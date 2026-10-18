@@ -442,6 +442,100 @@ class TechErrorReportPostgresTest {
         }
     }
 
+    @Test
+    @DisplayName("inceleme 2026-10-18 (kilit sırası): aynı yuvada görsel silme ile yerine yükleme eşzamanlı → ikisi de biter (biri bekler),"
+            + " 40P01 kilitlenmesi yok; görsel silme rapor satırını İLK iş olarak kilitler — satırı tutan işlem varken görsel satırına dokunmaz")
+    void imageDeleteAndReplaceUploadDoNotDeadlock() throws Exception {
+        var service = PostgresIt.app().bean(com.sitemonitor.service.techerror.TechErrorReportService.class);
+        TechErrorReportRepository reports = PostgresIt.app().bean(TechErrorReportRepository.class);
+        TechErrorReportImageRepository images = PostgresIt.app().bean(TechErrorReportImageRepository.class);
+        TechErrorReportEventRepository events = PostgresIt.app().bean(TechErrorReportEventRepository.class);
+        var tx = new org.springframework.transaction.support.TransactionTemplate(
+                PostgresIt.app().bean(org.springframework.transaction.PlatformTransactionManager.class));
+        var jdbc = PostgresIt.app().jdbc();
+        long team = 765_430L + (long) (Math.random() * 1000);
+        String tag = "ter-it-" + UUID.randomUUID().toString().substring(0, 8);
+        TechErrorChannel ch = service.createChannel(team, tag + " Kilit sırası", null, TechErrorTemplate.defaults("tr"), null);
+        Long reportId = null;
+        var pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            TechErrorReport r = service.createReport(ch, 2025, 8, null);
+            reportId = r.getId();
+            Long rid = r.getId();
+            byte[] a = png(400, 200);
+            byte[] b = png(300, 150);
+
+            // 1) Belirlenimci: rapor satırını tutan işlem varken görsel silme BEKLER ve görsel satırına dokunmamıştır
+            TechErrorReportImage first = service.upload(rid, "sla-shot-1", a, "a.png", null);
+            var locked = new java.util.concurrent.CountDownLatch(1);
+            var probed = new java.util.concurrent.atomic.AtomicInteger(-1);
+            var holder = pool.submit(() -> tx.execute(st -> {
+                reports.lockRow(rid);
+                locked.countDown();
+                try {
+                    Thread.sleep(500);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                // NOWAIT: görsel satırı başka işlemde kilitliyse hemen 55P03 — eski sırada (görsel önce silinir) burada patlardı
+                probed.set(jdbc.queryForList("SELECT id FROM tech_error_report_images WHERE report_id = ? FOR UPDATE NOWAIT",
+                        Long.class, rid).size());
+                return null;
+            }));
+            assertThat(locked.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            long t0 = System.nanoTime();
+            service.deleteImage(rid, first.getId(), null);
+            assertThat((System.nanoTime() - t0) / 1_000_000L).as("görsel silme rapor satırını bekledi").isGreaterThanOrEqualTo(300L);
+            holder.get(10, java.util.concurrent.TimeUnit.SECONDS);
+            assertThat(probed.get()).as("beklerken görsel satırı serbestti").isEqualTo(1);
+            assertThat(images.findByReportIdOrderByIdAsc(rid)).isEmpty();
+
+            // 2) Yarış: aynı yuvada silme ile yerine yükleme aynı anda, birkaç tur — hiçbiri kilitlenme (40P01) / 500 almaz
+            List<String> outcomes = new java.util.ArrayList<>();
+            for (int round = 0; round < 12; round++) {
+                TechErrorReportImage cur = service.upload(rid, "sla-shot-1", a, "a.png", null);
+                var barrier = new java.util.concurrent.CyclicBarrier(2);
+                var del = pool.submit(() -> {
+                    barrier.await(10, java.util.concurrent.TimeUnit.SECONDS);
+                    try {
+                        service.deleteImage(rid, cur.getId(), null);
+                        return "DELETED";
+                    } catch (java.util.NoSuchElementException gone) {
+                        return "GONE";                // yükleme önce bitti: görsel yerine yenisi geldi → 404 (beklenen)
+                    } catch (RuntimeException e) {
+                        return "ERR:" + e;
+                    }
+                });
+                var up = pool.submit(() -> {
+                    barrier.await(10, java.util.concurrent.TimeUnit.SECONDS);
+                    try {
+                        service.upload(rid, "sla-shot-1", b, "b.png", null);
+                        return "UPLOADED";
+                    } catch (RuntimeException e) {
+                        return "ERR:" + e;
+                    }
+                });
+                String d = del.get(30, java.util.concurrent.TimeUnit.SECONDS);
+                String u = up.get(30, java.util.concurrent.TimeUnit.SECONDS);
+                outcomes.add(d + "/" + u);
+                assertThat(d).as("tur %d silme", round).isIn("DELETED", "GONE");
+                assertThat(u).as("tur %d yükleme", round).isEqualTo("UPLOADED");
+                // Her iki sırada da yuvada tek görsel kalır: yeni yüklenen (silme önce bittiyse de sonra yüklendi)
+                assertThat(images.findByReportIdOrderByIdAsc(rid)).hasSize(1);
+            }
+            assertThat(outcomes).hasSize(12);
+        } finally {
+            pool.shutdownNow();
+            if (reportId != null) {
+                images.deleteAllForReport(reportId);
+                events.deleteAllForReport(reportId);
+            }
+            reports.deleteAllForChannel(ch.getId());
+            PostgresIt.app().bean(TechErrorTemplateVersionRepository.class).deleteAllForChannel(ch.getId());
+            PostgresIt.app().bean(TechErrorChannelRepository.class).deleteById(ch.getId());
+        }
+    }
+
     private static byte[] png(int w, int h) throws java.io.IOException {
         java.awt.image.BufferedImage img = new java.awt.image.BufferedImage(w, h, java.awt.image.BufferedImage.TYPE_INT_RGB);
         java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();

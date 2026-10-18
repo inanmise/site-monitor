@@ -451,6 +451,36 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
+    @SuppressWarnings("deprecation")
+    @DisplayName("inceleme 2026-10-18: kilit çatışması (40P01 kilitlenme / 40001 serileştirme / kilit bekleme) → 409 CONCURRENT_MODIFICATION"
+            + " 'tekrar deneyin' — 503 DB_UNAVAILABLE değil; Spring bu istisnalar için en özgül işleyiciyi seçer, gerçek kesinti 503 kalır")
+    void pessimisticLockIsConflictNot503() {
+        var resolver = new org.springframework.web.method.annotation.ExceptionHandlerMethodResolver(GlobalExceptionHandler.class);
+        List<Exception> conflicts = List.of(
+                new org.springframework.dao.CannotAcquireLockException("deadlock", new SQLException("ERROR: deadlock detected", "40P01")),
+                new org.springframework.dao.DeadlockLoserDataAccessException("deadlock", new SQLException("deadlock detected", "40P01")),
+                new org.springframework.dao.PessimisticLockingFailureException("serialization",
+                        new SQLException("could not serialize access due to concurrent update", "40001")),
+                new org.springframework.dao.CannotSerializeTransactionException("serialization", new SQLException("x", "40001")),
+                new org.springframework.dao.PessimisticLockingFailureException("lock timeout", new SQLException("lock not available", "55P03")));
+        for (Exception e : conflicts) {
+            assertEquals("handlePessimisticLock", resolver.resolveMethod(e).getName(), e.getClass().getSimpleName());
+            ResponseEntity<Map<String, Object>> r = handler.handlePessimisticLock(e);
+            assertEquals(409, r.getStatusCode().value());
+            assertEquals("CONCURRENT_MODIFICATION", r.getBody().get("code"));
+            assertTrue(error(r).contains("tekrar deneyin"), error(r));
+            assertFalse(error(r).contains("deadlock"));
+            assertFalse(error(r).contains("ulaşılamıyor"));
+        }
+        // Gerçek erişim sorunu ve sorgu zaman aşımı 503 kalır; iyimser kilit kendi işleyicisinde
+        assertEquals("handleDbUnavailable", resolver.resolveMethod(
+                new org.springframework.dao.DataAccessResourceFailureException("Unable to acquire JDBC Connection")).getName());
+        assertEquals("handleDbUnavailable", resolver.resolveMethod(new org.springframework.dao.QueryTimeoutException("x")).getName());
+        assertEquals("handleOptimisticLock", resolver.resolveMethod(
+                new org.springframework.orm.ObjectOptimisticLockingFailureException("Team", 3L)).getName());
+    }
+
+    @Test
     @DisplayName("Beklenmeyen Exception → 500 + açıklayıcı metin (stack trace / iç ileti sızmaz)")
     void generic() {
         ResponseEntity<Map<String, Object>> r = handler.handleGeneric(

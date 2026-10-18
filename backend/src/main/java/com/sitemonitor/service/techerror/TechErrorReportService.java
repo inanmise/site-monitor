@@ -447,12 +447,15 @@ public class TechErrorReportService {
     @Transactional
     public int deleteChannel(Long id) {
         TechErrorChannel ch = channel(id);
+        // Kilit sırası (inceleme 2026-10-18): raporların satırları kimlik sırasıyla ÖNCE kilitlenir, görseller / raporlar sonra
+        // silinir — görsellere yazan her yol gibi (yükleme rapor satırını tutup görseli beklerken burada görseli tutup rapor
+        // satırını beklemek PostgreSQL'de kilitlenmeydi, 40P01)
+        List<Long> ids = reports.lockForChannel(ch.getId());
         if (reports.countSendingForChannel(ch.getId(), now().minus(TechErrorReportSender.STALE_CLAIM)) > 0) {
             throw new CodedConflictException("REPORT_SENT_OR_SENDING", Msg.t(
                     "Bu kanalın bir raporu şu anda gönderiliyor; kanal silinmedi. Gönderim bitince tekrar deneyin.",
                     "One of this channel's reports is being sent right now, so the channel wasn't deleted. Try again when the send finishes."));
         }
-        List<Long> ids = reports.idsForChannel(ch.getId());
         if (!ids.isEmpty()) {
             for (int i = 0; i < ids.size(); i += 500) images.deleteAllForReports(ids.subList(i, Math.min(ids.size(), i + 500)));
             history.deleteForReports(ids);
@@ -669,7 +672,12 @@ public class TechErrorReportService {
         // Kayıp yalnız şablon farkından sayılır: yeni hesaplanan oranlar kaybı gizlemesin (inceleme 2026-10-16)
         int removedValues = countValues(before) - countValues(carried);
         Set<String> keep = keepSlots(next, carried);
-        int removedImages = keep.isEmpty() ? images.deleteAllForReport(r.getId()) : images.deleteSlotsNotIn(r.getId(), keep);
+        // Sayı kullanıcının GÖRDÜĞÜ görsellerden (inceleme 2026-10-18): sahipsiz konu görseli de silinir ama hiç gösterilmediği
+        // için "N görsel silindi" sayısına girmez (önizlemenin lost_images'ı ile aynı kural)
+        int removedImages = 0;
+        for (var m : liveImageMeta(r.getId(), prev, before)) if (!keep.contains(m.getSlotId())) removedImages++;
+        if (keep.isEmpty()) images.deleteAllForReport(r.getId());
+        else images.deleteSlotsNotIn(r.getId(), keep);
         Instant now = now();
         r.setTemplateJson(TechErrorTemplate.toJson(next));
         r.setTemplateVersion(ch.getTemplateVersion());      // uygulanan kanal şablonunun sürümü (D19)
@@ -697,8 +705,9 @@ public class TechErrorReportService {
         Values carried = carry(before, prev, next);
         Values after = TechErrorCalc.apply(next, carried, previousFields(r, next));
         Set<String> keep = keepSlots(next, carried);
+        // Yalnız kullanıcının gördüğü görseller (sahipsiz konu görseli rapor ekranında yok — inceleme 2026-10-18)
         int lostImages = 0;
-        for (var m : images.findByReportIdOrderByIdAsc(r.getId())) if (!keep.contains(m.getSlotId())) lostImages++;
+        for (var m : liveImageMeta(r.getId(), prev, before)) if (!keep.contains(m.getSlotId())) lostImages++;
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("differs", !TechErrorTemplate.toJson(next).equals(TechErrorTemplate.toJson(prev)));
         out.put("lost_values", Math.max(0, countValues(before) - countValues(carried)));
@@ -747,6 +756,8 @@ public class TechErrorReportService {
      */
     @Transactional
     public boolean deleteReport(Long reportId, boolean onlyUnsent) {
+        // Kilit sırası (inceleme 2026-10-18): rapor satırı ÖNCE, görseller sonra — görsellere yazan her yol gibi
+        reports.lockRow(reportId);
         TechErrorReport r = report(reportId);
         boolean wasSent = r.getLastSentAt() != null;
         images.deleteAllForReport(r.getId());
@@ -883,15 +894,33 @@ public class TechErrorReportService {
 
     // ── Görseller ────────────────────────────────────────────────────────────────────────────────────
 
-    public List<TechErrorReportImageRepository.Meta> imageMeta(Long reportId) {
-        return images.findByReportIdOrderByIdAsc(reportId);
-    }
-
+    /**
+     * Rapor listesinin görsel sayısı ve baytı: rapor → [adet, bayt]. SAHİPSİZ konu görselleri ({@link #orphanIssueSlot})
+     * sayılmaz — rapor ekranı ({@link #liveImageMeta}) onları göstermez (inceleme 2026-10-18). Sabit sorgu: gruplu sayım + konu
+     * görseli satırları; şablon / değerler YALNIZ konu görseli olan raporlar için tek sorguda okunur (konu görseli yoksa iki
+     * sorgu, eskisi gibi bir sayım + boş bir okuma).
+     */
     public Map<Long, long[]> imageCounts(Collection<Long> reportIds) {
         Map<Long, long[]> out = new HashMap<>();
         if (reportIds.isEmpty()) return out;
         for (Object[] row : images.countsByReport(reportIds)) {
             out.put(((Number) row[0]).longValue(), new long[]{ ((Number) row[1]).longValue(), ((Number) row[2]).longValue() });
+        }
+        Map<Long, List<Object[]>> issueSlots = new HashMap<>();
+        for (Object[] row : images.slotsByReportWithPrefix(reportIds, TechErrorTemplate.ISSUE_SLOT_PREFIX + "%")) {
+            issueSlots.computeIfAbsent(((Number) row[0]).longValue(), k -> new ArrayList<>()).add(row);
+        }
+        if (issueSlots.isEmpty()) return out;
+        for (TechErrorReportRepository.ContentRow c : reports.findContentByIdIn(issueSlots.keySet())) {
+            Template t = TechErrorTemplate.fromStored(c.getTemplateJson());
+            Values v = TechErrorValues.fromStored(c.getValuesJson(), t);
+            long[] counts = out.get(c.getId());
+            if (counts == null) continue;
+            for (Object[] row : issueSlots.getOrDefault(c.getId(), List.of())) {
+                if (!orphanIssueSlot(t, v, (String) row[1])) continue;
+                counts[0] = Math.max(0, counts[0] - 1);
+                counts[1] = Math.max(0, counts[1] - ((Number) row[2]).longValue());
+            }
         }
         return out;
     }
@@ -1077,6 +1106,10 @@ public class TechErrorReportService {
 
     @Transactional
     public TechErrorReportImage deleteImage(Long reportId, Long imageId, Long by) {
+        // Kilit sırası (inceleme 2026-10-18): rapor satırı İLK iş — eskiden görsel satırı önce silinip rapor satırına sonra
+        // dokunuluyordu (touchContent); aynı yuvaya süren yükleme rapor satırını tutup bu görseli beklerken PostgreSQL
+        // kilitlenmesi (40P01) olurdu. Görsel kilitten SONRA okunur: yükleme arada görseli değiştirdiyse 404
+        reports.lockRow(reportId);
         TechErrorReportImage img = image(imageId);
         if (!img.getReportId().equals(reportId)) throw imageNotFound();
         TechErrorReport r = report(reportId);
@@ -1183,9 +1216,13 @@ public class TechErrorReportService {
      */
     public List<TechErrorReportImageRepository.Meta> liveImageMeta(TechErrorReport r) {
         Template t = TechErrorTemplate.fromStored(r.getTemplateJson());
-        Values v = TechErrorValues.fromStored(r.getValuesJson(), t);
+        return liveImageMeta(r.getId(), t, TechErrorValues.fromStored(r.getValuesJson(), t));
+    }
+
+    /** {@link #liveImageMeta(TechErrorReport)} — şablon ve değerler zaten okunmuşken (şablon yenileme / önizleme sayıları). */
+    private List<TechErrorReportImageRepository.Meta> liveImageMeta(Long reportId, Template t, Values v) {
         List<TechErrorReportImageRepository.Meta> out = new ArrayList<>();
-        for (var m : images.findByReportIdOrderByIdAsc(r.getId())) if (!orphanIssueSlot(t, v, m.getSlotId())) out.add(m);
+        for (var m : images.findByReportIdOrderByIdAsc(reportId)) if (!orphanIssueSlot(t, v, m.getSlotId())) out.add(m);
         return out;
     }
 

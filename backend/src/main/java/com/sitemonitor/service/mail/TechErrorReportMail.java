@@ -642,7 +642,7 @@ public final class TechErrorReportMail {
             } else {
                 boolean unreadable = prepared.unreadable().contains(sl.id());
                 sb.append("<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"border-collapse:separate\" data-slot=\"")
-                  .append(unreadable ? "te-image-unreadable" : "te-image-pdf").append("\"><tr>")
+                  .append(unreadable ? "te-image-unreadable" : attached ? "te-image-pdf" : "te-image-no-pdf").append("\"><tr>")
                   .append("<td style=\"border:1px dashed ").append(MailTokens.BORDER).append(";border-radius:8px;padding:18px 16px;text-align:center;font-family:")
                   .append(MailTokens.FONT).append(";font-size:13px;line-height:18px;color:").append(MailTokens.MUTED).append("\">")
                   .append(MailKit.esc(placeholderText(unreadable, en, attached)))

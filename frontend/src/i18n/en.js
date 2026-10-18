@@ -20535,6 +20535,7 @@ export const EN = {
   'te.unsavedAuto': "saved automatically within 30 seconds",
   'te.unsavedInvalid': "everything except the invalid fields is saved automatically; an invalid field keeps its old value",
   'te.unsavedInvalidList': "missing or invalid: {0} — these aren't saved automatically (they keep their saved value); the other fields are saved",
+  'te.unsavedInvalidListMore': "missing or invalid: {0} and other invalid fields — these aren't saved automatically (they keep their saved value); the rest is saved",
   'te.hist.auto': "Automatic save",
   'te.hist.autoSaves': "{0} automatic saves in one row",
   'te.tpl.untitledSection': "Untitled section",

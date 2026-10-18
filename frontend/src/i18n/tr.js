@@ -20569,6 +20569,7 @@ export const TR = {
   'te.unsavedAuto': "30 saniye içinde otomatik kaydedilir",
   'te.unsavedInvalid': "hatalı alanlar dışındakiler otomatik kaydedilir, hatalı alan eski değerinde kalır",
   'te.unsavedInvalidList': "eksik ya da hatalı: {0} — bunlar otomatik kaydedilmez (kayıtlı değerinde kalır), diğer alanlar kaydedilir",
+  'te.unsavedInvalidListMore': "eksik ya da hatalı: {0} ve başka hatalı alanlar — bunlar otomatik kaydedilmez (kayıtlı değerinde kalır), geri kalan alanlar kaydedilir",
   'te.hist.auto': "Otomatik kayıt",
   'te.hist.autoSaves': "{0} otomatik kayıt tek satırda",
   'te.tpl.untitledSection': "Başlıksız bölüm",

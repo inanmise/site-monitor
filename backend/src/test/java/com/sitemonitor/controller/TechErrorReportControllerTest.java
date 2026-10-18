@@ -349,7 +349,7 @@ class TechErrorReportControllerTest {
         aug.setValuesJson(TechErrorValues.toJson(TechErrorValues.normalize(Map.of(
                 "fields", Map.of("total-tx", 4_350_000_000L, "error-count", 5_000_000), "units", Map.of("total-tx", 9, "error-count", 6)), t)));
         when(service.previousReport(any())).thenReturn(Optional.of(aug));
-        when(service.imageMeta(100L)).thenReturn(List.of());
+        when(service.liveImageMeta(any())).thenReturn(List.of());
         mvc.perform(get("/api/tech-error-reports/reports/100").session(user("USER", A, List.of())))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.values.units['total-tx']").value(9))

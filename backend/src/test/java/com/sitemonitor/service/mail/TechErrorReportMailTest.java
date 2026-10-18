@@ -209,6 +209,33 @@ class TechErrorReportMailTest {
     }
 
     @Test
+    @DisplayName("inceleme 2026-10-18: PDF EKLENEMEDİYSE (onay isteği, fileName null) gömülmeyen görselin kutusu 'ekteki PDF'te' demez"
+            + " — 'bu postaya eklenmedi, PDF'i Site Monitor'den indirin' (20.157.0 metni; TR / EN, düz metin de); ayrı data-slot"
+            + " te-image-no-pdf; okunamayan görsel yine 'okunamadı'")
+    void imageBoxesWhenPdfNotAttached() throws IOException {
+        TechErrorPdfInput in = input("tr", images());
+        TechErrorReportMail.Built b = TechErrorReportMail.buildFull(in.withoutImages(), TechErrorMailImages.allSkipped(in), null, null);
+        String html = b.mail().html();
+        assertThat(html).contains("PDF bu postanın boyut sınırına sığmadığından eklenmedi")
+                .doesNotContain("data-slot=\"te-image-pdf\"").doesNotContain("Görsel ekteki PDF&#39;te");
+        assertThat(html.split("data-slot=\"te-image-no-pdf\"", -1).length - 1).isEqualTo(3);
+        assertThat(html).contains("Görsel bu postaya eklenmedi — görmek için PDF&#39;i Site Monitor&#39;den indirin (tam çözünürlük).");
+        assertThat(b.mail().text()).contains("[Görsel — Site Monitor'deki PDF'te] Yıllık Operasyon ve Hata Dağılım Özeti (Son 12 Ay)")
+                .doesNotContain("[Görsel — PDF ekinde]");
+        // Okunamayan görselin metni değişmez (PDF'te de çizilemez); PDF ekliyse kutular eskisi gibi
+        TechErrorMailImages.Result broken = new TechErrorMailImages.Result(Map.of(), List.of("annual-summary"), List.of("annual-tech-rate"), 0);
+        String bh = TechErrorReportMail.buildFull(in.withoutImages(), broken, null, null).mail().html();
+        assertThat(bh).contains("data-slot=\"te-image-unreadable\"").contains("data-slot=\"te-image-no-pdf\"").doesNotContain("data-slot=\"te-image-pdf\"");
+        assertThat(TechErrorReportMail.buildFull(in.withoutImages(), TechErrorMailImages.allSkipped(in), null, "m.pdf").mail().html())
+                .contains("data-slot=\"te-image-pdf\"").doesNotContain("te-image-no-pdf");
+        TechErrorPdfInput en = input("en", images());
+        TechErrorReportMail.Built eb = TechErrorReportMail.buildFull(en.withoutImages(), TechErrorMailImages.allSkipped(en), null, null);
+        assertThat(eb.mail().html()).contains("Image not included in this e-mail — download the PDF from Site Monitor to see it (full resolution).")
+                .doesNotContain("Image in the attached PDF");
+        assertThat(eb.mail().text()).contains("[Image — in the PDF in Site Monitor]");
+    }
+
+    @Test
     @DisplayName("EN şablon: band, notlar ve görsel metinleri İngilizce; konu = rapor başlığı")
     void english() throws IOException {
         TechErrorPdfInput in = input("en", images());

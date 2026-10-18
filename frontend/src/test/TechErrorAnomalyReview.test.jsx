@@ -198,6 +198,25 @@ describe('denetim ve durum', () => {
     await waitFor(() => expect(section.querySelector('[data-slot="te-section-invalid"]')?.textContent).toBe('1 alan düzeltilmeli'))
   })
 
+  it('anomali alanının yanında bir gösterge alanı da hatalıysa durum satırı ikisini de söyler ("ve başka hatalı alanlar"); gösterge düzelince yalnız anomali listesi', async () => {
+    te().report.mockResolvedValue(respond([topic({ errors: 10 })]))
+    render(<TechErrorReportsPage />)
+    await screen.findByRole('heading', { name: TITLE })
+    fireEvent.click(within(card().querySelector('[data-slot="te-issue-outage"]')).getByRole('radio', { name: 'Evet' }))
+    await waitFor(() => expect(document.querySelector('[data-slot="te-save-auto"]').textContent)
+      .toContain('eksik ya da hatalı: Kesinti ID (Kart Limiti: Hata Artışı) — bunlar'))
+    const total = screen.getByLabelText('Toplam işlem adedi')
+    fireEvent.change(total, { target: { value: 'abc' } })
+    fireEvent.blur(total)
+    await waitFor(() => expect(document.querySelector('[data-slot="te-save-auto"]').textContent)
+      .toContain('eksik ya da hatalı: Kesinti ID (Kart Limiti: Hata Artışı) ve başka hatalı alanlar — bunlar otomatik kaydedilmez'))
+    expect(document.querySelector('[data-slot="te-save-auto"]').textContent).not.toContain('diğer alanlar kaydedilir')
+    fireEvent.change(total, { target: { value: '1200' } })
+    fireEvent.blur(total)
+    await waitFor(() => expect(document.querySelector('[data-slot="te-save-auto"]').textContent)
+      .toContain('Kesinti ID (Kart Limiti: Hata Artışı) — bunlar otomatik kaydedilmez (kayıtlı değerinde kalır), diğer alanlar kaydedilir'))
+  })
+
   it('"Ertesi gün bitti" iki saat girilene kadar kapalı; yarım saat alan bırakılınca hata, otomatik kayıt onu kayıtlı değerinde gönderir', async () => {
     const stored = topic({ date: '2026-09-12', errors: 5 })
     te().report.mockResolvedValue(respond([stored]))

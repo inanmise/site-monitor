@@ -1053,6 +1053,105 @@ class TechErrorReportServiceTest {
     }
 
     @Test
+    @DisplayName("inceleme 2026-10-18: sahipsiz konu görseli SAYILMAZ — rapor listesinin görsel adedi / baytı, şablon önizlemesinin"
+            + " lost_images'ı ve şablon yenilemenin removed_images'ı kullanıcının gördüğü görsellerden; yenileme sahipsizi yine siler")
+    void orphanIssueImagesAreNotCounted() throws Exception {
+        TechErrorChannel ch = channel(1, "Mobil");
+        TechErrorReport r = service.createReport(ch, 2026, 9, 7L);
+        TechErrorReport plain = service.createReport(ch, 2026, 8, 7L);
+        service.saveValues(r.getId(), r.getVersion(), Map.of("issues", Map.of("issues", List.of(topicRaw("k1", "errors", 10)))), 7L);
+        service.upload(r.getId(), "iss:issues:k1:1", TechErrorImageValidatorTest.png(400, 200), "a.png", 7L);
+        service.upload(r.getId(), "sla-shot-1", TechErrorImageValidatorTest.png(400, 200), "sla.png", 7L);
+        service.upload(plain.getId(), "sla-shot-1", TechErrorImageValidatorTest.png(300, 100), "b.png", 7L);
+        long liveBytes = images.findByReportIdOrderByIdAsc(r.getId()).stream().mapToLong(TechErrorReportImageRepository.Meta::getSizeBytes).sum();
+        long plainBytes = images.findByReportIdOrderByIdAsc(plain.getId()).stream().mapToLong(TechErrorReportImageRepository.Meta::getSizeBytes).sum();
+        orphan(reports.findById(r.getId()).orElseThrow(), "iss:issues:gone:1", 5_000);
+
+        Map<Long, long[]> counts = service.imageCounts(List.of(r.getId(), plain.getId(), 999_999L));
+        assertThat(counts.get(r.getId())).containsExactly(2L, liveBytes);
+        assertThat(counts.get(plain.getId())).containsExactly(1L, plainBytes);
+        assertThat(counts).doesNotContainKey(999_999L);
+        assertThat(service.imageCounts(List.of())).isEmpty();
+
+        TechErrorReport cur = reports.findById(r.getId()).orElseThrow();
+        assertThat(service.refreshPreview(cur, service.channel(ch.getId()))).containsEntry("lost_images", 0);
+        TechErrorReportService.RefreshResult res = service.refreshTemplate(r.getId(), cur.getVersion(), 7L);
+        assertThat(res.removedImages()).isZero();
+        assertThat(images.findByReportIdOrderByIdAsc(r.getId())).extracting(TechErrorReportImageRepository.Meta::getSlotId)
+                .containsExactlyInAnyOrder("iss:issues:k1:1", "sla-shot-1");
+        assertThat(events.findAll()).filteredOn(e -> "TEMPLATE_REFRESH".equals(e.getKind()))
+                .singleElement().satisfies(e -> assertThat(e.getDetailJson()).contains("\"removed_images\":0"));
+    }
+
+    @Autowired jakarta.persistence.EntityManager em;
+
+    /**
+     * Kilit sırası denetimi (inceleme 2026-10-18): başka bir işlem raporun satırını tutarken {@code writer} BEKLER ve bu sırada
+     * raporun görsel satırlarına DOKUNMAMIŞ olmalıdır — tutan işlem görsel satırlarını hemen güncelleyebilir. Eski sıra (görsel önce
+     * silinir, rapor satırı sonra) burada kilitlenme / kilit zaman aşımı verirdi (PostgreSQL'de 40P01).
+     */
+    private void assertLocksReportRowBeforeImages(Long reportId, Runnable writer) throws Exception {
+        var tx = new org.springframework.transaction.support.TransactionTemplate(txManager);
+        var locked = new java.util.concurrent.CountDownLatch(1);
+        var probed = new java.util.concurrent.atomic.AtomicInteger(-1);
+        var probeMs = new java.util.concurrent.atomic.AtomicLong(-1);
+        var pool = java.util.concurrent.Executors.newSingleThreadExecutor();
+        try {
+            var holder = pool.submit(() -> tx.execute(st -> {
+                reports.lockRow(reportId);
+                locked.countDown();
+                try {
+                    Thread.sleep(400);          // yazan başladı ve rapor satırını bekliyor
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                long t0 = System.nanoTime();
+                probed.set(em.createNativeQuery("UPDATE tech_error_report_images SET file_name = file_name WHERE report_id = ?1")
+                        .setParameter(1, reportId).executeUpdate());
+                probeMs.set((System.nanoTime() - t0) / 1_000_000L);
+                return null;
+            }));
+            assertThat(locked.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            long t0 = System.nanoTime();
+            writer.run();
+            long waited = (System.nanoTime() - t0) / 1_000_000L;
+            holder.get(10, java.util.concurrent.TimeUnit.SECONDS);
+            assertThat(waited).as("yazan rapor satırını bekledi").isGreaterThanOrEqualTo(300L);
+            assertThat(probed.get()).as("beklerken görsel satırları serbestti").isPositive();
+            assertThat(probeMs.get()).as("görsel satırı kilidi beklenmedi").isLessThan(300L);
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    @Test
+    @DisplayName("inceleme 2026-10-18 (kilit sırası): görsel silme, rapor silme ve kanal silme rapor satırını İLK iş olarak kilitler —"
+            + " satırı tutan işlem varken bekler ve görsel satırlarına dokunmaz (eskiden önce görseli silip rapor satırını bekliyordu)")
+    void imageWritersLockTheReportRowFirst() throws Exception {
+        TechErrorChannel ch = channel(1, "Mobil");
+        TechErrorReport r = service.createReport(ch, 2026, 9, 7L);
+        var img = service.upload(r.getId(), "sla-shot-1", TechErrorImageValidatorTest.png(400, 200), "a.png", 7L);
+        service.upload(r.getId(), "sla-shot-2", TechErrorImageValidatorTest.png(400, 200), "b.png", 7L);
+        assertLocksReportRowBeforeImages(r.getId(), () -> service.deleteImage(r.getId(), img.getId(), 7L));
+        assertThat(images.findByReportIdOrderByIdAsc(r.getId())).extracting(TechErrorReportImageRepository.Meta::getSlotId)
+                .containsExactly("sla-shot-2");
+
+        assertLocksReportRowBeforeImages(r.getId(), () -> service.deleteReport(r.getId(), false));
+        assertThat(reports.findById(r.getId())).isEmpty();
+        assertThat(images.findByReportIdOrderByIdAsc(r.getId())).isEmpty();
+
+        TechErrorReport a = service.createReport(ch, 2026, 8, 7L);
+        TechErrorReport b = service.createReport(ch, 2026, 7, 7L);
+        service.upload(a.getId(), "sla-shot-1", TechErrorImageValidatorTest.png(400, 200), "a.png", 7L);
+        service.upload(b.getId(), "sla-shot-1", TechErrorImageValidatorTest.png(400, 200), "b.png", 7L);
+        assertThat(reports.lockForChannel(ch.getId())).containsExactly(Math.min(a.getId(), b.getId()), Math.max(a.getId(), b.getId()));
+        assertLocksReportRowBeforeImages(b.getId(), () -> assertThat(service.deleteChannel(ch.getId())).isEqualTo(2));
+        assertThat(channels.findById(ch.getId())).isEmpty();
+        assertThat(images.findByReportIdOrderByIdAsc(a.getId())).isEmpty();
+        assertThat(images.findByReportIdOrderByIdAsc(b.getId())).isEmpty();
+    }
+
+    @Test
     @DisplayName("şablon önizlemesi (inceleme 2026-10-18): yeni şablon 'konuyu rapora alma' diyorsa müşteri etkisi Hayır olan (0 müşteriden"
             + " çıkarılan dahil) konular hidden_topics'te sayılır; eski şablonda zaten gizli konu sayılmaz")
     void refreshPreviewCountsNewlyHiddenTopics() {

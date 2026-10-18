@@ -1070,6 +1070,13 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
   }, [issueChecks, tpl, draftIssues, resolve, t])
   const problemList = issueProblemNames.length > 3
     ? `${issueProblemNames.slice(0, 3).join(', ')} +${issueProblemNames.length - 3}` : issueProblemNames.join(', ')
+  // Adı listede OLMAYAN başka hatalı / yarım alan da var mı (inceleme 2026-10-18): liste yalnız anomali denetimini adlandırır;
+  // bir gösterge alanı da hatalıyken "diğer alanlar kaydedilir" eksik kalıyordu — durum satırı onları da söyler
+  const otherInvalid = useMemo(() => {
+    const named = new Set(Object.keys(issueChecks))
+    const isOther = (m) => Object.entries(m || {}).some(([k, v]) => v && !named.has(k))
+    return isOther(clientErrors) || isOther(pending)
+  }, [issueChecks, clientErrors, pending])
   // Rapor toplamı ve yükleme ipucu yalnız ilk görsel bölümünde (varsayılan şablonda beş görsel bölümü var)
   const firstImagesId = sections.find((s) => s.kind === 'images')?.id
   // Otomatik oranlar (2026-10-16): taslağın adetlerinden CANLI hesap — yalnız gösterim (alan çıktısı, özet önizlemesi,
@@ -1416,7 +1423,7 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
                     : autoInfo?.ok === false && autoInfo.blocked && autoInfo.message ? t('te.autoBlockedReason', autoInfo.message)
                   : autoInfo?.ok === false && autoInfo.blocked ? t('te.autoBlocked')
                     : autoInfo?.ok === false ? t('te.autoFailed', clockTime(autoInfo.at, uiLang))
-                      : issueProblemNames.length ? t('te.unsavedInvalidList', problemList)
+                      : issueProblemNames.length ? t(otherInvalid ? 'te.unsavedInvalidListMore' : 'te.unsavedInvalidList', problemList)
                         : hasClientErrors || hasPending ? t('te.unsavedInvalid') : t('te.unsavedAuto')}</span>
               ) : autoInfo?.ok ? (
                 <span data-slot="te-save-auto"> · {t('te.autoSaved', clockTime(autoInfo.at, uiLang))}</span>

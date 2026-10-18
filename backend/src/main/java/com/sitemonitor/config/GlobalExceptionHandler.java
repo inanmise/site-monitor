@@ -576,6 +576,22 @@ public class GlobalExceptionHandler {
                 "Someone else changed this record while you were editing it, so your change wasn’t saved. Reload the page and try again on the latest version."));
     }
 
+    /**
+     * Kötümser kilit çatışması (inceleme 2026-10-18): PostgreSQL kilitlenme (40P01 → {@code CannotAcquireLockException} /
+     * {@code DeadlockLoserDataAccessException}), serileştirme hatası (40001 → {@code CannotSerializeTransactionException}) ve
+     * kilit bekleme zaman aşımı (55P03) — hepsi {@link org.springframework.dao.PessimisticLockingFailureException}. Veritabanı
+     * ERİŞİLEBİLİR; aynı kayıtta aynı anda iki işlem çatıştı ve biri geri alındı → 409 {@code CONCURRENT_MODIFICATION}
+     * ("tekrar deneyin"). Eskiden {@link TransientDataAccessException} üzerinden 503 "veritabanına ulaşılamıyor" alıyordu —
+     * yanlış neden.
+     */
+    @ExceptionHandler(org.springframework.dao.PessimisticLockingFailureException.class)
+    public ResponseEntity<Map<String, Object>> handlePessimisticLock(Exception e) {
+        log.warn("Kilit çatışması (eşzamanlı işlem, geri alındı) [istek={}]: {}", rid(), e.toString());
+        return respond(409, "CONCURRENT_MODIFICATION", Msg.t(
+                "Aynı kayıt üzerinde aynı anda başka bir işlem sürüyordu; işleminiz tamamlanmadı ve hiçbir şey kaydedilmedi. Birkaç saniye sonra tekrar deneyin; sayfayı yenilemek son durumu gösterir.",
+                "Another action was working on the same record at the same moment, so yours didn’t finish and nothing was saved. Try again in a few seconds; reloading the page shows the latest state."));
+    }
+
     /** JPA "kayıt yok" (getReferenceById / tembel yükleme) → 404, 500 değil. */
     @ExceptionHandler({jakarta.persistence.EntityNotFoundException.class,
             org.springframework.orm.ObjectRetrievalFailureException.class})
