@@ -1853,17 +1853,56 @@ for (const vp of VIEWPORTS) {
       expect(uploadBodies[0].toString('latin1')).toMatch(/filename="monthly-tx-pano-\d{8}-\d{6}\.png"/)
       await expect(paste).toHaveAttribute('data-has-image', 'true')
 
+      // Yarım yuvanın eylemleri (inceleme 2026-10-18): "Değiştir" + (masaüstünde) "Ekrandan al" düğme; "Panodan yapıştır" ve
+      // "Kaldır" adlı "Diğer işlemler: <yuva>" menüsünde. Eylemler yuvanın içinde kalır, kesilmez; menü klavyeyle açılır
+      const actions = paste.locator('[data-slot="te-image-actions"]')
+      await expect(actions).toHaveAttribute('data-layout', 'compact')
+      await expect(paste.locator('[data-slot="te-image-upload"]')).toBeVisible()
+      await expect(paste.locator('[data-slot="te-image-paste"]')).toHaveCount(0)
+      await expect(paste.locator('[data-slot="te-image-remove"]')).toHaveCount(0)
+      const more = paste.getByRole('button', { name: /^(Diğer işlemler|More actions): / })
+      await expect(more).toBeVisible()
+      await page.waitForTimeout(200)
+      const slotBox = await paste.boundingBox()
+      for (const b of await actions.locator('button').all()) {
+        if (!(await b.isVisible())) continue
+        const r = await b.boundingBox()
+        expect(r.x, 'eylem yuvanın içinde (sol)').toBeGreaterThanOrEqual(slotBox.x - 1)
+        expect(r.x + r.width, 'eylem yuvanın içinde (sağ)').toBeLessThanOrEqual(slotBox.x + slotBox.width + 1)
+      }
+      expect(await page.evaluate(clipped, '[data-slot-id="monthly-tx"]'), 'kırpılan metin (yuva eylemleri)').toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot-id="monthly-tx"]'), 'küçük hedef (yuva)').toEqual([])
+      await more.focus()
+      await page.keyboard.press('Enter')
+      const menu = page.getByRole('menu')
+      await expect(menu).toBeVisible()
+      await expect(menu.getByRole('menuitem', { name: /^(Panodan yapıştır|Paste from clipboard): / })).toBeVisible()
+      await expect(menu.getByRole('menuitem', { name: /^(Kaldır|Remove): / })).toBeVisible()
+      await page.keyboard.press('ArrowDown')
+      await expect(menu.locator('[role="menuitem"]:focus')).toHaveCount(1)
+      if (vp.touch) {
+        for (const it of await menu.getByRole('menuitem').all()) {
+          expect((await it.boundingBox()).height, 'menü öğesi dokunmatikte ≥ 40 px').toBeGreaterThanOrEqual(39.5)
+        }
+      }
+      await page.keyboard.press('Escape')
+      await expect(menu).toHaveCount(0)
+      await expect(more).toBeFocused()
+      await paste.screenshot({ path: `test-results/te-cap-slot-actions-${vp.name}.png` })
+
       if (vp.width < 768) {
-        // Telefonda ekrandan alma ve panel yok (bozuk düğme bırakılmaz); yapıştırma yolu ve "Panodan yapıştır" var
+        // Telefonda ekrandan alma ve panel yok (bozuk düğme bırakılmaz); yapıştırma yolu ve "Panodan yapıştır" (menüde) var
         await expect(editor.locator('[data-slot="te-image-snip"]')).toHaveCount(0)
         await expect(editor.locator('[data-slot="te-images-panel-open"]')).toHaveCount(0)
-        await expect(paste.locator('[data-slot="te-image-paste"]')).toBeVisible()
         await page.waitForTimeout(200)
         expect(await page.evaluate(overflowX), 'yatay taşma (telefon, görsel)').toBeLessThanOrEqual(1)
         expect(await page.evaluate(clipped, '[data-slot="te-report"]'), 'kırpılan metin (telefon, görsel)').toEqual([])
-        expect(await page.evaluate(smallTargets, '[data-slot-id="monthly-tx"]'), 'küçük hedef (yuva)').toEqual([])
         return
       }
+      await expect(paste.locator('[data-slot="te-image-snip"]')).toBeVisible()
+      // Tam yuvada hepsi düğme (menü yok)
+      await expect(editor.locator('[data-slot-id="daily-errors"] [data-slot="te-image-actions"]')).toHaveAttribute('data-layout', 'full')
+      await expect(editor.locator('[data-slot-id="daily-errors"] [data-slot="te-image-paste"]')).toBeVisible()
 
       // 2) Ekrandan al: ilk basış paylaşımı başlatır (sahte getDisplayMedia = renk bloklu tuvalin akışı), kırpma penceresi
       const snipSlot = editor.locator('[data-slot-id="tech-errors"]')
@@ -1965,6 +2004,17 @@ for (const vp of VIEWPORTS) {
       expect(await panel.evaluate(clipped, '[data-slot="te-panel"]'), 'kırpılan metin (panel)').toEqual([])
       if (vp.touch) expect(await panel.evaluate(smallTargets, '[data-slot="te-panel"]'), 'küçük hedef (panel)').toEqual([])
       await panel.screenshot({ path: `test-results/te-images-panel-${vp.name}.png` })
+
+      // 4) "Ana pencerede aç" (inceleme 2026-10-18): ana pencere başka görünümdeyken rapor UYGULAMA İÇİNDE açılır — sayfa
+      // yeniden yüklenmez (pencere işareti korunur; eskiden location.assign tam yükleme yapıyordu)
+      await page.evaluate(() => window.dispatchEvent(new CustomEvent('sm:apply-view', { detail: { tab: 'channelreports', params: {} } })))
+      await expect.poll(() => new URL(page.url()).searchParams.get('te_view')).toBeNull()
+      await page.evaluate(() => { window.__noReload = 'kanal-raporlari' })
+      await panel.locator('[data-slot="te-panel-main"]').click()
+      await expect.poll(() => new URL(page.url()).searchParams.get('te_rep'), { timeout: 10_000 }).toBe('100')
+      expect(new URL(page.url()).searchParams.get('te_view')).toBe('report')
+      expect(await page.evaluate(() => window.__noReload), 'sayfa yeniden yüklenmedi').toBe('kanal-raporlari')
+      await expect(editor.locator('[data-slot-id="daily-errors"]')).toHaveAttribute('data-has-image', 'true', { timeout: 10_000 })
       await panel.close()
     })
 

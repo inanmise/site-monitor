@@ -76,6 +76,16 @@ export default function CaptureCropDialog({
   const shown = toDisplayRect(rect, dw / (W || 1))
   const out = sourceRect(rect, W, H)
   const full = isFullRect(rect, W, H)
+  const sizeText = t('te.cap.size', out.w, out.h, W, H)
+
+  // Ekran okuyucuya ölçü SÜRÜKLEME BİTİNCE söylenir (inceleme 2026-10-18): canlı bölge her işaretçi hareketinde
+  // değişiyordu — sürükleme boyunca onlarca duyuru. Klavye, "Tümünü seç" ve yeni kare hemen söylenir.
+  const [announced, setAnnounced] = useState(sizeText)
+  const sizeRef = useRef(sizeText)
+  sizeRef.current = sizeText
+  useEffect(() => {
+    if (!drag.current) setAnnounced(sizeText)
+  }, [sizeText])
 
   const srcPoint = useCallback((e) => {
     const el = stageRef.current
@@ -115,6 +125,7 @@ export default function CaptureCropDialog({
     if (!d) return
     drag.current = null
     try { e.currentTarget.releasePointerCapture?.(d.id) } catch { /* jsdom */ }
+    setAnnounced(sizeRef.current)
   }
 
   function onKeyDown(e) {
@@ -179,9 +190,10 @@ export default function CaptureCropDialog({
             </div>
           </div>
         </div>
-        <p className="text-sm tabular-nums text-muted-foreground [overflow-wrap:anywhere]" aria-live="polite" data-slot="te-cap-size">
-          {t('te.cap.size', out.w, out.h, W, H)}
+        <p className="text-sm tabular-nums text-muted-foreground [overflow-wrap:anywhere]" aria-hidden="true" data-slot="te-cap-size">
+          {sizeText}
         </p>
+        <span className="sr-only" aria-live="polite" data-slot="te-cap-size-live">{announced}</span>
         {error && <p className="text-sm text-destructive [overflow-wrap:anywhere]" role="alert" data-slot="te-cap-error">{error}</p>}
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex flex-wrap gap-2">

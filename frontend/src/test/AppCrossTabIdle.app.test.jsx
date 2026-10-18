@@ -41,15 +41,23 @@ vi.mock('../api/client', async () => {
 import App from '../App.jsx'
 import './appLazyWarmup.js'
 import { LANG_STORAGE_KEY } from '../i18n/dateLocale.js'
-import { ACTIVITY_PREFIX, ACTIVITY_THROTTLE_MS, markActivity, resetActivityThrottleForTests } from '../utils/crossTabActivity.js'
+import {
+  ACTIVITY_PREFIX, ACTIVITY_THROTTLE_MS, activityUserKey, markActivity, ownActivityKey, resetActivityThrottleForTests,
+} from '../utils/crossTabActivity.js'
+import { OWNER_KEY } from '../utils/personalStorage.js'
+import { OPEN_REPORT_ACK, OPEN_REPORT_REQUEST } from '../components/techerror/capture/panelWindow.js'
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const OTHER = `${ACTIVITY_PREFIX}gorsel-paneli`
+const ME = 'panel-kullanicisi'
 const warning = () => document.querySelector('[data-slot="inactivity-warning"]')
 
-/** Öteki sekmenin "şimdi" etkinliği: damga kısma payı kadar geriden yazılır (okuyan pay ekler → tam şimdi). */
-function otherTabActive({ event = true } = {}) {
-  const v = String(Date.now() - ACTIVITY_THROTTLE_MS)
+/**
+ * Öteki sekmenin "şimdi" etkinliği: damga kısma payı kadar geriden yazılır (okuyan pay ekler → tam şimdi). `user`: damgayı
+ * yazan sekmenin kullanıcısı; `at`: damga zamanı (verilirse kısma payı eklenmez).
+ */
+function otherTabActive({ event = true, user = ME, at = null } = {}) {
+  const v = JSON.stringify({ u: activityUserKey(user), t: at ?? Date.now() - ACTIVITY_THROTTLE_MS })
   localStorage.setItem(OTHER, v)
   if (event) window.dispatchEvent(new StorageEvent('storage', { key: OTHER, newValue: v }))
 }
@@ -100,10 +108,73 @@ describe('App — sekmeler arası hareketsizlik', () => {
     await waitFor(() => expect(warning()).not.toBeNull(), { timeout: 3000 })
   }, 20_000)
 
-  it('tek sekmede davranış aynı: uyarı ~1 sn sonra, çıkış toplam sürede (kendi damgası okunmaz)', async () => {
+  it('tek sekmede davranış aynı: uyarı ~1 sn sonra, çıkış toplam sürede (kendi damgası okunmaz); çıkışta kendi damgası silinir', async () => {
     render(<App />)
+    await waitFor(() => expect(localStorage.getItem(ownActivityKey())).not.toBeNull(), { timeout: 8000 })
+    // Damga kullanıcının özetini taşır, adını değil
+    expect(localStorage.getItem(ownActivityKey())).toContain(activityUserKey(ME))
+    expect(localStorage.getItem(ownActivityKey())).not.toContain(ME)
     await waitFor(() => expect(warning()).not.toBeNull(), { timeout: 8000 })
     await waitFor(() => expect(fx.logout).toBe(1), { timeout: 4000 })
+    // Sonraki kullanıcı bu sekmede girerse önceki kişinin damgası öteki sekmelerini açık tutmaz
+    await waitFor(() => expect(localStorage.getItem(ownActivityKey())).toBeNull())
+  }, 20_000)
+
+  it('3 saat ileri tarihli damga (saat oynadı) sekmeyi açık tutmaz ve silinir; uyarı ve çıkış zamanında gelir', async () => {
+    render(<App />)
+    await waitFor(() => expect(fx.certs).toBeGreaterThan(0), { timeout: 8000 })
+    act(() => otherTabActive({ at: Date.now() + 3 * 3600_000 }))
+    // Eskiden damga "şimdi" sayılıyordu: sayaç her seferinde yeniden kuruluyor, çıkış hiç olmuyordu
+    await waitFor(() => expect(fx.logout).toBe(1), { timeout: 5000 })
+    expect(localStorage.getItem(OTHER)).toBeNull()
+  }, 20_000)
+
+  it('BAŞKA kullanıcının sekmesi (aynı tarayıcıda yeni giriş) bu sekmeyi açık tutmaz', async () => {
+    render(<App />)
+    await waitFor(() => expect(fx.certs).toBeGreaterThan(0), { timeout: 8000 })
+    // Öteki sekme toplam süreden (3 sn) uzun etkin kalır; damgası sayılmaz → bu sekme zamanında çıkar
+    for (let i = 0; i < 7 && fx.logout === 0; i++) {
+      await act(async () => { otherTabActive({ user: 'baska-kullanici' }); await sleep(700) })
+    }
+    await waitFor(() => expect(fx.logout).toBe(1), { timeout: 2500 })
+  }, 20_000)
+
+  it('tarayıcıdaki son giriş başka kullanıcınınsa aynı kullanıcının öteki sekmesi de bu sekmeyi açık tutmaz (oturum zaten bitti)', async () => {
+    render(<App />)
+    await waitFor(() => expect(fx.certs).toBeGreaterThan(0), { timeout: 8000 })
+    act(() => localStorage.setItem(OWNER_KEY, 'baska-kullanici'))
+    for (let i = 0; i < 7 && fx.logout === 0; i++) {
+      await act(async () => { otherTabActive(); await sleep(700) })
+    }
+    await waitFor(() => expect(fx.logout).toBe(1), { timeout: 2500 })
+  }, 20_000)
+})
+
+describe('App — Görsel panelinin "Ana pencerede aç" isteği', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    localStorage.setItem(LANG_STORAGE_KEY, 'tr')
+    resetActivityThrottleForTests()
+    fx.certs = 0
+    window.history.replaceState({}, '', '/?tab=dashboard')
+  })
+  afterEach(() => { window.history.replaceState({}, '', '/') })
+
+  it('rapor UYGULAMA İÇİNDE açılır (sayfa yüklenmez) ve panele yanıt gider; başka kökenden istek yok sayılır', async () => {
+    render(<App />)
+    await waitFor(() => expect(fx.certs).toBeGreaterThan(0), { timeout: 8000 })
+    const post = vi.spyOn(window, 'postMessage').mockImplementation(() => {})
+    const ask = (origin) => window.dispatchEvent(new MessageEvent('message', { origin, source: window,
+      data: { type: OPEN_REPORT_REQUEST, rid: 'r1', reportId: '100', channelId: '10' } }))
+    act(() => ask('https://qlik.example'))
+    expect(new URLSearchParams(window.location.search).get('tab')).toBe('dashboard')
+    expect(post).not.toHaveBeenCalled()
+    act(() => ask(window.location.origin))
+    await waitFor(() => expect(new URLSearchParams(window.location.search).get('te_rep')).toBe('100'))
+    const p = new URLSearchParams(window.location.search)
+    expect([p.get('tab'), p.get('te_view'), p.get('te_ch')]).toEqual(['channelreports', 'report', '10'])
+    expect(post).toHaveBeenCalledWith({ type: OPEN_REPORT_ACK, rid: 'r1' }, window.location.origin)
+    post.mockRestore()
   }, 20_000)
 })
 

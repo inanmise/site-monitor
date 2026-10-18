@@ -143,6 +143,37 @@ describe('ekran paylaşımı oturumu', () => {
     expect(e).toMatchObject({ kind: 'failed' })
     expect(e.cause.kind).toBe('noFrame')
   })
+
+  it('ilk kare okunamasa da 10 dk sayacı kuruludur: paylaşım açık kalmaz (inceleme 2026-10-18)', async () => {
+    const noFrame = Object.assign(new Error('noFrame'), { kind: 'noFrame' })
+    const { session, stream, fireIdle, timers } = setup({ read: vi.fn(async () => { throw noFrame }) })
+    await session.grab().catch(() => {})
+    expect(session.getState().status).toBe('live')
+    expect(timers.filter((h) => h.on)).toHaveLength(1)
+    fireIdle()
+    expect(stream.track.stop).toHaveBeenCalled()
+    expect(session.getState()).toMatchObject({ status: 'off', stopReason: 'idle' })
+  })
+
+  it('yüzey değiştirme (tarayıcıdan "bunun yerine bunu paylaş"): çipin adı sonraki karede ve configurationchange olayında güncellenir', async () => {
+    const { session, stream } = setup()
+    await session.grab()
+    expect(session.getState()).toMatchObject({ label: 'Qlik Sense — Kanal Raporu', surface: 'browser' })
+    stream.track.label = 'Grafana — Kanal Panosu'
+    await session.grab()
+    expect(session.getState()).toMatchObject({ status: 'live', label: 'Grafana — Kanal Panosu' })
+    stream.track.label = 'screen:0:0'
+    stream.track.getSettings = () => ({ displaySurface: 'monitor' })
+    const seen = vi.fn()
+    const off = session.subscribe(seen)
+    stream.track.fire('configurationchange')
+    expect(session.getState()).toMatchObject({ label: 'screen:0:0', surface: 'monitor' })
+    expect(seen).toHaveBeenCalledTimes(1)
+    // Değişiklik yoksa yayın yok
+    stream.track.fire('configurationchange')
+    expect(seen).toHaveBeenCalledTimes(1)
+    off()
+  })
 })
 
 describe('pencerenin oturumu', () => {

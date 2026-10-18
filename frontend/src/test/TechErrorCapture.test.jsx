@@ -36,11 +36,14 @@ import { captureSession } from '../components/techerror/capture/captureSession.j
 import { emitSessionReset } from '../utils/sessionResetBus.js'
 import { LANG_STORAGE_KEY } from '../i18n/dateLocale.js'
 import TechErrorReportsPage from '../components/techerror/TechErrorReportsPage.jsx'
+import { ImagePrepError } from '../components/techerror/imagePrep.js'
+import { pressMenuTrigger } from './helpers/dropdownMenu.js'
 
 const te = () => api.techErrors
 const TITLE = 'Mobil Kanalı Teknik Hata Mesajları - Eylül 2026'
 const LABEL = 'Mobil Kanalı Ay Bazlı Toplam İşlem Adetleri'
 const png = (name = 'image.png') => new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], name, { type: 'image/png' })
+const IMG = { id: 7, slot_id: 'monthly-tx', file_name: 'aylik.png', width: 1600, height: 700, size_bytes: 90_000 }
 
 function fakeStream(label = 'Qlik Sense — Kanal Raporu (Eylül)') {
   const listeners = {}
@@ -85,6 +88,13 @@ async function openEditor() {
   await screen.findByRole('heading', { name: TITLE })
   const slot = (id = 'monthly-tx') => view.container.querySelector(`[data-slot-id="${id}"]`)
   return { view, slot }
+}
+
+/** Yarım yuvanın "Diğer işlemler: <yuva>" menüsünü açar ve öğeyi döndürür. */
+async function moreItem(slotEl, name) {
+  pressMenuTrigger(within(slotEl).getByRole('button', { name: /^Diğer işlemler: / }))
+  const menu = await screen.findByRole('menu')
+  return within(menu).getByRole('menuitem', { name })
 }
 
 describe('yapıştırma', () => {
@@ -135,17 +145,117 @@ describe('yapıştırma', () => {
     first.view.unmount()
     navigator.clipboard.read = vi.fn(async () => [{ types: ['text/html', 'image/png'], getType: async () => new Blob([new Uint8Array([1, 2])], { type: 'image/png' }) }])
     const { slot } = await openEditor()
-    fireEvent.click(within(slot()).getByRole('button', { name: `Panodan yapıştır: ${LABEL}` }))
+    // Yarım yuvada "Panodan yapıştır" adlı "Diğer işlemler" menüsünde (inceleme 2026-10-18 — 768 px'te iki yuva yan yana)
+    expect(within(slot()).queryByRole('button', { name: /Panodan yapıştır/ })).toBeNull()
+    fireEvent.click(await moreItem(slot(), `Panodan yapıştır: ${LABEL}`))
     await waitFor(() => expect(te().uploadImage).toHaveBeenCalledTimes(1))
     expect(prepareImage.mock.calls[0][0].name).toMatch(/^monthly-tx-pano-\d{8}-\d{6}\.png$/)
     navigator.clipboard.read = vi.fn(async () => { throw Object.assign(new Error('denied'), { name: 'NotAllowedError' }) })
-    fireEvent.click(within(slot('tech-errors')).getByRole('button', { name: /Panodan yapıştır/ }))
+    fireEvent.click(await moreItem(slot('tech-errors'), /Panodan yapıştır/))
     expect(await within(slot('tech-errors')).findByText('Tarayıcı panoyu okumaya izin vermedi. Yuvayı seçip Ctrl+V ile yapıştırın.'))
       .toBeInTheDocument()
     navigator.clipboard.read = vi.fn(async () => [{ types: ['text/plain'], getType: async () => new Blob(['x']) }])
     fireEvent.click(within(slot('daily-errors')).getByRole('button', { name: /Panodan yapıştır/ }))
     expect(await within(slot('daily-errors')).findByText(/Panoda görsel yok/)).toBeInTheDocument()
     expect(te().uploadImage).toHaveBeenCalledTimes(1)
+  })
+
+  it('DOLU yuvaya Ctrl+V önce sorar (geri alma yok): Vazgeç yüklemez, görsel kalır; Değiştir yükler', async () => {
+    te().report.mockResolvedValue(reportResponse({ images: [IMG] }))
+    const { slot } = await openEditor()
+    const file = png()
+    const paste = () => fireEvent.paste(slot(), { clipboardData: { items: [{ kind: 'file', type: 'image/png', getAsFile: () => file }] } })
+    paste()
+    let dlg = await screen.findByRole('dialog', { name: 'Görsel değiştirilsin mi?' })
+    expect(dlg).toHaveTextContent(`“${LABEL}” yuvasındaki görsel yapıştırdığınız görselle değiştirilecek`)
+    fireEvent.click(within(dlg).getByRole('button', { name: 'Vazgeç' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(prepareImage).not.toHaveBeenCalled()
+    expect(slot().querySelector('img')).toHaveAttribute('src', '/api/tech-error-reports/images/7')
+    paste()
+    dlg = await screen.findByRole('dialog', { name: 'Görsel değiştirilsin mi?' })
+    fireEvent.click(within(dlg).getByRole('button', { name: 'Değiştir' }))
+    await waitFor(() => expect(te().uploadImage).toHaveBeenCalledTimes(1))
+    expect(prepareImage.mock.calls[0][0].name).toMatch(/^monthly-tx-pano-/)
+    // Boş yuvaya yapıştırma sormaz
+    fireEvent.paste(slot('tech-errors'), { clipboardData: { items: [{ kind: 'file', type: 'image/png', getAsFile: () => png() }] } })
+    await waitFor(() => expect(te().uploadImage).toHaveBeenCalledTimes(2))
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('görsel olmayan dosya yapıştırılırsa (dosya yöneticisinden PDF) türünü söyleyen hata yazar; yüklenmez, sorulmaz', async () => {
+    te().report.mockResolvedValue(reportResponse({ images: [IMG] }))
+    const { slot } = await openEditor()
+    const pdf = new File([new Uint8Array([0x25, 0x50, 0x44, 0x46])], 'rapor.pdf', { type: 'application/pdf' })
+    prepareImage.mockImplementationOnce(async () => { throw new ImagePrepError('te.img.errPdf', []) })
+    fireEvent.paste(slot(), { clipboardData: { items: [{ kind: 'file', type: 'application/pdf', getAsFile: () => pdf }], files: [pdf], types: ['Files'] } })
+    expect(await within(slot()).findByRole('alert')).toHaveTextContent('PDF dosyası görsel yuvasına yüklenemez')
+    expect(prepareImage.mock.calls[0][0]).toBe(pdf)   // adı değişmeden (pano adı yalnız görsele)
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(te().uploadImage).not.toHaveBeenCalled()
+    expect(slot().querySelector('img')).not.toBeNull()
+  })
+
+  it('yarım yuva: "Yükle / Değiştir" ve "Ekrandan al" düğme; "Panodan yapıştır" ve "Kaldır" adlı "Diğer işlemler" menüsünde; tam yuvada hepsi düğme', async () => {
+    navigator.clipboard.read = vi.fn()
+    te().report.mockResolvedValue(reportResponse({ images: [IMG, { ...IMG, id: 8, slot_id: 'daily-errors' }] }))
+    te().deleteImage.mockResolvedValue({ success: true })
+    const { slot } = await openEditor()
+    const half = slot()
+    expect(half.querySelector('[data-slot="te-image-actions"]')).toHaveAttribute('data-layout', 'compact')
+    expect(within(half).getByRole('button', { name: `Değiştir: ${LABEL}` })).toBeInTheDocument()
+    expect(within(half).getByRole('button', { name: `Ekrandan al: ${LABEL}` })).toBeInTheDocument()
+    expect(within(half).queryByRole('button', { name: /^Kaldır/ })).toBeNull()
+    const trigger = within(half).getByRole('button', { name: `Diğer işlemler: ${LABEL}` })
+    expect(trigger).toHaveTextContent('Diğer işlemler')
+    pressMenuTrigger(trigger)
+    const menu = await screen.findByRole('menu')
+    expect(within(menu).getByRole('menuitem', { name: `Panodan yapıştır: ${LABEL}` })).toBeInTheDocument()
+    fireEvent.click(within(menu).getByRole('menuitem', { name: `Kaldır: ${LABEL}` }))
+    const dlg = await screen.findByRole('dialog', { name: 'Görsel kaldırılsın mı?' })
+    fireEvent.click(within(dlg).getByRole('button', { name: 'Kaldır' }))
+    await waitFor(() => expect(te().deleteImage).toHaveBeenCalledWith('100', 7))
+    await waitFor(() => expect(slot().querySelector('img')).toBeNull())
+    // Boş yarım yuvada menüde yalnız yapıştırma kalır
+    pressMenuTrigger(within(slot()).getByRole('button', { name: `Diğer işlemler: ${LABEL}` }))
+    const menu2 = await screen.findByRole('menu')
+    expect(within(menu2).queryByRole('menuitem', { name: /Kaldır/ })).toBeNull()
+    fireEvent.keyDown(document.activeElement || document.body, { key: 'Escape' })
+    // Tam yuva: hepsi düğme, menü yok
+    const full = slot('daily-errors')
+    expect(full.querySelector('[data-slot="te-image-actions"]')).toHaveAttribute('data-layout', 'full')
+    expect(within(full).getByRole('button', { name: /^Panodan yapıştır: / })).toBeInTheDocument()
+    expect(within(full).getByRole('button', { name: /^Kaldır: / })).toBeInTheDocument()
+    expect(within(full).queryByRole('button', { name: /^Diğer işlemler/ })).toBeNull()
+  })
+
+  it('pano arayüzü yoksa boş yarım yuvada menü hiç çizilmez (boş menü yok)', async () => {
+    const { slot } = await openEditor()
+    expect(within(slot()).queryByRole('button', { name: /^Diğer işlemler/ })).toBeNull()
+  })
+
+  it('yükleme bitince odak sayfanın gövdesine düşmüşse yuvaya döner; kullanıcı başka yere geçtiyse dokunulmaz', async () => {
+    const { slot } = await openEditor()
+    const pick = (el) => fireEvent.change(el.querySelector('input[type="file"]'), { target: { files: [png()] } })
+    let finish
+    prepareImage.mockImplementationOnce((file) => new Promise((r) => { finish = () => r({ file, info: {} }) }))
+    pick(slot())
+    await within(slot()).findByRole('button', { name: /Hazırlanıyor/ })
+    document.activeElement?.blur?.()
+    expect(document.activeElement).toBe(document.body)
+    act(() => finish())
+    await waitFor(() => expect(te().uploadImage).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(document.activeElement).toBe(slot()))
+    // İkinci yüklemede kullanıcı bir alana geçti: odak orada kalır
+    prepareImage.mockImplementationOnce((file) => new Promise((r) => { finish = () => r({ file, info: {} }) }))
+    pick(slot('tech-errors'))
+    await within(slot('tech-errors')).findByRole('button', { name: /Hazırlanıyor/ })
+    const field = screen.getByLabelText('Toplam işlem adedi', { exact: true })
+    field.focus()
+    act(() => finish())
+    await waitFor(() => expect(te().uploadImage).toHaveBeenCalledTimes(2))
+    await new Promise((r) => setTimeout(r, 20))
+    expect(document.activeElement).toBe(field)
   })
 
   it('ipucu satırı işletim sistemine göre kısayolu söyler; Görsel paneli düğmesi masaüstünde', async () => {
@@ -178,7 +288,24 @@ describe('ekrandan alma', () => {
     expect(sent.name).toMatch(/^monthly-tx-ekran-/)
     expect(te().uploadImage).toHaveBeenCalledWith('100', 'monthly-tx', sent)
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    // Yükleme bittiyse "Ekrandan al" yine açık: odak ona döner
     await waitFor(() => expect(document.activeElement).toBe(within(slot()).getByRole('button', { name: `Ekrandan al: ${LABEL}` })))
+  })
+
+  it('kırpmadan sonra yükleme sürerken "Ekrandan al" kapalı: odak yuvanın kendisine döner, gövdeye düşmez; yükleme bitince orada kalır', async () => {
+    const { slot } = await openEditor()
+    let finish
+    prepareImage.mockImplementationOnce((file) => new Promise((r) => { finish = () => r({ file, info: {} }) }))
+    fireEvent.click(within(slot()).getByRole('button', { name: `Ekrandan al: ${LABEL}` }))
+    const dlg = await screen.findByRole('dialog', { name: `Ekrandan al: ${LABEL}` })
+    fireEvent.click(within(dlg).getByRole('button', { name: /Bu alanı yükle/ }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(within(slot()).getByRole('button', { name: `Ekrandan al: ${LABEL}` })).toBeDisabled()
+    await waitFor(() => expect(document.activeElement).toBe(slot()))
+    act(() => finish())
+    await waitFor(() => expect(te().uploadImage).toHaveBeenCalledTimes(1))
+    await new Promise((r) => setTimeout(r, 20))
+    expect(document.activeElement).toBe(slot())
   })
 
   it('ikinci yuva seçici AÇMADAN o anki kareyi alır; Vazgeç yüklemez; Durdur paylaşımı kapatır', async () => {
@@ -283,7 +410,7 @@ describe('görünürlük', () => {
     expect(within(slot()).queryByRole('button', { name: /Ekrandan al/ })).toBeNull()
     expect(screen.queryByRole('button', { name: /Görsel paneli/ })).toBeNull()
     expect(document.querySelector('[data-slot="te-cap-hint"]')).toBeNull()
-    expect(within(slot()).getByRole('button', { name: /Panodan yapıştır/ })).toBeInTheDocument()
+    expect(await moreItem(slot(), /Panodan yapıştır/)).toBeInTheDocument()
   })
 
   it('Görsel paneli düğmesi ilk görsel bölümünün başlığında: bölüm kapalıyken de görünür', async () => {

@@ -203,23 +203,34 @@ export function pickImageType(types) {
 }
 
 /**
- * Yapıştırılan içerikten ilk görsel dosyası (`ClipboardEvent.clipboardData` / `DataTransfer`). `hasText`: görsel yok
- * ama metin var (metin yapıştırması yok sayılır, kısa bir ipucu gösterilir).
+ * Yapıştırılan içerikten ilk görsel dosyası (`ClipboardEvent.clipboardData` / `DataTransfer`) — `image: true`. Görsel
+ * yoksa ilk DOSYA (dosya yöneticisinden kopyalanan PDF, belge…) `image: false` ile döner: yuvanın yükleme yolu
+ * (imagePrep) türünü söyleyen hatayı yazar ("PDF dosyası görsel yuvasına yüklenemez…" — inceleme 2026-10-18; eskiden
+ * sessizce yok sayılıyordu). `hasText`: dosya yok ama metin var (metin yapıştırması yok sayılır, kısa bir ipucu).
  */
 export function imageFromDataTransfer(dt) {
-  if (!dt) return { file: null, hasText: false }
-  for (const item of Array.from(dt.items || [])) {
+  if (!dt) return { file: null, hasText: false, image: false }
+  const items = Array.from(dt.items || [])
+  const asFile = (item) => (typeof item?.getAsFile === 'function' ? item.getAsFile() : null)
+  for (const item of items) {
     if (item?.kind === 'file' && String(item.type || '').startsWith('image/')) {
-      const f = typeof item.getAsFile === 'function' ? item.getAsFile() : null
-      if (f) return { file: f, hasText: false }
+      const f = asFile(item)
+      if (f) return { file: f, hasText: false, image: true }
     }
   }
-  for (const f of Array.from(dt.files || [])) {
-    if (f && String(f.type || '').startsWith('image/')) return { file: f, hasText: false }
+  const files = Array.from(dt.files || []).filter(Boolean)
+  for (const f of files) {
+    if (String(f.type || '').startsWith('image/')) return { file: f, hasText: false, image: true }
   }
+  for (const item of items) {
+    if (item?.kind !== 'file') continue
+    const f = asFile(item)
+    if (f) return { file: f, hasText: false, image: false }
+  }
+  if (files.length) return { file: files[0], hasText: false, image: false }
   const types = Array.from(dt.types || []).map(String)
-  const hasText = types.some((t) => t.startsWith('text/')) || Array.from(dt.items || []).some((i) => i?.kind === 'string')
-  return { file: null, hasText }
+  const hasText = types.some((t) => t.startsWith('text/')) || items.some((i) => i?.kind === 'string')
+  return { file: null, hasText, image: false }
 }
 
 /**

@@ -151,17 +151,21 @@ describe('captureModel — kare, dosya adı, pano', () => {
     expect(pickImageType(null)).toBeNull()
   })
 
-  it('imageFromDataTransfer: görsel öğe / dosya; yalnız metin → hasText; boş → null', () => {
+  it('imageFromDataTransfer: görsel öğe / dosya (image); görsel yoksa ilk dosya (image: false — tür hatası yazılsın); yalnız metin → hasText; boş → null', () => {
     const png = new File([new Uint8Array([1])], 'image.png', { type: 'image/png' })
-    expect(imageFromDataTransfer({ items: [{ kind: 'string', type: 'text/plain' }, { kind: 'file', type: 'image/png', getAsFile: () => png }] }).file)
-      .toBe(png)
+    expect(imageFromDataTransfer({ items: [{ kind: 'string', type: 'text/plain' }, { kind: 'file', type: 'image/png', getAsFile: () => png }] }))
+      .toEqual({ file: png, hasText: false, image: true })
     expect(imageFromDataTransfer({ items: [], files: [png] }).file).toBe(png)
     expect(imageFromDataTransfer({ items: [{ kind: 'string', type: 'text/plain' }], types: ['text/plain'] }))
-      .toEqual({ file: null, hasText: true })
+      .toEqual({ file: null, hasText: true, image: false })
     const pdf = new File([new Uint8Array([1])], 'a.pdf', { type: 'application/pdf' })
     expect(imageFromDataTransfer({ items: [{ kind: 'file', type: 'application/pdf', getAsFile: () => pdf }], files: [pdf] }))
-      .toEqual({ file: null, hasText: false })
-    expect(imageFromDataTransfer(null)).toEqual({ file: null, hasText: false })
+      .toEqual({ file: pdf, hasText: false, image: false })
+    expect(imageFromDataTransfer({ items: [], files: [pdf] })).toEqual({ file: pdf, hasText: false, image: false })
+    // Görsel ile birlikte başka dosya da varsa görsel seçilir
+    expect(imageFromDataTransfer({ items: [{ kind: 'file', type: 'application/pdf', getAsFile: () => pdf },
+      { kind: 'file', type: 'image/png', getAsFile: () => png }] }).file).toBe(png)
+    expect(imageFromDataTransfer(null)).toEqual({ file: null, hasText: false, image: false })
   })
 
   it('friendlyTrackLabel: makine kimliği (screen:0:0, web-contents…, uzun belirteç) boş; pencere başlığı kalır', () => {

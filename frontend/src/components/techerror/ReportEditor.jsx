@@ -15,6 +15,7 @@ import { Badge } from '@/components/shadcn/badge'
 import { Skeleton } from '@/components/shadcn/skeleton'
 import { ImagesBlock } from './ReportImages.jsx'
 import { useImagesSync } from './capture/useImagesSync.js'
+import { useFileDropGuard } from './capture/useFileDropGuard.js'
 import { KIND_REPORT, postImagesChanged } from './capture/imageSync.js'
 import { TrendBlock } from './ReportTrend.jsx'
 import ReportHistorySheet from './ReportHistory.jsx'
@@ -100,12 +101,6 @@ function clockTime(ms, lang) {
   return new Intl.DateTimeFormat(lang === 'en' ? 'en-GB' : 'tr-TR', {
     hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Istanbul',
   }).format(new Date(ms))
-}
-
-/** Sürüklenen bir DOSYA mı (metin / bağlantı sürüklemesine dokunulmaz)? */
-function isFileDrag(e) {
-  const types = e?.dataTransfer?.types
-  return !!types && Array.from(types).includes('Files')
 }
 
 /**
@@ -385,29 +380,36 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
   }, [unsaved])
 
   // Grafik yuvasının DIŞINA bırakılan dosya tarayıcıyı görsele götürmesin (kaydedilmemiş taslak kaybolurdu)
-  useEffect(() => {
-    if (readOnly) return undefined
-    const guard = (e) => { if (isFileDrag(e)) e.preventDefault() }
-    window.addEventListener('dragover', guard)
-    window.addEventListener('drop', guard)
-    return () => {
-      window.removeEventListener('dragover', guard)
-      window.removeEventListener('drop', guard)
-    }
-  }, [readOnly])
+  useFileDropGuard(!readOnly)
 
   const tpl = data?.template
   const report = data?.report
   const channel = data?.channel
+  // Bu penceredeki görsel değişikliği sayacı: eşitleme okuması bu pencerenin daha yeni yüklemesini ezmesin
+  const imagesGen = useRef(0)
+  const imagesRef = useRef(images)
+  imagesRef.current = images
   // Görsel bölümlerinin geri çağrısı SABİT: ImagesBlock memo'su yazarken yeniden çizimi atlasın
   const onImagesChange = useCallback((fn) => {
+    imagesGen.current++
     setImages(fn)
     statusGen.current++
     setPreviewRev(bumpMailPreviewContent(reportId))
     setData((d) => (d ? { ...d, report: { ...d.report, status: d.report.status === 'sent' ? 'changed' : d.report.status } } : d))
   }, [reportId])
-  // Görsel paneli (2026-10-18): öteki penceredeki yükleme / silme yalnız görsel listesini yeniden okur (taslağa dokunmaz)
-  useImagesSync(reportId, onImagesChange)
+  // Görsel paneli (2026-10-18): öteki penceredeki yükleme / silme yalnız görsel listesini yeniden okur (taslağa dokunmaz).
+  // İnceleme 2026-10-18: liste değişmediyse hiçbir şey uygulanmaz; değiştiyse durum SUNUCUNUN yanıtından gelir (gönderilmiş
+  // raporda panel açılınca her pencere dönüşü "gönderimden sonra değişti" demiyor). Değişen liste e-posta önizlemesinin de
+  // içeriğidir (önizleme eski isteğe katılmaz) ve durumu bu pencere yazar (gönderim yoklamasının eski yanıtı ezmesin)
+  const applySyncedImages = useCallback((list, status) => {
+    setImages(list)
+    setPreviewRev(bumpMailPreviewContent(reportId))
+    if (status) {
+      statusGen.current++
+      setData((d) => (d ? { ...d, report: { ...d.report, status } } : d))
+    }
+  }, [reportId])
+  useImagesSync(reportId, { getImages: () => imagesRef.current, apply: applySyncedImages, localGen: imagesGen })
   const resolve = useCallback((p) => resolvePlaceholders(p, channel?.name, report?.year, report?.month, tpl?.lang),
     [channel?.name, report?.year, report?.month, tpl?.lang])
   const resolveText = useCallback((p) => resolveTextPlaceholders(p, channel?.name, report?.year, report?.month, tpl?.lang),

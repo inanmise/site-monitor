@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import {
-  IMAGES_CHANNEL, IMAGES_SYNC_KEY, IMAGES_SYNC_SELF, KIND_IMAGES, KIND_REPORT, onImagesChanged, postImagesChanged,
+  IMAGES_CHANNEL, IMAGES_SYNC_KEY, IMAGES_SYNC_SELF, KIND_IMAGES, KIND_REPORT, onImagesChanged, postImagesChanged, sameImageList,
 } from '../components/techerror/capture/imageSync.js'
 import {
-  PANEL_FEATURES, imagesPanelReportFromSearch, imagesPanelUrl, openImagesPanel, openInMainWindow, panelWindowName, reportEditorUrl,
+  OPEN_REPORT_ACK, OPEN_REPORT_REQUEST, PANEL_FEATURES, imagesPanelReportFromSearch, imagesPanelUrl, isReportEditorSearch,
+  onOpenReportRequest, openImagesPanel, openInMainWindow, panelWindowName, reportEditorUrl,
 } from '../components/techerror/capture/panelWindow.js'
 
 // Görsel paneli (2026-10-18): adres, pencere açma (engellenince yeni sekme bağlantısı), ana pencereye dönüş ve iki pencere
@@ -99,21 +100,103 @@ describe('Görsel paneli penceresi', () => {
     expect(openImagesPanel(100, { location: loc, open: () => { throw new Error('x') } }).blocked).toBe(true)
   })
 
-  it('"Ana pencerede aç": açan SiteMonitor penceresi raporu açar (zaten oradaysa yalnız öne gelir); başka siteye geçmişse yeni sekme', () => {
-    const opener = { closed: false, focus: vi.fn(), location: { origin: loc.origin, search: '?tab=dashboard', assign: vi.fn() } }
-    expect(openInMainWindow(100, 10, { location: loc, opener, open: vi.fn() })).toBe('opener')
-    expect(opener.location.assign).toHaveBeenCalledWith('/?tab=channelreports&te_view=report&te_ch=10&te_rep=100')
+  /** Olay dinleyicili sahte pencere (postMessage yanıtı `dispatch` ile gelir). */
+  function fakeWin(opener) {
+    const ls = new Set()
+    return {
+      location: loc, opener, open: vi.fn(),
+      addEventListener: (_t, fn) => ls.add(fn), removeEventListener: (_t, fn) => ls.delete(fn),
+      dispatch: (e) => [...ls].forEach((fn) => fn(e)),
+      listeners: () => ls.size,
+    }
+  }
+  const REPORT_URL = '/?tab=channelreports&te_view=report&te_ch=10&te_rep=100'
+
+  it('"Ana pencerede aç": açan SiteMonitor penceresine İLETİ gider; yanıt verirse rapor uygulama içinde açılır (adres değişmez)', async () => {
+    const opener = { closed: false, focus: vi.fn(), postMessage: vi.fn(),
+      location: { origin: loc.origin, search: '?tab=dashboard', assign: vi.fn() } }
+    const win = fakeWin(opener)
+    opener.postMessage.mockImplementation((msg, origin) => win.dispatch({ origin, data: { type: OPEN_REPORT_ACK, rid: msg.rid } }))
+    await expect(openInMainWindow(100, 10, win)).resolves.toBe('opener')
+    expect(opener.postMessage).toHaveBeenCalledWith(
+      { type: OPEN_REPORT_REQUEST, rid: expect.any(String), reportId: '100', channelId: '10' }, loc.origin)
+    expect(opener.location.assign).not.toHaveBeenCalled()
     expect(opener.focus).toHaveBeenCalled()
-    const onReport = { closed: false, focus: vi.fn(),
+    expect(win.listeners()).toBe(0)   // dinleyici kaldırıldı
+  })
+
+  it('başka köken / yanlış kimlikli yanıt sayılmaz; açan pencere yanıt vermezse süre sonunda adres değişir (zaten o rapordaysa yalnız öne gelir)', async () => {
+    const opener = { closed: false, focus: vi.fn(), postMessage: vi.fn(),
+      location: { origin: loc.origin, search: '?tab=dashboard', assign: vi.fn() } }
+    const win = fakeWin(opener)
+    opener.postMessage.mockImplementation((msg) => {
+      win.dispatch({ origin: 'https://qlik.example', data: { type: OPEN_REPORT_ACK, rid: msg.rid } })
+      win.dispatch({ origin: loc.origin, data: { type: OPEN_REPORT_ACK, rid: 'baska' } })
+    })
+    await expect(openInMainWindow(100, 10, win, { timeoutMs: 10 })).resolves.toBe('assign')
+    expect(opener.location.assign).toHaveBeenCalledWith(REPORT_URL)
+    const onReport = { closed: false, focus: vi.fn(), postMessage: vi.fn(),
       location: { origin: loc.origin, search: '?tab=channelreports&te_view=report&te_ch=10&te_rep=100', assign: vi.fn() } }
-    openInMainWindow(100, 10, { location: loc, opener: onReport, open: vi.fn() })
+    await expect(openInMainWindow(100, 10, fakeWin(onReport), { timeoutMs: 10 })).resolves.toBe('assign')
     expect(onReport.location.assign).not.toHaveBeenCalled()
-    // Başka kökene geçmiş açan pencere (Qlik): konumu okunamaz → dokunulmaz, rapor yeni sekmede
-    const foreign = { closed: false, focus: vi.fn(), get location() { throw new Error('cross-origin') } }
-    const win = { location: loc, opener: foreign, open: vi.fn() }
-    expect(openInMainWindow(100, 10, win)).toBe('tab')
-    expect(win.open).toHaveBeenCalledWith('/?tab=channelreports&te_view=report&te_ch=10&te_rep=100', '_blank', 'noopener')
-    const closed = { location: loc, opener: { closed: true }, open: vi.fn() }
-    expect(openInMainWindow(100, null, closed)).toBe('tab')
+    expect(onReport.focus).toHaveBeenCalled()
+    // İleti gönderilemezse beklenmeden eski yol
+    const broken = { closed: false, focus: vi.fn(), postMessage: () => { throw new Error('x') },
+      location: { origin: loc.origin, search: '', assign: vi.fn() } }
+    await expect(openInMainWindow(100, 10, fakeWin(broken), { timeoutMs: 60_000 })).resolves.toBe('assign')
+  })
+
+  it('başka siteye geçmiş ya da kapanmış açan pencere: rapor HEMEN yeni sekmede (tıklama anında — engellenmesin)', async () => {
+    const foreign = { closed: false, focus: vi.fn(), postMessage: vi.fn(), get location() { throw new Error('cross-origin') } }
+    const win = fakeWin(foreign)
+    const p = openInMainWindow(100, 10, win)
+    expect(win.open).toHaveBeenCalledWith(REPORT_URL, '_blank', 'noopener')
+    await expect(p).resolves.toBe('tab')
+    expect(foreign.postMessage).not.toHaveBeenCalled()
+    const closed = fakeWin({ closed: true })
+    await expect(openInMainWindow(100, null, closed)).resolves.toBe('tab')
+    expect(closed.open).toHaveBeenCalled()
+  })
+
+  it('açan pencere tarafı: yalnız aynı kökenden geçerli kimlikli istek işlenir; işleyen yanıt verir, işlemeyen (oturum yok) vermez', () => {
+    const win = fakeWin(null)
+    const handler = vi.fn(() => true)
+    const off = onOpenReportRequest(handler, win)
+    const source = { postMessage: vi.fn() }
+    const req = (over = {}) => ({ origin: loc.origin, source, data: { type: OPEN_REPORT_REQUEST, rid: 'r1', reportId: '100', channelId: '10', ...over } })
+    win.dispatch(req())
+    expect(handler).toHaveBeenCalledWith({ reportId: '100', channelId: '10' })
+    expect(source.postMessage).toHaveBeenCalledWith({ type: OPEN_REPORT_ACK, rid: 'r1' }, loc.origin)
+    win.dispatch({ ...req(), origin: 'https://qlik.example' })
+    win.dispatch(req({ reportId: '1 OR 1' }))
+    win.dispatch(req({ type: 'baska' }))
+    win.dispatch(req({ rid: 'x'.repeat(41) }))
+    expect(handler).toHaveBeenCalledTimes(1)
+    win.dispatch(req({ channelId: 'abc' }))
+    expect(handler).toHaveBeenLastCalledWith({ reportId: '100', channelId: null })
+    handler.mockReturnValue(false)
+    source.postMessage.mockClear()
+    win.dispatch(req())
+    expect(source.postMessage).not.toHaveBeenCalled()
+    off()
+    expect(win.listeners()).toBe(0)
+  })
+
+  it('isReportEditorSearch: yalnız bu raporun düzenleyicisi', () => {
+    expect(isReportEditorSearch('?tab=channelreports&te_view=report&te_rep=100', 100)).toBe(true)
+    expect(isReportEditorSearch('?tab=channelreports&te_view=images&te_rep=100', 100)).toBe(false)
+    expect(isReportEditorSearch('?tab=channelreports&te_view=report&te_rep=101', 100)).toBe(false)
+    expect(isReportEditorSearch('', 100)).toBe(false)
+  })
+})
+
+describe('sameImageList', () => {
+  it('yuva → görsel kimliği aynıysa aynı (sıra önemsiz); değişen / eklenen / silinen görsel farklı', () => {
+    const a = [{ slot_id: 'x', id: 1 }, { slot_id: 'y', id: 2 }]
+    expect(sameImageList(a, [{ slot_id: 'y', id: 2, size_bytes: 9 }, { slot_id: 'x', id: 1 }])).toBe(true)
+    expect(sameImageList(a, [{ slot_id: 'x', id: 3 }, { slot_id: 'y', id: 2 }])).toBe(false)
+    expect(sameImageList(a, [{ slot_id: 'x', id: 1 }])).toBe(false)
+    expect(sameImageList([], [])).toBe(true)
+    expect(sameImageList(null, [])).toBe(true)
   })
 })

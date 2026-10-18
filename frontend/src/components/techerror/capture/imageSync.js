@@ -74,5 +74,15 @@ export function onImagesChanged(reportId, cb, kinds = null) {
   return () => { listeners.delete(fn) }
 }
 
+/**
+ * İki görsel listesi aynı mı (yuva → görsel kimliği; sıra önemsiz)? Eşitleme okuması değişmeyen listeyi uygulamaz —
+ * gereksiz yeniden çizim ve "gönderimden sonra değişti" tahmini olmaz (inceleme 2026-10-18).
+ */
+export function sameImageList(a, b) {
+  const key = (list) => (Array.isArray(list) ? list : [])
+    .map((i) => `${i?.slot_id ?? ''}\u0000${i?.id ?? ''}`).sort().join('\u0001')
+  return key(a) === key(b)
+}
+
 /** Testler: bu pencerenin kimliği. */
 export const IMAGES_SYNC_SELF = SELF

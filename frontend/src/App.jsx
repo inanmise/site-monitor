@@ -21,7 +21,7 @@ import { resolveLandingTab } from './hooks/userPrefsModel.js'
 import { useThemePrefSync } from './hooks/useThemePrefSync.js'   // tema seçimi sunucudan (2026-10-05)
 import { landingTabOptions } from './utils/landingTabs.js'
 import { installLeaveBeacon } from './utils/tabPresence.js'
-import { APPLY_VIEW_EVENT } from './utils/navigate.js'
+import { APPLY_VIEW_EVENT, applyTabView } from './utils/navigate.js'
 import DashboardFilters from './components/dashboard/DashboardFilters.jsx'   // Genel Bakış kart araç çubuğu (2026-09-28)
 import { PLATFORM_NONE, PLATFORM_URL_KEY, parsePlatformParam, serializePlatformParam, matchesPlatform, countPlatforms, buildPlatformOptions } from './utils/platformFilter.js'
 import Login, { REMEMBER_KEY } from './pages/Login'
@@ -117,9 +117,11 @@ const ExecutiveSummaryPage = lazy(() => import('./components/executive/Executive
 const TechErrorReportsPage = lazy(() => import('./components/techerror/TechErrorReportsPage'))
 // Görsel paneli (2026-10-18): raporun yalnız görsel yuvaları, ayrı pencerede (`te_view=images`) — kenar çubuksuz kabuk
 const ImagesPanelPage = lazy(() => import('./components/techerror/capture/ImagesPanelPage'))
-import { imagesPanelReportFromSearch } from './components/techerror/capture/panelWindow.js'   // bağımlılıksız, küçük
+import { imagesPanelReportFromSearch, isReportEditorSearch, onOpenReportRequest } from './components/techerror/capture/panelWindow.js'   // bağımlılıksız, küçük
 // Sekmeler arası etkinlik (2026-10-18): öteki SiteMonitor sekmesi etkinken bu sekme hareketsizlik çıkışı yapmaz
-import { ACTIVITY_EVENT, latestOtherActivity, onOtherActivity, writeActivityStamp } from './utils/crossTabActivity.js'
+import {
+  ACTIVITY_EVENT, bindActivityUser, clearOwnActivityStamp, latestOtherActivity, onOtherActivity, writeActivityStamp,
+} from './utils/crossTabActivity.js'
 import { emitSessionReset } from './utils/sessionResetBus.js'
 const ScriptedMonitorPage = lazy(() => import('./components/ScriptedMonitorPage'))
 
@@ -697,6 +699,8 @@ export default function App() {
         doAutoLogout()
       }, Math.max(0, base + idleCfg.totalMs - now))
     }
+    // Damgalar kullanıcıya bağlı (inceleme 2026-10-18): yalnız AYNI kullanıcının öteki sekmeleri bu sekmeyi açık tutar
+    bindActivityUser(user)
     // Bu sekmenin etkinliği: damga (en çok 15 sn'de bir) + sayaç şimdiden
     const resetTimer = () => {
       writeActivityStamp()
@@ -906,6 +910,23 @@ export default function App() {
   // giriş sayfası pasif bildirimiyle açılır. Öteki sekmenin duyurusu da aynı yoldan gelir (her sekme kendi penceresi).
   const userRef = useRef(user)
   userRef.current = user
+
+  // GÖRSEL PANELİNİN "Ana pencerede aç"ı (inceleme 2026-10-18): panel bu pencereye ileti gönderir; rapor UYGULAMA İÇİNDE
+  // açılır (sayfa yeniden yüklenmez — açık form / kaydedilmemiş taslak eskiden `location.assign` ile kayboluyordu). Aynı
+  // sekmedeysek sekme görünümü yeniden kurulur (Kanal raporları adres paramını yalnız açılışta okur), başka sekmedeysek
+  // olağan sekme geçişi. Zaten o rapordaysak yalnız öne gelinir. Oturum yoksa / bu pencere panelin kendisiyse yanıt
+  // verilmez: panel eski yola (adres) düşer.
+  useEffect(() => onOpenReportRequest(({ reportId, channelId }) => {
+    if (!userRef.current || imagesPanelReport) return false
+    const params = { te_view: 'report', te_rep: reportId, ...(channelId ? { te_ch: channelId } : {}) }
+    if (!isReportEditorSearch(window.location.search, reportId)) {
+      if (tabRef.current === 'channelreports') applyTabView('channelreports', params)
+      else tabChangeRef.current?.('channelreports', params)
+    }
+    try { window.focus() } catch { /* yok */ }
+    return true
+  }), [imagesPanelReport])
+
   useEffect(() => {
     const handle = () => {
       if (userRef.current) {
@@ -1022,6 +1043,8 @@ export default function App() {
    */
   function resetSessionData() {
     loadAliveRef.current = false
+    // Sekmeler arası etkinlik damgası silinir, sekme kullanıcıdan ayrılır: sonraki kullanıcının sekmelerini açık tutmaz
+    clearOwnActivityStamp()
     // Tembel modüllerin oturum durumu (Kanal raporlarının ekran paylaşımı açıksa kapanır — 2026-10-18)
     emitSessionReset()
     // Kişisel Panom: önceki oturumun süren paylaşılan kutu istekleri yeni kullanıcıya geçmesin (2026-10-13)

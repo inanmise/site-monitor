@@ -22,6 +22,7 @@ vi.mock('../components/techerror/imagePrep.js', async (importOriginal) => {
 import { api } from '../api/client'
 import { prepareImage } from '../components/techerror/imagePrep.js'
 import { IMAGES_CHANNEL, KIND_IMAGES, KIND_REPORT } from '../components/techerror/capture/imageSync.js'
+import { OPEN_REPORT_ACK, OPEN_REPORT_REQUEST } from '../components/techerror/capture/panelWindow.js'
 import { LANG_STORAGE_KEY } from '../i18n/dateLocale.js'
 import ImagesPanelPage from '../components/techerror/capture/ImagesPanelPage.jsx'
 import TechErrorReportsPage from '../components/techerror/TechErrorReportsPage.jsx'
@@ -122,18 +123,66 @@ describe('Görsel paneli', () => {
     expect(await screen.findByText('Bu raporda görsel bölümü yok')).toBeInTheDocument()
   })
 
-  it('açan pencere varken "Kapat" pencereyi kapatır; "Ana pencerede aç" açan pencereyi rapora götürür', async () => {
-    const opener = { closed: false, focus: vi.fn(), location: { origin: window.location.origin, search: '?tab=dashboard', assign: vi.fn() } }
+  it('açan pencere varken "Kapat" pencereyi kapatır; "Ana pencerede aç" açan pencereye ileti gönderir — yanıt gelirse adres DEĞİŞMEZ (uygulama içi), gelmezse eski yol', async () => {
+    const opener = { closed: false, focus: vi.fn(), postMessage: vi.fn(),
+      location: { origin: window.location.origin, search: '?tab=dashboard', assign: vi.fn() } }
+    // Açan pencere (App.onOpenReportRequest) yanıt verir
+    opener.postMessage.mockImplementation((msg, origin) => window.dispatchEvent(new MessageEvent('message',
+      { origin, data: { type: OPEN_REPORT_ACK, rid: msg.rid } })))
     Object.defineProperty(window, 'opener', { configurable: true, value: opener })
     const close = vi.spyOn(window, 'close').mockImplementation(() => {})
     render(<ImagesPanelPage reportId="100" />)
     await screen.findByRole('heading', { level: 1 })
+    fireEvent.click(screen.getByRole('button', { name: /Ana pencerede aç/ }))
+    expect(opener.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: OPEN_REPORT_REQUEST, reportId: '100', channelId: '10' }),
+      window.location.origin)
+    expect(opener.focus).toHaveBeenCalled()
+    await new Promise((r) => setTimeout(r, 30))
+    expect(opener.location.assign).not.toHaveBeenCalled()
+    // Yanıt vermeyen açan pencere (eski sürüm): ileti gönderilemez → adres değişir
+    opener.postMessage.mockImplementation(() => { throw new Error('x') })
     fireEvent.click(screen.getByRole('button', { name: /Ana pencerede aç/ }))
     expect(opener.location.assign).toHaveBeenCalledWith('/?tab=channelreports&te_view=report&te_ch=10&te_rep=100')
     fireEvent.click(screen.getByRole('button', { name: /^Kapat$/ }))
     expect(close).toHaveBeenCalled()
     close.mockRestore()
     delete window.opener
+  })
+
+  it('yuvanın dışına bırakılan dosya paneli o dosyaya götürmez (pencere düzeyinde koruma); metin sürüklemesine dokunulmaz', async () => {
+    const view = render(<ImagesPanelPage reportId="100" />)
+    await screen.findByRole('heading', { level: 1 })
+    const drop = (types) => {
+      const ev = new Event('drop', { bubbles: true, cancelable: true })
+      Object.defineProperty(ev, 'dataTransfer', { value: { types, files: [] } })
+      document.body.dispatchEvent(ev)
+      return ev
+    }
+    expect(drop(['Files']).defaultPrevented).toBe(true)
+    expect(drop(['text/plain']).defaultPrevented).toBe(false)
+    const over = new Event('dragover', { bubbles: true, cancelable: true })
+    Object.defineProperty(over, 'dataTransfer', { value: { types: ['Files'] } })
+    window.dispatchEvent(over)
+    expect(over.defaultPrevented).toBe(true)
+    view.unmount()
+    expect(drop(['Files']).defaultPrevented).toBe(false)
+  })
+
+  it('öteki pencerenin iletisiyle başlayan okuma, sürerken paneldeki yüklemeyi EZMEZ: okuma yeniden yapılır', async () => {
+    const view = render(<ImagesPanelPage reportId="100" />)
+    await screen.findByRole('heading', { level: 1 })
+    let release
+    te().report.mockImplementationOnce(() => new Promise((r) => { release = r }))
+    other.postMessage({ reportId: '100', kind: KIND_IMAGES, from: 'w-main' })
+    await waitFor(() => expect(te().report).toHaveBeenCalledTimes(2))
+    // Okuma sürerken panelde yükleme
+    pick(view.container.querySelector('[data-slot-id="monthly-tx"]'), png('yeni.png'))
+    await waitFor(() => expect(view.container.querySelector('[data-slot-id="monthly-tx"] img')).not.toBeNull())
+    te().report.mockResolvedValue(reportResponse({ images: [{ ...IMG, id: 9, file_name: 'yeni.png' }] }))
+    release(reportResponse({ images: [] }))   // eski yanıt: yükleme yok
+    await waitFor(() => expect(te().report).toHaveBeenCalledTimes(3))
+    await new Promise((r) => setTimeout(r, 30))
+    expect(view.container.querySelector('[data-slot-id="monthly-tx"] img')).not.toBeNull()
   })
 })
 
@@ -174,5 +223,48 @@ describe('düzenleyici ↔ panel eşitlemesi', () => {
     fireEvent.focus(window)
     await waitFor(() => expect(view.container.querySelector('[data-slot-id="monthly-tx"] img')).not.toBeNull())
     open.mockRestore()
+  })
+
+  it('gönderilmiş rapor: panel açıldıktan sonra pencereye dönüş, liste DEĞİŞMEDİYSE "gönderimden sonra değişti" demez; değiştiyse durum sunucudan', async () => {
+    window.history.replaceState({}, '', '/?tab=channelreports&te_view=report&te_ch=10&te_rep=102')
+    const sentReport = { ...reportResponse().data.report, id: 102, status: 'sent', last_sent_at: '2026-10-03T07:00:00Z' }
+    te().report.mockResolvedValue(reportResponse({ report: sentReport, images: [IMG] }))
+    const open = vi.spyOn(window, 'open').mockReturnValue({ location: { href: 'about:blank', search: '', replace: vi.fn() }, focus: vi.fn() })
+    const now = vi.spyOn(Date, 'now')
+    const view = render(<TechErrorReportsPage />)
+    await screen.findByRole('heading', { name: 'Mobil Kanalı Teknik Hata Mesajları - Eylül 2026' })
+    fireEvent.click(screen.getByRole('button', { name: /Görsel paneli/ }))
+    const before = te().report.mock.calls.length
+    fireEvent.focus(window)
+    await waitFor(() => expect(te().report.mock.calls.length).toBe(before + 1))
+    await new Promise((r) => setTimeout(r, 30))
+    expect(screen.queryByText('Rapor gönderildikten sonra değişti')).toBeNull()
+    // Panelde görsel değişti: sunucu "changed" der → şerit
+    te().report.mockResolvedValue(reportResponse({ report: { ...sentReport, status: 'changed' }, images: [{ ...IMG, id: 8 }] }))
+    now.mockReturnValue(Date.now() + 10_000)
+    fireEvent.focus(window)
+    expect(await screen.findByText('Rapor gönderildikten sonra değişti')).toBeInTheDocument()
+    expect(view.container.querySelector('[data-slot-id="monthly-tx"] img')).toHaveAttribute('src', '/api/tech-error-reports/images/8')
+    now.mockRestore()
+    open.mockRestore()
+  })
+
+  it('eşitleme okuması sürerken düzenleyicide yüklenen görsel ezilmez: okuma yeniden yapılır', async () => {
+    window.history.replaceState({}, '', '/?tab=channelreports&te_view=report&te_ch=10&te_rep=100')
+    const view = render(<TechErrorReportsPage />)
+    await screen.findByRole('heading', { name: 'Mobil Kanalı Teknik Hata Mesajları - Eylül 2026' })
+    const n = te().report.mock.calls.length
+    let release
+    te().report.mockImplementationOnce(() => new Promise((r) => { release = r }))
+    other.postMessage({ reportId: '100', kind: KIND_IMAGES, from: 'w-panel' })
+    await waitFor(() => expect(te().report.mock.calls.length).toBe(n + 1))
+    pick(view.container.querySelector('[data-slot-id="tech-errors"]'), png('yerel.png'))
+    await waitFor(() => expect(view.container.querySelector('[data-slot-id="tech-errors"] img')).not.toBeNull())
+    // Panelin yüklemesi + bu pencerenin yüklemesi: yeniden okuma ikisini de görür
+    te().report.mockResolvedValue(reportResponse({ images: [IMG, { ...IMG, id: 9, slot_id: 'tech-errors', file_name: 'yerel.png' }] }))
+    release(reportResponse({ images: [IMG] }))   // okuma yüklemeden önce başladı: yerel görsel yok
+    await waitFor(() => expect(te().report.mock.calls.length).toBe(n + 2))
+    await waitFor(() => expect(view.container.querySelector('[data-slot-id="monthly-tx"] img')).not.toBeNull())
+    expect(view.container.querySelector('[data-slot-id="tech-errors"] img')).not.toBeNull()
   })
 })

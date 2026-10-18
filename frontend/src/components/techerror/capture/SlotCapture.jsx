@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ClipboardPaste, RefreshCw, ScreenShare } from 'lucide-react'
 import { Button } from '@/components/shadcn/button'
 import { cn } from '@/lib/utils'
@@ -27,14 +27,21 @@ const isEditable = (el) => !!el && (el.isContentEditable || /^(INPUT|TEXTAREA|SE
  * yükleme, aynı sınırlar / notlar / hatalar) varır:
  * <ul>
  *   <li><b>Yapıştır:</b> yuva odaklanabilir; Ctrl/⌘+V ile panodaki görsel yüklenir (metin yapıştırması yok sayılır, kısa
- *   ipucu). "Panodan yapıştır" düğmesi `navigator.clipboard.read()` olan tarayıcıda görünür; izin yoksa "Ctrl+V ile
- *   yapıştırın" der, ham hata göstermez.</li>
+ *   ipucu). Görsel olmayan dosya (dosya yöneticisinden kopyalanan PDF…) yükleme yoluna gider — türünü söyleyen hata yazar.
+ *   DOLU yuvaya yapıştırma önce sorar (`confirmReplace`; geri alma yok — inceleme 2026-10-18). "Panodan yapıştır"
+ *   `navigator.clipboard.read()` olan tarayıcıda görünür; izin yoksa "Ctrl+V ile yapıştırın" der, ham hata göstermez.</li>
  *   <li><b>Ekrandan al:</b> pencere başına paylaşım oturumu (captureSession); kare kırpma penceresinde seçilen alan PNG
  *   olarak yüklenir. Telefonda ve desteklemeyen tarayıcıda düğme yoktur (bozuk düğme bırakılmaz).</li>
  * </ul>
  * Salt okunur yuvada hiçbiri yoktur; yükleme sürerken yuva yeni görsel almaz (bir yuvada tek yükleme).
+ *
+ * <p>Dönen parçalar: `zoneProps` (odaklanabilir bırakma alanı, `ref` dahil), `zoneRef`, `pasteButton`, `snipButton`,
+ * `pasteMenuItem` (yarım yuvanın "Diğer işlemler" menüsü için), `notes`, `emptyHint`, `dialog`. Kırpma penceresi
+ * kapanınca odak "Ekrandan al"a döner; düğme o an kapalıysa (yükleme başladı) yuvanın kendisine.
  */
-export function useSlotCapture({ slotId, label, busy = false, readOnly = false, inPanel = false, onFile }) {
+export function useSlotCapture({
+  slotId, label, busy = false, readOnly = false, inPanel = false, hasImage = false, confirmReplace = null, onFile,
+}) {
   const t = useT()
   const isMobile = useIsMobile()
   const keys = shortcutKeys()
@@ -46,17 +53,31 @@ export function useSlotCapture({ slotId, label, busy = false, readOnly = false, 
   const [snipping, setSnipping] = useState(false)
   const [clipBusy, setClipBusy] = useState(false)
   const snipRef = useRef(null)
+  const zoneRef = useRef(null)
   const frameRef = useRef(frame)
   frameRef.current = frame
   const onFileRef = useRef(onFile)
   onFileRef.current = onFile
   const busyRef = useRef(busy)
   busyRef.current = busy
+  const hasImageRef = useRef(hasImage)
+  hasImageRef.current = hasImage
+  const confirmRef = useRef(confirmReplace)
+  confirmRef.current = confirmReplace
+  const asking = useRef(false)
   const alive = useRef(true)
   useEffect(() => {
     alive.current = true
     return () => { alive.current = false; releaseFrame(frameRef.current) }
   }, [])
+
+  // Kırpma kapanınca odak: "Ekrandan al" (Vazgeç) ya da — yükleme başladıysa düğme kapalıdır — yuvanın kendisi
+  const returnFocusRef = useMemo(() => ({
+    get current() {
+      const b = snipRef.current
+      return b && !b.disabled ? b : zoneRef.current || b
+    },
+  }), [])
 
   const editable = !readOnly
   const desktop = inPanel || !isMobile
@@ -79,17 +100,38 @@ export function useSlotCapture({ slotId, label, busy = false, readOnly = false, 
     return { tone: 'error', text: t('te.cap.snipFailed', keys.snip, keys.paste) }
   }, [t, keys.snip, keys.paste])
 
+  /** Dolu yuvada önce sorar (geri alma yok); onaylanınca yükleme hâlâ boşsa verir. */
+  const giveAfterConfirm = useCallback(async (file) => {
+    if (asking.current) return
+    asking.current = true
+    let ok = false
+    try {
+      ok = await confirmRef.current()
+    } catch {
+      ok = false
+    } finally {
+      asking.current = false
+    }
+    if (!ok || !alive.current) return
+    if (busyRef.current) { setNote({ tone: 'muted', text: t('te.cap.pasteBusy') }); return }
+    give(file)
+  }, [give, t])
+
   const onPaste = useCallback((e) => {
     if (readOnly || isEditable(e.target)) return
-    const { file, hasText } = imageFromDataTransfer(e.clipboardData)
+    const { file, hasText, image } = imageFromDataTransfer(e.clipboardData)
     if (!file) {
       if (hasText) setNote({ tone: 'muted', text: t('te.cap.pasteNoImage', keys.snip) })
       return
     }
     e.preventDefault()
     if (busyRef.current) { setNote({ tone: 'muted', text: t('te.cap.pasteBusy') }); return }
-    give(renameClipboardFile(file, slotId))
-  }, [readOnly, give, slotId, t, keys.snip])
+    // Görsel olmayan dosya adıyla gider: imagePrep türünü söyleyen hatayı yazar (yüklenmez, yuvadaki görsel kalır)
+    if (!image) { give(file); return }
+    const named = renameClipboardFile(file, slotId)
+    if (hasImageRef.current && typeof confirmRef.current === 'function') { giveAfterConfirm(named); return }
+    give(named)
+  }, [readOnly, give, giveAfterConfirm, slotId, t, keys.snip])
 
   async function pasteFromClipboard() {
     if (busyRef.current || clipBusy) return
@@ -176,29 +218,35 @@ export function useSlotCapture({ slotId, label, busy = false, readOnly = false, 
 
   // Odaklanabilir bırakma alanı: ekran okuyucu yuvanın adını ve yapıştırma kısayolunu duyar
   const zoneProps = editable
-    ? { tabIndex: 0, onPaste, role: 'group', 'aria-label': t('te.cap.zoneLabel', label, keys.paste), 'data-paste': 'true' }
+    ? { ref: zoneRef, tabIndex: 0, onPaste, role: 'group', 'aria-label': t('te.cap.zoneLabel', label, keys.paste), 'data-paste': 'true' }
     : {}
   const zoneClassName = editable ? 'outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50' : ''
 
-  const buttons = (showClip || showSnip) ? (
-    <>
-      {showClip && (
-        <Button type="button" size="sm" variant="outline" disabled={busy || clipBusy} onClick={pasteFromClipboard}
-          className="pointer-coarse:min-h-10" data-slot="te-image-paste">
-          {clipBusy ? <RefreshCw aria-hidden="true" className="animate-spin motion-reduce:animate-none" /> : <ClipboardPaste aria-hidden="true" />}
-          {t('te.cap.pasteButton')}
-          <span className="sr-only">{`: ${label}`}</span>
-        </Button>
-      )}
-      {showSnip && (
-        <Button ref={snipRef} type="button" size="sm" variant="outline" disabled={busy || snipping} onClick={snip}
-          className="pointer-coarse:min-h-10" data-slot="te-image-snip">
-          {snipping ? <RefreshCw aria-hidden="true" className="animate-spin motion-reduce:animate-none" /> : <ScreenShare aria-hidden="true" />}
-          {t('te.cap.snipButton')}
-          <span className="sr-only">{`: ${label}`}</span>
-        </Button>
-      )}
-    </>
+  const pasteButton = showClip ? (
+    <Button type="button" size="sm" variant="outline" disabled={busy || clipBusy} onClick={pasteFromClipboard}
+      className="pointer-coarse:min-h-10" data-slot="te-image-paste">
+      {clipBusy ? <RefreshCw aria-hidden="true" className="animate-spin motion-reduce:animate-none" /> : <ClipboardPaste aria-hidden="true" />}
+      {t('te.cap.pasteButton')}
+      <span className="sr-only">{`: ${label}`}</span>
+    </Button>
+  ) : null
+
+  // Yarım yuvanın "Diğer işlemler" menüsündeki karşılığı (aynı işlev; erişilebilir ad yuvanın adını taşır)
+  const pasteMenuItem = showClip ? {
+    label: t('te.cap.pasteButton'),
+    ariaLabel: `${t('te.cap.pasteButton')}: ${label}`,
+    icon: clipBusy ? <RefreshCw aria-hidden="true" className="animate-spin motion-reduce:animate-none" /> : <ClipboardPaste aria-hidden="true" />,
+    disabled: busy || clipBusy,
+    onClick: pasteFromClipboard,
+  } : null
+
+  const snipButton = showSnip ? (
+    <Button ref={snipRef} type="button" size="sm" variant="outline" disabled={busy || snipping} onClick={snip}
+      className="pointer-coarse:min-h-10" data-slot="te-image-snip">
+      {snipping ? <RefreshCw aria-hidden="true" className="animate-spin motion-reduce:animate-none" /> : <ScreenShare aria-hidden="true" />}
+      {t('te.cap.snipButton')}
+      <span className="sr-only">{`: ${label}`}</span>
+    </Button>
   ) : null
 
   const notes = note ? (
@@ -215,9 +263,9 @@ export function useSlotCapture({ slotId, label, busy = false, readOnly = false, 
   const dialog = frame ? (
     <Suspense fallback={null}>
       <CaptureCropDialog open frame={frame} label={label} busy={cropBusy} retaking={retaking} error={cropError}
-        onRetake={retake} onConfirm={confirmCrop} onCancel={closeCrop} returnFocusRef={snipRef} />
+        onRetake={retake} onConfirm={confirmCrop} onCancel={closeCrop} returnFocusRef={returnFocusRef} />
     </Suspense>
   ) : null
 
-  return { zoneProps, zoneClassName, buttons, notes, emptyHint, dialog }
+  return { zoneProps, zoneRef, zoneClassName, pasteButton, snipButton, pasteMenuItem, notes, emptyHint, dialog }
 }

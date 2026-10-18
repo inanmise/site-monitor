@@ -141,8 +141,8 @@ export function createCaptureSession({
     stream = s
     track = t
     t.addEventListener?.('ended', () => { if (my === gen) stop('ended') })
-    let surface = ''
-    try { surface = String(t.getSettings?.().displaySurface || '') } catch { /* yok */ }
+    // Tarayıcının "bunun yerine bu sekmeyi paylaş"ı (surfaceSwitching) kaynağı aynı izde değiştirir: çipin adı güncellenir
+    t.addEventListener?.('configurationchange', () => { if (my === gen) refreshSource() })
     try {
       video = await attach(s)
     } catch (e) {
@@ -150,7 +150,25 @@ export function createCaptureSession({
       throw new CaptureError('failed', e)
     }
     if (my !== gen) throw new CaptureError('ended')
-    emit({ status: 'live', label: String(t.label || ''), surface, stopReason: null })
+    emit({ status: 'live', ...sourceOf(t), stopReason: null })
+    // 10 dk sayacı paylaşım açılır açılmaz kurulur: ilk kare okunamasa da akış sonsuza dek açık kalmaz (inceleme 2026-10-18)
+    touch()
+  }
+
+  /** İzin o anki kaynağı: etiket (pencere / sekme başlığı) ve yüzey türü. */
+  function sourceOf(t) {
+    let surface = ''
+    try { surface = String(t?.getSettings?.().displaySurface || '') } catch { /* yok */ }
+    let label = ''
+    try { label = String(t?.label || '') } catch { /* yok */ }
+    return { label, surface }
+  }
+
+  /** Paylaşılan kaynak değiştiyse (yüzey değiştirme) çip yeni adı gösterir; değişmediyse yayın yok. */
+  function refreshSource() {
+    if (state.status !== 'live' || !track) return
+    const next = sourceOf(track)
+    if (next.label !== state.label || next.surface !== state.surface) emit(next)
   }
 
   /**
@@ -170,6 +188,8 @@ export function createCaptureSession({
     }
     if (my !== gen || state.status !== 'live') throw new CaptureError('ended')
     touch()
+    // Kullanıcı tarayıcıdan paylaşılan sekmeyi değiştirmiş olabilir (olay her tarayıcıda yok): her karede ad yeniden okunur
+    refreshSource()
     return frame
   }
 

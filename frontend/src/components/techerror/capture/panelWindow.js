@@ -65,26 +65,99 @@ export function openImagesPanel(reportId, win = globalThis.window) {
   return { blocked: false, url, win: w }
 }
 
+/** "Raporu aç" isteği ve yanıtı (panel → açan pencere, yalnız aynı köken; ileti yalnız kimlik taşır). */
+export const OPEN_REPORT_REQUEST = 'sm-te-open-report'
+export const OPEN_REPORT_ACK = 'sm-te-open-report-ack'
+/** Açan pencerenin yanıtı bu kadar beklenir; gelmezse adres değiştirilerek açılır (eski yol). */
+export const OPEN_REPORT_TIMEOUT_MS = 1000
+
+/** Adres bu raporun düzenleyicisi mi? */
+export function isReportEditorSearch(search, reportId) {
+  try {
+    const p = new URLSearchParams(search || '')
+    return p.get('tab') === 'channelreports' && p.get('te_view') === 'report' && p.get('te_rep') === String(reportId)
+  } catch {
+    return false
+  }
+}
+
 /**
- * Panelden "Ana pencerede aç": açan pencere hâlâ SiteMonitor'deyse oraya raporu açar (zaten o rapordaysa yalnız öne
- * getirir); açan pencere başka siteye geçtiyse ya da kapandıysa rapor yeni sekmede açılır (kullanıcının Qlik sekmesi
- * ezilmez).
+ * Panelden "Ana pencerede aç" (inceleme 2026-10-18): açan pencere hâlâ SiteMonitor'deyse ona İLETİ gönderilir
+ * (`postMessage`, hedef köken = bu köken) — açan pencere raporu UYGULAMA İÇİNDE açar (`App`, `onOpenReportRequest`):
+ * kaydedilmemiş form / taslak sayfa yeniden yüklenmeden ayrılır, uygulamanın geçiş kuralları geçerlidir. Yalnız açan
+ * pencere {@link OPEN_REPORT_TIMEOUT_MS} içinde yanıt vermezse (eski sürüm, oturum kapalı) adres değiştirilir
+ * (`location.assign`, zaten o rapordaysa yalnız öne getirilir). Açan pencere başka siteye geçtiyse ya da kapandıysa rapor
+ * yeni sekmede açılır — hemen, tıklama anında (açılır pencere engellenmesin; kullanıcının Qlik sekmesi ezilmez).
+ *
+ * @returns {Promise<'opener'|'assign'|'tab'>}
  */
-export function openInMainWindow(reportId, channelId, win = globalThis.window) {
+export function openInMainWindow(reportId, channelId, win = globalThis.window, { timeoutMs = OPEN_REPORT_TIMEOUT_MS } = {}) {
   const url = reportEditorUrl(reportId, channelId, win?.location)
   const opener = (() => { try { return win.opener && !win.opener.closed ? win.opener : null } catch { return null } })()
+  let same = false
   if (opener) {
-    try {
-      const same = opener.location.origin === win.location.origin
-      if (same) {
-        const p = new URLSearchParams(opener.location.search)
-        const onReport = p.get('tab') === 'channelreports' && p.get('te_view') === 'report' && p.get('te_rep') === String(reportId)
-        if (!onReport) opener.location.assign(url)
-        opener.focus()
-        return 'opener'
-      }
-    } catch { /* başka kökene geçmiş: dokunulmaz */ }
+    try { same = opener.location.origin === win.location.origin } catch { same = false }   // başka kökene geçmiş
   }
-  try { win.open(url, '_blank', 'noopener') } catch { /* yok */ }
-  return 'tab'
+  if (!same) {
+    try { win.open(url, '_blank', 'noopener') } catch { /* yok */ }
+    return Promise.resolve('tab')
+  }
+  // Tıklamanın kullanıcı etkinliği sürerken öne getir (bazı tarayıcılar sonradan izin vermez)
+  try { opener.focus() } catch { /* yok */ }
+  const origin = win.location.origin
+  const rid = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`
+  return new Promise((resolve) => {
+    let done = false
+    let timer = null
+    const finish = (how) => {
+      if (done) return
+      done = true
+      clearTimeout(timer)
+      try { win.removeEventListener?.('message', onMsg) } catch { /* yok */ }
+      resolve(how)
+    }
+    const fallback = () => {
+      try {
+        if (!isReportEditorSearch(opener.location.search, reportId)) opener.location.assign(url)
+        opener.focus()
+        finish('assign')
+      } catch {
+        try { win.open(url, '_blank', 'noopener') } catch { /* yok */ }
+        finish('tab')
+      }
+    }
+    function onMsg(e) {
+      if (e?.origin !== origin || e.data?.type !== OPEN_REPORT_ACK || e.data.rid !== rid) return
+      finish('opener')
+    }
+    try { win.addEventListener?.('message', onMsg) } catch { /* yok */ }
+    timer = setTimeout(() => { if (!done) fallback() }, Math.max(0, timeoutMs))
+    try {
+      opener.postMessage({ type: OPEN_REPORT_REQUEST, rid, reportId: String(reportId), channelId: channelId != null ? String(channelId) : null }, origin)
+    } catch {
+      fallback()
+    }
+  })
+}
+
+/**
+ * Açan pencere tarafı: panelin "raporu aç" isteğine abone olur (App bağlar — bu modül açılış paketindedir, bağımlılığı
+ * yoktur). `handler({ reportId, channelId })` true dönerse istek işlendi sayılır ve panele yanıt gider; false (oturum yok,
+ * pencere kendisi panel) yanıt vermez — panel eski yola düşer. Yalnız AYNI kökenden ve geçerli kimlikle gelen istek.
+ */
+export function onOpenReportRequest(handler, win = globalThis.window) {
+  const h = (e) => {
+    try {
+      if (e?.origin !== win.location.origin) return
+      const d = e.data
+      if (!d || d.type !== OPEN_REPORT_REQUEST || typeof d.rid !== 'string' || d.rid.length > 40) return
+      const reportId = String(d.reportId ?? '')
+      if (!ID_RE.test(reportId)) return
+      const channelId = d.channelId != null && ID_RE.test(String(d.channelId)) ? String(d.channelId) : null
+      if (!handler({ reportId, channelId })) return
+      e.source?.postMessage?.({ type: OPEN_REPORT_ACK, rid: d.rid }, e.origin)
+    } catch { /* yanıt verilemedi: panel eski yola düşer */ }
+  }
+  try { win.addEventListener?.('message', h) } catch { /* yok */ }
+  return () => { try { win.removeEventListener?.('message', h) } catch { /* yok */ } }
 }

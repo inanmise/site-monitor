@@ -12,9 +12,12 @@ import { resolvePlaceholders } from '../techErrorModel.js'
 import { CaptureSessionChip, CaptureStopNotice, useCaptureScope } from './CaptureParts.jsx'
 import { KIND_IMAGES, KIND_REPORT, onImagesChanged } from './imageSync.js'
 import { openInMainWindow } from './panelWindow.js'
+import { useFileDropGuard } from './useFileDropGuard.js'
 
 /** Pencereye dönülünce (odak / görünür) rapor en çok bu sıklıkla yeniden okunur — şablon uygulandı mı, silindi mi. */
 export const PANEL_FOCUS_RELOAD_MS = 5000
+/** Sessiz okuma sürerken bu panelde görsel değişirse okuma en çok bu kadar kez yeniden yapılır. */
+export const PANEL_SYNC_RETRY_MAX = 3
 
 /**
  * GÖRSEL PANELİ (2026-10-18, kullanıcı isteği: "ayrı bir panelde görsellerin olduğu sayfa açık olacak, site monitör
@@ -34,16 +37,26 @@ export default function ImagesPanelPage({ reportId }) {
   const [data, setData] = useState(null)
   const [images, setImages] = useState([])
   const seq = useRef(0)
+  // Bu paneldeki görsel değişikliği sayacı (inceleme 2026-10-18): öteki pencerenin iletisiyle başlayan okuma, sürerken
+  // burada yapılan yüklemeyi ezmesin — okuma yeniden yapılır (yeni okuma ikisini de görür)
+  const localGen = useRef(0)
   const tRef = useRef(t)
   tRef.current = t
   useCaptureScope()
+  // Yuvanın dışına bırakılan dosya paneli o dosyaya götürmesin (panel ve ekran paylaşımı kaybolurdu)
+  useFileDropGuard(true)
 
-  const load = useCallback(async ({ quiet = false } = {}) => {
+  const load = useCallback(async ({ quiet = false, attempt = 0 } = {}) => {
     const my = ++seq.current
+    const gen = localGen.current
     if (!quiet) setState((s) => ({ ...s, loading: true }))
     try {
       const res = await api.techErrors.report(reportId)
       if (my !== seq.current) return
+      if (localGen.current !== gen && res?.success) {
+        if (attempt < PANEL_SYNC_RETRY_MAX) load({ quiet: true, attempt: attempt + 1 })
+        return
+      }
       if (res?.success && res.data?.report) {
         setData(res.data)
         setImages(res.data.images || [])
@@ -79,7 +92,7 @@ export default function ImagesPanelPage({ reportId }) {
     }
   }, [load])
 
-  const onImagesChange = useCallback((fn) => setImages(fn), [])
+  const onImagesChange = useCallback((fn) => { localGen.current++; setImages(fn) }, [])
   const tpl = data?.template
   const report = data?.report
   const channel = data?.channel
