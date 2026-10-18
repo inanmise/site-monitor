@@ -8,7 +8,8 @@ import java.util.List;
 /**
  * İzleme ölçümleri aktarıcısının ayarları (2026-10-18, Ayarlar → Platform → Grafana panosu). Anahtarlar
  * {@code AppSettingsCatalog}'da grup {@code grafana}, GLOBAL_ONLY; varsayılanlar {@code application.properties}'te
- * ({@code METRICS_EXPORT_*}). {@link MonitoringMetricsExporter} her turda CANLI okur (yeniden başlatma yok).
+ * ({@code METRICS_EXPORT_*}). {@link MonitoringMetricsExporter} her turda CANLI okur (yeniden başlatma yok). {@code enabled}
+ * yalnız taşıyıcı belirteç ({@link MetricsExportToken}, ortam değişkeni — katalogda DEĞİL) tanımlıyken etkilidir.
  */
 public final class MetricsExportSettings {
 
@@ -38,8 +39,13 @@ public final class MetricsExportSettings {
         return s == null || s.getBoolean(KEY_ENABLED, true);
     }
 
+    /**
+     * İzleme / sertifika / alan adı / alarm başına seriler. Varsayılan KAPALI (2026-10-18, bağımsız inceleme): belirteç
+     * sahibi bütün envanteri görür; açmak Ayarlar → Grafana panosu'ndan bilinçli bir karardır. Toplamlar (takım × tür)
+     * belirteç varken her zaman yayılır.
+     */
     public static boolean perMonitor(AppSettingsService s) {
-        return s == null || s.getBoolean(KEY_PER_MONITOR, true);
+        return s != null && s.getBoolean(KEY_PER_MONITOR, false);
     }
 
     public static int maxEntities(AppSettingsService s) {

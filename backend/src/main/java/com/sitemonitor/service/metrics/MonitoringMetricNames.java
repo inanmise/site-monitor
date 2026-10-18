@@ -222,6 +222,15 @@ public final class MonitoringMetricNames {
         BY_NAME = Collections.unmodifiableMap(m);
     }
 
+    /**
+     * Aktarıcı BAYATKEN ({@code refresh-seconds}'ın 3 katı — en az 3 dk — tamamlanmış tur yok: iş parçacığı takılmış olabilir)
+     * {@code /metrics/sitemonitor}'un yine yayınladığı aileler (Prometheus adları). İş değerleri ve {@code source_up} /
+     * {@code series} / {@code capped} GİZLENİR — eski değerler "güncel" ya da panonun {@code guard()}'ı üzerinden sahte 0
+     * görünmesin; pano tazelik şeridi bunlardan "bayat" der.
+     */
+    public static final java.util.Set<String> STALE_VISIBLE = java.util.Set.of(prom(EXPORTER_ENABLED), prom(EXPORTER_PER_MONITOR),
+            prom(EXPORTER_LAST_REFRESH), prom(EXPORTER_DURATION));
+
     /** Ada göre tanım; bilinmiyorsa null. */
     public static Def def(String name) {
         return BY_NAME.get(name);

@@ -93,6 +93,7 @@ class GrafanaDashboardControllerTest {
         });
         Team t = new Team(); t.setId(14L); t.setName("Dijital Kanallar");
         lenient().when(teams.findAll()).thenReturn(List.of(t));
+        lenient().when(exporter.tokenConfigured()).thenReturn(true);
         lenient().when(exporter.lastStatus()).thenReturn(new MonitoringMetricsExporter.Status(true, true, "2026-10-18T08:00:00", 120, 900,
                 Map.of("monitors", 640), Map.of("overview", true, "alerts", false), List.of(), 60, 5000));
     }
@@ -113,6 +114,10 @@ class GrafanaDashboardControllerTest {
                 .andExpect(jsonPath("$.data.summary.panels").isNumber())
                 .andExpect(jsonPath("$.data.summary.file_name").value("sitemonitor-grafana-dashboard-local.json"))
                 .andExpect(jsonPath("$.data.exporter.state").value("running"))
+                .andExpect(jsonPath("$.data.exporter.token_configured").value(true))
+                .andExpect(jsonPath("$.data.metrics_path").value("/metrics/sitemonitor"))
+                .andExpect(jsonPath("$.data.runtime_metrics_path").value("/metrics"))
+                .andExpect(jsonPath("$.data.token_env").value("METRICS_EXPORT_TOKEN"))
                 .andExpect(jsonPath("$.data.exporter.sources[?(@.source == 'alerts')].up").value(org.hamcrest.Matchers.contains(false)))
                 .andExpect(jsonPath("$.data.revision").value(GrafanaDashboardGenerator.DASHBOARD_REVISION))
                 .andExpect(jsonPath("$.data.metrics[0].name").value("sitemonitor_monitor_state"));
@@ -136,6 +141,20 @@ class GrafanaDashboardControllerTest {
         stored.put(MetricsExportSettings.KEY_ENABLED, "false");
         mvc.perform(get("/api/admin/grafana/settings").session(session("ADMIN", false)))
                 .andExpect(jsonPath("$.data.exporter.state").value("disabled"));
+    }
+
+    @Test
+    @DisplayName("GET: belirteç yok → no_token, yalnız EVET / HAYIR (değer asla); canlı sayılar yok; yanıtta belirteç değeri geçmez")
+    void exporterWithoutToken() throws Exception {
+        when(exporter.tokenConfigured()).thenReturn(false);
+        MvcResult r = mvc.perform(get("/api/admin/grafana/settings").session(session("ADMIN", false)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.exporter.state").value("no_token"))
+                .andExpect(jsonPath("$.data.exporter.token_configured").value(false))
+                .andExpect(jsonPath("$.data.exporter.series_total").doesNotExist())
+                .andReturn();
+        String body = r.getResponse().getContentAsString(StandardCharsets.UTF_8);
+        assertThat(body).doesNotContain("site.monitor.metrics.export.token").doesNotContain("\"token\":");
     }
 
     @Test

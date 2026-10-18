@@ -363,8 +363,37 @@ class MonitoringMetricsModelTest {
         String longName = "x".repeat(400);
         assertThat(MonitoringMetricsModel.label(longName)).hasSize(MonitoringMetricsModel.LABEL_MAX).endsWith("…");
         assertThat(MonitoringMetricsModel.safeTarget("https://user:pass@api.example.com/path?token=abc&x=1"))
-                .isEqualTo("https://api.example.com/path?token=*****&x=1");
+                .isEqualTo("https://api.example.com/path");
         assertThat(MonitoringMetricsModel.safeTarget("10.0.0.1")).isEqualTo("10.0.0.1");
+    }
+
+    @Test
+    @DisplayName("hedef etiketi: yalnız şema + host + port + yol — ad listesinin kaçırdığı sır parametreleri (key, code, sig, "
+            + "X-Amz-Signature, subscription-key) ve parça hiç yazılmaz; kullanıcı bilgisi atılır")
+    void safeTargetDropsQueryAndFragment() {
+        String[] secrets = {
+                "https://api.example.com:8443/v1/items?key=AIzaSyD-secret",
+                "https://login.example.com/callback?code=4/0AY0e-g7secret&state=x",
+                "https://blob.example.net/c/f.png?sv=2020&sig=abcSECRET%3D",
+                "https://bucket.s3.amazonaws.com/o?X-Amz-Algorithm=AWS4&X-Amz-Signature=deadbeefSECRET",
+                "https://gw.example.com/api?subscription-key=SECRETKEY",
+                "https://app.example.com/#access_token=SECRET",
+                "https://u:p@app.example.com:9443/a/b?x=1#frag",
+        };
+        for (String in : secrets) {
+            String out = MonitoringMetricsModel.safeTarget(in);
+            assertThat(out).as(in).doesNotContain("?").doesNotContain("#").doesNotContainIgnoringCase("secret")
+                    .doesNotContain("u:p").doesNotContain("@");
+        }
+        assertThat(MonitoringMetricsModel.safeTarget("https://api.example.com:8443/v1/items?key=AIzaSyD-secret"))
+                .isEqualTo("https://api.example.com:8443/v1/items");
+        assertThat(MonitoringMetricsModel.safeTarget("https://u:p@app.example.com:9443/a/b?x=1#frag")).isEqualTo("https://app.example.com:9443/a/b");
+        assertThat(MonitoringMetricsModel.safeTarget("https://app.example.com/#access_token=SECRET")).isEqualTo("https://app.example.com/");
+        assertThat(MonitoringMetricsModel.safeTarget("db.example.com:5432")).isEqualTo("db.example.com:5432");
+        assertThat(MonitoringMetricsModel.safeTarget("admin@ssh.example.com")).isEqualTo("ssh.example.com");
+        assertThat(MonitoringMetricsModel.safeTarget(null)).isEmpty();
+        assertThat(MonitoringMetricsModel.safeTarget("https://x.example.com/" + "a".repeat(5000) + "?k=SECRET"))
+                .hasSizeLessThanOrEqualTo(MonitoringMetricsModel.LABEL_MAX).doesNotContain("SECRET");
         assertThat(MonitoringMetricsModel.epochSeconds("2026-10-18T08:00:00")).isEqualTo(Instant.parse("2026-10-18T08:00:00Z").getEpochSecond());
         assertThat(MonitoringMetricsModel.epochSeconds("2026-10-18T08:00:00.123Z")).isEqualTo(Instant.parse("2026-10-18T08:00:00Z").getEpochSecond());
         assertThat(MonitoringMetricsModel.epochSeconds("garbage")).isNull();

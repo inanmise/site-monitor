@@ -9,6 +9,8 @@
 #     --set secret.adminPassword=devpassword \
 #     --set secret.dbPassword=devpassword \
 #     -n site-monitor-dev --create-namespace
+# Optional (Grafana business metrics, /metrics/sitemonitor): add
+#     --set secret.metricsExportToken="$METRICS_EXPORT_TOKEN"   (>= 32 random chars, same value in Prometheus)
 # ─────────────────────────────────────────────────────────────────────────────
 
 image:

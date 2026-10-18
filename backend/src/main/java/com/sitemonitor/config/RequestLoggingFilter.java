@@ -208,7 +208,9 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
     private boolean shouldSkip(HttpServletRequest req) {
         String uri = req.getRequestURI();
         if (uri == null) return false;
-        return uri.equals("/health") || uri.equals("/favicon.ico")
+        // /metrics ve /metrics/sitemonitor: Prometheus kazıması (her 15–60 sn) — iş ölçümleri yanıtı envanteri taşır,
+        // günlüğe hiç yazılmaz (2026-10-18)
+        return uri.equals("/health") || uri.equals("/favicon.ico") || uri.equals("/metrics") || uri.startsWith("/metrics/")
                 || uri.startsWith("/assets/") || uri.startsWith("/static/")
                 || uri.endsWith(".js") || uri.endsWith(".css") || uri.endsWith(".map")
                 || uri.endsWith(".png") || uri.endsWith(".svg") || uri.endsWith(".woff2")

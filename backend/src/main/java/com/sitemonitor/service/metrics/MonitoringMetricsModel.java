@@ -4,7 +4,6 @@ import com.sitemonitor.dto.CertificateDto;
 import com.sitemonitor.model.AlertEvent;
 import com.sitemonitor.service.AlertOwnership;
 import com.sitemonitor.service.MonitorTypeCatalog;
-import com.sitemonitor.service.SecretMask;
 import com.sitemonitor.service.tlsgrade.TlsGradeRules;
 
 import java.time.Instant;
@@ -42,7 +41,11 @@ public final class MonitoringMetricsModel {
     /** Takımsız (sahipsiz) kayıtların takım etiketi; kimliği {@code "0"}. */
     public static final String NO_TEAM = "Takımsız";
     public static final String NO_TEAM_ID = "0";
-    /** Etiket değeri üst sınırı (uzun ad / URL) — "…" ile biter. */
+    /**
+     * Etiket değeri üst sınırı (uzun ad / URL) — "…" ile biter. 160: en uzun gerçek AD takım adları ("Ad (Bölüm / Unvan)"
+     * 60–90 karakter) ve şema + host + yol hedefleri sığar; üstü Prometheus'ta seri başına bellek, Grafana'da okunmaz tablo
+     * hücresi demektir. Kesilen iki değer aynı öneki paylaşırsa seriler {@code monitor_id} / {@code alert_id} ile ayrışır.
+     */
     static final int LABEL_MAX = 160;
 
     /** İzleme durum kodları (sitemonitor_monitor_state). */
@@ -690,21 +693,27 @@ public final class MonitoringMetricsModel {
     }
 
     /**
-     * Hedef (URL / host) etiketi: kullanıcı bilgisi ({@code //kullanıcı:parola@}) atılır, hassas sorgu parametreleri
-     * maskelenir ({@link SecretMask#maskUrlQuery}). {@code /metrics} kimliksizdir — sır asla etikete yazılmaz.
+     * Hedef (URL / host) etiketi = şema + host + port + yol. Sorgu ({@code ?…}) ve parça ({@code #…}) HİÇ yazılmaz, kullanıcı
+     * bilgisi ({@code kullanıcı:parola@}) atılır (2026-10-18, bağımsız inceleme: ad listesine dayalı maskeleme {@code key=},
+     * {@code code=}, {@code sig=}, {@code X-Amz-Signature}, {@code subscription-key} gibi adları kaçırıyordu). Doğrusal tarama,
+     * düzenli ifade yok; önce uzunluk sınırı.
      */
     public static String safeTarget(String target) {
         if (target == null) return "";
         String t = target.length() > 2048 ? target.substring(0, 2048) : target;
-        int scheme = t.indexOf("://");
-        if (scheme > 0) {
-            int hostStart = scheme + 3;
-            int end = hostStart;
-            while (end < t.length() && "/?#".indexOf(t.charAt(end)) < 0) end++;
-            int at = t.lastIndexOf('@', end - 1);
-            if (at >= hostStart) t = t.substring(0, hostStart) + t.substring(at + 1);
+        int cut = -1;
+        for (int i = 0; i < t.length(); i++) {
+            char c = t.charAt(i);
+            if (c == '?' || c == '#') { cut = i; break; }
         }
-        return label(SecretMask.maskUrlQuery(t));
+        if (cut >= 0) t = t.substring(0, cut);
+        int scheme = t.indexOf("://");
+        int hostStart = scheme > 0 ? scheme + 3 : 0;
+        int end = t.indexOf('/', hostStart);
+        if (end < 0) end = t.length();
+        int at = end > hostStart ? t.lastIndexOf('@', end - 1) : -1;
+        if (at >= hostStart) t = t.substring(0, hostStart) + t.substring(at + 1);
+        return label(t);
     }
 
     /** ISO zaman (UTC; {@code Z}'li, ofsetli ya da yerel biçim, kesirli olabilir) → epoch saniye; okunamazsa null. */

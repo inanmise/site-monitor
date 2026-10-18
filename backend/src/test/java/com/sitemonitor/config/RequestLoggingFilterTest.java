@@ -244,6 +244,25 @@ class RequestLoggingFilterTest {
         assertThat(seen[0]).isNotInstanceOf(HttpServletResponseWrapper.class);
     }
 
+    @Test
+    @DisplayName("TRACE: /metrics ve /metrics/sitemonitor hiç yazılmaz (iş ölçümleri yanıtı envanter taşır; belirteç başlığı da yok)")
+    void trace_metricsPaths_skipped() throws Exception {
+        logbackLogger.setLevel(Level.TRACE);
+        for (String path : new String[] { "/metrics", "/metrics/sitemonitor" }) {
+            MockHttpServletRequest req = new MockHttpServletRequest("GET", path);
+            req.addHeader("Authorization", "Bearer secret-token-0123456789abcdef");
+            MockHttpServletResponse resp = new MockHttpServletResponse();
+            HttpServletResponse[] seen = new HttpServletResponse[1];
+            FilterChain chain = (request, response) -> {
+                seen[0] = (HttpServletResponse) response;
+                ((HttpServletResponse) response).setStatus(200);
+            };
+            filter.doFilter(req, resp, chain);
+            assertThat(seen[0]).as(path).isSameAs(resp);
+        }
+        assertThat(appender.list).isEmpty();
+    }
+
     /** En son "<<<" (yanıt) TRACE satırının formatlanmış mesajı. */
     private String lastResponseLogLine() {
         return appender.list.stream()

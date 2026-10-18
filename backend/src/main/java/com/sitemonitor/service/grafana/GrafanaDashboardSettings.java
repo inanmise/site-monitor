@@ -79,7 +79,7 @@ public final class GrafanaDashboardSettings {
         String language = pick(s.getString(KEY_LANGUAGE, DEFAULT_LANGUAGE), LANGUAGES, DEFAULT_LANGUAGE);
         List<String> sections = parseSections(s.getString(KEY_SECTIONS, String.join(",", GrafanaDashboardGenerator.SECTIONS)));
         if (sections.isEmpty()) sections = GrafanaDashboardGenerator.SECTIONS;
-        boolean perMonitor = s.getBoolean(KEY_PER_MONITOR, true);
+        boolean perMonitor = s.getBoolean(KEY_PER_MONITOR, false);
         String team = s.getString(KEY_DEFAULT_TEAM, "");
         if (team == null || team.length() > TEAM_MAX) team = "";
         int topN = Math.max(TOP_N_MIN, Math.min(TOP_N_MAX, s.getInt(KEY_TOP_N, DEFAULT_TOP_N)));

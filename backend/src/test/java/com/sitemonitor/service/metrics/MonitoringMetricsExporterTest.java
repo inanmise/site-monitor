@@ -70,6 +70,8 @@ class MonitoringMetricsExporterTest {
         settings = mock(AppSettingsService.class);
         when(settings.getBoolean(anyString(), anyBoolean())).thenAnswer(i -> i.getArgument(1));
         when(settings.getInt(anyString(), anyInt())).thenAnswer(i -> i.getArgument(1));
+        // İzleme başına seriler varsayılan KAPALI (2026-10-18) — bu testler açık hâli de sınar
+        when(settings.getBoolean(eq(MetricsExportSettings.KEY_PER_MONITOR), anyBoolean())).thenReturn(true);
         exporter = new MonitoringMetricsExporter(registry, settings);
         exporter.setClock(() -> NOW);
         overview = mock(MonitoringOverviewService.class);
@@ -326,6 +328,47 @@ class MonitoringMetricsExporterTest {
         exporter.refresh();
         assertThat(exists(MonitoringMetricNames.WATCHDOG_STATUS)).isFalse();
         assertThat(exists(MonitoringMetricNames.WATCHDOG_CHECK)).isFalse();
+    }
+
+    @Test
+    @DisplayName("belirteç yok: aktarıcı hiçbir kaynağı okumaz (veritabanı yükü yok), iş serisi yazmaz; iş parçacığı başlamaz")
+    void noTokenNoWork() {
+        SimpleMeterRegistry r = new SimpleMeterRegistry();
+        MonitoringMetricsExporter off = new MonitoringMetricsExporter(r, settings, false);
+        off.setOverview(overview);
+        off.setAlertRepo(alerts);
+        off.setJdbc(jdbc);
+        assertThat(off.tokenConfigured()).isFalse();
+        MonitoringMetricsExporter.Status s = off.refresh();
+        assertThat(s.enabled()).isFalse();
+        verifyNoInteractions(overview, alerts, jdbc);
+        assertThat(r.find(MonitoringMetricNames.MONITOR_STATE).gauge()).isNull();
+        assertThat(r.find(MonitoringMetricNames.EXPORTER_ENABLED).gauge().value()).isEqualTo(0);
+        off.start();   // belirteç yoksa zamanlayıcı kurulmaz — tekrar çağrı da güvenli
+        off.start();
+        off.stop();
+    }
+
+    @Test
+    @DisplayName("tazelik: tur 3 × aralıktan (en az 3 dk) eskiyse yalnız aktarıcının tazelik ölçümleri görünür; hiç tur yoksa da")
+    void staleExporterHidesBusinessValues() {
+        java.util.concurrent.atomic.AtomicReference<Instant> now = new java.util.concurrent.atomic.AtomicReference<>(NOW);
+        exporter.setClock(now::get);
+        assertThat(exporter.fresh()).as("hiç tur yok").isFalse();
+        assertThat(exporter.visibleNames()).isEqualTo(MonitoringMetricNames.STALE_VISIBLE);
+        exporter.refresh();
+        assertThat(exporter.fresh()).isTrue();
+        assertThat(exporter.visibleNames()).isNull();
+        now.set(NOW.plusSeconds(179));
+        assertThat(exporter.fresh()).isTrue();
+        now.set(NOW.plusSeconds(181));
+        assertThat(exporter.fresh()).as("varsayılan 60 sn aralık → eşik 3 dk").isFalse();
+        assertThat(exporter.visibleNames()).containsExactlyInAnyOrder("sitemonitor_exporter_enabled", "sitemonitor_exporter_per_monitor",
+                "sitemonitor_exporter_last_refresh_timestamp_seconds", "sitemonitor_exporter_refresh_duration_seconds");
+        when(settings.getInt(eq(MetricsExportSettings.KEY_REFRESH_SECONDS), anyInt())).thenReturn(300);
+        assertThat(exporter.fresh()).as("300 sn aralık → eşik 15 dk").isTrue();
+        now.set(NOW.plusSeconds(901));
+        assertThat(exporter.fresh()).isFalse();
     }
 
     @Test

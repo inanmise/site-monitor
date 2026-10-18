@@ -203,7 +203,10 @@ public class GrafanaDashboardController {
         data.put("schema_version", GrafanaDashboardGenerator.SCHEMA_VERSION);
         data.put("grafana_min_version", GrafanaDashboardGenerator.GRAFANA_MIN_VERSION);
         data.put("app_version", appVersion());
-        data.put("metrics_path", "/metrics");
+        // İş ölçümleri belirteçli ayrı uçta; kimliksiz /metrics yalnız JVM / HTTP / uygulama sağlığı (2026-10-18)
+        data.put("metrics_path", MetricsExportController.PATH);
+        data.put("runtime_metrics_path", "/metrics");
+        data.put("token_env", com.sitemonitor.service.metrics.MetricsExportToken.ENV);
         data.put("metrics", metricCatalog());
         return data;
     }
@@ -212,15 +215,18 @@ public class GrafanaDashboardController {
         Map<String, Object> m = new LinkedHashMap<>();
         boolean enabled = MetricsExportSettings.enabled(settings);
         MonitoringMetricsExporter.Status s = exporter == null ? null : exporter.lastStatus();
+        // Belirteç yoksa aktarıcı hiç koşmaz (uç 404) → "no_token"; yalnız EVET / HAYIR söylenir, değer asla.
         // Açıldıktan sonraki ilk tur gelmeden son durum hâlâ "kapalı" turudur → "bekliyor" (canlı sayılar yok).
-        m.put("state", !enabled ? "disabled" : s == null || !s.enabled() ? "waiting" : "running");
+        boolean tokenConfigured = exporter != null && exporter.tokenConfigured();
+        m.put("token_configured", tokenConfigured);
+        m.put("state", !tokenConfigured ? "no_token" : !enabled ? "disabled" : s == null || !s.enabled() ? "waiting" : "running");
         m.put("enabled", enabled);
         m.put("per_monitor", MetricsExportSettings.perMonitor(settings));
         m.put("refresh_seconds", MetricsExportSettings.refreshSeconds(settings));
         m.put("max_entities", MetricsExportSettings.maxEntities(settings));
         m.put("pod", pod());
         m.put("server_now", ISO.format(Instant.now()));
-        if (s != null && s.enabled()) {
+        if (tokenConfigured && s != null && s.enabled()) {
             m.put("refreshed_at", s.refreshedAt());
             m.put("duration_ms", s.durationMs());
             m.put("series_total", s.seriesTotal());

@@ -58,8 +58,11 @@ import java.util.function.Supplier;
 
 /**
  * İzleme ölçümleri aktarıcısı (2026-10-18, kullanıcı isteği: "SiteMonitor'ü Grafana'da uçtan uca izleyeyim; izlemelerin
- * durumu, alarmlar, sistemin kendi sağlığı"). Prometheus {@code /metrics} ucuna {@code sitemonitor_*} gauge'ları yazar —
- * ad ve etiket kataloğu {@link MonitoringMetricNames}, hesap {@link MonitoringMetricsModel} (saf).
+ * durumu, alarmlar, sistemin kendi sağlığı"). {@code sitemonitor_*} iş gauge'larını AYRI kayıt defterine
+ * ({@link BusinessMetricsRegistry}) yazar; yalnız taşıyıcı belirteçli {@code /metrics/sitemonitor} ucu kazır
+ * ({@code MetricsExportController}) — kimliksiz {@code /metrics}'te iş verisi YOK. Belirteç ({@link MetricsExportToken})
+ * tanımlı değilse aktarıcı hiç koşmaz. Ad ve etiket kataloğu {@link MonitoringMetricNames}, hesap
+ * {@link MonitoringMetricsModel} (saf).
  *
  * <ul>
  *   <li><b>İstek yolunun dışında:</b> kendi tek daemon iş parçacığında, {@code refresh-seconds} (60 sn) aralıkla;
@@ -74,9 +77,11 @@ import java.util.function.Supplier;
  *   <li><b>Kardinalite:</b> izleme / sertifika / alan adı / alarm başına seriler {@code per-monitor} anahtarıyla kapanır;
  *       aile başına {@code max-entities} (5000) tavanı — aşılınca sorunlular korunur, kalanı düşer, saatte bir WARN ve
  *       {@code sitemonitor_exporter_capped{family}=1}.</li>
- *   <li><b>Gizlilik:</b> etiketlerde kişi verisi YOK (takım ve izleme adları, hedef host / URL — sorgudaki sır parametresi ve
- *       kullanıcı bilgisi maskelenir). {@code /metrics} kimliksizdir: Ingress'te engellenir, küme içinden kazınır
- *       (docs/RUNBOOK.md "/metrics erişimi").</li>
+ *   <li><b>Gizlilik:</b> etiketlerde kişi verisi YOK (takım ve izleme adları, hedef: şema + host + port + yol — sorgu,
+ *       parça ve kullanıcı bilgisi HİÇ yazılmaz). Belirteci bilen herkes bütün envanteri görür; Grafana takım kapsamı uygulamaz
+ *       (docs/RUNBOOK.md "Grafana panosu ve Prometheus").</li>
+ *   <li><b>Tazelik:</b> son tamamlanan tur {@code refresh-seconds}'ın 3 katından (en az 3 dk) eskiyse uç iş değerlerini
+ *       yayınlamaz ({@link #visibleNames()}) — takılmış iş parçacığının eski değerleri "güncel" görünmez.</li>
  * </ul>
  */
 @Slf4j
@@ -109,6 +114,10 @@ public class MonitoringMetricsExporter {
 
     private final MeterRegistry registry;
     private final AppSettingsService settings;
+    /** Belirteç tanımlı mı (açılışta sabit — ortam değişkeni çalışırken değişmez). */
+    private final boolean tokenConfigured;
+    /** Son TAMAMLANAN turun saati (epoch ms; 0 = hiç). */
+    private volatile long lastCompletedMs;
     private final Map<String, MultiGauge> gauges = new LinkedHashMap<>();
 
     private MonitoringOverviewService overview;
@@ -137,12 +146,29 @@ public class MonitoringMetricsExporter {
                          Map<String, Integer> entities, Map<String, Boolean> sources, List<String> capped,
                          int refreshSeconds, int maxEntities) {}
 
-    public MonitoringMetricsExporter(MeterRegistry registry, AppSettingsService settings) {
+    /** Spring: iş kayıt defteri + belirteç. Küresel (kimliksiz {@code /metrics}) kayıt defterine HİÇBİR şey yazılmaz. */
+    @Autowired
+    public MonitoringMetricsExporter(BusinessMetricsRegistry business, AppSettingsService settings, MetricsExportToken token) {
+        this(business.meters(), settings, token != null && token.configured());
+    }
+
+    /** Testler: belirteç tanımlıymış gibi. */
+    MonitoringMetricsExporter(MeterRegistry registry, AppSettingsService settings) {
+        this(registry, settings, true);
+    }
+
+    MonitoringMetricsExporter(MeterRegistry registry, AppSettingsService settings, boolean tokenConfigured) {
         this.registry = registry;
         this.settings = settings;
+        this.tokenConfigured = tokenConfigured;
         for (MonitoringMetricNames.Def d : MonitoringMetricNames.ALL) {
             gauges.put(d.name(), MultiGauge.builder(d.name()).description(d.help()).register(registry));
         }
+    }
+
+    /** Belirteç tanımlı mı (yoksa aktarıcı koşmaz, uç 404). */
+    public boolean tokenConfigured() {
+        return tokenConfigured;
     }
 
     @Autowired(required = false) @Lazy public void setOverview(MonitoringOverviewService v) { this.overview = v; }
@@ -168,6 +194,12 @@ public class MonitoringMetricsExporter {
     @EventListener(ApplicationReadyEvent.class)
     public void start() {
         if (executor != null) return;
+        if (!tokenConfigured) {
+            // Belirteç yok → iş ölçümleri yayınlanamaz; okuma yükü de olmasın (iş parçacığı hiç başlamaz)
+            log.info("İş ölçümleri aktarıcısı kapalı: {} tanımlı değil (ya da kısa) — /metrics/sitemonitor 404 döner.",
+                    MetricsExportToken.ENV);
+            return;
+        }
         executor = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "metrics-exporter");
             t.setDaemon(true);
@@ -203,7 +235,7 @@ public class MonitoringMetricsExporter {
     public synchronized Status refresh() {
         long t0 = System.nanoTime();
         Instant now = clock.get();
-        boolean enabled = MetricsExportSettings.enabled(settings);
+        boolean enabled = tokenConfigured && MetricsExportSettings.enabled(settings);
         boolean perEntity = MetricsExportSettings.perMonitor(settings);
         int maxEntities = MetricsExportSettings.maxEntities(settings);
         Families f = new Families();
@@ -243,7 +275,28 @@ public class MonitoringMetricsExporter {
         Status s = new Status(enabled, perEntity, ISO.format(now), durationMs, total, entities, sources,
                 List.copyOf(f.capped().keySet()), MetricsExportSettings.refreshSeconds(settings), maxEntities);
         lastStatus = s;
+        lastCompletedMs = clock.get().toEpochMilli();
         return s;
+    }
+
+    /** Bayatlık eşiği (ms): {@code refresh-seconds}'ın 3 katı, en az 3 dk. */
+    long staleAfterMs() {
+        return Math.max(180L, 3L * MetricsExportSettings.refreshSeconds(settings)) * 1000L;
+    }
+
+    /** Son tamamlanan tur eşikten yeni mi (hiç tur yoksa false). */
+    public boolean fresh() {
+        long last = lastCompletedMs;
+        return last > 0 && clock.get().toEpochMilli() - last <= staleAfterMs();
+    }
+
+    /**
+     * Kazımada yayınlanacak aileler: tazeyse {@code null} (hepsi); bayatsa yalnız {@link MonitoringMetricNames#STALE_VISIBLE}
+     * (aktarıcının açık / son tur / süre ölçümleri). Böylece takılmış bir iş parçacığının eski iş değerleri ve
+     * {@code source_up=1} kazınmaz; panoda iş panelleri "veri yok", tazelik şeridi "bayat" gösterir.
+     */
+    public java.util.Set<String> visibleNames() {
+        return fresh() ? null : MonitoringMetricNames.STALE_VISIBLE;
     }
 
     /** Son turun özeti; hiç tur koşmadıysa null. */

@@ -85,7 +85,7 @@ class GrafanaDashboardSettingsTest {
         assertThat(d.uid()).isEqualTo("sitemonitor-overview");
         assertThat(d.sections()).isEqualTo(GrafanaDashboardGenerator.SECTIONS);
         assertThat(d.linkBaseUrl()).isEmpty();
-        assertThat(d.perMonitor()).isTrue();
+        assertThat(d.perMonitor()).as("izleme başına varsayılan KAPALI (2026-10-18)").isFalse();
         assertThat(d.topN()).isEqualTo(10);
         stored.put(GrafanaDashboardSettings.KEY_APP_BASE_URL, "https://sm.example.org/");
         stored.put(GrafanaDashboardSettings.KEY_UID, "bad uid");
