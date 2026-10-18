@@ -987,7 +987,7 @@ class TechErrorReminderServiceTest {
 
     @Test
     @SuppressWarnings("unchecked")
-    @DisplayName("onay hatırlatması push'u: aynı talep / pencere, tüm PO'lar (e-postasız dahil, isteyen hariç); posta BAŞARISIZ ama push ulaştı → talep harcanır (ertesi gün yeniden YOK); ikisi de ulaşmadı → bırakılır; kapalı anahtar → push yok, posta sürer")
+    @DisplayName("onay hatırlatması push'u: aynı talep / pencere, tüm PO'lar (e-postasız dahil, isteyen hariç); posta BAŞARISIZ ama push HER PO'ya ulaştı → talep harcanır (ertesi gün yeniden YOK); ikisi de ulaşmadı → bırakılır; kapalı anahtar → push yok, posta sürer")
     void approvalReminderPushCountsAsDelivered() {
         TechErrorPushService pushes = new TechErrorPushService(appSettings, users);
         pushes.setPush(push);
@@ -1040,5 +1040,52 @@ class TechErrorReminderServiceTest {
         verify(push, never()).enqueueDirectLocalized(any(), any(), anyString(), anyString(), anyString(), anyString(), any(), anyString());
         assertThat(noMail.getId()).isNotNull();
         job.setPushes(null);
+    }
+
+    @Test
+    @DisplayName("inceleme 2026-10-18: onay hatırlatmasında karar PO BAŞINA — postası ya da push'u ulaşan PO ulaşılmış; postası BAŞARISIZ ve push'u olmayan tek PO bile varsa talep bırakılır (ertesi gün yeniden), başka bir PO'ya giden push bunu örtmez; posta SKIPPED (kapalı / pasif) o PO için son karar")
+    void approvalReminderDecidesPerPo() {
+        TechErrorPushService pushes = new TechErrorPushService(appSettings, users);
+        pushes.setPush(push);
+        pushes.setVisibility(visibility);
+        job.setPushes(pushes);
+        AppUser noMail = user("po3", "PO Üç", null, "PO", dijital.getId());
+        pendingSince(OCT5.minus(Duration.ofDays(3)));
+        // po1 postayla ulaşıldı, po2'nin postası BAŞARISIZ; push yalnız e-postası olmayan po3'e kuyruklandı
+        when(email.sendHtml(any(String[].class), any(), anyString(), anyString(), any(), any(), anyBoolean(), any()))
+                .thenAnswer(inv -> ((String[]) inv.getArgument(0))[0].startsWith("po2") ? "FAILED: 550" : "SENT");
+        when(push.enqueueDirectLocalized(any(), any(), anyString(), anyString(), anyString(), anyString(), any(), anyString()))
+                .thenReturn(Map.of("queued", 1, "queued_usernames", List.of("po3")));
+        TechErrorReminderService.Result res = job.run();
+        assertThat(res.approvalReports()).isEqualTo(1);                       // bazı PO'lara ulaştı
+        assertThat(reminders.findAll()).singleElement()
+                .satisfies(rm -> assertThat(rm.getLastSentOn()).as("po2'ye ulaşılmadı → talep bırakıldı").isNull());
+        assertThat(rows(TechErrorReminderService.TRIGGER_APPROVAL)).hasSize(2)
+                .allSatisfy(n -> assertThat(n.getMessage()).endsWith(" · push 1"));
+
+        // Ertesi gün: po2'nin postası yine BAŞARISIZ ama push'u bu kez kuyrukta → her PO'ya ulaşıldı, talep harcanır
+        at(OCT5.plus(Duration.ofDays(1)));
+        when(push.enqueueDirectLocalized(any(), any(), anyString(), anyString(), anyString(), anyString(), any(), anyString()))
+                .thenReturn(Map.of("queued", 2, "queued_usernames", List.of("po2", "po3")));
+        assertThat(job.run().approvalReports()).isEqualTo(1);
+        assertThat(reminders.findAll()).singleElement().satisfies(rm -> assertThat(rm.getLastSentOn()).isEqualTo("2026-10-06"));
+
+        // Postası SKIPPED (kanal kapalı / pasif adres) ve push'u olmayan PO: o PO için son karar — talep bırakılmaz
+        reminders.deleteAll();
+        when(email.sendHtml(any(String[].class), any(), anyString(), anyString(), any(), any(), anyBoolean(), any()))
+                .thenAnswer(inv -> ((String[]) inv.getArgument(0))[0].startsWith("po2") ? "SKIPPED: e-posta kapalı" : "SENT");
+        when(push.enqueueDirectLocalized(any(), any(), anyString(), anyString(), anyString(), anyString(), any(), anyString()))
+                .thenReturn(Map.of("queued", 0, "queued_usernames", List.of()));
+        assertThat(job.run().approvalReports()).isEqualTo(1);
+        assertThat(reminders.findAll()).singleElement().satisfies(rm -> assertThat(rm.getLastSentOn()).isEqualTo("2026-10-06"));
+
+        // Push hiç yokken de aynı kural: bir PO'nun postası BAŞARISIZ → bırakılır (eskiden başka bir PO'ya ulaşmak yetiyordu)
+        reminders.deleteAll();
+        job.setPushes(null);
+        when(email.sendHtml(any(String[].class), any(), anyString(), anyString(), any(), any(), anyBoolean(), any()))
+                .thenAnswer(inv -> ((String[]) inv.getArgument(0))[0].startsWith("po2") ? "FAILED: 550" : "SENT");
+        assertThat(job.run().approvalReports()).isEqualTo(1);
+        assertThat(reminders.findAll()).singleElement().satisfies(rm -> assertThat(rm.getLastSentOn()).isNull());
+        assertThat(noMail.getId()).isNotNull();
     }
 }

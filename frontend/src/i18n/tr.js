@@ -1660,6 +1660,11 @@ export const TR = {
   'userpush.type.page': 'Sayfa',
   'userpush.type.scripted': 'Sentetik',
   'userpush.type.pagespeed': 'Sayfa Hızı',
+  // Aile olmayan push türleri (2026-10-18) — utils/pushPrefs.js PUSH_TYPE_ALIASES; ham tür asla gösterilmez
+  'userpush.type.channel_reports': 'Kanal teknik hata raporları',
+  'userpush.type.weekly_report': 'Haftalık rapor',
+  'userpush.type.storm': 'Alarm fırtınası',
+  'userpush.type.other': 'Diğer bildirim',
   'userpush.quietTitle': 'Sessiz Saatler ve Tekrarlar',
   'userpush.quietDesc': 'Pencere içinde yalnız seçilen seviye ve üstü push gönderilir; boş bırakılırsa pencere yok.',
   'userpush.quietStart': 'Başlangıç',

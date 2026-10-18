@@ -677,9 +677,11 @@ public class TechErrorReminderService {
                 for (TechErrorApprovalService.Approver a : all) if (a.email() != null) apps.add(a);
                 String requester = service.displayName(r.getApprovalRequestedById());
                 long waiting = waitingDays(r.getApprovalRequestedAt(), today);
-                // Push (2026-10-18): aynı talep / pencere, TÜM onaylayıcılar (e-postası olmayanlar dahil, isteyen hariç). Yalnız
-                // push'la ulaşan hatırlatma da ulaşmış sayılır (dönem hatırlatmasıyla aynı kural): talep bırakılmaz
-                int pushed = approvalPush(r, ch, all, requester, waiting, todayStr);
+                // Push (2026-10-18): aynı talep / pencere, TÜM onaylayıcılar (e-postası olmayanlar dahil, isteyen hariç). Karar PO
+                // BAŞINA (inceleme 2026-10-18): postası ya da push'u ulaşan PO ulaşılmış sayılır — bir PO'ya giden push, postası
+                // başarısız olan BAŞKA bir PO'nun ertesi gün yeniden denenmesini engellemez
+                Set<Long> pushedTo = approvalPush(r, ch, all, requester, waiting, todayStr);
+                int pushed = pushedTo.size();
                 String pushNote = pushed > 0 ? " · push " + pushed : "";
                 if (apps.isEmpty()) {
                     saveLogFor(r.getChannelId(), r.getId(), TRIGGER_APPROVAL, team.getName(), List.of(), "PO", subject, ST_NO_APPROVER_EMAIL,
@@ -691,7 +693,7 @@ public class TechErrorReminderService {
                 Links links = links(r, now);
                 Map<Long, Instant> linkUntil = links.live();
                 String url = TechErrorApprovalMail.reportUrl(base, ch.getId(), r.getId());
-                int reached = 0, finalSkips = 0;
+                int reached = 0, missed = 0;
                 for (TechErrorApprovalService.Approver a : apps) {
                     String status;
                     try {
@@ -703,16 +705,18 @@ public class TechErrorReminderService {
                         status = "FAILED: " + clip(e.getClass().getSimpleName(), 120);
                         log.warn("Onay hatırlatması gönderilemedi (rapor {}): {}", r.getId(), e.toString());
                     }
-                    if (status.startsWith("SENT") || status.startsWith("QUEUED")) reached++;
-                    else if (status.startsWith("SKIPPED")) finalSkips++;   // posta kapalı / pasif: son karar, her gün denenmez
+                    boolean mailed = status.startsWith("SENT") || status.startsWith("QUEUED");
+                    if (mailed || pushedTo.contains(a.id())) reached++;
+                    else if (!status.startsWith("SKIPPED")) missed++;      // posta BAŞARISIZ ve push'u da yok → ertesi gün yeniden
+                    // (SKIPPED: posta kapalı / pasif — o PO için son karar, her gün denenmez)
                     saveLogFor(r.getChannelId(), r.getId(), TRIGGER_APPROVAL, a.name() + " · " + team.getName(), List.of(a.email()), "PO", subject, status,
                             withNote(title, pushNote));
                 }
                 if (reached > 0 || pushed > 0) counts[2]++;
-                else {
-                    counts[3]++;
-                    if (finalSkips == 0) release(c);                       // hiçbir PO'ya ulaşmadı (FAILED, push yok) → ertesi gün yeniden
-                }
+                else counts[3]++;
+                // Ulaşılamayan bir PO bile varsa talep bırakılır: ertesi gün hatırlatma YENİDEN denenir (posta ve push herkese
+                // yeniden gider — PO başına bellek yok; bir hatırlatmanın tekrarı, kaçan bir hatırlatmadan iyidir)
+                if (missed > 0) release(c);
             } catch (RuntimeException e) {
                 // Beklenmeyen hata bir raporda kalır: talep bırakılır, iz FAILED — ertesi gün yeniden
                 log.warn("Onay hatırlatması rapor {} için yarıda kaldı: {}", r.getId(), e.toString(), e);
@@ -723,18 +727,19 @@ public class TechErrorReminderService {
         }
     }
 
-    /** Onay hatırlatmasının push'u: kuyruğa alınan sayı (push yok / kapalı / hata = 0 — talep kararı buna göre). */
-    private int approvalPush(TechErrorReportRepository.Row r, TechErrorChannel ch, List<TechErrorApprovalService.Approver> all,
-                             String requester, long waiting, String todayStr) {
+    /** Onay hatırlatmasının push'u: push'u kuyruğa alınan PO'ların kimlikleri (push yok / kapalı / hata = boş — talep kararı buna göre). */
+    private Set<Long> approvalPush(TechErrorReportRepository.Row r, TechErrorChannel ch, List<TechErrorApprovalService.Approver> all,
+                                   String requester, long waiting, String todayStr) {
         TechErrorPushService p = pushes;
-        if (p == null) return 0;
+        if (p == null) return Set.of();
         try {
             TechErrorPushService.Ctx ctx = new TechErrorPushService.Ctx(r.getId(), r.getTeamId(), ch.getName(),
                     r.getReportYear() == null ? 0 : r.getReportYear(), r.getReportMonth() == null ? 0 : r.getReportMonth());
-            return p.approvalReminder(ctx, all, r.getApprovalRequestedById(), requester, waiting, r.getApprovalRequestedAt(), todayStr);
+            Set<Long> ids = p.approvalReminder(ctx, all, r.getApprovalRequestedById(), requester, waiting, r.getApprovalRequestedAt(), todayStr);
+            return ids == null ? Set.of() : ids;
         } catch (RuntimeException e) {
             log.warn("Onay hatırlatması push'u kuyruğa alınamadı (rapor {}): {}", r.getId(), e.toString());
-            return 0;
+            return Set.of();
         }
     }
 

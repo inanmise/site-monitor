@@ -1004,7 +1004,7 @@ public class UserPushService {
     public Map<String, Object> enqueueDirectLocalized(List<DirectRecipient> recipients, Long teamId, String trigger, String alertLevel,
                                                       String monitorType, String monitorName, LocalizedText message, String dedupeKey) {
         Map<String, Object> out = new LinkedHashMap<>();
-        out.put("queued", 0); out.put("skipped", 0); out.put("recipients", List.of());
+        out.put("queued", 0); out.put("skipped", 0); out.put("recipients", List.of()); out.put("queued_usernames", List.of());
         if (!enabled()) { out.put("reason", "SKIPPED_DISABLED"); return out; }
         if (recipients == null || recipients.isEmpty()) { out.put("reason", "SKIPPED_NO_RECIPIENTS"); return out; }
         String batchId = UUID.randomUUID().toString().substring(0, 8);
@@ -1015,6 +1015,7 @@ public class UserPushService {
         List<String> names = new ArrayList<>();
         java.util.Set<String> seen = new java.util.HashSet<>();
         List<String> usernames = new ArrayList<>();
+        List<String> queuedUsernames = new ArrayList<>();
         for (DirectRecipient r : recipients) {
             String u = r.username() == null ? "" : r.username().trim();
             if (u.isEmpty() || !seen.add(u)) { skipped++; continue; }
@@ -1041,13 +1042,16 @@ public class UserPushService {
             d.setBatchId(batchIdFor(batchId, lang));
             d.setPushLang(lang);
             try { deliveryRepo.save(d); } catch (Exception dup) { skipped++; continue; }
-            if ("PENDING".equals(status)) { queued++; names.add(d.getDisplayName()); }
+            if ("PENDING".equals(status)) { queued++; names.add(d.getDisplayName()); queuedUsernames.add(u); }
             else skipped++;
             usernames.add(u);
         }
         if (queued > 0) worker.execute(this::drainOutbox);
         out.put("queued", queued); out.put("skipped", skipped); out.put("recipients", names); out.put("batch_id", batchId);
         out.put("usernames", usernames);   // çağıran, aynı olayın takım bildiriminden bu kişileri düşer
+        // Kuyruğa GİREN kişiler (2026-10-18): çağıran kişi başına "push ulaştı" kararı verir (teknik hata raporu onay
+        // hatırlatması — talep PO başına; satırı atlanan / tekrar sayılan kişi ulaşmış sayılmaz)
+        out.put("queued_usernames", queuedUsernames);
         return out;
     }
 

@@ -5,7 +5,7 @@ import UserBadge from '../../ui/UserBadge.jsx'
 import SimpleTooltip from '../../ui/SimpleTooltip.jsx'
 import { SortHead, KindBadge, TriggerBadge, LevelBadge, TypeBadge, ErrorClassBadge, MUTED_SM } from '../LogViewParts.jsx'
 import { STATUS_META, triggerLabel, statusLabel, retryable } from './pushLogModel.js'
-import { pushReasonLabel } from '../../../utils/pushPrefs.js'
+import { pushReasonLabel, familyLabel } from '../../../utils/pushPrefs.js'
 import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
 import { TableBody, TableCell, TableHead, TableHeader, TableRow, Table } from '@/components/shadcn/table'
@@ -50,6 +50,8 @@ export function PushRowLinks({ row, t }) {
 
 const TD = 'px-2 py-2 align-top'
 const monitorOf = (row) => row.monitor_name || row.title || '—'
+/** Tür rozeti metni: etiket (ham tür ASLA — 2026-10-18), tür yoksa "—". Detay ve kırılım paneli de bunu kullanır. */
+export const typeText = (row, t) => (row?.monitor_type ? familyLabel(row.monitor_type, t) : '—')
 const actionName = (row, t, what) => t('a11y.rowAction', `${monitorOf(row)} · ${formatDate(row.at)}`, what)
 
 function RowActions({ row, t, canRequeue, busy, onOpen, onRequeue }) {
@@ -98,7 +100,7 @@ export function PushLogTable({ rows, t, sort, onSort, canRequeue, busy, onOpen, 
             <TableCell className={cn(TD, 'font-mono whitespace-nowrap text-muted-foreground')}>{formatDate(row.at)}</TableCell>
             <TableCell className={cn(TD, 'hidden overflow-hidden @5xl/pl:table-cell')} title={row.team_name || ''}>{row.team_name ? <span className="flex min-w-0" data-row-stop="" onClick={(e) => e.stopPropagation()}><TeamBadge teamId={row.team_id} teamName={row.team_name} className="max-w-full min-w-0" /></span> : <span className="text-muted-foreground">—</span>}</TableCell>
             <TableCell className={cn(TD, 'overflow-hidden')} title={row.display_name || row.username || ''}><span className="flex min-w-0 overflow-hidden" data-row-stop="" onClick={(e) => e.stopPropagation()}><UserBadge username={row.username} displayName={row.display_name} inline size="sm" /></span></TableCell>
-            <TableCell className={cn(TD, 'truncate')} title={[row.monitor_name, row.title].filter(Boolean).join(' · ')}><TypeBadge>{row.monitor_type || '—'}</TypeBadge> <span>{monitorOf(row)}</span></TableCell>
+            <TableCell className={cn(TD, 'truncate')} title={[row.monitor_name, row.title].filter(Boolean).join(' · ')}><TypeBadge>{typeText(row, t)}</TypeBadge> <span>{monitorOf(row)}</span></TableCell>
             <TableCell className={cn(TD, 'hidden @4xl/pl:table-cell')}>{row.alert_level ? <LevelBadge level={row.alert_level} /> : '—'}</TableCell>
             <TableCell className={cn(TD, 'hidden @6xl/pl:table-cell')}><TriggerBadge trigger={row.trigger}>{triggerLabel(row.trigger, t)}</TriggerBadge></TableCell>
             <TableCell className={cn(TD, 'overflow-hidden')}><PushStatusBadge row={row} t={t} />{row.error_class && <ErrorClassBadge>{t(`pl.cls.${row.error_class}`)}</ErrorClassBadge>}</TableCell>
@@ -127,7 +129,7 @@ export function PushLogCards({ rows, t, canRequeue, busy, onOpen, onRequeue }) {
               className="h-auto min-h-12 min-w-0 flex-1 flex-col items-stretch gap-1 px-1.5 py-1 text-left font-normal whitespace-normal">
               <span className="flex min-w-0 items-center justify-between gap-2">
                 <span className="flex min-w-0 items-center gap-1.5">
-                  <TypeBadge>{row.monitor_type || '—'}</TypeBadge>
+                  <TypeBadge>{typeText(row, t)}</TypeBadge>
                   <span className="min-w-0 truncate text-sm font-semibold">{monitorOf(row)}</span>
                 </span>
                 <KindBadge tone={m.tone} icon={m.Icon} title={row.status || ''}>{statusLabel(row.kind, t)}</KindBadge>

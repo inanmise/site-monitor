@@ -1474,8 +1474,8 @@ class TechErrorReportServiceTest {
             reports.finishQueued(r2.getId(), claim, "QUEUED_RETRY: 421", claim, log2, 8L, "a@b.com", 0L);
             setLogStatus(log2, "FAILED: 550");
             assertThat(service.reconcileQueued(List.of(ch.getId()))).isEqualTo(1);
-            org.mockito.Mockito.verify(pushes).sendFailed(org.mockito.ArgumentMatchers.argThat(c -> r2.getId().equals(c.reportId())),
-                    org.mockito.ArgumentMatchers.eq(false), org.mockito.ArgumentMatchers.eq(8L),
+            org.mockito.Mockito.verify(pushes).sendFailedTo(org.mockito.ArgumentMatchers.argThat(c -> r2.getId().equals(c.reportId())),
+                    org.mockito.ArgumentMatchers.eq(false), org.mockito.ArgumentMatchers.eq(List.of(8L)),
                     org.mockito.ArgumentMatchers.eq(TechErrorPushService.Failure.QUEUE_FAILED), org.mockito.ArgumentMatchers.isNull(),
                     org.mockito.ArgumentMatchers.eq(claim));
             // Push hatası sonuçlandırmayı bozmaz
@@ -1489,6 +1489,63 @@ class TechErrorReportServiceTest {
                     org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
             assertThat(service.reconcileQueued(List.of(ch.getId()))).isEqualTo(1);
             assertThat(reports.findById(r3.getId()).orElseThrow().getSendState()).isEqualTo("SENT");
+        } finally {
+            service.setPushes(null);
+        }
+    }
+
+    @Test
+    @DisplayName("inceleme 2026-10-18: onaydan sonra kuyruğa giren YÖNETİCİ gönderimi kuyrukta BAŞARISIZ → gönderen PO + onaya gönderen kişi (aynı kişiyse bir kez), takım adresine kuyrukta yalnız gönderen; talep anı sonuçlandırma işleminde okunan satırdan")
+    void queuedExecutiveFailureAlsoTellsTheRequester() {
+        TechErrorPushService pushes = org.mockito.Mockito.mock(TechErrorPushService.class);
+        service.setPushes(pushes);
+        try {
+            TechErrorChannel ch = channel(1, "POS");
+            Instant claim = Instant.parse("2026-10-13T08:59:00Z");
+            // a) onaya gönderen 9, onaylayıp gönderen (kuyruğa alan) 8 → ikisi
+            TechErrorReport r = service.createReport(ch, 2026, 9, 7L);
+            assertThat(reports.requestApproval(r.getId(), 0L, claim.minusSeconds(3600), 9L, claim.minusSeconds(4000))).isEqualTo(1);
+            reports.claimSend(r.getId(), claim, claim.minusSeconds(600));
+            Long logId = logRow("QUEUED_RETRY: 421");
+            com.sitemonitor.model.NotificationLog n = logs.findById(logId).orElseThrow();
+            n.setRecipientRole("EXECUTIVE");
+            logs.save(n);
+            reports.finishQueued(r.getId(), claim, "QUEUED_RETRY: 421", claim, logId, 8L, "ceo@b.com", 0L);
+            setLogStatus(logId, "FAILED: 550");
+            assertThat(service.reconcileQueued(List.of(ch.getId()))).isEqualTo(1);
+            org.mockito.Mockito.verify(pushes).sendFailedTo(org.mockito.ArgumentMatchers.argThat(c -> r.getId().equals(c.reportId())
+                            && "POS".equals(c.channelName()) && c.year() == 2026 && c.month() == 9),
+                    org.mockito.ArgumentMatchers.eq(true), org.mockito.ArgumentMatchers.eq(List.of(8L, 9L)),
+                    org.mockito.ArgumentMatchers.eq(TechErrorPushService.Failure.QUEUE_FAILED), org.mockito.ArgumentMatchers.isNull(),
+                    org.mockito.ArgumentMatchers.eq(claim));
+
+            // b) onaya gönderen = kuyruğa alan → tek kişi
+            TechErrorReport r2 = service.createReport(ch, 2026, 8, 7L);
+            assertThat(reports.requestApproval(r2.getId(), 0L, claim.minusSeconds(3600), 8L, claim.minusSeconds(4000))).isEqualTo(1);
+            reports.claimSend(r2.getId(), claim, claim.minusSeconds(600));
+            Long log2 = logRow("QUEUED_RETRY: 421");
+            com.sitemonitor.model.NotificationLog n2 = logs.findById(log2).orElseThrow();
+            n2.setRecipientRole("EXECUTIVE");
+            logs.save(n2);
+            reports.finishQueued(r2.getId(), claim, "QUEUED_RETRY: 421", claim, log2, 8L, "ceo@b.com", 0L);
+            setLogStatus(log2, "FAILED: 550");
+            assertThat(service.reconcileQueued(List.of(ch.getId()))).isEqualTo(1);
+            org.mockito.Mockito.verify(pushes).sendFailedTo(org.mockito.ArgumentMatchers.argThat(c -> r2.getId().equals(c.reportId())),
+                    org.mockito.ArgumentMatchers.eq(true), org.mockito.ArgumentMatchers.eq(List.of(8L)),
+                    org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.eq(claim));
+
+            // c) takım adresine (TEAM) kuyruk başarısızlığı: onaya gönderen eklenmez
+            TechErrorReport r3 = service.createReport(ch, 2026, 7, 7L);
+            assertThat(reports.requestApproval(r3.getId(), 0L, claim.minusSeconds(3600), 9L, claim.minusSeconds(4000))).isEqualTo(1);
+            reports.claimSend(r3.getId(), claim, claim.minusSeconds(600));
+            Long log3 = logRow("QUEUED_RETRY: 421");
+            reports.finishQueued(r3.getId(), claim, "QUEUED_RETRY: 421", claim, log3, 8L, "a@b.com", 0L);
+            setLogStatus(log3, "FAILED: 550");
+            assertThat(service.reconcileQueued(List.of(ch.getId()))).isEqualTo(1);
+            org.mockito.Mockito.verify(pushes).sendFailedTo(org.mockito.ArgumentMatchers.argThat(c -> r3.getId().equals(c.reportId())),
+                    org.mockito.ArgumentMatchers.eq(false), org.mockito.ArgumentMatchers.eq(List.of(8L)),
+                    org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.eq(claim));
+            org.mockito.Mockito.verifyNoMoreInteractions(pushes);
         } finally {
             service.setPushes(null);
         }

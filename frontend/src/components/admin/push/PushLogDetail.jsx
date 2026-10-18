@@ -7,7 +7,7 @@ import AlertBanner from '../../ui/AlertBanner.jsx'
 import { LoadingBlock } from '../../ui/Progress.jsx'
 import { useToast } from '../../ui/Toast.jsx'
 import { TriggerBadge, LevelBadge, TypeBadge, ErrorClassBadge, ChainList, MUTED_SM } from '../LogViewParts.jsx'
-import { PushStatusBadge, PushRowLinks } from './PushLogRows.jsx'
+import { PushStatusBadge, PushRowLinks, typeText } from './PushLogRows.jsx'
 import { triggerLabel, retryable, gapMs } from './pushLogModel.js'
 import { pushReasonLabel } from '../../../utils/pushPrefs.js'
 import { Badge } from '@/components/shadcn/badge'
@@ -202,7 +202,7 @@ export default function PushLogDetail({ open, detail, t, onClose, onPick, ids = 
                     {d.team_name && <TeamBadge teamId={d.team_id} teamName={d.team_name} />}
                   </Field>
                   <Field label={t('pl.colMonitor')}>
-                    <TypeBadge>{d.monitor_type || '—'}</TypeBadge><span className="min-w-0 break-words">{d.monitor_name || '—'}</span>
+                    <TypeBadge>{typeText(d, t)}</TypeBadge><span className="min-w-0 break-words">{d.monitor_name || '—'}</span>
                     {d.alert_level && <LevelBadge level={d.alert_level} />}
                   </Field>
                   <Field label={t('pl.colTitle')}><span className="font-semibold break-words">{d.title || '—'}</span></Field>
@@ -235,7 +235,7 @@ export default function PushLogDetail({ open, detail, t, onClose, onPick, ids = 
                   <h4 className="m-0 text-xs font-semibold tracking-wide text-muted-foreground uppercase">{t('pl.summarizedTitle', d.summarized.length)}</h4>
                   <ChainList items={d.summarized} currentId={d.id} onPick={onPick} render={(c) => (
                     <>
-                      <TypeBadge>{c.monitor_type || '—'}</TypeBadge>
+                      <TypeBadge>{typeText(c, t)}</TypeBadge>
                       <span className="min-w-0 truncate">{c.monitor_name || '—'}</span>
                       {c.alert_level && <LevelBadge level={c.alert_level} />}
                       <span className={MUTED_SM}>{formatDate(c.created_at || c.at)}</span>

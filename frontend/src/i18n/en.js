@@ -1659,6 +1659,11 @@ export const EN = {
   'userpush.type.page': 'Page',
   'userpush.type.scripted': 'Synthetic',
   'userpush.type.pagespeed': 'Page Speed',
+  // Non-family push types (2026-10-18) — utils/pushPrefs.js PUSH_TYPE_ALIASES; a raw type is never shown
+  'userpush.type.channel_reports': 'Channel technical error reports',
+  'userpush.type.weekly_report': 'Weekly report',
+  'userpush.type.storm': 'Alert storm',
+  'userpush.type.other': 'Other notification',
   'userpush.quietTitle': 'Quiet Hours and Repeats',
   'userpush.quietDesc': 'Inside the window only the selected level and above is pushed; leave empty for no window.',
   'userpush.quietStart': 'Start',

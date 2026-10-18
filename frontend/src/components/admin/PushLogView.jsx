@@ -29,7 +29,7 @@ import { ToolbarSearch } from './ListToolbar.jsx'
 import { LogHeader, RangeControl, FilterChip, LevelBadge, TypeBadge } from './LogViewParts.jsx'
 import PushHealthCard from './push/PushHealthCard.jsx'
 import PushLogDetail from './push/PushLogDetail.jsx'
-import { PushLogTable, PushLogCards, PushStatusBadge } from './push/PushLogRows.jsx'
+import { PushLogTable, PushLogCards, PushStatusBadge, typeText } from './push/PushLogRows.jsx'
 import {
   RANGES, STATUSES, TRIGGERS, LEVELS, ERROR_CLASSES, SORT_FIELDS, REFRESH_MS, DEFAULT_SORT, EMPTY_FILTERS, SERIES_COLORS,
   triggerLabel, statusLabel, toIso, fromIso, rangeFrom, readInitial,
@@ -396,7 +396,7 @@ export default function PushLogView({ onBack, initial }) {
               </TabsContent>
               <TabsContent value="monitor" className="pt-1.5">
                 <PushBreakdownPanel bare title={t('pl.topMonitors')} rows={summary?.top_monitors || []} keyOf={(x) => `${x.monitor_type}:${x.monitor_name}`} status={f.status} onFilter={applyBreakdown}
-                  label={(x) => <span className="flex min-w-0 items-center gap-2"><TypeBadge>{x.monitor_type}</TypeBadge><span className="truncate" title={x.monitor_name || ''}>{x.monitor_name}</span></span>}
+                  label={(x) => <span className="flex min-w-0 items-center gap-2"><TypeBadge>{typeText(x, t)}</TypeBadge><span className="truncate" title={x.monitor_name || ''}>{x.monitor_name}</span></span>}
                   dim={(x) => ({ q: x.monitor_name || '' })} isDimActive={(x) => !!x.monitor_name && f.q === x.monitor_name} />
               </TabsContent>
               <TabsContent value="level" className="pt-1.5">

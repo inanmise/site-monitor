@@ -1147,6 +1147,10 @@ class UserPushServiceTest {
         Map<String, Object> out = service.enqueueDirectLocalized(List.of(level, snoozedOptOut, plain), 5L, "TECH_ERROR_APPROVAL", "WARNING",
                 "TECH_ERROR_REPORT", "Mobil Eylül 2026", new UserPushService.LocalizedText("tr metin", "en text"), "te-appr:1:2");
         assertThat(out.get("queued")).isEqualTo(1);
+        // Kuyruğa GİREN kişiler (inceleme 2026-10-18: onay hatırlatması PO başına karar verir) — satırı atlanan yok
+        assertThat(out.get("queued_usernames")).isEqualTo(List.of("P00003"));
+        assertThat(out.get("usernames")).isEqualTo(List.of("P00001", "P00002", "P00003"));
+        assertThat(service.enqueueDirect(List.of(), 5L, "X", "WARNING", "X", "x", "y", null).get("queued_usernames")).isEqualTo(List.of());
         List<UserPushDelivery> rows = savedRows();
         assertThat(rows).extracting(UserPushDelivery::getStatus)
                 .containsExactly("SKIPPED_USER_LEVEL", "SKIPPED_USER_OPT_OUT", "PENDING");
