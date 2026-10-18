@@ -251,15 +251,20 @@ public final class GrafanaDashboardGenerator {
                     + metric(m, b.toArray(String[]::new)) + "))";
         }
 
-        /** Takım başına sayım: UG sahibi olduğu seriyi kendi adına da sayar (takım tablosu). */
-        String ownedPerTeam(String m, String labels, String... extra) {
+        /**
+         * Takım başına sayım: UG sahibi olduğu seriyi kendi adına da sayar (takım tablosu). UG tarafında SY etiketleri
+         * ({@code team}, {@code team_id}) ÖNCE {@code agg} ile toplanır ({@code sum} sayımda, {@code min} en eski zamanda):
+         * aynı UG takımına iki farklı SY'den gelen seriler label_replace sonrası aynı etiket kümesine düşer ve Prometheus
+         * "vector cannot contain metrics with the same labelset" hatası verirdi (panel boş kalırdı).
+         */
+        String ownedPerTeam(String m, String labels, String agg, String... extra) {
             List<String> a = new ArrayList<>(List.of(TEAM));
             a.addAll(Arrays.asList(extra));
             List<String> b = new ArrayList<>(List.of(UG, "ug_team!=\"\""));
             b.addAll(Arrays.asList(extra));
-            return "(max by (" + labels + ") (" + metric(m, a.toArray(String[]::new)) + ") or label_replace(label_replace(max by ("
-                    + labels + ") (" + metric(m, b.toArray(String[]::new)) + "), \"team\", \"$1\", \"ug_team\", \"(.+)\"), "
-                    + "\"team_id\", \"$1\", \"ug_team_id\", \"(.+)\"))";
+            return "(max by (" + labels + ") (" + metric(m, a.toArray(String[]::new)) + ") or label_replace(label_replace(" + agg
+                    + " without (team, team_id) (max by (" + labels + ") (" + metric(m, b.toArray(String[]::new)) + ")), "
+                    + "\"team\", \"$1\", \"ug_team\", \"(.+)\"), \"team_id\", \"$1\", \"ug_team_id\", \"(.+)\"))";
         }
 
         /**
@@ -269,6 +274,29 @@ public final class GrafanaDashboardGenerator {
         String guard(String expr, String source) {
             return "(" + expr + ") or (vector(0) and on() (max(" + p(MonitoringMetricNames.EXPORTER_SOURCE)
                     + sel("source=\"" + source + "\"") + ") == 1))";
+        }
+
+        /**
+         * İzleme sayıları: {@link #guard} + süzgece uyan bir tür HİÇBİR pod'da okunamadıysa "veri yok". Okunamayan türün
+         * satırları dışa verilmez; toplam yalnız diğer türlerden oluşur ve "tümü" gibi görünürdü (sahte düşük sayı / sahte
+         * yeşil). Aktarıcı her tür için {@code source="monitors:<tür>"} yazar (1 okundu, 0 okunamadı); pod'lardan biri okuduysa
+         * {@code max} 1'dir (izleme serileri pod'lar arası {@code max by} ile birleşir, o pod'un verisi tamdır).
+         */
+        String monitorGuard(String expr) {
+            return "(" + guard(expr, "overview") + ")" + unlessTypeUnreadable();
+        }
+
+        /**
+         * Lejantı / çubuğu tür kimliğiyle ({@code {{type}}} / {@code {{family}}}) adlanan panellerde okunur tür adı: değer
+         * eşlemesi (mappings) dizi ADINA uygulanmaz, ad başına {@code displayName} geçersiz kılması gerekir.
+         */
+        void typeNames(Panel pn) {
+            for (Map.Entry<String, String[]> e : TYPE_LABELS.entrySet()) pn.override(e.getKey(), "displayName", en ? e.getValue()[1] : e.getValue()[0]);
+        }
+
+        String unlessTypeUnreadable() {
+            return " unless on() (max by (source) (" + p(MonitoringMetricNames.EXPORTER_SOURCE)
+                    + sel("source=~\"monitors:$type\"") + ") == 0)";
         }
 
         // ── Yerleşim ─────────────────────────────────────────────────────────────────────────────────────
@@ -476,15 +504,23 @@ public final class GrafanaDashboardGenerator {
             builtIn.put("name", "Annotations & Alerts");
             builtIn.put("type", "dashboard");
             l.add(builtIn);
-            String deploy = "max by (version, commit, environment) (changes(sitemonitor_build_info" + sel() + "[10m])) > 0";
+            // Yeni sürüm = şu an görülen ama 5 dk önce görülmeyen build etiketi. changes() KULLANILMAZ: sabit 1 olan yeni
+            // doğmuş seride sonuç 0'dır (anotasyon hiç düşmezdi). 5 dk pencere uzun aralıkta Grafana'nın büyüttüğü adımdan
+            // (30 günde ≈ 4 dk) büyük — dağıtım iki örnek arasında kalıp kaçmaz; count by çoklu pod'u tek anotasyona indirir.
+            String deploy = "count by (version, commit, environment) (sitemonitor_build_info" + sel()
+                    + ") unless count by (version, commit, environment) (sitemonitor_build_info" + sel() + " offset 5m)";
             metrics.addAll(metricsIn(deploy));
             l.add(annotation(t("Sürüm dağıtımı", "Deployments"), "blue", deploy, "SiteMonitor {{version}}",
                     "{{version}} ({{commit}}) — {{environment}}", "version", true));
             if (o.perMonitor()) {
                 String a = metric(MonitoringMetricNames.ALERT_OPEN, TEAM, "level=~\"CRITICAL|HIGH\"");
                 String b = metric(MonitoringMetricNames.ALERT_OPEN, UG, "level=~\"CRITICAL|HIGH\"");
-                String opened = "(max by (" + APL + ") (" + a + ") or max by (" + APL + ") (" + b + ")) unless (max by (" + APL + ") ("
-                        + a + " offset 1m) or max by (" + APL + ") (" + b + " offset 1m))";
+                // "Açıldı" = bu alarm kimliği bu seviyede 1 dk önce YOKTU. Önceki seri SÜZGEÇSİZ okunur ve yalnız
+                // (alert_id, level) ile eşlenir: sahiplenme, takım taşıma ya da UG değişince seri yeniden doğar — anotasyon
+                // onu "yeni alarm" saymaz. Seviye yükselmesi (uyarı → kritik) yeni kritik alarm sayılır, bilinçli.
+                String an = "alert_id, family, alert_type, target, team, level";
+                String opened = "(max by (" + an + ") (" + a + ") or max by (" + an + ") (" + b + ")) unless on (alert_id, level) "
+                        + "(max by (alert_id, level) (" + metric(MonitoringMetricNames.ALERT_OPEN) + " offset 1m))";
                 metrics.addAll(metricsIn(opened));
                 l.add(annotation(t("Kritik / yüksek alarm açıldı", "Critical / high alert opened"), "red", opened,
                         "{{level}} · {{family}} · {{target}}", t("Takım: {{team}} · tür: {{alert_type}}", "Team: {{team}} · type: {{alert_type}}"),
@@ -761,32 +797,33 @@ public final class GrafanaDashboardGenerator {
             String active = "sum(" + agg(MonitoringMetricNames.MONITORS, MA, "state=~\"up|stale|down|unknown\"") + ")";
 
             add(stat(t("Etkin izleme", "Active monitors"), t("Süzgece uyan etkin izlemeler (duraklatılmışlar hariç).",
-                    "Active monitors matching the filter (paused excluded)."), guard(active, "overview"), "short",
+                    "Active monitors matching the filter (paused excluded)."), monitorGuard(active), "short",
                     thresholds(BLUE, null), "value", links() ? url("tab=monitoring") : null));
             add(stat(t("Sağlıklı", "Up"), t("Son kontrolü başarılı ve açık alarmı olmayan izlemeler.",
-                    "Monitors whose last check passed and have no open alert."), guard(up, "overview"), "short",
+                    "Monitors whose last check passed and have no open alert."), monitorGuard(up), "short",
                     thresholds(GREEN, null), "value", links() ? url("tab=monitoring&mo_status=up") : null));
             add(stat(t("Düşük", "Down"), t("Son kontrolü başarısız ya da açık alarmı olan izlemeler.",
-                    "Monitors whose last check failed or that have an open alert."), guard(down, "overview"), "short",
+                    "Monitors whose last check failed or that have an open alert."), monitorGuard(down), "short",
                     thresholds(GREEN, null, RED, 1), "background", links() ? url("tab=monitoring&mo_status=down") : null));
             add(stat(t("Gecikmiş", "Stale"), t("Kontrolü aralığının üç katından uzun süredir koşmamış izlemeler (tarama takılmış olabilir).",
-                    "Monitors not checked for more than three intervals (a sweep may be stuck)."), guard(stale, "overview"), "short",
+                    "Monitors not checked for more than three intervals (a sweep may be stuck)."), monitorGuard(stale), "short",
                     thresholds(GREEN, null, AMBER, 1), "background", links() ? url("tab=monitoring&mo_status=stale") : null));
             add(stat(t("Bilinmiyor", "Unknown"), t("Etkin ama hiç kontrol edilmemiş izlemeler.", "Active monitors never checked yet."),
-                    guard(unknown, "overview"), "short", thresholds(GREEN, null, GREY, 1), "background", null));
+                    monitorGuard(unknown), "short", thresholds(GREEN, null, GREY, 1), "background", null));
             add(stat(t("Duraklatılmış", "Paused"), t("Duraklatılmış izlemeler (envanterden çıkmış türev satırlar dahil).",
-                    "Paused monitors (incl. derived rows no longer in the inventory)."), guard(paused, "overview"), "short",
+                    "Paused monitors (incl. derived rows no longer in the inventory)."), monitorGuard(paused), "short",
                     thresholds(GREY, null), "value", null));
 
             String checks = "sum(" + agg(MonitoringMetricNames.MONITORS_CHECKS, MC) + ")";
             String failed = "sum(" + agg(MonitoringMetricNames.MONITORS_FAILED, MC) + ")";
             Panel sr = stat(t("24 sa başarı oranı", "24 h success rate"), t("Son 24 saatteki kontrollerin başarılı olan payı (koşum yoksa veri yok).",
                     "Share of checks that passed in the last 24 hours (no checks = no data)."),
-                    "1 - (" + failed + " / (" + checks + " > 0))", "percentunit", thresholds(RED, null, AMBER, 0.95, GREEN, 0.99), "value", null);
+                    "(1 - (" + failed + " / (" + checks + " > 0)))" + unlessTypeUnreadable(), "percentunit",
+                    thresholds(RED, null, AMBER, 0.95, GREEN, 0.99), "value", null);
             sr.decimals(2);
             add(sr);
             add(stat(t("24 sa kontrol", "Checks (24 h)"), t("Son 24 saatte koşan izleme kontrolleri (sertifika taraması hariç).",
-                    "Monitor checks run in the last 24 hours (certificate scans excluded)."), guard(checks, "overview"), "short",
+                    "Monitor checks run in the last 24 hours (certificate scans excluded)."), monitorGuard(checks), "short",
                     thresholds(BLUE, null), "value", null));
 
             add(alertLevelStat("CRITICAL", t("Kritik alarm", "Critical alerts"), RED));
@@ -911,13 +948,20 @@ public final class GrafanaDashboardGenerator {
             add(stat(t("Açık alarm (süzgeç)", "Open alerts (filtered)"), t("Takım, tür ve seviye süzgecine uyan açık alarmlar.",
                     "Open alerts matching the team, type and level filters."), guard(all, "alerts"), "short",
                     thresholds(GREEN, null, AMBER, 1), "background", links() ? url("tab=alerthistory&view=open") : null).size(4, 5));
-            String oldestSevere = "time() - min(" + owned(MonitoringMetricNames.ALERTS_OLDEST, AOL, "level=~\"CRITICAL|HIGH\"", FAMILY) + ")";
-            add(stat(t("En eski kritik / yüksek alarm", "Oldest critical / high alert"), t("En eski açık kritik ya da yüksek alarmın ne zamandır açık olduğu.",
-                    "How long the oldest open critical or high alert has been open."), oldestSevere, "dtdurations",
-                    thresholds(AMBER, null, RED, 1800), "background", links() ? url("tab=alerthistory&view=open&sort=opened_asc") : null).size(5, 5));
-            String oldestAny = "time() - min(" + owned(MonitoringMetricNames.ALERTS_OLDEST, AOL, LEVEL, FAMILY) + ")";
-            add(stat(t("En eski açık alarm", "Oldest open alert"), t("Süzgece uyan en eski açık alarmın yaşı.", "Age of the oldest open alert matching the filter."),
-                    oldestAny, "dtdurations", thresholds(YELLOW, null, AMBER, 86400), "value", null).size(5, 5));
+            // Açık alarm yoksa (ve alarm kaynağı okunduysa) 0 = "Yok" (yeşil) — "veri yok" yalnız kaynak okunamadığında.
+            List<Object> noneOpen = List.of(valueMap(new Object[][]{{0, t("Yok", "None"), GREEN}}));
+            String oldestSevere = guard("time() - min(" + owned(MonitoringMetricNames.ALERTS_OLDEST, AOL, "level=~\"CRITICAL|HIGH\"", FAMILY) + ")", "alerts");
+            Panel severe = stat(t("En eski kritik / yüksek alarm", "Oldest critical / high alert"), t("En eski açık kritik ya da yüksek alarmın ne zamandır açık olduğu (yoksa \"Yok\").",
+                    "How long the oldest open critical or high alert has been open (\"None\" when there is none)."), oldestSevere, "dtdurations",
+                    thresholds(GREEN, null, AMBER, 1, RED, 1800), "background", links() ? url("tab=alerthistory&view=open&sort=opened_asc") : null).size(5, 5);
+            severe.mappings(noneOpen);
+            add(severe);
+            String oldestAny = guard("time() - min(" + owned(MonitoringMetricNames.ALERTS_OLDEST, AOL, LEVEL, FAMILY) + ")", "alerts");
+            Panel any = stat(t("En eski açık alarm", "Oldest open alert"), t("Süzgece uyan en eski açık alarmın yaşı (yoksa \"Yok\").",
+                    "Age of the oldest open alert matching the filter (\"None\" when there is none)."),
+                    oldestAny, "dtdurations", thresholds(GREEN, null, YELLOW, 1, AMBER, 86400), "value", null).size(5, 5);
+            any.mappings(noneOpen);
+            add(any);
             String acked = "sum(" + owned(MonitoringMetricNames.ALERTS_OPEN, AL, LEVEL, FAMILY, "acknowledged=\"true\"") + ")";
             Panel ackRatio = stat(t("Sahiplenme oranı", "Acknowledged share"), t("Açık alarmlardan sahiplenilenlerin payı (alarm yoksa veri yok).",
                     "Share of open alerts that are acknowledged (no alerts = no data)."), "(" + acked + " or vector(0)) / (" + all + " > 0)",
@@ -946,6 +990,7 @@ public final class GrafanaDashboardGenerator {
             byFamily.w = 12; byFamily.h = 8;
             byFamily.target("sum by (family) (" + owned(MonitoringMetricNames.ALERTS_OPEN, AL, LEVEL, FAMILY) + ")", "{{family}}", false);
             byFamily.timeseries("short", true, "line");
+            typeNames(byFamily);
             add(byFamily);
 
             // Takım tablosu
@@ -954,13 +999,13 @@ public final class GrafanaDashboardGenerator {
                             "Each team's open alerts (alerts it co-owns as UG are counted too). The team name opens SiteMonitor's alert history for it."));
             teams.w = 14; teams.h = 9;
             String ow = "family, alert_type, team, team_id, ug_team, ug_team_id, level, acknowledged";
-            teams.targetTable("sum by (team, team_id) (" + ownedPerTeam(MonitoringMetricNames.ALERTS_OPEN, ow, FAMILY) + ")", "A");
-            teams.targetTable("sum by (team, team_id) (" + ownedPerTeam(MonitoringMetricNames.ALERTS_OPEN, ow, FAMILY, "level=\"CRITICAL\"") + ")", "B");
-            teams.targetTable("sum by (team, team_id) (" + ownedPerTeam(MonitoringMetricNames.ALERTS_OPEN, ow, FAMILY, "level=\"HIGH\"") + ")", "C");
-            teams.targetTable("sum by (team, team_id) (" + ownedPerTeam(MonitoringMetricNames.ALERTS_OPEN, ow, FAMILY, "level=\"WARNING\"") + ")", "D");
-            teams.targetTable("sum by (team, team_id) (" + ownedPerTeam(MonitoringMetricNames.ALERTS_OPEN, ow, FAMILY, "acknowledged=\"false\"") + ")", "E");
+            teams.targetTable("sum by (team, team_id) (" + ownedPerTeam(MonitoringMetricNames.ALERTS_OPEN, ow, "sum", FAMILY) + ")", "A");
+            teams.targetTable("sum by (team, team_id) (" + ownedPerTeam(MonitoringMetricNames.ALERTS_OPEN, ow, "sum", FAMILY, "level=\"CRITICAL\"") + ")", "B");
+            teams.targetTable("sum by (team, team_id) (" + ownedPerTeam(MonitoringMetricNames.ALERTS_OPEN, ow, "sum", FAMILY, "level=\"HIGH\"") + ")", "C");
+            teams.targetTable("sum by (team, team_id) (" + ownedPerTeam(MonitoringMetricNames.ALERTS_OPEN, ow, "sum", FAMILY, "level=\"WARNING\"") + ")", "D");
+            teams.targetTable("sum by (team, team_id) (" + ownedPerTeam(MonitoringMetricNames.ALERTS_OPEN, ow, "sum", FAMILY, "acknowledged=\"false\"") + ")", "E");
             teams.targetTable("time() - min by (team, team_id) (" + ownedPerTeam(MonitoringMetricNames.ALERTS_OLDEST,
-                    "family, team, team_id, ug_team, ug_team_id, level", FAMILY) + ")", "F");
+                    "family, team, team_id, ug_team, ug_team_id, level", "min", FAMILY) + ")", "F");
             teams.mergeTable();
             teams.override("team", "displayName", t("Takım", "Team"));
             if (links()) teams.override("team", "links", List.of(link(t("Alarm geçmişinde aç", "Open in alert history"),
@@ -980,7 +1025,7 @@ public final class GrafanaDashboardGenerator {
                             "Age of each team's oldest open critical or high alert — the longest waiting team on top."));
             oldestTeam.w = 10; oldestTeam.h = 9;
             oldestTeam.targetInstant("sort_desc(time() - min by (team) (" + ownedPerTeam(MonitoringMetricNames.ALERTS_OLDEST,
-                    "family, team, team_id, ug_team, ug_team_id, level", FAMILY, "level=~\"CRITICAL|HIGH\"") + "))", "{{team}}");
+                    "family, team, team_id, ug_team, ug_team_id, level", "min", FAMILY, "level=~\"CRITICAL|HIGH\"") + "))", "{{team}}");
             oldestTeam.bargauge("dtdurations", thresholds(AMBER, null, RED, 3600));
             add(oldestTeam);
 
@@ -1163,6 +1208,7 @@ public final class GrafanaDashboardGenerator {
                 avgType.target("avg by (type) (max by (type, monitor_id) (" + metric(MonitoringMetricNames.MONITOR_RESPONSE_MS, TEAM, TYPE, MON) + "))",
                         "{{type}}", false);
                 avgType.timeseries("ms", false, "line");
+                typeNames(avgType);
                 add(avgType);
             }
 
@@ -1182,7 +1228,7 @@ public final class GrafanaDashboardGenerator {
                     + agg(MonitoringMetricNames.MONITORS_CHECKS, MC) + ") > 0))", "{{type}}");
             success.bargauge("percentunit", thresholds(RED, null, AMBER, 0.95, GREEN, 0.99));
             success.minMax(0, 1);
-            success.override("type", "mappings", typeMappings());
+            typeNames(success);
             add(success);
 
             Panel downTeam = new Panel("timeseries", t("Düşük izlemeler — takıma göre", "Down monitors by team"),

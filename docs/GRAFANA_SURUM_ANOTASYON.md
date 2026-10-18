@@ -46,24 +46,25 @@ Grafana → Dashboard settings → **Annotations** → *Add annotation query*:
 | Alan | Değer |
 |---|---|
 | Data source | Prometheus |
-| Query | `changes(sitemonitor_build_info{environment="prod"}[10m]) > 0` |
+| Query | `count by (version, commit, environment) (sitemonitor_build_info{environment="prod"}) unless count by (version, commit, environment) (sitemonitor_build_info{environment="prod"} offset 5m)` |
 | Title | `Sürüm {{version}}` |
 | Text | `{{version}} ({{commit}}) — {{environment}}` |
 | Tags | `deploy` |
 | Series value as timestamp | kapalı |
 
-Neden `changes(...[10m])`: `sitemonitor_build_info` sabit `1`'dir; değer hiç değişmez ama sürüm
-değişince **yeni etiket kombinasyonu** ile yeni bir seri başlar. `changes()` bir seri için 10
-dakikalık pencerede kaç değer değişimi olduğunu sayar; yeni doğan seri pencerenin başında yoktur, bu
-"yoktan var olma" bir değişim sayılır ve sonuç `> 0` olur. Eski seri kaybolduğu için çift anotasyon
-üretmez. Yalnız yeniden başlatma (aynı sürüm) anotasyon üretmez — etiketler aynıdır.
+Neden `unless … offset 5m`: `sitemonitor_build_info` sabit `1`'dir; değer hiç değişmez, sürüm değişince **yeni etiket
+kombinasyonu** ile yeni bir seri başlar. Sorgu "şu an görülen ama 5 dakika önce görülmeyen" sürüm etiketlerini verir —
+yeni sürüm ilk 5 dakikasında anotasyon üretir, eski sürüm kaybolduğu için çift anotasyon olmaz, aynı sürümle yeniden
+başlatma (etiketler aynı, 5 dakika önce de vardı) anotasyon üretmez. `count by (…)` aynı sürümü birden çok podda doğan
+rolling update'i tek anotasyona indirir.
 
-Birden çok pod (rolling update) aynı sürümü aynı anda doğurduğunda anotasyonlar üst üste biner;
-istenirse sorguyu `max by (version, commit, environment) (…)` ile tekilleştirin:
+> **Düzeltme (2026-10-18):** Bu belgenin önceki sürümü `changes(sitemonitor_build_info[10m]) > 0` öneriyordu. Bu ifade
+> hiç tetiklenmez: `changes()` bir serinin pencere İÇİNDEKİ değer değişimlerini sayar, sabit `1` olan yeni doğmuş bir
+> seri için sonuç `0`'dır ("yoktan var olma" değişim sayılmaz). Kendi panonuzda / kuralınızda o ifadeyi kullandıysanız
+> aşağıdaki `unless … offset` biçimiyle değiştirin. Hazır pano (Ayarlar → Platform → Grafana panosu) bu biçimi kullanır.
 
-```promql
-max by (version, commit, environment) (changes(sitemonitor_build_info[10m])) > 0
-```
+Pencere (`offset 5m`) panonun adımından (step) büyük olmalı: Grafana uzun aralıklarda adımı büyütür (30 günde ≈ 4 dk);
+adım pencereden büyükse dağıtım iki örnek arasında kalıp kaçabilir.
 
 ## 3. Alarm kuralı: sürüm değişti / beklenmeyen geri alma
 
@@ -75,7 +76,7 @@ groups:
     rules:
       # Bilgi: yeni sürüm devreye girdi (anotasyonla aynı ifade).
       - alert: SiteMonitorVersionChanged
-        expr: max by (version, commit, environment) (changes(sitemonitor_build_info[10m])) > 0
+        expr: count by (version, commit, environment) (sitemonitor_build_info) unless count by (version, commit, environment) (sitemonitor_build_info offset 10m)
         for: 0m
         labels:
           severity: info
@@ -116,10 +117,9 @@ birden çok podda doğması tek dağıtım sayılır; `max by (...)` bunu sağla
 **Haftalık dağıtım sayısı (Stat / Bar chart, `environment="prod"`):**
 
 ```promql
-sum(
-  max by (version, commit) (
-    changes(sitemonitor_build_info{environment="prod"}[10m]) > bool 0
-  )
+count(
+  count by (version, commit) (sitemonitor_build_info{environment="prod"})
+  unless count by (version, commit) (sitemonitor_build_info{environment="prod"} offset 10m)
 )
 ```
 
@@ -130,10 +130,9 @@ Paneli **Time series** olarak çizip *Query options → Min interval = 10m* veri
 # Seçili zaman aralığındaki toplam dağıtım (dashboard aralığı = $__range)
 sum_over_time(
   (
-    sum(
-      max by (version, commit) (
-        changes(sitemonitor_build_info{environment="prod"}[10m]) > bool 0
-      )
+    count(
+      count by (version, commit) (sitemonitor_build_info{environment="prod"})
+      unless count by (version, commit) (sitemonitor_build_info{environment="prod"} offset 10m)
     )
   )[$__range:10m]
 )
@@ -143,7 +142,7 @@ sum_over_time(
 *Unit = none*, *Decimals = 2*:
 
 ```promql
-sum_over_time((sum(max by (version, commit) (changes(sitemonitor_build_info{environment="prod"}[10m]) > bool 0)))[$__range:10m])
+sum_over_time((count(count by (version, commit) (sitemonitor_build_info{environment="prod"}) unless count by (version, commit) (sitemonitor_build_info{environment="prod"} offset 10m)))[$__range:10m])
 / ($__range_s / 86400)
 ```
 
@@ -165,12 +164,13 @@ time() - max(sitemonitor_deployment_started_seconds{namespace="site-monitor-prod
 - Ölçümler **yalnız koşan örneğin** kimliğini verir. Prometheus'un saklama süresinden eski dağıtımlar
   metrikten okunamaz; kalıcı kayıt uygulamadaki `deployment_history` tablosudur (Sistem Sağlığı →
   Sürüm & Dağıtım, CSV dışa aktarma; `/api/admin/deployments`).
-- `changes()` penceresi (10m) kazıma aralığının en az 2–3 katı olmalı; 15 saniyelik kazımada 10 dakika
-  rahat bir paydır. Pencereyi kazıma aralığının altına çekmeyin, dağıtım kaçar.
+- `offset` penceresi (10m) alt sorgu adımına (`[$__range:10m]`) eşit olmalı: yeni sürüm tam 10 dakika "yeni"
+  görünür, 10 dakikalık adım onu tam bir kez sayar. Pencereyi adımdan küçük yaparsanız dağıtım kaçar, büyük yaparsanız
+  iki kez sayılır. Pod 10 dakikadan uzun kapalı kalıp aynı sürümle dönerse bu bir dağıtım sayılır.
 - Pod hiç ayağa kalkamazsa (failed-start) metrik de doğmaz; o durum `kube_pod_container_status_restarts_total`
   ve uygulamanın `SYSTEM_STARTUP` denetim izi ile izlenir.
 - Etiket kardinalitesi 1'dir (her sürüm tek seri, eski seri kaybolur) — uzun vadede seri şişmesi yaratmaz.
-- Ortam adı Genel Ayarlar'dan değiştirilince yeni `environment` etiketli seri doğar: `changes()` tabanlı anotasyon ve
+- Ortam adı Genel Ayarlar'dan değiştirilince yeni `environment` etiketli seri doğar: sürüm anotasyonu ve
   "yeni sürüm" alarmı o an **bir kez** tetiklenir (sürüm değişmediği hâlde). Adlandırmayı bakım penceresinde yapın ya
   da o anotasyonu yok sayın; `environment="…"` ile süzen panoların sorgusunu yeni ada göre güncelleyin.
 - Gerçek ana bilgisayar adı, küme adı ya da kurum kimliği bu belgeye ve panolara yazılmaz; örneklerde

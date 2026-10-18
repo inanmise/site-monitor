@@ -367,7 +367,7 @@ public class MonitoringOverviewService {
         List<M> monitors;
         // Okuma hatası işaretleri (2026-10-18): yalnız hata varken yazılır — türün sayıları "0 izleme / bilinmiyor" diye
         // okunmasın (Grafana aktarıcısı o türü dışa VERMEZ; ekran yanıtı hatasız durumda bayt bayt aynı).
-        boolean monitorsUnavailable = false, checksUnavailable = false;
+        boolean monitorsUnavailable = false, checksUnavailable = false, statsUnavailable = false;
         try { monitors = spec.monitors().get(); } catch (Exception e) { log.warn("{} izlemeleri okunamadı: {}", spec.type(), e.toString()); monitors = List.of(); monitorsUnavailable = true; }
         List<M> visible = new ArrayList<>();
         for (M m : monitors) {
@@ -397,7 +397,7 @@ public class MonitoringOverviewService {
                     long weight = avg < 0 ? 0L : r.length > 4 && r[4] instanceof Number w ? w.longValue() : tot;
                     stats.put(((Number) r[0]).longValue(), new long[]{ tot, ok, avg, weight });
                 }
-            } catch (Exception e) { log.debug("{} pencere sayımı okunamadı: {}", spec.type(), e.toString()); }
+            } catch (Exception e) { log.debug("{} pencere sayımı okunamadı: {}", spec.type(), e.toString()); statsUnavailable = true; }
         }
         double avgSum = 0; long avgWeight = 0;
 
@@ -491,6 +491,7 @@ public class MonitoringOverviewService {
         t.put("last_checked_at", lastChecked);
         if (monitorsUnavailable) t.put("unavailable", true);
         if (checksUnavailable) t.put("checks_unavailable", true);
+        if (statsUnavailable) t.put("stats_unavailable", true);
         return t;
     }
 

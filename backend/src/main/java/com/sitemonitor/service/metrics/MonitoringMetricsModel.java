@@ -98,6 +98,14 @@ public final class MonitoringMetricsModel {
         public Map<String, Boolean> capped() { return capped; }
 
         public int size(String name) { return get(name).size(); }
+
+        /** Başka bir kümenin satırlarını ve tavan işaretlerini ekler (kaynak tam okunduğunda geçici kümeden aktarım). */
+        public void mergeFrom(Families other) {
+            for (Map.Entry<String, List<Row>> e : other.rows.entrySet()) {
+                rows.computeIfAbsent(e.getKey(), k -> new ArrayList<>()).addAll(e.getValue());
+            }
+            capped.putAll(other.capped);
+        }
     }
 
     // ── Takım dizini ─────────────────────────────────────────────────────────────────────────────────────
@@ -144,6 +152,15 @@ public final class MonitoringMetricsModel {
      * @return okunamayan türler (o türlerin hiçbir satırı yazılmaz; aktarıcı {@code source.up{source="monitors:<tür>"}=0})
      */
     @SuppressWarnings("unchecked")
+    /** Genel Bakış yanıtındaki tür kimlikleri (sırayla). */
+    public static List<String> overviewTypes(Map<String, Object> overview) {
+        List<String> out = new ArrayList<>();
+        if (overview != null && overview.get("types") instanceof List<?> types) {
+            for (Object o : types) if (o instanceof Map<?, ?> t && t.get("type") != null) out.add(String.valueOf(t.get("type")));
+        }
+        return out;
+    }
+
     public static Set<String> monitors(Families f, Map<String, Object> overview, TeamDirectory teams, boolean perEntity,
                                        int maxEntities) {
         Set<String> failed = new LinkedHashSet<>();
@@ -153,7 +170,8 @@ public final class MonitoringMetricsModel {
             for (Object o : types) {
                 if (!(o instanceof Map<?, ?> t)) continue;
                 String type = String.valueOf(t.get("type"));
-                if (Boolean.TRUE.equals(t.get("unavailable")) || Boolean.TRUE.equals(t.get("checks_unavailable"))) failed.add(type);
+                if (Boolean.TRUE.equals(t.get("unavailable")) || Boolean.TRUE.equals(t.get("checks_unavailable"))
+                        || Boolean.TRUE.equals(t.get("stats_unavailable"))) failed.add(type);
                 else knownTypes.add(type);
             }
         }
@@ -285,6 +303,9 @@ public final class MonitoringMetricsModel {
             ev.setContextJson(str(r[7]));
             Owners inv = ev.getDomain() == null || inventory == null ? null : inventory.get(ev.getDomain());
             Set<Long> owners = AlertOwnership.ownerTeamIds(ev, inv == null ? null : inv.teamId(), inv == null ? null : inv.ugTeamId());
+            // Bilinen sınır: etiket şeması iki sahip taşır (team + ug_team). Sahiplik kümesi ikiden büyükse (damga + envanter SY
+            // + farklı UG — damganın envanterden ayrıştığı nadir durum) üçüncü takım dışa verilmez; o takımın panosu bu alarmı
+            // görmez (SiteMonitor'un kendi ekranları görür). Etiket sayısını büyütmek tüm alarm serilerinin kimliğini değiştirirdi.
             List<Long> o = new ArrayList<>(owners);
             Long primary = o.isEmpty() ? null : o.get(0);
             Long second = o.size() > 1 ? o.get(1) : null;

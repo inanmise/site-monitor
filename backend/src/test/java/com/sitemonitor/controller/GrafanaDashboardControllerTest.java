@@ -123,11 +123,16 @@ class GrafanaDashboardControllerTest {
     }
 
     @Test
-    @DisplayName("GET: aktarıcı kapalı → disabled; hiç tur koşmadı → waiting")
+    @DisplayName("GET: aktarıcı kapalı → disabled; hiç tur koşmadı ya da son tur kapalıyken koştu → waiting (canlı sayı yok)")
     void exporterStates() throws Exception {
         when(exporter.lastStatus()).thenReturn(null);
         mvc.perform(get("/api/admin/grafana/settings").session(session("ADMIN", false)))
                 .andExpect(jsonPath("$.data.exporter.state").value("waiting"));
+        when(exporter.lastStatus()).thenReturn(new MonitoringMetricsExporter.Status(false, true, "2026-10-18T08:00:00", 3, 2,
+                Map.of(), Map.of(), List.of(), 60, 5000));
+        mvc.perform(get("/api/admin/grafana/settings").session(session("ADMIN", false)))
+                .andExpect(jsonPath("$.data.exporter.state").value("waiting"))
+                .andExpect(jsonPath("$.data.exporter.series_total").doesNotExist());
         stored.put(MetricsExportSettings.KEY_ENABLED, "false");
         mvc.perform(get("/api/admin/grafana/settings").session(session("ADMIN", false)))
                 .andExpect(jsonPath("$.data.exporter.state").value("disabled"));
@@ -246,6 +251,18 @@ class GrafanaDashboardControllerTest {
         assertThat(body).contains("\"__inputs\"").contains("DS_PROMETHEUS").contains("\"templating\"").contains("https://sitemonitor.example.org/?tab=");
         verify(auditService).recordAction(eq("GRAFANA_DASHBOARD_EXPORT"), any(jakarta.servlet.http.HttpSession.class),
                 any(jakarta.servlet.http.HttpServletRequest.class), eq("SETTINGS"), eq("sitemonitor-overview"), anyString());
+    }
+
+    @Test
+    @DisplayName("değişiklik karşılaştırması alan türüne göre: büyük/küçük harf farkı başlık / eşleyicide değişiklik; bölüm sırası ve bool yazımı değil")
+    void sameIsFieldAware() {
+        assertThat(GrafanaDashboardController.same("title", "Panel, A", "panel, a")).isFalse();
+        assertThat(GrafanaDashboardController.same("selector", "job=\"X\", ns=\"y\"", "job=\"x\", ns=\"y\"")).isFalse();
+        assertThat(GrafanaDashboardController.same("title", " Pano ", "Pano")).isTrue();
+        assertThat(GrafanaDashboardController.same("sections", "overview,alerts", "alerts, overview")).isTrue();
+        assertThat(GrafanaDashboardController.same("sections", "overview,alerts", "overview")).isFalse();
+        assertThat(GrafanaDashboardController.same("per_monitor", "TRUE", "true")).isTrue();
+        assertThat(GrafanaDashboardController.same("per_monitor", "true", "false")).isFalse();
     }
 
     private static MockHttpSession session(String role, boolean scoped) {

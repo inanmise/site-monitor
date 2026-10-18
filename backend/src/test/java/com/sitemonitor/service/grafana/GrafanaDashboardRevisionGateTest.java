@@ -55,8 +55,9 @@ class GrafanaDashboardRevisionGateTest {
         if (storedHash.equals(hash) && storedRevision == revision) return;
         if (!storedHash.equals(hash) && storedRevision == revision) {
             fail("Grafana panosunun içeriği değişti ama DASHBOARD_REVISION (" + revision + ") artırılmadı.\n"
-                    + "Yapılacak: GrafanaDashboardGenerator.DASHBOARD_REVISION = " + (revision + 1) + " yapın, sonra bu testi yeniden "
-                    + "koşup verdiği satırı " + FILE + " dosyasına yazın. Ekipler yeni JSON'u Ayarlar → Platform → Grafana panosu'ndan "
+                    + "Yapılacak: GrafanaDashboardGenerator.DASHBOARD_REVISION = " + (revision + 1) + " yapın ve " + FILE
+                    + " dosyasına şu satırı yazın: revision=" + (revision + 1) + " sha256=" + hash + " (e2e örneği: "
+                    + "-Dtest=GrafanaDashboardFixtureTest -Dgrafana.writeFixture=true). Ekipler yeni JSON'u Ayarlar → Platform → Grafana panosu'ndan "
                     + "indirip Grafana'ya yeniden içe aktarmalı (aynı uid → üzerine yazar). Değişiklik istenmeden olduysa üreticideki farkı "
                     + "geri alın.");
         }

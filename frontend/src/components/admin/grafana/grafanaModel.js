@@ -73,6 +73,17 @@ export function isDirty(savedForm, form) {
   return Object.keys(changedFields(savedForm, form)).length > 0
 }
 
+/**
+ * Yalnız DEĞİŞEN alanların hataları (sunucuyla aynı kural: değişmeyen değer yeniden doğrulanmaz). Kayıtlı bir değer
+ * sonradan geçersizleşirse (ör. varsayılan takım silindi / yeniden adlandırıldı) başka bir alanın kaydı engellenmez.
+ */
+export function errorsForChanges(errors, changes) {
+  const out = {}
+  if (!errors || !changes) return out
+  for (const k of Object.keys(errors)) if (Object.prototype.hasOwnProperty.call(changes, k)) out[k] = errors[k]
+  return out
+}
+
 // ── Doğrulama (sunucuyla aynı kurallar) ───────────────────────────────────────────────────────────────
 
 /**

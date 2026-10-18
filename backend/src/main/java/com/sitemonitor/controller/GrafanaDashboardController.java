@@ -56,8 +56,9 @@ import java.util.Set;
  *   <li>{@code GET /dashboard} — YALNIZ global yönetici; KAYITLI ayarlarla pano JSON'u dosya olarak
  *       ({@code Content-Disposition: attachment}, {@code application/json}). Denetim {@code GRAFANA_DASHBOARD_EXPORT}.</li>
  * </ul>
- * Pano JSON'u veri TAŞIMAZ (yalnız sorgular): takım / izleme adları Grafana'da Prometheus'tan okunur. Etiket eşleyicisi altyapı
- * adı (ad alanı / iş) taşıdığından indirme global yöneticiye kapılıdır.
+ * Pano JSON'u veri TAŞIMAZ (yalnız sorgular): takım / izleme adları Grafana'da Prometheus'tan okunur. Kaydetme ve indirme
+ * global yöneticiye kapılıdır (GLOBAL_ONLY yapılandırma + denetlenen dışa aktarım). Etiket eşleyicisi (ad alanı / iş adı) gizli
+ * değildir — kapsamlı müdür onu salt okunur görür (kazıma örneği ve sorun giderme için gerekir); sır taşıyan alan yoktur.
  */
 @RestController
 @RequestMapping("/api/admin/grafana")
@@ -122,7 +123,7 @@ public class GrafanaDashboardController {
         for (Map.Entry<String, String> e : next.entrySet()) {
             String key = FIELDS.get(e.getKey());
             String cur = current(key);
-            if (same(cur, e.getValue())) continue;   // değişmeyen değer yazılmaz
+            if (same(e.getKey(), cur, e.getValue())) continue;   // değişmeyen değer yazılmaz
             values.put(key, e.getValue());
             before.put(e.getKey(), cur);
             after.put(e.getKey(), e.getValue());
@@ -211,7 +212,8 @@ public class GrafanaDashboardController {
         Map<String, Object> m = new LinkedHashMap<>();
         boolean enabled = MetricsExportSettings.enabled(settings);
         MonitoringMetricsExporter.Status s = exporter == null ? null : exporter.lastStatus();
-        m.put("state", !enabled ? "disabled" : s == null ? "waiting" : "running");
+        // Açıldıktan sonraki ilk tur gelmeden son durum hâlâ "kapalı" turudur → "bekliyor" (canlı sayılar yok).
+        m.put("state", !enabled ? "disabled" : s == null || !s.enabled() ? "waiting" : "running");
         m.put("enabled", enabled);
         m.put("per_monitor", MetricsExportSettings.perMonitor(settings));
         m.put("refresh_seconds", MetricsExportSettings.refreshSeconds(settings));
@@ -300,7 +302,7 @@ public class GrafanaDashboardController {
             String field = f.getKey();
             if (!body.containsKey(field)) continue;
             String v = asText(field, body.get(field));
-            if (skipUnchanged && same(current(f.getValue()), v)) { out.put(field, v); continue; }
+            if (skipUnchanged && same(field, current(f.getValue()), v)) { out.put(field, v); continue; }
             String problem = problem(field, f.getValue(), v);
             if (problem != null) throw new FieldValidationException(field, problem);
             out.put(field, v);
@@ -412,12 +414,20 @@ public class GrafanaDashboardController {
         return v;
     }
 
-    private static boolean same(String a, String b) {
+    /**
+     * Kayıtlı değer ile gelen değer aynı mı — alan türüne göre: bölümler küme olarak (sıra / boşluk farkı değişiklik değil),
+     * aç/kapa büyük/küçük harf duyarsız, diğerleri kırpılmış metin olarak BİREBİR (başlık / eşleyici / takım adında büyük-küçük
+     * harf farkı gerçek bir değişikliktir).
+     */
+    static boolean same(String field, String a, String b) {
         String x = a == null ? "" : a.trim();
         String y = b == null ? "" : b.trim();
         if (x.equals(y)) return true;
-        // CSV / bool karşılaştırması biçimden bağımsız
-        return x.replace(" ", "").equalsIgnoreCase(y.replace(" ", "")) && (isBool(x) || x.contains(","));
+        if ("sections".equals(field)) {
+            return GrafanaDashboardSettings.parseSections(x).equals(GrafanaDashboardSettings.parseSections(y));
+        }
+        if (BOOL_FIELDS.contains(field)) return isBool(x) && x.equalsIgnoreCase(y);
+        return false;
     }
 
     private static boolean isBool(String v) {

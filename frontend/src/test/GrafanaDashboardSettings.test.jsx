@@ -123,6 +123,17 @@ describe('GrafanaDashboardSettings', () => {
     await waitFor(() => expect(slot('settings-save-bar')).not.toHaveAttribute('data-dirty'))
   })
 
+  it('kayıtlı ama artık listede olmayan varsayılan takım başka alanın kaydını engellemez (yalnız değişen alan doğrulanır)', async () => {
+    await mount(ok({ values: { ...VALUES, default_team: 'Silinen Takım' } }))
+    api.admin.saveGrafanaSettings.mockResolvedValue({ success: true,
+      data: data({ values: { ...VALUES, default_team: 'Silinen Takım', top_n: 20 } }) })
+    fireEvent.change(document.querySelector('[data-slot="grafana-f-topn"]'), { target: { value: '20' } })
+    await waitFor(() => expect(slot('grafana-preview')).not.toHaveAttribute('data-state', 'invalid'))
+    fireEvent.click(screen.getByRole('button', { name: /^Kaydet$/ }))
+    await waitFor(() => expect(api.admin.saveGrafanaSettings).toHaveBeenCalledWith({ top_n: 20 }))
+    expect(document.querySelector('[data-field="default_team"]')).not.toHaveAttribute('data-invalid', 'true')
+  })
+
   it('sunucu alan hatası alanın altında gösterilir', async () => {
     await mount()
     api.admin.saveGrafanaSettings.mockResolvedValue({ success: false, field: 'default_team',

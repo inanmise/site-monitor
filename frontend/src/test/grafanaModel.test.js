@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
 import {
-  FIELD_KEYS, SECTION_IDS, changedFields, exporterState, failedSources, formToBody, isDirty, namespaceOf, orderSections, scrapeSnippet,
-  selectorOk, toForm, urlOk, validateForm,
+  FIELD_KEYS, SECTION_IDS, changedFields, errorsForChanges, exporterState, failedSources, formToBody, isDirty, namespaceOf, orderSections,
+  scrapeSnippet, selectorOk, toForm, urlOk, validateForm,
 } from '../components/admin/grafana/grafanaModel.js'
 
 // Ayarlar → Grafana panosu modeli (2026-10-18): form ↔ sunucu biçimi, yalnız değişen alanlar, istemci kuralları (sunucuyla
@@ -77,6 +77,18 @@ describe('grafanaModel — form ve değişiklikler', () => {
     expect(changedFields(null, saved)).toEqual({})
     expect(formToBody(saved).export_max_entities).toBe(5000)
     expect(orderSections(['x', 'health', 'alerts', 'health'])).toEqual(['alerts', 'health'])
+  })
+
+  it('errorsForChanges: kayıtlı ama artık geçersiz değer (silinmiş varsayılan takım) başka alanın kaydını engellemez', () => {
+    const saved = toForm({ ...values, default_team: 'Silinen Takım' })
+    const form = { ...saved, top_n: '20' }
+    const all = validateForm(form, {}, ['Dijital Kanallar'])
+    expect(all.default_team?.key).toBe('grafana.v.team')
+    expect(errorsForChanges(all, changedFields(saved, form))).toEqual({})
+    const edited = { ...form, default_team: 'Yok Böyle' }
+    expect(Object.keys(errorsForChanges(validateForm(edited, {}, ['Dijital Kanallar']), changedFields(saved, edited))))
+      .toEqual(['default_team'])
+    expect(errorsForChanges(null, {})).toEqual({})
   })
 })
 

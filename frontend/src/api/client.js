@@ -1408,8 +1408,9 @@ export const api = {
         let name = null
         try { name = star ? decodeURIComponent(star[1]) : (plain ? plain[1] : null) } catch { name = plain ? plain[1] : null }
         return { success: true, blob, name }
-      } catch (e) {
-        return { success: false, status: 0, error: e?.message || 'NETWORK' }
+      } catch {
+        // Ağ hatası: teknik metin ("Failed to fetch") kullanıcıya gösterilmez — sayfa kendi açıklayıcı iletisini kullanır
+        return { success: false, status: 0, error: null, code: 'NETWORK_ERROR' }
       }
     },
     // Hatırlatmalar + posta sınırları (12. sürüm) AYRI uçta: eski pod bu yolu tanımaz (404 / 405) ve görünürlüğe dokunmaz

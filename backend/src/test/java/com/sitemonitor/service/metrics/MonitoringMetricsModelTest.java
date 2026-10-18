@@ -143,13 +143,14 @@ class MonitoringMetricsModelTest {
     @Test
     @DisplayName("okunamayan tür (izlemeler ya da son kontroller): o türün HİÇ satırı yok, tür okunamayanlarda döner — sahte 0 / up yok")
     void unreadableTypeDropsRows() {
-        List<Map<String, Object>> t = types("http", "ping");
+        List<Map<String, Object>> t = types("http", "ping", "port");
         t.get(0).put("unavailable", true);
         t.get(1).put("checks_unavailable", true);
+        t.get(2).put("stats_unavailable", true);
         Families f = new Families();
         Set<String> failed = MonitoringMetricsModel.monitors(f, overview(List.of(row("http", 1, "a", "https://a", 14L, "up"),
-                row("ping", 2, "b", "10.0.0.9", 14L, "unknown")), t), DIR, true, 100);
-        assertThat(failed).containsExactly("http", "ping");
+                row("ping", 2, "b", "10.0.0.9", 14L, "unknown"), row("port", 3, "c", "10.0.0.8", 14L, "up")), t), DIR, true, 100);
+        assertThat(failed).containsExactly("http", "ping", "port");
         assertThat(f.get(MONITORS)).isEmpty();
         assertThat(f.get(MONITOR_STATE)).isEmpty();
         assertThat(MonitoringMetricsModel.monitors(new Families(), null, DIR, true, 100)).isEmpty();

@@ -218,8 +218,9 @@ for (const vp of VIEWPORTS) {
       expect(calls.puts).toHaveLength(0)
       await uid.fill('dk-panosu')
       await root.locator('[data-slot="grafana-section"][data-id="runtime"] [role="checkbox"]').click()
-      await expect.poll(() => calls.previews.length, { timeout: 5000 }).toBeGreaterThan(0)
-      expect(calls.previews.at(-1)).toEqual({ uid: 'dk-panosu', sections: SECTIONS.filter((s) => s !== 'runtime') })
+      // Ön izleme gecikmelidir: iki değişiklik arasında süre geçerse önce yalnız uid'li istek gidebilir — son istek beklenir
+      await expect.poll(() => calls.previews.at(-1), { timeout: 5000 })
+        .toEqual({ uid: 'dk-panosu', sections: SECTIONS.filter((s) => s !== 'runtime') })
       await expect(root.locator('[data-slot="grafana-preview-tile"][data-key="panels"]')).toContainText('58')
       await save.click()
       await expect.poll(() => calls.puts.length).toBe(1)

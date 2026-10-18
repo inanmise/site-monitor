@@ -77,7 +77,7 @@
         "uid" : "${datasource}"
       },
       "enable" : true,
-      "expr" : "max by (version, commit, environment) (changes(sitemonitor_build_info{namespace=\"site-monitor-prod\"}[10m])) > 0",
+      "expr" : "count by (version, commit, environment) (sitemonitor_build_info{namespace=\"site-monitor-prod\"}) unless count by (version, commit, environment) (sitemonitor_build_info{namespace=\"site-monitor-prod\"} offset 5m)",
       "iconColor" : "blue",
       "name" : "Sürüm dağıtımı",
       "step" : "1m",
@@ -86,7 +86,7 @@
       "titleFormat" : "SiteMonitor {{version}}",
       "useValueForTime" : false,
       "target" : {
-        "expr" : "max by (version, commit, environment) (changes(sitemonitor_build_info{namespace=\"site-monitor-prod\"}[10m])) > 0",
+        "expr" : "count by (version, commit, environment) (sitemonitor_build_info{namespace=\"site-monitor-prod\"}) unless count by (version, commit, environment) (sitemonitor_build_info{namespace=\"site-monitor-prod\"} offset 5m)",
         "interval" : "1m",
         "refId" : "Anno"
       }
@@ -96,7 +96,7 @@
         "uid" : "${datasource}"
       },
       "enable" : true,
-      "expr" : "(max by (alert_id, family, alert_type, target, team, team_id, ug_team, ug_team_id, level, acknowledged) (sitemonitor_alert_open_since_timestamp_seconds{namespace=\"site-monitor-prod\", team=~\"$team\", level=~\"CRITICAL|HIGH\"}) or max by (alert_id, family, alert_type, target, team, team_id, ug_team, ug_team_id, level, acknowledged) (sitemonitor_alert_open_since_timestamp_seconds{namespace=\"site-monitor-prod\", ug_team=~\"$team\", level=~\"CRITICAL|HIGH\"})) unless (max by (alert_id, family, alert_type, target, team, team_id, ug_team, ug_team_id, level, acknowledged) (sitemonitor_alert_open_since_timestamp_seconds{namespace=\"site-monitor-prod\", team=~\"$team\", level=~\"CRITICAL|HIGH\"} offset 1m) or max by (alert_id, family, alert_type, target, team, team_id, ug_team, ug_team_id, level, acknowledged) (sitemonitor_alert_open_since_timestamp_seconds{namespace=\"site-monitor-prod\", ug_team=~\"$team\", level=~\"CRITICAL|HIGH\"} offset 1m))",
+      "expr" : "(max by (alert_id, family, alert_type, target, team, level) (sitemonitor_alert_open_since_timestamp_seconds{namespace=\"site-monitor-prod\", team=~\"$team\", level=~\"CRITICAL|HIGH\"}) or max by (alert_id, family, alert_type, target, team, level) (sitemonitor_alert_open_since_timestamp_seconds{namespace=\"site-monitor-prod\", ug_team=~\"$team\", level=~\"CRITICAL|HIGH\"})) unless on (alert_id, level) (max by (alert_id, level) (sitemonitor_alert_open_since_timestamp_seconds{namespace=\"site-monitor-prod\"} offset 1m))",
       "iconColor" : "red",
       "name" : "Kritik / yüksek alarm açıldı",
       "step" : "1m",
@@ -105,7 +105,7 @@
       "titleFormat" : "{{level}} · {{family}} · {{target}}",
       "useValueForTime" : false,
       "target" : {
-        "expr" : "(max by (alert_id, family, alert_type, target, team, team_id, ug_team, ug_team_id, level, acknowledged) (sitemonitor_alert_open_since_timestamp_seconds{namespace=\"site-monitor-prod\", team=~\"$team\", level=~\"CRITICAL|HIGH\"}) or max by (alert_id, family, alert_type, target, team, team_id, ug_team, ug_team_id, level, acknowledged) (sitemonitor_alert_open_since_timestamp_seconds{namespace=\"site-monitor-prod\", ug_team=~\"$team\", level=~\"CRITICAL|HIGH\"})) unless (max by (alert_id, family, alert_type, target, team, team_id, ug_team, ug_team_id, level, acknowledged) (sitemonitor_alert_open_since_timestamp_seconds{namespace=\"site-monitor-prod\", team=~\"$team\", level=~\"CRITICAL|HIGH\"} offset 1m) or max by (alert_id, family, alert_type, target, team, team_id, ug_team, ug_team_id, level, acknowledged) (sitemonitor_alert_open_since_timestamp_seconds{namespace=\"site-monitor-prod\", ug_team=~\"$team\", level=~\"CRITICAL|HIGH\"} offset 1m))",
+        "expr" : "(max by (alert_id, family, alert_type, target, team, level) (sitemonitor_alert_open_since_timestamp_seconds{namespace=\"site-monitor-prod\", team=~\"$team\", level=~\"CRITICAL|HIGH\"}) or max by (alert_id, family, alert_type, target, team, level) (sitemonitor_alert_open_since_timestamp_seconds{namespace=\"site-monitor-prod\", ug_team=~\"$team\", level=~\"CRITICAL|HIGH\"})) unless on (alert_id, level) (max by (alert_id, level) (sitemonitor_alert_open_since_timestamp_seconds{namespace=\"site-monitor-prod\"} offset 1m))",
         "interval" : "1m",
         "refId" : "Anno"
       }
@@ -236,7 +236,7 @@
         "uid" : "${datasource}"
       },
       "editorMode" : "code",
-      "expr" : "(sum(max by (type, team, team_id, state) (sitemonitor_monitors{namespace=\"site-monitor-prod\", team=~\"$team\", type=~\"$type\", state=~\"up|stale|down|unknown\"}))) or (vector(0) and on() (max(sitemonitor_exporter_source_up{namespace=\"site-monitor-prod\", source=\"overview\"}) == 1))",
+      "expr" : "((sum(max by (type, team, team_id, state) (sitemonitor_monitors{namespace=\"site-monitor-prod\", team=~\"$team\", type=~\"$type\", state=~\"up|stale|down|unknown\"}))) or (vector(0) and on() (max(sitemonitor_exporter_source_up{namespace=\"site-monitor-prod\", source=\"overview\"}) == 1))) unless on() (max by (source) (sitemonitor_exporter_source_up{namespace=\"site-monitor-prod\", source=~\"monitors:$type\"}) == 0)",
       "instant" : false,
       "legendFormat" : "__auto",
       "range" : true,
@@ -301,7 +301,7 @@
         "uid" : "${datasource}"
       },
       "editorMode" : "code",
-      "expr" : "(sum(max by (type, team, team_id, state) (sitemonitor_monitors{namespace=\"site-monitor-prod\", team=~\"$team\", type=~\"$type\", state=\"up\"}))) or (vector(0) and on() (max(sitemonitor_exporter_source_up{namespace=\"site-monitor-prod\", source=\"overview\"}) == 1))",
+      "expr" : "((sum(max by (type, team, team_id, state) (sitemonitor_monitors{namespace=\"site-monitor-prod\", team=~\"$team\", type=~\"$type\", state=\"up\"}))) or (vector(0) and on() (max(sitemonitor_exporter_source_up{namespace=\"site-monitor-prod\", source=\"overview\"}) == 1))) unless on() (max by (source) (sitemonitor_exporter_source_up{namespace=\"site-monitor-prod\", source=~\"monitors:$type\"}) == 0)",
       "instant" : false,
       "legendFormat" : "__auto",
       "range" : true,
@@ -369,7 +369,7 @@
         "uid" : "${datasource}"
       },
       "editorMode" : "code",
-      "expr" : "(sum(max by (type, team, team_id, state) (sitemonitor_monitors{namespace=\"site-monitor-prod\", team=~\"$team\", type=~\"$type\", state=\"down\"}))) or (vector(0) and on() (max(sitemonitor_exporter_source_up{namespace=\"site-monitor-prod\", source=\"overview\"}) == 1))",
+      "expr" : "((sum(max by (type, team, team_id, state) (sitemonitor_monitors{namespace=\"site-monitor-prod\", team=~\"$team\", type=~\"$type\", state=\"down\"}))) or (vector(0) and on() (max(sitemonitor_exporter_source_up{namespace=\"site-monitor-prod\", source=\"overview\"}) == 1))) unless on() (max by (source) (sitemonitor_exporter_source_up{namespace=\"site-monitor-prod\", source=~\"monitors:$type\"}) == 0)",
       "instant" : false,
       "legendFormat" : "__auto",
       "range" : true,
@@ -437,7 +437,7 @@
         "uid" : "${datasource}"
       },
       "editorMode" : "code",
-      "expr" : "(sum(max by (type, team, team_id, state) (sitemonitor_monitors{namespace=\"site-monitor-prod\", team=~\"$team\", type=~\"$type\", state=\"stale\"}))) or (vector(0) and on() (max(sitemonitor_exporter_source_up{namespace=\"site-monitor-prod\", source=\"overview\"}) == 1))",
+      "expr" : "((sum(max by (type, team, team_id, state) (sitemonitor_monitors{namespace=\"site-monitor-prod\", team=~\"$team\", type=~\"$type\", state=\"stale\"}))) or (vector(0) and on() (max(sitemonitor_exporter_source_up{namespace=\"site-monitor-prod\", source=\"overview\"}) == 1))) unless on() (max by (source) (sitemonitor_exporter_source_up{namespace=\"site-monitor-prod\", source=~\"monitors:$type\"}) == 0)",
       "instant" : false,
       "legendFormat" : "__auto",
       "range" : true,
@@ -505,7 +505,7 @@
         "uid" : "${datasource}"
       },
       "editorMode" : "code",
-      "expr" : "(sum(max by (type, team, team_id, state) (sitemonitor_monitors{namespace=\"site-monitor-prod\", team=~\"$team\", type=~\"$type\", state=\"unknown\"}))) or (vector(0) and on() (max(sitemonitor_exporter_source_up{namespace=\"site-monitor-prod\", source=\"overview\"}) == 1))",
+      "expr" : "((sum(max by (type, team, team_id, state) (sitemonitor_monitors{namespace=\"site-monitor-prod\", team=~\"$team\", type=~\"$type\", state=\"unknown\"}))) or (vector(0) and on() (max(sitemonitor_exporter_source_up{namespace=\"site-monitor-prod\", source=\"overview\"}) == 1))) unless on() (max by (source) (sitemonitor_exporter_source_up{namespace=\"site-monitor-prod\", source=~\"monitors:$type\"}) == 0)",
       "instant" : false,
       "legendFormat" : "__auto",
       "range" : true,
@@ -565,7 +565,7 @@
         "uid" : "${datasource}"
       },
       "editorMode" : "code",
-      "expr" : "(sum(max by (type, team, team_id, state) (sitemonitor_monitors{namespace=\"site-monitor-prod\", team=~\"$team\", type=~\"$type\", state=\"paused\"}))) or (vector(0) and on() (max(sitemonitor_exporter_source_up{namespace=\"site-monitor-prod\", source=\"overview\"}) == 1))",
+      "expr" : "((sum(max by (type, team, team_id, state) (sitemonitor_monitors{namespace=\"site-monitor-prod\", team=~\"$team\", type=~\"$type\", state=\"paused\"}))) or (vector(0) and on() (max(sitemonitor_exporter_source_up{namespace=\"site-monitor-prod\", source=\"overview\"}) == 1))) unless on() (max by (source) (sitemonitor_exporter_source_up{namespace=\"site-monitor-prod\", source=~\"monitors:$type\"}) == 0)",
       "instant" : false,
       "legendFormat" : "__auto",
       "range" : true,
@@ -632,7 +632,7 @@
         "uid" : "${datasource}"
       },
       "editorMode" : "code",
-      "expr" : "1 - (sum(max by (type, team, team_id) (sitemonitor_monitors_failed_checks_24h{namespace=\"site-monitor-prod\", team=~\"$team\", type=~\"$type\"})) / (sum(max by (type, team, team_id) (sitemonitor_monitors_checks_24h{namespace=\"site-monitor-prod\", team=~\"$team\", type=~\"$type\"})) > 0))",
+      "expr" : "(1 - (sum(max by (type, team, team_id) (sitemonitor_monitors_failed_checks_24h{namespace=\"site-monitor-prod\", team=~\"$team\", type=~\"$type\"})) / (sum(max by (type, team, team_id) (sitemonitor_monitors_checks_24h{namespace=\"site-monitor-prod\", team=~\"$team\", type=~\"$type\"})) > 0))) unless on() (max by (source) (sitemonitor_exporter_source_up{namespace=\"site-monitor-prod\", source=~\"monitors:$type\"}) == 0)",
       "instant" : false,
       "legendFormat" : "__auto",
       "range" : true,
@@ -692,7 +692,7 @@
         "uid" : "${datasource}"
       },
       "editorMode" : "code",
-      "expr" : "(sum(max by (type, team, team_id) (sitemonitor_monitors_checks_24h{namespace=\"site-monitor-prod\", team=~\"$team\", type=~\"$type\"}))) or (vector(0) and on() (max(sitemonitor_exporter_source_up{namespace=\"site-monitor-prod\", source=\"overview\"}) == 1))",
+      "expr" : "((sum(max by (type, team, team_id) (sitemonitor_monitors_checks_24h{namespace=\"site-monitor-prod\", team=~\"$team\", type=~\"$type\"}))) or (vector(0) and on() (max(sitemonitor_exporter_source_up{namespace=\"site-monitor-prod\", source=\"overview\"}) == 1))) unless on() (max by (source) (sitemonitor_exporter_source_up{namespace=\"site-monitor-prod\", source=~\"monitors:$type\"}) == 0)",
       "instant" : false,
       "legendFormat" : "__auto",
       "range" : true,
@@ -2012,7 +2012,7 @@
   }, {
     "type" : "stat",
     "title" : "En eski kritik / yüksek alarm",
-    "description" : "En eski açık kritik ya da yüksek alarmın ne zamandır açık olduğu.",
+    "description" : "En eski açık kritik ya da yüksek alarmın ne zamandır açık olduğu (yoksa \"Yok\").",
     "datasource" : {
       "type" : "prometheus",
       "uid" : "${datasource}"
@@ -2023,8 +2023,11 @@
         "thresholds" : {
           "mode" : "absolute",
           "steps" : [ {
-            "color" : "orange",
+            "color" : "green",
             "value" : null
+          }, {
+            "color" : "orange",
+            "value" : 1
           }, {
             "color" : "red",
             "value" : 1800
@@ -2033,7 +2036,17 @@
         "color" : {
           "mode" : "thresholds"
         },
-        "noValue" : "Veri yok"
+        "noValue" : "Veri yok",
+        "mappings" : [ {
+          "options" : {
+            "0" : {
+              "color" : "green",
+              "index" : 0,
+              "text" : "Yok"
+            }
+          },
+          "type" : "value"
+        } ]
       },
       "overrides" : [ ]
     },
@@ -2043,7 +2056,7 @@
         "uid" : "${datasource}"
       },
       "editorMode" : "code",
-      "expr" : "time() - min((max by (family, team, team_id, ug_team, ug_team_id, level) (sitemonitor_alerts_oldest_open_timestamp_seconds{namespace=\"site-monitor-prod\", team=~\"$team\", level=~\"CRITICAL|HIGH\", family=~\"$type\"}) or max by (family, team, team_id, ug_team, ug_team_id, level) (sitemonitor_alerts_oldest_open_timestamp_seconds{namespace=\"site-monitor-prod\", ug_team=~\"$team\", level=~\"CRITICAL|HIGH\", family=~\"$type\"})))",
+      "expr" : "(time() - min((max by (family, team, team_id, ug_team, ug_team_id, level) (sitemonitor_alerts_oldest_open_timestamp_seconds{namespace=\"site-monitor-prod\", team=~\"$team\", level=~\"CRITICAL|HIGH\", family=~\"$type\"}) or max by (family, team, team_id, ug_team, ug_team_id, level) (sitemonitor_alerts_oldest_open_timestamp_seconds{namespace=\"site-monitor-prod\", ug_team=~\"$team\", level=~\"CRITICAL|HIGH\", family=~\"$type\"})))) or (vector(0) and on() (max(sitemonitor_exporter_source_up{namespace=\"site-monitor-prod\", source=\"alerts\"}) == 1))",
       "instant" : false,
       "legendFormat" : "__auto",
       "range" : true,
@@ -2080,7 +2093,7 @@
   }, {
     "type" : "stat",
     "title" : "En eski açık alarm",
-    "description" : "Süzgece uyan en eski açık alarmın yaşı.",
+    "description" : "Süzgece uyan en eski açık alarmın yaşı (yoksa \"Yok\").",
     "datasource" : {
       "type" : "prometheus",
       "uid" : "${datasource}"
@@ -2091,8 +2104,11 @@
         "thresholds" : {
           "mode" : "absolute",
           "steps" : [ {
-            "color" : "yellow",
+            "color" : "green",
             "value" : null
+          }, {
+            "color" : "yellow",
+            "value" : 1
           }, {
             "color" : "orange",
             "value" : 86400
@@ -2101,7 +2117,17 @@
         "color" : {
           "mode" : "thresholds"
         },
-        "noValue" : "Veri yok"
+        "noValue" : "Veri yok",
+        "mappings" : [ {
+          "options" : {
+            "0" : {
+              "color" : "green",
+              "index" : 0,
+              "text" : "Yok"
+            }
+          },
+          "type" : "value"
+        } ]
       },
       "overrides" : [ ]
     },
@@ -2111,7 +2137,7 @@
         "uid" : "${datasource}"
       },
       "editorMode" : "code",
-      "expr" : "time() - min((max by (family, team, team_id, ug_team, ug_team_id, level) (sitemonitor_alerts_oldest_open_timestamp_seconds{namespace=\"site-monitor-prod\", team=~\"$team\", level=~\"$level\", family=~\"$type\"}) or max by (family, team, team_id, ug_team, ug_team_id, level) (sitemonitor_alerts_oldest_open_timestamp_seconds{namespace=\"site-monitor-prod\", ug_team=~\"$team\", level=~\"$level\", family=~\"$type\"})))",
+      "expr" : "(time() - min((max by (family, team, team_id, ug_team, ug_team_id, level) (sitemonitor_alerts_oldest_open_timestamp_seconds{namespace=\"site-monitor-prod\", team=~\"$team\", level=~\"$level\", family=~\"$type\"}) or max by (family, team, team_id, ug_team, ug_team_id, level) (sitemonitor_alerts_oldest_open_timestamp_seconds{namespace=\"site-monitor-prod\", ug_team=~\"$team\", level=~\"$level\", family=~\"$type\"})))) or (vector(0) and on() (max(sitemonitor_exporter_source_up{namespace=\"site-monitor-prod\", source=\"alerts\"}) == 1))",
       "instant" : false,
       "legendFormat" : "__auto",
       "range" : true,
@@ -2458,7 +2484,97 @@
           }
         }
       },
-      "overrides" : [ ]
+      "overrides" : [ {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "cert"
+        },
+        "properties" : [ {
+          "id" : "displayName",
+          "value" : "Sertifika"
+        } ]
+      }, {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "domain"
+        },
+        "properties" : [ {
+          "id" : "displayName",
+          "value" : "Alan adı kaydı"
+        } ]
+      }, {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "http"
+        },
+        "properties" : [ {
+          "id" : "displayName",
+          "value" : "HTTP / Web sitesi"
+        } ]
+      }, {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "ping"
+        },
+        "properties" : [ {
+          "id" : "displayName",
+          "value" : "Ping"
+        } ]
+      }, {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "port"
+        },
+        "properties" : [ {
+          "id" : "displayName",
+          "value" : "Port"
+        } ]
+      }, {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "dns"
+        },
+        "properties" : [ {
+          "id" : "displayName",
+          "value" : "DNS"
+        } ]
+      }, {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "keyword"
+        },
+        "properties" : [ {
+          "id" : "displayName",
+          "value" : "İçerik (keyword)"
+        } ]
+      }, {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "page"
+        },
+        "properties" : [ {
+          "id" : "displayName",
+          "value" : "Sayfa bütünlüğü"
+        } ]
+      }, {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "pagespeed"
+        },
+        "properties" : [ {
+          "id" : "displayName",
+          "value" : "Sayfa hızı"
+        } ]
+      }, {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "scripted"
+        },
+        "properties" : [ {
+          "id" : "displayName",
+          "value" : "Sentetik (k6)"
+        } ]
+      } ]
     },
     "targets" : [ {
       "datasource" : {
@@ -2716,7 +2832,7 @@
         "uid" : "${datasource}"
       },
       "editorMode" : "code",
-      "expr" : "sum by (team, team_id) ((max by (family, alert_type, team, team_id, ug_team, ug_team_id, level, acknowledged) (sitemonitor_alerts_open{namespace=\"site-monitor-prod\", team=~\"$team\", family=~\"$type\"}) or label_replace(label_replace(max by (family, alert_type, team, team_id, ug_team, ug_team_id, level, acknowledged) (sitemonitor_alerts_open{namespace=\"site-monitor-prod\", ug_team=~\"$team\", ug_team!=\"\", family=~\"$type\"}), \"team\", \"$1\", \"ug_team\", \"(.+)\"), \"team_id\", \"$1\", \"ug_team_id\", \"(.+)\")))",
+      "expr" : "sum by (team, team_id) ((max by (family, alert_type, team, team_id, ug_team, ug_team_id, level, acknowledged) (sitemonitor_alerts_open{namespace=\"site-monitor-prod\", team=~\"$team\", family=~\"$type\"}) or label_replace(label_replace(sum without (team, team_id) (max by (family, alert_type, team, team_id, ug_team, ug_team_id, level, acknowledged) (sitemonitor_alerts_open{namespace=\"site-monitor-prod\", ug_team=~\"$team\", ug_team!=\"\", family=~\"$type\"})), \"team\", \"$1\", \"ug_team\", \"(.+)\"), \"team_id\", \"$1\", \"ug_team_id\", \"(.+)\")))",
       "format" : "table",
       "instant" : true,
       "legendFormat" : "__auto",
@@ -2728,7 +2844,7 @@
         "uid" : "${datasource}"
       },
       "editorMode" : "code",
-      "expr" : "sum by (team, team_id) ((max by (family, alert_type, team, team_id, ug_team, ug_team_id, level, acknowledged) (sitemonitor_alerts_open{namespace=\"site-monitor-prod\", team=~\"$team\", family=~\"$type\", level=\"CRITICAL\"}) or label_replace(label_replace(max by (family, alert_type, team, team_id, ug_team, ug_team_id, level, acknowledged) (sitemonitor_alerts_open{namespace=\"site-monitor-prod\", ug_team=~\"$team\", ug_team!=\"\", family=~\"$type\", level=\"CRITICAL\"}), \"team\", \"$1\", \"ug_team\", \"(.+)\"), \"team_id\", \"$1\", \"ug_team_id\", \"(.+)\")))",
+      "expr" : "sum by (team, team_id) ((max by (family, alert_type, team, team_id, ug_team, ug_team_id, level, acknowledged) (sitemonitor_alerts_open{namespace=\"site-monitor-prod\", team=~\"$team\", family=~\"$type\", level=\"CRITICAL\"}) or label_replace(label_replace(sum without (team, team_id) (max by (family, alert_type, team, team_id, ug_team, ug_team_id, level, acknowledged) (sitemonitor_alerts_open{namespace=\"site-monitor-prod\", ug_team=~\"$team\", ug_team!=\"\", family=~\"$type\", level=\"CRITICAL\"})), \"team\", \"$1\", \"ug_team\", \"(.+)\"), \"team_id\", \"$1\", \"ug_team_id\", \"(.+)\")))",
       "format" : "table",
       "instant" : true,
       "legendFormat" : "__auto",
@@ -2740,7 +2856,7 @@
         "uid" : "${datasource}"
       },
       "editorMode" : "code",
-      "expr" : "sum by (team, team_id) ((max by (family, alert_type, team, team_id, ug_team, ug_team_id, level, acknowledged) (sitemonitor_alerts_open{namespace=\"site-monitor-prod\", team=~\"$team\", family=~\"$type\", level=\"HIGH\"}) or label_replace(label_replace(max by (family, alert_type, team, team_id, ug_team, ug_team_id, level, acknowledged) (sitemonitor_alerts_open{namespace=\"site-monitor-prod\", ug_team=~\"$team\", ug_team!=\"\", family=~\"$type\", level=\"HIGH\"}), \"team\", \"$1\", \"ug_team\", \"(.+)\"), \"team_id\", \"$1\", \"ug_team_id\", \"(.+)\")))",
+      "expr" : "sum by (team, team_id) ((max by (family, alert_type, team, team_id, ug_team, ug_team_id, level, acknowledged) (sitemonitor_alerts_open{namespace=\"site-monitor-prod\", team=~\"$team\", family=~\"$type\", level=\"HIGH\"}) or label_replace(label_replace(sum without (team, team_id) (max by (family, alert_type, team, team_id, ug_team, ug_team_id, level, acknowledged) (sitemonitor_alerts_open{namespace=\"site-monitor-prod\", ug_team=~\"$team\", ug_team!=\"\", family=~\"$type\", level=\"HIGH\"})), \"team\", \"$1\", \"ug_team\", \"(.+)\"), \"team_id\", \"$1\", \"ug_team_id\", \"(.+)\")))",
       "format" : "table",
       "instant" : true,
       "legendFormat" : "__auto",
@@ -2752,7 +2868,7 @@
         "uid" : "${datasource}"
       },
       "editorMode" : "code",
-      "expr" : "sum by (team, team_id) ((max by (family, alert_type, team, team_id, ug_team, ug_team_id, level, acknowledged) (sitemonitor_alerts_open{namespace=\"site-monitor-prod\", team=~\"$team\", family=~\"$type\", level=\"WARNING\"}) or label_replace(label_replace(max by (family, alert_type, team, team_id, ug_team, ug_team_id, level, acknowledged) (sitemonitor_alerts_open{namespace=\"site-monitor-prod\", ug_team=~\"$team\", ug_team!=\"\", family=~\"$type\", level=\"WARNING\"}), \"team\", \"$1\", \"ug_team\", \"(.+)\"), \"team_id\", \"$1\", \"ug_team_id\", \"(.+)\")))",
+      "expr" : "sum by (team, team_id) ((max by (family, alert_type, team, team_id, ug_team, ug_team_id, level, acknowledged) (sitemonitor_alerts_open{namespace=\"site-monitor-prod\", team=~\"$team\", family=~\"$type\", level=\"WARNING\"}) or label_replace(label_replace(sum without (team, team_id) (max by (family, alert_type, team, team_id, ug_team, ug_team_id, level, acknowledged) (sitemonitor_alerts_open{namespace=\"site-monitor-prod\", ug_team=~\"$team\", ug_team!=\"\", family=~\"$type\", level=\"WARNING\"})), \"team\", \"$1\", \"ug_team\", \"(.+)\"), \"team_id\", \"$1\", \"ug_team_id\", \"(.+)\")))",
       "format" : "table",
       "instant" : true,
       "legendFormat" : "__auto",
@@ -2764,7 +2880,7 @@
         "uid" : "${datasource}"
       },
       "editorMode" : "code",
-      "expr" : "sum by (team, team_id) ((max by (family, alert_type, team, team_id, ug_team, ug_team_id, level, acknowledged) (sitemonitor_alerts_open{namespace=\"site-monitor-prod\", team=~\"$team\", family=~\"$type\", acknowledged=\"false\"}) or label_replace(label_replace(max by (family, alert_type, team, team_id, ug_team, ug_team_id, level, acknowledged) (sitemonitor_alerts_open{namespace=\"site-monitor-prod\", ug_team=~\"$team\", ug_team!=\"\", family=~\"$type\", acknowledged=\"false\"}), \"team\", \"$1\", \"ug_team\", \"(.+)\"), \"team_id\", \"$1\", \"ug_team_id\", \"(.+)\")))",
+      "expr" : "sum by (team, team_id) ((max by (family, alert_type, team, team_id, ug_team, ug_team_id, level, acknowledged) (sitemonitor_alerts_open{namespace=\"site-monitor-prod\", team=~\"$team\", family=~\"$type\", acknowledged=\"false\"}) or label_replace(label_replace(sum without (team, team_id) (max by (family, alert_type, team, team_id, ug_team, ug_team_id, level, acknowledged) (sitemonitor_alerts_open{namespace=\"site-monitor-prod\", ug_team=~\"$team\", ug_team!=\"\", family=~\"$type\", acknowledged=\"false\"})), \"team\", \"$1\", \"ug_team\", \"(.+)\"), \"team_id\", \"$1\", \"ug_team_id\", \"(.+)\")))",
       "format" : "table",
       "instant" : true,
       "legendFormat" : "__auto",
@@ -2776,7 +2892,7 @@
         "uid" : "${datasource}"
       },
       "editorMode" : "code",
-      "expr" : "time() - min by (team, team_id) ((max by (family, team, team_id, ug_team, ug_team_id, level) (sitemonitor_alerts_oldest_open_timestamp_seconds{namespace=\"site-monitor-prod\", team=~\"$team\", family=~\"$type\"}) or label_replace(label_replace(max by (family, team, team_id, ug_team, ug_team_id, level) (sitemonitor_alerts_oldest_open_timestamp_seconds{namespace=\"site-monitor-prod\", ug_team=~\"$team\", ug_team!=\"\", family=~\"$type\"}), \"team\", \"$1\", \"ug_team\", \"(.+)\"), \"team_id\", \"$1\", \"ug_team_id\", \"(.+)\")))",
+      "expr" : "time() - min by (team, team_id) ((max by (family, team, team_id, ug_team, ug_team_id, level) (sitemonitor_alerts_oldest_open_timestamp_seconds{namespace=\"site-monitor-prod\", team=~\"$team\", family=~\"$type\"}) or label_replace(label_replace(min without (team, team_id) (max by (family, team, team_id, ug_team, ug_team_id, level) (sitemonitor_alerts_oldest_open_timestamp_seconds{namespace=\"site-monitor-prod\", ug_team=~\"$team\", ug_team!=\"\", family=~\"$type\"})), \"team\", \"$1\", \"ug_team\", \"(.+)\"), \"team_id\", \"$1\", \"ug_team_id\", \"(.+)\")))",
       "format" : "table",
       "instant" : true,
       "legendFormat" : "__auto",
@@ -2852,7 +2968,7 @@
         "uid" : "${datasource}"
       },
       "editorMode" : "code",
-      "expr" : "sort_desc(time() - min by (team) ((max by (family, team, team_id, ug_team, ug_team_id, level) (sitemonitor_alerts_oldest_open_timestamp_seconds{namespace=\"site-monitor-prod\", team=~\"$team\", family=~\"$type\", level=~\"CRITICAL|HIGH\"}) or label_replace(label_replace(max by (family, team, team_id, ug_team, ug_team_id, level) (sitemonitor_alerts_oldest_open_timestamp_seconds{namespace=\"site-monitor-prod\", ug_team=~\"$team\", ug_team!=\"\", family=~\"$type\", level=~\"CRITICAL|HIGH\"}), \"team\", \"$1\", \"ug_team\", \"(.+)\"), \"team_id\", \"$1\", \"ug_team_id\", \"(.+)\"))))",
+      "expr" : "sort_desc(time() - min by (team) ((max by (family, team, team_id, ug_team, ug_team_id, level) (sitemonitor_alerts_oldest_open_timestamp_seconds{namespace=\"site-monitor-prod\", team=~\"$team\", family=~\"$type\", level=~\"CRITICAL|HIGH\"}) or label_replace(label_replace(min without (team, team_id) (max by (family, team, team_id, ug_team, ug_team_id, level) (sitemonitor_alerts_oldest_open_timestamp_seconds{namespace=\"site-monitor-prod\", ug_team=~\"$team\", ug_team!=\"\", family=~\"$type\", level=~\"CRITICAL|HIGH\"})), \"team\", \"$1\", \"ug_team\", \"(.+)\"), \"team_id\", \"$1\", \"ug_team_id\", \"(.+)\"))))",
       "instant" : true,
       "legendFormat" : "{{team}}",
       "range" : false,
@@ -4524,7 +4640,97 @@
           }
         }
       },
-      "overrides" : [ ]
+      "overrides" : [ {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "cert"
+        },
+        "properties" : [ {
+          "id" : "displayName",
+          "value" : "Sertifika"
+        } ]
+      }, {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "domain"
+        },
+        "properties" : [ {
+          "id" : "displayName",
+          "value" : "Alan adı kaydı"
+        } ]
+      }, {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "http"
+        },
+        "properties" : [ {
+          "id" : "displayName",
+          "value" : "HTTP / Web sitesi"
+        } ]
+      }, {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "ping"
+        },
+        "properties" : [ {
+          "id" : "displayName",
+          "value" : "Ping"
+        } ]
+      }, {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "port"
+        },
+        "properties" : [ {
+          "id" : "displayName",
+          "value" : "Port"
+        } ]
+      }, {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "dns"
+        },
+        "properties" : [ {
+          "id" : "displayName",
+          "value" : "DNS"
+        } ]
+      }, {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "keyword"
+        },
+        "properties" : [ {
+          "id" : "displayName",
+          "value" : "İçerik (keyword)"
+        } ]
+      }, {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "page"
+        },
+        "properties" : [ {
+          "id" : "displayName",
+          "value" : "Sayfa bütünlüğü"
+        } ]
+      }, {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "pagespeed"
+        },
+        "properties" : [ {
+          "id" : "displayName",
+          "value" : "Sayfa hızı"
+        } ]
+      }, {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "scripted"
+        },
+        "properties" : [ {
+          "id" : "displayName",
+          "value" : "Sentetik (k6)"
+        } ]
+      } ]
     },
     "targets" : [ {
       "datasource" : {
@@ -4766,65 +4972,92 @@
       "overrides" : [ {
         "matcher" : {
           "id" : "byName",
-          "options" : "type"
+          "options" : "cert"
         },
         "properties" : [ {
-          "id" : "mappings",
-          "value" : [ {
-            "options" : {
-              "cert" : {
-                "color" : "text",
-                "index" : 0,
-                "text" : "Sertifika"
-              },
-              "domain" : {
-                "color" : "text",
-                "index" : 1,
-                "text" : "Alan adı kaydı"
-              },
-              "http" : {
-                "color" : "text",
-                "index" : 2,
-                "text" : "HTTP / Web sitesi"
-              },
-              "ping" : {
-                "color" : "text",
-                "index" : 3,
-                "text" : "Ping"
-              },
-              "port" : {
-                "color" : "text",
-                "index" : 4,
-                "text" : "Port"
-              },
-              "dns" : {
-                "color" : "text",
-                "index" : 5,
-                "text" : "DNS"
-              },
-              "keyword" : {
-                "color" : "text",
-                "index" : 6,
-                "text" : "İçerik (keyword)"
-              },
-              "page" : {
-                "color" : "text",
-                "index" : 7,
-                "text" : "Sayfa bütünlüğü"
-              },
-              "pagespeed" : {
-                "color" : "text",
-                "index" : 8,
-                "text" : "Sayfa hızı"
-              },
-              "scripted" : {
-                "color" : "text",
-                "index" : 9,
-                "text" : "Sentetik (k6)"
-              }
-            },
-            "type" : "value"
-          } ]
+          "id" : "displayName",
+          "value" : "Sertifika"
+        } ]
+      }, {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "domain"
+        },
+        "properties" : [ {
+          "id" : "displayName",
+          "value" : "Alan adı kaydı"
+        } ]
+      }, {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "http"
+        },
+        "properties" : [ {
+          "id" : "displayName",
+          "value" : "HTTP / Web sitesi"
+        } ]
+      }, {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "ping"
+        },
+        "properties" : [ {
+          "id" : "displayName",
+          "value" : "Ping"
+        } ]
+      }, {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "port"
+        },
+        "properties" : [ {
+          "id" : "displayName",
+          "value" : "Port"
+        } ]
+      }, {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "dns"
+        },
+        "properties" : [ {
+          "id" : "displayName",
+          "value" : "DNS"
+        } ]
+      }, {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "keyword"
+        },
+        "properties" : [ {
+          "id" : "displayName",
+          "value" : "İçerik (keyword)"
+        } ]
+      }, {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "page"
+        },
+        "properties" : [ {
+          "id" : "displayName",
+          "value" : "Sayfa bütünlüğü"
+        } ]
+      }, {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "pagespeed"
+        },
+        "properties" : [ {
+          "id" : "displayName",
+          "value" : "Sayfa hızı"
+        } ]
+      }, {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "scripted"
+        },
+        "properties" : [ {
+          "id" : "displayName",
+          "value" : "Sentetik (k6)"
         } ]
       } ]
     },

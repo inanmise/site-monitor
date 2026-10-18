@@ -277,8 +277,13 @@ public class MonitoringMetricsExporter {
             return m;
         });
         if (ov != null && teams != null) {
-            for (String type : MonitoringMetricsModel.monitors(f, ov, teams, perEntity, maxEntities)) sources.put("monitors:" + type, false);
-            List<DomainDays> days = read(sources, "domains", () -> {
+            java.util.Set<String> failedTypes = MonitoringMetricsModel.monitors(f, ov, teams, perEntity, maxEntities);
+            // Her tür kendi kaynak satırını yazar (1 okundu / 0 okunamadı): pano "süzgece uyan tür okunamadı" kararını
+            // pod'lar arası max ile verir (bir pod okuduysa veri tamdır).
+            for (String type : MonitoringMetricsModel.overviewTypes(ov)) sources.put("monitors:" + type, !failedTypes.contains(type));
+            for (String type : failedTypes) sources.put("monitors:" + type, false);
+            // Alan adı izlemeleri okunamadıysa kovalar "0 alan adı" diye yazılmasın (sahte 0 yok) — kaynak düşer
+            List<DomainDays> days = failedTypes.contains("domain") ? null : read(sources, "domains", () -> {
                 if (domainCheckRepo == null) return null;
                 List<DomainDays> l = new ArrayList<>();
                 for (DomainCheck c : domainCheckRepo.findLatestPerMonitor()) {
@@ -286,6 +291,7 @@ public class MonitoringMetricsExporter {
                 }
                 return l;
             });
+            if (failedTypes.contains("domain")) sources.put("domains", false);
             if (days != null) MonitoringMetricsModel.domains(f, ov, days, teams, perEntity, maxEntities);
         }
 
@@ -328,55 +334,58 @@ public class MonitoringMetricsExporter {
         if (notif != null) MonitoringMetricsModel.notifications(f, notif);
 
         // Kişisel push
-        read(sources, "push", () -> {
+        mergeInto(f, read(sources, "push", () -> {
+            Families t = new Families();
             if (jdbc == null) return null;
             List<Object[]> rows = jdbc.query(SQL_PUSH_24H, (rs, i) -> new Object[]{rs.getString(1), rs.getLong(2)}, since24h);
             Long pending = jdbc.queryForObject(SQL_PUSH_PENDING, Long.class);
             String created = ISO.format(now.minus(Duration.ofMinutes(PUSH_STUCK_MINUTES + 5)));
             String due = ISO.format(now.minus(Duration.ofMinutes(PUSH_STUCK_MINUTES)));
             Long stuck = jdbc.queryForObject(SQL_PUSH_STUCK, Long.class, created, due);
-            MonitoringMetricsModel.pushDeliveries(f, rows);
-            f.add(MonitoringMetricNames.PUSH_PENDING, pending == null ? 0 : pending);
-            f.add(MonitoringMetricNames.PUSH_STUCK, stuck == null ? 0 : stuck);
+            MonitoringMetricsModel.pushDeliveries(t, rows);
+            t.add(MonitoringMetricNames.PUSH_PENDING, pending == null ? 0 : pending);
+            t.add(MonitoringMetricNames.PUSH_STUCK, stuck == null ? 0 : stuck);
             if (push != null) {
-                f.add(MonitoringMetricNames.PUSH_ENABLED, push.enabled() ? 1 : 0);
-                f.add(MonitoringMetricNames.PUSH_CIRCUIT, Boolean.TRUE.equals(push.healthSnapshot().get("circuit_open")) ? 1 : 0);
+                t.add(MonitoringMetricNames.PUSH_ENABLED, push.enabled() ? 1 : 0);
+                t.add(MonitoringMetricNames.PUSH_CIRCUIT, Boolean.TRUE.equals(push.healthSnapshot().get("circuit_open")) ? 1 : 0);
             }
-            return Boolean.TRUE;
-        });
+            return t;
+        }));
 
         // Kendi kendini izleme
-        read(sources, "watchdog", () -> {
+        mergeInto(f, read(sources, "watchdog", () -> {
+            Families t = new Families();
             if (watchdog == null) return null;
             Map<String, Object> ps = watchdog.publicStatus(now);
             Integer code = MonitoringMetricsModel.watchdogCode(ps == null ? null : String.valueOf(ps.get("status")));
-            if (code != null) f.add(MonitoringMetricNames.WATCHDOG_STATUS, code);
+            if (code != null) t.add(MonitoringMetricNames.WATCHDOG_STATUS, code);
             Long evaluated = MonitoringMetricsModel.epochSeconds(ps == null || ps.get("evaluated_at") == null ? null
                     : String.valueOf(ps.get("evaluated_at")));
-            if (evaluated != null) f.add(MonitoringMetricNames.WATCHDOG_EVALUATED, evaluated);
+            if (evaluated != null) t.add(MonitoringMetricNames.WATCHDOG_EVALUATED, evaluated);
             Map<String, Map<?, ?>> byKey = new HashMap<>();
             if (ps != null && ps.get("checks") instanceof List<?> checks) {
                 for (Object o : checks) if (o instanceof Map<?, ?> m && m.get("key") != null) byKey.put(String.valueOf(m.get("key")), m);
             }
             for (WatchdogCheck c : WatchdogCheck.values()) {
                 Map<?, ?> m = byKey.get(c.key());
-                f.add(MonitoringMetricNames.WATCHDOG_CHECK, MonitoringMetricsModel.watchdogCheckCode(
+                t.add(MonitoringMetricNames.WATCHDOG_CHECK, MonitoringMetricsModel.watchdogCheckCode(
                         m == null || m.get("status") == null ? null : String.valueOf(m.get("status")),
                         m == null || m.get("severity") == null ? null : String.valueOf(m.get("severity"))), "check", c.key());
             }
-            return Boolean.TRUE;
-        });
+            return t;
+        }));
 
         // Tarama liderliği (salt okuma — kira ALINMAZ)
-        read(sources, "cluster", () -> {
+        mergeInto(f, read(sources, "cluster", () -> {
+            Families t = new Families();
             if (cluster == null) return null;
             ClusterScheduleService.Lease lease = cluster.lease("sweep-leader");
-            if (lease == null) return Boolean.TRUE;   // kira satırı yok (tek pod / henüz alınmadı) → bilinmiyor, yazılmaz
+            if (lease == null) return t;   // kira satırı yok (tek pod / henüz alınmadı) → bilinmiyor, yazılmaz
             boolean mine = cluster.owner() != null && cluster.owner().equals(lease.owner()) && lease.untilMs() > now.toEpochMilli();
-            f.add(MonitoringMetricNames.SWEEP_LEADER, mine ? 1 : 0);
-            f.add(MonitoringMetricNames.SWEEP_LEASE, (lease.untilMs() - now.toEpochMilli()) / 1000.0);
-            return Boolean.TRUE;
-        });
+            t.add(MonitoringMetricNames.SWEEP_LEADER, mine ? 1 : 0);
+            t.add(MonitoringMetricNames.SWEEP_LEASE, (lease.untilMs() - now.toEpochMilli()) / 1000.0);
+            return t;
+        }));
 
         // Zamanlayıcı kilitleri
         List<Object[]> locks = read(sources, "scheduler_locks", () -> jdbc == null ? null
@@ -384,19 +393,26 @@ public class MonitoringMetricsExporter {
         if (locks != null) MonitoringMetricsModel.schedulerLocks(f, locks, now, MAX_LOCK_NAMES);
 
         // Veritabanı sağlığı (bu pod, 5 sn önbellek) ve sistem bakımı
-        read(sources, "database", () -> {
+        mergeInto(f, read(sources, "database", () -> {
+            Families t = new Families();
             if (database == null) return null;
             Integer code = MonitoringMetricsModel.databaseCode(database.current().status());
-            if (code != null) f.add(MonitoringMetricNames.DATABASE_STATUS, code);
-            return Boolean.TRUE;
-        });
-        read(sources, "maintenance", () -> {
+            if (code != null) t.add(MonitoringMetricNames.DATABASE_STATUS, code);
+            return t;
+        }));
+        mergeInto(f, read(sources, "maintenance", () -> {
+            Families t = new Families();
             if (maintenance == null) return null;
             Map<String, Object> b = maintenance.clientBlock();
             Integer code = MonitoringMetricsModel.maintenanceCode(b == null || b.get("state") == null ? null : String.valueOf(b.get("state")));
-            if (code != null) f.add(MonitoringMetricNames.SYSTEM_MAINTENANCE, code);
-            return Boolean.TRUE;
-        });
+            if (code != null) t.add(MonitoringMetricNames.SYSTEM_MAINTENANCE, code);
+            return t;
+        }));
+    }
+
+    /** Geçici aile kümesini (kaynak tamamen okunduysa) asıl kümeye ekler — yarım okunan kaynak satır bırakmaz. */
+    private static void mergeInto(Families f, Families part) {
+        if (part != null) f.mergeFrom(part);
     }
 
     /** Takım dizini: okunamazsa son başarılı okuma (adlar sabit kalsın, seriler el değiştirmesin); hiç yoksa null. */
@@ -426,19 +442,45 @@ public class MonitoringMetricsExporter {
         }
     }
 
-    /** Satırları kayıt defterine yazar; ailesi boş olan ölçümün eski serileri silinir ({@code overwrite=true}). */
+    /**
+     * Satırları kayıt defterine yazar. Her seri için KALICI bir değer tutucusu vardır: var olan seri yeniden kaydedilmez,
+     * yalnız tutucunun değeri güncellenir ({@code overwrite=false}) — her turda kaldır / yeniden kaydet, eşzamanlı bir kazımanın
+     * seriyi bir an göremeyip "bayat" işaretlemesine (grafikte boşluk, alarm anotasyonunda sahte "yeni alarm") yol açardı.
+     * Kaybolan satırları MultiGauge siler; tutucusu da bırakılır. Gauge değer nesnesini ZAYIF tutar (DefaultGauge →
+     * WeakReference) — tutucular {@link #holders} haritasında güçlü tutulur, GC'den sonra NaN olmaz.
+     */
     void apply(Families f) {
+        Map<String, Holder> next = new HashMap<>();
         for (MonitoringMetricNames.Def d : MonitoringMetricNames.ALL) {
             MultiGauge g = gauges.get(d.name());
             List<MultiGauge.Row<?>> rows = new ArrayList<>();
             for (Row r : f.get(d.name())) {
                 List<Tag> tags = new ArrayList<>(r.labels().size());
-                for (Map.Entry<String, String> e : r.labels().entrySet()) tags.add(Tag.of(e.getKey(), e.getValue()));
-                rows.add(MultiGauge.Row.of(Tags.of(tags), r.value()));
+                StringBuilder key = new StringBuilder(d.name());
+                for (Map.Entry<String, String> e : r.labels().entrySet()) {
+                    tags.add(Tag.of(e.getKey(), e.getValue()));
+                    key.append('\u0000').append(e.getKey()).append('=').append(e.getValue());
+                }
+                String k = key.toString();
+                Holder h = holders.get(k);
+                if (h == null) h = new Holder();
+                h.value = r.value();
+                next.put(k, h);
+                rows.add(MultiGauge.Row.of(Tags.of(tags), h, Holder::get));
             }
-            g.register(rows, true);
+            g.register(rows, false);
         }
+        holders = next;
     }
+
+    /** Bir serinin değişken değer tutucusu. */
+    static final class Holder {
+        volatile double value;
+        double get() { return value; }
+    }
+
+    /** Kayıtlı serilerin değer tutucuları (ölçüm adı + etiketler → tutucu). */
+    private volatile Map<String, Holder> holders = new HashMap<>();
 
     private void warnCapped(Families f) {
         if (f.capped().isEmpty()) return;

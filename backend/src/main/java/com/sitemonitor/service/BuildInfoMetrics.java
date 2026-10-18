@@ -18,7 +18,8 @@ import java.util.List;
  * <ul>
  *   <li>{@code sitemonitor_build_info{version,commit,environment} 1} — kardinalite 1. {@code version}/{@code commit}
  *       süreç ömrünce sabit; {@code environment} Ayarlar → Genel Ayarlar'daki ortam adını izler (2026-09-29).
- *       Grafana anotasyonu / alarm: {@code changes(sitemonitor_build_info[10m]) > 0}.</li>
+ *       Grafana anotasyonu / alarm: {@code count by (version, commit, environment) (sitemonitor_build_info) unless count by
+ *       (version, commit, environment) (sitemonitor_build_info offset 5m)} ({@code changes()} sabit seride hiç tetiklenmez).</li>
  *   <li>{@code sitemonitor_deployment_started_seconds} — JVM başlangıcı (epoch sn); DORA dağıtım
  *       sıklığı ve "bu pod ne zamandır ayakta" bundan okunur.</li>
  * </ul>
@@ -27,7 +28,7 @@ import java.util.List;
  * açılış değerinde bırakmak, uygulama "prod" derken panoların {@code environment="unknown"} süzmesi demekti (bir
  * sonraki yeniden başlatmaya kadar). {@link MultiGauge} satırı {@code overwrite=true} ile yeniden kaydedilir: eski
  * seri silinir, yeni etiketli seri doğar — kardinalite yine 1. Bedeli: adlandırma anında yeni seri doğduğu için
- * {@code changes()} anotasyonu BİR KEZ tetiklenir (belge: {@code docs/GRAFANA_SURUM_ANOTASYON.md} §5).
+ * sürüm anotasyonu BİR KEZ tetiklenir (belge: {@code docs/GRAFANA_SURUM_ANOTASYON.md} §5).
  * Belge: {@code docs/GRAFANA_SURUM_ANOTASYON.md}.
  */
 @Slf4j

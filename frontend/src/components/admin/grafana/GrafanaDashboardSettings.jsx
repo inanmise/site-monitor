@@ -17,7 +17,8 @@ import { downloadBlob } from '../../../utils/csvExport.js'
 import { agoText } from '../../../utils/relativeTime.js'
 import { SETTINGS_STACK, SettingsHeader, SettingsSaveBar, SettingsSection, ToggleRow } from '../SettingsControls.jsx'
 import {
-  SECTION_IDS, changedFields, exporterState, failedSources, isDirty, orderSections, scrapeSnippet, toForm, utcMs, validateForm,
+  SECTION_IDS, changedFields, errorsForChanges, exporterState, failedSources, isDirty, orderSections, scrapeSnippet, toForm, utcMs,
+  validateForm,
 } from './grafanaModel.js'
 import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
@@ -103,7 +104,9 @@ export default function GrafanaDashboardSettings({ readOnly: readOnlyProp = fals
   const teams = useMemo(() => (Array.isArray(data?.teams) ? data.teams : []), [data])
   const dirty = !!saved && !!form && isDirty(saved, form)
   const changes = useMemo(() => (saved && form ? changedFields(saved, form) : {}), [saved, form])
-  const clientErrors = useMemo(() => (form ? validateForm(form, options, teams) : {}), [form, options, teams])
+  // Yalnız değişen alanlar doğrulanır (kayıtlı ama artık geçersiz bir değer başka alanın kaydını engellemez)
+  const clientErrors = useMemo(() => (form ? errorsForChanges(validateForm(form, options, teams), changes) : {}),
+    [form, options, teams, changes])
   const hasClientErrors = Object.keys(clientErrors).length > 0
 
   // Ön izleme: kaydedilmemiş değerlerle, gecikmeli; geç gelen yanıt atılır (sıra damgası)
@@ -155,6 +158,9 @@ export default function GrafanaDashboardSettings({ readOnly: readOnlyProp = fals
     const body = changedFields(saved, form)
     if (!Object.keys(body).length) return true
     setSaving(true)
+    // Kayıt başlarken süren bir yenileme (load) yanıtı geçersizleşir: kayıttan ÖNCEKİ değerleri taban yapıp kaydedilen
+    // değişikliği "kaydedilmemiş" gösteremesin
+    loadSeq.current++
     try {
       const res = await api.admin.saveGrafanaSettings(body)
       if (!alive.current) return false

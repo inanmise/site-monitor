@@ -318,9 +318,15 @@ Pano "veri yok" gösteriyorsa sırayla:
 2. Aktarıcı: Ayarlar sayfasındaki canlı kontrol "Çalışıyor" mu? Kapalıysa (`site.monitor.metrics.export.enabled`,
    env `METRICS_EXPORT_ENABLED`) açın; "Takılmış olabilir" ise pod günlüğünde `İzleme ölçümleri tazelenemedi` arayın.
 3. Okunamayan kaynak: `sitemonitor_exporter_source_up == 0` olan kaynakların serileri bilerek DÜŞER (sahte 0 yazılmaz) —
-   genellikle veritabanı erişimi; Sistem Sağlığı → Veritabanı.
+   genellikle veritabanı erişimi; Sistem Sağlığı → Veritabanı. İzleme sayıları (Etkin / Sağlıklı / Düşük …) süzgece uyan bir
+   izleme türü HİÇBİR pod'da okunamazken de "veri yok" gösterir (`source=~"monitors:.*"` satırları; eksik toplam bütün filo
+   gibi görünmesin).
 4. Seri tavanı: `sitemonitor_exporter_capped{family} == 1` → aile başına kayıt tavanını artırın ya da izleme başına serileri
    kapatın (Prometheus yükü). Günlükte saatte bir `seri tavanına takıldı` uyarısı.
+
+Sürüm anotasyonu "yeni görülen build etiketi" ile çizilir (`count by (version, commit, environment) (sitemonitor_build_info)
+unless … offset 5m`); `changes(sitemonitor_build_info[10m])` kullanan eski elle kurulmuş panolar hiç anotasyon üretmez —
+`docs/GRAFANA_SURUM_ANOTASYON.md` düzeltmesine bakın.
 
 Çok pod: her pod kuruluş ölçümlerini aynı değerle yayar; kendi sorgularınızda `max by (<ölçümün etiketleri>)` ile
 birleştirin (ör. `sum(max by (type, team, team_id, state) (sitemonitor_monitors{state="down"}))`). Pod'a özgü olanlar:

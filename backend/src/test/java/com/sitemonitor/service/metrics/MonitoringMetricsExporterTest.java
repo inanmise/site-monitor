@@ -219,6 +219,20 @@ class MonitoringMetricsExporterTest {
     }
 
     @Test
+    @DisplayName("alan adı izlemeleri okunamadıysa alan adı kovaları yazılmaz (sahte '0 alan adı' yok), domains kaynağı 0")
+    void unreadableDomainMonitorsDropDomainFamilies() {
+        ov.put("types", List.of(new LinkedHashMap<>(Map.of("type", "http")),
+                new LinkedHashMap<>(Map.of("type", "domain", "unavailable", true))));
+        exporter.refresh();
+        assertThat(exists(MonitoringMetricNames.DOMAINS_EXPIRY)).isFalse();
+        assertThat(gauge(MonitoringMetricNames.EXPORTER_SOURCE, "source", "domains")).isEqualTo(0);
+        assertThat(gauge(MonitoringMetricNames.EXPORTER_SOURCE, "source", "monitors:domain")).isEqualTo(0);
+        assertThat(exists(MonitoringMetricNames.MONITORS, "type", "http")).isTrue();
+        assertThat(gauge(MonitoringMetricNames.EXPORTER_SOURCE, "source", "monitors:http"))
+                .as("okunan tür kaynak satırı 1 yazar (pano 'tür okunamadı' kararını pod'lar arası max ile verir)").isEqualTo(1);
+    }
+
+    @Test
     @DisplayName("kaybolan izlemenin serisi sonraki turda silinir")
     @SuppressWarnings("unchecked")
     void removedMonitorDisappears() {
@@ -272,6 +286,46 @@ class MonitoringMetricsExporterTest {
         when(cluster.lease("sweep-leader")).thenReturn(null);
         exporter.refresh();
         assertThat(exists(MonitoringMetricNames.SWEEP_LEADER)).isFalse();
+    }
+
+    @Test
+    @DisplayName("değerler GC'den sonra da okunur (gauge değer nesnesini zayıf tutar — tutucular aktarıcıda güçlü)")
+    void valuesSurviveGarbageCollection() throws InterruptedException {
+        exporter.refresh();
+        for (int i = 0; i < 5; i++) {
+            System.gc();
+            Thread.sleep(20);
+        }
+        assertThat(gauge(MonitoringMetricNames.MONITOR_STATE, "monitor_id", "2")).isEqualTo(2);
+        assertThat(gauge(MonitoringMetricNames.CERT_DAYS, "domain", "api.example.com")).isEqualTo(20);
+        assertThat(gauge(MonitoringMetricNames.EXPORTER_LAST_REFRESH)).isEqualTo(NOW.getEpochSecond());
+    }
+
+    @Test
+    @DisplayName("var olan seri her turda aynı gauge kalır, yalnız değeri güncellenir (kazıma arası boşluk yok)")
+    @SuppressWarnings("unchecked")
+    void seriesKeepTheirMeterAcrossRefreshes() {
+        exporter.refresh();
+        Gauge before = registry.find(MonitoringMetricNames.MONITOR_STATE).tags("monitor_id", "2").gauge();
+        ((List<Object>) ov.get("monitors")).set(1, monitor(2, "Ödeme", "up"));
+        exporter.refresh();
+        Gauge after = registry.find(MonitoringMetricNames.MONITOR_STATE).tags("monitor_id", "2").gauge();
+        assertThat(after).isSameAs(before);
+        assertThat(after.value()).isEqualTo(0);
+    }
+
+    @Test
+    @DisplayName("yarım okunan kaynak satır bırakmaz: push sağlık okuması patlarsa push aileleri hiç yazılmaz")
+    void partialSourceWritesNothing() {
+        when(push.healthSnapshot()).thenThrow(new RuntimeException("push"));
+        exporter.refresh();
+        assertThat(exists(MonitoringMetricNames.PUSH_PENDING)).isFalse();
+        assertThat(exists(MonitoringMetricNames.PUSH_DELIVERIES)).isFalse();
+        assertThat(gauge(MonitoringMetricNames.EXPORTER_SOURCE, "source", "push")).isEqualTo(0);
+        when(watchdog.publicStatus(any())).thenThrow(new RuntimeException("wd"));
+        exporter.refresh();
+        assertThat(exists(MonitoringMetricNames.WATCHDOG_STATUS)).isFalse();
+        assertThat(exists(MonitoringMetricNames.WATCHDOG_CHECK)).isFalse();
     }
 
     @Test
