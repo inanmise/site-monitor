@@ -59,9 +59,11 @@ export function rememberSectionsOpen(kind, id, value) {
  * <p>`opts.max`: hatırlanan kimlik tavanı (varsayılan 64 — bölümler; konular {@link OPEN_TOPICS_MAX_IDS}). `opts.prune`
  * (konular, inceleme 2026-10-19): her yazımdan ÖNCE küme `ids`'te artık olmayan kimliklerden arındırılır (Vazgeç / "son şablonu
  * uygula" ile kalkan konular tavanı doldurmasın); işlemin kendisi sonra uygulanır — aynı çizimde eklenen yeni konunun (henüz
- * `ids`'te yok) açılması arınmaya takılmaz.
+ * `ids`'te yok) açılması arınmaya takılmaz. `opts.keep` (konular, inceleme 2026-10-19): arınmada `ids`'e EK olarak korunan
+ * kimlikler — kayıtlı raporun konuları; daha az konulu bir yedek taslak gösterilirken yapılan yazım, kayıtlı konuların açık
+ * kaydını silmesin (Vazgeç'ten sonra kapalı görünüyorlardı). "Hepsi açık" iken kapatma yalnız `ids`'e bakar (`keep` değil).
  */
-export function useSectionOpenState(storageKey, ids, { max = OPEN_STATE_MAX_IDS, prune = false } = {}) {
+export function useSectionOpenState(storageKey, ids, { max = OPEN_STATE_MAX_IDS, prune = false, keep = null } = {}) {
   const [st, setSt] = useState(() => ({ key: storageKey, state: readOpenState(storageKey, max) }))
   let current = st
   if (st.key !== storageKey) {
@@ -70,10 +72,12 @@ export function useSectionOpenState(storageKey, ids, { max = OPEN_STATE_MAX_IDS,
   }
   const idsRef = useRef(ids)
   idsRef.current = ids
-  const optsRef = useRef({ max, prune })
-  optsRef.current = { max, prune }
+  const optsRef = useRef({ max, prune, keep })
+  optsRef.current = { max, prune, keep }
   const update = useCallback((fn) => setSt((cur) => {
-    const base = optsRef.current.prune ? pruneOpenState(cur.state, idsRef.current) : cur.state
+    const { prune: doPrune, keep: kept } = optsRef.current
+    const known = doPrune && kept?.length ? [...(idsRef.current || []), ...kept] : idsRef.current
+    const base = doPrune ? pruneOpenState(cur.state, known) : cur.state
     const next = fn(base)
     if (next === cur.state) return cur
     writeOpenState(cur.key, next)

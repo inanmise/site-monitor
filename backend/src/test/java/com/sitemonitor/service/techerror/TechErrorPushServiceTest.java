@@ -256,10 +256,10 @@ class TechErrorPushServiceTest {
         assertThat(t.get(0).tr()).contains("onaylandı ve yöneticilere gönderildi").endsWith("Onaylayan: PO Bir.");
         assertThat(t.get(1).tr()).contains("kuyrukta");
         assertThat(t.get(2).tr()).contains("PDF sırası dolu").contains("yeniden gönderin").doesNotContain("PDF_BUSY").doesNotContain("BAŞARISIZ");
-        assertThat(t.get(2).en()).contains("PDF queue was busy").doesNotContain("PDF_BUSY");
+        assertThat(t.get(2).en()).contains("PDF queue busy").contains("send it again").doesNotContain("PDF_BUSY");
         // Red: notun KENDİSİ hiçbir dilde push'ta yok (push uygulaması kurum ağının dışında — karar 2026-10-18)
-        assertThat(t.get(3).tr()).isEqualTo("[Teknik hata raporu] Mobil Bankacılık Eylül 2026 raporu reddedildi. Ret notunu Site Monitor'de görüntüleyin. Reddeden: PO Bir.");
-        assertThat(t.get(3).en()).isEqualTo("[Technical error report] Mobil Bankacılık September 2026 was rejected. See the rejection note in Site Monitor. Rejected by: PO Bir.");
+        assertThat(t.get(3).tr()).isEqualTo("[Teknik hata raporu] Mobil Bankacılık Eylül 2026 raporu reddedildi. Ret notu Site Monitor'de. Reddeden: PO Bir.");
+        assertThat(t.get(3).en()).isEqualTo("[Technical error report] Mobil Bankacılık September 2026 was rejected. See note in Site Monitor. Rejected by: PO Bir.");
         for (String s : new String[] { t.get(3).tr(), t.get(3).en() }) {
             assertThat(s).doesNotContain("Tablo").doesNotContain("wiki").doesNotContain("@").doesNotContain("Srv01").doesNotContain("Corp");
         }
@@ -281,15 +281,15 @@ class TechErrorPushServiceTest {
     void approvedOutcomePhrases() {
         Map<String, String[]> want = new java.util.LinkedHashMap<>();
         want.put("SENT", new String[] { "onaylandı ve yöneticilere gönderildi", "was approved and sent to the executives" });
-        want.put("QUEUED", new String[] { "kuyrukta", "is queued" });
+        want.put("QUEUED", new String[] { "kuyrukta", "queued for the executives" });
         want.put("SKIPPED", new String[] { "E-posta kanalı kapalı ya da etkin alıcı yok", "The e-mail channel is off or there is no active recipient" });
-        want.put("APPROVAL_STALE", new String[] { "sonradan değiştiği için yöneticilere gönderilmedi. Yeniden onaya gönderin", "Submit it for approval again" });
+        want.put("APPROVAL_STALE", new String[] { "değişti; gönderilmedi. Onaydan sonra değişti; yeniden onaya gönderin", "submit it for approval again" });
         want.put("SEND_IN_PROGRESS", new String[] { "zaten gönderiliyor. Sonuç Site Monitor'de raporda görünecek", "already being sent. The result will show" });
-        want.put("PDF_BUSY", new String[] { "PDF sırası dolu", "the PDF queue was busy" });
-        want.put("PDF_TOO_LARGE", new String[] { "PDF yöneticilere e-postayla gönderilemeyecek kadar büyük", "the PDF is too large to e-mail" });
-        want.put("FAILED", new String[] { "yöneticilere e-posta ulaşmadı. Raporu Site Monitor'den yeniden gönderin", "did not reach the executives" });
-        want.put("MAIL_FAILED", new String[] { "yöneticilere e-posta ulaşmadı", "did not reach the executives" });
-        want.put("EXEC_RECIPIENTS_MISSING", new String[] { "yöneticilere e-posta ulaşmadı", "did not reach the executives" });
+        want.put("PDF_BUSY", new String[] { "PDF sırası dolu", "PDF queue busy" });
+        want.put("PDF_TOO_LARGE", new String[] { "PDF çok büyük, gitmedi. PDF yöneticilere e-posta sınırını aşıyor", "the PDF is too large. It exceeds the e-mail limit" });
+        want.put("FAILED", new String[] { "yöneticilere ulaşmadı. Raporu Site Monitor'den yeniden gönderin", "did not reach the executives" });
+        want.put("MAIL_FAILED", new String[] { "yöneticilere ulaşmadı", "did not reach the executives" });
+        want.put("EXEC_RECIPIENTS_MISSING", new String[] { "yöneticilere ulaşmadı", "did not reach the executives" });
         for (Map.Entry<String, String[]> e : want.entrySet()) {
             String code = e.getKey();
             // sendState (SENT / QUEUED / SKIPPED / FAILED) ya da sendError kodu — ikisi de aynı cümleye
@@ -318,7 +318,7 @@ class TechErrorPushServiceTest {
         assertThat(adName.length()).isGreaterThanOrEqualTo(68);
         List<String> codes = List.of("SENT", "QUEUED", "SKIPPED", "FAILED", "APPROVAL_STALE", "SEND_IN_PROGRESS", "PDF_BUSY",
                 "PDF_TOO_LARGE", "MAIL_FAILED", "EXEC_RECIPIENTS_MISSING", "REJECTED");
-        for (int limit : new int[] { 120, 200, 320 }) {
+        for (int limit : new int[] { TechErrorPushService.MIN_MESSAGE_LIMIT, 120, 200, 320 }) {
             for (String code : codes) {
                 boolean rejected = "REJECTED".equals(code);
                 boolean state = List.of("SENT", "QUEUED", "SKIPPED", "FAILED").contains(code);
@@ -330,14 +330,16 @@ class TechErrorPushServiceTest {
                         String where = limit + " " + code + " " + en + ": " + s;
                         assertThat(PushText.truncate(PushText.pushSafe(s), limit)).as(where).isEqualTo(s);
                         assertThat(s.length()).as(where).isLessThanOrEqualTo(limit);
-                        String core = rejected ? (en ? "was rejected. See the rejection note in Site Monitor." : "raporu reddedildi. Ret notunu Site Monitor'de görüntüleyin.")
+                        String core = rejected ? (en ? TechErrorPushService.REJECT_CORE_EN : TechErrorPushService.REJECT_CORE_TR).trim()
                                 : TechErrorPushService.approvedParts(code, en)[0];
                         assertThat(s).as(where).contains(core).contains(en ? "September 2026" : "Eylül 2026")
                                 .startsWith(en ? "[Technical error report] " : "[Teknik hata raporu] ");
                         assertThat(s.endsWith(".")).as("imza ya yok ya tam: " + where).isTrue();
                         if (limit == 320) {
                             // Geniş tavanda hiçbir şey düşmez: tam kanal adı, öneri, tam imza
-                            assertThat(s).as(where).contains(ctx.channelName()).contains(rejected ? "" : TechErrorPushService.approvedParts(code, en)[1])
+                            assertThat(s).as(where).contains(ctx.channelName())
+                                    .contains(rejected ? (en ? TechErrorPushService.REJECT_ADVICE_EN : TechErrorPushService.REJECT_ADVICE_TR)
+                                            : TechErrorPushService.approvedParts(code, en)[1])
                                     .endsWith(adName + ".");
                         }
                     }
@@ -347,9 +349,14 @@ class TechErrorPushServiceTest {
         // Düşme sırası (200, uzun kanal): öneri KALIR, kanal adı kısalır, imza düşer
         String busy = TechErrorPushService.decisionText(longCh, true, adName, null, null, "PDF_BUSY", 200).en();
         assertThat(busy).contains(TechErrorPushService.approvedOutcome("PDF_BUSY", true)).contains("...").doesNotContain("Approved by");
-        // 120: öneri de düşer, kanal adı yerine yalnız dönem
+        // 120: öneri düşer (kanal adı kısalsa da sığmıyor), imza da; kısalan kanal adı + dönem + çekirdek kalır
         String narrow = TechErrorPushService.decisionText(longCh, true, adName, null, null, "PDF_BUSY", 120).en();
-        assertThat(narrow).isEqualTo("[Technical error report] September 2026 " + TechErrorPushService.approvedParts("PDF_BUSY", true)[0]);
+        assertThat(narrow).startsWith("[Technical error report] Bireysel").contains("...")
+                .endsWith("September 2026 " + TechErrorPushService.approvedParts("PDF_BUSY", true)[0])
+                .doesNotContain(TechErrorPushService.approvedParts("PDF_BUSY", true)[1].trim()).doesNotContain("Approved by");
+        // 80 (en küçük tavan): yalnız başlık + dönem + çekirdek
+        String min = TechErrorPushService.decisionText(longCh, true, adName, null, null, "PDF_BUSY", 80).en();
+        assertThat(min).isEqualTo("[Technical error report] September 2026 " + TechErrorPushService.approvedParts("PDF_BUSY", true)[0]);
         // Kısa ad kuralı
         assertThat(TechErrorPushService.shortName(adName)).isEqualTo("Ayşe Yılmaz Kayaoğlu");
         assertThat(TechErrorPushService.shortName("  ")).isEmpty();
@@ -401,7 +408,7 @@ class TechErrorPushServiceTest {
         ArgumentCaptor<String> key = ArgumentCaptor.forClass(String.class);
         List<List<UserPushService.DirectRecipient>> calls = directCalls(1, text, key, TechErrorPushService.TRIGGER_DECISION);
         assertThat(names(calls.get(0))).containsExactly("tech");
-        assertThat(text.getValue().tr()).contains("yöneticilere gönderim kuyrukta");
+        assertThat(text.getValue().tr()).contains("yönetici gönderimi kuyrukta");
         // 2) kuyruk teslim edildi: sonuçlandırma kuyrukla saklanan kişiyi (isteyen) geçer → takım bildiriminde ikisi de yok
         svc.delivered(CTX, true, 1L, "PO Bir", 5L, AT.plusSeconds(1), List.of(9L));
         @SuppressWarnings("unchecked")
@@ -430,9 +437,9 @@ class TechErrorPushServiceTest {
         List<List<UserPushService.DirectRecipient>> calls = directCalls(1, text, key, TechErrorPushService.TRIGGER_SENT);
         assertThat(names(calls.get(0))).containsExactly("tech");
         assertThat(text.getValue().tr()).isEqualTo(
-                "[Teknik hata raporu] Mobil Bankacılık Eylül 2026 raporu yöneticilere teslim edildi; kuyruktaki gönderim tamamlandı. Onaylayan: PO Bir.");
+                "[Teknik hata raporu] Mobil Bankacılık Eylül 2026 raporu yöneticilere teslim edildi. Kuyruktaki gönderim tamamlandı. Onaylayan: PO Bir.");
         assertThat(text.getValue().en()).isEqualTo(
-                "[Technical error report] Mobil Bankacılık September 2026 was delivered to the executives; the queued send has completed. Approved by: PO Bir.");
+                "[Technical error report] Mobil Bankacılık September 2026 was delivered to the executives. The queued send has completed. Approved by: PO Bir.");
         String deliveryKey = "te-sent:42:5:" + AT.toEpochMilli();
         assertThat(key.getValue()).isEqualTo(deliveryKey).isEqualTo(TechErrorPushService.sentKey(CTX, 5L, AT));
         @SuppressWarnings("unchecked")
@@ -485,7 +492,7 @@ class TechErrorPushServiceTest {
         String adName = "Ayşe Yılmaz Kayaoğlu (Dijital Kanallar Müdürlüğü / Kıdemli Ürün Sahibi)";
         TechErrorPushService.Ctx longCh = new TechErrorPushService.Ctx(42L, 7L,
                 "Bireysel Mobil Bankacılık ve Dijital Şube Kanalları Web Uygulaması", 2026, 9);
-        for (int limit : new int[] { 120, 200, 320 }) {
+        for (int limit : new int[] { TechErrorPushService.MIN_MESSAGE_LIMIT, 120, 200, 320 }) {
             for (boolean exec : new boolean[] { true, false }) {
                 for (TechErrorPushService.Ctx ctx : List.of(CTX, longCh)) {
                     UserPushService.LocalizedText t = TechErrorPushService.requesterDeliveredText(ctx, exec, adName, limit);
@@ -495,10 +502,15 @@ class TechErrorPushServiceTest {
                         assertThat(s.length()).as(where).isLessThanOrEqualTo(limit);
                         assertThat(PushText.truncate(PushText.pushSafe(s), limit)).as(where).isEqualTo(s);
                         assertThat(s).as(where).contains(en ? "September 2026" : "Eylül 2026")
-                                .contains(en ? "the queued send has completed." : "kuyruktaki gönderim tamamlandı.")
+                                .contains(exec ? (en ? "was delivered to the executives." : "raporu yöneticilere teslim edildi.")
+                                        : (en ? "was delivered to the team address." : "raporu takım adresine teslim edildi."))
                                 .startsWith(en ? "[Technical error report] " : "[Teknik hata raporu] ")
                                 .doesNotContain("http").doesNotContain("://");
                         assertThat(s.endsWith(".")).as(where).isTrue();
+                        if (limit > TechErrorPushService.MIN_MESSAGE_LIMIT) {
+                            assertThat(s).as(where).contains(en ? TechErrorPushService.DELIVERED_ADVICE_EN.trim()
+                                    : TechErrorPushService.DELIVERED_ADVICE_TR.trim());
+                        }
                         if (limit == 320) assertThat(s).as(where).contains(ctx.channelName()).endsWith(adName + ".");
                     }
                 }
@@ -555,6 +567,61 @@ class TechErrorPushServiceTest {
         svc.sendFailedTo(CTX, true, List.of(), TechErrorPushService.Failure.QUEUE_FAILED, null, AT);
         svc.sendFailedTo(CTX, true, null, TechErrorPushService.Failure.QUEUE_FAILED, null, AT);
         verify(push, times(1)).enqueueDirectLocalized(any(), any(), anyString(), anyString(), anyString(), anyString(), any(), anyString());
+    }
+
+    @Test
+    @DisplayName("inceleme 2026-10-19: EN KÜÇÜK push tavanında (80) her sonuç metni — 8 onay sonucu + bilinmeyen kod, red, isteyene "
+            + "teslim (yönetici / takım) — TR + EN, 12 ayın her biri, kısa / 66 karakterlik kanal + 71 karakterlik AD adıyla kesilmeden "
+            + "sığar: başlık + dönem + çekirdek cümle her zaman var, öneri ve imza önce düşer")
+    void outcomeTextsFitTheMinimumLimit() {
+        int limit = TechErrorPushService.MIN_MESSAGE_LIMIT;
+        assertThat(limit).isEqualTo(80);
+        String adName = "Ayşe Yılmaz Kayaoğlu (Dijital Kanallar Müdürlüğü / Kıdemli Ürün Sahibi)";
+        String channel = "Bireysel Mobil Bankacılık ve Dijital Şube Kanalları Web Uygulaması";
+        List<String> codes = List.of("SENT", "QUEUED", "SKIPPED", "FAILED", "APPROVAL_STALE", "SEND_IN_PROGRESS", "PDF_BUSY",
+                "PDF_TOO_LARGE", "MAIL_FAILED", "SOME_NEW_CODE");
+        int checked = 0;
+        for (int month = 1; month <= 12; month++) {
+            for (String ch : List.of("", "Mobil", channel)) {
+                TechErrorPushService.Ctx ctx = new TechErrorPushService.Ctx(42L, 7L, ch, 2026, month);
+                List<String[]> cases = new ArrayList<>();   // { ad, tr metni, en metni, tr çekirdek, en çekirdek }
+                for (String code : codes) {
+                    boolean state = List.of("SENT", "QUEUED", "SKIPPED", "FAILED").contains(code);
+                    UserPushService.LocalizedText t = TechErrorPushService.decisionText(ctx, true, adName, null,
+                            state ? code : null, state ? null : code, limit);
+                    cases.add(new String[] { code, t.tr(), t.en(), TechErrorPushService.approvedParts(code, false)[0],
+                            TechErrorPushService.approvedParts(code, true)[0] });
+                }
+                UserPushService.LocalizedText rej = TechErrorPushService.decisionText(ctx, false, adName, "not", null, null, limit);
+                cases.add(new String[] { "REJECTED", rej.tr(), rej.en(), TechErrorPushService.REJECT_CORE_TR.trim(),
+                        TechErrorPushService.REJECT_CORE_EN.trim() });
+                for (boolean exec : new boolean[] { true, false }) {
+                    UserPushService.LocalizedText d = TechErrorPushService.requesterDeliveredText(ctx, exec, adName, limit);
+                    cases.add(new String[] { "DELIVERED-" + exec, d.tr(), d.en(),
+                            exec ? "raporu yöneticilere teslim edildi." : "raporu takım adresine teslim edildi.",
+                            exec ? "was delivered to the executives." : "was delivered to the team address." });
+                }
+                for (String[] c : cases) {
+                    for (boolean en : new boolean[] { false, true }) {
+                        String s = en ? c[2] : c[1];
+                        String where = month + " / " + ch.length() + " / " + c[0] + " / " + (en ? "EN" : "TR") + ": " + s;
+                        assertThat(s.length()).as(where).isLessThanOrEqualTo(limit);
+                        assertThat(PushText.truncate(PushText.pushSafe(s), limit)).as(where).isEqualTo(s);
+                        assertThat(s).as(where).startsWith(en ? TechErrorPushService.HEAD_EN : TechErrorPushService.HEAD_TR)
+                                .contains(com.sitemonitor.service.mail.TechErrorReminderMail.period(2026, month, en))
+                                .contains(en ? c[4] : c[3])
+                                .doesNotContain("http");
+                        assertThat(s.endsWith(".")).as(where).isTrue();
+                        checked++;
+                    }
+                }
+            }
+        }
+        assertThat(checked).isEqualTo(12 * 3 * (10 + 1 + 2) * 2);
+        // Kısa kanal + kısa ayda öneri sığarsa kalır (önce imza düşer, sonra kanal adı): red notu yönlendirmesi 80'de de görünür
+        String shortRej = TechErrorPushService.decisionText(new TechErrorPushService.Ctx(42L, 7L, "Mobil", 2026, 5), false,
+                adName, null, null, null, limit).tr();
+        assertThat(shortRej).isEqualTo("[Teknik hata raporu] Mayıs 2026 raporu reddedildi. Ret notu Site Monitor'de.");
     }
 
     // ── Metin kuralları ───────────────────────────────────────────────────────────────────────────────

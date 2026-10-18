@@ -27,7 +27,7 @@ vi.mock('../components/techerror/capture/imageSync.js', async (importOriginal) =
 import { api } from '../api/client'
 import { prepareImage } from '../components/techerror/imagePrep.js'
 import { postImagesChanged } from '../components/techerror/capture/imageSync.js'
-import { ImagesBlock, LOCK_RETRY_MAX_MS, isLockConflict, lockRetryDelayMs } from '../components/techerror/ReportImages.jsx'
+import { ImagesBlock, LOCK_RETRY_MAX_MS, isLockConflict, isOwnUpload, lockRetryDelayMs, storedFileName } from '../components/techerror/ReportImages.jsx'
 import { LANG_STORAGE_KEY } from '../i18n/dateLocale.js'
 import TechErrorReportsPage from '../components/techerror/TechErrorReportsPage.jsx'
 
@@ -226,5 +226,85 @@ describe('görsel yüklemesi — kilit çakışması', () => {
     view.rerender(<ImagesBlock key="g2" {...props()} />)
     expect(view.container.querySelector('[data-slot-id="monthly-tx"] img')).toHaveAttribute('src', '/api/tech-error-reports/images/41')
     expect(screen.queryByText('“Aylık” görseli yüklendi.')).toBeNull()
+  })
+
+  it('inceleme 2026-10-19: ağ hatası ama sunucu yüklemeyi KAYDETMİŞTİ — "Yeniden dene" yuvadaki kendi görselini (ad + bayt) bulur: onay yok, yükleme yok, bekletilen dosya bırakılır, görsel gösterilir', async () => {
+    let server = []
+    te().report.mockImplementation(async () => reportResponse({ images: server }))
+    const file = png('kendi-ekran.png')
+    te().uploadImage.mockImplementationOnce(async () => {
+      server = [{ id: 55, slot_id: 'monthly-tx', file_name: 'kendi-ekran.png', width: 1600, height: 700, size_bytes: file.size }]
+      throw Object.assign(new Error('Sunucuya ulaşılamadı; bağlantınızı kontrol edip yeniden deneyin.'), { status: 0, code: 'NETWORK_ERROR' })
+    })
+    render(<TechErrorReportsPage />)
+    await screen.findByRole('heading', { name: TITLE })
+    pick(slotEl(), file)
+    await waitFor(() => expect(slotEl().querySelector('[data-slot="te-image-kept"]')).not.toBeNull())
+    fireEvent.click(slotEl().querySelector('[data-slot="te-image-retry"]'))
+    await waitFor(() => expect(slotEl().querySelector('img')).toHaveAttribute('src', '/api/tech-error-reports/images/55'))
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(te().uploadImage).toHaveBeenCalledTimes(1)
+    expect(slotEl().querySelector('[data-slot="te-image-kept"]')).toBeNull()
+    expect(slotEl().querySelector('[data-slot="te-image-error"]')).toBeNull()
+
+    // Aynı ad ama başka boyut = öteki pencerenin görseli → onay yine sorulur
+    const second = png('ikinci-ekran.png')
+    te().uploadImage.mockImplementationOnce(async () => {
+      server = [{ id: 56, slot_id: 'monthly-tx', file_name: 'ikinci-ekran.png', width: 1600, height: 700, size_bytes: second.size + 10 }]
+      throw Object.assign(new Error('Sunucuya ulaşılamadı; bağlantınızı kontrol edip yeniden deneyin.'), { status: 0, code: 'NETWORK_ERROR' })
+    })
+    pick(slotEl(), second)
+    await waitFor(() => expect(slotEl().querySelector('[data-slot="te-image-kept"]')).not.toBeNull())
+    fireEvent.click(slotEl().querySelector('[data-slot="te-image-retry"]'))
+    const dlg = await screen.findByRole('dialog', { name: 'Görsel değiştirilsin mi?' })
+    fireEvent.click(within(dlg).getByRole('button', { name: 'Vazgeç' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(te().uploadImage).toHaveBeenCalledTimes(2)
+  })
+
+  it('isOwnUpload / storedFileName: bilinen kimlik önce; yoksa sunucunun ad kuralı (yol atılır, denetim karakteri boşluk, son 200) + bayt; eksik bilgi = değil', () => {
+    const f = new File([new Uint8Array(12)], 'C:\\Users\\a\\Ekran  görüntüsü\u0007.png', { type: 'image/png' })
+    expect(storedFileName(f.name)).toBe('Ekran görüntüsü .png')
+    expect(storedFileName('a/b/c.png')).toBe('c.png')
+    expect(storedFileName('   ')).toBeNull()
+    expect(storedFileName(null)).toBeNull()
+    expect(storedFileName('x'.repeat(250) + '.png')).toHaveLength(200)
+    expect(isOwnUpload({ id: 1, file_name: 'Ekran görüntüsü .png', size_bytes: 12 }, f)).toBe(true)
+    expect(isOwnUpload({ id: 1, file_name: 'Ekran görüntüsü .png', size_bytes: 13 }, f)).toBe(false)
+    expect(isOwnUpload({ id: 1, file_name: 'baska.png', size_bytes: 12 }, f)).toBe(false)
+    expect(isOwnUpload({ id: 1, size_bytes: 12 }, f)).toBe(false)
+    expect(isOwnUpload({ id: 7, file_name: 'baska.png', size_bytes: 1 }, f, 7)).toBe(true)
+    expect(isOwnUpload({ id: 8, file_name: 'Ekran görüntüsü .png', size_bytes: 12 }, f, 7)).toBe(false)
+    expect(isOwnUpload(null, f)).toBe(false)
+  })
+
+  it('inceleme 2026-10-19: geç gelen başarı, eşitlemenin yuvaya o arada getirdiği DAHA YENİ görseli (büyük kimlik) ezmez; daha eski görselin yerine yazılır', async () => {
+    let finish
+    te().uploadImage.mockImplementationOnce(() => new Promise((r) => { finish = r }))
+    const section = { id: 'charts', title: 'Grafikler', slots: [{ id: 'monthly-tx', label: 'Aylık', width: 'half' }] }
+    let images = []
+    const props = () => ({ section, reportId: '100', images, resolve: (s) => s, uiLang: 'tr', readOnly: false,
+      onImagesChange: (fn) => { images = fn(images) } })
+    const view = render(<ImagesBlock {...props()} />)
+    pick(view.container.querySelector('[data-slot-id="monthly-tx"]'), png('a.png'))
+    await waitFor(() => expect(te().uploadImage).toHaveBeenCalledTimes(1))
+    // Eşitleme: öteki pencere sonradan yükledi (kimlik 90 > 41)
+    images = [{ id: 90, slot_id: 'monthly-tx', file_name: 'panel.png', width: 1600, height: 700, size_bytes: 1000 }]
+    view.rerender(<ImagesBlock {...props()} />)
+    finish({ success: true, data: { id: 41, slot_id: 'monthly-tx', file_name: 'a.png', width: 1600, height: 700, size_bytes: 90_000 } })
+    await waitFor(() => expect(screen.queryByText('“Aylık” görseli yüklendi.')).not.toBeNull())
+    expect(images).toHaveLength(1)
+    expect(images[0].id).toBe(90)
+
+    // Daha ESKİ görsel (kimlik 20 < 42) varken geç başarı yerine yazılır
+    let finish2
+    te().uploadImage.mockImplementationOnce(() => new Promise((r) => { finish2 = r }))
+    images = [{ id: 20, slot_id: 'monthly-tx', file_name: 'eski.png', width: 1600, height: 700, size_bytes: 1000 }]
+    view.rerender(<ImagesBlock {...props()} />)
+    fireEvent.change(view.container.querySelector('[data-slot-id="monthly-tx"] input[type="file"]'), { target: { files: [png('b.png')] } })
+    await waitFor(() => expect(te().uploadImage).toHaveBeenCalledTimes(2))
+    finish2({ success: true, data: { id: 42, slot_id: 'monthly-tx', file_name: 'b.png', width: 1600, height: 700, size_bytes: 90_000 } })
+    await waitFor(() => expect(images[0].id).toBe(42))
+    expect(images).toHaveLength(1)
   })
 })

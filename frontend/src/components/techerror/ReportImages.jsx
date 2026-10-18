@@ -62,6 +62,39 @@ export function lockRetryDelayMs(res) {
 // düzenleyici geri çağrıyı sabit verir (useCallback)
 // Ekrandan görsel alma (2026-10-18): yapıştırma / "Ekrandan al" / Görsel paneli `capture/*`; her yükleme ve silme öteki
 // pencerelere duyurulur (imageSync). `inPanel`: Görsel paneli penceresinde (panel düğmesi ve bölüm başı paylaşım çipi yok).
+/**
+ * Sunucunun yüklenen dosyaya verdiği ad — {@code TechErrorReportService.fileName} ile aynı kural: yol kısmı atılır, denetim
+ * karakterleri boşluk olur, çoklu boşluk tek, kırpılır, boşsa null, en çok SON 200 karakter.
+ */
+export function storedFileName(raw) {
+  if (raw == null) return null
+  let n = String(raw).replace(/\\/g, '/')
+  const slash = n.lastIndexOf('/')
+  if (slash >= 0) n = n.slice(slash + 1)
+  let out = ''
+  for (const ch of n.slice(0, 4096)) {
+    const c = ch.codePointAt(0)
+    out += (c < 0x20 || (c >= 0x7f && c <= 0x9f)) ? ' ' : ch
+  }
+  out = out.replace(/ {2,}/g, ' ').trim()
+  if (!out) return null
+  return out.length > 200 ? out.slice(out.length - 200) : out
+}
+
+/**
+ * Yuvadaki görsel bu pencerenin bekletilen dosyası mı (inceleme 2026-10-19): ağ hatasında sunucu yüklemeyi ASLINDA kaydetmiş
+ * olabilir — "Yeniden dene" o görseli "öteki pencere yükledi" diye sormamalı. Bilinen kimlik (ilk yüklemenin döndürdüğü)
+ * önce; yoksa ad + bayt sayısı (sunucu adı aynı kuralla kurar, boyut hazırlanmış dosyanınki). Biri eksikse "bilinmiyor" =
+ * değil (onay sorulur — öteki pencerenin görselini sormadan ezmektense).
+ */
+export function isOwnUpload(current, file, ownId = null) {
+  if (!current) return false
+  if (ownId != null && current.id != null) return current.id === ownId
+  if (!file || current.size_bytes == null || current.file_name == null) return false
+  const name = storedFileName(file.name)
+  return name != null && current.file_name === name && Number(current.size_bytes) === file.size
+}
+
 export const ImagesBlock = memo(function ImagesBlock({ section, reportId, images, resolve, uiLang, readOnly, onImagesChange, showTotals = true, inPanel = false }) {
   const t = useT()
   useCaptureScope()
@@ -189,7 +222,7 @@ function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesCh
    * değiştirmedeki onay sorulur; Vazgeç → öteki pencerenin görseli kalır (eşitleme gösterir), bekletilen dosya bırakılır.
    * Okunamazsa bu pencerenin eşitlenmiş listesi kullanılır. Dönen `{ ok, since }`: `since` onaylanan görselin kimliği.
    */
-  async function confirmBeforeRetry(since) {
+  async function confirmBeforeRetry(since, prepared = null) {
     let current = imageRef.current ?? null
     try {
       const res = await api.techErrors.report(reportId)
@@ -198,6 +231,16 @@ function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesCh
     } catch { /* okunamadı: eşitlenmiş liste */ }
     if (!alive.current) return { ok: false }
     if (!current || current.id == null || current.id === since) return { ok: true, since }
+    // Yuvadaki görsel BU pencerenin bekletilen dosyası (ağ hatası ama sunucu kaydetmişti — inceleme 2026-10-19): iş bitmiş
+    // sayılır — onay yok, bekletilen dosya bırakılır, liste sunucudaki görselle tazelenir
+    if (prepared && isOwnUpload(current, prepared.file)) {
+      const own = current
+      onImagesChange((list) => [...list.filter((i) => i.slot_id !== slot.id), own])
+      setKept(null)
+      setError(null)
+      toast.success(t('te.img.uploaded', label))
+      return { ok: false, done: true }
+    }
     const yes = await showConfirm({
       title: t('te.cap.replaceTitle'), message: t('te.img.replaceOtherBody', fullLabel), confirmText: t('te.img.replace'),
       cancelText: t('te.cancel'),
@@ -236,7 +279,7 @@ function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesCh
       }
       setPhase('upload')
       if (retry) {
-        const go = await confirmBeforeRetry(since)
+        const go = await confirmBeforeRetry(since, prepared)
         if (!go.ok) return
         since = go.since
       }
@@ -244,7 +287,7 @@ function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesCh
       if (isLockConflict(res)) {
         await new Promise((r) => { setTimeout(r, lockRetryDelayMs(res)) })
         if (!alive.current) return
-        const go = await confirmBeforeRetry(since)
+        const go = await confirmBeforeRetry(since, prepared)
         if (!go.ok) return
         since = go.since
         res = await api.techErrors.uploadImage(reportId, slot.id, prepared.file)
@@ -254,7 +297,13 @@ function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesCh
         // (Vazgeç / yedeği geri yükleme / tam yeniden yükleme yeni kuşak çizer) görsel sunucuda yine de değişti — yeni yuva
         // ve Görsel paneli onu göstermeli. Yalnız bu yuvanın yerel durumu ve bildirim kurulu yuvada
         const uploaded = res.data
-        onImagesChange((list) => [...list.filter((i) => i.slot_id !== slot.id), uploaded])
+        // Geç gelen başarı (inceleme 2026-10-19): eşitleme bu yuvaya o arada DAHA YENİ bir görsel (daha büyük kimlik — öteki
+        // pencerenin sonraki yüklemesi) getirdiyse o kalır; eskisi onun yerine yazılmaz
+        onImagesChange((list) => {
+          const shown = list.find((i) => i.slot_id === slot.id)
+          if (shown && shown.id != null && uploaded.id != null && Number(shown.id) > Number(uploaded.id)) return list
+          return [...list.filter((i) => i.slot_id !== slot.id), uploaded]
+        })
         if (!alive.current) return
         setKept(null)
         const changed = prepared.info.resized || prepared.info.converted || prepared.info.rotated

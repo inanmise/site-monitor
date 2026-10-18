@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   LIMITS, OPEN_STATE_MAX_IDS, OPEN_TOPICS_MAX_IDS, allSectionsOpen, dropIssueCaptions, errorCountsBySection, isSectionOpen,
-  parseOpenState, pruneOpenState, reportErrorSection, reportErrorTopic, revertInvalidValues, templateErrorSection, topicOpenId,
+  parseOpenState, pruneOpenState, reportErrorSection, reportErrorTopic, revertInvalidValues, savedTopicOpenIds, templateErrorSection, topicOpenId,
   withSectionOpen, withSectionsClosed, withSectionsOpened,
 } from '../components/techerror/techErrorModel.js'
 
@@ -315,6 +315,16 @@ describe('açık bölüm durumu', () => {
     for (let i = 0; i < OPEN_TOPICS_MAX_IDS + 2; i++) capped = withSectionOpen(capped, `x:${i}`, true, [], OPEN_TOPICS_MAX_IDS)
     expect(capped.ids).toHaveLength(OPEN_TOPICS_MAX_IDS)
     expect(capped.ids[0]).toBe('x:2')
+  })
+
+  it('savedTopicOpenIds (inceleme 2026-10-19): kayıtlı raporun (taban JSON) anomali konularının kimlikleri; yalnız issues bölümleri; okunamayan / boş taban boş liste', () => {
+    const sections = [{ id: 'summary', kind: 'metrics' }, { id: 'issues', kind: 'issues' }, { id: 'iss2', kind: 'issues' }]
+    const json = JSON.stringify({ fields: {}, issues: { issues: [{ id: 'k1' }, { id: 'k2' }, {}], iss2: [{ id: 'z' }], summary: [{ id: 'x' }] } })
+    expect(savedTopicOpenIds(json, sections)).toEqual(['issues:k1', 'issues:k2', 'iss2:z'])
+    expect(savedTopicOpenIds(null, sections)).toEqual([])
+    expect(savedTopicOpenIds('{bozuk', sections)).toEqual([])
+    expect(savedTopicOpenIds(JSON.stringify({ fields: {} }), sections)).toEqual([])
+    expect(savedTopicOpenIds(json, null)).toEqual([])
   })
 
   it('pruneOpenState: raporda olmayan kimlikler düşer; liste boş / bilinmiyorsa ya da "hepsi açık"sa dokunulmaz; değişiklik yoksa aynı nesne', () => {

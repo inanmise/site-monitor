@@ -38,7 +38,7 @@ import {
   allFields, allSectionsOpen, applyCalc, calcResults, canonicalValues, dropIssueCaptions, embeddedSections, errorCountsBySection, hostOf,
   normalizeValues, parseIssueSlot, reportErrorSection, reportErrorTopic, fieldExempt, issueDisplayTitle, issueImageAlive, issueOptions,
   issueValidation, monthName, outageAnswerConflict, resolvePlaceholders,
-  resolveTextPlaceholders, revertInvalidValues, stableJson, topicOpenId, trendRefs,
+  resolveTextPlaceholders, revertInvalidValues, savedTopicOpenIds, stableJson, topicOpenId, trendRefs,
 } from './techErrorModel.js'
 import { storageOwner } from '../../utils/personalStorage.js'
 import { errorInfoOf } from '../../utils/errorMessages.js'
@@ -1224,8 +1224,12 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
     return out.join('|')
   }, [sections, draftIssues])
   const topicKeys = useMemo(() => (topicKeysJoined ? topicKeysJoined.split('|') : []), [topicKeysJoined])
+  // KAYITLI raporun konuları (inceleme 2026-10-19): arınma taslak ∪ kayıtlı rapor kümesine karşı yapılır — daha az konulu bir
+  // yedek taslak gösterilirken yapılan yazım kayıtlı konuların açık kaydını silmez (Vazgeç'ten sonra kapalı görünüyorlardı)
+  const savedTopicKeys = useMemo(() => savedTopicOpenIds(base.json, sections), [base.json, sections])
+  const topicOpenOpts = useMemo(() => ({ ...TOPIC_OPEN_OPTS, keep: savedTopicKeys }), [savedTopicKeys])
   // Raporda artık olmayan konular her yazımda düşer, tavan = bir raporun en çok konusu (inceleme 2026-10-19 — TOPIC_OPEN_OPTS)
-  const topicOpen = useSectionOpenState(sectionOpenKey('ri', reportId), topicKeys, TOPIC_OPEN_OPTS)
+  const topicOpen = useSectionOpenState(sectionOpenKey('ri', reportId), topicKeys, topicOpenOpts)
   // Konu başına hatalı alan sayısı + hatalı anahtarlar: yalnız hata KÜMESİ değişince yeni nesne (her tuşta değil — kart memo'su)
   const topicErrKey = useMemo(() => Object.entries(countedErrors)
     .filter(([, v]) => v).map(([k]) => [k, reportErrorTopic(k, draftIssues)]).filter(([, tk]) => tk)
