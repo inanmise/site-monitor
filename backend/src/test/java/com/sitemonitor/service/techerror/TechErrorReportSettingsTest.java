@@ -155,4 +155,27 @@ class TechErrorReportSettingsTest {
         }
         assertThat(TechErrorReportSettings.isKey("site.monitor.tech-error-report.other")).isFalse();
     }
+
+    @Test
+    @DisplayName("2026-10-18 push anahtarları: katalogda BOOL, 'tech-error-report' grubunda, GLOBAL_ONLY; varsayılan AÇIK (okunamazsa da açık); validate boolean anahtarları geçirir")
+    void pushKeys() {
+        assertThat(TechErrorReportSettings.PUSH_KEYS).hasSize(5).allMatch(k -> k.startsWith("site.monitor.tech-error-report.push."));
+        for (String k : TechErrorReportSettings.PUSH_KEYS) {
+            AppSettingsCatalog.Setting st = AppSettingsCatalog.byKey(k);
+            assertThat(st).as(k).isNotNull();
+            assertThat(st.group()).as(k).isEqualTo(TechErrorReportSettings.GROUP);
+            assertThat(st.type()).as(k).isEqualTo(AppSettingsCatalog.Type.BOOL);
+            assertThat(AppSettingsCatalog.isGlobalOnly(k)).as(k).isTrue();
+            assertThat(TechErrorReportSettings.isKey(k)).as(k).isTrue();
+            assertThatCode(() -> TechErrorReportSettings.validate(k, "false")).doesNotThrowAnyException();
+        }
+        AppSettingsService s = mock(AppSettingsService.class);
+        when(s.getBoolean(anyString(), anyBoolean())).thenAnswer(inv -> inv.getArgument(1));
+        assertThat(TechErrorReportSettings.pushOn(s, TechErrorReportSettings.KEY_PUSH_FAILED)).isTrue();
+        when(s.getBoolean(eq(TechErrorReportSettings.KEY_PUSH_FAILED), anyBoolean())).thenReturn(false);
+        assertThat(TechErrorReportSettings.pushOn(s, TechErrorReportSettings.KEY_PUSH_FAILED)).isFalse();
+        when(s.getBoolean(eq(TechErrorReportSettings.KEY_PUSH_DECISION), anyBoolean())).thenThrow(new IllegalStateException("db"));
+        assertThat(TechErrorReportSettings.pushOn(s, TechErrorReportSettings.KEY_PUSH_DECISION)).isTrue();
+        assertThat(TechErrorReportSettings.pushOn(null, TechErrorReportSettings.KEY_PUSH_DECISION)).isTrue();
+    }
 }

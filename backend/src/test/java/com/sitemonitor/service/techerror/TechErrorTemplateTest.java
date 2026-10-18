@@ -51,6 +51,18 @@ class TechErrorTemplateTest {
         assertThat(t.sections().get(0).tiles()).containsExactly("error-rate", "total-tx", "error-count", "unmapped-count", "quota-count", "sla-rate");
         assertThat(t.sections().get(0).lines()).anyMatch(l -> l.contains("{d:error-count}") && l.contains("{d:error-rate}"))
                 .anyMatch(l -> l.contains("{t:sla-rate}") && l.contains("{dt:sla-rate}"));
+        // Kullanıcı kararı 2026-10-18: kesinti cevabı özette cümle (iki dal da dolu), kesinti kaynaklı adet cümlesinin hemen önünde
+        // — Verileri'nde kesinti sorusu tekrar basılmaz (bölüm PDF / e-postada kalkar)
+        for (String lang : List.of("tr", "en")) {
+            List<String> lines = TechErrorTemplate.defaults(lang).sections().get(0).lines();
+            String outage = "en".equals(lang) ? TechErrorTemplate.OUTAGE_LINE_EN : TechErrorTemplate.OUTAGE_LINE_TR;
+            int at = lines.indexOf(outage);
+            assertThat(at).as(lang).isPositive();
+            assertThat(lines.get(at + 1)).as(lang).contains("{f:outage-errors}");
+            assertThat(lines.stream().filter(l -> l.contains("{f:had-outage")).count()).as(lang + " tek kesinti cümlesi").isEqualTo(1);
+        }
+        assertThat(TechErrorTemplate.OUTAGE_LINE_TR).isEqualTo("{f:had-outage?Dönemde kesinti yaşanmıştır.|Dönemde kesinti yaşanmamıştır.}");
+        assertThat(TechErrorTemplate.OUTAGE_LINE_EN).isEqualTo("{f:had-outage?There was an outage in the period.|There was no outage in the period.}");
         assertThat(t.sections().get(2).title()).isEqualTo("{kanal} Kanalı — {ay} {yil} Oranları (otomatik)");
         assertThat(t.sections().get(2).fields()).allMatch(f -> f.calc() != null);
         // Kullanıcı kararı 2026-10-17: anomali adları

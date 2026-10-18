@@ -127,8 +127,13 @@ describe('techErrorReminderModel', () => {
     expect(changedFields(saved, form)).toEqual({})
     expect(isFormDirty(saved, form)).toBe(false)
     expect(changedFields(saved, { ...form, team_ids: [1, 3] })).toEqual({})
-    expect(changedFields(saved, { ...form, team_ids: [1], reminder_day: '7', reminder_push: false }))
-      .toEqual({ reminder_team_ids: [1], reminder_day: 7, reminder_push: false })
+    expect(changedFields(saved, { ...form, team_ids: [1], reminder_day: '7' }))
+      .toEqual({ reminder_team_ids: [1], reminder_day: 7 })
+    // 2026-10-18: dönem hatırlatmasının push anahtarı "Push bildirimleri" kartına taşındı — bu kartın gövdesine ASLA girmez
+    // (kaydedilmemiş taslaklı yenileme diğer kartın kaydını eski değerle ezmesin)
+    expect(form).not.toHaveProperty('reminder_push')
+    expect(changedFields(saved, { ...form, reminder_push: false })).toEqual({})
+    expect(isFormDirty(saved, { ...form, reminder_push: false })).toBe(false)
     const half = { ...form, max_mail_mb: '' }
     expect(changedFields(saved, half)).toEqual({})
     expect(isFormDirty(saved, half)).toBe(true)

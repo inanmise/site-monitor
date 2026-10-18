@@ -4,6 +4,7 @@ import {
   LibraryBig, ListPlus, Plus, RefreshCw, RotateCcw, Save, ScrollText, Table2, Trash2, TrendingUp, TriangleAlert, Undo2,
 } from 'lucide-react'
 import { api } from '../../api/client'
+import { useUnsavedWork } from '../../utils/unsavedWork.js'
 import { useLanguage, useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import { useDialog } from '../ui/Dialog.jsx'
@@ -201,6 +202,7 @@ export default function TemplateEditor({ channelId, onDirtyChange, onSaved }) {
   const dirty = draft != null && base.json != null && tplJson(draft) !== base.json
   useEffect(() => { onDirtyChange?.(dirty) }, [dirty, onDirtyChange])
   useEffect(() => () => onDirtyChange?.(false), [onDirtyChange])
+  useUnsavedWork(dirty)   // başka pencereden "raporu aç" isteği taslağı sessizce bırakmasın
   useEffect(() => {
     if (!dirty) return undefined
     const h = (e) => { e.preventDefault(); e.returnValue = '' }

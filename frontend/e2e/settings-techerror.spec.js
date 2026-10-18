@@ -52,13 +52,14 @@ const REMINDERS = {
 }
 
 /** mockApi'den SONRA kaydedilen yollar önceliklidir. Arayüz dili TR (varsayılan EN — metin iddiaları Türkçe). */
-async function routes(page, { readOnly = false, fail = () => false, reminders = null, settingsExtra = {} } = {}) {
+async function routes(page, { readOnly = false, fail = () => false, reminders = null, settingsExtra = {}, push = undefined } = {}) {
   await page.addInitScript(() => { try { localStorage.setItem('site-monitor-lang', 'tr') } catch { /* yok */ } })
   await mockApi(page, { role: 'ADMIN', globalAdmin: !readOnly })
   await page.route((u) => new URL(u).pathname === '/api/teams/directory', json({ success: true, data: TEAMS }))
   // `saves`: görünürlük PUT'ları (`/settings`, 11. sürüm sözleşmesi); `saves.reminders`: hatırlatma PUT'ları (ayrı uç)
   const saves = []
   saves.reminders = []
+  saves.pushes = []
   await page.route((u) => new URL(u).pathname === '/api/admin/tech-error-reports/settings', (route) => {
     if (route.request().method() === 'PUT') {
       const body = JSON.parse(route.request().postData() || '{}')
@@ -89,8 +90,30 @@ async function routes(page, { readOnly = false, fail = () => false, reminders = 
     }
     return json({ success: true, data: { ...current, read_only: readOnly } })(route)
   })
+  // 2026-10-18: push bildirimleri bloğu — AYRI uç `/settings/push`. `push` verilmezse yol kaydedilmez (genel sahte yanıt →
+  // kart yok); `false` → eski pod (GET 404 / PUT 405); nesne → sunucu gibi (gönderilen anahtarlar yazılır).
+  if (push !== undefined) {
+    let pushNow = push ? { ...push } : null
+    await page.route((u) => new URL(u).pathname === '/api/admin/tech-error-reports/settings/push', (route) => {
+      const method = route.request().method()
+      if (!pushNow) {
+        return json({ success: false, code: method === 'GET' ? 'NOT_FOUND' : 'METHOD_NOT_ALLOWED', error: 'Kaynak bulunamadı' },
+          method === 'GET' ? 404 : 405)(route)
+      }
+      if (method === 'PUT') {
+        const body = JSON.parse(route.request().postData() || '{}')
+        saves.pushes.push(body)
+        pushNow = { ...pushNow, ...body }
+        return json({ success: true, data: { ...pushNow, read_only: false } })(route)
+      }
+      return json({ success: true, data: { ...pushNow, read_only: readOnly } })(route)
+    })
+  }
   return saves
 }
+
+/** 2026-10-18: teknik hata raporu push anahtarları (hepsi varsayılan açık) + genel push kanalı durumu. */
+const PUSH = { period_reminder: true, approval_request: true, approval_reminder: true, decision: true, delivered: true, failed: true, push_enabled: true }
 
 /** PUT gövdesindeki hatırlatma alanları → yanıt bloğu (sunucu gibi: gönderilmeyen alan aynı kalır). */
 function pickReminders(body) {
@@ -112,6 +135,8 @@ function smallTargets(sel) {
     const cs = getComputedStyle(b)
     if (cs.visibility === 'hidden' || cs.display === 'none' || b.getAttribute('aria-hidden') === 'true') continue
     let h = r.height
+    // Anahtar (switch): satırın tamamı etiketle tıklanır — dokunma hedefi satırın yüksekliği (ldap / oncall spec'leriyle aynı kural)
+    if (b.getAttribute('role') === 'switch') h = Math.max(h, b.parentElement.getBoundingClientRect().height)
     // Takım rozeti gibi küçük görünen hedefler dokunmatikte ::after ile dikeyde büyür (TEAM_BADGE_TOUCH, ~42 px) — o alan sayılır
     const af = getComputedStyle(b, '::after')
     if (af.position === 'absolute' && af.content !== 'none') {
@@ -338,16 +363,21 @@ test.describe('Ayarlar → Teknik hata raporu — tablet 768 (dokunmatik)', () =
 
   test('kapsamlı müdür salt okunur — seçici kilitli, kayıt çubuğu yok, kanal özeti görünür', async ({ page }) => {
   test.setTimeout(120_000)
-  const saves = await routes(page, { readOnly: true })
+  const saves = await routes(page, { readOnly: true, push: PUSH })
   await page.goto('/?tab=settings&sec=techerror')
   const root = page.locator(ROOT)
   await expect(root.locator('[data-slot="tes-channel"]')).toHaveCount(4, { timeout: 20_000 })
   await expect(root.locator('[data-slot="tes-readonly"]')).toContainText('yalnız global yöneticiler')
+  // Push kartı (2026-10-18): kapsamlı müdür anahtarları görür ama değiştiremez
+  const pushCard = root.locator('[data-slot="tes-push"]')
+  await expect(pushCard.getByRole('switch')).toHaveCount(6)
+  for (const sw of await pushCard.getByRole('switch').all()) await expect(sw).toBeDisabled()
   // Hatırlatma ucu yok (eski pod, 404): kart "henüz desteklemiyor" der, alan / kayıt çubuğu yok (inceleme 2026-10-18)
   await expect(root.locator('[data-slot="tes-rem-unsupported"]')).toContainText('hiçbir değişiklik kaydedilmedi')
   await expect(root.getByRole('combobox', { name: 'Modülü gören takımlar' })).toBeDisabled()
   await expect(root.locator('[data-slot="settings-save-bar"]')).toHaveCount(0)
   expect([...saves]).toEqual([])
+  expect(saves.pushes).toEqual([])
   expect(await page.evaluate(overflowX)).toBeLessThanOrEqual(1)
   expect(await page.evaluate(clipped, ROOT)).toEqual([])
   expect(await page.evaluate(smallTargets, ROOT), 'küçük dokunma hedefi (salt okunur)').toEqual([])
@@ -418,7 +448,9 @@ for (const vp of VIEWPORTS) {
       const day = card.getByLabel('Hatırlatma günü (ayın kaçıncı günü)')
       await expect(day).toHaveValue('5')
       await expect(card.getByLabel('E-posta boyut sınırı (MB)')).toHaveValue('15')
-      await expect(card.getByRole('checkbox', { name: 'Takım üyelerine push bildirimi de gönder' })).toBeChecked()
+      // 2026-10-18: hatırlatmanın push anahtarı "Push bildirimleri" kartına taşındı — burada yalnız yönlendirme notu
+      await expect(card.getByRole('checkbox', { name: 'Takım üyelerine push bildirimi de gönder' })).toHaveCount(0)
+      await expect(card.locator('[data-slot="tes-rem-push-moved"]')).toBeVisible()
       await card.scrollIntoViewIfNeeded()
       await page.waitForTimeout(300)
 
@@ -464,6 +496,72 @@ for (const vp of VIEWPORTS) {
       await expect(day).toHaveValue('7')
       if (vp.touch) expect(await page.evaluate(smallTargets, REM_ROOT), `@${vp.name}: küçük dokunma hedefi (kayıt sonrası)`).toEqual([])
       await page.screenshot({ path: `test-results/settings-techerror-reminders-${vp.name}.png`, fullPage: false })
+    })
+  })
+}
+
+// 2026-10-18 (kullanıcı isteği: "teknik hata raporu bildirimlerini haftalık rapordaki gibi push ile de yapalım, ayarlardan
+// kontrol edilebilsin"): "Push bildirimleri" kartı telefon (390, dokunmatik), tablet (768, dokunmatik) ve dizüstünde (1280)
+// sığar, kırpılmaz, anahtar satırları dokunmatikte ≥ 40 px; genel push kanalı kapalı uyarısı + yönlendirme; değişen anahtar
+// AYRI uca gider (görünürlük / hatırlatma PUT'u yok); eski pod (404) "henüz desteklenmiyor".
+const PUSH_ROOT = '[data-slot="tes-push"]'
+for (const vp of VIEWPORTS) {
+  test.describe(`Ayarlar → Teknik hata raporu — push bildirimleri ${vp.name} ${vp.width}`, () => {
+    test.use({ viewport: { width: vp.width, height: vp.height }, hasTouch: vp.touch, isMobile: vp.touch })
+
+    test('push kartı sığar ve kırpılmaz; kanal kapalı uyarısı; Kaydet yalnız değişen anahtarı push ucuna gönderir', async ({ page }) => {
+      test.setTimeout(120_000)
+      const saves = await routes(page, { reminders: REMINDERS, push: { ...PUSH, push_enabled: false } })
+      await page.goto('/?tab=settings&sec=techerror')
+      const card = page.locator(PUSH_ROOT)
+      await expect(card).toHaveAttribute('data-state', 'ok', { timeout: 20_000 })
+      await expect(card.getByRole('switch')).toHaveCount(6)
+      for (const sw of await card.getByRole('switch').all()) await expect(sw).toHaveAttribute('aria-checked', 'true')
+      const off = card.locator('[data-slot="tes-push-channel-off"]')
+      await expect(off).toContainText('Genel push kanalı kapalı')
+      await expect(off.getByRole('button', { name: 'Push ayarlarını aç' })).toBeVisible()
+      await card.scrollIntoViewIfNeeded()
+      await page.waitForTimeout(300)
+
+      expect(await page.evaluate(overflowX), `@${vp.name}: yatay taşma`).toBeLessThanOrEqual(1)
+      expect(await page.evaluate(offenders, PUSH_ROOT), `@${vp.name}: ekran dışına taşan öğe`).toEqual([])
+      expect(await page.evaluate(clipped, PUSH_ROOT), `@${vp.name}: kırpılan metin`).toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, PUSH_ROOT), `@${vp.name}: küçük dokunma hedefi`).toEqual([])
+      // Satır kartın içinde kalır
+      const row = card.locator('[data-slot="tes-push-delivered"]')
+      const cardBox = await card.boundingBox()
+      const rowBox = await row.boundingBox()
+      expect(rowBox.x + rowBox.width, `@${vp.name}: satır kart içinde`).toBeLessThanOrEqual(cardBox.x + cardBox.width + 1)
+
+      // Karar anahtarını kapat → Kaydet → yalnız { decision: false } push ucuna; diğer uçlara istek yok
+      await card.getByRole('switch', { name: 'Karar → isteyene' }).click()
+      const bar = card.locator('[data-slot="tes-push-save"] [data-slot="settings-save-bar"]')
+      await expect(bar).toHaveAttribute('data-dirty', 'true')
+      await bar.getByRole('button', { name: /Kaydet/ }).click()
+      await expect.poll(() => saves.pushes.length).toBe(1)
+      expect(saves.pushes[0]).toEqual({ decision: false })
+      expect(saves.reminders).toEqual([])
+      expect([...saves]).toEqual([])
+      await expect(bar).not.toHaveAttribute('data-dirty', 'true')
+      await expect(card.getByRole('switch', { name: 'Karar → isteyene' })).toHaveAttribute('aria-checked', 'false')
+      await page.waitForTimeout(200)
+      expect(await page.evaluate(overflowX), `@${vp.name}: yatay taşma (kayıt sonrası)`).toBeLessThanOrEqual(1)
+      if (vp.touch) expect(await page.evaluate(smallTargets, PUSH_ROOT), `@${vp.name}: küçük dokunma hedefi (kayıt sonrası)`).toEqual([])
+      await card.screenshot({ path: `test-results/settings-techerror-push-${vp.name}.png` })
+    })
+
+    test('eski pod (push ucu 404): kart "henüz desteklenmiyor" der, anahtar ve kayıt çubuğu yok, sığar', async ({ page }) => {
+      test.setTimeout(120_000)
+      await routes(page, { reminders: REMINDERS, push: false })
+      await page.goto('/?tab=settings&sec=techerror')
+      const card = page.locator(PUSH_ROOT)
+      await expect(card).toHaveAttribute('data-state', 'unsupported', { timeout: 20_000 })
+      await expect(card.locator('[data-slot="tes-push-unsupported"]')).toContainText('hiçbir değişiklik kaydedilmedi')
+      await expect(card.getByRole('switch')).toHaveCount(0)
+      await expect(card.locator('[data-slot="settings-save-bar"]')).toHaveCount(0)
+      await card.scrollIntoViewIfNeeded()
+      expect(await page.evaluate(overflowX), `@${vp.name}: yatay taşma`).toBeLessThanOrEqual(1)
+      expect(await page.evaluate(clipped, PUSH_ROOT), `@${vp.name}: kırpılan metin`).toEqual([])
     })
   })
 }

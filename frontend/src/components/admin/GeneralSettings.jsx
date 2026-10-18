@@ -148,7 +148,8 @@ export default function GeneralSettings({ focusKey = null }) {
   // login-methods (2026-10-02): Ayarlar → Güvenlik → Giriş Yöntemleri kendi sayfasında (onay penceresi + önizleme).
   // appearance (2026-10-05): Ayarlar → Görünüm → Temalar kendi sayfasında (tema kartları + canlı önizleme).
   // tech-error-report (2026-10-17): Ayarlar → Platform → Teknik hata raporu kendi sayfasında (takım seçici + kanal özeti).
-  const SKIP_GROUPS = new Set(['branding', 'retention', 'userpush', 'storm', 'login-anomaly', 'login-methods', 'appearance', 'executive-summary', 'tech-error-report'])
+  // grafana (2026-10-18): Ayarlar → Platform → Grafana panosu kendi sayfasında (pano ayarları + aktarıcı + JSON indirme).
+  const SKIP_GROUPS = new Set(['branding', 'retention', 'userpush', 'storm', 'login-anomaly', 'login-methods', 'appearance', 'executive-summary', 'tech-error-report', 'grafana'])
   const order = []
   const byGroup = {}
   for (const it of items) {

@@ -75,6 +75,7 @@ class TechErrorReminderServiceTest {
     @Autowired NotificationLogRepository logs;
     @Autowired com.sitemonitor.repository.TechErrorReportImageRepository images;
     @Autowired com.sitemonitor.repository.TechErrorTemplateVersionRepository versions;
+    @Autowired com.sitemonitor.repository.UserPushDeliveryRepository pushDeliveries;
 
     @MockitoBean TechErrorReportSender sender;
     @MockitoBean EmailNotificationService email;
@@ -981,5 +982,306 @@ class TechErrorReminderServiceTest {
         TechErrorReminderService.Links links = job.links(reports.findByApprovalStateAndApprovalRequestedAtLessThanEqual("PENDING", nov).get(0), nov);
         assertThat(links.live()).isEmpty();
         assertThat(links.unconfirmed()).containsOnly(po1.getId());
+    }
+
+    // ── Onay hatırlatması push'u (2026-10-18) ────────────────────────────────────────────────────────
+
+    @Test
+    @SuppressWarnings("unchecked")
+    @DisplayName("onay hatırlatması push'u: aynı talep / pencere, tüm PO'lar (e-postasız dahil, isteyen hariç); posta BAŞARISIZ ama push HER PO'ya ulaştı → talep harcanır (ertesi gün yeniden YOK); ikisi de ulaşmadı → bırakılır; kapalı anahtar → push yok, posta sürer")
+    void approvalReminderPushCountsAsDelivered() {
+        TechErrorPushService pushes = new TechErrorPushService(appSettings, users);
+        pushes.setPush(push);
+        pushes.setVisibility(visibility);
+        job.setPushes(pushes);
+        when(push.enqueueDirectLocalized(any(), any(), anyString(), anyString(), anyString(), anyString(), any(), anyString()))
+                .thenAnswer(inv -> Map.of("queued", ((List<?>) inv.getArgument(0)).size()));
+        AppUser noMail = user("po3", "PO Üç", null, "PO", dijital.getId());
+        TechErrorReport r = pendingSince(OCT5.minus(Duration.ofDays(3)));
+        when(email.sendHtml(any(String[].class), any(), anyString(), anyString(), any(), any(), anyBoolean(), any())).thenReturn("FAILED: 550");
+        TechErrorReminderService.Result res = job.run();
+        assertThat(res.approvalReports()).isEqualTo(1);
+        org.mockito.ArgumentCaptor<List<UserPushService.DirectRecipient>> who = ArgumentCaptor.forClass(List.class);
+        ArgumentCaptor<String> key = ArgumentCaptor.forClass(String.class);
+        verify(push).enqueueDirectLocalized(who.capture(), eq(dijital.getId()), eq(TechErrorPushService.TRIGGER_APPROVAL_REMINDER),
+                eq("WARNING"), eq("TECH_ERROR_REPORT"), anyString(), any(), key.capture());
+        assertThat(who.getValue()).extracting(UserPushService.DirectRecipient::username).containsExactly("po1", "po2", "po3");
+        // Anahtar TURU taşır (istek + send_count), günü değil (inceleme 2026-10-18)
+        assertThat(key.getValue()).isEqualTo("te-appr-remind:" + r.getId() + ":" + r.getApprovalRequestedAt().toEpochMilli() + ":r1");
+        assertThat(rows(TechErrorReminderService.TRIGGER_APPROVAL)).hasSize(2).allSatisfy(n -> assertThat(n.getMessage()).endsWith(" · push 3"));
+        assertThat(reminders.findAll()).singleElement().satisfies(rm -> assertThat(rm.getLastSentOn()).isEqualTo("2026-10-05"));
+        at(OCT5.plus(Duration.ofDays(1)));
+        job.run();                                                         // pencere içinde: posta da push da yok
+        verify(push, times(1)).enqueueDirectLocalized(any(), any(), anyString(), anyString(), anyString(), anyString(), any(), anyString());
+
+        // E-postası olan PO kalmadı: "onaylayıcı e-postası yok" satırı + push ile ulaşılır
+        reminders.deleteAll();
+        logs.deleteAll();
+        for (AppUser u : List.of(po1, po2)) { u.setEmail(null); users.save(u); }
+        at(OCT5.plus(Duration.ofDays(4)));
+        res = job.run();
+        assertThat(res.approvalReports()).isEqualTo(1);
+        assertThat(rows(TechErrorReminderService.TRIGGER_APPROVAL)).singleElement()
+                .satisfies(n -> assertThat(n.getEmailStatus()).isEqualTo(TechErrorReminderService.ST_NO_APPROVER_EMAIL));
+
+        // Push de ulaşmadı (hepsi atlandı) ve posta BAŞARISIZ → talep bırakılır, ertesi gün yeniden
+        for (AppUser u : List.of(po1, po2)) { u.setEmail(u.getUsername() + "@example.com"); users.save(u); }
+        reminders.deleteAll();
+        org.mockito.Mockito.doReturn(Map.of("queued", 0, "skipped", 3)).when(push)
+                .enqueueDirectLocalized(any(), any(), anyString(), anyString(), anyString(), anyString(), any(), anyString());
+        res = job.run();
+        assertThat(res.approvalReports()).isZero();
+        assertThat(reminders.findAll()).singleElement().satisfies(rm -> assertThat(rm.getLastSentOn()).isNull());
+
+        // Anahtar kapalı: push yok, posta sürer (başarılı posta talebi harcar)
+        reminders.deleteAll();
+        org.mockito.Mockito.clearInvocations(push);
+        settings.put(TechErrorReportSettings.KEY_PUSH_APPROVAL_REMINDER, "false");
+        when(email.sendHtml(any(String[].class), any(), anyString(), anyString(), any(), any(), anyBoolean(), any())).thenReturn("SENT");
+        assertThat(job.run().approvalReports()).isEqualTo(1);
+        verify(push, never()).enqueueDirectLocalized(any(), any(), anyString(), anyString(), anyString(), anyString(), any(), anyString());
+        assertThat(noMail.getId()).isNotNull();
+        job.setPushes(null);
+    }
+
+    @Test
+    @DisplayName("inceleme 2026-10-18: onay hatırlatması PO BAŞINA ve TUR başına — kalıcı geri dönen po2 (FAILED: 550) varken 1.–4. gün: ulaşılan PO'lar (po1 postayla, po3 push'la) turda TAM BİR kez alır; po2 en çok 3 kez denenir, sonra 'SKIPPED: hatırlatma 3 denemede ulaşmadı' satırı; push anahtarı turu taşır; yeni tur (pencere) yeniden başlar")
+    void approvalReminderDecidesPerPo() {
+        TechErrorPushService pushes = new TechErrorPushService(appSettings, users);
+        pushes.setPush(push);
+        pushes.setVisibility(visibility);
+        job.setPushes(pushes);
+        AppUser po3 = user("po3", "PO Üç", null, "PO", dijital.getId());
+        TechErrorReport r = pendingSince(OCT5.minus(Duration.ofDays(3)));
+        Map<String, Integer> mails = new HashMap<>();
+        when(email.sendHtml(any(String[].class), any(), anyString(), anyString(), any(), any(), anyBoolean(), any())).thenAnswer(inv -> {
+            String to = ((String[]) inv.getArgument(0))[0];
+            mails.merge(to, 1, Integer::sum);
+            return to.startsWith("po2") ? "FAILED: 550 kullanıcı yok" : "SENT";
+        });
+        // push yalnız po3'e kuyruklanır (po2'nin push'u kapalı / atlanmış gibi): kim listede, hangi anahtarla — sayılır
+        Map<String, Integer> pushListed = new HashMap<>();
+        Map<String, Integer> pushQueued = new HashMap<>();
+        Set<String> keys = new LinkedHashSet<>();
+        org.mockito.Mockito.doAnswer(inv -> {
+            List<UserPushService.DirectRecipient> list = inv.getArgument(0);
+            keys.add(inv.getArgument(7));
+            List<String> queued = new java.util.ArrayList<>();
+            for (UserPushService.DirectRecipient d : list) {
+                pushListed.merge(d.username(), 1, Integer::sum);
+                if ("po3".equals(d.username())) { queued.add("po3"); pushQueued.merge("po3", 1, Integer::sum); }
+            }
+            return Map.of("queued", queued.size(), "queued_usernames", queued);
+        }).when(push).enqueueDirectLocalized(any(), any(), anyString(), anyString(), anyString(), anyString(), any(), anyString());
+
+        // 1. gün: po1 posta SENT, po2 FAILED, po3 push → po2 için talep bırakılır (1. deneme), ulaşılanlar kaydedilir
+        assertThat(job.run().approvalReports()).isEqualTo(1);
+        assertThat(reminders.findAll()).singleElement().satisfies(rm -> {
+            assertThat(rm.getLastSentOn()).isNull();
+            assertThat(rm.getReachedIds()).isEqualTo(r.getApprovalRequestedAt().toEpochMilli() + "#1#1:" + po3.getId() + "," + po1.getId());
+        });
+        // 2. ve 3. gün: YALNIZ po2 yeniden denenir (posta + push listesi); po1 / po3'e hiçbir şey gitmez
+        at(OCT5.plus(Duration.ofDays(1)));
+        job.run();
+        assertThat(reminders.findAll()).singleElement().satisfies(rm -> assertThat(rm.getReachedIds()).contains("#1#2:"));
+        at(OCT5.plus(Duration.ofDays(2)));
+        job.run();
+        // 3. denemede vazgeçildi: talep KALIR (bu turda yeniden denenmez), vazgeçme satırı po2'nin adresiyle
+        assertThat(reminders.findAll()).singleElement().satisfies(rm -> assertThat(rm.getLastSentOn()).isEqualTo("2026-10-07"));
+        List<NotificationLog> gaveUp = rows(TechErrorReminderService.TRIGGER_APPROVAL).stream()
+                .filter(n -> n.getEmailStatus().startsWith(TechErrorReminderService.ST_GAVE_UP)).toList();
+        assertThat(gaveUp).singleElement().satisfies(n -> {
+            assertThat(n.getRecipientEmail()).isEqualTo("po2@example.com");
+            assertThat(n.getEmailStatus()).startsWith("SKIPPED: hatırlatma 3 denemede ulaşmadı");
+            assertThat(TechErrorSendLogService.reasonOf(n.getEmailStatus())).isEqualTo("RETRIES_EXHAUSTED");
+        });
+        // 4. gün: tur bitti, pencere dolmadı → hiçbir şey
+        at(OCT5.plus(Duration.ofDays(3)));
+        job.run();
+        assertThat(mails).containsExactlyInAnyOrderEntriesOf(Map.of("po1@example.com", 1, "po2@example.com", 3));
+        assertThat(pushQueued).containsExactlyEntriesOf(Map.of("po3", 1));
+        assertThat(pushListed).containsExactlyInAnyOrderEntriesOf(Map.of("po1", 1, "po2", 3, "po3", 1));
+        // Anahtar: ilk deneme turu, sonraki denemeler tur + deneme (yalnız ulaşılmayan PO'lar listede)
+        String base = "te-appr-remind:" + r.getId() + ":" + r.getApprovalRequestedAt().toEpochMilli();
+        assertThat(keys).containsExactly(base + ":r1", base + ":r1t2", base + ":r1t3");
+
+        // Yeni tur (3 günlük pencere doldu): herkes yeniden hatırlatılır, yeni anahtar; po2 yine en çok 3 deneme
+        at(OCT5.plus(Duration.ofDays(5)));
+        job.run();
+        assertThat(mails).containsEntry("po1@example.com", 2).containsEntry("po2@example.com", 4);
+        assertThat(pushQueued).containsEntry("po3", 2);
+        assertThat(keys).last().isEqualTo("te-appr-remind:" + r.getId() + ":" + r.getApprovalRequestedAt().toEpochMilli() + ":r2");
+    }
+
+    @Test
+    @DisplayName("inceleme 2026-10-18: posta SKIPPED (kapalı / pasif) ve push'u olmayan PO o PO için son karar (talep kalır); push hiç yokken de karar PO başına (bir PO'nun postası BAŞARISIZ → bırakılır, eskiden başka bir PO'ya ulaşmak yetiyordu)")
+    void approvalReminderSkippedIsFinalPerPo() {
+        pendingSince(OCT5.minus(Duration.ofDays(3)));
+        when(email.sendHtml(any(String[].class), any(), anyString(), anyString(), any(), any(), anyBoolean(), any()))
+                .thenAnswer(inv -> ((String[]) inv.getArgument(0))[0].startsWith("po2") ? "SKIPPED: e-posta kapalı" : "SENT");
+        assertThat(job.run().approvalReports()).isEqualTo(1);
+        assertThat(reminders.findAll()).singleElement().satisfies(rm -> assertThat(rm.getLastSentOn()).isEqualTo("2026-10-05"));
+
+        reminders.deleteAll();
+        when(email.sendHtml(any(String[].class), any(), anyString(), anyString(), any(), any(), anyBoolean(), any()))
+                .thenAnswer(inv -> ((String[]) inv.getArgument(0))[0].startsWith("po2") ? "FAILED: 550" : "SENT");
+        assertThat(job.run().approvalReports()).isEqualTo(1);
+        assertThat(reminders.findAll()).singleElement().satisfies(rm -> assertThat(rm.getLastSentOn()).isNull());
+    }
+
+    @Test
+    @DisplayName("inceleme 2026-10-18 (aynı desen, dönem hatırlatması): takım adresi kalıcı geri dönüyor, push yok → talep bırakılır ama TUR başına en çok 3 deneme; sonra 'SKIPPED: hatırlatma 3 denemede ulaşmadı' satırı, 4. gün posta yok")
+    void periodReminderRetriesAreCapped() {
+        optIn(dijital);
+        channel(dijital, "Mobil");
+        settings.put(TechErrorReportSettings.KEY_REMINDER_PUSH, "false");
+        when(email.sendHtml(any(String[].class), any(), anyString(), anyString(), any(), any(), anyBoolean(), any())).thenReturn("FAILED: 550 reddedildi");
+        for (int d = 0; d < 4; d++) {
+            at(OCT5.plus(Duration.ofDays(d)));
+            job.run();
+        }
+        verifyMails(3);
+        assertThat(rows(TechErrorReminderService.TRIGGER)).extracting(NotificationLog::getEmailStatus)
+                .containsExactly("FAILED: 550 reddedildi", "FAILED: 550 reddedildi", "FAILED: 550 reddedildi", TechErrorReminderService.ST_GAVE_UP);
+        assertThat(reminders.findAll()).singleElement().satisfies(rm -> assertThat(rm.getLastSentOn()).isEqualTo("2026-10-07"));
+    }
+
+    @Test
+    @DisplayName("inceleme 2026-10-18 (3. tur): GERÇEK çıkış kutusu tekilleştirmesiyle — 1. denemede push'u kuyruğa GİRMEYEN (susturma satırı yazılan) PO 2. denemede yeni anahtarla push alır; ulaşılan PO'lara ikinci satır yok")
+    void retryPushIsNotBlockedByTheOutboxDedupe() {
+        settings.put("site.monitor.userpush.enabled", "true");
+        UserPushService realPush = new UserPushService(appSettings, pushDeliveries, null, null, null, null, null, null);
+        TechErrorPushService pushes = new TechErrorPushService(appSettings, users);
+        pushes.setPush(realPush);
+        pushes.setVisibility(visibility);
+        job.setPushes(pushes);
+        pushDeliveries.deleteAll();
+        user("po3", "PO Üç", null, "PO", dijital.getId());
+        // gerçek saat (tercih kararı gerçek "şimdi"yi okur); kolon 20 karakter → saniyeye kesilmiş ISO
+        po2.setPushSnoozeUntil(Instant.now().plus(Duration.ofHours(1)).truncatedTo(java.time.temporal.ChronoUnit.SECONDS).toString());
+        users.save(po2);
+        TechErrorReport r = pendingSince(OCT5.minus(Duration.ofDays(3)));
+        when(email.sendHtml(any(String[].class), any(), anyString(), anyString(), any(), any(), anyBoolean(), any()))
+                .thenAnswer(inv -> ((String[]) inv.getArgument(0))[0].startsWith("po2") ? "FAILED: 550 kullanıcı yok" : "SENT");
+        String base = "te-appr-remind:" + r.getId() + ":" + r.getApprovalRequestedAt().toEpochMilli();
+
+        job.run();                                                             // 1. deneme: po2 posta FAILED + push susturuldu
+        assertThat(reminders.findAll()).singleElement().satisfies(rm -> assertThat(rm.getLastSentOn()).isNull());
+        assertThat(pushDeliveries.existsByDedupeKeyAndUsername(base + ":r1", "po2")).isTrue();   // tur anahtarı po2 için DOLU
+        po2.setPushSnoozeUntil(null);                                          // susturma bitti
+        users.save(po2);
+        at(OCT5.plus(Duration.ofDays(1)));
+        job.run();                                                             // 2. deneme: yeni anahtar → po2'nin push'u kuyrukta
+        assertThat(reminders.findAll()).singleElement()
+                .satisfies(rm -> assertThat(rm.getLastSentOn()).as("po2'ye push ulaştı → tur bitti").isEqualTo("2026-10-06"));
+        Map<String, List<String>> byUser = new HashMap<>();
+        for (com.sitemonitor.model.UserPushDelivery d : pushDeliveries.findAll()) {
+            byUser.computeIfAbsent(d.getUsername(), k -> new java.util.ArrayList<>()).add(d.getDedupeKey() + "=" + d.getStatus());
+        }
+        assertThat(byUser.get("po2")).hasSize(2).anySatisfy(v -> assertThat(v).isEqualTo(base + ":r1=SKIPPED_USER_SNOOZE"))
+                .anySatisfy(v -> assertThat(v).startsWith(base + ":r1t2=").doesNotContain("SKIPPED"));
+        assertThat(byUser.get("po1")).singleElement().satisfies(v -> assertThat(v).startsWith(base + ":r1="));
+        assertThat(byUser.get("po3")).singleElement().satisfies(v -> assertThat(v).startsWith(base + ":r1="));
+        verify(email, times(3)).sendHtml(any(String[].class), any(), anyString(), anyString(), any(), any(), anyBoolean(), any());
+        job.setPushes(null);
+    }
+
+    @Test
+    @DisplayName("inceleme 2026-10-18 (3. tur): postası SKIPPED olan PO (adres / kanal kapalı) o TURDA son karar — yeniden denemede ne posta ne push ne günlük satırı; yalnız BAŞARISIZ PO yeniden denenir")
+    void skippedPoIsFinalForTheRound() {
+        AppUser po4 = user("po4", "PO Dört", "po4@example.com", "PO", dijital.getId());
+        pendingSince(OCT5.minus(Duration.ofDays(3)));
+        Map<String, Integer> mails = new HashMap<>();
+        when(email.sendHtml(any(String[].class), any(), anyString(), anyString(), any(), any(), anyBoolean(), any())).thenAnswer(inv -> {
+            String to = ((String[]) inv.getArgument(0))[0];
+            mails.merge(to, 1, Integer::sum);
+            if (to.startsWith("po2")) return "FAILED: 550 kullanıcı yok";
+            if (to.startsWith("po4")) return "SKIPPED: e-posta kapalı";
+            return "SENT";
+        });
+        for (int d = 0; d < 3; d++) {
+            at(OCT5.plus(Duration.ofDays(d)));
+            job.run();
+        }
+        assertThat(mails).containsExactlyInAnyOrderEntriesOf(Map.of("po1@example.com", 1, "po2@example.com", 3, "po4@example.com", 1));
+        assertThat(rows(TechErrorReminderService.TRIGGER_APPROVAL).stream().filter(n -> "po4@example.com".equals(n.getRecipientEmail())))
+                .singleElement().satisfies(n -> assertThat(n.getEmailStatus()).startsWith("SKIPPED"));
+        assertThat(rows(TechErrorReminderService.TRIGGER_APPROVAL).stream().filter(n -> n.getEmailStatus().startsWith(TechErrorReminderService.ST_GAVE_UP)))
+                .singleElement().satisfies(n -> assertThat(n.getRecipientEmail()).isEqualTo("po2@example.com"));
+        assertThat(po4.getId()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("inceleme 2026-10-18 (3. tur): üç deneme UYGULAMA HATASIYLA biterse (posta servisi sonuç vermedi / istisna) vazgeçme FAILED sınıfı ve ayrı sebep (RETRIES_FAILED); posta sunucusu reddiyle bitince SKIPPED + RETRIES_EXHAUSTED — onay ve dönem hatırlatması")
+    void errorGiveUpIsFailedAndSeparate() {
+        pendingSince(OCT5.minus(Duration.ofDays(3)));
+        when(email.sendHtml(any(String[].class), any(), anyString(), anyString(), any(), any(), anyBoolean(), any())).thenAnswer(inv -> {
+            if (((String[]) inv.getArgument(0))[0].startsWith("po2")) throw new IllegalStateException("smtp istemcisi kurulamadı");
+            return "SENT";
+        });
+        for (int d = 0; d < 4; d++) {
+            at(OCT5.plus(Duration.ofDays(d)));
+            job.run();
+        }
+        List<NotificationLog> gaveUp = rows(TechErrorReminderService.TRIGGER_APPROVAL).stream()
+                .filter(n -> n.getEmailStatus().contains("denemede")).toList();
+        assertThat(gaveUp).singleElement().satisfies(n -> {
+            assertThat(n.getEmailStatus()).startsWith(TechErrorReminderService.ST_GAVE_UP_ERROR).startsWith("FAILED: ");
+            assertThat(TechErrorSendLogService.reasonOf(n.getEmailStatus())).isEqualTo("RETRIES_FAILED");
+            assertThat(n.getRecipientEmail()).isEqualTo("po2@example.com");
+        });
+        assertThat(TechErrorSendLogService.reasonOf(TechErrorReminderService.ST_GAVE_UP + " — 1 onaylayıcı")).isEqualTo("RETRIES_EXHAUSTED");
+
+        // Dönem hatırlatması: posta servisi sonuç vermedi ("FAILED: sonuç yok") üç gün → FAILED vazgeçme
+        reminders.deleteAll();
+        logs.deleteAll();
+        reports.deleteAll();
+        optIn(dijital);
+        settings.put(TechErrorReportSettings.KEY_REMINDER_PUSH, "false");
+        when(email.sendHtml(any(String[].class), any(), anyString(), anyString(), any(), any(), anyBoolean(), any())).thenReturn(null);
+        for (int d = 0; d < 3; d++) {
+            at(OCT5.plus(Duration.ofDays(d)));
+            job.run();
+        }
+        assertThat(rows(TechErrorReminderService.TRIGGER)).extracting(NotificationLog::getEmailStatus)
+                .containsExactly("FAILED: sonuç yok", "FAILED: sonuç yok", "FAILED: sonuç yok", TechErrorReminderService.ST_GAVE_UP_ERROR);
+    }
+
+    @Test
+    @DisplayName("inceleme 2026-10-18 (3. tur): tekrar 0 olan dönem hatırlatması kalıcı geri dönen adreste 3 günden sonra o dönem için KALICI olarak durur (vazgeçme satırı günlükte)")
+    void periodRepeatZeroStopsForGoodAfterThreeFailures() {
+        optIn(dijital);
+        channel(dijital, "Mobil");
+        settings.put(TechErrorReportSettings.KEY_REMINDER_PUSH, "false");
+        settings.put(TechErrorReportSettings.KEY_REMINDER_REPEAT_DAYS, "0");
+        when(email.sendHtml(any(String[].class), any(), anyString(), anyString(), any(), any(), anyBoolean(), any())).thenReturn("FAILED: 550 reddedildi");
+        for (int d = 0; d < 10; d++) {
+            at(OCT5.plus(Duration.ofDays(d)));
+            job.run();
+        }
+        verifyMails(3);
+        assertThat(rows(TechErrorReminderService.TRIGGER)).extracting(NotificationLog::getEmailStatus).last().isEqualTo(TechErrorReminderService.ST_GAVE_UP);
+    }
+
+    @Test
+    @DisplayName("tur kaydı (reached_ids) biçimi: <ref>#<tur>#<deneme>:<kimlikler> — başka istek / başka tur / bozuk / çok uzun değer yok sayılır; kolon sınırını aşan kimlik yazılmaz")
+    void roundStateFormat() {
+        String raw = TechErrorReminderService.RoundState.format("1700", 2, 1, List.of(5L, 9L));
+        assertThat(raw).isEqualTo("1700#2#1:5,9");
+        TechErrorReminderService.RoundState s = TechErrorReminderService.RoundState.of(raw, "1700", 2);
+        assertThat(s.tries()).isEqualTo(1);
+        assertThat(s.reached()).containsExactlyInAnyOrder(5L, 9L);
+        assertThat(TechErrorReminderService.RoundState.of(raw, "1701", 2)).isSameAs(TechErrorReminderService.RoundState.NONE);
+        assertThat(TechErrorReminderService.RoundState.of(raw, "1700", 3)).isSameAs(TechErrorReminderService.RoundState.NONE);
+        assertThat(TechErrorReminderService.RoundState.of("x#y#z:1", "x", 1)).isSameAs(TechErrorReminderService.RoundState.NONE);
+        assertThat(TechErrorReminderService.RoundState.of(null, "", 1)).isSameAs(TechErrorReminderService.RoundState.NONE);
+        assertThat(TechErrorReminderService.RoundState.of("#1#2:", "", 1).tries()).isEqualTo(2);   // dönem talebi: ref boş, kimlik yok
+        assertThat(TechErrorReminderService.RoundState.of("1700#2#1:5,,abc,9", "1700", 2).reached()).containsExactlyInAnyOrder(5L, 9L);
+        java.util.List<Long> many = new java.util.ArrayList<>();
+        for (long i = 1_000_000_000_000L; i < 1_000_000_000_000L + 1000; i++) many.add(i);
+        String big = TechErrorReminderService.RoundState.format("1700", 1, 1, many);
+        assertThat(big.length()).isLessThanOrEqualTo(TechErrorReminderService.RoundState.MAX_CHARS);
+        assertThat(TechErrorReminderService.RoundState.of(big, "1700", 1).reached()).isNotEmpty();
+        assertThat(TechErrorReminderService.RoundState.of("1700#1#1:" + "9".repeat(5000), "1700", 1)).isSameAs(TechErrorReminderService.RoundState.NONE);
     }
 }

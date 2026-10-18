@@ -104,6 +104,20 @@ describe('tembel parça kapısı — açılış paketi ve ekran ön-yükleme gra
     expect(hasStatic('components/techerror/ChannelView.jsx', /xlsxWriter|channelExport(\.js)?$/)).toBe(false)
   })
 
+  it('Ekrandan görsel alma (2026-10-18): kırpma penceresi yalnız "Ekrandan al" ile, Görsel paneli yalnız panel adresinde yüklenir', () => {
+    const slot = 'components/techerror/capture/SlotCapture.jsx'
+    expect(hasStatic(slot, /CaptureCropDialog(\.jsx)?$/)).toBe(false)
+    expect(hasDynamic(slot, /\/CaptureCropDialog\.jsx$/)).toBe(true)
+    expect(FILES.filter(({ src }) => staticImports(src).some((s) => /CaptureCropDialog(\.jsx)?$/.test(s))).map((x) => x.rel)).toEqual([])
+    expect(hasStatic('App.jsx', /capture\/ImagesPanelPage(\.jsx)?$/)).toBe(false)
+    expect(hasDynamic('App.jsx', /capture\/ImagesPanelPage(\.jsx)?$/)).toBe(true)
+    expect(FILES.filter(({ src }) => staticImports(src).some((s) => /ImagesPanelPage(\.jsx)?$/.test(s))).map((x) => x.rel)).toEqual([])
+    // App yalnız bağımlılıksız küçük yardımcıları içe aktarır (paylaşım oturumu / kare okuyucu açılış paketine girmez)
+    const appCapture = staticImports(read('App.jsx')).filter((s) => s.includes('/capture/'))
+    expect(appCapture).toEqual(['./components/techerror/capture/panelWindow.js'])
+    expect(staticImports(read('components/techerror/capture/panelWindow.js'))).toEqual([])
+  })
+
   it('Sistem Sağlığı → Metrikler görünümü (grafikler) yalnız açılınca yüklenir (2026-10-13)', () => {
     const page = 'components/admin/SystemHealth.jsx'
     expect(hasStatic(page, /metrics\/MetricsView(\.jsx)?$/)).toBe(false)

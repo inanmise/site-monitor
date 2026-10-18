@@ -1,9 +1,198 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-18T15:31:14Z",
+  "generatedAt": "2026-10-18T17:54:43Z",
   "repo": "inanmise/site-monitor",
-  "count": 777,
+  "count": 778,
   "releases": [
+    {
+      "version": "20.160.0",
+      "tag": "v20.160.0",
+      "releasedAt": "2026-10-18T17:54:34Z",
+      "commit": "e1a5499b3c2026625a66f121f6816b9a5721b524",
+      "prevVersion": "20.159.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 6,
+        "fix": 16,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 2,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "e1a5499b",
+          "subject": "kılavuzda marka \"Site Monitor\" yazılır (sürüm geçmişi cümlesi), diyalog erişilebilirlik testi yüklü CI'da açıklama öğesini bekler"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "5f71102e",
+          "subject": "kesinti cümlesi göçü anomali göçünü bekler ve kütüphaneyi aynı yolla yazar, özete taşınan kısa metin düz satır ve iki kez basılmaz, kesilen cümlenin gömülü değeri kaybolmaz, kesinti cevabı konularla …"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "f2850d91",
+          "subject": "iş ölçümleri ucu — /metrics varyantları günlüğe gövde yazmaz, doğru belirteç engelli IP'den geçer, belirteç en az 32 karakter"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "d8089d39",
+          "subject": "Grafana iş ölçümleri belirteci — CLAUDE.md, çalıştırma kılavuzu (iki uç, belirteç, döndürme, kazıma örneği), kılavuz TR/EN §15.10, PDF ve kök kopyalar"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "c8d3b443",
+          "subject": "Grafana panosu ayar sayfası — belirteç durumu, iki işli kazıma örneği, takım kapsamı uyarısı, indirmede oturum yolu"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "07b5fa19",
+          "subject": "Grafana panosu revizyon 2 — zaman çizelgesi tek değerlendirme, alarm açılışı açılış zamanından, tazelik şeridi, tam ad kapıları"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "f555c105",
+          "subject": "Grafana iş ölçümleri belirteçli ayrı uca taşındı (/metrics/sitemonitor) — kimliksiz /metrics'te envanter yok"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "e57af18b",
+          "subject": "kılavuz §15.10'da marka yazımı \"Site Monitor\" (naming-consistency kapısı); kılavuz PDF'leri ve kök kopyalar yeniden üretildi"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "52e21eea",
+          "subject": "Grafana panosu inceleme düzeltmeleri — kararlı seri tutucuları, yarım kaynak yok, takım tablosu çakışması, anotasyonlar"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "5efea805",
+          "subject": "Grafana panosu — CLAUDE.md bölümü ve kalıcı güncelleme kuralı, kılavuz TR/EN §15.10, PDF ve kök kopyalar, çalıştırma kılavuzu (kazıma örneği, /metrics uyarısı, alarm kuralları)"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "de95b786",
+          "subject": "Ayarlar → Platform → Grafana panosu sayfası (kurulum adımları, aktarıcı canlı durumu, pano ayarları, ön izleme, JSON indir)"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "0b9a9b7b",
+          "subject": "izleme ölçümleri aktarıcısı ve Grafana panosu üreticisi (sitemonitor_* gauge'ları, içe aktarılabilir pano JSON'u)"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "6bc3c9cc",
+          "subject": "teknik hata raporunda kesinti cevabı özette cümle, bütün değerleri özette olan Verileri bölümü PDF ve e-postada kalkar"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "95896ee2",
+          "subject": "özette gösterilmiş sayılma kuralı boş seçim dalını ve metin sınırında kesilen cümleyi saymaz"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "ee524ab8",
+          "subject": "teknik hata raporunda yönetici özetinde gösterilen değer PDF ve e-postada Verileri / Oranları bölümünde tekrar basılmaz"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "34b57499",
+          "subject": "ekrandan görsel alma anomali konu görsellerinde de — yapıştırma / ekrandan al / Görsel paneli konunun altında, \"gitmemiş\" bandı okunamazsa ek Bilgi korunur, konunun kısaltma üssü şablon yenilemede ka…"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "c0e5eea1",
+          "subject": "teknik hata raporu red push'u notu taşımaz, yeniden denemede push tekilleştirmesi engellemez, SKIPPED PO o turda son karar, hatayla biten vazgeçme ayrı sebep, metinler canlı push tavanına sığar"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "646d162b",
+          "subject": "teknik hata raporu hatırlatması tur başına en çok 3 deneme ve ulaşılan PO'ya ikinci kez gitmez, nottaki Türkçe ekli / büyük harfli adresler ayıklanır, onay metni uzun kanal adında kesilmez, push türl…"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "f110e601",
+          "subject": "teknik hata raporu push incelemesi — red notu imzadan önce ve kesilmez, onay sonucu her duruma kendi cümlesi, nottaki bağlantılar ayıklanır, hatırlatma PO başına, kuyruk hatası onaya gönderene de, ha…"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "143f7d96",
+          "subject": "teknik hata raporu push bildirimleri — onay isteği / hatırlatması PO'lara, karar isteyene, gönderildi takıma, gönderilemedi gönderene; Ayarlar'dan olay başına aç / kapa"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "a5f6f13e",
+          "subject": "hareketsizlikte gerçek fare hareketi yine etkinlik sayılır (≥ 4 px)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "65f5c215",
+          "subject": "ekrandan görsel alma 2. inceleme turu — ana pencere isteği, dolu yuva onayı, etkinlik olayları"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "3b811996",
+          "subject": "ekrandan görsel alma inceleme bulguları — sekmeler arası damga, eşitleme, panel, yuva eylemleri"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "7d127bdc",
+          "subject": "kanal teknik hata raporunda ekrandan görsel alma — yapıştırma, ekrandan al + kırpma, Görsel paneli"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.159.0",
       "tag": "v20.159.0",

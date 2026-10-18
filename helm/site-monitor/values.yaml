@@ -195,7 +195,8 @@ secret:
   # If existingSecret is set, an existing K8s Secret is used instead of creating one.
   # It must hold: ADMIN_USERNAME, ADMIN_PASSWORD, DB_PASSWORD, SPRING_MAIL_USERNAME,
   # SPRING_MAIL_PASSWORD, SITE_MONITOR_EMAIL_FROM, SITE_MONITOR_SECRET_KEY, HTTP_PROXY_USER,
-  # HTTP_PROXY_PASS (+ optional SITE_MONITOR_SECRET_KEY_PREVIOUS while rotating). With existingSecret the pod is NOT restarted by a Secret edit (no checksum):
+  # HTTP_PROXY_PASS (+ optional SITE_MONITOR_SECRET_KEY_PREVIOUS while rotating, + optional
+  # METRICS_EXPORT_TOKEN for the Grafana business metrics endpoint). With existingSecret the pod is NOT restarted by a Secret edit (no checksum):
   # run `kubectl rollout restart deploy/<name>` after changing it.
   existingSecret: ""
   adminUsername: "admin"
@@ -229,6 +230,17 @@ secret:
   # Secret key is then omitted). Set it to the OLD key while rotating; remove it once Settings >
   # Secret tools > Key rotation shows "All values are on the current key".
   secretKeyPrevious: ""
+
+  # Bearer token of the business metrics endpoint /metrics/sitemonitor (Grafana dashboard, 2026-10-18).
+  # Empty (default) or shorter than 32 characters -> the endpoint answers 404 and the exporter does
+  # not run; /metrics keeps serving only JVM / HTTP / app health metrics. Set >= 32 random chars
+  # (e.g. `openssl rand -hex 32`) to enable it, give the SAME value to Prometheus (scrape job "authorization: credentials_file") and
+  # NEVER commit it. Anyone holding it reads the whole monitoring inventory (monitor names,
+  # targets, teams, certificates, open alerts) — treat it like a password. Rotate: new value here +
+  # in Prometheus, deploy; old scrapes get 401 until Prometheus is updated. With existingSecret, editing
+  # the Secret in place does NOT restart the pods: run `kubectl rollout restart deploy/<name>` — until
+  # then the old (possibly leaked) token keeps working. `helm upgrade` with a changed value restarts them.
+  metricsExportToken: ""
 
   # Corporate proxy auth (Basic). Leave empty for anonymous proxies.
   # Inject real values via --set or external-secrets; do NOT commit them.

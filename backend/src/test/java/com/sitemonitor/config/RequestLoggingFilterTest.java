@@ -244,6 +244,49 @@ class RequestLoggingFilterTest {
         assertThat(seen[0]).isNotInstanceOf(HttpServletResponseWrapper.class);
     }
 
+    @Test
+    @DisplayName("TRACE: /metrics ve /metrics/sitemonitor hiç yazılmaz (iş ölçümleri yanıtı envanter taşır; belirteç başlığı da yok)")
+    void trace_metricsPaths_skipped() throws Exception {
+        logbackLogger.setLevel(Level.TRACE);
+        for (String path : new String[] { "/metrics", "/metrics/sitemonitor" }) {
+            MockHttpServletRequest req = new MockHttpServletRequest("GET", path);
+            req.addHeader("Authorization", "Bearer secret-token-0123456789abcdef");
+            MockHttpServletResponse resp = new MockHttpServletResponse();
+            HttpServletResponse[] seen = new HttpServletResponse[1];
+            FilterChain chain = (request, response) -> {
+                seen[0] = (HttpServletResponse) response;
+                ((HttpServletResponse) response).setStatus(200);
+            };
+            filter.doFilter(req, resp, chain);
+            assertThat(seen[0]).as(path).isSameAs(resp);
+        }
+        assertThat(appender.list).isEmpty();
+    }
+
+    @Test
+    @DisplayName("TRACE: /metrics yol parametresi ve yüzde kodlamasıyla (shouldSkip'i atlatsa da) envanter gövdesi YAZILMAZ")
+    void trace_metricsVariants_bodyNeverLogged() throws Exception {
+        logbackLogger.setLevel(Level.TRACE);
+        String inventory = "sitemonitor_monitor_state{team=\"GIZLI-TAKIM\",target=\"https://gizli.example.com\"} 2.0";
+        for (String uri : new String[] { "/metrics;x=1/sitemonitor", "/%6Detrics/sitemonitor", "/%256Detrics/sitemonitor",
+                "//metrics/sitemonitor", "/Metrics/sitemonitor" }) {
+            assertThat(RequestLoggingFilter.bodyNeverLogged(new MockHttpServletRequest("GET", uri))).as(uri).isTrue();
+            appender.list.clear();
+            MockHttpServletRequest req = new MockHttpServletRequest("GET", uri);
+            req.addHeader("Authorization", "Bearer secret-token-0123456789abcdef0123456789");
+            MockHttpServletResponse resp = new MockHttpServletResponse();
+            filter.doFilter(req, resp, (request, response) -> {
+                ((HttpServletResponse) response).setStatus(200);
+                response.getOutputStream().write(inventory.getBytes(StandardCharsets.UTF_8));
+            });
+            assertThat(resp.getContentAsString()).as("gerçek yanıt değişmez").isEqualTo(inventory);
+            String all = String.join("\n", appender.list.stream().map(ILoggingEvent::getFormattedMessage).toList());
+            assertThat(all).as(uri).doesNotContain("GIZLI-TAKIM").doesNotContain("gizli.example.com")
+                    .doesNotContain("secret-token-0123456789abcdef0123456789");
+        }
+        assertThat(RequestLoggingFilter.bodyNeverLogged(new MockHttpServletRequest("GET", "/api/admin/settings"))).isFalse();
+    }
+
     /** En son "<<<" (yanıt) TRACE satırının formatlanmış mesajı. */
     private String lastResponseLogLine() {
         return appender.list.stream()

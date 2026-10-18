@@ -9,6 +9,10 @@ import { isDirty, normalizeIds } from './noc/operatorTeamsModel.js'
  * Alan hataları sunucudan `field` = bu adlardan biri olarak döner. Eski pod bu yolu tanımaz: GET 404, PUT 405 / 404 → kart
  * "henüz desteklenmiyor" der ve salt okunur olur (`reminderState`, `isUnsupportedResponse`).
  *
+ * Dönem hatırlatmasının push anahtarı (`reminder_push`) okunur ama bu kartın formunda / gövdesinde YOK (2026-10-18): anahtar
+ * "Push bildirimleri" kartına taşındı (`techErrorPushModel.js`, `…/settings/push`) — iki kart aynı anahtarı tutsaydı
+ * kaydedilmemiş taslaklı bir yenileme diğer kartın kaydını eski değerle ezebilirdi.
+ *
  * Form sayı alanlarını METİN tutar (yarım yazılmış değer kaybolmasın); kayıtta tam sayıya çevrilir. Bilinmeyen ≠ varsayılan:
  * okunamayan blok için değer uydurulmaz (`normalizeReminders` null döner).
  */
@@ -90,7 +94,7 @@ export function reminderState(res, prev = null) {
 /** Kayıtlı görüntü → düzenleme formu (sayılar metin). */
 export function toForm(saved) {
   const s = saved || normalizeReminders({})
-  const f = { team_ids: [...s.team_ids], reminder_push: s.reminder_push }
+  const f = { team_ids: [...s.team_ids] }
   for (const k of REM_INT_FIELDS) f[k] = String(s[k])
   return f
 }
@@ -158,7 +162,6 @@ export function changedFields(saved, form, { repairs = true } = {}) {
     const n = parseWhole(form[k])
     if (n != null && (n !== saved[k] || (repairs && isRepairKey(saved, k)))) out[k] = n
   }
-  if (Boolean(form.reminder_push) !== Boolean(saved.reminder_push)) out.reminder_push = Boolean(form.reminder_push)
   return out
 }
 

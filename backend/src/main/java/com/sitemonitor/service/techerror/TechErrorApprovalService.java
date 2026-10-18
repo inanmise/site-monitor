@@ -130,6 +130,18 @@ public class TechErrorApprovalService {
         this.mailExecutor = executor;
     }
 
+    /**
+     * Push bildirimleri (2026-10-18): onay isteği → PO'lar, karar → isteyen ({@link TechErrorPushService}). Yoksa (dilim
+     * testleri, eski kurulum) push yok — posta akışı byte-identical.
+     */
+    @Autowired(required = false)
+    TechErrorPushService pushes;
+
+    /** Test dikişi. */
+    void setPushes(TechErrorPushService p) {
+        this.pushes = p;
+    }
+
     public TechErrorApprovalService(TechErrorReportService service, TechErrorReportRepository reports,
                                     TechErrorApprovalTokenRepository tokens, AppUserRepository users,
                                     TechErrorReportSender sender, EmailNotificationService email,
@@ -247,6 +259,9 @@ public class TechErrorApprovalService {
         TechErrorReport fresh = service.report(report.getId());
         long rev = fresh.getContentRev() == null ? 0L : fresh.getContentRev();
         Instant now = service.now();
+        // Aynı içerik için bekleyen istek varken kazanan UPDATE = yeniden gönderim (10 dk'dan eski istek — hatırlatma); push metni
+        // ve tekilleştirme anahtarı ayrı (2026-10-18)
+        boolean resend = "PENDING".equals(fresh.getApprovalState()) && fresh.getApprovalRev() != null && fresh.getApprovalRev() == rev;
         if (reports.requestApproval(fresh.getId(), rev, now, by, now.minus(RESEND_AFTER)) == 0) {
             TechErrorReport again = service.report(fresh.getId());
             long againRev = again.getContentRev() == null ? 0L : again.getContentRev();
@@ -386,6 +401,12 @@ public class TechErrorApprovalService {
         // Geçmiş olayı postalardan SONRA: kime gerçekten gittiği ve gitmeme sebebi (inceleme 2026-10-17)
         TechErrorHistoryService h = service.history();
         if (h != null) h.recordSend(fresh, KIND_REQUEST, by, "PENDING", mailedTo, problem, now);
+        // Push (2026-10-18): postayla AYNI onaylayıcılar (e-postası olmayanlar dahil, isteyen hariç); postası ulaşmayana metin
+        // bunu söyler. Hata isteği değiştirmez (servis kendi hatasını yutar)
+        TechErrorPushService p = pushes;
+        if (p != null) {
+            p.approvalRequested(TechErrorPushService.Ctx.of(fresh, channel), apps, by, service.displayName(by), resend, mailedTo, now);
+        }
         return new RequestResult(apps, mailed, failed, problem, now);
     }
 
@@ -447,9 +468,16 @@ public class TechErrorApprovalService {
         }
         TechErrorReportSender.Result send = null;
         String sendError = null;
+        TechErrorPushService p = pushes;
+        Long requesterId = fresh.getApprovalRequestedById();
+        // Karar push'unu alacak isteyen (2026-10-18) gönderildi takım bildiriminden düşülür — aynı olay için iki push almaz
+        boolean requesterPushed = p != null && p.decisionGoesTo(requesterId, by);
         if (approve) {
             try {
-                send = sender.send(service.report(fresh.getId()), channel, team, by, TechErrorReportSender.Delivery.EXECUTIVE);
+                send = requesterPushed
+                        ? sender.send(service.report(fresh.getId()), channel, team, by, TechErrorReportSender.Delivery.EXECUTIVE, null,
+                                Set.of(requesterId))
+                        : sender.send(service.report(fresh.getId()), channel, team, by, TechErrorReportSender.Delivery.EXECUTIVE);
             } catch (CodedConflictException e) {
                 sendError = e.getCode();
             } catch (TechErrorReportService.PdfBusyException e) {
@@ -460,6 +488,11 @@ public class TechErrorApprovalService {
             }
         }
         notifyRequester(fresh, channel, team, by, approve, note, send, sendError, now);
+        // Karar push'u isteyene (kendi kararıysa atlanır); onayda yöneticilere gönderimin sonucuyla. Hata kararı değiştirmez
+        if (p != null) {
+            p.decided(TechErrorPushService.Ctx.of(fresh, channel), requesterId, by, service.displayName(by), approve, note,
+                    send == null ? null : send.state(), sendError, now);
+        }
         // Kararı vermeyen diğer onaylayıcılara bilgi (12. sürüm, C10): başarısızlık kararı ASLA değiştirmez. Arka planda
         // (inceleme 2026-10-18): N onaylayıcıya SMTP gönderimi isteği bekletmesin; karar yazıldıktan (commit) SONRA
         TechErrorReport decided = fresh;

@@ -1,5 +1,6 @@
 import { useState, useEffect, useLayoutEffect, useMemo, useCallback, useRef } from 'react'
 import { api, formatDate } from '../../api/client'
+import { useUnsavedWork } from '../../utils/unsavedWork.js'
 import { useT } from '../../i18n/index.jsx'
 import { useDialog } from '../ui/Dialog.jsx'
 import { useToast } from '../ui/Toast.jsx'
@@ -115,6 +116,7 @@ export default function PermissionMatrix({ initialOpenGroup = null }) {
   const filtering = query.trim() !== '' || onlyPending || onlySensitive || kinds.length < ACTION_KEYS.length
   const dirty = pending.size > 0
 
+  useUnsavedWork(dirty)   // başka pencereden gelen "raporu aç" isteği değişikliği sessizce bırakmasın
   // Kaydedilmemiş değişiklikle sayfadan çıkış (yenile / sekmeyi kapat) tarayıcı uyarısı alır.
   useEffect(() => {
     if (!dirty) return undefined

@@ -187,6 +187,86 @@ public class TechErrorSettingsController {
         return ResponseEntity.ok(Map.of("success", true, "data", remindersResponse()));
     }
 
+    // ── Push bildirimleri (2026-10-18) ──────────────────────────────────────────────────────────────────
+
+    /**
+     * Push PUT gövdesindeki alanlar → ayar anahtarı (sıra ön yüzle aynı). Dönem hatırlatmasının push'u eski anahtarındadır
+     * ({@code reminder-push}; hatırlatma ucu da onu yazmayı sürdürür — eski kartla uyum).
+     */
+    static final Map<String, String> PUSH_FIELDS = new LinkedHashMap<>();
+    static {
+        PUSH_FIELDS.put("period_reminder", TechErrorReportSettings.KEY_REMINDER_PUSH);
+        PUSH_FIELDS.put("approval_request", TechErrorReportSettings.KEY_PUSH_APPROVAL_REQUEST);
+        PUSH_FIELDS.put("approval_reminder", TechErrorReportSettings.KEY_PUSH_APPROVAL_REMINDER);
+        PUSH_FIELDS.put("decision", TechErrorReportSettings.KEY_PUSH_DECISION);
+        PUSH_FIELDS.put("delivered", TechErrorReportSettings.KEY_PUSH_DELIVERED);
+        PUSH_FIELDS.put("failed", TechErrorReportSettings.KEY_PUSH_FAILED);
+    }
+
+    /**
+     * Teknik hata raporu push bildirimleri (2026-10-18, kullanıcı isteği): olay başına aç / kapa — AYRI uç (eski pod 404 / 405
+     * alır ve hiçbir şey yazmaz; hatırlatma ucu bilinmeyen alanları yok sayıp "kaydedildi" derdi). {@code push_enabled}: genel
+     * push kanalı açık mı (kapalıyken anahtarların etkisi yok — kart bunu söyler). Kapsamlı müdür okur (salt okunur).
+     */
+    @GetMapping("/settings/push")
+    public ResponseEntity<Map<String, Object>> getPush(HttpSession session) {
+        requireAdmin(session);
+        Map<String, Object> data = pushSettings();
+        data.put("read_only", !SessionScope.isGlobalAdmin(session));
+        return ResponseEntity.ok(Map.of("success", true, "data", data));
+    }
+
+    /**
+     * YALNIZ gönderilen alanlar yazılır (açık / kapalı, boolean); bilinmeyen alan yok sayılır; boş gövde hiçbir şey yazmaz ve
+     * denetlenmez. Tür hatası 400 {@code VALIDATION_FAILED} + {@code field}. GLOBAL_ONLY: kapsamlı müdür 403.
+     */
+    @PutMapping("/settings/push")
+    public ResponseEntity<Map<String, Object>> savePush(@RequestBody(required = false) Map<String, Object> body,
+                                                        HttpSession session, HttpServletRequest request) {
+        requireAdmin(session);
+        requireGlobalWriter(session);
+        Map<String, Object> in = body == null ? Map.of() : body;
+        Map<String, Object> values = new LinkedHashMap<>();
+        Map<String, Object> audit = new LinkedHashMap<>();
+        for (Map.Entry<String, String> e : PUSH_FIELDS.entrySet()) {
+            if (!in.containsKey(e.getKey())) continue;
+            if (!(in.get(e.getKey()) instanceof Boolean b)) {
+                throw new FieldValidationException(e.getKey(), Msg.t("Push seçeneği açık ya da kapalı olmalı.",
+                        "The push option must be on or off."));
+            }
+            values.put(e.getValue(), String.valueOf(b));
+            audit.put(e.getKey(), b);
+        }
+        Map<String, Object> data;
+        if (values.isEmpty()) {
+            data = pushSettings();
+        } else {
+            settings.save(Map.of("values", values), actor(session));
+            audit.put("keys", new ArrayList<>(values.keySet()));
+            auditService.recordAction("TECH_ERROR_SETTINGS_SAVE", session, request, "SETTINGS", "tech-error-report",
+                    AuditDetail.ofMap(audit));
+            data = pushSettings();
+        }
+        data.put("read_only", false);
+        return ResponseEntity.ok(Map.of("success", true, "data", data));
+    }
+
+    /** Push anahtarlarının ETKİN değerleri + genel push kanalının durumu. */
+    Map<String, Object> pushSettings() {
+        Map<String, Object> r = new LinkedHashMap<>();
+        for (Map.Entry<String, String> e : PUSH_FIELDS.entrySet()) {
+            r.put(e.getKey(), TechErrorReportSettings.pushOn(settings, e.getValue()));
+        }
+        boolean channel;
+        try {
+            channel = settings.getBoolean("site.monitor.userpush.enabled", false);
+        } catch (RuntimeException ex) {
+            channel = false;
+        }
+        r.put("push_enabled", channel);
+        return r;
+    }
+
     /** Hatırlatma ve posta sınırı ayarlarının ETKİN değerleri + aralıkları (ön yüz alan sınırlarını buradan alır). */
     Map<String, Object> reminders() {
         Map<String, Object> r = new LinkedHashMap<>();

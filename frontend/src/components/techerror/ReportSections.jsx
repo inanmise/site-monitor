@@ -10,8 +10,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/shadcn/collapsible'
 import { ToggleGroup, ToggleGroupItem } from '@/components/shadcn/toggle-group'
 import { cn } from '@/lib/utils'
+import AlertBanner from '../ui/AlertBanner.jsx'
 import {
-  CALC_MANUAL, LIMITS, MAX_RESOLVED_TEXT, changePercent, derivedRates, fieldExempt, formatNumber, formatPercent, formatValue,
+  CALC_MANUAL, OUTAGE_FIELD, allFields, summaryRefs, LIMITS, MAX_RESOLVED_TEXT, changePercent, derivedRates, fieldExempt, formatNumber, formatPercent, formatValue,
   abbreviable, abbreviationExp, formatAbbreviated, hasAbbreviation, isAmbiguousB, isIncompleteNumber, tableUnitKey, zeroOk,
   parseNumber, summaryAutoText, summaryBlocks, summaryLinePreview, summaryLineStatus,
   summaryTiles, effectiveTarget, effectiveBetter, calcNumber,
@@ -229,8 +230,25 @@ function PreviousHint({ field, prev, cur, previous, uiLang, t }) {
  * çıktısı, hesap notu, bu adetten türeyen oranlar, ipucu, muafiyet notu, geçen ayın değeri ve alan hatası.
  * `templateFields`: şablonun bütün alanları (formül adları, türeyen oranlar, bağlı alan sayısı).
  */
+/**
+ * Kesinti cevabı konularla çelişiyor (2026-10-18 bütünleştirme incelemesi): "Dönemde kesinti oldu mu?" Hayır, ama `count` anomali
+ * konusu kesinti kaynaklı işaretli — bilgi bandı (rapor ikisini de yazıldığı gibi basar; kayıt engellenmez). Kesinti
+ * alanının yanında ve özet kartında.
+ */
+export function OutageConflictBanner({ count, label, where }) {
+  const t = useT()
+  if (!count) return null
+  return (
+    <div data-slot="te-outage-conflict" data-where={where} data-count={count} className="min-w-0">
+      <AlertBanner tone="info" title={t('te.outageConflict.title')}>
+        {t(count === 1 ? 'te.outageConflict.bodyOne' : 'te.outageConflict.body', label, count)}
+      </AlertBanner>
+    </div>
+  )
+}
+
 export function MetricField({ field: f, values, resolve, uiLang, previous, readOnly, errors, onField, onFieldError, templateFields,
-  calc = null, onTarget = null }) {
+  calc = null, onTarget = null, outageConflict = 0 }) {
   const t = useT()
   const all = templateFields || []
   const labelOf = (fid) => resolve(all.find((x) => x.id === fid)?.label || fid)
@@ -294,6 +312,9 @@ export function MetricField({ field: f, values, resolve, uiLang, previous, readO
         <CopyTextButton text={resolve(f.label)} />
       </div>
       {control}
+      {f.id === OUTAGE_FIELD && f.type === 'yesno' && (
+        <OutageConflictBanner count={outageConflict} label={resolve(f.label)} where="field" />
+      )}
       {res && (
         <p id={noteId} className="text-xs text-muted-foreground [overflow-wrap:anywhere]" data-slot="te-calc-note" data-status={res.status}>
           {calcNoteText(f, res, labelOf, previous, t, compareInfo)}
@@ -369,11 +390,12 @@ export function MetricFieldsGrid({ section, values, templateFields, columns = 3,
 }
 
 export function MetricsBlock({ section, values, resolve, uiLang, previous, readOnly, errors, onField, onFieldError, templateFields,
-  calc = null, onTarget = null }) {
+  calc = null, onTarget = null, outageConflict = 0 }) {
   return (
     <SectionShell title={resolve(section.title)} slot="te-metrics" sectionId={section.id}>
       <MetricFieldsGrid section={section} values={values} resolve={resolve} uiLang={uiLang} previous={previous} readOnly={readOnly}
-        errors={errors} onField={onField} onFieldError={onFieldError} templateFields={templateFields} calc={calc} onTarget={onTarget} />
+        errors={errors} onField={onField} onFieldError={onFieldError} templateFields={templateFields} calc={calc} onTarget={onTarget}
+        outageConflict={outageConflict} />
     </SectionShell>
   )
 }
@@ -427,9 +449,15 @@ function focusValueField(fieldId) {
  * kopyayı siler (onayla). Boş bırakılan elle metin kayıtta otomatiğe döner (özet kilitlenmez).
  */
 export function SummaryBlock({ section, template, values, channelName, year, month, resolve, readOnly, errors, onText, onClearText,
-  embedded = [], fieldValues = null, uiLang, previous, onField, onFieldError, templateFields, calc = null, onTarget = null }) {
+  embedded = [], fieldValues = null, uiLang, previous, onField, onFieldError, templateFields, calc = null, onTarget = null,
+  outageConflict = 0 }) {
   const t = useT()
   const { showConfirm } = useDialog()
+  // Kesinti cevabı konularla çelişiyorsa (Hayır + kesinti kaynaklı konu) özet metni "kesinti yaşanmamıştır" der — kartta bant;
+  // kesinti alanı bu kartın içindeyse bant alanın yanında (aynı kartta iki kez değil)
+  const outageField = outageConflict > 0 ? allFields(template).find((x) => x.id === OUTAGE_FIELD) : null
+  const outageInCard = !!outageField && embedded.some((e) => (e.fields || []).some((x) => x.id === OUTAGE_FIELD))
+  const outageInText = !!outageField && (section.lines || []).some((l) => summaryRefs(l).some((r) => r.id === OUTAGE_FIELD))
   const override = values.texts[section.id]
   const manual = override != null
   // Geçen ayın değerleri ve raporun o aya özel hedefleri (2026-10-17, 4b): fark / hedef cümleleri ve renkli kutucuklar
@@ -523,6 +551,7 @@ export function SummaryBlock({ section, template, values, channelName, year, mon
       ) : (
         <p className="m-0 rounded-lg border border-dashed p-3 text-sm text-muted-foreground" data-slot="te-sum-empty">{t('te.sum.empty')}</p>
       )}
+      {outageInText && !outageInCard && <OutageConflictBanner count={outageConflict} label={resolve(outageField.label)} where="summary" />}
       {!manual && pending.length > 0 && (
         <div className="flex flex-col gap-1.5" data-slot="te-sum-pending">
           <p className="m-0 text-sm font-medium">{t('te.sum.pending', pending.length)}</p>
@@ -586,7 +615,7 @@ export function SummaryBlock({ section, template, values, channelName, year, mon
               </div>
               <MetricFieldsGrid section={e} values={fieldValues || values} resolve={resolve} uiLang={uiLang} previous={previous} readOnly={readOnly}
                 errors={errors} onField={onField} onFieldError={onFieldError} templateFields={templateFields} calc={calc} columns={2}
-                onTarget={onTarget} />
+                onTarget={onTarget} outageConflict={outageConflict} />
             </div>
           ))}
         </div>

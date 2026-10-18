@@ -48,12 +48,15 @@ import {
  * aynı sözleşme.
  * Görünür item yoksa hiçbir şey render etmez (yetkisiz kullanıcıda boş hücre).
  */
-export default function KebabMenu({ items = [], label = 'İşlemler', rowLabel = null, placement = 'bottom', variant = 'icon' }) {
+export default function KebabMenu({ items = [], label = 'İşlemler', rowLabel = null, placement = 'bottom', variant = 'icon', ariaLabel = null }) {
   const selectedRef = useRef(false)   // kapanış bir EYLEM seçiminden mi geldi (odak dönüşü için)
   const visible = (items || []).filter((it) => it && !it.hidden)
   if (visible.length === 0) return null
 
   const right = placement === 'right'
+  // `ariaLabel` (2026-10-18, görsel yuvası): tetiğin erişilebilir adı açıkça verilir ("Diğer işlemler: <yuva>"); görünür
+  // etiketi İÇERMELİ (etiket-adda kuralı). Verilmezse eski kural: `rowLabel — label` ya da yalnız `label`.
+  const triggerName = ariaLabel || (rowLabel ? `${rowLabel} — ${label}` : label)
 
   return (
     <DropdownMenu modal={false}>
@@ -66,14 +69,14 @@ export default function KebabMenu({ items = [], label = 'İşlemler', rowLabel =
         {variant === 'labeled' ? (
           <Button variant="outline" size="sm" data-kebab="labeled"
             className="h-8 gap-1.5 px-2.5 font-semibold max-sm:h-10 pointer-coarse:h-10 print:hidden data-[state=open]:border-primary data-[state=open]:text-primary"
-            title={label} aria-label={rowLabel ? `${rowLabel} — ${label}` : label}>
+            title={label} aria-label={triggerName}>
             <Menu aria-hidden="true" />
             <span>{label}</span>
             <ChevronDown aria-hidden="true" className="size-3.5 opacity-70" />
           </Button>
         ) : (
           <Button variant="ghost" size="icon-sm" className="size-7 text-muted-foreground pointer-coarse:size-10 print:hidden"
-            title={label} aria-label={rowLabel ? `${rowLabel} — ${label}` : label}>
+            title={label} aria-label={triggerName}>
             <Menu aria-hidden="true" />
           </Button>
         )}
@@ -96,8 +99,9 @@ export default function KebabMenu({ items = [], label = 'İşlemler', rowLabel =
         }}
       >
         {visible.map((it, i) => (
+          // Dokunmatikte öğe de 40 px (RESPONSIVE.md dokunma hedefi; 2026-10-18 görsel yuvası menüsü — masaüstü değişmez)
           <DropdownMenuItem key={i} variant={it.danger ? 'destructive' : 'default'} disabled={!!it.disabled}
-            aria-label={it.ariaLabel || undefined}
+            className="pointer-coarse:min-h-10" aria-label={it.ariaLabel || undefined}
             onSelect={() => { selectedRef.current = true; it.onClick() }}>
             {it.icon}{it.label}
           </DropdownMenuItem>

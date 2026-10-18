@@ -56,12 +56,29 @@ export function pushTriggerLabel(trigger, t) {
   return v === key ? trigger : v
 }
 
-/** İzleme ailesi etiketi — `userpush.type.<aile>`; aile olmayan bildirim türü (STORM, WEEKLY_REPORT…) ham. */
+/**
+ * Aile olmayan push türleri → etiket anahtarı (2026-10-18, inceleme: "Push bildirimlerim"de ham "TECH_ERROR_REPORT" rozeti).
+ * Anahtar adları "error" İÇERMEZ — `errorMessageQuality` kapısı adı error'la eşleşen her anahtarı hata iletisi sayar.
+ * CERTIFICATE: takım bildirimlerinin (zayıf algoritma) ve varsayılan satırın türü = sertifika ailesi.
+ */
+export const PUSH_TYPE_ALIASES = {
+  certificate: 'cert',
+  tech_error_report: 'channel_reports',
+  weekly_report: 'weekly_report',
+  storm: 'storm',
+}
+
+/**
+ * Push türü etiketi — izleme ailesi (`userpush.type.<aile>`) ya da aile olmayan bildirim türü (`PUSH_TYPE_ALIASES`).
+ * Bilinmeyen tür ASLA ham gösterilmez: "Diğer bildirim" (`userpush.type.other`). "Push bildirimlerim" ve yönetici push
+ * günlüğü (TypeBadge) aynı etiketi kullanır.
+ */
 export function familyLabel(type, t) {
   if (!type) return ''
-  const key = `userpush.type.${String(type).toLowerCase()}`
+  const low = String(type).trim().toLowerCase()
+  const key = `userpush.type.${PUSH_TYPE_ALIASES[low] || low}`
   const v = t(key)
-  return v === key ? type : v
+  return v === key || !v ? t('userpush.type.other') : v
 }
 
 /** UTC damga → yerel "HH:mm" (bugün değilse tarih de ayrı döner). */

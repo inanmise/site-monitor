@@ -159,3 +159,81 @@ describe('yönetici özeti blokları — Java ile ortak doğruluk tablosu', () =
     expect(long[1].kind).toBe('note')
   })
 })
+
+// Bütünleştirme incelemesi 2026-10-18: "söylenen" = sunucudaki shownValues kuralı (tamamı basılan cümle + seçilen dal boş
+// değil) — seçimli başvuru tablosu Java kaynağından (CHOICE_TABLE), metin sınırı senaryosu Java testindekinin aynısı
+const CHOICE_TPL = {
+  lang: 'tr',
+  title: '{kanal}',
+  sections: [
+    { id: 'exec', kind: 'summary', title: 'Yönetici Özeti', lines: [
+      'Dönem değerlendirmesi tamamlandı.{f:q-flag? Kota aşıldı.|}',
+      'Kota adedi {f:q-count} olarak kaydedilmiştir.',
+    ] },
+    { id: 'q', kind: 'metrics', title: 'Kota', host: 'exec', fields: [
+      { id: 'q-flag', label: 'Kota aşımı oldu mu?', type: 'yesno' },
+      { id: 'q-count', label: 'Kota hatası adedi', type: 'number' },
+    ] },
+  ],
+}
+
+function valuesFor(tpl, spec) {
+  const byId = new Map(tpl.sections.filter((s) => s.kind === 'metrics').flatMap((s) => s.fields).map((f) => [f.id, f]))
+  const out = {}
+  if (!spec) return out
+  for (const part of spec.split(';')) {
+    const eq = part.indexOf('=')
+    const f = byId.get(part.slice(0, eq))
+    const raw = part.slice(eq + 1)
+    expect(f, `alan ${part}`).toBeTruthy()
+    out[f.id] = f.type === 'number' || f.type === 'percent' ? Number(raw) : f.type === 'yesno' ? raw === 'true' : raw
+  }
+  return out
+}
+
+/** 450 karakterlik dolgu cümlesi (Java filler ile aynı). */
+const filler = (k) => {
+  const head = `Dolgu ${k} `
+  return `${head}${'x'.repeat(449 - head.length)}.`
+}
+
+describe('yönetici özeti blokları — söylenen kümesi = shownValues kuralı', () => {
+  const rows = javaStringTable(JAVA, 'CHOICE_TABLE')
+
+  it('seçimli başvuru tablosu Java ile aynı: seçilen dal boşsa gömülü değer satır olarak basılır', () => {
+    expect(rows.length).toBeGreaterThanOrEqual(3)
+    for (const [name, spec, override, ...exp] of rows) {
+      const texts = override == null ? {} : { exec: override }
+      expect(summaryBlocks(CHOICE_TPL, CHOICE_TPL.sections[0], valuesFor(CHOICE_TPL, spec), texts, 'Mobil', 2026, 9), name)
+        .toEqual(exp.map(expected))
+    }
+  })
+
+  it('cümlesi metin sınırında kesilen ya da sınırın ötesinde kalan gömülü değer kaybolmaz: değer satırı tamamıyla özet metninden sonra (Java cutSentenceValuesStillPrint)', () => {
+    const lines = Array.from({ length: 26 }, (_, k) => filler(k))
+    const tail = ' değeri {f:e2}.'
+    lines.push(`Gömülü ${'y'.repeat(450 - 'Gömülü '.length - tail.length)}${tail}`)
+    lines.push('Sınırın ötesinde {f:e1}.')
+    const tpl = {
+      lang: 'tr',
+      title: '{kanal}',
+      sections: [
+        { id: 'exec', kind: 'summary', title: 'Yönetici Özeti', lines },
+        { id: 'e', kind: 'metrics', title: 'Gömülü', host: 'exec', fields: [
+          { id: 'e1', label: 'Gömülü adet', type: 'number' },
+          { id: 'e2', label: 'Gömülü iki', type: 'number' },
+          { id: 'e-note', label: 'Gömülü açıklama', type: 'textarea' },
+        ] },
+      ],
+    }
+    const got = summaryBlocks(tpl, tpl.sections[0], { e1: 7, e2: 8, 'e-note': 'Not' }, {}, 'Mobil', 2026, 9)
+    expect(got).toHaveLength(3)
+    expect(got[0].kind).toBe('text')
+    expect(got[0].text.startsWith('Dolgu 0 ')).toBe(true)
+    expect(got[0].text.endsWith('…')).toBe(true)
+    expect(got[0].text).not.toContain('**8**')
+    expect(got[0].text.length).toBeLessThanOrEqual(MAX_RESOLVED_TEXT)
+    expect(got[1]).toEqual({ kind: 'note', section: 'e', field: 'e-note', label: 'Gömülü açıklama', text: 'Not' })
+    expect(got[2]).toEqual({ kind: 'text', text: 'Gömülü adet: **7**\nGömülü iki: **8**' })
+  })
+})

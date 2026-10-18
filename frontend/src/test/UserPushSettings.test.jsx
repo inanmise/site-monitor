@@ -447,6 +447,26 @@ describe('UserPushSettings', () => {
     await waitFor(() => expect(api.admin.userPush.saveSettings).toHaveBeenCalledWith(expect.objectContaining({ 'site.monitor.userpush.weekly.manager-enabled': 'false' })))
   })
 
+  it('2026-10-18: haftalık rapor bölümü teknik hata raporu push anahtarlarının YERİNİ söyler ve Ayarlar → Teknik hata raporu\'na götürür (anahtarlar burada değil)', async () => {
+    try { localStorage.removeItem('sm.userpush.sections') } catch {}
+    const events = []
+    const on = (e) => events.push(e.detail)
+    window.addEventListener('sm:navigate', on)
+    try {
+      render(<UserPushSettings />)
+      await screen.findByDisplayValue('Site Monitor')
+      fireEvent.click(screen.getByRole('button', { name: /Haftalık rapor onayı|Weekly report approval/ }))
+      const hint = document.querySelector('[data-slot="userpush-techerror-hint"]')
+      expect(hint).not.toBeNull()
+      expect(within(hint).getByText(/Push bildirimleri kartından|Push notifications\./)).toBeInTheDocument()
+      expect(screen.queryByRole('switch', { name: /Karar → isteyene|Decision → requester/ })).toBeNull()
+      fireEvent.click(within(hint).getByRole('button', { name: /Teknik hata raporu ayarları|Technical error report settings/ }))
+      await waitFor(() => expect(events.some((d) => d?.tab === 'settings' && d?.params?.sec === 'techerror')).toBe(true))
+    } finally {
+      window.removeEventListener('sm:navigate', on)
+    }
+  })
+
   it('2026-09-27 (B2): pencere modalı yeniden çizimde istek DÖNGÜSÜNE girmez — pencere başlangıcı açılışta bir kez hesaplanır', async () => {
     render(<UserPushSettings />)
     await screen.findByDisplayValue('Authorization')

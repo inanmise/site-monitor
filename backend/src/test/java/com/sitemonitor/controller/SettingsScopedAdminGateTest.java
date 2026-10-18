@@ -167,6 +167,17 @@ class SettingsScopedAdminGateTest {
     }
 
     @Test
+    @DisplayName("2026-10-18: teknik hata raporu push anahtarları (olay başına + dönem hatırlatması) GLOBAL_ONLY; uç müdüre SALT OKUNUR, yazma global yöneticiye kapılı")
+    void techErrorPush_globalOnly() throws IOException {
+        assertThat(AppSettingsCatalog.GLOBAL_ONLY).containsAll(com.sitemonitor.service.techerror.TechErrorReportSettings.PUSH_KEYS)
+                .contains(com.sitemonitor.service.techerror.TechErrorReportSettings.KEY_REMINDER_PUSH);
+        String src = src("TechErrorSettingsController");
+        int put = src.indexOf("@PutMapping(\"/settings/push\")");
+        assertThat(put).as("push PUT ucu").isPositive();
+        assertThat(src.substring(put, src.indexOf("pushSettings()", put))).contains("requireGlobalWriter(session)");
+    }
+
+    @Test
     @DisplayName("2026-09-28: sistem geneli yüzeyler (Veri Saklama yazma uçları, Sorun Bildirimleri yönetimi) requireNotScopedAdmin TAŞIR")
     void systemWideSurfaces_keepGate() throws IOException {
         for (String c : List.of("RetentionAdminController", "LoginIssueController")) {

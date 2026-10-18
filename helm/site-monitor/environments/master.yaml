@@ -20,6 +20,9 @@
 #                  silently installs a SECOND release (a second Ingress on the same host).
 #   PRIVATE_VALUES repo-external file: config.dbHost / dbName / dbUser (+ imagePullSecrets).
 #   SECRET         the Secret the running pod already uses - it holds the CURRENT values.
+#                  For the Grafana business metrics endpoint add METRICS_EXPORT_TOKEN to it
+#                  (>= 32 random chars, same value in the Prometheus scrape job; RUNBOOK
+#                  "Grafana panosu ve Prometheus"). Absent -> /metrics/sitemonitor answers 404.
 #                  Without existingSecret every secret.* value must be passed with its
 #                  CURRENT value, or the values.yaml placeholders overwrite the live Secret.
 #   logLevel=DEBUG prod runs DEBUG ON PURPOSE (owner decision). Drop the flag and prod

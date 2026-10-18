@@ -17,6 +17,8 @@ export const META_DESCRIPTION_MAX = 160
 /** Sekme dışı ekranlar. */
 export const META_PAGES = Object.freeze([
   'loading', 'login', 'sessionExpired', 'accountInactive', 'maintenance', 'changePassword', 'notFound', 'restricted',
+  // Kanal raporlarının Görsel paneli penceresi (2026-10-18, ?tab=channelreports&te_view=images)
+  'imagesPanel',
 ])
 
 export const tabMetaKey = (tab) => `meta.tab.${tab}`
@@ -35,7 +37,7 @@ export function formatTitle(pageTitle, brand) {
  */
 export function appMetaKey({
   authChecked, user, mustChangePwd, tab, validTabs, restricted = false,
-  accountInactive = false, maintenance = false, sessionExpired = false,
+  accountInactive = false, maintenance = false, sessionExpired = false, imagesPanel = false,
 }) {
   if (!authChecked) return pageMetaKey('loading')
   if (!user) {
@@ -45,6 +47,7 @@ export function appMetaKey({
     return pageMetaKey('login')
   }
   if (mustChangePwd) return pageMetaKey('changePassword')
+  if (imagesPanel) return pageMetaKey('imagesPanel')
   if (!validTabs?.has?.(tab)) return pageMetaKey('notFound')
   if (restricted) return pageMetaKey('restricted')
   return tabMetaKey(tab)

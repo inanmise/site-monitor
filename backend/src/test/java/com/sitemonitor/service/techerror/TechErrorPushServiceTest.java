@@ -1,0 +1,473 @@
+package com.sitemonitor.service.techerror;
+
+import com.sitemonitor.model.AppUser;
+import com.sitemonitor.repository.AppUserRepository;
+import com.sitemonitor.service.AppSettingsService;
+import com.sitemonitor.service.PushText;
+import com.sitemonitor.service.UserPushService;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+/**
+ * Teknik hata raporu push bildirimleri (2026-10-18) — alıcılar, dışlamalar, tekilleştirme anahtarları, ayar anahtarları,
+ * modül görünürlüğü, pasif hesap, dil, kişisel tercih satırı, hata yalıtımı ve metin kuralları (push kanalı ISO-8859-9:
+ * {@link PushText#pushSafe} metni DEĞİŞTİRMEZ; bağlantı yok).
+ */
+class TechErrorPushServiceTest {
+
+    private final AppSettingsService appSettings = mock(AppSettingsService.class);
+    private final AppUserRepository users = mock(AppUserRepository.class);
+    private final UserPushService push = mock(UserPushService.class);
+    private final TechErrorVisibilityService visibility = mock(TechErrorVisibilityService.class);
+    private final Map<String, String> settings = new HashMap<>();
+    private final Map<Long, AppUser> byId = new HashMap<>();
+    private TechErrorPushService svc;
+
+    private static final Instant AT = Instant.parse("2026-10-05T06:15:00Z");
+    private static final TechErrorPushService.Ctx CTX = new TechErrorPushService.Ctx(42L, 7L, "Mobil Bankacılık", 2026, 9);
+
+    @BeforeEach
+    void setUp() {
+        when(appSettings.getBoolean(anyString(), anyBoolean())).thenAnswer(inv -> {
+            String v = settings.get((String) inv.getArgument(0));
+            return v == null ? inv.getArgument(1) : Boolean.parseBoolean(v);
+        });
+        when(users.findById(anyLong())).thenAnswer(inv -> Optional.ofNullable(byId.get((Long) inv.getArgument(0))));
+        when(users.findAllById(any())).thenAnswer(inv -> {
+            List<AppUser> out = new ArrayList<>();
+            for (Object id : (Iterable<?>) inv.getArgument(0)) if (byId.containsKey(id)) out.add(byId.get(id));
+            return out;
+        });
+        when(push.enqueueDirectLocalized(any(), any(), anyString(), anyString(), anyString(), anyString(), any(), anyString()))
+                .thenAnswer(inv -> Map.of("queued", ((List<?>) inv.getArgument(0)).size()));
+        when(push.enqueueTeamNoticeLocalized(any(), anyString(), anyString(), anyString(), anyString(), any(), anyString(), any()))
+                .thenReturn(Map.of("queued", 3));
+        when(visibility.teamVisible(any())).thenReturn(true);
+        svc = new TechErrorPushService(appSettings, users);
+        svc.setPush(push);
+        svc.setVisibility(visibility);
+        user(1L, "po1", "PO Bir", "po1@example.com", "tr");
+        user(2L, "po2", "PO İki", "ortak@example.com", "en");
+        user(3L, "po3", "PO Üç", null, "tr");                 // e-postası yok: uygulama içinde onaylar
+        user(4L, "po4", "PO Dört", "ORTAK@example.com", "tr"); // aynı kutuyu paylaşan PO (onaylayıcı listesinde adres null)
+        user(9L, "tech", "Teknik Kişi", "tech@example.com", "tr");
+    }
+
+    private AppUser user(Long id, String name, String display, String mail, String lang) {
+        AppUser u = new AppUser();
+        u.setId(id);
+        u.setUsername(name);
+        u.setDisplayName(display);
+        u.setEmail(mail);
+        u.setPushLang(lang);
+        u.setActive(true);
+        byId.put(id, u);
+        return u;
+    }
+
+    private static List<TechErrorApprovalService.Approver> approvers(Long... ids) {
+        List<TechErrorApprovalService.Approver> out = new ArrayList<>();
+        for (Long id : ids) out.add(new TechErrorApprovalService.Approver(id, "PO " + id, id == 3L || id == 4L ? null : "po" + id + "@example.com"));
+        return out;
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<List<UserPushService.DirectRecipient>> directCalls(int n, ArgumentCaptor<UserPushService.LocalizedText> text,
+                                                                    ArgumentCaptor<String> key, String trigger) {
+        ArgumentCaptor<List<UserPushService.DirectRecipient>> list = ArgumentCaptor.forClass(List.class);
+        verify(push, times(n)).enqueueDirectLocalized(list.capture(), eq(7L), eq(trigger), eq("WARNING"), eq("TECH_ERROR_REPORT"),
+                eq("Mobil Bankacılık Eylül 2026"), text.capture(), key.capture());
+        return list.getAllValues();
+    }
+
+    private static List<String> names(List<UserPushService.DirectRecipient> l) {
+        return l.stream().map(UserPushService.DirectRecipient::username).toList();
+    }
+
+    // ── 1. Onay isteği ────────────────────────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("onay isteği: postayla aynı PO'lar (e-postası olmayan dahil), isteyen HİÇ; postası ulaşana (ortak kutu dahil) 'e-postanızdan', ulaşmayana 'size ulaşmadı'; dil kişinin")
+    void approvalRequestRecipients() {
+        int queued = svc.approvalRequested(CTX, approvers(1L, 2L, 3L, 4L, 9L), 9L, "Teknik Kişi", false,
+                List.of("po1@example.com", "ortak@example.com"), AT);
+        ArgumentCaptor<UserPushService.LocalizedText> text = ArgumentCaptor.forClass(UserPushService.LocalizedText.class);
+        ArgumentCaptor<String> key = ArgumentCaptor.forClass(String.class);
+        List<List<UserPushService.DirectRecipient>> calls = directCalls(2, text, key, TechErrorPushService.TRIGGER_APPROVAL);
+        assertThat(queued).isEqualTo(4);
+        assertThat(names(calls.get(0))).containsExactly("po1", "po2", "po4");          // ortak kutu: po4'ün adresi de ulaştı
+        assertThat(names(calls.get(1))).containsExactly("po3");                        // e-postası yok
+        assertThat(calls.get(0).get(1).lang()).isEqualTo("en");
+        assertThat(text.getAllValues().get(0).tr()).contains("onayınızı bekliyor").contains("e-postanızdan").contains("Talep eden: Teknik Kişi.");
+        assertThat(text.getAllValues().get(1).tr()).contains("Onay e-postası size ulaşmadı");
+        assertThat(text.getAllValues().get(1).en()).contains("did not reach you").contains("Requested by: Teknik Kişi.");
+        assertThat(key.getAllValues()).containsOnly("te-appr:42:" + AT.toEpochMilli());
+    }
+
+    @Test
+    @DisplayName("yeniden gönderilen istek: ayrı anahtar + 'Hatırlatma' metni; posta hiç gitmediyse (PDF sırası dolu) herkes 'ulaşmadı' alır")
+    void approvalResend() {
+        svc.approvalRequested(CTX, approvers(1L, 2L), 9L, "Teknik Kişi", true, List.of(), AT);
+        ArgumentCaptor<UserPushService.LocalizedText> text = ArgumentCaptor.forClass(UserPushService.LocalizedText.class);
+        ArgumentCaptor<String> key = ArgumentCaptor.forClass(String.class);
+        List<List<UserPushService.DirectRecipient>> calls = directCalls(1, text, key, TechErrorPushService.TRIGGER_APPROVAL);
+        assertThat(names(calls.get(0))).containsExactly("po1", "po2");
+        assertThat(key.getValue()).isEqualTo("te-appr-resend:42:" + AT.toEpochMilli());
+        assertThat(text.getValue().tr()).startsWith("[Teknik hata raporu] Hatırlatma: Mobil Bankacılık Eylül 2026 raporu hâlâ onayınızı bekliyor")
+                .contains("size ulaşmadı");
+        assertThat(text.getValue().en()).startsWith("[Technical error report] Reminder: Mobil Bankacılık September 2026 is still waiting");
+    }
+
+    @Test
+    @DisplayName("pasif PO, kişisel tercih (asgari seviye HIGH → satır SKIPPED_USER_LEVEL), opt-out bayrağı servise taşınır")
+    void passiveAndPreferences() {
+        byId.get(2L).setActive(false);
+        byId.get(1L).setPushMinLevel("HIGH");
+        byId.get(3L).setPushOptOut(true);
+        svc.approvalRequested(CTX, approvers(1L, 2L, 3L), null, null, false, List.of("po1@example.com"), AT);
+        ArgumentCaptor<UserPushService.LocalizedText> text = ArgumentCaptor.forClass(UserPushService.LocalizedText.class);
+        ArgumentCaptor<String> key = ArgumentCaptor.forClass(String.class);
+        List<List<UserPushService.DirectRecipient>> calls = directCalls(2, text, key, TechErrorPushService.TRIGGER_APPROVAL);
+        assertThat(names(calls.get(0))).containsExactly("po1");
+        assertThat(calls.get(0).get(0).skipReason()).isEqualTo("SKIPPED_USER_LEVEL");
+        assertThat(names(calls.get(1))).containsExactly("po3");
+        assertThat(calls.get(1).get(0).optOut()).isTrue();
+        assertThat(text.getAllValues().get(0).tr()).doesNotContain("Talep eden");   // isteyen adı yoksa satır yok
+    }
+
+    // ── Ayar / görünürlük / hata yalıtımı ─────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("her olayın kendi anahtarı: kapalıysa o olay için HİÇ push yok, diğerleri sürer")
+    void togglesOff() {
+        for (String k : TechErrorReportSettings.PUSH_KEYS) settings.put(k, "false");
+        svc.approvalRequested(CTX, approvers(1L), 9L, "Teknik Kişi", false, List.of(), AT);
+        assertThat(svc.approvalReminder(CTX, approvers(1L), 9L, "Teknik Kişi", 3, AT, "2026-10-05")).isEmpty();
+        svc.decided(CTX, 9L, 1L, "PO Bir", true, null, "SENT", null, AT);
+        svc.delivered(CTX, false, 9L, "Teknik Kişi", 2L, AT, List.of());
+        svc.sendFailed(CTX, false, 9L, TechErrorPushService.Failure.FAILED, null, AT);
+        verify(push, never()).enqueueDirectLocalized(any(), any(), anyString(), anyString(), anyString(), anyString(), any(), anyString());
+        verify(push, never()).enqueueTeamNoticeLocalized(any(), anyString(), anyString(), anyString(), anyString(), any(), anyString(), any());
+        assertThat(svc.decisionGoesTo(9L, 1L)).isFalse();
+
+        settings.put(TechErrorReportSettings.KEY_PUSH_DELIVERED, "true");
+        svc.delivered(CTX, false, 9L, "Teknik Kişi", 2L, AT, List.of());
+        verify(push).enqueueTeamNoticeLocalized(eq(7L), eq(TechErrorPushService.TRIGGER_SENT), eq("WARNING"), eq("TECH_ERROR_REPORT"),
+                anyString(), any(), anyString(), any());
+    }
+
+    @Test
+    @DisplayName("modül takıma kapalı → push yok; push servisi yok → sessiz; enqueue hatası çağırana yayılmaz")
+    void hiddenModuleAndFailureIsolation() {
+        when(visibility.teamVisible(7L)).thenReturn(false);
+        svc.approvalRequested(CTX, approvers(1L), 9L, "Teknik Kişi", false, List.of(), AT);
+        svc.delivered(CTX, true, 9L, "Teknik Kişi", 2L, AT, List.of());
+        verify(push, never()).enqueueDirectLocalized(any(), any(), anyString(), anyString(), anyString(), anyString(), any(), anyString());
+        verify(push, never()).enqueueTeamNoticeLocalized(any(), anyString(), anyString(), anyString(), anyString(), any(), anyString(), any());
+
+        when(visibility.teamVisible(7L)).thenReturn(true);
+        doThrow(new IllegalStateException("db down")).when(push)
+                .enqueueDirectLocalized(any(), any(), anyString(), anyString(), anyString(), anyString(), any(), anyString());
+        doThrow(new IllegalStateException("db down")).when(push)
+                .enqueueTeamNoticeLocalized(any(), anyString(), anyString(), anyString(), anyString(), any(), anyString(), any());
+        assertThatCode(() -> {
+            assertThat(svc.approvalRequested(CTX, approvers(1L), 9L, "Teknik Kişi", false, List.of(), AT)).isZero();
+            assertThat(svc.approvalReminder(CTX, approvers(1L), 9L, "Teknik Kişi", 3, AT, "2026-10-05")).isEmpty();
+            svc.decided(CTX, 9L, 1L, "PO Bir", false, "not", null, null, AT);
+            svc.delivered(CTX, false, 9L, "Teknik Kişi", 2L, AT, List.of());
+            svc.sendFailed(CTX, false, 9L, TechErrorPushService.Failure.FAILED, null, AT);
+        }).doesNotThrowAnyException();
+
+        TechErrorPushService none = new TechErrorPushService(appSettings, users);
+        assertThatCode(() -> none.delivered(CTX, false, 9L, "x", 1L, AT, List.of())).doesNotThrowAnyException();
+        assertThat(none.approvalReminder(CTX, approvers(1L), 9L, "x", 3, AT, "2026-10-05")).isEmpty();
+    }
+
+    // ── 2. Onay hatırlatması ──────────────────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("onay hatırlatması: tüm PO'lar (e-postasız dahil, isteyen hariç), gün taşıyan anahtar, N gün metni; push'u kuyruğa alınan PO kimlikleri döner")
+    void approvalReminder() {
+        Set<Long> queued = svc.approvalReminder(CTX, approvers(1L, 3L, 9L), 9L, "Teknik Kişi", 1, AT, "2026-10-05");
+        assertThat(queued).containsExactly(1L, 3L);
+        ArgumentCaptor<UserPushService.LocalizedText> text = ArgumentCaptor.forClass(UserPushService.LocalizedText.class);
+        ArgumentCaptor<String> key = ArgumentCaptor.forClass(String.class);
+        List<List<UserPushService.DirectRecipient>> calls = directCalls(1, text, key, TechErrorPushService.TRIGGER_APPROVAL_REMINDER);
+        assertThat(names(calls.get(0))).containsExactly("po1", "po3");
+        assertThat(key.getValue()).isEqualTo("te-appr-remind:42:" + AT.toEpochMilli() + ":2026-10-05");
+        assertThat(text.getValue().tr()).contains("1 gündür onayınızı bekliyor");
+        assertThat(text.getValue().en()).contains("for 1 day;");
+        assertThat(TechErrorPushService.reminderText(CTX, 3, "x").en()).contains("for 3 days;");
+        assertThat(svc.approvalReminder(CTX, approvers(9L), 9L, "Teknik Kişi", 1, AT, "2026-10-05")).isEmpty();   // yalnız isteyen
+    }
+
+    @Test
+    @DisplayName("inceleme 2026-10-18: kimin push'u kuyrukta — servis queued_usernames verirse kişi kişi; vermeyen sonuçta yalnız herkes kuyruktaysa herkes, aksi hâlde kimse")
+    void approvalReminderReportsWhoWasQueued() {
+        org.mockito.Mockito.doReturn(Map.of("queued", 1, "queued_usernames", List.of("po3"))).when(push)
+                .enqueueDirectLocalized(any(), any(), anyString(), anyString(), anyString(), anyString(), any(), anyString());
+        assertThat(svc.approvalReminder(CTX, approvers(1L, 3L), 9L, "Teknik Kişi", 2, AT, "2026-10-05")).containsExactly(3L);
+        List<AppUser> people = List.of(byId.get(1L), byId.get(3L));
+        assertThat(TechErrorPushService.queuedIds(people, Map.of("queued", 2))).containsExactly(1L, 3L);
+        assertThat(TechErrorPushService.queuedIds(people, Map.of("queued", 1))).isEmpty();     // kim olduğu bilinmiyor
+        assertThat(TechErrorPushService.queuedIds(people, Map.of("queued", 0, "queued_usernames", List.of()))).isEmpty();
+        assertThat(TechErrorPushService.queuedIds(people, null)).isEmpty();
+    }
+
+    // ── 3. Karar ──────────────────────────────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("karar → isteyen: onay + gönderim sonucu (gönderildi / kuyrukta / PDF sırası dolu — ham kod yok), red → 'ret notunu Site Monitor'de görüntüleyin' (not push'a YAZILMAZ); kendi kararı ve pasif isteyen atlanır")
+    void decision() {
+        svc.decided(CTX, 9L, 1L, "PO Bir", true, null, "SENT", null, AT);
+        svc.decided(CTX, 9L, 1L, "PO Bir", true, null, "QUEUED", null, AT.plusSeconds(1));
+        svc.decided(CTX, 9L, 1L, "PO Bir", true, null, null, "PDF_BUSY", AT.plusSeconds(2));
+        String note = "Tablo eksik; bkz. https://wiki.corp.local/te ve ayse@banka.com.tr — Srv01.Corp.Local'a bakın.";
+        svc.decided(CTX, 9L, 1L, "PO Bir", false, note, null, null, AT.plusSeconds(3));
+        ArgumentCaptor<UserPushService.LocalizedText> text = ArgumentCaptor.forClass(UserPushService.LocalizedText.class);
+        ArgumentCaptor<String> key = ArgumentCaptor.forClass(String.class);
+        List<List<UserPushService.DirectRecipient>> calls = directCalls(4, text, key, TechErrorPushService.TRIGGER_DECISION);
+        assertThat(calls).allSatisfy(l -> assertThat(names(l)).containsExactly("tech"));
+        List<UserPushService.LocalizedText> t = text.getAllValues();
+        assertThat(t.get(0).tr()).contains("onaylandı ve yöneticilere gönderildi").endsWith("Onaylayan: PO Bir.");
+        assertThat(t.get(1).tr()).contains("kuyrukta");
+        assertThat(t.get(2).tr()).contains("PDF sırası dolu").contains("yeniden gönderin").doesNotContain("PDF_BUSY").doesNotContain("BAŞARISIZ");
+        assertThat(t.get(2).en()).contains("PDF queue was busy").doesNotContain("PDF_BUSY");
+        // Red: notun KENDİSİ hiçbir dilde push'ta yok (push uygulaması kurum ağının dışında — karar 2026-10-18)
+        assertThat(t.get(3).tr()).isEqualTo("[Teknik hata raporu] Mobil Bankacılık Eylül 2026 raporu reddedildi. Ret notunu Site Monitor'de görüntüleyin. Reddeden: PO Bir.");
+        assertThat(t.get(3).en()).isEqualTo("[Technical error report] Mobil Bankacılık September 2026 was rejected. See the rejection note in Site Monitor. Rejected by: PO Bir.");
+        for (String s : new String[] { t.get(3).tr(), t.get(3).en() }) {
+            assertThat(s).doesNotContain("Tablo").doesNotContain("wiki").doesNotContain("@").doesNotContain("Srv01").doesNotContain("Corp");
+        }
+        assertThat(key.getAllValues()).containsExactly("te-decision:42:" + AT.toEpochMilli(), "te-decision:42:" + (AT.toEpochMilli() + 1000),
+                "te-decision:42:" + (AT.toEpochMilli() + 2000), "te-decision:42:" + (AT.toEpochMilli() + 3000));
+
+        // isteyen kararı kendisi verdi / isteyen yok / pasif → hiç push
+        svc.decided(CTX, 1L, 1L, "PO Bir", true, null, "SENT", null, AT);
+        svc.decided(CTX, null, 1L, "PO Bir", true, null, "SENT", null, AT);
+        byId.get(9L).setActive(false);
+        svc.decided(CTX, 9L, 1L, "PO Bir", true, null, "SENT", null, AT);
+        verify(push, times(4)).enqueueDirectLocalized(any(), any(), anyString(), anyString(), anyString(), anyString(), any(), anyString());
+        assertThat(svc.decisionGoesTo(1L, 1L)).isFalse();
+        assertThat(svc.decisionGoesTo(9L, 1L)).isTrue();
+    }
+
+    @Test
+    @DisplayName("inceleme 2026-10-18: onaydan sonraki gönderimin her sonucu KENDİ cümlesi (atlandı ≠ başarısız, eskiyen onay yeniden onay ister, zaten gönderiliyor, PDF sırası dolu, PDF çok büyük, ulaşmadı); ham kod asla metinde değil, TR + EN")
+    void approvedOutcomePhrases() {
+        Map<String, String[]> want = new java.util.LinkedHashMap<>();
+        want.put("SENT", new String[] { "onaylandı ve yöneticilere gönderildi", "was approved and sent to the executives" });
+        want.put("QUEUED", new String[] { "kuyrukta", "is queued" });
+        want.put("SKIPPED", new String[] { "E-posta kanalı kapalı ya da etkin alıcı yok", "The e-mail channel is off or there is no active recipient" });
+        want.put("APPROVAL_STALE", new String[] { "sonradan değiştiği için yöneticilere gönderilmedi. Yeniden onaya gönderin", "Submit it for approval again" });
+        want.put("SEND_IN_PROGRESS", new String[] { "zaten gönderiliyor. Sonuç Site Monitor'de raporda görünecek", "already being sent. The result will show" });
+        want.put("PDF_BUSY", new String[] { "PDF sırası dolu", "the PDF queue was busy" });
+        want.put("PDF_TOO_LARGE", new String[] { "PDF yöneticilere e-postayla gönderilemeyecek kadar büyük", "the PDF is too large to e-mail" });
+        want.put("FAILED", new String[] { "yöneticilere e-posta ulaşmadı. Raporu Site Monitor'den yeniden gönderin", "did not reach the executives" });
+        want.put("MAIL_FAILED", new String[] { "yöneticilere e-posta ulaşmadı", "did not reach the executives" });
+        want.put("EXEC_RECIPIENTS_MISSING", new String[] { "yöneticilere e-posta ulaşmadı", "did not reach the executives" });
+        for (Map.Entry<String, String[]> e : want.entrySet()) {
+            String code = e.getKey();
+            // sendState (SENT / QUEUED / SKIPPED / FAILED) ya da sendError kodu — ikisi de aynı cümleye
+            boolean state = List.of("SENT", "QUEUED", "SKIPPED", "FAILED").contains(code);
+            UserPushService.LocalizedText t = TechErrorPushService.decisionText(CTX, true, "PO Bir", null, state ? code : null, state ? null : code);
+            assertThat(t.tr()).as(code).contains(e.getValue()[0]).doesNotContain(code.contains("_") ? code : "§").doesNotContain("BAŞARISIZ")
+                    .doesNotContain("(" + code + ")").endsWith("Onaylayan: PO Bir.");
+            assertThat(t.en()).as(code).contains(e.getValue()[1]).doesNotContain(code.contains("_") ? code : "§").doesNotContain("FAILED")
+                    .endsWith("Approved by: PO Bir.");
+            assertThat(PushText.pushSafe(t.tr())).isEqualTo(t.tr());
+            assertThat(PushText.pushSafe(t.en())).isEqualTo(t.en());
+        }
+        // Atlanan gönderim başarısız sayılmaz: "ulaşmadı / yeniden gönderin" demez
+        assertThat(TechErrorPushService.decisionText(CTX, true, "x", null, "SKIPPED", null).tr()).doesNotContain("ulaşmadı").doesNotContain("yeniden gönderin");
+        // Bilinmeyen kod da ham yazılmaz
+        assertThat(TechErrorPushService.decisionText(CTX, true, "x", null, null, "SOME_NEW_CODE").tr()).doesNotContain("SOME_NEW_CODE").contains("ulaşmadı");
+    }
+
+    @Test
+    @DisplayName("inceleme 2026-10-18 (3. tur): CANLI push tavanı (120 / 200 / 320) — 66 karakterlik kanal + 71 karakterlik AD adıyla her onay sonucu ve red TR + EN kesilmeden sığar; çekirdek cümle ve dönem her tavanda; düşme sırası imza → kanal adı → öneri; 320'de hepsi tam")
+    void textsFitTheConfiguredLimit() {
+        String adName = "Ayşe Yılmaz Kayaoğlu (Dijital Kanallar Müdürlüğü / Kıdemli Ürün Sahibi)";
+        String channel = "Bireysel Mobil Bankacılık ve Dijital Şube Kanalları Web Uygulaması";
+        TechErrorPushService.Ctx longCh = new TechErrorPushService.Ctx(42L, 7L, channel, 2026, 9);
+        assertThat(channel.length()).isGreaterThanOrEqualTo(60);
+        assertThat(adName.length()).isGreaterThanOrEqualTo(68);
+        List<String> codes = List.of("SENT", "QUEUED", "SKIPPED", "FAILED", "APPROVAL_STALE", "SEND_IN_PROGRESS", "PDF_BUSY",
+                "PDF_TOO_LARGE", "MAIL_FAILED", "EXEC_RECIPIENTS_MISSING", "REJECTED");
+        for (int limit : new int[] { 120, 200, 320 }) {
+            for (String code : codes) {
+                boolean rejected = "REJECTED".equals(code);
+                boolean state = List.of("SENT", "QUEUED", "SKIPPED", "FAILED").contains(code);
+                for (TechErrorPushService.Ctx ctx : List.of(CTX, longCh)) {
+                    UserPushService.LocalizedText t = TechErrorPushService.decisionText(ctx, !rejected, adName, "not", state ? code : null,
+                            state || rejected ? null : code, limit);
+                    for (boolean en : new boolean[] { false, true }) {
+                        String s = en ? t.en() : t.tr();
+                        String where = limit + " " + code + " " + en + ": " + s;
+                        assertThat(PushText.truncate(PushText.pushSafe(s), limit)).as(where).isEqualTo(s);
+                        assertThat(s.length()).as(where).isLessThanOrEqualTo(limit);
+                        String core = rejected ? (en ? "was rejected. See the rejection note in Site Monitor." : "raporu reddedildi. Ret notunu Site Monitor'de görüntüleyin.")
+                                : TechErrorPushService.approvedParts(code, en)[0];
+                        assertThat(s).as(where).contains(core).contains(en ? "September 2026" : "Eylül 2026")
+                                .startsWith(en ? "[Technical error report] " : "[Teknik hata raporu] ");
+                        assertThat(s.endsWith(".")).as("imza ya yok ya tam: " + where).isTrue();
+                        if (limit == 320) {
+                            // Geniş tavanda hiçbir şey düşmez: tam kanal adı, öneri, tam imza
+                            assertThat(s).as(where).contains(ctx.channelName()).contains(rejected ? "" : TechErrorPushService.approvedParts(code, en)[1])
+                                    .endsWith(adName + ".");
+                        }
+                    }
+                }
+            }
+        }
+        // Düşme sırası (200, uzun kanal): öneri KALIR, kanal adı kısalır, imza düşer
+        String busy = TechErrorPushService.decisionText(longCh, true, adName, null, null, "PDF_BUSY", 200).en();
+        assertThat(busy).contains(TechErrorPushService.approvedOutcome("PDF_BUSY", true)).contains("...").doesNotContain("Approved by");
+        // 120: öneri de düşer, kanal adı yerine yalnız dönem
+        String narrow = TechErrorPushService.decisionText(longCh, true, adName, null, null, "PDF_BUSY", 120).en();
+        assertThat(narrow).isEqualTo("[Technical error report] September 2026 " + TechErrorPushService.approvedParts("PDF_BUSY", true)[0]);
+        // Kısa ad kuralı
+        assertThat(TechErrorPushService.shortName(adName)).isEqualTo("Ayşe Yılmaz Kayaoğlu");
+        assertThat(TechErrorPushService.shortName("  ")).isEmpty();
+        assertThat(TechErrorPushService.shortName("A".repeat(60)).length()).isLessThanOrEqualTo(40);
+    }
+
+    @Test
+    @DisplayName("inceleme 2026-10-18 (3. tur): karar push'u kişinin CANLI tavanını kullanır (messageCharLimit 120 → metin ≤ 120, okunamaz / 0 → 200)")
+    void decisionUsesTheLiveLimit() {
+        TechErrorPushService.Ctx longCh = new TechErrorPushService.Ctx(42L, 7L,
+                "Bireysel Mobil Bankacılık ve Dijital Şube Kanalları Web Uygulaması", 2026, 9);
+        when(push.messageCharLimit()).thenReturn(120);
+        svc.decided(longCh, 9L, 1L, "Ayşe Yılmaz Kayaoğlu (Dijital Kanallar Müdürlüğü / Kıdemli Ürün Sahibi)", true, null, null, "PDF_BUSY", AT);
+        ArgumentCaptor<UserPushService.LocalizedText> text = ArgumentCaptor.forClass(UserPushService.LocalizedText.class);
+        verify(push).enqueueDirectLocalized(any(), eq(7L), eq(TechErrorPushService.TRIGGER_DECISION), eq("WARNING"), eq("TECH_ERROR_REPORT"),
+                anyString(), text.capture(), anyString());
+        assertThat(text.getValue().tr().length()).isLessThanOrEqualTo(120);
+        assertThat(text.getValue().en().length()).isLessThanOrEqualTo(120);
+        assertThat(text.getValue().en()).contains(TechErrorPushService.approvedParts("PDF_BUSY", true)[0]);
+    }
+
+    // ── 4. Gönderildi ─────────────────────────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("gönderildi → takım bildirimi: gönderen ve bu olay için zaten push alan hariç, anahtar rapor + sayaç + talep anı, hedef kitle metinde (adres yok)")
+    void delivered() {
+        svc.delivered(CTX, true, 1L, "PO Bir", 5L, AT, List.of(9L));
+        ArgumentCaptor<UserPushService.LocalizedText> text = ArgumentCaptor.forClass(UserPushService.LocalizedText.class);
+        ArgumentCaptor<String> key = ArgumentCaptor.forClass(String.class);
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Set<String>> excluded = ArgumentCaptor.forClass(Set.class);
+        verify(push).enqueueTeamNoticeLocalized(eq(7L), eq(TechErrorPushService.TRIGGER_SENT), eq("WARNING"), eq("TECH_ERROR_REPORT"),
+                eq("Mobil Bankacılık Eylül 2026"), text.capture(), key.capture(), excluded.capture());
+        assertThat(excluded.getValue()).containsExactlyInAnyOrder("po1", "tech");
+        assertThat(key.getValue()).isEqualTo("te-sent:42:5:" + AT.toEpochMilli());
+        assertThat(text.getValue().tr()).isEqualTo("[Teknik hata raporu] Mobil Bankacılık Eylül 2026 raporu yöneticilere gönderildi. Gönderen: PO Bir.");
+        assertThat(text.getValue().en()).isEqualTo("[Technical error report] Mobil Bankacılık September 2026 was sent to the executives. Sent by: PO Bir.");
+        assertThat(TechErrorPushService.deliveredText(CTX, false, "x").tr()).contains("takım adresine gönderildi");
+        assertThat(text.getValue().tr()).doesNotContain("@");
+    }
+
+    // ── 5. Gönderilemedi ──────────────────────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("gönderilemedi → gönderen: anında / kuyruk sonunda / sonucu alınamadı ayrı metin ve anahtar; pasif gönderen atlanır")
+    void sendFailed() {
+        svc.sendFailed(CTX, false, 9L, TechErrorPushService.Failure.FAILED, "PDF_TOO_LARGE", AT);
+        svc.sendFailed(CTX, true, 9L, TechErrorPushService.Failure.QUEUE_FAILED, null, AT.plusSeconds(1));
+        svc.sendFailed(CTX, false, 9L, TechErrorPushService.Failure.UNKNOWN, null, AT.plusSeconds(2));
+        ArgumentCaptor<UserPushService.LocalizedText> text = ArgumentCaptor.forClass(UserPushService.LocalizedText.class);
+        ArgumentCaptor<String> key = ArgumentCaptor.forClass(String.class);
+        List<List<UserPushService.DirectRecipient>> calls = directCalls(3, text, key, TechErrorPushService.TRIGGER_SEND_FAILED);
+        assertThat(calls).allSatisfy(l -> assertThat(names(l)).containsExactly("tech"));
+        List<UserPushService.LocalizedText> t = text.getAllValues();
+        assertThat(t.get(0).tr()).contains("takım adresine gönderilemedi (PDF e-posta boyut sınırını aşıyor)").contains("yeniden gönderin");
+        assertThat(t.get(1).tr()).contains("yöneticilere gönderilemedi (posta sunucusu teslim edemedi)");
+        assertThat(t.get(2).tr()).contains("önceki gönderiminin sonucu alınamadı");
+        assertThat(key.getAllValues()).containsExactly("te-fail:42:" + AT.toEpochMilli(), "te-fail:42:" + (AT.toEpochMilli() + 1000),
+                "te-fail:42:" + (AT.toEpochMilli() + 2000) + ":unknown");
+        byId.get(9L).setActive(false);
+        svc.sendFailed(CTX, false, 9L, TechErrorPushService.Failure.FAILED, null, AT);
+        svc.sendFailed(CTX, false, null, TechErrorPushService.Failure.FAILED, null, AT);
+        verify(push, times(3)).enqueueDirectLocalized(any(), any(), anyString(), anyString(), anyString(), anyString(), any(), anyString());
+    }
+
+    @Test
+    @DisplayName("inceleme 2026-10-18: birden çok alıcılı 'gönderilemedi' (kuyrukta başarısız yönetici gönderimi → gönderen PO + onaya gönderen) — tek çağrı, kişiler tekil, pasif / bilinmeyen atlanır, anahtar aynı")
+    void sendFailedToSeveral() {
+        byId.get(2L).setActive(false);
+        svc.sendFailedTo(CTX, true, java.util.Arrays.asList(1L, 9L, 1L, null, 2L, 77L), TechErrorPushService.Failure.QUEUE_FAILED, null, AT);
+        ArgumentCaptor<UserPushService.LocalizedText> text = ArgumentCaptor.forClass(UserPushService.LocalizedText.class);
+        ArgumentCaptor<String> key = ArgumentCaptor.forClass(String.class);
+        List<List<UserPushService.DirectRecipient>> calls = directCalls(1, text, key, TechErrorPushService.TRIGGER_SEND_FAILED);
+        assertThat(names(calls.get(0))).containsExactly("po1", "tech");
+        assertThat(key.getValue()).isEqualTo("te-fail:42:" + AT.toEpochMilli());
+        assertThat(text.getValue().tr()).contains("yöneticilere gönderilemedi (posta sunucusu teslim edemedi)");
+        // hiç geçerli alıcı yok → çağrı yok
+        svc.sendFailedTo(CTX, true, List.of(2L, 77L), TechErrorPushService.Failure.QUEUE_FAILED, null, AT);
+        svc.sendFailedTo(CTX, true, List.of(), TechErrorPushService.Failure.QUEUE_FAILED, null, AT);
+        svc.sendFailedTo(CTX, true, null, TechErrorPushService.Failure.QUEUE_FAILED, null, AT);
+        verify(push, times(1)).enqueueDirectLocalized(any(), any(), anyString(), anyString(), anyString(), anyString(), any(), anyString());
+    }
+
+    // ── Metin kuralları ───────────────────────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("her metin (TR + EN): push kanalının karakter kümesinde (pushSafe değiştirmez), bağlantı yok, başlıkla başlar, boş değil")
+    void textsArePushSafe() {
+        List<UserPushService.LocalizedText> all = new ArrayList<>();
+        for (boolean resend : new boolean[] { false, true }) {
+            for (boolean reached : new boolean[] { false, true }) all.add(TechErrorPushService.requestText(CTX, resend, reached, "Ayşe Yılmaz (Dijital / Çağrı)"));
+        }
+        all.add(TechErrorPushService.reminderText(CTX, 4, "Ayşe Yılmaz"));
+        all.add(TechErrorPushService.decisionText(CTX, true, "Şükrü Öztürk", null, "SENT", null));
+        all.add(TechErrorPushService.decisionText(CTX, true, "Şükrü Öztürk", null, "QUEUED", null));
+        all.add(TechErrorPushService.decisionText(CTX, true, "Şükrü Öztürk", null, "FAILED", null));
+        all.add(TechErrorPushService.decisionText(CTX, true, "Şükrü Öztürk", null, null, "MAIL_FAILED"));
+        all.add(TechErrorPushService.decisionText(CTX, false, "Şükrü Öztürk", "Düzeltin — tablo ve “özet” eksik…\nikinci satır", null, null));
+        for (boolean exec : new boolean[] { false, true }) {
+            all.add(TechErrorPushService.deliveredText(CTX, exec, "Ayşe Yılmaz"));
+            for (TechErrorPushService.Failure f : TechErrorPushService.Failure.values()) {
+                all.add(TechErrorPushService.failedText(CTX, exec, f, "PDF_TOO_LARGE"));
+                all.add(TechErrorPushService.failedText(CTX, exec, f, null));
+            }
+        }
+        for (int i = 0; i < all.size(); i++) {
+            UserPushService.LocalizedText t = all.get(i);
+            for (String s : new String[] { t.tr(), t.en() }) {
+                String safe = s;
+                // Red notu push'a girmez (karar 2026-10-18): özel karakterli not da metni değiştirmez — HER metin pushSafe-değişmez
+                assertThat(PushText.pushSafe(s)).as("pushSafe metni değiştirmemeli: %s", s).isEqualTo(s);
+                assertThat(safe).isNotBlank().doesNotContain("http").doesNotContain("www.").doesNotContain("://").doesNotContain("\n");
+            }
+            assertThat(t.tr()).startsWith("[Teknik hata raporu] ");
+            assertThat(t.en()).startsWith("[Technical error report] ");
+        }
+        // Boş ad satırı yazılmaz; ad noktayla bitiyorsa ikinci nokta yok
+        assertThat(TechErrorPushService.byLine(" Talep eden: ", " ")).isEmpty();
+        assertThat(TechErrorPushService.byLine(" Talep eden: ", "Ltd. Şti.")).isEqualTo(" Talep eden: Ltd. Şti.");
+    }
+}

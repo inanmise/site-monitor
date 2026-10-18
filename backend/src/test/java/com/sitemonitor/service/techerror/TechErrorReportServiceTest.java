@@ -966,6 +966,59 @@ class TechErrorReportServiceTest {
         assertThat(reports.findById(r.getId()).orElseThrow().getValuesJson()).contains("\"id\":\"k2\"").contains("\"share\":0.2");
     }
 
+    @Test
+    @DisplayName("anomali + kısaltma (2026-10-18): konunun \"1,25M\" yazılmış hata adedinin üssü (issues.<bölüm>.<konu>.errors = 6)"
+            + " \"şablonun son hâlini uygula\"dan sonra da kalır — değer 1.250.000, pay sayıdan hesaplanır; konu yeni şablonda düşünce"
+            + " üssü de düşer")
+    void issueCountUnitSurvivesTemplateRefresh() {
+        TechErrorChannel ch = channel(1, "Mobil");
+        TechErrorReport r = service.createReport(ch, 2026, 9, 7L);
+        String key = TechErrorValues.issueUnitKey("issues", "k1", "errors");
+        assertThat(key).isEqualTo("issues.issues.k1.errors");
+        TechErrorReport s1 = service.saveValues(r.getId(), r.getVersion(), Map.of(
+                "fields", Map.of("error-count", 50_000_000, "total-tx", 900_000_000),
+                "issues", Map.of("issues", List.of(topicRaw("k1", "errors", 1_250_000), topicRaw("k2", "errors", 10))),
+                "units", Map.of(key, 6)), 7L);
+        Template t1 = TechErrorTemplate.fromStored(s1.getTemplateJson());
+        assertThat(TechErrorValues.fromStored(s1.getValuesJson(), t1).issueUnit("issues", "k1", "errors")).isEqualTo(6);
+
+        // Şablon değişir (bölüm başlığı) → rapora son hâli uygulanır: konu taşınır, üssü de
+        Map<String, Object> raw = TechErrorTemplate.toMap(TechErrorTemplate.fromStored(service.channel(ch.getId()).getTemplateJson()));
+        @SuppressWarnings("unchecked") List<Map<String, Object>> secs = new ArrayList<>((List<Map<String, Object>>) raw.get("sections"));
+        secs.replaceAll(x -> {
+            if (!"issues".equals(x.get("kind"))) return x;
+            Map<String, Object> copy = new LinkedHashMap<>(x);
+            copy.put("title", "Anomaliler (yeni)");
+            return copy;
+        });
+        raw.put("sections", secs);
+        service.saveTemplate(ch.getId(), 1, TechErrorTemplate.normalize(raw), 7L);
+        TechErrorChannel v2 = service.channel(ch.getId());
+        assertThat(service.refreshPreview(reports.findById(r.getId()).orElseThrow(), v2)).containsEntry("lost_values", 0);
+        service.refreshTemplate(r.getId(), reports.findById(r.getId()).orElseThrow().getVersion(), 7L);
+        TechErrorReport refreshed = reports.findById(r.getId()).orElseThrow();
+        Template t2 = TechErrorTemplate.fromStored(refreshed.getTemplateJson());
+        var rv = TechErrorValues.fromStored(refreshed.getValuesJson(), t2);
+        assertThat(rv.issueUnit("issues", "k1", "errors")).isEqualTo(6);
+        assertThat(rv.units()).containsExactly(Map.entry(key, 6));
+        assertThat(rv.issues().get("issues")).extracting(TechErrorValues.Issue::id, i -> i.errors().longValue())
+                .containsExactly(org.assertj.core.groups.Tuple.tuple("k1", 1_250_000L), org.assertj.core.groups.Tuple.tuple("k2", 10L));
+        // Pay SAYIDAN (1.250.000 ÷ 50.000.000 = %2,5) — üs hesaba girmez (yenilemede yeniden hesaplanır, PDF girdisinde canlı);
+        // PDF girdisi üssü taşır
+        assertThat(refreshed.getValuesJson()).contains("\"share\":2.5");
+        var pdfValues = service.pdfInput(refreshed, v2, "Dijital").values();
+        assertThat(pdfValues.issues().get("issues").get(0).share().doubleValue()).isEqualTo(2.5);
+        assertThat(pdfValues.issueUnit("issues", "k1", "errors")).isEqualTo(6);
+
+        // Konusu yeni şablonda kalmayan üs taşınmaz (issues bölümü kaldırılır)
+        secs.removeIf(x -> "issues".equals(x.get("kind")));
+        raw.put("sections", secs);
+        service.saveTemplate(ch.getId(), 2, TechErrorTemplate.normalize(raw), 7L);
+        service.refreshTemplate(r.getId(), reports.findById(r.getId()).orElseThrow().getVersion(), 7L);
+        TechErrorReport gone = reports.findById(r.getId()).orElseThrow();
+        assertThat(TechErrorValues.fromStored(gone.getValuesJson(), TechErrorTemplate.fromStored(gone.getTemplateJson())).units()).isEmpty();
+    }
+
     @Autowired org.springframework.transaction.PlatformTransactionManager txManager;
 
     @Test
@@ -1441,6 +1494,114 @@ class TechErrorReportServiceTest {
         int shown = ((List<?>) d.get("changes")).size();
         assertThat(shown).isBetween(1, TechErrorChangeDiff.MAX_CHANGES - 1);
         assertThat(shown + ((Number) d.get("more")).intValue()).isEqualTo(400);
+    }
+
+    @Test
+    @DisplayName("push (2026-10-18): kuyruktaki gönderim sonuçlanınca bir kez — SENT → delivered (gönderen, sayaç, talep anı; günlük rolü EXECUTIVE → yöneticiler), FAILED → gönderene QUEUE_FAILED; ikinci okuma ikinci push yazmaz")
+    void queuedResultPushesOnce() {
+        TechErrorPushService pushes = org.mockito.Mockito.mock(TechErrorPushService.class);
+        service.setPushes(pushes);
+        try {
+            TechErrorChannel ch = channel(1, "POS");
+            TechErrorReport r = service.createReport(ch, 2026, 9, 7L);
+            Instant claim = Instant.parse("2026-10-13T08:59:00Z");
+            reports.claimSend(r.getId(), claim, claim.minusSeconds(600));
+            Long logId = logRow("QUEUED_RETRY: 421");
+            com.sitemonitor.model.NotificationLog n = logs.findById(logId).orElseThrow();
+            n.setRecipientRole("EXECUTIVE");
+            logs.save(n);
+            reports.finishQueued(r.getId(), claim, "QUEUED_RETRY: 421", claim, logId, 7L, "a@b.com", 2L);
+            setLogStatus(logId, "SENT");
+            assertThat(service.reconcileQueued(List.of(ch.getId()))).isEqualTo(1);
+            assertThat(service.reconcileQueued(List.of(ch.getId()))).isZero();
+            org.mockito.Mockito.verify(pushes).delivered(
+                    org.mockito.ArgumentMatchers.argThat(c -> r.getId().equals(c.reportId()) && Long.valueOf(1L).equals(c.teamId())
+                            && "POS".equals(c.channelName()) && c.year() == 2026 && c.month() == 9),
+                    org.mockito.ArgumentMatchers.eq(true), org.mockito.ArgumentMatchers.eq(7L), org.mockito.ArgumentMatchers.any(),
+                    org.mockito.ArgumentMatchers.eq(2L), org.mockito.ArgumentMatchers.eq(claim), org.mockito.ArgumentMatchers.eq(List.of()));
+            org.mockito.Mockito.verifyNoMoreInteractions(pushes);
+
+            TechErrorReport r2 = service.createReport(ch, 2026, 8, 7L);
+            reports.claimSend(r2.getId(), claim, claim.minusSeconds(600));
+            Long log2 = logRow("QUEUED_RETRY: 421");
+            reports.finishQueued(r2.getId(), claim, "QUEUED_RETRY: 421", claim, log2, 8L, "a@b.com", 0L);
+            setLogStatus(log2, "FAILED: 550");
+            assertThat(service.reconcileQueued(List.of(ch.getId()))).isEqualTo(1);
+            org.mockito.Mockito.verify(pushes).sendFailedTo(org.mockito.ArgumentMatchers.argThat(c -> r2.getId().equals(c.reportId())),
+                    org.mockito.ArgumentMatchers.eq(false), org.mockito.ArgumentMatchers.eq(List.of(8L)),
+                    org.mockito.ArgumentMatchers.eq(TechErrorPushService.Failure.QUEUE_FAILED), org.mockito.ArgumentMatchers.isNull(),
+                    org.mockito.ArgumentMatchers.eq(claim));
+            // Push hatası sonuçlandırmayı bozmaz
+            TechErrorReport r3 = service.createReport(ch, 2026, 7, 7L);
+            reports.claimSend(r3.getId(), claim, claim.minusSeconds(600));
+            Long log3 = logRow("QUEUED_RETRY: 421");
+            reports.finishQueued(r3.getId(), claim, "QUEUED_RETRY: 421", claim, log3, 7L, "a@b.com", 0L);
+            setLogStatus(log3, "SENT");
+            org.mockito.Mockito.doThrow(new IllegalStateException("push yok")).when(pushes).delivered(org.mockito.ArgumentMatchers.any(),
+                    org.mockito.ArgumentMatchers.anyBoolean(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                    org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+            assertThat(service.reconcileQueued(List.of(ch.getId()))).isEqualTo(1);
+            assertThat(reports.findById(r3.getId()).orElseThrow().getSendState()).isEqualTo("SENT");
+        } finally {
+            service.setPushes(null);
+        }
+    }
+
+    @Test
+    @DisplayName("inceleme 2026-10-18: onaydan sonra kuyruğa giren YÖNETİCİ gönderimi kuyrukta BAŞARISIZ → gönderen PO + onaya gönderen kişi (aynı kişiyse bir kez), takım adresine kuyrukta yalnız gönderen; talep anı sonuçlandırma işleminde okunan satırdan")
+    void queuedExecutiveFailureAlsoTellsTheRequester() {
+        TechErrorPushService pushes = org.mockito.Mockito.mock(TechErrorPushService.class);
+        service.setPushes(pushes);
+        try {
+            TechErrorChannel ch = channel(1, "POS");
+            Instant claim = Instant.parse("2026-10-13T08:59:00Z");
+            // a) onaya gönderen 9, onaylayıp gönderen (kuyruğa alan) 8 → ikisi
+            TechErrorReport r = service.createReport(ch, 2026, 9, 7L);
+            assertThat(reports.requestApproval(r.getId(), 0L, claim.minusSeconds(3600), 9L, claim.minusSeconds(4000))).isEqualTo(1);
+            reports.claimSend(r.getId(), claim, claim.minusSeconds(600));
+            Long logId = logRow("QUEUED_RETRY: 421");
+            com.sitemonitor.model.NotificationLog n = logs.findById(logId).orElseThrow();
+            n.setRecipientRole("EXECUTIVE");
+            logs.save(n);
+            reports.finishQueued(r.getId(), claim, "QUEUED_RETRY: 421", claim, logId, 8L, "ceo@b.com", 0L);
+            setLogStatus(logId, "FAILED: 550");
+            assertThat(service.reconcileQueued(List.of(ch.getId()))).isEqualTo(1);
+            org.mockito.Mockito.verify(pushes).sendFailedTo(org.mockito.ArgumentMatchers.argThat(c -> r.getId().equals(c.reportId())
+                            && "POS".equals(c.channelName()) && c.year() == 2026 && c.month() == 9),
+                    org.mockito.ArgumentMatchers.eq(true), org.mockito.ArgumentMatchers.eq(List.of(8L, 9L)),
+                    org.mockito.ArgumentMatchers.eq(TechErrorPushService.Failure.QUEUE_FAILED), org.mockito.ArgumentMatchers.isNull(),
+                    org.mockito.ArgumentMatchers.eq(claim));
+
+            // b) onaya gönderen = kuyruğa alan → tek kişi
+            TechErrorReport r2 = service.createReport(ch, 2026, 8, 7L);
+            assertThat(reports.requestApproval(r2.getId(), 0L, claim.minusSeconds(3600), 8L, claim.minusSeconds(4000))).isEqualTo(1);
+            reports.claimSend(r2.getId(), claim, claim.minusSeconds(600));
+            Long log2 = logRow("QUEUED_RETRY: 421");
+            com.sitemonitor.model.NotificationLog n2 = logs.findById(log2).orElseThrow();
+            n2.setRecipientRole("EXECUTIVE");
+            logs.save(n2);
+            reports.finishQueued(r2.getId(), claim, "QUEUED_RETRY: 421", claim, log2, 8L, "ceo@b.com", 0L);
+            setLogStatus(log2, "FAILED: 550");
+            assertThat(service.reconcileQueued(List.of(ch.getId()))).isEqualTo(1);
+            org.mockito.Mockito.verify(pushes).sendFailedTo(org.mockito.ArgumentMatchers.argThat(c -> r2.getId().equals(c.reportId())),
+                    org.mockito.ArgumentMatchers.eq(true), org.mockito.ArgumentMatchers.eq(List.of(8L)),
+                    org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.eq(claim));
+
+            // c) takım adresine (TEAM) kuyruk başarısızlığı: onaya gönderen eklenmez
+            TechErrorReport r3 = service.createReport(ch, 2026, 7, 7L);
+            assertThat(reports.requestApproval(r3.getId(), 0L, claim.minusSeconds(3600), 9L, claim.minusSeconds(4000))).isEqualTo(1);
+            reports.claimSend(r3.getId(), claim, claim.minusSeconds(600));
+            Long log3 = logRow("QUEUED_RETRY: 421");
+            reports.finishQueued(r3.getId(), claim, "QUEUED_RETRY: 421", claim, log3, 8L, "a@b.com", 0L);
+            setLogStatus(log3, "FAILED: 550");
+            assertThat(service.reconcileQueued(List.of(ch.getId()))).isEqualTo(1);
+            org.mockito.Mockito.verify(pushes).sendFailedTo(org.mockito.ArgumentMatchers.argThat(c -> r3.getId().equals(c.reportId())),
+                    org.mockito.ArgumentMatchers.eq(false), org.mockito.ArgumentMatchers.eq(List.of(8L)),
+                    org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.eq(claim));
+            org.mockito.Mockito.verifyNoMoreInteractions(pushes);
+        } finally {
+            service.setPushes(null);
+        }
     }
 
     @Test

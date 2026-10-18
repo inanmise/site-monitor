@@ -19,6 +19,7 @@
 | Pod `OOMKilled` / sık yeniden başlıyor | [Bellek](#bellek) |
 | RDAP/HTTPS `PKIX path building failed` | [Kurumsal vekil CA rotasyonu](#kurumsal-vekil-ca-rotasyonu) |
 | `/metrics` dışarıdan açık mı? | [/metrics erişimi](#metrics-erişimi) |
+| Grafana panosu boş / "veri yok", Prometheus kazıma ayarı | [Grafana panosu ve Prometheus](#grafana-panosu-ve-prometheus) |
 | Kullanıcının ilettiği istek kimliğini günlükte bulmak, JSON günlük, iz (trace) | [Günlükler ve izleme](#günlükler-ve-izleme) |
 | "Uygulama sorunu: …" e-postası / dış izleyici `/api/public/health/watchdog` 503 | [Kendi kendini izleme](#kendi-kendini-izleme) |
 
@@ -276,6 +277,141 @@ Seçenekler (platform ekibi kararı):
 3. Kalıcı: ayrı yönetim portu (`management.server.port`) + Service'te yayınlamama — kod ve chart değişikliği.
 
 Kontrol: kurum ağından `curl -s -o /dev/null -w "%{http_code}\n" https://<host>/metrics` → engellendiyse 403/404.
+
+İzleme ölçümleri (`sitemonitor_*`: takım, izleme ve alan adları, hedefler, alarmlar) `/metrics`'te **YOKTUR** — ayrı
+`/metrics/sitemonitor` ucunda, yalnız taşıyıcı belirteçle (`METRICS_EXPORT_TOKEN`) yayınlanır (bkz. "Grafana panosu ve
+Prometheus"). Yine de `/metrics*` yollarını kenarda engelleyin: belirteçli uç kaba kuvvete karşı hız sınırlıdır ama kurum
+ağına açık olması gerekmez; Prometheus pod IP'sinden küme içinden kazımaya devam eder.
+
+## Grafana panosu ve Prometheus
+
+Ayarlar → Platform → **Grafana panosu**: ölçüm aktarıcısının canlı durumu (bu pod), pano ayarları ve **JSON indir**
+(global yönetici). Ayrıntı: kılavuz §15.10.
+
+**İki uç (2026-10-18):**
+
+| Uç | İçerik | Kimlik |
+|---|---|---|
+| `/metrics` | JVM, HTTP, Hikari, sürüm (`sitemonitor_build_info`), şema yaması, saklama / DB büyüme, uç etiketsiz HTTP gecikme histogramı | yok (küme içi) |
+| `/metrics/sitemonitor` | İzleme envanteri: izleme durumu, alarmlar, sertifikalar / alan adları, bildirimler / fırtınalar / push, aktarıcının kendi sağlığı (`sitemonitor_*` iş ölçümleri) | `Authorization: Bearer <METRICS_EXPORT_TOKEN>` |
+
+**Belirteç:** ortam değişkeni `METRICS_EXPORT_TOKEN` (Helm `secret.metricsExportToken` ya da `existingSecret`'e
+`METRICS_EXPORT_TOKEN` anahtarı). En az 32 rastgele karakter üretin (ör. `openssl rand -hex 32`), git'e yazmayın. Yoksa ya
+da 32 karakterden kısaysa `/metrics/sitemonitor` **404** döner ve aktarıcı hiç koşmaz (veritabanı yükü yok); pano yalnız
+sürüm / JVM / HTTP panellerini doldurur ve "Veri tazeliği" şeridi "veri yok" der. **Belirteci bilen herkes bütün envanteri
+(izleme adları, hedefler, takımlar, sertifikalar, açık alarmlar) okur** — parola gibi saklayın. Grafana takım kapsamı
+uygulamaz: panoya / veri kaynağına erişebilen herkes süzgeci değiştirip bütün takımları görür; takıma özel indirilen pano
+(varsayılan takım + UID) bir kolaylıktır, erişim denetimi değildir.
+
+Yanlış / eksik belirteç **401** (gövdesiz) döner; aynı IP'den dakikada 10 başarısız denemeden sonra **429** — DOĞRU
+belirteçle gelen kazıma o IP engelliyken de geçer (ortak adres / SNAT / mesh arkasında başkasının kötü istekleri
+Prometheus'u kilitlemez). Denetim
+günlüğünde güvenlik olayı `METRICS_EXPORT_ACCESS_DENIED` IP başına 10 dakikada bir yazılır — Prometheus'un eski / yanlış
+belirteçle kazıdığını buradan görürsünüz.
+
+**Döndürme:** yeni değeri Secret'a ve Prometheus'un belirteç dosyasına yazın, dağıtın; geçişte eski belirteçle gelen
+kazımalar 401 alır (pano birkaç dakika "veri yok"). Uygulama tek belirteç tutar (önceki belirteç kabul edilmez) ve onu
+AÇILIŞTA okur: Secret'ı yerinde düzenlediyseniz (`existingSecret`, `kubectl edit secret`) pod'lar kendiliğinden
+yenilenmez — `kubectl rollout restart deploy/<ad> -n <ad-alanı>` çalıştırın. O zamana kadar ESKİ (sızmış olabilecek)
+belirteç çalışmaya devam eder. Değeri değiştiren bir `helm upgrade` pod'ları zaten yeniden başlatır (Secret özeti).
+Belirteç diğer sırlar gibi pod ortamındadır: k6 senaryoları pod dosyalarını okuyabilir (Ayarlar → k6 dosya okuma politikası,
+`site.monitor.scripted.file-read-policy`) — sentetik izleme yazabilen biri ortamı görebilir.
+
+**Prometheus kazıma örneği** (pod anotasyonlarıyla; Helm `podAnnotations` zaten ekler — ServiceMonitor kullanan kümede
+ikinci uç için `endpoints: [{port: http, path: /metrics/sitemonitor, authorization: {type: Bearer, credentials: {name: …,
+key: …}}}]`):
+
+```yaml
+scrape_configs:
+  - job_name: site-monitor            # JVM / HTTP / uygulama sağlığı — belirteç gerekmez
+    metrics_path: /metrics
+    scrape_interval: 30s
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          names: [<site-monitor-namespace>]
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+        action: keep
+        regex: "true"
+      - source_labels: [__meta_kubernetes_namespace]
+        target_label: namespace
+      - source_labels: [__meta_kubernetes_pod_name]
+        target_label: pod
+  - job_name: site-monitor-inventory  # izleme envanteri — taşıyıcı belirteç ŞART
+    metrics_path: /metrics/sitemonitor
+    scrape_interval: 60s
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/secrets/site-monitor/metrics-export-token
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          names: [<site-monitor-namespace>]
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+        action: keep
+        regex: "true"
+      - source_labels: [__meta_kubernetes_namespace]
+        target_label: namespace
+      - source_labels: [__meta_kubernetes_pod_name]
+        target_label: pod
+```
+
+Hızlı kontrol (pod içinden): `curl -s -o /dev/null -w '%{http_code}' localhost:8080/metrics/sitemonitor` → 401 (belirteç
+tanımlı) ya da 404 (tanımlı değil); `curl -s -H "Authorization: Bearer $METRICS_EXPORT_TOKEN" localhost:8080/metrics/sitemonitor | grep -c '^sitemonitor_'`
+sıfırdan büyük olmalı. `/metrics` çıktısında `sitemonitor_monitor` ya da takım adı GÖRÜNMEMELİ.
+
+**Yükseltme / geri alma:** `/metrics` kazıyan mevcut Prometheus işi JVM / HTTP için aynen çalışır; iş verisi için yeni iş +
+belirteç gerekir. Bu değişiklikten önceki bir sürüme geri dönmek iş serilerini yeniden kimliksiz `/metrics`'e koyar.
+
+**Prometheus sürümü:** "Sorun yaşayan izlemeler" zaman çizelgesi `@ end()` değiştiricisini kullanır (Prometheus ≥ 2.33,
+varsayılan açık).
+
+Aynı Prometheus birden çok ortamı (test + prod) kazıyorsa sayfadaki **Prometheus etiket eşleyicisi** alanına
+`namespace="<prod ad alanı>"` yazın; pano her sorguya ekler.
+
+Pano "veri yok" gösteriyorsa sırayla:
+1. Kazıma: Prometheus → Status → Targets'ta İKİ işin pod'ları da `UP` mı? `site-monitor-inventory` işi 401 diyorsa
+   belirteç dosyası yanlış / eski; 404 diyorsa uygulamada `METRICS_EXPORT_TOKEN` yok (ya da 32 karakterden kısa).
+2. Aktarıcı: Ayarlar sayfasındaki canlı kontrol "Çalışıyor" mu? "Belirteç yok" → adım 1; kapalıysa
+   (`site.monitor.metrics.export.enabled`, env `METRICS_EXPORT_ENABLED`) açın; "Takılmış olabilir" ise pod günlüğünde
+   `İzleme ölçümleri tazelenemedi` arayın — son tur 3 tazeleme aralığından (en az 3 dk) eskiyken uç iş değerlerini
+   yayınlamaz (panoda "Veri tazeliği" şeridi kırmızı, iş panelleri "veri yok").
+3. Okunamayan kaynak: `sitemonitor_exporter_source_up == 0` olan kaynakların serileri bilerek DÜŞER (sahte 0 yazılmaz) —
+   genellikle veritabanı erişimi; Sistem Sağlığı → Veritabanı. İzleme sayıları (Etkin / Sağlıklı / Düşük …) süzgece uyan bir
+   izleme türü HİÇBİR pod'da okunamazken de "veri yok" gösterir (`source=~"monitors:.*"` satırları; eksik toplam bütün filo
+   gibi görünmesin).
+4. Seri tavanı: `sitemonitor_exporter_capped{family} == 1` → aile başına kayıt tavanını artırın ya da izleme başına serileri
+   kapatın (Prometheus yükü). Günlükte saatte bir `seri tavanına takıldı` uyarısı.
+
+Sürüm anotasyonu "yeni görülen build etiketi" ile çizilir (`count by (version, commit, environment) (sitemonitor_build_info)
+unless … offset 5m`); `changes(sitemonitor_build_info[10m])` kullanan eski elle kurulmuş panolar hiç anotasyon üretmez —
+`docs/GRAFANA_SURUM_ANOTASYON.md` düzeltmesine bakın.
+
+Çok pod: her pod kuruluş ölçümlerini aynı değerle yayar; kendi sorgularınızda `max by (<ölçümün etiketleri>)` ile
+birleştirin (ör. `sum(max by (type, team, team_id, state) (sitemonitor_monitors{state="down"}))`). Pod'a özgü olanlar:
+`sitemonitor_sweep_leader` (toplamı 1 olmalı), `sitemonitor_exporter_*`, `sitemonitor_database_status`,
+`sitemonitor_push_circuit_open`.
+
+Örnek Prometheus alarm kuralları:
+
+```yaml
+groups:
+  - name: sitemonitor
+    rules:
+      - alert: SiteMonitorMonitorDown
+        expr: max by (type, team, monitor) (sitemonitor_monitor_state) == 2
+        for: 5m
+        labels: { severity: warning }
+      - alert: SiteMonitorNoSweepLeader
+        expr: sum(sitemonitor_sweep_leader) == 0
+        for: 5m
+        labels: { severity: critical }
+      - alert: SiteMonitorExporterStale
+        expr: time() - max(sitemonitor_exporter_last_refresh_timestamp_seconds) > 600
+        labels: { severity: warning }
+```
 
 ## Günlükler ve izleme
 

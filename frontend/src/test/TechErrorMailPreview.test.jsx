@@ -27,6 +27,7 @@ import { LANG_STORAGE_KEY } from '../i18n/dateLocale.js'
 import TechErrorReportsPage from '../components/techerror/TechErrorReportsPage.jsx'
 import MailPreviewDialog from '../components/techerror/MailPreviewDialog.jsx'
 import { clearMailPreviewShares } from '../components/techerror/mailPreviewFetch.js'
+import { pressMenuTrigger } from './helpers/dropdownMenu.js'
 
 const te = () => api.techErrors
 
@@ -221,8 +222,10 @@ describe('e-posta önizlemesi — pencere', () => {
     await waitFor(() => expect(releaseOld).toBeTypeOf('function'))
     fireEvent.click(within(dlg).getByRole('button', { name: 'Kapat' }))
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'E-posta önizlemesi' })).toBeNull())
-    // Görsel kaldırılır (rapor sürümü DEĞİŞMEZ — sunucu yalnız içerik sayacını artırır)
-    fireEvent.click(screen.getByRole('button', { name: 'Kaldır: Mobil Kanalı Ay Bazlı Toplam İşlem Adetleri' }))
+    // Görsel kaldırılır (rapor sürümü DEĞİŞMEZ — sunucu yalnız içerik sayacını artırır). Yarım yuvada "Kaldır" "Diğer
+    // işlemler" menüsünde (ekrandan görsel alma, 2026-10-18)
+    pressMenuTrigger(screen.getByRole('button', { name: 'Diğer işlemler: Mobil Kanalı Ay Bazlı Toplam İşlem Adetleri' }))
+    fireEvent.click(within(await screen.findByRole('menu')).getByRole('menuitem', { name: 'Kaldır: Mobil Kanalı Ay Bazlı Toplam İşlem Adetleri' }))
     const ask = await screen.findByRole('dialog', { name: 'Görsel kaldırılsın mı?' })
     fireEvent.click(within(ask).getByRole('button', { name: 'Kaldır' }))
     await waitFor(() => expect(te().deleteImage).toHaveBeenCalledWith('100', 501))

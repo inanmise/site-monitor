@@ -473,4 +473,27 @@ class MonitoringOverviewServiceTest {
         assertThat(MonitoringOverviewService.groupNameOf(null)).isNull();
         assertThat(MonitoringOverviewService.groupNameOf("başka nesne")).isNull();
     }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    @DisplayName("Okuma hatası işaretleri (2026-10-18, Grafana aktarıcısı): izlemeler / son kontroller / açık alarmlar okunamazsa "
+            + "işaret yazılır; hatasız yanıtta hiçbir işaret yok (bayt bayt aynı)")
+    void readFailuresAreFlagged() {
+        when(httpMonitorRepo.findAllByOrderByNameAsc()).thenReturn(List.of(http(1, "https://a.example.com", 14L, true, 300)));
+        Map<String, Object> clean = svc.build(team -> true, true, 24);
+        assertThat(clean).doesNotContainKey("alerts_unavailable");
+        for (Map<String, Object> t : (List<Map<String, Object>>) clean.get("types")) {
+            assertThat(t).doesNotContainKeys("unavailable", "checks_unavailable", "stats_unavailable");
+        }
+        when(pingMonitorRepo.findAllByOrderByNameAsc()).thenThrow(new RuntimeException("db"));
+        when(httpCheckRepo.findLatestPerMonitor()).thenThrow(new RuntimeException("db"));
+        when(httpCheckRepo.weeklyStatsByMonitor(any(), any(), any())).thenThrow(new RuntimeException("db"));
+        when(alertEventRepo.findAllOpenOrderBySeverity()).thenThrow(new RuntimeException("db"));
+        Map<String, Object> broken = svc.build(team -> true, true, 24);
+        assertThat(broken).containsEntry("alerts_unavailable", true);
+        List<Map<String, Object>> types = (List<Map<String, Object>>) broken.get("types");
+        assertThat(types.stream().filter(x -> "ping".equals(x.get("type"))).findFirst().orElseThrow()).containsEntry("unavailable", true);
+        assertThat(types.stream().filter(x -> "http".equals(x.get("type"))).findFirst().orElseThrow()).containsEntry("checks_unavailable", true)
+                .containsEntry("stats_unavailable", true);
+    }
 }

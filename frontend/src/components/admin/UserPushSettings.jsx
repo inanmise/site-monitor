@@ -25,6 +25,7 @@ import { helpLabel, SETTINGS_STACK, SettingsHeader, ToggleRow } from './Settings
 import ToneBadge, { DecisionBadge } from './ToneBadge.jsx'
 import { formatDateSec } from '../../api/client'
 import { copyText } from '../../utils/copyText.js'
+import { navigateTo } from '../../utils/navigate.js'
 import { Button } from '@/components/shadcn/button'
 import { Badge } from '@/components/shadcn/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/shadcn/card'
@@ -77,7 +78,8 @@ const STATUS_OPTIONS = ['SENT', 'FAILED', 'PENDING', 'RATE_LIMITED', 'CIRCUIT_OP
   'SKIPPED_NO_USER_MATCH', 'SKIPPED_AMBIGUOUS_USER']
 const TRIGGERS = ['OPEN', 'ESCALATION', 'RE_ALERT', 'RESOLVE', 'RESEND', 'WEAK_ALGO', 'WEEKLY_REPORT', 'TEST',
   'STORM', 'STORM_RESOLVED', 'SCRIPTED_DISABLED', 'DOMAIN_EXPIRY_REMINDER', 'OVERFLOW_SUMMARY', 'ESCALATION_STEP',
-  'TECH_ERROR_REMINDER']   // 2026-10-04; 2026-10-17: teknik hata raporu hatırlatması   // WEAK_ALGO: rapor 'takıma bildir' (2026-09-12); WEEKLY_REPORT: onay → takıma (2026-09-13)
+  'TECH_ERROR_REMINDER', 'TECH_ERROR_APPROVAL', 'TECH_ERROR_APPROVAL_REMINDER', 'TECH_ERROR_DECISION', 'TECH_ERROR_SENT',
+  'TECH_ERROR_SEND_FAILED']   // 2026-10-04; 2026-10-17: teknik hata raporu hatırlatması; 2026-10-18: onay / karar / gönderim push'ları   // WEAK_ALGO: rapor 'takıma bildir' (2026-09-12); WEEKLY_REPORT: onay → takıma (2026-09-13)
 
 /** İzleme tipleri — ikonlar Nav/ChangeKindCards ile AYNI: kullanıcı yeni görsel dil öğrenmez. */
 const TYPES = [
@@ -1016,6 +1018,14 @@ export default function UserPushSettings() {
               label={t('userpush.weeklyManager')} helpKey="help.set.site.monitor.userpush.weekly.manager-enabled" />
           </div>
           <p className="mt-2 text-xs text-muted-foreground">{t('userpush.weeklyHint')}</p>
+          {/* 2026-10-18: teknik hata raporu push'ları kendi ayar kartında — buradan yönlendirme */}
+          <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1" data-slot="userpush-techerror-hint">
+            <p className="m-0 min-w-0 flex-1 basis-64 text-xs text-muted-foreground">{t('userpush.techErrorHint')}</p>
+            <Button type="button" variant="outline" size="sm" className="h-9 sm:h-8 pointer-coarse:min-h-10"
+              onClick={() => navigateTo('settings', { sec: 'techerror' })}>
+              {t('userpush.techErrorOpen')}
+            </Button>
+          </div>
         </Section>
 
         {/* ── Şablonlar — push bildirim MAKETİ önizlemeli ── */}

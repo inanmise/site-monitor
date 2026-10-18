@@ -284,6 +284,7 @@ public class MonitoringOverviewService {
 
         // Açık alarmlar — hedef anahtarına göre (izlemeye bağlanır; kapsam izlemeden miras). Tür süzgeci katalogdan.
         Map<String, List<AlertEvent>> openByKey = new HashMap<>();
+        boolean alertsUnavailable = false;
         try {
             for (AlertEvent e : alertEventRepo.findAllOpenOrderBySeverity()) {
                 if (e.getDomain() == null) continue;
@@ -291,7 +292,7 @@ public class MonitoringOverviewService {
                 if (family == null || "cert".equals(family)) continue;
                 openByKey.computeIfAbsent(family + "|" + e.getDomain().toLowerCase(Locale.ROOT), k -> new ArrayList<>()).add(e);
             }
-        } catch (Exception e) { log.debug("açık alarmlar okunamadı: {}", e.toString()); }
+        } catch (Exception e) { log.debug("açık alarmlar okunamadı: {}", e.toString()); alertsUnavailable = true; }
 
         List<Map<String, Object>> types = new ArrayList<>();
         List<Map<String, Object>> rows = new ArrayList<>();
@@ -347,6 +348,10 @@ public class MonitoringOverviewService {
         out.put("totals", totals);
         out.put("types", types);
         out.put("monitors", rows);
+        // Okuma hatası işareti (2026-10-18, Grafana aktarıcısı): açık alarmlar okunamadıysa durumlar alarmsız hesaplandı —
+        // "düşük" bir izleme "sağlıklı" görünebilir. Alan YALNIZ hata varken yazılır (normal yanıt bayt bayt aynı);
+        // MonitoringMetricsExporter bu durumda izleme durumlarını dışa vermez (sahte "up" yok).
+        if (alertsUnavailable) out.put("alerts_unavailable", true);
         return out;
     }
 
@@ -360,7 +365,10 @@ public class MonitoringOverviewService {
         String lastChecked = null;
 
         List<M> monitors;
-        try { monitors = spec.monitors().get(); } catch (Exception e) { log.warn("{} izlemeleri okunamadı: {}", spec.type(), e.toString()); monitors = List.of(); }
+        // Okuma hatası işaretleri (2026-10-18): yalnız hata varken yazılır — türün sayıları "0 izleme / bilinmiyor" diye
+        // okunmasın (Grafana aktarıcısı o türü dışa VERMEZ; ekran yanıtı hatasız durumda bayt bayt aynı).
+        boolean monitorsUnavailable = false, checksUnavailable = false, statsUnavailable = false;
+        try { monitors = spec.monitors().get(); } catch (Exception e) { log.warn("{} izlemeleri okunamadı: {}", spec.type(), e.toString()); monitors = List.of(); monitorsUnavailable = true; }
         List<M> visible = new ArrayList<>();
         for (M m : monitors) {
             if (m == null) continue;
@@ -371,7 +379,7 @@ public class MonitoringOverviewService {
         Map<Long, C> latest = new HashMap<>();
         try {
             for (C c : spec.latest().get()) { Long id = spec.checkMonitorId().apply(c); if (id != null) latest.putIfAbsent(id, c); }
-        } catch (Exception e) { log.debug("{} son kontrolleri okunamadı: {}", spec.type(), e.toString()); }
+        } catch (Exception e) { log.debug("{} son kontrolleri okunamadı: {}", spec.type(), e.toString()); checksUnavailable = true; }
 
         List<Long> ids = new ArrayList<>();
         for (M m : visible) if (!Boolean.TRUE.equals(spec.deleted().apply(m))) ids.add(spec.id().apply(m));
@@ -389,7 +397,7 @@ public class MonitoringOverviewService {
                     long weight = avg < 0 ? 0L : r.length > 4 && r[4] instanceof Number w ? w.longValue() : tot;
                     stats.put(((Number) r[0]).longValue(), new long[]{ tot, ok, avg, weight });
                 }
-            } catch (Exception e) { log.debug("{} pencere sayımı okunamadı: {}", spec.type(), e.toString()); }
+            } catch (Exception e) { log.debug("{} pencere sayımı okunamadı: {}", spec.type(), e.toString()); statsUnavailable = true; }
         }
         double avgSum = 0; long avgWeight = 0;
 
@@ -481,6 +489,9 @@ public class MonitoringOverviewService {
         t.put("avg_response_ms_window", avgWeight > 0 ? Math.round(avgSum / avgWeight) : null);
         t.put("open_alerts", openAlerts); t.put("open_critical", openCritical);
         t.put("last_checked_at", lastChecked);
+        if (monitorsUnavailable) t.put("unavailable", true);
+        if (checksUnavailable) t.put("checks_unavailable", true);
+        if (statsUnavailable) t.put("stats_unavailable", true);
         return t;
     }
 

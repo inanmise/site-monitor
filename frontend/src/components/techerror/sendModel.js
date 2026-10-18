@@ -310,6 +310,8 @@ export const SENDLOG_REASON_KEYS = Object.freeze({
   APPROVAL_STALE: 'te.slog.reason.APPROVAL_STALE',
   SMTP_FAILED: 'te.slog.reason.SMTP_FAILED',
   INTERNAL_ERROR: 'te.slog.reason.INTERNAL_ERROR',
+  RETRIES_EXHAUSTED: 'te.slog.reason.RETRIES_EXHAUSTED',
+  RETRIES_FAILED: 'te.slog.reason.RETRIES_FAILED',
   SKIPPED_OTHER: 'te.slog.reason.SKIPPED_OTHER',
   UNKNOWN: 'te.slog.reason.UNKNOWN',
 })

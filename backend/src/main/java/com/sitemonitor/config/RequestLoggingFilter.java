@@ -131,7 +131,11 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
     private static final List<String> BODY_NEVER_LOGGED = List.of("/api/admin/secret-tools/", "/api/login/otp/",
             "/api/manual-certs", "/api/admin/ldap", "/api/monitoring/scripted", "/api/admin/user-push",
             // Genel ayarlar katalogu ham değerleri genel "value" anahtarıyla taşır (push ağ geçidi URL'si jeton içerir)
-            "/api/admin/general/settings");
+            "/api/admin/general/settings",
+            // Prometheus kazıması: /metrics/sitemonitor bütün izleme envanterini taşır (2026-10-18). shouldSkip ham URI'ye
+            // bakar; ";x=1" yol parametresi ya da yüzde kodlaması (/%6Detrics/…) onu atlatıp denetleyiciye ulaşabilir —
+            // bu normalleştiren kontrol de gövdeyi asla yazmaz.
+            "/metrics");
     static final String BODY_OMITTED = "[omitted: sensitive endpoint]";
 
     private static final int MAX_BODY_LOG = 2000;
@@ -208,7 +212,9 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
     private boolean shouldSkip(HttpServletRequest req) {
         String uri = req.getRequestURI();
         if (uri == null) return false;
-        return uri.equals("/health") || uri.equals("/favicon.ico")
+        // /metrics ve /metrics/sitemonitor: Prometheus kazıması (her 15–60 sn) — iş ölçümleri yanıtı envanteri taşır,
+        // günlüğe hiç yazılmaz (2026-10-18)
+        return uri.equals("/health") || uri.equals("/favicon.ico") || uri.equals("/metrics") || uri.startsWith("/metrics/")
                 || uri.startsWith("/assets/") || uri.startsWith("/static/")
                 || uri.endsWith(".js") || uri.endsWith(".css") || uri.endsWith(".map")
                 || uri.endsWith(".png") || uri.endsWith(".svg") || uri.endsWith(".woff2")

@@ -3,6 +3,7 @@ import {
   ArrowLeft, ChevronLeft, ChevronRight, CircleAlert, Download, Eye, History, LayoutTemplate, MailWarning, RefreshCw, Save, Send,
   Trash2, Undo2, ShieldCheck } from 'lucide-react'
 import { api } from '../../api/client'
+import { useUnsavedWork } from '../../utils/unsavedWork.js'
 import { useT, useLanguage } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import { useDialog } from '../ui/Dialog.jsx'
@@ -14,6 +15,9 @@ import { Button } from '@/components/shadcn/button'
 import { Badge } from '@/components/shadcn/badge'
 import { Skeleton } from '@/components/shadcn/skeleton'
 import { ImagesBlock } from './ReportImages.jsx'
+import { useImagesSync } from './capture/useImagesSync.js'
+import { useFileDropGuard } from './capture/useFileDropGuard.js'
+import { KIND_REPORT, postImagesChanged } from './capture/imageSync.js'
 import { TrendBlock } from './ReportTrend.jsx'
 import ReportHistorySheet from './ReportHistory.jsx'
 import {
@@ -32,7 +36,8 @@ import { bumpMailPreviewContent, mailPreviewContentRev } from './mailPreviewFetc
 import RecipientsSummary from './RecipientsSummary.jsx'
 import {
   allFields, allSectionsOpen, applyCalc, calcResults, canonicalValues, embeddedSections, errorCountsBySection, hostOf, normalizeValues,
-  reportErrorSection, fieldExempt, issueDisplayTitle, issueImageAlive, issueOptions, issueValidation, monthName, resolvePlaceholders,
+  reportErrorSection, fieldExempt, issueDisplayTitle, issueImageAlive, issueOptions, issueValidation, monthName, outageAnswerConflict,
+  resolvePlaceholders,
   resolveTextPlaceholders, revertInvalidValues, stableJson, trendRefs,
 } from './techErrorModel.js'
 import { storageOwner } from '../../utils/personalStorage.js'
@@ -100,10 +105,22 @@ function clockTime(ms, lang) {
   }).format(new Date(ms))
 }
 
-/** Sürüklenen bir DOSYA mı (metin / bağlantı sürüklemesine dokunulmaz)? */
-function isFileDrag(e) {
-  const types = e?.dataTransfer?.types
-  return !!types && Array.from(types).includes('Files')
+/** JSON metni → nesne; okunamazsa boş nesne. */
+function parseJsonOr(json) {
+  try { return JSON.parse(json || '{}') || {} } catch { return {} }
+}
+
+/**
+ * Görsel alan anomali bölümlerinin kayıtlı konu kimlikleri (`{bölüm: [kimlik…]}` JSON'u) — Görsel paneli konu görsellerini
+ * bunlardan listeler; değişince panel yeniden okur.
+ */
+function imageTopicIds(values, tpl) {
+  const out = {}
+  for (const s of tpl?.sections || []) {
+    if (s.kind !== 'issues' || !issueOptions(s, tpl?.lang).allowImages) continue
+    out[s.id] = (values?.issues?.[s.id] || []).map((i) => i?.id ?? null)
+  }
+  return JSON.stringify(out)
 }
 
 /**
@@ -375,6 +392,7 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
   }
   useEffect(() => () => flushBackup.current?.(), [])
 
+  useUnsavedWork(unsaved)   // başka pencereden "raporu aç" isteği taslağı sessizce bırakmasın
   useEffect(() => {
     if (!unsaved) return undefined
     const h = (e) => { e.preventDefault(); e.returnValue = '' }
@@ -383,27 +401,36 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
   }, [unsaved])
 
   // Grafik yuvasının DIŞINA bırakılan dosya tarayıcıyı görsele götürmesin (kaydedilmemiş taslak kaybolurdu)
-  useEffect(() => {
-    if (readOnly) return undefined
-    const guard = (e) => { if (isFileDrag(e)) e.preventDefault() }
-    window.addEventListener('dragover', guard)
-    window.addEventListener('drop', guard)
-    return () => {
-      window.removeEventListener('dragover', guard)
-      window.removeEventListener('drop', guard)
-    }
-  }, [readOnly])
+  useFileDropGuard(!readOnly)
 
   const tpl = data?.template
   const report = data?.report
   const channel = data?.channel
+  // Bu penceredeki görsel değişikliği sayacı: eşitleme okuması bu pencerenin daha yeni yüklemesini ezmesin
+  const imagesGen = useRef(0)
+  const imagesRef = useRef(images)
+  imagesRef.current = images
   // Görsel bölümlerinin geri çağrısı SABİT: ImagesBlock memo'su yazarken yeniden çizimi atlasın
   const onImagesChange = useCallback((fn) => {
+    imagesGen.current++
     setImages(fn)
     statusGen.current++
     setPreviewRev(bumpMailPreviewContent(reportId))
     setData((d) => (d ? { ...d, report: { ...d.report, status: d.report.status === 'sent' ? 'changed' : d.report.status } } : d))
   }, [reportId])
+  // Görsel paneli (2026-10-18): öteki penceredeki yükleme / silme yalnız görsel listesini yeniden okur (taslağa dokunmaz).
+  // İnceleme 2026-10-18: liste değişmediyse hiçbir şey uygulanmaz; değiştiyse durum SUNUCUNUN yanıtından gelir (gönderilmiş
+  // raporda panel açılınca her pencere dönüşü "gönderimden sonra değişti" demiyor). Değişen liste e-posta önizlemesinin de
+  // içeriğidir (önizleme eski isteğe katılmaz) ve durumu bu pencere yazar (gönderim yoklamasının eski yanıtı ezmesin)
+  const applySyncedImages = useCallback((list, status) => {
+    setImages(list)
+    setPreviewRev(bumpMailPreviewContent(reportId))
+    if (status) {
+      statusGen.current++
+      setData((d) => (d ? { ...d, report: { ...d.report, status } } : d))
+    }
+  }, [reportId])
+  useImagesSync(reportId, { getImages: () => imagesRef.current, apply: applySyncedImages, localGen: imagesGen })
   const resolve = useCallback((p) => resolvePlaceholders(p, channel?.name, report?.year, report?.month, tpl?.lang),
     [channel?.name, report?.year, report?.month, tpl?.lang])
   const resolveText = useCallback((p) => resolveTextPlaceholders(p, channel?.name, report?.year, report?.month, tpl?.lang),
@@ -540,7 +567,11 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
       if (res?.success && res.data) {
         const values = normalizeValues(res.data.values)
         const baseJson = canonJson(values)
+        const prevTopics = imageTopicIds(parseJsonOr(baseRef.current.json), canonTpl.current)
         applyBase({ json: baseJson, version: res.data.version })
+        // Görsel paneli konu görsellerini KAYITLI konulardan listeler (2026-10-18): kayıt görsel alan bir bölümün konu listesini
+        // değiştirdiyse (eklenen konu; silinen konu — sunucu görsellerini de bu kayıtta sildi) açık panel yeniden okusun
+        if (imageTopicIds(values, canonTpl.current) !== prevTopics) postImagesChanged(reportId, KIND_REPORT)
         accepted.current = auto ? { sent: sentJson, base: baseJson } : null
         // Kayıt sürerken yazılan değişiklik korunur: yanıt yalnız GÖNDERİLEN taslağın yerini alır. Otomatik kayıt taslağa
         // HİÇ dokunmaz (kullanıcı yazıyor olabilir); yedek yine silinir — içerik sunucuda
@@ -715,9 +746,10 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
         return
       }
       if (!fresh) {
-        // Okunamadı: "gitmemiş" denmez (bilinmiyor) — pencere taze açılır; sonraki açılış yeniden denetler
+        // Okunamadı: "gitmemiş" denmez (bilinmiyor) — pencere bantsız açılır ama taşınan ek Bilgi ALANDA (bu dalda boş açılış
+        // ek adresleri sessizce düşürür, gönderim geri alınamaz); sonraki açılış yeniden denetler
         resumeSend.current = r
-        setSendDialog({ error: null, failure: null })
+        setSendDialog({ error: null, failure: null, initialCc: ccCarry.current })
         return
       }
     }
@@ -1015,7 +1047,7 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
       // Onay sırasında yazılan değişiklik şablon uygulamasıyla kaybolmasın
       if (!isSavedJson(canonJson(draftRef.current))) { toast.error(t('te.fixUnsavedFirst')); return }
       const res = await api.techErrors.refreshTemplate(reportId, baseRef.current.version)
-      if (res?.success) { toast.success(t('te.applyTemplateDone')); dropBackup(reportId); await load() }
+      if (res?.success) { toast.success(t('te.applyTemplateDone')); dropBackup(reportId); postImagesChanged(reportId, KIND_REPORT); await load() }
       else if (res?.code === 'CONCURRENT_MODIFICATION') setConflict(true)
       else toast.error(res?.error || t('te.saveError'), { details: res?.errorInfo })
     } catch (e) {
@@ -1039,6 +1071,7 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
         skipFlush.current = true
         clearTimeout(backupTimer.current)
         dropBackup(reportId)
+        postImagesChanged(reportId, KIND_REPORT)
         toast.success(t('te.reportDeleted'))
         onBack(channel?.id)
       } else {
@@ -1117,6 +1150,13 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
   }, [issueChecks, clientErrors, pending])
   // Rapor toplamı ve yükleme ipucu yalnız ilk görsel bölümünde (varsayılan şablonda beş görsel bölümü var)
   const firstImagesId = sections.find((s) => s.kind === 'images')?.id
+  // Kesinti cevabı konularla çelişiyor mu (2026-10-18): "Dönemde kesinti oldu mu?" Hayır + kesinti kaynaklı konu → alanın yanında
+  // ve özet kartında bilgi bandı (kayıt engellenmez; rapor ikisini de yazıldığı gibi basar)
+  const outageConflict = outageAnswerConflict(tpl, draft)
+  // Ekrandan görsel alma: paylaşımın kendiliğinden kapandığını söyleyen TEK bildirim ilk görsel bölümünde; rapor yalnız anomali
+  // konusu görseli taşıyorsa ilk görsel alan konu bölümünde (yoksa hiç söylenmezdi)
+  const firstIssueImagesId = firstImagesId ? null
+    : sections.find((s) => s.kind === 'issues' && issueOptions(s, tpl?.lang).allowImages)?.id
   // Otomatik oranlar (2026-10-16): taslağın adetlerinden CANLI hesap — yalnız gösterim (alan çıktısı, özet önizlemesi,
   // trendin bu ayı); taslağa yazılmaz, kaydedilen değeri sunucu hesaplar
   const prevFields = data?.previous?.fields || null
@@ -1390,20 +1430,21 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
         if (s.kind === 'metrics') {
           return <MetricsBlock key={key} section={s} values={draft} resolve={resolve} uiLang={uiLang} previous={data.previous}
             readOnly={readOnly} errors={fieldErrors} onField={setField} onFieldError={setFieldError} templateFields={allFields(tpl)}
-            calc={calc} onTarget={setTarget} />
+            calc={calc} onTarget={setTarget} outageConflict={outageConflict} />
         }
         if (s.kind === 'issues') {
           return <IssuesBlock key={key} section={s} template={tpl} list={draft.issues?.[s.id] || NO_ISSUES} units={draft.units}
             shownFields={shownFields} resolve={resolve} uiLang={uiLang} readOnly={readOnly} errors={fieldErrors}
             onIssuesUpdate={updateIssues} onFieldError={setFieldError} onUnit={setUnit} reportId={reportId} images={images}
             onImagesChange={onImagesChange} period={issuePeriod}
-            beforeIssueUpload={beforeIssueUpload} />
+            beforeIssueUpload={beforeIssueUpload} captureNotice={s.id === firstIssueImagesId} />
         }
         if (s.kind === 'summary') {
           return <SummaryBlock key={key} section={s} template={tpl} values={shownValues} channelName={channel?.name} year={report?.year}
             month={report?.month} resolve={resolve} readOnly={readOnly} errors={fieldErrors} onText={setText} onClearText={clearText}
             embedded={embeddedSections(tpl, s.id)} fieldValues={draft} uiLang={uiLang} previous={data.previous}
-            onField={setField} onFieldError={setFieldError} templateFields={allFields(tpl)} calc={calc} onTarget={setTarget} />
+            onField={setField} onFieldError={setFieldError} templateFields={allFields(tpl)} calc={calc} onTarget={setTarget}
+            outageConflict={outageConflict} />
         }
         if (s.kind === 'table') {
           return <TableBlock key={key} section={s} values={draft} resolve={resolve} uiLang={uiLang} tplLang={tpl?.lang} readOnly={readOnly}

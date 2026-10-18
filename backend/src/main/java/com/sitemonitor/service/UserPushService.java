@@ -970,14 +970,23 @@ public class UserPushService {
         } catch (Exception ignored) { /* karar satırı yazılamadıysa gönderim mantığı etkilenmez */ }
     }
 
-    /** Doğrudan alıcı (rol grubu çözümü YOK): kullanıcı adı + görünen ad + opt-out. */
-    public record DirectRecipient(String username, String displayName, boolean optOut, String lang) {
+    /**
+     * Doğrudan alıcı (rol grubu çözümü YOK): kullanıcı adı + görünen ad + opt-out. {@code skipReason} (2026-10-18, teknik hata
+     * raporu push'ları): çağıranın kişisel tercih kararı ({@link UserPushRecipientResolver#preferenceSkip} — seviye / susturma);
+     * doluysa satır o nedenle yazılır (sessiz kayıp yok). Eski biçimler null verir: davranış bugünküyle aynı.
+     */
+    public record DirectRecipient(String username, String displayName, boolean optOut, String lang, String skipReason) {
         /** Eski üç alanlı biçim — push Türkçe (bugünkü davranış). */
         public DirectRecipient(String username, String displayName, boolean optOut) {
-            this(username, displayName, optOut, PushI18n.TR);
+            this(username, displayName, optOut, PushI18n.TR, null);
+        }
+        /** Dört alanlı biçim (haftalık rapor müdür push'u) — kişisel tercih süzgeci yok (bugünkü davranış). */
+        public DirectRecipient(String username, String displayName, boolean optOut, String lang) {
+            this(username, displayName, optOut, lang, null);
         }
         public DirectRecipient {
             lang = PushI18n.norm(lang);
+            skipReason = skipReason == null || skipReason.isBlank() ? null : skipReason;
         }
     }
 
@@ -995,7 +1004,7 @@ public class UserPushService {
     public Map<String, Object> enqueueDirectLocalized(List<DirectRecipient> recipients, Long teamId, String trigger, String alertLevel,
                                                       String monitorType, String monitorName, LocalizedText message, String dedupeKey) {
         Map<String, Object> out = new LinkedHashMap<>();
-        out.put("queued", 0); out.put("skipped", 0); out.put("recipients", List.of());
+        out.put("queued", 0); out.put("skipped", 0); out.put("recipients", List.of()); out.put("queued_usernames", List.of());
         if (!enabled()) { out.put("reason", "SKIPPED_DISABLED"); return out; }
         if (recipients == null || recipients.isEmpty()) { out.put("reason", "SKIPPED_NO_RECIPIENTS"); return out; }
         String batchId = UUID.randomUUID().toString().substring(0, 8);
@@ -1006,11 +1015,13 @@ public class UserPushService {
         List<String> names = new ArrayList<>();
         java.util.Set<String> seen = new java.util.HashSet<>();
         List<String> usernames = new ArrayList<>();
+        List<String> queuedUsernames = new ArrayList<>();
         for (DirectRecipient r : recipients) {
             String u = r.username() == null ? "" : r.username().trim();
             if (u.isEmpty() || !seen.add(u)) { skipped++; continue; }
             String status;
             if (r.optOut()) status = "SKIPPED_USER_OPT_OUT";
+            else if (r.skipReason() != null) status = r.skipReason();   // kişisel tercih (seviye / susturma) — satır nedeniyle
             else if (deliveryRepo.countRecentForUser(u, since) >= hourlyCap()) status = "RATE_LIMITED";
             else status = "PENDING";   // devre kesici açıksa drainOutbox bekletir (N2) — satır kaybolmaz
             if (dedupeKey != null && deliveryRepo.existsByDedupeKeyAndUsername(dedupeKey, u)) { skipped++; continue; }
@@ -1031,13 +1042,16 @@ public class UserPushService {
             d.setBatchId(batchIdFor(batchId, lang));
             d.setPushLang(lang);
             try { deliveryRepo.save(d); } catch (Exception dup) { skipped++; continue; }
-            if ("PENDING".equals(status)) { queued++; names.add(d.getDisplayName()); }
+            if ("PENDING".equals(status)) { queued++; names.add(d.getDisplayName()); queuedUsernames.add(u); }
             else skipped++;
             usernames.add(u);
         }
         if (queued > 0) worker.execute(this::drainOutbox);
         out.put("queued", queued); out.put("skipped", skipped); out.put("recipients", names); out.put("batch_id", batchId);
         out.put("usernames", usernames);   // çağıran, aynı olayın takım bildiriminden bu kişileri düşer
+        // Kuyruğa GİREN kişiler (2026-10-18): çağıran kişi başına "push ulaştı" kararı verir (teknik hata raporu onay
+        // hatırlatması — talep PO başına; satırı atlanan / tekrar sayılan kişi ulaşmış sayılmaz)
+        out.put("queued_usernames", queuedUsernames);
         return out;
     }
 

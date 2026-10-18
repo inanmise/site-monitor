@@ -1,9 +1,10 @@
-import { memo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import { ImagePlus, RefreshCw, Trash2, Upload, ZoomIn } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import { useDialog } from '../ui/Dialog.jsx'
+import KebabMenu from '../ui/KebabMenu.jsx'
 import { Button } from '@/components/shadcn/button'
 import { Input } from '@/components/shadcn/input'
 import { CollapsibleCard } from './SectionCollapse.jsx'
@@ -12,6 +13,11 @@ import { LIMITS, formatBytes, imageRows } from './techErrorModel.js'
 import { ImagePrepError, displayWidthPct, prepareImage } from './imagePrep.js'
 import { CopyTextButton } from './TechErrorParts.jsx'
 import { ImageLightbox } from './ImageLightbox.jsx'
+import { useSlotCapture } from './capture/SlotCapture.jsx'
+import {
+  CaptureHint, CaptureSessionChip, CaptureStopNotice, ImagesPanelHeaderButton, useCaptureScope,
+} from './capture/CaptureParts.jsx'
+import { postImagesChanged } from './capture/imageSync.js'
 
 /** Tarayıcının açıp PNG / JPEG'e çevirebildiği türler (sunucu yalnız PNG / JPEG alır — imagePrep çevirir). */
 const ACCEPT = 'image/png,image/jpeg,image/webp,image/gif,image/bmp,image/avif'
@@ -35,8 +41,12 @@ export const UPLOAD_BLOCK_KEYS = Object.freeze({
  */
 // memo: yazarken (her tuşta düzenleyici yeniden çizilir) değişmeyen görsel bölümleri — 22 yuva — yeniden çizilmez;
 // düzenleyici geri çağrıyı sabit verir (useCallback)
-export const ImagesBlock = memo(function ImagesBlock({ section, reportId, images, resolve, uiLang, readOnly, onImagesChange, showTotals = true }) {
+// Ekrandan görsel alma (2026-10-18): yapıştırma / "Ekrandan al" / Görsel paneli `capture/*`; her yükleme ve silme öteki
+// pencerelere duyurulur (imageSync). `inPanel`: Görsel paneli penceresinde (panel düğmesi ve bölüm başı paylaşım çipi yok).
+export const ImagesBlock = memo(function ImagesBlock({ section, reportId, images, resolve, uiLang, readOnly, onImagesChange, showTotals = true, inPanel = false }) {
   const t = useT()
+  useCaptureScope()
+  const notifyChange = useCallback((fn) => { onImagesChange(fn); postImagesChanged(reportId) }, [onImagesChange, reportId])
   const bySlot = new Map(images.map((i) => [i.slot_id, i]))
   const total = images.reduce((a, i) => a + (i.size_bytes || 0), 0)
   // Rapor toplamı yükleme ANINDA okunur: hazırlama sürerken başka yuvaya yüklenen görsel de sayılır (inceleme 2026-10-15)
@@ -48,19 +58,23 @@ export const ImagesBlock = memo(function ImagesBlock({ section, reportId, images
   return (
     // Katlanır kart (2026-10-16): ipucu ve rapor toplamı yalnız açıkken
     <CollapsibleCard sectionId={section.id} slot="te-images" title={resolve(section.title)} contentClassName="flex flex-col gap-3"
+      headerEnd={showTotals && !inPanel ? <ImagesPanelHeaderButton reportId={reportId} readOnly={readOnly} /> : null}
       hint={showTotals ? (
         <>
           <p className="text-sm text-muted-foreground">{t('te.img.hint')}</p>
           <p className="text-xs text-muted-foreground" data-slot="te-img-total">
             {t('te.img.total', formatBytes(total, uiLang), formatBytes(LIMITS.reportImageBytes, uiLang))}
           </p>
+          <CaptureHint readOnly={readOnly} inPanel={inPanel} />
         </>
       ) : null}>
+        {!inPanel && <CaptureSessionChip />}
+        {showTotals && !inPanel && <CaptureStopNotice />}
         {rows.map((row) => (
           <div key={row.map((r) => r.id).join('|')} className="grid gap-3 md:grid-cols-2">
             {row.map((slot) => (
               <SlotTile key={slot.id} slot={slot} image={bySlot.get(slot.id)} reportId={reportId} resolve={resolve}
-                uiLang={uiLang} readOnly={readOnly} onImagesChange={onImagesChange}
+                uiLang={uiLang} readOnly={readOnly} onImagesChange={notifyChange} inPanel={inPanel}
                 otherBytes={() => otherBytesOf(slot.id)}
                 className={slot.width === 'full' ? 'md:col-span-2' : row.length === 1 ? 'md:col-span-1' : ''} />
             ))}
@@ -82,7 +96,7 @@ export function ImageSlotTile(props) {
 }
 
 function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesChange, className, otherBytes = () => 0, beforeUpload = null,
-  hideWidth = false, contextLabel = null, onRemoved = null }) {
+  hideWidth = false, contextLabel = null, onRemoved = null, inPanel = false }) {
   const t = useT()
   const toast = useToast()
   const { showConfirm } = useDialog()
@@ -162,6 +176,11 @@ function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesCh
     }
   }
 
+  // Dolu yuvaya yapıştırma önce sorar: yeni görsel eskisinin yerini alır, geri alma yok (inceleme 2026-10-18)
+  const confirmReplace = () => showConfirm({
+    title: t('te.cap.replaceTitle'), message: t('te.cap.replaceBody', fullLabel), confirmText: t('te.img.replace'), cancelText: t('te.cancel'),
+  })
+
   async function remove() {
     const ok = await showConfirm({ title: t('te.img.removeTitle'), message: t('te.img.removeBody', fullLabel), variant: 'danger',
       confirmText: t('te.img.remove'), cancelText: t('te.cancel') })
@@ -182,10 +201,41 @@ function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesCh
     }
   }
 
+  // Yapıştırma (Ctrl/⌘+V, "Panodan yapıştır") ve "Ekrandan al" aynı yükleme yoluna varır (capture/SlotCapture) — anomali
+  // konusu görselinde de (ImageSlotTile): `beforeUpload` (kaydedilmemiş konu önce kaydedilir) ve nedenli ret metni aynı.
+  // Ad bağlamlı ("Konu — Görsel 1"): iki konunun "Görsel 1" yuvası ekran okuyucuda / onayda karışmasın
+  const cap = useSlotCapture({ slotId: slot.id, label: fullLabel, busy, readOnly, inPanel, hasImage: !!image, confirmReplace, onFile: upload })
   const inputId = `te-img-${slot.id}`
+
+  // Yükleme / silme bitince: sürerken düğmeler kapalıydı (ya da "Kaldır" kalktı) ve odak sayfanın gövdesine düşmüş olabilir —
+  // yuvaya döner (klavye kullanıcısı kaldığı yerden sürer). Kullanıcı başka bir yere geçtiyse odağa dokunulmaz (inceleme
+  // 2026-10-18: kırpmadan sonra odak kapalı "Ekrandan al"a dönüp kayboluyordu)
+  const wasBusy = useRef(false)
+  const zoneRef = cap.zoneRef
+  useEffect(() => {
+    if (wasBusy.current && !busy) {
+      try {
+        const a = document.activeElement
+        if (!a || a === document.body || !a.isConnected || a.disabled) zoneRef.current?.focus?.({ preventScroll: true })
+      } catch { /* yok */ }
+    }
+    wasBusy.current = busy
+  }, [busy, zoneRef])
+
+  // Yarım yuvada (768 px'te iki yuva yan yana) yalnız "Yükle / Değiştir" ve "Ekrandan al" düğme kalır; "Panodan yapıştır" ve
+  // "Kaldır" adlı menüde (inceleme 2026-10-18). Tam yuvada hepsi düğme.
+  const half = slot.width !== 'full'
+  const moreItems = half ? [
+    cap.pasteMenuItem,
+    image ? {
+      label: t('te.img.remove'), ariaLabel: `${t('te.img.remove')}: ${fullLabel}`, icon: <Trash2 aria-hidden="true" />,
+      danger: true, disabled: busy, onClick: remove,
+    } : null,
+  ].filter(Boolean) : []
   return (
     <>
-    <div className={cn('flex min-w-0 flex-col gap-2 rounded-xl border p-3', drag && 'border-primary bg-primary/5', className)}
+    <div className={cn('flex min-w-0 flex-col gap-2 rounded-xl border p-3', cap.zoneClassName, drag && 'border-primary bg-primary/5', className)}
+      {...cap.zoneProps}
       data-slot="te-image-slot" data-slot-id={slot.id} data-width={slot.width} data-has-image={image ? 'true' : 'false'}
       onDragOver={readOnly ? undefined : (e) => { e.preventDefault(); setDrag(true) }}
       onDragLeave={readOnly ? undefined : () => setDrag(false)}
@@ -231,31 +281,46 @@ function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesCh
         <div className="flex min-h-28 flex-col items-center justify-center gap-1 rounded-md border border-dashed px-3 py-4 text-center text-sm text-muted-foreground">
           <ImagePlus aria-hidden="true" className="size-6" />
           <span>{readOnly ? t('te.img.none') : t('te.img.drop')}</span>
+          {cap.emptyHint}
         </div>
       )}
       {!readOnly && (
-        <div className="flex flex-wrap gap-2">
-          <Input ref={inputRef} id={inputId} type="file" accept={ACCEPT} hidden tabIndex={-1} aria-hidden="true"
-            onChange={(e) => { const f = e.target.files?.[0]; if (f) upload(f) }} />
-          {/* Erişilebilir ad görünen metni İÇERİR (yuva adı yalnız ekran okuyucuya eklenir — etiket-adda kuralı) */}
-          <Button type="button" size="sm" variant={image ? 'outline' : 'default'} disabled={busy}
-            onClick={() => inputRef.current?.click()} className="pointer-coarse:min-h-10" data-slot="te-image-upload">
-            {busy ? <RefreshCw aria-hidden="true" className="animate-spin motion-reduce:animate-none" />
-              : image ? <RefreshCw aria-hidden="true" /> : <Upload aria-hidden="true" />}
-            {busy ? (phase === 'prep' ? t('te.img.preparing') : t('te.img.uploading')) : image ? t('te.img.replace') : t('te.img.upload')}
-            <span className="sr-only">{`: ${fullLabel}`}</span>
-          </Button>
-          {image && (
-            <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={remove}
-              className="text-destructive pointer-coarse:min-h-10">
-              <Trash2 aria-hidden="true" /> {t('te.img.remove')}
+        // Eylemler kendi genişliğine göre dizilir (@container): dar yuvada alt alta (tam genişlik düğmeler), @xs'ten (320 px)
+        // itibaren tek satır — 768 px'te yan yana iki yuvada düğmeler kesilmez / taşmaz
+        <div className="@container" data-slot="te-image-actions" data-layout={half ? 'compact' : 'full'}>
+          <div className="flex flex-col gap-2 @xs:flex-row @xs:flex-wrap @xs:items-center">
+            <Input ref={inputRef} id={inputId} type="file" accept={ACCEPT} hidden tabIndex={-1} aria-hidden="true"
+              onChange={(e) => { const f = e.target.files?.[0]; if (f) upload(f) }} />
+            {/* Erişilebilir ad görünen metni İÇERİR (yuva adı yalnız ekran okuyucuya eklenir — etiket-adda kuralı) */}
+            <Button type="button" size="sm" variant={image ? 'outline' : 'default'} disabled={busy}
+              onClick={() => inputRef.current?.click()} className="pointer-coarse:min-h-10" data-slot="te-image-upload">
+              {busy ? <RefreshCw aria-hidden="true" className="animate-spin motion-reduce:animate-none" />
+                : image ? <RefreshCw aria-hidden="true" /> : <Upload aria-hidden="true" />}
+              {busy ? (phase === 'prep' ? t('te.img.preparing') : t('te.img.uploading')) : image ? t('te.img.replace') : t('te.img.upload')}
               <span className="sr-only">{`: ${fullLabel}`}</span>
             </Button>
-          )}
+            {!half && cap.pasteButton}
+            {cap.snipButton}
+            {!half && image && (
+              <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={remove}
+                className="text-destructive pointer-coarse:min-h-10" data-slot="te-image-remove">
+                <Trash2 aria-hidden="true" /> {t('te.img.remove')}
+                <span className="sr-only">{`: ${fullLabel}`}</span>
+              </Button>
+            )}
+            {half && moreItems.length > 0 && (
+              <span className="flex [&>button]:w-full @xs:[&>button]:w-auto" data-slot="te-image-more">
+                <KebabMenu variant="labeled" label={t('te.cap.moreActions')} ariaLabel={t('te.cap.moreActionsFor', fullLabel)}
+                  items={moreItems} />
+              </span>
+            )}
+          </div>
         </div>
       )}
       {error && <p className="text-sm text-destructive [overflow-wrap:anywhere]" role="alert" data-slot="te-image-error">{error}</p>}
+      {cap.notes}
     </div>
+    {cap.dialog}
     {/* Büyük görünüm yuvanın bırakma alanının DIŞINDA: portal olayları React ağacında kabarcıklanır — içerideyken açık
         pencereye bırakılan dosya bu yuvaya sessizce yükleniyordu (inceleme 2026-10-16) */}
     {image && (

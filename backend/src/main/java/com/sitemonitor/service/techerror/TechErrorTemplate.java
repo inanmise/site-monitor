@@ -1261,6 +1261,15 @@ public final class TechErrorTemplate {
     /** Varsayılan kutucuklar (kullanıcı kararı 2026-10-17: 6 karışık — oran, adet, SLA). */
     static final List<String> DEFAULT_TILES = List.of("error-rate", "total-tx", "error-count", "unmapped-count", "quota-count", "sla-rate");
 
+    /**
+     * Kesinti cümlesi (2026-10-18, kullanıcı kararı: "Verileri bölümünde yalnız 'Dönemde kesinti oldu mu?' sorusu kalıyor —
+     * özete bir cümle olarak ekleyip bölümü tamamen kaldıralım"): iki dal da dolu, böylece cevap her durumda özette yazılır
+     * ve soru Verileri'nde tekrar basılmaz. Kesinti kaynaklı adet cümlesinin hemen önünde: "Dönemde kesinti yaşanmıştır.
+     * Teknik hataların … adedi kesinti kaynaklı …"; Hayır'da adet cümlesi (muaf) düşer, yalnız bu cümle kalır.
+     */
+    public static final String OUTAGE_LINE_TR = "{f:had-outage?Dönemde kesinti yaşanmıştır.|Dönemde kesinti yaşanmamıştır.}";
+    public static final String OUTAGE_LINE_EN = "{f:had-outage?There was an outage in the period.|There was no outage in the period.}";
+
     public static Template defaults(String lang) {
         return "en".equals(lang) ? defaultsEn() : defaultsTr();
     }
@@ -1277,6 +1286,7 @@ public final class TechErrorTemplate {
                 "Önceki aya göre teknik hata adedi {d:error-count}, teknik hata oranı {d:error-rate} değişmiştir.",
                 "Map yapılmamış hata adedi {f:unmapped-count} olup teknik hataların {f:unmapped-rate} kadarını oluşturmaktadır.",
                 "Kota hatası adedi {f:quota-count} olup teknik hataların {f:quota-rate} kadarını oluşturmaktadır.",
+                OUTAGE_LINE_TR,
                 "Teknik hataların {f:outage-errors} adedi kesinti kaynaklı olup teknik hataların {f:outage-share} kadarını oluşturmaktadır.",
                 "SLA taahhüdü kapsamında kritik fonksiyonların SLA oranı {f:sla-rate} (hedef {t:sla-rate}, fark {dt:sla-rate}) ile "
                         + "{f:sla-above?hedef başarıyla tutturulmuştur|hedefin altında kalmıştır}.")).withTiles(DEFAULT_TILES));
@@ -1341,6 +1351,7 @@ public final class TechErrorTemplate {
                 "Compared with the previous month, technical errors changed by {d:error-count} and the technical error rate by {d:error-rate}.",
                 "There were {f:unmapped-count} unmapped errors, {f:unmapped-rate} of the technical errors.",
                 "There were {f:quota-count} quota errors, {f:quota-rate} of the technical errors.",
+                OUTAGE_LINE_EN,
                 "{f:outage-errors} technical errors were caused by outages, {f:outage-share} of the technical errors.",
                 "Under the SLA commitment the critical functions' SLA rate was {f:sla-rate} (target {t:sla-rate}, difference {dt:sla-rate}), "
                         + "so {f:sla-above?the target was met|the target was missed}.")).withTiles(DEFAULT_TILES));

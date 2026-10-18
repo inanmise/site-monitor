@@ -788,7 +788,11 @@ public class TechErrorReportService {
             Set<Long> logIds = new HashSet<>();
             for (Object[] r : rows) if (r[1] != null) logIds.add(((Number) r[1]).longValue());
             Map<Long, String> status = new HashMap<>();
-            for (var l : notificationLogs.findAllById(logIds)) status.put(l.getId(), l.getEmailStatus());
+            Map<Long, String> role = new HashMap<>();
+            for (var l : notificationLogs.findAllById(logIds)) {
+                status.put(l.getId(), l.getEmailStatus());
+                role.put(l.getId(), l.getRecipientRole());
+            }
             int changed = 0;
             for (Object[] r : rows) {
                 Long id = ((Number) r[0]).longValue();
@@ -796,7 +800,13 @@ public class TechErrorReportService {
                 String st = status.get(logId);
                 if (!"SENT".equals(st) && (st == null || !st.startsWith("FAILED"))) continue;
                 try {
-                    changed += inNewTx(() -> finishQueuedWithEvent(id, logId, st));
+                    QueuedFinish f = inNewTx(() -> finishQueuedWithEvent(id, logId, st));
+                    changed += f.changed();
+                    // Push (2026-10-18): yalnız bu çağrı sonucu KAZANDIYSA ve işlem işlendikten sonra — iki pod aynı sonucu
+                    // iki kez bildirmez; eşzamanlı yoldaki SENT push'uyla aynı anahtar (rapor + sayaç + talep anı). Anahtarın
+                    // alanları sonuçlandırma İŞLEMİNİN İÇİNDE okunan satırdan (inceleme 2026-10-18: işlemden sonra yeniden okumak
+                    // arada yeni bir gönderim talebinin send_claimed_at'ini alabilirdi)
+                    if (f.changed() > 0 && f.row() != null) pushQueuedResult(f.row(), "SENT".equals(st), "EXECUTIVE".equals(role.get(logId)));
                 } catch (RuntimeException e) {
                     // Bu satır sonraki okumada yeniden denenir (koşullu UPDATE geri alındı); diğerleri sürer
                     log.warn("Kuyruktaki teknik hata raporu #{} sonuçlandırılamadı: {}", id, e.toString());
@@ -814,18 +824,75 @@ public class TechErrorReportService {
      * iki kez yazmaz; olay yazılamazsa işlem geri alınır ve sonuç bir sonraki okumada yeniden denenir. Olayın zamanı sonucun
      * OKUNDUĞU an (posta servisi teslim anını saklamaz) — arayüz bunu söyler.
      */
-    private int finishQueuedWithEvent(Long id, Long logId, String st) {
+    private QueuedFinish finishQueuedWithEvent(Long id, Long logId, String st) {
         boolean sent = "SENT".equals(st);
         int c = sent ? reports.confirmQueued(id, logId)
                 : reports.failQueued(id, logId, st.length() > 255 ? st.substring(0, 255) : st);
+        QueuedRow row = null;
         if (c > 0) {
             TechErrorReport rep = reports.findById(id).orElse(null);
             if (rep != null) {
                 history.record(rep, "SEND_RESULT", null, null, TechErrorHistoryService.sendDetail(sent ? "SENT" : "FAILED", null,
                         sent ? null : TechErrorHistoryService.sendReason(st)), now());
+                row = QueuedRow.of(rep);
             }
         }
-        return c;
+        return new QueuedFinish(c, row);
+    }
+
+    /** Kuyruk sonuçlandırmasının sonucu: kazanan UPDATE sayısı + aynı işlemde okunan satırın push alanları. */
+    record QueuedFinish(int changed, QueuedRow row) { }
+
+    /**
+     * Sonuçlandırma işleminin İÇİNDE okunan satırın push için gereken alanları (işlem bittikten sonra varlık okunmaz): gönderen,
+     * içerik sayacı, talep anı (tekilleştirme anahtarı), kuyruğa alan ve onaya gönderen kişi.
+     */
+    record QueuedRow(Long id, Long teamId, Long channelId, int year, int month, Long lastSentById, Long sentRev,
+                     Instant sendClaimedAt, Long queuedById, Long approvalRequestedById) {
+        static QueuedRow of(TechErrorReport r) {
+            return new QueuedRow(r.getId(), r.getTeamId(), r.getChannelId(), r.getReportYear() == null ? 0 : r.getReportYear(),
+                    r.getReportMonth() == null ? 0 : r.getReportMonth(), r.getLastSentById(), r.getSentRev(), r.getSendClaimedAt(),
+                    r.getQueuedById(), r.getApprovalRequestedById());
+        }
+    }
+
+    /**
+     * Push bildirimleri (2026-10-18, {@link TechErrorPushService}): kuyruktaki gönderim sonuçlanınca — SENT → takım
+     * bildirimi (gönderen hariç), FAILED → gönderene. Yoksa (dilim testleri) push yok.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    TechErrorPushService pushes;
+
+    /** Test dikişi (public: işlem vekili üzerinden de hedefe ulaşsın). */
+    public void setPushes(TechErrorPushService p) {
+        this.pushes = p;
+    }
+
+    /**
+     * Sonuçlanan kuyruğun push'u; hata okuma ucunu ve sonuçlandırmayı bozmaz. {@code rep}: sonuçlandırma işleminde okunan satır.
+     * Yöneticilere gönderim kuyrukta BAŞARISIZ olursa gönderenin (onaylayan PO) yanında onaya gönderen kişi de bilgilenir
+     * (inceleme 2026-10-18: karar push'u ona "kuyrukta" demişti, sonucu hiç öğrenmiyordu); aynı kişiyse bir kez.
+     */
+    private void pushQueuedResult(QueuedRow rep, boolean sent, boolean executive) {
+        TechErrorPushService p = pushes;
+        if (p == null) return;
+        try {
+            TechErrorChannel ch = channels.findById(rep.channelId()).orElse(null);
+            TechErrorPushService.Ctx c = new TechErrorPushService.Ctx(rep.id(), rep.teamId(),
+                    ch != null && ch.getName() != null ? ch.getName() : "", rep.year(), rep.month());
+            // confirmQueued gönderen / sayaç / talep anını bekleyen alanlardan son gönderime yazdı
+            if (sent) {
+                p.delivered(c, executive, rep.lastSentById(), displayName(rep.lastSentById()), rep.sentRev(),
+                        rep.sendClaimedAt(), List.of());
+            } else {
+                Set<Long> to = new LinkedHashSet<>();
+                if (rep.queuedById() != null) to.add(rep.queuedById());
+                if (executive && rep.approvalRequestedById() != null) to.add(rep.approvalRequestedById());
+                p.sendFailedTo(c, executive, List.copyOf(to), TechErrorPushService.Failure.QUEUE_FAILED, null, rep.sendClaimedAt());
+            }
+        } catch (RuntimeException e) {
+            log.warn("Teknik hata raporu #{} kuyruk sonucu push'u kuyruğa alınamadı: {}", rep.id(), e.toString());
+        }
     }
 
     /** Yeni bir işlemde çalıştırır (işlem yöneticisi yoksa doğrudan). */

@@ -9,6 +9,8 @@
 #     --set secret.adminPassword=$STAGING_ADMIN_PASSWORD \
 #     --set secret.dbPassword=$STAGING_DB_PASSWORD \
 #     -n site-monitor-staging --create-namespace
+# Optional (Grafana business metrics, /metrics/sitemonitor): add
+#     --set secret.metricsExportToken="$STAGING_METRICS_EXPORT_TOKEN"   (>= 32 random chars, same value in Prometheus)
 # ─────────────────────────────────────────────────────────────────────────────
 
 image:

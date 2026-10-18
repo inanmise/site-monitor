@@ -37,15 +37,16 @@ public interface TechErrorReminderRepository extends JpaRepository<TechErrorRemi
               @Param("now") String now);
 
     /**
-     * Talebi geri bırakır (hatırlatma hiçbir kanaldan ulaşmadı → ertesi koşu yeniden dener): önceki gün ve istek anahtarı
-     * geri yazılır, yalnız bu talebin sürümü ({@code rev}) duruyorsa.
+     * Talebi geri bırakır (hatırlatma bir alıcıya ulaşmadı → ertesi koşu yeniden dener): önceki gün ve istek anahtarı geri
+     * yazılır, yalnız bu talebin sürümü ({@code rev}) duruyorsa. {@code reached}: turun durumu ({@code reached_ids} —
+     * {@code <ref>#<send_count>#<deneme>:<kimlikler>}); aynı koşullu yazım, ayrı bir UPDATE yok.
      */
     @Modifying
     @Transactional
     @Query("UPDATE TechErrorReminder r SET r.lastSentOn = :prevDay, r.refKey = :prevRef, r.sendCount = r.sendCount - 1, "
-            + "r.claimRev = r.claimRev + 1, r.updatedAt = :now WHERE r.id = :id AND r.claimRev = :rev")
+            + "r.claimRev = r.claimRev + 1, r.updatedAt = :now, r.reachedIds = :reached WHERE r.id = :id AND r.claimRev = :rev")
     int release(@Param("id") Long id, @Param("rev") int rev, @Param("prevDay") String prevDay, @Param("prevRef") String prevRef,
-                @Param("now") String now);
+                @Param("reached") String reached, @Param("now") String now);
 
     /**
      * SATIR YAŞINA göre budama (inceleme 2026-10-18): {@code updated_at} (ISO, UTC — sözlük sırası = zaman sırası) kesimden

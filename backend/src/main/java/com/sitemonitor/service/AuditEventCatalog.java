@@ -131,6 +131,8 @@ public final class AuditEventCatalog {
             "EXECUTIVE_SUMMARY_TEAM_SETTINGS", // takım yönetici özeti ayarları (alıcılar / açık-kapalı) kaydedildi
             "EXECUTIVE_SUMMARY_TEST",       // aylık yönetici özeti test e-postası (yalnız isteyen yöneticiye)
             "GENERAL_SETTINGS_SAVE",
+            "GRAFANA_DASHBOARD_EXPORT",   // Ayarlar → Grafana panosu: içe aktarılabilir pano JSON'u indirildi (2026-10-18)
+            "GRAFANA_SETTINGS_SAVE",      // Grafana panosu + ölçüm aktarıcısı ayarları kaydedildi (2026-10-18)
             "GUIDE_LINK_CREATE",
             "GUIDE_LINK_DELETE",
             "GUIDE_LINK_UPDATE",
@@ -183,6 +185,7 @@ public final class AuditEventCatalog {
             "MAINTENANCE_QUICK",
             "MAINTENANCE_RESUME",
             "MAINTENANCE_UPDATE",
+            "METRICS_EXPORT_ACCESS_DENIED", // /metrics/sitemonitor: eksik / yanlış taşıyıcı belirteç (IP başına 10 dk'da bir; 2026-10-18)
             "MONITOR_CREATE",
             "MONITOR_DELETE",
             "MONITOR_DIAGNOSE",
@@ -430,6 +433,7 @@ public final class AuditEventCatalog {
         if (t.startsWith("INCIDENT_") || t.startsWith("ALERT_")) return INCIDENT;
 
         if (t.startsWith("CA_")) return INTEGRATION;
+        if (t.startsWith("GRAFANA_")) return INTEGRATION;            // Grafana panosu (2026-10-18) — _EXPORT / SETTINGS kurallarından ÖNCE
         if (t.startsWith("SMTP_") || t.startsWith("LDAP_") || t.startsWith("NOTIFICATION_GROUP_")
                 || t.startsWith("CONTACT_")) return INTEGRATION;
 
