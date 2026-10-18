@@ -1,9 +1,72 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-18T01:42:02Z",
+  "generatedAt": "2026-10-18T02:29:29Z",
   "repo": "inanmise/site-monitor",
-  "count": 773,
+  "count": 774,
   "releases": [
+    {
+      "version": "20.156.0",
+      "tag": "v20.156.0",
+      "releasedAt": "2026-10-18T02:29:24Z",
+      "commit": "0d8154e2237559f0992776774add51a84e4500aa",
+      "prevVersion": "20.155.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 4,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 1,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "0d8154e2",
+          "subject": "şablon kütüphanesinin yenileniyor göstergesi shadcn Spinner ile (ilerleme göstergesi kapısı)"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "e5512f40",
+          "subject": "takım şablon kütüphanesi ve raporun şablon sürümü — CLAUDE.md, kılavuz TR/EN, PDF ve kök kopyalar"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "cd506f56",
+          "subject": "şablon kütüphanesinde silme onayından vazgeçince ve silinmiş kaydı yeniden adlandırınca odak kaybolmaz"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "41d76b0e",
+          "subject": "birleşim — dışa aktarımın satır görünümü şablon sürümü alanını uygular; depo arayüzünde kayıp Javadoc açılışı"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "4f30e4ea",
+          "subject": "şablon kütüphanesi penceresi işlemden sonra listeyi korur, kullanıcının kaynak seçimi ezilmez, bozuk kütüphane kaydı sistem şablonuna düşmez"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "7cac480a",
+          "subject": "kanal teknik hata raporunda takım şablon kütüphanesi ve takım varsayılanı; raporun şablon sürümü ve sürüm penceresinde rapor sayısı"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.155.0",
       "tag": "v20.155.0",
