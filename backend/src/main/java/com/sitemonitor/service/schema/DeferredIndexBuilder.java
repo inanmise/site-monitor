@@ -166,7 +166,18 @@ public final class DeferredIndexBuilder {
             // H2'de sade hâli (kısmi indeks yok).
             Spec.withFallback(
                     "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_nl_te_channel ON notification_logs(tech_error_channel_id, id) WHERE tech_error_channel_id IS NOT NULL",
-                    "CREATE INDEX IF NOT EXISTS idx_nl_te_channel ON notification_logs(tech_error_channel_id, id)"));
+                    "CREATE INDEX IF NOT EXISTS idx_nl_te_channel ON notification_logs(tech_error_channel_id, id)"),
+            // 2026-10-21 (çok pod — MP-17): OLAYSIZ push satırlarının (takım / doğrudan bildirim, fırtına push'u, karar satırı)
+            // tekilliği. ux_push_event_phase_user NULL alert_event_id'yi kapsamaz (PostgreSQL'de NULL'lar farklıdır): iki pod
+            // aynı anahtarı "var mı → ekle" ile aynı anda yazıp aynı push'u iki kez kuyruğa koyabiliyordu. Takım dahil
+            // (fırtına karar satırı takım başına '-' kişisiyle yazılır). Hariç: TEST (aynı toplu istekte aynı kişi yinelenebilir)
+            // ve OVERFLOW_SUMMARY (taşma özeti push-overflow kilidi altında; yarıda kalan özet yeniden yazılabilmeli).
+            // created_at kesimi: bu sürümden ÖNCEKİ geçmiş satırlar (olası eski çiftler) indekse girmez — kurulumu
+            // düşüremez, geçmiş silinmez. Tekil ihlal ekleme yolunda "zaten var" sayılır (UserPushService.insertEventless).
+            // Kısmi + ifade indeksi PostgreSQL'e özgü (H2'de uygulama düzeyindeki ön kontrol).
+            Spec.postgresOnly("CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS ux_push_eventless_key_user ON user_push_deliveries"
+                    + "(dedupe_key, username, (COALESCE(team_id, 0))) WHERE alert_event_id IS NULL"
+                    + " AND push_trigger NOT IN ('TEST', 'OVERFLOW_SUMMARY') AND created_at >= '2026-10-21'"));
 
     /** Bir koşunun özeti. {@code locked=false} → kilit alınamadı, hiçbir şey denenmedi. */
     public record Result(int built, int rebuilt, int valid, int skipped, int failed, boolean locked, long millis) {}

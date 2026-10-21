@@ -33,6 +33,8 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -123,6 +125,21 @@ class UserPushServiceTest {
             return store.stream().filter(d -> d.getId() != null && ids.contains(d.getId())
                     && lease.equals(d.getNextAttemptAt())).toList();
         });
+        // Batch başına kira tazeleme (2026-10-21, çok pod — MP-05) — JPQL'in aynası: hâlâ PENDING ve kira bu turunsa.
+        when(deliveryRepo.renewLease(any(), anyString(), anyString())).thenAnswer(inv -> {
+            java.util.Collection<Long> ids = inv.getArgument(0);
+            String mine = inv.getArgument(1);
+            String lease = inv.getArgument(2);
+            int n = 0;
+            for (UserPushDelivery d : store) {
+                if (d.getId() != null && ids.contains(d.getId()) && "PENDING".equals(d.getStatus())
+                        && mine.equals(d.getNextAttemptAt())) {
+                    d.setNextAttemptAt(lease);
+                    n++;
+                }
+            }
+            return n;
+        });
     }
 
     @Test
@@ -153,13 +170,13 @@ class UserPushServiceTest {
     }
 
     @Test
-    @DisplayName("Öneri 3: sahiplenme sorgusu düşerse eski yol — okunan satırlar gönderilir (tek pod'da davranış aynı)")
-    void claim_queryFailure_fallsBackToReadRows() {
+    @DisplayName("Çok pod (2026-10-21, MP-05 — öneri 3'ün eski yolu GERİ ALINDI): sahiplenme sorgusu düşerse HİÇBİR satır gönderilmez — okunan (kiralanmamış) satırı başka pod kiralayıp gönderebilirdi; push en çok bir tur gecikir, iki kez gitmez")
+    void claim_queryFailure_sendsNothing() {
         UserPushDelivery d = new UserPushDelivery();
         d.setId(9L);
         d.setStatus("PENDING");
         when(deliveryRepo.claimDue(any(), anyString(), anyString())).thenThrow(new RuntimeException("db kapalı"));
-        assertThat(service.claim(List.of(d))).containsExactly(d);
+        assertThat(service.claim(List.of(d))).isEmpty();
     }
 
     @AfterEach
@@ -1304,7 +1321,7 @@ class UserPushServiceTest {
     @DisplayName("DÖNGÜ KAPISI (2026-10-09): push gitti ama sonucu (tam + dar) yazılamadı → satır PENDING kalsa da sonraki tur YENİDEN GÖNDERMEZ, yalnız SENT'i yazar")
     void sentButOutcomeUnwritable_isNotResent() throws Exception {
         startServer();
-        when(deliveryRepo.claimDue(any(), anyString(), anyString())).thenThrow(new RuntimeException("db kapalı"));   // eski yol
+        // 2026-10-21 (MP-05): sahiplenme artık düşmez (eski yol kaldırıldı) — sahiplenilen satır gönderilir, sonucu yazılamaz
         when(deliveryRepo.saveAll(any())).thenThrow(readOnlyDb());
         UserPushDelivery row = pendingRow(36L);
         when(deliveryRepo.updateOutcome(anyLong(), anyString(), any(), any(), any(), any(), any()))
@@ -1568,5 +1585,86 @@ class UserPushServiceTest {
         when(appSettings.getBoolean(eq("site.monitor.userpush.enabled"), any(Boolean.class))).thenReturn(false);
         service.recordSuppressed(stormMember(415L, "SCRIPTED_FAIL", null), "SKIPPED_STORM");
         assertThat(savedRows()).hasSize(1);
+    }
+
+    // ── Çok pod (2026-10-21): batch başına kira tazeleme (MP-05), olaysız satırın tekil eklemesi (MP-17) ──────────
+
+    private UserPushDelivery leased(long id, String lease) {
+        UserPushDelivery d = new UserPushDelivery();
+        d.setId(id);
+        d.setStatus("PENDING");
+        d.setUsername("N" + id);
+        d.setNextAttemptAt(lease);
+        store.add(d);
+        return d;
+    }
+
+    @Test
+    @DisplayName("MP-05: kira tazeleme — başka pod'un kiraladığı satır gönderilmez, yalnız hâlâ bu turun kirasındaki satırlar tazelenip döner")
+    void renewForSend_keepsOnlyRowsStillMine() {
+        UserPushDelivery mine = leased(71L, "2026-10-21T06:02:00.000000001");
+        UserPushDelivery taken = leased(72L, "2026-10-21T06:02:00.000000001");
+        taken.setNextAttemptAt("2026-10-21T06:03:00.999999999");   // kira dolunca başka pod aldı (kendi kirası)
+        UserPushDelivery batchView = new UserPushDelivery();       // bu pod'un bellekteki (bayat) kopyası
+        batchView.setId(72L);
+        batchView.setStatus("PENDING");
+        batchView.setNextAttemptAt("2026-10-21T06:02:00.000000001");
+
+        List<UserPushDelivery> out = service.renewForSend(List.of(mine, batchView));
+
+        assertThat(out).extracting(UserPushDelivery::getId).containsExactly(71L);
+        assertThat(mine.getNextAttemptAt()).as("yeni kira").isNotEqualTo("2026-10-21T06:02:00.000000001").contains(".");
+        assertThat(taken.getNextAttemptAt()).as("başka pod'un kirasına dokunulmaz").isEqualTo("2026-10-21T06:03:00.999999999");
+    }
+
+    @Test
+    @DisplayName("MP-05: kira tazeleme sorgusu düşerse batch GÖNDERİLMEZ; kimliksiz (kiralanmamış) satır olduğu gibi geçer")
+    void renewForSend_failureSendsNothing_idlessPassesThrough() {
+        UserPushDelivery mine = leased(73L, "2026-10-21T06:02:00.000000001");
+        UserPushDelivery idless = new UserPushDelivery();
+        idless.setStatus("PENDING");
+        doThrow(new RuntimeException("db kapalı")).when(deliveryRepo).renewLease(any(), anyString(), anyString());
+
+        assertThat(service.renewForSend(List.of(mine, idless))).containsExactly(idless);
+    }
+
+    @Test
+    @DisplayName("MP-05: kira başka pod'a geçmiş satır — drainOutbox o satırı POST ETMEZ")
+    void drain_skipsRowWhoseLeaseWasTaken() throws Exception {
+        startServer();
+        UserPushDelivery row = pendingRow(74L);
+        // Tur kiralar; gönderimden hemen önce başka pod kira dolup satırı kendi kirasıyla almış olsun
+        doAnswer(inv -> {
+            row.setNextAttemptAt("9999-12-31T23:59:59.000000000");   // diğer pod'un kirası
+            return 0;
+        }).when(deliveryRepo).renewLease(any(), anyString(), anyString());
+        try {
+            service.drainOutbox();
+            assertThat(receivedBodies).as("kirası elinden alınan satır gönderilmez").isEmpty();
+            assertThat(row.getStatus()).isEqualTo("PENDING");
+        } finally {
+            service.shutdown();
+        }
+    }
+
+    @Test
+    @DisplayName("MP-17: olaysız satır tekil ihlale çarparsa (iki pod aynı anda yazdı) 'zaten var' sayılır — sayılır, kuyruğa ikinci kez girmez, istisna sızmaz")
+    void eventlessDuplicate_isSkipped() {
+        when(deliveryRepo.findDuePending(anyString(), any())).thenReturn(List.of());
+        recipients("N00001", "N00002");
+        doAnswer(inv -> {
+            UserPushDelivery d = inv.getArgument(0);
+            if ("N00002".equals(d.getUsername())) {
+                throw new org.springframework.dao.DataIntegrityViolationException("ux_push_eventless_key_user");
+            }
+            store.add(d);
+            return d;
+        }).when(deliveryRepo).save(any());
+
+        Map<String, Object> out = service.enqueueTeamNotice(5L, "WEAK_ALGO", "CRITICAL", "a.example.com", "m", "k-dup");
+
+        assertThat(out.get("queued")).isEqualTo(1);
+        assertThat(out.get("skipped")).isEqualTo(1);
+        assertThat(service.insertEventless(new UserPushDelivery() {{ setUsername("N00002"); setDedupeKey("k"); }})).isFalse();
     }
 }

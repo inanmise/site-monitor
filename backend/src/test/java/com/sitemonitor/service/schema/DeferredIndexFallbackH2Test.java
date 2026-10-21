@@ -65,9 +65,11 @@ class DeferredIndexFallbackH2Test {
     /** DDL'deki "ON tablo(…)" sonrası kolon adları (lower(…), INCLUDE, WHERE dâhil; anahtar sözcükler hariç). */
     private static List<String> referencedColumns(Spec s) {
         String tail = s.postgresDdl().substring(s.postgresDdl().indexOf(" ON " + s.table() + "(") + (" ON " + s.table() + "(").length());
-        Set<String> keywords = Set.of("lower", "upper", "include", "where", "true", "false", "is", "not", "null");   // işlev / anahtar sözcük — kolon değil
+        Set<String> keywords = Set.of("lower", "upper", "include", "where", "true", "false", "is", "not", "null",
+                "coalesce", "and", "in");   // işlev / anahtar sözcük — kolon değil
         List<String> out = new ArrayList<>();
-        Matcher m = Pattern.compile("[a-z_]+").matcher(tail.toLowerCase(Locale.ROOT));
+        // Tırnaklı sabitler (ör. kısmi indeksin 'TEST' / tarih kesimi) kolon değil — taranmadan çıkarılır (2026-10-21)
+        Matcher m = Pattern.compile("[a-z_]+").matcher(tail.replaceAll("'[^']*'", " ").toLowerCase(Locale.ROOT));
         while (m.find()) if (!keywords.contains(m.group())) out.add(m.group());
         return out;
     }

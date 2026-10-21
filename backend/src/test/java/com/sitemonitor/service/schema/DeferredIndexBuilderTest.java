@@ -63,11 +63,16 @@ class DeferredIndexBuilderTest {
         EXPECTED.put("idx_app_users_upper_username", "app_users(UPPER(username))");   // oturum kapısı + ping (2026-10-09)
         // Kanal gönderim günlüğü (2026-10-18, R18 / E22): kısmi indeks PG'de, H2'de sade (tech_error_channel_id, id)
         EXPECTED.put("idx_nl_te_channel", "notification_logs(tech_error_channel_id, id) WHERE tech_error_channel_id IS NOT NULL");
+        // Olaysız push satırlarının tekilliği (2026-10-21, çok pod — MP-17): kısmi + ifade, TEKİL; geçmiş satırlar kesimle dışarıda
+        EXPECTED.put("ux_push_eventless_key_user", "user_push_deliveries(dedupe_key, username, (COALESCE(team_id, 0))) "
+                + "WHERE alert_event_id IS NULL AND push_trigger NOT IN ('TEST', 'OVERFLOW_SUMMARY') AND created_at >= '2026-10-21'");
     }
+    /** TEKİL indeksler — {@code CREATE UNIQUE INDEX …}, {@code ux_} öneki. */
+    private static final Set<String> UNIQUE = Set.of("ux_push_eventless_key_user");
     /** Fonksiyonel / kısmi — H2 karşılığı yok. */
     private static final Set<String> POSTGRES_ONLY =
             Set.of("idx_sc_success_monitor", "idx_audit_lower_actor_type_time", "idx_push_lower_user_created",
-                    "idx_app_users_upper_username");
+                    "idx_app_users_upper_username", "ux_push_eventless_key_user");
 
     private static final Path MAIN = Path.of("src/main/java/com/sitemonitor");
 
@@ -79,7 +84,7 @@ class DeferredIndexBuilderTest {
         assertThat(DeferredIndexBuilder.CATALOG).extracting(Spec::name).containsExactlyElementsOf(EXPECTED.keySet());
         for (Spec s : DeferredIndexBuilder.CATALOG) {
             assertThat(s.postgresDdl()).as(s.name())
-                    .isEqualTo("CREATE INDEX CONCURRENTLY IF NOT EXISTS " + s.name() + " ON " + EXPECTED.get(s.name()));
+                    .isEqualTo(create(s.name()) + s.name() + " ON " + EXPECTED.get(s.name()));
         }
     }
 
@@ -89,8 +94,8 @@ class DeferredIndexBuilderTest {
         Set<String> names = new HashSet<>();
         for (Spec s : DeferredIndexBuilder.CATALOG) {
             assertThat(names.add(s.name())).as("tekil ad %s", s.name()).isTrue();
-            assertThat(s.name()).startsWith("idx_").hasSizeLessThanOrEqualTo(63).isLowerCase();
-            assertThat(s.postgresDdl()).startsWith("CREATE INDEX CONCURRENTLY IF NOT EXISTS " + s.name() + " ON " + s.table() + "(");
+            assertThat(s.name()).startsWith(UNIQUE.contains(s.name()) ? "ux_" : "idx_").hasSizeLessThanOrEqualTo(63).isLowerCase();
+            assertThat(s.postgresDdl()).startsWith(create(s.name()) + s.name() + " ON " + s.table() + "(");
             if (POSTGRES_ONLY.contains(s.name())) {
                 assertThat(s.fallbackDdl()).as("%s PG'ye özgü — H2 yedeği olmamalı", s.name()).isNull();
                 continue;
@@ -101,6 +106,10 @@ class DeferredIndexBuilderTest {
             assertThat(lower).as(s.name()).doesNotContain("concurrently").doesNotContain(" include ")
                     .doesNotContain(" where ").doesNotContain("lower(").doesNotContain("text_pattern_ops");
         }
+    }
+
+    private static String create(String name) {
+        return UNIQUE.contains(name) ? "CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS " : "CREATE INDEX CONCURRENTLY IF NOT EXISTS ";
     }
 
     @Test
