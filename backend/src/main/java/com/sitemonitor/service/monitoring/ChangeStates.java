@@ -39,13 +39,50 @@ public final class ChangeStates {
     public static final long DOMAIN_REQUEUE_MAX_AGE_MS = 6L * 60 * 60 * 1000;
     /**
      * DNS yeniden kuyruk sorgusunun geriye bakışı = en uzun işlenebilir yaş + pay (inceleme 2026-10-22, CORE-6): yalnız
-     * 2 saatten genç satır teyide alınır; 2–3 saat arası EXPIRED olur (iz bırakır). Daha eskisi hiç okunmaz — her 5 dk'lık
-     * turda 24 saatlik {@code dns_records} okunmasın. Sorgu bekleyen satırların kısmi dizinini kullanır
-     * ({@code DeferredIndexBuilder.CATALOG}; kurulana dek {@code checked_at} dizininde bu aralık).
+     * 2 saatten genç satır teyide alınır; 2–3 saat arası EXPIRED olur (iz bırakır). Her 5 dk'lık turda 24 saatlik
+     * {@code dns_records} okunmasın. Daha eski bekleyen satırları ayrı, alt sınırsız SÜRE DOLUMU geçişi kapatır
+     * ({@link #EXPIRY_PASS_INTERVAL_MS}, inceleme R3). Sorgu bekleyen satırların kısmi dizinini kullanır
+     * ({@link #DNS_PENDING_INDEX}, {@code DeferredIndexBuilder.CATALOG}; kurulana dek {@code checked_at} dizininde bu aralık).
      */
     public static final long DNS_REQUEUE_LOOKBACK_MS = DNS_REQUEUE_MAX_AGE_MS + 60L * 60 * 1000;
     /** Alan adı: tik saatlik — en uzun işlenebilir yaş (6 saat) + 2 saat pay. */
     public static final long DOMAIN_REQUEUE_LOOKBACK_MS = DOMAIN_REQUEUE_MAX_AGE_MS + 2L * 60 * 60 * 1000;
     /** Bir turda en çok okunan bekleyen satır. */
     public static final int REQUEUE_BATCH = 200;
+
+    /**
+     * Süre dolumu geçişinin aralığı (inceleme 2026-10-22, R3): pencerenin DIŞINDA kalmış (DNS 3 saat, alan adı 8 saat — ör.
+     * uzun süren eski sürüm liderli dağıtım, bakım gecesi, kapalı tür) bekleyen satırlar alt sınırsız bir sorguyla EXPIRED
+     * olur ve satır başına bir {@code notification_logs} izi bırakır; aksi hâlde sonsuza dek "bekliyor" kalıp görünmezlerdi.
+     * Geçiş başına en çok {@link #REQUEUE_BATCH} satır.
+     */
+    public static final long EXPIRY_PASS_INTERVAL_MS = 15L * 60 * 1000;
+
+    /** {@code dns_records} bekleyen satırlarının kısmi dizini (PostgreSQL; {@code DeferredIndexBuilder.CATALOG}'daki ad). */
+    public static final String DNS_PENDING_INDEX = "idx_dnsr_pending";
+
+    private static final java.util.concurrent.atomic.AtomicBoolean DNS_PENDING_INDEX_READY =
+            new java.util.concurrent.atomic.AtomicBoolean();
+
+    /**
+     * Alt sınırsız DNS süre dolumu sorgusu ucuz mu? PostgreSQL'de yalnız kısmi dizin GEÇERLİ olarak kurulmuşsa (yoksa sorgu
+     * {@code checked_at} dizinini tarihin başından tarayabilirdi — büyük tablo); PostgreSQL dışı (H2: geliştirme / test)
+     * evet; tür okunamazsa hayır (sonraki geçiş yeniden sorar). Hazır cevabı pod başına ezberlenir.
+     */
+    public static boolean dnsPendingIndexUsable(org.springframework.jdbc.core.JdbcTemplate jdbc) {
+        if (DNS_PENDING_INDEX_READY.get()) return true;
+        Boolean pg = com.sitemonitor.service.schema.DeferredIndexBuilder.postgresOrNull(jdbc.getDataSource());
+        if (pg == null) return false;
+        if (!pg) return true;
+        try {
+            Integer n = jdbc.queryForObject("SELECT count(*) FROM pg_class c JOIN pg_index i ON i.indexrelid = c.oid "
+                    + "JOIN pg_namespace ns ON ns.oid = c.relnamespace WHERE ns.nspname = current_schema() "
+                    + "AND c.relname = ? AND i.indisvalid", Integer.class, DNS_PENDING_INDEX);
+            boolean ready = n != null && n > 0;
+            if (ready) DNS_PENDING_INDEX_READY.set(true);
+            return ready;
+        } catch (Exception e) {
+            return false;
+        }
+    }
 }

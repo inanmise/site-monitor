@@ -168,22 +168,28 @@ class DomainChangeDurabilityTest {
         monitor.setChangeAlert(false);
         mp.jdbc().update("INSERT INTO domain_checks (monitor_id, checked_at, changed, manual, change_state) VALUES (?, ?, TRUE, FALSE, ?)",
                 11L, ISO.format(Instant.now().minusSeconds(60)), ChangeStates.PENDING);
+        // R3: 8 saatlik okuma penceresinin çok dışında kalmış bekleyen satır — süre dolumu geçişi kapatır.
+        mp.jdbc().update("INSERT INTO domain_checks (monitor_id, checked_at, changed, manual, change_state) VALUES (?, ?, TRUE, FALSE, ?)",
+                11L, ISO.format(Instant.now().minusSeconds(30 * 3600)), ChangeStates.PENDING);
 
         mp.advance(3_600_000L);
         a.scheduler().runDomainChecks();
         List<String> states = mp.jdbc().queryForList("SELECT change_state FROM domain_checks WHERE monitor_id = 11 ORDER BY id",
                 String.class);
-        assertThat(states).containsExactly(ChangeStates.ALARMED, ChangeStates.EXPIRED, ChangeStates.SUPPRESSED);
+        assertThat(states).containsExactly(ChangeStates.ALARMED, ChangeStates.EXPIRED, ChangeStates.SUPPRESSED,
+                ChangeStates.EXPIRED);
         assertThat(changedAlarms()).isEqualTo(1);
         // F6: süresi dolan değişikliğin izi — satır başına TEK notification_logs satırı (tetik = alarm türü).
         ArgumentCaptor<com.sitemonitor.model.NotificationLog> trace =
                 ArgumentCaptor.forClass(com.sitemonitor.model.NotificationLog.class);
-        verify(logs, org.mockito.Mockito.times(1)).save(trace.capture());
-        assertThat(trace.getValue().getTrigger()).isEqualTo(EscalationService.TYPE_DOMAINMON_CHANGED);
-        assertThat(trace.getValue().getSubject()).contains(DOMAIN);
-        assertThat(trace.getValue().getEmailStatus()).startsWith("SKIPPED: değişiklik süresi doldu");
+        verify(logs, org.mockito.Mockito.times(2)).save(trace.capture());
+        assertThat(trace.getAllValues()).allSatisfy(t -> {
+            assertThat(t.getTrigger()).isEqualTo(EscalationService.TYPE_DOMAINMON_CHANGED);
+            assertThat(t.getSubject()).contains(DOMAIN);
+            assertThat(t.getEmailStatus()).startsWith("SKIPPED: değişiklik süresi doldu");
+        });
         mp.advance(3_600_000L);
         a.scheduler().runDomainChecks();
-        verify(logs, org.mockito.Mockito.times(1)).save(any());
+        verify(logs, org.mockito.Mockito.times(2)).save(any());
     }
 }

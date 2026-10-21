@@ -5767,9 +5767,10 @@ public class SchedulerService {
     boolean forwardManualToLeader(String type, Long monitorId, Map<String, Object> raw) {
         if (manualEvalInbox == null || clusterSchedule == null) return false;
         if (isSweepLeader()) return false;
-        // Yuvarlanan dağıtım (inceleme 2026-10-22, CORE-3 / F9 / R-4): lider ESKİ sürümse (20.164.0) gelen kutusunu hiç
-        // boşaltmaz — iletilen sonuç 10 dk sonra silinir, "Şimdi kontrol et" alarmı kapatamaz. Yalnız boşaltan liderin
-        // canlılık kirası tazeyse iletilir; değilse 20.164.0'daki gibi YEREL değerlendirilir (elle kural: yalnız kapanış).
+        // Yuvarlanan dağıtım (inceleme 2026-10-22, CORE-3 / F9 / R-4 + B1): lider ESKİ sürümse (20.164.0) gelen kutusunu
+        // hiç boşaltmaz — iletilen sonuç 10 dk sonra silinir, "Şimdi kontrol et" alarmı kapatamaz. Karar YETENEĞE dayanır,
+        // zamana değil: boşaltıcı ilanının sahibi tarama liderliği kirasının sahibiyse iletilir; değilse 20.164.0'daki gibi
+        // YEREL değerlendirilir (elle kural: yalnız kapanış).
         if (!evalInboxDrainerAlive()) {
             log.debug("Gelen kutusunu boşaltan lider yok (eski sürüm lider / boşaltma durdu) — elle kontrol yerel: tür={} "
                     + "izleme={}", type, monitorId);
@@ -5825,29 +5826,29 @@ public class SchedulerService {
                 }
             }
             if (rows.size() < com.sitemonitor.service.monitoring.ManualEvalInbox.CLAIM_BATCH) break;
+            advertiseEvalInboxDrainer();   // uzun boşaltmada da ilan tazelensin (B1)
         }
         if (evaluated > 0) log.debug("Elle kontrol gelen kutusu: {} sonuç değerlendirildi", evaluated);
     }
 
     /**
-     * Gelen kutusunu boşaltan liderin canlılık kirası (inceleme 2026-10-22, CORE-3) — {@code monitor_check_schedule}
-     * satırı {@code lease:eval-inbox-drainer} (kalıcı ad). Boşaltan lider her turda (5 sn) {@value #EVAL_INBOX_DRAINER_TTL_MS}
-     * ms'lik kira yazar; takipçi yalnız kira tazeyse iletir. ESKİ sürüm lider kira yazmaz → takipçi 20.164.0 gibi yerel
-     * değerlendirir. Kira başka (eski lider, yeni sürüm) pod'daysa ve dolmamışsa bu tur yazılamaz — boşaltma yine yapılır,
-     * kira en geç {@value #EVAL_INBOX_DRAINER_TTL_MS} ms sonra bu pod'a geçer (eski sahip liderliği kaybedince ilk turda bırakır).
+     * Gelen kutusunu boşaltan liderin İLANI (inceleme 2026-10-22, CORE-3 + B1) — {@code monitor_check_schedule} satırı
+     * {@code lease:eval-inbox-drainer} (kalıcı ad) = "bu sahibin kodu gelen kutusunu boşaltır". Tarama lideri her boşaltma
+     * turunda (ve uzun boşaltmada partiler arasında) satırı KOŞULSUZ kendi adına yazar ({@code ManualEvalInbox.advertiseDrainer};
+     * ölmüş önceki liderin satırını beklemez). Takipçi YETENEĞE bakar, zamana değil: ilanın sahibi tarama liderliği kirasının
+     * sahibiyse iletir — paylaşılan zamanlayıcı havuzu dakikalarca meşgul olsa da; ESKİ sürüm lider (20.164.0) ilan yazmaz,
+     * sahipler farklıdır → takipçi 20.164.0 gibi yerel değerlendirir. {@value #EVAL_INBOX_DRAINER_TTL_MS} ms yalnız güvenlik
+     * ağıdır (tarama kirası süresinin çok üstünde): lider o kadar süre hiç boşaltma turu koşmadıysa takipçiler yerel döner.
      */
     static final String EVAL_INBOX_DRAINER = "eval-inbox-drainer";
-    static final long EVAL_INBOX_DRAINER_TTL_MS = 30_000L;
+    static final long EVAL_INBOX_DRAINER_TTL_MS = 10L * 60_000;
     private volatile boolean evalInboxDrainerAdvertised;
 
-    /** Bu pod (lider) boşaltıcı kirasını yazar / yeniler. Hata yutulur (kira tazelenmezse takipçiler yerel değerlendirir). */
+    /** Bu pod (lider) boşaltıcı ilanını yazar / yeniler. Hata yutulur (yazılamazsa takipçiler o sürede yerel değerlendirir). */
     void advertiseEvalInboxDrainer() {
-        try {
-            if (clusterSchedule.acquireLease(EVAL_INBOX_DRAINER, scheduleClock.getAsLong(), EVAL_INBOX_DRAINER_TTL_MS)) {
-                evalInboxDrainerAdvertised = true;
-            }
-        } catch (Exception e) {
-            log.debug("Gelen kutusu boşaltıcı kirası yazılamadı: {}", e.toString());
+        long now = scheduleClock.getAsLong();
+        if (manualEvalInbox.advertiseDrainer(EVAL_INBOX_DRAINER, clusterSchedule.owner(), now, now + EVAL_INBOX_DRAINER_TTL_MS)) {
+            evalInboxDrainerAdvertised = true;
         }
     }
 
@@ -5862,11 +5863,17 @@ public class SchedulerService {
         }
     }
 
-    /** Gelen kutusunu boşaltan (yeni sürüm) bir lider var mı: kira tazeyse evet; okunamazsa hayır (yerel = eski davranış). */
+    /**
+     * Şu anki tarama lideri gelen kutusunu boşaltan (yeni sürüm) kodu mu koşuyor: boşaltıcı ilanının sahibi tarama
+     * liderliği kirasının sahibine eşit ve ilan güvenlik ağı süresinde. İlan yok / sahip farklı (eski lider, ya da yeni
+     * lider ilk turunu henüz koşmadı) / okunamadı → hayır (yerel = eski davranış).
+     */
     boolean evalInboxDrainerAlive() {
         try {
-            com.sitemonitor.service.schedule.ClusterScheduleService.Lease l = clusterSchedule.lease(EVAL_INBOX_DRAINER);
-            return l != null && l.untilMs() >= scheduleClock.getAsLong();
+            com.sitemonitor.service.schedule.ClusterScheduleService.Lease drainer = clusterSchedule.lease(EVAL_INBOX_DRAINER);
+            if (drainer == null || drainer.owner() == null || drainer.untilMs() < scheduleClock.getAsLong()) return false;
+            com.sitemonitor.service.schedule.ClusterScheduleService.Lease leader = clusterSchedule.lease(SWEEP_LEADER);
+            return leader != null && drainer.owner().equals(leader.owner());
         } catch (Exception e) {
             log.debug("Gelen kutusu boşaltıcı kirası okunamadı — elle kontrol yerel: {}", e.toString());
             return false;
@@ -8296,6 +8303,8 @@ public class SchedulerService {
      */
     void requeuePendingDnsChanges() {
         if (monitoringOutageService == null) return;
+        expireStalePendingChanges("dns_records", EscalationService.TYPE_DNS_CHANGED,
+                com.sitemonitor.service.monitoring.ChangeStates.DNS_REQUEUE_MAX_AGE_MS);
         List<Map<String, Object>> rows;
         try {
             // "value" tırnaklı: H2'de anahtar sözcük (NON_KEYWORDS olmadan); PostgreSQL'de aynı kolon.
@@ -8358,6 +8367,57 @@ public class SchedulerService {
         }
     }
 
+    /** Tablo → son süre dolumu geçişinin anı (ms, zamanlama saati); 0 = bu pod'da hiç koşmadı. */
+    private final java.util.concurrent.ConcurrentHashMap<String, Long> lastPendingExpiryPassMs =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * Süre dolumu geçişi (inceleme 2026-10-22, R3): okuma penceresinin DIŞINDA kalmış bekleyen satırlar — alt zaman sınırı
+     * YOK — koşullu EXPIRED olur ve her biri bir {@code notification_logs} izi bırakır (yalnız satırı güncelleyen pod).
+     * Pod başına {@code ChangeStates.EXPIRY_PASS_INTERVAL_MS}'de bir, geçiş başına en çok {@code REQUEUE_BATCH} satır.
+     * {@code dns_records}'ta yalnız bekleyenlerin kısmi dizini geçerliyken koşar (yoksa büyük tablo baştan taranırdı;
+     * pencere içindeki 2–3 saatlik satırları ana okuma yine kapatır); {@code domain_checks} küçük ({@code checked_at} dizini).
+     */
+    void expireStalePendingChanges(String table, String alertType, long maxAgeMs) {
+        if (monitoringOutageService == null) return;
+        long now = scheduleClock.getAsLong();
+        Long last = lastPendingExpiryPassMs.get(table);
+        if (last != null && now - last < com.sitemonitor.service.monitoring.ChangeStates.EXPIRY_PASS_INTERVAL_MS) return;
+        if ("dns_records".equals(table) && !com.sitemonitor.service.monitoring.ChangeStates.dnsPendingIndexUsable(jdbcTemplate)) {
+            log.debug("Bekleyen DNS değişiklikleri süre dolumu geçişi atlandı — kısmi dizin henüz hazır değil");
+            return;
+        }
+        lastPendingExpiryPassMs.put(table, now);
+        List<Map<String, Object>> rows;
+        try {
+            rows = jdbcTemplate.queryForList("SELECT id, monitor_id, checked_at FROM " + table + " WHERE change_state = '"
+                            + com.sitemonitor.service.monitoring.ChangeStates.PENDING + "' AND checked_at < ? "
+                            + "ORDER BY checked_at LIMIT " + com.sitemonitor.service.monitoring.ChangeStates.REQUEUE_BATCH,
+                    isoAgo(maxAgeMs));
+        } catch (Exception e) {
+            log.debug("Süresi dolan bekleyen değişiklikler okunamadı ({}): {}", table, e.toString());
+            return;
+        }
+        if (rows == null) return;
+        for (Map<String, Object> row : rows) {
+            try {
+                long id = ((Number) row.get("id")).longValue();
+                Long monitorId = row.get("monitor_id") instanceof Number n ? n.longValue() : null;
+                String at = row.get("checked_at") == null ? null : String.valueOf(row.get("checked_at"));
+                if (!decidePendingRow(table, id, com.sitemonitor.service.monitoring.ChangeStates.EXPIRED)) continue;
+                String domain = null;
+                if (monitorId != null) {
+                    domain = "dns_records".equals(table)
+                            ? dnsMonitorRepo.findById(monitorId).map(DnsMonitor::getDomain).orElse(null)
+                            : domainMonitorRepo.findById(monitorId).map(DomainMonitor::getDomain).orElse(null);
+                }
+                monitoringOutageService.traceChangeExpired(alertType, domain, monitorId, at, maxAgeMs);
+            } catch (Exception e) {
+                log.warn("Süresi dolan bekleyen değişiklik kapatılamadı ({} {}): {}", table, row.get("id"), e.toString());
+            }
+        }
+    }
+
     /** Bekleyen satıra koşullu karar (yalnız PENDING iken). @return yazıldı mı */
     private boolean decidePendingRow(String table, long id, String state) {
         try {
@@ -8379,6 +8439,8 @@ public class SchedulerService {
     private List<MonitoringOutageService.SweepItem> withPendingDomainChanges(List<DomainMonitor> monitors,
                                                                             List<MonitoringOutageService.SweepItem> fresh) {
         List<MonitoringOutageService.SweepItem> out = new ArrayList<>(fresh);
+        expireStalePendingChanges("domain_checks", EscalationService.TYPE_DOMAINMON_CHANGED,
+                com.sitemonitor.service.monitoring.ChangeStates.DOMAIN_REQUEUE_MAX_AGE_MS);
         List<Map<String, Object>> rows;
         try {
             rows = jdbcTemplate.queryForList("SELECT id, monitor_id, checked_at, change_detail, registrar, days_remaining, "

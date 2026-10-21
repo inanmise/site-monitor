@@ -260,20 +260,22 @@ class DnsChangeDurabilityTest {
         insertPending(5L, "A", "1.1.1.1", "2.2.2.2", fresh);
         insertPending(9L, "A", "3.3.3.3", "4.4.4.4", ISO.format(Instant.now().minusSeconds(150 * 60)));   // 2,5 saat
         String tooOld = ISO.format(Instant.now().minusSeconds(5 * 3600));
-        insertPending(10L, "A", "5.5.5.5", "6.6.6.6", tooOld);   // işlenebilir aralık + payın dışında: okunmaz
+        insertPending(10L, "A", "5.5.5.5", "6.6.6.6", tooOld);   // okuma penceresinin dışında: süre dolumu geçişi kapatır
         insertPending(6L, "MX", "mx1", "mx2", fresh);
         insertPending(8L, "TXT", "t1", "t2", fresh);
         assertThat(a.scheduler().isSweepLeaderNow()).isTrue();
 
         a.scheduler().requeuePendingDnsChanges();
         assertThat(state(9L)).isEqualTo(ChangeStates.EXPIRED);
-        assertThat(state(10L)).as("3 saatlik okuma penceresi dışında — okunmadı").isEqualTo(ChangeStates.PENDING);
+        assertThat(state(10L)).as("pencere dışı eski satır da süre dolumu geçişiyle kapandı (R3)").isEqualTo(ChangeStates.EXPIRED);
         // F6: süresi dolan değişiklik izsiz kaybolmaz — satır başına TEK notification_logs satırı.
         ArgumentCaptor<NotificationLog> trace = ArgumentCaptor.forClass(NotificationLog.class);
-        verify(logs, times(1)).save(trace.capture());
-        assertThat(trace.getValue().getTrigger()).isEqualTo(EscalationService.TYPE_DNS_CHANGED);
-        assertThat(trace.getValue().getEmailStatus()).startsWith("SKIPPED: değişiklik süresi doldu");
-        assertThat(trace.getValue().getAlertEventId()).isZero();
+        verify(logs, times(2)).save(trace.capture());
+        assertThat(trace.getAllValues()).allSatisfy(t -> {
+            assertThat(t.getTrigger()).isEqualTo(EscalationService.TYPE_DNS_CHANGED);
+            assertThat(t.getEmailStatus()).startsWith("SKIPPED: değişiklik süresi doldu");
+            assertThat(t.getAlertEventId()).isZero();
+        });
         assertThat(state(6L)).isEqualTo(ChangeStates.SUPPRESSED);
         assertThat(state(8L)).isEqualTo(ChangeStates.SUPPRESSED);
         assertThat(state(5L)).isEqualTo(ChangeStates.PENDING);
@@ -281,7 +283,7 @@ class DnsChangeDurabilityTest {
 
         a.scheduler().requeuePendingDnsChanges();                              // zincir sürüyor → ikinci zincir yok
         assertThat(ex.pending()).isEqualTo(1);
-        verify(logs, times(1)).save(any());                                    // EXPIRED satırı ikinci iz üretmez
+        verify(logs, times(2)).save(any());                                    // EXPIRED satırı ikinci iz üretmez
         ex.drain();
         assertThat(state(5L)).isEqualTo(ChangeStates.ALARMED);
         assertThat(dnsChangedAlarms()).isEqualTo(1);
@@ -299,6 +301,35 @@ class DnsChangeDurabilityTest {
         s.handleDnsSweep(List.of(), List.of(), List.of(change(5L, "A", "1.1.1.1", "2.2.2.2", at)), List.of(), List.of());
         verify(escalation, never()).processConfirmedOutage(anyString(), anyString(), anyString(), any());
         assertThat(state(5L)).isEqualTo(ChangeStates.PENDING);
+    }
+
+    @Test
+    @DisplayName("R3: süre dolumu geçişi alt sınırsızdır (günler önceki satır da kapanır), geçiş başına 200 satır, pod başına 15 dk'da bir")
+    void expiryPass_noLowerBound_cappedAndThrottled() {
+        MonitoringMultiPodKit.PodWithMos a = MonitoringMultiPodKit.podWithMos(mp, 1);
+        NotificationLogRepository logs = mock(NotificationLogRepository.class);
+        ReflectionTestUtils.setField(a.mos(), "notificationLogRepo", logs);
+        for (int i = 0; i < 205; i++) {
+            insertPending(100L + i, "A", "1.1.1.1", "2.2.2.2", ISO.format(Instant.now().minusSeconds(3 * 86_400L + i)));
+        }
+        assertThat(a.scheduler().isSweepLeaderNow()).isTrue();
+
+        a.scheduler().requeuePendingDnsChanges();
+        assertThat(pendingCount()).as("geçiş başına en çok 200").isEqualTo(5);
+        a.scheduler().requeuePendingDnsChanges();
+        assertThat(pendingCount()).as("15 dk dolmadan ikinci geçiş yok").isEqualTo(5);
+
+        mp.advance(com.sitemonitor.service.monitoring.ChangeStates.EXPIRY_PASS_INTERVAL_MS + 1_000);
+        a.scheduler().requeuePendingDnsChanges();
+        assertThat(pendingCount()).isZero();
+        verify(logs, times(205)).save(any());                                   // satır başına TEK iz
+        assertThat(dnsChangedAlarms()).isZero();
+    }
+
+    int pendingCount() {
+        Integer n = mp.jdbc().queryForObject("SELECT count(*) FROM dns_records WHERE change_state = ?", Integer.class,
+                ChangeStates.PENDING);
+        return n == null ? 0 : n;
     }
 
     // ── İnceleme 2026-10-22: durum okunamazsa "şimdi karar yok, sonra dene"; NULL / elle satır eski davranış ──────────

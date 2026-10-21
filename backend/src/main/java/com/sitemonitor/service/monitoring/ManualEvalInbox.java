@@ -206,6 +206,30 @@ public class ManualEvalInbox {
         }
     }
 
+    private static final String SQL_ADVERTISE_UPDATE = "UPDATE " + com.sitemonitor.service.schedule.ClusterScheduleService.TABLE
+            + " SET next_due_at = ?, claimed_by = ?, claimed_at = ? WHERE monitor_key = ?";
+    private static final String SQL_ADVERTISE_INSERT = "INSERT INTO " + com.sitemonitor.service.schedule.ClusterScheduleService.TABLE
+            + "(monitor_key, next_due_at, claimed_by, claimed_at) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING";
+
+    /**
+     * Boşaltıcı ilanı (inceleme 2026-10-22, B1): {@code monitor_check_schedule} satırı {@code lease:<name>} = "bu sahibin kodu
+     * gelen kutusunu boşaltır". Tarama lideri KOŞULSUZ yazar (önceki liderin — ölmüş olsa da — satırını beklemeden devralır);
+     * takipçi satırın sahibini tarama liderliği kirasının sahibiyle karşılaştırır. Kira semantiği yok: tek yazan liderdir.
+     *
+     * @return yazıldı mı (hata yutulur — takipçiler o sürede yerel değerlendirir)
+     */
+    public boolean advertiseDrainer(String name, String owner, long nowMs, long untilMs) {
+        String key = com.sitemonitor.service.schedule.ClusterScheduleService.LEASE_PREFIX + name;
+        try {
+            if (jdbc.update(SQL_ADVERTISE_UPDATE, untilMs, owner, nowMs, key) == 1) return true;
+            return jdbc.update(SQL_ADVERTISE_INSERT, key, untilMs, owner, nowMs) == 1;
+        } catch (RuntimeException e) {
+            warn("Gelen kutusu boşaltıcı ilanı yazılamadı (takipçiler bu sürede elle kontrolü yerel değerlendirir): {}",
+                    e.toString());
+            return false;
+        }
+    }
+
     /** Satırın ham sonucu (değiştirilebilir harita). */
     public static Map<String, Object> parse(String json) {
         if (json == null || json.isBlank()) return new LinkedHashMap<>();
