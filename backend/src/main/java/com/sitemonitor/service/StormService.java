@@ -482,9 +482,9 @@ public class StormService {
     @Scheduled(fixedDelayString = "${site.monitor.storm.sweep-ms:30000}", initialDelay = 45000)
     public void lifecycleSweep() {
         if (shuttingDown()) return;   // kapanış (inceleme R-2): yeni fırtına işi yok — yarıda kalan kapanışı başka pod bitirir
-        // Ucuz ön bakış: aktif fırtına yoksa kilit tablosuna hiç yazılmaz (her pod 30 sn'de bir).
+        // Ucuz ön bakış: aktif fırtına da yarıda kalmış kapanış da yoksa kilit tablosuna hiç yazılmaz (her pod 30 sn'de bir).
         try {
-            if (stormRepo.findByResolvedFalse().isEmpty()) return;
+            if (stormRepo.findByResolvedFalse().isEmpty() && closingIds().isEmpty()) return;
         } catch (Exception e) {
             return;   // tablo henüz yok / DB erişilemez — sessiz
         }
@@ -499,7 +499,12 @@ public class StormService {
             // gidiyordu. Kapanışın kendisi de koşullu (claimClose) — bayat varlık ikinci kez kapatamaz.
             List<AlertStorm> active;
             try {
-                active = stormRepo.findByResolvedFalse();
+                // Yarıda kalmış kapanışlar (resolved=true, close_state=CLOSING) önce — sonra açık fırtınalar.
+                active = new ArrayList<>();
+                for (Long id : closingIds()) stormRepo.findById(id).ifPresent(active::add);
+                for (AlertStorm s : stormRepo.findByResolvedFalse()) {
+                    if (s != null && active.stream().noneMatch(x -> java.util.Objects.equals(x.getId(), s.getId()))) active.add(s);
+                }
             } catch (Exception e) {
                 return;
             }
@@ -644,7 +649,14 @@ public class StormService {
         int announced = 0, unannounced = 0, failures = 0;
         for (AlertEvent e : stillDown) {
             try {
-                if (announcedInStorm(e, announcedAt)) {
+                if (notifiedAfter(e, closingAt)) {
+                    // Kapanış SÜRERKEN bireysel bildirildi (fırtına üyeler için kapalı): bağ kopar, KENDİ damgası kalır —
+                    // damgayı sıfırlamak ek INITIAL, fırtına postasına geri sarmak erken tekrar demekti (ikinci inceleme D1).
+                    if (alertEventRepo.releaseFromStormAsNotified(e.getId(), storm.getId(), e.getLastReAlertAt()) == 1) {
+                        announced++;
+                        leave(leaves, storm.getId(), e.getId(), closingAt, AlertStormMember.LEAVE_NOTIFIED);
+                    }
+                } else if (announcedInStorm(e, announcedAt)) {
                     if (alertEventRepo.releaseFromStormAsNotified(e.getId(), storm.getId(), announcedAt) == 1) {
                         announced++;
                         leave(leaves, storm.getId(), e.getId(), closingAt, AlertStormMember.LEAVE_NOTIFIED);
@@ -674,6 +686,20 @@ public class StormService {
         log.info("🌩✅ Storm #{} çözüldü ({}) — {} kurtuldu, {} hâlâ down ({} duyurulmuş → bildirildi sayıldı, {} duyurulmamış → bireysel ilk bildirim)",
                 storm.getId(), run.reason(), recovered.size(), stillDown.size(), announced, unannounced);
         return new CloseWork(recovered, stillDown, failures);
+    }
+
+    /**
+     * Üye kapanış SAHİPLENMESİNDEN SONRA bireysel bildirildi mi (kendi {@code lastReAlertAt}'i kapanış anından yeni) — fırtına
+     * üyeler için kapalıyken tırmanma / tekrar bireysel gider; üye adımı o damgayı korur (ikinci inceleme D1).
+     */
+    static boolean notifiedAfter(AlertEvent e, String closingAt) {
+        String own = e == null ? null : e.getLastReAlertAt();
+        return own != null && closingAt != null && own.compareTo(closingAt) > 0;
+    }
+
+    /** "Bildirildi" bırakmasının damgası: kapanış sürerken bireysel bildirilen üyenin kendi damgası, yoksa fırtına postası. */
+    static String stampFor(AlertEvent e, String closingAt, String stormNotifiedAt) {
+        return notifiedAfter(e, closingAt) ? e.getLastReAlertAt() : stormNotifiedAt;
     }
 
     /** Üye kapanış anına kadar mı çözüldü (damgasız çözüm de sayılır — D-b7a kuralıyla aynı). */
@@ -773,6 +799,11 @@ public class StormService {
         int failures = 0;
         for (AlertEvent e : stillDown) {
             try {
+                if (notifiedAfter(e, closingAt)) {   // kapanış sürerken bireysel bildirildi: damgası korunur (ikinci inceleme D1)
+                    alertEventRepo.releaseFromStormAsNotified(e.getId(), storm.getId(), e.getLastReAlertAt());
+                    leave(leaves, storm.getId(), e.getId(), closingAt, AlertStormMember.LEAVE_NOTIFIED);
+                    continue;
+                }
                 alertEventRepo.unlinkFromStorm(e.getId(), storm.getId());   // koşullu geri-bağlama (M6, yalnız BU fırtınadan); sonraki sweep bireysel re-alert
                 leave(leaves, storm.getId(), e.getId(), closingAt, AlertStormMember.LEAVE_UNLINKED);
             } catch (Exception ex) {
@@ -876,7 +907,8 @@ public class StormService {
                         moved++;
                         leave(leaves, legacy.getId(), m.getId(), movedAt, AlertStormMember.LEAVE_MOVED);
                     } else {
-                        alertEventRepo.releaseFromStormAsNotified(m.getId(), legacy.getId(), notifiedAt); released++;
+                        alertEventRepo.releaseFromStormAsNotified(m.getId(), legacy.getId(), stampFor(m, run.closingAt(), notifiedAt));
+                        released++;
                         leave(leaves, legacy.getId(), m.getId(), movedAt, AlertStormMember.LEAVE_RELEASED);
                     }
                 } catch (Exception ex) {
@@ -888,7 +920,8 @@ public class StormService {
         }
         for (AlertEvent m : ownerless) {
             try {
-                alertEventRepo.releaseFromStormAsNotified(m.getId(), legacy.getId(), notifiedAt); released++;
+                alertEventRepo.releaseFromStormAsNotified(m.getId(), legacy.getId(), stampFor(m, run.closingAt(), notifiedAt));
+                released++;
                 leave(leaves, legacy.getId(), m.getId(), now(), AlertStormMember.LEAVE_RELEASED);
             } catch (Exception ex) {
                 failures++;
@@ -1276,16 +1309,23 @@ public class StormService {
      * bağlarını ve kurtarma postasını SONRA yapıyordu: arada bir DB hatası ya da pod ölümü olunca kurtarma (posta / webhook /
      * 7-24 / push) kayboluyor, duyurulmamış hâlâ-down üyeler kapanmış fırtınaya bağlı kalıp ilk bildirimlerini ~24 sa geç
      * alıyordu — iz bırakmadan. Şimdi:
-     *   1. claimClose: close_state=CLOSING (+ sahiplenme anı / sahip / deneme 1, recovery_state=PENDING, resolved_at = kapanış
-     *      anı); resolved HÂLÂ false → yarıda kalırsa yaşam döngüsü onu bulur. CLOSING fırtına üyeler için kapalıdır
-     *      (openForMembers): yeni üye almaz, kapanış anından sonra çözülen üyenin bireysel çözümünü bastırmaz.
+     *   1. claimClose: resolved=true + close_state=CLOSING (+ sahiplenme anı / sahip / deneme 1, recovery_state=PENDING,
+     *      resolved_at = kapanış anı). resolved=true HEMEN (2026-10-21 ikinci inceleme D1/D2): takımın kapsamı
+     *      (ux_alert_storms_active, resolved=false) sahiplenme anında boşalır — takılı bir kapanış yeni fırtınayı ~20-25 dk
+     *      engellemez; eski sürüm pod'ları (resolved'a bakar) kapanan fırtınayı açık sanıp üyenin bireysel çözümünü
+     *      bastırmaz ya da kendi yoluyla ikinci kez kapatmaz. Yarıda kalan kapanışı yaşam döngüsü close_state='CLOSING' ile
+     *      bulur. CLOSING fırtına üyeler için kapalıdır (openForMembers): yeni üye almaz, kapanış anından sonra çözülen üyenin
+     *      bireysel çözümünü bastırmaz; kapanış SÜRERKEN bireysel bildirilen üyenin damgasına üye adımı dokunmaz
+     *      (notifiedAfter — ek INITIAL / geri sarma yok).
      *   2. Üye adımları (bırak / bağı kopar / taşı) — her biri kendi try/catch'inde, koşullu UPDATE (tekrarı zararsız).
      *   3. Kurtarma TEK kez: recovery_state PENDING → SENDING (koşullu) → gönder → SENT. Gönderim sırasında ölen pod'un
      *      SENDING'i bitiren pod'ca UNKNOWN olur ve izi notification_logs'a yazılır — yeniden GÖNDERİLMEZ (çift posta olmasın).
-     *   4. En son resolved=true, close_state=DONE. Üye adımı düştüyse kapanış CLOSING kalır; CLOSE_STALE_MS sonra herhangi bir
+     *   4. En son close_state=DONE. Üye adımı düştüyse kapanış CLOSING kalır; CLOSE_STALE_MS sonra herhangi bir
      *      pod sahiplenmeyi koşullu yeniler (close_claimed_at CAS) ve adımları tekrarlar; CLOSE_MAX_ATTEMPTS denemede bitmezse
      *      kapanış yine DONE yazılır ve bağı koparılamayan her üye için notification_logs izi bırakılır.
-     * Sütunlar yoksa (eski şema) eski tek aşamalı sahiplenmeye düşülür (SQL_RESOLVE_CLAIM).
+     * Eski tek aşamalı yedek yol KALDIRILDI (ikinci inceleme D5): AlertStorm close_* sütunlarını eşler — sütunlar yoksa
+     * fırtına okumaları zaten düşer (yaşam döngüsü sessizce atlar), sahiplenmeye hiç gelinmez; ddl-auto ve
+     * StormCloseSchemaPatch sütunları ekler.
      */
     static final String CLOSE_CLOSING = "CLOSING";
     static final String CLOSE_DONE = "DONE";
@@ -1299,14 +1339,18 @@ public class StormService {
     /** Bu kadar denemede bitmeyen kapanış izle birlikte DONE yazılır (sonsuz tekrar yok). */
     static final int CLOSE_MAX_ATTEMPTS = 5;
 
-    static final String SQL_CLOSE_CLAIM = "UPDATE alert_storms SET close_state = 'CLOSING', close_claimed_at = ?, close_owner = ?, "
-            + "close_attempts = 1, recovery_state = 'PENDING', resolved_at = ?, resolve_reason = ? "
+    static final String SQL_CLOSE_CLAIM = "UPDATE alert_storms SET resolved = true, close_state = 'CLOSING', close_claimed_at = ?, "
+            + "close_owner = ?, close_attempts = 1, recovery_state = 'PENDING', resolved_at = ?, resolve_reason = ? "
             + "WHERE id = ? AND resolved = false AND close_state IS NULL";
     static final String SQL_CLOSE_RECLAIM = "UPDATE alert_storms SET close_claimed_at = ?, close_owner = ?, "
             + "close_attempts = COALESCE(close_attempts, 1) + 1 "
-            + "WHERE id = ? AND resolved = false AND close_state = 'CLOSING' AND COALESCE(close_claimed_at, '') = ?";
+            + "WHERE id = ? AND close_state = 'CLOSING' AND COALESCE(close_claimed_at, '') = ?";
+    /** Bitiş — {@code resolved = true} yine yazılır: bu sürümden önceki CLOSING satırı (resolved=false) da kapansın. */
     static final String SQL_CLOSE_DONE =
-            "UPDATE alert_storms SET resolved = true, close_state = 'DONE' WHERE id = ? AND resolved = false AND close_state = 'CLOSING'";
+            "UPDATE alert_storms SET resolved = true, close_state = 'DONE' WHERE id = ? AND close_state = 'CLOSING'";
+    /** Yarıda kalmış kapanışlar (yaşam döngüsü bitirir) — küçük tablo, sınırlı. */
+    static final String SQL_CLOSING_IDS =
+            "SELECT id FROM alert_storms WHERE close_state = 'CLOSING' ORDER BY id LIMIT 50";
     static final String SQL_RECOVERY_CLAIM =
             "UPDATE alert_storms SET recovery_state = 'SENDING' WHERE id = ? AND recovery_state = 'PENDING'";
     static final String SQL_RECOVERY_FINISH =
@@ -1316,21 +1360,15 @@ public class StormService {
     static final String SQL_RECOVERY_GIVE_UP =
             "UPDATE alert_storms SET recovery_state = 'UNKNOWN' WHERE id = ? AND recovery_state = 'PENDING'";
 
-    /**
-     * Eski tek aşamalı sahiplenme (2026-10-21 ilk sürüm) — YALNIZ kapanış sütunları henüz yokken (eski şema, ilk açılış):
-     * fırtına yalnız hâlâ AÇIKSA kapatılır, tek yazar kazanır.
-     */
-    static final String SQL_RESOLVE_CLAIM =
-            "UPDATE alert_storms SET resolved = true, resolved_at = ?, resolve_reason = ? WHERE id = ? AND resolved = false";
     /** Kapanışta üye sayacı + tepe hedef (eski tam varlık kaydının yazdığı iki alan) — hedefli, kapanışı sahiplenen yazar. */
     static final String SQL_RESOLVE_STATS =
             "UPDATE alert_storms SET member_count = ?, peak_targets = GREATEST(COALESCE(peak_targets, 0), ?) WHERE id = ?";
 
     /**
      * Bir kapanış turu. {@code closingAt} = kapanış anı (ilk sahiplenmede yazılır, bitiren tur aynısını kullanır — kurtarma
-     * yalnız bu ana kadar çözülenleri sayar); {@code tracked=false} = eski tek aşamalı yol (sütun yok).
+     * yalnız bu ana kadar çözülenleri sayar).
      */
-    record CloseRun(AlertStorm storm, String closingAt, int attempt, boolean tracked, String reason) {}
+    record CloseRun(AlertStorm storm, String closingAt, int attempt, String reason) {}
 
     /** Üye adımının sonucu: kurtarma postasının kurtulan / hâlâ-down listeleri ve düşen üye adımı sayısı. */
     record CloseWork(List<AlertEvent> recovered, List<AlertEvent> stillDown, int failures) {}
@@ -1341,8 +1379,8 @@ public class StormService {
     }
 
     /**
-     * Kapanışı sahiplenir (CLOSING). {@code null} = başka pod / tur sahiplendi ya da yazılamadı → hiçbir yan etki yok
-     * (yazılamadıysa sonraki tur dener). Sütunlar yoksa eski tek aşamalı sahiplenme.
+     * Kapanışı sahiplenir (resolved=true + CLOSING). {@code null} = başka pod / tur sahiplendi ya da yazılamadı → hiçbir yan
+     * etki yok (yazılamadıysa sonraki tur dener).
      */
     CloseRun claimClose(AlertStorm storm, String reasonCode, String reason) {
         String closingAt = now();
@@ -1350,9 +1388,6 @@ public class StormService {
         int rows;
         try {
             rows = jdbcTemplate.update(SQL_CLOSE_CLAIM, closingAt, owner, closingAt, reasonCode, storm.getId());
-        } catch (org.springframework.jdbc.BadSqlGrammarException e) {
-            log.warn("Storm #{}: iki aşamalı kapanış sütunları yok (eski şema) — tek aşamalı kapanış: {}", storm.getId(), e.getMessage());
-            return claimResolution(storm, closingAt, reasonCode) ? new CloseRun(storm, closingAt, 1, false, reason) : null;
         } catch (Exception e) {
             log.warn("Storm #{} kapanışı sahiplenilemedi — bu tur kapatmıyor (sonraki tur yeniden dener): {}",
                     storm.getId(), e.getMessage());
@@ -1362,6 +1397,7 @@ public class StormService {
             log.info("Storm #{} zaten kapatılmış ya da kapanıyor (başka pod / tur) — kapanış bu turdan yürütülmüyor", storm.getId());
             return null;
         }
+        storm.setResolved(true);
         storm.setCloseState(CLOSE_CLOSING);
         storm.setCloseClaimedAt(closingAt);
         storm.setCloseOwner(owner);
@@ -1369,27 +1405,7 @@ public class StormService {
         storm.setRecoveryState(RECOVERY_PENDING);
         storm.setResolvedAt(closingAt);
         storm.setResolveReason(reasonCode);
-        return new CloseRun(storm, closingAt, 1, true, reason);
-    }
-
-    /** Eski tek aşamalı sahiplenme ({@link #SQL_RESOLVE_CLAIM}); bellekteki varlık da kapalı işaretlenir. */
-    boolean claimResolution(AlertStorm storm, String closingAt, String reasonCode) {
-        int rows;
-        try {
-            rows = jdbcTemplate.update(SQL_RESOLVE_CLAIM, closingAt, reasonCode, storm.getId());
-        } catch (Exception e) {
-            log.warn("Storm #{} kapanışı sahiplenilemedi — bu tur kapatmıyor (sonraki tur yeniden dener): {}",
-                    storm.getId(), e.getMessage());
-            return false;
-        }
-        if (rows != 1) {
-            log.info("Storm #{} zaten kapatılmış (başka pod / tur) — kapanış bildirimleri bu turdan gönderilmiyor", storm.getId());
-            return false;
-        }
-        storm.setResolved(true);
-        storm.setResolvedAt(closingAt);
-        storm.setResolveReason(reasonCode);
-        return true;
+        return new CloseRun(storm, closingAt, 1, reason);
     }
 
     /**
@@ -1405,12 +1421,8 @@ public class StormService {
                     : RESOLVE_DISABLED.equals(code) ? disbandClose(run)
                     : resolveClose(run);
         } catch (RuntimeException e) {
-            log.warn("Storm #{} kapanışı yarıda kaldı (deneme {}): {}{}", storm.getId(), run.attempt(), e.getMessage(),
-                    run.tracked() ? " — fırtına CLOSING kaldı, sonraki tur bitirir" : "");
-        }
-        if (!run.tracked()) {
-            if (work != null && !work.recovered().isEmpty()) sendStormRecovery(storm, work.recovered(), work.stillDown());
-            return;
+            log.warn("Storm #{} kapanışı yarıda kaldı (deneme {}): {} — fırtına CLOSING kaldı, sonraki tur bitirir",
+                    storm.getId(), run.attempt(), e.getMessage());
         }
         boolean recoveryOk = work != null && deliverRecovery(run, work);
         boolean complete = work != null && work.failures() == 0 && recoveryOk;
@@ -1508,7 +1520,7 @@ public class StormService {
         String closingAt = storm.getResolvedAt() != null ? storm.getResolvedAt() : at;
         log.warn("Storm #{} kapanışı yarıda kalmış (sahibi {}, {}) — bu tur tamamlıyor (deneme {})", storm.getId(),
                 previousOwner, claimedAt.isEmpty() ? "-" : claimedAt, attempt);
-        runClose(new CloseRun(storm, closingAt, attempt, true, "yarıda kalan kapanış"));
+        runClose(new CloseRun(storm, closingAt, attempt, "yarıda kalan kapanış"));
         return true;
     }
 
@@ -2442,6 +2454,12 @@ public class StormService {
         } catch (Exception e) {
             log.debug("Storm kilidi bırakılamadı: {}", e.getMessage());
         }
+    }
+
+    /** Yarıda kalmış kapanışların kimlikleri ({@link #SQL_CLOSING_IDS}); okunamazsa istisna (çağıran sessizce atlar). */
+    List<Long> closingIds() {
+        List<Long> ids = jdbcTemplate.queryForList(SQL_CLOSING_IDS, Long.class);
+        return ids == null ? List.of() : ids;
     }
 
     /** Kilit tazeleme — yalnız hâlâ BU pod'unsa (2026-10-21, çok pod — MP-04). */

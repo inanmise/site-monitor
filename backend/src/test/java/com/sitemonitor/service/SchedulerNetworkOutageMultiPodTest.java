@@ -42,7 +42,8 @@ class SchedulerNetworkOutageMultiPodTest {
                 + "network_errors INTEGER, total_checks INTEGER, error_rate DOUBLE PRECISION, threshold DOUBLE PRECISION, "
                 + "duration_ms BIGINT, status VARCHAR(16) NOT NULL, source VARCHAR(32), "
                 + "alert_mail_status VARCHAR(255), alert_mail_claimed_ms BIGINT, alert_mail_attempts INTEGER, "
-                + "resolved_mail_status VARCHAR(255), resolved_mail_claimed_ms BIGINT, resolved_mail_attempts INTEGER)");
+                + "resolved_mail_status VARCHAR(255), resolved_mail_claimed_ms BIGINT, resolved_mail_attempts INTEGER, "
+                + "last_confirmed_at VARCHAR(30))");
         checker = mp.mock(CertificateCheckerService.class);
         escalation = mp.mock(EscalationService.class);
         email = mp.mock(EmailNotificationService.class);

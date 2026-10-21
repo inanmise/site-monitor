@@ -326,18 +326,42 @@ class CertNetworkOutageMultiPodTest {
     }
 
     @Test
-    @DisplayName("421 kuyruğu ama günlük satırı YAZILAMADI (inceleme F8): kuyruğun sonucu hiçbir yerde görünmezdi → kesin sayılmaz, RETRY; sonraki tur yeniden dener")
-    void queuedRetryWithoutLogRow_isRetried() {
+    @DisplayName("421 kuyruğu ama günlük satırı YAZILAMADI (ikinci inceleme N6): posta kararı yine kesin — kuyruk zinciri sürüyor, posta YENİDEN GÖNDERİLMEZ; iz sonraki turda yazılır")
+    void queuedRetryWithoutLogRow_isFinal_traceRetried() {
         alertResults.add("QUEUED_RETRY: 421 too many connections");
         logFails.set(true);
         suspectedRun(a);
-        assertThat(onlyRow()).containsEntry("alert_mail_status", "RETRY").containsEntry("alert_mail_attempts", 1);
+        assertThat(onlyRow().get("alert_mail_status").toString()).startsWith("QUEUED_RETRY");
+        assertThat(logs).isEmpty();
+        assertThat(a.pendingTraces).hasSize(1);
+
+        mp.advance(300_000);
+        suspectedRun(b);
+        assertThat(alertMails.get()).as("ikinci kopya yok").isEqualTo(1);
 
         logFails.set(false);
         mp.advance(300_000);
-        suspectedRun(b);
-        assertThat(alertMails.get()).isEqualTo(2);
-        assertThat(onlyRow()).containsEntry("alert_mail_status", "SENT");
+        suspectedRun(a);   // A'nın sonraki turu bekleyen izi yazar
+        assertThat(a.pendingTraces).isEmpty();
+        assertThat(traces(CertNetworkOutageService.ALERT_SUBJECT, "QUEUED_RETRY")).isEqualTo(1);
+        assertThat(alertMails.get()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("Yazılamayan iz kuyruğu tavanlı: veritabanı yazmadıkça izler bekler, tavanda en eskisi düşer (sonsuz büyümez)")
+    void pendingTracesAreCapped() {
+        logFails.set(true);
+        for (int i = 0; i < CertNetworkOutageService.PENDING_TRACE_MAX + 5; i++) {
+            a.trace(CertNetworkOutageService.ALERT_SUBJECT, "SENT", ADMIN, i);
+        }
+        assertThat(a.pendingTraces).hasSize(CertNetworkOutageService.PENDING_TRACE_MAX);
+        assertThat(a.pendingTraces.peekFirst().eventId()).isEqualTo(5L);
+        a.flushPendingTraces();
+        assertThat(a.pendingTraces).as("hâlâ yazmıyor — kuyruk aynı").hasSize(CertNetworkOutageService.PENDING_TRACE_MAX);
+        logFails.set(false);
+        a.flushPendingTraces();
+        assertThat(a.pendingTraces).isEmpty();
+        assertThat(logs).hasSize(CertNetworkOutageService.PENDING_TRACE_MAX);
     }
 
     @Test
@@ -394,7 +418,7 @@ class CertNetworkOutageMultiPodTest {
     }
 
     @Test
-    @DisplayName("Güvenlik süresi (inceleme S-2): 24 saatten eski açık kesintiyi küçük ama şüphesiz tur kapatır — WARN + iz, çözüm postası gider")
+    @DisplayName("Güvenlik süresi (inceleme S-2): 24 saattir hiçbir turca doğrulanmamış açık kesintiyi küçük ama şüphesiz tur kapatır — WARN + iz, çözüm postası gider")
     void maxAgeResolvesStuckOutage() {
         suspectedRun(a);
         mp.advance(CertNetworkOutageService.MAX_OUTAGE_AGE_MS - 60_000);
@@ -453,5 +477,54 @@ class CertNetworkOutageMultiPodTest {
     private long traces(String subject, String statusPart) {
         return logs.stream().filter(l -> subject.equals(l.getSubject()))
                 .filter(l -> l.getEmailStatus() != null && l.getEmailStatus().contains(statusPart)).count();
+    }
+
+    @Test
+    @DisplayName("İki günlük GERÇEK kesinti (ikinci inceleme N5): saatlik tam tarama her saat doğrular, arada 5 dk'lık bayat taramalar (birkaç sağlıklı alan adı) kesintiyi KAPATMAZ — TEK açılış, sonda TEK çözüm postası")
+    void twoDayOutage_staleSweepsNeverResolve() {
+        suspectedRun(a);
+        for (int hour = 0; hour < 48; hour++) {
+            for (int tick = 0; tick < 11; tick++) {
+                mp.advance(300_000);
+                CertNetworkOutageService pod = tick % 2 == 0 ? a : b;
+                assertThat(pod.onRun(0, 2, 0.0, false, 3, 0.5)).as("saat %d: açık kesinti sürüyor", hour).isFalse();
+            }
+            mp.advance(300_000);
+            suspectedRun(hour % 2 == 0 ? b : a);   // saatlik tam tarama hâlâ kesinti görüyor
+        }
+        assertThat(ongoing()).isEqualTo(1);
+        assertThat(alertMails.get()).as("tek açılış postası").isEqualTo(1);
+        assertThat(resolvedMails.get()).isZero();
+
+        mp.advance(3_600_000);
+        assertThat(healthyRun(a)).isTrue();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM network_outage_events", Integer.class)).as("tek olay").isEqualTo(1);
+        assertThat(alertMails.get()).isEqualTo(1);
+        assertThat(resolvedMails.get()).as("tek çözüm postası").isEqualTo(1);
+        assertThat(traces(CertNetworkOutageService.RESOLVED_SUBJECT, "güvenlik süresiyle")).isZero();
+    }
+
+    @Test
+    @DisplayName("Kesinti tespitte ve her şüpheli turda doğrulanır (last_confirmed_at); güvenlik süresi tespitten değil son doğrulamadan sayılır")
+    void lastConfirmedIsRefreshedBySuspectedRuns() {
+        suspectedRun(a);
+        String detected = (String) onlyRow().get("detected_at");
+        assertThat(onlyRow()).containsEntry("last_confirmed_at", detected);
+        mp.advance(CertNetworkOutageService.MAX_OUTAGE_AGE_MS - 60_000);
+        suspectedRun(b);
+        mp.advance(120_000);   // tespitten 24 sa+ geçti ama son doğrulama 2 dk önce
+        assertThat(b.onRun(0, 1, 0.0, false, 3, 0.5)).isFalse();
+        assertThat(ongoing()).isEqualTo(1);
+        assertThat(a.sinceLastConfirmedMs(mp.now())).isBetween(120_000L, 121_000L);
+    }
+
+    @Test
+    @DisplayName("Kendi sonucu kesinti düzeyinde olan küçük tur (oran ≥ eşik) güvenlik süresi dolsa da kesintiyi KAPATMAZ")
+    void failingSmallRunNeverResolvesByAge() {
+        suspectedRun(a);
+        mp.advance(CertNetworkOutageService.MAX_OUTAGE_AGE_MS + 60_000);
+        assertThat(b.onRun(2, 2, 1.0, false, 3, 0.5)).isFalse();
+        assertThat(ongoing()).isEqualTo(1);
+        assertThat(resolvedMails.get()).isZero();
     }
 }

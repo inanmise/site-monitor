@@ -263,4 +263,57 @@ class UserPushOutboxLeaseTest {
         pod("podB", 1).drainOutbox();
         assertThat(posts.values().stream().mapToInt(AtomicInteger::get).sum()).isEqualTo(1);
     }
+
+    @Test
+    @DisplayName("Gönderilecek batch'in kirası en az tutuş süresi kadar (ikinci inceleme D3): POST başarılı, sonuç da İLK tutuş da yazılamadı (havuz tükendi) — satır yine ~10 dk kimseye verilmez, başka pod ikinci kez GÖNDERMEZ")
+    void inFlightLeaseCoversTheHold_whenImmediateHoldFails() throws Exception {
+        rows(1);
+        gatewayDelayMs = 0;
+        UserPushDeliveryRepository failing = mock(UserPushDeliveryRepository.class,
+                org.mockito.AdditionalAnswers.delegatesTo(repo));
+        org.springframework.dao.DataAccessResourceFailureException down =
+                new org.springframework.dao.DataAccessResourceFailureException("havuz tükendi");
+        doThrow(down).when(failing).saveAll(any());
+        doThrow(down).when(failing).updateOutcome(any(), any(), any(), any(), any(), any(), any());
+        doAnswer(org.mockito.AdditionalAnswers.delegatesTo(repo)).doThrow(down)
+                .when(failing).renewLease(any(), any(), any());   // batch tazelemesi gerçek, tutuş yazımı düşer
+        UserPushService a = pod("podA", 0, failing);   // gerçek (hesaplanan) kira süreleri
+
+        a.drainOutbox();
+
+        assertThat(posts.values().stream().mapToInt(AtomicInteger::get).sum()).isEqualTo(1);
+        assertThat(a.inFlightLeaseSec()).isGreaterThanOrEqualTo(UserPushService.SENT_UNRECORDED_HOLD_SEC);
+        String lease = jdbc.queryForObject("SELECT next_attempt_at FROM user_push_deliveries", String.class);
+        assertThat(lease).as("tur kirası (≥ 2 dk) değil, tutuş süresi kadar")
+                .isGreaterThan(ISO.format(Instant.now().plusSeconds(UserPushService.SENT_UNRECORDED_HOLD_SEC - 60)));
+        UserPushService b = pod("podB", 0);
+        b.drainOutbox();
+        assertThat(posts.values().stream().mapToInt(AtomicInteger::get).sum()).as("başka pod ikinci kez GÖNDERMEDİ").isEqualTo(1);
+        assertThat(a.sentUnrecorded).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("24 sa sonra düşen 'gönderildi, sonucu yazılamadı' kaydı SESSİZ değil: ERROR satırı (kimlik + gönderim anı) bırakır")
+    void droppedSentUnrecordedIsLogged() {
+        UserPushService a = pod("podA", 0);
+        long old = System.currentTimeMillis() - UserPushService.SENT_UNRECORDED_TTL_MS - 1_000;
+        a.sentUnrecorded.put(77L, new UserPushService.SentUnrecorded(1, 200, "2026-10-20T10:00:00", old, "lease"));
+        a.sentUnrecorded.put(78L, new UserPushService.SentUnrecorded(1, 200, "2026-10-21T10:00:00", System.currentTimeMillis(), "lease"));
+        ch.qos.logback.classic.Logger logger =
+                (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(UserPushService.class);
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender =
+                new ch.qos.logback.core.read.ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            assertThat(a.pruneSentUnrecorded(System.currentTimeMillis())).isEqualTo(1);
+        } finally {
+            logger.detachAppender(appender);
+        }
+        assertThat(a.sentUnrecorded).containsOnlyKeys(78L);
+        assertThat(appender.list).anySatisfy(e -> {
+            assertThat(e.getLevel()).isEqualTo(ch.qos.logback.classic.Level.ERROR);
+            assertThat(e.getFormattedMessage()).contains("#77").contains("2026-10-20T10:00:00").contains("YENİDEN GÖNDERİLEBİLİR");
+        });
+    }
 }

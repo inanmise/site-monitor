@@ -83,9 +83,12 @@ public class CertNetworkOutageService {
      */
     static final long CLAIM_STALE_MS = 10L * 60_000;
     /**
-     * Güvenlik süresi (inceleme S-2): açık kesinti bu kadar eskiyse ŞÜPHESİZ her tur (küçük de olsa) onu kapatır — envanter
-     * min-errors'tun altına inince ya da eşik envanterin üstüne çıkınca kesinti sonsuza dek açık kalıp tüm sertifika
-     * alarmlarını durduruyordu. WARN + notification_logs izi.
+     * Güvenlik süresi (inceleme S-2): açık kesinti en son bu kadar önce DOĞRULANDIYSA ({@code last_confirmed_at} — her şüpheli
+     * tur tazeler) şüphesiz ve oranı eşiğin altındaki tur (küçük de olsa) onu kapatır. Envanter min-errors'ın altına inince ya
+     * da min-errors envanterin üstüne çıkınca hiçbir tur kesintiyi doğrulayamaz / kapatamaz, kesinti sonsuza dek açık kalıp
+     * tüm sertifika alarmlarını durduruyordu. Gerçek, günlerce süren kesintide saatlik tam tarama her saat doğrular — 5 dk'lık
+     * bayat tarama (birkaç sağlıklı alan adı) onu kapatmaz (ikinci inceleme N5: eskiden tespit anından sayılıyordu, kesinti
+     * her gün kapanıp yeniden açılıyor, her seferinde posta gidiyordu). WARN + notification_logs izi.
      */
     static final long MAX_OUTAGE_AGE_MS = 24L * 60 * 60_000;
     /** notification_logs tetiği (her posta kararı bir satır; alertEventId 0). */
@@ -110,13 +113,14 @@ public class CertNetworkOutageService {
 
     static final String SQL_INSERT_IF_ABSENT =
             "INSERT INTO network_outage_events (detected_at, network_errors, total_checks, error_rate, threshold, status, "
-          + "source, alert_mail_status, alert_mail_attempts) "
+          + "source, alert_mail_status, alert_mail_attempts, last_confirmed_at) "
           + "SELECT CAST(? AS VARCHAR(255)), CAST(? AS INTEGER), CAST(? AS INTEGER), CAST(? AS DOUBLE PRECISION), "
-          + "CAST(? AS DOUBLE PRECISION), 'ONGOING', 'CERT', 'PENDING', 0 "
+          + "CAST(? AS DOUBLE PRECISION), 'ONGOING', 'CERT', 'PENDING', 0, CAST(? AS VARCHAR(30)) "
           + "WHERE NOT EXISTS (SELECT 1 FROM network_outage_events WHERE status = 'ONGOING' AND " + CERT_SCOPE + ")";
 
+    /** Şüpheli tur: son tur sayıları + kesintinin son doğrulanma anı ({@code last_confirmed_at}, güvenlik süresi bundan sayılır). */
     static final String SQL_UPDATE_STATS =
-            "UPDATE network_outage_events SET network_errors = ?, total_checks = ?, error_rate = ? "
+            "UPDATE network_outage_events SET network_errors = ?, total_checks = ?, error_rate = ?, last_confirmed_at = ? "
           + "WHERE status = 'ONGOING' AND " + CERT_SCOPE;
 
     /**
@@ -270,6 +274,7 @@ public class CertNetworkOutageService {
     public boolean onRun(long networkErrors, int total, double rate, boolean suspected, int minErrors, double threshold) {
         long nowMs = clock.getAsLong();
         String nowIso = ISO.format(Instant.ofEpochMilli(nowMs));
+        flushPendingTraces();
         try {
             if (suspected) {
                 java.util.Set<Long> tried = new java.util.HashSet<>();
@@ -282,7 +287,7 @@ public class CertNetworkOutageService {
                     sendAlert(id);
                     tried.add(id);
                 } else {
-                    int n = jdbc.update(SQL_UPDATE_STATS, (int) networkErrors, total, rate);
+                    int n = jdbc.update(SQL_UPDATE_STATS, (int) networkErrors, total, rate, nowIso);
                     if (n > 0) invalidate();
                     log.warn("⚠ Suspected network outage still ongoing: {}/{} domains failed with network-class errors "
                             + "(rate={}) — alarm processing remains SKIPPED", networkErrors, total, String.format("%.2f", rate));
@@ -301,10 +306,11 @@ public class CertNetworkOutageService {
                 if (inventory != null && total > 0 && total >= inventory) {
                     canResolve = true;
                     closeNote = "tüm aktif ağ envanteri (" + inventory + ") denetlendi, ağ hatası eşiğin altında";
-                } else if (oldestOngoingAgeMs(nowMs) >= MAX_OUTAGE_AGE_MS) {
+                } else if (sinceLastConfirmedMs(nowMs) >= MAX_OUTAGE_AGE_MS) {
                     canResolve = true;
-                    closeNote = "açık kesinti " + (MAX_OUTAGE_AGE_MS / 3_600_000L) + " saati aştı ve son tur şüphesiz "
-                            + "(küçük tur: " + total + " kontrol < min-errors " + minErrors + ") — güvenlik süresiyle kapatıldı";
+                    closeNote = "açık kesinti " + (MAX_OUTAGE_AGE_MS / 3_600_000L) + " saattir hiçbir turca doğrulanmadı ve son "
+                            + "tur şüphesiz (küçük tur: " + total + " kontrol < min-errors " + minErrors
+                            + ") — güvenlik süresiyle kapatıldı";
                 } else {
                     log.info("Ağ kesintisi sürüyor — bu tur küçük ({} kontrol < min-errors {}), kesintiyi kapatamaz; "
                             + "alarm işleme bekletiliyor", total, minErrors);
@@ -344,6 +350,7 @@ public class CertNetworkOutageService {
                 ps.setInt(3, total);
                 ps.setDouble(4, rate);
                 ps.setDouble(5, threshold);
+                ps.setString(6, detectedAt);
                 return ps;
             }, keys);
         } catch (DuplicateKeyException race) {
@@ -510,11 +517,11 @@ public class CertNetworkOutageService {
     /** Gönderimin sonucunu YALNIZ bu sahiplenmenin satırına yazar: kesin sonuç ya da RETRY (tavanda FAILED). */
     private void finish(String col, long id, long claimMs, String status, String adminEmail) {
         boolean alert = col.startsWith("alert");
-        // İz (inceleme S-4 / F8): her karar bir notification_logs satırı. 421 kuyruğu (QUEUED_RETRY…) YALNIZ satırıyla
-        // birlikte kesindir — e-posta servisi sonucu bu satıra (konu + alıcı) geri yazar, yetimi süpürücü kapatır; satır
-        // yazılamadıysa kuyruk sonucu hiçbir yerde görünmez → yeniden denenecek (RETRY) sayılır.
-        boolean logged = trace(alert ? ALERT_SUBJECT : RESOLVED_SUBJECT, status, adminEmail, id);
-        boolean finalResult = isFinal(status) && (logged || status == null || !status.startsWith("QUEUED_RETRY"));
+        // İz (inceleme S-4 / F8): her karar bir notification_logs satırı. Postanın kararı İZDEN BAĞIMSIZDIR (ikinci inceleme
+        // N6): 421 kuyruğu (QUEUED_RETRY…) iz yazılamasa da kesindir — kuyruk zinciri bu pod'da sürüyor, postayı yeniden
+        // göndermek ikinci kopya demekti. Yazılamayan iz sonraki turlarda yeniden denenir (pendingTraces), posta asla.
+        trace(alert ? ALERT_SUBJECT : RESOLVED_SUBJECT, status, adminEmail, id);
+        boolean finalResult = isFinal(status);
         try {
             if (finalResult) {
                 jdbc.update("UPDATE network_outage_events SET " + col + "_status = ? WHERE id = ? AND " + col
@@ -561,10 +568,46 @@ public class CertNetworkOutageService {
      */
     boolean trace(String subject, String status, String adminEmail, long eventId) {
         if (notificationLogRepo == null) return false;
+        PendingTrace t = new PendingTrace(subject, status, adminEmail, eventId, clock.getAsLong());
+        if (writeTrace(t)) return true;
+        if (pendingTraces.size() >= PENDING_TRACE_MAX) {
+            PendingTrace dropped = pendingTraces.pollFirst();
+            if (dropped != null) log.warn("Ağ kesintisi posta izi bekleme kuyruğu dolu ({}) — en eski iz düştü (olay #{}, {})",
+                    PENDING_TRACE_MAX, dropped.eventId(), dropped.status());
+        }
+        pendingTraces.addLast(t);
+        return false;
+    }
+
+    /** Yazılamamış iz (sonraki turlarda yeniden denenir — yalnız iz, posta değil). Karar anı korunur. */
+    record PendingTrace(String subject, String status, String adminEmail, long eventId, long atMs) {}
+
+    /** Pod başına bekleyen izler (tavanlı; pod ölürse kaybolur — posta kararı satırda, iz yalnız günlük). */
+    final java.util.concurrent.ConcurrentLinkedDeque<PendingTrace> pendingTraces = new java.util.concurrent.ConcurrentLinkedDeque<>();
+    static final int PENDING_TRACE_MAX = 200;
+
+    /** Bekleyen izleri yazmayı dener (ilk hatada durur — veritabanı hâlâ yazmıyorsa döngü dövmez). */
+    void flushPendingTraces() {
+        if (notificationLogRepo == null) return;
+        for (int i = 0, n = pendingTraces.size(); i < n; i++) {
+            PendingTrace t = pendingTraces.pollFirst();
+            if (t == null) return;
+            if (!writeTrace(t)) {
+                pendingTraces.addFirst(t);
+                return;
+            }
+        }
+    }
+
+    private boolean writeTrace(PendingTrace t) {
+        String subject = t.subject();
+        String status = t.status();
+        String adminEmail = t.adminEmail();
+        long eventId = t.eventId();
         try {
             com.sitemonitor.model.NotificationLog entry = new com.sitemonitor.model.NotificationLog();
             entry.setAlertEventId(0L);
-            entry.setSentAt(ISO.format(Instant.ofEpochMilli(clock.getAsLong())));
+            entry.setSentAt(ISO.format(Instant.ofEpochMilli(t.atMs())));
             entry.setRecipientName("Sistem yöneticisi");
             entry.setRecipientEmail(adminEmail == null || adminEmail.isBlank() ? "-" : adminEmail);
             entry.setRecipientRole("SYSTEM_ADMIN");
@@ -577,7 +620,8 @@ public class CertNetworkOutageService {
             notificationLogRepo.save(entry);
             return true;
         } catch (Exception e) {
-            log.warn("Ağ kesintisi posta izi yazılamadı (olay #{}): {}", eventId, e.getMessage());
+            log.warn("Ağ kesintisi posta izi yazılamadı (olay #{}, sonraki turda yeniden denenecek — posta değil): {}",
+                    eventId, e.getMessage());
             return false;
         }
     }
@@ -593,12 +637,15 @@ public class CertNetworkOutageService {
         }
     }
 
-    /** En eski açık CERT kesintisinin yaşı (ms); yoksa / okunamazsa 0. */
-    long oldestOngoingAgeMs(long nowMs) {
+    /**
+     * Açık CERT kesintisinin en son doğrulanmasından ({@code last_confirmed_at}; sütundan önceki satırda tespit anı) bu yana
+     * geçen süre (ms); yoksa / okunamazsa 0 (kural uygulanmaz).
+     */
+    long sinceLastConfirmedMs(long nowMs) {
         try {
-            String oldest = jdbc.queryForObject("SELECT MIN(detected_at) FROM network_outage_events WHERE status = 'ONGOING' AND "
-                    + CERT_SCOPE, String.class);
-            Long age = durationMs(oldest, nowMs);
+            String last = jdbc.queryForObject("SELECT MAX(COALESCE(last_confirmed_at, detected_at)) FROM network_outage_events "
+                    + "WHERE status = 'ONGOING' AND " + CERT_SCOPE, String.class);
+            Long age = durationMs(last, nowMs);
             return age == null ? 0L : Math.max(0L, age);
         } catch (RuntimeException e) {
             return 0L;

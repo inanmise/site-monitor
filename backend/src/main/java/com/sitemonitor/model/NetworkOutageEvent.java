@@ -72,4 +72,12 @@ public class NetworkOutageEvent {
 
     @Column(name = "resolved_mail_attempts", insertable = false, updatable = false)
     private Integer resolvedMailAttempts;
+
+    /**
+     * Kesintinin son DOĞRULANMA anı (2026-10-21, çok pod — ikinci inceleme N5): tespitte ve her şüpheli turda yazılır; 24 sa
+     * güvenlik kapanışı bundan sayılır (tespit anından değil). NULL = sütundan önceki satır (tespit anı kullanılır). Yazan tek
+     * yer {@code CertNetworkOutageService}.
+     */
+    @Column(name = "last_confirmed_at", length = 30, insertable = false, updatable = false)
+    private String lastConfirmedAt;
 }

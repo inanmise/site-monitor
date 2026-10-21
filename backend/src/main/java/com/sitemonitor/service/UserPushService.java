@@ -1518,8 +1518,27 @@ public class UserPushService {
 
     /** Tur / batch başına tekil kira damgası (saniye + rastgele kesir; "şimdi" damgasıyla metin olarak sıralı). */
     private String newLease() {
-        return ISO.format(Instant.now().plusSeconds(claimLeaseSec()))
+        return leaseStamp(claimLeaseSec());
+    }
+
+    /**
+     * Tekil kira damgası: şimdi + {@code seconds} (saniye + rastgele kesir). Tur sahiplenmesi, batch tazelemesi ve "gönderildi,
+     * sonucu yazılamadı" tutuşu AYNI damga biçimini ve aynı {@code renewLease} CAS'ını kullanır (ikinci inceleme D3).
+     */
+    static String leaseStamp(long seconds) {
+        return ISO.format(Instant.now().plusSeconds(seconds))
                 + "." + String.format("%09d", java.util.concurrent.ThreadLocalRandom.current().nextInt(1_000_000_000));
+    }
+
+    /**
+     * Gönderilmek ÜZERE olan batch'in kirası (ikinci inceleme D3): en az {@link #SENT_UNRECORDED_HOLD_SEC}. POST başarılı olup
+     * SENT yazılamazsa satır, bu pod'un ilk tutuş yazımı da düşse (havuz tükenmesi) en az bu süre başka pod'ca yeniden
+     * kiralanamaz; tutuş her süpürmede ileri alınır. Bedeli: pod gönderim ORTASINDA çökerse o batch en çok bu kadar gecikir
+     * (düzgün kapanışta süren istek sonucuyla biter). Test kısa kira verirse ({@link #leaseSecondsOverride}) o kullanılır.
+     */
+    long inFlightLeaseSec() {
+        if (leaseSecondsOverride > 0) return leaseSecondsOverride;
+        return Math.max(claimLeaseSec(), SENT_UNRECORDED_HOLD_SEC);
     }
 
     /**
@@ -1537,7 +1556,7 @@ public class UserPushService {
         for (Map.Entry<String, List<UserPushDelivery>> e : byLease.entrySet()) {
             List<UserPushDelivery> rows = e.getValue();
             List<Long> ids = rows.stream().map(UserPushDelivery::getId).toList();
-            String lease = newLease();
+            String lease = leaseStamp(inFlightLeaseSec());
             int renewed;
             try {
                 renewed = deliveryRepo.renewLease(ids, e.getKey(), lease);
@@ -1683,7 +1702,7 @@ public class UserPushService {
     List<UserPushDelivery> withoutSentUnrecorded(List<UserPushDelivery> rows) {
         if (sentUnrecorded.isEmpty()) return rows;
         long nowMs = System.currentTimeMillis();
-        sentUnrecorded.values().removeIf(s -> nowMs - s.atMs() > SENT_UNRECORDED_TTL_MS);
+        pruneSentUnrecorded(nowMs);
         List<UserPushDelivery> out = new ArrayList<>(rows.size());
         for (UserPushDelivery d : rows) {
             SentUnrecorded s = d.getId() == null ? null : sentUnrecorded.get(d.getId());
@@ -1721,7 +1740,7 @@ public class UserPushService {
     void flushSentUnrecorded() {
         if (sentUnrecorded.isEmpty()) return;
         long nowMs = System.currentTimeMillis();
-        sentUnrecorded.values().removeIf(x -> nowMs - x.atMs() > SENT_UNRECORDED_TTL_MS);
+        pruneSentUnrecorded(nowMs);
         for (Map.Entry<Long, SentUnrecorded> e : new ArrayList<>(sentUnrecorded.entrySet())) {
             Long id = e.getKey();
             SentUnrecorded s = e.getValue();
@@ -1735,11 +1754,32 @@ public class UserPushService {
         }
     }
 
+    /**
+     * {@link #SENT_UNRECORDED_TTL_MS}'den eski kayıtları düşürür — SESSİZ DEĞİL (ikinci inceleme D3): düşen her kayıt ERROR
+     * satırı bırakır (kimlik + gönderim anı); satırın SENT sonucu 24 saattir yazılamıyor, tutuş bırakıldığı için kira dolunca
+     * satır YENİDEN GÖNDERİLEBİLİR. @return düşen kayıt sayısı
+     */
+    int pruneSentUnrecorded(long nowMs) {
+        int dropped = 0;
+        for (Map.Entry<Long, SentUnrecorded> e : new ArrayList<>(sentUnrecorded.entrySet())) {
+            SentUnrecorded x = e.getValue();
+            if (nowMs - x.atMs() <= SENT_UNRECORDED_TTL_MS) continue;
+            if (!sentUnrecorded.remove(e.getKey(), x)) continue;
+            dropped++;
+            if (dropped <= 20) {
+                log.error("user-push satır #{}: gönderilmiş push'un SENT sonucu {} saattir yazılamadı (gönderim {}) — izden "
+                        + "düşürüldü; kira dolunca satır YENİDEN GÖNDERİLEBİLİR", e.getKey(), SENT_UNRECORDED_TTL_MS / 3_600_000L,
+                        x.sentAt());
+            }
+        }
+        if (dropped > 20) log.error("user-push: toplam {} sonucu yazılamamış gönderim kaydı düşürüldü (ilk 20'si yukarıda)", dropped);
+        return dropped;
+    }
+
     /** Satırın kirasını (hâlâ bu pod'un damgasındaysa) ileri alır; hata yutulur (sonraki süpürme yeniden dener). */
     private void holdLease(Long id, SentUnrecorded s) {
         if (id == null || s == null || s.lease() == null) return;
-        String next = ISO.format(Instant.now().plusSeconds(SENT_UNRECORDED_HOLD_SEC))
-                + "." + String.format("%09d", java.util.concurrent.ThreadLocalRandom.current().nextInt(1_000_000_000));
+        String next = leaseStamp(SENT_UNRECORDED_HOLD_SEC);
         try {
             int n = deliveryRepo.renewLease(List.of(id), s.lease(), next);
             if (n == 1) {

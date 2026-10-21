@@ -41,6 +41,7 @@ public class NetworkOutageSchemaPatch {
         m.put("resolved_mail_status", "VARCHAR(255)");
         m.put("resolved_mail_claimed_ms", "BIGINT");
         m.put("resolved_mail_attempts", "INTEGER");
+        m.put("last_confirmed_at", "VARCHAR(30)");   // kesintinin son doğrulanma anı (ikinci inceleme N5)
         return m;
     }
 

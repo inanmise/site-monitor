@@ -285,7 +285,9 @@ class StormLifecycleMultiPodTest {
         a.lifecycleSweep();
 
         assertThat(col(1, "close_state")).isEqualTo(StormService.CLOSE_CLOSING);
-        assertThat(resolved(1)).as("yarıda kalan kapanış resolved=true YAZMAZ").isFalse();
+        assertThat(resolved(1)).as("sahiplenme kapsamı hemen boşaltır — takılı kapanış yeni fırtınayı engellemez").isTrue();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM alert_storms WHERE scope_key = 'TEAM:14' AND resolved = false",
+                Integer.class)).as("ux_alert_storms_active (resolved=false) kapsamı serbest").isZero();
         assertThat(col(1, "recovery_state")).isEqualTo(StormService.RECOVERY_PENDING);
         assertThat(recoveryMails.get()).isZero();
 
@@ -382,7 +384,7 @@ class StormLifecycleMultiPodTest {
 
         a.lifecycleSweep();   // deneme 1
         for (int i = 2; i <= StormService.CLOSE_MAX_ATTEMPTS; i++) {
-            assertThat(resolved(1)).as("deneme %d öncesi hâlâ CLOSING", i).isFalse();
+            assertThat(col(1, "close_state")).as("deneme %d öncesi hâlâ CLOSING", i).isEqualTo(StormService.CLOSE_CLOSING);
             ageClaim(1, StormService.CLOSE_STALE_MS / 60_000 + 1);
             pod("pod" + i + "-storm").lifecycleSweep();
         }
@@ -469,5 +471,60 @@ class StormLifecycleMultiPodTest {
         assertThat(StormService.openForMembers(s)).isTrue();
         s.setResolved(true);
         assertThat(StormService.openForMembers(s)).isFalse();
+    }
+
+    @Test
+    @DisplayName("Kapanış SÜRERKEN bireysel bildirilen üyenin damgası korunur (ikinci inceleme D1): bitiren tur bağı koparır ama damgayı sıfırlamaz (ek INITIAL yok), fırtına postasına geri sarmaz")
+    void memberNotifiedWhileClosing_keepsItsStamp() {
+        stormWithOneStillDown(1);
+        AlertEvent down = members.get(1L).stream().filter(e -> e.getId() == 19L).findFirst().orElseThrow();
+        AtomicInteger unlinks = new AtomicInteger();
+        when(alertEventRepo.unlinkFromStorm(anyLong(), anyLong())).thenAnswer(i -> {
+            if (unlinks.incrementAndGet() == 1) throw new IllegalStateException("kilit çakışması");
+            return 1;
+        });
+        when(alertEventRepo.releaseFromStormAsNotified(anyLong(), anyLong(), anyString())).thenReturn(1);
+        pod("podA-storm").lifecycleSweep();
+        assertThat(col(1, "close_state")).isEqualTo(StormService.CLOSE_CLOSING);
+
+        // Fırtına üyeler için kapalı: üye bu arada bireysel tırmandı / tekrar aldı → kendi damgası kapanış anından yeni
+        String escalatedAt = ago(-1);
+        down.setLastReAlertAt(escalatedAt);
+        ageClaim(1, StormService.CLOSE_STALE_MS / 60_000 + 1);
+        pod("podB-storm").lifecycleSweep();
+
+        assertThat(col(1, "close_state")).isEqualTo(StormService.CLOSE_DONE);
+        assertThat(unlinks.get()).as("damga sıfırlayan bağ koparma yalnız ilk (düşen) denemede").isEqualTo(1);
+        verify(alertEventRepo).releaseFromStormAsNotified(19L, 1L, escalatedAt);
+        assertThat(recoveryMails.get()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("Bu sürümden önceki CLOSING satırı (resolved=false) da yaşam döngüsünce bulunur ve bitirilir — sonra resolved=true, DONE")
+    void preReleaseClosingRowIsFinished() {
+        stormWithRecoveredMembers(1);
+        jdbc.update("UPDATE alert_storms SET close_state = 'CLOSING', close_claimed_at = ?, close_owner = 'eski', close_attempts = 1, "
+                + "recovery_state = 'PENDING', resolved_at = ?, resolve_reason = ? WHERE id = 1", ago(30), ago(1), StormService.RESOLVE_FLOOR);
+        assertThat(resolved(1)).isFalse();
+
+        pod("podA-storm").lifecycleSweep();
+
+        assertThat(resolved(1)).isTrue();
+        assertThat(col(1, "close_state")).isEqualTo(StormService.CLOSE_DONE);
+        assertThat(recoveryMails.get()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("Yalnız yarıda kalmış kapanış varsa (açık fırtına yok) süpürme yine kilidi alıp onu bitirir")
+    void onlyClosingStormStillSwept() {
+        stormWithRecoveredMembers(1);
+        jdbc.update("UPDATE alert_storms SET resolved = true, close_state = 'CLOSING', close_claimed_at = ?, close_owner = 'ölü', "
+                + "close_attempts = 1, recovery_state = 'PENDING', resolved_at = ?, resolve_reason = ? WHERE id = 1",
+                ago(30), ago(1), StormService.RESOLVE_SEALED);
+
+        pod("podA-storm").lifecycleSweep();
+
+        assertThat(col(1, "close_state")).isEqualTo(StormService.CLOSE_DONE);
+        assertThat(recoveryMails.get()).isEqualTo(1);
     }
 }

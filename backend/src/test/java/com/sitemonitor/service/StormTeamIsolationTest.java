@@ -226,6 +226,8 @@ class StormTeamIsolationTest {
             if (sql.equals(StormService.SQL_CLOSE_CLAIM)) {
                 AlertStorm s = byId.get((Long) a[5]);
                 if (s == null || Boolean.TRUE.equals(s.getResolved()) || s.getCloseState() != null) return 0;
+                s.setResolved(true);   // sahiplenme kapsamı hemen boşaltır (ikinci inceleme D1)
+                active.values().removeIf(x -> x == s);
                 s.setCloseState(StormService.CLOSE_CLOSING);
                 s.setRecoveryState(StormService.RECOVERY_PENDING);
                 s.setResolvedAt(String.valueOf(a[3]));
@@ -240,10 +242,9 @@ class StormTeamIsolationTest {
             }
             if (sql.equals(StormService.SQL_CLOSE_DONE)) {
                 AlertStorm s = byId.get((Long) a[1]);
-                if (s == null || Boolean.TRUE.equals(s.getResolved()) || !StormService.CLOSE_CLOSING.equals(s.getCloseState())) return 0;
+                if (s == null || !StormService.CLOSE_CLOSING.equals(s.getCloseState())) return 0;
                 s.setResolved(true);
                 s.setCloseState(StormService.CLOSE_DONE);
-                active.values().removeIf(x -> x == s);
                 return 1;
             }
             if (!sql.startsWith("INSERT INTO alert_storms")) return 0;
