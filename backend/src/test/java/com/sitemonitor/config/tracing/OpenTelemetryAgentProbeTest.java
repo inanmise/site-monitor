@@ -70,6 +70,22 @@ class OpenTelemetryAgentProbeTest {
     }
 
     @Test
+    @DisplayName("url.query gizleme: ayar yoksa ajanın listesi token'ı kapsamaz; Helm listesi kapsar; ayar listeyi DEĞİŞTİRİR")
+    void queryCredentialRedaction() {
+        String key = "OTEL_INSTRUMENTATION_SANITIZATION_URL_EXPERIMENTAL_SENSITIVE_QUERY_PARAMETERS";
+        assertThat(OpenTelemetryAgentProbe.envName(OpenTelemetryAgentProbe.SENSITIVE_QUERY_KEY)).isEqualTo(key);
+        assertThat(probe(true, Map.of(), Map.of(), List.of()).redactsQueryCredentials()).isFalse();
+        assertThat(probe(true, Map.of(), Map.of(key, String.join(",", OpenTelemetryAgentProbe.SENSITIVE_QUERY_PARAMETERS)),
+                List.of()).redactsQueryCredentials()).isTrue();
+        assertThat(probe(true, Map.of(), Map.of(key, " sig , token "), List.of()).redactsQueryCredentials())
+                .as("kırpılır").isTrue();
+        assertThat(probe(true, Map.of(), Map.of(key, "Token,TOKEN"), List.of()).redactsQueryCredentials())
+                .as("ajan büyük/küçük harf duyarlı eşler").isFalse();
+        assertThat(probe(true, Map.of(OpenTelemetryAgentProbe.SENSITIVE_QUERY_KEY, "token"), Map.of(key, "sig"),
+                List.of()).redactsQueryCredentials()).as("sistem özelliği env'i ezer").isTrue();
+    }
+
+    @Test
     @DisplayName("ortam değişkeni adı ajanın kuralıyla: nokta ve tire alt çizgi, büyük harf")
     void envName() {
         assertThat(OpenTelemetryAgentProbe.envName("otel.instrumentation.java-http-client.enabled"))

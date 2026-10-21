@@ -28,7 +28,7 @@ class TracingCoexistenceTest {
 
     private static Inputs in(boolean agent, boolean defer, boolean sender, String transport) {
         SignalState s = transport == null ? SignalState.NONE : exporting(transport);
-        return new Inputs(agent, defer, sender, s, s, false);
+        return new Inputs(agent, defer, sender, s, s, false, false);
     }
 
     /**
@@ -86,20 +86,22 @@ class TracingCoexistenceTest {
     @Test
     @DisplayName("ajanın HTTP istemci enstrümantasyonu açıksa traceparent uyarısı (ajan kipinde de)")
     void clientInstrumentationWarning() {
-        Decision on = TracingCoexistence.decide(new Inputs(true, true, false, SignalState.NONE, SignalState.NONE, true));
+        Decision on = TracingCoexistence.decide(
+                new Inputs(true, true, false, SignalState.NONE, SignalState.NONE, true, false));
         assertThat(on.messages()).extracting(Message::level).containsExactly(Level.INFO, Level.WARN);
         assertThat(on.messages().get(1).text())
                 .contains("traceparent")
                 .contains("OTEL_INSTRUMENTATION_JAVA_HTTP_CLIENT_ENABLED=false")
                 .contains("OTEL_INSTRUMENTATION_HTTP_URL_CONNECTION_ENABLED=false");
-        Decision noAgent = TracingCoexistence.decide(new Inputs(false, true, false, SignalState.NONE, SignalState.NONE, true));
+        Decision noAgent = TracingCoexistence.decide(
+                new Inputs(false, true, false, SignalState.NONE, SignalState.NONE, true, true));
         assertThat(noAgent.messages()).as("ajan yoksa enstrümantasyon da yok").isEmpty();
     }
 
     @Test
     @DisplayName("gRPC koruması: yalnız ilgili sinyalin dışa aktarıcısı kapanır, eşleme sabitlenir, uyarı düzeltmeyi söyler")
     void grpcGuardOverrides() {
-        Inputs onlyTraces = new Inputs(false, true, false, exporting("GRPC"), exporting("HTTP"), false);
+        Inputs onlyTraces = new Inputs(false, true, false, exporting("GRPC"), exporting("HTTP"), false, false);
         Decision d = TracingCoexistence.decide(onlyTraces);
         assertThat(d.disabled()).containsExactly(Signal.TRACES);
         assertThat(d.overrides()).containsExactlyInAnyOrderEntriesOf(Map.of(
@@ -110,7 +112,8 @@ class TracingCoexistenceTest {
                 .contains("OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf").contains("4318")
                 .contains("config.otel.endpoint").contains("/v1/traces");
 
-        Decision logs = TracingCoexistence.decide(new Inputs(false, true, false, SignalState.NONE, exporting("grpc"), false));
+        Decision logs = TracingCoexistence.decide(
+                new Inputs(false, true, false, SignalState.NONE, exporting("grpc"), false, false));
         assertThat(logs.disabled()).containsExactly(Signal.LOGS);
         assertThat(logs.overrides()).containsEntry("management.logging.export.otlp.enabled", "false");
     }
@@ -128,7 +131,7 @@ class TracingCoexistenceTest {
     void exportActivePrecedence(boolean endpoint, Boolean exporter, Boolean global, boolean active) {
         SignalState s = new SignalState(endpoint, exporter, global, "GRPC");
         assertThat(s.exportActive()).isEqualTo(active);
-        Decision d = TracingCoexistence.decide(new Inputs(false, true, false, s, SignalState.NONE, false));
+        Decision d = TracingCoexistence.decide(new Inputs(false, true, false, s, SignalState.NONE, false, false));
         assertThat(d.disabled()).hasSize(active ? 1 : 0);
     }
 
@@ -140,6 +143,38 @@ class TracingCoexistenceTest {
         assertThat(new SignalState(true, null, null, "HTTP").grpc()).isFalse();
         assertThat(new SignalState(true, null, null, null).grpc()).isFalse();
         assertThat(new SignalState(true, null, null, "grpcx").grpc()).isFalse();
+    }
+
+    @Test
+    @DisplayName("ajan url.query'de onay belirtecini gizlemiyorsa UYARI: ad ve tam ortam değişkeni değeri yazılır")
+    void queryCredentialWarning() {
+        Decision d = TracingCoexistence.decide(
+                new Inputs(true, true, false, SignalState.NONE, SignalState.NONE, false, true));
+        assertThat(d.messages()).extracting(Message::level).containsExactly(Level.INFO, Level.WARN);
+        assertThat(d.messages().get(1).text()).contains("url.query").contains("token")
+                .contains("OTEL_INSTRUMENTATION_SANITIZATION_URL_EXPERIMENTAL_SENSITIVE_QUERY_PARAMETERS="
+                        + String.join(",", OpenTelemetryAgentProbe.SENSITIVE_QUERY_PARAMETERS))
+                .contains("YERİNE");
+        Decision off = TracingCoexistence.decide(
+                new Inputs(true, false, true, SignalState.NONE, SignalState.NONE, false, true));
+        assertThat(off.messages()).extracting(Message::text).anyMatch(t -> t.contains("url.query"));
+    }
+
+    @Test
+    @DisplayName("anahtar kapalı: ileti GERÇEK durumu söyler — gRPC koruması kapattıysa \"gönderiyor\" denmez")
+    void switchOffMessageMatchesState() {
+        Decision exporting = TracingCoexistence.decide(in(true, false, false, "HTTP"));
+        assertThat(exporting.messages()).extracting(Message::text).containsExactly(TracingCoexistence.BOTH_SYSTEMS_WARN);
+
+        Decision guarded = TracingCoexistence.decide(in(true, false, false, "GRPC"));
+        assertThat(guarded.messages()).extracting(Message::text)
+                .doesNotContain(TracingCoexistence.BOTH_SYSTEMS_WARN)
+                .contains(TracingCoexistence.OWN_SDK_NOT_EXPORTING_WARN);
+        assertThat(TracingCoexistence.OWN_SDK_NOT_EXPORTING_WARN).contains("gönderilmiyor");
+
+        Decision noEndpoint = TracingCoexistence.decide(in(true, false, false, null));
+        assertThat(noEndpoint.messages()).extracting(Message::text)
+                .containsExactly(TracingCoexistence.OWN_SDK_NOT_EXPORTING_WARN);
     }
 
     @Test

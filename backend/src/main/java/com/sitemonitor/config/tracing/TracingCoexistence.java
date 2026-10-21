@@ -111,9 +111,12 @@ public final class TracingCoexistence {
      * @param logs                     günlük dışa aktarımının etkin ayarı
      * @param agentInstrumentsHttpClients ajanın java.net.http / HttpURLConnection istemci enstrümantasyonu açık
      *                                 (izlenen sitelere giden kontrollere {@code traceparent} eklenir)
+     * @param agentLeaksQueryCredentials ajanın {@code url.query} gizleme listesi uygulamanın sorgu dizesindeki kimlik
+     *                                 parametrelerini ({@link OpenTelemetryAgentProbe#APP_QUERY_CREDENTIALS}) kapsamıyor
      */
     public record Inputs(boolean agentPresent, boolean deferToAgent, boolean grpcSenderPresent,
-                         SignalState traces, SignalState logs, boolean agentInstrumentsHttpClients) {
+                         SignalState traces, SignalState logs, boolean agentInstrumentsHttpClients,
+                         boolean agentLeaksQueryCredentials) {
     }
 
     public enum Level { INFO, WARN }
@@ -143,9 +146,25 @@ public final class TracingCoexistence {
                     + " OTEL_INSTRUMENTATION_HTTP_URL_CONNECTION_ENABLED=false verin (Helm: config.otel.agent.enabled=true"
                     + " bunları ekler)";
 
+    static final String QUERY_WARN =
+            "OpenTelemetry Java ajanı sunucu span'larında url.query'yi kaydediyor ve şu adları gizlemiyor: "
+                    + String.join(", ", OpenTelemetryAgentProbe.APP_QUERY_CREDENTIALS)
+                    + " — haftalık rapor ve teknik hata raporu onay bağlantılarının belirteçleri (14 gün geçerli) iz"
+                    + " arka ucuna gider. Pod ortamına OTEL_INSTRUMENTATION_SANITIZATION_URL_EXPERIMENTAL_SENSITIVE_QUERY_PARAMETERS="
+                    + String.join(",", OpenTelemetryAgentProbe.SENSITIVE_QUERY_PARAMETERS)
+                    + " verin (ajanın kendi listesinin YERİNE geçer; Helm: config.otel.agent.enabled=true bunu ekler)";
+
+    /** Ajan var, anahtar kapalı, uygulamanın iz gönderimi AÇIK. */
     static final String BOTH_SYSTEMS_WARN =
             "OpenTelemetry Java ajanı algılandı ama " + DEFER_PROPERTY + "=false: uygulama kendi izlerini de üretip"
                     + " gönderiyor — iki ayrı iz sistemi (iki iz kimliği) oluşur";
+
+    /** Ajan var, anahtar kapalı, uygulamanın iz gönderimi YOK (uç nokta yok, kapalı ya da gRPC koruması kapattı). */
+    static final String OWN_SDK_NOT_EXPORTING_WARN =
+            "OpenTelemetry Java ajanı algılandı ama " + DEFER_PROPERTY + "=false: uygulamanın kendi iz SDK'sı da açık"
+                    + " ve span üretiyor, ancak bu span'lar hiçbir yere gönderilmiyor (izleri yalnız ajan gönderiyor);"
+                    + " ajanın span ağacında gönderilmeyen ara span'lar oluşabilir. Tek iz sistemi için anahtarı açık"
+                    + " bırakın (varsayılan)";
 
     private TracingCoexistence() {
     }
@@ -164,18 +183,20 @@ public final class TracingCoexistence {
             overrides.put(OTEL_SDK_ENABLED, "false");
             overrides.put(AGENT_ACTIVE_PROPERTY, "true");
             messages.add(new Message(Level.INFO, AGENT_INFO));
-            if (in.agentInstrumentsHttpClients()) messages.add(new Message(Level.WARN, CLIENT_WARN));
+            agentWarnings(in, messages);
             return new Decision(true, Collections.unmodifiableMap(overrides), List.of(), List.copyOf(messages));
-        }
-
-        if (in.agentPresent()) {
-            messages.add(new Message(Level.WARN, BOTH_SYSTEMS_WARN));
-            if (in.agentInstrumentsHttpClients()) messages.add(new Message(Level.WARN, CLIENT_WARN));
         }
 
         if (!in.grpcSenderPresent()) {
             guard(Signal.TRACES, in.traces(), overrides, disabled);
             guard(Signal.LOGS, in.logs(), overrides, disabled);
+        }
+        if (in.agentPresent()) {
+            // İleti GERÇEK durumu söylesin: gRPC koruması iz gönderimini az önce kapattıysa "gönderiyor" denmez.
+            boolean ownTracesExported = in.traces() != null && in.traces().exportActive()
+                    && !disabled.contains(Signal.TRACES);
+            messages.add(new Message(Level.WARN, ownTracesExported ? BOTH_SYSTEMS_WARN : OWN_SDK_NOT_EXPORTING_WARN));
+            agentWarnings(in, messages);
         }
         if (!disabled.isEmpty()) {
             // Eşleme işlemcisi bundan sonra koşarsa kendi kaynağını en başa koyup kararı ezmesin.
@@ -184,6 +205,11 @@ public final class TracingCoexistence {
         }
         return new Decision(false, Collections.unmodifiableMap(overrides), List.copyOf(disabled),
                 List.copyOf(messages));
+    }
+
+    private static void agentWarnings(Inputs in, List<Message> messages) {
+        if (in.agentInstrumentsHttpClients()) messages.add(new Message(Level.WARN, CLIENT_WARN));
+        if (in.agentLeaksQueryCredentials()) messages.add(new Message(Level.WARN, QUERY_WARN));
     }
 
     private static void guard(Signal signal, SignalState state, Map<String, Object> overrides, List<Signal> disabled) {

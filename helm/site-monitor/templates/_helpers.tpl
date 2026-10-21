@@ -91,3 +91,23 @@ Secret name — either existing or managed by this chart
 {{- include "site-monitor.fullname" . }}-secret
 {{- end }}
 {{- end }}
+
+{{/*
+OpenTelemetry Java agent (2026-10-21): the operator's inject annotation written by hand into podAnnotations; empty when
+absent or an explicit opt-out ("false"). Used by the deployment guard and NOTES.txt.
+*/}}
+{{- define "site-monitor.manualOtelInject" -}}
+{{- $v := toString (get (.Values.podAnnotations | default dict) "instrumentation.opentelemetry.io/inject-java") -}}
+{{- if and (ne $v "") (ne (lower $v) "false") -}}{{ $v }}{{- end -}}
+{{- end }}
+
+{{/*
+Query parameter names the OpenTelemetry Java agent redacts in span url.query / url.full
+(OTEL_INSTRUMENTATION_SANITIZATION_URL_EXPERIMENTAL_SENSITIVE_QUERY_PARAMETERS). The setting REPLACES the agent's
+built-in list (2.32.0: AWSAccessKeyId … X-Goog-Signature), so it is repeated; exact, case-sensitive names. "token" =
+the weekly / technical-error report approval links. Single source: OpenTelemetryAgentProbe.SENSITIVE_QUERY_PARAMETERS
+(OtelAgentQueryRedactionGateTest compares them).
+*/}}
+{{- define "site-monitor.otelSensitiveQueryParameters" -}}
+AWSAccessKeyId,Signature,X-Amz-Signature,X-Amz-Credential,X-Amz-Security-Token,sig,X-Goog-Signature,token,access_token,api_key,apiKey,apikey,key,code,password,secret,signature,client_secret,subscription-key,auth,jsessionid,otp
+{{- end }}

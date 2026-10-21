@@ -6,6 +6,7 @@ import com.sitemonitor.config.tracing.TracingCoexistence.Message;
 import com.sitemonitor.config.tracing.TracingCoexistence.Signal;
 import com.sitemonitor.config.tracing.TracingCoexistence.SignalState;
 import org.apache.commons.logging.Log;
+import org.apache.commons.logging.impl.NoOpLog;
 import org.springframework.boot.EnvironmentPostProcessor;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.logging.DeferredLogFactory;
@@ -13,10 +14,15 @@ import org.springframework.boot.opentelemetry.autoconfigure.OpenTelemetryEnviron
 import org.springframework.core.Ordered;
 import org.springframework.core.env.ConfigurableEnvironment;
 import org.springframework.core.env.MapPropertySource;
+import org.springframework.core.env.MutablePropertySources;
+import org.springframework.core.env.PropertySource;
+import org.springframework.core.env.StandardEnvironment;
 import org.springframework.util.StringUtils;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.function.BooleanSupplier;
-import java.util.function.Supplier;
+import java.util.function.Function;
 
 /**
  * OpenTelemetry Java ajanı / OTLP gRPC uyumu (2026-10-21) — kararı {@link TracingCoexistence} verir, bu işlemci ortamı
@@ -31,9 +37,11 @@ import java.util.function.Supplier;
  *   <li>Ajan kipinde eşleme hiç gerekmez; eklenen kaynak {@code map-environment-variables=false} taşır → Boot'un
  *       işlemcisi sonra koşarsa hiçbir şey eklemez, önce koştuysa kaynağı bizimkinin ALTINDA kalır.</li>
  *   <li>Diğer durumlarda karar Boot'un eşlenmiş değerlerine bakmalıdır: eşleme henüz uygulanmadıysa (kaynak yok ve
- *       eşleme açık) burada Boot'un KENDİ işlemcisi çalıştırılır (tek doğruluk kaynağı Boot'un eşlemesi). Bir şey
- *       değiştirilecekse kaynak yine {@code map-environment-variables=false} taşır; hiçbir şey değişmiyorsa ortama
- *       dokunulmaz ve Boot'un işlemcisi sonra aynı kaynağı aynı içerikle yeniden yazar.</li>
+ *       eşleme açık) Boot'un KENDİ işlemcisi ortamın bir KOPYASINDA, sessiz günlükle çalıştırılır (tek doğruluk
+ *       kaynağı Boot'un eşlemesi; gerçek ortam ve günlük değişmez). Hiçbir şey değişmiyorsa ortama dokunulmaz ve
+ *       Boot'un işlemcisi sonra eşlemeyi bir kez (uyarılarıyla bir kez) yapar. Bir şey değiştirilecekse eşleme gerçek
+ *       ortama gerçek günlükle BİR kez uygulanır ve kaynak {@code map-environment-variables=false} taşır (Boot'un
+ *       işlemcisi tekrarlamaz, kaynağını bizimkinin üstüne koyamaz).</li>
  * </ul>
  * Beklenmeyen bir hata açılışı ASLA düşürmez: bir UYARI yazılır ve Boot'un yapılandırması değiştirilmeden kullanılır.
  */
@@ -43,22 +51,30 @@ public class TracingCoexistenceEnvironmentPostProcessor implements EnvironmentPo
     /** Boot 4.1'in eşleme kaynağının adı ({@code OpenTelemetryEnvironmentVariableEnvironmentPostProcessor}). */
     static final String BOOT_MAPPING_SOURCE = "openTelemetryEnvironmentVariables";
 
+    /** Kopya ortamdaki deneme eşlemesi için: Boot'un geçersiz değer uyarıları iki kez yazılmasın. */
+    private static final DeferredLogFactory QUIET = destination -> new NoOpLog();
+
     private final Log log;
+    private final DeferredLogFactory logFactory;
     private final OpenTelemetryAgentProbe agent;
     private final BooleanSupplier grpcSenderPresent;
-    private final Supplier<EnvironmentPostProcessor> bootMapping;
+    private final Function<DeferredLogFactory, EnvironmentPostProcessor> bootMapping;
 
     public TracingCoexistenceEnvironmentPostProcessor(DeferredLogFactory logFactory) {
         this(logFactory, OpenTelemetryAgentProbe.jvm(),
                 () -> GrpcSenderProbe.present(TracingCoexistenceEnvironmentPostProcessor.class.getClassLoader()),
-                () -> new OpenTelemetryEnvironmentVariableEnvironmentPostProcessor(logFactory));
+                OpenTelemetryEnvironmentVariableEnvironmentPostProcessor::new);
     }
 
-    /** Test dikişi: ajan, gRPC göndericisi ve Boot eşlemesi (sahte {@code OTEL_*} ortamıyla) dışarıdan verilir. */
+    /**
+     * Test dikişi: ajan, gRPC göndericisi ve Boot eşlemesi (verilen günlük fabrikasıyla, sahte {@code OTEL_*}
+     * ortamıyla) dışarıdan verilir.
+     */
     TracingCoexistenceEnvironmentPostProcessor(DeferredLogFactory logFactory, OpenTelemetryAgentProbe agent,
                                                BooleanSupplier grpcSenderPresent,
-                                               Supplier<EnvironmentPostProcessor> bootMapping) {
+                                               Function<DeferredLogFactory, EnvironmentPostProcessor> bootMapping) {
         this.log = logFactory.getLog(TracingCoexistenceEnvironmentPostProcessor.class);
+        this.logFactory = logFactory;
         this.agent = agent;
         this.grpcSenderPresent = grpcSenderPresent;
         this.bootMapping = bootMapping;
@@ -75,6 +91,8 @@ public class TracingCoexistenceEnvironmentPostProcessor implements EnvironmentPo
         try {
             Decision decision = decide(environment, application);
             if (!decision.overrides().isEmpty()) {
+                // Ajan kipinde eşleme istenmez; korumada karar eşlenmiş değerlere dayanır → gerçek ortama BİR kez uygula.
+                if (!decision.agentMode()) applyBootMapping(environment, application, logFactory);
                 environment.getPropertySources()
                         .addFirst(new MapPropertySource(PROPERTY_SOURCE_NAME, decision.overrides()));
             }
@@ -88,24 +106,46 @@ public class TracingCoexistenceEnvironmentPostProcessor implements EnvironmentPo
         }
     }
 
+    /** Karar: gerçek ortama DOKUNMAZ (eşleme gerekiyorsa kopyada, sessizce). */
     Decision decide(ConfigurableEnvironment environment, SpringApplication application) {
         boolean agentPresent = agent.present();
         boolean defer = bool(environment, TracingCoexistence.DEFER_PROPERTY, true);
         boolean agentMode = agentPresent && defer;
-        if (!agentMode) applyBootMappingOnce(environment, application);
+        ConfigurableEnvironment view = environment;
+        if (!agentMode && bootMappingPending(environment)) {
+            view = copyOf(environment);
+            applyBootMapping(view, application, QUIET);
+        }
         Inputs in = new Inputs(agentPresent, defer,
                 !agentMode && grpcSenderPresent.getAsBoolean(),
-                agentMode ? SignalState.NONE : read(environment, Signal.TRACES),
-                agentMode ? SignalState.NONE : read(environment, Signal.LOGS),
-                agentPresent && agent.instrumentsHttpClients());
+                agentMode ? SignalState.NONE : read(view, Signal.TRACES),
+                agentMode ? SignalState.NONE : read(view, Signal.LOGS),
+                agentPresent && agent.instrumentsHttpClients(),
+                agentPresent && !agent.redactsQueryCredentials());
         return TracingCoexistence.decide(in);
     }
 
-    /** Boot'un {@code OTEL_*} eşlemesi henüz uygulanmadıysa (ve kapatılmadıysa) şimdi uygula — karar onu görmeli. */
-    void applyBootMappingOnce(ConfigurableEnvironment environment, SpringApplication application) {
-        if (environment.getPropertySources().contains(BOOT_MAPPING_SOURCE)) return;
-        if (!bool(environment, TracingCoexistence.MAP_ENV_PROPERTY, true)) return;
-        bootMapping.get().postProcessEnvironment(environment, application);
+    /** Boot'un {@code OTEL_*} eşlemesi henüz uygulanmadı ve kapatılmadı. */
+    static boolean bootMappingPending(ConfigurableEnvironment environment) {
+        return !environment.getPropertySources().contains(BOOT_MAPPING_SOURCE)
+                && bool(environment, TracingCoexistence.MAP_ENV_PROPERTY, true);
+    }
+
+    void applyBootMapping(ConfigurableEnvironment environment, SpringApplication application,
+                          DeferredLogFactory factory) {
+        if (!bootMappingPending(environment)) return;
+        bootMapping.apply(factory).postProcessEnvironment(environment, application);
+    }
+
+    /** Aynı özellik kaynaklarını (aynı nesneler, aynı sıra) taşıyan ayrı bir ortam — eklenen kaynak gerçeğe geçmez. */
+    static ConfigurableEnvironment copyOf(ConfigurableEnvironment environment) {
+        StandardEnvironment copy = new StandardEnvironment();
+        MutablePropertySources target = copy.getPropertySources();
+        List<String> defaults = new ArrayList<>();
+        for (PropertySource<?> ps : target) defaults.add(ps.getName());
+        for (String name : defaults) target.remove(name);
+        for (PropertySource<?> ps : environment.getPropertySources()) target.addLast(ps);
+        return copy;
     }
 
     static SignalState read(ConfigurableEnvironment environment, Signal signal) {

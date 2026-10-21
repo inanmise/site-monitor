@@ -1,12 +1,15 @@
 package com.sitemonitor.config.tracing;
 
 import io.micrometer.tracing.Tracer;
+import io.micrometer.tracing.otel.bridge.EventPublishingContextWrapper;
+import io.micrometer.tracing.otel.bridge.Slf4JEventListener;
 import io.micrometer.tracing.propagation.Propagator;
 import io.opentelemetry.api.OpenTelemetry;
 import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.SpanContext;
 import io.opentelemetry.api.trace.TraceFlags;
 import io.opentelemetry.api.trace.TraceState;
+import io.opentelemetry.context.Context;
 import io.opentelemetry.context.Scope;
 import io.opentelemetry.exporter.otlp.http.trace.OtlpHttpSpanExporter;
 import io.opentelemetry.exporter.otlp.trace.OtlpGrpcSpanExporter;
@@ -18,6 +21,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.slf4j.MDC;
 import org.springframework.boot.EnvironmentPostProcessor;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
@@ -93,10 +97,21 @@ class TracingCoexistenceContextTest {
         return OtelEnvMappingTestSupport.mapping(logFactory, otelEnv);
     }
 
+    /** Helm ajan bloğunun ortamı (istemci enstrümantasyonu kapalı, url.query gizleme listesi). */
+    static Map<String, String> helmAgentEnv() {
+        Map<String, String> env = new HashMap<>(OPERATOR_GRPC);
+        env.put("OTEL_INSTRUMENTATION_JAVA_HTTP_CLIENT_ENABLED", "false");
+        env.put("OTEL_INSTRUMENTATION_HTTP_URL_CONNECTION_ENABLED", "false");
+        env.put("OTEL_INSTRUMENTATION_SANITIZATION_URL_EXPERIMENTAL_SENSITIVE_QUERY_PARAMETERS",
+                String.join(",", OpenTelemetryAgentProbe.SENSITIVE_QUERY_PARAMETERS));
+        return env;
+    }
+
     private TracingCoexistenceEnvironmentPostProcessor ours(Map<String, String> otelEnv, boolean agent) {
         OpenTelemetryAgentProbe probe = new OpenTelemetryAgentProbe(() -> agent, k -> null, otelEnv::get, List::of);
         return new TracingCoexistenceEnvironmentPostProcessor(logFactory, probe,
-                () -> GrpcSenderProbe.present(getClass().getClassLoader()), () -> bootMapping(otelEnv));
+                () -> GrpcSenderProbe.present(getClass().getClassLoader()),
+                factory -> OtelEnvMappingTestSupport.mapping(factory, otelEnv));
     }
 
     /** Boot'un açılışındaki ortamı kurar: uygulama ayarları + (sırayla) eşleme ve bu işlemci. */
@@ -179,8 +194,9 @@ class TracingCoexistenceContextTest {
             assertThat(ctx.getBean(Propagator.class).fields()).as("Boot W3C yaymaz; yayılım ajanın").isEmpty();
         });
         assertThat(infos).containsExactly(TracingCoexistence.AGENT_INFO);
-        assertThat(warns).as("operatör ortamında istemci enstrümantasyonu açık → traceparent uyarısı").singleElement()
-                .asString().contains("traceparent");
+        assertThat(warns).as("operatör ortamında istemci enstrümantasyonu açık ve url.query gizlenmiyor").hasSize(2);
+        assertThat(warns.get(0)).contains("traceparent");
+        assertThat(warns.get(1)).contains("url.query").contains("token");
     }
 
     @Test
@@ -265,8 +281,11 @@ class TracingCoexistenceContextTest {
             assertThat(ctx).doesNotHaveBean(SpanExporter.class);
             assertThat(ctx).hasSingleBean(SdkTracerProvider.class);
         });
-        assertThat(warns).hasSize(3);
-        assertThat(String.join("\n", warns)).contains("iki ayrı iz sistemi").contains("traceparent").contains("http/protobuf");
+        assertThat(warns).hasSize(4);
+        assertThat(String.join("\n", warns))
+                .as("gRPC koruması iz gönderimini kapattı → \"gönderiyor\" denmez")
+                .doesNotContain("iki ayrı iz sistemi").contains("gönderilmiyor")
+                .contains("traceparent").contains("url.query").contains("http/protobuf");
     }
 
     @Test
@@ -281,16 +300,76 @@ class TracingCoexistenceContextTest {
     @Test
     @DisplayName("Helm ajan bloğu (MAP_ENVIRONMENT_VARIABLES=false + istemci enstrümantasyonu kapalı): açılır, uyarı yok")
     void helmAgentBlock() {
-        Map<String, String> env = new HashMap<>(OPERATOR_GRPC);
-        env.put("OTEL_INSTRUMENTATION_JAVA_HTTP_CLIENT_ENABLED", "false");
-        env.put("OTEL_INSTRUMENTATION_HTTP_URL_CONNECTION_ENABLED", "false");
-        runner(prepare(env, Map.of(TracingCoexistence.MAP_ENV_PROPERTY, "false"), true, true, true)).run(ctx -> {
+        runner(prepare(helmAgentEnv(), Map.of(TracingCoexistence.MAP_ENV_PROPERTY, "false"), true, true, true)).run(ctx -> {
             assertThat(ctx).hasNotFailed();
             assertThat(ctx).doesNotHaveBean(SpanExporter.class);
             assertThat(ctx.getBean(OpenTelemetry.class)).isSameAs(OpenTelemetry.noop());
         });
         assertThat(warns).isEmpty();
         assertThat(infos).containsExactly(TracingCoexistence.AGENT_INFO);
+    }
+
+    @ParameterizedTest(name = "bu işlemci Boot eşlemesinden önce={0}")
+    @ValueSource(booleans = {true, false})
+    @DisplayName("ajansız, değişiklik yok: Boot'un geçersiz-değer uyarısı TEK kez yazılır, ortama kaynak eklenmez")
+    void bootMappingWarningsLoggedOnce(boolean oursFirst) {
+        Map<String, String> env = new HashMap<>(PLAIN_HTTP);
+        env.put("OTEL_EXPORTER_OTLP_COMPRESSION", "zstd");
+        ConfigurableEnvironment prepared = prepare(env, Map.of(), false, true, oursFirst);
+        assertThat(prepared.getPropertySources().contains(TracingCoexistenceEnvironmentPostProcessor.PROPERTY_SOURCE_NAME))
+                .isFalse();
+        assertThat(prepared.getProperty("management.opentelemetry.tracing.export.otlp.endpoint"))
+                .isEqualTo("http://127.0.0.1:4318/v1/traces");
+        assertThat(warns).as("Boot'un eşleme uyarıları: " + warns)
+                .filteredOn(w -> w.contains("OTEL_EXPORTER_OTLP_COMPRESSION")).hasSize(3);   // metrik + iz + günlük, birer kez
+    }
+
+    @ParameterizedTest(name = "bu işlemci Boot eşlemesinden önce={0}")
+    @ValueSource(booleans = {true, false})
+    @DisplayName("ajansız + gRPC koruması: eşleme gerçek ortama bir kez, uyarılarıyla bir kez uygulanır")
+    void guardAppliesBootMappingOnce(boolean oursFirst) {
+        Map<String, String> env = new HashMap<>(OPERATOR_GRPC);
+        env.put("OTEL_EXPORTER_OTLP_COMPRESSION", "zstd");
+        ConfigurableEnvironment prepared = prepare(env, Map.of(), false, true, oursFirst);
+        assertThat(prepared.getPropertySources().contains(TracingCoexistenceEnvironmentPostProcessor.BOOT_MAPPING_SOURCE))
+                .isTrue();
+        assertThat(prepared.getProperty("management.tracing.export.otlp.enabled")).isEqualTo("false");
+        assertThat(warns).filteredOn(w -> w.contains("OTEL_EXPORTER_OTLP_COMPRESSION")).hasSize(3);
+    }
+
+    @Test
+    @DisplayName("ajan kipi: geçersiz (sıfır) span bağlamı MDC'ye yazılmaz; geçerli bağlam yazılır")
+    void agentModeSkipsInvalidSpanInMdc() {
+        runner(prepare(OPERATOR_GRPC, Map.of(), true, true, true)).run(ctx -> {
+            Slf4JEventListener listener = ctx.getBean(Slf4JEventListener.class);
+            assertThat(listener).isInstanceOf(AgentTracingConfiguration.ValidSpanSlf4JEventListener.class);
+            try {
+                MDC.put("traceId", "stale");
+                listener.onEvent(new EventPublishingContextWrapper.ScopeAttachedEvent(
+                        Context.root().with(Span.getInvalid())));
+                assertThat(MDC.get("traceId")).isNull();
+                assertThat(MDC.get("spanId")).isNull();
+                listener.onEvent(new EventPublishingContextWrapper.ScopeAttachedEvent(Context.root().with(agentSpan())));
+                assertThat(MDC.get("traceId")).isEqualTo(AGENT_TRACE);
+                assertThat(MDC.get("spanId")).isEqualTo(AGENT_SPAN);
+                listener.onEvent(new EventPublishingContextWrapper.ScopeRestoredEvent(
+                        Context.root().with(Span.getInvalid())));
+                assertThat(MDC.get("traceId")).isNull();
+                listener.onEvent(new EventPublishingContextWrapper.ScopeRestoredEvent(Context.root().with(agentSpan())));
+                listener.onEvent(new EventPublishingContextWrapper.ScopeClosedEvent());
+                assertThat(MDC.get("traceId")).isNull();
+            } finally {
+                MDC.clear();
+            }
+            // Micrometer'ın no-op izleyicisi o an span yokken geçersiz bağlamı sarar — kaynağı budur.
+            io.micrometer.tracing.Span orphan = ctx.getBean(Tracer.class).nextSpan().start();
+            assertThat(orphan.context().traceId()).isEqualTo("00000000000000000000000000000000");
+            orphan.end();
+        });
+        runner(prepare(PLAIN_HTTP, Map.of(), false, true, true)).run(ctx ->
+                assertThat(ctx.getBean(Slf4JEventListener.class))
+                        .as("ajansız: Boot'un kendi dinleyicisi").isNotInstanceOf(
+                                AgentTracingConfiguration.ValidSpanSlf4JEventListener.class));
     }
 
     @Test
@@ -301,7 +380,8 @@ class TracingCoexistenceContextTest {
         }, k -> null, k -> null, List::of);
         StandardEnvironment env = new StandardEnvironment();
         int before = env.getPropertySources().size();
-        new TracingCoexistenceEnvironmentPostProcessor(logFactory, broken, () -> false, () -> bootMapping(Map.of()))
+        new TracingCoexistenceEnvironmentPostProcessor(logFactory, broken, () -> false,
+                factory -> OtelEnvMappingTestSupport.mapping(factory, Map.of()))
                 .postProcessEnvironment(env, new SpringApplication());
         assertThat(env.getPropertySources().size()).isEqualTo(before);
         assertThat(warns).singleElement().asString().contains("İzleme uyum denetimi yapılamadı").contains("boom");

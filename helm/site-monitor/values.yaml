@@ -83,7 +83,11 @@ config:
     #   OTEL_SERVICE_NAME (serviceName, empty = the Deployment name);
     #   MANAGEMENT_OPENTELEMETRY_MAP_ENVIRONMENT_VARIABLES=false — Spring Boot must not map the agent's OTEL_*
     #     variables into its own exporter (that crashed the start with OTEL_EXPORTER_OTLP_PROTOCOL=grpc);
-    #   OTEL_RESOURCE_ATTRIBUTES (resourceAttributes above, when set; the operator appends its own).
+    #   OTEL_RESOURCE_ATTRIBUTES (resourceAttributes above, when set; the operator appends its own);
+    #   OTEL_INSTRUMENTATION_SANITIZATION_URL_EXPERIMENTAL_SENSITIVE_QUERY_PARAMETERS — server spans record url.query;
+    #     the approval links' ?token= (weekly / technical-error reports, valid 14 days) must not reach the trace
+    #     backend. REPLACES the agent's built-in list, so that list is repeated (_helpers.tpl).
+    # An explicit podAnnotations "instrumentation.opentelemetry.io/inject-java: false" counts as not set.
     # The app detects the agent and turns its own OTLP export off (one trace system: the agent's; log trace id
     # = the agent's). Sampling, propagators and the collector address come from the Instrumentation resource;
     # samplingProbability above does not apply. The agent adds ~100-200 MiB memory and a slower start

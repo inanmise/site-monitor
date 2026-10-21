@@ -32,6 +32,39 @@ public final class OpenTelemetryAgentProbe {
      */
     static final List<String> CLIENT_INSTRUMENTATIONS = List.of("java-http-client", "http-url-connection");
 
+    /** Ajanın sorgu adı gizleme ayarı (ortam: {@code OTEL_INSTRUMENTATION_SANITIZATION_URL_EXPERIMENTAL_SENSITIVE_QUERY_PARAMETERS}). */
+    static final String SENSITIVE_QUERY_KEY = "otel.instrumentation.sanitization.url.experimental.sensitive-query-parameters";
+
+    /**
+     * Ajan 2.32.0'ın yerleşik gizleme listesi ({@code HttpConstants.SENSITIVE_QUERY_PARAMETERS}). Ayar verilince bu liste
+     * GENİŞLEMEZ, DEĞİŞTİRİLİR ({@code CommonConfig}: ayar null değilse {@code new HashSet(ayar)}) — o yüzden yeniden
+     * yazılır. Eşleşme büyük/küçük harf duyarlı ve kodlanmamış ad üzerinden ({@code Set.contains}).
+     */
+    public static final List<String> AGENT_DEFAULT_SENSITIVE_QUERY_PARAMETERS = List.of(
+            "AWSAccessKeyId", "Signature", "X-Amz-Signature", "X-Amz-Credential", "X-Amz-Security-Token", "sig",
+            "X-Goog-Signature");
+
+    /**
+     * Uygulamanın SORGU DİZESİNDEN kabul ettiği kimlik bilgileri (2026-10-21 taraması): {@code token} — haftalık rapor
+     * ({@code GET /api/weekly-reports/approve-link?token=…}) ve teknik hata raporu ({@code GET
+     * /api/tech-error-reports/approve-link?token=…}) onay bağlantıları; 14 gün geçerli, kimliği doğrulanmamış onay.
+     * Başka uç sorgu ile kimlik almaz (oturum çerezde, OTP / giriş JSON gövdesinde, metrik belirteci Authorization
+     * başlığında) ve hiçbir kimlik URL YOLUNDA taşınmaz. Kapı: {@code OtelAgentQueryRedactionGateTest}.
+     */
+    public static final List<String> APP_QUERY_CREDENTIALS = List.of("token");
+
+    /**
+     * Helm'in ajana verdiği gizleme listesi (tek kaynak; Helm şablonu ve RUNBOOK bunun aynısını taşır — kapı denetler):
+     * ajanın yerleşik listesi + uygulamanın sorgu kimlikleri + derinlemesine savunma için yaygın kimlik adları (istemci
+     * enstrümantasyonu yeniden açılırsa izlenen URL'lerdeki anahtarlar; yanlış kullanan bir çağıran).
+     */
+    public static final List<String> SENSITIVE_QUERY_PARAMETERS = List.of(
+            "AWSAccessKeyId", "Signature", "X-Amz-Signature", "X-Amz-Credential", "X-Amz-Security-Token", "sig",
+            "X-Goog-Signature",
+            "token",
+            "access_token", "api_key", "apiKey", "apikey", "key", "code", "password", "secret", "signature",
+            "client_secret", "subscription-key", "auth", "jsessionid", "otp");
+
     private final BooleanSupplier bootstrapClassPresent;
     private final Function<String, String> systemProperties;
     private final Function<String, String> environment;
@@ -68,6 +101,19 @@ public final class OpenTelemetryAgentProbe {
             if (enabled(config("otel.instrumentation." + name + ".enabled"), defaultEnabled)) return true;
         }
         return false;
+    }
+
+    /**
+     * Ajanın {@code url.query} gizleme listesi uygulamanın sorgu kimliklerini ({@link #APP_QUERY_CREDENTIALS}) kapsıyor
+     * mu. Ayar yoksa ajanın yerleşik listesi geçerlidir (kapsamaz); ayar varsa virgülle ayrılmış adlar, kırpılmış.
+     */
+    public boolean redactsQueryCredentials() {
+        String raw = config(SENSITIVE_QUERY_KEY);
+        List<String> names = AGENT_DEFAULT_SENSITIVE_QUERY_PARAMETERS;
+        if (raw != null && !raw.isBlank()) {
+            names = java.util.Arrays.stream(raw.split(",")).map(String::trim).filter(n -> !n.isEmpty()).toList();
+        }
+        return names.containsAll(APP_QUERY_CREDENTIALS);
     }
 
     /** Ajanın yapılandırma okuması: sistem özelliği, yoksa ortam değişkeni ({@code a.b-c} → {@code A_B_C}). */

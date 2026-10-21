@@ -485,6 +485,7 @@ groups:
   | `MANAGEMENT_OPENTELEMETRY_MAP_ENVIRONMENT_VARIABLES=false` | Boot ajanın değişkenlerini kendi dışa aktarıcısına eşlemesin (eski sürümlerde açılışı düşüren şey; uygulama bunu kendisi de yapar). |
   | `OTEL_INSTRUMENTATION_COMMON_LOGGING_TRACE_ID_KEY=traceId`, `…_SPAN_ID_KEY=spanId` | JSON günlükte alan adları `traceId` / `spanId` kalır (ajanın varsayılanı `trace_id` / `span_id`; eski ajan sürümleri bu anahtarı tanımaz → `trace_id`, düz metin `trace=` ikisini de okur). |
   | `OTEL_RESOURCE_ATTRIBUTES` | `config.otel.resourceAttributes` doluysa (operatör kendi özniteliklerini ekler). |
+  | `OTEL_INSTRUMENTATION_SANITIZATION_URL_EXPERIMENTAL_SENSITIVE_QUERY_PARAMETERS=AWSAccessKeyId,Signature,X-Amz-Signature,X-Amz-Credential,X-Amz-Security-Token,sig,X-Goog-Signature,token,access_token,api_key,apiKey,apikey,key,code,password,secret,signature,client_secret,subscription-key,auth,jsessionid,otp` | Ajan sunucu span'larında `url.query`'yi kaydeder; 2.32 yalnız `AWSAccessKeyId`, `Signature`, `X-Amz-*`, `sig`, `X-Goog-Signature`'ı gizler. Haftalık rapor ve teknik hata raporu onay bağlantıları (`GET /api/weekly-reports/approve-link?token=…`, `GET /api/tech-error-reports/approve-link?token=…`) 14 gün geçerli, oturumsuz onay belirteci taşır — gizlenmezse iz arka ucunu okuyan herkes raporu onaylayabilir. Ayar ajanın listesinin YERİNE geçer (genişletmez), o yüzden yerleşik adlar tekrar yazılır; eşleşme büyük/küçük harf duyarlı, kodlanmamış ad üzerinden. Uygulamada sorgu dizesinden kimlik alan başka uç yok (oturum çerezde, giriş / OTP gövdede, metrik belirteci `Authorization` başlığında) ve URL YOLUNDA kimlik taşınmaz (kapı `OtelAgentQueryRedactionGateTest`); listedeki diğer adlar derinlemesine savunma. Liste değişirse tek kaynak `OpenTelemetryAgentProbe.SENSITIVE_QUERY_PARAMETERS`. |
 
   Ek değişken: `config.otel.agent.extraEnv` (ör. `OTEL_LOGS_EXPORTER: none` — ajan varsayılanda uygulama günlüklerini de
   OTLP ile gönderir; `OTEL_INSTRUMENTATION_SPRING_SCHEDULING_ENABLED: "false"` — zamanlanmış iş span'ları). Ek açıklamayı
@@ -501,12 +502,17 @@ groups:
 
   **Eski sürüm (≤ 20.163) ajanla düşüyorsa — sürüm beklemeden geçici çözüm:** kapsayıcı ortamına
   `MANAGEMENT_OPENTELEMETRY_MAP_ENVIRONMENT_VARIABLES=false` ekleyin (Boot ajanın `OTEL_*` değişkenlerini eşlemez →
-  "No GrpcSenderProvider found on classpath" kalkar) ve izlenen sitelere `traceparent` gitmesin diye
-  `OTEL_INSTRUMENTATION_JAVA_HTTP_CLIENT_ENABLED=false`, `OTEL_INSTRUMENTATION_HTTP_URL_CONNECTION_ENABLED=false`:
+  "No GrpcSenderProvider found on classpath" kalkar), izlenen sitelere `traceparent` gitmesin diye
+  `OTEL_INSTRUMENTATION_JAVA_HTTP_CLIENT_ENABLED=false`, `OTEL_INSTRUMENTATION_HTTP_URL_CONNECTION_ENABLED=false` ve onay
+  bağlantılarının `?token=` değeri iz arka ucuna gitmesin diye url.query gizleme listesi (yukarıdaki tablo):
   ```bash
   kubectl set env -n "$NS" deploy/"$DEPLOY" -c <kapsayıcı> MANAGEMENT_OPENTELEMETRY_MAP_ENVIRONMENT_VARIABLES=false \
-    OTEL_INSTRUMENTATION_JAVA_HTTP_CLIENT_ENABLED=false OTEL_INSTRUMENTATION_HTTP_URL_CONNECTION_ENABLED=false
+    OTEL_INSTRUMENTATION_JAVA_HTTP_CLIENT_ENABLED=false OTEL_INSTRUMENTATION_HTTP_URL_CONNECTION_ENABLED=false \
+    OTEL_INSTRUMENTATION_SANITIZATION_URL_EXPERIMENTAL_SENSITIVE_QUERY_PARAMETERS=AWSAccessKeyId,Signature,X-Amz-Signature,X-Amz-Credential,X-Amz-Security-Token,sig,X-Goog-Signature,token,access_token,api_key,apiKey,apikey,key,code,password,secret,signature,client_secret,subscription-key,auth,jsessionid,otp
   ```
+  Ek açıklamayı (`instrumentation.opentelemetry.io/inject-java`) elle kullanan HER sürüm için son üç ayar (iki istemci
+  enstrümantasyonu + `url.query` listesi) gerekir; yeni sürüm eksik olanı açılışta UYARI ile söyler (`traceparent` /
+  `url.query`). `podAnnotations`'ta `inject-java: "false"` (açıkça kapalı) ayarlanmamış sayılır.
   (Bir sonraki `helm upgrade` bunları siler — kalıcı yol `config.otel.agent.enabled`.) Eski sürümde uygulama kendi
   SDK'sıyla da span üretir (dışa aktarmaz); günlükteki `trace=` yine ajanın iziyle aynıdır (ölçüldü).
 
