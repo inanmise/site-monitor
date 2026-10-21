@@ -676,7 +676,9 @@ describe('AlertHistory — tema sözleşmesi', () => {
     fireEvent.click(screen.getByRole('button', { name: /foo\.example\.com.*Re-Notify/ }))
     await screen.findByText(/confirm recipients/i)
     expect(screen.getByText('Kisi Bir')).toBeDefined()
-    expect(screen.getByText('RATE_LIMITED')).toBeDefined()
+    // 2026-10-21: gönderilmeyecek satırın nedeni insan diliyle (ham kod yalnız title'da) — aynı kişi satırı da böyle okunur
+    expect(screen.getByText('Skipped — hourly push limit')).toBeDefined()
+    expect(screen.queryByText('RATE_LIMITED')).toBeNull()
     const modal = screen.getByRole('dialog')
     expect(Array.from(modal.querySelectorAll('[role="checkbox"]')).some((b) => b.disabled)).toBe(true)
     expect(screen.getByText(/3 recipients selected/i)).toBeDefined()

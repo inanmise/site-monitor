@@ -70,6 +70,8 @@ export function pushFix(t, row, { access, settings, level, onNavigate }) {
     case 'INACTIVE': return { text: t('wn.fix.INACTIVE'), action: openUser }
     case 'SKIPPED_NO_ID': return { text: t('wn.fix.SKIPPED_NO_ID'), action: openUser }
     case 'MISSING_MEMBERSHIP': return { text: t('wn.fix.MISSING_MEMBERSHIP'), action: openUser }
+    // Aynı kişi (2026-10-21): düzeltilecek bir şey yok — kişi push'u öbür hesabıyla alır
+    case 'SKIPPED_SAME_PERSON': return row.samePersonOf ? { text: t('wn.fix.SKIPPED_SAME_PERSON', row.samePersonOf), action: null } : null
     default: return null
   }
 }

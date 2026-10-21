@@ -22,6 +22,10 @@ export function PushStatusBadge({ row, t, compact = false }) {
       {!compact && (row.kind === 'SKIPPED' || row.kind === 'BLOCKED') && row.status && (
         <div data-slot="pl-reason" className="w-full max-w-[260px] text-xs leading-snug text-muted-foreground" title={row.status}>{pushReasonLabel(row.status, t)}</div>
       )}
+      {/* Aynı kişi (2026-10-21): push aynı kişinin öbür hesabına gitti — o hesap (kullanıcı adı) */}
+      {!compact && row.same_person_username && (
+        <div data-slot="pl-same-person" className="w-full max-w-[260px] text-xs leading-snug [overflow-wrap:anywhere] text-muted-foreground">{t('push.samePersonOf', row.same_person_username)}</div>
+      )}
       {!compact && row.error && <div className="w-full max-w-[260px] truncate text-xs text-destructive" title={row.error}>{row.error}</div>}
       {!compact && detail && <div className={MUTED_SM}>{detail}</div>}
       {!compact && <PushRowLinks row={row} t={t} />}
@@ -143,6 +147,9 @@ export function PushLogCards({ rows, t, canRequeue, busy, onOpen, onRequeue }) {
               )}
               {(row.kind === 'SKIPPED' || row.kind === 'BLOCKED') && row.status && (
                 <span data-slot="pl-reason" className="min-w-0 text-xs leading-snug text-muted-foreground">{pushReasonLabel(row.status, t)}</span>
+              )}
+              {row.same_person_username && (
+                <span data-slot="pl-same-person" className="min-w-0 text-xs leading-snug [overflow-wrap:anywhere] text-muted-foreground">{t('push.samePersonOf', row.same_person_username)}</span>
               )}
               <PushRowLinks row={row} t={t} />
               <span className="flex min-w-0 flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">

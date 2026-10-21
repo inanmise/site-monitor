@@ -144,6 +144,9 @@ export default function PushHistorySection() {
                   {rowStatus(r) !== 'sent' && rowStatus(r) !== 'pending' && r.reason && (
                     <span className="text-xs leading-snug text-muted-foreground">{pushReasonLabel(r.reason, t)}</span>
                   )}
+                  {r.same_person_username && (
+                    <span data-slot="ph-same-person" className="text-xs leading-snug [overflow-wrap:anywhere] text-muted-foreground">{t('push.samePersonOf', r.same_person_username)}</span>
+                  )}
                 </li>
               ))}
             </ul>
@@ -265,6 +268,10 @@ function RowStatus({ r, t, compact = false }) {
       </Badge>
       {!compact && st !== 'sent' && st !== 'pending' && r.reason && (
         <span data-slot="ph-reason" className="text-xs leading-snug text-muted-foreground">{pushReasonLabel(r.reason, t)}</span>
+      )}
+      {/* Aynı kişi (2026-10-21): bu push kişinin öbür hesabına gitti — o hesabın kullanıcı adı */}
+      {!compact && r.same_person_username && (
+        <span data-slot="ph-same-person" className="text-xs leading-snug [overflow-wrap:anywhere] text-muted-foreground">{t('push.samePersonOf', r.same_person_username)}</span>
       )}
       {st === 'summarized' && !compact && <span className="text-xs text-muted-foreground">{t('mypush.hist.summarizedInto')}</span>}
     </div>

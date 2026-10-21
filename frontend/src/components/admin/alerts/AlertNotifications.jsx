@@ -133,9 +133,14 @@ export function PushDeliveryGroup({ rows }) {
   const who = (p) => (p.username === '-'
     ? <Badge key={p.id} variant="outline" data-who="system" className="font-normal text-muted-foreground"><em>{t('userpush.systemRow')}</em></Badge>
     : (
-      <Badge key={p.id} variant="outline" data-who="" className="gap-1.5 font-normal">
+      <Badge key={p.id} variant="outline" data-who=""
+        className={cn('gap-1.5 font-normal', p.same_person_username && 'h-auto flex-wrap overflow-visible rounded-md whitespace-normal')}>
         <UserBadge username={p.username} displayName={p.display_name} size="sm" inline nameOnly />
         <span data-who-id="" className="font-mono text-muted-foreground">{p.username}</span>
+        {/* Aynı kişi (2026-10-21): bu hesap atlandı, push aynı kişinin öbür hesabına gitti */}
+        {p.same_person_username && (
+          <span data-who-same="" className="text-muted-foreground">· {t('push.samePersonOf', p.same_person_username)}</span>
+        )}
       </Badge>
     ))
 

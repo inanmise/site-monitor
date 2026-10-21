@@ -123,7 +123,8 @@ public class EscalationStepService {
     }
 
     /**
-     * Adım push'u (2026-10-04, onaylı öneri 6) — gönderilen adım, kişi TEK aktif kullanıcıya çözülürse push olarak da gider
+     * Adım push'u (2026-10-04, onaylı öneri 6) — gönderilen adım, kişi aktif bir kullanıcıya çözülürse push olarak da gider
+     * (aynı e-postalı birden çok aktif hesap aynı kişidir, yalnız biri alır — 2026-10-21)
      * ({@link UserPushService#enqueueEscalationStep}; ayar {@code site.monitor.escalation.step-push-enabled}, vars. açık).
      * İsteğe bağlı: yokken (testler) adım bugünkü gibi yalnız e-posta + webhook'tur. Gecikmeli kişi yoksa bu yol hiç koşmaz.
      */

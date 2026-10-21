@@ -133,6 +133,9 @@ public class MyPushHistoryService {
         m.put("monitor_type", r.getMonitorType());
         m.put("lang", r.getPushLang() == null ? PushI18n.TR : r.getPushLang());
         m.put("summarized_into", r.getOverflowSummaryId());
+        // Aynı kişi kuralı (2026-10-21): bu push kişinin BAŞKA hesabına gitti — o hesabın kullanıcı adı (yalnız kişinin
+        // kendi satırında; karar satırları kişi taşımaz).
+        m.put("same_person_username", own ? r.getSamePersonUsername() : null);
         if (visible) {
             m.put("target", r.getMonitorName());
             m.put("alert_event_id", r.getAlertEventId());

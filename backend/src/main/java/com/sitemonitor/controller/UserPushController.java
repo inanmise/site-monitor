@@ -354,7 +354,7 @@ public class UserPushController {
                 PageRequest.of(0, 10_000));
         StringBuilder sb = new StringBuilder();
         sb.append("created_at,sent_at,username,display_name,team_id,monitor_type,monitor_name,")
-          .append("alert_level,trigger,status,http_status,attempts,notification_id,batch_id,message\n");
+          .append("alert_level,trigger,status,http_status,attempts,notification_id,batch_id,message,same_person_username\n");
         for (UserPushDelivery d : pg.getContent()) {
             sb.append(Csv.cell(d.getCreatedAt())).append(',').append(Csv.cell(d.getSentAt())).append(',')
               .append(Csv.cell(d.getUsername())).append(',').append(Csv.cell(d.getDisplayName())).append(',')
@@ -363,7 +363,8 @@ public class UserPushController {
               .append(Csv.cell(d.getTrigger())).append(',').append(Csv.cell(d.getStatus())).append(',')
               .append(Csv.cell(d.getHttpStatus())).append(',').append(Csv.cell(d.getAttempts())).append(',')
               .append(Csv.cell(d.getNotificationId())).append(',').append(Csv.cell(d.getBatchId())).append(',')
-              .append(Csv.cell(d.getMessage())).append('\n');
+              .append(Csv.cell(d.getMessage())).append(',')
+              .append(Csv.cell(d.getSamePersonUsername())).append('\n');   // 2026-10-21: aynı kişi kuralı — gönderilen hesap
         }
         byte[] bom = {(byte) 0xEF, (byte) 0xBB, (byte) 0xBF};   // Excel Türkçe karakter için BOM
         byte[] csv = sb.toString().getBytes(StandardCharsets.UTF_8);

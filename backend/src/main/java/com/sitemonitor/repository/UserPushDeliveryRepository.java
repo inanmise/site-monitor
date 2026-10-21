@@ -87,6 +87,22 @@ public interface UserPushDeliveryRepository extends JpaRepository<UserPushDelive
     boolean existsByDedupeKeyAndUsername(String dedupeKey, String username);
     /** Fırtına karar satırı dedupe'u — takım başına (aynı fırtınada iki takımın kararı ayrı yazılır). */
     boolean existsByDedupeKeyAndUsernameAndTeamId(String dedupeKey, String username, Long teamId);
+    /**
+     * Aynı kişi kuralı (2026-10-21, {@code PushSamePersonGuard}): verilen hesapların (BÜYÜK harf kullanıcı adları) bu
+     * yinelenmezlik anahtarındaki satırları — olaysız takım / doğrudan bildirimin "bu kişi bu bildirimi zaten aldı mı" kanıtı.
+     */
+    @Query("SELECT d FROM UserPushDelivery d WHERE d.dedupeKey = :key AND UPPER(d.username) IN :usernames")
+    List<UserPushDelivery> findPersonRowsByKey(@Param("key") String key,
+                                               @Param("usernames") java.util.Collection<String> upperUsernames);
+
+    /**
+     * {@link #findPersonRowsByKey} anahtar ÖNEKİYLE (fırtına: {@code storm:<id>:} — aynı fırtınanın açılış / tekrar
+     * satırları). {@code prefixPattern} çağıranın kaçırdığı LIKE deseni ({@code \} kaçış karakteri, sonda {@code %}).
+     */
+    @Query("SELECT d FROM UserPushDelivery d WHERE d.dedupeKey LIKE :prefixPattern ESCAPE '\\' AND UPPER(d.username) IN :usernames")
+    List<UserPushDelivery> findPersonRowsByKeyPrefix(@Param("prefixPattern") String prefixPattern,
+                                                     @Param("usernames") java.util.Collection<String> upperUsernames);
+
     /** Fırtına çözüm push'unun alıcıları: bu fırtınanın bu takıma giden açılış/tekrar satırları (anahtar öneki). */
     List<UserPushDelivery> findByDedupeKeyStartingWithAndTeamIdAndStatusOrderByIdAsc(String dedupeKeyPrefix, Long teamId,
                                                                                        String status);
@@ -217,12 +233,13 @@ public interface UserPushDeliveryRepository extends JpaRepository<UserPushDelive
      * Webhook Push Gönderim Logu penceresi (2026-09-19; PushLogQueryService) — {@code message} ve {@code rawResponse}
      * HARİÇ sütunlar (gövde yalnız satır detayında). Sıra: id, alertEventId, trigger, monitorType, monitorId, monitorName,
      * teamId, alertLevel, username, displayName, title, status, httpStatus, error, attempts, createdAt, sentAt, batchId,
-     * notificationId, overflowSummaryId, pushLang (son ikisi 2026-10-04 — SONA eklendi; konumlar sabit kalır).
+     * notificationId, overflowSummaryId, pushLang (son ikisi 2026-10-04 — SONA eklendi; konumlar sabit kalır),
+     * samePersonUsername (2026-10-21 — SONA eklendi).
      */
     @Query("""
            SELECT d.id, d.alertEventId, d.trigger, d.monitorType, d.monitorId, d.monitorName, d.teamId, d.alertLevel,
                   d.username, d.displayName, d.title, d.status, d.httpStatus, d.error, d.attempts, d.createdAt, d.sentAt,
-                  d.batchId, d.notificationId, d.overflowSummaryId, d.pushLang
+                  d.batchId, d.notificationId, d.overflowSummaryId, d.pushLang, d.samePersonUsername
            FROM UserPushDelivery d
            WHERE d.createdAt >= :from AND d.createdAt <= :to
            ORDER BY d.createdAt DESC, d.id DESC

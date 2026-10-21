@@ -2,6 +2,7 @@ import { useId, useState } from 'react'
 import { useT } from '../../../i18n/index.jsx'
 import ModalShell from '../../ui/ModalShell.jsx'
 import ToneBadge, { SystemRoleBadge } from '../ToneBadge.jsx'
+import { statusLabel } from './alertHistoryModel.js'
 import { Button } from '@/components/shadcn/button'
 import { Checkbox } from '@/components/shadcn/checkbox'
 import { Label } from '@/components/shadcn/label'
@@ -80,7 +81,11 @@ export default function ReNotifyConfirmModal({ domain, recipients, webhook, send
               checked={willSend && !uncheckedUsers.has(r.username)} onToggle={() => toggleUser(r.username)}>
               <strong>{r.display_name || r.username}</strong>
               <ToneBadge tone={willSend ? 'info' : 'muted'}>{willSend ? t('alh.renotifyModal.willSend') : t('alh.renotifyModal.wontSend')}</ToneBadge>
-              <span className="text-xs text-muted-foreground">{willSend ? r.username : r.status}</span>
+              <span className="text-xs text-muted-foreground [overflow-wrap:anywhere]">{willSend ? r.username : statusLabel(t, r.status)}</span>
+              {/* Aynı kişi (2026-10-21): push bu kişinin öbür hesabına gidecek */}
+              {r.same_person_of && (
+                <span data-slot="renotify-same-person" className="text-xs text-muted-foreground [overflow-wrap:anywhere]">{t('push.samePersonOf', r.same_person_of)}</span>
+              )}
             </RecipientRow>
           )
         })}

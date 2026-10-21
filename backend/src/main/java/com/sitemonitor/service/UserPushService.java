@@ -29,6 +29,7 @@ import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -345,14 +346,22 @@ public class UserPushService {
         // RESOLVE: alıcı kümesi açılışta gerçekten push ALANLARDIR (seviye/grup/takım çözümlemesi
         // yeniden yapılmaz) — bkz. resolver.resolvePrior. Diğer fazlar takım+seviye ile çözülür.
         // Kişisel aile süzgeci (2026-10-04) yalnız açılış/eskalasyon/tekrar/elle gönderimde; ÇÖZÜM muaf (resolvePrior).
-        List<UserPushRecipientResolver.Recipient> recipients =
-                ("RESOLVE".equals(trigger) ? resolver.resolvePrior(priorSentUsernames(event))
-                                            : UserPushRecipientResolver.withFamilies(
-                                                    resolver.resolve(teamId, event.getAlertLevel()), familyList(family)))
-                .stream().filter(r -> !excluded.contains(r.username())).toList();
+        List<UserPushRecipientResolver.Recipient> resolved =
+                "RESOLVE".equals(trigger) ? resolver.resolvePrior(priorSentUsernames(event))
+                                          : UserPushRecipientResolver.withFamilies(
+                                                  resolver.resolve(teamId, event.getAlertLevel()), familyList(family));
+        String dedupeKey = dedupeKeyFor(trigger, event);
+        // Aynı kişi (2026-10-21, PushSamePersonGuard): aynı e-postalı aktif hesaplardan YALNIZ biri push alır — bu bildirimi zaten
+        // almış hesap; yoksa bu olayda satırı olan (önce SENT); yoksa en son giriş yapan, sonra en küçük kimlik. Diğerleri
+        // SKIPPED_SAME_PERSON (tavana sayılmaz). Karar ÇIKARMADAN ÖNCE, önizlemeyle aynı listede verilir: operatör push'u alacak
+        // hesabı çıkardıysa kişiyi çıkarmıştır — öbür hesabı da yazılmaz (onay penceresinde "gitmeyecek" görünüyordu).
+        PushSamePersonGuard.Plan same = samePlan(resolved.stream().map(UserPushRecipientResolver.Recipient::username).toList(),
+                alarmPrior(event.getId(), d -> dedupeKey.equals(d.getDedupeKey())));
+        List<UserPushRecipientResolver.Recipient> recipients = resolved.stream()
+                .filter(r -> !containsName(excluded, r.username()) && !containsName(excluded, same.chosenFor(r.username())))
+                .toList();
         if (recipients.isEmpty()) { skipRow(event, trigger, "SKIPPED_NO_RECIPIENTS"); return; }
 
-        String dedupeKey = dedupeKeyFor(trigger, event);
         // Mesaj kişinin DİLİNDE (2026-10-04, öneri 5) — dil başına bir kez kurulur; Türkçe bugünküyle bayt bayt aynı.
         Map<String, String> messages = new java.util.HashMap<>();
         String batchId = UUID.randomUUID().toString().substring(0, 8);
@@ -367,8 +376,10 @@ public class UserPushService {
         boolean capExempt = "RESOLVE".equals(trigger) || capBypass(event.getAlertLevel());
         int queued = 0;
         for (var r : recipients) {
+            String chosen = same.chosenFor(r.username());
             String status;
-            if (r.skipReason() != null) status = r.skipReason();
+            if (chosen != null) status = STATUS_SKIPPED_SAME_PERSON;
+            else if (r.skipReason() != null) status = r.skipReason();
             else if (!capExempt && deliveryRepo.countRecentForUser(r.username(), since) >= hourlyCap()) status = "RATE_LIMITED";
             else status = "PENDING";   // devre kesici açıksa drainOutbox bekletir (N2) — satır kaybolmaz
 
@@ -379,6 +390,7 @@ public class UserPushService {
             String message = messages.computeIfAbsent(lang, l -> buildMessage(event, trigger, ctx, l));
             UserPushDelivery d = row(event, trigger, dedupeKey, teamId, family, r.username(), r.displayName(),
                     message, status, now, lang);
+            d.setSamePersonUsername(chosen);
             d.setBatchId(batchIdFor(batchId, lang));
             try {
                 deliveryRepo.save(d);
@@ -496,8 +508,15 @@ public class UserPushService {
         return out;
     }
 
-    /** Onay pop-up'ındaki tek webhook alıcı satırı. {@code status}: PENDING = gidecek, aksi halde sebep. */
-    public record PushPreviewRow(String username, String displayName, String status) {}
+    /**
+     * Onay pop-up'ındaki tek webhook alıcı satırı. {@code status}: PENDING = gidecek, aksi halde sebep.
+     * {@code samePersonOf}: durum {@code SKIPPED_SAME_PERSON} ise push'un gideceği (aynı kişinin) hesap (2026-10-21).
+     */
+    public record PushPreviewRow(String username, String displayName, String status, String samePersonOf) {
+        public PushPreviewRow(String username, String displayName, String status) {
+            this(username, displayName, status, null);
+        }
+    }
 
     /**
      * Webhook kanalının "kime gider" önizlemesi — HİÇBİR yazma yapmaz.
@@ -533,6 +552,11 @@ public class UserPushService {
         String family = MonitorTypeCatalog.typeOfAlert(event.getAlertType());
         Set<String> listed = new HashSet<>();
         base.recipients().forEach(r -> listed.add(r.username()));
+        // Bu gönderimde push'u GERÇEKTEN alacak / satırı yazılacak hesaplar (aynı kişi satırı hariç) — nöbetçinin kardeş hesabı
+        // bunlardan biriyse gönderimdeki gibi (enqueueOnCall) nöbetçi satırı SKIPPED_SAME_PERSON olur (2026-10-21).
+        Map<String, String> holders = new LinkedHashMap<>();
+        for (PushPreviewRow b : base.recipients())
+            if (!STATUS_SKIPPED_SAME_PERSON.equals(b.status())) holders.put(PushSamePersonGuard.key(b.username()), b.username());
         List<PushPreviewRow> extra = new ArrayList<>();
         String since = ISO.format(Instant.now().minus(Duration.ofHours(1)));
         Set<Long> done = new HashSet<>();
@@ -546,11 +570,21 @@ public class UserPushService {
             if (match == null || match.recipient() == null) continue;
             UserPushRecipientResolver.Recipient r = match.recipient();
             if (!listed.add(r.username())) continue;
+            String chosen = samePlan(List.of(r.username()), names -> {
+                Map<String, PushSamePersonGuard.Evidence> m = new HashMap<>();
+                for (String n : names) {
+                    if (holders.containsKey(PushSamePersonGuard.key(n)))
+                        m.put(PushSamePersonGuard.key(n), new PushSamePersonGuard.Evidence(true, false, true));
+                }
+                return m;
+            }).chosenFor(r.username());
             String status;
-            if (r.skipReason() != null) status = r.skipReason();
+            if (chosen != null) status = STATUS_SKIPPED_SAME_PERSON;
+            else if (r.skipReason() != null) status = r.skipReason();
             else if (!capBypass(event.getAlertLevel()) && deliveryRepo.countRecentForUser(r.username(), since) >= hourlyCap()) status = "RATE_LIMITED";
             else status = "PENDING";
-            extra.add(new PushPreviewRow(r.username(), r.displayName(), status));
+            if (chosen == null) holders.put(PushSamePersonGuard.key(r.username()), r.username());
+            extra.add(new PushPreviewRow(r.username(), r.displayName(), status, chosen));
         }
         if (extra.isEmpty()) return base;
         List<PushPreviewRow> rows = new ArrayList<>(base.recipients());
@@ -571,12 +605,20 @@ public class UserPushService {
         List<PushPreviewRow> rows = new ArrayList<>();
         String since = ISO.format(Instant.now().minus(Duration.ofHours(1)));
         boolean capExempt = capBypass(event.getAlertLevel());
-        for (var r : UserPushRecipientResolver.withFamilies(resolver.resolve(teamId, event.getAlertLevel()), familyList(family))) {
+        List<UserPushRecipientResolver.Recipient> recipients =
+                UserPushRecipientResolver.withFamilies(resolver.resolve(teamId, event.getAlertLevel()), familyList(family));
+        // Aynı kişi (2026-10-21): gönderimle AYNI karar (enqueueInternal) — elle gönderimin anahtarı her seferinde yenidir,
+        // "bu bildirimi zaten aldı" kanıtı olmaz; seçim bu olayda satırı olan hesap, sonra son giriş, sonra kimlik.
+        PushSamePersonGuard.Plan same = samePlan(recipients.stream().map(UserPushRecipientResolver.Recipient::username).toList(),
+                alarmPrior(event.getId(), d -> false));
+        for (var r : recipients) {
+            String chosen = same.chosenFor(r.username());
             String status;
-            if (r.skipReason() != null) status = r.skipReason();
+            if (chosen != null) status = STATUS_SKIPPED_SAME_PERSON;
+            else if (r.skipReason() != null) status = r.skipReason();
             else if (!capExempt && deliveryRepo.countRecentForUser(r.username(), since) >= hourlyCap()) status = "RATE_LIMITED";
             else status = "PENDING";   // devre kesici açıksa drainOutbox bekletir (N2) — satır kaybolmaz
-            rows.add(new PushPreviewRow(r.username(), r.displayName(), status));
+            rows.add(new PushPreviewRow(r.username(), r.displayName(), status, chosen));
         }
         if (rows.isEmpty()) return new PushPreview(true, "SKIPPED_NO_RECIPIENTS", List.of());
         return new PushPreview(true, null, rows);
@@ -698,8 +740,12 @@ public class UserPushService {
                                                           String monitorName, LocalizedText message, String dedupeKey,
                                                           java.util.Set<String> excludeUsernames) {
         java.util.Set<String> excluded = new java.util.HashSet<>();
-        for (String u : excludeUsernames == null ? java.util.Set.<String>of() : excludeUsernames)
-            if (u != null) excluded.add(u.trim().toUpperCase(java.util.Locale.ROOT));
+        List<String> excludedNames = new ArrayList<>();
+        for (String u : excludeUsernames == null ? java.util.Set.<String>of() : excludeUsernames) {
+            if (u == null || u.isBlank()) continue;
+            excluded.add(u.trim().toUpperCase(java.util.Locale.ROOT));
+            excludedNames.add(u.trim());
+        }
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("queued", 0); out.put("skipped", 0); out.put("recipients", List.of());
         if (!enabled()) { out.put("reason", "SKIPPED_DISABLED"); return out; }
@@ -714,25 +760,44 @@ public class UserPushService {
                 .map(r -> UserPushRecipientResolver.SKIPPED_USER_QUIET_HOURS.equals(r.skipReason()) ? r.withSkip(null) : r)
                 .toList();
         if (recipients.isEmpty()) { out.put("reason", "SKIPPED_NO_RECIPIENTS"); return out; }
+        // Düşülen kişinin (ör. müdür push'unu alan, raporu gönderen) AYNI KİŞİYE ait öbür hesabı da bu bildirimi ikinci kez
+        // almaz (2026-10-21): satırı SKIPPED_SAME_PERSON, gönderilen hesap = düşülen hesap.
+        Map<String, String> excludedSiblings = excludedNames.isEmpty() ? Map.of() : samePersonSiblings(excludedNames);
         return writeTeamRows(out, teamId, trigger, alertLevel, monitorType, monitorName, message, dedupeKey,
-                recipients, excluded, false);
+                recipients, excluded, false, keyPrior(dedupeKey), excludedSiblings);
     }
 
-    /** Olaysız takım satırlarını yazar — takım bildirimi ve fırtına push'u ortak (dedupe, opt-out, saat tavanı). */
+    /**
+     * Olaysız takım satırlarını yazar — takım bildirimi ve fırtına push'u ortak (dedupe, opt-out, saat tavanı, aynı kişi).
+     *
+     * @param prior            aynı kişi kuralının önceki satır kanıtı ({@link PushSamePersonGuard})
+     * @param excludedSiblings düşülen hesapların kardeş hesapları ({@link PushSamePersonGuard#key}) → düşülen hesap
+     */
     private Map<String, Object> writeTeamRows(Map<String, Object> out, Long teamId, String trigger, String alertLevel,
                                               String monitorType, String monitorName, LocalizedText message, String dedupeKey,
                                               List<UserPushRecipientResolver.Recipient> recipients,
-                                              java.util.Set<String> excluded, boolean capExempt) {
+                                              java.util.Set<String> excluded, boolean capExempt,
+                                              PushSamePersonGuard.Prior prior, Map<String, String> excludedSiblings) {
         String batchId = UUID.randomUUID().toString().substring(0, 8);
         String now = ISO.format(Instant.now());
         String since = ISO.format(Instant.now().minus(Duration.ofHours(1)));
         Map<String, String> texts = new java.util.HashMap<>();
         int queued = 0, skipped = 0;
         List<String> names = new ArrayList<>();
+        List<String> candidates = new ArrayList<>();
+        for (var r : recipients) {
+            if (r.username() != null && !excluded.contains(r.username().trim().toUpperCase(java.util.Locale.ROOT))) candidates.add(r.username());
+        }
+        // Aynı kişi (2026-10-21): aynı e-postalı aktif hesaplardan YALNIZ biri — bu bildirimi zaten almış hesap, sonra bu olayda
+        // satırı olan, sonra en son giriş yapan, sonra en küçük kimlik. Diğerleri SKIPPED_SAME_PERSON (tavana sayılmaz).
+        PushSamePersonGuard.Plan same = samePlan(candidates, prior);
         for (var r : recipients) {
             if (r.username() != null && excluded.contains(r.username().trim().toUpperCase(java.util.Locale.ROOT))) { skipped++; continue; }
+            String chosen = excludedSiblings == null ? null : excludedSiblings.get(PushSamePersonGuard.key(r.username()));
+            if (chosen == null) chosen = same.chosenFor(r.username());
             String status;
-            if (r.skipReason() != null) status = r.skipReason();
+            if (chosen != null) status = STATUS_SKIPPED_SAME_PERSON;
+            else if (r.skipReason() != null) status = r.skipReason();
             else if (!capExempt && deliveryRepo.countRecentForUser(r.username(), since) >= hourlyCap()) status = "RATE_LIMITED";
             else status = "PENDING";   // devre kesici açıksa drainOutbox bekletir (N2) — satır kaybolmaz
             if (dedupeKey != null && deliveryRepo.existsByDedupeKeyAndUsername(dedupeKey, r.username())) { skipped++; continue; }
@@ -749,6 +814,7 @@ public class UserPushService {
             d.setTitle(titleSetting(lang));
             d.setMessage(texts.computeIfAbsent(lang, l -> PushText.truncate(PushText.pushSafe(message.forLang(l)), maxMessageChars())));
             d.setStatus(status);
+            d.setSamePersonUsername(chosen);
             d.setCreatedAt(now);
             d.setBatchId(batchIdFor(batchId, lang));
             d.setPushLang(lang);
@@ -830,7 +896,8 @@ public class UserPushService {
                 if (!recipients.isEmpty()) {
                     Map<String, Object> res = writeTeamRows(out, teamId, trigger, alertLevel, STORM_MONITOR_TYPE, STORM_MONITOR_NAME,
                             message, dedupeKey, recipients, java.util.Set.of(),
-                            resolve || capBypass(alertLevel));   // çözüm tavandan muaf; KRİTİK, ayar açıksa muaf
+                            resolve || capBypass(alertLevel),   // çözüm tavandan muaf; KRİTİK, ayar açıksa muaf
+                            stormPrior(stormId, legacyStormId, dedupeKey), Map.of());
                     recordCoverage(stormId, teamId, dedupeKey, stormTrigger, members);
                     return res;
                 }
@@ -1005,6 +1072,7 @@ public class UserPushService {
                                                       String monitorType, String monitorName, LocalizedText message, String dedupeKey) {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("queued", 0); out.put("skipped", 0); out.put("recipients", List.of()); out.put("queued_usernames", List.of());
+        out.put("same_person", Map.of());
         if (!enabled()) { out.put("reason", "SKIPPED_DISABLED"); return out; }
         if (recipients == null || recipients.isEmpty()) { out.put("reason", "SKIPPED_NO_RECIPIENTS"); return out; }
         String batchId = UUID.randomUUID().toString().substring(0, 8);
@@ -1016,11 +1084,20 @@ public class UserPushService {
         java.util.Set<String> seen = new java.util.HashSet<>();
         List<String> usernames = new ArrayList<>();
         List<String> queuedUsernames = new ArrayList<>();
+        // Aynı kişi (2026-10-21): aynı e-postalı aktif hesaplardan YALNIZ biri — bu bildirimi (anahtar) zaten almış hesap, sonra
+        // en son giriş yapan, sonra en küçük kimlik. Diğerleri SKIPPED_SAME_PERSON; çağıran "kime ulaştı" kararını
+        // {@code same_person} haritasıyla verir (kişi başına).
+        List<String> candidates = new ArrayList<>();
+        for (DirectRecipient r : recipients) if (r != null && r.username() != null && !r.username().isBlank()) candidates.add(r.username().trim());
+        PushSamePersonGuard.Plan same = samePlan(candidates, keyPrior(dedupeKey));
+        Map<String, String> samePersonOut = new LinkedHashMap<>();
         for (DirectRecipient r : recipients) {
             String u = r.username() == null ? "" : r.username().trim();
             if (u.isEmpty() || !seen.add(u)) { skipped++; continue; }
+            String chosen = same.chosenFor(u);
             String status;
-            if (r.optOut()) status = "SKIPPED_USER_OPT_OUT";
+            if (chosen != null) status = STATUS_SKIPPED_SAME_PERSON;
+            else if (r.optOut()) status = "SKIPPED_USER_OPT_OUT";
             else if (r.skipReason() != null) status = r.skipReason();   // kişisel tercih (seviye / susturma) — satır nedeniyle
             else if (deliveryRepo.countRecentForUser(u, since) >= hourlyCap()) status = "RATE_LIMITED";
             else status = "PENDING";   // devre kesici açıksa drainOutbox bekletir (N2) — satır kaybolmaz
@@ -1038,21 +1115,139 @@ public class UserPushService {
             d.setTitle(titleSetting(lang));
             d.setMessage(texts.computeIfAbsent(lang, l -> PushText.truncate(PushText.pushSafe(message.forLang(l)), maxMessageChars())));
             d.setStatus(status);
+            d.setSamePersonUsername(chosen);
             d.setCreatedAt(now);
             d.setBatchId(batchIdFor(batchId, lang));
             d.setPushLang(lang);
             try { deliveryRepo.save(d); } catch (Exception dup) { skipped++; continue; }
             if ("PENDING".equals(status)) { queued++; names.add(d.getDisplayName()); queuedUsernames.add(u); }
             else skipped++;
+            if (chosen != null) samePersonOut.put(u, chosen);
             usernames.add(u);
         }
         if (queued > 0) worker.execute(this::drainOutbox);
         out.put("queued", queued); out.put("skipped", skipped); out.put("recipients", names); out.put("batch_id", batchId);
         out.put("usernames", usernames);   // çağıran, aynı olayın takım bildiriminden bu kişileri düşer
+        // Aynı kişinin öbür hesabı yüzünden atlanan hesap → push'un gittiği hesap (2026-10-21): kişi başına "ulaştı" kararı için
+        out.put("same_person", samePersonOut);
         // Kuyruğa GİREN kişiler (2026-10-18): çağıran kişi başına "push ulaştı" kararı verir (teknik hata raporu onay
         // hatırlatması — talep PO başına; satırı atlanan / tekrar sayılan kişi ulaşmış sayılmaz)
         out.put("queued_usernames", queuedUsernames);
         return out;
+    }
+
+    // ── Aynı kişi kuralı (2026-10-21) ─────────────────────────────────────────────────────────
+
+    /**
+     * Aynı kişiye başka hesapla gönderildi: e-postası aynı aktif hesaplardan biri bu push'u aldı (ya da alacak) — bu hesaba
+     * satır yazılır ama push gitmez; satırın {@code samePersonUsername}'i push'un gittiği hesaptır. Bkz. {@link PushSamePersonGuard}.
+     */
+    public static final String STATUS_SKIPPED_SAME_PERSON = PushSamePersonGuard.SKIPPED_SAME_PERSON;
+
+    /**
+     * Aynı kişi kuralının uygulayıcısı — isteğe bağlı (alan enjeksiyonu: yapıcı imzası değişmez; elle kurulan testlerde yokken
+     * davranış birebir bugünkü). Kodla giriş push'u ({@link #sendDirect}) bu kurala tabi değildir.
+     */
+    @Autowired(required = false)
+    private PushSamePersonGuard samePerson;
+
+    /** Test kancası. */
+    void setSamePerson(PushSamePersonGuard g) { this.samePerson = g; }
+
+    /** Teslimatın aynı kişi kararı; koruyucu yoksa ya da düşerse boş karar (bugünkü davranış — push kaybolmaz). */
+    private PushSamePersonGuard.Plan samePlan(java.util.Collection<String> usernames, PushSamePersonGuard.Prior prior) {
+        PushSamePersonGuard g = samePerson;
+        if (g == null || usernames == null || usernames.isEmpty()) return PushSamePersonGuard.Plan.NONE;
+        try {
+            return g.plan(usernames, prior);
+        } catch (RuntimeException e) {
+            log.warn("user-push aynı kişi kararı verilemedi (birleştirme yok): {}", e.toString());
+            return PushSamePersonGuard.Plan.NONE;
+        }
+    }
+
+    /** Düşülen hesapların kardeş hesapları (aynı e-posta) → düşülen hesap; koruyucu yoksa boş. */
+    private Map<String, String> samePersonSiblings(java.util.Collection<String> usernames) {
+        PushSamePersonGuard g = samePerson;
+        if (g == null) return Map.of();
+        try {
+            return g.siblingsOf(usernames);
+        } catch (RuntimeException e) {
+            log.warn("user-push aynı kişi kardeş hesapları okunamadı: {}", e.toString());
+            return Map.of();
+        }
+    }
+
+    /**
+     * Alarm teslimatının kanıtı: olayın satırları (tek sorgu, yalnız birden çok hesabı olan kişi varsa). Olayın her satırı
+     * "aynı mantıksal olay" sayılır (açılış / eskalasyon / tekrar / çözüm / nöbetçi / adım); {@code exact} bu bildirimin aynısı.
+     */
+    private PushSamePersonGuard.Prior alarmPrior(Long eventId, java.util.function.Predicate<UserPushDelivery> exact) {
+        if (eventId == null) return PushSamePersonGuard.Prior.NONE;
+        return new PushSamePersonGuard.Prior() {
+            private List<UserPushDelivery> rows;   // teslimat başına en çok bir okuma (birden çok kişi grubu olsa da)
+
+            @Override
+            public Map<String, PushSamePersonGuard.Evidence> of(java.util.Collection<String> names) {
+                if (rows == null) rows = deliveryRepo.findByAlertEventIdOrderByIdAsc(eventId);
+                return evidenceOf(rows, names, exact);
+            }
+        };
+    }
+
+    /** Olaysız takım / doğrudan bildirimin kanıtı: aynı yinelenmezlik anahtarındaki satırlar (= bu bildirimin aynısı). */
+    private PushSamePersonGuard.Prior keyPrior(String dedupeKey) {
+        if (dedupeKey == null) return PushSamePersonGuard.Prior.NONE;
+        return names -> evidenceOf(deliveryRepo.findPersonRowsByKey(dedupeKey, upperAll(names)), names, d -> true);
+    }
+
+    /**
+     * Fırtına push'unun kanıtı: aynı fırtınanın (ve üyelerin taşındığı eski fırtınanın) açılış / tekrar satırları — günlük tekrar
+     * ve çözüm, açılışı alan hesaba gider; {@code exact} bu bildirimin anahtarı (bireysel takım yolunun anahtar × kişi tekilliği).
+     */
+    private PushSamePersonGuard.Prior stormPrior(Long stormId, Long legacyStormId, String dedupeKey) {
+        return names -> {
+            List<String> up = upperAll(names);
+            List<UserPushDelivery> rows = new ArrayList<>(deliveryRepo.findPersonRowsByKeyPrefix(likePrefix("storm:" + stormId + ":"), up));
+            if (legacyStormId != null)
+                rows.addAll(deliveryRepo.findPersonRowsByKeyPrefix(likePrefix("storm:" + legacyStormId + ":"), up));
+            if (dedupeKey != null && !dedupeKey.startsWith("storm:" + stormId + ":"))
+                rows.addAll(deliveryRepo.findPersonRowsByKey(dedupeKey, up));   // çözüm anahtarı (storm-resolved:<id>)
+            return evidenceOf(rows, names, d -> dedupeKey != null && dedupeKey.equals(d.getDedupeKey()));
+        };
+    }
+
+    /** Satırlar → hesap başına kanıt. Sistem satırı ve SKIPPED_SAME_PERSON satırı kanıt değildir (yalnız asıl alıcı sayılır). */
+    static Map<String, PushSamePersonGuard.Evidence> evidenceOf(List<UserPushDelivery> rows, java.util.Collection<String> names,
+                                                               java.util.function.Predicate<UserPushDelivery> exact) {
+        Set<String> keys = new HashSet<>();
+        for (String n : names == null ? List.<String>of() : names) keys.add(PushSamePersonGuard.key(n));
+        Map<String, PushSamePersonGuard.Evidence> out = new java.util.HashMap<>();
+        for (UserPushDelivery d : rows == null ? List.<UserPushDelivery>of() : rows) {
+            if (d == null || d.getUsername() == null || SYSTEM_USER.equals(d.getUsername())) continue;
+            if (STATUS_SKIPPED_SAME_PERSON.equals(d.getStatus())) continue;
+            String k = PushSamePersonGuard.key(d.getUsername());
+            if (!keys.contains(k)) continue;
+            out.merge(k, new PushSamePersonGuard.Evidence(exact != null && exact.test(d), "SENT".equals(d.getStatus()), true),
+                    PushSamePersonGuard.Evidence::or);
+        }
+        return out;
+    }
+
+    /** Çıkarılan siciller kümesi bu adı içeriyor mu (null güvenli — {@code Set.of().contains(null)} istisna atar). */
+    private static boolean containsName(java.util.Collection<String> names, String name) {
+        return name != null && names != null && !names.isEmpty() && names.contains(name);
+    }
+
+    private static List<String> upperAll(java.util.Collection<String> names) {
+        List<String> out = new ArrayList<>();
+        for (String n : names == null ? List.<String>of() : names) if (n != null && !n.isBlank()) out.add(PushSamePersonGuard.key(n));
+        return out;
+    }
+
+    /** LIKE önek deseni ({@code \} kaçış karakteri — sorgudaki ESCAPE ile aynı). */
+    static String likePrefix(String prefix) {
+        return prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%";
     }
 
     // ── Outbox worker ──────────────────────────────────────────────────────────────────────
@@ -1615,8 +1810,9 @@ public class UserPushService {
     }
 
     /**
-     * Eskalasyon adımı gönderildiğinde kişiye PUSH (e-posta + webhook'un yanında). Kişi TEK aktif kullanıcıya çözülürse
-     * ({@link UserPushRecipientResolver#resolveContact}) satır yazılır; çözülemezse (yok / belirsiz / pasif) push gitmez ve
+     * Eskalasyon adımı gönderildiğinde kişiye PUSH (e-posta + webhook'un yanında). Kişi aktif bir kullanıcıya çözülürse
+     * ({@link UserPushRecipientResolver#resolveContact}; aynı e-postalı birden çok aktif hesap aynı kişidir — 2026-10-21, yalnız
+     * biri alır, diğerleri {@code SKIPPED_SAME_PERSON}) satır yazılır; çözülemezse (yok / pasif) push gitmez ve
      * neden sistem satırına yazılır. Kanal kuralları (sistem bakımı, tür/takım kapsamı, izleme bayrağı, global sessiz saat),
      * kişisel tercihler (opt-out, aile, seviye, susturma — kritik istisnası, kişisel sessiz saat) ve saat tavanı (KRİTİK
      * muafiyeti ayarıyla) aynen uygulanır. Takım yönlendirmesini adım servisi zaten verdi; burada yeniden sorulmaz.
@@ -1644,28 +1840,57 @@ public class UserPushService {
                 stepSkipRow(event, contact, teamId, family, dedupeKey, reason);
                 return reason;
             }
-            UserPushRecipientResolver.Recipient r = match.recipient();
-            if (deliveryRepo.existsByAlertEventIdAndDedupeKeyAndUsername(event.getId(), dedupeKey, r.username())) return null;
-            String since = ISO.format(Instant.now().minus(Duration.ofHours(1)));
-            String status;
-            if (r.skipReason() != null) status = r.skipReason();
-            else if (!capBypass(level) && deliveryRepo.countRecentForUser(r.username(), since) >= hourlyCap()) status = "RATE_LIMITED";
-            else status = "PENDING";
-            String lang = r.lang();
-            String message = PushText.truncate(PushText.pushSafe(PushI18n.escalationStepPrefix(delayMinutes, lang)
-                    + rawMessage(event, "ESCALATION", contextOf(event), lang)), maxMessageChars());
-            UserPushDelivery d = row(event, TRIGGER_ESCALATION_STEP, dedupeKey, teamId, family, r.username(), r.displayName(),
-                    message, status, ISO.format(Instant.now()), lang);
-            d.setBatchId("step-" + UUID.randomUUID().toString().substring(0, 8));
-            try {
-                deliveryRepo.save(d);
-            } catch (Exception dup) {
-                log.debug("user-push eskalasyon adımı dedupe (unique): olay={} kişi={}", event.getId(), contact.getId());
-                return null;
+            // Aynı kişi (2026-10-21): kişinin e-postası birden çok AKTİF hesaba eşleşiyorsa hepsi aynı kişidir (eskiden "belirsiz",
+            // push yok) — YALNIZ biri alır: bu adımı zaten almış hesap, sonra bu alarmda satırı olan (açılışı alan), sonra son
+            // giriş, sonra en küçük kimlik. Diğerleri SKIPPED_SAME_PERSON satırı alır.
+            List<UserPushRecipientResolver.Recipient> people = new ArrayList<>();
+            people.add(match.recipient());
+            for (UserPushRecipientResolver.Recipient o : match.sameEmail())
+                if (o != null && people.stream().noneMatch(p -> PushSamePersonGuard.key(p.username()).equals(PushSamePersonGuard.key(o.username()))))
+                    people.add(o);
+            PushSamePersonGuard.Plan same = samePlan(people.stream().map(UserPushRecipientResolver.Recipient::username).toList(),
+                    alarmPrior(event.getId(), d -> dedupeKey.equals(d.getDedupeKey())));
+            // Hesaplar AYNI e-postayla eşleşti (çözüm biliyor): koruyucu yoksa (elle kurulan test) ya da karar veremediyse (sorgu
+            // düştü) yine tek push — çözümün seçtiği ilk hesap (en son giriş, sonra en küçük kimlik) alır.
+            PushSamePersonGuard.Plan decided = same;
+            if (people.size() > 1 && people.stream().noneMatch(p -> decided.chosenFor(p.username()) != null)) {
+                Map<String, String> m = new LinkedHashMap<>();
+                for (int i = 1; i < people.size(); i++) m.put(PushSamePersonGuard.key(people.get(i).username()), people.get(0).username());
+                same = new PushSamePersonGuard.Plan(m);
             }
-            if ("PENDING".equals(status)) worker.execute(this::drainOutbox);
-            log.info("user-push eskalasyon adımı: olay #{} kişi #{} → {}", event.getId(), contact.getId(), status);
-            return status;
+            String since = ISO.format(Instant.now().minus(Duration.ofHours(1)));
+            String result = null;
+            boolean anyPending = false, anyWritten = false;
+            for (UserPushRecipientResolver.Recipient r : people) {
+                if (deliveryRepo.existsByAlertEventIdAndDedupeKeyAndUsername(event.getId(), dedupeKey, r.username())) continue;
+                String chosen = same.chosenFor(r.username());
+                String status;
+                if (chosen != null) status = STATUS_SKIPPED_SAME_PERSON;
+                else if (r.skipReason() != null) status = r.skipReason();
+                else if (!capBypass(level) && deliveryRepo.countRecentForUser(r.username(), since) >= hourlyCap()) status = "RATE_LIMITED";
+                else status = "PENDING";
+                String lang = r.lang();
+                String message = PushText.truncate(PushText.pushSafe(PushI18n.escalationStepPrefix(delayMinutes, lang)
+                        + rawMessage(event, "ESCALATION", contextOf(event), lang)), maxMessageChars());
+                UserPushDelivery d = row(event, TRIGGER_ESCALATION_STEP, dedupeKey, teamId, family, r.username(), r.displayName(),
+                        message, status, ISO.format(Instant.now()), lang);
+                d.setSamePersonUsername(chosen);
+                d.setBatchId("step-" + UUID.randomUUID().toString().substring(0, 8));
+                try {
+                    deliveryRepo.save(d);
+                } catch (Exception dup) {
+                    log.debug("user-push eskalasyon adımı dedupe (unique): olay={} kişi={}", event.getId(), contact.getId());
+                    continue;
+                }
+                anyWritten = true;
+                if ("PENDING".equals(status)) anyPending = true;
+                if (chosen == null && result == null) result = status;
+            }
+            if (!anyWritten) return null;
+            if (result == null) result = STATUS_SKIPPED_SAME_PERSON;   // kişi bu adımı başka hesabıyla zaten almıştı
+            if (anyPending) worker.execute(this::drainOutbox);
+            log.info("user-push eskalasyon adımı: olay #{} kişi #{} → {}", event.getId(), contact.getId(), result);
+            return result;
         } catch (Exception e) {
             log.warn("user-push eskalasyon adımı atlandı (adımın e-postası etkilenmedi): {}", e.toString());
             return null;
@@ -1711,6 +1936,9 @@ public class UserPushService {
             if (match == null || match.recipient() == null) return match == null ? null : match.skipReason();
             UserPushRecipientResolver.Recipient r = match.recipient();
             if (excludeUsernames != null && excludeUsernames.contains(r.username())) return null;
+            // Operatör onay penceresinde kişinin ÖBÜR hesabını çıkardıysa kişiyi çıkarmıştır (2026-10-21, aynı kişi kuralı)
+            if (excludeUsernames != null && !excludeUsernames.isEmpty()
+                    && samePersonSiblings(excludeUsernames).containsKey(PushSamePersonGuard.key(r.username()))) return null;
             // Aynı tetikte takım push'unu zaten aldıysa (üyelik + seviye) ikinci kez gitmez — RESEND anahtarı rastgele olduğundan
             // elle gönderimde bu denetim aynı olay + kişi için son 2 dakikada yazılmış RESEND satırına bakar (takım push'u aynı
             // çağrıda, nöbetçi push'undan hemen ÖNCE yazılır).
@@ -1724,9 +1952,19 @@ public class UserPushService {
             }
             String dedupeKey = "ONCALL:" + ("RESEND".equals(trigger) ? "RESEND:" + UUID.randomUUID().toString().substring(0, 8) : teamKey);
             if (deliveryRepo.existsByAlertEventIdAndDedupeKeyAndUsername(event.getId(), dedupeKey, r.username())) return null;
+            // Aynı kişi (2026-10-21): kişinin BAŞKA hesabı bu tetikte takım push'unu (ya da başka bir nöbet push'unu) zaten aldıysa
+            // bu hesaba ikinci push gitmez — satır SKIPPED_SAME_PERSON (iz kalır, tavana sayılmaz). Elle gönderimde "aynı
+            // gönderim" = son 2 dakikada yazılmış RESEND / nöbetçi RESEND satırı (yukarıdaki tek hesap denetimiyle aynı ölçü).
+            String resendSince = ISO.format(Instant.now().minus(Duration.ofMinutes(2)));
+            java.util.function.Predicate<UserPushDelivery> sameNotice = "RESEND".equals(trigger)
+                    ? d -> d.getDedupeKey() != null && d.getCreatedAt() != null && d.getCreatedAt().compareTo(resendSince) >= 0
+                            && (d.getDedupeKey().startsWith("RESEND:") || d.getDedupeKey().startsWith("ONCALL:RESEND:"))
+                    : d -> teamKey.equals(d.getDedupeKey()) || ("ONCALL:" + teamKey).equals(d.getDedupeKey());
+            String chosen = samePlan(List.of(r.username()), alarmPrior(event.getId(), sameNotice)).chosenFor(r.username());
             String since = ISO.format(Instant.now().minus(Duration.ofHours(1)));
             String status;
-            if (r.skipReason() != null) status = r.skipReason();
+            if (chosen != null) status = STATUS_SKIPPED_SAME_PERSON;
+            else if (r.skipReason() != null) status = r.skipReason();
             else if (!capBypass(level) && deliveryRepo.countRecentForUser(r.username(), since) >= hourlyCap()) status = "RATE_LIMITED";
             else status = "PENDING";
             String lang = r.lang();
@@ -1734,6 +1972,7 @@ public class UserPushService {
             String message = PushText.truncate(PushText.pushSafe(prefix + rawMessage(event, trigger, contextOf(event), lang)), maxMessageChars());
             UserPushDelivery d = row(event, trigger, dedupeKey, teamId, family, r.username(), r.displayName(),
                     message, status, ISO.format(Instant.now()), lang);
+            d.setSamePersonUsername(chosen);
             d.setBatchId("oncall-" + UUID.randomUUID().toString().substring(0, 8));
             try {
                 deliveryRepo.save(d);

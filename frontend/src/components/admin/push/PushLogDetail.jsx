@@ -187,6 +187,9 @@ export default function PushLogDetail({ open, detail, t, onClose, onPick, ids = 
                   {(d.kind === 'SKIPPED' || d.kind === 'BLOCKED') && d.status && (
                     <span data-slot="pl-detail-reason" className="mb-1 block">{pushReasonLabel(d.status, t)}</span>
                   )}
+                  {d.same_person_username && (
+                    <span data-slot="pl-detail-same-person" className="mb-1 block [overflow-wrap:anywhere]">{t('push.samePersonOf', d.same_person_username)}</span>
+                  )}
                   <code className="text-[0.85em] [overflow-wrap:anywhere]">{errText}</code>
                 </AlertBanner>
               )}

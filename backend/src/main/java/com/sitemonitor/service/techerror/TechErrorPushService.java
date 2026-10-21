@@ -17,6 +17,7 @@ import org.springframework.stereotype.Service;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -205,7 +206,18 @@ public class TechErrorPushService {
         if (res.get("queued_usernames") instanceof Collection<?> col) {
             Set<String> q = new HashSet<>();
             for (Object o : col) if (o != null) q.add(o.toString().trim());
-            for (AppUser u : people) if (u.getUsername() != null && q.contains(u.getUsername().trim())) out.add(u.getId());
+            // Aynı kişi (2026-10-21): öbür hesabı push'u aldığı için atlanan hesap da ulaşılmış sayılır (karar kişi başına) —
+            // yoksa yeniden denemede atlanan hesaba aynı hatırlatma ikinci kez giderdi.
+            Map<String, String> same = new HashMap<>();
+            if (res.get("same_person") instanceof Map<?, ?> m) {
+                for (Map.Entry<?, ?> e : m.entrySet())
+                    if (e.getKey() != null && e.getValue() != null) same.put(e.getKey().toString().trim(), e.getValue().toString().trim());
+            }
+            for (AppUser u : people) {
+                if (u.getUsername() == null) continue;
+                String name = u.getUsername().trim();
+                if (q.contains(name) || (same.containsKey(name) && q.contains(same.get(name)))) out.add(u.getId());
+            }
             return out;
         }
         int queued = res.get("queued") instanceof Number n ? n.intValue() : 0;
