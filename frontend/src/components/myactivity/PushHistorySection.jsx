@@ -14,6 +14,7 @@ import {
   groupByDay, rowStatus, rowTime, pushReasonLabel, pushTriggerLabel, familyLabel,
 } from '../../utils/pushPrefs.js'
 import { StormAlarmsNote, StormPushNote } from './PushHistoryStormLinks.jsx'
+import { samePersonText } from '../../utils/pushPrefs.js'
 import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/shadcn/card'
@@ -144,6 +145,9 @@ export default function PushHistorySection() {
                   {rowStatus(r) !== 'sent' && rowStatus(r) !== 'pending' && r.reason && (
                     <span className="text-xs leading-snug text-muted-foreground">{pushReasonLabel(r.reason, t)}</span>
                   )}
+                  {r.same_person_username && (
+                    <span data-slot="ph-same-person" className="text-xs leading-snug [overflow-wrap:anywhere] text-muted-foreground">{samePersonText(t, r.status, r.same_person_username)}</span>
+                  )}
                 </li>
               ))}
             </ul>
@@ -265,6 +269,10 @@ function RowStatus({ r, t, compact = false }) {
       </Badge>
       {!compact && st !== 'sent' && st !== 'pending' && r.reason && (
         <span data-slot="ph-reason" className="text-xs leading-snug text-muted-foreground">{pushReasonLabel(r.reason, t)}</span>
+      )}
+      {/* Aynı kişi (2026-10-21): karar kişinin öbür hesabı için verildi — o hesabın kullanıcı adı */}
+      {!compact && r.same_person_username && (
+        <span data-slot="ph-same-person" className="text-xs leading-snug [overflow-wrap:anywhere] text-muted-foreground">{samePersonText(t, r.status, r.same_person_username)}</span>
       )}
       {st === 'summarized' && !compact && <span className="text-xs text-muted-foreground">{t('mypush.hist.summarizedInto')}</span>}
     </div>

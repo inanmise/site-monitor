@@ -14,6 +14,7 @@
 | E-postalar gitmiyor | [SMTP düştü](#smtp-düştü) |
 | Tarayıcı uygulamanın sertifikasına uyarı veriyor | [Uygulamanın kendi sertifikası](#uygulamanın-kendi-sertifikası) |
 | Yönetici giriş yapamıyor ("hesap kilitli") | [Kilitli admin hesabı](#kilitli-admin-hesabı) |
+| MP… (ikinci) hesaplarla girişi kapatmak / ön ek kuralı yüzünden kimse giremiyor | [MP hesaplarıyla giriş kapatma](#mp-hesaplarıyla-giriş-kapatma) |
 | `decrypt failed`, LDAP/SMTP birden bozuldu | [Secret key](#secret-key) |
 | "Denetim izinde BOŞLUK" / `AUDIT fallback` logu | [Denetim fallback](#denetim-fallback) |
 | Pod `OOMKilled` / sık yeniden başlıyor | [Bellek](#bellek) |
@@ -163,6 +164,34 @@ Giriş kilidi kademelidir: ihlal başına **30 sn → 2 dk → 10 dk → 30 dk**
 - Parolayı unutmak ayrı konudur: Secret'taki `ADMIN_PASSWORD` **yalnız ilk açılışta** (boş DB) kullanılır;
   sonradan değiştirmek hiçbir şeyi değiştirmez. Başka bir yönetici "parolayı sıfırla" ile geçici parola üretir
   ve kullanıcının e-postasına gönderir (`POST /api/admin/users/{id}/auto-reset-password`; SMTP çalışıyor olmalı).
+
+## MP hesaplarıyla giriş kapatma
+
+İki hesabı olan kullanıcıların (N… sicil hesabı, MP… ikinci hesap) yalnız izin verilen hesapla girmesi için kullanıcı adı
+ön eki kuralı (2026-10-21).
+
+- **Açma:** Ayarlar → Güvenlik → Giriş Yöntemleri → "Kullanıcı adı ön eki" kartı (yalnız global yönetici). İzinli ön ek
+  olarak `N` yazın (Enter); **Etki önizlemesi** kaç aktif kullanıcının giremeyeceğini ve ilk 50 adı gösterir. Anahtarı açıp
+  Kaydet → onay. Ayar anahtarları: `site.monitor.login.username-prefix.enabled|allowed|exempt` (GLOBAL_ONLY).
+- **Ne olur:** izinli ön ekle başlamayan adlar şifre, LDAP, kodla giriş ve beni hatırla yollarının hiçbirinden giremez —
+  ret parola / AD parolası DOĞRULANDIKTAN sonra gelir: giriş 403 `USERNAME_PREFIX_NOT_ALLOWED`; yanlış parola ve olmayan ad
+  kural kapalıyken olduğu gibi genel 401 + kilit merdivenini alır (muaf adlar, bootstrap yönetici adı yanıttan okunamaz).
+  Kodla girişte aynı genel yanıt ve kod gitmez. Açık oturumlar sonraki istekte (~15 sn) kapanır, hatırlanan girişler
+  silinir. Çok pod'da ayar ≤ 10 sn'de yayılır: kural açıldıktan sonraki ilk ≤ 10 sn içinde eski ayarlı bir pod bir girişi
+  kabul edebilir, sonraki istek keser; kesilmiş (mezar taşı) oturum her pod'da aynı uyarıyı alır. Kurala takılan hesap e-posta
+  onay bağlantılarıyla (teknik hata raporu PO onayı, haftalık rapor) da karar veremez — sayfa sebebini söyler, bağlantı
+  tüketilmez — ve PO onay isteği postası almaz. Denetim: `SESSION_ENDED_USERNAME_PREFIX` ve `LOGIN_FAILED` (BLOCKED, neden
+  `USERNAME_PREFIX`, kanal LOCAL / LDAP — kilit sayacına girmez).
+- **Muaf liste:** ön eke bakılmadan girebilecek tam adlar (servis / acil durum hesabı). Kurulumdaki bootstrap yönetici
+  (`site.monitor.username`, prod'da `ADMIN_USERNAME`) HER ZAMAN muaftır; global yöneticiler otomatik muaf DEĞİLDİR.
+- **Kendini kilitleme yok:** kaydeden yöneticinin kendi hesabı kurala uymuyorsa kayıt 400 `LOCKOUT_SELF` ile reddedilir.
+- **Kilitlendiyseniz (kurtarma):** bootstrap yönetici her zaman girer → kuralı kapatın ya da listeyi düzeltin. Bootstrap
+  yöneticiye de erişim yoksa (son çare, DB'de; denetime düşmez — olay kaydına not edin):
+  ```sql
+  UPDATE app_settings SET setting_value = 'false'
+   WHERE setting_key = 'site.monitor.login.username-prefix.enabled';
+  ```
+  Değer pod belleğinde ≤ 10 sn'de tazelenir; yeniden başlatma gerekmez.
 
 ## Secret key
 
@@ -428,10 +457,64 @@ groups:
 - **jq ile okuma:** `kubectl logs … | jq -r 'select(."log.level"=="ERROR" or .log.level=="ERROR") | .message'`.
   Eski `grep "decrypt failed"` / `grep 'Şema yamaları'` komutları JSON satırda da çalışır (ileti kaçışsız UTF-8).
 - **İz (OpenTelemetry):** her isteğin ve zamanlanmış işin bir `traceId`'si vardır (günlükte `traceId` / `trace=`).
-  Örnekleme %10 (`config.otel.samplingProbability`). Span'lar YALNIZ `config.otel.endpoint` (tam OTLP/HTTP iz URL'si,
-  ör. `http://otel-collector:4318/v1/traces`) verilince dışa aktarılır; boşken uygulama hiçbir yere bağlanmaz.
-  Tamamen kapatmak: `OTEL_SDK_DISABLED=true`. Metrikler Prometheus'ta kalır (OTLP metrik gönderimi yok). İzlenen
-  sitelere giden kontrol isteklerine `traceparent` başlığı EKLENMEZ (Boot HTTP istemci kurucuları kullanılmıyor).
+  İzi bir toplayıcıya göndermenin **iki yolu** var; ikisini birlikte açmayın (`helm template` hata verir):
+
+  | | A) Uygulamanın kendi gönderimi | B) OpenTelemetry Java ajanı (OpenTelemetry Operator) |
+  |---|---|---|
+  | Helm | `config.otel.endpoint: http://otel-collector:4318/v1/traces` (TAM OTLP/HTTP iz URL'si) | `config.otel.agent.enabled: true` + `config.otel.agent.instrumentation: <ns>/<Instrumentation adı>` |
+  | Ne izlenir | HTTP istekleri ve zamanlanmış işler (Micrometer gözlemleri) | Ajanın enstrümantasyonu: Tomcat/Spring MVC, JDBC/Hibernate, Spring Data, zamanlanmış işler… |
+  | Örnekleme | `config.otel.samplingProbability` (%10) | Instrumentation kaynağındaki `sampler` (`samplingProbability` uygulanmaz) |
+  | Taşıma | yalnız OTLP/HTTP (4318) — imajda gRPC göndericisi yok | ajan kendi göndericisiyle gRPC (4317) da gönderir |
+
+  **A** boşken uygulama hiçbir yere bağlanmaz; tamamen kapatmak: `OTEL_SDK_DISABLED=true`. Metrikler her iki yolda da
+  Prometheus'ta kalır (OTLP metrik gönderimi yok).
+
+  **B — ajan ile (2026-10-21).** Operatör pod'a `JAVA_TOOL_OPTIONS=-javaagent:…` ve `OTEL_*` değişkenleri ekler. Uygulama
+  açılışta ajanı algılar (önyükleme sınıfı `io.opentelemetry.javaagent.bootstrap.AgentInitializer`) ve izi ajana bırakır:
+  günlükte TEK satır `OpenTelemetry Java ajanı algılandı; uygulamanın kendi OTLP gönderimi kapatıldı, izleri ajan
+  gönderiyor`. Boot'un kendi OTLP gönderimi ve SDK'sı kapanır, Boot ajanın `OTEL_*` değişkenlerini kendi ayarına
+  eşlemez, Micrometer yeni span açmaz (günlükteki iz kimliği ajanınkidir; Tempo/Jaeger'da aynı iz). Geri almak (iki ayrı
+  iz sistemi — önerilmez): `SITE_MONITOR_TRACING_DEFER_TO_AGENT=false`. `config.otel.agent.enabled` kapsayıcıya şu
+  ortamı ekler (operatör kapsayıcıda zaten olan değişkeni ezmez; gerekçesiyle):
+
+  | Değişken | Neden |
+  |---|---|
+  | `OTEL_INSTRUMENTATION_JAVA_HTTP_CLIENT_ENABLED=false`, `OTEL_INSTRUMENTATION_HTTP_URL_CONNECTION_ENABLED=false` | Uygulama izlenen sitelere (HTTP / Keyword / Sayfa / Sayfa hızı, HSTS, OCSP/CRL, RDAP, web-WHOIS) ve webhook / push / GeoIP servislerine `java.net.http` ve `HttpURLConnection` ile gider. Ajan bu istemcileri izlerse her isteğe `traceparent` ekler (izlenen siteye iç iz kimliğimiz gider, bazı WAF'lar tanımadığı başlığı reddedebilir) ve her kontrol için bir istemci span'ı üretir (saatte binlerce). SMTP, LDAP ve DNS ajan tarafından zaten izlenmiyor; ham soket kontrolleri (port, TLS profili, ham HTTP tanılama) da. |
+  | `OTEL_METRICS_EXPORTER=none` | Metrikler Prometheus'ta (`/metrics`, `/metrics/sitemonitor`); ajanın OTLP metrikleri ikinci bir kaynak olurdu. |
+  | `OTEL_SERVICE_NAME` | `config.otel.agent.serviceName`, boşsa Deployment adı. |
+  | `MANAGEMENT_OPENTELEMETRY_MAP_ENVIRONMENT_VARIABLES=false` | Boot ajanın değişkenlerini kendi dışa aktarıcısına eşlemesin (eski sürümlerde açılışı düşüren şey; uygulama bunu kendisi de yapar). |
+  | `OTEL_INSTRUMENTATION_COMMON_LOGGING_TRACE_ID_KEY=traceId`, `…_SPAN_ID_KEY=spanId` | JSON günlükte alan adları `traceId` / `spanId` kalır (ajanın varsayılanı `trace_id` / `span_id`; eski ajan sürümleri bu anahtarı tanımaz → `trace_id`, düz metin `trace=` ikisini de okur). |
+  | `OTEL_RESOURCE_ATTRIBUTES` | `config.otel.resourceAttributes` doluysa (operatör kendi özniteliklerini ekler). |
+  | `OTEL_INSTRUMENTATION_SANITIZATION_URL_EXPERIMENTAL_SENSITIVE_QUERY_PARAMETERS=AWSAccessKeyId,Signature,X-Amz-Signature,X-Amz-Credential,X-Amz-Security-Token,sig,X-Goog-Signature,token,access_token,api_key,apiKey,apikey,key,code,password,secret,signature,client_secret,subscription-key,auth,jsessionid,otp` | Ajan sunucu span'larında `url.query`'yi kaydeder; 2.32 yalnız `AWSAccessKeyId`, `Signature`, `X-Amz-*`, `sig`, `X-Goog-Signature`'ı gizler. Haftalık rapor ve teknik hata raporu onay bağlantıları (`GET /api/weekly-reports/approve-link?token=…`, `GET /api/tech-error-reports/approve-link?token=…`) 14 gün geçerli, oturumsuz onay belirteci taşır — gizlenmezse iz arka ucunu okuyan herkes raporu onaylayabilir. Ayar ajanın listesinin YERİNE geçer (genişletmez), o yüzden yerleşik adlar tekrar yazılır; eşleşme büyük/küçük harf duyarlı, kodlanmamış ad üzerinden. Uygulamada sorgu dizesinden kimlik alan başka uç yok (oturum çerezde, giriş / OTP gövdede, metrik belirteci `Authorization` başlığında) ve URL YOLUNDA kimlik taşınmaz (kapı `OtelAgentQueryRedactionGateTest`); listedeki diğer adlar derinlemesine savunma. Liste değişirse tek kaynak `OpenTelemetryAgentProbe.SENSITIVE_QUERY_PARAMETERS`. |
+
+  Ek değişken: `config.otel.agent.extraEnv` (ör. `OTEL_LOGS_EXPORTER: none` — ajan varsayılanda uygulama günlüklerini de
+  OTLP ile gönderir; `OTEL_INSTRUMENTATION_SPRING_SCHEDULING_ENABLED: "false"` — zamanlanmış iş span'ları). Ek açıklamayı
+  `podAnnotations`'a ELLE yazmayın: yukarıdaki ortam eklenmez (uygulama yine açılır ama izlenen sitelere `traceparent`
+  gider ve günlükte bunu söyleyen bir UYARI çıkar; `helm install/upgrade` notları da uyarır).
+
+  **Bellek ve açılış:** ajan JVM'e ~100–200 MiB (metaspace + heap) ekler ve açılışı uzatır (sınıfların enstrümante
+  edilmesi; ölçümde ~20 sn → ~30 sn). İlk açılışta `kubectl top pod` ve readiness süresine bakın; gerekirse
+  `resources.limits.memory`'yi ve `probes.startup.failureThreshold`'u (varsayılan 30 × 10 sn) büyütün.
+
+  **gRPC koruması (ajansız):** `OTEL_EXPORTER_OTLP_PROTOCOL=grpc` (ya da `…otlp.transport=grpc`) verilir ve ajan yoksa
+  imajda gRPC göndericisi olmadığından o gönderim KAPATILIR ve günlükte tek UYARI düzeltmeyi söyler
+  (`OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf` + 4318, ya da `config.otel.endpoint`). Açılış düşmez.
+
+  **Eski sürüm (≤ 20.163) ajanla düşüyorsa — sürüm beklemeden geçici çözüm:** kapsayıcı ortamına
+  `MANAGEMENT_OPENTELEMETRY_MAP_ENVIRONMENT_VARIABLES=false` ekleyin (Boot ajanın `OTEL_*` değişkenlerini eşlemez →
+  "No GrpcSenderProvider found on classpath" kalkar), izlenen sitelere `traceparent` gitmesin diye
+  `OTEL_INSTRUMENTATION_JAVA_HTTP_CLIENT_ENABLED=false`, `OTEL_INSTRUMENTATION_HTTP_URL_CONNECTION_ENABLED=false` ve onay
+  bağlantılarının `?token=` değeri iz arka ucuna gitmesin diye url.query gizleme listesi (yukarıdaki tablo):
+  ```bash
+  kubectl set env -n "$NS" deploy/"$DEPLOY" -c <kapsayıcı> MANAGEMENT_OPENTELEMETRY_MAP_ENVIRONMENT_VARIABLES=false \
+    OTEL_INSTRUMENTATION_JAVA_HTTP_CLIENT_ENABLED=false OTEL_INSTRUMENTATION_HTTP_URL_CONNECTION_ENABLED=false \
+    OTEL_INSTRUMENTATION_SANITIZATION_URL_EXPERIMENTAL_SENSITIVE_QUERY_PARAMETERS=AWSAccessKeyId,Signature,X-Amz-Signature,X-Amz-Credential,X-Amz-Security-Token,sig,X-Goog-Signature,token,access_token,api_key,apiKey,apikey,key,code,password,secret,signature,client_secret,subscription-key,auth,jsessionid,otp
+  ```
+  Ek açıklamayı (`instrumentation.opentelemetry.io/inject-java`) elle kullanan HER sürüm için son üç ayar (iki istemci
+  enstrümantasyonu + `url.query` listesi) gerekir; yeni sürüm eksik olanı açılışta UYARI ile söyler (`traceparent` /
+  `url.query`). `podAnnotations`'ta `inject-java: "false"` (açıkça kapalı) ayarlanmamış sayılır.
+  (Bir sonraki `helm upgrade` bunları siler — kalıcı yol `config.otel.agent.enabled`.) Eski sürümde uygulama kendi
+  SDK'sıyla da span üretir (dışa aktarmaz); günlükteki `trace=` yine ajanın iziyle aynıdır (ölçüldü).
 
 ## Kendi kendini izleme
 

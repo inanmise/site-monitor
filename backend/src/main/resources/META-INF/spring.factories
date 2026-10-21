@@ -1,3 +1,6 @@
 # Oturum deposu anahtari (site.monitor.session.store) - bkz. com.sitemonitor.config.SessionStoreAutoConfigurationFilter
 org.springframework.boot.autoconfigure.AutoConfigurationImportFilter=\
 com.sitemonitor.config.SessionStoreAutoConfigurationFilter
+# OpenTelemetry Java ajani / OTLP gRPC uyumu (2026-10-21) - bkz. com.sitemonitor.config.tracing.TracingCoexistence
+org.springframework.boot.EnvironmentPostProcessor=\
+com.sitemonitor.config.tracing.TracingCoexistenceEnvironmentPostProcessor

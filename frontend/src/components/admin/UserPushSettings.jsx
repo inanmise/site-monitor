@@ -75,7 +75,8 @@ const STATUS_OPTIONS = ['SENT', 'FAILED', 'PENDING', 'RATE_LIMITED', 'CIRCUIT_OP
   'SKIPPED_RESOLVED_BEFORE_SEND',   // 2026-10-09: bekleyen push alarm düzelince iptal edildi
   // 2026-10-04: kişisel tercihler + eskalasyon adımı kişi eşlemesi
   'SKIPPED_USER_LEVEL', 'SKIPPED_USER_TYPE', 'SKIPPED_USER_SNOOZE', 'SKIPPED_USER_INACTIVE',
-  'SKIPPED_NO_USER_MATCH', 'SKIPPED_AMBIGUOUS_USER']
+  'SKIPPED_NO_USER_MATCH', 'SKIPPED_AMBIGUOUS_USER',
+  'SKIPPED_SAME_PERSON', 'SKIPPED_SAME_PERSON_EXCLUDED']   // 2026-10-21: aynı kişi (aynı e-posta + ad) — tek push
 const TRIGGERS = ['OPEN', 'ESCALATION', 'RE_ALERT', 'RESOLVE', 'RESEND', 'WEAK_ALGO', 'WEEKLY_REPORT', 'TEST',
   'STORM', 'STORM_RESOLVED', 'SCRIPTED_DISABLED', 'DOMAIN_EXPIRY_REMINDER', 'OVERFLOW_SUMMARY', 'ESCALATION_STEP',
   'TECH_ERROR_REMINDER', 'TECH_ERROR_APPROVAL', 'TECH_ERROR_APPROVAL_REMINDER', 'TECH_ERROR_DECISION', 'TECH_ERROR_SENT',
@@ -1146,8 +1147,12 @@ export default function UserPushSettings() {
                     <TableCell className="whitespace-normal"><strong>{m.display_name || m.username}</strong> <span className="font-mono text-xs text-muted-foreground">{m.username}</span></TableCell>
                     <TableCell className="text-xs whitespace-normal">{m.title || '—'}{m.org_role ? <span className="text-muted-foreground"> · {m.org_role}</span> : null}</TableCell>
                     <TableCell className="text-xs whitespace-normal">{m.group ? <>{m.group}{m.min_level ? <span className="text-muted-foreground"> · ≥ {m.min_level}</span> : null}{m.group_enabled === false ? <span className="text-muted-foreground"> · {t('userpush.explainGroupOff')}</span> : null}</> : '—'}</TableCell>
-                    <TableCell>
-                      <DecisionBadge decision={m.decision}>{t('userpush.decision.' + m.decision)}</DecisionBadge>
+                    <TableCell className="whitespace-normal">
+                      <DecisionBadge decision={m.decision} className="h-auto max-w-full whitespace-normal text-left">{t('userpush.decision.' + m.decision)}</DecisionBadge>
+                      {/* Aynı kişi (2026-10-21): push'u alacak hesap — e-posta değil, kullanıcı adı */}
+                      {m.same_person_of && (
+                        <div data-slot="up-same-person" className="mt-1 text-xs [overflow-wrap:anywhere] text-muted-foreground">{t('push.samePersonOf', m.same_person_of)}</div>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}

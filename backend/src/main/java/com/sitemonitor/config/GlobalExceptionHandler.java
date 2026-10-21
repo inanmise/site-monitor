@@ -211,7 +211,7 @@ public class GlobalExceptionHandler {
     public ResponseEntity<Map<String, Object>> handleBadRequest(IllegalArgumentException e) {
         // Alan bazlı doğrulama (2026-10-08): @Valid'in VALIDATION_FAILED + fields sözleşmesinin elle yazılan kardeşi.
         if (e instanceof FieldValidationException fe) {
-            Map<String, Object> body = errorBody("VALIDATION_FAILED", e.getMessage());
+            Map<String, Object> body = errorBody(fe.getCode() != null ? fe.getCode() : "VALIDATION_FAILED", e.getMessage());
             body.put("fields", fe.getFields());
             if (!fe.getFields().isEmpty()) body.put("field", fe.getFields().keySet().iterator().next());
             return ResponseEntity.status(400).body(body);
@@ -275,13 +275,24 @@ public class GlobalExceptionHandler {
      */
     public static class FieldValidationException extends IllegalArgumentException {
         private final Map<String, String> fields;
+        private final String code;
         public FieldValidationException(String field, String message) {
+            this(null, field, message);
+        }
+        /**
+         * Alan hatası + kararlı özel kod (2026-10-21): ör. {@code LOCKOUT_SELF} — kaydeden yöneticinin kendi hesabı yeni
+         * kuralla giriş yapamazdı. Gövde yine {@code fields} + {@code field} taşır; yalnız {@code code} farklıdır.
+         */
+        public FieldValidationException(String code, String field, String message) {
             super(message);
             Map<String, String> f = new LinkedHashMap<>();
             f.put(field, message);
             this.fields = java.util.Collections.unmodifiableMap(f);
+            this.code = code;
         }
         public Map<String, String> getFields() { return fields; }
+        /** Özel kod; yoksa null ({@code VALIDATION_FAILED}). */
+        public String getCode() { return code; }
     }
 
     /**

@@ -2631,6 +2631,8 @@ public class AdminController {
                     m.put("username",     r.username());
                     m.put("display_name", r.displayName());
                     m.put("status",       r.status());
+                    // Aynı kişi kuralı (2026-10-21): SKIPPED_SAME_PERSON satırında kararın verildiği (aynı kişinin) hesap.
+                    m.put("same_person_of", r.samePersonOf());
                     return m;
                 }).toList();
         Map<String, Object> data = new LinkedHashMap<>();
@@ -2853,6 +2855,7 @@ public class AdminController {
             org.springframework.beans.BeanUtils.copyProperties(d, c);
             c.setUsername(null);
             c.setDisplayName(null);
+            c.setSamePersonUsername(null);   // aynı kişinin öbür hesabı da kişi bilgisidir
             c.setError(c.getError() == null ? null : "FAILED");   // ağ geçidi metni kişi / adres taşıyabilir
             c.setRawResponse(null);
             c.setNotificationId(null);

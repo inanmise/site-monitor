@@ -74,19 +74,38 @@ public interface UserPushDeliveryRepository extends JpaRepository<UserPushDelive
 
     /** Dedupe ön-kontrolü (yarışta son söz UNIQUE kısıtın — bu yalnız gürültüsüz erken çıkış). */
     boolean existsByAlertEventIdAndDedupeKeyAndUsername(Long alertEventId, String dedupeKey, String username);
-    /**
-     * Elle yeniden gönderimde nöbetçi push'u (2026-10-12): RESEND anahtarı her gönderimde rastgele olduğundan "takım push'unu
-     * bu gönderimde zaten aldı mı" sorusu anahtarla değil, aynı olay + kişi için yakın zamanda yazılmış RESEND satırıyla yanıtlanır.
-     */
-    @Query("""
-           SELECT COUNT(d) > 0 FROM UserPushDelivery d
-           WHERE d.alertEventId = :eventId AND d.username = :username AND d.dedupeKey LIKE 'RESEND:%' AND d.createdAt >= :since
-           """)
-    boolean existsRecentTeamResend(@Param("eventId") Long eventId, @Param("username") String username, @Param("since") String since);
     /** Olaysız takım bildirimi (Zayıf Algoritma Raporu) dedupe'u — alertEventId yok. */
     boolean existsByDedupeKeyAndUsername(String dedupeKey, String username);
     /** Fırtına karar satırı dedupe'u — takım başına (aynı fırtınada iki takımın kararı ayrı yazılır). */
     boolean existsByDedupeKeyAndUsernameAndTeamId(String dedupeKey, String username, Long teamId);
+    /**
+     * Aynı kişi kuralı (2026-10-21, {@code PushSamePersonGuard}): verilen hesapların (BÜYÜK harf kullanıcı adları) bu
+     * yinelenmezlik anahtarındaki satırları — olaysız takım / doğrudan bildirimin "bu kişi bu bildirimi zaten aldı mı" kanıtı.
+     * DAR izdüşüm {@code [username, dedupeKey, status, createdAt]} — mesaj metni okunmaz.
+     */
+    @Query("SELECT d.username, d.dedupeKey, d.status, d.createdAt FROM UserPushDelivery d "
+            + "WHERE d.dedupeKey = :key AND UPPER(d.username) IN :usernames")
+    List<Object[]> findPersonEvidenceByKey(@Param("key") String key,
+                                           @Param("usernames") java.util.Collection<String> upperUsernames);
+
+    /**
+     * {@link #findPersonEvidenceByKey} anahtar ÖNEKİYLE (fırtına: {@code storm:<id>:} — aynı fırtınanın açılış / tekrar
+     * satırları). {@code prefixPattern} çağıranın kaçırdığı LIKE deseni ({@code \} kaçış karakteri, sonda {@code %}).
+     */
+    @Query("SELECT d.username, d.dedupeKey, d.status, d.createdAt FROM UserPushDelivery d "
+            + "WHERE d.dedupeKey LIKE :prefixPattern ESCAPE '\\' AND UPPER(d.username) IN :usernames")
+    List<Object[]> findPersonEvidenceByKeyPrefix(@Param("prefixPattern") String prefixPattern,
+                                                 @Param("usernames") java.util.Collection<String> upperUsernames);
+
+    /**
+     * Aynı kişi kuralı — alarm teslimatının kanıtı: olayın kişi satırları, DAR izdüşüm {@code [username, dedupeKey, status,
+     * createdAt]} (mesaj metni okunmaz; sistem satırı '-' hariç). Teslimat başına en çok bir kez (birden çok hesaplı kişi
+     * varsa) ve nöbetçi push'unda bir kez okunur — alıcı başına sorgu yok.
+     */
+    @Query("SELECT d.username, d.dedupeKey, d.status, d.createdAt FROM UserPushDelivery d "
+            + "WHERE d.alertEventId = :eventId AND d.username <> '-'")
+    List<Object[]> findPersonEvidenceByEvent(@Param("eventId") Long eventId);
+
     /** Fırtına çözüm push'unun alıcıları: bu fırtınanın bu takıma giden açılış/tekrar satırları (anahtar öneki). */
     List<UserPushDelivery> findByDedupeKeyStartingWithAndTeamIdAndStatusOrderByIdAsc(String dedupeKeyPrefix, Long teamId,
                                                                                        String status);
@@ -217,12 +236,13 @@ public interface UserPushDeliveryRepository extends JpaRepository<UserPushDelive
      * Webhook Push Gönderim Logu penceresi (2026-09-19; PushLogQueryService) — {@code message} ve {@code rawResponse}
      * HARİÇ sütunlar (gövde yalnız satır detayında). Sıra: id, alertEventId, trigger, monitorType, monitorId, monitorName,
      * teamId, alertLevel, username, displayName, title, status, httpStatus, error, attempts, createdAt, sentAt, batchId,
-     * notificationId, overflowSummaryId, pushLang (son ikisi 2026-10-04 — SONA eklendi; konumlar sabit kalır).
+     * notificationId, overflowSummaryId, pushLang (son ikisi 2026-10-04 — SONA eklendi; konumlar sabit kalır),
+     * samePersonUsername (2026-10-21 — SONA eklendi).
      */
     @Query("""
            SELECT d.id, d.alertEventId, d.trigger, d.monitorType, d.monitorId, d.monitorName, d.teamId, d.alertLevel,
                   d.username, d.displayName, d.title, d.status, d.httpStatus, d.error, d.attempts, d.createdAt, d.sentAt,
-                  d.batchId, d.notificationId, d.overflowSummaryId, d.pushLang
+                  d.batchId, d.notificationId, d.overflowSummaryId, d.pushLang, d.samePersonUsername
            FROM UserPushDelivery d
            WHERE d.createdAt >= :from AND d.createdAt <= :to
            ORDER BY d.createdAt DESC, d.id DESC

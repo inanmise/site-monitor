@@ -208,6 +208,8 @@ const SPECIAL = {
   SYSTEM_MAINTENANCE_CANCELLED: 'audit.ev.SYSTEM_MAINTENANCE_CANCELLED',
   SYSTEM_MAINTENANCE_MAIL: 'audit.ev.SYSTEM_MAINTENANCE_MAIL',
   SESSION_ENDED_MAINTENANCE: 'audit.ev.SESSION_ENDED_MAINTENANCE',
+  // Kullanıcı adı ön eki kuralına uymayan hesabın oturumu kesildi (2026-10-21) — kural adı/eylem eşlemesine uymaz
+  SESSION_ENDED_USERNAME_PREFIX: 'audit.ev.SESSION_ENDED_USERNAME_PREFIX',
   // Kodla giriş (push / e-posta tek kullanımlık kod) + Giriş Yöntemleri ayarı (2026-10-02) — kural adı/eylem eşlemesine uymaz
   LOGIN_OTP_REQUESTED: 'audit.ev.LOGIN_OTP_REQUESTED',
   LOGIN_OTP_DELIVERY_FAILED: 'audit.ev.LOGIN_OTP_DELIVERY_FAILED',

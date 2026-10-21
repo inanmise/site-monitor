@@ -57,6 +57,7 @@ export default function NotificationsTab({ user, isAdmin, push, contacts, teamMa
                 <p className="m-0 text-sm leading-relaxed text-muted-foreground">
                   {p.decision === 'RECIPIENT'
                     ? (p.group ? t('ud.pushWhyRecipient', p.group, levelLabel(t, p.min_level || 'HIGH')) : t('ud.pushWhyRecipientPlain'))
+                    : p.same_person_of ? t('wn.fix.SKIPPED_SAME_PERSON', p.same_person_of)
                     : t('ud.pushWhyNot')}
                 </p>
               </div>

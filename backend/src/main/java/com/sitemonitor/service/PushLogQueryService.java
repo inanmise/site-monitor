@@ -69,7 +69,7 @@ public class PushLogQueryService {
                       Long teamId, String teamName, String alertLevel, String username, String displayName, String title,
                       String status, Integer httpStatus, String error, Integer attempts, String createdAt, String sentAt,
                       String batchId, String notificationId, String kind, String errorClass,
-                      Long overflowSummaryId, String pushLang) {
+                      Long overflowSummaryId, String pushLang, String samePersonUsername) {
         /** Zaman: gönderildiyse sentAt, yoksa createdAt (kuyruk/başarısız). */
         String at() { return sentAt != null ? sentAt : createdAt; }
         Map<String, Object> toMap() {
@@ -84,6 +84,8 @@ public class PushLogQueryService {
             m.put("kind", kind); m.put("error_class", errorClass);
             // 2026-10-04: saat tavanı özeti bağı (özetlenen satır → özet satırı) ve mesajın dili.
             m.put("overflow_summary_id", overflowSummaryId); m.put("push_lang", pushLang);
+            // 2026-10-21: aynı kişi kuralı — SKIPPED_SAME_PERSON(_EXCLUDED) satırında kararın verildiği / çıkarılan hesap (kullanıcı adı).
+            m.put("same_person_username", samePersonUsername);
             return m;
         }
     }
@@ -156,7 +158,8 @@ public class PushLogQueryService {
                     kindOf(status), classifyError(status, http, (String) r[13]),
                     // Sona eklenen kolonlar (2026-10-04) — eski biçimli satır dizisinde yoksa null.
                     r.length > 19 && r[19] != null ? ((Number) r[19]).longValue() : null,
-                    r.length > 20 ? (String) r[20] : null));
+                    r.length > 20 ? (String) r[20] : null,
+                    r.length > 21 ? (String) r[21] : null));
         }
         return out;
     }
@@ -165,7 +168,7 @@ public class PushLogQueryService {
         return new Object[]{d.getId(), d.getAlertEventId(), d.getTrigger(), d.getMonitorType(), d.getMonitorId(), d.getMonitorName(),
                 d.getTeamId(), d.getAlertLevel(), d.getUsername(), d.getDisplayName(), d.getTitle(), d.getStatus(), d.getHttpStatus(),
                 d.getError(), d.getAttempts(), d.getCreatedAt(), d.getSentAt(), d.getBatchId(), d.getNotificationId(),
-                d.getOverflowSummaryId(), d.getPushLang()};
+                d.getOverflowSummaryId(), d.getPushLang(), d.getSamePersonUsername()};
     }
 
     // ── Süzgeç / sıralama ─────────────────────────────────────────────────────────────────────

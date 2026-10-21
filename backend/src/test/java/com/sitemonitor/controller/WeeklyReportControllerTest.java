@@ -623,6 +623,36 @@ class WeeklyReportControllerTest {
         org.mockito.Mockito.verify(auditService).recordSecurityEvent(eq("WEEKLY_REPORT_LINK_DENIED"), any(), isNull(),
                 eq("WEEKLY_REPORT"), eq("5"), contains("reject"));
     }
+
+    @Test
+    @DisplayName("2026-10-21 inceleme: sahibi kullanıcı adı ön eki kuralıyla girişe kapalı → kendi metniyle ret sayfası (form YOK) + WEEKLY_REPORT_LINK_DENIED username_prefix; onay / iade de aynı")
+    void approveLink_usernamePrefix_refusedAndAudited() throws Exception {
+        when(service.approvalTokenStatus("T1")).thenReturn(Map.of(
+                "valid", false, "reason", "username_prefix", "report_id", 5L, "team_name", "TakimA", "week_label", "2026-W24"));
+        mvc.perform(get("/api/weekly-reports/approve-link").param("token", "T1"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("yalnız izinli ön ekle başlayan hesaplar girebilir")))
+                .andExpect(content().string(containsString("Onay Verilemez")))
+                .andExpect(content().string(org.hamcrest.Matchers.not(containsString("approve-link/confirm"))));
+        org.mockito.Mockito.verify(auditService).recordSecurityEvent(eq("WEEKLY_REPORT_LINK_DENIED"), any(), isNull(),
+                eq("WEEKLY_REPORT"), eq("5"), eq("username_prefix (link opened)"));
+
+        when(service.approveViaToken("T1")).thenThrow(new WeeklyReportService.ApproverUsernamePrefixException(5L, 2L));
+        mvc.perform(post("/api/weekly-reports/approve-link/confirm").param("token", "T1"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("yalnız izinli ön ekle başlayan hesaplar girebilir")));
+        org.mockito.Mockito.verify(auditService).recordSecurityEvent(eq("WEEKLY_REPORT_LINK_DENIED"), any(), isNull(),
+                eq("WEEKLY_REPORT"), eq("5"), eq("username_prefix (approve)"));
+        org.mockito.Mockito.verify(auditService, org.mockito.Mockito.never()).recordTokenAction(
+                eq("WEEKLY_REPORT_APPROVE"), any(), any(), any(), any(), any(), any());
+
+        when(service.rejectViaToken(any(), any())).thenThrow(new WeeklyReportService.ApproverUsernamePrefixException(5L, 2L));
+        mvc.perform(post("/api/weekly-reports/approve-link/reject").param("token", "T1").param("reason", "x"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("yalnız izinli ön ekle başlayan hesaplar girebilir")));
+        org.mockito.Mockito.verify(auditService).recordSecurityEvent(eq("WEEKLY_REPORT_LINK_DENIED"), any(), isNull(),
+                eq("WEEKLY_REPORT"), eq("5"), eq("username_prefix (reject)"));
+    }
     @Test
     @DisplayName("2026-09-12: GET /weekly-reports/deadline canlı ayardan gün/saat + TR/EN gün adı döner")
     void deadline_fromLiveSettings() throws Exception {

@@ -4,8 +4,9 @@ import { useT, useLanguage } from '../i18n/index.jsx'
 import { useBranding, useAppVersion } from '../contexts/BrandingProvider.jsx'
 import BrandLogo from '../components/BrandLogo.jsx'
 import LoginHelpDialog from '../components/issues/report/LoginHelpDialog.jsx'
-import { ShieldAlert, ShieldCheck, Lock, Globe, Activity, Radio, Network, Server, Search, Gauge, Bell, BellRing, AlertTriangle, FileText, BarChart3, TrendingUp, Wrench, ScanSearch, FlaskConical, Zap, X, Info, Eye, EyeOff, AlertCircle, UserX, KeyRound } from 'lucide-react'
+import { ShieldAlert, ShieldCheck, Lock, Globe, Activity, Radio, Network, Server, Search, Gauge, Bell, BellRing, AlertTriangle, FileText, BarChart3, TrendingUp, Wrench, ScanSearch, FlaskConical, Zap, X, Info, Eye, EyeOff, AlertCircle, UserX, KeyRound, IdCard } from 'lucide-react'
 import { isAccountInactivePayload } from '../utils/accountInactive.js'
+import { isUsernamePrefixPayload, prefixesOf } from '../utils/usernamePrefix.js'
 import { isMaintenancePayload, lastWindow } from '../utils/systemMaintenance.js'
 import MaintenanceLoginCard from '../components/maintenance/MaintenanceLoginCard.jsx'
 // shadcn/ui (feature/shadcn-ui): giriş formu ve sorun bildirimi penceresi gerçek shadcn bileşenleri
@@ -39,13 +40,15 @@ function writeRemembered(username) { try { if (username) localStorage.setItem(ST
  * @param accountInactive hesap pasife alındı bildirimi (`?session=inactive` ya da açılışta 401 ACCOUNT_INACTIVE, 2026-10-02)
  * @param maintenanceEnded oturum sistem bakımı nedeniyle kapatıldı (`?session=maintenance` ya da açılışta 401 MAINTENANCE,
  *                         2026-10-02) — bakım kartı "oturumunuz sonlandırıldı" kipinde
+ * @param usernamePrefixDenied oturum kullanıcı adı ön eki kuralı nedeniyle kapatıldı (`?session=prefix` ya da açılışta 401
+ *                         USERNAME_PREFIX_NOT_ALLOWED, 2026-10-21) — izinli ön ekleri söyleyen bildirim
  */
 /** Giriş sayfasının bakım durumu yoklaması (ms) — oturumsuz public uç, `no-store`. */
 const MAINT_POLL_MS = 60_000
 /** Kullanım istatistikleri yoklaması (ms) — sunucu belleğiyle aynı pencere (60 sn); gizli sekmede durur. */
 const STATS_POLL_MS = 60_000
 
-export default function Login({ onLogin, sessionExpired = false, accountInactive = false, maintenanceEnded = false }) {
+export default function Login({ onLogin, sessionExpired = false, accountInactive = false, maintenanceEnded = false, usernamePrefixDenied = false }) {
   const t = useT()
   // langPending: İngilizce sözlük (ayrı chunk) iniyor — dil düğmesi kısa süre meşgul görünür (2026-10-02, öneri 22)
   const { lang, toggle: toggleLang, pending: langPending } = useLanguage()
@@ -79,6 +82,10 @@ export default function Login({ onLogin, sessionExpired = false, accountInactive
   const [methods, setMethods] = useState(null)
   const [otp, setOtp] = useState(null)
   const otpChannels = availableChannels(methods)
+  // Kullanıcı adı ön eki ipucu (2026-10-21): kural UYGULANIRKEN public uç izinli ön ekleri taşır ("N…" ile girin). Ön ek gizli
+  // değildir (ret iletisi de söyler); muaf hesap adları bu uçta hiç yoktur.
+  const prefixList = Array.isArray(methods?.username_prefix?.allowed)
+    ? methods.username_prefix.allowed.filter((p) => typeof p === 'string' && p).join(', ') : ''
   function openHelp() {
     setHelpUser(username.trim())
     setHelpOpen(true)
@@ -176,6 +183,12 @@ export default function Login({ onLogin, sessionExpired = false, accountInactive
     }
   }, [])
 
+  /** Ön ek reddinin metni — gövdedeki izinli ön eklerle (yoksa genel metin). */
+  function prefixErrorText(data) {
+    const list = prefixesOf(data)
+    return list.length ? t('login.prefixError', list.join(', ')) : t('login.prefixErrorGeneric')
+  }
+
   async function handleSubmit(e) {
     e.preventDefault()
     if (lockout > 0) return
@@ -191,6 +204,10 @@ export default function Login({ onLogin, sessionExpired = false, accountInactive
         // 403 ACCOUNT_INACTIVE — sunucu bunu YALNIZ kimlik bilgisi doğruysa döner; yanlış parola genel mesajda kalır.
         setErrorCode('ACCOUNT_INACTIVE')
         setError(t('login.accountInactiveError'))
+      } else if (isUsernamePrefixPayload(data)) {
+        // 403 USERNAME_PREFIX_NOT_ALLOWED (2026-10-21) — yalnız kimlik bilgisi DOĞRUYSA gelir; izinli ön ekler gövdede
+        setErrorCode('USERNAME_PREFIX_NOT_ALLOWED')
+        setError(prefixErrorText(data))
       } else if (isMaintenancePayload(data)) {
         // 403 MAINTENANCE (2026-10-02) — bakımda yalnız global yöneticiler girer; kart pencere bilgisiyle tazelenir.
         setErrorCode('MAINTENANCE')
@@ -243,6 +260,10 @@ export default function Login({ onLogin, sessionExpired = false, accountInactive
         setConfirmActiveSession(false)
         setErrorCode('ACCOUNT_INACTIVE')
         setError(t('login.accountInactiveError'))
+      } else if (isUsernamePrefixPayload(data)) {
+        setConfirmActiveSession(false)
+        setErrorCode('USERNAME_PREFIX_NOT_ALLOWED')
+        setError(prefixErrorText(data))
       } else if (isMaintenancePayload(data)) {
         setConfirmActiveSession(false)
         setErrorCode('MAINTENANCE')
@@ -359,6 +380,16 @@ export default function Login({ onLogin, sessionExpired = false, accountInactive
           {/* Sistem Bakım Modu (2026-10-02): yaklaşan / süren bakım ya da bakım nedeniyle kapatılan oturum */}
           <MaintenanceLoginCard status={maint} sessionEnded={maintenanceEnded} />
 
+          {/* Kullanıcı adı ön eki (2026-10-21): oturum kurala uymayan hesap nedeniyle kapatıldı */}
+          {usernamePrefixDenied && (
+            <Alert variant="warning" role="status" aria-live="polite" data-slot="login-username-prefix">
+              <IdCard />
+              <AlertDescription className="[overflow-wrap:anywhere]">
+                {prefixList ? t('login.prefixNotice', prefixList) : t('login.prefixNoticeGeneric')}
+              </AlertDescription>
+            </Alert>
+          )}
+
           {/* Hesap pasife alındı (2026-10-02): oturum yönetici tarafından kapatıldı ya da çerez pasif hesaba ait */}
           {accountInactive && (
             <Alert variant="warning" role="status" aria-live="polite" data-slot="login-account-inactive">
@@ -444,7 +475,7 @@ export default function Login({ onLogin, sessionExpired = false, accountInactive
             </div>
           ) : otp ? (
             /* Kodla giriş akışı (2026-10-02) — aynı kartta, ana formun yerine */
-            <OtpLoginFlow methods={methods} initialUsername={username.trim()} initialChannel={otp.channel}
+            <OtpLoginFlow methods={methods} initialUsername={username.trim()} initialChannel={otp.channel} prefixHint={prefixList}
               initialRemember={rememberMe} onSuccess={onOtpSuccess} onCancel={() => setOtp(null)}
               onMaintenance={(m) => setMaint(m)} />
           ) : (
@@ -463,7 +494,13 @@ export default function Login({ onLogin, sessionExpired = false, accountInactive
                   required
                   autoFocus
                   autoComplete="username"
+                  aria-describedby={prefixList ? 'lp-user-hint' : undefined}
                 />
+                {prefixList && (
+                  <p id="lp-user-hint" data-slot="login-prefix-hint" className="m-0 text-xs text-muted-foreground [overflow-wrap:anywhere]">
+                    {t('login.prefixHint', prefixList)}
+                  </p>
+                )}
               </div>
 
               <div className="lp-field">
@@ -502,7 +539,8 @@ export default function Login({ onLogin, sessionExpired = false, accountInactive
               {error && (
                 <Alert variant="destructive" data-code={errorCode || undefined}>
                   {errorCode === 'ACCOUNT_INACTIVE' ? <UserX /> : errorCode === 'MAINTENANCE' ? <Wrench />
-                    : errorCode === 'LDAP_LOGIN_DISABLED' ? <KeyRound /> : <AlertCircle />}
+                    : errorCode === 'LDAP_LOGIN_DISABLED' ? <KeyRound />
+                    : errorCode === 'USERNAME_PREFIX_NOT_ALLOWED' ? <IdCard /> : <AlertCircle />}
                   <AlertDescription>{error}</AlertDescription>
                 </Alert>
               )}

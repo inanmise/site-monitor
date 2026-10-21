@@ -202,8 +202,9 @@ class PushDecisionAccessTest {
         var tree = snake.readTree(json);
         var names = new java.util.TreeSet<String>();
         tree.get("push").get(0).fieldNames().forEachRemaining(names::add);
+        // same_person_of (2026-10-21): aynı kişinin push'u alacak öbür hesabının KULLANICI ADI — e-posta / telefon değil
         assertThat(names).containsExactlyInAnyOrder("username", "display_name", "title", "org_role", "active", "group",
-                "group_enabled", "min_level", "opt_out", "decision");
+                "group_enabled", "min_level", "opt_out", "decision", "same_person_of");
     }
 
     @Test

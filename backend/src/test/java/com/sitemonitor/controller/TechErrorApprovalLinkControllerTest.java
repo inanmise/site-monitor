@@ -112,6 +112,8 @@ class TechErrorApprovalLinkControllerTest {
                 // A2: yeniden istek — eski bağlantı "geçersiz" değil, "en son e-postadaki bağlantıyı kullanın"; yeni postanın
                 // ulaşmamış olabileceği için uygulama içi yol da söylenir (inceleme 2026-10-17)
                 { "superseded", "daha yeni bir onay isteği gönderildi; lütfen en son e-postadaki bağlantıyı kullanın. Postayı bulamıyorsanız raporu Site Monitor&#39;de açıp kararınızı oradan verebilirsiniz." },
+                // kullanıcı adı ön eki (2026-10-21 inceleme): girişe kapalı hesap — kendi sebebi, belirteç tüketilmez
+                { "username_prefix", "yalnız izinli ön ekle başlayan hesaplar girebilir" },
                 { "not_found", "Bağlantı geçersiz" } };
         for (int i = 0; i < cases.length; i++) {
             String[] c = cases[i];
@@ -133,13 +135,15 @@ class TechErrorApprovalLinkControllerTest {
                     .andExpect(status().isOk())
                     .andExpect(content().string(containsString(c[1])));
         }
-        // 8 sebep × (sayfa + onay + red) = 24 güvenlik olayı; sebep ayrıntıda ("no_permission (approve)" gibi)
-        verify(auditService, org.mockito.Mockito.times(24)).recordSecurityEvent(eq("TECH_ERROR_APPROVAL_LINK_DENIED"), any(), isNull(),
+        // 9 sebep × (sayfa + onay + red) = 27 güvenlik olayı; sebep ayrıntıda ("no_permission (approve)" gibi)
+        verify(auditService, org.mockito.Mockito.times(27)).recordSecurityEvent(eq("TECH_ERROR_APPROVAL_LINK_DENIED"), any(), isNull(),
                 eq("TECH_ERROR_REPORT"), anyString(), anyString());
         verify(auditService).recordSecurityEvent(eq("TECH_ERROR_APPROVAL_LINK_DENIED"), any(), isNull(), eq("TECH_ERROR_REPORT"),
                 anyString(), eq("no_permission (approve)"));
         verify(auditService).recordSecurityEvent(eq("TECH_ERROR_APPROVAL_LINK_DENIED"), any(), isNull(), eq("TECH_ERROR_REPORT"),
                 anyString(), eq("superseded (reject)"));
+        verify(auditService).recordSecurityEvent(eq("TECH_ERROR_APPROVAL_LINK_DENIED"), any(), isNull(), eq("TECH_ERROR_REPORT"),
+                anyString(), eq("username_prefix (approve)"));
         verify(approvals, never()).decideViaToken(anyString(), any(), anyBoolean(), any());
     }
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { BarChart3, KeyRound, LockKeyhole, Mail, Settings2, ShieldCheck, Smartphone, UserCog } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
@@ -21,6 +21,12 @@ import LoginMethodsCoverage from './loginmethods/LoginMethodsCoverage.jsx'
 import PushTemplateEditor from './loginmethods/PushTemplateEditor.jsx'
 import { DEFAULT_MESSAGE_MAX, PUSH_TEXT_FIELDS, validatePushTexts } from './loginmethods/pushTemplateModel.js'
 import LoginStatsTab from './loginmethods/stats/LoginStatsTab.jsx'
+// Kullanıcı adı ön eki kuralı (2026-10-21): kart + saf model (değişen alanlar, doğrulama, sıkılaştırma onayı)
+import UsernamePrefixCard from './loginmethods/UsernamePrefixCard.jsx'
+import {
+  FIELD_ALLOWED as PREFIX_ALLOWED, FIELD_ENABLED as PREFIX_ENABLED, FIELD_EXEMPT as PREFIX_EXEMPT, asList, changedPrefixFields,
+  previewKey, tightensRule, validatePrefixForm,
+} from './loginmethods/usernamePrefixModel.js'
 import { enabledChannels } from './loginmethods/stats/loginStatsModel.js'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/shadcn/tabs'
 import { readUrlParam, useUrlQuerySync } from '../../hooks/useUrlQuerySync.js'
@@ -67,6 +73,9 @@ function payloadOf(form, saved) {
   for (const k of BOOL_FIELDS) out[k] = !!form[k]
   for (const { key } of NUMERIC_FIELDS) if (form[key] !== undefined) out[key] = Number(String(form[key]).trim())
   for (const [k, v] of Object.entries(changedTexts(form, saved))) out[k] = String(v ?? '').trim()
+  // Kullanıcı adı ön eki (2026-10-21): YALNIZ değişen alanlar — ilgisiz bir kayıt (ör. LDAP'ı kapatmak) depodaki ön ek
+  // değerini yeniden doğrulatmasın (kural kaydı sunucuda "kendini kilitleme" denetiminden geçer).
+  Object.assign(out, changedPrefixFields(form, saved))
   return out
 }
 
@@ -153,6 +162,10 @@ export default function LoginMethodsSettings({ onOpenSection }) {
   const [pushLang, setPushLang] = useState('tr')
   // Sayfa görünümü (2026-10-03): ayarlar | istatistikler — derin bağlantı ?lm_tab=stats (Kullanıcı/Oturum'dan gelir)
   const [view, setView] = useState(() => (readUrlParam('lm_tab') === 'stats' ? 'stats' : 'settings'))
+  // Ön ek kartının son önizlemesi (2026-10-21) — sıkılaştıran kayıtta onay penceresi etkilenecek kişi sayısını söylesin
+  const prefixPreviewRef = useRef(null)
+  // Ön ek kartının kutusunda kalan geçersiz yazılar ({alan: ileti}) — varken kayıt durur (sessizce atlanmasın)
+  const prefixEntryErrRef = useRef({})
   useUrlQuerySync({ lm_tab: view === 'stats' ? 'stats' : null })
 
   const apply = useCallback((d) => {
@@ -199,8 +212,24 @@ export default function LoginMethodsSettings({ onOpenSection }) {
     const errs = {
       ...validateLoginMethods(form, limits, (min, max) => t('lm.range', min, max)),
       ...validatePushTexts(changedTexts(form, saved), Number(data?.push_template?.message_max) || DEFAULT_MESSAGE_MAX, t),
+      ...validatePrefixForm(form, data?.username_prefix?.limits, t),
+      ...Object.fromEntries(Object.entries(prefixEntryErrRef.current || {}).filter(([, v]) => !!v)),
     }
     if (showErrors(errs)) return
+    // Kullanıcı adı ön eki kuralı SIKILAŞIYORSA (açılıyor / liste değişiyor) onay — kurala uymayanların açık oturumu hemen kapanır
+    if (tightensRule(form, saved)) {
+      const pv = prefixPreviewRef.current
+      const known = pv && pv.key === previewKey(form[PREFIX_ALLOWED], form[PREFIX_EXEMPT]) && pv.data
+      const refused = known ? Number(pv.data.refused ?? 0) : null
+      const ok = await showConfirm({
+        title: t('lm.prefix.confirmTitle'),
+        message: refused == null ? t('lm.prefix.confirmBody') : refused > 0 ? t('lm.prefix.confirmBodyCount', refused) : t('lm.prefix.confirmBodyNone'),
+        confirmText: t('lm.prefix.confirmOk'),
+        cancelText: t('app.cancel'),
+        variant: refused == null || refused > 0 ? 'warning' : 'info',
+      })
+      if (!ok) return
+    }
     if (saved?.ldap_enabled && !form.ldap_enabled) {
       const noCode = !(form.push_enabled && gateway) && !form.email_enabled
       const ok = await showConfirm({
@@ -358,6 +387,13 @@ export default function LoginMethodsSettings({ onOpenSection }) {
                 </MethodCard>
               </div>
 
+              {/* 2026-10-21: kullanıcı adı ön eki kuralı — sunucu bloğu yoksa (eski sürüm) kart çizilmez */}
+              {form[PREFIX_ENABLED] !== undefined && (
+                <UsernamePrefixCard form={form} onField={set} fe={fe} info={data.username_prefix}
+                  onPreview={(p) => { prefixPreviewRef.current = p }}
+                  onEntryErrors={(m) => { prefixEntryErrRef.current = m || {} }} />
+              )}
+
               {/* 2026-10-03: kodla giriş push metni (TR / EN) — ağ geçidi yokken de hazırlanabilir; test gönderimi pasif */}
               {form.push_title_tr !== undefined && (
                 <PushTemplateEditor form={form} onField={set} fe={fe} template={data.push_template} lang={pushLang}
@@ -403,5 +439,8 @@ function payloadOfSafe(form) {
   for (const k of BOOL_FIELDS) out[k] = !!form?.[k]
   for (const { key } of NUMERIC_FIELDS) out[key] = String(form?.[key] ?? '').trim()
   for (const k of TEXT_FIELDS) out[k] = String(form?.[k] ?? '').trim()
+  out[PREFIX_ENABLED] = !!form?.[PREFIX_ENABLED]
+  out[PREFIX_ALLOWED] = asList(form?.[PREFIX_ALLOWED]).join(',')
+  out[PREFIX_EXEMPT] = asList(form?.[PREFIX_EXEMPT]).join(',')
   return out
 }

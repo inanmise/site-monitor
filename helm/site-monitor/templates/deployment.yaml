@@ -1,3 +1,14 @@
+{{- /* OpenTelemetry Java agent via the OpenTelemetry Operator (2026-10-21) - see values.yaml config.otel.agent */ -}}
+{{- $otel := .Values.config.otel | default dict -}}
+{{- $agent := $otel.agent | default dict -}}
+{{- if $agent.enabled -}}
+{{- if $otel.endpoint -}}
+{{- fail "config.otel.agent.enabled and config.otel.endpoint are mutually exclusive: with the OpenTelemetry Java agent the agent sends the traces (collector address from the Instrumentation resource). Clear config.otel.endpoint or turn config.otel.agent.enabled off." -}}
+{{- end -}}
+{{- if include "site-monitor.manualOtelInject" . -}}
+{{- fail "podAnnotations already has instrumentation.opentelemetry.io/inject-java while config.otel.agent.enabled is true: remove it from podAnnotations (config.otel.agent.instrumentation sets it)." -}}
+{{- end -}}
+{{- end -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -21,8 +32,14 @@ spec:
         {{- include "site-monitor.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
       annotations:
-        {{- with .Values.podAnnotations }}
+        {{- $podAnnotations := .Values.podAnnotations }}
+        {{- /* an explicit opt-out "false" in podAnnotations must not render next to the agent annotation (duplicate key) */}}
+        {{- if $agent.enabled }}{{- $podAnnotations = omit (.Values.podAnnotations | default dict) "instrumentation.opentelemetry.io/inject-java" }}{{- end }}
+        {{- with $podAnnotations }}
         {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- if $agent.enabled }}
+        instrumentation.opentelemetry.io/inject-java: {{ $agent.instrumentation | default "true" | quote }}
         {{- end }}
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
         checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
@@ -77,6 +94,21 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.annotations['checksum/config']
+            {{- if $agent.enabled }}
+            # OpenTelemetry Java agent (config.otel.agent): the operator never overrides env already on the
+            # container. No client spans / traceparent on checks to monitored sites, metrics stay on Prometheus,
+            # Spring Boot must not map the agent's OTEL_* variables into its own exporter; log MDC keys stay traceId/spanId;
+            # approval-link tokens (?token=) and other credential query parameters are redacted in url.query (the
+            # setting REPLACES the agent's built-in list, so that list is repeated in site-monitor.otelSensitiveQueryParameters).
+            {{- $agentEnv := dict "OTEL_SERVICE_NAME" ($agent.serviceName | default (include "site-monitor.fullname" .)) "OTEL_METRICS_EXPORTER" "none" "OTEL_INSTRUMENTATION_JAVA_HTTP_CLIENT_ENABLED" "false" "OTEL_INSTRUMENTATION_HTTP_URL_CONNECTION_ENABLED" "false" "MANAGEMENT_OPENTELEMETRY_MAP_ENVIRONMENT_VARIABLES" "false" "OTEL_INSTRUMENTATION_COMMON_LOGGING_TRACE_ID_KEY" "traceId" "OTEL_INSTRUMENTATION_COMMON_LOGGING_SPAN_ID_KEY" "spanId" "OTEL_INSTRUMENTATION_SANITIZATION_URL_EXPERIMENTAL_SENSITIVE_QUERY_PARAMETERS" (include "site-monitor.otelSensitiveQueryParameters" .) }}
+            {{- with $otel.resourceAttributes }}
+            {{- $_ := set $agentEnv "OTEL_RESOURCE_ATTRIBUTES" . }}
+            {{- end }}
+            {{- range $name, $value := mergeOverwrite $agentEnv ($agent.extraEnv | default dict) }}
+            - name: {{ $name }}
+              value: {{ $value | toString | quote }}
+            {{- end }}
+            {{- end }}
           envFrom:
             - configMapRef:
                 name: {{ include "site-monitor.fullname" . }}-config

@@ -257,6 +257,7 @@ public final class AuditEventCatalog {
             "SELF_PASSWORD_CHANGE",
             "SESSION_ENDED_INACTIVE",     // pasife alınan hesabın canlı oturumu kesildi (2026-10-02)
             "SESSION_ENDED_MAINTENANCE",  // sistem bakımı başladı — global yönetici olmayan oturum kesildi (2026-10-02)
+            "SESSION_ENDED_USERNAME_PREFIX", // kullanıcı adı ön eki kuralına uymayan hesabın canlı oturumu kesildi (2026-10-21)
             "SESSION_REVOKE_ALL",
             "SESSION_TERMINATE",
             "SMTP_RESEND",

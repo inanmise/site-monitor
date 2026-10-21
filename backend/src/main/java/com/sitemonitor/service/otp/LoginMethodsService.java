@@ -67,7 +67,11 @@ public class LoginMethodsService {
     public static final List<String> KEYS = List.of(KEY_LDAP, KEY_PUSH_ENABLED, KEY_EMAIL_ENABLED, KEY_PUSH_TTL,
             KEY_EMAIL_TTL, KEY_MAX_ATTEMPTS, KEY_COOLDOWN, KEY_MAX_PER_USER, KEY_MAX_PER_IP, KEY_MAX_FAILED,
             KEY_ALLOW_GLOBAL_ADMINS, KEY_PUSH_REQUIRE_PHONE, KEY_EMAIL_REQUIRE_EMAIL, KEY_MAX_CONTACT_MISMATCHES,
-            KEY_PUSH_TITLE_TR, KEY_PUSH_TITLE_EN, KEY_PUSH_MESSAGE_TR, KEY_PUSH_MESSAGE_EN);
+            KEY_PUSH_TITLE_TR, KEY_PUSH_TITLE_EN, KEY_PUSH_MESSAGE_TR, KEY_PUSH_MESSAGE_EN,
+            // 2026-10-21: kullanıcı adı ön eki kuralı (UsernamePrefixRule)
+            com.sitemonitor.service.loginpolicy.UsernamePrefixRule.KEY_ENABLED,
+            com.sitemonitor.service.loginpolicy.UsernamePrefixRule.KEY_ALLOWED,
+            com.sitemonitor.service.loginpolicy.UsernamePrefixRule.KEY_EXEMPT);
 
     /** Push metni anahtarları: telde kısa ad → ayar anahtarı (kayıt gövdesi ve görünüm aynı adları kullanır). */
     public static final Map<String, String> PUSH_TEXT_FIELDS = Map.of(
@@ -100,6 +104,16 @@ public class LoginMethodsService {
     private final UserPushService userPushService;
     private final SmtpSettingsService smtpSettings;
     private final AppUserRepository userRepo;
+
+    /**
+     * Kullanıcı adı ön eki kuralı (2026-10-21) — İSTEĞE BAĞLI (yapıcıya eklenmez): giriş sayfası ipucu için. Yoksa / kural
+     * kapalıyken PUBLIC görünüm bugünküyle birebir (anahtar yazılmaz).
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.loginpolicy.UsernamePrefixPolicy usernamePrefix;
+
+    /** Test kancası. */
+    void setUsernamePrefix(com.sitemonitor.service.loginpolicy.UsernamePrefixPolicy p) { this.usernamePrefix = p; }
 
     // ── Anahtarlar ─────────────────────────────────────────────────────────────
 
@@ -271,6 +285,14 @@ public class LoginMethodsService {
         // (kimin hangi bilgiye sahip olduğu değil). Eski istemci bu anahtarları tanımaz ve alanı çizmez.
         m.put("push_requires_phone", pushRequiresPhone());
         m.put("email_requires_email", emailRequiresEmail());
+        // 2026-10-21 (eklemeli): kullanıcı adı ön eki kuralı UYGULANIRKEN izinli ön ekler — giriş formu "N… ile girin"
+        // ipucunu gösterir. Ön ek gizli değildir (ret iletisi de söyler); muaf liste ASLA yazılmaz. Kapalıyken anahtar yok.
+        try {
+            Map<String, Object> hint = usernamePrefix == null ? null : usernamePrefix.publicHint();
+            if (hint != null) m.put("username_prefix", hint);
+        } catch (Exception e) {
+            // ipucu yoksa giriş sayfası yine çalışır
+        }
         return m;
     }
 

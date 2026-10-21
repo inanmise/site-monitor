@@ -151,7 +151,7 @@ class UserPushPreferencesTest {
         }
 
         @Test
-        @DisplayName("eskalasyon kişisi → kullanıcı: açık bağ > tekil aktif e-posta (harf duyarsız); belirsiz / yok / yalnız pasif → push yok + neden")
+        @DisplayName("eskalasyon kişisi → kullanıcı: açık bağ > aktif e-posta (harf duyarsız; iki aktif hesap = aynı kişi, en son giriş); yok / yalnız pasif → push yok + neden")
         void resolveContact_matching() {
             EscalationContact linked = new EscalationContact();
             linked.setId(1L); linked.setUserId(10L); linked.setEmail("ignored@example.com");
@@ -167,9 +167,16 @@ class UserPushPreferencesTest {
             when(userRepo.findAllByEmailLower("ops.lead@example.com")).thenReturn(List.of(a));
             assertThat(resolver.resolveContact(byMail, "HIGH", null).recipient().username()).isEqualTo("N00020");
 
+            // Aynı kişi (2026-10-21): e-posta iki AKTİF hesaba eşleşirse artık "belirsiz" değil — en son giriş yapan seçilir, öbürü
+            // sameEmail'de (çağıran SKIPPED_SAME_PERSON yazar)
             AppUser b = user("N00021"); b.setEmail("ops.lead@example.com");
+            a.setLastLoginAt("2026-10-01T08:00:00");
+            b.setLastLoginAt("2026-10-20T08:00:00");
             when(userRepo.findAllByEmailLower("ops.lead@example.com")).thenReturn(List.of(a, b));
-            assertThat(resolver.resolveContact(byMail, "HIGH", null).skipReason()).isEqualTo(UserPushRecipientResolver.SKIPPED_AMBIGUOUS_USER);
+            UserPushRecipientResolver.ContactMatch both = resolver.resolveContact(byMail, "HIGH", null);
+            assertThat(both.skipReason()).isNull();
+            assertThat(both.recipient().username()).isEqualTo("N00021");
+            assertThat(both.sameEmail()).extracting(UserPushRecipientResolver.Recipient::username).containsExactly("N00020");
 
             b.setActive(false);
             assertThat(resolver.resolveContact(byMail, "HIGH", null).recipient().username()).as("pasif ikiz belirsizlik yaratmaz").isEqualTo("N00020");
@@ -248,10 +255,19 @@ class UserPushPreferencesTest {
             event("HIGH");
             when(resolver.resolveContact(any(), eq("HIGH"), any())).thenReturn(new UserPushRecipientResolver.ContactMatch(
                     new UserPushRecipientResolver.Recipient("N00009", "Nöbetçi", null), null));
-            when(deliveryRepo.existsRecentTeamResend(eq(9L), eq("N00009"), anyString())).thenReturn(true);
+            String now = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss")
+                    .withZone(java.time.ZoneOffset.UTC).format(java.time.Instant.now());
+            when(deliveryRepo.findPersonEvidenceByEvent(9L)).thenReturn(
+                    List.<Object[]>of(new Object[]{"N00009", "RESEND:ab12cd34", "PENDING", now}));
             assertThat(service.enqueueOnCall(9L, "MANUAL", 5L, 77L, Set.of())).isNull();
             assertThat(store).isEmpty();
-            when(deliveryRepo.existsRecentTeamResend(eq(9L), eq("N00009"), anyString())).thenReturn(false);
+            // 2026-10-21 inceleme: takım satırı ATLAMA satırıysa (seviye, tavan, aynı kişi …) "aldı" sayılmaz — nöbetçi kendi kararını verir
+            when(deliveryRepo.findPersonEvidenceByEvent(9L)).thenReturn(
+                    List.<Object[]>of(new Object[]{"N00009", "RESEND:ab12cd34", "SKIPPED_USER_LEVEL", now}));
+            assertThat(service.enqueueOnCall(9L, "MANUAL", 5L, 77L, Set.of())).isEqualTo("PENDING");
+            assertThat(store).singleElement().satisfies(d -> assertThat(d.getDedupeKey()).startsWith("ONCALL:RESEND:"));
+            store.clear();
+            when(deliveryRepo.findPersonEvidenceByEvent(9L)).thenReturn(List.of());
             assertThat(service.enqueueOnCall(9L, "MANUAL", 5L, 77L, Set.of())).isEqualTo("PENDING");
             assertThat(store).singleElement().satisfies(d -> assertThat(d.getDedupeKey()).startsWith("ONCALL:RESEND:"));
         }

@@ -136,4 +136,11 @@ public class UserPushDelivery {
     /** Mesajın kurulduğu dil ({@code tr} / {@code en}, 2026-10-04); null = eski satır (tr). */
     @Column(name = "push_lang", length = 5)
     private String pushLang;
+    /**
+     * Aynı kişi kuralı (2026-10-21, {@code PushSamePersonGuard}): durum {@code SKIPPED_SAME_PERSON} ise kararın verildiği aynı
+     * kişinin hesabı, {@code SKIPPED_SAME_PERSON_EXCLUDED} ise bildirimden çıkarılan hesabı (kullanıcı adı — e-posta ASLA).
+     * Gönderildiğini iddia etmez: seçilen hesabın satırı kendi sonucunu taşır. Diğer satırlarda null. Sonradan eklenen kolon.
+     */
+    @Column(name = "same_person_username", length = 100)
+    private String samePersonUsername;
 }

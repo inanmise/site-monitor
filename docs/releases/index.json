@@ -1,9 +1,72 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-18T23:53:03Z",
+  "generatedAt": "2026-10-21T18:46:43Z",
   "repo": "inanmise/site-monitor",
-  "count": 781,
+  "count": 782,
   "releases": [
+    {
+      "version": "20.164.0",
+      "tag": "v20.164.0",
+      "releasedAt": "2026-10-21T18:46:37Z",
+      "commit": "264807625be2ad43cfa84b66fae8069127ba42e9",
+      "prevVersion": "20.163.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 5,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "26480762",
+          "subject": "aynı kişi push kuralı inceleme düzeltmeleri — yalnız push alabilen hesap seçilir, ortak posta kutusu birleşmez, metinler gönderildiğini iddia etmez"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "a48cdbb9",
+          "subject": "OpenTelemetry ajan kipinde onay bağlantısı belirteci iz arka ucuna gitmiyor, sıfır iz kimliği günlüğe yazılmıyor — inceleme bulguları"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "fdb6b935",
+          "subject": "kullanıcı adı ön eki inceleme düzeltmeleri — ret parola doğrulandıktan sonra, mezar taşı her pod'da aynı sinyal, kurala takılan hesap e-posta onay bağlantısıyla karar veremez"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "2ba47109",
+          "subject": "OpenTelemetry Java ajanı enjekte edilince açılış düşmüyor — iz ajana bırakılır, gRPC göndericisi yoksa uygulamanın kendi OTLP gönderimi uyarıyla kapanır"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "ce291fc6",
+          "subject": "kullanıcı adı ön eki kuralı — yalnız izinli ön ekle (ör. N) başlayan hesaplar girer, MP… hesapları reddedilir; Ayarlar → Giriş Yöntemleri'nde canlı önizleme ve muaf liste"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "67f82ff6",
+          "subject": "aynı kişinin iki hesabına tek push — e-postası aynı aktif hesaplardan yalnız biri alır, öbürü SKIPPED_SAME_PERSON izi bırakır (prod alarm #628)"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.163.0",
       "tag": "v20.163.0",

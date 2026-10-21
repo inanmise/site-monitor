@@ -8,6 +8,8 @@ import com.sitemonitor.service.AuditDetail;
 import com.sitemonitor.service.AuditService;
 import com.sitemonitor.service.LdapSettingsService;
 import com.sitemonitor.service.UserPushService;
+import com.sitemonitor.service.loginpolicy.UsernamePrefixPolicy;
+import com.sitemonitor.service.loginpolicy.UsernamePrefixRule;
 import com.sitemonitor.service.loginstats.LoginStatsService;
 import com.sitemonitor.service.otp.LoginMethodsService;
 import com.sitemonitor.service.otp.OtpCodes;
@@ -87,7 +89,11 @@ public class LoginMethodsController {
             "push_title_tr", LoginMethodsService.KEY_PUSH_TITLE_TR,
             "push_title_en", LoginMethodsService.KEY_PUSH_TITLE_EN,
             "push_message_tr", LoginMethodsService.KEY_PUSH_MESSAGE_TR,
-            "push_message_en", LoginMethodsService.KEY_PUSH_MESSAGE_EN);
+            "push_message_en", LoginMethodsService.KEY_PUSH_MESSAGE_EN,
+            // 2026-10-21: kullanıcı adı ön eki kuralı — açık/kapalı + izinli ön ekler + muaf adlar (liste ya da CSV)
+            UsernamePrefixRule.FIELD_ENABLED, UsernamePrefixRule.KEY_ENABLED,
+            UsernamePrefixRule.FIELD_ALLOWED, UsernamePrefixRule.KEY_ALLOWED,
+            UsernamePrefixRule.FIELD_EXEMPT, UsernamePrefixRule.KEY_EXEMPT);
 
     /** "Kendime test gönder" tavanı: yönetici başına dakikada en çok bu kadar test push'u. */
     static final int PUSH_TEST_PER_MINUTE = 3;
@@ -107,6 +113,49 @@ public class LoginMethodsController {
     /** LDAP entegrasyonu (dizin) açık mı — bilgi amaçlı; isteğe bağlı (dilim testlerinde yok). */
     @Autowired(required = false)
     private LdapSettingsService ldapSettings;
+
+    /**
+     * Kullanıcı adı ön eki kuralı (2026-10-21) — isteğe bağlı: yoksa görünümde {@code username_prefix} bloğu yer almaz
+     * (arayüz kartı çizmez) ve önizleme ucu 404 döner.
+     */
+    @Autowired(required = false)
+    private UsernamePrefixPolicy usernamePrefix;
+
+    // ── Kullanıcı adı ön eki önizlemesi (2026-10-21) — salt okuma, YALNIZ global yönetici ─────────────────
+
+    /**
+     * Kaydetmeden önizleme: {@code allowed} (CSV) ve {@code exempt} (CSV) ile kural AÇIK olsaydı hangi AKTİF kullanıcılar
+     * giremezdi — {@code {active_users, refused, sample[≤50]{username, display_name, auth_source}, self_refused, …}}.
+     * Değerler kayıtla AYNI kurallarla doğrulanır (400 + {@code field}); boş ön ek listesi 400. Yazma yok, denetim yok.
+     */
+    @GetMapping("/api/admin/login-methods/username-prefix/preview")
+    public ResponseEntity<Map<String, Object>> usernamePrefixPreview(@RequestParam(required = false) String allowed,
+                                                                     @RequestParam(required = false) String exempt,
+                                                                     HttpSession session) {
+        requireGlobalAdmin(session);
+        if (usernamePrefix == null) {
+            throw new java.util.NoSuchElementException(Msg.t("Kullanıcı adı ön eki önizlemesi bu sunucuda yok.",
+                    "Username prefix preview is not available on this server."));
+        }
+        String a = prefixList(UsernamePrefixRule.FIELD_ALLOWED, allowed);
+        String e = prefixList(UsernamePrefixRule.FIELD_EXEMPT, exempt);
+        if (a.isEmpty()) {
+            throw new FieldException(UsernamePrefixRule.FIELD_ALLOWED, Msg.t(
+                    "Önizleme için en az bir izinli ön ek girin (örneğin N).",
+                    "Enter at least one allowed prefix (for example N) to preview."));
+        }
+        return ok(usernamePrefix.preview(a, e, actor(session)), null);
+    }
+
+    /** İzinli ön ek / muaf ad listesi (liste ya da CSV) → normalize CSV; geçersiz öğe → 400 + alan adı. */
+    static String prefixList(String field, Object raw) {
+        try {
+            return UsernamePrefixRule.FIELD_ALLOWED.equals(field)
+                    ? UsernamePrefixRule.normalizePrefixes(raw) : UsernamePrefixRule.normalizeExempt(raw);
+        } catch (UsernamePrefixRule.InvalidValue iv) {
+            throw new FieldException(field, iv.getMessage());
+        }
+    }
 
     // ── Giriş sayfası (PUBLIC) ──────────────────────────────────────────────────
 
@@ -146,6 +195,8 @@ public class LoginMethodsController {
             String val;
             if (LoginMethodsService.PUSH_TEXT_FIELDS.containsKey(f.getKey())) {
                 val = pushText(f.getKey(), raw, pushLimit);
+            } else if (UsernamePrefixRule.FIELD_ALLOWED.equals(f.getKey()) || UsernamePrefixRule.FIELD_EXEMPT.equals(f.getKey())) {
+                val = prefixList(f.getKey(), raw);
             } else if (range == null) {
                 val = String.valueOf(asBool(f.getKey(), raw));
             } else {
@@ -163,10 +214,13 @@ public class LoginMethodsController {
         if (values.isEmpty()) {
             throw new IllegalArgumentException(Msg.t("Kaydedilecek ayar yok.", "There is nothing to save."));
         }
+        // Kullanıcı adı ön eki alanlar-arası kuralı (açıkken liste boş olamaz, kaydeden kendini kilitleyemez) ve GLOBAL_ONLY
+        // kapısı AppSettingsService.save içinde — hangi uçtan gelirse gelsin aynı (400 + field / LOCKOUT_SELF).
         settingsService.save(Map.of("values", values), actor(session));
         auditService.recordAction("LOGIN_METHODS_SETTINGS_SAVE", session, request, "SETTINGS", "login-methods",
                 AuditDetail.of("keys", values.size(), "ldap_enabled", methods.ldapLoginEnabled(),
-                        "otp_push", methods.pushEnabled(), "otp_email", methods.emailEnabled()),
+                        "otp_push", methods.pushEnabled(), "otp_email", methods.emailEnabled(),
+                        "username_prefix", usernamePrefix == null ? null : usernamePrefix.active()),
                 AuditDiff.diff(before, values));
         return ok(view(session), Msg.t("Giriş yöntemleri kaydedildi (yeniden başlatma gerekmez)", "Sign-in methods saved (no restart needed)"));
     }
@@ -348,7 +402,18 @@ public class LoginMethodsController {
 
     private Map<String, Object> view(HttpSession session) {
         Map<String, Object> data = new LinkedHashMap<>();
-        data.put("settings", methods.settingsView());
+        Map<String, Object> settings = new LinkedHashMap<>();
+        Map<String, Object> sv = methods.settingsView();
+        if (sv != null) settings.putAll(sv);
+        if (usernamePrefix != null) {
+            // 2026-10-21: kullanıcı adı ön eki — form alanları ayarlarla birlikte (kaydet çubuğu tek); ayrıntılar ayrı blokta
+            Map<String, Object> up = usernamePrefix.settingsView();
+            settings.put(UsernamePrefixRule.FIELD_ENABLED, up.get("enabled"));
+            settings.put(UsernamePrefixRule.FIELD_ALLOWED, up.get("allowed"));
+            settings.put(UsernamePrefixRule.FIELD_EXEMPT, up.get("exempt"));
+            data.put("username_prefix", up);
+        }
+        data.put("settings", settings);
         data.put("limits", LoginMethodsService.limitsView());
         Map<String, Object> status = new LinkedHashMap<>();
         status.put("push_gateway_configured", methods.pushGatewayConfigured());

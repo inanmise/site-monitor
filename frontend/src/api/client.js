@@ -8,6 +8,7 @@ import { announceInventoryAdded, inventoryAddedDomain } from '../utils/inventory
 import { assignLocation, isAccountInactivePayload, signalAccountInactive } from '../utils/accountInactive.js'
 import { claimExpiredRedirect, signalSessionExpired } from '../utils/sessionExpiry.js'
 import { isMaintenancePayload, signalMaintenance } from '../utils/systemMaintenance.js'
+import { isUsernamePrefixPayload, prefixesOf, signalUsernamePrefix } from '../utils/usernamePrefix.js'
 import { downloadBlob } from '../utils/csvExport.js'
 import {
   ApiError, attachErrorInfo, errorInfoOf, networkMessage, nonJsonMessage, normalizeErrorBody, parseRetryAfter, rememberErrorInfo,
@@ -315,6 +316,13 @@ async function request(path, options = {}) {
     if (isMaintenancePayload(body401)) {
       try { sessionStorage.removeItem('sm.session.active') } catch { /* sessionStorage yok */ }
       signalMaintenance(body401.maintenance)
+      return null
+    }
+    // KULLANICI ADI ÖN EKİ (2026-10-21): kural açıldı / değişti ve oturum (ya da remember-me çerezi) kurala uymuyor — pasif
+    // hesap deseninin aynısı: YÖNLENDİRME YOK, uygulama kapatılamaz geri sayımlı pencereyi açar, sonra /?session=prefix.
+    if (isUsernamePrefixPayload(body401)) {
+      try { sessionStorage.removeItem('sm.session.active') } catch { /* sessionStorage yok */ }
+      signalUsernamePrefix(prefixesOf(body401))
       return null
     }
     // Session expired or invalidated (typically: pod restart wiped in-memory
@@ -877,6 +885,13 @@ export const api = {
     statsUsers: (params = {}) => request(`/admin/login-methods/stats/users?${historyQuery(params)}`),
     /** Tek kullanıcının giriş istatistiği + son olaylar. */
     statsUser: (username, days) => request(`/admin/login-methods/stats/users/${encodeURIComponent(username)}?${historyQuery({ days })}`),
+    /**
+     * Kullanıcı adı ön eki önizlemesi (2026-10-21): kaydetmeden, verilen ön ek / muaf listesiyle kural açık olsaydı hangi
+     * aktif kullanıcılar giremezdi. 400 + field (geçersiz değer), global yönetici dışı 403. `signal` geç yanıtı iptal eder.
+     */
+    prefixPreview: (allowed, exempt, signal) => request(`/admin/login-methods/username-prefix/preview?${historyQuery({
+      allowed: (allowed || []).join(','), exempt: (exempt || []).join(','),
+    })}`, { withStatus: true, ...(signal ? { signal } : {}) }),
   },
 
   /**

@@ -231,6 +231,11 @@ public class AppSettingsService {
                     effectiveInt(next, com.sitemonitor.service.techerror.TechErrorReportSettings.KEY_MAIL_INLINE_MB));
             if (problem != null) throw new IllegalArgumentException(problem);
         }
+        // Kullanıcı adı ön eki kuralı (2026-10-21): YALNIZ bu anahtarlara dokunan kayıtta — açıkken liste boş olamaz ve
+        // kaydeden yöneticinin KENDİ hesabı kurala uymalı (LOCKOUT_SELF). Hangi denetleyiciden gelirse gelsin aynı kural.
+        if (normalized.keySet().stream().anyMatch(com.sitemonitor.service.loginpolicy.UsernamePrefixRule.KEYS::contains)) {
+            validateUsernamePrefix(next);
+        }
 
         for (Map.Entry<String, String> e : normalized.entrySet()) {
             String key = e.getKey();
@@ -269,6 +274,30 @@ public class AppSettingsService {
         if (def == null) def = environment.getProperty(ThemeCatalog.KEY_DEFAULT, ThemeCatalog.SYSTEM);
         ThemeCatalog.Problem p = ThemeCatalog.validate(ThemeCatalog.parseCsv(enabledCsv), def);
         if (p != null) throw new IllegalArgumentException(Msg.t("Temalar: " + p.tr(), "Themes: " + p.en()));
+    }
+
+    /**
+     * Kullanıcı adı ön eki kuralının alanlar-arası denetimi (etkin değerler: yeni override → Environment → kapalı / boş).
+     * Hata alan adıyla döner ({@code username_prefix_allowed}); kendi hesabını kilitleme kodu {@code LOCKOUT_SELF}.
+     */
+    private void validateUsernamePrefix(Map<String, String> next) {
+        String en = effectiveString(next, com.sitemonitor.service.loginpolicy.UsernamePrefixRule.KEY_ENABLED, "false");
+        String allowed = effectiveString(next, com.sitemonitor.service.loginpolicy.UsernamePrefixRule.KEY_ALLOWED, "");
+        String exempt = effectiveString(next, com.sitemonitor.service.loginpolicy.UsernamePrefixRule.KEY_EXEMPT, "");
+        String bootstrap = environment.getProperty("site.monitor.username");
+        var p = com.sitemonitor.service.loginpolicy.UsernamePrefixRule.validateSave(Boolean.parseBoolean(en.trim()), allowed, exempt,
+                com.sitemonitor.controller.SessionScope.usernameInRequest(), bootstrap == null ? "user" : bootstrap);
+        if (p != null) {
+            throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException(
+                    "VALIDATION_FAILED".equals(p.code()) ? null : p.code(), p.field(), p.message());
+        }
+    }
+
+    /** Override → Environment → varsayılan sırasıyla metin (Environment taklit edilmiş testte null dönebilir). */
+    private String effectiveString(Map<String, String> next, String key, String def) {
+        String v = next.get(key);
+        if (v == null) v = environment.getProperty(key);
+        return v == null ? def : v;
     }
 
     /** Override → Environment sırasıyla tam sayı; hiçbiri yoksa ya da sayı değilse null. */
@@ -325,6 +354,20 @@ public class AppSettingsService {
         // Kendi kendini izleme (2026-10-11): aralıklar ve alıcı biçimleri — hangi uçtan yazılırsa yazılsın aynı kural.
         if (com.sitemonitor.service.watchdog.WatchdogSettings.isKey(s.key())) {
             com.sitemonitor.service.watchdog.WatchdogSettings.validate(s.key(), val);
+        }
+        // Kullanıcı adı ön eki (2026-10-21): izinli ön ek / muaf ad biçimi — hangi uçtan yazılırsa yazılsın aynı kural.
+        if (com.sitemonitor.service.loginpolicy.UsernamePrefixRule.KEY_ALLOWED.equals(s.key())
+                || com.sitemonitor.service.loginpolicy.UsernamePrefixRule.KEY_EXEMPT.equals(s.key())) {
+            try {
+                if (com.sitemonitor.service.loginpolicy.UsernamePrefixRule.KEY_ALLOWED.equals(s.key())) {
+                    com.sitemonitor.service.loginpolicy.UsernamePrefixRule.normalizePrefixes(val);
+                } else {
+                    com.sitemonitor.service.loginpolicy.UsernamePrefixRule.normalizeExempt(val);
+                }
+            } catch (com.sitemonitor.service.loginpolicy.UsernamePrefixRule.InvalidValue iv) {
+                throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException(
+                        iv.problem().field(), iv.getMessage());
+            }
         }
         // Açık temalar (2026-10-05): CSV'deki her kimlik katalogda olmalı (boş liste = varsayılana dön, yukarıda döndü).
         if (ThemeCatalog.KEY_ENABLED.equals(s.key())) {

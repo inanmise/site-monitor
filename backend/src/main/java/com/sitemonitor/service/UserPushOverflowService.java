@@ -15,6 +15,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -44,6 +45,12 @@ import java.util.UUID;
  * yazılır (iz). Sistem bakımı susturması → aynı (karar satırı {@code SKIPPED_SYSTEM_MAINTENANCE}). Global / kişisel sessiz
  * saat ya da susturma → özet ERTELENİR (sahiplenme yok; pencere bitince gider) — özetin en yüksek seviyesi kişinin
  * kurallarından geçiyorsa (ör. susturmada "kritikler yine gelsin" + kritik içerik) hemen gider.
+ *
+ * <p><b>Aynı kişi</b> (2026-10-21, {@link PushSamePersonGuard}): e-postası aynı AKTİF hesaplar aynı kişidir — iki hesabın
+ * taşmaları TEK özette toplanır ve özet, taşması olan hesaplardan en son giriş yapanına (eşitlikte en küçük kimlik) gider;
+ * öbür hesabın satırları da o özete bağlanır (iz: satırın {@code overflow_summary_id}'si). Özet aralığı kişi başınadır: kişinin
+ * herhangi bir hesabına bu aralıkta özet gittiyse yenisi beklenir. Seçilen hesabın kuralları (opt-out, sessiz saat, susturma)
+ * uygulanır.
  */
 @Slf4j
 @Service
@@ -72,6 +79,13 @@ public class UserPushOverflowService {
     /** Test kancası. */
     Clock clock = Clock.systemUTC();
 
+    /** Aynı kişi kuralı (2026-10-21) — isteğe bağlı: yokken (elle kurulan testler) kullanıcı başına özet, bugünkü gibi. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private PushSamePersonGuard samePerson;
+
+    /** Test kancası. */
+    void setSamePerson(PushSamePersonGuard g) { this.samePerson = g; }
+
     /** Tur özeti (log + test). */
     public record SweepResult(int summaries, int skipped, int deferred) {
         static final SweepResult EMPTY = new SweepResult(0, 0, 0);
@@ -96,31 +110,110 @@ public class UserPushOverflowService {
         if (candidates == null || candidates.isEmpty()) return SweepResult.EMPTY;
         Duration window = Duration.ofMinutes(push.overflowSummaryMinutes());
         int summaries = 0, skipped = 0, deferred = 0;
+        Map<String, String> firstAt = new LinkedHashMap<>();   // kullanıcı adı → ilk özetlenmemiş taşma damgası
         for (Object[] c : candidates) {
             if (c == null || c.length < 2 || c[0] == null) continue;
-            String username = c[0].toString();
-            Instant first = PushText.parseStoredUtc(c[1] == null ? null : c[1].toString());
-            if (first == null || now.isBefore(first.plus(window))) continue;          // ilk taşmadan beri aralık dolmadı
-            Instant last = PushText.parseStoredUtc(repo.lastOverflowSummaryAt(username));
-            if (last != null && now.isBefore(last.plus(window))) continue;            // bu aralıkta zaten bir özet gitti
-            try {
-                switch (summarize(username, now, since)) {
-                    case SENT -> summaries++;
-                    case SKIPPED -> skipped++;
-                    case DEFERRED -> deferred++;
-                    default -> { /* sahiplenecek satır kalmadı */ }
+            firstAt.putIfAbsent(c[0].toString(), c[1] == null ? null : c[1].toString());
+        }
+        Map<String, List<PushSamePersonGuard.Account>> personOf = persons(firstAt.keySet());
+        java.util.Set<String> handled = new java.util.HashSet<>();
+        for (Map.Entry<String, String> c : firstAt.entrySet()) {
+            String username = c.getKey();
+            if (!handled.add(PushSamePersonGuard.key(username))) continue;
+            // Aynı kişi (2026-10-21): kişinin taşması olan TÜM hesapları tek özette; aralık kişinin herhangi bir hesabına göre.
+            List<PushSamePersonGuard.Account> person = personOf.get(PushSamePersonGuard.key(username));
+            List<String> group = new ArrayList<>(List.of(username));
+            List<String> accounts = new ArrayList<>(List.of(username));
+            if (person != null) {
+                for (PushSamePersonGuard.Account a : person) {
+                    String k = PushSamePersonGuard.key(a.username());
+                    if (k.equals(PushSamePersonGuard.key(username))) continue;
+                    accounts.add(a.username());
+                    for (String other : firstAt.keySet()) {
+                        if (PushSamePersonGuard.key(other).equals(k) && handled.add(k)) group.add(other);
+                    }
                 }
-            } catch (Exception e) {
-                log.warn("Push saat tavanı özeti kurulamadı (kullanıcı başına yalıtım): {}", e.toString());
+            }
+            // Özetin hedefi: kişinin özeti ALABİLECEK hesabı (aktif, push'u kapatmamış — 2026-10-21 inceleme), en son giriş, kimlik.
+            // Hiçbiri alamıyorsa birleştirme YOK: her hesap kendi özetini / kendi dürüst atlama satırını alır (eski davranış).
+            List<List<String>> units = new ArrayList<>();
+            if (group.size() > 1) {
+                List<PushSamePersonGuard.Account> ready = person.stream()
+                        .filter(a -> group.stream().anyMatch(g -> PushSamePersonGuard.key(g).equals(PushSamePersonGuard.key(a.username()))))
+                        .filter(a -> canReceive(a.username()))
+                        .toList();
+                PushSamePersonGuard.Account chosen = PushSamePersonGuard.chooseByLogin(ready);
+                if (chosen == null) {
+                    for (String g : group) units.add(List.of(g));
+                } else {
+                    List<String> unit = new ArrayList<>();
+                    for (String g : group) if (PushSamePersonGuard.key(g).equals(PushSamePersonGuard.key(chosen.username()))) unit.add(g);
+                    for (String g : group) if (!unit.contains(g)) unit.add(g);
+                    units.add(unit);
+                }
+            } else {
+                units.add(group);
+            }
+            for (List<String> unit : units) {
+                Instant first = null;
+                for (String g : unit) {
+                    Instant f = PushText.parseStoredUtc(firstAt.get(g));
+                    if (f != null && (first == null || f.isBefore(first))) first = f;
+                }
+                if (first == null || now.isBefore(first.plus(window))) continue;      // ilk taşmadan beri aralık dolmadı
+                Instant last = null;
+                for (String a : units.size() > 1 ? unit : accounts) {
+                    Instant l = PushText.parseStoredUtc(repo.lastOverflowSummaryAt(a));
+                    if (l != null && (last == null || l.isAfter(last))) last = l;
+                }
+                if (last != null && now.isBefore(last.plus(window))) continue;        // bu aralıkta zaten bir özet gitti
+                try {
+                    switch (summarize(unit.get(0), unit.subList(1, unit.size()), now, since)) {
+                        case SENT -> summaries++;
+                        case SKIPPED -> skipped++;
+                        case DEFERRED -> deferred++;
+                        default -> { /* sahiplenecek satır kalmadı */ }
+                    }
+                } catch (Exception e) {
+                    log.warn("Push saat tavanı özeti kurulamadı (kullanıcı başına yalıtım): {}", e.toString());
+                }
             }
         }
         return new SweepResult(summaries, skipped, deferred);
     }
 
+    /** Hesap özeti alabilir mi (aktif, push'u kapatmamış) — okunamazsa hayır (yanlış hesaba birleştirilmesin). */
+    private boolean canReceive(String username) {
+        try {
+            AppUser u = userRepo.findByUsername(username).orElse(null);
+            return u != null && Boolean.TRUE.equals(u.getActive()) && !Boolean.TRUE.equals(u.getPushOptOut());
+        } catch (RuntimeException e) {
+            log.warn("Push saat tavanı özeti: hesap okunamadı ({}): {}", username, e.toString());
+            return false;
+        }
+    }
+
     enum Outcome { NONE, SENT, SKIPPED, DEFERRED }
 
     Outcome summarize(String username, Instant now, String since) {
+        return summarize(username, List.of(), now, since);
+    }
+
+    /**
+     * {@code others}: aynı kişinin taşması olan öbür hesapları (2026-10-21) — satırları bu özete katılır ve bağlanır; özet
+     * yalnız {@code username}'e gider.
+     */
+    Outcome summarize(String username, List<String> others, Instant now, String since) {
         List<UserPushDelivery> rows = repo.findUnsummarizedOverflow(username, since, PageRequest.of(0, MAX_ROWS));
+        if (others != null && !others.isEmpty()) {
+            List<UserPushDelivery> merged = new ArrayList<>(rows == null ? List.of() : rows);
+            for (String o : others) {
+                List<UserPushDelivery> more = repo.findUnsummarizedOverflow(o, since, PageRequest.of(0, MAX_ROWS));
+                if (more != null) merged.addAll(more);
+            }
+            merged.sort(java.util.Comparator.comparing(UserPushDelivery::getId, java.util.Comparator.nullsLast(java.util.Comparator.naturalOrder())));
+            rows = merged.size() > MAX_ROWS ? new ArrayList<>(merged.subList(0, MAX_ROWS)) : merged;
+        }
         if (rows == null || rows.isEmpty()) return Outcome.NONE;
         AppUser u = userRepo.findByUsername(username).orElse(null);
         String lang = PushI18n.norm(u == null ? null : u.getPushLang());
@@ -174,6 +267,22 @@ public class UserPushOverflowService {
         repo.save(s);
         push.kickDrain();
         return Outcome.SENT;
+    }
+
+    /** Taşması olan hesapların kişileri (yalnız birden çok aktif hesabı olanlar): hesap anahtarı → kişinin hesapları. */
+    private Map<String, List<PushSamePersonGuard.Account>> persons(java.util.Collection<String> usernames) {
+        PushSamePersonGuard g = samePerson;
+        if (g == null || usernames.isEmpty()) return Map.of();
+        try {
+            List<String> up = usernames.stream().map(PushSamePersonGuard::key).toList();
+            Map<String, List<PushSamePersonGuard.Account>> out = new LinkedHashMap<>();
+            for (List<PushSamePersonGuard.Account> person : g.persons(up).values())
+                for (PushSamePersonGuard.Account a : person) out.put(PushSamePersonGuard.key(a.username()), person);
+            return out;
+        } catch (RuntimeException e) {
+            log.warn("Push saat tavanı özeti: aynı kişi denetimi yapılamadı (kullanıcı başına özet): {}", e.toString());
+            return Map.of();
+        }
     }
 
     /** Özet bu an ertelenmeli mi — global/kişisel sessiz saat ya da susturma, özetin en yüksek seviyesini bastırıyorsa. */

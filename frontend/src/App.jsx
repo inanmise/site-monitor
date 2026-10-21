@@ -30,6 +30,11 @@ import {
   ACCOUNT_INACTIVE_REDIRECT, accountInactiveFromUrl, accountInactiveSignaled, assignLocation, onAccountInactive,
 } from './utils/accountInactive.js'
 import { onSessionExpired } from './utils/sessionExpiry.js'
+// Kullanıcı adı ön eki (2026-10-21): kurala uymayan hesabın oturumu kesilince pasif hesap penceresinin ön ek kipi
+import {
+  USERNAME_PREFIX_REDIRECT, lastUsernamePrefixes, onUsernamePrefix, resetUsernamePrefixSignal, usernamePrefixFromUrl,
+  usernamePrefixSignaled,
+} from './utils/usernamePrefix.js'
 // Sistem Bakım Modu (2026-10-02): şeritler + geri sayım penceresi (saniyelik tik kendi içinde) ve oturum kesimi sinyali
 import SystemMaintenanceLayer from './components/maintenance/SystemMaintenanceLayer.jsx'
 import {
@@ -335,6 +340,10 @@ export default function App() {
   // ACCOUNT_INACTIVE) ve oturum açıkken gelen sinyalin bloklayan penceresi. Sinyal api/client.js → utils/accountInactive.
   const [accountInactiveNotice, setAccountInactiveNotice] = useState(accountInactiveFromUrl)
   const [inactiveDialogOpen, setInactiveDialogOpen] = useState(false)
+  // Kullanıcı adı ön eki (2026-10-21): giriş sayfası bildirimi (`?session=prefix` ya da açılışta 401) ve oturum açıkken gelen
+  // sinyalin kapatılamaz geri sayımlı penceresi (pasif hesap penceresinin ön ek kipi). Sinyal api/client.js → utils/usernamePrefix.
+  const [prefixNotice, setPrefixNotice] = useState(usernamePrefixFromUrl)
+  const [prefixDialog, setPrefixDialog] = useState(null)   // null | { prefixes: [...] }
   // Sistem Bakım Modu (2026-10-02, kullanıcı kararı): sunucunun EK `maintenance` bloğu (yoklama / me / giriş yanıtı) +
   // sunucu saati farkı. Bakım başlayınca oturum sunucuda kesilir (401 MAINTENANCE) → kısa geri sayımlı pencere (`ended`);
   // giriş sayfası `?session=maintenance` ile bakım kartını gösterir.
@@ -975,6 +984,27 @@ export default function App() {
     return off
   }, [])
 
+  // KULLANICI ADI ÖN EKİ SİNYALİ (2026-10-21): oturum açıkken → kapatılamaz geri sayımlı pencere, sonra /?session=prefix;
+  // oturum yokken (açılışta /me ya da remember-me çerezi reddedildi) → pencere YOK, giriş sayfası bildirimiyle.
+  useEffect(() => {
+    const handle = (_src, prefixes) => {
+      const list = Array.isArray(prefixes) ? prefixes : lastUsernamePrefixes()
+      if (userRef.current) {
+        clearTimeout(logoutTimer.current)
+        clearTimeout(warnTimer.current)
+        clearInterval(countdownInterval.current)
+        setInactivityWarning(false)
+        setPrefixDialog({ prefixes: list })
+      } else {
+        setSessionExpiredNotice(false)
+        setPrefixNotice(true)
+      }
+    }
+    const off = onUsernamePrefix(handle)
+    if (usernamePrefixSignaled()) handle('local', lastUsernamePrefixes())
+    return off
+  }, [])
+
   // OTURUM DÜŞTÜ, YÖNLENDİRME SİGORTASI ATTI (2026-10-09): api/client.js 60 sn içinde 2 kez /?session=expired'a
   // yönlendirdiyse (çok kopyalı yanlış kurulum: /me bir kopyada 200, yoklama ötekinde 401) sayfayı yeniden yüklemez —
   // giriş formu burada, yönlendirmeyle AYNI "oturum süresi doldu" bildirimiyle açılır (utils/sessionExpiry.js).
@@ -1063,6 +1093,19 @@ export default function App() {
     assignLocation(ACCOUNT_INACTIVE_REDIRECT)
   }, [])
 
+  /** Ön ek kuralı oturumu kesti (2026-10-21): pasif hesap çıkışıyla AYNI istemci temizliği (sunucu oturumu, token'ları ve
+   *  çerezi zaten sildi — 401 dönecek çağrı YOK), sonra giriş sayfası `?session=prefix` bildirimiyle. */
+  const finishPrefixLogout = useCallback(() => {
+    clearTimeout(logoutTimer.current)
+    clearTimeout(warnTimer.current)
+    clearInterval(countdownInterval.current)
+    clearInterval(refreshPollRef.current)
+    try { sessionStorage.removeItem('sm.session.active') } catch { /* sessionStorage yok */ }
+    try { localStorage.removeItem(REMEMBER_KEY) } catch { /* depolama kapalı */ }
+    clearPersonalStorage()
+    assignLocation(USERNAME_PREFIX_REDIRECT)
+  }, [])
+
 
   /**
    * Oturum verisini sıfırlar (2026-10-09, hata düzeltmesi): sekme içi çıkış (elle ya da hareketsizlik) yalnız kimliği
@@ -1078,6 +1121,8 @@ export default function App() {
     emitSessionReset()
     // Kişisel Panom: önceki oturumun süren paylaşılan kutu istekleri yeni kullanıcıya geçmesin (2026-10-13)
     clearSharedFetches()
+    // Kullanıcı adı ön eki sinyali bu oturuma aitti: sonraki girişte yeni bir kesim yine pencere + yönlendirme açsın
+    resetUsernamePrefixSignal()
     // Uçuştaki (bu oturumun) her dalga artık eski: sonraki girişin dalgaları tabanın üstünden başlar
     loadFloorRef.current = loadSeqRef.current
     loadAppliedRef.current = {}
@@ -1370,6 +1415,9 @@ export default function App() {
     try { sessionStorage.removeItem('sm.banner.heroShown') } catch { /* yoksay */ }
     try { sessionStorage.removeItem('sm.login.noticeShown') } catch { /* yoksay */ }
     // B9: oturum düşüp BAŞKA biri girdiyse öncekinin kişisel kayıtları silinir; aynı kişide (kesinti yedeği) korunur.
+    // Kullanıcı adı ön eki sinyali (inceleme 2026-10-21): açılışta (ör. MP remember-me çerezi) verilmiş sinyal bu sayfa
+    // ömrünü kilitlemesin — yeni oturumda kural sonradan keserse pencere + /?session=prefix yine çalışır
+    resetUsernamePrefixSignal()
     prefsMigrateRef.current = sameStorageOwner(userData.username)   // öneri 23: claim'den ÖNCE okunur
     claimPersonalStorage(userData.username)
     landingRef.current = { eligible: landingEligibleFromUrl(), done: false }
@@ -1468,6 +1516,7 @@ export default function App() {
     if (!user) return
     setAccountInactiveNotice(false)   // pasif bildirimi yalnız bir sonraki girişe dek (sonraki çıkışta tekrar görünmesin)
     setMaintNotice(false)             // bakım bildirimi de (2026-10-02)
+    setPrefixNotice(false)            // kullanıcı adı ön eki bildirimi de (2026-10-21)
     try {
       const url = new URL(window.location.href)
       if (url.searchParams.has('session')) {
@@ -1702,8 +1751,8 @@ export default function App() {
   }
   // Login ekranında da duyuru görünür (public /api/branding) — orada sol menü yok, tam genişlik doğru.
   if (!user) return (<><AnnouncementBanner /><Login onLogin={handleLogin}
-    sessionExpired={sessionExpiredNotice && !accountInactiveNotice && !maintNotice} accountInactive={accountInactiveNotice}
-    maintenanceEnded={maintNotice && !accountInactiveNotice} /></>)
+    sessionExpired={sessionExpiredNotice && !accountInactiveNotice && !maintNotice && !prefixNotice} accountInactive={accountInactiveNotice}
+    maintenanceEnded={maintNotice && !accountInactiveNotice} usernamePrefixDenied={prefixNotice && !accountInactiveNotice} /></>)
   if (mustChangePwd) {
     // User was auto-reset by an admin — block all of the app until they
     // pick a new password. PasswordChangeModal in forced-change mode hides
@@ -1717,6 +1766,7 @@ export default function App() {
           onSuccess={() => setMustChangePwd(false)}
         />
         <AccountInactiveDialog open={inactiveDialogOpen} onExpire={finishInactiveLogout} />
+        <AccountInactiveDialog variant="prefix" open={!!prefixDialog && !inactiveDialogOpen} prefixes={prefixDialog?.prefixes} onExpire={finishPrefixLogout} />
         <SystemMaintenanceLayer stripsHidden block={maint.block} offset={maint.offset} globalAdmin={globalAdmin}
           ended={maintEnded} onExpire={finishMaintenanceLogout} />
       </>
@@ -1741,6 +1791,7 @@ export default function App() {
     return (
       <>
         <AccountInactiveDialog open={inactiveDialogOpen} onExpire={finishInactiveLogout} />
+        <AccountInactiveDialog variant="prefix" open={!!prefixDialog && !inactiveDialogOpen} prefixes={prefixDialog?.prefixes} onExpire={finishPrefixLogout} />
         {inactivityStrip}
         <SystemMaintenanceLayer block={maint.block} offset={maint.offset} globalAdmin={globalAdmin} ended={maintEnded}
           onExpire={finishMaintenanceLogout} onChanged={refreshMaintenance}
@@ -1762,6 +1813,8 @@ export default function App() {
 
       {/* Pasif hesap (2026-10-02): bloklayan, kapatılamaz pencere — geri sayım bitince giriş sayfasına */}
       <AccountInactiveDialog open={inactiveDialogOpen} onExpire={finishInactiveLogout} />
+      {/* Kullanıcı adı ön eki (2026-10-21): aynı kalıp — hesap kurala uymuyor, geri sayım bitince giriş sayfasına */}
+      <AccountInactiveDialog variant="prefix" open={!!prefixDialog && !inactiveDialogOpen} prefixes={prefixDialog?.prefixes} onExpire={finishPrefixLogout} />
 
       {inactivityStrip}
 

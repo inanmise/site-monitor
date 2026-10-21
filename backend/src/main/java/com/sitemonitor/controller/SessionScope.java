@@ -143,6 +143,22 @@ public final class SessionScope {
         return true;
     }
 
+    /**
+     * İstek bağlamındaki oturumun kullanıcı adı (2026-10-21, kullanıcı adı ön eki kuralının "kendi hesabını kilitleme"
+     * denetimi — servis katmanı, HttpSession parametresi yokken). Bağlam / oturum yoksa null.
+     */
+    public static String usernameInRequest() {
+        try {
+            var ra = org.springframework.web.context.request.RequestContextHolder.getRequestAttributes();
+            if (ra instanceof org.springframework.web.context.request.ServletRequestAttributes sra) {
+                HttpSession s = sra.getRequest().getSession(false);
+                Object u = s == null ? null : s.getAttribute("username");
+                return u == null ? null : u.toString();
+            }
+        } catch (Exception ignored) { /* bağlam yok → sistem çağrısı */ }
+        return null;
+    }
+
     /** {@link #isScopedAdmin} — istek bağlamındaki oturum için (servis katmanı, HttpSession parametresi yokken). */
     public static boolean isScopedAdminInRequest() {
         try {

@@ -19,6 +19,8 @@
     Every line carries the request id (MDC requestId, same value as the X-Request-Id header and the
     error body's request_id) and, when tracing is on, the OpenTelemetry traceId/spanId:
       text: "... : rid=<id> trace=<traceId> message"   json: "requestId":"…","traceId":"…"
+    With the OpenTelemetry Java agent (operator injection, 2026-10-21) the text trace id is the agent's
+    (MDC trace_id); JSON lines carry the MDC as is (trace_id / span_id from the agent, traceId / spanId).
 
   Log files produced (under LOG_DIR):
     site-monitor.log        — all levels, daily rotation, 30-day retention
@@ -30,6 +32,9 @@
   <!-- Register Spring Boot's %clr() colour macro so it's available even before
        SpringApplication.run() completes (e.g. during @SpringBootTest context init). -->
   <conversionRule conversionWord="clr" class="org.springframework.boot.logging.logback.ColorConverter"/>
+  <!-- "trace=<id> " or nothing (2026-10-21): the OpenTelemetry Java agent's MDC trace_id first, else Micrometer's
+       traceId; empty / all-zero ids are not written. See TraceCorrelationConverter. -->
+  <conversionRule conversionWord="traceCorrelation" class="com.sitemonitor.config.logging.TraceCorrelationConverter"/>
 
   <!-- ── Bind Spring properties ──────────────────────────────────────────── -->
   <springProperty scope="context" name="LOG_DIR"
@@ -54,9 +59,10 @@
         spring.output.ansi.enabled = DETECT by default). In containers/pods or when
         stdout is redirected to a file, output is plain text (no ESC[...] gibberish). -->
   <!--  Correlation (2026-10-11): "rid=<request id> trace=<trace id> " — each part only when present (boot, sweeps
-        and other non-request work have no request id; trace id appears when Micrometer tracing is active). -->
+        and other non-request work have no request id; trace id appears when tracing is active). 2026-10-21: the trace
+        id is the OpenTelemetry Java agent's (MDC trace_id) when the agent runs, otherwise Micrometer's (traceId). -->
   <property name="PAT_CORR"
-            value="%replace(rid=%X{requestId} ){'^rid= $', ''}%replace(trace=%X{traceId} ){'^trace= $', ''}"/>
+            value="%replace(rid=%X{requestId} ){'^rid= $', ''}%traceCorrelation"/>
   <property name="PAT_CONSOLE"
             value="%d{yyyy-MM-dd HH:mm:ss.SSS, ${LOG_TZ}} %clr(%-5level){highlight} [%15.15thread] %clr(%-36.36logger{35}){cyan} : ${PAT_CORR}%msg%n%rootException"/>
   <!--  File: full timestamp, no ANSI codes  -->

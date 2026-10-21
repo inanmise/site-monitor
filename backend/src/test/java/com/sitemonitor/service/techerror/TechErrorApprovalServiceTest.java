@@ -577,6 +577,59 @@ class TechErrorApprovalServiceTest {
         }
     }
 
+    @Test
+    @DisplayName("kullanıcı adı ön eki (2026-10-21 inceleme): girişe kapalı PO onaylayıcı listesinde yok, yeni istek postası / belirteci almaz; kural sonradan açılırsa eski bağlantısı status username_prefix, decideViaToken username_prefix — belirteç tüketilmez, karar yok; kural kapanınca aynı bağlantı karar verir")
+    void usernamePrefixRefusedApprover() {
+        TechErrorChannel ch = channelWithExecs("ceo@example.com");
+        TechErrorReport r = service.createReport(ch, 2026, 9, tech.getId());
+        approvals.request(r, ch, team, tech.getId());   // kural yokken iki PO da bağlantı alır
+        String raw = rawTokenOf("po1");
+        var policy = mock(com.sitemonitor.service.loginpolicy.UsernamePrefixPolicy.class);
+        var rule = new java.util.concurrent.atomic.AtomicReference<>(
+                com.sitemonitor.service.loginpolicy.UsernamePrefixRule.of(true, "PO2", "", "admin"));
+        when(policy.allows(any())).thenAnswer(inv -> rule.get().allows(inv.getArgument(0)));
+        approvals.setUsernamePrefix(policy);
+        try {
+            // po1 kurala takılır (yalnız "PO2" ön eki izinli)
+            assertThat(approvals.approvers(1L)).extracting(TechErrorApprovalService.Approver::id).containsExactly(po2.getId());
+            assertThat(approvals.isApprover(po1.getId(), 1L)).isFalse();
+            TechErrorApprovalService.TokenStatus st = approvals.status(raw);
+            assertThat(st.valid()).isFalse();
+            assertThat(st.reason()).isEqualTo("username_prefix");
+            assertThat(approvals.linkDecisionAllowed(po1, 1L)).isFalse();
+            assertThatThrownBy(() -> approvals.decideViaToken(raw, team, true, null)).isInstanceOf(IllegalStateException.class).hasMessage("username_prefix");
+            assertThatThrownBy(() -> approvals.decideViaToken(raw, team, false, "Eksik")).isInstanceOf(IllegalStateException.class).hasMessage("username_prefix");
+            assertThat(tokens.findByTokenHash(TechErrorApprovalService.hash(raw)).orElseThrow().getUsedAt()).isNull();
+            assertThat(service.report(r.getId()).getApprovalState()).isEqualTo("PENDING");
+            assertThat(events.findAll()).extracting(e -> e.getKind()).doesNotContain(TechErrorApprovalService.KIND_DECISION);
+            verify(sender, never()).send(any(), any(), any(), any(), any());
+
+            // kural açıkken yeni istek: kurala takılan PO'ya belirteç / posta YOK
+            TechErrorChannel ch2 = channelWithExecs("ceo@example.com");
+            TechErrorReport r2 = service.createReport(ch2, 2026, 9, tech.getId());
+            org.mockito.Mockito.clearInvocations(email);
+            approvals.request(r2, ch2, team, tech.getId());
+            assertThat(tokens.findByReportIdOrderByIdAsc(r2.getId())).extracting(TechErrorApprovalToken::getUserId)
+                    .containsExactly(po2.getId());
+            ArgumentCaptor<String[]> to = ArgumentCaptor.forClass(String[].class);
+            verify(email, org.mockito.Mockito.atLeastOnce()).sendHtml(to.capture(), any(), anyString(), anyString(), any(), any(), anyBoolean(), any());
+            assertThat(to.getAllValues()).flatExtracting(java.util.Arrays::asList).doesNotContain("po1@example.com");
+
+            // politika okunamıyor → kural yok sayılır (girişle aynı fail-open)
+            when(policy.allows(any())).thenThrow(new IllegalStateException("ayar okunamadı"));
+            assertThat(approvals.status(raw).valid()).isTrue();
+
+            // kural kapandı → aynı bağlantı karar verir
+            org.mockito.Mockito.reset(policy);
+            when(policy.allows(any())).thenReturn(true);
+            when(sender.send(any(), any(), any(), any(), eq(TechErrorReportSender.Delivery.EXECUTIVE)))
+                    .thenReturn(new TechErrorReportSender.Result("SENT", "SENT", List.of("ceo@example.com"), 100, "Konu"));
+            assertThat(approvals.decideViaToken(raw, team, true, null).state()).isEqualTo("APPROVED");
+        } finally {
+            approvals.setUsernamePrefix(null);
+        }
+    }
+
     @Autowired org.springframework.jdbc.core.JdbcTemplate jdbc;
 
     @Test
