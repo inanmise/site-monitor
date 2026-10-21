@@ -38,3 +38,16 @@ Post-deploy checklist (smoke steps, 24h watch, rollback): docs/PROD_DEPLOY_CHECK
 Admin password: ADMIN_USERNAME / ADMIN_PASSWORD are used ONLY on the very first start
 (empty database) to create the bootstrap admin. Patching the Secret afterwards changes
 nothing - change the password in the UI (user menu) after the first login.
+{{- $otel := .Values.config.otel | default dict }}
+{{- $agent := $otel.agent | default dict }}
+{{- if $agent.enabled }}
+
+OpenTelemetry Java agent: annotation instrumentation.opentelemetry.io/inject-java={{ $agent.instrumentation | default "true" }}.
+    The app hands tracing to the agent (log line: "OpenTelemetry Java ajanı algılandı ..."). Check the
+    first start for memory / startup time - docs/RUNBOOK.md "Günlükler ve izleme".
+{{- else if hasKey (.Values.podAnnotations | default dict) "instrumentation.opentelemetry.io/inject-java" }}
+
+!!! podAnnotations carries instrumentation.opentelemetry.io/inject-java but config.otel.agent.enabled is
+    false: the agent is injected WITHOUT the container env that keeps traceparent off checks to monitored
+    sites and metrics on Prometheus. Use config.otel.agent.enabled=true (+ .instrumentation) instead.
+{{- end }}

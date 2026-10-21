@@ -452,10 +452,58 @@ groups:
 - **jq ile okuma:** `kubectl logs … | jq -r 'select(."log.level"=="ERROR" or .log.level=="ERROR") | .message'`.
   Eski `grep "decrypt failed"` / `grep 'Şema yamaları'` komutları JSON satırda da çalışır (ileti kaçışsız UTF-8).
 - **İz (OpenTelemetry):** her isteğin ve zamanlanmış işin bir `traceId`'si vardır (günlükte `traceId` / `trace=`).
-  Örnekleme %10 (`config.otel.samplingProbability`). Span'lar YALNIZ `config.otel.endpoint` (tam OTLP/HTTP iz URL'si,
-  ör. `http://otel-collector:4318/v1/traces`) verilince dışa aktarılır; boşken uygulama hiçbir yere bağlanmaz.
-  Tamamen kapatmak: `OTEL_SDK_DISABLED=true`. Metrikler Prometheus'ta kalır (OTLP metrik gönderimi yok). İzlenen
-  sitelere giden kontrol isteklerine `traceparent` başlığı EKLENMEZ (Boot HTTP istemci kurucuları kullanılmıyor).
+  İzi bir toplayıcıya göndermenin **iki yolu** var; ikisini birlikte açmayın (`helm template` hata verir):
+
+  | | A) Uygulamanın kendi gönderimi | B) OpenTelemetry Java ajanı (OpenTelemetry Operator) |
+  |---|---|---|
+  | Helm | `config.otel.endpoint: http://otel-collector:4318/v1/traces` (TAM OTLP/HTTP iz URL'si) | `config.otel.agent.enabled: true` + `config.otel.agent.instrumentation: <ns>/<Instrumentation adı>` |
+  | Ne izlenir | HTTP istekleri ve zamanlanmış işler (Micrometer gözlemleri) | Ajanın enstrümantasyonu: Tomcat/Spring MVC, JDBC/Hibernate, Spring Data, zamanlanmış işler… |
+  | Örnekleme | `config.otel.samplingProbability` (%10) | Instrumentation kaynağındaki `sampler` (`samplingProbability` uygulanmaz) |
+  | Taşıma | yalnız OTLP/HTTP (4318) — imajda gRPC göndericisi yok | ajan kendi göndericisiyle gRPC (4317) da gönderir |
+
+  **A** boşken uygulama hiçbir yere bağlanmaz; tamamen kapatmak: `OTEL_SDK_DISABLED=true`. Metrikler her iki yolda da
+  Prometheus'ta kalır (OTLP metrik gönderimi yok).
+
+  **B — ajan ile (2026-10-21).** Operatör pod'a `JAVA_TOOL_OPTIONS=-javaagent:…` ve `OTEL_*` değişkenleri ekler. Uygulama
+  açılışta ajanı algılar (önyükleme sınıfı `io.opentelemetry.javaagent.bootstrap.AgentInitializer`) ve izi ajana bırakır:
+  günlükte TEK satır `OpenTelemetry Java ajanı algılandı; uygulamanın kendi OTLP gönderimi kapatıldı, izleri ajan
+  gönderiyor`. Boot'un kendi OTLP gönderimi ve SDK'sı kapanır, Boot ajanın `OTEL_*` değişkenlerini kendi ayarına
+  eşlemez, Micrometer yeni span açmaz (günlükteki iz kimliği ajanınkidir; Tempo/Jaeger'da aynı iz). Geri almak (iki ayrı
+  iz sistemi — önerilmez): `SITE_MONITOR_TRACING_DEFER_TO_AGENT=false`. `config.otel.agent.enabled` kapsayıcıya şu
+  ortamı ekler (operatör kapsayıcıda zaten olan değişkeni ezmez; gerekçesiyle):
+
+  | Değişken | Neden |
+  |---|---|
+  | `OTEL_INSTRUMENTATION_JAVA_HTTP_CLIENT_ENABLED=false`, `OTEL_INSTRUMENTATION_HTTP_URL_CONNECTION_ENABLED=false` | Uygulama izlenen sitelere (HTTP / Keyword / Sayfa / Sayfa hızı, HSTS, OCSP/CRL, RDAP, web-WHOIS) ve webhook / push / GeoIP servislerine `java.net.http` ve `HttpURLConnection` ile gider. Ajan bu istemcileri izlerse her isteğe `traceparent` ekler (izlenen siteye iç iz kimliğimiz gider, bazı WAF'lar tanımadığı başlığı reddedebilir) ve her kontrol için bir istemci span'ı üretir (saatte binlerce). SMTP, LDAP ve DNS ajan tarafından zaten izlenmiyor; ham soket kontrolleri (port, TLS profili, ham HTTP tanılama) da. |
+  | `OTEL_METRICS_EXPORTER=none` | Metrikler Prometheus'ta (`/metrics`, `/metrics/sitemonitor`); ajanın OTLP metrikleri ikinci bir kaynak olurdu. |
+  | `OTEL_SERVICE_NAME` | `config.otel.agent.serviceName`, boşsa Deployment adı. |
+  | `MANAGEMENT_OPENTELEMETRY_MAP_ENVIRONMENT_VARIABLES=false` | Boot ajanın değişkenlerini kendi dışa aktarıcısına eşlemesin (eski sürümlerde açılışı düşüren şey; uygulama bunu kendisi de yapar). |
+  | `OTEL_INSTRUMENTATION_COMMON_LOGGING_TRACE_ID_KEY=traceId`, `…_SPAN_ID_KEY=spanId` | JSON günlükte alan adları `traceId` / `spanId` kalır (ajanın varsayılanı `trace_id` / `span_id`; eski ajan sürümleri bu anahtarı tanımaz → `trace_id`, düz metin `trace=` ikisini de okur). |
+  | `OTEL_RESOURCE_ATTRIBUTES` | `config.otel.resourceAttributes` doluysa (operatör kendi özniteliklerini ekler). |
+
+  Ek değişken: `config.otel.agent.extraEnv` (ör. `OTEL_LOGS_EXPORTER: none` — ajan varsayılanda uygulama günlüklerini de
+  OTLP ile gönderir; `OTEL_INSTRUMENTATION_SPRING_SCHEDULING_ENABLED: "false"` — zamanlanmış iş span'ları). Ek açıklamayı
+  `podAnnotations`'a ELLE yazmayın: yukarıdaki ortam eklenmez (uygulama yine açılır ama izlenen sitelere `traceparent`
+  gider ve günlükte bunu söyleyen bir UYARI çıkar; `helm install/upgrade` notları da uyarır).
+
+  **Bellek ve açılış:** ajan JVM'e ~100–200 MiB (metaspace + heap) ekler ve açılışı uzatır (sınıfların enstrümante
+  edilmesi; ölçümde ~20 sn → ~30 sn). İlk açılışta `kubectl top pod` ve readiness süresine bakın; gerekirse
+  `resources.limits.memory`'yi ve `probes.startup.failureThreshold`'u (varsayılan 30 × 10 sn) büyütün.
+
+  **gRPC koruması (ajansız):** `OTEL_EXPORTER_OTLP_PROTOCOL=grpc` (ya da `…otlp.transport=grpc`) verilir ve ajan yoksa
+  imajda gRPC göndericisi olmadığından o gönderim KAPATILIR ve günlükte tek UYARI düzeltmeyi söyler
+  (`OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf` + 4318, ya da `config.otel.endpoint`). Açılış düşmez.
+
+  **Eski sürüm (≤ 20.163) ajanla düşüyorsa — sürüm beklemeden geçici çözüm:** kapsayıcı ortamına
+  `MANAGEMENT_OPENTELEMETRY_MAP_ENVIRONMENT_VARIABLES=false` ekleyin (Boot ajanın `OTEL_*` değişkenlerini eşlemez →
+  "No GrpcSenderProvider found on classpath" kalkar) ve izlenen sitelere `traceparent` gitmesin diye
+  `OTEL_INSTRUMENTATION_JAVA_HTTP_CLIENT_ENABLED=false`, `OTEL_INSTRUMENTATION_HTTP_URL_CONNECTION_ENABLED=false`:
+  ```bash
+  kubectl set env -n "$NS" deploy/"$DEPLOY" -c <kapsayıcı> MANAGEMENT_OPENTELEMETRY_MAP_ENVIRONMENT_VARIABLES=false \
+    OTEL_INSTRUMENTATION_JAVA_HTTP_CLIENT_ENABLED=false OTEL_INSTRUMENTATION_HTTP_URL_CONNECTION_ENABLED=false
+  ```
+  (Bir sonraki `helm upgrade` bunları siler — kalıcı yol `config.otel.agent.enabled`.) Eski sürümde uygulama kendi
+  SDK'sıyla da span üretir (dışa aktarmaz); günlükteki `trace=` yine ajanın iziyle aynıdır (ölçüldü).
 
 ## Kendi kendini izleme
 

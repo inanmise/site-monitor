@@ -71,6 +71,31 @@ config:
     endpoint: ""
     samplingProbability: "0.1"
     resourceAttributes: ""
+    # OpenTelemetry Java agent injected by the OpenTelemetry Operator (2026-10-21) — the OTHER way to send
+    # traces; use it INSTEAD of endpoint above, not with it (helm template fails when both are set). Needs the
+    # operator and an Instrumentation resource in the cluster. Adds the pod annotation
+    # instrumentation.opentelemetry.io/inject-java (do NOT also put it into podAnnotations — helm template
+    # fails) plus container env the operator never overrides:
+    #   OTEL_INSTRUMENTATION_JAVA_HTTP_CLIENT_ENABLED=false, OTEL_INSTRUMENTATION_HTTP_URL_CONNECTION_ENABLED=false
+    #     — checks to MONITORED sites (HTTP/keyword/page, HSTS, OCSP/CRL, RDAP) and webhook/push calls must
+    #     not carry a traceparent header nor create a client span per check;
+    #   OTEL_METRICS_EXPORTER=none — metrics stay on Prometheus (/metrics);
+    #   OTEL_SERVICE_NAME (serviceName, empty = the Deployment name);
+    #   MANAGEMENT_OPENTELEMETRY_MAP_ENVIRONMENT_VARIABLES=false — Spring Boot must not map the agent's OTEL_*
+    #     variables into its own exporter (that crashed the start with OTEL_EXPORTER_OTLP_PROTOCOL=grpc);
+    #   OTEL_RESOURCE_ATTRIBUTES (resourceAttributes above, when set; the operator appends its own).
+    # The app detects the agent and turns its own OTLP export off (one trace system: the agent's; log trace id
+    # = the agent's). Sampling, propagators and the collector address come from the Instrumentation resource;
+    # samplingProbability above does not apply. The agent adds ~100-200 MiB memory and a slower start
+    # (resources.limits.memory and probes.startup.failureThreshold — see docs/RUNBOOK.md "Günlükler ve izleme").
+    agent:
+      enabled: false
+      # "<namespace>/<Instrumentation name>", just "<name>" (release namespace) or "true" (the only one there).
+      instrumentation: "opentelemetry/opentelemetry-instrumentation"
+      serviceName: ""
+      # Extra container env for the agent; wins over the defaults above and over the Instrumentation
+      # resource. e.g. OTEL_LOGS_EXPORTER: "none", OTEL_INSTRUMENTATION_SPRING_SCHEDULING_ENABLED: "false".
+      extraEnv: {}
   # @Scheduled havuzu (33 zamanlanmış iş; 4'ü 30 sn'lik sweep, 4'ü 10 sn'lik ayar-cache refresh).
   # Sayfa bütünlüğü kontrolü tek başına 120 sn sürebildiği için dar havuz cron işlerini geciktirir.
   schedulingPoolSize: "8"
