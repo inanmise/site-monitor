@@ -6,6 +6,7 @@ import com.sitemonitor.model.DnsRecord;
 import com.sitemonitor.repository.AlertEventRepository;
 import com.sitemonitor.repository.DnsMonitorRepository;
 import com.sitemonitor.repository.DnsRecordRepository;
+import com.sitemonitor.service.monitoring.ChangeStates;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -46,6 +47,14 @@ import java.util.function.Supplier;
  * Restart semantiği (bilinçli): teyit durumu in-memory'dir. Restart'ta
  * kaybolur; ilk sweep DOWN'ı yeniden görür ve teyit baştan başlar.
  *
+ * Liderlik devri = yeniden başlatma (2026-10-21, çok pod R1-B): tarama liderliği bu pod'da her değiştiğinde
+ * ({@code SweepLeadershipChangedEvent} — alındı / kaybedildi / bırakıldı) TÜM bellek içi alarm durumu sıfırlanır
+ * ({@link #resetVolatileState}): kurtarma sayaçları, kardeş DOWN gözlemleri, tur / bastırma bayrakları; çalışan teyit ve
+ * kurtarma zincirleri bir sonraki adımlarında kuşak doğrulamasıyla düşer (iş parçacığı öldürülmez). Zamanlanmış turun
+ * başlattığı zincir son adımından (alarm açma / kapatma) önce kapıyı yeniden sorar — kirayı kaybeden pod karar yazmaz;
+ * elle kontrolün başlattığı kurtarma zinciri kapıdan muaftır (bugünkü elle kontrol kuralı). Kapı hata verirse KAPALI
+ * sayılır. Kenar tetikli değişiklik alarmlarının kararı {@code change_state} kolonunda kalıcıdır ({@code ChangeStates}).
+ *
  * Kapanış = UZLAŞTIRMA (2026-09-29): her turda "DB'de açık alarm VAR + güncel sonuç sağlıklı" sorulur; geçiş
  * (DOWN→UP) aranmaz. recoveryChecks kadar ardışık sağlıklı tur (ya da aktif doğrulama zinciri) alarmı kapatır —
  * toplu-kesinti bastırması ve tür bildirimlerinin kapalı olması kapanışı DURDURMAZ, yalnız yeni alarmı durdurur.
@@ -63,6 +72,10 @@ public class MonitoringOutageService {
     private final DnsMonitorRepository dnsMonitorRepo;
     private final AppSettingsService appSettings;
     private final com.sitemonitor.repository.NetworkOutageEventRepository networkOutageRepo;
+
+    /** Değişiklik alarmı kilidi alınamayınca bırakılan iz (2026-10-21, çok pod R1-B) — isteğe bağlı: bean yoksa yalnız günlük. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.repository.NotificationLogRepository notificationLogRepo;
 
     /**
      * Teyit zinciri her denemeden ÖNCE hedefin hâlâ izlendiğini sorar (SchedulerService kaydeder).
@@ -199,6 +212,29 @@ public class MonitoringOutageService {
     /** "tip:domain:detail" → ConfirmState — hem çift-zincir guard'ı hem canlı teyit durumu (activeConfirmations). */
     private final ConcurrentHashMap<String, ConfirmState> inFlight = new ConcurrentHashMap<>();
 
+    /**
+     * Teyit zinciri kimliği (2026-10-21, çok pod R1-B): "tip:domain:detail" → o anahtarı tutan zincirin tekil numarası.
+     * {@link #inFlight} kaydı yalnız bu numarayı taşıyan zincir tarafından bırakılır — liderlik değişiminde harita
+     * temizlenip aynı anahtarda yeni zincir başlarsa eski zincirin geç biten adımı yenisinin kaydını silemez.
+     */
+    private final ConcurrentHashMap<String, Long> chainOwner = new ConcurrentHashMap<>();
+
+    /** Zincir numarası kaynağı — global, asla geri sarılmaz. */
+    private final java.util.concurrent.atomic.AtomicLong chainSeq = new java.util.concurrent.atomic.AtomicLong();
+
+    /** Teyit kuşağı: liderlik her değiştiğinde artar; eski kuşağın zincirleri bir sonraki adımlarında düşer. */
+    private final java.util.concurrent.atomic.AtomicLong confirmEpoch = new java.util.concurrent.atomic.AtomicLong();
+
+    /** Zincir kimliği bilinmeyen eski çağrı ({@link #runConfirmAttempt(String, SweepItem, String, List, int)}). */
+    private static final long LEGACY_CHAIN = -1L;
+
+    /** Değişiklik türü (DNS_CHANGED / DOMAINMON_CHANGED) alarm kilidi çakışınca son adımın yeniden deneme aralığı (ms). */
+    static final long CHANGE_LOCK_RETRY_MS = 5_000L;
+    /** …ve en çok deneme sayısı; sonra {@code notification_logs} izi bırakılır, satır PENDING kalır (sonraki tur yeniden). */
+    static final int CHANGE_LOCK_RETRIES = 6;
+    /** Test: bekleme süresi kısaltılabilir. */
+    long changeLockRetryMs = CHANGE_LOCK_RETRY_MS;
+
     /** Recovery period: "tip:domain" → ardışık başarılı ("up") kontrol sayacı. Açık alarm,
      *  recoveryChecks kadar ardışık başarılı kontrol gelene dek KAPANMAZ; arada bir DOWN sayacı
      *  sıfırlar. In-memory → restart'ta sıfırlanır (recovery yeniden başlar). */
@@ -284,6 +320,47 @@ public class MonitoringOutageService {
         return cur != null && cur == gen;
     }
 
+    // ── Liderlik devri = yeniden başlatma (2026-10-21, çok pod R1-B, MP-12) ───────────────────────────────────────────
+
+    /**
+     * Tarama liderliği bu pod'da değişti (alındı / kaybedildi / bırakıldı) → bellek içi alarm durumu SIFIRLANIR.
+     *
+     * <p><b>Neden.</b> Takipçi pod zamanlanmış sonuç işlemez (kapı), belleği donar. Liderlik geri dönünce eski sayaçlar
+     * kullanılıyordu: A pod'u 2/3 sağlıklı saymışken lider B oldu, B saatlerce DOWN gördü, kira A'ya döndü → A'nın İLK
+     * sağlıklı sonucu 3/3 yapıp alarmı kapatıyordu (dalgalanma + çift bildirim); bayat kardeş gözlemi kapanışı bekletiyor,
+     * bayat "tur görüldü" işareti elle kapanış korumasını (D-6) devre dışı bırakıyordu. Yeni dönem tek pod'un yeniden
+     * başlatılmasıyla aynı başlar. Hızlıdır (yalnız harita temizliği) — olay liderlik kilidi tutulurken eşzamanlı gelir.
+     */
+    @org.springframework.context.event.EventListener
+    public void onSweepLeadershipChanged(com.sitemonitor.service.schedule.SweepLeadershipChangedEvent ev) {
+        if (ev == null) return;
+        resetVolatileState(ev.reason());
+    }
+
+    /**
+     * Restart semantiği: çalışan teyit zincirleri ({@link #confirmEpoch} artar, {@link #inFlight} temizlenir) ve kurtarma
+     * zincirleri ({@link #recoveryGeneration} temizlenir — kuşak numaraları tekrarsız olduğundan eski görev doğrulayamaz)
+     * bir sonraki adımlarında düşer; sayaçlar, kardeş gözlemleri, tur ve bastırma bayrakları silinir. Bastırma kaydı
+     * DB'dedir: sonraki temiz turda bir kez uzlaştırılır ({@link #outageReconciled} da silindiği için).
+     */
+    void resetVolatileState(String reason) {
+        confirmEpoch.incrementAndGet();
+        int chains = inFlight.size();
+        int recoveries = recoveryGeneration.size();
+        inFlight.clear();
+        chainOwner.clear();
+        recoveryGeneration.clear();
+        recoveryStartedAt.clear();
+        recoveryUpCount.clear();
+        recoveryLastCountedAt.clear();
+        downObserved.clear();
+        scheduledRoundSeen.clear();
+        suppressionActive.clear();
+        outageReconciled.clear();
+        log.info("Tarama liderliği değişti ({}) — bellek içi alarm durumu sıfırlandı ({} teyit, {} kurtarma zinciri durduruldu)",
+                reason, chains, recoveries);
+    }
+
     @PreDestroy
     void shutdown() {
         confirmExecutor.shutdownNow();
@@ -366,6 +443,14 @@ public class MonitoringOutageService {
         log.warn("⚠ {} sweep: {}/{} domain AĞ-SINIFI hatayla DOWN (oran={}) — ağ kesintisi şüphesi, "
                 + "alarmlar bastırılıyor", alertType, networkDown, totalDomains, String.format("%.2f", rate));
         try {
+            // Çok pod (2026-10-21, R1-B, MP-16): kaynak başına TEK açık (ONGOING) kayıt. Bellekteki "geçiş" bayrağı pod
+            // başınadır — liderlik devrinde yeni lider aynı kesintiye yeniden "girer"; önceki liderin açtığı kayıt sürüyorsa
+            // ikincisi YAZILMAZ (eskiden iki satır doğuyor, biri sonsuza dek "sürüyor" kalıyordu). PostgreSQL'de aynı anda
+            // iki ekleme yarışını kısmi tekil dizin keser (ux_noe_one_ongoing) → ihlal = "zaten açık".
+            if (networkOutageRepo.findFirstBySourceAndStatusOrderByIdDesc(alertType, "ONGOING").isPresent()) {
+                log.info("{} bastırma kaydı zaten açık (önceki liderden) — ikinci kayıt yazılmadı", alertType);
+                return;
+            }
             com.sitemonitor.model.NetworkOutageEvent ev = new com.sitemonitor.model.NetworkOutageEvent();
             ev.setDetectedAt(ISO.format(Instant.now()));
             ev.setNetworkErrors(networkDown);
@@ -376,9 +461,17 @@ public class MonitoringOutageService {
             ev.setSource(alertType);
             networkOutageRepo.save(ev);
         } catch (Exception e) {
+            if (StormService.isUniqueViolation(e)
+                    || e instanceof org.springframework.dao.DataIntegrityViolationException) {
+                log.info("{} bastırma kaydı başka pod'da eşzamanlı açıldı — ikinci kayıt yazılmadı", alertType);
+                return;
+            }
             log.warn("{} bastırma olayı kaydedilemedi: {}", alertType, e.getMessage());
         }
     }
+
+    /** Bir turda kapatılan en çok açık bastırma kaydı (bozuk veri / sahte döngüye tavan). */
+    static final int MAX_ONGOING_RESOLVE = 20;
 
     /**
      * Kaynak başına "yeniden başlatma sonrası DB ile bir kez uzlaşıldı" işareti (QA ISSUE-001, 2026-09-21).
@@ -395,8 +488,16 @@ public class MonitoringOutageService {
         if (wasActive) {
             log.info("{} sweep: ağ kesintisi şüphesi kalktı — alarm işleme normale döndü", alertType);
         }
+        // Çok pod (2026-10-21, R1-B, MP-16): kaynağın AÇIK kayıtlarının HEPSİ kapatılır — liderlik devrinde (ya da bu
+        // düzeltmeden önce) iki pod iki kayıt açmış olabilir; eskiden yalnız en yenisi kapanıyor, diğeri sonsuza dek
+        // "sürüyor" görünüyordu. Kayıt kimliği tekrar görülürse ya da tavan aşılırsa döngü durur (sonsuz döngü yok).
         try {
-            networkOutageRepo.findFirstBySourceAndStatusOrderByIdDesc(alertType, "ONGOING").ifPresent(ev -> {
+            java.util.Set<Long> seen = new java.util.HashSet<>();
+            for (int i = 0; i < MAX_ONGOING_RESOLVE; i++) {
+                com.sitemonitor.model.NetworkOutageEvent ev =
+                        networkOutageRepo.findFirstBySourceAndStatusOrderByIdDesc(alertType, "ONGOING").orElse(null);
+                if (ev == null || !"ONGOING".equals(ev.getStatus())) break;
+                if (ev.getId() != null && !seen.add(ev.getId())) break;
                 String now = ISO.format(Instant.now());
                 ev.setResolvedAt(now);
                 ev.setStatus("RESOLVED");
@@ -406,10 +507,11 @@ public class MonitoringOutageService {
                 } catch (Exception ignored) { /* süre null kalır */ }
                 networkOutageRepo.save(ev);
                 if (!wasActive) {
-                    log.info("{} sweep: yeniden başlatma öncesinden açık kalan ağ kesintisi kaydı kapatıldı (id={}, tespit={})",
-                            alertType, ev.getId(), ev.getDetectedAt());
+                    log.info("{} sweep: yeniden başlatma / liderlik devri öncesinden açık kalan ağ kesintisi kaydı kapatıldı "
+                            + "(id={}, tespit={})", alertType, ev.getId(), ev.getDetectedAt());
                 }
-            });
+                if (ev.getId() == null) break;   // kimliksiz (kaydedilmemiş) nesne — tekrar görülse ayırt edilemez
+            }
         } catch (Exception e) {
             log.warn("{} bastırma olayı kapatılamadı: {}", alertType, e.getMessage());
         }
@@ -424,7 +526,8 @@ public class MonitoringOutageService {
      * "Zamanlanmış sonuç yalnız tarama liderinden" kapısı (2026-10-09). {@code SchedulerService} açılışta takar; çok pod'da
      * kirayı (tarama liderliği) kaybeden pod'un yarıda kalmış taramasının sonucu alarm durumuna YAZILMAZ — yeni lider
      * aynı izlemeleri kendi turunda yoklar. Elle kontrol ({@code manual=true}) kapıdan geçmez (bugünkü davranış). Tek pod'da
-     * ya da kapı takılmamışsa her şey eskisi gibi; kira sorgusu hata verirse kapı açık (izleme durmaz).
+     * ya da kapı takılmamışsa her şey eskisi gibi. Kapı HATA verirse KAPALI (2026-10-21, çok pod R1-B, MP-11): liderliği
+     * doğrulanamayan pod alarm durumuna yazmaz — açık kapı, bağlantı havuzu tükenmiş bir takipçiyi ikinci lider yapıyordu.
      */
     private volatile java.util.function.BooleanSupplier scheduledResultsFence;
     private final java.util.concurrent.atomic.AtomicLong fenceLogAt = new java.util.concurrent.atomic.AtomicLong();
@@ -433,7 +536,7 @@ public class MonitoringOutageService {
         this.scheduledResultsFence = fence;
     }
 
-    /** Zamanlanmış sonuç işlenmeli mi (kapı yoksa ya da hata verirse evet). */
+    /** Zamanlanmış sonuç işlenmeli mi (kapı yoksa evet; kapı hata verirse HAYIR). */
     private boolean scheduledResultsAllowed(String alertType, int count) {
         java.util.function.BooleanSupplier f = scheduledResultsFence;
         if (f == null) return true;
@@ -441,7 +544,12 @@ public class MonitoringOutageService {
         try {
             ok = f.getAsBoolean();
         } catch (RuntimeException e) {
-            return true;
+            long last = fenceLogAt.get();
+            if (System.currentTimeMillis() - last >= 60_000L && fenceLogAt.compareAndSet(last, System.currentTimeMillis())) {
+                log.warn("Zamanlanmış tarama sonucu işlenmedi: tarama liderliği doğrulanamadı (kapı hata verdi — güvenli taraf, "
+                        + "tür={}, {} sonuç): {}", alertType, count, e.toString());
+            }
+            return false;
         }
         if (!ok) {
             long last = fenceLogAt.get();
@@ -497,6 +605,7 @@ public class MonitoringOutageService {
         // (D-1: SESSİZ — bkz. closeAlarm).
         if (!alertEnabled(alertType)) {
             reconcileRecoveries(alertType, byDomain, "alarm bildirimleri kapalı", false);
+            decideChanges(items, ChangeStates.SUPPRESSED);   // R1-B: değişiklik bilerek alarmlanmadı (bekleyen satır kapanır)
             return;
         }
 
@@ -589,12 +698,31 @@ public class MonitoringOutageService {
             // KALICI olarak kilitliyordu (BO0): startRecovery "zaten sürüyor" deyip hep atlıyordu.
             endRecovery(rkey);
             SweepItem firstDown = ownerDown.get(0);
+            if (isChangeType(alertType)) {
+                // R1-B (MP-13): açık olaya eklenen değişiklik (DOMAINMON_CHANGED) — karar kilit İÇİNDE, satır hâlâ
+                // bekliyorsa; kilit alınamazsa satır PENDING kalır, sonraki tur yeniden kuyruğa alır.
+                List<SweepItem> pendingDown = ownerDown;
+                withLock(alertType, domain, () -> {
+                    if (pendingDown.stream().noneMatch(this::changeStillPending)) {
+                        log.info("{} [{}]: değişiklik başka pod'da zaten karara bağlandı — yeniden işlenmedi", domain, alertType);
+                        return;
+                    }
+                    escalationService.processConfirmedOutage(domain, alertType, levelFor(alertType), sweepContext(firstDown));
+                    for (SweepItem it : pendingDown) markChange(it, ChangeStates.ALARMED);
+                });
+                return;
+            }
             withLock(alertType, domain, () ->
                     escalationService.processConfirmedOutage(domain, alertType,
                             levelFor(alertType), sweepContext(firstDown)));
             return;
         }
         if (foreignDown > 0) {
+            // R1-B: başka sahibin açık olayı varken bu izlemenin değişikliği bugünkü kuralla (Y-1) alarmlanmaz — bekleyen
+            // satır karara bağlanır (her turda yeniden kuyruğa girip aynı sonuca varmasın).
+            if (isChangeType(alertType)) {
+                for (SweepItem it : domainItems) if (!it.up() && !isOwnerItem(it, openEvent)) decideChange(it, ChangeStates.SUPPRESSED);
+            }
             log.debug("{} [{}]: {} kalem başka sahibin izlemesi ve DOWN — açık olayı (#{}) etkilemez; o izlemenin alarmı "
                     + "bu olay kapandıktan sonra kendi takımıyla açılır", domain, alertType, foreignDown, openEvent.getId());
         }
@@ -741,7 +869,7 @@ public class MonitoringOutageService {
         }
         if (recIntervalMs != null) {
             // AKTİF recovery (recoveryIntervalSeconds set): recIntervalMs arayla aktif doğrulama — hızlı yol.
-            startRecovery(alertType, domain, upItems, required, recIntervalMs);
+            startRecovery(alertType, domain, upItems, required, recIntervalMs, manual);
         } else {
             log.info("Recovery sürüyor: {} [{}] — {}/{} ardışık başarılı kontrol (kapatma bekliyor)",
                     domain, alertType, up, required);
@@ -939,7 +1067,10 @@ public class MonitoringOutageService {
         handleSweepResults(EscalationService.TYPE_DNS_SLOW, slowItems);   // yavaş/timeout'lu çözümleme — kendi teyit zinciri (3×60sn ctxExtra'dan)
         handleSweepResults(EscalationService.TYPE_DNS_UNEXPECTED, unexpectedItems);   // beklenen-değer kilidi (state; değer beklenene dönünce oto-kapanır)
         handleSweepResults(EscalationService.TYPE_DNS_INCONSISTENT, inconsistentItems);   // çoklu-resolver tutarsızlık (state; teyitli; resolver'lar aynılaşınca oto-kapanır)
-        if (!appSettings.getBoolean("site.monitor.dns.alert-enabled", dnsAlertEnabled)) return;
+        if (!appSettings.getBoolean("site.monitor.dns.alert-enabled", dnsAlertEnabled)) {
+            if (changes != null) for (DnsChange c : changes) decideChange(changeItem(c), ChangeStates.SUPPRESSED);   // R1-B
+            return;
+        }
 
         Set<String> changedThisSweep = new HashSet<>();
         if (changes != null) {
@@ -948,8 +1079,9 @@ public class MonitoringOutageService {
                 // DNS_CHANGED artık 3× teyitli (diğer DNS alarmları gibi): startConfirmation zinciri;
                 // recheck baseline'a dönerse "geçici dalgalanma" → iptal. Teyit sonrası processConfirmedOutage
                 // (HIGH) açar; handleSweepResults'a girmez → OTOMATİK KAPANMAZ (manuel). changeCtx old/new_values taşır.
-                startConfirmation(new SweepItem(EscalationService.TYPE_DNS_CHANGED,
-                        c.domain(), c.recordType(), false, "changed", changeCtx(c), c.recheck()));
+                // R1-B (MP-13): karar dns_records.change_state'e yazılır; zincir yarıda kalırsa satır PENDING kalır ve
+                // tarama lideri sonraki turda yeniden kuyruğa alır (requeueDnsChanges).
+                startConfirmation(changeItem(c));
             }
         }
 
@@ -981,6 +1113,130 @@ public class MonitoringOutageService {
                             escalationService.processConfirmedOutage(e.getDomain(),
                                     EscalationService.TYPE_DNS_CHANGED, levelFor(EscalationService.TYPE_DNS_CHANGED), ctx));
                 });
+    }
+
+    /** Değişiklik → teyit kalemi (sweep ve yeniden kuyruk aynı kalemi kurar). */
+    private static SweepItem changeItem(DnsChange c) {
+        return new SweepItem(EscalationService.TYPE_DNS_CHANGED, c.domain(), c.recordType(), false, "changed",
+                changeCtx(c), c.recheck());
+    }
+
+    /**
+     * Karar verilmemiş DNS değişikliklerini yeniden teyide alır (2026-10-21, çok pod R1-B, MP-13) — tarama lideri her DNS
+     * turunun BAŞINDA çağırır ({@code SchedulerService.requeuePendingDnsChanges}; değişiklikler {@code dns_records}
+     * satırlarındaki PENDING durumdan, taban = satırın önceki değeri). Zamanlanmış sonuç kapısı ve tür ayarı aynen
+     * uygulanır; teyit zinciri bu pod'da zaten sürüyorsa atlanır (o zincir kendi satırına karar yazar).
+     *
+     * @return başlatılan teyit sayısı
+     */
+    public int requeueDnsChanges(List<DnsChange> changes) {
+        if (changes == null || changes.isEmpty()) return 0;
+        if (!scheduledResultsAllowed(EscalationService.TYPE_DNS_CHANGED, changes.size())) return 0;
+        if (!appSettings.getBoolean("site.monitor.dns.alert-enabled", dnsAlertEnabled)) {
+            for (DnsChange c : changes) decideChange(changeItem(c), ChangeStates.SUPPRESSED);
+            return 0;
+        }
+        int started = 0;
+        for (DnsChange c : changes) {
+            SweepItem it = changeItem(c);
+            if (inFlight.containsKey(confirmKey(it))) continue;
+            log.info("Bekleyen DNS değişikliği yeniden teyide alındı (liderlik devri / yarıda kalan teyit): {} {} izleme={} "
+                    + "tespit={}", c.recordType(), c.domain(), c.monitorId(), c.detectedAt());
+            startConfirmation(it);
+            started++;
+        }
+        return started;
+    }
+
+    // ── Değişiklik kararının kalıcı durumu (2026-10-21, çok pod R1-B, MP-13) ─────────────────────────────────────────
+
+    static boolean isChangeType(String alertType) {
+        return MANUAL_CLOSE_TYPES.contains(alertType);
+    }
+
+    /**
+     * Kalemin karşılık geldiği değişiklik satırı: (tablo, izleme, tur anı). DNS bağlamı {@code changed_at}, alan adı
+     * bağlamı {@code checked_at} taşır — ikisi de satırın {@code checked_at}'ıdır. Değişiklik türü değilse ya da kimlik
+     * yoksa null (eski davranış: durum yazılmaz).
+     */
+    private static String[] changeRow(SweepItem it) {
+        if (it == null || !isChangeType(it.alertType()) || it.ctxExtra() == null) return null;
+        Long id = monitorIdOf(it);
+        boolean dns = EscalationService.TYPE_DNS_CHANGED.equals(it.alertType());
+        Object at = it.ctxExtra().get(dns ? "changed_at" : "checked_at");
+        if (id == null || !(at instanceof String s) || s.isBlank()) return null;
+        return new String[]{dns ? "dns_records" : "domain_checks", String.valueOf(id), s};
+    }
+
+    /**
+     * Satır hâlâ karar bekliyor mu? Satır bulunamazsa, durumu NULL ise (bu özellikten önceki / eski pod'un satırı) ya da
+     * okunamazsa EVET — eski davranış (alarm hattı işler). Yalnız başka bir karar YAZILMIŞSA hayır.
+     */
+    boolean changeStillPending(SweepItem it) {
+        String[] row = changeRow(it);
+        if (row == null) return true;
+        try {
+            List<String> states = jdbcTemplate.queryForList("SELECT " + ChangeStates.COLUMN + " FROM " + row[0]
+                    + " WHERE monitor_id = ? AND checked_at = ?", String.class, Long.valueOf(row[1]), row[2]);
+            if (states == null || states.isEmpty()) return true;
+            for (String s : states) if (s == null || ChangeStates.PENDING.equals(s)) return true;
+            return false;
+        } catch (Exception e) {
+            log.debug("Değişiklik durumu okunamadı ({} izleme {}): {}", row[0], row[1], e.toString());
+            return true;
+        }
+    }
+
+    /** Bekleyen satıra kararı KOŞULLU yazar (yalnız PENDING iken — iki pod iki karar yazamaz). Hata yutulur. */
+    void markChange(SweepItem it, String state) {
+        String[] row = changeRow(it);
+        if (row == null) return;
+        try {
+            int n = jdbcTemplate.update("UPDATE " + row[0] + " SET " + ChangeStates.COLUMN + " = ? WHERE monitor_id = ? "
+                    + "AND checked_at = ? AND " + ChangeStates.COLUMN + " = ?", state, Long.valueOf(row[1]), row[2],
+                    ChangeStates.PENDING);
+            if (n > 0) log.debug("Değişiklik kararı yazıldı: {} izleme {} tur {} → {}", row[0], row[1], row[2], state);
+        } catch (Exception e) {
+            log.debug("Değişiklik kararı yazılamadı ({} izleme {}): {}", row[0], row[1], e.toString());
+        }
+    }
+
+    /** Zamanlanmış kararın (geçici / bastırıldı) yazımı — kirayı kaybeden pod karar YAZMAZ (yeni lider yeniden teyit eder). */
+    private void decideChange(SweepItem it, String state) {
+        if (changeRow(it) == null) return;
+        if (!scheduledResultsAllowed(it.alertType(), 1)) return;
+        markChange(it, state);
+    }
+
+    private void decideChanges(List<SweepItem> items, String state) {
+        if (items == null) return;
+        for (SweepItem it : items) if (it != null && !it.up()) decideChange(it, state);
+    }
+
+    /**
+     * Değişiklik alarmının son adımı kilit alınamadığı için {@value #CHANGE_LOCK_RETRIES} denemede de yapılamadı — iz
+     * {@code notification_logs}'a (bildirim gitmedi, nedeni yazılı; satır PENDING kalır ve sonraki tur yeniden dener).
+     */
+    private void traceChangeLockGiveUp(SweepItem it) {
+        log.warn("{} [{}] değişiklik alarmı: alarm kilidi {} denemede alınamadı — karar bekliyor (sonraki tur yeniden "
+                + "dener), izleme={}", it.domain(), it.alertType(), CHANGE_LOCK_RETRIES, monitorIdOf(it));
+        if (notificationLogRepo == null) return;
+        try {
+            com.sitemonitor.model.NotificationLog n = new com.sitemonitor.model.NotificationLog();
+            n.setAlertEventId(0L);   // olay henüz yok (kolon NOT NULL)
+            n.setSentAt(now());
+            n.setTrigger("INITIAL");
+            n.setRecipientRole("SYSTEM");
+            n.setSubject(it.alertType() + " · " + it.domain());
+            n.setMessage("Değişiklik alarmı (" + it.alertType() + ", " + it.domain() + ", izleme " + monitorIdOf(it)
+                    + ") alarm kilidi " + CHANGE_LOCK_RETRIES + " denemede alınamadığı için işlenemedi; değişiklik "
+                    + "kaydı karar bekliyor ve sonraki taramada yeniden teyit edilecek.");
+            n.setEmailStatus("SKIPPED: alarm kilidi alınamadı (" + CHANGE_LOCK_RETRIES + " deneme) — değişiklik bekliyor");
+            n.setWebhookStatus("SKIPPED");
+            notificationLogRepo.save(n);
+        } catch (Exception e) {
+            log.warn("Değişiklik alarmı kilit izi yazılamadı: {}", e.getMessage());
+        }
     }
 
     /**
@@ -1122,8 +1378,15 @@ public class MonitoringOutageService {
         String firstFailureAt = now();
         ConfirmState initial = new ConfirmState(item.alertType(), item.domain(), item.detail(),
                 0, effAttempts(item), firstFailureAt, System.currentTimeMillis() + effDelayMs(item));
+        long epoch = confirmEpoch.get();
+        long chainId = chainSeq.incrementAndGet();
         if (inFlight.putIfAbsent(key, initial) != null) {
             log.debug("Teyit zaten devam ediyor, atlanıyor: {}", key);
+            return;
+        }
+        chainOwner.put(key, chainId);
+        if (confirmEpoch.get() != epoch) {   // liderlik değişimi tam bu arada sıfırladı → bu zincir eski döneme ait
+            releaseChain(key, chainId);
             return;
         }
         // Bu liste TEK bir teyit zincirine aittir ve senkronize değildir. GEREKÇE ÖNEMLİ:
@@ -1145,23 +1408,98 @@ public class MonitoringOutageService {
             // HİÇ başlamaz (restart'a kadar sessiz alarm körlüğü); (2) startConfirmation sweep'in domain
             // döngüsünden çağrıldığı için sweep'in KALAN domain'leri de işlenmeden düşerdi.
             // Aşağıdaki yapı N-denemeli yolla (runConfirmAttempt) simetriktir: logla, yut, anahtarı bırak.
+            // finishConfirmed kaydı kendisi bırakır (değişiklik türünde kilit yeniden denemesi sürerken TUTAR); istisnada
+            // burada bırakılır — releaseChain idempotent, başka zincirin kaydına dokunmaz.
             try {
                 Map<String, Object> ctx = buildOutageContext(item, firstFailureAt, attempts);
-                withLock(item.alertType(), item.domain(), () ->
-                        escalationService.processConfirmedOutage(item.domain(), item.alertType(),
-                                levelFor(item.alertType()), ctx));
+                finishConfirmed(key, chainId, epoch, item, ctx, 0);
             } catch (Exception e) {
                 log.error("Immediate teyit başarısız oldu: {} — {}", key, e.getMessage(), e);
-            } finally {
-                inFlight.remove(key);
+                releaseChain(key, chainId);
             }
             return;
         }
         log.info("{} DOWN tespit edildi: {} [{}] — {} sn arayla {} doğrulama denemesi başlatıldı",
                 item.alertType(), item.domain(), item.detail(), effDelayMs(item) / 1000, effAttempts(item));
         confirmExecutor.schedule(
-                () -> runConfirmAttempt(key, item, firstFailureAt, attempts, 1),
+                () -> runConfirmAttempt(key, chainId, epoch, item, firstFailureAt, attempts, 1),
                 effDelayMs(item), TimeUnit.MILLISECONDS);
+    }
+
+    /** Zincir hâlâ geçerli mi: aynı liderlik dönemi ve anahtar hâlâ bu zincirin (eski çağrı = her zaman geçerli). */
+    private boolean chainCurrent(String key, long chainId, long epoch) {
+        if (chainId == LEGACY_CHAIN) return true;
+        return confirmEpoch.get() == epoch && Long.valueOf(chainId).equals(chainOwner.get(key));
+    }
+
+    /** Anahtarı YALNIZ bu zincir tutuyorsa bırakır (sıfırlama sonrası başlayan yeni zincirin kaydı silinmez). */
+    private void releaseChain(String key, long chainId) {
+        if (chainId == LEGACY_CHAIN) {
+            chainOwner.remove(key);
+            inFlight.remove(key);
+            return;
+        }
+        if (chainOwner.remove(key, chainId)) inFlight.remove(key);
+    }
+
+    /**
+     * Teyitli kesintinin SON adımı — alarm hattına verir. Zamanlanmış turun zinciri olduğu için önce kapı sorulur: kirayı
+     * kaybeden pod karar YAZMAZ (değişiklik satırı PENDING kalır, yeni lider yeniden teyit eder; diğer türlerde yeni lider
+     * kendi turunda yeniden tespit eder). Değişiklik türünde karar kilit İÇİNDE, satır hâlâ bekliyorsa verilir (iki pod aynı
+     * değişikliği iki kez alarmlamaz) ve kilit çakışmasında {@link #CHANGE_LOCK_RETRY_MS} sonra yeniden denenir (en çok
+     * {@link #CHANGE_LOCK_RETRIES}; eskiden ikinci zincir SESSİZCE atlanıyor, ikinci izlemenin değişikliği kayboluyordu).
+     * Kaydı kendisi bırakır; yeniden deneme planlandıysa tutar. İstisna çağırana yayılır (kayıt bırakılmış olarak).
+     */
+    private void finishConfirmed(String key, long chainId, long epoch, SweepItem item, Map<String, Object> ctx, int lockTry) {
+        if (!chainCurrent(key, chainId, epoch)) {
+            log.debug("Teyit zinciri liderlik değişiminde düştü, son adım atlandı: {}", key);
+            return;
+        }
+        if (!scheduledResultsAllowed(item.alertType(), 1)) {
+            log.info("Teyit son adımı atlandı — bu pod artık tarama lideri değil, karar yeni liderde: {}", key);
+            releaseChain(key, chainId);
+            return;
+        }
+        boolean change = isChangeType(item.alertType());
+        LockOutcome out;
+        try {
+            out = lockAndRun(item.alertType(), item.domain(), () -> {
+                if (change && !changeStillPending(item)) {
+                    log.info("Değişiklik başka pod'da zaten karara bağlandı — yeniden alarmlanmadı: {}", key);
+                    return;
+                }
+                escalationService.processConfirmedOutage(item.domain(), item.alertType(), levelFor(item.alertType()), ctx);
+                if (change) markChange(item, ChangeStates.ALARMED);
+            });
+        } catch (RuntimeException e) {
+            releaseChain(key, chainId);
+            throw e;
+        }
+        if (out == LockOutcome.RAN || !change) {
+            releaseChain(key, chainId);
+            return;
+        }
+        if (lockTry < CHANGE_LOCK_RETRIES) {
+            log.info("Değişiklik alarmı kilidi alınamadı ({}), {} ms sonra yeniden denenecek ({}/{}): {}", out,
+                    changeLockRetryMs, lockTry + 1, CHANGE_LOCK_RETRIES, key);
+            try {
+                confirmExecutor.schedule(() -> {
+                    try {
+                        finishConfirmed(key, chainId, epoch, item, ctx, lockTry + 1);
+                    } catch (Exception e) {
+                        log.error("Değişiklik alarmı son adımı başarısız oldu: {} — {}", key, e.getMessage(), e);
+                        releaseChain(key, chainId);
+                    }
+                }, changeLockRetryMs, TimeUnit.MILLISECONDS);
+                return;
+            } catch (RuntimeException e) {   // havuz kapandı (kapanış) — satır PENDING kalır
+                log.warn("Değişiklik alarmı yeniden denemesi planlanamadı: {} — {}", key, e.toString());
+                releaseChain(key, chainId);
+                return;
+            }
+        }
+        traceChangeLockGiveUp(item);
+        releaseChain(key, chainId);
     }
 
     /** Aktif teyit zincirleri (UI: "Teyit denemesi X/N"). domainFilter null → tümü. */
@@ -1182,18 +1520,35 @@ public class MonitoringOutageService {
         return out;
     }
 
+    /** Eski giriş (zincir kimliği bilinmiyor — testler / doğrudan çağıran): anahtarı şu an tutan zincir sayılır. */
     void runConfirmAttempt(String key, SweepItem item, String firstFailureAt,
                            List<Map<String, Object>> attempts, int n) {
+        Long owner = chainOwner.get(key);
+        runConfirmAttempt(key, owner == null ? LEGACY_CHAIN : owner, confirmEpoch.get(), item, firstFailureAt, attempts, n);
+    }
+
+    void runConfirmAttempt(String key, long chainId, long epoch, SweepItem item, String firstFailureAt,
+                           List<Map<String, Object>> attempts, int n) {
         try {
+            // Liderlik değişimi (R1-B): sıfırlama kaydı temizledi; bu zincirin geç gelen adımı hiçbir şeye dokunmaz.
+            if (!chainCurrent(key, chainId, epoch)) {
+                log.debug("Teyit zinciri liderlik değişiminde düştü ({}. deneme): {}", n, key);
+                return;
+            }
             if (!stillMonitored(item)) {
                 log.info("Teyit zinciri iptal — hedef artık izlenmiyor (silindi/duraklatıldı): {} ({}. deneme)", key, n);
-                inFlight.remove(key);
+                decideChange(item, ChangeStates.SUPPRESSED);
+                releaseChain(key, chainId);
                 return;
             }
             // Canlı durum: bu deneme koşuyor; sonraki (varsa) effDelayMs sonra — UI 30sn poll'unda "X/N" görünür.
             inFlight.computeIfPresent(key, (k, s) -> new ConfirmState(s.alertType(), s.domain(), s.detail(),
                     n, s.totalAttempts(), s.startedAt(), System.currentTimeMillis() + effDelayMs(item)));
             Map<String, Object> r = item.recheck().get();
+            if (!chainCurrent(key, chainId, epoch)) {   // yeniden kontrol saniyeler sürdü; o arada liderlik değişti
+                log.debug("Teyit zinciri liderlik değişiminde düştü ({}. deneme sonrası): {}", n, key);
+                return;
+            }
             Map<String, Object> attempt = new LinkedHashMap<>();
             attempt.put("attempt", n);
             attempt.put("checked_at", now());
@@ -1204,21 +1559,22 @@ public class MonitoringOutageService {
             if ("up".equals(r.get("status"))) {
                 log.info("Geçici dalgalanma: {} — {}. doğrulama denemesinde düzeldi, alarm üretilmedi", key, n);
                 clearDownObservation(item);   // D2: bu izleme artık kardeşinin kapanışını bekletmez
-                inFlight.remove(key);
+                decideChange(item, ChangeStates.TRANSIENT);   // R1-B: değer tabana döndü — karar kalıcı
+                releaseChain(key, chainId);
                 return;
             }
             // "skipped" = doğrulama YÜRÜTÜLEMEDİ (ör. k6 havuzu dolu). Kanıt yok ⇒ zinciri iptal et.
             // Kesinti gerçekse sonraki sweep zinciri yeniden açar; tersini yapmak (kanıtsız DOWN
-            // saymak) altyapı darlığını KRİTİK alarma çevirirdi.
+            // saymak) altyapı darlığını KRİTİK alarma çevirirdi. (Değişiklik satırı PENDING kalır → yeniden kuyruk.)
             if ("skipped".equals(r.get("status"))) {
                 log.warn("Teyit denemesi yürütülemedi ({}. deneme): {} — {} · zincir iptal edildi, "
                         + "sonraki sweep yeniden değerlendirecek", n, key, r.get("error"));
-                inFlight.remove(key);
+                releaseChain(key, chainId);
                 return;
             }
             if (n < effAttempts(item)) {
                 confirmExecutor.schedule(
-                        () -> runConfirmAttempt(key, item, firstFailureAt, attempts, n + 1),
+                        () -> runConfirmAttempt(key, chainId, epoch, item, firstFailureAt, attempts, n + 1),
                         effDelayMs(item), TimeUnit.MILLISECONDS);
                 return;
             }
@@ -1226,19 +1582,24 @@ public class MonitoringOutageService {
             log.warn("{} kesintisi TEYİT EDİLDİ: {} [{}] — {}/{} doğrulama denemesi başarısız",
                     item.alertType(), item.domain(), item.detail(), effAttempts(item), effAttempts(item));
             Map<String, Object> ctx = buildOutageContext(item, firstFailureAt, attempts);
-            withLock(item.alertType(), item.domain(), () ->
-                    escalationService.processConfirmedOutage(item.domain(), item.alertType(),
-                            levelFor(item.alertType()), ctx));
-            inFlight.remove(key);
+            finishConfirmed(key, chainId, epoch, item, ctx, 0);
         } catch (Exception e) {
             log.error("Teyit başarısız oldu: {} — {}", key, e.getMessage(), e);
-            inFlight.remove(key);
+            releaseChain(key, chainId);
         }
     }
 
     /** Aktif recovery döngüsü (keyword/ping): alarm açıkken tüm monitörler up görülünce başlar; required kadar
      *  ardışık başarılı re-check (intervalMs arayla) sağlanınca alarmı kapatır; arada DOWN görülürse iptal olur. */
     void startRecovery(String alertType, String domain, List<SweepItem> items, int required, long intervalMs) {
+        startRecovery(alertType, domain, items, required, intervalMs, false);
+    }
+
+    /**
+     * @param manual zinciri elle kontrol başlattı — son adımı (kapanış) liderlik kapısından MUAFTIR (bugünkü elle kontrol
+     *               kuralı); zamanlanmış turun zinciri kapanıştan önce kapıyı sorar (R1-B, SWEEPS-12)
+     */
+    void startRecovery(String alertType, String domain, List<SweepItem> items, int required, long intervalMs, boolean manual) {
         String key = alertType + ":" + domain;
         if (required <= 1) {
             endRecovery(key);   // tek kontrol yeterli → beklemeden kapat
@@ -1262,13 +1623,18 @@ public class MonitoringOutageService {
         log.info("Recovery başladı (aktif): {} [{}] — {} sn arayla {} doğrulama denemesi",
                 domain, alertType, intervalMs / 1000, required - 1);
         recoveryExecutor.schedule(
-                () -> runRecoveryAttempt(key, gen, alertType, domain, items, required, intervalMs, 1),
+                () -> runRecoveryAttempt(key, gen, alertType, domain, items, required, intervalMs, 1, manual),
                 intervalMs, TimeUnit.MILLISECONDS);
     }
 
     void runRecoveryAttempt(String key, long gen, String alertType, String domain, List<SweepItem> items,
                             int required, long intervalMs, int n) {
-        if (!isCurrentGeneration(key, gen)) return;   // arada DOWN / yeniden başlatma → bu zincir iptal
+        runRecoveryAttempt(key, gen, alertType, domain, items, required, intervalMs, n, false);
+    }
+
+    void runRecoveryAttempt(String key, long gen, String alertType, String domain, List<SweepItem> items,
+                            int required, long intervalMs, int n, boolean manual) {
+        if (!isCurrentGeneration(key, gen)) return;   // arada DOWN / yeniden başlatma / liderlik değişimi → bu zincir iptal
         try {
             boolean allUp = true;
             boolean skipped = false;
@@ -1301,6 +1667,14 @@ public class MonitoringOutageService {
                     log.info("Recovery iptal edilmiş, alarm kapatılmıyor: {} [{}]", domain, alertType);
                     return;
                 }
+                // R1-B (SWEEPS-12): zamanlanmış turun zinciri, kirayı kaybetmiş pod'da alarmı KAPATMAZ — yeni lider aynı
+                // hedefi DOWN görüyor olabilir. Elle kontrolün zinciri bugünkü kuralla kapıdan muaftır.
+                if (!manual && !scheduledResultsAllowed(alertType, items.size())) {
+                    log.info("Recovery son adımı atlandı — bu pod artık tarama lideri değil, kapanış yeni liderde: {} [{}]",
+                            domain, alertType);
+                    endRecovery(key);
+                    return;
+                }
                 log.info("Recovery tamamlandı (aktif): {} [{}] — {}/{} ardışık başarılı, alarm kapatılıyor",
                         domain, alertType, done, required);
                 endRecovery(key);
@@ -1309,7 +1683,7 @@ public class MonitoringOutageService {
                 return;
             }
             recoveryExecutor.schedule(
-                    () -> runRecoveryAttempt(key, gen, alertType, domain, items, required, intervalMs, n + 1),
+                    () -> runRecoveryAttempt(key, gen, alertType, domain, items, required, intervalMs, n + 1, manual),
                     intervalMs, TimeUnit.MILLISECONDS);
         } catch (Exception e) {
             log.error("Recovery re-check hatası: {} [{}] — {}", domain, alertType, e.getMessage(), e);
@@ -1521,6 +1895,18 @@ public class MonitoringOutageService {
      * Kilit başka replikada ise sessiz skip; tablo erişilemezse degrade → izin ver.
      */
     void withLock(String alertType, String domain, Runnable action) {
+        lockAndRun(alertType, domain, action);
+    }
+
+    /** {@link #lockAndRun} sonucu: eylem koştu / kilit başka yazarda / geçici DB hatası (eylem koşmadı). */
+    enum LockOutcome { RAN, BUSY, FAILED }
+
+    /**
+     * {@link #withLock}'un sonucu bildiren hâli (2026-10-21, çok pod R1-B): değişiklik türünün son adımı kilit çakışmasında
+     * yeniden denenir ({@link #finishConfirmed}); diğer yollar sonucu yok sayar (bugünkü "sessiz atla"). Eylemin istisnası
+     * yayılır (kilit finally'de bırakılır).
+     */
+    LockOutcome lockAndRun(String alertType, String domain, Runnable action) {
         String lockName = "mon-alert:" + alertType + ":" + domain;
         boolean acquired;
         try {
@@ -1534,7 +1920,7 @@ public class MonitoringOutageService {
             acquired = true;
         } catch (org.springframework.dao.DuplicateKeyException e) {
             log.debug("İzleme alarm kilidi başka replikada: {} — atlanıyor", lockName);
-            return;
+            return LockOutcome.BUSY;
         } catch (org.springframework.jdbc.BadSqlGrammarException e) {
             // Kilit TABLOSU yok (ilk açılışta ddl-auto henüz koşmadı) — bilinçli tek-pod geri düşüşü.
             log.warn("Distributed lock table unavailable (HA degraded): {}", e.getMessage());
@@ -1542,17 +1928,18 @@ public class MonitoringOutageService {
         } catch (Exception e) {
             if (StormService.isUniqueViolation(e)) {
                 log.debug("İzleme alarm kilidi başka replikada: {} — atlanıyor", lockName);
-                return;
+                return LockOutcome.BUSY;
             }
             // SchedulerService.tryAcquireSchedulerLock ile aynı kural: geçici DB hatasında (deadlock,
             // statement-timeout, bağlantı kopması) kilitsiz devam etmek çok-pod'da aynı alarmı İKİ kez
             // açmak (çift alert_event + çift eskalasyon maili/push) demekti. Güvenli taraf bu turu
             // ATLAMAK — teyit zinciri bir sonraki sweep'te aynı sinyalle tekrar kurulur.
             log.warn("İzleme alarm kilidi alınamadı — {} bu tur atlanıyor (güvenli taraf): {}", lockName, e.getMessage());
-            return;
+            return LockOutcome.FAILED;
         }
         try {
             action.run();
+            return LockOutcome.RAN;
         } finally {
             if (acquired) {
                 try {

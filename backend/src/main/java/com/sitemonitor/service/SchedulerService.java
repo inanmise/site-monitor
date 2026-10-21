@@ -5117,6 +5117,8 @@ public class SchedulerService {
      */
     @Async("certCheckExecutor")
     public void evaluateDnsNow(DnsMonitor m, Map<String, Object> rawCheckResult) {
+        if (forwardManualToLeader(com.sitemonitor.service.monitoring.ManualEvalInbox.TYPE_DNS,
+                m == null ? null : m.getId(), rawCheckResult)) return;   // çok pod R1-B: takipçi → lider
         try {
             // HAM sonuc kullanilir: recheckDns {"status","error"} donduruyor ve "success" anahtari
             // YOK — bu yuzden success DAIMA false oluyordu, yani manuel DNS calistirmasi cozumleme
@@ -5163,6 +5165,8 @@ public class SchedulerService {
     /** Manuel "Çalıştır" — bkz. evaluatePageNow. */
     @Async("certCheckExecutor")
     public void evaluateKeywordNow(KeywordMonitor m, Map<String, Object> rawCheckResult) {
+        if (forwardManualToLeader(com.sitemonitor.service.monitoring.ManualEvalInbox.TYPE_KEYWORD,
+                m == null ? null : m.getId(), rawCheckResult)) return;   // çok pod R1-B: takipçi → lider
         try {
             Map<String, Object> r = keywordOutcome(m, rawCheckResult);
             monitoringOutageService.handleSweepResults(
@@ -5182,6 +5186,8 @@ public class SchedulerService {
      */
     @Async("certCheckExecutor")
     public void evaluatePageNow(com.sitemonitor.model.PageMonitor m, Map<String, Object> checkResult) {
+        if (forwardManualToLeader(com.sitemonitor.service.monitoring.ManualEvalInbox.TYPE_PAGE,
+                m == null ? null : m.getId(), checkResult)) return;   // çok pod R1-B: takipçi → lider
         try {
             List<MonitoringOutageService.SweepItem> down = new ArrayList<>(), integrity = new ArrayList<>();
             addPageSweepItems(m, checkResult, down, integrity);
@@ -5195,6 +5201,8 @@ public class SchedulerService {
     /** Manuel "Çalıştır" — bkz. evaluatePageNow. */
     @Async("certCheckExecutor")
     public void evaluatePageSpeedNow(com.sitemonitor.model.PageSpeedMonitor m, Map<String, Object> checkResult) {
+        if (forwardManualToLeader(com.sitemonitor.service.monitoring.ManualEvalInbox.TYPE_PAGESPEED,
+                m == null ? null : m.getId(), checkResult)) return;   // çok pod R1-B: takipçi → lider
         try {
             List<MonitoringOutageService.SweepItem> down = new ArrayList<>(), slow = new ArrayList<>();
             addPageSpeedSweepItems(m, checkResult, down, slow);
@@ -5208,6 +5216,8 @@ public class SchedulerService {
     /** Manuel "Çalıştır" — bkz. evaluatePageNow. */
     @Async("certCheckExecutor")
     public void evaluateScriptedNow(com.sitemonitor.model.ScriptedMonitor m, Map<String, Object> checkResult) {
+        if (forwardManualToLeader(com.sitemonitor.service.monitoring.ManualEvalInbox.TYPE_SCRIPTED,
+                m == null ? null : m.getId(), checkResult)) return;   // çok pod R1-B: takipçi → lider
         try {
             List<MonitoringOutageService.SweepItem> fail = new ArrayList<>(), slow = new ArrayList<>();
             addScriptedSweepItems(m, checkResult, fail, slow);
@@ -5264,6 +5274,8 @@ public class SchedulerService {
      */
     @Async("certCheckExecutor")
     public void evaluatePortNow(PortMonitor m, Map<String, Object> rawCheckResult) {
+        if (forwardManualToLeader(com.sitemonitor.service.monitoring.ManualEvalInbox.TYPE_PORT,
+                m == null ? null : m.getId(), rawCheckResult)) return;   // çok pod R1-B: takipçi → lider
         try {
             Map<String, Object> r = portOutcome(rawCheckResult);
             monitoringOutageService.handleSweepResults(
@@ -5417,6 +5429,8 @@ public class SchedulerService {
     /** Manuel "Çalıştır" — bkz. evaluatePortNow. */
     @Async("certCheckExecutor")
     public void evaluatePingNow(PingMonitor m, Map<String, Object> rawCheckResult) {
+        if (forwardManualToLeader(com.sitemonitor.service.monitoring.ManualEvalInbox.TYPE_PING,
+                m == null ? null : m.getId(), rawCheckResult)) return;   // çok pod R1-B: takipçi → lider
         try {
             Map<String, Object> r = pingOutcome(rawCheckResult);
             MonitoringOutageService.SweepItem downItem = pingSweepItem(m, r);   // D-A3-5: ICMP ölçülemediyse null
@@ -5553,6 +5567,8 @@ public class SchedulerService {
      */
     @Async("certCheckExecutor")
     public void evaluateHttpNow(HttpMonitor m, Map<String, Object> rawCheckResult) {
+        if (forwardManualToLeader(com.sitemonitor.service.monitoring.ManualEvalInbox.TYPE_HTTP,
+                m == null ? null : m.getId(), rawCheckResult)) return;   // çok pod R1-B: takipçi → lider
         try {
             Map<String, Object> r = httpOutcome(rawCheckResult);
             monitoringOutageService.handleSweepResults(
@@ -5566,6 +5582,144 @@ public class SchedulerService {
         } catch (Exception e) {
             log.warn("Manuel HTTP değerlendirmesi başarısız {}: {}", m.getUrl(), e.getMessage());
         }
+    }
+
+    // ── Elle kontrol sonucunun tarama liderine iletilmesi (2026-10-21, çok pod R1-B, MP-14) ──────────────────────────
+
+    /** Takipçi → lider elle kontrol gelen kutusu — isteğe bağlı: bean yoksa (manuel kurulum / test) her şey yerel. */
+    @Autowired(required = false)
+    private com.sitemonitor.service.monitoring.ManualEvalInbox manualEvalInbox;
+
+    /** Gelen kutusu boşaltma turunun zaman bütçesi (ms) — paylaşılan zamanlayıcı havuzunu uzun tutmasın. */
+    static final long MANUAL_EVAL_DRAIN_BUDGET_MS = 20_000L;
+
+    /**
+     * Elle kontrol sonucu bu pod'da mı değerlendirilmeli? Takipçi pod'da HAYIR: alarm durumu (kurtarma sayacı, kardeş DOWN
+     * gözlemi, kurtarma zinciri) yalnız liderin belleğinde; takipçinin boş belleğinde değerlendirmek kardeş kuralını
+     * atlatıyor (alarm kapanıp yeniden açılıyor), liderin sayacını sıfırlamıyor, takipçide liderin bilmediği bir kurtarma
+     * zinciri başlatıyordu. Ham sonuç {@code monitor_eval_inbox}'a yazılır; lider {@link #drainManualEvalInbox} ile BUGÜNKÜ
+     * elle kontrol kuralıyla (yalnız kapanış uzlaştırması, alarm AÇMAZ) değerlendirir. Kontrol geçmişi satırı tetik ucunda
+     * zaten yazıldı.
+     *
+     * @return true = bu pod değerlendirmez (iletildi ya da iletilemedi — WARN); false = yerel değerlendir (lider, küme
+     *         kaydı yok / tek pod, ya da gelen kutusu bean'i yok)
+     */
+    boolean forwardManualToLeader(String type, Long monitorId, Map<String, Object> raw) {
+        if (manualEvalInbox == null || clusterSchedule == null) return false;
+        if (isSweepLeader()) return false;
+        if (monitorId == null || raw == null) return true;
+        if (manualEvalInbox.enqueue(type, monitorId, true, raw, clusterSchedule.owner())) {
+            log.debug("Elle kontrol sonucu tarama liderine iletildi: tür={} izleme={}", type, monitorId);
+        }
+        // İletilemediyse (ManualEvalInbox WARN yazdı) takipçi YEREL değerlendirmez — bu gözlem yalnız geçmişte kalır;
+        // alarm bir sonraki zamanlanmış turda liderin kuralıyla kapanır.
+        return true;
+    }
+
+    /**
+     * Takipçilerin ilettiği elle kontrol sonuçlarını değerlendirir — YALNIZ tarama lideri, 5 sn'de bir. Satır koşullu
+     * sahiplenilir ve işlemeden hemen önce koşullu silinir: iki lider (devir anı) aynı satırı iki kez işleyemez. 10 dk'dan
+     * eski sonuç değerlendirilmeden silinir; izleme silinmiş / duraklatılmışsa atlanır.
+     */
+    @Scheduled(fixedDelayString = "${site.monitor.manual-eval.drain-ms:5000}", initialDelayString = "30000")
+    public void drainManualEvalInbox() {
+        if (manualEvalInbox == null || clusterSchedule == null) return;
+        if (!isSweepLeader()) return;
+        String owner = clusterSchedule.owner();
+        long started = System.currentTimeMillis();
+        int evaluated = 0;
+        int batches = 0;
+        while (batches++ < 40 && System.currentTimeMillis() - started < MANUAL_EVAL_DRAIN_BUDGET_MS) {
+            List<com.sitemonitor.service.monitoring.ManualEvalInbox.Row> rows =
+                    manualEvalInbox.claim(owner, com.sitemonitor.service.monitoring.ManualEvalInbox.CLAIM_BATCH);
+            if (rows.isEmpty()) break;
+            for (com.sitemonitor.service.monitoring.ManualEvalInbox.Row row : rows) {
+                if (!isSweepLeader()) {
+                    log.info("Elle kontrol gelen kutusu boşaltması durdu — bu pod artık tarama lideri değil (kalan satırları "
+                            + "yeni lider sahiplenir)");
+                    return;
+                }
+                if (!row.manual()) continue;   // R3'ün zamanlanmış sonuçları — bu sürüm yalnız elle kontrolü işler
+                if (!manualEvalInbox.take(row)) continue;   // kira dolmuş, başka pod sahiplenmiş
+                long age = manualEvalInbox.now() - row.checkedMs();
+                if (age > com.sitemonitor.service.monitoring.ManualEvalInbox.STALE_MS) {
+                    log.debug("Elle kontrol sonucu eskidi ({} sn), değerlendirilmeden silindi: {}", age / 1000, row);
+                    continue;
+                }
+                try {
+                    if (dispatchManualEval(row)) evaluated++;
+                } catch (Exception e) {
+                    log.warn("İletilen elle kontrol değerlendirilemedi {}: {}", row, e.toString());
+                }
+            }
+            if (rows.size() < com.sitemonitor.service.monitoring.ManualEvalInbox.CLAIM_BATCH) break;
+        }
+        if (evaluated > 0) log.debug("Elle kontrol gelen kutusu: {} sonuç değerlendirildi", evaluated);
+    }
+
+    /**
+     * Satırı türünün elle değerlendirme girişine verir; izleme yok / pasifse false. Giriş aynı sınıftan çağrıldığı için
+     * {@code @Async} vekili atlanır — değerlendirme bu iş parçacığında EŞZAMANLI koşar (triggerScriptedCheckAsync deseni).
+     * Giriş liderliği yeniden sorar: bu pod bu arada kirayı kaybettiyse sonuç yeni lidere yeniden iletilir.
+     */
+    boolean dispatchManualEval(com.sitemonitor.service.monitoring.ManualEvalInbox.Row row) {
+        Map<String, Object> raw = com.sitemonitor.service.monitoring.ManualEvalInbox.parse(row.resultJson());
+        long id = row.monitorId();
+        switch (row.type()) {
+            case com.sitemonitor.service.monitoring.ManualEvalInbox.TYPE_DNS -> {
+                DnsMonitor m = dnsMonitorRepo.findById(id).filter(x -> Boolean.TRUE.equals(x.getActive())).orElse(null);
+                if (m == null) return false;
+                evaluateDnsNow(m, raw);
+            }
+            case com.sitemonitor.service.monitoring.ManualEvalInbox.TYPE_KEYWORD -> {
+                KeywordMonitor m = keywordMonitorRepo.findById(id).filter(x -> Boolean.TRUE.equals(x.getActive())).orElse(null);
+                if (m == null) return false;
+                evaluateKeywordNow(m, raw);
+            }
+            case com.sitemonitor.service.monitoring.ManualEvalInbox.TYPE_PAGE -> {
+                com.sitemonitor.model.PageMonitor m = pageMonitorRepo == null ? null
+                        : pageMonitorRepo.findById(id).filter(x -> Boolean.TRUE.equals(x.getActive())).orElse(null);
+                if (m == null) return false;
+                evaluatePageNow(m, raw);
+            }
+            case com.sitemonitor.service.monitoring.ManualEvalInbox.TYPE_PAGESPEED -> {
+                com.sitemonitor.model.PageSpeedMonitor m = pageSpeedMonitorRepo == null ? null
+                        : pageSpeedMonitorRepo.findById(id).filter(x -> Boolean.TRUE.equals(x.getActive())).orElse(null);
+                if (m == null) return false;
+                evaluatePageSpeedNow(m, raw);
+            }
+            case com.sitemonitor.service.monitoring.ManualEvalInbox.TYPE_SCRIPTED -> {
+                com.sitemonitor.model.ScriptedMonitor m = scriptedMonitorRepo == null ? null
+                        : scriptedMonitorRepo.findById(id).filter(x -> Boolean.TRUE.equals(x.getActive())).orElse(null);
+                if (m == null) return false;
+                evaluateScriptedNow(m, raw);
+            }
+            case com.sitemonitor.service.monitoring.ManualEvalInbox.TYPE_PORT -> {
+                PortMonitor m = portMonitorRepo.findById(id).filter(x -> Boolean.TRUE.equals(x.getActive())).orElse(null);
+                if (m == null) return false;
+                evaluatePortNow(m, raw);
+            }
+            case com.sitemonitor.service.monitoring.ManualEvalInbox.TYPE_PING -> {
+                PingMonitor m = pingMonitorRepo.findById(id).filter(x -> Boolean.TRUE.equals(x.getActive())).orElse(null);
+                if (m == null) return false;
+                evaluatePingNow(m, raw);
+            }
+            case com.sitemonitor.service.monitoring.ManualEvalInbox.TYPE_HTTP -> {
+                HttpMonitor m = httpMonitorRepo.findById(id).filter(x -> Boolean.TRUE.equals(x.getActive())).orElse(null);
+                if (m == null) return false;
+                evaluateHttpNow(m, raw);
+            }
+            case com.sitemonitor.service.monitoring.ManualEvalInbox.TYPE_DOMAIN -> {
+                DomainMonitor m = domainMonitorRepo.findById(id).filter(x -> Boolean.TRUE.equals(x.getActive())).orElse(null);
+                if (m == null) return false;
+                evaluateDomainAlarmsNow(m, raw);
+            }
+            default -> {
+                log.warn("Elle kontrol gelen kutusunda bilinmeyen tür, atlandı: {}", row);
+                return false;
+            }
+        }
+        return true;
     }
 
     /** HTTP uptime check + http_checks persist'i. {"status","error","http_status","response_ms"} döner. */
@@ -7315,7 +7469,9 @@ public class SchedulerService {
         handleDomainSweep(EscalationService.TYPE_DOMAINMON_UNKNOWN, unknownSweep);
         handleDomainSweep(EscalationService.TYPE_DOMAINMON_EXPIRY, expirySweep);
         handleDomainSweep(EscalationService.TYPE_DOMAINMON_STATUS, statusSweep);
-        handleDomainSweep(EscalationService.TYPE_DOMAINMON_CHANGED, changedSweep);
+        // Çok pod R1-B (MP-13): karar verilmemiş önceki değişiklikler de (vadesi gelmemiş izlemelerinkiler dahil) — kararı
+        // alarm hattı change_state'e yazar; tur yarıda kalırsa satır PENDING kalır, sonraki tik yeniden dener.
+        handleDomainSweep(EscalationService.TYPE_DOMAINMON_CHANGED, withPendingDomainChanges(monitors, changedSweep));
         handleDomainSweep(EscalationService.TYPE_DOMAINMON_TRANSFER_LOCK, lockSweep);
         handleDomainSweep(EscalationService.TYPE_DOMAINMON_BLACKLIST, blacklistSweep);
         log.debug("Domain checks complete: {} monitors", checked);
@@ -7386,6 +7542,9 @@ public class SchedulerService {
      * ({@link #runCriticalDomainChecks}) işaretsiz {@link #evaluateDomainAlarms} yolunu kullanır.
      */
     public void evaluateDomainAlarmsNow(DomainMonitor m, Map<String, Object> r) {
+        // Çok pod (R1-B, MP-14): takipçide değerlendirilmez — ham sonuç tarama liderine iletilir (bkz. forwardManualToLeader).
+        if (forwardManualToLeader(com.sitemonitor.service.monitoring.ManualEvalInbox.TYPE_DOMAIN,
+                m == null ? null : m.getId(), r)) return;
         evaluateDomainAlarms(m, r, true);
     }
 
@@ -7638,6 +7797,7 @@ public class SchedulerService {
 
     /** Tüm-tur kilit içinde çalışan gerçek DNS sweep gövdesi (bkz. runDnsChecks). */
     private void runDnsChecksLocked() {
+        requeuePendingDnsChanges();
         List<DnsMonitor> monitors = dnsMonitorRepo.findByActiveTrue();
         if (monitors.isEmpty()) return;
         // Skip monitors whose domain is no longer in active inventory (soft-deleted / inactive)
@@ -7733,6 +7893,13 @@ public class SchedulerService {
                 // Hata teşhisi (2026-10-05): başarısız sorgunun hata metni + nedeni ilk kez saklanır. YALNIZ !success'te
                 // yazılır; value ('' = başarısız), changed/rotated ve değişiklik tabanı yukarıdaki gibi DEĞİŞMEDİ.
                 if (!success) DnsCheckerService.applyFailure(record, r);
+                // Çok pod R1-B (MP-13): bu satır sonraki turun TABANI olur — değişiklik bir daha algılanmaz. Karar verilene
+                // dek satır PENDING bekler; teyit zinciri yarıda kalırsa (liderlik devri, kapı, kapanış) tarama lideri
+                // sonraki turda yeniden kuyruğa alır (requeuePendingDnsChanges). Alarmlanmayacak değişiklik (izlemede
+                // kapalı, beklenen-değer içinde, tür bildirimleri kapalı) baştan SUPPRESSED.
+                if (changed) record.setChangeState(dnsChangeWillAlarm(m, values)
+                        ? com.sitemonitor.service.monitoring.ChangeStates.PENDING
+                        : com.sitemonitor.service.monitoring.ChangeStates.SUPPRESSED);
                 dnsRecordRepo.save(record);
                 activityLog.recordCheck(ActivityLogService.DNS, m.getId(), m.getName(),
                         m.getDomain() + " " + m.getRecordType(), m.getTeamId(), false, "scheduler", r);
@@ -7882,6 +8049,180 @@ public class SchedulerService {
         // yutuluyordu. "skipped" de zinciri iptal eder (aynı kayıp) → çözülemeyen deneme "sürüyor" (down) sayılır.
         out.put("status", !success || stillChanged ? "down" : "up");
         out.put("error", !success ? "çözümlenemedi (değişiklik gözlemi korunur)" : stillChanged ? "changed" : null);
+        return out;
+    }
+
+    // ── Kenar tetikli değişikliklerin kalıcı kararı (2026-10-21, çok pod R1-B, MP-13) ────────────────────────────────
+
+    /** Değişiklik alarm hattına girer mi: izlemede açık (null = açık), beklenen-değer sapması değil, tür bildirimi açık. */
+    private boolean dnsChangeWillAlarm(DnsMonitor m, List<String> liveValues) {
+        return !Boolean.FALSE.equals(m.getDnsChangeAlertEnabled())
+                && !DnsCheckerService.withinExpected(m.getExpectedValue(), liveValues)
+                && appSettings.getBoolean("site.monitor.dns.alert-enabled", true);
+    }
+
+    /** Okuma kalıbı: ISO saniye ({@code checked_at} biçimi). */
+    private static String isoAgo(long ms) {
+        return ISO.format(Instant.now().minusMillis(ms));
+    }
+
+    /**
+     * Karar verilmemiş (PENDING) DNS değişikliklerini yeniden teyide alır — tarama liderinin her DNS turunun İLK işi.
+     *
+     * <p>Değişmiş satır kaydedildiği anda sonraki turun tabanıdır: teyit zinciri (3 × 30 sn, bellekte) liderlik devrinde,
+     * kapıda ya da kapanışta yarıda kalırsa değişiklik eskiden SONSUZA DEK kayboluyordu. Burada 2 saatten genç bekleyen
+     * satırdan değişiklik yeniden kurulur (taban = satırın önceki değeri, yeniden kontrol = {@link #recheckDnsChanged}) ve
+     * {@code MonitoringOutageService.requeueDnsChanges} ile teyide verilir (zincir bu pod'da zaten sürüyorsa atlanır).
+     * Daha eski satır EXPIRED (WARN izi); izlemesi silinmiş / pasif / envanteri pasif ya da alarmı artık kapalı satır
+     * SUPPRESSED. Sorgu {@code checked_at} dizinini kullanır (son 24 saat); kolon henüz yoksa (ilk açılış saniyeleri)
+     * sessizce atlanır.
+     */
+    void requeuePendingDnsChanges() {
+        if (monitoringOutageService == null) return;
+        List<Map<String, Object>> rows;
+        try {
+            // "value" tırnaklı: H2'de anahtar sözcük (NON_KEYWORDS olmadan); PostgreSQL'de aynı kolon.
+            rows = jdbcTemplate.queryForList("SELECT id, monitor_id, previous_value, \"value\" AS dns_value, checked_at "
+                            + "FROM dns_records "
+                            // ORDER BY checked_at: checked_at dizininde aralık taraması (büyük tablo — id sırası tüm tabloyu
+                            // tarayabilirdi; bekleyen satır yokken bile)
+                            + "WHERE checked_at >= ? AND change_state = ? ORDER BY checked_at LIMIT "
+                            + com.sitemonitor.service.monitoring.ChangeStates.REQUEUE_BATCH,
+                    isoAgo(com.sitemonitor.service.monitoring.ChangeStates.REQUEUE_LOOKBACK_MS),
+                    com.sitemonitor.service.monitoring.ChangeStates.PENDING);
+        } catch (Exception e) {
+            log.debug("Bekleyen DNS değişiklikleri okunamadı (kolon / tablo henüz yok olabilir): {}", e.toString());
+            return;
+        }
+        if (rows == null || rows.isEmpty()) return;
+        String expireBefore = isoAgo(com.sitemonitor.service.monitoring.ChangeStates.DNS_REQUEUE_MAX_AGE_MS);
+        List<MonitoringOutageService.DnsChange> changes = new ArrayList<>();
+        for (Map<String, Object> row : rows) {
+            try {
+                long id = ((Number) row.get("id")).longValue();
+                Long monitorId = row.get("monitor_id") instanceof Number n ? n.longValue() : null;
+                String at = row.get("checked_at") == null ? null : String.valueOf(row.get("checked_at"));
+                if (at == null || at.compareTo(expireBefore) < 0) {
+                    if (decidePendingRow("dns_records", id, com.sitemonitor.service.monitoring.ChangeStates.EXPIRED)) {
+                        log.warn("DNS değişikliği karara bağlanamadan süresi doldu (2 saat) — alarmlanmadı: kayıt={} izleme={} "
+                                + "tespit={}", id, monitorId, at);
+                    }
+                    continue;
+                }
+                DnsMonitor m = monitorId == null ? null : dnsMonitorRepo.findById(monitorId).orElse(null);
+                String value = row.get("dns_value") == null ? "" : String.valueOf(row.get("dns_value"));
+                String prev = row.get("previous_value") == null ? null : String.valueOf(row.get("previous_value"));
+                boolean live = m != null && Boolean.TRUE.equals(m.getActive())
+                        && (Boolean.TRUE.equals(m.getStandalone()) || inventoryLive(m.getDomain()));
+                if (!live || !dnsChangeWillAlarm(m, DnsCheckerService.splitLines(value))) {
+                    decidePendingRow("dns_records", id, com.sitemonitor.service.monitoring.ChangeStates.SUPPRESSED);
+                    continue;
+                }
+                final DnsMonitor mon = m;
+                final String baseline = prev;
+                changes.add(new MonitoringOutageService.DnsChange(
+                        m.getDomain(), m.getRecordType(), prev, value, at, alarmTeamOf(m.getStandalone(), m.getTeamId()),
+                        m.getNotificationGroupId(),
+                        () -> recheckDnsChanged(mon, baseline),
+                        m.getNotifyEmail(), m.getNotifyWebhook(),
+                        Boolean.TRUE.equals(m.getStandalone()) ? Boolean.TRUE : null,
+                        m.getId(), m.getAlertLevel()));
+            } catch (Exception e) {
+                log.warn("Bekleyen DNS değişikliği yeniden kuyruğa alınamadı ({}): {}", row.get("id"), e.toString());
+            }
+        }
+        if (changes.isEmpty()) return;
+        try {
+            monitoringOutageService.requeueDnsChanges(changes);
+        } catch (Exception e) {
+            log.warn("Bekleyen DNS değişiklikleri teyide verilemedi: {}", e.getMessage(), e);
+        }
+    }
+
+    /** Bekleyen satıra koşullu karar (yalnız PENDING iken). @return yazıldı mı */
+    private boolean decidePendingRow(String table, long id, String state) {
+        try {
+            return jdbcTemplate.update("UPDATE " + table + " SET change_state = ? WHERE id = ? AND change_state = ?",
+                    state, id, com.sitemonitor.service.monitoring.ChangeStates.PENDING) > 0;
+        } catch (Exception e) {
+            log.debug("Değişiklik kararı yazılamadı ({} #{}): {}", table, id, e.toString());
+            return false;
+        }
+    }
+
+    /**
+     * Alan adı turunun DOMAINMON_CHANGED kalemleri + karar verilmemiş (PENDING) önceki değişiklikler (R1-B, MP-13) —
+     * izlemenin vadesi gelmemiş olsa da. Değişmiş satır kaydedilir kaydedilmez tabandır; tur sonundaki değerlendirme
+     * liderlik devrinde / kapıda düşerse değişiklik eskiden kayboluyordu. Bu turda yeni yazılan satır (zaten kalemde) tekrar
+     * eklenmez; 6 saatten eski satır EXPIRED, izlemesi pasif / alarmı kapalı satır SUPPRESSED. Kararı alarm hattı yazar
+     * ({@code MonitoringOutageService.markChange}).
+     */
+    private List<MonitoringOutageService.SweepItem> withPendingDomainChanges(List<DomainMonitor> monitors,
+                                                                            List<MonitoringOutageService.SweepItem> fresh) {
+        List<MonitoringOutageService.SweepItem> out = new ArrayList<>(fresh);
+        List<Map<String, Object>> rows;
+        try {
+            rows = jdbcTemplate.queryForList("SELECT id, monitor_id, checked_at, change_detail, registrar, days_remaining, "
+                            + "expiry_date, source, status_codes, nameservers, transfer_lock FROM domain_checks "
+                            + "WHERE checked_at >= ? AND change_state = ? ORDER BY checked_at LIMIT "
+                            + com.sitemonitor.service.monitoring.ChangeStates.REQUEUE_BATCH,
+                    isoAgo(com.sitemonitor.service.monitoring.ChangeStates.REQUEUE_LOOKBACK_MS),
+                    com.sitemonitor.service.monitoring.ChangeStates.PENDING);
+        } catch (Exception e) {
+            log.debug("Bekleyen alan adı değişiklikleri okunamadı (kolon / tablo henüz yok olabilir): {}", e.toString());
+            return out;
+        }
+        if (rows == null || rows.isEmpty()) return out;
+        Set<String> inSweep = new HashSet<>();
+        for (MonitoringOutageService.SweepItem it : fresh) {
+            Map<String, Object> c = it.ctxExtra();
+            if (c != null) inSweep.add(c.get("monitor_id") + "|" + c.get("checked_at"));
+        }
+        Map<Long, DomainMonitor> active = new HashMap<>();
+        for (DomainMonitor m : monitors) if (m.getId() != null && Boolean.TRUE.equals(m.getActive())) active.put(m.getId(), m);
+        String expireBefore = isoAgo(com.sitemonitor.service.monitoring.ChangeStates.DOMAIN_REQUEUE_MAX_AGE_MS);
+        for (Map<String, Object> row : rows) {
+            try {
+                long id = ((Number) row.get("id")).longValue();
+                Long monitorId = row.get("monitor_id") instanceof Number n ? n.longValue() : null;
+                String at = row.get("checked_at") == null ? null : String.valueOf(row.get("checked_at"));
+                if (inSweep.contains(monitorId + "|" + at)) continue;
+                if (at == null || at.compareTo(expireBefore) < 0) {
+                    if (decidePendingRow("domain_checks", id, com.sitemonitor.service.monitoring.ChangeStates.EXPIRED)) {
+                        log.warn("Alan adı değişikliği karara bağlanamadan süresi doldu (6 saat) — alarmlanmadı: kayıt={} "
+                                + "izleme={} tespit={}", id, monitorId, at);
+                    }
+                    continue;
+                }
+                DomainMonitor m = monitorId == null ? null : active.get(monitorId);
+                if (m == null || Boolean.FALSE.equals(m.getChangeAlert())) {
+                    decidePendingRow("domain_checks", id, com.sitemonitor.service.monitoring.ChangeStates.SUPPRESSED);
+                    continue;
+                }
+                Map<String, Object> r = new LinkedHashMap<>();
+                r.put("checked_at", at);
+                r.put("change_detail", row.get("change_detail"));
+                r.put("registrar", row.get("registrar"));
+                r.put("days_remaining", row.get("days_remaining") instanceof Number d ? d.intValue() : null);
+                r.put("expiry_date", row.get("expiry_date"));
+                r.put("source", row.get("source"));
+                r.put("status_codes", csvList(row.get("status_codes")));
+                r.put("nameservers", csvList(row.get("nameservers")));
+                r.put("transfer_lock", row.get("transfer_lock"));
+                log.info("Bekleyen alan adı değişikliği yeniden değerlendirmeye alındı (liderlik devri / yarıda kalan tur): "
+                        + "{} izleme={} tespit={}", m.getDomain(), m.getId(), at);
+                out.add(domainItem(EscalationService.TYPE_DOMAINMON_CHANGED, m, r, false, null));
+            } catch (Exception e) {
+                log.warn("Bekleyen alan adı değişikliği yeniden kuyruğa alınamadı ({}): {}", row.get("id"), e.toString());
+            }
+        }
+        return out;
+    }
+
+    private static List<String> csvList(Object v) {
+        if (v == null) return List.of();
+        List<String> out = new ArrayList<>();
+        for (String s : String.valueOf(v).split(",")) if (!s.isBlank()) out.add(s.trim());
         return out;
     }
 

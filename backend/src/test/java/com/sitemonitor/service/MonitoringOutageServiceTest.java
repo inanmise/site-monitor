@@ -1277,10 +1277,19 @@ class MonitoringOutageServiceTest {
     }
 
     @Test
-    @DisplayName("Kapı hata verirse sonuç işlenir (izleme durmaz); kapı takılmamışsa davranış bugünküyle aynı")
-    void scheduledResultsFence_failingFenceIsOpen() {
+    @DisplayName("Çok pod R1-B (2026-10-21): kapı hata verirse KAPALI — liderliği doğrulanamayan pod alarm durumuna yazmaz; "
+            + "kapı takılmamışsa davranış bugünküyle aynı")
+    void scheduledResultsFence_failingFenceIsClosed() {
         AtomicInteger calls = new AtomicInteger();
         service.setScheduledResultsFence(() -> { throw new IllegalStateException("kira sorgusu düştü"); });
+        service.handleSweepResults(EscalationService.TYPE_ACCESSIBILITY, List.of(
+                item(EscalationService.TYPE_ACCESSIBILITY, "down.example.com", "443", false,
+                        Map.of("port", 443), downThenUp(99, calls))));
+        verify(escalationService, never()).processConfirmedOutage(anyString(), anyString(), anyString(), any());
+        assertThat(calls.get()).as("teyit yoklaması da başlamadı").isZero();
+
+        // Kapı takılı değil (tek pod / manuel kurulum) → bugünkü davranış: teyit + alarm.
+        service.setScheduledResultsFence(null);
         service.handleSweepResults(EscalationService.TYPE_ACCESSIBILITY, List.of(
                 item(EscalationService.TYPE_ACCESSIBILITY, "down.example.com", "443", false,
                         Map.of("port", 443), downThenUp(99, calls))));
