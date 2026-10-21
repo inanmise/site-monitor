@@ -135,6 +135,45 @@ public class AuthController {
     void setLoginMethods(com.sitemonitor.service.otp.LoginMethodsService s) { this.loginMethods = s; }
     void setLoginOtp(com.sitemonitor.service.otp.LoginOtpService s) { this.loginOtp = s; }
 
+    /**
+     * Kullanıcı adı ön eki kuralı (2026-10-21, kullanıcı isteği: "yalnız N ile başlayan kullanıcıya login izni") —
+     * İSTEĞE BAĞLI: {@code @WebMvcTest} dilimlerinde yok → kural hiç uygulanmaz (bugünkü davranış birebir).
+     */
+    @Autowired(required = false)
+    private com.sitemonitor.service.loginpolicy.UsernamePrefixPolicy usernamePrefix;
+
+    /** Test kancası. */
+    void setUsernamePrefix(com.sitemonitor.service.loginpolicy.UsernamePrefixPolicy p) { this.usernamePrefix = p; }
+
+    /** Bu ad kurala uyuyor mu — servis yoksa / okunamazsa EVET (fail-open, bakım kapısıyla aynı ilke). */
+    private boolean prefixAllows(String username) {
+        try {
+            return usernamePrefix == null || usernamePrefix.allows(username);
+        } catch (Exception e) {
+            return true;
+        }
+    }
+
+    /**
+     * Kullanıcı adı ön eki kuralına uymayan girişi reddeder (2026-10-21) — oturum KURULMAZ, LDAP provizyonu YAPILMAZ.
+     * Denetim {@code LOGIN_FAILED} + neden {@code USERNAME_PREFIX}, sonuç BLOCKED → ilerleyici kilit / kaba kuvvet sayacına
+     * GİRMEZ; IP oran sınırına ve kullanıcının "başarısız deneme" özetine de yazılmaz (bakım reddiyle aynı ilke — kural
+     * kimlik bilgisine değil ada bakar). 403 + {@code USERNAME_PREFIX_NOT_ALLOWED} + izinli ön ekler.
+     *
+     * @param user   doğrulanmış hesap; parola girişinin DOĞRULAMA ÖNCESİ reddinde null (aktör yazılan ad)
+     * @param method {@code null} (doğrulama öncesi), {@code PASSWORD}, {@code LDAP}, {@code OTP_PUSH} / {@code OTP_EMAIL}
+     */
+    private ResponseEntity<Map<String, Object>> rejectUsernamePrefix(AppUser user, String typed, String method,
+                                                                    String clientIp, HttpServletRequest request) {
+        String actor = user != null && user.getUsername() != null ? user.getUsername()
+                : auditName(typed == null ? "" : typed.strip().toUpperCase(java.util.Locale.ROOT));
+        auditService.recordUsernamePrefixLogin(actor, user == null ? null : user.getId(), user == null ? null : user.getTeamId(),
+                user == null ? null : user.getSystemRole(), clientIp, request.getHeader("User-Agent"), method);
+        Map<String, Object> body = usernamePrefix != null ? usernamePrefix.deniedBody()
+                : com.sitemonitor.service.loginpolicy.UsernamePrefixRule.deniedBody(List.of());
+        return ResponseEntity.status(403).body(body);
+    }
+
     /** LDAP hesaplarının parola girişi açık mı (Ayarlar → Giriş Yöntemleri). Okuma hatası girişi KAPATMAZ (fail-open). */
     private boolean ldapLoginEnabled() {
         try {
@@ -271,6 +310,13 @@ public class AuthController {
                 "wait_seconds", waitSecs));
         }
 
+        // 1b. KULLANICI ADI ÖN EKİ (2026-10-21, kullanıcı isteği: "yalnız N ile başlayan kullanıcıya login izni"): karar
+        // YALNIZ yazılan ada bakar → kimlik bilgisi denetiminden ÖNCE reddedilir: LDAP bind yok, BCrypt yok, veritabanı
+        // araması yok, AD provizyonu yok. Yanıt hesabın var olup olmadığını söylemez (kural herkese aynı; ön ek gizli değil).
+        if (!username.isBlank() && !prefixAllows(username)) {
+            return rejectUsernamePrefix(null, username, null, clientIp, request);
+        }
+
         // 2. Per-user progressive lockout (DB-persisted)
         if (!username.isBlank()) {
             // Bilinmeyen ad (2026-10-09): kilit durumu login_unknown_lockouts'tan (tüm pod'larda ortak, mevcut hesapla aynı
@@ -316,6 +362,7 @@ public class AuthController {
         // parolasını bilene açılır (kullanıcı adı numaralandırması yok).
         AppUser inactive = null;
         AppUser maintenanceBlocked = null;
+        AppUser prefixDenied = null;
         String inactiveMethod = "PASSWORD";
         if (isLocalAccount) {
             userOpt = userService.authenticate(username, password);   // local BCrypt
@@ -326,6 +373,7 @@ public class AuthController {
             userOpt = Optional.ofNullable(ldap.user());
             inactive = ldap.inactive();
             maintenanceBlocked = ldap.maintenance();
+            prefixDenied = ldap.prefixDenied();
             inactiveMethod = "LDAP";
         } else {
             userOpt = userService.authenticate(username, password);   // LDAP off → local only
@@ -339,6 +387,16 @@ public class AuthController {
         // Giriş KANALI (2026-10-03, Giriş Yöntemleri → İstatistikler): AD bind yolu LDAP, yerel BCrypt yolu (bootstrap admin ve
         // LDAP kapalıyken yerel doğrulama dahil) LOCAL — LOGIN / LOGIN_FAILED ayrıntısına yazılır; tür / neden / sayaç aynen.
         String channel = "LDAP".equals(inactiveMethod) ? "LDAP" : "LOCAL";
+        // KULLANICI ADI ÖN EKİ — KAYITLI ad (2026-10-21): yazılan ad yukarıda geçti ama kimliği doğrulanan hesabın KANONİK adı
+        // (AD sAMAccountName / yerel kayıt) kurala uymuyorsa yine ret — ör. LDAP filtresi e-postayla da eşleşiyorsa "n.ad@…"
+        // yazılıp MP… hesabına girilemesin. Pasif / bakım kararından ÖNCE (kural "hangi hesapla girileceği"dir).
+        if (prefixDenied == null) {
+            AppUser verified = userOpt.orElse(inactive != null ? inactive : maintenanceBlocked);
+            if (verified != null && !prefixAllows(verified.getUsername())) prefixDenied = verified;
+        }
+        if (prefixDenied != null) {
+            return rejectUsernamePrefix(prefixDenied, username, inactiveMethod, clientIp, request);
+        }
         if (inactive != null) {
             return rejectInactiveLogin(inactive, inactiveMethod, clientIp, request);
         }
@@ -613,6 +671,12 @@ public class AuthController {
         AppUser user = v.user();
         UserService.LoginMethod method = v.channel().loginMethod();
         // Kod DOĞRU — buradan sonrası şifre girişinin kimlik-doğrulama-sonrası kararlarıyla AYNI sıra.
+        // Kullanıcı adı ön eki (2026-10-21): kural açıkken uymayan adın isteği zaten TUZAKTIR (kod gitmez, doğrulaması yanlış
+        // kod gibi davranır); buraya yalnız kural AÇILMADAN önce istenmiş gerçek bir kod düşebilir — o da kapanır.
+        if (!prefixAllows(user.getUsername())) {
+            loginOtp.block(v.challenge());
+            return rejectUsernamePrefix(user, user.getUsername(), method.name(), clientIp, request);
+        }
         if (!Boolean.TRUE.equals(user.getActive())) {
             loginOtp.block(v.challenge());
             return rejectInactiveLogin(user, method.name(), clientIp, request);
@@ -1296,9 +1360,10 @@ public class AuthController {
 
     /** LDAP giriş denemesinin sonucu: {@code user} = provizyonlanmış aktif kullanıcı; {@code inactive} = AD bind'ı
      *  BAŞARILI ama uygulama hesabı PASİF (provizyon yapılmadı). İkisi de null = başarısız deneme. */
-    record LdapAttempt(AppUser user, AppUser inactive, AppUser maintenance) {
-        static final LdapAttempt FAILED = new LdapAttempt(null, null, null);
-        LdapAttempt(AppUser user, AppUser inactive) { this(user, inactive, null); }
+    record LdapAttempt(AppUser user, AppUser inactive, AppUser maintenance, AppUser prefixDenied) {
+        static final LdapAttempt FAILED = new LdapAttempt(null, null, null, null);
+        LdapAttempt(AppUser user, AppUser inactive) { this(user, inactive, null, null); }
+        LdapAttempt(AppUser user, AppUser inactive, AppUser maintenance) { this(user, inactive, maintenance, null); }
     }
 
     /**
@@ -1319,6 +1384,17 @@ public class AuthController {
             var u = ad.get();
             String uname = (u.username() != null && !u.username().isBlank()) ? u.username() : username;
             Optional<AppUser> existingRow = userService.findByUsername(uname);
+            // KULLANICI ADI ÖN EKİ (2026-10-21): AD'nin döndürdüğü KANONİK ad (sAMAccountName) kurala uymuyorsa provizyon /
+            // profil / takım eşitlemesi HİÇ koşmaz, oturum kurulmaz (yazılan ad girişte zaten denetlendi; bu ikinci kapı LDAP
+            // filtresinin başka bir nitelikle — ör. e-posta — eşleştiği kurulumlar için).
+            if (!prefixAllows(uname)) {
+                AppUser row = existingRow.orElseGet(() -> {
+                    AppUser t = new AppUser();
+                    t.setUsername(uname);
+                    return t;
+                });
+                return new LdapAttempt(null, null, null, row);
+            }
             if (existingRow.isPresent() && !Boolean.TRUE.equals(existingRow.get().getActive())) {
                 return new LdapAttempt(null, existingRow.get());
             }

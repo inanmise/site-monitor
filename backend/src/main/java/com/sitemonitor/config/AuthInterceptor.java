@@ -112,6 +112,35 @@ public class AuthInterceptor implements HandlerInterceptor {
     public static final String ATTR_MAINTENANCE_USER = "systemMaintenanceUser";
 
     /**
+     * Kullanıcı adı ön eki "mezar taşı" (2026-10-21, kullanıcı isteği: "yalnız N ile başlayan kullanıcıya login izni") —
+     * pasif hesap deseninin AYNISI: kural açılınca (ya da ön ek listesi değişince) kurala uymayan kullanıcının canlı oturumu
+     * kimliksizleştirilir, yerine yalnız bu iki öznitelik kalır; aynı çerezle gelen her istek (öteki sekmeler, uçuştaki
+     * istekler, öteki pod'lar — JDBC deposu) aynı {@code USERNAME_PREFIX_NOT_ALLOWED} sinyalini alır. {@code invalidate()}
+     * DEĞİL (bkz. {@link #ATTR_INACTIVE}). Kural kapatılır / ad yeniden izinli olursa mezar taşı kapanır (yeniden giriş).
+     */
+    public static final String ATTR_USERNAME_PREFIX = "usernamePrefixDenied";
+    public static final String ATTR_USERNAME_PREFIX_USER = "usernamePrefixDeniedUser";
+
+    /**
+     * Kullanıcı adı ön eki politikası — İSTEĞE BAĞLI (bakım servisiyle aynı gerekçe: dilim testlerinin bağlamı büyümesin).
+     * Yoksa kapı hiç çalışmaz. Karar bellek içi ayarlardan (veritabanı yok); okuma hatası kapıyı AÇIK bırakır.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.loginpolicy.UsernamePrefixPolicy usernamePrefix;
+
+    /** Test kancası. */
+    void setUsernamePrefix(com.sitemonitor.service.loginpolicy.UsernamePrefixPolicy p) { this.usernamePrefix = p; }
+
+    /** Bu ad kurala UYMUYOR mu (servis yok / okunamaz → hayır). */
+    private boolean prefixDenied(String username) {
+        try {
+            return usernamePrefix != null && !usernamePrefix.allows(username);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /**
      * Bakım durumu — İSTEĞE BAĞLI bağımlılık (yapıcıya EKLENMEZ): interceptor her {@code @WebMvcTest} diliminde kuruluyor ve
      * dilimler servisleri yüklemiyor; zorunlu bağımlılık ~30 controller testinin bağlamını düşürürdü (IP çözümü notuyla aynı
      * gerekçe). Yoksa (dilim/birim test) kapı hiç çalışmaz → davranış bugünküyle birebir.
@@ -192,6 +221,14 @@ public class AuthInterceptor implements HandlerInterceptor {
                         endInactiveSession(session, username, req, res);
                         return writeAccountInactive(res);
                     }
+                    // KULLANICI ADI ÖN EKİ KAPISI (2026-10-21) — pasif kontrolünden SONRA, bakımdan ÖNCE: kural açıldıysa ya da
+                    // ön ek listesi değiştiyse kurala uymayan kullanıcının oturumu aynı mezar taşı deseniyle kesilir. Global
+                    // yönetici OTOMATİK muaf değil (kural hangi hesapla girileceğidir) — yalnız bootstrap yönetici ve muaf liste.
+                    // Karar bellek içi (ayar önbelleği) — istek başına veritabanı okuması yok.
+                    if (prefixDenied(username)) {
+                        endUsernamePrefixSession(session, username, req, res);
+                        return writeUsernamePrefixDenied(res);
+                    }
                     // SİSTEM BAKIM KAPISI (2026-10-02, kullanıcı kararı) — pasif kontrolünden SONRA, süpersede kontrolünden
                     // ÖNCE: bakım AKTİFKEN yalnız global yönetici içeride kalır. Kesim pasif hesapla aynı mezar taşı
                     // desenidir (invalidate değil); sıra ters olsaydı kesilen oturumun öteki sekmesi "oturum düştü"
@@ -218,6 +255,15 @@ public class AuthInterceptor implements HandlerInterceptor {
                     if (userService.isAccountInactive(tombUser)) {
                         clearRememberMeCookie(res);
                         return writeAccountInactive(res);
+                    }
+                    try { session.invalidate(); } catch (IllegalStateException ignored) { /* zaten kapalı */ }
+                } else if (Boolean.TRUE.equals(session.getAttribute(ATTR_USERNAME_PREFIX))) {
+                    // Ön ek mezar taşı: kural hâlâ bu adı reddediyorsa aynı sinyal (çok sekme / eşzamanlı istek); kural
+                    // kapatıldıysa ya da ad izinli olduysa mezar taşı kapatılır, istek oturumsuz sayılır (yeniden giriş).
+                    String tombUser = (String) session.getAttribute(ATTR_USERNAME_PREFIX_USER);
+                    if (prefixDenied(tombUser)) {
+                        clearRememberMeCookie(res);
+                        return writeUsernamePrefixDenied(res);
                     }
                     try { session.invalidate(); } catch (IllegalStateException ignored) { /* zaten kapalı */ }
                 } else if (Boolean.TRUE.equals(session.getAttribute(ATTR_MAINTENANCE))) {
@@ -264,6 +310,18 @@ public class AuthInterceptor implements HandlerInterceptor {
                             rememberIp, req.getHeader("User-Agent"), "REMEMBER_ME");
                 }
                 return writeAccountInactive(res);
+            }
+            if (userOpt.isPresent() && prefixDenied(userOpt.get().getUsername())) {
+                // KULLANICI ADI ÖN EKİ (2026-10-21): çerez kurala uymayan hesaba ait → oturum KURULMAZ; kullanıcının tüm
+                // token'ları silinir, çerez düşürülür, istemci ön ek sinyalini alır (giriş sayfası bildirimiyle açılır).
+                AppUser u = userOpt.get();
+                rememberMeService.invalidateAllForUser(u.getUsername());
+                clearRememberMeCookie(res);
+                if (shouldAuditInactive("RMP|" + u.getUsername())) {
+                    auditService.recordUsernamePrefixLogin(u.getUsername(), u.getId(), u.getTeamId(), u.getSystemRole(),
+                            rememberIp, req.getHeader("User-Agent"), "REMEMBER_ME");
+                }
+                return writeUsernamePrefixDenied(res);
             }
             if (userOpt.isPresent() && Boolean.TRUE.equals(userOpt.get().getActive()) && maintenanceActive()
                     && !systemMaintenance.isGlobalAdminAccount(userOpt.get())) {
@@ -377,6 +435,49 @@ public class AuthInterceptor implements HandlerInterceptor {
                     auditService.resolveIp(req), req.getHeader("User-Agent"), sid);
             try { systemMaintenance.recordSessionEnded(); } catch (Exception ignored) { /* sayaç best-effort */ }
         }
+    }
+
+    /**
+     * Kurala uymayan kullanıcının canlı oturumunu keser (2026-10-21) — bakım / pasif kesiminin aynası: oturum
+     * kimliksizleştirilir (mezar taşı, bkz. {@link #ATTR_USERNAME_PREFIX}), kullanıcının remember-me token'ları silinir,
+     * çerez düşürülür, tek-oturum kaydı temizlenir ve {@code SESSION_ENDED_USERNAME_PREFIX} denetimi yazılır (eşzamanlı
+     * istekler için 30 sn ikizlenme kalkanı).
+     */
+    private void endUsernamePrefixSession(HttpSession session, String username, HttpServletRequest req, HttpServletResponse res) {
+        String sid = session.getId();
+        Long userId = longAttr(session.getAttribute("userId"));
+        Long teamId = longAttr(session.getAttribute("teamId"));
+        Object role = session.getAttribute("systemRole");
+        for (String name : java.util.Collections.list(session.getAttributeNames())) session.removeAttribute(name);
+        session.setAttribute(ATTR_USERNAME_PREFIX, Boolean.TRUE);
+        session.setAttribute(ATTR_USERNAME_PREFIX_USER, username);
+        session.setMaxInactiveInterval(INACTIVE_TOMBSTONE_TTL_SECONDS);
+        if (username != null) {
+            rememberMeService.invalidateAllForUser(username);
+            try { userService.clearActiveSession(username, sid); } catch (Exception ignored) { /* kayıt best-effort */ }
+        }
+        clearRememberMeCookie(res);
+        if (shouldAuditInactive("P|" + username + "|" + sid)) {
+            auditService.recordAction("SESSION_ENDED_USERNAME_PREFIX", username, userId, teamId,
+                    role == null ? null : role.toString(), "USER", username,
+                    "Kullanıcı adı izinli bir ön ekle başlamadığı için canlı oturum sonlandırıldı (hatırlanan girişler silindi)",
+                    auditService.resolveIp(req), req.getHeader("User-Agent"), sid);
+        }
+    }
+
+    /** 401 + {@code USERNAME_PREFIX_NOT_ALLOWED} gövdesi (izinli ön eklerle) — istemci geri sayım penceresini açar. */
+    private boolean writeUsernamePrefixDenied(HttpServletResponse res) throws Exception {
+        res.setStatus(401);
+        res.setContentType("application/json;charset=UTF-8");
+        Map<String, Object> body;
+        try {
+            body = usernamePrefix != null ? usernamePrefix.deniedBody()
+                    : com.sitemonitor.service.loginpolicy.UsernamePrefixRule.deniedBody(java.util.List.of());
+        } catch (Exception e) {
+            body = com.sitemonitor.service.loginpolicy.UsernamePrefixRule.deniedBody(java.util.List.of());
+        }
+        mapper.writeValue(res.getWriter(), body);
+        return false;
     }
 
     /** 401 + {@code MAINTENANCE} gövdesi (pencere bilgisiyle) — istemci geri sayım penceresini açar, sonra giriş sayfası. */

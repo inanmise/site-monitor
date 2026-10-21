@@ -4,6 +4,7 @@ import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { isAccountInactivePayload } from '../../utils/accountInactive.js'
 import { isMaintenancePayload } from '../../utils/systemMaintenance.js'
+import { isUsernamePrefixPayload, prefixesOf } from '../../utils/usernamePrefix.js'
 import { Button } from '@/components/shadcn/button'
 import { Input } from '@/components/shadcn/input'
 import { Label } from '@/components/shadcn/label'
@@ -43,6 +44,8 @@ export function otpErrorOf(res) {
   if (code === 'EMAIL_REQUIRED') return { kind: 'emailRequired' }
   if (isAccountInactivePayload(res)) return { kind: 'inactive' }
   if (isMaintenancePayload(res)) return { kind: 'maintenance' }
+  // 2026-10-21: kural açılmadan önce istenmiş gerçek kod doğru girildi ama hesap ön ek kuralına uymuyor (403)
+  if (isUsernamePrefixPayload(res)) return { kind: 'usernamePrefix', prefixes: prefixesOf(res) }
   if (res.status === 423) return { kind: 'accountLocked' }
   return { kind: 'server' }
 }
@@ -58,6 +61,7 @@ function errorText(t, err) {
     case 'usernameRequired': return t('otp.err.usernameRequired')
     case 'inactive': return t('login.accountInactiveError')
     case 'maintenance': return t('sysmaint.login.error')
+    case 'usernamePrefix': return err.prefixes?.length ? t('login.prefixError', err.prefixes.join(', ')) : t('login.prefixErrorGeneric')
     case 'accountLocked': return t('otp.err.accountLocked')
     case 'network': return t('login.serverError')
     default: return t('login.serverError')
@@ -109,7 +113,7 @@ export function validateOtpRequest({ username, kind, phone, email }, t) {
  * `data-field` = `username` / `phone` / `email`.
  */
 export default function OtpLoginFlow({ methods, initialUsername = '', initialChannel = 'push', initialRemember = false,
-  onSuccess, onCancel, onMaintenance }) {
+  onSuccess, onCancel, onMaintenance, prefixHint = '' }) {
   const t = useT()
   const channels = availableChannels(methods)
   const [step, setStep] = useState('request')
@@ -258,7 +262,9 @@ export default function OtpLoginFlow({ methods, initialUsername = '', initialCha
 
       {step === 'request' && (
         <form onSubmit={sendCode} className="flex min-w-0 flex-col gap-4" noValidate>
-          <Field label={t('login.username')} className="mb-0" {...fe.fieldProps('username')}>
+          {/* 2026-10-21: kullanıcı adı ön eki kuralı uygulanırken "N… ile girin" ipucu (sunucu kararı yine aynı genel yanıttır) */}
+          <Field label={t('login.username')} className="mb-0" {...fe.fieldProps('username')}
+            hint={prefixHint ? t('login.prefixHint', prefixHint) : undefined}>
             {({ id, describedBy, invalid }) => (
               <Input id={id} className="h-10" type="text" value={username} autoComplete="username"
                 autoCapitalize="off" autoCorrect="off" spellCheck={false}

@@ -530,6 +530,28 @@ public class AuditService {
         log.info("Sistem bakımında giriş reddedildi: actor={} yol={} IP={}", actor, method, ipAddress);
     }
 
+    /** Kullanıcı adı ön eki kuralına uymayan girişin denetim nedeni (2026-10-21). */
+    public static final String REASON_USERNAME_PREFIX = "USERNAME_PREFIX";
+
+    /**
+     * KULLANICI ADI ÖN EKİ kuralı (Ayarlar → Giriş Yöntemleri, 2026-10-21): ad izinli bir ön ekle başlamıyor — giriş
+     * reddedildi. {@code LOGIN_FAILED}, sonuç {@code BLOCKED}: kaba kuvvet / ilerleyici kilit sayacına GİRMEZ (parola ya hiç
+     * denenmedi ya da doğruydu; kural yalnız yazılan / kayıtlı ada bakar). Parola girişinde ad DOĞRULAMADAN önce
+     * reddedilir (aktör büyük harfe çevrilmiş yazılan ad, kimlik bilgisi yok); LDAP / kodla giriş / remember-me yolunda
+     * kimlik doğrulandıktan sonra kayıtlı ad.
+     *
+     * @param method giriş yolu: {@code null} (doğrulama öncesi), {@code PASSWORD}, {@code LDAP}, {@code REMEMBER_ME},
+     *               {@code OTP_PUSH} / {@code OTP_EMAIL}
+     */
+    public void recordUsernamePrefixLogin(String actor, Long actorId, Long actorTeamId, String actorRole,
+                                          String ipAddress, String userAgent, String method) {
+        recordBlockedLogin(actor, actorId, actorTeamId, actorRole, ipAddress, userAgent,
+                REASON_USERNAME_PREFIX + ": kullanıcı adı izinli bir ön ekle başlamıyor — giriş reddedildi"
+                        + (method == null ? "" : " (" + method + ")"),
+                method);
+        log.info("Kullanıcı adı ön eki kuralı girişi reddetti: actor={} yol={} IP={}", actor, method, ipAddress);
+    }
+
     /** LDAP girişi kapalıyken reddedilen parola girişinin denetim nedeni (2026-10-02). */
     public static final String REASON_LDAP_LOGIN_DISABLED = "LDAP_LOGIN_DISABLED";
     /** Kimlik doğrulandı (kodla giriş) ama hesap kilitli — denetim nedeni (2026-10-02). */

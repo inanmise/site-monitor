@@ -133,6 +133,20 @@ class LoginMethodsServiceTest {
     }
 
     @Test
+    @DisplayName("2026-10-21: kullanıcı adı ön eki kuralı UYGULANIRKEN PUBLIC görünüm yalnız izinli ön ekleri ekler; kapalıyken anahtar yok")
+    void publicViewUsernamePrefixHint() {
+        com.sitemonitor.service.loginpolicy.UsernamePrefixPolicy policy =
+                mock(com.sitemonitor.service.loginpolicy.UsernamePrefixPolicy.class);
+        svc.setUsernamePrefix(policy);
+        when(policy.publicHint()).thenReturn(null);
+        assertThat(svc.publicView()).doesNotContainKey("username_prefix");
+        when(policy.publicHint()).thenReturn(java.util.Map.of("allowed", List.of("N")));
+        assertThat(svc.publicView()).containsEntry("username_prefix", java.util.Map.of("allowed", List.of("N")));
+        when(policy.publicHint()).thenThrow(new RuntimeException("x"));
+        assertThat(svc.publicView()).doesNotContainKey("username_prefix").containsKey("ldap");
+    }
+
+    @Test
     @DisplayName("SMTP durumu sır taşımaz (yalnız sunucu adı + yapılandırıldı mı + alarm e-postası anahtarı)")
     void smtpStatus_noSecrets() {
         SmtpSettings s = new SmtpSettings();
@@ -176,7 +190,7 @@ class LoginMethodsServiceTest {
     @DisplayName("KAPI: sayfanın her anahtarı katalogda ve GLOBAL_ONLY; saklama anahtarı da katalogda")
     void keysAreCataloguedAndGlobalOnly() {
         Set<String> catalog = AppSettingsCatalog.ALL.stream().map(AppSettingsCatalog.Setting::key).collect(Collectors.toSet());
-        assertThat(LoginMethodsService.KEYS).hasSize(18);   // 2026-10-03: + push başlığı / mesajı (TR, EN)
+        assertThat(LoginMethodsService.KEYS).hasSize(21);   // 2026-10-03: + push başlığı / mesajı (TR, EN); 2026-10-21: + ön ek (3)
         for (String k : LoginMethodsService.KEYS) {
             assertThat(catalog).as("katalogda: " + k).contains(k);
             assertThat(AppSettingsCatalog.isGlobalOnly(k)).as("GLOBAL_ONLY: " + k).isTrue();

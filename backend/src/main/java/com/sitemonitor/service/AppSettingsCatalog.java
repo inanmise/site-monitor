@@ -445,6 +445,11 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.login.otp.push.title-en",               "login-methods", Type.STRING),
         new Setting("site.monitor.login.otp.push.message-tr",             "login-methods", Type.STRING),
         new Setting("site.monitor.login.otp.push.message-en",             "login-methods", Type.STRING),
+        //    2026-10-21 (kullanıcı isteği): kullanıcı adı ön eki kuralı — yalnız izinli ön ekle (ör. N) başlayan adlar girer;
+        //    muaf liste + kurulumdaki bootstrap yönetici her zaman girer. Kurallar UsernamePrefixRule (kayıtta da doğrulanır).
+        new Setting("site.monitor.login.username-prefix.enabled",         "login-methods", Type.BOOL),
+        new Setting("site.monitor.login.username-prefix.allowed",         "login-methods", Type.CSV),
+        new Setting("site.monitor.login.username-prefix.exempt",          "login-methods", Type.CSV),
         // ── Branding (beyaz etiket) — BrandingController üzerinden yönetilir; /api/branding public okur.
         //    Boş değer = varsayılan SiteMonitor kimliği. banner-version otomatik yönetilir (UI'da gizli).
         new Setting("site.monitor.branding.app-name",            "branding",   Type.STRING),
@@ -644,6 +649,11 @@ public final class AppSettingsCatalog {
         "site.monitor.login.otp.push.title-en",
         "site.monitor.login.otp.push.message-tr",
         "site.monitor.login.otp.push.message-en",
+        // 2026-10-21: kullanıcı adı ön eki kuralı — hangi hesap türünün (ör. N… sicil hesabı, MP… değil) girebileceği kurum
+        // geneli güvenlik politikası; müdür kuralı kapatıp açamaz, ön ekleri ya da muaf listesini değiştiremez.
+        "site.monitor.login.username-prefix.enabled",
+        "site.monitor.login.username-prefix.allowed",
+        "site.monitor.login.username-prefix.exempt",
         // 2026-10-04: giriş sayfası kullanım istatistikleri — OTURUMSUZ herkese açık uçta kurum geneli kullanım
         // rakamlarını yayınlayıp yayınlamama kararı kurulumun tamamını bağlar; takım kapsamlı müdür açıp kapatamaz.
         "site.monitor.public-stats.usage-enabled",

@@ -139,6 +139,27 @@ public class LoginOtpService {
     /** Test kancası. */
     void setClock(Clock clock) { this.clock = clock; }
 
+    /**
+     * Kullanıcı adı ön eki kuralı (2026-10-21) — İSTEĞE BAĞLI (yapıcıya eklenmez: mevcut testler aynı kalsın). Kurala
+     * uymayan ad UYGUN DEĞİLDİR: aynı 200 gövdesi + tuzak satırı ({@code SUPPRESSED_USERNAME_PREFIX}), kod gitmez.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.loginpolicy.UsernamePrefixPolicy usernamePrefix;
+
+    /** Test kancası. */
+    void setUsernamePrefix(com.sitemonitor.service.loginpolicy.UsernamePrefixPolicy p) { this.usernamePrefix = p; }
+
+    /** Yazılan ad ya da kayıtlı ad kurala uymuyor mu (servis yok / okunamaz → hayır). Bellek içi — sorgu yok. */
+    private boolean prefixDenied(String typed, AppUser user) {
+        try {
+            if (usernamePrefix == null) return false;
+            if (!usernamePrefix.allows(typed)) return true;
+            return user != null && user.getUsername() != null && !usernamePrefix.allows(user.getUsername());
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     // ── İstek ──────────────────────────────────────────────────────────────────
 
     /** Kişi bilgisi olmadan istek (kişi bilgisi doğrulaması KAPALIYKEN önceki davranış; testler ve eski çağıranlar). */
@@ -226,7 +247,10 @@ public class LoginOtpService {
                     : OtpContactMatcher.emailMatches(entered, registered);
         }
 
-        String reason = ineligibility(user, ch, locked);
+        // Kullanıcı adı ön eki (2026-10-21): kurala uymayan ad UYGUN DEĞİL — diğer uygunsuzluklar gibi aynı 200 + tuzak satırı.
+        // Karar bellek içi; yukarıdaki sorgular yine HER istekte koştu (kısa devre yok, süre ayırt ettirmez).
+        String reason = prefixDenied(typed, user) ? com.sitemonitor.service.loginpolicy.UsernamePrefixRule.REASON
+                : ineligibility(user, ch, locked);
         // Kişi bilgisi sonucu yalnız denetime gider (MATCHED / MISMATCH / MISSING / LOCKED / NOT_CHECKED) — DEĞER asla.
         String contactOutcome = null;
         if (contactRequired) {

@@ -14,6 +14,7 @@
 | E-postalar gitmiyor | [SMTP düştü](#smtp-düştü) |
 | Tarayıcı uygulamanın sertifikasına uyarı veriyor | [Uygulamanın kendi sertifikası](#uygulamanın-kendi-sertifikası) |
 | Yönetici giriş yapamıyor ("hesap kilitli") | [Kilitli admin hesabı](#kilitli-admin-hesabı) |
+| MP… (ikinci) hesaplarla girişi kapatmak / ön ek kuralı yüzünden kimse giremiyor | [MP hesaplarıyla giriş kapatma](#mp-hesaplarıyla-giriş-kapatma) |
 | `decrypt failed`, LDAP/SMTP birden bozuldu | [Secret key](#secret-key) |
 | "Denetim izinde BOŞLUK" / `AUDIT fallback` logu | [Denetim fallback](#denetim-fallback) |
 | Pod `OOMKilled` / sık yeniden başlıyor | [Bellek](#bellek) |
@@ -163,6 +164,29 @@ Giriş kilidi kademelidir: ihlal başına **30 sn → 2 dk → 10 dk → 30 dk**
 - Parolayı unutmak ayrı konudur: Secret'taki `ADMIN_PASSWORD` **yalnız ilk açılışta** (boş DB) kullanılır;
   sonradan değiştirmek hiçbir şeyi değiştirmez. Başka bir yönetici "parolayı sıfırla" ile geçici parola üretir
   ve kullanıcının e-postasına gönderir (`POST /api/admin/users/{id}/auto-reset-password`; SMTP çalışıyor olmalı).
+
+## MP hesaplarıyla giriş kapatma
+
+İki hesabı olan kullanıcıların (N… sicil hesabı, MP… ikinci hesap) yalnız izin verilen hesapla girmesi için kullanıcı adı
+ön eki kuralı (2026-10-21).
+
+- **Açma:** Ayarlar → Güvenlik → Giriş Yöntemleri → "Kullanıcı adı ön eki" kartı (yalnız global yönetici). İzinli ön ek
+  olarak `N` yazın (Enter); **Etki önizlemesi** kaç aktif kullanıcının giremeyeceğini ve ilk 50 adı gösterir. Anahtarı açıp
+  Kaydet → onay. Ayar anahtarları: `site.monitor.login.username-prefix.enabled|allowed|exempt` (GLOBAL_ONLY).
+- **Ne olur:** izinli ön ekle başlamayan adlar şifre, LDAP, kodla giriş ve beni hatırla yollarının hiçbirinden giremez —
+  giriş 403 `USERNAME_PREFIX_NOT_ALLOWED` (parola denenmeden), kodla girişte aynı genel yanıt ve kod gitmez. Açık oturumlar
+  sonraki istekte (~15 sn; çok pod'da ayar ≤ 10 sn'de yayılır) kapanır, hatırlanan girişler silinir. Denetim:
+  `SESSION_ENDED_USERNAME_PREFIX` ve `LOGIN_FAILED` (BLOCKED, neden `USERNAME_PREFIX` — kilit sayacına girmez).
+- **Muaf liste:** ön eke bakılmadan girebilecek tam adlar (servis / acil durum hesabı). Kurulumdaki bootstrap yönetici
+  (`site.monitor.username`, prod'da `ADMIN_USERNAME`) HER ZAMAN muaftır; global yöneticiler otomatik muaf DEĞİLDİR.
+- **Kendini kilitleme yok:** kaydeden yöneticinin kendi hesabı kurala uymuyorsa kayıt 400 `LOCKOUT_SELF` ile reddedilir.
+- **Kilitlendiyseniz (kurtarma):** bootstrap yönetici her zaman girer → kuralı kapatın ya da listeyi düzeltin. Bootstrap
+  yöneticiye de erişim yoksa (son çare, DB'de; denetime düşmez — olay kaydına not edin):
+  ```sql
+  UPDATE app_settings SET setting_value = 'false'
+   WHERE setting_key = 'site.monitor.login.username-prefix.enabled';
+  ```
+  Değer pod belleğinde ≤ 10 sn'de tazelenir; yeniden başlatma gerekmez.
 
 ## Secret key
 

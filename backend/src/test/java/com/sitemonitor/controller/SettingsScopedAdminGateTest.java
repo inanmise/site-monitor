@@ -148,8 +148,13 @@ class SettingsScopedAdminGateTest {
                 "site.monitor.login.otp.push.title-tr",
                 "site.monitor.login.otp.push.title-en",
                 "site.monitor.login.otp.push.message-tr",
-                "site.monitor.login.otp.push.message-en");
+                "site.monitor.login.otp.push.message-en",
+                // 2026-10-21: kullanıcı adı ön eki kuralı (müdür kuralı kapatıp açamaz, ön ekleri / muafları değiştiremez)
+                "site.monitor.login.username-prefix.enabled",
+                "site.monitor.login.username-prefix.allowed",
+                "site.monitor.login.username-prefix.exempt");
         assertThat(AppSettingsCatalog.GLOBAL_ONLY).containsAll(com.sitemonitor.service.otp.LoginMethodsService.KEYS);
+        assertThat(AppSettingsCatalog.GLOBAL_ONLY).containsAll(com.sitemonitor.service.loginpolicy.UsernamePrefixRule.KEYS);
         assertThat(src("LoginMethodsController")).contains("SessionScope.requireNotScopedAdmin(")
                 .contains("SessionScope.isGlobalAdmin(session)");
     }
