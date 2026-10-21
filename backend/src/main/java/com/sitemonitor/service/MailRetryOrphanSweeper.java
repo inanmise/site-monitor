@@ -22,7 +22,8 @@ import java.time.format.DateTimeFormatter;
  * + 5 dk, en az {@link #MIN_ORPHAN_AGE}) eski {@code QUEUED_RETRY} satırlarını {@link EmailNotificationService#STATUS_RETRY_ORPHANED}
  * yapar — KOŞULLU tek UPDATE (yalnız hâlâ {@code QUEUED_RETRY} olan satır; iki pod aynı satırı iki kez yazmaz, kilit yalnız
  * boşa iş yapılmasın diye). Tarama son {@link #LOOKBACK} ile sınırlı ({@code idx_nl_sent_at} aralık taraması; tüm tablo okunmaz).
- * Geç gelen gerçek sonuç satırı yine düzeltir.
+ * Geç gelen gerçek sonuç satırı yine düzeltir. Aynı turda 7/24 teslim satırlarının ({@code noc_deliveries}) kuyruk sonucu da
+ * yazılır ({@code NocQueuedRetryReconciler}).
  */
 @Slf4j
 @Component
@@ -49,6 +50,13 @@ public class MailRetryOrphanSweeper {
     @Autowired(required = false)
     private SchedulerService scheduler;
 
+    /**
+     * 7/24 teslim satırlarının kuyruk sonucu (2026-10-21, MP-06) — posta günlüğü yetimleri yazıldıktan SONRA, aynı turda ve
+     * aynı eşikle. Yoksa (dilim testleri) atlanır.
+     */
+    @Autowired(required = false)
+    private com.sitemonitor.service.noc.NocQueuedRetryReconciler nocReconciler;
+
     public MailRetryOrphanSweeper(JdbcTemplate jdbc, EmailNotificationService emailService) {
         this.jdbc = jdbc;
         this.emailService = emailService;
@@ -57,6 +65,11 @@ public class MailRetryOrphanSweeper {
     /** Test dikişi. */
     void setScheduler(SchedulerService scheduler) {
         this.scheduler = scheduler;
+    }
+
+    /** Test dikişi. */
+    public void setNocReconciler(com.sitemonitor.service.noc.NocQueuedRetryReconciler nocReconciler) {
+        this.nocReconciler = nocReconciler;
     }
 
     @Scheduled(fixedDelayString = "${site.monitor.mail.retry-orphan-sweep-ms:300000}",
@@ -82,6 +95,14 @@ public class MailRetryOrphanSweeper {
         if (n > 0) {
             log.warn("SMTP 421 yeniden denemesinin sonucu gelmeyen {} bildirim satırı FAILED yapıldı (gönderen pod kapanmış; eşik {} dk)",
                     n, age.toMinutes());
+        }
+        if (nocReconciler != null) {
+            try {
+                int noc = nocReconciler.reconcile(now, age);
+                if (noc > 0) log.info("7/24 teslimlerinin {} tanesinin 421 kuyruk sonucu yazıldı", noc);
+            } catch (Exception e) {
+                log.warn("7/24 teslimlerinin kuyruk sonucu yazılamadı (sonraki turda yeniden denenir): {}", e.getMessage());
+            }
         }
         return n;
     }

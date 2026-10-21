@@ -7,7 +7,6 @@ import com.sitemonitor.model.DnsRecord;
 import com.sitemonitor.model.PortCheck;
 import com.sitemonitor.model.PortMonitor;
 import com.sitemonitor.model.UptimeCheck;
-import com.sitemonitor.model.NetworkOutageEvent;
 import com.sitemonitor.model.PageCheck;
 import com.sitemonitor.model.PageResourceIssue;
 import com.sitemonitor.model.PageSpeedCheck;
