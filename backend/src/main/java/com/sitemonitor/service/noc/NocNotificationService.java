@@ -661,6 +661,30 @@ public class NocNotificationService {
     /** Tekil anahtarı "gönderiliyor" durumuyla sahiplenir; yarışı kaybeden (anahtar başkasında) false döner. */
     private boolean claim(NocDelivery d, String key, Long alertId, Long stormId, String phase) {
         String now = now();
+        if (d.getId() != null) {
+            // VAR OLAN satır (FAILED / bayat SENDING yeniden deneme) — koşullu sahiplenme (2026-10-21, çok pod — N-10): satır
+            // okunduğu durumda değilse (başka pod / tur sahiplendi ya da sonuçlandırdı) bu tur göndermez.
+            int rows;
+            try {
+                rows = deliveries.reclaim(d.getId(), d.getStatus() == null ? "" : d.getStatus(),
+                        d.getUpdatedAt() == null ? "" : d.getUpdatedAt(), now);
+            } catch (RuntimeException e) {
+                log.warn("7/24 teslimi yeniden sahiplenilemedi ({}) — bu tur göndermiyor: {}", key, e.toString());
+                return false;
+            }
+            if (rows != 1) {
+                log.debug("7/24 teslimi bu arada başka pod / turca sahiplenildi: {}", key);
+                return false;
+            }
+            d.setDedupeKey(key);
+            d.setAlertEventId(alertId);
+            d.setStormId(stormId);
+            d.setPhase(phase);
+            d.setStatus("SENDING");
+            d.setAttempts(attemptsOf(d) + 1);
+            d.setUpdatedAt(now);
+            return true;
+        }
         d.setDedupeKey(key);
         d.setAlertEventId(alertId);
         d.setStormId(stormId);

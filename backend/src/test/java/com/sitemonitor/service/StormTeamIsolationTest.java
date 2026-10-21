@@ -221,6 +221,16 @@ class StormTeamIsolationTest {
                 s.setLastReAlertAt(String.valueOf(a[1]));
                 return 1;
             }
+            // Kapanışın koşullu sahiplenmesi (2026-10-21, çok pod — MP-04): yalnız hâlâ açık fırtına kapatılır.
+            if (sql.equals(StormService.SQL_RESOLVE_CLAIM)) {
+                AlertStorm s = byId.get((Long) a[3]);
+                if (s == null || Boolean.TRUE.equals(s.getResolved())) return 0;
+                s.setResolved(true);
+                s.setResolvedAt(String.valueOf(a[1]));
+                s.setResolveReason(String.valueOf(a[2]));
+                active.values().removeIf(x -> x == s);
+                return 1;
+            }
             if (!sql.startsWith("INSERT INTO alert_storms")) return 0;
             String scopeKey = String.valueOf(a[1]);
             inserts.add(a);

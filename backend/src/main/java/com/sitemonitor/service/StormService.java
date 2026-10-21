@@ -252,6 +252,10 @@ public class StormService {
 
     private static final String INSTANCE_ID = resolveHostname() + "-storm";
     private static final int LOCK_TTL_SECONDS = 90;
+    /** Kilit sahibi kimliği — pod başına; iki pod'u tek JVM'de canlandıran test ayrı kimlik verir. */
+    String lockOwner = INSTANCE_ID;
+    /** Tur içinde kilit en geç bu kadar ms'de bir tazelenir (TTL'in üçte biri); test 0 verip her fırtınada tazeletir. */
+    long lockRenewEveryMs = LOCK_TTL_SECONDS * 1000L / 3;
 
     // Toplam-aktif-monitör cache (denominatör) — her kesintide saymamak için (~60sn TTL).
     private volatile long cachedTotal = 0;
@@ -432,18 +436,38 @@ public class StormService {
 
     @Scheduled(fixedDelayString = "${site.monitor.storm.sweep-ms:30000}", initialDelay = 45000)
     public void lifecycleSweep() {
-        List<AlertStorm> active;
+        // Ucuz ön bakış: aktif fırtına yoksa kilit tablosuna hiç yazılmaz (her pod 30 sn'de bir).
         try {
-            active = stormRepo.findByResolvedFalse();
+            if (stormRepo.findByResolvedFalse().isEmpty()) return;
         } catch (Exception e) {
             return;   // tablo henüz yok / DB erişilemez — sessiz
         }
-        if (active.isEmpty()) return;
 
         boolean enabled = isEnabled();
         if (!tryLock()) return;   // HA: yalnız bir pod yönetir
+        long lockAt = System.currentTimeMillis();
         try {
+            // Liste KİLİTTEN SONRA okunur (2026-10-21, çok pod — MP-04): kilitten önce okunan liste, kilidi o arada bırakan
+            // pod'un az önce kapattığı fırtınayı "açık" gösteriyor, kapanış (posta / webhook / 7-24 / push) ikinci kez
+            // gidiyordu. Kapanışın kendisi de koşullu (claimResolution) — bayat varlık ikinci kez kapatamaz.
+            List<AlertStorm> active;
+            try {
+                active = stormRepo.findByResolvedFalse();
+            } catch (Exception e) {
+                return;
+            }
+            boolean first = true;
             for (AlertStorm storm : active) {
+                // Kilit fırtınalar ARASINDA tazelenir (90 sn TTL; yavaş SMTP / webhook'la tur uzayabilir). Tazelenemezse
+                // (başka pod süresi dolan kilidi aldı ya da DB hatası) tur DURUR — kalan fırtınaları kilidin sahibi işler.
+                if (!first && System.currentTimeMillis() - lockAt >= lockRenewEveryMs) {
+                    if (!renewLock()) {
+                        log.warn("Storm yaşam döngüsü kilidi kaybedildi — tur durduruldu (kalan fırtınaları kilidin sahibi işler)");
+                        return;
+                    }
+                    lockAt = System.currentTimeMillis();
+                }
+                first = false;
                 try {
                     if (!enabled) { disband(storm, "özellik kapatıldı"); continue; }   // toggle-off: geri-bağla, sessiz kapat
                     // 2026-09-29 öncesinin kuruluş geneli (ACCOUNT) / takımsız grup fırtınası: takım yalıtımında karşılığı
@@ -530,13 +554,21 @@ public class StormService {
      * ve ilk turda bireysel İLK bildirimini alır. Eskiden hepsi ikinci sınıftı: duyurulmuş üyeler de yeniden İLK alıyordu.
      */
     private void resolveStorm(AlertStorm storm, List<AlertEvent> members, String reason, String reasonCode) {
+        String closingAt = now();
+        // Önce SAHİPLEN (2026-10-21, çok pod): kapanışın bütün yan etkileri yalnız fırtınayı gerçekten kapatan tura aittir.
+        if (!claimResolution(storm, closingAt, reasonCode)) return;
+        try {
+            jdbcTemplate.update(SQL_RESOLVE_STATS, storm.getMemberCount() == null ? members.size() : storm.getMemberCount(),
+                    storm.getPeakTargets() == null ? 0 : storm.getPeakTargets(), storm.getId());
+        } catch (Exception e) {
+            log.debug("Storm #{} kapanış sayaçları yazılamadı: {}", storm.getId(), e.getMessage());
+        }
         List<AlertEvent> recovered = members.stream()
                 .filter(m -> Boolean.TRUE.equals(m.getResolved())).toList();
         List<AlertEvent> stillDown = members.stream()
                 .filter(m -> !Boolean.TRUE.equals(m.getResolved())).toList();
 
         String announcedAt = storm.getLastReAlertAt();
-        String closingAt = now();
         List<Object[]> leaves = new ArrayList<>(members.size());
         int announced = 0, unannounced = 0;
         for (AlertEvent e : stillDown) {
@@ -558,10 +590,6 @@ public class StormService {
             leave(leaves, storm.getId(), e.getId(), e.getResolvedAt() != null ? e.getResolvedAt() : closingAt, AlertStormMember.LEAVE_RECOVERED);
         }
         flushLeaves(storm.getId(), leaves);
-        storm.setResolved(true);
-        storm.setResolvedAt(closingAt);
-        storm.setResolveReason(reasonCode);
-        stormRepo.save(storm);
         unlinkLateJoiners(storm, members);   // liste okunduktan sonra bağlanan üye (kapanış yarışı, 2026-10-09)
 
         if (!recovered.isEmpty()) sendStormRecovery(storm, recovered, stillDown);
@@ -647,6 +675,9 @@ public class StormService {
             if (e.getId() != null && !stillDownIds.contains(e.getId())) recovered.add(e);
 
         String closingAt = now();
+        // SAHİPLEN (2026-10-21, çok pod — MP-04): üye listeleri kapanıştan ÖNCE okunur (eski sıra — kapanıştan sonra çözülen
+        // üye bireysel çözümünü alır, burada sayılmaz); bağ koparma, ayrılış kaydı ve kurtarma YALNIZ kapanışı kazanan turda.
+        if (!claimResolution(storm, closingAt, RESOLVE_DISABLED)) return;
         List<Object[]> leaves = new ArrayList<>(stillDown.size() + recovered.size());
         for (AlertEvent e : stillDown) {
             alertEventRepo.unlinkFromStorm(e.getId(), storm.getId());   // koşullu geri-bağlama (M6, yalnız BU fırtınadan); sonraki sweep bireysel re-alert
@@ -656,10 +687,6 @@ public class StormService {
             leave(leaves, storm.getId(), e.getId(), e.getResolvedAt() != null ? e.getResolvedAt() : closingAt, AlertStormMember.LEAVE_RECOVERED);
         }
         flushLeaves(storm.getId(), leaves);
-        storm.setResolved(true);
-        storm.setResolvedAt(closingAt);
-        storm.setResolveReason(RESOLVE_DISABLED);
-        stormRepo.save(storm);
         List<AlertEvent> known = new ArrayList<>(stillDown);
         known.addAll(recovered);
         unlinkLateJoiners(storm, known);   // liste okunduktan sonra bağlanan üye (kapanış yarışı, 2026-10-09)
@@ -692,6 +719,10 @@ public class StormService {
         for (AlertEvent m : members) if (!Boolean.TRUE.equals(m.getResolved())) stillDown.add(m);
         String notifiedAt = legacy.getLastReAlertAt() != null ? legacy.getLastReAlertAt()
                 : legacy.getCreatedAt() != null ? legacy.getCreatedAt() : now();
+        // SAHİPLEN (2026-10-21, çok pod — MP-04): taşıma, bırakma ve kurtarma yalnız eski fırtınayı GERÇEKTEN kapatan turda.
+        // Kapanış anı = sahiplenme anı: bundan sonra çözülen üye bireysel çözüm yolundan gider (isActive=false) ve aşağıdaki
+        // kurtulanlar okumasında sayılmaz (D-b7a kuralı aynı).
+        if (!claimResolution(legacy, now(), RESOLVE_LEGACY)) return;
         boolean perGroup = appSettings.getBoolean(KEY_PER_GROUP, false);
 
         Map<String, List<AlertEvent>> byScope = new LinkedHashMap<>();
@@ -742,11 +773,6 @@ public class StormService {
             leave(leaves, legacy.getId(), m.getId(), now(), AlertStormMember.LEAVE_RELEASED);
         }
         flushLeaves(legacy.getId(), leaves);
-
-        legacy.setResolved(true);
-        legacy.setResolvedAt(now());
-        legacy.setResolveReason(RESOLVE_LEGACY);
-        stormRepo.save(legacy);
         // D-b7(a) (2026-09-29): kurtulanlar işlemin SONUNDA yeniden okunur. Üye listesi baştan okunduktan sonra, taşıma /
         // çözme sürerken izleme turu bir üyeyi çözebilir: bireysel çözüm e-postası "fırtına aktif" diye bastırılmıştı, üye
         // ise baştaki okumada "hâlâ düşük" göründüğü için kurtulanlara girmiyordu → hiçbir çözüm bildirimi gitmiyordu.
@@ -1121,6 +1147,41 @@ public class StormService {
         }
     }
 
+    /**
+     * Kapanışın sahiplenmesi (2026-10-21, çok pod — MP-04): fırtına yalnız hâlâ AÇIKSA kapatılır — tek yazar kazanır. Eskiden
+     * okunan varlığın tamamı {@code save} ediliyordu (koşulsuz, {@code @Version} yok): iki pod aynı fırtınayı kapatıp
+     * kurtarma postasını / webhook'u / 7-24 çözümünü / push'u iki kez gönderebiliyordu.
+     */
+    static final String SQL_RESOLVE_CLAIM =
+            "UPDATE alert_storms SET resolved = true, resolved_at = ?, resolve_reason = ? WHERE id = ? AND resolved = false";
+    /** Kapanışta üye sayacı + tepe hedef (eski tam varlık kaydının yazdığı iki alan) — hedefli, kapanışı sahiplenen yazar. */
+    static final String SQL_RESOLVE_STATS =
+            "UPDATE alert_storms SET member_count = ?, peak_targets = GREATEST(COALESCE(peak_targets, 0), ?) WHERE id = ?";
+
+    /**
+     * Fırtınanın kapanışını sahiplenir; {@code true} = bu tur kapattı (bellekteki varlık da kapalı işaretlenir) ve kapanışın
+     * TÜM yan etkileri (üyelerin bırakılması / bağın koparılması, kurtarma postası, webhook, 7-24, push) bu tura aittir;
+     * {@code false} = başka pod / tur zaten kapattı ya da yazılamadı → hiçbir yan etki yok (yazılamadıysa sonraki tur dener).
+     */
+    boolean claimResolution(AlertStorm storm, String closingAt, String reasonCode) {
+        int rows;
+        try {
+            rows = jdbcTemplate.update(SQL_RESOLVE_CLAIM, closingAt, reasonCode, storm.getId());
+        } catch (Exception e) {
+            log.warn("Storm #{} kapanışı sahiplenilemedi — bu tur kapatmıyor (sonraki tur yeniden dener): {}",
+                    storm.getId(), e.getMessage());
+            return false;
+        }
+        if (rows != 1) {
+            log.info("Storm #{} zaten kapatılmış (başka pod / tur) — kapanış bildirimleri bu turdan gönderilmiyor", storm.getId());
+            return false;
+        }
+        storm.setResolved(true);
+        storm.setResolvedAt(closingAt);
+        storm.setResolveReason(reasonCode);
+        return true;
+    }
+
     /** Günlük toplu tekrarın sahiplenmesi (2026-10-09): damga hâlâ OKUNAN değerdeyse ileri alınır — tek yazar kazanır. */
     static final String SQL_REALERT_CLAIM =
             "UPDATE alert_storms SET last_re_alert_at = ? WHERE id = ? AND resolved = false AND last_re_alert_at = ?";
@@ -1216,8 +1277,12 @@ public class StormService {
             recordStormMaintenanceSkip(storm, downMembers,
                     "DAILY_REALERT".equals(trigger) ? TRIGGER_STORM_REALERT : TRIGGER_STORM_INITIAL);
             try {
-                storm.setLastReAlertAt(now());
-                stormRepo.save(storm);
+                // Hedefli + koşullu (2026-10-21, çok pod): varlığın tamamı kaydedilirse arada başka pod'un kapattığı fırtına
+                // bayat resolved=false ile yeniden AÇILIYORDU.
+                String at = now();
+                storm.setLastReAlertAt(at);
+                jdbcTemplate.update("UPDATE alert_storms SET last_re_alert_at = ? WHERE id = ? AND resolved = false",
+                        at, storm.getId());
             } catch (Exception e) {
                 log.warn("Storm #{} damgası yazılamadı (sistem bakımı): {}", storm.getId(), e.getMessage());
             }
@@ -1904,7 +1969,7 @@ public class StormService {
             String until = ISO.format(Instant.now().plusSeconds(LOCK_TTL_SECONDS));
             jdbcTemplate.update("DELETE FROM scheduler_lock WHERE name = ? AND locked_until < ?", lockName, nowIso);
             jdbcTemplate.update("INSERT INTO scheduler_lock(name, locked_by, locked_until) VALUES(?, ?, ?)",
-                    lockName, INSTANCE_ID, until);
+                    lockName, lockOwner, until);
             return true;
         } catch (org.springframework.dao.DuplicateKeyException e) {
             return false;   // başka pod yönetiyor — tipli yakalama, mesaj metnine bağımlılık yok
@@ -1929,9 +1994,28 @@ public class StormService {
 
     private void releaseLock() {
         try {
-            jdbcTemplate.update("DELETE FROM scheduler_lock WHERE name = ? AND locked_by = ?", "storm-sweep", INSTANCE_ID);
+            jdbcTemplate.update("DELETE FROM scheduler_lock WHERE name = ? AND locked_by = ?", "storm-sweep", lockOwner);
         } catch (Exception e) {
             log.debug("Storm kilidi bırakılamadı: {}", e.getMessage());
+        }
+    }
+
+    /** Kilit tazeleme — yalnız hâlâ BU pod'unsa (2026-10-21, çok pod — MP-04). */
+    static final String SQL_LOCK_RENEW = "UPDATE scheduler_lock SET locked_until = ? WHERE name = ? AND locked_by = ?";
+
+    /**
+     * Kilidi tazeler; {@code false} = artık bu pod'un değil (süresi doldu ve başka pod aldı) ya da yazılamadı → çağıran
+     * turu durdurur. Kilit TABLOSU yoksa (tek pod geri düşüşü, bkz. {@link #tryLock}) tazeleme de sorunsuz sayılır.
+     */
+    boolean renewLock() {
+        try {
+            String until = ISO.format(Instant.now().plusSeconds(LOCK_TTL_SECONDS));
+            return jdbcTemplate.update(SQL_LOCK_RENEW, until, "storm-sweep", lockOwner) == 1;
+        } catch (org.springframework.jdbc.BadSqlGrammarException e) {
+            return true;
+        } catch (Exception e) {
+            log.warn("Storm kilidi tazelenemedi — tur durduruluyor (güvenli taraf): {}", e.getMessage());
+            return false;
         }
     }
 

@@ -169,6 +169,8 @@ class StormSealingTest {
     private void lockOk() {
         when(jdbcTemplate.update(startsWith("DELETE FROM scheduler_lock"), any(), any())).thenReturn(1);
         when(jdbcTemplate.update(startsWith("INSERT INTO scheduler_lock"), any(), any(), any())).thenReturn(1);
+        // Kapanışın koşullu sahiplenmesi (2026-10-21, çok pod — MP-04): fırtına açık → 1 satır, bu tur kapatır.
+        when(jdbcTemplate.update(eq(StormService.SQL_RESOLVE_CLAIM), any(Object[].class))).thenReturn(1);
     }
 
     @Test
@@ -186,7 +188,9 @@ class StormSealingTest {
         storm.lifecycleSweep();
 
         assertThat(s.getResolved()).isTrue();
-        verify(stormRepo).save(s);
+        // Kapanış koşullu UPDATE ile (2026-10-21) — varlığın tamamı kaydedilmez (bayat alanlar geri sarılmasın)
+        verify(jdbcTemplate).update(eq(StormService.SQL_RESOLVE_CLAIM), anyString(), eq(StormService.RESOLVE_SEALED), eq(7L));
+        verify(stormRepo, never()).save(s);
         verify(alertEventRepo).releaseFromStormAsNotified(1L, 7L, announcedAt);
         verify(alertEventRepo).releaseFromStormAsNotified(2L, 7L, announcedAt);
         verify(alertEventRepo, never()).releaseFromStormAsNotified(eq(414L), anyLong(), anyString());
