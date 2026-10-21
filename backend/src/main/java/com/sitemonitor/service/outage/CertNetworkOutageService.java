@@ -68,6 +68,8 @@ public class CertNetworkOutageService {
     static final String MAIL_SENDING = "SENDING";
     static final String MAIL_SUPERSEDED = "SUPERSEDED";
     static final String MAIL_FAILED = "FAILED";
+    /** Gönderen pod gönderim sırasında durdu (SENDING bayatladı) — postanın gidip gitmediği bilinmiyor, YENİDEN GÖNDERİLMEZ. */
+    static final String MAIL_UNKNOWN = "UNKNOWN";
     /** Yönetici adresi ayarlı değil — kardeş tüketicilerle aynı: adres yoksa posta yok (kesin sonuç). */
     static final String MAIL_NO_ADDRESS = "SKIPPED: yönetici adresi yok";
     /** Aynı kaynağın eski çift açık satırı (çok pod öncesi) — çözüm postası yalnız en yeni satır için gider. */
@@ -75,8 +77,25 @@ public class CertNetworkOutageService {
 
     /** Bir postanın en çok deneme sayısı — sonra FAILED (her pod'un her turunda sonsuza dek denenmesin). */
     static final int MAX_ATTEMPTS = 24;
-    /** Sahiplenen pod öldüyse SENDING bu süreden sonra başka pod'ca yeniden sahiplenilir. */
+    /**
+     * Sahiplenen pod öldüyse SENDING bu süreden sonra UNKNOWN olur (inceleme F8 / S-3, 2026-10-21): posta belki gitti —
+     * resolution_notify kuralıyla aynı, yeniden gönderilmez (çift posta yerine iz).
+     */
     static final long CLAIM_STALE_MS = 10L * 60_000;
+    /**
+     * Güvenlik süresi (inceleme S-2): açık kesinti bu kadar eskiyse ŞÜPHESİZ her tur (küçük de olsa) onu kapatır — envanter
+     * min-errors'tun altına inince ya da eşik envanterin üstüne çıkınca kesinti sonsuza dek açık kalıp tüm sertifika
+     * alarmlarını durduruyordu. WARN + notification_logs izi.
+     */
+    static final long MAX_OUTAGE_AGE_MS = 24L * 60 * 60_000;
+    /** notification_logs tetiği (her posta kararı bir satır; alertEventId 0). */
+    public static final String TRIGGER = "NETWORK_OUTAGE";
+    /**
+     * Yönetici postalarının konuları — {@code EmailNotificationService.sendSystemAdminNetwork*} ile AYNI metin (421 kuyruk
+     * sonucu günlük satırına konu + alıcıyla geri yazılır; {@code CertNetworkOutageMailLogTest} kaynağı karşılaştırır).
+     */
+    static final String ALERT_SUBJECT = "[Site Monitor] ⚠ Ağ Erişim Sorunu Tespit Edildi";
+    static final String RESOLVED_SUBJECT = "[Site Monitor] ✅ Ağ Erişim Sorunu Çözüldü";
     /** Okuyucu ezberinin ömrü (ms). */
     static final long MEMO_MS = 10_000L;
     /** Bekleyen çözüm postası taranırken bakılan en yeni satır sayısı (sınırlı tarama). */
@@ -100,21 +119,35 @@ public class CertNetworkOutageService {
             "UPDATE network_outage_events SET network_errors = ?, total_checks = ?, error_rate = ? "
           + "WHERE status = 'ONGOING' AND " + CERT_SCOPE;
 
+    /**
+     * Kapanış: açılış postası hâlâ bekliyorsa SUPERSEDED (çözüm postası zaman çizelgesini taşır); bayat SENDING (gönderen pod
+     * durdu) UNKNOWN — hiçbir posta durumu ara hâlde kalmaz (inceleme S-3). Parametreler: çözüm anı, süre, çözüm postası
+     * durumu, bayatlık eşiği (ms), kimlik.
+     */
     static final String SQL_RESOLVE =
             "UPDATE network_outage_events SET status = 'RESOLVED', resolved_at = ?, duration_ms = ?, "
           + "resolved_mail_status = ?, resolved_mail_attempts = 0, "
-          + "alert_mail_status = CASE WHEN alert_mail_status IN ('PENDING', 'RETRY') THEN 'SUPERSEDED' ELSE alert_mail_status END "
+          + "alert_mail_status = CASE WHEN alert_mail_status IN ('PENDING', 'RETRY') THEN 'SUPERSEDED' "
+          + "WHEN alert_mail_status = 'SENDING' AND (alert_mail_claimed_ms IS NULL OR alert_mail_claimed_ms < ?) THEN 'UNKNOWN' "
+          + "ELSE alert_mail_status END "
           + "WHERE id = ? AND status = 'ONGOING'";
 
+    /** Açılış postasının sahiplenmesi — yalnız PENDING / RETRY (bayat SENDING yeniden gönderilmez, UNKNOWN olur: F8). */
     static final String SQL_CLAIM_ALERT =
             "UPDATE network_outage_events SET alert_mail_status = 'SENDING', alert_mail_claimed_ms = ? "
-          + "WHERE id = ? AND status = 'ONGOING' AND (alert_mail_status IN ('PENDING', 'RETRY') "
-          + "OR (alert_mail_status = 'SENDING' AND (alert_mail_claimed_ms IS NULL OR alert_mail_claimed_ms < ?)))";
+          + "WHERE id = ? AND status = 'ONGOING' AND alert_mail_status IN ('PENDING', 'RETRY')";
 
     static final String SQL_CLAIM_RESOLVED =
             "UPDATE network_outage_events SET resolved_mail_status = 'SENDING', resolved_mail_claimed_ms = ? "
-          + "WHERE id = ? AND status = 'RESOLVED' AND (resolved_mail_status IN ('PENDING', 'RETRY') "
-          + "OR (resolved_mail_status = 'SENDING' AND (resolved_mail_claimed_ms IS NULL OR resolved_mail_claimed_ms < ?)))";
+          + "WHERE id = ? AND status = 'RESOLVED' AND resolved_mail_status IN ('PENDING', 'RETRY')";
+
+    /** Bayat SENDING → UNKNOWN (koşullu; yalnız bir pod izi yazar). Parametreler: kimlik, bayatlık eşiği (ms). */
+    static final String SQL_EXPIRE_ALERT_SENDING =
+            "UPDATE network_outage_events SET alert_mail_status = 'UNKNOWN' WHERE id = ? AND alert_mail_status = 'SENDING' "
+          + "AND (alert_mail_claimed_ms IS NULL OR alert_mail_claimed_ms < ?)";
+    static final String SQL_EXPIRE_RESOLVED_SENDING =
+            "UPDATE network_outage_events SET resolved_mail_status = 'UNKNOWN' WHERE id = ? AND resolved_mail_status = 'SENDING' "
+          + "AND (resolved_mail_claimed_ms IS NULL OR resolved_mail_claimed_ms < ?)";
 
     private final JdbcTemplate jdbc;
     private final EmailNotificationService email;
@@ -122,6 +155,10 @@ public class CertNetworkOutageService {
 
     @Value("${site.monitor.system-admin.email:}")
     private String systemAdminEmail = "";
+
+    /** Posta kararlarının izi (inceleme S-4 / F8). Alan enjeksiyonu, null-güvenli — yokken iz yazılmaz (QUEUED_RETRY de kesin sayılmaz). */
+    @Autowired(required = false)
+    com.sitemonitor.repository.NotificationLogRepository notificationLogRepo;
 
     /** Saat (ms) — test paylaşılan saati verir. */
     LongSupplier clock = System::currentTimeMillis;
@@ -145,6 +182,12 @@ public class CertNetworkOutageService {
     /** Kurulum dışı (bean'siz) kullanım: yönetici adresinin yapılandırma varsayılanı. */
     public CertNetworkOutageService withSystemAdminEmailDefault(String fallback) {
         this.systemAdminEmail = fallback == null ? "" : fallback;
+        return this;
+    }
+
+    /** Kurulum dışı (bean'siz) kullanım: posta kararlarının izi. */
+    public CertNetworkOutageService withNotificationLogs(com.sitemonitor.repository.NotificationLogRepository repo) {
+        this.notificationLogRepo = repo;
         return this;
     }
 
@@ -248,14 +291,34 @@ public class CertNetworkOutageService {
                 return false;
             }
             java.util.Set<Long> tried = new java.util.HashSet<>();
-            if (total >= Math.max(0, minErrors)) {
+            String closeNote = null;
+            boolean canResolve = total >= Math.max(0, minErrors);
+            if (!canResolve && rate < threshold && ongoingExists()) {
+                // Küçük tur (inceleme S-2): ağ hatası oranı eşiğin ALTINDAYSA yine de kapatabilir — tüm aktif ağ envanterini
+                // denetlediyse (envanter min-errors'tan küçüldü / min-errors envanterin üstüne çıktı) ya da açık kesinti
+                // güvenlik süresinden eskiyse. Oran eşikteyse (küçük envanterde hepsi hâlâ düşüyor) kesinti açık kalır.
+                Long inventory = activeNetworkInventory();
+                if (inventory != null && total > 0 && total >= inventory) {
+                    canResolve = true;
+                    closeNote = "tüm aktif ağ envanteri (" + inventory + ") denetlendi, ağ hatası eşiğin altında";
+                } else if (oldestOngoingAgeMs(nowMs) >= MAX_OUTAGE_AGE_MS) {
+                    canResolve = true;
+                    closeNote = "açık kesinti " + (MAX_OUTAGE_AGE_MS / 3_600_000L) + " saati aştı ve son tur şüphesiz "
+                            + "(küçük tur: " + total + " kontrol < min-errors " + minErrors + ") — güvenlik süresiyle kapatıldı";
+                } else {
+                    log.info("Ağ kesintisi sürüyor — bu tur küçük ({} kontrol < min-errors {}), kesintiyi kapatamaz; "
+                            + "alarm işleme bekletiliyor", total, minErrors);
+                }
+            }
+            if (canResolve) {
                 for (Long id : resolveOngoing(nowMs, nowIso)) {
+                    if (closeNote != null) {
+                        log.warn("Ağ kesintisi (olay #{}) küçük turla kapatıldı: {}", id, closeNote);
+                        trace(RESOLVED_SUBJECT, "SKIPPED: kesinti küçük turla kapatıldı — " + closeNote, adminEmail(), id);
+                    }
                     sendResolved(id);
                     tried.add(id);
                 }
-            } else if (ongoingExists()) {
-                log.info("Ağ kesintisi sürüyor — bu tur küçük ({} kontrol < min-errors {}), kesintiyi kapatamaz; "
-                        + "alarm işleme bekletiliyor", total, minErrors);
             }
             retryPendingMails(tried);
             return !ongoingExists();
@@ -306,8 +369,9 @@ public class CertNetworkOutageService {
      * açık satır (çok pod öncesinden kalan çift) varsa en yeni satır çözüm postasını alır, eskiler {@value #MAIL_SKIPPED_DUPLICATE}.
      */
     List<Long> resolveOngoing(long nowMs, String nowIso) {
-        List<Map<String, Object>> open = jdbc.queryForList("SELECT id, detected_at FROM network_outage_events "
-                + "WHERE status = 'ONGOING' AND " + CERT_SCOPE + " ORDER BY id DESC");
+        List<Map<String, Object>> open = jdbc.queryForList("SELECT id, detected_at, alert_mail_status, alert_mail_claimed_ms "
+                + "FROM network_outage_events WHERE status = 'ONGOING' AND " + CERT_SCOPE + " ORDER BY id DESC");
+        long stale = nowMs - CLAIM_STALE_MS;
         List<Long> mine = new ArrayList<>();
         boolean first = true;
         for (Map<String, Object> r : open) {
@@ -316,11 +380,19 @@ public class CertNetworkOutageService {
             Long duration = durationMs(str(r.get("detected_at")), nowMs);
             String mailStatus = first ? MAIL_PENDING : MAIL_SKIPPED_DUPLICATE;
             first = false;
-            int n = jdbc.update(SQL_RESOLVE, nowIso, duration, mailStatus, id);
+            int n = jdbc.update(SQL_RESOLVE, nowIso, duration, mailStatus, stale, id);
             if (n == 1) {
                 invalidate();
                 log.info("✓ Network outage cleared — alarm processing resumed (olay #{})", id);
                 if (MAIL_PENDING.equals(mailStatus)) mine.add(id);
+                String before = str(r.get("alert_mail_status"));
+                Long claimed = num(r.get("alert_mail_claimed_ms"));
+                if (MAIL_PENDING.equals(before) || MAIL_RETRY.equals(before)) {
+                    trace(ALERT_SUBJECT, "SKIPPED: açılış postası gitmeden kesinti kapandı — çözüm postası zaman çizelgesini "
+                            + "taşır", adminEmail(), id);
+                } else if (MAIL_SENDING.equals(before) && (claimed == null || claimed < stale)) {
+                    trace(ALERT_SUBJECT, unknownStatus(), adminEmail(), id);
+                }
             }
         }
         return mine;
@@ -338,17 +410,14 @@ public class CertNetworkOutageService {
      */
     void retryPendingMails(java.util.Set<Long> tried) {
         long stale = clock.getAsLong() - CLAIM_STALE_MS;
+        expireStaleSending(stale);
         try {
             for (Long id : jdbc.queryForList("SELECT id FROM network_outage_events WHERE status = 'ONGOING' AND " + CERT_SCOPE
-                    + " AND (alert_mail_status IN ('PENDING', 'RETRY') OR (alert_mail_status = 'SENDING' AND "
-                    + "(alert_mail_claimed_ms IS NULL OR alert_mail_claimed_ms < ?))) ORDER BY id DESC LIMIT "
-                    + RETRY_SCAN_LIMIT, Long.class, stale)) {
+                    + " AND alert_mail_status IN ('PENDING', 'RETRY') ORDER BY id DESC LIMIT " + RETRY_SCAN_LIMIT, Long.class)) {
                 if (!tried.contains(id)) sendAlert(id);
             }
             for (Long id : jdbc.queryForList("SELECT id FROM network_outage_events WHERE status = 'RESOLVED' AND " + CERT_SCOPE
-                    + " AND (resolved_mail_status IN ('PENDING', 'RETRY') OR (resolved_mail_status = 'SENDING' AND "
-                    + "(resolved_mail_claimed_ms IS NULL OR resolved_mail_claimed_ms < ?))) ORDER BY id DESC LIMIT "
-                    + RETRY_SCAN_LIMIT, Long.class, stale)) {
+                    + " AND resolved_mail_status IN ('PENDING', 'RETRY') ORDER BY id DESC LIMIT " + RETRY_SCAN_LIMIT, Long.class)) {
                 if (!tried.contains(id)) sendResolved(id);
             }
         } catch (RuntimeException e) {
@@ -356,12 +425,45 @@ public class CertNetworkOutageService {
         }
     }
 
+    /**
+     * Bayat SENDING (gönderen pod gönderim sırasında durdu) → UNKNOWN + iz; yeniden GÖNDERİLMEZ (inceleme F8: eskiden yeniden
+     * sahiplenilip gönderiliyordu — SMTP'den sonra, sonuç yazılmadan ölen pod'un postası ikinci kez gidiyordu).
+     */
+    void expireStaleSending(long stale) {
+        try {
+            for (Long id : jdbc.queryForList("SELECT id FROM network_outage_events WHERE " + CERT_SCOPE
+                    + " AND alert_mail_status = 'SENDING' AND (alert_mail_claimed_ms IS NULL OR alert_mail_claimed_ms < ?) "
+                    + "ORDER BY id DESC LIMIT " + RETRY_SCAN_LIMIT, Long.class, stale)) {
+                if (jdbc.update(SQL_EXPIRE_ALERT_SENDING, id, stale) == 1) {
+                    invalidate();
+                    log.warn("Ağ kesintisi açılış postası (olay #{}) gönderilirken pod durdu — UNKNOWN, yeniden gönderilmedi", id);
+                    trace(ALERT_SUBJECT, unknownStatus(), adminEmail(), id);
+                }
+            }
+            for (Long id : jdbc.queryForList("SELECT id FROM network_outage_events WHERE " + CERT_SCOPE
+                    + " AND resolved_mail_status = 'SENDING' AND (resolved_mail_claimed_ms IS NULL OR resolved_mail_claimed_ms < ?) "
+                    + "ORDER BY id DESC LIMIT " + RETRY_SCAN_LIMIT, Long.class, stale)) {
+                if (jdbc.update(SQL_EXPIRE_RESOLVED_SENDING, id, stale) == 1) {
+                    invalidate();
+                    log.warn("Ağ kesintisi çözüm postası (olay #{}) gönderilirken pod durdu — UNKNOWN, yeniden gönderilmedi", id);
+                    trace(RESOLVED_SUBJECT, unknownStatus(), adminEmail(), id);
+                }
+            }
+        } catch (RuntimeException e) {
+            log.warn("Bayat ağ kesintisi postaları taranamadı (sonraki tur yeniden dener): {}", e.getMessage());
+        }
+    }
+
+    private static String unknownStatus() {
+        return "FAILED: sonuç bilinmiyor — gönderen pod gönderim sırasında durdu; çift posta olmasın diye yeniden gönderilmedi";
+    }
+
     // ── Postalar ─────────────────────────────────────────────────────────────────────────────────────────────────
 
     /** Açılış postası: sahiplen → gönder → sonuç. Sahiplenemezse (başka pod / zaten gitti / kesinti kapandı) hiçbir şey. */
     void sendAlert(long id) {
         long claimMs = clock.getAsLong();
-        if (jdbc.update(SQL_CLAIM_ALERT, claimMs, id, claimMs - CLAIM_STALE_MS) != 1) return;
+        if (jdbc.update(SQL_CLAIM_ALERT, claimMs, id) != 1) return;
         invalidate();
         String status;
         String adminEmail = adminEmail();
@@ -384,7 +486,7 @@ public class CertNetworkOutageService {
     /** Çözüm postası — yalnız satırı kapatan pod'un sahiplendiği (ya da yeniden denenen) satır için. */
     void sendResolved(long id) {
         long claimMs = clock.getAsLong();
-        if (jdbc.update(SQL_CLAIM_RESOLVED, claimMs, id, claimMs - CLAIM_STALE_MS) != 1) return;
+        if (jdbc.update(SQL_CLAIM_RESOLVED, claimMs, id) != 1) return;
         invalidate();
         String status;
         String adminEmail = adminEmail();
@@ -407,7 +509,12 @@ public class CertNetworkOutageService {
 
     /** Gönderimin sonucunu YALNIZ bu sahiplenmenin satırına yazar: kesin sonuç ya da RETRY (tavanda FAILED). */
     private void finish(String col, long id, long claimMs, String status, String adminEmail) {
-        boolean finalResult = isFinal(status);
+        boolean alert = col.startsWith("alert");
+        // İz (inceleme S-4 / F8): her karar bir notification_logs satırı. 421 kuyruğu (QUEUED_RETRY…) YALNIZ satırıyla
+        // birlikte kesindir — e-posta servisi sonucu bu satıra (konu + alıcı) geri yazar, yetimi süpürücü kapatır; satır
+        // yazılamadıysa kuyruk sonucu hiçbir yerde görünmez → yeniden denenecek (RETRY) sayılır.
+        boolean logged = trace(alert ? ALERT_SUBJECT : RESOLVED_SUBJECT, status, adminEmail, id);
+        boolean finalResult = isFinal(status) && (logged || status == null || !status.startsWith("QUEUED_RETRY"));
         try {
             if (finalResult) {
                 jdbc.update("UPDATE network_outage_events SET " + col + "_status = ? WHERE id = ? AND " + col
@@ -424,6 +531,8 @@ public class CertNetworkOutageService {
                 if (MAIL_FAILED.equals(now)) {
                     log.error("Ağ kesintisi {} postası (olay #{}) {} denemede gönderilemedi — vazgeçildi: {}",
                             col.startsWith("alert") ? "açılış" : "çözüm", id, MAX_ATTEMPTS, status);
+                    trace(alert ? ALERT_SUBJECT : RESOLVED_SUBJECT, "FAILED: " + MAX_ATTEMPTS + " denemede gönderilemedi — "
+                            + "vazgeçildi (son hata: " + status + ")", adminEmail, id);
                 } else {
                     log.warn("Ağ kesintisi {} postası (olay #{}) gönderilemedi — sonraki turda (herhangi bir pod) yeniden "
                             + "denenecek: {}{}", col.startsWith("alert") ? "açılış" : "çözüm", id, status,
@@ -444,6 +553,56 @@ public class CertNetworkOutageService {
                 || InactiveRecipientGuard.STATUS_SKIPPED.equals(status)
                 || MAIL_NO_ADDRESS.equals(status)
                 || status.startsWith("QUEUED_RETRY");
+    }
+
+    /**
+     * Posta kararının izi: {@code notification_logs} satırı (tetik {@value #TRIGGER}, alertEventId 0, konu = postanın konusu,
+     * alıcı = yönetici adresi). {@code true} = yazıldı. Hata yutulur.
+     */
+    boolean trace(String subject, String status, String adminEmail, long eventId) {
+        if (notificationLogRepo == null) return false;
+        try {
+            com.sitemonitor.model.NotificationLog entry = new com.sitemonitor.model.NotificationLog();
+            entry.setAlertEventId(0L);
+            entry.setSentAt(ISO.format(Instant.ofEpochMilli(clock.getAsLong())));
+            entry.setRecipientName("Sistem yöneticisi");
+            entry.setRecipientEmail(adminEmail == null || adminEmail.isBlank() ? "-" : adminEmail);
+            entry.setRecipientRole("SYSTEM_ADMIN");
+            entry.setSubject(subject);
+            entry.setMessage("Ağ kesintisi olayı #" + eventId + " — " + (status == null ? "sonuç yok" : status));
+            entry.setEmailStatus(status == null ? "FAILED: sonuç yok" : status);
+            entry.setWebhookStatus("SKIPPED");
+            entry.setTrigger(TRIGGER);
+            try { entry.setEmailFrom(email.getEmailFrom()); } catch (Exception ignored) { /* gönderen adı iz için şart değil */ }
+            notificationLogRepo.save(entry);
+            return true;
+        } catch (Exception e) {
+            log.warn("Ağ kesintisi posta izi yazılamadı (olay #{}): {}", eventId, e.getMessage());
+            return false;
+        }
+    }
+
+    /** Aktif AĞ envanteri (dosyadan yüklenen sertifikalar hariç) — okunamazsa null (kural uygulanmaz). */
+    Long activeNetworkInventory() {
+        try {
+            return jdbc.queryForObject("SELECT COUNT(*) FROM certificate_inventory WHERE active = true "
+                    + "AND (cert_source IS NULL OR cert_source <> 'MANUAL')", Long.class);
+        } catch (RuntimeException e) {
+            log.debug("Aktif ağ envanteri sayılamadı: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /** En eski açık CERT kesintisinin yaşı (ms); yoksa / okunamazsa 0. */
+    long oldestOngoingAgeMs(long nowMs) {
+        try {
+            String oldest = jdbc.queryForObject("SELECT MIN(detected_at) FROM network_outage_events WHERE status = 'ONGOING' AND "
+                    + CERT_SCOPE, String.class);
+            Long age = durationMs(oldest, nowMs);
+            return age == null ? 0L : Math.max(0L, age);
+        } catch (RuntimeException e) {
+            return 0L;
+        }
     }
 
     private Map<String, Object> row(long id) {

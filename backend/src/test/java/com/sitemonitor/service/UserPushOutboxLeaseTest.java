@@ -103,6 +103,10 @@ class UserPushOutboxLeaseTest {
     }
 
     private UserPushService pod(String name, long leaseSeconds) {
+        return pod(name, leaseSeconds, repo);
+    }
+
+    private UserPushService pod(String name, long leaseSeconds, UserPushDeliveryRepository deliveries) {
         AppSettingsService settings = mock(AppSettingsService.class, withSettings().defaultAnswer(inv -> {
             Object[] a = inv.getArguments();
             if (inv.getMethod().getName().startsWith("get") && a.length == 2 && a[0] instanceof String) return a[1];
@@ -114,7 +118,7 @@ class UserPushOutboxLeaseTest {
         when(settings.getString("site.monitor.userpush.pipeline", "")).thenReturn(name);
         TrustEvaluator trust = mock(TrustEvaluator.class);
         when(trust.pinAwareOutboundSslContext(any(), any())).thenReturn(null);
-        UserPushService s = new UserPushService(settings, repo, mock(UserPushScopeRepository.class),
+        UserPushService s = new UserPushService(settings, deliveries, mock(UserPushScopeRepository.class),
                 mock(UserPushRecipientResolver.class), mock(AlertEventRepository.class), mock(SecretCipher.class),
                 trust, mock(CaAutoPinService.class));
         s.leaseSecondsOverride = leaseSeconds;
@@ -198,5 +202,65 @@ class UserPushOutboxLeaseTest {
         b.drainOutbox();
         assertThat(pending()).isZero();
         assertThat(posts.values()).allSatisfy(c -> assertThat(c.get()).isEqualTo(1));
+    }
+
+    @Test
+    @DisplayName("Gönderildi ama sonuç bir kez yazılamadı (inceleme F4): satırın kirası ileri alınır — kira dolduktan sonra başka pod satırı ALMAZ (ikinci POST yok); sonraki süpürme SENT yazar")
+    void outcomeWriteFailsOnce_noSecondPostFromAnotherPod() throws Exception {
+        rows(1);
+        gatewayDelayMs = 0;
+        UserPushDeliveryRepository failing = mock(UserPushDeliveryRepository.class,
+                org.mockito.AdditionalAnswers.delegatesTo(repo));
+        doThrow(new org.springframework.dao.DataAccessResourceFailureException("bağlantı koptu"))
+                .doAnswer(org.mockito.AdditionalAnswers.delegatesTo(repo)).when(failing).saveAll(any());
+        doThrow(new org.springframework.dao.DataAccessResourceFailureException("bağlantı koptu"))
+                .doAnswer(org.mockito.AdditionalAnswers.delegatesTo(repo))
+                .when(failing).updateOutcome(any(), any(), any(), any(), any(), any(), any());
+        UserPushService a = pod("podA", 1, failing);
+
+        a.drainOutbox();
+
+        assertThat(posts.values().stream().mapToInt(AtomicInteger::get).sum()).isEqualTo(1);
+        assertThat(pending()).as("sonuç yazılamadı — satır PENDING").isEqualTo(1);
+        String held = jdbc.queryForObject("SELECT next_attempt_at FROM user_push_deliveries", String.class);
+        assertThat(held).as("kira 1 sn'lik tur kirasından çok ileri alındı")
+                .isGreaterThan(ISO.format(Instant.now().plusSeconds(UserPushService.SENT_UNRECORDED_HOLD_SEC - 60)));
+
+        Thread.sleep(1_500);   // A'nın ilk (1 sn) kirası çoktan doldu
+        UserPushService b = pod("podB", 1);
+        b.drainOutbox();
+        assertThat(posts.values().stream().mapToInt(AtomicInteger::get).sum()).as("başka pod ikinci kez GÖNDERMEDİ").isEqualTo(1);
+        assertThat(senders.values().stream().flatMap(List::stream).toList()).containsExactly("podA");
+
+        a.flushSentUnrecorded();   // A'nın sonraki süpürmesi: sonuç yazılır, yeniden gönderilmez
+        assertThat(jdbc.queryForObject("SELECT status FROM user_push_deliveries", String.class)).isEqualTo("SENT");
+        assertThat(a.sentUnrecorded).isEmpty();
+        b.drainOutbox();
+        a.drainOutbox();
+        assertThat(posts.values().stream().mapToInt(AtomicInteger::get).sum()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("Sonuç yazımı süpürmelerde de düşmeye devam ederse kira her süpürmede yeniden ileri alınır (satır hiçbir pod'ca yeniden kiralanmaz)")
+    void outcomeWriteKeepsFailing_leaseKeptAlive() throws Exception {
+        rows(1);
+        gatewayDelayMs = 0;
+        UserPushDeliveryRepository failing = mock(UserPushDeliveryRepository.class,
+                org.mockito.AdditionalAnswers.delegatesTo(repo));
+        doThrow(new org.springframework.dao.DataAccessResourceFailureException("bağlantı koptu")).when(failing).saveAll(any());
+        doThrow(new org.springframework.dao.DataAccessResourceFailureException("bağlantı koptu"))
+                .when(failing).updateOutcome(any(), any(), any(), any(), any(), any(), any());
+        UserPushService a = pod("podA", 1, failing);
+
+        a.drainOutbox();
+        String first = jdbc.queryForObject("SELECT next_attempt_at FROM user_push_deliveries", String.class);
+        Thread.sleep(1_100);
+        a.flushSentUnrecorded();
+        String second = jdbc.queryForObject("SELECT next_attempt_at FROM user_push_deliveries", String.class);
+
+        assertThat(second).as("kira ileri alındı").isGreaterThan(first);
+        assertThat(a.sentUnrecorded).hasSize(1);
+        pod("podB", 1).drainOutbox();
+        assertThat(posts.values().stream().mapToInt(AtomicInteger::get).sum()).isEqualTo(1);
     }
 }

@@ -134,8 +134,11 @@ public class NetworkOutageOngoingDedupe {
             if (!(id instanceof Number n)) continue;
             Object det = r.get("detected_at");
             Long duration = CertNetworkOutageService.durationMs(det == null ? null : det.toString(), nowMs);
+            // Açılış postası ara hâlde kalmaz (inceleme S-3): bekleyen → SUPERSEDED, gönderiliyor (eski çift satır) → UNKNOWN.
             int changed = jdbc.update("UPDATE network_outage_events SET status = 'RESOLVED', resolved_at = ?, duration_ms = ?, "
-                    + "resolved_mail_status = ? WHERE id = ? AND status = 'ONGOING'",
+                    + "resolved_mail_status = ?, alert_mail_status = CASE WHEN alert_mail_status IN ('PENDING', 'RETRY') "
+                    + "THEN 'SUPERSEDED' WHEN alert_mail_status = 'SENDING' THEN 'UNKNOWN' ELSE alert_mail_status END "
+                    + "WHERE id = ? AND status = 'ONGOING'",
                     nowIso, duration, CertNetworkOutageService.MAIL_SKIPPED_DUPLICATE, n.longValue());
             if (changed == 1) {
                 resolved++;

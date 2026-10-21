@@ -121,4 +121,28 @@ class NetworkOutageOngoingDedupeTest {
         for (int i = 0; i < 30; i++) scheduled.run();
         verify(sched, times(NetworkOutageOngoingDedupe.MAX_ATTEMPTS)).callWithSchedulerLock(eq(NetworkOutageOngoingDedupe.LOCK), any());
     }
+
+    @Test
+    @DisplayName("Kapatılan çift satırın açılış postası ara hâlde kalmaz (inceleme S-3): bekleyen → SUPERSEDED, gönderiliyor → UNKNOWN, gitmiş olduğu gibi")
+    void closedDuplicateMailStatusIsFinal() {
+        long pend = NetworkOutageTestSchema.insertLegacyOngoing(jdbc, null, "2026-10-20T01:00:00");
+        long sending = NetworkOutageTestSchema.insertLegacyOngoing(jdbc, null, "2026-10-20T02:00:00");
+        long sent = NetworkOutageTestSchema.insertLegacyOngoing(jdbc, null, "2026-10-20T03:00:00");
+        long newest = NetworkOutageTestSchema.insertLegacyOngoing(jdbc, null, "2026-10-20T04:00:00");
+        jdbc.update("UPDATE network_outage_events SET alert_mail_status = 'RETRY' WHERE id = ?", pend);
+        jdbc.update("UPDATE network_outage_events SET alert_mail_status = 'SENDING', alert_mail_claimed_ms = 1 WHERE id = ?", sending);
+        jdbc.update("UPDATE network_outage_events SET alert_mail_status = 'SENT' WHERE id = ?", sent);
+        jdbc.update("UPDATE network_outage_events SET alert_mail_status = 'PENDING' WHERE id = ?", newest);
+
+        new NetworkOutageOngoingDedupe(jdbc, provider(null)).dedupe();
+
+        assertThat(jdbc.queryForObject("SELECT alert_mail_status FROM network_outage_events WHERE id = ?", String.class, pend))
+                .isEqualTo(CertNetworkOutageService.MAIL_SUPERSEDED);
+        assertThat(jdbc.queryForObject("SELECT alert_mail_status FROM network_outage_events WHERE id = ?", String.class, sending))
+                .isEqualTo(CertNetworkOutageService.MAIL_UNKNOWN);
+        assertThat(jdbc.queryForObject("SELECT alert_mail_status FROM network_outage_events WHERE id = ?", String.class, sent))
+                .isEqualTo("SENT");
+        assertThat(jdbc.queryForObject("SELECT alert_mail_status FROM network_outage_events WHERE id = ?", String.class, newest))
+                .as("kalan en yeni açık satıra dokunulmaz").isEqualTo("PENDING");
+    }
 }

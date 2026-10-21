@@ -1445,6 +1445,7 @@ public class UserPushService {
     @Scheduled(fixedDelayString = "${site.monitor.userpush.outbox-sweep-ms:60000}",
                initialDelayString = "${site.monitor.userpush.outbox-sweep-initial-ms:30000}")
     void sweepOutbox() {
+        flushSentUnrecorded();   // ağ geçidinden bağımsız: devre kesici açıkken de sonucu yazılamamış gönderimler kalıcılaşsın
         if (circuitOpen()) return;
         worker.execute(this::drainOutbox);
     }
@@ -1452,6 +1453,7 @@ public class UserPushService {
     /** PENDING satırları batch bazında gönderir. Tek worker — eşzamanlılık yok. */
     void drainOutbox() {
         if (stopping) return;   // kapanış: yeni tur yok — satırlar veritabanında, başka pod alır
+        flushSentUnrecorded();
         try {
             // Yalnız ZAMANI GELMİŞ satırlar: fail()'in backoff'u satıra yazılır; süpürme/enqueue/açılış turları
             // bekleyen retry'ı erken göndermesin (2026-09-28). Yeni satırlar (damgasız) hemen gelir.
@@ -1645,8 +1647,26 @@ public class UserPushService {
         return false;
     }
 
-    /** Gönderildi ama sonucu yazılamadı: SENT sonucunun yeniden yazımı için gereken alanlar + kayıt anı. */
-    record SentUnrecorded(Integer attempts, Integer httpStatus, String sentAt, long atMs) {}
+    /**
+     * Gönderildi ama sonucu yazılamadı: SENT sonucunun yeniden yazımı için gereken alanlar + kayıt anı + satırın şu anki kira
+     * damgası ({@code lease}; bu pod'un tuttuğu, null = bilinmiyor).
+     */
+    record SentUnrecorded(Integer attempts, Integer httpStatus, String sentAt, long atMs, String lease) {
+        SentUnrecorded(Integer attempts, Integer httpStatus, String sentAt, long atMs) {
+            this(attempts, httpStatus, sentAt, atMs, null);
+        }
+
+        SentUnrecorded withLease(String l) {
+            return new SentUnrecorded(attempts, httpStatus, sentAt, atMs, l);
+        }
+    }
+
+    /**
+     * Sonucu yazılamamış gönderimin satır kirası bu kadar ileri alınır ve her süpürmede (≈ 60 sn) yeniden ileri alınır
+     * (2026-10-21, çok pod — inceleme F4): kira dolup başka pod satırı yeniden kiralayıp AYNI push'u ikinci kez göndermesin.
+     * Pod ölürse kira en geç bu sürede düşer ve satır yeniden gönderilir (pod ölümünde en az bir kez — bilinçli).
+     */
+    static final long SENT_UNRECORDED_HOLD_SEC = 10L * 60;
 
     /**
      * Push API'nin KABUL ETTİĞİ ama sonucu (tam kayıt + dar güncelleme) yazılamamış satırlar (2026-10-09). Satır
@@ -1681,14 +1701,57 @@ public class UserPushService {
     }
 
     /** Gönderilmiş satırın sonucu yazılamadı — sonraki turların yeniden göndermemesi için hatırla (tavanlı). */
-    private void rememberSentUnrecorded(UserPushDelivery d) {
+    private void rememberSentUnrecorded(UserPushDelivery d, String lease) {
         if (d.getId() == null) return;
         if (sentUnrecorded.size() >= SENT_UNRECORDED_MAX) {
             log.warn("user-push: sonucu yazılamamış gönderim kaydı tavanda ({}) — satır #{} hatırlanamadı", SENT_UNRECORDED_MAX, d.getId());
             return;
         }
-        sentUnrecorded.put(d.getId(), new SentUnrecorded(d.getAttempts(), d.getHttpStatus(), d.getSentAt(),
-                System.currentTimeMillis()));
+        SentUnrecorded s = new SentUnrecorded(d.getAttempts(), d.getHttpStatus(), d.getSentAt(), System.currentTimeMillis(), lease);
+        sentUnrecorded.put(d.getId(), s);
+        holdLease(d.getId(), s);   // hemen: kira dolmadan başka pod satırı yeniden almasın
+    }
+
+    /**
+     * Sonucu yazılamamış gönderimleri kalıcılaştırır (2026-10-21, çok pod — inceleme F4): her süpürme / turda önce SENT
+     * yazılmaya çalışılır; yazılamazsa satırın kirası (hâlâ bu pod'unsa) ileri alınır — satır BAŞKA pod'ca yeniden
+     * kiralanıp ikinci kez gönderilmesin. Eskiden SENT yalnız bu pod satırı kira dolunca yeniden kiraladığında yazılıyordu;
+     * kira dolunca iki pod'un süpürmesi yarışıyor, öbür pod kazanırsa aynı push yeniden gidiyordu.
+     */
+    void flushSentUnrecorded() {
+        if (sentUnrecorded.isEmpty()) return;
+        long nowMs = System.currentTimeMillis();
+        sentUnrecorded.values().removeIf(x -> nowMs - x.atMs() > SENT_UNRECORDED_TTL_MS);
+        for (Map.Entry<Long, SentUnrecorded> e : new ArrayList<>(sentUnrecorded.entrySet())) {
+            Long id = e.getKey();
+            SentUnrecorded s = e.getValue();
+            try {
+                deliveryRepo.updateOutcome(id, "SENT", s.attempts(), s.httpStatus(), null, s.sentAt(), null);
+                sentUnrecorded.remove(id, s);
+                log.info("user-push satır #{}: gönderilmiş push'un SENT sonucu şimdi yazıldı (yeniden gönderilmedi)", id);
+            } catch (Exception ex) {
+                holdLease(id, s);
+            }
+        }
+    }
+
+    /** Satırın kirasını (hâlâ bu pod'un damgasındaysa) ileri alır; hata yutulur (sonraki süpürme yeniden dener). */
+    private void holdLease(Long id, SentUnrecorded s) {
+        if (id == null || s == null || s.lease() == null) return;
+        String next = ISO.format(Instant.now().plusSeconds(SENT_UNRECORDED_HOLD_SEC))
+                + "." + String.format("%09d", java.util.concurrent.ThreadLocalRandom.current().nextInt(1_000_000_000));
+        try {
+            int n = deliveryRepo.renewLease(List.of(id), s.lease(), next);
+            if (n == 1) {
+                sentUnrecorded.replace(id, s, s.withLease(next));
+            } else {
+                // Kira artık bu pod'un değil (başka pod aldı ya da satır sonuçlandı) — ileri alınacak bir şey yok.
+                sentUnrecorded.replace(id, s, s.withLease(null));
+                log.warn("user-push satır #{}: sonucu yazılamamış gönderimin kirası artık bu pod'da değil", id);
+            }
+        } catch (Exception ex) {
+            log.debug("user-push satır #{}: kira ileri alınamadı (sonraki süpürme yeniden dener): {}", id, ex.toString());
+        }
     }
 
     private void sendBatch(List<UserPushDelivery> rows) {
@@ -1755,7 +1818,9 @@ public class UserPushService {
             if (notificationId != null && notificationId.length() > MAX_NOTIFICATION_ID)
                 notificationId = notificationId.substring(0, MAX_NOTIFICATION_ID);
             String sentAt = ISO.format(Instant.now());
+            Map<Long, String> leases = new HashMap<>();   // sonuç yazılamazsa kirayı tutabilmek için (inceleme F4)
             for (UserPushDelivery d : rows) {
+                if (d.getId() != null && d.getNextAttemptAt() != null) leases.put(d.getId(), d.getNextAttemptAt());
                 d.setStatus("SENT");
                 d.setHttpStatus(resp.statusCode());
                 d.setSentAt(sentAt);
@@ -1764,7 +1829,7 @@ public class UserPushService {
                 d.setNotificationId(notificationId);   // tek istek → tek numara, TÜM alt satırlara
                 d.setRawResponse(raw);
             }
-            saveOutcome(rows);
+            saveOutcome(rows, leases);
             log.info("user-push gönderildi: {} alıcı (HTTP {})", userIds.size(), resp.statusCode());
         } else {
             fail(rows, resp.statusCode(), "HTTP " + resp.statusCode() + " — " + raw, true);
@@ -1777,6 +1842,11 @@ public class UserPushService {
      * PENDING kalıp yeniden gönderilmesin, başarısız satırın deneme sayacı da ilerlesin diye (2026-09-28).
      */
     private void saveOutcome(List<UserPushDelivery> rows) {
+        saveOutcome(rows, Map.of());
+    }
+
+    /** {@link #saveOutcome(List)} — {@code leases}: gönderilen satırların kira damgası (sonuç yazılamazsa kira tutulur). */
+    private void saveOutcome(List<UserPushDelivery> rows, Map<Long, String> leases) {
         try {
             deliveryRepo.saveAll(rows);
         } catch (Exception e) {
@@ -1790,7 +1860,7 @@ public class UserPushService {
                 } catch (Exception ex) {
                     log.warn("user-push satır #{} durumu yazılamadı: {}", d.getId(), ex.toString());
                     // Gönderildi ama PENDING kaldı (2026-10-09): sonraki turlar yeniden göndermesin — withoutSentUnrecorded.
-                    if ("SENT".equals(d.getStatus())) rememberSentUnrecorded(d);
+                    if ("SENT".equals(d.getStatus())) rememberSentUnrecorded(d, leases.get(d.getId()));
                 }
             }
         }

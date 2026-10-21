@@ -119,4 +119,26 @@ public class AlertStorm {
 
     /** Kapanış nedeni: FLOOR (histerezis tabanı) | SEALED (sessiz pencere) | DISABLED (koruma kapatıldı) | LEGACY_RETIRE. */
     private String resolveReason;
+
+    /*
+     * İki aşamalı kapanış (2026-10-21, çok pod — inceleme S-1 / F1). Kapanışı sahiplenen tur önce CLOSING yazar
+     * (resolved hâlâ false: yaşam döngüsü yarıda kalan kapanışı bulup bitirebilsin), üye bağlarını koparır, kurtarma
+     * bildirimini TEK kez gönderir ({@code recovery_state} PENDING → SENDING → SENT / NONE / UNKNOWN), en son
+     * {@code resolved=true, close_state=DONE}. NULL = açık fırtına (ya da bu sütunlardan önce kapanmış kayıt). Yazan tek yer
+     * StormService'in koşullu UPDATE'leri — varlık kaydı bu sütunlara dokunmaz.
+     */
+    @Column(name = "close_state", length = 16, insertable = false, updatable = false)
+    private String closeState;
+
+    @Column(name = "close_claimed_at", length = 30, insertable = false, updatable = false)
+    private String closeClaimedAt;
+
+    @Column(name = "close_owner", length = 120, insertable = false, updatable = false)
+    private String closeOwner;
+
+    @Column(name = "close_attempts", insertable = false, updatable = false)
+    private Integer closeAttempts;
+
+    @Column(name = "recovery_state", length = 16, insertable = false, updatable = false)
+    private String recoveryState;
 }

@@ -222,12 +222,27 @@ class StormTeamIsolationTest {
                 return 1;
             }
             // Kapanışın koşullu sahiplenmesi (2026-10-21, çok pod — MP-04): yalnız hâlâ açık fırtına kapatılır.
-            if (sql.equals(StormService.SQL_RESOLVE_CLAIM)) {
-                AlertStorm s = byId.get((Long) a[3]);
-                if (s == null || Boolean.TRUE.equals(s.getResolved())) return 0;
+            // İki aşamalı kapanış (2026-10-21): sahiplen (CLOSING, hâlâ resolved=false) → kurtarma tek kez → DONE.
+            if (sql.equals(StormService.SQL_CLOSE_CLAIM)) {
+                AlertStorm s = byId.get((Long) a[5]);
+                if (s == null || Boolean.TRUE.equals(s.getResolved()) || s.getCloseState() != null) return 0;
+                s.setCloseState(StormService.CLOSE_CLOSING);
+                s.setRecoveryState(StormService.RECOVERY_PENDING);
+                s.setResolvedAt(String.valueOf(a[3]));
+                s.setResolveReason(String.valueOf(a[4]));
+                return 1;
+            }
+            if (sql.equals(StormService.SQL_RECOVERY_CLAIM)) {
+                AlertStorm s = byId.get((Long) a[1]);
+                if (s == null || !StormService.RECOVERY_PENDING.equals(s.getRecoveryState())) return 0;
+                s.setRecoveryState(StormService.RECOVERY_SENDING);
+                return 1;
+            }
+            if (sql.equals(StormService.SQL_CLOSE_DONE)) {
+                AlertStorm s = byId.get((Long) a[1]);
+                if (s == null || Boolean.TRUE.equals(s.getResolved()) || !StormService.CLOSE_CLOSING.equals(s.getCloseState())) return 0;
                 s.setResolved(true);
-                s.setResolvedAt(String.valueOf(a[1]));
-                s.setResolveReason(String.valueOf(a[2]));
+                s.setCloseState(StormService.CLOSE_DONE);
                 active.values().removeIf(x -> x == s);
                 return 1;
             }

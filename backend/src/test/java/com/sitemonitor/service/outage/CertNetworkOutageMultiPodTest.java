@@ -7,11 +7,15 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import com.sitemonitor.model.NotificationLog;
+import com.sitemonitor.repository.NotificationLogRepository;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -40,6 +44,10 @@ class CertNetworkOutageMultiPodTest {
     private final ConcurrentLinkedQueue<String> resolvedResults = new ConcurrentLinkedQueue<>();
     private final AtomicInteger alertMails = new AtomicInteger();
     private final AtomicInteger resolvedMails = new AtomicInteger();
+    /** notification_logs izi (inceleme S-4 / F8); {@code logFails} = günlük yazımı düşer. */
+    private final List<NotificationLog> logs = new CopyOnWriteArrayList<>();
+    private final AtomicBoolean logFails = new AtomicBoolean();
+    private NotificationLogRepository logRepo;
 
     @BeforeEach
     void setUp() {
@@ -58,6 +66,12 @@ class CertNetworkOutageMultiPodTest {
             String r = resolvedResults.poll();
             return r == null ? "SENT" : r;
         });
+        logRepo = mock(NotificationLogRepository.class);
+        when(logRepo.save(any())).thenAnswer(i -> {
+            if (logFails.get()) throw new org.springframework.dao.DataAccessResourceFailureException("günlük yazılamadı");
+            logs.add(i.getArgument(0));
+            return i.getArgument(0);
+        });
         a = pod();
         b = pod();
     }
@@ -68,7 +82,8 @@ class CertNetworkOutageMultiPodTest {
     }
 
     private CertNetworkOutageService pod() {
-        CertNetworkOutageService s = new CertNetworkOutageService(jdbc, email, settings).withSystemAdminEmailDefault(ADMIN);
+        CertNetworkOutageService s = new CertNetworkOutageService(jdbc, email, settings).withSystemAdminEmailDefault(ADMIN)
+                .withNotificationLogs(logRepo);
         s.clock = mp.clockSupplier();
         return s;
     }
@@ -230,8 +245,8 @@ class CertNetworkOutageMultiPodTest {
     }
 
     @Test
-    @DisplayName("Sahiplenen pod öldü (SENDING kaldı): 10 dk dolmadan başka pod dokunmaz, dolunca TEK kez gönderir")
-    void staleSendingClaimIsRetaken() {
+    @DisplayName("Sahiplenen pod gönderirken öldü (SENDING kaldı, inceleme F8): 10 dk dolmadan dokunulmaz; dolunca UNKNOWN + iz — YENİDEN GÖNDERİLMEZ (çift posta yok)")
+    void staleSendingBecomesUnknown_notResent() {
         suspectedRun(a);
         long id = (Long) onlyRow().get("id");
         jdbc.update("UPDATE network_outage_events SET alert_mail_status = 'SENDING', alert_mail_claimed_ms = ? WHERE id = ?",
@@ -241,11 +256,40 @@ class CertNetworkOutageMultiPodTest {
         mp.advance(CertNetworkOutageService.CLAIM_STALE_MS - 1_000);
         suspectedRun(b);
         assertThat(alertMails.get()).as("taze SENDING başka pod'da sürüyor sayılır").isEqualTo(before);
+        assertThat(onlyRow()).containsEntry("alert_mail_status", "SENDING");
 
         mp.advance(2_000);
         suspectedRun(b);
-        assertThat(alertMails.get()).isEqualTo(before + 1);
-        assertThat(onlyRow()).containsEntry("alert_mail_status", "SENT");
+        suspectedRun(a);
+        assertThat(alertMails.get()).as("belki gitmiş posta yeniden gönderilmez").isEqualTo(before);
+        assertThat(onlyRow()).containsEntry("alert_mail_status", CertNetworkOutageService.MAIL_UNKNOWN);
+        assertThat(traces(CertNetworkOutageService.ALERT_SUBJECT, "sonuç bilinmiyor")).as("tek iz").isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("Kesinti kapanırken açılış postası bayat SENDING'de (inceleme S-3): UNKNOWN olur (ara hâlde kalmaz) + iz; taze SENDING'e dokunulmaz")
+    void resolveMapsStaleSendingToUnknown() {
+        suspectedRun(a);
+        long id = (Long) onlyRow().get("id");
+        jdbc.update("UPDATE network_outage_events SET alert_mail_status = 'SENDING', alert_mail_claimed_ms = ? WHERE id = ?",
+                mp.now(), id);
+        mp.advance(CertNetworkOutageService.CLAIM_STALE_MS + 1_000);
+
+        healthyRun(b);
+
+        assertThat(onlyRow()).containsEntry("status", "RESOLVED")
+                .containsEntry("alert_mail_status", CertNetworkOutageService.MAIL_UNKNOWN)
+                .containsEntry("resolved_mail_status", "SENT");
+        assertThat(traces(CertNetworkOutageService.ALERT_SUBJECT, "sonuç bilinmiyor")).isEqualTo(1);
+
+        // taze SENDING (gönderen pod hâlâ çalışıyor) — kapanış ona dokunmaz, gönderen pod sonucunu kendisi yazar
+        jdbc.update("DELETE FROM network_outage_events");
+        suspectedRun(a);
+        long id2 = (Long) onlyRow().get("id");
+        jdbc.update("UPDATE network_outage_events SET alert_mail_status = 'SENDING', alert_mail_claimed_ms = ? WHERE id = ?",
+                mp.now(), id2);
+        healthyRun(b);
+        assertThat(onlyRow()).containsEntry("alert_mail_status", "SENDING");
     }
 
     @Test
@@ -263,13 +307,105 @@ class CertNetworkOutageMultiPodTest {
     }
 
     @Test
-    @DisplayName("421 kuyruğu (QUEUED_RETRY…) kesin sonuçtur — e-posta servisi yeniden dener, sonraki tur ikinci posta atmaz")
+    @DisplayName("421 kuyruğu (QUEUED_RETRY…) günlük satırıyla birlikte kesin sonuçtur — e-posta servisi o satıra geri yazar, sonraki tur ikinci posta atmaz")
     void queuedRetryIsFinal() {
         alertResults.add("QUEUED_RETRY: 421 too many connections");
         suspectedRun(a);
         mp.advance(300_000);
         suspectedRun(b);
         assertThat(alertMails.get()).isEqualTo(1);
+        assertThat(onlyRow().get("alert_mail_status").toString()).startsWith("QUEUED_RETRY");
+        assertThat(logs).filteredOn(l -> CertNetworkOutageService.ALERT_SUBJECT.equals(l.getSubject()))
+                .singleElement()
+                .satisfies(l -> {
+                    assertThat(l.getEmailStatus()).startsWith("QUEUED_RETRY");
+                    assertThat(l.getRecipientEmail()).as("421 geri yazımı konu + alıcıyla eşleşir").isEqualTo(ADMIN);
+                    assertThat(l.getTrigger()).isEqualTo(CertNetworkOutageService.TRIGGER);
+                    assertThat(l.getAlertEventId()).isZero();
+                });
+    }
+
+    @Test
+    @DisplayName("421 kuyruğu ama günlük satırı YAZILAMADI (inceleme F8): kuyruğun sonucu hiçbir yerde görünmezdi → kesin sayılmaz, RETRY; sonraki tur yeniden dener")
+    void queuedRetryWithoutLogRow_isRetried() {
+        alertResults.add("QUEUED_RETRY: 421 too many connections");
+        logFails.set(true);
+        suspectedRun(a);
+        assertThat(onlyRow()).containsEntry("alert_mail_status", "RETRY").containsEntry("alert_mail_attempts", 1);
+
+        logFails.set(false);
+        mp.advance(300_000);
+        suspectedRun(b);
+        assertThat(alertMails.get()).isEqualTo(2);
+        assertThat(onlyRow()).containsEntry("alert_mail_status", "SENT");
+    }
+
+    @Test
+    @DisplayName("Her yönetici postası kararı bir notification_logs satırı (inceleme S-4): açılış SENT, çözüm SENT, gitmeden kapanan açılış SKIPPED — tetik NETWORK_OUTAGE, alertEventId 0")
+    void everyAdminMailDecisionIsLogged() {
+        suspectedRun(a);
+        mp.advance(600_000);
+        healthyRun(b);
+        assertThat(traces(CertNetworkOutageService.ALERT_SUBJECT, "SENT")).isEqualTo(1);
+        assertThat(traces(CertNetworkOutageService.RESOLVED_SUBJECT, "SENT")).isEqualTo(1);
+
+        alertResults.add("FAILED: smtp");
+        mp.advance(600_000);
+        suspectedRun(a);
+        mp.advance(600_000);
+        healthyRun(b);
+        assertThat(traces(CertNetworkOutageService.ALERT_SUBJECT, "FAILED: smtp")).isEqualTo(1);
+        assertThat(traces(CertNetworkOutageService.ALERT_SUBJECT, "SKIPPED: açılış postası gitmeden")).isEqualTo(1);
+        assertThat(logs).allSatisfy(l -> {
+            assertThat(l.getTrigger()).isEqualTo(CertNetworkOutageService.TRIGGER);
+            assertThat(l.getAlertEventId()).isZero();
+            assertThat(l.getRecipientRole()).isEqualTo("SYSTEM_ADMIN");
+        });
+    }
+
+    @Test
+    @DisplayName("Adres yok / posta kanalı kapalı da iz bırakır (SKIPPED ≠ FAILED)")
+    void skippedDecisionsAreLogged() {
+        CertNetworkOutageService noAddr = new CertNetworkOutageService(jdbc, email, settings).withNotificationLogs(logRepo);
+        noAddr.clock = mp.clockSupplier();
+        noAddr.onRun(8, 10, 0.8, true, 3, 0.5);
+        assertThat(traces(CertNetworkOutageService.ALERT_SUBJECT, CertNetworkOutageService.MAIL_NO_ADDRESS)).isEqualTo(1);
+        assertThat(logs).singleElement().satisfies(l -> assertThat(l.getRecipientEmail()).isEqualTo("-"));
+    }
+
+    @Test
+    @DisplayName("Küçük envanter (min-errors'tan küçük, inceleme S-2): TÜM aktif ağ envanterini denetleyen şüphesiz tur kesintiyi kapatır (+ iz); oran eşikteyse kapatmaz")
+    void fullSweepOfSmallInventoryResolves() {
+        jdbc.execute("CREATE TABLE certificate_inventory (id BIGINT PRIMARY KEY, active BOOLEAN, cert_source VARCHAR(16))");
+        jdbc.update("INSERT INTO certificate_inventory VALUES (1, true, NULL), (2, true, 'NETWORK'), (3, true, 'MANUAL'), (4, false, NULL)");
+        suspectedRun(a);
+
+        assertThat(b.onRun(2, 2, 1.0, false, 3, 0.5)).as("iki alan adının ikisi de düşüyor: kesinti sürer").isFalse();
+        assertThat(ongoing()).isEqualTo(1);
+
+        assertThat(b.onRun(0, 2, 0.0, false, 3, 0.5)).as("tüm ağ envanteri (2) denetlendi, hata yok").isTrue();
+        assertThat(ongoing()).isZero();
+        assertThat(resolvedMails.get()).isEqualTo(1);
+        assertThat(traces(CertNetworkOutageService.RESOLVED_SUBJECT, "küçük turla kapatıldı")).isEqualTo(1);
+
+        suspectedRun(a);
+        assertThat(b.onRun(0, 1, 0.0, false, 3, 0.5)).as("envanterin yarısı — kapatamaz").isFalse();
+        assertThat(ongoing()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("Güvenlik süresi (inceleme S-2): 24 saatten eski açık kesintiyi küçük ama şüphesiz tur kapatır — WARN + iz, çözüm postası gider")
+    void maxAgeResolvesStuckOutage() {
+        suspectedRun(a);
+        mp.advance(CertNetworkOutageService.MAX_OUTAGE_AGE_MS - 60_000);
+        assertThat(b.onRun(0, 1, 0.0, false, 3, 0.5)).isFalse();
+        assertThat(ongoing()).isEqualTo(1);
+
+        mp.advance(120_000);
+        assertThat(b.onRun(1, 2, 1.0 / 2 - 0.01, false, 3, 0.5)).isTrue();
+        assertThat(ongoing()).isZero();
+        assertThat(resolvedMails.get()).isEqualTo(1);
+        assertThat(traces(CertNetworkOutageService.RESOLVED_SUBJECT, "güvenlik süresiyle")).isEqualTo(1);
     }
 
     @Test
@@ -312,5 +448,10 @@ class CertNetworkOutageMultiPodTest {
         assertThat(s.onRun(0, 40, 0.0, false, 3, 0.5)).isTrue();
         assertThat(s.snapshot()).isEqualTo(CertNetworkOutageService.NONE);
         assertThat(alertMails.get() + resolvedMails.get()).isZero();
+    }
+
+    private long traces(String subject, String statusPart) {
+        return logs.stream().filter(l -> subject.equals(l.getSubject()))
+                .filter(l -> l.getEmailStatus() != null && l.getEmailStatus().contains(statusPart)).count();
     }
 }
