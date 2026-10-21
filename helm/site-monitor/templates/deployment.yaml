@@ -9,6 +9,19 @@
 {{- fail "podAnnotations already has instrumentation.opentelemetry.io/inject-java while config.otel.agent.enabled is true: remove it from podAnnotations (config.otel.agent.instrumentation sets it)." -}}
 {{- end -}}
 {{- end -}}
+{{- /* Multi-pod guards (2026-10-21) - see docs/RUNBOOK.md "Çok pod" */ -}}
+{{- if and (or (gt (int .Values.replicaCount) 1) .Values.autoscaling.enabled) (ne (toString .Values.config.sessionStoreType) "jdbc") -}}
+{{- fail (printf "config.sessionStoreType is %q but more than one pod can run (replicaCount=%v, autoscaling.enabled=%v): sessions must be shared through PostgreSQL. Set config.sessionStoreType=jdbc (the prod default) or run a single replica. With the in-memory store a login made on one pod is unknown on the other (users are logged out at random) and every pod start clears every user's single-session marker." (toString .Values.config.sessionStoreType) .Values.replicaCount .Values.autoscaling.enabled) -}}
+{{- end -}}
+{{- $grace := int (.Values.terminationGracePeriodSeconds | default 90) -}}
+{{- $preStop := 10 -}}
+{{- if hasKey .Values "preStopSleepSeconds" -}}{{- $preStop = int .Values.preStopSleepSeconds -}}{{- end -}}
+{{- if lt $preStop 0 -}}
+{{- fail (printf "preStopSleepSeconds must be 0 (no preStop hook) or more, got %d" $preStop) -}}
+{{- end -}}
+{{- if ge $preStop $grace -}}
+{{- fail (printf "preStopSleepSeconds (%d) must be well below terminationGracePeriodSeconds (%d): the kubelet counts the preStop sleep inside the grace period, so the app would be SIGKILLed before its own graceful shutdown (requests, job locks, sweep-leader lease) could run. Defaults: 10 and 90." $preStop $grace) -}}
+{{- end -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -145,6 +158,16 @@ spec:
           securityContext:
             {{- toYaml . | nindent 12 }}
           {{- end }}
+          {{- if gt $preStop 0 }}
+          # preStop (2026-10-21): the endpoint is removed from the Service / ingress while the pod still serves; only
+          # then does SIGTERM start Spring's graceful shutdown (no 502 on in-flight POSTs during a rollout). The image
+          # is alpine, so busybox sleep exists. Time budget (all inside terminationGracePeriodSeconds):
+          # preStop 10 + web phase 20 + executor phase 20 + @Scheduled await 20 + @PreDestroy ~10 = 80 < 90.
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sh", "-c", "sleep {{ $preStop }}"]
+          {{- end }}
           volumeMounts:
             - name: tmp
               mountPath: /tmp
@@ -155,13 +178,32 @@ spec:
           emptyDir: {}
         - name: varlog
           emptyDir: {}
-      terminationGracePeriodSeconds: 60
+      # 90 s (was 60): the worst-case Spring shutdown (web phase + executor phase + @Scheduled await + @PreDestroy)
+      # plus the preStop sleep must finish before SIGKILL, otherwise the sweep-leader lease is not released and the
+      # other pod waits the full lease TTL (180 s) before it takes monitoring over.
+      terminationGracePeriodSeconds: {{ $grace }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       {{- if .Values.topologySpreadConstraints.enabled }}
       topologySpreadConstraints:
         - maxSkew: {{ .Values.topologySpreadConstraints.maxSkew }}
           topologyKey: {{ .Values.topologySpreadConstraints.topologyKey }}
-          whenUnsatisfiable: DoNotSchedule
+          whenUnsatisfiable: {{ .Values.topologySpreadConstraints.whenUnsatisfiable | default "DoNotSchedule" }}
           labelSelector:
             matchLabels:
               {{- include "site-monitor.selectorLabels" . | nindent 14 }}
+          {{- with .Values.topologySpreadConstraints.matchLabelKeys }}
+          matchLabelKeys:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
       {{- end }}

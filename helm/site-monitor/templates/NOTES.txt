@@ -27,13 +27,19 @@ Health check:
     A changed key does not stop the app: every stored secret (LDAP bind, SMTP password,
     header / push secrets, PageSpeed key, scripted env secrets) silently decrypts to null.
     Secrets are decrypted on use, so first trigger them (LDAP login or test-bind, SMTP test
-    mail, one header-secret monitor "check now"), then - the count MUST be 0:
-      kubectl logs -n {{ .Release.Namespace }} deploy/{{ include "site-monitor.fullname" . }} | grep -c "decrypt failed"
+    mail, one header-secret monitor "check now"), then - the count MUST be 0 (reads EVERY pod):
+      kubectl logs -n {{ .Release.Namespace }} -l app.kubernetes.io/instance={{ .Release.Name }} --prefix --tail=-1 | grep -c "decrypt failed"
     If it is not 0: put the previous key back into the Secret and restart the pod (or
     helm rollback when this chart renders the Secret). Do not re-enter the secrets unless
     the old key is really lost - see docs/RUNBOOK.md, "Secret key".
 
 Post-deploy checklist (smoke steps, 24h watch, rollback): docs/PROD_DEPLOY_CHECKLIST.md
+{{- if or (gt (int .Values.replicaCount) 1) .Values.autoscaling.enabled }}
+
+More than one pod: exactly ONE pod must hold the sweep-leader lease (it runs all monitoring sweeps).
+    System Health -> Scheduler -> sweep_leader.owner, or Grafana sum(sitemonitor_sweep_leader) == 1;
+    System Health -> session_store must say jdbc. Runbook: docs/RUNBOOK.md "Çok pod".
+{{- end }}
 
 Admin password: ADMIN_USERNAME / ADMIN_PASSWORD are used ONLY on the very first start
 (empty database) to create the bootstrap admin. Patching the Secret afterwards changes

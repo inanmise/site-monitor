@@ -18,6 +18,9 @@ image:
   tag: "1.0.0-rc"    # overridden by CI with {version}-rc
   pullPolicy: Always
 
+# Staging runs the prod multi-pod topology with a FIXED replica count (2026-10-21): two pods share the work through
+# the sweep-leader lease and scheduler_lock. Session store stays jdbc (values.yaml default) — helm template fails
+# with the in-memory store and more than one pod.
 replicaCount: 2
 
 config:
@@ -49,8 +52,13 @@ resources:
     memory: "1Gi"
     cpu: "2000m"     # soğuk-başlangıç CPU burst tavanı (1500m→2000m) → warmup'ta CFS throttling azalır
 
+# HPA OFF (2026-10-21, multi-pod release 1): the memory metric of a JVM never falls (heap is sized to the limit), so
+# the HPA pinned staging at maxReplicas; every scale-in could remove the sweep leader (handover + in-memory alarm
+# state reset), and extra pods take no monitoring work anyway (it all runs on the lease holder). The chart also
+# renders `replicas` next to an HPA, so each `helm upgrade` fought the HPA's count. Re-enable only after the
+# chart change of release 2 (CPU-only metric + behavior block).
 autoscaling:
-  enabled: true
+  enabled: false
   minReplicas: 2
   maxReplicas: 5
   targetCPUUtilizationPercentage: 70
