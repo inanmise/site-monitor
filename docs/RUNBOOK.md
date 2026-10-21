@@ -40,9 +40,10 @@ Rollout'ta olanlar:
   koşar (DB bağlantıları ve kota buna göre). İşleri tarama liderliği kirası ve `scheduler_lock` (DB) paylaştırır,
   oturumlar JDBC'de olduğu için kullanıcılar oturum kaybetmez ([Çok pod](#çok-pod)).
 - Eski pod'un kapanışı (2026-10-21): önce `preStop` 10 sn (pod Service / ingress uç noktalarından düşer, istekler
-  yeni pod'a gider), sonra SIGTERM → liderlik kirası hemen bırakılır, Spring zarif kapanışı (web ≤ 20 sn, yürütücüler
-  ≤ 20 sn, zamanlanmış işler ≤ 20 sn, `@PreDestroy` ≈ 10 sn). Hepsi `terminationGracePeriodSeconds: 90` içinde; aşılırsa
-  kubelet SIGKILL atar ve kira süresi (180 sn) dolana dek izleme duraklar.
+  yeni pod'a gider), sonra SIGTERM → liderlik kirası hemen bırakılır, bildirim havuzları boşaltılır (≤ 20 sn), Spring
+  zarif kapanışı (web ≤ 20 sn, yürütücüler ≤ 20 sn, zamanlanmış işler ≤ 20 sn, `@PreDestroy` ≈ 10 sn). Hepsi
+  `terminationGracePeriodSeconds: 120` içinde; aşılırsa kubelet SIGKILL atar — kira zaten bırakılmıştır, ama süren iş
+  kesilir ve iş kilitleri TTL'lerine (3 dk) kalır.
 - Açılışta şema yamaları uygulanır (`SchedulerService.applySchemaPatches`, idempotent `ADD COLUMN` /
   `CREATE TABLE`). Logda `Schema patch applied …` satırları.
 - `startupProbe` hazır olmayı en fazla **~300 sn** bekler (30 × 10 sn); aşılırsa pod öldürülür.
@@ -548,7 +549,8 @@ Bildirimler `notification_logs`'ta tetik `WATCHDOG` (test `WATCHDOG_TEST`). Hiç
 bir yeniden denenir; sistem bakımı "bildirimler sussun" açıkken gönderilmez (iz `SKIPPED: sistem bakımı`). Veritabanı
 çökükken yalnız veritabanı kontrolü pod belleğinde değerlendirilir ve e-posta / webhook / push yine gider. Birden çok pod
 varken bu "veritabanı çöktü" uyarısını yalnız son doğrulanmış lider gönderir (her pod ayrı ayrı göndermez); takipçi ancak
-okuduğu son kira zaten dolmuşsa duyurur.
+son okuduğu kira yenilenmemiş görünüyorsa ve üstünden bir kira süresi + doğrulama süresi geçmişse duyurur. Düzelme
+bildirimi (RECOVER) önce satıra damgalanır — tek pod gönderir. Değerlendirme kilidi `watchdog` 2 dk TTL ile yenilenir.
 
 ## Çok pod
 
@@ -586,7 +588,7 @@ okuduğu son kira zaten dolmuşsa duyurur.
 |---|---|
 | Planlı kapanış (rollout, `kubectl drain`, `delete pod`) | **≤ ~35 sn.** preStop 10 sn boyunca lider taramaya devam eder; SIGTERM'de kira hemen bırakılır, takipçi ≤ 5 sn'de alır, ilk taraması ≤ 30 sn'de başlar. |
 | Pod öldürüldü (SIGKILL, `OOMKilled`, node kaybı, grace aşıldı) | **≤ ~4 dk:** kira süresinin (180 sn) dolması + 5 sn + ilk tarama. |
-| Lider kilitlendi (pod ayakta, taramalar ilerlemiyor) | 10 dk tarama yoksa lider kirayı bırakır (WARN); 30 dk'da liveness BROKEN → kubelet pod'u yeniden başlatır. |
+| Lider kilitlendi (pod ayakta, taramalar ilerlemiyor) | 10 dk tarama tıkı yoksa lider kirayı bırakır (WARN, 2 × TTL yeniden almaz) → takipçi devralır; son tıktan 30 dk sonra hâlâ tık yoksa liveness BROKEN → kubelet pod'u yeniden başlatır. |
 | Veritabanı bir pod'dan kısa süre okunamıyor (havuz doldu, ağ) | Lider, son doğrulanmış kirası bitmeden 30 sn öncesine kadar lider kalır; takipçi kendini asla lider ilan etmez; küme tur sahiplenmesi iki kez yeniden denenir, olmazsa o tur atlanır (WARN — sonraki tur / yakalama telafi eder; iki kez koşmaktansa bir kez gecikir). |
 
 Her liderlik değişiminde yeni lider alarm kararlarının bellekteki durumunu sıfırdan kurar (doğrulama zincirleri, kurtarma
@@ -602,14 +604,16 @@ lider 2 saate kadar yeniden kuyruğa alır, değişiklik bildirimi kaybolmaz.
 | Adım | Süre | Ayar |
 |---|---|---|
 | preStop `sleep` (pod Service / ingress uç noktalarından düşer) | 10 sn | Helm `preStopSleepSeconds` (0 = kanca yok) |
-| SIGTERM → liderlik kirası ve iş kilitleri bırakılır | anında | — |
+| SIGTERM → liderlik kirası bırakılır, yeni kilit / tur / liderlik alınmaz (`ContextClosedEvent`, ilk dinleyici) | anında | — |
+| Bildirim havuzları boşaltılır (çözüm postaları, yeniden gönderimler, giriş sorunu postaları) | ≤ 20 sn | `WebConfig.NOTIFY_AWAIT_SECONDS` |
 | Web zarif aşaması (süren istekler biter) | ≤ 20 sn | `SHUTDOWN_PHASE_TIMEOUT` (`spring.lifecycle.timeout-per-shutdown-phase`) |
 | Yürütücü aşaması (süren kontroller / bildirimler biter) | ≤ 20 sn | aynı |
 | Zamanlanmış işler havuzu (süren işler biter, kesilmez) | ≤ 20 sn | `SCHEDULING_AWAIT_TERMINATION` |
 | `@PreDestroy` beklemeleri | ≈ 10 sn | — |
-| **Toplam** | **≈ 80 sn < 90 sn** | Helm `terminationGracePeriodSeconds` (90) |
+| **Toplam** | **≈ 100 sn < 120 sn** | Helm `terminationGracePeriodSeconds` (120) |
 
-Birini büyütürseniz grace'i de büyütün: `preStop + 2 × aşama + zamanlanmış bekleme + 10 < grace`. `helm template`
+Birini büyütürseniz grace'i de büyütün: `preStop + boşaltma + 2 × aşama + zamanlanmış bekleme + 10 < grace`. İş kilitleri
+`@PreDestroy`'da (zamanlayıcı durduktan sonra) bırakılır. `helm template`
 preStop ≥ grace'i reddeder; CI (`scripts/helm-template-check.sh`) ve `ShutdownBudgetGateTest` varsayılanları denetler.
 
 ### Kilitler
@@ -617,12 +621,24 @@ preStop ≥ grace'i reddeder; CI (`scripts/helm-template-check.sh`) ve `Shutdown
 ```sql
 SELECT name, locked_by, locked_until FROM scheduler_lock ORDER BY name;   -- locked_by = <pod adı>-<8 hane>, UTC
 ```
-- Uzun bir iş kilidini tutarken onu düzenli yeniler; kapanışta pod kendi kilitlerini bırakır. Ölen pod'un kilidi TTL
-  dolunca düşer (yenilenen kilitlerde 3 dk), yeni pod açılışta kendi ölü örneğinin kilitlerini temizler.
+- İş kilidini tutan pod onu 30 sn'de bir yeniler (`ClusterLockService`; yenilenen TTL en çok 3 dk, izleme taraması ve
+  kendi-kendini-izleme kilitleri 2 dk; sert tavan 3 sa, gece temizliği / ping toparlama 4 sa). Yenileme satırı bulamazsa
+  kilit KAYIP sayılır (tek WARN). Kapanışta pod kendi kilitlerini bırakır; ölen pod'un kilidi TTL dolunca düşer, yeni
+  pod açılışta kendi ölü örneğinin kilitlerini temizler. Sistem Sağlığı → Zamanlayıcı `held_locks` bu pod'un kilitlerini,
+  `round_claim_failures` okunamadığı için atlanan turları gösterir.
 - **Takılı kilit:** Sistem Sağlığı → Zamanlayıcı → kilidi bırak (yalnız `cert-check`; `DELETE /api/admin/system/scheduler-lock`,
   denetimde `SCHEDULER_LOCK_RELEASE`). Diğerleri SQL ile: `DELETE FROM scheduler_lock WHERE name = '<ad>';` — kilidi
   tutan pod canlıysa bir sonraki yenilemede kilidi kaybettiğini görür (WARN) ve sertifika taraması sonuçlarını işlemez.
   Önce sahibinin gerçekten ölü ya da takılı olduğundan emin olun (günlükte o işin son satırları).
+- **Takılı ağ kesintisi kaydı:** sertifika taramasının "ağ kesintisi" durumu pod belleğinde değil `network_outage_events`
+  satırındadır (kaynak başına tek ONGOING satır); kesinti açıkken taramalar alarm işlemez. Gerçekten bitmiş ama kapanmamış
+  bir kesintiyi kapatmak (pano bütün pod'larda ≤ 10 sn'de izler; çözüm postası gitmez):
+  ```sql
+  UPDATE network_outage_events SET status = 'RESOLVED', resolved_at = to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS'),
+         resolved_mail_status = 'SKIPPED',
+         alert_mail_status = CASE WHEN alert_mail_status IN ('PENDING', 'RETRY', 'SENDING') THEN 'SUPERSEDED' ELSE alert_mail_status END
+   WHERE status = 'ONGOING' AND (source IS NULL OR source = 'CERT');
+  ```
 
 ### Ön koşullar — 1 → N geçişinden ÖNCE
 

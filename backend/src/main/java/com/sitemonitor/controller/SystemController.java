@@ -345,8 +345,11 @@ public class SystemController {
         return ok(Map.of("username", username));
     }
 
-    /** Admin: haftalık erişilebilirlik raporunu ŞİMDİ tetikle (Pazartesi'yi beklemeden test/önizleme).
-     *  force=true → idempotency atlanır; geçen tam hafta penceresiyle ilgili takımlara mail gider. */
+    /** Admin: haftalık erişilebilirlik raporunu ŞİMDİ tetikle (Pazartesi'yi beklemeden; geçen tam hafta penceresi).
+     *  Elle koşu ({@code sendWeeklyReports(true)}, 2026-10-21 çok pod MP-40): yalnız bu hafta HENÜZ gönderilmemiş takımlara
+     *  gider (SENT atlanır; FAILED / alıcı yok / e-posta kanalı kapalı yeniden denenir) ve bayat SENDING'i (pod gönderirken
+     *  öldü) devralır. Eskiden "force" idi, her takıma yeniden gönderirdi; bilinçli yeniden gönderim = Ayarlar'daki test
+     *  gönderimi (takım adresine). */
     @PostMapping("/weekly-availability/run")
     public ResponseEntity<Map<String, Object>> runWeeklyAvailability(HttpSession session) {
         requireAdmin(session);

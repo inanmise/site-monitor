@@ -283,18 +283,21 @@ If more than one pod is running, only one of them should be sweeping at any mome
 ```
 scheduler_lock table:
   name         → "cert-check"
-  locked_by    → "hostname-uuid8"
-  locked_until → expiry timestamp (TTL: 10 minutes)
+  locked_by    → "<pod name>-uuid8"
+  locked_until → expiry timestamp (TTL: at most 3 minutes, extended every 30 s while the job runs)
 
 Flow:
   Pod starts    → stale locks from the same host are cleared
   Sweep is due  → INSERT INTO scheduler_lock (unique constraint)
-    ├─ Success        → this pod runs the sweep
+    ├─ Success        → this pod runs the sweep and renews the lock every 30 s
     └─ Duplicate key  → another pod has it, skip
-  Sweep ends    → DELETE FROM scheduler_lock
+  Lock lost (renewal finds no row) → the sweep does not save its results
+  Sweep ends / pod shuts down      → the lock is released
 ```
 
-If a lock ever gets stuck, you can force-release it from the **System Health** screen.
+If a lock ever gets stuck, you can force-release it from the **System Health** screen. A long job renews its lock for at most 3 hours (4 hours for the nightly cleanup), so a hung job can never hold it forever.
+
+Next to this lock, the monitoring sweeps (HTTP, port, ping, DNS, domain, …) are given to a single pod through **sweep leadership**: the pod holding a lease in the database (180 s, renewed on its own thread) runs every monitoring sweep and makes the alert decisions; when it shuts down it hands the lease over at once and another pod takes over in about half a minute.
 
 ---
 
@@ -591,7 +594,7 @@ Every active team that owns certificates receives a summary of its domains' avai
 
 A **detailed outage report is attached as a PDF**: every outage of the week, with charts and status colouring, and the email body announces the attachment explicitly. Managers read the summary in the body and find the detail in the attachment.
 
-Delivery is idempotent per team and per week — a second email for the same week never goes out. Configure it under **Settings → Weekly Availability**, where you can also review past sends, preview the next one, download the outage PDF on its own, and send yourself a test.
+Delivery happens at most once per team and per week — a second email for the same week never goes out, also when several pods are running. Each team is claimed separately: one team's failure does not stop the others, and a failed team is retried on the next run. While the email channel is switched off a team counts as "skipped", not "sent", and is mailed on the next run after the channel is back. If a pod shuts down in the middle of a send, that team shows as "interrupted" (the email may have gone out); the scheduled run does not send it again, only a manually triggered run takes it over. A manual run (`POST /api/admin/system/weekly-availability/run`) mails only the teams **not yet sent** this week — to deliberately send one team the email again, use the test send in Settings with the team's address. Configure it under **Settings → Weekly Availability**, where you can also review past sends, preview the next one, download the outage PDF on its own, and send yourself a test.
 
 ### 9.4 Email Configuration
 
@@ -1617,7 +1620,7 @@ strategy:
   maxUnavailable: 0    # the old one only goes when the new one is ready
 ```
 
-On a single-pod deployment `maxUnavailable: 0` is the setting that matters most: the old pod carries traffic until the new one passes its readiness probe, so an upgrade is invisible to users. A generous termination grace period, paired with graceful shutdown in the application, means in-flight requests and a running sweep are not cut off mid-way.
+On a single-pod deployment `maxUnavailable: 0` is the setting that matters most: the old pod carries traffic until the new one passes its readiness probe, so an upgrade is invisible to users. When the old pod shuts down it first leaves the load balancer during a 10-second preStop pause, then hands over the sweep leadership at once, finishes the notifications it is sending and, with graceful shutdown in the application, completes in-flight requests and the running job. All of it fits inside the 120-second termination grace period (preStop 10 + notification drain 20 + web 20 + executors 20 + scheduled jobs 20 + about 10 s).
 
 ### 17.2 Health Checks
 
@@ -1636,8 +1639,12 @@ Nothing durable lives in the pod's memory, so a restart loses nothing.
 | State | Where it lives | On pod death |
 |---|---|---|
 | User sessions | The session table in the database | Preserved — nobody has to sign in again |
-| Scheduler lock | The lock table, with a TTL | Released when the TTL expires |
-| Alert state and confirmation counters | The alert tables | Preserved |
+| Scheduler lock | The lock table, with a TTL, renewed every 30 s while the job runs | Released at shutdown; after a crash, free once the TTL (≤ 3 minutes) expires |
+| Sweep leadership | A lease row in the schedule table (180 s) | Handed over at shutdown; after a crash, another pod takes it when the lease expires |
+| Alert state | The alert tables | Preserved |
+| Confirmation and recovery counters | The leader pod's memory | Rebuilt — an alert about to open or close re-confirms on the new leader (later, never twice) |
+| DNS / domain change | A "pending" mark on the check row | Preserved — the new leader decides it |
+| Network outage state, a resolution email still to send | The outage row, a mark on the alert row | Preserved — another pod carries on |
 | Maintenance window cache | In memory, refreshed every 30 seconds | Rebuilt |
 | Settings caches | In memory, refreshed every 10 seconds | Rebuilt |
 
@@ -1649,14 +1656,16 @@ Heavy start-up work is deferred by a configurable delay, so that in the first se
 
 ### 17.5 Moving to Horizontal Scaling
 
-If one pod is not enough, the chart is ready: turn on the replica count, autoscaling, the pod disruption budget and topology spread. The multi-pod behaviour already exists in the code and runs harmlessly on a single pod today:
+Two or more pods are supported (multi-pod release 1, 2026-10-21). One thing to know: **a single pod (the leader)** runs every monitoring sweep — a second pod brings high availability and interface capacity, not monitoring capacity. If the monitoring load grows, scale vertically first; autoscaling stays off for that reason. The multi-pod behaviour exists in the code and runs harmlessly on a single pod today:
 
-- **The scheduler lock** (see §5.3) — however many pods there are, only one runs a given sweep.
-- **The database-backed session store** — sessions are shared across pods.
+- **Sweep leadership** (see §5.3) — the pod holding the lease runs the monitoring sweeps; when the leader shuts down another pod takes over in about half a minute (at most ~4 minutes if a pod dies suddenly; a stuck leader gives the lease up after 10 minutes). A "Check now" pressed on a follower is forwarded to the leader for evaluation.
+- **Renewed scheduler locks** — however many pods there are, only one runs a given job; a job that loses its lock does not save its results.
+- **Claim first, then send** — opening an alert, re-alerts, resolution emails, closing a storm, pushes, the weekly report and the weekly availability email are claimed at row level: the same notification never goes out twice from two pods, and it is not lost when a pod shuts down.
+- **The database-backed session store** — sessions are shared across pods; Helm refuses several pods with the in-memory session store.
 - **The single-active-session registry** — a user has one session regardless of which pod they land on.
 - **Periodic settings cache refresh** — a change made on one pod reaches the others within seconds.
 
-Measure two things before you make the move. The database connection pool is sized **per pod**, so pool size multiplied by replicas must stay within the database's connection limit; and if you use synthetic monitoring, every pod runs its own k6 subprocesses, so memory demand grows linearly with replicas.
+The move is a step of its own: first deploy the new version on one pod, then switch to `replicaCount: 2` with a disruption budget using the same image (`docs/PROD_DEPLOY_CHECKLIST.md` → "Çok pod"). Check beforehand: **the same network egress from every node** (proxy, SMTP, LDAP, push, internal targets — leadership changes node on every deployment); node clocks in sync; and database connections — the pool is sized **per pod** and one extra pod is open during a rollout, so `max_connections ≥ (replicas + 1) × pool size + 25`. Synthetic monitoring runs its k6 subprocesses on the leader; any pod can become the leader, so every pod's memory limit must leave room for them.
 
 ---
 

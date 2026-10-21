@@ -217,7 +217,7 @@ helm upgrade --install "$REL" ./helm/site-monitor --namespace "$NS" \
 - existingSecret kullanılmıyorsa `--set secret.existingSecret=…` yerine `-f /guvenli/yol/prod-secrets.yaml`
   (tüm `secret.*` anahtarları, **şu anki** değerleriyle).
 - Rollout sırasında replika + 1 pod kısa süre birlikte koşar: izleme taramalarını tarama liderliği kirası, diğer
-  işleri `scheduler_lock` / küme turları tek pod'a verir. Eski pod preStop (10 sn) + zarif kapanışla (≤ 80 sn, grace 90)
+  işleri `scheduler_lock` / küme turları tek pod'a verir. Eski pod preStop (10 sn) + zarif kapanışla (≤ 100 sn, grace 120)
   kapanır ve kirayı hemen bırakır. Bu pencerede çift bildirim görülürse not edin ve çift-iş dedektörünü koşun
   ([`RUNBOOK.md` → Çok pod](RUNBOOK.md#çok-pod)).
 - **İki ya da daha çok replikada** `--timeout 15m` kullanın: pod'lar sırayla değişir (her biri açılışta ≤ 300 sn
@@ -312,7 +312,7 @@ kubectl get pod -n "$NS" -l app.kubernetes.io/instance="$REL" \
 
 ### 2. Yeni sürüm TEK pod'la
 - [ ] Yukarıdaki "Sırası — tek komut" ile, `replicaCount: 1` (master.yaml'ın bu sürümdeki değeri) dağıtıldı ve
-      "Sonrası" kontrolleri temiz. Tek pod davranışı değişmez; yeni olan: grace 90 sn, preStop 10 sn.
+      "Sonrası" kontrolleri temiz. Tek pod davranışı değişmez; yeni olan: grace 120 sn, preStop 10 sn.
 
 ### 3. Replika 1 → 2 (AYRI commit + `helm upgrade`, aynı imaj)
 - [ ] `environments/master.yaml`: `replicaCount: 2`, `podDisruptionBudget.enabled: true` (`minAvailable: 1`),
@@ -320,7 +320,7 @@ kubectl get pod -n "$NS" -l app.kubernetes.io/instance="$REL" \
       (`matchLabelKeys: ["pod-template-hash"]`, Kubernetes ≥ 1.27; daha az node'da `whenUnsatisfiable: ScheduleAnyway`).
       `autoscaling.enabled: false` kalır. `config.sessionStoreType` `jdbc` (değilse `helm template` reddeder).
 - [ ] Kuru koşu: `--dry-run=server` çıktısında `replicas: 2`, `PodDisruptionBudget`, `SPRING_SESSION_STORE_TYPE: "jdbc"`,
-      `terminationGracePeriodSeconds: 90`, preStop `sleep 10`.
+      `terminationGracePeriodSeconds: 120`, preStop `sleep 10`.
 - [ ] Aynı komut, aynı `image.tag` (sürüm DEĞİŞMEZ), `--atomic --wait --timeout 15m`.
 
 ### 4. Sonrası (iki pod)
