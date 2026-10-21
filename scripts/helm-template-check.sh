@@ -9,7 +9,7 @@
 # Denetimler (biri bile tutmazsa çıkış kodu 1, her biri ::error:: satırı):
 #   1. Üç ortam (master / develop / release) + yalın values.yaml render olur.
 #   2. Her render'da terminationGracePeriodSeconds ve preStop "sleep N" var; grace − preStop ≥ SPRING_BUDGET_S
-#      (bildirim havuzu boşaltma 20 + web 20 + yürütücü 20 + @Scheduled bekleme 20 + @PreDestroy 10 = 90 sn —
+#      (bildirim havuzu boşaltma 20 + web 20 + yürütücü 20 + @Scheduled bekleme 20 + ortak yok etme bütçesi 10 (ShutdownDeadline) = 90 sn —
 #      backend application.properties + WebConfig.NOTIFY_AWAIT_SECONDS; Java tarafını ShutdownBudgetGateTest denetler).
 #   3. Birden çok pod koşabilen her render'da (replicas > 1 ya da HPA) oturum deposu jdbc.
 #   4. Koruma: replicaCount=2 + sessionStoreType=memory ve autoscaling + none → render BAŞARISIZ olur;
@@ -114,6 +114,9 @@ expect_fail "release.yaml + sessionStoreType=memory" "config.sessionStoreType is
   -f "$CHART/environments/release.yaml" --set config.sessionStoreType=memory
 out="$(render --set replicaCount=1 --set config.sessionStoreType=memory)"
 [ $? -eq 0 ] && ok "tek pod + memory render olur" || err "tek pod + memory render olmadı: $out"
+# Uygulama değeri kırpıp küçük harfe çevirir (SessionStoreAutoConfigurationFilter) — koruma da öyle okumalı.
+out="$(render --set replicaCount=2 --set config.sessionStoreType=' JDBC ')"
+[ $? -eq 0 ] && ok "2 replika + ' JDBC ' (büyük harf / boşluk) render olur" || err "2 replika + ' JDBC ' reddedildi (uygulama bunu jdbc okur): $out"
 
 # ── 5: preStop sınırları ───────────────────────────────────────────────────────────────────
 echo "── preStop sınırları"

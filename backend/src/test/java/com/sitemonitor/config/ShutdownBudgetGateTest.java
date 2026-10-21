@@ -160,7 +160,7 @@ class ShutdownBudgetGateTest {
                 .contains("preStop:")
                 .contains("sleep {{ $preStop }}");
         assertThat(tpl).as("çok pod + bellek oturum deposu koruması")
-                .contains("(ne (toString .Values.config.sessionStoreType) \"jdbc\")")
+                .contains("(ne (lower (trim (toString .Values.config.sessionStoreType))) \"jdbc\")")
                 .contains("(gt (int .Values.replicaCount) 1) .Values.autoscaling.enabled");
     }
 

@@ -10,7 +10,8 @@
 {{- end -}}
 {{- end -}}
 {{- /* Multi-pod guards (2026-10-21) - see docs/RUNBOOK.md "Çok pod" */ -}}
-{{- if and (or (gt (int .Values.replicaCount) 1) .Values.autoscaling.enabled) (ne (toString .Values.config.sessionStoreType) "jdbc") -}}
+{{- /* same reading as the app (SessionStoreAutoConfigurationFilter.jdbcRequested): trimmed, case-insensitive */ -}}
+{{- if and (or (gt (int .Values.replicaCount) 1) .Values.autoscaling.enabled) (ne (lower (trim (toString .Values.config.sessionStoreType))) "jdbc") -}}
 {{- fail (printf "config.sessionStoreType is %q but more than one pod can run (replicaCount=%v, autoscaling.enabled=%v): sessions must be shared through PostgreSQL. Set config.sessionStoreType=jdbc (the prod default) or run a single replica. With the in-memory store a login made on one pod is unknown on the other (users are logged out at random) and every pod start clears every user's single-session marker." (toString .Values.config.sessionStoreType) .Values.replicaCount .Values.autoscaling.enabled) -}}
 {{- end -}}
 {{- $grace := int (.Values.terminationGracePeriodSeconds | default 120) -}}
@@ -162,7 +163,7 @@ spec:
           # preStop (2026-10-21): the endpoint is removed from the Service / ingress while the pod still serves; only
           # then does SIGTERM start Spring's graceful shutdown (no 502 on in-flight POSTs during a rollout). The image
           # is alpine, so busybox sleep exists. Time budget (all inside terminationGracePeriodSeconds):
-          # preStop 10 + notify drain 20 + web phase 20 + executor phase 20 + @Scheduled await 20 + @PreDestroy ~10 = 100 < 120.
+          # preStop 10 + notify drain 20 + web phase 20 + executor phase 20 + @Scheduled await 20 + shared destroy waits 10 (ShutdownDeadline) = 100 < 120.
           lifecycle:
             preStop:
               exec:
