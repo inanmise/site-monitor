@@ -47,7 +47,7 @@ public class ShutdownDeadline {
     }
 
     /** Saf hesap (test): ortak süre ilk çağrıda başlar; kalan süre ve tavanın küçüğü, en az 0. */
-    long remainingMs(long capMs, long nowNanos) {
+    public long remainingMs(long capMs, long nowNanos) {
         startNanos.compareAndSet(Long.MIN_VALUE, nowNanos);
         long used = Math.max(0, (nowNanos - startNanos.get()) / 1_000_000L);
         return Math.max(0, Math.min(Math.max(0, capMs), DESTROY_BUDGET_MS - used));
@@ -65,8 +65,8 @@ public class ShutdownDeadline {
         }
     }
 
-    /** Test dikişi: etkin örneği ayarlar (null = kapalı). */
-    static void activate(ShutdownDeadline d) {
+    /** Test dikişi: etkin örneği ayarlar (null = kapalı). Başka paketlerin testleri de kullanır. */
+    public static void activate(ShutdownDeadline d) {
         ACTIVE.set(d);
     }
 }

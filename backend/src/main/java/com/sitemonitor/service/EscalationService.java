@@ -533,36 +533,40 @@ public class EscalationService {
                         String claimAt = now();
                         EscalationUndo undo = EscalationUndo.of(event);
                         if (!claimEscalation(event.getId(), seenStamp, event.getAlertLevel(), alertLevel, claimAt)) continue;
-                        event.setAlertLevel(alertLevel);
-                        event.setMessage(message);
-                        event.setDaysRemaining(daysRemaining);
-                        if (notAfterOf(result) != null) event.setNotAfter(notAfterOf(result));
-                        // ÜÇ alan birden sıfırlanır (izleme yolu :1056-1058 ile aynı). Yalnız
-                        // acknowledged düşürülünce acknowledgedAt/By bayat kalıyordu: WARNING'de
-                        // onaylanıp KRİTİK'e tırmanan olay, olay ekranında ve mail/incidentMeta
-                        // sunumunda hâlâ "X tarafından <eski tarih> onaylandı" taşıyor, yani
-                        // tırmanma sonrası kimse onaylamamışken "ele alınmış" görünüyordu.
-                        event.setAcknowledged(false);
-                        event.setAcknowledgedAt(null);
-                        event.setAcknowledgedBy(null);
-
-                        List<EscalationContact> contacts = recipientsNow(alertLevel, domainTeamId, ugTeamId, event.getId());
-                        // Terfi ÖNCE kalıcılaşır, SONRA gönderilir (INITIAL dalıyla aynı sıra). Kişi-webhook tetiği
-                        // (UserPushService.enqueueAlert) olayı DB'den yeniden yükleyip alıcıyı event.alertLevel ile
-                        // çözer; save gönderimden sonra kaldığında eski seviye (WARNING) okunuyor ve ESCALATION
-                        // push'u "bu seviyede kimse yok" diye atlanıyordu — e-posta HIGH giderken (prod, 2026-09-07:
-                        // eskalasyon push'u SKIPPED, 13 saat sonraki elle yeniden gönderim 5 kişiye SENT).
-                        event.setNotifiedContacts(serializeContacts(contacts));
-                        event.setLastReAlertAt(claimAt);
-                        event = alertEventRepo.save(event);
-
+                        // Sahiplenme YENİ seviyeyi yazdı: bundan sonraki HER adım (alıcı sorgusu, kayıt, gönderim) düşerse
+                        // terfi geri alınır (inceleme N1 — havuz tükenmesinde kayıt / alıcı sorgusu düşünce seviye yükselmiş
+                        // kalıyor, sonraki tur terfiyi "yapılmış" görüyor ve ESCALATION hiç gitmiyordu).
+                        AlertEvent claimed = event;
                         try {
+                            event.setAlertLevel(alertLevel);
+                            event.setMessage(message);
+                            event.setDaysRemaining(daysRemaining);
+                            if (notAfterOf(result) != null) event.setNotAfter(notAfterOf(result));
+                            // ÜÇ alan birden sıfırlanır (izleme yolu :1056-1058 ile aynı). Yalnız
+                            // acknowledged düşürülünce acknowledgedAt/By bayat kalıyordu: WARNING'de
+                            // onaylanıp KRİTİK'e tırmanan olay, olay ekranında ve mail/incidentMeta
+                            // sunumunda hâlâ "X tarafından <eski tarih> onaylandı" taşıyor, yani
+                            // tırmanma sonrası kimse onaylamamışken "ele alınmış" görünüyordu.
+                            event.setAcknowledged(false);
+                            event.setAcknowledgedAt(null);
+                            event.setAcknowledgedBy(null);
+
+                            List<EscalationContact> contacts = recipientsNow(alertLevel, domainTeamId, ugTeamId, event.getId());
+                            // Terfi ÖNCE kalıcılaşır, SONRA gönderilir (INITIAL dalıyla aynı sıra). Kişi-webhook tetiği
+                            // (UserPushService.enqueueAlert) olayı DB'den yeniden yükleyip alıcıyı event.alertLevel ile
+                            // çözer; save gönderimden sonra kaldığında eski seviye (WARNING) okunuyor ve ESCALATION
+                            // push'u "bu seviyede kimse yok" diye atlanıyordu — e-posta HIGH giderken (prod, 2026-09-07:
+                            // eskalasyon push'u SKIPPED, 13 saat sonraki elle yeniden gönderim 5 kişiye SENT).
+                            event.setNotifiedContacts(serializeContacts(contacts));
+                            event.setLastReAlertAt(claimAt);
+                            event = alertEventRepo.save(event);
+
                             sendCombinedAlert(domainTeamId, ugTeamId, contacts, domain, alertLevel, alertType, message,
                                     "", event.getId(), "ESCALATION", daysRemaining, result);
                         } catch (RuntimeException ex) {
                             // Gönderilemedi: seviye / onay / damga birlikte GERİ alınır → sonraki tur terfiyi yeniden görür ve
                             // ESCALATION'ı gönderir (yalnız damga geri alınsaydı terfi "yapılmış" sayılır, bildirim hiç gitmezdi).
-                            revertEscalation(event, undo, claimAt);
+                            revertEscalation(event != null ? event : claimed, undo, claimAt, ex);
                             throw ex;
                         }
 
@@ -1723,30 +1727,35 @@ public class EscalationService {
                 String claimAt = now();
                 EscalationUndo undo = EscalationUndo.of(event);
                 if (!stormMember && !claimEscalation(event.getId(), seenStamp, event.getAlertLevel(), alertLevel, claimAt)) return;
-                event.setAlertLevel(alertLevel);
-                event.setMessage(message);
-                if (acked) {
-                    event.setAcknowledged(false);
-                    event.setAcknowledgedAt(null);
-                    event.setAcknowledgedBy(null);
-                }
-                // Varlık kaydı sahiplenilen damgayı GERİ yazmasın (kayıt tüm kolonları yazar)
-                if (!stormMember) event.setLastReAlertAt(claimAt);
-                // KALICILASTIR: asagidaki "re-alert vakti gelmedi" dali save cagirmiyor ve sinifta
-                // @Transactional da yok — dirty-checking kurtarmiyordu. Terfi bellekte kalip
-                // kayboluyor, araya giren bir cozum bildirimini ESKI (dusuk) seviyeyle gonderiyor
-                // ve mudur atlanabiliyordu (Y5'in alt-dali).
-                alertEventRepo.save(event);
-                if (!stormMember) {
-                    List<EscalationContact> contacts = teamOnly ? List.of()
-                            : recipientsNow(alertLevel, domainTeamId, ugTeamId, event.getId());
-                    try {
+                // Sahiplenme YENİ seviyeyi yazdı: kayıt, alıcı sorgusu ve gönderimden HERHANGİ biri düşerse terfi geri alınır
+                // (inceleme N1 — eskiden yalnız gönderim korunuyordu; havuz tükenmesinde kayıt düşünce seviye yükselmiş kalıyor,
+                // ESCALATION hiç gitmiyor, onaylı alarm sonsuza dek susuyordu).
+                List<EscalationContact> contacts = List.of();
+                try {
+                    event.setAlertLevel(alertLevel);
+                    event.setMessage(message);
+                    if (acked) {
+                        event.setAcknowledged(false);
+                        event.setAcknowledgedAt(null);
+                        event.setAcknowledgedBy(null);
+                    }
+                    // Varlık kaydı sahiplenilen damgayı GERİ yazmasın (kayıt tüm kolonları yazar)
+                    if (!stormMember) event.setLastReAlertAt(claimAt);
+                    // KALICILASTIR: asagidaki "re-alert vakti gelmedi" dali save cagirmiyor ve sinifta
+                    // @Transactional da yok — dirty-checking kurtarmiyordu. Terfi bellekte kalip
+                    // kayboluyor, araya giren bir cozum bildirimini ESKI (dusuk) seviyeyle gonderiyor
+                    // ve mudur atlanabiliyordu (Y5'in alt-dali).
+                    alertEventRepo.save(event);
+                    if (!stormMember) {
+                        contacts = teamOnly ? List.of() : recipientsNow(alertLevel, domainTeamId, ugTeamId, event.getId());
                         sendCombinedAlert(domainTeamId, ugTeamId, contacts, domain, alertLevel, alertType,
                                 message, "", event.getId(), "ESCALATION", null, outageContext);
-                    } catch (RuntimeException ex) {
-                        revertEscalation(event, undo, claimAt);   // sonraki tur terfiyi yeniden görür ve gönderir
-                        throw ex;
                     }
+                } catch (RuntimeException ex) {
+                    if (!stormMember) revertEscalation(event, undo, claimAt, ex);   // sonraki tur terfiyi yeniden görür ve gönderir
+                    throw ex;
+                }
+                if (!stormMember) {
                     event.setNotifiedContacts(serializeContacts(contacts));
                     event.setLastReAlertAt(claimAt);
                     alertEventRepo.save(event);
@@ -4618,8 +4627,22 @@ public class EscalationService {
      * duruyorsa ve olay açıksa; arada başka yol ilerlettiyse dokunulmaz). Sonraki tur terfiyi yeniden görür ve ESCALATION'ı
      * gönderir. Veritabanı yoksa (birim testi) bugünkü davranış: yalnız istisna yayılır.
      */
-    void revertEscalation(AlertEvent event, EscalationUndo undo, String claimedAt) {
-        if (jdbcTemplate == null || event == null || event.getId() == null || undo == null) return;
+    boolean revertEscalation(AlertEvent event, EscalationUndo undo, String claimedAt) {
+        return revertEscalation(event, undo, claimedAt, null);
+    }
+
+    /** Geri alma da düşen terfinin izi (inceleme N1) — {@code notification_logs} ESCALATION satırı; sınıf adı eklenir. */
+    static final String STATUS_ESCALATION_REVERT_FAILED =
+            "FAILED: terfi bildirimi gönderilemedi ve terfi geri alınamadı — seviye yükseltilmiş kaldı, ESCALATION gitmedi";
+
+    /**
+     * Terfiyi geri alır (koşullu — yalnız bu sahiplenmenin damgası duruyorsa). {@code cause}: terfiyi düşüren hata. Geri alma
+     * da düşerse (veritabanı erişilemiyor) sessiz kalmaz: WARN + {@code notification_logs} FAILED satırı
+     * ({@link #STATUS_ESCALATION_REVERT_FAILED}) — seviye yükseltilmiş kaldığı için sonraki tur terfiyi göremez, bildirim gitmez.
+     * Geri alındıysa true; damga bu arada ilerlediyse (başka yol / pod sahiplendi) ya da olay kapandıysa false (iz yok).
+     */
+    boolean revertEscalation(AlertEvent event, EscalationUndo undo, String claimedAt, Exception cause) {
+        if (jdbcTemplate == null || event == null || event.getId() == null || undo == null) return false;
         try {
             int n = jdbcTemplate.update("UPDATE alert_events SET alert_level = ?, message = ?, acknowledged = ?, acknowledged_at = ?, "
                     + "acknowledged_by = ?, last_re_alert_at = ?, days_remaining = ?, not_after = ?, notified_contacts = ? "
@@ -4628,8 +4651,19 @@ public class EscalationService {
                     undo.acknowledgedBy(), undo.lastReAlertAt(), undo.daysRemaining(), undo.notAfter(), undo.notifiedContacts(),
                     event.getId(), claimedAt);
             if (n == 1) undo.applyTo(event);
+            return n == 1;
         } catch (Exception e) {
-            log.warn("Alarm #{} terfisi geri alınamadı (sonraki tur yeniden göndermeyebilir): {}", event.getId(), e.getMessage());
+            log.warn("Alarm #{} terfisi geri alınamadı — seviye yükseltilmiş kaldı, ESCALATION gitmedi ve sonraki tur yeniden "
+                    + "göndermeyecek: {}", event.getId(), e.getMessage());
+            String why = cause != null ? cause.getClass().getSimpleName() : e.getClass().getSimpleName();
+            try {
+                saveLog(event.getId(), "-", "", "[Site Monitor ⬆ ESKALASYON] " + event.getDomain() + " — " + event.getAlertType(),
+                        "", NotificationLog.fit(STATUS_ESCALATION_REVERT_FAILED + " (" + why + ")", NotificationLog.VARCHAR_MAX),
+                        "SKIPPED", "ESCALATION");
+            } catch (Exception logEx) {
+                log.error("Alarm #{} terfi bildirimi kaybı günlüğe de yazılamadı: {}", event.getId(), logEx.getMessage());
+            }
+            return false;
         }
     }
 
@@ -4720,7 +4754,7 @@ public class EscalationService {
      */
     ResolutionClaim claimResolutionNotify(Long id, boolean marked) {
         if (jdbcTemplate == null || id == null) return ResolutionClaim.LEGACY;
-        String at = now();
+        String at = claimToken();
         try {
             int n = jdbcTemplate.update("UPDATE alert_events SET resolution_notify = 'SENDING', resolution_notify_at = ? "
                     + "WHERE id = ? AND resolution_notify = 'PENDING'", at, id);
@@ -4731,6 +4765,11 @@ public class EscalationService {
         } catch (org.springframework.jdbc.BadSqlGrammarException e) {
             return ResolutionClaim.LEGACY;
         } catch (Exception e) {
+            // Yazım veritabanında GEÇTİ ama istemci hatayı gördüyse (yanıt kayboldu) işaret bizim damgamızla SENDING'dir — yeniden
+            // okunur ve sahiplenme bizimse gönderilir (inceleme D4: eskiden satır 10 dk sonra "pod durdu" UNKNOWN oluyor, posta
+            // kayboluyordu). Damga benzersiz ({@link #claimToken}) — aynı saniyede başka pod'un sahiplenmesiyle karışmaz.
+            ResolutionClaim mine = ownResolutionClaim(id, at);
+            if (mine != null) return mine;
             if (marked) {
                 log.warn("Çözüm bildirimi işareti sahiplenilemedi (olay {}) — gönderim süpürücüye bırakıldı: {}", id, e.getMessage());
                 return ResolutionClaim.LOST;
@@ -4738,6 +4777,32 @@ public class EscalationService {
             log.warn("Çözüm bildirimi işareti sahiplenilemedi (olay {}) — işaretsiz gönderiliyor: {}", id, e.getMessage());
             return ResolutionClaim.LEGACY;
         }
+    }
+
+    /**
+     * Benzersiz sahiplenme damgası: ISO saniye + milisaniye + rastgele ek ({@code 2026-10-22T10:00:00.123#a1b2}, ≤ 30) — sözlük
+     * sırası saniyeye kadar zamanla aynı (süpürücünün {@code resolution_notify_at < ?} karşılaştırması bozulmaz).
+     */
+    private String claimToken() {
+        Instant t = Instant.now();
+        return ISO.format(t) + String.format(java.util.Locale.ROOT, ".%03d#%04x", t.toEpochMilli() % 1000,
+                java.util.concurrent.ThreadLocalRandom.current().nextInt(0x10000));
+    }
+
+    /** Sahiplenme yazımı hata verdikten sonra: satır bu damgayla SENDING ise sahiplenme bizimdir (yazım aslında geçti). */
+    private ResolutionClaim ownResolutionClaim(Long id, String at) {
+        try {
+            List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+                    "SELECT resolution_notify, resolution_notify_at FROM alert_events WHERE id = ?", id);
+            if (!rows.isEmpty() && RESOLUTION_NOTIFY_SENDING.equals(rows.get(0).get("resolution_notify"))
+                    && at.equals(rows.get(0).get("resolution_notify_at"))) {
+                log.info("Çözüm bildirimi sahiplenmesi hata verdi ama yazılmıştı (olay {}) — gönderiliyor", id);
+                return new ResolutionClaim(true, at);
+            }
+        } catch (Exception ignore) {
+            // okunamadı — çağıran mevcut kurala düşer (işaret biliniyorsa süpürücü)
+        }
+        return null;
     }
 
     /** Uygulama hatasıyla biten çözüm postası — iz metni (sınıf adı eklenir). */

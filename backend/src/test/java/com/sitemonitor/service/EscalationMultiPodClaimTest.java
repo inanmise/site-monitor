@@ -43,6 +43,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyCollection;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.reset;
@@ -422,5 +423,127 @@ class EscalationMultiPodClaimTest {
         a.processResults(List.of(expiryResult(domain, 3)));
         assertThat(pushes("ESCALATION")).isEqualTo(1);
         assertThat(store.byId(e.getId()).orElseThrow().getAlertLevel()).isEqualTo("CRITICAL");
+    }
+
+    // ── İnceleme N1 (2026-10-22): sahiplenmeden SONRAKİ her adım (kayıt, alıcı sorgusu, gönderim) korunur ─────────────
+
+    /** Terfi edilmiş (CRITICAL) varlığın ilk {@code n} kaydı geçici veritabanı hatasıyla düşer (havuz tükenmesi benzetimi). */
+    void failEscalatedSaves(int n) {
+        java.util.concurrent.atomic.AtomicInteger left = new java.util.concurrent.atomic.AtomicInteger(n);
+        org.mockito.Mockito.doAnswer(inv -> {
+            AlertEvent a = inv.getArgument(0);
+            if ("CRITICAL".equals(a.getAlertLevel()) && left.getAndDecrement() > 0) {
+                throw new org.springframework.dao.QueryTimeoutException("havuz zaman aşımı (test)");
+            }
+            return store.save(a);
+        }).when(store.repo()).save(any(AlertEvent.class));
+    }
+
+    /** Terfi geri alma ifadesi her zaman düşer (veritabanı erişilemiyor). */
+    static final class RevertFailsJdbc extends org.springframework.jdbc.core.JdbcTemplate {
+        RevertFailsJdbc(javax.sql.DataSource ds) {
+            super(ds);
+        }
+
+        @Override
+        public int update(String sql, Object... args) {
+            if (sql.startsWith("UPDATE alert_events SET alert_level = ?")) {
+                throw new org.springframework.dao.QueryTimeoutException("havuz zaman aşımı (test)");
+            }
+            return super.update(sql, args);
+        }
+    }
+
+    @Test
+    @DisplayName("N1: izleme terfisi — sahiplenmeden sonra KAYIT düşerse seviye / onay / damga geri alınır; sonraki tur ESCALATION'ı BİR kez gönderir")
+    void monitoringEscalation_saveFailsAfterClaim_revertedAndNextSweepSends() {
+        String domain = "esc-save.example.com";
+        AlertEvent e = openMonitoringAlarm(domain, "HIGH");
+        String seen = e.getLastReAlertAt();
+        EscalationService a = pod(1);
+        failEscalatedSaves(1);
+        assertThatThrownBy(() -> a.processConfirmedOutage(domain, EscalationService.TYPE_ACCESSIBILITY, "CRITICAL",
+                new LinkedHashMap<>())).isInstanceOf(org.springframework.dao.QueryTimeoutException.class);
+        AlertEvent reverted = store.byId(e.getId()).orElseThrow();
+        assertThat(reverted.getAlertLevel()).isEqualTo("HIGH");
+        assertThat(reverted.getAcknowledged()).as("onay geri geldi").isTrue();
+        assertThat(reverted.getLastReAlertAt()).isEqualTo(seen);
+        assertThat(pushes("ESCALATION")).isZero();
+
+        a.processConfirmedOutage(domain, EscalationService.TYPE_ACCESSIBILITY, "CRITICAL", new LinkedHashMap<>());
+        assertThat(store.byId(e.getId()).orElseThrow().getAlertLevel()).isEqualTo("CRITICAL");
+        assertThat(pushes("ESCALATION")).isEqualTo(1);
+        a.processConfirmedOutage(domain, EscalationService.TYPE_ACCESSIBILITY, "CRITICAL", new LinkedHashMap<>());
+        assertThat(pushes("ESCALATION")).as("bir kez").isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("N1: izleme terfisi — sahiplenmeden sonra ALICI SORGUSU düşerse de geri alınır; sonraki tur gönderir")
+    void monitoringEscalation_recipientsFailAfterClaim_revertedAndNextSweepSends() {
+        String domain = "esc-rcpt.example.com";
+        AlertEvent e = openMonitoringAlarm(domain, "HIGH");
+        EscalationService a = pod(1);
+        java.util.concurrent.atomic.AtomicInteger left = new java.util.concurrent.atomic.AtomicInteger(1);
+        when(contactRepo.findByTeamIdAndActiveTrueOrderByRoleAsc(anyLong())).thenAnswer(inv -> {
+            // yalnız sahiplenme YENİ seviyeyi yazdıktan sonra düşer
+            if ("CRITICAL".equals(store.byId(e.getId()).orElseThrow().getAlertLevel()) && left.getAndDecrement() > 0) {
+                throw new org.springframework.dao.QueryTimeoutException("havuz zaman aşımı (test)");
+            }
+            return List.of();
+        });
+        assertThatThrownBy(() -> a.processConfirmedOutage(domain, EscalationService.TYPE_ACCESSIBILITY, "CRITICAL",
+                new LinkedHashMap<>())).isInstanceOf(org.springframework.dao.QueryTimeoutException.class);
+        assertThat(left.get()).as("hata sahiplenmeden SONRA atıldı").isLessThan(1);
+        assertThat(store.byId(e.getId()).orElseThrow().getAlertLevel()).as("terfi geri alındı").isEqualTo("HIGH");
+        assertThat(pushes("ESCALATION")).isZero();
+        a.processConfirmedOutage(domain, EscalationService.TYPE_ACCESSIBILITY, "CRITICAL", new LinkedHashMap<>());
+        assertThat(pushes("ESCALATION")).isEqualTo(1);
+        assertThat(store.byId(e.getId()).orElseThrow().getAlertLevel()).isEqualTo("CRITICAL");
+    }
+
+    @Test
+    @DisplayName("N1: sertifika terfisi — sahiplenmeden sonra KAYIT düşerse geri alınır; sonraki tur ESCALATION'ı BİR kez gönderir")
+    void certEscalation_saveFailsAfterClaim_revertedAndNextRunSends() {
+        String domain = "esc-cert-save.example.com";
+        Instant now = Instant.now();
+        AlertEvent e = openAlarm(domain, "WARNING", now.minus(2, ChronoUnit.DAYS), now.minus(1, ChronoUnit.HOURS));
+        String seen = e.getLastReAlertAt();
+        EscalationService a = pod(1);
+        failEscalatedSaves(1);
+        assertThatThrownBy(() -> a.processResults(List.of(expiryResult(domain, 3))))
+                .isInstanceOf(org.springframework.dao.QueryTimeoutException.class);
+        AlertEvent reverted = store.byId(e.getId()).orElseThrow();
+        assertThat(reverted.getAlertLevel()).isEqualTo("WARNING");
+        assertThat(reverted.getLastReAlertAt()).isEqualTo(seen);
+        assertThat(pushes("ESCALATION")).isZero();
+
+        a.processResults(List.of(expiryResult(domain, 3)));
+        assertThat(pushes("ESCALATION")).isEqualTo(1);
+        assertThat(store.byId(e.getId()).orElseThrow().getAlertLevel()).isEqualTo("CRITICAL");
+        a.processResults(List.of(expiryResult(domain, 3)));
+        assertThat(pushes("ESCALATION")).as("bir kez").isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("N1: geri alma DA düşerse sessiz kalmaz — notification_logs ESCALATION FAILED satırı (sınıf adıyla)")
+    void escalationRevertFails_leavesFailedLogRow() {
+        String domain = "esc-revert.example.com";
+        AlertEvent e = openMonitoringAlarm(domain, "HIGH");
+        EscalationService a = pod(1);
+        a.setJdbcTemplate(new RevertFailsJdbc(mp.dataSource()));
+        failEscalatedSaves(1);
+        assertThatThrownBy(() -> a.processConfirmedOutage(domain, EscalationService.TYPE_ACCESSIBILITY, "CRITICAL",
+                new LinkedHashMap<>())).isInstanceOf(org.springframework.dao.QueryTimeoutException.class);
+        assertThat(pushes("ESCALATION")).isZero();
+        org.mockito.ArgumentCaptor<com.sitemonitor.model.NotificationLog> cap =
+                org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.NotificationLog.class);
+        org.mockito.Mockito.verify(notificationLogRepo, org.mockito.Mockito.atLeastOnce()).save(cap.capture());
+        assertThat(cap.getAllValues()).anySatisfy(n -> {
+            assertThat(n.getAlertEventId()).isEqualTo(e.getId());
+            assertThat(n.getTrigger()).isEqualTo("ESCALATION");
+            assertThat(n.getEmailStatus()).startsWith(EscalationService.STATUS_ESCALATION_REVERT_FAILED)
+                    .contains("QueryTimeoutException");
+        });
+        assertThat(EscalationService.STATUS_ESCALATION_REVERT_FAILED.length()).isLessThan(220);
     }
 }

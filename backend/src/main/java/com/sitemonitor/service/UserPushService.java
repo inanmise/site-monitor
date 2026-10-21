@@ -171,9 +171,25 @@ public class UserPushService {
     /**
      * Kapanış (2026-10-21, çok pod — MP-05 / N-16): eskiden {@code shutdownNow} süren gönderimi KESİYORDU — ağ geçidi isteği
      * kabul etmiş ama SENT yazılmamış satır kira dolunca başka pod'ca yeniden gönderiliyordu (aynı push iki kez). Artık süren
-     * istek + sonucunun yazımı {@value #SHUTDOWN_WAIT_SECONDS} sn beklenir; turun kalan batch'leri gönderilmez, kiraları
-     * bırakılır (başka pod hemen alır). Süre dolarsa kesilir (eski davranış).
+     * istek + sonucunun yazımı kapanışın başında ({@link #beginShutdown}, {@code NotifyExecutorDrain}) beklenir; burada en çok
+     * {@value #SHUTDOWN_WAIT_SECONDS} sn ve ortak yok etme süresi kadar daha beklenir. Turun kalan batch'leri gönderilmez,
+     * kiraları bırakılır (başka pod hemen alır). Süre dolarsa kesilir (eski davranış).
      */
+    /**
+     * Kapanışın EN BAŞI ({@code ContextClosedEvent}, {@code NotifyExecutorDrain} çağırır — inceleme N3): yeni tur / batch
+     * başlamaz; süren istek bitirilir, boşaltma onu bekler. Eskiden {@code stopping} yalnız {@code @PreDestroy}'da kuruluyordu:
+     * worker web ve yürütücü aşamalarında göndermeye devam ediyor, ortak yok etme süresi ({@code ShutdownDeadline}) önceki
+     * beklemelerce tüketilince süren gönderim SENT yazılmadan kesiliyor ve başka pod aynı push'u yeniden gönderiyordu.
+     */
+    public void beginShutdown() {
+        stopping = true;
+    }
+
+    /** Şu an süren gönderim turu sayısı (tek worker: 0 / 1) — kapanış boşaltması bunu bekler. */
+    public int inFlightBatches() {
+        return worker instanceof java.util.concurrent.ThreadPoolExecutor tpe ? tpe.getActiveCount() : 0;
+    }
+
     @PreDestroy
     void shutdown() {
         stopping = true;

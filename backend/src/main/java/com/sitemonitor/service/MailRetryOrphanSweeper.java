@@ -39,8 +39,24 @@ public class MailRetryOrphanSweeper {
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
 
+    /**
+     * Canlı pod'un tazelediği satır ({@code retry_alive_at} {@link #aliveTtl} içinde) yetim sayılmaz (inceleme N4) — en çok
+     * {@link #MAX_ALIVE} boyunca; daha eski satır damgadan bağımsız kapanır (takılı kalmış iş parçacığı sonsuz bekletmez).
+     */
     static final String SQL = "UPDATE notification_logs SET email_status = ? "
+            + "WHERE sent_at >= ? AND sent_at < ? AND email_status LIKE 'QUEUED_RETRY%' "
+            + "AND (retry_alive_at IS NULL OR retry_alive_at < ? OR sent_at < ?)";
+    /** Kolon yoksa (yama uygulanamadı) eski ifade. */
+    static final String SQL_LEGACY = "UPDATE notification_logs SET email_status = ? "
             + "WHERE sent_at >= ? AND sent_at < ? AND email_status LIKE 'QUEUED_RETRY%'";
+    /** Canlılık damgasının en az geçerlilik süresi (tur aralığının 3 katı daha uzunsa o). */
+    static final Duration MIN_ALIVE_TTL = Duration.ofMinutes(15);
+    /** Canlı pod'un satırı bile bu yaştan sonra yetim sayılır. */
+    static final Duration MAX_ALIVE = Duration.ofHours(2);
+
+    /** Tur aralığı (canlılık süresi bundan türetilir). */
+    @org.springframework.beans.factory.annotation.Value("${site.monitor.mail.retry-orphan-sweep-ms:300000}")
+    long sweepIntervalMs = 300_000L;
 
     private final JdbcTemplate jdbc;
     private final EmailNotificationService emailService;
@@ -73,6 +89,13 @@ public class MailRetryOrphanSweeper {
     @Scheduled(fixedDelayString = "${site.monitor.mail.retry-orphan-sweep-ms:300000}",
                initialDelayString = "${site.monitor.mail.retry-orphan-sweep-initial-ms:180000}")
     public void scheduledSweep() {
+        // Her pod KENDİ bekleyen yeniden denemelerini tazeler (kilitten bağımsız — yalnız bir pod süpürür ama her canlı pod
+        // kendi satırını korumalı).
+        try {
+            if (emailService != null) emailService.heartbeatPendingRetries(ISO.format(Instant.now()));
+        } catch (Exception e) {
+            log.debug("421 yeniden deneme canlılık damgası atlandı: {}", e.getMessage());
+        }
         try {
             if (scheduler == null) {
                 sweep(Instant.now());
@@ -89,7 +112,14 @@ public class MailRetryOrphanSweeper {
         Duration age = orphanAge();
         String before = ISO.format(now.minus(age));
         String from = ISO.format(now.minus(LOOKBACK));
-        int n = jdbc.update(SQL, EmailNotificationService.STATUS_RETRY_ORPHANED, from, before);
+        String aliveBefore = ISO.format(now.minus(aliveTtl()));
+        String hardBefore = ISO.format(now.minus(MAX_ALIVE));
+        int n;
+        try {
+            n = jdbc.update(SQL, EmailNotificationService.STATUS_RETRY_ORPHANED, from, before, aliveBefore, hardBefore);
+        } catch (org.springframework.jdbc.BadSqlGrammarException noColumn) {
+            n = jdbc.update(SQL_LEGACY, EmailNotificationService.STATUS_RETRY_ORPHANED, from, before);
+        }
         if (n > 0) {
             log.warn("SMTP 421 yeniden denemesinin sonucu gelmeyen {} bildirim satırı FAILED yapıldı (gönderen pod kapanmış; eşik {} dk)",
                     n, age.toMinutes());
@@ -103,6 +133,12 @@ public class MailRetryOrphanSweeper {
             }
         }
         return n;
+    }
+
+    /** Canlılık damgasının geçerlilik süresi: max({@link #MIN_ALIVE_TTL}, 3 × tur aralığı). */
+    Duration aliveTtl() {
+        Duration three = Duration.ofMillis(Math.max(0, sweepIntervalMs) * 3);
+        return three.compareTo(MIN_ALIVE_TTL) > 0 ? three : MIN_ALIVE_TTL;
     }
 
     /** Yetim eşiği: yeniden deneme zinciri + pay, en az {@link #MIN_ORPHAN_AGE}. */

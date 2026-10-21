@@ -205,6 +205,44 @@ class UserPushOutboxLeaseTest {
     }
 
     @Test
+    @DisplayName("inceleme N3: kapanışın BAŞINDA (ContextClosedEvent) yeni tur durur ve süren istek beklenir — ortak yok etme süresi "
+            + "tükenmiş olsa da süren push kesilmez, SENT yazılır; kalan batch'lerin kirası bırakılır, başka pod bir kez gönderir")
+    void contextClosedDrain_finishesInFlightEvenWhenDestroyBudgetIsGone() throws Exception {
+        rows(3);
+        gatewayDelayMs = 1_000;
+        UserPushService a = pod("podA", 120);
+
+        a.sweepOutbox();
+        assertThat(firstRequest.await(10, TimeUnit.SECONDS)).isTrue();
+        a.beginShutdown();   // NotifyExecutorDrain bunu ContextClosedEvent'te çağırır
+        assertThat(a.inFlightBatches()).as("süren tur").isEqualTo(1);
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (a.inFlightBatches() > 0 && System.nanoTime() < deadline) Thread.sleep(50);
+        assertThat(a.inFlightBatches()).as("boşaltma süren turu bekledi").isZero();
+
+        a.drainOutbox();   // durdurulmuş worker yeni tur başlatmaz
+        com.sitemonitor.config.ShutdownDeadline spent = new com.sitemonitor.config.ShutdownDeadline();
+        spent.remainingMs(0, System.nanoTime() - TimeUnit.SECONDS.toNanos(30));   // ortak süre önceki beklemelerce tüketildi
+        com.sitemonitor.config.ShutdownDeadline.activate(spent);
+        try {
+            a.shutdown();
+        } finally {
+            com.sitemonitor.config.ShutdownDeadline.activate(null);
+        }
+
+        assertThat(posts.values().stream().mapToInt(AtomicInteger::get).sum()).as("yalnız süren istek").isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM user_push_deliveries WHERE status = 'SENT'", Integer.class)).isEqualTo(1);
+        assertThat(jdbc.queryForList("SELECT next_attempt_at FROM user_push_deliveries WHERE status = 'PENDING'", String.class))
+                .hasSize(2).containsOnlyNulls();
+
+        UserPushService b = pod("podB", 120);
+        gatewayDelayMs = 0;
+        b.drainOutbox();
+        assertThat(pending()).isZero();
+        assertThat(posts.values()).allSatisfy(c -> assertThat(c.get()).as("aynı push iki kez gitmedi").isEqualTo(1));
+    }
+
+    @Test
     @DisplayName("Gönderildi ama sonuç bir kez yazılamadı (inceleme F4): satırın kirası ileri alınır — kira dolduktan sonra başka pod satırı ALMAZ (ikinci POST yok); sonraki süpürme SENT yazar")
     void outcomeWriteFailsOnce_noSecondPostFromAnotherPod() throws Exception {
         rows(1);

@@ -83,4 +83,30 @@ class NotifyExecutorShutdownTest {
         ex.getThreadPoolExecutor().getRejectedExecutionHandler().rejectedExecution(ran::incrementAndGet, ex.getThreadPoolExecutor());
         assertThat(ran.get()).isZero();
     }
+
+    @Test
+    @DisplayName("inceleme N3: kapanış boşaltması push worker'ını ÖNCE durdurur, sonra süren turunu bildirim havuzlarıyla AYNI süre içinde bekler")
+    void contextCloseStopsAndDrainsThePushWorker() {
+        com.sitemonitor.service.UserPushService push = org.mockito.Mockito.mock(com.sitemonitor.service.UserPushService.class);
+        org.mockito.Mockito.when(push.inFlightBatches()).thenReturn(1, 1, 0);
+        AnnotationConfigApplicationContext ctx = new AnnotationConfigApplicationContext();
+        ctx.registerBean("notifyExecutor", ThreadPoolTaskExecutor.class, () -> new WebConfig().notifyExecutor());
+        ctx.registerBean("loginIssueMailExecutor", ThreadPoolTaskExecutor.class, () -> new WebConfig().loginIssueMailExecutor());
+        ctx.registerBean(com.sitemonitor.service.UserPushService.class, () -> push);
+        ctx.register(NotifyExecutorDrain.class);
+        ctx.refresh();
+        ctx.close();
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(push);
+        order.verify(push).beginShutdown();
+        order.verify(push, org.mockito.Mockito.atLeast(3)).inFlightBatches();
+    }
+
+    @Test
+    @DisplayName("inceleme N3: push turu bitmezse boşaltma yine süreyle sınırlı (ek süre yok); push okunamazsa beklenmez")
+    void pushDrainIsBounded() {
+        long t0 = System.nanoTime();
+        assertThat(NotifyExecutorDrain.drain(List.of(), () -> 1, 200)).isEqualTo(1);
+        assertThat(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t0)).isLessThan(2_000);
+        assertThat(NotifyExecutorDrain.drain(List.of(), () -> { throw new IllegalStateException("kapandı"); }, 1_000)).isZero();
+    }
 }

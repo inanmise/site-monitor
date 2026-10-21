@@ -124,6 +124,33 @@ class SystemMaintenanceQueriesTest {
     }
 
     @Test
+    @DisplayName("inceleme N2 (gerçek SQL): 'gönderim başladı' yalnız bu sahiplenmeye yazılır; bırakma onu da temizler; devralma "
+            + "SENDING satırını yeniden sahiplenemez, vazgeçme yazar")
+    void endMailSendingMarker() {
+        Long id = window("2026-10-02T10:00:00", "2026-10-02T11:00:00").getId();
+        assertThat(repo.claimEndMail(id, "2026-10-02T11:00:20")).isEqualTo(1);
+        assertThat(repo.markEndMailSending(id, "2026-10-02T11:00:59", "SENDING: x")).as("başka sahiplenme").isZero();
+        assertThat(repo.markEndMailSending(id, "2026-10-02T11:00:20", "SENDING: x")).isEqualTo(1);
+        assertThat(repo.reclaimEndMail(id, "2026-10-02T11:00:20", "2026-10-02T11:20:00", "RETRY: y"))
+                .as("gönderimi başlamış satır devralınamaz").isZero();
+        assertThat(repo.releaseEndMail(id, "2026-10-02T11:00:20")).as("gönderim istisnası — hiç gitmedi").isEqualTo(1);
+        SystemMaintenanceWindow released = repo.findById(id).orElseThrow();
+        assertThat(released.getEndMailAt()).isNull();
+        assertThat(released.getEndMailStatus()).isNull();
+
+        assertThat(repo.claimEndMail(id, "2026-10-02T11:05:00")).isEqualTo(1);
+        assertThat(repo.markEndMailSending(id, "2026-10-02T11:05:00", "SENDING: x")).isEqualTo(1);
+        assertThat(repo.giveUpEndMail(id, "2026-10-02T11:05:00", "FAILED: z")).isEqualTo(1);
+        assertThat(repo.findById(id).orElseThrow().getEndMailStatus()).isEqualTo("FAILED: z");
+
+        Long a = window("2026-10-03T10:00:00", "2026-10-03T11:00:00").getId();
+        assertThat(repo.claimAnnounceMail(a, "2026-10-02T09:00:00", 1)).isEqualTo(1);
+        assertThat(repo.markAnnounceMailSending(a, "2026-10-02T09:00:00", "SENDING: x")).isEqualTo(1);
+        assertThat(repo.reclaimAnnounceMail(a, "2026-10-02T09:00:00", "2026-10-02T09:20:00", "RETRY: y")).isZero();
+        assertThat(repo.giveUpAnnounceMail(a, "2026-10-02T09:00:00", "FAILED: z")).isEqualTo(1);
+    }
+
+    @Test
     @DisplayName("canlı pencereler: iptal edilmemiş ve bitmemiş, başlangıca göre")
     void liveWindows() {
         Long a = window("2026-10-02T12:00:00", "2026-10-02T13:00:00").getId();

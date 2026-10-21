@@ -17,6 +17,7 @@ import java.util.List;
  * <ul>
  *   <li>{@code alert_events.resolution_notify} / {@code resolution_notify_at} — kalıcı çözüm bildirimi işareti (MP-07).</li>
  *   <li>{@code login_anomaly_incident.last_alert_attempt_at} — giriş anomalisi uyarı denemesi damgası (MP-10).</li>
+ *   <li>{@code notification_logs.retry_alive_at} — 421 yeniden denemesi canlılık damgası (inceleme N4).</li>
  * </ul>
  * Kolonlar varlıklarda da tanımlı (ddl-auto ekler); bu yama ddl-auto'nun sessizce atladığı ortamları kapatır. Hepsi
  * NULLABLE, varsayılansız. Her ifade kendi try/catch'inde ({@link SchemaDdlGuard} kilit beklemesi sınırlı); biri düşerse
@@ -34,7 +35,8 @@ public class NotificationDurabilitySchemaPatch {
     static final List<Col> COLUMNS = List.of(
             new Col("alert_events", "resolution_notify", "VARCHAR(16)"),
             new Col("alert_events", "resolution_notify_at", "VARCHAR(30)"),
-            new Col("login_anomaly_incident", "last_alert_attempt_at", "VARCHAR(40)"));
+            new Col("login_anomaly_incident", "last_alert_attempt_at", "VARCHAR(40)"),
+            new Col("notification_logs", "retry_alive_at", "VARCHAR(30)"));
 
     private final JdbcTemplate jdbc;
 

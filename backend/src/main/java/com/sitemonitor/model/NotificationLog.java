@@ -55,6 +55,14 @@ public class NotificationLog {
     @Column(name = "tech_error_report_id")
     private Long techErrorReportId;
 
+    /**
+     * 421 yeniden denemesinin canlılık damgası (2026-10-22, çok pod R1 inceleme N4) — yalnız hedefli SQL yazar
+     * ({@code NotificationLogRepository.touchRetryAlive}); varlık kaydı yazmaz. Yetim süpürmesi taze damgalı satıra dokunmaz.
+     */
+    @Column(name = "retry_alive_at", length = 30, insertable = false, updatable = false)
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private String retryAliveAt;
+
     /** VARCHAR kolonlarının uzunluğu (kolon tanımı yok → JPA varsayılanı 255). */
     public static final int VARCHAR_MAX = 255;
 

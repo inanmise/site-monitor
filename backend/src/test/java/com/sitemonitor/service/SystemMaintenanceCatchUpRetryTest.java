@@ -71,6 +71,8 @@ class SystemMaintenanceCatchUpRetryTest {
         when(repo.claimCatchUp(anyLong(), anyString())).thenReturn(1);
         when(repo.reclaimCatchUp(anyLong(), anyString(), anyString())).thenReturn(1);
         when(repo.claimEndMail(anyLong(), anyString())).thenReturn(1);
+        when(repo.markEndMailSending(anyLong(), anyString(), anyString())).thenReturn(1);
+        when(repo.markAnnounceMailSending(anyLong(), anyString(), anyString())).thenReturn(1);
         when(repo.claimAnnounceMail(anyLong(), anyString(), anyInt())).thenReturn(1);
     }
 
@@ -337,6 +339,67 @@ class SystemMaintenanceCatchUpRetryTest {
         verify(emailService, never()).sendHtmlBcc(any(), anyString(), anyString(), anyString());
         verify(repo).giveUpAnnounceMail(eq(5L), eq(w.getAnnounceMailAt()), eq(SystemMaintenanceJobService.STATUS_RESULT_UNKNOWN));
         verify(auditService).recordSystemEvent(eq("SYSTEM_MAINTENANCE_MAIL"), anyString(), eq("5"), any());
+    }
+
+    @Test
+    @DisplayName("N2: gönderim BAŞARILI, yalnız durum yazımı düşüyor — yazım 3 kez denenir; tutarsa tek gönderim, pencere biter")
+    void endMailRecordRetriedAfterSuccessfulSend() {
+        SystemMaintenanceWindow w = endedWithMailClaim(Duration.ofMinutes(0), null);
+        w.setEndMailAt(null);
+        job.recordBackoffMs = 1;
+        when(repo.recordEndMail(anyLong(), anyString(), anyInt()))
+                .thenThrow(new IllegalStateException("havuz")).thenThrow(new IllegalStateException("havuz")).thenReturn(1);
+        job.process(w, NOW);
+        verify(repo).markEndMailSending(eq(5L), eq(iso(NOW)), eq(SystemMaintenanceJobService.STATUS_SENDING));
+        verify(emailService, times(1)).sendHtmlBcc(any(), anyString(), anyString(), anyString());
+        verify(repo, times(3)).recordEndMail(eq(5L), anyString(), eq(1));
+        verify(repo).markJobsDone(5L);
+    }
+
+    @Test
+    @DisplayName("N2: gönderim başarılı ama durum hiç yazılamadı — 'gönderim başladı' kalır; 10 dk sonra devralma YENİDEN GÖNDERMEZ, "
+            + "'başladı ama sonucu yazılamadı' ile vazgeçer")
+    void endMailSentButUnrecorded_takeoverNeverResends() {
+        SystemMaintenanceWindow w = endedWithMailClaim(Duration.ofMinutes(0), null);
+        w.setEndMailAt(null);
+        job.recordBackoffMs = 1;
+        when(repo.recordEndMail(anyLong(), anyString(), anyInt())).thenThrow(new IllegalStateException("havuz"));
+        assertThatThrownBy(() -> job.process(w, NOW)).isInstanceOf(IllegalStateException.class);
+        verify(emailService, times(1)).sendHtmlBcc(any(), anyString(), anyString(), anyString());
+        verify(repo, never()).releaseEndMail(anyLong(), anyString());
+        verify(repo, never()).markJobsDone(anyLong());
+
+        // 11 dk sonraki tur: satırda "gönderim başladı" durumu duruyor → yeniden gönderim YOK
+        org.mockito.Mockito.clearInvocations(emailService);
+        SystemMaintenanceWindow later = endedWithMailClaim(Duration.ofMinutes(11), SystemMaintenanceJobService.STATUS_SENDING);
+        job.process(later, NOW);
+        verify(repo, never()).reclaimEndMail(anyLong(), anyString(), anyString(), anyString());
+        verify(emailService, never()).sendHtmlBcc(any(), anyString(), anyString(), anyString());
+        verify(repo).giveUpEndMail(eq(5L), eq(later.getEndMailAt()), eq(SystemMaintenanceJobService.STATUS_SEND_UNCONFIRMED));
+        verify(repo).markJobsDone(5L);
+    }
+
+    @Test
+    @DisplayName("N2: 'gönderim başladı' durumu yazılamazsa posta GÖNDERİLMEZ, sahiplenme bırakılır (sonraki tur dener)")
+    void markSendingFails_noSendAndReleased() {
+        SystemMaintenanceWindow w = endedWithMailClaim(Duration.ofMinutes(0), null);
+        w.setEndMailAt(null);
+        when(repo.markEndMailSending(anyLong(), anyString(), anyString())).thenThrow(new IllegalStateException("havuz"));
+        assertThatThrownBy(() -> job.process(w, NOW)).isInstanceOf(IllegalStateException.class);
+        verify(emailService, never()).sendHtmlBcc(any(), anyString(), anyString(), anyString());
+        verify(repo).releaseEndMail(eq(5L), eq(iso(NOW)));
+    }
+
+    @Test
+    @DisplayName("N2: duyuru da aynı — gönderim başlamış (durum SENDING) bayat sahiplenme yeniden gönderilmez")
+    void announceSentButUnrecorded_takeoverNeverResends() {
+        SystemMaintenanceWindow w = plannedWithAnnounceClaim(Duration.ofMinutes(11), SystemMaintenanceJobService.STATUS_SENDING,
+                Duration.ofHours(2));
+        job.process(w, NOW);
+        verify(emailService, never()).sendHtmlBcc(any(), anyString(), anyString(), anyString());
+        verify(repo).giveUpAnnounceMail(eq(5L), eq(w.getAnnounceMailAt()), eq(SystemMaintenanceJobService.STATUS_SEND_UNCONFIRMED));
+        assertThat(SystemMaintenanceJobService.mailUnsettled(SystemMaintenanceJobService.STATUS_SENDING)).isTrue();
+        assertThat(SystemMaintenanceJobService.STATUS_SEND_UNCONFIRMED.length()).isLessThanOrEqualTo(255);
     }
 
     @Test

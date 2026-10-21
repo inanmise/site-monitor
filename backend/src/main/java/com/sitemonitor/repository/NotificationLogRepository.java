@@ -22,6 +22,16 @@ public interface NotificationLogRepository extends JpaRepository<NotificationLog
     @Query("UPDATE NotificationLog n SET n.emailStatus = :status WHERE n.id = :id AND n.emailStatus LIKE 'QUEUED_RETRY%'")
     int failQueuedRetryIfStill(@Param("id") Long id, @Param("status") String status);
 
+    /**
+     * 421 yeniden denemesi canlılık damgası (2026-10-22, çok pod R1 inceleme N4) — yalnız hâlâ {@code QUEUED_RETRY…} olan satıra.
+     * {@code EmailNotificationService.heartbeatPendingRetries} yazar, {@code MailRetryOrphanSweeper} okur.
+     */
+    @org.springframework.data.jpa.repository.Modifying
+    @org.springframework.transaction.annotation.Transactional
+    @Query(value = "UPDATE notification_logs SET retry_alive_at = :at WHERE id = :id AND email_status LIKE 'QUEUED_RETRY%'",
+            nativeQuery = true)
+    int touchRetryAlive(@Param("id") Long id, @Param("at") String at);
+
     /** Alıcı adresi başına EN SON webhook teslimatı (SKIPPED hariç) — eskalasyon listesindeki "son teslimat" sütunu (2026-09-20). */
     @org.springframework.data.jpa.repository.Query("""
             select n from NotificationLog n

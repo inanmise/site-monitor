@@ -370,4 +370,54 @@ class ResolutionNotifyDurabilityTest {
         assertThat(marker(e.getId())).isEqualTo(EscalationService.RESOLUTION_NOTIFY_FAILED);
         assertThat(b.deliverPendingResolutions(Instant.now().plus(4, ChronoUnit.MINUTES))).as("yeniden gönderilmez").isZero();
     }
+
+    // ── İnceleme D4 (2026-10-22): sahiplenme yazımı geçti ama istemci hata gördü ─────────────────────────────────────────
+
+    /** İlk SENDING sahiplenmesini YAZAR, sonra istemciye hata döner (yanıt kayboldu benzetimi). */
+    static final class CommitThenThrowJdbc extends org.springframework.jdbc.core.JdbcTemplate {
+        final java.util.concurrent.atomic.AtomicInteger left = new java.util.concurrent.atomic.AtomicInteger(1);
+
+        CommitThenThrowJdbc(javax.sql.DataSource ds) {
+            super(ds);
+        }
+
+        @Override
+        public int update(String sql, Object... args) {
+            int n = super.update(sql, args);
+            if (sql.startsWith("UPDATE alert_events SET resolution_notify = 'SENDING'") && left.getAndDecrement() > 0) {
+                throw new org.springframework.dao.QueryTimeoutException("yanıt kayboldu (test)");
+            }
+            return n;
+        }
+    }
+
+    @Test
+    @DisplayName("D4: sahiplenme veritabanında yazıldı ama istemci hata gördü — işaret yeniden okunur, bizimse BİR kez gönderilir ve DONE; "
+            + "10 dk sonra 'pod durdu' UNKNOWN olmaz, süpürücü ikinci kez göndermez")
+    void claimCommittedButClientSawError_sendsOnce() {
+        AlertEvent e = openAlarm("lostreply.example.com");
+        EscalationService a = pod(1, true);
+        a.setJdbcTemplate(new CommitThenThrowJdbc(mp.dataSource()));
+        a.processResults(List.of(healthy("lostreply.example.com")));
+        assertThat(resolveSends()).isEqualTo(1);
+        assertThat(marker(e.getId())).isEqualTo(EscalationService.RESOLUTION_NOTIFY_DONE);
+        assertThat(pod(2, true).deliverPendingResolutions(Instant.now().plus(20, ChronoUnit.MINUTES))).isZero();
+        assertThat(marker(e.getId())).isEqualTo(EscalationService.RESOLUTION_NOTIFY_DONE);
+        assertThat(resolveSends()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("D4: sahiplenme damgası benzersiz ve ≤ 30 karakter; sözlük sırası saniyeye kadar zamanla aynı")
+    void claimTokenIsUniqueAndOrdered() {
+        AlertEvent x = openAlarm("tok1.example.com");
+        AlertEvent y = openAlarm("tok2.example.com");
+        store.jdbc().update("UPDATE alert_events SET resolution_notify = 'PENDING'");
+        EscalationService a = pod(1, true);
+        String t1 = a.claimResolutionNotify(x.getId(), true).at();
+        String t2 = a.claimResolutionNotify(y.getId(), true).at();
+        assertThat(t1).isNotNull().hasSizeLessThanOrEqualTo(30).isNotEqualTo(t2);
+        assertThat(t1.substring(0, 19)).matches("\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}");
+        assertThat(t1.compareTo(ISO.format(Instant.now().plusSeconds(60)))).isNegative();
+        assertThat(t1.compareTo(ISO.format(Instant.now().minusSeconds(60)))).isPositive();
+    }
 }

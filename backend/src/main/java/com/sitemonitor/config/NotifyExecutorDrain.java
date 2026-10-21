@@ -31,16 +31,24 @@ public class NotifyExecutorDrain {
 
     private final ObjectProvider<ThreadPoolTaskExecutor> notifyExecutor;
     private final ObjectProvider<ThreadPoolTaskExecutor> loginMailExecutor;
+    private final ObjectProvider<com.sitemonitor.service.UserPushService> userPush;
 
     /** Bekleme sınırı (ms) — test kısaltır. */
     long maxWaitMs = WebConfig.NOTIFY_AWAIT_SECONDS * 1000L;
 
     public NotifyExecutorDrain(@Qualifier("notifyExecutor") ObjectProvider<ThreadPoolTaskExecutor> notifyExecutor,
-                               @Qualifier("loginIssueMailExecutor") ObjectProvider<ThreadPoolTaskExecutor> loginMailExecutor) {
+                               @Qualifier("loginIssueMailExecutor") ObjectProvider<ThreadPoolTaskExecutor> loginMailExecutor,
+                               ObjectProvider<com.sitemonitor.service.UserPushService> userPush) {
         this.notifyExecutor = notifyExecutor;
         this.loginMailExecutor = loginMailExecutor;
+        this.userPush = userPush;
     }
 
+    /**
+     * Push worker'ı da AYNI süre içinde boşaltılır (inceleme N3): önce yeni tur durdurulur ({@code beginShutdown}), sonra süren
+     * gönderim bildirim havuzlarıyla birlikte beklenir — ek süre yok (aynı {@link WebConfig#NOTIFY_AWAIT_SECONDS} sınırı), ortak
+     * yok etme süresine kalmaz (önceki yok etme beklemeleri onu tüketince süren push SENT yazılmadan kesiliyordu).
+     */
     @EventListener(ContextClosedEvent.class)
     public void onContextClosed() {
         List<ThreadPoolTaskExecutor> pools = new ArrayList<>(2);
@@ -48,29 +56,51 @@ public class NotifyExecutorDrain {
         if (n != null) pools.add(n);
         ThreadPoolTaskExecutor l = loginMailExecutor.getIfAvailable();
         if (l != null) pools.add(l);
-        int left = drain(pools, maxWaitMs);
+        com.sitemonitor.service.UserPushService push = userPush.getIfAvailable();
+        java.util.function.IntSupplier pushInFlight = () -> 0;
+        if (push != null) {
+            try {
+                push.beginShutdown();
+                pushInFlight = push::inFlightBatches;
+            } catch (RuntimeException e) {
+                log.warn("Kapanış: push worker durdurulamadı: {}", e.getMessage());
+            }
+        }
+        int left = drain(pools, pushInFlight, maxWaitMs);
         if (left > 0) {
-            log.warn("Kapanış: bildirim havuzlarında {} iş {} ms içinde bitmedi — çözüm postaları kalıcı işaretle başka pod'dan gider",
-                    left, maxWaitMs);
+            log.warn("Kapanış: bildirim havuzlarında / push worker'ında {} iş {} ms içinde bitmedi — çözüm postaları kalıcı işaretle, "
+                    + "push'lar kirası dolunca başka pod'dan gider", left, maxWaitMs);
         }
     }
 
-    /**
-     * Havuzlar boşalana (süren iş = 0 ve kuyruk boş) ya da süre dolana dek bekler; kalan iş sayısını döner. Döngü süreyle
-     * sınırlı (100 ms adım) — kesilirse hemen döner.
-     */
     static int drain(List<ThreadPoolTaskExecutor> pools, long maxWaitMs) {
+        return drain(pools, () -> 0, maxWaitMs);
+    }
+
+    /**
+     * Havuzlar boşalana (süren iş = 0 ve kuyruk boş; push için yalnız SÜREN tur — kuyrukta periyodik süpürme görevi hep durur)
+     * ya da süre dolana dek bekler; kalan iş sayısını döner. Döngü süreyle sınırlı (100 ms adım) — kesilirse hemen döner.
+     */
+    static int drain(List<ThreadPoolTaskExecutor> pools, java.util.function.IntSupplier extra, long maxWaitMs) {
         long deadline = System.nanoTime() + Math.max(0, maxWaitMs) * 1_000_000L;
         while (true) {
-            int pending = pending(pools);
+            int pending = pending(pools) + safe(extra);
             if (pending == 0) return 0;
             if (System.nanoTime() >= deadline) return pending;
             try {
                 Thread.sleep(100);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                return pending(pools);
+                return pending(pools) + safe(extra);
             }
+        }
+    }
+
+    private static int safe(java.util.function.IntSupplier s) {
+        try {
+            return Math.max(0, s.getAsInt());
+        } catch (RuntimeException e) {
+            return 0;
         }
     }
 

@@ -412,10 +412,12 @@ public class EmailNotificationService {
                         () -> {
                             // Kapanış bu görevi iptal edip FAILED yazdıysa başlamaz (iki kez yazılmasın)
                             if (!pendingRetryTasks.remove(task)) return;
-                            // Son başlama sınırı (çok pod R1 inceleme D-2): tek iş parçacıklı kuyruk gecikip yetim eşiğine
-                            // yaklaştıysa GÖNDERİLMEZ — süpürücü bu satırı birazdan "sonuç alınamadı" yapar ve 7/24 / rapor
-                            // yeniden dener; geç gelen gerçek bir gönderim o yeniden denemeyle ÇİFT posta olurdu.
-                            if (clockMs.getAsLong() > chainStartMs + retryStartDeadline(retry()).toMillis()) {
+                            // Son başlama sınırı (çok pod R1 inceleme D-2 / N4): tek iş parçacıklı kuyruk gecikip yetim eşiğine
+                            // yaklaştıysa, sonucu BAŞKA YERDE uzlaştırılıp yeniden gönderilen posta (7/24, kanal teknik hata
+                            // raporu) GÖNDERİLMEZ — uzlaştırma onu "sonuç alınamadı" yapıp yeniden gönderir; geç gelen gerçek
+                            // gönderim ÇİFT posta olurdu. Diğer postaları (alarm, çözüm, rapor …) kimse yeniden göndermez: geç
+                            // de olsa gönderilir (eskisi gibi); canlı pod satırı tazelediği için yetim süpürmesi onu FAILED yapmaz.
+                            if (clockMs.getAsLong() > chainStartMs + retryStartDeadline(retry()).toMillis() && resentElsewhere(msg)) {
                                 pendingRetries.decrementAndGet();
                                 log.warn("SMTP 421 yeniden denemesi süresinde başlayamadı (kuyruk gecikmesi) — gönderilmedi: TO={}",
                                         SecretMask.maskEmails(to));
@@ -483,6 +485,62 @@ public class EmailNotificationService {
         } catch (Exception e) {
             log.warn("Retry sonucu bildirim loguna yazılamadı: {}", e.getMessage());
         }
+    }
+
+    /** Sonucu başka yerde uzlaştırılıp YENİDEN gönderilen satırların rolleri — 7/24 ({@code NocQueuedRetryReconciler}). */
+    static final java.util.Set<String> RESENT_ELSEWHERE_ROLES =
+            java.util.Set.of(com.sitemonitor.service.noc.NocNotificationService.LOG_ROLE);
+    /** … ve tetikleri — kanal teknik hata raporu gönderimi ({@code TechErrorReportService.reconcileQueued}). */
+    static final java.util.Set<String> RESENT_ELSEWHERE_TRIGGERS =
+            java.util.Set.of(com.sitemonitor.service.techerror.TechErrorReportSender.TRIGGER);
+
+    /** Satırın postası başka yerde uzlaştırılıp yeniden gönderiliyor mu (inceleme N4)? */
+    static boolean resentElsewhere(com.sitemonitor.model.NotificationLog row) {
+        if (row == null) return false;
+        String role = row.getRecipientRole(), trigger = row.getTrigger();   // Set.of(...).contains(null) fırlatır
+        return (role != null && RESENT_ELSEWHERE_ROLES.contains(role))
+                || (trigger != null && RESENT_ELSEWHERE_TRIGGERS.contains(trigger));
+    }
+
+    /**
+     * Yeniden denenen postanın kuyruk satırı başka yerde uzlaştırılan türden mi? Satır bulunamaz / okunamazsa false — eski
+     * davranış (geç de olsa gönderilir): bilinmeyen bir alarm postasını düşürmek, olası tek kopyadan kötüdür.
+     */
+    boolean resentElsewhere(MimeMessage msg) {
+        try {
+            String subject = msg.getSubject();
+            if (subject == null || subject.isBlank()) return false;
+            java.util.Set<String> to = toAddresses(msg);
+            com.sitemonitor.model.NotificationLog row = retryRowFor(subject, to);
+            if (row == null) row = rowFor(subject, to, STATUS_RETRY_ORPHANED);
+            return resentElsewhere(row);
+        } catch (Exception e) {
+            log.debug("421 yeniden deneme satırı okunamadı (geç de olsa gönderilecek): {}", e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Canlılık damgası (inceleme N4): bu pod'da HÂLÂ bekleyen 421 yeniden denemelerinin kuyruk satırlarına
+     * {@code retry_alive_at = now} yazar — başka yerde uzlaştırılan türler hariç (onlar son başlama sınırıyla düşer). Her pod'da
+     * {@code MailRetryOrphanSweeper} turunun başında (kilitten önce) çağrılır; yetim süpürmesi taze damgalı satıra dokunmaz,
+     * yani canlı pod'un geciken yeniden denemesi "gönderen pod kapandı" diye FAILED yazılmaz. Bekleyen görev en çok
+     * {@link #MAX_PENDING_RETRIES} — tur başına o kadar okuma + koşullu yazım. Tazelenen satır sayısını döner.
+     */
+    public int heartbeatPendingRetries(String nowIso) {
+        int n = 0;
+        for (RetryTask t : new ArrayList<>(pendingRetryTasks)) {
+            try {
+                String subject = t.msg.getSubject();
+                if (subject == null || subject.isBlank()) continue;
+                com.sitemonitor.model.NotificationLog row = retryRowFor(subject, toAddresses(t.msg));
+                if (row == null || row.getId() == null || resentElsewhere(row)) continue;
+                n += notificationLogRepo.touchRetryAlive(row.getId(), nowIso);
+            } catch (Exception e) {
+                log.debug("421 yeniden deneme canlılık damgası yazılamadı: {}", e.getMessage());
+            }
+        }
+        return n;
     }
 
     /**

@@ -175,7 +175,7 @@ public class SystemMaintenanceJobService {
                 mails += sendAnnouncement(w, now, rev, w.getAnnounceMailAt());
             } else {
                 giveUpMail(w, SystemMaintenanceMail.Kind.ANNOUNCE,
-                        repo.giveUpAnnounceMail(w.getId(), w.getAnnounceMailAt(), STATUS_RESULT_UNKNOWN));
+                        repo.giveUpAnnounceMail(w.getId(), w.getAnnounceMailAt(), giveUpStatus(w.getAnnounceMailStatus())));
             }
         }
 
@@ -255,7 +255,7 @@ public class SystemMaintenanceJobService {
                             if (r < 0) endMailSettled = false; else mails += r;
                         } else {
                             giveUpMail(w, SystemMaintenanceMail.Kind.ENDED,
-                                    repo.giveUpEndMail(w.getId(), w.getEndMailAt(), STATUS_RESULT_UNKNOWN));
+                                    repo.giveUpEndMail(w.getId(), w.getEndMailAt(), giveUpStatus(w.getEndMailStatus())));
                         }
                     }
                 }
@@ -278,9 +278,54 @@ public class SystemMaintenanceJobService {
     /** İkinci kez yarıda kalan / artık anlamsız e-postanın durumu (yeniden gönderilmez). */
     static final String STATUS_RESULT_UNKNOWN = "FAILED: sonuç bilinmiyor — gönderen pod yarıda durdu; yeniden gönderilmedi";
 
-    /** Sahiplenilmiş e-postanın sonucu henüz yazılmadı mı (NULL ya da devralınıp yeniden gönderiliyor). */
+    /**
+     * İlk dilimden HEMEN önce yazılan "gönderim başladı" durumu (inceleme N2). Devralma bunu görünce YENİDEN GÖNDERMEZ (sonuç
+     * bilinmiyor) — yalnız gönderime hiç başlamamış sahiplenme (durum NULL) bir kez yeniden gönderilir. Eskiden gönderim başarılı
+     * olup yalnız durum yazımı düşünce 10 dk sonra devralma tüm BCC listesine ikinci postayı atıyordu.
+     */
+    static final String STATUS_SENDING = "SENDING: gönderim başladı — sonuç henüz yazılmadı";
+    /** Gönderimi başlamış ama sonucu hiç yazılamamış e-postanın vazgeçme durumu (yeniden gönderilmez). */
+    static final String STATUS_SEND_UNCONFIRMED =
+            "FAILED: sonuç bilinmiyor — gönderim başladı ama sonucu yazılamadı; yeniden gönderilmedi";
+    /** Sonuç yazımının deneme sayısı ve denemeler arası bekleme (ms; test kısaltır). */
+    static final int RECORD_ATTEMPTS = 3;
+    long recordBackoffMs = 200;
+
+    /** Sahiplenilmiş e-postanın sonucu henüz yazılmadı mı (NULL, devralınıp yeniden gönderiliyor ya da gönderim sürüyor). */
     static boolean mailUnsettled(String status) {
-        return status == null || status.startsWith("RETRY:");
+        return status == null || status.startsWith("RETRY:") || status.startsWith("SENDING:");
+    }
+
+    /** Bayat, sonuçlanmamış e-postadan vazgeçme durumu: gönderim başladıysa "başladı ama yazılamadı", değilse "pod durdu". */
+    static String giveUpStatus(String status) {
+        return status != null && status.startsWith("SENDING:") ? STATUS_SEND_UNCONFIRMED : STATUS_RESULT_UNKNOWN;
+    }
+
+    /**
+     * Gönderim sonrası durum yazımı — {@value #RECORD_ATTEMPTS} deneme, artan bekleme (inceleme N2). Hepsi düşerse ERROR ve
+     * istisna: "gönderim başladı" durumu kalır, devralma yeniden GÖNDERMEZ (bayatlayınca {@link #STATUS_SEND_UNCONFIRMED}).
+     */
+    private void recordWithRetry(SystemMaintenanceWindow w, SystemMaintenanceMail.Kind kind, Runnable write) {
+        RuntimeException last = null;
+        for (int i = 0; i < RECORD_ATTEMPTS; i++) {
+            try {
+                write.run();
+                return;
+            } catch (RuntimeException e) {
+                last = e;
+                if (i + 1 < RECORD_ATTEMPTS) {
+                    try {
+                        Thread.sleep(recordBackoffMs * (1L << i));
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                }
+            }
+        }
+        log.error("Sistem bakımı #{} {} e-postası GÖNDERİLDİ ama durumu {} denemede yazılamadı — yeniden gönderilmeyecek: {}",
+                w.getId(), kind, RECORD_ATTEMPTS, last == null ? "kesildi" : last.getMessage());
+        throw last != null ? last : new IllegalStateException("durum yazımı kesildi");
     }
 
     /** Vazgeçme izi: ERROR + {@code SYSTEM_MAINTENANCE_MAIL} denetimi (durum = sonuç bilinmiyor). */
@@ -396,6 +441,8 @@ public class SystemMaintenanceJobService {
         String key = w.getId() + ":announce";
         try {
             to = recipients(w);
+            // İlk dilimden önce "gönderim başladı" (N2) — yazılamazsa gönderilmez (sahiplenme bırakılır, sonraki tur dener).
+            if (repo.markAnnounceMailSending(w.getId(), at, STATUS_SENDING) != 1) return 0;   // sahiplenme el değiştirdi
             status = send(w, SystemMaintenanceMail.Kind.ANNOUNCE, to);   // dilim hataları içeride yakalanır — istisna = hiç gitmedi
         } catch (RuntimeException e) {
             if (reclaimFrom == null && !countFailure(key, w, "announce")) repo.releaseAnnounceMail(w.getId(), at);   // MP-18
@@ -403,7 +450,10 @@ public class SystemMaintenanceJobService {
             throw e;
         }
         failedAttempts.remove(key);
-        repo.recordAnnounceMail(w.getId(), clip(status), to.size());
+        final String announceStatus = clip(status);
+        final int announceCount = to.size();
+        recordWithRetry(w, SystemMaintenanceMail.Kind.ANNOUNCE,
+                () -> repo.recordAnnounceMail(w.getId(), announceStatus, announceCount));
         auditService.recordSystemEvent("SYSTEM_MAINTENANCE_MAIL", SystemMaintenanceService.RESOURCE, String.valueOf(w.getId()),
                 AuditDetail.of("kind", "ANNOUNCE", "recipients", to.size(), "status", status));
         return to.isEmpty() ? 0 : 1;
@@ -445,6 +495,8 @@ public class SystemMaintenanceJobService {
         String key = w.getId() + ":end-mail";
         try {
             to = recipients(w);
+            // İlk dilimden önce "gönderim başladı" (N2) — yazılamazsa gönderilmez (sahiplenme bırakılır, sonraki tur dener).
+            if (repo.markEndMailSending(w.getId(), at, STATUS_SENDING) != 1) return -1;   // sahiplenme el değiştirdi
             status = send(w, SystemMaintenanceMail.Kind.ENDED, to);
         } catch (RuntimeException e) {
             if (reclaimFrom == null && !countFailure(key, w, "end-mail")) repo.releaseEndMail(w.getId(), at);   // MP-18
@@ -452,7 +504,9 @@ public class SystemMaintenanceJobService {
             throw e;
         }
         failedAttempts.remove(key);
-        repo.recordEndMail(w.getId(), clip(status), to.size());
+        final String endStatus = clip(status);
+        final int endCount = to.size();
+        recordWithRetry(w, SystemMaintenanceMail.Kind.ENDED, () -> repo.recordEndMail(w.getId(), endStatus, endCount));
         auditService.recordSystemEvent("SYSTEM_MAINTENANCE_MAIL", SystemMaintenanceService.RESOURCE, String.valueOf(w.getId()),
                 AuditDetail.of("kind", SystemMaintenanceMail.Kind.ENDED.name(), "recipients", to.size(), "status", status,
                         "planned_end", SystemMaintenanceService.wire(w.getPlannedEndAt()),
