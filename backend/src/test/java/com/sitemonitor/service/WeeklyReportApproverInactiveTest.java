@@ -74,6 +74,7 @@ class WeeklyReportApproverInactiveTest {
         when(guard.withoutInactive(any(), any())).thenAnswer(i -> i.getArgument(0));   // kişi süzgeci: bu süitte dokunmaz
         when(appSettings.getString(anyString(), any())).thenAnswer(i -> i.getArgument(1));
         when(reportRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        WeeklyReportClaimStubs.allWin(reportRepo);   // durum geçişleri koşullu UPDATE (MP-39) — tek istek kazanır
         when(mailRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(emailService.fromAddress()).thenReturn("sitemonitor@test");
         when(emailService.sendHtml(any(), any(), anyString(), anyString(), any())).thenReturn("SENT");

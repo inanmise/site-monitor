@@ -654,6 +654,45 @@ class WeeklyReportControllerTest {
                 eq("WEEKLY_REPORT"), eq("5"), eq("username_prefix (reject)"));
     }
     @Test
+    @DisplayName("2026-10-21 (MP-39): bağlantıya çift tık / uygulama içi kararla yarışı KAYBEDEN istek → nötr 'zaten onaylanmış' sayfası,"
+            + " güvenlik olayı YOK, onay denetimi YOK (karar diğer istekte verildi)")
+    void approveLink_lostRace_neutralPageNoSecurityEvent() throws Exception {
+        when(service.approveViaToken("T1")).thenThrow(new WeeklyReportService.StateChangedException(
+                WeeklyReportService.lostMessage("approve_link", "APPROVED"), "APPROVED"));
+        mvc.perform(post("/api/weekly-reports/approve-link/confirm").param("token", "T1"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("zaten onaylanmış")))
+                .andExpect(content().string(org.hamcrest.Matchers.not(containsString("Onay Başarısız"))));
+
+        when(service.rejectViaToken(any(), any())).thenThrow(new WeeklyReportService.StateChangedException(
+                WeeklyReportService.lostMessage("reject_link", "APPROVED"), "APPROVED"));
+        mvc.perform(post("/api/weekly-reports/approve-link/reject").param("token", "T1").param("reason", "x"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("onaylandı")))
+                .andExpect(content().string(org.hamcrest.Matchers.not(containsString("İade Başarısız"))));
+
+        org.mockito.Mockito.verify(auditService, org.mockito.Mockito.never()).recordSecurityEvent(
+                any(), any(), any(), any(), any(), any());
+        org.mockito.Mockito.verify(auditService, org.mockito.Mockito.never()).recordTokenAction(
+                any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("2026-10-21 (MP-39): uygulama içi onayı kaybeden istek 409 + code WEEKLY_REPORT_STATE_CHANGED + current_status; denetim YOK")
+    void approve_lostRace_409WithCurrentStatus() throws Exception {
+        when(service.approve(eq(5L), any())).thenThrow(new WeeklyReportService.StateChangedException(
+                WeeklyReportService.lostMessage("approve", "APPROVED"), "APPROVED"));
+        mvc.perform(post("/api/weekly-reports/5/approve").session(adminSession()))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("WEEKLY_REPORT_STATE_CHANGED"))
+                .andExpect(jsonPath("$.current_status").value("APPROVED"))
+                .andExpect(jsonPath("$.error", containsString("ikinci bir e-posta gönderilmedi")));
+        org.mockito.Mockito.verify(auditService, org.mockito.Mockito.never()).recordAction(
+                eq("WEEKLY_REPORT_APPROVE"), any(jakarta.servlet.http.HttpSession.class),
+                any(jakarta.servlet.http.HttpServletRequest.class), any(), any(), any());
+    }
+
+    @Test
     @DisplayName("2026-09-12: GET /weekly-reports/deadline canlı ayardan gün/saat + TR/EN gün adı döner")
     void deadline_fromLiveSettings() throws Exception {
         org.mockito.Mockito.when(appSettings.getString(org.mockito.ArgumentMatchers.eq("site.monitor.weekly-report.deadline-day"), org.mockito.ArgumentMatchers.any())).thenReturn("THU");

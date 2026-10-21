@@ -589,6 +589,8 @@ public class WeeklyReportController {
                 "<p class='msg'><strong>Rapor onaylandı.</strong><br>" + note + "</p>", "#15803d");
         } catch (WeeklyReportService.ApproverInactiveException e) {
             return linkDenied(request, e, "approve");
+        } catch (WeeklyReportService.StateChangedException e) {
+            return decisionAlreadyTaken(e, "approve");
         } catch (Exception e) {
             String msg = e.getMessage() != null ? e.getMessage() : "Onay işlemi başarısız.";
             // Başarısız token denemesi de iz bırakır: sızmış/süresi dolmuş bir bağlantının
@@ -616,12 +618,25 @@ public class WeeklyReportController {
                 "<p class='msg'><strong>Rapor iade edildi.</strong><br>" + note + "</p>", "#d97706");
         } catch (WeeklyReportService.ApproverInactiveException e) {
             return linkDenied(request, e, "reject");
+        } catch (WeeklyReportService.StateChangedException e) {
+            return decisionAlreadyTaken(e, "reject");
         } catch (Exception e) {
             String msg = e.getMessage() != null ? e.getMessage() : "İade işlemi başarısız.";
             auditService.recordSecurityEvent("WEEKLY_REPORT_REJECT", request, null,
                     "WEEKLY_REPORT", "email-token", msg);
             return htmlPage("İade Başarısız", "<p class='msg'>" + esc(msg) + "</p>", "#dc2626");
         }
+    }
+
+    /**
+     * Bağlantıya çift tık / uygulama içi kararla yarış (2026-10-21, çok pod MP-39): kararı eş zamanlı başka bir istek
+     * VERDİ; bu istek hiçbir şey değiştirmedi ve posta göndermedi. Sızmış / eski bağlantı denemesi DEĞİL — güvenlik olayı
+     * yazılmaz, sayfa nötr renkte güncel durumu söyler (GET sayfasının "zaten onaylanmış" görünümüyle aynı).
+     */
+    private ResponseEntity<String> decisionAlreadyTaken(WeeklyReportService.StateChangedException e, String action) {
+        log.info("Haftalık rapor e-posta bağlantısı ({}) eşzamanlı bir kararın arkasından geldi — işlem yapılmadı, güncel durum={}",
+                action, e.currentStatus());
+        return htmlPage("Haftalık Rapor Onayı", "<p class='msg'>" + esc(e.getMessage()) + "</p>", "#64748b");
     }
 
     /**

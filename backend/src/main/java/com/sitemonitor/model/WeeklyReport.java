@@ -12,8 +12,13 @@ import lombok.NoArgsConstructor;
  *
  * Durum makinesi: DRAFT → PENDING_APPROVAL → APPROVED (müdüre otomatik mail)
  *                                          → REJECTED (düzeltme notuyla; kaydetme DRAFT'a döndürür)
+ *
+ * <p>Durum geçişleri (2026-10-21, çok pod MP-39) {@code WeeklyReportRepository.claim*} koşullu UPDATE'leriyle yazılır;
+ * {@code @DynamicUpdate}: kalan varlık kayıtları (takım aktarımı, hafta etiketi onarımı) yalnız DEĞİŞTİRDİĞİ kolonları
+ * yazar — eş zamanlı bir geçişin durum / belirteç kolonlarını bayat kopyayla geri almaz.
  */
 @Entity
+@org.hibernate.annotations.DynamicUpdate
 @Table(name = "weekly_reports",
     uniqueConstraints = @UniqueConstraint(name = "ux_weekly_report_team_week",
         columnNames = {"team_id", "report_year", "week_no"}),
