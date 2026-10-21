@@ -11,7 +11,7 @@ replicaCount: 1
 
 # Shutdown (2026-10-21). The kubelet waits terminationGracePeriodSeconds after it starts the preStop hook, then
 # SIGKILLs. Budget: preStop 10 + notification-pool drain 20 (ContextClosedEvent) + Spring web phase 20 + executor
-# phase 20 + @Scheduled await 20 + @PreDestroy ~10 = 100 s < 120 s (backend application.properties:
+# phase 20 + @Scheduled await 20 + shared destroy-wait budget 10 (ShutdownDeadline) = 100 s < 120 s (backend application.properties:
 # SHUTDOWN_PHASE_TIMEOUT / SCHEDULING_AWAIT_TERMINATION; WebConfig.NOTIFY_AWAIT_SECONDS). The sweep-leader lease is
 # released at the very start of the shutdown; a pod killed early still cuts in-flight work and leaves its job locks
 # to their TTL (3 min).

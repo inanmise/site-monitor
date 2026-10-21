@@ -41,9 +41,15 @@ Rollout'ta olanlar:
   oturumlar JDBC'de olduğu için kullanıcılar oturum kaybetmez ([Çok pod](#çok-pod)).
 - Eski pod'un kapanışı (2026-10-21): önce `preStop` 10 sn (pod Service / ingress uç noktalarından düşer, istekler
   yeni pod'a gider), sonra SIGTERM → liderlik kirası hemen bırakılır, bildirim havuzları boşaltılır (≤ 20 sn), Spring
-  zarif kapanışı (web ≤ 20 sn, yürütücüler ≤ 20 sn, zamanlanmış işler ≤ 20 sn, `@PreDestroy` ≈ 10 sn). Hepsi
-  `terminationGracePeriodSeconds: 120` içinde; aşılırsa kubelet SIGKILL atar — kira zaten bırakılmıştır, ama süren iş
-  kesilir ve iş kilitleri TTL'lerine (3 dk) kalır.
+  zarif kapanışı (web ≤ 20 sn, yürütücüler ≤ 20 sn, zamanlanmış işler ≤ 20 sn, geri kalan bütün `@PreDestroy`
+  beklemeleri birlikte ≤ 10 sn — `ShutdownDeadline`). Hepsi `terminationGracePeriodSeconds: 120` içinde; aşılırsa
+  kubelet SIGKILL atar — kira zaten bırakılmıştır, ama süren iş kesilir ve iş kilitleri TTL'lerine (3 dk) kalır.
+- **İlk çok pod sürümüne geçiş (20.164 ve öncesi → bu sürüm) BİR KERELİKTİR:** kapanan eski pod kendi eski
+  ayarlarıyla kapanır — grace 60 sn, preStop yok, 30 sn'lik aşamalar, liderlik kirası yalnız `@PreDestroy`'da
+  bırakılır. Bu geçişte 502 görülebilir, eski pod 60 sn'yi aşarsa izleme ~4 dk durabilir (kira 180 sn) ve eski
+  pod'un kuyruğundaki "ÇÖZÜLDÜ" postaları kaybolabilir (eski sürümde kalıcı işaret yok). Sessiz bir saatte dağıtın;
+  sonra Sistem Sağlığı → `sweep_leader.owner` ve Bildirim Geçmişi'ne bakın. Yukarıdaki sayılar sonraki dağıtımdan
+  itibaren geçerlidir. Ön ve son kontroller: [`PROD_DEPLOY_CHECKLIST.md` → İlk çok pod sürümüne geçiş](PROD_DEPLOY_CHECKLIST.md#ilk-çok-pod-sürümüne-geçiş-20164-ve-öncesi--bu-sürüm--bir-kerelik).
 - Açılışta şema yamaları uygulanır (`SchedulerService.applySchemaPatches`, idempotent `ADD COLUMN` /
   `CREATE TABLE`). Logda `Schema patch applied …` satırları.
 - `startupProbe` hazır olmayı en fazla **~300 sn** bekler (30 × 10 sn); aşılırsa pod öldürülür.
@@ -86,6 +92,11 @@ kubectl rollout status "$DEPLOY" -n "$NS"
   kolonlara yazılmış veri eski sürümde görünmez ama kaybolmaz, yeniden ileri gidildiğinde geri gelir.
   İstisnalar (sürüm notunda özellikle yazılır): varsayılansız `NOT NULL` kolon (eski sürümün INSERT'ü kırılır)
   ve veri göçleri (ör. rename sürümündeki `app_settings` anahtar göçü, [`DEPLOY_GECIS_PLANI.md`](DEPLOY_GECIS_PLANI.md) §6).
+- **Çok pod sürüm 1'in iki tekil indeksi geri almada KALIR** (`ux_push_eventless_key_user`, `ux_noe_one_ongoing`) — silmeyin,
+  yeniden ileri gidildiğinde kullanılır. Eski sürüm onlarla çalışır: eski push yazımları önce daha GENİŞ bir anahtarla
+  "var mı?" diye bakar ve ihlali yakalar, eski kesinti / bastırma yazımları ihlali yakalayıp WARN yazar (işlem dışında);
+  yalnız eski bir `@Transactional` çağıranın içindeki gerçek bir yarış o çağıranı geri sarabilir (nadir). Yeni kolonlar
+  (`close_state`, `resolution_notify`, `change_state`, posta durum kolonları) eski sürümce yok sayılır.
 - Geri alma **secret key değişikliğini** geri almaz; anahtar değiştiyse önceki değeri Secret'a geri koyun.
 - Son çare DB yedeğinden dönüş (yedekten sonraki kayıtlar kaybolur) — platform/DBA ile.
 
@@ -609,10 +620,11 @@ lider 2 saate kadar yeniden kuyruğa alır, değişiklik bildirimi kaybolmaz.
 | Web zarif aşaması (süren istekler biter) | ≤ 20 sn | `SHUTDOWN_PHASE_TIMEOUT` (`spring.lifecycle.timeout-per-shutdown-phase`) |
 | Yürütücü aşaması (süren kontroller / bildirimler biter) | ≤ 20 sn | aynı |
 | Zamanlanmış işler havuzu (süren işler biter, kesilmez) | ≤ 20 sn | `SCHEDULING_AWAIT_TERMINATION` |
-| `@PreDestroy` beklemeleri | ≈ 10 sn | — |
+| Geri kalan bütün yok etme beklemeleri (e-posta 421 kuyruğu, push, kod girişi, olay bildirimi, elle kontrol havuzu, bildirim havuzlarının kendisi) | birlikte ≤ 10 sn | `config/ShutdownDeadline.DESTROY_BUDGET_MS` |
 | **Toplam** | **≈ 100 sn < 120 sn** | Helm `terminationGracePeriodSeconds` (120) |
 
-Birini büyütürseniz grace'i de büyütün: `preStop + boşaltma + 2 × aşama + zamanlanmış bekleme + 10 < grace`. İş kilitleri
+Birini büyütürseniz grace'i de büyütün: `preStop + boşaltma + 2 × aşama + zamanlanmış bekleme + 10 < grace` (yeni bir
+havuzun `awaitTermination`'ı `ShutdownDeadline.waitMs` kullanmak zorundadır — `ShutdownBudgetGateTest`). İş kilitleri
 `@PreDestroy`'da (zamanlayıcı durduktan sonra) bırakılır. `helm template`
 preStop ≥ grace'i reddeder; CI (`scripts/helm-template-check.sh`) ve `ShutdownBudgetGateTest` varsayılanları denetler.
 
@@ -639,6 +651,14 @@ SELECT name, locked_by, locked_until FROM scheduler_lock ORDER BY name;   -- loc
          alert_mail_status = CASE WHEN alert_mail_status IN ('PENDING', 'RETRY', 'SENDING') THEN 'SUPERSEDED' ELSE alert_mail_status END
    WHERE status = 'ONGOING' AND (source IS NULL OR source = 'CERT');
   ```
+  Çoğu zaman gerekmez: açık bir kesinti, ağ hatası oranı eşiğin altındaki küçük turlarla 24 saat sonra, bütün etkin
+  ağ envanterini kapsayan bir turla hemen kendiliğinden kapanır. Yönetici kesinti postasının her kararı (gönderildi,
+  atlandı, başarısız, vazgeçildi, geçersiz kaldı, bilinmiyor) SMTP günlüğünde tetik `NETWORK_OUTAGE` ile görünür.
+- **Takılı fırtına kapanışı:** fırtına iki aşamada kapanır (`alert_storms.close_state` `CLOSING` → `DONE`, kurtarma
+  postası `recovery_state` ile tek kez). Yarıda kalan (`CLOSING`, sahiplenmesi 5 dk'dan eski) bir kapanışı herhangi bir pod
+  bir sonraki fırtına turunda tamamlar; 5 denemede olmazsa yine `DONE` yazılır ve üyelere iz düşer. `recovery_state =
+  'UNKNOWN'` = kurtarma postası gitmiş de olabilir, gitmemiş de — `notification_logs`'ta tetik `STORM_RESOLVE`'a bakın;
+  yeniden gönderilmez.
 
 ### Ön koşullar — 1 → N geçişinden ÖNCE
 
@@ -712,6 +732,23 @@ zamanda çakışmasını sayar; `STUCK_TOTAL` 25 dk'dan eski `QUEUED_RETRY` sat�
 görülür (hatadan sonraki doğrulama kontrolü zamanlanmış kontrolle aynı saniyeye düşer) — iki lider ise HER izlemenin
 HER kontrolünü ikiler; ayrıntıdaki `cift / toplam_satir` oranına bakın. Docker'lı iki pod duman testi (yeni imaj, staging
 öncesi): `SMOKE_IMAGE=<imaj> bash scripts/multipod-smoke.sh`.
+
+### Sürüm geçişi sırasında (eski + yeni pod birlikte)
+
+Rollout'ta (`maxSurge: 1`) tek replikada da bir an eski ve yeni sürüm birlikte koşar; eski pod sürüm 1'in sahiplenmelerini
+bilmez. Son eski pod gidene kadar şunlar görülebilir (sonra kendiliğinden biter):
+
+- Eski pod yönetici "ağ kesintisi" / "düzeldi" postasını belleğinden gönderebilir (yinelenen yönetici postası; DB
+  indeksi ikinci ONGOING satırı engeller, WARN).
+- Eski lider `monitor_eval_inbox`'u boşaltmaz: yeni takipçiler boşaltıcı nabzını (`lease:eval-inbox-drainer`) göremez ve
+  "Şimdi kontrol et"i eskisi gibi yerel değerlendirir. Yalnız yeni bir lider öldükten sonraki ≤ 30 sn'de iletilen satırlar
+  bir sonraki yeni-sürüm liderini bekler (10 dk sonra düşer).
+- Eski pod fırtınayı eski tek aşamalı yolla kapatabilir: yinelenen bir kurtarma postası mümkün.
+- Eski pod'da push kuyruğu, haftalık rapor geçişleri ve haftalık erişilebilirlik postası sahiplenmesizdir: çift tık /
+  yarışta yinelenen push ya da posta mümkün (eski davranış).
+- Eski saatlik tarama önce turu alır: kilidi yeni pod'un bayat taraması tutuyorsa o saat atlanır (bir sonraki saat tarar).
+- Eski lider DNS / alan adı değişikliğini taban yapar ama PENDING yazmaz; yeni lider 2 sa (DNS) / 6 sa (alan adı) içinde
+  yeni-sürüm satırlarını yeniden kuyruğa alır.
 
 ### Sürüm 2'ye kadar bilinen pod farkları (zararsız ama kafa karıştırır)
 
