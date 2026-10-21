@@ -437,6 +437,12 @@ public class TechErrorReminderService {
     static TechErrorReminderMail.State stateOf(TechErrorReportRepository.Row r, Instant now, boolean approvalFlow) {
         if (r == null) return TechErrorReminderMail.State.MISSING;
         if (r.getLastSentAt() != null) return null;
+        // Sonucu gelmediği için kuyruk uzlaştırmasının FAILED yaptığı gönderim (2026-10-21, çok pod R1 / MP-06) hâlâ
+        // "gönderim sonucu alınamadı" — taslak değil (gönderilmiş olabilir, ekip yeniden göndermeli)
+        if ("FAILED".equals(r.getSendState()) && r.getLastSendStatus() != null
+                && r.getLastSendStatus().startsWith(com.sitemonitor.service.EmailNotificationService.STATUS_RETRY_ORPHANED)) {
+            return TechErrorReminderMail.State.QUEUED_UNKNOWN;
+        }
         if ("QUEUED".equals(r.getSendState())) {
             boolean mayLand = r.getSendClaimedAt() != null
                     && r.getSendClaimedAt().isAfter(now.minus(TechErrorReportSender.QUEUED_RESULT_WINDOW));

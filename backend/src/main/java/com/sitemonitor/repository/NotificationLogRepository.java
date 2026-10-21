@@ -13,6 +13,15 @@ import java.util.Optional;
 public interface NotificationLogRepository extends JpaRepository<NotificationLog, Long> {
     List<NotificationLog> findByAlertEventIdOrderBySentAtDesc(Long alertEventId);
 
+    /**
+     * Sonucu gelmeyecek 421 kuyruk satırını kapatır (2026-10-21, çok pod R1 / MP-06) — YALNIZ hâlâ {@code QUEUED_RETRY…}
+     * ise (geç gelen gerçek sonuç ya da başka pod önce yazdıysa 0). Kanal teknik hata raporu kuyruk uzlaştırması kullanır.
+     */
+    @org.springframework.data.jpa.repository.Modifying
+    @org.springframework.transaction.annotation.Transactional
+    @Query("UPDATE NotificationLog n SET n.emailStatus = :status WHERE n.id = :id AND n.emailStatus LIKE 'QUEUED_RETRY%'")
+    int failQueuedRetryIfStill(@Param("id") Long id, @Param("status") String status);
+
     /** Alıcı adresi başına EN SON webhook teslimatı (SKIPPED hariç) — eskalasyon listesindeki "son teslimat" sütunu (2026-09-20). */
     @org.springframework.data.jpa.repository.Query("""
             select n from NotificationLog n

@@ -789,16 +789,28 @@ public class TechErrorReportService {
             for (Object[] r : rows) if (r[1] != null) logIds.add(((Number) r[1]).longValue());
             Map<Long, String> status = new HashMap<>();
             Map<Long, String> role = new HashMap<>();
+            Map<Long, String> sentAt = new HashMap<>();
             for (var l : notificationLogs.findAllById(logIds)) {
                 status.put(l.getId(), l.getEmailStatus());
                 role.put(l.getId(), l.getRecipientRole());
+                sentAt.put(l.getId(), l.getSentAt());
             }
             int changed = 0;
+            Instant now = now();
             for (Object[] r : rows) {
                 Long id = ((Number) r[0]).longValue();
                 Long logId = ((Number) r[1]).longValue();
-                String st = status.get(logId);
-                if (!"SENT".equals(st) && (st == null || !st.startsWith("FAILED"))) continue;
+                String logSt = status.get(logId);
+                if (!"SENT".equals(logSt) && (logSt == null || !logSt.startsWith("FAILED"))) {
+                    // ÇOK POD (2026-10-21, R1 / MP-06): 421 yeniden denemeleri gönderen pod'un belleğinde yaşar; pod durdu /
+                    // öldüyse sonuç ASLA gelmez ve rapor sonsuza dek "kuyrukta" kalıyordu (sonuç olayı yok, gönderene push yok,
+                    // üye taslağı silemiyor). Sonucun gelebileceği süre (QUEUED_RESULT_WINDOW) geçtiyse günlük satırı KOŞULLU
+                    // olarak FAILED yazılır ve rapor aynı koşullu sonuçlandırmadan geçer — iki pod aynı kuyruğu iki kez
+                    // sonuçlandırmaz (kazanan tek UPDATE).
+                    logSt = orphanedQueue(id, logId, status.containsKey(logId), logSt, sentAt.get(logId), now);
+                    if (logSt == null) continue;
+                }
+                final String st = logSt;
                 try {
                     QueuedFinish f = inNewTx(() -> finishQueuedWithEvent(id, logId, st));
                     changed += f.changed();
@@ -816,6 +828,40 @@ public class TechErrorReportService {
         } catch (RuntimeException e) {
             log.warn("Kuyruktaki teknik hata raporu gönderimleri sonuçlandırılamadı: {}", e.toString());
             return 0;
+        }
+    }
+
+    /**
+     * Sonucu artık gelemeyecek kuyruk (MP-06): günlük satırı hâlâ {@code QUEUED_RETRY…} (ya da satır yok) ve gönderim
+     * (raporun {@code send_claimed_at}'i — hatırlatmanın ölçütü) {@link TechErrorReportSender#QUEUED_RESULT_WINDOW}'dan eski. Satır varsa koşullu olarak
+     * {@link com.sitemonitor.service.EmailNotificationService#STATUS_RETRY_ORPHANED} yazılır (kaybeden — başka pod ya da geç
+     * gelen gerçek sonuç — null alır, bu tur atlanır). Sonuçlandırılacak durumu döner; değilse null. Zamanı okunamayan satır
+     * dokunulmaz (yaşı bilinmiyor).
+     */
+    private String orphanedQueue(Long reportId, Long logId, boolean logRowExists, String st, String logSentAt, Instant now) {
+        if (logRowExists && st != null && !st.startsWith("QUEUED_RETRY")) return null;   // bilinmeyen durum — dokunma
+        // Ucuz ön süzgeç: günlük satırı gençse sonuç hâlâ gelebilir (rapor satırı okunmaz)
+        Instant logAt = parseLogTime(logSentAt);
+        if (logAt != null && !logAt.plus(TechErrorReportSender.QUEUED_RESULT_WINDOW).isBefore(now)) return null;
+        // Karar kuyruğa alınma ANINA göre (hatırlatma ile aynı ölçüt: send_claimed_at)
+        Instant since = reports.findById(reportId).map(TechErrorReport::getSendClaimedAt).orElse(null);
+        if (since == null || !since.plus(TechErrorReportSender.QUEUED_RESULT_WINDOW).isBefore(now)) return null;
+        String orphan = com.sitemonitor.service.EmailNotificationService.STATUS_RETRY_ORPHANED;
+        if (logRowExists && notificationLogs.failQueuedRetryIfStill(logId, orphan) != 1) return null;
+        log.warn("Teknik hata raporu #{} kuyruktaki gönderiminin sonucu {} dk içinde gelmedi (gönderen pod kapanmış) — FAILED",
+                reportId, TechErrorReportSender.QUEUED_RESULT_WINDOW.toMinutes());
+        return orphan;
+    }
+
+    /** {@code notification_logs.sent_at} (ISO, UTC, saniye) → an; okunamazsa null. */
+    private static Instant parseLogTime(String iso) {
+        if (iso == null || iso.isBlank()) return null;
+        try {
+            String s = iso.trim();
+            if (s.endsWith("Z")) return Instant.parse(s);
+            return java.time.LocalDateTime.parse(s).toInstant(java.time.ZoneOffset.UTC);
+        } catch (Exception e) {
+            return null;
         }
     }
 

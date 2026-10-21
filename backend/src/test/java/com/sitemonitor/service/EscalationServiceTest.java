@@ -1555,7 +1555,13 @@ class EscalationServiceTest {
         // Bağ koparıldıktan sonra olay varlığı YENİDEN kaydedilmez (bayat varlık bağı geri yazardı): iki save (açılış + damga).
         verify(alertEventRepo, times(2)).save(any());
 
-        // 2. tur: arıza sürüyor → yarıda kalmış ilk bildirim dalı bireysel INITIAL'ı HEMEN gönderir.
+        // 2. tur, olay hâlâ 5 dk'dan genç (MP-19, çok pod R1 2026-10-21): damgasız taze olayda ilk bildirim başka pod'da
+        // SÜRÜYOR olabilir — bu tur beklenir (ikinci INITIAL riski yerine en çok 5 dk gecikme).
+        service.processConfirmedOutage(name, EscalationService.TYPE_SCRIPTED_FAIL, "WARNING", ctx);
+        verify(emailService, never()).sendAlert(any(String[].class), any(), any(), any(), any(), any(), any(), any());
+
+        // 3. tur: pay doldu, arıza sürüyor → yarıda kalmış ilk bildirim dalı bireysel INITIAL'ı gönderir.
+        stored[0].setCreatedAt(ISO.format(Instant.now().minus(6, ChronoUnit.MINUTES)));
         service.processConfirmedOutage(name, EscalationService.TYPE_SCRIPTED_FAIL, "WARNING", ctx);
 
         verify(emailService).sendAlert(any(String[].class), not(contains("[RE-ALERT]")), anyString(), eq(name),
@@ -1907,8 +1913,9 @@ class EscalationServiceTest {
         String domain = "down.example.com";
         AlertEvent open = existingOpenAlert(domain, "ACCESSIBILITY", "CRITICAL", false);
         open.setId(7L);
-        open.setCreatedAt(ISO.format(Instant.now()));   // AZ ONCE olusmus → re-alert penceresi DOLMADI
-        open.setLastReAlertAt(null);                    // ...ama ilk bildirim hic tamamlanmamis
+        // 6 dk once olusmus → re-alert penceresi DOLMADI, ama ilk bildirimin 5 dk'lik payi (MP-19) doldu
+        open.setCreatedAt(ISO.format(Instant.now().minus(6, ChronoUnit.MINUTES)));
+        open.setLastReAlertAt(null);                    // ...ve ilk bildirim hic tamamlanmamis
         when(inventoryRepo.findByDomain(domain)).thenReturn(Optional.empty());
         when(alertEventRepo.findOpenAlert(domain, "ACCESSIBILITY")).thenReturn(Optional.of(open));
         when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -1922,6 +1929,29 @@ class EscalationServiceTest {
                 anyString(), eq(domain), eq("CRITICAL"), eq("ACCESSIBILITY"), isNull(), any());
         // Damga atilir ki bir sonraki sweep bunu tekrar gondermesin.
         assertThat(open.getLastReAlertAt()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("MP-19 (çok pod R1): damgasız ama 30 sn önce açılmış izleme alarmı — ilk bildirim HÂLÂ sürüyor olabilir, ikinci INITIAL gitmez")
+    void processConfirmedOutage_unstampedYoungAlarm_waitsForGrace() {
+        // Lider A INITIAL'ı gönderirken (yavaş SMTP + kontak webhook'ları > izleme kilidinin 120 sn'si) kilidi devralan
+        // lider B damgasız olayı görüp İKİNCİ bir INITIAL gönderiyordu. Sertifika yolunun 5 dk'lık payı burada da.
+        String domain = "young.example.com";
+        AlertEvent open = existingOpenAlert(domain, "ACCESSIBILITY", "CRITICAL", false);
+        open.setId(8L);
+        open.setCreatedAt(ISO.format(Instant.now().minusSeconds(30)));
+        open.setLastReAlertAt(null);
+        when(inventoryRepo.findByDomain(domain)).thenReturn(Optional.empty());
+        when(alertEventRepo.findOpenAlert(domain, "ACCESSIBILITY")).thenReturn(Optional.of(open));
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(contactRepo.findByTeamIdAndActiveTrueOrderByRoleAsc(OWNER))
+                .thenReturn(List.of(contact("team@test.com", "TECH", "WARNING")));
+
+        service.processConfirmedOutage(domain, "ACCESSIBILITY", "CRITICAL", outageCtx());
+
+        verify(emailService, never()).sendAlert(any(String[].class), any(), any(), any(), any(), any(), any(), any());
+        verify(userPushService, never()).enqueueAlert(any(), any(), any(), any(), any());
+        assertThat(open.getLastReAlertAt()).as("damga atılmadı — pay dolunca telafi gider").isNull();
     }
 
     @Test

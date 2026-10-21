@@ -115,6 +115,22 @@ public class AlertEvent {
     @Column(name = "oncall_emails", columnDefinition = "TEXT", insertable = false, updatable = false)
     private String oncallEmails;
 
+    /**
+     * Çözüm bildiriminin KALICI işareti (2026-10-21, çok pod R1 / MP-07): {@code PENDING} (çözüm kapısıyla AYNI koşullu
+     * UPDATE'te yazılır — bildirim gönderilecek), {@code SENDING} (bir yol sahiplendi, an {@link #resolutionNotifyAt}),
+     * {@code DONE} (karar verildi / gönderildi), {@code UNKNOWN} (gönderen pod yarıda durdu — çift gönderim olmasın diye
+     * yeniden gönderilmez, izi notification_logs'ta), {@code EXPIRED} (24 saatte gönderilemedi). NULL = işaretsiz (eski satır,
+     * sessiz kapanış, fırtına üyesi) — süpürücü dokunmaz. Yalnız hedefli UPDATE yazar; varlık kaydı ezmesin diye salt okunur.
+     */
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    @Column(name = "resolution_notify", length = 16, insertable = false, updatable = false)
+    private String resolutionNotify;
+
+    /** {@link #resolutionNotify} son geçişinin anı (ISO UTC) — SENDING sahiplenmesinin bayatlığı buradan ölçülür. */
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    @Column(name = "resolution_notify_at", length = 30, insertable = false, updatable = false)
+    private String resolutionNotifyAt;
+
     /** Monitörün grubu (group_name) — per-group storm scoping için oluşturulurken damgalanır (yalnız
      *  per-group modu açıkken StormService tarafından çözülür); cert-envanteri/grupsuz izlemede null. */
     @Column(name = "group_name")

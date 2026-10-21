@@ -27,6 +27,8 @@ import java.util.concurrent.Executor;
 @Configuration
 public class WebConfig implements WebMvcConfigurer {
 
+    private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(WebConfig.class);
+
     // @Lazy: WebConfig aynı zamanda certCheckExecutor (AsyncTaskExecutor) tanımlar.
     // Spring Boot 4'te JPA EntityManagerFactoryBuilder, bootstrap executor'ı çözerken
     // bu @Configuration'ı örnekler; interceptor'lar eager enjekte edilirse
@@ -250,9 +252,48 @@ public class WebConfig implements WebMvcConfigurer {
         // CallerRunsPolicy'nin SAYAÇLI eşleniği: davranış aynı (kapanmamışsa çağıranda koştur), ama
         // her taşma CALLER_RUNS'a yazılır → doygunluk Sistem Sağlığı'nda görünür olur.
         executor.setRejectedExecutionHandler((r, ex) -> {
-            if (ex.isShutdown()) return;
+            if (ex.isShutdown()) {
+                // Kapanışta reddedilen iş artık SESSİZ değil (2026-10-21, çok pod R1 / MP-07): bildirim işleri notifyExecutor'a
+                // taşındı; burada kalan kontrol işi kaybolur — kapanış sırasında ne düştüğü günlükte görünsün.
+                LOG.warn("certCheckExecutor kapanıyor — görev reddedildi ve çalıştırılmadı: {}", r.getClass().getSimpleName());
+                return;
+            }
             CALLER_RUNS.incrementAndGet();
             r.run();
+        });
+        executor.initialize();
+        return executor;
+    }
+
+    /** {@link #notifyExecutor} ve {@link #loginIssueMailExecutor} kapanışta bekleme süresi (sn). */
+    public static final int NOTIFY_AWAIT_SECONDS = 20;
+
+    /**
+     * Bildirim {@code @Async} işleri için AYRI küçük havuz (2026-10-21, çok pod R1 / MP-07): çözüm postası
+     * ({@code EscalationService.sendResolutionNotificationAsync}) ve elle yeniden gönderim ({@code reNotifyAsync}) eskiden
+     * {@code certCheckExecutor}'da kontrol işlerinin ARKASINDA kuyruğa giriyordu; o havuz kapanışta beklemiyor ve reddi
+     * sessizce yutuyordu — her yayılımda / pod küçülmesinde "ÇÖZÜLDÜ" postaları kayboluyordu. Bu havuz kapanışta kuyruğunu
+     * {@link #NOTIFY_AWAIT_SECONDS} kadar bitirir ({@code NotifyExecutorDrain} bağlam kapanırken, kalanı yok etme anında);
+     * yine de kaybolan çözüm postasını kalıcı işaret ({@code alert_events.resolution_notify}) + {@code ResolutionNotifySweeper}
+     * başka pod'dan BİR kez gönderir. Doluysa çağıranda koşar (kapanmıyorsa); kapanmışsa WARN (iş kalıcı işaretle kurtulur).
+     */
+    @Bean(name = "notifyExecutor")
+    public ThreadPoolTaskExecutor notifyExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(2);
+        executor.setMaxPoolSize(4);
+        executor.setQueueCapacity(1000);
+        executor.setThreadNamePrefix("notify-");
+        executor.setTaskDecorator(new MdcTaskDecorator());
+        executor.setWaitForTasksToCompleteOnShutdown(true);
+        executor.setAwaitTerminationSeconds(NOTIFY_AWAIT_SECONDS);
+        executor.setRejectedExecutionHandler((r, ex) -> {
+            if (ex.isShutdown()) {
+                LOG.warn("notifyExecutor kapanıyor — bildirim görevi reddedildi (çözüm postası kalıcı işaretle başka pod'dan gider): {}",
+                        r.getClass().getSimpleName());
+                return;
+            }
+            r.run();   // CallerRuns: kuyruk doluysa bildirim kaybolmaz, çağıranda gider
         });
         executor.initialize();
         return executor;
@@ -283,6 +324,10 @@ public class WebConfig implements WebMvcConfigurer {
         executor.setQueueCapacity(100);
         executor.setThreadNamePrefix("login-mail-");
         executor.setTaskDecorator(new MdcTaskDecorator());
+        // Kapanışta kuyruktaki güvenlik / onay bilgilendirme postaları beklenir (2026-10-21, çok pod R1 / MP-07) — eskiden
+        // yok etme anında düşüyordu (giriş anomalisi uyarısı, yeni cihaz, onaylayan bilgilendirmesi).
+        executor.setWaitForTasksToCompleteOnShutdown(true);
+        executor.setAwaitTerminationSeconds(NOTIFY_AWAIT_SECONDS);
         executor.setRejectedExecutionHandler(new java.util.concurrent.ThreadPoolExecutor.CallerRunsPolicy());
         executor.initialize();
         return executor;

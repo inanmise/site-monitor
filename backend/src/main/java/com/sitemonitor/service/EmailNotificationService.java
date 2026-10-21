@@ -107,6 +107,52 @@ public class EmailNotificationService {
     int pendingRetryCount() { return pendingRetries.get(); }
 
     /**
+     * Kapanışta İPTAL edilen 421 yeniden denemesinin günlük durumu (2026-10-21, çok pod R1 / MP-06). "FAILED: sonuç yok"
+     * öneki bilinçli: kanal teknik hata raporu gönderim günlüğü bunu "uygulama içinde yarıda kaldı" (INTERNAL_ERROR) okur,
+     * posta sunucusu reddi (SMTP_FAILED) değil.
+     */
+    public static final String STATUS_RETRY_CANCELLED_SHUTDOWN = "FAILED: sonuç yok — pod kapanırken 421 yeniden denemesi iptal edildi";
+
+    /**
+     * Sonucu hiç gelmeyen (gönderen pod öldü) {@code QUEUED_RETRY} satırının durumu — {@code MailRetryOrphanSweeper} ve kanal
+     * teknik hata raporu kuyruk uzlaştırması yazar. Geç gelen gerçek sonuç bu satırı yine düzeltebilir ({@link #writeBackRetryStatus}).
+     */
+    public static final String STATUS_RETRY_ORPHANED = "FAILED: sonuç yok — 421 yeniden denemesinin sonucu alınamadı (gönderen pod kapandı)";
+
+    /**
+     * Bekleyen 421 yeniden denemeleri (2026-10-21, çok pod R1 / MP-06). Görev BAŞLARKEN kendini kümeden çıkarır; kapanışta
+     * kümede kalanlar hiç başlamamış (iptal edilmiş) görevlerdir — günlük satırlarına {@link #STATUS_RETRY_CANCELLED_SHUTDOWN}
+     * yazılır. Eskiden satır sonsuza dek {@code QUEUED_RETRY} kalıyordu (7/24 onu "gitti" sayıyor, teknik hata raporu kuyrukta
+     * görünüyordu). Kümeden çıkarmayı kim kazanırsa (görev ya da kapanış) o yazar — iki kez yazılmaz.
+     */
+    private final java.util.Set<RetryTask> pendingRetryTasks = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /** Bekleyen yeniden deneme — kimliğe göre karşılaştırılır (kayıt değil, sınıf). */
+    private static final class RetryTask {
+        final MimeMessage msg;
+        RetryTask(MimeMessage msg) { this.msg = msg; }
+    }
+
+    /**
+     * 421 yeniden deneme zincirinin toplam bekleme süresi ({@code retry × (1 + 2 + … + 2^(n−2))}, n = toplam deneme) —
+     * bundan sonra sonuç gelmeyen satır yetimdir.
+     */
+    public static java.time.Duration retryChainDuration(long retryDelayMs) {
+        long base = Math.max(0, retryDelayMs);
+        long factor = (1L << (MAX_SEND_ATTEMPTS - 1)) - 1;   // 4 deneme → 1 + 2 + 4 = 7
+        return java.time.Duration.ofMillis(base * factor);
+    }
+
+    /** Güncel ayarla yeniden deneme zincirinin süresi (ayar okunamazsa varsayılan 90 sn). */
+    public java.time.Duration currentRetryChainDuration() {
+        try {
+            return retryChainDuration(retry());
+        } catch (Exception e) {
+            return retryChainDuration(90_000L);
+        }
+    }
+
+    /**
      * Pasif kullanıcı ağı (2026-10-02, kullanıcı kararı): her giden e-posta {@link #doSend}'den geçer ve YALNIZ pasif
      * kullanıcılara ait adresler alıcılardan çıkarılır; hepsi düşerse gönderim yapılmaz, durum
      * {@link InactiveRecipientGuard#STATUS_SKIPPED} döner. Alan enjeksiyonu + isteğe bağlı: elle kurulan birim testlerinde
@@ -120,16 +166,40 @@ public class EmailNotificationService {
 
     @PreDestroy
     void shutdownRetryExecutor() {
+        shutdownRetryExecutor(5_000L);
+    }
+
+    /** {@link #shutdownRetryExecutor()} gövdesi (test bekleme süresini kısaltır). İptal edilip FAILED yazılan görev sayısını döner. */
+    int shutdownRetryExecutor(long waitMs) {
         mailRetryExecutor.shutdown();
         try {
             // Graceful shutdown: bekleyen 421-retry görevlerine kısa süre tanı
-            if (!mailRetryExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
+            if (!mailRetryExecutor.awaitTermination(Math.max(0, waitMs), TimeUnit.MILLISECONDS)) {
                 mailRetryExecutor.shutdownNow();
             }
         } catch (InterruptedException e) {
             mailRetryExecutor.shutdownNow();
             Thread.currentThread().interrupt();
         }
+        return failCancelledRetries();
+    }
+
+    /**
+     * Hiç başlamamış (kapanışta iptal edilmiş) 421 yeniden denemelerinin günlük satırlarını {@link #STATUS_RETRY_CANCELLED_SHUTDOWN}
+     * yapar (MP-06). Başlamış görev kümede değildir — kendi sonucunu yazar.
+     */
+    private int failCancelledRetries() {
+        int n = 0;
+        for (RetryTask t : new ArrayList<>(pendingRetryTasks)) {
+            if (!pendingRetryTasks.remove(t)) continue;   // tam bu anda başladı — kendi sonucunu yazar
+            pendingRetries.decrementAndGet();
+            writeBackRetryStatus(t.msg, STATUS_RETRY_CANCELLED_SHUTDOWN);
+            n++;
+        }
+        if (n > 0) {
+            log.warn("Kapanış: {} bekleyen SMTP 421 yeniden denemesi iptal edildi — bildirim günlüğüne FAILED yazıldı", n);
+        }
+        return n;
     }
 
     // ── Current SMTP settings (DB-backed; SmtpSettingsService falls back to env) ──
@@ -301,17 +371,30 @@ public class EmailNotificationService {
                     return "FAILED: retry kuyruğu dolu";
                 }
                 // Caller'ı bloke etme; retry'ı ayrı thread'de tetikle.
+                RetryTask task = new RetryTask(msg);
+                pendingRetryTasks.add(task);
                 pendingRetries.incrementAndGet();
-                mailRetryExecutor.schedule(
-                    () -> {
-                        try { doSend(to, msg, attempt + 1); }
-                        catch (Exception ex) {
-                            log.error("✗ Async retry başarısız: TO={} | HATA={}", SecretMask.maskEmails(to), ex.getMessage(), ex);
-                        } finally {
-                            pendingRetries.decrementAndGet();
-                        }
-                    },
-                    delay, TimeUnit.MILLISECONDS);
+                try {
+                    mailRetryExecutor.schedule(
+                        () -> {
+                            // Kapanış bu görevi iptal edip FAILED yazdıysa başlamaz (iki kez yazılmasın)
+                            if (!pendingRetryTasks.remove(task)) return;
+                            try { doSend(to, msg, attempt + 1); }
+                            catch (Exception ex) {
+                                log.error("✗ Async retry başarısız: TO={} | HATA={}", SecretMask.maskEmails(to), ex.getMessage(), ex);
+                            } finally {
+                                pendingRetries.decrementAndGet();
+                            }
+                        },
+                        delay, TimeUnit.MILLISECONDS);
+                } catch (java.util.concurrent.RejectedExecutionException rex) {
+                    // Pod kapanıyor (havuz kapalı): yeniden deneme planlanamaz — "kuyrukta" deyip satırı sonsuza dek
+                    // QUEUED_RETRY bırakmak yerine dürüst sonuç (MP-06).
+                    if (pendingRetryTasks.remove(task)) pendingRetries.decrementAndGet();
+                    log.warn("SMTP 421 yeniden denemesi planlanamadı (pod kapanıyor): TO={}", SecretMask.maskEmails(to));
+                    if (attempt > 1) writeBackRetryStatus(msg, STATUS_RETRY_CANCELLED_SHUTDOWN);
+                    return STATUS_RETRY_CANCELLED_SHUTDOWN;
+                }
                 // İlk denemenin sonucu caller'a döner (sonraki retry'lar async, sonucu yutulur).
                 return attempt == 1 ? "QUEUED_RETRY: " + err : "QUEUED_RETRY";
             }
@@ -346,7 +429,11 @@ public class EmailNotificationService {
         try {
             String subject = msg.getSubject();
             if (subject == null || subject.isBlank()) return;
-            com.sitemonitor.model.NotificationLog logRow = retryRowFor(subject, toAddresses(msg));
+            java.util.Set<String> to = toAddresses(msg);
+            com.sitemonitor.model.NotificationLog logRow = retryRowFor(subject, to);
+            // Satır bu arada yetim sayılıp FAILED yazıldıysa (süpürücü / teknik hata uzlaştırması; MP-06) geç gelen GERÇEK sonuç
+            // onu yine düzeltir — günlük doğruyu söylesin.
+            if (logRow == null) logRow = rowFor(subject, to, STATUS_RETRY_ORPHANED);
             if (logRow == null) return;
             logRow.setEmailStatus(terminalStatus);
             notificationLogRepo.save(logRow);
@@ -362,13 +449,18 @@ public class EmailNotificationService {
      * satırı yanlışlıkla SENT / FAILED oluyordu) — hiçbir şey yazılmaz, bir WARN. Kime okunamadıysa eski kural (konuya göre en yeni).
      */
     com.sitemonitor.model.NotificationLog retryRowFor(String subject, java.util.Set<String> to) {
+        return rowFor(subject, to, "QUEUED_RETRY");
+    }
+
+    /** {@link #retryRowFor} gövdesi — durum öneki parametreli (yetim satırın geç düzeltmesi aynı eşleştirme kuralıyla). */
+    private com.sitemonitor.model.NotificationLog rowFor(String subject, java.util.Set<String> to, String statusPrefix) {
         if (to == null || to.isEmpty()) {
-            return notificationLogRepo.findTopBySubjectAndEmailStatusStartingWithOrderByIdDesc(subject, "QUEUED_RETRY").orElse(null);
+            return notificationLogRepo.findTopBySubjectAndEmailStatusStartingWithOrderByIdDesc(subject, statusPrefix).orElse(null);
         }
         java.util.List<com.sitemonitor.model.NotificationLog> rows =
-                notificationLogRepo.findTop20BySubjectAndEmailStatusStartingWithOrderByIdDesc(subject, "QUEUED_RETRY");
+                notificationLogRepo.findTop20BySubjectAndEmailStatusStartingWithOrderByIdDesc(subject, statusPrefix);
         if (rows == null) {
-            return notificationLogRepo.findTopBySubjectAndEmailStatusStartingWithOrderByIdDesc(subject, "QUEUED_RETRY").orElse(null);
+            return notificationLogRepo.findTopBySubjectAndEmailStatusStartingWithOrderByIdDesc(subject, statusPrefix).orElse(null);
         }
         com.sitemonitor.model.NotificationLog uncomparable = null;
         boolean addressRows = false;
