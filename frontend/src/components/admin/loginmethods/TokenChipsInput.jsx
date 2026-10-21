@@ -6,12 +6,16 @@ import { Input } from '@/components/shadcn/input'
 import { cn } from '@/lib/utils'
 import { splitTokens } from './usernamePrefixModel.js'
 
+/** Sınır aşıldı sorunu: `onEntryError({ key: TOO_MANY, params: [max] })` — çağıran alana özgü metne çevirir. */
+export const TOO_MANY = 'tooMany'
+
 /**
  * Kısa değer çip girişi (2026-10-21, kullanıcı adı ön eki kartı: izinli ön ekler + muaf kullanıcı adları).
  *
  * Yazıp Enter / virgül / noktalı virgül / boşluk / odak kaybı ya da bir liste YAPIŞTIRMA → her parça `validate` ile denetlenir;
  * geçerliler `normalize` edilip çip olur (tekrar sessizce atlanmaz: `onEntryError(null)` + liste değişmez), İLK geçersiz parça
- * kutuda kalır ve `onEntryError(ileti)` alanın altında gösterilir (çağıran `Field error`'a bağlar). Denetimli: `values` →
+ * kutuda kalır ve `onEntryError(ileti)` alanın altında gösterilir (çağıran `Field error`'a bağlar). `max` dolunca fazlası da
+ * kutuda kalır ve `onEntryError({ key: TOO_MANY, params: [max] })` gelir (hiçbir parça sessizce düşmez). Denetimli: `values` →
  * `onChange(values)`. Çipler shadcn Badge (ad SARAR, kesilmez — `rounded-md whitespace-normal`), kaldır düğmeleri Button
  * (dokunmatikte ≥ 40 px vuruş alanı), giriş shadcn Input. Test kancaları: `data-slot="token-chips" | "token-chip"`.
  */
@@ -34,7 +38,10 @@ export default function TokenChipsInput({
       const problem = validate ? validate(p) : null
       if (problem) { bad = problem; rest.push(p); continue }
       const v = normalize(p)
-      if (!next.includes(v) && next.length < max) next.push(v)
+      if (next.includes(v)) continue
+      // Sınır dolu (inceleme 2026-10-21): fazlası SESSİZCE düşmez — kutuda kalır ve alanın altında söylenir
+      if (next.length >= max) { bad = { key: TOO_MANY, params: [max] }; rest.push(p); continue }
+      next.push(v)
     }
     if (next.length !== values.length) onChange(next)
     onEntryError?.(bad)

@@ -169,4 +169,23 @@ class UsernamePrefixRuleTest {
         assertThat(r.exempt()).hasSize(50);
         assertThat(UsernamePrefixRule.disabled("admin").isExempt("ADMIN")).isTrue();
     }
+
+    @Test
+    @DisplayName("muaf liste GİRİŞ sırasını korur (her pod / her okuma aynı sıra) ve değiştirilemez")
+    void exemptKeepsInsertionOrder() {
+        StringBuilder csv = new StringBuilder();
+        List<String> expected = new java.util.ArrayList<>();
+        for (int i = 30; i > 0; i--) {
+            csv.append("svc").append(i).append(',');
+            expected.add("SVC" + i);
+        }
+        UsernamePrefixRule r = UsernamePrefixRule.of(true, "N", csv + "zeta,alfa,SVC3", "admin");
+        expected.add("ZETA");
+        expected.add("ALFA");
+        assertThat(r.exempt()).containsExactlyElementsOf(expected);
+        assertThat(UsernamePrefixRule.of(true, "N", csv + "zeta,alfa", "admin").exempt())
+                .containsExactlyElementsOf(r.exempt());
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> r.exempt().add("X"))
+                .isInstanceOf(UnsupportedOperationException.class);
+    }
 }

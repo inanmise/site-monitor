@@ -95,6 +95,34 @@ describe('App — kullanıcı adı ön eki sinyali', () => {
     expect(assignLocation).not.toHaveBeenCalled()
   })
 
+  it('inceleme 2026-10-21: AÇILIŞTA MP remember-me reddi → N hesabıyla giriş → kural SONRA keserse pencere + /?session=prefix yine çalışır (sinyal girişte sıfırlanır)', async () => {
+    api.getMe.mockResolvedValue({ success: true, username: 'N123', system_role: 'USER', team_ids: [] })
+    api.getMe.mockImplementationOnce(async () => { signalUsernamePrefix(['N']); return null })
+    api.login.mockResolvedValue({ success: true, username: 'N123', system_role: 'USER', team_ids: [] })
+    render(<App />)
+    await waitFor(() => expect(document.querySelector('[data-slot="login-username-prefix"]')).not.toBeNull())
+
+    const userInput = document.getElementById('lp-user')
+    fireEvent.change(userInput, { target: { value: 'N123' } })
+    fireEvent.change(document.getElementById('lp-pass'), { target: { value: 'pw' } })
+    fireEvent.submit(userInput.closest('form'))
+    await screen.findByText(/^v\d+\./)
+    expect(document.querySelector('[data-slot="username-prefix-dialog"]')).toBeNull()
+
+    // kural sonradan N'yi de dışarıda bırakacak biçimde değişti → aynı sayfa ömründe yeni kesim
+    let first
+    act(() => { first = signalUsernamePrefix(['T']) })
+    expect(first).toBe(true)
+    const dlg = await waitFor(() => {
+      const d = document.querySelector('[data-slot="username-prefix-dialog"]')
+      expect(d).not.toBeNull()
+      return d
+    })
+    expect(dlg).toHaveTextContent(/start with T|T ile başlayan/)
+    fireEvent.click(document.querySelector('[data-slot="username-prefix-logout"]'))
+    expect(assignLocation).toHaveBeenCalledWith('/?session=prefix')
+  })
+
   it('/?session=prefix → giriş sayfasında ön ek bildirimi ("oturum süresi doldu" değil)', async () => {
     window.history.replaceState({}, '', '/?session=prefix')
     api.getMe.mockResolvedValue({})

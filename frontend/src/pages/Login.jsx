@@ -205,7 +205,7 @@ export default function Login({ onLogin, sessionExpired = false, accountInactive
         setErrorCode('ACCOUNT_INACTIVE')
         setError(t('login.accountInactiveError'))
       } else if (isUsernamePrefixPayload(data)) {
-        // 403 USERNAME_PREFIX_NOT_ALLOWED (2026-10-21) — kural yazılan ada bakar; izinli ön ekler gövdede
+        // 403 USERNAME_PREFIX_NOT_ALLOWED (2026-10-21) — yalnız kimlik bilgisi DOĞRUYSA gelir; izinli ön ekler gövdede
         setErrorCode('USERNAME_PREFIX_NOT_ALLOWED')
         setError(prefixErrorText(data))
       } else if (isMaintenancePayload(data)) {

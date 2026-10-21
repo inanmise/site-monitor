@@ -101,6 +101,28 @@ public class TechErrorApprovalService {
     @Autowired(required = false)
     TechErrorVisibilityService visibility;
 
+    /**
+     * Kullanıcı adı ön eki kuralı (2026-10-21 inceleme): kural açıkken giriş yapamayan hesap (ör. MP…) onaylayıcı sayılmaz,
+     * istek postası almaz ve e-posta bağlantısıyla da karar veremez (sebep {@code username_prefix}, belirteç tüketilmez).
+     * Bellek içi karar (ayar önbelleği) — sorgu yok. Fasulye yoksa / okunamazsa kural yok sayılır (fail-open, girişle aynı).
+     */
+    @Autowired(required = false)
+    com.sitemonitor.service.loginpolicy.UsernamePrefixPolicy usernamePrefix;
+
+    /** Test dikişi. */
+    void setUsernamePrefix(com.sitemonitor.service.loginpolicy.UsernamePrefixPolicy p) {
+        this.usernamePrefix = p;
+    }
+
+    /** Bu ad giriş kuralına uyuyor mu — politika yoksa / okunamazsa EVET (fail-open). */
+    boolean prefixAllows(String username) {
+        try {
+            return usernamePrefix == null || usernamePrefix.allows(username);
+        } catch (RuntimeException e) {
+            return true;
+        }
+    }
+
     private final TechErrorReportService service;
     private final TechErrorReportRepository reports;
     private final TechErrorApprovalTokenRepository tokens;
@@ -166,12 +188,17 @@ public class TechErrorApprovalService {
         return !TechErrorReportSender.executiveRecipients(ch).isEmpty();
     }
 
-    /** Takımın onaylayıcıları (aktif PO üyeler), kullanıcı adına göre; e-postası olmayan da listede (uygulama içi onay). */
+    /**
+     * Takımın onaylayıcıları (aktif PO üyeler), kullanıcı adına göre; e-postası olmayan da listede (uygulama içi onay).
+     * Kullanıcı adı ön eki kuralının girişe kapattığı hesap listede YOK (2026-10-21 inceleme): giremeyen hesap onaylayamaz,
+     * istek postası / push almaz, sayılarda görünmez.
+     */
     public List<Approver> approvers(Long teamId) {
         if (teamId == null) return List.of();
         List<Approver> out = new ArrayList<>();
         Set<String> seenMail = new LinkedHashSet<>();
         for (AppUser u : users.findActiveByOrgRoleInTeam(teamId, APPROVER_ROLE)) {
+            if (!prefixAllows(u.getUsername())) continue;
             String mail = u.getEmail() == null ? null : u.getEmail().trim();
             // Boş adres → yok; aynı kutuyu paylaşan ikinci PO → yok (inceleme 2026-10-17: eski satır adresi aynen bırakıyordu —
             // ortak kutuya iki istek postası, iki belirteç). Uygulama içi onay yine açık.
@@ -210,6 +237,9 @@ public class TechErrorApprovalService {
      */
     public boolean linkDecisionAllowed(AppUser u, Long teamId) {
         if (!hasApprovePermission(u)) return false;
+        // Kullanıcı adı ön eki (2026-10-21 inceleme): girişe kapalı hesap bağlantıdan da karar veremez (status() bunu kendi
+        // sebebiyle — username_prefix — daha önce eler; burada derinlikli savunma)
+        if (!prefixAllows(u.getUsername())) return false;
         if (permissions != null) {
             try {
                 if (!permissions.allows(u.getSystemRole(), READ_PERMISSION, PermissionCatalog.VIEW)) return false;
@@ -646,9 +676,9 @@ public class TechErrorApprovalService {
 
     /**
      * Bağlantı durumu: {@code valid} ise {@code reason} null; değilse not_found | used | superseded | expired | not_pending |
-     * flow_removed (kanalın yönetici alıcıları kaldırıldı — onay gerekmiyor) | stale | approver_inactive | no_permission. Geçerli bağlantının raporu, kanalı ve onaylayıcısı da döner (sayfa özeti).
+     * flow_removed (kanalın yönetici alıcıları kaldırıldı — onay gerekmiyor) | stale | approver_inactive | username_prefix (giriş kuralı hesabı kapatıyor) | no_permission. Geçerli bağlantının raporu, kanalı ve onaylayıcısı da döner (sayfa özeti).
      * Sıra: kullanılmış → yerine geçilmiş (A2: yeni istek gönderildi — süresi de dolmuş olsa "en son postayı kullanın" demek
-     * daha doğru) → süresi dolmuş → rapor / kanal yok → bekleyen istek değil → onaylayıcı değil / pasif → rolün onay / okuma
+     * daha doğru) → süresi dolmuş → rapor / kanal yok → bekleyen istek değil → pasif → kullanıcı adı ön eki → onaylayıcı değil → rolün onay / okuma
      * izni yok ya da modül takıma kapalı (A1, {@link #linkDecisionAllowed}) → onay akışı kaldırıldı ({@code flow_removed};
      * kişi kapılarından SONRA — inceleme 2026-10-18: pasif PO "onay gerekmiyor" görmesin; bu sebep güvenlik olayı değildir).
      */
@@ -682,9 +712,12 @@ public class TechErrorApprovalService {
         if (!"PENDING".equals(r.getApprovalState()) || !Objects.equals(r.getApprovalRev(), t.getApprovalRev())) {
             return new TokenStatus(false, "not_pending", t, r, ch, u);
         }
-        if (u == null || Boolean.FALSE.equals(u.getActive()) || !isApprover(u.getId(), r.getTeamId())) {
-            return new TokenStatus(false, "approver_inactive", t, r, ch, u);
-        }
+        if (u == null || Boolean.FALSE.equals(u.getActive())) return new TokenStatus(false, "approver_inactive", t, r, ch, u);
+        // Kullanıcı adı ön eki kuralı (2026-10-21 inceleme): kural açıldıktan sonra giriş yapamayan hesap (ör. MP…) eski
+        // bağlantısıyla da karar veremez — kendi sebebiyle (sayfa söyler), belirteç TÜKETİLMEZ; kural kapatılırsa bağlantı
+        // süresi içinde yine çalışır. Onaylayıcı listesinden de düştüğü için isApprover'dan ÖNCE.
+        if (!prefixAllows(u.getUsername())) return new TokenStatus(false, "username_prefix", t, r, ch, u);
+        if (!isApprover(u.getId(), r.getTeamId())) return new TokenStatus(false, "approver_inactive", t, r, ch, u);
         // A1: uygulama içi uçla aynı kapılar — rolün onay ya da okuma izni kapalıysa veya modül raporun takımına kapalıysa
         // PO bağlantıdan da karar veremez (inceleme 2026-10-17: okuma izni ve modül görünürlüğü de)
         if (!linkDecisionAllowed(u, r.getTeamId())) return new TokenStatus(false, "no_permission", t, r, ch, u);
@@ -708,6 +741,7 @@ public class TechErrorApprovalService {
         if (!st.valid()) throw new IllegalStateException(st.reason());
         // Derinlikli savunma (A1 / A2): status() bunları zaten eler; sırası değişse de belirteç tüketilmeden durur
         if (st.token().getSupersededAt() != null) throw new IllegalStateException("superseded");
+        if (!prefixAllows(st.user().getUsername())) throw new IllegalStateException("username_prefix");
         if (!linkDecisionAllowed(st.user(), st.report().getTeamId())) throw new IllegalStateException("no_permission");
         if (approve && st.stale()) throw new IllegalStateException("stale");
         validateNote(approve, note);

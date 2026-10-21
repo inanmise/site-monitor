@@ -156,12 +156,14 @@ public class AuthController {
 
     /**
      * Kullanıcı adı ön eki kuralına uymayan girişi reddeder (2026-10-21) — oturum KURULMAZ, LDAP provizyonu YAPILMAZ.
-     * Denetim {@code LOGIN_FAILED} + neden {@code USERNAME_PREFIX}, sonuç BLOCKED → ilerleyici kilit / kaba kuvvet sayacına
-     * GİRMEZ; IP oran sınırına ve kullanıcının "başarısız deneme" özetine de yazılmaz (bakım reddiyle aynı ilke — kural
-     * kimlik bilgisine değil ada bakar). 403 + {@code USERNAME_PREFIX_NOT_ALLOWED} + izinli ön ekler.
+     * Yalnız kimlik bilgisi DOĞRULANDIKTAN sonra çağrılır (pasif hesap / bakım reddiyle aynı ilke): yanlış parola ya da
+     * bilinmeyen ad kural kapalıyken olduğu gibi genel 401 + kilit merdivenini alır → "hangi ad muaf / bootstrap admin
+     * kim" yanıttan okunamaz. Denetim {@code LOGIN_FAILED} + neden {@code USERNAME_PREFIX}, sonuç BLOCKED → ilerleyici
+     * kilit / kaba kuvvet sayacına GİRMEZ; IP oran sınırına ve kullanıcının "başarısız deneme" özetine de yazılmaz.
+     * 403 + {@code USERNAME_PREFIX_NOT_ALLOWED} + izinli ön ekler.
      *
-     * @param user   doğrulanmış hesap; parola girişinin DOĞRULAMA ÖNCESİ reddinde null (aktör yazılan ad)
-     * @param method {@code null} (doğrulama öncesi), {@code PASSWORD}, {@code LDAP}, {@code OTP_PUSH} / {@code OTP_EMAIL}
+     * @param user   doğrulanmış hesap (aktör onun kayıtlı adı)
+     * @param method giriş kanalı: {@code LOCAL}, {@code LDAP}, {@code OTP_PUSH} / {@code OTP_EMAIL}
      */
     private ResponseEntity<Map<String, Object>> rejectUsernamePrefix(AppUser user, String typed, String method,
                                                                     String clientIp, HttpServletRequest request) {
@@ -310,12 +312,8 @@ public class AuthController {
                 "wait_seconds", waitSecs));
         }
 
-        // 1b. KULLANICI ADI ÖN EKİ (2026-10-21, kullanıcı isteği: "yalnız N ile başlayan kullanıcıya login izni"): karar
-        // YALNIZ yazılan ada bakar → kimlik bilgisi denetiminden ÖNCE reddedilir: LDAP bind yok, BCrypt yok, veritabanı
-        // araması yok, AD provizyonu yok. Yanıt hesabın var olup olmadığını söylemez (kural herkese aynı; ön ek gizli değil).
-        if (!username.isBlank() && !prefixAllows(username)) {
-            return rejectUsernamePrefix(null, username, null, clientIp, request);
-        }
+        // (Kullanıcı adı ön eki burada DENETLENMEZ — 2026-10-21 inceleme: doğrulama öncesi ret muaf adları ve bootstrap
+        // admin adını yanıttan okutuyordu. Karar kimlik bilgisi doğrulandıktan sonra, pasif / bakım kararıyla aynı yerde.)
 
         // 2. Per-user progressive lockout (DB-persisted)
         if (!username.isBlank()) {
@@ -387,15 +385,18 @@ public class AuthController {
         // Giriş KANALI (2026-10-03, Giriş Yöntemleri → İstatistikler): AD bind yolu LDAP, yerel BCrypt yolu (bootstrap admin ve
         // LDAP kapalıyken yerel doğrulama dahil) LOCAL — LOGIN / LOGIN_FAILED ayrıntısına yazılır; tür / neden / sayaç aynen.
         String channel = "LDAP".equals(inactiveMethod) ? "LDAP" : "LOCAL";
-        // KULLANICI ADI ÖN EKİ — KAYITLI ad (2026-10-21): yazılan ad yukarıda geçti ama kimliği doğrulanan hesabın KANONİK adı
-        // (AD sAMAccountName / yerel kayıt) kurala uymuyorsa yine ret — ör. LDAP filtresi e-postayla da eşleşiyorsa "n.ad@…"
-        // yazılıp MP… hesabına girilemesin. Pasif / bakım kararından ÖNCE (kural "hangi hesapla girileceği"dir).
+        // KULLANICI ADI ÖN EKİ (2026-10-21, kullanıcı isteği: "yalnız N ile başlayan kullanıcıya login izni"): karar kimlik
+        // bilgisi DOĞRULANDIKTAN sonra (pasif / bakım ilkesi — 2026-10-21 inceleme): yanlış parola ve bilinmeyen ad, kural
+        // kapalıyken olduğu gibi aşağıdaki genel 401 + kilit merdivenini alır → hangi adın muaf olduğu, bootstrap admin
+        // adının ne olduğu yanıttan / süreden okunamaz. Hem YAZILAN ad hem doğrulanan hesabın KANONİK adı (yerel kayıt / AD
+        // sAMAccountName) uymalı — ör. LDAP filtresi e-postayla da eşleşiyorsa "n.ad@…" yazılıp MP… hesabına girilemesin.
+        // LDAP yolunda provizyon hiç koşmadı (tryLdapLogin). Pasif / bakım kararından ÖNCE (kural "hangi hesapla girileceği").
         if (prefixDenied == null) {
             AppUser verified = userOpt.orElse(inactive != null ? inactive : maintenanceBlocked);
-            if (verified != null && !prefixAllows(verified.getUsername())) prefixDenied = verified;
+            if (verified != null && (!prefixAllows(username) || !prefixAllows(verified.getUsername()))) prefixDenied = verified;
         }
         if (prefixDenied != null) {
-            return rejectUsernamePrefix(prefixDenied, username, inactiveMethod, clientIp, request);
+            return rejectUsernamePrefix(prefixDenied, username, channel, clientIp, request);
         }
         if (inactive != null) {
             return rejectInactiveLogin(inactive, inactiveMethod, clientIp, request);
@@ -1384,10 +1385,10 @@ public class AuthController {
             var u = ad.get();
             String uname = (u.username() != null && !u.username().isBlank()) ? u.username() : username;
             Optional<AppUser> existingRow = userService.findByUsername(uname);
-            // KULLANICI ADI ÖN EKİ (2026-10-21): AD'nin döndürdüğü KANONİK ad (sAMAccountName) kurala uymuyorsa provizyon /
-            // profil / takım eşitlemesi HİÇ koşmaz, oturum kurulmaz (yazılan ad girişte zaten denetlendi; bu ikinci kapı LDAP
-            // filtresinin başka bir nitelikle — ör. e-posta — eşleştiği kurulumlar için).
-            if (!prefixAllows(uname)) {
+            // KULLANICI ADI ÖN EKİ (2026-10-21): AD bind'ı BAŞARILI ama yazılan ad ya da AD'nin döndürdüğü KANONİK ad
+            // (sAMAccountName) kurala uymuyorsa provizyon / profil / takım eşitlemesi HİÇ koşmaz, oturum kurulmaz (kanonik ad
+            // denetimi LDAP filtresinin başka bir nitelikle — ör. e-posta — eşleştiği kurulumlar için).
+            if (!prefixAllows(username) || !prefixAllows(uname)) {
                 AppUser row = existingRow.orElseGet(() -> {
                     AppUser t = new AppUser();
                     t.setUsername(uname);

@@ -538,13 +538,15 @@ public class WeeklyReportController {
                 case "expired"          -> "Onay bağlantısının süresi dolmuş. Ekipten raporu tekrar onaya göndermesini isteyebilirsiniz.";
                 case "not_pending"      -> "Rapor şu an onay bekleme durumunda değil.";
                 case "approver_inactive" -> WeeklyReportService.approverInactiveMessage();
+                case "username_prefix"  -> WeeklyReportService.approverPrefixMessage();
                 default                 -> "Onay bağlantısı geçersiz veya daha önce kullanılmış.";
             };
-            if ("approver_inactive".equals(reason)) {
-                // Pasif hesabın bağlantısı (2026-10-02): açılış da iz bırakır — form hiç gösterilmez.
+            if ("approver_inactive".equals(reason) || "username_prefix".equals(reason)) {
+                // Pasif hesabın bağlantısı (2026-10-02) / girişe kapalı hesabın bağlantısı (ön ek kuralı, 2026-10-21 inceleme):
+                // açılış da iz bırakır — form hiç gösterilmez.
                 Object rid = st.get("report_id");
                 auditService.recordSecurityEvent("WEEKLY_REPORT_LINK_DENIED", request, null,
-                        "WEEKLY_REPORT", rid == null ? "email-token" : String.valueOf(rid), "approver_inactive (link opened)");
+                        "WEEKLY_REPORT", rid == null ? "email-token" : String.valueOf(rid), reason + " (link opened)");
                 return htmlPage("Onay Verilemez",
                     "<div class='wk'>" + team + " · " + week + "</div>"
                     + "<p class='msg'>" + esc(msg) + "</p>", "#dc2626");
@@ -630,7 +632,7 @@ public class WeeklyReportController {
     private ResponseEntity<String> linkDenied(HttpServletRequest request,
                                               WeeklyReportService.ApproverInactiveException e, String action) {
         auditService.recordSecurityEvent("WEEKLY_REPORT_LINK_DENIED", request, null, "WEEKLY_REPORT",
-                e.reportId() == null ? "email-token" : String.valueOf(e.reportId()), "approver_inactive (" + action + ")");
+                e.reportId() == null ? "email-token" : String.valueOf(e.reportId()), e.reason() + " (" + action + ")");
         return htmlPage("Onay Verilemez", "<p class='msg'>" + esc(e.getMessage()) + "</p>", "#dc2626");
     }
 

@@ -121,15 +121,20 @@ class AuthInterceptorUsernamePrefixTest {
     }
 
     @Test
-    @DisplayName("mezar taşı: kural kapatılınca oturum kapanır ve istek oturumsuz sayılır (401 Unauthorized, yeniden giriş)")
-    void tombstoneReleasedWhenRuleOff() throws Exception {
+    @DisplayName("mezar taşı her pod'da AYNI sinyal: kuralı (bayat önbellekle) KAPALI gören pod da 401 USERNAME_PREFIX_NOT_ALLOWED döner, oturumu kapatmaz")
+    void tombstoneAlwaysSignalsWhateverTheLocalRule() throws Exception {
         MockHttpSession s = session("MP123", "USER");
         interceptor.preHandle(req("/api/me", s), new MockHttpServletResponse(), new Object());
+        // öteki pod: ayar önbelleği henüz eski → kural kapalı
         rule.set(UsernamePrefixRule.disabled("admin"));
-        MockHttpServletResponse res = new MockHttpServletResponse();
-        assertThat(interceptor.preHandle(req("/api/me", s), res, new Object())).isFalse();
-        assertThat(res.getContentAsString()).contains("Unauthorized").doesNotContain("USERNAME_PREFIX");
-        assertThat(s.isInvalid()).isTrue();
+        for (int i = 0; i < 2; i++) {
+            MockHttpServletResponse res = new MockHttpServletResponse();
+            assertThat(interceptor.preHandle(req("/api/me", s), res, new Object())).isFalse();
+            assertThat(res.getStatus()).isEqualTo(401);
+            assertThat(res.getContentAsString()).contains("USERNAME_PREFIX_NOT_ALLOWED");
+            assertThat(s.isInvalid()).isFalse();
+            assertThat(s.getAttribute("authenticated")).isNull();
+        }
     }
 
     @Test

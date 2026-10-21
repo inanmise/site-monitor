@@ -3,12 +3,12 @@
  * başka harfli olana izin vermeyelim"). Pasif hesap sinyalinin (`utils/accountInactive.js`) kardeşi. Sunucu iki yerde aynı
  * gövdeyi döner — `{ success:false, code:'USERNAME_PREFIX_NOT_ALLOWED', error_code, error, allowed_prefixes:[…] }`:
  *
- * - `POST /api/login` → **403** (kimlik bilgisi denetiminden ÖNCE; yalnız yazılan ada bakar) → giriş formu hata alanında
- *   izinli ön ekleri adlandıran metni gösterir.
+ * - `POST /api/login` → **403** (kimlik bilgisi DOĞRULANDIKTAN sonra — yanlış parola genel 401 alır; yazılan ad ve kayıtlı /
+ *   AD adı kurala uymalı) → giriş formu hata alanında izinli ön ekleri adlandıran metni gösterir.
  * - Oturumlu her `/api/**` isteği → **401** (kural açıldı ya da değişti; canlı oturum ya da remember-me çerezi kurala uymuyor)
  *   → `api/client.js` bu modüle haber verir; uygulama kapatılamaz geri sayımlı pencereyi açar, sonra `/?session=prefix`.
  *
- * Sinyal sayfa ömründe TEK kez yayılır ve `localStorage` ile öteki sekmelere duyurulur (her sekme kendi penceresini açar);
+ * Sinyal oturum başına TEK kez yayılır ve `localStorage` ile öteki sekmelere duyurulur (her sekme kendi penceresini açar);
  * sunucu da aynı çerezle gelen her isteğe aynı sinyali verir (oturum mezar taşı).
  */
 
@@ -38,7 +38,8 @@ export function prefixesOf(body) {
 }
 
 /**
- * Sinyali yayar — sayfa ömründe YALNIZ ilk çağrı etkilidir (eşzamanlı 401'ler tek pencere açar).
+ * Sinyali yayar — oturum başına YALNIZ ilk çağrı etkilidir (eşzamanlı 401'ler tek pencere açar; giriş / çıkış bayrağı
+ * {@link resetUsernamePrefixSignal} ile sıfırlar).
  * @returns {boolean} ilk sinyal mi
  */
 export function signalUsernamePrefix(prefixes = []) {
@@ -88,7 +89,11 @@ export function usernamePrefixFromUrl() {
   try { return new URLSearchParams(window.location.search).get('session') === 'prefix' } catch { return false }
 }
 
-/** Test kancası: sayfa ömrü bayrağını sıfırlar. */
+/**
+ * Sinyal bayrağını sıfırlar — başarılı girişte ve sekme içi çıkışta / oturum sıfırlamada (App.handleLogin,
+ * App.resetSessionData; inceleme 2026-10-21): açılışta verilmiş sinyal (ör. reddedilen MP remember-me çerezi) sonra N
+ * hesabıyla açılan oturumda kuralın yeni bir kesimini yutmasın. Testler de kullanır.
+ */
 export function resetUsernamePrefixSignal() {
   signaled = false
   lastPrefixes = []

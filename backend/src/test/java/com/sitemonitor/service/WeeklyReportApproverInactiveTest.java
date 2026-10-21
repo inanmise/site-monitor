@@ -224,4 +224,90 @@ class WeeklyReportApproverInactiveTest {
         when(mailRepo.findToAddressesByReportIdAndType(eq(5L), eq("SUBMIT_PO"))).thenThrow(new RuntimeException("db"));
         assertThat(service.approvalTokenStatus("T1").get("valid")).isEqualTo(true);
     }
+
+    // ── Kullanıcı adı ön eki (2026-10-21 inceleme: girişe kapalı hesap e-posta bağlantısıyla da karar vermesin) ──
+
+    private com.sitemonitor.service.loginpolicy.UsernamePrefixPolicy prefixRule(String allowed) {
+        var rule = com.sitemonitor.service.loginpolicy.UsernamePrefixRule.of(true, allowed, "", "admin");
+        var policy = mock(com.sitemonitor.service.loginpolicy.UsernamePrefixPolicy.class);
+        when(policy.active()).thenReturn(rule.active());
+        when(policy.allows(any())).thenAnswer(inv -> rule.allows(inv.getArgument(0)));
+        service.setUsernamePrefix(policy);
+        return policy;
+    }
+
+    private static com.sitemonitor.model.AppUser owner(String username, String email) {
+        com.sitemonitor.model.AppUser u = new com.sitemonitor.model.AppUser();
+        u.setUsername(username);
+        u.setEmail(email);
+        u.setActive(true);
+        return u;
+    }
+
+    @Test
+    @DisplayName("ön ek: adresin TEK aktif sahibi kurala takılıyor (MP…) → sayfa username_prefix, onay / iade reddedilir (ApproverUsernamePrefixException), rapor ve belirteç değişmez")
+    void prefixRefusedOwner_refused() {
+        prefixRule("N");
+        linkSentTo("mp@test.com");
+        when(userRepo.findActiveByEmailsLower(List.of("mp@test.com"))).thenReturn(List.of(owner("MP123", "MP@test.com")));
+
+        Map<String, Object> st = service.approvalTokenStatus("T1");
+        assertThat(st.get("valid")).isEqualTo(false);
+        assertThat(st.get("reason")).isEqualTo("username_prefix");
+        assertThat(st.get("report_id")).isEqualTo(5L);
+        assertThatThrownBy(() -> service.approveViaToken("T1"))
+                .isInstanceOf(WeeklyReportService.ApproverUsernamePrefixException.class)
+                .isInstanceOf(WeeklyReportService.ApproverInactiveException.class)
+                .satisfies(e -> assertThat(((WeeklyReportService.ApproverInactiveException) e).reason()).isEqualTo("username_prefix"));
+        assertThatThrownBy(() -> service.rejectViaToken("T1", "not"))
+                .isInstanceOf(WeeklyReportService.ApproverUsernamePrefixException.class);
+        assertThat(report.getStatus()).isEqualTo("PENDING_APPROVAL");
+        assertThat(report.getApprovalToken()).isEqualTo("T1");
+        verify(emailService, never()).sendHtml(any(), any(), anyString(), anyString(), any());
+        verify(reportRepo, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("ön ek: aynı adresin girişe açık bir sahibi (N…) de var ya da adresin sahibi yok (takım kutusu) → bağlantı açık")
+    void prefixMixedOrOwnerless_allowed() {
+        prefixRule("N");
+        linkSentTo("ortak@test.com");
+        when(userRepo.findActiveByEmailsLower(List.of("ortak@test.com")))
+                .thenReturn(List.of(owner("MP123", "ortak@test.com"), owner("N123", "ortak@test.com")));
+        assertThat(service.approvalTokenStatus("T1").get("valid")).isEqualTo(true);
+
+        linkSentTo("takim-kutusu@test.com, mp@test.com");
+        when(userRepo.findActiveByEmailsLower(List.of("takim-kutusu@test.com", "mp@test.com")))
+                .thenReturn(List.of(owner("MP123", "mp@test.com")));
+        assertThat(service.approvalTokenStatus("T1").get("valid")).isEqualTo(true);
+        service.approveViaToken("T1");
+        assertThat(report.getStatus()).isEqualTo("APPROVED");
+    }
+
+    @Test
+    @DisplayName("ön ek: bir alıcı kurala takılıyor, öteki yalnız pasife ait → kimse işlem yapamaz, username_prefix")
+    void prefixPlusPassive_refused() {
+        prefixRule("N");
+        linkSentTo("mp@test.com; po@test.com");
+        when(guard.isInactiveOnlyEmail("po@test.com")).thenReturn(true);
+        when(userRepo.findActiveByEmailsLower(List.of("mp@test.com", "po@test.com"))).thenReturn(List.of(owner("MP123", "mp@test.com")));
+        assertThat(service.approvalTokenStatus("T1").get("reason")).isEqualTo("username_prefix");
+    }
+
+    @Test
+    @DisplayName("ön ek kuralı KAPALI ya da politika yok → sorgu yok, davranış birebir; politika okuma hatası fail-open")
+    void prefixRuleOff_noQuery() {
+        linkSentTo("mp@test.com");
+        var policy = mock(com.sitemonitor.service.loginpolicy.UsernamePrefixPolicy.class);
+        when(policy.active()).thenReturn(false);
+        service.setUsernamePrefix(policy);
+        assertThat(service.approvalTokenStatus("T1").get("valid")).isEqualTo(true);
+        service.setUsernamePrefix(null);
+        assertThat(service.approvalTokenStatus("T1").get("valid")).isEqualTo(true);
+        verify(userRepo, never()).findActiveByEmailsLower(any());
+
+        prefixRule("N");
+        when(userRepo.findActiveByEmailsLower(any())).thenThrow(new RuntimeException("db"));
+        assertThat(service.approvalTokenStatus("T1").get("valid")).isEqualTo(true);
+    }
 }

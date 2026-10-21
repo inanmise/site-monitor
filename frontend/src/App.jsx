@@ -32,7 +32,8 @@ import {
 import { onSessionExpired } from './utils/sessionExpiry.js'
 // Kullanıcı adı ön eki (2026-10-21): kurala uymayan hesabın oturumu kesilince pasif hesap penceresinin ön ek kipi
 import {
-  USERNAME_PREFIX_REDIRECT, lastUsernamePrefixes, onUsernamePrefix, usernamePrefixFromUrl, usernamePrefixSignaled,
+  USERNAME_PREFIX_REDIRECT, lastUsernamePrefixes, onUsernamePrefix, resetUsernamePrefixSignal, usernamePrefixFromUrl,
+  usernamePrefixSignaled,
 } from './utils/usernamePrefix.js'
 // Sistem Bakım Modu (2026-10-02): şeritler + geri sayım penceresi (saniyelik tik kendi içinde) ve oturum kesimi sinyali
 import SystemMaintenanceLayer from './components/maintenance/SystemMaintenanceLayer.jsx'
@@ -1120,6 +1121,8 @@ export default function App() {
     emitSessionReset()
     // Kişisel Panom: önceki oturumun süren paylaşılan kutu istekleri yeni kullanıcıya geçmesin (2026-10-13)
     clearSharedFetches()
+    // Kullanıcı adı ön eki sinyali bu oturuma aitti: sonraki girişte yeni bir kesim yine pencere + yönlendirme açsın
+    resetUsernamePrefixSignal()
     // Uçuştaki (bu oturumun) her dalga artık eski: sonraki girişin dalgaları tabanın üstünden başlar
     loadFloorRef.current = loadSeqRef.current
     loadAppliedRef.current = {}
@@ -1412,6 +1415,9 @@ export default function App() {
     try { sessionStorage.removeItem('sm.banner.heroShown') } catch { /* yoksay */ }
     try { sessionStorage.removeItem('sm.login.noticeShown') } catch { /* yoksay */ }
     // B9: oturum düşüp BAŞKA biri girdiyse öncekinin kişisel kayıtları silinir; aynı kişide (kesinti yedeği) korunur.
+    // Kullanıcı adı ön eki sinyali (inceleme 2026-10-21): açılışta (ör. MP remember-me çerezi) verilmiş sinyal bu sayfa
+    // ömrünü kilitlemesin — yeni oturumda kural sonradan keserse pencere + /?session=prefix yine çalışır
+    resetUsernamePrefixSignal()
     prefsMigrateRef.current = sameStorageOwner(userData.username)   // öneri 23: claim'den ÖNCE okunur
     claimPersonalStorage(userData.username)
     landingRef.current = { eligible: landingEligibleFromUrl(), done: false }

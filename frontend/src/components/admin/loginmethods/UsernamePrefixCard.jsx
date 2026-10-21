@@ -8,7 +8,7 @@ import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
 import { Spinner } from '../../ui/Progress.jsx'
 import { SettingsSection, ToggleRow, helpLabel } from '../SettingsControls.jsx'
-import TokenChipsInput from './TokenChipsInput.jsx'
+import TokenChipsInput, { TOO_MANY } from './TokenChipsInput.jsx'
 import {
   DEFAULT_LIMITS, FIELD_ALLOWED, FIELD_ENABLED, FIELD_EXEMPT, asList, exemptProblem, normalizeExempt, normalizePrefix,
   prefixProblem, previewKey,
@@ -40,8 +40,12 @@ export default function UsernamePrefixCard({ form, onField, fe, info, onPreview,
   const [preview, setPreview] = useState({ state: 'idle', data: null, key: null })
   const seq = useRef(0)
 
-  const problemText = (p) => {
+  /** Çip girişinin sorununu alanın metnine çevirir (biçim ya da sınır aşımı — fazlası kutuda kalır). */
+  const problemText = (field, p) => {
     if (!p) return null
+    if (p.key === TOO_MANY) {
+      return t(field === FIELD_ALLOWED ? 'lm.prefix.err.tooManyPrefixes' : 'lm.prefix.err.tooManyExempt', ...p.params)
+    }
     return p.key === 'lm.prefix.err.prefixFormat'
       ? t('lm.prefix.err.prefixFormat', ...p.params) : t('lm.prefix.err.exemptFormat', ...p.params)
   }
@@ -110,7 +114,7 @@ export default function UsernamePrefixCard({ form, onField, fe, info, onPreview,
               <TokenChipsInput id={id} describedBy={describedBy} invalid={invalid} values={allowed} max={limits.max_prefixes}
                 slot="lm-prefix-allowed-chips" placeholder={t('lm.prefix.allowedPh')}
                 validate={(s) => prefixProblem(s, limits)} normalize={normalizePrefix}
-                onEntryError={(p) => setEntryErr((m) => ({ ...m, [FIELD_ALLOWED]: problemText(p) }))}
+                onEntryError={(p) => setEntryErr((m) => ({ ...m, [FIELD_ALLOWED]: problemText(FIELD_ALLOWED, p) }))}
                 removeLabel={(v) => t('lm.prefix.removePrefix', v)}
                 onChange={(list) => setList(FIELD_ALLOWED, list)} />
             </div>
@@ -126,7 +130,7 @@ export default function UsernamePrefixCard({ form, onField, fe, info, onPreview,
               <TokenChipsInput id={id} describedBy={describedBy} invalid={invalid} values={exempt} max={limits.max_exempt}
                 slot="lm-prefix-exempt-chips" placeholder={t('lm.prefix.exemptPh')}
                 validate={(s) => exemptProblem(s, limits)} normalize={normalizeExempt}
-                onEntryError={(p) => setEntryErr((m) => ({ ...m, [FIELD_EXEMPT]: problemText(p) }))}
+                onEntryError={(p) => setEntryErr((m) => ({ ...m, [FIELD_EXEMPT]: problemText(FIELD_EXEMPT, p) }))}
                 removeLabel={(v) => t('lm.prefix.removeExempt', v)}
                 onChange={(list) => setList(FIELD_EXEMPT, list)} />
             </div>

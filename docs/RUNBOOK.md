@@ -174,9 +174,14 @@ Giriş kilidi kademelidir: ihlal başına **30 sn → 2 dk → 10 dk → 30 dk**
   olarak `N` yazın (Enter); **Etki önizlemesi** kaç aktif kullanıcının giremeyeceğini ve ilk 50 adı gösterir. Anahtarı açıp
   Kaydet → onay. Ayar anahtarları: `site.monitor.login.username-prefix.enabled|allowed|exempt` (GLOBAL_ONLY).
 - **Ne olur:** izinli ön ekle başlamayan adlar şifre, LDAP, kodla giriş ve beni hatırla yollarının hiçbirinden giremez —
-  giriş 403 `USERNAME_PREFIX_NOT_ALLOWED` (parola denenmeden), kodla girişte aynı genel yanıt ve kod gitmez. Açık oturumlar
-  sonraki istekte (~15 sn; çok pod'da ayar ≤ 10 sn'de yayılır) kapanır, hatırlanan girişler silinir. Denetim:
-  `SESSION_ENDED_USERNAME_PREFIX` ve `LOGIN_FAILED` (BLOCKED, neden `USERNAME_PREFIX` — kilit sayacına girmez).
+  ret parola / AD parolası DOĞRULANDIKTAN sonra gelir: giriş 403 `USERNAME_PREFIX_NOT_ALLOWED`; yanlış parola ve olmayan ad
+  kural kapalıyken olduğu gibi genel 401 + kilit merdivenini alır (muaf adlar, bootstrap yönetici adı yanıttan okunamaz).
+  Kodla girişte aynı genel yanıt ve kod gitmez. Açık oturumlar sonraki istekte (~15 sn) kapanır, hatırlanan girişler
+  silinir. Çok pod'da ayar ≤ 10 sn'de yayılır: kural açıldıktan sonraki ilk ≤ 10 sn içinde eski ayarlı bir pod bir girişi
+  kabul edebilir, sonraki istek keser; kesilmiş (mezar taşı) oturum her pod'da aynı uyarıyı alır. Kurala takılan hesap e-posta
+  onay bağlantılarıyla (teknik hata raporu PO onayı, haftalık rapor) da karar veremez — sayfa sebebini söyler, bağlantı
+  tüketilmez — ve PO onay isteği postası almaz. Denetim: `SESSION_ENDED_USERNAME_PREFIX` ve `LOGIN_FAILED` (BLOCKED, neden
+  `USERNAME_PREFIX`, kanal LOCAL / LDAP — kilit sayacına girmez).
 - **Muaf liste:** ön eke bakılmadan girebilecek tam adlar (servis / acil durum hesabı). Kurulumdaki bootstrap yönetici
   (`site.monitor.username`, prod'da `ADMIN_USERNAME`) HER ZAMAN muaftır; global yöneticiler otomatik muaf DEĞİLDİR.
 - **Kendini kilitleme yok:** kaydeden yöneticinin kendi hesabı kurala uymuyorsa kayıt 400 `LOCKOUT_SELF` ile reddedilir.

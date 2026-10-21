@@ -76,7 +76,7 @@ public final class UsernamePrefixRule {
     private UsernamePrefixRule(boolean enabled, List<String> prefixes, Set<String> exempt, String bootstrapAdmin) {
         this.enabled = enabled;
         this.prefixes = List.copyOf(prefixes);
-        this.exempt = Set.copyOf(exempt);
+        this.exempt = java.util.Collections.unmodifiableSet(new LinkedHashSet<>(exempt));   // GİRİŞ sırası (her pod aynı liste)
         this.bootstrapAdmin = bootstrapAdmin == null || bootstrapAdmin.isBlank() ? null : fold(bootstrapAdmin);
     }
 

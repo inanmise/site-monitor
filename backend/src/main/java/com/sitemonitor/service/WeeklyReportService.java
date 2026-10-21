@@ -84,6 +84,13 @@ public class WeeklyReportService {
 
     void setInactiveGuard(InactiveRecipientGuard guard) { this.inactiveGuard = guard; }
 
+    /** Kullanıcı adı ön eki kuralı (2026-10-21 inceleme): girişe kapalı hesabın (ör. MP…) adresine giden onay bağlantısı
+     *  karar veremez — {@link #approverPrefixRefused}. Alan enjeksiyonu; null ise (eski testler) kural yok sayılır. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.loginpolicy.UsernamePrefixPolicy usernamePrefix;
+
+    void setUsernamePrefix(com.sitemonitor.service.loginpolicy.UsernamePrefixPolicy p) { this.usernamePrefix = p; }
+
     private List<EscalationContact> reachable(List<EscalationContact> contacts, String where) {
         return inactiveGuard == null ? contacts : inactiveGuard.withoutInactive(contacts, where);
     }
@@ -742,6 +749,13 @@ public class WeeklyReportService {
             out.put("team_id", r.getTeamId());
             return out;
         }
+        if (approverPrefixRefused(r)) {
+            out.put("valid", false);
+            out.put("reason", "username_prefix");
+            out.put("report_id", r.getId());
+            out.put("team_id", r.getTeamId());
+            return out;
+        }
         out.put("valid", true);
         return out;
     }
@@ -763,12 +777,33 @@ public class WeeklyReportService {
 
         public Long reportId() { return reportId; }
         public Long teamId() { return teamId; }
+        /** Denetim / sayfa sebebi. */
+        public String reason() { return "approver_inactive"; }
+    }
+
+    /**
+     * Bağlantının sahibi kullanıcı adı ön eki kuralıyla girişe KAPALI (2026-10-21 inceleme) — pasif hesapla aynı yol (rapor
+     * değişmez, bağlantı tüketilmez, {@code WEEKLY_REPORT_LINK_DENIED}); yalnız sebep ve metin farklı.
+     */
+    public static class ApproverUsernamePrefixException extends ApproverInactiveException {
+        public ApproverUsernamePrefixException(Long reportId, Long teamId) {
+            super(approverPrefixMessage(), reportId, teamId);
+        }
+
+        @Override
+        public String reason() { return "username_prefix"; }
     }
 
     public static String approverInactiveMessage() {
         return com.sitemonitor.util.Msg.t(
                 "Bu onay bağlantısının sahibi olan hesap pasif durumda; onay verilemez.",
                 "The account that owns this approval link is inactive; it can't be used to approve.");
+    }
+
+    public static String approverPrefixMessage() {
+        return com.sitemonitor.util.Msg.t(
+                "Bu onay bağlantısının gönderildiği hesabın kullanıcı adıyla Site Monitor'e giriş şu an kapalı (yalnız izinli ön ekle başlayan hesaplar girebilir); bu bağlantıyla karar verilemez. Girişe açık hesabınızla Site Monitor'de karar verin ya da yöneticinize başvurun.",
+                "Signing in to Site Monitor with the username of the account this approval link was sent to is currently turned off (only accounts that start with an allowed prefix can sign in), so this link can't be used to decide. Decide in Site Monitor with your account that can sign in, or contact your administrator.");
     }
 
     /**
@@ -787,20 +822,11 @@ public class WeeklyReportService {
     boolean approverInactive(WeeklyReport r) {
         if (inactiveGuard == null || r == null || r.getId() == null) return false;
         try {
-            List<String> rows = mailRepo.findToAddressesByReportIdAndType(r.getId(), "SUBMIT_PO");
-            if (rows == null || rows.isEmpty() || rows.get(0) == null) return false;
-            List<String> to = Arrays.stream(rows.get(0).split("[,;]"))
-                    .map(String::trim).filter(s -> !s.isEmpty()).toList();
+            List<String> to = submitPoAddresses(r);
             if (to.isEmpty()) return false;
-            List<EscalationContact> poContacts = null;
+            List<List<EscalationContact>> poContacts = new ArrayList<>(1);
             for (String addr : to) {
-                if (inactiveGuard.isInactiveOnlyEmail(addr)) continue;
-                if (poContacts == null) poContacts = contactRepo.findByTeamIdAndRoleAndActiveTrue(r.getTeamId(), "PO");
-                boolean passiveContact = poContacts.stream().anyMatch(c -> c.getEmail() != null
-                        && c.getEmail().trim().equalsIgnoreCase(addr) && inactiveGuard.isInactiveContact(c));
-                if (!passiveContact) return false;
-                List<String> activeOwners = userRepo.findActiveEmailsLowerIn(List.of(addr.toLowerCase(Locale.ROOT)));
-                if (activeOwners != null && !activeOwners.isEmpty()) return false;
+                if (!passiveAddress(r, addr, poContacts)) return false;
             }
             log.warn("Haftalık rapor onay bağlantısının sahibi pasif hesap: report={} team={} alıcı_sayısı={}",
                     r.getId(), r.getTeamId(), to.size());
@@ -808,6 +834,71 @@ public class WeeklyReportService {
         } catch (Exception e) {
             // Okuma hatası bağlantıyı KİLİTLEMEZ (fail-open, InactiveRecipientGuard ile aynı ilke).
             log.warn("Onay bağlantısı sahibi denetlenemedi (report={}): {}", r.getId(), e.toString());
+            return false;
+        }
+    }
+
+    /** Raporun son {@code SUBMIT_PO} postasının alıcı adresleri (kırpılmış, boşsuz); kayıt yoksa boş. */
+    private List<String> submitPoAddresses(WeeklyReport r) {
+        List<String> rows = mailRepo.findToAddressesByReportIdAndType(r.getId(), "SUBMIT_PO");
+        if (rows == null || rows.isEmpty() || rows.get(0) == null) return List.of();
+        return Arrays.stream(rows.get(0).split("[,;]")).map(String::trim).filter(s -> !s.isEmpty()).toList();
+    }
+
+    /**
+     * Adres PASİF sayılır mı ({@link #approverInactive} kuralı): yalnız pasif kullanıcılara aitse ya da takımın bu adresi
+     * taşıyan PO kişisi pasif bir kullanıcıya bağlıysa ve adres hiçbir aktif kullanıcıya ait değilse. {@code poContacts}
+     * takımın PO kişilerini bir kez okumak için (ilk ihtiyaçta doldurulur).
+     */
+    private boolean passiveAddress(WeeklyReport r, String addr, List<List<EscalationContact>> poContacts) {
+        if (inactiveGuard == null) return false;
+        if (inactiveGuard.isInactiveOnlyEmail(addr)) return true;
+        if (poContacts.isEmpty()) poContacts.add(contactRepo.findByTeamIdAndRoleAndActiveTrue(r.getTeamId(), "PO"));
+        boolean passiveContact = poContacts.get(0).stream().anyMatch(c -> c.getEmail() != null
+                && c.getEmail().trim().equalsIgnoreCase(addr) && inactiveGuard.isInactiveContact(c));
+        if (!passiveContact) return false;
+        List<String> activeOwners = userRepo.findActiveEmailsLowerIn(List.of(addr.toLowerCase(Locale.ROOT)));
+        return activeOwners == null || activeOwners.isEmpty();
+    }
+
+    /**
+     * Bağlantının sahibi kullanıcı adı ön eki kuralıyla girişe KAPALI mı (2026-10-21 inceleme: "giremeyen hesap e-posta
+     * bağlantısıyla da karar vermesin")? Pasif kuralıyla aynı ilke: belirteç rapora bağlıdır, sahibi son {@code SUBMIT_PO}
+     * postasının alıcılarıdır; HER alıcı adresi işlem yapamıyorsa — en az biri ön ek kuralıyla (adresin AKTİF sahiplerinin
+     * hepsi kurala takılıyor), kalanı pasif ({@link #passiveAddress}) — bağlantı karar veremez. Sahibi olmayan adres
+     * (takım kutusu, grup) ya da girişe açık bir sahip bağlantıyı açık tutar — kimin tıkladığı bilinemez. Kural kapalıyken
+     * sorgu YOK (davranış birebir); okuma hatası kilitlemez (fail-open).
+     */
+    boolean approverPrefixRefused(WeeklyReport r) {
+        if (usernamePrefix == null || r == null || r.getId() == null) return false;
+        try {
+            if (!usernamePrefix.active()) return false;
+            List<String> to = submitPoAddresses(r);
+            if (to.isEmpty()) return false;
+            List<String> lowered = to.stream().map(a -> a.toLowerCase(Locale.ROOT)).distinct().toList();
+            Map<String, List<AppUser>> owners = new HashMap<>();
+            for (AppUser u : userRepo.findActiveByEmailsLower(lowered)) {
+                if (u.getEmail() == null) continue;
+                owners.computeIfAbsent(u.getEmail().trim().toLowerCase(Locale.ROOT), k -> new ArrayList<>()).add(u);
+            }
+            List<List<EscalationContact>> poContacts = new ArrayList<>(1);
+            boolean anyRefused = false;
+            for (String addr : to) {
+                List<AppUser> o = owners.get(addr.toLowerCase(Locale.ROOT));
+                if (o != null && !o.isEmpty()) {
+                    if (o.stream().anyMatch(u -> usernamePrefix.allows(u.getUsername()))) return false;
+                    anyRefused = true;
+                    continue;
+                }
+                if (!passiveAddress(r, addr, poContacts)) return false;
+            }
+            if (anyRefused) {
+                log.warn("Haftalık rapor onay bağlantısının sahibi kullanıcı adı ön eki kuralıyla girişe kapalı: report={} team={}",
+                        r.getId(), r.getTeamId());
+            }
+            return anyRefused;
+        } catch (Exception e) {
+            log.warn("Onay bağlantısı sahibi (ön ek) denetlenemedi (report={}): {}", r.getId(), e.toString());
             return false;
         }
     }
@@ -825,6 +916,7 @@ public class WeeklyReportService {
                     ? "Bu rapor zaten onaylanmış" : "Rapor onay bekleme durumunda değil");
         }
         if (approverInactive(r)) throw new ApproverInactiveException(approverInactiveMessage(), r.getId(), r.getTeamId());
+        if (approverPrefixRefused(r)) throw new ApproverUsernamePrefixException(r.getId(), r.getTeamId());
         String approver = resolvePoDisplayName(r.getTeamId());
         Actor actor = new Actor(null, "email-approval", approver, r.getTeamId(), "ADMIN");
         String mailStatus = sendApprovalMail(r, actor); // MANAGER yoksa 409 fırlatır
@@ -862,6 +954,7 @@ public class WeeklyReportService {
                     ? "Bu rapor zaten onaylanmış" : "Rapor onay bekleme durumunda değil");
         }
         if (approverInactive(r)) throw new ApproverInactiveException(approverInactiveMessage(), r.getId(), r.getTeamId());
+        if (approverPrefixRefused(r)) throw new ApproverUsernamePrefixException(r.getId(), r.getTeamId());
         String rejecter = resolvePoDisplayName(r.getTeamId());
         Actor actor = new Actor(null, "email-approval", rejecter, r.getTeamId(), "ADMIN");
         String finalNote = (note != null && !note.isBlank()) ? note.trim() : "İade edildi — neden belirtilmedi (e-posta ile)";

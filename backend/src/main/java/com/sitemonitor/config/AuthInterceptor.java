@@ -116,7 +116,8 @@ public class AuthInterceptor implements HandlerInterceptor {
      * pasif hesap deseninin AYNISI: kural açılınca (ya da ön ek listesi değişince) kurala uymayan kullanıcının canlı oturumu
      * kimliksizleştirilir, yerine yalnız bu iki öznitelik kalır; aynı çerezle gelen her istek (öteki sekmeler, uçuştaki
      * istekler, öteki pod'lar — JDBC deposu) aynı {@code USERNAME_PREFIX_NOT_ALLOWED} sinyalini alır. {@code invalidate()}
-     * DEĞİL (bkz. {@link #ATTR_INACTIVE}). Kural kapatılır / ad yeniden izinli olursa mezar taşı kapanır (yeniden giriş).
+     * DEĞİL (bkz. {@link #ATTR_INACTIVE}). Mezar taşı VAR OLDUĞU SÜRECE sinyal tekrarlanır — pod'un (≤ 10 sn bayat) kural
+     * durumuna bakılmaz (inceleme 2026-10-21); yeniden giriş oturumu yeniler. Kullanıcı adı özniteliği yalnız iz içindir.
      */
     public static final String ATTR_USERNAME_PREFIX = "usernamePrefixDenied";
     public static final String ATTR_USERNAME_PREFIX_USER = "usernamePrefixDeniedUser";
@@ -258,14 +259,15 @@ public class AuthInterceptor implements HandlerInterceptor {
                     }
                     try { session.invalidate(); } catch (IllegalStateException ignored) { /* zaten kapalı */ }
                 } else if (Boolean.TRUE.equals(session.getAttribute(ATTR_USERNAME_PREFIX))) {
-                    // Ön ek mezar taşı: kural hâlâ bu adı reddediyorsa aynı sinyal (çok sekme / eşzamanlı istek); kural
-                    // kapatıldıysa ya da ad izinli olduysa mezar taşı kapatılır, istek oturumsuz sayılır (yeniden giriş).
-                    String tombUser = (String) session.getAttribute(ATTR_USERNAME_PREFIX_USER);
-                    if (prefixDenied(tombUser)) {
-                        clearRememberMeCookie(res);
-                        return writeUsernamePrefixDenied(res);
-                    }
-                    try { session.invalidate(); } catch (IllegalStateException ignored) { /* zaten kapalı */ }
+                    // Ön ek mezar taşı: VAR OLDUĞU SÜRECE aynı sinyal (çok sekme / eşzamanlı istek) — bu pod'un kural
+                    // durumuna BAKILMAZ (2026-10-21 inceleme): ayar önbelleği ≤ 10 sn geride kalan bir pod kuralı hâlâ
+                    // kapalı görürse eskiden mezar taşını kapatıp "oturum düştü"ye (/?session=expired) çeviriyordu.
+                    // Mezar taşı kimliksizdir (authenticated yok) ve yeniden giriş oturumu zaten yeniler (establishSession
+                    // eski oturumu kapatır) → sinyali tekrarlamak güvenli; kural sonradan kapatılsa da kullanıcı yeniden
+                    // giriş yapar. (Ayar önbelleği farkı yalnız YENİ girişi etkiler: kuralın açıldığı ilk ≤ 10 sn içinde
+                    // eski önbellekli bir pod bir girişi kabul edebilir; sonraki istek kesimi yapar.)
+                    clearRememberMeCookie(res);
+                    return writeUsernamePrefixDenied(res);
                 } else if (Boolean.TRUE.equals(session.getAttribute(ATTR_MAINTENANCE))) {
                     // Bakım mezar taşı: bakım sürüyorsa aynı sinyal (çok sekme / eşzamanlı istek); bittiyse mezar taşı
                     // kapatılır, istek oturumsuz sayılır (giriş yeniden açıldı — kullanıcı yeniden giriş yapar).

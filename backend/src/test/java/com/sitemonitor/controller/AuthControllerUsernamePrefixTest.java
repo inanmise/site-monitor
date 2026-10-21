@@ -45,9 +45,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * Kullanıcı adı ön eki kuralı — giriş ucu, LDAP, kodla giriş doğrulaması ve oturum kapısı (2026-10-21, kullanıcı isteği:
  * "yalnız N ile başlayan kullanıcıya login izni; MP'li ya da başka harfli olana izin vermeyelim").
  *
- * <p>Kural YAZILAN ada bakar ve kimlik bilgisi denetiminden ÖNCE reddeder: BCrypt yok, AD bind yok, veritabanı araması
- * yok, provizyon yok; denetim LOGIN_FAILED + BLOCKED (kilit sayacına girmez). Kurala uyan ad bugünkü gibi girer;
- * bootstrap yönetici her zaman muaf. LDAP'ta AD'nin döndürdüğü KANONİK ad da denetlenir.
+ * <p>Karar kimlik bilgisi DOĞRULANDIKTAN sonra (2026-10-21 inceleme — pasif / bakım ilkesi): yanlış parola ve bilinmeyen
+ * ad, ön eke uysun uymasın kural kapalıyla aynı genel 401 + kilit merdivenini alır (muaf / bootstrap adı yanıttan
+ * okunamaz); doğru kimlik bilgisiyle uymayan ad 403 alır — provizyon yok, oturum yok; denetim LOGIN_FAILED + BLOCKED +
+ * kanal (kilit sayacına ve IP sınırına girmez). Hem YAZILAN ad hem kayıtlı / AD KANONİK ad uymalı; bootstrap yönetici
+ * her zaman muaf.
  */
 @WebMvcTest(AuthController.class)
 @TestPropertySource(properties = "site.monitor.username=admin")
@@ -117,35 +119,74 @@ class AuthControllerUsernamePrefixTest {
     }
 
     @Test
-    @DisplayName("MP… adı: kimlik bilgisi denetiminden ÖNCE 403 USERNAME_PREFIX_NOT_ALLOWED — BCrypt, AD bind, DB araması yok; denetim BLOCKED")
-    void mpRefusedBeforeCredentialCheck() throws Exception {
-        mvc.perform(post("/api/login").contentType(MediaType.APPLICATION_JSON).content(creds("MP123", "pw")))
+    @DisplayName("MP… adı + DOĞRU parola: kimlik bilgisi doğrulandıktan SONRA 403 USERNAME_PREFIX_NOT_ALLOWED — oturum yok, kilit sayacı yok, denetim BLOCKED + kanal LOCAL")
+    void mpRefusedOnlyAfterValidCredentials() throws Exception {
+        var res = mvc.perform(post("/api/login").contentType(MediaType.APPLICATION_JSON).content(creds("MP123", "pw")))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value("USERNAME_PREFIX_NOT_ALLOWED"))
                 .andExpect(jsonPath("$.error_code").value("USERNAME_PREFIX_NOT_ALLOWED"))
                 .andExpect(jsonPath("$.allowed_prefixes[0]").value("N"))
-                .andExpect(jsonPath("$.error").isNotEmpty());
-        verify(userService, never()).authenticate(any(), any());
-        verify(userService, never()).findByUsername(any());
-        verify(userService, never()).burnPasswordCheck(any());
-        verify(userService, never()).findInactiveWithValidPassword(any(), any());
-        verify(ldapDirectory, never()).authenticate(any(), any());
+                .andExpect(jsonPath("$.error").isNotEmpty())
+                .andReturn();
+        // parola GERÇEKTEN denendi (kural kapalıyla aynı iş) …
+        verify(userService).authenticate("MP123", "pw");
         verify(ldapProvisioning, never()).provisionFromAd(any(), any(), any());
-        verify(auditService).recordUsernamePrefixLogin(eq("MP123"), isNull(), isNull(), isNull(), eq("10.1.1.1"), any(), isNull());
-        // kilit merdivenine / başarısız deneme özetine / oturuma GİRMEZ
+        // … ama oturum kurulmadı
+        assertThat(res.getRequest().getSession(false)).isNull();
+        verify(userService, never()).recordSuccessfulLogin(any(), any(), any(), any());
+        // denetim: kayıtlı ad + hesap kimliği + kanal (her parola-yolu LOGIN_FAILED kanal taşır)
+        verify(auditService).recordUsernamePrefixLogin(eq("MP123"), eq(2L), any(), eq("USER"), eq("10.1.1.1"), any(), eq("LOCAL"));
+        // kilit merdivenine / başarısız deneme özetine GİRMEZ
         verify(auditService, never()).recordLogin(any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), anyInt(), any());
         verify(userService, never()).recordFailedLogin(any(), any(), any());
-        verify(userService, never()).recordSuccessfulLogin(any(), any(), any(), any());
+        verify(userService, never()).applyProgressiveLockout(any());
     }
 
     @Test
-    @DisplayName("ret yanıtı hesabın varlığını söylemez: OLMAYAN MP adı ile VAR OLAN MP adı aynı gövdeyi alır")
-    void sameBodyForUnknownAndExisting() throws Exception {
-        String a = mvc.perform(post("/api/login").contentType(MediaType.APPLICATION_JSON).content(creds("MP123", "pw")))
-                .andExpect(status().isForbidden()).andReturn().getResponse().getContentAsString();
-        String b = mvc.perform(post("/api/login").contentType(MediaType.APPLICATION_JSON).content(creds("MP999", "x")))
-                .andExpect(status().isForbidden()).andReturn().getResponse().getContentAsString();
-        assertThat(a).isEqualTo(b);
+    @DisplayName("ret IP oran sınırına yazılmaz: aynı IP'den 12 ret → hep 403, 429 yok")
+    void refusalNotCountedForIpLimit() throws Exception {
+        when(clientIpResolver.resolve(any())).thenReturn("10.2.2.2");
+        for (int i = 0; i < 12; i++) {
+            mvc.perform(post("/api/login").contentType(MediaType.APPLICATION_JSON).content(creds("MP123", "pw")))
+                    .andExpect(status().isForbidden());
+        }
+    }
+
+    @Test
+    @DisplayName("YANLIŞ parola / bilinmeyen ad: ön eke uysun uymasın aynı genel 401 — kural kapalıyla bayt bayt aynı, muaf / bootstrap adı okunamaz")
+    void wrongPasswordIdenticalWhateverThePrefix() throws Exception {
+        when(clientIpResolver.resolve(any())).thenReturn("10.3.3.3");
+        when(userService.findByUsername("MP999")).thenReturn(Optional.empty());
+        when(userService.findByUsername("N999")).thenReturn(Optional.empty());
+        String mpWrong = wrong("MP123", "bad");
+        String nWrong = wrong("N123", "bad");
+        String mpUnknown = wrong("MP999", "bad");
+        String nUnknown = wrong("N999", "bad");
+        String adminWrong;
+        {
+            AppUser admin = user(9L, "ADMIN", "LOCAL");
+            when(userService.findByUsername("admin")).thenReturn(Optional.of(admin));
+            adminWrong = wrong("admin", "bad");
+        }
+        assertThat(mpWrong).isEqualTo(nWrong).isEqualTo(mpUnknown).isEqualTo(nUnknown).isEqualTo(adminWrong);
+        verify(auditService, never()).recordUsernamePrefixLogin(any(), any(), any(), any(), any(), any(), any());
+        // parola her adda denendi (aynı maliyet sınıfı) ve hata kilit merdivenine yazıldı
+        verify(userService).authenticate("MP123", "bad");
+        verify(userService).authenticate("N123", "bad");
+        verify(userService).recordFailedLogin(eq("MP123"), eq("10.3.3.3"), eq("BAD_PASSWORD"));
+        verify(userService).recordFailedLogin(eq("N123"), eq("10.3.3.3"), eq("BAD_PASSWORD"));
+
+        // kural KAPALI → aynı istek aynı gövde
+        rule.set(UsernamePrefixRule.disabled("admin"));
+        when(clientIpResolver.resolve(any())).thenReturn("10.3.3.4");
+        assertThat(wrong("MP123", "bad")).isEqualTo(mpWrong);
+        assertThat(wrong("MP999", "bad")).isEqualTo(mpUnknown);
+    }
+
+    private String wrong(String u, String p) throws Exception {
+        return mvc.perform(post("/api/login").contentType(MediaType.APPLICATION_JSON).content(creds(u, p)))
+                .andExpect(status().isUnauthorized())
+                .andReturn().getResponse().getContentAsString();
     }
 
     @Test
@@ -169,12 +210,39 @@ class AuthControllerUsernamePrefixTest {
     }
 
     @Test
-    @DisplayName("DOMAIN\\ad biçimi temkinli: CORP\\n123 → ret (yazılan ad C ile başlar)")
-    void domainFormRefused() throws Exception {
-        mvc.perform(post("/api/login").contentType(MediaType.APPLICATION_JSON).content(creds("CORP\\n123", "pw")))
+    @DisplayName("LDAP: YAZILAN ad da denetlenir — CORP\\n123 (C ile başlar) AD'de doğrulansa da 403, provizyon HİÇ çalışmaz")
+    void ldapTypedNameChecked() throws Exception {
+        com.sitemonitor.model.LdapSettings ls = new com.sitemonitor.model.LdapSettings();
+        ls.setEnabled(true);
+        when(ldapSettings.getOrDefaults()).thenReturn(ls);
+        when(clientIpResolver.resolve(any())).thenReturn("10.4.4.4");
+        when(userService.findByUsername("CORP\\n123")).thenReturn(Optional.empty());
+        when(ldapDirectory.authenticate("CORP\\n123", "adpass")).thenReturn(Optional.of(
+                new LdapDirectoryService.LdapUser("N123", "CN=N123,DC=corp", Map.of())));
+        mvc.perform(post("/api/login").contentType(MediaType.APPLICATION_JSON).content(creds("CORP\\n123", "adpass")))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value("USERNAME_PREFIX_NOT_ALLOWED"));
-        verify(userService, never()).authenticate(any(), any());
+        verify(ldapProvisioning, never()).provisionFromAd(any(), any(), any());
+        verify(auditService).recordUsernamePrefixLogin(eq("N123"), eq(1L), any(), any(), any(), any(), eq("LDAP"));
+        verify(userService, never()).recordSuccessfulLogin(any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("LDAP: MP… adı YANLIŞ AD parolası → AD bind denenir, genel 401 (kural kapalıyla aynı), ön ek reddi yok")
+    void ldapWrongPasswordGeneric401() throws Exception {
+        com.sitemonitor.model.LdapSettings ls = new com.sitemonitor.model.LdapSettings();
+        ls.setEnabled(true);
+        when(ldapSettings.getOrDefaults()).thenReturn(ls);
+        when(clientIpResolver.resolve(any())).thenReturn("10.5.5.5");
+        when(userService.findByUsername("MP777")).thenReturn(Optional.empty());
+        when(ldapDirectory.authenticate("MP777", "bad")).thenReturn(Optional.empty());
+        String on = wrong("MP777", "bad");
+        rule.set(UsernamePrefixRule.disabled("admin"));
+        String off = wrong("MP777", "bad");
+        assertThat(on).isEqualTo(off);
+        verify(ldapDirectory, org.mockito.Mockito.times(2)).authenticate("MP777", "bad");
+        verify(ldapProvisioning, never()).provisionFromAd(any(), any(), any());
+        verify(auditService, never()).recordUsernamePrefixLogin(any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test

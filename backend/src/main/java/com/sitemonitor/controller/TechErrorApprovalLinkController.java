@@ -184,6 +184,11 @@ public class TechErrorApprovalLinkController {
             case "approver_inactive" -> { title = Msg.t("Onay yetkiniz yok", "You can't approve this"); msg = Msg.t(
                     "Hesabınız pasif ya da artık bu takımın PO rolündeki bir üyesi değilsiniz; bu bağlantı kullanılamaz.",
                     "Your account is inactive or you are no longer a PO member of this team, so this link can't be used."); }
+            // Kullanıcı adı ön eki (2026-10-21 inceleme): giriş kuralı bu hesabı kapatıyor — belirteç tüketilmez; kural
+            // kapatılırsa bağlantı süresi içinde yine çalışır
+            case "username_prefix" -> { title = Msg.t("Bu hesapla karar verilemez", "This account can't decide"); msg = Msg.t(
+                    "Bu hesabın kullanıcı adıyla Site Monitor'e giriş şu an kapalı (yalnız izinli ön ekle başlayan hesaplar girebilir), bu yüzden bu bağlantıyla karar verilemez. Girişe açık hesabınızın PO rolü varsa kararı Site Monitor'de verin ya da yöneticinize başvurun.",
+                    "Signing in to Site Monitor with this account's username is currently turned off (only accounts that start with an allowed prefix can sign in), so this link can't be used to decide. If your account that can sign in has the PO role, decide in Site Monitor, or contact your administrator."); }
             // A1 (inceleme 2026-10-17): uygulama içi uçla aynı kapılar (okuma + onay izni, modül görünürlüğü); belirteç
             // tüketilmez, karar yazılmaz — metin üç durumda da doğru
             case "no_permission" -> { title = Msg.t("Onay yetkiniz yok", "You can't approve this"); msg = Msg.t(
