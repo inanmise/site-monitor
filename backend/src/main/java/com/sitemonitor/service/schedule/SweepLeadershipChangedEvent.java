@@ -13,7 +13,10 @@ package com.sitemonitor.service.schedule;
  *       ALMAZ. Yalnız kira bu pod'daydıysa yayınlanır.</li>
  * </ul>
  * Aynı pod'un olayları sırayla gelir: GAINED, ardından LOST ya da RELEASED, sonra yine GAINED … RELEASED'dan sonra olay
- * gelmez. Kira sorgusunun veritabanı hatası (pod taramayı geçici olarak YEREL koşturur) geçiş SAYILMAZ, olay yayınlanmaz.
+ * gelmez. Kira TABLOSU yoksa (eski tek pod geri düşüşü, pod taramayı YEREL koşturur) olay yayınlanmaz. 2026-10-21 (çok pod
+ * R1-A): kira sorgusu GEÇİCİ hata verirken lider, son yazdığı kira bitişinin güvenli penceresi dolunca taramayı bırakır ve
+ * {@link #LOST} yayınlar (pencere içindeki hatalar olay üretmez); tıkanmış lider (10 dk hiç tarama tıkı yok) kirayı
+ * bıraktığında da {@link #LOST} yayınlanır — her iki durumda pod sonra yeniden {@link #GAINED} alabilir.
  *
  * <p><b>Dinleyiciler için:</b> olay, geçişi gören iş parçacığında (bir tarama iş parçacığı, {@code sweep-leader-lease}
  * yenileyicisi ya da kapanış iş parçacığı) {@code SchedulerService}'in liderlik kilidi tutulurken EŞZAMANLI dağıtılır —

@@ -45,6 +45,16 @@ public class WatchdogService {
 
     public static final String LOCK = "watchdog";
     static final int STALE_FACTOR = 5;
+    /** Değerlendirme kilidinin süresi (2026-10-21, çok pod R1-A, MP-02): kilit tur boyunca yenilenir; pod ölürse kilit en
+     *  geç bu sürede düşer — eskiden 10 dk bekleniyor, dış uç ({@link #STALE_FACTOR} tur) arada 503'e düşüyordu. */
+    static final Duration LOCK_TTL = Duration.ofMinutes(2);
+    /** Kesintide bu pod'un duyurduğu sorunun "düzeldi"sini TEK pod göndersin diye önce koşullu damga (MP-09). */
+    static final String SQL_STAMP_RECOVER = "UPDATE watchdog_state SET notified_kind = 'RECOVER', notified_at = ? "
+            + "WHERE check_key = ? AND (notified_kind IS NULL OR notified_kind NOT LIKE 'RECOVER%' "
+            + "OR notified_at IS NULL OR notified_at < ?)";
+    /** Damgalanan "düzeldi" teslim edilemediyse türüne ek (yönetici ekranı "gitti" demesin; yeniden denenmez). */
+    static final String SQL_RECOVER_SUFFIX = "UPDATE watchdog_state SET notified_kind = ? "
+            + "WHERE check_key = ? AND notified_kind = 'RECOVER' AND notified_at = ?";
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private final WatchdogStateRepository repo;
@@ -81,17 +91,29 @@ public class WatchdogService {
         this.scheduler = scheduler;
     }
 
+    /** "Düzeldi" damgası için (MP-09) — yoksa (eski testler) damgasız gönderim (önceki davranış). */
+    private org.springframework.jdbc.core.JdbcTemplate jdbc;
+
+    @Autowired(required = false)
+    public void setJdbcTemplate(org.springframework.jdbc.core.JdbcTemplate jdbc) {
+        this.jdbc = jdbc;
+    }
+
     /** Bir turun özeti. */
     public record Round(int evaluated, int alerts, int reminders, int recoveries, String outcome, boolean local) { }
 
     @Scheduled(fixedDelayString = "${site.monitor.watchdog.interval-ms:60000}",
                initialDelayString = "${site.monitor.watchdog.initial-delay-ms:120000}")
     public void tick() {
+        tick(Instant.now());
+    }
+
+    /** Zamanlanmış tur — anı dışarıdan (testler ortak saati verir). */
+    void tick(Instant now) {
         if (!WatchdogSettings.enabled(settings)) return;
         try {
-            Instant now = Instant.now();
             Optional<Round> r = scheduler == null ? Optional.of(evaluate(now, false))
-                    : scheduler.callWithSchedulerLock(LOCK, () -> evaluate(now, false));
+                    : scheduler.callWithSchedulerLock(LOCK, LOCK_TTL, () -> evaluate(now, false));
             if (r.isEmpty() && databaseDown(now)) evaluateLocalDatabase(now);   // kilit tablosu okunamıyor → yerel kip
         } catch (Exception e) {
             log.warn("Kendi kendini izleme turu tamamlanamadı: {}", e.toString());
@@ -104,7 +126,7 @@ public class WatchdogService {
      */
     public Optional<Round> evaluateManually(Instant now) {
         if (!WatchdogSettings.enabled(settings)) return Optional.empty();
-        return scheduler == null ? Optional.of(evaluate(now, true)) : scheduler.callWithSchedulerLock(LOCK, () -> evaluate(now, true));
+        return scheduler == null ? Optional.of(evaluate(now, true)) : scheduler.callWithSchedulerLock(LOCK, LOCK_TTL, () -> evaluate(now, true));
     }
 
     /** Kapalı mı (uç 409 döner, düğme gizlenir). */
@@ -143,7 +165,7 @@ public class WatchdogService {
             // RECENT ile sürekli atlayan bir pod bayat "sorun" durumunu sonraki DB kesintisinde yeniden kullanmasın (2026-10-12).
             // Bu pod'un kesintide bellekte açıp BİLDİRDİĞİ sorun, kayıtlı satır sorunsuzsa "düzeldi" bildirimiyle kapanır
             // (2026-10-12; eskiden budanıp kayboluyordu — yöneticiler "veritabanı çöktü" alıp "düzeldi"yi hiç almıyordu).
-            List<WatchdogState> orphans = new ArrayList<>();
+            List<Map.Entry<WatchdogState, WatchdogState>> orphans = new ArrayList<>();   // (kayıtlı satır, bu pod'un duyurusu)
             memory.entrySet().removeIf(en -> {
                 WatchdogState stored = states.get(en.getKey());
                 if (stored == null || newer(en.getValue().getEvaluatedAt(), stored.getEvaluatedAt())) return false;
@@ -162,7 +184,7 @@ public class WatchdogService {
                 if ("PROBLEM".equals(stored.getStatus()) || recoveryAnnounced(stored, en.getValue())) {
                     it.remove();                                                // sorun artık kayıtlı satırın / düzelme duyuruldu
                 } else if (storedHealthy(stored)) {
-                    orphans.add(stored);
+                    orphans.add(Map.entry(stored, en.getValue()));
                     it.remove();
                 }
             }
@@ -201,6 +223,14 @@ public class WatchdogService {
             }
         }
         String outcome = "NONE";
+        if (!items.isEmpty() && !persisted && !mayAnnounceLocally(now)) {
+            // Durum okunamadı (DB çökük) ve bu pod duyurmaya yetkili değil (MP-09): durum yalnız bellekte ilerler, bildirim
+            // gitmez — "veritabanı çöktü"yü yalnız doğrulanmış lider gönderir (N pod → N bildirim değil).
+            items.clear();
+            acted.clear();
+            alerts = reminders = recoveries = 0;
+            outcome = "HELD";
+        }
         if (!items.isEmpty()) {
             WatchdogNotifier.Report rep = notifier.send(items, false);
             outcome = rep.outcome().name();
@@ -258,12 +288,25 @@ public class WatchdogService {
         return k != null && k.startsWith("RECOVER") && !newer(memory.getNotifiedAt(), stored.getNotifiedAt());
     }
 
-    /** Budanan bellek sorunlarının "düzeldi" bildirimi — kayıtlı (güncel) satırın olgularıyla, tek bildirimde. */
-    private void recoverOrphans(List<WatchdogState> stored, Instant now) {
+    /**
+     * Budanan bellek sorunlarının "düzeldi" bildirimi — kayıtlı (güncel) satırın olgularıyla, tek bildirimde.
+     *
+     * <p><b>Önce damga, sonra gönderim (2026-10-21, çok pod R1-A, MP-09):</b> kesintide birden çok pod aynı sorunu
+     * duyurmuşsa (eski sürümlü pod'lar, takipçi yedeği) her biri kendi "düzeldi"sini gönderiyordu. Artık kayıtlı satıra
+     * koşullu {@code UPDATE … notified_kind='RECOVER'} yazılır (yalnız satır bu duyurudan SONRA "düzeldi" demediyse); 1 satır
+     * güncelleyen tek pod gönderir. Teslim edilemezse tür {@code RECOVER_FAILED} / {@code _MUTED} / {@code _NOCHANNEL} olur
+     * (yeniden denenmez — sorun zaten bitti). Veritabanı erişimi yoksa (eski testler) damgasız gönderilir.
+     */
+    private void recoverOrphans(List<Map.Entry<WatchdogState, WatchdogState>> orphans, Instant now) {
         List<WatchdogMail.Item> items = new ArrayList<>();
-        for (WatchdogState s : stored) {
+        List<WatchdogState> stamped = new ArrayList<>();
+        String nowIso = WatchdogTransition.ISO.format(now);
+        for (Map.Entry<WatchdogState, WatchdogState> o : orphans) {
+            WatchdogState s = o.getKey();
             WatchdogCheck c = WatchdogCheck.byKey(s.getCheckKey());
             if (c == null) continue;
+            if (!stampRecover(s, o.getValue(), nowIso)) continue;   // başka pod "düzeldi"yi zaten üstlendi
+            stamped.add(s);
             Map<String, Object> facts = parse(s.getFacts());
             items.add(new WatchdogMail.Item(Action.RECOVER.name(), c.labelTr(), c.severity().name(),
                     WatchdogMessages.detail(c, facts, false), c.labelEn(), WatchdogMessages.detail(c, facts, true)));
@@ -272,8 +315,45 @@ public class WatchdogService {
         try {
             WatchdogNotifier.Report rep = notifier.send(items, false);
             log.info("Kendi kendini izleme: kesintide bu pod'da açılan {} sorun düzeldi → bildirim {}", items.size(), rep.outcome());
+            String suffix = suffix(rep.outcome());
+            if (!suffix.isEmpty()) markRecoverSuffix(stamped, suffix, nowIso);
         } catch (Exception e) {
             log.warn("Kendi kendini izleme: düzelme bildirimi gönderilemedi: {}", e.toString());
+            markRecoverSuffix(stamped, WatchdogTransition.FAILED, nowIso);
+        }
+    }
+
+    /**
+     * "Düzeldi"yi bu pod'a sahiplendirir: kayıtlı satır, bu pod'un duyurusundan ({@code announced.notifiedAt}) sonra
+     * "düzeldi" demediyse {@code RECOVER} damgası yazılır. Kayıtlı varlık da güncellenir (turun sonunda {@code saveAll}
+     * damgayı eski değerle ezmesin). @return gönderilmeli mi
+     */
+    private boolean stampRecover(WatchdogState stored, WatchdogState announced, String nowIso) {
+        if (jdbc == null) return true;   // eski davranış (testler / bileşen yok)
+        String announcedAt = announced.getNotifiedAt() == null ? "" : announced.getNotifiedAt();
+        try {
+            if (jdbc.update(SQL_STAMP_RECOVER, nowIso, stored.getCheckKey(), announcedAt) != 1) return false;
+        } catch (Exception e) {
+            log.warn("Kendi kendini izleme: 'düzeldi' damgası yazılamadı ({}), bildirim bu turda gönderilmedi: {}",
+                    stored.getCheckKey(), e.toString());
+            return false;
+        }
+        stored.setNotifiedKind(Action.RECOVER.name());
+        stored.setNotifiedAt(nowIso);
+        stored.setSeverity(null);
+        return true;
+    }
+
+    private void markRecoverSuffix(List<WatchdogState> stamped, String suffix, String nowIso) {
+        for (WatchdogState s : stamped) {
+            String kind = Action.RECOVER.name() + suffix;
+            s.setNotifiedKind(kind);
+            if (jdbc == null) continue;
+            try {
+                jdbc.update(SQL_RECOVER_SUFFIX, kind, s.getCheckKey(), nowIso);
+            } catch (Exception e) {
+                log.debug("watchdog RECOVER eki yazılamadı: {}", e.toString());
+            }
         }
     }
 
@@ -293,7 +373,12 @@ public class WatchdogService {
         return false;
     }
 
-    /** DB çökükken: yalnız veritabanı kontrolü, pod belleğinde (her pod kendisi bildirir — tek pod prod'da tek bildirim). */
+    /**
+     * DB çökükken: yalnız veritabanı kontrolü, pod belleğinde. Bildirimi YALNIZ duyurmaya yetkili pod gönderir
+     * ({@link #mayAnnounceLocally}, 2026-10-21, çok pod R1-A, MP-09 — eskiden her pod kendisi bildiriyordu: N pod → N
+     * "veritabanı çöktü" e-postası / push / webhook, N hatırlatma); diğerleri durumu bellekte ilerletir (DB dönünce
+     * kayıtlı satırla birleşir, ikinci "düzeldi" gitmez).
+     */
     synchronized void evaluateLocalDatabase(Instant now) {
         Probe p = probes.run(WatchdogCheck.DATABASE, now);
         WatchdogState st = memory.computeIfAbsent(WatchdogCheck.DATABASE.key(), k -> {
@@ -304,6 +389,10 @@ public class WatchdogService {
         Action a = WatchdogTransition.apply(st, p.result(), p.severity(), json(p.facts()), now,
                 WatchdogSettings.confirm(settings), WatchdogSettings.reminderHours(settings), notifier.muted());
         if (a == Action.NONE) return;
+        if (!mayAnnounceLocally(now)) {
+            log.debug("Kendi kendini izleme (DB çökük): {} bu pod'dan duyurulmuyor — duyuruyu doğrulanmış lider yapar", a);
+            return;
+        }
         WatchdogNotifier.Report rep = notifier.send(List.of(new WatchdogMail.Item(a.name(), WatchdogCheck.DATABASE.labelTr(),
                 st.getSeverity(), WatchdogMessages.detail(WatchdogCheck.DATABASE, p.facts(), false),
                 WatchdogCheck.DATABASE.labelEn(), WatchdogMessages.detail(WatchdogCheck.DATABASE, p.facts(), true))), false);
@@ -313,6 +402,42 @@ public class WatchdogService {
     private boolean databaseDown(Instant now) {
         Probe p = probes.run(WatchdogCheck.DATABASE, now);
         return p.result() == Result.PROBLEM && WatchdogCheck.Severity.CRITICAL.name().equals(p.severity());
+    }
+
+    /**
+     * Veritabanı okunamazken bu pod bildirim gönderebilir mi (2026-10-21, çok pod R1-A, MP-09):
+     * <ul>
+     *   <li>küme bileşeni yok (tek pod / test) → evet (eski davranış);</li>
+     *   <li>son BAŞARILI kira okumasında bu pod tarama lideriydi ({@code SchedulerService.lastConfirmedSweepLeader}) → evet —
+     *       veritabanı hatası bu değeri değiştirmez, canlı lider kesinti boyunca tek duyurucudur;</li>
+     *   <li>takipçi → yalnız {@link #followerMayAnnounce} (lider ölmüş görünüyorsa yedek).</li>
+     * </ul>
+     */
+    boolean mayAnnounceLocally(Instant now) {
+        SchedulerService s = scheduler;
+        if (s == null) return true;
+        try {
+            if (s.lastConfirmedSweepLeader()) return true;
+            return followerMayAnnounce(now, s.sweepLeaseObservation());
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /**
+     * Takipçi yedeği: lider ölmüş VE veritabanı çökmüşse kimse duyurmazdı. Takipçi duyurur ancak (1) son başarılı
+     * gözleminde kira zaten bayatlamışsa (kalan süre kira süresinin yarısından az — canlı lider her TTL/3'te yeniler, bu
+     * yüzden kalan süre en az 2/3 TTL olur; daha azı en az bir yenilemenin kaçtığı, ya da kiranın süresinin dolduğu anlamına
+     * gelir) ve (2) o gözlemden bu yana en az {@code TTL + onay × aralık} geçtiyse (kira kesin dolmuş, canlı bir lider olsaydı
+     * çoktan duyurmuştu). Kalan yarış (lider ve veritabanı aynı ~90 sn'de ölür, N takipçi) bilerek kabul edilir — çift duyuru
+     * sessiz kesintiden iyidir.
+     */
+    boolean followerMayAnnounce(Instant now, SchedulerService.LeaseObservation obs) {
+        if (obs == null || obs.leader() || obs.leaseUntilMs() < 0) return false;
+        long remainingAtObservation = obs.leaseUntilMs() - obs.observedAtMs();
+        if (remainingAtObservation >= obs.ttlMs() / 2) return false;   // kira o an tazeydi → lider canlıydı
+        long waitMs = obs.ttlMs() + (long) Math.max(1, WatchdogSettings.confirm(settings)) * Math.max(1_000L, intervalMs);
+        return now.toEpochMilli() - obs.observedAtMs() >= waitMs;
     }
 
     // ── Okuma ─────────────────────────────────────────────────────────────────────────────────

@@ -2,6 +2,7 @@ package com.sitemonitor.it;
 
 import com.sitemonitor.service.AppSettingsService;
 import com.sitemonitor.service.SchedulerService;
+import com.sitemonitor.service.schedule.ClusterLockService;
 import com.sitemonitor.service.schedule.ClusterScheduleService;
 import org.mockito.Mockito;
 import org.mockito.invocation.InvocationOnMock;
@@ -66,7 +67,9 @@ import java.util.function.LongSupplier;
  *       {@link Pod#schedule()}, {@link Pod#events()}, {@link Pod#owner()}.</li>
  *   <li>{@link #newPod(String)} — aynı ada sahip ama BELLEĞİ BOŞ yeni bir örnek (yeniden başlatılmış pod; ezberlenmez).</li>
  *   <li>{@link #legacyPod()} — küme kaydı olmayan pod ({@code schedule() == null}; tek pod / eski davranış).</li>
- *   <li>{@link #schedule(String)} — yalnız {@code ClusterScheduleService} (kurulumsuz, hafif testler için).</li>
+ *   <li>{@link #schedule(String)} — yalnız {@code ClusterScheduleService} (kurulumsuz, hafif testler için);
+ *       {@link #locks(String)} — yalnız {@code ClusterLockService} (ortak saat, elle yenileme); {@link Pod#locks()} — pod'un
+ *       kendi kilit servisi.</li>
  *   <li>{@link #mock(Class)} — paylaşılan bağımlılık sahtesi; {@link #use(Class, Object)} — kendi örneğinle değiştir
  *       (yalnız SONRA kurulan pod'ları etkiler).</li>
  *   <li>{@link #lease(String)}, {@link #leaseOwner(String)}, {@link #schedulerLockHolder(String)} — DB'den okuma.</li>
@@ -99,11 +102,13 @@ import java.util.function.LongSupplier;
  * }
  * }</pre>
  *
- * <p><b>Sınırlar.</b> {@code scheduler_lock} satırını {@code SchedulerService} JVM başına SABİT örnek kimliğiyle
- * ({@code SchedulerService.instanceId()}) yazar ve kilit sürelerini DUVAR saatiyle hesaplar: aynı JVM'deki iki pod bu
- * tabloda AYNI sahiptir (biri tutarken diğerinin INSERT'i yine düşer, ama diğeri onun kilidini bırakabilir) ve
- * {@link #advance(long)} kilit süresini etkilemez. Kilit sahibine bağlı senaryolar için kilit servisinin kendi
- * sahip kimliğini kullan. Kurucu dışında enjekte edilen alanlar ({@code @Autowired(required = false)} yardımcılar,
+ * <p><b>İş kilidi (2026-10-21, çok pod R1-A).</b> {@link #pod(int)} / {@link #newPod(String)} her pod'a KENDİ sahip
+ * kimliğiyle ve ORTAK saatle bir {@link ClusterLockService} verir ({@link Pod#locks()}; arka plan yenileyicisi yok —
+ * yenileme turunu test {@code locks().renewAll()} ile koşturur). Böylece {@code scheduler_lock} satırları pod başına ayrı
+ * sahiptir ve {@link #advance(long)} kilit süresini de ilerletir. {@link #legacyPod()} kilit servissizdir (eski SQL: JVM
+ * başına sabit {@code SchedulerService.instanceId()} ve duvar saati).
+ *
+ * <p><b>Sınırlar.</b> Kurucu dışında enjekte edilen alanlar ({@code @Autowired(required = false)} yardımcılar,
  * {@code @Value} ayarları) kurulumda boş / 0 kalır — gerekiyorsa {@link #pod(int, Consumer)} ile ya da
  * {@code ReflectionTestUtils.setField} ile ver. Düzenek iş parçacığı güvenlidir; {@link #race} dışındaki yardımcılar
  * kendi iş parçacığı açmaz.
@@ -269,7 +274,7 @@ public final class MultiPodTestSupport implements AutoCloseable {
      */
     public Pod legacyPod() {
         RecordingEventPublisher events = new RecordingEventPublisher();
-        return new Pod(-1, null, null, newScheduler(null, events), events);
+        return new Pod(-1, null, null, newScheduler(null, events), events, null);
     }
 
     /** Yalnız küme zamanlama kaydı (SchedulerService kurmadan): ortak veritabanında verilen sahip adına. */
@@ -277,12 +282,19 @@ public final class MultiPodTestSupport implements AutoCloseable {
         return new ClusterScheduleService(jdbc, owner);
     }
 
+    /** Yalnız iş kilidi servisi (SchedulerService kurmadan): ortak veritabanı ve ORTAK saat, verilen sahip adına. */
+    public ClusterLockService locks(String owner) {
+        return new ClusterLockService(jdbc, owner, clockSupplier(), false);
+    }
+
     private Pod build(int index, String owner, Consumer<SchedulerService> customizer) {
         ClusterScheduleService store = new ClusterScheduleService(jdbc, owner);
+        ClusterLockService locks = new ClusterLockService(jdbc, owner, clockSupplier(), false);
         RecordingEventPublisher events = new RecordingEventPublisher();
         SchedulerService scheduler = newScheduler(store, events);
+        ReflectionTestUtils.setField(scheduler, "lockService", locks);
         if (customizer != null) customizer.accept(scheduler);
-        return new Pod(index, owner, store, scheduler, events);
+        return new Pod(index, owner, store, scheduler, events, locks);
     }
 
     /**
@@ -402,9 +414,10 @@ public final class MultiPodTestSupport implements AutoCloseable {
      *
      * @param index {@link MultiPodTestSupport#pod(int)} numarası ({@link MultiPodTestSupport#newPod(String)} ve
      *              {@link MultiPodTestSupport#legacyPod()} için -1)
+     * @param locks pod'un iş kilidi servisi (ortak saat, kendi sahibi; {@link MultiPodTestSupport#legacyPod()} için null)
      */
     public record Pod(int index, String owner, ClusterScheduleService schedule, SchedulerService scheduler,
-                      RecordingEventPublisher events) {
+                      RecordingEventPublisher events, ClusterLockService locks) {
     }
 
     /**

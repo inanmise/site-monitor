@@ -225,6 +225,19 @@ public class SchedulerService {
     private java.util.function.LongSupplier scheduleClock = System::currentTimeMillis;
     /** Küme zamanlama hatası WARN kısıtlayıcısı (son WARN anı, ms). */
     private final AtomicLong clusterScheduleWarnAt = new AtomicLong();
+    /** Yenilenen iş kilidi (2026-10-21, çok pod R1-A, MP-02) — alan enjeksiyonu (G2: kurucu değişmez). Bean yoksa (manuel
+     *  kurulum/test) kilit yardımcıları birebir eski yenilemesiz SQL'i koşturur. */
+    @Autowired(required = false)
+    private com.sitemonitor.service.schedule.ClusterLockService lockService;
+    /** {@code ContextClosedEvent}'in BU bağlamdan geldiğini ayırt etmek için (bir alt bağlamın kapanışı liderliği bırakmasın). */
+    @Autowired(required = false)
+    private org.springframework.context.ApplicationContext applicationContext;
+    /** Tur sahiplenmesinin geçici veritabanı hatasıyla düştüğü (güvenli tarafta ATLANAN) tur sayısı — System Health. */
+    private final AtomicLong roundClaimFailures = new AtomicLong();
+    /** Son atlanan turun adı ve anı (System Health). */
+    private final AtomicReference<String> lastRoundClaimFailure = new AtomicReference<>(null);
+    /** Tur sahiplenmesinin geçici hata sonrası yeniden deneme beklemeleri (ms) — testler kısaltır. */
+    private long[] roundClaimRetryDelaysMs = {250L, 1_000L};
 
     @Autowired
     @Qualifier("certCheckExecutor")
@@ -311,6 +324,9 @@ public class SchedulerService {
     /** Açılış tam sertifika taramasının küme geneli tekrar penceresi (2026-10-09): bu süre içinde açılan diğer pod'lar
      *  (yuvarlanan dağıtım) taramayı yinelemez. Saatlik + bayat süpürmesi arayı zaten kapatır. */
     static final long STARTUP_CHECK_DEDUPE_MS = 15L * 60 * 1000;
+
+    /** Açılış catch-up'ının küme tur penceresi ({@code round:startup-catchup}, 2026-10-21; ad kalıcı — G6). */
+    static final long STARTUP_CATCHUP_ROUND_MS = 15L * 60 * 1000;
 
     @Value("${site.monitor.alert.default-warning-days:30}")
     private int defaultWarningDays;
@@ -412,43 +428,21 @@ public class SchedulerService {
             runDeletedRecordsPurge();
             // Dağıtım kaydı: şema yamalarından SONRA (tablo/indeks hazır). Hata içeride yutulur — açılışı
             // hiçbir koşulda durdurmaz (K2). Tür (UPGRADE/RESTART/ROLLBACK) satırlardan türetilir, burada değil.
-            if (deploymentHistory != null) deploymentHistory.recordStartup();
-            if (schemaRegistry != null) schemaRegistry.tick();   // yeni tablolar first_seen alsın (hata içeride yutulur)
-            userService.ensureBootstrapped(adminUsername, adminPassword);
-            // Opak kullanıcı kimliği (2026-10-08): eski hesaplara kimlik + önbellek ısıtma; hata açılışı durdurmaz.
-            if (userPublicIds != null) userPublicIds.backfill();
-            // In-memory oturumlar restart'ta silinir ama DB'deki activeSessionId kalır → aksi halde
-            // "Aktif Oturum" sayımı şişer ve restart sonrası ilk login'de gerçekte canlı oturum
-            // olmasa da "başka yerde aktif oturum" onayı çıkar. Açılışta stale işaretleri temizle.
-            // JDBC deposunda (2026-10-09) oturumlar yaşar: yalnız depoda karşılığı kalmamış işaretler temizlenir.
-            try {
-                int cleared = sessionStore != null ? sessionStore.clearStaleActiveSessionMarkers() : userService.clearAllActiveSessions();
-                if (cleared > 0) log.info("Cleared {} stale active-session marker(s) on startup", cleared);
-            } catch (Exception e) {
-                log.warn("Startup active-session cleanup failed: {}", e.getMessage());
-            }
-            // Geçmiş tablosu ŞEMA YAMALARINDAN SONRA doldurulur (tablo/kolonlar hazır olmalı).
-            // Hata yutulur: geri doldurma açılışı düşürmez, bir sonraki başlangıç yeniden dener.
-            try {
-                int moved = historyBackfill.runOnce();
-                if (moved > 0) log.info("İzleme değişiklik geçmişi denetimden dolduruldu: {} satır", moved);
-            } catch (Exception e) {
-                log.warn("İzleme geçmişi geri doldurma başarısız: {}", e.getMessage());
-            }
-            permissionService.seedDefaultsIfEmpty();
-            permissionService.seedMissingDefaults(); // katalogda yeni eklenen modüllerin grant'lerini backfill et
-            // Politika yükseltmeleri: seedMissingDefaults yalnız EKSİK satırı ekler, var olan
-            // allowed=false satırını çevirmez — sonradan gevşetilen bir varsayılan mevcut
-            // kurulumlarda ancak bununla geçerli olur (yalnız insan eli değmemiş satırlar).
-            permissionService.applyPolicyUpgrades();
-            try { incidentService.seedOptions(); } // olay modülü varsayılan kanalları (idempotent)
-            catch (Exception e) { log.warn("Incident option seed failed: {}", e.getMessage()); }
-            ensureDefaultThreshold();
-            warnOnOrphanedRecords();
-            clearStaleLocksForThisHost();
-            clearStaleSweepLeaderOfThisHost();
-            startSweepLeaderRenewer();
-            restoreOutageStateFromDb();
+            bootstrapStep("deployment-history", () -> { if (deploymentHistory != null) deploymentHistory.recordStartup(); });
+            bootstrapStep("schema-registry", () -> { if (schemaRegistry != null) schemaRegistry.tick(); });   // yeni tablolar first_seen alsın
+            // Tohumlama (2026-10-21, çok pod R1-A, MP-20): "boş mu → ekle" adımları aynı anda açılan iki pod'da yarışıyordu
+            // (ilk kurulum replicaCount 2, sürüm + replika aynı helm upgrade'de). Kazanan pod'u bırakıp kaybedenin
+            // ApplicationReadyEvent'inden kaçan benzersizlik istisnası açılışı düşürüyor, eşiksiz "default" eşik satırı
+            // ikilenebiliyordu. Artık şema yamalarıyla AYNI advisory lock (SMSCHEMA) altında sırayla ve HER ADIM KENDİ
+            // try/catch'inde: bir adımın hatası (WARN) sonrakileri ve aşağıdaki kilit / kira / kesinti adımlarını durdurmaz.
+            runBootstrapSeeding();
+            bootstrapStep("orphan-warning", this::warnOnOrphanedRecords);
+            // Aşağıdaki adımlar tohumlamanın sonucundan bağımsız HER ZAMAN koşar (kira yenileyicisi başlamazsa pod lider
+            // olamaz; eski örneğin kilitleri temizlenmezse işler TTL boyunca durur).
+            bootstrapStep("stale-locks", this::clearStaleLocksForThisHost);
+            bootstrapStep("stale-sweep-leader", this::clearStaleSweepLeaderOfThisHost);
+            bootstrapStep("sweep-leader-renewer", this::startSweepLeaderRenewer);
+            bootstrapStep("outage-restore", this::restoreOutageStateFromDb);
         } finally {
             // Senkron bootstrap bitti (başarılı ya da değil — mevcut davranış: app yine de çalışmaya
             // devam eder) → trafiğe HAZIR. Gecikmeli ağır tarama aşağıda arka planda kalır.
@@ -473,6 +467,61 @@ public class SchedulerService {
         t.setDaemon(true);
         startupCheckThread = t;
         t.start();
+    }
+
+    /** Tek pod / H2'de (advisory lock yok) aynı JVM'deki eşzamanlı tohumlamaları da sıraya sokar (çok pod testleri). */
+    private static final Object BOOTSTRAP_SEED_MONITOR = new Object();
+
+    /**
+     * Açılış tohumlaması (MP-20): yönetici hesabı, opak kimlik doldurma, oturum işaretleri, geçmiş doldurma, izin
+     * varsayılanları, olay seçenekleri, varsayılan eşik — bugünkü SIRAYLA, ama {@code SMSCHEMA} advisory lock altında
+     * (PostgreSQL; kilit 60 sn'de alınamazsa kilitsiz — yamalarla aynı kural) ve her adım kendi try/catch'inde. Aynı anda
+     * açılan ikinci pod birincinin bitirmesini bekler, "boş" değil "dolu" görür; bir adım düşse de diğerleri koşar.
+     */
+    void runBootstrapSeeding() {
+        Runnable seeding = () -> {
+            synchronized (BOOTSTRAP_SEED_MONITOR) {
+                bootstrapStep("admin-bootstrap", () -> userService.ensureBootstrapped(adminUsername, adminPassword));
+                // Opak kullanıcı kimliği (2026-10-08): eski hesaplara kimlik + önbellek ısıtma.
+                bootstrapStep("user-public-ids", () -> { if (userPublicIds != null) userPublicIds.backfill(); });
+                // In-memory oturumlar restart'ta silinir ama DB'deki activeSessionId kalır → aksi halde
+                // "Aktif Oturum" sayımı şişer ve restart sonrası ilk login'de gerçekte canlı oturum
+                // olmasa da "başka yerde aktif oturum" onayı çıkar. Açılışta stale işaretleri temizle.
+                // JDBC deposunda (2026-10-09) oturumlar yaşar: yalnız depoda karşılığı kalmamış işaretler temizlenir.
+                bootstrapStep("session-markers", () -> {
+                    int cleared = sessionStore != null ? sessionStore.clearStaleActiveSessionMarkers() : userService.clearAllActiveSessions();
+                    if (cleared > 0) log.info("Cleared {} stale active-session marker(s) on startup", cleared);
+                });
+                // Geçmiş tablosu ŞEMA YAMALARINDAN SONRA doldurulur (tablo/kolonlar hazır olmalı); hata bir sonraki başlangıçta
+                // yeniden denenir.
+                bootstrapStep("history-backfill", () -> {
+                    int moved = historyBackfill.runOnce();
+                    if (moved > 0) log.info("İzleme değişiklik geçmişi denetimden dolduruldu: {} satır", moved);
+                });
+                bootstrapStep("permission-defaults", permissionService::seedDefaultsIfEmpty);
+                // katalogda yeni eklenen modüllerin grant'lerini backfill et
+                bootstrapStep("permission-missing", permissionService::seedMissingDefaults);
+                // Politika yükseltmeleri: seedMissingDefaults yalnız EKSİK satırı ekler, var olan allowed=false satırını
+                // çevirmez — sonradan gevşetilen bir varsayılan mevcut kurulumlarda ancak bununla geçerli olur.
+                bootstrapStep("permission-upgrades", permissionService::applyPolicyUpgrades);
+                bootstrapStep("incident-options", incidentService::seedOptions);   // olay modülü varsayılan kanalları (idempotent)
+                bootstrapStep("default-threshold", this::ensureDefaultThreshold);
+            }
+        };
+        try {
+            new com.sitemonitor.service.schema.SchemaPatchRunner(jdbcTemplate).runExclusive(seeding);
+        } catch (Exception e) {
+            log.warn("Açılış tohumlaması tamamlanamadı (sonraki açılış yeniden dener): {}", e.toString());
+        }
+    }
+
+    /** Bir açılış adımı: hatası WARN olur, açılışı ve sonraki adımları durdurmaz. */
+    private void bootstrapStep(String name, Runnable step) {
+        try {
+            step.run();
+        } catch (Exception e) {
+            log.warn("Açılış adımı '{}' başarısız (açılış sürüyor; sonraki açılış yeniden dener): {}", name, e.toString());
+        }
     }
 
     /** Gecikmeli açılış işinin iş parçacığı — kapanışta kesilir ({@link #stopStartupCheck()}). */
@@ -500,7 +549,16 @@ public class SchedulerService {
         // Dağıtık kilit (2026-10-09): yuvarlanan dağıtımda N pod aynı anda açılıp AYNI kaçırılmış bildirimi N kez
         // gönderiyordu. Kilit başka pod'daysa bu pod atlar (o pod gönderiyor); kilit TTL'i aşan uzun bir koşuda geç
         // başlayan pod da göndermez — catch-up her alarmı göndermeden önce taze satırdan yeniden değerlendirir.
-        try { runWithSchedulerLock("startup-catchup", escalationService::catchUpMissedDailyAlerts); }
+        // Küme turu (2026-10-21, çok pod R1-A, MP-03): yuvarlanan dağıtımda her yeni pod 60 sn sonra AYRI bir catch-up koşuyordu;
+        // kilit tek tur boyunca tutulup bırakıldığı için birbirini izleyen açılışlar aynı alarmları yeniden değerlendiriyordu.
+        // Son STARTUP_CATCHUP_ROUND_MS içinde başka bir pod koştuysa atlanır (alarm başına sahiplenme ayrıca C2'de).
+        try {
+            runWithSchedulerLock("startup-catchup", () -> {
+                if (roundDue("startup-catchup", STARTUP_CATCHUP_ROUND_MS)) escalationService.catchUpMissedDailyAlerts();
+                else log.info("Açılış catch-up atlandı — son {} dk içinde başka bir pod koşturdu [instance={}]",
+                        STARTUP_CATCHUP_ROUND_MS / 60_000L, INSTANCE_ID);
+            });
+        }
         catch (Exception e) { log.warn("Startup catch-up (daily) failed: {}", e.getMessage()); }
         if (startupCheckStopped) return;
         // (2026-10-07) catchUpAlertsOnDeletedDomains kaldırıldı: silme kalıcı, yumuşak silinmiş envanter kalmaz.
@@ -2144,26 +2202,80 @@ public class SchedulerService {
         // engelliyordu; geç tetiklenen pod (dolu zamanlayıcı havuzu) aynı saatin turunu bitmişken yeniden başlatabiliyordu.
         // Elle "Şimdi kontrol et" (runCheck) bu kayda bakmaz.
         String cron = (sweepCron == null || sweepCron.isBlank()) ? "0 0 * * * *" : sweepCron;   // nextCertificateSweepAt ile aynı
-        if (!cronRoundDue("cert-hourly", cron, null)) {
-            log.info("Hourly scheduled check — bu saatin turu başka pod'da koştu, atlanıyor [instance={}]", INSTANCE_ID);
+        // Önce kilit, SONRA tur (2026-10-21, çok pod R1-A, MP-15): eskiden tur kaydı önce tüketiliyor, ardından "cert-check"
+        // kilidi başka pod'un 5 dk'lık bayat taramasında olduğu için alınamıyordu → o saatin turu kümede hiç koşmuyordu.
+        // Bayat taramalar kısa sürer; kilit en çok HOURLY_LOCK_WAIT_MS boyunca yeniden denenir. Alınamazsa tur TÜKETİLMEZ.
+        LockTicket lock = acquireCertCheckForHourly();
+        if (lock == null) {
+            log.info("Hourly scheduled check — cert-check kilidi {} sn içinde alınamadı (başka tarama sürüyor), tur tüketilmedi [instance={}]",
+                    hourlyLockWaitMs / 1000, INSTANCE_ID);
             return;
         }
-        log.info("Hourly scheduled check triggered [instance={}]", INSTANCE_ID);
-        // Alan başına sıklık: vadesi gelmeyenler bu turda atlanır (elle runCheck() hepsini koşturur).
-        List<Map<String, Object>> due = dueForScheduledSweep(loadDomainsFromInventory());
-        if (due.isEmpty()) {
-            log.warn("Hourly check: no domain due (inventory empty or all on longer intervals) — skipping");
-        } else {
-            runCheckForDomains(due, true);
+        boolean handedOff = false;
+        try {
+            if (!cronRoundDue("cert-hourly", cron, null)) {
+                log.info("Hourly scheduled check — bu saatin turu başka pod'da koştu, atlanıyor [instance={}]", INSTANCE_ID);
+                return;
+            }
+            log.info("Hourly scheduled check triggered [instance={}]", INSTANCE_ID);
+            // Alan başına sıklık: vadesi gelmeyenler bu turda atlanır (elle runCheck() hepsini koşturur).
+            List<Map<String, Object>> due = dueForScheduledSweep(loadDomainsFromInventory());
+            if (due.isEmpty()) {
+                log.warn("Hourly check: no domain due (inventory empty or all on longer intervals) — skipping");
+            } else {
+                handedOff = true;
+                runCheckForDomains(due, true, lock);   // kilidi o bırakır
+            }
+        } finally {
+            if (!handedOff) releaseLock(lock);
         }
         // Elle yüklenen sertifikalar (2026-10-06): ağ turundan SONRA, ayrı adım + ayrı kilit (çevrim-dışı).
         runManualCertificateStep(true, null);
+    }
+
+    /** Saatlik turun "cert-check" kilidini bekleme tavanı (ms) ve deneme aralığı (ms) — testler kısaltır. */
+    private long hourlyLockWaitMs = 60_000L;
+    private long hourlyLockRetryMs = 5_000L;
+
+    /** Saatlik tur: "cert-check" kilidini en çok {@link #hourlyLockWaitMs} boyunca dener; kapanış başlarsa bırakır. */
+    private LockTicket acquireCertCheckForHourly() {
+        long deadline = System.nanoTime() + Math.max(0L, hourlyLockWaitMs) * 1_000_000L;
+        while (true) {
+            LockTicket t = acquireLock("cert-check", lockTtlMinutes);
+            if (t != null) return t;
+            if (startupCheckStopped || System.nanoTime() >= deadline || hourlyLockRetryMs <= 0) return null;
+            try {
+                Thread.sleep(Math.min(hourlyLockRetryMs, Math.max(1L, (deadline - System.nanoTime()) / 1_000_000L)));
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                return null;
+            }
+        }
     }
 
     /** Stale sweep: checks domains not checked within stale-minutes (configurable). */
     @Scheduled(fixedDelayString = "${site.monitor.scheduler.stale-check-interval-ms:300000}",
                initialDelayString = "${site.monitor.scheduler.stale-check-interval-ms:300000}")
     public void checkStaleInventory() {
+        // Küme turu (2026-10-21, çok pod R1-A, MP-02): bayat süpürmesi her pod'da 5 dk'da bir koşuyordu (liderliğe bağlı
+        // değil); N pod → N kat tetik ve uzun bir saatlik turla çakışma. Artık aralık başına kümede bir tur (iki aşamalı:
+        // yarıda kalırsa koşu kirası dolunca yeniden). Sertifika taramaları liderliğe BAĞLANMAZ (yük lidere yığılmasın).
+        if (!roundMayBeDue("cert-stale", staleCheckIntervalMs)) return;
+        if (!claimRound("cert-stale", staleCheckIntervalMs)) return;
+        boolean done = false;
+        try {
+            checkStaleInventoryRound();
+            done = true;
+        } finally {
+            finishRound("cert-stale", done);
+        }
+    }
+
+    /** Bayat süpürmesinin küme tur aralığı (ms) — {@code @Scheduled} ile aynı ayar. */
+    @Value("${site.monitor.scheduler.stale-check-interval-ms:300000}")
+    private long staleCheckIntervalMs = 300_000L;
+
+    private void checkStaleInventoryRound() {
         int staleMin = appSettings.getInt("site.monitor.scheduler.stale-minutes", staleMinutes);
         String cutoff = ISO.format(Instant.now().minus(staleMin, ChronoUnit.MINUTES));
         Set<String> freshDomains = latestCheckRepo.findByCheckedAtGreaterThanEqual(cutoff).stream()
@@ -2692,16 +2804,30 @@ public class SchedulerService {
      * (2026-10-11, gizli anahtar yeniden şifreleme) sonucu ekranda gösterir. İş null dönmemeli.
      */
     public <T> java.util.Optional<T> callWithSchedulerLock(String lockName, java.util.function.Supplier<T> task) {
-        if (!tryAcquireSchedulerLock(lockName, lockTtlMinutes)) return java.util.Optional.empty();
+        return callWithLockTicket(acquireLock(lockName, lockTtlMinutes), task);
+    }
+
+    /**
+     * {@link #callWithSchedulerLock(String, java.util.function.Supplier)} + açık kilit süresi (2026-10-21, çok pod R1-A):
+     * yenilenen kilitte TTL yalnız "pod ölürse iş en geç ne zaman başka pod'a geçer" demektir (ör. izleyici 2 dk — ölen pod'un
+     * kilidi dış ucu 503'e düşürecek kadar beklemesin). Kilit servisi yoksa dakikaya yuvarlanır.
+     */
+    public <T> java.util.Optional<T> callWithSchedulerLock(String lockName, java.time.Duration ttl, java.util.function.Supplier<T> task) {
+        return callWithLockTicket(acquireLock(lockName, ttl), task);
+    }
+
+    private <T> java.util.Optional<T> callWithLockTicket(LockTicket lock, java.util.function.Supplier<T> task) {
+        if (lock == null) return java.util.Optional.empty();
         try {
             return java.util.Optional.ofNullable(task.get());
         } finally {
-            releaseSchedulerLock(lockName);
+            releaseLock(lock);
         }
     }
 
     public void runWithSchedulerLock(String lockName, Runnable task) {
-        if (!tryAcquireSchedulerLock(lockName, lockTtlMinutes)) {
+        LockTicket lock = acquireLock(lockName, lockTtlMinutes);
+        if (lock == null) {
             log.debug("{} — lock başka pod'da, atlanıyor", lockName);
             return;
         }
@@ -2710,7 +2836,7 @@ public class SchedulerService {
         } catch (Exception e) {
             log.error("{} başarısız: {}", lockName, e.getMessage(), e);
         } finally {
-            releaseSchedulerLock(lockName);
+            releaseLock(lock);
         }
     }
 
@@ -2834,14 +2960,25 @@ public class SchedulerService {
     }
 
     private void runCheckForDomains(List<Map<String, Object>> domains, boolean evictCaches) {
+        runCheckForDomains(domains, evictCaches, null);
+    }
+
+    /**
+     * @param preHeld çağıranın zaten aldığı "cert-check" kilidi (saatlik tur: önce kilit, sonra tur — MP-15); null → burada
+     *                alınır. Her iki durumda kilidi bu metot bırakır.
+     */
+    private void runCheckForDomains(List<Map<String, Object>> domains, boolean evictCaches, LockTicket preHeld) {
         // 1. In-process guard (fast fail for same JVM)
         if (!running.compareAndSet(false, true)) {
             log.warn("Check already in progress (runId={}) — skipping duplicate trigger", currentRunId.get());
+            releaseLock(preHeld);
             return;
         }
 
-        // 2. Distributed DB lock (HA: prevents duplicate across multiple instances)
-        if (!tryAcquireSchedulerLock("cert-check", lockTtlMinutes)) {
+        // 2. Distributed DB lock (HA: prevents duplicate across multiple instances). 2026-10-21: kilit tur boyunca YENİLENİR
+        // (ClusterLockService) — uzun süren tarama artık başka pod'un bayat taramasıyla eşzamanlı koşmaz.
+        LockTicket certLock = preHeld != null ? preHeld : acquireLock("cert-check", lockTtlMinutes);
+        if (certLock == null) {
             running.set(false);
             log.info("Scheduler lock held by another instance [{}], skipping", INSTANCE_ID);
             return;
@@ -2890,6 +3027,14 @@ public class SchedulerService {
             if (startupCheckStopped) {
                 log.info("Kapanış başladı — sertifika taraması sonuçları işlenmeden bırakıldı (runId={}, {} / {} sonuç)",
                         runId, results.size(), futures.size());
+                return;
+            }
+            // Kilit kaybedildiyse (2026-10-21, çok pod R1-A, MP-02) sonuçlar İŞLENMEZ: yenileme 0 satır buldu (yönetici zorla
+            // bıraktı ya da başka pod aldı) veya yenileme aksayıp süre doldu — o pod aynı alanları tarıyor olabilir; ikimiz
+            // de kaydedip alarm işlersek çift alarm / çift e-posta. Sonraki tur telafi eder.
+            if (!lockStillHeld(certLock)) {
+                log.warn("cert-check kilidi kaybedildi — sonuçlar işlenmedi (runId={}, {} sonuç) [instance={}]",
+                        runId, results.size(), INSTANCE_ID);
                 return;
             }
 
@@ -2977,7 +3122,7 @@ public class SchedulerService {
             running.set(false);
             lastRunId.set(currentRunId.get());
             currentRunId.set("");
-            releaseSchedulerLock("cert-check");
+            releaseLock(certLock);
         }
     }
 
@@ -3045,6 +3190,74 @@ public class SchedulerService {
      * Gracefully degrades to {@code true} (allow) if the lock table is unavailable.
      */
     public boolean tryAcquireSchedulerLock(String lockName, int ttlMinutes) {
+        return acquireLock(lockName, ttlMinutes) != null;
+    }
+
+    /**
+     * Alınmış iş kilidi (2026-10-21, çok pod R1-A): kilit servisi varsa onun tutuşu ({@code hold}), yoksa eski ad tabanlı
+     * kilit ({@code hold == null}). Uzun işler bırakırken TUTUŞU bırakır — yönetici kilidi zorla bırakıp aynı pod yeni bir
+     * koşu başlattıysa eski koşunun {@code finally}'si yenisinin kilidini silmez.
+     */
+    record LockTicket(String name, com.sitemonitor.service.schedule.ClusterLockService.Hold hold) {}
+
+    /** Yenilenen kilidin süresi: istenen dakika, en çok {@code ClusterLockService.RENEWED_TTL} (en az 1 dk). */
+    static java.time.Duration renewedTtl(int ttlMinutes) {
+        long max = com.sitemonitor.service.schedule.ClusterLockService.RENEWED_TTL.toMinutes();
+        return java.time.Duration.ofMinutes(Math.max(1L, Math.min(max, ttlMinutes)));
+    }
+
+    private LockTicket acquireLock(String lockName, int ttlMinutes) {
+        if (shutdownStarted) return refusedAtShutdown(lockName);
+        if (lockService != null) return acquireLock(lockName, renewedTtl(ttlMinutes));
+        return legacyTryAcquireSchedulerLock(lockName, ttlMinutes) ? new LockTicket(lockName, null) : null;
+    }
+
+    private LockTicket acquireLock(String lockName, java.time.Duration ttl) {
+        if (shutdownStarted) return refusedAtShutdown(lockName);
+        if (lockService == null) {
+            long minutes = Math.max(1L, (ttl.toSeconds() + 59) / 60);
+            return legacyTryAcquireSchedulerLock(lockName, (int) Math.min(Integer.MAX_VALUE, minutes))
+                    ? new LockTicket(lockName, null) : null;
+        }
+        return lockService.tryAcquire(lockName, ttl, com.sitemonitor.service.schedule.ClusterLockService.hardCapFor(lockName))
+                .map(h -> new LockTicket(lockName, h)).orElse(null);
+    }
+
+    /**
+     * Kapanış başladı ({@code ContextClosedEvent}, 2026-10-21, çok pod R1-A): Spring zamanlayıcısı kapanışta {@code @Scheduled}
+     * tıklarını ~40 sn daha tetikler (aşama zaman aşımı 20 sn + bekleme 20 sn) — ölmekte olan pod YENİ bir iş kilidi, tur ya
+     * da liderlik ALMAZ (süren iş adımını bitirir, kilidi yenilenir ve kapanışta bırakılır). Geri alınmaz.
+     */
+    private volatile boolean shutdownStarted = false;
+
+    private LockTicket refusedAtShutdown(String lockName) {
+        log.debug("{} — pod kapanıyor, yeni iş başlatılmıyor [instance={}]", lockName, INSTANCE_ID);
+        return null;
+    }
+
+    private void releaseLock(LockTicket lock) {
+        if (lock == null) return;
+        if (lock.hold() != null && lockService != null) lockService.release(lock.hold());
+        else releaseSchedulerLock(lock.name());
+    }
+
+    /**
+     * Kilit ŞU AN kesin bu pod'da mı (2026-10-21, çok pod R1-A, MP-02): yenileme 0 satır bulduysa (başka pod aldı, yönetici
+     * zorla bıraktı) ya da yenileme aksayıp son yazılan süre geçtiyse false. Uzun iş (sertifika taraması) sonuç yazmadan önce
+     * bakar. Kilit servisi yoksa (eski davranış) true.
+     */
+    public boolean schedulerLockHeld(String lockName) {
+        return lockService == null || lockService.held(lockName);
+    }
+
+    private boolean lockStillHeld(LockTicket lock) {
+        if (lock == null) return false;
+        if (lock.hold() == null || lockService == null) return true;
+        return lockService.held(lock.name()) && lockService.hold(lock.name()).orElse(null) == lock.hold();
+    }
+
+    /** Eski (yenilemesiz) kilit — kilit servisi yokken (manuel kurulum / test) birebir önceki davranış. */
+    private boolean legacyTryAcquireSchedulerLock(String lockName, int ttlMinutes) {
         try {
             String now   = ISO.format(Instant.now());
             String until = ISO.format(Instant.now().plusSeconds(ttlMinutes * 60L));
@@ -3075,6 +3288,10 @@ public class SchedulerService {
     }
 
     private void releaseSchedulerLock(String lockName) {
+        if (lockService != null) {
+            lockService.release(lockName);
+            return;
+        }
         try {
             jdbcTemplate.update(
                 "DELETE FROM scheduler_lock WHERE name = ? AND locked_by = ?", lockName, INSTANCE_ID);
@@ -3166,6 +3383,16 @@ public class SchedulerService {
         // İzleme taramalarını koşturan pod (kira sahibi, 2026-10-09) — bean yoksa alan hiç eklenmez (eski şekil).
         Map<String, Object> leader = sweepLeaderStatus();
         if (leader != null) schedulerMap.put("sweep_leader", leader);
+        // Çok pod (2026-10-21, R1-A): geçici DB hatasıyla güvenli tarafta ATLANAN tur sayısı + bu pod'un tuttuğu iş kilitleri.
+        // Alanlar yalnız küme kaydı / kilit servisi varken eklenir (eski şekil korunur).
+        if (clusterSchedule != null) {
+            schedulerMap.put("round_claim_failures", roundClaimFailures.get());
+            schedulerMap.put("last_round_claim_failure", lastRoundClaimFailure.get());
+        }
+        if (lockService != null) {
+            try { schedulerMap.put("held_locks", lockService.status()); }
+            catch (RuntimeException e) { log.debug("Kilit özeti alınamadı: {}", e.toString()); }
+        }
         h.put("scheduler", schedulerMap);
         // Oturum deposu (2026-10-09): jdbc | memory + canlı oturum sayısı — dağıtım sonrası doğrulama için
         if (sessionStore != null) {
@@ -3328,6 +3555,9 @@ public class SchedulerService {
         } catch (Exception e) {
             log.warn("forceReleaseLock: could not delete lock row: {}", e.getMessage());
         }
+        // Bu pod'un tutuşu da unutulur (2026-10-21): takılmış koşu artık "kilit bende" sanıp sonuç yazmaz, yenileyici satırı
+        // geri yazmaz; yeni koşu kilidi yeniden alabilir.
+        if (lockService != null) lockService.forget("cert-check");
         before.put("in_process_running_before", running.get());
         before.put("run_id_before", currentRunId.get());
         running.set(false);
@@ -3599,20 +3829,78 @@ public class SchedulerService {
      * aralık, o da {@code ClusterScheduleService.isDue} ile yakalanır) → "önbellek henüz değil diyorsa atla" güvenlidir.
      */
     boolean clusterDue(String key, long nominalMs, DueAdvance advance) {
+        return clusterClaim(key, nominalMs, advance, 0L, null);
+    }
+
+    /**
+     * {@link #clusterDue} gövdesi; {@code runLeaseMs > 0} → İKİ AŞAMALI tur sahiplenmesi (satır {@code şimdi + runLease}'e,
+     * ızgara vadesi {@code runOut}'a: [0] önceki vade, [1] koşu kirasının değeri).
+     *
+     * <p><b>Hata kuralı (2026-10-21, çok pod R1-A, MP-11 — "güvenli taraf"):</b>
+     * <ul>
+     *   <li>Tablo YOK ({@link org.springframework.jdbc.BadSqlGrammarException}, ilk açılış / manuel kurulum): eski bellek içi
+     *       davranış ({@link #localDue}) — izleme durmaz.</li>
+     *   <li>Geçici hata (bağlantı havuzu dolu, zaman aşımı, kilitlenme): tur anahtarı ({@code round:…}) iki kez yeniden
+     *       denenir ({@link #roundClaimRetryDelaysMs}), yine düşerse tur ATLANIR (false + WARN + System Health sayacı) —
+     *       eskiden bellek içi karar ilk görüşte "evet" diyordu ve başka pod'un koşturduğu haftalık raporu İKİNCİ kez
+     *       gönderiyordu. İzleme anahtarı yalnız bu pod liderliğin DOĞRULANMIŞ güvenli penceresindeyse yerel karara düşer
+     *       (lider izlemeyi kesmez), değilse false (takipçi ikinci lider gibi yoklamaz).</li>
+     * </ul>
+     */
+    private boolean clusterClaim(String key, long nominalMs, DueAdvance advance, long runLeaseMs, long[] runOut) {
         long nowMs = scheduleClock.getAsLong();
         if (clusterSchedule == null) return localDue(key, nowMs, advance);
         Long cached = lastMonitorCheckAt.get(key);
         if (cached != null && !com.sitemonitor.service.schedule.ClusterScheduleService.isDue(cached, nowMs, nominalMs)) {
             return false;                                        // hızlı yol: vade gelmedi, sorgu yok
         }
+        boolean round = key.startsWith(ROUND_KEY_PREFIX);
+        long[] delays = round && roundClaimRetryDelaysMs != null ? roundClaimRetryDelaysMs : new long[0];
+        Exception failure = null;
+        for (int attempt = 0; attempt <= delays.length; attempt++) {
+            if (attempt > 0 && !sleepQuietly(delays[attempt - 1])) break;
+            try {
+                com.sitemonitor.service.schedule.ClusterScheduleService.Claim claim;
+                if (runLeaseMs > 0) {
+                    long[] prev = {nowMs};
+                    claim = clusterSchedule.claimRun(key, nowMs, nominalMs, cached, runLeaseMs, prev);
+                    if (runOut != null && runOut.length >= 2) {
+                        runOut[0] = prev[0];
+                        runOut[1] = claim.nextDueAt() == null ? -1L : claim.nextDueAt();
+                    }
+                } else {
+                    claim = clusterSchedule.claim(key, nowMs, nominalMs, cached, prev -> advance.next(prev, nowMs));
+                }
+                if (claim.nextDueAt() != null) lastMonitorCheckAt.put(key, claim.nextDueAt());
+                else lastMonitorCheckAt.remove(key);             // yarış kaybedildi → sıradaki turda DB'den okunur
+                return claim.due();
+            } catch (org.springframework.jdbc.BadSqlGrammarException e) {
+                warnClusterScheduleFallback(key, e);             // tablo yok: bilinçli eski (tek pod) davranış
+                return localDue(key, nowMs, advance);
+            } catch (Exception e) {
+                failure = e;
+            }
+        }
+        if (round) {
+            roundClaimFailures.incrementAndGet();
+            lastRoundClaimFailure.set(ISO.format(Instant.ofEpochMilli(nowMs)) + " " + key);
+            log.warn("Küme tur kaydı okunamadı ({}) — bu tur GÜVENLİ TARAFTA atlandı (başka pod koşturmuş olabilir; sonraki "
+                    + "tık yeniden dener): {}", key, failure == null ? "kesildi" : failure.toString());
+            return false;
+        }
+        warnClusterScheduleFallback(key, failure == null ? new IllegalStateException("kesildi") : failure);
+        return withinConfirmedLeaderWindow(nowMs) && localDue(key, nowMs, advance);
+    }
+
+    /** Uyur; kesilirse bayrağı geri koyup false döner. */
+    private static boolean sleepQuietly(long ms) {
+        if (ms <= 0) return true;
         try {
-            var claim = clusterSchedule.claim(key, nowMs, nominalMs, cached, prev -> advance.next(prev, nowMs));
-            if (claim.nextDueAt() != null) lastMonitorCheckAt.put(key, claim.nextDueAt());
-            else lastMonitorCheckAt.remove(key);                 // yarış kaybedildi → sıradaki turda DB'den okunur
-            return claim.due();
-        } catch (Exception e) {
-            warnClusterScheduleFallback(key, e);
-            return localDue(key, nowMs, advance);
+            Thread.sleep(ms);
+            return true;
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            return false;
         }
     }
 
@@ -3633,8 +3921,13 @@ public class SchedulerService {
         long now = System.currentTimeMillis();
         long last = clusterScheduleWarnAt.get();
         if (now - last >= 60_000L && clusterScheduleWarnAt.compareAndSet(last, now)) {
-            log.warn("Küme zamanlama tablosuna erişilemedi ({}) — bu pod bellek içi zamanlamaya düştü; çok pod'da "
-                    + "aralık başına çift yoklama olabilir: {}", key, e.toString());
+            if (e instanceof org.springframework.jdbc.BadSqlGrammarException) {
+                log.warn("Küme zamanlama tablosu yok ({}) — bu pod bellek içi zamanlamaya düştü; çok pod'da "
+                        + "aralık başına çift yoklama olabilir: {}", key, e.toString());
+            } else {
+                log.warn("Küme zamanlama tablosuna erişilemedi ({}) — yalnız doğrulanmış lider güvenli penceresinde yerel "
+                        + "zamanlamayla sürer, takipçi yoklamaz: {}", key, e.toString());
+            }
         } else {
             log.debug("Küme zamanlama hatası (bellek içi yedek): {} — {}", key, e.toString());
         }
@@ -3646,10 +3939,88 @@ public class SchedulerService {
      * yeniden başlatamaz. Bean yoksa her çağrı bir turdur (eski davranış: zamanlamayı {@code @Scheduled} verirdi).
      */
     private boolean roundDue(String name, long periodMs) {
+        if (shutdownStarted) return false;                       // kapanıyor: yeni tur yok
         if (clusterSchedule == null) return true;
         long period = Math.max(1L, periodMs);
         return clusterDue(ROUND_KEY_PREFIX + name, period,
                 (prev, nowMs) -> prev > nowMs ? nowMs + period : nextDueAfter(prev, nowMs, period));
+    }
+
+    // ── İki aşamalı tur (2026-10-21, çok pod R1-A, MP-15) ────────────────────────────────────────────────────────────
+
+    /** Bu pod'da sahiplenilmiş ama henüz tamamlanmamış tur koşusu: anahtar, koşu kirasının değeri, ızgaradaki asıl vade. */
+    private record RoundRun(String key, long leaseValue, long gridNext) {}
+
+    /** Açık tur koşuları (ad → koşu). Aynı turun iki koşusu aynı pod'da olamaz (tur kilidi altında). */
+    private final java.util.concurrent.ConcurrentHashMap<String, RoundRun> openRounds = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** Koşu kirası: günlük (≥ 1 gün) turda en çok 30 dk, daha sıkta en çok 10 dk; hiçbir zaman turun aralığından uzun değil. */
+    static long runLeaseFor(long periodMs) {
+        long period = Math.max(1L, periodMs);
+        long cap = period >= 86_400_000L ? 30L * 60_000L : 10L * 60_000L;
+        return Math.min(period, cap);
+    }
+
+    /**
+     * İki aşamalı tur sahiplenmesi (genel API, R2/R3 de kullanır): tur bu pod'a geçerse true; satır "koşu kirası"na
+     * ilerletilir. Koşu başarıyla bitince {@link #completeRound} satırı ızgaradaki asıl vadeye taşır; tamamlanmayan koşu (pod
+     * öldü, liderlik kaybedildi, istisna) kira dolunca yeniden vadesi gelmiş olur — tur bir gün / bir saat kaybolmaz.
+     * Koşu boyunca tur kilidi YENİLENDİĞİ için kira dolsa da sahibi canlıyken ikinci koşu başlamaz. Küme kaydı yoksa her
+     * çağrı bir turdur (eski davranış).
+     */
+    public boolean claimRound(String name, long periodMs) {
+        if (shutdownStarted) return false;                       // kapanıyor: yeni tur yok
+        if (clusterSchedule == null) return true;
+        long period = Math.max(1L, periodMs);
+        long[] run = {-1L, -1L};
+        boolean due = clusterClaim(ROUND_KEY_PREFIX + name, period,
+                (prev, nowMs) -> prev > nowMs ? nowMs + period : nextDueAfter(prev, nowMs, period), runLeaseFor(period), run);
+        if (!due) return false;
+        if (run[1] > 0) {
+            long nowMs = scheduleClock.getAsLong();
+            long prev = run[0];
+            long grid = prev > nowMs ? nowMs + period : nextDueAfter(prev, nowMs, period);
+            openRounds.put(name, new RoundRun(ROUND_KEY_PREFIX + name, run[1], grid));
+        }
+        return true;
+    }
+
+    /** Cron'lu tur (genel API): bu tetik küme genelinde bir kez — {@link #cronRoundDue} ile aynı (tek aşamalı). */
+    public boolean claimCronRound(String name, String cronExpr, String zone) {
+        return cronRoundDue(name, cronExpr, zone);
+    }
+
+    /**
+     * Tur koşusunu tamamlar: satır hâlâ bu koşunun kirasındaysa ızgaradaki asıl vadeye ilerler. Açık koşu yoksa (küme kaydı
+     * yok, cron turu, tablo yokken yerel karar) hiçbir şey yapmaz. Hata → satır kirada kalır, kira dolunca tur yeniden
+     * koşar (en kötü bir fazla tur — kaybolan tur değil).
+     */
+    public void completeRound(String name) {
+        RoundRun run = openRounds.remove(name);
+        if (run == null || clusterSchedule == null) return;
+        try {
+            if (clusterSchedule.complete(run.key(), run.leaseValue(), run.gridNext())) {
+                lastMonitorCheckAt.put(run.key(), run.gridNext());
+            } else {
+                lastMonitorCheckAt.remove(run.key());            // başka pod yeniden sahiplendi → DB'den okunur
+            }
+        } catch (Exception e) {
+            lastMonitorCheckAt.remove(run.key());
+            log.warn("Tur '{}' tamamlanamadı — koşu kirası dolunca yeniden koşar: {}", name, e.toString());
+        }
+    }
+
+    /** Tur koşusu yarıda bırakıldı: tamamlanmaz → koşu kirası dolunca (bu ya da başka pod) yeniden koşar. */
+    void abandonRound(String name) {
+        if (openRounds.remove(name) != null) {
+            log.info("Tur '{}' tamamlanmadan bırakıldı — koşu kirası dolunca yeniden koşacak [instance={}]", name, INSTANCE_ID);
+        }
+    }
+
+    /** Gövde normal bittiyse (ve liderliğe bağlı turda hâlâ liderse) tamamla, değilse bırak. */
+    private void finishRound(String name, boolean completed) {
+        if (completed) completeRound(name);
+        else abandonRound(name);
     }
 
     /** Yalnız önbelleğe bakan ön eleme: tur vadesi bilinen ve gelmemişse kilit/DB'ye hiç gidilmez (dakikalık tıkta). */
@@ -3680,6 +4051,7 @@ public class SchedulerService {
      *                 meşru bir tur atlanmaz (varsayılan saatlik cron'da iki aday zaten aynı andır).
      */
     private boolean cronRoundDue(String name, String cronExpr, String zone) {
+        if (shutdownStarted) return false;                       // kapanıyor: yeni tur yok
         if (clusterSchedule == null) return true;
         long nowMs = scheduleClock.getAsLong();
         long untilMs;
@@ -3718,10 +4090,35 @@ public class SchedulerService {
     @Value("${site.monitor.scheduler.sweep-leader-ttl-ms:180000}")
     private long sweepLeaderTtlMs = 180_000L;
 
+    /** Lider, kirayı son BAŞARIYLA yazdığı bitişten bu kadar önce (geçici DB hatasında) taramayı bırakır — kira bitmeden
+     *  önce durmuş olsun ki takipçi devraldığında iki lider üst üste binmesin (saat kayması + son tık payı). */
+    static final long LEASE_SAFETY_MARGIN_MS = 30_000L;
+
+    /** Tıkanmış lider (2026-10-21, çok pod R1-A, MP-24): bu süre boyunca HİÇ tarama tıkı yoksa lider kirayı bırakır. */
+    static final long WEDGE_YIELD_MS = 10L * 60_000L;
+    /** Bıraktıktan sonra da tık gelmezse (zamanlayıcı havuzu kilitlenmiş) canlılık BROKEN yayınlanır — kubelet yeniden başlatır. */
+    static final long WEDGE_LIVENESS_MS = 30L * 60_000L;
+
     private final Object sweepLeaderMonitor = new Object();
     /** Son kira kararı (true = lider) ve anı (ms, bu pod'un saati); -1 = henüz sorulmadı. */
     private volatile boolean sweepLeaderHeld = false;
     private volatile long sweepLeaderCheckedAt = -1L;
+    /** Liderin kirayı son BAŞARIYLA yazdığı bitiş (ms) — geçici DB hatasında liderlik yalnız {@code bu − güvenlik payı}'na dek sürer. */
+    private volatile long sweepLeaderConfirmedUntil = -1L;
+    /** Son BAŞARILI kira okumasının sonucu (izleyicinin DB çöküşü duyurusu için; hatalar değiştirmez). */
+    private volatile boolean leaseConfirmedLeader = false;
+    /** Son başarılı kira gözleminin anı ve o an kiranın bitişi (takipçide satırdan okunur; -1 = bilinmiyor). */
+    private volatile long leaseObservedAt = -1L;
+    private volatile long leaseObservedUntil = -1L;
+    /** Bu pod'un liderliği son kazandığı an (ms) — tıkanma süresi yeni dönemin başından sayılır. */
+    private volatile long sweepLeaderSince = -1L;
+    /** Son tarama tıkı (14 tarama giriş metodundan herhangi biri bu pod'da çağrıldı; ms). 0 = hiç. */
+    private volatile long lastSweepTickAt = 0L;
+    /** Tıkanma yüzünden bırakılan liderlik bu ana dek yeniden alınmaz (2 × TTL). */
+    private volatile long sweepLeaderYieldUntil = -1L;
+    /** Tıkanma bırakışının anı (0 = yok) ve canlılık BROKEN yayınlandı mı. */
+    private volatile long wedgeYieldedAt = 0L;
+    private volatile boolean livenessBroken = false;
     /** Zarif kapanış başladı: kira bırakıldı, bu pod yeniden ALMAZ. */
     private volatile boolean sweepLeaderStopped = false;
     private final AtomicLong sweepLeaderWarnAt = new AtomicLong();
@@ -3748,10 +4145,13 @@ public class SchedulerService {
      * durumu BOŞ başlar (teyit zincirleri, kurtarma sayaçları, kardeş gözlemleri) — tek pod'un yeniden başlatılmasında
      * bugün olanın aynısı. Vade ve tur kayıtları DB'de olduğundan devirde izlemeler topluca yeniden yoklanmaz.
      *
-     * <p>Bean yoksa (manuel kurulum/test) her pod lider sayılır (eski davranış). Kira sorgusu hata verirse bu tur YERELDE
-     * koşulur (hata öncesi davranış; dakikada en çok bir WARN) — izleme hiçbir koşulda durmaz.
+     * <p>Bean yoksa (manuel kurulum/test) ya da kira TABLOSU yoksa her pod lider sayılır (eski davranış). Kira sorgusu
+     * GEÇİCİ hata verirse (2026-10-21, çok pod R1-A, MP-11) güvenli taraf: lider yalnız kirayı son yazdığı bitişten
+     * {@link #LEASE_SAFETY_MARGIN_MS} öncesine dek taramayı sürdürür (tek pod'da izleme kesilmez), sonra durur (LOST);
+     * takipçi hata anında kendini asla lider saymaz (dakikada en çok bir WARN).
      */
     boolean isSweepLeader() {
+        if (shutdownStarted) return false;                       // kapanıyor (ContextClosedEvent): yeni tarama yok
         if (clusterSchedule == null) return true;
         if (sweepLeaderStopped) return false;
         long ttl = Math.max(MIN_SWEEP_LEADER_TTL_MS, sweepLeaderTtlMs);
@@ -3767,7 +4167,8 @@ public class SchedulerService {
 
     /**
      * {@link #isSweepLeader} kararının paket dışı okuması (2026-10-10, TLS profili işi {@code tlsgrade.TlsProfileJobService}):
-     * düşük sıklıklı yan işler de yalnız lider pod'da koşsun. Karar ve yedek davranış aynı (kira okunamazsa yerel koşu).
+     * düşük sıklıklı yan işler de yalnız lider pod'da koşsun. Karar ve yedek davranış aynı (kira tablosu yoksa yerel koşu,
+     * geçici hatada yalnız doğrulanmış lider güvenli penceresinde).
      */
     public boolean isSweepLeaderNow() {
         return isSweepLeader();
@@ -3781,19 +4182,46 @@ public class SchedulerService {
         // Kapanış, dışarıdaki "durdu mu" bakışı ile bu kilit arasında başladıysa kira yeniden ALINMAZ (bırakıldıktan
         // sonra geri alıp ikinci bir GAINED yayınlamasın).
         if (sweepLeaderStopped) return false;
+        // Tıkanma yüzünden bırakıldıysa (MP-24) 2 × TTL boyunca ve tarama tıkları geri gelene dek yeniden alınmaz — aksi
+        // hâlde tek pod kendini hemen yeniden lider yapar, çok pod'da devralan takipçiyle yarışır.
+        if (now < sweepLeaderYieldUntil || (wedgeYieldedAt > 0 && lastSweepTickAt <= wedgeYieldedAt)) {
+            sweepLeaderCheckedAt = now;
+            return false;
+        }
         boolean held;
         try {
             held = clusterSchedule.acquireLease(SWEEP_LEADER, now, ttl);
-        } catch (Exception e) {
-            long last = sweepLeaderWarnAt.get();
-            if (System.currentTimeMillis() - last >= 60_000L
-                    && sweepLeaderWarnAt.compareAndSet(last, System.currentTimeMillis())) {
-                log.warn("Tarama liderliği kirası okunamadı — bu pod izleme taramalarını YEREL koşturuyor (çok pod'da "
-                        + "alarm durumu bölünebilir): {}", e.toString());
-            }
+        } catch (org.springframework.jdbc.BadSqlGrammarException e) {
+            // Kira TABLOSU yok (ilk açılış / manuel kurulum): bilinçli eski davranış — bu pod YEREL koşar, olay yok.
+            warnSweepLeader("Tarama liderliği kira tablosu yok — bu pod izleme taramalarını YEREL koşturuyor (çok pod'da "
+                    + "alarm durumu bölünebilir): {}", e);
+            leaseConfirmedLeader = true;
             return true;
+        } catch (Exception e) {
+            // Geçici hata (2026-10-21, çok pod R1-A, MP-11 — güvenli taraf): eskiden her pod kendini lider sayıyordu → bağlantı
+            // havuzu dolan takipçi İKİNCİ lider oluyordu. Artık yalnız kirayı son yazdığı bitişin GÜVENLİ penceresindeki lider
+            // sürer; pencere dolunca durur (LOST) ve takipçi asla kendini terfi ettirmez.
+            boolean inWindow = sweepLeaderHeld && now < sweepLeaderConfirmedUntil - LEASE_SAFETY_MARGIN_MS;
+            warnSweepLeader(inWindow
+                    ? "Tarama liderliği kirası okunamadı — lider güvenli pencere içinde taramaya devam ediyor: {}"
+                    : "Tarama liderliği kirası okunamadı — bu pod izleme taramalarını KOŞTURMUYOR (güvenli taraf): {}", e);
+            if (!inWindow && sweepLeaderHeld) {
+                sweepLeaderHeld = false;
+                sweepLeaderCheckedAt = now;
+                log.warn("Tarama liderliği güvenli penceresi doldu (kira yenilenemedi) — bu pod izleme taramalarını durdurdu "
+                        + "[owner={}]", clusterSchedule.owner());
+                publishSweepLeadership(false, now, SweepLeadershipChangedEvent.LOST);
+            }
+            return inWindow;
+        }
+        leaseConfirmedLeader = held;
+        leaseObservedAt = now;
+        if (held) {
+            sweepLeaderConfirmedUntil = now + ttl;
+            leaseObservedUntil = now + ttl;
         }
         if (held && !sweepLeaderHeld) {
+            sweepLeaderSince = now;
             log.info("Tarama liderliği bu pod'da [instance={}, owner={}] — izleme taramaları burada koşar",
                     INSTANCE_ID, clusterSchedule.owner());
         } else if (!held && sweepLeaderHeld) {
@@ -3807,6 +4235,51 @@ public class SchedulerService {
             publishSweepLeadership(held, now, held ? SweepLeadershipChangedEvent.GAINED : SweepLeadershipChangedEvent.LOST);
         }
         return held;
+    }
+
+    /** Kira hatası WARN'u — dakikada en çok bir kez. */
+    private void warnSweepLeader(String pattern, Exception e) {
+        long last = sweepLeaderWarnAt.get();
+        long wall = System.currentTimeMillis();
+        if (wall - last >= 60_000L && sweepLeaderWarnAt.compareAndSet(last, wall)) log.warn(pattern, e.toString());
+        else log.debug(pattern, e.toString());
+    }
+
+    /** Lider kirayı son yazdığı bitişin güvenli penceresinde mi (geçici DB hatasında izleme vadesinin yerel kararı için). */
+    private boolean withinConfirmedLeaderWindow(long now) {
+        return clusterSchedule != null && sweepLeaderHeld && !sweepLeaderStopped
+                && now < sweepLeaderConfirmedUntil - LEASE_SAFETY_MARGIN_MS;
+    }
+
+    /**
+     * Son BAŞARILI kira okumasına göre bu pod lider miydi (2026-10-21, çok pod R1-A, MP-09). Veritabanı hataları bu değeri
+     * DEĞİŞTİRMEZ: veritabanı çökükken izleyici ({@code WatchdogService}) "veritabanı çöktü" bildirimini yalnız çöküşten
+     * önce doğrulanmış lider pod'dan gönderir (N pod → N bildirim değil). Küme kaydı yoksa (tek pod) true; kapanışta false.
+     */
+    public boolean lastConfirmedSweepLeader() {
+        if (clusterSchedule == null) return true;
+        return !sweepLeaderStopped && leaseConfirmedLeader;
+    }
+
+    /**
+     * Son başarılı kira gözlemi (izleyicinin takipçi yedeği için): ne zaman okundu, bu pod lider miydi, kiranın o anki
+     * bitişi (takipçide satırdan okunan; okunamadıysa -1) ve kira süresi. Hiç okunmadıysa / küme kaydı yoksa null.
+     */
+    public record LeaseObservation(long observedAtMs, boolean leader, long leaseUntilMs, long ttlMs) {}
+
+    public LeaseObservation sweepLeaseObservation() {
+        if (clusterSchedule == null || leaseObservedAt < 0) return null;
+        long ttl = Math.max(MIN_SWEEP_LEADER_TTL_MS, sweepLeaderTtlMs);
+        return new LeaseObservation(leaseObservedAt, leaseConfirmedLeader, leaseObservedUntil, ttl);
+    }
+
+    /**
+     * Tarama tıkı (2026-10-21, çok pod R1-A, MP-24): 14 tarama giriş metodunun İLK satırı. Tıkanma ölçüsüdür — lider
+     * pod'un zamanlayıcı iş parçacıkları kilitlenirse tık gelmez ve yenileyici kirayı bırakır. Liderlik ya da "izleme
+     * duraklatıldı" kapısından ÖNCE çağrılır: duraklatılmış bir tür tıkanma sayılmasın, takipçi de tıklasın.
+     */
+    void noteSweepTick() {
+        lastSweepTickAt = scheduleClock.getAsLong();
     }
 
     /**
@@ -3840,22 +4313,135 @@ public class SchedulerService {
      */
     @jakarta.annotation.PreDestroy
     void onShutdown() {
+        shutdownStarted = true;
+        if (lockService != null) lockService.stopAcquiring();
         stopStartupCheck();
         stopSweepLeaderRenewer();
         releaseSweepLeadership();
         shutdownManualRunPool();
+        // Bu pod'un iş kilitleri (2026-10-21, çok pod R1-A, MP-08): zamanlayıcı durduktan ve manuel koşu havuzu kapandıktan
+        // SONRA bırakılır — ölen pod'un kilidi işi (izleyici, eskalasyon adımları, …) süre boyunca kümede durdurmasın.
+        if (lockService != null) {
+            try {
+                lockService.releaseAllOwn();
+            } catch (Exception e) {
+                log.warn("Kapanışta iş kilitleri bırakılamadı (TTL dolunca düşer): {}", e.getMessage());
+            }
+        }
+    }
+
+    /**
+     * Kapanışın İLK anı (2026-10-21, çok pod R1-A, MP-08): {@code ContextClosedEvent} yaşam döngüsü durdurmasından (web
+     * kapanışı ≤ 30 sn + yürütücü beklemeleri) ÖNCE gelir. Eskiden kira yalnız {@code @PreDestroy}'da bırakılıyordu: o ana
+     * dek ayrı yenileyici kirayı tutuyor, ölmekte olan lider hiçbir şey taramadığı halde takipçi devralamıyordu — SIGKILL
+     * önce gelirse takipçi 180 sn kira süresini bekliyordu. Artık açılış işi durur, yenileyici durur, kira bırakılır
+     * (RELEASED); takipçi bir sonraki tıkta devralır. Süren taramanın sonuçlarını mevcut kapı ({@code sweepLeaderStopped})
+     * düşürür. İş kilitleri {@link #onShutdown}'da (zamanlayıcı durduktan sonra) bırakılır. Yalnız BU bağlamın kapanışı
+     * (bir alt bağlamın olayı liderliği bırakmaz); {@link #onShutdown} idempotent yedektir.
+     *
+     * <p><b>Yeni iş kapısı:</b> Spring zamanlayıcısı kapanışta {@code @Scheduled} tıklarını durdurmaz (aşama zaman aşımı 20 sn
+     * + bekleme 20 sn ≈ 40 sn tetiklenmeye devam eder). Bu andan sonra pod YENİ kilit ({@code ClusterLockService.stopAcquiring},
+     * {@link #tryAcquireSchedulerLock}, {@link #callWithSchedulerLock}), YENİ tur ({@link #claimRound}, cron / sabit turlar)
+     * ve liderlik ({@link #isSweepLeader}) almaz; süren iş adımını bitirir, kilidi kapanışa dek yenilenir.
+     */
+    @org.springframework.context.event.EventListener(org.springframework.context.event.ContextClosedEvent.class)
+    public void onContextClosed(org.springframework.context.event.ContextClosedEvent event) {
+        if (applicationContext != null && event != null && event.getApplicationContext() != applicationContext) return;
+        // Önce yeni iş kapısı: kapanışta tetiklenmeye devam eden @Scheduled tıkları yeni kilit / tur / liderlik almasın.
+        shutdownStarted = true;
+        if (lockService != null) lockService.stopAcquiring();
+        stopStartupCheck();
+        stopSweepLeaderRenewer();
+        releaseSweepLeadership();
     }
 
     /**
      * Kira yenileyicisinin bir turu (2026-10-09): tarama iş parçacıkları meşgul olsa da lider kirasını süresi dolmadan
      * yeniler; takipçide süresi dolmuş kirayı devralmayı dener. Önbelleğe bakmaz (her tur veritabanına sorar).
+     *
+     * <p>2026-10-21 (çok pod R1-A): lider {@link #WEDGE_YIELD_MS} boyunca hiç tarama tıkı görmediyse kirayı BIRAKIR
+     * (tıkanmış lider kirayı sonsuza dek tutmasın — MP-24); bıraktıktan sonra {@link #WEDGE_LIVENESS_MS} dolup hâlâ tık
+     * yoksa canlılık BROKEN yayınlanır. Takipçi kiranın o anki bitişini de okur (izleyicinin DB çöküşü yedeği için).
      */
     void renewSweepLeadership() {
         if (clusterSchedule == null || sweepLeaderStopped) return;
         long ttl = Math.max(MIN_SWEEP_LEADER_TTL_MS, sweepLeaderTtlMs);
+        long now;
+        boolean leader;
         synchronized (sweepLeaderMonitor) {
             if (sweepLeaderStopped) return;
-            refreshSweepLeader(scheduleClock.getAsLong(), ttl);
+            now = scheduleClock.getAsLong();
+            leader = refreshSweepLeader(now, ttl);
+            if (leader) leader = !yieldIfWedged(now, ttl);
+        }
+        if (!leader) observeLeaseAsFollower(now);
+        checkWedgeLiveness(now);
+    }
+
+    /** Lider tıkanmışsa (tıklar durdu) kirayı bırakır; bıraktıysa true. {@link #sweepLeaderMonitor} altında çağrılır. */
+    private boolean yieldIfWedged(long now, long ttl) {
+        long tick = lastSweepTickAt;
+        if (tick <= 0 || !sweepLeaderHeld) return false;          // bu pod'da hiç tarama tıkı olmadı (zamanlayıcı yok / test)
+        long since = Math.max(tick, sweepLeaderSince);
+        if (now - since < WEDGE_YIELD_MS) return false;
+        log.warn("Tarama liderliği tıkanmış görünüyor: {} dk'dır hiçbir izleme taraması başlamadı (zamanlayıcı iş "
+                + "parçacıkları dolu ya da kilitli) — kira bırakılıyor, başka pod devralsın [instance={}]",
+                (now - since) / 60_000L, INSTANCE_ID);
+        try {
+            clusterSchedule.releaseLease(SWEEP_LEADER);
+        } catch (Exception e) {
+            log.warn("Tıkanmış liderin kirası bırakılamadı (kira süresi dolunca devredilir): {}", e.getMessage());
+        }
+        sweepLeaderHeld = false;
+        leaseConfirmedLeader = false;
+        sweepLeaderCheckedAt = now;
+        sweepLeaderYieldUntil = now + 2 * ttl;
+        wedgeYieldedAt = now;
+        publishSweepLeadership(false, now, SweepLeadershipChangedEvent.LOST);
+        return true;
+    }
+
+    /** Bıraktıktan sonra da tık gelmiyorsa canlılık BROKEN (bir kez); tıklar dönünce CORRECT ve bırakış unutulur. */
+    private void checkWedgeLiveness(long now) {
+        long yielded = wedgeYieldedAt;
+        if (yielded <= 0) return;
+        long tick = lastSweepTickAt;
+        if (tick > yielded) {
+            wedgeYieldedAt = 0L;
+            if (livenessBroken) {
+                livenessBroken = false;
+                log.info("Tarama tıkları geri geldi — canlılık yeniden CORRECT [instance={}]", INSTANCE_ID);
+                publishLiveness(org.springframework.boot.availability.LivenessState.CORRECT);
+            }
+            return;
+        }
+        if (!livenessBroken && tick > 0 && now - tick >= WEDGE_LIVENESS_MS) {
+            livenessBroken = true;
+            log.error("Bu pod'un zamanlayıcısı {} dk'dır hiçbir izleme taraması başlatmadı — canlılık BROKEN (kubelet pod'u "
+                    + "yeniden başlatır) [instance={}]", (now - tick) / 60_000L, INSTANCE_ID);
+            publishLiveness(org.springframework.boot.availability.LivenessState.BROKEN);
+        }
+    }
+
+    private void publishLiveness(org.springframework.boot.availability.LivenessState state) {
+        if (eventPublisher == null) return;
+        try {
+            AvailabilityChangeEvent.publish(eventPublisher, this, state);
+        } catch (Exception e) {
+            log.warn("Canlılık durumu yayınlanamadı: {}", e.toString());
+        }
+    }
+
+    /** Takipçi: kiranın o anki bitişini okur (izleyicinin "lider ölmüş olabilir" yedeği). Hata gözlemi değiştirmez. */
+    private void observeLeaseAsFollower(long now) {
+        if (clusterSchedule == null || sweepLeaderStopped) return;
+        try {
+            var lease = clusterSchedule.lease(SWEEP_LEADER);
+            leaseObservedUntil = lease == null ? now : lease.untilMs();
+            leaseObservedAt = now;
+            leaseConfirmedLeader = lease != null && clusterSchedule.owner().equals(lease.owner()) && lease.untilMs() >= now;
+        } catch (Exception e) {
+            log.debug("Kira gözlemi okunamadı: {}", e.toString());
         }
     }
 
@@ -3916,6 +4502,7 @@ public class SchedulerService {
             }
             boolean was = sweepLeaderHeld;
             sweepLeaderHeld = false;
+            leaseConfirmedLeader = false;
             if (was) publishSweepLeadership(false, scheduleClock.getAsLong(), SweepLeadershipChangedEvent.RELEASED);
         }
     }
@@ -3945,6 +4532,10 @@ public class SchedulerService {
             m.put("expired", lease == null || lease.untilMs() < now);
             m.put("held_by_me", lease != null && lease.untilMs() >= now && clusterSchedule.owner().equals(lease.owner()));
             m.put("renewer", sweepLeaderRenewer != null);
+            // Tıkanma (MP-24): son tarama tıkı ve tıkanma yüzünden bırakılmışsa anı (bu pod'un belleği).
+            long tick = lastSweepTickAt;
+            m.put("last_sweep_tick", tick > 0 ? ISO.format(Instant.ofEpochMilli(tick)) : null);
+            if (wedgeYieldedAt > 0) m.put("wedge_yielded_at", ISO.format(Instant.ofEpochMilli(wedgeYieldedAt)));
         } catch (Exception e) {
             m.put("error", e.getMessage());
         }
@@ -3983,6 +4574,7 @@ public class SchedulerService {
      *  için 2 pod'da tur saatte iki kez koşuyordu. Metot {@link #ROUND_TICK} sıklığında uyanır. */
     @Scheduled(fixedDelayString = ROUND_TICK, initialDelayString = "60000")
     public void runUptimeChecks() {
+        noteSweepTick();   // tıkanma ölçüsü (MP-24): liderlik / duraklatma kapısından ÖNCE
         if (!appSettings.getBoolean("site.monitor.uptime.alert-enabled", true)) return;   // izleme duraklatıldı → kontrol+alarm yok
         if (!isSweepLeader()) return;   // tarama liderliği (2026-10-09): alarm hattını besleyen taramalar küme genelinde TEK pod'da
         if (!roundMayBeDue("uptime", uptimeIntervalMs)) return;   // bu pod biliyor: tur vadesi gelmedi → sorgu yok
@@ -3992,8 +4584,16 @@ public class SchedulerService {
             return;
         }
         try {
-            if (!roundDue("uptime", uptimeIntervalMs)) return;   // bu aralığın turu (başka pod'da) zaten koştu
-            runUptimeChecksLocked();
+            if (!claimRound("uptime", uptimeIntervalMs)) return;   // bu aralığın turu (başka pod'da) zaten koştu
+            // İki aşamalı tur (2026-10-21, MP-15): yalnız gövde normal biter ve pod hâlâ liderse tamamlanır; yarıda kalan tur
+            // (devir, kapanış) koşu kirası dolunca yeniden koşar — bir saat kaybolmaz.
+            boolean done = false;
+            try {
+                runUptimeChecksLocked();
+                done = true;
+            } finally {
+                finishRound("uptime", done && isSweepLeader());
+            }
         } finally {
             releaseSchedulerLock("uptime-sweep");
         }
@@ -4075,6 +4675,7 @@ public class SchedulerService {
 
     @Scheduled(fixedDelayString = "${site.monitor.port.interval-ms:30000}", initialDelayString = "45000")
     public void runPortChecks() {
+        noteSweepTick();   // tıkanma ölçüsü (MP-24): liderlik / duraklatma kapısından ÖNCE
         if (!appSettings.getBoolean("site.monitor.port.alert-enabled", true)) return;   // izleme duraklatıldı → kontrol+alarm yok
         if (!isSweepLeader()) return;   // tarama liderliği (2026-10-09): alarm hattını besleyen taramalar küme genelinde TEK pod'da
         // HA: tüm-tur dağıtık kilit — 2+ pod'da bir turu yalnız bir pod çalıştırır.
@@ -4237,6 +4838,7 @@ public class SchedulerService {
     // ── Keyword monitor sweep (serbest-form; envanter filtresi YOK) ──────────────
     @Scheduled(fixedDelayString = "${site.monitor.keyword.interval-ms:30000}", initialDelayString = "55000")
     public void runKeywordChecks() {
+        noteSweepTick();   // tıkanma ölçüsü (MP-24): liderlik / duraklatma kapısından ÖNCE
         if (!appSettings.getBoolean("site.monitor.keyword.alert-enabled", true)) return;   // izleme duraklatıldı → kontrol+alarm yok
         if (!isSweepLeader()) return;   // tarama liderliği (2026-10-09): alarm hattını besleyen taramalar küme genelinde TEK pod'da
         // HA: tüm-tur dağıtık kilit — 2+ pod'da bir turu yalnız bir pod çalıştırır.
@@ -4352,6 +4954,7 @@ public class SchedulerService {
     // ── HTTP / Website monitor sweep (serbest-form; envanter filtresi YOK) ────────
     @Scheduled(fixedDelayString = "${site.monitor.http.interval-ms:30000}", initialDelayString = "75000")
     public void runHttpChecks() {
+        noteSweepTick();   // tıkanma ölçüsü (MP-24): liderlik / duraklatma kapısından ÖNCE
         if (!appSettings.getBoolean("site.monitor.http.alert-enabled", true)) return;   // izleme duraklatıldı → kontrol+alarm yok
         if (!isSweepLeader()) return;   // tarama liderliği (2026-10-09): alarm hattını besleyen taramalar küme genelinde TEK pod'da
         if (!tryAcquireSchedulerLock("http-sweep", sweepLockTtlMinutes)) {
@@ -4990,6 +5593,7 @@ public class SchedulerService {
     // ── Sayfa Bütünlüğü (9. tür) sweep — sık: her monitörün ANA sayfası (SINGLE_PAGE) ────────────────
     @Scheduled(fixedDelayString = "${site.monitor.page.interval-ms:60000}", initialDelayString = "90000")
     public void runPageChecks() {
+        noteSweepTick();   // tıkanma ölçüsü (MP-24): liderlik / duraklatma kapısından ÖNCE
         if (!appSettings.getBoolean("site.monitor.page.alert-enabled", true)) return;
         if (!isSweepLeader()) return;   // tarama liderliği (2026-10-09): alarm hattını besleyen taramalar küme genelinde TEK pod'da
         if (!tryAcquireSchedulerLock("page-sweep", sweepLockTtlMinutes)) {
@@ -5047,6 +5651,7 @@ public class SchedulerService {
     // ve kendi fazında ayrı bir tur; yuvarlanan dağıtımda her yeni pod tüm siteleri yeniden tarıyordu).
     @Scheduled(fixedDelayString = ROUND_TICK, initialDelayString = "150000")
     public void runPageCrawls() {
+        noteSweepTick();   // tıkanma ölçüsü (MP-24): liderlik / duraklatma kapısından ÖNCE
         if (!appSettings.getBoolean("site.monitor.page.alert-enabled", true)) return;
         if (!isSweepLeader()) return;   // tarama liderliği (2026-10-09): alarm hattını besleyen taramalar küme genelinde TEK pod'da
         if (!roundMayBeDue("page-crawl", pageCrawlIntervalMs)) return;
@@ -5055,29 +5660,40 @@ public class SchedulerService {
             return;
         }
         try {
-            if (!roundDue("page-crawl", pageCrawlIntervalMs)) return;
-            List<com.sitemonitor.model.PageMonitor> crawlers = pageMonitorRepo.findByActiveTrue().stream()
-                    .filter(m -> "SITE_CRAWL".equalsIgnoreCase(m.getMode())).toList();
-            if (crawlers.isEmpty()) return;
-            List<MonitoringOutageService.SweepItem> downSweep = new ArrayList<>();
-            List<MonitoringOutageService.SweepItem> integritySweep = new ArrayList<>();
-            // Tek site anda: SIRALI (fan-out YOK) — tek-pod yük + nezaket.
-            for (com.sitemonitor.model.PageMonitor m : crawlers) {
-                try {
-                    Map<String, Object> r = recheckPage(m, false, "SITE_CRAWL");
-                    addPageSweepItems(m, r, downSweep, integritySweep);
-                } catch (Exception e) {
-                    log.warn("Page crawl failed for {}: {}", m.getUrl(), e.getMessage());
-                }
+            if (!claimRound("page-crawl", pageCrawlIntervalMs)) return;
+            boolean done = false;
+            try {
+                runPageCrawlsLocked();
+                done = true;
+            } finally {
+                finishRound("page-crawl", done && isSweepLeader());   // iki aşamalı tur (MP-15)
             }
-            try { monitoringOutageService.handleSweepResults(EscalationService.TYPE_PAGE_DOWN, downSweep); }
-            catch (Exception e) { log.warn("Page crawl DOWN processing failed: {}", e.getMessage(), e); }
-            try { monitoringOutageService.handleSweepResults(EscalationService.TYPE_PAGE_INTEGRITY, integritySweep); }
-            catch (Exception e) { log.warn("Page crawl INTEGRITY processing failed: {}", e.getMessage(), e); }
-            log.debug("Page crawl complete: {} sites", crawlers.size());
         } finally {
             releaseSchedulerLock("page-crawl");
         }
+    }
+
+    /** Derin crawl turunun gövdesi (kilit ve tur sahiplenmesi altında; bkz. {@link #runPageCrawls}). */
+    private void runPageCrawlsLocked() {
+        List<com.sitemonitor.model.PageMonitor> crawlers = pageMonitorRepo.findByActiveTrue().stream()
+                .filter(m -> "SITE_CRAWL".equalsIgnoreCase(m.getMode())).toList();
+        if (crawlers.isEmpty()) return;
+        List<MonitoringOutageService.SweepItem> downSweep = new ArrayList<>();
+        List<MonitoringOutageService.SweepItem> integritySweep = new ArrayList<>();
+        // Tek site anda: SIRALI (fan-out YOK) — tek-pod yük + nezaket.
+        for (com.sitemonitor.model.PageMonitor m : crawlers) {
+            try {
+                Map<String, Object> r = recheckPage(m, false, "SITE_CRAWL");
+                addPageSweepItems(m, r, downSweep, integritySweep);
+            } catch (Exception e) {
+                log.warn("Page crawl failed for {}: {}", m.getUrl(), e.getMessage());
+            }
+        }
+        try { monitoringOutageService.handleSweepResults(EscalationService.TYPE_PAGE_DOWN, downSweep); }
+        catch (Exception e) { log.warn("Page crawl DOWN processing failed: {}", e.getMessage(), e); }
+        try { monitoringOutageService.handleSweepResults(EscalationService.TYPE_PAGE_INTEGRITY, integritySweep); }
+        catch (Exception e) { log.warn("Page crawl INTEGRITY processing failed: {}", e.getMessage(), e); }
+        log.debug("Page crawl complete: {} sites", crawlers.size());
     }
 
     /** Bir page kontrol sonucundan iki SweepItem (DOWN + INTEGRITY) üretip ilgili listelere ekler. */
@@ -5477,6 +6093,7 @@ public class SchedulerService {
     // Aralık tabanı 5 dk olduğu için sweep dakikada bir uyanıp yalnız vakti gelenleri ölçer (checkDue).
     @Scheduled(fixedDelayString = "${site.monitor.pagespeed.interval-ms:60000}", initialDelayString = "120000")
     public void runPageSpeedChecks() {
+        noteSweepTick();   // tıkanma ölçüsü (MP-24): liderlik / duraklatma kapısından ÖNCE
         if (!appSettings.getBoolean("site.monitor.pagespeed.alert-enabled", true)) return;
         if (!isSweepLeader()) return;   // tarama liderliği (2026-10-09): alarm hattını besleyen taramalar küme genelinde TEK pod'da
         if (!tryAcquireSchedulerLock("pagespeed-sweep", sweepLockTtlMinutes)) {
@@ -5775,6 +6392,7 @@ public class SchedulerService {
     // ── Senaryo İzleme (10. tür) — k6 alt süreç sweep'i (bounded executor, scheduler'ı bloklamaz) ──────
     @Scheduled(fixedDelayString = "${site.monitor.scripted.interval-ms:60000}", initialDelayString = "95000")
     public void runScriptedChecks() {
+        noteSweepTick();   // tıkanma ölçüsü (MP-24): liderlik / duraklatma kapısından ÖNCE
         if (!appSettings.getBoolean("site.monitor.scripted.enabled", true)) return;
         if (!isSweepLeader()) return;   // tarama liderliği (2026-10-09): alarm hattını besleyen taramalar küme genelinde TEK pod'da
         // k6 yoksa PERİYODİK yeniden dene ve SUS-MA. Eskiden burada koşulsuz `return` vardı ve
@@ -6194,6 +6812,7 @@ public class SchedulerService {
     // 2026-10-09: günlük aralık küme tur kaydından (bkz. ROUND_TICK) — RDAP sorguları pod başına yinelenmesin.
     @Scheduled(fixedDelayString = ROUND_TICK, initialDelayString = "120000")
     public void runHttpSslDomainChecks() {
+        noteSweepTick();   // tıkanma ölçüsü (MP-24): liderlik / duraklatma kapısından ÖNCE
         if (!appSettings.getBoolean("site.monitor.http.alert-enabled", true)) return;
         if (!isSweepLeader()) return;   // tarama liderliği (2026-10-09): alarm hattını besleyen taramalar küme genelinde TEK pod'da
         if (!roundMayBeDue("http-ssl-domain", httpSslDomainIntervalMs)) return;
@@ -6202,8 +6821,14 @@ public class SchedulerService {
             return;
         }
         try {
-            if (!roundDue("http-ssl-domain", httpSslDomainIntervalMs)) return;
-            runHttpSslDomainChecksLocked();
+            if (!claimRound("http-ssl-domain", httpSslDomainIntervalMs)) return;
+            boolean done = false;
+            try {
+                runHttpSslDomainChecksLocked();
+                done = true;
+            } finally {
+                finishRound("http-ssl-domain", done && isSweepLeader());   // iki aşamalı tur (MP-15)
+            }
         } finally {
             releaseSchedulerLock("http-ssl-domain-sweep");
         }
@@ -6433,6 +7058,7 @@ public class SchedulerService {
     // 2026-10-09: günlük aralık küme tur kaydından (bkz. ROUND_TICK).
     @Scheduled(fixedDelayString = ROUND_TICK, initialDelayString = "150000")
     public void runKeywordSslDomainChecks() {
+        noteSweepTick();   // tıkanma ölçüsü (MP-24): liderlik / duraklatma kapısından ÖNCE
         if (!appSettings.getBoolean("site.monitor.keyword.alert-enabled", true)) return;
         if (!isSweepLeader()) return;   // tarama liderliği (2026-10-09): alarm hattını besleyen taramalar küme genelinde TEK pod'da
         if (!roundMayBeDue("keyword-ssl-domain", keywordSslDomainIntervalMs)) return;
@@ -6441,8 +7067,14 @@ public class SchedulerService {
             return;
         }
         try {
-            if (!roundDue("keyword-ssl-domain", keywordSslDomainIntervalMs)) return;
-            runKeywordSslDomainChecksLocked();
+            if (!claimRound("keyword-ssl-domain", keywordSslDomainIntervalMs)) return;
+            boolean done = false;
+            try {
+                runKeywordSslDomainChecksLocked();
+                done = true;
+            } finally {
+                finishRound("keyword-ssl-domain", done && isSweepLeader());   // iki aşamalı tur (MP-15)
+            }
         } finally {
             releaseSchedulerLock("keyword-ssl-domain-sweep");
         }
@@ -6568,6 +7200,7 @@ public class SchedulerService {
     // ── Domain (alan adı) süre-bitişi sweep'i — günlük + jitter; RDAP/WHOIS (DomainCheckerService) ──
     @Scheduled(fixedDelayString = "${site.monitor.domain.interval-ms:3600000}", initialDelayString = "90000")
     public void runDomainChecks() {
+        noteSweepTick();   // tıkanma ölçüsü (MP-24): liderlik / duraklatma kapısından ÖNCE
         if (!appSettings.getBoolean("site.monitor.domain.alert-enabled", true)) return;
         if (!isSweepLeader()) return;   // tarama liderliği (2026-10-09): alarm hattını besleyen taramalar küme genelinde TEK pod'da
         if (!tryAcquireSchedulerLock("domain-sweep", sweepLockTtlMinutes)) {
@@ -6589,6 +7222,7 @@ public class SchedulerService {
     //    yalnız durumu günceller / yenilenmişse alarmı kapatır.
     @Scheduled(cron = CRON_CRITICAL_DOMAIN, zone = ZONE_IST)
     public void runCriticalDomainChecks() {
+        noteSweepTick();   // tıkanma ölçüsü (MP-24): liderlik / duraklatma kapısından ÖNCE
         if (!appSettings.getBoolean("site.monitor.domain.alert-enabled", true)) return;            // domain izleme duraklatıldı → hiç kontrol yok
         if (!appSettings.getBoolean("site.monitor.domain.critical-check-enabled", true)) return;   // ikinci kontrol ops kill-switch
         if (!isSweepLeader()) return;   // tarama liderliği (2026-10-09): alarm hattını besleyen taramalar küme genelinde TEK pod'da
@@ -6883,6 +7517,7 @@ public class SchedulerService {
     // ── Ping monitor sweep (serbest-form; envanter filtresi YOK) ─────────────────
     @Scheduled(fixedDelayString = "${site.monitor.ping.interval-ms:30000}", initialDelayString = "65000")
     public void runPingChecks() {
+        noteSweepTick();   // tıkanma ölçüsü (MP-24): liderlik / duraklatma kapısından ÖNCE
         if (!appSettings.getBoolean("site.monitor.ping.alert-enabled", true)) return;   // izleme duraklatıldı → kontrol+alarm yok
         if (!isSweepLeader()) return;   // tarama liderliği (2026-10-09): alarm hattını besleyen taramalar küme genelinde TEK pod'da
         // HA: tüm-tur dağıtık kilit — 2+ pod'da bir turu (öksüz-alarm temizliği dahil) yalnız bir pod çalıştırır.
@@ -6986,6 +7621,7 @@ public class SchedulerService {
 
     @Scheduled(fixedDelayString = "${site.monitor.dns.interval-ms:300000}", initialDelayString = "60000")
     public void runDnsChecks() {
+        noteSweepTick();   // tıkanma ölçüsü (MP-24): liderlik / duraklatma kapısından ÖNCE
         if (!appSettings.getBoolean("site.monitor.dns.alert-enabled", true)) return;   // izleme duraklatıldı → kontrol+alarm yok
         if (!isSweepLeader()) return;   // tarama liderliği (2026-10-09): alarm hattını besleyen taramalar küme genelinde TEK pod'da
         // HA: tüm-tur dağıtık kilit — 2+ pod'da bir turu yalnız bir pod çalıştırır.
@@ -7278,8 +7914,35 @@ public class SchedulerService {
     }
 
     private static String resolveHostname() {
-        try { return InetAddress.getLocalHost().getHostName(); }
-        catch (Exception e) { return "node"; }
+        return resolveHostname(() -> {
+            try { return InetAddress.getLocalHost().getHostName(); }
+            catch (Exception e) { return null; }
+        }, System::getenv, () -> UUID.randomUUID().toString().replace("-", "").substring(0, 12));
+    }
+
+    /**
+     * Örnek kimliğinin host kısmı (2026-10-21, çok pod R1-A, MP-21). Eskiden ad çözülemezse SABİT "node" dönüyordu: birden
+     * çok pod'da çözüm düşerse hepsi "node-…" olur, açılış temizliği ({@code clearStaleLocksForThisHost},
+     * {@code clearStaleSweepLeaderOfThisHost} — "aynı host'un önceki örneği" varsayımı) CANLI pod'ların kilitlerini ve tarama
+     * liderliği kirasını silerdi (iki lider). Sıra: makine adı → {@code HOSTNAME} → {@code POD_NAME} ortam değişkeni (Kubernetes
+     * pod adı) → rastgele kimlik (hiçbir başka pod'la eşleşmez; önceki örneğin kilidi yalnız TTL ile düşer).
+     */
+    static String resolveHostname(java.util.function.Supplier<String> localHost,
+                                  java.util.function.Function<String, String> env,
+                                  java.util.function.Supplier<String> random) {
+        String h = clean(localHost.get());
+        if (h == null) h = clean(env.apply("HOSTNAME"));
+        if (h == null) h = clean(env.apply("POD_NAME"));
+        if (h == null) h = "host-" + random.get();
+        return h;
+    }
+
+    /** Boş / anlamsız (localhost) adı eler, LIKE kalıbında anlamı olan karakterleri ({@code % _}) kaldırır. */
+    private static String clean(String raw) {
+        if (raw == null) return null;
+        String s = raw.trim().replace("%", "").replace("_", "-");
+        if (s.isEmpty() || "localhost".equalsIgnoreCase(s) || "node".equalsIgnoreCase(s)) return null;
+        return s.length() > 120 ? s.substring(0, 120) : s;
     }
 
     // ── Network outage state — getters used by ExtendedHealthService ──────────

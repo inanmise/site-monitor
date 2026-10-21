@@ -108,6 +108,54 @@ class ClusterSchedulePostgresTest {
     }
 
     @Test
+    @DisplayName("PostgreSQL (2026-10-21, MP-15): 8 pod iki aşamalı tura uzanır → tek koşu; tamamlama yalnız kira sahibinden; yarıda kalan tur kira dolunca yeniden")
+    void claimRunAndComplete_onPostgres() throws Exception {
+        JdbcTemplate jdbc = jdbc();
+        int pods = 8;
+        String key = ClusterScheduleService.ROUND_PREFIX + "it-run-" + UUID.randomUUID();
+        long t0 = System.currentTimeMillis();
+        long lease = 10 * MIN;
+        ExecutorService pool = Executors.newFixedThreadPool(pods);
+        try {
+            CyclicBarrier start = new CyclicBarrier(pods);
+            List<ClusterScheduleService> owners = new ArrayList<>();
+            List<Future<ClusterScheduleService.Claim>> results = new ArrayList<>();
+            for (int p = 0; p < pods; p++) {
+                ClusterScheduleService pod = new ClusterScheduleService(jdbc, "it-run-pod-" + p);
+                owners.add(pod);
+                results.add(pool.submit(() -> {
+                    start.await(10, TimeUnit.SECONDS);
+                    return pod.claimRun(key, t0, 60 * MIN, null, lease, null);
+                }));
+            }
+            ClusterScheduleService winner = null;
+            long leaseValue = -1;
+            for (int p = 0; p < pods; p++) {
+                ClusterScheduleService.Claim c = results.get(p).get(30, TimeUnit.SECONDS);
+                if (c.due()) {
+                    assertThat(winner).as("tek kazanan").isNull();
+                    winner = owners.get(p);
+                    leaseValue = c.nextDueAt();
+                }
+            }
+            assertThat(winner).isNotNull();
+            assertThat(leaseValue).isEqualTo(t0 + lease);
+            ClusterScheduleService other = owners.get(owners.get(0) == winner ? 1 : 0);
+            assertThat(other.complete(key, leaseValue, t0 + 60 * MIN)).isFalse();
+            // yarıda kaldı: kira dolunca başka pod yeniden koşar; eski koşunun geç tamamlaması yenisini ezmez
+            ClusterScheduleService.Claim again = other.claimRun(key, t0 + lease + 1, 60 * MIN, null, lease, null);
+            assertThat(again.due()).isTrue();
+            assertThat(winner.complete(key, leaseValue, t0 + 60 * MIN)).isFalse();
+            assertThat(other.complete(key, again.nextDueAt(), t0 + 60 * MIN)).isTrue();
+            assertThat(jdbc.queryForObject("SELECT next_due_at FROM monitor_check_schedule WHERE monitor_key = ?",
+                    Long.class, key)).isEqualTo(t0 + 60 * MIN);
+        } finally {
+            pool.shutdownNow();
+            jdbc.update("DELETE FROM monitor_check_schedule WHERE monitor_key = ?", key);
+        }
+    }
+
+    @Test
     @DisplayName("PostgreSQL: budama yalnız canlı kümede olmayan izleme satırlarını siler, tur satırlarına dokunmaz")
     void prune_onPostgres() {
         JdbcTemplate jdbc = jdbc();

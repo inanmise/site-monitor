@@ -31,7 +31,27 @@ class WatchdogPostgresTest {
         svc.evaluate(now);
         Map<String, Object> pub = svc.publicStatus(now.plusSeconds(1));
         assertThat(pub.get("status")).isIn("UP", "DEGRADED", "DOWN");
-        assertThat(PostgresIt.app().jdbc().queryForObject("SELECT COUNT(*) FROM watchdog_state", Integer.class))
-                .isEqualTo(WatchdogCheck.values().length);
+        assertThat(PostgresIt.app().jdbc().queryForObject("SELECT COUNT(*) FROM watchdog_state WHERE check_key NOT LIKE 'it-%'",
+                Integer.class)).isEqualTo(WatchdogCheck.values().length);
+    }
+
+    @Test
+    @DisplayName("2026-10-21 (çok pod, MP-09): 'düzeldi' damgası gerçek şemada — aynı duyuru için tek pod kazanır, yeni duyuru yeniden damgalanır")
+    void recoverStampOnRealSchema() {
+        org.springframework.jdbc.core.JdbcTemplate jdbc = PostgresIt.app().jdbc();
+        String key = "it-" + java.util.UUID.randomUUID().toString().replace("-", "");
+        jdbc.update("INSERT INTO watchdog_state(check_key, status, last_result, notified_kind, notified_at, evaluated_at) "
+                + "VALUES (?, 'OK', 'OK', 'ALERT', '2026-10-21T06:00:00', '2026-10-21T06:10:00')", key);
+        try {
+            String announced = "2026-10-21T06:00:00";
+            assertThat(jdbc.update(WatchdogService.SQL_STAMP_RECOVER, "2026-10-21T06:11:00", key, announced)).isEqualTo(1);
+            assertThat(jdbc.update(WatchdogService.SQL_STAMP_RECOVER, "2026-10-21T06:11:01", key, announced))
+                    .as("ikinci pod aynı duyuru için damgalayamaz").isZero();
+            assertThat(jdbc.update(WatchdogService.SQL_RECOVER_SUFFIX, "RECOVER_FAILED", key, "2026-10-21T06:11:00")).isEqualTo(1);
+            assertThat(jdbc.update(WatchdogService.SQL_STAMP_RECOVER, "2026-10-21T08:00:00", key, "2026-10-21T07:00:00"))
+                    .as("sonraki kesintinin duyurusu yeniden damgalanır").isEqualTo(1);
+        } finally {
+            jdbc.update("DELETE FROM watchdog_state WHERE check_key = ?", key);
+        }
     }
 }
