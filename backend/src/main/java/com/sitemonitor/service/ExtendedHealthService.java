@@ -65,6 +65,21 @@ public class ExtendedHealthService {
             m.put("alarm", false);
             return m;
         }
+        // Durum veritabanından (2026-10-21, çok pod — MP-01): tek okuma → alanlar aynı andan; hangi pod cevaplarsa aynı.
+        com.sitemonitor.service.outage.CertNetworkOutageService.Snapshot s = schedulerService.networkOutageSnapshot();
+        if (s != null) {
+            m.put("alarm",               s.active());
+            m.put("detected_at",         s.detectedAt());
+            m.put("resolved_at",         s.resolvedAt());
+            m.put("last_error_rate",     s.lastErrorRate());
+            m.put("last_network_errors", s.lastNetworkErrors());
+            m.put("last_total",          s.lastTotal());
+            m.put("threshold",           schedulerService.getErrorRateThreshold());
+            m.put("min_errors",          schedulerService.getMinNetworkErrors());
+            m.put("pending_alert_email", s.pendingAlertEmail());
+            m.put("pending_resolved_email", s.pendingResolvedEmail());
+            return m;
+        }
         m.put("alarm",               schedulerService.isNetworkOutageActive());
         m.put("detected_at",         schedulerService.getNetworkOutageDetectedAt());
         m.put("resolved_at",         schedulerService.getNetworkOutageResolvedAt());

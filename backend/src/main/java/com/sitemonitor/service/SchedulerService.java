@@ -395,18 +395,29 @@ public class SchedulerService {
      *  sessizce yanmasın — eskiden istisna yalnız Spring'in generic log satırına düşüyordu. */
     private final AtomicReference<String> lastRunFailure = new AtomicReference<>(null);
 
-    // Network bulk-failure state (in-memory; resets on restart)
-    private final AtomicBoolean   networkOutageActive       = new AtomicBoolean(false);
-    private final AtomicReference<String> networkOutageDetectedAt = new AtomicReference<>(null);
-    private final AtomicReference<String> networkOutageResolvedAt = new AtomicReference<>(null);
-    private final AtomicReference<Double> networkLastErrorRate    = new AtomicReference<>(0.0);
-    private final AtomicInteger   networkLastNetworkErrors  = new AtomicInteger(0);
-    private final AtomicInteger   networkLastTotal          = new AtomicInteger(0);
-    /** Set when admin alert email could not be sent (likely because the same outage blocked SMTP).
-     *  Retried on every scheduler tick until cleared by a successful alert OR resolved email. */
-    private final AtomicBoolean   pendingAdminAlertEmail    = new AtomicBoolean(false);
-    /** Set when admin resolved email could not be sent. */
-    private final AtomicBoolean   pendingAdminResolvedEmail = new AtomicBoolean(false);
+    // Toplu ağ kesintisi durumu (2026-10-21, çok pod — MP-01): eskiden bu pod'un belleğindeydi (AtomicBoolean'lar); artık
+    // veritabanı satırı durum makinesidir — CertNetworkOutageService. Bean yoksa (bağlamsız birim testi) aynı servis bu
+    // sınıfın kendi bağımlılıklarıyla kurulur: davranış iki yolda da aynı (veritabanı + yönetici postası).
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.outage.CertNetworkOutageService certNetworkOutage;
+    private volatile com.sitemonitor.service.outage.CertNetworkOutageService fallbackNetworkOutage;
+
+    com.sitemonitor.service.outage.CertNetworkOutageService networkOutage() {
+        com.sitemonitor.service.outage.CertNetworkOutageService s = certNetworkOutage;
+        if (s != null) return s;
+        s = fallbackNetworkOutage;
+        if (s == null) {
+            synchronized (this) {
+                s = fallbackNetworkOutage;
+                if (s == null) {
+                    s = new com.sitemonitor.service.outage.CertNetworkOutageService(jdbcTemplate, emailService, appSettings)
+                            .withSystemAdminEmailDefault(systemAdminEmail);
+                    fallbackNetworkOutage = s;
+                }
+            }
+        }
+        return s;
+    }
 
     @EventListener(ApplicationReadyEvent.class)
     public void runOnStartup() {
@@ -3068,38 +3079,18 @@ public class SchedulerService {
             boolean suspectedOutage = networkErrors >= minErrors
                                    && networkErrorRate >= rateThreshold;
 
-            if (suspectedOutage) {
-                networkLastErrorRate.set(networkErrorRate);
-                networkLastNetworkErrors.set((int) networkErrors);
-                networkLastTotal.set(results.size());
-                if (networkOutageActive.compareAndSet(false, true)) {
-                    String detectedAt = ISO.format(Instant.now());
-                    networkOutageDetectedAt.set(detectedAt);
-                    networkOutageResolvedAt.set(null);
-                    log.warn("⚠ Suspected network outage detected: {}/{} domains failed with network-class errors " +
-                             "(rate={}, threshold={}) — alarm processing SKIPPED for this run",
-                            networkErrors, results.size(),
-                            String.format("%.2f", networkErrorRate), rateThreshold);
-                    persistOutageDetected(detectedAt, (int) networkErrors, results.size(), networkErrorRate);
-                    trySendAdminAlert();
-                } else {
-                    log.warn("⚠ Suspected network outage still ongoing: {}/{} domains failed with network-class errors " +
-                             "(rate={}) — alarm processing remains SKIPPED",
-                            networkErrors, results.size(), String.format("%.2f", networkErrorRate));
-                    if (pendingAdminAlertEmail.get()) trySendAdminAlert();
-                }
+            // Kesinti durumu VERİTABANINDA (2026-10-21, çok pod — MP-01): açılış = "açık kayıt yoksa ekle" (postayı yalnız
+            // ekleyen pod atar), çözüm = koşullu UPDATE (postayı yalnız kapatan pod atar), bekleyen postalar satırda
+            // (herhangi bir pod yeniden dener). min-errors'tan küçük tur kesintiyi KAPATAMAZ. false = bu turun yeni
+            // alarmları bastırılır (şüpheli tur ya da hâlâ açık kesinti).
+            boolean processAlarms = networkOutage().onRun(networkErrors, results.size(), networkErrorRate,
+                    suspectedOutage, minErrors, rateThreshold);
+
+            if (!processAlarms) {
                 // K1 (2026-09-29): kesinti şüphesi YENİ alarmı durdurur, doğrulanmış sağlıklı sonucun açık alarmını
                 // kapatmayı DEĞİL — aksi hâlde kesinti sürdükçe düzelen alan adlarının alarmları da açık kalıyordu.
                 resolveVerifiedCertAlertsQuietly(results);
             } else {
-                if (networkOutageActive.compareAndSet(true, false)) {
-                    String resolvedAt = ISO.format(Instant.now());
-                    networkOutageResolvedAt.set(resolvedAt);
-                    log.info("✓ Network outage cleared — alarm processing resumed");
-                    persistOutageResolved(resolvedAt);
-                    trySendAdminResolved();
-                }
-                if (pendingAdminResolvedEmail.get()) trySendAdminResolved();
                 // Cert/domain expiry izleme kapalıysa cert alarmları işlenmez (SSL kontrol + durum güncellemesi sürer);
                 // K5 (2026-09-29): açık sertifika alarmları yine de düzelince kapanır (yeni alarm/yeniden uyarı yok).
                 if (appSettings.getBoolean("site.monitor.expiry.alert-enabled", true)) {
@@ -3764,7 +3755,7 @@ public class SchedulerService {
                 // Alarm da ANINDA (kullanıcı isteği 2026-09-22): 14 günü kalmış bir sertifika eklendiğinde bir sonraki saatlik
                 // sweep'i beklemeden aynı eskalasyon hattından geçer (eşik/tier/suppression/re-alert kuralları birebir aynı).
                 // Ağ kesintisi bayrağı açıkken sweep de işlemez → burada da işlenmez; ayar kapalıysa yine atlanır.
-                if (!networkOutageActive.get() && appSettings.getBoolean("site.monitor.expiry.alert-enabled", true)) {
+                if (!networkOutage().isActive() && appSettings.getBoolean("site.monitor.expiry.alert-enabled", true)) {
                     try { escalationService.processResults(java.util.List.of(result)); }
                     catch (Exception e) { log.warn("Yeni envanter anında alarm değerlendirmesi başarısız {}: {}", domain, e.getMessage()); }
                 }
@@ -8287,161 +8278,34 @@ public class SchedulerService {
     }
 
     // ── Network outage state — getters used by ExtendedHealthService ──────────
+    // Hepsi veritabanından (CertNetworkOutageService, pod başına ≤ 10 sn ezber) — bütün pod'lar aynı cevabı verir (MP-01).
 
-    public boolean isNetworkOutageActive() { return networkOutageActive.get(); }
-    public String  getNetworkOutageDetectedAt() { return networkOutageDetectedAt.get(); }
-    public String  getNetworkOutageResolvedAt() { return networkOutageResolvedAt.get(); }
-    public double  getNetworkLastErrorRate() { return networkLastErrorRate.get(); }
-    public int     getNetworkLastNetworkErrors() { return networkLastNetworkErrors.get(); }
-    public int     getNetworkLastTotal() { return networkLastTotal.get(); }
+    public boolean isNetworkOutageActive() { return networkOutage().snapshot().active(); }
+    public String  getNetworkOutageDetectedAt() { return networkOutage().snapshot().detectedAt(); }
+    public String  getNetworkOutageResolvedAt() { return networkOutage().snapshot().resolvedAt(); }
+    public double  getNetworkLastErrorRate() { return networkOutage().snapshot().lastErrorRate(); }
+    public int     getNetworkLastNetworkErrors() { return networkOutage().snapshot().lastNetworkErrors(); }
+    public int     getNetworkLastTotal() { return networkOutage().snapshot().lastTotal(); }
     public double  getErrorRateThreshold() { return appSettings.getDouble("site.monitor.network.error-rate-threshold", networkErrorRateThreshold); }
     public int     getMinNetworkErrors() { return appSettings.getInt("site.monitor.network.min-errors", networkMinErrors); }
-    public boolean isPendingAdminAlertEmail() { return pendingAdminAlertEmail.get(); }
-    public boolean isPendingAdminResolvedEmail() { return pendingAdminResolvedEmail.get(); }
+    public boolean isPendingAdminAlertEmail() { return networkOutage().snapshot().pendingAlertEmail(); }
+    public boolean isPendingAdminResolvedEmail() { return networkOutage().snapshot().pendingResolvedEmail(); }
 
-    // ── Admin email — outage notification + resilient retry ───────────────────
-
-    private void trySendAdminAlert() {
-        String adminEmail = appSettings.getString("site.monitor.system-admin.email", systemAdminEmail);
-        if (adminEmail == null || adminEmail.isBlank()) {   // kardeş tüketicilerle aynı: adres yoksa mail yok
-            pendingAdminAlertEmail.set(false);
-            log.info("Ağ kesintisi bildirimi atlandı — system-admin.email boş");
-            return;
-        }
-        double rateThreshold = appSettings.getDouble("site.monitor.network.error-rate-threshold", networkErrorRateThreshold);
-        String status;
-        try {
-            status = emailService.sendSystemAdminNetworkAlert(
-                    adminEmail,
-                    networkOutageDetectedAt.get(),
-                    networkLastNetworkErrors.get(),
-                    networkLastTotal.get(),
-                    networkLastErrorRate.get(),
-                    rateThreshold);
-        } catch (Exception e) {
-            status = "FAILED: " + e.getMessage();
-        }
-        // SKIPPED: pasif kullanıcı (2026-10-02) de KESİN sonuçtur — adres pasif kullanıcıya ait; her turda yeniden denenmez.
-        if ("SENT".equals(status) || "SKIPPED_DISABLED".equals(status) || InactiveRecipientGuard.STATUS_SKIPPED.equals(status)) {
-            pendingAdminAlertEmail.set(false);
-            log.info("System admin notified about network outage ({}) status={}", adminEmail, status);
-        } else {
-            pendingAdminAlertEmail.set(true);
-            log.warn("Failed to send admin network alert (likely same outage blocking SMTP): {}", status);
-        }
+    /** Tek okumalık durum (Sistem Sağlığı ağ kartı alanları aynı andan gelsin). */
+    public com.sitemonitor.service.outage.CertNetworkOutageService.Snapshot networkOutageSnapshot() {
+        return networkOutage().snapshot();
     }
 
-    private void trySendAdminResolved() {
-        String adminEmail = appSettings.getString("site.monitor.system-admin.email", systemAdminEmail);
-        if (adminEmail == null || adminEmail.isBlank()) {
-            pendingAdminResolvedEmail.set(false);
-            pendingAdminAlertEmail.set(false);
-            log.info("Ağ kesintisi çözüm bildirimi atlandı — system-admin.email boş");
-            return;
-        }
-        long durationMs = computeOutageDurationMs();
-        String status;
-        try {
-            status = emailService.sendSystemAdminNetworkResolved(
-                    adminEmail,
-                    networkOutageDetectedAt.get(),
-                    networkOutageResolvedAt.get(),
-                    durationMs,
-                    networkLastNetworkErrors.get(),
-                    networkLastTotal.get(),
-                    networkLastErrorRate.get());
-        } catch (Exception e) {
-            status = "FAILED: " + e.getMessage();
-        }
-        // SKIPPED: pasif kullanıcı (2026-10-02) de KESİN sonuçtur — adres pasif kullanıcıya ait; her turda yeniden denenmez.
-        if ("SENT".equals(status) || "SKIPPED_DISABLED".equals(status) || InactiveRecipientGuard.STATUS_SKIPPED.equals(status)) {
-            pendingAdminResolvedEmail.set(false);
-            // Resolved email contains full timeline → no need to send the detection-only one separately
-            pendingAdminAlertEmail.set(false);
-            log.info("System admin notified about network outage resolution ({}) status={}",
-                    adminEmail, status);
-        } else {
-            pendingAdminResolvedEmail.set(true);
-            log.warn("Failed to send admin network resolved notification: {}", status);
-        }
-    }
-
-    // ── Outage event persistence ──────────────────────────────────────────────
-
-    private void persistOutageDetected(String detectedAt, int networkErrors, int totalChecks, double rate) {
-        try {
-            NetworkOutageEvent ev = new NetworkOutageEvent();
-            ev.setDetectedAt(detectedAt);
-            ev.setNetworkErrors(networkErrors);
-            ev.setTotalChecks(totalChecks);
-            ev.setErrorRate(rate);
-            ev.setThreshold(appSettings.getDouble("site.monitor.network.error-rate-threshold", networkErrorRateThreshold));
-            ev.setStatus("ONGOING");
-            // Kaynak imzasi: ayni tabloya artik izleme sweep'lerinin bastirma olaylari da yaziliyor
-            // (MonitoringOutageService). Isaretlenmezse iki olgu "ag kesintisi gecmisi"nde karisir.
-            ev.setSource("CERT");
-            networkOutageRepo.save(ev);
-        } catch (Exception e) {
-            log.warn("Failed to persist outage detection event: {}", e.getMessage());
-        }
-    }
-
-    /** Sertifika sweep'ine ait acik kesinti olayi (source NULL = 2026-08 oncesi kayitlar). */
-    private java.util.Optional<NetworkOutageEvent> certOngoingOutage() {
-        return networkOutageRepo.findCertByStatus("ONGOING", org.springframework.data.domain.PageRequest.of(0, 1))
-                .stream().findFirst();
-    }
-
-    private void persistOutageResolved(String resolvedAt) {
-        try {
-            // Kapsamli sorgu SART: kapsamsiz hali, izleme sweep'inin daha yeni acik olayini
-            // sertifika kesintisi sanip yanlis kaydi RESOLVED'a ceker / panoya tasirdi.
-            certOngoingOutage().ifPresent(ev -> {
-                ev.setResolvedAt(resolvedAt);
-                ev.setStatus("RESOLVED");
-                try {
-                    Instant det = Instant.from(ISO.parse(ev.getDetectedAt()));
-                    Instant res = Instant.from(ISO.parse(resolvedAt));
-                    ev.setDurationMs(res.toEpochMilli() - det.toEpochMilli());
-                } catch (Exception ignored) { /* duration stays null */ }
-                networkOutageRepo.save(ev);
-            });
-        } catch (Exception e) {
-            log.warn("Failed to persist outage resolution event: {}", e.getMessage());
-        }
-    }
-
-    /** Called from startup — if an ONGOING outage row exists in DB (previous run
-     *  crashed/exited mid-outage), restore the in-memory active state so the dashboard
-     *  banner persists across restarts. The next healthy scan run will resolve it. */
+    /**
+     * Açılışta çağrılır (2026-10-21'den beri yalnız günlük): durum artık veritabanında — bellek "geri yüklenmez", ilk okuma
+     * açık kaydı zaten görür. Önceki yeniden başlatmadan açık kalan kesinti varsa bilgi satırı yazılır.
+     */
     private void restoreOutageStateFromDb() {
         try {
-            // Kapsamli sorgu SART: kapsamsiz hali, izleme sweep'inin daha yeni acik olayini
-            // sertifika kesintisi sanip yanlis kaydi RESOLVED'a ceker / panoya tasirdi.
-            certOngoingOutage().ifPresent(ev -> {
-                networkOutageActive.set(true);
-                networkOutageDetectedAt.set(ev.getDetectedAt());
-                networkOutageResolvedAt.set(null);
-                if (ev.getNetworkErrors() != null)  networkLastNetworkErrors.set(ev.getNetworkErrors());
-                if (ev.getTotalChecks()  != null)  networkLastTotal.set(ev.getTotalChecks());
-                if (ev.getErrorRate()    != null)  networkLastErrorRate.set(ev.getErrorRate());
-                log.info("Restored ONGOING network outage state from DB (detected_at={})", ev.getDetectedAt());
-            });
+            com.sitemonitor.service.outage.CertNetworkOutageService.Snapshot s = networkOutage().snapshot();
+            if (s.active()) log.info("Açık ağ kesintisi kaydı var (detected_at={}) — durum veritabanından okunuyor", s.detectedAt());
         } catch (Exception e) {
-            log.warn("Failed to restore outage state from DB: {}", e.getMessage());
-        }
-    }
-
-    private long computeOutageDurationMs() {
-        String d = networkOutageDetectedAt.get();
-        String r = networkOutageResolvedAt.get();
-        if (d == null || r == null) return 0L;
-        try {
-            Instant det = Instant.from(ISO.parse(d));
-            Instant res = Instant.from(ISO.parse(r));
-            return res.toEpochMilli() - det.toEpochMilli();
-        } catch (Exception e) {
-            return 0L;
+            log.warn("Failed to read outage state from DB: {}", e.getMessage());
         }
     }
 }
