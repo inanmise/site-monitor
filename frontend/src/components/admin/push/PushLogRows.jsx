@@ -5,7 +5,7 @@ import UserBadge from '../../ui/UserBadge.jsx'
 import SimpleTooltip from '../../ui/SimpleTooltip.jsx'
 import { SortHead, KindBadge, TriggerBadge, LevelBadge, TypeBadge, ErrorClassBadge, MUTED_SM } from '../LogViewParts.jsx'
 import { STATUS_META, triggerLabel, statusLabel, retryable } from './pushLogModel.js'
-import { pushReasonLabel, familyLabel } from '../../../utils/pushPrefs.js'
+import { pushReasonLabel, familyLabel, samePersonText } from '../../../utils/pushPrefs.js'
 import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
 import { TableBody, TableCell, TableHead, TableHeader, TableRow, Table } from '@/components/shadcn/table'
@@ -22,9 +22,9 @@ export function PushStatusBadge({ row, t, compact = false }) {
       {!compact && (row.kind === 'SKIPPED' || row.kind === 'BLOCKED') && row.status && (
         <div data-slot="pl-reason" className="w-full max-w-[260px] text-xs leading-snug text-muted-foreground" title={row.status}>{pushReasonLabel(row.status, t)}</div>
       )}
-      {/* Aynı kişi (2026-10-21): push aynı kişinin öbür hesabına gitti — o hesap (kullanıcı adı) */}
+      {/* Aynı kişi (2026-10-21): karar kişinin öbür hesabı için verildi (ya da o hesap çıkarıldı) — o hesap (kullanıcı adı) */}
       {!compact && row.same_person_username && (
-        <div data-slot="pl-same-person" className="w-full max-w-[260px] text-xs leading-snug [overflow-wrap:anywhere] text-muted-foreground">{t('push.samePersonOf', row.same_person_username)}</div>
+        <div data-slot="pl-same-person" className="w-full max-w-[260px] text-xs leading-snug [overflow-wrap:anywhere] text-muted-foreground">{samePersonText(t, row.status, row.same_person_username)}</div>
       )}
       {!compact && row.error && <div className="w-full max-w-[260px] truncate text-xs text-destructive" title={row.error}>{row.error}</div>}
       {!compact && detail && <div className={MUTED_SM}>{detail}</div>}
@@ -149,7 +149,7 @@ export function PushLogCards({ rows, t, canRequeue, busy, onOpen, onRequeue }) {
                 <span data-slot="pl-reason" className="min-w-0 text-xs leading-snug text-muted-foreground">{pushReasonLabel(row.status, t)}</span>
               )}
               {row.same_person_username && (
-                <span data-slot="pl-same-person" className="min-w-0 text-xs leading-snug [overflow-wrap:anywhere] text-muted-foreground">{t('push.samePersonOf', row.same_person_username)}</span>
+                <span data-slot="pl-same-person" className="min-w-0 text-xs leading-snug [overflow-wrap:anywhere] text-muted-foreground">{samePersonText(t, row.status, row.same_person_username)}</span>
               )}
               <PushRowLinks row={row} t={t} />
               <span className="flex min-w-0 flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">

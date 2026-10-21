@@ -102,9 +102,9 @@ public class UserPushRecipientResolver {
     /** Eskalasyon adımı push'u: kişinin bağlı/e-postası eşleşen aktif kullanıcısı yok. */
     public static final String SKIPPED_NO_USER_MATCH = "SKIPPED_NO_USER_MATCH";
     /**
-     * Eskalasyon adımı push'u: kişinin e-postası birden çok aktif kullanıcıya eşleşiyor (kime gideceği belirsiz). 2026-10-21'den
-     * beri YAZILMAZ — aynı e-postalı aktif hesaplar aynı kişidir, biri seçilir ({@link PushSamePersonGuard}); kod eski satırlar
-     * (günlük / geçmiş etiketleri) için kalır.
+     * Eskalasyon adımı push'u: kişinin e-postası FARKLI kişilerin aktif hesaplarına eşleşiyor (kime gideceği belirsiz — ör.
+     * ortak posta kutusu). 2026-10-21'den beri aynı kişinin hesapları (aynı e-posta + aynı ad, {@link PushSamePersonGuard})
+     * belirsiz sayılmaz: biri seçilir.
      */
     public static final String SKIPPED_AMBIGUOUS_USER = "SKIPPED_AMBIGUOUS_USER";
 
@@ -279,8 +279,8 @@ public class UserPushRecipientResolver {
      * gerekçesiyle döndürür (2026-09-11, kullanıcı: aynı takımdaki bir üyeye push gitmiyor, nedeni görünmüyor).
      * resolve() elenen üyeyi hiç yazmaz (teslimat günlüğü yalnız adayları taşır) — bu yüzden ayrı yüzey.
      *
-     * <p>{@code samePersonOf} (2026-10-21): karar {@link PushSamePersonGuard#SKIPPED_SAME_PERSON} ise push'u alacak (aynı
-     * e-postalı) hesabın kullanıcı adı; aksi hâlde null.
+     * <p>{@code samePersonOf} (2026-10-21): karar {@link PushSamePersonGuard#SKIPPED_SAME_PERSON} ise kararın verildiği (aynı
+     * kişinin) hesabın kullanıcı adı; aksi hâlde null.
      */
     public record Explanation(String username, String displayName, String title, String orgRole, boolean active,
                               String group, Boolean groupEnabled, String minLevel, boolean optOut, String decision,
@@ -303,10 +303,10 @@ public class UserPushRecipientResolver {
         int level = levelValue(alertLevel);
         java.time.Instant now = java.time.Instant.now(clock);
         java.util.Set<String> seen = new java.util.LinkedHashSet<>();   // id null olabilir → ad+id anahtarı
-        // Aynı kişi (2026-10-21): satırı yazılacak üyeler e-postaya göre gruplanır; grupta tek hesap push alır (gönderimle aynı
-        // kural, PushSamePersonGuard — senaryoda alarm yok: en son giriş, sonra en küçük kimlik). Sıra: açıklama indeksi.
-        Map<String, List<Integer>> byEmail = new LinkedHashMap<>();
-        Map<Integer, PushSamePersonGuard.Account> accounts = new java.util.HashMap<>();
+        // Aynı kişi (2026-10-21): satırı yazılacak üyeler kişiye göre gruplanır (aynı e-posta + aynı ad — gönderimle aynı kural,
+        // PushSamePersonGuard.groupPersons); kişinin ALICI kararlı hesaplarından biri seçilir (senaryoda alarm yok: en son giriş,
+        // sonra en küçük kimlik), diğerleri SKIPPED_SAME_PERSON. Hiçbiri alıcı değilse her hesap kendi nedeniyle kalır.
+        java.util.IdentityHashMap<PushSamePersonGuard.Account, Integer> accounts = new java.util.IdentityHashMap<>();
         for (AppUser u : userRepo.findByMembershipTeamId(teamId)) {
             String username = u.getUsername() == null ? "" : u.getUsername().trim();
             String display = u.getDisplayName() != null ? u.getDisplayName() : username;
@@ -328,23 +328,23 @@ public class UserPushRecipientResolver {
             seen.add(seenKey(u));
             String ek = PushSamePersonGuard.emailKey(u.getEmail());
             if (active && ek != null && !username.isEmpty() && ROW_DECISIONS.contains(decision)) {
-                byEmail.computeIfAbsent(ek, k -> new ArrayList<>()).add(out.size());
-                accounts.put(out.size(), new PushSamePersonGuard.Account(u.getId(), username, u.getEmail(),
-                        PushText.parseStoredUtc(u.getLastLoginAt())));
+                accounts.put(new PushSamePersonGuard.Account(u.getId(), username, u.getEmail(),
+                        PushText.parseStoredUtc(u.getLastLoginAt()), u.getDisplayName()), out.size());
             }
             out.add(new Explanation(username.isEmpty() ? "-" : username, display, u.getTitle(), u.getOrgRole(), active,
                     match == null ? null : match.key, match == null ? null : match.enabled,
                     match == null ? null : match.minLevel, optOut, decision));
         }
-        for (List<Integer> idxs : byEmail.values()) {
-            if (idxs.size() < 2) continue;
-            List<PushSamePersonGuard.Account> accs = idxs.stream().map(accounts::get).toList();
-            PushSamePersonGuard.Account chosen = PushSamePersonGuard.chooseByLogin(accs);
-            for (Integer i : idxs) {
-                PushSamePersonGuard.Account a = accounts.get(i);
+        for (List<PushSamePersonGuard.Account> person : PushSamePersonGuard.groupPersons(new ArrayList<>(accounts.keySet()).stream()
+                .sorted(java.util.Comparator.comparing(accounts::get)).toList())) {
+            List<PushSamePersonGuard.Account> eligible = person.stream()
+                    .filter(a -> "RECIPIENT".equals(out.get(accounts.get(a)).decision())).toList();
+            PushSamePersonGuard.Account chosen = PushSamePersonGuard.chooseByLogin(eligible);
+            if (chosen == null) continue;   // kişinin hiçbir hesabı alıcı değil: herkes kendi nedeniyle
+            for (PushSamePersonGuard.Account a : person) {
                 if (a == chosen) continue;
-                Explanation e = out.get(i);
-                out.set(i, new Explanation(e.username(), e.displayName(), e.title(), e.orgRole(), e.active(), e.group(),
+                Explanation e = out.get(accounts.get(a));
+                out.set(accounts.get(a), new Explanation(e.username(), e.displayName(), e.title(), e.orgRole(), e.active(), e.group(),
                         e.groupEnabled(), e.minLevel(), e.optOut(), PushSamePersonGuard.SKIPPED_SAME_PERSON, chosen.username()));
             }
         }
@@ -371,10 +371,11 @@ public class UserPushRecipientResolver {
      * <p>Öncelik: kişideki açık bağ ({@code escalation_contacts.user_id}); yoksa büyük/küçük harf duyarsız e-posta.
      * Rol grubu / takım üyeliği SORULMAZ — kişi eskalasyon listesinde olduğu için adımın alıcısıdır (e-postanın aynası).
      *
-     * <p>{@code sameEmail} (2026-10-21): e-posta birden çok AKTİF hesaba eşleştiyse {@code recipient} (en son giriş, sonra en
-     * küçük kimlik) dışındaki hesaplar — aynı kişi ({@link PushSamePersonGuard}); her biri kendi kişisel kararıyla. Çağıran
-     * (eskalasyon adımı push'u) aralarından TEK hesabı seçer, diğerlerine {@code SKIPPED_SAME_PERSON} satırı yazar. Eskiden
-     * bu durum {@link #SKIPPED_AMBIGUOUS_USER} ile push'suz kalıyordu. Boş = tek hesap.
+     * <p>{@code sameEmail} (2026-10-21): e-posta AYNI KİŞİNİN birden çok aktif hesabına eşleştiyse (aynı ad —
+     * {@link PushSamePersonGuard#groupPersons}) {@code recipient} (en son giriş, sonra en küçük kimlik) dışındaki hesaplar; her
+     * biri kendi kişisel kararıyla. Çağıran (eskalasyon adımı push'u) aralarından TEK hesabı seçer, diğerlerine
+     * {@code SKIPPED_SAME_PERSON} satırı yazar. Adres FARKLI kişilere eşleşiyorsa {@link #SKIPPED_AMBIGUOUS_USER} (push yok,
+     * eski davranış). Boş = tek hesap.
      */
     public record ContactMatch(Recipient recipient, String skipReason, List<Recipient> sameEmail) {
         public ContactMatch(Recipient recipient, String skipReason) {
@@ -401,9 +402,10 @@ public class UserPushRecipientResolver {
             List<AppUser> all = userRepo.findAllByEmailLower(email);
             List<AppUser> active = all.stream().filter(x -> Boolean.TRUE.equals(x.getActive())).toList();
             if (active.isEmpty()) return new ContactMatch(null, all.isEmpty() ? SKIPPED_NO_USER_MATCH : SKIPPED_USER_INACTIVE);
-            // Aynı kişi (2026-10-21, kullanıcı kararı): aynı e-postalı aktif hesaplar AYNI kişidir — eskiden "belirsiz" diye push hiç
-            // gitmiyordu (SKIPPED_AMBIGUOUS_USER; kod eski satırlar için kalır). Sıra: en son giriş, sonra en küçük kimlik; çağıran
-            // bu alarmda satırı olan hesabı öne alabilir (PushSamePersonGuard).
+            // Aynı kişi (2026-10-21, kullanıcı kararı + inceleme): aynı e-posta + aynı adı taşıyan aktif hesaplar AYNI kişidir —
+            // eskiden "belirsiz" diye push hiç gitmiyordu. Adres FARKLI kişilere aitse (ortak posta kutusu) yine belirsizdir
+            // (SKIPPED_AMBIGUOUS_USER). Sıra: en son giriş, sonra en küçük kimlik; çağıran gönderilebilir hesabı seçer
+            // (PushSamePersonGuard).
             List<AppUser> named = active.stream().filter(x -> x.getUsername() != null && !x.getUsername().isBlank())
                     .sorted(java.util.Comparator
                             .comparing((AppUser x) -> PushText.parseStoredUtc(x.getLastLoginAt()),
@@ -411,12 +413,21 @@ public class UserPushRecipientResolver {
                             .thenComparing(AppUser::getId, java.util.Comparator.nullsLast(java.util.Comparator.naturalOrder())))
                     .toList();
             if (named.isEmpty()) return new ContactMatch(null, "SKIPPED_NO_ID");
+            if (named.size() > 1 && !onePerson(named)) return new ContactMatch(null, SKIPPED_AMBIGUOUS_USER);
             u = named.get(0);
             for (int i = 1; i < named.size(); i++) others.add(contactRecipient(named.get(i), alertLevel, families, now));
         }
         String username = u.getUsername() == null ? "" : u.getUsername().trim();
         if (username.isEmpty()) return new ContactMatch(null, "SKIPPED_NO_ID");
         return new ContactMatch(contactRecipient(u, alertLevel, families, now), null, others);
+    }
+
+    /** Hesapların hepsi AYNI kişi mi ({@link PushSamePersonGuard#groupPersons}: tek grup, herkes içinde). */
+    static boolean onePerson(List<AppUser> users) {
+        List<PushSamePersonGuard.Account> accs = new ArrayList<>();
+        for (AppUser x : users) accs.add(new PushSamePersonGuard.Account(x.getId(), x.getUsername(), x.getEmail(), null, x.getDisplayName()));
+        List<List<PushSamePersonGuard.Account>> groups = PushSamePersonGuard.groupPersons(accs);
+        return groups.size() == 1 && groups.get(0).size() == accs.size();
     }
 
     /** Eşleşen hesap → alıcı, kişisel kurallar {@link #resolve} sırasıyla (opt-out → tercih → kişisel sessiz saat). */

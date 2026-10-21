@@ -255,10 +255,19 @@ class UserPushPreferencesTest {
             event("HIGH");
             when(resolver.resolveContact(any(), eq("HIGH"), any())).thenReturn(new UserPushRecipientResolver.ContactMatch(
                     new UserPushRecipientResolver.Recipient("N00009", "Nöbetçi", null), null));
-            when(deliveryRepo.existsRecentTeamResend(eq(9L), eq("N00009"), anyString())).thenReturn(true);
+            String now = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss")
+                    .withZone(java.time.ZoneOffset.UTC).format(java.time.Instant.now());
+            when(deliveryRepo.findPersonEvidenceByEvent(9L)).thenReturn(
+                    List.<Object[]>of(new Object[]{"N00009", "RESEND:ab12cd34", "PENDING", now}));
             assertThat(service.enqueueOnCall(9L, "MANUAL", 5L, 77L, Set.of())).isNull();
             assertThat(store).isEmpty();
-            when(deliveryRepo.existsRecentTeamResend(eq(9L), eq("N00009"), anyString())).thenReturn(false);
+            // 2026-10-21 inceleme: takım satırı ATLAMA satırıysa (seviye, tavan, aynı kişi …) "aldı" sayılmaz — nöbetçi kendi kararını verir
+            when(deliveryRepo.findPersonEvidenceByEvent(9L)).thenReturn(
+                    List.<Object[]>of(new Object[]{"N00009", "RESEND:ab12cd34", "SKIPPED_USER_LEVEL", now}));
+            assertThat(service.enqueueOnCall(9L, "MANUAL", 5L, 77L, Set.of())).isEqualTo("PENDING");
+            assertThat(store).singleElement().satisfies(d -> assertThat(d.getDedupeKey()).startsWith("ONCALL:RESEND:"));
+            store.clear();
+            when(deliveryRepo.findPersonEvidenceByEvent(9L)).thenReturn(List.of());
             assertThat(service.enqueueOnCall(9L, "MANUAL", 5L, 77L, Set.of())).isEqualTo("PENDING");
             assertThat(store).singleElement().satisfies(d -> assertThat(d.getDedupeKey()).startsWith("ONCALL:RESEND:"));
         }

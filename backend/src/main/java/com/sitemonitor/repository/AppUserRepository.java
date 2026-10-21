@@ -84,10 +84,11 @@ public interface AppUserRepository extends JpaRepository<AppUser, Long> {
     /**
      * Push "aynı kişi" kuralı (2026-10-21, {@code PushSamePersonGuard}): verilen hesapların (BÜYÜK harf kullanıcı adları)
      * e-posta adresini paylaşan TÜM aktif hesaplar — verilenlerin kendileri dahil. Boş adres hiçbir zaman eşleşmez; pasif
-     * hesap dönmez. Satır: {@code [Long id, String username, String email, String lastLoginAt]} (hafif izdüşüm — foto /
-     * EAGER teamIds yüklenmez; teslimat başına bir kez okunur).
+     * hesap dönmez. Satır: {@code [Long id, String username, String email, String lastLoginAt, String displayName]} (hafif
+     * izdüşüm — foto / EAGER teamIds yüklenmez; teslimat başına bir kez okunur; görünen ad kişi eşleşmesi içindir — aynı kutuyu
+     * paylaşan farklı kişiler birleşmez).
      */
-    @Query("SELECT u.id, u.username, u.email, u.lastLoginAt FROM AppUser u WHERE u.active = true AND u.email IS NOT NULL "
+    @Query("SELECT u.id, u.username, u.email, u.lastLoginAt, u.displayName FROM AppUser u WHERE u.active = true AND u.email IS NOT NULL "
         + "AND TRIM(u.email) <> '' AND LOWER(TRIM(u.email)) IN (SELECT LOWER(TRIM(v.email)) FROM AppUser v "
         + "WHERE v.active = true AND v.email IS NOT NULL AND TRIM(v.email) <> '' AND UPPER(v.username) IN :usernames)")
     List<Object[]> findSamePersonAccounts(@Param("usernames") Collection<String> upperUsernames);

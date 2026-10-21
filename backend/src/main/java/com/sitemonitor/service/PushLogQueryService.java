@@ -84,7 +84,7 @@ public class PushLogQueryService {
             m.put("kind", kind); m.put("error_class", errorClass);
             // 2026-10-04: saat tavanı özeti bağı (özetlenen satır → özet satırı) ve mesajın dili.
             m.put("overflow_summary_id", overflowSummaryId); m.put("push_lang", pushLang);
-            // 2026-10-21: aynı kişi kuralı — SKIPPED_SAME_PERSON satırında bildirimin gittiği hesap (kullanıcı adı).
+            // 2026-10-21: aynı kişi kuralı — SKIPPED_SAME_PERSON(_EXCLUDED) satırında kararın verildiği / çıkarılan hesap (kullanıcı adı).
             m.put("same_person_username", samePersonUsername);
             return m;
         }

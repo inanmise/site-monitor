@@ -12,6 +12,7 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/
 import { cn } from '@/lib/utils'
 import { fmtStamp, statusLabel } from './alertHistoryModel.js'
 import { clockTime } from './nocCallModel.js'
+import { samePersonText } from '../../../utils/pushPrefs.js'
 
 /**
  * Bildirim teslimatları — e-posta günlüğü (mail önizlemesi sandbox iframe'de) ve webhook (push) partileri.
@@ -137,9 +138,9 @@ export function PushDeliveryGroup({ rows }) {
         className={cn('gap-1.5 font-normal', p.same_person_username && 'h-auto flex-wrap overflow-visible rounded-md whitespace-normal')}>
         <UserBadge username={p.username} displayName={p.display_name} size="sm" inline nameOnly />
         <span data-who-id="" className="font-mono text-muted-foreground">{p.username}</span>
-        {/* Aynı kişi (2026-10-21): bu hesap atlandı, push aynı kişinin öbür hesabına gitti */}
+        {/* Aynı kişi (2026-10-21): bu hesaba ayrı push yok — karar kişinin öbür hesabı için verildi (ya da o hesap çıkarıldı) */}
         {p.same_person_username && (
-          <span data-who-same="" className="text-muted-foreground">· {t('push.samePersonOf', p.same_person_username)}</span>
+          <span data-who-same="" className="text-muted-foreground">· {samePersonText(t, p.status, p.same_person_username)}</span>
         )}
       </Badge>
     ))

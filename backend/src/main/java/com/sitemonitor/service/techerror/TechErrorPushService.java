@@ -206,7 +206,7 @@ public class TechErrorPushService {
         if (res.get("queued_usernames") instanceof Collection<?> col) {
             Set<String> q = new HashSet<>();
             for (Object o : col) if (o != null) q.add(o.toString().trim());
-            // Aynı kişi (2026-10-21): öbür hesabı push'u aldığı için atlanan hesap da ulaşılmış sayılır (karar kişi başına) —
+            // Aynı kişi (2026-10-21): kararın verildiği hesabı KUYRUKTAYSA atlanan hesap da ulaşılmış sayılır (karar kişi başına) —
             // yoksa yeniden denemede atlanan hesaba aynı hatırlatma ikinci kez giderdi.
             Map<String, String> same = new HashMap<>();
             if (res.get("same_person") instanceof Map<?, ?> m) {

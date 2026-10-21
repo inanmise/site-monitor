@@ -341,7 +341,8 @@ export const PUSH_STATUS_KEYS = new Set([
   // 2026-10-04: saat tavanı (ham görünüyordu) + kişisel tercihler + eskalasyon adımı kişi eşlemesi
   'RATE_LIMITED', 'SKIPPED_USER_LEVEL', 'SKIPPED_USER_TYPE', 'SKIPPED_USER_SNOOZE', 'SKIPPED_USER_INACTIVE',
   'SKIPPED_NO_USER_MATCH', 'SKIPPED_AMBIGUOUS_USER',
-  'SKIPPED_SAME_PERSON',   // 2026-10-21: aynı e-postalı aktif hesaplardan yalnız biri push alır (aynı kişi)
+  // 2026-10-21: aynı kişi (aynı e-posta + ad) — kararın verildiği başka hesap / kişinin başka hesabı bildirimden çıkarıldı
+  'SKIPPED_SAME_PERSON', 'SKIPPED_SAME_PERSON_EXCLUDED',
 ])
 
 /** Bildirim günlüğü tetiği "bildirim fırtınaya devredildi" kararı mı (e-posta değil, karar satırı — backend STORM). */

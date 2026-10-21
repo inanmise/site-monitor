@@ -1034,7 +1034,7 @@ public class SchedulerService {
         patch("ALTER TABLE user_push_deliveries ADD COLUMN overflow_summary_id BIGINT");
         patch("ALTER TABLE user_push_deliveries ADD COLUMN push_lang VARCHAR(5)");
         patch("CREATE INDEX IF NOT EXISTS idx_push_overflow ON user_push_deliveries(overflow_summary_id)");
-        // Aynı kişi kuralı (2026-10-21, PushSamePersonGuard): SKIPPED_SAME_PERSON satırında bildirimin gittiği hesap.
+        // Aynı kişi kuralı (2026-10-21, PushSamePersonGuard): SKIPPED_SAME_PERSON(_EXCLUDED) satırında kararın verildiği hesap.
         patch("ALTER TABLE user_push_deliveries ADD COLUMN same_person_username VARCHAR(100)");
         // Tetik kolonu 20 → 40 (2026-10-04): "DOMAIN_EXPIRY_REMINDER" (22) PostgreSQL'de "value too long" ile satırı düşürüyor,
         // writeTeamRows istisnayı yuttuğu için alan adı hatırlatma push'u İZSİZ kayboluyordu. Genişletme veri kaybı yapmaz.

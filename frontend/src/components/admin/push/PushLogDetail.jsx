@@ -9,7 +9,7 @@ import { useToast } from '../../ui/Toast.jsx'
 import { TriggerBadge, LevelBadge, TypeBadge, ErrorClassBadge, ChainList, MUTED_SM } from '../LogViewParts.jsx'
 import { PushStatusBadge, PushRowLinks, typeText } from './PushLogRows.jsx'
 import { triggerLabel, retryable, gapMs } from './pushLogModel.js'
-import { pushReasonLabel } from '../../../utils/pushPrefs.js'
+import { pushReasonLabel, samePersonText } from '../../../utils/pushPrefs.js'
 import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
 import { Card } from '@/components/shadcn/card'
@@ -188,7 +188,7 @@ export default function PushLogDetail({ open, detail, t, onClose, onPick, ids = 
                     <span data-slot="pl-detail-reason" className="mb-1 block">{pushReasonLabel(d.status, t)}</span>
                   )}
                   {d.same_person_username && (
-                    <span data-slot="pl-detail-same-person" className="mb-1 block [overflow-wrap:anywhere]">{t('push.samePersonOf', d.same_person_username)}</span>
+                    <span data-slot="pl-detail-same-person" className="mb-1 block [overflow-wrap:anywhere]">{samePersonText(t, d.status, d.same_person_username)}</span>
                   )}
                   <code className="text-[0.85em] [overflow-wrap:anywhere]">{errText}</code>
                 </AlertBanner>

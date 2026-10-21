@@ -48,6 +48,8 @@ import static org.mockito.Mockito.when;
  * Aynı kişi kuralı uçtan uca (2026-10-21, prod alarm #628 "OCPAA - Servis Yanıt Süresi Anomalisi"): GERÇEK SQL (H2,
  * PostgreSQL kipi) + GERÇEK alıcı çözümü + gerçek ağ geçidi isteği (JDK HttpServer). Sekiz kişilik takımda aynı kişinin iki
  * hesabı ("MP60146" / "N60146", e-posta farklı harf ve boşlukla) → TEK push; diğer hesap {@code SKIPPED_SAME_PERSON} satırı.
+ * İnceleme (2026-10-21): seçilen hesap GÖNDERİLEBİLİR olmalı (opt-out / tavan), hiçbiri değilse birleştirme yok; ortak posta
+ * kutusunu paylaşan FARKLI kişiler birleşmez; nöbetçi yalnız push'u ALAN satırları sayar.
  *
  * <p>Yazan sorgular işlem dışında koşar ({@code NOT_SUPPORTED}): outbox işçisi ayrı iş parçacığında satırları okur.
  * Fixture kimlikleri SAHTE sicillerdir.
@@ -66,6 +68,7 @@ class UserPushSamePersonTest {
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final long TEAM = 7L;
     private static final String SAME = PushSamePersonGuard.SKIPPED_SAME_PERSON;
+    private static final String EXCLUDED = PushSamePersonGuard.SKIPPED_SAME_PERSON_EXCLUDED;
 
     @Autowired AppUserRepository userRepo;
     @Autowired UserPushDeliveryRepository deliveryRepo;
@@ -132,9 +135,13 @@ class UserPushSamePersonTest {
     // ── Yardımcılar ────────────────────────────────────────────────────────────────────────────
 
     private AppUser user(String username, String email, String lastLogin, Long... teams) {
+        return named(username, "Ad " + username, email, lastLogin, teams);
+    }
+
+    private AppUser named(String username, String displayName, String email, String lastLogin, Long... teams) {
         AppUser u = new AppUser();
         u.setUsername(username);
-        u.setDisplayName("Ad " + username);
+        u.setDisplayName(displayName);
         u.setEmail(email);
         u.setOrgRole("TECH");
         u.setActive(true);
@@ -144,11 +151,27 @@ class UserPushSamePersonTest {
         return userRepo.save(u);
     }
 
-    /** #628 takımı: altı ayrı kişi + aynı kişinin iki hesabı (e-posta farklı harf / boşlukla). */
+    /** #628 takımı: altı ayrı kişi + aynı kişinin iki hesabı (e-posta farklı harf / boşlukla, ad AD biçiminde sicilli). */
     private void team628(String mpLogin, String nLogin) {
         for (int i = 1; i <= 6; i++) user("N0000" + i, "kisi" + i + "@example.com", "2026-10-19T08:00:00", TEAM);
-        user("MP60146", "  Emre.Gokoglu@Example.com ", mpLogin, TEAM);
-        user("N60146", "emre.gokoglu@example.com", nLogin, TEAM);
+        named("MP60146", "Emre Gökoğlu MP60146", "  Emre.Gokoglu@Example.com ", mpLogin, TEAM);
+        named("N60146", "EMRE GÖKOĞLU N60146", "emre.gokoglu@example.com", nLogin, TEAM);
+    }
+
+    private void optOut(String username) {
+        AppUser u = userRepo.findByUsername(username).orElseThrow();
+        u.setPushOptOut(true);
+        userRepo.save(u);
+    }
+
+    /** Bu yinelenmezlik anahtarındaki satırlar (olaysız takım / doğrudan / fırtına bildirimleri). */
+    private List<UserPushDelivery> keyRows(String key) {
+        return deliveryRepo.findAll().stream().filter(d -> key.equals(d.getDedupeKey())).toList();
+    }
+
+    private UserPushDelivery keyRow(String key, String username) {
+        return keyRows(key).stream().filter(d -> username.equals(d.getUsername())).findFirst()
+                .orElseThrow(() -> new AssertionError("satır yok: " + username + " " + key));
     }
 
     private AlertEvent alarm(String level) {
@@ -251,17 +274,102 @@ class UserPushSamePersonTest {
     }
 
     @Test
-    @DisplayName("seçilen hesap push istemiyorsa (opt-out) bugünkü opt-out satırı yazılır, öbür hesap YİNE SKIPPED_SAME_PERSON (kişi başına tek karar)")
-    void optedOutChosenAccount() {
+    @DisplayName("inceleme: en son giriş yapan hesap push'u kapattıysa (opt-out) kişiye ÖBÜR hesaptan gider; opt-out hesap SKIPPED_SAME_PERSON")
+    void optedOutAccountIsNeverChosen() throws Exception {
         team628("2026-10-18T09:00:00", "2026-10-19T21:00:00");
-        AppUser n = userRepo.findByUsername("N60146").orElseThrow();
-        n.setPushOptOut(true);
-        userRepo.save(n);
+        optOut("N60146");
+        AlertEvent e = alarm("HIGH");
+        push.enqueueAlert(e.getId(), "INITIAL", TEAM, null);
+        List<UserPushDelivery> rs = rows(e.getId());
+        assertThat(row(rs, "MP60146", "OPEN").getStatus()).isIn("PENDING", "SENT");
+        assertThat(row(rs, "MP60146", "OPEN").getSamePersonUsername()).isNull();
+        assertThat(row(rs, "N60146", "OPEN").getStatus()).isEqualTo(SAME);
+        assertThat(row(rs, "N60146", "OPEN").getSamePersonUsername()).isEqualTo("MP60146");
+        awaitSent(e.getId(), "MP60146", "OPEN");
+        assertThat(gatewayUserIds().stream().flatMap(List::stream).toList()).containsOnlyOnce("MP60146").doesNotContain("N60146");
+    }
+
+    @Test
+    @DisplayName("inceleme: kişinin HİÇBİR hesabı gönderilebilir değilse birleştirme yok — her hesap kendi dürüst nedenini yazar")
+    void noDeliverableAccountMeansNoMerge() {
+        team628("2026-10-18T09:00:00", "2026-10-19T21:00:00");
+        optOut("N60146");
+        AppUser mp = userRepo.findByUsername("MP60146").orElseThrow();
+        mp.setPushMinLevel("CRITICAL");   // HIGH alarm → SKIPPED_USER_LEVEL
+        userRepo.save(mp);
         AlertEvent e = alarm("HIGH");
         push.enqueueAlert(e.getId(), "INITIAL", TEAM, null);
         List<UserPushDelivery> rs = rows(e.getId());
         assertThat(row(rs, "N60146", "OPEN").getStatus()).isEqualTo("SKIPPED_USER_OPT_OUT");
-        assertThat(row(rs, "MP60146", "OPEN").getStatus()).isEqualTo(SAME);
+        assertThat(row(rs, "MP60146", "OPEN").getStatus()).isEqualTo(UserPushRecipientResolver.SKIPPED_USER_LEVEL);
+        assertThat(rs).extracting(UserPushDelivery::getStatus).doesNotContain(SAME);
+        assertThat(rs).extracting(UserPushDelivery::getSamePersonUsername).containsOnlyNulls();
+        // Önizleme aynı kararı verir
+        assertThat(push.preview(e.getId(), TEAM).recipients()).extracting(UserPushService.PushPreviewRow::status)
+                .doesNotContain(SAME);
+    }
+
+    @Test
+    @DisplayName("inceleme: saat tavanındaki hesap yerine tavan altındaki hesap seçilir (en son giriş daha yeni olsa da)")
+    void underCapBeatsOverCap() {
+        team628("2026-10-18T09:00:00", "2026-10-19T21:00:00");
+        when(settings.getInt(eq("site.monitor.userpush.hourly-cap"), any(Integer.class))).thenReturn(1);
+        UserPushDelivery earlier = new UserPushDelivery();
+        earlier.setTrigger("OPEN");
+        earlier.setDedupeKey("OPEN");
+        earlier.setAlertEventId(4242L);
+        earlier.setUsername("N60146");
+        earlier.setStatus("SENT");
+        earlier.setCreatedAt(ISO.format(Instant.now().minusSeconds(60)));
+        deliveryRepo.save(earlier);
+        AlertEvent e = alarm("HIGH");
+        push.enqueueAlert(e.getId(), "INITIAL", TEAM, null);
+        List<UserPushDelivery> rs = rows(e.getId());
+        assertThat(row(rs, "MP60146", "OPEN").getStatus()).isIn("PENDING", "SENT");
+        assertThat(row(rs, "N60146", "OPEN").getStatus()).isEqualTo(SAME);
+        assertThat(row(rs, "N60146", "OPEN").getSamePersonUsername()).isEqualTo("MP60146");
+    }
+
+    @Test
+    @DisplayName("inceleme: ortak posta kutusunu paylaşan FARKLI kişiler (farklı ad) birleşmez — ikisi de kendi push'unu alır")
+    void sharedMailboxDifferentPeopleNotMerged() {
+        named("A00001", "Ayşe Yılmaz", "ekip-kutusu@example.com", "2026-10-19T08:00:00", TEAM);
+        named("A00002", "Mehmet Demir", "Ekip-Kutusu@example.com", "2026-10-19T09:00:00", TEAM);
+        AlertEvent e = alarm("HIGH");
+        push.enqueueAlert(e.getId(), "INITIAL", TEAM, null);
+        assertThat(rows(e.getId())).hasSize(2).extracting(UserPushDelivery::getStatus).doesNotContain(SAME);
+        assertThat(resolver.explain(TEAM, "HIGH")).extracting(UserPushRecipientResolver.Explanation::decision)
+                .containsOnly("RECIPIENT");
+
+        // Eskalasyon kişisinin adresi FARKLI kişilere eşleşiyor → kime gideceği belirsiz (eski davranış, push yok)
+        EscalationContact c = new EscalationContact();
+        c.setId(79L);
+        c.setEmail("ekip-kutusu@example.com");
+        c.setTeamId(TEAM);
+        assertThat(push.enqueueEscalationStep(alertRepo.findById(e.getId()).orElseThrow(), c, 15))
+                .isEqualTo(UserPushRecipientResolver.SKIPPED_AMBIGUOUS_USER);
+    }
+
+    @Test
+    @DisplayName("inceleme: alarm yolunun kanıtı DAR izdüşümle okunur — [kullanıcı, anahtar, durum, zaman], sistem satırı hariç")
+    void evidenceProjectionIsNarrow() {
+        team628("2026-10-18T09:00:00", "2026-10-19T21:00:00");
+        AlertEvent e = alarm("HIGH");
+        push.enqueueAlert(e.getId(), "INITIAL", TEAM, null);
+        UserPushDelivery sys = new UserPushDelivery();
+        sys.setAlertEventId(e.getId());
+        sys.setTrigger("OPEN");
+        sys.setDedupeKey("SYS");
+        sys.setUsername("-");
+        sys.setStatus("SKIPPED_NO_RECIPIENTS");
+        sys.setCreatedAt(ISO.format(Instant.now()));
+        deliveryRepo.save(sys);
+        List<Object[]> ev = deliveryRepo.findPersonEvidenceByEvent(e.getId());
+        assertThat(ev).hasSize(8).allSatisfy(r -> assertThat(r).hasSize(4));
+        assertThat(ev).extracting(r -> (String) r[0]).doesNotContain("-").contains("MP60146", "N60146");
+        assertThat(ev).extracting(r -> (String) r[1]).containsOnly("OPEN");
+        assertThat(deliveryRepo.findPersonEvidenceByKey("OPEN", List.of("MP60146"))).singleElement()
+                .satisfies(r -> assertThat(r).hasSize(4));
     }
 
     @Test
@@ -288,7 +396,7 @@ class UserPushSamePersonTest {
     @DisplayName("elle gönderim: operatör push'u alacak hesabı listeden çıkardıysa kişiyi çıkarmıştır — öbür hesaba da push / satır YOK (nöbetçi dahil)")
     void resendExclusionRemovesThePerson() {
         team628("2026-10-18T09:00:00", "2026-10-19T21:00:00");
-        AppUser oncall = user("N60999", "EMRE.gokoglu@example.com", "2026-10-01T09:00:00", 99L);   // aynı kişinin üçüncü hesabı
+        AppUser oncall = named("N60999", "Emre Gökoğlu (Nöbet)", "EMRE.gokoglu@example.com", "2026-10-01T09:00:00", 99L);   // aynı kişinin üçüncü hesabı
         AlertEvent e = alarm("HIGH");
         push.enqueueAlert(e.getId(), "MANUAL", TEAM, null, Set.of("N60146"));
         assertThat(rows(e.getId())).extracting(UserPushDelivery::getUsername)
@@ -298,7 +406,7 @@ class UserPushSamePersonTest {
     }
 
     @Test
-    @DisplayName("Kim alır? (explain): aynı kişinin ikinci hesabı SKIPPED_SAME_PERSON kararı + push'u alacak hesap")
+    @DisplayName("Kim alır? (explain): aynı kişinin ikinci hesabı SKIPPED_SAME_PERSON kararı + kararın verildiği hesap")
     void explainShowsMergedAccount() {
         team628("2026-10-18T09:00:00", "2026-10-19T21:00:00");
         List<UserPushRecipientResolver.Explanation> ex = resolver.explain(TEAM, "HIGH");
@@ -306,6 +414,20 @@ class UserPushSamePersonTest {
         assertThat(mp.decision()).isEqualTo(SAME);
         assertThat(mp.samePersonOf()).isEqualTo("N60146");
         assertThat(ex.stream().filter(x -> "N60146".equals(x.username())).findFirst().orElseThrow().decision()).isEqualTo("RECIPIENT");
+
+        // Gönderimle aynı: push'u kapatan hesap seçilmez
+        optOut("N60146");
+        ex = resolver.explain(TEAM, "HIGH");
+        assertThat(ex.stream().filter(x -> "MP60146".equals(x.username())).findFirst().orElseThrow().decision()).isEqualTo("RECIPIENT");
+        UserPushRecipientResolver.Explanation n = ex.stream().filter(x -> "N60146".equals(x.username())).findFirst().orElseThrow();
+        assertThat(n.decision()).isEqualTo(SAME);
+        assertThat(n.samePersonOf()).isEqualTo("MP60146");
+
+        // Hiçbiri alıcı değilse herkes kendi nedeniyle
+        optOut("MP60146");
+        ex = resolver.explain(TEAM, "HIGH");
+        assertThat(ex.stream().filter(x -> x.username().endsWith("60146")).map(UserPushRecipientResolver.Explanation::decision))
+                .containsOnly("SKIPPED_USER_OPT_OUT");
     }
 
     // ── Öbür yollar ───────────────────────────────────────────────────────────────────────────
@@ -317,7 +439,7 @@ class UserPushSamePersonTest {
         AlertEvent e = alarm("HIGH");
         push.enqueueStormNoticeLocalized(55L, null, TEAM, "INITIAL", "HIGH", List.of(e),
                 UserPushService.LocalizedText.of("3 monitör düştü"));
-        List<UserPushDelivery> init = deliveryRepo.findPersonRowsByKey("storm:55:INITIAL", List.of("MP60146", "N60146"));
+        List<UserPushDelivery> init = keyRows("storm:55:INITIAL");
         assertThat(init).extracting(UserPushDelivery::getUsername, UserPushDelivery::getStatus)
                 .contains(org.assertj.core.groups.Tuple.tuple("MP60146", SAME));
         assertThat(init.stream().filter(d -> "N60146".equals(d.getUsername())).findFirst().orElseThrow().getStatus())
@@ -329,7 +451,7 @@ class UserPushSamePersonTest {
         push.enqueueStormNoticeLocalized(55L, null, TEAM, "DAILY_REALERT", "HIGH", List.of(e),
                 UserPushService.LocalizedText.of("hâlâ düşük"));
         String daily = UserPushService.stormDedupeKey(55L, "DAILY_REALERT");
-        List<UserPushDelivery> rs = deliveryRepo.findPersonRowsByKey(daily, List.of("MP60146", "N60146"));
+        List<UserPushDelivery> rs = keyRows(daily);
         assertThat(rs.stream().filter(d -> "MP60146".equals(d.getUsername())).findFirst().orElseThrow().getStatus()).isEqualTo(SAME);
         assertThat(rs.stream().filter(d -> "N60146".equals(d.getUsername())).findFirst().orElseThrow().getStatus()).isIn("PENDING", "SENT");
     }
@@ -346,6 +468,21 @@ class UserPushSamePersonTest {
         assertThat(d.getDedupeKey()).isEqualTo("ONCALL:OPEN");
         assertThat(d.getSamePersonUsername()).isEqualTo("MP60146");
         assertThat(row(rows(e.getId()), "MP60146", "OPEN").getStatus()).isIn("PENDING", "SENT");
+    }
+
+    @Test
+    @DisplayName("inceleme (nöbetçi B): takım hesabının satırı ATLAMA satırıysa (opt-out) nöbetçi hesabı push'u alır — atlama satırı 'aldı' sayılmaz")
+    void onCallCountsOnlyDeliveringTeamRows() throws Exception {
+        user("MP60146", "emre.gokoglu@example.com", "2026-10-18T09:00:00", TEAM);
+        AppUser oncall = user("N60146", "Emre.Gokoglu@example.com", "2026-10-19T21:00:00", 99L);
+        optOut("MP60146");
+        AlertEvent e = alarm("HIGH");
+        push.enqueueAlert(e.getId(), "INITIAL", TEAM, null);
+        assertThat(row(rows(e.getId()), "MP60146", "OPEN").getStatus()).isEqualTo("SKIPPED_USER_OPT_OUT");
+        assertThat(push.enqueueOnCall(e.getId(), "INITIAL", TEAM, oncall.getId(), Set.of())).isEqualTo("PENDING");
+        awaitSent(e.getId(), "N60146", "OPEN");
+        assertThat(row(rows(e.getId()), "N60146", "OPEN").getSamePersonUsername()).isNull();
+        assertThat(gatewayUserIds().stream().flatMap(List::stream).toList()).containsExactly("N60146");
     }
 
     @Test
@@ -397,7 +534,7 @@ class UserPushSamePersonTest {
     }
 
     @Test
-    @DisplayName("haftalık rapor: müdüre doğrudan push + takım bildiriminde müdürün öbür hesabı ikinci kez almaz")
+    @DisplayName("haftalık rapor: müdüre doğrudan push + takım bildiriminde müdürün öbür hesabı ikinci kez almaz (SKIPPED_SAME_PERSON_EXCLUDED)")
     void weeklyManagerSibling() {
         AppUser mgr = user("MGR001", "mudur@example.com", "2026-10-19T08:00:00");
         user("N00777", "Mudur@Example.com ", "2026-10-19T09:00:00", TEAM);   // müdürün takımdaki öbür hesabı
@@ -407,8 +544,8 @@ class UserPushSamePersonTest {
         Map<String, Object> team = push.enqueueTeamNotice(TEAM, "WEEKLY_REPORT", "WARNING", "WEEKLY_REPORT", "Takım",
                 "rapor onaylandı", "weekly:1", Set.of("MGR001"));
         assertThat(team.get("queued")).isEqualTo(1);
-        UserPushDelivery sib = deliveryRepo.findPersonRowsByKey("weekly:1", List.of("N00777")).get(0);
-        assertThat(sib.getStatus()).isEqualTo(SAME);
+        UserPushDelivery sib = keyRow("weekly:1", "N00777");
+        assertThat(sib.getStatus()).isEqualTo(EXCLUDED);
         assertThat(sib.getSamePersonUsername()).isEqualTo("MGR001");
     }
 
@@ -432,7 +569,7 @@ class UserPushSamePersonTest {
         Map<String, Object> second = push.enqueueDirectLocalized(List.of(new UserPushService.DirectRecipient("MP60146", "PO A", false)),
                 TEAM, "TECH_ERROR_APPROVAL", "WARNING", "TECH_ERROR_REPORT", "Kanal", UserPushService.LocalizedText.of("x"), "te-appr:1:2");
         assertThat(second.get("queued")).isEqualTo(0);
-        assertThat(deliveryRepo.findPersonRowsByKey("te-appr:1:2", List.of("MP60146")).get(0).getStatus()).isEqualTo(SAME);
+        assertThat(keyRow("te-appr:1:2", "MP60146").getStatus()).isEqualTo(SAME);
     }
 
     @Test
@@ -471,5 +608,50 @@ class UserPushSamePersonTest {
         assertThat(summaries).hasSize(1);
         assertThat(summaries.get(0).getUsername()).isEqualTo("N60146");
         assertThat(deliveryRepo.findByOverflowSummaryIdOrderByIdAsc(summaries.get(0).getId())).hasSize(3);
+    }
+
+    private void overflowRows(String... usernames) {
+        String old = ISO.format(Instant.now().minus(Duration.ofMinutes(30)));
+        for (String u : usernames) {
+            UserPushDelivery d = new UserPushDelivery();
+            d.setTrigger("OPEN");
+            d.setDedupeKey("OPEN");
+            d.setAlertEventId(1000L + deliveryRepo.count());
+            d.setUsername(u);
+            d.setStatus("RATE_LIMITED");
+            d.setAlertLevel("HIGH");
+            d.setMonitorName("x.example.com");
+            d.setCreatedAt(old);
+            deliveryRepo.save(d);
+        }
+    }
+
+    @Test
+    @DisplayName("inceleme: saat tavanı özeti push'u kapatan hesaba GİTMEZ — kişinin alabilen hesabına; hiçbiri alamıyorsa her hesap kendi satırı")
+    void overflowSkipsAccountsThatCannotReceive() {
+        user("MP60146", "emre@example.com", "2026-10-18T09:00:00", TEAM);
+        user("N60146", "Emre@Example.com", "2026-10-19T21:00:00", TEAM);
+        optOut("N60146");
+        overflowRows("MP60146", "N60146", "MP60146");
+        UserPushOverflowService ovf = new UserPushOverflowService(push, deliveryRepo, userRepo, null);
+        ovf.setSamePerson(guard);
+        assertThat(ovf.sweep(Instant.now()).summaries()).isEqualTo(1);
+        List<UserPushDelivery> summaries = deliveryRepo.findAll().stream()
+                .filter(d -> UserPushOverflowService.TRIGGER.equals(d.getTrigger())).toList();
+        assertThat(summaries).singleElement().satisfies(s -> {
+            assertThat(s.getUsername()).isEqualTo("MP60146");
+            assertThat(deliveryRepo.findByOverflowSummaryIdOrderByIdAsc(s.getId())).hasSize(3);
+        });
+
+        deliveryRepo.deleteAll();
+        optOut("MP60146");
+        overflowRows("MP60146", "N60146");
+        UserPushOverflowService.SweepResult r = ovf.sweep(Instant.now());
+        assertThat(r.summaries()).isZero();
+        assertThat(r.skipped()).isEqualTo(2);
+        assertThat(deliveryRepo.findAll().stream().filter(d -> UserPushOverflowService.TRIGGER.equals(d.getTrigger())))
+                .extracting(UserPushDelivery::getUsername, UserPushDelivery::getStatus)
+                .containsExactlyInAnyOrder(org.assertj.core.groups.Tuple.tuple("MP60146", "SKIPPED_USER_OPT_OUT"),
+                        org.assertj.core.groups.Tuple.tuple("N60146", "SKIPPED_USER_OPT_OUT"));
     }
 }

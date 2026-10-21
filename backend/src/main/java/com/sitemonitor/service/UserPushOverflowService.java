@@ -134,43 +134,63 @@ public class UserPushOverflowService {
                     }
                 }
             }
-            Instant first = null;
-            for (String g : group) {
-                Instant f = PushText.parseStoredUtc(firstAt.get(g));
-                if (f != null && (first == null || f.isBefore(first))) first = f;
-            }
-            if (first == null || now.isBefore(first.plus(window))) continue;          // ilk taşmadan beri aralık dolmadı
-            Instant last = null;
-            for (String a : accounts) {
-                Instant l = PushText.parseStoredUtc(repo.lastOverflowSummaryAt(a));
-                if (l != null && (last == null || l.isAfter(last))) last = l;
-            }
-            if (last != null && now.isBefore(last.plus(window))) continue;            // bu aralıkta zaten bir özet gitti
-            String target = username;
-            List<String> others = List.of();
+            // Özetin hedefi: kişinin özeti ALABİLECEK hesabı (aktif, push'u kapatmamış — 2026-10-21 inceleme), en son giriş, kimlik.
+            // Hiçbiri alamıyorsa birleştirme YOK: her hesap kendi özetini / kendi dürüst atlama satırını alır (eski davranış).
+            List<List<String>> units = new ArrayList<>();
             if (group.size() > 1) {
-                List<PushSamePersonGuard.Account> inGroup = person.stream()
+                List<PushSamePersonGuard.Account> ready = person.stream()
                         .filter(a -> group.stream().anyMatch(g -> PushSamePersonGuard.key(g).equals(PushSamePersonGuard.key(a.username()))))
+                        .filter(a -> canReceive(a.username()))
                         .toList();
-                PushSamePersonGuard.Account chosen = PushSamePersonGuard.chooseByLogin(inGroup);
-                if (chosen != null) {
-                    for (String g : group) if (PushSamePersonGuard.key(g).equals(PushSamePersonGuard.key(chosen.username()))) target = g;
+                PushSamePersonGuard.Account chosen = PushSamePersonGuard.chooseByLogin(ready);
+                if (chosen == null) {
+                    for (String g : group) units.add(List.of(g));
+                } else {
+                    List<String> unit = new ArrayList<>();
+                    for (String g : group) if (PushSamePersonGuard.key(g).equals(PushSamePersonGuard.key(chosen.username()))) unit.add(g);
+                    for (String g : group) if (!unit.contains(g)) unit.add(g);
+                    units.add(unit);
                 }
-                String t = target;
-                others = group.stream().filter(g -> !g.equals(t)).toList();
+            } else {
+                units.add(group);
             }
-            try {
-                switch (summarize(target, others, now, since)) {
-                    case SENT -> summaries++;
-                    case SKIPPED -> skipped++;
-                    case DEFERRED -> deferred++;
-                    default -> { /* sahiplenecek satır kalmadı */ }
+            for (List<String> unit : units) {
+                Instant first = null;
+                for (String g : unit) {
+                    Instant f = PushText.parseStoredUtc(firstAt.get(g));
+                    if (f != null && (first == null || f.isBefore(first))) first = f;
                 }
-            } catch (Exception e) {
-                log.warn("Push saat tavanı özeti kurulamadı (kullanıcı başına yalıtım): {}", e.toString());
+                if (first == null || now.isBefore(first.plus(window))) continue;      // ilk taşmadan beri aralık dolmadı
+                Instant last = null;
+                for (String a : units.size() > 1 ? unit : accounts) {
+                    Instant l = PushText.parseStoredUtc(repo.lastOverflowSummaryAt(a));
+                    if (l != null && (last == null || l.isAfter(last))) last = l;
+                }
+                if (last != null && now.isBefore(last.plus(window))) continue;        // bu aralıkta zaten bir özet gitti
+                try {
+                    switch (summarize(unit.get(0), unit.subList(1, unit.size()), now, since)) {
+                        case SENT -> summaries++;
+                        case SKIPPED -> skipped++;
+                        case DEFERRED -> deferred++;
+                        default -> { /* sahiplenecek satır kalmadı */ }
+                    }
+                } catch (Exception e) {
+                    log.warn("Push saat tavanı özeti kurulamadı (kullanıcı başına yalıtım): {}", e.toString());
+                }
             }
         }
         return new SweepResult(summaries, skipped, deferred);
+    }
+
+    /** Hesap özeti alabilir mi (aktif, push'u kapatmamış) — okunamazsa hayır (yanlış hesaba birleştirilmesin). */
+    private boolean canReceive(String username) {
+        try {
+            AppUser u = userRepo.findByUsername(username).orElse(null);
+            return u != null && Boolean.TRUE.equals(u.getActive()) && !Boolean.TRUE.equals(u.getPushOptOut());
+        } catch (RuntimeException e) {
+            log.warn("Push saat tavanı özeti: hesap okunamadı ({}): {}", username, e.toString());
+            return false;
+        }
     }
 
     enum Outcome { NONE, SENT, SKIPPED, DEFERRED }

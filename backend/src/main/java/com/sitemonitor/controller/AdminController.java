@@ -2631,7 +2631,7 @@ public class AdminController {
                     m.put("username",     r.username());
                     m.put("display_name", r.displayName());
                     m.put("status",       r.status());
-                    // Aynı kişi kuralı (2026-10-21): SKIPPED_SAME_PERSON satırında push'un gideceği hesap.
+                    // Aynı kişi kuralı (2026-10-21): SKIPPED_SAME_PERSON satırında kararın verildiği (aynı kişinin) hesap.
                     m.put("same_person_of", r.samePersonOf());
                     return m;
                 }).toList();

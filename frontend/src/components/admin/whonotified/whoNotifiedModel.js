@@ -135,7 +135,7 @@ export function buildView(data) {
       orgRole: pick(p, 'org_role', 'orgRole'),
       group: p?.group || null,
       minLevel: pick(p, 'min_level', 'minLevel'),
-      // Aynı kişi (2026-10-21): karar SKIPPED_SAME_PERSON ise push'u alacak (aynı e-postalı) hesap
+      // Aynı kişi (2026-10-21): karar SKIPPED_SAME_PERSON ise kararın verildiği (aynı kişinin) hesap
       samePersonOf: pick(p, 'same_person_of', 'samePersonOf') || null,
       decision,
       effective,

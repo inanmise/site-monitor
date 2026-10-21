@@ -48,6 +48,15 @@ export function pushReasonLabel(code, t) {
   return v === key ? code : v
 }
 
+/**
+ * Aynı kişi satırının hesap notu (2026-10-21): SKIPPED_SAME_PERSON → kararın verildiği hesap; SKIPPED_SAME_PERSON_EXCLUDED →
+ * bildirimden çıkarılan hesap. Metin gönderildiğini iddia etmez (inceleme): karar o hesap için verildi.
+ */
+export function samePersonText(t, status, username) {
+  if (!username) return ''
+  return status === 'SKIPPED_SAME_PERSON_EXCLUDED' ? t('push.samePersonExcludedOf', username) : t('push.samePersonOf', username)
+}
+
 /** Push tetiği etiketi — `userpush.trigger.<T>`; bilinmeyen ham. */
 export function pushTriggerLabel(trigger, t) {
   if (!trigger) return '—'

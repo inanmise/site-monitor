@@ -18,9 +18,10 @@ import static org.mockito.Mockito.when;
 
 /**
  * Aynı kişi kuralının karar çekirdeği (2026-10-21, prod alarm #628) — sorgunun kendisi H2 üstünde
- * {@code UserPushSamePersonTest}'te; burada seçim sırası ve gruplama: e-posta (kırpılmış, harf duyarsız) aynı aktif hesaplar
- * tek kişidir; boş adres asla birleşmez; seçim = bu bildirimi almış hesap → bu olayda SENT → herhangi bir satır → son giriş →
- * en küçük kimlik. Fixture kimlikleri SAHTE sicillerdir.
+ * {@code UserPushSamePersonTest}'te; burada seçim sırası ve gruplama: e-posta (kırpılmış, harf duyarsız) ve kişi adı aynı aktif
+ * hesaplar tek kişidir; boş adres asla birleşmez; seçim = bu bildirimi almış hesap → yoksa GÖNDERİLEBİLİR hesaplar (tavan altı →
+ * bu olayda SENT → PENDING → son giriş → en küçük kimlik); hiçbiri gönderilebilir değilse birleştirme yok. Fixture kimlikleri
+ * SAHTE sicillerdir.
  */
 class PushSamePersonGuardTest {
 
@@ -30,6 +31,33 @@ class PushSamePersonGuardTest {
     private static Object[] acc(long id, String username, String email, String lastLogin) {
         return new Object[]{id, username, email, lastLogin};
     }
+
+    private static Object[] acc(long id, String username, String email, String lastLogin, String displayName) {
+        return new Object[]{id, username, email, lastLogin, displayName};
+    }
+
+    private static PushSamePersonGuard.Account a(long id, String username, String email, String displayName) {
+        return new PushSamePersonGuard.Account(id, username, email, null, displayName);
+    }
+
+    /** Kişi adı katlama doğruluk tablosu: girdi → beklenen anahtar ({@code null} = boş ad). */
+    private static final String[][] PERSON_NAME_TABLE = {
+            {"Emre Gökoğlu MP60146", "emre gokoglu"},
+            {"Emre Gökoğlu N60146", "emre gokoglu"},
+            {"EMRE GÖKOĞLU", "emre gokoglu"},
+            {"  emre   gokoglu  ", "emre gokoglu"},
+            {"İsmail Işık (Dijital Kanallar / Uzman)", "ismail isik"},
+            {"ISMAIL IŞIK", "ismail isik"},
+            {"Şükrü Çağlar Öztürk", "sukru caglar ozturk"},
+            {"Ali (Müdür (Vekil)) Veli", "ali veli"},
+            {"Ünal, Öz.", "unal oz"},
+            {"N60146", null},
+            {"(Dijital Kanallar)", null},
+            {"   ", null},
+            {"- 12 -", null},
+            {"Ayşe Yılmaz", "ayse yilmaz"},
+            {"Mehmet Demir", "mehmet demir"},
+    };
 
     @Test
     @DisplayName("#628: aynı e-posta (farklı harf / boşluk) iki hesap → en son giriş yapan seçilir, öbürü atlanır; tekil hesap dokunulmaz")
@@ -119,5 +147,102 @@ class PushSamePersonGuardTest {
         assertThat(PushSamePersonGuard.chooseByLogin(List.of(a, b, c)).username()).isEqualTo("B");
         var d = new PushSamePersonGuard.Account(2L, "D", "p@x.com", null);
         assertThat(PushSamePersonGuard.chooseByLogin(List.of(c, d)).username()).isEqualTo("D");
+    }
+
+    @Test
+    @DisplayName("kişi adı: Türkçe harf / aksan katlanır, parantezli kısım ve sicil (rakamlı sözcük) atılır, boşluklar teke iner")
+    void personNameTruthTable() {
+        for (String[] row : PERSON_NAME_TABLE) {
+            assertThat(PushSamePersonGuard.personName(row[0])).as(row[0]).isEqualTo(row[1]);
+        }
+        assertThat(PushSamePersonGuard.personName(null)).isNull();
+        assertThat(PushSamePersonGuard.personName("Emre Gökoğlu " + "x".repeat(10_000))).as("uzun girdi sınırlı").isNotNull();
+    }
+
+    @Test
+    @DisplayName("gruplama: aynı e-posta + aynı ad birleşir; ortak kutudaki FARKLI kişiler birleşmez; boş ad tek ada katılır, iki ad varsa katılmaz")
+    void groupPersonsTruthTable() {
+        // #628: aynı kişi, iki sicil
+        assertThat(PushSamePersonGuard.groupPersons(List.of(
+                a(1, "MP60146", "Emre.Gokoglu@Example.com ", "Emre Gökoğlu MP60146"),
+                a(2, "N60146", "emre.gokoglu@example.com", "EMRE GÖKOĞLU N60146"))))
+                .singleElement().satisfies(g -> assertThat(g).extracting(PushSamePersonGuard.Account::username)
+                        .containsExactly("MP60146", "N60146"));
+        // Ortak posta kutusu, farklı kişiler
+        assertThat(PushSamePersonGuard.groupPersons(List.of(
+                a(1, "A1", "kutu@x.com", "Ayşe Yılmaz"), a(2, "A2", "kutu@x.com", "Mehmet Demir")))).isEmpty();
+        // Adı boş hesap tek ada katılır
+        assertThat(PushSamePersonGuard.groupPersons(List.of(
+                a(1, "A1", "p@x.com", "Ayşe Yılmaz"), a(2, "A2", "p@x.com", "  "))))
+                .singleElement().satisfies(g -> assertThat(g).hasSize(2));
+        // Adı boş hesap, iki farklı ad varken hiçbirine katılmaz; aynı adlı iki hesap yine birleşir
+        assertThat(PushSamePersonGuard.groupPersons(List.of(
+                a(1, "A1", "p@x.com", "Ayşe Yılmaz"), a(2, "A2", "p@x.com", "Mehmet Demir"),
+                a(3, "A3", "p@x.com", null), a(4, "A4", "p@x.com", "AYŞE YILMAZ (Uzman)"))))
+                .singleElement().satisfies(g -> assertThat(g).extracting(PushSamePersonGuard.Account::username)
+                        .containsExactly("A1", "A4"));
+        // İki ad da boş → yalnız e-posta
+        assertThat(PushSamePersonGuard.groupPersons(List.of(a(1, "A1", "p@x.com", null), a(2, "A2", "P@x.com", ""))))
+                .singleElement().satisfies(g -> assertThat(g).hasSize(2));
+        // Farklı e-posta asla
+        assertThat(PushSamePersonGuard.groupPersons(List.of(
+                a(1, "A1", "p@x.com", "Ayşe Yılmaz"), a(2, "A2", "q@x.com", "Ayşe Yılmaz")))).isEmpty();
+    }
+
+    @Test
+    @DisplayName("plan: ortak posta kutusundaki farklı kişiler (sorgu ad döndürür) birleşmez")
+    void planHonoursNames() {
+        when(repo.findSamePersonAccounts(anyCollection())).thenReturn(List.of(
+                acc(1, "A1", "kutu@x.com", "2026-10-19T08:00:00", "Ayşe Yılmaz"),
+                acc(2, "A2", "kutu@x.com", "2026-10-19T09:00:00", "Mehmet Demir")));
+        assertThat(guard.plan(List.of("A1", "A2"), null).isEmpty()).isTrue();
+    }
+
+    @Test
+    @DisplayName("seçim yalnız GÖNDERİLEBİLİR hesaplar arasında: engelli hesap seçilmez, tavan altı tavandakini yener, hiçbiri yoksa birleştirme yok")
+    void choiceFollowsReadiness() {
+        when(repo.findSamePersonAccounts(anyCollection())).thenReturn(List.of(
+                acc(10, "MP60146", "p@x.com", "2026-10-18T08:00:00"),
+                acc(11, "N60146", "p@x.com", "2026-10-19T20:00:00")));
+        List<String> both = List.of("MP60146", "N60146");
+        // En son giriş N, ama N engelli (opt-out) → MP
+        PushSamePersonGuard.Plan blocked = guard.plan(both,
+                u -> "N60146".equals(u) ? PushSamePersonGuard.Readiness.BLOCKED : PushSamePersonGuard.Readiness.DELIVERABLE, null);
+        assertThat(blocked.chosenFor("N60146")).isEqualTo("MP60146");
+        assertThat(blocked.chosenFor("MP60146")).isNull();
+        // N tavanda → MP (kanıt N lehine olsa da tavan önce gelir)
+        PushSamePersonGuard.Plan cap = guard.plan(both,
+                u -> "N60146".equals(u) ? PushSamePersonGuard.Readiness.OVER_CAP : PushSamePersonGuard.Readiness.DELIVERABLE,
+                names -> Map.of("N60146", new PushSamePersonGuard.Evidence(false, true, true)));
+        assertThat(cap.chosenFor("N60146")).isEqualTo("MP60146");
+        // İkisi de tavanda → yine tek hesap (en son giriş); satırı RATE_LIMITED olur, özet kişi başına
+        PushSamePersonGuard.Plan allCap = guard.plan(both, u -> PushSamePersonGuard.Readiness.OVER_CAP, null);
+        assertThat(allCap.chosenFor("MP60146")).isEqualTo("N60146");
+        // Hiçbiri gönderilebilir değil → birleştirme YOK (her hesap kendi nedeni)
+        assertThat(guard.plan(both, u -> PushSamePersonGuard.Readiness.BLOCKED, null).isEmpty()).isTrue();
+        // Durum okunamazsa hesap engelli sayılır (yanlış hesaba "karar verildi" yazılmasın)
+        PushSamePersonGuard.Plan failing = guard.plan(both, u -> {
+            if ("N60146".equals(u)) throw new IllegalStateException("db");
+            return PushSamePersonGuard.Readiness.DELIVERABLE;
+        }, null);
+        assertThat(failing.chosenFor("N60146")).isEqualTo("MP60146");
+    }
+
+    @Test
+    @DisplayName("bu bildirimin aynısını ALMIŞ hesap (kesin kanıt) her zaman kazanır — o an engelli olsa da kişi bildirimi almıştır")
+    void exactEvidenceWins() {
+        when(repo.findSamePersonAccounts(anyCollection())).thenReturn(List.of(
+                acc(10, "MP60146", "p@x.com", "2026-10-18T08:00:00"),
+                acc(11, "N60146", "p@x.com", "2026-10-19T20:00:00")));
+        PushSamePersonGuard.Plan p = guard.plan(List.of("MP60146", "N60146"),
+                u -> "MP60146".equals(u) ? PushSamePersonGuard.Readiness.OVER_CAP : PushSamePersonGuard.Readiness.DELIVERABLE,
+                names -> Map.of("MP60146", new PushSamePersonGuard.Evidence(true, true, true)));
+        assertThat(p.chosenFor("N60146")).isEqualTo("MP60146");
+        assertThat(PushSamePersonGuard.delivering("SENT")).isTrue();
+        assertThat(PushSamePersonGuard.delivering("PENDING")).isTrue();
+        assertThat(PushSamePersonGuard.delivering("QUEUED_RETRY")).isTrue();
+        assertThat(PushSamePersonGuard.delivering("RATE_LIMITED")).isFalse();
+        assertThat(PushSamePersonGuard.delivering(PushSamePersonGuard.SKIPPED_SAME_PERSON)).isFalse();
+        assertThat(PushSamePersonGuard.delivering(null)).isFalse();
     }
 }
