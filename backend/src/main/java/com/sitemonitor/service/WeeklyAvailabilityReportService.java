@@ -10,7 +10,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.scheduling.support.CronExpression;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.time.*;
 import java.time.format.DateTimeFormatter;
@@ -110,8 +109,38 @@ public class WeeklyAvailabilityReportService {
 
     private static final String ENABLED_KEY = "site.monitor.weekly-availability.enabled";
 
+    /**
+     * Koşu özeti. {@code sent} = posta servisine teslim edildi (SENT / QUEUED_RETRY); {@code failed} = posta servisi
+     * FAILED döndü ya da rapor hazırlanamadı; {@code skippedMailOff} = posta kanalı kapalı (SKIPPED_*);
+     * {@code skippedInProgress} = takım bu hafta için başka bir koşuda (başka pod) gönderiliyor ya da yarışı kaybetti;
+     * {@code interrupted} = yarıda kalmış (bayat SENDING) gönderim — zamanlanmış koşu DEVRALMAZ, yalnız elle koşu.
+     */
     public record SendResult(int teams, int sent, int skippedNoDomains, int skippedNoRecipient, int skippedDone,
-                             int skippedDisabled) {}
+                             int skippedDisabled, int failed, int skippedMailOff, int skippedInProgress,
+                             int interrupted) {
+        /** Geriye uyumlu 6 alanlı kurucu (yeni sayaçlar 0). */
+        public SendResult(int teams, int sent, int skippedNoDomains, int skippedNoRecipient, int skippedDone,
+                          int skippedDisabled) {
+            this(teams, sent, skippedNoDomains, skippedNoRecipient, skippedDone, skippedDisabled, 0, 0, 0, 0);
+        }
+    }
+
+    // ── Takım × hafta sahiplenmesi (2026-10-21, çok pod MP-40) ──────────────────────────────────────────────────────
+    /** Gönderim sürüyor — sahiplenme damgası {@code sent_at}'te. */
+    static final String ST_SENDING = "SENDING";
+    static final String ST_SENT = "SENT";
+    static final String ST_FAILED = "FAILED";
+    static final String ST_SKIPPED = "SKIPPED";
+    static final String ST_NO_RECIPIENT = "NO_RECIPIENT";
+    /** Bu kadar dakikadan eski SENDING = yarıda kalmış (pod öldü / yeniden başladı). Yalnız ELLE koşu devralır. */
+    static final long STALE_SENDING_MINUTES = 30;
+    /** Durum kartı: bayat SENDING satırı bu adla gösterilir (veritabanına yazılmaz). */
+    static final String ST_INTERRUPTED = "INTERRUPTED";
+
+    /** Sahiplenme / bayatlık kararlarının saati — testler sabitler. */
+    private java.time.Clock clock = java.time.Clock.systemUTC();
+
+    void useClock(java.time.Clock c) { this.clock = c; }
 
     /** Geçen tam ISO hafta penceresi (Europe/Istanbul → UTC ISO sınırlar). */
     public record Window(String fromUtc, String toUtc, Instant windowEnd, int year, int week, String weekLabel) {}
@@ -152,9 +181,29 @@ public class WeeklyAvailabilityReportService {
     private static final List<String> ARCHIVE_TRIGGERS =
             List.of("WEEKLY_AVAILABILITY", "WEEKLY_AVAILABILITY_TEST");
 
-    /** force=true → idempotency atlanır (manuel tetik/test). */
-    @Transactional
-    public SendResult sendWeeklyReports(boolean force) {
+    /**
+     * Geçen tam haftanın raporunu takımlara gönderir — takım × hafta başına EN ÇOK BİR KEZ (2026-10-21, çok pod MP-40).
+     *
+     * <p><b>Takım başına bağımsız:</b> metot işlem içinde DEĞİL. Her takım kendi adımlarında kesinleşir: önce
+     * {@code weekly_availability_log} satırı SENDING olarak sahiplenilir (yeni satır INSERT — {@code uk_wal_team_week}
+     * ikinci pod'u durdurur; var olan satır koşullu UPDATE), sonra rapor + posta, sonra SENT / FAILED / SKIPPED /
+     * NO_RECIPIENT. Bir takımın istisnası yalnız o takımı FAILED yapar, kalanlar gönderilir; daha önce gönderilmiş
+     * takımların izi (satır + {@code notification_logs}) geri alınmaz. Eskiden TEK işlem tüm takımları kapsıyordu: bir
+     * hata ya da pod durması gönderilmiş takımların SENT satırlarını da geri alıyordu ve yeniden koşu onlara İKİNCİ kez
+     * posta atıyordu.
+     *
+     * <p><b>Kim neyi atlar:</b> SENT satırı → atlanır (her iki kip; bilinçli yeniden gönderim = Ayarlar'daki test
+     * gönderimi). Taze SENDING (≤ {@value #STALE_SENDING_MINUTES} dk) → başka koşu gönderiyor, atlanır. Bayat SENDING
+     * (pod gönderirken öldü; posta GİTMİŞ olabilir) → zamanlanmış koşu DEVRALMAZ (en çok bir kez kuralı; uyarı + sayaç),
+     * yalnız ELLE koşu devralır. FAILED / NO_RECIPIENT / SKIPPED → yeniden denenir (posta gitmemişti).
+     *
+     * <p><b>İz:</b> sahiplenilen her takımın kararı {@code notification_logs}'a yazılır (trigger
+     * {@code WEEKLY_AVAILABILITY}): gönderim sonucu, {@code SKIPPED: alıcı yok}, {@code FAILED: rapor hazırlanamadı (…)}.
+     *
+     * @param manual true = elle koşu ({@code POST …/weekly-availability/run}): yalnız EKSİK takımlar (eskiden "force",
+     *               herkese yeniden gönderirdi) + bayat SENDING devralınır. false = zamanlanmış (Pazartesi cron'u).
+     */
+    public SendResult sendWeeklyReports(boolean manual) {
         if (!isEnabled()) {
             log.info("Haftalık erişilebilirlik raporu devre dışı (weekly-availability.enabled=false) — atlandı");
             return new SendResult(0, 0, 0, 0, 0, 0);
@@ -162,48 +211,183 @@ public class WeeklyAvailabilityReportService {
 
         Window w = lastFullWeekWindow();
         List<Team> teams = teamRepo.findByActiveTrueOrderByNameAsc();
-        int sent = 0, skipNoDomains = 0, skipNoRecipient = 0, skipDone = 0, skipDisabled = 0;
+        int[] c = new int[Outcome.values().length];
 
         for (Team team : teams) {
-            // Takım başına opt-in (Takım Yönetimi'ndeki anahtar). Filtre repo sorgusuna DEĞİL buraya konur —
-            // findByActiveTrueOrderByNameAsc'i başka akışlar da kullanıyor.
-            if (!Boolean.TRUE.equals(team.getWeeklyAvailabilityEnabled())) { skipDisabled++; continue; }
-
-            List<CertificateInventory> domains =
-                    uptimeInventory(team.getId());
-            if (domains.isEmpty()) { skipNoDomains++; continue; }
-
-            if (!force) {
-                Optional<WeeklyAvailabilityLog> prev =
-                        walRepo.findByTeamIdAndReportYearAndWeekNo(team.getId(), w.year(), w.week());
-                if (prev.isPresent() && "SENT".equals(prev.get().getStatus())) { skipDone++; continue; }
+            Outcome o;
+            try {
+                o = sendTeam(team, w, manual);
+            } catch (Exception e) {
+                // sendTeam kendi hatalarını yakalar; buraya düşen beklenmeyen bir hata DİĞER takımları durdurmaz.
+                o = Outcome.FAILED;
+                log.error("Haftalık erişilebilirlik: takım {} ({}) işlenemedi — diğer takımlar sürüyor: {}",
+                        team.getName(), team.getId(), e.toString(), e);
             }
-
-            TeamReport report = buildTeamReport(team, w, domains);
-            if (report.to().length == 0) {
-                skipNoRecipient++;
-                record(team.getId(), w.year(), w.week(), "NO_RECIPIENT");
-                log.warn("Haftalık erişilebilirlik atlandı (alıcı yok): team={} ({})", team.getName(), team.getId());
-                continue;
-            }
-
-            String[] cc = report.cc();
-            List<EmailNotificationService.MailAttachment> attachments = outageAttachment(team, w, report);
-            String status = emailService.sendHtmlWithAttachments(report.to(), cc.length > 0 ? cc : null,
-                    report.subject(), report.html(), null, attachments);
-            saveNotificationLog(team, report.to(), cc, report.subject(), report.html(), status, "WEEKLY_AVAILABILITY");
-            record(team.getId(), w.year(), w.week(), status != null && status.startsWith("FAILED") ? "FAILED" : "SENT");
-            sent++;
-            log.info("Haftalık erişilebilirlik: team={} week={} domains={} to={} cc={} status={}",
-                    team.getName(), w.weekLabel(), domains.size(), SecretMask.maskEmails(report.to()), SecretMask.maskEmails(cc), status);
+            c[o.ordinal()]++;
         }
 
-        SendResult result = new SendResult(teams.size(), sent, skipNoDomains, skipNoRecipient, skipDone, skipDisabled);
-        log.info("Haftalık erişilebilirlik raporu tamamlandı: {} takım → gönderilen={}, domain'siz={}, alıcısız={}, "
-                + "zaten gönderilmiş={}, rapor kapalı={}",
-                result.teams(), result.sent(), result.skippedNoDomains(), result.skippedNoRecipient(),
-                result.skippedDone(), result.skippedDisabled());
+        SendResult result = new SendResult(teams.size(), c[Outcome.SENT.ordinal()], c[Outcome.NO_DOMAINS.ordinal()],
+                c[Outcome.NO_RECIPIENT.ordinal()], c[Outcome.DONE.ordinal()], c[Outcome.DISABLED.ordinal()],
+                c[Outcome.FAILED.ordinal()], c[Outcome.MAIL_OFF.ordinal()], c[Outcome.IN_PROGRESS.ordinal()],
+                c[Outcome.INTERRUPTED.ordinal()]);
+        log.info("Haftalık erişilebilirlik raporu tamamlandı ({}): {} takım → gönderilen={}, başarısız={}, domain'siz={}, "
+                + "alıcısız={}, zaten gönderilmiş={}, rapor kapalı={}, posta kapalı={}, başka koşuda={}, yarıda kalmış={}",
+                manual ? "elle" : "zamanlanmış", result.teams(), result.sent(), result.failed(), result.skippedNoDomains(),
+                result.skippedNoRecipient(), result.skippedDone(), result.skippedDisabled(), result.skippedMailOff(),
+                result.skippedInProgress(), result.interrupted());
+        if (result.interrupted() > 0) {
+            log.warn("Haftalık erişilebilirlik: {} takımın gönderimi yarıda kalmış (SENDING, {} dk'dan eski) — posta gitmiş "
+                    + "olabilir; zamanlanmış koşu yeniden GÖNDERMEZ. Gerekirse elle koşu (POST /api/admin/system/"
+                    + "weekly-availability/run) devralır.", result.interrupted(), STALE_SENDING_MINUTES);
+        }
         return result;
+    }
+
+    /** Takım başına karar. */
+    enum Outcome { SENT, FAILED, NO_RECIPIENT, NO_DOMAINS, DISABLED, DONE, MAIL_OFF, IN_PROGRESS, INTERRUPTED }
+
+    /** Tek takım: sahiplen → hazırla → gönder → kapat. Sahiplenmeden sonraki her hata FAILED olarak kapanır. */
+    private Outcome sendTeam(Team team, Window w, boolean manual) {
+        // Takım başına opt-in (Takım Yönetimi'ndeki anahtar). Filtre repo sorgusuna DEĞİL buraya konur —
+        // findByActiveTrueOrderByNameAsc'i başka akışlar da kullanıyor.
+        if (!Boolean.TRUE.equals(team.getWeeklyAvailabilityEnabled())) return Outcome.DISABLED;
+
+        List<CertificateInventory> domains;
+        try {
+            domains = uptimeInventory(team.getId());
+        } catch (Exception e) {
+            // Sahiplenme yok → satır yazılmaz, sonraki koşu yeniden dener (posta gitmedi). Karar yine de iz bırakır.
+            log.warn("Haftalık erişilebilirlik: takım {} ({}) envanteri okunamadı — atlandı: {}",
+                    team.getName(), team.getId(), e.toString());
+            saveNotificationLog(team, new String[0], null, fallbackSubject(team, w), null,
+                    "FAILED: envanter okunamadı (" + e.getClass().getSimpleName() + ")", "WEEKLY_AVAILABILITY");
+            return Outcome.FAILED;
+        }
+        if (domains == null || domains.isEmpty()) return Outcome.NO_DOMAINS;
+
+        Claim claim = claim(team, w, manual);
+        if (claim.outcome() != null) return claim.outcome();
+
+        String[] to = new String[0];
+        String[] cc = null;
+        String subject = fallbackSubject(team, w);
+        String html = null;
+        String status;
+        try {
+            TeamReport report = buildTeamReport(team, w, domains);
+            subject = report.subject();
+            html = report.html();
+            if (report.to().length == 0) {
+                saveNotificationLog(team, to, null, subject, html, "SKIPPED: alıcı yok", "WEEKLY_AVAILABILITY");
+                finish(team, w, claim.stamp(), ST_NO_RECIPIENT);
+                log.warn("Haftalık erişilebilirlik atlandı (alıcı yok): team={} ({})", team.getName(), team.getId());
+                return Outcome.NO_RECIPIENT;
+            }
+            to = report.to();
+            cc = report.cc();
+            List<EmailNotificationService.MailAttachment> attachments = outageAttachment(team, w, report);
+            status = emailService.sendHtmlWithAttachments(to, cc.length > 0 ? cc : null,
+                    subject, html, null, attachments);
+        } catch (Exception e) {
+            status = "FAILED: rapor hazırlanamadı/gönderilemedi (" + e.getClass().getSimpleName() + ")";
+            log.warn("Haftalık erişilebilirlik: takım {} ({}) gönderilemedi: {}", team.getName(), team.getId(), e.toString());
+        }
+        saveNotificationLog(team, to, cc, subject, html, status, "WEEKLY_AVAILABILITY");
+        String finalState = finalState(status);
+        finish(team, w, claim.stamp(), finalState);
+        log.info("Haftalık erişilebilirlik: team={} week={} domains={} to={} cc={} status={}",
+                team.getName(), w.weekLabel(), domains.size(), SecretMask.maskEmails(to), SecretMask.maskEmails(cc), status);
+        return switch (finalState) {
+            case ST_SENT -> Outcome.SENT;
+            case ST_SKIPPED -> Outcome.MAIL_OFF;
+            default -> Outcome.FAILED;
+        };
+    }
+
+    /** Posta servisi sonucu → satırın son durumu. SENT / QUEUED_RETRY = SENT (yeniden denemeyi posta servisi sürdürür). */
+    static String finalState(String mailStatus) {
+        if (mailStatus == null) return ST_FAILED;
+        if ("SENT".equals(mailStatus) || mailStatus.startsWith("QUEUED_RETRY")) return ST_SENT;
+        if (mailStatus.startsWith("SKIPPED")) return ST_SKIPPED;
+        return ST_FAILED;
+    }
+
+    private static String fallbackSubject(Team team, Window w) {
+        return "[Site Monitor] " + team.getName() + " — Haftalık Erişilebilirlik (" + w.weekLabel() + ")";
+    }
+
+    /** Sahiplenme sonucu: {@code outcome} null ise sahiplenildi ve {@code stamp} = sahiplenme damgası. */
+    record Claim(Outcome outcome, String stamp) { }
+
+    /**
+     * Takım × hafta satırını SENDING olarak sahiplenir. Yeni satır: INSERT (eş zamanlı ikinci INSERT benzersizlikten
+     * düşer → kaybeden). Var olan: okunan (durum, damga) üzerinden koşullu UPDATE. SENT ve taze SENDING sahiplenilmez;
+     * bayat SENDING yalnız elle koşuda devralınır.
+     */
+    private Claim claim(Team team, Window w, boolean manual) {
+        Instant now = clock.instant();
+        String stamp = UTC_ISO.format(now);
+        Optional<WeeklyAvailabilityLog> prev = walRepo.findByTeamIdAndReportYearAndWeekNo(team.getId(), w.year(), w.week());
+        if (prev.isEmpty()) {
+            WeeklyAvailabilityLog row = new WeeklyAvailabilityLog();
+            row.setTeamId(team.getId());
+            row.setReportYear(w.year());
+            row.setWeekNo(w.week());
+            row.setStatus(ST_SENDING);
+            row.setSentAt(stamp);
+            row.setCreatedAt(stamp);
+            try {
+                walRepo.save(row);
+                return new Claim(null, stamp);
+            } catch (org.springframework.dao.DataIntegrityViolationException e) {
+                // Aynı anda başka bir pod / koşu aynı takımı sahiplendi — o gönderir.
+                log.info("Haftalık erişilebilirlik: takım {} ({}) bu hafta başka bir koşuda gönderiliyor — atlandı",
+                        team.getName(), team.getId());
+                return new Claim(Outcome.IN_PROGRESS, null);
+            }
+        }
+        WeeklyAvailabilityLog p = prev.get();
+        String st = p.getStatus();
+        if (ST_SENT.equals(st)) return new Claim(Outcome.DONE, null);
+        if (ST_SENDING.equals(st)) {
+            boolean stale = isStale(p.getSentAt(), now);
+            if (!stale) return new Claim(Outcome.IN_PROGRESS, null);
+            if (!manual) {
+                log.warn("Haftalık erişilebilirlik: takım {} ({}) gönderimi yarıda kalmış (SENDING, damga={}) — "
+                        + "zamanlanmış koşu yeniden göndermez (posta gitmiş olabilir)", team.getName(), team.getId(), p.getSentAt());
+                return new Claim(Outcome.INTERRUPTED, null);
+            }
+            log.warn("Haftalık erişilebilirlik: yarıda kalmış gönderim ELLE devralınıyor — takım {} ({}), damga={}",
+                    team.getName(), team.getId(), p.getSentAt());
+        }
+        int n = walRepo.claimExisting(team.getId(), w.year(), w.week(),
+                st == null ? "-" : st, p.getSentAt() == null ? "-" : p.getSentAt(), stamp);
+        if (n == 0) {
+            log.info("Haftalık erişilebilirlik: takım {} ({}) satırı bu arada değişti (başka koşu) — atlandı",
+                    team.getName(), team.getId());
+            return new Claim(Outcome.IN_PROGRESS, null);
+        }
+        return new Claim(null, stamp);
+    }
+
+    /** SENDING damgası {@value #STALE_SENDING_MINUTES} dakikadan eski mi (okunamayan damga = bayat). */
+    private static boolean isStale(String sentAt, Instant now) {
+        Instant t = parse(sentAt);
+        return t == null || t.isBefore(now.minus(Duration.ofMinutes(STALE_SENDING_MINUTES)));
+    }
+
+    /** Sahiplenmeyi kapatır; satır bu arada devralındıysa (bayat sayılıp elle koşu) dokunmaz, uyarır. */
+    private void finish(Team team, Window w, String claimStamp, String state) {
+        try {
+            int n = walRepo.finishClaim(team.getId(), w.year(), w.week(), claimStamp, state, UTC_ISO.format(clock.instant()));
+            if (n == 0) {
+                log.warn("Haftalık erişilebilirlik: takım {} ({}) sahiplenmesi bu arada devralınmış — son durum ({}) yazılmadı",
+                        team.getName(), team.getId(), state);
+            }
+        } catch (Exception e) {
+            log.warn("weekly_availability_log son durumu yazılamadı (team={} {}-W{} → {}): {}",
+                    team.getId(), w.year(), w.week(), state, e.getMessage());
+        }
     }
 
     public boolean isEnabled() {
@@ -831,10 +1015,17 @@ public class WeeklyAvailabilityReportService {
                     walRepo.findByTeamIdAndReportYearAndWeekNo(team.getId(), w.year(), w.week());
             teamStatuses.add(new TeamStatus(team.getId(), team.getName(), domains.size(),
                     List.of(to), List.of(cc),
-                    prev.map(WeeklyAvailabilityLog::getStatus).orElse(null),
+                    prev.map(this::displayStatus).orElse(null),
                     prev.map(WeeklyAvailabilityLog::getSentAt).orElse(null)));
         }
         return new StatusResult(isEnabled(), cronExpr, w.weekLabel(), teamStatuses, weekOptions());
+    }
+
+    /** Kartta gösterilen durum: bayat SENDING (pod gönderirken durdu) {@value #ST_INTERRUPTED} olarak; diğerleri aynen. */
+    String displayStatus(WeeklyAvailabilityLog l) {
+        if (l == null) return null;
+        if (ST_SENDING.equals(l.getStatus()) && isStale(l.getSentAt(), clock.instant())) return ST_INTERRUPTED;
+        return l.getStatus();
     }
 
     /** Arşiv listesi: gönderilmiş haftalık erişilebilirlik mailleri (en yeni üstte). includeTest → test maillerini de getir. */
@@ -869,7 +1060,9 @@ public class WeeklyAvailabilityReportService {
             WeeklyAvailabilityLog l = last.get();
             List<WeeklyAvailabilityLog> group = walRepo.findByReportYearAndWeekNo(l.getReportYear(), l.getWeekNo());
             long sent     = group.stream().filter(x -> "SENT".equals(x.getStatus())).count();
-            long failed   = group.stream().filter(x -> x.getStatus() != null && x.getStatus().startsWith("FAIL")).count();
+            // Yarıda kalmış (bayat SENDING) gönderim de başarısız sayılır — sağlık kartı "uyarı" göstersin (2026-10-21).
+            long failed   = group.stream().filter(x -> (x.getStatus() != null && x.getStatus().startsWith("FAIL"))
+                    || ST_INTERRUPTED.equals(displayStatus(x))).count();
             long noRecip  = group.stream().filter(x -> "NO_RECIPIENT".equals(x.getStatus())).count();
             LocalDate lrMon = LocalDate.of(l.getReportYear(), 1, 4)
                     .with(WeekFields.ISO.weekOfWeekBasedYear(), l.getWeekNo())
@@ -1052,22 +1245,6 @@ public class WeeklyAvailabilityReportService {
             notificationLogRepo.save(n);
         } catch (Exception e) {
             log.warn("Haftalık erişilebilirlik NotificationLog kaydı başarısız: {}", e.getMessage());
-        }
-    }
-
-    private void record(Long teamId, int year, int week, String status) {
-        try {
-            WeeklyAvailabilityLog rec = walRepo.findByTeamIdAndReportYearAndWeekNo(teamId, year, week)
-                    .orElseGet(WeeklyAvailabilityLog::new);
-            if (rec.getCreatedAt() == null) rec.setCreatedAt(UTC_ISO.format(Instant.now()));
-            rec.setTeamId(teamId);
-            rec.setReportYear(year);
-            rec.setWeekNo(week);
-            rec.setStatus(status);
-            rec.setSentAt(UTC_ISO.format(Instant.now()));
-            walRepo.save(rec);
-        } catch (Exception e) {
-            log.warn("weekly_availability_log kaydı başarısız (team={} {}-W{}): {}", teamId, year, week, e.getMessage());
         }
     }
 
