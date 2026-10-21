@@ -40,6 +40,7 @@ import com.sitemonitor.repository.DomainMonitorRepository;
 import com.sitemonitor.repository.DomainCheckRepository;
 import com.sitemonitor.service.retention.RetentionCatalog;
 import com.sitemonitor.service.retention.RetentionService;
+import com.sitemonitor.service.schedule.SweepLeadershipChangedEvent;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -3772,8 +3773,14 @@ public class SchedulerService {
         return isSweepLeader();
     }
 
-    /** Kirayı veritabanında alır / yeniler ve kararı önbelleğe yazar. {@link #sweepLeaderMonitor} altında çağrılır. */
+    /**
+     * Kirayı veritabanında alır / yeniler ve kararı önbelleğe yazar. {@link #sweepLeaderMonitor} altında çağrılır.
+     * Karar değiştiyse (alındı / kaybedildi) {@link SweepLeadershipChangedEvent} yayınlar — kararlı durumda yayınlamaz.
+     */
     private boolean refreshSweepLeader(long now, long ttl) {
+        // Kapanış, dışarıdaki "durdu mu" bakışı ile bu kilit arasında başladıysa kira yeniden ALINMAZ (bırakıldıktan
+        // sonra geri alıp ikinci bir GAINED yayınlamasın).
+        if (sweepLeaderStopped) return false;
         boolean held;
         try {
             held = clusterSchedule.acquireLease(SWEEP_LEADER, now, ttl);
@@ -3793,9 +3800,27 @@ public class SchedulerService {
             log.warn("Tarama liderliği başka pod'a geçti [owner={}] — bu pod izleme taramalarını durdurdu",
                     clusterSchedule.owner());
         }
+        boolean was = sweepLeaderHeld;
         sweepLeaderHeld = held;
         sweepLeaderCheckedAt = now;
+        if (held != was) {
+            publishSweepLeadership(held, now, held ? SweepLeadershipChangedEvent.GAINED : SweepLeadershipChangedEvent.LOST);
+        }
         return held;
+    }
+
+    /**
+     * Liderlik geçişini yayınlar (2026-10-21, çok pod P0). {@link #sweepLeaderMonitor} altında çağrılır — aynı pod'un
+     * olayları sırayla dağıtılır. Dinleyici hatası yutulur (WARN): liderlik kararı ve tarama hiçbir koşulda bozulmaz.
+     */
+    private void publishSweepLeadership(boolean leader, long atMs, String reason) {
+        if (eventPublisher == null || clusterSchedule == null) return;
+        try {
+            eventPublisher.publishEvent(new SweepLeadershipChangedEvent(leader, clusterSchedule.owner(), atMs, reason));
+        } catch (Exception e) {
+            log.warn("Tarama liderliği değişim olayı ({}) dinleyicisi hata verdi — liderlik kararı değişmedi: {}",
+                    reason, e.toString());
+        }
     }
 
     /** Taze karar varsa onu döner (lider: {@code ttl/3}'ten yeni yenileme; takipçi: kısa yeniden yoklama aralığı). */
@@ -3879,14 +3904,20 @@ public class SchedulerService {
     public void releaseSweepLeadership() {
         sweepLeaderStopped = true;
         if (clusterSchedule == null) return;
-        try {
-            if (clusterSchedule.releaseLease(SWEEP_LEADER)) {
-                log.info("Tarama liderliği kapanışta bırakıldı [instance={}]", INSTANCE_ID);
+        // Kilit altında: yarıda kalmış bir kira yoklaması bitmeden bırakılmaz (yoksa bırakılan kirayı geri alabilirdi)
+        // ve RELEASED olayı bu pod'un son GAINED olayından sonra, TAM BİR KEZ yayınlanır (ikinci çağrı: was = false).
+        synchronized (sweepLeaderMonitor) {
+            try {
+                if (clusterSchedule.releaseLease(SWEEP_LEADER)) {
+                    log.info("Tarama liderliği kapanışta bırakıldı [instance={}]", INSTANCE_ID);
+                }
+            } catch (Exception e) {
+                log.warn("Tarama liderliği kapanışta bırakılamadı (kira süresi dolunca devredilir): {}", e.getMessage());
             }
-        } catch (Exception e) {
-            log.warn("Tarama liderliği kapanışta bırakılamadı (kira süresi dolunca devredilir): {}", e.getMessage());
+            boolean was = sweepLeaderHeld;
+            sweepLeaderHeld = false;
+            if (was) publishSweepLeadership(false, scheduleClock.getAsLong(), SweepLeadershipChangedEvent.RELEASED);
         }
-        sweepLeaderHeld = false;
     }
 
     /** Açılış: aynı makinedeki önceki örneğin (çökmüş) kirasını sil — tek pod'un kaba yeniden başlatması taramaları
