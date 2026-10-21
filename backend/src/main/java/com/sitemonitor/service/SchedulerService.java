@@ -4335,6 +4335,7 @@ public class SchedulerService {
      * ve liderlik ({@link #isSweepLeader}) almaz; süren iş adımını bitirir, kilidi kapanışa dek yenilenir.
      */
     @org.springframework.context.event.EventListener(org.springframework.context.event.ContextClosedEvent.class)
+    @org.springframework.core.annotation.Order(org.springframework.core.Ordered.HIGHEST_PRECEDENCE)   // İLK dinleyici: NotifyExecutorDrain (≤ 20 sn) kirayı geciktirmesin
     public void onContextClosed(org.springframework.context.event.ContextClosedEvent event) {
         if (applicationContext != null && event != null && event.getApplicationContext() != applicationContext) return;
         // Önce yeni iş kapısı: kapanışta tetiklenmeye devam eden @Scheduled tıkları yeni kilit / tur / liderlik almasın.

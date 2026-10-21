@@ -10,7 +10,7 @@
 #     3. SMOKE_SWEEP_SECONDS boyunca (varsayılan 600) taslak hedeflere (PostgreSQL portu, takipçi pod'un /health'i)
 #        karşı izleme taramaları koşar; lider bu sürede el değiştirmez;
 #     4. lidere SIGTERM → takipçi kirayı ≤ SMOKE_HANDOVER_MAX_S (40) saniyede alır; ölen pod SMOKE_SHUTDOWN_MAX_S
-#        (80 = Helm grace 90 − preStop 10) içinde kapanır; yeni lider taramaya devam eder;
+#        (110 = Helm grace 120 − preStop 10) içinde kapanır; yeni lider taramaya devam eder;
 #     5. scripts/multipod-dup-check.sql → DUP_TOTAL = 0 ve STUCK_TOTAL = 0 (çift kontrol / bildirim / push / açık
 #        alarm / ONGOING kesinti yok, sonuçsuz QUEUED_RETRY yok).
 #   Kapsayıcılar ve ağ sonunda silinir (SMOKE_KEEP=1 bırakır); günlükler SMOKE_WORKDIR'e yazılır.
@@ -27,7 +27,7 @@
 #   PGHOST=… PGDATABASE=… PGUSER=… PGPASSWORD=… bash scripts/multipod-smoke.sh dup-check
 #
 # Ortam (run): SMOKE_IMAGE (zorunlu), SMOKE_PG_IMAGE, SMOKE_PORT_A / SMOKE_PORT_B (18080 / 18081, yalnız 127.0.0.1),
-#   SMOKE_SWEEP_SECONDS (600), SMOKE_HANDOVER_MAX_S (40), SMOKE_SHUTDOWN_MAX_S (80), SMOKE_POST_HANDOVER_S (90),
+#   SMOKE_SWEEP_SECONDS (600), SMOKE_HANDOVER_MAX_S (40), SMOKE_SHUTDOWN_MAX_S (110), SMOKE_POST_HANDOVER_S (90),
 #   SMOKE_MEMORY (1g), SMOKE_CPUS (2), SMOKE_WORKDIR, SMOKE_KEEP (0), SMOKE_STRICT_LOGS (0: günlükteki ERROR satırları
 #   uyarıdır; 1: hata).
 # Gerekenler: docker, curl, bash. Yerel makinede koşulabilir (Git Bash dahil); prod/staging kümesine dokunmaz.
@@ -81,7 +81,7 @@ PORT_A="${SMOKE_PORT_A:-18080}"
 PORT_B="${SMOKE_PORT_B:-18081}"
 SWEEP_S="${SMOKE_SWEEP_SECONDS:-600}"
 HANDOVER_MAX_S="${SMOKE_HANDOVER_MAX_S:-40}"
-SHUTDOWN_MAX_S="${SMOKE_SHUTDOWN_MAX_S:-80}"
+SHUTDOWN_MAX_S="${SMOKE_SHUTDOWN_MAX_S:-110}"
 POST_HANDOVER_S="${SMOKE_POST_HANDOVER_S:-90}"
 MEMORY="${SMOKE_MEMORY:-1g}"
 CPUS="${SMOKE_CPUS:-2}"
@@ -299,7 +299,7 @@ fi
 if [ -z "$handover" ]; then err "$FOLLOWER kirayı hiç almadı"
 elif [ "$handover" -le "$HANDOVER_MAX_S" ]; then ok "devir süresi ${handover} sn ≤ ${HANDOVER_MAX_S} sn"
 else err "devir ${handover} sn sürdü (> ${HANDOVER_MAX_S} sn) — kira kapanışın başında (ContextClosedEvent) bırakılmıyor mu?"; fi
-[ -n "$stopped" ] && [ "$stopped" -le "$SHUTDOWN_MAX_S" ] && ok "kapanış ${stopped} sn ≤ ${SHUTDOWN_MAX_S} sn (grace 90 − preStop 10)" \
+[ -n "$stopped" ] && [ "$stopped" -le "$SHUTDOWN_MAX_S" ] && ok "kapanış ${stopped} sn ≤ ${SHUTDOWN_MAX_S} sn (grace 120 − preStop 10)" \
   || err "kapanış ${stopped:-?} sn > ${SHUTDOWN_MAX_S} sn"
 
 # ── 8. Yeni lider taramaya devam eder ─────────────────────────────────────────────────────────

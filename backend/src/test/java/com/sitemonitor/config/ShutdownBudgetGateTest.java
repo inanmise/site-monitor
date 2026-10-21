@@ -19,11 +19,13 @@ import static org.assertj.core.api.Assertions.assertThat;
  * KAPI (2026-10-21, çok pod sürüm 1 — MP-07 / MP-08): pod'un kapanışı Kubernetes'in SIGKILL'inden ÖNCE bitmeli.
  *
  * <p>Kubelet preStop kancasını başlattığı anda {@code terminationGracePeriodSeconds} saymaya başlar. Spring'in
- * kapanışı sırayla: web zarif aşaması ({@code timeout-per-shutdown-phase}), yürütücü yaşam döngüsü aşaması (aynı
- * süre), {@code @Scheduled} havuzunun beklemesi ({@code await-termination-period}), ardından {@code @PreDestroy}
- * beklemeleri (~10 sn: e-posta yeniden deneme havuzu, manuel kontrol havuzu, …). Eski değerlerle (30 + 30 + beklemeler
- * &gt; 60 sn grace) pod sık sık {@code @PreDestroy}'dan önce öldürülüyor, tarama liderliği kirası ve iş kilitleri
- * bırakılmıyor, diğer pod izlemeyi ancak kira süresi (180 sn) dolunca devralıyordu.
+ * kapanışı sırayla: {@code ContextClosedEvent} dinleyicileri (ÖNCE tarama liderliği kirası bırakılır —
+ * {@code SchedulerService.onContextClosed} en yüksek öncelikte —, sonra {@code NotifyExecutorDrain} bildirim havuzlarını
+ * ≤ {@link WebConfig#NOTIFY_AWAIT_SECONDS} sn boşaltır), web zarif aşaması ({@code timeout-per-shutdown-phase}),
+ * yürütücü yaşam döngüsü aşaması (aynı süre), {@code @Scheduled} havuzunun beklemesi ({@code await-termination-period}),
+ * ardından {@code @PreDestroy} beklemeleri (~10 sn: e-posta yeniden deneme havuzu, manuel kontrol havuzu, …). Eski
+ * değerlerle (30 + 30 + beklemeler &gt; 60 sn grace) pod sık sık {@code @PreDestroy}'dan önce öldürülüyor, tarama
+ * liderliği kirası ve iş kilitleri bırakılmıyor, diğer pod izlemeyi ancak kira süresi (180 sn) dolunca devralıyordu.
  *
  * <p>Bu test üç kaynağı birlikte okur: {@code application.properties} varsayılanları, Helm {@code values.yaml}
  * (grace + preStop) ve {@code scripts/helm-template-check.sh}'in render denetiminde kullandığı bütçe sabiti. Biri
@@ -101,12 +103,13 @@ class ShutdownBudgetGateTest {
         long grace = topLevelInt(values, "terminationGracePeriodSeconds");
         long preStop = topLevelInt(values, "preStopSleepSeconds");
 
-        long spring = phase /* web zarif aşaması */ + phase /* yürütücü yaşam döngüsü aşaması */ + await + PRE_DESTROY_SLACK_S;
+        long spring = WebConfig.NOTIFY_AWAIT_SECONDS /* ContextClosedEvent: bildirim havuzu boşaltma */
+                + phase /* web zarif aşaması */ + phase /* yürütücü yaşam döngüsü aşaması */ + await + PRE_DESTROY_SLACK_S;
         assertThat(preStop).as("preStop kancası açık (rollout'ta 502 olmasın)").isPositive();
         assertThat(preStop + spring)
                 .as("preStop %d + Spring %d sn, grace %d sn'nin altında kalmalı", preStop, spring, grace)
                 .isLessThan(grace);
-        assertThat(grace).as("plan varsayılanı").isEqualTo(90);
+        assertThat(grace).as("varsayılan: 10 + 20 + 20 + 20 + 20 + 10 = 100 < 120").isEqualTo(120);
         assertThat(preStop).as("plan varsayılanı").isEqualTo(10);
 
         // helm-template-check.sh render çıktısında aynı bütçeyi (grace − preStop ≥ SPRING_BUDGET_S) arar.
@@ -122,11 +125,25 @@ class ShutdownBudgetGateTest {
         String tpl = Files.readString(DEPLOYMENT, StandardCharsets.UTF_8);
         assertThat(tpl).as("sabit 60 sn geri gelmesin").doesNotContainPattern("terminationGracePeriodSeconds:\\s*\\d");
         assertThat(tpl).contains("terminationGracePeriodSeconds: {{ $grace }}")
-                .contains(".Values.terminationGracePeriodSeconds | default 90")
+                .contains(".Values.terminationGracePeriodSeconds | default 120")
                 .contains("preStop:")
                 .contains("sleep {{ $preStop }}");
         assertThat(tpl).as("çok pod + bellek oturum deposu koruması")
                 .contains("(ne (toString .Values.config.sessionStoreType) \"jdbc\")")
                 .contains("(gt (int .Values.replicaCount) 1) .Values.autoscaling.enabled");
+    }
+
+    @Test
+    @DisplayName("ContextClosedEvent: liderlik kirası İLK bırakılır (bildirim havuzu boşaltmasından önce)")
+    void leaseIsReleasedBeforeTheNotifyDrain() throws NoSuchMethodException {
+        var release = new org.springframework.context.event.ApplicationListenerMethodAdapter("schedulerService",
+                com.sitemonitor.service.SchedulerService.class,
+                com.sitemonitor.service.SchedulerService.class.getMethod("onContextClosed",
+                        org.springframework.context.event.ContextClosedEvent.class));
+        var drain = new org.springframework.context.event.ApplicationListenerMethodAdapter("notifyExecutorDrain",
+                NotifyExecutorDrain.class, NotifyExecutorDrain.class.getMethod("onContextClosed"));
+        assertThat(release.getOrder()).as("SchedulerService.onContextClosed @Order").isEqualTo(org.springframework.core.Ordered.HIGHEST_PRECEDENCE);
+        assertThat(release.getOrder()).as("kira, ≤ 20 sn süren boşaltmadan ÖNCE bırakılır (devir ≤ ~35 sn)")
+                .isLessThan(drain.getOrder());
     }
 }

@@ -9,8 +9,8 @@
 # Denetimler (biri bile tutmazsa çıkış kodu 1, her biri ::error:: satırı):
 #   1. Üç ortam (master / develop / release) + yalın values.yaml render olur.
 #   2. Her render'da terminationGracePeriodSeconds ve preStop "sleep N" var; grace − preStop ≥ SPRING_BUDGET_S
-#      (web 20 + yürütücü 20 + @Scheduled bekleme 20 + @PreDestroy 10 = 70 sn — backend application.properties
-#      varsayılanları; Java tarafını ShutdownBudgetGateTest denetler).
+#      (bildirim havuzu boşaltma 20 + web 20 + yürütücü 20 + @Scheduled bekleme 20 + @PreDestroy 10 = 90 sn —
+#      backend application.properties + WebConfig.NOTIFY_AWAIT_SECONDS; Java tarafını ShutdownBudgetGateTest denetler).
 #   3. Birden çok pod koşabilen her render'da (replicas > 1 ya da HPA) oturum deposu jdbc.
 #   4. Koruma: replicaCount=2 + sessionStoreType=memory ve autoscaling + none → render BAŞARISIZ olur;
 #      replicaCount=1 + memory → render olur (tek pod geri dönüşü serbest).
@@ -24,7 +24,7 @@ HELM="${HELM:-helm}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CHART="$ROOT/helm/site-monitor"
 VALUES="$CHART/values.yaml"
-SPRING_BUDGET_S=70
+SPRING_BUDGET_S=90
 fail=0
 err() { echo "::error::$*"; fail=1; }
 ok()  { echo "  ok: $*"; }
@@ -122,7 +122,7 @@ if [ $? -ne 0 ]; then err "preStopSleepSeconds=0 render olmadı: $out"
 elif grep -q 'preStop:' <<<"$out"; then err "preStopSleepSeconds=0 iken preStop render edildi"
 else ok "preStopSleepSeconds=0 → preStop yok"; fi
 expect_fail "preStopSleepSeconds ≥ terminationGracePeriodSeconds" "must be well below terminationGracePeriodSeconds" \
-  --set preStopSleepSeconds=90
+  --set preStopSleepSeconds=120
 expect_fail "preStopSleepSeconds < 0" "must be 0 (no preStop hook) or more" \
   --set preStopSleepSeconds=-1
 
