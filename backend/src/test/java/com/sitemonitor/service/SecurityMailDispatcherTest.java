@@ -62,6 +62,7 @@ class SecurityMailDispatcherTest {
         assertThat(dispatcher.consecutiveFailures()).isEqualTo(1);
         // başarısızlıkta lastAlertAt damgalanmaz
         verify(incidentRepo, never()).save(any());
+        verify(incidentRepo, never()).stampLastAlertAt(any(), any());
     }
 
     @Test
@@ -78,7 +79,9 @@ class SecurityMailDispatcherTest {
         verify(notificationLogRepo).save(cap.capture());
         assertThat(cap.getValue().getEmailStatus()).isEqualTo("SENT");
         assertThat(cap.getValue().getTrigger()).isEqualTo("LOGIN_ANOMALY_ESCALATION");
-        verify(incidentRepo).save(argThat(i -> i.getLastAlertAt() != null));
+        // 2026-10-21 (çok pod R1 / MP-10): damga HEDEFLİ UPDATE ile — varlık kaydı yok (resolved'ı geri alamaz)
+        verify(incidentRepo).stampLastAlertAt(eq(1L), argThat(at -> at != null && !at.isBlank()));
+        verify(incidentRepo, never()).save(any());
         assertThat(dispatcher.consecutiveFailures()).isZero();
         verify(auditService).recordSystemEvent(eq("LOGIN_ANOMALY_ALERT"), any(), any(), any());
     }

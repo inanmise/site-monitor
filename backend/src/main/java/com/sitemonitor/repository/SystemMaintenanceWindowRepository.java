@@ -121,6 +121,45 @@ public interface SystemMaintenanceWindowRepository extends JpaRepository<SystemM
     @Query(value = "UPDATE system_maintenance_windows SET caught_up_count = :count WHERE id = :id", nativeQuery = true)
     int recordCaughtUp(@Param("id") Long id, @Param("count") int count);
 
+    // ── Sahiplenme geri bırakma / bayat sahiplenmeyi devralma (2026-10-21, çok pod R1 / MP-18) ───────────────────────
+    // Sahiplenme işten ÖNCE işlenir; iş istisnayla düşer ya da pod ölürse damga kalıyor, telafi / e-posta hiç yapılmıyordu
+    // (susturulan alarmlar INITIAL'ı almıyor, bitiş e-postası kayboluyordu). Hepsi koşullu: yalnız BU sahiplenmenin damgası.
+
+    /** Telafi sahiplenmesini bırakır — yalnız damga hâlâ bu sahiplenmeninse (sonraki tur yeniden dener). */
+    @Modifying
+    @Transactional
+    @Query(value = "UPDATE system_maintenance_windows SET catch_up_at = NULL WHERE id = :id AND catch_up_at = :at",
+            nativeQuery = true)
+    int releaseCatchUp(@Param("id") Long id, @Param("at") String at);
+
+    /** Bayat telafi sahiplenmesini devralır — telafi bitmemişse (sayaç yazılmamış) ve damga hâlâ görülen değerse. */
+    @Modifying
+    @Transactional
+    @Query(value = "UPDATE system_maintenance_windows SET catch_up_at = :at WHERE id = :id AND catch_up_at = :seen "
+            + "AND caught_up_count IS NULL", nativeQuery = true)
+    int reclaimCatchUp(@Param("id") Long id, @Param("seen") String seen, @Param("at") String at);
+
+    /** Duyuru sahiplenmesini bırakır — hiçbir dilim gitmeden düştüyse. */
+    @Modifying
+    @Transactional
+    @Query(value = "UPDATE system_maintenance_windows SET announce_mail_at = NULL WHERE id = :id AND announce_mail_at = :at "
+            + "AND announce_mail_status IS NULL", nativeQuery = true)
+    int releaseAnnounceMail(@Param("id") Long id, @Param("at") String at);
+
+    /** Düzeltme sahiplenmesini bırakır (gönderilen sürüm geri alınır) — hiçbir dilim gitmeden düştüyse. */
+    @Modifying
+    @Transactional
+    @Query(value = "UPDATE system_maintenance_windows SET mailed_revision = :prev WHERE id = :id AND correction_mail_at = :at "
+            + "AND mailed_revision = :rev", nativeQuery = true)
+    int releaseCorrectionMail(@Param("id") Long id, @Param("at") String at, @Param("rev") int rev, @Param("prev") int prev);
+
+    /** Bitiş e-postası sahiplenmesini bırakır — hiçbir dilim gitmeden düştüyse. */
+    @Modifying
+    @Transactional
+    @Query(value = "UPDATE system_maintenance_windows SET end_mail_at = NULL WHERE id = :id AND end_mail_at = :at "
+            + "AND end_mail_status IS NULL", nativeQuery = true)
+    int releaseEndMail(@Param("id") Long id, @Param("at") String at);
+
     @Modifying
     @Transactional
     @Query(value = "UPDATE system_maintenance_windows SET jobs_done = TRUE WHERE id = :id", nativeQuery = true)

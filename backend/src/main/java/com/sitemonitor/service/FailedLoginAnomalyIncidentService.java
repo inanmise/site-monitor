@@ -44,6 +44,17 @@ public class FailedLoginAnomalyIncidentService {
     @Value("${site.monitor.failed-login.catchup-cap-minutes:60}") int catchupCapDefault;
     @Value("${site.monitor.failed-login.cooldown-minutes:60}")    int cooldownMinutesDefault;
     @Value("${site.monitor.system-admin.email:}")                 String systemAdminEmail;
+    /** Tarama aralığı (zamanlayıcıyla aynı anahtar) — "yakın zamanda tarandı" kapısı için; 0 / eksi = kapı yok. */
+    @Value("${site.monitor.failed-login.scan-ms:600000}")         long scanMs;
+
+    /**
+     * Uyarı gönderim DENEMESİ koruması (2026-10-21, çok pod R1 / MP-10): son deneme bundan gençse REALERT gönderilmez —
+     * ilk posta hâlâ yolda (eşzamansız dağıtıcı, yavaş SMTP / 421) ya da az önce düştü. Düşen posta bir sonraki
+     * taramada (≥ 10 dk) yeniden denenir — eski davranışla aynı kadans.
+     */
+    static final java.time.Duration ATTEMPT_GUARD = java.time.Duration.ofMinutes(10);
+    /** "Yakın zamanda tarandı" kapısının payı: aralıktan bu kadar erken gelen tur da başka pod'un turunun tekrarı sayılır. */
+    static final long RECENT_SCAN_SLACK_MS = 5_000L;
 
     public record Window(String start, String end, int nominalMinutes) {}
 
@@ -51,10 +62,29 @@ public class FailedLoginAnomalyIncidentService {
     public void scan() {
         if (!detector.isEnabled()) return;
         Instant now = Instant.now();
-        Window w = computeWindow(readLastScanAt(), now);
+        String lastScanAt = readLastScanAt();
+        // ÇOK POD (2026-10-21, R1 / MP-10): zamanlayıcı her pod'da fixedDelay ile koşar ve kilit tarama bitince bırakılır —
+        // N pod aralık başına N tarama ve üst üste binen pencereler demekti (uçuştaki İLK postanın arkasından REALERT).
+        // Kilidin İÇİNDE okunan ortak damga: başka bir pod bu aralıkta zaten taradıysa bu tur atlanır.
+        if (recentlyScanned(lastScanAt, now)) {
+            log.debug("Başarısız-login anomali taraması atlandı — son tarama {} (aralık içinde, başka pod taramış)", lastScanAt);
+            return;
+        }
+        Window w = computeWindow(lastScanAt, now);
         AnomalyReport report = detector.evaluate(w.start(), w.end(), w.nominalMinutes());
         handle(report, now);
         writeLastScanAt(w.end());
+    }
+
+    /** Son tarama bu aralığın içinde mi ({@code last > now − scanMs + pay})? Damga okunamazsa / kapı kapalıysa false. */
+    boolean recentlyScanned(String lastScanAt, Instant now) {
+        if (scanMs <= 0 || lastScanAt == null || lastScanAt.isBlank()) return false;
+        try {
+            Instant last = Instant.from(ISO.parse(lastScanAt));
+            return last.isAfter(now.minusMillis(scanMs - RECENT_SCAN_SLACK_MS));
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     /**
@@ -94,6 +124,7 @@ public class FailedLoginAnomalyIncidentService {
                 inc.setLastWindowEnd(report.windowEnd());
                 inc.setSummary(summarize(report));
                 inc.setRealertCount(0);
+                inc.setLastAlertAttemptAt(nowIso);   // gönderim denemesi dağıtımdan ÖNCE damgalanır (MP-10)
                 LoginAnomalyIncident saved = incidentRepo.save(inc);
                 dispatcher.dispatchAlert(recipients, report, "INITIAL", saved.getId());
             } else {
@@ -109,10 +140,13 @@ public class FailedLoginAnomalyIncidentService {
 
                 if (newRule || volumeDoubled) {
                     inc.setRealertCount(inc.getRealertCount() + 1);
+                    inc.setLastAlertAttemptAt(nowIso);
                     incidentRepo.save(inc);
                     dispatcher.dispatchAlert(recipients, report, "ESCALATION", inc.getId());
-                } else if (cooldownElapsed(inc.getLastAlertAt(), nowIso)) {
+                } else if (cooldownElapsed(inc.getLastAlertAt(), nowIso)
+                        && !attemptRecent(inc.getLastAlertAttemptAt(), nowIso)) {
                     inc.setRealertCount(inc.getRealertCount() + 1);
+                    inc.setLastAlertAttemptAt(nowIso);
                     incidentRepo.save(inc);
                     dispatcher.dispatchAlert(recipients, report, "REALERT", inc.getId());
                 } else {
@@ -150,6 +184,22 @@ public class FailedLoginAnomalyIncidentService {
             return !now.isBefore(last.plusSeconds(cooldownMinutes * 60L));
         } catch (Exception e) {
             return true;
+        }
+    }
+
+    /**
+     * Son gönderim DENEMESİ {@link #ATTEMPT_GUARD}'dan genç mi (MP-10)? Başarılı damga ({@code lastAlertAt}) yalnız gönderim
+     * BİTİNCE yazılır; eskiden ilk posta yoldayken / az önce düşmüşken {@code cooldownElapsed(null)} true dönüyor ve
+     * ikinci tarama hemen REALERT gönderiyordu. Okunamazsa false (eski davranış).
+     */
+    boolean attemptRecent(String lastAttemptAt, String nowIso) {
+        if (lastAttemptAt == null || lastAttemptAt.isBlank()) return false;
+        try {
+            Instant last = Instant.from(ISO.parse(lastAttemptAt));
+            Instant now  = Instant.from(ISO.parse(nowIso));
+            return now.isBefore(last.plus(ATTEMPT_GUARD));
+        } catch (Exception e) {
+            return false;
         }
     }
 

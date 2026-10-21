@@ -79,6 +79,23 @@ public class SystemMaintenanceJobService {
     @Value("${site.monitor.app.base-url:http://localhost:5173}")
     private String fallbackBaseUrl = "";
 
+    /**
+     * Telafi sahiplenmesi bu kadar eskiyse ve telafi bitmediyse ({@code caught_up_count} yok) sahibi yarıda ölmüştür — yeniden
+     * koşulur (2026-10-21, çok pod R1 / MP-18). Telafi idempotenttir (yalnız sonuçlanmamış bastırma satırlarını okur, damgayı
+     * yalnız bakım bitişinden önceyse sıfırlar).
+     */
+    static final Duration STALE_CLAIM = Duration.ofMinutes(10);
+
+    /**
+     * Bir işin (pencere × iş türü) pod başına en çok kaç kez yeniden deneneceği — sahiplenme bırakılarak ya da bayat
+     * sahiplenme devralınarak. Aşılınca vazgeçilir (ERROR; e-posta işlerinde pencereye FAILED durumu), pencere işlerini
+     * bitirebilir; sonsuz yeniden deneme yok.
+     */
+    static final int MAX_JOB_ATTEMPTS = 10;
+
+    /** Pencere × iş türü → başarısız deneme sayısı (pod belleği; vazgeçme sınırı için). */
+    private final Map<String, Integer> failedAttempts = new java.util.concurrent.ConcurrentHashMap<>();
+
     /** Tur özeti (log + test). */
     public record RunResult(int windows, int mails, int caughtUp) {
         static final RunResult EMPTY = new RunResult(0, 0, 0);
@@ -162,12 +179,38 @@ public class SystemMaintenanceJobService {
         }
 
         if (p == Phase.ENDED) {
-            // 4) Telafi ÖNCE: bitiş denetimi telafi sayısını taşısın.
-            if (Boolean.TRUE.equals(w.getMuteNotifications()) && w.getCatchUpAt() == null
-                    && repo.claimCatchUp(w.getId(), SystemMaintenanceService.iso(now)) == 1) {
-                caught = catchUp(w, now);
+            // 4) Telafi ÖNCE: bitiş denetimi telafi sayısını taşısın. Sahiplenme istisnada BIRAKILIR, ölü pod'un bayat
+            // sahiplenmesi devralınır (MP-18); telafi bitmeden pencere iş listesinden çıkmaz.
+            boolean catchUpSettled = true;
+            if (Boolean.TRUE.equals(w.getMuteNotifications()) && w.getCaughtUpCount() == null) {
+                catchUpSettled = false;
+                String key = w.getId() + ":catch-up";
+                String at = SystemMaintenanceService.iso(now);
+                String claimedAt = null;
+                if (w.getCatchUpAt() == null) {
+                    if (repo.claimCatchUp(w.getId(), at) == 1) claimedAt = at;
+                } else if (staleClaim(w.getCatchUpAt(), now)) {
+                    if (gaveUp(key)) {
+                        catchUpSettled = true;   // vazgeçildi (ERROR yazıldı) — pencere işlerini bitirebilir
+                    } else if (repo.reclaimCatchUp(w.getId(), w.getCatchUpAt(), at) == 1) {
+                        claimedAt = at;
+                        log.warn("Sistem bakımı #{} bildirim telafisi yarıda kalmıştı ({} tarihli sahiplenme) — yeniden koşuluyor",
+                                w.getId(), w.getCatchUpAt());
+                    }
+                }
+                if (claimedAt != null) {
+                    try {
+                        caught = catchUp(w, now);
+                        catchUpSettled = true;
+                        failedAttempts.remove(key);
+                    } catch (RuntimeException e) {
+                        if (!countFailure(key, w, "catch-up")) repo.releaseCatchUp(w.getId(), claimedAt);
+                        throw e;
+                    }
+                }
             }
-            if (w.getEndLoggedAt() == null && repo.claimEndLog(w.getId(), SystemMaintenanceService.iso(now)) == 1) {
+            if (catchUpSettled && w.getEndLoggedAt() == null
+                    && repo.claimEndLog(w.getId(), SystemMaintenanceService.iso(now)) == 1) {
                 SystemMaintenanceWindow fresh = repo.findById(w.getId()).orElse(w);
                 auditService.recordSystemEvent("SYSTEM_MAINTENANCE_ENDED", SystemMaintenanceService.RESOURCE, String.valueOf(w.getId()),
                         AuditDetail.of("planned_start", SystemMaintenanceService.wire(fresh.getPlannedStartAt()),
@@ -185,9 +228,44 @@ public class SystemMaintenanceJobService {
             if (recipientsChosen && SystemMaintenanceService.emailOnEnd(w) && w.getEndMailAt() == null) {
                 mails += sendEnded(w, now);
             }
-            repo.markJobsDone(w.getId());
+            if (catchUpSettled) repo.markJobsDone(w.getId());
         }
         return new int[]{mails, caught};
+    }
+
+    /** Sahiplenme damgası {@link #STALE_CLAIM}'den eski mi (okunamıyorsa eski sayılır — sahibi belirsiz). */
+    static boolean staleClaim(String claimedAt, Instant now) {
+        Instant at = SystemMaintenanceService.parse(claimedAt);
+        return at == null || !now.isBefore(at.plus(STALE_CLAIM));
+    }
+
+    /** Vazgeçildi mi ({@link #MAX_JOB_ATTEMPTS} başarısız deneme bu pod'da doldu)? */
+    private boolean gaveUp(String key) {
+        return failedAttempts.getOrDefault(key, 0) >= MAX_JOB_ATTEMPTS;
+    }
+
+    /**
+     * Başarısız denemeyi sayar; sınır DOLDUYSA true (sahiplenme bırakılmaz — vazgeçilir; ERROR) — e-posta işlerinde çağıran
+     * durumu pencereye de yazar ({@link #STATUS_GAVE_UP}). Sınır dolmadıysa false (çağıran sahiplenmeyi bırakır, sonraki tur
+     * yeniden dener).
+     */
+    private boolean countFailure(String key, SystemMaintenanceWindow w, String job) {
+        int n = failedAttempts.merge(key, 1, Integer::sum);
+        if (n < MAX_JOB_ATTEMPTS) return false;
+        log.error("Sistem bakımı #{} '{}' işi {} denemede tamamlanamadı — vazgeçildi (elle inceleyin)", w.getId(), job, n);
+        return true;
+    }
+
+    /** Vazgeçilen e-posta işinin pencereye yazılan durumu (ekran "gönderilemedi" der). */
+    static final String STATUS_GAVE_UP = "FAILED: e-posta hazırlanamadı — " + MAX_JOB_ATTEMPTS + " denemede vazgeçildi";
+
+    /** Vazgeçme durumunu yazar; yazılamazsa yalnız WARN (iş zaten ERROR ile günlükte). */
+    private void recordGaveUp(Runnable write) {
+        try {
+            write.run();
+        } catch (Exception e) {
+            log.warn("Sistem bakımı vazgeçme durumu yazılamadı: {}", e.getMessage());
+        }
     }
 
     private static int nz(Integer v) { return v == null ? 0 : v; }
@@ -242,9 +320,20 @@ public class SystemMaintenanceJobService {
     // ── E-posta duyurusu ────────────────────────────────────────────────────────────────────────────
 
     private int sendAnnouncement(SystemMaintenanceWindow w, Instant now, int rev) {
-        if (repo.claimAnnounceMail(w.getId(), SystemMaintenanceService.iso(now), rev) != 1) return 0;
-        List<String> to = recipients(w);
-        String status = send(w, SystemMaintenanceMail.Kind.ANNOUNCE, to);
+        String at = SystemMaintenanceService.iso(now);
+        if (repo.claimAnnounceMail(w.getId(), at, rev) != 1) return 0;
+        List<String> to;
+        String status;
+        String key = w.getId() + ":announce";
+        try {
+            to = recipients(w);
+            status = send(w, SystemMaintenanceMail.Kind.ANNOUNCE, to);   // dilim hataları içeride yakalanır — istisna = hiç gitmedi
+        } catch (RuntimeException e) {
+            if (!countFailure(key, w, "announce")) repo.releaseAnnounceMail(w.getId(), at);   // MP-18: sonraki tur yeniden dener
+            else recordGaveUp(() -> repo.recordAnnounceMail(w.getId(), STATUS_GAVE_UP, 0));
+            throw e;
+        }
+        failedAttempts.remove(key);
         repo.recordAnnounceMail(w.getId(), clip(status), to.size());
         auditService.recordSystemEvent("SYSTEM_MAINTENANCE_MAIL", SystemMaintenanceService.RESOURCE, String.valueOf(w.getId()),
                 AuditDetail.of("kind", "ANNOUNCE", "recipients", to.size(), "status", status));
@@ -252,9 +341,20 @@ public class SystemMaintenanceJobService {
     }
 
     private int sendCorrection(SystemMaintenanceWindow w, SystemMaintenanceMail.Kind kind, Instant now, int rev) {
-        if (repo.claimCorrectionMail(w.getId(), SystemMaintenanceService.iso(now), rev) != 1) return 0;
-        List<String> to = recipients(w);
-        String status = send(w, kind, to);
+        String at = SystemMaintenanceService.iso(now);
+        int prevRev = w.getMailedRevision() == null ? 0 : w.getMailedRevision();
+        if (repo.claimCorrectionMail(w.getId(), at, rev) != 1) return 0;
+        List<String> to;
+        String status;
+        String key = w.getId() + ":correction:" + rev;
+        try {
+            to = recipients(w);
+            status = send(w, kind, to);
+        } catch (RuntimeException e) {
+            if (!countFailure(key, w, "correction")) repo.releaseCorrectionMail(w.getId(), at, rev, prevRev);   // MP-18
+            throw e;
+        }
+        failedAttempts.remove(key);
         repo.incrementCorrectionMails(w.getId());
         auditService.recordSystemEvent("SYSTEM_MAINTENANCE_MAIL", SystemMaintenanceService.RESOURCE, String.valueOf(w.getId()),
                 AuditDetail.of("kind", kind.name(), "recipients", to.size(), "status", status, "revision", rev));
@@ -263,9 +363,20 @@ public class SystemMaintenanceJobService {
 
     /** "Bakım tamamlandı" e-postası — sahiplenme + duyuruyla aynı alıcılar + denetim ({@code SYSTEM_MAINTENANCE_MAIL}, ENDED). */
     private int sendEnded(SystemMaintenanceWindow w, Instant now) {
-        if (repo.claimEndMail(w.getId(), SystemMaintenanceService.iso(now)) != 1) return 0;
-        List<String> to = recipients(w);
-        String status = send(w, SystemMaintenanceMail.Kind.ENDED, to);
+        String at = SystemMaintenanceService.iso(now);
+        if (repo.claimEndMail(w.getId(), at) != 1) return 0;
+        List<String> to;
+        String status;
+        String key = w.getId() + ":end-mail";
+        try {
+            to = recipients(w);
+            status = send(w, SystemMaintenanceMail.Kind.ENDED, to);
+        } catch (RuntimeException e) {
+            if (!countFailure(key, w, "end-mail")) repo.releaseEndMail(w.getId(), at);   // MP-18: sonraki tur yeniden dener
+            else recordGaveUp(() -> repo.recordEndMail(w.getId(), STATUS_GAVE_UP, 0));
+            throw e;
+        }
+        failedAttempts.remove(key);
         repo.recordEndMail(w.getId(), clip(status), to.size());
         auditService.recordSystemEvent("SYSTEM_MAINTENANCE_MAIL", SystemMaintenanceService.RESOURCE, String.valueOf(w.getId()),
                 AuditDetail.of("kind", SystemMaintenanceMail.Kind.ENDED.name(), "recipients", to.size(), "status", status,
