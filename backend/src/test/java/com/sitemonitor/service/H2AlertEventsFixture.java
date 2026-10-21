@@ -34,13 +34,14 @@ final class H2AlertEventsFixture {
             + "domain VARCHAR(255) NOT NULL, alert_level VARCHAR(16) NOT NULL, alert_type VARCHAR(64) NOT NULL, "
             + "message VARCHAR(4000), days_remaining INT, not_after VARCHAR(40), team_id BIGINT, "
             + "notified_contacts VARCHAR(4000), context_json VARCHAR(4000), acknowledged BOOLEAN DEFAULT FALSE, "
+            + "acknowledged_at VARCHAR(40), acknowledged_by VARCHAR(255), "
             + "resolved BOOLEAN NOT NULL DEFAULT FALSE, resolved_at VARCHAR(40), resolved_by VARCHAR(255), "
             + "created_at VARCHAR(40), last_re_alert_at VARCHAR(40), realert_count INT, storm_id BIGINT, "
             + "notification_group_id BIGINT, resolution_notify VARCHAR(16), resolution_notify_at VARCHAR(30))";
 
     private static final String COLS = "id, domain, alert_level, alert_type, message, days_remaining, not_after, team_id, "
-            + "notified_contacts, context_json, acknowledged, resolved, resolved_at, resolved_by, created_at, last_re_alert_at, "
-            + "realert_count, storm_id, notification_group_id, resolution_notify, resolution_notify_at";
+            + "notified_contacts, context_json, acknowledged, acknowledged_at, acknowledged_by, resolved, resolved_at, resolved_by, "
+            + "created_at, last_re_alert_at, realert_count, storm_id, notification_group_id, resolution_notify, resolution_notify_at";
 
     private static final RowMapper<AlertEvent> MAPPER = (rs, i) -> {
         AlertEvent e = new AlertEvent();
@@ -57,6 +58,8 @@ final class H2AlertEventsFixture {
         e.setNotifiedContacts(rs.getString("notified_contacts"));
         e.setContextJson(rs.getString("context_json"));
         e.setAcknowledged(rs.getBoolean("acknowledged"));
+        e.setAcknowledgedAt(rs.getString("acknowledged_at"));
+        e.setAcknowledgedBy(rs.getString("acknowledged_by"));
         e.setResolved(rs.getBoolean("resolved"));
         e.setResolvedAt(rs.getString("resolved_at"));
         e.setResolvedBy(rs.getString("resolved_by"));
@@ -113,12 +116,13 @@ final class H2AlertEventsFixture {
             e.setId(kh.getKey().longValue());
         } else {
             jdbc.update("UPDATE alert_events SET domain = ?, alert_level = ?, alert_type = ?, message = ?, days_remaining = ?, "
-                    + "not_after = ?, team_id = ?, notified_contacts = ?, context_json = ?, acknowledged = ?, resolved = ?, "
+                    + "not_after = ?, team_id = ?, notified_contacts = ?, context_json = ?, acknowledged = ?, acknowledged_at = ?, "
+                    + "acknowledged_by = ?, resolved = ?, "
                     + "resolved_at = ?, resolved_by = ?, created_at = ?, last_re_alert_at = ?, realert_count = ?, storm_id = ?, "
                     + "notification_group_id = ? WHERE id = ?",
                     e.getDomain(), e.getAlertLevel(), e.getAlertType(), e.getMessage(), e.getDaysRemaining(), e.getNotAfter(),
                     e.getTeamId(), e.getNotifiedContacts(), e.getContextJson(), Boolean.TRUE.equals(e.getAcknowledged()),
-                    Boolean.TRUE.equals(e.getResolved()), e.getResolvedAt(), e.getResolvedBy(), e.getCreatedAt(),
+                    e.getAcknowledgedAt(), e.getAcknowledgedBy(), Boolean.TRUE.equals(e.getResolved()), e.getResolvedAt(), e.getResolvedBy(), e.getCreatedAt(),
                     e.getLastReAlertAt(), e.getRealertCount(), e.getStormId(), e.getNotificationGroupId(), e.getId());
         }
         return e;

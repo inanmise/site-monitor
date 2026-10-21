@@ -287,7 +287,7 @@ class EscalationMultiPodClaimTest {
         s.setJdbcTemplate(null);
         assertThat(s.claimReAlert(1L, "x", "y", "T")).isTrue();
         assertThat(s.acquireAlertKeyLock("mon-alert:EXPIRY:x")).isEqualTo(EscalationService.KeyLock.UNAVAILABLE);
-        assertThat(s.claimResolutionNotify(1L)).isEqualTo(EscalationService.ResolutionClaim.LEGACY);
+        assertThat(s.claimResolutionNotify(1L, false)).isEqualTo(EscalationService.ResolutionClaim.LEGACY);
     }
 
     @Test
@@ -308,5 +308,119 @@ class EscalationMultiPodClaimTest {
 
         mp.jdbc().update("UPDATE alert_events SET resolved = TRUE WHERE id = ?", e.getId());
         assertThat(a.claimReAlert(e.getId(), seen, "2099-01-02T00:00:00", "T")).as("kapanmış olay").isFalse();
+    }
+
+    // ── İnceleme F2 / S-6 (2026-10-21): terfi sahiplenmesi seviyeden ÖNCE; gönderim düşerse terfi geri alınır ──────────
+
+    /** İlk {@code failures} yeniden uyarı sahiplenmesinde geçici veritabanı hatası veren şablon (havuz zaman aşımı benzetimi). */
+    static final class FlakyClaimJdbc extends org.springframework.jdbc.core.JdbcTemplate {
+        final java.util.concurrent.atomic.AtomicInteger failures;
+
+        FlakyClaimJdbc(javax.sql.DataSource ds, int failures) {
+            super(ds);
+            this.failures = new java.util.concurrent.atomic.AtomicInteger(failures);
+        }
+
+        @Override
+        public int update(String sql, Object... args) {
+            if (sql.startsWith("UPDATE alert_events SET last_re_alert_at = ?") && failures.getAndDecrement() > 0) {
+                throw new org.springframework.dao.QueryTimeoutException("havuz zaman aşımı (test)");
+            }
+            return super.update(sql, args);
+        }
+    }
+
+    AlertEvent openMonitoringAlarm(String domain, String level) {
+        AlertEvent e = new AlertEvent();
+        e.setDomain(domain);
+        e.setAlertType(EscalationService.TYPE_ACCESSIBILITY);
+        e.setAlertLevel(level);
+        e.setMessage("eski");
+        e.setTeamId(OWNER);
+        e.setAcknowledged(true);
+        e.setAcknowledgedAt(ISO.format(Instant.now().minus(1, ChronoUnit.HOURS)));
+        e.setAcknowledgedBy("ayse");
+        e.setResolved(false);
+        Instant now = Instant.now();
+        e.setCreatedAt(ISO.format(now.minus(1, ChronoUnit.DAYS)));
+        e.setLastReAlertAt(ISO.format(now.minus(2, ChronoUnit.HOURS)));
+        return store.save(e);
+    }
+
+    @Test
+    @DisplayName("F2: izleme terfisinin sahiplenmesi veritabanı hatasıyla düşerse seviye ve onay DEĞİŞMEZ; sonraki tur ESCALATION'ı BİR kez gönderir")
+    void monitoringEscalation_claimDbError_nextSweepSends() {
+        String domain = "esc-db.example.com";
+        AlertEvent e = openMonitoringAlarm(domain, "HIGH");
+        EscalationService a = pod(1);
+        a.setJdbcTemplate(new FlakyClaimJdbc(mp.dataSource(), 1));
+        Map<String, Object> ctx = new LinkedHashMap<>();
+
+        a.processConfirmedOutage(domain, EscalationService.TYPE_ACCESSIBILITY, "CRITICAL", ctx);
+        AlertEvent afterFail = store.byId(e.getId()).orElseThrow();
+        assertThat(afterFail.getAlertLevel()).as("terfi yazılmadı").isEqualTo("HIGH");
+        assertThat(afterFail.getAcknowledged()).as("onay sessizce düşmedi").isTrue();
+        assertThat(pushes("ESCALATION")).isZero();
+
+        a.processConfirmedOutage(domain, EscalationService.TYPE_ACCESSIBILITY, "CRITICAL", ctx);
+        AlertEvent after = store.byId(e.getId()).orElseThrow();
+        assertThat(after.getAlertLevel()).isEqualTo("CRITICAL");
+        assertThat(after.getAcknowledged()).isFalse();
+        assertThat(pushes("ESCALATION")).isEqualTo(1);
+
+        a.processConfirmedOutage(domain, EscalationService.TYPE_ACCESSIBILITY, "CRITICAL", ctx);
+        assertThat(pushes("ESCALATION")).as("bir kez").isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("F2: izleme terfisi iki pod'da aynı anda → TEK ESCALATION")
+    void monitoringEscalationRace_sendsOnce() {
+        for (int round = 0; round < 20; round++) {
+            store.jdbc().update("DELETE FROM alert_events");
+            org.mockito.Mockito.clearInvocations(userPushService);
+            escalationRaceRound("esc-race-" + round + ".example.com");
+        }
+    }
+
+    @Test
+    @DisplayName("F2: ikinci pod birincinin damgasını ESKİ seviyeyle okursa (seviye henüz kaydedilmemişken) sahiplenemez — seviye koşulda")
+    void escalationClaimChecksTheSeenLevel() {
+        AlertEvent e = openMonitoringAlarm("esc-stale.example.com", "HIGH");
+        EscalationService a = pod(1), b = pod(2);
+        String aAt = ISO.format(Instant.now());
+        assertThat(a.claimEscalation(e.getId(), e.getLastReAlertAt(), "HIGH", "CRITICAL", aAt)).isTrue();
+        assertThat(b.claimEscalation(e.getId(), aAt, "HIGH", "CRITICAL", ISO.format(Instant.now().plusSeconds(1)))).isFalse();
+        AlertEvent row = store.byId(e.getId()).orElseThrow();
+        assertThat(row.getAlertLevel()).isEqualTo("CRITICAL");
+        assertThat(row.getLastReAlertAt()).isEqualTo(aAt);
+    }
+
+    void escalationRaceRound(String domain) {
+        openMonitoringAlarm(domain, "HIGH");
+        EscalationService a = pod(1), b = pod(2);
+        race(() -> { a.processConfirmedOutage(domain, EscalationService.TYPE_ACCESSIBILITY, "CRITICAL", new LinkedHashMap<>()); return true; },
+             () -> { b.processConfirmedOutage(domain, EscalationService.TYPE_ACCESSIBILITY, "CRITICAL", new LinkedHashMap<>()); return true; });
+        assertThat(pushes("ESCALATION")).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("S-6: sertifika terfisinin gönderimi istisnayla düşerse seviye / onay / damga GERİ alınır → sonraki tur ESCALATION'ı gönderir")
+    void certEscalation_sendFailure_revertsAndNextRunSends() {
+        String domain = "esc-fail.example.com";
+        Instant now = Instant.now();
+        AlertEvent e = openAlarm(domain, "WARNING", now.minus(2, ChronoUnit.DAYS), now.minus(1, ChronoUnit.HOURS));
+        String seen = e.getLastReAlertAt();
+        EscalationService a = pod(1);
+        doThrow(new IllegalStateException("şablon kırık")).when(emailService).buildAlertEmailHtml(
+                any(), any(), any(), any(), any(), any(), any());
+        assertThatThrownBy(() -> a.processResults(List.of(expiryResult(domain, 3)))).isInstanceOf(IllegalStateException.class);
+        AlertEvent reverted = store.byId(e.getId()).orElseThrow();
+        assertThat(reverted.getAlertLevel()).isEqualTo("WARNING");
+        assertThat(reverted.getLastReAlertAt()).isEqualTo(seen);
+
+        reset(emailService);
+        a.processResults(List.of(expiryResult(domain, 3)));
+        assertThat(pushes("ESCALATION")).isEqualTo(1);
+        assertThat(store.byId(e.getId()).orElseThrow().getAlertLevel()).isEqualTo("CRITICAL");
     }
 }

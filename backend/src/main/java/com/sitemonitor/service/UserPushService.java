@@ -179,7 +179,7 @@ public class UserPushService {
         stopping = true;
         worker.shutdown();
         try {
-            if (!worker.awaitTermination(SHUTDOWN_WAIT_SECONDS, TimeUnit.SECONDS)) {
+            if (!worker.awaitTermination(com.sitemonitor.config.ShutdownDeadline.waitMs(SHUTDOWN_WAIT_SECONDS * 1000L), TimeUnit.MILLISECONDS)) {
                 log.warn("user-push: süren gönderim {} sn'de bitmedi — kesiliyor", SHUTDOWN_WAIT_SECONDS);
                 worker.shutdownNow();
             }

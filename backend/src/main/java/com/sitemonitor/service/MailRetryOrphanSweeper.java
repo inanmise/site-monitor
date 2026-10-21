@@ -31,10 +31,8 @@ public class MailRetryOrphanSweeper {
 
     /** Kilit adı — KALICI (yayından sonra değiştirilmez). */
     public static final String LOCK = "mail-retry-orphans";
-    /** Varsayılan 90 sn gecikmeyle zincir 10.5 dk; teknik hata raporunun sonuç penceresiyle aynı taban. */
-    static final Duration MIN_ORPHAN_AGE = Duration.ofMinutes(20);
-    /** Zincirin üstüne pay (tek iş parçacıklı yeniden deneme kuyruğunun sırası, SMTP zaman aşımları). */
-    static final Duration MARGIN = Duration.ofMinutes(5);
+    /** Taban — {@link EmailNotificationService#MIN_ORPHAN_AGE} (formül tek yerde). */
+    static final Duration MIN_ORPHAN_AGE = EmailNotificationService.MIN_ORPHAN_AGE;
     /** Geriye bakış — daha eski takılı satırlar (bu sürümden önce) dokunulmadan kalır. */
     static final Duration LOOKBACK = Duration.ofDays(2);
 
@@ -110,7 +108,9 @@ public class MailRetryOrphanSweeper {
     /** Yetim eşiği: yeniden deneme zinciri + pay, en az {@link #MIN_ORPHAN_AGE}. */
     Duration orphanAge() {
         Duration chain = emailService == null ? Duration.ZERO : emailService.currentRetryChainDuration();
-        Duration a = chain.plus(MARGIN);
+        // EmailNotificationService.orphanAge ile AYNI formül — canlı pod'un yeniden denemesi bu eşikten önce başlamak zorunda
+        // (retryStartDeadline), yani yetim sayılan satır canlı bir gönderimin satırı olamaz (inceleme D-2).
+        Duration a = chain.plus(EmailNotificationService.ORPHAN_MARGIN);
         return a.compareTo(MIN_ORPHAN_AGE) < 0 ? MIN_ORPHAN_AGE : a;
     }
 }

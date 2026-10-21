@@ -302,4 +302,72 @@ class ResolutionNotifyDurabilityTest {
         assertThat(marker(e.getId())).isEqualTo(EscalationService.RESOLUTION_NOTIFY_DONE);
         verify(userPushService).enqueueResolve(any(AlertEvent.class), any(), anyLong());
     }
+
+    // ── İnceleme F3 / S-5 (2026-10-21) ─────────────────────────────────────────────────────────────────────────────────
+
+    /** İlk {@code failures} SENDING sahiplenmesinde geçici veritabanı hatası veren şablon. */
+    static final class FlakyResolutionClaimJdbc extends org.springframework.jdbc.core.JdbcTemplate {
+        final java.util.concurrent.atomic.AtomicInteger failures;
+
+        FlakyResolutionClaimJdbc(javax.sql.DataSource ds, int failures) {
+            super(ds);
+            this.failures = new java.util.concurrent.atomic.AtomicInteger(failures);
+        }
+
+        @Override
+        public int update(String sql, Object... args) {
+            if (sql.startsWith("UPDATE alert_events SET resolution_notify = 'SENDING'") && failures.getAndDecrement() > 0) {
+                throw new org.springframework.dao.QueryTimeoutException("havuz zaman aşımı (test)");
+            }
+            return super.update(sql, args);
+        }
+    }
+
+    @Test
+    @DisplayName("F3: işareti yazan kapanışın eşzamansız sahiplenmesi veritabanı hatasıyla düşerse GÖNDERMEZ — süpürücü BİR kez gönderir (çift posta yok)")
+    void claimErrorAfterMarking_sweeperSendsOnce() {
+        AlertEvent e = openAlarm("flaky.example.com");
+        EscalationService a = pod(1, true);
+        a.setJdbcTemplate(new FlakyResolutionClaimJdbc(mp.dataSource(), 1));
+        a.processResults(List.of(healthy("flaky.example.com")));
+        assertThat(store.byId(e.getId()).orElseThrow().getResolved()).isTrue();
+        assertThat(marker(e.getId())).isEqualTo(EscalationService.RESOLUTION_NOTIFY_PENDING);
+        assertThat(resolveSends()).as("işaretsiz gönderim yok").isZero();
+
+        EscalationService b = pod(2, true);
+        assertThat(b.deliverPendingResolutions(Instant.now().plus(3, ChronoUnit.MINUTES))).isEqualTo(1);
+        assertThat(resolveSends()).isEqualTo(1);
+        assertThat(marker(e.getId())).isEqualTo(EscalationService.RESOLUTION_NOTIFY_DONE);
+    }
+
+    @Test
+    @DisplayName("S-5: sahiplenilmiş çözüm postası istisnayla düşerse (eşzamansız yol) FAILED + iz — 'pod durdu' UNKNOWN'u değil; süpürücü yeniden göndermez")
+    void asyncSendException_endsFailedWithTrace() {
+        AlertEvent e = openAlarm("boom.example.com");
+        when(inventoryRepo.findByDomain(anyString())).thenThrow(new IllegalStateException("envanter okunamadı"));
+        EscalationService a = pod(1, true);
+        a.processResults(List.of(healthy("boom.example.com")));
+        assertThat(marker(e.getId())).isEqualTo(EscalationService.RESOLUTION_NOTIFY_FAILED);
+        ArgumentCaptor<NotificationLog> cap = ArgumentCaptor.forClass(NotificationLog.class);
+        verify(notificationLogRepo, atLeastOnce()).save(cap.capture());
+        assertThat(cap.getAllValues()).anySatisfy(n -> {
+            assertThat(n.getAlertEventId()).isEqualTo(e.getId());
+            assertThat(n.getEmailStatus()).startsWith(EscalationService.STATUS_RESOLUTION_FAILED).contains("IllegalStateException");
+        });
+        assertThat(a.deliverPendingResolutions(Instant.now().plus(20, ChronoUnit.MINUTES))).isZero();
+        assertThat(marker(e.getId())).as("UNKNOWN'a çevrilmez").isEqualTo(EscalationService.RESOLUTION_NOTIFY_FAILED);
+    }
+
+    @Test
+    @DisplayName("S-5: süpürücü yolunda da aynı kural — istisna DONE değil FAILED + iz")
+    void sweeperSendException_endsFailedWithTrace() {
+        AlertEvent e = openAlarm("boom2.example.com");
+        pod(1, false).processResults(List.of(healthy("boom2.example.com")));
+        assertThat(marker(e.getId())).isEqualTo(EscalationService.RESOLUTION_NOTIFY_PENDING);
+        when(inventoryRepo.findByDomain(anyString())).thenThrow(new IllegalStateException("envanter okunamadı"));
+        EscalationService b = pod(2, true);
+        assertThat(b.deliverPendingResolutions(Instant.now().plus(3, ChronoUnit.MINUTES))).isZero();
+        assertThat(marker(e.getId())).isEqualTo(EscalationService.RESOLUTION_NOTIFY_FAILED);
+        assertThat(b.deliverPendingResolutions(Instant.now().plus(4, ChronoUnit.MINUTES))).as("yeniden gönderilmez").isZero();
+    }
 }

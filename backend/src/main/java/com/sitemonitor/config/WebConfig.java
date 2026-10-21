@@ -277,9 +277,28 @@ public class WebConfig implements WebMvcConfigurer {
      * yine de kaybolan çözüm postasını kalıcı işaret ({@code alert_events.resolution_notify}) + {@code ResolutionNotifySweeper}
      * başka pod'dan BİR kez gönderir. Doluysa çağıranda koşar (kapanmıyorsa); kapanmışsa WARN (iş kalıcı işaretle kurtulur).
      */
+    /**
+     * Yok etme anındaki beklemesi ORTAK kapanış süresinden düşülen havuz (inceleme D-1): {@code shutdown()} (yok etme) anında
+     * bekleme {@code min(kendi tavanı, ShutdownDeadline kalan)} olur — havuzların asıl boşaltması {@code NotifyExecutorDrain}'de.
+     */
+    static final class DeadlineAwareTaskExecutor extends ThreadPoolTaskExecutor {
+        private final long capMs;
+
+        DeadlineAwareTaskExecutor(long capMs) {
+            this.capMs = capMs;
+            setAwaitTerminationMillis(capMs);
+        }
+
+        @Override
+        public void shutdown() {
+            setAwaitTerminationMillis(ShutdownDeadline.waitMs(capMs));
+            super.shutdown();
+        }
+    }
+
     @Bean(name = "notifyExecutor")
     public ThreadPoolTaskExecutor notifyExecutor() {
-        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        ThreadPoolTaskExecutor executor = new DeadlineAwareTaskExecutor(NOTIFY_AWAIT_SECONDS * 1000L);
         executor.setCorePoolSize(2);
         executor.setMaxPoolSize(4);
         executor.setQueueCapacity(1000);
@@ -318,7 +337,7 @@ public class WebConfig implements WebMvcConfigurer {
 
     @Bean(name = "loginIssueMailExecutor")
     public ThreadPoolTaskExecutor loginIssueMailExecutor() {
-        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        ThreadPoolTaskExecutor executor = new DeadlineAwareTaskExecutor(NOTIFY_AWAIT_SECONDS * 1000L);
         executor.setCorePoolSize(2);
         executor.setMaxPoolSize(4);
         executor.setQueueCapacity(100);

@@ -143,6 +143,34 @@ public class EmailNotificationService {
         return java.time.Duration.ofMillis(base * factor);
     }
 
+    /** Yetim eşiğinin tabanı — varsayılan 90 sn gecikmeyle zincir 10.5 dk; teknik hata raporunun sonuç penceresiyle aynı. */
+    public static final java.time.Duration MIN_ORPHAN_AGE = java.time.Duration.ofMinutes(20);
+    /** Zincirin üstüne pay (tek iş parçacıklı yeniden deneme kuyruğunun sırası, SMTP zaman aşımları). */
+    public static final java.time.Duration ORPHAN_MARGIN = java.time.Duration.ofMinutes(5);
+    /** Son başlama sınırının yetim eşiğinden önceki güvenlik payı (bir SMTP gönderiminin süresi). */
+    public static final java.time.Duration RETRY_START_SAFETY = java.time.Duration.ofMinutes(2);
+
+    /** Bu süreyi geçen {@code QUEUED_RETRY} satırı yetimdir: max({@link #MIN_ORPHAN_AGE}, zincir + {@link #ORPHAN_MARGIN}). */
+    public static java.time.Duration orphanAge(long retryDelayMs) {
+        java.time.Duration a = retryChainDuration(retryDelayMs).plus(ORPHAN_MARGIN);
+        return a.compareTo(MIN_ORPHAN_AGE) < 0 ? MIN_ORPHAN_AGE : a;
+    }
+
+    /**
+     * Bir 421 yeniden denemesinin en geç BAŞLAYABİLECEĞİ an (zincirin ilk denemesinden itibaren): yetim eşiği − güvenlik payı.
+     * Böylece yetim sayılan satırın gönderimi canlı bir pod'da hiç başlamaz (inceleme D-2).
+     */
+    public static java.time.Duration retryStartDeadline(long retryDelayMs) {
+        return orphanAge(retryDelayMs).minus(RETRY_START_SAFETY);
+    }
+
+    /** Son başlama sınırını geçen yeniden denemenin durumu (FAILED sınıfı; 7/24 / rapor mevcut kurallarla yeniden dener). */
+    public static final String STATUS_RETRY_LATE =
+            "FAILED: sonuç yok — 421 yeniden denemesi süresinde başlayamadı (kuyruk gecikmesi), gönderilmedi";
+
+    /** Saat (test dikişi). */
+    java.util.function.LongSupplier clockMs = System::currentTimeMillis;
+
     /** Güncel ayarla yeniden deneme zincirinin süresi (ayar okunamazsa varsayılan 90 sn). */
     public java.time.Duration currentRetryChainDuration() {
         try {
@@ -166,7 +194,7 @@ public class EmailNotificationService {
 
     @PreDestroy
     void shutdownRetryExecutor() {
-        shutdownRetryExecutor(5_000L);
+        shutdownRetryExecutor(com.sitemonitor.config.ShutdownDeadline.waitMs(5_000L));   // ortak yok etme süresi (D-1)
     }
 
     /** {@link #shutdownRetryExecutor()} gövdesi (test bekleme süresini kısaltır). İptal edilip FAILED yazılan görev sayısını döner. */
@@ -317,6 +345,11 @@ public class EmailNotificationService {
     }
 
     private String doSend(String toLabel, MimeMessage msg, int attempt) {
+        return doSend(toLabel, msg, attempt, clockMs.getAsLong());
+    }
+
+    /** {@code chainStartMs}: zincirin İLK denemesinin anı — yeniden deneme son başlama sınırı buradan ölçülür (D-2). */
+    private String doSend(String toLabel, MimeMessage msg, int attempt, long chainStartMs) {
         // Pasif kullanıcı ağı — yalnız İLK denemede (421 yeniden denemesi aynı, zaten süzülmüş mesajı gönderir).
         String filteredTo = toLabel;
         if (attempt == 1 && inactiveRecipientGuard != null) {
@@ -379,7 +412,17 @@ public class EmailNotificationService {
                         () -> {
                             // Kapanış bu görevi iptal edip FAILED yazdıysa başlamaz (iki kez yazılmasın)
                             if (!pendingRetryTasks.remove(task)) return;
-                            try { doSend(to, msg, attempt + 1); }
+                            // Son başlama sınırı (çok pod R1 inceleme D-2): tek iş parçacıklı kuyruk gecikip yetim eşiğine
+                            // yaklaştıysa GÖNDERİLMEZ — süpürücü bu satırı birazdan "sonuç alınamadı" yapar ve 7/24 / rapor
+                            // yeniden dener; geç gelen gerçek bir gönderim o yeniden denemeyle ÇİFT posta olurdu.
+                            if (clockMs.getAsLong() > chainStartMs + retryStartDeadline(retry()).toMillis()) {
+                                pendingRetries.decrementAndGet();
+                                log.warn("SMTP 421 yeniden denemesi süresinde başlayamadı (kuyruk gecikmesi) — gönderilmedi: TO={}",
+                                        SecretMask.maskEmails(to));
+                                writeBackRetryStatus(msg, STATUS_RETRY_LATE);
+                                return;
+                            }
+                            try { doSend(to, msg, attempt + 1, chainStartMs); }
                             catch (Exception ex) {
                                 log.error("✗ Async retry başarısız: TO={} | HATA={}", SecretMask.maskEmails(to), ex.getMessage(), ex);
                             } finally {

@@ -216,6 +216,140 @@ class SystemMaintenanceCatchUpRetryTest {
         assertThat(SystemMaintenanceJobService.staleClaim(iso(NOW.minus(Duration.ofMinutes(10))), NOW)).isTrue();
     }
 
+    // ── İnceleme F7 (2026-10-21): durumu yazılmamış bayat e-posta sahiplenmesi ──────────────────────────────────────────
+
+    SystemMaintenanceWindow endedWithMailClaim(Duration claimAge, String status) {
+        SystemMaintenanceWindow w = ended(false);
+        w.setEmailAllUsers(true);
+        w.setEndLoggedAt(iso(NOW.minus(Duration.ofMinutes(1))));
+        w.setEndMailAt(iso(NOW.minus(claimAge)));
+        w.setEndMailStatus(status);
+        AppUser u = new AppUser();
+        u.setUsername("a");
+        u.setEmail("a@x.com");
+        u.setActive(true);
+        when(userRepo.findByActiveTrueOrderByUsernameAsc()).thenReturn(List.of(u));
+        when(repo.reclaimEndMail(anyLong(), anyString(), anyString(), anyString())).thenReturn(1);
+        when(repo.giveUpEndMail(anyLong(), anyString(), anyString())).thenReturn(1);
+        return w;
+    }
+
+    @Test
+    @DisplayName("F7: bitiş e-postası sahiplenildi ama durumu yazılmadı (pod öldü) — taze sahiplenme pencereyi AÇIK tutar, gönderilmez")
+    void endMailFreshUnsettledClaimKeepsWindowOpen() {
+        SystemMaintenanceWindow w = endedWithMailClaim(Duration.ofMinutes(2), null);
+        job.process(w, NOW);
+        verify(repo, never()).reclaimEndMail(anyLong(), anyString(), anyString(), anyString());
+        verify(emailService, never()).sendHtmlBcc(any(), anyString(), anyString(), anyString());
+        verify(repo, never()).markJobsDone(anyLong());
+    }
+
+    @Test
+    @DisplayName("F7: bayat (11 dk) ve durumu yazılmamış bitiş e-postası BİR kez devralınıp gönderilir, sonra pencere biter")
+    void endMailStaleClaimIsResentOnce() {
+        SystemMaintenanceWindow w = endedWithMailClaim(Duration.ofMinutes(11), null);
+        job.process(w, NOW);
+        verify(repo).reclaimEndMail(eq(5L), eq(w.getEndMailAt()), eq(iso(NOW)), eq(SystemMaintenanceJobService.STATUS_RETRYING));
+        verify(emailService, times(1)).sendHtmlBcc(any(), anyString(), anyString(), anyString());
+        verify(repo).recordEndMail(eq(5L), anyString(), eq(1));
+        verify(repo).markJobsDone(5L);
+    }
+
+    @Test
+    @DisplayName("F7: devralınan yeniden gönderim de yarıda kaldıysa (durum RETRY:) VAZGEÇİLİR — sonuç bilinmiyor yazılır, ERROR + denetim, ikinci posta yok")
+    void endMailSecondInterruptionGivesUp() {
+        SystemMaintenanceWindow w = endedWithMailClaim(Duration.ofMinutes(11), SystemMaintenanceJobService.STATUS_RETRYING);
+        job.process(w, NOW);
+        verify(repo, never()).reclaimEndMail(anyLong(), anyString(), anyString(), anyString());
+        verify(emailService, never()).sendHtmlBcc(any(), anyString(), anyString(), anyString());
+        verify(repo).giveUpEndMail(eq(5L), eq(w.getEndMailAt()), eq(SystemMaintenanceJobService.STATUS_RESULT_UNKNOWN));
+        verify(auditService).recordSystemEvent(eq("SYSTEM_MAINTENANCE_MAIL"), anyString(), eq("5"), any());
+        verify(repo).markJobsDone(5L);
+    }
+
+    @Test
+    @DisplayName("F7: çok eski bitiş (6 saatten önce) için geç 'bakım tamamlandı' postası gönderilmez — vazgeçilir")
+    void endMailTooLateGivesUp() {
+        SystemMaintenanceWindow w = endedWithMailClaim(Duration.ofHours(7), null);
+        w.setEndAt(iso(NOW.minus(Duration.ofHours(7))));
+        job.process(w, NOW);
+        verify(emailService, never()).sendHtmlBcc(any(), anyString(), anyString(), anyString());
+        verify(repo).giveUpEndMail(eq(5L), eq(w.getEndMailAt()), eq(SystemMaintenanceJobService.STATUS_RESULT_UNKNOWN));
+        verify(repo).markJobsDone(5L);
+    }
+
+    @Test
+    @DisplayName("F7: sonucu yazılmış bitiş e-postası (SENT) yeniden gönderilmez ve pencere biter — eskisiyle aynı")
+    void endMailSettledIsNotTouched() {
+        SystemMaintenanceWindow w = endedWithMailClaim(Duration.ofMinutes(11), "SENT");
+        job.process(w, NOW);
+        verify(repo, never()).reclaimEndMail(anyLong(), anyString(), anyString(), anyString());
+        verify(repo, never()).giveUpEndMail(anyLong(), anyString(), anyString());
+        verify(emailService, never()).sendHtmlBcc(any(), anyString(), anyString(), anyString());
+        verify(repo).markJobsDone(5L);
+    }
+
+    SystemMaintenanceWindow plannedWithAnnounceClaim(Duration claimAge, String status, Duration startsIn) {
+        SystemMaintenanceWindow w = new SystemMaintenanceWindow();
+        w.setId(5L);
+        w.setStartAt(iso(NOW.plus(startsIn)));
+        w.setEndAt(iso(NOW.plus(startsIn).plus(Duration.ofHours(1))));
+        w.setPlannedStartAt(w.getStartAt());
+        w.setPlannedEndAt(w.getEndAt());
+        w.setWarnMinutes(10);
+        w.setAnnounceHours(24);
+        w.setRevision(1);
+        w.setMailedRevision(1);
+        w.setEmailAllUsers(true);
+        w.setAnnounceMailAt(iso(NOW.minus(claimAge)));
+        w.setAnnounceMailStatus(status);
+        AppUser u = new AppUser();
+        u.setUsername("a");
+        u.setEmail("a@x.com");
+        u.setActive(true);
+        when(userRepo.findByActiveTrueOrderByUsernameAsc()).thenReturn(List.of(u));
+        when(repo.reclaimAnnounceMail(anyLong(), anyString(), anyString(), anyString())).thenReturn(1);
+        when(repo.giveUpAnnounceMail(anyLong(), anyString(), anyString())).thenReturn(1);
+        return w;
+    }
+
+    @Test
+    @DisplayName("F7: bakım başlamadan önce bayat ve durumu yazılmamış duyuru BİR kez yeniden gönderilir; taze olana dokunulmaz")
+    void announceStaleClaimIsResentOnceBeforeStart() {
+        SystemMaintenanceWindow fresh = plannedWithAnnounceClaim(Duration.ofMinutes(2), null, Duration.ofHours(2));
+        job.process(fresh, NOW);
+        verify(repo, never()).reclaimAnnounceMail(anyLong(), anyString(), anyString(), anyString());
+        verify(emailService, never()).sendHtmlBcc(any(), anyString(), anyString(), anyString());
+
+        SystemMaintenanceWindow stale = plannedWithAnnounceClaim(Duration.ofMinutes(11), null, Duration.ofHours(2));
+        job.process(stale, NOW);
+        verify(repo).reclaimAnnounceMail(eq(5L), eq(stale.getAnnounceMailAt()), eq(iso(NOW)), eq(SystemMaintenanceJobService.STATUS_RETRYING));
+        verify(emailService, times(1)).sendHtmlBcc(any(), anyString(), anyString(), anyString());
+        verify(repo).recordAnnounceMail(eq(5L), anyString(), eq(1));
+    }
+
+    @Test
+    @DisplayName("F7: ikinci kez yarıda kalan duyurudan vazgeçilir (sonuç bilinmiyor + denetim), yeniden gönderilmez")
+    void announceSecondInterruptionGivesUp() {
+        SystemMaintenanceWindow w = plannedWithAnnounceClaim(Duration.ofMinutes(11), SystemMaintenanceJobService.STATUS_RETRYING,
+                Duration.ofHours(2));
+        job.process(w, NOW);
+        verify(emailService, never()).sendHtmlBcc(any(), anyString(), anyString(), anyString());
+        verify(repo).giveUpAnnounceMail(eq(5L), eq(w.getAnnounceMailAt()), eq(SystemMaintenanceJobService.STATUS_RESULT_UNKNOWN));
+        verify(auditService).recordSystemEvent(eq("SYSTEM_MAINTENANCE_MAIL"), anyString(), eq("5"), any());
+    }
+
+    @Test
+    @DisplayName("durum kuralı: NULL ve RETRY: sonuçlanmamış; SENT / FAILED / vazgeçildi sonuçlanmış")
+    void mailUnsettledRule() {
+        assertThat(SystemMaintenanceJobService.mailUnsettled(null)).isTrue();
+        assertThat(SystemMaintenanceJobService.mailUnsettled(SystemMaintenanceJobService.STATUS_RETRYING)).isTrue();
+        assertThat(SystemMaintenanceJobService.mailUnsettled("SENT")).isFalse();
+        assertThat(SystemMaintenanceJobService.mailUnsettled(SystemMaintenanceJobService.STATUS_RESULT_UNKNOWN)).isFalse();
+        assertThat(SystemMaintenanceJobService.STATUS_RESULT_UNKNOWN.length()).isLessThanOrEqualTo(255);
+        assertThat(SystemMaintenanceJobService.STATUS_RETRYING.length()).isLessThanOrEqualTo(255);
+    }
+
     private static SystemMaintenanceSuppression supp(long alertId) {
         SystemMaintenanceSuppression s = new SystemMaintenanceSuppression();
         s.setWindowId(5L);

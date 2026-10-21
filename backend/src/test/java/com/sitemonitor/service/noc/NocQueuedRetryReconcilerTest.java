@@ -152,8 +152,27 @@ class NocQueuedRetryReconcilerTest {
         NocDelivery d = delivery("alert:9:OPEN", "QUEUED_RETRY: 421", old, "[7/24] KRİTİK · i.example.com");
         assertThat(deliveries.reclaim(d.getId(), "QUEUED_RETRY: 421", ISO.format(old), ISO.format(now))).isEqualTo(1);
         assertThat(deliveries.finishQueuedRetry(d.getId(), "QUEUED_RETRY: 421", ISO.format(old),
-                EmailNotificationService.STATUS_RETRY_ORPHANED, ISO.format(now))).isZero();
+                EmailNotificationService.STATUS_RETRY_ORPHANED)).isZero();
         assertThat(status(d)).isEqualTo("SENDING");
+    }
+
+    @Test
+    @DisplayName("inceleme D-2: yetim sayılmış teslim, günlük satırı sonradan SENT olduysa (geç gelen gerçek sonuç) SENT olur — "
+            + "7/24 açılışı ikinci kez gönderilmez; son deneme anı (updated_at) korunur")
+    void orphanedDeliveryRepairedWhenLogTurnsSent() {
+        Instant old = now.minus(Duration.ofMinutes(30));
+        NocDelivery d = delivery("alert:11:OPEN", "QUEUED_RETRY: 421", old, "[7/24] KRİTİK · k.example.com");
+        logRow("[7/24] KRİTİK · k.example.com", "QUEUED_RETRY: 421", old);
+        NocQueuedRetryReconciler r = new NocQueuedRetryReconciler(deliveries, jdbc);
+        assertThat(r.reconcile(now, ORPHAN_AGE)).isEqualTo(1);
+        assertThat(status(d)).isEqualTo(EmailNotificationService.STATUS_RETRY_ORPHANED);
+        assertThat(deliveries.findById(d.getId()).orElseThrow().getUpdatedAt()).as("son deneme anı korunur").isEqualTo(ISO.format(old));
+
+        jdbc.update("UPDATE notification_logs SET email_status = 'SENT'");   // geç gelen gerçek sonuç (tek satır)
+        assertThat(r.reconcile(now, ORPHAN_AGE)).isEqualTo(1);
+        assertThat(status(d)).isEqualTo("SENT");
+        assertThat(NocNotificationService.blocking(status(d))).isTrue();
+        assertThat(r.reconcile(now, ORPHAN_AGE)).isZero();
     }
 
     @Test

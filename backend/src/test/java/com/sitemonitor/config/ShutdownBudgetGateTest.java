@@ -38,8 +38,12 @@ class ShutdownBudgetGateTest {
     private static final Path DEPLOYMENT = Path.of("../helm/site-monitor/templates/deployment.yaml");
     private static final Path TEMPLATE_CHECK = Path.of("../scripts/helm-template-check.sh");
 
-    /** {@code @PreDestroy} beklemeleri için ayrılan pay (EmailNotificationService 5 sn, manuel havuz 5 sn, …). */
-    private static final long PRE_DESTROY_SLACK_S = 10;
+    /**
+     * Yok etme anındaki TÜM havuz beklemelerinin ortak süresi (inceleme D-1, 2026-10-21): her bekleme
+     * {@code min(kendi tavanı, kalan)} kadar bekler ({@link ShutdownDeadline#waitMs}) — sıralı beklemelerin toplamı (bildirim 20 +
+     * giriş postası 20 + push 10 + kodla giriş 10 + e-posta 5 + olay 5 + elle kontrol 5 ≈ 75 sn) artık bu süreyi aşmaz.
+     */
+    private static final long PRE_DESTROY_SLACK_S = ShutdownDeadline.DESTROY_BUDGET_MS / 1000;
 
     private static final Pattern PLACEHOLDER_DEFAULT = Pattern.compile("^\\$\\{[A-Z0-9_]+:([^}]+)}$");
 
@@ -117,6 +121,33 @@ class ShutdownBudgetGateTest {
                 .matcher(Files.readString(TEMPLATE_CHECK, StandardCharsets.UTF_8));
         assertThat(m.find()).as("scripts/helm-template-check.sh SPRING_BUDGET_S").isTrue();
         assertThat(Long.parseLong(m.group(1))).as("betikteki bütçe = uygulamanın kapanış bütçesi").isEqualTo(spring);
+    }
+
+    @Test
+    @DisplayName("KAPI (D-1): yok etme anındaki her havuz beklemesi ortak süreden düşer — awaitTermination / setAwaitTermination* olan her dosya ShutdownDeadline.waitMs kullanır")
+    void everyDestroyWaitUsesTheSharedDeadline() throws IOException {
+        Path main = Path.of("src/main/java");
+        java.util.List<String> offenders = new java.util.ArrayList<>();
+        try (var files = Files.walk(main)) {
+            for (Path f : (Iterable<Path>) files.filter(x -> x.toString().endsWith(".java"))::iterator) {
+                String src = Files.readString(f, StandardCharsets.UTF_8);
+                boolean waits = src.contains(".awaitTermination(") || src.contains("setAwaitTerminationSeconds(")
+                        || src.contains("setAwaitTerminationMillis(");
+                if (!waits || f.endsWith("ShutdownDeadline.java")) continue;
+                if (!src.contains("ShutdownDeadline.waitMs(")) offenders.add(main.relativize(f).toString());
+            }
+        }
+        assertThat(offenders).as("yok etme anında kendi tam süresini bekleyen havuz — ShutdownDeadline.waitMs(tavan) kullanın")
+                .isEmpty();
+        // WebConfig: kapanışta bekleyen her havuz ortak süreyi okuyan alt sınıftan
+        String web = Files.readString(Path.of("src/main/java/com/sitemonitor/config/WebConfig.java"), StandardCharsets.UTF_8);
+        assertThat(count(web, "setWaitForTasksToCompleteOnShutdown(true)")).isEqualTo(count(web, "new DeadlineAwareTaskExecutor("));
+    }
+
+    private static int count(String s, String needle) {
+        int n = 0;
+        for (int i = s.indexOf(needle); i >= 0; i = s.indexOf(needle, i + needle.length())) n++;
+        return n;
     }
 
     @Test

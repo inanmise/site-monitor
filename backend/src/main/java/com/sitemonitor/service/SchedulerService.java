@@ -7110,7 +7110,7 @@ public class SchedulerService {
     void shutdownManualRunPool() {
         manualRunPool.shutdown();
         try {
-            if (!manualRunPool.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS)) {
+            if (!manualRunPool.awaitTermination(com.sitemonitor.config.ShutdownDeadline.waitMs(5_000L), java.util.concurrent.TimeUnit.MILLISECONDS)) {
                 manualRunPool.shutdownNow();
             }
         } catch (InterruptedException e) {

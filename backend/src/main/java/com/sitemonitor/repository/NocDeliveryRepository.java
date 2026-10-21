@@ -44,12 +44,16 @@ public interface NocDeliveryRepository extends JpaRepository<NocDelivery, Long> 
     /**
      * Kuyruktaki teslimin KESİN sonucunu yazar (2026-10-21, çok pod R1 / MP-06) — {@link #reclaim} ile AYNI koşul: satır
      * okunduğu durumdaysa ({@code status} + {@code updated_at}) tek yazar kazanır; arada yeniden sahiplenilmiş / sonuçlanmış
-     * satıra dokunulmaz. Deneme sayacı değişmez (yeni deneme değil, mevcut denemenin sonucu).
+     * satıra dokunulmaz. Deneme sayacı ve {@code updated_at} değişmez (yeni deneme değil, mevcut denemenin sonucu — son
+     * deneme anı korunur: fırtına tik'inin aralığı ve günlük satırı eşleştirmesi ona bakar).
      */
     @Modifying
     @Transactional
-    @Query("UPDATE NocDelivery d SET d.status = :status, d.updatedAt = :now "
+    @Query("UPDATE NocDelivery d SET d.status = :status "
          + "WHERE d.id = :id AND COALESCE(d.status, '') = :seenStatus AND COALESCE(d.updatedAt, '') = :seenAt")
     int finishQueuedRetry(@Param("id") Long id, @Param("seenStatus") String seenStatus, @Param("seenAt") String seenAt,
-                          @Param("status") String status, @Param("now") String now);
+                          @Param("status") String status);
+
+    /** Belirli durumdaki teslimler (yetim sayılmış olanların onarımı), en eski önce, en çok 200. */
+    List<NocDelivery> findTop200ByStatusAndCreatedAtGreaterThanEqualOrderByIdAsc(String status, String since);
 }

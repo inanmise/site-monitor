@@ -84,7 +84,7 @@ public class LoginOtpDeliveryService {
      */
     @PreDestroy
     void shutdown() {
-        shutdown(SHUTDOWN_WAIT_MS);
+        shutdown(com.sitemonitor.config.ShutdownDeadline.waitMs(SHUTDOWN_WAIT_MS));   // ortak yok etme süresi (D-1)
     }
 
     /** {@link #shutdown()}'ın süre parametreli gövdesi (test). Kesilen iş sayısını döner. */

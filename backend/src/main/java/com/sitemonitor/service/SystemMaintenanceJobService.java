@@ -165,6 +165,18 @@ public class SystemMaintenanceJobService {
             mails += sendAnnouncement(w, now, rev);
         } else if (mailWanted && corrections && w.getAnnounceMailAt() != null && mailedRev < rev && p != Phase.ENDED) {
             mails += sendCorrection(w, SystemMaintenanceMail.Kind.UPDATED, now, rev);
+        } else if (mailWanted && w.getAnnounceMailAt() != null && mailUnsettled(w.getAnnounceMailStatus())
+                && staleClaim(w.getAnnounceMailAt(), now)) {
+            // F7: duyuru sahiplenildi ama durumu hiç yazılmadı (gönderen öldü) — bakım başlamadıysa BİR kez yeniden; ikinci kez
+            // yarıda kaldıysa ya da bakım başladıysa vazgeçilir (durum yazılır).
+            if (w.getAnnounceMailStatus() == null && p != null && p.beforeStart()) {
+                log.warn("Sistem bakımı #{} duyuru e-postası yarıda kalmıştı ({} tarihli sahiplenme) — bir kez yeniden gönderiliyor",
+                        w.getId(), w.getAnnounceMailAt());
+                mails += sendAnnouncement(w, now, rev, w.getAnnounceMailAt());
+            } else {
+                giveUpMail(w, SystemMaintenanceMail.Kind.ANNOUNCE,
+                        repo.giveUpAnnounceMail(w.getId(), w.getAnnounceMailAt(), STATUS_RESULT_UNKNOWN));
+            }
         }
 
         // 3) Başlangıç denetimi (saat gelince sistem başlatır — "hemen" bakımda da asıl başlangıç anı budur).
@@ -224,13 +236,63 @@ public class SystemMaintenanceJobService {
                         + "telafi {})", w.getId(), nz(fresh.getSessionsEnded()), nz(fresh.getLoginsBlocked()),
                         nz(fresh.getNotificationsSuppressed()), caught);
             }
-            // 5) "Bakım tamamlandı" e-postası — bitişte BİR kez (sahiplenme kaybı = başka pod / önceki tur gönderdi).
-            if (recipientsChosen && SystemMaintenanceService.emailOnEnd(w) && w.getEndMailAt() == null) {
-                mails += sendEnded(w, now);
+            // 5) "Bakım tamamlandı" e-postası — bitişte BİR kez (sahiplenme kaybı = başka pod / önceki tur gönderdi). Sahiplenmesi
+            // sonuçlanmamış e-posta (durum yazılmadı) pencereyi açık tutar; bayatlayınca BİR kez yeniden gönderilir, o da yarıda
+            // kalırsa vazgeçilir (inceleme F7 — eskiden pod ölünce durum sonsuza dek NULL kalıyordu, iş yine "bitti" sayılıyordu).
+            boolean endMailSettled = true;
+            if (recipientsChosen && SystemMaintenanceService.emailOnEnd(w)) {
+                if (w.getEndMailAt() == null) {
+                    int r = sendEnded(w, now, null);
+                    if (r < 0) endMailSettled = false; else mails += r;
+                } else if (mailUnsettled(w.getEndMailStatus())) {
+                    endMailSettled = false;
+                    if (staleClaim(w.getEndMailAt(), now)) {
+                        endMailSettled = true;
+                        if (w.getEndMailStatus() == null && endedRecently(w, now)) {
+                            log.warn("Sistem bakımı #{} bitiş e-postası yarıda kalmıştı ({} tarihli sahiplenme) — bir kez yeniden gönderiliyor",
+                                    w.getId(), w.getEndMailAt());
+                            int r = sendEnded(w, now, w.getEndMailAt());
+                            if (r < 0) endMailSettled = false; else mails += r;
+                        } else {
+                            giveUpMail(w, SystemMaintenanceMail.Kind.ENDED,
+                                    repo.giveUpEndMail(w.getId(), w.getEndMailAt(), STATUS_RESULT_UNKNOWN));
+                        }
+                    }
+                }
             }
-            if (catchUpSettled) repo.markJobsDone(w.getId());
+            if (catchUpSettled && endMailSettled) repo.markJobsDone(w.getId());
         }
         return new int[]{mails, caught};
+    }
+
+    /** Yarıda kalmış bitiş e-postası yalnız bu süre içinde yeniden gönderilir — daha geç bir "bakım tamamlandı" postası yanıltır. */
+    static final Duration END_MAIL_RETRY_WINDOW = Duration.ofHours(6);
+
+    static boolean endedRecently(SystemMaintenanceWindow w, Instant now) {
+        Instant end = SystemMaintenanceService.parse(w.getEndAt());
+        return end != null && now.isBefore(end.plus(END_MAIL_RETRY_WINDOW));
+    }
+
+    /** Yeniden gönderilen (devralınmış) e-postanın durum öneki — sonuç yazılınca ezilir. */
+    static final String STATUS_RETRYING = "RETRY: önceki gönderen pod yarıda durdu — bir kez yeniden gönderiliyor";
+    /** İkinci kez yarıda kalan / artık anlamsız e-postanın durumu (yeniden gönderilmez). */
+    static final String STATUS_RESULT_UNKNOWN = "FAILED: sonuç bilinmiyor — gönderen pod yarıda durdu; yeniden gönderilmedi";
+
+    /** Sahiplenilmiş e-postanın sonucu henüz yazılmadı mı (NULL ya da devralınıp yeniden gönderiliyor). */
+    static boolean mailUnsettled(String status) {
+        return status == null || status.startsWith("RETRY:");
+    }
+
+    /** Vazgeçme izi: ERROR + {@code SYSTEM_MAINTENANCE_MAIL} denetimi (durum = sonuç bilinmiyor). */
+    private void giveUpMail(SystemMaintenanceWindow w, SystemMaintenanceMail.Kind kind, int rows) {
+        if (rows != 1) return;
+        log.error("Sistem bakımı #{} {} e-postası yarıda kaldı ve yeniden gönderilmedi (sonuç bilinmiyor)", w.getId(), kind);
+        try {
+            auditService.recordSystemEvent("SYSTEM_MAINTENANCE_MAIL", SystemMaintenanceService.RESOURCE, String.valueOf(w.getId()),
+                    AuditDetail.of("kind", kind.name(), "recipients", 0, "status", STATUS_RESULT_UNKNOWN));
+        } catch (Exception e) {
+            log.warn("Sistem bakımı e-posta vazgeçme denetimi yazılamadı: {}", e.getMessage());
+        }
     }
 
     /** Sahiplenme damgası {@link #STALE_CLAIM}'den eski mi (okunamıyorsa eski sayılır — sahibi belirsiz). */
@@ -320,8 +382,15 @@ public class SystemMaintenanceJobService {
     // ── E-posta duyurusu ────────────────────────────────────────────────────────────────────────────
 
     private int sendAnnouncement(SystemMaintenanceWindow w, Instant now, int rev) {
+        return sendAnnouncement(w, now, rev, null);
+    }
+
+    /** {@code reclaimFrom}: devralınan bayat sahiplenmenin damgası (F7); null = yeni sahiplenme. Sahiplenme kaybı → 0. */
+    private int sendAnnouncement(SystemMaintenanceWindow w, Instant now, int rev, String reclaimFrom) {
         String at = SystemMaintenanceService.iso(now);
-        if (repo.claimAnnounceMail(w.getId(), at, rev) != 1) return 0;
+        boolean claimed = reclaimFrom == null ? repo.claimAnnounceMail(w.getId(), at, rev) == 1
+                : repo.reclaimAnnounceMail(w.getId(), reclaimFrom, at, STATUS_RETRYING) == 1;
+        if (!claimed) return 0;
         List<String> to;
         String status;
         String key = w.getId() + ":announce";
@@ -329,7 +398,7 @@ public class SystemMaintenanceJobService {
             to = recipients(w);
             status = send(w, SystemMaintenanceMail.Kind.ANNOUNCE, to);   // dilim hataları içeride yakalanır — istisna = hiç gitmedi
         } catch (RuntimeException e) {
-            if (!countFailure(key, w, "announce")) repo.releaseAnnounceMail(w.getId(), at);   // MP-18: sonraki tur yeniden dener
+            if (reclaimFrom == null && !countFailure(key, w, "announce")) repo.releaseAnnounceMail(w.getId(), at);   // MP-18
             else recordGaveUp(() -> repo.recordAnnounceMail(w.getId(), STATUS_GAVE_UP, 0));
             throw e;
         }
@@ -361,10 +430,16 @@ public class SystemMaintenanceJobService {
         return to.isEmpty() ? 0 : 1;
     }
 
-    /** "Bakım tamamlandı" e-postası — sahiplenme + duyuruyla aynı alıcılar + denetim ({@code SYSTEM_MAINTENANCE_MAIL}, ENDED). */
-    private int sendEnded(SystemMaintenanceWindow w, Instant now) {
+    /**
+     * "Bakım tamamlandı" e-postası — sahiplenme + duyuruyla aynı alıcılar + denetim ({@code SYSTEM_MAINTENANCE_MAIL}, ENDED).
+     * {@code reclaimFrom}: devralınan bayat sahiplenmenin damgası (F7); null = yeni sahiplenme. Dönüş: gönderim sayısı (0/1),
+     * sahiplenme kaybedildiyse -1 (başka pod / tur sürdürüyor — pencere açık kalır).
+     */
+    private int sendEnded(SystemMaintenanceWindow w, Instant now, String reclaimFrom) {
         String at = SystemMaintenanceService.iso(now);
-        if (repo.claimEndMail(w.getId(), at) != 1) return 0;
+        boolean claimed = reclaimFrom == null ? repo.claimEndMail(w.getId(), at) == 1
+                : repo.reclaimEndMail(w.getId(), reclaimFrom, at, STATUS_RETRYING) == 1;
+        if (!claimed) return -1;
         List<String> to;
         String status;
         String key = w.getId() + ":end-mail";
@@ -372,7 +447,7 @@ public class SystemMaintenanceJobService {
             to = recipients(w);
             status = send(w, SystemMaintenanceMail.Kind.ENDED, to);
         } catch (RuntimeException e) {
-            if (!countFailure(key, w, "end-mail")) repo.releaseEndMail(w.getId(), at);   // MP-18: sonraki tur yeniden dener
+            if (reclaimFrom == null && !countFailure(key, w, "end-mail")) repo.releaseEndMail(w.getId(), at);   // MP-18
             else recordGaveUp(() -> repo.recordEndMail(w.getId(), STATUS_GAVE_UP, 0));
             throw e;
         }

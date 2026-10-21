@@ -531,7 +531,8 @@ public class EscalationService {
                         // (yeni envanterin anında kontrolü, açılış telafisi) ikinci ESCALATION göndermez.
                         String seenStamp = event.getLastReAlertAt();
                         String claimAt = now();
-                        if (!claimReAlert(event.getId(), seenStamp, claimAt, "ESCALATION")) continue;
+                        EscalationUndo undo = EscalationUndo.of(event);
+                        if (!claimEscalation(event.getId(), seenStamp, event.getAlertLevel(), alertLevel, claimAt)) continue;
                         event.setAlertLevel(alertLevel);
                         event.setMessage(message);
                         event.setDaysRemaining(daysRemaining);
@@ -559,7 +560,9 @@ public class EscalationService {
                             sendCombinedAlert(domainTeamId, ugTeamId, contacts, domain, alertLevel, alertType, message,
                                     "", event.getId(), "ESCALATION", daysRemaining, result);
                         } catch (RuntimeException ex) {
-                            releaseReAlert(event.getId(), claimAt, seenStamp);   // gönderilemedi → sonraki tur yeniden dener
+                            // Gönderilemedi: seviye / onay / damga birlikte GERİ alınır → sonraki tur terfiyi yeniden görür ve
+                            // ESCALATION'ı gönderir (yalnız damga geri alınsaydı terfi "yapılmış" sayılır, bildirim hiç gitmezdi).
+                            revertEscalation(event, undo, claimAt);
                             throw ex;
                         }
 
@@ -1166,7 +1169,7 @@ public class EscalationService {
         // yukarıdaki oku-kontrol-yaz penceresinde resolvedBy/At'i eziyor ve İKİNCİ bir çözüm e-postası (MANUAL_RESOLVE)
         // üretiyordu. Koşullu UPDATE 0 dönerse yarışı otomatik yol kazanmış demektir: kapanmış olay olduğu gibi döner,
         // bildirim yok (yukarıdaki idempotent kuralla aynı sonuç).
-        if (event.getId() != null && markResolvedIfOpenNotify(event.getId(), at, by, !stormMember) == 0) {
+        if (event.getId() != null && markResolvedIfOpenNotify(event, at, by, !stormMember) == 0) {
             log.info("Elle çözüm atlandı — alarm aynı anda otomatik kapandı (yarış): {} [{}] #{}",
                     event.getDomain(), event.getAlertType(), event.getId());
             return alertEventRepo.findById(eventId).orElse(event);
@@ -1176,6 +1179,7 @@ public class EscalationService {
         event.setResolvedBy(by);
         if (note != null && !note.isBlank()) event.setResolvedNote(note.trim());
         AlertEvent saved = alertEventRepo.save(event);
+        keepResolutionMarker(event, saved);   // salt okunur işaret kayıt dönüşünde de bilinsin (F3)
         // D-A3-3 (2026-09-29): fırtına üyesi elle çözülünce de bireysel ÇÖZÜLDÜ e-postası GİTMEZ — otomatik yolla aynı
         // kural (resolveOpenAlertsForDomain): tek toplu kurtarma fırtına dağılınca gider; aksi hâlde takım aynı üyeyi
         // önce bireysel, sonra toplu çözümde iki kez alıyordu. Push simetrisi korunur (açılışta SENT olanlara).
@@ -1233,7 +1237,7 @@ public class EscalationService {
             // gönderilmeyen satır bırakır, süpürücü üyeye bireysel posta atardı.
             boolean stormMember = event.getStormId() != null && stormService.isActive(event.getStormId());
             if (event.getId() != null
-                    && markResolvedIfOpenNotify(event.getId(), now(), "system", !stormMember) == 0) {
+                    && markResolvedIfOpenNotify(event, now(), "system", !stormMember) == 0) {
                 log.debug("Alarm zaten çözülmüş (yarış) — otomatik kapanış atlandı: {} [{}]",
                         domain, event.getAlertType());
                 continue;
@@ -1242,6 +1246,7 @@ public class EscalationService {
             event.setResolvedAt(now());
             event.setResolvedBy("system");
             AlertEvent saved = alertEventRepo.save(event);
+            keepResolutionMarker(event, saved);   // salt okunur işaret kayıt dönüşünde de bilinsin (F3)
             // Storm üyesi + storm hâlâ aktif → bireysel çözüm e-postası GÖNDERME
             // (TEK toplu recovery, fırtına dağıldığında storm sweep'inden gider). Incident yine kapandı.
             if (stormMember) {
@@ -1709,6 +1714,15 @@ public class EscalationService {
             // acknowledgedAt hiçbir yerde okunmadığından ack alarmı SONSUZA kadar susturuyordu.
             // Sertifika yolu (processResults) ile aynı kural: terfi ack'i düşürür ve ESCALATION gönderir.
             if (levelValue(alertLevel) > levelValue(event.getAlertLevel())) {
+                boolean stormMember = event.getStormId() != null && stormService.isActive(event.getStormId());
+                // ÇOK POD (MP-03 / inceleme F2): terfi bildirimi damgası seviye YAZILMADAN ÖNCE sahiplenilir (sertifika yolu
+                // gibi). Eskiden seviye önce kaydediliyordu: sahiplenme veritabanı hatasıyla düşünce sonraki tur terfiyi
+                // "yapılmış" görüyor, ESCALATION hiç gitmiyor ve onay da sessizce düşmüş oluyordu. Sahiplenme kaybedilirse
+                // (başka pod / yol) ya da yazılamazsa seviye ve onay DEĞİŞMEZ → sonraki tur yeniden dener.
+                String seenStamp = event.getLastReAlertAt();
+                String claimAt = now();
+                EscalationUndo undo = EscalationUndo.of(event);
+                if (!stormMember && !claimEscalation(event.getId(), seenStamp, event.getAlertLevel(), alertLevel, claimAt)) return;
                 event.setAlertLevel(alertLevel);
                 event.setMessage(message);
                 if (acked) {
@@ -1716,25 +1730,21 @@ public class EscalationService {
                     event.setAcknowledgedAt(null);
                     event.setAcknowledgedBy(null);
                 }
+                // Varlık kaydı sahiplenilen damgayı GERİ yazmasın (kayıt tüm kolonları yazar)
+                if (!stormMember) event.setLastReAlertAt(claimAt);
                 // KALICILASTIR: asagidaki "re-alert vakti gelmedi" dali save cagirmiyor ve sinifta
                 // @Transactional da yok — dirty-checking kurtarmiyordu. Terfi bellekte kalip
                 // kayboluyor, araya giren bir cozum bildirimini ESKI (dusuk) seviyeyle gonderiyor
                 // ve mudur atlanabiliyordu (Y5'in alt-dali).
                 alertEventRepo.save(event);
-                boolean stormMember = event.getStormId() != null && stormService.isActive(event.getStormId());
                 if (!stormMember) {
-                    // ÇOK POD (MP-03): terfi bildirimi damgası gönderimden ÖNCE sahiplenilir (izleme kilidi 120 sn'lik — süresi
-                    // dolmuş kilitle ikinci pod aynı terfiyi ikinci kez göndermesin).
-                    String seenStamp = event.getLastReAlertAt();
-                    String claimAt = now();
-                    if (!claimReAlert(event.getId(), seenStamp, claimAt, "ESCALATION")) return;
                     List<EscalationContact> contacts = teamOnly ? List.of()
                             : recipientsNow(alertLevel, domainTeamId, ugTeamId, event.getId());
                     try {
                         sendCombinedAlert(domainTeamId, ugTeamId, contacts, domain, alertLevel, alertType,
                                 message, "", event.getId(), "ESCALATION", null, outageContext);
                     } catch (RuntimeException ex) {
-                        releaseReAlert(event.getId(), claimAt, seenStamp);
+                        revertEscalation(event, undo, claimAt);   // sonraki tur terfiyi yeniden görür ve gönderir
                         throw ex;
                     }
                     event.setNotifiedContacts(serializeContacts(contacts));
@@ -2283,13 +2293,20 @@ public class EscalationService {
     @Async("notifyExecutor")
     public void sendResolutionNotificationAsync(AlertEvent event, String resolvedBy, String trigger) {
         try {
-            ResolutionClaim claim = claimResolutionNotify(event != null ? event.getId() : null);
+            // İşareti bu kapanış yazdıysa (inceleme F3) sahiplenme hatasında GÖNDERİLMEZ — süpürücü BİR kez gönderir; işaret
+            // durumu bilinmeden göndermek süpürücünün ikinci postasına yol açıyordu.
+            boolean marked = event != null && RESOLUTION_NOTIFY_PENDING.equals(event.getResolutionNotify());
+            ResolutionClaim claim = claimResolutionNotify(event != null ? event.getId() : null, marked);
             if (!claim.send()) {
-                log.info("Çözüm bildirimi başka yolda/pod'da sahiplenilmiş — bu iş göndermedi: olay {}", event.getId());
+                log.info("Çözüm bildirimi başka yolda/pod'da sahiplenilmiş ya da süpürücüye bırakıldı — bu iş göndermedi: olay {}",
+                        event != null ? event.getId() : null);
                 return;
             }
-            sendResolutionNotification(event, resolvedBy, trigger);
-            if (claim.at() != null) finishResolutionNotify(event.getId(), claim.at());
+            if (claim.at() == null) {
+                sendResolutionNotification(event, resolvedBy, trigger);   // işaretsiz satır: eski davranış
+            } else {
+                deliverClaimedResolution(event, resolvedBy, trigger, claim.at());
+            }
         } catch (Exception e) {
             log.error("Async resolution notification failed for alertEventId={}: {}",
                     event != null ? event.getId() : null, e.getMessage(), e);
@@ -2297,6 +2314,14 @@ public class EscalationService {
     }
 
     private void sendResolutionNotification(AlertEvent event, String resolvedBy, String trigger) {
+        sendResolutionNotification(event, resolvedBy, trigger, false);
+    }
+
+    /**
+     * {@code propagate}: gövdedeki istisna yutulmaz, çağırana gider (inceleme S-5) — sahiplenilmiş çözüm postası ({@link
+     * #deliverClaimedResolution}) sonucu FAILED olarak kaydedebilsin; eski yol (işaretsiz) istisnayı günlüğe yazıp yutar.
+     */
+    private void sendResolutionNotification(AlertEvent event, String resolvedBy, String trigger, boolean propagate) {
         // SİSTEM BAKIMI (2026-10-02, kullanıcı kararı): "Bildirimler bakım boyunca sussun" açık bakım AKTİFKEN çözüm de
         // hiçbir kanaldan gitmez (e-posta, webhook, push, 7/24) — iz SYSTEM_MAINTENANCE satırı. Bakım içinde kapanan alarm
         // için bakım sonrasında da bir şey gönderilmez (telafi yalnız hâlâ AÇIK alarmların açılışıdır).
@@ -2503,6 +2528,7 @@ public class EscalationService {
                 log.warn("user-push çözüm tetiği atlandı (mail yolu etkilenmedi): {}", ex.toString());
             }
         } catch (Exception e) {
+            if (propagate) throw e instanceof RuntimeException re ? re : new IllegalStateException(e);
             log.warn("Çözüm bildirimi gönderilemedi: {} — {}", event.getDomain(), e.getMessage());
         }
     }
@@ -4534,6 +4560,79 @@ public class EscalationService {
         return true;
     }
 
+    /** Terfi sahiplenmesi: damga VE seviye tek koşullu yazımda (inceleme F2). */
+    static final String SQL_ESCALATION_CLAIM = "UPDATE alert_events SET last_re_alert_at = ?, alert_level = ? "
+            + "WHERE id = ? AND resolved = FALSE AND last_re_alert_at = ? AND alert_level = ?";
+    static final String SQL_ESCALATION_CLAIM_UNSTAMPED = "UPDATE alert_events SET last_re_alert_at = ?, alert_level = ? "
+            + "WHERE id = ? AND resolved = FALSE AND last_re_alert_at IS NULL AND alert_level = ?";
+
+    /**
+     * Terfi (ESCALATION) sahiplenmesi — {@link #claimReAlert} gibi, ama YENİ seviye de aynı koşullu yazımda yazılır ve görülen
+     * seviye koşula girer. Yalnız damgayla sahiplenmede ikinci pod, birincinin damgasını okuyup (seviye henüz kaydedilmemişken)
+     * kendi damgasıyla yeniden sahiplenebiliyor ve ikinci ESCALATION'ı gönderiyordu. Hata / kayıp → false: seviye, onay ve damga
+     * değişmez, sonraki tur yeniden dener. Görülen seviye bilinmiyorsa (NULL) yalnız damga sahiplenmesi.
+     */
+    boolean claimEscalation(Long id, String seenStamp, String seenLevel, String newLevel, String at) {
+        if (jdbcTemplate == null || id == null) return true;
+        if (seenLevel == null || newLevel == null) return claimReAlert(id, seenStamp, at, "ESCALATION");
+        int rows;
+        try {
+            rows = seenStamp == null
+                    ? jdbcTemplate.update(SQL_ESCALATION_CLAIM_UNSTAMPED, at, newLevel, id, seenLevel)
+                    : jdbcTemplate.update(SQL_ESCALATION_CLAIM, at, newLevel, id, seenStamp, seenLevel);
+        } catch (Exception e) {
+            log.warn("Alarm #{} ESCALATION bildirimi sahiplenilemedi — seviye değişmedi, sonraki tur yeniden dener: {}",
+                    id, e.getMessage());
+            return false;
+        }
+        if (rows != 1) {
+            log.info("Alarm #{} ESCALATION bildirimi gönderilmedi — damga / seviye bu arada değişti ya da olay kapandı (başka yol/pod)", id);
+            return false;
+        }
+        return true;
+    }
+
+    /** Terfi öncesi değerler — terfi bildirimi istisnayla düşerse geri yüklenir (inceleme F2 / S-6). */
+    record EscalationUndo(String level, String message, Boolean acknowledged, String acknowledgedAt, String acknowledgedBy,
+                          String lastReAlertAt, Integer daysRemaining, String notAfter, String notifiedContacts) {
+        static EscalationUndo of(AlertEvent e) {
+            return new EscalationUndo(e.getAlertLevel(), e.getMessage(), e.getAcknowledged(), e.getAcknowledgedAt(),
+                    e.getAcknowledgedBy(), e.getLastReAlertAt(), e.getDaysRemaining(), e.getNotAfter(), e.getNotifiedContacts());
+        }
+
+        void applyTo(AlertEvent e) {
+            e.setAlertLevel(level);
+            e.setMessage(message);
+            e.setAcknowledged(acknowledged);
+            e.setAcknowledgedAt(acknowledgedAt);
+            e.setAcknowledgedBy(acknowledgedBy);
+            e.setLastReAlertAt(lastReAlertAt);
+            e.setDaysRemaining(daysRemaining);
+            e.setNotAfter(notAfter);
+            e.setNotifiedContacts(notifiedContacts);
+        }
+    }
+
+    /**
+     * Terfi bildirimi gönderilemedi: seviye, onay ve damga terfi ÖNCESİNE döner — KOŞULLU (yalnız bu sahiplenmenin damgası hâlâ
+     * duruyorsa ve olay açıksa; arada başka yol ilerlettiyse dokunulmaz). Sonraki tur terfiyi yeniden görür ve ESCALATION'ı
+     * gönderir. Veritabanı yoksa (birim testi) bugünkü davranış: yalnız istisna yayılır.
+     */
+    void revertEscalation(AlertEvent event, EscalationUndo undo, String claimedAt) {
+        if (jdbcTemplate == null || event == null || event.getId() == null || undo == null) return;
+        try {
+            int n = jdbcTemplate.update("UPDATE alert_events SET alert_level = ?, message = ?, acknowledged = ?, acknowledged_at = ?, "
+                    + "acknowledged_by = ?, last_re_alert_at = ?, days_remaining = ?, not_after = ?, notified_contacts = ? "
+                    + "WHERE id = ? AND resolved = FALSE AND last_re_alert_at = ?",
+                    undo.level(), undo.message(), Boolean.TRUE.equals(undo.acknowledged()), undo.acknowledgedAt(),
+                    undo.acknowledgedBy(), undo.lastReAlertAt(), undo.daysRemaining(), undo.notAfter(), undo.notifiedContacts(),
+                    event.getId(), claimedAt);
+            if (n == 1) undo.applyTo(event);
+        } catch (Exception e) {
+            log.warn("Alarm #{} terfisi geri alınamadı (sonraki tur yeniden göndermeyebilir): {}", event.getId(), e.getMessage());
+        }
+    }
+
     /** Gönderim istisnayla düştü: sahiplenilen damga geri alınır (koşullu — arada başkası ilerlettiyse dokunulmaz). */
     void releaseReAlert(Long id, String claimedAt, String seen) {
         if (jdbcTemplate == null || id == null) return;
@@ -4557,6 +4656,8 @@ public class EscalationService {
     public static final String RESOLUTION_NOTIFY_DONE = "DONE";
     public static final String RESOLUTION_NOTIFY_UNKNOWN = "UNKNOWN";
     public static final String RESOLUTION_NOTIFY_EXPIRED = "EXPIRED";
+    /** Sahiplenilmiş gönderim uygulama hatasıyla düştü (inceleme S-5) — yeniden denenmez, iz {@code notification_logs}'ta. */
+    public static final String RESOLUTION_NOTIFY_FAILED = "FAILED";
 
     /** Süpürücü PENDING satıra bu kadar dokunmaz — normal eşzamansız iş saniyeler içinde gönderir. */
     static final java.time.Duration RESOLUTION_SWEEP_MIN_AGE = java.time.Duration.ofMinutes(2);
@@ -4579,17 +4680,29 @@ public class EscalationService {
      * henüz yoksa ({@code BadSqlGrammarException}) ya da veritabanı yoksa (birim testi) / bildirim yoksa bugünkü
      * {@link AlertEventRepository#markResolvedIfOpen}. 1 = bu çağrı kapattı, 0 = başkası kapatmıştı.
      */
-    int markResolvedIfOpenNotify(Long id, String at, String by, boolean notify) {
+    int markResolvedIfOpenNotify(AlertEvent event, String at, String by, boolean notify) {
+        Long id = event.getId();
         if (notify && jdbcTemplate != null) {
             try {
-                return jdbcTemplate.update("UPDATE alert_events SET resolved = TRUE, resolved_at = ?, resolved_by = ?, "
+                int n = jdbcTemplate.update("UPDATE alert_events SET resolved = TRUE, resolved_at = ?, resolved_by = ?, "
                         + "resolution_notify = 'PENDING', resolution_notify_at = ? WHERE id = ? AND resolved = FALSE",
                         at, by, at, id);
+                // Bellekteki nesne de işaretli: eşzamansız iş işaretin BU kapanışça yazıldığını bilir (inceleme F3). Salt okunur
+                // kolon — varlık kaydı onu yazmaz.
+                if (n == 1) event.setResolutionNotify(RESOLUTION_NOTIFY_PENDING);
+                return n;
             } catch (org.springframework.jdbc.BadSqlGrammarException e) {
                 log.debug("Çözüm bildirimi işareti yazılamadı (kolon yok?) — işaretsiz kapanış: {}", e.getMessage());
             }
         }
         return alertEventRepo.markResolvedIfOpen(id, at, by);
+    }
+
+    /** Kapanışın yazdığı işaret kaydın döndürdüğü nesneye de taşınır (salt okunur kolon; birleştirme kopyası olabilir). */
+    private static void keepResolutionMarker(AlertEvent from, AlertEvent to) {
+        if (from != null && to != null && to != from && from.getResolutionNotify() != null) {
+            to.setResolutionNotify(from.getResolutionNotify());
+        }
     }
 
     /** Sahiplenme sonucu: {@code send} = gönder; {@code at} dolu = işaret SENDING'e alındı (bitince DONE yazılır). */
@@ -4600,10 +4713,12 @@ public class EscalationService {
 
     /**
      * PENDING → SENDING. Kazanırsa gönder; satır işaretsizse (NULL — eski pod / işaret yazılamadı) eski davranış: gönder;
-     * işaret başka durumdaysa (SENDING / DONE / UNKNOWN / EXPIRED) başkası sahiplenmiş: GÖNDERME. Okuma/yazma hatasında
-     * gönderilir (en az bir kez — işaret durumu bilinemiyor).
+     * işaret başka durumdaysa (SENDING / DONE / UNKNOWN / EXPIRED / FAILED) başkası sahiplenmiş: GÖNDERME. Okuma/yazma
+     * hatasında: işaretin YAZILDIĞI biliniyorsa ({@code marked} — bu kapanış yazdı, ya da süpürücü) GÖNDERİLMEZ, PENDING kalır
+     * ve süpürücü 2 dk sonra BİR kez gönderir (inceleme F3: eskiden işaretsiz gönderiliyor, süpürücü ikinci kez gönderiyordu);
+     * bilinmiyorsa eski davranış (en az bir kez).
      */
-    ResolutionClaim claimResolutionNotify(Long id) {
+    ResolutionClaim claimResolutionNotify(Long id, boolean marked) {
         if (jdbcTemplate == null || id == null) return ResolutionClaim.LEGACY;
         String at = now();
         try {
@@ -4616,8 +4731,48 @@ public class EscalationService {
         } catch (org.springframework.jdbc.BadSqlGrammarException e) {
             return ResolutionClaim.LEGACY;
         } catch (Exception e) {
+            if (marked) {
+                log.warn("Çözüm bildirimi işareti sahiplenilemedi (olay {}) — gönderim süpürücüye bırakıldı: {}", id, e.getMessage());
+                return ResolutionClaim.LOST;
+            }
             log.warn("Çözüm bildirimi işareti sahiplenilemedi (olay {}) — işaretsiz gönderiliyor: {}", id, e.getMessage());
             return ResolutionClaim.LEGACY;
+        }
+    }
+
+    /** Uygulama hatasıyla biten çözüm postası — iz metni (sınıf adı eklenir). */
+    static final String STATUS_RESOLUTION_FAILED =
+            "FAILED: çözüm bildirimi yarıda kaldı (uygulama hatası) — gitmemiş olabilir, otomatik yeniden denenmez";
+
+    /**
+     * Sahiplenilmiş çözüm postasını gönderir ve işareti SONUÇLANDIRIR (inceleme S-5 — eşzamansız iş ve süpürücü AYNI kural):
+     * normal biterse DONE; gövde istisnayla düşerse FAILED + {@code notification_logs} izi ({@link #STATUS_RESOLUTION_FAILED}).
+     * Eskiden eşzamansız yolda istisna SENDING bırakıyor (10 dk sonra yanlış "pod durdu" UNKNOWN'u), süpürücü yolunda DONE
+     * yazıyordu. FAILED yeniden denenmez (uygulama hatası tekrarlanırdı — sonsuz döngü yok); iz neden gitmediğini söyler.
+     */
+    boolean deliverClaimedResolution(AlertEvent event, String resolvedBy, String trigger, String claimAt) {
+        try {
+            sendResolutionNotification(event, resolvedBy, trigger, true);
+        } catch (RuntimeException e) {
+            log.error("Çözüm bildirimi yarıda kaldı (olay {}): {}", event.getId(), e.toString());
+            failResolutionNotify(event.getId(), claimAt, e);
+            return false;
+        }
+        finishResolutionNotify(event.getId(), claimAt);
+        return true;
+    }
+
+    /** SENDING → FAILED + iz (yalnız bu sahiplenmenin satırı). */
+    void failResolutionNotify(Long id, String claimedAt, Exception cause) {
+        if (jdbcTemplate == null || id == null || claimedAt == null) return;
+        try {
+            if (jdbcTemplate.update("UPDATE alert_events SET resolution_notify = 'FAILED', resolution_notify_at = ? "
+                    + "WHERE id = ? AND resolution_notify = 'SENDING' AND resolution_notify_at = ?", now(), id, claimedAt) == 1) {
+                traceResolutionDecision(id, NotificationLog.fit(STATUS_RESOLUTION_FAILED + " (" + cause.getClass().getSimpleName() + ")",
+                        NotificationLog.VARCHAR_MAX));
+            }
+        } catch (Exception e) {
+            log.warn("Çözüm bildirimi işareti FAILED yazılamadı (olay {}): {}", id, e.getMessage());
         }
     }
 
@@ -4677,20 +4832,25 @@ public class EscalationService {
                 + "AND resolution_notify = 'PENDING' ORDER BY id LIMIT " + RESOLUTION_SWEEP_BATCH, Long.class, maxAge, minAge);
         int sent = 0;
         for (Long id : due) {
-            ResolutionClaim claim = claimResolutionNotify(id);
+            ResolutionClaim claim = claimResolutionNotify(id, true);
             if (claim.at() == null) continue;   // yalnız GERÇEK sahiplenme gönderir (işaretsiz / kaybedilmiş satır değil)
+            AlertEvent e;
             try {
-                AlertEvent e = alertEventRepo.findById(id).orElse(null);
-                if (e != null && Boolean.TRUE.equals(e.getResolved())) {
-                    String by = e.getResolvedBy();
-                    boolean manual = by != null && !by.isBlank() && !"system".equalsIgnoreCase(by.trim());
-                    sendResolutionNotification(e, manual ? by : "Sistem (otomatik)", manual ? "MANUAL_RESOLVE" : "RESOLUTION");
-                    sent++;
-                    log.info("Çözüm bildirimi kalıcı işaretten gönderildi (önceki iş düşmüştü): olay {} {} [{}]",
-                            id, e.getDomain(), e.getAlertType());
-                }
-            } finally {
-                finishResolutionNotify(id, claim.at());
+                e = alertEventRepo.findById(id).orElse(null);
+            } catch (RuntimeException ex) {
+                failResolutionNotify(id, claim.at(), ex);
+                continue;
+            }
+            if (e == null || !Boolean.TRUE.equals(e.getResolved())) {
+                finishResolutionNotify(id, claim.at());   // satır yok / yeniden açıldı — gönderilecek bir şey yok
+                continue;
+            }
+            String by = e.getResolvedBy();
+            boolean manual = by != null && !by.isBlank() && !"system".equalsIgnoreCase(by.trim());
+            if (deliverClaimedResolution(e, manual ? by : "Sistem (otomatik)", manual ? "MANUAL_RESOLVE" : "RESOLUTION", claim.at())) {
+                sent++;
+                log.info("Çözüm bildirimi kalıcı işaretten gönderildi (önceki iş düşmüştü): olay {} {} [{}]",
+                        id, e.getDomain(), e.getAlertType());
             }
         }
         return sent;

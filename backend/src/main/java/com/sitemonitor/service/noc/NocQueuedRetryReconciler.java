@@ -71,13 +71,37 @@ public class NocQueuedRetryReconciler {
                     continue;   // sonuç hâlâ gelebilir
                 }
                 int rows = deliveries.finishQueuedRetry(d.getId(), d.getStatus() == null ? "" : d.getStatus(),
-                        d.getUpdatedAt() == null ? "" : d.getUpdatedAt(), target, ISO.format(now));
+                        d.getUpdatedAt() == null ? "" : d.getUpdatedAt(), target);
                 if (rows == 1) {
                     done++;
                     log.info("7/24 teslimi ({}) kuyruk sonucu yazıldı: {}", d.getDedupeKey(), target.length() > 80 ? target.substring(0, 80) : target);
                 }
             } catch (RuntimeException e) {
                 log.warn("7/24 teslimi #{} kuyruk sonucu yazılamadı (sonraki tur yeniden dener): {}", d.getId(), e.getMessage());
+            }
+        }
+        done += repairOrphaned(now);
+        return done;
+    }
+
+    /**
+     * Onarım (inceleme D-2): yetim sayılmış teslimin günlük satırı SONRADAN SENT olduysa (geç gelen gerçek sonuç) teslim de SENT
+     * olur — 7/24 açılışı ikinci kez gönderilmesin. Yeniden deneme yetim eşiğinden önce başlamak zorunda olduğundan nadirdir.
+     */
+    private int repairOrphaned(Instant now) {
+        int done = 0;
+        for (NocDelivery d : deliveries.findTop200ByStatusAndCreatedAtGreaterThanEqualOrderByIdAsc(
+                EmailNotificationService.STATUS_RETRY_ORPHANED, ISO.format(now.minus(LOOKBACK)))) {
+            try {
+                String at = d.getUpdatedAt() != null ? d.getUpdatedAt() : d.getCreatedAt();
+                if (!"SENT".equals(logStatusOf(d.getSubject(), parse(at)))) continue;
+                if (deliveries.finishQueuedRetry(d.getId(), d.getStatus(), d.getUpdatedAt() == null ? "" : d.getUpdatedAt(),
+                        "SENT") == 1) {
+                    done++;
+                    log.info("7/24 teslimi ({}) yetim sayılmıştı, geç gelen sonuç SENT — düzeltildi", d.getDedupeKey());
+                }
+            } catch (RuntimeException e) {
+                log.warn("7/24 teslimi #{} onarılamadı: {}", d.getId(), e.getMessage());
             }
         }
         return done;

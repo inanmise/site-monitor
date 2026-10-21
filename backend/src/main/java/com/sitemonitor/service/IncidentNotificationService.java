@@ -59,7 +59,7 @@ public class IncidentNotificationService {
     void shutdownExecutor() {
         exec.shutdown();
         try {
-            if (!exec.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS)) exec.shutdownNow();
+            if (!exec.awaitTermination(com.sitemonitor.config.ShutdownDeadline.waitMs(5_000L), java.util.concurrent.TimeUnit.MILLISECONDS)) exec.shutdownNow();
         } catch (InterruptedException e) {
             exec.shutdownNow();
             Thread.currentThread().interrupt();
