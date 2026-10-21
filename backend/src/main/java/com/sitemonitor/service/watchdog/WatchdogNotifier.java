@@ -197,6 +197,30 @@ public class WatchdogNotifier {
         return items.stream().anyMatch(i -> "CRITICAL".equals(i.severity()) && !"RECOVER".equals(i.kind())) ? "CRITICAL" : "HIGH";
     }
 
+    /**
+     * Gönderilmeyen bir kararın izi (2026-10-22, çok pod inceleme R5): alıcısız {@code notification_logs} satırı, tetik
+     * {@value #TRIGGER}, alarm kimliği 0 — "bildirim gitmedi / sonucu bilinmiyor" sessiz kalmasın (ör. iki denemede de
+     * sonuçlanmayan "düzeldi"). Durum {@code SKIPPED…} ile başlamalı: başarısız sayılıp bildirim sağlığı ölçümünü bozmasın.
+     */
+    public void recordDecision(String subject, String emailStatus) {
+        try {
+            NotificationLog n = new NotificationLog();
+            n.setAlertEventId(0L);
+            n.setSentAt(WatchdogTransition.ISO.format(Instant.now()));
+            n.setRecipientName("Kendi kendini izleme");
+            n.setRecipientEmail("");
+            n.setRecipientRole("SYSTEM_ADMIN");
+            n.setSubject(subject);
+            n.setEmailStatus(clip(emailStatus, 250));
+            n.setWebhookStatus("SKIPPED");
+            n.setTrigger(TRIGGER);
+            n.setEmailFrom(email.getEmailFrom());
+            logs.save(n);
+        } catch (Exception e) {
+            log.warn("Kendi kendini izleme karar günlüğü yazılamadı: {}", e.getMessage());
+        }
+    }
+
     private void saveLog(String subject, List<String> to, Report r, String trigger) {
         try {
             NotificationLog n = new NotificationLog();

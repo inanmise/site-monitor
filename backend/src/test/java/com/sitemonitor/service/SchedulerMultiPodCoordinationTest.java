@@ -124,6 +124,8 @@ class SchedulerMultiPodCoordinationTest {
         final AtomicBoolean claimDown = new AtomicBoolean();
         /** Bu kadar sahiplenme denemesi hata verir, sonra düzelir (cron payı içinde yeniden deneme). */
         final AtomicInteger claimFailuresLeft = new AtomicInteger();
+        /** Her başarısız sahiplenme denemesinde çağrılır (ör. yeniden deneme sırasında kapanış başlat). */
+        volatile Runnable onClaimFailure;
 
         FlakyStore(MultiPodTestSupport mp, String owner) {
             super(mp.jdbc(), owner);
@@ -144,6 +146,8 @@ class SchedulerMultiPodCoordinationTest {
         @Override
         public Claim claim(String key, long nowMs, long nominalMs, Long knownNextDue, LongUnaryOperator advance) {
             if (claimDown.get() || claimFailuresLeft.getAndUpdate(n -> Math.max(0, n - 1)) > 0) {
+                Runnable hook = onClaimFailure;
+                if (hook != null) hook.run();
                 throw new DataAccessResourceFailureException("bağlantı havuzu dolu");
             }
             return super.claim(key, nowMs, nominalMs, knownNextDue, advance);
@@ -318,6 +322,27 @@ class SchedulerMultiPodCoordinationTest {
         mp.advance(5 * SEC);
         b.scheduler().scheduledWeeklyReportReminder();
         verify(mp.mock(WeeklyReportReminderService.class), times(1)).sendFridayReminders(true);
+    }
+
+    @Test
+    @DisplayName("R4: tur kaydı yeniden denenirken (cron payı ~30 sn) kapanış başlarsa yeni tur ALINMAZ — korunmayan iş de, "
+            + "kayıt hatasında 'yine de koşan' korunan iş de başlamaz")
+    void shutdownDuringRoundClaimRetry_noNewJob() {
+        mp.clock().set(Instant.parse("2026-10-16T06:00:00Z").toEpochMilli());   // Cuma 09:00 İstanbul
+        Pod a = pod(1);
+        FlakyStore storeA = flaky(a);
+        storeA.claimFailuresLeft.set(1);                     // ilk deneme düşer, ikincisi başarırdı
+        storeA.onClaimFailure = () -> a.scheduler().onContextClosed(null);   // SIGTERM tam o anda
+        a.scheduler().scheduledWeeklyReportReminder();       // ÖNCE: bekleme sonrası tur alınıp hatırlatma başlıyordu
+        verify(mp.mock(WeeklyReportReminderService.class), never()).sendFridayReminders(anyBoolean());
+
+        mp.clock().set(Instant.parse("2026-10-19T07:00:00Z").toEpochMilli());   // Pazartesi 10:00 İstanbul
+        Pod b = pod(2);
+        FlakyStore storeB = flaky(b);
+        storeB.claimDown.set(true);                          // kayıt hiç okunamıyor → korunan iş normalde "yine de" koşar
+        storeB.onClaimFailure = () -> b.scheduler().onContextClosed(null);
+        b.scheduler().scheduledWeeklyAvailabilityReport();
+        verify(mp.mock(WeeklyAvailabilityReportService.class), never()).sendWeeklyReports(anyBoolean());
     }
 
     @Test

@@ -3282,6 +3282,14 @@ public class SchedulerService {
      */
     private volatile boolean shutdownStarted = false;
 
+    /**
+     * Kapanış başladı mı (bu servisin bayrağı ya da kilit servisinin "yeni kilit yok" kapısı) — uzun bekleyen döngüler
+     * (tur kaydı yeniden denemesi) her adımda bakar (inceleme 2026-10-22, R4).
+     */
+    private boolean stopping() {
+        return shutdownStarted || (lockService != null && lockService.acquiringStopped());
+    }
+
     private LockTicket refusedAtShutdown(String lockName) {
         log.debug("{} — pod kapanıyor, yeni iş başlatılmıyor [instance={}]", lockName, INSTANCE_ID);
         return null;
@@ -3936,6 +3944,9 @@ public class SchedulerService {
         Exception failure = null;
         for (int attempt = 0; attempt <= delays.length; attempt++) {
             if (attempt > 0 && !sleepQuietly(delays[attempt - 1])) break;
+            // R4: yeniden deneme beklemesi (cron turunda ~30 sn) içinde kapanış başladıysa yeni tur ALINMAZ — ölmekte olan pod
+            // hatırlatmayı / özeti başlatıp yarıda kesilmesin.
+            if (attempt > 0 && stopping()) return false;
             try {
                 com.sitemonitor.service.schedule.ClusterScheduleService.Claim claim;
                 if (runLeaseMs > 0) {
@@ -4164,8 +4175,9 @@ public class SchedulerService {
         long[] delays = claimProtected ? roundClaimRetryDelaysMs : cronRoundRetryDelaysMs;
         Boolean r = clusterClaimOrNull(key, Math.max(1L, until - nowMs), (prev, now) -> Math.max(until, now + 1), 0L, null,
                 delays == null ? new long[0] : delays);
-        if (r != null) return r;
+        if (r != null) return r && !stoppingNow(name);
         noteRoundClaimFailure(key, nowMs);
+        if (stoppingNow(name)) return false;
         if (claimProtected) {
             log.warn("Küme tur kaydı okunamadı ({}) — iş öğe başına sahiplenmeyle korunduğu için YİNE DE koşuluyor (yinelenen "
                     + "koşu çift gönderim üretmez) [instance={}]", key, INSTANCE_ID);
@@ -4173,6 +4185,13 @@ public class SchedulerService {
         }
         recordSkippedRound(name, nowMs);
         return false;
+    }
+
+    /** İş başlamadan son kapanış kapısı (R4): kapanış başladıysa iş koşmaz (iz: INFO). */
+    private boolean stoppingNow(String name) {
+        if (!stopping()) return false;
+        log.info("Cron turu '{}' koşturulmadı — pod kapanıyor (yeni iş başlamaz) [instance={}]", name, INSTANCE_ID);
+        return true;
     }
 
     /**

@@ -58,6 +58,20 @@ class WatchdogNotifierTest {
     }
 
     @Test
+    @DisplayName("R5 (2026-10-22): gönderilmeyen kararın izi — alıcısız satır, tetik WATCHDOG, alarm kimliği 0, durum aynen; posta gitmez")
+    void recordDecisionWritesTraceOnly() {
+        n.recordDecision("[Site Monitor] Düzeldi: Veritabanı", "SKIPPED: düzelme bildirimi sonucu bilinmiyor — deneme");
+        ArgumentCaptor<NotificationLog> log = ArgumentCaptor.forClass(NotificationLog.class);
+        verify(logs).save(log.capture());
+        assertThat(log.getValue().getTrigger()).isEqualTo(WatchdogNotifier.TRIGGER);
+        assertThat(log.getValue().getAlertEventId()).isZero();
+        assertThat(log.getValue().getEmailStatus()).startsWith("SKIPPED: düzelme bildirimi sonucu bilinmiyor");
+        assertThat(log.getValue().getRecipientEmail()).isEmpty();
+        org.mockito.Mockito.verifyNoInteractions(webhooks, push);
+        verify(email, org.mockito.Mockito.never()).sendHtml(any(), any(), anyString(), anyString(), any());
+    }
+
+    @Test
     @DisplayName("e-posta gider → DELIVERED; günlük satırı tetik WATCHDOG, alarm kimliği 0, alıcılar yazılı")
     void emailDelivered() {
         WatchdogNotifier.Report r = n.send(items, false);

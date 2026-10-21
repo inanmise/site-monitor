@@ -31,6 +31,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -363,9 +364,25 @@ class WatchdogMultiPodTest {
         assertThat(count("RECOVER")).isEqualTo(1);
 
         setDb("RECOVER_RETRY", t0.minus(java.time.Duration.ofMinutes(10)));     // yeniden deneyen de öldü → tavan
-        a.evaluate(t0.plusSeconds(20), false);
+        WatchdogNotifier na = (WatchdogNotifier) ReflectionTestUtils.getField(a, "notifier");
+        WatchdogNotifier nb = (WatchdogNotifier) ReflectionTestUtils.getField(b, "notifier");
+        mp.race(() -> a.evaluate(t0.plusSeconds(20), false), () -> b.evaluate(t0.plusSeconds(20), false));
         assertThat(count("RECOVER")).as("tavan: ikinci yeniden deneme yok").isEqualTo(1);
         assertThat(dbKind()).isEqualTo(WatchdogService.RECOVER_UNKNOWN);
+        // R5: kararın kalıcı izi — notification_logs satırı TEK pod'dan, bir kez (SKIPPED: bildirim sağlığını bozmaz)
+        org.mockito.ArgumentCaptor<String> status = org.mockito.ArgumentCaptor.forClass(String.class);
+        int traces = org.mockito.Mockito.mockingDetails(na).getInvocations().stream()
+                .filter(i -> i.getMethod().getName().equals("recordDecision")).toList().size()
+                + org.mockito.Mockito.mockingDetails(nb).getInvocations().stream()
+                .filter(i -> i.getMethod().getName().equals("recordDecision")).toList().size();
+        assertThat(traces).isEqualTo(1);
+        WatchdogNotifier traced = org.mockito.Mockito.mockingDetails(na).getInvocations().stream()
+                .anyMatch(i -> i.getMethod().getName().equals("recordDecision")) ? na : nb;
+        org.mockito.Mockito.verify(traced).recordDecision(org.mockito.ArgumentMatchers.contains("Veritabanı"), status.capture());
+        assertThat(status.getValue()).startsWith("SKIPPED: düzelme bildirimi sonucu bilinmiyor");
+        a.evaluate(t0.plusSeconds(30), false);
+        b.evaluate(t0.plusSeconds(30), false);
+        org.mockito.Mockito.verify(traced, org.mockito.Mockito.times(1)).recordDecision(anyString(), anyString());
     }
 
     /** Tüm kontroller sağlıklı (OK / OK) satırlarla, verilen değerlendirme anıyla. */

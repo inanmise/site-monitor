@@ -385,6 +385,13 @@ public class WatchdogService {
                         s.setNotifiedKind(RECOVER_UNKNOWN);
                         log.warn("Kendi kendini izleme: '{}' düzelme bildirimi iki denemede de sonuçlanmadı — artık "
                                 + "gönderilmeyecek (RECOVER_UNKNOWN)", s.getCheckKey());
+                        // R5: kararın kalıcı izi — koşullu UPDATE'i kazanan TEK pod, bir kez yazar.
+                        WatchdogCheck uc = WatchdogCheck.byKey(s.getCheckKey());
+                        String label = uc == null ? s.getCheckKey() : uc.labelTr();
+                        notifier.recordDecision(WatchdogMail.subject(List.of(new WatchdogMail.Item(Action.RECOVER.name(), label,
+                                        uc == null ? "HIGH" : uc.severity().name(), "Düzelme bildirimi sonucu bilinmiyor.")), false),
+                                "SKIPPED: düzelme bildirimi sonucu bilinmiyor — iki denemede sonuçlanmadı (gönderen pod durdu); "
+                                        + "yeniden gönderilmeyecek");
                     }
                     continue;
                 }
