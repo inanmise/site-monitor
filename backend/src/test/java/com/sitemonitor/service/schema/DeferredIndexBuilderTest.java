@@ -66,13 +66,15 @@ class DeferredIndexBuilderTest {
         // Olaysız push satırlarının tekilliği (2026-10-21, çok pod — MP-17): kısmi + ifade, TEKİL; geçmiş satırlar kesimle dışarıda
         EXPECTED.put("ux_push_eventless_key_user", "user_push_deliveries(dedupe_key, username, (COALESCE(team_id, 0))) "
                 + "WHERE alert_event_id IS NULL AND push_trigger NOT IN ('TEST', 'OVERFLOW_SUMMARY') AND created_at >= '2026-10-21'");
+        // Karar bekleyen DNS değişiklikleri (2026-10-22, çok pod R1-B inceleme CORE-6): kısmi, PG'ye özgü
+        EXPECTED.put("idx_dnsr_pending", "dns_records(checked_at) WHERE change_state = 'PENDING'");
     }
     /** TEKİL indeksler — {@code CREATE UNIQUE INDEX …}, {@code ux_} öneki. */
     private static final Set<String> UNIQUE = Set.of("ux_push_eventless_key_user");
     /** Fonksiyonel / kısmi — H2 karşılığı yok. */
     private static final Set<String> POSTGRES_ONLY =
             Set.of("idx_sc_success_monitor", "idx_audit_lower_actor_type_time", "idx_push_lower_user_created",
-                    "idx_app_users_upper_username", "ux_push_eventless_key_user");
+                    "idx_app_users_upper_username", "ux_push_eventless_key_user", "idx_dnsr_pending");
 
     private static final Path MAIN = Path.of("src/main/java/com/sitemonitor");
 

@@ -247,6 +247,8 @@ class DnsChangeDurabilityTest {
         MonitoringMultiPodKit.PodWithMos a = MonitoringMultiPodKit.podWithMos(mp, 1);
         MonitoringMultiPodKit.Manual ex = new MonitoringMultiPodKit.Manual();
         ReflectionTestUtils.setField(a.mos(), "confirmExecutor", ex);
+        NotificationLogRepository logs = mock(NotificationLogRepository.class);
+        ReflectionTestUtils.setField(a.mos(), "notificationLogRepo", logs);
         DnsMonitorRepository monitors = mp.mock(DnsMonitorRepository.class);
         DnsMonitor paused = monitor(6L, "MX");
         paused.setActive(false);
@@ -256,13 +258,22 @@ class DnsChangeDurabilityTest {
         when(monitors.findById(8L)).thenReturn(Optional.of(quiet));
         String fresh = ISO.format(Instant.now().minusSeconds(600));
         insertPending(5L, "A", "1.1.1.1", "2.2.2.2", fresh);
-        insertPending(9L, "A", "3.3.3.3", "4.4.4.4", ISO.format(Instant.now().minusSeconds(3 * 3600)));
+        insertPending(9L, "A", "3.3.3.3", "4.4.4.4", ISO.format(Instant.now().minusSeconds(150 * 60)));   // 2,5 saat
+        String tooOld = ISO.format(Instant.now().minusSeconds(5 * 3600));
+        insertPending(10L, "A", "5.5.5.5", "6.6.6.6", tooOld);   // işlenebilir aralık + payın dışında: okunmaz
         insertPending(6L, "MX", "mx1", "mx2", fresh);
         insertPending(8L, "TXT", "t1", "t2", fresh);
         assertThat(a.scheduler().isSweepLeaderNow()).isTrue();
 
         a.scheduler().requeuePendingDnsChanges();
         assertThat(state(9L)).isEqualTo(ChangeStates.EXPIRED);
+        assertThat(state(10L)).as("3 saatlik okuma penceresi dışında — okunmadı").isEqualTo(ChangeStates.PENDING);
+        // F6: süresi dolan değişiklik izsiz kaybolmaz — satır başına TEK notification_logs satırı.
+        ArgumentCaptor<NotificationLog> trace = ArgumentCaptor.forClass(NotificationLog.class);
+        verify(logs, times(1)).save(trace.capture());
+        assertThat(trace.getValue().getTrigger()).isEqualTo(EscalationService.TYPE_DNS_CHANGED);
+        assertThat(trace.getValue().getEmailStatus()).startsWith("SKIPPED: değişiklik süresi doldu");
+        assertThat(trace.getValue().getAlertEventId()).isZero();
         assertThat(state(6L)).isEqualTo(ChangeStates.SUPPRESSED);
         assertThat(state(8L)).isEqualTo(ChangeStates.SUPPRESSED);
         assertThat(state(5L)).isEqualTo(ChangeStates.PENDING);
@@ -270,6 +281,7 @@ class DnsChangeDurabilityTest {
 
         a.scheduler().requeuePendingDnsChanges();                              // zincir sürüyor → ikinci zincir yok
         assertThat(ex.pending()).isEqualTo(1);
+        verify(logs, times(1)).save(any());                                    // EXPIRED satırı ikinci iz üretmez
         ex.drain();
         assertThat(state(5L)).isEqualTo(ChangeStates.ALARMED);
         assertThat(dnsChangedAlarms()).isEqualTo(1);
@@ -287,6 +299,77 @@ class DnsChangeDurabilityTest {
         s.handleDnsSweep(List.of(), List.of(), List.of(change(5L, "A", "1.1.1.1", "2.2.2.2", at)), List.of(), List.of());
         verify(escalation, never()).processConfirmedOutage(anyString(), anyString(), anyString(), any());
         assertThat(state(5L)).isEqualTo(ChangeStates.PENDING);
+    }
+
+    // ── İnceleme 2026-10-22: durum okunamazsa "şimdi karar yok, sonra dene"; NULL / elle satır eski davranış ──────────
+
+    @Test
+    @DisplayName("Değişiklik durumu geçici olarak okunamazsa alarm AÇILMAZ, son adım yeniden denenir; okununca TAM BİR alarm")
+    void unreadableState_retriedLater_alarmsOnce() {
+        org.springframework.jdbc.core.JdbcTemplate spy = org.mockito.Mockito.spy(mp.jdbc());
+        org.mockito.Mockito.doThrow(new org.springframework.dao.TransientDataAccessResourceException("bağlantı koptu"))
+                .doCallRealMethod()
+                .when(spy).queryForList(org.mockito.ArgumentMatchers.startsWith("SELECT change_state"), eq(String.class),
+                        any(), any());
+        MonitoringOutageService s = new MonitoringOutageService(mp.mock(com.sitemonitor.repository.AlertEventRepository.class),
+                escalation, spy, mp.mock(DnsRecordRepository.class), mp.mock(DnsMonitorRepository.class),
+                mp.mock(AppSettingsService.class), mp.mock(com.sitemonitor.repository.NetworkOutageEventRepository.class));
+        ReflectionTestUtils.setField(s, "dnsAlertEnabled", true);
+        ReflectionTestUtils.setField(s, "confirmAttempts", 3);
+        ReflectionTestUtils.setField(s, "confirmDelayMs", 1L);
+        ReflectionTestUtils.setField(s, "changeLockRetryMs", 4_243L);
+        MonitoringMultiPodKit.Manual ex = new MonitoringMultiPodKit.Manual();
+        ReflectionTestUtils.setField(s, "confirmExecutor", ex);
+        String at = ISO.format(Instant.now());
+        insertPending(5L, "A", "1.1.1.1", "2.2.2.2", at);
+
+        s.handleDnsSweep(List.of(), List.of(), List.of(change(5L, "A", "1.1.1.1", "2.2.2.2", at)), List.of(), List.of());
+        for (int i = 0; i < 10 && !ex.pendingDelays().contains(4_243L); i++) ex.runRound();
+        assertThat(ex.pendingDelays()).as("okuma hatası → son adım yeniden planlandı").containsExactly(4_243L);
+        assertThat(dnsChangedAlarms()).as("okunamayan durumda alarm yok").isZero();
+        assertThat(state(5L)).isEqualTo(ChangeStates.PENDING);
+
+        ex.drain();
+        assertThat(dnsChangedAlarms()).isEqualTo(1);
+        assertThat(state(5L)).isEqualTo(ChangeStates.ALARMED);
+        assertThat(mp.schedulerLockHolder("mon-alert:" + EscalationService.TYPE_DNS_CHANGED + ":" + DOMAIN)).isNull();
+    }
+
+    @Test
+    @DisplayName("Karara bağlı satırla AYNI saniyedeki elle (değişmemiş, NULL durumlu) satır kararı 'bekliyor'a çevirmez")
+    void manualRowSameSecond_doesNotReopenDecision() {
+        MonitoringOutageService s = MonitoringMultiPodKit.mos(mp);
+        String at = ISO.format(Instant.now());
+        insertPending(5L, "A", "1.1.1.1", "2.2.2.2", at);
+        mp.jdbc().update("UPDATE dns_records SET change_state = ? WHERE monitor_id = 5", ChangeStates.ALARMED);
+        mp.jdbc().update("INSERT INTO dns_records (monitor_id, record_type, \"value\", changed, rotated, previous_value, "
+                + "checked_at, manual, change_state) VALUES (5, 'A', '2.2.2.2', FALSE, FALSE, '2.2.2.2', ?, TRUE, NULL)", at);
+        MonitoringOutageService.SweepItem it = new MonitoringOutageService.SweepItem(EscalationService.TYPE_DNS_CHANGED,
+                DOMAIN, "A", false, "changed", Map.of("monitor_id", 5L, "changed_at", at), null);
+        assertThat(s.changePending(it)).isEqualTo(MonitoringOutageService.ChangePending.DECIDED);
+    }
+
+    @Test
+    @DisplayName("Yükseltme: eski sürümün yazdığı NULL durumlu değişmiş satırlar yeniden kuyruğa ALINMAZ (alarm seli yok); "
+            + "son adımda NULL satır eski davranışla işlenir")
+    void legacyNullRows_notRequeued_finalStepAsBefore() {
+        MonitoringMultiPodKit.PodWithMos a = MonitoringMultiPodKit.podWithMos(mp, 1);
+        MonitoringMultiPodKit.Manual ex = new MonitoringMultiPodKit.Manual();
+        ReflectionTestUtils.setField(a.mos(), "confirmExecutor", ex);
+        String at = ISO.format(Instant.now().minusSeconds(600));
+        for (long id = 20; id < 25; id++) {
+            mp.jdbc().update("INSERT INTO dns_records (monitor_id, record_type, \"value\", changed, rotated, previous_value, "
+                    + "checked_at, manual, change_state) VALUES (?, 'A', '9.9.9.9', TRUE, FALSE, '8.8.8.8', ?, FALSE, NULL)", id, at);
+        }
+        assertThat(a.scheduler().isSweepLeaderNow()).isTrue();
+        a.scheduler().requeuePendingDnsChanges();
+        assertThat(ex.pending()).as("NULL durumlu eski satırlar teyide alınmadı").isZero();
+        assertThat(dnsChangedAlarms()).isZero();
+
+        MonitoringOutageService.SweepItem legacy = new MonitoringOutageService.SweepItem(EscalationService.TYPE_DNS_CHANGED,
+                DOMAIN, "A", false, "changed", Map.of("monitor_id", 20L, "changed_at", at), null);
+        assertThat(a.mos().changePending(legacy)).as("eski pod'un satırı: bugünkü gibi işlenir").isEqualTo(
+                MonitoringOutageService.ChangePending.YES);
     }
 
     void insertPending(long monitorId, String type, String prev, String value, String at) {

@@ -158,6 +158,9 @@ class DomainChangeDurabilityTest {
     void suppressedAndExpired() {
         MonitoringMultiPodKit.PodWithMos a = MonitoringMultiPodKit.podWithMos(mp, 1);
         ReflectionTestUtils.setField(a.mos(), "confirmExecutor", MonitoringMultiPodKit.immediate());
+        com.sitemonitor.repository.NotificationLogRepository logs =
+                org.mockito.Mockito.mock(com.sitemonitor.repository.NotificationLogRepository.class);
+        ReflectionTestUtils.setField(a.mos(), "notificationLogRepo", logs);
         // Önce vade dolsun diye izleme bir tur koşsun (satır ALARMED); sonra iki elle eklenmiş bekleyen satır.
         a.scheduler().runDomainChecks();
         mp.jdbc().update("INSERT INTO domain_checks (monitor_id, checked_at, changed, manual, change_state) VALUES (?, ?, TRUE, FALSE, ?)",
@@ -172,5 +175,15 @@ class DomainChangeDurabilityTest {
                 String.class);
         assertThat(states).containsExactly(ChangeStates.ALARMED, ChangeStates.EXPIRED, ChangeStates.SUPPRESSED);
         assertThat(changedAlarms()).isEqualTo(1);
+        // F6: süresi dolan değişikliğin izi — satır başına TEK notification_logs satırı (tetik = alarm türü).
+        ArgumentCaptor<com.sitemonitor.model.NotificationLog> trace =
+                ArgumentCaptor.forClass(com.sitemonitor.model.NotificationLog.class);
+        verify(logs, org.mockito.Mockito.times(1)).save(trace.capture());
+        assertThat(trace.getValue().getTrigger()).isEqualTo(EscalationService.TYPE_DOMAINMON_CHANGED);
+        assertThat(trace.getValue().getSubject()).contains(DOMAIN);
+        assertThat(trace.getValue().getEmailStatus()).startsWith("SKIPPED: değişiklik süresi doldu");
+        mp.advance(3_600_000L);
+        a.scheduler().runDomainChecks();
+        verify(logs, org.mockito.Mockito.times(1)).save(any());
     }
 }

@@ -703,8 +703,11 @@ public class MonitoringOutageService {
                 // bekliyorsa; kilit alınamazsa satır PENDING kalır, sonraki tur yeniden kuyruğa alır.
                 List<SweepItem> pendingDown = ownerDown;
                 withLock(alertType, domain, () -> {
-                    if (pendingDown.stream().noneMatch(this::changeStillPending)) {
-                        log.info("{} [{}]: değişiklik başka pod'da zaten karara bağlandı — yeniden işlenmedi", domain, alertType);
+                    List<ChangePending> states = pendingDown.stream().map(this::changePending).toList();
+                    if (!states.contains(ChangePending.YES)) {
+                        // Hepsi başka karara bağlı ya da şu an okunamıyor (UNKNOWN → satır PENDING kalır, sonraki tik dener).
+                        log.info("{} [{}]: değişiklik şu an işlenmedi ({}) — karar verilmiş ya da durum okunamadı", domain,
+                                alertType, states);
                         return;
                     }
                     escalationService.processConfirmedOutage(domain, alertType, levelFor(alertType), sweepContext(firstDown));
@@ -1168,22 +1171,38 @@ public class MonitoringOutageService {
         return new String[]{dns ? "dns_records" : "domain_checks", String.valueOf(id), s};
     }
 
+    /** {@link #changePending} sonucu: işle / başka karar yazılmış (işleme) / şu an okunamadı (sonra yeniden dene). */
+    enum ChangePending { YES, DECIDED, UNKNOWN }
+
     /**
-     * Satır hâlâ karar bekliyor mu? Satır bulunamazsa, durumu NULL ise (bu özellikten önceki / eski pod'un satırı) ya da
-     * okunamazsa EVET — eski davranış (alarm hattı işler). Yalnız başka bir karar YAZILMIŞSA hayır.
+     * Değişiklik satırı hâlâ karar bekliyor mu (inceleme 2026-10-22)?
+     * <ul>
+     *   <li>{@link ChangePending#YES} — satır PENDING; ya da eski davranış: kalem satıra bağlanamıyor, değişmiş satır
+     *       bulunamadı, durumu NULL (bu özellikten önceki / eski pod'un yazdığı değişmiş satır — bunlar yeniden kuyruğa hiç
+     *       alınmadığı için yükseltmede alarm seli olmaz) ya da kolon / tablo henüz yok (ilk açılış saniyeleri).</li>
+     *   <li>{@link ChangePending#DECIDED} — başka bir karar yazılmış: yeniden alarmlanmaz.</li>
+     *   <li>{@link ChangePending#UNKNOWN} — geçici okuma hatası: ŞİMDİ karar verilmez (iki kez alarmlama riski yok), satır
+     *       PENDING kalır; zincir son adımı yeniden dener, olmazsa sonraki tur yeniden kuyruğa alır.</li>
+     * </ul>
+     * Yalnız değişmiş ({@code changed = TRUE}) satırlara bakılır: aynı saniyedeki elle satırın NULL durumu kararı
+     * "bekliyor"a çevirmesin.
      */
-    boolean changeStillPending(SweepItem it) {
+    ChangePending changePending(SweepItem it) {
         String[] row = changeRow(it);
-        if (row == null) return true;
+        if (row == null) return ChangePending.YES;
         try {
             List<String> states = jdbcTemplate.queryForList("SELECT " + ChangeStates.COLUMN + " FROM " + row[0]
-                    + " WHERE monitor_id = ? AND checked_at = ?", String.class, Long.valueOf(row[1]), row[2]);
-            if (states == null || states.isEmpty()) return true;
-            for (String s : states) if (s == null || ChangeStates.PENDING.equals(s)) return true;
-            return false;
+                    + " WHERE monitor_id = ? AND checked_at = ? AND changed = TRUE", String.class, Long.valueOf(row[1]), row[2]);
+            if (states == null || states.isEmpty()) return ChangePending.YES;
+            for (String s : states) if (s == null || ChangeStates.PENDING.equals(s)) return ChangePending.YES;
+            return ChangePending.DECIDED;
+        } catch (org.springframework.jdbc.BadSqlGrammarException e) {
+            log.debug("Değişiklik durumu kolonu henüz yok ({} izleme {}) — eski davranış: {}", row[0], row[1], e.toString());
+            return ChangePending.YES;
         } catch (Exception e) {
-            log.debug("Değişiklik durumu okunamadı ({} izleme {}): {}", row[0], row[1], e.toString());
-            return true;
+            log.info("Değişiklik durumu okunamadı ({} izleme {}) — karar ertelendi, yeniden denenecek: {}", row[0], row[1],
+                    e.toString());
+            return ChangePending.UNKNOWN;
         }
     }
 
@@ -1217,9 +1236,10 @@ public class MonitoringOutageService {
      * Değişiklik alarmının son adımı kilit alınamadığı için {@value #CHANGE_LOCK_RETRIES} denemede de yapılamadı — iz
      * {@code notification_logs}'a (bildirim gitmedi, nedeni yazılı; satır PENDING kalır ve sonraki tur yeniden dener).
      */
-    private void traceChangeLockGiveUp(SweepItem it) {
-        log.warn("{} [{}] değişiklik alarmı: alarm kilidi {} denemede alınamadı — karar bekliyor (sonraki tur yeniden "
-                + "dener), izleme={}", it.domain(), it.alertType(), CHANGE_LOCK_RETRIES, monitorIdOf(it));
+    private void traceChangeLockGiveUp(SweepItem it, boolean stateUnreadable) {
+        String why = stateUnreadable ? "değişiklik durumu okunamadı" : "alarm kilidi alınamadı";
+        log.warn("{} [{}] değişiklik alarmı: {} ({} deneme) — karar bekliyor (sonraki tur yeniden dener), izleme={}",
+                it.domain(), it.alertType(), why, CHANGE_LOCK_RETRIES, monitorIdOf(it));
         if (notificationLogRepo == null) return;
         try {
             com.sitemonitor.model.NotificationLog n = new com.sitemonitor.model.NotificationLog();
@@ -1229,13 +1249,41 @@ public class MonitoringOutageService {
             n.setRecipientRole("SYSTEM");
             n.setSubject(it.alertType() + " · " + it.domain());
             n.setMessage("Değişiklik alarmı (" + it.alertType() + ", " + it.domain() + ", izleme " + monitorIdOf(it)
-                    + ") alarm kilidi " + CHANGE_LOCK_RETRIES + " denemede alınamadığı için işlenemedi; değişiklik "
-                    + "kaydı karar bekliyor ve sonraki taramada yeniden teyit edilecek.");
-            n.setEmailStatus("SKIPPED: alarm kilidi alınamadı (" + CHANGE_LOCK_RETRIES + " deneme) — değişiklik bekliyor");
+                    + ") " + CHANGE_LOCK_RETRIES + " denemede işlenemedi (" + why + "); değişiklik kaydı karar bekliyor "
+                    + "ve sonraki taramada yeniden teyit edilecek.");
+            n.setEmailStatus("SKIPPED: " + why + " (" + CHANGE_LOCK_RETRIES + " deneme) — değişiklik bekliyor");
             n.setWebhookStatus("SKIPPED");
             notificationLogRepo.save(n);
         } catch (Exception e) {
             log.warn("Değişiklik alarmı kilit izi yazılamadı: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * Karara bağlanamadan süresi dolan değişikliğin izi (inceleme 2026-10-22, F6) — olası ele geçirme sinyali yalnız WARN
+     * satırında kaybolmasın: {@code notification_logs} (tetik = alarm türü, {@code SKIPPED: değişiklik süresi doldu …},
+     * alertEventId 0). Satır başına TEK kez: çağıran önce koşullu EXPIRED yazar, yalnız 1 satır güncellediyse bunu çağırır.
+     */
+    public void traceChangeExpired(String alertType, String domain, Long monitorId, String detectedAt, long maxAgeMs) {
+        long hours = Math.max(1L, maxAgeMs / 3_600_000L);
+        log.warn("{} değişikliği karara bağlanamadan süresi doldu ({} saat) — alarmlanmadı: {} izleme={} tespit={}",
+                alertType, hours, domain, monitorId, detectedAt);
+        if (notificationLogRepo == null) return;
+        try {
+            com.sitemonitor.model.NotificationLog n = new com.sitemonitor.model.NotificationLog();
+            n.setAlertEventId(0L);
+            n.setSentAt(now());
+            n.setTrigger(alertType);
+            n.setRecipientRole("SYSTEM");
+            n.setSubject(alertType + " · " + (domain == null ? "?" : domain));
+            n.setMessage("Değişiklik (" + alertType + ", " + domain + ", izleme " + monitorId + ", tespit " + detectedAt
+                    + ") " + hours + " saat içinde karara bağlanamadı (tarama lideri bu sürede teyit edemedi); alarm "
+                    + "açılmadı. Kaydı izlemenin geçmişinden inceleyin.");
+            n.setEmailStatus("SKIPPED: değişiklik süresi doldu (" + hours + " saat, karar verilemedi) — alarmlanmadı");
+            n.setWebhookStatus("SKIPPED");
+            notificationLogRepo.save(n);
+        } catch (Exception e) {
+            log.warn("Süresi dolan değişiklik izi yazılamadı: {}", e.getMessage());
         }
     }
 
@@ -1461,12 +1509,20 @@ public class MonitoringOutageService {
             return;
         }
         boolean change = isChangeType(item.alertType());
+        java.util.concurrent.atomic.AtomicBoolean unreadable = new java.util.concurrent.atomic.AtomicBoolean();
         LockOutcome out;
         try {
             out = lockAndRun(item.alertType(), item.domain(), () -> {
-                if (change && !changeStillPending(item)) {
-                    log.info("Değişiklik başka pod'da zaten karara bağlandı — yeniden alarmlanmadı: {}", key);
-                    return;
+                if (change) {
+                    ChangePending p = changePending(item);
+                    if (p == ChangePending.DECIDED) {
+                        log.info("Değişiklik başka pod'da zaten karara bağlandı — yeniden alarmlanmadı: {}", key);
+                        return;
+                    }
+                    if (p == ChangePending.UNKNOWN) {   // geçici okuma hatası: şimdi karar yok, yeniden dene
+                        unreadable.set(true);
+                        return;
+                    }
                 }
                 escalationService.processConfirmedOutage(item.domain(), item.alertType(), levelFor(item.alertType()), ctx);
                 if (change) markChange(item, ChangeStates.ALARMED);
@@ -1475,13 +1531,13 @@ public class MonitoringOutageService {
             releaseChain(key, chainId);
             throw e;
         }
-        if (out == LockOutcome.RAN || !change) {
+        if ((out == LockOutcome.RAN && !unreadable.get()) || !change) {
             releaseChain(key, chainId);
             return;
         }
         if (lockTry < CHANGE_LOCK_RETRIES) {
-            log.info("Değişiklik alarmı kilidi alınamadı ({}), {} ms sonra yeniden denenecek ({}/{}): {}", out,
-                    changeLockRetryMs, lockTry + 1, CHANGE_LOCK_RETRIES, key);
+            log.info("Değişiklik alarmı son adımı ertelendi ({}), {} ms sonra yeniden denenecek ({}/{}): {}",
+                    unreadable.get() ? "durum okunamadı" : out, changeLockRetryMs, lockTry + 1, CHANGE_LOCK_RETRIES, key);
             try {
                 confirmExecutor.schedule(() -> {
                     try {
@@ -1498,7 +1554,7 @@ public class MonitoringOutageService {
                 return;
             }
         }
-        traceChangeLockGiveUp(item);
+        traceChangeLockGiveUp(item, unreadable.get());
         releaseChain(key, chainId);
     }
 

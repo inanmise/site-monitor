@@ -37,8 +37,15 @@ public final class ChangeStates {
     public static final long DNS_REQUEUE_MAX_AGE_MS = 2L * 60 * 60 * 1000;
     /** Alan adı: tik saatlik olduğu için pay daha geniş; daha eskisi {@link #EXPIRED}. */
     public static final long DOMAIN_REQUEUE_MAX_AGE_MS = 6L * 60 * 60 * 1000;
-    /** Yeniden kuyruk sorgusunun geriye bakışı ({@code checked_at} dizini kullanılır; büyük tablo taranmaz). */
-    public static final long REQUEUE_LOOKBACK_MS = 24L * 60 * 60 * 1000;
+    /**
+     * DNS yeniden kuyruk sorgusunun geriye bakışı = en uzun işlenebilir yaş + pay (inceleme 2026-10-22, CORE-6): yalnız
+     * 2 saatten genç satır teyide alınır; 2–3 saat arası EXPIRED olur (iz bırakır). Daha eskisi hiç okunmaz — her 5 dk'lık
+     * turda 24 saatlik {@code dns_records} okunmasın. Sorgu bekleyen satırların kısmi dizinini kullanır
+     * ({@code DeferredIndexBuilder.CATALOG}; kurulana dek {@code checked_at} dizininde bu aralık).
+     */
+    public static final long DNS_REQUEUE_LOOKBACK_MS = DNS_REQUEUE_MAX_AGE_MS + 60L * 60 * 1000;
+    /** Alan adı: tik saatlik — en uzun işlenebilir yaş (6 saat) + 2 saat pay. */
+    public static final long DOMAIN_REQUEUE_LOOKBACK_MS = DOMAIN_REQUEUE_MAX_AGE_MS + 2L * 60 * 60 * 1000;
     /** Bir turda en çok okunan bekleyen satır. */
     public static final int REQUEUE_BATCH = 200;
 }

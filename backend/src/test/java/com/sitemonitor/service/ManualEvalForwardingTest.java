@@ -65,6 +65,13 @@ class ManualEvalForwardingTest {
         ReflectionTestUtils.setField(b.scheduler(), "manualEvalInbox", inboxB);
         assertThat(a.scheduler().isSweepLeaderNow()).as("A lider").isTrue();
         assertThat(b.scheduler().isSweepLeaderNow()).as("B takipçi").isFalse();
+        a.scheduler().drainManualEvalInbox();   // lider boşaltıcı kirasını yazar (her 5 sn)
+    }
+
+    /** Saat ilerler; lider bu arada boşaltma turlarını koşmuştur (kira taze). */
+    void tick(long ms) {
+        mp.advance(ms);
+        a.scheduler().drainManualEvalInbox();
     }
 
     @AfterEach
@@ -168,12 +175,12 @@ class ManualEvalForwardingTest {
         b.scheduler().evaluateHttpNow(x2, raw(true));
         a.scheduler().drainManualEvalInbox();                            // 1/2
         a.mos().handleSweepResults(TYPE, List.of(scheduled(1L, false)));   // lider DOWN → sayaç sıfır
-        mp.advance(60_000);
+        tick(60_000);
         b.scheduler().evaluateHttpNow(x2, raw(true));
         a.scheduler().drainManualEvalInbox();                            // yine 1/2 (eskiden takipçide 2/2 → kapanırdı)
         verify(escalation, never()).resolveMonitoringAlertsForDomain(anyString(), anyString());
 
-        mp.advance(60_000);
+        tick(60_000);
         b.scheduler().evaluateHttpNow(x2, raw(true));
         a.scheduler().drainManualEvalInbox();                            // 2/2
         verify(escalation, times(1)).resolveMonitoringAlertsForDomain(URL, TYPE);
@@ -238,5 +245,63 @@ class ManualEvalForwardingTest {
         a.scheduler().drainManualEvalInbox();                            // canlı lider kirası dolmuş satırı alır
         verify(escalation, times(1)).resolveMonitoringAlertsForDomain(URL, TYPE);
         assertThat(inboxA.take(claimed.get(0))).as("ölü sahibin geç gelen işi işlenemez").isFalse();
+    }
+
+    // ── İnceleme 2026-10-22 (CORE-3 / F9 / R-4): yuvarlanan dağıtımda ESKİ sürüm lider gelen kutusunu boşaltmaz ─────────
+
+    long drainerLeaseRows() {
+        Integer n = mp.jdbc().queryForObject("SELECT count(*) FROM monitor_check_schedule WHERE monitor_key = ?",
+                Integer.class, "lease:" + SchedulerService.EVAL_INBOX_DRAINER);
+        return n == null ? 0 : n;
+    }
+
+    @Test
+    @DisplayName("Eski sürüm lider (boşaltıcı kirası yok): takipçinin 'Şimdi kontrol et' sonucu 20.164.0 gibi YEREL değerlendirilir")
+    void oldLeaderWithoutHeartbeat_followerEvaluatesLocally() {
+        mp.jdbc().update("DELETE FROM monitor_check_schedule WHERE monitor_key = ?", "lease:" + SchedulerService.EVAL_INBOX_DRAINER);
+        ReflectionTestUtils.setField(a.scheduler(), "manualEvalInbox", null);   // 20.164.0: boşaltma yok, kira da yok
+        openAlarmByX();
+
+        a.scheduler().drainManualEvalInbox();                            // eski lider: hiçbir şey yazmaz
+        assertThat(drainerLeaseRows()).isZero();
+        b.scheduler().evaluateHttpNow(x, raw(true));
+
+        assertThat(inboxRows()).as("gelen kutusuna yazılmadı (eski lider hiç boşaltmayacaktı)").isZero();
+        verify(escalation, times(1)).resolveMonitoringAlertsForDomain(URL, TYPE);   // takipçide yerel kapanış (eski davranış)
+    }
+
+    @Test
+    @DisplayName("Boşaltıcı kirası bayatsa (30 sn'den eski — boşaltma durdu) takipçi yerel değerlendirir; taze kirada iletir")
+    void staleHeartbeat_followerEvaluatesLocally_freshForwards() {
+        openAlarmByX();
+        mp.advance(SchedulerService.EVAL_INBOX_DRAINER_TTL_MS + 1_000);  // lider bu sürede boşaltmadı
+        b.scheduler().evaluateHttpNow(x, raw(true));
+        assertThat(inboxRows()).isZero();
+        verify(escalation, times(1)).resolveMonitoringAlertsForDomain(URL, TYPE);
+
+        a.scheduler().drainManualEvalInbox();                            // boşaltma sürüyor → kira taze
+        b.scheduler().evaluateHttpNow(x, raw(true));
+        assertThat(inboxRows()).as("taze kirada lidere iletilir").isEqualTo(1);
+        a.scheduler().drainManualEvalInbox();
+        assertThat(inboxRows()).isZero();
+        verify(escalation, times(2)).resolveMonitoringAlertsForDomain(URL, TYPE);   // iletilen satır TAM BİR kez işlendi
+    }
+
+    @Test
+    @DisplayName("Liderliği kaybeden pod ilk boşaltma turunda kirasını bırakır; yeni lider hemen devralır ve iletim sürer")
+    void exLeaderRetiresHeartbeat_newLeaderTakesOver() {
+        assertThat(mp.lease(SchedulerService.EVAL_INBOX_DRAINER).owner()).isEqualTo(MultiPodTestSupport.owner(1));
+        mp.advance(MonitoringMultiPodKit.TTL + 1_000);                    // A'nın tarama kirası doldu
+        assertThat(b.scheduler().isSweepLeaderNow()).isTrue();
+        a.scheduler().drainManualEvalInbox();                            // A artık takipçi → boşaltıcı kirasını bırakır
+        assertThat(drainerLeaseRows()).isZero();
+        b.scheduler().drainManualEvalInbox();                            // B yeni lider → kira B'de
+        assertThat(mp.lease(SchedulerService.EVAL_INBOX_DRAINER).owner()).isEqualTo(MultiPodTestSupport.owner(2));
+
+        openAlarmByX();
+        a.scheduler().evaluateHttpNow(x, raw(true));                     // A takipçi → B'ye iletir
+        assertThat(inboxRows()).isEqualTo(1);
+        b.scheduler().drainManualEvalInbox();
+        verify(escalation, times(1)).resolveMonitoringAlertsForDomain(URL, TYPE);
     }
 }
