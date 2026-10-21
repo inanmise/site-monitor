@@ -40,7 +40,7 @@ Rollout'ta olanlar:
   koşar (DB bağlantıları ve kota buna göre). İşleri tarama liderliği kirası ve `scheduler_lock` (DB) paylaştırır,
   oturumlar JDBC'de olduğu için kullanıcılar oturum kaybetmez ([Çok pod](#çok-pod)).
 - Eski pod'un kapanışı (2026-10-21): önce `preStop` 10 sn (pod Service / ingress uç noktalarından düşer, istekler
-  yeni pod'a gider), sonra SIGTERM → liderlik kirası hemen bırakılır, bildirim havuzları boşaltılır (≤ 20 sn), Spring
+  yeni pod'a gider), sonra SIGTERM → liderlik kirası hemen bırakılır, push işçisi durdurulur ve bildirim havuzlarıyla birlikte boşaltılır (≤ 20 sn), Spring
   zarif kapanışı (web ≤ 20 sn, yürütücüler ≤ 20 sn, zamanlanmış işler ≤ 20 sn, geri kalan bütün `@PreDestroy`
   beklemeleri birlikte ≤ 10 sn — `ShutdownDeadline`). Hepsi `terminationGracePeriodSeconds: 120` içinde; aşılırsa
   kubelet SIGKILL atar — kira zaten bırakılmıştır, ama süren iş kesilir ve iş kilitleri TTL'lerine (3 dk) kalır.
@@ -598,7 +598,7 @@ bildirimi (RECOVER) önce satıra damgalanır — tek pod gönderir. Değerlendi
 | Olay | İzlemenin durduğu süre |
 |---|---|
 | Planlı kapanış (rollout, `kubectl drain`, `delete pod`) | **≤ ~35 sn.** preStop 10 sn boyunca lider taramaya devam eder; SIGTERM'de kira hemen bırakılır, takipçi ≤ 5 sn'de alır, ilk taraması ≤ 30 sn'de başlar. |
-| Pod öldürüldü (SIGKILL, `OOMKilled`, node kaybı, grace aşıldı) | **≤ ~4 dk:** kira süresinin (180 sn) dolması + 5 sn + ilk tarama. |
+| Pod öldürüldü (SIGKILL, `OOMKilled`, node kaybı, grace aşıldı) | **≤ ~4 dk:** kira süresinin (180 sn) dolması + 5 sn + ilk tarama. O pod tam o an bir push batch'i gönderiyorduysa o batch ≤ 10 dk sonra başka bir pod'dan gider (gönderilmekte olan batch'in kirası 10 dk — iki kez gitmesin diye). |
 | Lider kilitlendi (pod ayakta, taramalar ilerlemiyor) | 10 dk tarama tıkı yoksa lider kirayı bırakır (WARN, 2 × TTL yeniden almaz) → takipçi devralır; son tıktan 30 dk sonra hâlâ tık yoksa liveness BROKEN → kubelet pod'u yeniden başlatır. |
 | Veritabanı bir pod'dan kısa süre okunamıyor (havuz doldu, ağ) | Lider, son doğrulanmış kirası bitmeden 30 sn öncesine kadar lider kalır; takipçi kendini asla lider ilan etmez; küme tur sahiplenmesi iki kez yeniden denenir, olmazsa o tur atlanır (WARN — sonraki tur / yakalama telafi eder; iki kez koşmaktansa bir kez gecikir). |
 
@@ -616,7 +616,7 @@ lider 2 saate kadar yeniden kuyruğa alır, değişiklik bildirimi kaybolmaz.
 |---|---|---|
 | preStop `sleep` (pod Service / ingress uç noktalarından düşer) | 10 sn | Helm `preStopSleepSeconds` (0 = kanca yok) |
 | SIGTERM → liderlik kirası bırakılır, yeni kilit / tur / liderlik alınmaz (`ContextClosedEvent`, ilk dinleyici) | anında | — |
-| Bildirim havuzları boşaltılır (çözüm postaları, yeniden gönderimler, giriş sorunu postaları) | ≤ 20 sn | `WebConfig.NOTIFY_AWAIT_SECONDS` |
+| Push işçisi durdurulur (yeni tur / batch yok, kalan batch'lerin kirası bırakılır) ve süren push biter; bildirim havuzları boşaltılır (çözüm postaları, yeniden gönderimler, giriş sorunu postaları) — hepsi AYNI süre içinde | ≤ 20 sn | `WebConfig.NOTIFY_AWAIT_SECONDS` |
 | Web zarif aşaması (süren istekler biter) | ≤ 20 sn | `SHUTDOWN_PHASE_TIMEOUT` (`spring.lifecycle.timeout-per-shutdown-phase`) |
 | Yürütücü aşaması (süren kontroller / bildirimler biter) | ≤ 20 sn | aynı |
 | Zamanlanmış işler havuzu (süren işler biter, kesilmez) | ≤ 20 sn | `SCHEDULING_AWAIT_TERMINATION` |
@@ -740,12 +740,15 @@ bilmez. Son eski pod gidene kadar şunlar görülebilir (sonra kendiliğinden bi
 
 - Eski pod yönetici "ağ kesintisi" / "düzeldi" postasını belleğinden gönderebilir (yinelenen yönetici postası; DB
   indeksi ikinci ONGOING satırı engeller, WARN).
-- Eski lider `monitor_eval_inbox`'u boşaltmaz: yeni takipçiler boşaltıcı nabzını (`lease:eval-inbox-drainer`) göremez ve
-  "Şimdi kontrol et"i eskisi gibi yerel değerlendirir. Yalnız yeni bir lider öldükten sonraki ≤ 30 sn'de iletilen satırlar
-  bir sonraki yeni-sürüm liderini bekler (10 dk sonra düşer).
+- Eski (20.164.0) lider `monitor_eval_inbox`'u boşaltmaz ve kendini boşaltıcı olarak duyurmaz: yeni takipçiler
+  `lease:eval-inbox-drainer` satırının şu anki tarama liderine ait olmadığını görür ve "Şimdi kontrol et"i eskisi gibi
+  yerel değerlendirir (geçiş penceresi kalmaz).
 - Eski pod fırtınayı eski tek aşamalı yolla kapatabilir: yinelenen bir kurtarma postası mümkün.
 - Eski pod'da push kuyruğu, haftalık rapor geçişleri ve haftalık erişilebilirlik postası sahiplenmesizdir: çift tık /
   yarışta yinelenen push ya da posta mümkün (eski davranış).
+- **Haftalık erişilebilirlik penceresinde dağıtmayın** (tetik günü, Pazartesi ~10:00–12:00 Istanbul) — bir 20.164.0 pod'u
+  hâlâ koşabildiği sürece: eski pod bütün takımları TEK işlemde gönderir; gönderirken öldürülürse kayıtları geri sarılır, yeni
+  sürümün telafi turu kaydı olmayan takımları gönderir → o takımlar ikinci posta alır.
 - Eski saatlik tarama önce turu alır: kilidi yeni pod'un bayat taraması tutuyorsa o saat atlanır (bir sonraki saat tarar).
 - Eski lider DNS / alan adı değişikliğini taban yapar ama PENDING yazmaz; yeni lider 2 sa (DNS) / 6 sa (alan adı) içinde
   yeni-sürüm satırlarını yeniden kuyruğa alır.

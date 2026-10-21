@@ -53,6 +53,10 @@ Bu bölüm yalnız prod çok pod sürüm 1'i (2026-10-21) İLK kez aldığında 
       aşamalar, liderlik kirası yalnız `@PreDestroy`'da bırakılır. Beklenen: geçişte birkaç 502; eski pod 60 sn'yi aşarsa
       izleme ~4 dk durur (kira 180 sn dolana dek); eski pod'un kuyruğundaki "ÇÖZÜLDÜ" postaları kaybolabilir. Yeni
       kapanış (preStop 10, grace 120, kira ilk anda bırakılır) bir SONRAKİ dağıtımda devreye girer.
+- [ ] **Haftalık erişilebilirlik penceresi DEĞİL** (tetik günü — varsayılan Pazartesi — ~10:00–12:00 Europe/Istanbul;
+      Ayarlar → Haftalık Erişilebilirlik'teki cron). Bir 20.164.0 pod'u koşarken bu pencerede dağıtılmaz: eski pod bütün
+      takımları tek işlemde gönderir, gönderirken öldürülürse kayıtları geri sarılır ve yeni sürümün telafi turu o takımlara
+      postayı İKİNCİ kez gönderir.
 - [ ] **Olaysız push çiftleri yok** (yeni tekil indeks `ux_push_eventless_key_user` bu satırlarla kurulamazdı; her açılışta
       yeniden dener ve düşer) — boş dönmeli:
   ```sql
@@ -76,6 +80,9 @@ Bu bölüm yalnız prod çok pod sürüm 1'i (2026-10-21) İLK kez aldığında 
   SELECT COALESCE(source, 'CERT') AS kaynak, count(*) FROM network_outage_events WHERE status = 'ONGOING'
    GROUP BY 1 HAVING count(*) > 1;
   ```
+- [ ] Yeni kapanış sırası biliniyor: SIGTERM'de kira bırakılır, sonra push işçisi durdurulup bildirim havuzlarıyla aynı 20 sn
+      içinde boşaltılır. Bir pod push batch'i gönderirken ÇÖKERSE o batch ≤ 10 dk sonra başka pod'dan gider (bilinçli: iki kez
+      gitmesindense gecikir) — dağıtım sonrası push geçmişinde 10 dk'lık gecikme hata değildir.
 - [ ] Geçiş penceresinde (eski + yeni pod birlikte) beklenen yinelenmeler biliniyor: eski pod'un bellekten yönetici kesinti
       postası, eski yolla kapanan fırtınanın ikinci kurtarma postası, eski pod'da sahiplenmesiz push / haftalık rapor —
       [`RUNBOOK.md` → Sürüm geçişi sırasında](RUNBOOK.md#sürüm-geçişi-sırasında-eski--yeni-pod-birlikte).
