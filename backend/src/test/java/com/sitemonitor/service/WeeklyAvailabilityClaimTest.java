@@ -303,4 +303,29 @@ class WeeklyAvailabilityClaimTest {
         assertThat(again.sent()).isEqualTo(1);
         assertThat(rowStatuses(w)).containsEntry(1L, "SENT");
     }
+
+    @Test
+    @DisplayName("2026-10-22 (çok pod inceleme CORE-2 / F5): yakalama yalnız bu haftanın SATIRI OLMAYAN takımlarına gönderir; "
+            + "SENT / FAILED / yarıda kalmış satıra dokunmaz; iki pod aynı anda yakalarsa yine tek posta")
+    void catchUpSendsOnlyToTeamsWithoutARow() throws Exception {
+        WeeklyAvailabilityReportService p1 = pod();
+        WeeklyAvailabilityReportService p2 = pod();
+        var w = p1.lastFullWeekWindow();
+        // Pazartesi koşusu Alfa'yı gönderdi, Beta'da patladı, sonra pod öldü — Gama hiç sahiplenilmedi (satırsız, izsiz).
+        seed(1L, w, "SENT", NOW.minus(Duration.ofMinutes(4)));
+        seed(2L, w, "FAILED", NOW.minus(Duration.ofMinutes(3)));
+
+        CyclicBarrier start = new CyclicBarrier(2);
+        Future<WeeklyAvailabilityReportService.SendResult> a = pool.submit(() -> { start.await(10, TimeUnit.SECONDS); return p1.sendMissingWeeklyReports(); });
+        Future<WeeklyAvailabilityReportService.SendResult> b = pool.submit(() -> { start.await(10, TimeUnit.SECONDS); return p2.sendMissingWeeklyReports(); });
+        int sent = a.get(30, TimeUnit.SECONDS).sent() + b.get(30, TimeUnit.SECONDS).sent();
+
+        assertThat(sent).isEqualTo(1);
+        assertThat(mails("Gama")).isEqualTo(1);
+        assertThat(mails("Alfa")).as("SENT satırı").isZero();
+        assertThat(mails("Beta")).as("FAILED satırı yakalamada yeniden denenmez (elle koşu)").isZero();
+        assertThat(rowStatuses(w)).containsEntry(1L, "SENT").containsEntry(2L, "FAILED").containsEntry(3L, "SENT");
+        assertThat(p1.sendMissingWeeklyReports().sent()).as("sonraki saatlik tik").isZero();
+        assertThat(mails("Gama")).isEqualTo(1);
+    }
 }

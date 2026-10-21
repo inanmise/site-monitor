@@ -47,9 +47,17 @@ class WatchdogPostgresTest {
             assertThat(jdbc.update(WatchdogService.SQL_STAMP_RECOVER, "2026-10-21T06:11:00", key, announced)).isEqualTo(1);
             assertThat(jdbc.update(WatchdogService.SQL_STAMP_RECOVER, "2026-10-21T06:11:01", key, announced))
                     .as("ikinci pod aynı duyuru için damgalayamaz").isZero();
-            assertThat(jdbc.update(WatchdogService.SQL_RECOVER_SUFFIX, "RECOVER_FAILED", key, "2026-10-21T06:11:00")).isEqualTo(1);
+            assertThat(jdbc.queryForObject("SELECT notified_kind FROM watchdog_state WHERE check_key = ?", String.class, key))
+                    .as("önce sahiplenme (CORE-5)").isEqualTo(WatchdogService.RECOVER_SENDING);
+            assertThat(jdbc.update(WatchdogService.SQL_RECOVER_FINISH, "RECOVER_FAILED", key,
+                    WatchdogService.RECOVER_SENDING, "2026-10-21T06:11:00")).isEqualTo(1);
             assertThat(jdbc.update(WatchdogService.SQL_STAMP_RECOVER, "2026-10-21T08:00:00", key, "2026-10-21T07:00:00"))
                     .as("sonraki kesintinin duyurusu yeniden damgalanır").isEqualTo(1);
+            // bayat sahiplenmenin devri koşullu: okunan tür + an değiştiyse 0 satır
+            assertThat(jdbc.update(WatchdogService.SQL_RECOVER_RECLAIM, WatchdogService.RECOVER_RETRY, "2026-10-21T08:10:00",
+                    key, WatchdogService.RECOVER_SENDING, "2026-10-21T08:00:00")).isEqualTo(1);
+            assertThat(jdbc.update(WatchdogService.SQL_RECOVER_RECLAIM, WatchdogService.RECOVER_RETRY, "2026-10-21T08:10:01",
+                    key, WatchdogService.RECOVER_SENDING, "2026-10-21T08:00:00")).as("tek pod devralır").isZero();
         } finally {
             jdbc.update("DELETE FROM watchdog_state WHERE check_key = ?", key);
         }

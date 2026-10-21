@@ -204,16 +204,41 @@ public class WeeklyAvailabilityReportService {
      *               herkese yeniden gönderirdi) + bayat SENDING devralınır. false = zamanlanmış (Pazartesi cron'u).
      */
     public SendResult sendWeeklyReports(boolean manual) {
+        return send(manual, false);
+    }
+
+    /**
+     * Yakalama (2026-10-22, çok pod inceleme CORE-2 / F5): bu haftanın satırı HİÇ olmayan takımlara zamanlanmış kipte
+     * gönderir — Pazartesi koşusu yarıda kaldıysa (SIGKILL, kapanış, tur kaydının geçici hatası) sahiplenilmemiş takımlar
+     * izsiz kalıyordu. Satırı olan takıma (SENT / SENDING / FAILED / NO_RECIPIENT / SKIPPED) DOKUNMAZ — başarısızlar elle
+     * koşuyla, yarıda kalanlar elle devralmayla yönetilir; satırsız takım yine takım × hafta sahiplenmesinden geçer (yarışan
+     * iki koşu tek posta). Satır listesi okunamazsa istisna (yakalama bu tur koşmaz, sonraki tik yeniden dener).
+     */
+    public SendResult sendMissingWeeklyReports() {
+        return send(false, true);
+    }
+
+    private SendResult send(boolean manual, boolean onlyMissing) {
         if (!isEnabled()) {
             log.info("Haftalık erişilebilirlik raporu devre dışı (weekly-availability.enabled=false) — atlandı");
             return new SendResult(0, 0, 0, 0, 0, 0);
         }
 
         Window w = lastFullWeekWindow();
+        java.util.Set<Long> withRow = new java.util.HashSet<>();
+        if (onlyMissing) {
+            for (WeeklyAvailabilityLog l : walRepo.findByReportYearAndWeekNo(w.year(), w.week())) {
+                if (l.getTeamId() != null) withRow.add(l.getTeamId());
+            }
+        }
         List<Team> teams = teamRepo.findByActiveTrueOrderByNameAsc();
         int[] c = new int[Outcome.values().length];
 
         for (Team team : teams) {
+            if (onlyMissing && withRow.contains(team.getId())) {
+                c[Outcome.DONE.ordinal()]++;                     // satırı var — yakalama dokunmaz
+                continue;
+            }
             Outcome o;
             try {
                 o = sendTeam(team, w, manual);
@@ -232,7 +257,7 @@ public class WeeklyAvailabilityReportService {
                 c[Outcome.INTERRUPTED.ordinal()]);
         log.info("Haftalık erişilebilirlik raporu tamamlandı ({}): {} takım → gönderilen={}, başarısız={}, domain'siz={}, "
                 + "alıcısız={}, zaten gönderilmiş={}, rapor kapalı={}, posta kapalı={}, başka koşuda={}, yarıda kalmış={}",
-                manual ? "elle" : "zamanlanmış", result.teams(), result.sent(), result.failed(), result.skippedNoDomains(),
+                manual ? "elle" : onlyMissing ? "yakalama" : "zamanlanmış", result.teams(), result.sent(), result.failed(), result.skippedNoDomains(),
                 result.skippedNoRecipient(), result.skippedDone(), result.skippedDisabled(), result.skippedMailOff(),
                 result.skippedInProgress(), result.interrupted());
         if (result.interrupted() > 0) {

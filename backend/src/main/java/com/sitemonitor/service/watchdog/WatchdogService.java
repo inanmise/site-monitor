@@ -48,13 +48,29 @@ public class WatchdogService {
     /** Değerlendirme kilidinin süresi (2026-10-21, çok pod R1-A, MP-02): kilit tur boyunca yenilenir; pod ölürse kilit en
      *  geç bu sürede düşer — eskiden 10 dk bekleniyor, dış uç ({@link #STALE_FACTOR} tur) arada 503'e düşüyordu. */
     static final Duration LOCK_TTL = Duration.ofMinutes(2);
-    /** Kesintide bu pod'un duyurduğu sorunun "düzeldi"sini TEK pod göndersin diye önce koşullu damga (MP-09). */
-    static final String SQL_STAMP_RECOVER = "UPDATE watchdog_state SET notified_kind = 'RECOVER', notified_at = ? "
+    /**
+     * Kesintide bu pod'un duyurduğu sorunun "düzeldi"sini TEK pod göndersin diye önce koşullu SAHİPLENME (MP-09). İnceleme
+     * 2026-10-22 (CORE-5 / F10): damga artık {@value #RECOVER_SENDING} — gönderim bitince {@link #SQL_RECOVER_FINISH} ile
+     * {@code RECOVER} (+ ek) olur. Eskiden doğrudan {@code RECOVER} yazılıyordu: damga ile gönderim arasında pod ölürse satır
+     * "gönderildi" diyor, kimse göndermiyordu.
+     */
+    static final String SQL_STAMP_RECOVER = "UPDATE watchdog_state SET notified_kind = 'RECOVER_SENDING', notified_at = ? "
             + "WHERE check_key = ? AND (notified_kind IS NULL OR notified_kind NOT LIKE 'RECOVER%' "
             + "OR notified_at IS NULL OR notified_at < ?)";
-    /** Damgalanan "düzeldi" teslim edilemediyse türüne ek (yönetici ekranı "gitti" demesin; yeniden denenmez). */
-    static final String SQL_RECOVER_SUFFIX = "UPDATE watchdog_state SET notified_kind = ? "
-            + "WHERE check_key = ? AND notified_kind = 'RECOVER' AND notified_at = ?";
+    /** Sahiplenilmiş "düzeldi"nin sonucu: tür beklenen sahiplenme türü ve anıyla hâlâ aynıysa son türe çevrilir. */
+    static final String SQL_RECOVER_FINISH = "UPDATE watchdog_state SET notified_kind = ? "
+            + "WHERE check_key = ? AND notified_kind = ? AND notified_at = ?";
+    /** Bayat sahiplenmenin devri: tür + an okunan değerle aynıysa yeni türe ve ana geçer (koşullu — tek pod kazanır). */
+    static final String SQL_RECOVER_RECLAIM = "UPDATE watchdog_state SET notified_kind = ?, notified_at = ? "
+            + "WHERE check_key = ? AND notified_kind = ? AND notified_at = ?";
+    /** "Düzeldi" gönderiliyor (sahiplenildi, sonuç henüz yazılmadı). */
+    static final String RECOVER_SENDING = "RECOVER_SENDING";
+    /** Bayat {@value #RECOVER_SENDING} başka pod tarafından BİR KEZ yeniden gönderiliyor (tavan: ikinci deneme). */
+    static final String RECOVER_RETRY = "RECOVER_RETRY";
+    /** İkinci deneme de sonuçlanmadı — artık gönderilmez (ekran "gitti" demez: bilinmeyen tür bildirim satırı çizmez). */
+    static final String RECOVER_UNKNOWN = "RECOVER_UNKNOWN";
+    /** Sahiplenmenin bayat sayılacağı süre (bir gönderim saniyeler sürer; pod öldüyse bu süre sonra devralınır). */
+    static final long RECOVER_CLAIM_STALE_MS = 5 * 60_000L;
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private final WatchdogStateRepository repo;
@@ -189,6 +205,7 @@ public class WatchdogService {
                 }
             }
             if (!orphans.isEmpty()) recoverOrphans(orphans, now);
+            retryStaleRecoverClaims(states.values(), now);
             // Yalnız KAYITLI satırlara bakılır: bu pod'un DB kesintisindeki yerel değerlendirmesi "yakın tur" sayılmaz.
             if (!manual && evaluatedRecently(states.values(), now)) {
                 return new Round(states.size(), 0, 0, 0, "RECENT", false);
@@ -312,15 +329,82 @@ public class WatchdogService {
                     WatchdogMessages.detail(c, facts, false), c.labelEn(), WatchdogMessages.detail(c, facts, true)));
         }
         if (items.isEmpty()) return;
+        sendRecover(items, stamped, RECOVER_SENDING, nowIso);
+    }
+
+    /**
+     * Sahiplenilmiş "düzeldi"leri gönderir ve sonucu yazar: teslim → {@code RECOVER}, değilse {@code RECOVER_FAILED} /
+     * {@code _MUTED} / {@code _NOCHANNEL} (yeniden denenmez — sorun zaten bitti). Yalnız sahiplenme hâlâ bizimse yazılır.
+     */
+    private void sendRecover(List<WatchdogMail.Item> items, List<WatchdogState> claimed, String claimKind, String claimAt) {
+        String suffix;
         try {
             WatchdogNotifier.Report rep = notifier.send(items, false);
-            log.info("Kendi kendini izleme: kesintide bu pod'da açılan {} sorun düzeldi → bildirim {}", items.size(), rep.outcome());
-            String suffix = suffix(rep.outcome());
-            if (!suffix.isEmpty()) markRecoverSuffix(stamped, suffix, nowIso);
+            log.info("Kendi kendini izleme: kesintide açılan {} sorun düzeldi → bildirim {}", items.size(), rep.outcome());
+            suffix = suffix(rep.outcome());
         } catch (Exception e) {
             log.warn("Kendi kendini izleme: düzelme bildirimi gönderilemedi: {}", e.toString());
-            markRecoverSuffix(stamped, WatchdogTransition.FAILED, nowIso);
+            suffix = WatchdogTransition.FAILED;
         }
+        finishRecover(claimed, claimKind, Action.RECOVER.name() + suffix, claimAt);
+    }
+
+    private void finishRecover(List<WatchdogState> claimed, String claimKind, String finalKind, String claimAt) {
+        for (WatchdogState s : claimed) {
+            s.setNotifiedKind(finalKind);
+            if (jdbc == null) continue;
+            try {
+                jdbc.update(SQL_RECOVER_FINISH, finalKind, s.getCheckKey(), claimKind, claimAt);
+            } catch (Exception e) {
+                // Sonuç yazılamadı: satır sahiplenmede kalır, bayatlayınca başka pod BİR KEZ yeniden gönderir (en az bir kez).
+                log.warn("Kendi kendini izleme: 'düzeldi' sonucu yazılamadı ({}): {}", s.getCheckKey(), e.toString());
+            }
+        }
+    }
+
+    /**
+     * Bayat "düzeldi" sahiplenmeleri (CORE-5): pod {@value #RECOVER_SENDING} damgasından sonra ve sonucu yazmadan öldüyse
+     * satır sonsuza dek "gönderiliyor" kalırdı. Kayıtlı satırı okuyan her pod (her turda, {@code RECENT}'ten önce):
+     * {@value #RECOVER_CLAIM_STALE_MS} ms'den eski {@value #RECOVER_SENDING} + satır hâlâ sağlıklı → koşullu devir
+     * ({@value #RECOVER_RETRY}) ve BİR KEZ yeniden gönderim (en az bir kez, tavanlı — ilk pod göndermiş de olabilir; çift
+     * "düzeldi" kayıp "düzeldi"den iyidir). Bayat {@value #RECOVER_RETRY} → {@value #RECOVER_UNKNOWN} (artık denenmez, WARN).
+     */
+    private void retryStaleRecoverClaims(java.util.Collection<WatchdogState> stored, Instant now) {
+        if (jdbc == null) return;
+        String nowIso = WatchdogTransition.ISO.format(now);
+        String staleBefore = WatchdogTransition.ISO.format(now.minusMillis(RECOVER_CLAIM_STALE_MS));
+        List<WatchdogMail.Item> items = new ArrayList<>();
+        List<WatchdogState> claimed = new ArrayList<>();
+        for (WatchdogState s : stored) {
+            String kind = s.getNotifiedKind();
+            String at = s.getNotifiedAt();
+            if (at == null || at.compareTo(staleBefore) >= 0) continue;
+            try {
+                if (RECOVER_RETRY.equals(kind)) {
+                    if (jdbc.update(SQL_RECOVER_RECLAIM, RECOVER_UNKNOWN, at, s.getCheckKey(), RECOVER_RETRY, at) == 1) {
+                        s.setNotifiedKind(RECOVER_UNKNOWN);
+                        log.warn("Kendi kendini izleme: '{}' düzelme bildirimi iki denemede de sonuçlanmadı — artık "
+                                + "gönderilmeyecek (RECOVER_UNKNOWN)", s.getCheckKey());
+                    }
+                    continue;
+                }
+                if (!RECOVER_SENDING.equals(kind) || !storedHealthy(s)) continue;
+                WatchdogCheck c = WatchdogCheck.byKey(s.getCheckKey());
+                if (c == null) continue;
+                if (jdbc.update(SQL_RECOVER_RECLAIM, RECOVER_RETRY, nowIso, s.getCheckKey(), RECOVER_SENDING, at) != 1) continue;
+                s.setNotifiedKind(RECOVER_RETRY);
+                s.setNotifiedAt(nowIso);
+                claimed.add(s);
+                Map<String, Object> facts = parse(s.getFacts());
+                items.add(new WatchdogMail.Item(Action.RECOVER.name(), c.labelTr(), c.severity().name(),
+                        WatchdogMessages.detail(c, facts, false), c.labelEn(), WatchdogMessages.detail(c, facts, true)));
+                log.warn("Kendi kendini izleme: '{}' düzelme bildirimi yarıda kalmış (damga {}) — bir kez yeniden gönderiliyor",
+                        s.getCheckKey(), at);
+            } catch (Exception e) {
+                log.debug("watchdog bayat 'düzeldi' devri okunamadı: {}", e.toString());
+            }
+        }
+        if (!items.isEmpty()) sendRecover(items, claimed, RECOVER_RETRY, nowIso);
     }
 
     /**
@@ -338,23 +422,10 @@ public class WatchdogService {
                     stored.getCheckKey(), e.toString());
             return false;
         }
-        stored.setNotifiedKind(Action.RECOVER.name());
+        stored.setNotifiedKind(RECOVER_SENDING);
         stored.setNotifiedAt(nowIso);
         stored.setSeverity(null);
         return true;
-    }
-
-    private void markRecoverSuffix(List<WatchdogState> stamped, String suffix, String nowIso) {
-        for (WatchdogState s : stamped) {
-            String kind = Action.RECOVER.name() + suffix;
-            s.setNotifiedKind(kind);
-            if (jdbc == null) continue;
-            try {
-                jdbc.update(SQL_RECOVER_SUFFIX, kind, s.getCheckKey(), nowIso);
-            } catch (Exception e) {
-                log.debug("watchdog RECOVER eki yazılamadı: {}", e.toString());
-            }
-        }
     }
 
     /** {@code a} anı {@code b}'den sonra mı (ISO yyyy-MM-ddTHH:mm:ss metinleri; null = hiç). */

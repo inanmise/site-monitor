@@ -73,6 +73,7 @@ class SchedulerMultiPodCoordinationTest {
         ReflectionTestUtils.setField(s, "sweepLockTtlMinutes", 2);
         ReflectionTestUtils.setField(s, "hourlyLockWaitMs", 0L);
         ReflectionTestUtils.setField(s, "roundClaimRetryDelaysMs", new long[] {1L, 1L});
+        ReflectionTestUtils.setField(s, "cronRoundRetryDelaysMs", new long[] {1L, 1L, 1L, 1L, 1L});
         ReflectionTestUtils.setField(s, "startupCheckDelayMs", 0L);
         ReflectionTestUtils.setField(s, "networkMinErrors", 3);        // @Value varsayılanları (manuel kurulumda 0 kalır)
         ReflectionTestUtils.setField(s, "networkErrorRateThreshold", 0.5);
@@ -121,6 +122,8 @@ class SchedulerMultiPodCoordinationTest {
     static final class FlakyStore extends ClusterScheduleService {
         final AtomicBoolean leaseDown = new AtomicBoolean();
         final AtomicBoolean claimDown = new AtomicBoolean();
+        /** Bu kadar sahiplenme denemesi hata verir, sonra düzelir (cron payı içinde yeniden deneme). */
+        final AtomicInteger claimFailuresLeft = new AtomicInteger();
 
         FlakyStore(MultiPodTestSupport mp, String owner) {
             super(mp.jdbc(), owner);
@@ -140,7 +143,9 @@ class SchedulerMultiPodCoordinationTest {
 
         @Override
         public Claim claim(String key, long nowMs, long nominalMs, Long knownNextDue, LongUnaryOperator advance) {
-            if (claimDown.get()) throw new DataAccessResourceFailureException("bağlantı havuzu dolu");
+            if (claimDown.get() || claimFailuresLeft.getAndUpdate(n -> Math.max(0, n - 1)) > 0) {
+                throw new DataAccessResourceFailureException("bağlantı havuzu dolu");
+            }
             return super.claim(key, nowMs, nominalMs, knownNextDue, advance);
         }
     }
@@ -273,23 +278,97 @@ class SchedulerMultiPodCoordinationTest {
     }
 
     @Test
-    @DisplayName("MP-11: tur sahiplenmesi bir pod'da geçici hata verir → o pod turu ATLAR; Pazartesi raporu kümede TEK kez; System Health sayar")
+    @DisplayName("MP-11 / CORE-2: kilidi kazanan pod'un cron tur kaydı geçici hata verir → takım × hafta sahiplenmesiyle korunan "
+            + "Pazartesi raporu YİNE DE koşar (hafta kaybolmaz; çift postayı takım sahiplenmesi önler); System Health sayar")
     @SuppressWarnings("unchecked")
-    void roundClaimFailure_weeklyReportOnce() {
+    void cronRoundClaimError_claimProtectedJobRunsAnyway() {
         mp.clock().set(Instant.parse("2026-10-19T07:00:00Z").toEpochMilli());   // Pazartesi 10:00 İstanbul
         Pod a = pod(1);
         Pod b = pod(2);
-        FlakyStore storeB = flaky(b);
-        storeB.claimDown.set(true);
+        FlakyStore storeA = flaky(a);
+        storeA.claimDown.set(true);                          // kilidi kazanan pod'un havuzu dolu
 
-        a.scheduler().scheduledWeeklyAvailabilityReport();
-        mp.advance(5 * SEC);
-        b.scheduler().scheduledWeeklyAvailabilityReport();   // HATA ÖNCESİ: bellek içi karar "ilk görüş → evet" → İKİNCİ rapor
+        a.scheduler().scheduledWeeklyAvailabilityReport();   // ÖNCE: kayıt hatası → tur atlanır, öbür pod kilidi meşgul bulmuştu → hafta KAYBOLURDU
         verify(mp.mock(WeeklyAvailabilityReportService.class), times(1)).sendWeeklyReports(false);
-
-        Map<String, Object> scheduler = (Map<String, Object>) b.scheduler().getSystemHealth().get("scheduler");
+        Map<String, Object> scheduler = (Map<String, Object>) a.scheduler().getSystemHealth().get("scheduler");
         assertThat(scheduler).containsEntry("round_claim_failures", 1L);
         assertThat((String) scheduler.get("last_round_claim_failure")).contains("round:weekly-availability");
+        assertThat((List<Map<String, Object>>) scheduler.get("skipped_rounds")).as("atlanmadı").isEmpty();
+
+        mp.advance(5 * SEC);
+        b.scheduler().scheduledWeeklyAvailabilityReport();   // kayıt yazılamamıştı → b de koşar; takım sahiplenmesi tek posta
+        verify(mp.mock(WeeklyAvailabilityReportService.class), times(2)).sendWeeklyReports(false);
+        mp.advance(5 * SEC);
+        storeA.claimDown.set(false);                         // a'nın havuzu düzeldi
+        a.scheduler().scheduledWeeklyAvailabilityReport();   // tur artık kayıtlı → üçüncü koşu yok
+        verify(mp.mock(WeeklyAvailabilityReportService.class), times(2)).sendWeeklyReports(false);
+    }
+
+    @Test
+    @DisplayName("CORE-2: korunmayan cron işi (Cuma hatırlatması) — tur kaydı birkaç kez hata verip düzelirse cron payı içinde yeniden denenir ve TEK kez koşar")
+    void cronRoundClaimTransientError_retriedWithinSlack() {
+        mp.clock().set(Instant.parse("2026-10-16T06:00:00Z").toEpochMilli());   // Cuma 09:00 İstanbul
+        Pod a = pod(1);
+        Pod b = pod(2);
+        FlakyStore storeA = flaky(a);
+        storeA.claimFailuresLeft.set(3);
+
+        a.scheduler().scheduledWeeklyReportReminder();
+        verify(mp.mock(WeeklyReportReminderService.class), times(1)).sendFridayReminders(true);
+        mp.advance(5 * SEC);
+        b.scheduler().scheduledWeeklyReportReminder();
+        verify(mp.mock(WeeklyReportReminderService.class), times(1)).sendFridayReminders(true);
+    }
+
+    @Test
+    @DisplayName("CORE-2: korunmayan cron işi — tur kaydı cron payı boyunca okunamazsa atlanır ve İZ bırakır (System Health skipped_rounds)")
+    @SuppressWarnings("unchecked")
+    void cronRoundClaimPersistentError_skippedWithTrace() {
+        mp.clock().set(Instant.parse("2026-10-16T06:00:00Z").toEpochMilli());   // Cuma 09:00 İstanbul
+        Pod a = pod(1);
+        FlakyStore storeA = flaky(a);
+        storeA.claimDown.set(true);
+
+        a.scheduler().scheduledWeeklyReportReminder();
+        verify(mp.mock(WeeklyReportReminderService.class), never()).sendFridayReminders(anyBoolean());
+        Map<String, Object> scheduler = (Map<String, Object>) a.scheduler().getSystemHealth().get("scheduler");
+        assertThat(scheduler).containsEntry("round_claim_failures", 1L);
+        assertThat((List<Map<String, Object>>) scheduler.get("skipped_rounds"))
+                .extracting(m -> m.get("round")).containsExactly("weekly-report-reminder");
+    }
+
+    @Test
+    @DisplayName("CORE-2 / F5: haftalık erişilebilirlik yakalaması — yalnız tetik gününde, tetikten 20 dk sonra, saatte kümede bir kez; asıl koşu sürerken atlar")
+    void weeklyAvailabilityCatchUp_window_andOncePerHour() {
+        Pod a = pod(1);
+        Pod b = pod(2);
+        SchedulerService s = a.scheduler();
+        long mon1010 = Instant.parse("2026-10-19T07:10:00Z").toEpochMilli();   // Pazartesi 10:10 İstanbul
+        assertThat(s.weeklyAvailabilityCatchUpWindow(mon1010)).as("tetikten 10 dk sonra (asıl koşu sürüyor olabilir)").isFalse();
+        assertThat(s.weeklyAvailabilityCatchUpWindow(mon1010 + 15 * MIN)).as("10:25").isTrue();
+        assertThat(s.weeklyAvailabilityCatchUpWindow(Instant.parse("2026-10-19T20:25:00Z").toEpochMilli())).as("23:25").isTrue();
+        assertThat(s.weeklyAvailabilityCatchUpWindow(Instant.parse("2026-10-20T07:25:00Z").toEpochMilli())).as("Salı").isFalse();
+        assertThat(s.weeklyAvailabilityCatchUpWindow(Instant.parse("2026-10-18T07:25:00Z").toEpochMilli())).as("Pazar").isFalse();
+        assertThat(s.weeklyAvailabilityCatchUpWindow(Instant.parse("2026-10-19T06:25:00Z").toEpochMilli())).as("tetikten önce").isFalse();
+
+        WeeklyAvailabilityReportService wa = mp.mock(WeeklyAvailabilityReportService.class);
+        mp.clock().set(Instant.parse("2026-10-19T07:25:00Z").toEpochMilli());
+        assertThat(b.locks().tryAcquire("weekly-availability")).isPresent();   // asıl koşu b'de sürüyor
+        a.scheduler().scheduledWeeklyAvailabilityCatchUp();
+        verify(wa, never()).sendMissingWeeklyReports();
+        b.locks().release("weekly-availability");
+
+        a.scheduler().scheduledWeeklyAvailabilityCatchUp();
+        mp.advance(30 * SEC);
+        b.scheduler().scheduledWeeklyAvailabilityCatchUp();
+        verify(wa, times(1)).sendMissingWeeklyReports();
+        mp.advance(60 * MIN);                                // 11:25
+        b.scheduler().scheduledWeeklyAvailabilityCatchUp();
+        a.scheduler().scheduledWeeklyAvailabilityCatchUp();
+        verify(wa, times(2)).sendMissingWeeklyReports();
+        mp.clock().set(Instant.parse("2026-10-20T07:25:00Z").toEpochMilli());   // Salı: yakalama yok
+        a.scheduler().scheduledWeeklyAvailabilityCatchUp();
+        verify(wa, times(2)).sendMissingWeeklyReports();
     }
 
     @Test

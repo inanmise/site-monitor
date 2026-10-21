@@ -2338,7 +2338,7 @@ public class SchedulerService {
             return;
         }
         try {
-            if (!cronRoundDue("ca-pin-refresh", CRON_CA_PIN_REFRESH, ZONE_IST)) {
+            if (!cronRoundDue("ca-pin-refresh", CRON_CA_PIN_REFRESH, ZONE_IST, true)) {   // yalnız süresi yaklaşanı döndürür
                 log.debug("CA pin refresh — bu tetiğin turu başka pod'da koştu, atlanıyor");
                 return;
             }
@@ -2792,7 +2792,8 @@ public class SchedulerService {
             return;
         }
         try {
-            if (!cronRoundDue("weekly-availability", CRON_WEEKLY_AVAILABILITY, ZONE_IST)) {   // çift rapor maili yok
+            // takım × hafta sahiplenmesi (uk_wal_team_week) çift postayı önler → kayıt hatasında da koşar (CORE-2)
+            if (!cronRoundDue("weekly-availability", CRON_WEEKLY_AVAILABILITY, ZONE_IST, true)) {   // çift rapor maili yok
                 log.debug("Haftalık erişilebilirlik raporu — bu tetiğin turu başka pod'da koştu, atlanıyor");
                 return;
             }
@@ -2801,6 +2802,67 @@ public class SchedulerService {
             log.error("Haftalık erişilebilirlik raporu başarısız: {}", e.getMessage(), e);
         } finally {
             releaseSchedulerLock("weekly-availability");
+        }
+    }
+
+    /** Haftalık erişilebilirlik yakalamasının saatlik tiki (İstanbul; dakika 25) — yalnız tetik gününde iş yapar. */
+    static final String CRON_WEEKLY_AVAILABILITY_CATCHUP = "${site.monitor.weekly-availability.catchup-cron:0 25 * * * *}";
+    /** Yakalama tetikten en erken bu kadar sonra (asıl koşu bitmiş olsun) koşar. */
+    static final long WEEKLY_AVAILABILITY_CATCHUP_DELAY_MS = 20L * 60_000L;
+    /** Yakalama turunun küme penceresi ({@code round:weekly-availability-catchup}; ad kalıcı — G6). */
+    static final long WEEKLY_AVAILABILITY_CATCHUP_ROUND_MS = 50L * 60_000L;
+
+    /**
+     * Haftalık erişilebilirlik YAKALAMASI (2026-10-22, çok pod inceleme CORE-2 / F5): Pazartesi koşusu yarıda kalırsa
+     * (SIGKILL, kapanışta yarıda kesilen takım döngüsü, tur kaydının geçici hatası) sahiplenilmemiş takımlar hiçbir satır ve
+     * {@code notification_logs} izi olmadan o hafta raporsuz kalıyordu; bir sonraki koşu başka haftanındır. Tetik gününün
+     * (cron {@link #CRON_WEEKLY_AVAILABILITY}, İstanbul) tetikten {@link #WEEKLY_AVAILABILITY_CATCHUP_DELAY_MS} sonrasından gün
+     * sonuna dek saatte bir: yalnız bu haftanın SATIRI OLMAYAN takımlarına gönderir
+     * ({@code WeeklyAvailabilityReportService.sendMissingWeeklyReports}). Asıl koşuyla aynı kilit (o sürerken atlanır),
+     * kendi küme turu; takım × hafta sahiplenmesi çift postayı önler.
+     */
+    @Scheduled(cron = CRON_WEEKLY_AVAILABILITY_CATCHUP, zone = ZONE_IST)
+    public void scheduledWeeklyAvailabilityCatchUp() {
+        if (!weeklyAvailabilityCatchUpWindow(scheduleClock.getAsLong())) return;
+        if (!tryAcquireSchedulerLock("weekly-availability", lockTtlMinutes)) {
+            log.debug("Haftalık erişilebilirlik yakalaması — asıl koşu / başka pod sürüyor, atlanıyor");
+            return;
+        }
+        try {
+            if (!roundDue("weekly-availability-catchup", WEEKLY_AVAILABILITY_CATCHUP_ROUND_MS)) return;
+            var r = weeklyAvailabilityReportService.sendMissingWeeklyReports();
+            if (r != null && r.sent() > 0) {
+                log.warn("Haftalık erişilebilirlik yakalaması: asıl koşuda gönderilmemiş {} takıma rapor gönderildi", r.sent());
+            }
+        } catch (Exception e) {
+            log.error("Haftalık erişilebilirlik yakalaması başarısız (sonraki saat yeniden dener): {}", e.getMessage(), e);
+        } finally {
+            releaseSchedulerLock("weekly-availability");
+        }
+    }
+
+    /**
+     * Yakalama penceresi: haftalık cron'un son 24 saat içindeki tetiği (İstanbul) en az {@link #WEEKLY_AVAILABILITY_CATCHUP_DELAY_MS}
+     * önce geçti ve bugün o tetiğin günü. Cron çözülemezse false (asıl iş zaten kendi cron'uyla koşar).
+     */
+    boolean weeklyAvailabilityCatchUpWindow(long nowMs) {
+        try {
+            var expr = org.springframework.scheduling.support.CronExpression.parse(resolvePlaceholder(CRON_WEEKLY_AVAILABILITY));
+            java.time.ZoneId ist = java.time.ZoneId.of(ZONE_IST);
+            java.time.ZonedDateTime now = Instant.ofEpochMilli(nowMs).atZone(ist);
+            // Son 24 saatteki EN SON tetik (haftalık cron'da en çok bir tane; sık cron'a çevrilmişse sınırlı tarama).
+            java.time.ZonedDateTime trigger = null;
+            java.time.ZonedDateTime t = expr.next(now.minusHours(24));
+            for (int i = 0; t != null && !t.isAfter(now) && i < 48; i++) {
+                trigger = t;
+                t = expr.next(t);
+            }
+            if (trigger == null) return false;
+            if (!trigger.toLocalDate().equals(now.toLocalDate())) return false;
+            return nowMs - trigger.toInstant().toEpochMilli() >= WEEKLY_AVAILABILITY_CATCHUP_DELAY_MS;
+        } catch (Exception e) {
+            log.debug("Haftalık erişilebilirlik yakalama penceresi hesaplanamadı: {}", e.toString());
+            return false;
         }
     }
 
@@ -3378,6 +3440,7 @@ public class SchedulerService {
         if (clusterSchedule != null) {
             schedulerMap.put("round_claim_failures", roundClaimFailures.get());
             schedulerMap.put("last_round_claim_failure", lastRoundClaimFailure.get());
+            schedulerMap.put("skipped_rounds", skippedRoundsSnapshot());
         }
         if (lockService != null) {
             try { schedulerMap.put("held_locks", lockService.status()); }
@@ -3838,14 +3901,38 @@ public class SchedulerService {
      * </ul>
      */
     private boolean clusterClaim(String key, long nominalMs, DueAdvance advance, long runLeaseMs, long[] runOut) {
+        boolean round = key.startsWith(ROUND_KEY_PREFIX);
+        long nowMs = scheduleClock.getAsLong();
+        Boolean r = clusterClaimOrNull(key, nominalMs, advance, runLeaseMs, runOut,
+                round && roundClaimRetryDelaysMs != null ? roundClaimRetryDelaysMs : new long[0]);
+        if (r != null) return r;
+        if (round) {
+            noteRoundClaimFailure(key, nowMs);
+            log.warn("Küme tur kaydı okunamadı ({}) — bu tur GÜVENLİ TARAFTA atlandı (başka pod koşturmuş olabilir; sonraki "
+                    + "tık yeniden dener)", key);
+            return false;
+        }
+        return withinConfirmedLeaderWindow(nowMs) && localDue(key, nowMs, advance);
+    }
+
+    /** Tur sahiplenmesi geçici hatayla düştü: sayaç + son hata (System Health). */
+    private void noteRoundClaimFailure(String key, long nowMs) {
+        roundClaimFailures.incrementAndGet();
+        lastRoundClaimFailure.set(ISO.format(Instant.ofEpochMilli(nowMs)) + " " + key);
+    }
+
+    /**
+     * {@link #clusterClaim}'in sorgu kısmı: karar (true / false) ya da {@code delays} kadar yeniden denemeden sonra hâlâ GEÇİCİ
+     * hata → {@code null} (karar çağıranın — tur türüne göre koşar ya da atlar). Tablo yoksa eski yerel karar.
+     */
+    private Boolean clusterClaimOrNull(String key, long nominalMs, DueAdvance advance, long runLeaseMs, long[] runOut,
+                                       long[] delays) {
         long nowMs = scheduleClock.getAsLong();
         if (clusterSchedule == null) return localDue(key, nowMs, advance);
         Long cached = lastMonitorCheckAt.get(key);
         if (cached != null && !com.sitemonitor.service.schedule.ClusterScheduleService.isDue(cached, nowMs, nominalMs)) {
             return false;                                        // hızlı yol: vade gelmedi, sorgu yok
         }
-        boolean round = key.startsWith(ROUND_KEY_PREFIX);
-        long[] delays = round && roundClaimRetryDelaysMs != null ? roundClaimRetryDelaysMs : new long[0];
         Exception failure = null;
         for (int attempt = 0; attempt <= delays.length; attempt++) {
             if (attempt > 0 && !sleepQuietly(delays[attempt - 1])) break;
@@ -3871,15 +3958,8 @@ public class SchedulerService {
                 failure = e;
             }
         }
-        if (round) {
-            roundClaimFailures.incrementAndGet();
-            lastRoundClaimFailure.set(ISO.format(Instant.ofEpochMilli(nowMs)) + " " + key);
-            log.warn("Küme tur kaydı okunamadı ({}) — bu tur GÜVENLİ TARAFTA atlandı (başka pod koşturmuş olabilir; sonraki "
-                    + "tık yeniden dener): {}", key, failure == null ? "kesildi" : failure.toString());
-            return false;
-        }
         warnClusterScheduleFallback(key, failure == null ? new IllegalStateException("kesildi") : failure);
-        return withinConfirmedLeaderWindow(nowMs) && localDue(key, nowMs, advance);
+        return null;
     }
 
     /** Uyur; kesilirse bayrağı geri koyup false döner. */
@@ -4041,6 +4121,24 @@ public class SchedulerService {
      *                 meşru bir tur atlanmaz (varsayılan saatlik cron'da iki aday zaten aynı andır).
      */
     private boolean cronRoundDue(String name, String cronExpr, String zone) {
+        return cronRoundDue(name, cronExpr, zone, false);
+    }
+
+    /**
+     * Cron turu + tur kaydının GEÇİCİ hatasında ne olacağı (inceleme 2026-10-22, CORE-2 / F5). Cron işi günde / haftada BİR
+     * tetiktir: tur kaydı tek bir geçici hatayla atlanırsa (havuz dolu) o hafta / gün kaybolur (Pazartesi raporu, Cuma
+     * hatırlatması), çünkü öbür pod'lar kilidi meşgul bulup çoktan dönmüştür.
+     * <ul>
+     *   <li>{@code claimProtected = true} — işin kendisi öğe başına sahiplenmeyle korunuyor (yinelenen koşu çift posta
+     *       ÜRETMEZ): hata → iş YİNE DE koşar (WARN). Bugün: {@code weekly-availability} (takım × hafta sahiplenmesi,
+     *       {@code uk_wal_team_week}) ve {@code ca-pin-refresh} (yalnız süresi yaklaşan pin'i döndürür; ikinci koşu boş geçer).</li>
+     *   <li>diğerleri (posta / ağır iş yinelenebilir: haftalık rapor hatırlatması, sorun özeti, gece temizliği, alan adı
+     *       önbelleği, saatlik sertifika, 16:00 kritik alan adı): tur kaydı cron payı ({@link #CRON_ROUND_SLACK_MS})
+     *       içinde {@link #cronRoundRetryDelaysMs} kadar yeniden denenir; yine düşerse atlanır ve İZ bırakır (ERROR + System
+     *       Health {@code scheduler.skipped_rounds}).</li>
+     * </ul>
+     */
+    private boolean cronRoundDue(String name, String cronExpr, String zone, boolean claimProtected) {
         if (shutdownStarted) return false;                       // kapanıyor: yeni tur yok
         if (clusterSchedule == null) return true;
         long nowMs = scheduleClock.getAsLong();
@@ -4062,7 +4160,54 @@ public class SchedulerService {
             return true;
         }
         long until = untilMs;
-        return clusterDue(ROUND_KEY_PREFIX + name, Math.max(1L, until - nowMs), (prev, now) -> Math.max(until, now + 1));
+        String key = ROUND_KEY_PREFIX + name;
+        long[] delays = claimProtected ? roundClaimRetryDelaysMs : cronRoundRetryDelaysMs;
+        Boolean r = clusterClaimOrNull(key, Math.max(1L, until - nowMs), (prev, now) -> Math.max(until, now + 1), 0L, null,
+                delays == null ? new long[0] : delays);
+        if (r != null) return r;
+        noteRoundClaimFailure(key, nowMs);
+        if (claimProtected) {
+            log.warn("Küme tur kaydı okunamadı ({}) — iş öğe başına sahiplenmeyle korunduğu için YİNE DE koşuluyor (yinelenen "
+                    + "koşu çift gönderim üretmez) [instance={}]", key, INSTANCE_ID);
+            return true;
+        }
+        recordSkippedRound(name, nowMs);
+        return false;
+    }
+
+    /**
+     * Cron turunun kayıt hatası yüzünden atlandığı yerin İZİ (CORE-2): ERROR günlüğü + System Health
+     * {@code scheduler.skipped_rounds} (pod belleği, son {@link #SKIPPED_ROUNDS_MAX} kayıt).
+     */
+    private void recordSkippedRound(String name, long nowMs) {
+        String at = ISO.format(Instant.ofEpochMilli(nowMs));
+        synchronized (skippedRounds) {
+            skippedRounds.addLast(Map.of("round", name, "at", at));
+            while (skippedRounds.size() > SKIPPED_ROUNDS_MAX) skippedRounds.removeFirst();
+        }
+        log.error("Cron turu '{}' ATLANDI — tur kaydı {} sn boyunca okunamadı (veritabanı geçici hata); bu tetiğin işi bu "
+                + "turda koşmadı, elle tetiklenmesi gerekebilir [instance={}]", name, totalDelaySeconds(cronRoundRetryDelaysMs),
+                INSTANCE_ID);
+    }
+
+    private static long totalDelaySeconds(long[] delays) {
+        long t = 0;
+        if (delays != null) for (long d : delays) t += Math.max(0L, d);
+        return t / 1000;
+    }
+
+    /** Cron turu kaydının yeniden deneme beklemeleri (ms) — toplam (~30 sn) cron payının ({@link #CRON_ROUND_SLACK_MS}) içinde. */
+    private long[] cronRoundRetryDelaysMs = {250L, 1_000L, 4_000L, 10_000L, 15_000L};
+
+    /** Atlanan cron turlarının izi (System Health). */
+    static final int SKIPPED_ROUNDS_MAX = 20;
+    private final java.util.ArrayDeque<Map<String, Object>> skippedRounds = new java.util.ArrayDeque<>();
+
+    /** System Health için atlanan turların kopyası. */
+    private List<Map<String, Object>> skippedRoundsSnapshot() {
+        synchronized (skippedRounds) {
+            return new ArrayList<>(skippedRounds);
+        }
     }
 
     // ── Tarama liderliği (2026-10-09) ────────────────────────────────────────────────────────────────────────────
@@ -4097,9 +4242,14 @@ public class SchedulerService {
     private volatile long sweepLeaderConfirmedUntil = -1L;
     /** Son BAŞARILI kira okumasının sonucu (izleyicinin DB çöküşü duyurusu için; hatalar değiştirmez). */
     private volatile boolean leaseConfirmedLeader = false;
-    /** Son başarılı kira gözleminin anı ve o an kiranın bitişi (takipçide satırdan okunur; -1 = bilinmiyor). */
-    private volatile long leaseObservedAt = -1L;
-    private volatile long leaseObservedUntil = -1L;
+    /**
+     * Son başarılı kira gözlemi: kiranın bitişi ve O DEĞERİN OKUNDUĞU an — TEK nesnede, birlikte yazılır (inceleme 2026-10-22,
+     * CORE-1). Eskiden takipçinin her {@code isSweepLeader()} çağrısı (≥ 5 sn) yalnız anı ilerletiyor, bitiş yalnız yenileyicide
+     * (60 sn) okunuyordu; izleyici "kalan = bitiş − an"ı sağlıklı bir kirada bile TTL/2'nin altında görüp canlı liderin yanında
+     * ikinci "veritabanı çöktü" duyurusu yapabiliyordu. null = hiç gözlenmedi.
+     */
+    private record ObservedLease(long atMs, long untilMs) {}
+    private volatile ObservedLease observedLease = null;
     /** Bu pod'un liderliği son kazandığı an (ms) — tıkanma süresi yeni dönemin başından sayılır. */
     private volatile long sweepLeaderSince = -1L;
     /** Son tarama tıkı (14 tarama giriş metodundan herhangi biri bu pod'da çağrıldı; ms). 0 = hiç. */
@@ -4205,11 +4355,11 @@ public class SchedulerService {
             return inWindow;
         }
         leaseConfirmedLeader = held;
-        leaseObservedAt = now;
         if (held) {
             sweepLeaderConfirmedUntil = now + ttl;
-            leaseObservedUntil = now + ttl;
+            observedLease = new ObservedLease(now, now + ttl);   // lider: bitişi kendisi yazdı (an + bitiş birlikte)
         }
+        // Takipçi: kira bitişini bu sorgu okumaz → gözlem DEĞİŞMEZ (yalnız observeLeaseAsFollower, satırı okuyarak).
         if (held && !sweepLeaderHeld) {
             sweepLeaderSince = now;
             log.info("Tarama liderliği bu pod'da [instance={}, owner={}] — izleme taramaları burada koşar",
@@ -4258,9 +4408,10 @@ public class SchedulerService {
     public record LeaseObservation(long observedAtMs, boolean leader, long leaseUntilMs, long ttlMs) {}
 
     public LeaseObservation sweepLeaseObservation() {
-        if (clusterSchedule == null || leaseObservedAt < 0) return null;
+        ObservedLease o = observedLease;
+        if (clusterSchedule == null || o == null) return null;
         long ttl = Math.max(MIN_SWEEP_LEADER_TTL_MS, sweepLeaderTtlMs);
-        return new LeaseObservation(leaseObservedAt, leaseConfirmedLeader, leaseObservedUntil, ttl);
+        return new LeaseObservation(o.atMs(), leaseConfirmedLeader, o.untilMs(), ttl);
     }
 
     /**
@@ -4428,8 +4579,7 @@ public class SchedulerService {
         if (clusterSchedule == null || sweepLeaderStopped) return;
         try {
             var lease = clusterSchedule.lease(SWEEP_LEADER);
-            leaseObservedUntil = lease == null ? now : lease.untilMs();
-            leaseObservedAt = now;
+            observedLease = new ObservedLease(now, lease == null ? now : lease.untilMs());
             leaseConfirmedLeader = lease != null && clusterSchedule.owner().equals(lease.owner()) && lease.untilMs() >= now;
         } catch (Exception e) {
             log.debug("Kira gözlemi okunamadı: {}", e.toString());

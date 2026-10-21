@@ -286,6 +286,112 @@ class WatchdogMultiPodTest {
     }
 
     @Test
+    @DisplayName("CORE-1: takipçinin kendi isSweepLeader() yoklaması (yenileyiciden 40–55 sn sonra) gözlem anını kaydırmaz → "
+            + "canlı liderin taze kirası 'bayat' görünmez; 30 dk kesintide takipçi duyurmaz, yalnız lider bir kez")
+    void followerOwnLeaseChecksDoNotFakeStaleLease() {
+        Pod p1 = mp.pod(1);
+        Pod p2 = mp.pod(2);
+        assertThat(p1.scheduler().isSweepLeaderNow()).isTrue();     // t=0: kira 180 sn
+        WatchdogService w1 = watchdog(p1.owner(), p1);
+        WatchdogService w2 = watchdog(p2.owner(), p2);
+        for (int offset = 40; offset <= 55; offset += 5) {
+            renew(p1);                                               // canlı lider yeniler (bitiş = şimdi + 180 sn)
+            mp.advance(50 * SEC);
+            renew(p2);                                               // takipçinin yenileyicisi kirayı okur: kalan 130 sn
+            mp.advance(offset * SEC);                                // ÖNCE: anı buraya kaydırıyordu → kalan 130 − offset < 90
+            assertThat(p2.scheduler().isSweepLeaderNow()).isFalse(); // takipçinin kendi yoklaması (tarama, kutu, kapı)
+            var obs = p2.scheduler().sweepLeaseObservation();
+            assertThat(obs.leaseUntilMs() - obs.observedAtMs()).as("gözlem çifti birlikte (bitiş, okunduğu an)")
+                    .isGreaterThanOrEqualTo(obs.ttlMs() / 2);
+        }
+        dbDown.set(true);
+        results.put(WatchdogCheck.DATABASE, Result.PROBLEM);
+        cut(p1);
+        cut(p2);
+        for (int m = 1; m <= 30; m++) {
+            mp.advance(MIN);
+            renew(p1);
+            renew(p2);
+            p2.scheduler().isSweepLeaderNow();
+            w1.tick(now());
+            w2.tick(now());
+        }
+        assertThat(sent).as("ÖNCE: takipçi 'bayat kira' sanıp ikinci kez duyuruyordu").containsExactly(p1.owner() + ":ALERT");
+    }
+
+    @Test
+    @DisplayName("CORE-5: 'düzeldi' önce RECOVER_SENDING ile sahiplenilir, gönderim SIRASINDA satır 'gönderildi' demez; bitince RECOVER")
+    void recoverIsClaimedThenFinalized() {
+        WatchdogService a = watchdog("eski-a", null);
+        dbDown.set(true);
+        results.put(WatchdogCheck.DATABASE, Result.PROBLEM);
+        a.evaluate(now(), false);
+        mp.advance(MIN);
+        a.evaluate(now(), false);                                    // kesintide duyurdu (bellek)
+        dbDown.set(false);
+        results.put(WatchdogCheck.DATABASE, Result.OK);
+        watchdog("yeni-x", null).evaluate(now(), false);              // başka pod sağlıklı satırı yazdı
+        List<String> kindDuringSend = new CopyOnWriteArrayList<>();
+        WatchdogNotifier n = (WatchdogNotifier) ReflectionTestUtils.getField(a, "notifier");
+        when(n.send(anyList(), anyBoolean())).thenAnswer(i -> {
+            kindDuringSend.add(dbKind());
+            return new WatchdogNotifier.Report(WatchdogNotifier.Outcome.DELIVERED, "SENT", "SKIPPED", "SKIPPED", 1);
+        });
+        mp.advance(10 * SEC);
+        a.evaluate(now(), false);
+        assertThat(kindDuringSend).containsExactly(WatchdogService.RECOVER_SENDING);
+        assertThat(dbKind()).isEqualTo("RECOVER");
+    }
+
+    @Test
+    @DisplayName("CORE-5: pod sahiplendikten sonra ÖLDÜ (RECOVER_SENDING kaldı) → bayatlayınca başka pod BİR KEZ yeniden gönderir; "
+            + "iki pod yarışırsa tek gönderim; taze sahiplenmeye dokunulmaz; ikinci deneme de kalırsa RECOVER_UNKNOWN (bir daha yok)")
+    void staleRecoverClaimIsRetriedOnceWithCap() {
+        Instant t0 = now();
+        healthyRows(t0.minusSeconds(30));
+        setDb("RECOVER_SENDING", t0.minusSeconds(60));               // 1 dk önce sahiplenildi — taze
+        WatchdogService a = watchdog("pod-a", null);
+        WatchdogService b = watchdog("pod-b", null);
+        a.evaluate(t0, false);
+        assertThat(sent).as("taze sahiplenme gönderiliyor olabilir").isEmpty();
+
+        setDb("RECOVER_SENDING", t0.minus(java.time.Duration.ofMinutes(10)));   // sahibi öldü
+        mp.race(() -> a.evaluate(t0, false), () -> b.evaluate(t0, false));
+        assertThat(count("RECOVER")).as("en az bir kez, tek pod").isEqualTo(1);
+        assertThat(dbKind()).isEqualTo("RECOVER");
+        a.evaluate(t0.plusSeconds(10), false);
+        assertThat(count("RECOVER")).isEqualTo(1);
+
+        setDb("RECOVER_RETRY", t0.minus(java.time.Duration.ofMinutes(10)));     // yeniden deneyen de öldü → tavan
+        a.evaluate(t0.plusSeconds(20), false);
+        assertThat(count("RECOVER")).as("tavan: ikinci yeniden deneme yok").isEqualTo(1);
+        assertThat(dbKind()).isEqualTo(WatchdogService.RECOVER_UNKNOWN);
+    }
+
+    /** Tüm kontroller sağlıklı (OK / OK) satırlarla, verilen değerlendirme anıyla. */
+    void healthyRows(Instant evaluatedAt) {
+        List<WatchdogState> rows = new ArrayList<>();
+        for (WatchdogCheck c : WatchdogCheck.values()) {
+            WatchdogState s = new WatchdogState();
+            s.setCheckKey(c.key());
+            s.setStatus("OK");
+            s.setLastResult("OK");
+            s.setEvaluatedAt(WatchdogTransition.ISO.format(evaluatedAt));
+            rows.add(s);
+        }
+        writeAll(rows);
+    }
+
+    void setDb(String kind, Instant at) {
+        mp.jdbc().update("UPDATE watchdog_state SET notified_kind = ?, notified_at = ? WHERE check_key = 'database'",
+                kind, WatchdogTransition.ISO.format(at));
+    }
+
+    String dbKind() {
+        return mp.jdbc().queryForObject("SELECT notified_kind FROM watchdog_state WHERE check_key = 'database'", String.class);
+    }
+
+    @Test
     @DisplayName("izleyici kilidi 2 dk ile alınır (ölen pod'un kilidi dış ucu 503'e düşürecek kadar beklemesin)")
     void watchdogLockTtl() {
         Pod p1 = mp.pod(1);
