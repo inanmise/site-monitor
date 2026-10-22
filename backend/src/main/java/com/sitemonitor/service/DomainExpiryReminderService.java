@@ -95,6 +95,9 @@ public class DomainExpiryReminderService {
     public DomainExpiryReminder evaluate(DomainMonitor m, Map<String, Object> result) {
         try {
             if (m == null || m.getId() == null || result == null) return null;
+            // Yarıda kalmış sahiplenmeler eşik denetiminden BAĞIMSIZ kapanır (inceleme J-3): yenilenmiş (yeni bitiş) ya da eşiği
+            // değişmiş serinin SENDING satırı da INTERRUPTED olur. İzleme başına sınırlı tek dizinli okuma.
+            expireStaleSending(m);
             if (!Boolean.TRUE.equals(m.getActive())) return null;
             Integer days = result.get("days_remaining") instanceof Number n ? n.intValue() : null;
             String expiry = result.get("expiry_date") instanceof String s ? s : null;
@@ -103,7 +106,6 @@ public class DomainExpiryReminderService {
             List<Integer> crossed = new ArrayList<>();
             for (Integer t : parseThresholds(m.getThresholdsCsv())) if (days <= t) crossed.add(t);
             if (crossed.isEmpty()) return null;
-            expireStaleSending(m);
             String key = m.getId() + "|" + expiry;
             if (!deciding.add(key)) {
                 log.debug("Alan adı hatırlatması bu pod'da başka turda değerlendiriliyor: {} — atlandı", m.getDomain());
@@ -189,7 +191,7 @@ public class DomainExpiryReminderService {
      */
     private void expireStaleSending(DomainMonitor m) {
         try {
-            List<DomainExpiryReminder> rows = repo.findByMonitorIdAndStatus(m.getId(), STATUS_SENDING);
+            List<DomainExpiryReminder> rows = repo.findTop20ByMonitorIdAndStatusOrderBySentAtAsc(m.getId(), STATUS_SENDING);
             if (rows == null || rows.isEmpty()) return;
             String cutoff = ISO.format(Instant.ofEpochMilli(clock.getAsLong() - STALE_SENDING_MS));
             for (DomainExpiryReminder r : rows) {

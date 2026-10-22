@@ -25,15 +25,16 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 /**
- * MP-44 (2026-10-23, çok pod R2a · D2): başka pod'un kaydını DB tazelemesinde gören pod ({@code source="refresh"})
- * uzlaştırmayı YİNELEMEZ; ekrandan kayıt ({@code "save"}) kuyruğa alır. İçe aktarmayla pasifleştirme koşullu kapanışı
- * kullanır (bütün varlık kaydı yapan {@code closeAlertsOnDeactivate} değil).
+ * MP-44 (2026-10-23, çok pod R2a · D2): ekrandan kayıt ({@code "save"}) kilit meşgulken yeniden dener; başka pod'un kaydını DB
+ * tazelemesinde gören pod ({@code "refresh"}) TEK deneme yapar (inceleme J-2 — kaydı yapan pod'un turundan sonra biten teyit
+ * zincirlerinin alarmları da kapansın). İçe aktarmayla pasifleştirme koşullu kapanışı kullanır.
  */
 class DisabledTypesSettingsEventTest {
 
     private MonitoringOutageService mos(List<Runnable> queued) {
         AppSettingsService settings = mock(AppSettingsService.class);
         when(settings.getBoolean(anyString(), anyBoolean())).thenAnswer(i -> i.getArgument(1));
+        when(settings.getBoolean(eq("site.monitor.scripted.alert-enabled"), anyBoolean())).thenReturn(false);
         MonitoringOutageService s = new MonitoringOutageService(mock(AlertEventRepository.class), mock(EscalationService.class),
                 mock(JdbcTemplate.class), mock(DnsRecordRepository.class), mock(DnsMonitorRepository.class), settings,
                 mock(NetworkOutageEventRepository.class));
@@ -42,15 +43,28 @@ class DisabledTypesSettingsEventTest {
     }
 
     @Test
-    @DisplayName("refresh olayı (başka pod'un kaydı) uzlaştırma KUYRUĞA ALMAZ; save olayı alır")
-    void refreshEventIgnored_saveQueued() {
+    @DisplayName("refresh olayı TEK kilit denemesi (yeniden deneme yok); save olayı kilit meşgulken sınırlı yeniden dener")
+    void refreshSingleAttempt_saveRetries() {
         List<Runnable> queued = new ArrayList<>();
         MonitoringOutageService s = mos(queued);
+        com.sitemonitor.service.schedule.ClusterLockService locks = mock(com.sitemonitor.service.schedule.ClusterLockService.class);
+        when(locks.tryAcquire(anyString(), any(), any())).thenReturn(Optional.empty());   // kilit hep başka pod'da
+        s.setClusterLockService(locks);
+        s.disabledTypesRetryDelayMs = 1L;
+
         s.onSettingsChanged(new AppSettingsChangedEvent(Set.of("site.monitor.scripted.alert-enabled"), "refresh"));
-        s.onSettingsChanged(new AppSettingsChangedEvent(Set.of(), "refresh"));
-        assertThat(queued).isEmpty();
-        s.onSettingsChanged(new AppSettingsChangedEvent(Set.of("site.monitor.scripted.alert-enabled"), "save"));
         assertThat(queued).hasSize(1);
+        queued.remove(0).run();
+        verify(locks, times(1)).tryAcquire(eq(MonitoringOutageService.DISABLED_TYPES_LOCK), any(), any());
+
+        clearInvocations(locks);
+        s.onSettingsChanged(new AppSettingsChangedEvent(Set.of("site.monitor.scripted.alert-enabled"), "save"));
+        queued.remove(0).run();
+        verify(locks, times(MonitoringOutageService.DISABLED_TYPES_ATTEMPTS))
+                .tryAcquire(eq(MonitoringOutageService.DISABLED_TYPES_LOCK), any(), any());
+
+        s.onSettingsChanged(new AppSettingsChangedEvent(Set.of("site.monitor.ping.interval-ms"), "refresh"));
+        assertThat(queued).as("ilgisiz anahtar kuyruğa girmez").isEmpty();
     }
 
     @Test

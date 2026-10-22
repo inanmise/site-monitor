@@ -59,7 +59,7 @@ public class IncidentNotificationService {
     void shutdownExecutor() {
         // 2026-10-23 (çok pod R2a · D2): kuyruktakiler ortak kapanış süresi içinde gönderilir; başlayamayan her olay postası
         // için notification_logs satırı (eskiden shutdownNow() onları SESSİZCE düşürüyordu).
-        DroppableTask.drain(exec, drainCapMs);
+        DroppableTask.drain(exec, drainCapMs, DroppableTask.MAX_TRACES, this::recordDroppedMore);
     }
 
     /** Kapanışta kuyruğun en çok bekleneceği süre (ortak kapanış süresiyle sınırlı). Paket-özel: testte kısaltılır. */
@@ -90,16 +90,26 @@ public class IncidentNotificationService {
         String prefix = "RESOLVED".equals(kind) ? "Olay Çözüldü" : "NEW".equals(kind) ? "Yeni Olay" : "Olay Güncellendi";
         Object teamName = dto.get("team_name");
         log.warn("Olay kaydı postası başlayamadı (pod kapanıyor): '{}' takım={} — gönderilmedi", dto.get("title"), dto.get("team_id"));
+        saveTrace(teamName == null ? "-" : teamName.toString(), "[Site Monitor] " + prefix + " — " + dto.get("title"), STATUS_DROPPED);
+    }
+
+    /** Görev başı iz sınırını aşan başlamamış postalar için TEK özet satırı. */
+    void recordDroppedMore(int more) {
+        saveTrace("-", "[Site Monitor] Olay kaydı postaları — " + more + " posta daha",
+                "FAILED: sonuç yok — pod kapanırken " + more + " olay kaydı postası daha kuyrukta kaldı, gönderilmedi");
+    }
+
+    private void saveTrace(String name, String subject, String status) {
         if (notificationLogRepo == null) return;
         com.sitemonitor.model.NotificationLog n = new com.sitemonitor.model.NotificationLog();
         n.setAlertEventId(0L);
         n.setSentAt(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(java.time.ZoneOffset.UTC)
                 .format(java.time.Instant.now()));
-        n.setRecipientName(teamName == null ? "-" : teamName.toString());
+        n.setRecipientName(name);
         n.setRecipientEmail("");
         n.setRecipientRole("TEAM");
-        n.setSubject("[Site Monitor] " + prefix + " — " + dto.get("title"));
-        n.setEmailStatus(STATUS_DROPPED);
+        n.setSubject(subject);
+        n.setEmailStatus(status);
         n.setWebhookStatus("SKIPPED");
         n.setTrigger(TRIGGER_INCIDENT_NOTIFY);
         notificationLogRepo.save(n);

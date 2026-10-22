@@ -13918,6 +13918,7 @@ export const EN = {
   // ── multi-pod R2a · D2 ──
   'dreg.remStatus_SENDING': 'sending',
   'dreg.remStatus_INTERRUPTED': 'interrupted (not resent)',
+  'dreg.remLegendClaim': 'Blue: sending (claimed, result not written yet) · orange: interrupted — the sending pod stopped, the mail may have gone out; not resent',
   'logtrig.INCIDENT_NOTIFY': 'Incident record notification',
   'logtrig.NEW_DEVICE': 'New-device sign-in notice',
   'dom.how8': 'Reminder thresholds (default 60/30/14/7/3/1 days): each time a threshold is crossed one e-mail + push goes out (notification group → team chain). When several thresholds are crossed at once only the tightest is sent; the series restarts once a renewal moves the expiry forward. Sent reminders are listed on the Domain Record tab and in the Activity Log.',

@@ -62,10 +62,14 @@ const DOT = {
   critical: 'border-destructive bg-destructive/20',
   expired: 'border-destructive bg-destructive',
 }
-/** Hatırlatma çipi durumu → ton (efsane metniyle aynı: yeşil gönderildi, gri kapsandı, kırmızı aşıldı, amber atlandı). */
-const REM_TONE = { sent: 'ok', covered: 'muted', skipped: 'warn', due: 'bad', pending: 'muted' }
-const REM_DOT = { sent: 'bg-success', covered: 'bg-muted-foreground/50', skipped: 'bg-amber-500' }
-const remClass = (status) => (status === 'SENT' ? 'sent' : status === 'COVERED' ? 'covered' : 'skipped')
+/**
+ * Hatırlatma çipi durumu → ton (efsane metniyle aynı: yeşil gönderildi, gri kapsandı, kırmızı aşıldı, amber atlandı; çok pod
+ * R2a 2026-10-23: mavi gönderiliyor — sahiplenildi, sonuç yazılmadı; turuncu yarıda kaldı — gönderen pod durdu, sonuç bilinmiyor).
+ */
+const REM_TONE = { sent: 'ok', covered: 'muted', skipped: 'warn', due: 'bad', pending: 'muted', sending: 'info', interrupted: 'high' }
+const REM_DOT = { sent: 'bg-success', covered: 'bg-muted-foreground/50', skipped: 'bg-amber-500', sending: 'bg-primary', interrupted: 'bg-orange-500' }
+const REM_CLASS = { SENT: 'sent', COVERED: 'covered', SENDING: 'sending', INTERRUPTED: 'interrupted' }
+const remClass = (status) => REM_CLASS[status] ?? 'skipped'
 
 /** Neden-boş satırı (eski `.dreg-why`): soluk, kırılabilir. */
 function Why({ children, className, ...rest }) {
@@ -418,6 +422,9 @@ function RemindersSection({ d, rem, remError, remPager }) {
             })}
           </ul>
           <Why>{t('dreg.remLegend')}</Why>
+          {items.some((x) => x.status === 'SENDING' || x.status === 'INTERRUPTED') && (
+            <Why data-slot="domain-reminders-claim-legend">{t('dreg.remLegendClaim')}</Why>
+          )}
           {items.length > 0 ? (
             <>
               <ul className="m-0 flex list-none flex-col divide-y rounded-lg border p-0 text-sm">

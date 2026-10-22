@@ -46,6 +46,8 @@ class RetentionAdminControllerTest {
     @MockitoBean UserService userService;
     @MockitoBean AuthController authController;
     @MockitoBean HttpMetricsService httpMetricsService;
+    /** Kilit satırı okuması (inceleme 2026-10-23): tutulan kilit = 409, alınamayan kilit = 503. */
+    @MockitoBean org.springframework.jdbc.core.JdbcTemplate jdbc;
 
     private static final String ACTIVITY_KEY = "site.monitor.activity.retention-days";
 
@@ -243,6 +245,7 @@ class RetentionAdminControllerTest {
         when(retentionService.holdActive()).thenReturn(false);
         when(schedulerService.callWithSchedulerLock(eq("nightly-cleanup"), any(java.time.Duration.class), any()))
                 .thenReturn(java.util.Optional.empty());
+        when(jdbc.queryForObject(contains("scheduler_lock"), eq(String.class), any(Object[].class))).thenReturn("2999-01-01T00:00:00");
 
         mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
                         .post("/api/admin/retention/run").session(admin()).header("X-Lang", "en"))
@@ -253,6 +256,26 @@ class RetentionAdminControllerTest {
         verify(retentionService, never()).execute(anyBoolean(), anyString());
         verify(auditService, never()).recordAction(eq("RETENTION_RUN_MANUAL"), any(jakarta.servlet.http.HttpSession.class),
                 any(jakarta.servlet.http.HttpServletRequest.class), anyString(), anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("İnceleme: kilit alınamadı ama geçerli kilit satırı YOK / okunamadı → 503 DB_UNAVAILABLE (\"zaten çalışıyor\" değil)")
+    void runNow_lockCallFailedWithoutHolder_503() throws Exception {
+        when(retentionService.holdActive()).thenReturn(false);
+        when(schedulerService.callWithSchedulerLock(eq("nightly-cleanup"), any(java.time.Duration.class), any()))
+                .thenReturn(java.util.Optional.empty());
+        when(jdbc.queryForObject(contains("scheduler_lock"), eq(String.class), any(Object[].class)))
+                .thenThrow(new org.springframework.dao.DataAccessResourceFailureException("db down"));
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .post("/api/admin/retention/run").session(admin()).header("X-Lang", "en"))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.code").value("DB_UNAVAILABLE"));
+
+        reset(jdbc);   // satır yok (süresi dolmuş / hiç alınmamış)
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .post("/api/admin/retention/run").session(admin()))
+                .andExpect(status().isServiceUnavailable());
+        verify(retentionService, never()).execute(anyBoolean(), anyString());
     }
 
     @Test

@@ -57,11 +57,15 @@ final class DroppableTask implements Runnable {
         }
     }
 
+    /** Kapanışta görev başına yazılan iz satırı üst sınırı (inceleme 2026-10-23): kalanlar TEK özet satırında. */
+    static final int MAX_TRACES = 200;
+
     /**
      * Havuzu kapatır: yeni görev almaz, kuyruktakileri {@code min(capMs, ortak kapanış süresi)} kadar koşturur, sonra kalanları
-     * keser; başlamamış her görevin izi yazılır. Dönüş: izi yazılan (başlamamış) görev sayısı.
+     * keser; başlamamış görevlerin ilk {@code maxTraces} tanesinin izi tek tek yazılır, kalanların sayısı {@code onMore}'a
+     * verilir (tek özet satırı — kapanış bütçesi tükendikten sonra sınırsız yazım yok). Dönüş: başlamamış görev sayısı.
      */
-    static int drain(ExecutorService exec, long capMs) {
+    static int drain(ExecutorService exec, long capMs, int maxTraces, java.util.function.IntConsumer onMore) {
         exec.shutdown();
         try {
             if (exec.awaitTermination(ShutdownDeadline.waitMs(capMs), TimeUnit.MILLISECONDS)) return 0;
@@ -69,14 +73,25 @@ final class DroppableTask implements Runnable {
             Thread.currentThread().interrupt();
         }
         List<Runnable> notStarted = exec.shutdownNow();
-        int traced = 0;
+        int total = 0, traced = 0;
         for (Runnable r : notStarted) {
-            if (r instanceof DroppableTask t) {
+            if (!(r instanceof DroppableTask t)) continue;
+            total++;
+            if (traced < Math.max(0, maxTraces)) {
                 t.dropped();
                 traced++;
             }
         }
-        if (traced > 0) log.warn("Kapanış: {} bildirim görevi başlayamadı — her biri için iz yazıldı (gönderilmedi)", traced);
-        return traced;
+        int more = total - traced;
+        if (more > 0 && onMore != null) {
+            try {
+                onMore.accept(more);
+            } catch (Exception e) {
+                log.warn("Başlamayan bildirim görevlerinin özet izi yazılamadı: {}", e.toString());
+            }
+        }
+        if (total > 0) log.warn("Kapanış: {} bildirim görevi başlayamadı — {} iz satırı{} (gönderilmedi)", total, traced,
+                more > 0 ? " + " + more + " görev için tek özet satırı" : "");
+        return total;
     }
 }

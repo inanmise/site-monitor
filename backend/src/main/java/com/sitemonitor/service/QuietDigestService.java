@@ -64,6 +64,11 @@ public class QuietDigestService {
     static final String STATUS_STALE = "FAILED: özet turu yarıda kaldı (gönderen pod durdu) — sonuç bilinmiyor, yeniden gönderilmedi";
     /** Bu süreden eski {@code SENDING:} sahiplenmesi sahibi ölmüş sayılır (tur kilit altında; sahibi yaşıyorsa kilit bırakılmaz). */
     static final long STALE_CLAIM_MS = 15L * 60_000L;
+    /**
+     * Yarım sahiplenme aramasının geriye bakışı (sorgu sınırı): dakikalık iş yarım sahiplenmeyi ~16 dk içinde kapatır; iki
+     * günden eski bir yarım sahiplenme (iş günlerce durdu) aranmaz — görünür kalır ama sorgu geçmişi taramaz.
+     */
+    static final long STALE_LOOKBACK_MS = 2L * 24 * 60 * 60_000L;
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
     private static final DateTimeFormatter DAY = DateTimeFormatter.ofPattern("dd.MM.yyyy");
@@ -98,14 +103,24 @@ public class QuietDigestService {
     @Scheduled(fixedDelayString = "${site.monitor.quiet-digest.interval-ms:60000}",
                initialDelayString = "${site.monitor.quiet-digest.initial-delay-ms:75000}")
     public void scheduledRun() {
-        String now = ISO.format(Instant.now(clock));
-        // Sessiz saat kurulmamış (bugünkü kurulum) ya da vakti gelen özet yok: tek boolean sorgu, kilit yok.
-        if (!anyDue(now)) return;
-        if (systemMaintenanceHeld()) {
+        Instant at = Instant.now(clock);
+        String now = ISO.format(at);
+        // Sessiz saat kurulmamış (bugünkü kurulum) ya da vakti gelen özet yok: iki küçük sorgu, kilit yok. Yarıda kalmış
+        // sahiplenme (ölen pod) varsa da kilide girilir — yeni kayıt beklenmeden kapanır (inceleme J-1).
+        boolean due = anyDue(now);
+        boolean stale = anyStaleClaim(at);
+        if (!due && !stale) return;
+        if (due && systemMaintenanceHeld()) {
             log.debug("Sessiz saat özeti sistem bakımı nedeniyle bekletildi (bildirimler susturulmuş / telafi bekleniyor)");
-            return;
+            if (!stale) return;
+            due = false;   // bakımda posta yok; yalnız yarım sahiplenmeler kapanır (iz, gönderim değil)
         }
+        boolean sendRound = due;
         schedulerService.runWithSchedulerLock(LOCK_NAME, () -> {
+            if (!sendRound) {
+                failStaleClaims(Instant.now(clock));
+                return;
+            }
             RunResult r = run(Instant.now(clock));
             if (r.items() > 0) {
                 log.info("Sessiz saat özeti turu: {} kayıt, {} e-posta ({} gönderildi)", r.items(), r.mails(), r.sent());
@@ -117,6 +132,16 @@ public class QuietDigestService {
         try {
             return systemMaintenance != null && systemMaintenance.notificationsHeld();
         } catch (Exception e) {
+            return false;
+        }
+    }
+
+    boolean anyStaleClaim(Instant at) {
+        try {
+            return itemRepo.countStaleClaims(ISO.format(at.minusMillis(STALE_LOOKBACK_MS)),
+                    ISO.format(at.minusMillis(STALE_CLAIM_MS))) > 0;
+        } catch (Exception e) {
+            log.debug("Sessiz saat özeti yarım sahiplenme kapısı okunamadı: {}", e.getMessage());
             return false;
         }
     }
@@ -289,7 +314,8 @@ public class QuietDigestService {
      */
     void failStaleClaims(Instant at) {
         try {
-            List<QuietDigestItem> stale = itemRepo.findStaleClaims(ISO.format(at.minusMillis(STALE_CLAIM_MS)));
+            List<QuietDigestItem> stale = itemRepo.findStaleClaims(ISO.format(at.minusMillis(STALE_LOOKBACK_MS)),
+                    ISO.format(at.minusMillis(STALE_CLAIM_MS)));
             if (stale == null || stale.isEmpty()) return;
             Map<String, List<QuietDigestItem>> byToken = new LinkedHashMap<>();
             for (QuietDigestItem i : stale) {

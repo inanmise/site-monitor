@@ -47,10 +47,46 @@ class DroppedMailTraceTest {
         DroppableTask.submit(exec, () -> { }, dropped::incrementAndGet);
         DroppableTask.submit(exec, () -> { }, dropped::incrementAndGet);
 
-        assertThat(DroppableTask.drain(exec, 50)).isEqualTo(2);
+        assertThat(DroppableTask.drain(exec, 50, DroppableTask.MAX_TRACES, n -> { throw new AssertionError("özet beklenmiyor"); }))
+                .isEqualTo(2);
         assertThat(dropped.get()).as("yalnız başlamamış iki görev").isEqualTo(2);
         assertThat(DroppableTask.submit(exec, () -> { }, dropped::incrementAndGet)).isFalse();
         assertThat(dropped.get()).isEqualTo(3);
+    }
+
+    @Test
+    @DisplayName("Kapanış izi sınırlı: ilk N görev tek tek, kalanı TEK özet satırında (kapanış bütçesinden sonra sınırsız yazım yok)")
+    void helper_capsPerTaskTraces() throws Exception {
+        ExecutorService exec = Executors.newSingleThreadExecutor();
+        CountDownLatch started = new CountDownLatch(1);
+        AtomicInteger dropped = new AtomicInteger();
+        java.util.List<Integer> summaries = new java.util.ArrayList<>();
+        DroppableTask.submit(exec, () -> {
+            started.countDown();
+            try { new CountDownLatch(1).await(30, TimeUnit.SECONDS); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+        }, dropped::incrementAndGet);
+        assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
+        for (int i = 0; i < 7; i++) DroppableTask.submit(exec, () -> { }, dropped::incrementAndGet);
+
+        assertThat(DroppableTask.drain(exec, 50, 3, summaries::add)).isEqualTo(7);
+        assertThat(dropped.get()).isEqualTo(3);
+        assertThat(summaries).containsExactly(4);
+    }
+
+    @Test
+    @DisplayName("Olay postası özet satırı: kalan sayıyı taşıyan TEK FAILED satırı")
+    void incident_summaryRow() {
+        NotificationLogRepository logs = mock(NotificationLogRepository.class);
+        IncidentNotificationService svc = new IncidentNotificationService(mock(EmailNotificationService.class), mock(TeamRepository.class),
+                mock(AppUserRepository.class), mock(IncidentImageRepository.class), mock(AppSettingsService.class),
+                mock(NotificationGroupService.class));
+        svc.setNotificationLogRepo(logs);
+        svc.recordDroppedMore(57);
+        ArgumentCaptor<NotificationLog> c = ArgumentCaptor.forClass(NotificationLog.class);
+        verify(logs).save(c.capture());
+        assertThat(c.getValue().getEmailStatus()).startsWith("FAILED: sonuç yok").contains("57 olay kaydı postası");
+        assertThat(c.getValue().getTrigger()).isEqualTo(IncidentNotificationService.TRIGGER_INCIDENT_NOTIFY);
+        svc.shutdownExecutor();
     }
 
     private static Map<String, Object> incident(String title) {

@@ -52,6 +52,23 @@ public class RetentionAdminController {
     /** Gece temizliğinin kilit adı — {@code SchedulerService.cleanupOldLogs} ile AYNI (kalıcı ad). */
     static final String NIGHTLY_CLEANUP_LOCK = "nightly-cleanup";
 
+    /** Kilit satırını okumak için (alan enjeksiyonu; yoksa — dilim testleri — kilit alınamadıysa "tutuluyor" sayılır). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private org.springframework.jdbc.core.JdbcTemplate jdbc;
+
+    /** {@code true} = geçerli bir kilit satırı var (başkası tutuyor), {@code false} = yok / süresi dolmuş, {@code null} = okunamadı. */
+    Boolean nightlyLockHeld() {
+        if (jdbc == null) return Boolean.TRUE;
+        try {
+            String until = jdbc.queryForObject("SELECT MAX(locked_until) FROM scheduler_lock WHERE name = ?", String.class,
+                    NIGHTLY_CLEANUP_LOCK);
+            return until != null && until.compareTo(ISO.format(Instant.now())) >= 0;
+        } catch (Exception e) {
+            log.warn("Gece temizliği kilit kaydı okunamadı: {}", e.getMessage());
+            return null;
+        }
+    }
+
     /** Uyum onayı (kim/ne zaman onayladı) ayar anahtarı öneki — politika id'siyle birleşir. */
     private static final String APPROVAL_PREFIX = com.sitemonitor.service.AppSettingsCatalog.RETENTION_APPROVAL_PREFIX;
 
@@ -252,13 +269,22 @@ public class RetentionAdminController {
         // kilit). Eskiden kilitsiz koşuyordu — gece işi başka pod'da sürerken aynı tablolarda eşzamanlı toplu DELETE (kilit
         // beklemesi, kilitlenme → 503). Kilit doluysa 409 ve açık metin; hiçbir şey silinmez.
         String actor = actor(session);
-        RetentionService.RunResult run = schedulerService.callWithSchedulerLock(NIGHTLY_CLEANUP_LOCK,
-                java.time.Duration.ofMinutes(3), () -> retentionService.execute(false, actor))
-                .orElseThrow(() -> new com.sitemonitor.config.GlobalExceptionHandler.CodedConflictException("RETENTION_RUNNING",
-                        Msg.t("Temizlik şu an çalışıyor (gece temizliği ya da başka bir elle temizlik) — bu istek hiçbir kaydı "
-                                        + "silmedi. Birkaç dakika sonra yeniden deneyin; son koşunun sonucu Çalışma Geçmişi'nde.",
-                                "Cleanup is already running (the nightly cleanup or another manual run) — this request deleted "
-                                        + "nothing. Try again in a few minutes; the last run's result is in the run history.")));
+        java.util.Optional<RetentionService.RunResult> ran = schedulerService.callWithSchedulerLock(NIGHTLY_CLEANUP_LOCK,
+                java.time.Duration.ofMinutes(3), () -> retentionService.execute(false, actor));
+        if (ran.isEmpty()) {
+            // Yalnız GERÇEKTEN tutulan kilit "çalışıyor"dur (inceleme 2026-10-23): kilit alınamadıysa ve geçerli bir kilit satırı
+            // yoksa (geçici veritabanı hatası, kilit kaydı okunamadı) 503 DB_UNAVAILABLE — "zaten çalışıyor" yanıltırdı.
+            if (!Boolean.TRUE.equals(nightlyLockHeld())) {
+                throw new org.springframework.dao.DataAccessResourceFailureException(
+                        "nightly-cleanup kilidi alınamadı ve kilit kaydı geçerli değil / okunamadı");
+            }
+            throw new com.sitemonitor.config.GlobalExceptionHandler.CodedConflictException("RETENTION_RUNNING",
+                    Msg.t("Temizlik şu an çalışıyor (gece temizliği ya da başka bir elle temizlik) — bu istek hiçbir kaydı "
+                                    + "silmedi. Birkaç dakika sonra yeniden deneyin; son koşunun sonucu Çalışma Geçmişi'nde.",
+                            "Cleanup is already running (the nightly cleanup or another manual run) — this request deleted "
+                                    + "nothing. Try again in a few minutes; the last run's result is in the run history."));
+        }
+        RetentionService.RunResult run = ran.get();
         auditService.recordAction("RETENTION_RUN_MANUAL", session, request, "RETENTION", "run",
                 "{\"rows\":" + run.totalRows() + ",\"failed\":" + run.failedCount() + "}");
         return ok(Map.of("data", runResultToMap(run),

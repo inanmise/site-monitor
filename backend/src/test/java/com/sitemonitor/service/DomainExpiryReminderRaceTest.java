@@ -170,6 +170,30 @@ class DomainExpiryReminderRaceTest {
     }
 
     @Test
+    @DisplayName("İnceleme J-3: yenilenmiş serinin (eski bitiş) yarım SENDING satırı da INTERRUPTED olur — eşik aşılmasa da, pasif izlemede de")
+    void staleSendingOfOldSeries_expiresWithoutCrossing() {
+        DomainExpiryReminderService pod = pod();
+        pod.clock = () -> Instant.parse("2026-10-23T10:00:00Z").toEpochMilli();
+        jdbc.update("INSERT INTO domain_expiry_reminders(monitor_id, expiry_date, threshold_days, days_remaining, status, sent_at) "
+                + "VALUES (7, '2026-10-25T00:00:00Z', 7, 2, 'SENDING', '2026-10-22T08:00:00')");
+        Map<String, Object> renewed = new HashMap<>();
+        renewed.put("days_remaining", 365);
+        renewed.put("expiry_date", "2027-10-25T00:00:00Z");
+
+        assertThat(pod.evaluate(monitor(), renewed)).isNull();   // eşik aşılmadı
+
+        assertThat(rows()).extracting(r -> r.get("status")).containsExactly("INTERRUPTED");
+        verify(email, never()).sendHtml(any(), any(), any(), any(), any());
+
+        jdbc.update("INSERT INTO domain_expiry_reminders(monitor_id, expiry_date, threshold_days, days_remaining, status, sent_at) "
+                + "VALUES (7, '2026-10-25T00:00:00Z', 30, 2, 'SENDING', '2026-10-22T08:00:00')");
+        DomainMonitor paused = monitor();
+        paused.setActive(false);
+        assertThat(pod.evaluate(paused, renewed)).isNull();
+        assertThat(rows()).extracting(r -> r.get("status")).containsExactly("INTERRUPTED", "INTERRUPTED");
+    }
+
+    @Test
     @DisplayName("Taze SENDING satırı (başka pod şu an gönderiyor, gevşek eşikleri henüz yazmadı) dokunulmaz; bu tur ne o eşiği ne daha gevşeğini gönderir")
     void freshSending_leftAlone() {
         DomainExpiryReminderService pod = pod();

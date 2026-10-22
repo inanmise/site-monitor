@@ -68,7 +68,7 @@ public class NewDeviceNotifier {
 
     @jakarta.annotation.PreDestroy
     void shutdownExecutor() {
-        DroppableTask.drain(exec, drainCapMs);
+        DroppableTask.drain(exec, drainCapMs, DroppableTask.MAX_TRACES, this::recordDroppedMore);
     }
 
     /**
@@ -90,16 +90,30 @@ public class NewDeviceNotifier {
             return;
         }
         log.warn("Yeni cihaz denetimi başlayamadı (pod kapanıyor / kuyruk dolu): kullanıcı {} — bildirim gönderilmedi", actor);
+        saveTrace(actor == null ? "-" : actor, STATUS_DROPPED);
+    }
+
+    /** Görev başı iz sınırını aşan başlamamış denetimler için TEK özet satırı (özellik açıkken). */
+    void recordDroppedMore(int more) {
+        try {
+            if (!appSettings.getBoolean(SETTING_KEY, false)) return;
+        } catch (Exception e) {
+            return;
+        }
+        saveTrace("-", "SKIPPED: " + more + " yeni cihaz denetimi daha yapılamadı (pod kapanıyordu) — bildirim gönderilmedi");
+    }
+
+    private void saveTrace(String name, String status) {
         if (notificationLogRepo == null) return;
         com.sitemonitor.model.NotificationLog n = new com.sitemonitor.model.NotificationLog();
         n.setAlertEventId(0L);
         n.setSentAt(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(java.time.ZoneOffset.UTC)
                 .format(java.time.Instant.now()));
-        n.setRecipientName(actor == null ? "-" : actor);
+        n.setRecipientName(name);
         n.setRecipientEmail("");
         n.setRecipientRole("USER");
         n.setSubject("[Site Monitor] Hesabınıza yeni bir cihazdan giriş yapıldı");
-        n.setEmailStatus(STATUS_DROPPED);
+        n.setEmailStatus(status);
         n.setWebhookStatus("SKIPPED");
         n.setTrigger(TRIGGER_NEW_DEVICE);
         notificationLogRepo.save(n);

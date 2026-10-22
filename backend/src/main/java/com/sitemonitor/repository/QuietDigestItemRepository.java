@@ -52,10 +52,19 @@ public interface QuietDigestItemRepository extends JpaRepository<QuietDigestItem
     @Query("UPDATE QuietDigestItem i SET i.digestStatus = :status WHERE i.digestStatus = :token")
     int markStatusIfToken(@Param("token") String token, @Param("status") String status);
 
-    /** MP-46: verilen andan önce sahiplenilmiş ve hâlâ {@code SENDING:} belirteci taşıyan (yarıda kalmış) kayıtlar. */
-    @Query("SELECT i FROM QuietDigestItem i WHERE i.digestStatus LIKE 'SENDING:%' AND i.digestSentAt < :cutoff "
-            + "ORDER BY i.digestStatus ASC, i.id ASC")
-    List<QuietDigestItem> findStaleClaims(@Param("cutoff") String cutoff);
+    /**
+     * MP-46: {@code [since, cutoff)} aralığında sahiplenilmiş ve hâlâ {@code SENDING:} belirteci taşıyan (yarıda kalmış) kayıtlar.
+     * Alt sınır aralığı {@code idx_qdi_pending}'in ({@code digest_sent_at, window_end}) kısa bir dilimine indirir — geçmişin
+     * tamamı taranmaz.
+     */
+    @Query("SELECT i FROM QuietDigestItem i WHERE i.digestSentAt >= :since AND i.digestSentAt < :cutoff "
+            + "AND i.digestStatus LIKE 'SENDING:%' ORDER BY i.digestStatus ASC, i.id ASC")
+    List<QuietDigestItem> findStaleClaims(@Param("since") String since, @Param("cutoff") String cutoff);
+
+    /** Dakikalık ön kapının ikinci sorgusu (inceleme J-1): yarıda kalmış sahiplenme var mı — aynı kısa aralık, kilit almadan. */
+    @Query("SELECT COUNT(i) FROM QuietDigestItem i WHERE i.digestSentAt >= :since AND i.digestSentAt < :cutoff "
+            + "AND i.digestStatus LIKE 'SENDING:%'")
+    long countStaleClaims(@Param("since") String since, @Param("cutoff") String cutoff);
 
     /** Pencere içinde ertelenmeyen bildirim → bekleyen kayıt özette tekrar edilmez. */
     @Transactional
