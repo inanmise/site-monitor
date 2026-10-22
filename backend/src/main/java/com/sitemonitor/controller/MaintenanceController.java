@@ -176,12 +176,12 @@ public class MaintenanceController {
         MaintenanceWindow w = new MaintenanceWindow();
         applyFields(w, body);
         validateWindow(w);
-        requireWindowScope(w, session);
+        Map<String, Set<Long>> owners = requireWindowScope(w, session);
         w.setActive(true);
         w.setCreatedAt(now());
         w.setUpdatedAt(now());
         w.setCreatedBy(actor(session));
-        w.setTeamId(sessionTeamId(session));
+        w.setTeamId(ownerTeamFor(w, session, owners));
         MaintenanceWindow saved = repo.save(w);
         maintenanceService.refresh();
         auditService.recordAction("MAINTENANCE_CREATE", session, request, "MAINTENANCE_WINDOW",
@@ -198,10 +198,16 @@ public class MaintenanceController {
         permissionService.require(session, "maintenance.manage", "edit");
         MaintenanceWindow w = requireManageable(id, session);
         Map<String, Object> _before = AuditDiff.snapshot(w, MAINTENANCE_FIELDS);
+        List<String> keysBefore = sortedKeys(w);
+        Boolean allBefore = w.getAllMonitors();
         applyFields(w, body);
         validateWindow(w);
         // SONUÇ durumu doğrulanır: "tüm izlemeler"e çevirme, yabancı hedef ekleme ve süre uzatma aynı kapıdan geçer.
-        requireWindowScope(w, session);
+        Map<String, Set<Long>> owners = requireWindowScope(w, session);
+        // Kapsam değiştiyse sahip yeniden hedeflerden türetilir (ADMIN-5); kapsamı değişmeyen pencerenin sahibi korunur.
+        if (!keysBefore.equals(sortedKeys(w)) || !Objects.equals(Boolean.TRUE.equals(allBefore), Boolean.TRUE.equals(w.getAllMonitors()))) {
+            w.setTeamId(ownerTeamFor(w, session, owners));
+        }
         w.setUpdatedAt(now());
         MaintenanceWindow saved = repo.save(w);
         maintenanceService.refresh();
@@ -276,8 +282,8 @@ public class MaintenanceController {
         w.setCreatedAt(now());
         w.setUpdatedAt(now());
         w.setCreatedBy(actor(session));
-        w.setTeamId(sessionTeamId(session));
-        requireWindowScope(w, session);
+        Map<String, Set<Long>> owners = requireWindowScope(w, session);
+        w.setTeamId(ownerTeamFor(w, session, owners));
         MaintenanceWindow saved = repo.save(w);
         maintenanceService.refresh();
         auditService.recordAction("MAINTENANCE_QUICK", session, request, "MAINTENANCE_WINDOW",
@@ -399,8 +405,9 @@ public class MaintenanceController {
      * </ul>
      * Anahtar listesi motorun OKUDUĞU ayrıştırmayla çıkarılır ({@link MaintenanceService#targetKeys}).
      */
-    private void requireWindowScope(MaintenanceWindow w, HttpSession session) {
+    private Map<String, Set<Long>> requireWindowScope(MaintenanceWindow w, HttpSession session) {
         boolean global = SessionScope.isGlobalAdmin(session);
+        Map<String, Set<Long>> resolved = null;   // sahip türetmesi aynı sorguyu tekrarlamasın (ADMIN-5)
         if (!global) {
             if (Boolean.TRUE.equals(w.getAllMonitors()))
                 throw new SecurityException(com.sitemonitor.util.Msg.t(
@@ -409,6 +416,7 @@ public class MaintenanceController {
             List<String> keys = MaintenanceService.targetKeys(w.getTargetsJson()).stream().distinct().toList();
             if (!keys.isEmpty()) {
                 Map<String, Set<Long>> owners = targetOwnership.ownerTeams(keys);
+                resolved = owners;
                 List<String> denied = keys.stream().filter(k -> {
                     Set<Long> o = owners.get(k);
                     return o == null || o.isEmpty() || !o.stream().allMatch(t -> SessionScope.canManage(session, t));
@@ -427,6 +435,7 @@ public class MaintenanceController {
             throw new IllegalArgumentException(com.sitemonitor.util.Msg.t(
                     "Bakım süresi en fazla " + (cap / (24 * 60)) + " gün olabilir; daha uzun süre için izlemeyi duraklatın",
                     "A maintenance window can last at most " + (cap / (24 * 60)) + " days; pause the monitor for anything longer"));
+        return resolved;
     }
 
     private static String csvDays(Object v) {
@@ -456,6 +465,43 @@ public class MaintenanceController {
         Object u = session.getAttribute("username");
         return u != null ? u.toString() : "anonymous";
     }
+    /**
+     * Pencerenin SAHİP takımı (2026-10-22, ADMIN-5): eskiden yaratanın BİRİNCİL takımıydı. Başka bir takımı da yöneten
+     * TEAM_ADMIN'in açtığı pencere o takımın üyelerine görünmüyor, yöneticileri düzenleyemiyordu; birincil takımı olmayan
+     * kapsamlı müdür kendi açtığı pencereyi düzenleyemiyor (sahip null → 403) ve takımsız pencere herkese görünüyordu.
+     * Kural: hedeflerin TEK sahip takımı varsa o; birden çok takım → yaratanın yönetim kapsamındaki ilk sahip takım (global
+     * yöneticide birincil takımı sahiplerdeyse o, değilse en küçük kimlik); "tüm izlemeler" penceresi global yöneticide
+     * sahipsiz (null) kalır; hedefi olmayan / hiçbir satıra çözülmeyen pencerede eski kural (birincil takım).
+     */
+    Long ownerTeamFor(MaintenanceWindow w, HttpSession session, Map<String, Set<Long>> knownOwners) {
+        boolean global = SessionScope.isGlobalAdmin(session);
+        Long primary = sessionTeamId(session);
+        if (Boolean.TRUE.equals(w.getAllMonitors())) return global ? null : primary;
+        List<String> keys = MaintenanceService.targetKeys(w.getTargetsJson()).stream().distinct().toList();
+        if (keys.isEmpty()) return primary;
+        Map<String, Set<Long>> owners = knownOwners;
+        try {
+            if (owners == null) owners = targetOwnership.ownerTeams(keys);
+        } catch (Exception e) {
+            log.warn("Bakım penceresi sahip takımı çözülemedi, birincil takım kullanılıyor: {}", e.toString());
+            return primary;
+        }
+        TreeSet<Long> all = new TreeSet<>();
+        if (owners != null) for (Set<Long> o : owners.values()) if (o != null) for (Long t : o) if (t != null) all.add(t);
+        if (all.isEmpty()) return primary;
+        if (all.size() == 1) return all.first();
+        List<Long> manage = SessionScope.manageTeamIds(session);
+        if (!global && manage != null) {
+            for (Long t : manage) if (t != null && all.contains(t)) return t;
+        }
+        if (primary != null && all.contains(primary)) return primary;
+        return all.first();
+    }
+
+    private static List<String> sortedKeys(MaintenanceWindow w) {
+        return MaintenanceService.targetKeys(w.getTargetsJson()).stream().distinct().sorted().toList();
+    }
+
     private Long sessionTeamId(HttpSession session) {
         Object v = session.getAttribute("teamId");
         return v instanceof Number num ? num.longValue() : null;

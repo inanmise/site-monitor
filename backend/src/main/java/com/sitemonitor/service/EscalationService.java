@@ -169,6 +169,8 @@ public class EscalationService {
     }
 
     static final String TRIGGER_MANUAL = "MANUAL";
+    /** Elle gönderimde e-posta alıcılarının hepsi onay penceresinde çıkarıldı (yalnız push / webhook gitti). */
+    static final String STATUS_SKIPPED_EMAIL_DESELECTED = "SKIPPED: e-posta alıcısı seçilmedi (elle gönderim — yalnız push / webhook)";
 
     /**
      * Sistem bakımı susturmasının İZİ ("never silent"): alarmın bildirim günlüğüne {@code SYSTEM_MAINTENANCE /
@@ -323,6 +325,10 @@ public class EscalationService {
                    TYPE_KEYWORD_SLOW, TYPE_KEYWORD_SSL, TYPE_KEYWORD_DOMAIN_EXPIRY, TYPE_PORT_SLOW, TYPE_PING_SLOW,
                    TYPE_PAGE_DOWN, TYPE_PAGE_INTEGRITY, TYPE_SCRIPTED_FAIL, TYPE_SCRIPTED_SLOW,
                    TYPE_PAGESPEED_DOWN, TYPE_PAGESPEED_SLOW);
+
+    /** İzleme türlerinden süre-bitişi ailesi ("N gün kaldı" anlamlı) — {@link #isDurationAlert}. */
+    public static final Set<String> EXPIRY_MONITORING_TYPES =
+            Set.of(TYPE_DOMAINMON_EXPIRY, TYPE_DOMAIN_EXPIRY, TYPE_KEYWORD_DOMAIN_EXPIRY);
 
     /** Sertifika kaynaklı alarm tipleri — cert sweep'inin auto-resolve kapsamı.
      *  İzleme tipleri bilinçli olarak DIŞINDA: sertifika kontrolünün düzelmesi
@@ -859,6 +865,9 @@ public class EscalationService {
         }
         ReNotifyTargets targets = resolveReNotifyTargets(event);
         requireOwned(event, targets);
+        // C2 (son inceleme 2026-10-22): izlemenin "E-posta" kanalı alarm anında kapalıysa gönderim e-postayı atlar
+        // (reNotifyAsync → sendCombinedAlert, alarm anı damgası) — önizleme de e-posta alıcısı listelemez (önizleme = gönderim).
+        if (reNotifyMailDisabled(event)) return List.of();
         List<ReNotifyRecipient> out = new ArrayList<>();
         Set<String> seen = new HashSet<>();
         for (String[] team : collectTeamRecipients(targets.domainTeamId(), targets.ugTeamId(),
@@ -898,6 +907,28 @@ public class EscalationService {
     }
 
     /**
+     * Elle yeniden gönderimde e-posta kanalı KAPALI mı (C2, son inceleme 2026-10-22): izleme türlerinde gönderim bağlamı
+     * alarm anı anlık görüntüsünü taşır ({@link #reNotifyAsync}) ve {@code sendCombinedAlert} onun {@code mail_disabled}
+     * damgasıyla e-postayı atlar (push'un {@code push_disabled} kuralıyla aynı — izleme bayrağı alarm anında karar verir).
+     * Önizleme ve kuyruk sayısı BUNU okur; sertifika alarmının bağlamı {@code latest_checks}'ten gelir, damga okunmaz.
+     */
+    public boolean reNotifyMailDisabled(Long alertId) {
+        try {
+            return alertId != null && alertEventRepo.findById(alertId).map(this::reNotifyMailDisabled).orElse(false);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private boolean reNotifyMailDisabled(AlertEvent event) {
+        if (event == null) return false;
+        String type = event.getAlertType();
+        if (!MONITORING_ALERT_TYPES.contains(type) && !isDomainMon(type)) return false;
+        Map<String, Object> snapshot = deserializeContext(event.getContextJson());
+        return snapshot != null && Boolean.TRUE.equals(snapshot.get("mail_disabled"));
+    }
+
+    /**
      * Manuel re-notify — {@code excludeEmails}: kullanıcının onay pop-up'ında listeden çıkardığı
      * adresler (case-insensitive). Hariç tutulan KONTAĞIN e-postası da webhook'u da gönderilmez
      * (tek filtrelenmiş contacts listesi ikisini de besler). Send, alıcıları CANLI yeniden çözer;
@@ -931,27 +962,35 @@ public class EscalationService {
                         || !excluded.contains(c.getEmail().trim().toLowerCase()))
                 .toList();
 
-        // Count actual recipients (team emails + contacts, deduped, exclusions applied) — same logic as sendCombinedAlert
-        List<String> teamEmails = collectTeamEmails(domainTeamId, ugTeamId, targets.stampedGroupId());
+        // Count actual recipients (team emails + contacts, deduped, exclusions applied) — same logic as sendCombinedAlert.
+        // C2: izlemenin e-posta kanalı alarm anında kapalıysa gönderim e-postayı atlar → sayı 0 (önizleme de boş liste döner).
+        boolean mailOff = reNotifyMailDisabled(event);
+        List<String> teamEmails = mailOff ? List.of() : collectTeamEmails(domainTeamId, ugTeamId, targets.stampedGroupId());
         Set<String> seen = new HashSet<>();
         int recipientCount = 0;
         for (String e : teamEmails) {
             if (e != null && !e.isBlank() && !excluded.contains(e.trim().toLowerCase())
                     && seen.add(e.trim().toLowerCase())) recipientCount++;   // D8
         }
-        for (EscalationContact c : contacts) {
+        for (EscalationContact c : mailOff ? List.<EscalationContact>of() : contacts) {
             if (c.getEmail() != null && !c.getEmail().isBlank()
                     && seen.add(c.getEmail().trim().toLowerCase())) recipientCount++;
         }
-        for (var p : oncallFor(domainTeamId, ugTeamId, event.getAlertLevel())) {
+        for (var p : mailOff ? List.<com.sitemonitor.service.oncall.OnCallService.OnCallPerson>of()
+                : oncallFor(domainTeamId, ugTeamId, event.getAlertLevel())) {
             if (p.email() != null && !p.email().isBlank() && !excluded.contains(p.email().trim().toLowerCase())
                     && seen.add(p.email().trim().toLowerCase())) recipientCount++;
         }
-        if (recipientCount == 0 && !excluded.isEmpty()) {
+        if (recipientCount == 0 && !excluded.isEmpty()
+                && !otherChannelLeft(event, targets, contacts, excludeUsernames)) {
             // Kullanıcı pop-up'ta TÜM alıcıları çıkardıysa DB'ye yazmadan reddet (→ 400).
             // Doğal sıfır-alıcı durumu (kontak/takım maili hiç yok) ESKİ davranışında kalır:
             // queued döner, sendCombinedAlert boş listeyle gönderimi zaten atlar.
-            throw new IllegalArgumentException("Tüm alıcılar hariç tutuldu — en az bir alıcı seçin");
+            // UIM-8 / K13 (2026-10-22): yalnız e-postalar çıkarıldı ama push (ya da kontak webhook'u) alıcısı kaldıysa
+            // gönderim KABUL edilir — "e-posta gitmesin, push gitsin" onay penceresinin sunduğu seçenek. Metin UI dilinde.
+            throw new IllegalArgumentException(com.sitemonitor.util.Msg.t(
+                    "Tüm alıcılar hariç tutuldu — en az bir e-posta ya da push alıcısı seçin.",
+                    "Every recipient was excluded — select at least one e-mail or push recipient."));
         }
 
         // Quick DB write — commits before async dispatch
@@ -990,26 +1029,49 @@ public class EscalationService {
             // (tipe özel şablon; ctx reconstruction follow-up); sertifika → latest_check.
             // NOT: monitörün dns_change_alert_enabled=false olması MANUEL Tekrar Bildir'i ENGELLEMEZ —
             // bastırma yalnız otomatik günlük re-alert içindir, manuel gönderim operatör iradesidir.
+            // ALERTS-1 (2026-10-22): izleme türlerinde içerik ALARM ANI anlık görüntüsünden ve olayın kendi iletisinden
+            // kurulur. Eskiden bağlam null'dı ve ileti sertifika şablonundan üretiliyordu: KEYWORD / PING_* "sertifika
+            // bilgileri alınamadı", BLACKLIST / TRANSFER_LOCK "sertifikanın süresi 245 gün içinde doluyor" + konu
+            // "245 GÜN KALDI" diyordu; diğer türler URL / port / anahtar kelime / izleme adını ve "e-posta kapalı"
+            // (mail_disabled) damgasını kaybediyordu. Push aynı olayın iletisini okuduğu için e-posta ile çelişiyordu.
+            AlertEvent ev = alertEventId == null ? null : alertEventRepo.findById(alertEventId).orElse(null);
+            Map<String, Object> snapshot = ev == null ? null : deserializeContext(ev.getContextJson());
+            boolean monitoring = MONITORING_ALERT_TYPES.contains(alertType);
+            boolean freshCtx = false;   // bağlam taze kaynaktan mı (ileti ondan yeniden kurulur)
             Map<String, Object> certContext;
             if (isDomainMon(alertType)) {
-                certContext = reconstructDomainContext(domain);
+                Map<String, Object> rebuilt = reconstructDomainContext(domain);
+                freshCtx = rebuilt != null && reconstructedDomainCtxFresh(alertType);
+                certContext = withSnapshot(rebuilt, snapshot);
             } else if (TYPE_DNS_CHANGED.equals(alertType)) {
                 // D-b2: olayı AÇAN izlemenin kaydı (günlük yeniden uyarıyla aynı seçim).
-                Long opener = alertEventId == null ? null
-                        : alertEventRepo.findById(alertEventId).map(EscalationService::contextMonitorId).orElse(null);
-                certContext = DnsCheckerService.changeCtxOf(
+                Long opener = ev == null ? null : contextMonitorId(ev);
+                Map<String, Object> change = DnsCheckerService.changeCtxOf(
                         DnsCheckerService.lastChangedRecord(dnsRecordRepo, domain, opener));
-                if (certContext.isEmpty()) certContext = null;
-            } else if (MONITORING_ALERT_TYPES.contains(alertType)) {
-                certContext = null;
+                freshCtx = change != null && !change.isEmpty();
+                certContext = freshCtx ? withSnapshot(change, snapshot) : copyOf(snapshot);
+                // Taze kayıt bakım SONRASI bir değişiklik olabilir: "bakımda algılandı" notu yalnız olayın kendi iletisinde kalır.
+                if (freshCtx) certContext.remove(CTX_DETECTED_IN_MAINTENANCE);
+            } else if (monitoring) {
+                certContext = copyOf(snapshot);
             } else {
                 certContext = latestCheckRepo.findById(domain).map(this::latestToCertContext).orElse(null);
             }
-            Integer freshDays     = certContext != null ? toInt(certContext.get("days_remaining")) : null;
-            Integer effectiveDays = freshDays != null ? freshDays : daysRemainingFallback;
-            String  freshMessage  = TYPE_DNS_CHANGED.equals(alertType) && certContext != null
-                    ? monitoringMessage(domain, alertType, alertLevel, certContext)   // eski→yeni değerli zengin mesaj
-                    : buildMessage(domain, alertType, alertLevel, effectiveDays);
+            // "N gün kaldı" yalnız süre-bitişi türlerinde (sertifika + alan adı/kayıt bitişi); diğer izleme türlerinde gün yok.
+            Integer effectiveDays = null;
+            if (!monitoring || isDurationAlert(alertType)) {
+                Integer freshDays = certContext != null ? toInt(certContext.get("days_remaining")) : null;
+                effectiveDays = freshDays != null ? freshDays : daysRemainingFallback;
+            }
+            String storedMessage = ev == null ? null : ev.getMessage();
+            String freshMessage;
+            if (!monitoring) {
+                freshMessage = buildMessage(domain, alertType, alertLevel, effectiveDays);
+            } else if (freshCtx || storedMessage == null || storedMessage.isBlank()) {
+                freshMessage = monitoringMessage(domain, alertType, alertLevel, certContext);   // taze / tek kaynak bağlamı
+            } else {
+                freshMessage = withLevelWord(storedMessage, alertLevel);   // alarmın kendi iletisi (Alarm Geçmişi + push ile aynı)
+            }
             sendCombinedAlert(domainTeamId, ugTeamId, contacts, domain, alertLevel, alertType,
                     freshMessage, "[RE-ALERT] ", alertEventId, "MANUAL",
                     effectiveDays, certContext, excludeEmails == null ? Set.of() : excludeEmails,
@@ -1017,6 +1079,51 @@ public class EscalationService {
         } catch (Exception e) {
             log.error("Async reNotify failed for alertEventId={}: {}", alertEventId, e.getMessage(), e);
         }
+    }
+
+    /**
+     * E-posta alıcısı kalmayan elle gönderimde başka kanal kaldı mı (UIM-8 / K13): hariç tutulmamış bir kontak webhook'u ya da
+     * onay penceresinin gösterdiği push önizlemesinde ({@link UserPushService#preview}) gidecek (PENDING) ve hariç tutulmamış
+     * bir kullanıcı. Yalnız ret kararı verilirken çağrılır (normal yolda ek sorgu yok). Önizleme okunamazsa push yok sayılır.
+     */
+    private boolean otherChannelLeft(AlertEvent event, ReNotifyTargets targets, List<EscalationContact> contacts,
+                                     Set<String> excludeUsernames) {
+        for (EscalationContact c : contacts) {
+            if (c.getWebhookUrl() != null && !c.getWebhookUrl().isBlank()) return true;
+        }
+        if (userPushService == null || event.getId() == null) return false;
+        try {
+            Set<String> skipUsers = excludeUsernames == null ? Set.of() : excludeUsernames;
+            var preview = userPushService.preview(event.getId(), targets.domainTeamId(),
+                    oncallFor(targets.domainTeamId(), targets.ugTeamId(), event.getAlertLevel()));
+            if (preview == null || preview.recipients() == null) return false;
+            return preview.recipients().stream().anyMatch(r -> r != null && "PENDING".equals(r.status())
+                    && r.username() != null && !skipUsers.contains(r.username()));
+        } catch (Exception e) {
+            log.debug("Elle gönderim push önizlemesi okunamadı (olay {}): {}", event.getId(), e.toString());
+            return false;
+        }
+    }
+
+    /** Taze bağlam + alarm anı damgaları ({@code mail_disabled}, {@code team_id}, {@code monitor_id} …) — taze anahtar ezilmez. */
+    private static Map<String, Object> withSnapshot(Map<String, Object> fresh, Map<String, Object> snapshot) {
+        if (fresh == null) return copyOf(snapshot);
+        Map<String, Object> out = new LinkedHashMap<>(fresh);
+        if (snapshot != null) snapshot.forEach(out::putIfAbsent);
+        return out;
+    }
+
+    private static Map<String, Object> copyOf(Map<String, Object> m) {
+        return m == null ? null : new LinkedHashMap<>(m);
+    }
+
+    /**
+     * Elle yeniden gönderimde iletisi EN GÜNCEL alan adı kaydından yeniden kurulan alan adı türleri: bitiş (kalan gün) ve
+     * EPP durum kodları güncel kayıtta tamdır. Kara liste / transfer kilidi / veri yok / değişiklik iletisinin kanıtı
+     * (liste adları, hata, değişiklik ayrıntısı) güncel kayıtta YOKTUR — olayın kendi iletisi kullanılır.
+     */
+    private static boolean reconstructedDomainCtxFresh(String alertType) {
+        return TYPE_DOMAINMON_EXPIRY.equals(alertType) || TYPE_DOMAINMON_STATUS.equals(alertType);
     }
 
     public void catchUpMissedDailyAlerts() {
@@ -1557,6 +1664,16 @@ public class EscalationService {
      */
     public void processConfirmedOutage(String domain, String alertType, String alertLevel,
                                        Map<String, Object> outageContext) {
+        processConfirmedOutage(domain, alertType, alertLevel, outageContext, null);
+    }
+
+    /**
+     * @param presetMessage doluysa ileti bağlamdan YENİDEN KURULMAZ (ALERTS-2): bakımda açılmış değişiklik olayının ertelenmiş
+     *                      INITIAL'ı açılışta saklanan zengin iletiyi (eski → yeni değerler, "bakım penceresinde algılandı")
+     *                      kullanır; eski anlık görüntüde bu anahtarlar yoktu ve ileti genel metne dönüp olayın iletisini eziyordu.
+     */
+    private void processConfirmedOutage(String domain, String alertType, String alertLevel,
+                                        Map<String, Object> outageContext, String presetMessage) {
         // Bakım penceresi: atanan monitör bakımdaysa alarm AÇILMAZ + hiçbir kanaldan bildirim gitmez
         // (açılış + günlük re-alert + DNS_CHANGED hepsi bu tek noktadan geçer; save + sendCombinedAlert'ten ÖNCE).
         if (maintenanceService.isUnderMaintenance(domain)) {
@@ -1597,7 +1714,9 @@ public class EscalationService {
         // Bağlamda team_id damgası = bağımsız izleme (PORT/DNS dâhil — O-1).
         boolean teamOnly = teamOnly(isStandalone(alertType, outageContext), alertLevel);
 
-        String message = monitoringMessage(domain, alertType, alertLevel, outageContext);
+        String message = presetMessage != null && !presetMessage.isBlank()
+                ? withLevelWord(presetMessage, alertLevel)
+                : monitoringMessage(domain, alertType, alertLevel, outageContext);
         Optional<AlertEvent> existing = alertEventRepo.findOpenAlert(domain, alertType);
 
         if (existing.isEmpty()) {
@@ -1891,7 +2010,7 @@ public class EscalationService {
         Map<String, Object> ctx = deserializeContext(e.getContextJson());
         if (ctx == null) ctx = new LinkedHashMap<>();
         processConfirmedOutage(e.getDomain(), e.getAlertType(),
-                e.getAlertLevel() != null ? e.getAlertLevel() : levelWordSafe(ctx), ctx);
+                e.getAlertLevel() != null ? e.getAlertLevel() : levelWordSafe(ctx), ctx, e.getMessage());
     }
 
     private static String levelWordSafe(Map<String, Object> ctx) {
@@ -2384,6 +2503,8 @@ public class EscalationService {
             if (domainTeamId == null && ugTeamId == null) {
                 log.warn("Sahipsiz kayıt — çözüm bildirimi gönderilmedi: olay={} alan={} tür={}",
                         event.getId(), event.getDomain(), event.getAlertType());
+                // İZ (L-E4, 2026-10-22): açılışın "SKIPPED: takım yok" satırının çözüm eşleniği — her karar günlükte.
+                saveLog(event.getId(), "-", "", resolutionSubject(event), "", STATUS_NO_TEAM, "SKIPPED", trigger);
                 return;
             }
 
@@ -2449,12 +2570,13 @@ public class EscalationService {
             // burada erkenden okunabilir (cert alarmlarında contextJson yok → null → bugünkü davranış).
             Map<String, Object> earlyCtx = deserializeContext(event.getContextJson());
             boolean mailDisabled = earlyCtx != null && Boolean.TRUE.equals(earlyCtx.get("mail_disabled"));
-            String typeTr = resolvedTypeLabel(event.getAlertType());
-            String subject = "[Site Monitor ✅ ÇÖZÜLDÜ] " + event.getDomain()
-                    + " — " + typeTr + " sorunu giderildi";
+            String subject = resolutionSubject(event);
             if (mailDisabled || allEmails.isEmpty()) {
                 log.info("Çözüm bildirimi — mail atlandı ({}): {}",
                         mailDisabled ? "izlemede e-posta kapalı" : "alıcı yok", event.getDomain());
+                // İZ (L-Q2, 2026-10-22): atlanan çözüm postası da tek satırla günlüğe girer (açılış yoluyla aynı metinler).
+                saveLog(event.getId(), ownerTeamNames(mailSy, mailUg), "", subject, "",
+                        mailDisabled ? "SKIPPED: e-posta kanalı kapalı" : "SKIPPED: alıcı yok", "SKIPPED", trigger);
                 // Kontak webhook'u da mailden BAĞIMSIZ (O-2): açılış yolu mail atlansa da webhook'u gönderiyor.
                 sendResolutionWebhooks(event, contacts, subject, trigger);
                 // Kanal BAĞIMSIZLIĞI: e-posta alıcısı yoksa push da düşmemeli. Açılış yolunda bu
@@ -2540,6 +2662,11 @@ public class EscalationService {
             if (propagate) throw e instanceof RuntimeException re ? re : new IllegalStateException(e);
             log.warn("Çözüm bildirimi gönderilemedi: {} — {}", event.getDomain(), e.getMessage());
         }
+    }
+
+    /** Çözüm postasının konusu (tek yer: gönderim, atlama izi ve sahipsiz kayıt izi aynı konuyu yazar). */
+    private static String resolutionSubject(AlertEvent event) {
+        return "[Site Monitor ✅ ÇÖZÜLDÜ] " + event.getDomain() + " — " + resolvedTypeLabel(event.getAlertType()) + " sorunu giderildi";
     }
 
     /**
@@ -3268,7 +3395,11 @@ public class EscalationService {
         if (skipMail) {
             // Pasif kullanıcı izi (2026-10-02): alıcı listesi pasif kişiler düştüğü için boşaldıysa neden "alıcı yok" değil
             // "pasif kullanıcı"dır (getContactsForLevel'in döndürdüğü liste düşen sayıyı taşır; pasif yoksa 0 → bugünkü yol).
+            // Elle gönderimde kullanıcı onay penceresinde TÜM e-posta alıcılarını çıkardıysa (yalnız push / webhook — K13) neden
+            // "alıcı yok" değil, bilinçli seçimdir (son inceleme 2026-10-22).
             emailStatus = mailDisabled ? "SKIPPED: e-posta kanalı kapalı"
+                    : TRIGGER_MANUAL.equals(trigger) && !excludeEmails.isEmpty() && allEmails.isEmpty()
+                        ? STATUS_SKIPPED_EMAIL_DESELECTED
                     : InactiveRecipientGuard.droppedCount(contacts) > 0 ? InactiveRecipientGuard.STATUS_SKIPPED
                     : "SKIPPED: alıcı yok";
             // İZ (2026-09-30): atlanan e-posta da tek satırla günlüğe girer — neden gitmediği ekranda okunur.
@@ -3280,7 +3411,9 @@ public class EscalationService {
                     toArr, subject, message, domain, level, alertType, daysRemaining, mailCtx);
             // 4. Email log — tek kayıt (teamNames yukarıda ctx zenginleştirmesinde hesaplandı)
             saveLog(alertEventId, teamNames, String.join(", ", allEmails), subject, htmlBody, emailStatus, "SKIPPED", trigger);
-            rememberOncallMailed(alertEventId, oncallMailed);
+            // L-E5 (2026-10-22): nöbetçi adresi yalnız posta GERÇEKTEN gittiyse (SENT / 421 kuyruğu) damgalanır — başarısız ya da
+            // pasif süzgecinde atlanmış postanın nöbetçisi çözüm postasını (açılışı hiç almadığı alarm için) almasın.
+            if (mailDelivered(emailStatus)) rememberOncallMailed(alertEventId, oncallMailed);
         }
 
         // 5. Webhook — kontaklara ayrı ayrı
@@ -3538,6 +3671,12 @@ public class EscalationService {
             log.warn("Nöbetçi alıcısı eklenemedi (bildirim nöbetçisiz sürer): {}", e.toString());
             return List.of();
         }
+    }
+
+    /** E-posta gönderimi alıcıya ulaştı / kuyrukta (SENT, QUEUED_RETRY…) mı — FAILED / SKIPPED değil. */
+    static boolean mailDelivered(String emailStatus) {
+        return emailStatus != null && (emailStatus.equals("SENT") || emailStatus.startsWith("SENT ")
+                || emailStatus.startsWith("QUEUED"));
     }
 
     /** Nöbetçi olarak e-posta alan adresleri alarma ekler (en çok 20, tekil) — çözüm e-postası bunlara gider. Hata bildirimi durdurmaz. */
@@ -3911,6 +4050,10 @@ public class EscalationService {
      */
     static boolean isDurationAlert(String alertType) {
         if (alertType == null || alertType.isBlank()) return true;   // eski/bilinmeyen: bugünkü davranış
+        // İzleme türlerinde YALNIZ kayıt / alan adı bitişi süre ailesidir (ALERTS-1, 2026-10-22): DOMAINMON_UNKNOWN /
+        // STATUS / CHANGED / TRANSFER_LOCK / BLACKLIST bağlamı da kalan günü taşır (en güncel alan adı kaydından) ve konu
+        // "245 GÜN KALDI · … · Alan adı kara listede", eskalasyon adımının hero'su "245 gün kaldı" oluyordu.
+        if (MONITORING_ALERT_TYPES.contains(alertType)) return EXPIRY_MONITORING_TYPES.contains(alertType);
         return !("REVOKED".equals(alertType) || "MISMATCH".equals(alertType)
                 || "CHAIN_BROKEN".equals(alertType)
                 || TYPE_HOSTNAME_MISMATCH.equals(alertType) || TYPE_UNTRUSTED_CA.equals(alertType));
@@ -3998,6 +4141,19 @@ public class EscalationService {
             case TYPE_DOMAINMON_UNKNOWN -> "UYARI: " + domain + " alan adının kayıt bilgisi alınamadı (veri yok). Erişim/TLD desteğini doğrulayın.";
             case TYPE_DOMAINMON_STATUS -> "YÜKSEK: " + domain + " alan adında dikkat gerektiren EPP durum kodları var.";
             case TYPE_DOMAINMON_CHANGED -> "YÜKSEK: " + domain + " alan adının kayıt bilgisi değişti (olası hijack). İnceleyip onaylayın.";
+            // ALERTS-1 (2026-10-22): bu beş tür eksikti ve default'a (SERTİFİKA metni) düşüyordu — bağlamsız yeniden
+            // gönderimde "sertifika bilgileri alınamadı" / "sertifikanın süresi 245 gün içinde doluyor" yazıyordu.
+            case TYPE_KEYWORD -> "KRİTİK: " + domain +
+                    " içerik doğrulaması başarısız — izlenen sayfada aranan içerik koşulu sağlanmıyor. " +
+                    "Ardışık doğrulama denemeleri başarısız oldu. Koşul yeniden sağlandığında alarm otomatik kapanacaktır.";
+            case TYPE_PING_DOWN -> "KRİTİK: " + domain + " ICMP ping'e yanıt vermiyor. " +
+                    "Ardışık doğrulama denemeleri başarısız oldu. Host yeniden yanıt verdiğinde alarm otomatik kapanacaktır.";
+            case TYPE_PING_SLOW -> "YÜKSEK: " + domain + " ping yanıt süresi kendi taban çizgisinin üstüne çıktı. " +
+                    "Süre taban çizgisine döndüğünde alarm otomatik kapanır.";
+            case TYPE_DOMAINMON_TRANSFER_LOCK -> "YÜKSEK: " + domain + " alan adında TRANSFER KİLİDİ YOK. " +
+                    "Registrar panelinden clientTransferProhibited kilidini etkinleştirin. Kilit görüldüğünde alarm otomatik kapanır.";
+            case TYPE_DOMAINMON_BLACKLIST -> "YÜKSEK: " + domain + " alan adı ya da IP'leri e-posta KARA LİSTESİNDE. " +
+                    "Listeden çıkınca alarm otomatik kapanır.";
             default -> {
                 String lvl = switch (alertLevel != null ? alertLevel : "") {
                     case "CRITICAL" -> "KRİTİK";
@@ -4136,7 +4292,13 @@ public class EscalationService {
                                  "duration_ms", "failed_checks", "error",
                                  // O-b4: sayfa bütünlüğü bulgusunun KAYNAĞI (HOME / CRAWL) ve crawl'daki sorunlu
                                  // sayfalar — kurtarma doğrulaması aynı kaynağı yeniden ölçer (SchedulerService).
-                                 "integrity_scope", "problem_pages");
+                                 "integrity_scope", "problem_pages",
+                                 // ALERTS-2 (2026-10-22): bakım penceresinde algılanan DNS / alan adı DEĞİŞİKLİĞİ pencere bitince
+                                 // bu anlık görüntüden bildiriliyor — anahtarlar yokken ileti eski/yeni değersiz genel metne
+                                 // dönüyor, e-postanın ESKİ / YENİ kutuları boş gidiyordu.
+                                 "record_type", "old_values", "new_values", "change_detail", CTX_DETECTED_IN_MAINTENANCE,
+                                 // ALERTS-1: elle yeniden gönderim / eskalasyon adımı konusunda izlemenin ADI (çıplak URL değil).
+                                 "monitor_name");
 
     private String snapshotContext(Map<String, Object> ctx) {
         if (ctx == null) return null;

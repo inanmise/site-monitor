@@ -34,7 +34,7 @@ export const TIER_VALUES = ['1', '2', '3', '4', 'none']
 export const NO_TEAM = '__none__'
 
 /** Pano satırından uyarı satırına taşınan envanter alanları (uyarı satırında boşsa). */
-const ENRICH_KEYS = ['team_id', 'team_name', 'tier', 'alert_level', 'platform', 'platform_name', 'platform_detail', 'group_name', 'tags', 'port']
+const ENRICH_KEYS = ['team_id', 'team_name', 'owner_team_ids', 'tier', 'alert_level', 'platform', 'platform_name', 'platform_detail', 'group_name', 'tags', 'port']
 
 /**
  * Uyarı satırlarını Pano listesiyle alan adından zenginleştirir. Alan adı olmayan satır atlanır (anahtar yok).

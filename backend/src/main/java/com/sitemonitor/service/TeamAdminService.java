@@ -74,6 +74,26 @@ public class TeamAdminService {
         this.teamSources = teamSources;
     }
 
+    /**
+     * Takım belgeleri (2026-10-22, ADMIN-1): kanal teknik hata raporu kanalları + raporları, takım şablon kütüphanesi ve
+     * bakım pencereleri. Takım silinince yetim kuralları ({@code RetentionCatalog} tech-error-*-orphan) kanalları, raporları,
+     * görselleri ve geçmişi KALICI siliyordu; etki önizlemesi bunları hiç saymıyor, "Taşı" taşımıyordu. Artık etki onları
+     * sayar (silmeyi engeller), {@link #moveAll} taşır. Alan enjeksiyonu (kurucu ve {@code @InjectMocks} testleri
+     * değişmesin); yokken (dilimli test) bölüm atlanır.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private org.springframework.jdbc.core.JdbcTemplate jdbc;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.repository.MaintenanceWindowRepository maintenanceRepo;
+
+    void setJdbc(org.springframework.jdbc.core.JdbcTemplate jdbc) { this.jdbc = jdbc; }
+    void setMaintenanceRepo(com.sitemonitor.repository.MaintenanceWindowRepository repo) { this.maintenanceRepo = repo; }
+
+    /** Taşıma çakışması: hedef takımda aynı adlı kanal / şablon ya da hedefin sınırı dolu → 409, HİÇBİR şey taşınmaz. */
+    public static class MoveConflictException extends com.sitemonitor.config.GlobalExceptionHandler.CodedConflictException {
+        public MoveConflictException(String code, String message) { super(code, message, null); }
+    }
+
     /** İzleme türü → repo; tür adı UI etiketi anahtarıdır (todayMonitorRows ile aynı sözlük). */
     private Map<String, JpaRepository<? extends MonitorSchedule, Long>> monitorRepos() {
         Map<String, JpaRepository<? extends MonitorSchedule, Long>> m = new LinkedHashMap<>();
@@ -151,13 +171,85 @@ public class TeamAdminService {
         out.put("groups", sample(groupRepo.findByTeamIdOrderByNameAsc(teamId).stream().map(NotificationGroup::getName).toList()));
         long open = alertEventRepo.findAllOpenOrderBySeverity().stream().filter(a -> Objects.equals(a.getTeamId(), teamId)).count();
         out.put("open_alerts", open);
+        // Takım belgeleri (2026-10-22, ADMIN-1): kanallar (raporlarıyla), şablon kütüphanesi, süren / yaklaşan / duraklatılmış
+        // bakım pencereleri silmeyi ENGELLER ("Taşı" hepsini taşır). Bitmiş bakım penceresi engel değildir (taşımayla gider).
+        List<String> channels = names("SELECT name FROM tech_error_channels WHERE team_id = ? ORDER BY name", teamId);
+        Map<String, Object> channelSample = sample(channels);
+        channelSample.put("reports", count("SELECT COUNT(*) FROM tech_error_reports WHERE team_id = ?", teamId));
+        out.put("te_channels", channelSample);
+        List<String> templates = names("SELECT name FROM tech_error_team_templates WHERE team_id = ? ORDER BY name", teamId);
+        out.put("te_templates", sample(templates));
+        List<String> windows = liveWindowNames(teamId, java.time.Instant.now());
+        out.put("maintenance_windows", sample(windows));
+        // Yönetici özeti takım ayarı / geçmişi: BİLGİ (engel değil) — takımla birlikte silinir (yetim kuralı), taşınmaz.
+        Map<String, Object> exec = new LinkedHashMap<>();
+        exec.put("settings", count("SELECT COUNT(*) FROM executive_summary_team_settings WHERE team_id = ?", teamId) > 0);
+        exec.put("reports", count("SELECT COUNT(*) FROM executive_summary_team_reports WHERE team_id = ?", teamId));
+        out.put("executive_summary", exec);
         // AÇIK alarm da bağlı kayıttır (2026-09-28, Y1): damgası bu takımda kalan açık alarmın yeniden uyarısı,
         // eskalasyonu ve çözümü takım silinince hiçbir adrese/kişiye gitmezdi (sessiz susma). "Taşı" açık alarmları da
         // taşır; taşımadan silme 409 alır.
         boolean empty = inv.isEmpty() && ugInv.isEmpty() && monitorNames.isEmpty() && users.isEmpty() && open == 0
-                && contactRepo.findByTeamIdOrderByRoleAsc(teamId).isEmpty() && groupRepo.findByTeamIdOrderByNameAsc(teamId).isEmpty();
+                && contactRepo.findByTeamIdOrderByRoleAsc(teamId).isEmpty() && groupRepo.findByTeamIdOrderByNameAsc(teamId).isEmpty()
+                && channels.isEmpty() && templates.isEmpty() && windows.isEmpty();
         out.put("empty", empty);
         return out;
+    }
+
+    /** Tek sütunlu ad listesi; JDBC yoksa (dilimli test) ya da tablo okunamazsa boş liste — eski davranış. */
+    private List<String> names(String sql, Long teamId) {
+        if (jdbc == null) return List.of();
+        try {
+            List<String> out = new ArrayList<>();
+            for (String n : jdbc.queryForList(sql, String.class, teamId)) out.add(n == null ? "—" : n);
+            return out;
+        } catch (Exception e) {
+            org.slf4j.LoggerFactory.getLogger(TeamAdminService.class).warn("Takım etkisi okunamadı ({}): {}", sql, e.toString());
+            throw new IllegalStateException(com.sitemonitor.util.Msg.t(
+                    "Takıma bağlı belgeler okunamadı; takım silinmedi. Birkaç saniye sonra yeniden deneyin.",
+                    "The team's linked documents could not be read; the team was not deleted. Try again in a few seconds."));
+        }
+    }
+
+    private long count(String sql, Long teamId) {
+        if (jdbc == null) return 0;
+        try {
+            Long n = jdbc.queryForObject(sql, Long.class, teamId);
+            return n == null ? 0 : n;
+        } catch (Exception e) {
+            org.slf4j.LoggerFactory.getLogger(TeamAdminService.class).debug("Takım etkisi sayılamadı ({}): {}", sql, e.toString());
+            return 0;
+        }
+    }
+
+    /** Takımın bitmemiş bakım pencereleri (süren, yaklaşan, duraklatılmış, tekrarlayan) — ad listesi. */
+    private List<String> liveWindowNames(Long teamId, java.time.Instant now) {
+        if (maintenanceRepo == null) return List.of();
+        List<String> out = new ArrayList<>();
+        for (com.sitemonitor.model.MaintenanceWindow w : maintenanceRepo.findAll()) {
+            if (!Objects.equals(w.getTeamId(), teamId) || windowFinished(w, now)) continue;
+            out.add(w.getName() == null ? "—" : w.getName());
+        }
+        return out;
+    }
+
+    /** Tek seferlik pencere bitti mi ({@code MaintenanceService.computeStatus} "completed" ile aynı kural). Tekrarlayan asla bitmez. */
+    static boolean windowFinished(com.sitemonitor.model.MaintenanceWindow w, java.time.Instant now) {
+        String rec = w.getRecurrence() == null ? "NONE" : w.getRecurrence();
+        if (!"NONE".equals(rec)) return false;
+        java.time.Instant start = parseIso(w.getStartAt());
+        if (start == null) return false;
+        int dur = w.getDurationMinutes() == null ? 60 : Math.max(1, w.getDurationMinutes());
+        return now.isAfter(start.plus(java.time.Duration.ofMinutes(dur)));
+    }
+
+    private static java.time.Instant parseIso(String iso) {
+        if (iso == null || iso.isBlank()) return null;
+        try {
+            String v = iso.trim();
+            if (v.endsWith("Z") || v.matches(".*[+-]\\d\\d:?\\d\\d$")) return java.time.Instant.parse(v);
+            return java.time.LocalDateTime.parse(v).toInstant(java.time.ZoneOffset.UTC);
+        } catch (Exception e) { return null; }
     }
 
     private static Map<String, Object> sample(List<String> all) {
@@ -176,6 +268,9 @@ public class TeamAdminService {
     public Map<String, Integer> moveAll(Long from, Long to) {
         if (from == null || to == null || from.equals(to)) throw new IllegalArgumentException("Kaynak ve hedef takım farklı olmalı");
         if (teamRepo.findById(to).isEmpty()) throw new IllegalArgumentException("Hedef takım bulunamadı: " + to);
+        // Takım belgeleri ÖNCE denetlenir (2026-10-22, ADMIN-1): hedefte aynı adlı kanal / şablon ya da dolu sınır → 409,
+        // hiçbir şey taşınmaz (işlem geri alınır). Kanal adı takım içinde tekildir (uk_tech_error_channel_team_name).
+        DocumentMove docs = planDocumentMove(from, to);
         Map<String, Integer> moved = new LinkedHashMap<>();
         int n = 0;
         for (CertificateInventory i : inventoryRepo.findByTeamIdOrderByDomainAsc(from)) {
@@ -250,7 +345,138 @@ public class TeamAdminService {
             n++;
         }
         moved.put("open_alerts", n);
+        applyDocumentMove(docs, from, to, moved);
+        // Bakım pencereleri de takımla gider (2026-10-22, ADMIN-5): sahibi silinmiş pencere kimsenin listesinde görünmüyor,
+        // kimse düzenleyemiyor ama hedeflerini susturmaya devam ediyordu. Susturma hedeflere bağlıdır — takım değişimi
+        // yalnız görünürlüğü / yönetimi değiştirir.
+        n = 0;
+        if (maintenanceRepo != null) {
+            String at = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss")
+                    .withZone(java.time.ZoneOffset.UTC).format(java.time.Instant.now());
+            for (com.sitemonitor.model.MaintenanceWindow w : maintenanceRepo.findAll()) {
+                if (!Objects.equals(w.getTeamId(), from)) continue;
+                w.setTeamId(to);
+                w.setUpdatedAt(at);
+                maintenanceRepo.save(w);
+                n++;
+            }
+        }
+        moved.put("maintenance_windows", n);
         return moved;
+    }
+
+    /** Taşınacak takım belgeleri (kanallar sıralı, şablonlar) — denetimden geçmiş plan. */
+    private record DocumentMove(List<Long> channelIds, boolean appendOrder, int nextOrder,
+                                int templates, boolean dropSourceDefault) { }
+
+    private static final int CLASH_HEAD = 5;
+
+    /**
+     * Kanal ve şablon kütüphanesi taşımasının ön denetimi. İki takımın satırı kilitlenir (kütüphane yazımlarıyla aynı
+     * {@code teams FOR UPDATE} sırası, küçük kimlik önce) — eşzamanlı "yeni kanal / şablon" aynı adı ya da sınırı
+     * kaçıramaz. Çakışma → {@link MoveConflictException} (409).
+     */
+    private DocumentMove planDocumentMove(Long from, Long to) {
+        if (jdbc == null) return null;
+        try {
+            jdbc.queryForList("SELECT id FROM teams WHERE id = ? FOR UPDATE", Long.class, Math.min(from, to));
+            jdbc.queryForList("SELECT id FROM teams WHERE id = ? FOR UPDATE", Long.class, Math.max(from, to));
+        } catch (Exception e) {
+            org.slf4j.LoggerFactory.getLogger(TeamAdminService.class).debug("Takım satırı kilitlenemedi: {}", e.toString());
+        }
+        List<Map<String, Object>> src = jdbc.queryForList(
+                "SELECT id, name, name_key, sort_order FROM tech_error_channels WHERE team_id = ? "
+                        + "ORDER BY CASE WHEN sort_order IS NULL THEN 1 ELSE 0 END, sort_order, name, id", from);
+        java.util.Set<String> targetKeys = new java.util.HashSet<>(
+                jdbc.queryForList("SELECT name_key FROM tech_error_channels WHERE team_id = ?", String.class, to));
+        List<String> clash = new ArrayList<>();
+        List<Long> ids = new ArrayList<>();
+        boolean srcUnordered = false;
+        for (Map<String, Object> row : src) {
+            ids.add(((Number) row.get("id")).longValue());
+            if (row.get("sort_order") == null) srcUnordered = true;
+            if (targetKeys.contains(String.valueOf(row.get("name_key")))) clash.add(String.valueOf(row.get("name")));
+        }
+        if (!clash.isEmpty()) {
+            String head = head(clash);
+            throw new MoveConflictException("TEAM_MOVE_CHANNEL_CLASH", com.sitemonitor.util.Msg.t(
+                    "Hedef takımda aynı adlı teknik hata raporu kanalı var: " + head + ". Hiçbir şey taşınmadı; kanallardan birini yeniden adlandırıp tekrar deneyin.",
+                    "The target team already has a technical error report channel with the same name: " + head + ". Nothing was moved; rename one of the channels and try again."));
+        }
+        int maxChannels = com.sitemonitor.service.techerror.TechErrorReportService.MAX_CHANNELS_PER_TEAM;
+        if (!ids.isEmpty() && targetKeys.size() + ids.size() > maxChannels) {
+            throw new MoveConflictException("TEAM_MOVE_CHANNEL_LIMIT", com.sitemonitor.util.Msg.t(
+                    "Taşıma hedef takımı kanal sınırının (" + maxChannels + ") üstüne çıkarır; hiçbir şey taşınmadı. Kullanılmayan kanalları silip tekrar deneyin.",
+                    "Moving would put the target team over its channel limit (" + maxChannels + "); nothing was moved. Delete unused channels and try again."));
+        }
+        Long targetUnordered = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM tech_error_channels WHERE team_id = ? AND sort_order IS NULL", Long.class, to);
+        Integer targetMax = jdbc.queryForObject("SELECT MAX(sort_order) FROM tech_error_channels WHERE team_id = ?", Integer.class, to);
+        boolean append = !srcUnordered && (targetUnordered == null || targetUnordered == 0);
+
+        List<Map<String, Object>> tpl = jdbc.queryForList(
+                "SELECT name, name_key, is_default FROM tech_error_team_templates WHERE team_id = ?", from);
+        List<Map<String, Object>> tplTarget = jdbc.queryForList(
+                "SELECT name_key, is_default FROM tech_error_team_templates WHERE team_id = ?", to);
+        java.util.Set<String> tplKeys = new java.util.HashSet<>();
+        boolean targetHasDefault = false;
+        for (Map<String, Object> row : tplTarget) {
+            tplKeys.add(String.valueOf(row.get("name_key")));
+            if (Boolean.TRUE.equals(row.get("is_default"))) targetHasDefault = true;
+        }
+        List<String> tplClash = new ArrayList<>();
+        boolean sourceHasDefault = false;
+        for (Map<String, Object> row : tpl) {
+            if (tplKeys.contains(String.valueOf(row.get("name_key")))) tplClash.add(String.valueOf(row.get("name")));
+            if (Boolean.TRUE.equals(row.get("is_default"))) sourceHasDefault = true;
+        }
+        if (!tplClash.isEmpty()) {
+            String head = head(tplClash);
+            throw new MoveConflictException("TEAM_MOVE_TEMPLATE_CLASH", com.sitemonitor.util.Msg.t(
+                    "Hedef takımın şablon kütüphanesinde aynı adlı şablon var: " + head + ". Hiçbir şey taşınmadı; şablonlardan birini yeniden adlandırıp tekrar deneyin.",
+                    "The target team's template library already has a template with the same name: " + head + ". Nothing was moved; rename one of the templates and try again."));
+        }
+        int maxTemplates = com.sitemonitor.service.techerror.TechErrorTeamTemplateService.MAX_PER_TEAM;
+        if (!tpl.isEmpty() && tplTarget.size() + tpl.size() > maxTemplates) {
+            throw new MoveConflictException("TEAM_MOVE_TEMPLATE_LIMIT", com.sitemonitor.util.Msg.t(
+                    "Taşıma hedef takımın şablon kütüphanesini sınırın (" + maxTemplates + ") üstüne çıkarır; hiçbir şey taşınmadı. Kullanılmayan şablonları silip tekrar deneyin.",
+                    "Moving would put the target team's template library over its limit (" + maxTemplates + "); nothing was moved. Delete unused templates and try again."));
+        }
+        return new DocumentMove(ids, append, (targetMax == null ? 0 : targetMax) + 1, tpl.size(),
+                sourceHasDefault && targetHasDefault);
+    }
+
+    /** Planı uygular: kanallar (+ rapor / görsel / geçmiş / şablon sürümü satırlarındaki takım kopyası) ve şablonlar. */
+    private void applyDocumentMove(DocumentMove docs, Long from, Long to, Map<String, Integer> moved) {
+        if (docs == null || jdbc == null) return;
+        // KİLİT SIRASI (son inceleme 2026-10-22, CLAUDE.md "LOCK ORDER"): önce taşınan RAPOR satırları kimlik sırasıyla, sonra
+        // KANAL satırları kimlik sırasıyla — kanal silme (raporlar → kanal) ve kanal sırası (kanallar kimlik sırasıyla) ile
+        // aynı yön. Eskiden kanallar önce güncelleniyordu: kanal silme raporları tutup kanalı beklerken burada kanal tutulup
+        // raporlar bekleniyordu (PostgreSQL 40P01 → 503 LOCK_CONFLICT).
+        jdbc.queryForList("SELECT id FROM tech_error_reports WHERE team_id = ? ORDER BY id FOR UPDATE", Long.class, from);
+        jdbc.queryForList("SELECT id FROM tech_error_channels WHERE team_id = ? ORDER BY id FOR UPDATE", Long.class, from);
+        int order = docs.nextOrder();
+        for (Long id : docs.channelIds()) {
+            jdbc.update("UPDATE tech_error_channels SET team_id = ?, sort_order = ? WHERE id = ? AND team_id = ?",
+                    to, docs.appendOrder() ? Integer.valueOf(order++) : null, id, from);
+        }
+        moved.put("te_channels", docs.channelIds().size());
+        int reports = jdbc.update("UPDATE tech_error_reports SET team_id = ? WHERE team_id = ?", to, from);
+        jdbc.update("UPDATE tech_error_report_images SET team_id = ? WHERE team_id = ?", to, from);
+        jdbc.update("UPDATE tech_error_report_events SET team_id = ? WHERE team_id = ?", to, from);
+        jdbc.update("UPDATE tech_error_template_versions SET team_id = ? WHERE team_id = ?", to, from);
+        moved.put("te_reports", reports);
+        // Hedefte zaten varsayılan şablon varsa taşınan varsayılan düşer — takım başına en çok bir varsayılan (uq_tett_one_default).
+        if (docs.dropSourceDefault()) {
+            jdbc.update("UPDATE tech_error_team_templates SET is_default = FALSE, version = version + 1 "
+                    + "WHERE team_id = ? AND is_default = TRUE", from);
+        }
+        jdbc.update("UPDATE tech_error_team_templates SET team_id = ?, version = version + 1 WHERE team_id = ?", to, from);
+        moved.put("te_templates", docs.templates());
+    }
+
+    private static String head(List<String> names) {
+        return String.join(", ", names.subList(0, Math.min(CLASH_HEAD, names.size()))) + (names.size() > CLASH_HEAD ? " …" : "");
     }
 
     private static <M extends MonitorSchedule> int moveMonitors(JpaRepository<M, Long> repo, Long from, Long to, BiConsumer<M, Long> set) {

@@ -44,20 +44,30 @@ export function toForm(view) {
   }
 }
 
-/** Kaydetme gövdesi (PUT). */
+/**
+ * Kaydetme gövdesi (PUT). SİLİNMİŞ hesaplar (`missing`) GİTMEZ (20.165.1, UIA-A5 / K11): silinen bir kişi hiç nöbetçi
+ * olamaz; eski sunucu bilinmeyen kimliği reddediyordu ("listedeki bir kişi bulunamadı — sayfayı yenileyin", yenilemek de
+ * bir şey değiştirmiyordu), yenisi sessizce düşürür. Kapsamlı görüntüleyicide silinmiş kişinin kimliği zaten null'dır.
+ */
 export function buildPayload(form) {
   return {
     enabled: !!form.enabled,
     rotation: form.rotation === 'DAILY' ? 'DAILY' : 'WEEKLY',
     anchor: form.anchor,
     notify_oncall: !!form.notify,
-    members: form.members.map((m) => m.id),
+    members: form.members.filter((m) => !m.missing && m.id != null).map((m) => m.id),
   }
 }
 
-/** Form değişti mi (kaydet düğmesi). */
+/** Form değişti mi (kaydet düğmesi). Silinmiş satırı listeden çıkarmak da değişikliktir (kaydedince sunucudan düşer). */
 export function isDirty(form, base) {
-  return JSON.stringify(buildPayload(form)) !== JSON.stringify(buildPayload(base))
+  const shape = (f) => ({ ...buildPayload(f), members: f.members.map((m) => (m.missing ? '∅' : String(m.id))) })
+  return JSON.stringify(shape(form)) !== JSON.stringify(shape(base))
+}
+
+/** Listede silinmiş hesap var mı (pencerede uyarı bandı). */
+export function hasMissingMembers(form) {
+  return !!form?.members?.some((m) => m.missing)
 }
 
 export const MAX_MEMBERS = 50
@@ -66,7 +76,8 @@ export const MAX_MEMBERS = 50
 export function validate(form) {
   const errs = {}
   if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(form.anchor || '')) errs.anchor = 'oncall.err.anchor'
-  if (form.enabled && form.members.length === 0) errs.members = 'oncall.err.noMembers'
+  // Silinmiş hesaplar sayılmaz: gövdeden düşer, açık çizelge yalnız onlarla kalırsa sunucu 400 verir (K11)
+  if (form.enabled && form.members.filter((m) => !m.missing).length === 0) errs.members = 'oncall.err.noMembers'
   if (form.members.length > MAX_MEMBERS) errs.members = 'oncall.err.tooMany'
   return errs
 }

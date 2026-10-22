@@ -50,6 +50,22 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
     List<AlertEvent> findByResolvedAtGreaterThanEqual(String since);
 
     /**
+     * Bildirim kutusu GEÇMİŞİ (2026-10-22, DATA-11): {@code since}'ten beri ÇÖZÜLEN alarmlar, kapsam ve sayfa SQL'de —
+     * açılış tarihinden bağımsız (eskiden son 60 günde açılanlar belleğe alınıp süzülüyordu; daha önce açılıp bu ay çözülen
+     * alarm hiç görünmüyordu). Kapsam: damgalı takım ya da AKTİF envanterin SY / UG takımı (bildirim kutusunun kuralı).
+     * Sıra çözülme anı + kimlik (eşitlikte kararlı sayfa). İndeks: {@code idx_ae_resolved_at}.
+     */
+    @Query(value = "SELECT e FROM AlertEvent e WHERE e.resolved = true AND e.resolvedAt >= :since"
+            + " AND (:scoped = FALSE OR e.teamId IN :scope OR EXISTS (SELECT 1 FROM CertificateInventory i"
+            + " WHERE i.domain = e.domain AND i.active = true AND (i.teamId IN :scope OR i.ugTeamId IN :scope)))"
+            + " ORDER BY e.resolvedAt DESC, e.id DESC",
+           countQuery = "SELECT COUNT(e) FROM AlertEvent e WHERE e.resolved = true AND e.resolvedAt >= :since"
+            + " AND (:scoped = FALSE OR e.teamId IN :scope OR EXISTS (SELECT 1 FROM CertificateInventory i"
+            + " WHERE i.domain = e.domain AND i.active = true AND (i.teamId IN :scope OR i.ugTeamId IN :scope)))")
+    Page<AlertEvent> findResolvedHistory(@Param("since") String since, @Param("scoped") boolean scoped,
+                                         @Param("scope") Collection<Long> scope, Pageable pageable);
+
+    /**
      * Açık alarmlar, en ACİL önce. Önem METİN olarak saklanıyor: {@code ORDER BY alertLevel DESC} alfabetik
      * sıralayıp WARNING &gt; HIGH &gt; CRITICAL verdiği için kritikler listenin SONUNA düşüyordu ve ilk 5'i gösteren
      * "Sizin için — bugün / Açık alarm" kartı onları hiç göstermiyordu (QA 2026-09-24, ISSUE-001). Sıra açıkça
@@ -84,13 +100,16 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
      *  uptime recovery sadece ACCESSIBILITY'yi kapatabilsin diye. */
     List<AlertEvent> findByDomainAndAlertTypeInAndResolvedFalse(String domain, Collection<String> alertTypes);
 
-    /** Kontrol Geçmişi v2: aralıkla KESİŞEN alarmlar (içinde AÇILAN veya içinde ÇÖZÜLEN) —
-     *  satır↔alarm çıkarımsal eşlemesi client'ta yapılır (check kaydında alertEventId yok, bilinçli).
+    /** Kontrol Geçmişi v2: aralıkla KESİŞEN alarmlar — aralığın sonundan önce (ya da sonunda) açılmış VE aralığın
+     *  başında hâlâ açık ya da aralıkta / sonrasında çözülmüş. 2026-10-22 (DATA-4): eskiden yalnız "içinde AÇILAN veya
+     *  içinde ÇÖZÜLEN" alınıyordu — aralıktan önce başlayıp hâlâ süren (ya da aralığın tamamını kaplayan) kesinti hiç
+     *  görünmüyor, "Kesinti 0" ve %100 erişilebilirlik yazılıyordu. İstemci kesintiyi aralığa kırpar (OutageTimeline).
+     *  Satır↔alarm çıkarımsal eşlemesi client'ta yapılır (check kaydında alertEventId yok, bilinçli).
      *  createdAt/resolvedAt sabit-genişlik ISO → sözlüksel aralık. */
     @Query("SELECT e FROM AlertEvent e WHERE e.domain = :domainKey AND e.alertType IN :types "
-         + "AND ((e.createdAt >= :from AND e.createdAt <= :to) "
-         + "  OR (e.resolvedAt IS NOT NULL AND e.resolvedAt >= :from AND e.resolvedAt <= :to)) "
-         + "ORDER BY e.createdAt DESC")
+         + "AND e.createdAt <= :to "
+         + "AND (e.resolved = false OR e.resolvedAt IS NULL OR e.resolvedAt >= :from) "
+         + "ORDER BY e.createdAt DESC, e.id DESC")
     List<AlertEvent> findOverlappingForHistory(@Param("domainKey") String domainKey,
                                                @Param("types") Collection<String> types,
                                                @Param("from") String from, @Param("to") String to);

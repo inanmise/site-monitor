@@ -5,7 +5,7 @@ import {
   WARNING_CODES, compareWithCurrent, defaultRef, fillParams, filterManualRows, inventoryPayload, isManualCert,
   looksLikeTruststore, manualKpis, passwordLikely, sortManualRows, splitServerErrors, trackingKeyError, extractedFormData,
   warningText, withoutManualCerts, discouragedExtension, knownExtension, validitySpan, teamFilterOptions, wirePayload,
-  extractionErrorKey, CLIENT_NOTE_CODES,
+  extractionErrorKey, CLIENT_NOTE_CODES, rowTone, rowToneLabel, rowDays, notEvaluated, canRenewMatch,
 } from '../components/manualcert/manualCertModel.js'
 import { eventLabel } from '../components/admin/audit/auditFormat.js'
 
@@ -141,6 +141,54 @@ describe('manualCertModel — liste', () => {
   it('özet kutuları ve takım seçenekleri', () => {
     expect(manualKpis(rows)).toEqual({ total: 4, healthy: 1, expiring: 2, expired: 1, versions: 7 })
     expect(teamFilterOptions(rows)).toEqual({ options: [{ value: '1', label: 'Takım A' }, { value: '2', label: 'Takım B' }], hasNone: true })
+  })
+})
+
+// 2026-10-22 (UIM-23 / UIM-49): pasif satır artık değerlendirilmiyor (saklı gün DONMUŞ) ve hiç değerlendirilmemiş satır
+// bilinmiyor — ikisi de yeşil "Geçerli" çizilmez, sağlıklı / yaklaşan / dolmuş sayılmaz.
+describe('manualCertModel — pasif ve değerlendirilmemiş satır', () => {
+  const NOW = Date.parse('2026-10-22T12:00:00Z')
+  const paused = { inventory_id: 7, domain: 'pasif.example.test', active: false, status: 'valid', alert_level: 'valid', days_remaining: 40,
+    not_after: '2026-10-12T00:00:00' }
+  const fresh = { inventory_id: 8, domain: 'yeni.example.test', status: null, alert_level: null, days_remaining: null }
+  it('pasif → ton `paused`, metin "Pasif (izlenmiyor)"; gün donmuş değerden değil bitiş tarihinden', () => {
+    expect(rowTone(paused)).toBe('paused')
+    expect(rowToneLabel('paused')).toBe('mcert.tone.paused')
+    expect(rowDays(paused, NOW)).toBeLessThan(0)   // bitiş 12 Ekim — saklı "40 gün" değil
+    expect(rowDays({ ...paused, not_after: null }, NOW)).toBeNull()
+  })
+  it('hiç değerlendirilmemiş → ton `unknown` (yeşil değil), metin "Değerlendirilmedi"', () => {
+    expect(notEvaluated(fresh)).toBe(true)
+    expect(rowTone(fresh)).toBe('unknown')
+    expect(rowToneLabel('unknown')).toBe('mcert.tone.notEvaluated')
+    expect(rowTone({ ...fresh, days_remaining: 30 })).not.toBe('unknown')
+  })
+  it('özet kutuları / süzgeçler: pasif ve değerlendirilmemiş sağlıklı / yaklaşan / dolmuş sayılmaz; pasif sorunlu da değil', () => {
+    const rows = [paused, fresh, { inventory_id: 9, domain: 'ok.example.test', status: 'valid', alert_level: 'valid', days_remaining: 200 }]
+    expect(manualKpis(rows)).toMatchObject({ total: 3, healthy: 1, expiring: 0, expired: 0 })
+    expect(filterManualRows(rows, { status: 'healthy' }).map((r) => r.inventory_id)).toEqual([9])
+    expect(filterManualRows(rows, { status: 'problem' }).map((r) => r.inventory_id)).toEqual([8])
+    expect(sortManualRows(rows).map((r) => r.inventory_id).at(-1)).toBe(7)   // pasif en sonda
+  })
+  it('ton metinleri iki sözlükte', () => {
+    for (const k of ['mcert.tone.paused', 'mcert.tone.notEvaluated']) {
+      expect(TR[k]).toBeTruthy()
+      expect(EN[k]).toBeTruthy()
+    }
+  })
+})
+
+// UIM-24 (K6): analizin "aynı konu" eşleşmesi yalnız yazılabilen kayıtta yenilenir
+describe('manualCertModel — canRenewMatch', () => {
+  it('sunucu `can_write` verirse yalnız true', () => {
+    expect(canRenewMatch({ inventory_id: 1, can_write: true })).toBe(true)
+    expect(canRenewMatch({ inventory_id: 1, can_write: false })).toBe(false)
+  })
+  it('alan yoksa (eski sunucu) eski kural — liste satırı `can_manage:false` diyorsa değil', () => {
+    expect(canRenewMatch({ inventory_id: 1 }, [])).toBe(true)
+    expect(canRenewMatch({ inventory_id: 1 }, [{ inventory_id: 1, can_manage: false }])).toBe(false)
+    expect(canRenewMatch({ inventory_id: 1 }, [{ inventory_id: 1, can_manage: true }])).toBe(true)
+    expect(canRenewMatch(null)).toBe(false)
   })
 })
 

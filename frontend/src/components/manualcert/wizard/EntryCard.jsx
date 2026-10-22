@@ -34,7 +34,7 @@ const BAR = { valid: 'ok', warning: 'warn', expired: 'crit' }
  * <p>Test kancaları: kök `data-slot="mcert-entry"` + `data-ref` + `data-selected`; `mcert-trust`, `mcert-chain-state`,
  * `mcert-weak`, zincir `mcert-chain` (içinde `ssl-chain` + `ssl-chain-node[data-role]`), `mcert-match` (`data-kind`).
  */
-export default function EntryCard({ entry, control, selected = false, titleId, onOpenCert, onRenewTarget, renewTargetId = null }) {
+export default function EntryCard({ entry, control, selected = false, titleId, onOpenCert, onRenewTarget, renewTargetId = null, canRenewMatch }) {
   const t = useT()
   const tone = entryTone(entry)
   const span = validitySpan(entry)
@@ -133,7 +133,8 @@ export default function EntryCard({ entry, control, selected = false, titleId, o
       {same.slice(0, 3).map((s) => (
         <div key={s.inventory_id} data-slot="mcert-match" data-kind="same-subject">
           <AlertBanner tone="info" className="mb-0" icon={RefreshCw} title={t('mcert.match.renewalTitle')}
-            actions={onRenewTarget ? (
+            // "Bu kaydı yenile" yalnız yazılabilen kayıtta (UIM-24, K6) — öbürü bilgi olarak kalır, düğme yok
+            actions={onRenewTarget && (typeof canRenewMatch !== 'function' || canRenewMatch(s)) ? (
               <Button type="button" variant="secondary" size="sm" className="pointer-coarse:h-10" onClick={() => onRenewTarget(s)}
                 aria-label={t('a11y.rowAction', s.domain, t('mcert.match.renewThis'))}>
                 {t('mcert.match.renewThis')}

@@ -164,7 +164,8 @@ function TeamRow({ checked, onToggle, label, count, strong = false }) {
   return (
     <Field orientation="horizontal" role={undefined} className="gap-2.5 px-3 py-2 hover:bg-muted/50">
       <Checkbox id={id} checked={checked} onCheckedChange={() => onToggle()} />
-      <FieldLabel htmlFor={id} className={cn('min-w-0 flex-1 cursor-pointer truncate text-sm', strong ? 'font-bold' : 'font-normal')}>
+      {/* Takım adı KESİLMEZ (UIM-38): uzun AD adı sararak tam okunur */}
+      <FieldLabel htmlFor={id} className={cn('min-w-0 flex-1 cursor-pointer text-sm [overflow-wrap:anywhere]', strong ? 'font-bold' : 'font-normal')}>
         {label}
       </FieldLabel>
       <span className="text-[13px] font-bold tabular-nums text-muted-foreground">{count}</span>

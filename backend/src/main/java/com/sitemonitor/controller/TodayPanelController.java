@@ -63,10 +63,12 @@ public class TodayPanelController {
         // full=true: "Tümünü gör" pop-up'ı — kart başına tavan kalkar (2026-09-18).
         // Bakım satırları ("Susturulmuş ve bakımda" kartı, 2026-09-23) yalnız bakım sayfasını görebilene.
         boolean showMaintenance = permissionService.allows(session, "maintenance.view", "view");
+        // Açık alarm kartı Alarm Geçmişi'ni açabilene (2026-10-22, L-H8) — /me/open-alerts ile aynı kural.
+        boolean showAlerts = permissionService.allows(session, "alerts.read", "view");
         // İzleme OKUMA kapsamı (2026-10-04): 7/24 operatörünün "Bugün" kartları kurum genelidir; haftalık KENDİ takım
         // bloğu (own) üyelikten kalır. Bildirim kutusu (inbox) kişiseldir — bilerek genişlemez.
         Map<String, Object> data = todayPanelService.build(teamId -> SessionScope.canViewMonitoring(session, teamId), own,
-                full ? Integer.MAX_VALUE : com.sitemonitor.service.TodayPanelService.TOP, showMaintenance);
+                full ? Integer.MAX_VALUE : com.sitemonitor.service.TodayPanelService.TOP, showMaintenance, showAlerts);
         return ResponseEntity.ok(Map.of("success", true, "data", data));
     }
 
@@ -82,7 +84,11 @@ public class TodayPanelController {
         else if (session.getAttribute("teamId") instanceof Long tid) own.add(tid);
         // Geçmiş (2026-09-20): çözülmüş alarmlar 30 gün, sayfalı — güncel liste yalnız son 24 saati gösterir.
         if ("history".equals(view)) {
-            var h = inboxService.history(teamId -> SessionScope.canView(session, teamId), page, size);
+            // Kapsam ve sayfa SQL'de (2026-10-22, DATA-11) — SessionScope.canView ile aynı küme: global görüntüleyici hepsi,
+            // diğerleri görüş takımları (yoksa boş).
+            List<Long> scope = SessionScope.isGlobalViewer(session) ? null
+                    : (viewIds == null ? List.of() : viewIds);
+            var h = inboxService.history(scope, page, size);
             Map<String, Object> out = new java.util.LinkedHashMap<>();
             out.put("success", true);
             out.put("data", h.items().stream().map(TodayPanelController::inboxItem).toList());

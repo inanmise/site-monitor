@@ -15,6 +15,26 @@ const STRENGTH_LABELS = ['weak', 'weak', 'fair', 'good', 'strong']
 const STRENGTH_BG = ['bg-destructive', 'bg-destructive', 'bg-amber-500', 'bg-blue-500', 'bg-success']
 const STRENGTH_INK = ['text-destructive', 'text-destructive', 'text-amber-600 dark:text-amber-400', 'text-blue-600 dark:text-blue-400', 'text-success']
 
+/**
+ * Parola uzunluk kuralı — sunucunun VARSAYILANLARIYLA aynı (`site.monitor.password.min-length` 6 / `max-length` 64,
+ * application.properties; kapı: passwordLengthRule.test.js). Eskiden istemci 6–10 diyor ve alanlara `maxLength={10}`
+ * koyuyordu: yapıştırılan / parola yöneticisinin ürettiği 12+ karakterlik parola iki alanda da SESSİZCE 10 karaktere
+ * kesiliyor, eşleşiyor ve sunucuya ilk 10 karakter yazılıyordu (sonraki giriş tam parolayla başarısız — UIA-H1). Kurulum
+ * sınırı değiştirdiyse sunucunun kendi "çok kısa / çok uzun" iletisindeki sayı gösterilir (`serverLengthMessage`).
+ */
+export const PWD_MIN_LENGTH = 6
+export const PWD_MAX_LENGTH = 64
+
+/** Sunucunun "Password too short (min N chars)" / "Password too long (max N chars)" iletisi → yerelleştirilmiş metin. */
+export function serverLengthMessage(err, t) {
+  const s = String(err || '')
+  const short = /too short/i.test(s)
+  if (!short && !/too long/i.test(s)) return null
+  const n = /(?:min|max)\D{0,3}(\d{1,4})/i.exec(s)?.[1]
+  if (short) return t('pwd.tooShort', n || PWD_MIN_LENGTH)
+  return t('pwd.tooLong', n || PWD_MAX_LENGTH)
+}
+
 function passwordStrength(pwd) {
   if (!pwd) return 0
   let s = 0
@@ -63,6 +83,8 @@ export default function PasswordChangeModal({ mode, targetUser, onClose, onSucce
   const [confirmPwd, setConfirmPwd] = useState('')
   const [saving, setSaving]         = useState(false)
   const [msg, setMsg]               = useState(null)
+  // Sunucunun YENİ parola alanı hatası (`field: "password"`, ör. baştaki / sondaki boşluk — AUTH-7) alanın altında gösterilir
+  const [newPwdErr, setNewPwdErr]   = useState(null)
   const strengthId = useId()
 
   const isForced       = mode === 'forced-change'
@@ -71,9 +93,11 @@ export default function PasswordChangeModal({ mode, targetUser, onClose, onSucce
   const verifyHintKey  = isForced ? 'usr.forcedPwdHint'      : 'usr.pwdSelfVerifyHint'
   const wrongVerifyKey = 'usr.pwdSelfVerifyWrong'
 
+  const lengthOk = newPwd.length >= PWD_MIN_LENGTH && newPwd.length <= PWD_MAX_LENGTH
+
   async function submit() {
     if (!verifyPwd) { setMsg(t('usr.pwdAdminConfirmRequired')); return }
-    if (newPwd.length < 6 || newPwd.length > 10) { setMsg(t('usr.pwdLengthRule')); return }
+    if (!lengthOk) { setMsg(t('pwd.lengthRule', PWD_MIN_LENGTH, PWD_MAX_LENGTH)); return }
     if (newPwd !== confirmPwd) { setMsg(t('usr.pwdMismatch')); return }
     setSaving(true)
     try {
@@ -83,22 +107,31 @@ export default function PasswordChangeModal({ mode, targetUser, onClose, onSucce
         onClose()
       } else {
         const err = res?.error || ''
+        const lengthMsg = serverLengthMessage(err, t)
         if (/FORBIDDEN|Current password|Invalid admin/i.test(err) || res?.status === 403) {
           setMsg(t(wrongVerifyKey))
         } else if (/recently used/i.test(err)) {
           setMsg(t('usr.pwdReused'))
-        } else if (/too short|too long/i.test(err)) {
-          setMsg(t('usr.pwdLengthRule'))
+        } else if (lengthMsg) {
+          setMsg(lengthMsg)
+        } else if (res?.field === 'password' && err) {
+          setMsg(null)
+          setNewPwdErr(err)
         } else {
-          setMsg(err || 'Error')
+          setMsg(err || t('pwd.changeFailed'))
         }
       }
+    } catch (e) {
+      // Ağ kesintisi (request() ApiError fırlatır, POST yeniden denenmez): eskiden yakalanmamış söz reddiydi — düğme
+      // dönmeyi bırakıyor, zorunlu değişim ekranındaki kullanıcı hiçbir ileti görmüyordu (UIA-H11).
+      setMsg(e?.message || t('login.serverError'))
     } finally {
       setSaving(false)
     }
   }
 
   const mismatch = !!confirmPwd && newPwd !== confirmPwd
+  const tooLong = newPwd.length > PWD_MAX_LENGTH
 
   return (
     <ModalShell open onClose={onClose} title={t(titleKey, targetUser.username)} icon={KeyRound} size="sm" busy={saving}
@@ -108,7 +141,7 @@ export default function PasswordChangeModal({ mode, targetUser, onClose, onSucce
           <Button variant="secondary" onClick={onClose}>{t('usr.cancel')}</Button>
         )}
         <Button onClick={submit} aria-busy={saving || undefined}
-          disabled={saving || !verifyPwd || newPwd.length < 6 || newPwd.length > 10 || newPwd !== confirmPwd}>
+          disabled={saving || !verifyPwd || !lengthOk || newPwd !== confirmPwd}>
           {saving ? t('usr.saving') : t('usr.pwdSave')}
         </Button>
       </>}>
@@ -119,11 +152,14 @@ export default function PasswordChangeModal({ mode, targetUser, onClose, onSucce
             autoFocus autoComplete="current-password" />
         )}
       </Field>
-      <Field label={t('usr.formNewPwd')} required>
-        {({ id }) => (
+      {/* maxLength YOK: tarayıcı fazlasını sessizce keserdi (parola değişirdi); fazla uzunluk görünür uyarıyla söylenir */}
+      <Field label={t('usr.formNewPwd')} required hintTone={tooLong || newPwdErr ? 'warn' : undefined}
+        hint={tooLong ? t('pwd.tooLong', PWD_MAX_LENGTH) : (newPwdErr || t('pwd.lengthRule', PWD_MIN_LENGTH, PWD_MAX_LENGTH))}>
+        {({ id, describedBy }) => (
           <>
-            <Input id={id} type="password" value={newPwd} maxLength={10} aria-describedby={newPwd ? strengthId : undefined}
-              onChange={(e) => setNewPwd(e.target.value)} autoComplete="new-password" />
+            <Input id={id} type="password" value={newPwd} aria-invalid={tooLong || !!newPwdErr || undefined}
+              aria-describedby={[describedBy, newPwd ? strengthId : null].filter(Boolean).join(' ') || undefined}
+              onChange={(e) => { setNewPwd(e.target.value); setNewPwdErr(null) }} autoComplete="new-password" />
             <PwdStrengthMeter pwd={newPwd} t={t} id={strengthId} />
           </>
         )}
@@ -131,7 +167,7 @@ export default function PasswordChangeModal({ mode, targetUser, onClose, onSucce
       <Field label={t('usr.formConfirmPwd')} required hint={mismatch ? t('usr.pwdMismatch') : undefined} hintTone="warn"
         className="mb-0">
         {({ id, describedBy }) => (
-          <Input id={id} type="password" value={confirmPwd} maxLength={10} aria-describedby={describedBy} aria-invalid={mismatch || undefined}
+          <Input id={id} type="password" value={confirmPwd} aria-describedby={describedBy} aria-invalid={mismatch || undefined}
             onChange={(e) => setConfirmPwd(e.target.value)} autoComplete="new-password" />
         )}
       </Field>

@@ -171,6 +171,24 @@ class NocConsoleServiceTest {
     }
 
     @Test
+    @DisplayName("L-N3: bağımsız izleme alarmı (HTTP) envanter takımını ALMAZ — aynı ana makinenin envanter UG'si 'UG' diye görünmez, damgasızsa takımı yok")
+    void standaloneAlarmIgnoresInventoryTeams() {
+        ev(15, "cert.example.com", "HTTP_DOWN", "CRITICAL", TEAM_A, "2026-10-04T11:40:00", false);
+        ev(16, "cert.example.com", "KEYWORD", "HIGH", null, "2026-10-04T11:41:00", false);
+        List<Map<String, Object>> rows = items(svc.console(q(), true));
+        Map<String, Object> r15 = rows.stream().filter(m -> Long.valueOf(15L).equals(m.get("id"))).findFirst().orElseThrow();
+        assertThat(r15.get("team_id")).isEqualTo(TEAM_A);
+        assertThat(r15.get("ug_team_id")).isNull();
+        assertThat(r15.get("ug_team_name")).isNull();
+        Map<String, Object> r16 = rows.stream().filter(m -> Long.valueOf(16L).equals(m.get("id"))).findFirst().orElseThrow();
+        assertThat(r16.get("team_id")).as("damgasız bağımsız alarm envanter SY'sini almaz").isNull();
+        assertThat(r16.get("ug_team_id")).isNull();
+        // envanter gibi yönlenen sertifika alarmı değişmedi
+        Map<String, Object> r12 = rows.stream().filter(m -> Long.valueOf(12L).equals(m.get("id"))).findFirst().orElseThrow();
+        assertThat(r12.get("ug_team_id")).isEqualTo(TEAM_UG);
+    }
+
+    @Test
     @DisplayName("öncelik: açık + 7/24'e gitmiş + aranmamış en üstte; kapalı en altta")
     void priorityOrder() {
         List<Map<String, Object>> rows = items(svc.console(q(), true));

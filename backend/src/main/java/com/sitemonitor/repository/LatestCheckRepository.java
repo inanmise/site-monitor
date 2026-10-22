@@ -25,8 +25,8 @@ public interface LatestCheckRepository extends JpaRepository<LatestCheck, String
 
     /**
      * Zayıf algoritma adaylarını DB'de filtreler (tüm tabloyu çekmek yerine):
-     * eski hash (MD2/MD5/SHA1) veya kısa anahtar (RSA/DSA < 2048, EC < 256).
-     * classifyWeakness ile birebir aynı koşullar — sonuç kümesi değişmez.
+     * eski hash (MD2/MD5/SHA1) veya kısa anahtar (RSA/DSA < 2048, EC < 256; boyu okunamayan / EdDSA / PQC anahtar
+     * kısa SAYILMAZ — DATA-13). classifyWeakness ile birebir aynı koşullar — sonuç kümesi değişmez (WeakKeySqlParityTest).
      */
     @Query("""
         SELECT c FROM LatestCheck c
@@ -34,8 +34,15 @@ public interface LatestCheckRepository extends JpaRepository<LatestCheck, String
            OR upper(c.signatureAlgorithm) LIKE '%MD5%'
            OR upper(c.signatureAlgorithm) LIKE '%SHA1%'
            OR upper(c.signatureAlgorithm) LIKE '%SHA-1%'
-           OR ((upper(c.publicKeyAlgorithm) LIKE '%RSA%' OR upper(c.publicKeyAlgorithm) LIKE '%DSA%') AND c.publicKeySize < 2048)
-           OR (upper(c.publicKeyAlgorithm) LIKE '%EC%' AND c.publicKeySize < 256)
+           OR (c.publicKeySize > 0 AND c.publicKeySize < 2048
+               AND upper(c.publicKeyAlgorithm) NOT LIKE 'EC%'
+               AND upper(c.publicKeyAlgorithm) NOT LIKE '%EDDSA%' AND upper(c.publicKeyAlgorithm) NOT LIKE '%ED25519%'
+               AND upper(c.publicKeyAlgorithm) NOT LIKE '%ED448%' AND upper(c.publicKeyAlgorithm) NOT LIKE '%ML-DSA%'
+               AND upper(c.publicKeyAlgorithm) NOT LIKE '%MLDSA%' AND upper(c.publicKeyAlgorithm) NOT LIKE '%SLH-DSA%'
+               AND upper(c.publicKeyAlgorithm) NOT LIKE '%SLHDSA%' AND upper(c.publicKeyAlgorithm) NOT LIKE '%FN-DSA%'
+               AND upper(c.publicKeyAlgorithm) NOT LIKE '%FNDSA%'
+               AND (upper(c.publicKeyAlgorithm) LIKE '%RSA%' OR upper(c.publicKeyAlgorithm) LIKE '%DSA%'))
+           OR (c.publicKeySize > 0 AND upper(c.publicKeyAlgorithm) LIKE 'EC%' AND c.publicKeySize < 256)
         """)
     List<LatestCheck> findWeakAlgorithmCandidates();
 

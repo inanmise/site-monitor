@@ -127,7 +127,8 @@ export function OpenAlertBadge({ id, label, summary, onGo, className }) {
                 <span aria-hidden="true" className={cn('mt-1.5 size-2 shrink-0 rounded-full', DOT[topLevel({ levels: { [String(a.alert_level || '').toLowerCase()]: 1 } })])} />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm font-medium [overflow-wrap:anywhere]">{a.domain}</span>
-                  <span className="block truncate text-[11px] text-muted-foreground">
+                  {/* Takım adı SARAR (2026-10-22, L-H7): AD takım adları uzun, dokunmatikte kırpılmış metnin tamamı okunamıyordu */}
+                  <span className="block text-[11px] text-muted-foreground [overflow-wrap:anywhere]">
                     {alertTypeLabel(t, a.alert_type)}{a.team_name ? ` · ${a.team_name}` : ''} · {formatIncidentTime(a.created_at, locale)}
                   </span>
                 </span>

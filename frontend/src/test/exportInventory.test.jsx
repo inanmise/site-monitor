@@ -244,3 +244,22 @@ describe('exportInventoryPdf', () => {
     await expect(exportInventoryPdf([], TEAMS, t)).resolves.not.toThrow()
   })
 })
+
+// UIM-27 (2026-10-22): indirme ortak `downloadBlob` ile — bağlantı DOM'a eklenir, adres hemen iptal edilmez (Safari / iPad
+// DOM dışı bağlantıda ve tıklamanın hemen ardından iptal edilen adreste indirmeyi başlatmıyordu, başarı tostu yine çıkıyordu).
+describe('exportInventoryCsv — indirme (Safari uyumlu)', () => {
+  it('bağlantı tıklanırken DOM\'da; adres tıklamadan HEMEN SONRA iptal edilmez', () => {
+    let inDom = null
+    HTMLAnchorElement.prototype.click.mockImplementation(function () { inDom = document.body.contains(this) })
+    exportInventoryCsv([ITEM], TEAMS, t)
+    expect(inDom).toBe(true)
+    expect(URL.revokeObjectURL).not.toHaveBeenCalled()
+  })
+
+  it('tarayıcı indirmeyi başlatamazsa DOWNLOAD_FAILED kodlu hata — çağıran başarı tostu göstermez', () => {
+    global.URL.createObjectURL = vi.fn(() => { throw new Error('quota') })
+    let err = null
+    try { exportInventoryCsv([ITEM], TEAMS, t) } catch (e) { err = e }
+    expect(err?.code).toBe('DOWNLOAD_FAILED')
+  })
+})

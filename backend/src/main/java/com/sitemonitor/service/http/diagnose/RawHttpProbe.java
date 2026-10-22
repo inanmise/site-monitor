@@ -1024,7 +1024,7 @@ public final class RawHttpProbe {   // public (2026-10-04): keyword uçtan uca t
      * İzlemenin strict yolunun güveni: JVM cacerts → kurumsal CA paketi ({@link TrustEvaluator}) → host'un MEVCUT pinli
      * CA'sı ({@link CaAutoPinService#trustManagerForHost}, salt okuma). {@code [0]} = null → güvenilir; aksi hâlde neden.
      */
-    private String[] trust(X509Certificate[] chain, String host, int port) {
+    String[] trust(X509Certificate[] chain, String host, int port) {
         if (chain == null || chain.length == 0) return new String[]{ "sunucu sertifika göndermedi" };
         String reason;
         try {
@@ -1038,7 +1038,9 @@ public final class RawHttpProbe {   // public (2026-10-04): keyword uçtan uca t
             try {
                 X509TrustManager pinned = caAutoPin.trustManagerForHost(host, port);
                 if (pinned != null) {
-                    pinned.checkServerTrusted(chain, chain[0].getPublicKey().getAlgorithm());
+                    // CHECKS-1 (2026-10-22): anahtar algoritması ("EC") JDK authType'ı DEĞİL — uç-sertifika denetimi zincir 1'den
+                    // uzunken "Unknown authType: EC" fırlatıyordu; pinli CA'lı her ECDSA host'u tanılamada "güvenilmiyor" görünürdü.
+                    TrustEvaluator.checkServerTrustedAnyAuthType(pinned, chain);
                     return new String[]{ null };
                 }
             } catch (Exception ignore) { /* pin de güvenmiyor — ilk neden kalır */ }

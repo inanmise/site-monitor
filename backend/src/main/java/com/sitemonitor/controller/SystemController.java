@@ -49,6 +49,9 @@ public class SystemController {
 
     @GetMapping
     public ResponseEntity<Map<String, Object>> getHealth(HttpSession session) {
+        // İzin kapısı (2026-10-22, UIA-D11): kardeş okuma uçlarıyla aynı — matristen system_health.read geri alınan kullanıcı
+        // kilit sahibi pod'u, sürüm / commit'i, SMTP / tarama / yürütücü / oturum deposu istatistiklerini okumaya devam ediyordu.
+        permissionService.require(session, "system_health.read", "view");
         Map<String, Object> data = new LinkedHashMap<>(schedulerService.getSystemHealth());
         data.put("smtp",      extendedHealthService.getSmtpStats());
         data.put("db_ms",     extendedHealthService.measureDbResponseMs());
@@ -432,7 +435,9 @@ public class SystemController {
         Long teamId = Long.valueOf(teamIdRaw.toString());
         try {
             String status = weeklyAvailabilityReportService.sendTest(teamId, email);
-            boolean ok = status == null || !status.startsWith("FAILED");
+            // Başarı = posta GİTTİ ya da teslim kuyruğunda (UIA-C2): kanal kapalı (SKIPPED_DISABLED) / alıcı pasif (SKIPPED: …)
+            // eskiden "başarılı" sayılıyor, ekran "test raporu gönderildi" diyordu.
+            boolean ok = com.sitemonitor.service.report.CertificateInventoryReportService.delivered(status);
             auditService.recordAction("WEEKLY_AVAILABILITY_TEST", session, "REPORT", String.valueOf(teamId),
                     "test → " + email, null);
             return ResponseEntity.ok(Map.of("success", ok, "data", Map.of("status", status == null ? "" : status),
@@ -511,9 +516,19 @@ public class SystemController {
         requireAdmin(session);
         permissionService.require(session, "system_health.actions", "execute");
         var result = certificateInventoryReportService.sendMonthlyReport(true);
+        String outcome = com.sitemonitor.service.report.CertificateInventoryReportService.historyStatus(result.status());
         auditService.recordAction("CERT_INVENTORY_REPORT_RUN", session, "REPORT", "cert-inventory-report",
-                result.rows() + " kayıt · " + result.findings() + " bulgu", null);
-        return ok(Map.of("data", result));
+                result.rows() + " kayıt · " + result.findings() + " bulgu · " + outcome, null);
+        // Gerçek sonuç (K9): ham posta durumu (status) + indirgenmiş sonuç (outcome: SENT / QUEUED / SKIPPED / FAILED /
+        // NO_RECIPIENT). Ekran başarıyı yalnız SENT'ten türetir.
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("status", result.status());
+        data.put("outcome", outcome);
+        data.put("rows", result.rows());
+        data.put("findings", result.findings());
+        data.put("to", result.to());
+        data.put("subject", result.subject());
+        return ok(Map.of("data", data));
     }
 
     /** Admin: raporu yalnız verilen test adresine gönder (aylık idempotency kaydı YAZILMAZ). */
@@ -528,7 +543,8 @@ public class SystemController {
                     "success", false, "error", "Geçerli bir e-posta adresi gerekli", "timestamp", now()));
         }
         var result = certificateInventoryReportService.sendTest(email);
-        boolean okStatus = result.status() == null || !result.status().startsWith("FAILED");
+        // UIA-C2 / K9: yalnız SENT ya da teslim kuyruğu (QUEUED…) başarıdır — SKIPPED (kanal kapalı, alıcı pasif) değil.
+        boolean okStatus = com.sitemonitor.service.report.CertificateInventoryReportService.delivered(result.status());
         auditService.recordAction("CERT_INVENTORY_REPORT_TEST", session, "REPORT", "cert-inventory-report",
                 "test → " + email, null);
         return ResponseEntity.ok(Map.of("success", okStatus, "data", result,

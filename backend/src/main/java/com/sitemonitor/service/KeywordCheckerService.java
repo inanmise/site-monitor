@@ -185,12 +185,7 @@ public class KeywordCheckerService {
             result.put("http_status", resp.statusCode());
             result.put("response_ms", ms);
             if (found) {
-                int idx = hay.indexOf(needle);
-                int s = Math.max(0, idx - 50);
-                int e = Math.min(body.length(), idx + keyword.length() + 50);
-                String snip = body.substring(s, e).replaceAll("\\s+", " ").trim();
-                if (snip.length() > 200) snip = snip.substring(0, 200);
-                result.put("snippet", snip);
+                result.put("snippet", snippet(body, hay, hay.indexOf(needle), needle.length()));
             }
             // ── Yanıt meta verisi (2026-10-04) — her yanıtta, ucuz (başlık + en çok 4 KB meta koklaması) ──
             String contentType = resp.headers().firstValue("content-type").orElse(null);
@@ -229,6 +224,49 @@ public class KeywordCheckerService {
             log.debug("Keyword check failed for {}: {}", url, e.getMessage());
         }
         return result;
+    }
+
+    /**
+     * Eşleşmenin çevresinden (±50 karakter) okunur alıntı — konum {@code hay} (aranan metin) üzerinden bulunur, alıntı
+     * {@code body}'den (özgün metin) kesilir.
+     *
+     * <p>CHECKS-3 (2026-10-22): büyük/küçük harf duyarsız aramada {@code hay = body.toLowerCase(ROOT)}; "İ" (U+0130)
+     * küçültülünce İKİ karakter olur ("i̇"), yani {@code hay} {@code body}'den uzun olabilir. Eskiden {@code hay}'deki
+     * konum doğrudan {@code body}'de kullanılıyordu: her "İ" alıntıyı sağa kaydırıyordu (anahtar kelimesiz alıntı) ve
+     * eşleşmeden önce yeterince "İ" varsa başlangıç sondan büyük → {@code StringIndexOutOfBoundsException} → kontrol
+     * "hata" (anahtar kelime sayfada varken yanlış KEYWORD alarmı). Alıntı artık hiçbir koşulda kontrolü düşürmez.
+     */
+    static String snippet(String body, String hay, int hayIdx, int hayLen) {
+        if (body == null || hay == null || hayIdx < 0) return "";
+        int start = hayIdx;
+        int end = hayIdx + Math.max(0, hayLen);
+        if (hay.length() != body.length()) {
+            start = toBodyIndex(body, hayIdx);
+            end = toBodyIndex(body, hayIdx + Math.max(0, hayLen));
+        }
+        int s = Math.max(0, Math.min(start, body.length()) - 50);
+        int e = Math.min(body.length(), Math.max(end, start) + 50);
+        if (s > e) s = e;
+        String snip = body.substring(s, e).replaceAll("\\s+", " ").trim();
+        return snip.length() > 200 ? snip.substring(0, 200) : snip;
+    }
+
+    /**
+     * {@code body.toLowerCase(Locale.ROOT)} içindeki konumu {@code body} konumuna çevirir. ROOT küçültmesinde uzunluğu
+     * değiştiren tek karakter U+0130'dur (→ 2 karakter); geri kalan kod noktaları kendi karakter sayısını korur. Tek
+     * doğrusal geçiş, ara nesne yok.
+     */
+    static int toBodyIndex(String body, int hayIdx) {
+        int lowered = 0;
+        int i = 0;
+        int n = body.length();
+        while (i < n && lowered < hayIdx) {
+            int cp = body.codePointAt(i);
+            int w = Character.charCount(cp);
+            lowered += cp == 0x0130 ? 2 : Character.charCount(Character.toLowerCase(cp));
+            i += w;
+        }
+        return i;
     }
 
     /** İstek tamamlanmadı → neden + ayrıntı + takıldığı URL (yönlendirme ortasında düştüyse o hop'un adresi). */

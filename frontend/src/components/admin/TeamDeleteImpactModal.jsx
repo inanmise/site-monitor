@@ -11,7 +11,20 @@ import { Button } from '@/components/shadcn/button'
 import { Card, CardTitle } from '@/components/shadcn/card'
 import { Label } from '@/components/shadcn/label'
 
-const SECTIONS = ['domains', 'ug_domains', 'monitors', 'users', 'contacts', 'groups']   // ug_domains: UG olarak bağlı kayıtlar (2026-09-28)
+// ug_domains: UG olarak bağlı kayıtlar (2026-09-28). te_channels / te_templates / maintenance_windows (20.165.1, ADMIN-1):
+// takımın BELGELERİ — kanal raporları, şablon kütüphanesi, süren / yaklaşan bakım pencereleri silmeyi ENGELLER, "Taşı" taşır
+// (eskiden etki listesinde yoktu; silinen takımın kanal raporları saklama temizliğinde kalıcı siliniyordu). Eski sunucu
+// göndermezse bölüm çizilmez (bugünkü davranış).
+const SECTIONS = ['domains', 'ug_domains', 'monitors', 'users', 'contacts', 'groups', 'te_channels', 'te_templates', 'maintenance_windows']
+
+/** Taşıma özeti (2026-10-22, FE-8): sunucunun saydığı HER taşınan şey, sıfırlar yazılmaz — yalnız kanalı / şablonu / bakım
+ *  penceresi olan takımda "0 domain, 0 izleme, 0 kullanıcı" yanlış izlenimi kalkar. Bilinmeyen anahtar yok sayılır. */
+const MOVED_KEYS = ['domains', 'ug_domains', 'monitors', 'users', 'contacts', 'groups', 'te_channels', 'te_templates', 'maintenance_windows', 'open_alerts']
+export function movedSummary(data, t) {
+  const m = data || {}
+  const parts = MOVED_KEYS.filter((k) => Number(m[k]) > 0).map((k) => t(`team.mv.${k}`, Number(m[k])))
+  return parts.length ? t('team.movedList', parts.join(', ')) : t('team.movedNothing')
+}
 
 /**
  * Takım silme ETKİ önizlemesi (2026-09-20): silmeden önce "bu takıma bağlı N domain, M izleme, K kullanıcı,
@@ -44,8 +57,7 @@ export default function TeamDeleteImpactModal({ team, teams = [], onClose, onDel
       if (!empty) {
         const mv = await api.admin.teamMove(team.id, Number(target))
         if (!mv?.success) { toast.error(mv?.error || t('team.moveError')); return }
-        const m = mv.data || {}
-        toast.success(t('team.moved', m.domains ?? 0, m.monitors ?? 0, m.users ?? 0))
+        toast.success(movedSummary(mv.data, t))
       }
       if (deleteAfter) {
         const res = await api.admin.deleteTeam(team.id)
@@ -84,6 +96,10 @@ export default function TeamDeleteImpactModal({ team, teams = [], onClose, onDel
             <AlertBanner tone="warning">{t('team.impactWarn')}</AlertBanner>
           )}
           {Number(impact.open_alerts) > 0 && <p className="text-xs text-muted-foreground">{t('team.impactOpenAlertsMoved', impact.open_alerts)}</p>}
+          {/* Yönetici özeti takım ayarı / gönderim geçmişi takımla SİLİNİR — engellemez, yalnız bilgi (20.165.1, ADMIN-1) */}
+          {(impact.executive_summary?.settings || Number(impact.executive_summary?.reports) > 0) && (
+            <p className="text-xs text-muted-foreground" data-slot="team-impact-exec">{t('team.impactExecDeleted')}</p>
+          )}
           <div className="grid grid-cols-[repeat(auto-fit,minmax(min(220px,100%),1fr))] gap-2.5">
             {SECTIONS.map(k => {
               const s = impact[k] || { count: 0, items: [] }

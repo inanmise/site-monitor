@@ -10,6 +10,7 @@ import { useVisibleInterval } from '../hooks/useVisibleInterval.js'
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQuerySync.js'
 import { useServerPagination } from '../hooks/useServerPagination.js'
 import { navigateTo } from '../utils/navigate.js'
+import { usePermissions } from '../contexts/PermissionsProvider.jsx'
 import { formatDuration, formatIncidentTime } from '../utils/incidentMeta.js'
 import PageHeader from './ui/PageHeader.jsx'
 import StatusBlock from './ui/StatusBlock.jsx'
@@ -113,10 +114,14 @@ function ChartTip({ active, payload, keys, t }) {
   )
 }
 
-export default function StormStatusPage() {
+// canOpenSettings (2026-10-22, UIM-35 / K3): App verir (`systemRole === 'ADMIN'` — Ayarlar sekmesinin kapısı). Verilmezse
+// yalnız global yönetici (`scope.global_admin`, K1); bilinmiyorsa düğme gizli — ADMIN olmayan "Erişim yok"a düşüyordu.
+export default function StormStatusPage({ canOpenSettings }) {
   const t = useT()
   const locale = useDateLocale()
   const phone = useIsMobile()
+  const { scope } = usePermissions()
+  const showSettings = typeof canOpenSettings === 'boolean' ? canOpenSettings : scope?.global_admin === true
   const [tab, setTab] = useState(() => (TABS.includes(readUrlParam('sf_tab', '')) ? readUrlParam('sf_tab', '') : 'status'))
   const [team, setTeam] = useState(() => readUrlParam('sf_team', ''))
   const [from, setFrom] = useState(() => (isDay(readUrlParam('sf_from', '')) ? readUrlParam('sf_from', '') : ''))
@@ -216,9 +221,11 @@ export default function StormStatusPage() {
       <PageHeader icon={CloudLightning} title={t('sf.title')} description={description} meta={meta}
         actions={
           <div className="flex flex-wrap items-center gap-2">
-            <Button type="button" variant="outline" size="sm" className="pointer-coarse:h-10" onClick={() => navigateTo('settings', { sec: 'storm' })}>
-              <Settings2 aria-hidden="true" />{t('sf.action.settings')}
-            </Button>
+            {showSettings && (
+              <Button type="button" variant="outline" size="sm" className="pointer-coarse:h-10" onClick={() => navigateTo('settings', { sec: 'storm' })}>
+                <Settings2 aria-hidden="true" />{t('sf.action.settings')}
+              </Button>
+            )}
             <Button type="button" variant="outline" size="sm" className="pointer-coarse:h-10" onClick={() => { loadStatus(true); if (tab === 'history') loadHistory(); if (tab === 'analytics') loadAnalytics() }}>
               <RefreshCw aria-hidden="true" />{t('sf.refresh')}
             </Button>

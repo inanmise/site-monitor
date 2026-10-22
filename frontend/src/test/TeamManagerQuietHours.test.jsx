@@ -48,26 +48,40 @@ describe('TeamManager — sessiz saatler', () => {
   }
 
   const save = (dlg) => fireEvent.click(within(dlg).getByRole('button', { name: 'Save' }))
+  /** Aynı çizimde ikinci kez düzenleme penceresi aç (render yok). */
+  async function openEdit2(name) {
+    pressMenuTrigger(screen.getByRole('button', { name: `${name} — Actions` }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Edit' }))
+    return screen.findByRole('dialog')
+  }
 
-  it('dokunulmamış form: gövde bugünküyle aynı — quiet_* anahtarı YOK', async () => {
+  // 20.165.1 (UIA-A11): düzenleme YALNIZ değişen alanları yollar — dokunulmamış form hiç istek atmaz (eskiden tam gövde
+  // gidiyor, pencere açıkken satırdan çevrilen haftalık anahtarı eski değere döndürüyordu).
+  it('dokunulmamış form: istek YOK, pencere kapanır; tek alan değişince gövde yalnız o alan (quiet_* yok)', async () => {
     const { dlg } = await openEdit('Payments')
     save(dlg)
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(api.admin.updateTeam).not.toHaveBeenCalled()
+
+    const again = await openEdit2('Payments')
+    fireEvent.change(within(again).getByLabelText('Description'), { target: { value: 'Ödeme ekibi' } })
+    save(again)
     await waitFor(() => expect(api.admin.updateTeam).toHaveBeenCalledTimes(1))
-    const body = api.admin.updateTeam.mock.calls[0][1]
-    expect(Object.keys(body).sort()).toEqual(['active', 'description', 'email', 'leader_id', 'manager_id', 'name',
-      'weekly_availability_enabled', 'weekly_reminder_enabled'])
+    expect(api.admin.updateTeam.mock.calls[0][1]).toEqual({ description: 'Ödeme ekibi' })
   })
 
-  it('kayıtlı pencere alanlara yüklenir; dokunulmadan kaydetmek de gövdeye quiet_* EKLEMEZ', async () => {
+  it('kayıtlı pencere alanlara yüklenir; başka alan değişince gövdeye quiet_* EKLENMEZ', async () => {
     const { dlg, section } = await openEdit('Nightly')
     expect(section.getByLabelText('Start')).toHaveValue('22:00')
     expect(section.getByLabelText('End')).toHaveValue('07:00')
     expect(section.getByRole('button', { name: 'Saturday' })).toHaveAttribute('data-state', 'off')
     expect(section.getByRole('button', { name: 'Monday' })).toHaveAttribute('data-state', 'on')
     expect(section.getByRole('button', { name: 'CRITICAL only' })).toHaveAttribute('aria-pressed', 'true')
+    fireEvent.change(within(dlg).getByLabelText('Description'), { target: { value: 'Gece' } })
     save(dlg)
     await waitFor(() => expect(api.admin.updateTeam).toHaveBeenCalledTimes(1))
     expect(api.admin.updateTeam.mock.calls[0][1]).not.toHaveProperty('quiet_start')
+    expect(api.admin.updateTeam.mock.calls[0][1]).not.toHaveProperty('weekly_reminder_enabled')
   })
 
   it('yalnız başlangıç girildi: hata BİTİŞ alanının altında, kayıt gitmez; düzeltilince normalize gövde gider', async () => {

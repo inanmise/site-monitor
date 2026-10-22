@@ -157,10 +157,11 @@ describe('UserEditor — düzenleme, değişiklik özeti, kapatma onayı', () =>
     expect(saveBtn()).not.toBeDisabled()
     fireEvent.click(saveBtn())
     await waitFor(() => expect(api.admin.updateUser).toHaveBeenCalled())
-    // KABLO SÖZLEŞMESİ: eski formun gövdesi, yalnız değişen alan farklı
+    // KABLO SÖZLEŞMESİ: eski formun gövdesi, yalnız değişen alan farklı — DEĞİŞMEYEN takım kümesi artık GİTMEZ (20.165.1,
+    // UIA-1: sunucu her gönderilen takımı kapsamda arıyordu; kapsam dışı takımı olan kullanıcı hiç kaydedilemiyordu)
     expect(api.admin.updateUser.mock.calls[0]).toEqual([7, {
       username: 'ALI', display_name: 'Ali Veli', email: 'ali@example.com', employee_id: '12345', system_role: 'USER',
-      team_ids: [3], team_id: 3, org_role: 'TECH', active: true, first_name: '', last_name: '', title: '', phone: '',
+      org_role: 'TECH', active: true, first_name: '', last_name: '', title: '', phone: '',
       department: '', company_level: '', mudurluk_name: '', manager_sicil: '',
     }])
     await waitFor(() => expect(onSaved).toHaveBeenCalled())
@@ -264,7 +265,10 @@ describe('UserEditor — korumalar', () => {
     fireEvent.change(screen.getByLabelText(/^(E-posta|Email)/), { target: { value: 'n@example.com' } })
     fireEvent.click(saveBtn())
     await waitFor(() => expect(api.admin.updateUser).toHaveBeenCalled())
-    expect(api.admin.updateUser.mock.calls[0][1]).toMatchObject({ team_ids: [9], team_id: 9 })
+    // Kendi takımına sabitlenen küme kayıtlıyla AYNI → takım anahtarları gitmez (20.165.1, UIA-1; sunucu TEAM_ADMIN'in
+    // üyelik değişikliğini zaten yok sayar)
+    expect(api.admin.updateUser.mock.calls[0][1]).not.toHaveProperty('team_ids')
+    expect(api.admin.updateUser.mock.calls[0][1]).not.toHaveProperty('team_id')
   })
 
   it('aktiflik bandı: pasife alınca sonuç uyarısı, pasifi aktifleştirince bilgi', () => {
@@ -379,5 +383,93 @@ describe('UserEditor — AD kilitleri, güvenlik eylemleri', () => {
     renderEditor({ user: LDAP_USER, globalAdmin: true, onOpenDirectory })
     fireEvent.click(dialog().querySelector('[data-slot="ued-ad-compare"]'))
     await waitFor(() => expect(onOpenDirectory).toHaveBeenCalledWith(expect.objectContaining({ id: 8 })))
+  })
+})
+
+// ── 20.165.1 bugfix (PKG-8a): kapsamlı müdür + yönetim kapsamı dışındaki takım (UIA-1 / UIA-13) ──────────────────────────
+describe('UserEditor — kapsamlı müdür, kapsam dışı takım', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    perms.set = new Set()
+    api.admin.updateUser.mockResolvedValue({ success: true })
+    api.teams.directory.mockResolvedValue({ success: true, data: [{ id: 77, name: 'Başka Müdürlük Takımı' }, ...TEAMS] })
+    api.getMe.mockResolvedValue({ success: true, username: 'mudur', manage_team_ids: [3, 4] })
+  })
+
+  // Yeniden taban (FE-6): değişiklik alanı telefon değil ünvan — sunucu kapsamlı yazarın telefonunu sessizce yok sayar
+  it('kapsam dışı takım ADIYLA görünür (asla #id), çıkarılamaz; seçici yalnız yönetilen takımları sunar; ünvan kaydı takımları göndermez', async () => {
+    renderEditor({ globalAdmin: false, user: { ...LOCAL, team_ids: [3, 77], team_id: 3 } })
+    openTab(/^(Takımlar|Teams)/)
+    const row = await waitFor(() => {
+      const r = dialog().querySelector('[data-slot="ued-team-row"][data-team-id="77"]')
+      if (!r || !r.textContent.includes('Başka Müdürlük Takımı')) throw new Error('ad yok')
+      return r
+    })
+    expect(dialog().textContent).not.toContain('#77')
+    await waitFor(() => expect(row.querySelector('[data-slot="ued-team-out-of-scope"]')).not.toBeNull())
+    expect(within(row).queryByRole('button', { name: /(çıkar|remove)/i })).toBeNull()
+    fireEvent.mouseDown(within(field('teams')).getByRole('combobox'))
+    const labels = [...document.querySelectorAll('[cmdk-item]')].map((o) => o.textContent)
+    expect(labels).toEqual(expect.arrayContaining(['Payments', 'Cards']))
+    expect(labels).not.toContain('Ops')
+    fireEvent.keyDown(document.activeElement, { key: 'Escape' })
+    openTab(/^(Profil|Profile)/)
+    fireEvent.change(screen.getByLabelText(/^(Ünvan|Title)/), { target: { value: 'Kıdemli Uzman' } })
+    fireEvent.click(saveBtn())
+    await waitFor(() => expect(api.admin.updateUser).toHaveBeenCalled())
+    const body = api.admin.updateUser.mock.calls[0][1]
+    expect(body.title).toBe('Kıdemli Uzman')
+    expect(body).not.toHaveProperty('team_ids')
+    expect(body).not.toHaveProperty('team_id')
+  })
+
+  it('FE-6: global olmayan yönetici düzenlemede telefonu ve müdür sicilini DEĞİŞTİREMEZ (sunucu yok sayar) — alan kilitli + açıklama', async () => {
+    renderEditor({ globalAdmin: false, user: { ...LOCAL, team_ids: [3], team_id: 3, manager_sicil: 'M100' } })
+    openTab(/^(Profil|Profile)/)
+    const phone = screen.getByLabelText(/^(Telefon|Phone)/)
+    const mgr = screen.getByLabelText(/^(Müdür|Manager)/)
+    expect(phone).toBeDisabled()
+    expect(mgr).toBeDisabled()
+    expect(mgr).toHaveValue('M100')
+    expect(document.body.textContent).toMatch(/(yalnız global yönetici görür ve değiştirir|Only a global administrator can see and change the phone number)/)
+    expect(document.body.textContent).toMatch(/(Müdür sicilini yalnız global yönetici|Only a global administrator can change the manager ID)/)
+    // Ünvan (gerçekten yazılan alan) açık
+    expect(screen.getByLabelText(/^(Ünvan|Title)/)).not.toBeDisabled()
+  })
+
+  it('FE-6: global yönetici telefonu ve müdür sicilini düzenler (bugünkü davranış)', async () => {
+    renderEditor({ globalAdmin: true, user: { ...LOCAL, team_ids: [3], team_id: 3 } })
+    openTab(/^(Profil|Profile)/)
+    expect(screen.getByLabelText(/^(Telefon|Phone)/)).not.toBeDisabled()
+    expect(screen.getByLabelText(/^(Müdür|Manager)/)).not.toBeDisabled()
+  })
+
+  it('takım adı hiçbir yerden okunamazsa "adı okunamayan takım" yazar, kimlik değil', async () => {
+    api.teams.directory.mockResolvedValue({ success: false })
+    renderEditor({ globalAdmin: false, user: { ...LOCAL, team_ids: [3, 77], team_id: 3 } })
+    openTab(/^(Takımlar|Teams)/)
+    await waitFor(() => expect(dialog().querySelector('[data-slot="ued-team-row"][data-team-id="77"]')).not.toBeNull())
+    expect(dialog().textContent).not.toContain('#77')
+    expect(dialog().querySelector('[data-team-id="77"]').textContent).toMatch(/Adı okunamayan takım|Team \(name unavailable\)/)
+  })
+
+  it('rol seçici: kapsamlı müdür USER / TEAM_ADMIN; global yönetici dört rol', async () => {
+    const { unmount } = renderEditor({ globalAdmin: false })
+    fireEvent.mouseDown(screen.getByLabelText(/^(Sistem Rolü|System Role)/))
+    expect((await screen.findAllByRole('option')).map((o) => o.textContent)).toEqual(['USER', 'TEAM_ADMIN'])
+    fireEvent.keyDown(document.activeElement, { key: 'Escape' })
+    unmount()
+    renderEditor({ globalAdmin: true })
+    fireEvent.mouseDown(screen.getByLabelText(/^(Sistem Rolü|System Role)/))
+    expect((await screen.findAllByRole('option')).map((o) => o.textContent)).toEqual(['USER', 'TEAM_ADMIN', 'AUDIT', 'ADMIN'])
+  })
+
+  it('UIA-A2 / A3: e-postasız hesabın org rolü temizlenebilir — e-posta hatası yok, gövdede org_role: ""', async () => {
+    renderEditor({ globalAdmin: true, user: { ...LOCAL, email: null, org_role: 'PO' } })
+    fireEvent.mouseDown(screen.getByLabelText(/^(Organizasyonel Rol|Organizational Role)/))
+    fireEvent.mouseDown([...document.querySelectorAll('[cmdk-item]')].find((o) => /Rol yok|No role/i.test(o.textContent)))
+    fireEvent.click(saveBtn())
+    await waitFor(() => expect(api.admin.updateUser).toHaveBeenCalled())
+    expect(api.admin.updateUser.mock.calls[0][1].org_role).toBe('')
   })
 })

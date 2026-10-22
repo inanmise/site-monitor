@@ -127,6 +127,9 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
   // Kullanıcı değişiklik geçmişi yalnız GLOBAL yönetici: sunucu kapsamlı müdüre 403 verir (requireNotScopedAdmin).
   const canSeeUserHistory = isAdmin && !!globalAdmin
   const isSelf = (u) => u?.username === currentUsername
+  // ADMIN / AUDIT hesabını YALNIZ global yönetici yönetir (20.165.1, UIA-13): sunucu `requireCanAdministerTarget` kapsamlı
+  // müdüre ve TEAM_ADMIN'e düzenle / parola sıfırla / sil için 403 verir — menüde bu satırlarda yok.
+  const elevatedTarget = (u) => !globalAdmin && (u?.system_role === 'ADMIN' || u?.system_role === 'AUDIT')
   const isAudit = systemRole === 'AUDIT'
   const canSeeAllTeams = isAdmin || isAudit   // takım filtresi yalnız bunlara görünür
   const { showConfirm } = useDialog()
@@ -407,13 +410,13 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
           <Button type="button" variant="ghost" data-user-open={u.id} onClick={() => setViewUser(u)}
             aria-label={t('a11y.openRow', nameOf(u))}
             className="h-auto justify-start rounded-none p-0 text-left text-[0.97em] font-bold text-foreground hover:bg-transparent hover:text-foreground focus-visible:ring-0 after:absolute after:inset-0 after:z-0 after:rounded-xl focus-visible:after:ring-[3px] focus-visible:after:ring-ring/50 dark:hover:bg-transparent">
-            <span className="min-w-0 truncate">{nameOf(u)}</span>
+            <span className="min-w-0 [overflow-wrap:anywhere]">{nameOf(u)}</span>
           </Button>
         ) : (
-          <strong className="max-w-[260px] truncate text-[0.95em]" title={nameOf(u)}>{nameOf(u)}</strong>
+          <strong className="max-w-[260px] text-[0.95em] [overflow-wrap:anywhere]">{nameOf(u)}</strong>
         )}
         <span className="flex min-w-0 flex-wrap items-center gap-x-1.5 font-mono text-[0.78em] text-muted-foreground">
-          <span className="truncate">{u.username}{u.employee_id ? ` · ${u.employee_id}` : ''}</span>
+          <span className="min-w-0 [overflow-wrap:anywhere]">{u.username}{u.employee_id ? ` · ${u.employee_id}` : ''}</span>
           {u.auth_source === 'LDAP' && (
             <Badge variant="outline" className="px-1 py-0 text-[0.85em] font-normal text-muted-foreground" title={t('usr.authSourceTitle')}>{t('usr.ldapBadge')}</Badge>
           )}
@@ -423,19 +426,20 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
             </span>
           )}
         </span>
-        {u.title && <span className="max-w-[260px] truncate text-[0.76em] text-muted-foreground" title={u.title}>{u.title}</span>}
+        {u.title && <span className="max-w-[260px] text-[0.76em] text-muted-foreground [overflow-wrap:anywhere]">{u.title}</span>}
       </div>
     </div>
   )
   const menuItems = (u) => (canManage ? [
-    { label: t('usr.edit'), icon: <Pencil size={14} />, onClick: () => openEdit(u) },
+    { label: t('usr.edit'), icon: <Pencil size={14} />, onClick: () => openEdit(u), hidden: elevatedTarget(u) },
     { label: t('hist.title'), icon: <History size={14} />, onClick: () => setHistFilter({ id: u.id, name: nameOf(u) }), hidden: !canSeeUserHistory },
-    { label: t('usr.autoResetBtn'), icon: <KeyRound size={14} />, onClick: () => setAutoResetModal(u) },
+    // Geçici parola LDAP hesabında YOK (20.165.1, UIA-A8): parolayı AD yönetir, sunucu `requireLocalForPassword` reddeder
+    { label: t('usr.autoResetBtn'), icon: <KeyRound size={14} />, onClick: () => setAutoResetModal(u), hidden: elevatedTarget(u) || u?.auth_source === 'LDAP' },
     { label: t('usr.unlock'), icon: <LockOpen size={14} />, onClick: () => unlock(u.id), hidden: !u.permanent_lock },
     { label: t('usr.roleUnlock'), icon: <LockOpen size={14} />, onClick: () => roleUnlock(u.id), hidden: !u.role_locked },
     { label: t('usr.orgRoleUnlock'), icon: <LockOpen size={14} />, onClick: () => orgRoleUnlock(u.id), hidden: !u.org_role_locked },
     { label: t('usr.teamUnlock'), icon: <LockOpen size={14} />, onClick: () => teamUnlock(u.id), hidden: !u.team_locked },
-    { label: t('usr.delete'), icon: <Trash2 size={14} />, danger: true, onClick: () => del(u.id), hidden: isSelf(u) || isLastActiveAdmin(u) },
+    { label: t('usr.delete'), icon: <Trash2 size={14} />, danger: true, onClick: () => del(u.id), hidden: isSelf(u) || isLastActiveAdmin(u) || elevatedTarget(u) },
   ] : [])
 
   // ── Özet kutucukları: yalnız mevcut uç (/admin/overview); tıklama VAR OLAN süzgeci uygular ──
@@ -673,7 +677,7 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
           viewerRole={systemRole} globalAdmin={globalAdmin} ownTeamId={ownTeamId} currentUsername={currentUsername}
           activeAdminCount={activeAdminCount}
           onClose={() => setModal(null)} onSaved={refresh} onChanged={refresh}
-          onOpenDirectory={isAdmin ? (u) => { setModal(null); setViewTab('directory'); setViewUser(u) } : undefined} />
+          onOpenDirectory={isAdmin && globalAdmin ? (u) => { setModal(null); setViewTab('directory'); setViewUser(u) } : undefined} />
       )}
 
       {globalAdmin && (
@@ -697,7 +701,7 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
         <UserDetailPanel user={users.find((u) => u.id === viewUser.id) || viewUser} teams={teams} isAdmin={isAdmin} globalAdmin={globalAdmin}
           initialTab={viewTab} onClose={() => { setViewUser(null); setViewTab('overview') }} onChanged={refresh}
           onUnlock={canManage ? { perm: unlock, role: roleUnlock, org: orgRoleUnlock, team: teamUnlock } : undefined}
-          onEdit={canManage ? () => { const u = viewUser; setViewUser(null); setViewTab('overview'); openEdit(u) } : undefined} />
+          onEdit={canManage && !elevatedTarget(viewUser) ? () => { const u = viewUser; setViewUser(null); setViewTab('overview'); openEdit(u) } : undefined} />
       )}
     </section>
   )

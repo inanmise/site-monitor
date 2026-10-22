@@ -1,4 +1,5 @@
 import { navigateTo } from '../../../utils/navigate.js'
+import { VALID_TABS } from '../../../utils/appRoutes.js'
 
 /**
  * Gürültü analizi — saf model yardımcıları (2026-10-01 yeniden tasarım). Bileşen bunları çizer; test burada kalır.
@@ -60,6 +61,24 @@ export function groupSuggestions(suggestions) {
 }
 
 /**
+ * "İzlemeyi aç" hedefi (2026-10-22, ALERTS-20). Sunucunun `monitor_type`'ı izleme TÜRÜDÜR, sekme değil: sertifika
+ * alarmlarında `cert` (VALID_TABS'ta yok → düğme hiçbir şey yapmıyordu), envanter erişilebilirliğinde (ACCESSIBILITY)
+ * `http` (HTTP izleme sayfasında o host yok). Eşleme:
+ *  - `cert` → Sertifika Panosu kartının penceresi (`dashboard` + `domain` + `open=cert`);
+ *  - ACCESSIBILITY → Erişilebilirlik (`uptime`) + `q`;
+ *  - geçerli bir izleme sekmesi → o sekme + `q`;
+ *  - hedef (alan adı) yok ya da tanınmayan tür → null (düğme çizilmez).
+ */
+export function noiseMonitorTarget({ monitorType, alertType, domain } = {}) {
+  const d = String(domain ?? '').trim()
+  if (!d) return null
+  if (String(alertType || '') === 'ACCESSIBILITY') return { tab: 'uptime', params: { q: d } }
+  if (monitorType === 'cert') return { tab: 'dashboard', params: { domain: d, open: 'cert' } }
+  if (monitorType && VALID_TABS.has(monitorType) && monitorType !== 'alerthistory') return { tab: monitorType, params: { q: d } }
+  return null
+}
+
+/**
  * Öneri eylemini uygular. Sunucunun {@code action: {kind, tab, params}} ipucu:
  *  - open_monitor    → izleme türü sekmesi (`tab` = http/ping/…; bilinmiyorsa alerthistory) + `q` araması
  *  - open_alerts     → Alarm Geçmişi süzgeci: aynı sayfadaysak `onPickDomain` (URL/liste güncellenir), yoksa sekme geçişi
@@ -88,11 +107,18 @@ export function runSuggestionAction(suggestion, { onPickDomain } = {}) {
       return { tab: 'maintenance', params: p }
     }
     case 'open_monitor': {
-      const tab = a.tab && a.tab !== 'alerthistory' ? a.tab : 'alerthistory'
+      // Sunucu sekmesi izleme türüdür ('cert' sekme değil) — noiseMonitorTarget doğru sekmeye çevirir (ALERTS-20)
+      const dest = a.tab && a.tab !== 'alerthistory'
+        ? noiseMonitorTarget({ monitorType: a.tab, alertType: suggestion?.type, domain: target }) : null
+      if (dest) {
+        const p = { ...params, ...dest.params }
+        navigateTo(dest.tab, p)
+        return { tab: dest.tab, params: p }
+      }
       const p = target ? { q: target, ...params } : params
-      if (tab === 'alerthistory' && onPickDomain && target) { onPickDomain(target); return { tab, params: p, local: true } }
-      navigateTo(tab, p)
-      return { tab, params: p }
+      if (onPickDomain && target) { onPickDomain(target); return { tab: 'alerthistory', params: p, local: true } }
+      navigateTo('alerthistory', p)
+      return { tab: 'alerthistory', params: p }
     }
     default: {
       const p = target ? { q: target, ...params } : params

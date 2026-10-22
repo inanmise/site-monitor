@@ -24,6 +24,43 @@ public interface PageMonitorRepository extends JpaRepository<PageMonitor, Long> 
 
     /** Aynı domain için AKTİF sayfa izlemeleri — karışık içerik satırı bunların sonucundan beslenir. */
     java.util.List<PageMonitor> findByUrlContainingIgnoreCaseAndActiveTrue(String domain);
+
+    /**
+     * Host'u TAM OLARAK bu alan adı olan aktif sayfa izlemeleri (DATA-9, 2026-10-22). {@code LIKE %domain%} yalnız ön
+     * süzgeçtir: {@code example.com} araması {@code https://www.example.com/}'u, {@code bank.com} araması
+     * {@code internetbank.com.tr}'yi de buluyordu — sertifika sağlığının "karışık içerik" satırı BAŞKA bir host'un (çoğu
+     * kez başka takımın) sayfasından besleniyordu. Eşleşme {@code URI.getHost()} ile, büyük/küçük harf duyarsız, sondaki
+     * nokta yok sayılır; ayrıştırılamayan URL eşleşmez.
+     */
+    default java.util.List<PageMonitor> findActiveForHost(String domain) {
+        if (domain == null || domain.isBlank()) return List.of();
+        java.util.List<PageMonitor> out = new java.util.ArrayList<>();
+        for (PageMonitor m : findByUrlContainingIgnoreCaseAndActiveTrue(domain.trim())) {
+            if (m != null && urlHostMatches(m.getUrl(), domain)) out.add(m);
+        }
+        return out;
+    }
+
+    /** {@link #findActiveForHost} boş değil mi — sağlık listesinin "sayfa izlemesi var" bayrağı için. */
+    default boolean existsActiveForHost(String domain) {
+        return !findActiveForHost(domain).isEmpty();
+    }
+
+    /** URL'nin host'u {@code domain} mi (büyük/küçük harf duyarsız, sondaki nokta yok sayılır). */
+    static boolean urlHostMatches(String url, String domain) {
+        if (url == null || domain == null) return false;
+        String host;
+        try {
+            host = java.net.URI.create(url.trim()).getHost();
+        } catch (RuntimeException e) {
+            return false;
+        }
+        if (host == null) return false;
+        String a = host.endsWith(".") ? host.substring(0, host.length() - 1) : host;
+        String d = domain.trim();
+        if (d.endsWith(".")) d = d.substring(0, d.length() - 1);
+        return a.equalsIgnoreCase(d);
+    }
     List<PageMonitor> findAllByOrderByNameAsc();
     /** Rehber & Notlar hedef yetkisi (MonitorTargetTeams). */
     List<PageMonitor> findByUrl(String url);

@@ -157,6 +157,8 @@ public class ManualCertificateController {
         }
         // Girdi başına SSL sekmesiyle AYNI biçimli çevrim-dışı sonuç (2026-10-07): İnceleme adımı zinciri ağ sertifikasının
         // zincir görünümüyle çizer. Ağa çıkmaz, yazmaz.
+        // Eşleşmeler yalnız çağıranın görebildiği kayıtlar + kayıt başına can_write (UIM-24 / K6, 2026-10-22)
+        a.applyScope(matchScope(session));
         return ok(a.toJson(e -> evaluation.previewChain(
                 e.suggestedKey() != null ? e.suggestedKey() : e.cn(), e.cert, e.chain)));
     }
@@ -193,7 +195,7 @@ public class ManualCertificateController {
         prepareManualItem(item, key, errors, "");
         if (!errors.isEmpty()) return badRequest(errors, a);
 
-        if (entry.alreadyTracked() != null) return alreadyTracked(entry);
+        if (entry.alreadyTracked() != null) return alreadyTracked(entry, session);
         ResponseEntity<Map<String, Object>> clash = keyClash(key);
         if (clash != null) return clash;
 
@@ -267,7 +269,7 @@ public class ManualCertificateController {
         }
         if (!errors.isEmpty()) return badRequest(errors, a);
         for (int i = 0; i < items.size(); i++) {
-            if (entries.get(i).alreadyTracked() != null) return alreadyTracked(entries.get(i));
+            if (entries.get(i).alreadyTracked() != null) return alreadyTracked(entries.get(i), session);
             ResponseEntity<Map<String, Object>> clash = keyClash(invs.get(i).getDomain());
             if (clash != null) return clash;
         }
@@ -855,6 +857,37 @@ public class ManualCertificateController {
                         + "record). Choose a different name by adding the environment or purpose; if you are uploading the "
                         + "renewal of the same certificate, renew the existing record."));
         return ResponseEntity.status(409).body(body);
+    }
+
+    /** Analiz eşleşmelerinin görünürlüğü: okuma = {@link #canRead}; yazma = yenileme ucunun kapısı (canWriteInventory). */
+    private ManualCertificateAnalyzer.MatchScope matchScope(HttpSession session) {
+        return new ManualCertificateAnalyzer.MatchScope() {
+            @Override public boolean canRead(CertificateInventory inv) {
+                return inv != null && ManualCertificateController.this.canRead(session, inv);
+            }
+            @Override public boolean canWrite(CertificateInventory inv) {
+                return inv != null && SessionScope.canWriteInventory(session, inv.getTeamId());
+            }
+        };
+    }
+
+    private ResponseEntity<Map<String, Object>> alreadyTracked(ManualCertificateAnalyzer.Entry entry, HttpSession session) {
+        CertificateInventory owner = entry.alreadyTrackedInventory();
+        if (owner != null && !canRead(session, owner)) {
+            // Aynı sertifikayı GÖREMEDİĞİNİZ bir kayıt takip ediyor (UIM-24): ret kuralı aynı (bir sertifika iki kayıtla
+            // takip edilemez), ama başka takımın takip adı / kimliği yanıtta YOK.
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("success", false);
+            body.put("code", "ALREADY_TRACKED");
+            body.put("error", Msg.t("Bu sertifika, göremediğiniz bir kayıtla (başka bir takım) zaten takip ediliyor; bir "
+                            + "sertifika iki ayrı kayıtla takip edilemez. Yenilemeyi o kaydın takımından birine yaptırın ya da "
+                            + "takım yöneticinize başvurun.",
+                    "This certificate is already tracked by a record you can't see (another team); one certificate can't "
+                            + "be tracked by two records. Ask someone in that record's team, or your team manager, to upload "
+                            + "the renewal."));
+            return ResponseEntity.status(409).body(body);
+        }
+        return alreadyTracked(entry);
     }
 
     private static ResponseEntity<Map<String, Object>> alreadyTracked(ManualCertificateAnalyzer.Entry entry) {

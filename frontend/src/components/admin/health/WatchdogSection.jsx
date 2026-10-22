@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { historyBadge } from '../reportSendStatus.js'
 import {
   Activity, AlertOctagon, Bell, CheckCircle2, CircleDashed, HelpCircle, Mail, MinusCircle, Play, Radar, Send, Smartphone, Webhook,
 } from 'lucide-react'
@@ -27,6 +28,16 @@ const STATE_ICON = {
  * Test kancaları: `data-slot="watchdog-section"` (+ `data-status`), `watchdog-check` (+ `data-key`, `data-state`),
  * `watchdog-channels`, `watchdog-public-url`.
  */
+/** Test sonucundaki kanal durumları → "e-posta: atlandı · webhook: gönderilemedi · push: —" (arayüz dilinde). */
+function channelSummary(data, t) {
+  const word = (raw) => (raw ? historyBadge(raw, t).label : '—')
+  return [
+    `${t('wd.ch.email')}: ${word(data?.email)}`,
+    `${t('wd.ch.webhook')}: ${word(data?.webhook)}`,
+    `${t('wd.ch.push')}: ${word(data?.push)}`,
+  ].join(' · ')
+}
+
 export default function WatchdogSection({ t, data, error, canAct, globalAdmin, onChanged }) {
   const toast = useToast()
   const [busy, setBusy] = useState(null)   // 'eval' | 'test'
@@ -60,7 +71,9 @@ export default function WatchdogSection({ t, data, error, canAct, globalAdmin, o
         const o = res.data?.outcome
         if (o === 'DELIVERED') toast.success(t('wd.testDelivered'))
         else if (o === 'NO_CHANNEL') toast.error(t('wd.testNoChannel'))
-        else toast.error(t('wd.testFailed', res.data?.email || '—'))
+        // UIA-D9 (20.165.1): hangi kanalın ne olduğunu söyler (eskiden yalnız e-postanın HAM Türkçe durumu basılıyordu — ör.
+        // "SKIPPED: alıcı yok" — başarısız olan webhook / push adı geçmiyordu)
+        else toast.error(t('wd.testFailedChannels', channelSummary(res.data, t)))
       } else toast.error(res?.error || t('wd.actionError'))
     } catch (e) {
       toast.error(e?.message || t('wd.actionError'))

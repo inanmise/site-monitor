@@ -69,11 +69,13 @@ const STATUS = {
   error: 'border-destructive/40 bg-transparent text-destructive',
   // Pasif (izleme durduruldu, 2026-10-08): nötr — dikkat çekmez
   paused: 'border-dashed border-muted-foreground/40 bg-muted text-muted-foreground',
+  // Henüz değerlendirilmedi (manuel sertifika, 2026-10-22, UIM-49): nötr — bilinmeyen yeşil çizilmez
+  unknown: 'border-muted-foreground/40 bg-transparent text-muted-foreground',
 }
 
 export function CertStatusBadge({ tone, label }) {
   return (
-    <Badge variant={tone === 'error' || tone === 'paused' ? 'outline' : 'secondary'} data-slot="cert-status" data-status={tone}
+    <Badge variant={tone === 'error' || tone === 'paused' || tone === 'unknown' ? 'outline' : 'secondary'} data-slot="cert-status" data-status={tone}
       className={cn('gap-1.5 px-2.5 py-[3px] text-[11px] font-bold tracking-[.03em]', STATUS[tone] ?? STATUS.valid)}>
       {tone === 'paused'
         ? <CirclePause aria-hidden="true" className="size-3 shrink-0" />

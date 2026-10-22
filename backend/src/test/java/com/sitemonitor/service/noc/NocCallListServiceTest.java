@@ -93,6 +93,16 @@ class NocCallListServiceTest {
     }
 
     @Test
+    @DisplayName("L-N4: üyelik hatası sayısal kullanıcı kimliği TAŞIMAZ (opak kimlik kuralı) — kişi adıyla ya da genel cümleyle söylenir")
+    void membershipErrorHasNoNumericId() {
+        assertThatThrownBy(() -> svc.replace(TEAM, List.of(10L, 13L), "po"))
+                .hasMessageContaining("Kişi D (başka takım)").hasMessageNotContaining(": 13").hasMessageNotContaining(" 13");
+        assertThatThrownBy(() -> svc.replace(TEAM, List.of(987654L), "po"))
+                .hasMessageContaining("aktif üyesi değil").hasMessageNotContaining("987654");
+        assertThat(svc.teamNames(List.of(TEAM, 404L))).isEmpty();   // findAllById taklit edilmedi → boş, hata yok
+    }
+
+    @Test
     @DisplayName("e-posta: arama listesi SIRAYLA, telefon DAHİL; takımdan ayrılan kişi atlanır")
     void forMailOrdered() {
         when(callRepo.findByTeamIdOrderByPositionAsc(TEAM)).thenReturn(List.of(entry(12, 0), entry(13, 1), entry(10, 2)));

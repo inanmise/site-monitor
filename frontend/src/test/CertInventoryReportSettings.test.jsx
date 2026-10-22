@@ -126,12 +126,68 @@ describe('CertInventoryReportSettings', () => {
     expect(screen.getAllByRole('combobox')[0]).toHaveAttribute('data-slot', 'native-select')
     const table = await screen.findByTestId('cir-history')
     expect(table).toHaveAttribute('data-slot', 'table')
-    expect(screen.getByText('SENT')).toHaveAttribute('data-tone', 'success')
-    expect(screen.getByText('FAILED')).toHaveAttribute('data-tone', 'danger')
+    // Durum ham kod değil, arayüz dilinde etiket (20.165.1, UIA-C2 / C11): SENT → "Sent", FAILED → "Not delivered"
+    const hist = screen.getByTestId('cir-history')
+    expect(hist.querySelector('[data-status="sent"]')).toHaveAttribute('data-tone', 'success')
+    expect(hist.querySelector('[data-status="sent"]')).toHaveTextContent(/^(Sent|Gönderildi)$/)
+    expect(hist.querySelector('[data-status="failed"]')).toHaveAttribute('data-tone', 'danger')
+    expect(hist.querySelector('[data-status="failed"]')).toHaveTextContent(/^(Not delivered|Gönderilemedi)$/)
   })
 
   it('geçmiş listesi yüklenir (24 kayıt istenir)', async () => {
     render(<CertInventoryReportSettings />)
     await waitFor(() => expect(api.admin.getCertInvReportHistory).toHaveBeenCalledWith(24))
+  })
+})
+
+// 20.165.1 bugfix (UIA-C2 / C11): sonuç DURUMDAN okunur; kaydedilmemiş değişiklikte "Şimdi çalıştır" kapalı
+describe('CertInventoryReportSettings — gönderim sonucu', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    api.admin.getCertInvReportStatus.mockResolvedValue({ success: true, data: status({ recipients: 'ops@example.com' }) })
+    api.admin.getCertInvReportHistory.mockResolvedValue({ success: true, data: [] })
+  })
+  const runBtn = () => screen.getByRole('button', { name: /^(Send now|Şimdi gönder)$/ })
+
+  it('Şimdi çalıştır → FAILED: yeşil "gönderildi" YOK, tehlike bandı + ham SMTP metni', async () => {
+    api.admin.runCertInvReport.mockResolvedValue({ success: true, data: { status: 'FAILED: Connection refused', rows: 3, findings: 1 } })
+    render(<CertInventoryReportSettings />)
+    await waitFor(() => expect(runBtn()).toBeEnabled())
+    fireEvent.click(runBtn())
+    const box = await waitFor(() => { const el = document.querySelector('[data-slot="cir-result"]'); if (!el) throw new Error('yok'); return el })
+    expect(box).toHaveAttribute('data-outcome', 'failed')
+    expect(box.querySelector('[data-tone="danger"]')).not.toBeNull()
+    expect(box.querySelector('[data-slot="cir-result-raw"]')).toHaveTextContent('FAILED: Connection refused')
+    expect(screen.queryByText(/Report sent:|Rapor gönderildi:/)).toBeNull()
+  })
+
+  it('Şimdi çalıştır → SKIPPED (kanal kapalı) uyarı, SENT başarı', async () => {
+    api.admin.runCertInvReport.mockResolvedValueOnce({ success: true, data: { status: 'SKIPPED_DISABLED', rows: 3, findings: 1 } })
+    render(<CertInventoryReportSettings />)
+    await waitFor(() => expect(runBtn()).toBeEnabled())
+    fireEvent.click(runBtn())
+    await waitFor(() => expect(document.querySelector('[data-slot="cir-result"]')).toHaveAttribute('data-outcome', 'skipped'))
+    api.admin.runCertInvReport.mockResolvedValueOnce({ success: true, data: { status: 'SENT', rows: 3, findings: 1 } })
+    await waitFor(() => expect(runBtn()).toBeEnabled())
+    fireEvent.click(runBtn())
+    await waitFor(() => expect(document.querySelector('[data-slot="cir-result"]')).toHaveAttribute('data-outcome', 'sent'))
+  })
+
+  it('test gönderimi: success:false + message SKIPPED (K9) → "gönderildi" denmez', async () => {
+    api.admin.sendCertInvReportTest.mockResolvedValue({ success: false, message: 'SKIPPED_DISABLED', data: { status: 'SKIPPED_DISABLED', rows: 1, findings: 0 } })
+    render(<CertInventoryReportSettings />)
+    await screen.findByDisplayValue('pki@example.com')
+    fireEvent.change(screen.getByRole('textbox', { name: /Send test|Test gönder/i }), { target: { value: 'me@example.com' } })
+    fireEvent.click(screen.getByRole('button', { name: /^(Send test|Test gönder)$/ }))
+    await waitFor(() => expect(document.querySelector('[data-slot="cir-result"]')).toHaveAttribute('data-outcome', 'skipped'))
+    expect(screen.queryByText(/Test report sent to|adresine gönderildi/)).toBeNull()
+  })
+
+  it('kaydedilmemiş değişiklik varken "Şimdi çalıştır" KAPALI ve nedeni yazar', async () => {
+    render(<CertInventoryReportSettings />)
+    await waitFor(() => expect(runBtn()).toBeEnabled())
+    fireEvent.change(screen.getByDisplayValue('pki@example.com'), { target: { value: 'pki@example.com, yeni@example.com' } })
+    expect(runBtn()).toBeDisabled()
+    expect(screen.getByText(/Save your changes first|Önce değişiklikleri kaydedin/)).toBeInTheDocument()
   })
 })

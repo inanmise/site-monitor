@@ -364,6 +364,28 @@ class NocNotificationServiceTest {
     }
 
     @Test
+    @DisplayName("L-N2: fırtına çözüm postasının 'Takım' sütunu takım ADINI taşır (eskiden her satır '—')")
+    @SuppressWarnings("unchecked")
+    void stormRecoveryMailCarriesTeamName() {
+        when(callLists.teamNames(any())).thenAnswer(i -> {
+            Map<Long, String> m = new java.util.HashMap<>();
+            for (Object id : (java.util.Collection<Long>) i.getArgument(0)) m.put((Long) id, "Fırtına Takımı");
+            return m;
+        });
+        AlertEvent a = alert(61, "PING_DOWN", "CRITICAL", "h61.example.com");
+        AlertEvent b = alert(62, "PING_DOWN", "CRITICAL", "h62.example.com");
+        monitor(NocType.PING, 61, true, true, null);
+        monitor(NocType.PING, 62, true, true, null);
+        svc.onStormDispatched(storm(8), List.of(a, b), "Tüm izlemeler", "Ping Yanıtsız");
+        a.setResolvedAt("2026-01-10T21:40:00");
+        svc.onStormRecovered(storm(8), List.of(a), List.of(b));
+        ArgumentCaptor<String> html = ArgumentCaptor.forClass(String.class);
+        verify(email, atLeastOnce()).sendHtml(any(String[].class), any(), anyString(), html.capture(), anyString(), any(), anyBoolean(), any());
+        String resolveMail = html.getAllValues().get(html.getAllValues().size() - 1);
+        assertThat(resolveMail).contains("h61.example.com").contains("Fırtına Takımı");
+    }
+
+    @Test
     @DisplayName("fırtınada kapsanan üye yoksa NOC e-postası yok; kurtulanların açılışı gitmemişse ÇÖZÜLDÜ de yok")
     void stormWithoutEligibleMembers() {
         AlertEvent a = alert(51, "PING_DOWN", "CRITICAL", "h51.example.com");

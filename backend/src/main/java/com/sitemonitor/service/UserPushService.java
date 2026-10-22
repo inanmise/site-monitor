@@ -442,8 +442,8 @@ public class UserPushService {
                 if ("PENDING".equals(status)) queued++;
             } catch (Exception dup) {
                 // UNIQUE kısıt yarışta da son sözü söyler: aynı olayın aynı fazı aynı kişiye
-                // kod hatasında bile iki kez yazılamaz. İhlal = zaten var → sessizce geç.
-                log.debug("user-push dedupe (unique): event={} key={}", event.getId(), dedupeKey);
+                // kod hatasında bile iki kez yazılamaz. İhlal = zaten var → sessizce geç; başka hata WARN (ALERTS-12).
+                logRowWriteFailure("olay #" + event.getId(), d, dup);
             }
         }
         if (queued > 0) {
@@ -769,7 +769,8 @@ public class UserPushService {
         return switch (monitorType) {
             case "DOMAIN" -> List.of("domain");
             case "SCRIPTED" -> List.of("scripted");
-            case "CERTIFICATE" -> List.of("cert");
+            // TLS notu düşüşü "CERT" türüyle gelir (TlsGradeDropNotifier) — sertifika ailesidir (L-P1)
+            case "CERTIFICATE", "CERT" -> List.of("cert");
             default -> null;
         };
     }
@@ -781,6 +782,8 @@ public class UserPushService {
     public Map<String, Object> enqueueTeamNoticeLocalized(Long teamId, String trigger, String alertLevel, String monitorType,
                                                           String monitorName, LocalizedText message, String dedupeKey,
                                                           java.util.Set<String> excludeUsernames) {
+        // Anahtar kolona SIĞDIRILIR (ALERTS-12): yazım ve "zaten var" araması aynı değeri kullanır.
+        dedupeKey = UserPushDelivery.fitDedupeKey(dedupeKey);
         java.util.Set<String> excluded = new java.util.HashSet<>();
         List<String> excludedNames = new ArrayList<>();
         for (String u : excludeUsernames == null ? java.util.Set.<String>of() : excludeUsernames) {
@@ -896,13 +899,39 @@ public class UserPushService {
                 deliveryRepo.save(d);
             }
             return true;
-        } catch (org.springframework.dao.DataIntegrityViolationException dup) {
-            log.debug("user-push: aynı bildirim satırı zaten var ({} / {}) — ikinci kez yazılmadı", d.getDedupeKey(), d.getUsername());
-            return false;
         } catch (Exception e) {
-            log.warn("user-push satırı yazılamadı ({} / {}): {}", d.getDedupeKey(), d.getUsername(), e.toString());
+            logRowWriteFailure("olaysız", d, e);
             return false;
         }
+    }
+
+    /**
+     * Push satırı yazılamadı (2026-10-22, ALERTS-12): YALNIZ tekil ihlal "aynı satır zaten var"dır (DEBUG, sessiz erken çıkış).
+     * Başka her bütünlük hatası (PostgreSQL 22001 "value too long", NOT NULL …) eskiden aynı DEBUG satırıyla "zaten var"
+     * sayılıyordu — push kayboluyor, iz kalmıyordu. Artık WARN: anahtar, tetik ve kolonuna sığmayan alan(lar) yazılır; sicil
+     * YAZILMAZ (sunucu günlüğü yalnız adet / anahtar taşır).
+     */
+    void logRowWriteFailure(String where, UserPushDelivery d, Exception e) {
+        if (isUniqueViolation(e)) {
+            log.debug("user-push ({}): aynı bildirim satırı zaten var (anahtar {}) — ikinci kez yazılmadı", where,
+                    d == null ? null : d.getDedupeKey());
+            return;
+        }
+        java.util.List<String> over = d == null ? List.of() : d.overlongColumns();
+        log.warn("user-push satırı YAZILAMADI ({}; anahtar {}, tetik {}){} — push kuyruğa girmedi: {}", where,
+                d == null ? null : d.getDedupeKey(), d == null ? null : d.getTrigger(),
+                over.isEmpty() ? "" : " — kolona sığmayan: " + String.join(", ", over), e.toString());
+    }
+
+    /** Tekil (unique) ihlal mi — SQLSTATE 23505 (PostgreSQL ve H2) ya da Spring {@code DuplicateKeyException}. */
+    static boolean isUniqueViolation(Throwable t) {
+        Throwable c = t;
+        for (int causeDepth = 0; c != null && causeDepth < com.sitemonitor.util.CauseChain.MAX_DEPTH; causeDepth++, c = c.getCause()) {
+            if (c instanceof org.springframework.dao.DuplicateKeyException) return true;
+            if (c instanceof java.sql.SQLException se && "23505".equals(se.getSQLState())) return true;
+            if (c instanceof org.hibernate.exception.ConstraintViolationException cv && "23505".equals(cv.getSQLState())) return true;
+        }
+        return false;
     }
 
     // ── Fırtına push'u (2026-09-28) ────────────────────────────────────────────────────────
@@ -956,7 +985,7 @@ public class UserPushService {
             if (stormId == null || teamId == null) { out.put("reason", "SKIPPED_NO_TEAM"); return out; }
             boolean resolve = "RESOLVE".equals(stormTrigger);
             String trigger = resolve ? "STORM_RESOLVED" : "STORM";
-            String dedupeKey = stormDedupeKey(stormId, stormTrigger);
+            String dedupeKey = UserPushDelivery.fitDedupeKey(stormDedupeKey(stormId, stormTrigger));
             List<String> prior = resolve ? priorStormRecipients(stormId, teamId) : List.of();
             if (resolve && legacyStormId != null) {
                 List<String> merged = new ArrayList<>(prior);
@@ -1148,6 +1177,7 @@ public class UserPushService {
     /** {@link #enqueueDirect} — iki dilli metinle (kişinin push diline göre, 2026-10-04). */
     public Map<String, Object> enqueueDirectLocalized(List<DirectRecipient> recipients, Long teamId, String trigger, String alertLevel,
                                                       String monitorType, String monitorName, LocalizedText message, String dedupeKey) {
+        dedupeKey = UserPushDelivery.fitDedupeKey(dedupeKey);   // ALERTS-12: yazım ve arama aynı (sığdırılmış) anahtarla
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("queued", 0); out.put("skipped", 0); out.put("recipients", List.of()); out.put("queued_usernames", List.of());
         out.put("same_person", Map.of());
@@ -1816,7 +1846,8 @@ public class UserPushService {
         String body;
         try {
             Map<String, Object> payload = new LinkedHashMap<>();   // alan SIRASI API sözleşmesine sadık
-            payload.put("title", first.getTitle() == null ? titleSetting() : first.getTitle());
+            // Kanal ISO-8859-9 (PushText): alarm hattının başlığı da süzülür (L-P3) — yönetici başlığındaki "—" telefonda "?" oluyordu
+            payload.put("title", PushText.pushSafe(first.getTitle() == null ? titleSetting() : first.getTitle()));
             payload.put("message", first.getMessage());
             payload.put("pipeline", appSettings.getString("site.monitor.userpush.pipeline", ""));
             payload.put("userIds", userIds);
@@ -2252,7 +2283,7 @@ public class UserPushService {
                 try {
                     deliveryRepo.save(d);
                 } catch (Exception dup) {
-                    log.debug("user-push eskalasyon adımı dedupe (unique): olay={} kişi={}", event.getId(), contact.getId());
+                    logRowWriteFailure("eskalasyon adımı, olay #" + event.getId(), d, dup);
                     continue;
                 }
                 anyWritten = true;
@@ -2347,7 +2378,7 @@ public class UserPushService {
             try {
                 deliveryRepo.save(d);
             } catch (Exception dup) {
-                log.debug("user-push nöbetçi dedupe (unique): olay={} kişi={}", event.getId(), r.username());
+                logRowWriteFailure("nöbetçi, olay #" + event.getId(), d, dup);
                 return null;
             }
             if ("PENDING".equals(status)) worker.execute(this::drainOutbox);

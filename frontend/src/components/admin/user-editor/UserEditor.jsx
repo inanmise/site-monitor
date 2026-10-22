@@ -18,7 +18,7 @@ import UserEditorSecurity from './UserEditorSecurity.jsx'
 import { AccountSection, ProfileSection, TeamsSection } from './UserEditorSections.jsx'
 import {
   buildCreatePayload, buildPayload, diffChanges, editorGuards, errorCountsByTab, firstErrorTab, isAddFormTouched,
-  lockoutState, toForm, emptyForm, validateForm,
+  lockoutState, toForm, emptyForm, validateForm, rowTeamIds as rowTeamIdsOf,
 } from './userEditorModel.js'
 import { Badge } from '@/components/shadcn/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/shadcn/tabs'
@@ -116,12 +116,42 @@ export default function UserEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId])
 
-  const ctx = useMemo(() => ({ mode, viewerRole, ownTeamId }), [mode, viewerRole, ownTeamId])
   const baseline = useMemo(() => (isAdd ? emptyForm() : toForm(user)), [isAdd, user])
+  // Düzenlemede taban kayıt gövdesine de girer (değişmeyen takım kümesi / temizlenen org rolü / değişmeyen e-posta —
+  // userEditorModel.buildPayload / validateForm, 20.165.1 UIA-1 / A2 / A3).
+  const ctx = useMemo(() => ({ mode, viewerRole, ownTeamId, baseline: isAdd ? null : baseline }), [mode, viewerRole, ownTeamId, isAdd, baseline])
   const changes = useMemo(() => (isAdd || isView ? [] : diffChanges(baseline, form, ctx)), [isAdd, isView, baseline, form, ctx])
   const dirty = isAdd ? isAddFormTouched(form) : changes.length > 0
   const guards = useMemo(() => editorGuards(user, { mode, currentUsername, activeAdminCount }), [user, mode, currentUsername, activeAdminCount])
-  const teamMap = useMemo(() => Object.fromEntries((teams || []).map((tm) => [tm.id, tm.name])), [teams])
+  // Takım adları (20.165.1, UIA-1): `teams` görüntüleyenin GÖRÜŞ kapsamıdır (kapsamlı müdür) — kullanıcının kapsam dışı
+  // takımı eskiden çıplak `#id` çiziliyordu. Herkese açık takım dizini (yalnız ad) eksik adları tamamlar; o da okunamazsa
+  // "takım adı görünmüyor" yazılır, asla kimlik.
+  const [dirNames, setDirNames] = useState(null)
+  const missingTeamName = !isAdd && rowTeamIdsOf(user).some((id) => !(teams || []).some((tm) => String(tm.id) === String(id)))
+  useEffect(() => {
+    if (!missingTeamName) return undefined
+    let alive = true
+    Promise.resolve(api.teams?.directory?.()).then((r) => {
+      if (!alive || !r?.success || !Array.isArray(r.data)) return
+      setDirNames(Object.fromEntries(r.data.filter((x) => x?.id != null && x?.name).map((x) => [x.id, x.name])))
+    }).catch(() => {})
+    return () => { alive = false }
+  }, [missingTeamName])
+  // Kapsamlı müdürün YÖNETİM kapsamı (K2 `/me.manage_team_ids`): seçici yalnız onları sunar, kapsam dışı mevcut takım
+  // listeden çıkarılamaz (sunucu ekleme / çıkarmayı yönetim kapsamında ister). Alan yoksa (eski sunucu) bugünkü davranış.
+  const scopedAdmin = viewerRole === 'ADMIN' && !globalAdmin
+  const [manageIds, setManageIds] = useState(null)
+  useEffect(() => {
+    if (!scopedAdmin || isView) return undefined
+    let alive = true
+    Promise.resolve(api.getMe?.()).then((r) => {
+      const ids = r?.manage_team_ids ?? r?.data?.manage_team_ids
+      if (alive && Array.isArray(ids)) setManageIds(new Set(ids.map(String)))
+    }).catch(() => {})
+    return () => { alive = false }
+  }, [scopedAdmin, isView])
+  const teamMap = useMemo(() => ({ ...(dirNames || {}), ...Object.fromEntries((teams || []).map((tm) => [tm.id, tm.name])) }), [teams, dirNames])
+  const pickTeams = useMemo(() => (manageIds ? (teams || []).filter((tm) => manageIds.has(String(tm.id))) : teams), [teams, manageIds])
   const ldap = !isAdd && user?.auth_source === 'LDAP'
   const lockedKeys = useMemo(() => new Set(ldap
     ? (user?.locked_field_keys || []).filter((k) => !released.has(`field:${k}`)) : []), [ldap, user, released])
@@ -264,7 +294,7 @@ export default function UserEditor({
   const startEdit = onEdit || (canManage ? () => setMode('edit') : null)
   const ed = {
     mode, isAdd, isView, editable, form, set, fe, user, guards, viewerRole, isTeamAdmin: viewerRole === 'TEAM_ADMIN',
-    globalAdmin, ownTeamId, teams, teamMap, ldap, lockedKeys, released, busy,
+    globalAdmin, ownTeamId, teams: pickTeams, teamMap, manageIds, ldap, lockedKeys, released, busy,
     canManage, lock, releaseLock, releaseField, resetTour, resetResult,
     openAutoReset: () => setAutoResetOpen(true), openTerminate: () => setTerminateOpen(true),
     canTerminate: !isAdd && editable && globalAdmin && !guards.self && !!user?.username,

@@ -31,6 +31,8 @@ export default function SchedulerSection({
 }) {
   const { scheduler, lock, executor_pool: executorPool, pool, scan, scan_alarm: scanAlarm, db_ms: dbMs } = health || {}
   const isRunning = !!scheduler?.running
+  // UIA-D5 (20.165.1): kilit satırı okunamadıysa sunucu `{held:false, error}` döner — "Serbest" yeşili değil, bilinmiyor.
+  const lockUnknown = !!lock?.error
   const ex = executorStats(executorPool)
   const pl = poolStats(pool, dbMs)
   const dbMsTone = dbMs == null ? undefined : dbMs < 0 ? ERR_T : dbMs >= HEALTH_THRESHOLDS.dbMs.crit ? ERR_T : dbMs >= HEALTH_THRESHOLDS.dbMs.warn ? WARN_T : OK_T
@@ -68,9 +70,13 @@ export default function SchedulerSection({
         </SysCard>
 
         {/* Dağıtık kilit */}
-        <SysCard icon={lock?.held ? Lock : LockOpen} cardKey="lock" iconClass={lock?.held ? ERR_T : OK_T} title={t('sys.lockTitle')}
-          right={<ToneBadge tone={lock?.held ? 'danger' : 'success'} data-kind={lock?.held ? 'locked' : 'free'} className="font-semibold">{lock?.held ? t('sys.locked') : t('sys.free')}</ToneBadge>}>
-          {lock?.held ? (
+        <SysCard icon={lock?.held ? Lock : LockOpen} cardKey="lock" iconClass={lockUnknown ? 'text-muted-foreground' : lock?.held ? ERR_T : OK_T} title={t('sys.lockTitle')}
+          right={lockUnknown
+            ? <ToneBadge tone="muted" data-kind="unknown" className="font-semibold">{t('health.stUnknown')}</ToneBadge>
+            : <ToneBadge tone={lock?.held ? 'danger' : 'success'} data-kind={lock?.held ? 'locked' : 'free'} className="font-semibold">{lock?.held ? t('sys.locked') : t('sys.free')}</ToneBadge>}>
+          {lockUnknown ? (
+            <p className="text-[0.9em] text-muted-foreground" data-slot="lock-unavailable">{t('health.statsUnavailable')}</p>
+          ) : lock?.held ? (
             <>
               <KvList>
                 <dt>{t('sys.lockedBy')}</dt><dd className={monoSm}>{lock.locked_by}</dd>

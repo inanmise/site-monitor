@@ -134,9 +134,13 @@ export function nocEditTarget(type, id) {
   return { tab, params: { monitor: id, open: 'noc' } }
 }
 
-/** "7/24 Kapsamı'nda gör" hedefi — kapsam sayfası, tür + arama süzgeciyle (sekme `noc`, `n_type` / `n_q`). */
+/**
+ * "7/24 Kapsamı'nda gör" hedefi — kapsam sayfası, tür + arama süzgeciyle (sekme `noc`, `n_type` / `n_q`). `n_view:
+ * 'coverage'` (2026-10-22, UIM-30): 7/24 operatörünün varsayılan görünümü KONSOL — görünüm verilmezse bağlantı süzgeçsiz
+ * konsolu açıyordu. Konsolu göremeyen kullanıcıda NocPage anahtarı yok sayar.
+ */
 export function nocCoverageTarget(type, query) {
-  const params = {}
+  const params = { n_view: 'coverage' }
   if (type) params.n_type = type
   const q = query == null ? '' : String(query).trim()
   if (q) params.n_q = q

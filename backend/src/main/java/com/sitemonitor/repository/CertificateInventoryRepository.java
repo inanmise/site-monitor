@@ -41,9 +41,10 @@ public interface CertificateInventoryRepository extends JpaRepository<Certificat
      */
     @Query("SELECT LOWER(c.domain) FROM CertificateInventory c WHERE LOWER(c.domain) IN :keys AND c.deletedAt IS NULL")
     List<String> findExistingDomainsLower(@Param("keys") Collection<String> keys);
-    /** Aktif envanter (alan adı, SY takımı) çiftleri — alarm gürültü analizinin kapsam/takım eşlemesi (2026-10-01,
-     *  performans: tam entity yerine iki sütun). Sütunlar: {@code [domain, teamId]}. */
-    @Query("SELECT c.domain, c.teamId FROM CertificateInventory c WHERE c.active = true")
+    /** Aktif envanter (alan adı, SY takımı, UG takımı) — alarm gürültü analizinin kapsam/takım eşlemesi (2026-10-01,
+     *  performans: tam entity yerine dar sütunlar). Sütunlar: {@code [domain, teamId, ugTeamId]} — UG 2026-10-22'de eklendi
+     *  (ALERTS-3: UG takımı da alarmı görür, Alarm Geçmişi listesiyle aynı kural). Okuyan iki-sütunlu eski satıra da dayanıklı. */
+    @Query("SELECT c.domain, c.teamId, c.ugTeamId FROM CertificateInventory c WHERE c.active = true")
     List<Object[]> findActiveDomainTeams();
 
     /**

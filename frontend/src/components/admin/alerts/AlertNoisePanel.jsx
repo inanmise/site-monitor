@@ -25,7 +25,7 @@ import { Bar, BarChart, CartesianGrid, Cell, ChartContainer, ChartTooltip, Chart
 import { cn } from '@/lib/utils'
 import {
   NOISE_WINDOWS, PATTERN_VARIANT, SCORE_TONE, SEVERITY_VARIANT, buildTeamOptions, groupSuggestions, isNightHour,
-  runSuggestionAction, scoreBand, suggestionParams,
+  noiseMonitorTarget, runSuggestionAction, scoreBand, suggestionParams,
 } from './noiseModel.js'
 
 /**
@@ -99,7 +99,8 @@ function Section({ id, icon: Icon, title, description, children, className }) {
 /** Gürültü kaynağı satırı — sıra, hedef, tip, desen, takım, sayılar, eylemler. */
 function SourceRow({ r, rank, t, onPickDomain }) {
   const pattern = r.pattern || 'NORMAL'
-  const canOpenMonitor = !!r.monitor_type
+  // Hedef sekme (ALERTS-20): sertifika → pano kartı, ACCESSIBILITY → Erişilebilirlik; hedef yoksa düğme yok
+  const monitorTarget = noiseMonitorTarget({ monitorType: r.monitor_type, alertType: r.type, domain: r.domain })
   return (
     <Item variant="outline" size="sm" data-slot="noise-source" data-pattern={pattern} className="min-w-0 flex-col flex-nowrap items-stretch gap-2 sm:flex-row sm:items-start">
       <ItemContent className="min-w-0 gap-1">
@@ -125,9 +126,9 @@ function SourceRow({ r, rank, t, onPickDomain }) {
         <Button type="button" variant="outline" size="sm" className={cn(TOUCH_BTN, 'flex-1 sm:flex-none')} onClick={() => onPickDomain?.(r.domain)}>
           <ListFilter aria-hidden="true" />{t('noise.actShowAlerts')}
         </Button>
-        {canOpenMonitor && (
+        {monitorTarget && (
           <Button type="button" variant="ghost" size="sm" className={cn(TOUCH_BTN, 'flex-1 sm:flex-none')} data-slot="noise-open-monitor"
-            onClick={() => navigateTo(r.monitor_type, { q: r.domain })}>
+            data-target-tab={monitorTarget.tab} onClick={() => navigateTo(monitorTarget.tab, monitorTarget.params)}>
             <ExternalLink aria-hidden="true" />{t('noise.actOpenMonitor')}
           </Button>
         )}

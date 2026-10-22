@@ -88,7 +88,9 @@ export default function TechErrorReminderSettings({
 
   function set(key, value) {
     setForm((f) => ({ ...f, [key]: value }))
-    fe.clear(key)
+    // Takım seçicinin hatası `reminder_team_ids` alanında (sunucunun alan adı): `team_ids` silmek onu hiç kaldırmıyordu
+    // (20.165.1 bugfix, UIA-E6)
+    fe.clear(key === 'team_ids' ? 'reminder_team_ids' : key)
     if (key === 'max_mail_mb') fe.clear('mail_inline_mb')
   }
 

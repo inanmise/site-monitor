@@ -273,7 +273,7 @@ export default function WeeklyAvailLogsModal({ t, onClose }) {
                     onClick={() => setOpenId(r.id)}
                     className="h-auto min-h-14 w-full flex-col items-stretch gap-1 rounded-none px-3 py-2.5 text-left font-normal whitespace-normal">
                     <span className="flex min-w-0 items-center justify-between gap-2">
-                      <span className="min-w-0 truncate text-sm font-semibold">{r.team || '—'}</span>
+                      <span className="min-w-0 text-sm font-semibold [overflow-wrap:anywhere]">{r.team || '—'}</span>
                       <WaStatusBadge row={r} t={t} short />
                     </span>
                     <span className="min-w-0 truncate text-xs text-muted-foreground">{to[0] || '—'}{to.length > 1 && ` ${t('waLogs.more', to.length - 1)}`}</span>

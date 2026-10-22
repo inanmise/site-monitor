@@ -193,9 +193,9 @@ export default function SysMaintHistory({ refreshKey = 0 }) {
             <TableBody>
               {rows.map((w) => (
                 <TableRow key={w.id} data-slot="sysmaint-history-row" data-id={w.id} data-phase={w.phase}>
-                  <TableCell className="truncate" title={windowText(w)}>{windowText(w)}</TableCell>
+                  <TableCell className="whitespace-normal [overflow-wrap:anywhere]">{windowText(w)}</TableCell>
                   <TableCell><PhaseBadge phase={w.phase} /></TableCell>
-                  <TableCell className="truncate" title={w.created_by || ''}>{w.created_by || '—'}</TableCell>
+                  <TableCell className="whitespace-normal [overflow-wrap:anywhere]" data-slot="sysmaint-history-who">{w.created_by || '—'}</TableCell>
                   <TableCell><Counters w={w} /></TableCell>
                   <TableCell className="text-right">
                     <Button type="button" variant="ghost" size="sm" onClick={() => setOpenId(w.id)}

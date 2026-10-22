@@ -123,11 +123,24 @@ public class NocCallListService {
         List<Long> ordered = new ArrayList<>(new LinkedHashSet<>(userIds == null ? List.<Long>of() : userIds));
         ordered.removeIf(java.util.Objects::isNull);
         if (ordered.size() > MAX_ENTRIES)
-            throw new IllegalArgumentException("Arama listesinde en fazla " + MAX_ENTRIES + " kişi olabilir");
+            throw new IllegalArgumentException(com.sitemonitor.util.Msg.t(
+                    "Arama listesinde en fazla " + MAX_ENTRIES + " kişi olabilir.",
+                    "The call list can hold at most " + MAX_ENTRIES + " people."));
         Map<Long, AppUser> users = usersById(ordered);
         for (Long id : ordered) {
-            if (!isActiveMember(users.get(id), teamId))
-                throw new IllegalArgumentException("Kişi bu takımın aktif üyesi değil: " + id);
+            AppUser u = users.get(id);
+            if (!isActiveMember(u, teamId)) {
+                // İleti sayısal kullanıcı kimliği TAŞIMAZ (2026-10-22, L-N4 — opak kimlik kuralı: global olmayan yönetici sayısal
+                // kimliği göremez) ve ekran dilindedir; kişi biliniyorsa adıyla söylenir (seçiciden seçilmişti).
+                String who = u == null ? null : displayName(u);
+                throw new IllegalArgumentException(who == null || who.isBlank()
+                        ? com.sitemonitor.util.Msg.t(
+                                "Listedeki bir kişi bu takımın aktif üyesi değil; listeyi yenileyip yeniden seçin.",
+                                "A person in the list is not an active member of this team; reload the list and pick again.")
+                        : com.sitemonitor.util.Msg.t(
+                                who + " bu takımın aktif üyesi değil; arama listesine yalnız takımın aktif üyeleri eklenebilir.",
+                                who + " is not an active member of this team; only active team members can be on the call list."));
+            }
         }
         callRepo.deleteByTeamId(teamId);
         callRepo.flush();
@@ -155,6 +168,17 @@ public class NocCallListService {
         return teamRepo.findById(teamId)
                 .map(t -> userId.equals(t.getManagerId()) || userId.equals(t.getLeaderId()))
                 .orElse(false);
+    }
+
+    /** Takım kimliği → adı (tek sorgu; bilinmeyen kimlik haritada yok) — 7/24 fırtına çözüm postasının "Takım" sütunu. */
+    public Map<Long, String> teamNames(java.util.Collection<Long> teamIds) {
+        Map<Long, String> out = new HashMap<>();
+        if (teamIds == null || teamIds.isEmpty()) return out;
+        Set<Long> ids = new LinkedHashSet<>();
+        for (Long id : teamIds) if (id != null) ids.add(id);
+        if (ids.isEmpty()) return out;
+        for (Team t : teamRepo.findAllById(ids)) if (t.getId() != null) out.put(t.getId(), t.getName());
+        return out;
     }
 
     // ── E-posta için (telefon DAHİL) ─────────────────────────────────────────

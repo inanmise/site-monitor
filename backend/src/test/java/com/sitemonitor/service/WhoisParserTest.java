@@ -24,6 +24,16 @@ class WhoisParserTest {
     }
 
     @Test
+    @DisplayName("CHECKS-11: ay adı büyük/küçük harf duyarsız — 14-AUG-2025, 14-aug-2025, 2025-AUG-14, AUG 14 2025")
+    void parseDate_monthNameCaseInsensitive() {
+        assertThat(WhoisParser.parseDate("14-AUG-2025")).isEqualTo("2025-08-14");
+        assertThat(WhoisParser.parseDate("14-aug-2025")).isEqualTo("2025-08-14");
+        assertThat(WhoisParser.parseDate("2025-AUG-14")).isEqualTo("2025-08-14");
+        assertThat(WhoisParser.parseDate("AUG 14 2025")).isEqualTo("2025-08-14");
+        assertThat(WhoisParser.parseDate("14 AUGUST 2025")).isEqualTo("2025-08-14");
+    }
+
+    @Test
     @DisplayName("DefaultWhoisParser gTLD çıktısını ayrıştırır")
     @SuppressWarnings("unchecked")
     void defaultParser() {

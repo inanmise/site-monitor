@@ -13,6 +13,7 @@ import RateLimitBanner from '../diagnostics/RateLimitBanner.jsx'
 import { normaliseDomainInput, isValidDomain, readRecent, pushRecent, clearRecent, wasRateLimited } from '../diagnostics/diagModel.js'
 import { copyText } from '../../utils/copyText.js'
 import { navigateTo } from '../../utils/navigate.js'
+import { useGlobalAdmin } from './useGlobalAdmin.js'
 import { Button } from '@/components/shadcn/button'
 import { Input } from '@/components/shadcn/input'
 import { Textarea } from '@/components/shadcn/textarea'
@@ -27,8 +28,12 @@ import { cn } from '@/lib/utils'
  * kayıt varsa; özeti kopyala), 429 → geri sayımlı şerit, özet kartı ve zincir şeridi `DomainExpiryTrace`'te.
  * Telefonda tek sütun; her dokunma hedefi ≥ 40 px. Backend uçları değişmedi.
  */
-export default function DomainDiagnostics() {
+export default function DomainDiagnostics({ globalAdmin: globalAdminProp } = {}) {
   const t = useT()
+  // Proxy CA zinciri yakalama yalnız global yönetici (20.165.1, UIA-C7): varsayılan host `data.iana.org` envanterde değil →
+  // sunucu `requireAdminOrMonitoredDomain` kapsamlı müdüre her zaman 403 (+ ACCESS_DENIED); yakalanan PEM'in yapıştırılacağı
+  // `trust.ca-bundle-pem` de GLOBAL_ONLY. Prop yoksa scope.global_admin (K1).
+  const globalAdmin = useGlobalAdmin(globalAdminProp)
   const toast = useToast()
   const [domain, setDomain] = useState('')
   const [invalid, setInvalid] = useState(false)
@@ -190,12 +195,16 @@ export default function DomainDiagnostics() {
       <SettingsSection level={3}
         title={<span className="inline-flex items-center gap-2"><ShieldCheck size={18} aria-hidden="true" /> {t('dexp.caTitle')}</span>}
         description={t('dexp.caDesc')} contentClassName="flex flex-col gap-3">
-        <div>
-          <Button variant="secondary" onClick={captureCa} disabled={caLoading} aria-busy={caLoading || undefined}>
-            {caLoading ? <Spinner size={14} inline decorative /> : <ShieldCheck size={14} />}
-            {caLoading ? t('dexp.caCapturing') : t('dexp.caCapture')}
-          </Button>
-        </div>
+        {globalAdmin ? (
+          <div>
+            <Button variant="secondary" onClick={captureCa} disabled={caLoading} aria-busy={caLoading || undefined}>
+              {caLoading ? <Spinner size={14} inline decorative /> : <ShieldCheck size={14} />}
+              {caLoading ? t('dexp.caCapturing') : t('dexp.caCapture')}
+            </Button>
+          </div>
+        ) : (
+          <div data-slot="dexp-ca-global-only"><AlertBanner tone="info" className="mb-0">{t('dexp.caGlobalOnly')}</AlertBanner></div>
+        )}
 
         {ca && !ca.ok && (
           <AlertBanner tone="danger" className="mb-0">

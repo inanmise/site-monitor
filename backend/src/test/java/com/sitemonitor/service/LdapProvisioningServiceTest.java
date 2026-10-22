@@ -208,6 +208,7 @@ class LdapProvisioningServiceTest {
         AppUser existing = new AppUser();
         existing.setId(42L);
         existing.setUsername("POADMIN");
+        existing.setAuthSource("LDAP");   // LDAP hesabı (kaynağı boş satır yerel sayılır — AUTH-3)
         existing.setSystemRole("ADMIN");          // admin panelinden elle verilmiş
         existing.setRoleLocked(false);
         when(userRepo.findByUsername("POADMIN")).thenReturn(Optional.of(existing));
@@ -225,6 +226,7 @@ class LdapProvisioningServiceTest {
         AppUser existing = new AppUser();
         existing.setId(43L);
         existing.setUsername("POLOCKED");
+        existing.setAuthSource("LDAP");   // LDAP hesabı (kaynağı boş satır yerel sayılır — AUTH-3)
         existing.setSystemRole("ADMIN");
         existing.setRoleLocked(true);             // admin bilerek kilitledi
         when(userRepo.findByUsername("POLOCKED")).thenReturn(Optional.of(existing));
@@ -242,6 +244,7 @@ class LdapProvisioningServiceTest {
         AppUser existing = new AppUser();
         existing.setId(44L);
         existing.setUsername("POAUDIT");
+        existing.setAuthSource("LDAP");   // LDAP hesabı (kaynağı boş satır yerel sayılır — AUTH-3)
         existing.setSystemRole("AUDIT");
         existing.setRoleLocked(false);
         when(userRepo.findByUsername("POAUDIT")).thenReturn(Optional.of(existing));
@@ -364,6 +367,7 @@ class LdapProvisioningServiceTest {
         AppUser existing = new AppUser();
         existing.setId(77L);
         existing.setUsername("LOCKEDTEAMS");
+        existing.setAuthSource("LDAP");   // LDAP hesabı (kaynağı boş satır yerel sayılır — AUTH-3)
         existing.setTeamIds(new java.util.LinkedHashSet<>(List.of(5L, 9L)));   // admin elle verdi
         existing.setTeamId(5L);
         existing.setTeamLocked(true);
@@ -385,6 +389,7 @@ class LdapProvisioningServiceTest {
         AppUser existing = new AppUser();
         existing.setId(78L);
         existing.setUsername("UNLOCKEDTEAMS");
+        existing.setAuthSource("LDAP");   // LDAP hesabı (kaynağı boş satır yerel sayılır — AUTH-3)
         existing.setTeamIds(new java.util.LinkedHashSet<>(List.of(5L, 9L)));
         existing.setTeamId(5L);
         existing.setTeamLocked(false);
@@ -628,5 +633,28 @@ class LdapProvisioningServiceTest {
 
         assertThat(u.getOrgRole()).isEqualTo("MANAGER");   // EZİLMEDİ
         assertThat(u.getOrgRoleLocked()).isTrue();
+    }
+
+    @Test
+    @DisplayName("AUTH-3 (2026-10-22): GİRİŞ kipinde de yerel hesap (LOCAL ya da kaynağı boş) provizyonla DEVRALINMAZ — parola silinmez, rol / profil değişmez")
+    void loginModeNeverTouchesLocalAccount() {
+        for (String source : new String[] { "LOCAL", null }) {
+            AppUser local = new AppUser();
+            local.setId(1L);
+            local.setUsername("ADMIN");
+            local.setAuthSource(source);
+            local.setSystemRole("ADMIN");
+            local.setPasswordHash("$2a$10$sahte-hash");
+            local.setDisplayName("Yerel Yönetici");
+            when(userRepo.findByUsername("ADMIN")).thenReturn(Optional.of(local));
+
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.provisionFromAd("admin", "CN=admin,DC=corp",
+                            Map.of("displayName", "AD Kişisi", "mail", "ad@corp.com")))
+                    .as("kaynak=" + source).isInstanceOf(IllegalStateException.class);
+            assertThat(local.getPasswordHash()).isEqualTo("$2a$10$sahte-hash");
+            assertThat(local.getDisplayName()).isEqualTo("Yerel Yönetici");
+            assertThat(local.getEmail()).isNull();
+            org.mockito.Mockito.verify(userRepo, org.mockito.Mockito.never()).save(local);
+        }
     }
 }

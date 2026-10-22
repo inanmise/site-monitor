@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import { ArrowLeft, ArrowRight, CalendarDays, CheckCircle2, FilePlus2, Lock, Plus } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT, useLanguage } from '../../i18n/index.jsx'
@@ -8,6 +8,7 @@ import PageHeader from '../ui/PageHeader.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
 import WeekDatePicker from '../ui/WeekDatePicker.jsx'
 import TeamBadge from '../ui/TeamBadge.jsx'
+import { FieldError } from '../ui/Field.jsx'
 import { Spinner } from '../ui/Progress.jsx'
 import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
@@ -51,6 +52,9 @@ export default function WeeklyReportCreate({ initial, isAdmin, teams = [], teamI
   const [picked, setPicked] = useState('')
   const [existing, setExisting] = useState({ key: null, map: null })   // takım+yıl → { hafta: rapor id }
   const [busy, setBusy] = useState(false)
+  // Sunucunun takım alanı hatası (K8: 400 VALIDATION_FAILED field=team_id) — takım adımının altında; takım değişince silinir
+  const [teamError, setTeamError] = useState(null)
+  const teamErrorId = useId()
 
   const teamKey = team ? `${team}:${year}` : null
   useEffect(() => {
@@ -89,7 +93,11 @@ export default function WeeklyReportCreate({ initial, isAdmin, teams = [], teamI
   async function create() {
     if (!canCreate) return
     setBusy(true)
-    try { await onCreate({ teamId: team, year, week, carry }) } finally { setBusy(false) }
+    setTeamError(null)
+    try {
+      const r = await onCreate({ teamId: team, year, week, carry })
+      if (r?.field === 'team_id') setTeamError(r.error)
+    } finally { setBusy(false) }
   }
 
   const quick = (on, title, y, w) => (
@@ -178,15 +186,22 @@ export default function WeeklyReportCreate({ initial, isAdmin, teams = [], teamI
           </Step>
 
           <Step n={2} title={t('wr.team')} description={isAdmin ? t('wr.new.stepTeamAdmin') : t('wr.new.stepTeamOwn')}>
+            <div data-field="team_id" data-invalid={teamError ? true : undefined} className="flex min-w-0 flex-col gap-1.5">
             {isAdmin ? (
               <div className="w-full sm:max-w-xs">
-                <SearchableSelect value={team} onChange={(v) => setTeam(v)} ariaLabel={t('wr.team')}
+                <SearchableSelect value={team} onChange={(v) => { setTeam(v); setTeamError(null) }} ariaLabel={t('wr.team')}
                   placeholder={t('wr.selectTeam')} searchThreshold={2}
                   options={teams.map((tm) => ({ value: String(tm.id), label: tm.name }))} />
               </div>
             ) : (
-              <span className="inline-flex rounded-md border px-2 py-1.5 text-sm"><TeamBadge teamId={teamId} teamName={teamName} /></span>
+              <span className="inline-flex w-fit rounded-md border px-2 py-1.5 text-sm"><TeamBadge teamId={teamId} teamName={teamName} /></span>
             )}
+            {teamError && (
+              <div role="alert" data-slot="wr-create-team-error">
+                <FieldError id={teamErrorId}>{teamError}</FieldError>
+              </div>
+            )}
+            </div>
           </Step>
 
           <Step n={3} title={t('wr.carryTitle')} description={t('wr.new.stepStartDesc')}>

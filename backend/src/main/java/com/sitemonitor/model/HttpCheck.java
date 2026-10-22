@@ -40,4 +40,24 @@ public class HttpCheck {
 
     @Column(name = "checked_at")
     private String checkedAt;
+
+    /** {@code error} sütununun boyu (VARCHAR(255), ddl-auto varsayılanı). */
+    public static final int ERROR_MAX = 255;
+
+    /**
+     * DATA-14 (2026-10-22): hata metni sütuna SIĞDIRILIR. JSON doğrulama iletisi (önek + 300 karakterlik yol + iki
+     * kırpılmış değer) 255'i aşabiliyordu; PostgreSQL INSERT'i reddediyor, çağıranın try/catch'i satırı sessizce
+     * düşürüyordu — başarısız kontrol geçmişte ve özetlerde YOK, erişilebilirlik olduğundan iyi görünüyordu.
+     */
+    public void setError(String error) {
+        this.error = clip(error, ERROR_MAX);
+    }
+
+    /** {@code max} karaktere sığdırır ("…" ile biter; vekil çift ortadan bölünmez). */
+    public static String clip(String s, int max) {
+        if (s == null || s.length() <= max) return s;
+        int end = max - 1;
+        if (end > 0 && Character.isHighSurrogate(s.charAt(end - 1))) end--;
+        return s.substring(0, end) + "…";
+    }
 }

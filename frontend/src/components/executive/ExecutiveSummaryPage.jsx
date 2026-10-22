@@ -80,6 +80,9 @@ export default function ExecutiveSummaryPage({ globalAdmin = false }) {
   const seq = useRef(0)
   // Bağlantıdaki kapsam görülemediği için varsayılana dönüldü mü — bildirim ancak varsayılan kapsam YÜKLENİNCE gösterilir
   const fellBack = useRef(false)
+  // Bağlantıdaki ay geçersiz / aralık dışı (UIA-G7): varsayılan aya dönülür, sunucunun iletisi varsayılan ay yüklenince
+  // bir kez gösterilir. Eskiden ay seçicisi olmayan hata ekranında kilitleniyordu ("Tekrar dene" aynı 400'ü alıyordu).
+  const monthFellBack = useRef(null)
 
   const allowDelivery = state.canConfigure || state.canConfigureAny
   const activeView = allowDelivery ? view : VIEW_REPORT
@@ -107,6 +110,10 @@ export default function ExecutiveSummaryPage({ globalAdmin = false }) {
           fellBack.current = false
           toast.info(t('exec.scopeFallback'))
         }
+        if (monthFellBack.current) {
+          toast.info(monthFellBack.current, 8000)
+          monthFellBack.current = null
+        }
       } else {
         const status = res?.status ?? res?.errorInfo?.status ?? null
         // Bozuk takım bağlantısı (kesilmiş posta bağlantısı → 400 field=team) da aynı yoldan (inceleme 4): ilk açılışta kapsam
@@ -118,6 +125,12 @@ export default function ExecutiveSummaryPage({ globalAdmin = false }) {
           // ilgili değildir — geçerli takım düşürülmez, ay hatası gösterilir.
           fellBack.current = true
           setTeam(null)
+          return
+        }
+        const badMonthLink = status === 400 && (res?.field === 'month' || res?.fields?.month != null)
+        if (month != null && badMonthLink) {
+          monthFellBack.current = res?.error || t('exec.monthFallback')
+          setMonth(null)
           return
         }
         fellBack.current = false
@@ -151,6 +164,9 @@ export default function ExecutiveSummaryPage({ globalAdmin = false }) {
       if (!res?.success) {
         toast.error(res?.status === 403 ? t('exec.pdfForbidden') : t('exec.pdfFailed'))
       }
+    } catch (e) {
+      // Ağ kesintisi: eskiden yakalanmamış söz reddiydi, kullanıcı hiçbir ileti görmüyordu (UIA-8)
+      toast.error(e?.message || t('exec.pdfFailed'))
     } finally {
       setPdfBusy(false)
     }

@@ -96,7 +96,7 @@ export default function AuditDetailPanel({
 
   if (!row) return null
 
-  const { changes, detailObj, detailText } = parseDetail(row)
+  const { changes, snapshotObj, detailObj, detailText } = parseDetail(row)
   const outcomeKey = OUTCOME_KEYS[row.outcome]
   const label = eventLabel(row.event_type, t)
   const resName = resourceLabel(row)
@@ -235,6 +235,20 @@ export default function AuditDetailPanel({
           <DiffTable fieldLabel={t('audit.diffField')} fromLabel={t('audit.diffFrom')} toLabel={t('audit.diffTo')}
             className="w-full min-w-0"
             rows={changes.map(([field, change]) => [field, field, fmtValue(change?.from), fmtValue(change?.to)])} />
+        </Section>
+      )}
+
+      {/* ── Anlık görüntü: fark DEĞİL, olayın yazdığı değerler (20.165.1, UIA-A4) ── */}
+      {snapshotObj && (
+        <Section title={t('audit.sectionSnapshot')}>
+          <dl className={KV} data-slot="audit-snapshot">
+            {Object.entries(snapshotObj).map(([k, v]) => (
+              <div key={k} className="contents">
+                <dt className="font-mono text-xs">{k}</dt>
+                <dd className="font-mono text-xs break-words">{fmtValue(v)}</dd>
+              </div>
+            ))}
+          </dl>
         </Section>
       )}
 

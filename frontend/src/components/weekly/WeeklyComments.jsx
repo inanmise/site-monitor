@@ -31,6 +31,10 @@ export default function WeeklyComments({ reportId, canWrite, nonce = 0, classNam
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState(null)
+  // Okuma hatası (UIA-G9, 2026-10-22): başarısız okuma eskiden "Henüz yorum yok" çiziyordu — PO'nun iade notu varken ekip
+  // dizinin boş olduğunu sanıyordu. Artık "okunamadı" + Tekrar dene (yorum kutusu açık kalır).
+  const [loadFailed, setLoadFailed] = useState(false)
+  const [retryNonce, setRetryNonce] = useState(0)
   // Açık rapor (gönderim sürerken rapor değişirse yanıt YENİ raporun dizisine eklenmesin).
   const ridRef = useRef(reportId)
   ridRef.current = reportId
@@ -41,16 +45,18 @@ export default function WeeklyComments({ reportId, canWrite, nonce = 0, classNam
 
   useEffect(() => {
     let alive = true
-    setItems(null); setErr(null)
+    setItems(null); setErr(null); setLoadFailed(false)
     if (!reportId) return undefined
     ;(async () => {
       try {
         const r = await api.weeklyReports.comments(reportId)
-        if (alive) setItems(r?.success ? (r.data || []) : [])
-      } catch { if (alive) setItems([]) }
+        if (!alive) return
+        if (r?.success) setItems(r.data || [])
+        else { setItems([]); setLoadFailed(true) }
+      } catch { if (alive) { setItems([]); setLoadFailed(true) } }
     })()
     return () => { alive = false }
-  }, [reportId, nonce])
+  }, [reportId, nonce, retryNonce])
 
   async function send() {
     const v = text.trim()
@@ -71,12 +77,22 @@ export default function WeeklyComments({ reportId, canWrite, nonce = 0, classNam
       <div className="flex items-center gap-2 border-b px-4 py-3">
         <MessageSquare aria-hidden="true" className="size-4 text-muted-foreground" />
         <h3 className="text-sm font-semibold">{t('wr.cm.title')}</h3>
-        {items && <Badge variant="secondary" className="rounded-full px-2 py-px text-[.72em] font-bold text-muted-foreground tabular-nums">{list.length}</Badge>}
+        {items && !loadFailed && <Badge variant="secondary" className="rounded-full px-2 py-px text-[.72em] font-bold text-muted-foreground tabular-nums">{list.length}</Badge>}
       </div>
       <div className="flex min-w-0 flex-col px-4 py-3">
+      {/* Okuma hatası bandı (UIA-G9) okunamayan dizi YERİNE durur; okuma hatasından sonra gönderilen yorum listeye eklense
+          de bant KALIR (2026-10-22, FE-8) — eklenen tek yorum dizinin tamamı değildir. */}
+      {items != null && loadFailed && (
+        <div data-slot="wr-comments-load-failed" className={list.length > 0 ? 'mb-2' : undefined}>
+          <AlertBanner tone="danger" className="mb-0"
+            actions={<Button type="button" variant="secondary" size="sm" className="pointer-coarse:h-10" onClick={() => setRetryNonce((n) => n + 1)}>{t('wr.cm.retry')}</Button>}>
+            {t('wr.cm.loadFailed')}
+          </AlertBanner>
+        </div>
+      )}
       {items == null ? (
         <div className="px-0.5 py-1 text-[.84em] text-muted-foreground">…</div>
-      ) : list.length === 0 ? (
+      ) : loadFailed && list.length === 0 ? null : list.length === 0 ? (
         <div className="px-0.5 py-1 text-[.84em] text-muted-foreground">{t('wr.cm.empty')}</div>
       ) : (
         <ul className="flex max-h-[28rem] flex-col gap-2 overflow-y-auto">

@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertOctagon, AlertTriangle, BookOpenText, CalendarClock, Clock, Download, FileDown, FolderOpen, Hourglass, Layers,
   Link2Off, ListFilter, RefreshCw, ShieldCheck, Tag, Users,
@@ -29,6 +29,7 @@ import AdviceToolbar from './renewal/AdviceToolbar.jsx'
 import {
   CODES, NONE, SORT_KEYS, STAT_KEYS, facetOptions, filterAdvice, fingerprintCounts, isShared, joinList, parseList,
   sortAdvice, summarise, tagFacetOptions,
+  reconcilePlanOverrides,
 } from './renewal/renewalModel.js'
 import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
@@ -58,11 +59,14 @@ const GROUP_ICON = { critical: AlertOctagon, warning: AlertTriangle, info: Calen
  * API: `/api/renewal-advice` satırı kayıtlı planı taşır (`renewal_planned_at` / `_note`, 2026-10-09); bu oturumda
  * kaydedilen/kaldırılan plan onu ezer.
  */
-export default function RenewalAdvice({ onSelectDomain }) {
+export default function RenewalAdvice({ onSelectDomain, canPlanRow }) {
   const t = useT()
   const toast = useToast()
   const isMobile = useIsMobile()
   const canPlan = usePermissions().canEdit('inventory.crud')
+  // Satır başına plan kapısı (2026-10-22, UIM-11): sunucu `canManage` ister (yönetim kapsamı; üyelik / paylaşım yetmez).
+  // App verir (K2 `manage_team_ids`); verilmezse bugünkü kural (yalnız izin).
+  const rowPlannable = (a) => canPlan && (typeof canPlanRow !== 'function' || canPlanRow(a) !== false)
 
   const [advice, setAdvice] = useState([])
   const [loading, setLoading] = useState(true)
@@ -72,6 +76,7 @@ export default function RenewalAdvice({ onSelectDomain }) {
   const [diag, setDiag] = useState(null)       // { domain, port } → DiagnosticsModal
   const [planRow, setPlanRow] = useState(null) // RenewalPlanModal satırı
   const [plans, setPlans] = useState({})       // domain → { renewal_planned_at, renewal_planned_note } (bu oturum)
+  const planStampsRef = useRef({})             // domain → geçersiz kılmanın yazıldığı an (reconcilePlanOverrides)
 
   const [view, setView] = useState(() => { try { const v = localStorage.getItem('renewal-view'); return VIEWS.includes(v) ? v : 'list' } catch { return 'list' } })
   const switchView = (v) => { setView(v); try { localStorage.setItem('renewal-view', v) } catch { /* yoksay */ } }
@@ -98,7 +103,12 @@ export default function RenewalAdvice({ onSelectDomain }) {
     if (!initial) setRefreshing(true)
     return api.getRenewalAdvice()
       .then((res) => {
-        if (res?.success) { setAdvice(res.data || []); setLoadError(null); setAsOf(res.timestamp || new Date().toISOString()) }
+        if (res?.success) {
+          const rows = res.data || []
+          setAdvice(rows); setLoadError(null); setAsOf(res.timestamp || new Date().toISOString())
+          // Sunucu yakaladıysa yerel plan geçersiz kılması düşer (FE-8) — başkasının sonradan eklediği plan görünsün
+          setPlans((p) => reconcilePlanOverrides(p, rows, planStampsRef.current))
+        }
         else setLoadError(res?.error || t('renewal.loadError'))
       })
       .catch((e) => setLoadError(e?.message || t('renewal.loadError')))
@@ -304,7 +314,7 @@ export default function RenewalAdvice({ onSelectDomain }) {
 
       {view === 'table' && filtered.length > 0 && (
         <AdviceTable rows={pager.pageItems} t={t} codeLabel={codeLabel} fpCount={fpCount}
-          onOpen={openCert} onPlan={openPlan} onDiagnose={diagnose} onCopy={copyDomain} />
+          onOpen={openCert} onPlan={openPlan} canPlanRow={rowPlannable} onDiagnose={diagnose} onCopy={copyDomain} />
       )}
 
       {view === 'list' && filtered.length > 0 && (
@@ -324,7 +334,7 @@ export default function RenewalAdvice({ onSelectDomain }) {
                   </h3>
                 )}
                 <AdviceCard item={item} t={t} text={adviceText(item)} codeLabel={codeLabel(item.code)} shared={shared}
-                  plan={planOf(item)} onOpen={openCert} onPlan={openPlan} onDiagnose={diagnose} onCopy={copyDomain}
+                  plan={planOf(item)} onOpen={openCert} onPlan={openPlan && rowPlannable(item) ? openPlan : null} onDiagnose={diagnose} onCopy={copyDomain}
                   onFilterGroup={addTo(setGroups)} onFilterTag={addTo(setTags)} />
               </Fragment>
             )
@@ -338,8 +348,9 @@ export default function RenewalAdvice({ onSelectDomain }) {
       {diag && <DiagnosticsModal domain={diag.domain} port={diag.port} onClose={() => setDiag(null)} />}
       {planRow && (
         <RenewalPlanModal row={planRow} onClose={() => setPlanRow(null)}
-          onSaved={(data) => { setPlans((p) => ({ ...p, [planRow.domain]: data || { renewal_planned_at: planRow.renewal_planned_at } })); setPlanRow(null) }}
-          onCleared={() => { setPlans((p) => { const n = { ...p }; delete n[planRow.domain]; return n }); setPlanRow(null) }} />
+          onSaved={(data) => { planStampsRef.current[planRow.domain] = Date.now(); setPlans((p) => ({ ...p, [planRow.domain]: data || { renewal_planned_at: planRow.renewal_planned_at } })); setPlanRow(null) }}
+          // Kaldırma KAYDEDİLİR (null) — anahtar silinseydi planOf satırın bayat sunucu planına düşer, rozet geri gelirdi (UIM-16)
+          onCleared={() => { planStampsRef.current[planRow.domain] = Date.now(); setPlans((p) => ({ ...p, [planRow.domain]: null })); setPlanRow(null); load() }} />
       )}
     </div>
   )

@@ -164,13 +164,13 @@ describe('CertNotesTab', () => {
   })
 
   it('silme onay penceresiyle (useDialog → shadcn AlertDialog): Vazgeç → uç çağrılmaz; Sil → çağrılır ve liste tazelenir', async () => {
-    renderTab()
+    renderTab({ globalAdmin: true })   // başkasının notunu silme / geri yükleme yalnız global yönetici (UIM-12)
     await waitFor(() => expect(noteItems()).toHaveLength(4))
     fireEvent.click(screen.getByRole('button', { name: 'Delete note by Kişi A' }))
     fireEvent.click(within(await screen.findByRole('dialog', { name: 'Delete note' })).getByRole('button', { name: 'Cancel' }))
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Delete note' })).toBeNull())
     expect(api.admin.deleteNote).not.toHaveBeenCalled()
-    // Yönetici başkasının notunu da silebilir (kisi.b); silinmiş not "geri yükle" alır
+    // Global yönetici başkasının notunu da silebilir (kisi.b); silinmiş not "geri yükle" alır
     expect(screen.getAllByRole('button', { name: /^Delete note by Kişi B$/ })).toHaveLength(2)
     expect(screen.getByRole('button', { name: 'Restore note by Kişi A' })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Delete note by Kişi A' }))
@@ -219,6 +219,15 @@ describe('CertNotesTab', () => {
     expect(composer()).toBeNull()
     expect(screen.getByText(/belongs to another team \(Takım B\)/)).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /^(Edit|Delete|Restore) note by/ })).toBeNull()
+  })
+
+  it('takım yöneticisi (global değil): not ekler, kendi notunu siler; başkasının notunu silemez, geri yükleyemez (UIM-12)', async () => {
+    renderTab({ isAdmin: true, globalAdmin: false })
+    await waitFor(() => expect(noteItems()).toHaveLength(4))
+    expect(composer()).not.toBeNull()
+    expect(screen.getByRole('button', { name: 'Delete note by Kişi A' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Delete note by Kişi B$/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^Restore note by/ })).toBeNull()
   })
 
   it('yetkisiz kullanıcı (yönetici değil): yazma kartı yerine açıklama; kendi notunu yine SİLEBİLİR (yazar kuralı)', async () => {

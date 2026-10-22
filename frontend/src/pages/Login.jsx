@@ -5,9 +5,9 @@ import { useBranding, useAppVersion } from '../contexts/BrandingProvider.jsx'
 import BrandLogo from '../components/BrandLogo.jsx'
 import LoginHelpDialog from '../components/issues/report/LoginHelpDialog.jsx'
 import { ShieldAlert, ShieldCheck, Lock, Globe, Activity, Radio, Network, Server, Search, Gauge, Bell, BellRing, AlertTriangle, FileText, BarChart3, TrendingUp, Wrench, ScanSearch, FlaskConical, Zap, X, Info, Eye, EyeOff, AlertCircle, UserX, KeyRound, IdCard } from 'lucide-react'
-import { isAccountInactivePayload } from '../utils/accountInactive.js'
+import { isAccountInactivePayload, resetAccountInactiveSignal } from '../utils/accountInactive.js'
 import { isUsernamePrefixPayload, prefixesOf } from '../utils/usernamePrefix.js'
-import { isMaintenancePayload, lastWindow } from '../utils/systemMaintenance.js'
+import { isMaintenancePayload, lastWindow, resetMaintenanceSignal } from '../utils/systemMaintenance.js'
 import MaintenanceLoginCard from '../components/maintenance/MaintenanceLoginCard.jsx'
 // shadcn/ui (feature/shadcn-ui): giriş formu ve sorun bildirimi penceresi gerçek shadcn bileşenleri
 import { Button } from '@/components/shadcn/button'
@@ -199,7 +199,7 @@ export default function Login({ onLogin, sessionExpired = false, accountInactive
       const data = await api.login(username, password, rememberMe)
       if (data.success) {
         writeRemembered(rememberMe ? username : null)
-        onLogin(data)
+        completeLogin(data)
       } else if (isAccountInactivePayload(data)) {
         // 403 ACCOUNT_INACTIVE — sunucu bunu YALNIZ kimlik bilgisi doğruysa döner; yanlış parola genel mesajda kalır.
         setErrorCode('ACCOUNT_INACTIVE')
@@ -240,10 +240,22 @@ export default function Login({ onLogin, sessionExpired = false, accountInactive
     }
   }
 
+  /**
+   * Başarılı giriş (parola, zorla giriş, kod) — tek yol. Pasif hesap ve sistem bakımı oturum sinyalleri sayfa ömrünce TEK kez
+   * yayılır; açılışta (ölü çerezle /me → 401 ACCOUNT_INACTIVE / MAINTENANCE) verilmiş bir sinyal bu sekmedeki YENİ oturumu
+   * kilitlemesin (UIA-H2, 2026-10-22 — kullanıcı adı ön eki sinyalinin App.handleLogin'deki sıfırlamasının kardeşi): aksi
+   * hâlde aynı sekmede giren kişi sonradan pasife alınınca / bakım başlayınca pencere açılmıyor, uygulama ölü kalıyordu.
+   */
+  function completeLogin(data) {
+    resetAccountInactiveSignal()
+    resetMaintenanceSignal()
+    onLogin(data)
+  }
+
   /** Kod akışında başarılı giriş — şifre girişinin başarı dalıyla aynı (beni hatırla adı + onLogin). */
   function onOtpSuccess(data, { username: name, remember }) {
     writeRemembered(remember ? name : null)
-    onLogin(data)
+    completeLogin(data)
   }
 
   // Onay sonrası: force_login=true ile tekrar dene → backend diğer oturumu düşürüp girişi tamamlar.
@@ -255,7 +267,7 @@ export default function Login({ onLogin, sessionExpired = false, accountInactive
       const data = await api.login(username, password, rememberMe, true)
       if (data.success) {
         writeRemembered(rememberMe ? username : null)
-        onLogin(data)
+        completeLogin(data)
       } else if (isAccountInactivePayload(data)) {
         setConfirmActiveSession(false)
         setErrorCode('ACCOUNT_INACTIVE')
@@ -425,7 +437,8 @@ export default function Login({ onLogin, sessionExpired = false, accountInactive
               <h3 id={`${sessionDlgId}-title`} className="lp-blocked-title">{t('login.activeSessionTitle')}</h3>
               <p id={`${sessionDlgId}-desc`} className="lp-blocked-desc">{t('login.activeSessionDesc')}</p>
               <div className="lp-blocked-actions">
-                <Button className="w-full" onClick={confirmAndLogin} disabled={loading}>
+                {/* Odak onay penceresine taşınır (UIA-H12): form sökülünce odak <body>'ye düşüyordu */}
+                <Button className="w-full" onClick={confirmAndLogin} disabled={loading} autoFocus data-slot="login-session-confirm">
                   {loading
                     ? <><Spinner size={16} inline decorative /> {t('login.loading')}</>
                     : <><Lock /> {t('login.activeSessionConfirm')}</>

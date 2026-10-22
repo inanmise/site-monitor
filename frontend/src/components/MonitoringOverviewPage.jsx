@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import {
   Radar, RefreshCw, Search, PauseCircle, CircleAlert, Clock, CheckCircle2, BellRing, Boxes, Activity, ListChecks,
-  ShieldAlert, FilterX, Download, LayoutGrid, Gauge, HeartPulse, Users, Star,
+  ShieldAlert, FilterX, Download, LayoutGrid, Gauge, HeartPulse, Users, Star, CircleHelp,
 } from 'lucide-react'
 import { api } from '../api/client'
 import { useUserPrefs } from '../hooks/useUserPrefs.js'
@@ -26,7 +26,7 @@ import {
 } from './monitoring/overviewFilters.js'
 import { TYPE_META, TYPE_ORDER, STATUS_META, STATUS_ORDER, WINDOWS } from './monitoring/overviewMeta.js'
 import {
-  QUICK_VIEWS, matchQuickView, quickViewCounts, teamHealth, overviewCsv, verdict, verdictHeadline, teamsDigest,
+  QUICK_VIEWS, matchQuickView, quickViewCounts, teamHealth, overviewCsv, verdict, verdictHeadline, teamsDigest, overviewGaps,
 } from './monitoring/overviewModel.js'
 import { FilterChips, PhoneFilterSheet } from './monitoring/OverviewColumnFilters.jsx'
 import { LiveIndicator } from './monitoring/OverviewParts.jsx'
@@ -211,6 +211,11 @@ export default function MonitoringOverviewPage() {
   const pager = usePagination(filtered, { listKey: 'monitoring-overview', preset: 'page',
     resetDeps: [types.join(','), statuses.join(','), teamsSel.join(','), q, lastSel, checksSel, alertSel, windowHours, sortValue(sort), favActive] })
   const totals = data?.totals || {}
+  // Okuma hatası işaretleri (2026-10-22, UIM-5): sunucu bir parçayı okuyamadıysa o parça "0 / sağlıklı" GÖSTERİLMEZ.
+  const gaps = useMemo(() => overviewGaps(data), [data])
+  const alertsUnknown = gaps.alerts
+  // ?mo_dlg=alerts derin bağlantısı alarmlar okunamazken açılmaz (FE-8) — URL'den de düşer, sonraki okuma başarılıysa yeniden açılabilir
+  useEffect(() => { if (kpi === 'alerts' && alertsUnknown) setKpi('') }, [kpi, alertsUnknown])
   const columnFilterCount = activeColumnFilterCount(filters)
   const anyFilter = !!(columnFilterCount || q || favActive)
   const clearFilters = () => { setTypes([]); setStatuses([]); setTeamsSel([]); setQ(''); setLastSel(''); setChecksSel(''); setAlertSel(''); setFavOnly(false) }
@@ -311,14 +316,19 @@ export default function MonitoringOverviewPage() {
   const kpiTip = (label) => t('mo.kpi.openSummary', label)
   const kpis = [
     { key: 'total',   Icon: Boxes,       label: t('mo.kpi.total'),   value: totals.total ?? 0,   cls: 'total' },
-    { key: 'up',      Icon: CheckCircle2, label: t('mo.kpi.up'),      value: Math.max(0, (totals.active ?? 0) - (totals.down ?? 0) - (totals.stale ?? 0) - (totals.unknown ?? 0)), cls: 'valid' },
+    { key: 'up',      Icon: CheckCircle2, label: t('mo.kpi.up'),      value: Math.max(0, (totals.active ?? 0) - (totals.down ?? 0) - (totals.stale ?? 0) - (totals.unknown ?? 0)), cls: 'valid',
+      sub: alertsUnknown ? t('mo.unavailable.upSub') : undefined },
     { key: 'down',    Icon: CircleAlert, label: t('mo.kpi.down'),    value: totals.down ?? 0,    cls: 'critical', tip: kpiTip(t('mo.kpi.down')), onClick: () => setKpi('down') },
     { key: 'stale',   Icon: Clock,       label: t('mo.kpi.stale'),   value: totals.stale ?? 0,   cls: 'warning',  hint: t('mo.kpi.staleHint'), tip: kpiTip(t('mo.kpi.stale')), onClick: () => setKpi('stale') },
     { key: 'paused',  Icon: PauseCircle, label: t('mo.kpi.paused'),  value: totals.paused ?? 0,  cls: 'paused',
       sub: invInactive > 0 ? t('mo.kpi.invSub', invInactive) : undefined, tip: kpiTip(t('mo.kpi.paused')), onClick: () => setKpi('paused') },
-    { key: 'alerts',  Icon: BellRing,    label: t('mo.kpi.alerts'),  value: totals.open_alerts ?? 0, cls: 'alert', hint: t('mo.kpi.alertsHint', totals.open_critical ?? 0), tip: kpiTip(t('mo.kpi.alerts')), onClick: () => setKpi('alerts') },
-    { key: 'checks',  Icon: ListChecks,  label: t('mo.kpi.checks', windowLabel), value: Number(totals.checks_window ?? 0).toLocaleString(locale), cls: 'total',
-      sub: t('mo.kpi.failed', Number(totals.failed_window ?? 0).toLocaleString(locale)), tip: t('mo.kpi.checksTip'),
+    // Açık alarmlar okunamadıysa sayı "—" (0 değil) ve özet penceresi açılmaz — "alarm yok" listesi yanıltırdı
+    alertsUnknown
+      ? { key: 'alerts', Icon: BellRing, label: t('mo.kpi.alerts'), value: '—', cls: 'alert', hint: t('mo.unavailable.kpiAlerts'),
+          tip: t('mo.unavailable.kpiRetry'), onClick: () => refresh() }
+      : { key: 'alerts',  Icon: BellRing,    label: t('mo.kpi.alerts'),  value: totals.open_alerts ?? 0, cls: 'alert', hint: t('mo.kpi.alertsHint', totals.open_critical ?? 0), tip: kpiTip(t('mo.kpi.alerts')), onClick: () => setKpi('alerts') },
+    { key: 'checks',  Icon: ListChecks,  label: t('mo.kpi.checks', windowLabel), value: gaps.allStats ? '—' : Number(totals.checks_window ?? 0).toLocaleString(locale), cls: 'total',
+      sub: gaps.stats.length > 0 ? t('mo.unavailable.kpiPartial') : t('mo.kpi.failed', Number(totals.failed_window ?? 0).toLocaleString(locale)), tip: t('mo.kpi.checksTip'),
       onClick: () => { applyView('failing'); focusList() } },
     { key: 'resolved', Icon: ShieldAlert, label: t('mo.kpi.resolved'), value: totals.resolved_window ?? 0, cls: 'valid', tip: t('mo.kpi.resolvedTip'), onClick: () => navigateTo('alerthistory', { view: 'closed' }) },
   ]
@@ -334,11 +344,18 @@ export default function MonitoringOverviewPage() {
   // ── Bölümler akordiyonu: başlık özetleri (kapalı bölüm de durumu söyler) ──
   const totalN = Number(totals.total ?? 0)
   const downN = Number(totals.down ?? 0), staleN = Number(totals.stale ?? 0), alertsN = Number(totals.open_alerts ?? 0)
-  const fleetVerdict = verdict(totals)
-  const tDigest = teamsDigest(teamGroups)
+  const fleetVerdict = verdict(totals, gaps)
+  // Takım özeti (2026-10-22, FE-2): bir türün listesi ya da kontrolleri okunamadıysa o türün izlemeleri takım satırlarında YOK
+  // (ya da bilinmiyor) — "Tüm takımlar sağlıklı" yeşili çizilmez; alarmların okunamadığı durumla aynı nötr ton + çip.
+  const teamsPartial = alertsUnknown || gaps.types.length > 0 || gaps.checks.length > 0
+  const tDigest = teamsDigest(teamGroups, { alertsUnknown: teamsPartial })
   const typeList = (data?.types || []).filter((ty) => TYPE_META[ty.type])
-  const typeTones = typeList.map((ty) => typeTone(ty))
+  const typeTones = typeList.map((ty) => typeTone(ty, { alertsUnknown }))
   const badTypes = typeTones.filter((x) => x === 'bad').length, warnTypes = typeTones.filter((x) => x === 'warn').length
+  // Nötr tür = okunamayan ya da hiç ölçülmemiş (aktif izlemelerinin hepsi bilinmiyor). Alarmlar okunamadıysa her tür
+  // nötrdür — o durumda ayrı "eksik veri" çipi söyler, tür sayısı yazılmaz.
+  const unknownTypes = alertsUnknown ? 0 : typeTones.filter((x) => x === 'neutral').length
+  const typeNames = (keys) => keys.filter((k) => TYPE_META[k]).map((k) => t(TYPE_META[k].labelKey)).join(', ')
   const fmt = (n) => Number(n).toLocaleString(locale)
   const sections = data ? [
     { key: 'kpis', Icon: Gauge, title: t('mo.sec.kpis'), desc: t('mo.sec.kpisDesc'), tone: 'primary',
@@ -347,29 +364,36 @@ export default function MonitoringOverviewPage() {
         {downN > 0 && <SummaryChip tone="bad" Icon={CircleAlert}>{t('mo.sum.down', fmt(downN))}</SummaryChip>}
         {staleN > 0 && <SummaryChip tone="warn" Icon={Clock}>{t('mo.sum.stale', fmt(staleN))}</SummaryChip>}
         {alertsN > 0 && <SummaryChip tone="alert" Icon={BellRing}>{t('mo.sum.alerts', fmt(alertsN))}</SummaryChip>}
-        {downN + staleN + alertsN === 0 && totalN > 0 && <SummaryChip tone="ok" Icon={CheckCircle2}>{t('mo.sum.clear')}</SummaryChip>}
+        {gaps.any
+          ? <SummaryChip Icon={CircleHelp}>{t('mo.unavailable.chip')}</SummaryChip>
+          : downN + staleN + alertsN === 0 && totalN > 0 && <SummaryChip tone="ok" Icon={CheckCircle2}>{t('mo.sum.clear')}</SummaryChip>}
       </>,
       content: <MonitorStatsBar dense items={kpis} activeFilter={kpiActive} onStatClick={onStatClick}
         className="mb-0 border-0 bg-transparent p-0 shadow-none sm:p-0" /> },
     { key: 'health', Icon: HeartPulse, title: t('mo.sec.health'), desc: t('mo.sec.healthDesc'), tone: fleetVerdict.tone,
       summary: <>
         <SummaryChip tone={fleetVerdict.tone}>{verdictHeadline(fleetVerdict, t)}</SummaryChip>
-        {totals.success_rate_window != null && <SummaryChip>{t('mo.health.rate', windowLabel, pctText(Number(totals.success_rate_window), locale))}</SummaryChip>}
+        {totals.success_rate_window != null && gaps.stats.length === 0 && <SummaryChip>{t('mo.health.rate', windowLabel, pctText(Number(totals.success_rate_window), locale))}</SummaryChip>}
       </>,
-      content: <OverviewHealthCard bare totals={totals} rows={rows} nowMs={nowMs} windowLabel={windowLabel} activeStatuses={statuses}
+      content: <OverviewHealthCard bare totals={totals} rows={rows} nowMs={nowMs} windowLabel={windowLabel} activeStatuses={statuses} gaps={gaps}
         onPickStatus={pickStatus} onShowAll={() => { applyView('problems'); focusList() }} /> },
     ...(teamGroups.length > 1 ? [{ key: 'teams', Icon: Users, title: t('mo.teams.title'), desc: t('mo.teams.desc'), tone: tDigest.tone,
       summary: <>
         <SummaryChip Icon={Users}>{t('mo.sum.teams', fmt(tDigest.count))}</SummaryChip>
         {tDigest.issues > 0
           ? <SummaryChip tone={tDigest.tone}>{t('mo.sum.teamsIssue', fmt(tDigest.issues))}</SummaryChip>
-          : <SummaryChip tone="ok" Icon={CheckCircle2}>{t('mo.sum.teamsOk')}</SummaryChip>}
+          : tDigest.unknown > 0
+            ? <SummaryChip Icon={CircleHelp}>{t('mo.unavailable.teamsUnknown', fmt(tDigest.unknown))}</SummaryChip>
+            : teamsPartial
+              ? <SummaryChip Icon={CircleHelp}>{t('mo.unavailable.chip')}</SummaryChip>
+              : <SummaryChip tone="ok" Icon={CheckCircle2}>{t('mo.sum.teamsOk')}</SummaryChip>}
       </>,
       content: <>
         <p className="m-0 mb-2 text-xs text-muted-foreground md:hidden">{t('mo.teams.desc')}</p>
-        <OverviewTeamsCard bare teams={teamGroups} activeTeams={teamsSel} onPickTeam={pickTeam} />
+        <OverviewTeamsCard bare teams={teamGroups} activeTeams={teamsSel} onPickTeam={pickTeam} alertsUnknown={teamsPartial} />
       </> }] : []),
-    { key: 'types', Icon: LayoutGrid, title: t('mo.types'), desc: t('mo.types.hint'), tone: badTypes > 0 ? 'bad' : warnTypes > 0 ? 'warn' : 'ok',
+    { key: 'types', Icon: LayoutGrid, title: t('mo.types'), desc: t('mo.types.hint'),
+      tone: badTypes > 0 ? 'bad' : warnTypes > 0 ? 'warn' : (unknownTypes > 0 || alertsUnknown) ? 'neutral' : 'ok',
       summary: <>
         {/* Tür simgeleri tonlarıyla (≥ 1024 px) — hangi türün kırmızı olduğu tek bakışta; sayılar çiplerde */}
         <span aria-hidden="true" data-slot="mo-type-strip" className="hidden items-center gap-1 lg:inline-flex">
@@ -382,13 +406,15 @@ export default function MonitoringOverviewPage() {
         <SummaryChip Icon={LayoutGrid}>{t('mo.sum.types', fmt(typeList.length))}</SummaryChip>
         {badTypes > 0 && <SummaryChip tone="bad" Icon={CircleAlert}>{t('mo.sum.typesBad', fmt(badTypes))}</SummaryChip>}
         {warnTypes > 0 && <SummaryChip tone="warn" Icon={Clock}>{t('mo.sum.typesWarn', fmt(warnTypes))}</SummaryChip>}
-        {badTypes + warnTypes === 0 && <SummaryChip tone="ok" Icon={CheckCircle2}>{t('mo.sum.typesOk')}</SummaryChip>}
+        {unknownTypes > 0 && <SummaryChip Icon={CircleHelp}>{t('mo.unavailable.typesUnknown', fmt(unknownTypes))}</SummaryChip>}
+        {alertsUnknown && badTypes + warnTypes === 0 && <SummaryChip Icon={CircleHelp}>{t('mo.unavailable.chip')}</SummaryChip>}
+        {badTypes + warnTypes + unknownTypes === 0 && !alertsUnknown && <SummaryChip tone="ok" Icon={CheckCircle2}>{t('mo.sum.typesOk')}</SummaryChip>}
       </>,
       content: <>
         <p className="m-0 mb-2 text-xs text-muted-foreground md:hidden">{t('mo.types.hint')}</p>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {typeList.map((ty) => (
-            <OverviewTypeCard key={ty.type} type={ty} active={types.includes(ty.type)} nowMs={nowMs} windowLabel={windowLabel}
+            <OverviewTypeCard key={ty.type} type={ty} active={types.includes(ty.type)} nowMs={nowMs} windowLabel={windowLabel} alertsUnknown={alertsUnknown}
               onSelect={pickType} onOpen={(tab) => navigateTo(tab)} />
           ))}
         </div>
@@ -431,6 +457,21 @@ export default function MonitoringOverviewPage() {
               <AlertBanner tone="warning" title={t('mo.staleData.title')}
                 actions={<Button type="button" variant="outline" size="sm" onClick={refresh} className="pointer-coarse:h-10">{t('mo.staleData.retry')}</Button>}>
                 {t('mo.staleData.text', state.error)}
+              </AlertBanner>
+            </div>
+          )}
+
+          {/* Okunamayan parçalar (2026-10-22, UIM-5): ne eksik söylenir; "Tekrar dene" sunucu belleğini atlar */}
+          {gaps.any && (
+            <div data-slot="mo-unavailable">
+              <AlertBanner tone="warning" title={t('mo.unavailable.title')}
+                actions={<Button type="button" variant="outline" size="sm" onClick={refresh} className="pointer-coarse:h-10">{t('mo.staleData.retry')}</Button>}>
+                <ul className="m-0 flex list-none flex-col gap-0.5 p-0">
+                  {gaps.alerts && <li data-gap="alerts">{t('mo.unavailable.alerts')}</li>}
+                  {gaps.types.length > 0 && <li data-gap="types">{t('mo.unavailable.types', typeNames(gaps.types))}</li>}
+                  {gaps.checks.length > 0 && <li data-gap="checks">{t('mo.unavailable.checks', typeNames(gaps.checks))}</li>}
+                  {gaps.stats.length > 0 && <li data-gap="stats">{t('mo.unavailable.stats', typeNames(gaps.stats))}</li>}
+                </ul>
               </AlertBanner>
             </div>
           )}
@@ -532,7 +573,8 @@ export default function MonitoringOverviewPage() {
             {filtered.length > 0 && <PaginationBar {...pager} />}
           </section>
 
-          <OverviewKpiDialog kind={kpi} rows={rows} totals={totals} nowMs={nowMs} onClose={() => setKpi('')} onFilter={onKpiFilter} />
+          {/* Alarmlar okunamadıysa (?mo_dlg=alerts derin bağlantısı da) alarm özeti AÇILMAZ — boş "alarm yok" listesi yalan olurdu */}
+          <OverviewKpiDialog kind={kpi === 'alerts' && alertsUnknown ? '' : kpi} rows={rows} totals={totals} nowMs={nowMs} onClose={() => setKpi('')} onFilter={onKpiFilter} />
         </div>
       )}
     </div>

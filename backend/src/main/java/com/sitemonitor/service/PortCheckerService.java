@@ -251,12 +251,21 @@ public class PortCheckerService {
 
     /** Tünelde elle HTTP GET — yalnız durum satırı okunur (gövde yok, yönlendirme izlenmez: doğrudan yolla aynı). */
     private static void httpOver(Socket tunnel, String host, int port, int timeoutMs, String path, String expect, Map<String, Object> result) throws Exception {
+        httpOn(tunnel, host, port, timeoutMs, path, expect, result, " · vekil üzerinden");
+    }
+
+    /**
+     * BAĞLI bir sokette (vekil tüneli ya da sabit adrese doğrudan bağlantı) elle HTTP GET: 443/8443'te SNI = {@code host}
+     * ile TLS, {@code Host} başlığı = {@code host[:port]}. Yalnız durum satırı okunur.
+     */
+    private static void httpOn(Socket base, String host, int port, int timeoutMs, String path, String expect,
+                               Map<String, Object> result, String detailSuffix) throws Exception {
         boolean https = port == 443 || port == 8443;
         String p = (path != null && !path.isBlank()) ? path.trim() : "/";
         if (!p.startsWith("/")) p = "/" + p;
-        Socket s = https ? tlsOver(tunnel, host, port, timeoutMs) : tunnel;
+        Socket s = https ? tlsOver(base, host, port, timeoutMs) : base;
         try {
-            String req = "GET " + p + " HTTP/1.1\r\nHost: " + ((port == 80 || port == 443) ? host : host + ":" + port)
+            String req = "GET " + p + " HTTP/1.1\r\nHost: " + hostHeader(host, port)
                     + "\r\nUser-Agent: SiteMonitor-PortCheck\r\nConnection: close\r\n\r\n";
             s.getOutputStream().write(req.getBytes(StandardCharsets.US_ASCII));
             s.getOutputStream().flush();
@@ -267,14 +276,20 @@ public class PortCheckerService {
             int code = Integer.parseInt(status.substring(9, 12));
             boolean ok = httpStatusMatches(code, expect);
             result.put("open", ok);
-            result.put("detail", "HTTP " + code + " · vekil üzerinden");
+            result.put("detail", "HTTP " + code + detailSuffix);
             if (!ok) {
                 result.put("error", "HTTP " + code + (expect != null && !expect.isBlank() ? " (beklenen: " + expect.trim() + ")" : ""));
                 pend(result, CheckFailureClassifier.forHttpStatus(code, expect));
             }
         } finally {
-            if (s != tunnel) s.close();
+            if (s != base) s.close();
         }
+    }
+
+    /** {@code Host} başlığı: varsayılan portta yalnız ad; IPv6 sabiti köşeli parantezle. */
+    static String hostHeader(String host, int port) {
+        String h = host != null && host.indexOf(':') >= 0 && !host.startsWith("[") ? "[" + host + "]" : host;
+        return (port == 80 || port == 443) ? h : h + ":" + port;
     }
 
     /** Durum satırının tavanı — {@code ProxySettings.readTunnelLine} ile aynı (8 KB). */
@@ -331,11 +346,14 @@ public class PortCheckerService {
     }
 
     private void doHttp(InetAddress addr, String host, int port, int timeoutMs, String path, String expect, Map<String, Object> result) throws Exception {
+        if (addr != null) {
+            doHttpPinned(addr, host, port, timeoutMs, path, expect, result);
+            return;
+        }
         boolean https = port == 443 || port == 8443;
         String p = (path != null && !path.isBlank()) ? path.trim() : "/";
         if (!p.startsWith("/")) p = "/" + p;
-        String connectHost = addr != null ? urlHost(addr) : host;
-        URL url = URI.create((https ? "https" : "http") + "://" + connectHost + ":" + port + p).toURL();
+        URL url = URI.create((https ? "https" : "http") + "://" + host + ":" + port + p).toURL();
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         if (conn instanceof HttpsURLConnection hc) {
             hc.setSSLSocketFactory(TRUST_ALL_FACTORY);
@@ -346,7 +364,6 @@ public class PortCheckerService {
         conn.setInstanceFollowRedirects(false);
         conn.setRequestMethod("GET");
         conn.setRequestProperty("User-Agent", "SiteMonitor-PortCheck");
-        if (addr != null) conn.setRequestProperty("Host", (port == 80 || port == 443) ? host : host + ":" + port);   // IP'ye bağlan, vhost adı doğru kalsın
         int code;
         // TOPLAM süre (2026-10-08, "zaman aşımı olmayan servis çağrısı" denetimi): connect/read zaman aşımları yalnız
         // TEK okumayı sınırlar; durum satırını/başlıkları bayt bayt damlatan bir hedef getResponseCode()'u süresiz
@@ -372,6 +389,53 @@ public class PortCheckerService {
                     + (expect != null && !expect.isBlank() ? " (beklenen: " + expect.trim() + ")" : ""));
             pend(result, CheckFailureClassifier.forHttpStatus(code, expect));
         }
+    }
+
+    /**
+     * IP sürümü seçili (v4 / v6) HTTP kontrolü — SSRF'nin doğruladığı O adrese bağlanılır, ama istek host ADIYLA gider
+     * (CHECKS-5, 2026-10-22). Eskiden URL IP sabitiyle kuruluyor ve ad {@code setRequestProperty("Host")} ile geri
+     * verilmeye çalışılıyordu: {@code HttpURLConnection} {@code Host}'u yasaklı başlık sayıp SESSİZCE yok sayar
+     * ({@code sun.net.http.allowRestrictedHeaders} kapalı), HTTPS'te IP sabiti SNI de göndermez → istek dengeleyicinin
+     * varsayılan sanal sunucusuna düşüyor, 404 / 421 → yanlış PORT_DOWN. Şimdi: soket o adrese, TLS'te SNI = host,
+     * {@code Host} başlığı elle yazılır (vekil yolundaki {@link #httpOn} ile aynı). Toplam süre {@link #httpTotalMs}.
+     */
+    private void doHttpPinned(InetAddress addr, String host, int port, int timeoutMs, String path, String expect,
+                              Map<String, Object> result) throws Exception {
+        long totalMs = httpTotalMs(timeoutMs);
+        Socket raw = NetworkResolver.connectSingle(new InetSocketAddress(addr, port), timeoutMs);
+        java.util.concurrent.atomic.AtomicBoolean expired = new java.util.concurrent.atomic.AtomicBoolean();
+        java.util.concurrent.ScheduledFuture<?> watchdog = PINNED_HTTP_DEADLINE.schedule(() -> {
+            expired.set(true);
+            try { raw.close(); } catch (java.io.IOException ignore) { /* zaten kapandı */ }
+        }, totalMs, java.util.concurrent.TimeUnit.MILLISECONDS);
+        try (raw) {
+            raw.setSoTimeout(timeoutMs);
+            httpOn(raw, host, port, timeoutMs, path, expect, result, "");
+        } catch (java.io.IOException | RuntimeException e) {
+            if (expired.get()) throw pinnedTimeout(totalMs);
+            throw e;
+        } finally {
+            watchdog.cancel(false);
+        }
+        if (expired.get()) throw pinnedTimeout(totalMs);   // yarıda kesilen yanıttan okunan kod kullanılmaz
+    }
+
+    private static com.sitemonitor.util.HttpBodies.BodyDeadlineException pinnedTimeout(long totalMs) {
+        return new com.sitemonitor.util.HttpBodies.BodyDeadlineException("Port HTTP isteği " + totalMs
+                + " ms içinde tamamlanmadı — bağlantı kesildi (sunucu yanıtı çok yavaş gönderiyor)");
+    }
+
+    /** Sabit adresli HTTP kontrolünün toplam süre bekçisi — tek, cin iş parçacığı; iptal edilen görev hemen düşer. */
+    private static final java.util.concurrent.ScheduledThreadPoolExecutor PINNED_HTTP_DEADLINE = pinnedHttpDeadline();
+
+    private static java.util.concurrent.ScheduledThreadPoolExecutor pinnedHttpDeadline() {
+        java.util.concurrent.ScheduledThreadPoolExecutor ex = new java.util.concurrent.ScheduledThreadPoolExecutor(1, r -> {
+            Thread t = new Thread(r, "port-http-deadline");
+            t.setDaemon(true);
+            return t;
+        });
+        ex.setRemoveOnCancelPolicy(true);
+        return ex;
     }
 
     private void doBanner(InetAddress addr, List<InetAddress> vetted, int port, int timeoutMs, String send, String expect, Map<String, Object> result) throws Exception {
@@ -474,14 +538,6 @@ public class PortCheckerService {
             return NetworkResolver.connectSingle(new InetSocketAddress(addr, port), timeoutMs);
         }
         return NetworkResolver.connectFirstReachable(vetted, port, timeoutMs);
-    }
-
-    /** URL için IP literali (v6 köşeli parantez + zone-id kırpma). */
-    private static String urlHost(InetAddress addr) {
-        String ip = addr.getHostAddress();
-        int z = ip.indexOf('%');
-        if (z >= 0) ip = ip.substring(0, z);
-        return addr instanceof Inet6Address ? "[" + ip + "]" : ip;
     }
 
     /** Trust-all SSLSocketFactory'yi BİR KEZ kur (leak analizi #3) — her check'te SSLContext.init (SecureRandom

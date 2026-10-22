@@ -143,4 +143,83 @@ public class UserPushDelivery {
      */
     @Column(name = "same_person_username", length = 100)
     private String samePersonUsername;
+
+    /** {@code dedupe_key} kolonunun uzunluğu (VARCHAR(60)). */
+    public static final int DEDUPE_KEY_MAX = 60;
+    /** Sığdırılmış anahtarın sonundaki SHA-256 özetinin onaltılık hane sayısı. */
+    static final int DEDUPE_HASH_HEX = 16;
+
+    /**
+     * Tekilleştirme anahtarını {@value #DEDUPE_KEY_MAX} karaktere SIĞDIRIR (2026-10-22, ALERTS-12 / DATA-2). Kolon VARCHAR(60);
+     * çağıranın anahtarı daha uzunsa (TLS notu düşüşü: {@code tls-drop:<takım>:<tüm satır kimlikleri>}, zayıf algoritma:
+     * {@code WEAK_ALGO:<alan adı>:<gün>}) PostgreSQL INSERT'i 22001 ile düşürüyor, satır "zaten var" sanılıp push SESSİZCE
+     * kayboluyordu. Kural belirleyici (her pod aynı sonucu üretir) ve idempotenttir: 60'a sığan anahtar AYNEN döner; uzun
+     * anahtar = ilk 43 karakter + {@code #} + TÜM anahtarın SHA-256 özetinin ilk 16 hanesi (önek sorguları — {@code storm:<id>:} —
+     * ve günlükte okunabilirlik korunur; farklı uzun anahtarlar farklı özet alır). Yazım VE arama aynı kapıdan geçer
+     * ({@code UserPushService} giriş noktaları + {@link #fitColumns}).
+     */
+    public static String fitDedupeKey(String key) {
+        if (key == null || key.length() <= DEDUPE_KEY_MAX) return key;
+        int head = DEDUPE_KEY_MAX - 1 - DEDUPE_HASH_HEX;
+        if (Character.isHighSurrogate(key.charAt(head - 1))) head--;
+        return key.substring(0, head) + "#" + sha256Hex(key).substring(0, DEDUPE_HASH_HEX);
+    }
+
+    private static String sha256Hex(String s) {
+        try {
+            byte[] d = java.security.MessageDigest.getInstance("SHA-256").digest(s.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            return java.util.HexFormat.of().formatHex(d);
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 yok", e);   // her JRE'de zorunlu algoritma — olamaz
+        }
+    }
+
+    /**
+     * Yazmadan önce VARCHAR kolonlarına sığdırır (2026-10-22, ALERTS-12 — {@code NotificationLog.fitColumns} deseni). Uzun bir
+     * görünen ad (AD ad-soyadı 255'e kadar, kolon 200), yönetici başlığı ya da izleme adı satırı düşürüyor ve o kişinin alarm
+     * push'u sessizce kayboluyordu. Kimlik taşıyan kolonlara ({@code username}, {@code same_person_username}) ve durum koduna
+     * dokunulmaz — kırpılmış sicil başka bir kişiyi gösterirdi.
+     */
+    @PrePersist
+    @PreUpdate
+    void fitColumns() {
+        dedupeKey = fitDedupeKey(dedupeKey);
+        trigger = NotificationLog.fit(trigger, 40);
+        monitorType = NotificationLog.fit(monitorType, 20);
+        monitorName = NotificationLog.fit(monitorName, 300);
+        alertLevel = NotificationLog.fit(alertLevel, 20);
+        displayName = NotificationLog.fit(displayName, 200);
+        title = NotificationLog.fit(title, 200);
+        batchId = NotificationLog.fit(batchId, 40);
+        notificationId = NotificationLog.fit(notificationId, 60);
+        rawResponse = NotificationLog.fit(rawResponse, 600);
+        pushLang = NotificationLog.fit(pushLang, 5);
+    }
+
+    /**
+     * Sığdırma SONRASI hâlâ kolonuna sığmayan alanların adları (yalnız kimlik / durum kolonları olabilir) — satır yazılamayınca
+     * WARN günlüğü hangi kolonun düşürdüğünü söylesin. Boş liste = uzunluk sorunu yok.
+     */
+    public java.util.List<String> overlongColumns() {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        over(out, "dedupe_key", dedupeKey, DEDUPE_KEY_MAX);
+        over(out, "push_trigger", trigger, 40);
+        over(out, "monitor_type", monitorType, 20);
+        over(out, "monitor_name", monitorName, 300);
+        over(out, "alert_level", alertLevel, 20);
+        over(out, "username", username, 100);
+        over(out, "display_name", displayName, 200);
+        over(out, "title", title, 200);
+        over(out, "status", status, 40);
+        over(out, "batch_id", batchId, 40);
+        over(out, "notification_id", notificationId, 60);
+        over(out, "raw_response", rawResponse, 600);
+        over(out, "push_lang", pushLang, 5);
+        over(out, "same_person_username", samePersonUsername, 100);
+        return out;
+    }
+
+    private static void over(java.util.List<String> out, String column, String value, int max) {
+        if (value != null && value.length() > max) out.add(column + "(" + value.length() + ">" + max + ")");
+    }
 }

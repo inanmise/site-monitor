@@ -89,9 +89,10 @@ export function KpiTile({ sectionKey, kpi, emphasis = false, caption = null }) {
       className={cn('flex min-w-0 flex-col gap-1.5 rounded-xl border bg-card px-3 py-3 sm:px-3.5',
         emphasis && 'bg-gradient-to-b from-muted/50 to-card')}>
       {caption && (
-        <span data-slot="ex-kpi-caption" className="flex min-w-0 items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
-          <Icon aria-hidden="true" className="size-3.5 shrink-0" />
-          <span className="truncate">{caption}</span>
+        // Bölüm adı KESİLMEZ (UIA-G10, "adlar ve uzun metin kırpılmaz"): telefonda iki satıra sarar, ikon ilk satırda
+        <span data-slot="ex-kpi-caption" className="flex min-w-0 items-start gap-1.5 text-[11px] font-medium text-muted-foreground">
+          <Icon aria-hidden="true" className="mt-px size-3.5 shrink-0" />
+          <span className="min-w-0 [overflow-wrap:anywhere]">{caption}</span>
         </span>
       )}
       <span className="text-xs font-medium text-muted-foreground [overflow-wrap:anywhere]">{v.label}</span>

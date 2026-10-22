@@ -377,4 +377,35 @@ class WeakAlgorithmReportServiceTest {
         Map<String, Object> all = svc.trend(now, Set.of());
         assertThat(rows(all.get("series")).stream().mapToInt(m -> (int) m.get("weak")).sum()).isEqualTo(2);
     }
+
+    @Test
+    @DisplayName("certRuleKeys (son inceleme 2026-10-22): EdDSA / ML-DSA anahtar 'DSA' sayılmaz (sahte key.rsa1024 yok); RSA / EC eşikleri aynı")
+    void certRuleKeysUseSharedKeyFamily() {
+        LatestCheck ed = new LatestCheck();
+        ed.setSignatureAlgorithm("SHA1withRSA");
+        ed.setPublicKeyAlgorithm("Ed25519");
+        ed.setPublicKeySize(256);
+        assertThat(WeakAlgorithmReportService.certRuleKeys(ed)).containsExactly("sig.sha1");
+        ed.setPublicKeyAlgorithm("EdDSA");
+        ed.setPublicKeySize(-1);
+        assertThat(WeakAlgorithmReportService.certRuleKeys(ed)).containsExactly("sig.sha1");
+        ed.setPublicKeyAlgorithm("ML-DSA-65");
+        assertThat(WeakAlgorithmReportService.certRuleKeys(ed)).containsExactly("sig.sha1");
+
+        LatestCheck rsa = new LatestCheck();
+        rsa.setSignatureAlgorithm("SHA256withRSA");
+        rsa.setPublicKeyAlgorithm("RSA");
+        rsa.setPublicKeySize(1024);
+        assertThat(WeakAlgorithmReportService.certRuleKeys(rsa)).containsExactly("key.rsa1024");
+        rsa.setPublicKeyAlgorithm("DSA");
+        rsa.setPublicKeySize(1536);
+        assertThat(WeakAlgorithmReportService.certRuleKeys(rsa)).containsExactly("key.rsa2048");
+
+        LatestCheck ec = new LatestCheck();
+        ec.setPublicKeyAlgorithm("EC");
+        ec.setPublicKeySize(160);
+        assertThat(WeakAlgorithmReportService.certRuleKeys(ec)).containsExactly("key.ec192");
+        ec.setPublicKeySize(256);
+        assertThat(WeakAlgorithmReportService.certRuleKeys(ec)).isEmpty();
+    }
 }

@@ -36,16 +36,31 @@ public class MonitorSparklineService {
     /** Tür → (kontrol tablosu, monitör tablosu, süre sütunu, hata ifadesi). Sütunlar Hibernate snake_case. */
     record Kind(String table, String monitorTable, String msCol, String failExpr) {}
 
+    /**
+     * Hata ifadeleri KONTROLÜN KENDİ HÜKMÜNDEN okunur (DATA-1, 2026-10-22): {@code ok} / {@code open} sütunu — saatlik
+     * özetler (izleme panosu, durum sayfası) da bunu sayar. Eskiden yalnız {@code error IS NOT NULL} sayılıyordu: HTTP
+     * durum kodu uyuşmazlığı (503) ve anahtar kelime koşulu {@code error=NULL, ok=false} yazar → kart "%100 SLA", yeşil
+     * son-5 gösteriyordu. {@code ok IS NULL} (sütundan önceki eski satır) için eski {@code error} kuralı yedektir. DNS:
+     * yalnız sorgu HATASI kesintidir — planlı kayıt değişikliği ({@code changed}) kesinti DEĞİLDİR. Sayfa Hızı'nda eşik
+     * aşımı kartın "sorunlu" saydığı durum olarak kalır (kart bunu gösterir; ok yalnız sayfanın alınıp alınamadığıdır).
+     */
     static final Map<String, Kind> KINDS = new LinkedHashMap<>();
     static {
-        KINDS.put("http",      new Kind("http_checks",      "http_monitors",      "response_ms", "CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END"));
+        KINDS.put("http",      new Kind("http_checks",      "http_monitors",      "response_ms", verdict("ok", "error IS NOT NULL")));
         KINDS.put("ping",      new Kind("ping_checks",      "ping_monitors",      "rtt_ms",      "CASE WHEN error IS NOT NULL OR packet_loss >= 100 THEN 1 ELSE 0 END"));
-        KINDS.put("port",      new Kind("port_checks",      "port_monitors",      "response_ms", "CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END"));
-        KINDS.put("dns",       new Kind("dns_records",      "dns_monitors",       "response_ms", "CASE WHEN changed = TRUE THEN 1 ELSE 0 END"));
-        KINDS.put("keyword",   new Kind("keyword_results",  "keyword_monitors",   "response_ms", "CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END"));
-        KINDS.put("page",      new Kind("page_checks",      "page_monitors",      "response_ms", "CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END"));
-        KINDS.put("pagespeed", new Kind("pagespeed_checks", "pagespeed_monitors", "response_ms", "CASE WHEN error_message IS NOT NULL OR (breached_metrics IS NOT NULL AND breached_metrics <> '') THEN 1 ELSE 0 END"));
-        KINDS.put("scripted",  new Kind("scripted_checks",  "scripted_monitors",  "duration_ms", "CASE WHEN error IS NOT NULL OR exit_code <> 0 OR checks_failed > 0 THEN 1 ELSE 0 END"));
+        KINDS.put("port",      new Kind("port_checks",      "port_monitors",      "response_ms", verdict("open", "error IS NOT NULL")));
+        KINDS.put("dns",       new Kind("dns_records",      "dns_monitors",       "response_ms", "CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END"));
+        KINDS.put("keyword",   new Kind("keyword_results",  "keyword_monitors",   "response_ms", verdict("ok", "error IS NOT NULL")));
+        KINDS.put("page",      new Kind("page_checks",      "page_monitors",      "response_ms", verdict("ok", "error IS NOT NULL")));
+        KINDS.put("pagespeed", new Kind("pagespeed_checks", "pagespeed_monitors", "response_ms",
+                "CASE WHEN ok = FALSE OR error_message IS NOT NULL OR (breached_metrics IS NOT NULL AND breached_metrics <> '') THEN 1 ELSE 0 END"));
+        KINDS.put("scripted",  new Kind("scripted_checks",  "scripted_monitors",  "duration_ms",
+                verdict("ok", "error IS NOT NULL OR exit_code <> 0 OR checks_failed > 0")));
+    }
+
+    /** {@code col = FALSE} → hata; hüküm sütunu boş (eski satır) ise {@code legacyFail} kuralı. */
+    static String verdict(String col, String legacyFail) {
+        return "CASE WHEN " + col + " = FALSE OR (" + col + " IS NULL AND (" + legacyFail + ")) THEN 1 ELSE 0 END";
     }
 
     private final JdbcTemplate jdbc;

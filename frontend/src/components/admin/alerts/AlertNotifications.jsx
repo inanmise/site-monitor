@@ -10,7 +10,7 @@ import { Card } from '@/components/shadcn/card'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/shadcn/collapsible'
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/shadcn/accordion'
 import { cn } from '@/lib/utils'
-import { fmtStamp, statusLabel } from './alertHistoryModel.js'
+import { fmtStamp, statusLabel, pushPeopleCount, pushHiddenCount, PUSH_SYSTEM_USER } from './alertHistoryModel.js'
 import { clockTime } from './nocCallModel.js'
 import { samePersonText } from '../../../utils/pushPrefs.js'
 
@@ -45,6 +45,8 @@ const MAIL_TRIGGER = {
   DAILY_REALERT: { Icon: RefreshCcw,  textKey: 'alh.trigger.daily',      cls: 'daily' },
   MANUAL:        { Icon: Bell,        textKey: 'alh.trigger.manual',     cls: 'manual' },
   RESOLUTION:    { Icon: CheckCircle, textKey: 'alh.trigger.resolution', cls: 'resolution' },
+  // 2026-10-22 (L-H2): elle "Çöz" sonrası giden çözüm e-postası (EscalationService tetiği MANUAL_RESOLVE) — ham kod basılmasın
+  MANUAL_RESOLVE: { Icon: CheckCircle, textKey: 'alh.trigger.manualResolve', cls: 'resolution' },
   // 2026-09-30: fırtına devri KARARI (e-posta değil) ve fırtına postaları (açılış / günlük tekrar / çözüm) — üye alarmın
   // günlüğünde görünür; eskiden fırtına postası hiçbir yere yazılmıyordu.
   STORM:         { Icon: CloudLightning, textKey: 'alh.trigger.storm',        cls: 'storm' },
@@ -83,6 +85,9 @@ export function EmailStatusBadge({ status }) {
   if (status === 'SENT') return <ToneBadge tone="success">{t('alh.status.sent')}</ToneBadge>
   if (status === 'SKIPPED_DISABLED') return <ToneBadge tone="warning">{t('alh.status.skip')}</ToneBadge>
   if (status.startsWith('FAILED')) return <ToneBadge tone="danger" title={status}>{t('alh.status.failed')}</ToneBadge>
+  // "QUEUED_RETRY: <SMTP 421 metni>" (2026-10-22, L-E6): sunucu geçici olarak reddetti, posta yeniden denenecek — ham
+  // sunucu metni rozete basılmaz (ayrıntısı title'da)
+  if (status.startsWith('QUEUED_RETRY')) return <ToneBadge tone="info" title={status}>{t('alh.mail.queuedRetry')}</ToneBadge>
   // "SKIPPED: <neden>" — atlanan e-posta, nedeniyle (alıcı yok / kanal kapalı / fırtına #N / takım yok). 2026-09-30.
   if (status.startsWith('SKIPPED:')) {
     const reason = status.slice('SKIPPED:'.length).trim()
@@ -127,13 +132,25 @@ export function PushDeliveryGroup({ rows }) {
   const [open, setOpen] = useState(false)
   const head = rows[0]
   const many = rows.length > 1
-  const uniqueRecipients = new Set(rows.map((r) => r.username)).size
-  const uniqueRows = rows.filter((r, i) => r.username === '-' || rows.findIndex((x) => x.username === r.username) === i)
+  // Kişi sayısı (2026-10-22, ALERTS-18): gizli satırlar (paylaşımla okuyanda `username: null`) TEK TEK sayılır, sistem
+  // karar satırı (`-`) kişi sayılmaz; listede gizli satırlar tek "N gizli alıcı" rozetinde toplanır.
+  const uniqueRecipients = pushPeopleCount(rows)
+  const hiddenCount = pushHiddenCount(rows)
+  const isHidden = (r) => r.username == null || r.username === ''
+  const uniqueRows = rows.filter((r, i) => r.username === PUSH_SYSTEM_USER
+    || (isHidden(r) ? rows.findIndex(isHidden) === i : rows.findIndex((x) => x.username === r.username) === i))
   const cls = PUSH_TRIGGER_CLS[head.trigger] ?? 'other'
   const statusTone = head.status === 'SENT' ? 'success' : (head.status === 'FAILED' || head.status === 'CIRCUIT_OPEN') ? 'danger' : 'muted'
-  const who = (p) => (p.username === '-'
+  const who = (p) => (p.username === PUSH_SYSTEM_USER
     ? <Badge key={p.id} variant="outline" data-who="system" className="font-normal text-muted-foreground"><em>{t('userpush.systemRow')}</em></Badge>
-    : (
+    : isHidden(p)
+      ? (
+        <Badge key={p.id ?? 'hidden'} variant="outline" data-who="hidden" data-count={hiddenCount}
+          className="h-auto rounded-md font-normal whitespace-normal text-muted-foreground">
+          <em>{hiddenCount === 1 ? t('alh.push.hiddenRecipients.one') : t('alh.push.hiddenRecipients', hiddenCount)}</em>
+        </Badge>
+      )
+      : (
       <Badge key={p.id} variant="outline" data-who=""
         className={cn('gap-1.5 font-normal', p.same_person_username && 'h-auto flex-wrap overflow-visible rounded-md whitespace-normal')}>
         <UserBadge username={p.username} displayName={p.display_name} size="sm" inline nameOnly />
@@ -175,7 +192,7 @@ export function NotifLogCard({ log: l, alertLevel }) {
     <NotifCard tone={trig.cls} open={open} onOpenChange={setOpen} head={<>
       <Badge variant="outline" className={cn('font-bold', tone.badge)}><trig.Icon aria-hidden="true" className="size-3" /> {trig.text}</Badge>
       <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
-        <strong className="truncate">{l.recipient_name}</strong>
+        <strong className="min-w-0 [overflow-wrap:anywhere]">{l.recipient_name}</strong>
         {isNocLog(l)
           ? (nocDelivered(l.email_status) && (
               <Badge variant="outline" data-slot="notif-noc-delivered" className={cn('gap-1 font-semibold', NOTIF_TONE.noc.badge)}>
@@ -183,7 +200,7 @@ export function NotifLogCard({ log: l, alertLevel }) {
               </Badge>
             ))
           : l.recipient_role && l.recipient_role !== 'COMBINED' && <SystemRoleBadge role={l.recipient_role} className="text-[0.75em]" />}
-        <span className="truncate text-xs text-muted-foreground">{l.recipient_email}</span>
+        <span className="min-w-0 text-xs text-muted-foreground [overflow-wrap:anywhere]">{l.recipient_email}</span>
       </div>
       <EmailStatusBadge status={l.email_status} />
       <span className="text-xs whitespace-nowrap text-muted-foreground tabular-nums">{sentDate}</span>
@@ -195,7 +212,7 @@ export function NotifLogCard({ log: l, alertLevel }) {
       <DetailRow label={t('alh.notif.content')} body>
         {l.message && l.message.trimStart().startsWith('<') ? (
           <iframe className="h-[420px] w-full rounded-md border bg-white" title={l.subject}
-            srcDoc={mailPreviewSrcDoc(l.message, { logoVariant: mailLogoVariant({ trigger: l.trigger, level: alertLevel }) })}
+            srcDoc={mailPreviewSrcDoc(l.message, { logoVariant: mailLogoVariant({ trigger: l.trigger === 'MANUAL_RESOLVE' ? 'RESOLUTION' : l.trigger, level: alertLevel }) })}
             sandbox={MAIL_PREVIEW_SANDBOX} />
         ) : <span className="whitespace-pre-wrap">{l.message || '—'}</span>}
       </DetailRow>

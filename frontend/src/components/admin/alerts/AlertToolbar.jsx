@@ -25,7 +25,7 @@ import { FieldLabel, Field as ShField, FieldContent, FieldTitle, FieldDescriptio
 import { cn } from '@/lib/utils'
 import {
   LEVELS, RANGE_ACTIVE, RANGE_RESOLVED, PRESETS, SORT_KEYS, NOC_SENT, activeAlertFilters, dateKind, dateKindOptions, rangeForKind,
-  isPreset, sortParts, sortValue, fmtFilterDate,
+  isPreset, presetStartDay, sortParts, sortValue, fmtFilterDate,
 } from './alertHistoryModel.js'
 
 /** Radix radyo öğesi değeri boş dize olamaz → "Tümü" için sabit belirteç. */
@@ -133,7 +133,10 @@ function DateRangeBody({ filters, patch, tab }) {
       <div className="flex flex-col gap-1 text-xs font-semibold text-muted-foreground">
         {t('alh.facet.to')}
         <DateTimeField dateOnly clearable placeholder={t('alh.facet.to')}
-          value={filters.to} onChange={(v) => patch({ to: v || '' })} />
+          value={filters.to}
+          // Hızlı dönem ("Son 7 gün") etkinken seçilen bitiş yok sayılıyordu (dönem "şimdiye kadar"dır) — bitiş seçilince
+          // dönem başladığı güne çevrilir, aralık "o günden seçilen bitişe" olur (2026-10-22, UIM-32)
+          onChange={(v) => patch(v && isPreset(filters.from) ? { to: v, from: presetStartDay(filters.from) } : { to: v || '' })} />
       </div>
     </div>
   )

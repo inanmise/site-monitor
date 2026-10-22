@@ -368,7 +368,12 @@ export default function DnsDetailModal({ monitor, onClose, teamNames = {}, canMa
                   </dl>
                 </DnsSection>
               )}
-
+            </div>
+          )}
+          {/* Kontrol geçmişi KAYITLI veridir (2026-10-22, UIM-46): canlı ayrıntı sorgusu (/details, 6 kayıt türü + SOA + NS)
+              beklenirken ya da düştüğünde de görünür — eskiden yalnız ayrıntı gelince çiziliyordu, çözümleyici yavaşken
+              (tam da geçmişe bakılacak an) hiç açılmıyordu. */}
+          <div data-slot="dns-history" className="mt-4">
               {/* Recent history — paylaşılan Kontrol Geçmişi (filterMode=changed: "Değişenler" chip'i) */}
               <DnsSection icon={Clock} title={t('dns.recentChecks')}>
                 {/* Hata teşhisi (2026-10-05): başarısız sorgu ("" değer) artık "Değişiklik Yok" görünmez — değer hücresinde
@@ -448,8 +453,7 @@ export default function DnsDetailModal({ monitor, onClose, teamNames = {}, canMa
                     </>)
                   }} />
               </DnsSection>
-            </div>
-          )}
+          </div>
         </TabsContent>
 
         <TabsContent value="alerts"><AlertHistory domain={monitor.domain} types={alertTypesFor('dns')} /></TabsContent>
@@ -461,7 +465,7 @@ export default function DnsDetailModal({ monitor, onClose, teamNames = {}, canMa
         </TabsContent>
 
         <TabsContent value="notes"><MonitorNotes type="DNS" target={monitor.domain}
-          canManage={monitor.shared_access === true ? !!canManage : undefined} /></TabsContent>
+          canManage={!!canManage} /></TabsContent>
 
         <TabsContent value="changes">
           <Suspense fallback={<LoadingBlock label={t('modal.loading')} />}>

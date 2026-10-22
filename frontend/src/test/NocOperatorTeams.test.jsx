@@ -156,3 +156,33 @@ describe('operatorTeamsModel', () => {
     expect(opts.map((o) => o.label)).toEqual(['#99', 'Ada (pasif)', 'Çay'])
   })
 })
+
+// 20.165.1 (UIA-C12): takım rehberi okunamasa da seçili takımlar ayar yanıtındaki ADLARIYLA görünür, asla çıplak "#3"
+describe('NocOperatorTeams — rehber okunamadı', () => {
+  it('rehber başarısız: çip adı ayar yanıtının `teams` alanından; o da yoksa "adı okunamayan takım"', async () => {
+    api.teams.directory.mockResolvedValue({ success: false })
+    api.admin.noc.getOperatorTeams.mockResolvedValue({ success: true, data: { ...SETTINGS, teams: [{ id: 3, name: 'Takım NOC', active: true }] } })
+    const { unmount } = render(<NocOperatorTeams />)
+    await waitFor(() => expect(chips()).toHaveLength(1))
+    expect(chips()[0]).toHaveTextContent('Takım NOC')
+    expect(chips()[0].textContent).not.toContain('#3')
+    unmount()
+    api.admin.noc.getOperatorTeams.mockResolvedValue({ success: true, data: SETTINGS })
+    render(<NocOperatorTeams />)
+    await waitFor(() => expect(chips()).toHaveLength(1))
+    expect(chips()[0].textContent).not.toContain('#3')
+    expect(chips()[0]).toHaveTextContent(/Adı okunamayan takım|Team \(name unavailable\)/)
+  })
+
+  it('uzun takım adı çipte KESİLMEZ (truncate yok, hap köşesi kırpmaz)', async () => {
+    const LONG = 'Dijital Kanallar Teknoloji Servis Yönetimi Uzun Ad Müdürlüğü 7/24'
+    api.teams.directory.mockResolvedValue({ success: true, data: [...DIRECTORY.filter((d) => d.id !== 3), { id: 3, name: LONG, active: true }] })
+    render(<NocOperatorTeams />)
+    await waitFor(() => expect(chips()).toHaveLength(1))
+    const chip = chips()[0]
+    expect(chip).toHaveTextContent(LONG)
+    expect(chip.querySelector('.truncate')).toBeNull()
+    expect(chip.className).toContain('rounded-md')
+    expect(chip.className).toContain('overflow-visible')
+  })
+})

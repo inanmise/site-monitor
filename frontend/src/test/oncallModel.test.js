@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  addMember, anchorToUtc, buildPayload, defaultAnchor, isDirty, move, toForm, utcToAnchor, validate, validateOverride,
+  addMember, anchorToUtc, buildPayload, defaultAnchor, hasMissingMembers, isDirty, move, toForm, utcToAnchor, validate, validateOverride,
 } from '../components/admin/oncall/oncallModel.js'
 
 /** Nöbet çizelgesi saf modeli (2026-10-11): İstanbul ↔ UTC, form ↔ gövde, doğrulama, sıra işlemleri. */
@@ -49,5 +49,26 @@ describe('oncallModel', () => {
     expect(move(l, 2, 1)).toBe(l)
     expect(addMember(l, { id: '2' })).toBe(l)
     expect(addMember(l, { id: 4 }).map((x) => x.id)).toEqual([1, 2, 3, 4])
+  })
+})
+
+// 20.165.1 (UIA-A5 / K11): silinmiş hesap nöbetçi olamaz — gövdeye girmez, ama listeden çıkarılması değişikliktir
+describe('oncallModel — silinmiş üye', () => {
+  const view = { enabled: true, rotation: 'WEEKLY', anchor: '2026-10-05T09:00', members: [
+    { user_id: 7, name: 'A', active: true }, { user_id: null, missing: true, active: false }, { user_id: 9, missing: true, active: false }] }
+  it('buildPayload silinmişleri (null kimlikli olanlar dâhil) göndermez', () => {
+    expect(buildPayload(toForm(view)).members).toEqual([7])
+  })
+  it('isDirty: silinmiş satırı çıkarmak değişiklik; dokunulmamış form değil', () => {
+    const f = toForm(view)
+    expect(isDirty(f, f)).toBe(false)
+    expect(isDirty({ ...f, members: f.members.filter((m) => !m.missing) }, f)).toBe(true)
+    expect(hasMissingMembers(f)).toBe(true)
+    expect(hasMissingMembers({ ...f, members: [] })).toBe(false)
+  })
+  it('validate: açık çizelgede yalnız silinmiş hesaplar kaldıysa "en az bir kişi" hatası (sunucu 400 verirdi)', () => {
+    const f = toForm({ ...view, members: [{ user_id: null, missing: true, active: false }] })
+    expect(validate(f).members).toBe('oncall.err.noMembers')
+    expect(validate({ ...f, enabled: false }).members).toBeUndefined()
   })
 })

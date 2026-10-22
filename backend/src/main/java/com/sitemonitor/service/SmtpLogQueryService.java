@@ -442,14 +442,17 @@ public class SmtpLogQueryService {
         }
         if (n.getRecipientEmail() == null || n.getRecipientEmail().isBlank()) return new ResendResult(false, null, null, "NO_RECIPIENT");
         // Kolona sığmayan alıcı listesi "… +N" ile kısaltıldı (2026-10-12): yeniden gönderim alıcıların bir KISMINA giderdi.
-        if (NotificationLog.fitted(n.getRecipientEmail())) return new ResendResult(false, null, null, "RECIPIENTS_TRUNCATED");
+        if (NotificationLog.fitted(n.getRecipientEmail()) || NotificationLog.fitted(n.getCc()))
+            return new ResendResult(false, null, null, "RECIPIENTS_TRUNCATED");
         if (n.getMessage() == null || n.getMessage().isBlank()) return new ResendResult(false, null, null, "NO_BODY");
         if (n.getAlertEventId() != null) {
             AlertEvent e = alertEventRepo.findById(n.getAlertEventId()).orElse(null);
             if (e != null && Boolean.TRUE.equals(e.getResolved())) return new ResendResult(false, null, null, "ALERT_RESOLVED");
         }
         String variant = "RESOLUTION".equalsIgnoreCase(n.getTrigger()) ? "ok" : BrandMailAssets.variantForLevel(row.alertLevel());
-        String status = emailService.resendStoredHtml(n.getRecipientEmail().trim(), n.getSubject(), n.getMessage(), variant);
+        // Alıcı metni ("a@x, b@y") ve CC gönderici tarafından adreslere bölünür (ALERTS-14: tek adres sanılıp "Illegal address");
+        // yeniden gönderim AYNI postadır — günlükteki CC de alır (kopya satır CC'yi zaten taşıyordu).
+        String status = emailService.resendStoredHtml(n.getRecipientEmail().trim(), n.getCc(), n.getSubject(), n.getMessage(), variant);
         NotificationLog copy = new NotificationLog();
         copy.setAlertEventId(n.getAlertEventId()); copy.setSentAt(ISO.format(Instant.now()));
         copy.setRecipientName(n.getRecipientName()); copy.setRecipientEmail(n.getRecipientEmail()); copy.setRecipientRole(n.getRecipientRole());

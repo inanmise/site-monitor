@@ -95,7 +95,7 @@ class SmtpLogNocRedactionTest {
         SmtpLogQueryService.ResendResult r = svc.resend(7L, SmtpLogQueryService.Scope.all(), "admin");
         assertThat(r.ok()).isFalse();
         assertThat(r.reason()).isEqualTo("NOC_NOT_RESENDABLE");
-        verify(emailService, never()).resendStoredHtml(anyString(), anyString(), anyString(), anyString());
+        verify(emailService, never()).resendStoredHtml(any(), any(), any(), any(), any());
     }
 
     @Test
@@ -109,6 +109,6 @@ class SmtpLogNocRedactionTest {
         SmtpLogQueryService.ResendResult r = svc.resend(8L, SmtpLogQueryService.Scope.all(), "admin");
         assertThat(r.ok()).isFalse();
         assertThat(r.reason()).isEqualTo("RECIPIENTS_TRUNCATED");
-        verify(emailService, never()).resendStoredHtml(anyString(), anyString(), anyString(), anyString());
+        verify(emailService, never()).resendStoredHtml(any(), any(), any(), any(), any());
     }
 }

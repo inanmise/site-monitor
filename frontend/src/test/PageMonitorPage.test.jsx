@@ -204,10 +204,10 @@ describe('PageMonitorPage', () => {
     fireEvent.click(getCard('https://www.example.com/'))
     await waitFor(() => expect(api.monitoring.getPageIssues).toHaveBeenCalled())
 
-    // Sinif adi ayirt edici DEGIL: yukleme bloguyla "sorun yok" blogu ayni `upt-modal-loading`
-    // sinifini kullaniyor (PageMonitorPage:763-764). Ayirt eden sey METIN — bayrak inmezse
-    // "Yukleniyor..." kalir, inerse bos-durum metni gelir.
-    expect(await screen.findByText(/sorunlu kaynak yok|no resource issues/i)).toBeInTheDocument()
+    // Bayrak inmezse "Yukleniyor..." kalir. 2026-10-22 (UIM-45): inince "Sorunlu kaynak yok" DEGIL — okuma hatasi
+    // hata blogu + yeniden dene gosterir (eski test bos-durum metnini pinliyordu).
+    await waitFor(() => expect(document.querySelector('[data-slot="page-issues-error"]')).not.toBeNull())
+    expect(screen.queryByText(/sorunlu kaynak yok|no resource issues/i)).toBeNull()
     expect(screen.queryByText(/^yükleniyor\.\.\.$|^loading\.\.\.$/i)).not.toBeInTheDocument()
     expect(screen.getByRole('tab', { name: /issues|sorunlar/i })).toBeInTheDocument()
   })

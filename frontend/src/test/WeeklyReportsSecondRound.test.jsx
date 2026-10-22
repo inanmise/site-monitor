@@ -116,7 +116,9 @@ describe('Yıl özeti — CSV + yazdırılabilir HTML + pano düğmeleri', () =>
     expect(html).not.toContain('<Takım')
     expect(html).toMatch(/<td class="c"[^>]*>88<\/td>/)
     expect(html).toMatch(/<td class="c"[^>]*>·<\/td>/)
-    expect(html).toContain('2026-09-13 10:00')
+    // Türkiye saati + bölge etiketi (UIA-10): 10:00Z → 13:00; UTC damgası basılmaz
+    expect(html).toContain('2026-09-13 13:00 (wr.ys.tz)')
+    expect(html).not.toContain('2026-09-13 10:00')
     expect((html.match(/class="lg"/g) || []).length).toBe(5)
     expect(html).toContain('<th class="w cur">3</th>')
     // Durum dağılımı yoksa ikinci satır yok; varsa takım hücresinde son raporun anlık görüntüsü

@@ -117,6 +117,11 @@ export default function IncidentHistoryPage() {
   // ── Özet, trend, seçenekler, takımlar ──
   const [trends, setTrends] = useState(null)
   const trendsSeq = useRef(0)
+  // Özet okunamadı (UIA-G8, 2026-10-22): eskiden hata yutuluyor, başlık KPI'ları sonsuza dek iskelette kalıyor, döküm
+  // kartları "0" gösteriyor ve tarih aralığı değişip okuma düşünce ESKİ dönemin sayıları yeni dönemin etiketiyle
+  // kalıyordu. Artık "—" + "özet okunamadı"; başka aralığın verisi temizlenir (aynı aralığın tazelemesi düşerse eski kalır).
+  const [trendsFailed, setTrendsFailed] = useState(false)
+  const trendsKeyRef = useRef(null)
   const [trendDays, setTrendDays] = useState(30)
   const [trendDaily, setTrendDaily] = useState([])
   const trendDailySeq = useRef(0)
@@ -167,11 +172,19 @@ export default function IncidentHistoryPage() {
   const loadTrends = useCallback(async () => {
     if (!allowView) return
     const my = ++trendsSeq.current
+    const key = `${filters.since || ''}|${filters.until || ''}`
+    const fail = () => {
+      if (trendsKeyRef.current !== key) { setTrends(null); trendsKeyRef.current = null }
+      setTrendsFailed(true)
+    }
     try {
       const res = await api.incidents.trends(localDayToUtcIso(filters.since, false), localDayToUtcIso(filters.until, true))
       if (my !== trendsSeq.current) return
-      if (res?.success) setTrends(res.data)
-    } catch { /* sessiz — özet boş kalır, liste yine çizilir */ }
+      if (res?.success) { setTrends(res.data); trendsKeyRef.current = key; setTrendsFailed(false) } else fail()
+    } catch {
+      // liste yine çizilir; özet "okunamadı" der
+      if (my === trendsSeq.current) fail()
+    }
   }, [filters.since, filters.until, allowView])
 
   // Günlük trend: son trendDays gün, tablo süzgecinden BAĞIMSIZ (bugünle biten kayan pencere).
@@ -386,7 +399,7 @@ export default function IncidentHistoryPage() {
     ['sumToday', s.today, 'total', 'today', Calendar],
     ['sumLast7d', s.last_7d, 'total', 'last7d', CalendarRange],
     ['sumLast30d', s.last_30d, 'total', 'last30d', CalendarDays],
-  ].map(([k, v, cls, kind, Icon]) => ({ key: kind, label: t('inc.' + k), value: v ?? 0, cls, Icon, hint: t('inc.filterByCard') }))
+  ].map(([k, v, cls, kind, Icon]) => ({ key: kind, label: t('inc.' + k), value: sum ? (v ?? 0) : (trendsFailed ? '—' : v ?? 0), cls, Icon, hint: t('inc.filterByCard') }))
   const activeKind = statItems.find((it) => isActive(it.key))?.key ?? null
   const selectedDay = filters.since && filters.since === filters.until ? filters.since : null
 
@@ -426,7 +439,7 @@ export default function IncidentHistoryPage() {
 
   return (
     <section data-slot="incident-history" className="mb-8 flex min-w-0 flex-col gap-4">
-      <HistoryHeader summary={sum} byStatus={byStatus} filters={effFilters} total={sp.total} loading={loading}
+      <HistoryHeader summary={sum} summaryFailed={trendsFailed && !sum} byStatus={byStatus} filters={effFilters} total={sp.total} loading={loading}
         onRefresh={refreshAll} onNew={openCreate} allowManage={allowManage} isActive={isActive} onCard={onCard} />
 
       <div className="flex flex-wrap items-center gap-2" data-slot="ih-view-switch">

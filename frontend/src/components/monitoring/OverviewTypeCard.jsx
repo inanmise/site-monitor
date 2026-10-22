@@ -3,7 +3,7 @@
 // (sorunlu / gecikmiş / açık alarm) ve son kontrol. Kart sayıları tür sayfasıyla EŞLEŞİR: "aktif + duraklatılmış" =
 // sayfadaki izleme sayısı; envanterden çıkarılmış (taramanın atladığı, sayfanın listelemediği) eski satırlar ayrı çipte.
 // Kartta SOL ŞERİT YOK — ton ikon kutusunda ve `data-tone`'da; seçili kart tüm çerçeveyle vurgulanır.
-import { ArrowUpRight, CheckCircle2, Clock, Trash2, Unplug } from 'lucide-react'
+import { ArrowUpRight, CheckCircle2, CircleHelp, Clock, Trash2, Unplug } from 'lucide-react'
 import { useT, useDateLocale } from '../../i18n/index.jsx'
 import { ProgressBar } from '../ui/Progress.jsx'
 import { Badge } from '@/components/shadcn/badge'
@@ -24,20 +24,33 @@ function Stat({ label, value, tone }) {
   )
 }
 
-/** Kartın tonu: sorunlu ya da kritik alarm → kötü; açık alarm ya da gecikmiş → uyarı; aksi iyi. */
-export function typeTone(type) {
-  return Number(type.down || 0) > 0 || Number(type.open_critical || 0) > 0 ? 'bad'
-    : Number(type.open_alerts || 0) > 0 || Number(type.stale || 0) > 0 ? 'warn' : 'ok'
+/**
+ * Kartın tonu: sorunlu ya da kritik alarm → kötü; açık alarm ya da gecikmiş → uyarı; aksi iyi. Bilinmeyen ASLA iyi
+ * değildir (2026-10-22, UIM-5): izleme listesi / son kontroller okunamayan tür (`unavailable` / `checks_unavailable`),
+ * aktif izlemelerinin hepsi "bilinmiyor" olan tür ve açık alarmlar okunamadığında (`alertsUnknown`) → nötr.
+ */
+export function typeTone(type, { alertsUnknown = false } = {}) {
+  if (type?.unavailable === true) return 'neutral'
+  // Kontroller okunamasa da OKUNABİLEN açık alarmlar gerçek bulgudur (2026-10-22, FE-8): kritik alarmı olan tür gri çizilmez
+  if (Number(type.down || 0) > 0 || Number(type.open_critical || 0) > 0) return 'bad'
+  if (Number(type.open_alerts || 0) > 0 || Number(type.stale || 0) > 0) return 'warn'
+  if (type?.checks_unavailable === true) return 'neutral'
+  const active = Number(type.active || 0)
+  if (active > 0 && Number(type.unknown || 0) >= active) return 'neutral'
+  return alertsUnknown ? 'neutral' : 'ok'
 }
 
-export default function OverviewTypeCard({ type, active, nowMs, windowLabel, onSelect, onOpen }) {
+export default function OverviewTypeCard({ type, active, nowMs, windowLabel, onSelect, onOpen, alertsUnknown = false }) {
   const t = useT()
   const locale = useDateLocale()
   const meta = TYPE_META[type.type]
   if (!meta) return null
-  const pct = successPct(type)
-  const tone = typeTone(type)
+  const listGone = type.unavailable === true, checksGone = type.checks_unavailable === true, statsGone = type.stats_unavailable === true
+  const pct = statsGone || listGone ? null : successPct(type)
+  const tone = typeTone(type, { alertsUnknown })
   const down = Number(type.down || 0), open = Number(type.open_alerts || 0), stale = Number(type.stale || 0)
+  const gapLines = [listGone && t('mo.unavailable.typeList'), checksGone && t('mo.unavailable.typeChecks'),
+    statsGone && !listGone && t('mo.unavailable.typeStats')].filter(Boolean)
   const inv = Number(type.inventory_inactive || 0)
   const pausedShown = Math.max(0, Number(type.paused || 0) - inv)
   const avg = formatMs(type.avg_response_ms_window, t, locale)
@@ -53,12 +66,15 @@ export default function OverviewTypeCard({ type, active, nowMs, windowLabel, onS
             aria-label={t('mo.card.filterBy', t(meta.labelKey))}
             className="h-auto min-w-0 flex-1 justify-start gap-2.5 px-1 py-1 text-left whitespace-normal">
             <span className={cn('grid size-9 shrink-0 place-items-center rounded-lg',
-              tone === 'bad' ? 'bg-destructive/10 text-destructive' : tone === 'warn' ? 'bg-amber-500/10 text-amber-700 dark:text-amber-300' : 'bg-primary/10 text-primary')}>
+              tone === 'bad' ? 'bg-destructive/10 text-destructive' : tone === 'warn' ? 'bg-amber-500/10 text-amber-700 dark:text-amber-300'
+                : tone === 'neutral' ? 'bg-muted text-muted-foreground' : 'bg-primary/10 text-primary')}>
               <meta.Icon aria-hidden="true" className="size-5" />
             </span>
             <span className="min-w-0">
-              <span className="block truncate text-sm font-semibold">{t(meta.labelKey)}</span>
-              <span className="block text-xs font-normal text-muted-foreground">{t('mo.card.counts', type.active ?? 0, pausedShown)}</span>
+              <span className="block text-sm font-semibold [overflow-wrap:anywhere]">{t(meta.labelKey)}</span>
+              <span className="block text-xs font-normal text-muted-foreground">
+                {listGone ? t('mo.unavailable.typeCount') : t('mo.card.counts', type.active ?? 0, pausedShown)}
+              </span>
             </span>
           </Button>
           <Button type="button" variant="outline" size="icon-sm" aria-label={t('mo.card.open', t(meta.labelKey))} title={t('mo.card.open', t(meta.labelKey))}
@@ -73,8 +89,10 @@ export default function OverviewTypeCard({ type, active, nowMs, windowLabel, onS
               pTone === 'crit' ? 'text-destructive' : pTone === 'warn' ? 'text-amber-700 dark:text-amber-300' : 'text-foreground')}>
               {pct == null ? '—' : pctText(pct, locale)}
             </div>
-            <div className="mt-1 truncate text-[11px] text-muted-foreground">
-              {pct == null ? t('mo.card.noRuns') : t('mo.card.successIn', windowLabel)} · {t('mo.card.checks', Number(type.checks_window || 0).toLocaleString(locale))}
+            <div className="mt-1 text-[11px] text-muted-foreground">
+              {statsGone || listGone
+                ? t('mo.unavailable.typeRuns')
+                : <>{pct == null ? t('mo.card.noRuns') : t('mo.card.successIn', windowLabel)} · {t('mo.card.checks', Number(type.checks_window || 0).toLocaleString(locale))}</>}
             </div>
           </div>
           {avg && (
@@ -89,10 +107,17 @@ export default function OverviewTypeCard({ type, active, nowMs, windowLabel, onS
           className={cn('h-1.5', pct == null && 'opacity-40')} />
 
         <div className="grid grid-cols-3 gap-2 text-center">
-          <Stat label={t('mo.card.down')} value={down} tone={down > 0 ? 'bad' : 'muted'} />
-          <Stat label={t('mo.card.stale')} value={stale} tone={stale > 0 ? 'warn' : 'muted'} />
-          <Stat label={t('mo.card.alerts')} value={open} tone={open > 0 ? 'bad' : 'muted'} />
+          <Stat label={t('mo.card.down')} value={listGone ? '—' : down} tone={down > 0 ? 'bad' : 'muted'} />
+          <Stat label={t('mo.card.stale')} value={listGone ? '—' : stale} tone={stale > 0 ? 'warn' : 'muted'} />
+          <Stat label={t('mo.card.alerts')} value={listGone || alertsUnknown ? '—' : open} tone={open > 0 ? 'bad' : 'muted'} />
         </div>
+
+        {gapLines.length > 0 && (
+          <div data-slot="mo-type-unavailable" className="flex items-start gap-1.5 rounded-md bg-muted/50 px-2 py-1.5 text-[11px] text-muted-foreground">
+            <CircleHelp aria-hidden="true" className="mt-px size-3.5 shrink-0" />
+            <span className="min-w-0">{gapLines.join(' · ')}</span>
+          </div>
+        )}
 
         <div className="mt-auto flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
           <span className="inline-flex items-center gap-1" title={fullTime(type.last_checked_at, locale) || undefined}>

@@ -161,6 +161,16 @@ public class CertificateCheckerService {
         // SSRF: hedef host'u bağlanmadan önce doğrula (cloud-metadata/loopback/link-local blok; iç ağ ayara bağlı).
         try {
             ssrfGuard.validate(domain);
+        } catch (SsrfGuard.UnresolvableHostException ue) {
+            // DNS'te çözülmeyen host bir POLİTİKA reddi değil, ulaşılamazlıktır (CHECKS-2, 2026-10-22): sınıf DNS olmalı.
+            // BLOCKED yazıldığında alarm seviyesi KRİTİK'e düşüyordu (yalnız NETWORK/DNS "erişilemedi" = UYARI). Biçim aşağıdaki
+            // UnknownHostException dalıyla aynı.
+            Map<String, Object> r = errorWithClass(domain, "Domain resolution failed", "DNS", "dns", List.of());
+            // Son inceleme 2026-10-22: çözülmeyen ad (NXDOMAIN — kaldırılmış / yanlış yazılmış host) GERÇEK bir bulgudur, çıkış
+            // (egress) kesintisi değil. Toplu ağ kesintisi oranına SAYILMAZ (20.165.0'da BLOCKED'dı, sayılmıyordu): küçük bir
+            // turda ≥ 3 ve ≥ %50 böyle host sahte "ağ kesintisi" açıp yönetici postası atıyor, turun alarmlarını bastırıyordu.
+            r.put(UNRESOLVABLE_HOST, true);
+            return r;
         } catch (SsrfGuard.BlockedException be) {
             return errorWithClass(domain, be.getMessage(), "BLOCKED");
         }
@@ -482,21 +492,33 @@ public class CertificateCheckerService {
                 }
 
                 // HSTS check via HTTP HEAD — reuse the SSLSocketFactory that already succeeded
+                boolean defaultPort = isDefaultHttpsPort(port);
                 HttpURLConnection hc = null;
                 try {
                     hc = openHstsFollowingSafely("https://" + domain + "/", useProxy, factory);
                     result.put("hsts", hc.getHeaderField("Strict-Transport-Security") != null);
                     // Aynı HEAD'den HTTP durum kodu — ek istek YOK. "Şimdi Kontrol Et" tablosunda
                     // erişilebilirlik kolonunu besler (sertifika geçerli ama uygulama 503 olabilir).
-                    result.put("http_status", hc.getResponseCode());
+                    if (defaultPort) result.put("http_status", hc.getResponseCode());
                 } catch (Exception e) {
                     log.debug("HSTS check failed for {}: {}", domain, e.getMessage());
                     result.put("hsts", null);
-                    result.put("http_status", null);
+                    if (defaultPort) result.put("http_status", null);
                 } finally {
                     if (hc != null) {
                         try { hc.disconnect(); } catch (Exception ignored) { }
                     }
+                }
+                // CHECKS-10 (2026-10-22): sertifika 443 DIŞINDA bir portta kontrol ediliyorsa (8443 …) erişilebilirlik
+                // durumu O PORTUN yanıtıdır — 443'teki başka servisin (ya da dinlemeyen portun) kodu değil. HSTS ise
+                // host geneli bir politikadır; yukarıdaki 443 HEAD'inden okunmaya devam eder.
+                // Son inceleme 2026-10-22: HEAD yalnız port HTTP konuşuyorsa — el sıkışma ALPN ile h2 / http/1.1 anlaştıysa
+                // ya da bilinen bir HTTPS portuysa. LDAPS / SMTPS / IMAPS / AMQPS satırları her saat geçersiz istek alıyor,
+                // sessiz sunucu kontrolü 4–15 sn bekletip certCheckExecutor iş parçacığını tutuyordu; orada durum bilinmiyor (null).
+                if (!defaultPort) {
+                    Object alpn = result.get("alpn");   // el sıkışmada anlaşılan protokol (yukarıda okundu)
+                    result.put("http_status", httpLikely(port, alpn == null ? null : alpn.toString())
+                            ? httpStatusOnPort(domain, port, useProxy, factory) : null);
                 }
 
                 long elapsed = System.currentTimeMillis() - startMs;
@@ -934,6 +956,49 @@ public class CertificateCheckerService {
     }
 
     /**
+     * Sonuç işareti: alan adı bağlanmadan önce DNS'te çözülemedi ({@link SsrfGuard.UnresolvableHostException}). Sınıf yine
+     * {@code DNS} (alarm seviyesi UYARI), ama toplu ağ kesintisi oranına girmez ({@code SchedulerService.networkErrorCount}).
+     */
+    public static final String UNRESOLVABLE_HOST = "unresolvable_host";
+
+    /** Varsayılan HTTPS portu mu (443 ya da tanımsız ≤ 0) — durum kodu 443 HSTS HEAD'inden okunur (CHECKS-10). */
+    static boolean isDefaultHttpsPort(int port) {
+        return port <= 0 || port == 443;
+    }
+
+    /** ALPN'siz el sıkışmada da HTTP konuştuğu varsayılan HTTPS portları (CHECKS-10, son inceleme 2026-10-22). */
+    static final Set<Integer> KNOWN_HTTPS_PORTS = Set.of(4443, 5443, 7443, 8000, 8008, 8080, 8081, 8443, 8843, 8888, 9443, 10443);
+
+    /**
+     * 443 dışı portta HTTP durum kodu yoklanmalı mı: el sıkışma ALPN ile {@code h2} / {@code http/1.1} anlaştıysa ya da port
+     * {@link #KNOWN_HTTPS_PORTS} içindeyse. LDAPS (636), SMTPS (465), IMAPS (993), AMQPS (5671) … ALPN anlaşmaz — oraya HTTP
+     * HEAD gönderilmez, durum bilinmiyor kalır.
+     */
+    static boolean httpLikely(int port, String alpn) {
+        if ("h2".equals(alpn) || "http/1.1".equals(alpn)) return true;
+        return KNOWN_HTTPS_PORTS.contains(port);
+    }
+
+    /**
+     * Kontrol edilen portun HTTP durum kodu (HEAD, yönlendirmeler HSTS yoklamasıyla AYNI güvenli takip kurallarıyla) —
+     * 443 dışı portlar için; okunamazsa {@code null} (bilinmiyor, "erişilemez" değil).
+     */
+    Integer httpStatusOnPort(String domain, int port, boolean useProxy, SSLSocketFactory factory) {
+        HttpURLConnection hc = null;
+        try {
+            hc = openHstsFollowingSafely("https://" + domain + ":" + port + "/", useProxy, factory);
+            return hc.getResponseCode();
+        } catch (Exception e) {
+            log.debug("HTTP status probe failed for {}:{}: {}", domain, port, e.getMessage());
+            return null;
+        } finally {
+            if (hc != null) {
+                try { hc.disconnect(); } catch (Exception ignored) { }
+            }
+        }
+    }
+
+    /**
      * HSTS HEAD probe'u — yönlendirmeleri <b>her hop {@link SsrfGuard}'dan geçirerek</b> takip eder.
      *
      * <p><b>Neden gerekti.</b> Önceki hal {@code setInstanceFollowRedirects(true)} ile JDK'nın kör
@@ -945,8 +1010,9 @@ public class CertificateCheckerService {
      * <p>Desen {@code HstsDiagnosticsService.openFollowingSafely} ile aynı: takip KAPALI kurulur,
      * zincir burada {@link SafeRedirect} kurallarıyla ilerler (şema allow-list, host zorunluluğu,
      * https→http düşürümü engeli, hop tavanı).
+     *
+     * <p>Paket-görünür: kapı testi (HstsProbeRedirectGuardTest) yerel sunucuya karşı doğrudan sürer.
      */
-    // Paket-gorunur: kapi testi (HstsProbeRedirectGuardTest) yerel sunucuya karsi dogrudan surer.
     HttpURLConnection openHstsFollowingSafely(String startUrl, boolean useProxy,
                                               SSLSocketFactory factory) throws Exception {
         String current = startUrl;

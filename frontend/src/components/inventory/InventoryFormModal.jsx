@@ -267,8 +267,11 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
   }, [focus])
 
   const isDuplicate = mode === 'duplicate'
-  // Silme yetkisi: CertificateModal ile AYNI kapı (inventory.crud) — ikinci bir yetki yolu açılmaz.
+  // Silme yetkisi (2026-10-22, UIM-14): izin (inventory.crud) VE kaydın sunucu bayrağı `can_delete` (yönetim kapsamı ya da
+  // DELETE paylaşımı — üyelik / EDIT paylaşımı yetmez; sunucu requireInventoryDeleter). Bayrak yoksa (eski sunucu) rol
+  // kuralı `canManage`. Envanter tablosu / çekmecesiyle AYNI ifade.
   const canDelete = usePermissions().canEdit('inventory.crud')
+    && (record?.can_delete === true || (record?.can_delete == null && canManage))
   // Tanilama BASKA bir kapidan gecer (diagnostics.run/execute); test sonucundaki eylem, yetkisi
   // olmayan kullaniciya 403 alacagi bir dugme gostermesin.
   const canDiagnose = usePermissions().canExecute('diagnostics.run')

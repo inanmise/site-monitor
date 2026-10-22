@@ -470,21 +470,132 @@ public class EmailNotificationService {
      * hatırlatması her PO'ya aynı konuyla) — sonuç önce konusu VE alıcısı eşleşen en yeni kuyruk satırına yazılır; alıcısı
      * eşleşen satır yoksa (alıcı listesi günlükte grup adı / farklı biçim) eski kural: konuya göre en yeni satır.
      */
-    private void writeBackRetryStatus(MimeMessage msg, String terminalStatus) {
+    void writeBackRetryStatus(MimeMessage msg, String terminalStatus) {
         try {
             String subject = msg.getSubject();
             if (subject == null || subject.isBlank()) return;
             java.util.Set<String> to = toAddresses(msg);
+            String prefix = "QUEUED_RETRY";
             com.sitemonitor.model.NotificationLog logRow = retryRowFor(subject, to);
             // Satır bu arada yetim sayılıp FAILED yazıldıysa (süpürücü / teknik hata uzlaştırması; MP-06) geç gelen GERÇEK sonuç
             // onu yine düzeltir — günlük doğruyu söylesin.
-            if (logRow == null) logRow = rowFor(subject, to, STATUS_RETRY_ORPHANED);
+            if (logRow == null) {
+                logRow = rowFor(subject, to, STATUS_RETRY_ORPHANED);
+                prefix = STATUS_RETRY_ORPHANED;
+            }
             if (logRow == null) return;
             logRow.setEmailStatus(terminalStatus);
             notificationLogRepo.save(logRow);
+            // Aynı postanın öbür satırları (sessiz saat özeti / fırtına postası alarm başına bir satır yazar) da aynı sonucu alır.
+            writeSameMailSiblings(logRow, subject, prefix, terminalStatus);
         } catch (Exception e) {
             log.warn("Retry sonucu bildirim loguna yazılamadı: {}", e.getMessage());
         }
+    }
+
+    /**
+     * Tek posta, N günlük satırı (2026-10-22, ALERTS-16): sessiz saat özeti ({@code QuietDigestService}) ve fırtına postası
+     * ({@code StormService.logStormMail}) aynı postayı kapsadığı HER alarm için ayrı satır yazar — aynı konu, alıcı, rol ve
+     * tetikle, aynı anda. 421 sonucu eskiden yalnız EN YENİ satıra yazılıyordu; öbür N-1 satır kuyrukta kalıp yetim süpürmesince
+     * "FAILED: … gönderen pod kapandı" oluyordu (teslim edilmiş posta FAILED görünüyordu, özet kalemleri ve yeniden uyarı
+     * damgası takılıyordu). Kardeş = aynı konu + aynı alıcı metni + aynı rol + aynı tetik + aynı durum öneki + eşleşen satırın
+     * yazılma anının ±{@link #SAME_MAIL_WINDOW} içinde. Başka yerde uzlaştırılan postalar (7/24, teknik hata raporu) tek satırdır,
+     * kardeş aranmaz. Veritabanında tek hedefli UPDATE (satır tavanı yok); JDBC yoksa (birim testi) son 20 satırdan.
+     */
+    private int writeSameMailSiblings(com.sitemonitor.model.NotificationLog row, String subject, String statusPrefix, String status) {
+        if (row == null || row.getId() == null || resentElsewhere(row)) return 0;
+        try {
+            org.springframework.jdbc.core.JdbcTemplate j = jdbc;
+            if (j != null) {
+                java.util.List<Object> args = new java.util.ArrayList<>();
+                // Ham JDBC UPDATE @PreUpdate'i (NotificationLog.fitColumns) atlar: uzun "FAILED: <SMTP hatası>" PostgreSQL'de
+                // 22001 ile düşüp kardeşleri kuyrukta bırakıyordu — eşleşen satırın aldığı AYNI kırpılmış metin yazılır.
+                args.add(com.sitemonitor.model.NotificationLog.fit(status, com.sitemonitor.model.NotificationLog.VARCHAR_MAX));
+                String where = sameMailWhere(row, subject, statusPrefix, args);
+                return j.update("UPDATE notification_logs SET email_status = ?" + where, args.toArray());
+            }
+            int n = 0;
+            java.util.List<com.sitemonitor.model.NotificationLog> rows =
+                    notificationLogRepo.findTop20BySubjectAndEmailStatusStartingWithOrderByIdDesc(subject, statusPrefix);
+            if (rows == null) return 0;
+            for (com.sitemonitor.model.NotificationLog sib : rows) {
+                if (sib == null || sib == row || java.util.Objects.equals(sib.getId(), row.getId())) continue;
+                if (!sameMail(row, sib)) continue;
+                sib.setEmailStatus(status);
+                notificationLogRepo.save(sib);
+                n++;
+            }
+            return n;
+        } catch (Exception e) {
+            log.warn("Retry sonucu aynı postanın öbür günlük satırlarına yazılamadı: {}", e.getMessage());
+            return 0;
+        }
+    }
+
+    /** Aynı postanın kardeş satırlarının yazılma anı penceresi (aynı yazım dalgası — saniyeler; pay bırakıldı). */
+    static final java.time.Duration SAME_MAIL_WINDOW = java.time.Duration.ofMinutes(2);
+
+    /** Kardeş satır kümesi (JDBC; dinamik test dikişi) — yoksa son 20 satırdan bakılır. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private org.springframework.jdbc.core.JdbcTemplate jdbc;
+
+    /** Test dikişi. */
+    void setJdbc(org.springframework.jdbc.core.JdbcTemplate jdbc) { this.jdbc = jdbc; }
+
+    private static final java.time.format.DateTimeFormatter LOG_TS =
+            java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss");
+
+    /** Günlük zaman damgasının ilk 19 karakteri ({@code yyyy-MM-ddTHH:mm:ss}); okunamazsa null. */
+    static java.time.LocalDateTime logTime(String sentAt) {
+        if (sentAt == null || sentAt.length() < 19) return null;
+        try {
+            return java.time.LocalDateTime.parse(sentAt.substring(0, 19));
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** Java tarafı kardeş kuralı (JDBC'siz yol) — {@link #sameMailWhere} ile aynı. */
+    static boolean sameMail(com.sitemonitor.model.NotificationLog a, com.sitemonitor.model.NotificationLog b) {
+        if (!java.util.Objects.equals(a.getRecipientEmail(), b.getRecipientEmail())) return false;
+        if (!java.util.Objects.equals(emptyIfNull(a.getRecipientRole()), emptyIfNull(b.getRecipientRole()))) return false;
+        if (!java.util.Objects.equals(emptyIfNull(a.getTrigger()), emptyIfNull(b.getTrigger()))) return false;
+        java.time.LocalDateTime ta = logTime(a.getSentAt()), tb = logTime(b.getSentAt());
+        if (ta == null || tb == null) return a.getSentAt() != null && a.getSentAt().equals(b.getSentAt());
+        return !tb.isBefore(ta.minus(SAME_MAIL_WINDOW)) && !tb.isAfter(ta.plus(SAME_MAIL_WINDOW));
+    }
+
+    private static String emptyIfNull(String s) { return s == null ? "" : s; }
+
+    /** Kardeş satırların WHERE yan cümlesi (bağ değerleri {@code args}'a eklenir; eşleşen satırın kendisi hariç). */
+    private static String sameMailWhere(com.sitemonitor.model.NotificationLog row, String subject, String statusPrefix,
+                                        java.util.List<Object> args) {
+        StringBuilder w = new StringBuilder(" WHERE subject = ? AND id <> ? AND email_status LIKE ? ESCAPE '\\'");
+        args.add(subject);
+        args.add(row.getId());
+        args.add(likePrefix(statusPrefix));
+        if (row.getRecipientEmail() == null) w.append(" AND recipient_email IS NULL");
+        else { w.append(" AND recipient_email = ?"); args.add(row.getRecipientEmail()); }
+        w.append(" AND COALESCE(recipient_role, '') = ?");
+        args.add(emptyIfNull(row.getRecipientRole()));
+        w.append(" AND COALESCE(trigger, '') = ?");
+        args.add(emptyIfNull(row.getTrigger()));
+        java.time.LocalDateTime t = logTime(row.getSentAt());
+        if (t != null) {
+            w.append(" AND sent_at >= ? AND sent_at < ?");
+            args.add(LOG_TS.format(t.minus(SAME_MAIL_WINDOW)));
+            args.add(LOG_TS.format(t.plus(SAME_MAIL_WINDOW).plusSeconds(1)));
+        } else {
+            w.append(" AND sent_at = ?");
+            args.add(row.getSentAt());
+        }
+        return w.toString();
+    }
+
+    /** LIKE öneki — {@code \}, {@code %}, {@code _} kaçırılır (ESCAPE '\'). */
+    static String likePrefix(String prefix) {
+        String p = prefix == null ? "" : prefix;
+        return p.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%";
     }
 
     /** Sonucu başka yerde uzlaştırılıp YENİDEN gönderilen satırların rolleri — 7/24 ({@code NocQueuedRetryReconciler}). */
@@ -536,11 +647,40 @@ public class EmailNotificationService {
                 com.sitemonitor.model.NotificationLog row = retryRowFor(subject, toAddresses(t.msg));
                 if (row == null || row.getId() == null || resentElsewhere(row)) continue;
                 n += notificationLogRepo.touchRetryAlive(row.getId(), nowIso);
+                n += touchSameMailSiblings(row, subject, nowIso);
             } catch (Exception e) {
                 log.debug("421 yeniden deneme canlılık damgası yazılamadı: {}", e.getMessage());
             }
         }
         return n;
+    }
+
+    /**
+     * Canlılık damgası aynı postanın öbür kuyruk satırlarına da (ALERTS-16) — yoksa yetim süpürmesi onları FAILED yapardı.
+     * JDBC yoksa son 20 satırdan; kolon yoksa (yama uygulanamadı) sessizce 0.
+     */
+    private int touchSameMailSiblings(com.sitemonitor.model.NotificationLog row, String subject, String nowIso) {
+        try {
+            org.springframework.jdbc.core.JdbcTemplate j = jdbc;
+            if (j != null) {
+                java.util.List<Object> args = new java.util.ArrayList<>();
+                args.add(nowIso);
+                String where = sameMailWhere(row, subject, "QUEUED_RETRY", args);
+                return j.update("UPDATE notification_logs SET retry_alive_at = ?" + where, args.toArray());
+            }
+            int n = 0;
+            java.util.List<com.sitemonitor.model.NotificationLog> rows =
+                    notificationLogRepo.findTop20BySubjectAndEmailStatusStartingWithOrderByIdDesc(subject, "QUEUED_RETRY");
+            if (rows == null) return 0;
+            for (com.sitemonitor.model.NotificationLog sib : rows) {
+                if (sib == null || sib.getId() == null || sib == row || sib.getId().equals(row.getId()) || !sameMail(row, sib)) continue;
+                n += notificationLogRepo.touchRetryAlive(sib.getId(), nowIso);
+            }
+            return n;
+        } catch (Exception e) {
+            log.debug("421 yeniden deneme kardeş satır damgası yazılamadı: {}", e.getMessage());
+            return 0;
+        }
     }
 
     /**
@@ -704,9 +844,15 @@ public class EmailNotificationService {
      * <p>Düz metin: MailDoc'un yazdığı metin (yoksa HTML'den türetilir) → multipart/alternative.
      */
     private String sendFramedHtml(String[] to, String subject, String html, String variant) throws Exception {
+        return sendFramedHtml(to, null, subject, html, variant);
+    }
+
+    /** {@link #sendFramedHtml(String[], String, String, String)} + isteğe bağlı CC (SMTP günlüğünden yeniden gönderim). */
+    private String sendFramedHtml(String[] to, String[] cc, String subject, String html, String variant) throws Exception {
         MimeMessage msg = currentSender().createMimeMessage();
         MimeMessageHelper helper = new MimeMessageHelper(msg, true, "UTF-8");
         helper.setTo(to);
+        if (cc != null && cc.length > 0) helper.setCc(cc);
         applyFrom(helper);
         helper.setSubject(subject);
         String text = MailKit.plainTextFor(html);
@@ -722,16 +868,49 @@ public class EmailNotificationService {
      * CID logoyu iliştirir. Dönüş sözlüğü diğer gönderimlerle aynı (SENT / FAILED: … / SKIPPED_DISABLED).
      */
     public String resendStoredHtml(String to, String subject, String html, String logoVariant) {
+        return resendStoredHtml(to, null, subject, html, logoVariant);
+    }
+
+    /**
+     * {@link #resendStoredHtml(String, String, String, String)} + günlükteki CC listesi. Günlük satırı alıcıları TEK metin
+     * olarak tutar ("takim@x.com, mudur@x.com"); eskiden bu metin tek adres diye {@code setTo}'ya veriliyordu ve birden çok
+     * alıcılı her satırın yeniden gönderimi "Illegal address" ile FAILED oluyordu (2026-10-22, ALERTS-14). Liste {@code ,} /
+     * {@code ;} / boşlukta bölünür, kırpılır, boşlar ve tekrarlar (büyük / küçük harf duyarsız) atılır; Kime'de olan adres
+     * CC'ye ikinci kez yazılmaz.
+     */
+    public String resendStoredHtml(String to, String cc, String subject, String html, String logoVariant) {
+        String[] toList = splitAddressList(to, java.util.Set.of());
         if (!isEnabled()) {
             log.info("⚠ Email devre dışı — yeniden gönderim atlandı: TO={}", SecretMask.maskEmails(to));
             return "SKIPPED_DISABLED";
         }
+        if (toList.length == 0) return "FAILED: alıcı yok";
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        for (String a : toList) seen.add(a.toLowerCase(java.util.Locale.ROOT));
+        String[] ccList = splitAddressList(cc, seen);
         try {
-            return sendFramedHtml(new String[]{to}, subject, html, logoVariant);
+            return sendFramedHtml(toList, ccList, subject, html, logoVariant);
         } catch (Exception e) {
             log.error("✗ Yeniden gönderim hazırlanamadı: TO={} | HATA={}", SecretMask.maskEmails(to), e.getMessage(), e);
             return "FAILED: " + e.getMessage();
         }
+    }
+
+    /**
+     * Günlükte saklanan alıcı metnini adreslere böler ({@code ,} / {@code ;} / boşluk); boşlar ve {@code exclude}'daki ya da
+     * tekrar eden adresler (küçük harfle karşılaştırılır) atılır, sıra korunur. {@code null} → boş dizi.
+     */
+    static String[] splitAddressList(String list, java.util.Set<String> exclude) {
+        if (list == null || list.isBlank()) return new String[0];
+        java.util.LinkedHashMap<String, String> out = new java.util.LinkedHashMap<>();
+        for (String part : list.split("[,;\\s]+")) {
+            String a = part.trim();
+            if (a.isEmpty()) continue;
+            String key = a.toLowerCase(java.util.Locale.ROOT);
+            if (exclude != null && exclude.contains(key)) continue;
+            out.putIfAbsent(key, a);
+        }
+        return out.values().toArray(new String[0]);
     }
 
     // ── Password reset — admin auto-reset flow ──────────────────────────────

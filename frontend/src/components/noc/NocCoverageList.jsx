@@ -111,7 +111,7 @@ function GroupNames({ it, t }) {
   return (
     <div data-slot="noc-row-groups" className="flex min-w-0 flex-wrap gap-1 text-xs text-muted-foreground">
       {names.length
-        ? names.map((n) => <Badge key={n} variant="outline" className="max-w-full font-normal"><span className="truncate">{n}</span></Badge>)
+        ? names.map((n) => <Badge key={n} variant="outline" className="h-auto max-w-full overflow-visible rounded-md font-normal whitespace-normal"><span className="[overflow-wrap:anywhere]">{n}</span></Badge>)
         : <span>{t('noc.groupsDefault')}</span>}
     </div>
   )

@@ -12,6 +12,7 @@ import { useToast } from './components/ui/Toast.jsx'
 import { useT } from './i18n/index.jsx'
 import { usePagination } from './hooks/usePagination.js'
 import { teamsFromMe, grantWriteTeamsFromMe, grantLevelsFromMe, mergeWriteTeams, rowGrantAccess } from './hooks/useMonitorTeamPick.js'
+import { canCheckCertRow } from './utils/certCheckScope.js'
 import { matchesTag, tagNamesOf, matchesGroupOrTagText, matchesSearchText } from './utils/monitorFilters.js'
 import PaginationBar from './components/ui/PaginationBar.jsx'
 import InactivityCountdownText from './components/ui/InactivityCountdownText.jsx'
@@ -28,6 +29,7 @@ import Login, { REMEMBER_KEY } from './pages/Login'
 import AccountInactiveDialog from './components/AccountInactiveDialog.jsx'
 import {
   ACCOUNT_INACTIVE_REDIRECT, accountInactiveFromUrl, accountInactiveSignaled, assignLocation, onAccountInactive,
+  resetAccountInactiveSignal,
 } from './utils/accountInactive.js'
 import { onSessionExpired } from './utils/sessionExpiry.js'
 // Kullanıcı adı ön eki (2026-10-21): kurala uymayan hesabın oturumu kesilince pasif hesap penceresinin ön ek kipi
@@ -38,9 +40,14 @@ import {
 // Sistem Bakım Modu (2026-10-02): şeritler + geri sayım penceresi (saniyelik tik kendi içinde) ve oturum kesimi sinyali
 import SystemMaintenanceLayer from './components/maintenance/SystemMaintenanceLayer.jsx'
 import {
-  MAINTENANCE_REDIRECT, maintenanceFromUrl, maintenanceSignaled, onMaintenance, rememberWindow, serverOffset,
+  MAINTENANCE_REDIRECT, maintenanceFromUrl, maintenanceSignaled, onMaintenance, rememberWindow, resetMaintenanceSignal,
+  serverOffset,
 } from './utils/systemMaintenance.js'
-import { claimPersonalStorage, clearPersonalStorage, storageOwner } from './utils/personalStorage.js'
+import { OWNER_KEY, claimPersonalStorage, clearPersonalStorage, storageOwner } from './utils/personalStorage.js'
+// Bekleyen sunucu çıkışı (2026-10-22, UIM-1): /logout düşse de istemci oturumu kapatır; sunucu çıkışı sonra yeniden denenir
+import {
+  clearLogoutPending, isLogoutPending, markLogoutPending, settlePendingLogout, startPendingLogoutRetry, tryServerLogout,
+} from './utils/pendingLogout.js'
 import Nav from './components/Nav'
 import MobileTopBar from './components/nav/MobileTopBar.jsx'
 import ThemePreviewBar from './components/theme/ThemePreviewBar.jsx'
@@ -282,6 +289,39 @@ function nocFrom(r) {
   }
 }
 
+/**
+ * Yönetim kapsamı (2026-10-22, K2): `/me` (ve giriş yanıtı) `manage_team_ids` taşıyorsa o liste — sunucunun
+ * `SessionScope.canManage`'ının takımları (yenileme planı, kart silme). Alan yoksa (eski sunucu, global yönetici) null =
+ * bilinmiyor → kart eylemleri bugünkü rol kuralıyla.
+ */
+function manageIdsFrom(r) {
+  return Array.isArray(r?.manage_team_ids) ? r.manage_team_ids : null
+}
+
+/**
+ * Görüş kapsamı (2026-10-22, FE-1): `/me` (ve giriş yanıtı) `view_team_ids` = oturumun `viewTeamIds` listesi (sunucunun
+ * `canView` takımları — sertifika `/check/{domain}` kapısı). Alan yoksa (eski sunucu, global görüntüleyici) null.
+ */
+function viewIdsFrom(r) {
+  return Array.isArray(r?.view_team_ids) ? r.view_team_ids : null
+}
+
+/** "Geçerli" sertifika (UIM-18, K12): sunucu hükmü (`alert_level`) varsa yalnız `valid`; yoksa eski 30 gün bayrağı. */
+function isValidCert(c) {
+  if (c?.alert_level) return c.alert_level === 'valid'
+  return !c?.warning && c?.status !== 'error'
+}
+
+/** Çıkıştan önce bekleyen tercih yazımı (öneri 23) — en çok 3 sn; çevrimdışıyken çıkışı bekletmez. */
+function boundedFlush(pf, ms = 3000) {
+  if (!pf) return Promise.resolve()
+  let timer
+  return Promise.race([
+    Promise.resolve(pf).catch(() => {}),
+    new Promise((r) => { timer = setTimeout(r, ms) }),
+  ]).finally(() => clearTimeout(timer))
+}
+
 
 export default function App() {
   const { showConfirm } = useDialog()
@@ -312,6 +352,10 @@ export default function App() {
   // Kullanıcının TÜM takım üyelikleri (birincil takım ilk). Takım Yönetimi'ndeki haftalık e-posta
   // anahtarları üye bazlı açıldığı için gerekir; /me ve login yanıtı ikisi de team_ids döndürür.
   const [myTeamIds, setMyTeamIds] = useState([])
+  // Yönetim kapsamındaki takımlar (K2, 2026-10-22) — null = bilinmiyor (alan yok); bkz. manageIdsFrom
+  const [manageTeamIds, setManageTeamIds] = useState(null)
+  // Görüş kapsamındaki takımlar (FE-1, 2026-10-22) — null = bilinmiyor (alan yok); bkz. viewIdsFrom
+  const [viewTeamIds, setViewTeamIds] = useState(null)
   // Üyesi olunan takımlar (id+ad): izleme formlarında takım seçimi (2026-09-18) — /me team_ids × team_names
   const [myTeams, setMyTeams] = useState([])
   // Takım erişim paylaşımıyla düzenlenebilen takımlar (2026-10-12) — yalnız izleme / envanter formlarının takım seçicisine
@@ -468,10 +512,43 @@ export default function App() {
   // Yalnız erişim paylaşımıyla görülen kart (2026-10-12): Kontrol (EXECUTE+), Düzenle (EDIT+), Sil (DELETE) paylaşım
   // düzeyinden; diğer kartlarda null → rol kuralı aynen.
   const certGrantAccess = (cert) => rowGrantAccess(cert?.team_id, { memberTeamIds: myTeamIds, grantLevels, globalViewer })
+  const isMemberTeam = (teamId) => teamId != null && myTeamIds.some((id) => String(id) === String(teamId))
+  /** Takım yönetim kapsamında mı: true / false; K2 alanı yoksa null (bilinmiyor → çağıran bugünkü rol kuralını uygular). */
+  const inManageScope = (teamId) => {
+    if (globalAdmin) return true
+    if (manageTeamIds == null) return null
+    return teamId != null && manageTeamIds.some((id) => String(id) === String(teamId))
+  }
   const canEditCert = (cert) => {
     const ga = certGrantAccess(cert)
     if (ga) return canAddInventory && ga.edit
-    return canManageInventory || (canAddInventory && cert?.team_id != null && myTeamIds.some((id) => String(id) === String(cert.team_id)))
+    if (isMemberTeam(cert?.team_id)) return canAddInventory
+    // Yönetici rolü: yönetim kapsamı biliniyorsa ona göre (7/24 operatörü müdür başka takımın kartını da görür, sunucu 403)
+    const m = inManageScope(cert?.team_id)
+    return canManageInventory && (m == null ? true : m)
+  }
+  /**
+   * "Şimdi kontrol et" (kart, Uyarılar satırı, toplu koşu, pencere Çalıştır / Sağlık yenile / Tanıla): sunucunun
+   * `/check/{domain}` kuralının aynası (`utils/certCheckScope`, 2026-10-22 UIM-9 + FE-1) — SY ya da UG takımı kendi görüş
+   * kapsamında ya da EXECUTE+ paylaşımında. 7/24 genişlemesi çalıştırmaya girmez; satır sahip takımları taşımıyorsa
+   * (eski sunucu) bugünkü kural — sunucunun kabul edeceği düğme hiç gizlenmez.
+   */
+  const checkCtx = useMemo(() => ({ globalViewer, viewTeamIds, memberTeamIds: myTeamIds, manageTeamIds, systemRole, grantLevels }),
+    [globalViewer, viewTeamIds, myTeamIds, manageTeamIds, systemRole, grantLevels])
+  const canCheckCert = (cert) => canCheckCertRow(cert, checkCtx)
+  /** Yenileme planı (UIM-11): sunucu `inventory.crud` + `canManage` ister — paylaşım ve üyelik yetmez. K2 yoksa bugünkü kural. */
+  const canPlanCert = (cert) => {
+    if (!canAddInventory || certGrantAccess(cert)) return false
+    const m = inManageScope(cert?.team_id)
+    return m == null ? true : m
+  }
+  /** Kart / pencere silme (UIM-14): yönetim kapsamı ya da DELETE paylaşımı — üyelik yetmez (sunucu requireInventoryDeleter). */
+  const canDeleteCert = (cert) => {
+    const ga = certGrantAccess(cert)
+    if (ga) return canAddInventory && ga.delete
+    if (!canManageInventory) return false
+    const m = inManageScope(cert?.team_id)
+    return m == null ? true : m
   }
   const [caModal, setCaModal]     = useState(false)
   const [newDomain,    setNewDomain]    = useState('')
@@ -480,6 +557,9 @@ export default function App() {
   const [checkRun, setCheckRun] = useState(null)        // Şimdi Kontrol Et — akan ilerleme modalı (domain başına sonuç satırı)
   const [teamPickerOpen, setTeamPickerOpen] = useState(false)   // kontrol öncesi takım seçimi
   const [lastUpdate, setLastUpdate] = useState(null)
+  // İlk sertifika listesi okunamadı (2026-10-22, UIM-4): "yükleniyor" sonsuza dek dönmesin — hata + Yeniden dene.
+  // Liste bir kez geldiyse sonraki tazeleme hatası eldeki kartları bırakır (bayrak yalnız ilk veriden önce anlamlı).
+  const [certsFailed, setCertsFailed] = useState(false)
   const [inactivityWarning, setInactivityWarning] = useState(false)
   const [idleCfg, setIdleCfg] = useState(() => ({ totalMs: INACTIVITY_MS, warnMs: WARN_BEFORE_MS }))
   const [warnDeadline, setWarnDeadline] = useState(0)   // otomatik çıkış anı; saniye sayacı InactivityCountdownText'te
@@ -515,15 +595,23 @@ export default function App() {
   const countdownInterval = useRef(null)
   const refreshPollRef = useRef(null)
   const checkCancelRef = useRef(false)   // "Durdur" bayrağı — döngü kalan domainlere istek atmasın
+  // Toplu kontrol koşusunun kimliği (2026-10-22, UIM-26): çıkış ya da yeni koşu eski koşuyu durdurur — eski döngünün
+  // `finally`si yeni koşunun meşgul bayrağını, geç satırları yeni koşunun tablosunu bozmaz.
+  const checkRunSeqRef = useRef(0)
 
   useEffect(() => {
-    api.getMe().then((res) => {
+    // Bekleyen çıkış (UIM-1): önceki çıkışta sunucuya ulaşılamadıysa oturum çerezi hâlâ geçerli — /me'den ÖNCE kapatılır,
+    // F5 kullanıcıyı geri getirmez. Yine kapanamazsa /me sorulmaz (giriş formu; yeniden deneme giriş ekranı effect'inde).
+    let cancelled = false
+    const bootMe = () => api.getMe().then((res) => {
       if (res?.success) {
         prefsMigrateRef.current = sameStorageOwner(res.username)   // öneri 23: claim'den ÖNCE okunur
         claimPersonalStorage(res.username)   // B9: başka kullanıcının tarayıcıda kalan kişisel kayıtları silinir
         setUser(res.username)
         setSystemRole(res.system_role || 'USER')
         setGlobalAdmin(!!res.global_admin)
+        setManageTeamIds(manageIdsFrom(res))
+        setViewTeamIds(viewIdsFrom(res))
         setWeeklyReportsVisible(!!res.weekly_reports_visible)
         setNoc(nocFrom(res))
         setTeamId(res.team_id ?? null)
@@ -560,6 +648,17 @@ export default function App() {
       }
       setAuthChecked(true)
     }).catch(() => setAuthChecked(true))
+    if (!isLogoutPending()) {
+      bootMe()   // bugünkü yol: hemen (eşzamanlı) — bekleyen çıkış yoksa açılış sırası değişmez
+    } else {
+      // Süren bir giriş varsa (öteki sekme) açılış çıkışı başlatmaz — yanıtı yeni oturumun çerezini silebilirdi (D1)
+      settlePendingLogout((signal) => api.logout({ signal }), undefined, { respectLoginHold: true }).then((done) => {
+        if (cancelled) return
+        if (done) bootMe()
+        else setAuthChecked(true)
+      })
+    }
+    return () => { cancelled = true }
   }, [applyMaintenance])   // applyMaintenance kararlı (useCallback []) — açılışta bir kez koşar
 
   // Tarayıcı Geri/İleri (popstate): URL'deki ?tab= / ?domain='e göre görünümü geri yükle.
@@ -669,21 +768,9 @@ export default function App() {
   useEffect(() => {
     if (!user) return
 
-    const doAutoLogout = async () => {
-      clearInterval(countdownInterval.current)
-      const pf = prefsFlushRef.current?.(); if (pf) await pf.catch(() => {})   // bekleyen tercih yazımı (öneri 23)
-      await api.logout()
-      resetSessionData()
-      try { localStorage.removeItem(REMEMBER_KEY) } catch { /* depolama kapalı */ }
-      clearPersonalStorage()   // B9: paylaşılan makinede sonraki kişiye son kullanılanlar / taslak yedeği kalmasın
-      setCardMode('rich')      // sonraki giriş Genel Bakış'ı Zengin açar (2026-09-27)
-      setUser(null)
-      setSystemRole('USER')
-      setTeamId(null)
-      setTeamName(null)
-      setInactivityWarning(false)
-      setSessionExpiredNotice(false)   // varsa "oturum süresi doldu" bildirimini temizle
-    }
+    // Hareketsizlik çıkışı (UIM-1, 2026-10-22): /logout düşse de (uykudan uyanış, ağ kopması) istemci oturumu KAPANIR —
+    // eskiden `await api.logout()` reddedince temizlik hiç koşmuyor, uygulama verisiyle ekranda kalıyordu.
+    const doAutoLogout = () => logoutRef.current?.()
 
     // Sayaç `base` anından kurulur (kendi etkinliği: şimdi; öteki sekmenin etkinliği: onun damgası). Uyarı ve çıkıştan
     // ÖNCE öteki SiteMonitor sekmelerinin (ör. Görsel paneli penceresi) damgasına bakılır: daha yeniyse sayaç ondan
@@ -778,7 +865,11 @@ export default function App() {
   // test sahtesi) atlanır. `after`: aynı dalgada o kaynak yerleşmeden uygulanmaz — pasif kartlar aktif liste gelmeden tek
   // başına çizilip aktifler sonradan üstlerine kaymasın (aktif liste düşerse pasifler yine gösterilir).
   const loadSources = useMemo(() => ({
-    certs:    { fetch: () => api.getCertificates(), apply: (r) => { setCerts(r.data); setLastUpdate(r.timestamp) } },
+    certs:    {
+      fetch: () => api.getCertificates(),
+      apply: (r) => { setCerts(r.data); setLastUpdate(r.timestamp); setCertsFailed(false) },
+      fail: () => setCertsFailed(true),   // UIM-4: yalnız ilk veriden önce görünür (bkz. certsFailed)
+    },
     stats:    { fetch: () => api.getStats(), apply: (r) => setStats(r.data) },
     silent:   { fetch: () => api.getSilentAlertDomains(), apply: (r) => setSilentAlertDomains(new Set(r.data)) },
     paused:   {
@@ -807,12 +898,19 @@ export default function App() {
   const runLoadWave = useCallback((keys, alive) => {
     const seq = ++loadSeqRef.current
     const jobs = {}
+    // Başarısızlık bildirimi (UIM-4): yalnız bu dalga hâlâ geçerliyse (oturum aynı, daha yeni bir yanıt uygulanmadı)
+    const failNow = (key, src) => {
+      if (!src.fail || (alive && !alive())) return
+      if (!loadAliveRef.current || seq <= loadFloorRef.current || (loadAppliedRef.current[key] ?? 0) > seq) return
+      src.fail()
+    }
     for (const key of keys) {
       const src = loadSources[key]
       jobs[key] = (async () => {
-        const res = await src.fetch()
+        let res
+        try { res = await src.fetch() } catch (e) { failNow(key, src); throw e }
         if (src.after && jobs[src.after]) await jobs[src.after].catch(() => {})
-        if (!(src.ok ? src.ok(res) : res?.success)) return res ?? null
+        if (!(src.ok ? src.ok(res) : res?.success)) { failNow(key, src); return res ?? null }
         if (alive && !alive()) return res
         if (acceptLoad(key, seq)) src.apply(res)
         return res
@@ -1126,13 +1224,62 @@ export default function App() {
     // Uçuştaki (bu oturumun) her dalga artık eski: sonraki girişin dalgaları tabanın üstünden başlar
     loadFloorRef.current = loadSeqRef.current
     loadAppliedRef.current = {}
+    // Süren "Şimdi Kontrol Et" koşusu durur (UIM-26): kalan alan adlarına — belki sonraki kullanıcının çereziyle — istek gitmez
+    checkCancelRef.current = true
+    checkRunSeqRef.current += 1
+    setRefreshing(false); setCheckingDomain(null)
     setCerts([]); setPausedCerts([]); setStats(null); setTeamStats(null); setCardExtras({})
     setSilentAlertDomains(new Set()); setMailFailureDomains(new Set()); setWeakAlgStats(null)
-    setNetworkStatus(null); setLastUpdate(null)
+    setNetworkStatus(null); setLastUpdate(null); setCertsFailed(false)
     setModalCert(null); setInvForm(null); setSharedCert(null); setPlanRow(null); setCaModal(false); setCheckRun(null)
     setSearch(''); setSortOrder('default'); setStatusFilter('all'); setExpiryFilter('all'); setTeamFilter('all')
     setGroupFilter('all'); setTagFilter('all'); setStatsFilter(null); setPlatformFilter([]); setActivityFilter('all')
   }
+
+  /**
+   * İstemci tarafı oturum sonu (elle / hareketsizlik çıkışı ve öteki sekmenin çevrimdışı çıkışı — UIM-1/2, 2026-10-22):
+   * zamanlayıcılar, oturum verisi, "beni hatırla", kişisel kayıtlar, kimlik. Sunucu çağrısı YOK — çağıran yapar.
+   */
+  function endSessionLocally() {
+    clearTimeout(logoutTimer.current)
+    clearTimeout(warnTimer.current)
+    clearInterval(countdownInterval.current)
+    clearInterval(refreshPollRef.current)
+    resetSessionData()
+    try { localStorage.removeItem(REMEMBER_KEY) } catch { /* depolama kapalı: çıkış yine tamamlanır */ }
+    clearPersonalStorage()   // B9: paylaşılan makinede sonraki kişiye son kullanılanlar / taslak yedeği kalmasın
+    setCardMode('rich')      // sonraki giriş Genel Bakış'ı Zengin açar (2026-09-27)
+    setUser(null)
+    setSystemRole('USER')
+    setTeamId(null)
+    setTeamName(null)
+    setManageTeamIds(null)
+    setViewTeamIds(null)
+    setInactivityWarning(false)
+    setRefreshing(false)
+    setSessionExpiredNotice(false)   // varsa "oturum süresi doldu" bildirimini temizle
+  }
+
+  /**
+   * Çıkış (UIM-1, 2026-10-22): bekleyen tercih yazımı (≤ 3 sn) → sunucu çıkışı (≤ 3 sn, reddetmez) → istemci temizliği
+   * HER DURUMDA. Sunucu onaylamadıysa `sm.logout.pending` bırakılır (temizlikten ÖNCE: öteki sekmeler sahip silinince
+   * işareti görür) — açılış /me'den önce, giriş ekranı da çevrimiçi olunca yeniden dener; kullanıcıya söylenir.
+   */
+  async function logoutEverywhere() {
+    clearInterval(countdownInterval.current)
+    await boundedFlush(prefsFlushRef.current?.())   // bekleyen tercih yazımı (öneri 23)
+    const { ok, late } = await tryServerLogout((signal) => api.logout({ signal }))
+    if (!ok) {
+      const token = markLogoutPending()
+      late.then((v) => { if (v) clearLogoutPending(token) }).catch(() => {})
+    }
+    endSessionLocally()
+    if (!ok) toast.info(t('app.logoutPendingNotice'), 10000)
+  }
+
+  // Hareketsizlik zamanlayıcısı güncel işlevi ref'ten çağırır (effect yalnız user / idleCfg değişince yeniden kurulur)
+  const logoutRef = useRef(null)
+  logoutRef.current = logoutEverywhere
 
   async function handleLogout() {
     const ok = await showConfirm({
@@ -1147,20 +1294,35 @@ export default function App() {
     clearTimeout(warnTimer.current)
     clearInterval(countdownInterval.current)
     clearInterval(refreshPollRef.current)
-    const pf = prefsFlushRef.current?.(); if (pf) await pf.catch(() => {})   // bekleyen tercih yazımı (öneri 23, ≤2 sn)
-    await api.logout()
-    resetSessionData()
-    try { localStorage.removeItem(REMEMBER_KEY) } catch { /* depolama kapalı: çıkış yine tamamlanır */ }
-    clearPersonalStorage()   // B9: paylaşılan makinede sonraki kişiye son kullanılanlar / taslak yedeği kalmasın
-    setCardMode('rich')      // sonraki giriş Genel Bakış'ı Zengin açar (2026-09-27)
-    setUser(null)
-    setSystemRole('USER')
-    setTeamId(null)
-    setTeamName(null)
-    setInactivityWarning(false)
-    setRefreshing(false)
-    setSessionExpiredNotice(false)   // varsa "oturum süresi doldu" bildirimini temizle
+    await logoutEverywhere()
   }
+
+  // Giriş formu açıkken bekleyen sunucu çıkışını yeniden dene (UIM-1): çevrimiçi olunca ve aralıkla, sınırlı sayıda.
+  useEffect(() => {
+    if (!authChecked || user) return undefined
+    return startPendingLogoutRetry((signal) => api.logout({ signal }))
+  }, [authChecked, user])
+
+  // Sekmeler arası kimlik (UIM-2, 2026-10-22): öteki sekmede çıkış / başka kullanıcının girişi `sm.storage.owner`'ı
+  // değiştirir. Bu sekme o çerezle eski kimliği taşıyordu (yoklama kimlik dönmez) — artık: başka sahip → sayfa yeniden
+  // yüklenir (/me gerçek kimliği verir); sahip silindi → çevrimdışı çıkış işareti varsa burada da yerel çıkış, yoksa hemen
+  // bir yoklama (oturum kapandıysa 401 yolu yönlendirir).
+  const endLocallyRef = useRef(null)
+  endLocallyRef.current = endSessionLocally
+  useEffect(() => {
+    if (!user) return undefined
+    const me = String(user).trim()
+    const onStorage = (e) => {
+      if (e.key !== OWNER_KEY && e.key !== null) return   // null = öteki sekmede localStorage.clear()
+      const owner = e.key === null ? storageOwner() : (e.newValue || null)
+      if (owner && owner === me) return
+      if (owner) { assignLocation('/?session=expired'); return }
+      if (isLogoutPending()) { endLocallyRef.current?.(); return }
+      Promise.resolve(api.sessionPing()).then(applyMaintenance).catch(() => { /* yoklama hatası: sonraki tur */ })
+    }
+    window.addEventListener('storage', onStorage)
+    return () => window.removeEventListener('storage', onStorage)
+  }, [user, applyMaintenance])
 
   // "Şimdi Kontrol Et": her domain'i sırayla yeniden kontrol eder; başlangıç/bitiş/süre ölçüp
   // akan modala yazar (alt alta ✓ + zaman). Bittiğinde veriyi tazeler; "Kapat" ile kapanır.
@@ -1183,12 +1345,15 @@ export default function App() {
     }
 
     setRefreshing(true)
+    const runId = ++checkRunSeqRef.current
+    const live = () => checkRunSeqRef.current === runId
     try {
       checkCancelRef.current = false
       setCheckRun({ rows: [], total: domains.length, done: false, teamLabel: teamLabel || null,
         startedAt: Date.now(), finishedAt: null })
 
       async function checkOne(domain) {
+        if (!live()) return
         const start = new Date()
         const t0 = Date.now()
         let ok = false, data = null, error = null
@@ -1205,6 +1370,7 @@ export default function App() {
         // Satırlar TAMAMLANMA sırasında eklenir (alfabetik değil): yavaş bir domain arkasındakileri
         // bekletmesin. setCheckRun fonksiyonel güncelleme kullanır — eşzamanlı işçiler birbirinin
         // eklediği satırı ezmez.
+        if (!live()) return   // çıkış / yeni koşu: geç satır yeni koşunun tablosuna yazılmaz
         setCheckRun(cr => cr ? { ...cr, rows: [...cr.rows, { domain, start, end, ms, ok, data, error }] } : cr)
       }
 
@@ -1213,15 +1379,16 @@ export default function App() {
       // (cert-check executor: core 20 / max 50). "Durdur" → uçuştakiler biter, yenisi başlamaz.
       await runWithConcurrency(domains, checkOne, {
         limit: CHECK_CONCURRENCY,
-        shouldStop: () => checkCancelRef.current,
+        shouldStop: () => checkCancelRef.current || !live(),
       })
 
+      if (!live()) return   // oturum kapandı ya da yeni koşu başladı — bu koşunun sonu yazılmaz
       // Kontrol dalgası: her yanıt geldiği an yazılır (bkz. runLoadWave); tazeleme hatası yutulur — modal yine tamamlanır
       await runLoadWave(CHECK_LOAD_WAVE)
       setActivityRefreshKey(k => k + 1)
-      setCheckRun(cr => cr ? { ...cr, done: true, finishedAt: Date.now() } : cr)
+      if (live()) setCheckRun(cr => cr ? { ...cr, done: true, finishedAt: Date.now() } : cr)
     } finally {
-      setRefreshing(false)
+      if (live()) setRefreshing(false)
     }
   }
 
@@ -1248,8 +1415,8 @@ export default function App() {
     }
   }
 
-  /** Kart aksiyon prop'ları. Düzenle/Kopyala yalnız envanteri yönetebilenlere; Çalıştır herkese
-   *  (toplu "Şimdi Kontrol Et" de rol kapısı taşımıyor, /check/{domain} yalnız oturum istiyor). */
+  /** Kart aksiyon prop'ları (aşağıda `cardActions`): her düğme sunucunun kapısıyla — Çalıştır `canCheckCert` (/check/{domain}
+   *  kendi görüş kapsamını ister), Düzenle `canEditCert`, Sil `canDeleteCert` (2026-10-22, UIM-9/14). */
   /** Kart detayını açar. useCallback ŞART: CertificateCard memo'lu — her render'da yeni bir
    *  fonksiyon üretmek 50 kartın tamamını yeniden render ettirir ve memo'yu boşa çıkarır.
    *  Güncel listeyi ref'ten okur: `certs`i dep yapmak referansı her veri tazelemesinde
@@ -1363,9 +1530,9 @@ export default function App() {
   }
 
   function cardActions(cert) {
-    const ga = certGrantAccess(cert)
     return {
-      onCheckNow: cert.paused || (ga && !ga.check) ? undefined : () => runSingleCheck(cert.domain),
+      // Çalıştır sunucunun kapısıyla (UIM-9): 7/24 operatörü başka takımın kartında görmez; paylaşımda EXECUTE+
+      onCheckNow: cert.paused || !canCheckCert(cert) ? undefined : () => runSingleCheck(cert.domain),
       checking: checkingDomain === cert.domain || refreshing,
       // 2026-09-18: USER kendi TAKIMININ kaydını düzenler/kopyalar (uç üyelik doğrular); silme yönetici işi.
       onEdit:      canEditCert(cert) ? () => setInvForm({ domain: cert.domain, mode: 'edit' }) : undefined,
@@ -1375,7 +1542,7 @@ export default function App() {
       // PermissionsProvider App'in KENDİ içinde render ediliyor, App gövdesi context'in
       // ÜSTÜNDE kalır ve canEdit daima false döner (düğme hiç çizilmezdi). Yetkinin asıl
       // kapısı zaten uçta: inventory.crud/edit + takım kapsamı; reddedilirse toast hatayı gösterir.
-      onDelete: (ga ? canAddInventory && ga.delete : canManageInventory) ? () => deleteCertFromCard(cert.domain) : undefined,
+      onDelete: canDeleteCert(cert) ? () => deleteCertFromCard(cert.domain) : undefined,
       // "Sorumlu kişi yok" çipi (2026-09-20): form doğrudan Sorumlu Ekipler bölümünde açılır.
       onEditContacts: canEditCert(cert) ? () => setInvForm({ domain: cert.domain, mode: 'edit', focus: 'contacts' }) : undefined,
       deleting: deletingDomain === cert.domain,
@@ -1418,6 +1585,11 @@ export default function App() {
     // Kullanıcı adı ön eki sinyali (inceleme 2026-10-21): açılışta (ör. MP remember-me çerezi) verilmiş sinyal bu sayfa
     // ömrünü kilitlemesin — yeni oturumda kural sonradan keserse pencere + /?session=prefix yine çalışır
     resetUsernamePrefixSignal()
+    // Pasif hesap / bakım sinyalleri de (UIA-H2, PKG-8b isteği): önceki oturumun sinyali yeni oturumda pencereyi kilitlemesin
+    resetAccountInactiveSignal()
+    resetMaintenanceSignal()
+    // Yeni oturum açıldı: önceki (çevrimdışı) çıkışın bekleyen işareti bu oturumu kapatmasın (UIM-1)
+    clearLogoutPending()
     prefsMigrateRef.current = sameStorageOwner(userData.username)   // öneri 23: claim'den ÖNCE okunur
     claimPersonalStorage(userData.username)
     landingRef.current = { eligible: landingEligibleFromUrl(), done: false }
@@ -1425,6 +1597,8 @@ export default function App() {
     setUser(userData.username)
     setSystemRole(userData.system_role || 'USER')
     setGlobalAdmin(!!userData.global_admin)
+    setManageTeamIds(manageIdsFrom(userData))
+    setViewTeamIds(viewIdsFrom(userData))
     setWeeklyReportsVisible(!!userData.weekly_reports_visible)
     setNoc(nocFrom(userData))
     setTeamId(userData.team_id ?? null)
@@ -1470,12 +1644,14 @@ export default function App() {
     return idx
   }, [certs])
 
-  // "Şimdi Kontrol Et" kapsamı (2026-10-12): yalnız paylaşımla GÖRÜLEN (EXECUTE'u olmayan) kartlar listelenmez — sunucu
-  // reddederdi; paylaşımı olmayan kullanıcıda liste `certs`'in kendisi.
+  // "Şimdi Kontrol Et" kapsamı: kartla AYNI kural (`canCheckCertRow`) — sunucunun reddedeceği alan adı toplu koşuya girmez
+  // (7/24 operatörü tüm takımları görür, paylaşımla yalnız GÖRÜLEN kart da öyle; 2026-10-12 / UIM-9), kabul edeceği hiçbiri
+  // de düşmez (UG takımı, müdürün astlarının takımı, UG'de EXECUTE paylaşımı — FE-1). Hepsi geçiyorsa AYNI dizi döner.
   const checkableCerts = useMemo(() => {
-    if (!Object.keys(grantLevels).length) return certs
-    return certs.filter((c) => { const ga = rowGrantAccess(c?.team_id, { memberTeamIds: myTeamIds, grantLevels, globalViewer }); return !ga || ga.check })
-  }, [certs, grantLevels, myTeamIds, globalViewer])
+    if (globalViewer) return certs
+    const out = certs.filter((c) => canCheckCertRow(c, checkCtx))
+    return out.length === certs.length ? certs : out
+  }, [certs, globalViewer, checkCtx])
 
   const issuerStats = useMemo(() => {
     const reachable = certs.filter(c => c.status !== 'error')
@@ -1533,7 +1709,9 @@ export default function App() {
   // "Rendered more hooks" ile çöker (2026-08-05'te yaşandı). Zincir saf hesap, her render'da ucuz.
   const STAT_FILTER_FN = {
     total:      () => true,
-    valid:      (c) => !c.warning && c.status !== 'error',
+    // Sunucu hükmü (alert_level, katman eşikleri) varsa o — eşikler `warning-days`'ten büyükse kart sarı/turuncu çizilip
+    // "Geçerli" süzgecinde de çıkıyordu (UIM-18, 2026-10-22); yoksa eski bayrak kuralı
+    valid:      (c) => isValidCert(c),
     critical:   (c) => c.alert_level ? c.alert_level === 'critical' : (c.warning === true && c.days_remaining != null && c.days_remaining <= 7),
     high:       (c) => c.alert_level ? c.alert_level === 'high'     : (c.warning === true && c.days_remaining != null && c.days_remaining > 7 && c.days_remaining <= 15),
     warning:    (c) => c.alert_level ? c.alert_level === 'warning' : (c.warning === true && c.status !== 'error'),
@@ -1558,8 +1736,9 @@ export default function App() {
 
   const STATUS_FILTER_FN = {
     all:     () => true,
-    valid:   (c) => !c.warning && c.status !== 'error',
-    warning: (c) => c.warning === true && c.status !== 'error',
+    valid:   (c) => isValidCert(c),
+    // valid ∪ warning ∪ error = hepsi: uyarı = hata olmayan ve geçerli olmayan (alert_level varsa onunla — UIM-18)
+    warning: (c) => (c.alert_level ? c.alert_level !== 'error' && c.alert_level !== 'valid' : c.warning === true && c.status !== 'error'),
     error:   (c) => c.status === 'error',
   }
   const EXPIRY_FILTER_FN = {
@@ -1710,10 +1889,15 @@ export default function App() {
   // Sayfalama standardı: "Tümü" seçeneği kaldırıldı (binlerce kart tek seferde render edilmesin; max 200/sayfa).
   // Sayfalama standardı (2026-09-26): süzgeç DEĞERİ değişince sayfa 1 (resetDeps; eskiden 12 ayrı elle `setPage(1)`),
   // `page`/`ps` adresi yalnız Genel Bakış sekmesindeyken okunur/yazılır (ps ön ayar listesine karşı doğrulanır).
+  // UIM-25 (2026-10-22): sayfalama hook'u adresi YALNIZ bağlanırken okur ve App ilk çizimde `tab='dashboard'` ile başlar —
+  // `?tab=alerthistory&page=5&ps=100` açılışında Pano sonradan 5. sayfada / 100'lük açılıyordu. Adres yalnız açılış sekmesi
+  // Pano ise okunur; Pano'ya sonradan geçilince yalnız YAZILIR (o sırada adreste Pano'nun kendi paramı yok).
+  const [dashUrlOk, setDashUrlOk] = useState(() => (initialTabFromUrl() ?? 'dashboard') === 'dashboard')
+  useEffect(() => { if (!dashUrlOk && user && tab !== 'dashboard') setDashUrlOk(true) }, [dashUrlOk, user, tab])
   const dashPager = usePagination(sorted, {
     listKey: 'dashboard-certs', preset: 'page',
     resetDeps: [search, sortOrder, activityFilter, statusFilter, expiryFilter, teamFilter, groupFilter, tagFilter, statsFilter, platformFilter],
-    url: tab === 'dashboard' ? DASH_PAGE_URL : null,
+    url: tab === 'dashboard' && dashUrlOk ? DASH_PAGE_URL : null,
   })
   // Uyarılar sekmesinin sayfalaması artık pages/WarningsPage içinde (aynı listKey 'warnings-certs', URL wa_page/wa_ps).
 
@@ -1740,6 +1924,25 @@ export default function App() {
     accountInactive: accountInactiveNotice, maintenance: maintNotice, sessionExpired: sessionExpiredNotice,
     imagesPanel: !!imagesPanelReport,
   }))
+
+  // Açık sertifika penceresinin CANLI satırı (UIM-17): liste her kontrol / tazelemede yenilenir; pencere açılış anının
+  // `alert_level`'ında kalmasın. Önizlemede (envanterde yok) satır yok → açılış değeri.
+  const liveModalRow = modalCert && !modalCert._preview
+    ? (certs.find((c) => c.domain === modalCert.domain) ?? pausedCerts.find((c) => c.domain === modalCert.domain) ?? null)
+    : null
+  // İlk sertifika listesi okunamadı (UIM-4): Pano ve İstatistik aynı bloğu çizer; Yeniden dene tam dalgayı yeniden ister
+  const retryCerts = () => { setCertsFailed(false); loadData() }
+  const certsFailedBlock = (
+    <div data-slot="dash-certs-failed">
+      <StatusBlock tone="danger" icon={AlertOctagon} role="alert"
+        title={t('app.certsLoadFailed')} description={t('app.certsLoadFailedHint')}
+        actions={(
+          <Button type="button" variant="outline" className="pointer-coarse:h-10" onClick={retryCerts}>
+            <RefreshCw aria-hidden="true" />{t('app.certsRetry')}
+          </Button>
+        )} />
+    </div>
+  )
 
   if (!authChecked) {
     return (
@@ -1976,7 +2179,19 @@ export default function App() {
                     </Button>
                   </div>
                 )}
-                {sorted.length === 0 && lastUpdate == null ? (
+                {/* İlk liste okunamadı ama pasif kartlar var (UIM-4): aktif kartların yokluğu "hepsi pasif" diye okunmasın */}
+                {certsFailed && lastUpdate == null && sorted.length > 0 && (
+                  <div data-slot="dash-certs-failed-banner">
+                    <AlertBanner tone="danger" role="alert" className="mb-4" title={t('app.certsLoadFailed')}
+                      actions={<Button type="button" variant="outline" size="sm" className="pointer-coarse:h-10" onClick={retryCerts}><RefreshCw aria-hidden="true" />{t('app.certsRetry')}</Button>}>
+                      {t('app.certsLoadFailedHint')}
+                    </AlertBanner>
+                  </div>
+                )}
+                {sorted.length === 0 && lastUpdate == null && certsFailed ? (
+                  /* İlk sertifika listesi okunamadı (UIM-4, 2026-10-22): eskiden "yükleniyor" sonsuza dek dönüyordu — hata + Yeniden dene */
+                  certsFailedBlock
+                ) : sorted.length === 0 && lastUpdate == null ? (
                   /* İlk veri gelene kadar "Sertifika bulunamadı" DEĞİL yükleniyor (kullanıcı bildirimi 2026-09-21, QA ISSUE-006):
                      certs [] ile başlar, getCertificates yanıtı gecikince boş durum sahte "sertifika yok" algısı veriyordu.
                      lastUpdate yalnız ilk başarılı yanıtta dolar — tur kapısındaki "veri geldi" sinyaliyle aynı. */
@@ -1992,8 +2207,9 @@ export default function App() {
                           extra={cardMode === 'rich' ? cardExtras[cert.domain] : undefined}
                           warming={warmingDomains.has(cert.domain)} extrasPending={cardMode === 'rich' && warmingDomains.has(cert.domain)}
                           live={cardExtras[cert.domain] ? { uptime: cardExtras[cert.domain].uptime, alert: cardExtras[cert.domain].last_alert, renewal: cardExtras[cert.domain].renewal } : undefined}
-                          onOpenHealth={openCertHealth} onConfirmRenewal={cert.paused ? undefined : confirmCardRenewal}
-                          onPlanRenewal={cert.paused ? undefined : planCardRenewal} confirming={confirmingDomain === cert.domain}
+                          // Onayla / Planla sunucunun kapısıyla (UIM-10/11): onay = envanter düzenleme; plan = yönetim kapsamı
+                          onOpenHealth={openCertHealth} onConfirmRenewal={cert.paused || !canEditCert(cert) ? undefined : confirmCardRenewal}
+                          onPlanRenewal={cert.paused || !canPlanCert(cert) ? undefined : planCardRenewal} confirming={confirmingDomain === cert.domain}
                           onOpenShared={setSharedCert}
                           hasSilentAlert={silentAlertDomains.has(cert.domain)}
                           hasMailFailure={mailFailureDomains.has(cert.domain)}
@@ -2015,9 +2231,12 @@ export default function App() {
             {tab === 'stats' && (
               <div className="tab-content active">
                 <PageHeader icon={TAB_META.stats.Icon} title={t('app.statsTitle')} description={t('app.statsDesc')} />
-                <StatsView certs={certs} teamStats={teamStats} onRowClick={(d) => setModalCert(certs.find(c => c.domain === d) ?? null)}
-                  canAddDomain={systemRole === 'ADMIN' || systemRole === 'TEAM_ADMIN'} loading={lastUpdate == null}
-                  onAddDomain={() => { setPendingAddDomain(true); handleTabChange('domains') }} />
+                {/* İlk liste okunamadı (UIM-4): "yükleniyor" ya da sahte "sertifika yok" yerine hata + Yeniden dene */}
+                {certsFailed && lastUpdate == null ? certsFailedBlock : (
+                  <StatsView certs={certs} teamStats={teamStats} onRowClick={(d) => setModalCert(certs.find(c => c.domain === d) ?? null)}
+                    canAddDomain={systemRole === 'ADMIN' || systemRole === 'TEAM_ADMIN'} loading={lastUpdate == null && !certsFailed}
+                    onAddDomain={() => { setPendingAddDomain(true); handleTabChange('domains') }} />
+                )}
               </div>
             )}
 
@@ -2031,7 +2250,7 @@ export default function App() {
                   weakDomains={weakAlgStats != null ? weakDomainSet : null}
                   // Pano listesinde henüz olmayan alan (veri gelmeden) → pencere alan adıyla açılır, sessizce düşmez
                   onOpenCert={(d) => (certs.some((c) => c.domain === d) ? openCertModal(d) : setModalCert({ domain: d }))}
-                  onOpenHealth={openCertHealth} onPlanRenewal={planCardRenewal} cardActions={cardActions}
+                  onOpenHealth={openCertHealth} onPlanRenewal={planCardRenewal} canPlan={canPlanCert} cardActions={cardActions}
                   // 'health' sekmesi: preFilterDomain/openSmtpModalOnLoad'ı SystemHealth tüketir (2026-08-19 düzeltmesi)
                   onMailFailure={(d) => { handleTabChange('health'); setSmtpPreFilterDomain(d); setOpenSmtpModalOnLoad(true) }}
                   onCheckAll={() => setTeamPickerOpen(true)} checkingAll={refreshing}
@@ -2060,7 +2279,8 @@ export default function App() {
                   onRowClick={(d, tab) => { const c = findCertRow(d) ?? { domain: d }; setModalCert(tab ? { ...c, _tab: tab } : c) }}
                   refreshKey={lastUpdate}
                   onCheckNow={runSingleCheck} checkingDomain={refreshing ? '*' : checkingDomain}
-                  onEdit={canManageInventory ? (d) => setInvForm({ domain: d, mode: 'edit' }) : undefined}
+                  // Düzenle satırın `can_manage`'ına göre (UIM-43): USER üyesi de kendi takımının kaydını düzenler
+                  onEdit={canAddInventory ? (d) => setInvForm({ domain: d, mode: 'edit' }) : undefined}
                   canManage={canManageInventory} globalAdmin={globalAdmin} onRefresh={loadData}
                   // Başka takımın satırı (org geneli görünürlük, 2026-09-26): Pano listesinde yok → pencere satırla, salt okunur açılır
                   onOpenReadOnly={(row, tab) => setModalCert({ ...row, _readOnly: true, ...(tab ? { _tab: tab } : {}) })} />
@@ -2071,7 +2291,7 @@ export default function App() {
               <div className="tab-content active">
                 {/* Açıklama + Yenile/Dışa aktar RenewalAdvice'ın kendi üst satırında — burada yalnız başlık */}
                 <PageHeader icon={TAB_META.renewal.Icon} title={t('app.renewalTitle')} />
-                <RenewalAdvice onSelectDomain={(d) => setModalCert(certs.find(c => c.domain === d) ?? { domain: d })} />
+                <RenewalAdvice onSelectDomain={(d) => setModalCert(certs.find(c => c.domain === d) ?? { domain: d })} canPlanRow={canPlanCert} />
               </div>
             )}
 
@@ -2229,7 +2449,7 @@ export default function App() {
             {/* Derin bağlantı da kapıdan geçer: modül kapalıysa sayfa hiç çizilmez (2026-09-16). */}
             {tab === 'weeklyreports' && weeklyReportsVisible && (
               <div className="tab-content active">
-                <WeeklyReportsPage systemRole={systemRole} teamId={teamId} teamName={teamName} resetNonce={wrResetNonce} />
+                <WeeklyReportsPage systemRole={systemRole} globalAdmin={globalAdmin} teamId={teamId} teamName={teamName} resetNonce={wrResetNonce} />
               </div>
             )}
             {tab === 'weeklyreports' && !weeklyReportsVisible && (
@@ -2279,7 +2499,7 @@ export default function App() {
             {tab === 'uptime'   && <UptimePage   systemRole={systemRole} />}
             {tab === 'monitoring' && <MonitoringOverviewPage />}
             {tab === 'status' && <StatusPage />}
-            {tab === 'storms' && <StormStatusPage />}
+            {tab === 'storms' && <StormStatusPage canOpenSettings={systemRole === 'ADMIN'} />}
             {tab === 'mydash' && <MyDashPage nocConsole={noc.operator || globalViewer} />}
             {tab === 'dataquality' && <DataQualityPage globalAdmin={globalAdmin} />}
             {tab === 'executive' && (systemRole === 'ADMIN' || systemRole === 'AUDIT') && <ExecutiveSummaryPage globalAdmin={globalAdmin} />}
@@ -2319,13 +2539,17 @@ export default function App() {
           sıfırlıyor; ilk tıklama gecikmesin diye parça ilk veri geldikten sonra boşta önceden yüklenir (aşağıdaki effect). */}
       {modalCert && (
       <Suspense fallback={null}>
-      <CertificateModal domain={modalCert?.domain} alertLevel={modalCert?.alert_level} initialData={modalCert?._preview ? modalCert : undefined} previewMode={!!modalCert?._preview} currentUser={user} currentUserRole={systemRole} onClose={() => setModalCert(null)} initialTab={modalCert?._tab} renamedFrom={modalCert?._renamedFrom ?? null}
+      {/* Başlık durumu CANLI satırdan (UIM-17): pencere açıkken koşan kontrol listeyi tazeler; açılış anının seviyesi kalmaz */}
+      <CertificateModal domain={modalCert?.domain} alertLevel={liveModalRow?.alert_level ?? modalCert?.alert_level} initialData={modalCert?._preview ? modalCert : undefined} previewMode={!!modalCert?._preview} currentUser={user} currentUserRole={systemRole} globalAdmin={globalAdmin} onClose={() => setModalCert(null)} initialTab={modalCert?._tab} renamedFrom={modalCert?._renamedFrom ?? null}
         manual={isManualCert(modalCert)} manualMeta={isManualCert(modalCert) ? { version: modalCert.manual_version ?? null, uploadedAt: modalCert.manual_uploaded_at ?? null } : null}
         refreshSignal={certModalRefresh}
         onDataChanged={loadData}
         readOnly={!!modalCert?._readOnly}
         readOnlyTeam={modalCert?._readOnly ? { id: modalCert.team_id, name: modalCert.team_name } : null}
         grantAccess={modalCert && !modalCert._preview && !modalCert._readOnly ? certGrantAccess(modalCert) : null}
+        // Sağlık yenile / tanıla / sil sunucunun kapısıyla (UIM-9/14): kartın Çalıştır ve Sil kuralının AYNISI
+        canCheck={modalCert && !modalCert._preview && !modalCert._readOnly ? canCheckCert(modalCert) : undefined}
+        canDelete={modalCert && !modalCert._preview && !modalCert._readOnly ? canDeleteCert(modalCert) : undefined}
         {...(modalCert && !modalCert._preview && !modalCert._readOnly ? cardActions(modalCert) : {})} />
       </Suspense>
       )}

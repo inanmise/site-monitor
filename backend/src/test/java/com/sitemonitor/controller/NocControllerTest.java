@@ -56,6 +56,9 @@ class NocControllerTest {
     @MockitoBean NocOperatorService nocOperators;
     @MockitoBean NocConsoleService console;
     @MockitoBean NocCallLogService nocCallLog;
+    /** Arama kartının nöbetçisi (isteğe bağlı bağımlılıklar — 2026-10-22, L-N1). */
+    @MockitoBean com.sitemonitor.service.oncall.OnCallService onCallService;
+    @MockitoBean com.sitemonitor.repository.AppUserRepository appUserRepo;
 
     @MockitoBean AppSettingsService appSettings;
     @MockitoBean RememberMeService rememberMeService;
@@ -576,6 +579,34 @@ class NocControllerTest {
                 .andExpect(jsonPath("$.data.call_instructions").value("Önce listeyi arayın"));
         for (MockHttpSession s : List.of(userA, teamAdmin, audit))
             mvc.perform(get("/api/noc/console/alerts/50/call-sheet").session(s)).andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("L-N1: pasif (devre dışı) nöbetçi arama kartında 'pasif' işaretli görünür ama TELEFONU verilmez; etkin nöbetçinin telefonu verilir")
+    void callSheetPassiveOnCallHasNoPhone() throws Exception {
+        MockHttpSession op = nocOperator();
+        when(nocCallLog.canWrite(any())).thenAnswer(i -> i.getArgument(0) == op);
+        com.sitemonitor.model.AlertEvent ev = new com.sitemonitor.model.AlertEvent();
+        ev.setId(51L); ev.setTeamId(TEAM_A);
+        when(nocCallLog.loadAlert(51L)).thenReturn(ev);
+        when(nocCallLog.owningTeam(ev)).thenReturn(TEAM_A);
+        when(callLists.forMail(TEAM_A)).thenReturn(new NocMailComposer.TeamBlock("Takım A", List.of(), false, null, List.of()));
+        when(configService.get()).thenReturn(new NocConfigService.Config(Set.of(), "CRITICAL", true, "", null, null));
+        com.sitemonitor.model.AppUser u = new com.sitemonitor.model.AppUser();
+        u.setId(70L); u.setUsername("N70"); u.setDisplayName("Ayrılan Kişi"); u.setPhone("0555 000 00 70"); u.setActive(false);
+        when(appUserRepo.findById(70L)).thenReturn(java.util.Optional.of(u));
+        when(onCallService.currentFor(any())).thenReturn(Map.of(TEAM_A, new com.sitemonitor.service.oncall.OnCallService.OnCallPerson(
+                TEAM_A, 70L, "N70", "Ayrılan Kişi", null, false, false, null)));
+        mvc.perform(get("/api/noc/console/alerts/51/call-sheet").session(op)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.oncall.name").value("Ayrılan Kişi"))
+                .andExpect(jsonPath("$.data.oncall.active").value(false))
+                .andExpect(jsonPath("$.data.oncall.phone").doesNotExist());
+        u.setActive(true);
+        when(onCallService.currentFor(any())).thenReturn(Map.of(TEAM_A, new com.sitemonitor.service.oncall.OnCallService.OnCallPerson(
+                TEAM_A, 70L, "N70", "Ayrılan Kişi", null, true, false, null)));
+        mvc.perform(get("/api/noc/console/alerts/51/call-sheet").session(op)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.oncall.active").value(true))
+                .andExpect(jsonPath("$.data.oncall.phone").value("0555 000 00 70"));
     }
 
     @Test

@@ -15,7 +15,6 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
-import java.net.InetAddress;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
@@ -129,6 +128,34 @@ public class MonitoringOutageService {
 
     @Value("${site.monitor.network.min-errors:3}")
     private int bulkMinErrors;
+
+    /**
+     * SOAK-1 (2026-10-22): bastırma oranının pencere TABANI (ms). Oran artık TEK tur çağrısının kalemleri üzerinden değil,
+     * türün son {@code max(3 × tur aralığı, bu taban)} içindeki alan adı başına EN SON zamanlanmış sonucu üzerinden
+     * hesaplanır. İzleme başına due zamanlı kümede bir tur yalnız o anda vakti gelen izlemeleri taşır: 9 izlemeli bir
+     * turda 7 ağ hatası (0,78) gerçek kesintileri ~5 dk bastırdı, öbür tur her 30 sn'de şüpheyi kaldırıp
+     * {@code network_outage_events}'e her dakika açılış / kapanış satırı yazdırdı.
+     */
+    @Value("${site.monitor.network.suppression-window-ms:300000}")
+    private long suppressionWindowFloorMs = 300_000L;
+
+    /** Pencerenin üst sınırı — çok seyrek turlu türde (günlük alan adı turu) pencere sınırsız büyümesin. */
+    static final long SUPPRESSION_WINDOW_CAP_MS = 60L * 60_000L;
+
+    /** Test saati (yalnız testler değiştirir). */
+    java.util.function.LongSupplier suppressionClock = System::currentTimeMillis;
+
+    /** SOAK-1: tür → (alan adı → son zamanlanmış sonucun ağ-sınıfı DOWN bayrağı + zamanı). Tarama liderinin belleği. */
+    private final Map<String, Map<String, OutcomeMark>> suppressionWindow = new ConcurrentHashMap<>();
+    /** SOAK-1: tür → önceki zamanlanmış çağrının zamanı ve aralığı (pencere = max(3 × aralık, taban)). */
+    private final Map<String, long[]> suppressionTick = new ConcurrentHashMap<>();
+
+    private record OutcomeMark(boolean networkDown, long atMs) {}
+
+    /** Penceredeki örnek: ağ-sınıfı DOWN alan adı sayısı / gözlenen alan adı sayısı. */
+    record WindowSample(int networkDown, int total) {
+        double rate() { return total == 0 ? 0 : (double) networkDown / total; }
+    }
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -356,6 +383,8 @@ public class MonitoringOutageService {
         downObserved.clear();
         scheduledRoundSeen.clear();
         suppressionActive.clear();
+        suppressionWindow.clear();
+        suppressionTick.clear();
         outageReconciled.clear();
         log.info("Tarama liderliği değişti ({}) — bellek içi alarm durumu sıfırlandı ({} teyit, {} kurtarma zinciri durduruldu)",
                 reason, chains, recoveries);
@@ -517,6 +546,42 @@ public class MonitoringOutageService {
         }
     }
 
+    /**
+     * SOAK-1: bu turun alan adı sonuçlarını türün penceresine yazar, pencere dışını budar ve örneği döner. Pencere =
+     * {@code max(3 × son tur aralığı, taban)} ({@link #SUPPRESSION_WINDOW_CAP_MS} ile sınırlı). Aynı alan adının YENİ sonucu
+     * eskisinin yerini alır; tur aralığı ilk çağrıda bilinmez (taban). Harita türün alan adı sayısıyla sınırlıdır.
+     */
+    WindowSample windowedOutageSample(String alertType, Map<String, List<SweepItem>> byDomain) {
+        long now = suppressionClock.getAsLong();
+        long[] tick = suppressionTick.computeIfAbsent(alertType, k -> new long[]{0L, 0L});
+        long window;
+        synchronized (tick) {
+            if (tick[0] > 0 && now > tick[0]) tick[1] = now - tick[0];
+            tick[0] = now;
+            window = Math.min(SUPPRESSION_WINDOW_CAP_MS, Math.max(Math.max(0L, suppressionWindowFloorMs), 3L * tick[1]));
+        }
+        Map<String, OutcomeMark> marks = suppressionWindow.computeIfAbsent(alertType, k -> new ConcurrentHashMap<>());
+        for (Map.Entry<String, List<SweepItem>> e : byDomain.entrySet()) {
+            if (e.getKey() == null) continue;
+            boolean netDown = e.getValue().stream().anyMatch(it -> !it.up() && isOutageClass(it.error(), e.getKey()));
+            marks.put(e.getKey(), new OutcomeMark(netDown, now));
+        }
+        long cutoff = now - window;
+        int down = 0, total = 0;
+        for (Iterator<Map.Entry<String, OutcomeMark>> it = marks.entrySet().iterator(); it.hasNext(); ) {
+            OutcomeMark m = it.next().getValue();
+            if (m.atMs() < cutoff) { it.remove(); continue; }
+            total++;
+            if (m.networkDown()) down++;
+        }
+        return new WindowSample(down, total);
+    }
+
+    /** Ağ kesintisi şüphesi bu tür için şu an AÇIK mı (pencere kararı — teyit zincirinin son adımı da sorar). */
+    boolean outageSuppressed(String alertType) {
+        return alertType != null && Boolean.TRUE.equals(suppressionActive.get(alertType));
+    }
+
     /** Uptime/Port/DNS-failure sweep'leri her tur sonunda bir kez çağırır. */
     public void handleSweepResults(String alertType, List<SweepItem> items) {
         handleSweepResults(alertType, items, false);
@@ -612,13 +677,16 @@ public class MonitoringOutageService {
         // Bastırma YALNIZ ağ-sınıfı hatalara bakar — sertifika sweep'indeki kuralın aynısı
         // (SchedulerService: error_class ∈ {DNS, NETWORK}). Gerekçe için bkz. isOutageClass:
         // yapılandırma hatası olan bir monitör SONSUZA DEK düşük kalır ve oranı kalıcı şişirir.
-        long networkDown = byDomain.entrySet().stream()
-                .filter(e -> e.getValue().stream()
-                        .anyMatch(it -> !it.up() && isOutageClass(it.error(), e.getKey())))
-                .count();
-        if (networkDown >= bulkMinErrors
-                && (double) networkDown / byDomain.size() >= bulkRateThreshold) {
-            noteSuppression(alertType, (int) networkDown, byDomain.size());
+        // SOAK-1 (2026-10-22): karar TEK turun kalemlerinden değil türün kayan penceresinden (alan adı başına son sonuç).
+        // Girme: ≥ bulkMinErrors ağ-sınıfı DOWN ve oran ≥ eşik; çıkma (histerezis): oran eşiğin altına inince — tek turun
+        // küçük örneği şüpheyi ne açar ne her turda kapatır.
+        WindowSample sample = windowedOutageSample(alertType, byDomain);
+        boolean active = Boolean.TRUE.equals(suppressionActive.get(alertType));
+        boolean suppress = active
+                ? sample.networkDown() > 0 && sample.rate() >= bulkRateThreshold
+                : sample.networkDown() >= bulkMinErrors && sample.rate() >= bulkRateThreshold;
+        if (suppress) {
+            noteSuppression(alertType, sample.networkDown(), sample.total());
             // K1 (prod 2026-09-29, kök neden): bastırma eskiden burada HİÇBİR alan adını işlemeden dönüyordu. Amacı
             // ağ kesintisi şüphesinde YENİ alarm selini durdurmaktır; ama SAĞLIKLI dönen ve açık alarmı olan hedefin
             // kurtarmasını da kesiyordu. Filoda sürekli ulaşılamayan hedefler varsa (pod'dan doğrudan erişilemeyen
@@ -697,7 +765,9 @@ public class MonitoringOutageService {
             // yeni zincir de onu canlandıramaz. Anahtarı haritada bırakmak (eski merge) kurtarmayı
             // KALICI olarak kilitliyordu (BO0): startRecovery "zaten sürüyor" deyip hep atlıyordu.
             endRecovery(rkey);
-            SweepItem firstDown = ownerDown.get(0);
+            // ALERTS-11 (2026-10-22): aynı anahtarı paylaşan sahibin kalemlerinden EN YÜKSEK seviyeli olan (443 WARNING +
+            // 8443 CRITICAL) — eskiden ilk kalem gidiyordu ve KRİTİK kardeş olayı hiç terfi ettirmiyordu.
+            SweepItem firstDown = highestLevelItem(ownerDown);
             if (isChangeType(alertType)) {
                 // R1-B (MP-13): açık olaya eklenen değişiklik (DOMAINMON_CHANGED) — karar kilit İÇİNDE, satır hâlâ
                 // bekliyorsa; kilit alınamazsa satır PENDING kalır, sonraki tur yeniden kuyruğa alır.
@@ -730,6 +800,35 @@ public class MonitoringOutageService {
                     + "bu olay kapandıktan sonra kendi takımıyla açılır", domain, alertType, foreignDown, openEvent.getId());
         }
         if (!up.isEmpty()) recoverDomain(alertType, domain, up, openEvent, false);
+    }
+
+    /** Kalemlerden bağlamdaki {@code alert_level}'i en yüksek olan; eşitlikte ilk (eski seçim). Liste boş olamaz. */
+    static SweepItem highestLevelItem(List<SweepItem> items) {
+        SweepItem best = items.get(0);
+        int bestRank = levelRank(best);
+        for (SweepItem it : items) {
+            int r = levelRank(it);
+            if (r > bestRank) { best = it; bestRank = r; }
+        }
+        return best;
+    }
+
+    private static int levelRank(SweepItem it) {
+        Object lvl = it == null || it.ctxExtra() == null ? null : it.ctxExtra().get("alert_level");
+        return switch (lvl == null ? "" : String.valueOf(lvl).trim().toUpperCase(Locale.ROOT)) {
+            case "CRITICAL" -> 3;
+            case "HIGH" -> 2;
+            case "WARNING" -> 1;
+            default -> 0;
+        };
+    }
+
+    /** Teyitli arızanın son hatası (yoksa tespit hatası) ağ / DNS sınıfı mı — bastırma oranına giren sınıf. */
+    private static boolean networkClassFailure(SweepItem item, Map<String, Object> ctx) {
+        Object last = ctx == null ? null : ctx.get("last_error");
+        String err = last != null && !String.valueOf(last).isBlank() && !"null".equals(String.valueOf(last))
+                ? String.valueOf(last) : item.error();
+        return isOutageClass(err, item.domain()) || isOutageClass(item.error(), item.domain());
     }
 
     /** Kalem, açık olayın sahibine mi ait (Y-1)? Kimliksiz kalem (ör. envanter ACCESSIBILITY) sahip sayılır. */
@@ -1509,6 +1608,15 @@ public class MonitoringOutageService {
             return;
         }
         boolean change = isChangeType(item.alertType());
+        // SOAK-1 (2026-10-22): zincir şüphe AÇILMADAN önce başladıysa (pencere bir turun sağlıklı sonuçlarını hâlâ taşıyordu)
+        // ve teyit bittiğinde tür için ağ kesintisi şüphesi açıksa ağ-sınıfı hata yeni alarm AÇMAZ — bastırma yalnız yeni
+        // alarmı durdurur (kurtarma sürer). Şüphe kalkınca sonraki DOWN turu yeniden teyit eder. Değişiklik türü hariç.
+        if (!change && outageSuppressed(item.alertType()) && networkClassFailure(item, ctx)) {
+            log.info("Teyit tamamlandı ama {} için ağ kesintisi şüphesi açık — alarm açılmadı (şüphe kalkınca yeniden teyit): {}",
+                    item.alertType(), key);
+            releaseChain(key, chainId);
+            return;
+        }
         java.util.concurrent.atomic.AtomicBoolean unreadable = new java.util.concurrent.atomic.AtomicBoolean();
         LockOutcome out;
         try {
@@ -2013,11 +2121,12 @@ public class MonitoringOutageService {
         return ISO.format(Instant.now());
     }
 
+    /**
+     * Kilit sahibi kimliğinin host kısmı — {@link SchedulerService}'in kilit kimliğiyle AYNI değer (SOAK-3, 2026-10-22): makine
+     * adı → {@code HOSTNAME} → {@code POD_NAME} → rastgele. Eskiden çözüm düşünce sabit "unknown" dönüyordu; birden çok pod'da
+     * düşerse hepsi "unknown-…" olur, bu pod'un önceki örneğinin izleme kilitleri açılış temizliğince tanınmazdı.
+     */
     private static String resolveHostname() {
-        try {
-            return InetAddress.getLocalHost().getHostName();
-        } catch (Exception e) {
-            return "unknown";
-        }
+        return SchedulerService.hostname();   // aynı süreçte aynı değer: açılış temizliği bu pod'un izleme kilitlerini de tanır
     }
 }

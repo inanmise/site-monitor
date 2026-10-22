@@ -64,6 +64,9 @@ export default function SystemMaintenanceLayer({ block, offset = 0, globalAdmin 
       if (r?.success) toast.success(t('sysmaint.toast.ended'))
       else toast.error(r?.error || t('sysmaint.err.generic'))
       onChanged?.()
+    } catch (e) {
+      // Ağ kesintisi: eskiden yakalanmamış söz reddiydi, "Hemen bitir" sessizce dönüyordu (UIA-H11)
+      toast.error(e?.message || t('sysmaint.err.generic'), { details: e?.errorInfo })
     } finally {
       setBusy(false)
     }

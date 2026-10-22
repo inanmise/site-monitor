@@ -493,3 +493,117 @@ describe('UserPushSettings', () => {
     }
   })
 })
+
+// ── 20.165.1 bugfix (PKG-8a): kapsamlı müdür kilitleri (K10, UIA-C3) + okunamayan yükler (UIA-C5) + TLS düşüş etiketi (C4) ──
+describe('UserPushSettings — K10 kilitleri ve okunamayan yükler', () => {
+  const K = (k) => `site.monitor.userpush.${k}`
+  function stubScoped({ settings = { ...SETTINGS, [K('headers')]: [] } } = {}) {
+    stubAll({ settings })
+    api.admin.userPush.getSettings.mockResolvedValue({
+      success: true,
+      data: {
+        settings,
+        scopes: [],
+        defaults: { templates: { down: 'x' }, placeholders: ['seviye', 'ad', 'hedef', 'saat'] },
+        health: { enabled: true, circuit_open: false },
+        read_only_keys: [K('url'), K('headers')], can_edit_types: false, manage_team_ids: [5],
+      },
+    })
+    api.admin.getTeams.mockResolvedValue({ success: true, data: [{ id: 5, name: 'Takım A' }, { id: 6, name: 'Takım B' }] })
+  }
+  beforeEach(() => { vi.clearAllMocks(); openAllSections() })
+
+  it('kapsamlı müdür: URL / başlık düzenleyicisi, tür çipleri ve yönetmediği takımın çipi KAPALI', async () => {
+    stubScoped()
+    render(<UserPushSettings />)
+    const url = await screen.findByDisplayValue('http://notify.example.com/api')
+    expect(url).toBeDisabled()
+    expect(screen.getByRole('button', { name: /Add header|Başlık ekle/i })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'HTTP' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Takım B' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Takım A' })).toBeEnabled()
+    expect(document.querySelector('[data-slot="userpush-global-only"]')).not.toBeNull()
+    expect(document.querySelector('[data-slot="userpush-types-locked"]')).not.toBeNull()
+  })
+
+  it("kaydet: dokunulmamış URL ve başlıklar GİTMEZ (GLOBAL_ONLY → kapsamlı müdür her kaydı 403'lüyordu)", async () => {
+    stubScoped()
+    api.admin.userPush.saveSettings.mockResolvedValue({ success: true, data: { settings: { ...SETTINGS, [K('headers')]: [], [K('title')]: 'Yeni' } } })
+    render(<UserPushSettings />)
+    fireEvent.change(await screen.findByDisplayValue('Site Monitor'), { target: { value: 'Yeni' } })
+    fireEvent.click(within(saveBar()).getByRole('button', { name: /^(Save|Kaydet)$/ }))
+    await waitFor(() => expect(api.admin.userPush.saveSettings).toHaveBeenCalled())
+    const body = api.admin.userPush.saveSettings.mock.calls[0][0]
+    expect(body).not.toHaveProperty(K('headers'))
+    expect(body).not.toHaveProperty(K('url'))
+    expect(body[K('title')]).toBe('Yeni')
+  })
+
+  it('global yönetici (K10 alanı yok = bugünkü davranış): başlık değişince başlıklar gider, URL değişmediyse gitmez', async () => {
+    stubAll()
+    api.admin.userPush.saveSettings.mockResolvedValue({ success: true, data: { settings: SETTINGS } })
+    render(<UserPushSettings />)
+    const name = await screen.findByDisplayValue('Authorization')
+    expect(screen.getByDisplayValue('http://notify.example.com/api')).toBeEnabled()
+    fireEvent.change(name, { target: { value: 'X-Token' } })
+    fireEvent.click(within(saveBar()).getByRole('button', { name: /^(Save|Kaydet)$/ }))
+    await waitFor(() => expect(api.admin.userPush.saveSettings).toHaveBeenCalled())
+    const body = api.admin.userPush.saveSettings.mock.calls[0][0]
+    expect(body[K('headers')]).toEqual([{ name: 'X-Token', value: '*****', secret: true }])
+    expect(body).not.toHaveProperty(K('url'))
+  })
+
+  it('FE-7: eski pod (read_only_keys YOK) — kapsamlı müdür yalnız başlığı değiştirir: gövde YALNIZ değişen anahtar (başlıklar / URL / rol grupları / diğerleri yok)', async () => {
+    stubAll()   // 20.165.0 yanıtı: read_only_keys, can_edit_types, manage_team_ids yok
+    api.admin.userPush.saveSettings.mockResolvedValue({ success: true, data: { settings: { ...SETTINGS, [K('title')]: 'Yeni' } } })
+    render(<UserPushSettings />)
+    fireEvent.change(await screen.findByDisplayValue('Site Monitor'), { target: { value: 'Yeni' } })
+    fireEvent.click(within(saveBar()).getByRole('button', { name: /^(Save|Kaydet)$/ }))
+    await waitFor(() => expect(api.admin.userPush.saveSettings).toHaveBeenCalled())
+    expect(api.admin.userPush.saveSettings.mock.calls[0][0]).toEqual({ [K('title')]: 'Yeni' })
+  })
+
+  it('FE-7: salt okunur başlıkların "gizli" kutusu da kilitli', async () => {
+    stubScoped({ settings: SETTINGS })
+    render(<UserPushSettings />)
+    await screen.findByDisplayValue('Authorization')
+    expect(screen.getByRole('checkbox', { name: /^(Sır|Secret)$/ })).toBeDisabled()
+  })
+
+  it('toplu aç/kapa yalnız YÖNETİLEN görünen takımları gönderir', async () => {
+    stubScoped()
+    api.admin.userPush.saveScopes.mockResolvedValue({ success: true, data: { data: [] } })
+    render(<UserPushSettings />)
+    await screen.findByDisplayValue('http://notify.example.com/api')
+    fireEvent.click(screen.getByRole('button', { name: /Tümünü aç|Enable all/ }))
+    await waitFor(() => expect(api.admin.userPush.saveScopes).toHaveBeenCalledWith([{ scopeType: 'TEAM', scopeKey: '5', enabled: true }]))
+  })
+
+  it('ayarlar okunamadı → form ÇİZİLMEZ ("Tüm değişiklikler kaydedildi" yok), hata + yeniden dene', async () => {
+    stubAll()
+    api.admin.userPush.getSettings.mockResolvedValue({ success: false, error: 'Sunucu yanıt vermedi' })
+    render(<UserPushSettings />)
+    await waitFor(() => expect(document.querySelector('[data-slot="userpush-load-error"]')).not.toBeNull())
+    expect(screen.queryByText(/All changes saved|Tüm değişiklikler kaydedildi/)).toBeNull()
+  })
+
+  it('teslimat günlüğü okunamadı → "kayıt yok" DEĞİL, okunamadı + yenile; "Kim alır?" 403 → üye yok DEĞİL', async () => {
+    stubAll()
+    api.admin.userPush.getDeliveries.mockResolvedValue({ success: false, error: 'boom' })
+    api.admin.userPush.explain.mockResolvedValue({ success: false, error: 'Bu takımı yönetemezsiniz' })
+    render(<UserPushSettings />)
+    await waitFor(() => expect(document.querySelector('[data-slot="userpush-log-error"]')).not.toBeNull())
+    const pick = screen.getByRole('combobox', { name: /^— (Takım seçin|Select a team) —$/ })
+    fireEvent.mouseDown(pick)
+    fireEvent.mouseDown([...document.querySelectorAll('[cmdk-item]')].find((o) => o.textContent === 'Takım A'))
+    await waitFor(() => expect(document.querySelector('[data-slot="userpush-explain-error"]')).not.toBeNull())
+  })
+
+  it('TLS notu düşüş push satırı ham anahtar değil etiketiyle çizilir', async () => {
+    stubAll({ deliveries: [{ ...DELIVERY, id: 9, trigger: 'TLS_GRADE_DROP', username: '-' }] })
+    render(<UserPushSettings />)
+    await screen.findByDisplayValue('Authorization')
+    await waitFor(() => expect(screen.getAllByText(/TLS grade dropped|TLS notu düştü/).length).toBeGreaterThan(0))
+    expect(screen.queryByText('userpush.trigger.TLS_GRADE_DROP')).toBeNull()
+  })
+})

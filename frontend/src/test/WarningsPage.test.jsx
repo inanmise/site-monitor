@@ -361,3 +361,36 @@ describe('warningsModel — saf kurallar', () => {
     expect(sortItems(items, 'domain').map((i) => i.row.domain)).toEqual(['a', 'z', 'b'])
   })
 })
+
+// 2026-10-22 hata avı (PKG-6): ağ kesinti geçmişi okunamazsa "kesinti yok" denmez (UIM-28); satır eylemleri sunucunun
+// kapısıyla — kontrol / plan izni olmayan satırda o adım "Sertifikayı aç"a düşer, menüde görünmez (UIM-9 / UIM-11).
+describe('WarningsPage — okuma hatası ve satır kapıları', () => {
+  it('kesinti geçmişi okunamazsa "Kayıtlı ağ kesintisi yok" YOK; "okunamadı" + Yeniden dene yeniden ister', async () => {
+    apiMock.getNetworkOutageHistory.mockResolvedValueOnce({ success: false, error: 'boom' })
+    await renderLoaded()
+    const section = await waitFor(() => {
+      const el = document.querySelector('[data-slot="attn-outage-section"]')
+      expect(el).not.toBeNull()
+      return el
+    })
+    expect(section).toHaveTextContent(EN['attn.outageHintFailed'])
+    expect(screen.queryByText(EN['attn.outageHintNone'])).toBeNull()
+    fireEvent.click(within(section).getByRole('button', { name: EN['app.networkOutageHistoryTitle'] }))
+    const failed = await waitFor(() => {
+      const el = document.querySelector('[data-slot="attn-outage-failed"]')
+      expect(el).not.toBeNull()
+      return el
+    })
+    fireEvent.click(within(failed).getByRole('button', { name: EN['attn.outageRetry'] }))
+    await waitFor(() => expect(apiMock.getNetworkOutageHistory).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(document.querySelector('[data-slot="attn-outage-failed"]')).toBeNull())
+  })
+
+  it('kontrol ve plan izni yoksa sonraki adım hiçbir satırda "kontrol" / "planla" değil', async () => {
+    await renderLoaded(props({ cardActions: vi.fn(() => ({ checking: false })), canPlan: () => false }))
+    const actions = [...document.querySelectorAll('[data-slot="attn-next-action"]')].map((b) => b.getAttribute('data-action'))
+    expect(actions.length).toBeGreaterThan(0)
+    expect(actions).not.toContain('check')
+    expect(actions).not.toContain('plan')
+  })
+})

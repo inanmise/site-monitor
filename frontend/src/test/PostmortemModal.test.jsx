@@ -210,4 +210,25 @@ describe('PostmortemModal', () => {
       { id: 'u-3', display_name: 'Pasif Kişi', active: false }, { id: 'u-4', username: 'kullanici.d', active: true }]))
       .toEqual([{ value: 'u-1', label: 'Ayşe' }, { value: 'u-4', label: 'kullanici.d' }, { value: 'u-2', label: 'Zeynep' }])
   })
+
+  // UIA-4 (2026-10-22): kayıt sürerken yazılan metin sunucu yanıtıyla EZİLMEZ; form kirli kalır, sonraki kayıt onu gönderir
+  it('kayıt uçuştayken yazılan bölüm korunur; Kaydet yeniden etkin, ikinci gövde yeni metni taşır', async () => {
+    let release
+    api.incidents.savePostmortem.mockImplementationOnce((_id, body) => new Promise((r) => {
+      release = () => r({ success: true, data: { ...base().postmortem, exists: true, version: 1, ...body } })
+    }))
+    render(<PostmortemModal incident={incident} onClose={() => {}} />)
+    await findSection('lessons')
+    const lessons = within(section('lessons')).getByRole('textbox')
+    fireEvent.change(lessons, { target: { value: 'İlk' } })
+    fireEvent.click(document.querySelector('[data-slot="pm-save"]'))
+    await waitFor(() => expect(api.incidents.savePostmortem).toHaveBeenCalledTimes(1))
+    fireEvent.change(lessons, { target: { value: 'İlk + kayıt sırasında' } })
+    release()
+    await waitFor(() => expect(document.querySelector('[data-slot="pm-save"]')).not.toBeDisabled())
+    expect(lessons).toHaveValue('İlk + kayıt sırasında')
+    fireEvent.click(document.querySelector('[data-slot="pm-save"]'))
+    await waitFor(() => expect(api.incidents.savePostmortem).toHaveBeenCalledTimes(2))
+    expect(api.incidents.savePostmortem.mock.calls[1][1].lessons).toBe('İlk + kayıt sırasında')
+  })
 })

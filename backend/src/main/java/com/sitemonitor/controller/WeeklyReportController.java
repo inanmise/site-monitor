@@ -582,9 +582,11 @@ public class WeeklyReportController {
             Map<String, Object> res = service.approveViaToken(token);
             String mail = String.valueOf(res.get("mail_status"));
             auditTokenDecision("WEEKLY_REPORT_APPROVE", request, res, null);
-            String note = (mail != null && (mail.startsWith("SENT") || mail.equals("QUEUED_RETRY")))
+            // Ham posta durumu (ör. "FAILED: smtp.kurum:25 …") oturumsuz ziyaretçiye GÖSTERİLMEZ (2026-10-22, AUTH-14):
+            // yalnız gitti / gitmedi.
+            String note = mailDelivered(mail)
                 ? "Rapor müdüre e-posta ile iletildi."
-                : "Rapor onaylandı; müdür e-postası gönderilemedi/atlandı (" + esc(mail) + "). Uygulamadan tekrar gönderebilirsiniz.";
+                : "Rapor onaylandı; müdür e-postası gönderilemedi ya da atlandı. Uygulamadan tekrar gönderebilirsiniz.";
             return htmlPage("Onaylandı",
                 "<p class='msg'><strong>Rapor onaylandı.</strong><br>" + note + "</p>", "#15803d");
         } catch (WeeklyReportService.ApproverInactiveException e) {
@@ -592,11 +594,11 @@ public class WeeklyReportController {
         } catch (WeeklyReportService.StateChangedException e) {
             return decisionAlreadyTaken(e, "approve");
         } catch (Exception e) {
-            String msg = e.getMessage() != null ? e.getMessage() : "Onay işlemi başarısız.";
+            String msg = linkFailureText(e, "approve");
             // Başarısız token denemesi de iz bırakır: sızmış/süresi dolmuş bir bağlantının
             // kullanılmaya çalışılması, denetimde görülmesi gereken ilk sinyaldir.
             auditService.recordSecurityEvent("WEEKLY_REPORT_APPROVE", request, null,
-                    "WEEKLY_REPORT", "email-token", msg);
+                    "WEEKLY_REPORT", "email-token", linkFailureAuditText(e));
             return htmlPage("Onay Başarısız", "<p class='msg'>" + esc(msg) + "</p>", "#dc2626");
         }
     }
@@ -611,9 +613,9 @@ public class WeeklyReportController {
             Map<String, Object> res = service.rejectViaToken(token, reason);
             String mail = String.valueOf(res.get("mail_status"));
             auditTokenDecision("WEEKLY_REPORT_REJECT", request, res, reason);
-            String note = (mail != null && (mail.startsWith("SENT") || mail.equals("QUEUED_RETRY")))
+            String note = mailDelivered(mail)
                 ? "İade bilgisi ve notunuz ekibe e-posta ile iletildi."
-                : "Rapor iade edildi; ekip bilgilendirme e-postası gönderilemedi/atlandı (" + esc(mail) + ").";
+                : "Rapor iade edildi; ekip bilgilendirme e-postası gönderilemedi ya da atlandı.";
             return htmlPage("İade Edildi",
                 "<p class='msg'><strong>Rapor iade edildi.</strong><br>" + note + "</p>", "#d97706");
         } catch (WeeklyReportService.ApproverInactiveException e) {
@@ -621,11 +623,55 @@ public class WeeklyReportController {
         } catch (WeeklyReportService.StateChangedException e) {
             return decisionAlreadyTaken(e, "reject");
         } catch (Exception e) {
-            String msg = e.getMessage() != null ? e.getMessage() : "İade işlemi başarısız.";
+            String msg = linkFailureText(e, "reject");
             auditService.recordSecurityEvent("WEEKLY_REPORT_REJECT", request, null,
-                    "WEEKLY_REPORT", "email-token", msg);
+                    "WEEKLY_REPORT", "email-token", linkFailureAuditText(e));
             return htmlPage("İade Başarısız", "<p class='msg'>" + esc(msg) + "</p>", "#dc2626");
         }
+    }
+
+    /** Posta gerçekten teslim için verildi mi (SENT…, ya da 421 sonrası kuyrukta yeniden deneniyor). */
+    static boolean mailDelivered(String mail) {
+        return mail != null && (mail.startsWith("SENT") || mail.startsWith("QUEUED"));
+    }
+
+    /**
+     * Oturumsuz onay / iade sayfasının hata metni (2026-10-22, AUTH-14). Servisin KENDİ iletileri (geçersiz / kullanılmış /
+     * süresi dolmuş bağlantı, rapor onay beklemiyor — {@link IllegalArgumentException} / {@link IllegalStateException},
+     * teknik değil) olduğu gibi gösterilir; bunun dışındaki her istisna (veritabanı, posta, beklenmeyen) GENEL metne döner ve
+     * ayrıntısı yalnız günlüğe yazılır — SQL / kısıt / sunucu adı bağlantıyı açan ziyaretçiye ulaşmaz.
+     */
+    static String linkFailureText(Exception e, String action) {
+        boolean approve = "approve".equals(action);
+        if (e instanceof IllegalArgumentException || e instanceof IllegalStateException) {
+            String m = e.getMessage();
+            if ("MANAGER_CONTACT_MISSING".equals(m)) {
+                return com.sitemonitor.util.Msg.t(
+                        "Takımın müdür e-posta adresi tanımlı olmadığı için rapor onaylanmadı; durum değişmedi. Takım yöneticisinden müdür kişisini eklemesini isteyin, sonra bağlantıyı yeniden açın.",
+                        "The report was not approved because the team has no manager e-mail address; nothing changed. Ask the team manager to add the manager contact, then open the link again.");
+            }
+            if (m != null && !m.isBlank() && !com.sitemonitor.util.ErrorTexts.isTechnical(m)
+                    && !com.sitemonitor.util.ErrorTexts.isCodeLike(m)) {
+                return m;
+            }
+        }
+        log.warn("Haftalık rapor e-posta bağlantısı ({}) beklenmeyen hatayla bitti: {}", action, e.toString());
+        return approve
+                ? com.sitemonitor.util.Msg.t(
+                        "Onay işlemi tamamlanamadı; beklenmeyen bir hata oluştu. Birkaç dakika sonra bağlantıyı yeniden açın ya da raporu uygulamadan onaylayın.",
+                        "The approval could not be completed because of an unexpected error. Open the link again in a few minutes or approve the report in the application.")
+                : com.sitemonitor.util.Msg.t(
+                        "İade işlemi tamamlanamadı; beklenmeyen bir hata oluştu. Birkaç dakika sonra bağlantıyı yeniden açın ya da raporu uygulamadan iade edin.",
+                        "The return could not be completed because of an unexpected error. Open the link again in a few minutes or return the report in the application.");
+    }
+
+    /** Güvenlik olayı ayrıntısı: servisin kendi iletisi aynen; beklenmeyen istisnada yalnız sınıf adı (SQL metni denetime de yazılmaz). */
+    private static String linkFailureAuditText(Exception e) {
+        if (e instanceof IllegalArgumentException || e instanceof IllegalStateException) {
+            String m = e.getMessage();
+            if (m != null && !com.sitemonitor.util.ErrorTexts.isTechnical(m)) return m;
+        }
+        return "unexpected: " + e.getClass().getSimpleName();
     }
 
     /**

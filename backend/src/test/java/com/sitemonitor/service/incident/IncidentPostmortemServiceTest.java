@@ -196,6 +196,28 @@ class IncidentPostmortemServiceTest {
     }
 
     @Test
+    @DisplayName("IN-1 (2026-10-22): yeni son tarih / yeni sahip hatırlatmayı HEDEFLİ UPDATE ile sıfırlar; durum düzenlemesi sıfırlamaz")
+    void reminderResetIsTargeted() {
+        when(userRepo.findById(9L)).thenReturn(Optional.of(user(9L, true)));
+        IncidentActionItem a = new IncidentActionItem();
+        a.setId(55L);
+        a.setIncidentId(10L);
+        a.setTitle("İş");
+        a.setStatus("OPEN");
+        a.setKind("PREVENT");
+        a.setPriority("LOW");
+        a.setDueDate("2026-10-12");
+        a.setOwnerUserId(7L);
+        svc.updateAction(a, Map.of("status", "IN_PROGRESS"), null, false, false, "b");
+        svc.updateAction(a, Map.of("due_date", "2026-10-12"), null, false, false, "b");   // aynı tarih
+        org.mockito.Mockito.verify(actionRepo, org.mockito.Mockito.never()).resetReminder(any());
+        svc.updateAction(a, Map.of("due_date", "2026-10-30"), null, false, false, "b");
+        org.mockito.Mockito.verify(actionRepo, org.mockito.Mockito.times(1)).resetReminder(55L);
+        svc.updateAction(a, Map.of("owner_user_id", "x"), 9L, true, false, "b");
+        org.mockito.Mockito.verify(actionRepo, org.mockito.Mockito.times(2)).resetReminder(55L);
+    }
+
+    @Test
     @DisplayName("2026-10-12: sonradan pasifleşen sahip DEĞİŞMEDEN gönderilirse düzenleme kilitlenmez; YENİ pasif sahip reddedilir")
     void unchangedPassiveOwnerDoesNotBlockEdit() {
         when(userRepo.findById(7L)).thenReturn(Optional.of(user(7L, false)));

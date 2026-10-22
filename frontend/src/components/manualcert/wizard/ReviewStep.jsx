@@ -49,7 +49,7 @@ function CsrCard({ csr }) {
  * ikinci kez gösterilmez.
  */
 export default function ReviewStep({
-  analysis, multi, onMulti, selected, onSelect, selectedSet, onToggle, renewMode, renewTargetId, onOpenCert, onRenewTarget, onFixPassword,
+  analysis, multi, onMulti, selected, onSelect, selectedSet, onToggle, renewMode, renewTargetId, onOpenCert, onRenewTarget, canRenewMatch, onFixPassword,
   extraction = null,
 }) {
   const t = useT()
@@ -132,6 +132,7 @@ export default function ReviewStep({
                 return (
                   <EntryCard key={e.ref} entry={e} selected={selected === e.ref} titleId={titleId} onOpenCert={onOpenCert}
                     onRenewTarget={renewMode ? undefined : (target) => onRenewTarget(e.ref, target)} renewTargetId={renewTargetId}
+                    canRenewMatch={canRenewMatch}
                     control={entries.length > 1
                       ? <RadioGroupItem value={e.ref} aria-labelledby={titleId} className={`size-5 ${TOUCH_AREA}`} />
                       : null} />

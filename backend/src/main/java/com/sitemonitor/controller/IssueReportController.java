@@ -222,7 +222,8 @@ public class IssueReportController {
     // ── "Bildirimlerim" (2026-09-26): kullanıcı kendi bildirimlerini görür, durumunu izler, yorum yazar ──
     //
     // Kimlik OTURUMDAN (istek parametresinden asla); sahiplik = username büyük/küçük harf duyarsız eşleşmesi
-    // (USER_REPORT + aynı kullanıcının CLIENT_ERROR otomatik kayıtları + login ekranından yazılan LOGIN).
+    // (USER_REPORT + aynı kullanıcının CLIENT_ERROR otomatik kayıtları). Giriş ekranından yazılan LOGIN kaydı LİSTELENMEZ
+    // (2026-10-22, hata avı AUTH-13): oradaki ad ziyaretçinin YAZDIĞI addır — LoginIssueService.SESSION_SOURCES.
     // Başkasının raporu → 404 (403 varlığı sızdırır). İç notlar (internal) HİÇBİR yanıta girmez.
 
     private static final int MAX_COMMENTS_PER_WINDOW = 30;   // yorum: saatte 30 (bildirim kaydı 10)

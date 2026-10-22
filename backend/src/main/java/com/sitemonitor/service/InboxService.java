@@ -119,19 +119,19 @@ public class InboxService {
     public HistoryPage history(Predicate<Long> canViewTeam, int page, int size) {
         int p = Math.max(0, page), s = Math.max(1, Math.min(size, HISTORY_SIZE_MAX));
         Instant now = Instant.now();
-        Set<String> domains = new HashSet<>();
-        try { for (CertificateInventory i : inventoryRepo.findByActiveTrueOrderByDomainAsc()) if (canViewTeam.test(i.getTeamId())) domains.add(i.getDomain()); }
-        catch (Exception e) { log.debug("inbox: envanter okunamadı: {}", e.toString()); }
+        Set<String> domains = visibleDomains(canViewTeam);
         List<AlertEvent> resolvedAll = new ArrayList<>();
         try {
+            // Açılış tarihinden BAĞIMSIZ (2026-10-22, DATA-11): eskiden son 60 günde AÇILAN alarmlar okunuyordu — 60 günden
+            // önce açılıp bu ay çözülen (ör. 60 gün önceden uyaran sertifika alarmı) geçmişte hiç görünmüyordu.
             String since = ISO.format(now.minus(HISTORY_DAYS, ChronoUnit.DAYS));
-            for (AlertEvent e : alertEventRepo.findByCreatedAtGreaterThanEqualOrderByCreatedAtDesc(ISO.format(now.minus(HISTORY_DAYS + 30L, ChronoUnit.DAYS)))) {
+            for (AlertEvent e : alertEventRepo.findByResolvedAtGreaterThanEqual(since)) {
                 if (!Boolean.TRUE.equals(e.getResolved()) || e.getResolvedAt() == null || e.getResolvedAt().compareTo(since) < 0) continue;
                 if (!visible(e, canViewTeam, domains)) continue;
                 resolvedAll.add(e);
             }
         } catch (Exception ex) { log.debug("inbox: geçmiş düştü: {}", ex.toString()); }
-        resolvedAll.sort((a, b) -> String.valueOf(b.getResolvedAt()).compareTo(String.valueOf(a.getResolvedAt())));
+        resolvedAll.sort(RESOLVED_NEWEST_FIRST);
         int from = Math.min(p * s, resolvedAll.size()), to = Math.min(from + s, resolvedAll.size());
         List<AlertEvent> slice = resolvedAll.subList(from, to);
         Map<Long, String> teamNames = teamNames();
@@ -139,6 +139,55 @@ public class InboxService {
         List<Item> items = new ArrayList<>();
         for (AlertEvent e : slice) items.add(alertItem(e, true, teamNames, refs));
         return new HistoryPage(items, resolvedAll.size(), p, s);
+    }
+
+    /** Çözülme anı yeniden eskiye; eşitlikte kimlik azalan (sayfalar arası kararlı). */
+    private static final Comparator<AlertEvent> RESOLVED_NEWEST_FIRST = (a, b) -> {
+        int c = String.valueOf(b.getResolvedAt()).compareTo(String.valueOf(a.getResolvedAt()));
+        if (c != 0) return c;
+        return Long.compare(b.getId() == null ? 0L : b.getId(), a.getId() == null ? 0L : a.getId());
+    };
+
+    /**
+     * Geçmiş — SQL'de sayfalanmış (2026-10-22, DATA-11): kapsam (damgalı takım ya da görülebilir AKTİF envanterin SY / UG
+     * takımı) ve sayfa veritabanında; 30 günlük çözülmüş alarmların TAMAMI belleğe alınmaz. {@code scope} null = global
+     * görüntüleyici (hepsi). Sıra çözülme anı + kimlik (eşitlikte kararlı).
+     */
+    public HistoryPage history(List<Long> scope, int page, int size) {
+        int p = Math.max(0, page), s = Math.max(1, Math.min(size, HISTORY_SIZE_MAX));
+        String since = ISO.format(Instant.now().minus(HISTORY_DAYS, ChronoUnit.DAYS));
+        boolean scoped = scope != null;
+        List<Long> scopeList = scoped && !scope.isEmpty() ? scope : List.of(-1L);
+        org.springframework.data.domain.Page<AlertEvent> pg;
+        try {
+            pg = alertEventRepo.findResolvedHistory(since, scoped, scopeList, org.springframework.data.domain.PageRequest.of(p, s));
+        } catch (Exception ex) {
+            log.debug("inbox: geçmiş düştü: {}", ex.toString());
+            return new HistoryPage(List.of(), 0, p, s);
+        }
+        if (pg == null) return new HistoryPage(List.of(), 0, p, s);
+        List<AlertEvent> slice = pg.getContent();
+        Map<Long, String> teamNames = teamNames();
+        Map<Long, MonitorRefResolver.Ref> refs = monitorRefs(slice);
+        List<Item> items = new ArrayList<>();
+        for (AlertEvent e : slice) items.add(alertItem(e, true, teamNames, refs));
+        return new HistoryPage(items, pg.getTotalElements(), p, s);
+    }
+
+    /**
+     * Görülebilir aktif envanter alanları (2026-10-22, ALERTS-3 / DATA-5): SY ya da UG takımı görülebilen kayıt. Eskiden
+     * yalnız SY sorulurdu — UG takımı kendine postalanan sertifika alarmını bildirim kutusunda göremiyordu.
+     */
+    private Set<String> visibleDomains(Predicate<Long> canViewTeam) {
+        Set<String> domains = new HashSet<>();
+        try {
+            for (CertificateInventory i : inventoryRepo.findByActiveTrueOrderByDomainAsc()) {
+                if (canViewTeam.test(i.getTeamId()) || (i.getUgTeamId() != null && canViewTeam.test(i.getUgTeamId()))) {
+                    domains.add(i.getDomain());
+                }
+            }
+        } catch (Exception e) { log.debug("inbox: envanter okunamadı: {}", e.toString()); }
+        return domains;
     }
 
     /**
@@ -216,9 +265,7 @@ public class InboxService {
     public List<Item> build(Predicate<Long> canViewTeam, List<Long> ownTeamIds) {
         List<Item> out = new ArrayList<>();
         Instant now = Instant.now();
-        Set<String> domains = new HashSet<>();
-        try { for (CertificateInventory i : inventoryRepo.findByActiveTrueOrderByDomainAsc()) if (canViewTeam.test(i.getTeamId())) domains.add(i.getDomain()); }
-        catch (Exception e) { log.debug("inbox: envanter okunamadı: {}", e.toString()); }
+        Set<String> domains = visibleDomains(canViewTeam);
 
         Map<Long, String> teamNames = teamNames();
         List<AlertEvent> alertRows = new ArrayList<>();
@@ -238,7 +285,8 @@ public class InboxService {
         try {
             String since = ISO.format(now.minus(24, ChronoUnit.HOURS));
             // Yalnız son 24 saatte çözülenler DB'de süzülür (2026-10-09); aşağıdaki denetim aynen kalır (savunma).
-            for (AlertEvent e : alertEventRepo.findResolvedSinceCreatedSince(since, ISO.format(now.minus(30, ChronoUnit.DAYS)))) {
+            // Açılış alt sınırı YOK (2026-10-22, DATA-11): 30 günden uzun açık kalıp bugün çözülen alarm da "çözüldü" haberidir.
+            for (AlertEvent e : alertEventRepo.findByResolvedAtGreaterThanEqual(since)) {
                 if (!Boolean.TRUE.equals(e.getResolved()) || e.getResolvedAt() == null || e.getResolvedAt().compareTo(since) < 0) continue;
                 if (!visible(e, canViewTeam, domains)) continue;
                 resolvedRows.add(e);

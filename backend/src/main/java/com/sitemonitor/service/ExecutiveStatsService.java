@@ -72,7 +72,8 @@ public class ExecutiveStatsService {
             latestCheckRepo.findAll().forEach(c -> { if (c.getDomain() != null) lc.put(c.getDomain(), c); });
             int total = 0, ok = 0, under30 = 0, under7 = 0, expired = 0, error = 0, unchecked = 0;
             for (CertificateInventory i : active) {
-                if (!canViewTeam.test(i.getTeamId())) continue;
+                // SY ya da UG takımı görülebilen kayıt (2026-10-22, ALERTS-3 / DATA-5); takım karşılaştırması SY'de kalır.
+                if (!visibleInventory(i, canViewTeam)) continue;
                 visibleDomains.add(i.getDomain()); domainTeam.put(i.getDomain(), i.getTeamId());
                 int[] tc = perTeam.computeIfAbsent(i.getTeamId() == null ? -1L : i.getTeamId(), k -> new int[6]);
                 total++; tc[0]++;
@@ -193,7 +194,7 @@ public class ExecutiveStatsService {
             for (CertificateInventory i : inventoryRepo.findAllByOrderByDomainAsc()) {
                 if (i.getDeletedAt() != null) continue;   // eski sürümden kalmış çöp satırı (tek seferlik temizlik siler)
                 liveIds.add(i.getId());
-                if (!canViewTeam.test(i.getTeamId())) continue;
+                if (!visibleInventory(i, canViewTeam)) continue;
                 visibleDomains.add(i.getDomain());
                 if (i.getCreatedAt() != null && i.getCreatedAt().compareTo(since) >= 0) added++;
             }
@@ -234,6 +235,11 @@ public class ExecutiveStatsService {
         out.put("added", added); out.put("removed", removed); out.put("renewed", renewed);
         out.put("alerts_opened", opened); out.put("alerts_resolved", resolved);
         return out;
+    }
+
+    /** Envanter kaydı görülebilir mi: SY ya da UG takımı (Alarm Geçmişi listesiyle aynı kural). */
+    static boolean visibleInventory(CertificateInventory i, Predicate<Long> canViewTeam) {
+        return canViewTeam.test(i.getTeamId()) || (i.getUgTeamId() != null && canViewTeam.test(i.getUgTeamId()));
     }
 
     private static boolean visible(AlertEvent e, Predicate<Long> canViewTeam, Set<String> domains) {

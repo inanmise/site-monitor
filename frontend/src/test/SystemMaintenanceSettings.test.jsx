@@ -238,6 +238,9 @@ describe('Sistem Bakımı — önizleme ve geçmiş', () => {
     const row = await screen.findByText((_, el) => el?.getAttribute?.('data-slot') === 'sysmaint-history-row')
     expect(row).toHaveAttribute('data-phase', 'ended')
     expect(row).toHaveTextContent('30.09.2026 22:00 – 23:00')
+    // UIA-C9 (2026-10-22): pencere metni ve "kim" kesilmez, sarar
+    expect(row.querySelector('[data-slot="sysmaint-history-who"]')).not.toHaveClass('truncate')
+    expect(row.querySelector('[data-slot="sysmaint-history-who"]').className).toContain('[overflow-wrap:anywhere]')
     fireEvent.click(within(row).getByRole('button', { name: /Open details/ }))
     const dlg = await screen.findByRole('dialog', { name: /System maintenance #3/ })
     await waitFor(() => expect(dlg.querySelector('[data-slot="sysmaint-detail"]')).toHaveTextContent(/8 notifications \(4 alerts\).*2 alerts caught up.*2 alerts closed/))

@@ -290,10 +290,14 @@ public class NocConsoleService {
             log.debug("7/24 konsolu: izleme çözülemedi ({}): {}", e.getId(), ex.toString());
         }
         // Sahibi takım: damgalı teamId → izleme satırının etkin takımı → envanter SY → UG (NocCallLogService.owningTeam sırası)
+        // Bağımsız izleme alarmı envanter takımını ALMAZ (2026-10-22, L-N3 — AlertOwnership): aynı ana makinenin envanter
+        // kaydının SY / UG takımı bağımsız HTTP / keyword … alarmında "UG: C" diye görünüyor, UG süzgeci başka takımın alarmını
+        // listeliyordu. Arama kartı (NocCallLogService.owningTeam) zaten bu kuralla çalışıyordu.
+        boolean inventoryRouted = com.sitemonitor.service.AlertOwnership.routesLikeInventory(e);
         Long team = e.getTeamId();
         if (team == null && row != null) team = row.teamId();
-        if (team == null && inv != null) team = inv.getTeamId() != null ? inv.getTeamId() : inv.getUgTeamId();
-        Long ug = inv != null ? inv.getUgTeamId() : (row != null ? row.ugTeamId() : null);
+        if (team == null && inv != null && inventoryRouted) team = inv.getTeamId() != null ? inv.getTeamId() : inv.getUgTeamId();
+        Long ug = !inventoryRouted ? null : inv != null ? inv.getUgTeamId() : (row != null ? row.ugTeamId() : null);
         if (ug != null && ug.equals(team)) ug = null;
 
         String family = MonitorTypeCatalog.typeOfAlert(e.getAlertType());

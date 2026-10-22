@@ -11,11 +11,11 @@ import { Button } from '@/components/shadcn/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/shadcn/card'
 import { cn } from '@/lib/utils'
 import { StatusDistribution, pctText } from './OverviewParts.jsx'
-import { uptimeTone } from './overviewModel.js'
+import { teamAllUnknown, uptimeTone } from './overviewModel.js'
 
 export const TEAM_LIMIT = 6
 
-export default function OverviewTeamsCard({ teams, activeTeams = [], onPickTeam, bare = false, className }) {
+export default function OverviewTeamsCard({ teams, activeTeams = [], onPickTeam, bare = false, className, alertsUnknown = false }) {
   const t = useT()
   const locale = useDateLocale()
   const [expanded, setExpanded] = useState(false)
@@ -47,7 +47,7 @@ export default function OverviewTeamsCard({ teams, activeTeams = [], onPickTeam,
                 bare && 'border border-border/70 bg-muted/20', pressed && 'bg-accent ring-1 ring-primary/40')}>
               <span className="flex min-w-0 items-center justify-between gap-2">
                 <span className="min-w-0">
-                  <span className="block truncate text-sm font-medium">{g.name}</span>
+                  <span className="block text-sm font-medium [overflow-wrap:anywhere]">{g.name}</span>
                   <span className="block text-[11px] text-muted-foreground">
                     {t('mo.teams.monitors', g.total.toLocaleString(locale))}
                     {g.uptime != null && (
@@ -61,7 +61,10 @@ export default function OverviewTeamsCard({ teams, activeTeams = [], onPickTeam,
                   {g.down > 0 && <span className="inline-flex items-center gap-0.5 font-semibold text-destructive"><CircleAlert aria-hidden="true" className="size-3.5" />{g.down}</span>}
                   {g.stale > 0 && <span className="inline-flex items-center gap-0.5 font-semibold text-amber-700 dark:text-amber-300"><Clock aria-hidden="true" className="size-3.5" />{g.stale}</span>}
                   {g.openAlerts > 0 && <span className="inline-flex items-center gap-0.5 text-orange-600 dark:text-orange-400"><BellRing aria-hidden="true" className="size-3.5" />{g.openAlerts}</span>}
-                  {g.down === 0 && g.stale === 0 && g.openAlerts === 0 && <span className="text-success">{t('mo.teams.ok')}</span>}
+                  {/* Bilinmeyen asla yeşil değil (2026-10-22): aktif izlemelerin hepsi bilinmiyorsa / alarmlar okunamadıysa nötr */}
+                  {g.down === 0 && g.stale === 0 && g.openAlerts === 0 && (teamAllUnknown(g) || alertsUnknown
+                    ? <span data-slot="mo-team-unknown" className="text-muted-foreground">{t('mo.unavailable.teamRow')}</span>
+                    : <span className="text-success">{t('mo.teams.ok')}</span>)}
                 </span>
               </span>
               <StatusDistribution items={dist} size="sm" legendClassName={false} className="gap-0" />

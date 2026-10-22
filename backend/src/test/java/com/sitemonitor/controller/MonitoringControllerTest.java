@@ -3504,6 +3504,109 @@ class MonitoringControllerTest {
                     eq("RESTORE"), any(), any(), anyString(), any());
         }
 
+        // ── ALERTS-8 / ADMIN-2 (2026-10-22): geri yükleme güncellemenin alarm kurallarını HER türde uygular ──────────────
+
+        private void stubRestore(String kind, long id, String snapshot) {
+            when(changeLogRepo.findByResourceKindAndResourceIdAndSeq(kind, id, 0)).thenReturn(Optional.of(snapRow(5L, snapshot)));
+        }
+
+        @Test
+        @DisplayName("ALERTS-8: duraklatılmış duruma geri yükleme 8 türün HER BİRİNDE bu izlemenin açık alarmlarını sessizce kapatır")
+        void restore_pausedSnapshot_closesAlarms_allTypes() throws Exception {
+            com.sitemonitor.model.PortMonitor port = liveMonitor(); port.setActive(true); port.setStandalone(true);
+            when(portMonitorRepo.findById(7L)).thenReturn(Optional.of(port));
+            stubRestore("PORT", 7L, "{\"active\":false}");
+
+            com.sitemonitor.model.DnsMonitor dns = new com.sitemonitor.model.DnsMonitor();
+            dns.setId(8L); dns.setDomain("dns.example.com"); dns.setRecordType("A"); dns.setTeamId(5L); dns.setStandalone(true); dns.setActive(true);
+            when(dnsMonitorRepo.findById(8L)).thenReturn(Optional.of(dns));
+            stubRestore("DNS", 8L, "{\"active\":false}");
+
+            com.sitemonitor.model.KeywordMonitor kw = new com.sitemonitor.model.KeywordMonitor();
+            kw.setId(9L); kw.setUrl("https://kw.example.com/"); kw.setKeyword("x"); kw.setTeamId(5L); kw.setActive(true);
+            when(keywordMonitorRepo.findById(9L)).thenReturn(Optional.of(kw));
+            stubRestore("KEYWORD", 9L, "{\"active\":false}");
+
+            com.sitemonitor.model.HttpMonitor http = new com.sitemonitor.model.HttpMonitor();
+            http.setId(10L); http.setUrl("https://http.example.com/"); http.setTeamId(5L); http.setActive(true);
+            when(httpMonitorRepo.findById(10L)).thenReturn(Optional.of(http));
+            stubRestore("HTTP", 10L, "{\"active\":false}");
+
+            com.sitemonitor.model.PageMonitor page = new com.sitemonitor.model.PageMonitor();
+            page.setId(11L); page.setUrl("https://page.example.com/"); page.setTeamId(5L); page.setActive(true);
+            when(pageMonitorRepo.findById(11L)).thenReturn(Optional.of(page));
+            stubRestore("PAGE", 11L, "{\"active\":false}");
+
+            com.sitemonitor.model.PageSpeedMonitor ps = new com.sitemonitor.model.PageSpeedMonitor();
+            ps.setId(12L); ps.setUrl("https://ps.example.com/"); ps.setTeamId(5L); ps.setActive(true);
+            when(pageSpeedMonitorRepo.findById(12L)).thenReturn(Optional.of(ps));
+            stubRestore("PAGESPEED", 12L, "{\"active\":false}");
+
+            com.sitemonitor.model.DomainMonitor dom = new com.sitemonitor.model.DomainMonitor();
+            dom.setId(13L); dom.setDomain("dom.example.com"); dom.setTeamId(5L); dom.setActive(true);
+            when(domainMonitorRepo.findById(13L)).thenReturn(Optional.of(dom));
+            stubRestore("DOMAIN", 13L, "{\"active\":false}");
+
+            com.sitemonitor.model.PingMonitor ping = new com.sitemonitor.model.PingMonitor();
+            ping.setId(14L); ping.setHost("10.0.0.9"); ping.setTeamId(5L); ping.setActive(true);
+            when(pingMonitorRepo.findById(14L)).thenReturn(Optional.of(ping));
+            stubRestore("PING", 14L, "{\"active\":false}");
+
+            String[][] cases = {{"port", "7", "odeme.local"}, {"dns", "8", "dns.example.com"},
+                    {"keyword", "9", "https://kw.example.com/"}, {"http", "10", "https://http.example.com/"},
+                    {"page", "11", "https://page.example.com/"}, {"pagespeed", "12", "https://ps.example.com/"},
+                    {"domain", "13", "dom.example.com"}, {"ping", "14", "10.0.0.9"}};
+            for (String[] c : cases) {
+                mvc.perform(post("/api/monitoring/changes/" + c[0] + "/" + c[1] + "/0/restore").session(managerOf(5L)))
+                        .andExpect(status().isOk());
+                verify(escalationService).resolveOpenAlertsSilently(eq(c[2]), anyCollection(),
+                        eq("Sistem (izleme duraklatıldı)"), org.mockito.ArgumentMatchers.argThat(ctx ->
+                                ctx != null && ctx.get("monitor_id") instanceof Number n && n.longValue() == Long.parseLong(c[1])));
+            }
+        }
+
+        @Test
+        @DisplayName("ALERTS-8: aktif duruma geri yükleme alarm KAPATMAZ (yalnız açık → kapalı geçişi)")
+        void restore_activeSnapshot_doesNotClose() throws Exception {
+            stubRestore("PORT", 7L, "{\"port\":443,\"active\":true}");
+            com.sitemonitor.model.PortMonitor live = liveMonitor(); live.setActive(true); live.setStandalone(true);
+            when(portMonitorRepo.findById(7L)).thenReturn(Optional.of(live));
+
+            mvc.perform(post("/api/monitoring/changes/port/7/0/restore").session(managerOf(5L))).andExpect(status().isOk());
+
+            verify(escalationService, never()).resolveOpenAlertsSilently(anyString(), anyCollection(), anyString(), any());
+        }
+
+        @Test
+        @DisplayName("ALERTS-8: DNS alan adını geri yükleme ESKİ alan adının açık DNS alarmlarını kapatır ('domain değişti')")
+        void restore_dnsDomainChange_closesOldDomainAlarms() throws Exception {
+            com.sitemonitor.model.DnsMonitor dns = new com.sitemonitor.model.DnsMonitor();
+            dns.setId(8L); dns.setDomain("b.example.com"); dns.setRecordType("A"); dns.setTeamId(5L); dns.setStandalone(true); dns.setActive(true);
+            when(dnsMonitorRepo.findById(8L)).thenReturn(Optional.of(dns));
+            stubRestore("DNS", 8L, "{\"domain\":\"a.example.com\"}");
+
+            mvc.perform(post("/api/monitoring/changes/dns/8/0/restore").session(managerOf(5L))).andExpect(status().isOk());
+
+            assertThat(dns.getDomain()).isEqualTo("a.example.com");
+            verify(escalationService).resolveOpenAlertsSilently(eq("b.example.com"), anyCollection(),
+                    eq("Sistem (domain değişti)"), any());
+        }
+
+        @Test
+        @DisplayName("ALERTS-9 (geri yükleme): beklenen değeri olmayan duruma dönülürse açık DNS_UNEXPECTED kapanır")
+        void restore_dnsExpectedRemoved_closesUnexpected() throws Exception {
+            com.sitemonitor.model.DnsMonitor dns = new com.sitemonitor.model.DnsMonitor();
+            dns.setId(8L); dns.setDomain("b.example.com"); dns.setRecordType("A"); dns.setTeamId(5L); dns.setStandalone(true);
+            dns.setActive(true); dns.setExpectedValue("1.2.3.4");
+            when(dnsMonitorRepo.findById(8L)).thenReturn(Optional.of(dns));
+            stubRestore("DNS", 8L, "{\"expectedValue\":null}");
+
+            mvc.perform(post("/api/monitoring/changes/dns/8/0/restore").session(managerOf(5L))).andExpect(status().isOk());
+
+            verify(escalationService).resolveOpenAlertsSilently(eq("b.example.com"),
+                    eq(java.util.Set.of(com.sitemonitor.service.EscalationService.TYPE_DNS_UNEXPECTED)), anyString(), any());
+        }
+
         @Test
         @DisplayName("Maskeli alan geri YAZILMAZ — gerçek sır '***' ile ezilmez, atlandığı bildirilir")
         void restore_neverWritesMaskedValues() throws Exception {
@@ -5302,6 +5405,82 @@ class MonitoringControllerTest {
         assertThat(cap.getValue().getId()).isEqualTo(46L);
         assertThat(cap.getValue().getActive()).isFalse();
         assertThat(cap.getValue().getDeletedAt()).isNull();
+    }
+
+    // ── ALERTS-7 / ALERTS-9 (2026-10-22): türev Port/DNS silmesi ve kapatılan DNS denetimleri alarmı kapatır ────────────────
+
+    @SuppressWarnings("unchecked")
+    private static boolean ownerOf(Object ctx, long monitorId) {
+        java.util.Map<String, Object> m = (java.util.Map<String, Object>) ctx;
+        return m != null && m.get("monitor_id") instanceof Number n && n.longValue() == monitorId && !m.containsKey("team_id");
+    }
+
+    @Test
+    @DisplayName("ALERTS-7: envanter-türevi Port silmesi (= duraklatma) BU izlemenin açık PORT alarmlarını sessizce kapatır")
+    void deletePort_derived_closesOwnAlarms() throws Exception {
+        when(portMonitorRepo.findById(44L)).thenReturn(Optional.of(inventoryPort(44L, "turev.example.com", 3L)));
+        when(portMonitorRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        mvc.perform(delete("/api/monitoring/port/44").session(session("ADMIN"))).andExpect(status().isOk());
+
+        verify(escalationService).resolveOpenAlertsSilently(eq("turev.example.com"),
+                eq(java.util.Set.of(com.sitemonitor.service.EscalationService.TYPE_PORT_DOWN,
+                        com.sitemonitor.service.EscalationService.TYPE_PORT_SLOW)),
+                eq("Sistem (izleme duraklatıldı)"), org.mockito.ArgumentMatchers.argThat(c -> ownerOf(c, 44L)));
+    }
+
+    @Test
+    @DisplayName("ALERTS-7: envanter-türevi DNS silmesi (= duraklatma) BU izlemenin açık DNS alarmlarını sessizce kapatır")
+    void deleteDns_derived_closesOwnAlarms() throws Exception {
+        com.sitemonitor.model.DnsMonitor derived = standaloneDns(46L);
+        derived.setStandalone(false);
+        when(dnsMonitorRepo.findById(46L)).thenReturn(Optional.of(derived));
+        when(dnsMonitorRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        mvc.perform(delete("/api/monitoring/dns/46").session(session("ADMIN"))).andExpect(status().isOk());
+
+        verify(escalationService).resolveOpenAlertsSilently(eq("own.example.com"),
+                org.mockito.ArgumentMatchers.argThat(t -> t.contains(com.sitemonitor.service.EscalationService.TYPE_DNS_FAILURE)
+                        && t.contains(com.sitemonitor.service.EscalationService.TYPE_DNS_UNEXPECTED)),
+                eq("Sistem (izleme duraklatıldı)"), org.mockito.ArgumentMatchers.argThat(c -> ownerOf(c, 46L)));
+    }
+
+    @Test
+    @DisplayName("ALERTS-9: DNS beklenen-değer kilidi ve yayılım denetimi KAPATILINCA açık DNS_UNEXPECTED / DNS_INCONSISTENT sessizce kapanır")
+    void updateDns_disabledChecks_closeTheirAlarms() throws Exception {
+        com.sitemonitor.model.DnsMonitor m = standaloneDns(47L);
+        m.setExpectedValue("1.2.3.4"); m.setPropagationCheck(true);
+        when(dnsMonitorRepo.findById(47L)).thenReturn(Optional.of(m));
+        when(dnsMonitorRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        mvc.perform(put("/api/monitoring/dns/47").session(session("ADMIN"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"expectedValue\":\"\",\"propagationCheck\":false}"))
+                .andExpect(status().isOk());
+
+        verify(escalationService).resolveOpenAlertsSilently(eq("own.example.com"),
+                eq(java.util.Set.of(com.sitemonitor.service.EscalationService.TYPE_DNS_UNEXPECTED)), anyString(), any());
+        verify(escalationService).resolveOpenAlertsSilently(eq("own.example.com"),
+                eq(java.util.Set.of(com.sitemonitor.service.EscalationService.TYPE_DNS_INCONSISTENT)), anyString(), any());
+    }
+
+    @Test
+    @DisplayName("ALERTS-9: denetimler açık kalırsa (ya da değer değişirse) alarm KAPATILMAZ")
+    void updateDns_checksStillOn_noClose() throws Exception {
+        com.sitemonitor.model.DnsMonitor m = standaloneDns(48L);
+        m.setExpectedValue("1.2.3.4"); m.setPropagationCheck(true);
+        when(dnsMonitorRepo.findById(48L)).thenReturn(Optional.of(m));
+        when(dnsMonitorRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        mvc.perform(put("/api/monitoring/dns/48").session(session("ADMIN"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"expectedValue\":\"5.6.7.8\",\"propagationCheck\":true}"))
+                .andExpect(status().isOk());
+
+        verify(escalationService, never()).resolveOpenAlertsSilently(anyString(),
+                eq(java.util.Set.of(com.sitemonitor.service.EscalationService.TYPE_DNS_UNEXPECTED)), anyString(), any());
+        verify(escalationService, never()).resolveOpenAlertsSilently(anyString(),
+                eq(java.util.Set.of(com.sitemonitor.service.EscalationService.TYPE_DNS_INCONSISTENT)), anyString(), any());
     }
 
     @Test

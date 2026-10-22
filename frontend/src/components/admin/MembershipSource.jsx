@@ -27,7 +27,7 @@ export function MembershipSourceDetail({ detail, updatedBy, updatedAt }) {
   const parts = [detail, [updatedBy, updatedAt].filter(Boolean).join(' · ')].filter(Boolean)
   if (!parts.length) return null
   const text = parts.join(' — ')
-  return <span className="min-w-0 truncate text-xs text-muted-foreground" title={text}>{text}</span>
+  return <span className="min-w-0 text-xs text-muted-foreground [overflow-wrap:anywhere]">{text}</span>
 }
 
 /** "Yeniden eşitlemede / Girişte" sonucu rozeti; `label` verilirse önüne yazılır. */

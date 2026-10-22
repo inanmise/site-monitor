@@ -2,6 +2,7 @@ import { formatDate } from '../api/client'
 import { drawBrandHeader } from './pdfBrand.js'
 import { INVENTORY_FLAGS } from './inventoryFlags.js'
 import { csvCell } from './csv.js'
+import { downloadBlob } from './csvExport.js'
 
 
 const teamName = (id, teams) =>
@@ -13,13 +14,19 @@ const statusOf = (item, t) =>
 const tierLabel = (item, t) =>
   item.tier ? `T${item.tier} — ${t(`inv.tier${item.tier}`)}` : t('inv.tierNone')
 
+/** Tarayıcı indirmeyi başlatamadı (2026-10-22, UIM-27) — çağıranın `catch`i başarı tostu yerine hatayı söyler. */
+export const DOWNLOAD_FAILED = 'DOWNLOAD_FAILED'
+export function downloadFailedError() {
+  return Object.assign(new Error(DOWNLOAD_FAILED), { code: DOWNLOAD_FAILED })
+}
+
+/**
+ * Hazır Blob'u indirir — ortak `utils/csvExport.downloadBlob` (2026-10-22, UIM-27): bağlantı DOM'a eklenir, adres 60 sn
+ * tutulur. Eskiden bağlantı DOM dışındaydı ve adres tıklamanın hemen ardından iptal ediliyordu: Safari / iPad indirmeyi
+ * başlatmıyor, başarı tostu yine çıkıyordu. Başlatılamazsa `DOWNLOAD_FAILED` kodlu hata fırlatır.
+ */
 export const triggerDownload = (blob, filename) => {
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  a.click()
-  URL.revokeObjectURL(url)
+  if (!downloadBlob(filename, blob)) throw downloadFailedError()
 }
 
 export const dateStamp = () => {

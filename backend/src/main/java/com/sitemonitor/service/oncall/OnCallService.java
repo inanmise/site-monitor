@@ -208,16 +208,21 @@ public class OnCallService {
         if (members.size() > MAX_MEMBERS) {
             throw field("members", "Bir çizelgede en çok " + MAX_MEMBERS + " kişi olabilir.", "A schedule can have at most " + MAX_MEMBERS + " people.");
         }
-        if (enabled && members.isEmpty()) {
-            throw field("members", "Çizelgeyi açmak için en az bir nöbetçi ekleyin.", "Add at least one person to turn the schedule on.");
-        }
+        // Silinmiş hesap listeden DÜŞER (2026-10-22, UIA-A5 / K11): kullanıcı silinince çizelgenin member_ids'inden çıkarılmıyordu;
+        // görünüm onu "silinmiş" (missing:true) gösteriyor ama her kayıt "Listedeki bir kişi bulunamadı; sayfayı yenileyin" ile
+        // reddediliyordu — sayfayı yenilemek hiçbir şeyi değiştirmiyordu, çizelge hiç kaydedilemiyordu. Var olmayan kişi zaten hiç
+        // nöbetçi olamaz; kayıtta sessizce düşer, bir INFO satırı kalır (yalnız adet).
         if (!members.isEmpty()) {
             Set<Long> found = new java.util.HashSet<>();
             for (AppUser u : users.findAllById(members)) found.add(u.getId());
-            for (Long id : members) if (!found.contains(id)) {
-                throw field("members", "Listedeki bir kişi bulunamadı; sayfayı yenileyip yeniden seçin.",
-                        "A person in the list was not found; refresh the page and pick again.");
+            int before = members.size();
+            members.removeIf(id -> !found.contains(id));
+            if (members.size() < before) {
+                log.info("Nöbet çizelgesi (takım #{}): artık var olmayan {} hesap listeden çıkarıldı", teamId, before - members.size());
             }
+        }
+        if (enabled && members.isEmpty()) {
+            throw field("members", "Çizelgeyi açmak için en az bir nöbetçi ekleyin.", "Add at least one person to turn the schedule on.");
         }
         OnCallSchedule s = schedules.findByTeamId(teamId).orElseGet(() -> {
             OnCallSchedule n = new OnCallSchedule();

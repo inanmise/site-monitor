@@ -184,7 +184,7 @@ describe('Uyarılar — 7/24 açıklamasındaki eylem izne göre; satır eylemle
     expect(href.searchParams.get('n_type')).toBe('SSL')
     expect(href.searchParams.get('n_q')).toBe('off.example.com')
     fireEvent.click(link)
-    expect(navMock).toHaveBeenCalledWith('noc', { n_type: 'SSL', n_q: 'off.example.com' })
+    expect(navMock).toHaveBeenCalledWith('noc', { n_view: 'coverage', n_type: 'SSL', n_q: 'off.example.com' })
     expect(p.onEdit).not.toHaveBeenCalled()
     expect(p.onOpenCert).not.toHaveBeenCalled()
   })

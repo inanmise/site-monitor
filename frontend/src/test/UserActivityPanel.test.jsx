@@ -79,8 +79,9 @@ describe('UserActivityPanel', () => {
     await waitFor(() => expect(api.admin.getLoginSeries).toHaveBeenCalled())
   })
 
+  // Oturum sonlandırma YALNIZ global yönetici (20.165.1, UIA-D1 — SystemController.terminateSession requireAdmin)
   it('oturum tablosu: boşta bandı, son sayfa etiketi, kendi oturumu sonlandırılamaz, sıralama düğmesi aria-sort taşır', () => {
-    renderPanel()
+    renderPanel({ globalAdmin: true })
     const table = screen.getByTestId('uact-sessions')
     expect(within(table).getByText(/Vade Takvimi|Expiry Forecast/)).toBeInTheDocument()        // last_tab → nav etiketi
     expect(table.querySelector('[data-idle="live"]')).not.toBeNull()
@@ -96,8 +97,14 @@ describe('UserActivityPanel', () => {
     expect(th.getAttribute('aria-sort')).toMatch(/ascending|descending/)
   })
 
+  it('kapsamlı müdür (isAdmin, globalAdmin değil): oturum tablosunda "Sonlandır" YOK (sunucu 403 verirdi)', () => {
+    renderPanel()
+    const table = screen.getByTestId('uact-sessions')
+    expect(within(table).queryByRole('button', { name: /^(Sonlandır|Terminate)$/ })).toBeNull()
+  })
+
   it('gerekçeli sonlandırma: modal → gerekçe → API gerekçeyle çağrılır, tazeleme tetiklenir', async () => {
-    const { onRefresh } = renderPanel()
+    const { onRefresh } = renderPanel({ globalAdmin: true })
     const table = screen.getByTestId('uact-sessions')
     const bobRow = [...table.querySelectorAll('tbody tr')].find((tr) => tr.textContent.includes('bob'))
     fireEvent.click(within(bobRow).getByRole('button', { name: /Sonlandır|Terminate/ }))
@@ -162,6 +169,25 @@ describe('UserActivityPanel', () => {
     fireEvent.click(within(dlg).getByRole('button', { name: /User-Agent/ }))
     expect(within(dlg).getByText('Firefox/1')).toBeInTheDocument()
     expect(document.querySelectorAll('[data-tl]').length).toBe(2)
+  })
+
+  // 20.165.1 (UIA-D4): zaman çizelgesindeki "Onayla" yalnız onaylayabilene (global admin / AUDIT — SystemController.ackAnomaly)
+  it('detay modalı: canAck yoksa işaretli olayda "Onayla" bağlantısı YOK; canAck varsa VAR', async () => {
+    const { unmount } = renderPanel({ canAck: false })
+    let table = screen.getByTestId('uact-sessions')
+    let bobRow = [...table.querySelectorAll('tbody tr')].find((tr) => tr.textContent.includes('bob'))
+    fireEvent.click(within(bobRow).getByRole('button', { name: /Detay|Details/ }))
+    let dlg = await screen.findByRole('dialog')
+    await waitFor(() => expect(dlg.querySelector('[data-anom="true"]')).not.toBeNull())
+    expect(within(dlg.querySelector('[data-anom="true"]')).queryByRole('button', { name: /^(Onayla|Acknowledge)$/ })).toBeNull()
+    unmount()
+    renderPanel({ canAck: true })
+    table = screen.getByTestId('uact-sessions')
+    bobRow = [...table.querySelectorAll('tbody tr')].find((tr) => tr.textContent.includes('bob'))
+    fireEvent.click(within(bobRow).getByRole('button', { name: /Detay|Details/ }))
+    dlg = await screen.findByRole('dialog')
+    await waitFor(() => expect(dlg.querySelector('[data-anom="true"]')).not.toBeNull())
+    expect(within(dlg.querySelector('[data-anom="true"]')).getByRole('button', { name: /^(Onayla|Acknowledge)$/ })).toBeInTheDocument()
   })
 
   it('global admin sicil numarasını görür; dışa aktarma menüsü ve bağlantı kopyalama çökmeden çalışır', async () => {

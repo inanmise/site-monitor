@@ -152,7 +152,18 @@ public class LoginIssueService {
         return r != null && !u.isEmpty() && u.equals(norm(r.getUsername()));
     }
 
-    /** Kullanıcının kendi raporları — tüm kaynaklar, en yeni önce; durum süzgeci opsiyonel. */
+    /**
+     * "Bildirimlerim"de kullanıcıya ait sayılan kaynaklar (2026-10-22, hata avı AUTH-13): yalnız OTURUM İÇİNDE oluşanlar —
+     * kullanıcı adı sunucudaki oturumdan yazılır. Giriş sayfası (LOGIN) kaydında ad ziyaretçinin YAZDIĞI addır.
+     */
+    public static final java.util.Set<String> SESSION_SOURCES = java.util.Set.of("USER_REPORT", "CLIENT_ERROR");
+
+    /** {@link #ownedBy} + oturum içi kaynak — "Bildirimlerim" ayrıntısı ve yorumu bunu kullanır. */
+    public static boolean ownedInSession(LoginIssueReport r, String username) {
+        return ownedBy(r, username) && r.getSource() != null && SESSION_SOURCES.contains(r.getSource());
+    }
+
+    /** Kullanıcının kendi raporları — oturum içi kaynaklar, en yeni önce; durum süzgeci opsiyonel. */
     @Transactional(readOnly = true)
     public Page<LoginIssueReport> listMine(String username, String status, int page, int size) {
         String st = (status != null && STATUSES.contains(status)) ? status : null;
@@ -177,7 +188,7 @@ public class LoginIssueService {
      */
     @Transactional(readOnly = true)
     public Optional<LoginIssueReport> getMine(Long id, String username) {
-        return reportRepo.findById(id).filter(r -> ownedBy(r, username));
+        return reportRepo.findById(id).filter(r -> ownedInSession(r, username));
     }
 
     /** Bildiren raporu açtı — okunmamış-yanıt göstergesi sıfırlanır. */

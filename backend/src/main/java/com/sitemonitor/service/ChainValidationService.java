@@ -443,9 +443,24 @@ public class ChainValidationService {
 
     public String extractOcspUrl(X509Certificate cert) { return getOcspUrl(cert); }
 
+    /** {@code latest_checks.crl_url} / {@code certificate_checks.crl_url} sütun boyu (VARCHAR(255)). */
+    static final int CRL_URL_MAX = 255;
+
+    /**
+     * Gösterilen / saklanan CRL adresi: SIĞAN ilk dağıtım noktası (DATA-14, 2026-10-22). AD CS sertifikaları çoğunlukla
+     * önce uzun bir LDAP CDP'si ({@code ldap:///CN=…,CN=CDP,CN=Public%20Key%20Services,…?certificateRevocationList…})
+     * listeler; 255'i aşınca {@code latest_checks} upsert'i PostgreSQL'de düşüyor, pano ESKİ durumu gösteriyordu. Hiçbiri
+     * sığmıyorsa ilki kırpılır ("…"). İptal denetimi bundan etkilenmez — tüm adresleri {@link #getCrlUrls} okur.
+     */
     public String extractCrlUrl(X509Certificate cert) {
         List<String> urls = getCrlUrls(cert);
-        return urls.isEmpty() ? null : urls.get(0);
+        if (urls.isEmpty()) return null;
+        for (String u : urls) if (u != null && u.length() <= CRL_URL_MAX) return u;
+        String first = urls.get(0);
+        if (first == null) return null;
+        int end = CRL_URL_MAX - 1;
+        if (Character.isHighSurrogate(first.charAt(end - 1))) end--;
+        return first.substring(0, end) + "…";
     }
 
     private String getOcspUrl(X509Certificate cert) {

@@ -284,7 +284,8 @@ export default function ChannelView({ channelId, tab, onTabChange, onBack, onOpe
           <div ref={listRef} className="flex flex-col gap-3" data-slot="te-report-list">
             {reports.length === 0 ? (
               <StatusBlock tone="neutral" icon={FileText} title={t('te.noReportsTitle')}
-                description={canReport(ch) ? t('te.noReportsBodyEdit') : t('te.noReportsBody')} />
+                description={canReport(ch) && ch?.active ? t('te.noReportsBodyEdit')
+                  : canReport(ch) ? t('te.noReportsBodyInactive') : t('te.noReportsBody')} />
             ) : filtered.length === 0 ? (
               <StatusBlock tone="neutral" icon={Search} title={t('te.rnoMatchTitle')} description={t('te.rnoMatchBody')}
                 actions={<Button type="button" variant="outline" onClick={clearFilters}><X aria-hidden="true" /> {t('te.filters.clear')}</Button>} />

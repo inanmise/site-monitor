@@ -387,7 +387,7 @@ export default function OtpLoginFlow({ methods, initialUsername = '', initialCha
             <AlertDescription id={`${ids}-cd`}>{t('login.activeSessionDesc')}</AlertDescription>
           </Alert>
           <Button type="button" size="lg" className="w-full" disabled={verifying} onClick={() => verify(code, true)}
-            data-slot="otp-confirm-ok">
+            data-slot="otp-confirm-ok" autoFocus>
             {verifying ? <><Spinner size={16} inline decorative /> {t('login.loading')}</> : <><Lock /> {t('login.activeSessionConfirm')}</>}
           </Button>
           <Button type="button" variant="outline" className="min-h-10 w-full" disabled={verifying} onClick={onCancel}>

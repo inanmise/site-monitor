@@ -393,6 +393,29 @@ describe('TechErrorReportSettings — hatırlatmalar ve posta sınırları', () 
     expect(remBar()).toHaveAttribute('data-dirty', 'true')
   })
 
+  // 20.165.1 bugfix (UIA-E6): takım seçicinin hatası `reminder_team_ids` altında; seçimi değiştirmek `team_ids` siliyordu → hata kalıcıydı
+  it('takım seçicinin sunucu hatası seçim değişince kalkar', async () => {
+    api.admin.techErrorSettings.mockResolvedValue(settings())
+    api.admin.techErrorReminderSettings.mockResolvedValue(remOk())
+    api.admin.saveTechErrorReminderSettings.mockResolvedValue({ success: false, status: 400, code: 'VALIDATION_FAILED', field: 'reminder_team_ids',
+      error: 'Seçilen takımlardan biri artık yok: listeyi yenileyip yeniden seçin.' })
+    render(<TechErrorReportSettings />)
+    await screen.findByText('Mobil')
+    const card = await waitFor(() => { const c = remCard(); expect(c).not.toBeNull(); return c })
+    const pick = async (name) => {
+      // çoklu seçici seçimden sonra açık kalır: yeniden tıklamak onu KAPATIRDI
+      if (!document.querySelector('[role="option"]')) fireEvent.mouseDown(within(card).getByRole('combobox', { name: 'Hatırlatma alan takımlar' }))
+      const opt = (await screen.findAllByText(name)).map((el) => el.closest('[role="option"]')).find(Boolean)
+      fireEvent.mouseDown(opt)
+    }
+    await pick('Ödeme Sistemleri')
+    fireEvent.click(within(remBar()).getByRole('button', { name: /Kaydet/ }))
+    const field = () => card.querySelector('[data-field="reminder_team_ids"]')
+    expect(await within(field()).findByText(/artık yok/)).toBeInTheDocument()
+    await pick('Dijital Kanallar')
+    await waitFor(() => expect(within(field()).queryByText(/artık yok/)).toBeNull())
+  })
+
   it('kapsamlı müdür (read_only): kart alanları kilitli, kartın kayıt çubuğu yok', async () => {
     api.admin.techErrorSettings.mockResolvedValue(settings({ read_only: true }))
     api.admin.techErrorReminderSettings.mockResolvedValue(remOk({ team_ids: [1], read_only: true }))

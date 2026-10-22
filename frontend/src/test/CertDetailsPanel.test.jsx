@@ -316,3 +316,14 @@ describe('CertDetailsPanel — OCSP/CRL adresi yok', () => {
     expect(within(field('revocation')).getByText('Revocation status unknown')).toBeInTheDocument()
   })
 })
+
+// UIM-40 (2026-10-22): yüklenen (manuel) sertifika ağdan okunmadı — bağlantı yolu "doğrudan bağlantı" DEĞİL, kartla aynı metin
+describe('CertDetailsPanel — yüklenen sertifikanın bağlantı yolu', () => {
+  it('via=upload → "Uploaded file"; via=direct değişmedi', () => {
+    const { unmount } = render(<CertDetailsPanel d={rich({ via: 'upload' })} now={NOW} />)
+    expect(field('via')).toHaveTextContent('Uploaded file')
+    unmount()
+    render(<CertDetailsPanel d={rich({ via: 'direct' })} now={NOW} />)
+    expect(field('via')).not.toHaveTextContent('Uploaded file')
+  })
+})

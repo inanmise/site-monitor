@@ -142,4 +142,32 @@ describe('CertificateCard — zengin görünüm', () => {
     fireEvent.click(screen.getByRole('button', { name: /2 contacts$|2 sorumlu$/ }))
     expect(screen.getByRole('tooltip').textContent).toMatch(/dev@example\.com[\s\S]*ops@example\.com/)
   })
+  // UIM-6 (2026-10-22): "Tüm kontroller temiz" YALNIZ her değerlendirilen kural temizken (sunucunun allClear() kuralı)
+  it('sağlık kutusu: FAIL yok ama UYARI var (13/14) → temiz DEĞİL, sarı + "1 kural dikkat istiyor"', () => {
+    render(<CertificateCard cert={CERT} onClick={() => {}} extra={{ health: { ok: 13, evaluated: 14, failed: [] } }} />)
+    const health = document.querySelector('[data-slot="cert-extras-health"]')
+    expect(health).toHaveAttribute('data-tone', 'warn')
+    expect(screen.queryByText(/All checks passed|Tüm kontroller temiz/)).toBeNull()
+    expect(screen.getByText('1 rule needs attention')).toBeInTheDocument()
+  })
+
+  it('sağlık kutusu: birden çok uyarı → "N kural dikkat istiyor"; hiç değerlendirilmedi (0/0) → nötr "değerlendirilmedi"', () => {
+    const { unmount } = render(<CertificateCard cert={CERT} onClick={() => {}} extra={{ health: { ok: 10, evaluated: 14, failed: [] } }} />)
+    expect(screen.getByText('4 rules need attention')).toBeInTheDocument()
+    unmount()
+    render(<CertificateCard cert={CERT} onClick={() => {}} extra={{ health: { ok: 0, evaluated: 0, failed: [] } }} />)
+    const health = document.querySelector('[data-slot="cert-extras-health"]')
+    expect(health).toHaveAttribute('data-tone', 'info')
+    expect(screen.queryByText(/All checks passed|Tüm kontroller temiz/)).toBeNull()
+    expect(screen.getByText('Not evaluated yet')).toBeInTheDocument()
+  })
+
+  // UIM-42: kontrolü olmayan saat (null) 0 % dip çizmez — çizgi yalnız ölçülen saatlerden
+  it('erişilebilirlik grafiği: null saatler 0 % dip olarak çizilmez', () => {
+    render(<CertificateCard cert={CERT} onClick={() => {}} extra={{ uptime: { pct24: 100, checks24: 3, last_status: 'up', points: [100, null, null, 100, 100] } }} />)
+    const pts = document.querySelector('[data-slot="cert-extras-spark"] polyline').getAttribute('points').split(' ')
+    expect(pts).toHaveLength(3)
+    const ys = pts.map((p) => Number(p.split(',')[1]))
+    expect(new Set(ys).size).toBe(1)   // hepsi aynı yükseklikte (100 %) — dip yok
+  })
 })

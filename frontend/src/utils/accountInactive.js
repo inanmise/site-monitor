@@ -81,7 +81,7 @@ export function assignLocation(url) {
   window.location.assign(url)
 }
 
-/** Test kancası: sayfa ömrü bayrağını sıfırlar. */
+/** Sayfa ömrü bayrağını sıfırlar — başarılı girişte (pages/Login completeLogin, UIA-H2) ve testlerde. */
 export function resetAccountInactiveSignal() {
   signaled = false
 }

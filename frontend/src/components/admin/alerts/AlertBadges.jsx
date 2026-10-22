@@ -239,7 +239,10 @@ export function WhyOpenChips({ alert: a, push, className }) {
   const sent = push?.sent ?? 0, failed = push?.failed ?? 0, skipped = push?.skipped ?? 0
   const mailSent = Number(a?.email_sent_count ?? 0), mailFailed = Number(a?.email_failed_count ?? 0)
   const stormMember = a?.storm_id != null
-  const nobody = mailSent === 0 && sent === 0 && !stormMember
+  // Takımın Teams/Slack kontak webhook'u (2026-10-22, ALERTS-19): sunucunun `webhook_sent_count`'u — yalnız webhook'la
+  // ulaşılan alarm "kimseye ulaşmadı" değildir. Alan yoksa (eski sunucu) 0 sayılır, davranış eskisi gibi.
+  const webhookSent = Number(a?.webhook_sent_count ?? 0)
+  const nobody = mailSent === 0 && sent === 0 && webhookSent === 0 && !stormMember
   const auto = closesAutomatically(a?.alert_type)
   const chip = 'rounded-full font-normal'
   return (
@@ -260,6 +263,9 @@ export function WhyOpenChips({ alert: a, push, className }) {
       <ToneBadge tone={failed > 0 ? 'danger' : sent > 0 ? 'neutral' : 'muted'} className={chip} title={push ? t('alh.whyPushTip', sent, failed, skipped) : undefined}>
         {push ? t('alh.whyPush', sent, failed) : t('alh.whyPushNone')}
       </ToneBadge>
+      {webhookSent > 0 && (
+        <ToneBadge tone="neutral" className={chip} data-why-webhook="" title={t('alh.whyWebhookTip')}>{t('alh.whyWebhook', webhookSent)}</ToneBadge>
+      )}
       {stormMember && (
         <ToneBadge tone="info" className={chip} data-why-storm="" title={t('alh.whyStormTip')}>{t('alh.whyStorm')}</ToneBadge>
       )}

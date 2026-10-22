@@ -30,8 +30,9 @@ export const fmtDay = (iso) => {
 export const CELL = {
   mono: 'font-mono tabular-nums text-muted-foreground [&_b]:font-bold [&_b]:text-foreground',
   left: 'text-left',
-  target: 'max-w-[260px] truncate text-left font-medium text-muted-foreground',
-  team: 'max-w-[170px] truncate text-left font-medium text-muted-foreground',
+  // Adlar KESİLMEZ (2026-10-22, UIM-38): uzun alan adı / AD takım adı sararak tam görünür
+  target: 'max-w-[260px] min-w-[10rem] whitespace-normal [overflow-wrap:anywhere] text-left font-medium text-muted-foreground',
+  team: 'max-w-[170px] min-w-[7rem] whitespace-normal [overflow-wrap:anywhere] text-left font-medium text-muted-foreground',
   days: 'font-bold',
 }
 
@@ -155,7 +156,7 @@ export default function CheckRunShell({ run, nameHeader, nameOf, errorOf, column
         <span className="inline-flex items-center gap-1.5 text-success"><Check size={13} aria-hidden="true" />{t('app.checkSummaryOk', okCount)}</span>
         <span className={cn('inline-flex items-center gap-1.5', failCount && 'text-destructive')}><X size={13} aria-hidden="true" />{t('app.checkSummaryFail', failCount)}</span>
         <span className="inline-flex items-center gap-1.5">{t('app.checkSummaryTime', fmtDur(elapsedMs))}</span>
-        {run.teamLabel && <span className="ml-auto max-w-[42%] truncate font-semibold">{run.teamLabel}</span>}
+        {run.teamLabel && <span data-slot="check-run-team" className="ml-auto max-w-full min-w-0 font-semibold [overflow-wrap:anywhere] sm:max-w-[42%]">{run.teamLabel}</span>}
       </div>
       {notice}
 

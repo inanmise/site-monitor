@@ -100,7 +100,9 @@ describe('useCardDensity', () => {
     const app = fs.readFileSync(path.join(SRC, 'App.jsx'), 'utf8')
     expect(app).toMatch(/const \[cardMode, setCardMode\] = useState\('rich'\)/)
     expect(app).not.toMatch(/dash-card-mode/)
-    expect(app.match(/setCardMode\('rich'\)/g)?.length, "iki çıkış yolu da Zengin'e döndürmeli").toBe(2)
+    // 2026-10-22 (UIM-1): iki çıkış yolu (elle + hareketsizlik) ortak `endSessionLocally`den geçer — tek çağrı ikisini de kapsar
+    expect(app.match(/setCardMode\('rich'\)/g)?.length, "ortak çıkış temizliği Zengin'e döndürmeli").toBe(1)
+    expect(/function endSessionLocally\(\)[\s\S]{0,900}setCardMode\('rich'\)/.test(app)).toBe(true)
   })
 })
 

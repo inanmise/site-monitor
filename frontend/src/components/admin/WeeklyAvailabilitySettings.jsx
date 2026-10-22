@@ -7,6 +7,7 @@ import SearchableSelect from '../ui/SearchableSelect.jsx'
 import { mailPreviewSrcDoc, MAIL_PREVIEW_SANDBOX } from '../../utils/mailPreview.js'
 import { LoadingBlock, Spinner } from '../ui/Progress.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
+import { sendOutcome } from './reportSendStatus.js'
 import ModalShell from '../ui/ModalShell.jsx'
 import SimpleTooltip from '../ui/SimpleTooltip.jsx'
 import ToneBadge from './ToneBadge.jsx'
@@ -178,9 +179,16 @@ export default function WeeklyAvailabilitySettings() {
     try {
       setSendResult(null)
       const res = await api.admin.sendWeeklyAvailTest(testTeamId, testEmail.trim())
-      setSendResult(res)
-      if (res?.success) { toast.success(res.message || t('weeklyavail.sendOk')); loadHistory() }
-      else toast.error(res?.error || res?.message || t('weeklyavail.sendFail'))
+      // UIA-C2 (20.165.1): sonuç DURUMDAN — SKIPPED_DISABLED / "SKIPPED: …" artık "gönderildi" değil (ham Türkçe durum da
+      // gösterilmez; yalnız "Teknik ayrıntı"da)
+      const o = sendOutcome(res, t)
+      setSendResult(o)
+      if (o.cls === 'sent') toast.success(t('weeklyavail.sendOk'))
+      else if (o.tone === 'danger') toast.error(o.text)
+      else toast.info(o.text)
+      if (o.cls !== 'failed' || res?.data) loadHistory()
+    } catch (e) {
+      toast.error(e?.message || t('weeklyavail.sendFail'))
     } finally {
       setSending(false)
     }
@@ -306,11 +314,14 @@ export default function WeeklyAvailabilitySettings() {
           </Button>
         </div>
         {sendResult && (
-          <AlertBanner tone={sendResult.success ? 'success' : 'danger'} className="mb-0">
-            {sendResult.success
-              ? (sendResult.message || t('weeklyavail.sendOk'))
-              : (sendResult.error || sendResult.message || t('weeklyavail.sendFail'))}
-          </AlertBanner>
+          <div data-slot="wa-send-result" data-outcome={sendResult.cls}>
+            <AlertBanner tone={sendResult.tone} className="mb-0">
+              {sendResult.cls === 'sent' ? t('weeklyavail.sendOk') : sendResult.text}
+              {sendResult.cls === 'failed' && sendResult.raw && (
+                <span className="mt-1 block font-mono text-xs break-words opacity-80" data-slot="wa-send-raw">{sendResult.raw}</span>
+              )}
+            </AlertBanner>
+          </div>
         )}
       </SettingsSection>
 

@@ -1863,6 +1863,40 @@ class SchedulerServiceTest {
         assertThat(((Number) ctx.get("monitor_recovery_checks")).intValue()).isEqualTo(2);
     }
 
+    @Test
+    @DisplayName("ALERTS-10: UNKNOWN kalemi izlemenin kurtarma ARALIĞINI da taşır; eşik türleri taşımaz (anında kapanış kuralı)")
+    void domainItem_unknown_carriesRecoveryInterval() {
+        Object unknown = org.springframework.test.util.ReflectionTestUtils.invokeMethod(
+                scheduler, "domainItem", EscalationService.TYPE_DOMAINMON_UNKNOWN,
+                domainMon(), java.util.Map.of(), false, "WARNING");
+        assertThat(((Number) itemCtx(unknown).get("monitor_recovery_interval_ms")).longValue()).isEqualTo(15_000L);
+        Object expiry = org.springframework.test.util.ReflectionTestUtils.invokeMethod(
+                scheduler, "domainItem", EscalationService.TYPE_DOMAINMON_EXPIRY,
+                domainMon(), java.util.Map.of(), false, "WARNING");
+        assertThat(itemCtx(expiry)).doesNotContainKey("monitor_recovery_interval_ms");
+    }
+
+    @Test
+    @DisplayName("L-M2: kritik eşik uyarıdan BÜYÜK (crit 45 > warn 30) → 40 gün kala EXPIRY alarmı KRİTİK açılır (eskiden hiç açılmazdı)")
+    void domainExpiry_criticalAboveWarning_stillAlarms() {
+        var m = domainMon();
+        m.setWarningDays(30); m.setCriticalDays(45);
+        java.util.Map<String, Object> r = new java.util.LinkedHashMap<>();
+        r.put("status", "WARNING"); r.put("days_remaining", 40); r.put("source", "RDAP");
+        java.util.List<MonitoringOutageService.SweepItem> unknown = new java.util.ArrayList<>(), expiry = new java.util.ArrayList<>(),
+                status = new java.util.ArrayList<>(), changed = new java.util.ArrayList<>(),
+                lock = new java.util.ArrayList<>(), blacklist = new java.util.ArrayList<>();
+        org.springframework.test.util.ReflectionTestUtils.invokeMethod(scheduler, "addDomainSweepItems",
+                m, r, unknown, expiry, status, changed, lock, blacklist);
+        assertThat(expiry).hasSize(1);
+        assertThat(expiry.get(0).up()).isFalse();
+        assertThat(expiry.get(0).ctxExtra()).containsEntry("alert_level", "CRITICAL");
+
+        assertThat(SchedulerService.domainExpiryDown(40, 30, 45)).isTrue();
+        assertThat(SchedulerService.domainExpiryDown(31, 30, 7)).isFalse();
+        assertThat(SchedulerService.domainExpiryDown(30, 30, 7)).isTrue();
+    }
+
     // Regression: ISSUE-001 — teyit zinciri hedef canlılığı (silinen/duraklatılan monitör alarm açmasın)
     // Found by /qa on 2026-09-10 · Report: .gstack/qa-reports/qa-report-localhost-2026-09-10.md
 

@@ -60,7 +60,7 @@ function LastCall({ row, nowMs, t, locale }) {
     <span data-slot="noc-con-last-call" className="flex min-w-0 flex-col gap-0.5 text-xs">
       <span className="flex min-w-0 flex-wrap items-center gap-1">
         <NocOutcomeBadge outcome={c.outcome} className="text-[0.95em]" />
-        <span className="truncate font-medium" title={c.contacted_name}>{c.contacted_name}</span>
+        <span className="min-w-0 font-medium [overflow-wrap:anywhere]">{c.contacted_name}</span>
       </span>
       <span className="text-muted-foreground" title={fullTime(c.contacted_at, locale)}>
         {relTime(c.contacted_at, nowMs, t)}{c.created_by_name ? ` · ${t('noc.con.by', c.created_by_name)}` : ''}
@@ -119,8 +119,8 @@ function Team({ row, t }) {
   if (!row.team_name) return <span className="text-xs text-muted-foreground">{t('app.noTeam')}</span>
   return (
     <span className="flex min-w-0 flex-col">
-      <span className="truncate text-sm" title={row.team_name}>{row.team_name}</span>
-      {row.ug_team_name && <span className="truncate text-xs text-muted-foreground" title={row.ug_team_name}>{t('noc.con.ug', row.ug_team_name)}</span>}
+      <span className="text-sm [overflow-wrap:anywhere]">{row.team_name}</span>
+      {row.ug_team_name && <span className="text-xs text-muted-foreground [overflow-wrap:anywhere]">{t('noc.con.ug', row.ug_team_name)}</span>}
     </span>
   )
 }

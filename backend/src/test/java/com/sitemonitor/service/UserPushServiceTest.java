@@ -459,6 +459,22 @@ class UserPushServiceTest {
     }
 
     @Test
+    @DisplayName("L-P3 (2026-10-22): alarm hattının BAŞLIĞI da kanala süzülür (PushText.pushSafe) — '—' telefonda '?' olmaz")
+    void alarmTitleIsPushSafe() throws Exception {
+        startServer();
+        when(appSettings.getString(eq("site.monitor.userpush.title"), any())).thenReturn("Site Monitor — Alarm ✓");
+        when(alertEventRepo.findById(1L)).thenReturn(Optional.of(event(1L, "HIGH", "HTTP_DOWN")));
+        recipients("N00001");
+
+        service.enqueueAlert(1L, "INITIAL", 5L, Map.of());
+        await().atMost(java.time.Duration.ofSeconds(5)).until(() -> !receivedBodies.isEmpty());
+
+        String body = receivedBodies.get(0);
+        String title = body.substring(body.indexOf("\"title\":\"") + 9, body.indexOf("\",\"message\""));
+        assertThat(title).isEqualTo(PushText.pushSafe("Site Monitor — Alarm ✓")).doesNotContain("—").doesNotContain("✓");
+    }
+
+    @Test
     @DisplayName("2xx yanıttaki notificationId TÜM alt satırlara yazılır (kanıt zinciri)")
     void notificationId_parsedIntoAllRows() throws Exception {
         startServer();

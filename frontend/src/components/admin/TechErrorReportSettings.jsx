@@ -230,13 +230,19 @@ export default function TechErrorReportSettings({ readOnly = false }) {
     setFilter(ALL)
   }
 
+  // Kaydedilmemiş görünürlük / hatırlatma / push taslağı varsa sayfadan ayrılmadan önce sorar. Temizken gezinme EŞZAMANLI
+  // kalır (await yok) — onay penceresi yalnız gerektiğinde beklenir.
+  const leaveNeedsConfirm = () => dirty || remDirty || pushDirty
+  const askLeave = (bodyKey) => showConfirm({ title: t('te.set.leaveTitle'), message: t(bodyKey), variant: 'warning',
+    confirmText: t('te.set.leaveConfirm'), cancelText: t('te.cancel') })
   async function openChannel(ch) {
-    if (dirty || remDirty || pushDirty) {
-      const ok = await showConfirm({ title: t('te.set.leaveTitle'), message: t(remDirty || pushDirty ? 'te.set.leaveBodyAny' : 'te.set.leaveBody'), variant: 'warning',
-        confirmText: t('te.set.leaveConfirm'), cancelText: t('te.cancel') })
-      if (!ok) return
-    }
+    if (leaveNeedsConfirm() && !(await askLeave(remDirty || pushDirty ? 'te.set.leaveBodyAny' : 'te.set.leaveBody'))) return
     navigateTo('channelreports', { [TE_VIEW]: VIEW_CHANNEL, [TE_CHANNEL]: String(ch.id) })
+  }
+  // Push kartının "Push ayarlarını aç" bağlantısı da aynı onaydan geçer (20.165.1 bugfix, UIA-E5: sessizce taslağı atıyordu)
+  async function openPushSettings() {
+    if (leaveNeedsConfirm() && !(await askLeave('te.set.leaveBodyPush'))) return
+    navigateTo('settings', { sec: 'userpush' })
   }
   // Salt okunur (kapsamlı) görüntüleyici modülü kapalı bir takımın kanalını açamaz (sayfa "erişim yok" derdi)
   const openFor = (ch) => (locked && ch.team_visible === false ? null : () => openChannel(ch))
@@ -348,7 +354,7 @@ export default function TechErrorReportSettings({ readOnly = false }) {
 
       {/* 3 — Push bildirimleri (2026-10-18) */}
       {settings && pushSt && (
-        <TechErrorPushSettings state={pushSt} readOnly={locked} onDirtyChange={setPushDirty}
+        <TechErrorPushSettings state={pushSt} readOnly={locked} onDirtyChange={setPushDirty} onOpenPushSettings={openPushSettings}
           onSaving={onPushSaving} onSaved={onPushSaved} onUnsupported={onPushUnsupported} onRetry={load}
           retryDisabled={loading || saving || remSaving || pushSaving} />
       )}

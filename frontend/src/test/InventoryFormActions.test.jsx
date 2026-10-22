@@ -89,6 +89,27 @@ describe('envanter formu eylem çubuğu', () => {
     expect(btn(RUN_RE)).toBeTruthy()
   })
 
+  // UIM-14 (2026-10-22): Sil kaydın sunucu bayrağıyla (`can_delete` = yönetim kapsamı ya da DELETE paylaşımı) — USER üyesi
+  // ve EDIT paylaşımlı kişi görmez (sunucu 403 + ACCESS_DENIED); bayrak yoksa (eski sunucu) rol kuralı `canManage`.
+  it('Sil: kayıt `can_delete:false` ve yönetici değil → çizilmez; `can_delete:true` (DELETE paylaşımı) → çizilir', () => {
+    const { unmount } = render(<InventoryFormModal mode="edit" record={{ ...RECORD, can_delete: false }} canManage={false} teams={TEAMS} onClose={() => {}} onSaved={() => {}} />)
+    expect(maybeBtn(DEL_RE)).toBeNull()
+    expect(btn(RUN_RE)).toBeTruthy()
+    unmount()
+    render(<InventoryFormModal mode="edit" record={{ ...RECORD, can_delete: true }} canManage={false} teams={TEAMS} onClose={() => {}} onSaved={() => {}} />)
+    expect(btn(DEL_RE)).toBeTruthy()
+  })
+
+  it('Sil: bayrak yoksa rol kuralı — yönetici değil (canManage=false) → çizilmez', () => {
+    render(<InventoryFormModal mode="edit" record={RECORD} canManage={false} teams={TEAMS} onClose={() => {}} onSaved={() => {}} />)
+    expect(maybeBtn(DEL_RE)).toBeNull()
+  })
+
+  it('Sil: yönetici bile olsa kayıt `can_delete:false` diyorsa çizilmez (sunucu kararı kazanır)', () => {
+    render(<InventoryFormModal mode="edit" record={{ ...RECORD, can_delete: false }} teams={TEAMS} onClose={() => {}} onSaved={() => {}} />)
+    expect(maybeBtn(DEL_RE)).toBeNull()
+  })
+
   it('yeni kayıt modunda Sil ve Çalıştır YOK, Test et VAR', () => {
     render(<InventoryFormModal mode="add" teams={TEAMS} onClose={() => {}} onSaved={() => {}} />)
     expect(maybeBtn(DEL_RE)).toBeNull()

@@ -52,3 +52,17 @@ describe('SharedCertificateModal', () => {
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('boom'))
   })
 })
+
+// UIM-41 (2026-10-22): süresi dolmuş sertifikanın künyesi "-12 gün kaldı" DEĞİL — satırlar / dışa aktarımla aynı metin
+describe('SharedCertificateModal — süresi dolmuş künye', () => {
+  it('days_remaining -12 → "12 gün önce doldu" metni (eksi gün yok)', async () => {
+    api.getSharedCertificate.mockResolvedValue({ success: true, data: {
+      domain: 'a.example.com', fingerprint: 'AA', subject: 'CN=a', issuer: 'CA', not_after: '2026-10-10T00:00:00', days_remaining: -12, san: [], hidden: 0,
+      peers: [{ domain: 'a.example.com', self: true, status: 'expired', days_remaining: -12, in_inventory: true }],
+    } })
+    render(<SharedCertificateModal domain="a.example.com" onClose={() => {}} />)
+    const card = await waitFor(() => { const el = document.querySelector('[data-slot="shc-cert"]'); expect(el).not.toBeNull(); return el })
+    expect(card.textContent).not.toMatch(/-12/)
+    expect(card.textContent).toMatch(/12/)
+  })
+})

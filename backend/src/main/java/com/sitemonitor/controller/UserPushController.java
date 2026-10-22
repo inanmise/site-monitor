@@ -9,6 +9,7 @@ import com.sitemonitor.repository.AppUserRepository;
 import com.sitemonitor.repository.TeamRepository;
 import com.sitemonitor.repository.UserPushDeliveryRepository;
 import com.sitemonitor.repository.UserPushScopeRepository;
+import com.sitemonitor.service.AppSettingsCatalog;
 import com.sitemonitor.service.AppSettingsService;
 import com.sitemonitor.service.AuditDetail;
 import com.sitemonitor.service.AuditDiff;
@@ -119,8 +120,26 @@ public class UserPushController {
                 "templates_en", com.sitemonitor.service.PushI18n.DEFAULT_TEMPLATES_EN,
                 "placeholders", UserPushService.KNOWN_PLACEHOLDERS));
         out.put("health", userPushService.healthSnapshot());
+        // K10 (2026-10-22, UIA-C3): ekran yalnız sunucunun KABUL EDECEĞİ denetimleri açsın. Kapsamlı müdür GLOBAL_ONLY anahtarları
+        // (push URL'i, başlıklar) değiştiremez, izleme TÜRÜ kapsamı tüm takımları etkiler (yalnız global yönetici) ve takım
+        // kapsamını yalnız YÖNETTİĞİ takımlarda değiştirir. Global yöneticide manage_team_ids yazılmaz (hepsi).
+        boolean global = SessionScope.isGlobalAdmin(session);
+        List<String> readOnly = new ArrayList<>();
+        if (!global) {
+            for (String k : PLAIN_KEYS) if (AppSettingsCatalog.GLOBAL_ONLY.contains(k)) readOnly.add(k);
+            if (AppSettingsCatalog.GLOBAL_ONLY.contains(HEADERS_KEY)) readOnly.add(HEADERS_KEY);
+        }
+        out.put("read_only_keys", readOnly);
+        out.put("can_edit_types", global);
+        if (!global) {
+            List<Long> manage = SessionScope.manageTeamIds(session);
+            out.put("manage_team_ids", manage == null ? List.of() : manage);
+        }
         return ok(out);
     }
+
+    /** Şifreli push başlıkları anahtarı. */
+    private static final String HEADERS_KEY = "site.monitor.userpush.headers";
 
     @PostMapping("/settings")
     public ResponseEntity<Map<String, Object>> saveSettings(
@@ -140,8 +159,17 @@ public class UserPushController {
             }
             toSave.put(k, v);
         }
-        if (body.containsKey("site.monitor.userpush.headers")) {
-            toSave.put("site.monitor.userpush.headers", encryptHeaders(body.get("site.monitor.userpush.headers")));
+        // Kapsamlı müdür (K10, UIA-C3): sayfa her kayıtta URL'i ve başlık listesini de yollar. Değişmemiş GLOBAL_ONLY değeri
+        // kayda HİÇ girmez — eskiden boş başlık listesi "[]" olarak şifrelenip saklı (boş) değerle eşleşmiyor, müdürün HER kaydı
+        // (şablon, sessiz saat …) dokunmadığı bir anahtar yüzünden 403 alıyordu. Gerçekten DEĞİŞTİRİLEN değer yine 403'tür
+        // (AppSettingsService.save — GLOBAL_ONLY kuralı tek yerde).
+        boolean global = SessionScope.isGlobalAdmin(session);
+        if (!global) {
+            toSave.keySet().removeIf(k -> AppSettingsCatalog.GLOBAL_ONLY.contains(k)
+                    && sameSettingText(toSave.get(k), appSettings.getString(k, null)));
+        }
+        if (body.containsKey(HEADERS_KEY) && (global || !headersUnchanged(body.get(HEADERS_KEY)))) {
+            toSave.put(HEADERS_KEY, encryptHeaders(body.get(HEADERS_KEY)));
         }
         // Değerler save'DEN ÖNCE okunur (save void döner + önbelleği anında tazeler).
         // Maskeleme kritik: `...webhook-url` hassas ANAHTAR sayılmıyor (kara listede "url" yok)
@@ -566,6 +594,45 @@ public class UserPushController {
             }
         }
         try { return MAPPER.writeValueAsString(out); } catch (Exception e) { return "[]"; }
+    }
+
+    /** Ayar değerleri metin olarak aynı mı (null ≡ boş; kırpılmış karşılaştırma). */
+    static boolean sameSettingText(Object incoming, String stored) {
+        String a = incoming == null ? "" : String.valueOf(incoming).trim();
+        String b = stored == null ? "" : stored.trim();
+        return a.equals(b);
+    }
+
+    /**
+     * Gelen başlık listesi saklı listeyle (maskeli hâliyle, {@link #maskedHeaders}) AYNI mı — ad, değer ve sır bayrağı; sır
+     * değeri maskeli ("*****") geldiyse değişmemiş sayılır. Boş liste ≡ hiç başlık yok.
+     */
+    boolean headersUnchanged(Object incoming) {
+        List<Map<String, Object>> current = maskedHeaders();
+        List<Map<String, Object>> in = new ArrayList<>();
+        if (incoming instanceof List<?> list) {
+            for (Object o : list) {
+                if (!(o instanceof Map<?, ?> e)) continue;
+                Object nm = e.get("name");
+                if (nm == null || nm.toString().isBlank()) continue;
+                Map<String, Object> row = new LinkedHashMap<>();
+                row.put("name", nm.toString().trim());
+                row.put("secret", Boolean.TRUE.equals(e.get("secret")) || "true".equals(String.valueOf(e.get("secret"))));
+                row.put("value", e.get("value") == null ? "" : e.get("value").toString());
+                in.add(row);
+            }
+        } else if (incoming != null) {
+            return false;   // beklenmeyen biçim — karar AppSettingsService'in (değişmiş say)
+        }
+        if (in.size() != current.size()) return false;
+        for (int i = 0; i < in.size(); i++) {
+            Map<String, Object> a = in.get(i), b = current.get(i);
+            if (!String.valueOf(a.get("name")).equals(String.valueOf(b.get("name")))) return false;
+            if (!String.valueOf(a.get("value")).equals(String.valueOf(b.get("value")))) return false;
+            boolean masked = MASKED.equals(a.get("value"));
+            if (!masked && !a.get("secret").equals(b.get("secret"))) return false;
+        }
+        return true;
     }
 
     /** Şablondaki İLK bilinmeyen yer tutucu; hepsi geçerliyse null. */

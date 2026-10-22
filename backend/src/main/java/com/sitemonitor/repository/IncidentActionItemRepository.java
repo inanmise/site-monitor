@@ -81,6 +81,12 @@ public interface IncidentActionItemRepository extends JpaRepository<IncidentActi
     @Query("UPDATE IncidentActionItem a SET a.remindedOn = :today WHERE a.id = :id AND a.remindedOn = :prev")
     int claimNextReminder(@Param("id") Long id, @Param("prev") String prev, @Param("today") String today);
 
+    /** Son tarih değişti → hatırlatma baştan (2026-10-22, IN-1): hedefli UPDATE — varlık kaydı {@code reminded_on}'u yazmaz. */
+    @Modifying
+    @Transactional
+    @Query("UPDATE IncidentActionItem a SET a.remindedOn = NULL WHERE a.id = :id")
+    int resetReminder(@Param("id") Long id);
+
     @Modifying
     @Transactional
     @Query("DELETE FROM IncidentActionItem a WHERE a.incidentId = :incidentId")

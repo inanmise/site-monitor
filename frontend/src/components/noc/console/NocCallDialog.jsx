@@ -20,9 +20,14 @@ export function telHref(phone) {
   return digits.replace(/\D/g, '').length >= 3 ? `tel:${digits}` : null
 }
 
-/** Bir kişi satırı: sıra no, ad + unvan, telefon (dokununca arar — `tel:`; numara olduğu gibi görünür). */
+/**
+ * Bir kişi satırı: sıra no, ad + unvan, telefon (dokununca arar — `tel:`; numara olduğu gibi görünür). Pasif (devre dışı)
+ * hesap (2026-10-22, L-N1 / PKG-3: sunucu `active:false` + `phone:null`) "Pasif hesap — aranmaz" rozeti taşır, arama
+ * bağlantısı çizilmez. Alan yoksa (eski sunucu) bugünkü davranış.
+ */
 function PersonRow({ person, position, t }) {
-  const href = telHref(person?.phone)
+  const passive = person?.active === false
+  const href = passive ? null : telHref(person?.phone)
   return (
     <li data-slot="noc-sheet-person" className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border bg-card px-3 py-2">
       {position != null && (
@@ -31,10 +36,16 @@ function PersonRow({ person, position, t }) {
         </span>
       )}
       <span className="flex min-w-0 flex-1 flex-col">
-        <span className="truncate text-sm font-semibold" title={person?.name}>{person?.name || '—'}</span>
-        {person?.title && <span className="truncate text-xs text-muted-foreground" title={person.title}>{person.title}</span>}
+        {/* Ad ve AD unvanı SARAR, kırpılmaz (2026-10-22, UIM-38 / L-N6 — dokunmatikte title görünmez) */}
+        <span data-slot="noc-sheet-person-name" className="text-sm font-semibold [overflow-wrap:anywhere]">{person?.name || '—'}</span>
+        {person?.title && <span className="text-xs text-muted-foreground [overflow-wrap:anywhere]">{person.title}</span>}
       </span>
-      {href ? (
+      {passive ? (
+        <Badge variant="outline" data-slot="noc-sheet-passive"
+          className="h-auto overflow-visible rounded-md border-destructive/40 bg-destructive/10 text-destructive whitespace-normal">
+          {t('noc.passiveNoCall')}
+        </Badge>
+      ) : href ? (
         <Button asChild variant="outline" size="sm" className="h-10 shrink-0 font-mono tabular-nums sm:h-8 sm:pointer-coarse:h-10">
           <a href={href} className="text-foreground no-underline" aria-label={t('noc.con.sheet.callPerson', person?.name || '', person.phone)}>
             <Phone aria-hidden="true" />{person.phone}

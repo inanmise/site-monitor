@@ -65,6 +65,19 @@ export function changedFields(form, original, exists) {
   return out
 }
 
+/**
+ * Kayıt yanıtını forma uygular (UIA-4, 2026-10-22): kayıt sürerken yazılan alanlar KORUNUR — yanıt yalnız gönderildiğinden
+ * beri değişmemiş alanlara yazılır. Eskiden yanıt formun tamamını değiştiriyor, kayıt sırasında yazılan metin uyarısız
+ * kayboluyordu. Korunan alan sunucu kopyasından farklı kalır → form kirli, sonraki Kaydet onları gönderir.
+ */
+export function mergeAfterSave(current, sent, server) {
+  const out = { ...server }
+  for (const k of [...SECTIONS, 'status']) {
+    if ((current?.[k] ?? '') !== (sent?.[k] ?? '')) out[k] = current?.[k] ?? ''
+  }
+  return out
+}
+
 export const isDirty = (form, original) => [...SECTIONS, 'status'].some((k) => (form?.[k] ?? '') !== (original?.[k] ?? ''))
 
 /** Bölüm uzunluk hataları — { key: true } (mesajı çağıran t ile yazar). */

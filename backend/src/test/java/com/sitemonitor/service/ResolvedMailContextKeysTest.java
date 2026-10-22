@@ -66,7 +66,7 @@ class ResolvedMailContextKeysTest {
 
     /** Çözüm kurucularının kaynak aralığı: ilk buildResolvedHtml → resolvedHeadline yardımcısı. */
     private static final String REGION_START = "public String buildResolvedHtml(";
-    private static final String REGION_END   = "private static String resolvedHeadline(";
+    private static final String REGION_END   = "static String resolvedHeadline(";   // paket içi (2026-10-22, EmailTemplateTypeTextsTest)
 
     private static Path templateSource() {
         Path p = Path.of("src/main/java/com/sitemonitor/service/EmailTemplateBuilder.java");

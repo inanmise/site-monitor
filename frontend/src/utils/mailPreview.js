@@ -28,7 +28,9 @@ const LOGOS = { ok: LOGO_OK, warning: LOGO_WARNING, critical: LOGO_CRITICAL }
  * renkte logo görünür (işlevsel bozulma değil), bu yüzden kural burada da yazılı tutuluyor.
  */
 export function mailLogoVariant({ trigger, level } = {}) {
-  if (String(trigger || '').toUpperCase() === 'RESOLUTION') return 'ok'
+  // Elle "Çöz" sonrası giden çözüm postası tetiği MANUAL_RESOLVE (2026-10-22) — o da yeşil logoyla gider
+  const tr = String(trigger || '').toUpperCase()
+  if (tr === 'RESOLUTION' || tr === 'MANUAL_RESOLVE') return 'ok'
   return String(level || '').toUpperCase() === 'CRITICAL' ? 'critical' : 'warning'
 }
 

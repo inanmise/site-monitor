@@ -52,4 +52,23 @@ class LoginIssueReportRepositoryTest {
         assertThat(ids("%,MOBILE,%")).isEmpty();
         assertThat(ids(null)).hasSize(4);
     }
+
+    @Test
+    @DisplayName("AUTH-13 (2026-10-22): 'Bildirimlerim' (findMine / countMineByStatus) yalnız oturum içi kaynakları sayar — giriş sayfası (LOGIN) kaydı sahibinin listesine girmez")
+    void mineExcludesLoginSource() {
+        for (String[] row : new String[][] { {"USER_REPORT", "2026-10-22T01:00:00"}, {"CLIENT_ERROR", "2026-10-22T02:00:00"},
+                {"LOGIN", "2026-10-22T03:00:00"} }) {
+            LoginIssueReport r = new LoginIssueReport();
+            r.setReportedAt(row[1]);
+            r.setMessage("m");
+            r.setStatus("OPEN");
+            r.setSource(row[0]);
+            r.setUsername("N12345");
+            repo.save(r);
+        }
+        assertThat(repo.findMine("n12345", null, PageRequest.of(0, 50)).getContent().stream()
+                .map(LoginIssueReport::getSource).toList()).containsExactly("CLIENT_ERROR", "USER_REPORT");
+        assertThat(repo.countMineByStatus("n12345")).singleElement()
+                .satisfies(r -> assertThat(((Number) r[1]).longValue()).isEqualTo(2L));
+    }
 }

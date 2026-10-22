@@ -81,6 +81,32 @@ class GeneralSettingsControllerTest {
     }
 
     @Test
+    @DisplayName("ADMIN-15 (2026-10-22): kendi sayfası olan grubun anahtarı (marka logosu, giriş anomalisi eşiği) genel uçtan 400 VALIDATION_FAILED + field; hiçbir şey yazılmaz")
+    void put_ownPageGroupKey_400() throws Exception {
+        mvc.perform(put("/api/admin/general/settings").session(userSession("admin"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"values\":{\"site.monitor.branding.logo-data\":\"data:image/png;base64,AAAA\"}}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                .andExpect(jsonPath("$.field").value("site.monitor.branding.logo-data"));
+        mvc.perform(put("/api/admin/general/settings").session(userSession("admin"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"values\":{\"site.monitor.app.base-url\":\"https://x\",\"site.monitor.failed-login.cooldown-minutes\":\"0\"}}"))
+                .andExpect(status().isBadRequest());
+        org.mockito.Mockito.verify(settingsService, org.mockito.Mockito.never()).save(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    @DisplayName("ADMIN-15: OWN_PAGE_GROUPS ön yüzdeki SKIP_GROUPS ile aynı; her grup katalogda gerçekten var")
+    void ownPageGroups_matchCatalog() {
+        java.util.Set<String> groups = new java.util.HashSet<>();
+        for (var s : com.sitemonitor.service.AppSettingsCatalog.ALL) groups.add(s.group());
+        org.assertj.core.api.Assertions.assertThat(groups).containsAll(GeneralSettingsController.OWN_PAGE_GROUPS);
+        org.assertj.core.api.Assertions.assertThat(com.sitemonitor.service.AppSettingsCatalog.byKey("site.monitor.failed-login.cooldown-minutes").group())
+                .isIn(GeneralSettingsController.OWN_PAGE_GROUPS);
+    }
+
+    @Test
     @DisplayName("PUT admin olmayan → 403")
     void put_nonAdmin_403() throws Exception {
         mvc.perform(put("/api/admin/general/settings").session(userSession("sre1"))

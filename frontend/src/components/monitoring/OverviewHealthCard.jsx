@@ -26,17 +26,19 @@ const TONE = {
   neutral: { Icon: HelpCircle, tile: 'bg-muted text-muted-foreground' },
 }
 
-export default function OverviewHealthCard({ totals = {}, rows = [], nowMs, windowLabel, activeStatuses = [], onPickStatus, onShowAll, bare = false, className }) {
+export default function OverviewHealthCard({ totals = {}, rows = [], nowMs, windowLabel, activeStatuses = [], onPickStatus, onShowAll, bare = false, className, gaps = null }) {
   const t = useT()
   const locale = useDateLocale()
-  const v = verdict(totals)
+  // gaps (2026-10-22, UIM-5): sunucu bir okumanın düştüğünü bildirdiyse hüküm "Tüm izlemeler sağlıklı" olamaz
+  const v = verdict(totals, gaps)
   const tone = TONE[v.tone] ?? TONE.neutral
   const Icon = v.key === 'mo.health.allPaused' ? PauseCircle : v.key === 'mo.health.empty' ? Radar : tone.Icon
   const headline = verdictHeadline(v, t)
   const dist = distribution(totals)
   const active = Number(totals.active ?? 0)
   const healthy = dist[0].count
-  const rate = totals.success_rate_window
+  // Koşum sayıları bir türde okunamadıysa başarı oranı eksik veriden — gösterilmez (yanlış "yüksek oran" olmasın)
+  const rate = gaps?.stats?.length ? null : totals.success_rate_window
   const attention = attentionRows(rows)
   const shown = attention.slice(0, ATTENTION_LIMIT)
   const Verdict = bare ? 'h4' : 'h3'

@@ -148,7 +148,7 @@ public class UserService {
     }
 
     private record ActiveSidEntry(String sid, long atMs) {}
-    private record InactiveEntry(boolean inactive, long atMs) {}
+    private record InactiveEntry(boolean inactive, boolean gone, long atMs) {}
     /** username (normalize) → pasif mi — {@link #isAccountInactive} önbelleği (sert üst sınır SESSION_MAP_MAX). */
     private final java.util.concurrent.ConcurrentHashMap<String, InactiveEntry> inactiveCache =
             new java.util.concurrent.ConcurrentHashMap<>();
@@ -210,15 +210,58 @@ public class UserService {
      */
     public boolean isAccountInactive(String username) {
         if (username == null || username.isBlank()) return false;
+        return accountState(username).inactive();
+    }
+
+    /**
+     * Hesap SİLİNMİŞ mi (2026-10-22, hata avı AUTH-1)? Kullanıcı satırı yoksa true. Silinen kullanıcının oturumu eskiden
+     * tam yetkiyle (giriş anındaki rol / kapsam oturum özniteliklerinden okunur) çalışmaya devam ediyordu — SPA her 15 sn
+     * yokladığı için 24 saatlik boşta kalma süresi de hiç dolmuyordu. Pasif kapısıyla AYNI önbellek kaydını kullanır (ek
+     * sorgu yalnız aktiflik okunamadığında, yani satır yokken / kolon NULL iken).
+     *
+     * <p><b>Veritabanı okunamazsa (gerçek davranış, son inceleme 2026-10-22).</b> {@code AuthInterceptor} bu kapıdan ÖNCE
+     * {@link #isAccountInactive} sorar ve AYNI okuma ({@code accountState}) orada fırlar: istek 5xx / {@code DB_UNAVAILABLE}
+     * ile düşer, oturum kapatılmaz, hatırlanan girişler silinmez — kimse dışarı atılmaz (bir sonraki istek yeniden dener).
+     * Aşağıdaki yakalama yalnız bu metodu doğrudan çağıranlar için bir güvenlik ağıdır (okuma hatası = silinmemiş).
+     */
+    public boolean isAccountGone(String username) {
+        if (username == null || username.isBlank()) return false;
+        try {
+            return accountState(username).gone();
+        } catch (RuntimeException e) {
+            log.debug("Hesap varlığı okunamadı (açık düşer): user={} err={}", username, e.toString());
+            return false;
+        }
+    }
+
+    /** Pasif + silinmiş kapısının tek okuması — {@code site.monitor.session.inactive-cache-ms} TTL'li. */
+    private InactiveEntry accountState(String username) {
         String key = normalizeUsername(username);
         long now = System.currentTimeMillis();
         InactiveEntry e = inactiveCache.get(key);
-        if (e != null && now - e.atMs() < inactiveCacheMs) return e.inactive();
-        boolean inactive = userRepo.findActiveFlagByUsername(username)
-                .map(a -> !Boolean.TRUE.equals(a)).orElse(false);
+        if (e != null && now - e.atMs() < inactiveCacheMs) return e;
+        Optional<Boolean> flag = userRepo.findActiveFlagByUsername(username);
+        boolean inactive = flag.map(a -> !Boolean.TRUE.equals(a)).orElse(false);
+        // Boş projeksiyon iki şey olabilir: satır yok ya da aktiflik kolonu NULL (eski satır) — yalnız ilkinde "silinmiş".
+        boolean gone = flag.isEmpty() && !userRepo.existsByUsername(username);
+        InactiveEntry fresh = new InactiveEntry(inactive, gone, now);
         if (inactiveCache.size() > SESSION_MAP_MAX) inactiveCache.clear();
-        inactiveCache.put(key, new InactiveEntry(inactive, now));
-        return inactive;
+        inactiveCache.put(key, fresh);
+        return fresh;
+    }
+
+    /**
+     * Kullanıcının bu pod'daki pasif / silinmiş / süpersede önbellek kayıtlarını düşürür (2026-10-22) — silme anında
+     * kapı bir sonraki istekte DB'yi okusun. Diğer pod'lar en geç önbellek süresi (≤ 5 sn) sonra görür.
+     */
+    public void forgetUserCaches(String username) {
+        String key = normalizeUsername(username);
+        if (key == null) return;
+        inactiveCache.remove(key);
+        activeSessionCache.remove(key);
+        if (inactiveRecipientGuard != null) {
+            try { inactiveRecipientGuard.evict(); } catch (Exception ignored) { /* bildirim süzgeci best-effort */ }
+        }
     }
 
     /** True when an admin-issued temp password's 24-hour window has elapsed.
@@ -510,17 +553,32 @@ public class UserService {
         }
     }
 
-    /** Çıkışta aktif oturum kaydını temizler — yalnız eşleşiyorsa (yarıştaki yeni oturumu silmesin). */
+    /**
+     * Çıkışta (ve bakım / ön ek kesiminde) aktif oturum kaydını KAPATIR — yalnız eşleşiyorsa (yarıştaki yeni oturumu
+     * silmesin). NULL DEĞİL, eşleşmeyen bir {@code TERMINATED:} nöbetçisi yazılır (2026-10-22, hata avı AUTH-2): NULL
+     * "eski (grandfathered) oturum" demektir — {@link #isSessionSuperseded} false döner ve {@code adoptSessionIfNone} ilk
+     * yoklamada oturumu yeniden sahiplenir. Çıkış böylece aynı kullanıcının daha önce süpersede edilmiş ya da yöneticinin
+     * sonlandırdığı oturumunu (çalınmış çerez) yeniden canlandırıyordu. Nöbetçi canlı sayılmaz ({@link #hasLiveSession}),
+     * açılış temizliği korur; bir sonraki giriş kendi oturumunu yazar. NULL artık yalnız eski satırlarda kalır.
+     */
     @Transactional
     public void clearActiveSession(String username, String sessionId) {
         if (username == null || sessionId == null) return;
         userRepo.findByUsername(username).ifPresent(u -> {
             if (sessionId.equals(u.getActiveSessionId())) {
-                u.setActiveSessionId(null);
+                u.setActiveSessionId(SESSION_TERMINATED_PREFIX + UUID.randomUUID());
                 userRepo.save(u);
             }
         });
-        activeSessionCache.remove(normalizeUsername(username));   // F2 evict
+        evictActiveSessionCache(username);   // F2 evict (commit sonrası da)
+    }
+
+    /**
+     * Tek kullanıcının süpersede önbelleği — tek-oturum işareti bu servisin DIŞINDA bir varlık kaydıyla değiştiğinde
+     * (A2, 2026-10-22: AD'den gelen rol değişikliği {@code LdapProvisioningService}). Hemen ve commit sonrası.
+     */
+    public void evictActiveSessionCacheFor(String username) {
+        if (username != null) evictActiveSessionCache(username);
     }
 
     /** Süpersede önbelleğini boşaltır — tek-oturum işaretleri bu servisin DIŞINDA (SQL ile) değiştiğinde
@@ -768,7 +826,9 @@ public class UserService {
         if (name == null || name.isBlank()) throw new IllegalArgumentException("Team name cannot be blank");
         if (email == null || email.isBlank()) throw new IllegalArgumentException("Team email is required");
         requireEmailFormat(email);   // 2026-10-08: yeni değer tek, biçimce geçerli adres olmalı
-        if (teamRepo.existsByName(name.trim())) throw new IllegalArgumentException("Team already exists: " + name);
+        // Harf duyarsız (2026-10-22, hata avı ADMIN-12): yeniden adlandırma yolu zaten duyarsızdı; oluşturmada "Ops" ve "ops"
+        // yan yana açılabiliyor, CSV içe aktarma takım adını hangisi sonra geldiyse ona eşliyordu.
+        if (teamRepo.existsByNameIgnoreCase(name.trim())) throw new IllegalArgumentException("Team already exists: " + name.trim());
         // Leader (PO) is OPTIONAL — a team may be created before its PO has logged in.
         if (leaderId != null && !userRepo.existsById(leaderId))
             throw new IllegalArgumentException("Leader user not found: " + leaderId);
@@ -814,6 +874,21 @@ public class UserService {
             if (!userRepo.existsById(leaderId)) throw new IllegalArgumentException("Leader user not found: " + leaderId);
             team.setLeaderId(leaderId);
         }
+        team.setUpdatedAt(now());
+        return teamRepo.save(team);
+    }
+
+    /**
+     * Takım liderini (PO) TEMİZLER (2026-10-22, hata avı ADMIN-11): {@link #updateTeam}'de {@code leaderId = null}
+     * "dokunma" demektir (toplu işlem, eski istemci) — formdaki "— Lider Seçin —" seçimi başarı iletisiyle kaydediliyor ama
+     * lider yeniden yüklemede geri geliyordu. Çağıran (controller) gövdede {@code leader_id} anahtarı BOŞ geldiğinde bunu
+     * çağırır. Zaten lidersizse yazma yok.
+     */
+    @Transactional
+    public Team clearTeamLeader(Long id) {
+        Team team = teamRepo.findById(id).orElseThrow(() -> new NoSuchElementException("Team not found: " + id));
+        if (team.getLeaderId() == null) return team;
+        team.setLeaderId(null);
         team.setUpdatedAt(now());
         return teamRepo.save(team);
     }
@@ -869,6 +944,7 @@ public class UserService {
                                Collection<Long> teamIds, String orgRole) {
         if (username == null || username.isBlank()) throw new IllegalArgumentException("Username cannot be blank");
         if (rawPassword == null || rawPassword.length() < passwordMinLength) throw new IllegalArgumentException("Password too short (min " + passwordMinLength + " chars)");
+        requireNoEdgeWhitespace(rawPassword);   // 2026-10-22, hata avı AUTH-7: giriş parolayı kırpar
         if (email == null || email.isBlank()) throw new IllegalArgumentException("Email is required");
         requireEmailFormat(email);   // 2026-10-08
         LinkedHashSet<Long> teams = normalizeTeams(teamIds);
@@ -1005,9 +1081,16 @@ public class UserService {
                 if (ldap) LdapFieldLocks.lock(user, LdapFieldLocks.EMPLOYEE_ID);
             }
         }
-        if (systemRole != null && !systemRole.equals(user.getSystemRole())) {
+        boolean roleChanged = systemRole != null && !systemRole.equals(user.getSystemRole());
+        if (roleChanged) {
             user.setSystemRole(systemRole);
             user.setRoleLocked(true);   // admin manuel değiştirdi → LDAP provisyonu bu rolü ezmesin
+            // Rol değişikliği CANLI oturuma ulaşır (2026-10-22, hata avı AUTH-4; varsayılan karar): rol ve kapsam yalnız
+            // girişte oturuma yazılır — ADMIN'den USER'a düşürülen global yönetici, çıkış yapana dek global yönetici
+            // kalıyordu (SPA yoklaması oturumu hiç bitirmiyordu). Pasifleştirmeyle AYNI nöbetçi: sonraki istekte 401
+            // "oturum düştü", yeni rolle yeniden giriş. Takım üyeliği değişikliği bunu yapmaz (/me kapsam tazelemesi).
+            // Pasif hesapta yazılmaz: oturumu pasif kapısı zaten kesti; toplu pasifleştirmenin geri alma işareti korunur.
+            if (Boolean.TRUE.equals(user.getActive())) user.setActiveSessionId(SESSION_TERMINATED_PREFIX + UUID.randomUUID());
         }
         // teamIds == null → takımlara dokunma (kısmi güncelleme); verilirse (boş dahil) üyeliği set et.
         if (teamIds != null) {
@@ -1051,6 +1134,11 @@ public class UserService {
         AppUser saved = userRepo.save(user);
         UserContactSync.sync(contactRepo, saved);
         syncPoLeadership(saved);
+        if (roleChanged) {
+            evictActiveSessionCache(saved.getUsername());   // nöbetçi bu pod'da hemen etkisin (commit sonrası da)
+            log.info("Kullanıcının sistem rolü değişti — canlı oturum sonlandırıldı (yeni rolle yeniden giriş): user={} role={}",
+                    saved.getUsername(), saved.getSystemRole());
+        }
         if (wasActive != Boolean.TRUE.equals(saved.getActive())) onActiveChanged(saved, deactivated);
         return saved;
     }
@@ -1218,6 +1306,19 @@ public class UserService {
         }
     }
 
+    /**
+     * Başında / sonunda boşluk olan parola REDDEDİLİR (2026-10-22, hata avı AUTH-7 — "kaydederken reddet" varyantı): giriş
+     * ucu parolayı kırpar ({@code strip}), yani "gizli1 " olarak kaydedilen parola hiçbir zaman eşleşmez ve kullanıcı
+     * kilit merdivenine düşerdi. Girişteki kırpma değişmez (klavyesi sona boşluk ekleyen kullanıcılar dışarıda kalmasın).
+     */
+    private static void requireNoEdgeWhitespace(String rawPassword) {
+        if (rawPassword != null && !rawPassword.equals(rawPassword.strip())) {
+            throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException("password", com.sitemonitor.util.Msg.t(
+                    "Parola boşlukla başlayamaz ya da bitemez: giriş ekranı baştaki ve sondaki boşlukları siler, böyle bir parolayla giriş yapılamaz. Boşlukları kaldırıp tekrar deneyin.",
+                    "The password can't start or end with a space: the sign-in page removes leading and trailing spaces, so such a password could never be used. Remove the spaces and try again."));
+        }
+    }
+
     @Transactional
     public void changePassword(Long id, String rawPassword) {
         if (rawPassword == null || rawPassword.length() < passwordMinLength) {
@@ -1226,6 +1327,7 @@ public class UserService {
         if (rawPassword.length() > passwordMaxLength) {
             throw new IllegalArgumentException("Password too long (max " + passwordMaxLength + " chars)");
         }
+        requireNoEdgeWhitespace(rawPassword);   // 2026-10-22, hata avı AUTH-7: giriş parolayı kırpar
         AppUser user = userRepo.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("User not found: " + id));
         // LDAP satırına yerel hash yazılmaz: eskiden geçici parola "mevcut parola" diye girilip yerel parola

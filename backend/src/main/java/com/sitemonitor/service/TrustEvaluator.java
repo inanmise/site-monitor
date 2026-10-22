@@ -63,12 +63,11 @@ public class TrustEvaluator {
         if (chain == null || chain.length == 0) {
             return new TrustResult(false, "empty chain");
         }
-        String authType = chain[0].getPublicKey().getAlgorithm(); // RSA / EC / ...
         String reason = null;
         // 1) JVM varsayılan truststore (public CA'lar)
         if (defaultTm != null) {
             try {
-                defaultTm.checkServerTrusted(chain, authType);
+                checkServerTrustedAnyAuthType(defaultTm, chain);
                 return new TrustResult(true, null);
             } catch (CertificateException e) {
                 reason = rootMessage(e);
@@ -78,13 +77,53 @@ public class TrustEvaluator {
         X509TrustManager extra = currentExtraTm();
         if (extra != null) {
             try {
-                extra.checkServerTrusted(chain, authType);
+                checkServerTrustedAnyAuthType(extra, chain);
                 return new TrustResult(true, null);
             } catch (CertificateException e) {
                 if (reason == null) reason = rootMessage(e);
             }
         }
         return new TrustResult(false, reason != null ? reason : "untrusted");
+    }
+
+    /**
+     * {@code checkServerTrusted}'in {@code authType} argümanı bir TLS ANAHTAR DEĞİŞİMİ adıdır (SunJSSE: {@code RSA},
+     * {@code ECDHE_ECDSA}, {@code UNKNOWN} …), anahtar algoritması DEĞİL. 2026-10-22'ye dek burada
+     * {@code getPublicKey().getAlgorithm()} ("EC" / "RSA") geçiyordu: JDK uç-sertifika denetimi ({@code EndEntityChecker})
+     * "EC" için "Unknown authType: EC" fırlatıyor, "RSA" için keyEncipherment istiyordu — zincir 1'den uzun olduğunda
+     * (yani her gerçek zincirde) her ECDSA sertifikası ve keyEncipherment'sız her RSA sertifikası UNTRUSTED görünüyordu.
+     *
+     * <p>Sıra: önce {@code UNKNOWN} (SunJSSE'nin TLS 1.3'te geçtiği değer — digitalSignature ya da KeyUsage uzantısı
+     * yok); olmazsa yalnız keyEncipherment taşıyan eski RSA sertifikaları için {@code RSA}, yalnız keyAgreement taşıyan
+     * (statik ECDH) EC sertifikaları için {@code ECDH_ECDSA}. Biri geçerse güvenilir; hiçbiri geçmezse İLK hatanın
+     * nedeni döner (zincir kurulamadıysa o neden her denemede aynıdır). Teşhis ve elle yüklenen sertifika yolları da bu
+     * kuralı kullanmalı (aynı zincir için aynı hüküm).
+     */
+    public static void checkServerTrustedAnyAuthType(X509TrustManager tm, X509Certificate[] chain)
+            throws CertificateException {
+        if (tm == null) throw new CertificateException("no trust manager");
+        if (chain == null || chain.length == 0 || chain[0] == null) throw new CertificateException("empty chain");
+        CertificateException first = null;
+        for (String authType : serverAuthTypes(chain[0])) {
+            try {
+                tm.checkServerTrusted(chain, authType);
+                return;
+            } catch (CertificateException e) {
+                if (first == null) first = e;
+            }
+        }
+        throw first != null ? first : new CertificateException("untrusted");
+    }
+
+    /** Denenecek SunJSSE authType adları — yaprağın anahtar türüne göre (sıra önemli: ilk hata nedeni korunur). */
+    static List<String> serverAuthTypes(X509Certificate leaf) {
+        String alg = null;
+        try {
+            alg = leaf.getPublicKey() == null ? null : leaf.getPublicKey().getAlgorithm();
+        } catch (RuntimeException ignore) { /* anahtar okunamadı → yalnız UNKNOWN */ }
+        if ("RSA".equalsIgnoreCase(alg)) return List.of("UNKNOWN", "RSA");
+        if ("EC".equalsIgnoreCase(alg) || "ECDSA".equalsIgnoreCase(alg)) return List.of("UNKNOWN", "ECDH_ECDSA");
+        return List.of("UNKNOWN");
     }
 
     /**

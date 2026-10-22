@@ -87,6 +87,52 @@ Bu bölüm yalnız prod çok pod sürüm 1'i (2026-10-21) İLK kez aldığında 
       postası, eski yolla kapanan fırtınanın ikinci kurtarma postası, eski pod'da sahiplenmesiz push / haftalık rapor —
       [`RUNBOOK.md` → Sürüm geçişi sırasında](RUNBOOK.md#sürüm-geçişi-sırasında-eski--yeni-pod-birlikte).
 
+### 20.165.1 öncesi kontroller (hata düzeltme sürümü) — bir kerelik
+Bu bölüm prod 20.165.0 ya da öncesinden 20.165.1'e ilk geçerken geçerlidir; sonraki dağıtımlarda atlanır. Sorgular salt okur.
+
+- [ ] **Anahtar kelime izlemesi çiftleri yok** — yeni tekil indeks `uq_kwm_team_url_kw` = `(team_id, LOWER(url), LOWER(keyword))`
+      (uygulamanın kuralı) bu satırlarla kurulamaz; o durumda bir WARN yazılır ve eski `uq_kwm_team_url` yerinde kalır. Boş dönmeli:
+  ```sql
+  SELECT team_id, lower(url), lower(keyword), count(*) FROM keyword_monitors GROUP BY 1, 2, 3 HAVING count(*) > 1;
+  ```
+  Satır dönerse dağıtımdan önce takımla konuşup çiftlerden birini silin ya da anahtar kelimesini değiştirin (ekrandan —
+  izleme geçmişi ve değişiklik kaydı korunur).
+- [ ] **ECDSA / keyEncipherment'sız RSA güven etkisi (CHECKS-1)** — bugün YANLIŞLIKLA "güvenilmiyor" görünen kayıtlar; dağıtımdan
+      sonraki ilk kontrolde TRUSTED olurlar. Önce / sonra karşılaştırmak için sayıları not edin:
+  ```sql
+  SELECT public_key_algorithm, trust_status, count(*) FROM latest_checks WHERE status <> 'error' GROUP BY 1, 2 ORDER BY 1, 2;
+  SELECT count(*) FROM latest_checks WHERE public_key_algorithm = 'RSA' AND trust_status = 'UNTRUSTED'
+     AND (key_usage IS NULL OR key_usage NOT LIKE '%Key Encipherment%');
+  SELECT count(*) FROM alert_events WHERE alert_type = 'UNTRUSTED_CA' AND resolved = false;
+  SELECT grade, count(*) FROM tls_grade_status WHERE reasons LIKE '%CERT_UNTRUSTED%' GROUP BY 1;
+  ```
+  Beklenen: EC satırlarının UNTRUSTED sayısı ilk saatlik kontrolden sonra düşer; açık `UNTRUSTED_CA` alarmları (yalnız
+  `site.monitor.trust.alert-untrusted` açıksa var) normal bir çözüm postasıyla kapanır; TLS notları yükselir (bildirim yok);
+  otomatik pin bir kez yeniden pinlenir (hata süresince yenilenmiş host'larda tek bir "sertifika değişti" damgası). Takımlara
+  "çok sayıda çözüm postası gelebilir" diye önceden duyurun.
+- [ ] **Anahtar boyu kuralı (DATA-13)** — EdDSA / ML-DSA ve boyu bilinmeyen (≤ 0) anahtarlar artık "kısa anahtar" sayılmaz;
+      zayıf algoritma listesinden çıkacak satırlar (bilgi amaçlı):
+  ```sql
+  SELECT public_key_algorithm, public_key_size, count(*) FROM latest_checks
+   WHERE public_key_algorithm ILIKE '%dsa%' OR public_key_size < 0 GROUP BY 1, 2;
+  ```
+- [ ] **Geçiş sırasında elle "Şimdi kontrol et" yok** — eski (20.165) ve yeni pod'un birlikte çalıştığı pencerede eski pod'a düşen
+      elle sertifika kontrolü EC / keyEncipherment'sız RSA kaydını yeniden UNTRUSTED yazar; sonraki TLS profili turu bunu A → F
+      not DÜŞÜŞÜ sayar ve takıma "TLS notu düştü" postası + push gider. Takımlara dağıtım bitene (tüm pod'lar 20.165.1) kadar
+      kartlardan / toplu "Şimdi kontrol et" kullanmamalarını duyurun. Sertifika taramaları lidere bağlı DEĞİLDİR (kilidi alan
+      pod koşar): dağıtımı saat başından (`:00` saatlik tarama) uzak bir zamana koyun — taramayı eski pod alırsa etki aynıdır.
+- [ ] `SELECT count(*) FROM escalation_contacts;` — `webhook_url` TEXT'e genişler (`ALTER COLUMN … TYPE TEXT`); küçük tablo,
+      kilit kaygısı yok (sayı binlerle ölçülmüyorsa ek bir şey gerekmez).
+- [ ] Davranış değişiklikleri duyuruldu: (1) bir kullanıcının **sistem rolü** gerçekten değiştirilince (elle, yöneticinin "AD'den
+      yeniden eşitle"siyle ya da AD grup → rol eşlemesiyle; ve yöneticinin "otomatik parola sıfırlama"sında) o kişinin oturumu
+      kapanır, yeni rolüyle yeniden girer; (2) **silinen kullanıcının** açık oturumu ve
+      "beni hatırla" çerezi bir sonraki istekte düşer; (3) kanal teknik hata raporu kanalı / şablonu ya da süren bakım penceresi
+      olan **takım silinemez** — önce "Taşı"; (4) başında / sonunda boşluk olan yeni parola reddedilir (girişteki kırpma aynı);
+      (5) kapsamlı müdür başka takım için **haftalık rapor** açamaz (400, takım adımının altında gerekçe); (6) 443 dışı portta
+      kontrol edilen sertifikanın "HTTP durumu" yalnız port HTTP konuşuyorsa (ALPN h2 / http/1.1 ya da bilinen HTTPS portu)
+      okunur — LDAPS / SMTPS / IMAPS satırlarında boş kalır; (7) DNS'te çözülemeyen alan adı (NXDOMAIN) toplu ağ kesintisi
+      oranına sayılmaz (sınıfı DNS, alarm seviyesi UYARI).
+
 ### Kapsam ve sürüm
 - [ ] Dağıtılan şey **tag'lenmiş sürüm** (`git checkout v$VERSION`); çalışma ağacındaki commit'lenmemiş iş
       bu dağıtıma dahil değildir. GitHub → Actions'ta o commit için `ci.yml` **dört işi de yeşil**.

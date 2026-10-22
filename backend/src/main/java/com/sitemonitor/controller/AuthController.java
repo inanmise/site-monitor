@@ -298,7 +298,9 @@ public class AuthController {
             HttpServletResponse response) {
 
         String clientIp = resolveClientIp(request);
-        String username = body.getOrDefault("username", "").strip();
+        // Null güvenli (2026-10-22, hata avı AUTH-8): {"username": null} getOrDefault'tan null döndürüp NPE → 500 üretiyordu;
+        // bozuk girdi artık genel 401 akışına girer.
+        String username = java.util.Objects.toString(body.get("username"), "").strip();
 
         // 1. IP-based rate limit
         long waitSecs = blockedSecondsRemaining(clientIp);
@@ -329,7 +331,7 @@ public class AuthController {
             }
         }
 
-        String password  = body.getOrDefault("password", "").strip();
+        String password  = java.util.Objects.toString(body.get("password"), "").strip();
         boolean rememberMe = Boolean.parseBoolean(body.getOrDefault("remember_me", "false"));
 
         // Route by auth source: LOCAL accounts (incl. bootstrap admin) → BCrypt;
@@ -483,9 +485,6 @@ public class AuthController {
                                                                  HttpServletRequest request, HttpServletResponse response,
                                                                  UserService.LoginMethod method, String channel) {
         String username = lockoutKey;
-        loginAttempts.remove(clientIp);
-        windowStart.remove(clientIp);
-        blockedUntil.remove(clientIp);
         userService.clearLockoutOnSuccess(username);
 
         // Yalnız CANLI (son ping penceresi içinde) bir aktif oturum varsa onay iste; logout'suz
@@ -495,6 +494,12 @@ public class AuthController {
             log.info("Login needs confirmation — active session exists elsewhere: user={} IP={}", username, clientIp);
             return activeSessionConflict();
         }
+        // IP oran sınırı sayaçları YALNIZ gerçekten oturum kurulurken sıfırlanır (2026-10-22, hata avı AUTH-9): 409 dalından
+        // önce sıfırlanıyordu — geçerli hesabı olan biri, başka adlara parola püskürtme denemelerinin arasına kendi doğru
+        // girişini (oturum kurmayan 409) sıkıştırıp tek püskürtme kontrolü olan IP sınırını hiç tetiklemiyordu.
+        loginAttempts.remove(clientIp);
+        windowStart.remove(clientIp);
+        blockedUntil.remove(clientIp);
 
         HttpSession oldSession = request.getSession(false);
         if (oldSession != null) oldSession.invalidate();
@@ -924,6 +929,8 @@ public class AuthController {
         // Faz 3b: scope flags for the UI (hide global-only tabs from scoped müdür-admins).
         resp.put("global_admin", SessionScope.isGlobalAdmin(session));
         resp.put("scoped", session.getAttribute("viewTeamIds") != null);
+        putManageTeamIds(resp, session);
+        putViewTeamIds(resp, session);
         // Haftalık Raporlar modülü bu kullanıcıya görünür mü (2026-09-16)? Takım bazlı açılır, varsayılan
         // KAPALI — sekme yalnız açık takımlara (ve en az bir takım açıksa yönetici/denetçiye) çizilir.
         resp.put("weekly_reports_visible", weeklyReportsVisible(resp, session));
@@ -1134,6 +1141,9 @@ public class AuthController {
                 : SessionScope.isGlobalViewer(session) || nocOperator);
         // Kanal teknik hata raporu modülü (2026-10-17, S6): takım bazlı görünürlük — kapalıysa menüde görünmez
         scope.put("channel_reports", techErrorVisibility == null || techErrorVisibility.sessionSees(session));
+        // GLOBAL yönetici mi (2026-10-22, hata avı Theme G / K1): arayüzün "yalnız global yönetici" kapıları rol dizesine
+        // (systemRole === 'ADMIN') bakıyordu — kapsamlı müdür de ADMIN'dir ve sunucu onu 403'le reddediyordu. Ek alan.
+        scope.put("global_admin", SessionScope.isGlobalAdmin(session));
         return ResponseEntity.ok(Map.of("success", true, "data", snapshot, "scope", scope));
     }
 
@@ -1149,7 +1159,7 @@ public class AuthController {
             HttpSession session) {
         Object usernameAttr = session.getAttribute("username");
         if (usernameAttr == null) throw new SecurityException("Not authenticated");
-        String username = usernameAttr.toString().toLowerCase();
+        String username = usernameAttr.toString().toLowerCase(java.util.Locale.ROOT);   // tr_TR JVM'de "I" → "ı" olmasın (AUTH-15)
 
         int sz = Math.max(1, Math.min(size, 200));
         var result = auditLogRepo.findOwnFiltered(
@@ -1271,7 +1281,7 @@ public class AuthController {
         Long auditId = body.get("auditId") instanceof Number n ? n.longValue() : null;
         if (auditId == null) return ResponseEntity.badRequest().body(Map.of("success", false, "error", "auditId zorunlu"));
 
-        String actor = user.getUsername() == null ? "" : user.getUsername().toLowerCase();
+        String actor = user.getUsername() == null ? "" : user.getUsername().toLowerCase(java.util.Locale.ROOT);   // AUTH-15
         var row = auditLogRepo.findOwnById(auditId, actor);
         if (row.isEmpty()) {
             return ResponseEntity.status(404).body(Map.of("success", false, "error", "Kayıt bulunamadı"));
@@ -1395,6 +1405,17 @@ public class AuthController {
                     return t;
                 });
                 return new LdapAttempt(null, null, null, row);
+            }
+            // AD YEREL HESABI DEVRALAMAZ (2026-10-22, hata avı AUTH-3; varsayılan karar): yönlendirme YAZILAN ada göre
+            // yapılır — LDAP filtresi başka bir nitelikle de eşleşiyorsa (ör. e-posta) "admin@kurum" yazan AD kullanıcısının
+            // KANONİK adı (sAMAccountName) yerel bir hesabınkiyle (bootstrap admin dâhil) aynı çıkabiliyordu. Provizyon o
+            // satırın yerel parolasını siliyor, oturum yerel hesap olarak (bootstrapAdmin bayrağıyla) kuruluyordu. Şimdi
+            // yanlış parolayla AYNI genel 401 + kilit merdiveni; provizyon hiç koşmaz. Ön ek kuralından SONRA (kural "hangi
+            // hesapla girileceği"), pasif / bakım kararından ÖNCE (yerel hesabın durumu AD parolasıyla okunmasın).
+            if (existingRow.isPresent() && !"LDAP".equalsIgnoreCase(existingRow.get().getAuthSource())) {
+                log.warn("LDAP girişi reddedildi: AD kanonik adı '{}' YEREL bir hesaba ait (yazılan ad '{}') — provizyon yapılmadı",
+                        uname, username);
+                return LdapAttempt.FAILED;
             }
             if (existingRow.isPresent() && !Boolean.TRUE.equals(existingRow.get().getActive())) {
                 return new LdapAttempt(null, existingRow.get());
@@ -1548,11 +1569,37 @@ public class AuthController {
         // Faz 3b: scope flags so the UI hides global-only tabs from scoped müdür-admins.
         resp.put("global_admin", SessionScope.isGlobalAdmin(session));
         resp.put("scoped", session.getAttribute("viewTeamIds") != null);
+        putManageTeamIds(resp, session);
+        putViewTeamIds(resp, session);
         // Giriş yanıtına da konur: /me yalnız açılışta koşuyor — konmazsa sekme ancak F5'ten sonra görünürdü.
         resp.put("weekly_reports_visible", weeklyReportsVisible(resp, session));
         putMaintenance(resp);   // Sistem Bakım Modu (2026-10-02): global yönetici bakımda girince admin şeridi hemen görünsün
         putNoc(resp, session);  // 7/24 izleme ekibi (2026-10-04): giriş yanıtı da taşır — menü F5 beklemesin
         return resp;
+    }
+
+    /**
+     * YÖNETİM kapsamı (2026-10-22, hata avı K2): {@code manage_team_ids} = oturumun {@code manageTeamIds} listesi — arayüz
+     * "bu takımın kaydını yönetebilir miyim" kararını (ör. yenileme planı) rol dizesinden değil buradan verir. Global
+     * yönetici (kapsam yok = sınırsız) için alan YAZILMAZ; istemci o durumda {@code global_admin}'e bakar. Ek alan.
+     */
+    private static void putManageTeamIds(Map<String, Object> resp, HttpSession session) {
+        if (SessionScope.isGlobalAdmin(session)) return;
+        List<Long> manage = SessionScope.manageTeamIds(session);
+        resp.put("manage_team_ids", manage == null ? List.of() : new ArrayList<>(manage));
+    }
+
+    /**
+     * GÖRÜŞ kapsamı (2026-10-22, hata avı FE-1): {@code view_team_ids} = oturumun {@code viewTeamIds} listesi — sunucunun
+     * {@link SessionScope#canView} takımları. Arayüz sertifikanın "Şimdi kontrol et" kapısını {@code /check/{domain}}
+     * kuralıyla (SY ya da UG takımı bu kapsamda / EXECUTE paylaşımında) birebir kurar; 7/24 operatörü kartların hepsini
+     * görür ama çalıştırma kendi kapsamındadır. Global görüntüleyicide (global yönetici / AUDIT; kapsam yok = sınırsız)
+     * alan YAZILMAZ. Ek alan — eski istemci yok sayar; alan yoksa istemci üyelik + yönetim kapsamından türetir.
+     */
+    private static void putViewTeamIds(Map<String, Object> resp, HttpSession session) {
+        if (SessionScope.isGlobalViewer(session)) return;
+        List<Long> view = SessionScope.viewTeamIds(session);
+        resp.put("view_team_ids", view == null ? List.of() : new ArrayList<>(view));
     }
 
     /**

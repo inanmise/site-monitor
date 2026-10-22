@@ -347,6 +347,8 @@ public class CertificateService {
         // 7/24 anahtarı + grupları (2026-09-28, kart göstergesi) — aynı tek envanter okumasından (bkz. applyNoc)
         Map<String, CertificateInventory> nocSource = new HashMap<>(activeInventory.size());
         Map<String, String> platformNames = platformNameMap();
+        // Sahip takımlar SY + UG (2026-10-22, FE-1): istemcinin "Şimdi kontrol et" kapısı /check/{domain} kuralıyla aynı olsun
+        Map<String, List<Long>> ownerMap = new HashMap<>(activeInventory.size());
         for (CertificateInventory inv : activeInventory) {
             String d = inv.getDomain();
             if (d == null) continue;
@@ -359,6 +361,7 @@ public class CertificateService {
             if (inv.getPlatformDetail() != null && !inv.getPlatformDetail().isBlank()) platformDetailMap.put(d, inv.getPlatformDetail());
             if (inv.getPort() != null) portMap.put(d, inv.getPort());
             if (inv.getCheckIntervalHours() != null) intervalMap.put(d, inv.getCheckIntervalHours());
+            ownerMap.put(d, CertificateDto.ownerTeamIdsOf(inv.getTeamId(), inv.getUgTeamId()));
             if (inv.getTeamId() != null) {
                 teamIdMap.put(d, inv.getTeamId());
                 String tn = teamNames.get(inv.getTeamId());
@@ -384,6 +387,7 @@ public class CertificateService {
                     dto.setTeamId(teamIdMap.get(c.getDomain()));
                     dto.setTeamName(teamNameMap.get(c.getDomain()));
                     dto.setGroupName(groupMap.get(c.getDomain()));
+                    dto.setOwnerTeamIds(ownerMap.get(c.getDomain()));
                     dto.setTags(tagsMap.get(c.getDomain()));
                     dto.setPlatform(platformMap.get(c.getDomain()));
                     dto.setPlatformDetail(platformDetailMap.get(c.getDomain()));
@@ -575,6 +579,7 @@ public class CertificateService {
             dto.setPort(inv.getPort());
             dto.setTeamId(inv.getTeamId());
             dto.setTeamName(inv.getTeamId() == null ? null : teamNames.get(inv.getTeamId()));
+            dto.setOwnerTeamIds(CertificateDto.ownerTeamIdsOf(inv.getTeamId(), inv.getUgTeamId()));
             if (inv.getGroupName() != null && !inv.getGroupName().isBlank()) dto.setGroupName(inv.getGroupName());
             if (inv.getTags() != null && !inv.getTags().isBlank()) dto.setTags(inv.getTags());
             dto.setPlatform(inv.getPlatform());
@@ -1123,7 +1128,23 @@ public class CertificateService {
         List<String> errorDomains    = new ArrayList<>();
         Set<String> warnDomainSet    = new HashSet<>();
 
-        for (CertificateDto c : warnings) {
+        // UIM-18 / K12 (2026-10-22): kovalar satırın GÖSTERDİĞİ seviyeyi (alert_level — tier eşikleri) izler. Aday
+        // kümesi eskiden yalnız saklı `warning` bayrağıydı (global site.monitor.warning-days, 30): tier uyarı / yüksek
+        // eşiği 30 günün üstündeyse (ör. T1 uyarı 60, yüksek 45) 40 günlük sertifika kartta turuncu "Yüksek" görünürken
+        // sayaçlarda "Geçerli" sayılıyordu. Uyarı listesinde olmayan ama seviyesi uyarı / yüksek / kritik / dolmuş olan
+        // satırlar da aday; kovaya aynı tier eşikleriyle (daysFor) yerleşir — eşikler eşitken çıktı birebir aynı.
+        List<CertificateDto> candidates = new ArrayList<>(warnings);
+        Set<String> inWarnings = new HashSet<>();
+        for (CertificateDto c : warnings) inWarnings.add(c.getDomain());
+        for (CertificateDto c : all) {
+            if (c.getDomain() == null || inWarnings.contains(c.getDomain())) continue;
+            String lvl = c.getAlertLevel();
+            if ("warning".equals(lvl) || "high".equals(lvl) || "critical".equals(lvl) || "expired".equals(lvl)) {
+                candidates.add(c);
+            }
+        }
+
+        for (CertificateDto c : candidates) {
             warnDomainSet.add(c.getDomain());
             boolean isError = "error".equals(c.getStatus());
             Integer d = c.getDaysRemaining();

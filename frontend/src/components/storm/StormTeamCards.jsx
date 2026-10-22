@@ -1,6 +1,7 @@
 // Takım fırtına durum kartları (2026-09-30) — Alarm Fırtınası sayfası (tam) ve Ayarlar → Alarm Fırtınası canlı paneli (compact).
 import { CloudLightning, BellRing, Eye, Clock, Gauge } from 'lucide-react'
 import { useT, useDateLocale } from '../../i18n/index.jsx'
+import { alertTypeLabel } from '../../utils/alertTypeMeta.js'
 import { navigateTo } from '../../utils/navigate.js'
 import { formatIncidentTime } from '../../utils/incidentMeta.js'
 import TeamBadge from '../ui/TeamBadge.jsx'
@@ -102,7 +103,7 @@ export function TeamStormCard({ team, onDetail, compact = false }) {
             {team.window_items.slice(0, 5).map((it) => (
               <li key={it.id} className="flex items-center gap-1.5 truncate text-muted-foreground">
                 <span className="truncate">{it.domain}</span>
-                <Badge variant="outline" className="text-[10px]">{it.alert_type}</Badge>
+                <Badge variant="outline" className="text-[10px]" title={it.alert_type}>{alertTypeLabel(t, it.alert_type)}</Badge>
               </li>
             ))}
           </ul>

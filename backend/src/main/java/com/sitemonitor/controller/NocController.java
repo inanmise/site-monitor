@@ -383,10 +383,13 @@ public class NocController {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("name", u.getDisplayName() == null || u.getDisplayName().isBlank() ? u.getUsername() : u.getDisplayName());
             m.put("title", u.getTitle());
-            m.put("phone", u.getPhone());
+            // Pasif (devre dışı) hesap aranacak nöbetçi DEĞİLDİR (2026-10-22, L-N1): kişi "pasif" işaretiyle görünür ama telefonu
+            // verilmez — çağrı kartı ona "ara" düğmesi çizmiyordu, ayrılmış birinin numarası aranıyordu.
+            boolean active = p.active() && !Boolean.FALSE.equals(u.getActive());
+            m.put("phone", active ? u.getPhone() : null);
             m.put("until", p.until());
             m.put("override", p.override());
-            m.put("active", p.active());
+            m.put("active", active);
             return m;
         } catch (Exception e) {
             return null;

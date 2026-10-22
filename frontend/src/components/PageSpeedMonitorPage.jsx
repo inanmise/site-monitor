@@ -219,6 +219,8 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
   const [breaches, setBreaches] = useState([])
   const [resCheckId, setResCheckId] = useState(null)   // null = son ölçüm (LATEST)
   const [resLoading, setResLoading] = useState(false)
+  // Kaynak kırılımı okunamadı mı (2026-10-22, UIM-45): okuma hatası "kaynak yok" GÖSTERİLMEZ
+  const [resError, setResError] = useState(null)
   // await SONRASI için güncel değerler (bayat kapanış YOK): checkNow/refreshModal yanıtı gelene kadar pencere
   // kapanmış, başka izlemeye geçilmiş ya da başka bir ölçüm (anlık görüntü) seçilmiş olabilir.
   const selectedIdRef = useRef(null)
@@ -257,7 +259,9 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
   const [tagFilter, setTagFilter] = useState(() => readUrlParam('tag', 'all'))   // etiket filtresi (2026-09-18)
   const [proxyFilter, setProxyFilter] = useState(() => readUrlParam('via', 'all'))   // vekil süzgeci (2026-09-22): all | proxy | direct
   const [statFilter, setStatFilter] = useState(() => { const v = readUrlParam('stat', null); return v === 'total' ? null : v })
-  const [statsVisible, setStatsVisible] = useState(false)
+  // Etkin bir sayım süzgeci (paylaşılan bağlantı / kayıtlı görünüm / yeniden yükleme) şeritle AÇIK gelir: süzgeç bandı ve
+  // "Filtreyi temizle" katlanmış şeridin içinde kalıp liste sessizce süzülmesin (2026-10-22, UIM-20)
+  const [statsVisible, setStatsVisible] = useState(() => statFilter != null)
   const [loadNonce, setLoadNonce] = useState(0)   // her başarılı yüklemede artar: başlık çipi geri sayımı kendisi sayar, sayfa saniyede bir çizilmez (2026-10-01)
   // Kart yoğunluğu (2026-09-27): Kompakt / Zengin — sayfa HER AÇILIŞTA Zengin başlar; Kompakt seçimi yalnız sayfada
   // kalındığı sürece geçerli, kalıcı DEĞİL (kullanıcı kararı; bkz. hooks/useCardDensity)
@@ -347,11 +351,21 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
     try {
       const res = await api.monitoring.getPageSpeedResources(id, { checkId: checkId ?? undefined })
       if (seq !== resSeq.current) return        // daha yeni bir istek var → bu yaniti AT
-      setResources(res?.success ? (res.data?.resources ?? []) : [])
-      setResTotal(res?.success ? (res.data?.total ?? 0) : 0)
-      setBreaches(res?.success ? (res.data?.breaches ?? []) : [])
-    } catch {
-      if (seq === resSeq.current) { setResources([]); setResTotal(0); setBreaches([]) }
+      if (!res?.success) {
+        // Okunamadı: sessiz yenilemede son iyi kırılım KALIR (hata şeridiyle), ilk okumada boş + hata bloğu
+        setResError(res?.error || t('pspd.resLoadFailed'))
+        if (!silent) { setResources([]); setResTotal(0); setBreaches([]) }
+        return
+      }
+      setResources(res.data?.resources ?? [])
+      setResTotal(res.data?.total ?? 0)
+      setBreaches(res.data?.breaches ?? [])
+      setResError(null)
+    } catch (e) {
+      if (seq === resSeq.current) {
+        setResError(e?.message || t('pspd.resLoadFailed'))
+        if (!silent) { setResources([]); setResTotal(0); setBreaches([]) }
+      }
     } finally {
       if (seq === resSeq.current) setResLoading(false)
     }
@@ -359,14 +373,14 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
 
   function openDetail(m) {
     resSeq.current++            // onceki izlemenin ucusan yaniti bu modali DOLDURMASIN
-    setSelected(m); setResources([]); setResTotal(0); setBreaches([]); setResCheckId(null)
+    setSelected(m); setResources([]); setResTotal(0); setBreaches([]); setResCheckId(null); setResError(null)
     setDetailTab(deepLinkTab()); setMetric('load')
     setSpeedDx((cur) => (cur && cur.monitorId === m?.id ? cur : null))   // derin bağlantının kayıtlı çalıştırması yalnız KENDİ izlemesinde
     loadResources(m.id)
   }
   function closeDetail() {
     resSeq.current++
-    setSelected(null); setResources([]); setResTotal(0); setBreaches([]); setSpeedDx(null)
+    setSelected(null); setResources([]); setResTotal(0); setBreaches([]); setSpeedDx(null); setResError(null)
   }
   /** Tanılama penceresini aç — başlangıç ekranıyla (koşu kullanıcı "Tanılamayı başlat"a basınca). */
   function openDiagnose(m) { if (m) setSpeedDx({ monitorId: m.id, runId: null, initialRunId: null }) }
@@ -374,10 +388,11 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
   async function refreshModal() {
     if (!selected) return
     const id = selected.id
-    const res = await api.monitoring.getPageSpeedMonitors()
-    if (res?.success) {
-      setMonitors(res.data)
-      const fresh = (res.data || []).find(x => x.id === id)
+    // Liste SIRA KORUMALI load()'dan geçer (2026-10-22, UIM-19): yavaş bir yenileme yanıtı kaydetmeden sonra dönüp
+    // kaydedilmiş satırı eski değerlerle ezmesin (ikinci "Düzenle" ilkini geri alıyordu); ağ hatası load()'da işlenir.
+    const rows = await load()
+    if (Array.isArray(rows)) {
+      const fresh = rows.find(x => x.id === id)
       if (fresh) setSelected(prev => (prev?.id === id ? fresh : prev))   // A'nın tazesi B'nin penceresini değiştirmesin
     }
     // Pencere o arada kapandı / başka izlemeye geçildi → A'nın kaynakları B'nin penceresine yüklenmesin
@@ -467,7 +482,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
     // Parola YALNIZ yazıldıysa gönderilir: boş bırakmak "değiştirme" demektir, "sil" değil.
     if (form.basicAuthPass) p.basicAuthPass = form.basicAuthPass
     // Özel başlıkları yalnız admin gönderir; admin olmayanın alanı zaten çizilmez.
-    if (isAdmin && form.customHeaders !== '') p.customHeaders = form.customHeaders.trim() || null
+    if (globalAdmin && form.customHeaders !== '') p.customHeaders = form.customHeaders.trim() || null   // sunucu: isGlobalAdmin (UIM-15)
     return p
   }
 
@@ -923,7 +938,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
 
               {/* Özel başlıklar YALNIZ global admin'e çizilir: serbest başlık iç servislere
                   yetki/SSRF yüzeyi açar (PORT sendData ile aynı gerekçe). */}
-              {isAdmin && (
+              {globalAdmin && (
                 <FormField full label={t('pspd.customHeaders')}
                   hint={
                     /* Kardeşi KeywordMonitorPage ile aynı yedek: isim listesi boş olduğunda
@@ -1058,7 +1073,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
         <>
         <BulkActionBar selected={bulkSel} items={pager.pageItems.filter(canManageRow)} teams={teams} canDelete={canDeleteRow} nocType="PAGESPEED"
           api={{ update: api.monitoring.updatePageSpeedMonitor, remove: api.monitoring.deletePageSpeedMonitor }}
-          onClear={() => setBulkSel(new Set())} onDone={load}
+          onClear={() => setBulkSel(new Set())} onPrune={setBulkSel} onDone={load}
           onToggleAll={() => setBulkSel((s) => { const vis = pager.pageItems.filter(canManageRow); const all = vis.every((m) => s.has(m.id)); return all ? new Set() : new Set(vis.map((m) => m.id)) })} />
         {/* Süzgeç/arama hiçbir izlemeyi bırakmadıysa boş alan yerine açık mesaj (2026-09-22; vekil süzgeciyle görünür oldu) */}
         {displayMonitors.length === 0 && <StatusBlock tone="neutral" icon={Inbox} title={t('mon.noFilterMatch')} description={t('empty.hintFilter')} />}
@@ -1183,7 +1198,17 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
                 {resCheckId == null && resources[0]?.checked_at
                   && ` ${t('pspd.resMeasuredAt', formatDateSec(resources[0].checked_at))}`}
               </p>
+              {resError && resources.length > 0 && !resLoading && (
+                <div data-slot="pspd-res-stale"><AlertBanner tone="warning" className="mb-2"
+                  actions={<Button type="button" variant="outline" size="sm" className="pointer-coarse:h-10" onClick={() => loadResources(selected.id, resCheckId)}>{t('hist.retry')}</Button>}>
+                  {t('pspd.resStale')}
+                </AlertBanner></div>
+              )}
               {resLoading ? <LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />
+                : resError && resources.length === 0 ? (
+                  <div data-slot="pspd-res-error"><StatusBlock tone="danger" icon={Inbox} title={t('pspd.resLoadFailed')} description={String(resError)} className="py-6"
+                    actions={<Button type="button" variant="outline" className="pointer-coarse:h-10" onClick={() => loadResources(selected.id, resCheckId)}>{t('hist.retry')}</Button>} /></div>
+                )
                 : resources.length === 0 ? <StatusBlock tone="neutral" icon={Inbox} title={t('pspd.noResources')} className="py-6" />
                 : (
                 /* shadcn Table. Telefonda düşük öncelikli sütunlar (süre / HTTP / taraf) gizlenir, tablo
@@ -1287,7 +1312,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
               <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>
                 <MonitorNotes type="PAGESPEED" target={selected.url}
                   // Yalnız paylaşımla görülen izlemede not / rehber yazmak DÜZENLEME ister (2026-10-12); diğerinde varsayılan
-                  canManage={selected.shared_access === true ? canManageRow(selected) : undefined} />
+                  canManage={canManageRow(selected)} />
               </Suspense>
             </TabsContent>
 

@@ -116,14 +116,8 @@ public class AlertNoiseService {
         int d = Math.max(1, Math.min(MAX_DAYS, days));
         Set<String> domains = new HashSet<>();
         Map<String, Long> domainTeam = new HashMap<>();
-        try {
-            for (Object[] r : inventoryRepo.findActiveDomainTeams()) {
-                if (r == null || r.length < 2) continue;
-                String domain = r[0] == null ? null : String.valueOf(r[0]);
-                Long teamId = r[1] instanceof Number n ? n.longValue() : null;
-                if (canViewTeam.test(teamId)) { domains.add(domain); if (teamId != null) domainTeam.put(domain, teamId); }
-            }
-        } catch (Exception e) { log.debug("noise: envanter okunamadı: {}", e.toString()); }
+        Map<String, Long> domainUg = new HashMap<>();
+        loadVisibleInventory(canViewTeam, domains, domainTeam, domainUg, "noise");
 
         // Pencere ile kovalar AYNI takvimden: olaylar UTC kayan pencereden çekilirken kovalar
         // LocalDate.now(IST) ile kuruluyordu ve :81 computeIfPresent kullandığı için haritada
@@ -137,7 +131,7 @@ public class AlertNoiseService {
             Ev e = Ev.of(r);
             boolean vis = (e.teamId() != null && canViewTeam.test(e.teamId())) || (e.domain() != null && domains.contains(e.domain()));
             if (!vis) continue;
-            if (teamFilter != null && !teamFilter.equals(teamOf(e, domainTeam))) continue;
+            if (teamFilter != null && !matchesTeam(teamFilter, teamOf(e, domainTeam), e.domain(), domainTeam, domainUg)) continue;
             events.add(e);
         }
         events.sort(NEWEST_FIRST);   // kararlı: eski ORDER BY createdAt DESC ile aynı geçiş sırası
@@ -390,14 +384,8 @@ public class AlertNoiseService {
         if (dow < 0 || dow > 6 || hour < 0 || hour > 23) throw new IllegalArgumentException("dow 0-6, hour 0-23");
         Set<String> domains = new HashSet<>();
         Map<String, Long> domainTeam = new HashMap<>();
-        try {
-            for (Object[] r : inventoryRepo.findActiveDomainTeams()) {
-                if (r == null || r.length < 2) continue;
-                String domain = r[0] == null ? null : String.valueOf(r[0]);
-                Long teamId = r[1] instanceof Number n ? n.longValue() : null;
-                if (canViewTeam.test(teamId)) { domains.add(domain); if (teamId != null) domainTeam.put(domain, teamId); }
-            }
-        } catch (Exception e) { log.debug("noise slot: envanter okunamadı: {}", e.toString()); }
+        Map<String, Long> domainUg = new HashMap<>();
+        loadVisibleInventory(canViewTeam, domains, domainTeam, domainUg, "noise slot");
         String since = ISO.format(LocalDate.now(IST).minusDays(d - 1L).atStartOfDay(IST).toInstant());
 
         List<Object[]> hits = new ArrayList<>();
@@ -408,7 +396,7 @@ public class AlertNoiseService {
             boolean vis = (stamped != null && canViewTeam.test(stamped)) || (domain != null && domains.contains(domain));
             if (!vis) continue;
             Long team = stamped != null ? stamped : (domain == null ? null : domainTeam.get(domain));
-            if (teamFilter != null && !teamFilter.equals(team)) continue;
+            if (teamFilter != null && !matchesTeam(teamFilter, team, domain, domainTeam, domainUg)) continue;
             Instant created = parse(r[4] == null ? null : String.valueOf(r[4]));
             if (created == null) continue;
             ZonedDateTime z = created.atZone(IST);
@@ -460,6 +448,36 @@ public class AlertNoiseService {
     }
 
     // ── Yardımcılar ──
+
+    /**
+     * Görülebilir aktif envanter (2026-10-22, ALERTS-3): SY ya da UG takımı görülebilen kayıt. Eskiden yalnız SY sorulurdu —
+     * UG takımı kendi sertifika alarmlarını Alarm Geçmişi'nde görüp (liste sorgusu SY + UG), gürültü panelinde göremiyordu.
+     * {@code domainTeam} SY'yi (takım kırılımı SY'de kalır), {@code domainUg} UG'yi tutar (takım süzgeci için).
+     */
+    private void loadVisibleInventory(Predicate<Long> canViewTeam, Set<String> domains, Map<String, Long> domainTeam,
+                                      Map<String, Long> domainUg, String where) {
+        try {
+            for (Object[] r : inventoryRepo.findActiveDomainTeams()) {
+                if (r == null || r.length < 2) continue;
+                String domain = r[0] == null ? null : String.valueOf(r[0]);
+                Long teamId = r[1] instanceof Number n ? n.longValue() : null;
+                Long ugId = r.length > 2 && r[2] instanceof Number u ? u.longValue() : null;
+                if (canViewTeam.test(teamId) || (ugId != null && canViewTeam.test(ugId))) {
+                    domains.add(domain);
+                    if (teamId != null) domainTeam.put(domain, teamId);
+                    if (ugId != null) domainUg.put(domain, ugId);
+                }
+            }
+        } catch (Exception e) { log.debug("{}: envanter okunamadı: {}", where, e.toString()); }
+    }
+
+    /** Takım süzgeci — Alarm Geçmişi listesiyle AYNI: damga / SY (olayın takımı) ya da envanterin UG takımı. */
+    private static boolean matchesTeam(Long teamFilter, Long eventTeam, String domain, Map<String, Long> domainTeam,
+                                       Map<String, Long> domainUg) {
+        if (teamFilter.equals(eventTeam)) return true;
+        if (domain == null) return false;
+        return teamFilter.equals(domainTeam.get(domain)) || teamFilter.equals(domainUg.get(domain));
+    }
 
     /** Olayın takımı: alarmda damgalı takım, yoksa envanterin SY takımı (görülebilir envanter). */
     private static Long teamOf(Ev e, Map<String, Long> domainTeam) {

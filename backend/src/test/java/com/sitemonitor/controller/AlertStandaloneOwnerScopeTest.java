@@ -96,6 +96,8 @@ class AlertStandaloneOwnerScopeTest {
     @MockitoBean com.sitemonitor.service.PermissionService permissionService;
     @MockitoBean com.sitemonitor.service.MonitoringGroupService monitoringGroupService;
     @MockitoBean com.sitemonitor.service.SchedulerService schedulerService;
+    /** Alarm ayrıntısının nöbetçisi (L-H4, 2026-10-22) — stub yoksa boş harita (eski davranış). */
+    @MockitoBean com.sitemonitor.service.oncall.OnCallService onCallService;
 
     private MockHttpSession memberA, memberB, memberC, globalAdmin, nocD, nocB;
     /** B'nin bağımsız Ping alarmı — A'nın envanter host'unda (tür listesinden bağımsız). */
@@ -403,5 +405,143 @@ class AlertStandaloneOwnerScopeTest {
         mvc.perform(get("/api/admin/alerts/60").session(memberA)).andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.notify_scope").doesNotExist())
                 .andExpect(jsonPath("$.data.act_block").doesNotExist());
+    }
+
+    // ── Hata avı 2026-10-22 (PKG-1): erişim paylaşımıyla KİŞİ verisi gösterilmez ──────────────────────────────
+
+    private static final String CONTACTS = "[{\"name\":\"Müdür Kişi\",\"email\":\"mgr@example.com\",\"role\":\"MANAGER\"}]";
+
+    private MockHttpSession grantOnlyD(boolean execute) {
+        MockHttpSession s = session(execute ? "kisidx" : "kisidv", "USER", List.of(TEAM_D));
+        s.setAttribute(SessionScope.ATTR_GRANT_VIEW, new ArrayList<>(List.of(TEAM_B)));
+        if (execute) s.setAttribute(SessionScope.ATTR_GRANT_EXECUTE, new ArrayList<>(List.of(TEAM_B)));
+        return s;
+    }
+
+    @Test
+    @DisplayName("ALERTS-17: yalnız paylaşımla okuyan kişi notified_contacts (eskalasyon kişilerinin ad / e-posta / rolü) GÖRMEZ — liste, tekil, sahiplen, çöz; sahibi takım görür; varlık KAYDEDİLMEZ")
+    void grantOnlyReader_neverSeesNotifiedContacts() throws Exception {
+        pingB.setNotifiedContacts(CONTACTS);
+        MockHttpSession viewD = grantOnlyD(false);
+        mvc.perform(get("/api/admin/alerts").session(viewD)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].id").value(60))
+                .andExpect(jsonPath("$.data[0].notified_contacts").isEmpty());
+        pingB.setNotifiedContacts(CONTACTS);
+        mvc.perform(get("/api/admin/alerts/60").session(viewD)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.notified_contacts").isEmpty());
+
+        MockHttpSession execD = grantOnlyD(true);
+        pingB.setNotifiedContacts(CONTACTS);
+        mvc.perform(post("/api/admin/alerts/60/acknowledge").session(execD)
+                        .contentType(MediaType.APPLICATION_JSON).content(NOTE))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.notified_contacts").isEmpty());
+        pingB.setNotifiedContacts(CONTACTS);
+        mvc.perform(post("/api/admin/alerts/60/resolve").session(execD)
+                        .contentType(MediaType.APPLICATION_JSON).content(NOTE))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.notified_contacts").isEmpty());
+
+        // Sahibi takımın üyesi ve global yönetici aynen görür
+        pingB.setNotifiedContacts(CONTACTS);
+        mvc.perform(get("/api/admin/alerts/60").session(memberB)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.notified_contacts").value(containsString("mgr@example.com")));
+        mvc.perform(post("/api/admin/alerts/60/acknowledge").session(memberB)
+                        .contentType(MediaType.APPLICATION_JSON).content(NOTE))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.notified_contacts").value(containsString("mgr@example.com")));
+        mvc.perform(get("/api/admin/alerts").session(globalAdmin)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].notified_contacts").value(containsString("mgr@example.com")));
+        verify(alertEventRepo, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("A1 (son inceleme 2026-10-22): paylaşımla çözen kişinin yanıtı KOPYADA maskelenir — servisin döndürdüğü (zaman uyumsuz çözüm "
+            + "bildirimine verilen) örnek notified_contacts'ı korur, NULL kaydedilemez")
+    void grantOnlyResolve_masksCopyNotTheServiceInstance() throws Exception {
+        MockHttpSession execD = grantOnlyD(true);
+        pingB.setNotifiedContacts(CONTACTS);
+        pingB.setNocLastCall(Map.of("caller", "7/24 Operatörü"));
+        mvc.perform(post("/api/admin/alerts/60/resolve").session(execD)
+                        .contentType(MediaType.APPLICATION_JSON).content(NOTE))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.id").value(60))
+                .andExpect(jsonPath("$.data.notified_contacts").isEmpty())
+                .andExpect(jsonPath("$.data.noc_last_call").isEmpty());
+        org.assertj.core.api.Assertions.assertThat(pingB.getNotifiedContacts()).isEqualTo(CONTACTS);
+        org.assertj.core.api.Assertions.assertThat(pingB.getNocLastCall()).isNotNull();
+
+        mvc.perform(post("/api/admin/alerts/60/acknowledge").session(execD)
+                        .contentType(MediaType.APPLICATION_JSON).content(NOTE))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.notified_contacts").isEmpty());
+        org.assertj.core.api.Assertions.assertThat(pingB.getNotifiedContacts()).isEqualTo(CONTACTS);
+    }
+
+    @Test
+    @DisplayName("ALERTS-18 / K4: paylaşımla okunan alarmın push satırları — kişi adı gizli (null), SİSTEM karar satırı '-' korunur")
+    void grantOnlyPushRows_keepSystemMarker() throws Exception {
+        com.sitemonitor.model.UserPushDelivery person = new com.sitemonitor.model.UserPushDelivery();
+        person.setId(1L); person.setAlertEventId(60L); person.setUsername("N12345"); person.setDisplayName("Ayşe Yılmaz");
+        person.setStatus("SENT");
+        com.sitemonitor.model.UserPushDelivery system = new com.sitemonitor.model.UserPushDelivery();
+        system.setId(2L); system.setAlertEventId(60L); system.setUsername(AdminController.PUSH_SYSTEM_USER);
+        system.setStatus("SKIPPED_STORM");
+        when(userPushDeliveryRepo.findByAlertEventIdOrderByIdAsc(60L)).thenReturn(List.of(person, system));
+
+        mvc.perform(get("/api/admin/alerts/60/push-deliveries").session(grantOnlyD(false))).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].username").isEmpty())
+                .andExpect(jsonPath("$.data[0].display_name").isEmpty())
+                .andExpect(jsonPath("$.data[1].username").value("-"))
+                .andExpect(jsonPath("$.data[1].status").value("SKIPPED_STORM"));
+        mvc.perform(get("/api/admin/alerts/60/push-deliveries").session(memberB)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].username").value("N12345"));
+    }
+
+    @Test
+    @DisplayName("ALERTS-18: denetleyicinin sistem satırı işareti UserPushService.SYSTEM_USER ile AYNI (paket içi sabit, yansımayla)")
+    void pushSystemUserMatchesService() throws Exception {
+        java.lang.reflect.Field f = com.sitemonitor.service.UserPushService.class.getDeclaredField("SYSTEM_USER");
+        f.setAccessible(true);
+        org.assertj.core.api.Assertions.assertThat(f.get(null)).isEqualTo(AdminController.PUSH_SYSTEM_USER);
+    }
+
+    @Test
+    @DisplayName("L-H4: alarm ayrıntısının nöbetçisi /api/oncall/current kapısıyla — oncall.read + sahip takımı KENDİ kapsamıyla görmek; A, B'nin bağımsız alarmında B'nin nöbetçisini almaz")
+    void alertDetailOncall_followsOncallGate() throws Exception {
+        when(permissionService.allows(any(HttpSession.class), eq("oncall.read"), eq("view"))).thenReturn(true);
+        when(onCallService.notifyTargets(any())).thenReturn(Map.of());
+        when(onCallService.currentFor(any())).thenAnswer(i -> {
+            Map<Long, com.sitemonitor.service.oncall.OnCallService.OnCallPerson> m = new LinkedHashMap<>();
+            for (Object t : (Collection<?>) i.getArgument(0)) {
+                Long id = (Long) t;
+                m.put(id, new com.sitemonitor.service.oncall.OnCallService.OnCallPerson(id, 900L + id, "NOBET" + id,
+                        "Nöbetçi " + id, "n" + id + "@example.com", true, false, "2026-10-23T08:00"));
+            }
+            return m;
+        });
+
+        // A üyesi B'nin bağımsız alarmını envanter kuralıyla OKUR ama B'nin nöbetçisini görmez
+        mvc.perform(get("/api/admin/alerts/60").session(memberA)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.oncall").isEmpty());
+        // Sahibi takımın üyesi görür
+        mvc.perform(get("/api/admin/alerts/60").session(memberB)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.oncall[0].name").value("Nöbetçi 2"));
+        // oncall.read izni yoksa kimse görmez
+        when(permissionService.allows(any(HttpSession.class), eq("oncall.read"), eq("view"))).thenReturn(false);
+        mvc.perform(get("/api/admin/alerts/60").session(memberB)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.oncall").isEmpty());
+    }
+
+    @Test
+    @DisplayName("DATA-7: alarm listesi sıralaması her anahtarda id eşitlik bozucusuyla biter (aynı saniyedeki alarmlar sayfa sınırında yinelenmez)")
+    void alertSortEndsWithIdTieBreak() {
+        for (String key : new String[] { null, "opened", "resolved", "level", "team", "domain", "type" }) {
+            for (Boolean resolved : new Boolean[] { null, Boolean.TRUE }) {
+                var orders = AdminController.AlertSort.of(key, "asc", resolved).toList();
+                org.assertj.core.api.Assertions.assertThat(orders.get(orders.size() - 1).getProperty())
+                        .as("anahtar=" + key + " kapalı=" + resolved).isEqualTo("id");
+            }
+        }
     }
 }

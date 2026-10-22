@@ -134,13 +134,13 @@ export function PushLogCards({ rows, t, canRequeue, busy, onOpen, onRequeue }) {
               <span className="flex min-w-0 items-center justify-between gap-2">
                 <span className="flex min-w-0 items-center gap-1.5">
                   <TypeBadge>{typeText(row, t)}</TypeBadge>
-                  <span className="min-w-0 truncate text-sm font-semibold">{monitorOf(row)}</span>
+                  <span className="min-w-0 text-sm font-semibold [overflow-wrap:anywhere]">{monitorOf(row)}</span>
                 </span>
                 <KindBadge tone={m.tone} icon={m.Icon} title={row.status || ''}>{statusLabel(row.kind, t)}</KindBadge>
               </span>
               <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-                <span className="min-w-0 truncate font-medium text-foreground">{row.display_name || row.username || '—'}</span>
-                {row.team_name && <span className="min-w-0 truncate">· {row.team_name}</span>}
+                <span className="min-w-0 font-medium text-foreground [overflow-wrap:anywhere]">{row.display_name || row.username || '—'}</span>
+                {row.team_name && <span className="min-w-0 [overflow-wrap:anywhere]">· {row.team_name}</span>}
               </span>
               {(row.error || row.http_status) && row.kind !== 'SENT' && (
                 <span className="min-w-0 truncate text-xs text-destructive">{[row.http_status ? `HTTP ${row.http_status}` : null, row.error].filter(Boolean).join(' · ')}</span>

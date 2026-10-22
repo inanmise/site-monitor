@@ -268,11 +268,15 @@ export default function ActivityLog({ refreshTrigger }) {
   const openDetail = (row) => {
     if (openId === row.id) { setOpenId(null); return }
     setOpenId(row.id)
-    if (!details[row.id]) {
-      api.getActivityDetail(row.id).then((res) => {
-        if (res?.success) setDetails((d) => ({ ...d, [row.id]: { data: res.data, recent: res.recent || [] } }))
-      }).catch(() => {})
-    }
+    if (!details[row.id] || details[row.id].error) loadDetail(row.id)
+  }
+  // Satır ayrıntısı (mini geçmiş) — okunamazsa "Yükleniyor…" sonsuza dek kalmasın, hata + yeniden dene (2026-10-22, UIM-37)
+  const loadDetail = (id) => {
+    setDetails((d) => (d[id]?.error ? { ...d, [id]: undefined } : d))
+    api.getActivityDetail(id).then((res) => {
+      if (res?.success) setDetails((d) => ({ ...d, [id]: { data: res.data, recent: res.recent || [] } }))
+      else setDetails((d) => ({ ...d, [id]: { error: true } }))
+    }).catch(() => setDetails((d) => ({ ...d, [id]: { error: true } })))
   }
 
   const anyFilter = filters.types.length > 0 || filters.status || filters.q || filters.range !== '24h'
@@ -332,7 +336,12 @@ export default function ActivityLog({ refreshTrigger }) {
         )}
         <div className="flex min-w-0 flex-col gap-1">
           <div className="flex items-center gap-1.5 text-[0.8em] tracking-wide text-muted-foreground uppercase"><Clock aria-hidden="true" className="size-3" /> {t('act.miniHistory')}</div>
-          {d ? (d.recent.length ? (
+          {d?.error ? (
+            <div data-slot="act-detail-error" className="flex flex-wrap items-center gap-2 text-[0.85em] text-muted-foreground">
+              <span>{t('act.detailLoadFailed')}</span>
+              <Button type="button" variant="outline" size="sm" className="pointer-coarse:h-10" onClick={() => loadDetail(row.id)}>{t('hist.retry')}</Button>
+            </div>
+          ) : d ? (d.recent.length ? (
             <ul className="flex list-none flex-col gap-1 p-0">
               {d.recent.map((h) => {
                 const hs = STATUS_META[h.result_status] || STATUS_META.UNKNOWN

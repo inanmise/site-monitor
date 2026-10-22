@@ -128,6 +128,28 @@ class IncidentPostmortemQueriesTest {
 
     @Test
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    @DisplayName("IN-1 (2026-10-22): sahiplenmeden ÖNCE okunmuş aksiyonun durum kaydı reminded_on'u eski değerle EZMEZ; resetReminder hedefli sıfırlar")
+    void staleSaveKeepsReminderClaim() {
+        IncidentRecord inc = incident("R", 5L, 5L);
+        try {
+            IncidentActionItem a = action(inc.getId(), "yarın", "OPEN", "2026-10-12", 1L);
+            IncidentActionItem stale = actions.findById(a.getId()).orElseThrow();   // kullanıcı formu açtı (remindedOn null)
+            assertThat(actions.claimFirstReminder(a.getId(), TODAY)).isEqualTo(1); // 09:00 işi sahiplendi
+            stale.setStatus("IN_PROGRESS");
+            actions.save(stale);                                                     // eski okumayla kayıt
+            IncidentActionItem now = actions.findById(a.getId()).orElseThrow();
+            assertThat(now.getStatus()).isEqualTo("IN_PROGRESS");
+            assertThat(now.getRemindedOn()).as("sahiplenme korunur — ikinci / erken hatırlatma yok").isEqualTo(TODAY);
+            assertThat(actions.resetReminder(a.getId())).isEqualTo(1);
+            assertThat(actions.findById(a.getId()).orElseThrow().getRemindedOn()).isNull();
+        } finally {
+            actions.deleteAll();
+            incidents.deleteAll();
+        }
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     @DisplayName("hatırlatma: adaylar açık + sahipli + son tarihi yarına kadar; sahiplenme koşullu ve kendi işleminde")
     void reminderClaims() {
         IncidentRecord inc = incident("H", 5L, 5L);

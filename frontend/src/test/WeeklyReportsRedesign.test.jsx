@@ -43,7 +43,7 @@ const SENT = base({ id: 12, status: 'APPROVED', sent_at: '2026-09-01T10:00:00', 
 const THIS_WEEK = { year: 2026, week: 37, due_at: '2000-01-01T12:00:00', deadline_day: 'FRI', deadline_time: '15:00',
   teams: [{ team_id: 5, team_name: 'SY-A', status: 'PENDING_APPROVAL', report_id: 10 }, { team_id: 6, team_name: 'SY-B', status: 'MISSING', report_id: null }, { team_id: 7, team_name: 'SY-C', status: 'DRAFT', report_id: 30 }] }
 
-const renderPage = (role = 'ADMIN', teamId = 5) => render(<LangProvider><WeeklyReportsPage systemRole={role} teamId={teamId} teamName="SY-A" /></LangProvider>)
+const renderPage = (role = 'ADMIN', teamId = 5) => render(<LangProvider><WeeklyReportsPage systemRole={role} globalAdmin={role === 'ADMIN'} teamId={teamId} teamName="SY-A" /></LangProvider>)
 const openEditor = async (id) => {
   window.history.replaceState({}, '', `/?tab=weeklyreports&w_id=${id}`)
   renderPage()
@@ -139,7 +139,9 @@ describe('WeeklyReportsPage — yeniden tasarım (2026-09-27)', () => {
     const cta = screen.getByRole('button', { name: /^(Raporu oluştur|Create report)$/ })
     await waitFor(() => expect(cta).toBeEnabled())
     fireEvent.click(cta)
-    await waitFor(() => expect(api.weeklyReports.create).toHaveBeenCalledWith({ team_id: 5, year: prev.year, week_no: prev.week, carry_notes: false }))
+    // Global olmayan kullanıcı takım GÖNDERMEZ — sunucu kendi takımını kullanır (WR-2 / K8, 2026-10-22)
+    await waitFor(() => expect(api.weeklyReports.create).toHaveBeenCalledWith(expect.objectContaining({ year: prev.year, week_no: prev.week, carry_notes: false })))
+    expect(api.weeklyReports.create.mock.calls[0][0].team_id).toBeUndefined()
     await waitFor(() => expect(api.weeklyReports.get).toHaveBeenCalledWith(11))
     expect(await screen.findByText('2026-W36')).toBeInTheDocument()
   })

@@ -106,6 +106,25 @@ class AlertTeamStatsServiceTest {
     }
 
     @Test
+    @DisplayName("ALERTS-3 / DATA-5 (2026-10-22): SY damgalı sertifika alarmı UG takımının satırında da sayılır (hücre penceresiyle aynı küme); toplam alarm BİR kez")
+    void ugTeamRowCounts() {
+        CertificateInventory inv = new CertificateInventory();
+        inv.setDomain("ug.example.com"); inv.setTeamId(2L); inv.setUgTeamId(1L);
+        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(inv));
+        when(alertEventRepo.findAllOpenOrderBySeverity()).thenReturn(List.of(ev(7, 2L, "ug.example.com", false, daysAgo(1))));
+        when(alertEventRepo.findByCreatedAtGreaterThanEqualOrderByCreatedAtDesc(anyString())).thenReturn(List.of());
+
+        Map<String, Object> ugView = service.build(t -> t != null && t == 1L, false);
+        assertThat(teams(ugView)).extracting(m -> m.get("team_id")).containsExactly(1L);
+        assertThat(teams(ugView).get(0)).containsEntry("open", 1L);
+        assertThat(ugView).containsEntry("total_open", 1L);
+
+        Map<String, Object> global = service.build(t -> true, true);
+        assertThat(teams(global)).extracting(m -> m.get("team_id")).containsExactlyInAnyOrder(1L, 2L);
+        assertThat(global).as("toplam alarmı bir kez sayar").containsEntry("total_open", 1L);
+    }
+
+    @Test
     @DisplayName("depo düşerse panel boş döner (liste etkilenmez)")
     void degradesGracefully() {
         when(alertEventRepo.findAllOpenOrderBySeverity()).thenThrow(new IllegalStateException("db"));

@@ -32,6 +32,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -219,7 +220,7 @@ class SmtpLogQueryServiceTest {
         when(logRepo.findById(7L)).thenReturn(Optional.of(resolvedFail));
         when(alertRepo.findById(10L)).thenReturn(Optional.of(ae(10, "a.example.com", 1L, "CRITICAL", false)));
         when(alertRepo.findById(12L)).thenReturn(Optional.of(ae(12, "b.example.com", 2L, "HIGH", true)));
-        when(emailService.resendStoredHtml(eq("ops@example.com"), eq("subj"), eq("<html>b</html>"), eq("critical"))).thenReturn("SENT");
+        when(emailService.resendStoredHtml(eq("ops@example.com"), isNull(), eq("subj"), eq("<html>b</html>"), eq("critical"))).thenReturn("SENT");
         when(emailService.getEmailFrom()).thenReturn("noreply@example.com");
         when(logRepo.save(any())).thenAnswer(inv -> { NotificationLog x = inv.getArgument(0); x.setId(99L); return x; });
 
@@ -227,7 +228,7 @@ class SmtpLogQueryServiceTest {
         assertThat(svc.resend(7L, SmtpLogQueryService.Scope.all(), "admin").reason()).isEqualTo("ALERT_RESOLVED");
         assertThat(svc.resend(2L, new SmtpLogQueryService.Scope(false, Set.of(2L), Set.of()), "admin").reason()).isEqualTo("NOT_FOUND");
         assertThat(svc.resend(404L, SmtpLogQueryService.Scope.all(), "admin").reason()).isEqualTo("NOT_FOUND");
-        verify(emailService, never()).resendStoredHtml(anyString(), anyString(), anyString(), anyString());
+        verify(emailService, never()).resendStoredHtml(any(), any(), any(), any(), any());
 
         SmtpLogQueryService.ResendResult r = svc.resend(2L, SmtpLogQueryService.Scope.all(), "admin");
         assertThat(r.ok()).isTrue(); assertThat(r.status()).isEqualTo("SENT"); assertThat(r.newLogId()).isEqualTo(99L);
@@ -250,7 +251,25 @@ class SmtpLogQueryServiceTest {
             when(logRepo.findById(50L)).thenReturn(Optional.of(n));
             assertThat(svc.resend(50L, SmtpLogQueryService.Scope.all(), "admin").reason()).as(trigger).isEqualTo("SUMMARY_NOT_RESENDABLE");
         }
-        verify(emailService, never()).resendStoredHtml(anyString(), anyString(), anyString(), anyString());
+        verify(emailService, never()).resendStoredHtml(any(), any(), any(), any(), any());
+        verify(logRepo, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("Son inceleme 2026-10-22 (e): teknik hata RAPORU / test / onay satırı gövde saklamaz → yeniden gönderilmez (NO_BODY) — "
+            + "çok alıcılı (To + CC) yönetici satırı PDF'siz gitmez, rapor durumu değişmeden kalmaz")
+    void techErrorReportRowsAreNotResendable() {
+        for (String trigger : List.of(com.sitemonitor.service.techerror.TechErrorReportSender.TRIGGER,
+                com.sitemonitor.service.techerror.TechErrorReportSender.TEST_TRIGGER,
+                com.sitemonitor.service.techerror.TechErrorApprovalService.TRIGGER)) {
+            NotificationLog n = new NotificationLog(); n.setId(51L); n.setAlertEventId(0L); n.setSentAt(at(3)); n.setRecipientName("Dijital");
+            n.setRecipientEmail("yonetici1@example.com, yonetici2@example.com"); n.setCc("dijital@example.com");
+            n.setSubject("Mobil Kanalı — Eylül 2026 Teknik Hata Raporu"); n.setRecipientRole("EXECUTIVE");
+            n.setEmailStatus("FAILED: 550 x"); n.setTrigger(trigger);
+            when(logRepo.findById(51L)).thenReturn(Optional.of(n));
+            assertThat(svc.resend(51L, SmtpLogQueryService.Scope.all(), "admin").reason()).as(trigger).isEqualTo("NO_BODY");
+        }
+        verify(emailService, never()).resendStoredHtml(any(), any(), any(), any(), any());
         verify(logRepo, never()).save(any());
     }
 

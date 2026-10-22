@@ -10,7 +10,7 @@ import TeamBadge from './ui/TeamBadge.jsx'
 import CopyableRef from './ui/CopyableRef.jsx'
 import { navigateTo } from '../utils/navigate.js'
 import { useToast } from './ui/Toast.jsx'
-import { groupPeers } from './sharedcert/sharedCertModel.js'
+import { daysText, groupPeers } from './sharedcert/sharedCertModel.js'
 import { ToggleGroup, ToggleGroupItem } from '@/components/shadcn/toggle-group'
 import { Button } from '@/components/shadcn/button'
 import { Badge } from '@/components/shadcn/badge'
@@ -108,7 +108,7 @@ export default function SharedCertificateModal({ domain, onClose, onSelectDomain
           <dt className="text-[.88em] text-muted-foreground">{t('shc.issuer')}</dt>
           <dd className="m-0 flex flex-wrap items-center gap-1 [overflow-wrap:anywhere]"><ShieldCheck size={12} aria-hidden="true" /> {d?.issuer || '—'}</dd>
           <dt className="text-[.88em] text-muted-foreground">{t('shc.expiry')}</dt>
-          <dd className="m-0">{d?.not_after ? formatDate(d.not_after) : '—'}{d?.days_remaining != null && <span className={DIM}> · {t('shc.daysLeft', d.days_remaining)}</span>}</dd>
+          <dd className="m-0">{d?.not_after ? formatDate(d.not_after) : '—'}{d?.days_remaining != null && <span className={DIM}> · {daysText(d, t)}</span>}</dd>
           <dt className="text-[.88em] text-muted-foreground">{t('shc.fingerprint')}</dt>
           <dd className="m-0 min-w-0">{d?.fingerprint ? <CopyableRef value={d.fingerprint} copyLabel={t('shc.copyFp')} copiedLabel={t('err.copied')} /> : '—'}</dd>
           {Array.isArray(d?.san) && d.san.length > 0 && (<>

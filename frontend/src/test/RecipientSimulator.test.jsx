@@ -56,7 +56,9 @@ describe('RecipientSimulator — "Who gets notified?" tab', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     api.admin.simulateRecipients.mockResolvedValue({ success: true, data: RESULT })
-    api.notificationGroups.list.mockResolvedValue({ success: true, data: GROUPS })
+    // Sunucunun GERÇEK biçimi (NotificationGroupController.list): { groups, writable_team_ids, team_names, team_emails } —
+    // eski mock dizi döndürüyordu, sunucunun hiç göndermediği biçim; bileşen o yüzden grubu hep boş görüyordu (2026-10-22, UIA-A1)
+    api.notificationGroups.list.mockResolvedValue({ success: true, data: { groups: GROUPS, writable_team_ids: [7], team_names: { 7: 'Takım A' }, team_emails: {} } })
     api.noc.coverage.mockResolvedValue({ success: true, data: { summary: { total: 3, covered: 1, not_covered: 2, paused: 0,
       by_type: { SSL: { total: 3, covered: 1 } }, active_groups: 1, disabled_types: [], min_level: 'CRITICAL' }, items: [] } })
   })

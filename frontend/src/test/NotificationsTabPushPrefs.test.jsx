@@ -57,3 +57,20 @@ describe('NotificationsTab — kişisel push tercihleri', () => {
     expect(document.querySelector('[data-slot="ud-push-prefs"]')).toBeNull()
   })
 })
+
+// 20.165.1 (UIA-6): takımsız (eski) eskalasyon kişisi alarm ALICISI DEĞİLDİR — "Tüm takımlar" tam tersini söylüyordu
+describe('NotificationsTab — takımsız eskalasyon kişisi', () => {
+  it('team_id yok → "Takıma atanmamış — bildirim almaz" uyarı rozeti; "Tüm takımlar" yazmaz; adı okunamayan takım #id değil', () => {
+    const contacts = { data: [
+      { id: 1, team_id: null, role: 'MANAGER', min_alert_level: 'HIGH', active: true },
+      { id: 2, team_id: 42, role: 'PO', min_alert_level: 'CRITICAL', active: true },
+    ], status: 'ok', loading: false, reload: vi.fn() }
+    render(<NotificationsTab {...props(base, { contacts })} />)
+    const rows = [...document.querySelectorAll('[data-slot="ud-contacts"] li')]
+    expect(rows[0].querySelector('[data-slot="ud-contact-no-team"]')).not.toBeNull()
+    expect(rows[0]).toHaveTextContent(/No team — gets no notifications|Takıma atanmamış — bildirim almaz/)
+    expect(rows[0].textContent).not.toMatch(/All teams|Tüm takımlar/)
+    expect(rows[1].textContent).not.toContain('#42')
+  })
+})
+

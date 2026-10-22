@@ -37,7 +37,9 @@ public class EscalationContact {
     @Column(nullable = false)
     private String minAlertLevel = "WARNING";
 
-    /** Optional webhook URL for Teams or Slack */
+    /** Optional webhook URL for Teams or Slack. TEXT (DATA-3, 2026-10-22): Teams "Workflows" (Power Automate) adresleri ~290
+     *  karakter — VARCHAR(255) varsayılanı kaydı 400 VALUE_TOO_LONG ile reddediyordu. */
+    @Column(name = "webhook_url", columnDefinition = "TEXT")
     private String webhookUrl;
 
     /** TEAMS or SLACK */

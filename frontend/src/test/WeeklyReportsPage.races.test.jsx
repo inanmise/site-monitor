@@ -37,7 +37,7 @@ const A = base({ id: 11, week_no: 36, week_label: '2026-W36', version: 4 })
 const B = base({ id: 15, week_no: 37, week_label: '2026-W37', version: 7 })
 const ALL = [A, B]
 const deferred = () => { let resolve; const p = new Promise((r) => { resolve = r }); return { p, resolve } }
-const renderPage = (role = 'ADMIN') => render(<LangProvider><WeeklyReportsPage systemRole={role} teamId={5} teamName="Takım A" /></LangProvider>)
+const renderPage = (role = 'ADMIN') => render(<LangProvider><WeeklyReportsPage systemRole={role} globalAdmin={role === 'ADMIN'} teamId={5} teamName="Takım A" /></LangProvider>)
 const flush = () => act(() => new Promise((r) => setTimeout(r, 0)))
 
 describe('WeeklyReportsPage — yarışlar (2026-09-27 regresyon taraması)', () => {

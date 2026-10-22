@@ -74,6 +74,13 @@ public class AdminController {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.sitemonitor.service.oncall.OnCallService onCallService;
 
+    /**
+     * Hatırlanan girişler (2026-10-22, hata avı AUTH-1 / AUTH-10) — kullanıcı silinince ve yönetici parolayı sıfırlayınca
+     * token'lar silinir. Alan enjeksiyonu + isteğe bağlı: {@code @RequiredArgsConstructor} imzası değişmez.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.RememberMeService rememberMeService;
+
     /** Takım erişim paylaşımı (2026-10-12) — takım / kullanıcı silinince paylaşımları da gider. İsteğe bağlı (dilim testi). */
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.sitemonitor.service.access.TeamAccessGrantService teamAccessGrants;
@@ -692,6 +699,12 @@ public class AdminController {
 
         // Build diff BEFORE applying changes
         String diffJson = buildInventoryDiff(existing, item, true);
+        // Grup / UG takımı / kontrol sıklığı DEĞERLERİ normalize edilip (grup kayıt defteri, UG kuralı, aralık listesi)
+        // yazıldıktan SONRA karşılaştırılır (2026-10-22, hata avı ADMIN-10) — yalnız bunlar değişince DOMAIN_EDIT hiç
+        // yazılmıyordu ("UG takımını kim kaldırdı?" sorusu cevapsız kalıyordu).
+        final String groupBefore = existing.getGroupName();
+        final Long ugBefore = existing.getUgTeamId();
+        final Integer intervalBefore = existing.getCheckIntervalHours();
         // Geçmiş için AYRI snapshot: buildInventoryDiff elle JSON kuruyor ve yalnız FARKI üretiyor;
         // ürün geçmişi ise "o an tam durum" da tutuyor (AuditDiff ile, aynı maskeleme kurallarıyla).
         Map<String, Object> _histBefore = AuditDiff.snapshot(existing, INVENTORY_FIELDS);
@@ -731,14 +744,18 @@ public class AdminController {
         existing.setActive(item.getActive() != null ? item.getActive() : true);
         existing.setExpectedFingerprint(item.getExpectedFingerprint());
         existing.setExpectedSubject(item.getExpectedSubject());
+        boolean syTeamChanged = false;
         if (item.getTeamId() != null) {
             // Takım buradan da değişebiliyor (global admin) — transferInventory ile AYNI senkron.
             boolean teamChanged = !java.util.Objects.equals(existing.getTeamId(), item.getTeamId());
             if (teamChanged) requireExistingTeam(item.getTeamId());   // O3 (2026-09-28): olmayan takıma taşıma 400
             existing.setTeamId(item.getTeamId());
             if (teamChanged) derivedMonitorTeamSync.syncTeam(existing.getDomain(), item.getTeamId());
+            syTeamChanged = teamChanged;
         }
-        existing.setUgTeamId(newUgTeamId);
+        // Takım DEĞİŞTİYSE ve UG yeni SY takımıyla aynıysa UG düşer (2026-10-22, hata avı ADMIN-13 — TeamAdminService.moveAll
+        // ile aynı kural): kayıt kendi UG takımına taşınınca iki rolde aynı takım kalıyordu.
+        existing.setUgTeamId(syTeamChanged && newUgTeamId != null && newUgTeamId.equals(existing.getTeamId()) ? null : newUgTeamId);
         // Bildirim grubu: SAHIPLIK dogrulanir -- baska takimin grubu envantere yazilamaz
         // (monitor tarafindaki applyNotificationGroup ile ayni kural).
         existing.setNotificationGroupId(
@@ -779,6 +796,9 @@ public class AdminController {
         existing.setTier(item.getTier());
         existing.setGroupName(monitoringGroupService.getOrCreate(existing.getTeamId(), "cert", item.getGroupName(), actor(session)));
         existing.setUpdatedAt(now());
+        // "Son güncelleyen" künyesi (2026-10-22, hata avı ADMIN-4): updated_at "şimdi" olurken updated_by boş / eski kalıyordu
+        // — sertifika penceresinin Değişiklikler kartı "Bilinmiyor" ya da yanlış kişiyi gösteriyordu.
+        monitorHistory.stampUpdated(existing, session);
         CertificateInventory saved = inventoryRepo.save(existing);
 
         // Pasife alındıysa (true→false) açık alarmları sessizce kapat — izleme durduğundan
@@ -788,6 +808,11 @@ public class AdminController {
             alertsClosed = escalationService.closeAlertsOnDeactivate(saved.getDomain());
         }
 
+        StringBuilder extra = new StringBuilder();
+        fieldDiff(extra, "groupName", groupBefore, saved.getGroupName());
+        fieldDiff(extra, "ugTeamId", ugBefore, saved.getUgTeamId());
+        fieldDiff(extra, "checkIntervalHours", intervalBefore, saved.getCheckIntervalHours());
+        diffJson = mergeDiff(diffJson, extra);
         if (!diffJson.equals("{}")) {
             auditService.recordAction("DOMAIN_EDIT", session, request,
                     "CERTIFICATE", saved.getDomain(), diffJson);
@@ -890,6 +915,24 @@ public class AdminController {
                 .orElse(null);
     }
 
+    /**
+     * SY takımı değişen envanter kaydının yönlendirme alanları (2026-10-22, hata avı ADMIN-13 — {@code TeamAdminService
+     * .moveAll} ile aynı kural): eski takımın bildirim grubu yeni takımda geçerli değilse düşer (kayıt eski takıma dönünce
+     * bayat grup sessizce yeniden devreye giriyordu), UG takımı yeni SY takımıyla aynıysa temizlenir.
+     */
+    private void applyTeamChangeRouting(CertificateInventory inv) {
+        inv.setNotificationGroupId(validInventoryGroup(inv.getNotificationGroupId(), inv.getTeamId()));
+        if (inv.getUgTeamId() != null && inv.getUgTeamId().equals(inv.getTeamId())) inv.setUgTeamId(null);
+    }
+
+    /** {@link #buildInventoryDiff} çıktısına {@link #fieldDiff} ile üretilmiş ek alanları ("a":{...},) ekler. */
+    static String mergeDiff(String diffJson, StringBuilder extra) {
+        if (extra.length() == 0) return diffJson;
+        String body = extra.charAt(extra.length() - 1) == ',' ? extra.substring(0, extra.length() - 1) : extra.toString();
+        if ("{}".equals(diffJson)) return "{" + body + "}";
+        return diffJson.substring(0, diffJson.length() - 1) + "," + body + "}";
+    }
+
     private void fieldDiff(StringBuilder sb, String field, Object oldVal, Object newVal) {
         if (!Objects.equals(oldVal, newVal)) {
             sb.append('"').append(field).append("\":{\"from\":")
@@ -927,7 +970,7 @@ public class AdminController {
 
     private String normalizeTlsMode(String v) {
         if (v == null || v.isBlank()) return null;
-        String m = v.trim().toLowerCase();
+        String m = v.trim().toLowerCase(java.util.Locale.ROOT);
         if (!m.equals("browser") && !m.equals("default")) {
             throw new IllegalArgumentException("tls_mode must be 'browser' or 'default'");
         }
@@ -1348,7 +1391,7 @@ public class AdminController {
     @CacheEvict(value = {"cert-latest", "cert-warnings", "cert-stats", "renewal-advice", "card-extras", "domain-team-names"}, allEntries = true)
     public ResponseEntity<Map<String, Object>> bulkInventoryAction(
             @RequestBody Map<String, Object> body, HttpSession session, HttpServletRequest request) {
-        String action = body.get("action") != null ? body.get("action").toString().trim().toLowerCase() : "";
+        String action = body.get("action") != null ? body.get("action").toString().trim().toLowerCase(java.util.Locale.ROOT) : "";
         // Toplu SİLME tekil silmeyle aynı satır kapısını kullanır (takımı yöneten ya da paylaşımda SİLME düzeyi) — paylaşımda
         // SİLME düzeyi olan USER da toplu siler (2026-10-12). Diğer toplu eylemler takım yönetimidir: rol kapısı aynen.
         boolean grantDelete = "delete".equals(action) && !SessionScope.grantDeleteTeamIds(session).isEmpty();
@@ -1364,13 +1407,18 @@ public class AdminController {
         if (body.get("ids") instanceof List<?> raw) {
             for (Object o : raw) { Long id = toLong(o); if (id != null) ids.add(id); }
         }
+        // Alan adı HARF DUYARSIZ çözülür (2026-10-22, hata avı ADMIN-16): eski "Example.com" satırı küçük harfli aramada
+        // bulunamıyor, işlenmiyor ve atlananlara bile sayılmıyordu. Bulunamayan alan adı atlanan sayılır.
+        int unknownDomains = 0;
         if (body.get("domains") instanceof List<?> rawDomains) {
             for (Object o : rawDomains) {
-                if (o == null) continue;
-                inventoryRepo.findByDomain(o.toString().trim().toLowerCase()).map(CertificateInventory::getId).ifPresent(ids::add);
+                if (o == null || o.toString().isBlank()) continue;
+                java.util.Optional<Long> found = inventoryRepo.findFirstByDomainIgnoreCaseOrderByIdAsc(o.toString().trim())
+                        .map(CertificateInventory::getId);
+                if (found.isPresent()) ids.add(found.get()); else unknownDomains++;
             }
         }
-        if (ids.isEmpty()) throw new IllegalArgumentException("No ids provided");
+        if (ids.isEmpty() && unknownDomains == 0) throw new IllegalArgumentException("No ids provided");
         // set-tier: 1–4 ya da null (kademeyi kaldır). set-team: yalnız GLOBAL admin + transfer izni —
         // tek kayıtlık /transfer ucuyla aynı kapı ve aynı türev-izleme senkronu.
         Integer newTier = null;
@@ -1388,7 +1436,7 @@ public class AdminController {
             requireExistingTeam(newTeamId);   // olmayan takıma yazılan kayıt sahipsiz kalırdı (2026-09-28)
         }
 
-        int processed = 0, skipped = 0, alertsClosed = 0;
+        int processed = 0, skipped = unknownDomains, alertsClosed = 0;
         List<String> deletedDomains = new ArrayList<>();
         String ts = now();
         for (Long id : ids) {
@@ -1408,13 +1456,13 @@ public class AdminController {
             switch (action) {
                 case "activate" -> {
                     if (deleted) { skipped++; }
-                    else { inv.setActive(true);  inv.setUpdatedAt(ts); inventoryRepo.save(inv); processed++; }
+                    else { inv.setActive(true);  inv.setUpdatedAt(ts); monitorHistory.stampUpdated(inv, session); inventoryRepo.save(inv); processed++; }
                 }
                 case "deactivate" -> {
                     if (deleted) { skipped++; }
                     else {
                         boolean wasActive = Boolean.TRUE.equals(inv.getActive());
-                        inv.setActive(false); inv.setUpdatedAt(ts); inventoryRepo.save(inv);
+                        inv.setActive(false); inv.setUpdatedAt(ts); monitorHistory.stampUpdated(inv, session); inventoryRepo.save(inv);
                         // Pasife alınan domain artık taranmaz → açık alarmlarını sessizce kapat
                         if (wasActive) alertsClosed += escalationService.closeAlertsOnDeactivate(inv.getDomain());
                         processed++;
@@ -1425,19 +1473,23 @@ public class AdminController {
                     else {
                         applyBulkContacts(inv, body);
                         inv.setUpdatedAt(ts);
+                        monitorHistory.stampUpdated(inv, session);
                         inventoryRepo.save(inv);
                         processed++;
                     }
                 }
                 case "set-tier" -> {
                     if (deleted) { skipped++; }
-                    else { inv.setTier(newTier); inv.setUpdatedAt(ts); inventoryRepo.save(inv); processed++; }
+                    else { inv.setTier(newTier); inv.setUpdatedAt(ts); monitorHistory.stampUpdated(inv, session); inventoryRepo.save(inv); processed++; }
                 }
                 case "set-team" -> {
                     if (deleted) { skipped++; }
                     else {
                         boolean changed = !java.util.Objects.equals(inv.getTeamId(), newTeamId);
-                        inv.setTeamId(newTeamId); inv.setUpdatedAt(ts); inventoryRepo.save(inv);
+                        inv.setTeamId(newTeamId); inv.setUpdatedAt(ts);
+                        if (changed) applyTeamChangeRouting(inv);   // ADMIN-13: eski takımın grubu / UG == yeni SY düşer
+                        monitorHistory.stampUpdated(inv, session);
+                        inventoryRepo.save(inv);
                         if (changed) derivedMonitorTeamSync.syncTeam(inv.getDomain(), newTeamId);
                         processed++;
                     }
@@ -1565,8 +1617,11 @@ public class AdminController {
                 .orElseThrow(() -> new NoSuchElementException("Inventory item not found: " + id));
         Long oldTeamId = inv.getTeamId();
         Map<String, Object> _histBefore = AuditDiff.snapshot(inv, INVENTORY_FIELDS);
+        boolean teamChanged = !java.util.Objects.equals(oldTeamId, newTeamId);
         inv.setTeamId(newTeamId);
+        if (teamChanged) applyTeamChangeRouting(inv);   // ADMIN-13: eski takımın grubu / UG == yeni SY düşer
         inv.setUpdatedAt(now());
+        monitorHistory.stampUpdated(inv, session);   // ADMIN-4: "Son güncelleyen" künyesi
         inventoryRepo.save(inv);
         // Ürün geçmişi (2026-09-28): takım değişikliği düzenleme (PUT) ve toplu set-team yolunda UPDATE olarak yazılıyor,
         // bu uçta yazılmıyordu — aynı olay hangi düğmeden yapıldığına göre İzleme Değişiklikleri'nde var/yok oluyordu.
@@ -1600,6 +1655,7 @@ public class AdminController {
         Map<String, Object> _histBefore = AuditDiff.snapshot(inv, INVENTORY_FIELDS);
         inv.setUgTeamId(newUgTeamId);
         inv.setUpdatedAt(now());
+        monitorHistory.stampUpdated(inv, session);   // ADMIN-4: "Son güncelleyen" künyesi
         inventoryRepo.save(inv);
         // Ürün geçmişi (2026-09-28): UG takımı değişikliği İzleme Değişiklikleri'ne hiç düşmüyordu (tekil /transfer ile
         // aynı desen). Aynı değere aktarım fark üretmez → record satır yazmaz.
@@ -2374,7 +2430,9 @@ public class AdminController {
         int rows = 0;
         if (!(scoped && scope.isEmpty())) {          // kapsamsız kullanıcı → yalnız başlık satırı
             for (int page = 0; rows < ALERT_CSV_MAX_ROWS; page++) {
-                var pageReq = PageRequest.of(page, ALERT_CSV_PAGE, Sort.by(Sort.Direction.DESC, "createdAt"));
+                // id eşitlik bozucu (2026-10-22, hata avı DATA-7): aynı saniyede açılan alarmlar sayfa sınırında yinelenmez / kaybolmaz
+                var pageReq = PageRequest.of(page, ALERT_CSV_PAGE, Sort.by(Sort.Direction.DESC, "createdAt")
+                        .and(Sort.by(Sort.Direction.DESC, "id")));
                 var chunk = (nocOnly
                         ? alertEventRepo.findFilteredNoc(resolved, win.openedSince(), until, resolvedSince, resolvedUntil,
                                 win.activeFrom(), domain, alertTypeEffective, csvTypeScoped, csvTypesParam,
@@ -2584,7 +2642,8 @@ public class AdminController {
         auditService.recordAction("ALERT_ACKNOWLEDGE", session, request,
                 "ALERT_EVENT", id.toString(),
                 auditDetail(Map.of("domain", nz(event.getDomain()), "note", note)));
-        return ok(Map.of("data", event, "message", "Alert acknowledged"));
+        // paylaşımla (EXECUTE) sahiplenen kişi alıcıları görmez (2026-10-22) — yanıt KOPYADA maskelenir
+        return ok(Map.of("data", maskGrantOnlyPeople(event, session), "message", "Alert acknowledged"));
     }
 
     @PostMapping("/alerts/{id}/resolve")
@@ -2600,7 +2659,9 @@ public class AdminController {
         auditService.recordAction("ALERT_RESOLVE", session, request,
                 "ALERT_EVENT", id.toString(),
                 auditDetail(Map.of("domain", nz(event.getDomain()), "note", note)));
-        return ok(Map.of("data", event, "message", "Alert resolved"));
+        // paylaşımla (EXECUTE) çözen kişi alıcıları görmez (2026-10-22) — yanıt KOPYADA maskelenir: aynı örnek çözüm
+        // bildirimi için zaman uyumsuz gönderime verildi ve orada kaydedilebiliyor (A1, son inceleme 2026-10-22)
+        return ok(Map.of("data", maskGrantOnlyPeople(event, session), "message", "Alert resolved"));
     }
 
     /** "Tekrar Bildir" onay pop-up'ı için alıcı önizlemesi — gönderim/yazma YAPMAZ.
@@ -2638,6 +2699,9 @@ public class AdminController {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("alert_id",   id);
         data.put("recipients", recipients);          // e-posta kanali (mevcut sozlesme korunur)
+        // C2 (2026-10-22): izlemenin e-posta kanali alarm aninda kapaliysa gonderim e-postayi atlar; liste bos doner ve
+        // nedeni push'taki block_reason gibi soylenir (eklenen alan — yoksa bugunku davranis).
+        if (escalationService.reNotifyMailDisabled(id)) data.put("email_block_reason", "SKIPPED_MONITOR_OFF");
         Map<String, Object> webhook = new LinkedHashMap<>();
         webhook.put("channel_enabled", push.channelEnabled());
         webhook.put("block_reason",    push.blockReason());
@@ -2684,7 +2748,7 @@ public class AdminController {
     public ResponseEntity<Map<String, Object>> bulkAlertAction(
             @RequestBody Map<String, Object> body, HttpSession session, HttpServletRequest request) {
         requirePerm(session, "alerts.actions", "execute");
-        String action = body.get("action") != null ? body.get("action").toString().trim().toLowerCase() : "";
+        String action = body.get("action") != null ? body.get("action").toString().trim().toLowerCase(java.util.Locale.ROOT) : "";
         if (!Set.of("acknowledge", "resolve", "re-notify").contains(action)) {
             throw new IllegalArgumentException("action must be one of: acknowledge, resolve, re-notify");
         }
@@ -2760,9 +2824,13 @@ public class AdminController {
         body.put("can_act", permissionService.allows(session, "alerts.actions", "execute"));
         // Sahip takım(lar)ın şu anki nöbetçisi (2026-10-11) — alarm ayrıntısında "kimi aramalı"; çizelge yoksa boş liste.
         // Yalnız takım erişim paylaşımıyla okunan alarmda boş (2026-10-12): nöbetçi kişi verisidir, paylaşımla açılmaz.
-        body.put("oncall", alertReadOnlyViaGrant(session, ev) ? List.of()
+        // /api/oncall/current ile AYNI kapı (2026-10-22, hata avı L-H4): oncall.read izni + sahip takımı KENDİ kapsamıyla
+        // görmek (canViewMonitoringOwn) — A takımı B'nin bağımsız alarmını envanter kuralıyla okuyunca B'nin nöbetçisini
+        // alıyordu. Görülemeyen sahip takımın nöbetçisi listeye girmez.
+        body.put("oncall", alertReadOnlyViaGrant(session, ev) || !permissionService.allows(session, "oncall.read", "view")
+                ? List.of()
                 : oncallFor(com.sitemonitor.service.AlertOwnership.ownerTeamIds(ev, ev.getSyTeamId(), ev.getUgTeamId())
-                .toArray(Long[]::new)));
+                .stream().filter(t -> SessionScope.canViewMonitoringOwn(session, t)).toArray(Long[]::new)));
         return ok(body);
     }
 
@@ -2819,8 +2887,30 @@ public class AdminController {
             if (ev.getTeamId() != null) read.add(ev.getTeamId());
             if (ev.getSyTeamId() != null) read.add(ev.getSyTeamId());
             if (ev.getUgTeamId() != null) read.add(ev.getUgTeamId());
-            if (own == null || !AlertOwnership.ownedByAny(read, own)) ev.setNocLastCall(null);
+            if (own == null || !AlertOwnership.ownedByAny(read, own)) {
+                ev.setNocLastCall(null);
+                // Bilgilendirilen eskalasyon kişileri (ad / e-posta / rol) KİŞİ verisidir — paylaşımla gösterilmez
+                // (2026-10-22, hata avı ALERTS-17). Varlık bağlamdan kopuk (open-in-view kapalı, uç işlem dışı): değişiklik
+                // kaydedilmez, yalnız bu yanıtı etkiler.
+                ev.setNotifiedContacts(null);
+            }
         }
+    }
+
+    /**
+     * Tek alarmın yanıtı (sahiplen / çöz) için {@link #maskGrantOnlyNocCalls} karşılığı (2026-10-22, hata avı ALERTS-17):
+     * erişim paylaşımında EXECUTE düzeyi olan kişi alarmı sahiplenip çözebilir; yanıttaki varlık bilgilendirilen kişileri
+     * ve son 7/24 aramasını taşımaz. Maskeleme bir KOPYADA yapılır (A1, son inceleme 2026-10-22): {@code resolve}'un döndürdüğü
+     * örnek çözüm bildirimine zaman uyumsuz verilmişti ve orada {@code alertEventRepo.save} ile kaydedilebiliyordu — aynı
+     * örneği maskelemek {@code notified_contacts}'ı veritabanında herkes için NULL yazıyordu (push teslimatı yolundaki gibi).
+     */
+    private AlertEvent maskGrantOnlyPeople(AlertEvent ev, HttpSession session) {
+        if (ev == null || !alertReadOnlyViaGrant(session, ev)) return ev;
+        AlertEvent c = new AlertEvent();
+        org.springframework.beans.BeanUtils.copyProperties(ev, c);
+        c.setNotifiedContacts(null);
+        c.setNocLastCall(null);
+        return c;
     }
 
     @GetMapping("/alerts/{id}/notifications")
@@ -2853,8 +2943,12 @@ public class AdminController {
         for (com.sitemonitor.model.UserPushDelivery d : rows) {
             com.sitemonitor.model.UserPushDelivery c = new com.sitemonitor.model.UserPushDelivery();
             org.springframework.beans.BeanUtils.copyProperties(d, c);
-            c.setUsername(null);
-            c.setDisplayName(null);
+            // Sistem karar satırı ("-": fırtına / takım yok / kanal kapalı …) kişi değildir — işareti KORUNUR (2026-10-22,
+            // hata avı ALERTS-18 / K4): her satırın adı silinince istemci N alıcıyı "1 kişi", karar satırını kişi sayıyordu.
+            // Gerçek kişi satırları null kalır; istemci her null satırı bir gizli alıcı sayar.
+            boolean systemRow = PUSH_SYSTEM_USER.equals(d.getUsername());
+            c.setUsername(systemRow ? PUSH_SYSTEM_USER : null);
+            c.setDisplayName(systemRow ? d.getDisplayName() : null);
             c.setSamePersonUsername(null);   // aynı kişinin öbür hesabı da kişi bilgisidir
             c.setError(c.getError() == null ? null : "FAILED");   // ağ geçidi metni kişi / adres taşıyabilir
             c.setRawResponse(null);
@@ -3170,6 +3264,12 @@ public class AdminController {
         // manager_id: anahtar gövdede VARSA uygulanır (null = temizle). leader_id'den farklı: lider null'da
         // dokunulmaz, müdür ise bilinçli olarak temizlenebilmeli (AD zincirine geri dönmek için).
         if (body.containsKey("manager_id")) team = userService.updateTeamManager(id, optUserRef(body.get("manager_id"), session));
+        // Lider TEMİZLEME (2026-10-22, hata avı ADMIN-11): gövdede leader_id anahtarı VAR ve BOŞ → lider kaldırılır. Eskiden
+        // null "dokunma" sayılıyordu: form "— Lider Seçin —" ile başarı iletisi veriyor, lider yeniden yüklemede geri geliyordu.
+        // Anahtar YOKSA (toplu işlem, eski istemci) lider aynen kalır.
+        if (body.containsKey("leader_id") && (body.get("leader_id") == null || String.valueOf(body.get("leader_id")).isBlank())) {
+            team = userService.clearTeamLeader(id);
+        }
         if (quietCfg != null) {
             team = userService.updateTeamQuietHours(id, quietCfg);
             if (teamQuietHours != null) teamQuietHours.invalidate();
@@ -3334,7 +3434,10 @@ public class AdminController {
         Map<String, Integer> moved = teamAdminService.moveAll(id, target);
         auditService.recordAction("TEAM_MOVE_ASSETS", session, request, "TEAM", id.toString(),
                 AuditDetail.of("from", fromName, "to", toName, "to_id", target, "domains", moved.get("domains"),
-                        "monitors", moved.get("monitors"), "users", moved.get("users"), "contacts", moved.get("contacts"), "groups", moved.get("groups")));
+                        "monitors", moved.get("monitors"), "users", moved.get("users"), "contacts", moved.get("contacts"), "groups", moved.get("groups"),
+                        // Takım belgeleri (2026-10-22, ADMIN-1): kanal teknik hata raporları, şablon kütüphanesi, bakım pencereleri
+                        "te_channels", moved.get("te_channels"), "te_reports", moved.get("te_reports"),
+                        "te_templates", moved.get("te_templates"), "maintenance_windows", moved.get("maintenance_windows")));
         return ok(Map.of("data", moved));
     }
 
@@ -3348,6 +3451,10 @@ public class AdminController {
         if (body.get("user_id") == null || String.valueOf(body.get("user_id")).isBlank()) throw new IllegalArgumentException("user_id is required");
         Long userId = userRef(body.get("user_id"), session);   // opak kimlik (2026-10-08)
         AppUser u = userRepo.findById(userId).orElseThrow(() -> new NoSuchElementException("User not found"));
+        // ADMIN / AUDIT hesabının takımlarına yalnız GLOBAL yönetici dokunur (2026-10-22, hata avı AUTH-6) — kullanıcı
+        // düzenleme ucuyla AYNI kural; bu uç onu atlıyordu (kapsamlı yönetici bir müdür meslektaşını takımdan çıkarıp
+        // kapsamını daraltabiliyor, üyelik kilidi de o hesabın AD eşitlemesini donduruyordu).
+        requireCanAdministerTarget(session, u);
         java.util.LinkedHashSet<Long> ids = new java.util.LinkedHashSet<>(u.getTeamIds() == null ? List.of() : u.getTeamIds());
         if (u.getTeamId() != null) ids.add(u.getTeamId());
         boolean added = ids.add(id);
@@ -3366,6 +3473,10 @@ public class AdminController {
         requireTeamManageScope(session, id);
         Long userId = userRef(userRefRaw, session);   // opak kimlik (2026-10-08)
         AppUser u = userRepo.findById(userId).orElseThrow(() -> new NoSuchElementException("User not found"));
+        // ADMIN / AUDIT hesabının takımlarına yalnız GLOBAL yönetici dokunur (2026-10-22, hata avı AUTH-6) — kullanıcı
+        // düzenleme ucuyla AYNI kural; bu uç onu atlıyordu (kapsamlı yönetici bir müdür meslektaşını takımdan çıkarıp
+        // kapsamını daraltabiliyor, üyelik kilidi de o hesabın AD eşitlemesini donduruyordu).
+        requireCanAdministerTarget(session, u);
         java.util.LinkedHashSet<Long> ids = new java.util.LinkedHashSet<>(u.getTeamIds() == null ? List.of() : u.getTeamIds());
         if (u.getTeamId() != null) ids.add(u.getTeamId());
         boolean removed = ids.remove(id);
@@ -3402,8 +3513,10 @@ public class AdminController {
         Map<String, Object> impact = teamAdminService.impact(id);
         if (impact != null && !impact.isEmpty() && !Boolean.TRUE.equals(impact.get("empty"))) {
             throw new IllegalStateException(com.sitemonitor.util.Msg.t(
-                    "Bu takıma bağlı alan adı, izleme, kişi ya da bildirim grubu var — önce başka bir takıma taşıyın.",
-                    "This team still has domains, monitors, people or notification groups — move them to another team first."));
+                    "Bu takıma bağlı alan adı, izleme, kişi, bildirim grubu, teknik hata raporu kanalı / şablonu ya da süren"
+                            + " bakım penceresi var — önce başka bir takıma taşıyın.",
+                    "This team still has domains, monitors, people, notification groups, technical error report channels /"
+                            + " templates or live maintenance windows — move them to another team first."));
         }
         userService.deleteTeam(id);
         if (onCallService != null) onCallService.deleteForTeam(id);
@@ -3446,9 +3559,18 @@ public class AdminController {
             HttpSession session) {
         requirePerm(session, "users.list", "view");
         size = Math.min(Math.max(size, 1), 200);
-        // TEAM_ADMIN yalnız kendi takımını görür → client teamId yok sayılır, kendi takımına sabitlenir
-        Long effTeamId = isAdminOrAudit(session) ? teamId : teamId(session);
-        if (!isAdminOrAudit(session) && effTeamId == null) {
+        // TEAM_ADMIN yalnız kendi takımını görür → client teamId yok sayılır, kendi takımına sabitlenir.
+        // Kapsamlı müdür (ve diğer global olmayan görüntüleyiciler) GÖRÜŞ KAPSAMIYLA arar (2026-10-22, hata avı UIA-2):
+        // eskiden o da oturumun birincil takımına sabitleniyordu — yönettiği B takımını süzgeçte seçse de A'nın üyeleri
+        // geliyor, birincil takımı yoksa liste boş kalıyordu (/users ise tüm görüş kapsamını veriyordu). Kapsamdaki teamId
+        // onurlandırılır; kapsam dışı teamId boş sonuç verir.
+        boolean global = isAdminOrAudit(session);
+        boolean pinned = !global && isTeamAdmin(session);
+        Long effTeamId = global ? teamId : pinned ? teamId(session) : teamId;
+        List<Long> scopeTeams = (global || pinned) ? null : viewScope(session);
+        boolean emptyScope = pinned ? effTeamId == null
+                : !global && (scopeTeams == null || scopeTeams.isEmpty() || (teamId != null && !scopeTeams.contains(teamId)));
+        if (emptyScope) {
             return ok(Map.of("data", List.of(), "total", 0L, "page", 0, "total_pages", 0,
                     "active_admin_count", userRepo.countBySystemRoleAndActiveTrue("ADMIN")));
         }
@@ -3458,7 +3580,10 @@ public class AdminController {
         // Uyuyan hesap süzgeci (2026-09-20): N gündür girmeyen / hiç girmemiş.
         String dormantBefore = dormantDays != null && dormantDays > 0
                 ? ISO.format(Instant.now().minus(java.time.Duration.ofDays(dormantDays))) : null;
-        Page<AppUser> p = (dormantBefore == null && !neverLoggedIn)
+        Page<AppUser> p = scopeTeams != null
+                ? userRepo.findFilteredInTeams(qParam, roleParam, orgRoleParam, effTeamId, scopeTeams, dormantBefore,
+                        neverLoggedIn, PageRequest.of(page, size))
+                : (dormantBefore == null && !neverLoggedIn)
                 ? userRepo.findFiltered(qParam, roleParam, orgRoleParam, effTeamId, PageRequest.of(page, size))
                 : userRepo.findFilteredDormant(qParam, roleParam, orgRoleParam, effTeamId, dormantBefore, neverLoggedIn, PageRequest.of(page, size));
 
@@ -3613,19 +3738,51 @@ public class AdminController {
         if (!isAdmin(session)) {
             // createUser ile aynı kural: global olmayan yazar ADMIN/AUDIT veremez (müdür dâhil).
             requireAssignableRole(requestedRole);
+            // Hedefin ŞU ANKİ üyelikleri (birincil dâhil). Düzenleme formu her kayıtta TÜM takım kümesini gönderir; yalnız
+            // EKLENEN / ÇIKARILAN takım denetlenir (2026-10-22, hata avı UIA-1 — "değişmeyen değer yeniden doğrulanmaz"):
+            // müdür, yönetim kapsamı dışındaki bir ek takımı olan kullanıcının telefonunu bile kaydedemiyordu (403).
+            java.util.LinkedHashSet<Long> currentTeams = new java.util.LinkedHashSet<>(
+                    target.getTeamIds() == null ? List.of() : target.getTeamIds());
+            if (target.getTeamId() != null) currentTeams.add(target.getTeamId());
             if (isTeamAdmin(session)) {
-                // TEAM_ADMIN kullanıcıyı kendi takımı dışına taşıyamaz / çoklu takım atayamaz.
+                // TEAM_ADMIN kullanıcıyı kendi takımı dışına taşıyamaz / çoklu takım atayamaz (yeni takım eklenemez).
                 if (requestedTeams != null) {
                     for (Long t : requestedTeams) {
-                        if (!t.equals(target.getTeamId())) {
+                        if (!t.equals(target.getTeamId()) && !currentTeams.contains(t)) {
                             throw new SecurityException("Team admin cannot transfer users to another team");
                         }
                     }
                 }
                 requestedTeams = null;   // üyeliği değiştirmesine izin verilmez
             } else if (requestedTeams != null) {
-                // Müdür: kullanıcıyı ancak yönettiği takımlar arasında taşır.
-                requireTeamsInManageScope(session, requestedTeams);
+                // Müdür: kullanıcıyı ancak yönettiği takımlar arasında taşır — eklenen ve çıkarılan takımlar kapsamda olmalı.
+                List<Long> changedTeams = new ArrayList<>();
+                for (Long t : requestedTeams) if (!currentTeams.contains(t)) changedTeams.add(t);
+                for (Long t : currentTeams) if (!requestedTeams.contains(t)) changedTeams.add(t);
+                requireTeamsInManageScope(session, changedTeams);
+            }
+            // TAKIM YÖNETİCİSİ YETKİSİ kapsam dışına taşmaz (2026-10-22, hata avı AUTH-5): TEAM_ADMIN'in yönetim kapsamı
+            // üyesi ve lideri olduğu TÜM takımlardır — X'in yöneticisi, X + Y üyesi bir kullanıcıyı TEAM_ADMIN yaparak
+            // ona Y'yi (kendisinin yönetmediği) yönettirebiliyordu. Yükseltmede ya da TEAM_ADMIN hedefe takım eklenirken
+            // hedefin değişiklik SONRASI tüm takımları (+ lideri olduğu takımlar) çağıranın yönetim kapsamında olmalı.
+            String nextRole = requestedRole != null ? requestedRole : target.getSystemRole();
+            boolean raisesToTeamAdmin = "TEAM_ADMIN".equals(nextRole) && !"TEAM_ADMIN".equals(target.getSystemRole());
+            boolean addsTeamToTeamAdmin = "TEAM_ADMIN".equals(nextRole) && requestedTeams != null
+                    && requestedTeams.stream().anyMatch(t -> !currentTeams.contains(t));
+            if (raisesToTeamAdmin || addsTeamToTeamAdmin) {
+                java.util.LinkedHashSet<Long> after = new java.util.LinkedHashSet<>(
+                        requestedTeams != null ? requestedTeams : currentTeams);
+                for (Team led : teamRepo.findByLeaderId(target.getId())) after.add(led.getId());
+                List<Long> manage = SessionScope.manageTeamIds(session);
+                for (Long t : after) {
+                    if (manage == null || !manage.contains(t)) {
+                        log.warn("Team-admin grant outside management scope refused: user={} target={} team={}",
+                                actor(session), target.getUsername(), t);
+                        throw new SecurityException(com.sitemonitor.util.Msg.t(
+                                "Bu kullanıcıya takım yöneticisi yetkisi veremezsiniz: üyesi ya da lideri olduğu takımlardan biri yönetim kapsamınızda değil. Bu yetkiyi o takımları yöneten biri ya da global yönetici verebilir.",
+                                "You can't give this user team-admin rights: one of the teams the user belongs to or leads is outside your management scope. Someone who manages those teams, or a global admin, can grant it."));
+                    }
+                }
             }
         }
         // Boş takım = takımsız; yalnız ADMIN rollü kullanıcı takımsız kalabilir.
@@ -3643,8 +3800,11 @@ public class AdminController {
                 requestedTeams,
                 body.get("active") instanceof Boolean ? (Boolean) body.get("active") : null,
                 (String) body.get("org_role"));
-        // AD-mirrored profil alanları (ad/soyad/ünvan/telefon/departman/seviye/müdürlük/müdür sicili)
-        userService.applyProfileFields(user, body);
+        // AD-mirrored profil alanları (ad/soyad/ünvan/telefon/departman/seviye/müdürlük/müdür sicili). Telefonu yalnız
+        // global yönetici yazar (2026-10-22, hata avı AUTH-11): 2 argümanlı yol hep true geçiyordu — kapsamlı yazar OTP kişi
+        // doğrulamasında ve 7/24 arama listesinde kullanılan AD telefonunu değiştirebiliyor, formu (telefonu görmediği için
+        // boş gönderip) temizleyebiliyordu. Yeni kullanıcı oluşturmada bugünkü gibi true.
+        userService.applyProfileFields(user, body, SessionScope.isGlobalAdmin(session));
         user = userRepo.save(user);
         auditService.recordAction("USER_UPDATE", session, "USER", id.toString(), user.getUsername(),
                 AuditDiff.diff(_before, AuditDiff.snapshot(user, _uf)));
@@ -3668,6 +3828,11 @@ public class AdminController {
         String adminUsername = actor(session);
 
         String tempPwd = userService.adminAutoResetPassword(id, adminUsername, adminPwd);
+        // Sıfırlama canlı oturumu ve hatırlanan girişleri BİTİRİR (2026-10-22, hata avı AUTH-10): hesabın ele geçirildiği
+        // düşünülüp parola sıfırlandığında davetsiz misafirin açık oturumu (eski mustChangePassword=false özniteliğiyle)
+        // çalışmaya devam ediyordu. "Oturumu sonlandır" ile aynı nöbetçi + token silme.
+        userService.terminateActiveSession(target.getUsername());
+        if (rememberMeService != null) rememberMeService.invalidateAllForUser(target.getUsername());
 
         // refresh: the auto-reset call may have updated must_change_password etc.
         target = userRepo.findById(id).orElse(target);
@@ -3819,6 +3984,11 @@ public class AdminController {
         String detail = AuditDiff.snapshotJson(AuditDiff.snapshot(target,
                 "username", "displayName", "email", "teamId", "systemRole", "orgRole", "active", "authSource"));
         userService.deleteUser(id);
+        // Silinen kullanıcının oturumu ve hatırlanan girişleri biter (2026-10-22, hata avı AUTH-1 / AUTH-16): token'lar
+        // kullanıcı ADIYLA tutulur — aynı ad geri gelirse (LDAP yeniden provizyonu) eski çerez yeni satıra girerdi. Canlı
+        // oturum bir sonraki istekte AuthInterceptor'ın silinmiş hesap kapısında kapanır; bu pod'un önbelleği hemen boşalır.
+        if (rememberMeService != null) rememberMeService.invalidateAllForUser(target.getUsername());
+        userService.forgetUserCaches(target.getUsername());
         int grantsRemoved = teamAccessGrants != null ? teamAccessGrants.deleteForUser(id) : 0;   // bu kişiye verilmiş paylaşımlar
         if (grantsRemoved > 0) auditService.recordAction("TEAM_ACCESS_GRANT_DELETE", session, request, "USER", id.toString(),
                 com.sitemonitor.service.AuditDetail.of("cascade", "user_delete", "count", grantsRemoved));
@@ -3904,7 +4074,12 @@ public class AdminController {
 
         CertificateNote note = new CertificateNote();
         note.setDomain(domain);
-        note.setTeamId(isAdmin(session) ? null : teamId(session));
+        // Not, alan adının ENVANTER takımıyla damgalanır (2026-10-22, hata avı ADMIN-14 — MonitorNotesController ile aynı):
+        // yazarın birincil takımıyla (global yöneticide null) damgalanan not, alan adının takım üyelerine görünmüyordu.
+        // Envanterde olmayan alan adı: bugünkü kural.
+        Long noteTeam = inventoryRepo.findByDomain(domain).map(CertificateInventory::getTeamId)
+                .orElse(isAdmin(session) ? null : teamId(session));
+        note.setTeamId(noteTeam);
         note.setAuthorUsername(currentUser);
         note.setAuthorName(currentName);
         note.setNote(text.trim());
@@ -3934,7 +4109,7 @@ public class AdminController {
         if (!domain.equals(note.getDomain()))
             throw new IllegalArgumentException("Note does not belong to domain: " + domain);
         requireNoteDomainWritable(session, domain);   // başka takımın alan adındaki not düzenlenmez (2026-09-26)
-        if (!isAdmin(session)) checkOwnership(note.getTeamId(), session);
+        if (!isAdmin(session)) checkNoteOwnership(note.getTeamId(), session);
 
         String currentUser = (String) session.getAttribute("username");
         if (!Objects.equals(currentUser, note.getAuthorUsername()))
@@ -3984,7 +4159,7 @@ public class AdminController {
         if (!domain.equals(note.getDomain()))
             throw new IllegalArgumentException("Note does not belong to domain: " + domain);
         requireNoteDomainWritable(session, domain);   // başka takımın alan adındaki not silinmez (2026-09-26)
-        if (!isAdmin(session)) checkOwnership(note.getTeamId(), session);
+        if (!isAdmin(session)) checkNoteOwnership(note.getTeamId(), session);
 
         String currentUser = (String) session.getAttribute("username");
         if (!isAdmin(session) && !Objects.equals(currentUser, note.getAuthorUsername()))
@@ -4146,7 +4321,8 @@ public class AdminController {
      *       açık CASE (CRITICAL 3 &gt; HIGH 2 &gt; WARNING 1 &gt; diğer 0) — {@code findAllOpenOrderBySeverity} ile aynı
      *       ders; {@link org.springframework.data.jpa.domain.JpaSort#unsafe} ifadeyi takma ad öneki olmadan ekler.</li>
      * </ul>
-     * Her anahtardan sonra {@code createdAt DESC} eşitlik bozucu (aynı seviye/takım içinde en yeni önce).
+     * Her anahtardan sonra {@code createdAt DESC} + {@code id DESC} eşitlik bozucu (aynı seviye/takım içinde en yeni önce;
+     * id sayfalamayı deterministik kılar — 2026-10-22, DATA-7).
      */
     public static final class AlertSort {
         public static final java.util.Set<String> KEYS = java.util.Set.of("opened", "resolved", "level", "team", "domain", "type");
@@ -4180,14 +4356,18 @@ public class AdminController {
         public static Sort of(String sort, String dir, Boolean resolved) {
             String k = key(sort);
             Sort.Direction d = direction(dir);
-            Sort tie = Sort.by(Sort.Direction.DESC, "createdAt");
+            // Son eşitlik bozucu id (2026-10-22, hata avı DATA-7): created_at saniye hassasiyetinde ve bir tarama aynı
+            // saniyede çok alarm açar — PostgreSQL eşit satırları her LIMIT/OFFSET'te farklı sıralar, sayfalar arasında
+            // satır yinelenir ya da kaybolurdu. id benzersiz → sıra deterministik.
+            Sort idTie = Sort.by(Sort.Direction.DESC, "id");
+            Sort tie = Sort.by(Sort.Direction.DESC, "createdAt").and(idTie);
             if (k == null) {
                 return Boolean.TRUE.equals(resolved)
                         ? Sort.by(Sort.Direction.DESC, "resolvedAt").and(tie)
                         : tie;
             }
             return switch (k) {
-                case "opened"   -> Sort.by(d, "createdAt");
+                case "opened"   -> Sort.by(d, "createdAt").and(Sort.by(d, "id"));
                 case "resolved" -> Sort.by(d, "resolvedAt").and(tie);
                 case "domain"   -> Sort.by(d, "domain").and(tie);
                 case "type"     -> Sort.by(d, "alertType").and(tie);
@@ -4232,6 +4412,9 @@ public class AdminController {
         boolean tierChanged = !Objects.equals(item.getTier(), existing.getTier());
         if (groupChanged || nocChanged || nocGroupsChanged || tierChanged) throw new SecurityException(SHARED_ROUTING_DENIED.get());
     }
+
+    /** {@code UserPushService.SYSTEM_USER} (paket içi) — sistem karar satırının kullanıcı adı; {@code AdminPushSystemUserGateTest} eşitliği pinler. */
+    static final String PUSH_SYSTEM_USER = "-";
 
     static final java.util.function.Supplier<String> SHARED_ROUTING_DENIED = () -> com.sitemonitor.util.Msg.t(
             "Takım erişim paylaşımıyla bildirim ayarları (bildirim grubu, 7/24, kademe) değiştirilemez; bunları kaydın takımı değiştirebilir.",
@@ -4322,7 +4505,13 @@ public class AdminController {
         if (target != null && !TEAM_ADMIN_ASSIGNABLE_ROLES.contains(target.getSystemRole())) {
             log.warn("Non-global admin attempted to administer {} account user={} target={}",
                     target.getSystemRole(), actor(session), target.getUsername());
-            throw new SecurityException("Only a global admin can administer an " + target.getSystemRole() + " account");
+            // A3 (son inceleme 2026-10-22): metin UI dilinde (hata sözleşmesi) — Türkçe ekranda İngilizce ret görünüyordu.
+            String role = target.getSystemRole();
+            throw new SecurityException(com.sitemonitor.util.Msg.t(
+                    "Bu bir " + role + " hesabı — parolasını, takımlarını, rolünü ya da etkinliğini yalnız global yönetici "
+                            + "değiştirebilir. Gerekiyorsa bir global yöneticiden yapmasını isteyin.",
+                    "This is an " + role + " account — only a global administrator can change its password, teams, role or "
+                            + "status. If needed, ask a global administrator to do it."));
         }
     }
 
@@ -4437,6 +4626,16 @@ public class AdminController {
             log.warn("Refused to remove last active ADMIN (target user id={})", target.getId());
             throw new SecurityException("Cannot remove the last active ADMIN from the system");
         }
+    }
+
+    /**
+     * Not sahipliği (2026-10-22, ADMIN-14 ile): not artık alan adının envanter takımıyla damgalanır — yazar o takımı
+     * YÖNETİYORSA (birincil takımı başka olsa da) kendi notunu düzenler / siler. Birincil takımla damgalı eski notlar bugünkü
+     * kuralla ({@link #checkOwnership}) aynı.
+     */
+    private void checkNoteOwnership(Long noteTeamId, HttpSession session) {
+        if (noteTeamId != null && canManageTeamResource(session, noteTeamId)) return;
+        checkOwnership(noteTeamId, session);
     }
 
     private void checkOwnership(Long resourceTeamId, HttpSession session) {

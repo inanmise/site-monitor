@@ -129,7 +129,7 @@ describe('Alarm Fırtınası sayfası (2026-09-30)', () => {
 
   it('"Fırtına ayarları" Ayarlar → Alarm Fırtınası\'na, "Takımın açık alarmları" Alarm Geçmişi\'ne takım süzgeciyle gider', async () => {
     const events = navEvents()
-    const { container } = render(<StormStatusPage />)
+    const { container } = render(<StormStatusPage canOpenSettings />)
     await waitFor(() => expect(container.querySelectorAll('[data-slot="sf-team"]').length).toBe(3))
     fireEvent.click(screen.getByRole('button', { name: /fırtına ayarları|storm settings/i }))
     expect(events.at(-1)).toEqual({ tab: 'settings', params: { sec: 'storm' } })

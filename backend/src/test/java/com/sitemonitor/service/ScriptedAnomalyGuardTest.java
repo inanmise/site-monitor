@@ -68,6 +68,8 @@ class ScriptedAnomalyGuardTest {
         when(appSettings.getInt(eq("site.monitor.scripted.anomaly.timeout-streak"), anyInt())).thenReturn(5);
         when(scriptedChecker.maxRequestsPerRun()).thenReturn(200);
         when(escalationService.teamEmailsForMonitor(anyLong(), any())).thenReturn(List.of("takim@example.com"));
+        // CHECKS-4: kapatma hedefli koşullu UPDATE — satır hâlâ açık (1 satır değişti)
+        when(monitorRepo.disableIfActive(anyLong(), anyString(), anyString())).thenReturn(1);
     }
 
     private static ScriptedCheckerService.ScriptedResult result(String status, Long httpReqs) {
@@ -94,18 +96,19 @@ class ScriptedAnomalyGuardTest {
         String reason = guard.evaluate(monitor, result("PASS", 5000L));
 
         assertThat(reason).contains("Anomali").contains("5000").contains("200");
-        ArgumentCaptor<ScriptedMonitor> saved = ArgumentCaptor.forClass(ScriptedMonitor.class);
-        verify(monitorRepo).save(saved.capture());
-        assertThat(saved.getValue().getActive()).isFalse();
-        assertThat(saved.getValue().getDisabledReason()).isEqualTo(reason);
-        assertThat(saved.getValue().getDisabledAt()).isNotBlank();
+        verify(monitorRepo).disableIfActive(eq(7L), eq(reason), anyString());
+        verify(monitorRepo, never()).save(any());   // CHECKS-4: eski varlık ASLA bütünüyle yazılmaz
+        assertThat(monitor.getActive()).isFalse();
+        assertThat(monitor.getDisabledReason()).isEqualTo(reason);
+        assertThat(monitor.getDisabledAt()).isNotBlank();
     }
 
     @Test
     @DisplayName("kapatma AÇIK ALARMI da kapatır — kapatılan izleme sweep üretmez, alarm sonsuza asılı kalırdı")
     void disablingResolvesOpenAlerts() {
         guard.evaluate(monitor, result("PASS", 5000L));
-        verify(escalationService).resolveOpenAlertsSilently(eq("Ödeme akışı"), any(), eq(ScriptedAnomalyGuard.ACTOR));
+        verify(escalationService).resolveOpenAlertsSilently(eq("Ödeme akışı"), any(), eq(ScriptedAnomalyGuard.ACTOR),
+                eq(Map.of("monitor_id", 7L, "team_id", 5L)));   // L-M3: yalnız BU izlemenin olayı
     }
 
     @Test
@@ -121,7 +124,7 @@ class ScriptedAnomalyGuardTest {
     void notifyDisabledStillDisablesMonitor() {
         monitor.setNotifyEmail(false);
         assertThat(guard.evaluate(monitor, result("PASS", 5000L))).isNotNull();
-        verify(monitorRepo).save(any());
+        verify(monitorRepo).disableIfActive(anyLong(), anyString(), anyString());
         verify(emailService, never()).sendAlert(any(String[].class), anyString(), anyString(),
                 anyString(), anyString(), anyString(), any(), any());
     }
@@ -137,7 +140,7 @@ class ScriptedAnomalyGuardTest {
         String reason = guard.evaluate(monitor, result("TIMEOUT", 1L));
 
         assertThat(reason).contains("süre aşımı");
-        verify(monitorRepo).save(any());
+        verify(monitorRepo).disableIfActive(anyLong(), anyString(), anyString());
     }
 
     @Test
@@ -147,7 +150,7 @@ class ScriptedAnomalyGuardTest {
                 .thenReturn(checks("TIMEOUT", "TIMEOUT", "PASS", "TIMEOUT", "TIMEOUT"));
 
         assertThat(guard.evaluate(monitor, result("TIMEOUT", 1L))).isNull();
-        verify(monitorRepo, never()).save(any());
+        verify(monitorRepo, never()).disableIfActive(anyLong(), anyString(), anyString());
     }
 
     @Test
@@ -156,7 +159,7 @@ class ScriptedAnomalyGuardTest {
         when(checkRepo.findRecentScheduledByMonitorId(7L, 5)).thenReturn(checks("TIMEOUT", "TIMEOUT", "TIMEOUT"));
 
         assertThat(guard.evaluate(monitor, result("TIMEOUT", 1L))).isNull();
-        verify(monitorRepo, never()).save(any());
+        verify(monitorRepo, never()).disableIfActive(anyLong(), anyString(), anyString());
     }
 
     @Test
@@ -172,7 +175,7 @@ class ScriptedAnomalyGuardTest {
     @DisplayName("temiz koşum hiçbir şey yapmaz")
     void cleanRunDoesNothing() {
         assertThat(guard.evaluate(monitor, result("PASS", 12L))).isNull();
-        verify(monitorRepo, never()).save(any());
+        verify(monitorRepo, never()).disableIfActive(anyLong(), anyString(), anyString());
     }
 
     @Test
@@ -180,7 +183,7 @@ class ScriptedAnomalyGuardTest {
     void alreadyDisabledIsNotReprocessed() {
         monitor.setActive(false);
         assertThat(guard.evaluate(monitor, result("PASS", 9999L))).isNull();
-        verify(monitorRepo, never()).save(any());
+        verify(monitorRepo, never()).disableIfActive(anyLong(), anyString(), anyString());
     }
 
     @Test
@@ -188,7 +191,7 @@ class ScriptedAnomalyGuardTest {
     void disabledGuardIsInert() {
         when(appSettings.getBoolean(eq("site.monitor.scripted.anomaly.enabled"), anyBoolean())).thenReturn(false);
         assertThat(guard.evaluate(monitor, result("PASS", 9999L))).isNull();
-        verify(monitorRepo, never()).save(any());
+        verify(monitorRepo, never()).disableIfActive(anyLong(), anyString(), anyString());
     }
 
     @Test
@@ -202,7 +205,7 @@ class ScriptedAnomalyGuardTest {
     @DisplayName("http_reqs ölçülemediyse (özet okunamadı) kapatma YAPILMAZ — bilgisizlik kanıt değildir")
     void unknownRequestCountNeverDisables() {
         assertThat(guard.evaluate(monitor, result("PASS", null))).isNull();
-        verify(monitorRepo, never()).save(any());
+        verify(monitorRepo, never()).disableIfActive(anyLong(), anyString(), anyString());
     }
 
     @Test
@@ -211,7 +214,7 @@ class ScriptedAnomalyGuardTest {
         when(escalationService.teamEmailsForMonitor(anyLong(), any())).thenThrow(new IllegalStateException("smtp yok"));
 
         assertThat(guard.evaluate(monitor, result("PASS", 5000L))).isNotNull();
-        verify(monitorRepo).save(any());
+        verify(monitorRepo).disableIfActive(anyLong(), anyString(), anyString());
     }
 
     @Test
@@ -303,7 +306,7 @@ class ScriptedAnomalyGuardTest {
         assertThat(guard.evaluate(monitor, result("PASS", 5000L), true)).isNull();     // istek tavanı aşımı
         assertThat(guard.evaluate(monitor, result("TIMEOUT", 1L), true)).isNull();     // seri dolu
 
-        verify(monitorRepo, never()).save(any());
+        verify(monitorRepo, never()).disableIfActive(anyLong(), anyString(), anyString());
         verify(checkRepo, never()).findRecentScheduledByMonitorId(anyLong(), anyInt());
         org.mockito.Mockito.verifyNoInteractions(emailService);
     }
@@ -312,6 +315,39 @@ class ScriptedAnomalyGuardTest {
     @DisplayName("Q3: zamanlanmış koşum 2-argümanlı ve manual=false çağrıda AYNI davranır (kapatma sürer)")
     void scheduledRun_stillDisables() {
         assertThat(guard.evaluate(monitor, result("PASS", 5000L), false)).isNotNull();
-        verify(monitorRepo).save(any());
+        verify(monitorRepo).disableIfActive(anyLong(), anyString(), anyString());
+    }
+
+    // ── CHECKS-4 (2026-10-22): eski varlık kullanıcının değişikliğini geri yazmaz ──────────────────────────
+
+    @Test
+    @DisplayName("CHECKS-4: satır arada kapatılmış/silinmiş (0 satır) → kapatma 'olmadı' sayılır, alarm/bildirim/aktivite YOK")
+    void alreadyClosedInDb_noNotification() {
+        when(monitorRepo.disableIfActive(anyLong(), anyString(), anyString())).thenReturn(0);
+
+        assertThat(guard.evaluate(monitor, result("PASS", 5000L))).isNull();
+
+        verify(monitorRepo, never()).save(any());
+        verify(escalationService, never()).resolveOpenAlertsSilently(anyString(), any(), anyString(), any());
+        org.mockito.Mockito.verifyNoInteractions(emailService, userPushService, activityLog);
+    }
+
+    @Test
+    @DisplayName("CHECKS-4: kapatmadan sonra GÜNCEL satır okunur — bildirim/alarm kapanışı kullanıcının yeni adıyla gider")
+    void notificationUsesFreshRow() {
+        ScriptedMonitor fresh = new ScriptedMonitor();
+        fresh.setId(7L);
+        fresh.setName("Ödeme akışı v2");
+        fresh.setTeamId(5L);
+        fresh.setActive(false);
+        fresh.setNotifyEmail(true);
+        when(monitorRepo.findById(7L)).thenReturn(java.util.Optional.of(fresh));
+
+        assertThat(guard.evaluate(monitor, result("PASS", 5000L))).isNotNull();
+
+        verify(escalationService).resolveOpenAlertsSilently(eq("Ödeme akışı v2"), any(), eq(ScriptedAnomalyGuard.ACTOR), any());
+        verify(activityLog).recordLifecycle(eq(ActivityLogService.SCRIPTED), eq(7L), eq("Ödeme akışı v2"),
+                eq("Ödeme akışı v2"), eq(5L), eq("PAUSED"), eq(ScriptedAnomalyGuard.ACTOR));
+        verify(monitorRepo, never()).save(any());
     }
 }

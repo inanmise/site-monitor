@@ -24,7 +24,8 @@ vi.mock('../components/admin/NocSettings.jsx', () => ({ default: ({ readOnly }) 
 // Login Anomali (2026-09-28): saklama süresi GLOBAL_ONLY → kapsamlı müdürde retentionReadOnly geçtiği sınanır
 vi.mock('../components/admin/LoginAnomalySettings', () => ({ default: ({ retentionReadOnly }) => <div data-testid="sec-loginanomaly" data-retention-ro={String(!!retentionReadOnly)} /> }))
 vi.mock('../components/admin/LdapSettings', () => ({ default: () => <div data-testid="sec-ldap" /> }))
-vi.mock('../components/admin/DomainDiagnostics', () => ({ default: () => <div data-testid="sec-domaindiag" /> }))
+// Alan Adı Tanılama (20.165.1, UIA-C7): proxy CA yakalama global-yalnız → kabuk globalAdmin'i geçirir
+vi.mock('../components/admin/DomainDiagnostics', () => ({ default: ({ globalAdmin }) => <div data-testid="sec-domaindiag" data-global={String(!!globalAdmin)} /> }))
 // Veri Saklama (2026-09-28): readOnly prop'u stub'a yazılır — kapsamlı müdürde salt okunur geçtiği sınanır
 vi.mock('../components/admin/RetentionSettings', () => ({ default: ({ readOnly }) => <div data-testid="sec-retention" data-readonly={String(!!readOnly)} /> }))
 vi.mock('../components/admin/DatabaseInfo', () => ({ default: () => <div data-testid="sec-database" /> }))
@@ -335,6 +336,27 @@ describe('AdminSettings — kapsamlı müdür kilitleri', () => {
     setUrl('tab=settings&sec=themes')
     render(<AdminSettings />)
     expect(screen.getByTestId('sec-themes')).toBeInTheDocument()
+  })
+
+  // 20.165.1 (UIA-C1): Haftalık erişilebilirlik + Envanter raporu uçlarının HEPSİ global-yalnız (SystemController.requireAdmin)
+  it('müdür: Haftalık erişilebilirlik ve Envanter raporu KİLİTLİ (kurum geneli not), bileşen çizilmez', () => {
+    render(<AdminSettings globalAdmin={false} />)
+    for (const [re, tid] of [[/^(Weekly Email|Haftalık E-posta)$/i, 'sec-weeklyavail'], [/Inventory report|Envanter Raporu/i, 'sec-certinvreport']]) {
+      clickTab(re)
+      expect(screen.getByTestId('settings-global-only')).toBeInTheDocument()
+      expect(screen.queryByTestId(tid), `${tid} müdüre çizildi`).toBeNull()
+      expect(screen.getByTestId('settings-global-only').textContent).not.toMatch(/SMTP\/LDAP/)   // sır metni değil
+    }
+  })
+
+  it('Alan Adı Tanılama: globalAdmin bölüme geçirilir (müdürde false)', () => {
+    const r1 = render(<AdminSettings globalAdmin={false} />)
+    clickTab(/Domain Diagnostics|Alan Adı Tanılama/i)
+    expect(screen.getByTestId('sec-domaindiag')).toHaveAttribute('data-global', 'false')
+    r1.unmount()
+    render(<AdminSettings />)
+    clickTab(/Domain Diagnostics|Alan Adı Tanılama/i)
+    expect(screen.getByTestId('sec-domaindiag')).toHaveAttribute('data-global', 'true')
   })
 
   it('müdür: operasyonel bölümler (Genel, Storm) normal çizilir', () => {

@@ -183,7 +183,9 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
   const [defaults, setDefaults] = useState(null)
   const [loadNonce, setLoadNonce] = useState(0)   // her başarılı yüklemede artar: başlık çipi geri sayımı kendisi sayar, sayfa saniyede bir çizilmez (2026-10-01)
   const [statFilter, setStatFilter] = useState(() => { const v = readUrlParam('stat', null); return v === 'total' ? null : v })
-  const [statsVisible, setStatsVisible] = useState(false)
+  // Etkin bir sayım süzgeci (paylaşılan bağlantı / kayıtlı görünüm / yeniden yükleme) şeritle AÇIK gelir: süzgeç bandı ve
+  // "Filtreyi temizle" katlanmış şeridin içinde kalıp liste sessizce süzülmesin (2026-10-22, UIM-20)
+  const [statsVisible, setStatsVisible] = useState(() => statFilter != null)
 
   // Liste yüklemesi sıra damgalı (2026-10-09): 60 sn yoklaması kaydetmeden ÖNCE başlayıp SONRA dönerse eski liste
   // yeniyi ezmesin — Düzenle açık detayda bile listedeki en yeni satırı kullanır.
@@ -455,7 +457,8 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
    * Kart / detay kenarı durum anahtarı (up | down | unknown). HTTP/Port'tan farklı olarak DNS'te
    * {@code status} alanı YOK: "çözümlüyor mu" sorusunun cevabı alarmın varlığından okunur.
    */
-  const statusKey = (m) => (m.active === false ? 'unknown' : m.active_alarm ? 'down' : 'up')
+  // Hiç kontrol edilmemiş izleme (checked_at yok) "sağlıklı" değildir — rozeti zaten "Kontrol edilmedi" der (2026-10-22, UIM-48)
+  const statusKey = (m) => (m.active === false ? 'unknown' : m.active_alarm ? 'down' : !m.checked_at ? 'unknown' : 'up')
 
   /**
    * Kart durum rozeti — diğer sekiz türde olan, DNS'te EKSİK olan bilgi.
@@ -535,7 +538,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
 
   const dnsCounts = useMemo(() => ({
     total: scoped.length,
-    ok: scoped.filter(m => m.active !== false && !m.active_alarm).length,
+    ok: scoped.filter(m => m.active !== false && !m.active_alarm && !!m.checked_at).length,
     alarm: scoped.filter(m => m.active_alarm).length,
     unacked: scoped.filter(m => m.active_alarm && !m.alarm_acknowledged).length,
     changed: scoped.filter(m => m.changed).length,
@@ -557,7 +560,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
     if (!statFilter || statFilter === 'total') return scoped
     return scoped.filter(m => {
       if (statFilter === 'alarm' && !m.active_alarm) return false
-      if (statFilter === 'ok' && (m.active === false || m.active_alarm)) return false
+      if (statFilter === 'ok' && (m.active === false || m.active_alarm || !m.checked_at)) return false
       if (statFilter === 'unacked' && !(m.active_alarm && !m.alarm_acknowledged)) return false
       if (statFilter === 'changed' && !m.changed) return false
       if (statFilter === 'paused' && m.active !== false) return false
@@ -845,7 +848,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
         <>
         <BulkActionBar selected={bulkSel} items={pager.pageItems.filter(canManageRow)} teams={teams} canDelete={canDeleteRow} nocType="DNS"
           api={{ update: api.monitoring.updateDnsMonitor, remove: api.monitoring.deleteDnsMonitor }}
-          onClear={() => setBulkSel(new Set())} onDone={load}
+          onClear={() => setBulkSel(new Set())} onPrune={setBulkSel} onDone={load}
           onToggleAll={() => setBulkSel((s) => { const vis = pager.pageItems.filter(canManageRow); const all = vis.every((m) => s.has(m.id)); return all ? new Set() : new Set(vis.map((m) => m.id)) })} />
         <div className="upt-grid" data-density={density}>
           {pager.pageItems.map(m => (

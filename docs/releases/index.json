@@ -1,9 +1,450 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-22T01:00:15Z",
+  "generatedAt": "2026-10-22T11:15:13Z",
   "repo": "inanmise/site-monitor",
-  "count": 783,
+  "count": 784,
   "releases": [
+    {
+      "version": "20.165.1",
+      "tag": "v20.165.1",
+      "releasedAt": "2026-10-22T11:15:07Z",
+      "commit": "ec218323558bd84fc302dd01078bee2269cb3563",
+      "prevVersion": "20.165.0",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 52,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 5,
+        "other": 7
+      },
+      "changes": [
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "ec218323",
+          "subject": "sürüm adı 20.165.1 — yalnız düzeltme içeren sürüm yama numarası alır; yorum ve belgelerdeki \"20.166\" düzeltildi"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "6f322ccf",
+          "subject": "ekran düzeltmelerinin CLAUDE.md notları — Şimdi kontrol et kapsamı, gecikmiş çıkış yarışı, yalnız global profil alanları, okunamayan veri nötr"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "956d9e74",
+          "subject": "UserPushSettings.test satır sonları özgün CRLF'ye döndü (yalnız eklenen testler fark olarak kalır)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "e97139fa",
+          "subject": "sekme kapanırken uçuştaki çıkış duyuruları kalkar — öteki sekmenin girişi ölü duyuruyu beklemez"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "f597f499",
+          "subject": "giriş, geç biten bir /logout yanıtının yeni oturum çerezini silmesine izin vermez"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "e650f02b",
+          "subject": "Yenileme Önerileri — yerel plan kaydı sunucu yakalayınca düşer; başkasının sonra eklediği plan görünür"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "4acef86a",
+          "subject": "Sistem Sağlığı genel bandı okunamayan SMTP özeti / kilit / görev kuyruğunda yeşil kalmaz"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "ee2535ea",
+          "subject": "takım yönetimi — taşıma bildirimi taşınan her şeyi sayar; kapsamlı yönetici ADMIN / AUDIT üyeyi ekleyip çıkaramaz"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "297062a9",
+          "subject": "haftalık rapor — Onaya gönder uçuştaki kaydı bekler; yorum okuma hatası bandı yorum gönderilince kaybolmaz"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "ad78e34f",
+          "subject": "alarm geçmişi — geç tekil okuma kapatılan / değişen pencereyi açmaz; tekrar bildirde e-posta kapalı nedeni"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "3f6daa7d",
+          "subject": "kişisel push ayarları kaydı yalnız değişen anahtarları gönderir; salt okunur başlığın \"Sır\" kutusu kilitli"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "6d36156a",
+          "subject": "kullanıcı düzenleyicisi global olmayan yöneticiye telefon / müdür sicili alanını kilitli gösterir"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "85f5a8cd",
+          "subject": "Alan Adı formundaki \"Sorun Tanıla\" kayıtlı izlemede satırın tanılama kapısıyla"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "abef75e1",
+          "subject": "Yönetici Özeti gönderim listesi \"Tekrar dene\" açık takım ayarını silmez; kapsamlı müdür de yeniden deneyebilir"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "a0679316",
+          "subject": "İzleme Panosu takım özeti eksik veride yeşil değil; okunabilen alarm türü griye çekmez; alarm penceresi derin bağlantısı"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "7151a5be",
+          "subject": "sertifika \"Şimdi kontrol et\" kapısı sunucunun /check kuralının birebir aynası"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "f7ffd1d4",
+          "subject": "CertChangesTab günlük satırlarını bekler — findAllByText özet kartındaki adla erken dönüyordu (CI titrekliği)"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "6da0d836",
+          "subject": "son inceleme notları CLAUDE.md'ye — önizleme = gönderim, AD rol değişikliği, paylaşım maskesi kopyada, çözülmeyen ad kesinti saymaz, kilit sırası, bilinen ödünleşimler"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "3abea46c",
+          "subject": "20.166 dağıtım kontrolleri — geçişte elle \"Şimdi kontrol et\" yok, yeni davranış notları"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "fb8e32c2",
+          "subject": "son inceleme (kontroller / raporlar) — HTTP durumu yalnız HTTP konuşan portta, çözülmeyen ad ağ kesintisi saymaz, takım taşıma kilit sırası"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "2f0a8b99",
+          "subject": "son inceleme (erişim) — paylaşım maskesi kopyada, AD'den rol değişikliği oturumu bitirir, ADMIN hesabı reddi UI dilinde, alan adı alarm kişileri sahibe göre gizlenir"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "6189727f",
+          "subject": "son inceleme (alarm) — 421 sonucu kardeşlere kırpılarak yazılır, elle yeniden gönderim önizlemesi e-posta kapalıyı gösterir, ayın gönderilmiş envanter raporu ezilmez"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "5f456e14",
+          "subject": "bildirim günlüğü sayım testi önceki testlerin işlediği satırlardan bağımsız"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "39072613",
+          "subject": "paketler arası yeniden taban — NOC kapsam bağlantısı n_view taşır, değişmeyen takım kümesi kullanıcı güncellemesine gitmez; parola testi tırnağı"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "3afecf71",
+          "subject": "20.166 hata düzeltme sürümü — CLAUDE.md kuralları, kullanım kılavuzu ve dağıtım öncesi kontroller"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "26dac59f",
+          "subject": "paketler arası istekler — tanılamada pinli CA authType'ı, karışık içerik host eşleşmesi, takım silme metni, nöbette null üye, kesilen adlar"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "006976cb",
+          "subject": "teknik hata raporu ayarları — \"Push ayarlarını aç\" kaydedilmemiş değişikliği sorar, takım seçici hatası seçimle kalkar"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "883450d2",
+          "subject": "takım silme etkisi takım belgelerini listeler, rapor sonucu K9 outcome'ını okur, silinmiş nöbet üyesi doğrulamada sayılmaz"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "6eab55ca",
+          "subject": "PKG-8a yönetim / ayarlar / Sistem Sağlığı / günlük / denetim ekranları — global-yalnız eylemler, düzenleme tabanı, gönderim sonucu, etiketler"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "8b3dfe9b",
+          "subject": "pasif nöbetçi 7/24 arama kartında ve alarm ayrıntısında \"Pasif hesap — aranmaz\" (L-N1, PKG-3 isteği)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "82d00545",
+          "subject": "Bugün paneli alarm okuma izni yoksa açık alarm kartını gizler (L-H8, PKG-5 isteği)"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "94c7d531",
+          "subject": "7/24 arama penceresinde uzun AD adı ve unvan kırpılmaz (390 / 768 e2e, UIM-38 / L-N6)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "ae99791c",
+          "subject": "izleme sayfaları, alarm geçmişi, 7/24, fırtına ve İzleme Panosu hata düzeltmeleri (PKG-7)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "9feb6f83",
+          "subject": "haftalık rapor oluşturma — yabancı takım reddi (K8) takım adımının altında alan hatası olarak gösterilir"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "74982f7e",
+          "subject": "giriş / tur / palet — pasif ve bakım sinyali girişte sıfırlanır, oturum onayı odak alır, tur açılan pencerenin tuşlarını çalmaz"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "36e117b2",
+          "subject": "olay geçmişi özeti okunamazsa iskelet / 0 değil '—'; postmortem kaydı sırasında yazılan metin ezilmez"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "47222b48",
+          "subject": "yönetici özeti — aralık dışı ay bağlantısı kilitlemez, okunamayan takım listesi '0 / 0' değil hata, KPI başlığı kesilmez"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "3aabdc35",
+          "subject": "kanal raporu onayı — sonuç ve e-posta sorunu ham kod değil cümle; paylaşımla okuyana 'PO yok' denmez"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "96b0026c",
+          "subject": "Etkinliklerim engellenen her girişi 'çok fazla deneme' yazmaz; cihaz geçmişinde okunamayan denemeler 'yok' sayılmaz"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "12c3016e",
+          "subject": "haftalık raporlar — kapsamlı müdür global yönetici sayılmaz, kayıt sırasında yazılan kaybolmaz, onay/tekrar gönderim gerçek posta sonucunu söyler"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "a89a8ff7",
+          "subject": "şifre değiştirme sunucu kuralıyla aynı (6–64), uzun parola sessizce kesilmez; ağ hatası iletisi; PKG-8b i18n bloğu"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "b3fbb330",
+          "subject": "sertifika penceresi, kart, envanter, manuel sertifika ve uyarılar sunucunun kapısıyla; indirmeler Safari uyumlu"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "ab512da4",
+          "subject": "çıkış ağ hatasında da tamamlanır, sekmeler arası kimlik değişimi yakalanır, pano kart eylemleri sunucu kapısıyla"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "2dedbde6",
+          "subject": "rapor gönderim sonucu, push ayarları kapsamı, nöbet ve 7/24 düzeltmeleri (UIA-C2/C3/A5/D11, L-N1..4)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "586a4e51",
+          "subject": "e-posta teslimi — çok alıcılı yeniden gönderim, 421 sonucunun tüm satırlara yazılması, tür-özel şablon metinleri (ALERTS-13/14/15/16)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "8af1c7cd",
+          "subject": "push tekilleştirme anahtarı kolona sığdırılır — uzun anahtarlı push sessizce kaybolmaz (ALERTS-12 / DATA-2)"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "3d3e6961",
+          "subject": "aynı saniyede açılan 1 200 alarm 500'lük sayfalarla PostgreSQL'de tam bir kez okunur (haftalık kesinti raporu + olaylar sırası)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "ace3d07b",
+          "subject": "aksiyon kaydı hatırlatma sahiplenmesini ezmez; genel ayar ucu kendi sayfası olan grupların anahtarlarını reddeder"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "d2ccfd3a",
+          "subject": "komut paleti kapsamı LIMIT'ten önce SQL'de (UG dahil), takım vuruşu takım adını taşır; sayfalama eşitlik bozucu; olay önem sırası"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "52be3e7b",
+          "subject": "UG takımı kişisel / gürültü / istatistik yüzeylerinde alarmlarını görür; bildirim kutusu açılış alt sınırını bırakır; Kontrol Geçmişi aralıktan önce başlayan kesintiyi gösterir"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "fb984518",
+          "subject": "envanter içe aktarma pasife almada alarmları kapatır, önizleme grup yaratmaz, uzun hücre satır hatası; \"son güncelleyen\" künyesi"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "94177c43",
+          "subject": "takım silme / taşıma kanal teknik hata raporlarını, şablon kütüphanesini ve bakım pencerelerini görür; bakım penceresi sahibi hedeflerin takımı"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "d3269259",
+          "subject": "haftalık rapor onay belirteci gönderim geçmişinde maskelenir, bağlantı sayfası ham hata / posta durumu göstermez, başka takım için rapor 400"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "5521f10d",
+          "subject": "yönetim API'si kapsamı — paylaşımla kişi verisi maskesi, kullanıcı/takım yazma kuralları, envanter künyesi ve sıralama"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "0da21ac8",
+          "subject": "oturum ve giriş güvenliği — silinmiş kullanıcı kapısı, çıkışta TERMINATED nöbetçisi, AD yerel hesabı devralamaz, rol değişikliği yeniden giriş"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "8dce5151",
+          "subject": "PKG-4 testleri düzeltildi — 443 dışı port testinde çok iş parçacıklı sunucu, gizli kayıt reddinde geçerli envanter gövdesi, guard testinde bütün-varlık kaydı yasağı"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "d389e755",
+          "subject": "elle yüklenen sertifika analizi başka takımların kayıtlarını eşleştiriyordu; /stats tier eşiğini yok sayıyordu; not satırları düzenleme yetkisini söylemiyordu (UIM-24 / K6, UIM-18 / K12, UIM-13 / K5)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "62b714af",
+          "subject": "kart SLA / mini trend kontrol hükmünü okumuyordu; EdDSA / ML-DSA \"kısa anahtar\" sayılıyordu; uzun hata / CRL adresi satırı düşürüyordu; karışık içerik başka host'un sayfa izlemesinden geliyordu (DATA…"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "6ceac280",
+          "subject": "port HTTP kontrolü IP sürümü seçiliyken Host / SNI göndermiyordu; TLS profili yalnız ilk adresi deniyordu; WHOIS ay adı harf duyarlıydı (CHECKS-5, CHECKS-9, CHECKS-11)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "04e191d2",
+          "subject": "k6 anomali guard'ı sweep başındaki eski varlığı kaydedip kullanıcının script / env değişikliğini geri yazıyordu (CHECKS-4, L-M3)"
+        }
+      ],
+      "truncated": true,
+      "omitted": 4
+    },
     {
       "version": "20.165.0",
       "tag": "v20.165.0",

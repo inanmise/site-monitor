@@ -415,6 +415,34 @@ class CertificateControllerTest {
     }
 
     @Test
+    @DisplayName("D2 (son inceleme 2026-10-22): bilgilendirilen kişiler ALARMIN SAHİBİNE göre gizlenir — aynı host'taki başka takımın bağımsız alarmı maskeli")
+    void getDomainAlerts_masksContactsPerAlarmOwner() throws Exception {
+        String contacts = "[{\"name\":\"Müdür\",\"email\":\"mgr@example.com\",\"role\":\"MANAGER\"}]";
+        AlertEvent cert = new AlertEvent();
+        cert.setId(1L); cert.setDomain("ortak.example.com"); cert.setAlertType("EXPIRY"); cert.setAlertLevel("HIGH");
+        cert.setNotifiedContacts(contacts);
+        AlertEvent foreignPing = new AlertEvent();
+        foreignPing.setId(2L); foreignPing.setDomain("ortak.example.com"); foreignPing.setAlertType("PING_DOWN");
+        foreignPing.setAlertLevel("CRITICAL"); foreignPing.setTeamId(9L); foreignPing.setNotifiedContacts(contacts);
+        AlertEvent ownHttp = new AlertEvent();
+        ownHttp.setId(3L); ownHttp.setDomain("ortak.example.com"); ownHttp.setAlertType("HTTP_DOWN");
+        ownHttp.setAlertLevel("CRITICAL"); ownHttp.setTeamId(5L); ownHttp.setNotifiedContacts(contacts);
+        when(inventoryRepo.findByDomain("ortak.example.com")).thenReturn(java.util.Optional.of(invOf("ortak.example.com", 5L)));
+        when(alertEventRepo.findByDomainOrderByCreatedAtDesc("ortak.example.com")).thenReturn(List.of(cert, foreignPing, ownHttp));
+
+        mvc.perform(get("/api/history/ortak.example.com/alerts").session(scopedSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].notified_contacts").value(org.hamcrest.Matchers.containsString("mgr@example.com")))
+                .andExpect(jsonPath("$.data[1].notified_contacts").isEmpty())
+                .andExpect(jsonPath("$.data[2].notified_contacts").value(org.hamcrest.Matchers.containsString("mgr@example.com")));
+
+        foreignPing.setNotifiedContacts(contacts);
+        mvc.perform(get("/api/history/ortak.example.com/alerts").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[1].notified_contacts").value(org.hamcrest.Matchers.containsString("mgr@example.com")));
+    }
+
+    @Test
     @DisplayName("GET /api/history/{domain}/alerts without session returns 401")
     void getDomainAlerts_unauthenticated_returns401() throws Exception {
         mvc.perform(get("/api/history/example.com/alerts"))
@@ -628,6 +656,27 @@ class CertificateControllerTest {
                 // Backend CÜMLE kurmaz: metin anahtarı taşınır, arayüz i18n'den kurar.
                 .andExpect(jsonPath("$.data.rows[0].value_key").value("daysLeft"))
                 .andExpect(jsonPath("$.data.rows[0].action_key").value("none"));
+    }
+
+    @Test
+    @DisplayName("DATA-9: karışık içerik satırının kaynağı host TAM eşleşmesiyle — başka host'un sayfa izlemesi sayılmaz")
+    void health_pageMonitorFlagUsesExactHost() throws Exception {
+        when(inventoryRepo.findByDomain("a.example.com")).thenReturn(java.util.Optional.of(invOf(5L, 443)));
+        when(latestCheckRepo.findById("a.example.com")).thenReturn(java.util.Optional.of(latestOf()));
+        // LIKE %a.example.com% başka host'u (www.a.example.com) bulur — eski kod bunu "sayfa izlemesi var" sayıyordu
+        when(pageMonitorRepo.existsByUrlContainingIgnoreCaseAndActiveTrue("a.example.com")).thenReturn(true);
+        when(pageMonitorRepo.existsActiveForHost("a.example.com")).thenReturn(false);
+
+        mvc.perform(get("/api/certificates/a.example.com/health").session(teamSession(5L)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.rows[?(@.key=='mixedContent')].evidence.source")
+                        .value(org.hamcrest.Matchers.contains("onDemand")));
+
+        when(pageMonitorRepo.existsActiveForHost("a.example.com")).thenReturn(true);
+        mvc.perform(get("/api/certificates/a.example.com/health").session(teamSession(5L)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.rows[?(@.key=='mixedContent')].evidence.source")
+                        .value(org.hamcrest.Matchers.contains("pageMonitor")));
     }
 
     @Test

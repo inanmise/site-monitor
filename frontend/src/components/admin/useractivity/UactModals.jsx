@@ -149,7 +149,7 @@ export function KpiDetailModal({ detail, data, onClose, onUser, winLabel }) {
 }
 
 /** Oturum / kullanıcı detayı: kimlik (gizlilik #14), oturum, giriş geçmişi, kaynak, 30 günlük zaman çizelgesi (#3). */
-export function SessionDetailModal({ row, full, isAdmin, globalAdmin, identityMasked = false, self, activeSet, onClose, onTerminate, onAck, ackBusy, onRefresh, teams = [] }) {
+export function SessionDetailModal({ row, full, isAdmin, globalAdmin, canAck = false, identityMasked = false, self, activeSet, onClose, onTerminate, onAck, ackBusy, onRefresh, teams = [] }) {
   const t = useT()
   const toast = useToast()
   const u = full || row
@@ -190,7 +190,8 @@ export function SessionDetailModal({ row, full, isAdmin, globalAdmin, identityMa
         {isAdmin && u.user_id != null && <Button type="button" variant="secondary" onClick={() => setFullCard(true)}><UserCog size={14} /> {t('uact.fullCard')}</Button>}
         {isAdmin && <Button type="button" variant="secondary" onClick={() => { onClose?.(); navigateTo('admin', { g_tab: 'users', g_q: u.username }) }}><ExternalLink size={14} /> {t('uact.actOpenAdmin')}</Button>}
         {isAdmin && u.user_id != null && (u.tour_status || 'none') !== 'none' && <Button type="button" variant="secondary" disabled={tourBusy} onClick={resetTour}><Compass size={14} /> {tourBusy ? t('usr.saving') : t('usr.tourReset')}</Button>}
-        {isAdmin && isLive && !self && <Button type="button" variant="destructive" onClick={() => onTerminate?.(u.username)}><LogOut size={14} /> {t('uact.terminate')}</Button>}
+        {/* Oturum sonlandırma yalnız global yönetici (20.165.1, UIA-D1 — sunucu requireAdmin) */}
+        {globalAdmin && isLive && !self && <Button type="button" variant="destructive" onClick={() => onTerminate?.(u.username)}><LogOut size={14} /> {t('uact.terminate')}</Button>}
         {/* 2026-10-03: Giriş Yöntemleri → İstatistikler (yalnız global yönetici) — bu kişinin ayrıntısıyla açılır */}
         {globalAdmin && (
           <Button type="button" variant="secondary" data-slot="uact-login-stats"
@@ -311,9 +312,10 @@ export function SessionDetailModal({ row, full, isAdmin, globalAdmin, identityMa
                       ? <span className={MUTED_SM}> · <MaskedValue /></span>
                       : <span className={MUTED_SM}> · {e.ip || '—'} {loc(e) !== '—' ? `(${loc(e)})` : ''} · {shortUa(e.user_agent)}</span>}
                     {splitFlags(e.flags).map((f) => <FlagBadge key={f} flag={f} title={t(`uact.flagHelp.${f}`)}>{t(`uact.anom_${f}`)}</FlagBadge>)}
+                    {/* UIA-D4 (20.165.1): onay bağlantısı yalnız onaylayabilene (global admin / AUDIT — SystemController.ackAnomaly) */}
                     {e.flags && (e.ack
                       ? <span className="inline-flex items-center gap-1 text-xs text-success"><Check size={12} /> {e.ack.by} · {rel(e.ack.at)}</span>
-                      : <LinkButton className="text-xs" disabled={ackBusy === e.id} onClick={() => onAck?.(e, true)}>{t('uact.ack')}</LinkButton>)}
+                      : canAck && <LinkButton className="text-xs" disabled={ackBusy === e.id} onClick={() => onAck?.(e, true)}>{t('uact.ack')}</LinkButton>)}
                   </span>
                 </li>
               )

@@ -53,7 +53,7 @@ public class DeviceHistoryService {
      *                         yalnız "bu cihaz mı" işaretlemesi için; yanıta ASLA yazılmaz
      */
     public Map<String, Object> devicesFor(AppUser user, String currentTokenHash) {
-        String actor = user.getUsername() == null ? "" : user.getUsername().toLowerCase();
+        String actor = user.getUsername() == null ? "" : user.getUsername().toLowerCase(java.util.Locale.ROOT);   // tr_TR JVM (AUTH-15)
 
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("current", currentDevice(user, actor, currentTokenHash != null));
@@ -107,7 +107,7 @@ public class DeviceHistoryService {
 
     /** @param failed true → yalnız başarısız denemeler (LOGIN_FAILED), false → başarılı girişler */
     public Map<String, Object> loginsFor(AppUser user, boolean failed, int page, int size) {
-        String actor = user.getUsername() == null ? "" : user.getUsername().toLowerCase();
+        String actor = user.getUsername() == null ? "" : user.getUsername().toLowerCase(java.util.Locale.ROOT);   // tr_TR JVM (AUTH-15)
         int sz = Math.max(1, Math.min(size, 200));
         Page<AuditLog> result = auditLogRepo.findOwnLogins(
                 actor, failed ? "LOGIN_FAILED" : "LOGIN", PageRequest.of(Math.max(0, page), sz));

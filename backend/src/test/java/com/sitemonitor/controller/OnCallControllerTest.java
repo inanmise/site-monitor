@@ -91,6 +91,25 @@ class OnCallControllerTest {
     }
 
     @Test
+    @DisplayName("K11: silinmiş üyenin null kimliği (eski istemci geri yollar) atlanır; bilinmeyen dolu kimlik yine 400")
+    void nullMemberIsSkipped() throws Exception {
+        OnCallSchedule saved = new OnCallSchedule();
+        saved.setEnabled(true); saved.setRotation("WEEKLY"); saved.setNotifyOncall(false);
+        when(onCall.save(any(), anyBoolean(), any(), any(), anyList(), anyBoolean(), any())).thenReturn(saved);
+        String body = "{\"enabled\":true,\"rotation\":\"WEEKLY\",\"anchor\":\"2026-10-05T09:00\",\"members\":[11,null,12]}";
+        mvc.perform(put("/api/oncall/teams/5").session(global()).contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk());
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<Long>> members = ArgumentCaptor.forClass(List.class);
+        verify(onCall).save(eq(5L), eq(true), eq("WEEKLY"), eq("2026-10-05T09:00"), members.capture(), anyBoolean(), eq("admin"));
+        assertThat(members.getValue()).containsExactly(11L, 12L);
+
+        String bad = "{\"enabled\":true,\"rotation\":\"WEEKLY\",\"anchor\":\"2026-10-05T09:00\",\"members\":[11,\"not-a-user\"]}";
+        mvc.perform(put("/api/oncall/teams/5").session(global()).contentType(MediaType.APPLICATION_JSON).content(bad))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
     @DisplayName("yazma: üye 403, yönetici 200 + kimlikler çözülür + denetim")
     void writeRequiresManage() throws Exception {
         String body = "{\"enabled\":true,\"rotation\":\"WEEKLY\",\"anchor\":\"2026-10-05T09:00\",\"members\":[11,12],\"notify_oncall\":true}";

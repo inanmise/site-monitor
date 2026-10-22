@@ -77,6 +77,42 @@ export function approvalStateLabelKey(approval) {
  * geçmişi varsa çizilir. Durum rozeti + kim / ne zaman + not; ekip için "Onaya gönder" (eylem çubuğunda da), PO için
  * "Onayla" / "Reddet" (gerekçe zorunlu). Karar sunucuda doğrulanır (PO üyeliği, bekleyen istek, eskimiş istek 409).
  */
+/**
+ * Onay sonrası yöneticilere gönderimin sonucu → cümle (UIA-E1, 2026-10-22). Eskiden ham kod basılıyordu ("…gönderilemedi
+ * (APPROVAL_STALE). Yöneticilere gönder ile yeniden deneyin") — onaydan sonra değişen raporda o düğme yine 409 alır, gönderim
+ * sürerken ikinci gönderime çağırıyordu. Anlamlar sunucunun push cümleleriyle aynı (TechErrorPushService.approvedParts).
+ * SENT + boş `sent_to` (yöneticilerin hepsi pasif, posta yalnız takım CC'sine gitti) "yalnız takım kopyası" der.
+ * @returns {{ tone: 'success'|'info'|'error', text: string }}
+ */
+export function approvalOutcome(d, t) {
+  const code = d?.send_state || d?.send_error || 'FAILED'
+  if (code === 'SENT') {
+    const to = Array.isArray(d?.sent_to) ? d.sent_to.filter(Boolean) : []
+    return to.length ? { tone: 'success', text: t('te.appr.approved', to.join(', ')) } : { tone: 'success', text: t('te.appr.outcome.ccOnly') }
+  }
+  if (code === 'QUEUED') return { tone: 'info', text: t('te.appr.approvedQueued') }
+  if (code === 'SKIPPED') return { tone: 'info', text: t('te.appr.outcome.SKIPPED') }
+  if (code === 'APPROVAL_STALE') return { tone: 'error', text: t('te.appr.outcome.APPROVAL_STALE') }
+  if (code === 'SEND_IN_PROGRESS') return { tone: 'info', text: t('te.appr.outcome.SEND_IN_PROGRESS') }
+  if (code === 'PDF_BUSY') return { tone: 'error', text: t('te.appr.outcome.PDF_BUSY') }
+  if (code === 'PDF_TOO_LARGE') return { tone: 'error', text: t('te.appr.outcome.PDF_TOO_LARGE') }
+  return { tone: 'error', text: t('te.appr.outcome.other') }
+}
+
+/**
+ * Onaylayıcı satırı (UIA-E2, 2026-10-22): paylaşımla okuyan (grant) adları görmez, sunucu adsız satırlar + `approver_count`
+ * gönderir — eskiden yalnız adlar sayılıyor, "takımda PO yok" deniyordu. Adlar varsa adlar; yoksa sayı > 0 ise "N PO
+ * onaylayıcı (adlar paylaşımla gösterilmez)"; yalnız sayı 0 iken "PO yok".
+ */
+export function approversLine(detail, t) {
+  const approvers = Array.isArray(detail?.approvers) ? detail.approvers : []
+  const names = approvers.map((a) => a?.name).filter(Boolean)
+  if (names.length) return t('te.appr.approvers', names.join(', '))
+  const n = Number(detail?.approver_count ?? approvers.length) || 0
+  if (n > 0) return t('te.appr.approversHidden', n)
+  return t('te.appr.noApprovers')
+}
+
 export default function ApprovalCard({ reportId, detail, approval, uiLang, busy, onBusy, onRequest, onChanged, sentAt, sentTo, reportStatus }) {
   const t = useT()
   const toast = useToast()
@@ -93,8 +129,6 @@ export default function ApprovalCard({ reportId, detail, approval, uiLang, busy,
   // bekliyor" yanıltıyordu), önceki durum ayrı bir satırda yalnız bilgi; ipucu duruma göre (`flowRemovedHintKey`)
   const flowRemoved = !required && state !== 'none'
   const Icon = flowRemoved ? ShieldCheck : ICON[state] || ShieldCheck
-  const approvers = Array.isArray(detail?.approvers) ? detail.approvers : []
-  const approverNames = approvers.map((a) => a?.name).filter(Boolean)
   const execCount = Number(detail?.executive_count) || 0
 
   async function decide(approve) {
@@ -107,9 +141,10 @@ export default function ApprovalCard({ reportId, detail, approval, uiLang, busy,
       if (res?.success && res.data) {
         const d = res.data
         if (approve) {
-          if (d.send_state === 'SENT') toast.success(t('te.appr.approved', (d.sent_to || []).join(', ')))
-          else if (d.send_state === 'QUEUED') toast.info(t('te.appr.approvedQueued'))
-          else toast.error(t('te.appr.approvedNotSent', d.send_error || d.send_state || '—'))
+          const o = approvalOutcome(d, t)
+          if (o.tone === 'success') toast.success(o.text)
+          else if (o.tone === 'info') toast.info(o.text, 8000)
+          else toast.error(o.text, { duration: 8000 })
         } else toast.success(t('te.appr.rejected'))
         setDialog(null)
         setNote('')
@@ -172,7 +207,7 @@ export default function ApprovalCard({ reportId, detail, approval, uiLang, busy,
       )}
       {required && (
         <p className="m-0 text-xs text-muted-foreground [overflow-wrap:anywhere]" data-slot="te-approval-approvers">
-          {approverNames.length ? t('te.appr.approvers', approverNames.join(', ')) : t('te.appr.noApprovers')}
+          {approversLine(detail, t)}
         </p>
       )}
       {(detail?.can_request || detail?.can_decide) && (

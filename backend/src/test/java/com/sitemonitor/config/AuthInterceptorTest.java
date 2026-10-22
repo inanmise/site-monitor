@@ -409,4 +409,77 @@ class AuthInterceptorTest {
         verify(auditService).recordInactiveLogin(eq("alice"), eq(9L), any(), any(), any(), any(), eq("REMEMBER_ME"));
         assertThat(req.getSession(false)).isNull();
     }
+
+    // ── AUTH-1 / AUTH-16 (2026-10-22): silinmiş kullanıcının oturumu ve çerezi ───────────────────────────────
+
+    @Test
+    @DisplayName("AUTH-1: SİLİNMİŞ kullanıcının canlı oturumu → 401 'Session superseded', oturum kapanır, token'ları silinir, çerez düşer")
+    void liveSession_deletedUser_401AndStripped() throws Exception {
+        MockHttpServletRequest req = new MockHttpServletRequest("GET", "/api/admin/users");
+        MockHttpSession s = liveSession("GONE");
+        s.setAttribute("systemRole", "ADMIN");
+        s.removeAttribute("viewTeamIds");   // silinmeden önce GLOBAL yöneticiydi
+        req.setSession(s);
+        MockHttpServletResponse res = new MockHttpServletResponse();
+        when(userService.isAccountGone("GONE")).thenReturn(true);
+
+        assertThat(interceptor.preHandle(req, res, new Object())).isFalse();
+        assertThat(res.getStatus()).isEqualTo(401);
+        assertThat(res.getContentAsString()).contains("Session superseded");
+        assertThat(s.isInvalid()).isTrue();
+        verify(rememberMeService).invalidateAllForUser("GONE");
+        Cookie c = res.getCookie(RememberMeService.COOKIE_NAME);
+        assertThat(c).isNotNull();
+        assertThat(c.getMaxAge()).isZero();
+        verify(userService, never()).isSessionSuperseded(any(), any());
+    }
+
+    @Test
+    @DisplayName("AUTH-1: hesap var → kapı açık, istek geçer (isAccountGone false)")
+    void liveSession_existingUser_passesGoneGate() throws Exception {
+        MockHttpServletRequest req = new MockHttpServletRequest("GET", "/api/certificates");
+        MockHttpSession s = liveSession("ALICE");
+        req.setSession(s);
+        when(userService.isAccountGone("ALICE")).thenReturn(false);
+
+        assertThat(interceptor.preHandle(req, new MockHttpServletResponse(), new Object())).isTrue();
+        verify(userService).isAccountGone("ALICE");
+        assertThat(s.isInvalid()).isFalse();
+    }
+
+    @Test
+    @DisplayName("AUTH-1 (son inceleme 2026-10-22): hesap durumu OKUNAMAZSA pasif kapısı fırlatır — istek hatayla düşer, oturum "
+            + "kapanmaz, token silinmez, silinmiş kapısına gelinmez (kimse dışarı atılmaz)")
+    void liveSession_accountStateUnreadable_requestFailsNobodyLoggedOut() {
+        MockHttpServletRequest req = new MockHttpServletRequest("GET", "/api/certificates");
+        MockHttpSession s = liveSession("ALICE");
+        req.setSession(s);
+        when(userService.isAccountInactive("ALICE"))
+                .thenThrow(new org.springframework.dao.DataAccessResourceFailureException("db down"));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                        () -> interceptor.preHandle(req, new MockHttpServletResponse(), new Object()))
+                .isInstanceOf(org.springframework.dao.DataAccessResourceFailureException.class);
+        assertThat(s.isInvalid()).isFalse();
+        verify(userService, never()).isAccountGone(any());
+        verify(rememberMeService, never()).invalidateAllForUser(any());
+    }
+
+    @Test
+    @DisplayName("AUTH-16: geçerli remember-me çerezi ama kullanıcı SATIRI YOK → oturum kurulmaz, o adın token'ları silinir, çerez düşer, 401")
+    void rememberMe_deletedUser_tokensDeleted() throws Exception {
+        MockHttpServletRequest req = reqWithCookie("/api/me");
+        MockHttpServletResponse res = new MockHttpServletResponse();
+        when(rememberMeService.validate(eq("tok"), any())).thenReturn(Optional.of("GONE"));
+        when(userService.findByUsername("GONE")).thenReturn(Optional.empty());
+
+        assertThat(interceptor.preHandle(req, res, new Object())).isFalse();
+        assertThat(res.getStatus()).isEqualTo(401);
+        verify(rememberMeService).invalidateAllForUser("GONE");
+        verify(authController, never()).populateSession(any(), any());
+        Cookie c = res.getCookie(RememberMeService.COOKIE_NAME);
+        assertThat(c).isNotNull();
+        assertThat(c.getMaxAge()).isZero();
+        assertThat(req.getSession(false)).isNull();
+    }
 }

@@ -59,8 +59,8 @@ function UserName({ row, onOpen }) {
     <Button type="button" variant="link" onClick={() => onOpen(row.username)} data-slot="lm-user-open"
       aria-label={t('lm.stats.users.open', row.display_name || row.username)}
       className="h-auto min-h-10 max-w-full flex-col items-start gap-0 px-0 py-1 text-left whitespace-normal sm:min-h-8">
-      <span className="max-w-full truncate font-medium">{row.display_name || row.username}</span>
-      <span className="max-w-full truncate font-mono text-xs text-muted-foreground">{row.username}</span>
+      <span className="max-w-full min-w-0 font-medium [overflow-wrap:anywhere]" data-slot="lm-user-name">{row.display_name || row.username}</span>
+      <span className="max-w-full min-w-0 font-mono text-xs text-muted-foreground [overflow-wrap:anywhere]">{row.username}</span>
     </Button>
   )
 }
@@ -211,11 +211,11 @@ export default function UsersTable({ days, channel, onChannelChange, refreshKey,
             <TableBody>
               {items.map((r) => (
                 <TableRow key={r.username} data-slot="lm-user-row" data-user={r.username}>
-                  <TableCell className="align-top"><UserName row={r} onOpen={onOpen} /><Flags row={r} />{r.team_name && <span className="mt-1 block truncate text-xs text-muted-foreground" title={r.team_name}>{r.team_name}</span>}</TableCell>
+                  <TableCell className="align-top whitespace-normal"><UserName row={r} onOpen={onOpen} /><Flags row={r} />{r.team_name && <span className="mt-1 block min-w-0 text-xs text-muted-foreground [overflow-wrap:anywhere]" data-slot="lm-user-team">{r.team_name}</span>}</TableCell>
                   <TableCell className="align-top whitespace-normal"><span className="mb-1 block font-semibold tabular-nums">{fmtNum(successTotal(r), locale)}</span><ChannelCounts row={r} locale={locale} /></TableCell>
                   <TableCell className={cn('text-right align-top tabular-nums', Number(r.failed) > 0 && 'font-semibold text-destructive')}>
                     {fmtNum(r.failed, locale)}
-                    {r.last_failure?.reason && <span className="block truncate text-xs font-normal text-muted-foreground" title={reasonLabel(r.last_failure.reason, t)}>{reasonLabel(r.last_failure.reason, t)}</span>}
+                    {r.last_failure?.reason && <span className="block whitespace-normal text-xs font-normal text-muted-foreground [overflow-wrap:anywhere]">{reasonLabel(r.last_failure.reason, t)}</span>}
                   </TableCell>
                   <TableCell className="text-right align-top tabular-nums">{fmtPct(r.success_rate, locale)}</TableCell>
                   <TableCell className="align-top"><LastSuccess row={r} /></TableCell>
@@ -243,7 +243,7 @@ export default function UsersTable({ days, channel, onChannelChange, refreshKey,
                 </div>
                 <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
                   <Flags row={r} />
-                  {r.team_name && <span className="min-w-0 truncate">{r.team_name}</span>}
+                  {r.team_name && <span className="min-w-0 [overflow-wrap:anywhere]" data-slot="lm-user-team">{r.team_name}</span>}
                 </div>
                 <ChannelCounts row={r} locale={locale} />
                 <dl className="m-0 grid grid-cols-3 gap-2 text-xs">

@@ -110,7 +110,12 @@ function initialSection() {
 // Modül görünürlüğü kurumsal bir karardır: kapsamlı müdür kendi takımına açamaz (2026-09-16).
 // Sistem Bakım Modu (2026-10-02): yalnız global yönetici sistemi bakıma alır — sunucu her uçta 403.
 // Giriş Yöntemleri (2026-10-02): kimin nasıl kimlik doğrulayacağı kurum geneli güvenlik politikası — sunucu her uçta 403.
-const GLOBAL_ONLY_SECTIONS = new Set(['smtp', 'ldap', 'database', 'secrets', 'weeklyreports', 'sysmaint', 'loginmethods'])
+// Haftalık erişilebilirlik + Envanter raporu (20.165.1, UIA-C1): SystemController'daki her uç `requireAdmin` (global) —
+// kapsamlı müdüre açık bölüm iki 403 tostu + ACCESS_DENIED güvenlik olayı üretiyordu.
+const GLOBAL_ONLY_SECTIONS = new Set(['smtp', 'ldap', 'database', 'secrets', 'weeklyreports', 'sysmaint', 'loginmethods',
+  'weeklyavail', 'certinvreport'])
+/** Kimlik bilgisi / sır taşıyan kilitli bölümler — notun metni bunlar için "sır", diğerleri için "kurum geneli ayar". */
+const SECRET_SECTIONS = new Set(['smtp', 'ldap', 'database', 'secrets'])
 
 /** Durum ağırlığı — bir bölüme birden çok kontrol düşerse en kötüsü gösterilir. */
 const STATUS_RANK = { bad: 2, warn: 1 }
@@ -280,7 +285,7 @@ export default function AdminSettings({ globalAdmin = true }) {
           {!globalAdmin && GLOBAL_ONLY_SECTIONS.has(active) && (
             <div className="mb-8" data-testid="settings-global-only">
               <AlertBanner tone="warning" title={t('settings.globalOnlyTitle')} role="status">
-                {t('settings.globalOnlyBody')}
+                {SECRET_SECTIONS.has(active) ? t('settings.globalOnlyBody') : t('settings.globalOnlyBodyOrg')}
               </AlertBanner>
             </div>
           )}
@@ -304,7 +309,7 @@ export default function AdminSettings({ globalAdmin = true }) {
           {active === 'loginmethods' && <LoginMethodsSettings onOpenSection={openSection} />}
           {active === 'loginanomaly' && <LoginAnomalySettings retentionReadOnly={!globalAdmin} />}
           {active === 'ldap' && <LdapSettings />}
-          {active === 'domaindiag' && <DomainDiagnostics />}
+          {active === 'domaindiag' && <DomainDiagnostics globalAdmin={globalAdmin} />}
           {active === 'retention' && <RetentionSettings readOnly={!globalAdmin} />}
           {active === 'database' && <DatabaseInfo />}
           {active === 'secrets' && <SecretTools />}

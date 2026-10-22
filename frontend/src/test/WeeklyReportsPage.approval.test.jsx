@@ -59,7 +59,7 @@ const REPORT = {
 }
 
 const renderPage = () =>
-  render(<LangProvider><WeeklyReportsPage systemRole="ADMIN" teamId={5} teamName="SY-A" /></LangProvider>)
+  render(<LangProvider><WeeklyReportsPage systemRole="ADMIN" globalAdmin teamId={5} teamName="SY-A" /></LangProvider>)
 
 /** Liste satırına tıklayıp rapor detayını açar. Satır, hafta ETİKETİNİ değil formatWeekRange ile
  *  üretilen tarih aralığını bastığı için satır tbody'den seçiliyor (metne bağlanmak kırılgan olurdu). */

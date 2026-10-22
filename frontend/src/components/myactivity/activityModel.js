@@ -76,18 +76,46 @@ export function locationText(row, t) {
 }
 
 /**
+ * `failure_reason`'ın kod öneki ("<KOD>: …") — yalnız BÜYÜK harf / rakam / alt çizgiden oluşan önek koddur. Hız sınırı
+ * satırı ("Rate limited: too many login attempts from …", AuditService#recordRateLimited) KODSUZDUR → ''.
+ */
+export function reasonCode(raw) {
+  if (!raw) return ''
+  const head = String(raw).split(':')[0].trim()
+  return /^[A-Z][A-Z0-9_]{2,63}$/.test(head) ? head : ''
+}
+
+/**
+ * Engellenen giriş satırı GERÇEK hız sınırı mı? (IP oranı ya da kilitliyken yapılan deneme — AuditService#recordRateLimited)
+ * Kodlu BLOCKED satırlar (USERNAME_PREFIX, LDAP_LOGIN_DISABLED, ACCOUNT_LOCKED, ACCOUNT_INACTIVE, MAINTENANCE …) değildir
+ * (UIA-G3, 2026-10-22: eskiden HER engellenen giriş "çok fazla deneme" diye yazılıyordu). Gerekçesiz eski satır = bugünkü
+ * okuma (hız sınırı).
+ */
+export function isRateLimitedRow(row) {
+  if (row?.event_type !== EV.SIGN_IN_FAILED || row?.outcome !== 'BLOCKED') return false
+  return !reasonCode(row?.failure_reason)
+}
+
+/**
  * Başarısızlık gerekçesi → okunur metin. Sunucu "<KOD>: <insan metni>" yazar (AuditService#recordLogin);
- * bilinen kodlar sözlükten, hız sınırı (BLOCKED giriş) kendi metniyle, gerisi olduğu gibi.
+ * bilinen kodlar sözlükten, hız sınırı (kodsuz BLOCKED giriş) kendi metniyle, kodlu ama bilinmeyen engel → null (cümle
+ * zaten "Giriş reddedildi" der; Türkçe sunucu metni İngilizce arayüze dökülmez), gerisi olduğu gibi.
  * `t()` çağrıları LİTERAL (i18n-used-keys kapısı).
  */
 export function reasonText(row, t) {
   const raw = row?.failure_reason
-  const code = raw ? String(raw).split(':')[0].trim() : ''
+  const code = reasonCode(raw)
   // Pasif hesap (2026-10-02): kimlik doğru ama hesap pasif — sonuç BLOCKED olsa da oran sınırı DEĞİL.
   if (code === 'ACCOUNT_INACTIVE') return t('lastLogin.reasonAccountInactive')
   // Sistem bakımı (2026-10-02): kimlik doğru ama bakımda yalnız global yöneticiler girer — BLOCKED, oran sınırı DEĞİL.
   if (code === 'MAINTENANCE') return t('lastLogin.reasonMaintenance')
-  if (row?.event_type === EV.SIGN_IN_FAILED && row?.outcome === 'BLOCKED') return t('myact.reason.rateLimited')
+  // Kullanıcı adı ön eki (2026-10-21), LDAP girişi kapalı, kilitli hesap (kodla giriş) — engel, oran sınırı DEĞİL
+  if (code === 'USERNAME_PREFIX') return t('myact.reason.usernamePrefix')
+  if (code === 'LDAP_LOGIN_DISABLED') return t('myact.reason.ldapDisabled')
+  if (code === 'ACCOUNT_LOCKED') return t('myact.reason.accountLocked')
+  if (row?.event_type === EV.SIGN_IN_FAILED && row?.outcome === 'BLOCKED') {
+    return isRateLimitedRow(row) ? t('myact.reason.rateLimited') : null
+  }
   if (!raw) return null
   if (code === 'BAD_PASSWORD') return t('lastLogin.reasonBadPassword')
   if (code === 'TEMP_PASSWORD_EXPIRED') return t('lastLogin.reasonTempExpired')
@@ -142,7 +170,10 @@ export function sentence(row, t) {
   const dev = deviceText(row?.ua_summary, t)
   if (type === EV.SIGN_IN) return { text: dev ? t('myact.s.signedInFrom', dev) : t('audit.ev.LOGIN'), target: null }
   if (type === EV.SIGN_IN_FAILED) {
-    if (row?.outcome === 'BLOCKED') return { text: t('myact.s.blocked'), target: null }
+    if (row?.outcome === 'BLOCKED') {
+      // Yalnız gerçek hız sınırı "çok fazla deneme"; kodlu engel (ön ek, LDAP kapalı, kilit, pasif, bakım) "reddedildi"
+      return { text: isRateLimitedRow(row) ? t('myact.s.blocked') : t('myact.s.refused'), target: null }
+    }
     return { text: dev ? t('myact.s.failedFrom', dev) : t('myact.s.failed'), target: null }
   }
   if (type === EV.SIGN_OUT) return { text: t('audit.ev.LOGOUT'), target: null }

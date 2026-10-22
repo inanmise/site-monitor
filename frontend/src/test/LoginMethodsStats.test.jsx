@@ -176,6 +176,10 @@ describe('Giriş Yöntemleri — İstatistikler sekmesi', () => {
     await waitFor(() => expect(document.querySelectorAll('[data-slot="lm-user-row"]')).toHaveLength(2))
     const rowB = document.querySelector('[data-slot="lm-user-row"][data-user="USER-B"]')
     expect(rowB.querySelector('[data-slot="lm-user-passive"]')).not.toBeNull()
+    // UIA-C9 (2026-10-22): ad ve takım KESİLMEZ — sararak tam görünür (truncate yok)
+    expect(rowB.querySelector('[data-slot="lm-user-name"]')).not.toHaveClass('truncate')
+    expect(rowB.querySelector('[data-slot="lm-user-name"]').className).toContain('[overflow-wrap:anywhere]')
+    rowB.querySelectorAll('[data-slot="lm-user-team"]').forEach((el) => expect(el).not.toHaveClass('truncate'))
     expect(api.loginMethodsAdmin.statsUsers).toHaveBeenCalledWith({ days: 7, q: null, channel: null, sort: 'logins', page: 1, size: expect.any(Number) })
 
     fireEvent.change(screen.getByRole('searchbox', { name: /Search users|Kullanıcı ara/ }), { target: { value: 'kullanici a' } })

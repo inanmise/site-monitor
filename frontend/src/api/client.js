@@ -10,6 +10,7 @@ import { claimExpiredRedirect, signalSessionExpired } from '../utils/sessionExpi
 import { isMaintenancePayload, signalMaintenance } from '../utils/systemMaintenance.js'
 import { isUsernamePrefixPayload, prefixesOf, signalUsernamePrefix } from '../utils/usernamePrefix.js'
 import { downloadBlob } from '../utils/csvExport.js'
+import { clearLogoutPending, holdLoginStart, settleLogoutsBeforeLogin } from '../utils/pendingLogout.js'
 import {
   ApiError, attachErrorInfo, errorInfoOf, networkMessage, nonJsonMessage, normalizeErrorBody, parseRetryAfter, rememberErrorInfo,
 } from '../utils/errorMessages.js'
@@ -67,6 +68,14 @@ async function fetchTechErrorPdf(id, signal = null) {
     if (e?.name === 'AbortError' || signal?.aborted) return { success: false, status: 0, aborted: true, error: null }
     return networkFailurePayload()
   }
+}
+
+/**
+ * Ham `fetch` ile inen dosya (PDF) 401 aldıysa oturum yolunu çalıştırır (2026-10-22, UIM-27): tek bir yoklama
+ * `request()`'in 401 dalından geçer — oturum düştüyse kullanıcı `/?session=expired`'a gider, sessizce "indirilemedi" kalmaz.
+ */
+function pingSessionPath() {
+  Promise.resolve().then(() => request('/session/ping', { timeoutMs: DEFAULT_TIMEOUT_MS })).catch(() => { /* ağ yok: sonraki yoklama */ })
 }
 
 /** Ağ hatası (sunucuya ulaşılamadı) → çevrilmiş metinli yumuşak yük; `code` NETWORK_ERROR | OFFLINE (künyede de). */
@@ -458,6 +467,50 @@ async function manualUpload(path, formData, { onProgress, signal } = {}) {
   return res
 }
 
+/** Sunucu çıkışı (iptal edilebilir) — `api.logout` ve girişten önceki bekleyen çıkış denemesi aynı isteği kullanır. */
+function logoutRequest(signal) {
+  return request('/logout', { method: 'POST', ...(signal ? { signal } : {}) })
+}
+
+/** `/login` isteği — `api.login` bekleyen çıkışları kapattıktan SONRA çağırır. */
+async function loginRequest(username, password, rememberMe, forceLogin) {
+  let r
+  try {
+    r = await fetchWithTimeout(`${BASE}/login`, {
+      method: 'POST',
+      credentials: 'include',
+      // X-Lang (2026-10-08): giriş hata metni de arayüz dilinde gelsin — başlık yokken sunucu tarayıcının
+      // Accept-Language'ına düşüyor, İngilizce arayüzde Türkçe "hatalı parola" çıkabiliyordu.
+      headers: { 'Content-Type': 'application/json', 'X-Lang': uiLang() },
+      body: JSON.stringify({
+        username, password,
+        remember_me: String(rememberMe),
+        force_login: String(forceLogin),
+      }),
+    })
+  } catch (e) {
+    // Login isteği asılır/başarısız olursa buton sonsuz "bekliyor"da kalmasın
+    const kind = e?.name === 'AbortError' ? 'timeout' : 'network'
+    return {
+      success: false,
+      status: 0,
+      networkError: kind === 'network',
+      error: networkMessage({ lang: uiLang(), kind }),
+    }
+  }
+  let body
+  try { body = await r.json() } catch { body = nonJsonErrorPayload(r.status, r) }
+  // Flag a successful login so the 401 handler in request() knows that any
+  // subsequent 401 is a *lost* session (worth a hard reload to /?session=
+  // expired), not the initial unauthenticated bootstrap.
+  if (r.ok && body?.success && typeof window !== 'undefined') {
+    try { sessionStorage.setItem('sm.session.active', '1') } catch {}
+  }
+  // Oturum kuruldu: bekleyen çıkış işareti HEMEN düşer (öteki sekmelerin yeniden denemesi durur; App.handleLogin'i beklemez)
+  if (r.ok && body?.success) clearLogoutPending()
+  return body
+}
+
 export const api = {
   /** Komut paleti (2026-09-12, #1): alan / izleme / takım — takım kapsamlı. */
   search: (q) => request(`/search?q=${encodeURIComponent(q)}`),
@@ -550,16 +603,15 @@ export const api = {
       if (live) qs.set('live', '1')
       try {
         const res = await fetch(`${BASE}/executive-summary/pdf?${qs.toString()}`, { credentials: 'include', headers: { 'X-Lang': uiLang() } })
-        if (!res.ok) return { success: false, status: res.status }
+        if (!res.ok) { if (res.status === 401) pingSessionPath(); return { success: false, status: res.status } }
         const blob = await res.blob()
-        const disp = res.headers.get('Content-Disposition') || ''
+        const disp = headerOf(res, 'Content-Disposition') || ''
         const match = /filename="?([^";]+)"?/.exec(disp)
-        const objectUrl = URL.createObjectURL(blob)
-        const a = document.createElement('a')
-        a.href = objectUrl
-        a.download = match ? match[1] : `site-monitor-yonetici-ozeti-${month || ''}.pdf`
-        a.click()
-        setTimeout(() => URL.revokeObjectURL(objectUrl), 0)
+        // Ortak indirme (2026-10-22, UIM-27): bağlantı DOM'da, adres 60 sn tutulur — Safari / iPad DOM dışı bağlantıda ya da
+        // hemen iptal edilen adreste indirmeyi başlatmıyordu. Başlatılamadıysa başarı DEĞİL.
+        if (!downloadBlob(match ? match[1] : `site-monitor-yonetici-ozeti-${month || ''}.pdf`, blob)) {
+          return { success: false, status: 0, code: 'DOWNLOAD_FAILED' }
+        }
         return { success: true }
       } catch (e) {
         return { success: false, status: 0, error: e?.message || 'NETWORK' }
@@ -783,46 +835,22 @@ export const api = {
   },
 
   login: async (username, password, rememberMe = false, forceLogin = false) => {
-    let r
+    // Önceki çıkış sunucuya ulaşamadıysa (UIM-1, 2026-10-22) o oturum ÖNCE kapatılır; uçuştaki her çıkış isteği bitirilir ya da
+    // İPTAL edilir, öteki sekmelerinki beklenir (D1) — geç biten bir /logout yanıtı yeni oturumun çerezini silemez.
+    const releaseHold = holdLoginStart()
     try {
-      r = await fetchWithTimeout(`${BASE}/login`, {
-        method: 'POST',
-        credentials: 'include',
-        // X-Lang (2026-10-08): giriş hata metni de arayüz dilinde gelsin — başlık yokken sunucu tarayıcının
-        // Accept-Language'ına düşüyor, İngilizce arayüzde Türkçe "hatalı parola" çıkabiliyordu.
-        headers: { 'Content-Type': 'application/json', 'X-Lang': uiLang() },
-        body: JSON.stringify({
-          username, password,
-          remember_me: String(rememberMe),
-          force_login: String(forceLogin),
-        }),
-      })
-    } catch (e) {
-      // Login isteği asılır/başarısız olursa buton sonsuz "bekliyor"da kalmasın
-      const kind = e?.name === 'AbortError' ? 'timeout' : 'network'
-      return {
-        success: false,
-        status: 0,
-        networkError: kind === 'network',
-        error: networkMessage({ lang: uiLang(), kind }),
-      }
+      await settleLogoutsBeforeLogin(logoutRequest)
+      return await loginRequest(username, password, rememberMe, forceLogin)
+    } finally {
+      releaseHold()
     }
-    let body
-    try { body = await r.json() } catch { body = nonJsonErrorPayload(r.status, r) }
-    // Flag a successful login so the 401 handler in request() knows that any
-    // subsequent 401 is a *lost* session (worth a hard reload to /?session=
-    // expired), not the initial unauthenticated bootstrap.
-    if (r.ok && body?.success && typeof window !== 'undefined') {
-      try { sessionStorage.setItem('sm.session.active', '1') } catch {}
-    }
-    return body
   },
 
-  logout: async () => {
+  logout: async ({ signal } = {}) => {
     if (typeof window !== 'undefined') {
       try { sessionStorage.removeItem('sm.session.active') } catch {}
     }
-    return request('/logout', { method: 'POST' })
+    return logoutRequest(signal)
   },
 
   getMe: () => request('/me', { timeoutMs: DEFAULT_TIMEOUT_MS }),
@@ -854,13 +882,20 @@ export const api = {
     // Eşleşmeme de AYNI 200'dür; boşsa 400 PHONE_REQUIRED / EMAIL_REQUIRED (+ field). Gövde hiçbir yerde loglanmaz.
     request: (username, channel, contact) => otpPost('/login/otp/request', { username, channel, ...(contact || {}) }),
     verify: async (challengeId, code, rememberMe = false, forceLogin = false) => {
-      const body = await otpPost('/login/otp/verify', {
-        challenge_id: challengeId, code, remember_me: !!rememberMe, forceLogin: !!forceLogin,
-      })
-      if (body?.success && typeof window !== 'undefined') {
-        try { sessionStorage.setItem('sm.session.active', '1') } catch { /* sessionStorage yok */ }
+      const releaseHold = holdLoginStart()   // bkz. login (UIM-1, D1)
+      try {
+        await settleLogoutsBeforeLogin(logoutRequest)
+        const body = await otpPost('/login/otp/verify', {
+          challenge_id: challengeId, code, remember_me: !!rememberMe, forceLogin: !!forceLogin,
+        })
+        if (body?.success && typeof window !== 'undefined') {
+          try { sessionStorage.setItem('sm.session.active', '1') } catch { /* sessionStorage yok */ }
+        }
+        if (body?.success) clearLogoutPending()   // oturum kuruldu — bekleyen çıkış işareti hemen düşer
+        return body
+      } finally {
+        releaseHold()
       }
-      return body
     },
   },
 
@@ -1605,23 +1640,20 @@ export const api = {
         + `?teamId=${encodeURIComponent(teamId)}`
         + (weekOffset != null ? `&weekOffset=${encodeURIComponent(weekOffset)}` : '')
       try {
-        const res = await fetch(url, { credentials: 'include' })
+        const res = await fetch(url, { credentials: 'include', headers: { 'X-Lang': uiLang() } })
         if (!res.ok) {
+          if (res.status === 401) pingSessionPath()
           return { success: false, status: res.status,
             error: res.status === 503 ? 'PDF_GENERATION_FAILED' : `HTTP_${res.status}` }
         }
         const blob = await res.blob()
         // Dosya adını sunucunun Content-Disposition'ından al — mailde giden adla aynı olsun.
-        const disp = res.headers.get('Content-Disposition') || ''
+        const disp = headerOf(res, 'Content-Disposition') || ''
         const match = /filename="?([^";]+)"?/.exec(disp)
-        const objectUrl = URL.createObjectURL(blob)
-        const a = document.createElement('a')
-        a.href = objectUrl
-        a.download = match ? match[1] : 'haftalik-kesinti-raporu.pdf'
-        a.click()
-        // Serbest bırakmayı ERTELE: click() indirmeyi eşzamanlı başlatmıyor ve URL hemen
-        // geçersiz kılınırsa bazı tarayıcılar dosyayı boş indiriyor ya da hiç indirmiyor.
-        setTimeout(() => URL.revokeObjectURL(objectUrl), 0)
+        // Ortak indirme (2026-10-22, UIM-27): bağlantı DOM'da, adres 60 sn tutulur (Safari / iPad); başlatılamadıysa başarı DEĞİL
+        if (!downloadBlob(match ? match[1] : 'haftalik-kesinti-raporu.pdf', blob)) {
+          return { success: false, status: 0, code: 'DOWNLOAD_FAILED', error: 'DOWNLOAD_FAILED' }
+        }
         return { success: true }
       } catch (e) {
         return { success: false, error: e?.message || 'NETWORK' }

@@ -79,7 +79,9 @@ export function shortcutEligible(e, doc = typeof document !== 'undefined' ? docu
 export function letterOf(e) {
   const k = e?.key
   if (typeof k !== 'string' || k.length !== 1) return null
-  if (k === 'İ') return 'i'
+  // Türkçe Q klavyede "I" tuşu (Caps kapalı) noktasız `ı` üretir — `g` + `I` (Envanter) onunla da çalışsın (UIA-H7);
+  // "İ" tuşu `i` / `İ` üretir.
+  if (k === 'İ' || k === 'ı') return 'i'
   return k.toLowerCase()
 }
 

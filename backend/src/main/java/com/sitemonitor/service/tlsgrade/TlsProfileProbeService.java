@@ -227,16 +227,30 @@ public class TlsProfileProbeService {
 
     private TlsHelloProbe.Connector defaultConnector(String host, int port, boolean viaProxy, List<InetAddress> addrs) {
         if (viaProxy) return t -> proxySettings.openConnectTunnel(host, port, t);
-        InetAddress target = addrs.get(0);
+        return directConnector(addrs, port);
+    }
+
+    /**
+     * Doğrudan yol (CHECKS-9, 2026-10-22): SSRF'nin doğruladığı adresler SIRAYLA denenir ({@link
+     * com.sitemonitor.service.NetworkResolver#connectFirstReachable(List, int, int)} — sertifika kontrolüyle aynı çok-A
+     * kuralı). Eskiden yalnız İLK adrese bağlanılıyordu: split-VIP host'ta ilk IP portu dinlemiyorsa profil FAILED, not
+     * "profil ölçülemedi" tavanına düşüyordu. İlk bağlanılan adres sonraki yoklamalarda önce denenir (her yoklama aynı
+     * sunucuyu ölçsün, ölü adres her seferinde yeniden beklenmesin).
+     */
+    static TlsHelloProbe.Connector directConnector(List<InetAddress> addrs, int port) {
+        java.util.concurrent.atomic.AtomicReference<InetAddress> reached = new java.util.concurrent.atomic.AtomicReference<>();
         return t -> {
-            Socket s = new Socket();
-            try {
-                s.connect(new InetSocketAddress(target, port), t);
-                return s;
-            } catch (IOException e) {
-                try { s.close(); } catch (IOException ignore) { /* zaten kapandı */ }
-                throw e;
+            InetAddress known = reached.get();
+            if (known != null) {
+                try {
+                    return com.sitemonitor.service.NetworkResolver.connectSingle(new InetSocketAddress(known, port), t);
+                } catch (IOException e) {
+                    reached.set(null);   // o adres düştü → tüm listeyi yeniden dene
+                }
             }
+            Socket s = com.sitemonitor.service.NetworkResolver.connectFirstReachable(addrs, port, t);
+            if (s.getInetAddress() != null) reached.set(s.getInetAddress());
+            return s;
         };
     }
 

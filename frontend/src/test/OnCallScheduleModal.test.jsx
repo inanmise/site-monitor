@@ -103,3 +103,37 @@ describe('OnCallScheduleModal', () => {
     await waitFor(() => expect(api.oncall.deleteOverride).toHaveBeenCalledWith(4))
   })
 })
+
+// 20.165.1 (UIA-A5 / K11): sırada SİLİNMİŞ bir hesap (sunucu `missing:true`, ad yok, kapsamlı görüntüleyicide kimlik null)
+describe('OnCallScheduleModal — silinmiş üye', () => {
+  const WITH_GONE = { ...VIEW, members: [
+    { user_id: 11, name: LONG, active: true },
+    { user_id: null, name: null, username: null, active: false, missing: true },
+    { user_id: null, name: null, username: null, active: false, missing: true },
+  ] }
+
+  it('"Silinmiş hesap" + rozet + uyarı bandı (Pasif değil); iki silinmiş satır ayrı anahtarla çizilir', async () => {
+    api.oncall.get.mockResolvedValue({ success: true, data: WITH_GONE })
+    render(<OnCallScheduleModal team={team} onClose={() => {}} />)
+    await screen.findByRole('button', { name: /Save schedule|Çizelgeyi kaydet/ })
+    const gone = [...document.querySelectorAll('[data-slot="oncall-member"][data-missing="true"]')]
+    expect(gone).toHaveLength(2)
+    expect(gone[0]).toHaveTextContent(/Silinmiş hesap|Deleted account/)
+    expect(gone[0].querySelector('[data-slot="oncall-member-deleted"]')).not.toBeNull()
+    expect(gone[0]).not.toHaveTextContent(/^.*(Pasif|Passive)/)
+    expect(document.querySelector('[data-slot="oncall-missing-note"]')).not.toBeNull()
+  })
+
+  it('silinmiş satırı çıkarmak değişikliktir; kaydetme gövdesi silinmiş kimlikleri GÖNDERMEZ', async () => {
+    api.oncall.get.mockResolvedValue({ success: true, data: WITH_GONE })
+    render(<OnCallScheduleModal team={team} onClose={() => {}} />)
+    const save = await screen.findByRole('button', { name: /Save schedule|Çizelgeyi kaydet/ })
+    expect(save).toBeDisabled()
+    const gone = document.querySelector('[data-slot="oncall-member"][data-missing="true"]')
+    fireEvent.click(within(gone).getByRole('button', { name: /Remove from rotation|Sıradan çıkar/ }))
+    expect(save).toBeEnabled()
+    fireEvent.click(save)
+    await waitFor(() => expect(api.oncall.save).toHaveBeenCalledTimes(1))
+    expect(api.oncall.save.mock.calls[0][1].members).toEqual([11])
+  })
+})

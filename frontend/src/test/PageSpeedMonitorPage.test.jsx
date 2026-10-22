@@ -162,13 +162,23 @@ describe('PageSpeedMonitorPage', () => {
     expect(screen.queryByText(/custom request headers|özel istek başlıkları/i)).toBeNull()
   })
 
-  it('özel başlık alanı ADMIN için çizilir', async () => {
-    render(<PageSpeedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+  // 2026-10-22 (UIM-15): sunucu başlıkları YALNIZ global admin'den alır (isGlobalAdmin) — alan rol değil globalAdmin ister
+  it('özel başlık alanı GLOBAL admin için çizilir', async () => {
+    render(<PageSpeedMonitorPage systemRole="ADMIN" globalAdmin teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getPageSpeedMonitors).toHaveBeenCalled())
     fireEvent.click(await screen.findByRole('button', { name: /edit|düzenle/i }))
     fireEvent.click(screen.getByRole('button', { name: /advanced|gelişmiş/i }))
 
     expect(screen.getByText(/custom request headers|özel istek başlıkları/i)).toBeInTheDocument()
+  })
+
+  it('kapsamlı yönetici (ADMIN, globalAdmin=false) özel başlık alanını görmez — sunucu sessizce düşürürdü', async () => {
+    render(<PageSpeedMonitorPage systemRole="ADMIN" globalAdmin={false} teamId={5} teamName="SY-A" />)
+    await waitFor(() => expect(api.monitoring.getPageSpeedMonitors).toHaveBeenCalled())
+    fireEvent.click(await screen.findByRole('button', { name: /edit|düzenle/i }))
+    fireEvent.click(screen.getByRole('button', { name: /advanced|gelişmiş/i }))
+
+    expect(screen.queryByText(/custom request headers|özel istek başlıkları/i)).toBeNull()
   })
 
   it('detay modali açılır; kaynak kırılımı çekilir ve tablo çizilir', async () => {

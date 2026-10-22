@@ -35,6 +35,7 @@ class GlobalSearchServiceTest {
         jdbc.update("CREATE TABLE scripted_monitors(id BIGINT, name VARCHAR(100), team_id BIGINT, group_name VARCHAR(100), tags VARCHAR(500))");
         jdbc.update("CREATE TABLE domain_monitors(id BIGINT, name VARCHAR(100), domain VARCHAR(300), team_id BIGINT, group_name VARCHAR(100), tags VARCHAR(500))");
         jdbc.update("INSERT INTO certificate_inventory VALUES ('shop.example.com', 1, 'Sahip A', 'Mağaza', TRUE, 'Satış', 'prod,odeme', 1), ('shop-old.example.com', 1, NULL, NULL, FALSE, NULL, NULL, NULL), ('other.example.com', 2, 'Shopkeeper', NULL, TRUE, NULL, NULL, NULL), ('tagged.example.com', 1, NULL, NULL, TRUE, 'Grup X', 'shopfloor', 2)");
+        jdbc.update("ALTER TABLE certificate_inventory ADD COLUMN ug_team_id BIGINT");   // UG (2026-10-22, DATA-6)
         jdbc.update("INSERT INTO teams VALUES (1, 'Takım A'), (2, 'Takım B'), (3, 'Shop Takımı')");
         jdbc.update("INSERT INTO http_monitors VALUES (7, 'Ödeme', 'https://shop.example.com/pay', 1, 'Satış', 'prod'), (8, 'Gizli', 'https://shop.example.com/x', 2, NULL, NULL), (10, 'Etiketli', 'https://a.example.com/', 1, NULL, 'shop-tag')");
         jdbc.update("INSERT INTO scripted_monitors VALUES (9, 'shop smoke', 1, NULL, NULL)");
@@ -93,5 +94,44 @@ class GlobalSearchServiceTest {
                 .contains(org.assertj.core.groups.Tuple.tuple("port", "21"), org.assertj.core.groups.Tuple.tuple("dns", "31"))
                 // silinmiş satır: ad, hedef VE grup adı eşleşse de (parantezsiz OR zinciri yalnız son terimi süzerdi) yok
                 .doesNotContain(org.assertj.core.groups.Tuple.tuple("port", "22"), org.assertj.core.groups.Tuple.tuple("dns", "32"));
+    }
+
+    @Test
+    @DisplayName("DATA-6 (2026-10-22): kapsam LIMIT'ten ÖNCE — ada göre önde gelen 100 yabancı kayıt kendi kaydını itmez (envanter + izleme)")
+    void scopeAppliedBeforeLimit() {
+        for (int i = 0; i < 100; i++) {
+            jdbc.update("INSERT INTO certificate_inventory (domain, team_id, active) VALUES (?, 2, TRUE)", String.format("aaa-api-%03d.example.com", i));
+            jdbc.update("INSERT INTO http_monitors (id, name, url, team_id) VALUES (?, ?, 'https://x/', 2)", 1000L + i, String.format("aaa api %03d", i));
+        }
+        jdbc.update("INSERT INTO certificate_inventory (domain, team_id, active) VALUES ('zzz-api.example.com', 1, TRUE)");
+        jdbc.update("INSERT INTO http_monitors (id, name, url, team_id) VALUES (2000, 'zzz api', 'https://y/', 1)");
+        List<GlobalSearchService.Hit> hits = svc.search("api", t -> t != null && t == 1L);
+        assertThat(hits).extracting(GlobalSearchService.Hit::kind, GlobalSearchService.Hit::id)
+                .contains(org.assertj.core.groups.Tuple.tuple("certificate", "zzz-api.example.com"),
+                          org.assertj.core.groups.Tuple.tuple("http", "2000"));
+        assertThat(hits).extracting(GlobalSearchService.Hit::id).noneMatch(id -> id.startsWith("aaa-api-"));
+    }
+
+    @Test
+    @DisplayName("DATA-6 (2026-10-22): yalnız UG takımı görülebilen sertifika bulunur (SY takımıyla gösterilir); başka UG'li kayıt bulunmaz")
+    void ugOwnedCertificateFound() {
+        jdbc.update("INSERT INTO certificate_inventory (domain, team_id, ug_team_id, active) VALUES ('ugapp.example.com', 2, 3, TRUE)");
+        jdbc.update("INSERT INTO certificate_inventory (domain, team_id, ug_team_id, active) VALUES ('ugother.example.com', 2, 1, TRUE)");
+        List<GlobalSearchService.Hit> hits = svc.search("ugapp", t -> t != null && t == 3L);
+        assertThat(hits).extracting(GlobalSearchService.Hit::id).containsExactly("ugapp.example.com");
+        assertThat(hits.get(0).teamId()).isEqualTo(2L);
+        assertThat(svc.search("ugother", t -> t != null && t == 3L)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("UIM-3 / K7 (2026-10-22): takım vuruşu pano süzgecine takım ADINI taşır (kimlik değil); kapsam dışı takım SQL'de elenir")
+    void teamHitCarriesName() {
+        List<GlobalSearchService.Hit> hits = svc.search("takım", t -> t != null && t == 1L);
+        assertThat(hits).filteredOn(h -> "team".equals(h.kind())).singleElement()
+                .satisfies(h -> {
+                    assertThat(h.id()).isEqualTo("1");
+                    assertThat(h.tab()).isEqualTo("dashboard");
+                    assertThat(h.params()).containsEntry("team", "Takım A");
+                });
     }
 }

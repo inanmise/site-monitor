@@ -219,7 +219,7 @@ export default function TeamMembersModal({ team, open, onClose, canManage = fals
 
   const openCoverage = () => {
     onClose?.()
-    navigateTo('noc', { n_ct: String(teamId) })
+    navigateTo('noc', { n_view: 'coverage', n_ct: String(teamId) })   // operatörün varsayılanı konsol (UIM-30)
   }
   const retryButton = (
     <Button type="button" variant="outline" size="sm" onClick={() => setRetry((n) => n + 1)} className="max-sm:h-10 pointer-coarse:h-10">

@@ -1,4 +1,4 @@
-import { useId, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import { Pause, Play, Users, FolderInput, Trash2, X, CheckSquare, Square, Headset, BellRing, BellOff } from 'lucide-react'
 import { api as client } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
@@ -28,8 +28,12 @@ import { isRoutingLockedRow } from '../../hooks/useMonitorTeamPick.js'
  * "7/24'e bildir: Aç / Kapat" grubu çıkar → TEK istek `POST /api/noc/monitors/bulk` ({ items: [{type,id}], enabled }).
  * Yetki ve "zaten öyle" elemesi sunucuda; sonuç bildirimi güncellenen sayıyı ve atlananları NEDENLERİYLE söyler.
  * Verilmezse çubuk bugünküyle birebir aynı (grup hiç çizilmez).
+ *
+ * Sayaç ve eylemler GÖRÜNÜR seçili satırlardır (2026-10-22, UIM-21): seçim sayfa / süzgeç değişince başka sayfada
+ * kalabiliyordu — çubuk "5 seçili" derken Sil yalnız görünen 2'yi siliyordu. `onPrune(set)` verilirse görünmeyen
+ * kimlikler seçimden atılır; verilmese de sayaç yalnız görünen seçili satırları sayar.
  */
-export default function BulkActionBar({ selected, items, onClear, onDone, api, teams = [], canDelete = () => false, onToggleAll, nocType }) {
+export default function BulkActionBar({ selected, items, onClear, onDone, api, teams = [], canDelete = () => false, onToggleAll, nocType, onPrune }) {
   const t = useT()
   const toast = useToast()
   const { showConfirm } = useDialog()
@@ -37,9 +41,15 @@ export default function BulkActionBar({ selected, items, onClear, onDone, api, t
   const [teamId, setTeamId] = useState('')
   const [group, setGroup] = useState('')
   const nocLabelId = useId()
-  const ids = [...selected]
-  if (ids.length === 0) return null
+  // Görünmeyen seçimleri buda — kimlik listesi değişmedikçe hiçbir şey yazılmaz (sonsuz yeniden çizim olmaz)
+  const visibleKey = items.map((m) => m.id).join(',')
+  useEffect(() => {
+    if (!onPrune || selected.size === 0) return
+    const visible = new Set(items.map((m) => m.id))
+    if ([...selected].some((id) => !visible.has(id))) onPrune(new Set([...selected].filter((id) => visible.has(id))))
+  }, [visibleKey, selected]) // eslint-disable-line react-hooks/exhaustive-deps
   const chosen = items.filter((m) => selected.has(m.id))
+  if (chosen.length === 0) return null
   const allVisibleSelected = items.length > 0 && items.every((m) => selected.has(m.id))
 
   async function run(kind, fn, filterFn) {
@@ -108,7 +118,7 @@ export default function BulkActionBar({ selected, items, onClear, onDone, api, t
         onClick={onToggleAll} title={selectAllLabel} aria-label={selectAllLabel}>
         {allVisibleSelected ? <CheckSquare size={15} /> : <Square size={15} />}
       </Button>
-      <span className="font-bold">{t('bulk.selected', ids.length)}</span>
+      <span className="font-bold" data-slot="bulk-count">{t('bulk.selected', chosen.length)}</span>
       <div className="flex flex-wrap items-center gap-1.5">
         {/* Duraklat / Sürdür birbirinin karşıtı — tek bir düğme grubu. */}
         <ButtonGroup>
@@ -148,7 +158,12 @@ export default function BulkActionBar({ selected, items, onClear, onDone, api, t
               // atlandığı söylenir (inceleme 5)
               const locked = chosen.filter(isRoutingLockedRow).length
               if (locked) toast.info(t('bulk.teamSkippedShared', locked))
-              run('team', (m) => api.update(m.id, { teamId: Number(teamId) }), (m) => !isRoutingLockedRow(m))
+              // Envanter türevi Port/DNS satırının takımı envanterden gelir (sunucu teamId'yi yok sayar / göstermez) —
+              // "güncellendi" dememek için denenmez, kaçının atlandığı söylenir (2026-10-22, UIM-47)
+              const derivedRow = (m) => (nocType === 'PORT' || nocType === 'DNS') && m.standalone === false
+              const derived = chosen.filter((m) => !isRoutingLockedRow(m) && derivedRow(m)).length
+              if (derived) toast.info(t('bulk.teamSkippedDerived', derived))
+              run('team', (m) => api.update(m.id, { teamId: Number(teamId) }), (m) => !isRoutingLockedRow(m) && !derivedRow(m))
             }}>{t('bulk.apply')}</Button>
           </span>
         )}

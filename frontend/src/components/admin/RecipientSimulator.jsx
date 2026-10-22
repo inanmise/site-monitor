@@ -72,7 +72,9 @@ export default function RecipientSimulator({ teams = [], isAdmin = false, defaul
     Promise.resolve(api.notificationGroups?.list?.(Number(teamId)))
       .then((res) => {
         if (!alive || !res?.success) return
-        const raw = Array.isArray(res.data) ? res.data : (res.data?.items || [])
+        // Sunucu (NotificationGroupController.list) `{ groups, writable_team_ids, … }` döndürür — dizi ya da `items`
+        // değil (2026-10-22, UIA-A1: seçici hep boş kalıp "bu takımın grubu yok" diyordu). Dizi biçimi eski uyum için.
+        const raw = Array.isArray(res.data?.groups) ? res.data.groups : (Array.isArray(res.data) ? res.data : [])
         const list = raw.filter((g) => g && g.active !== false && (g.team_id == null || String(g.team_id) === teamId))
         setGroupsState({ teamId, list })
         // Bağlantıdaki grup bu takımın değilse varsayılana dön (sunucu zaten yok sayar; ekran da yanıltmasın).

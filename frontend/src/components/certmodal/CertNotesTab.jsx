@@ -35,7 +35,7 @@ import { CAT_ICON } from './notesParts.jsx'
  *
  * <p>`onCountChange(n)`: silinmemiş not sayısı değişince (ekle/sil/geri yükle) sekme sayacını tazeler.
  */
-export default function CertNotesTab({ domain, currentUser, isAdmin = false, readOnly = false, readOnlyTeam = null, onCountChange }) {
+export default function CertNotesTab({ domain, currentUser, isAdmin = false, globalAdmin = false, readOnly = false, readOnlyTeam = null, onCountChange }) {
   const t = useT()
   const { showConfirm } = useDialog()
   const [notes, setNotes] = useState(null)
@@ -313,7 +313,7 @@ export default function CertNotesTab({ domain, currentUser, isAdmin = false, rea
           <ol data-slot="cert-note-timeline" aria-label={t('cnote.timelineLabel')} className="flex min-w-0 flex-col">
             {shown.map((n, i) => (
               <CertNoteItem key={n.id} note={n} last={i === shown.length - 1}
-                perms={notePermissions(n, { currentUser, isAdmin, readOnly })}
+                perms={notePermissions(n, { currentUser, globalAdmin, readOnly })}
                 editing={editingId === n.id} editBody={editBody} onEditBody={setEditBody}
                 onStartEdit={startEdit} onCancelEdit={cancelEdit} onSaveEdit={saveEdit} editSaving={editSaving}
                 onDelete={deleteNote} onRestore={restoreNote} pending={pendingId === n.id}

@@ -30,9 +30,15 @@ export default function AlertTeamStatsPanel({ onPickTeam, activeTeamId, onOpenAl
   const [cell, setCell] = useState(null)
   const [open, setOpen] = useState(() => { try { return sessionStorage.getItem('alh-teamstats-open') === 'true' } catch { return false } })
 
+  // Okuma hatası (2026-10-22, UIM-37): eskiden sessizce yutuluyordu → panel sonsuza dek "Yükleniyor…" diyordu
+  const [failed, setFailed] = useState(false)
   const load = useCallback(async () => {
-    try { const r = await api.admin.getAlertTeamStats(); if (r?.success && r.data) setData(r.data) }
-    catch { /* panel süs — liste etkilenmez */ }
+    setFailed(false)
+    try {
+      const r = await api.admin.getAlertTeamStats()
+      if (r?.success && r.data) setData(r.data)
+      else setFailed(true)
+    } catch { setFailed(true) }
   }, [])
   useEffect(() => { if (open) load() }, [open, load])
 
@@ -61,7 +67,13 @@ export default function AlertTeamStatsPanel({ onPickTeam, activeTeamId, onOpenAl
               className={cn('ml-auto transition-transform motion-reduce:transition-none', open && 'rotate-180')} />
           </CollapsibleTrigger>
           <CollapsibleContent className="overflow-x-auto px-3.5 pb-3">
-            {!data && <div className={EMPTY}>{t('alhts.loading')}</div>}
+            {!data && !failed && <div className={EMPTY}>{t('alhts.loading')}</div>}
+            {!data && failed && (
+              <div data-slot="alhts-error" className={cn(EMPTY, 'flex flex-wrap items-center gap-2')}>
+                <span>{t('alhts.loadFailedText')}</span>
+                <Button type="button" variant="outline" size="sm" className="pointer-coarse:h-10" onClick={load}>{t('hist.retry')}</Button>
+              </div>
+            )}
             {data && rows.length === 0 && <div className={EMPTY}>{t('alhts.none')}</div>}
             {data && rows.length > 0 && (
               <>

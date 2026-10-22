@@ -43,7 +43,7 @@ describe('Webhook push logu — dar kap: kart listesi', () => {
   })
 
   it('kartlar (tablo yok); kart ayrıntıyı açar; yeniden kuyruk yalnız başarısız/engellenmiş kartta; sıralama seçicisi sunucuya gider', async () => {
-    render(<PushLogView onBack={() => {}} />)
+    render(<PushLogView globalAdmin onBack={() => {}} />)
     const cards = await waitFor(() => { const el = document.querySelector('[data-testid="pl-cards"]'); expect(el).not.toBeNull(); return el })
     expect(screen.queryByTestId('sml-table')).toBeNull()
     expect(cards.querySelectorAll('[data-slot="pl-row"]')).toHaveLength(3)

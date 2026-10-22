@@ -295,6 +295,17 @@ export function quickRange(days, now = new Date()) {
 }
 
 /**
+ * Hızlı dönemin başladığı YEREL gün (yyyy-MM-dd) — dönem etkinken bitiş günü seçilince dönem bu güne çevrilir: aralık
+ * "dönemin başından seçilen bitişe" olur, bitiş yok sayılmaz (2026-10-22, UIM-32). Dönem değilse ''.
+ */
+const PRESET_MS = { '1h': 3_600_000, '24h': 86_400_000, '7d': 7 * 86_400_000, '30d': 30 * 86_400_000 }
+export function presetStartDay(preset, nowMs = Date.now()) {
+  const ms = PRESET_MS[preset]
+  if (!ms) return ''
+  return quickRange(0, new Date(nowMs - ms)).from
+}
+
+/**
  * Kapalı alarmdaki "Son Geçerlilik": SUNUCUNUN damgaladığı gerçek not_after (alarm anı). Yaklaşık hesap
  * (created_at + days_remaining) yalnız son çare — eskiden hep bu hesaplanıyor ve tarih açık kaldığı gün kadar
  * erken çıkıyordu (2026-09-10).
@@ -326,6 +337,30 @@ export function groupPushRows(rows) {
   }
   const stamp = (g) => g.reduce((mx, r) => { const v = r.sent_at || r.created_at || ''; return v > mx ? v : mx }, '')
   return [...by.values()].sort((a, b) => stamp(b).localeCompare(stamp(a)))
+}
+
+/** Sistem karar satırı (`UserPushService.SYSTEM_USER`) — kişi değil, "katman kararı". */
+export const PUSH_SYSTEM_USER = '-'
+
+/**
+ * Bir push partisinin KİŞİ sayısı (2026-10-22, ALERTS-18 / UIM-7). Takım erişim paylaşımıyla okuyanda sunucu kişi
+ * satırlarının kullanıcı adını gizler (`username: null`, satır başına bir kişi — adres SAYISI korunur, K4): gizli satırlar
+ * TEK TEK sayılır (30 gizli satır = 30 kişi, "1" değil); görünen adlar tekilleştirilir; sistem satırı (`-`) kişi değildir.
+ */
+export function pushPeopleCount(rows) {
+  const named = new Set()
+  let hidden = 0
+  for (const r of rows ?? []) {
+    if (r?.username === PUSH_SYSTEM_USER) continue
+    if (r?.username == null || r.username === '') hidden += 1
+    else named.add(r.username)
+  }
+  return named.size + hidden
+}
+
+/** Partideki gizli (adı paylaşımla gösterilmeyen) alıcı satırı sayısı. */
+export function pushHiddenCount(rows) {
+  return (rows ?? []).filter((r) => r?.username == null || r.username === '').length
 }
 
 /** Bilinen push teslimat kodları — bilinmeyen kod HAM hâliyle gösterilir (t() ham anahtar basmasın). */
@@ -388,8 +423,10 @@ export const MANUAL_CLOSE_TYPES = new Set(['DNS_CHANGED', 'DOMAINMON_CHANGED'])
 export const closesAutomatically = (type) => !!type && !MANUAL_CLOSE_TYPES.has(String(type))
 
 /** Alarm tipi → izleme sekmesi; sertifika tipleri (EXPIRY, CHAIN_BROKEN…) null döner. */
+// DOMAIN_EXPIRY (2026-10-22, UIM-33): HTTP izlemesinin kayıt süresi alarmı — HTTP ailesi (monitorAlertTypes.http);
+// eskiden kural yoktu → "Sertifikaları aç" + olay kategorisi CERTIFICATE.
 const TYPE_TAB = [
-  [/^HTTP_/, 'http'], [/^DNS_/, 'dns'], [/^PORT_/, 'port'], [/^PING_/, 'ping'], [/^KEYWORD/, 'keyword'],
+  [/^HTTP_/, 'http'], [/^DOMAIN_EXPIRY$/, 'http'], [/^DNS_/, 'dns'], [/^PORT_/, 'port'], [/^PING_/, 'ping'], [/^KEYWORD/, 'keyword'],
   [/^PAGESPEED_/, 'pagespeed'], [/^PAGE_/, 'page'], [/^SCRIPTED_/, 'scripted'], [/^DOMAINMON_/, 'domain'],
 ]
 export function alertSourceTab(type) {
@@ -468,7 +505,7 @@ export function buildAlertTimeline({ alert: a, notifications = [], pushGroups = 
   for (const g of pushGroups) {
     const head = g[0]
     if (!head) continue
-    const people = new Set(g.filter((r) => r.username !== '-').map((r) => r.username)).size
+    const people = pushPeopleCount(g)
     items.push({ id: `p-${head.id}`, kind: 'push', at: ts(head.sent_at || head.created_at) ?? openedAt + 1, when: head.sent_at || head.created_at,
       trigger: head.trigger || '', status: head.status || null, people })
   }

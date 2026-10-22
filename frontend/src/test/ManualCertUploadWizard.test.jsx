@@ -423,6 +423,20 @@ describe('UploadWizard — Takip adımı ve gönderim', () => {
     expect(btn(/^(Save new version|Yeni sürümü kaydet)$/)).toBeInTheDocument()
   })
 
+  // UIM-24 (2026-10-22, K6): başka takımın kaydı (sunucu `can_write:false`) yenileme hedefi olmaz — eskiden sihirbaz kendiliğinden
+  // yenileme kipine geçip onu hedefliyor, kayıt 403 alıyordu; eşleşme bilgi olarak kalır, "Bu kaydı yenile" düğmesi yok
+  it('aynı konu adı ama kayıt yazılamaz (`can_write:false`) → yenileme önerilmez, İleri yeni kayıt kipinde kalır', async () => {
+    renderWizard()
+    await toReview({ entries: [entry({ matches: { already_tracked: null, same_subject: [{ inventory_id: 9, domain: 'baska-takim.example.test', not_after: '2026-11-01T00:00:00', can_write: false }], network_monitored: [] } })] })
+    const match = document.querySelector('[data-slot="mcert-match"][data-kind="same-subject"]')
+    expect(match).toHaveTextContent('baska-takim.example.test')
+    expect(within(match).queryByRole('button')).toBeNull()
+    fireEvent.click(btn(/^(Next|İleri)$/))
+    await waitFor(() => expect(step()).toBe('track'))
+    expect(document.querySelector('[data-slot="mcert-mode"][data-mode="renew"]')?.getAttribute('data-selected')).not.toBe('true')
+    expect(api.manualCerts.get).not.toHaveBeenCalled()
+  })
+
   it('satırdan yenileme (sabit hedef): daha eski bitişte onay zorunlu; onayla → renew(confirm=true) → değişiklik uyarıları', async () => {
     renderWizard({ renewTarget: { inventory_id: 5, domain: 'api.example.test' } })
     expect(screen.getByText(/Upload new version: api\.example\.test|Yeni sürüm yükle: api\.example\.test/)).toBeInTheDocument()

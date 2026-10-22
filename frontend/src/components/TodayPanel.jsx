@@ -5,6 +5,11 @@ import { useT } from '../i18n/index.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval.js'
 import { navigateTo } from '../utils/navigate.js'
 import { alertNavParams } from './admin/alerts/alertHistoryModel.js'
+import { alertTypeLabel } from '../utils/alertTypeMeta.js'
+
+// Açık alarm satırının seviye etiketi (2026-10-22, UIM-36): ham CRITICAL/HIGH/WARNING yerine alh.level.*; bilinmeyen ham kalır
+const LEVEL_KEY = { CRITICAL: 'critical', HIGH: 'high', WARNING: 'warning' }
+const levelText = (t, level) => (LEVEL_KEY[String(level || '').toUpperCase()] ? t('alh.level.' + LEVEL_KEY[String(level).toUpperCase()]) : (level || ''))
 import TeamBadge from './ui/TeamBadge.jsx'
 import TodayListModal from './TodayListModal.jsx'
 import { MonitorRowBody, NotificationRowBody, HealthRowBody, QuietRowBody, MONITOR_SECTION_TAB, MONITOR_TAB, monitorRowKey, openMonitor, openNotification, openQuiet } from './todayMonitorRows.jsx'
@@ -71,7 +76,10 @@ export default function TodayPanel({ onOpenDomain }) {
   useVisibleInterval(load, 120_000, true)
 
   if (!data) return settled ? null : <TodayPanelSkeleton label={t('today.title')} />
-  const certs = data.certs || {}, alerts = data.alerts || {}, weekly = data.weekly || {}
+  // Alarm okuma izni yoksa (2026-10-22, L-H8 / PKG-5): sunucu `alerts.visible === false` döner — kart çizilmez, toplama ve
+  // "Sorun yok" şeridine girmez (bilinmeyen "sorun yok" değildir). Alan yoksa (eski sunucu) bugünkü davranış.
+  const alertsHidden = data.alerts?.visible === false
+  const certs = data.certs || {}, alerts = alertsHidden ? {} : (data.alerts || {}), weekly = data.weekly || {}
   const flapping = data.flapping || {}, slow = data.slow || {}, stale = data.stale || {}, domains = data.domains || {}
   const notif = data.notifications || {}, health = data.health || {}, quiet = data.quiet || {}, recent = data.recent || null
   const total = (certs.count || 0) + (alerts.count || 0) + (weekly.missing || 0)
@@ -133,7 +141,7 @@ export default function TodayPanel({ onOpenDomain }) {
     ['certs', t('today.certs'), certs], ['alerts', t('today.alerts'), alerts], ['flapping', t('today.flapping'), flapping],
     ['slow', t('today.slow'), slow], ['stale', t('today.stale'), stale], ['domains', t('today.domains'), domains],
     ['notifications', t('today.notif'), notif], ['health', t('today.health'), health], ['quiet', t('today.quiet'), quiet],
-  ].filter(([, , b]) => !b.count).map(([key, title, b]) => ({ key, title, prev: b.prev }))
+  ].filter(([key, , b]) => !b.count && !(key === 'alerts' && alertsHidden)).map(([key, title, b]) => ({ key, title, prev: b.prev }))
   if (weekly.count > 0 && !weekly.missing) clearCards.push({ key: 'weekly', title: t('today.weekly', weekly.week) })
   // Tekil ayrı anahtar (QA 2026-09-24, ISSUE-003): EN "alerts opened: 3" etiketin kendi iki noktasıyla
   // "Last 24 hours: alerts opened: 3" diye okunuyordu; artık "3 alerts opened" / "1 alert opened".
@@ -186,9 +194,9 @@ export default function TodayPanel({ onOpenDomain }) {
             <ul className="today-list">
               {(alerts.items || []).map((a) => (
                 <li key={a.id}>
-                  <span className={`today-level today-level--${(a.level || '').toLowerCase()}`}>{a.level}</span>
-                  <Button type="button" variant="link" className="h-auto min-w-0 max-w-full justify-start p-0 font-semibold" onClick={() => navigateTo('alerthistory', alertNavParams({ id: a.id, alert_type: a.type, domain: a.domain }))}><span className="truncate">{a.domain || a.type}</span></Button>
-                  <span className="today-muted">{a.type}{a.acknowledged ? ` · ${t('today.acked')}` : ''}</span>
+                  <span className={`today-level today-level--${(a.level || '').toLowerCase()}`} title={a.level || undefined}>{levelText(t, a.level)}</span>
+                  <Button type="button" variant="link" className="h-auto min-w-0 max-w-full justify-start p-0 font-semibold" onClick={() => navigateTo('alerthistory', alertNavParams({ id: a.id, alert_type: a.type, domain: a.domain }))}><span className="truncate">{a.domain || alertTypeLabel(t, a.type)}</span></Button>
+                  <span className="today-muted">{alertTypeLabel(t, a.type)}{a.acknowledged ? ` · ${t('today.acked')}` : ''}</span>
                 </li>
               ))}
             </ul>

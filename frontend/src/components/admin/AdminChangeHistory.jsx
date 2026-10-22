@@ -247,7 +247,7 @@ export default function AdminChangeHistory({ resource, filter = null, onClearFil
             <Card data-state={isOpen ? 'selected' : undefined} className="gap-2 px-3 py-2.5 shadow-none data-[state=selected]:border-primary/40">
               <div className="flex min-w-0 items-center justify-between gap-2 text-xs text-muted-foreground">
                 <time dateTime={r.at} className="shrink-0 tabular-nums">{relTime(r.at, t, now)}</time>
-                <span className="min-w-0 truncate">{actor(r)}</span>
+                <span className="min-w-0 [overflow-wrap:anywhere]">{actor(r)}</span>
               </div>
               <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm">
                 <EventBadge kind={eventKind(r.action)} title={r.event_type}>{actLabel(r.action)}</EventBadge>
@@ -298,9 +298,10 @@ export default function AdminChangeHistory({ resource, filter = null, onClearFil
             <div className="mb-2.5 flex flex-wrap items-center gap-2">
               {filter && (
                 // Etkin kayıt süzgeci: X'li rozet (kaldırınca tüm kayıtlar)
-                <Badge variant="outline" data-testid="history-filter" className="h-7 gap-1 rounded-full border-primary/40 bg-primary/10 pr-0.5 pl-2.5 text-primary">
-                  <History aria-hidden="true" className="size-3" />
-                  <span className="max-w-[16rem] truncate">{t('hist.filterBadge', filter.name)}</span>
+                // Uzun AD adı SARAR (20.165.1, UIA-D10): hap köşeleri sarılan metni kırpmasın → rounded-md + overflow-visible
+                <Badge variant="outline" data-testid="history-filter" className="h-auto min-h-7 max-w-full gap-1 overflow-visible rounded-md border-primary/40 bg-primary/10 py-0.5 pr-0.5 pl-2.5 whitespace-normal text-primary">
+                  <History aria-hidden="true" className="size-3 shrink-0" />
+                  <span className="min-w-0 [overflow-wrap:anywhere]">{t('hist.filterBadge', filter.name)}</span>
                   {/* Görünür boyut küçük; dokunma alanı görünmez ::after ile 40 px'e genişler */}
                   <Button type="button" variant="ghost" size="icon-xs" className="relative rounded-full text-primary after:absolute after:-inset-2 after:content-[''] hover:bg-primary/15"
                     aria-label={t('ng.histFilterClear')} onClick={onClearFilter}><X aria-hidden="true" /></Button>

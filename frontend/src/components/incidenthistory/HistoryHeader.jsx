@@ -53,10 +53,13 @@ function Kpi({ k, icon: Icon, label, value, sub, onClick, pressed, hint }) {
  * MTTR (ortalama çözülme süresi, bilgi) ve kritik (süzer). Sayılar seçili tarih aralığına göre (`trends.summary`).
  */
 export default function HistoryHeader({
-  summary, byStatus, filters, total, loading, onRefresh, onNew, allowManage, isActive, onCard,
+  summary, summaryFailed = false, byStatus, filters, total, loading, onRefresh, onNew, allowManage, isActive, onCard,
 }) {
   const t = useT()
   const s = summary
+  // Özet okunamadıysa iskelet yerine "—" + nedeni (bilinmeyen ≠ yükleniyor ≠ 0) — UIA-G8
+  const na = !s && summaryFailed ? '—' : null
+  const naSub = na ? t('inc.kpiUnavailable') : ''
   const period = filters.since || filters.until
     ? `${filters.since ? formatDay(filters.since) : '…'} – ${filters.until ? formatDay(filters.until) : '…'}`
     : t('inc.kpiAllTime')
@@ -84,16 +87,16 @@ export default function HistoryHeader({
         )} />
 
       <div data-slot="ih-kpis" role="group" aria-label={t('inc.kpiGroup')} className="grid grid-cols-2 gap-2 lg:grid-cols-4 lg:gap-3">
-        <Kpi k="open" icon={CircleDot} label={t('inc.kpiOpen')} value={s ? (s.open ?? 0) : null}
-          sub={s ? t('inc.kpiOpenSub', byStatus?.INVESTIGATING ?? 0, byStatus?.MITIGATED ?? 0) : ''}
+        <Kpi k="open" icon={CircleDot} label={t('inc.kpiOpen')} value={s ? (s.open ?? 0) : na}
+          sub={s ? t('inc.kpiOpenSub', byStatus?.INVESTIGATING ?? 0, byStatus?.MITIGATED ?? 0) : naSub}
           pressed={isActive('open')} onClick={() => onCard('open')} hint={t('inc.filterByCard')} />
-        <Kpi k="total" icon={Sigma} label={t('inc.kpiTotal')} value={s ? (s.total ?? 0) : null} sub={period}
+        <Kpi k="total" icon={Sigma} label={t('inc.kpiTotal')} value={s ? (s.total ?? 0) : na} sub={na ? naSub : period}
           pressed={isActive('total')} onClick={() => onCard('total')} hint={t('inc.kpiTotalHint')} />
         <Kpi k="mttr" icon={Timer} label={t('inc.kpiMttr')}
-          value={s ? (s.mttr_minutes == null ? '—' : formatMinutes(s.mttr_minutes, t)) : null}
-          sub={s ? (s.mttr_sample ? t('inc.kpiMttrSub', s.mttr_sample) : t('inc.kpiMttrNone')) : ''} />
-        <Kpi k="critical" icon={OctagonAlert} label={t('inc.kpiCritical')} value={s ? (s.critical ?? 0) : null}
-          sub={s ? t('inc.kpiCriticalSub', pct, s.sla_breached ?? 0) : ''}
+          value={s ? (s.mttr_minutes == null ? '—' : formatMinutes(s.mttr_minutes, t)) : na}
+          sub={s ? (s.mttr_sample ? t('inc.kpiMttrSub', s.mttr_sample) : t('inc.kpiMttrNone')) : naSub} />
+        <Kpi k="critical" icon={OctagonAlert} label={t('inc.kpiCritical')} value={s ? (s.critical ?? 0) : na}
+          sub={s ? t('inc.kpiCriticalSub', pct, s.sla_breached ?? 0) : naSub}
           pressed={isActive('critical')} onClick={() => onCard('critical')} hint={t('inc.filterByCard')} />
       </div>
     </>

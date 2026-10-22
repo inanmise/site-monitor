@@ -116,8 +116,9 @@ describe('eylem hedefleri', () => {
     expect(nocEditTarget('PING', null)).toBeNull()
   })
 
-  it('kapsam: sekme noc, tür + hedef süzgeci (boş hedef yazılmaz)', () => {
-    expect(nocCoverageTarget('PORT', ' db.example.com:5432 ')).toEqual({ tab: 'noc', params: { n_type: 'PORT', n_q: 'db.example.com:5432' } })
-    expect(nocCoverageTarget('SSL', '')).toEqual({ tab: 'noc', params: { n_type: 'SSL' } })
+  it('kapsam: sekme noc, kapsam görünümü + tür + hedef süzgeci (boş hedef yazılmaz)', () => {
+    // n_view: 'coverage' (2026-10-22, UIM-30): 7/24 operatörünün varsayılanı konsol — bağlantı kapsamı açmalı
+    expect(nocCoverageTarget('PORT', ' db.example.com:5432 ')).toEqual({ tab: 'noc', params: { n_view: 'coverage', n_type: 'PORT', n_q: 'db.example.com:5432' } })
+    expect(nocCoverageTarget('SSL', '')).toEqual({ tab: 'noc', params: { n_view: 'coverage', n_type: 'SSL' } })
   })
 })

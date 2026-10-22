@@ -256,10 +256,22 @@ public class IncidentPostmortemService {
                 }
             }
         }
+        String dueBefore = a.getDueDate();
+        Long ownerBefore = a.getOwnerUserId();
         apply(a, b, ownerId, ownerSent);
         a.setUpdatedBy(actor);
         a.setUpdatedAt(now());
-        return actionRepo.save(a);
+        IncidentActionItem saved = actionRepo.save(a);
+        // Yeni son tarih ya da yeni sahip → hatırlatma baştan (apply bellekte sıfırladı). reminded_on varlık kaydıyla
+        // YAZILMAZ (updatable=false, 2026-10-22, IN-1) — sıfırlama hedefli UPDATE ile; diğer düzenlemeler (durum, başlık)
+        // hatırlatma işinin o sırada yazdığı sahiplenmeyi eski değerle ezemez.
+        boolean newDue = a.getDueDate() != null && !a.getDueDate().equals(dueBefore);
+        boolean newOwner = a.getOwnerUserId() != null && !a.getOwnerUserId().equals(ownerBefore);
+        if ((newDue || newOwner) && a.getId() != null) {
+            actionRepo.resetReminder(a.getId());
+            a.setRemindedOn(null);
+        }
+        return saved;
     }
 
     public void deleteAction(IncidentActionItem a) {

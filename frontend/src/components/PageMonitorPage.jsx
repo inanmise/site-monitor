@@ -168,6 +168,8 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
   const [selected, setSelected] = useState(null)   // detay penceresi (MonitorDetailModal — Escape'i ModalShell işler)
   const [issues, setIssues] = useState([])
   const [issuesLoading, setIssuesLoading] = useState(false)
+  // Sorunlu kaynaklar okunamadı mı (2026-10-22, UIM-45): okuma hatası "Sorunlu kaynak yok" GÖSTERİLMEZ
+  const [issuesError, setIssuesError] = useState(null)
   const [confirmations, setConfirmations] = useState([])   // canlı teyit zincirleri (Teyit denemesi X/N)
   const [issueFilter, setIssueFilter] = useState('all')   // all | BROKEN | MIXED_CONTENT | SLOW | firstParty
   // await SONRASI için güncel değerler (bayat kapanış YOK): checkNow/refreshModal yanıtı gelene kadar pencere
@@ -209,7 +211,9 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
   const [tagFilter, setTagFilter] = useState(() => readUrlParam('tag', 'all'))   // etiket filtresi (2026-09-18)
   const [proxyFilter, setProxyFilter] = useState(() => readUrlParam('via', 'all'))   // vekil süzgeci (2026-09-22): all | proxy | direct
   const [statFilter, setStatFilter] = useState(() => { const v = readUrlParam('stat', null); return v === 'total' ? null : v })
-  const [statsVisible, setStatsVisible] = useState(false)
+  // Etkin bir sayım süzgeci (paylaşılan bağlantı / kayıtlı görünüm / yeniden yükleme) şeritle AÇIK gelir: süzgeç bandı ve
+  // "Filtreyi temizle" katlanmış şeridin içinde kalıp liste sessizce süzülmesin (2026-10-22, UIM-20)
+  const [statsVisible, setStatsVisible] = useState(() => statFilter != null)
   const [loadNonce, setLoadNonce] = useState(0)   // her başarılı yüklemede artar: başlık çipi geri sayımı kendisi sayar, sayfa saniyede bir çizilmez (2026-10-01)
 
   // Liste yüklemesi sıra damgalı (2026-10-09): 60 sn yoklaması kaydetmeden ÖNCE başlayıp SONRA dönerse eski liste
@@ -299,11 +303,21 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
     try {
       const res = await api.monitoring.getPageIssues(id, { issueType })
       if (seq !== issuesSeq.current) return        // daha yeni bir istek var → bu yanıtı AT
-      let rows = res?.success ? (res.data ?? []) : []
+      if (!res?.success) {
+        // Okunamadı: sessiz yenilemede eldeki liste KALIR (hata şeridiyle), ilk okumada boş liste + hata bloğu
+        setIssuesError(res?.error || t('page.issuesLoadFailed'))
+        if (!silent) setIssues([])
+        return
+      }
+      let rows = res.data ?? []
       if (filter === 'firstParty') rows = rows.filter(r => r.first_party)
       setIssues(rows)
-    } catch {
-      if (seq === issuesSeq.current) setIssues([])
+      setIssuesError(null)
+    } catch (e) {
+      if (seq === issuesSeq.current) {
+        setIssuesError(e?.message || t('page.issuesLoadFailed'))
+        if (!silent) setIssues([])
+      }
     } finally {
       if (seq === issuesSeq.current) setIssuesLoading(false)
     }
@@ -311,16 +325,17 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
   function selectIssueFilter(id, f) { setIssueFilter(f); loadIssues(id, f) }
   async function loadConfirmations(url) {
     const seq = ++confSeq.current
-    const res = await api.monitoring.getConfirmations(url)
+    let res = null
+    try { res = await api.monitoring.getConfirmations(url) } catch { res = null }   // ağ hatası: 30 sn'de bir işlenmemiş ret olmasın
     if (seq !== confSeq.current) return
-    setConfirmations(res?.success ? (res.data ?? []) : [])
+    if (res?.success) setConfirmations(res.data ?? [])
   }
   function openDetail(m) {
-    setSelected(m); setIssues([]); setConfirmations([]); setIssueFilter('all'); setDetailTab(deepLinkTab())
+    setSelected(m); setIssues([]); setIssuesError(null); setConfirmations([]); setIssueFilter('all'); setDetailTab(deepLinkTab())
     setPageDx((cur) => (cur && cur.monitorId === m?.id ? cur : null))   // derin bağlantının kayıtlı çalıştırması yalnız KENDİ izlemesinde
     loadIssues(m.id, 'all'); loadConfirmations(m.url)
   }
-  function closeDetail() { setSelected(null); setIssues([]); setConfirmations([]); setPageDx(null) }
+  function closeDetail() { setSelected(null); setIssues([]); setIssuesError(null); setConfirmations([]); setPageDx(null) }
   /** Tanılama penceresini aç — başlangıç ekranıyla (koşu kullanıcı "Tanılamayı başlat"a basınca). */
   function openDiagnose(m) { if (m) setPageDx({ monitorId: m.id, runId: null, initialRunId: null }) }
 
@@ -329,10 +344,12 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
   async function refreshModal() {
     if (!selected) return
     const { id, url } = selected
-    const res = await api.monitoring.getPageMonitors()
-    if (res?.success) {
-      setMonitors(res.data)
-      const fresh = (res.data || []).find(x => x.id === id)
+    // Liste SIRA KORUMALI load()'dan geçer (2026-10-22, UIM-19): eskiden doğrudan çağrı vardı — yavaş bir yenileme
+    // yanıtı kaydetmeden SONRA dönünce kaydedilmiş satırı eski değerlerle eziyor, ikinci "Düzenle" ilk düzenlemeyi
+    // sessizce geri alıyordu. load() bayat yanıtta undefined döner; hata dalını (ağ dahil) kendisi işler.
+    const rows = await load()
+    if (Array.isArray(rows)) {
+      const fresh = rows.find(x => x.id === id)
       if (fresh) setSelected(prev => (prev?.id === id ? fresh : prev))   // A'nın tazesi B'nin penceresini değiştirmesin
     }
     // Pencere o arada kapandı / başka izlemeye geçildi → A'nın sorunları B'nin penceresine yüklenmesin.
@@ -944,7 +961,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
         <>
         <BulkActionBar selected={bulkSel} items={pager.pageItems.filter(canManageRow)} teams={teams} canDelete={canDeleteRow} nocType="PAGE"
           api={{ update: api.monitoring.updatePageMonitor, remove: api.monitoring.deletePageMonitor }}
-          onClear={() => setBulkSel(new Set())} onDone={load}
+          onClear={() => setBulkSel(new Set())} onPrune={setBulkSel} onDone={load}
           onToggleAll={() => setBulkSel((s) => { const vis = pager.pageItems.filter(canManageRow); const all = vis.every((m) => s.has(m.id)); return all ? new Set() : new Set(vis.map((m) => m.id)) })} />
         {/* Süzgeç/arama hiçbir izlemeyi bırakmadıysa boş alan yerine açık mesaj (2026-09-22; vekil süzgeciyle görünür oldu) */}
         {displayMonitors.length === 0 && <StatusBlock tone="neutral" icon={Inbox} title={t('mon.noFilterMatch')} description={t('empty.hintFilter')} />}
@@ -1040,7 +1057,16 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
                 <Button type="button" variant="secondary" size="sm" className="ml-auto"
                   disabled={!issues.length} onClick={exportIssuesCsv}><Download size={12} />{t('page.exportCsv')}</Button>
               </div>
-              {issuesLoading ? <LoadingBlock label={t('modal.loading')} className="upt-modal-loading" /> : issues.length === 0 ? (
+              {issuesError && issues.length > 0 && !issuesLoading && (
+                <div data-slot="page-issues-stale"><AlertBanner tone="warning" className="mb-2"
+                  actions={<Button type="button" variant="outline" size="sm" className="pointer-coarse:h-10" onClick={() => loadIssues(selected.id)}>{t('hist.retry')}</Button>}>
+                  {t('page.issuesStale')}
+                </AlertBanner></div>
+              )}
+              {issuesLoading ? <LoadingBlock label={t('modal.loading')} className="upt-modal-loading" /> : issuesError && issues.length === 0 ? (
+                <div data-slot="page-issues-error"><StatusBlock tone="danger" icon={Inbox} title={t('page.issuesLoadFailed')} description={String(issuesError)} className="py-8"
+                  actions={<Button type="button" variant="outline" className="pointer-coarse:h-10" onClick={() => loadIssues(selected.id)}>{t('hist.retry')}</Button>} /></div>
+              ) : issues.length === 0 ? (
                 <StatusBlock tone="neutral" icon={Inbox} title={t('page.noIssues')} className="py-8" />
               ) : (
                 <div className="upt-rt-list">
@@ -1158,7 +1184,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
               <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>
                 <MonitorNotes type="PAGE" target={selected.url}
                   // Yalnız paylaşımla görülen izlemede not / rehber yazmak DÜZENLEME ister (2026-10-12); diğerinde varsayılan
-                  canManage={selected.shared_access === true ? canManageRow(selected) : undefined} />
+                  canManage={canManageRow(selected)} />
               </Suspense>
             </TabsContent>
 

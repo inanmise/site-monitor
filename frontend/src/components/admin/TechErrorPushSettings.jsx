@@ -38,11 +38,12 @@ const GROUP_META = {
  * takım push'u (eski hatırlatma kartından buraya taşındı, aynı ayar anahtarı). Hepsi varsayılan AÇIK, GLOBAL_ONLY: kapsamlı
  * müdür salt okunur görür (kayıt çubuğu yok). Değerler sayfanın okuma dalgasıyla gelir (`state` = `pushState`); kayıt AYRI
  * uca (`PUT …/settings/push`) YALNIZ değişen anahtarlarla gider. Eski pod 404 / 405 → "henüz desteklenmiyor", salt okunur,
- * taslak korunur. Genel push kanalı kapalıysa (`push_enabled: false`) kart bunu söyler ve Push ayarlarına götürür.
+ * taslak korunur. Genel push kanalı kapalıysa (`push_enabled: false`) kart bunu söyler ve Push ayarlarına götürür
+ * (sayfa `onOpenPushSettings` verirse önce onun kaydedilmemiş değişiklik onayı — 20.165.1 bugfix, UIA-E5).
  * Sayfayla eşgüdüm hatırlatma kartıyla aynı (`onSaving` / `onSaved` / `onUnsupported` / `onDirtyChange`). Kancalar `tes-push-*`.
  */
 export default function TechErrorPushSettings({
-  state, readOnly = false, onDirtyChange, onSaving, onSaved, onUnsupported, onRetry, retryDisabled = false,
+  state, readOnly = false, onDirtyChange, onSaving, onSaved, onUnsupported, onRetry, retryDisabled = false, onOpenPushSettings,
 }) {
   const t = useT()
   const toast = useToast()
@@ -139,7 +140,7 @@ export default function TechErrorPushSettings({
           <AlertBanner tone="warning" className="mb-0" title={t('te.push.channelOffTitle')}
             actions={(
               <Button type="button" variant="outline" size="sm" className={cn('h-9 sm:h-8', TOUCH)} data-slot="tes-push-open-channel"
-                onClick={() => navigateTo('settings', { sec: 'userpush' })}>
+                onClick={() => (onOpenPushSettings ? onOpenPushSettings() : navigateTo('settings', { sec: 'userpush' }))}>
                 {t('te.push.openChannel')}
               </Button>
             )}>

@@ -1,4 +1,4 @@
-import { certTone, dateOnly } from '../certcard/certCardModel.js'
+import { TONE_LABEL, certTone, dateOnly } from '../certcard/certCardModel.js'
 import { toUtc } from '../../utils/localDay.js'
 import { emptyFlags } from '../../utils/inventoryFlags.js'
 import { expiredAgoText, expiresInText } from '../../utils/dayPhrases.js'
@@ -195,13 +195,65 @@ export function compareWithCurrent(current, entry) {
   }
 }
 
-// ── Liste (sayfa) ────────────────────────────────────────────────────────────────────────────────────────────────
-/** Satır tonu — Genel Bakış kartının hükmü (sunucunun `alert_level`'ı; yoksa gün eşikleri). */
-export const rowTone = (row) => certTone(row)
+/**
+ * Analizin "aynı konu adı" eşleşmesi yenilenebilir mi (2026-10-22, UIM-24, K6): sunucu `can_write` taşıyorsa YALNIZ
+ * `true`; taşımıyorsa (eski sunucu) eski kural — ama liste satırı (`renewCandidates`) aynı kaydı `can_manage: false`
+ * diyorsa değil (başka takımın kaydı: yenileme 403 olurdu).
+ */
+export function canRenewMatch(match, renewCandidates = []) {
+  if (!match) return false
+  if (match.can_write !== undefined && match.can_write !== null) return match.can_write === true
+  const row = (Array.isArray(renewCandidates) ? renewCandidates : []).find((r) => String(r?.inventory_id) === String(match.inventory_id))
+  return !(row && row.can_manage === false)
+}
 
-const PROBLEM_RANK = { expired: 0, error: 0, critical: 1, high: 2, warning: 3, valid: 4 }
+// ── Liste (sayfa) ────────────────────────────────────────────────────────────────────────────────────────────────
+/** Pasif (izleme durduruldu) satır tonu — Genel Bakış'ın pasif kartıyla aynı ad. */
+export const PAUSED_ROW = 'paused'
+/** Henüz değerlendirilmemiş satır tonu (2026-10-22, UIM-49): durum / gün / seviye yok — bilinmeyen yeşil DEĞİL. */
+export const UNKNOWN_ROW = 'unknown'
+
+/** Hiç değerlendirilmemiş mi (ilk değerlendirme başarısız: zincir okunamadı vb.) — sunucu hükmü de gün de yok. */
+export function notEvaluated(row) {
+  return row?.status == null && row?.alert_level == null
+    && (row?.days_remaining == null || !Number.isFinite(Number(row.days_remaining)))
+}
+
+/**
+ * Satır tonu — Genel Bakış kartının hükmü (sunucunun `alert_level`'ı; yoksa gün eşikleri). 2026-10-22: pasif satır
+ * (`active === false`, UIM-23) `paused` — artık değerlendirilmiyor, saklı gün DONMUŞ; hiç değerlendirilmemiş satır `unknown`.
+ */
+export const rowTone = (row) => {
+  if (row?.active === false) return PAUSED_ROW
+  if (notEvaluated(row)) return UNKNOWN_ROW
+  return certTone(row)
+}
+
+/** Durum rozetinin i18n anahtarı (pasif / değerlendirilmedi manuel listeye özgü metin; diğerleri kartla aynı). */
+export function rowToneLabel(tone) {
+  if (tone === PAUSED_ROW) return 'mcert.tone.paused'
+  if (tone === UNKNOWN_ROW) return 'mcert.tone.notEvaluated'
+  return TONE_LABEL[tone] ?? TONE_LABEL.valid
+}
+
+const DAY_MS = 86400000
+/** Bitiş tarihinden BUGÜNE kalan gün (pasif satır — saklı `days_remaining` son değerlendirmede dondu). */
+function daysFromNotAfter(iso, now = Date.now()) {
+  if (!iso) return null
+  const end = Date.parse(toUtc(iso))
+  if (!Number.isFinite(end)) return null
+  return Math.floor((end - now) / DAY_MS)
+}
+
+/** Listede gösterilen kalan gün: pasifte bitiş tarihinden (donmuş değil), aksi hâlde sunucunun değeri. */
+export function rowDays(row, now = Date.now()) {
+  if (row?.active === false) return daysFromNotAfter(row?.not_after ?? row?.current_version?.not_after, now)
+  return row?.days_remaining
+}
+
+const PROBLEM_RANK = { expired: 0, error: 0, critical: 1, high: 2, warning: 3, unknown: 3, valid: 4, paused: 5 }
 const COLLATOR = new Intl.Collator('tr', { sensitivity: 'base', numeric: true })
-const daysOf = (r) => (r?.days_remaining == null || !Number.isFinite(Number(r.days_remaining)) ? Infinity : Number(r.days_remaining))
+const daysOf = (r) => { const d = rowDays(r); return d == null || !Number.isFinite(Number(d)) ? Infinity : Number(d) }
 
 /** Varsayılan sıra: sorunlular önce (dolmuş → kritik → yüksek → uyarı), sonra en yakın bitiş, sonra takip adı. */
 export function sortManualRows(rows) {
@@ -216,11 +268,13 @@ export const STATUS_FILTERS = Object.freeze(['all', 'problem', 'healthy', 'expir
 export function matchesStatus(row, status) {
   const tone = rowTone(row)
   const d = daysOf(row)
+  // Pasif satır (UIM-23) sağlıklı / yaklaşan / dolmuş / sorunlu sayılmaz — izlenmiyor; yalnız "Tümü" ve "Yenilenmiş"te
+  const paused = tone === PAUSED_ROW
   switch (status) {
-    case 'problem': return tone !== 'valid'
+    case 'problem': return !paused && tone !== 'valid'
     case 'healthy': return tone === 'valid'
-    case 'expiring': return d >= 0 && d <= 30
-    case 'expired': return tone === 'expired' || d < 0
+    case 'expiring': return !paused && tone !== UNKNOWN_ROW && d >= 0 && d <= 30
+    case 'expired': return !paused && (tone === 'expired' || d < 0)
     case 'renewed': return Number(row?.versions_count) > 1
     default: return true
   }

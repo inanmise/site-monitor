@@ -1065,6 +1065,9 @@ public class SchedulerService {
         // Zamana bağlı eskalasyon adımı (2026-10-01, opt-in): NULL/0 = bugünkü davranış (anlık bildirim); 1–1440 dk =
         // kişi yalnız alarm o kadar onaysız kalırsa EscalationStepService'ten BİR adım alır. Varsayılan YOK (NULL).
         patch("ALTER TABLE escalation_contacts ADD COLUMN delay_minutes INTEGER");
+        // DATA-3 (2026-10-22): Teams Workflows webhook adresi 255 karakteri aşar (~290) — kolon TEXT'e genişler (küçük tablo;
+        // SchemaDdlGuard zaten TEXT ise atlar).
+        patch("ALTER TABLE escalation_contacts ALTER COLUMN webhook_url TYPE TEXT");
         // Adım kararları + tekilleştirme kilidi — UNIQUE(alarm, kişi, seviye); ddl-auto aynı tabloyu entity'den de kurar.
         patch("""
             CREATE TABLE IF NOT EXISTS alert_escalation_steps (
@@ -2105,7 +2108,12 @@ public class SchedulerService {
         // Veri kirliyse CREATE UNIQUE INDEX başarısız olur, warnIfIndexMissing bunu logda söyler
         // ve ops elle temizler; indeks kurulana kadar davranış bugünküyle AYNI kalır (regresyon yok).
         uniqueMonitorTarget("uq_httpm_team_url",    "http_monitors",      "url");
-        uniqueMonitorTarget("uq_kwm_team_url",      "keyword_monitors",   "url");
+        // ADMIN-3 (2026-10-22): içerik izlemesinde kural (takım, URL, ANAHTAR KELİME) — aynı sayfayı FARKLI kelimeyle izlemek
+        // meşrudur (KeywordMonitorRepository.existsDuplicate). Eski (takım, LOWER(url)) indeksi ikinci kelimeyi genel bir 409
+        // ile reddediyordu. Yeni indeks önce kurulur; eskisi YALNIZ yenisi varken düşürülür (yarış koruması hiç boşalmaz).
+        patch("CREATE UNIQUE INDEX IF NOT EXISTS uq_kwm_team_url_kw ON keyword_monitors(team_id, LOWER(url), LOWER(keyword))");
+        if (indexPresent("uq_kwm_team_url_kw")) patch("DROP INDEX IF EXISTS uq_kwm_team_url");
+        warnIfIndexMissing("uq_kwm_team_url_kw");
         uniqueMonitorTarget("uq_pagem_team_url",    "page_monitors",      "url");
         uniqueMonitorTarget("uq_psm_team_url",      "pagespeed_monitors", "url");
         uniqueMonitorTarget("uq_domm_team_domain",  "domain_monitors",    "domain");
@@ -2157,6 +2165,18 @@ public class SchedulerService {
         }
     }
 
+    /** İndeks katalogda var mı (PostgreSQL). Okunamazsa (H2 / hata) false — çağıran düşürme gibi geri alınamaz adımı atlar. */
+    private boolean indexPresent(String indexName) {
+        try {
+            Integer n = jdbcTemplate.queryForObject(
+                    "SELECT count(*) FROM pg_indexes WHERE lower(indexname) = lower(?)", Integer.class, indexName);
+            return n != null && n > 0;
+        } catch (Exception e) {
+            log.debug("{} varlığı okunamadı (PostgreSQL değil?): {}", indexName, e.getMessage());
+            return false;
+        }
+    }
+
     /** Kısıt gerçekten kuruldu mu? {@link #patch} istisnayı yuttuğu için sessiz başarısızlık olmasın. */
     private void warnIfIndexMissing(String indexName) {
         try {
@@ -2204,6 +2224,22 @@ public class SchedulerService {
     static final String CRON_WEEKLY_AVAILABILITY = "${site.monitor.weekly-availability.cron:0 0 10 ? * MON}";
     static final String CRON_CRITICAL_DOMAIN = "${site.monitor.domain.critical-check-cron:0 0 16 * * *}";
     private static final String ZONE_IST = "Europe/Istanbul";
+
+    /**
+     * Toplu ağ kesintisi oranına giren hata sayısı: {@code status=error} ve sınıfı {@code DNS} / {@code NETWORK} olan sonuçlar —
+     * bağlanmadan önce DNS'te ÇÖZÜLEMEYEN alan adları HARİÇ ({@link CertificateCheckerService#UNRESOLVABLE_HOST}, son inceleme
+     * 2026-10-22): kaldırılmış / yanlış yazılmış host gerçek bir bulgudur, çıkış kesintisi değil; 20.165.0'da BLOCKED olarak
+     * zaten sayılmıyordu. Bağlantı sırasında çözülemeyen (UnknownHost) sonuçlar eskisi gibi sayılır.
+     */
+    static long networkErrorCount(List<Map<String, Object>> results) {
+        if (results == null) return 0;
+        return results.stream()
+                .filter(r -> r != null && "error".equals(r.get("status")))
+                .filter(r -> !Boolean.TRUE.equals(r.get(CertificateCheckerService.UNRESOLVABLE_HOST)))
+                .map(r -> r.get("error_class"))
+                .filter(c -> "DNS".equals(c) || "NETWORK".equals(c))
+                .count();
+    }
 
     /** Full sweep: runs at the top of every hour (configurable via site.monitor.scheduler.cron). */
     @Scheduled(cron = "${site.monitor.scheduler.cron:0 0 * * * *}")
@@ -3118,11 +3154,7 @@ public class SchedulerService {
 
             long errors   = results.stream().filter(r -> "error".equals(r.get("status"))).count();
             long warnings = results.stream().filter(r -> Boolean.TRUE.equals(r.get("warning"))).count();
-            long networkErrors = results.stream()
-                    .filter(r -> "error".equals(r.get("status")))
-                    .map(r -> (String) r.get("error_class"))
-                    .filter(c -> "DNS".equals(c) || "NETWORK".equals(c))
-                    .count();
+            long networkErrors = networkErrorCount(results);
             double networkErrorRate = results.isEmpty() ? 0.0 : (double) networkErrors / results.size();
             log.info("Check complete — runId={}, Total={}, Warning={}, Error={}, NetworkErrors={} (rate={}) [instance={}]",
                     runId, results.size(), warnings, errors, networkErrors,
@@ -7726,7 +7758,9 @@ public class SchedulerService {
         // tek bir RDAP zaman aşımı KRİTİK EXPIRY/STATUS alarmını "✅ ÇÖZÜLDÜ" diye kapatıyor, sonraki başarılı sorgu
         // yeni INITIAL açıyordu (flap + çift bildirim). Körlüğü DOMAINMON_UNKNOWN anlatır.
         boolean hasData = !"UNKNOWN".equals(status);
-        boolean expiryDown = days != null && days <= warn;
+        // L-M2 (2026-10-22): kritik eşik uyarı eşiğinden BÜYÜK girilmişse (crit > warn) kart KRİTİK gösterirken alarm hiç
+        // açılmıyordu — DOWN eşiği iki eşiğin büyüğüdür (yeniden kontrol de aynı kural: domainExpiryDown).
+        boolean expiryDown = days != null && domainExpiryDown(days, warn, crit);
         String expiryLevel = (days != null && (days < 0 || days <= crit)) ? "CRITICAL" : "WARNING";
         if (hasData && days != null)
             expirySweep.add(domainItem(EscalationService.TYPE_DOMAINMON_EXPIRY, m, r, !expiryDown, expiryLevel));
@@ -7798,6 +7832,11 @@ public class SchedulerService {
         return r.get("status_codes") instanceof List<?> l && !l.isEmpty();
     }
 
+    /** Alan adı bitişi DOWN mu: kalan gün iki eşiğin BÜYÜĞÜNÜN altında / eşit (L-M2 — kritik &gt; uyarı girilebilir). */
+    static boolean domainExpiryDown(int days, int warn, int crit) {
+        return days <= Math.max(warn, crit);
+    }
+
     /** Kilit KESİN yok mu? UNKNOWN (WHOIS/.tr, veri yok) alarm üretmez — kural: doğrulanamadı ≠ yok. */
     private static boolean isLockMissing(Map<String, Object> r) {
         return "NONE".equals(String.valueOf(r.get("transfer_lock")));
@@ -7839,6 +7878,10 @@ public class SchedulerService {
         if (transientType && m.getConfirmIntervalSeconds() != null)
             ctx.put("monitor_confirm_interval_ms", m.getConfirmIntervalSeconds() * 1000L);
         ctx.put("monitor_recovery_checks", transientType ? m.getRecoveryChecks() : Integer.valueOf(1));
+        // ALERTS-10 (2026-10-22): UNKNOWN'da formun kurtarma ARALIĞI da uygulanır — yoksa kurtarma pasif kalıyor, günlük alan
+        // adı kadansında N sağlıklı tur bekleniyor ve alarm RDAP döndükten ~2 gün sonra kapanıyordu.
+        if (transientType && m.getRecoveryIntervalSeconds() != null)
+            ctx.put("monitor_recovery_interval_ms", m.getRecoveryIntervalSeconds() * 1000L);
         if (m.getTeamId() != null) ctx.put("team_id", m.getTeamId());
         if (m.getNotificationGroupId() != null) ctx.put("notification_group_id", m.getNotificationGroupId());
         if (r.get("days_remaining") != null) ctx.put("days", r.get("days_remaining"));
@@ -7868,6 +7911,7 @@ public class SchedulerService {
         String status = String.valueOf(r.get("status"));
         Integer days = r.get("days_remaining") instanceof Number n ? n.intValue() : null;
         int warn = m.getWarningDays() != null ? m.getWarningDays() : 30;
+        int crit = m.getCriticalDays() != null ? m.getCriticalDays() : 7;
         boolean hasData = !"UNKNOWN".equals(status);
         boolean lockAlertOn = !Boolean.FALSE.equals(m.getTransferLockAlert());
         // D-b4 (2026-09-29): yeniden kontrol VERİ getirmediyse hüküm "skipped" (null) — sweep kalemi kuralının (O-5/D-b5)
@@ -7877,7 +7921,7 @@ public class SchedulerService {
         switch (type) {
             case EscalationService.TYPE_DOMAINMON_UNKNOWN -> verdict = hasData ? "up" : "down";
             case EscalationService.TYPE_DOMAINMON_EXPIRY -> verdict = (!hasData || days == null) ? "skipped"
-                    : (days <= warn ? "down" : "up");
+                    : (domainExpiryDown(days, warn, crit) ? "down" : "up");
             case EscalationService.TYPE_DOMAINMON_STATUS -> verdict = !eppStatusMeasured(r) ? "skipped"
                     : (Boolean.TRUE.equals(r.get("epp_critical")) || Boolean.TRUE.equals(r.get("epp_warn")) ? "down" : "up");
             // Yeni tipler BURAYA da yazılmalı: default -> "up" onları sessizce "düzeldi" sayar
