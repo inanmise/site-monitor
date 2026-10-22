@@ -979,7 +979,7 @@ The interface is a single-page application, so switching tabs never reloads the 
 
 **Pagination.** No list screen ever draws more than two hundred records at once. Every list view — the nine monitoring pages, Status, the certificate cards on the dashboard, the inventory, maintenance windows and the server-side lists — uses the same pagination component. You choose a page size of 25, 50, 100 or 200 (50 by default) and your choice is remembered for that view. The bar underneath shows "Page X of Y · A–B of N records" alongside first, previous, numbered, next and last navigation; past ten pages a box appears so you can jump straight to a page number. Changing a filter or the search text returns you to the first page; the sixty-second auto-refresh never moves you; and a deep link finds its target record whichever page it happens to be on.
 
-**Language, theme and identity.** Click your name at the foot of the sidebar to open the user menu. From there you can see your last sign-in, change your password, and switch the language (English or Turkish) and the theme (light or dark); both are remembered in your browser. If you have permission, **Settings** is there too, with **Report a Problem** just below it, available from every screen.
+**Language, theme and identity.** Click your name at the foot of the sidebar to open the user menu. From there you can see your last sign-in, change your password (6–64 characters, no leading or trailing space), and switch the language (English or Turkish) and the theme (light or dark); both are remembered in your browser. If you have permission, **Settings** is there too, with **Report a Problem** just below it, available from every screen. **Sign out** ends the session in this browser even without a connection: if the server can't confirm it, a note says so and the server session is closed as soon as the connection is back (at the latest before the next sign-in). Signing out in another tab, or signing in as another user there, is noticed by the open tabs at once (2026-10-22).
 
 **Monitoring menu.** The monitor types sit under three sub-headings: **Availability** (HTTP / Website, Ping, Port — is it up?), **Domains and DNS** (DNS, Domain Expiry — is the address right and still valid?) and **Content and experience** (Keyword, Page Integrity, Page Speed, Synthetic — is the page correct, complete and quick?).
 
@@ -1176,7 +1176,7 @@ Expanding a row reveals the notification history — recipient, subject, email a
 
 Where teams write their weekly operations report and the product owner approves it. You pick the week and fill in the incident summary (counts of urgent and high-severity events), the list of open problems and the planned work; a status badge shows draft, submitted, approved or returned.
 
-The flow: submit the report for approval, and the product owner receives an HTML email with an approval link. They can approve or return it from the screen or straight from the email — the token link deliberately works without signing in. On Friday morning a reminder goes out for anything still pending, and a report can be handed to another team. Everyday users write their own team's report; product owners see and approve the teams they lead; a global administrator sees everything.
+The flow: submit the report for approval, and the product owner receives an HTML email with an approval link. They can approve or return it from the screen or straight from the email — the token link deliberately works without signing in. On Friday morning a reminder goes out for anything still pending, and a report can be handed to another team (global administrators only). Everyday users and team-scoped administrators (managers) open and write their own team's report only — a request to open one for another team is refused with the reason under the team step; product owners see and approve the teams they lead; a global administrator sees everything and can open a report for any team. After an approval or a resend the screen tells the real mail result (sent / queued, will retry / mail switched off / recipients inactive / could not be sent). The approval link's token is hidden in the mail history.
 
 ### 14.19 Incident and Error History
 
@@ -1206,7 +1206,7 @@ The everyday administration screen, divided into sub-tabs:
 
 - Alert thresholds — the day boundaries for warning, high and critical, and the reminder interval (administrators only).
 - Escalation contacts — who receives alerts for which team, from which level, with an optional webhook.
-- Team management — teams, their leaders, their email addresses and their reporting switches.
+- Team management — teams, their leaders, their email addresses and their reporting switches. A team that still has domains, monitors, people, notification groups, technical error report channels / templates or live or upcoming maintenance windows can't be deleted: the delete dialog lists them and **Move** takes them all (channels with their reports and history) to another team; the team's executive summary settings and send history are deleted with the team (2026-10-22). To remove a leader, pick "— Select Leader —" in the edit form and save.
 - User management — accounts, roles, team memberships, password resets and lock releases.
 
 ### 14.25 Permissions
