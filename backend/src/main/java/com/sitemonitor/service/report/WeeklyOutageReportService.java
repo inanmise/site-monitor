@@ -228,12 +228,18 @@ public class WeeklyOutageReportService {
         return new ArrayList<>(byId.values());
     }
 
+    public static final org.springframework.data.domain.Sort STABLE_ORDER = org.springframework.data.domain.Sort.by(
+            org.springframework.data.domain.Sort.Direction.DESC, "createdAt")
+            .and(org.springframework.data.domain.Sort.by(org.springframework.data.domain.Sort.Direction.DESC, "id"));
+
     @FunctionalInterface
     private interface PagedQuery { Page<AlertEvent> run(PageRequest page); }
 
     private void collectPages(Map<Long, AlertEvent> sink, PagedQuery query) {
         for (int p = 0; p < MAX_PAGES; p++) {
-            Page<AlertEvent> page = query.run(PageRequest.of(p, PAGE_SIZE));
+            // Kararlı sayfa sırası (2026-10-22, DATA-7): sorgu ORDER BY taşımıyordu — PostgreSQL her sayfada eşitleri farklı
+            // sıralayıp satır atlayabiliyordu (500'den fazla alarmlı haftada rapor eksik çıkardı). Kimlik eşitlik bozucudur.
+            Page<AlertEvent> page = query.run(PageRequest.of(p, PAGE_SIZE, STABLE_ORDER));
             for (AlertEvent e : page.getContent()) sink.putIfAbsent(e.getId(), e);
             if (!page.hasNext()) return;
             if (p == MAX_PAGES - 1) {

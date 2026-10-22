@@ -71,7 +71,7 @@ public class IncidentController {
         int sz = Math.max(1, Math.min(size, 200));
         Page<IncidentRecord> result = this.service.list(q, severity, category, status, service, channel,
                 since, until, teamId, slaBreached, open, incidentViewScope(session),
-                PageRequest.of(Math.max(0, page), sz, Sort.by(Sort.Direction.DESC, "occurredAt")));
+                PageRequest.of(Math.max(0, page), sz, Sort.by(Sort.Direction.DESC, "occurredAt").and(Sort.by(Sort.Direction.DESC, "id"))));
         List<Map<String, Object>> rows = result.getContent().stream().map(e -> markWritable(session, e, dto(e))).toList();
         addPostmortemSummaries(rows);
         return ok(Map.of(

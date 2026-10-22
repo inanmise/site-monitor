@@ -125,7 +125,7 @@ public interface AuditLogRepository extends Repository<AuditLog, Long> {
            "(:since IS NULL OR a.eventTime >= :since) AND " +
            "(:until IS NULL OR a.eventTime <= :until) AND " +
            "(:anomalyOnly = false OR (a.anomalyFlags IS NOT NULL AND a.anomalyFlags <> '')) " +
-           "ORDER BY a.eventTime DESC")
+           "ORDER BY a.eventTime DESC, a.id DESC")
     Page<AuditLog> findFiltered(
         @Param("actor") String actor,
         @Param("eventType") String eventType,
@@ -164,7 +164,7 @@ public interface AuditLogRepository extends Repository<AuditLog, Long> {
            "(:until IS NULL OR a.eventTime <= :until) AND " +
            "(:anomalyOnly = false OR (a.anomalyFlags IS NOT NULL AND a.anomalyFlags <> '')) AND " +
            "(:q IS NULL OR LOWER(a.actor) LIKE :q OR LOWER(a.resourceId) LIKE :q OR LOWER(a.detail) LIKE :q OR LOWER(a.changes) LIKE :q) " +
-           "ORDER BY a.eventTime DESC")
+           "ORDER BY a.eventTime DESC, a.id DESC")
     Page<AuditLog> findAdvanced(
         @Param("actor") String actor, @Param("actorId") Long actorId,
         @Param("typeFilter") boolean typeFilter, @Param("types") List<String> types,
@@ -206,7 +206,7 @@ public interface AuditLogRepository extends Repository<AuditLog, Long> {
     @Query("SELECT a FROM AuditLog a WHERE a.eventType IN :types"
             + " OR (a.eventType = 'LOGIN' AND a.detail LIKE '%\"method\":\"OTP_%')"
             + " OR (a.eventType = 'LOGIN_FAILED' AND a.failureReason LIKE '%(OTP_%')"
-            + " ORDER BY a.eventTime DESC")
+            + " ORDER BY a.eventTime DESC, a.id DESC")
     List<AuditLog> findRecentOtpActivity(@Param("types") Collection<String> types, Pageable pageable);
 
     /**
@@ -215,7 +215,7 @@ public interface AuditLogRepository extends Repository<AuditLog, Long> {
      * boyuyla tavanlar (tavan + 1 → {@code truncated}). Satır başına / gün başına sorgu YOK.
      */
     @Query("SELECT a.eventType, a.eventTime, a.actor, a.outcome, a.failureReason, a.detail FROM AuditLog a"
-            + " WHERE a.eventType IN :types AND a.eventTime >= :since ORDER BY a.eventTime DESC")
+            + " WHERE a.eventType IN :types AND a.eventTime >= :since ORDER BY a.eventTime DESC, a.id DESC")
     List<Object[]> findLoginStatRows(@Param("types") Collection<String> types, @Param("since") String since, Pageable page);
 
     /** Giriş istatistikleri: aralıktaki tür başına adet + farklı aktör sayısı (önceki dönem karşılaştırması, kesin toplam). */
@@ -226,7 +226,7 @@ public interface AuditLogRepository extends Repository<AuditLog, Long> {
 
     /** Giriş istatistikleri: TEK kullanıcının pencere içi giriş olayları (harf duyarsız aktör), en yeniden; çağıran tavanlar. */
     @Query("SELECT a FROM AuditLog a WHERE a.eventType IN :types AND a.eventTime >= :since AND LOWER(a.actor) = :actor"
-            + " ORDER BY a.eventTime DESC")
+            + " ORDER BY a.eventTime DESC, a.id DESC")
     List<AuditLog> findLoginStatEventsForActor(@Param("types") Collection<String> types, @Param("since") String since,
                                                @Param("actor") String actorLower, Pageable page);
 
@@ -259,7 +259,7 @@ public interface AuditLogRepository extends Repository<AuditLog, Long> {
 
     /** Giriş zaman çizelgesi. {@code failed=false} → yalnız LOGIN, {@code true} → yalnız LOGIN_FAILED. */
     @Query("SELECT a FROM AuditLog a WHERE LOWER(a.actor) = :actor "
-         + "AND a.eventType = :eventType ORDER BY a.eventTime DESC")
+         + "AND a.eventType = :eventType ORDER BY a.eventTime DESC, a.id DESC")
     Page<AuditLog> findOwnLogins(@Param("actor") String actor,
                                  @Param("eventType") String eventType,
                                  Pageable pageable);
@@ -297,7 +297,7 @@ public interface AuditLogRepository extends Repository<AuditLog, Long> {
            "(:since IS NULL OR a.eventTime >= :since) AND " +
            "(:until IS NULL OR a.eventTime <= :until) AND " +
            "(:anomalyOnly = false OR (a.anomalyFlags IS NOT NULL AND a.anomalyFlags <> '')) " +
-           "ORDER BY a.eventTime DESC")
+           "ORDER BY a.eventTime DESC, a.id DESC")
     Page<AuditLog> findOwnFiltered(
         @Param("actor") String actor,
         @Param("eventType") String eventType,

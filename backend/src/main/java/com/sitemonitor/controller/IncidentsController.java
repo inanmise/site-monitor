@@ -276,15 +276,20 @@ public class IncidentsController {
     }
 
     /** Sıralama: varsayılan ongoing-first + en yeni; kolon seçilirse o alan + createdAt tie-breaker. */
-    private Sort sortFor(String sort, String dir) {
+    public static Sort sortFor(String sort, String dir) {
         Sort.Direction d = "asc".equalsIgnoreCase(dir) ? Sort.Direction.ASC : Sort.Direction.DESC;
+        // Kimlik eşitlik bozucu (2026-10-22, DATA-7): aynı saniyede açılan olaylarda sayfa sınırı kararsızdı (satır iki
+        // sayfada birden ya da hiç). Önem METİN saklanır (DATA-8): alfabetik sırada WARNING > HIGH > CRITICAL çıkıyordu —
+        // ilk tık (desc) en ağır olayları sona atıyordu; artık Alarm Geçmişi'yle aynı CASE sırası.
+        Sort tie = Sort.by(Sort.Direction.DESC, "id");
+        Sort newest = Sort.by(Sort.Direction.DESC, "createdAt");
         return switch (sort == null ? "started" : sort) {
-            case "status"   -> Sort.by(d, "resolved").and(Sort.by(Sort.Direction.DESC, "createdAt"));
-            case "severity" -> Sort.by(d, "alertLevel").and(Sort.by(Sort.Direction.DESC, "createdAt"));
-            case "type"     -> Sort.by(d, "alertType").and(Sort.by(Sort.Direction.DESC, "createdAt"));
-            case "started"  -> Sort.by(d, "createdAt");
+            case "status"   -> Sort.by(d, "resolved").and(newest).and(tie);
+            case "severity" -> org.springframework.data.jpa.domain.JpaSort.unsafe(d, AdminController.AlertSort.LEVEL_RANK).and(newest).and(tie);
+            case "type"     -> Sort.by(d, "alertType").and(newest).and(tie);
+            case "started"  -> Sort.by(d, "createdAt").and(Sort.by(d, "id"));
             // varsayılan (istek dışı): ongoing-first + en yeni
-            default         -> Sort.by(Sort.Direction.ASC, "resolved").and(Sort.by(Sort.Direction.DESC, "createdAt"));
+            default         -> Sort.by(Sort.Direction.ASC, "resolved").and(newest).and(tie);
         };
     }
 
