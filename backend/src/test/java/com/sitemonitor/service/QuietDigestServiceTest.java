@@ -273,10 +273,40 @@ class QuietDigestServiceTest {
             }
             return n;
         });
-        when(itemRepo.findStaleClaims(anyString())).thenAnswer(i -> db.values().stream()
-                .filter(x -> x.getDigestStatus() != null && x.getDigestStatus().startsWith("SENDING:")
-                        && x.getDigestSentAt() != null && x.getDigestSentAt().compareTo(i.getArgument(0)) < 0)
-                .toList());
+        when(itemRepo.findStaleClaims(anyString(), anyString())).thenAnswer(i -> staleIn(i.getArgument(0), i.getArgument(1)));
+        when(itemRepo.countStaleClaims(anyString(), anyString())).thenAnswer(i -> (long) staleIn(i.getArgument(0), i.getArgument(1)).size());
+    }
+
+    private List<QuietDigestItem> staleIn(String since, String cutoff) {
+        return db.values().stream()
+                .filter(x -> x.getDigestStatus() != null && x.getDigestStatus().startsWith("SENDING:") && x.getDigestSentAt() != null
+                        && x.getDigestSentAt().compareTo(since) >= 0 && x.getDigestSentAt().compareTo(cutoff) < 0)
+                .toList();
+    }
+
+    @Test
+    @DisplayName("İnceleme J-1: vakti gelen YENİ kayıt yokken de dakikalık iş yarım sahiplenmeyi kapatır (kilit altında, posta yok)")
+    void scheduledRun_noDueItem_stillClosesStaleClaim() {
+        wireClaimRecovery();
+        event(1, "WARNING", false);
+        QuietDigestItem stale = item(10, 1);
+        stale.setDigestStatus("SENDING:deadpod00000");
+        stale.setDigestSentAt("2026-10-02T03:40:00");
+        doAnswer(i -> { ((Runnable) i.getArgument(1)).run(); return null; })
+                .when(schedulerService).runWithSchedulerLock(eq(QuietDigestService.LOCK_NAME), any());
+        // existsByDigestSentAtIsNullAndWindowEndLessThanEqual taklitte false (vakti gelen yeni kayıt yok)
+
+        service.scheduledRun();
+
+        verify(schedulerService).runWithSchedulerLock(eq(QuietDigestService.LOCK_NAME), any());
+        assertThat(stale.getDigestStatus()).isEqualTo(QuietDigestService.STATUS_STALE);
+        assertThat(logs).hasSize(1);
+        verify(itemRepo, never()).findDue(anyString());
+        verify(emailService, never()).sendHtml(any(String[].class), any(), anyString(), anyString(), any());
+
+        clearInvocations(schedulerService);
+        service.scheduledRun();   // artık yarım sahiplenme yok, vakti gelen kayıt yok → kilit de alınmaz
+        verify(schedulerService, never()).runWithSchedulerLock(anyString(), any());
     }
 
     @Test
