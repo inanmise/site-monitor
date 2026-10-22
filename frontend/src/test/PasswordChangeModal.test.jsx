@@ -184,7 +184,7 @@ describe('PasswordChangeModal', () => {
   })
 
   it('AUTH-7: sunucunun yeni parola alan hatası (field: password) YENİ PAROLA alanının altında; yazınca kalkar', async () => {
-    const text = 'The password can't start or end with a space: remove the spaces and try again.'
+    const text = "The password can't start or end with a space: remove the spaces and try again."
     api.me.changePassword.mockResolvedValue({ success: false, code: 'VALIDATION_FAILED', field: 'password', error: text })
     render(<PasswordChangeModal mode="self" targetUser={USER} onClose={() => {}} />)
     const inputs = fill(null, { next: 'yeni12 ', confirm: 'yeni12 ' })

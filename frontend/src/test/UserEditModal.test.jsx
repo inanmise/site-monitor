@@ -60,11 +60,14 @@ describe('UserEditModal', () => {
         username: 'ali',
         email: 'ali@example.com',
         display_name: 'New Name',
-        team_id: 3,
         system_role: 'ADMIN',
         org_role: 'TECH',
       }),
     ))
+    // 20.166 (UIA-1): takım kümesi değişmediyse team_id / team_ids GİTMEZ — sunucu gönderilen her takımı yönetim kapsamına
+    // karşı yeniden denetliyordu (kapsamlı müdür kapsamı dışında takımı olan kişinin telefonunu kaydedemiyordu)
+    expect(api.admin.updateUser.mock.calls[0][1]).not.toHaveProperty('team_id')
+    expect(api.admin.updateUser.mock.calls[0][1]).not.toHaveProperty('team_ids')
     await waitFor(() => expect(onSaved).toHaveBeenCalled())
     await waitFor(() => expect(onClose).toHaveBeenCalled())
   })
