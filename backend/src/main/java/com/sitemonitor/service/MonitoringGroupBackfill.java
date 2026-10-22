@@ -1,12 +1,5 @@
 package com.sitemonitor.service;
 
-import com.sitemonitor.model.CertificateInventory;
-import com.sitemonitor.model.DnsMonitor;
-import com.sitemonitor.model.DomainMonitor;
-import com.sitemonitor.model.HttpMonitor;
-import com.sitemonitor.model.KeywordMonitor;
-import com.sitemonitor.model.PingMonitor;
-import com.sitemonitor.model.PortMonitor;
 import com.sitemonitor.repository.CertificateInventoryRepository;
 import com.sitemonitor.repository.DnsMonitorRepository;
 import com.sitemonitor.repository.DomainMonitorRepository;
@@ -75,7 +68,7 @@ public class MonitoringGroupBackfill {
         NULL_TEAM_TABLES.put("domain_monitors", "domain");
     }
 
-    /** Koşullu yazım yolu; yoksa (elle kurulan testler) eski varlık yolu. */
+    /** Koşullu yazım yolu; yoksa (elle kurulan testler) takımsız izleme adımı atlanır, tohumlama koşar. */
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private org.springframework.jdbc.core.JdbcTemplate jdbc;
     @org.springframework.beans.factory.annotation.Autowired(required = false)
@@ -88,7 +81,6 @@ public class MonitoringGroupBackfill {
     public void run() {
         try {
             if (jdbc != null) fillNullTeamsOnce();
-            else fillNullTeamsLegacy();
 
             // 2) registry seed — 7 türün mevcut (team, group) çiftleri
             int seeded = 0;
@@ -175,24 +167,6 @@ public class MonitoringGroupBackfill {
         return n != null && n > 0;
     }
 
-    /** Eski yol (JdbcTemplate'siz elle kurulan testler) — varlık kaydı. Üretimde {@link #fillNullTeamsOnce}. */
-    private void fillNullTeamsLegacy() {
-        Map<String, Long> domainTeam = new HashMap<>();
-        for (CertificateInventory inv : inventoryRepo.findAll())
-            if (inv.getDomain() != null && inv.getTeamId() != null)
-                domainTeam.putIfAbsent(inv.getDomain().toLowerCase(Locale.ROOT), inv.getTeamId());
-
-        int filled = 0, orphan = 0;
-        for (HttpMonitor m : httpRepo.findAll())    { int r = fill(m.getTeamId(), host(m.getUrl()), domainTeam, m::setTeamId, m.getGroupName()); filled += pos(r); orphan += neg(r); if (r > 0) httpRepo.save(m); }
-        for (KeywordMonitor m : keywordRepo.findAll()) { int r = fill(m.getTeamId(), host(m.getUrl()), domainTeam, m::setTeamId, m.getGroupName()); filled += pos(r); orphan += neg(r); if (r > 0) keywordRepo.save(m); }
-        for (PingMonitor m : pingRepo.findAll())    { int r = fill(m.getTeamId(), host(m.getHost()), domainTeam, m::setTeamId, m.getGroupName()); filled += pos(r); orphan += neg(r); if (r > 0) pingRepo.save(m); }
-        for (PortMonitor m : portRepo.findAll())    { int r = fill(m.getTeamId(), host(m.getHost()), domainTeam, m::setTeamId, m.getGroupName()); filled += pos(r); orphan += neg(r); if (r > 0) portRepo.save(m); }
-        for (DnsMonitor m : dnsRepo.findAll())      { int r = fill(m.getTeamId(), host(m.getDomain()), domainTeam, m::setTeamId, m.getGroupName()); filled += pos(r); orphan += neg(r); if (r > 0) dnsRepo.save(m); }
-        for (DomainMonitor m : domainRepo.findAll()) { int r = fill(m.getTeamId(), host(m.getDomain()), domainTeam, m::setTeamId, m.getGroupName()); filled += pos(r); orphan += neg(r); if (r > 0) domainRepo.save(m); }
-        if (filled > 0 || orphan > 0)
-            log.info("Monitoring group backfill: {} monitör takımı envanterden dolduruldu; {} türetilemedi (grubu var, teamId=null kaldı)", filled, orphan);
-    }
-
     /** Dönüş: 1=dolduruldu, -1=grubu var ama türetilemedi (orphan), 0=değişiklik yok. */
     static int fill(Long teamId, String domain, Map<String, Long> domainTeam, java.util.function.Consumer<Long> setTeam, String group) {
         if (teamId != null) return 0;
@@ -203,8 +177,6 @@ public class MonitoringGroupBackfill {
         return (group != null && !group.isBlank()) ? -1 : 0;   // grubu olan ama türetilemeyen → orphan raporla
     }
 
-    private static int pos(int r) { return r > 0 ? 1 : 0; }
-    private static int neg(int r) { return r < 0 ? 1 : 0; }
 
     private int seed(String type, List<Object[]> rows) {
         int n = 0;
