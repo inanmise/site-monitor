@@ -214,6 +214,8 @@ export default function MonitoringOverviewPage() {
   // Okuma hatası işaretleri (2026-10-22, UIM-5): sunucu bir parçayı okuyamadıysa o parça "0 / sağlıklı" GÖSTERİLMEZ.
   const gaps = useMemo(() => overviewGaps(data), [data])
   const alertsUnknown = gaps.alerts
+  // ?mo_dlg=alerts derin bağlantısı alarmlar okunamazken açılmaz (FE-8) — URL'den de düşer, sonraki okuma başarılıysa yeniden açılabilir
+  useEffect(() => { if (kpi === 'alerts' && alertsUnknown) setKpi('') }, [kpi, alertsUnknown])
   const columnFilterCount = activeColumnFilterCount(filters)
   const anyFilter = !!(columnFilterCount || q || favActive)
   const clearFilters = () => { setTypes([]); setStatuses([]); setTeamsSel([]); setQ(''); setLastSel(''); setChecksSel(''); setAlertSel(''); setFavOnly(false) }
@@ -343,7 +345,10 @@ export default function MonitoringOverviewPage() {
   const totalN = Number(totals.total ?? 0)
   const downN = Number(totals.down ?? 0), staleN = Number(totals.stale ?? 0), alertsN = Number(totals.open_alerts ?? 0)
   const fleetVerdict = verdict(totals, gaps)
-  const tDigest = teamsDigest(teamGroups, { alertsUnknown })
+  // Takım özeti (2026-10-22, FE-2): bir türün listesi ya da kontrolleri okunamadıysa o türün izlemeleri takım satırlarında YOK
+  // (ya da bilinmiyor) — "Tüm takımlar sağlıklı" yeşili çizilmez; alarmların okunamadığı durumla aynı nötr ton + çip.
+  const teamsPartial = alertsUnknown || gaps.types.length > 0 || gaps.checks.length > 0
+  const tDigest = teamsDigest(teamGroups, { alertsUnknown: teamsPartial })
   const typeList = (data?.types || []).filter((ty) => TYPE_META[ty.type])
   const typeTones = typeList.map((ty) => typeTone(ty, { alertsUnknown }))
   const badTypes = typeTones.filter((x) => x === 'bad').length, warnTypes = typeTones.filter((x) => x === 'warn').length
@@ -379,13 +384,13 @@ export default function MonitoringOverviewPage() {
           ? <SummaryChip tone={tDigest.tone}>{t('mo.sum.teamsIssue', fmt(tDigest.issues))}</SummaryChip>
           : tDigest.unknown > 0
             ? <SummaryChip Icon={CircleHelp}>{t('mo.unavailable.teamsUnknown', fmt(tDigest.unknown))}</SummaryChip>
-            : alertsUnknown
+            : teamsPartial
               ? <SummaryChip Icon={CircleHelp}>{t('mo.unavailable.chip')}</SummaryChip>
               : <SummaryChip tone="ok" Icon={CheckCircle2}>{t('mo.sum.teamsOk')}</SummaryChip>}
       </>,
       content: <>
         <p className="m-0 mb-2 text-xs text-muted-foreground md:hidden">{t('mo.teams.desc')}</p>
-        <OverviewTeamsCard bare teams={teamGroups} activeTeams={teamsSel} onPickTeam={pickTeam} alertsUnknown={alertsUnknown} />
+        <OverviewTeamsCard bare teams={teamGroups} activeTeams={teamsSel} onPickTeam={pickTeam} alertsUnknown={teamsPartial} />
       </> }] : []),
     { key: 'types', Icon: LayoutGrid, title: t('mo.types'), desc: t('mo.types.hint'),
       tone: badTypes > 0 ? 'bad' : warnTypes > 0 ? 'warn' : (unknownTypes > 0 || alertsUnknown) ? 'neutral' : 'ok',
@@ -568,7 +573,8 @@ export default function MonitoringOverviewPage() {
             {filtered.length > 0 && <PaginationBar {...pager} />}
           </section>
 
-          <OverviewKpiDialog kind={kpi} rows={rows} totals={totals} nowMs={nowMs} onClose={() => setKpi('')} onFilter={onKpiFilter} />
+          {/* Alarmlar okunamadıysa (?mo_dlg=alerts derin bağlantısı da) alarm özeti AÇILMAZ — boş "alarm yok" listesi yalan olurdu */}
+          <OverviewKpiDialog kind={kpi === 'alerts' && alertsUnknown ? '' : kpi} rows={rows} totals={totals} nowMs={nowMs} onClose={() => setKpi('')} onFilter={onKpiFilter} />
         </div>
       )}
     </div>

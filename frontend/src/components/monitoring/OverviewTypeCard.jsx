@@ -30,9 +30,11 @@ function Stat({ label, value, tone }) {
  * aktif izlemelerinin hepsi "bilinmiyor" olan tür ve açık alarmlar okunamadığında (`alertsUnknown`) → nötr.
  */
 export function typeTone(type, { alertsUnknown = false } = {}) {
-  if (type?.unavailable === true || type?.checks_unavailable === true) return 'neutral'
+  if (type?.unavailable === true) return 'neutral'
+  // Kontroller okunamasa da OKUNABİLEN açık alarmlar gerçek bulgudur (2026-10-22, FE-8): kritik alarmı olan tür gri çizilmez
   if (Number(type.down || 0) > 0 || Number(type.open_critical || 0) > 0) return 'bad'
   if (Number(type.open_alerts || 0) > 0 || Number(type.stale || 0) > 0) return 'warn'
+  if (type?.checks_unavailable === true) return 'neutral'
   const active = Number(type.active || 0)
   if (active > 0 && Number(type.unknown || 0) >= active) return 'neutral'
   return alertsUnknown ? 'neutral' : 'ok'

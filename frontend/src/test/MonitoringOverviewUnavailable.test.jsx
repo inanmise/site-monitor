@@ -156,3 +156,53 @@ describe('İzleme Panosu — okunamayan parça "0 / sağlıklı" gösterilmez', 
   })
 })
 
+// ── 20.166 son inceleme (FE-2 / FE-8) ──────────────────────────────────────────────────────────────────────────────────
+describe('İzleme Panosu — son inceleme: takım özeti, tür tonu, alarm penceresi derin bağlantısı', () => {
+  beforeEach(() => { vi.clearAllMocks(); window.history.replaceState({}, '', '/?tab=monitoring'); try { localStorage.clear() } catch { /* yok */ } })
+
+  it('FE-2: bir türün listesi okunamadıysa "Tüm takımlar sağlıklı" YOK, takımlar bölümü nötr', async () => {
+    const res = healthy()
+    res.data.types = [res.data.types[0], TYPE('ping', { unavailable: true })]
+    res.data.monitors = res.data.monitors.filter((m) => m.type !== 'ping')
+    api.monitoring.getOverview.mockResolvedValue(res)
+    const { container } = render(<MonitoringOverviewPage />)
+    await waitFor(() => expect(container.querySelector('[data-slot="mo-section"][data-section="teams"]')).not.toBeNull())
+    expect(summaryOf(container, 'teams')).not.toMatch(/tüm takımlar sağlıklı|all teams (are )?healthy/i)
+    expect(container.querySelector('[data-slot="mo-section"][data-section="teams"]')).toHaveAttribute('data-tone', 'neutral')
+    await expandAll()
+    expect(container.querySelectorAll('[data-slot="mo-team-unknown"]').length).toBeGreaterThan(0)
+  })
+
+  it('FE-2: bir türün kontrolleri okunamadıysa da takımlar bölümü nötr (yeşil değil)', async () => {
+    const res = healthy()
+    res.data.types = [res.data.types[0], TYPE('ping', { total: 1, active: 1, checks_unavailable: true })]
+    api.monitoring.getOverview.mockResolvedValue(res)
+    const { container } = render(<MonitoringOverviewPage />)
+    await waitFor(() => expect(container.querySelector('[data-slot="mo-section"][data-section="teams"]')).not.toBeNull())
+    expect(summaryOf(container, 'teams')).not.toMatch(/tüm takımlar sağlıklı|all teams (are )?healthy/i)
+    expect(container.querySelector('[data-slot="mo-section"][data-section="teams"]')).toHaveAttribute('data-tone', 'neutral')
+  })
+
+  it('FE-8: kontrolleri okunamayan türün OKUNABİLEN kritik alarmı kırmızı tondur, gri değil; uyarı alarmı turuncu', () => {
+    expect(typeTone(TYPE('http', { active: 2, checks_unavailable: true, open_alerts: 1, open_critical: 1 }))).toBe('bad')
+    expect(typeTone(TYPE('http', { active: 2, checks_unavailable: true, open_alerts: 2 }))).toBe('warn')
+    expect(typeTone(TYPE('http', { active: 2, checks_unavailable: true }))).toBe('neutral')
+    expect(typeTone(TYPE('http', { active: 2, unavailable: true, open_critical: 1 }))).toBe('neutral')
+  })
+
+  it('FE-8: ?mo_dlg=alerts derin bağlantısı alarmlar okunamazken boş "alarm yok" penceresi AÇMAZ; anahtar adresten düşer', async () => {
+    window.history.replaceState({}, '', '/?tab=monitoring&mo_dlg=alerts')
+    api.monitoring.getOverview.mockResolvedValue(healthy({ alerts_unavailable: true }))
+    const { container } = render(<MonitoringOverviewPage />)
+    await waitFor(() => expect(container.querySelector('[data-slot="mo-unavailable"]')).not.toBeNull())
+    expect(document.querySelector('[data-slot="mo-kpi-dialog"]')).toBeNull()
+    await waitFor(() => expect(window.location.search).not.toContain('mo_dlg'))
+  })
+
+  it('FE-8: alarmlar okunabiliyorsa aynı derin bağlantı pencereyi açar (bugünkü davranış)', async () => {
+    window.history.replaceState({}, '', '/?tab=monitoring&mo_dlg=alerts')
+    api.monitoring.getOverview.mockResolvedValue(healthy())
+    render(<MonitoringOverviewPage />)
+    await waitFor(() => expect(document.querySelector('[data-slot="mo-kpi-dialog"]')).not.toBeNull())
+  })
+})
