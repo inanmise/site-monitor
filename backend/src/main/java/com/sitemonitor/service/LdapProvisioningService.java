@@ -134,7 +134,10 @@ public class LdapProvisioningService {
         // YEREL hesaba (bootstrap admin dahil) müdür yolu DOKUNMAZ (2026-10-12): aynı adlı yerel satırı bulunca yerel parolayı
         // siliyor, rolü / profili değiştiriyordu (kişi kimlik bile doğrulamamıştı). provisionManager ön denetimi bunu zaten
         // engeller; burası son savunma hattı. (Giriş yönlendirmesi yerel hesabı AD'ye götürmez, yeniden eşitleme reddeder.)
-        if (mode == Mode.MANAGER && !isNew && !isLdapAccount(u)) {
+        // 2026-10-22 (hata avı AUTH-3): kural HER kipte — giriş yolu da (LDAP filtresi e-postayla eşleşip AD kanonik adı yerel
+        // bir hesabınkiyle çakışınca) yerel parolayı siliyor, profili / takımları eziyordu. Giriş kapısı (AuthController
+        // .tryLdapLogin) bunu önce reddeder; yeniden eşitleme (LdapMembershipService.resync) yerel hesabı zaten reddeder.
+        if (!isNew && !isLdapAccount(u)) {
             throw new IllegalStateException("LDAP provizyonu yerel hesaba dokunmaz (user=" + uname + ", mode=" + mode + ")");
         }
         List<Long> teamsBefore = isNew ? List.of() : ownTeams(u);

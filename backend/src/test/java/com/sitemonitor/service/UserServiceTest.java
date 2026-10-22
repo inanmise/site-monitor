@@ -379,7 +379,7 @@ class UserServiceTest {
     @Test
     @DisplayName("createTeam: valid inputs → saves team")
     void createTeam_validInputs_savesTeam() {
-        when(teamRepo.existsByName("Alpha")).thenReturn(false);
+        when(teamRepo.existsByNameIgnoreCase("Alpha")).thenReturn(false);
         when(userRepo.existsById(1L)).thenReturn(true);
 
         Team result = service.createTeam("Alpha", "alpha@example.com", "Desc", 1L);
@@ -440,7 +440,7 @@ class UserServiceTest {
     @Test
     @DisplayName("createTeam: null leaderId is now allowed (PO optional)")
     void createTeam_nullLeader_isAllowed() {
-        when(teamRepo.existsByName("Alpha")).thenReturn(false);
+        when(teamRepo.existsByNameIgnoreCase("Alpha")).thenReturn(false);
         Team result = service.createTeam("Alpha", "a@b.com", null, null);
         assertThat(result.getName()).isEqualTo("Alpha");
         assertThat(result.getLeaderId()).isNull();
@@ -450,7 +450,7 @@ class UserServiceTest {
     @Test
     @DisplayName("createTeam: duplicate name → IllegalArgumentException")
     void createTeam_duplicateName_throwsIllegalArgument() {
-        when(teamRepo.existsByName("Alpha")).thenReturn(true);
+        when(teamRepo.existsByNameIgnoreCase("Alpha")).thenReturn(true);
         assertThatThrownBy(() -> service.createTeam("Alpha", "a@b.com", null, 1L))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("already exists");
@@ -459,7 +459,7 @@ class UserServiceTest {
     @Test
     @DisplayName("createTeam: leader not found → IllegalArgumentException")
     void createTeam_leaderNotFound_throwsIllegalArgument() {
-        when(teamRepo.existsByName("Alpha")).thenReturn(false);
+        when(teamRepo.existsByNameIgnoreCase("Alpha")).thenReturn(false);
         when(userRepo.existsById(99L)).thenReturn(false);
         assertThatThrownBy(() -> service.createTeam("Alpha", "a@b.com", null, 99L))
                 .isInstanceOf(IllegalArgumentException.class)

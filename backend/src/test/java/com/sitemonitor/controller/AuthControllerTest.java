@@ -33,6 +33,10 @@ class AuthControllerTest {
     @Autowired
     MockMvc mvc;
 
+    /** IP oran sınırı testleri (AUTH-9) eşiği gerçek değere (10) indirir — test özelliği 1000. */
+    @Autowired
+    AuthController authController;
+
     @MockitoBean
     RememberMeService rememberMeService;
 
@@ -1393,7 +1397,8 @@ class AuthControllerTest {
                 .andExpect(jsonPath("$.scope.monitoring_all").value(false))
                 .andExpect(jsonPath("$.scope.noc_operator").value(false))
                 .andExpect(jsonPath("$.scope.noc_console").value(false))
-                .andExpect(jsonPath("$.scope.channel_reports").value(true));   // görünürlük bean'i yok → herkes (S6)
+                .andExpect(jsonPath("$.scope.channel_reports").value(true))   // görünürlük bean'i yok → herkes (S6)
+                .andExpect(jsonPath("$.scope.global_admin").value(false));   // K1 (2026-10-22)
 
         MockHttpSession operator = new MockHttpSession();
         operator.setAttribute("authenticated", Boolean.TRUE);
@@ -1415,7 +1420,16 @@ class AuthControllerTest {
         mvc.perform(get("/api/me/permissions").session(scoped))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.scope.monitoring_all").value(false))
-                .andExpect(jsonPath("$.scope.noc_console").value(false));
+                .andExpect(jsonPath("$.scope.noc_console").value(false))
+                .andExpect(jsonPath("$.scope.global_admin").value(false));   // K1: rol ADMIN ama GLOBAL değil
+
+        MockHttpSession global = new MockHttpSession();
+        global.setAttribute("authenticated", Boolean.TRUE);
+        global.setAttribute("username", "admin");
+        global.setAttribute("systemRole", "ADMIN");
+        mvc.perform(get("/api/me/permissions").session(global))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.scope.global_admin").value(true));
 
         MockHttpSession audit = new MockHttpSession();
         audit.setAttribute("authenticated", Boolean.TRUE);
@@ -1425,6 +1439,182 @@ class AuthControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.scope.monitoring_all").value(true))
                 .andExpect(jsonPath("$.scope.noc_operator").value(false))
-                .andExpect(jsonPath("$.scope.noc_console").value(true));
+                .andExpect(jsonPath("$.scope.noc_console").value(true))
+                .andExpect(jsonPath("$.scope.global_admin").value(false));   // AUDIT global GÖRÜNTÜLEYİCİ, yönetici değil
+    }
+
+    // ── Hata avı 2026-10-22 (PKG-1) ──────────────────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("K2: /me kapsamlı oturumda manage_team_ids taşır; global yöneticide alan YOK (istemci global_admin'e bakar)")
+    void me_carriesManageTeamIds() throws Exception {
+        MockHttpSession scoped = new MockHttpSession();
+        scoped.setAttribute("authenticated", Boolean.TRUE);
+        scoped.setAttribute("username", "mudur");
+        scoped.setAttribute("systemRole", "ADMIN");
+        scoped.setAttribute("viewTeamIds", new java.util.ArrayList<>(List.of(5L, 6L, 7L)));
+        scoped.setAttribute("manageTeamIds", new java.util.ArrayList<>(List.of(5L, 6L)));
+        mvc.perform(get("/api/me").session(scoped))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.global_admin").value(false))
+                .andExpect(jsonPath("$.manage_team_ids.length()").value(2))
+                .andExpect(jsonPath("$.manage_team_ids[0]").value(5))
+                .andExpect(jsonPath("$.manage_team_ids[1]").value(6));
+
+        MockHttpSession user = new MockHttpSession();
+        user.setAttribute("authenticated", Boolean.TRUE);
+        user.setAttribute("username", "kullanici");
+        user.setAttribute("systemRole", "USER");
+        user.setAttribute("viewTeamIds", new java.util.ArrayList<>(List.of(5L)));
+        user.setAttribute("manageTeamIds", new java.util.ArrayList<Long>());
+        mvc.perform(get("/api/me").session(user))
+                .andExpect(jsonPath("$.manage_team_ids").isArray())
+                .andExpect(jsonPath("$.manage_team_ids.length()").value(0));
+
+        MockHttpSession global = new MockHttpSession();
+        global.setAttribute("authenticated", Boolean.TRUE);
+        global.setAttribute("username", "admin");
+        global.setAttribute("systemRole", "ADMIN");
+        mvc.perform(get("/api/me").session(global))
+                .andExpect(jsonPath("$.global_admin").value(true))
+                .andExpect(jsonPath("$.manage_team_ids").doesNotExist());
+    }
+
+    @Test
+    @DisplayName("AUTH-8: username / password JSON null → genel 401, asla 500")
+    void login_nullFields_generic401() throws Exception {
+        when(clientIpResolver.resolve(any())).thenReturn("10.88.0.1");
+        mvc.perform(post("/api/login").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":null,\"password\":\"x\"}"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.success").value(false));
+        mvc.perform(post("/api/login").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"testuser\",\"password\":null}"))
+                .andExpect(status().isUnauthorized());
+        verify(userService, never()).recordSuccessfulLogin(any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("AUTH-9: 9 hata + doğru giriş ama 409 (oturum kurulmadı) + 1 hata → IP sınırı DOLAR (sonraki istek 429)")
+    void ipLimit_notResetBy409() throws Exception {
+        org.springframework.test.util.ReflectionTestUtils.setField(authController, "maxLoginAttempts", 10);   // test özelliği 1000
+        try {
+            ipLimitNotResetBy409();
+        } finally {
+            org.springframework.test.util.ReflectionTestUtils.setField(authController, "maxLoginAttempts", 1000);
+        }
+    }
+
+    private void ipLimitNotResetBy409() throws Exception {
+        when(clientIpResolver.resolve(any())).thenReturn("10.88.0.9");
+        for (int i = 0; i < 9; i++) {
+            mvc.perform(post("/api/login").contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"username\":\"testuser\",\"password\":\"wrongpass\"}"))
+                    .andExpect(status().isUnauthorized());
+        }
+        when(userService.hasLiveSession(testUser)).thenReturn(true);   // başka yerde canlı oturum → 409
+        mvc.perform(post("/api/login").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"testuser\",\"password\":\"testpass\"}"))
+                .andExpect(status().isConflict());
+        mvc.perform(post("/api/login").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"testuser\",\"password\":\"wrongpass\"}"))
+                .andExpect(status().isUnauthorized());
+        mvc.perform(post("/api/login").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"testuser\",\"password\":\"wrongpass\"}"))
+                .andExpect(status().isTooManyRequests());
+    }
+
+    @Test
+    @DisplayName("AUTH-9: gerçek oturum kuran giriş IP sayaçlarını yine SIFIRLAR (bugünkü davranış)")
+    void ipLimit_resetOnRealSession() throws Exception {
+        org.springframework.test.util.ReflectionTestUtils.setField(authController, "maxLoginAttempts", 10);   // test özelliği 1000
+        try {
+            ipLimitResetOnRealSession();
+        } finally {
+            org.springframework.test.util.ReflectionTestUtils.setField(authController, "maxLoginAttempts", 1000);
+        }
+    }
+
+    private void ipLimitResetOnRealSession() throws Exception {
+        when(clientIpResolver.resolve(any())).thenReturn("10.88.0.10");
+        for (int i = 0; i < 9; i++) {
+            mvc.perform(post("/api/login").contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"username\":\"testuser\",\"password\":\"wrongpass\"}"));
+        }
+        mvc.perform(post("/api/login").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"testuser\",\"password\":\"testpass\"}"))
+                .andExpect(status().isOk());
+        mvc.perform(post("/api/login").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"testuser\",\"password\":\"wrongpass\"}"))
+                .andExpect(status().isUnauthorized());
+        mvc.perform(post("/api/login").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"testuser\",\"password\":\"wrongpass\"}"))
+                .andExpect(status().isUnauthorized());   // sayaç sıfırlanmıştı → 429 yok
+    }
+
+    @Test
+    @DisplayName("AUTH-3: AD bind başarılı ama AD KANONİK adı YEREL bir hesabın (bootstrap admin) → genel 401, provizyon YOK, parola özeti değişmez")
+    void ldapCanonicalName_neverTakesLocalAccount() throws Exception {
+        when(clientIpResolver.resolve(any())).thenReturn("10.88.0.20");
+        com.sitemonitor.model.LdapSettings ls = new com.sitemonitor.model.LdapSettings();
+        ls.setEnabled(true);
+        when(ldapSettings.getOrDefaults()).thenReturn(ls);
+        when(userService.findByUsername("admin@corp")).thenReturn(Optional.empty());   // yazılan ad yerel değil → AD
+        AppUser local = new AppUser();
+        local.setId(1L);
+        local.setUsername("ADMIN");
+        local.setSystemRole("ADMIN");
+        local.setActive(true);
+        local.setAuthSource("LOCAL");
+        local.setPasswordHash("$2a$10$yerelparolaozeti");
+        when(userService.findByUsername("admin")).thenReturn(Optional.of(local));
+        when(ldapDirectory.authenticate("admin@corp", "adpass")).thenReturn(Optional.of(
+                new com.sitemonitor.service.LdapDirectoryService.LdapUser("admin", "CN=admin,DC=corp", Map.of())));
+
+        mvc.perform(post("/api/login").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"admin@corp\",\"password\":\"adpass\"}"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.success").value(false));
+        verify(ldapProvisioning, never()).provisionFromAd(any(), any(), any());
+        verify(userService, never()).recordSuccessfulLogin(any(), any(), any(), any());
+        assertThat(local.getPasswordHash()).isEqualTo("$2a$10$yerelparolaozeti");
+
+        // Kaynağı boş eski yerel satır da aynı kural (yönlendirme kuralı: boş = yerel)
+        local.setAuthSource(null);
+        when(clientIpResolver.resolve(any())).thenReturn("10.88.0.21");
+        mvc.perform(post("/api/login").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"admin@corp\",\"password\":\"adpass\"}"))
+                .andExpect(status().isUnauthorized());
+        verify(ldapProvisioning, never()).provisionFromAd(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("AUTH-15: Türkçe yerel ayarlı JVM'de /me/audit ve 'bu girişi ben yapmadım' küçük harfi Locale.ROOT ile yapar (ADMIN → admin, admın değil)")
+    void selfAudit_lowercaseIsLocaleIndependent() throws Exception {
+        java.util.Locale before = java.util.Locale.getDefault();
+        java.util.Locale.setDefault(java.util.Locale.forLanguageTag("tr-TR"));
+        try {
+            when(auditLogRepo.findOwnFiltered(any(), any(), any(), any(), any(), anyBoolean(), any()))
+                    .thenReturn(org.springframework.data.domain.Page.empty());
+            MockHttpSession s = new MockHttpSession();
+            s.setAttribute("authenticated", Boolean.TRUE);
+            s.setAttribute("username", "ADMIN");
+            mvc.perform(get("/api/me/audit").session(s)).andExpect(status().isOk());
+            verify(auditLogRepo).findOwnFiltered(eq("admin"), any(), any(), any(), any(), anyBoolean(), any());
+
+            AppUser admin = new AppUser();
+            admin.setId(1L);
+            admin.setUsername("ADMIN");
+            admin.setActive(true);
+            when(userService.findByUsername("ADMIN")).thenReturn(Optional.of(admin));
+            s.setAttribute("userId", 1L);
+            mvc.perform(post("/api/me/devices/report-login").session(s).contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"auditId\":7}"))
+                    .andExpect(status().isNotFound());
+            verify(auditLogRepo).findOwnById(7L, "admin");
+        } finally {
+            java.util.Locale.setDefault(before);
+        }
     }
 }
+

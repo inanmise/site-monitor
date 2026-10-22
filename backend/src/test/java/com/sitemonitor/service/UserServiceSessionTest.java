@@ -137,8 +137,8 @@ class UserServiceSessionTest {
     // ── clearActiveSession ──────────────────────────────────────────────────────
 
     @Test
-    @DisplayName("clearActiveSession: eşleşen oturum → activeSessionId null + kaydet")
-    void clearActiveSession_match_clears() {
+    @DisplayName("clearActiveSession: eşleşen oturum → TERMINATED nöbetçisi + kaydet (NULL değil — NULL 'eski oturum' demek, AUTH-2)")
+    void clearActiveSession_match_writesSentinel() {
         AppUser u = user("alice", "S1");
         when(userRepo.findByUsername("alice")).thenReturn(Optional.of(u));
 
@@ -146,7 +146,64 @@ class UserServiceSessionTest {
 
         ArgumentCaptor<AppUser> captor = ArgumentCaptor.forClass(AppUser.class);
         verify(userRepo).save(captor.capture());
-        assertThat(captor.getValue().getActiveSessionId()).isNull();
+        assertThat(captor.getValue().getActiveSessionId()).startsWith(UserService.SESSION_TERMINATED_PREFIX);
+        assertThat(service.hasLiveSession(captor.getValue())).as("nöbetçi canlı oturum sayılmaz → sonraki girişte yanlış 409 yok").isFalse();
+    }
+
+    // ── AUTH-2 (2026-10-22): çıkış, süpersede edilmiş / sonlandırılmış oturumları CANLANDIRMAZ ─────────────────
+
+    /** Tek satırlık sahte depo: oturum kaydı gerçek gibi okunur / yazılır (findByUsername, projeksiyon, sahiplenme). */
+    private AppUser fakeRow(String username) {
+        AppUser row = user(username, null);
+        when(userRepo.findByUsername(username)).thenReturn(Optional.of(row));
+        when(userRepo.findActiveSessionIdByUsername(username)).thenAnswer(i -> Optional.ofNullable(row.getActiveSessionId()));
+        when(userRepo.adoptSessionIfNone(eq(username), any(), any())).thenAnswer(i -> {
+            if (row.getActiveSessionId() != null) return 0;
+            row.setActiveSessionId(i.getArgument(1));
+            return 1;
+        });
+        return row;
+    }
+
+    @Test
+    @DisplayName("AUTH-2: A, B'nin girişiyle süpersede → B çıkış yapar → A HÂLÂ süpersede; ilk yoklaması da sahiplenemez")
+    void logoutOfNewerSession_doesNotReviveSupersededOne() {
+        fakeRow("ALICE");
+        service.recordSuccessfulLogin("ALICE", "SID-A", "10.0.0.1", UserService.LoginMethod.PASSWORD);
+        service.recordSuccessfulLogin("ALICE", "SID-B", "10.0.0.2", UserService.LoginMethod.PASSWORD);
+        assertThat(service.isSessionSuperseded("ALICE", "SID-A")).isTrue();
+
+        service.clearActiveSession("ALICE", "SID-B");   // B çıkış
+
+        assertThat(service.isSessionSuperseded("ALICE", "SID-A")).as("eski NULL yazımında false dönüyordu").isTrue();
+        service.touchActiveSession("ALICE", "SID-A");    // A'nın yoklaması (adoptSessionIfNone)
+        assertThat(service.isSessionSuperseded("ALICE", "SID-A")).isTrue();
+        assertThat(service.isSessionSuperseded("ALICE", "SID-B")).isTrue();   // çıkılan oturum da geri gelmez
+    }
+
+    @Test
+    @DisplayName("AUTH-2: yönetici 'Sonlandır' → kullanıcı C ile girer → C çıkış → sonlandırılan eski oturum ÖLÜ kalır")
+    void kickThenLoginLogout_keepsKickedSessionDead() {
+        AppUser row = fakeRow("ALICE");
+        row.setActiveSessionId("STOLEN");
+        service.terminateActiveSession("ALICE");
+        service.recordSuccessfulLogin("ALICE", "SID-C", "10.0.0.3", UserService.LoginMethod.PASSWORD);
+        service.clearActiveSession("ALICE", "SID-C");
+
+        assertThat(service.isSessionSuperseded("ALICE", "STOLEN")).isTrue();
+        service.touchActiveSession("ALICE", "STOLEN");
+        assertThat(service.isSessionSuperseded("ALICE", "STOLEN")).isTrue();
+        assertThat(row.getActiveSessionId()).startsWith(UserService.SESSION_TERMINATED_PREFIX);
+    }
+
+    @Test
+    @DisplayName("AUTH-2: yeni giriş nöbetçinin üstüne kendi oturumunu yazar — çıkıştan sonra tekrar giriş normal çalışır")
+    void loginAfterLogout_works() {
+        fakeRow("ALICE");
+        service.recordSuccessfulLogin("ALICE", "SID-1", null, UserService.LoginMethod.PASSWORD);
+        service.clearActiveSession("ALICE", "SID-1");
+        service.recordSuccessfulLogin("ALICE", "SID-2", null, UserService.LoginMethod.PASSWORD);
+        assertThat(service.isSessionSuperseded("ALICE", "SID-2")).isFalse();
     }
 
     @Test

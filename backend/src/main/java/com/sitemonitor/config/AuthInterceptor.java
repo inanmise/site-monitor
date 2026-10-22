@@ -222,6 +222,16 @@ public class AuthInterceptor implements HandlerInterceptor {
                         endInactiveSession(session, username, req, res);
                         return writeAccountInactive(res);
                     }
+                    // SİLİNMİŞ HESAP KAPISI (2026-10-22, hata avı AUTH-1) — pasif kapısının hemen ardından: kullanıcı satırı
+                    // yoksa oturum kapatılır, hatırlanan girişleri silinir ve istemci "oturum düştü" (/?session=expired) alır.
+                    // Eskiden silinen kullanıcı oturum özniteliklerindeki rol / kapsamla (global yönetici dâhil) çalışmaya
+                    // devam ediyordu. Okuma hatası kapıyı AÇIK bırakır (UserService.isAccountGone).
+                    if (userService.isAccountGone(username)) {
+                        try { session.invalidate(); } catch (IllegalStateException ignored) { /* zaten kapalı */ }
+                        try { rememberMeService.invalidateAllForUser(username); } catch (Exception ignored) { /* best-effort */ }
+                        clearRememberMeCookie(res);
+                        return writeUnauthorized(res, "Session superseded");
+                    }
                     // KULLANICI ADI ÖN EKİ KAPISI (2026-10-21) — pasif kontrolünden SONRA, bakımdan ÖNCE: kural açıldıysa ya da
                     // ön ek listesi değiştiyse kurala uymayan kullanıcının oturumu aynı mezar taşı deseniyle kesilir. Global
                     // yönetici OTOMATİK muaf değil (kural hangi hesapla girileceğidir) — yalnız bootstrap yönetici ve muaf liste.
@@ -301,6 +311,14 @@ public class AuthInterceptor implements HandlerInterceptor {
         if (usernameOpt.isPresent()) {
             String username = usernameOpt.get();
             Optional<AppUser> userOpt = userService.findByUsername(username);
+            if (userOpt.isEmpty()) {
+                // SİLİNMİŞ hesabın çerezi (2026-10-22, hata avı AUTH-16): token'lar kullanıcı ADIYLA tutulur — aynı ad geri
+                // gelirse (LDAP yeniden provizyonu, elle yeniden oluşturma) ≤ 7 günlük eski çerez YENİ satıra girerdi. Oturum
+                // kurulmaz; o adın tüm token'ları silinir, çerez düşürülür.
+                rememberMeService.invalidateAllForUser(username);
+                clearRememberMeCookie(res);
+                return writeUnauthorized(res, "Unauthorized");
+            }
             if (userOpt.isPresent() && !Boolean.TRUE.equals(userOpt.get().getActive())) {
                 // PASİF hesabın geçerli çerezi (2026-10-02): oturum KURULMAZ; kullanıcının tüm token'ları silinir, çerez
                 // düşürülür ve istemci "hesabınız pasif" sinyalini alır (açılışta giriş sayfası pasif bildirimiyle açılır).

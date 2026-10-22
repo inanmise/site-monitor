@@ -316,4 +316,61 @@ class RequestLoggingFilterTest {
                 .reduce((a, b) -> b)
                 .orElse("");
     }
+
+    // ── AUTH-12 (2026-10-22): kaçışlı tırnak + webhook adresi ────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("AUTH-12: JSON kaçışlı tırnaklı parola (ab\\\"cd) TAMAMEN maskelenir — tırnaktan sonrası günlüğe düşmez")
+    void trace_escapedQuoteInPassword_fullyMasked() throws Exception {
+        logbackLogger.setLevel(Level.TRACE);
+        String reqJson = "{\"username\":\"ali\",\"password\":\"ab\\\"SAHTE-KUYRUK-7\\\\x\",\"next\":\"gorunur\"}";
+        MockHttpServletRequest req = new MockHttpServletRequest("POST", "/api/admin/users");
+        req.setContentType("application/json");
+        req.setContent(reqJson.getBytes(StandardCharsets.UTF_8));
+        filter.doFilter(req, new MockHttpServletResponse(), (request, response) -> request.getInputStream().readAllBytes());
+        assertThat(lastResponseLogLine()).doesNotContain("SAHTE-KUYRUK-7").contains("\"password\":\"*******\"")
+                .contains("\"next\":\"gorunur\"").contains("\"username\":\"ali\"");
+    }
+
+    @Test
+    @DisplayName("AUTH-12: Teams / Slack webhook adresi (webhook_url, webhookUrl, url_secret) maskelenir; hassas olmayan url kalır")
+    void trace_webhookUrlMasked() {
+        String masked = RequestLoggingFilter.redactSensitiveFields(
+                "{\"name\":\"Ops\",\"webhook_url\":\"https://x.webhook.office.com/SAHTE-HOOK-1\","
+                        + "\"webhookUrl\":\"https://hooks.slack.com/SAHTE-HOOK-2\",\"url_secret\":\"SAHTE-HOOK-3\","
+                        + "\"url\":\"https://site.example.com/gorunur\"}");
+        assertThat(masked).doesNotContain("SAHTE-HOOK-1").doesNotContain("SAHTE-HOOK-2").doesNotContain("SAHTE-HOOK-3")
+                .contains("\"name\":\"Ops\"").contains("https://site.example.com/gorunur");
+    }
+
+    @Test
+    @DisplayName("AUTH-12: kırpılmış (kapanmamış) değer sonuna kadar maskelenir; eski desen hiç maskelemiyordu")
+    void unterminatedValueMaskedToEnd() {
+        String masked = RequestLoggingFilter.redactSensitiveFields("{\"a\":1,\"password\":\"SAHTE-KIRPIK-9");
+        assertThat(masked).doesNotContain("SAHTE-KIRPIK-9").startsWith("{\"a\":1,\"password\":\"*******");
+    }
+
+    @Test
+    @DisplayName("AUTH-12: doğrusal tarama — kaçışsız girdide eski düzenli ifadeyle BİREBİR aynı çıktı (kehanet); büyük kaçış dizisinde yığın taşması yok")
+    void linearScan_matchesOldRegexOracle_andIsBounded() {
+        java.util.regex.Pattern oldJson = java.util.regex.Pattern.compile(
+                "(?i)(\"(?:password|token|secret|api_key)\"\\s*:\\s*)\"[^\"]*\"");
+        String[] samples = {
+                "{\"password\":\"p1\",\"x\":\"y\"}",
+                "{\"token\" : \"t1\", \"Password\":\"P2\"}",
+                "[{\"secret\":\"\"},{\"api_key\":\"k\"}]",
+                "{\"nothing\":\"here\"}",
+                "",
+                "{\"password\":123}"
+        };
+        java.util.regex.Pattern prefix = java.util.regex.Pattern.compile(
+                "(?i)(\"(?:password|token|secret|api_key)\"\\s*:\\s*)\"");
+        for (String in : samples) {
+            String expected = oldJson.matcher(in).replaceAll("$1\"*******\"");
+            assertThat(RequestLoggingFilter.maskJsonStringValues(in, prefix)).as(in).isEqualTo(expected);
+        }
+        String huge = "{\"password\":\"" + "\\\\".repeat(40_000) + "\"}";   // 80 KB kaçış dizisi
+        String out = RequestLoggingFilter.maskJsonStringValues(huge, prefix);
+        assertThat(out).isEqualTo("{\"password\":\"*******\"}");
+    }
 }

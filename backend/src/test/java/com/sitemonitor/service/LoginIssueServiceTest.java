@@ -405,10 +405,24 @@ class LoginIssueServiceTest {
     @DisplayName("getMine / ownedBy: sahiplik büyük/küçük harf duyarsız; başkasının ve boş kullanıcı adının kaydı yok")
     void getMineOwnershipIsCaseInsensitive() {
         LoginIssueReport r = report(11L, "OPEN", "Kullanici.X");
+        r.setSource("USER_REPORT");   // oturum içi kaynak (AUTH-13: giriş sayfası LOGIN kaydı "benim" sayılmaz)
         assertThat(service.getMine(11L, "KULLANICI.x")).isPresent();
         assertThat(service.getMine(11L, "baskasi")).isEmpty();
         assertThat(service.getMine(11L, "")).isEmpty();
         assertThat(LoginIssueService.ownedBy(r, null)).isFalse();
+    }
+
+    @Test
+    @DisplayName("AUTH-13 (2026-10-22): giriş sayfasından (LOGIN, oturumsuz — ad ZİYARETÇİNİN yazdığı) kayıt 'Bildirimlerim'de sahibine ait SAYILMAZ; CLIENT_ERROR sayılır")
+    void getMine_loginSourceIsNotOwned() {
+        LoginIssueReport r = report(12L, "OPEN", "N12345");
+        r.setSource("LOGIN");
+        assertThat(service.getMine(12L, "N12345")).isEmpty();
+        assertThat(LoginIssueService.ownedBy(r, "N12345")).as("yönetici yanıtının 'kendine yanıt' kuralı değişmez").isTrue();
+        r.setSource("CLIENT_ERROR");
+        assertThat(service.getMine(12L, "N12345")).isPresent();
+        r.setSource(null);
+        assertThat(service.getMine(12L, "N12345")).isEmpty();
     }
 
     @Test

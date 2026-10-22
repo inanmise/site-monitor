@@ -38,24 +38,29 @@ public interface LoginIssueReportRepository extends JpaRepository<LoginIssueRepo
     List<LoginIssueReport> findBySourceAndReportedAtGreaterThanEqualOrderByReportedAtDesc(String source, String since);
 
     /**
-     * "Bildirimlerim" (2026-09-26): kullanıcı adı büyük/küçük harf duyarsız eşleşen TÜM kaynaklar
-     * (USER_REPORT + CLIENT_ERROR otomatik kayıtları + login ekranından yazılan LOGIN). Durum süzgeci opsiyonel.
-     * Kullanıcı adı OTURUMDAN gelir (controller); istek parametresinden asla.
+     * "Bildirimlerim" (2026-09-26): kullanıcı adı büyük/küçük harf duyarsız eşleşen, OTURUM İÇİNDE oluşan kayıtlar —
+     * USER_REPORT + CLIENT_ERROR (kullanıcı adı sunucudaki oturumdan yazılır). Giriş sayfasından (LOGIN, oturumsuz)
+     * yazılan kayıtlar LİSTELENMEZ (2026-10-22, hata avı AUTH-13; varsayılan karar): orada kullanıcı adı ziyaretçinin
+     * YAZDIĞI addır — herkes başkasının listesine kendi metni ve e-postasıyla kayıt bırakabiliyordu. Durum süzgeci opsiyonel.
+     * Kullanıcı adı OTURUMDAN gelir (controller); istek parametresinden asla. id eşitlik bozucu: aynı saniyedeki kayıtlar
+     * sayfa sınırında yinelenmez.
      */
     @Query("""
             SELECT r FROM LoginIssueReport r
              WHERE LOWER(r.username) = :username
+               AND r.source IN ('USER_REPORT', 'CLIENT_ERROR')
                AND (:status IS NULL OR r.status = :status)
-             ORDER BY r.reportedAt DESC
+             ORDER BY r.reportedAt DESC, r.id DESC
             """)
     Page<LoginIssueReport> findMine(@Param("username") String usernameLower,
                                     @Param("status") String status,
                                     Pageable pageable);
 
-    /** "Bildirimlerim" durum sayaçları. */
+    /** "Bildirimlerim" durum sayaçları — {@link #findMine} ile AYNI kaynak süzgeci. */
     @Query("""
             SELECT r.status, COUNT(r) FROM LoginIssueReport r
              WHERE LOWER(r.username) = :username
+               AND r.source IN ('USER_REPORT', 'CLIENT_ERROR')
              GROUP BY r.status
             """)
     List<Object[]> countMineByStatus(@Param("username") String usernameLower);

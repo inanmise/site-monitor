@@ -92,10 +92,20 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
             "session_id|sessionId|jsessionid|sid|" +
             // PINs / OTPs / verification codes
             "pin|pin_code|pinCode|otp|otp_code|otpCode|verification_code|verificationCode|" +
-            "mfa_code|mfaCode|two_factor|twoFactor";
+            "mfa_code|mfaCode|two_factor|twoFactor|" +
+            // Teams / Slack webhook adresi — URL'nin kendisi taşıyıcı sırdır (2026-10-22, hata avı AUTH-12): eskalasyon kişisi,
+            // bildirim grubu ve takım uçlarının gövdelerinde düz yazılıyordu.
+            "webhook_url|webhookUrl|url_secret|urlSecret";
 
+    /**
+     * Hassas JSON anahtarının değer ÖNCESİ kısmı — açılış tırnağına kadar. DEĞERİN kendisi düzenli ifadeyle DEĞİL
+     * {@link #maskJsonStringValues} ile doğrusal taranır (2026-10-22, hata avı AUTH-12): eski "[^"]*" deseni JSON kaçışlı
+     * tırnakta erken bitiyor, parolanın tırnaktan sonrası günlüğe düşüyordu; kapanmamış (kırpılmış) değeri hiç maskelemiyordu.
+     * Kaçışı tanıyan bir grup döngüsü Java'da tekrar başına özyineler (64 KB'lik gövdede yığın taşması) — güvenilmeyen
+     * veride grup döngüsü yok, doğrusal tarama.
+     */
     private static final Pattern SENSITIVE_JSON_FIELDS = Pattern.compile(
-            "(?i)(\"(?:" + SENSITIVE_FIELD_NAMES + ")\"\\s*:\\s*)\"[^\"]*\""
+            "(?i)(\"(?:" + SENSITIVE_FIELD_NAMES + ")\"\\s*:\\s*)\""
     );
 
     /**
@@ -104,7 +114,7 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
      * ({@code {0,64}}, desen {@code "} ile başlar) — doğrusal tarama, geri izleme patlaması yok.
      */
     private static final Pattern SENSITIVE_JSON_SUFFIX_FIELDS = Pattern.compile(
-            "(?i)(\"[A-Za-z0-9_\\-]{0,64}(?:password|passwd|secret|token|api_key|apikey|private_key)\"\\s*:\\s*)\"[^\"]*\""
+            "(?i)(\"[A-Za-z0-9_\\-]{0,64}(?:password|passwd|secret|token|api_key|apikey|private_key)\"\\s*:\\s*)\""
     );
 
     private static final Pattern SENSITIVE_FORM_FIELDS = Pattern.compile(
@@ -251,19 +261,48 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
      */
     public static String redactSensitiveFields(String text) {
         if (text == null || text.isEmpty()) return text;
-        String redacted = SENSITIVE_JSON_FIELDS.matcher(text).replaceAll("$1\"" + MASK + "\"");
-        redacted = SENSITIVE_JSON_SUFFIX_FIELDS.matcher(redacted).replaceAll("$1\"" + MASK + "\"");
+        String redacted = maskJsonStringValues(text, SENSITIVE_JSON_FIELDS);
+        redacted = maskJsonStringValues(redacted, SENSITIVE_JSON_SUFFIX_FIELDS);
         return SENSITIVE_FORM_FIELDS.matcher(redacted).replaceAll("$1" + MASK);
     }
 
     private String redact(String body) {
         if (body == null || body.isEmpty()) return body;
         // JSON: "field":"value" — tam ad listesi, sonra hassas son ekli anahtarlar (bind_password, webhook_secret …)
-        String redacted = SENSITIVE_JSON_FIELDS.matcher(body).replaceAll("$1\"" + MASK + "\"");
-        redacted = SENSITIVE_JSON_SUFFIX_FIELDS.matcher(redacted).replaceAll("$1\"" + MASK + "\"");
+        String redacted = maskJsonStringValues(body, SENSITIVE_JSON_FIELDS);
+        redacted = maskJsonStringValues(redacted, SENSITIVE_JSON_SUFFIX_FIELDS);
         // Form: field=value&...
         redacted = SENSITIVE_FORM_FIELDS.matcher(redacted).replaceAll("$1" + MASK);
         return redacted;
+    }
+
+    /**
+     * {@code keyPrefix} (açılış tırnağıyla biten anahtar deseni) her eşleştiğinde ardından gelen JSON DİZE değerini —
+     * kaçışlı karakterler dâhil, kapanış tırnağına kadar — {@link #MASK} ile değiştirir. Kapanış yoksa (kırpılmış gövde)
+     * metnin sonuna kadar maskeler. Doğrusal: her karakter bir kez taranır, düzenli ifade değere girmez.
+     */
+    static String maskJsonStringValues(String text, Pattern keyPrefix) {
+        if (text == null || text.isEmpty()) return text;
+        java.util.regex.Matcher m = keyPrefix.matcher(text);
+        StringBuilder out = null;
+        int last = 0;
+        int from = 0;
+        while (from < text.length() && m.find(from)) {
+            int valueStart = m.end();
+            int end = text.length();
+            for (int i = valueStart; i < text.length(); i++) {
+                char c = text.charAt(i);
+                if (c == '\\') { i++; continue; }   // kaçışlı karakter değeri bitirmez
+                if (c == '"') { end = i + 1; break; }
+            }
+            if (out == null) out = new StringBuilder(text.length());
+            out.append(text, last, valueStart).append(MASK).append('"');
+            last = end;
+            from = end;
+        }
+        if (out == null) return text;
+        out.append(text, last, text.length());
+        return out.toString();
     }
 
     private String sanitizeQuery(String query) {
