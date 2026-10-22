@@ -71,8 +71,13 @@ describe('personalStorage — kullanıcıya göre ayrım + çıkışta temizlik'
       // Pencere fonksiyonun BAŞINI kapsar (sıra denetimi): 2026-10-09'da çıkışa oturum verisi sıfırlama eklendi → 1400
       return src.slice(m.index, m.index + 1400)
     }
-    expect(body(/async function handleLogout\(\)/)).toMatch(/clearPersonalStorage\(\)[\s\S]*setUser\(null\)/)
-    expect(body(/const doAutoLogout = async \(\) =>/)).toMatch(/clearPersonalStorage\(\)[\s\S]*setUser\(null\)/)
+    // 2026-10-22 (UIM-1): iki çıkış yolu TEK işlevden geçer — `logoutEverywhere` (sunucu çıkışı ağ hatasında da) →
+    // `endSessionLocally` (temizlik). Elle çıkış onu çağırır, hareketsizlik zamanlayıcısı ref üzerinden.
+    expect(body(/function endSessionLocally\(\)/)).toMatch(/clearPersonalStorage\(\)[\s\S]*setUser\(null\)/)
+    expect(body(/async function logoutEverywhere\(\)/)).toMatch(/endSessionLocally\(\)/)
+    expect(body(/async function handleLogout\(\)/)).toMatch(/await logoutEverywhere\(\)/)
+    expect(src).toMatch(/const doAutoLogout = \(\) => logoutRef\.current\?\.\(\)/)
+    expect(src).toMatch(/logoutRef\.current = logoutEverywhere/)
     expect(body(/function handleLogin\(userData\)/)).toMatch(/claimPersonalStorage\(userData\.username\)[\s\S]*setUser\(userData\.username\)/)
     expect(body(/api\.getMe\(\)\.then\(/)).toMatch(/claimPersonalStorage\(res\.username\)[\s\S]*setUser\(res\.username\)/)
   })

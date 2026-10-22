@@ -10,6 +10,7 @@ import { claimExpiredRedirect, signalSessionExpired } from '../utils/sessionExpi
 import { isMaintenancePayload, signalMaintenance } from '../utils/systemMaintenance.js'
 import { isUsernamePrefixPayload, prefixesOf, signalUsernamePrefix } from '../utils/usernamePrefix.js'
 import { downloadBlob } from '../utils/csvExport.js'
+import { isLogoutPending, settlePendingLogout } from '../utils/pendingLogout.js'
 import {
   ApiError, attachErrorInfo, errorInfoOf, networkMessage, nonJsonMessage, normalizeErrorBody, parseRetryAfter, rememberErrorInfo,
 } from '../utils/errorMessages.js'
@@ -67,6 +68,14 @@ async function fetchTechErrorPdf(id, signal = null) {
     if (e?.name === 'AbortError' || signal?.aborted) return { success: false, status: 0, aborted: true, error: null }
     return networkFailurePayload()
   }
+}
+
+/**
+ * Ham `fetch` ile inen dosya (PDF) 401 aldıysa oturum yolunu çalıştırır (2026-10-22, UIM-27): tek bir yoklama
+ * `request()`'in 401 dalından geçer — oturum düştüyse kullanıcı `/?session=expired`'a gider, sessizce "indirilemedi" kalmaz.
+ */
+function pingSessionPath() {
+  Promise.resolve().then(() => request('/session/ping', { timeoutMs: DEFAULT_TIMEOUT_MS })).catch(() => { /* ağ yok: sonraki yoklama */ })
 }
 
 /** Ağ hatası (sunucuya ulaşılamadı) → çevrilmiş metinli yumuşak yük; `code` NETWORK_ERROR | OFFLINE (künyede de). */
@@ -550,16 +559,15 @@ export const api = {
       if (live) qs.set('live', '1')
       try {
         const res = await fetch(`${BASE}/executive-summary/pdf?${qs.toString()}`, { credentials: 'include', headers: { 'X-Lang': uiLang() } })
-        if (!res.ok) return { success: false, status: res.status }
+        if (!res.ok) { if (res.status === 401) pingSessionPath(); return { success: false, status: res.status } }
         const blob = await res.blob()
-        const disp = res.headers.get('Content-Disposition') || ''
+        const disp = headerOf(res, 'Content-Disposition') || ''
         const match = /filename="?([^";]+)"?/.exec(disp)
-        const objectUrl = URL.createObjectURL(blob)
-        const a = document.createElement('a')
-        a.href = objectUrl
-        a.download = match ? match[1] : `site-monitor-yonetici-ozeti-${month || ''}.pdf`
-        a.click()
-        setTimeout(() => URL.revokeObjectURL(objectUrl), 0)
+        // Ortak indirme (2026-10-22, UIM-27): bağlantı DOM'da, adres 60 sn tutulur — Safari / iPad DOM dışı bağlantıda ya da
+        // hemen iptal edilen adreste indirmeyi başlatmıyordu. Başlatılamadıysa başarı DEĞİL.
+        if (!downloadBlob(match ? match[1] : `site-monitor-yonetici-ozeti-${month || ''}.pdf`, blob)) {
+          return { success: false, status: 0, code: 'DOWNLOAD_FAILED' }
+        }
         return { success: true }
       } catch (e) {
         return { success: false, status: 0, error: e?.message || 'NETWORK' }
@@ -783,6 +791,9 @@ export const api = {
   },
 
   login: async (username, password, rememberMe = false, forceLogin = false) => {
+    // Önceki çıkış sunucuya ulaşamadıysa (UIM-1, 2026-10-22) o oturum ÖNCE kapatılır (≤ 3 sn) — yeni girişten sonra
+    // giden gecikmiş bir yeniden deneme YENİ oturumu kapatamasın.
+    if (isLogoutPending()) await settlePendingLogout(() => request('/logout', { method: 'POST' }))
     let r
     try {
       r = await fetchWithTimeout(`${BASE}/login`, {
@@ -854,6 +865,7 @@ export const api = {
     // Eşleşmeme de AYNI 200'dür; boşsa 400 PHONE_REQUIRED / EMAIL_REQUIRED (+ field). Gövde hiçbir yerde loglanmaz.
     request: (username, channel, contact) => otpPost('/login/otp/request', { username, channel, ...(contact || {}) }),
     verify: async (challengeId, code, rememberMe = false, forceLogin = false) => {
+      if (isLogoutPending()) await settlePendingLogout(() => request('/logout', { method: 'POST' }))   // bkz. login (UIM-1)
       const body = await otpPost('/login/otp/verify', {
         challenge_id: challengeId, code, remember_me: !!rememberMe, forceLogin: !!forceLogin,
       })
@@ -1605,23 +1617,20 @@ export const api = {
         + `?teamId=${encodeURIComponent(teamId)}`
         + (weekOffset != null ? `&weekOffset=${encodeURIComponent(weekOffset)}` : '')
       try {
-        const res = await fetch(url, { credentials: 'include' })
+        const res = await fetch(url, { credentials: 'include', headers: { 'X-Lang': uiLang() } })
         if (!res.ok) {
+          if (res.status === 401) pingSessionPath()
           return { success: false, status: res.status,
             error: res.status === 503 ? 'PDF_GENERATION_FAILED' : `HTTP_${res.status}` }
         }
         const blob = await res.blob()
         // Dosya adını sunucunun Content-Disposition'ından al — mailde giden adla aynı olsun.
-        const disp = res.headers.get('Content-Disposition') || ''
+        const disp = headerOf(res, 'Content-Disposition') || ''
         const match = /filename="?([^";]+)"?/.exec(disp)
-        const objectUrl = URL.createObjectURL(blob)
-        const a = document.createElement('a')
-        a.href = objectUrl
-        a.download = match ? match[1] : 'haftalik-kesinti-raporu.pdf'
-        a.click()
-        // Serbest bırakmayı ERTELE: click() indirmeyi eşzamanlı başlatmıyor ve URL hemen
-        // geçersiz kılınırsa bazı tarayıcılar dosyayı boş indiriyor ya da hiç indirmiyor.
-        setTimeout(() => URL.revokeObjectURL(objectUrl), 0)
+        // Ortak indirme (2026-10-22, UIM-27): bağlantı DOM'da, adres 60 sn tutulur (Safari / iPad); başlatılamadıysa başarı DEĞİL
+        if (!downloadBlob(match ? match[1] : 'haftalik-kesinti-raporu.pdf', blob)) {
+          return { success: false, status: 0, code: 'DOWNLOAD_FAILED', error: 'DOWNLOAD_FAILED' }
+        }
         return { success: true }
       } catch (e) {
         return { success: false, error: e?.message || 'NETWORK' }
