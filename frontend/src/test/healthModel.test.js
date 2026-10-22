@@ -180,4 +180,14 @@ describe('healthModel — okunamayan alt yük', () => {
     expect(executorStats({ error: 'x' })).toBeNull()
     expect(executorStats({ queue_size: 0, queue_capacity: 10 })).not.toBeNull()
   })
+  it('FE-8: genel bant da yeşil kalmaz — SMTP özeti / kilit / görev kuyruğu okunamadıysa "Veri alınamadı" sebebi (ilgili bölüm)', () => {
+    expect(deriveOverall({ health: CLEAN, httpMetrics: HTTP_OK, pushKpi: PUSH_OK }).level).toBe('ok')
+    const o = deriveOverall({ health: { ...CLEAN, smtp: { rate: 100, alarm: false, error: 'boom' }, lock: { held: false, error: 'x' },
+      executor_pool: { error: 'y' } }, httpMetrics: HTTP_OK, pushKpi: PUSH_OK })
+    expect(o.level).toBe('warn')
+    expect(o.reasons.filter((r) => r.code === 'loadPart').map((r) => [r.args[0], r.section]))
+      .toEqual([['smtp', 'integrations'], ['lock', 'sched'], ['executor', 'sched']])
+    // Yalnız SMTP: dönem verisi varsa (periods) okunmuş sayılır — sebep yok
+    expect(deriveOverall({ health: { ...CLEAN, smtp: { error: 'eski', periods: { '7d': { rate: 100 } } } }, httpMetrics: HTTP_OK, pushKpi: PUSH_OK }).level).toBe('ok')
+  })
 })

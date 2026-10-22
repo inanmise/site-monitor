@@ -607,6 +607,14 @@ describe('SystemHealth — okunamayan alt yük yeşil çizilmez (UIA-D5)', () =>
     expect(document.querySelector('[data-integration="smtp"]')).toHaveAttribute('data-level', 'unknown')
     expect(document.querySelector('[data-slot="smtp-unavailable"]')).not.toBeNull()
   })
+
+  it('FE-8: kilit okunamadıysa genel bant "Tüm sistemler çalışıyor" DEMEZ — sebep "Veri alınamadı: Zamanlayıcı kilidi"', async () => {
+    api.admin.getSystemHealth.mockResolvedValue({ success: true, data: { ...HEALTH, lock: { held: false, error: 'db down' } } })
+    await renderLoaded()
+    const band = document.querySelector('[data-slot="health-overall"]')
+    expect(band).not.toHaveAttribute('data-level', 'ok')
+    expect(band.textContent).toMatch(/(Data unavailable: Scheduler lock|Veri alınamadı: Zamanlayıcı kilidi)/)
+  })
 })
 
 describe('SystemHealth — bekçi test bildirimi başarısız (UIA-D9)', () => {

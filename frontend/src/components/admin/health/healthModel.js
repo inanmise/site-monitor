@@ -173,6 +173,13 @@ export function deriveOverall({ health, httpMetrics, pushKpi, smtpPeriod = '7d',
     else add(it.level, it.key, s)
   }
   for (const part of ['metrics', 'http', 'users']) if (loadErrors[part]) add('warn', 'loadPart', part === 'metrics' ? 'sys' : part, [part])
+  // Sunucunun okuyamadığı alt yükler (2026-10-22, FE-8): kartları UIA-D5'ten beri "bilinmiyor" çiziliyor ama genel bant
+  // "Tüm sistemler çalışıyor" diyordu — bilinmeyen asla yeşil değil; aynı "Veri alınamadı" sebebi, ilgili bölüme götürür.
+  if (health && !loadErrors.health) {
+    if (h.smtp?.error && !h.smtp?.periods) add('warn', 'loadPart', 'integrations', ['smtp'])
+    if (h.lock?.error) add('warn', 'loadPart', 'sched', ['lock'])
+    if (h.executor_pool?.error) add('warn', 'loadPart', 'sched', ['executor'])
+  }
 
   reasons.sort((a, b) => RANK[b.level] - RANK[a.level])
   return { level: worstLevel(reasons.map((r) => r.level)), reasons }
