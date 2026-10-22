@@ -74,6 +74,8 @@ class SystemMaintenanceJobServiceTest {
         when(repo.claimEndLog(anyLong(), anyString())).thenReturn(1);
         when(repo.claimCatchUp(anyLong(), anyString())).thenReturn(1);
         when(repo.claimEndMail(anyLong(), anyString())).thenReturn(1);
+        when(repo.markEndMailSending(anyLong(), anyString(), anyString())).thenReturn(1);
+        when(repo.markAnnounceMailSending(anyLong(), anyString(), anyString())).thenReturn(1);
     }
 
     static String iso(Instant i) { return SystemMaintenanceService.iso(i); }

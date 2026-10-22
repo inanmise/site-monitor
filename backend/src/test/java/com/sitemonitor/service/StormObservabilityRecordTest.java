@@ -86,6 +86,11 @@ class StormObservabilityRecordTest {
     private void lockOk() {
         when(jdbcTemplate.update(startsWith("DELETE FROM scheduler_lock"), any(), any())).thenReturn(1);
         when(jdbcTemplate.update(startsWith("INSERT INTO scheduler_lock"), any(), any(), any())).thenReturn(1);
+        // Kapanışın koşullu sahiplenmesi (2026-10-21, çok pod — MP-04): fırtına açık → 1 satır, bu tur kapatır.
+        // İki aşamalı kapanış (2026-10-21): sahiplen (CLOSING) → kurtarmayı sahiplen → DONE — hepsi 1 satır.
+        when(jdbcTemplate.update(eq(StormService.SQL_CLOSE_CLAIM), any(Object[].class))).thenReturn(1);
+        when(jdbcTemplate.update(eq(StormService.SQL_RECOVERY_CLAIM), any(Object[].class))).thenReturn(1);
+        when(jdbcTemplate.update(eq(StormService.SQL_CLOSE_DONE), any(Object[].class))).thenReturn(1);
     }
 
     @Test

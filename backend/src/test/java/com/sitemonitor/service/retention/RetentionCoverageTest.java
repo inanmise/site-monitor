@@ -65,6 +65,9 @@ class RetentionCoverageTest {
             Map.entry("smtp_settings", "Tekil ayar satırı."),
             Map.entry("ldap_settings", "Tekil ayar satırı."),
             Map.entry("scheduler_lock", "Aktif iş sayısı kadar; kilit bırakılınca silinir."),
+            Map.entry("monitor_eval_inbox", "Takipçi pod'un elle kontrol sonucunu lidere ileten kuyruk (2026-10-21, çok pod R1-B) — "
+                    + "tarama lideri 5 sn'de bir boşaltır (satır işlenmeden önce silinir), 10 dakikadan eski satır "
+                    + "değerlendirilmeden silinir; birikmez."),
             Map.entry("login_anomaly_state", "Tarama imleci — tek satır."),
             Map.entry("schema_patch_markers", "Tek seferlik veri yamalarının nişanı — yama başına TEK satır, SİLİNMEZ "
                     + "(silinirse yama yeniden koşar; ör. sonradan duraklatılan DNS/Port izlemelerini silinmiş işaretlerdi)."),

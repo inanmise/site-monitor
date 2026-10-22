@@ -2,9 +2,13 @@
 
 > Hedef kitle: prod'u işleten ekip (nöbetçi / platform). Planlı dağıtım adımları
 > [`PROD_DEPLOY_CHECKLIST.md`](PROD_DEPLOY_CHECKLIST.md)'dedir; bu dosya **olay anında** ne yapılacağını anlatır.
-> Prod **tek pod** çalışır (dikey ölçekleme): pod'un gitmesi = tam kesinti.
+> Prod bugün **tek pod** çalışır (dikey ölçekleme): pod'un gitmesi = tam kesinti. Çok pod sürüm 1'den (2026-10-21) beri
+> iki pod desteklenir; geçiş ayrı bir adımdır ve önce ön koşullar doğrulanır — [Çok pod](#çok-pod).
 >
 > Değişkenler checklist'teki gibi: `REL`, `NS`, `DEPLOY`, `SECRET` (`helm list -A`'dan okunur).
+> **Günlükleri her zaman TÜM pod'lardan okuyun:** `kubectl logs "$DEPLOY"` yalnız BİR pod'u okur; birden çok pod
+> varken diğerindeki satır görünmez. Bu dosyadaki komutlar `kubectl logs -n "$NS" -l app.kubernetes.io/instance="$REL"
+> --prefix --tail=-1` biçimindedir (`--prefix` satırın hangi pod'dan geldiğini yazar; tek pod'da da aynen çalışır).
 
 | Belirti | Bölüm |
 |---|---|
@@ -23,6 +27,7 @@
 | Grafana panosu boş / "veri yok", Prometheus kazıma ayarı | [Grafana panosu ve Prometheus](#grafana-panosu-ve-prometheus) |
 | Kullanıcının ilettiği istek kimliğini günlükte bulmak, JSON günlük, iz (trace) | [Günlükler ve izleme](#günlükler-ve-izleme) |
 | "Uygulama sorunu: …" e-postası / dış izleyici `/api/public/health/watchdog` 503 | [Kendi kendini izleme](#kendi-kendini-izleme) |
+| İki pod: hangi pod izliyor, liderlik el değiştirmiyor, aynı bildirim iki kez geldi, 1 → 2 pod geçişi | [Çok pod](#çok-pod) |
 
 ---
 
@@ -31,9 +36,20 @@
 Komut ve ön kontroller: [`PROD_DEPLOY_CHECKLIST.md`](PROD_DEPLOY_CHECKLIST.md) — başka komut kullanmayın.
 
 Rollout'ta olanlar:
-- `maxSurge: 1`, `maxUnavailable: 0` → yeni pod hazır olmadan eskisi kapanmaz; kısa süre **iki pod** birlikte
-  koşar (DB bağlantıları ve kota iki katı). Zamanlayıcıyı `scheduler_lock` (DB) korur, oturumlar JDBC'de
-  olduğu için kullanıcılar oturum kaybetmez.
+- `maxSurge: 1`, `maxUnavailable: 0` → yeni pod hazır olmadan eskisi kapanmaz; kısa süre **replika + 1** pod birlikte
+  koşar (DB bağlantıları ve kota buna göre). İşleri tarama liderliği kirası ve `scheduler_lock` (DB) paylaştırır,
+  oturumlar JDBC'de olduğu için kullanıcılar oturum kaybetmez ([Çok pod](#çok-pod)).
+- Eski pod'un kapanışı (2026-10-21): önce `preStop` 10 sn (pod Service / ingress uç noktalarından düşer, istekler
+  yeni pod'a gider), sonra SIGTERM → liderlik kirası hemen bırakılır, push işçisi durdurulur ve bildirim havuzlarıyla birlikte boşaltılır (≤ 20 sn), Spring
+  zarif kapanışı (web ≤ 20 sn, yürütücüler ≤ 20 sn, zamanlanmış işler ≤ 20 sn, geri kalan bütün `@PreDestroy`
+  beklemeleri birlikte ≤ 10 sn — `ShutdownDeadline`). Hepsi `terminationGracePeriodSeconds: 120` içinde; aşılırsa
+  kubelet SIGKILL atar — kira zaten bırakılmıştır, ama süren iş kesilir ve iş kilitleri TTL'lerine (3 dk) kalır.
+- **İlk çok pod sürümüne geçiş (20.164 ve öncesi → bu sürüm) BİR KERELİKTİR:** kapanan eski pod kendi eski
+  ayarlarıyla kapanır — grace 60 sn, preStop yok, 30 sn'lik aşamalar, liderlik kirası yalnız `@PreDestroy`'da
+  bırakılır. Bu geçişte 502 görülebilir, eski pod 60 sn'yi aşarsa izleme ~4 dk durabilir (kira 180 sn) ve eski
+  pod'un kuyruğundaki "ÇÖZÜLDÜ" postaları kaybolabilir (eski sürümde kalıcı işaret yok). Sessiz bir saatte dağıtın;
+  sonra Sistem Sağlığı → `sweep_leader.owner` ve Bildirim Geçmişi'ne bakın. Yukarıdaki sayılar sonraki dağıtımdan
+  itibaren geçerlidir. Ön ve son kontroller: [`PROD_DEPLOY_CHECKLIST.md` → İlk çok pod sürümüne geçiş](PROD_DEPLOY_CHECKLIST.md#ilk-çok-pod-sürümüne-geçiş-20164-ve-öncesi--bu-sürüm--bir-kerelik).
 - Açılışta şema yamaları uygulanır (`SchedulerService.applySchemaPatches`, idempotent `ADD COLUMN` /
   `CREATE TABLE`). Logda `Schema patch applied …` satırları.
 - `startupProbe` hazır olmayı en fazla **~300 sn** bekler (30 × 10 sn); aşılırsa pod öldürülür.
@@ -76,6 +92,11 @@ kubectl rollout status "$DEPLOY" -n "$NS"
   kolonlara yazılmış veri eski sürümde görünmez ama kaybolmaz, yeniden ileri gidildiğinde geri gelir.
   İstisnalar (sürüm notunda özellikle yazılır): varsayılansız `NOT NULL` kolon (eski sürümün INSERT'ü kırılır)
   ve veri göçleri (ör. rename sürümündeki `app_settings` anahtar göçü, [`DEPLOY_GECIS_PLANI.md`](DEPLOY_GECIS_PLANI.md) §6).
+- **Çok pod sürüm 1'in iki tekil indeksi geri almada KALIR** (`ux_push_eventless_key_user`, `ux_noe_one_ongoing`) — silmeyin,
+  yeniden ileri gidildiğinde kullanılır. Eski sürüm onlarla çalışır: eski push yazımları önce daha GENİŞ bir anahtarla
+  "var mı?" diye bakar ve ihlali yakalar, eski kesinti / bastırma yazımları ihlali yakalayıp WARN yazar (işlem dışında);
+  yalnız eski bir `@Transactional` çağıranın içindeki gerçek bir yarış o çağıranı geri sarabilir (nadir). Yeni kolonlar
+  (`close_state`, `resolution_notify`, `change_state`, posta durum kolonları) eski sürümce yok sayılır.
 - Geri alma **secret key değişikliğini** geri almaz; anahtar değiştiyse önceki değeri Secret'a geri koyun.
 - Son çare DB yedeğinden dönüş (yedekten sonraki kayıtlar kaybolur) — platform/DBA ile.
 
@@ -85,7 +106,8 @@ kubectl rollout status "$DEPLOY" -n "$NS"
 
 1. **Önce kaynağı ayırın — hedefler mi düştü, izleyen mi?** Tüm türler (HTTP, Port, DNS, Ping, RDAP) aynı
    anda kırmızıysa sorun büyük olasılıkla pod'un kendi çıkışıdır (vekil, DNS, firewall, node). Sistem Sağlığı
-   ağ durumu kartı / `GET /api/system/network-status`, Tanılama ekranı ve pod'dan:
+   ağ durumu kartı / `GET /api/system/network-status`, Tanılama ekranı ve pod'dan (birden çok pod varken izleme
+   taramalarını **lider** pod koşar — `"$DEPLOY"` yerine onun adını verin, bkz. [Çok pod](#çok-pod) → "Lider kim?"):
    ```bash
    kubectl exec -n "$NS" "$DEPLOY" -- sh -c 'nslookup <iç-bir-host>; curl -sS -o /dev/null -w "%{http_code}\n" -x "$HTTP_PROXY_HOST:$HTTP_PROXY_PORT" https://data.iana.org/'
    ```
@@ -207,7 +229,7 @@ kontrolleri bozulur. **Dağıtımlarda anahtarı aynen taşıyın.**
 
 Tespit:
 ```bash
-kubectl logs -n "$NS" "$DEPLOY" | grep -c "decrypt failed"   # > 0 = anahtar, şifreli değerlerle uyuşmuyor
+kubectl logs -n "$NS" -l app.kubernetes.io/instance="$REL" --prefix --tail=-1 | grep -c "decrypt failed"   # > 0 = anahtar, şifreli değerlerle uyuşmuyor
 ```
 
 Anahtar yanlışlıkla değiştiyse:
@@ -450,11 +472,13 @@ groups:
 - **İstek kimliği her satırda:** hata gövdesindeki `request_id` = yanıt başlığı `X-Request-Id` = günlükte `requestId`
   (JSON) / `rid=<id>` (düz metin). Kullanıcı "Teknik ayrıntı"daki kimliği iletir:
   ```bash
-  kubectl logs -n "$NS" "$DEPLOY" | grep '"requestId":"<id>"'          # JSON
-  kubectl logs -n "$NS" "$DEPLOY" | grep 'rid=<id>'                    # düz metin
+  kubectl logs -n "$NS" -l app.kubernetes.io/instance="$REL" --prefix --tail=-1 | grep '"requestId":"<id>"'   # JSON
+  kubectl logs -n "$NS" -l app.kubernetes.io/instance="$REL" --prefix --tail=-1 | grep 'rid=<id>'             # düz metin
   ```
+  Birden çok pod varken istek herhangi birine düşmüş olabilir — `--prefix` satırın pod'unu gösterir.
   Aynı isteğin havuza düşen işleri (ör. "Şimdi kontrol et") da aynı kimlikle yazılır.
-- **jq ile okuma:** `kubectl logs … | jq -r 'select(."log.level"=="ERROR" or .log.level=="ERROR") | .message'`.
+- **jq ile okuma:** `kubectl logs … | jq -r 'select(."log.level"=="ERROR" or .log.level=="ERROR") | .message'`
+  (jq'ya giden komutta `--prefix` kullanmayın — önek satırı JSON olmaktan çıkarır; pod başına ayrı okuyun).
   Eski `grep "decrypt failed"` / `grep 'Şema yamaları'` komutları JSON satırda da çalışır (ileti kaçışsız UTF-8).
 - **İz (OpenTelemetry):** her isteğin ve zamanlanmış işin bir `traceId`'si vardır (günlükte `traceId` / `trace=`).
   İzi bir toplayıcıya göndermenin **iki yolu** var; ikisini birlikte açmayın (`helm template` hata verir):
@@ -534,4 +558,209 @@ sistem yöneticisi adresi; isteğe bağlı webhook ve doğrudan push). Ekran: Si
 
 Bildirimler `notification_logs`'ta tetik `WATCHDOG` (test `WATCHDOG_TEST`). Hiçbir kanaldan gidemeyen bildirim 15 dk'da
 bir yeniden denenir; sistem bakımı "bildirimler sussun" açıkken gönderilmez (iz `SKIPPED: sistem bakımı`). Veritabanı
-çökükken yalnız veritabanı kontrolü pod belleğinde değerlendirilir ve e-posta / webhook / push yine gider.
+çökükken yalnız veritabanı kontrolü pod belleğinde değerlendirilir ve e-posta / webhook / push yine gider. Birden çok pod
+varken bu "veritabanı çöktü" uyarısını yalnız son doğrulanmış lider gönderir (her pod ayrı ayrı göndermez); takipçi ancak
+son okuduğu kira yenilenmemiş görünüyorsa ve üstünden bir kira süresi + doğrulama süresi geçmişse duyurur. Düzelme
+bildirimi (RECOVER) önce satıra damgalanır — tek pod gönderir. Değerlendirme kilidi `watchdog` 2 dk TTL ile yenilenir.
+
+## Çok pod
+
+> Çok pod sürüm 1 (2026-10-21). Aynı imaj N replikada koşar; kullanıcı istekleri bütün pod'lara dağılır, **izleme işi
+> tek pod'da (lider) koşar**. İkinci pod yüksek erişilebilirlik ve arayüz / API kapasitesi getirir, izleme kapasitesi
+> getirmez — izleme yükü büyürse önce dikey ölçekleyin (CPU / bellek / `dbPoolMax`). HPA kapalı kalır.
+
+### Kim neyi koşar
+
+| İş | Nerede | Çift koşmayı ne önler |
+|---|---|---|
+| Dokuz izleme türünün taramaları, envanter erişilebilirlik (HTTP) taraması, doğrulama / kurtarma yeniden kontrolleri, DNS ve alan adı değişiklik tespiti | **Lider** pod | Tarama liderliği kirası (`monitor_check_schedule`, anahtar `lease:sweep-leader`, 180 sn; ayrı iş parçacığında 60 sn'de bir yenilenir) + izleme başına küme vadesi + kirasını kaybetmiş pod'un zamanlanmış sonuçları alarm üretmez |
+| TLS profili işi; takipçide basılan "Şimdi kontrol et" sonucunun alarm değerlendirmesi (`monitor_eval_inbox` üzerinden lidere iletilir, ≤ 5 sn); veritabanı çökükken kendi-kendini-izleme uyarısı | Lider | Kira |
+| Sertifika taramaları (saatlik, bayat, tam), zamanlanmış raporlar / hatırlatmalar / özetler, gece temizliği, push kuyruğu, fırtına yaşam döngüsü, eskalasyon adımları, kendi-kendini-izleme turu, yetim QUEUED_RETRY / çözüm bildirimi süpürücüleri | Kilidi ya da turu ilk alan **herhangi** bir pod | `scheduler_lock` satırı (uzun iş sürdükçe yenilenir) + küme turu (`round:<ad>`, bir dönemde bir kez) + satır başına koşullu sahiplenme (aynı push / posta iki kez gitmez) |
+| Kullanıcı istekleri, "Şimdi kontrol et", tanılama, dışa aktarım | İsteği alan pod | Oturumlar PostgreSQL'de (`spring_session`) — her pod her oturumu tanır |
+
+### Lider kim?
+
+- **Sistem Sağlığı → Zamanlayıcı:** `sweep_leader.owner` = `<pod adı>-<8 hane>`; `held_by_me` = yanıtı veren pod lider mi.
+- **Grafana:** `sum(sitemonitor_sweep_leader) == 1` olmalı (0 = kimse taramıyor, 2 = iki lider — olmamalı; "Kendi kendini
+  izleme" → Tarama liderliği de bunu ölçer).
+- **SQL:**
+  ```sql
+  SELECT claimed_by AS lider, to_timestamp(next_due_at / 1000.0) AS kira_bitisi
+    FROM monitor_check_schedule WHERE monitor_key = 'lease:sweep-leader';
+  ```
+  Pod adı = `lider` değerinden son `-xxxxxxxx` çıkarılınca kalan. Liderin günlüğü:
+  `kubectl logs -n "$NS" <pod adı> --tail=300`.
+- **Liderliği başka pod'a taşımak:** lider pod'u silin (`kubectl delete pod -n "$NS" <pod adı>`) — zarif kapanış kirayı
+  hemen bırakır, diğer pod ≤ ~35 sn'de alır. Kira satırını elle silmeyin (eski lider bir sonraki yenilemede geri alır).
+
+### Devir süreleri
+
+| Olay | İzlemenin durduğu süre |
+|---|---|
+| Planlı kapanış (rollout, `kubectl drain`, `delete pod`) | **≤ ~35 sn.** preStop 10 sn boyunca lider taramaya devam eder; SIGTERM'de kira hemen bırakılır, takipçi ≤ 5 sn'de alır, ilk taraması ≤ 30 sn'de başlar. |
+| Pod öldürüldü (SIGKILL, `OOMKilled`, node kaybı, grace aşıldı) | **≤ ~4 dk:** kira süresinin (180 sn) dolması + 5 sn + ilk tarama. O pod tam o an bir push batch'i gönderiyorduysa o batch ≤ 10 dk sonra başka bir pod'dan gider (gönderilmekte olan batch'in kirası 10 dk — iki kez gitmesin diye). |
+| Lider kilitlendi (pod ayakta, taramalar ilerlemiyor) | 10 dk tarama tıkı yoksa lider kirayı bırakır (WARN, 2 × TTL yeniden almaz) → takipçi devralır; son tıktan 30 dk sonra hâlâ tık yoksa liveness BROKEN → kubelet pod'u yeniden başlatır. |
+| Veritabanı bir pod'dan kısa süre okunamıyor (havuz doldu, ağ) | Lider, son doğrulanmış kirası bitmeden 30 sn öncesine kadar lider kalır; takipçi kendini asla lider ilan etmez; küme tur sahiplenmesi iki kez yeniden denenir, olmazsa o tur atlanır (WARN — sonraki tur / yakalama telafi eder; iki kez koşmaktansa bir kez gecikir). |
+
+Her liderlik değişiminde yeni lider alarm kararlarının bellekteki durumunu sıfırdan kurar (doğrulama zincirleri, kurtarma
+sayaçları): açılmak / kapanmak üzere olan bir alarm doğrulamasını yeni liderde baştan yapar — birkaç dakika gecikme olur,
+çift bildirim olmaz. DNS / alan adı değişikliği (`DNS_CHANGED` / `DOMAINMON_CHANGED`) satırda PENDING olarak kalır; yeni
+lider 2 saate kadar yeniden kuyruğa alır, değişiklik bildirimi kaybolmaz.
+
+### Kapanış ve süre bütçesi
+
+`terminationGracePeriodSeconds` kubelet preStop'u başlattığı an sayılır; aşılırsa SIGKILL gelir ve kira dolana dek
+(180 sn) izleme duraklar:
+
+| Adım | Süre | Ayar |
+|---|---|---|
+| preStop `sleep` (pod Service / ingress uç noktalarından düşer) | 10 sn | Helm `preStopSleepSeconds` (0 = kanca yok) |
+| SIGTERM → liderlik kirası bırakılır, yeni kilit / tur / liderlik alınmaz (`ContextClosedEvent`, ilk dinleyici) | anında | — |
+| Push işçisi durdurulur (yeni tur / batch yok, kalan batch'lerin kirası bırakılır) ve süren push biter; bildirim havuzları boşaltılır (çözüm postaları, yeniden gönderimler, giriş sorunu postaları) — hepsi AYNI süre içinde | ≤ 20 sn | `WebConfig.NOTIFY_AWAIT_SECONDS` |
+| Web zarif aşaması (süren istekler biter) | ≤ 20 sn | `SHUTDOWN_PHASE_TIMEOUT` (`spring.lifecycle.timeout-per-shutdown-phase`) |
+| Yürütücü aşaması (süren kontroller / bildirimler biter) | ≤ 20 sn | aynı |
+| Zamanlanmış işler havuzu (süren işler biter, kesilmez) | ≤ 20 sn | `SCHEDULING_AWAIT_TERMINATION` |
+| Geri kalan bütün yok etme beklemeleri (e-posta 421 kuyruğu, push, kod girişi, olay bildirimi, elle kontrol havuzu, bildirim havuzlarının kendisi) | birlikte ≤ 10 sn | `config/ShutdownDeadline.DESTROY_BUDGET_MS` |
+| **Toplam** | **≈ 100 sn < 120 sn** | Helm `terminationGracePeriodSeconds` (120) |
+
+Birini büyütürseniz grace'i de büyütün: `preStop + boşaltma + 2 × aşama + zamanlanmış bekleme + 10 < grace` (yeni bir
+havuzun `awaitTermination`'ı `ShutdownDeadline.waitMs` kullanmak zorundadır — `ShutdownBudgetGateTest`). İş kilitleri
+`@PreDestroy`'da (zamanlayıcı durduktan sonra) bırakılır. `helm template`
+preStop ≥ grace'i reddeder; CI (`scripts/helm-template-check.sh`) ve `ShutdownBudgetGateTest` varsayılanları denetler.
+
+### Kilitler
+
+```sql
+SELECT name, locked_by, locked_until FROM scheduler_lock ORDER BY name;   -- locked_by = <pod adı>-<8 hane>, UTC
+```
+- İş kilidini tutan pod onu 30 sn'de bir yeniler (`ClusterLockService`; yenilenen TTL en çok 3 dk, izleme taraması ve
+  kendi-kendini-izleme kilitleri 2 dk; sert tavan 3 sa, gece temizliği / ping toparlama 4 sa). Yenileme satırı bulamazsa
+  kilit KAYIP sayılır (tek WARN). Kapanışta pod kendi kilitlerini bırakır; ölen pod'un kilidi TTL dolunca düşer, yeni
+  pod açılışta kendi ölü örneğinin kilitlerini temizler. Sistem Sağlığı → Zamanlayıcı `held_locks` bu pod'un kilitlerini,
+  `round_claim_failures` okunamadığı için atlanan turları gösterir.
+- **Takılı kilit:** Sistem Sağlığı → Zamanlayıcı → kilidi bırak (yalnız `cert-check`; `DELETE /api/admin/system/scheduler-lock`,
+  denetimde `SCHEDULER_LOCK_RELEASE`). Diğerleri SQL ile: `DELETE FROM scheduler_lock WHERE name = '<ad>';` — kilidi
+  tutan pod canlıysa bir sonraki yenilemede kilidi kaybettiğini görür (WARN) ve sertifika taraması sonuçlarını işlemez.
+  Önce sahibinin gerçekten ölü ya da takılı olduğundan emin olun (günlükte o işin son satırları).
+- **Takılı ağ kesintisi kaydı:** sertifika taramasının "ağ kesintisi" durumu pod belleğinde değil `network_outage_events`
+  satırındadır (kaynak başına tek ONGOING satır); kesinti açıkken taramalar alarm işlemez. Gerçekten bitmiş ama kapanmamış
+  bir kesintiyi kapatmak (pano bütün pod'larda ≤ 10 sn'de izler; çözüm postası gitmez):
+  ```sql
+  UPDATE network_outage_events SET status = 'RESOLVED', resolved_at = to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS'),
+         resolved_mail_status = 'SKIPPED',
+         alert_mail_status = CASE WHEN alert_mail_status IN ('PENDING', 'RETRY', 'SENDING') THEN 'SUPERSEDED' ELSE alert_mail_status END
+   WHERE status = 'ONGOING' AND (source IS NULL OR source = 'CERT');
+  ```
+  Çoğu zaman gerekmez: açık bir kesinti, ağ hatası oranı eşiğin altındaki küçük turlarla 24 saat sonra, bütün etkin
+  ağ envanterini kapsayan bir turla hemen kendiliğinden kapanır. Yönetici kesinti postasının her kararı (gönderildi,
+  atlandı, başarısız, vazgeçildi, geçersiz kaldı, bilinmiyor) SMTP günlüğünde tetik `NETWORK_OUTAGE` ile görünür.
+- **Takılı fırtına kapanışı:** fırtına iki aşamada kapanır (`alert_storms.close_state` `CLOSING` → `DONE`, kurtarma
+  postası `recovery_state` ile tek kez). Yarıda kalan (`CLOSING`, sahiplenmesi 5 dk'dan eski) bir kapanışı herhangi bir pod
+  bir sonraki fırtına turunda tamamlar; 5 denemede olmazsa yine `DONE` yazılır ve üyelere iz düşer. `recovery_state =
+  'UNKNOWN'` = kurtarma postası gitmiş de olabilir, gitmemiş de — `notification_logs`'ta tetik `STORM_RESOLVE`'a bakın;
+  yeniden gönderilmez.
+
+### Ön koşullar — 1 → N geçişinden ÖNCE
+
+Ayrıntılı komutlar ve onay kutuları: [`PROD_DEPLOY_CHECKLIST.md` → Çok pod](PROD_DEPLOY_CHECKLIST.md#çok-pod-1--2-replika).
+
+1. **P1 — Her node'dan aynı çıkış (en büyük risk).** Liderlik her rollout'ta node değiştirir ve bütün izlemeyi kira
+   sahibi pod koşar. Vekil ACL'i, firewall izin listeleri (doğrudan kontrol edilen iç hedefler), SMTP aktarıcısı,
+   LDAP / AD, push ağ geçidi ve RDAP, pod'ların koşabileceği **her** node'dan aynı sonucu vermeli. Node IP'sine bağlı
+   bir izin listesi varsa ilk devirde toplu "kesinti" ya da sessiz posta kaybı yaşanır (2026-10-02 node / egress olayı).
+   Denetim: uygulamanın kendi imajı ve ConfigMap'iyle (vekil, SMTP) her node'a sabitlenmiş tek kullanımlık bir pod
+   (`scripts/multipod-egress-check.sh`; restricted PodSecurity ile uyumlu, iş bitince pod silinir):
+   ```bash
+   # Ek hedefler: LDAP / AD, push ağ geçidi ve doğrudan (vekilsiz) kontrol edilen birkaç iç hedef (host:port).
+   # SMTP ve vekil ConfigMap'ten gelir. Node verilmezse kümedeki bütün node'lar denenir — pod'ların koşabileceği
+   # node'ları verin (nodeSelector / taint'ler).
+   NS="$NS" REL="$REL" TARGETS="<ldap-host>:636 <push-host>:443 <iç-hedef-1>:443" \
+     bash scripts/multipod-egress-check.sh <node-1> <node-2> <node-3>
+   ```
+   Beklenen: her node'da `rdap 200` (vekil üzerinden) ve bütün hedefler `OK`; çıkış kodu 0. Bir node başarısızsa ya
+   kural düzeltilir ya da pod'lar sağlam node'lara sabitlenir (Helm `nodeSelector` / `affinity`). Node havuzu her
+   değiştiğinde (yeni node, yükseltme) yeniden koşun.
+2. **P2 — Saat (NTP).** Kira ve kilitler pod saatiyle karşılaştırılır; ~120 sn'den büyük kayma iki lider üretir. Egress
+   betiğinin her node için yazdığı `saat <epoch>` değerleri birbirinden ve yerel `date -u +%s` /
+   `SELECT extract(epoch from now())` (DB) değerinden en çok 1-2 sn farklı olmalı; fazlası platform ekibine (chrony / NTP).
+3. **P3 — Veritabanı bağlantıları.** Rollout'ta `replika + 1` pod birlikte açıktır:
+   `max_connections ≥ (replika + 1) × dbPoolMax + 25`. `SHOW max_connections;` — 2 replikada `dbPoolMax` 30 için ≥ 115
+   (pratikte 120), `max_connections` 100 ise `dbPoolMax: "25"`. Formül ve PgBouncer: [`db-scaling.md`](db-scaling.md) §3.
+   **PgBouncer yalnız `session` kipinde** (şema yaması / ertelenmiş indeks oturum düzeyi advisory lock ve
+   `SET lock_timeout … RESET` kullanır; `transaction` kipi bunları bozar).
+4. **P4 — Kota.** Namespace kotası ve LimitRange `replika + 1` pod'u kabul etmeli (prod: 3 × 1.5Gi / 500m request,
+   3 × 3Gi / 2 CPU limit) ve bir node'da yeni pod'a yer olmalı: `kubectl describe resourcequota -n "$NS"`.
+5. **P5 — Prometheus pod keşfi.** Kazıma `role: pod` ile her pod'u ayrı hedef olarak okumalı (bkz. "Grafana panosu ve
+   Prometheus"); Service üzerinden kazıma pod'a özgü serileri (`sitemonitor_sweep_leader`, JVM) karıştırır. Kontrol:
+   `up{job="site-monitor"}` pod başına bir seri.
+
+### 1 → 2 geçişi (ve geri)
+
+- **Kendi `helm upgrade`'i olarak:** önce yeni sürüm `replicaCount: 1` ile dağıtılır ve doğrulanır; sonra AYNI imajla,
+  yalnız `environments/master.yaml`'da `replicaCount: 2` + `podDisruptionBudget.enabled: true` (`minAvailable: 1`) +
+  P3'e göre `dbPoolMax` değiştirilerek ikinci bir commit / `helm upgrade`. Sürüm değişikliği ile replika artışı aynı
+  upgrade'de yapılmaz (iki yeni sürüm pod'u aynı anda açılır). Spread (`topologySpreadConstraints`) yalnız ≥ 3
+  zamanlanabilir node varsa, `matchLabelKeys: ["pod-template-hash"]` ile (Kubernetes ≥ 1.27).
+- Bellek oturum deposuyla (`config.sessionStoreType` ≠ `jdbc`) birden çok pod `helm template`'te reddedilir.
+- **Doğrulama:** Sistem Sağlığı → `session_store` = `jdbc`, `sweep_leader.owner` tek pod; Grafana
+  `sum(sitemonitor_sweep_leader) == 1`; Metrikler sayfasında iki canlı pod; iki pod'un günlüğü de okunur (aşağıdaki
+  kanaryalar); bir hafta her gün çift-iş dedektörü.
+- **Geri (2 → 1):** aynı komut `replicaCount: 1` ve `podDisruptionBudget.enabled: false` ile (tek replikada
+  `minAvailable: 1` bir PDB node drain'i süresiz bloke eder) ya da `helm rollback`. Veri / şema değişmez.
+
+### Kanaryalar — her zaman tüm pod'lar
+
+```bash
+L="-n $NS -l app.kubernetes.io/instance=$REL --prefix --tail=-1"
+kubectl logs $L | grep -c "decrypt failed"                                   # 0 olmalı
+kubectl logs $L | grep -cE "Denetim izinde BOŞLUK|AUDIT fallback"            # 0 olmalı
+kubectl logs $L | grep "Tarama liderliği" | tail -20                         # liderlik geçişleri / bırakma (pod adıyla)
+kubectl get pod -n "$NS" -l app.kubernetes.io/instance="$REL" \
+  -o custom-columns=POD:.metadata.name,NODE:.spec.nodeName,RESTART:.status.containerStatuses[0].restartCount,SEBEP:.status.containerStatuses[0].lastState.terminated.reason
+```
+
+### Çift iş / kaybolan bildirim denetimi
+
+```bash
+psql -h <db-host> -U <kullanıcı> -d <db> -X -f scripts/multipod-dup-check.sql     # salt okur, son 24 saat
+PGHOST=… PGDATABASE=… PGUSER=… PGPASSWORD=… bash scripts/multipod-smoke.sh dup-check  # aynısı; > 0 ise çıkış 1
+```
+`DUP_TOTAL` aynı izlemenin aynı saniyelerde iki kontrolünü, aynı alarm bildiriminin aynı alıcıya 10 dk içinde iki kez
+gitmesini, aynı push'un iki SENT satırını, kaynak başına birden çok ONGOING kesinti satırını, aynı hedef + tür için birden
+çok açık alarmı, aynı kapsamda birden çok açık fırtınayı ve aynı alan adlarını kontrol eden iki sertifika taramasının
+zamanda çakışmasını sayar; `STUCK_TOTAL` 25 dk'dan eski `QUEUED_RETRY` satırlarını. Tek pod'da da birkaç kontrol çifti
+görülür (hatadan sonraki doğrulama kontrolü zamanlanmış kontrolle aynı saniyeye düşer) — iki lider ise HER izlemenin
+HER kontrolünü ikiler; ayrıntıdaki `cift / toplam_satir` oranına bakın. Docker'lı iki pod duman testi (yeni imaj, staging
+öncesi): `SMOKE_IMAGE=<imaj> bash scripts/multipod-smoke.sh`.
+
+### Sürüm geçişi sırasında (eski + yeni pod birlikte)
+
+Rollout'ta (`maxSurge: 1`) tek replikada da bir an eski ve yeni sürüm birlikte koşar; eski pod sürüm 1'in sahiplenmelerini
+bilmez. Son eski pod gidene kadar şunlar görülebilir (sonra kendiliğinden biter):
+
+- Eski pod yönetici "ağ kesintisi" / "düzeldi" postasını belleğinden gönderebilir (yinelenen yönetici postası; DB
+  indeksi ikinci ONGOING satırı engeller, WARN).
+- Eski (20.164.0) lider `monitor_eval_inbox`'u boşaltmaz ve kendini boşaltıcı olarak duyurmaz: yeni takipçiler
+  `lease:eval-inbox-drainer` satırının şu anki tarama liderine ait olmadığını görür ve "Şimdi kontrol et"i eskisi gibi
+  yerel değerlendirir (geçiş penceresi kalmaz).
+- Eski pod fırtınayı eski tek aşamalı yolla kapatabilir: yinelenen bir kurtarma postası mümkün.
+- Eski pod'da push kuyruğu, haftalık rapor geçişleri ve haftalık erişilebilirlik postası sahiplenmesizdir: çift tık /
+  yarışta yinelenen push ya da posta mümkün (eski davranış).
+- **Haftalık erişilebilirlik penceresinde dağıtmayın** (tetik günü, Pazartesi ~10:00–12:00 Istanbul) — bir 20.164.0 pod'u
+  hâlâ koşabildiği sürece: eski pod bütün takımları TEK işlemde gönderir; gönderirken öldürülürse kayıtları geri sarılır, yeni
+  sürümün telafi turu kaydı olmayan takımları gönderir → o takımlar ikinci posta alır.
+- Eski saatlik tarama önce turu alır: kilidi yeni pod'un bayat taraması tutuyorsa o saat atlanır (bir sonraki saat tarar).
+- Eski lider DNS / alan adı değişikliğini taban yapar ama PENDING yazmaz; yeni lider 2 sa (DNS) / 6 sa (alan adı) içinde
+  yeni-sürüm satırlarını yeniden kuyruğa alır.
+
+### Sürüm 2'ye kadar bilinen pod farkları (zararsız ama kafa karıştırır)
+
+- Sistem Sağlığı'nın bazı kartları yanıtı veren pod'un belleğini gösterir: sertifika taraması "çalışıyor / son koşu",
+  yürütücü / bellek / havuz kartları. "Tam kontrolü şimdi çalıştır" ilerlemesi diğer pod yanıt verince erken "bitti"
+  diyebilir. Kesin bilgi: `scheduler_lock` `cert-check` satırı (tarama sürüyorsa var).
+- Kalp atışı zaman çizelgesi pod sayısı kadar satır sayar ("alınan 2880 / beklenen 1440").
+- Sertifika panosu önbelleği pod başınadır (5 dk): bir pod'da yapılan ekleme / düzenleme diğer pod'dan birkaç dakika
+  eski görünebilir (silme hemen gizlenir).
+- Hız sınırları ve eşzamanlılık izinleri (giriş IP sınırı, tanılama, PDF, test postası) pod başınadır: N pod = N kat.
+- Çevrimiçi göstergesi sayfa yenilemesinde ≤ ~15 sn "çevrimdışı" görünebilir.
+- Grafana "Okunamayan kaynaklar" paneli bir kaynak her pod'da okunamıyorsa pod sayısı kadar sayar (renk doğrudur).

@@ -73,6 +73,15 @@ class NocNotificationServiceTest {
         });
         when(deliveries.saveAndFlush(any())).thenAnswer(i -> put(i.getArgument(0)));
         when(deliveries.save(any())).thenAnswer(i -> put(i.getArgument(0)));
+        // Var olan satırın koşullu yeniden sahiplenmesi (2026-10-21, çok pod — N-10) — JPQL'in aynası: (durum, damga) aynıysa.
+        when(deliveries.reclaim(anyLong(), anyString(), anyString(), anyString())).thenAnswer(i -> {
+            NocDelivery d = store.values().stream().filter(x -> Objects.equals(x.getId(), i.getArgument(0))).findFirst().orElse(null);
+            if (d == null) return 0;
+            String st = d.getStatus() == null ? "" : d.getStatus();
+            String at = d.getUpdatedAt() == null ? "" : d.getUpdatedAt();
+            // Depodaki nesne servisin okuduğuyla AYNI nesne: durum / sayaç / damgayı servis yazar (çift artış olmasın).
+            return st.equals(i.getArgument(1)) && at.equals(i.getArgument(2)) ? 1 : 0;
+        });
         when(deliveries.findTopByStormIdAndPhaseOrderByIdDesc(any(), anyString())).thenAnswer(i -> store.values().stream()
                 .filter(d -> Objects.equals(d.getStormId(), i.getArgument(0)) && Objects.equals(d.getPhase(), i.getArgument(1)))
                 .max(Comparator.comparing(NocDelivery::getId)));
@@ -412,6 +421,22 @@ class NocNotificationServiceTest {
         assertThat(l.getTrigger()).isEqualTo("NOC_STORM");
         assertThat(l.getMessage()).doesNotContain("tel:").doesNotContain("5550000000");
         assertThat(l.getRecipientEmail()).doesNotContain("@");
+    }
+
+    @Test
+    @DisplayName("Çok pod (2026-10-21, N-10): FAILED satırı başka pod bu arada yeniden sahiplendiyse (koşullu UPDATE 0 satır) bu pod GÖNDERMEZ")
+    void reclaimLostToOtherPod_noMail() {
+        monitor(NocType.PING, 63, true, true, null);
+        NocDelivery failed = new NocDelivery();
+        failed.setDedupeKey("alert:63:OPEN"); failed.setPhase("OPEN"); failed.setStatus("FAILED: Connection refused");
+        failed.setAttempts(1); failed.setCreatedAt("2026-01-10T20:55:00"); failed.setUpdatedAt("2026-01-10T20:56:00");
+        put(failed);
+        when(deliveries.reclaim(anyLong(), anyString(), anyString(), anyString())).thenReturn(0);   // diğer pod kazandı
+
+        dispatch(alert(63, "PING_DOWN", "CRITICAL", "h63.example.com"), "DAILY_REALERT");
+
+        assertThat(mailsSent()).isZero();
+        verify(deliveries, never()).saveAndFlush(any());
     }
 
     @Test

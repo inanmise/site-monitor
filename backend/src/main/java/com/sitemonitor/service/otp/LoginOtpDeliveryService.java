@@ -73,9 +73,43 @@ public class LoginOtpDeliveryService {
         }, new ThreadPoolExecutor.AbortPolicy());
     }
 
+    /** Kapanışta kuyruktaki / süren teslimlere tanınan süre (2026-10-21, çok pod R1 / MP-07). */
+    static final long SHUTDOWN_WAIT_MS = 10_000L;
+
+    /**
+     * Kapanış (2026-10-21, çok pod R1 / MP-07): eskiden {@code shutdownNow()} kuyruktaki kodları SESSİZCE düşürüyor, süren
+     * gönderimi kesiyordu — satır {@code QUEUED} kalıyor, denetime iz düşmüyordu (her yayılım / pod küçülmesinde). Artık yeni
+     * iş alınmaz, kuyruk ve süren işler {@link #SHUTDOWN_WAIT_MS} kadar beklenir; o sürede başlayamayan her iş
+     * {@code FAILED: SHUTDOWN} olarak kapanır (satır + {@code LOGIN_OTP_DELIVERY_FAILED} denetimi) — kullanıcı yeni kod ister.
+     */
     @PreDestroy
     void shutdown() {
-        executor.shutdownNow();
+        shutdown(com.sitemonitor.config.ShutdownDeadline.waitMs(SHUTDOWN_WAIT_MS));   // ortak yok etme süresi (D-1)
+    }
+
+    /** {@link #shutdown()}'ın süre parametreli gövdesi (test). Kesilen iş sayısını döner. */
+    int shutdown(long waitMs) {
+        executor.shutdown();
+        try {
+            if (executor.awaitTermination(Math.max(0, waitMs), TimeUnit.MILLISECONDS)) return 0;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        int dropped = 0;
+        for (Runnable r : executor.shutdownNow()) {
+            if (r instanceof DeliveryTask t) {
+                finish(t.job(), false, "SHUTDOWN");
+                dropped++;
+            }
+        }
+        if (dropped > 0) log.warn("Kodla giriş: kapanışta {} teslim başlayamadı — FAILED: SHUTDOWN yazıldı", dropped);
+        return dropped;
+    }
+
+    /** Kuyruktaki iş — kapanışta {@code shutdownNow()} listesinden işi geri okuyabilmek için adlı tür (kod alanı loglanmaz). */
+    private record DeliveryTask(Job job, String code, LoginOtpDeliveryService owner) implements Runnable {
+        @Override public void run() { owner.deliver(job, code); }
+        @Override public String toString() { return "DeliveryTask[" + (job == null ? "-" : job.channel()) + "]"; }
     }
 
     /** Teslim edilecek iş — kullanıcı anlık görüntüsü (oturumsuz iş parçacığında varlık yüklemesi yok). */
@@ -88,7 +122,7 @@ public class LoginOtpDeliveryService {
      */
     public void dispatch(Job job, String code) {
         try {
-            executor.execute(() -> deliver(job, code));
+            executor.execute(new DeliveryTask(job, code, this));
         } catch (RejectedExecutionException e) {
             finish(job, false, "QUEUE_FULL");
         }

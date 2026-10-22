@@ -80,6 +80,8 @@ class WeeklyAvailabilityReportServiceTest {
         when(pageSpeedMonitorRepo.findByActiveTrue()).thenReturn(java.util.List.of());
         when(emailService.getEmailFrom()).thenReturn("noreply@sitemonitor");
         when(walRepo.findByTeamIdAndReportYearAndWeekNo(anyLong(), anyInt(), anyInt())).thenReturn(Optional.empty());
+        // Takım × hafta sahiplenmesinin kapanışı (MP-40) — tek koşu kendi sahiplenmesini kapatır.
+        when(walRepo.finishClaim(anyLong(), anyInt(), anyInt(), anyString(), anyString(), anyString())).thenReturn(1);
         when(latestCheckRepo.findById(anyString())).thenReturn(Optional.empty());
     }
 
@@ -447,8 +449,14 @@ class WeeklyAvailabilityReportServiceTest {
         assertThat(result.sent()).isZero();
     }
 
+    /**
+     * YENİDEN TABANLANDI (2026-10-21, çok pod MP-40): elle koşu ({@code manual=true}, eskiden "force") artık SENT
+     * takıma YENİDEN göndermez — "takım × hafta en çok bir kez" kuralı (iki pod / çökme sonrası yeniden koşu ikinci
+     * posta atıyordu). Elle koşu yalnız EKSİK takımları gönderir; FAILED olan yeniden denenir. Bilinçli tek takımlık
+     * yeniden gönderim = Ayarlar'daki test gönderimi (takım adresine).
+     */
     @Test
-    @DisplayName("send: aynı hafta SENT ise (force=false) atlanır; force=true gönderir")
+    @DisplayName("send: aynı hafta SENT ise zamanlanmış da elle koşu da atlar; FAILED yeniden denenir")
     void send_idempotent() {
         Team t = team(5L, "Dijital", "dijital@x.com");
         when(teamRepo.findByActiveTrueOrderByNameAsc()).thenReturn(List.of(t));
@@ -458,10 +466,17 @@ class WeeklyAvailabilityReportServiceTest {
         sentLog.setStatus("SENT");
         when(walRepo.findByTeamIdAndReportYearAndWeekNo(eq(5L), anyInt(), anyInt())).thenReturn(Optional.of(sentLog));
 
-        assertThat(service.sendWeeklyReports(false).sent()).isZero();         // zaten gönderilmiş → atla
+        assertThat(service.sendWeeklyReports(false).skippedDone()).isEqualTo(1);   // zaten gönderilmiş → atla
+        assertThat(service.sendWeeklyReports(true).skippedDone()).isEqualTo(1);    // elle koşu da ikinci posta ATMAZ
         verifyNoMailSent();
 
-        assertThat(service.sendWeeklyReports(true).sent()).isEqualTo(1);      // force → gönder
+        WeeklyAvailabilityLog failedLog = new WeeklyAvailabilityLog();
+        failedLog.setStatus("FAILED");
+        failedLog.setSentAt("2026-06-22T07:00:00");
+        when(walRepo.findByTeamIdAndReportYearAndWeekNo(eq(5L), anyInt(), anyInt())).thenReturn(Optional.of(failedLog));
+        when(walRepo.claimExisting(eq(5L), anyInt(), anyInt(), eq("FAILED"), eq("2026-06-22T07:00:00"), anyString()))
+                .thenReturn(1);
+        assertThat(service.sendWeeklyReports(true).sent()).isEqualTo(1);          // posta gitmemişti → yeniden dene
         verify(emailService).sendHtmlWithAttachments(any(), any(), any(), any(), any(), any());
     }
 

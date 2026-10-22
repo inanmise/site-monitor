@@ -29,9 +29,13 @@ public class WeeklyAvailabilityLog {
     @Column(name = "week_no", nullable = false)
     private Integer weekNo;
 
-    /** SENT | FAILED | NO_RECIPIENT */
+    /**
+     * SENDING | SENT | FAILED | SKIPPED | NO_RECIPIENT (2026-10-21, çok pod MP-40). SENDING = gönderim sürüyor
+     * (postadan ÖNCE sahiplenildi); bayat SENDING = yarıda kalmış, yalnız elle koşu devralır.
+     */
     private String status;
 
+    /** SENDING iken sahiplenme anı (sahiplenme damgası — bitiş yalnız bu damgayla yazılır), sonra son karar anı. */
     @Column(name = "sent_at")
     private String sentAt;
 

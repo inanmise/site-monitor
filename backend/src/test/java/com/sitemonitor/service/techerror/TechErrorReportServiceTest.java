@@ -493,6 +493,83 @@ class TechErrorReportServiceTest {
         assertThat(TechErrorHistoryService.detail(eventsOf(r2.getId()).get(0))).containsEntry("state", "FAILED");
     }
 
+    @Test
+    @DisplayName("MP-06 (çok pod R1, 2026-10-21): sonucu gelmeyen kuyruk (gönderen pod öldü; günlük hâlâ QUEUED_RETRY, talep > 20 dk) "
+            + "FAILED olarak sonuçlanır — iki pod aynı anda okusa da TEK sonuç olayı ve TEK push; taze kuyruk beklenir")
+    void orphanedQueueIsFinalisedOnceAcrossPods() throws Exception {
+        TechErrorPushService pushes = org.mockito.Mockito.mock(TechErrorPushService.class);
+        service.setPushes(pushes);
+        try {
+            TechErrorChannel ch = channel(1, "POS");
+            TechErrorReport r = service.createReport(ch, 2026, 9, 7L);
+            Instant claim = Instant.parse("2026-10-13T08:30:00Z");                 // saat 09:00 → 30 dk önce
+            reports.claimSend(r.getId(), claim, claim.minusSeconds(600));
+            Long logId = logRow("QUEUED_RETRY: 421");
+            setLogSentAt(logId, "2026-10-13T08:30:00");
+            reports.finishQueued(r.getId(), claim, "QUEUED_RETRY: 421", claim, logId, 7L, "a@b.com", 0L);
+
+            TechErrorReport fresh = service.createReport(ch, 2026, 8, 7L);
+            Instant freshClaim = Instant.parse("2026-10-13T08:55:00Z");            // 5 dk önce — sonuç hâlâ gelebilir
+            reports.claimSend(fresh.getId(), freshClaim, freshClaim.minusSeconds(600));
+            Long freshLog = logRow("QUEUED_RETRY: 421");
+            setLogSentAt(freshLog, "2026-10-13T08:55:00");
+            reports.finishQueued(fresh.getId(), freshClaim, "QUEUED_RETRY: 421", freshClaim, freshLog, 7L, "a@b.com", 0L);
+
+            java.util.concurrent.CyclicBarrier gate = new java.util.concurrent.CyclicBarrier(2);
+            java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+            try {
+                java.util.concurrent.Callable<Integer> pod = () -> {
+                    gate.await(10, java.util.concurrent.TimeUnit.SECONDS);
+                    return service.reconcileQueued(List.of(ch.getId()));
+                };
+                var a = pool.submit(pod);
+                var b = pool.submit(pod);
+                assertThat(a.get(30, java.util.concurrent.TimeUnit.SECONDS) + b.get(30, java.util.concurrent.TimeUnit.SECONDS))
+                        .as("tek kazanan").isEqualTo(1);
+            } finally {
+                pool.shutdownNow();
+            }
+
+            TechErrorReport failed = reports.findById(r.getId()).orElseThrow();
+            assertThat(failed.getSendState()).isEqualTo("FAILED");
+            assertThat(failed.getLastSendStatus()).isEqualTo(com.sitemonitor.service.EmailNotificationService.STATUS_RETRY_ORPHANED);
+            assertThat(failed.getLastSentAt()).isNull();
+            assertThat(logs.findById(logId).orElseThrow().getEmailStatus())
+                    .isEqualTo(com.sitemonitor.service.EmailNotificationService.STATUS_RETRY_ORPHANED);
+            assertThat(eventsOf(r.getId())).filteredOn(e -> "SEND_RESULT".equals(e.getKind())).hasSize(1);
+            org.mockito.Mockito.verify(pushes, org.mockito.Mockito.times(1)).sendFailedTo(
+                    org.mockito.ArgumentMatchers.argThat(c -> r.getId().equals(c.reportId())), org.mockito.ArgumentMatchers.anyBoolean(),
+                    org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.eq(TechErrorPushService.Failure.QUEUE_FAILED),
+                    org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+
+            assertThat(reports.findById(fresh.getId()).orElseThrow().getSendState()).as("taze kuyruk beklenir").isEqualTo("QUEUED");
+            assertThat(logs.findById(freshLog).orElseThrow().getEmailStatus()).startsWith("QUEUED_RETRY");
+            assertThat(service.reconcileQueued(List.of(ch.getId()))).as("bir kez").isZero();
+        } finally {
+            service.setPushes(null);
+        }
+    }
+
+    @Test
+    @DisplayName("MP-06: geç gelen GERÇEK sonuç (günlük SENT) yetim sayılmadan önce yazıldıysa normal yoldan SENT olur; zamanı okunamayan günlük dokunulmaz")
+    void lateRealResultWinsOverOrphan() {
+        TechErrorChannel ch = channel(1, "POS");
+        TechErrorReport r = service.createReport(ch, 2026, 9, 7L);
+        Instant claim = Instant.parse("2026-10-13T08:30:00Z");
+        reports.claimSend(r.getId(), claim, claim.minusSeconds(600));
+        Long logId = logRow("SENT");
+        setLogSentAt(logId, "2026-10-13T08:30:00");
+        reports.finishQueued(r.getId(), claim, "QUEUED_RETRY: 421", claim, logId, 7L, "a@b.com", 0L);
+        assertThat(service.reconcileQueued(List.of(ch.getId()))).isEqualTo(1);
+        assertThat(reports.findById(r.getId()).orElseThrow().getSendState()).isEqualTo("SENT");
+    }
+
+    private void setLogSentAt(Long id, String at) {
+        com.sitemonitor.model.NotificationLog n = logs.findById(id).orElseThrow();
+        n.setSentAt(at);
+        logs.save(n);
+    }
+
     @Autowired TechErrorExportService exporter;
 
     @Test

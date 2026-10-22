@@ -33,7 +33,8 @@
 # !!! SITE_MONITOR_SECRET_KEY: carry the CURRENT value over UNCHANGED. A new key makes every
 # !!! stored secret undecryptable - LDAP bind, SMTP password, HTTP/Keyword header secrets,
 # !!! personal-push header secrets, PageSpeed key, scripted env secrets - with only a WARN.
-# !!! After every deploy: kubectl logs -n "$NS" deploy/<name> | grep -c "decrypt failed"  -> 0
+# !!! After every deploy (ALL pods - `deploy/<name>` reads only one of them):
+# !!!   kubectl logs -n "$NS" -l app.kubernetes.io/instance="$REL" --prefix --tail=-1 | grep -c "decrypt failed"  -> 0
 # -----------------------------------------------------------------------------
 
 image:
@@ -42,10 +43,13 @@ image:
   tag: ""           # empty -> v<Chart.AppVersion>; the deploy command passes image.tag=vX.Y.Z
   pullPolicy: Always
 
-# Üretim TEK POD çalışır (2026-08-19 teyidi). Ölçekleme DİKEY yapılır: kapasite yetmezse
-# önce resources büyütülür. Yatay ölçeklemeye geçilecekse aşağıdaki autoscaling /
-# podDisruptionBudget / topologySpreadConstraints bloklarını birlikte açın — chart bunları
-# destekler ve çok-pod mekanizmaları (scheduler_lock, JDBC oturum) zaten hazırdır.
+# Üretim bu sürümde HÂLÂ TEK POD (2026-10-21, çok pod sürüm 1). İki poda geçiş AYRI bir adımdır:
+#   1) bu sürüm replicaCount: 1 ile dağıtılır ve doğrulanır (tek pod davranışı değişmez);
+#   2) ön koşullar (docs/PROD_DEPLOY_CHECKLIST.md "Çok pod": P1 node başına egress, P2 NTP, P3 max_connections,
+#      P4 kota, P5 Prometheus pod keşfi) sağlanınca, AYNI imajla ayrı bir commit + `helm upgrade`:
+#      replicaCount: 2, podDisruptionBudget.enabled: true (minAvailable 1), dbPoolMax P3'e göre
+#      (docs/db-scaling.md), topologySpreadConstraints yalnız ≥ 3 zamanlanabilir node varsa.
+# autoscaling KAPALI kalır: izleme işinin hepsi kira sahibi podda koşar, HPA iş dağıtmaz (bkz. RUNBOOK "Çok pod").
 replicaCount: 1
 
 config:
@@ -71,9 +75,9 @@ config:
   # ekleniyor. 10 bağlantı 100 eşzamanlı kullanıcıda ilk darboğaz oluyordu.
   # minimum-idle 10'da bırakıldı (DB_POOL_MIN ezilmiyor): boşta tutulan bağlantı sayısı
   # artmaz, havuz yük geldikçe 30'a kadar büyür.
-  # DİKKAT: bu değer POD BAŞINA. Tek pod profilinde DB'de 30 bağlantı demektir; replika
-  # sayısını artırırsanız çarpılır (3 replika = 90) ve Postgres max_connections bütçesini
-  # birlikte gözden geçirmeniz gerekir.
+  # DİKKAT: bu değer POD BAŞINA. Tek pod profilinde DB'de 30 bağlantı demektir; rollout'ta
+  # (maxSurge 1) replica + 1 pod birlikte koşar. Kural: max_connections ≥ (replica + 1) × dbPoolMax + 25
+  # → 2 replikada 30 için ≥ 115 (pratikte 120), max_connections 100 ise 25 (docs/db-scaling.md).
   dbPoolMax: "30"
 
 ingress:
@@ -109,7 +113,8 @@ resources:
     cpu: "2000m"
 
 # Tek pod profilinde üçü de KAPALI. Değerler, yatay ölçeklemeye geçildiğinde
-# doğrudan kullanılabilsin diye korunuyor.
+# doğrudan kullanılabilsin diye korunuyor. autoscaling çok podda da KAPALI kalır (sabit replicaCount):
+# JVM bellek metriği hiç düşmez (HPA en üste kilitlenir) ve ölçek küçültme kira sahibi podu silebilir.
 autoscaling:
   enabled: false
   minReplicas: 1

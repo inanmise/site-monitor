@@ -70,6 +70,7 @@ class WeeklyReportServiceTest {
         when(permissionService.allows("TEAM_ADMIN", "weekly_reports.approve", "execute")).thenReturn(true);
         when(appSettings.getString(anyString(), any())).thenAnswer(i -> i.getArgument(1));
         when(reportRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        WeeklyReportClaimStubs.allWin(reportRepo);   // durum geçişleri koşullu UPDATE (MP-39) — tek istek kazanır
         when(mailRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(emailService.fromAddress()).thenReturn("sitemonitor@test");
         when(teamRepo.findById(2L)).thenReturn(Optional.of(team(2L, "TakimA", "takim@test.com")));

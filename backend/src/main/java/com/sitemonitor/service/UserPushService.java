@@ -36,7 +36,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -110,13 +109,29 @@ public class UserPushService {
     private final TrustEvaluator trustEvaluator;
     private final CaAutoPinService caAutoPinService;
 
-    /** Tek worker: outbox'ı sırayla boşaltır — API'ye eşzamanlı yığılma olmaz. */
-    private final ScheduledExecutorService worker =
-            Executors.newSingleThreadScheduledExecutor(r -> {
-                Thread t = new Thread(r, "user-push-worker");
-                t.setDaemon(true);
-                return t;
-            });
+    /**
+     * Tek worker: outbox'ı sırayla boşaltır — API'ye eşzamanlı yığılma olmaz. Kapanışta (2026-10-21) bekleyen GECİKMELİ
+     * görevler (backoff / devre kesici yeniden bakışı) koşmaz — satırlar veritabanında durur, başka pod ya da yeni pod alır;
+     * yalnız süren gönderim bitirilir ({@link #shutdown}).
+     */
+    private final ScheduledExecutorService worker = newWorker();
+
+    private static ScheduledExecutorService newWorker() {
+        java.util.concurrent.ScheduledThreadPoolExecutor ex = new java.util.concurrent.ScheduledThreadPoolExecutor(1, r -> {
+            Thread t = new Thread(r, "user-push-worker");
+            t.setDaemon(true);
+            return t;
+        });
+        ex.setExecuteExistingDelayedTasksAfterShutdownPolicy(false);
+        ex.setContinueExistingPeriodicTasksAfterShutdownPolicy(false);
+        ex.setRemoveOnCancelPolicy(true);
+        return ex;
+    }
+
+    /** Kapanış başladı: yeni tur başlamaz, süren tur kalan batch'leri göndermeden kiralarını bırakır. */
+    private volatile boolean stopping;
+    /** Kapanışta süren gönderimin bitmesi için en çok bu kadar beklenir (sonra kesilir). */
+    static final long SHUTDOWN_WAIT_SECONDS = 10;
 
     // ── Devre kesici (K7) — bellek içi; pod yeniden başlarsa temiz başlar (bilinçli) ──
     private final AtomicInteger consecutiveFailures = new AtomicInteger();
@@ -153,9 +168,41 @@ public class UserPushService {
     private volatile int httpClientTimeout = -1;
     private final Object clientLock = new Object();
 
+    /**
+     * Kapanış (2026-10-21, çok pod — MP-05 / N-16): eskiden {@code shutdownNow} süren gönderimi KESİYORDU — ağ geçidi isteği
+     * kabul etmiş ama SENT yazılmamış satır kira dolunca başka pod'ca yeniden gönderiliyordu (aynı push iki kez). Artık süren
+     * istek + sonucunun yazımı kapanışın başında ({@link #beginShutdown}, {@code NotifyExecutorDrain}) beklenir; burada en çok
+     * {@value #SHUTDOWN_WAIT_SECONDS} sn ve ortak yok etme süresi kadar daha beklenir. Turun kalan batch'leri gönderilmez,
+     * kiraları bırakılır (başka pod hemen alır). Süre dolarsa kesilir (eski davranış).
+     */
+    /**
+     * Kapanışın EN BAŞI ({@code ContextClosedEvent}, {@code NotifyExecutorDrain} çağırır — inceleme N3): yeni tur / batch
+     * başlamaz; süren istek bitirilir, boşaltma onu bekler. Eskiden {@code stopping} yalnız {@code @PreDestroy}'da kuruluyordu:
+     * worker web ve yürütücü aşamalarında göndermeye devam ediyor, ortak yok etme süresi ({@code ShutdownDeadline}) önceki
+     * beklemelerce tüketilince süren gönderim SENT yazılmadan kesiliyor ve başka pod aynı push'u yeniden gönderiyordu.
+     */
+    public void beginShutdown() {
+        stopping = true;
+    }
+
+    /** Şu an süren gönderim turu sayısı (tek worker: 0 / 1) — kapanış boşaltması bunu bekler. */
+    public int inFlightBatches() {
+        return worker instanceof java.util.concurrent.ThreadPoolExecutor tpe ? tpe.getActiveCount() : 0;
+    }
+
     @PreDestroy
     void shutdown() {
-        worker.shutdownNow();
+        stopping = true;
+        worker.shutdown();
+        try {
+            if (!worker.awaitTermination(com.sitemonitor.config.ShutdownDeadline.waitMs(SHUTDOWN_WAIT_SECONDS * 1000L), TimeUnit.MILLISECONDS)) {
+                log.warn("user-push: süren gönderim {} sn'de bitmedi — kesiliyor", SHUTDOWN_WAIT_SECONDS);
+                worker.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            worker.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
         HttpClient c = httpClient;
         if (c != null) try { c.close(); } catch (Exception ignore) { /* best-effort */ }
     }
@@ -818,13 +865,44 @@ public class UserPushService {
             d.setCreatedAt(now);
             d.setBatchId(batchIdFor(batchId, lang));
             d.setPushLang(lang);
-            try { deliveryRepo.save(d); } catch (Exception dup) { skipped++; continue; }
+            if (!insertEventless(d)) { skipped++; continue; }
             if ("PENDING".equals(status)) { queued++; names.add(r.displayName() == null ? r.username() : r.displayName()); }
             else skipped++;
         }
         if (queued > 0) worker.execute(this::drainOutbox);
         out.put("queued", queued); out.put("skipped", skipped); out.put("recipients", names); out.put("batch_id", batchId);
         return out;
+    }
+
+    @Autowired(required = false)
+    private org.springframework.transaction.PlatformTransactionManager txManager;
+
+    /**
+     * OLAYSIZ satırın eklenmesi (takım bildirimi, doğrudan bildirim, fırtına push'u ve karar satırı) — 2026-10-21, çok pod
+     * (MP-17). Ön kontrol ({@code existsByDedupeKeyAndUsername…}) gürültüsüz erken çıkıştır; yarışta son söz PostgreSQL'deki
+     * kısmi tekil indeksindir ({@code DeferredIndexBuilder.CATALOG}: anahtar + kişi + takım, olaysız, TEST / taşma özeti
+     * hariç): aynı anda iki pod aynı anahtarı yazarsa ikincisi "zaten var" sayılır ve push İKİNCİ KEZ kuyruğa girmez.
+     * Çağıran bir işlemin içindeyse ekleme AYRI işlemde yapılır — PostgreSQL'de işlem içindeki tekil ihlal çağıranın tüm
+     * işlemini geçersiz kılardı (25P02). {@code true} = eklendi.
+     */
+    boolean insertEventless(UserPushDelivery d) {
+        try {
+            org.springframework.transaction.PlatformTransactionManager tm = txManager;
+            if (tm != null && org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()) {
+                org.springframework.transaction.support.TransactionTemplate tt = new org.springframework.transaction.support.TransactionTemplate(tm);
+                tt.setPropagationBehavior(org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+                tt.executeWithoutResult(st -> deliveryRepo.save(d));
+            } else {
+                deliveryRepo.save(d);
+            }
+            return true;
+        } catch (org.springframework.dao.DataIntegrityViolationException dup) {
+            log.debug("user-push: aynı bildirim satırı zaten var ({} / {}) — ikinci kez yazılmadı", d.getDedupeKey(), d.getUsername());
+            return false;
+        } catch (Exception e) {
+            log.warn("user-push satırı yazılamadı ({} / {}): {}", d.getDedupeKey(), d.getUsername(), e.toString());
+            return false;
+        }
     }
 
     // ── Fırtına push'u (2026-09-28) ────────────────────────────────────────────────────────
@@ -1033,7 +1111,7 @@ public class UserPushService {
             d.setTitle(titleSetting());
             d.setStatus(reason);
             d.setCreatedAt(ISO.format(Instant.now()));
-            deliveryRepo.save(d);
+            insertEventless(d);
         } catch (Exception ignored) { /* karar satırı yazılamadıysa gönderim mantığı etkilenmez */ }
     }
 
@@ -1120,7 +1198,7 @@ public class UserPushService {
             d.setCreatedAt(now);
             d.setBatchId(batchIdFor(batchId, lang));
             d.setPushLang(lang);
-            try { deliveryRepo.save(d); } catch (Exception dup) { skipped++; continue; }
+            if (!insertEventless(d)) { skipped++; continue; }
             if ("PENDING".equals(status)) { queued++; names.add(d.getDisplayName()); queuedUsernames.add(u); }
             else skipped++;
             if (chosen != null) samePersonOut.put(u, chosen);
@@ -1383,12 +1461,15 @@ public class UserPushService {
     @Scheduled(fixedDelayString = "${site.monitor.userpush.outbox-sweep-ms:60000}",
                initialDelayString = "${site.monitor.userpush.outbox-sweep-initial-ms:30000}")
     void sweepOutbox() {
+        flushSentUnrecorded();   // ağ geçidinden bağımsız: devre kesici açıkken de sonucu yazılamamış gönderimler kalıcılaşsın
         if (circuitOpen()) return;
         worker.execute(this::drainOutbox);
     }
 
     /** PENDING satırları batch bazında gönderir. Tek worker — eşzamanlılık yok. */
     void drainOutbox() {
+        if (stopping) return;   // kapanış: yeni tur yok — satırlar veritabanında, başka pod alır
+        flushSentUnrecorded();
         try {
             // Yalnız ZAMANI GELMİŞ satırlar: fail()'in backoff'u satıra yazılır; süpürme/enqueue/açılış turları
             // bekleyen retry'ı erken göndermesin (2026-09-28). Yeni satırlar (damgasız) hemen gelir.
@@ -1421,11 +1502,21 @@ public class UserPushService {
             // gecikmesiz tur kuyruklar ve tek iş parçacıklı worker kendini durmadan yeniden çağırırdı.
             Set<Long> handled = new java.util.HashSet<>();
             for (UserPushDelivery d : claimed) if (d.getId() != null) handled.add(d.getId());
-            for (var e : byBatch.entrySet()) sendBatch(e.getValue());
+            List<List<UserPushDelivery>> batches = new ArrayList<>(byBatch.values());
+            for (int i = 0; i < batches.size(); i++) {
+                if (stopping) {   // kapanış: kalan batch'ler gönderilmez, kiraları bırakılır (başka pod beklemeden alır)
+                    for (int j = i; j < batches.size(); j++) releaseLease(batches.get(j));
+                    break;
+                }
+                // Çok pod (2026-10-21, MP-05): tur kirası 50 satırın SIRALI gönderimini kapsar; dolarsa başka pod satırları
+                // yeniden kiralayıp gönderirdi. Her batch'ten hemen önce kira tazelenir, yalnız tazelenen satırlar gider.
+                List<UserPushDelivery> mine = renewForSend(batches.get(i));
+                if (!mine.isEmpty()) sendBatch(mine);
+            }
             // Gönderim sürerken YENİ satır birikmiş olabilir — yalnız onlar için bir tur daha bak.
             boolean freshWork = deliveryRepo.findDuePending(ISO.format(Instant.now()), OUTBOX_PAGE).stream()
                     .anyMatch(d -> d.getId() == null || !handled.contains(d.getId()));
-            if (freshWork) worker.execute(this::drainOutbox);
+            if (freshWork && !stopping) worker.execute(this::drainOutbox);
         } catch (Exception e) {
             log.warn("user-push outbox taraması düştü (bir sonraki enqueue yeniden dener): {}", e.toString());
         }
@@ -1433,26 +1524,122 @@ public class UserPushService {
 
     /** TEK toplu istek (K9): batch'in tüm alıcıları tek userIds dizisinde. */
     /** Kira süresi: gönderim süresinin (bağlantı + gövde) iki katı + pay, en az 2 dk. */
-    private long claimLeaseSec() { return Math.max(120L, totalTimeout() * 2L + 30L); }
+    private long claimLeaseSec() {
+        if (leaseSecondsOverride > 0) return leaseSecondsOverride;
+        return Math.max(120L, totalTimeout() * 2L + 30L);
+    }
+
+    /** Test: kira süresi (sn) — 0 = hesaplanan. Çok pod kira testi kısa kira verir. */
+    long leaseSecondsOverride = 0;
+
+    /** Tur / batch başına tekil kira damgası (saniye + rastgele kesir; "şimdi" damgasıyla metin olarak sıralı). */
+    private String newLease() {
+        return leaseStamp(claimLeaseSec());
+    }
+
+    /**
+     * Tekil kira damgası: şimdi + {@code seconds} (saniye + rastgele kesir). Tur sahiplenmesi, batch tazelemesi ve "gönderildi,
+     * sonucu yazılamadı" tutuşu AYNI damga biçimini ve aynı {@code renewLease} CAS'ını kullanır (ikinci inceleme D3).
+     */
+    static String leaseStamp(long seconds) {
+        return ISO.format(Instant.now().plusSeconds(seconds))
+                + "." + String.format("%09d", java.util.concurrent.ThreadLocalRandom.current().nextInt(1_000_000_000));
+    }
+
+    /**
+     * Gönderilmek ÜZERE olan batch'in kirası (ikinci inceleme D3): en az {@link #SENT_UNRECORDED_HOLD_SEC}. POST başarılı olup
+     * SENT yazılamazsa satır, bu pod'un ilk tutuş yazımı da düşse (havuz tükenmesi) en az bu süre başka pod'ca yeniden
+     * kiralanamaz; tutuş her süpürmede ileri alınır. Bedeli: pod gönderim ORTASINDA çökerse o batch en çok bu kadar gecikir
+     * (düzgün kapanışta süren istek sonucuyla biter). Test kısa kira verirse ({@link #leaseSecondsOverride}) o kullanılır.
+     */
+    long inFlightLeaseSec() {
+        if (leaseSecondsOverride > 0) return leaseSecondsOverride;
+        return Math.max(claimLeaseSec(), SENT_UNRECORDED_HOLD_SEC);
+    }
+
+    /**
+     * Batch'in kirasını gönderimden HEMEN ÖNCE tazeler (2026-10-21, çok pod — MP-05) ve yalnız tazelenen satırları döner.
+     * Kimliksiz satır (yalnız birim testlerinin kayıtsız taklitleri) kiralanmamıştır, olduğu gibi döner. Tazeleme sorgusu
+     * düşerse batch GÖNDERİLMEZ (kira dolunca herhangi bir pod alır — gecikme, çift gönderim değil).
+     */
+    List<UserPushDelivery> renewForSend(List<UserPushDelivery> batch) {
+        Map<String, List<UserPushDelivery>> byLease = new LinkedHashMap<>();
+        List<UserPushDelivery> out = new ArrayList<>(batch.size());
+        for (UserPushDelivery d : batch) {
+            if (d.getId() == null || d.getNextAttemptAt() == null) out.add(d);   // kiralanmamış (kimliksiz) satır
+            else byLease.computeIfAbsent(d.getNextAttemptAt(), k -> new ArrayList<>()).add(d);
+        }
+        for (Map.Entry<String, List<UserPushDelivery>> e : byLease.entrySet()) {
+            List<UserPushDelivery> rows = e.getValue();
+            List<Long> ids = rows.stream().map(UserPushDelivery::getId).toList();
+            String lease = leaseStamp(inFlightLeaseSec());
+            int renewed;
+            try {
+                renewed = deliveryRepo.renewLease(ids, e.getKey(), lease);
+            } catch (Exception ex) {
+                log.warn("user-push kira tazelenemedi ({} satır) — bu batch GÖNDERİLMİYOR (kira dolunca yeniden alınır): {}",
+                        ids.size(), ex.toString());
+                continue;
+            }
+            if (renewed <= 0) {
+                log.info("user-push: {} satırın kirası başka pod'a geçmiş — bu pod göndermiyor", ids.size());
+                continue;
+            }
+            List<UserPushDelivery> kept = rows;
+            if (renewed < ids.size()) {
+                Set<Long> stillMine = new java.util.HashSet<>();
+                try {
+                    for (UserPushDelivery x : deliveryRepo.findByIdInAndNextAttemptAtOrderByIdAsc(ids, lease)) stillMine.add(x.getId());
+                } catch (Exception ex) {
+                    log.warn("user-push tazelenen satırlar okunamadı — bu batch GÖNDERİLMİYOR: {}", ex.toString());
+                    continue;
+                }
+                kept = rows.stream().filter(d -> stillMine.contains(d.getId())).toList();
+                log.info("user-push: {} / {} satırın kirası başka pod'a geçmiş — yalnız kalanlar gönderiliyor",
+                        ids.size() - kept.size(), ids.size());
+            }
+            for (UserPushDelivery d : kept) {
+                d.setNextAttemptAt(lease);
+                out.add(d);
+            }
+        }
+        return out;
+    }
+
+    /** Gönderilmeyecek batch'in kirasını bırakır (kapanış) — hata yutulur: kira kendiliğinden dolar. */
+    private void releaseLease(List<UserPushDelivery> batch) {
+        Map<String, List<Long>> byLease = new LinkedHashMap<>();
+        for (UserPushDelivery d : batch) {
+            if (d.getId() != null && d.getNextAttemptAt() != null)
+                byLease.computeIfAbsent(d.getNextAttemptAt(), k -> new ArrayList<>()).add(d.getId());
+        }
+        for (Map.Entry<String, List<Long>> e : byLease.entrySet()) {
+            try {
+                deliveryRepo.releaseLease(e.getValue(), e.getKey());
+            } catch (Exception ex) {
+                log.debug("user-push kira bırakılamadı ({} satır, kira dolunca alınır): {}", e.getValue().size(), ex.toString());
+            }
+        }
+    }
 
     /**
      * Zamanı gelmiş satırları bu tur için kiralar ({@link UserPushDeliveryRepository#claimDue}) ve YALNIZ kiralananları
      * döner — iki pod aynı satırı göndermez. Kira damgası tur başına tekildir (saniye + rastgele kesir; metin
-     * karşılaştırması {@code findDuePending}'in "şimdi" damgasıyla sıralı kalır). Sahiplenme sorgusu düşerse eski yol
-     * (okunan satırlar) — tek pod'da davranış birebir aynıdır.
+     * karşılaştırması {@code findDuePending}'in "şimdi" damgasıyla sıralı kalır). Sahiplenme sorgusu düşerse bu tur HİÇBİR
+     * şey göndermez (2026-10-21, çok pod — MP-05; eskiden okunan satırlar gönderiliyordu ve başka pod aynı satırları
+     * kiralayıp gönderebiliyordu): satır PENDING kalır, sonraki tur alır — push gecikir, iki kez gitmez. Kira yalnız turun
+     * ilk batch'ine kadar geçerli sayılmaz: her batch gönderimden hemen önce {@link #renewForSend} ile tazelenir.
      *
-     * <p>İSTİSNA (2026-10-09, sonsuz döngü düzeltmesi): veritabanı YAZMAYI REDDEDİYORSA ({@link #writeRejected} — ör.
-     * PostgreSQL yük devri sonrası salt-okunur replika, SQLSTATE 25006) eski yola düşülmez, bu tur HİÇ gönderilmez. Eski
-     * yol okunan satırları gönderiyor, push API 2xx dönüyor, ardından sonucu yazmak da reddediliyordu: satır PENDING kalıp
-     * her süpürmede (dakikada bir) aynı push kişiye yeniden gidiyordu. Yazma reddinde gönderilmeyen satır kaybolmaz —
-     * veritabanı yazılabilir olunca ilk tur gönderir.
+     * <p>Yazma reddi (2026-10-09, {@link #writeRejected} — ör. PostgreSQL yük devri sonrası salt-okunur replika, SQLSTATE
+     * 25006) ayrıca uyarılır: okunan satırlar gönderilseydi push API 2xx döner, sonucu yazmak da reddedilir, satır PENDING
+     * kalıp her süpürmede aynı push yeniden giderdi. Gönderilmeyen satır kaybolmaz — veritabanı yazılabilir olunca ilk tur
+     * gönderir.
      */
     List<UserPushDelivery> claim(List<UserPushDelivery> due) {
         List<Long> ids = due.stream().map(UserPushDelivery::getId).filter(java.util.Objects::nonNull).toList();
         if (ids.isEmpty()) return due;
         Instant now = Instant.now();
-        String lease = ISO.format(now.plusSeconds(claimLeaseSec()))
-                + "." + String.format("%09d", java.util.concurrent.ThreadLocalRandom.current().nextInt(1_000_000_000));
+        String lease = newLease();
         try {
             if (deliveryRepo.claimDue(ids, ISO.format(now), lease) == 0) return List.of();
             return deliveryRepo.findByIdInAndNextAttemptAtOrderByIdAsc(ids, lease);
@@ -1462,8 +1649,12 @@ public class UserPushService {
                         + "sonuç yazılamayacağı için yeniden gönderim döngüsü olurdu: {}", ids.size(), e.toString());
                 return List.of();
             }
-            log.debug("user-push sahiplenme yapılamadı ({} satır) — okunan satırlarla devam: {}", ids.size(), e.toString());
-            return due;
+            // Çok pod (2026-10-21, MP-05): sahiplenme düşerse HİÇBİR şey gönderilmez — eskiden okunan (kiralanmamış) satırlar
+            // gönderiliyordu; aynı anda başka pod onları kiralayıp gönderebiliyordu. Satır PENDING kalır, sonraki tur alır
+            // (push en çok bir süpürme aralığı ≈ 60 sn gecikir, iki kez gitmez).
+            log.warn("user-push sahiplenme yapılamadı ({} satır) — bu tur gönderilmiyor (sonraki tur yeniden dener): {}",
+                    ids.size(), e.toString());
+            return List.of();
         }
     }
 
@@ -1491,8 +1682,26 @@ public class UserPushService {
         return false;
     }
 
-    /** Gönderildi ama sonucu yazılamadı: SENT sonucunun yeniden yazımı için gereken alanlar + kayıt anı. */
-    record SentUnrecorded(Integer attempts, Integer httpStatus, String sentAt, long atMs) {}
+    /**
+     * Gönderildi ama sonucu yazılamadı: SENT sonucunun yeniden yazımı için gereken alanlar + kayıt anı + satırın şu anki kira
+     * damgası ({@code lease}; bu pod'un tuttuğu, null = bilinmiyor).
+     */
+    record SentUnrecorded(Integer attempts, Integer httpStatus, String sentAt, long atMs, String lease) {
+        SentUnrecorded(Integer attempts, Integer httpStatus, String sentAt, long atMs) {
+            this(attempts, httpStatus, sentAt, atMs, null);
+        }
+
+        SentUnrecorded withLease(String l) {
+            return new SentUnrecorded(attempts, httpStatus, sentAt, atMs, l);
+        }
+    }
+
+    /**
+     * Sonucu yazılamamış gönderimin satır kirası bu kadar ileri alınır ve her süpürmede (≈ 60 sn) yeniden ileri alınır
+     * (2026-10-21, çok pod — inceleme F4): kira dolup başka pod satırı yeniden kiralayıp AYNI push'u ikinci kez göndermesin.
+     * Pod ölürse kira en geç bu sürede düşer ve satır yeniden gönderilir (pod ölümünde en az bir kez — bilinçli).
+     */
+    static final long SENT_UNRECORDED_HOLD_SEC = 10L * 60;
 
     /**
      * Push API'nin KABUL ETTİĞİ ama sonucu (tam kayıt + dar güncelleme) yazılamamış satırlar (2026-10-09). Satır
@@ -1509,7 +1718,7 @@ public class UserPushService {
     List<UserPushDelivery> withoutSentUnrecorded(List<UserPushDelivery> rows) {
         if (sentUnrecorded.isEmpty()) return rows;
         long nowMs = System.currentTimeMillis();
-        sentUnrecorded.values().removeIf(s -> nowMs - s.atMs() > SENT_UNRECORDED_TTL_MS);
+        pruneSentUnrecorded(nowMs);
         List<UserPushDelivery> out = new ArrayList<>(rows.size());
         for (UserPushDelivery d : rows) {
             SentUnrecorded s = d.getId() == null ? null : sentUnrecorded.get(d.getId());
@@ -1527,14 +1736,78 @@ public class UserPushService {
     }
 
     /** Gönderilmiş satırın sonucu yazılamadı — sonraki turların yeniden göndermemesi için hatırla (tavanlı). */
-    private void rememberSentUnrecorded(UserPushDelivery d) {
+    private void rememberSentUnrecorded(UserPushDelivery d, String lease) {
         if (d.getId() == null) return;
         if (sentUnrecorded.size() >= SENT_UNRECORDED_MAX) {
             log.warn("user-push: sonucu yazılamamış gönderim kaydı tavanda ({}) — satır #{} hatırlanamadı", SENT_UNRECORDED_MAX, d.getId());
             return;
         }
-        sentUnrecorded.put(d.getId(), new SentUnrecorded(d.getAttempts(), d.getHttpStatus(), d.getSentAt(),
-                System.currentTimeMillis()));
+        SentUnrecorded s = new SentUnrecorded(d.getAttempts(), d.getHttpStatus(), d.getSentAt(), System.currentTimeMillis(), lease);
+        sentUnrecorded.put(d.getId(), s);
+        holdLease(d.getId(), s);   // hemen: kira dolmadan başka pod satırı yeniden almasın
+    }
+
+    /**
+     * Sonucu yazılamamış gönderimleri kalıcılaştırır (2026-10-21, çok pod — inceleme F4): her süpürme / turda önce SENT
+     * yazılmaya çalışılır; yazılamazsa satırın kirası (hâlâ bu pod'unsa) ileri alınır — satır BAŞKA pod'ca yeniden
+     * kiralanıp ikinci kez gönderilmesin. Eskiden SENT yalnız bu pod satırı kira dolunca yeniden kiraladığında yazılıyordu;
+     * kira dolunca iki pod'un süpürmesi yarışıyor, öbür pod kazanırsa aynı push yeniden gidiyordu.
+     */
+    void flushSentUnrecorded() {
+        if (sentUnrecorded.isEmpty()) return;
+        long nowMs = System.currentTimeMillis();
+        pruneSentUnrecorded(nowMs);
+        for (Map.Entry<Long, SentUnrecorded> e : new ArrayList<>(sentUnrecorded.entrySet())) {
+            Long id = e.getKey();
+            SentUnrecorded s = e.getValue();
+            try {
+                deliveryRepo.updateOutcome(id, "SENT", s.attempts(), s.httpStatus(), null, s.sentAt(), null);
+                sentUnrecorded.remove(id, s);
+                log.info("user-push satır #{}: gönderilmiş push'un SENT sonucu şimdi yazıldı (yeniden gönderilmedi)", id);
+            } catch (Exception ex) {
+                holdLease(id, s);
+            }
+        }
+    }
+
+    /**
+     * {@link #SENT_UNRECORDED_TTL_MS}'den eski kayıtları düşürür — SESSİZ DEĞİL (ikinci inceleme D3): düşen her kayıt ERROR
+     * satırı bırakır (kimlik + gönderim anı); satırın SENT sonucu 24 saattir yazılamıyor, tutuş bırakıldığı için kira dolunca
+     * satır YENİDEN GÖNDERİLEBİLİR. @return düşen kayıt sayısı
+     */
+    int pruneSentUnrecorded(long nowMs) {
+        int dropped = 0;
+        for (Map.Entry<Long, SentUnrecorded> e : new ArrayList<>(sentUnrecorded.entrySet())) {
+            SentUnrecorded x = e.getValue();
+            if (nowMs - x.atMs() <= SENT_UNRECORDED_TTL_MS) continue;
+            if (!sentUnrecorded.remove(e.getKey(), x)) continue;
+            dropped++;
+            if (dropped <= 20) {
+                log.error("user-push satır #{}: gönderilmiş push'un SENT sonucu {} saattir yazılamadı (gönderim {}) — izden "
+                        + "düşürüldü; kira dolunca satır YENİDEN GÖNDERİLEBİLİR", e.getKey(), SENT_UNRECORDED_TTL_MS / 3_600_000L,
+                        x.sentAt());
+            }
+        }
+        if (dropped > 20) log.error("user-push: toplam {} sonucu yazılamamış gönderim kaydı düşürüldü (ilk 20'si yukarıda)", dropped);
+        return dropped;
+    }
+
+    /** Satırın kirasını (hâlâ bu pod'un damgasındaysa) ileri alır; hata yutulur (sonraki süpürme yeniden dener). */
+    private void holdLease(Long id, SentUnrecorded s) {
+        if (id == null || s == null || s.lease() == null) return;
+        String next = leaseStamp(SENT_UNRECORDED_HOLD_SEC);
+        try {
+            int n = deliveryRepo.renewLease(List.of(id), s.lease(), next);
+            if (n == 1) {
+                sentUnrecorded.replace(id, s, s.withLease(next));
+            } else {
+                // Kira artık bu pod'un değil (başka pod aldı ya da satır sonuçlandı) — ileri alınacak bir şey yok.
+                sentUnrecorded.replace(id, s, s.withLease(null));
+                log.warn("user-push satır #{}: sonucu yazılamamış gönderimin kirası artık bu pod'da değil", id);
+            }
+        } catch (Exception ex) {
+            log.debug("user-push satır #{}: kira ileri alınamadı (sonraki süpürme yeniden dener): {}", id, ex.toString());
+        }
     }
 
     private void sendBatch(List<UserPushDelivery> rows) {
@@ -1601,7 +1874,9 @@ public class UserPushService {
             if (notificationId != null && notificationId.length() > MAX_NOTIFICATION_ID)
                 notificationId = notificationId.substring(0, MAX_NOTIFICATION_ID);
             String sentAt = ISO.format(Instant.now());
+            Map<Long, String> leases = new HashMap<>();   // sonuç yazılamazsa kirayı tutabilmek için (inceleme F4)
             for (UserPushDelivery d : rows) {
+                if (d.getId() != null && d.getNextAttemptAt() != null) leases.put(d.getId(), d.getNextAttemptAt());
                 d.setStatus("SENT");
                 d.setHttpStatus(resp.statusCode());
                 d.setSentAt(sentAt);
@@ -1610,7 +1885,7 @@ public class UserPushService {
                 d.setNotificationId(notificationId);   // tek istek → tek numara, TÜM alt satırlara
                 d.setRawResponse(raw);
             }
-            saveOutcome(rows);
+            saveOutcome(rows, leases);
             log.info("user-push gönderildi: {} alıcı (HTTP {})", userIds.size(), resp.statusCode());
         } else {
             fail(rows, resp.statusCode(), "HTTP " + resp.statusCode() + " — " + raw, true);
@@ -1623,6 +1898,11 @@ public class UserPushService {
      * PENDING kalıp yeniden gönderilmesin, başarısız satırın deneme sayacı da ilerlesin diye (2026-09-28).
      */
     private void saveOutcome(List<UserPushDelivery> rows) {
+        saveOutcome(rows, Map.of());
+    }
+
+    /** {@link #saveOutcome(List)} — {@code leases}: gönderilen satırların kira damgası (sonuç yazılamazsa kira tutulur). */
+    private void saveOutcome(List<UserPushDelivery> rows, Map<Long, String> leases) {
         try {
             deliveryRepo.saveAll(rows);
         } catch (Exception e) {
@@ -1636,7 +1916,7 @@ public class UserPushService {
                 } catch (Exception ex) {
                     log.warn("user-push satır #{} durumu yazılamadı: {}", d.getId(), ex.toString());
                     // Gönderildi ama PENDING kaldı (2026-10-09): sonraki turlar yeniden göndermesin — withoutSentUnrecorded.
-                    if ("SENT".equals(d.getStatus())) rememberSentUnrecorded(d);
+                    if ("SENT".equals(d.getStatus())) rememberSentUnrecorded(d, leases.get(d.getId()));
                 }
             }
         }
@@ -1694,7 +1974,8 @@ public class UserPushService {
             }
         }
         saveOutcome(rows);
-        if (minDelay != Long.MAX_VALUE) worker.schedule(this::drainOutbox, minDelay, TimeUnit.SECONDS);
+        // Kapanışta yeniden deneme planlanmaz (worker yeni iş almaz) — satır backoff damgasıyla durur, başka pod alır
+        if (minDelay != Long.MAX_VALUE && !stopping) worker.schedule(this::drainOutbox, minDelay, TimeUnit.SECONDS);
         log.warn("user-push gönderilemedi ({} alıcı): {}", rows.size(), error);
     }
 

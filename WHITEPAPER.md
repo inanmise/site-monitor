@@ -354,18 +354,21 @@ Birden çok pod çalışırken taramayı aynı anda yalnız bir pod yapmalıdır
 ```
 scheduler_lock tablosu:
   name        → "cert-check"
-  locked_by   → "hostname-uuid8"
-  locked_until→ "2026-08-06T09:10:00" (TTL: 10 dk)
+  locked_by   → "<pod adı>-uuid8"
+  locked_until→ "2026-08-06T09:10:00" (TTL: en çok 3 dk, iş sürdükçe 30 sn'de bir uzatılır)
 
 Akış:
   Pod başlar → aynı host'un eski kilitleri temizlenir
   Tarama zamanı → INSERT INTO scheduler_lock (benzersiz kısıt)
-    ├─ Başarılı → bu pod tarar
+    ├─ Başarılı → bu pod tarar; kilidi 30 sn'de bir yeniler
     └─ Hata (duplicate key) → başka pod tarıyor, atla
-  Tarama biter → DELETE FROM scheduler_lock
+  Kilit kaybedildi (yenilemede satır yok) → tarama sonuçlarını yazmaz
+  Tarama biter / pod kapanır → kilit bırakılır
 ```
 
-Sıkışan bir kilidi **Sistem Sağlığı** ekranından zorla serbest bırakabilirsiniz.
+Sıkışan bir kilidi **Sistem Sağlığı** ekranından zorla serbest bırakabilirsiniz. Uzun bir işin kilidi en çok 3 saat (gece temizliğinde 4 saat) yenilenir; takılan bir iş kilidi sonsuza dek tutamaz.
+
+İzleme taramaları (HTTP, port, ping, DNS, alan adı, …) bu kilidin yanında **tarama liderliği** ile tek pod'a verilir: veritabanındaki kirayı (180 sn, kendi iş parçacığında yenilenir) tutan pod bütün izleme taramalarını koşar ve alarm kararlarını verir; kapanırken kirayı hemen bırakır, diğer pod yaklaşık yarım dakikada devralır.
 
 ---
 ## 6. Veritabanı Şeması
@@ -728,7 +731,7 @@ Sertifika sahibi her aktif takıma, sahip olduğu domainlerin geçen tam haftaya
 
 Maile **ayrıntılı kesinti raporu PDF olarak eklenir**: haftanın her kesintisi grafikler ve durum renkleriyle birlikte listelenir, e-posta gövdesi ekin varlığını açıkça duyurur. Böylece yönetici özetini gövdede okur, ayrıntıyı ekte bulur.
 
-Gönderim takım × hafta bazında idempotenttir — aynı hafta için ikinci mail gitmez. **Ayarlar → Haftalık Erişilebilirlik** bölümünden yapılandırılır; oradan geçmiş gönderimleri görüntüleyebilir, önizleme alabilir, kesinti PDF'ini tek başına indirebilir ve test maili gönderebilirsiniz.
+Gönderim takım × hafta başına en çok bir kezdir — aynı hafta için ikinci mail gitmez, birden çok pod çalışırken de. Her takım ayrı sahiplenilir: bir takımın hatası diğerlerini durdurmaz. Ana koşu kaçarsa ya da yarıda kalırsa (pod kapandı, veritabanı okunamadı) aynı gün saat başlarını 25 geçe bir telafi turu, bu hafta için henüz hiç denenmemiş takımları gönderir. Hata alan takım ve e-posta kanalı kapalıyken "atlandı" sayılan takım (artık "gönderildi" sayılmaz) elle tetiklenen koşuyla yeniden denenir. Gönderim sürerken pod kapanırsa o takım "yarıda kaldı" görünür (posta gitmiş olabilir); zamanlanmış koşu onu yeniden göndermez, yalnız elle tetiklenen koşu üstlenir. Elle tetikleme (`POST /api/admin/system/weekly-availability/run`) yalnız bu hafta **henüz gönderilmemiş** takımlara gider — bir takıma bilinçli olarak yeniden göndermek için Ayarlar'daki test gönderimini takım adresine yapın. **Ayarlar → Haftalık Erişilebilirlik** bölümünden yapılandırılır; oradan geçmiş gönderimleri görüntüleyebilir, önizleme alabilir, kesinti PDF'ini tek başına indirebilir ve test maili gönderebilirsiniz.
 
 ### 9.4 E-posta Konfigürasyonu
 
@@ -1770,7 +1773,7 @@ strategy:
   maxUnavailable: 0    # eski pod ancak yenisi hazır olunca düşer
 ```
 
-`maxUnavailable: 0` tek pod kurulumunda en kritik ayardır: yeni pod readiness probe'unu geçene kadar eski pod trafiği taşımaya devam eder, yani sürüm geçişi kullanıcıya kesinti olarak yansımaz. `terminationGracePeriodSeconds: 60`, uygulamanın `server.shutdown=graceful` ayarıyla birlikte, devam eden isteklerin ve süren bir taramanın yarıda kesilmemesini sağlar.
+`maxUnavailable: 0` tek pod kurulumunda en kritik ayardır: yeni pod readiness probe'unu geçene kadar eski pod trafiği taşımaya devam eder, yani sürüm geçişi kullanıcıya kesinti olarak yansımaz. Eski pod kapanırken önce 10 saniyelik `preStop` beklemesiyle yük dengeleyiciden çıkar; ardından tarama liderliğini hemen bırakır, gönderilmekte olan bildirimleri bitirir ve uygulamanın `server.shutdown=graceful` ayarıyla devam eden istekleri ve süren işi tamamlar. Bunların hepsi `terminationGracePeriodSeconds: 120` içine sığar (preStop 10 + bildirim boşaltma 20 + web 20 + yürütücüler 20 + zamanlanmış işler 20 + ~10 sn).
 
 ### 17.2 Sağlık Kontrolleri
 
@@ -1789,8 +1792,12 @@ Pod'un belleğinde kalıcı hiçbir şey yoktur; yeniden başlatma veri kaybetti
 | Durum | Nerede yaşıyor | Pod ölünce |
 |---|---|---|
 | Kullanıcı oturumları | `spring_session` (JDBC deposu) | Korunur — kullanıcı yeniden giriş yapmaz |
-| Zamanlayıcı kilidi | `scheduler_lock` tablosu (TTL'li) | TTL dolunca serbest kalır |
-| Alarm durumu, doğrulama sayaçları | `alert_events` ve ilgili tablolar | Korunur |
+| Zamanlayıcı kilidi | `scheduler_lock` tablosu (TTL'li, iş sürdükçe 30 sn'de bir yenilenir) | Kapanışta bırakılır; çökmede TTL (≤ 3 dk) dolunca serbest kalır |
+| Tarama liderliği | `monitor_check_schedule` kira satırı (180 sn) | Kapanışta hemen bırakılır; çökmede kira dolunca diğer pod alır |
+| Alarm durumu | `alert_events` ve ilgili tablolar | Korunur |
+| Doğrulama / kurtarma sayaçları | Lider pod'un belleği | Yeniden kurulur — açılmak ya da kapanmak üzere olan alarm doğrulamasını yeni liderde baştan yapar (gecikir, iki kez bildirilmez) |
+| DNS / alan adı değişikliği | Kontrol satırında "bekliyor" işareti | Korunur — yeni lider karara bağlar |
+| Ağ kesintisi durumu, gönderilecek çözüm postası | `network_outage_events` satırı, alarm satırındaki işaret | Korunur — başka pod devam eder |
 | Bakım penceresi önbelleği | Bellekte, 30 sn'de bir DB'den tazelenir | Yeniden kurulur |
 | Ayar önbellekleri | Bellekte, 10 sn'de bir tazelenir | Yeniden kurulur |
 
@@ -1802,14 +1809,16 @@ Ağır açılış işleri `STARTUP_CHECK_DELAY_MS` (varsayılan 60 sn) kadar gec
 
 ### 17.5 Yatay Ölçeklemeye Geçmek
 
-Tek pod kapasitesi yetmezse chart hazırdır: `replicaCount`, `autoscaling`, `podDisruptionBudget` ve `topologySpreadConstraints` değerlerini açmanız yeterlidir. Çok-pod davranışları zaten kodda mevcut ve tek pod kurulumunda da zararsızca çalışıyor:
+İki ve daha çok pod desteklenir (çok pod sürüm 1, 2026-10-21). Bilinmesi gereken fark: izleme taramalarının hepsini **tek pod (lider)** koşar — ikinci pod yüksek erişilebilirlik ve arayüz kapasitesi getirir, izleme kapasitesi getirmez. İzleme yükü büyürse önce dikey ölçekleyin; otomatik ölçekleme (HPA) bu yüzden kapalı kalır. Çok-pod davranışları kodda mevcut ve tek pod kurulumunda da zararsızca çalışıyor:
 
-- **Zamanlayıcı kilidi** (bkz. §5.3) — kaç pod olursa olsun bir taramayı yalnız biri yürütür.
-- **JDBC oturum deposu** (`SPRING_SESSION_STORE_TYPE=jdbc`) — oturumlar pod'lar arasında paylaşılır.
+- **Tarama liderliği** (bkz. §5.3) — izleme taramalarını kirayı tutan tek pod koşar; lider kapanırken diğer pod yaklaşık yarım dakikada devralır (pod aniden ölürse en çok ~4 dakika, takılan lider 10 dakikada kirayı bırakır). Takipçide basılan "Şimdi kontrol et" sonucu değerlendirme için lidere iletilir.
+- **Yenilenen zamanlayıcı kilitleri** — kaç pod olursa olsun bir işi yalnız biri yürütür; kilidini kaybeden iş sonucunu yazmaz.
+- **Önce sahiplen, sonra gönder** — alarm açılışı, yeniden hatırlatma, çözüm postası, fırtına kapanışı, push, haftalık rapor ve haftalık erişilebilirlik postası satır düzeyinde sahiplenilir: aynı bildirim iki pod'dan iki kez gitmez, pod kapanınca da kaybolmaz.
+- **JDBC oturum deposu** (`SPRING_SESSION_STORE_TYPE=jdbc`) — oturumlar pod'lar arasında paylaşılır; bellek oturum deposuyla birden çok pod Helm'de reddedilir.
 - **Tek aktif oturum kaydı** — bir kullanıcının aynı anda tek oturumu olur, hangi pod'a düştüğünden bağımsız.
 - **Ayar önbelleklerinin periyodik tazelenmesi** — bir pod'da yapılan ayar değişikliği saniyeler içinde diğerlerine yayılır.
 
-Geçmeden önce iki şeyi ölçün: veritabanı bağlantı havuzu **pod başına** ayrıldığı için `DB_POOL_MAX × replika` toplamı PostgreSQL'in `max_connections` değerini aşmamalıdır, ve senaryo izleme kullanıyorsanız her pod kendi k6 alt süreçlerini çalıştıracağı için bellek talebi replika sayısıyla doğrusal artar.
+Geçiş ayrı bir adımdır: önce yeni sürüm tek pod'la dağıtılır, sonra aynı imajla `replicaCount: 2` ve kesinti bütçesi açılır (`docs/PROD_DEPLOY_CHECKLIST.md` → "Çok pod"). Öncesinde doğrulayın: liderlik her dağıtımda node değiştirdiği için **her node'dan aynı ağ çıkışı** (vekil, SMTP, LDAP, push, iç hedefler); node saatlerinin eşit olması; ve veritabanı bağlantıları — havuz **pod başına** ayrıldığından ve dağıtım sırasında bir pod fazladan açık olduğundan `max_connections ≥ (replika + 1) × DB_POOL_MAX + 25`. Senaryo izlemenin k6 alt süreçleri lider pod'da koşar; her pod lider olabileceği için her pod'un bellek limiti onları kaldırmalıdır.
 
 ---
 

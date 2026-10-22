@@ -510,10 +510,13 @@ public class WeeklyReportService {
             out.put("heartbeat_at", r.getEditingHeartbeat());
             return out;
         }
+        // Yalnız kilit kolonları yazılır (2026-10-21, MP-39): 45 sn'lik kalp atışı tam varlık kaydıyla eş zamanlı bir
+        // "onaya gönder"i geri alıyordu (durum DRAFT'a, belirteç null'a döner, PO'nun bağlantısı ölür).
+        String at = now();
+        reportRepo.setEditingLock(id, actor.userId(), actor.display(), at);
         r.setEditingUserId(actor.userId());
         r.setEditingBy(actor.display());
-        r.setEditingHeartbeat(now());
-        reportRepo.save(r);
+        r.setEditingHeartbeat(at);
         return Map.of("acquired", true);
     }
 
@@ -521,13 +524,13 @@ public class WeeklyReportService {
     public void releaseLock(Long id, Actor actor) {
         WeeklyReport r = reportRepo.findById(id).orElse(null);
         if (r == null || !Objects.equals(r.getEditingUserId(), actor.userId())) return;
+        if (actor.userId() != null) reportRepo.releaseEditingLock(id, actor.userId());   // koşullu, yalnız kilit kolonları
         r.setEditingUserId(null);
         r.setEditingBy(null);
         r.setEditingHeartbeat(null);
-        reportRepo.save(r);
     }
 
-    private void clearLock(WeeklyReport r) {
+    private static void clearLock(WeeklyReport r) {
         r.setEditingUserId(null);
         r.setEditingBy(null);
         r.setEditingHeartbeat(null);
@@ -543,66 +546,104 @@ public class WeeklyReportService {
             throw new IllegalStateException("VERSION_CONFLICT: rapor " + r.getUpdatedBy()
                     + " tarafından " + r.getUpdatedAt() + " tarihinde güncellendi");
         }
-        r.setContentJson(validateAndNormalizeContent(contentJson));
-        if ("REJECTED".equals(r.getStatus())) {
-            r.setStatus("DRAFT"); // iade sonrası düzenleme draft'a döndürür; rejectNote korunur
+        String content = validateAndNormalizeContent(contentJson);
+        // iade sonrası düzenleme draft'a döndürür; rejectNote korunur
+        String status = "REJECTED".equals(r.getStatus()) ? "DRAFT" : r.getStatus();
+        int readVersion = r.getVersion();
+        String at = now();
+        // Koşullu kayıt (2026-10-21, MP-39): okunan sürüm hâlâ geçerliyse yazılır. Her durum geçişi sürümü artırdığından
+        // eş zamanlı bir "onaya gönder / onayla" sonrası bayat kayıt raporu taslağa GERİ ÇEVİREMEZ (ve PO bağlantısını
+        // silemez) — 409 VERSION_CONFLICT alır. Eskiden tam varlık kaydı kazananın durumunu sessizce eziyordu.
+        if (reportRepo.updateContent(id, readVersion, content, status, actor.display(), at) == 0) {
+            WeeklyReport cur = reportRepo.findById(id).orElse(r);
+            throw new IllegalStateException("VERSION_CONFLICT: rapor " + cur.getUpdatedBy()
+                    + " tarafından " + cur.getUpdatedAt() + " tarihinde güncellendi");
         }
-        r.setVersion(r.getVersion() + 1);
-        if (Objects.equals(r.getEditingUserId(), actor.userId())) {
-            r.setEditingHeartbeat(now()); // kayıt = aktivite
-        }
+        r.setContentJson(content);
+        r.setStatus(status);
+        r.setVersion(readVersion + 1);
         r.setUpdatedBy(actor.display());
-        r.setUpdatedAt(now());
-        return reportRepo.save(r);
+        r.setUpdatedAt(at);
+        if (actor.userId() != null && Objects.equals(r.getEditingUserId(), actor.userId())
+                && reportRepo.touchEditingLock(id, actor.userId(), at) > 0) {
+            r.setEditingHeartbeat(at); // kayıt = aktivite
+        }
+        return r;
     }
 
     // ── Durum makinesi + mailler ──────────────────────────────────────────────
 
-    /** DRAFT → PENDING_APPROVAL; PO'ya bilgilendirme maili (yoksa SKIPPED). */
+    /**
+     * DRAFT → PENDING_APPROVAL; PO'ya bilgilendirme maili (yoksa SKIPPED).
+     *
+     * <p>Çok pod / çift tık (2026-10-21, MP-39): durum ÖNCE {@link WeeklyReportRepository#claimSubmit} ile alınır; posta
+     * yalnız kazanana gider. İkinci istek {@link StateChangedException} (409, güncel durum) alır — PO'ya ikinci posta ve
+     * ikinci belirteç (ilk postanın bağlantısını öldüren) üretilmez. Posta düşerse rapor onay bekler kalır, deneme
+     * {@code SUBMIT_PO} kaydına {@code FAILED: …} olarak yazılır (bugünkü davranış: durum geri alınmaz).
+     */
     public Map<String, Object> submit(Long id, Actor actor) {
         WeeklyReport r = get(id, actor);
         requireCanModify(r, actor);
         requireStatus(r, "DRAFT"); // ADMIN dahil: yalnız taslak onaya gönderilir
-        r.setStatus("PENDING_APPROVAL");
-        r.setVersion(r.getVersion() + 1);
-        clearLock(r); // düzenleme bitti
-        r.setSubmittedBy(actor.display());
-        r.setSubmittedAt(now());
-        r.setUpdatedBy(actor.display());
-        r.setUpdatedAt(now());
-        systemComment(r, "SUBMIT", actor, null);
         // Gönderim anı skoru (2026-09-13): liste sütunu için anlık görüntü; KPI hesabı düşerse gönderim durmaz
+        Integer score = r.getScore();
         try {
             var k = kpiService.compute(r.getTeamId(), r.getReportYear(), r.getWeekNo());
-            if (k != null && k.summary() != null && k.summary().score() != null) r.setScore(k.summary().score().value());
+            if (k != null && k.summary() != null && k.summary().score() != null) score = k.summary().score().value();
         } catch (Exception e) {
             log.warn("Haftalık rapor skoru hesaplanamadı (id={}): {}", r.getId(), e.toString());
         }
         // E-posta ile hızlı onay token'ı (tek-kullanımlık, süreli)
         String token = newApprovalToken();
-        r.setApprovalToken(token);
-        r.setApprovalTokenExpiresAt(ISO.format(Instant.now().plus(java.time.Duration.ofDays(APPROVAL_TOKEN_TTL_DAYS))));
-        reportRepo.save(r);
-
-        Team team = teamRepo.findById(r.getTeamId()).orElse(null);
-        String teamName = team != null ? team.getName() : "Takım";
-
-        List<String> poEmails = resolvePoEmails(r.getTeamId());
-        String poSubject = "[Site Monitor] " + teamName + " — " + r.getWeekLabel() + " raporu onayınızı bekliyor";
-        // PO mailine raporun TAMAMI gömülür + "Onayla" CTA'sı: PO maili açıp raporu görür
-        // ve maildeki linkten (login'siz) onaylayabilir. Görseller inline gider.
-        List<EmailNotificationService.InlineImage> inline = collectInlineImages(r);
-        String poHtml = emailService.buildWeeklyReportHtml(
-                teamName, r.getWeekLabel(), resolvePoDisplayName(r.getTeamId()),
-                r.getContentJson(), true, imageDisplayWidths(inline),
-                null, null, null, approveUrl(token), emailKpiSummary(r));
-        String poMail;
-        if (poEmails.isEmpty()) {
-            poMail = "SKIPPED_NO_CONTACT";
-            log.warn("Haftalık rapor onaya gönderildi ama PO kontağı yok: team={} report={}", teamName, id);
-        } else {
-            poMail = emailService.sendHtml(poEmails.toArray(new String[0]), null, poSubject, poHtml, inline);
+        String expiresAt = ISO.format(Instant.now().plus(java.time.Duration.ofDays(APPROVAL_TOKEN_TTL_DAYS)));
+        String at = now();
+        final Integer claimScore = score;
+        if (claim(id, "DRAFT", () -> reportRepo.claimSubmit(id, actor.display(), at, token, expiresAt, claimScore)) == 0) {
+            throw lostTransition(id, "submit");
         }
+        r.setStatus("PENDING_APPROVAL");
+        r.setVersion(r.getVersion() + 1);
+        clearLock(r); // düzenleme bitti
+        r.setSubmittedBy(actor.display());
+        r.setSubmittedAt(at);
+        r.setUpdatedBy(actor.display());
+        r.setUpdatedAt(at);
+        r.setScore(claimScore);
+        r.setApprovalToken(token);
+        r.setApprovalTokenExpiresAt(expiresAt);
+        r = afterClaim(r);
+        systemComment(r, "SUBMIT", actor, null);
+
+        String teamName = "Takım";
+        List<String> poEmails = List.of();
+        String poSubject = null;
+        String poHtml = null;
+        String poMail;
+        try {
+            Team team = teamRepo.findById(r.getTeamId()).orElse(null);
+            teamName = team != null ? team.getName() : "Takım";
+            poEmails = resolvePoEmails(r.getTeamId());
+            poSubject = "[Site Monitor] " + teamName + " — " + r.getWeekLabel() + " raporu onayınızı bekliyor";
+            // PO mailine raporun TAMAMI gömülür + "Onayla" CTA'sı: PO maili açıp raporu görür
+            // ve maildeki linkten (login'siz) onaylayabilir. Görseller inline gider.
+            List<EmailNotificationService.InlineImage> inline = collectInlineImages(r);
+            poHtml = emailService.buildWeeklyReportHtml(
+                    teamName, r.getWeekLabel(), resolvePoDisplayName(r.getTeamId()),
+                    r.getContentJson(), true, imageDisplayWidths(inline),
+                    null, null, null, approveUrl(token), emailKpiSummary(r));
+            if (poEmails.isEmpty()) {
+                poMail = "SKIPPED_NO_CONTACT";
+                log.warn("Haftalık rapor onaya gönderildi ama PO kontağı yok: team={} report={}", teamName, id);
+            } else {
+                poMail = emailService.sendHtml(poEmails.toArray(new String[0]), null, poSubject, poHtml, inline);
+            }
+        } catch (Exception e) {
+            // Sahiplenmeden SONRA: durum geri alınmaz (onay bekler), deneme kaydı başarısızlığı söyler.
+            poMail = failedStatus(e);
+            log.warn("Haftalık rapor PO postası hazırlanamadı/gönderilemedi (rapor onaya gönderildi): id={} err={}",
+                    id, e.toString());
+        }
+        if (poSubject == null) poSubject = "[Site Monitor] " + teamName + " — " + r.getWeekLabel() + " raporu onayınızı bekliyor";
         recordMail(r, "SUBMIT_PO", poEmails, null, poSubject, poHtml, poMail, actor);
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("data", r);
@@ -610,32 +651,194 @@ public class WeeklyReportService {
         return out;
     }
 
-    /** PENDING → APPROVED; müdüre tam rapor maili (To=MANAGER, CC=Team.email). */
+    /**
+     * PENDING → APPROVED; müdüre tam rapor maili (To=MANAGER, CC=Team.email) + takım / müdür push'u.
+     *
+     * <p>Sıra (2026-10-21, MP-39): yetki + durum → müdür alıcıları (yoksa 409 {@code MANAGER_CONTACT_MISSING}, durum
+     * DEĞİŞMEZ — bugünkü sözleşme) → durum {@link WeeklyReportRepository#claimApprove} ile alınır → YALNIZ kazanan
+     * postayı ve push'u gönderir. Kaybeden (çift tık, iki sekme, iki pod, e-posta bağlantısıyla yarış) 409
+     * {@link StateChangedException} alır; müdüre ikinci posta / ikinci push gitmez. Posta düşerse rapor ONAYLI kalır,
+     * {@code APPROVE_MANAGER} kaydı {@code FAILED: …} olur ve push "e-posta başarısız" der (bugünkü davranış) — yeniden
+     * gönderim "Tekrar gönder" ile.
+     */
     public Map<String, Object> approve(Long id, Actor actor) {
         WeeklyReport r = get(id, actor);
         requireCanApprove(r, actor);
         requireStatus(r, "PENDING_APPROVAL");
+        ManagerRecipients managers = resolveManagerRecipients(r); // MANAGER yoksa 409 fırlatır — durum değişmeden
 
-        String mailStatus = sendApprovalMail(r, actor); // MANAGER yoksa 409 fırlatır
-
-        r.setStatus("APPROVED");
-        r.setVersion(r.getVersion() + 1);
-        clearLock(r);
-        clearApprovalToken(r);
-        r.setApprovedBy(actor.display());
-        r.setApprovedAt(now());
-        r.setRejectNote(null);
+        String at = now();
+        if (claim(id, "PENDING_APPROVAL", () -> reportRepo.claimApprove(id, actor.display(), at)) == 0) {
+            throw lostTransition(id, "approve");
+        }
+        mirrorApproved(r, actor.display(), at);
+        r = afterClaim(r);
         systemComment(r, "APPROVE", actor, null);
-        if (mailSent(mailStatus)) r.setSentAt(now());
-        r.setUpdatedBy(actor.display());
-        r.setUpdatedAt(now());
-        reportRepo.save(r);
+
+        String mailStatus = sendApprovalMail(r, actor, managers);
+        markSentIfDelivered(r, mailStatus);
         pushTeamApproval(r, mailStatus, false);
 
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("data", r);
         out.put("mail_status", mailStatus);
         return out;
+    }
+
+    // ── Durum geçişi sahiplenmesi (2026-10-21, çok pod MP-39) ───────────────────────────────────────────────────────
+
+    /**
+     * Durum geçişini KAYBEDEN isteğin yanıtı: 409 + {@code code=WEEKLY_REPORT_STATE_CHANGED} + {@code current_status}.
+     * Kazanan isteğin postası / push'u zaten gitti; bu istek hiçbir şey göndermedi. {@link IllegalStateException} alt
+     * sınıfı: eski yakalayıcılar (e-posta bağlantısı sayfası dahil) aynı 409'u görmeye devam eder.
+     */
+    public static class StateChangedException extends com.sitemonitor.config.GlobalExceptionHandler.CodedConflictException {
+        public static final String CODE = "WEEKLY_REPORT_STATE_CHANGED";
+        private final String currentStatus;
+
+        public StateChangedException(String message, String currentStatus) {
+            super(CODE, message, currentStatus == null ? null : Map.of("current_status", currentStatus));
+            this.currentStatus = currentStatus;
+        }
+
+        /** Raporun şimdiki durumu; rapor bu arada silindiyse null. */
+        public String currentStatus() { return currentStatus; }
+    }
+
+    /**
+     * Koşullu geçişi koşturur. Sorgu bir veri erişim hatasıyla düşerse (satır kilidi çakışması — H2'nin "eş zamanlı
+     * güncelleme" hatası, PostgreSQL kilit beklemesi / serileştirme) satır yeniden okunur: durum GERÇEKTEN değiştiyse
+     * (başka istek kazandı) kaybeden gibi 0 döner; durum hâlâ beklenen değerse istisna aynen yükselir (GlobalExceptionHandler
+     * — kilit çakışması 503 LOCK_CONFLICT "birkaç saniye sonra tekrar deneyin"). Hiçbir durumda posta gönderilmez.
+     */
+    private int claim(Long id, String expectedStatus, java.util.function.IntSupplier op) {
+        try {
+            return op.getAsInt();
+        } catch (org.springframework.dao.DataAccessException e) {
+            WeeklyReport now = reportRepo.findById(id).orElse(null);
+            if (now != null && expectedStatus.equals(now.getStatus())) throw e;
+            log.info("Haftalık rapor durum geçişi eşzamanlı istekle çakıştı (kaybedildi): id={} beklenen={} güncel={}",
+                    id, expectedStatus, now == null ? null : now.getStatus());
+            return 0;
+        }
+    }
+
+    /** Sahiplenmeden sonra satırı yeniden okur (sürüm / içerik / onay damgası gerçek değerleriyle); okunamazsa yansıtılmış kopya. */
+    private WeeklyReport afterClaim(WeeklyReport mirrored) {
+        try {
+            return reportRepo.findById(mirrored.getId()).orElse(mirrored);
+        } catch (Exception e) {
+            log.warn("Haftalık rapor geçiş sonrası yeniden okunamadı (id={}): {}", mirrored.getId(), e.toString());
+            return mirrored;
+        }
+    }
+
+    private static void mirrorApproved(WeeklyReport r, String by, String at) {
+        r.setStatus("APPROVED");
+        r.setVersion(r.getVersion() + 1);
+        clearLock(r);
+        r.setApprovalToken(null);
+        r.setApprovalTokenExpiresAt(null);
+        r.setApprovedBy(by);
+        r.setApprovedAt(at);
+        r.setRejectNote(null);
+        r.setUpdatedBy(by);
+        r.setUpdatedAt(at);
+    }
+
+    private static void mirrorRejected(WeeklyReport r, String note, String by, String at) {
+        r.setStatus("REJECTED");
+        r.setVersion(r.getVersion() + 1);
+        r.setApprovalToken(null);
+        r.setApprovalTokenExpiresAt(null);
+        r.setRejectNote(note);
+        r.setRejectedBy(by);
+        r.setRejectedAt(at);
+        r.setUpdatedBy(by);
+        r.setUpdatedAt(at);
+    }
+
+    /** Müdür postası gittiyse (SENT / QUEUED_RETRY) gönderim anını YALNIZ aynı onay döngüsüne yazar. */
+    private void markSentIfDelivered(WeeklyReport r, String mailStatus) {
+        if (!mailSent(mailStatus)) return;
+        String at = now();
+        try {
+            String cycle = r.getApprovedAt() != null ? r.getApprovedAt() : "-";   // eski onaylı satır: onay anı yok
+            if (reportRepo.markSent(r.getId(), cycle, at) > 0) {
+                r.setSentAt(at);
+            } else {
+                // Rapor bu arada revize edildi (başka onay döngüsü) — gönderim anı o döngüye yazılmaz.
+                log.info("Haftalık rapor gönderim anı yazılmadı — rapor bu arada değişti (id={})", r.getId());
+            }
+        } catch (Exception e) {
+            log.warn("Haftalık rapor gönderim anı yazılamadı (id={}): {}", r.getId(), e.toString());
+        }
+    }
+
+    /** Posta hazırlama / gönderim istisnası → deneme kaydının durumu (istisna metni sızmaz, yalnız sınıf adı). */
+    private static String failedStatus(Exception e) {
+        return "FAILED: " + e.getClass().getSimpleName();
+    }
+
+    /** Kaybeden istek için güncel durumu okuyup açıklayıcı 409'u kurar. */
+    private StateChangedException lostTransition(Long id, String action) {
+        WeeklyReport cur = null;
+        try {
+            cur = reportRepo.findById(id).orElse(null);
+        } catch (Exception e) {
+            log.warn("Haftalık rapor güncel durumu okunamadı (id={}): {}", id, e.toString());
+        }
+        String st = cur == null ? null : cur.getStatus();
+        log.info("Haftalık rapor durum geçişi başka bir istekte (posta gönderilmedi): id={} işlem={} güncel={}", id, action, st);
+        return new StateChangedException(lostMessage(action, st), st);
+    }
+
+    public static String lostMessage(String action, String status) {
+        if (action.endsWith("_link")) {
+            // E-posta bağlantısı: rapor hâlâ onay bekliyorsa bağlantı (belirteç) bu arada yenilendi — yeniden onaya gönderildi.
+            if ("PENDING_APPROVAL".equals(status)) {
+                return com.sitemonitor.util.Msg.t("Bu bağlantı artık geçerli değil: rapor bu arada yeniden onaya gönderildi. En son gelen e-postadaki bağlantıyı kullanın.",
+                        "This link is no longer valid: the report was submitted for approval again in the meantime. Use the link in the most recent e-mail.");
+            }
+            action = action.substring(0, action.length() - "_link".length());
+        }
+        if (status == null) {
+            return com.sitemonitor.util.Msg.t("Rapor bu arada silindi; işlem yapılmadı.",
+                    "The report was deleted in the meantime; nothing was done.");
+        }
+        if ("approve".equals(action) && "APPROVED".equals(status)) {
+            return com.sitemonitor.util.Msg.t("Bu rapor zaten onaylanmış — müdüre ikinci bir e-posta gönderilmedi. Ek bir işlem gerekmiyor.",
+                    "This report has already been approved — no second e-mail was sent to the manager. Nothing else is needed.");
+        }
+        if ("reject".equals(action) && "REJECTED".equals(status)) {
+            return com.sitemonitor.util.Msg.t("Bu rapor zaten iade edilmiş — ekibe ikinci bir e-posta gönderilmedi.",
+                    "This report has already been returned — no second e-mail was sent to the team.");
+        }
+        if ("submit".equals(action) && "PENDING_APPROVAL".equals(status)) {
+            return com.sitemonitor.util.Msg.t("Rapor zaten onaya gönderilmiş — PO'ya ikinci bir e-posta gönderilmedi. Sayfayı yenileyin.",
+                    "The report has already been submitted for approval — no second e-mail was sent to the PO. Refresh the page.");
+        }
+        if ("reopen".equals(action) && "DRAFT".equals(status)) {
+            return com.sitemonitor.util.Msg.t("Rapor zaten revizyona açılmış. Sayfayı yenileyin.",
+                    "The report has already been reopened for revision. Refresh the page.");
+        }
+        if ("resend".equals(action) && "APPROVED".equals(status)) {
+            return com.sitemonitor.util.Msg.t("Rapor şu an başka bir istekle müdüre yeniden gönderildi ya da bu arada değişti — ikinci bir e-posta gönderilmedi. Sayfayı yenileyip gerekirse tekrar deneyin.",
+                    "The report was just re-sent to the manager by another request or changed in the meantime — no second e-mail was sent. Refresh the page and try again if needed.");
+        }
+        return com.sitemonitor.util.Msg.t(
+                "Rapor bu arada başka bir işlemle değişti (şimdiki durum: " + statusLabel(status, false) + "); işlem yapılmadı ve e-posta gönderilmedi. Sayfayı yenileyip tekrar deneyin.",
+                "The report was changed by another action in the meantime (current status: " + statusLabel(status, true) + "); nothing was done and no e-mail was sent. Refresh the page and try again.");
+    }
+
+    private static String statusLabel(String status, boolean en) {
+        return switch (status) {
+            case "DRAFT" -> en ? "draft" : "taslak";
+            case "PENDING_APPROVAL" -> en ? "pending approval" : "onay bekliyor";
+            case "APPROVED" -> en ? "approved" : "onaylandı";
+            case "REJECTED" -> en ? "returned" : "iade edildi";
+            default -> status;
+        };
     }
 
     /**
@@ -713,11 +916,6 @@ public class WeeklyReportService {
             out.add(new UserPushService.DirectRecipient(u.getUsername(), dn, Boolean.TRUE.equals(u.getPushOptOut()), u.getPushLang()));
         }
         return out;
-    }
-
-    private void clearApprovalToken(WeeklyReport r) {
-        r.setApprovalToken(null);
-        r.setApprovalTokenExpiresAt(null);
     }
 
     // ── E-posta ile hızlı onay (token, login'siz) ────────────────────────────
@@ -904,11 +1102,16 @@ public class WeeklyReportService {
     }
 
     /** Token ile onay (login'siz). Geçerli + süresi geçmemiş + PENDING_APPROVAL şart.
-     *  Onaylayan, takımın PO'su olarak kaydedilir. Tek-kullanımlık: onaydan sonra token silinir. */
-    @Transactional
+     *  Onaylayan, takımın PO'su olarak kaydedilir. Tek-kullanımlık: onaydan sonra token silinir.
+     *
+     *  <p>2026-10-21 (MP-39): {@code @Transactional} KALDIRILDI — geçiş {@link WeeklyReportRepository#claimApproveByToken}
+     *  ile kendi işleminde HEMEN kesinleşir, posta ondan SONRA gider (işlem içinde gönderilseydi sonraki bir hata geçişi
+     *  geri alır, gönderilmiş posta yeniden denenebilirdi). Bağlantıya çift tık / uygulama içi onayla yarış: kaybeden
+     *  {@link StateChangedException} alır, müdüre ikinci posta gitmez. */
     public Map<String, Object> approveViaToken(String token) {
         if (token == null || token.isBlank()) throw new IllegalArgumentException("Geçersiz onay bağlantısı");
-        WeeklyReport r = reportRepo.findByApprovalToken(token.trim())
+        String tok = token.trim();
+        WeeklyReport r = reportRepo.findByApprovalToken(tok)
                 .orElseThrow(() -> new IllegalArgumentException("Onay bağlantısı geçersiz veya kullanılmış"));
         if (tokenExpired(r)) throw new IllegalStateException("Onay bağlantısının süresi dolmuş");
         if (!"PENDING_APPROVAL".equals(r.getStatus())) {
@@ -919,19 +1122,18 @@ public class WeeklyReportService {
         if (approverPrefixRefused(r)) throw new ApproverUsernamePrefixException(r.getId(), r.getTeamId());
         String approver = resolvePoDisplayName(r.getTeamId());
         Actor actor = new Actor(null, "email-approval", approver, r.getTeamId(), "ADMIN");
-        String mailStatus = sendApprovalMail(r, actor); // MANAGER yoksa 409 fırlatır
+        ManagerRecipients managers = resolveManagerRecipients(r); // MANAGER yoksa 409 fırlatır — durum değişmeden
 
-        r.setStatus("APPROVED");
-        r.setVersion(r.getVersion() + 1);
-        clearLock(r);
-        clearApprovalToken(r);
-        r.setApprovedBy(approver);
-        r.setApprovedAt(now());
-        r.setRejectNote(null);
-        if (mailSent(mailStatus)) r.setSentAt(now());
-        r.setUpdatedBy(approver);
-        r.setUpdatedAt(now());
-        reportRepo.save(r);
+        Long id = r.getId();
+        String at = now();
+        if (claim(id, "PENDING_APPROVAL", () -> reportRepo.claimApproveByToken(id, tok, approver, at)) == 0) {
+            throw lostTransition(id, "approve_link");
+        }
+        mirrorApproved(r, approver, at);
+        r = afterClaim(r);
+
+        String mailStatus = sendApprovalMail(r, actor, managers);
+        markSentIfDelivered(r, mailStatus);
         log.info("Haftalık rapor e-posta linki ile onaylandı: id={} team={} approver={} mail={}",
                 r.getId(), r.getTeamId(), approver, mailStatus);
 
@@ -942,11 +1144,12 @@ public class WeeklyReportService {
     }
 
     /** E-posta magic-link ile İADE — {@link #approveViaToken} token akışını, {@link #reject} mutasyon/mail desenini
-     *  birleştirir. Token = yetki (requireCanApprove YOK). Session reject'ten farkı: <b>açıklama OPSİYONEL</b>. */
-    @Transactional
+     *  birleştirir. Token = yetki (requireCanApprove YOK). Session reject'ten farkı: <b>açıklama OPSİYONEL</b>.
+     *  2026-10-21 (MP-39): geçiş önce {@link WeeklyReportRepository#claimRejectByToken} ile alınır, posta sonra. */
     public Map<String, Object> rejectViaToken(String token, String note) {
         if (token == null || token.isBlank()) throw new IllegalArgumentException("Geçersiz iade bağlantısı");
-        WeeklyReport r = reportRepo.findByApprovalToken(token.trim())
+        String tok = token.trim();
+        WeeklyReport r = reportRepo.findByApprovalToken(tok)
                 .orElseThrow(() -> new IllegalArgumentException("İade bağlantısı geçersiz veya kullanılmış"));
         if (tokenExpired(r)) throw new IllegalStateException("Bağlantının süresi dolmuş");
         if (!"PENDING_APPROVAL".equals(r.getStatus())) {
@@ -959,31 +1162,15 @@ public class WeeklyReportService {
         Actor actor = new Actor(null, "email-approval", rejecter, r.getTeamId(), "ADMIN");
         String finalNote = (note != null && !note.isBlank()) ? note.trim() : "İade edildi — neden belirtilmedi (e-posta ile)";
 
-        r.setStatus("REJECTED");
-        r.setVersion(r.getVersion() + 1);
-        clearApprovalToken(r);
-        r.setRejectNote(finalNote);
-        r.setRejectedBy(rejecter);
-        r.setRejectedAt(now());
-        r.setUpdatedBy(rejecter);
-        r.setUpdatedAt(now());
-        reportRepo.save(r);
-
-        Team team = teamRepo.findById(r.getTeamId()).orElse(null);
-        String teamName = team != null ? team.getName() : "Takım";
-        String teamEmail = team != null && team.getEmail() != null && !team.getEmail().isBlank()
-                ? team.getEmail().trim() : null;
-        String rjSubject = "[Site Monitor] " + teamName + " — " + r.getWeekLabel() + " raporu iade edildi";
-        String rjHtml = emailService.buildWeeklyReportRejectedHtml(teamName, r.getWeekLabel(), finalNote, rejecter);
-        String rjStatus;
-        if (teamEmail != null) {
-            rjStatus = emailService.sendHtml(new String[]{teamEmail}, null, rjSubject, rjHtml, null);
-        } else {
-            rjStatus = "SKIPPED_NO_CONTACT";
-            log.warn("İade maili atlanıyor — takım email'i yok: team={} report={}", teamName, r.getId());
+        Long id = r.getId();
+        String at = now();
+        if (claim(id, "PENDING_APPROVAL", () -> reportRepo.claimRejectByToken(id, tok, finalNote, rejecter, at)) == 0) {
+            throw lostTransition(id, "reject_link");
         }
-        recordMail(r, "REJECT_TEAM", teamEmail != null ? List.of(teamEmail) : List.of(),
-                null, rjSubject, rjHtml, rjStatus, actor);
+        mirrorRejected(r, finalNote, rejecter, at);
+        r = afterClaim(r);
+
+        String rjStatus = sendRejectMail(r, finalNote, rejecter, actor);
         log.info("Haftalık rapor e-posta linki ile İADE edildi: id={} team={} by={} mail={}",
                 r.getId(), r.getTeamId(), rejecter, rjStatus);
 
@@ -991,6 +1178,36 @@ public class WeeklyReportService {
         out.put("data", r);
         out.put("mail_status", rjStatus);
         return out;
+    }
+
+    /** İade postası (Team.email) + deneme kaydı; hazırlama / gönderim istisnası {@code FAILED: …} olur, geçiş geri alınmaz. */
+    private String sendRejectMail(WeeklyReport r, String note, String rejecterName, Actor actor) {
+        String teamName = "Takım";
+        String teamEmail = null;
+        String rjHtml = null;
+        String rjStatus;
+        try {
+            Team team = teamRepo.findById(r.getTeamId()).orElse(null);
+            teamName = team != null ? team.getName() : "Takım";
+            teamEmail = team != null && team.getEmail() != null && !team.getEmail().isBlank()
+                    ? team.getEmail().trim() : null;
+            rjHtml = emailService.buildWeeklyReportRejectedHtml(teamName, r.getWeekLabel(), note, rejecterName);
+            if (teamEmail != null) {
+                rjStatus = emailService.sendHtml(new String[]{teamEmail}, null,
+                        "[Site Monitor] " + teamName + " — " + r.getWeekLabel() + " raporu iade edildi", rjHtml, null);
+            } else {
+                rjStatus = "SKIPPED_NO_CONTACT";
+                log.warn("İade maili atlanıyor — takım email'i yok: team={} report={}", teamName, r.getId());
+            }
+        } catch (Exception e) {
+            rjStatus = failedStatus(e);
+            log.warn("Haftalık rapor iade postası hazırlanamadı/gönderilemedi (rapor iade edildi): id={} err={}",
+                    r.getId(), e.toString());
+        }
+        String rjSubject = "[Site Monitor] " + teamName + " — " + r.getWeekLabel() + " raporu iade edildi";
+        recordMail(r, "REJECT_TEAM", teamEmail != null ? List.of(teamEmail) : List.of(),
+                null, rjSubject, rjHtml, rjStatus, actor);
+        return rjStatus;
     }
 
     private boolean tokenExpired(WeeklyReport r) {
@@ -1034,18 +1251,27 @@ public class WeeklyReportService {
     }
 
     /** Onaylanmış raporu (değiştirmeden, yeniden onaysız) müdüre TEKRAR gönderir
-     *  — "mail ulaşmadı/sorun oldu" senaryosu. Yetki = onay yetkisi. */
+     *  — "mail ulaşmadı/sorun oldu" senaryosu. Yetki = onay yetkisi.
+     *  2026-10-21 (MP-39): okunan sürüm {@link WeeklyReportRepository#claimResend} ile alınır — eş zamanlı ikinci tık /
+     *  ikinci pod 409 alır, müdüre ikinci posta gitmez. Bilinçli, ARDIŞIK yeniden gönderim her zaman çalışır. */
     public Map<String, Object> resend(Long id, Actor actor) {
         WeeklyReport r = get(id, actor);
         requireCanApprove(r, actor);
         requireStatus(r, "APPROVED");
+        ManagerRecipients managers = resolveManagerRecipients(r); // MANAGER yoksa 409 fırlatır — durum değişmeden
 
-        String mailStatus = sendApprovalMail(r, actor);
-        r.setVersion(r.getVersion() + 1);
-        if (mailSent(mailStatus)) r.setSentAt(now());
+        int readVersion = r.getVersion();
+        String at = now();
+        if (claim(id, "APPROVED", () -> reportRepo.claimResend(id, readVersion, actor.display(), at)) == 0) {
+            throw lostTransition(id, "resend");
+        }
+        r.setVersion(readVersion + 1);
         r.setUpdatedBy(actor.display());
-        r.setUpdatedAt(now());
-        reportRepo.save(r);
+        r.setUpdatedAt(at);
+        r = afterClaim(r);
+
+        String mailStatus = sendApprovalMail(r, actor, managers);
+        markSentIfDelivered(r, mailStatus);
         pushTeamApproval(r, mailStatus, true);
 
         Map<String, Object> out = new LinkedHashMap<>();
@@ -1056,7 +1282,8 @@ public class WeeklyReportService {
 
     /** Onaylı raporu yeniden düzenlenebilir hale getirir (APPROVED → DRAFT).
      *  ADMIN her hafta; non-admin kendi takımı + düzenleme penceresi.
-     *  Onay/gönderim alanları sıfırlanır (taze döngü); geçmiş mailler korunur. */
+     *  Onay/gönderim alanları sıfırlanır (taze döngü); geçmiş mailler korunur.
+     *  2026-10-21 (MP-39): geçiş {@link WeeklyReportRepository#claimReopen} ile — yarışta ikinci istek 409. */
     public WeeklyReport reopen(Long id, Actor actor) {
         WeeklyReport r = get(id, actor);
         requireStatus(r, "APPROVED");
@@ -1070,66 +1297,87 @@ public class WeeklyReportService {
                         "Yalnızca içinde bulunulan ve bir önceki haftanın raporları revize edilebilir");
             }
         }
+        String at = now();
+        if (claim(id, "APPROVED", () -> reportRepo.claimReopen(id, actor.display(), at)) == 0) {
+            throw lostTransition(id, "reopen");
+        }
         r.setStatus("DRAFT");
         r.setVersion(r.getVersion() + 1);
         r.setSentAt(null);
         r.setApprovedBy(null);
         r.setApprovedAt(null);
         r.setUpdatedBy(actor.display());
+        r.setUpdatedAt(at);
+        r = afterClaim(r);
         systemComment(r, "REOPEN", actor, null);
-        r.setUpdatedAt(now());
         log.info("Haftalık rapor revizyona açıldı (APPROVED→DRAFT): id={} team={} by={}",
                 id, r.getTeamId(), actor.display());
-        return reportRepo.save(r);
+        return r;
     }
 
     private static boolean mailSent(String s) {
         return "SENT".equals(s) || (s != null && s.startsWith("QUEUED_RETRY"));
     }
 
-    /** Müdüre rapor maili gönderir + kaydeder; mailStatus döner. MANAGER kontağı
-     *  yoksa MANAGER_CONTACT_MISSING (409). approve ve resend ortak kullanır. */
-    private String sendApprovalMail(WeeklyReport r, Actor actor) {
+    /** Onay postasının müdür alıcıları — durum geçişinden ÖNCE çözülür (yoksa 409, rapor değişmez). */
+    record ManagerRecipients(String[] to, String managerName) { }
+
+    /** MANAGER kontakları (pasifler hariç); yoksa AD müdürleri; ikisi de yoksa MANAGER_CONTACT_MISSING (409). */
+    private ManagerRecipients resolveManagerRecipients(WeeklyReport r) {
         List<EscalationContact> managers = reachable(contactRepo
                 .findByTeamIdAndRoleAndActiveTrue(r.getTeamId(), "MANAGER"), "haftalık rapor onayı takım " + r.getTeamId()).stream()
                 .filter(c -> c.getEmail() != null && !c.getEmail().isBlank())
                 .toList();
-        String[] to;
-        String managerName;
         if (!managers.isEmpty()) {
-            to = managers.stream().map(c -> c.getEmail().trim()).toArray(String[]::new);
-            managerName = managers.get(0).getName();
-        } else {
-            // MANAGER escalation contact yoksa AD müdürüne düş: takım üyelerinin
-            // bağlı olduğu müdür(ler)in (manager_id → AppUser) e-postaları.
-            List<AppUser> adManagers = resolveTeamManagerUsers(r.getTeamId());
-            if (adManagers.isEmpty()) {
-                throw new IllegalStateException("MANAGER_CONTACT_MISSING");
-            }
-            to = adManagers.stream().map(m -> m.getEmail().trim()).toArray(String[]::new);
-            AppUser first = adManagers.get(0);
-            managerName = (first.getDisplayName() != null && !first.getDisplayName().isBlank())
-                    ? first.getDisplayName() : first.getUsername();
+            return new ManagerRecipients(managers.stream().map(c -> c.getEmail().trim()).toArray(String[]::new),
+                    managers.get(0).getName());
         }
-        Team team = teamRepo.findById(r.getTeamId()).orElse(null);
-        String teamName = team != null ? team.getName() : "Takım";
-        String teamEmail = team != null && team.getEmail() != null && !team.getEmail().isBlank()
-                ? team.getEmail().trim() : null;
-        String[] cc = teamEmail != null ? new String[]{teamEmail} : null;
+        // MANAGER escalation contact yoksa AD müdürüne düş: takım üyelerinin
+        // bağlı olduğu müdür(ler)in (manager_id → AppUser) e-postaları.
+        List<AppUser> adManagers = resolveTeamManagerUsers(r.getTeamId());
+        if (adManagers.isEmpty()) {
+            throw new IllegalStateException("MANAGER_CONTACT_MISSING");
+        }
+        AppUser first = adManagers.get(0);
+        return new ManagerRecipients(adManagers.stream().map(m -> m.getEmail().trim()).toArray(String[]::new),
+                (first.getDisplayName() != null && !first.getDisplayName().isBlank())
+                        ? first.getDisplayName() : first.getUsername());
+    }
 
-        List<EmailNotificationService.InlineImage> inline = collectInlineImages(r);
-        // Footer onay bilgisi: ilk onayda alanlar henüz set değil → actor/şimdi;
-        // tekrar gönderimde orijinal onaylayan + yeni gönderim zamanı.
-        String approver   = r.getApprovedBy() != null ? r.getApprovedBy() : actor.display();
-        String approvedAt = r.getApprovedAt() != null ? r.getApprovedAt() : now();
-        String html = emailService.buildWeeklyReportHtml(
-                teamName, r.getWeekLabel(), managerName, r.getContentJson(), true,
-                imageDisplayWidths(inline), approver, approvedAt, now(), null, emailKpiSummary(r));
+    /** Müdüre rapor maili gönderir + kaydeder; mailStatus döner. Alıcılar {@link #resolveManagerRecipients} ile önceden
+     *  çözülür (approve, e-posta onayı ve resend ortak kullanır). Durum geçişi bu çağrıdan ÖNCE kesinleşmiştir: hazırlama
+     *  ya da gönderim istisnası geçişi geri ALMAZ, {@code APPROVE_MANAGER} kaydına {@code FAILED: …} yazılır. */
+    private String sendApprovalMail(WeeklyReport r, Actor actor, ManagerRecipients m) {
+        String[] to = m.to();
+        String teamName = "Takım";
+        String teamEmail = null;
+        String[] cc = null;
+        String html = null;
+        String mailStatus;
+        try {
+            Team team = teamRepo.findById(r.getTeamId()).orElse(null);
+            teamName = team != null ? team.getName() : "Takım";
+            teamEmail = team != null && team.getEmail() != null && !team.getEmail().isBlank()
+                    ? team.getEmail().trim() : null;
+            cc = teamEmail != null ? new String[]{teamEmail} : null;
 
+            List<EmailNotificationService.InlineImage> inline = collectInlineImages(r);
+            // Footer onay bilgisi: onaylayan + onay anı (geçişle yazıldı); tekrar gönderimde orijinal
+            // onaylayan + yeni gönderim zamanı.
+            String approver   = r.getApprovedBy() != null ? r.getApprovedBy() : actor.display();
+            String approvedAt = r.getApprovedAt() != null ? r.getApprovedAt() : now();
+            html = emailService.buildWeeklyReportHtml(
+                    teamName, r.getWeekLabel(), m.managerName(), r.getContentJson(), true,
+                    imageDisplayWidths(inline), approver, approvedAt, now(), null, emailKpiSummary(r));
+            mailStatus = emailService.sendHtml(to, cc, approvalSubject(teamName, r), html, inline);
+        } catch (Exception e) {
+            mailStatus = failedStatus(e);
+            log.warn("Haftalık rapor müdür postası hazırlanamadı/gönderilemedi (durum geçişi korunur): id={} err={}",
+                    r.getId(), e.toString());
+        }
         // "[Site Monitor]" öneki tüm konularda ortak (gelen kutusu kuralları buna bakar); takım köşeli
         // ayracı KORUNUR — müdürlerin "[Takım] Haftalık Rapor" filtreleri kırılmasın (2026-09-26).
-        String subject = "[Site Monitor] [" + teamName + "] Haftalık Rapor — " + r.getWeekLabel();
-        String mailStatus = emailService.sendHtml(to, cc, subject, html, inline);
+        String subject = approvalSubject(teamName, r);
         recordMail(r, "APPROVE_MANAGER", List.of(to),
                 cc != null ? List.of(cc) : null, subject, html, mailStatus, actor);
 
@@ -1139,7 +1387,12 @@ public class WeeklyReportService {
         return mailStatus;
     }
 
-    /** PENDING → REJECTED; düzeltme notu Team.email'e mail ile gider. */
+    private static String approvalSubject(String teamName, WeeklyReport r) {
+        return "[Site Monitor] [" + teamName + "] Haftalık Rapor — " + r.getWeekLabel();
+    }
+
+    /** PENDING → REJECTED; düzeltme notu Team.email'e mail ile gider.
+     *  2026-10-21 (MP-39): geçiş önce {@link WeeklyReportRepository#claimReject} ile alınır, posta yalnız kazanandan. */
     public WeeklyReport reject(Long id, String note, Actor actor) {
         if (note == null || note.isBlank()) {
             throw new IllegalArgumentException("İade notu zorunludur");
@@ -1147,33 +1400,15 @@ public class WeeklyReportService {
         WeeklyReport r = get(id, actor);
         requireCanApprove(r, actor);
         requireStatus(r, "PENDING_APPROVAL");
-        r.setStatus("REJECTED");
-        r.setVersion(r.getVersion() + 1);
-        clearApprovalToken(r);
-        r.setRejectNote(note.trim());
-        r.setRejectedBy(actor.display());
-        r.setRejectedAt(now());
-        systemComment(r, "REJECT", actor, note.trim());
-        r.setUpdatedBy(actor.display());
-        r.setUpdatedAt(now());
-        reportRepo.save(r);
-
-        Team team = teamRepo.findById(r.getTeamId()).orElse(null);
-        String teamName = team != null ? team.getName() : "Takım";
-        String teamEmail = team != null && team.getEmail() != null && !team.getEmail().isBlank()
-                ? team.getEmail().trim() : null;
-        String rjSubject = "[Site Monitor] " + teamName + " — " + r.getWeekLabel() + " raporu iade edildi";
-        String rjHtml = emailService.buildWeeklyReportRejectedHtml(
-                teamName, r.getWeekLabel(), note.trim(), actor.display());
-        String rjStatus;
-        if (teamEmail != null) {
-            rjStatus = emailService.sendHtml(new String[]{teamEmail}, null, rjSubject, rjHtml, null);
-        } else {
-            rjStatus = "SKIPPED_NO_CONTACT";
-            log.warn("İade maili atlanıyor — takım email'i yok: team={} report={}", teamName, id);
+        String finalNote = note.trim();
+        String at = now();
+        if (claim(id, "PENDING_APPROVAL", () -> reportRepo.claimReject(id, finalNote, actor.display(), at)) == 0) {
+            throw lostTransition(id, "reject");
         }
-        recordMail(r, "REJECT_TEAM", teamEmail != null ? List.of(teamEmail) : List.of(),
-                null, rjSubject, rjHtml, rjStatus, actor);
+        mirrorRejected(r, finalNote, actor.display(), at);
+        r = afterClaim(r);
+        systemComment(r, "REJECT", actor, finalNote);
+        sendRejectMail(r, finalNote, actor.display(), actor);
         return r;
     }
 

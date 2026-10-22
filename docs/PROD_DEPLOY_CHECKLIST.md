@@ -46,6 +46,47 @@ echo "$DEPLOY / $SECRET"                      # ikisi de dolu olmalı
 
 ## Öncesi (T-1 gün … T-15 dk)
 
+### İlk çok pod sürümüne geçiş (20.164 ve öncesi → bu sürüm) — bir kerelik
+Bu bölüm yalnız prod çok pod sürüm 1'i (2026-10-21) İLK kez aldığında geçerlidir; sonraki dağıtımlarda atlanır.
+
+- [ ] **Sessiz bir saat seçildi.** Kapanan eski pod kendi eski ayarlarıyla kapanır: grace 60 sn, preStop yok, 30 sn'lik
+      aşamalar, liderlik kirası yalnız `@PreDestroy`'da bırakılır. Beklenen: geçişte birkaç 502; eski pod 60 sn'yi aşarsa
+      izleme ~4 dk durur (kira 180 sn dolana dek); eski pod'un kuyruğundaki "ÇÖZÜLDÜ" postaları kaybolabilir. Yeni
+      kapanış (preStop 10, grace 120, kira ilk anda bırakılır) bir SONRAKİ dağıtımda devreye girer.
+- [ ] **Haftalık erişilebilirlik penceresi DEĞİL** (tetik günü — varsayılan Pazartesi — ~10:00–12:00 Europe/Istanbul;
+      Ayarlar → Haftalık Erişilebilirlik'teki cron). Bir 20.164.0 pod'u koşarken bu pencerede dağıtılmaz: eski pod bütün
+      takımları tek işlemde gönderir, gönderirken öldürülürse kayıtları geri sarılır ve yeni sürümün telafi turu o takımlara
+      postayı İKİNCİ kez gönderir.
+- [ ] **Olaysız push çiftleri yok** (yeni tekil indeks `ux_push_eventless_key_user` bu satırlarla kurulamazdı; her açılışta
+      yeniden dener ve düşer) — boş dönmeli:
+  ```sql
+  SELECT dedupe_key, username, COALESCE(team_id, 0) AS team, count(*)
+    FROM user_push_deliveries
+   WHERE alert_event_id IS NULL AND push_trigger NOT IN ('TEST', 'OVERFLOW_SUMMARY') AND created_at >= '2026-10-21'
+   GROUP BY 1, 2, 3 HAVING count(*) > 1;
+  ```
+  Satır dönerse geçmişi silmeden giderin — her grubun en eski satırı kalır, sonrakilerin anahtarı tekilleşir:
+  ```sql
+  UPDATE user_push_deliveries d SET dedupe_key = LEFT(d.dedupe_key, 40) || ':dup' || d.id
+   WHERE d.id IN (SELECT id FROM (
+           SELECT id, ROW_NUMBER() OVER (PARTITION BY dedupe_key, username, COALESCE(team_id, 0) ORDER BY id) AS rn
+             FROM user_push_deliveries
+            WHERE alert_event_id IS NULL AND push_trigger NOT IN ('TEST', 'OVERFLOW_SUMMARY')
+              AND created_at >= '2026-10-21') x WHERE rn > 1);
+  ```
+- [ ] **Kaynak başına birden çok ONGOING ağ kesintisi satırı** — bilgi amaçlı; varsa tek seferlik iş
+      (`NetworkOutageOngoingDedupe`, açılıştan ~150 sn sonra) en yenisini bırakıp gerisini kapatır, sonra `ux_noe_one_ongoing`'i kurar:
+  ```sql
+  SELECT COALESCE(source, 'CERT') AS kaynak, count(*) FROM network_outage_events WHERE status = 'ONGOING'
+   GROUP BY 1 HAVING count(*) > 1;
+  ```
+- [ ] Yeni kapanış sırası biliniyor: SIGTERM'de kira bırakılır, sonra push işçisi durdurulup bildirim havuzlarıyla aynı 20 sn
+      içinde boşaltılır. Bir pod push batch'i gönderirken ÇÖKERSE o batch ≤ 10 dk sonra başka pod'dan gider (bilinçli: iki kez
+      gitmesindense gecikir) — dağıtım sonrası push geçmişinde 10 dk'lık gecikme hata değildir.
+- [ ] Geçiş penceresinde (eski + yeni pod birlikte) beklenen yinelenmeler biliniyor: eski pod'un bellekten yönetici kesinti
+      postası, eski yolla kapanan fırtınanın ikinci kurtarma postası, eski pod'da sahiplenmesiz push / haftalık rapor —
+      [`RUNBOOK.md` → Sürüm geçişi sırasında](RUNBOOK.md#sürüm-geçişi-sırasında-eski--yeni-pod-birlikte).
+
 ### Kapsam ve sürüm
 - [ ] Dağıtılan şey **tag'lenmiş sürüm** (`git checkout v$VERSION`); çalışma ağacındaki commit'lenmemiş iş
       bu dağıtıma dahil değildir. GitHub → Actions'ta o commit için `ci.yml` **dört işi de yeşil**.
@@ -145,8 +186,9 @@ ulaşmadı. Bu dağıtım onu **ilk kez** uygular — aşağıdaki değişiklikl
   SHOW max_connections;
   SELECT count(*) FROM pg_stat_activity;
   ```
-  `max_connections` ≥ **2 × dbPoolMax + diğer istemciler** (yedek, yönetim araçları, izleme) — `maxSurge: 1`
-  yüzünden rollout sırasında eski ve yeni pod havuzlarını **birlikte** tutar (30 + 30 = 60 + pay).
+  `max_connections` ≥ **(replika + 1) × dbPoolMax + 25** (yedek, yönetim araçları, izleme payı) — `maxSurge: 1`
+  yüzünden rollout sırasında eski ve yeni pod havuzları **birlikte** açıktır (tek replikada 2 × 30 + 25 = 85, iki
+  replikada 3 × 30 + 25 = 115). PgBouncer varsa yalnız `session` kipinde ([`db-scaling.md`](db-scaling.md) §3).
 - [ ] `NO_PROXY` → master.yaml'daki sonek listesi (son bilinen canlı değer boş): listedeki iç hedefler artık vekile
       girmeden **doğrudan** gider. Egress kuralları buna izin veriyor mu?
 - [ ] `CORS_ALLOWED_ORIGINS` → master.yaml'daki köken (son bilinen canlı değer boş).
@@ -154,7 +196,7 @@ ulaşmadı. Bu dağıtım onu **ilk kez** uygular — aşağıdaki değişiklikl
 
 ### Kaynak ve küme
 - [ ] Bellek **3Gi limit / 1.5Gi request** (CPU değişmedi: 500m / 2000m). Namespace kotası rollout penceresinde
-      **iki** pod'u kaldırmalı (eski + yeni):
+      **replika + 1** pod'u kaldırmalı (tek replikada eski + yeni = 2, iki replikada 3):
   ```bash
   kubectl describe resourcequota -n "$NS"
   kubectl describe limitrange -n "$NS"
@@ -194,7 +236,7 @@ helm upgrade --install "$REL" ./helm/site-monitor --namespace "$NS" \
   --set image.tag="v${VERSION}" \
   --set secret.existingSecret="$SECRET" \
   --set config.logLevel=DEBUG \
-  --dry-run=server | grep -E 'image:|DB_POOL_MAX|NO_PROXY|CORS_ALLOWED|LOG_LEVEL|DB_HOST'
+  --dry-run=server | grep -E 'image:|replicas:|terminationGracePeriodSeconds|sleep [0-9]|DB_POOL_MAX|NO_PROXY|CORS_ALLOWED|LOG_LEVEL|DB_HOST|SPRING_SESSION_STORE_TYPE'
 
 # 2) Gerçek dağıtım — AYNI komut, --dry-run yerine --atomic --wait --timeout
 helm upgrade --install "$REL" ./helm/site-monitor --namespace "$NS" \
@@ -215,27 +257,45 @@ helm upgrade --install "$REL" ./helm/site-monitor --namespace "$NS" \
   eski chart'larda eşdeğeri `--set image.tag="vX.Y.Z@sha256:<digest>"`).
 - existingSecret kullanılmıyorsa `--set secret.existingSecret=…` yerine `-f /guvenli/yol/prod-secrets.yaml`
   (tüm `secret.*` anahtarları, **şu anki** değerleriyle).
-- Rollout sırasında iki pod kısa süre birlikte koşar: zamanlayıcıyı `scheduler_lock` korur; bu pencerede çift
-  bildirim görülürse not edin.
+- Rollout sırasında replika + 1 pod kısa süre birlikte koşar: izleme taramalarını tarama liderliği kirası, diğer
+  işleri `scheduler_lock` / küme turları tek pod'a verir. Eski pod preStop (10 sn) + zarif kapanışla (≤ 100 sn, grace 120)
+  kapanır ve kirayı hemen bırakır — İLK çok pod sürümüne geçişte değil: o dağıtımda eski pod kendi eski kapanışını kullanır
+  (yukarıdaki bir kerelik bölüm). Bu pencerede çift bildirim görülürse not edin ve çift-iş dedektörünü koşun
+  ([`RUNBOOK.md` → Çok pod](RUNBOOK.md#çok-pod)).
+- **İki ya da daha çok replikada** `--timeout 15m` kullanın: pod'lar sırayla değişir (her biri açılışta ≤ 300 sn
+  bekleyebilir); 10 dk yetmezse `--atomic` gereksiz yere geri alır.
 
 ## Sonrası
 
 ### İlk 15 dakika
+> **Günlükler TÜM pod'lardan okunur:** `kubectl logs "$DEPLOY"` yalnız BİR pod'u okur; birden çok pod varken diğerindeki
+> hata görünmez. Aşağıdaki komutlar `L` ile çalışır (tek pod'da da aynen geçerli; `--prefix` satırın pod'unu yazar):
+> ```bash
+> L="-n $NS -l app.kubernetes.io/instance=$REL --prefix --tail=-1"
+> ```
 - [ ] `kubectl rollout status "$DEPLOY" -n "$NS"` tamam; `/health/readiness` 200.
-- [ ] Açılış "ETKİN KONFİGÜRASYON" dökümü (`kubectl logs -n "$NS" "$DEPLOY" | grep -A200 'ETKİN KONFİGÜRASYON'`):
+- [ ] Açılış "ETKİN KONFİGÜRASYON" dökümü (her pod için; `kubectl logs $L | grep -A200 'ETKİN KONFİGÜRASYON'`):
       `maximum-pool-size = 30`, `NO_PROXY` dolu, vekil host dolu, "RDAP istemcisi proxy üzerinden" satırı,
       `site.monitor.secret-key = configured`, `LOG_LEVEL = DEBUG`, sürüm = `$VERSION`.
 - [ ] Nav sürüm çipi `$VERSION`; Sistem Sağlığı → Sürüm & Dağıtım'da `env=prod` ve yeni helm revizyonu.
       Ortam adı önceliği: Ayarlar → Genel Ayarlar → **Ortam adı** (DB, boş değilse) > Helm `config.environmentName`
       (`APP_ENVIRONMENT`) > otomatik (pod'da `unknown`); `env=prod` görünmüyorsa önce o alana bakın — oradaki değer
       Helm değerini ezer, boşaltınca Helm değerine döner (yeniden başlatma gerekmez).
-- [ ] Şema yamaları: `kubectl logs -n "$NS" "$DEPLOY" | grep -E 'Schema patch (applied|skipped)'` —
+- [ ] Şema yamaları: `kubectl logs $L | grep -E 'Schema patch (applied|skipped)|Şema yamaları:'` —
       `applied` bu sürümün eklediklerini listeler; `skipped` satırları (DEBUG'ta görünür) tek tek okunur,
       beklenmeyen bir SQL hatası varsa geri almayı düşünün.
 - [ ] Eşzamanlı kurulan indeksler geçerli mi (`CREATE INDEX CONCURRENTLY` — `idx_ae_created_at`, `idx_push_dedupe`; yarıda
       kalan derleme INVALID indeks bırakır ve `IF NOT EXISTS` onu bir daha kurmaz):
       `SELECT c.relname FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid WHERE NOT i.indisvalid;` → boş olmalı.
-      Satır dönerse: `DROP INDEX CONCURRENTLY <ad>;` ve pod'u yeniden başlatın (yama indeksi yeniden kurar).
+      Satır dönerse: `DROP INDEX CONCURRENTLY <ad>;` ve pod'u yeniden başlatın (yama indeksi yeniden kurar). **İstisna —
+      `ux_…` tekil indeksler:** INVALID / eksik kalmalarının nedeni çift satırdır; düşür-yeniden başlat döngüye girer. Önce
+      çiftleri giderin ("İlk çok pod sürümüne geçiş" bölümündeki sorgular), sonra TEK pod'u yeniden başlatın.
+- [ ] **Çok pod sürüm 1'in tekil indeksleri** (açılıştan ~5 dk sonra) — ikisi de dolu dönmeli:
+      `SELECT to_regclass('ux_push_eventless_key_user'), to_regclass('ux_noe_one_ongoing');`
+      `ux_push_eventless_key_user` boşsa: günlükte `kubectl logs $L | grep ux_push_eventless_key_user` (CONCURRENTLY kurulum
+      çift satırla düştü) → "İlk çok pod sürümüne geçiş" bölümündeki tekilleştirme UPDATE'i, sonra tek pod'u yeniden
+      başlatın (ertelenmiş kurucu açılışta yeniden dener). `ux_noe_one_ongoing` boşsa: `kubectl logs $L | grep -i
+      'noe-ongoing\|NetworkOutageOngoingDedupe'` — iş saatlik yeniden dener (pod başına en çok 24 deneme).
 - [ ] **Ertelenmiş indeksler (2026-10-08):** filtre indeksleri (`DeferredIndexBuilder.CATALOG` — uptime_checks, audit_log,
       activity_log, alert_events, push / bildirim günlükleri, rollup'lar…) açılışta DEĞİL, pod Ready olduktan sonra arka
       planda `CONCURRENTLY` kurulur; readiness beklemez, büyük tabloda dakikalar sürebilir (sorgular o sırada indekssiz,
@@ -252,10 +312,11 @@ helm upgrade --install "$REL" ./helm/site-monitor --namespace "$NS" \
 
 ### Kanaryalar — duman testinden SONRA (sırlar kullanılınca çözülür)
 ```bash
-kubectl logs -n "$NS" "$DEPLOY" | grep -c "decrypt failed"                          # 0 OLMALI
-kubectl logs -n "$NS" "$DEPLOY" | grep -cE "Denetim izinde BOŞLUK|AUDIT fallback"  # 0 olmalı
+kubectl logs $L | grep -c "decrypt failed"                                         # 0 OLMALI (bütün pod'lar)
+kubectl logs $L | grep -cE "Denetim izinde BOŞLUK|AUDIT fallback"                  # 0 olmalı
 kubectl get pod -n "$NS" -l app.kubernetes.io/instance="$REL" \
-  -o jsonpath='{..restartCount} {..lastState.terminated.reason}{"\n"}'             # "0 " olmalı (OOMKilled yok)
+  -o custom-columns=POD:.metadata.name,RESTART:.status.containerStatuses[0].restartCount,SEBEP:.status.containerStatuses[0].lastState.terminated.reason
+                                                                                   # her pod RESTART 0, SEBEP <none> (OOMKilled yok)
 ```
 - `decrypt failed` > 0 → anahtar değişmiştir: **hemen** [Geri alma](#geri-alma) ya da önceki anahtarı Secret'a
   geri koyup `kubectl rollout restart`. Sırları yeniden girmek son çaredir (RUNBOOK).
@@ -265,6 +326,78 @@ kubectl get pod -n "$NS" -l app.kubernetes.io/instance="$REL" \
       (`kubectl top pod -n "$NS"`); aşıyorsa RUNBOOK → Bellek.
 - [ ] 5xx oranı, sweep süreleri (Sistem Sağlığı), Bildirim Geçmişi'nde FAILED artışı yok, push outbox birikmiyor,
       Postgres bağlantı sayısı `max_connections`'ın altında rahat.
+
+## Çok pod (1 → 2 replika)
+
+> Çok pod sürüm 1 (2026-10-21). Prod'u iki pod'a almak **iki ayrı dağıtımdır**: önce yeni sürüm TEK pod'la dağıtılıp
+> doğrulanır, sonra AYNI imajla yalnız replika sayısı değişir. Sürüm değişikliği ile replika artışı aynı `helm upgrade`'de
+> yapılmaz (iki yeni sürüm pod'u aynı anda açılıp açılış tohumlamasında yarışır). İşleyiş, devir süreleri ve kilitler:
+> [`RUNBOOK.md` → Çok pod](RUNBOOK.md#çok-pod).
+
+### 0. Önce staging
+- [ ] Staging (`environments/release.yaml`) sabit **2 replika**, HPA kapalı koşuyor; yeni sürüm orada en az 24-48 saat
+      koştu ve çift-iş dedektörü her gün temiz (aşağıdaki 4. adım, staging veritabanına karşı).
+- [ ] HPA kaldırıldıktan sonra staging gerçekten 2 pod: `kubectl get deploy,hpa -n <staging-ns>` → Deployment `2/2`, HPA
+      yok. Eski HPA'nın büyüttüğü sayı kaldıysa (Helm 4 sunucu tarafı uygulamada alan sahipliği HPA'da kalabilir):
+      `kubectl scale deploy/<ad> -n <staging-ns> --replicas=2`; HPA nesnesi durduysa `kubectl delete hpa/<ad> -n <staging-ns>`.
+- [ ] (Önerilen) Yeni imajla iki pod duman testi koşuldu: `SMOKE_IMAGE=<imaj> bash scripts/multipod-smoke.sh`
+      (Docker; tek lider, A'da açılan oturum B'de geçerli, lidere SIGTERM → devir ≤ 40 sn, çift iş yok).
+
+### 1. Ön koşullar (P1-P5) — her biri kanıtıyla
+- [ ] **P1 — Her node'dan aynı çıkış.** Pod'ların koşabileceği her node'da vekil (RDAP), SMTP, LDAP / AD, push ağ
+      geçidi ve doğrudan kontrol edilen iç hedefler erişilebilir:
+      ```bash
+      NS="$NS" REL="$REL" TARGETS="<ldap-host>:636 <push-host>:443 <iç-hedef>:443" \
+        bash scripts/multipod-egress-check.sh <node-1> <node-2> <node-3>      # çıkış kodu 0 olmalı
+      ```
+      Bir node başarısızsa: kural düzeltilir ya da pod'lar sağlam node'lara sabitlenir (`master.yaml` → `nodeSelector` /
+      `affinity`). Bu yapılmadan ikinci pod açılmaz — ilk devirde toplu "kesinti" alarmı ya da sessiz posta kaybı olur.
+- [ ] **P2 — Saat.** Egress betiğinin yazdığı node saatleri (`saat <epoch>`) birbirinden ve DB saatinden
+      (`SELECT extract(epoch from now());`) en çok 1-2 sn farklı.
+- [ ] **P3 — DB bağlantıları.** `SHOW max_connections;` ≥ `3 × dbPoolMax + 25` (2 replika + rollout'ta 1 ek pod).
+      `dbPoolMax` 30 → ≥ 115 (pratikte 120); `max_connections` 100 ise `dbPoolMax: "25"` (3 × 25 + 25 = 100).
+      PgBouncer varsa kipi `session` (DBA'ya sorun; `transaction` kipi uyumsuz). Formül: [`db-scaling.md`](db-scaling.md) §3.
+- [ ] **P4 — Kota.** `kubectl describe resourcequota -n "$NS"` → 3 pod sığar (prod: 3 × 1.5Gi / 500m request,
+      3 × 3Gi / 2 CPU limit); en az bir node'da yeni pod'a yer var.
+- [ ] **P5 — Prometheus.** Kazıma `role: pod` ile pod başına (Service üzerinden değil); iki pod'da
+      `up{job="site-monitor"}` iki seri; `sum(sitemonitor_sweep_leader) == 1` (iş ölçümleri belirteçli
+      `/metrics/sitemonitor` ucundadır — belirteç yoksa liderliği Sistem Sağlığı'ndan okuyun).
+
+### 2. Yeni sürüm TEK pod'la
+- [ ] Yukarıdaki "Sırası — tek komut" ile, `replicaCount: 1` (master.yaml'ın bu sürümdeki değeri) dağıtıldı ve
+      "Sonrası" kontrolleri temiz. Tek pod davranışı değişmez; yeni olan: grace 120 sn, preStop 10 sn.
+
+### 3. Replika 1 → 2 (AYRI commit + `helm upgrade`, aynı imaj)
+- [ ] `environments/master.yaml`: `replicaCount: 2`, `podDisruptionBudget.enabled: true` (`minAvailable: 1`),
+      `config.dbPoolMax` P3'e göre. `topologySpreadConstraints` yalnız ≥ 3 zamanlanabilir node varsa açılır
+      (`matchLabelKeys: ["pod-template-hash"]`, Kubernetes ≥ 1.27; daha az node'da `whenUnsatisfiable: ScheduleAnyway`).
+      `autoscaling.enabled: false` kalır. `config.sessionStoreType` `jdbc` (değilse `helm template` reddeder).
+- [ ] Kuru koşu: `--dry-run=server` çıktısında `replicas: 2`, `PodDisruptionBudget`, `SPRING_SESSION_STORE_TYPE: "jdbc"`,
+      `terminationGracePeriodSeconds: 120`, preStop `sleep 10`.
+- [ ] Aynı komut, aynı `image.tag` (sürüm DEĞİŞMEZ), `--atomic --wait --timeout 15m`.
+
+### 4. Sonrası (iki pod)
+- [ ] `kubectl get pod -n "$NS" -l app.kubernetes.io/instance="$REL" -o wide` → iki pod Ready, tercihen farklı node'larda.
+- [ ] Sistem Sağlığı → `session_store: jdbc`; Zamanlayıcı → `sweep_leader.owner` TEK pod (sayfayı birkaç kez yenileyin:
+      iki pod da aynı sahibi göstermeli; `held_by_me` yalnız birinde true).
+- [ ] Grafana: `sum(sitemonitor_sweep_leader) == 1`; Sistem Sağlığı → Metrikler sayfasında iki canlı pod.
+- [ ] Giriş yapın, birkaç sayfa gezin: oturum düşmüyor (istekler iki pod'a dağılır).
+- [ ] Kanaryalar iki pod'da da temiz (`kubectl logs $L …`, yukarıda); `kubectl logs $L | grep "Tarama liderliği"` →
+      bir pod "bu pod'da", diğeri sessiz ya da "başka pod'a geçti".
+- [ ] Bir test alarmı → e-posta + push **birer kez** gelir.
+- [ ] Bir hafta boyunca her gün çift-iş dedektörü (salt okur):
+      ```bash
+      PGHOST=<db-host> PGDATABASE=<db> PGUSER=<kullanıcı> PGPASSWORD=… bash scripts/multipod-smoke.sh dup-check
+      ```
+      `DUP_TOTAL=0` ve `STUCK_TOTAL=0` beklenir; tek tük kontrol çifti (hatadan sonraki doğrulama kontrolü) normaldir —
+      satırların anlamı: [`RUNBOOK.md` → Çok pod](RUNBOOK.md#çok-pod).
+- [ ] (İsteğe bağlı) Devir provası, düşük trafikli bir saatte: lider pod'u silin (`kubectl delete pod -n "$NS" <lider>`)
+      → diğer pod ≤ ~35 sn'de lider olur, izleme kesintisiz devam eder.
+
+### 5. Geri dönüş (2 → 1)
+- [ ] `master.yaml`: `replicaCount: 1` **ve** `podDisruptionBudget.enabled: false` (tek replikada `minAvailable: 1`
+      node drain'i süresiz bloke eder), aynı komut — ya da `helm rollback "$REL" <2. adımdaki revizyon>`.
+      Veri ve şema değişmez; oturumlar JDBC'de kalır.
 
 ## Geri alma
 
@@ -287,6 +420,8 @@ kubectl rollout status "$DEPLOY" -n "$NS"
 - **Şema:** yamalar yalnız ekler (`ADD COLUMN` / `CREATE TABLE`, `ddl-auto=update`) → eski sürüm yeni şemada
   açılır; yeni kolonlara yazılan veri eski sürümde görünmez ama kaybolmaz. İstisna: varsayılansız `NOT NULL`
   kolon eski sürümün INSERT'ünü kırar — sürümün CHANGELOG'unda böyle bir şema notu varsa geri almadan önce okuyun.
+  Çok pod sürüm 1'in iki tekil indeksi (`ux_push_eventless_key_user`, `ux_noe_one_ongoing`) geri almada kalır ve silinmez:
+  eski sürümün yazımları önce "var mı?" diye bakar ve tekil ihlalini yakalar (ayrıntı: [`RUNBOOK.md` → Geri alma](RUNBOOK.md#geri-alma-rollback)).
 - **Secret key bu dağıtımda değiştiyse** rollback kurtarmaz: yeni anahtarla şifrelenen girişler eski anahtarla
   çözülemez. Bu yüzden anahtar değişimi hiçbir yayınla birlikte yapılmaz.
 - Son çare: DB yedeğinden geri yükleme (veri kaybı: yedekten sonraki kayıtlar) — platform ekibiyle.

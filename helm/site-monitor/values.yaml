@@ -3,7 +3,31 @@
 # Override with: helm install site-monitor ./helm/site-monitor -f my-values.yaml
 # ─────────────────────────────────────────────────────────────────────────────
 
+# More than one pod (replicaCount > 1 or autoscaling.enabled) REQUIRES config.sessionStoreType=jdbc — helm template
+# fails otherwise. Change the replica count in its OWN `helm upgrade` (same image), never together with a new
+# version: two new-version pods would start at once. Prerequisites (egress parity per node, NTP, max_connections,
+# quota) and the procedure: docs/PROD_DEPLOY_CHECKLIST.md "Çok pod" and docs/RUNBOOK.md "Çok pod".
 replicaCount: 1
+
+# Shutdown (2026-10-21). The kubelet waits terminationGracePeriodSeconds after it starts the preStop hook, then
+# SIGKILLs. Budget: preStop 10 + notification-pool drain 20 (ContextClosedEvent) + Spring web phase 20 + executor
+# phase 20 + @Scheduled await 20 + shared destroy-wait budget 10 (ShutdownDeadline) = 100 s < 120 s (backend application.properties:
+# SHUTDOWN_PHASE_TIMEOUT / SCHEDULING_AWAIT_TERMINATION; WebConfig.NOTIFY_AWAIT_SECONDS). The sweep-leader lease is
+# released at the very start of the shutdown; a pod killed early still cuts in-flight work and leaves its job locks
+# to their TTL (3 min).
+terminationGracePeriodSeconds: 120
+# preStop "sleep N": the pod leaves the Service / ingress endpoints before Spring stops accepting requests, so a
+# rollout does not answer in-flight POSTs with 502. 0 = no preStop hook. Must stay below terminationGracePeriodSeconds.
+preStopSleepSeconds: 10
+
+# Pod placement (2026-10-21). Empty = not rendered. Use nodeSelector / affinity to pin the pods to nodes whose
+# egress (proxy ACL, firewall allowlists, SMTP relay, LDAP, push gateway, RDAP) is known to work — whichever pod
+# holds the sweep-leader lease runs ALL monitoring, and the lease moves between nodes on every rollout.
+#   nodeSelector:
+#     sitemonitor-egress: "ok"
+nodeSelector: {}
+affinity: {}
+tolerations: []
 
 image:
   repository: ghcr.io/inanmise/site-monitor
@@ -108,9 +132,10 @@ config:
   dbPort: "5432"
   dbName: certmonitor
   dbUser: certmonitor
-  # Tek pod / 100 kullanıcı: 25. Tek pod → tek Postgres'e güvenli (replica çarpımı yok).
-  # AKSİYON: prod Postgres max_connections'ı doğrula; düşük tier (25-50) ise buna göre kıs.
-  # Çok-pod'a geçilirse (replica × 25) max_connections'ı aşmasın diye tekrar boyutlandır.
+  # Tek pod / 100 kullanıcı: 25. Bu değer POD BAŞINA; rollout'ta (maxSurge 1) replica + 1 pod birlikte koşar.
+  # Kural: max_connections ≥ (replica + 1) × dbPoolMax + 25 (yedek / yönetim / izleme payı) →
+  # dbPoolMax = min(30, floor((max_connections − 25) / (replica + 1))). PgBouncer yalnız SESSION kipinde
+  # (advisory lock + SET lock_timeout oturum ister; transaction kipi uyumsuz). Ayrıntı: docs/db-scaling.md.
   dbPoolMax: "25"
   # PostgreSQL JDBC socketTimeout (sn). pgjdbc varsayılanı sınırsız: sessizce düşen bir bağlantı (NAT/LB/yük devri)
   # kullanımdaki sorguyu ve iş parçacığını sonsuza dek tutar. Cömert (30 dk) — açılış CREATE INDEX'leri kesilmesin.
@@ -353,10 +378,17 @@ securityContext:
     drop: ["ALL"]
 
 # Node affinity / spread
+# Enable for more than one pod only when the cluster has at least replicas + 1 schedulable nodes: with
+# DoNotSchedule and too few nodes the rollout's surge pod stays Pending and `--atomic` rolls back. Fewer nodes ->
+# whenUnsatisfiable: ScheduleAnyway. matchLabelKeys: ["pod-template-hash"] (Kubernetes >= 1.27) counts only the
+# pods of the SAME ReplicaSet, so the old pods of a rollout do not skew the placement of the new ones (without it
+# both new pods can end up on one node after the rollout). Empty = not rendered.
 topologySpreadConstraints:
   enabled: false
   maxSkew: 1
   topologyKey: kubernetes.io/hostname
+  whenUnsatisfiable: DoNotSchedule
+  matchLabelKeys: []
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PostgreSQL subchart (Bitnami) — disabled by default

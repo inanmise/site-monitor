@@ -45,6 +45,32 @@ public interface UserPushDeliveryRepository extends JpaRepository<UserPushDelive
     List<UserPushDelivery> findByIdInAndNextAttemptAtOrderByIdAsc(java.util.Collection<Long> ids, String nextAttemptAt);
 
     /**
+     * Kira TAZELEME (2026-10-21, çok pod — MP-05): her toplu istekten HEMEN ÖNCE, o batch'in satırları hâlâ BU turun
+     * kirasındaysa ({@code nextAttemptAt = :mine}) yeni kiraya ({@code :lease}) geçirilir; yalnız tazelenen satırlar
+     * gönderilir. Tur kirası (50 satır, sıralı gönderim) dolmuş ve başka pod satırı kendi kirasıyla almışsa koşul tutmaz →
+     * bu pod o satırı GÖNDERMEZ (eskiden iki pod da gönderiyordu). Kira dolmuş ama kimse almamışsa satır yine bu pod'undur.
+     */
+    @Modifying
+    @Transactional
+    @Query("""
+           UPDATE UserPushDelivery d SET d.nextAttemptAt = :lease
+           WHERE d.id IN :ids AND d.status = 'PENDING' AND d.nextAttemptAt = :mine
+           """)
+    int renewLease(@Param("ids") java.util.Collection<Long> ids, @Param("mine") String mine, @Param("lease") String lease);
+
+    /**
+     * Gönderilmeyecek kiralı satırları HEMEN geri bırakır (2026-10-21, kapanış): kira damgası hâlâ bu turunsa silinir,
+     * satır bir sonraki taramada (herhangi bir pod) beklemeden alınır — kira süresi (≥ 2 dk) beklenmez.
+     */
+    @Modifying
+    @Transactional
+    @Query("""
+           UPDATE UserPushDelivery d SET d.nextAttemptAt = NULL
+           WHERE d.id IN :ids AND d.status = 'PENDING' AND d.nextAttemptAt = :mine
+           """)
+    int releaseLease(@Param("ids") java.util.Collection<Long> ids, @Param("mine") String mine);
+
+    /**
      * Gönderim sonucunun DAR yazımı — tam satır kaydı düştüğünde yedek (2026-09-28): durum ve deneme sayacı yine
      * ilerler. Yazılmazsa satır PENDING + eski sayaçla kalır ve her süpürmede yeniden gönderilir (zehirli satır).
      */

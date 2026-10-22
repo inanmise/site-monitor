@@ -396,3 +396,8 @@ jobs:
           helm lint helm/site-monitor \
             -f helm/site-monitor/values.yaml \
             -f helm/site-monitor/environments/release.yaml
+
+      # Çok pod sürüm 1 (2026-10-21): render edilen çıktı — kapanış bütçesi (grace + preStop), bellek oturumu +
+      # çok pod koruması, staging sabit 2 replika / HPA yok, yerleşim kancaları (scripts/helm-template-check.sh).
+      - name: Template checks (shutdown budget, multi-pod guards)
+        run: bash scripts/helm-template-check.sh

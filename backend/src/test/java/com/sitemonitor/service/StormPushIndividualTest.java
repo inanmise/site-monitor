@@ -373,6 +373,9 @@ class StormPushIndividualTest {
         AlertEvent e = event(1);
         e.setStormId(null);
         e.setLastReAlertAt(null);
+        // Damgasız olay 5 dk'lık İLK bildirim payını doldurmuş olmalı (MP-19, çok pod R1 2026-10-21): taze damgasız olayda
+        // ilk bildirim başka pod'da sürüyor olabilir — telafi pay dolunca gider (fırtına mühürlenmesi zaten ≥ 5 dk sessizlik).
+        e.setCreatedAt(minutesAgo(6));
 
         down(1, null);   // sonraki tur: yarıda kalmış ilk bildirim → INITIAL
 

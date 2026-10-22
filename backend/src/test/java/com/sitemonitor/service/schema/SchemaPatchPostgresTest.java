@@ -198,8 +198,17 @@ class SchemaPatchPostgresTest {
         Map<String, String> defs = indexDefs();
         for (DeferredIndexBuilder.Spec s : DeferredIndexBuilder.CATALOG) {
             assertThat(defs).as("%s ON %s", s.name(), s.table()).containsKey(s.name());
-            assertThat(defs.get(s.name())).as(s.name()).doesNotStartWith("CREATE UNIQUE").containsPattern(" ON (\\w+\\.)?" + s.table() + " USING btree ");
+            // Tekil ertelenmiş indeksler ux_ önekli (2026-10-21, çok pod — olaysız push satırları); geri kalanı tekil OLMAZ
+            if (s.name().startsWith("ux_")) {
+                assertThat(defs.get(s.name())).as(s.name()).startsWith("CREATE UNIQUE");
+            } else {
+                assertThat(defs.get(s.name())).as(s.name()).doesNotStartWith("CREATE UNIQUE");
+            }
+            assertThat(defs.get(s.name())).as(s.name()).containsPattern(" ON (\\w+\\.)?" + s.table() + " USING btree ");
         }
+        assertThat(defs.get("ux_push_eventless_key_user")).as("olaysız push: kısmi + ifade, TEST / taşma özeti ve geçmiş hariç")
+                .contains("COALESCE(team_id").contains("alert_event_id IS NULL").contains("TEST").contains("OVERFLOW_SUMMARY")
+                .contains("2026-10-21");
         assertThat(defs.get("idx_uc_domain_checked")).contains("(domain, checked_at)");
         assertThat(defs.get("idx_ae_domain_type_created")).contains("(domain, alert_type, created_at) INCLUDE (resolved_at)");
         assertThat(defs.get("idx_sc_success_monitor")).as("kısmi indeks yüklemi").contains("(monitor_id) WHERE (ok = true)");

@@ -243,11 +243,24 @@ public class DomainCheckerService {
         // Taban dışı (elle / Kayıt sekmesi / yeniden ölçüm) satır "değişti"yi KALICILAŞTIRMAZ (D-b10, DNS D-9 deseni):
         // aynı değişiklik sonraki zamanlanmış turda da "değişti" olur → geçmiş grafiğinde iki gün / iki kayıt görünürdü.
         // Gördüğü fark yalnız yanıtta ({@code changed}/{@code change_detail}) döner.
-        persist(monitorId, out, changed && !manual, manual);
+        // Çok pod R1-B (2026-10-21): zamanlanmış turun değişikliği karar verilene dek KALICI bekler (PENDING) — satır sonraki
+        // turun tabanı olduğu için değişiklik bir daha algılanmaz; değerlendirme liderlik devrinde / kapıda düşerse yeni lider
+        // bekleyen satırı yeniden kuyruğa alır (SchedulerService.withPendingDomainChanges). İzlemede değişiklik alarmı
+        // kapalıysa karar baştan verilmiştir (SUPPRESSED).
+        boolean persistedChange = changed && !manual;
+        String changeState = !persistedChange ? null
+                : (m != null && Boolean.FALSE.equals(m.getChangeAlert()))
+                        ? com.sitemonitor.service.monitoring.ChangeStates.SUPPRESSED
+                        : com.sitemonitor.service.monitoring.ChangeStates.PENDING;
+        persist(monitorId, out, persistedChange, manual, changeState);
         return out;
     }
 
     private void persist(Long monitorId, Map<String, Object> out, boolean changed, boolean manual) {
+        persist(monitorId, out, changed, manual, null);
+    }
+
+    private void persist(Long monitorId, Map<String, Object> out, boolean changed, boolean manual, String changeState) {
         if (monitorId == null) return;
         try {
             DomainCheck dc = new DomainCheck();
@@ -269,6 +282,7 @@ public class DomainCheckerService {
             dc.setNsResolves((Boolean) out.get("ns_resolves"));
             dc.setChanged(changed);
             dc.setChangeDetail(changed ? (String) out.get("change_detail") : null);
+            dc.setChangeState(changed ? changeState : null);
             dc.setTransferLock((String) out.get("transfer_lock"));
             dc.setBlacklistStatus((String) out.get("blacklist_status"));
             dc.setBlacklistDetail((String) out.get("blacklist_detail"));

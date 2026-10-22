@@ -88,4 +88,13 @@ public class DnsRecord {
     /** Kompakt JSON ayrıntı (evre, rcode, kayıt türü, sorgu süresi / zaman aşımı …), ≤ 4000 karakter. */
     @Column(name = "failure_detail", columnDefinition = "TEXT")
     private String failureDetail;
+
+    /**
+     * DNS_CHANGED kararının KALICI durumu (2026-10-21, çok pod R1-B) — {@code service.monitoring.ChangeStates}: yalnız
+     * zamanlanmış turun değişmiş ({@code changed=true}) satırında dolu (PENDING → ALARMED / TRANSIENT / SUPPRESSED /
+     * EXPIRED, koşullu UPDATE). NULL = eski satır / değişiklik yok. API'ye çıkmaz.
+     */
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    @Column(name = "change_state", length = 16)
+    private String changeState;
 }

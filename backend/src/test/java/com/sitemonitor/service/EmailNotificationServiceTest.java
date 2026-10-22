@@ -927,6 +927,213 @@ class EmailNotificationServiceTest {
         verify(neverRuns, times(50)).schedule(any(Runnable.class), anyLong(), any(TimeUnit.class));
     }
 
+    // ── Çok pod R1 / MP-06 (2026-10-21): kapanışta iptal edilen 421 yeniden denemesi + yetim satırın geç düzeltmesi ──
+
+    @Test
+    @DisplayName("MP-06: 421 → yeniden deneme planlandı → pod kapanıyor: iptal edilen görevin QUEUED_RETRY satırı FAILED (sonuç yok) olur, sayaç sıfırlanır")
+    void shutdownCancelsPendingRetry_writesFailed() throws Exception {
+        String subject = "[SiteMonitor KRİTİK] shutdown.example.com — Erişilebilirlik";
+        com.sitemonitor.model.SmtpSettings smtp = settings(true);
+        smtp.setRetryDelayMs(60_000);                       // gerçek havuz: görev 60 sn sonra koşacaktı
+        when(settingsService.getOrDefaults()).thenReturn(smtp);
+        when(smtpMailService.currentSender()).thenReturn(sender);
+        MimeMessage mockMsg = mock(MimeMessage.class);
+        when(sender.createMimeMessage()).thenReturn(mockMsg);
+        when(mockMsg.getAllRecipients()).thenReturn(null);
+        when(mockMsg.getSubject()).thenReturn(subject);
+        doThrow(new MailSendException("421 4.4.2 Try again later")).when(sender).send(mockMsg);
+        NotificationLog stuck = new NotificationLog();
+        stuck.setEmailStatus("QUEUED_RETRY: 421 4.4.2 Try again later");
+        when(notificationLogRepo.findTopBySubjectAndEmailStatusStartingWithOrderByIdDesc(subject, "QUEUED_RETRY"))
+                .thenReturn(Optional.of(stuck));
+
+        assertThat(service.sendAlert("to@test.com", subject, "msg")).startsWith("QUEUED_RETRY");
+        assertThat(service.pendingRetryCount()).isEqualTo(1);
+
+        assertThat(service.shutdownRetryExecutor(100)).isEqualTo(1);
+        assertThat(stuck.getEmailStatus()).isEqualTo(EmailNotificationService.STATUS_RETRY_CANCELLED_SHUTDOWN);
+        assertThat(stuck.getEmailStatus()).as("teknik hata raporu günlüğü bunu 'uygulama içinde yarıda kaldı' okur")
+                .startsWith("FAILED: sonuç yok");
+        assertThat(service.pendingRetryCount()).isZero();
+        verify(notificationLogRepo).save(stuck);
+
+        // Kapanmış havuza yeni 421: "kuyrukta" denmez, dürüst sonuç döner
+        assertThat(service.sendAlert("to@test.com", subject, "msg"))
+                .isEqualTo(EmailNotificationService.STATUS_RETRY_CANCELLED_SHUTDOWN);
+        assertThat(service.pendingRetryCount()).isZero();
+    }
+
+    @Test
+    @DisplayName("MP-06: yetim sayılıp FAILED yazılmış satırı geç gelen GERÇEK sonuç yine düzeltir (QUEUED_RETRY satırı yoksa)")
+    void lateRealResult_correctsOrphanedRow() throws Exception {
+        String subject = "[SiteMonitor YÜKSEK] late.example.com — DNS";
+        when(settingsService.getOrDefaults()).thenReturn(settings(true));
+        when(smtpMailService.currentSender()).thenReturn(sender);
+        MimeMessage mockMsg = mock(MimeMessage.class);
+        when(sender.createMimeMessage()).thenReturn(mockMsg);
+        when(mockMsg.getAllRecipients()).thenReturn(null);
+        when(mockMsg.getSubject()).thenReturn(subject);
+        doThrow(new MailSendException("421 4.4.2 Try again later")).doNothing().when(sender).send(mockMsg);
+        runRetriesInline();
+        NotificationLog orphan = new NotificationLog();
+        orphan.setEmailStatus(EmailNotificationService.STATUS_RETRY_ORPHANED);
+        when(notificationLogRepo.findTopBySubjectAndEmailStatusStartingWithOrderByIdDesc(subject, "QUEUED_RETRY"))
+                .thenReturn(Optional.empty());
+        when(notificationLogRepo.findTopBySubjectAndEmailStatusStartingWithOrderByIdDesc(subject,
+                EmailNotificationService.STATUS_RETRY_ORPHANED)).thenReturn(Optional.of(orphan));
+
+        service.sendAlert("to@test.com", subject, "msg");
+
+        assertThat(orphan.getEmailStatus()).isEqualTo("SENT");
+        verify(notificationLogRepo).save(orphan);
+    }
+
+    @Test
+    @DisplayName("MP-06: yeniden deneme zinciri süresi = gecikme × (1 + 2 + 4) — süpürücünün yetim eşiği bundan türer")
+    void retryChainDuration() {
+        assertThat(EmailNotificationService.retryChainDuration(90_000L)).isEqualTo(java.time.Duration.ofSeconds(630));
+        assertThat(EmailNotificationService.retryChainDuration(-5L)).isEqualTo(java.time.Duration.ZERO);
+    }
+
+    @Test
+    @DisplayName("inceleme D-2: 421 yeniden denemesi kuyrukta yetim eşiğine yaklaşana dek gecikirse GÖNDERİLMEZ — satır 'süresinde başlayamadı' "
+            + "FAILED olur (yetim süpürücüsünün 7/24 / rapor yeniden denemesiyle çift posta yok); sınır içinde gecikme gönderir")
+    void retryStartingTooLateIsNotSent() throws Exception {
+        String subject = "[7/24] KRİTİK · gec.example.com";
+        when(settingsService.getOrDefaults()).thenReturn(settings(true));
+        when(smtpMailService.currentSender()).thenReturn(sender);
+        MimeMessage mockMsg = mock(MimeMessage.class);
+        when(sender.createMimeMessage()).thenReturn(mockMsg);
+        when(mockMsg.getAllRecipients()).thenReturn(null);
+        when(mockMsg.getSubject()).thenReturn(subject);
+        doThrow(new MailSendException("421 4.4.2 Try again later")).doNothing().when(sender).send(mockMsg);
+        long[] clock = {10_000_000L};
+        service.clockMs = () -> clock[0];
+        long late = EmailNotificationService.retryStartDeadline(90_000L).toMillis() + 60_000L;
+        ScheduledExecutorService delayed = mock(ScheduledExecutorService.class);
+        when(delayed.schedule(any(Runnable.class), anyLong(), any(TimeUnit.class)))
+                .thenAnswer(inv -> { clock[0] += late; ((Runnable) inv.getArgument(0)).run(); return null; });
+        ReflectionTestUtils.setField(service, "mailRetryExecutor", delayed);
+        NotificationLog stuck = new NotificationLog();
+        stuck.setEmailStatus("QUEUED_RETRY: 421 4.4.2 Try again later");
+        when(notificationLogRepo.findTopBySubjectAndEmailStatusStartingWithOrderByIdDesc(subject, "QUEUED_RETRY"))
+                .thenReturn(Optional.of(stuck));
+
+        stuck.setRecipientRole(com.sitemonitor.service.noc.NocNotificationService.LOG_ROLE);   // 7/24 — uzlaştırıcı yeniden gönderir
+
+        assertThat(service.sendAlert("to@test.com", subject, "msg")).startsWith("QUEUED_RETRY");
+        verify(sender, times(1)).send(mockMsg);
+        assertThat(stuck.getEmailStatus()).isEqualTo(EmailNotificationService.STATUS_RETRY_LATE);
+        assertThat(EmailNotificationService.retryStartDeadline(90_000L))
+                .as("son başlama sınırı yetim eşiğinden önce").isLessThan(EmailNotificationService.orphanAge(90_000L));
+        assertThat(EmailNotificationService.STATUS_RETRY_LATE.length()).isLessThanOrEqualTo(255);
+    }
+
+    @Test
+    @DisplayName("inceleme N4: kimsenin yeniden göndermediği posta (alarm / çözüm …) son başlama sınırını geçse de GÖNDERİLİR "
+            + "(eskisi gibi); kanal teknik hata raporu gönderimi düşer (rapor uzlaştırması yeniden gönderir)")
+    void lateRetryOnlyDroppedForMailResentElsewhere() throws Exception {
+        for (String trigger : new String[]{"INITIAL", com.sitemonitor.service.techerror.TechErrorReportSender.TRIGGER}) {
+            org.mockito.Mockito.reset(sender, notificationLogRepo);
+            String subject = "[SiteMonitor KRİTİK] gec-" + trigger + ".example.com — Sertifika";
+            when(settingsService.getOrDefaults()).thenReturn(settings(true));
+            when(smtpMailService.currentSender()).thenReturn(sender);
+            MimeMessage mockMsg = mock(MimeMessage.class);
+            when(sender.createMimeMessage()).thenReturn(mockMsg);
+            when(mockMsg.getAllRecipients()).thenReturn(null);
+            when(mockMsg.getSubject()).thenReturn(subject);
+            doThrow(new MailSendException("421 4.4.2 Try again later")).doNothing().when(sender).send(mockMsg);
+            long[] clock = {10_000_000L};
+            service.clockMs = () -> clock[0];
+            long late = EmailNotificationService.retryStartDeadline(90_000L).toMillis() + 60_000L;
+            ScheduledExecutorService delayed = mock(ScheduledExecutorService.class);
+            when(delayed.schedule(any(Runnable.class), anyLong(), any(TimeUnit.class)))
+                    .thenAnswer(inv -> { clock[0] += late; ((Runnable) inv.getArgument(0)).run(); return null; });
+            ReflectionTestUtils.setField(service, "mailRetryExecutor", delayed);
+            NotificationLog stuck = new NotificationLog();
+            stuck.setEmailStatus("QUEUED_RETRY: 421 4.4.2 Try again later");
+            stuck.setRecipientRole("COMBINED");
+            stuck.setTrigger(trigger);
+            when(notificationLogRepo.findTopBySubjectAndEmailStatusStartingWithOrderByIdDesc(subject, "QUEUED_RETRY"))
+                    .thenReturn(Optional.of(stuck));
+
+            assertThat(service.sendAlert("to@test.com", subject, "msg")).startsWith("QUEUED_RETRY");
+            if ("INITIAL".equals(trigger)) {
+                verify(sender, times(2)).send(mockMsg);
+                assertThat(stuck.getEmailStatus()).as("alarm postası geç de olsa gitti").isEqualTo("SENT");
+            } else {
+                verify(sender, times(1)).send(mockMsg);
+                assertThat(stuck.getEmailStatus()).isEqualTo(EmailNotificationService.STATUS_RETRY_LATE);
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("inceleme N4: canlılık damgası yalnız bu pod'da BEKLEYEN ve başka yerde uzlaştırılMAYAN yeniden denemelerin satırına yazılır")
+    void heartbeatTouchesOnlyPendingRowsNotResentElsewhere() throws Exception {
+        when(settingsService.getOrDefaults()).thenReturn(settings(true));
+        when(smtpMailService.currentSender()).thenReturn(sender);
+        ScheduledExecutorService neverRuns = mock(ScheduledExecutorService.class);
+        ReflectionTestUtils.setField(service, "mailRetryExecutor", neverRuns);
+        String alarmSubject = "[SiteMonitor KRİTİK] bekleyen.example.com — Sertifika";
+        String nocSubject = "[7/24] KRİTİK · bekleyen.example.com";
+        for (String subject : new String[]{alarmSubject, nocSubject}) {
+            MimeMessage m = mock(MimeMessage.class);
+            when(m.getAllRecipients()).thenReturn(null);
+            when(m.getSubject()).thenReturn(subject);
+            when(sender.createMimeMessage()).thenReturn(m);
+            doThrow(new MailSendException("421 4.4.2 Try again later")).when(sender).send(m);
+            assertThat(service.sendAlert("to@test.com", subject, "msg")).startsWith("QUEUED_RETRY");
+        }
+        NotificationLog alarmRow = new NotificationLog();
+        alarmRow.setId(11L);
+        alarmRow.setEmailStatus("QUEUED_RETRY: 421");
+        alarmRow.setTrigger("INITIAL");
+        NotificationLog nocRow = new NotificationLog();
+        nocRow.setId(12L);
+        nocRow.setEmailStatus("QUEUED_RETRY: 421");
+        nocRow.setRecipientRole(com.sitemonitor.service.noc.NocNotificationService.LOG_ROLE);
+        when(notificationLogRepo.findTopBySubjectAndEmailStatusStartingWithOrderByIdDesc(alarmSubject, "QUEUED_RETRY"))
+                .thenReturn(Optional.of(alarmRow));
+        when(notificationLogRepo.findTopBySubjectAndEmailStatusStartingWithOrderByIdDesc(nocSubject, "QUEUED_RETRY"))
+                .thenReturn(Optional.of(nocRow));
+        when(notificationLogRepo.touchRetryAlive(anyLong(), anyString())).thenReturn(1);
+
+        assertThat(service.pendingRetryCount()).as("iki bekleyen yeniden deneme").isEqualTo(2);
+        assertThat(service.heartbeatPendingRetries("2026-10-22T10:00:00")).isEqualTo(1);
+        verify(notificationLogRepo).touchRetryAlive(11L, "2026-10-22T10:00:00");
+        verify(notificationLogRepo, never()).touchRetryAlive(eq(12L), anyString());
+        assertThat(EmailNotificationService.resentElsewhere(new NotificationLog())).as("rolü / tetiği boş satır").isFalse();
+    }
+
+    @Test
+    @DisplayName("inceleme D-2: sınırın İÇİNDE geciken 421 yeniden denemesi gönderilir (SENT)")
+    void retryDelayedWithinDeadlineIsSent() throws Exception {
+        String subject = "[SiteMonitor KRİTİK] sinir.example.com — DNS";
+        when(settingsService.getOrDefaults()).thenReturn(settings(true));
+        when(smtpMailService.currentSender()).thenReturn(sender);
+        MimeMessage mockMsg = mock(MimeMessage.class);
+        when(sender.createMimeMessage()).thenReturn(mockMsg);
+        when(mockMsg.getAllRecipients()).thenReturn(null);
+        when(mockMsg.getSubject()).thenReturn(subject);
+        doThrow(new MailSendException("421 4.4.2 Try again later")).doNothing().when(sender).send(mockMsg);
+        long[] clock = {10_000_000L};
+        service.clockMs = () -> clock[0];
+        long within = EmailNotificationService.retryStartDeadline(90_000L).toMillis() - 60_000L;
+        ScheduledExecutorService delayed = mock(ScheduledExecutorService.class);
+        when(delayed.schedule(any(Runnable.class), anyLong(), any(TimeUnit.class)))
+                .thenAnswer(inv -> { clock[0] += within; ((Runnable) inv.getArgument(0)).run(); return null; });
+        ReflectionTestUtils.setField(service, "mailRetryExecutor", delayed);
+        NotificationLog stuck = new NotificationLog();
+        stuck.setEmailStatus("QUEUED_RETRY: 421 4.4.2 Try again later");
+        when(notificationLogRepo.findTopBySubjectAndEmailStatusStartingWithOrderByIdDesc(subject, "QUEUED_RETRY"))
+                .thenReturn(Optional.of(stuck));
+
+        assertThat(service.sendAlert("to@test.com", subject, "msg")).startsWith("QUEUED_RETRY");
+        verify(sender, times(2)).send(mockMsg);
+        assertThat(stuck.getEmailStatus()).isEqualTo("SENT");
+    }
+
     @Test
     @DisplayName("doSend: 421 sonrası retry başarılı → QUEUED_RETRY logu SENT'e geri-yazılır")
     void retrySucceeds_writesBackSent() throws Exception {

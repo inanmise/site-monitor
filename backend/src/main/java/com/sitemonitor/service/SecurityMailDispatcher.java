@@ -56,10 +56,13 @@ public class SecurityMailDispatcher {
         if (isDelivered(status)) {
             consecutiveFailures.set(0);
             if (incidentId != null) {
-                incidentRepo.findById(incidentId).ifPresent(inc -> {
-                    inc.setLastAlertAt(ISO.format(Instant.now()));   // cooldown yalnız BAŞARIDA başlar
-                    incidentRepo.save(inc);
-                });
+                // Cooldown yalnız BAŞARIDA başlar. HEDEFLİ UPDATE (2026-10-21, çok pod R1 / MP-10): varlığı bütünüyle kaydetmek
+                // gönderim sürerken başka bir taramanın yazdığı resolved=true'yu geri alabiliyordu.
+                try {
+                    incidentRepo.stampLastAlertAt(incidentId, ISO.format(Instant.now()));
+                } catch (Exception e) {
+                    log.warn("Login anomaly cooldown damgası yazılamadı (incident {}): {}", incidentId, e.getMessage());
+                }
             }
         } else {
             int c = consecutiveFailures.incrementAndGet();

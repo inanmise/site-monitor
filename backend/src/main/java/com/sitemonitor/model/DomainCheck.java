@@ -131,4 +131,13 @@ public class DomainCheck {
     /** Kompakt JSON ayrıntı (evre, kaynak iletisi, RDAP HTTP durumu, WHOIS denemesi …), ≤ 4000 karakter. */
     @Column(name = "failure_detail", columnDefinition = "TEXT")
     private String failureDetail;
+
+    /**
+     * DOMAINMON_CHANGED kararının KALICI durumu (2026-10-21, çok pod R1-B) — {@code service.monitoring.ChangeStates}: yalnız
+     * zamanlanmış turun değişmiş ({@code changed=true}) satırında dolu (PENDING → ALARMED / TRANSIENT / SUPPRESSED /
+     * EXPIRED, koşullu UPDATE). NULL = eski satır / değişiklik yok. API'ye çıkmaz.
+     */
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    @Column(name = "change_state", length = 16)
+    private String changeState;
 }

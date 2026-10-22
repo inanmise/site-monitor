@@ -41,8 +41,13 @@ import java.util.function.LongUnaryOperator;
  * resmin yalnız bir parçasını görürdü. Vade kayıtları kirayla birlikte kalır: devir ve çakışma anında da izleme aralık
  * başına bir kez yoklanır, zamanlama yeniden başlatmada korunur.
  *
- * <p><b>Hata.</b> Bu sınıf istisnayı YUTMAZ: çağıran ({@code SchedulerService}) yakalar, WARN yazar ve o çağrı için
- * eski bellek içi davranışa düşer — izleme hiçbir koşulda durmaz.
+ * <p><b>Hata.</b> Bu sınıf istisnayı YUTMAZ: çağıran ({@code SchedulerService}) yakalar ve WARN yazar. 2026-10-21 (çok pod
+ * R1-A, MP-11): yalnız tablo YOKSA ({@code BadSqlGrammarException}) eski bellek içi davranışa düşülür; geçici hatada güvenli
+ * taraf — tur atlanır, izleme vadesi yalnız doğrulanmış liderin güvenli penceresinde yerelde karar verilir, takipçi asla
+ * kendini lider saymaz.
+ *
+ * <p><b>İki aşamalı tur (2026-10-21, MP-15):</b> {@link #claimRun} turu koşu kirasıyla sahiplenir, {@link #complete} başarılı
+ * koşuyu ızgara vadesine taşır; yarıda kalan tur kira dolunca yeniden koşar.
  *
  * <p>Tablo ham DDL ile kurulur ({@link #DDL}, {@code SchedulerService.applySchemaPatches}); entity yok
  * ({@code scheduler_lock} ile aynı desen). Silinen izlemelerin satırlarını gece temizliği {@link #prune} ile atar.
@@ -153,6 +158,43 @@ public class ClusterScheduleService {
         long next = advance.applyAsLong(current);
         if (jdbc.update(SQL_CAS, next, owner, nowMs, key, current) == 1) return new Claim(true, next);
         return new Claim(false, null);   // yarışı başka pod kazandı — değeri bir sonraki turda okunur
+    }
+
+    // ── İki aşamalı tur (2026-10-21, çok pod R1-A, MP-15) ────────────────────────────────────────────────────────────
+
+    /** Koşu tamamlandı: satır hâlâ bu koşunun bıraktığı değerdeyse (ve bu sahipteyse) sıradaki ızgara vadesine ilerler. */
+    static final String SQL_COMPLETE = "UPDATE monitor_check_schedule SET next_due_at = ? "
+            + "WHERE monitor_key = ? AND next_due_at = ? AND claimed_by = ?";
+
+    /**
+     * Turun KOŞU sahiplenmesi (iki aşamanın ilki): vadesi gelmiş satır {@code şimdi + runLeaseMs}'e ilerletilir — tur
+     * yarıda kalırsa (pod öldü, liderlik kaybedildi, istisna) satır runLease sonunda yeniden vadesi gelmiş olur ve başka
+     * (ya da aynı) pod turu yeniden koşar. Başarıyla biten tur {@link #complete} ile ızgaradaki asıl vadeye ilerler.
+     * Eşzamanlılık {@link #claim} ile aynı (koşullu UPDATE / ilk görüşte ON CONFLICT DO NOTHING).
+     *
+     * @param runLeaseMs koşu kirası — turun nominal aralığından BÜYÜK olmamalı (yoksa {@link #isDue} "aralık kısaltıldı"
+     *                   sanar)
+     * @param prevSink   kazanılan sahiplenmede satırın ÖNCEKİ vadesi buraya yazılır (ilk görüşte {@code nowMs}); ızgara bu
+     *                   değerden hesaplanır — {@code null} olabilir
+     * @return sahiplenme sonucu; {@code nextDueAt} = koşu kirasının değeri ({@link #complete}'in beklediği değer)
+     */
+    public Claim claimRun(String key, long nowMs, long nominalMs, Long knownNextDue, long runLeaseMs, long[] prevSink) {
+        long lease = nowMs + Math.max(1L, runLeaseMs);
+        return claim(key, nowMs, nominalMs, knownNextDue, prev -> {
+            if (prevSink != null && prevSink.length > 0) prevSink[0] = prev;
+            return lease;
+        });
+    }
+
+    /**
+     * Koşunun tamamlanması (iki aşamanın ikincisi): satır hâlâ {@code leaseValue}'da ve bu sahipteyse {@code nextDueAt}'e
+     * ilerletilir. 0 satır → başka pod bu arada turu yeniden sahiplendi (koşu kirası dolmuştu) ya da satır silindi — tur
+     * yine de koşmuş olur, satıra dokunulmaz.
+     *
+     * @return satır ilerletildi mi
+     */
+    public boolean complete(String key, long leaseValue, long nextDueAt) {
+        return jdbc.update(SQL_COMPLETE, nextDueAt, key, leaseValue, owner) == 1;
     }
 
     // ── Kira (lease) — tarama liderliği ───────────────────────────────────────────────────────────────────────────

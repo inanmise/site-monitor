@@ -121,6 +121,97 @@ public interface SystemMaintenanceWindowRepository extends JpaRepository<SystemM
     @Query(value = "UPDATE system_maintenance_windows SET caught_up_count = :count WHERE id = :id", nativeQuery = true)
     int recordCaughtUp(@Param("id") Long id, @Param("count") int count);
 
+    // ── Sahiplenme geri bırakma / bayat sahiplenmeyi devralma (2026-10-21, çok pod R1 / MP-18) ───────────────────────
+    // Sahiplenme işten ÖNCE işlenir; iş istisnayla düşer ya da pod ölürse damga kalıyor, telafi / e-posta hiç yapılmıyordu
+    // (susturulan alarmlar INITIAL'ı almıyor, bitiş e-postası kayboluyordu). Hepsi koşullu: yalnız BU sahiplenmenin damgası.
+
+    /** Telafi sahiplenmesini bırakır — yalnız damga hâlâ bu sahiplenmeninse (sonraki tur yeniden dener). */
+    @Modifying
+    @Transactional
+    @Query(value = "UPDATE system_maintenance_windows SET catch_up_at = NULL WHERE id = :id AND catch_up_at = :at",
+            nativeQuery = true)
+    int releaseCatchUp(@Param("id") Long id, @Param("at") String at);
+
+    /** Bayat telafi sahiplenmesini devralır — telafi bitmemişse (sayaç yazılmamış) ve damga hâlâ görülen değerse. */
+    @Modifying
+    @Transactional
+    @Query(value = "UPDATE system_maintenance_windows SET catch_up_at = :at WHERE id = :id AND catch_up_at = :seen "
+            + "AND caught_up_count IS NULL", nativeQuery = true)
+    int reclaimCatchUp(@Param("id") Long id, @Param("seen") String seen, @Param("at") String at);
+
+    /** Duyuru sahiplenmesini bırakır — hiçbir dilim gitmeden düştüyse. */
+    @Modifying
+    @Transactional
+    @Query(value = "UPDATE system_maintenance_windows SET announce_mail_at = NULL, announce_mail_status = NULL "
+            + "WHERE id = :id AND announce_mail_at = :at "
+            + "AND (announce_mail_status IS NULL OR announce_mail_status LIKE 'SENDING:%')", nativeQuery = true)
+    int releaseAnnounceMail(@Param("id") Long id, @Param("at") String at);
+
+    /** Düzeltme sahiplenmesini bırakır (gönderilen sürüm geri alınır) — hiçbir dilim gitmeden düştüyse. */
+    @Modifying
+    @Transactional
+    @Query(value = "UPDATE system_maintenance_windows SET mailed_revision = :prev WHERE id = :id AND correction_mail_at = :at "
+            + "AND mailed_revision = :rev", nativeQuery = true)
+    int releaseCorrectionMail(@Param("id") Long id, @Param("at") String at, @Param("rev") int rev, @Param("prev") int prev);
+
+    /** Bitiş e-postası sahiplenmesini bırakır — hiçbir dilim gitmeden düştüyse. */
+    @Modifying
+    @Transactional
+    @Query(value = "UPDATE system_maintenance_windows SET end_mail_at = NULL, end_mail_status = NULL "
+            + "WHERE id = :id AND end_mail_at = :at "
+            + "AND (end_mail_status IS NULL OR end_mail_status LIKE 'SENDING:%')", nativeQuery = true)
+    int releaseEndMail(@Param("id") Long id, @Param("at") String at);
+
+    // ── Bayat e-posta sahiplenmeleri (2026-10-21, çok pod R1 inceleme F7) ─────────────────────────────────────────────
+    // Sahiplenme ile durum kaydı arasında pod öldüyse damga kalıyor, durum NULL kalıyordu ve e-posta bir daha denenmiyordu.
+    // Bayat sahiplenme BİR kez devralınır (durum "RETRY: …" ile işaretlenir); o da yarıda kalırsa vazgeçilir (durum yazılır).
+
+    /** Bayat bitiş e-postası sahiplenmesini BİR kez devralır — damga hâlâ görülen değerde ve durum yazılmamışsa. */
+    @Modifying
+    @Transactional
+    @Query(value = "UPDATE system_maintenance_windows SET end_mail_at = :at, end_mail_status = :status "
+            + "WHERE id = :id AND end_mail_at = :seen AND end_mail_status IS NULL", nativeQuery = true)
+    int reclaimEndMail(@Param("id") Long id, @Param("seen") String seen, @Param("at") String at, @Param("status") String status);
+
+    /**
+     * İlk dilimden HEMEN önce "gönderim başladı" durumu (2026-10-22, çok pod R1 inceleme N2) — yalnız bu sahiplenmenin satırı
+     * ve durum yazılmamış / devralınmışsa. Devralma bu durumu görünce yeniden göndermez.
+     */
+    @Modifying
+    @Transactional
+    @Query(value = "UPDATE system_maintenance_windows SET end_mail_status = :status WHERE id = :id AND end_mail_at = :at "
+            + "AND (end_mail_status IS NULL OR end_mail_status LIKE 'RETRY:%')", nativeQuery = true)
+    int markEndMailSending(@Param("id") Long id, @Param("at") String at, @Param("status") String status);
+
+    /** Duyuru için aynı "gönderim başladı" durumu. */
+    @Modifying
+    @Transactional
+    @Query(value = "UPDATE system_maintenance_windows SET announce_mail_status = :status WHERE id = :id AND announce_mail_at = :at "
+            + "AND (announce_mail_status IS NULL OR announce_mail_status LIKE 'RETRY:%')", nativeQuery = true)
+    int markAnnounceMailSending(@Param("id") Long id, @Param("at") String at, @Param("status") String status);
+
+    /** Yeniden de yarıda kalan bitiş e-postasından vazgeçer — sonuç bilinmiyor durumu yazılır (yeniden gönderilmez). */
+    @Modifying
+    @Transactional
+    @Query(value = "UPDATE system_maintenance_windows SET end_mail_status = :status WHERE id = :id AND end_mail_at = :seen "
+            + "AND (end_mail_status IS NULL OR end_mail_status LIKE 'RETRY:%' OR end_mail_status LIKE 'SENDING:%')", nativeQuery = true)
+    int giveUpEndMail(@Param("id") Long id, @Param("seen") String seen, @Param("status") String status);
+
+    /** Bayat duyuru sahiplenmesini BİR kez devralır (bakım henüz başlamadıysa). */
+    @Modifying
+    @Transactional
+    @Query(value = "UPDATE system_maintenance_windows SET announce_mail_at = :at, announce_mail_status = :status "
+            + "WHERE id = :id AND announce_mail_at = :seen AND announce_mail_status IS NULL", nativeQuery = true)
+    int reclaimAnnounceMail(@Param("id") Long id, @Param("seen") String seen, @Param("at") String at, @Param("status") String status);
+
+    /** Yarıda kalan duyurudan vazgeçer — sonuç bilinmiyor durumu yazılır. */
+    @Modifying
+    @Transactional
+    @Query(value = "UPDATE system_maintenance_windows SET announce_mail_status = :status WHERE id = :id AND announce_mail_at = :seen "
+            + "AND (announce_mail_status IS NULL OR announce_mail_status LIKE 'RETRY:%' OR announce_mail_status LIKE 'SENDING:%')",
+            nativeQuery = true)
+    int giveUpAnnounceMail(@Param("id") Long id, @Param("seen") String seen, @Param("status") String status);
+
     @Modifying
     @Transactional
     @Query(value = "UPDATE system_maintenance_windows SET jobs_done = TRUE WHERE id = :id", nativeQuery = true)

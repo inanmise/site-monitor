@@ -97,14 +97,38 @@ Sunucu-global ayarları **ops uygular** (uygulama değiştiremez). Önerilen ba�
 - `work_mem` = 16–32MB (bağlantı × work_mem toplamına dikkat)
 - `maintenance_work_mem` = 128–256MB
 - `shared_preload_libraries = 'pg_stat_statements'` (en yavaş sorgu teşhisi + `db-health.sql` bölüm 4)
-- `max_connections` ≥ (Hikari pool × replica) + admin/monitoring headroom
+- `max_connections` ≥ (replika + 1) × Hikari havuzu + 25 (aşağıdaki bağlantı matematiği)
 
-**Bağlantı matematiği (kritik, 2026-10-02 güncel değerler):** prod overlay (`helm/.../environments/master.yaml`)
-`replicaCount: 1`, `dbPoolMax: "30"` → 30 bağlantı; release overlay `replicaCount: 2` + HPA `maxReplicas: 5`
-→ en kötü 5 × havuz. Formül: `max_connections` ≥ (Hikari havuzu × en yüksek pod sayısı) + admin/izleme payı
-(≥ 20). Bu 30 bağlantı 100 Tomcat iş parçacığına, 50 yürütücü iş parçacığına ve 8 zamanlayıcıya hizmet eder ve
-JDBC oturum deposu her istekte DB'ye gider; çok-pod'a çıkarken havuzu ve max_connections'ı buna göre
-boyutlandırın.
+**Bağlantı matematiği (kritik, 2026-10-21 çok pod sürüm 1):** `dbPoolMax` (`DB_POOL_MAX`, Hikari
+`maximum-pool-size`) **pod başınadır**. Rollout `maxSurge: 1` ile yapılır, yani bir an **replika + 1** pod birlikte açıktır;
+buna her açılan pod'un açılışta kısa süre tuttuğu havuz dışı bir bağlantı (ertelenmiş indeks kurucusu) ve yedek / yönetim /
+izleme araçları eklenir:
+
+```
+max_connections ≥ (N + 1) × dbPoolMax + 25
+dbPoolMax       = min(30, floor((max_connections − 25) / (N + 1)))      N = replika sayısı
+```
+
+| `max_connections` | N = 1 | N = 2 | N = 3 | N = 6 |
+|---|---|---|---|---|
+| 100 | 30 | 25 | 18 ✗ | 10 ✗ |
+| 150 | 30 | 30 | 30 | 17 ✗ |
+| 200 | 30 | 30 | 30 | 25 |
+
+✗ = 20'nin altı: lider pod'un payı yetmez (izleme taramalarının hepsi liderde koşar — 50 yürütücü iş parçacığı kısa
+işlemlerle, 8 zamanlayıcı, Tomcat ve JDBC oturum deposu her istekte DB'ye gider). O durumda `max_connections` büyütülür
+ya da PgBouncer **session** kipinde araya konur. Prod bugün `replicaCount: 1`, `dbPoolMax: "30"` (≥ 85 gerekir); 2
+replikaya geçişte 30 için ≥ 115 (pratikte 120), `max_connections` 100 ise `dbPoolMax: "25"`. Staging
+(`release.yaml`) sabit 2 replikadır (HPA kapalı; eskiden HPA `maxReplicas: 5` ile en kötü 6 × havuz demekti).
+
+**PgBouncer yalnız `pool_mode = session`.** Uygulama oturum düzeyinde durum kullanır: şema yamaları ve ertelenmiş indeks
+kurucusu `pg_try_advisory_lock` (oturum kilidi) alır, `SchemaDdlGuard` aynı bağlantıda `SET lock_timeout … RESET` yapar.
+`transaction` / `statement` kipinde bu komutlar farklı sunucu bağlantılarına düşer — kilit sızar ya da hiç tutulmaz,
+`lock_timeout` başka bir istemcide kalır. Spring Session JDBC iki kipte de çalışır; sorun yukarıdakilerdir.
+
+Pod başına sabit yük (N ile çarpılır, küçük): ayar / LDAP / SMTP / izin önbelleklerinin 10 sn'lik tazelemesi, dakikalık
+kalp atışı / sistem metriği / HTTP metriği / şema kayıt satırları, takipçinin 5 sn'lik kira kontrolü, Spring Session
+temizliği, iş ölçümü aktarıcısının dakikalık özeti (belirteç varsa) ve Hikari `minimum-idle` (10) bağlantı.
 
 ## 4. Teşhis & migration script'leri (`scripts/`)
 
@@ -141,9 +165,10 @@ opt-in'dir, gece temizlik/rollup dağıtık-kilitlidir → çok-pod'da tek pod �
    psql -h <prod-host> -U sitemonitor -d sitemonitor -v ON_ERROR_STOP=1 -f scripts/perf-indexes.sql
    ```
    Böylece startup patch'i no-op olur. (Taze/küçük DB'de gerek yok.)
-2. **Bağlantı matematiğini doğrula.** Prod bugün 1 replika × Hikari havuzu 30 = **30 bağlantı**; replika
-   sayısı ya da HPA açılırsa çarpım ona göre büyür. `max_connections ≥ havuz × en yüksek pod sayısı + pay`
-   olduğunu teyit et; değilse pod'lar bağlantı bulamaz. (Bkz. §3 bağlantı matematiği.)
+2. **Bağlantı matematiğini doğrula.** Prod bugün 1 replika × Hikari havuzu 30; rollout'ta iki pod birlikte açık
+   olduğundan `max_connections ≥ (replika + 1) × havuz + 25` (1 replika: ≥ 85; 2 replika: ≥ 115). Değilse pod'lar
+   bağlantı bulamaz ve küme kapıları (kira, turlar) "okunamadı" yoluna düşer. PgBouncer varsa yalnız `session` kipi.
+   (Bkz. §3 bağlantı matematiği.)
 3. **(Önerilen) Dış DB sunucu tuning'i** uygula (§3): `shared_buffers` ~RAM %25, `effective_cache_size`
    ~RAM %75, `work_mem` 16–32MB, `maintenance_work_mem` 128–256MB.
 4. **(Opsiyonel) `pg_stat_statements` preload** (`shared_preload_libraries`) — `db-health.sql` bölüm 4

@@ -23,8 +23,21 @@ public class LoginAnomalyIncident {
     @Column(name = "opened_at", length = 40)
     private String openedAt;            // ISO UTC
 
-    @Column(name = "last_alert_at", length = 40)
-    private String lastAlertAt;         // ISO UTC — cooldown burdan hesaplanır
+    /**
+     * ISO UTC — cooldown burdan hesaplanır. YALNIZ gönderim BAŞARIDA hedefli UPDATE ile yazılır
+     * ({@code LoginAnomalyIncidentRepository.stampLastAlertAt}; 2026-10-21, çok pod R1 / MP-10): varlık kaydı (taramanın bayat
+     * kopyası) onu geri saramasın diye {@code updatable=false}.
+     */
+    @Column(name = "last_alert_at", length = 40, updatable = false)
+    private String lastAlertAt;
+
+    /**
+     * Son uyarı GÖNDERİM DENEMESİNİN anı (ISO UTC, 2026-10-21, çok pod R1 / MP-10) — tarama gönderimi eşzamansız dağıtıcıya
+     * vermeden ÖNCE damgalar. Gönderim sürerken / az önce düştüyse ({@code FailedLoginAnomalyIncidentService.ATTEMPT_GUARD})
+     * cooldown bunu da sayar: ikinci tarama, uçuştaki İLK postanın arkasından hemen REALERT göndermez.
+     */
+    @Column(name = "last_alert_attempt_at", length = 40)
+    private String lastAlertAttemptAt;
 
     @Column(name = "realert_count")
     private int realertCount;

@@ -101,6 +101,11 @@ class StormCloseRaceTest {
     private void lockOk() {
         when(jdbcTemplate.update(startsWith("DELETE FROM scheduler_lock"), any(), any())).thenReturn(1);
         when(jdbcTemplate.update(startsWith("INSERT INTO scheduler_lock"), any(), any(), any())).thenReturn(1);
+        // Kapanışın koşullu sahiplenmesi (2026-10-21, çok pod — MP-04): fırtına açık → 1 satır, bu tur kapatır.
+        // İki aşamalı kapanış (2026-10-21): sahiplen (CLOSING) → kurtarmayı sahiplen → DONE — hepsi 1 satır.
+        when(jdbcTemplate.update(eq(StormService.SQL_CLOSE_CLAIM), any(Object[].class))).thenReturn(1);
+        when(jdbcTemplate.update(eq(StormService.SQL_RECOVERY_CLAIM), any(Object[].class))).thenReturn(1);
+        when(jdbcTemplate.update(eq(StormService.SQL_CLOSE_DONE), any(Object[].class))).thenReturn(1);
     }
 
     @SuppressWarnings("unchecked")
@@ -243,9 +248,10 @@ class StormCloseRaceTest {
         verify(alertEventRepo, never()).unlinkFromStormIfLinked(eq(2L), anyLong());
         verify(alertEventRepo, never()).unlinkFromStormIfLinked(eq(3L), anyLong());
         verify(alertEventRepo).unlinkFromStorm(2L, 7L);   // duyurulmamış bilinen üye: mevcut yol
-        // Sıra: önce fırtına kapanışı kaydedilir, sonra geç katılan okunur.
-        var order = inOrder(stormRepo, alertEventRepo);
-        order.verify(stormRepo).save(s);
+        // Sıra: önce fırtına kapanışı (koşullu sahiplenme, 2026-10-21) yazılır, sonra geç katılan okunur.
+        var order = inOrder(jdbcTemplate, alertEventRepo);
+        order.verify(jdbcTemplate).update(eq(StormService.SQL_CLOSE_CLAIM), anyString(), anyString(), anyString(),
+                eq(StormService.RESOLVE_SEALED), eq(7L));
         order.verify(alertEventRepo).findByStormIdAndResolvedFalse(7L);
         assertThat(leaveRows()).anySatisfy(r -> {
             assertThat(r[1]).isEqualTo(AlertStormMember.LEAVE_UNLINKED);
