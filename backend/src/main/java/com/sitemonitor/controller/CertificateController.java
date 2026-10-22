@@ -326,8 +326,16 @@ public class CertificateController {
 
     @GetMapping("/history/{domain}/alerts")
     public ResponseEntity<Map<String, Object>> getDomainAlerts(@PathVariable String domain, HttpSession session) {
-        requireMonitoringViewableDomain(session, domain);
+        // Alarm Geçmişi'yle AYNI izin (2026-10-22, hata avı ALERTS-17): bu uç alarm satırlarını izin sorgusuz veriyordu.
+        permissionService.require(session, "alerts.read", "view");
+        CertificateInventory inv = requireMonitoringViewableDomain(session, domain);
         List<AlertEvent> alerts = alertEventRepository.findByDomainOrderByCreatedAtDesc(domain);
+        // Kaydı YALNIZ takım erişim paylaşımıyla okuyan kişi (kendi kapsamı / 7/24 değil) bilgilendirilen eskalasyon
+        // kişilerini (ad / e-posta / rol) görmez — paylaşım izlemeleri açar, takımın insanlarını değil. Varlıklar bağlamdan
+        // kopuk (open-in-view kapalı): değişiklik kaydedilmez.
+        boolean ownRead = SessionScope.canViewMonitoringOwn(session, inv.getTeamId())
+                || (inv.getUgTeamId() != null && SessionScope.canViewMonitoringOwn(session, inv.getUgTeamId()));
+        if (!ownRead) for (AlertEvent a : alerts) a.setNotifiedContacts(null);
         return ok(Map.of("success", true, "domain", domain, "data", alerts, "timestamp", now()));
     }
 

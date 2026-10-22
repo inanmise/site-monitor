@@ -1221,8 +1221,9 @@ class AdminControllerTest {
     @DisplayName("bulk: `domains` listesi envanter kimliğine çözülür (bilinmeyen alan atlanır), set-tier kademeyi yazar")
     void bulk_domainsResolveToIds_setTier() throws Exception {
         CertificateInventory a = inventory("a.example.com"); a.setId(11L); a.setTeamId(1L); a.setTier(3);
-        when(inventoryRepo.findByDomain("a.example.com")).thenReturn(Optional.of(a));
-        when(inventoryRepo.findByDomain("yok.example.com")).thenReturn(Optional.empty());
+        // 2026-10-22 (ADMIN-16): alan adı harf DUYARSIZ çözülür, bulunamayan alan adı atlanan sayılır
+        when(inventoryRepo.findFirstByDomainIgnoreCaseOrderByIdAsc("A.example.com")).thenReturn(Optional.of(a));
+        when(inventoryRepo.findFirstByDomainIgnoreCaseOrderByIdAsc("yok.example.com")).thenReturn(Optional.empty());
         when(inventoryRepo.findById(11L)).thenReturn(Optional.of(a));
         when(inventoryRepo.save(any())).thenAnswer(i -> i.getArgument(0));
 
@@ -1230,7 +1231,8 @@ class AdminControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"action\":\"set-tier\",\"domains\":[\"A.example.com\",\"yok.example.com\"],\"tier\":1}"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.processed").value(1));
+                .andExpect(jsonPath("$.data.processed").value(1))
+                .andExpect(jsonPath("$.data.skipped").value(1));
         assertThat(a.getTier()).isEqualTo(1);
         ArgumentCaptor<String> act = ArgumentCaptor.forClass(String.class);
         verify(auditService).recordAction(act.capture(), any(jakarta.servlet.http.HttpSession.class),
@@ -2380,16 +2382,17 @@ class AdminControllerTest {
     }
 
     @Test
-    @DisplayName("GET /api/admin/alerts → varsayılan sıralama createdAt DESC; kapalı görünümde resolvedAt DESC + createdAt DESC")
+    @DisplayName("GET /api/admin/alerts → varsayılan sıralama createdAt DESC + id DESC; kapalı görünümde resolvedAt DESC + createdAt DESC + id DESC")
     void listAlerts_defaultSort() throws Exception {
         List<Sort.Order> o = alertSortFor("");
-        assertThat(o).hasSize(1);
+        assertThat(o).hasSize(2);   // 2026-10-22 (DATA-7): id eşitlik bozucu eklendi
         assertThat(o.get(0).getProperty()).isEqualTo("createdAt");
         assertThat(o.get(0).getDirection()).isEqualTo(Sort.Direction.DESC);
+        assertThat(o.get(1).getProperty()).isEqualTo("id");
 
         org.mockito.Mockito.clearInvocations(alertEventRepo);
         List<Sort.Order> c = alertSortFor("?resolved=true");
-        assertThat(c.stream().map(Sort.Order::getProperty).toList()).containsExactly("resolvedAt", "createdAt");
+        assertThat(c.stream().map(Sort.Order::getProperty).toList()).containsExactly("resolvedAt", "createdAt", "id");
         assertThat(c).allMatch(x -> x.getDirection() == Sort.Direction.DESC);
     }
 
@@ -2397,7 +2400,7 @@ class AdminControllerTest {
     @DisplayName("GET /api/admin/alerts?sort=level&dir=asc → seviye CASE sırası (asc) + createdAt DESC eşitlik bozucu")
     void listAlerts_sortLevel_usesCaseRank() throws Exception {
         List<Sort.Order> o = alertSortFor("?sort=level&dir=asc");
-        assertThat(o).hasSize(2);
+        assertThat(o).hasSize(3);   // seviye + createdAt + id (DATA-7)
         assertThat(o.get(0).getProperty()).isEqualTo(AdminController.AlertSort.LEVEL_RANK);
         assertThat(o.get(0).getProperty()).contains("CRITICAL").contains("HIGH").contains("WARNING");
         assertThat(o.get(0).getDirection()).isEqualTo(Sort.Direction.ASC);
@@ -2409,7 +2412,7 @@ class AdminControllerTest {
     @DisplayName("GET /api/admin/alerts?sort=<bilinmeyen>&dir=<bilinmeyen> → beyaz liste dışı anahtar varsayılana düşer (enjeksiyon yok)")
     void listAlerts_unknownSort_fallsBackToDefault() throws Exception {
         List<Sort.Order> o = alertSortFor("?sort=e.domain;DROP&dir=sideways");
-        assertThat(o).hasSize(1);
+        assertThat(o).hasSize(2);   // varsayılan createdAt + id (DATA-7)
         assertThat(o.get(0).getProperty()).isEqualTo("createdAt");
         assertThat(o.get(0).getDirection()).isEqualTo(Sort.Direction.DESC);
     }
@@ -4749,5 +4752,291 @@ class AdminControllerTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.fields.ids").exists());
         verify(inventoryRepo, never()).findById(anyLong());
+    }
+
+    // ═══ Hata avı 2026-10-22 (PKG-1): erişim denetimi + yönetim API'si ════════════════════════════════════════
+
+    private AppUser target(long id, String username, String role, Long primary, Long... extras) {
+        AppUser u = new AppUser();
+        u.setId(id);
+        u.setUsername(username);
+        u.setSystemRole(role);
+        u.setActive(true);
+        u.setTeamId(primary);
+        java.util.LinkedHashSet<Long> teams = new java.util.LinkedHashSet<>();
+        if (primary != null) teams.add(primary);
+        teams.addAll(java.util.Arrays.asList(extras));
+        u.setTeamIds(teams);
+        when(userRepo.findById(id)).thenReturn(Optional.of(u));
+        when(userService.updateUser(eq(id), any(), any(), any(), any(), any(), any(), any())).thenReturn(u);
+        return u;
+    }
+
+    /** Kapsamlı müdür: rol ADMIN, görüş + yönetim kapsamı verilen takımlar. */
+    private MockHttpSession mudur(List<Long> view, List<Long> manage) {
+        MockHttpSession s = scopedAdminSession();
+        s.setAttribute("viewTeamIds", new java.util.ArrayList<>(view));
+        s.setAttribute("manageTeamIds", new java.util.ArrayList<>(manage));
+        return s;
+    }
+
+    @Test
+    @DisplayName("AUTH-1/16: kullanıcı silinince hatırlanan girişleri silinir ve bu pod'un pasif/silinmiş önbelleği boşalır")
+    void deleteUser_revokesRememberMeAndCaches() throws Exception {
+        AppUser t = new AppUser();
+        t.setId(20L); t.setUsername("SILINEN"); t.setTeamId(1L); t.setSystemRole("USER"); t.setActive(true);
+        when(userRepo.findById(20L)).thenReturn(Optional.of(t));
+
+        mvc.perform(delete("/api/admin/users/20").session(authSession())).andExpect(status().isOk());
+        verify(rememberMeService).invalidateAllForUser("SILINEN");
+        verify(userService).forgetUserCaches("SILINEN");
+    }
+
+    @Test
+    @DisplayName("AUTH-10: otomatik parola sıfırlama hedefin canlı oturumunu sonlandırır ve hatırlanan girişlerini siler")
+    void autoReset_terminatesSessionAndTokens() throws Exception {
+        when(userService.adminAutoResetPassword(eq(7L), any(), any())).thenReturn("TempPwd12X");
+        AppUser t = new AppUser();
+        t.setId(7L); t.setUsername("BOB"); t.setEmail("bob@example.com"); t.setSystemRole("USER");
+        when(userRepo.findById(7L)).thenReturn(Optional.of(t));
+        when(emailNotificationService.sendPasswordResetEmail(any(), any(), any(), any())).thenReturn("SENT");
+
+        mvc.perform(post("/api/admin/users/7/auto-reset-password").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"admin_password\":\"rightpass\"}"))
+                .andExpect(status().isOk());
+        verify(userService).terminateActiveSession("BOB");
+        verify(rememberMeService).invalidateAllForUser("BOB");
+    }
+
+    @Test
+    @DisplayName("AUTH-5: TAKIM YÖNETİCİSİ (takım 2) {2, 9} üyesini TEAM_ADMIN yapamaz (9'u yönetmiyor) → 403; yalnız {2} üyesini yapabilir → 200")
+    void teamAdminPromotion_mustCoverAllTargetTeams() throws Exception {
+        target(31L, "COK_TAKIM", "USER", 2L, 9L);
+        mvc.perform(put("/api/admin/users/31").session(teamAdminSession())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"system_role\":\"TEAM_ADMIN\"}"))
+                .andExpect(status().isForbidden());
+        verify(userService, never()).updateUser(eq(31L), any(), any(), any(), any(), any(), any(), any());
+
+        target(32L, "TEK_TAKIM", "USER", 2L);
+        mvc.perform(put("/api/admin/users/32").session(teamAdminSession())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"system_role\":\"TEAM_ADMIN\"}"))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("AUTH-5: müdür (yönetim {2, 3}) TEAM_ADMIN hedefe takım eklerken hedefin TÜM takımları kapsamda olmalı")
+    void mudurAddsTeamToTeamAdmin_mustCoverAll() throws Exception {
+        MockHttpSession m = mudur(List.of(2L, 3L), List.of(2L, 3L));
+        target(33L, "TA_GENIS", "TEAM_ADMIN", 2L, 9L);
+        mvc.perform(put("/api/admin/users/33").session(m)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"team_ids\":[2,9,3]}"))
+                .andExpect(status().isForbidden());
+        target(34L, "TA_DAR", "TEAM_ADMIN", 2L);
+        mvc.perform(put("/api/admin/users/34").session(m)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"team_ids\":[2,3]}"))
+                .andExpect(status().isOk());
+        // Yalnız telefon / ad düzenlemesi (rol ve takım değişmez) bu kurala takılmaz
+        mvc.perform(put("/api/admin/users/33").session(m)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"display_name\":\"Yeni Ad\",\"team_ids\":[2,9]}"))
+                .andExpect(status().isOk());   // 9 kapsam DIŞI ama DEĞİŞMEDİ; rol de değişmedi → AUTH-5 / UIA-1 kuralına takılmaz
+    }
+
+    @Test
+    @DisplayName("UIA-1: müdür (yönetim {2}) {2, 9} kullanıcısının yalnız telefonunu / adını kaydeder (form tüm takımları gönderir) → 200; takım 10 eklemek ya da 9'u çıkarmak 403")
+    void mudurEditsUserWithForeignTeam_onlyChangedTeamsChecked() throws Exception {
+        MockHttpSession m = mudur(List.of(2L), List.of(2L));
+        target(35L, "IKI_TAKIM", "USER", 2L, 9L);
+        mvc.perform(put("/api/admin/users/35").session(m)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"display_name\":\"Ad Soyad\",\"team_ids\":[2,9],\"team_id\":2}"))
+                .andExpect(status().isOk());
+        verify(userService).updateUser(eq(35L), eq("Ad Soyad"), any(), any(), any(), eq(List.of(2L, 9L)), any(), any());
+
+        mvc.perform(put("/api/admin/users/35").session(m)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"team_ids\":[2,9,10]}"))
+                .andExpect(status().isForbidden());
+        mvc.perform(put("/api/admin/users/35").session(m)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"team_ids\":[2]}"))
+                .andExpect(status().isForbidden());   // kapsam dışı 9'u çıkarmak da yetki ister
+    }
+
+    @Test
+    @DisplayName("UIA-1: TAKIM YÖNETİCİSİ ek takımı olan üyeyi (değişmeyen takım kümesiyle) kaydedebilir → 200; yeni takım eklemek 403")
+    void teamAdminEditsMultiTeamUser_unchangedTeamsPass() throws Exception {
+        target(36L, "UYE", "USER", 2L, 9L);
+        mvc.perform(put("/api/admin/users/36").session(teamAdminSession())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"display_name\":\"Ad\",\"team_ids\":[2,9]}"))
+                .andExpect(status().isOk());
+        // TEAM_ADMIN üyeliği değiştiremez → takım listesi servise HİÇ gitmez (bugünkü gibi null)
+        verify(userService).updateUser(eq(36L), eq("Ad"), any(), any(), any(), isNull(), any(), any());
+        mvc.perform(put("/api/admin/users/36").session(teamAdminSession())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"team_ids\":[2,9,11]}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("AUTH-11: kapsamlı yazarın gövdesindeki telefon YOK SAYILIR (applyProfileFields sensitiveAllowed=false); global yönetici yazar")
+    void scopedWriterCannotSetPhone() throws Exception {
+        target(37L, "TEL", "USER", 2L);
+        mvc.perform(put("/api/admin/users/37").session(mudur(List.of(2L), List.of(2L)))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"phone\":\"05551112233\"}"))
+                .andExpect(status().isOk());
+        verify(userService).applyProfileFields(any(AppUser.class), any(), eq(false));
+        org.mockito.Mockito.clearInvocations(userService);
+        target(37L, "TEL", "USER", 2L);
+        mvc.perform(put("/api/admin/users/37").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"phone\":\"05551112233\"}"))
+                .andExpect(status().isOk());
+        verify(userService).applyProfileFields(any(AppUser.class), any(), eq(true));
+    }
+
+    @Test
+    @DisplayName("AUTH-6: TAKIM YÖNETİCİSİ ADMIN / AUDIT hesabını takımına EKLEYEMEZ / ÇIKARAMAZ → 403; USER hesabı → 200")
+    void teamMemberAddRemove_requiresAdministerTarget() throws Exception {
+        target(40L, "MUDUR_MESLEKTAS", "ADMIN", 2L);
+        target(41L, "DENETCI", "AUDIT", 5L);
+        mvc.perform(post("/api/admin/teams/2/members").session(teamAdminSession())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"user_id\":41}"))
+                .andExpect(status().isForbidden());
+        mvc.perform(delete("/api/admin/teams/2/members/40").session(teamAdminSession()))
+                .andExpect(status().isForbidden());
+        verify(userService, never()).updateUser(any(), any(), any(), any(), any(), any(), any(), any());
+
+        target(42L, "SIRADAN", "USER", 5L);
+        mvc.perform(post("/api/admin/teams/2/members").session(teamAdminSession())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"user_id\":42}"))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("UIA-2: kapsamlı müdür (görüş {2, 3}) kullanıcı aramasında teamId=3 → 3'ün üyeleri; teamId yok → tüm görüş kapsamı; kapsam dışı 99 → boş, sorgu yok; birincil takımı OLMAYAN müdür de arar")
+    void searchUsers_scopedAdminUsesViewScope() throws Exception {
+        when(userRepo.findFilteredInTeams(any(), any(), any(), any(), any(), any(), anyBoolean(), any()))
+                .thenReturn(new PageImpl<>(List.of(), org.springframework.data.domain.PageRequest.of(0, 20), 0));
+        MockHttpSession m = mudur(List.of(2L, 3L), List.of(2L, 3L));
+
+        mvc.perform(get("/api/admin/users/search").param("teamId", "3").session(m)).andExpect(status().isOk());
+        verify(userRepo).findFilteredInTeams(isNull(), isNull(), isNull(), eq(3L), eq(List.of(2L, 3L)), isNull(), eq(false), any());
+
+        org.mockito.Mockito.clearInvocations(userRepo);
+        m.removeAttribute("teamId");   // AD'den eşlenmemiş müdür: birincil takım yok
+        mvc.perform(get("/api/admin/users/search").param("dormantDays", "30").session(m)).andExpect(status().isOk());
+        verify(userRepo).findFilteredInTeams(isNull(), isNull(), isNull(), isNull(), eq(List.of(2L, 3L)), any(String.class), eq(false), any());
+
+        org.mockito.Mockito.clearInvocations(userRepo);
+        mvc.perform(get("/api/admin/users/search").param("teamId", "99").session(m))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").value(0));
+        verify(userRepo, never()).findFilteredInTeams(any(), any(), any(), any(), any(), any(), anyBoolean(), any());
+        verify(userRepo, never()).findFiltered(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("ADMIN-11: takım düzenlemesinde leader_id BOŞ gelirse lider kaldırılır; anahtar yoksa dokunulmaz")
+    void updateTeam_blankLeaderClears() throws Exception {
+        Team t = new Team(); t.setId(5L); t.setName("Ops"); t.setEmail("ops@example.com");
+        when(userService.updateTeam(eq(5L), any(), any(), any(), any(), any(), any(), any())).thenReturn(t);
+        when(userService.clearTeamLeader(5L)).thenReturn(t);
+
+        mvc.perform(put("/api/admin/teams/5").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"name\":\"Ops\",\"leader_id\":null}"))
+                .andExpect(status().isOk());
+        verify(userService, org.mockito.Mockito.times(1)).clearTeamLeader(5L);
+        mvc.perform(put("/api/admin/teams/5").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"name\":\"Ops\",\"leader_id\":\"\"}"))
+                .andExpect(status().isOk());
+        verify(userService, org.mockito.Mockito.times(2)).clearTeamLeader(5L);
+        mvc.perform(put("/api/admin/teams/5").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"name\":\"Ops\"}"))
+                .andExpect(status().isOk());
+        verify(userService, org.mockito.Mockito.times(2)).clearTeamLeader(5L);   // anahtar yok → dokunma
+    }
+
+    @Test
+    @DisplayName("ADMIN-4 + ADMIN-10: envanter düzenlemesi 'Son güncelleyen' künyesini basar; YALNIZ kontrol sıklığı / grup değişince de DOMAIN_EDIT yazılır")
+    void updateInventory_stampsAndAuditsGroupInterval() throws Exception {
+        CertificateInventory existing = inventory("site.example.com");
+        existing.setId(50L); existing.setTeamId(1L); existing.setGroupName("Grup A"); existing.setTags("t1");
+        existing.setCheckIntervalHours(24);
+        when(inventoryRepo.findById(50L)).thenReturn(Optional.of(existing));
+        when(inventoryRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+        when(monitoringGroupService.getOrCreate(any(), eq("cert"), any(), any())).thenAnswer(a -> a.getArgument(2));
+
+        mvc.perform(put("/api/admin/inventory/50").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"domain\":\"site.example.com\",\"port\":443,\"active\":true,\"team_id\":1,"
+                                + "\"group_name\":\"Grup B\",\"tags\":\"t1\",\"check_interval_hours\":6}"))
+                .andExpect(status().isOk());
+        verify(monitorHistory).stampUpdated(eq(existing), any(jakarta.servlet.http.HttpSession.class));
+        ArgumentCaptor<String> detail = ArgumentCaptor.forClass(String.class);
+        verify(auditService).recordAction(eq("DOMAIN_EDIT"), any(jakarta.servlet.http.HttpSession.class),
+                any(jakarta.servlet.http.HttpServletRequest.class), eq("CERTIFICATE"), eq("site.example.com"), detail.capture());
+        assertThat(detail.getValue()).contains("\"groupName\":{\"from\":\"Grup A\",\"to\":\"Grup B\"}")
+                .contains("\"checkIntervalHours\":{\"from\":24,\"to\":6}");
+    }
+
+    @Test
+    @DisplayName("ADMIN-13 + ADMIN-4: SY aktarımı eski takımın bildirim grubunu ve UG == yeni SY'yi düşürür, künyeyi basar")
+    void transfer_dropsStaleGroupAndSameUg() throws Exception {
+        CertificateInventory inv = inventory("tasinan.example.com");
+        inv.setId(60L); inv.setTeamId(1L); inv.setUgTeamId(3L); inv.setNotificationGroupId(500L);
+        when(inventoryRepo.findById(60L)).thenReturn(Optional.of(inv));
+        when(inventoryRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+        NotificationGroup g = new NotificationGroup(); g.setId(500L); g.setTeamId(1L); g.setActive(true);
+        when(notificationGroupRepo.findById(500L)).thenReturn(Optional.of(g));
+
+        mvc.perform(post("/api/admin/inventory/60/transfer").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"team_id\":3}"))
+                .andExpect(status().isOk());
+        assertThat(inv.getTeamId()).isEqualTo(3L);
+        assertThat(inv.getUgTeamId()).as("UG yeni SY ile aynıydı").isNull();
+        assertThat(inv.getNotificationGroupId()).as("takım 1'in grubu takım 3'te geçersiz").isNull();
+        verify(monitorHistory).stampUpdated(eq(inv), any(jakarta.servlet.http.HttpSession.class));
+    }
+
+    @Test
+    @DisplayName("ADMIN-16: toplu işlem alan adlarını HARF DUYARSIZ çözer; bulunamayan alan adı atlanan sayılır")
+    void bulkByDomains_caseInsensitive_missesCounted() throws Exception {
+        CertificateInventory legacy = inventory("Example.com"); legacy.setId(70L); legacy.setTeamId(1L); legacy.setTier(3);
+        when(inventoryRepo.findFirstByDomainIgnoreCaseOrderByIdAsc("Example.com")).thenReturn(Optional.of(legacy));
+        when(inventoryRepo.findFirstByDomainIgnoreCaseOrderByIdAsc("yok.example.com")).thenReturn(Optional.empty());
+        when(inventoryRepo.findById(70L)).thenReturn(Optional.of(legacy));
+        when(inventoryRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        mvc.perform(post("/api/admin/inventory/bulk").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"set-tier\",\"domains\":[\"Example.com\",\"yok.example.com\"],\"tier\":1}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.processed").value(1))
+                .andExpect(jsonPath("$.data.skipped").value(1));
+        assertThat(legacy.getTier()).isEqualTo(1);
+        verify(monitorHistory).stampUpdated(eq(legacy), any(jakarta.servlet.http.HttpSession.class));
+    }
+
+    @Test
+    @DisplayName("ADMIN-14: sertifika notu alan adının ENVANTER takımıyla damgalanır (global yöneticinin notu da takıma görünür)")
+    void addNote_stampedWithInventoryTeam() throws Exception {
+        CertificateInventory inv = inventory("notlu.example.com"); inv.setId(80L); inv.setTeamId(4L);
+        when(inventoryRepo.findByDomain("notlu.example.com")).thenReturn(Optional.of(inv));
+        when(noteRepo.save(any())).thenAnswer(i -> { CertificateNote n = i.getArgument(0); n.setId(900L); return n; });
+
+        mvc.perform(post("/api/admin/notes/notlu.example.com").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"note\":\"yenileme planlandı\"}"))
+                .andExpect(status().isOk());
+        ArgumentCaptor<CertificateNote> cap = ArgumentCaptor.forClass(CertificateNote.class);
+        verify(noteRepo).save(cap.capture());
+        assertThat(cap.getValue().getTeamId()).isEqualTo(4L);
+    }
+
+    @Test
+    @DisplayName("DATA-7: alarm CSV dışa aktarımı sayfaları createdAt DESC + id DESC ile çeker")
+    void exportAlerts_pagesWithIdTieBreak() throws Exception {
+        stubEmptyAlerts();
+        mvc.perform(get("/api/admin/alerts/export").session(authSession())).andExpect(status().isOk());
+        ArgumentCaptor<Pageable> cap = ArgumentCaptor.forClass(Pageable.class);
+        verify(alertEventRepo).findFiltered(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(),
+                any(), any(), any(), anyBoolean(), any(), cap.capture());
+        assertThat(cap.getValue().getSort().toList().stream().map(Sort.Order::getProperty).toList())
+                .containsExactly("createdAt", "id");
     }
 }
