@@ -1870,14 +1870,58 @@ public class MonitoringOutageService {
             phase = org.springframework.transaction.event.TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
     public void onSettingsChanged(AppSettingsChangedEvent ev) {
         if (ev == null) return;
+        // MP-44 (2026-10-23, çok pod R2a): başka pod'un kaydını DB tazelemesinde ({@code source="refresh"}, ~10 sn) fark eden
+        // pod uzlaştırmayı YİNELEMEZ — kaydı yapan pod koşturur (kilit altında), açılış uzlaştırması da her pod açılışında
+        // kilit altında koşar (kayıttan hemen sonra ölen pod yeniden başlarken telafi eder).
+        if ("refresh".equals(ev.source())) return;
         boolean relevant = ev.changedKeys() == null || ev.changedKeys().isEmpty() || ev.changedKeys().stream()
                 .anyMatch(k -> k != null && (k.endsWith(".alert-enabled") || "site.monitor.scripted.enabled".equals(k)));
         if (!relevant) return;
         try {
-            settingsReconcileExecutor.execute(() -> closeAlarmsOfDisabledTypes("ayar değişikliği"));
+            settingsReconcileExecutor.execute(() -> closeAlarmsOfDisabledTypesWithRetry("ayar değişikliği"));
         } catch (Exception ex) {
             log.warn("Kapalı türlerin alarm uzlaştırması kuyruğa alınamadı: {}", ex.getMessage());
         }
+    }
+
+    /**
+     * MP-44: kapalı türlerin uzlaştırması küme genelinde TEK pod'da koşar ({@code scheduler_lock} satırı
+     * {@value #DISABLED_TYPES_LOCK}, yenilenen kilit). Kilit servisi yoksa (elle kurulan testler, eski düzen) bugünkü gibi
+     * kilitsiz koşar. İsim kalıcıdır.
+     */
+    static final String DISABLED_TYPES_LOCK = "disabled-types-reconcile";
+    /** Ayar kaydı yolunda kilit meşgulse (başka pod'un açılış uzlaştırması) yeniden deneme sayısı ve aralığı — sınırlı. */
+    static final int DISABLED_TYPES_ATTEMPTS = 6;
+    long disabledTypesRetryDelayMs = 10_000L;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.schedule.ClusterLockService clusterLockService;
+    /** MP-44: koşullu sessiz kapanış (yalnız açık satır, bütün varlık kaydı yok); yoksa bugünkü {@code EscalationService} yolu. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private SilentAlarmCloser silentAlarmCloser;
+
+    void setClusterLockService(com.sitemonitor.service.schedule.ClusterLockService s) { this.clusterLockService = s; }
+    void setSilentAlarmCloser(SilentAlarmCloser c) { this.silentAlarmCloser = c; }
+
+    /**
+     * Ayar kaydı yolu: kilit başka pod'daysa (onun açılış uzlaştırması kaydı görmeden başlamış olabilir) aralıkla yeniden
+     * dener, en çok {@link #DISABLED_TYPES_ATTEMPTS} kez; pod kapanıyorsa bırakır. Hepsi düşerse WARN — sonraki açılış telafi
+     * eder.
+     */
+    void closeAlarmsOfDisabledTypesWithRetry(String reason) {
+        for (int attempt = 1; attempt <= DISABLED_TYPES_ATTEMPTS; attempt++) {
+            if (closeAlarmsOfDisabledTypes(reason) >= 0) return;
+            if (clusterLockService == null || clusterLockService.acquiringStopped()) return;
+            if (attempt == DISABLED_TYPES_ATTEMPTS) break;
+            try {
+                Thread.sleep(Math.max(0L, disabledTypesRetryDelayMs));
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+        }
+        log.warn("Kapalı türlerin alarm uzlaştırması {} denemede kilit alamadı ({}) — sonraki açılış ya da ayar kaydı telafi eder",
+                DISABLED_TYPES_ATTEMPTS, reason);
     }
 
     /** D-b8: toplu sessiz kapanışın arka plan yürütücüsü (paket-özel: testte eşzamanlı yürütücüyle değiştirilir). */
@@ -1900,19 +1944,50 @@ public class MonitoringOutageService {
         closeAlarmsOfDisabledTypes("açılış");
     }
 
-    /** @return sessizce kapatılan (alan adı, tür) sayısı */
+    /**
+     * @return sessizce kapatılan alarm sayısı; {@code -1} = kilit başka pod'da / pod kapanıyor / kilit alınamadı (hiçbir şey
+     *         yapılmadı)
+     */
     int closeAlarmsOfDisabledTypes(String reason) {
         try {
             Set<String> disabled = new HashSet<>();
             for (String t : EscalationService.MONITORING_ALERT_TYPES)
                 if (!MANUAL_CLOSE_TYPES.contains(t) && !alertEnabled(t)) disabled.add(t);   // D-b9
-            if (disabled.isEmpty()) return 0;
+            if (disabled.isEmpty()) return 0;   // kapalı tür yok: kilit de sorgu da yok (her ayar kaydında maliyet yok)
+            com.sitemonitor.service.schedule.ClusterLockService locks = clusterLockService;
+            if (locks == null) return closeOpenAlarmsOf(disabled, reason);
+            var hold = locks.tryAcquire(DISABLED_TYPES_LOCK, java.time.Duration.ofMinutes(2),
+                    com.sitemonitor.service.schedule.ClusterLockService.hardCapFor(DISABLED_TYPES_LOCK));
+            if (hold.isEmpty()) {
+                log.debug("Kapalı türlerin alarm uzlaştırması ({}) — kilit başka pod'da ya da pod kapanıyor, atlandı", reason);
+                return -1;
+            }
+            try {
+                return closeOpenAlarmsOf(disabled, reason);
+            } finally {
+                locks.release(hold.get());
+            }
+        } catch (Exception ex) {
+            log.warn("Kapalı türlerin açık alarmları kapatılamadı ({}): {}", reason, ex.getMessage());
+            return 0;
+        }
+    }
+
+    private int closeOpenAlarmsOf(Set<String> disabled, String reason) {
+        try {
             int n = 0;
             for (AlertEvent e : alertEventRepo.findAllOpenOrderBySeverity()) {
                 if (e.getDomain() == null || !disabled.contains(e.getAlertType())) continue;
-                escalationService.resolveOpenAlertsSilently(e.getDomain(), Set.of(e.getAlertType()),
-                        "Sistem (bu türün alarm bildirimleri kapatıldı)");
-                n++;
+                SilentAlarmCloser closer = silentAlarmCloser;
+                if (closer != null) {
+                    // MP-44: koşullu kapanış — başka yolda kapanmış alarmı yeniden yazmaz, okumadan sonra yazılmış onay /
+                    // damga ezilmez, çözüm push'u yalnız kapatan çağıranda.
+                    if (closer.closeIfOpen(e, SilentAlarmCloser.BY_TYPE_DISABLED)) n++;
+                } else {
+                    escalationService.resolveOpenAlertsSilently(e.getDomain(), Set.of(e.getAlertType()),
+                            SilentAlarmCloser.BY_TYPE_DISABLED);
+                    n++;
+                }
             }
             if (n > 0) log.info("Bildirimleri kapalı türlerin açık alarmları sessizce kapatıldı ({}): {} alarm, türler {}",
                     reason, n, disabled);

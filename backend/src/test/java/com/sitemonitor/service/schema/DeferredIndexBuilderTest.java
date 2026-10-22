@@ -70,13 +70,15 @@ class DeferredIndexBuilderTest {
         EXPECTED.put("idx_dnsr_pending", "dns_records(checked_at) WHERE change_state = 'PENDING'");
         // Oturumsuz bildirim uçlarının küme geneli IP sınırı (2026-10-23, çok pod Sürüm 2a — MP-33): taşınabilir
         EXPECTED.put("idx_lir_ip_reported", "login_issue_reports(ip_address, reported_at)");
+        // Alan adı hatırlatması eşik başına tek satır (2026-10-23, çok pod R2a · D2 — MP-45): kısmi, TEKİL; eski kodun satırları dışarıda
+        EXPECTED.put("ux_der_mon_exp_thr", "domain_expiry_reminders(monitor_id, expiry_date, threshold_days) WHERE claim_token IS NOT NULL");
     }
     /** TEKİL indeksler — {@code CREATE UNIQUE INDEX …}, {@code ux_} öneki. */
-    private static final Set<String> UNIQUE = Set.of("ux_push_eventless_key_user");
+    private static final Set<String> UNIQUE = Set.of("ux_push_eventless_key_user", "ux_der_mon_exp_thr");
     /** Fonksiyonel / kısmi — H2 karşılığı yok. */
     private static final Set<String> POSTGRES_ONLY =
             Set.of("idx_sc_success_monitor", "idx_audit_lower_actor_type_time", "idx_push_lower_user_created",
-                    "idx_app_users_upper_username", "ux_push_eventless_key_user", "idx_dnsr_pending");
+                    "idx_app_users_upper_username", "ux_push_eventless_key_user", "idx_dnsr_pending", "ux_der_mon_exp_thr");
 
     private static final Path MAIN = Path.of("src/main/java/com/sitemonitor");
 

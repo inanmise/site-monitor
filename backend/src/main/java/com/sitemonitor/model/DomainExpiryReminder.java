@@ -13,8 +13,12 @@ import lombok.NoArgsConstructor;
  * izidir; anahtar (monitor, expiry_date, threshold_days) — alan adı yenilenip bitiş ileri gidince aynı eşik yeni
  * bitiş için yeniden gönderilebilir (yeni satır), aynı bitiş için asla ikinci kez gönderilmez.
  *
- * <p>Tekilleştirme uygulama katmanında (sweep tek ipliklidir); ddl-auto'nun dolu tabloda @UniqueConstraint'i
- * SESSİZCE oluşturmadığı biliniyor — bilerek unique kısıt yok, {@code existsBy…} kapısı var.
+ * <p>Tekilleştirme: {@code existsBy…} ön kapısı + gönderimden ÖNCE {@code SENDING} satırının eklenmesi (2026-10-23, çok pod
+ * R2a · D2, MP-45 — {@code DomainExpiryReminderService}). Son söz PostgreSQL'deki kısmi tekil indeksindir
+ * ({@code ux_der_mon_exp_thr}, {@code DeferredIndexBuilder.CATALOG}) — YALNIZ yeni kodun yazdığı satırları kapsar
+ * ({@code claim_token IS NOT NULL}); eski sürümün satırları (olası eski çiftler) indeksin dışında kalır, kurulum düşmez.
+ * ddl-auto'nun dolu tabloda @UniqueConstraint'i SESSİZCE oluşturmadığı biliniyor — bu yüzden varlıkta unique kısıt yok.
+ * Durumlar: SENT · COVERED · SKIPPED_* · SENDING (gönderiliyor) · INTERRUPTED (gönderen pod yarıda durdu, yeniden gönderilmedi).
  */
 @Entity
 @Table(name = "domain_expiry_reminders", indexes = {
@@ -45,7 +49,7 @@ public class DomainExpiryReminder {
     private Integer daysRemaining;
 
     /** SENT (e-posta/push gitti) | COVERED (aynı turda daha sıkı bir eşik gönderildi, bu eşik ayrıca gönderilmedi)
-     *  | SKIPPED_NO_RECIPIENT | SKIPPED_CHANNELS_OFF. */
+     *  | SKIPPED_NO_RECIPIENT | SKIPPED_CHANNELS_OFF | SENDING (sahiplenildi, gönderiliyor) | INTERRUPTED (yarıda kaldı). */
     @Column(nullable = false, length = 24)
     private String status;
 
@@ -59,4 +63,12 @@ public class DomainExpiryReminder {
 
     @Column(name = "sent_at", nullable = false)
     private String sentAt;
+
+    /**
+     * Sahiplenme belirteci (2026-10-23, çok pod R2a · D2, MP-45): yeni kodun eklediği HER satırda dolu (SENDING ve COVERED),
+     * eski sürümler hiç yazmaz (NULL). Tekil indeks yalnız dolu satırları kapsar. Yalnız eklemede yazılır; ddl-auto +
+     * {@code DomainReminderSchemaPatch} ekler.
+     */
+    @Column(name = "claim_token", length = 40, updatable = false)
+    private String claimToken;
 }

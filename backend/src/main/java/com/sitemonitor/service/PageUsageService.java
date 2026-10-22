@@ -19,7 +19,7 @@ import java.util.regex.Pattern;
  * sonra NEYİ kullanıyor? Kaynak: oturum ping'i (~15 sn) sekme görünürken {@code ?tab=} taşır.
  *
  * <p>Bellekte (gün, kullanıcı, sekme) → ping sayısı biriktirilir, dakikada bir {@code page_usage_daily}'ye
- * yazılır (update-then-insert: PG ve H2'de aynı; tek pod). Kişisel veri: yalnız kullanıcı adı ve sekme
+ * yazılır (yarışa dayanıklı ekle-ya-da-topla; her pod kendi biriktirdiğini ekler). Kişisel veri: yalnız kullanıcı adı ve sekme
  * anahtarı — URL parametreleri, alan adı, arama metni ASLA kaydedilmez. Sekme anahtarı beyaz listeye
  * uyar (küçük harf/rakam/tire, ≤40) — keyfi dize yazılmaz.
  *
@@ -72,7 +72,16 @@ public class PageUsageService {
         return lastTab.get(username.trim().toLowerCase(Locale.ROOT));
     }
 
-    /** Dakikada bir: biriken sayaçları tabloya yaz. Hata olursa biriken veri bir sonraki tura kalır. */
+    /**
+     * Dakikada bir: biriken sayaçları tabloya yaz. Hata olursa yazılamayan anahtarlar bir sonraki tura kalır.
+     *
+     * <p><b>Çok pod (2026-10-23, R2a · D2, MP-46).</b> Aynı kullanıcı iki pod'a ping atar (oturum JDBC deposunda paylaşılır):
+     * günün ilk yazımında iki pod aynı (gün, kullanıcı, sekme) satırını "yok → ekle" ile yazmaya kalkınca ikinci INSERT birincil
+     * anahtarda düşüyor, tüm tur iptal oluyordu — ama O ANA KADAR yazılmış anahtarlar bellekte DÜŞÜLMEDİĞİNDEN sonraki turda
+     * yeniden yazılıp İKİ KEZ sayılıyordu. Artık her anahtar kendi yazımından HEMEN sonra düşülür (bir anahtar düşerse tur orada
+     * durur, kalanlar sonraki tura); yazım yarışa dayanıklıdır: PostgreSQL'de tek {@code INSERT … ON CONFLICT DO UPDATE},
+     * diğerlerinde (H2) UPDATE → INSERT → tekil ihlalde yeniden UPDATE. {@code last_seen} geriye gitmez (iki pod'un sırası).
+     */
     @Scheduled(fixedDelayString = "${site.monitor.page-usage.flush-ms:60000}", initialDelayString = "${site.monitor.page-usage.flush-ms:60000}")
     public synchronized void flush() {
         if (buffer.isEmpty()) return;
@@ -81,36 +90,72 @@ public class PageUsageService {
             Acc a = e.getValue();
             synchronized (a) { Acc c = new Acc(); c.pings = a.pings; c.first = a.first; c.last = a.last; snap.put(e.getKey(), c); }
         }
-        try {
-            for (Map.Entry<Key, Acc> e : snap.entrySet()) {
-                Key k = e.getKey(); Acc a = e.getValue();
-                int n = jdbc.update("UPDATE page_usage_daily SET pings = pings + ?, last_seen = ?, first_seen = COALESCE(first_seen, ?) WHERE day = ? AND username = ? AND tab = ?",
-                        a.pings, a.last, a.first, k.day(), k.username(), k.tab());
-                if (n == 0) jdbc.update("INSERT INTO page_usage_daily(day, username, tab, pings, first_seen, last_seen) VALUES (?,?,?,?,?,?)",
-                        k.day(), k.username(), k.tab(), a.pings, a.first, a.last);
+        boolean pg = Boolean.TRUE.equals(postgres());
+        for (Map.Entry<Key, Acc> e : snap.entrySet()) {
+            Key k = e.getKey(); Acc a = e.getValue();
+            try {
+                write(k, a, pg);
+            } catch (Exception ex) {
+                log.debug("page_usage_daily yazılamadı, kalan anahtarlar sonraki tura kaldı: {}", ex.toString());
+                return;
             }
-            // Yazılanı düş — yazma sırasında gelen ping'ler kalır (fark alınır)
-            for (Map.Entry<Key, Acc> e : snap.entrySet()) {
-                // ATOMİK-KOŞULLU kaldırma. Eskiden `synchronized (live) { ...; buffer.remove(key) }`
-                // idi ve kilit haritadaki VARLIK üzerinde değil Acc NESNESİ üzerindeydi:
-                // record() computeIfAbsent'ten döndükten SONRA ama synchronized'a girmeden önce
-                // preempt edilirse, flush aynı Acc'i sıfırlayıp haritadan düşürüyor, sonra record()
-                // kilidi alıp artık haritada olmayan YETİM nesneye pings++ yazıyordu — o ping DB'ye
-                // hiç gitmiyordu. computeIfPresent silme ile eşzamanlı computeIfAbsent'i aynı kova
-                // kilidinde serileştirir: yeni ping ya eski Acc'e ya taze bir Acc'e gider, ikisi de
-                // haritada kalır.
-                buffer.computeIfPresent(e.getKey(), (k, live) -> {
-                    synchronized (live) {
-                        live.pings -= e.getValue().pings;
-                        if (live.pings <= 0) return null;   // haritadan düş (atomik)
-                        live.first = null;
-                        return live;
-                    }
-                });
-            }
-        } catch (Exception ex) {
-            log.debug("page_usage_daily yazılamadı, sonraki tura kaldı: {}", ex.toString());
+            // Yazılanı HEMEN düş — yazma sırasında gelen ping'ler kalır (fark alınır).
+            // ATOMİK-KOŞULLU kaldırma. Eskiden `synchronized (live) { ...; buffer.remove(key) }`
+            // idi ve kilit haritadaki VARLIK üzerinde değil Acc NESNESİ üzerindeydi:
+            // record() computeIfAbsent'ten döndükten SONRA ama synchronized'a girmeden önce
+            // preempt edilirse, flush aynı Acc'i sıfırlayıp haritadan düşürüyor, sonra record()
+            // kilidi alıp artık haritada olmayan YETİM nesneye pings++ yazıyordu — o ping DB'ye
+            // hiç gitmiyordu. computeIfPresent silme ile eşzamanlı computeIfAbsent'i aynı kova
+            // kilidinde serileştirir: yeni ping ya eski Acc'e ya taze bir Acc'e gider, ikisi de
+            // haritada kalır.
+            buffer.computeIfPresent(k, (key, live) -> {
+                synchronized (live) {
+                    live.pings -= a.pings;
+                    if (live.pings <= 0) return null;   // haritadan düş (atomik)
+                    live.first = null;
+                    return live;
+                }
+            });
         }
+    }
+
+    static final String SQL_UPSERT_PG = "INSERT INTO page_usage_daily(day, username, tab, pings, first_seen, last_seen) "
+            + "VALUES (?,?,?,?,?,?) ON CONFLICT (day, username, tab) DO UPDATE SET "
+            + "pings = page_usage_daily.pings + EXCLUDED.pings, "
+            + "first_seen = COALESCE(page_usage_daily.first_seen, EXCLUDED.first_seen), "
+            + "last_seen = GREATEST(page_usage_daily.last_seen, EXCLUDED.last_seen)";
+    static final String SQL_UPDATE = "UPDATE page_usage_daily SET pings = pings + ?, "
+            + "last_seen = CASE WHEN last_seen IS NULL OR last_seen < ? THEN ? ELSE last_seen END, "
+            + "first_seen = COALESCE(first_seen, ?) WHERE day = ? AND username = ? AND tab = ?";
+    static final String SQL_INSERT = "INSERT INTO page_usage_daily(day, username, tab, pings, first_seen, last_seen) VALUES (?,?,?,?,?,?)";
+
+    private void write(Key k, Acc a, boolean pg) {
+        if (pg) {
+            jdbc.update(SQL_UPSERT_PG, k.day(), k.username(), k.tab(), a.pings, a.first, a.last);
+            return;
+        }
+        if (update(k, a) > 0) return;
+        try {
+            jdbc.update(SQL_INSERT, k.day(), k.username(), k.tab(), a.pings, a.first, a.last);
+        } catch (org.springframework.dao.DataIntegrityViolationException dup) {
+            // Başka pod aynı anda ilk satırı ekledi: bizimkini onun üstüne topla.
+            if (update(k, a) == 0) throw dup;
+        }
+    }
+
+    private int update(Key k, Acc a) {
+        return jdbc.update(SQL_UPDATE, a.pings, a.last, a.last, a.first, k.day(), k.username(), k.tab());
+    }
+
+    /** Veritabanı PostgreSQL mi — yalnız BİLİNEN yanıt saklanır (okunamazsa bu tur taşınabilir yol, sonraki tur yeniden sorar). */
+    private volatile Boolean postgres;
+
+    private Boolean postgres() {
+        Boolean p = postgres;
+        if (p != null) return p;
+        p = com.sitemonitor.service.schema.DeferredIndexBuilder.postgresOrNull(jdbc.getDataSource());
+        if (p != null) postgres = p;
+        return p;
     }
 
     /** Son N günün satırları (panel için). */

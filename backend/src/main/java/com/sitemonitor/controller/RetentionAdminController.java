@@ -49,6 +49,9 @@ public class RetentionAdminController {
     @Value("${" + RetentionCatalog.CLEANUP_CRON_KEY + ":" + RetentionCatalog.CLEANUP_CRON_DEFAULT + "}")
     private String cleanupCron;
 
+    /** Gece temizliğinin kilit adı — {@code SchedulerService.cleanupOldLogs} ile AYNI (kalıcı ad). */
+    static final String NIGHTLY_CLEANUP_LOCK = "nightly-cleanup";
+
     /** Uyum onayı (kim/ne zaman onayladı) ayar anahtarı öneki — politika id'siyle birleşir. */
     private static final String APPROVAL_PREFIX = com.sitemonitor.service.AppSettingsCatalog.RETENTION_APPROVAL_PREFIX;
 
@@ -245,7 +248,17 @@ public class RetentionAdminController {
             throw new IllegalStateException(
                     Msg.t("Yasal saklama (legal hold) açıkken temizlik çalıştırılamaz. Önce ayarı kapatın.", "Cleanup cannot run while legal hold is on. Turn the setting off first."));
         }
-        RetentionService.RunResult run = retentionService.execute(false, actor(session));
+        // MP-46 (2026-10-23, çok pod R2a · D2): elle temizlik gece temizliğiyle AYNI kilidi alır ("nightly-cleanup", yenilenen
+        // kilit). Eskiden kilitsiz koşuyordu — gece işi başka pod'da sürerken aynı tablolarda eşzamanlı toplu DELETE (kilit
+        // beklemesi, kilitlenme → 503). Kilit doluysa 409 ve açık metin; hiçbir şey silinmez.
+        String actor = actor(session);
+        RetentionService.RunResult run = schedulerService.callWithSchedulerLock(NIGHTLY_CLEANUP_LOCK,
+                java.time.Duration.ofMinutes(3), () -> retentionService.execute(false, actor))
+                .orElseThrow(() -> new com.sitemonitor.config.GlobalExceptionHandler.CodedConflictException("RETENTION_RUNNING",
+                        Msg.t("Temizlik şu an çalışıyor (gece temizliği ya da başka bir elle temizlik) — bu istek hiçbir kaydı "
+                                        + "silmedi. Birkaç dakika sonra yeniden deneyin; son koşunun sonucu Çalışma Geçmişi'nde.",
+                                "Cleanup is already running (the nightly cleanup or another manual run) — this request deleted "
+                                        + "nothing. Try again in a few minutes; the last run's result is in the run history.")));
         auditService.recordAction("RETENTION_RUN_MANUAL", session, request, "RETENTION", "run",
                 "{\"rows\":" + run.totalRows() + ",\"failed\":" + run.failedCount() + "}");
         return ok(Map.of("data", runResultToMap(run),

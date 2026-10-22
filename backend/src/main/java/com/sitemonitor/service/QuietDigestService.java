@@ -54,6 +54,16 @@ public class QuietDigestService {
     static final String STATUS_MAIL_OFF = "SKIPPED: e-posta kanalı kapalı";
     static final String STATUS_NO_RECIPIENT = "SKIPPED: alıcı yok";
     static final String STATUS_NO_EVENT = "SKIPPED: alarm kaydı yok";
+    /**
+     * Yarıda kalan sahiplenme (2026-10-23, çok pod R2a · D2, MP-46): tur sahiplendikten sonra hata verdi ya da pod öldü — kayıt
+     * {@code SENDING:<belirteç>} durumunda sonsuza dek kalıyor, ertelenen bildirim hiç gitmiyor ve {@code notification_logs}'ta
+     * NEDENİ yazmıyordu. Artık son duruma geçer ve alarm başına bir {@code QUIET_DIGEST} satırı yazılır; posta gitmiş olabilir,
+     * bu yüzden YENİDEN gönderilmez (en çok bir kez).
+     */
+    static final String STATUS_INTERRUPTED = "FAILED: özet turu yarıda kaldı — sonuç bilinmiyor, yeniden gönderilmedi";
+    static final String STATUS_STALE = "FAILED: özet turu yarıda kaldı (gönderen pod durdu) — sonuç bilinmiyor, yeniden gönderilmedi";
+    /** Bu süreden eski {@code SENDING:} sahiplenmesi sahibi ölmüş sayılır (tur kilit altında; sahibi yaşıyorsa kilit bırakılmaz). */
+    static final long STALE_CLAIM_MS = 15L * 60_000L;
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
     private static final DateTimeFormatter DAY = DateTimeFormatter.ofPattern("dd.MM.yyyy");
@@ -123,6 +133,7 @@ public class QuietDigestService {
     /** Tek tur — çağıran kilidi tutar. Paket-özel: test doğrudan çağırır. */
     RunResult run(Instant at) {
         String now = ISO.format(at);
+        failStaleClaims(at);
         List<QuietDigestItem> due = itemRepo.findDue(now);
         if (due == null || due.isEmpty()) return RunResult.EMPTY;
 
@@ -130,9 +141,25 @@ public class QuietDigestService {
         String token = "SENDING:" + UUID.randomUUID().toString().substring(0, 12);
         List<Long> ids = due.stream().map(QuietDigestItem::getId).filter(Objects::nonNull).toList();
         if (ids.isEmpty() || itemRepo.claim(ids, now, token) == 0) return RunResult.EMPTY;
-        List<QuietDigestItem> owned = itemRepo.findByDigestStatus(token);
+        List<QuietDigestItem> owned;
+        try {
+            owned = itemRepo.findByDigestStatus(token);
+        } catch (RuntimeException e) {
+            failClaim(token, null, e);
+            throw e;
+        }
         if (owned == null || owned.isEmpty()) return RunResult.EMPTY;
+        try {
+            return deliver(owned, now);
+        } catch (RuntimeException e) {
+            // MP-46: sahiplenmeden sonra beklenmeyen hata — hâlâ bu turun belirtecini taşıyan kayıtlar son duruma geçer (iz ile).
+            failClaim(token, owned, e);
+            throw e;
+        }
+    }
 
+    /** Adım 2–5: okumalar, gruplama, gönderim, damga. Çağıran ({@link #run}) beklenmeyen hatada sahiplenmeyi kapatır. */
+    private RunResult deliver(List<QuietDigestItem> owned, String now) {
         // 2) Toplu okumalar: olaylar + takımlar.
         Map<Long, AlertEvent> events = new HashMap<>();
         for (AlertEvent e : alertEventRepo.findAllById(owned.stream().map(QuietDigestItem::getAlertEventId)
@@ -235,6 +262,73 @@ public class QuietDigestService {
             }
         }
         return new RunResult(owned.size(), mails, sentMails);
+    }
+
+    /**
+     * MP-46: yarıda kalan bu turun sahiplenmesi — hâlâ {@code token} taşıyan kayıtlar {@link #STATUS_INTERRUPTED} olur, alarm
+     * başına bir {@code QUIET_DIGEST} satırı. Yazım da düşerse kayıt {@code SENDING:} kalır ve bir sonraki tur
+     * ({@link #failStaleClaims}) kapatır. Hata yutulur (asıl hata çağırana gider).
+     */
+    private void failClaim(String token, List<QuietDigestItem> owned, RuntimeException cause) {
+        String status = STATUS_INTERRUPTED + " (" + cause.getClass().getSimpleName() + ")";
+        try {
+            List<QuietDigestItem> left = itemRepo.findByDigestStatus(token);
+            if (left == null || left.isEmpty()) left = owned == null ? List.of() : owned;
+            if (itemRepo.markStatusIfToken(token, status) > 0) traceClosed(left, status);
+            log.warn("Sessiz saat özeti turu yarıda kaldı ({}): {} kayıt kapatıldı, yeniden gönderilmeyecek — {}",
+                    token, left.size(), cause.toString());
+        } catch (Exception e) {
+            log.warn("Sessiz saat özeti yarım sahiplenmesi kapatılamadı ({}): {} — sonraki tur kapatır", token, e.getMessage());
+        }
+    }
+
+    /**
+     * MP-46: {@link #STALE_CLAIM_MS}'den eski {@code SENDING:} sahiplenmeleri (sahibi ölmüş tur — tur kilit altında koştuğu için
+     * şu an başka bir tur yok) → {@link #STATUS_STALE} + alarm başına bir {@code QUIET_DIGEST} satırı. Belirteç başına koşullu:
+     * iki tur aynı sahiplenmeyi görse de iz bir kez yazılır.
+     */
+    void failStaleClaims(Instant at) {
+        try {
+            List<QuietDigestItem> stale = itemRepo.findStaleClaims(ISO.format(at.minusMillis(STALE_CLAIM_MS)));
+            if (stale == null || stale.isEmpty()) return;
+            Map<String, List<QuietDigestItem>> byToken = new LinkedHashMap<>();
+            for (QuietDigestItem i : stale) {
+                if (i.getDigestStatus() != null) byToken.computeIfAbsent(i.getDigestStatus(), k -> new ArrayList<>()).add(i);
+            }
+            for (Map.Entry<String, List<QuietDigestItem>> e : byToken.entrySet()) {
+                if (itemRepo.markStatusIfToken(e.getKey(), STATUS_STALE) == 0) continue;
+                traceClosed(e.getValue(), STATUS_STALE);
+                log.warn("Sessiz saat özeti: yarıda kalmış sahiplenme ({}) kapatıldı — {} kayıt, yeniden gönderilmedi",
+                        e.getKey(), e.getValue().size());
+            }
+        } catch (Exception e) {
+            log.debug("Sessiz saat özeti yarım sahiplenmeleri okunamadı: {}", e.getMessage());
+        }
+    }
+
+    /** Kapatılan kayıtların alarm başına {@code notification_logs} izi (takım adı bilinmeyebilir). */
+    private void traceClosed(List<QuietDigestItem> items, String status) {
+        Map<Long, Long> eventTeam = new LinkedHashMap<>();
+        for (QuietDigestItem i : items) {
+            if (i.getAlertEventId() != null) eventTeam.putIfAbsent(i.getAlertEventId(), i.getTeamId());
+        }
+        Map<Long, String> names = new HashMap<>();
+        try {
+            for (Team t : teamRepo.findAllById(eventTeam.values().stream().filter(Objects::nonNull).distinct().toList())) {
+                if (t != null && t.getId() != null) names.put(t.getId(), teamName(t));
+            }
+        } catch (Exception ignore) { /* ad yalnız bilgi */ }
+        List<NotificationLog> logs = new ArrayList<>();
+        for (Map.Entry<Long, Long> e : eventTeam.entrySet()) {
+            logs.add(logRow(e.getKey(), names.getOrDefault(e.getValue(), "-"), "", "Sessiz saat özeti",
+                    "Sessiz saat özeti turu yarıda kaldı; bu alarmın ertelenen bildirimi gönderilmiş olabilir, yeniden gönderilmedi.",
+                    status));
+        }
+        try {
+            notificationLogRepo.saveAll(logs);
+        } catch (Exception ex) {
+            log.warn("Sessiz saat özeti yarım tur izi günlüğe yazılamadı: {}", ex.getMessage());
+        }
     }
 
     private List<String> safeRecipients(Long teamId, Long stamp) {

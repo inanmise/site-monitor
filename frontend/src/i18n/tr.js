@@ -13945,6 +13945,11 @@ export const TR = {
   'dreg.reminders': 'Hatırlatmalar', 'dreg.remPending': 'Henüz gelmedi', 'dreg.remNone': 'Bu bitiş için henüz hatırlatma gönderilmedi.', 'dreg.remRow': '{0} gün eşiği · kalan {1} gün',
   'dreg.remLegend': 'Yeşil: gönderildi · gri: aynı turda daha sıkı eşikle kapsandı · kırmızı: aşıldı, bir sonraki kontrolde gönderilir · sarı: kanal kapalı / alıcı yok',
   'dreg.remStatus_SENT': 'gönderildi', 'dreg.remStatus_COVERED': 'kapsandı', 'dreg.remStatus_SKIPPED_NO_RECIPIENT': 'alıcı yok', 'dreg.remStatus_SKIPPED_CHANNELS_OFF': 'kanallar kapalı',
+  // ── multi-pod R2a · D2 ──
+  'dreg.remStatus_SENDING': 'gönderiliyor',
+  'dreg.remStatus_INTERRUPTED': 'yarıda kaldı (yeniden gönderilmedi)',
+  'logtrig.INCIDENT_NOTIFY': 'Olay kaydı bildirimi',
+  'logtrig.NEW_DEVICE': 'Yeni cihazdan giriş bildirimi',
   'dom.how8': 'Hatırlatma eşikleri (varsayılan 60/30/14/7/3/1 gün): her eşik geçildiğinde bir kez e-posta + push gider (bildirim grubu → takım zinciri). Aynı anda birden çok eşik aşılmışsa yalnız en sıkısı gönderilir; yenilemeyle bitiş ileri gidince seri sıfırlanır. Gönderilenler Domain Kaydı sekmesinde ve Aktivite Logu\'nda görünür.',
   'dom.exportTitle': 'Alan Adı Süre Bitişi İzleme', 'dom.exportCsvHint': 'Görünen {0} kayıt, tüm alanlar — Excel uyumlu', 'dom.exportPdfHint': 'Görünen {0} kayıt — yatay A4 özet tablo',
   'dom.trendTitle': 'Kalan gün trendi', 'dom.trendEmpty': 'Bu aralıkta kalan-gün verisi yok.', 'dom.trendError': 'Kalan gün trendi yüklenemedi. Biraz sonra pencereyi yeniden açıp tekrar deneyin.',

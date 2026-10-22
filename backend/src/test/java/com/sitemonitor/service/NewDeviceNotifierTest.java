@@ -66,7 +66,7 @@ class NewDeviceNotifierTest {
         when(auditLogRepo.findDistinctLoginUserAgents(anyString(), anyLong()))
                 .thenReturn(List.of(CHROME_120));
 
-        notifier.notifyIfNewDevice(9L, "N12345", CHROME_121, "10.0.0.1", "2026-08-24T10:00:00");
+        notifier.check(9L, "N12345", CHROME_121, "10.0.0.1", "2026-08-24T10:00:00");
 
         verify(emailService, never()).sendNewDeviceEmail(any(), any(), any(), any(), any(), any());
     }
@@ -77,7 +77,7 @@ class NewDeviceNotifierTest {
         when(auditLogRepo.findDistinctLoginUserAgents(anyString(), anyLong()))
                 .thenReturn(List.of(CHROME_120));
 
-        notifier.notifyIfNewDevice(9L, "N12345", FIREFOX_MAC, "10.0.0.1", "2026-08-24T10:00:00");
+        notifier.check(9L, "N12345", FIREFOX_MAC, "10.0.0.1", "2026-08-24T10:00:00");
 
         verify(emailService).sendNewDeviceEmail(
                 org.mockito.ArgumentMatchers.eq("kadir@example.com"), anyString(),
@@ -89,7 +89,7 @@ class NewDeviceNotifierTest {
     void firstEverLoginIsSilent() {
         when(auditLogRepo.findDistinctLoginUserAgents(anyString(), anyLong())).thenReturn(List.of());
 
-        notifier.notifyIfNewDevice(9L, "N12345", CHROME_120, "10.0.0.1", "2026-08-24T10:00:00");
+        notifier.check(9L, "N12345", CHROME_120, "10.0.0.1", "2026-08-24T10:00:00");
 
         verify(emailService, never()).sendNewDeviceEmail(any(), any(), any(), any(), any(), any());
     }
@@ -102,7 +102,7 @@ class NewDeviceNotifierTest {
         when(auditLogRepo.findDistinctLoginUserAgents(anyString(), anyLong()))
                 .thenReturn(List.of(CHROME_120));
 
-        notifier.notifyIfNewDevice(9L, "N12345", "curl/8.4.0", "10.0.0.1", "2026-08-24T10:00:00");
+        notifier.check(9L, "N12345", "curl/8.4.0", "10.0.0.1", "2026-08-24T10:00:00");
 
         verify(emailService, never()).sendNewDeviceEmail(any(), any(), any(), any(), any(), any());
     }
@@ -112,7 +112,7 @@ class NewDeviceNotifierTest {
     void disabledByDefaultDoesNothing() {
         when(appSettings.getBoolean(anyString(), org.mockito.ArgumentMatchers.anyBoolean())).thenReturn(false);
 
-        notifier.notifyIfNewDevice(9L, "N12345", FIREFOX_MAC, "10.0.0.1", "2026-08-24T10:00:00");
+        notifier.check(9L, "N12345", FIREFOX_MAC, "10.0.0.1", "2026-08-24T10:00:00");
 
         verify(auditLogRepo, never()).findDistinctLoginUserAgents(anyString(), anyLong());
         verify(emailService, never()).sendNewDeviceEmail(any(), any(), any(), any(), any(), any());
@@ -127,7 +127,7 @@ class NewDeviceNotifierTest {
         when(auditLogRepo.findDistinctLoginUserAgents(anyString(), anyLong()))
                 .thenReturn(List.of(CHROME_120));
 
-        notifier.notifyIfNewDevice(9L, "N12345", FIREFOX_MAC, "10.0.0.1", "2026-08-24T10:00:00");
+        notifier.check(9L, "N12345", FIREFOX_MAC, "10.0.0.1", "2026-08-24T10:00:00");
 
         verify(emailService, never()).sendNewDeviceEmail(any(), any(), any(), any(), any(), any());
     }
@@ -139,7 +139,7 @@ class NewDeviceNotifierTest {
                 .thenThrow(new RuntimeException("DB down"));
 
         // Istisna DISARI CIKMAMALI: bildirim hatasi girisi engellememeli.
-        notifier.notifyIfNewDevice(9L, "N12345", FIREFOX_MAC, "10.0.0.1", "2026-08-24T10:00:00");
+        notifier.check(9L, "N12345", FIREFOX_MAC, "10.0.0.1", "2026-08-24T10:00:00");
 
         verify(emailService, never()).sendNewDeviceEmail(any(), any(), any(), any(), any(), any());
     }

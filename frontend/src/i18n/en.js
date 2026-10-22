@@ -13915,6 +13915,11 @@ export const EN = {
   'dreg.reminders': 'Reminders', 'dreg.remPending': 'Not reached yet', 'dreg.remNone': 'No reminder has been sent for this expiry yet.', 'dreg.remRow': '{0}-day threshold · {1} days left',
   'dreg.remLegend': 'Green: sent · grey: covered by a tighter threshold in the same run · red: crossed, sent on the next check · amber: channels off / no recipient',
   'dreg.remStatus_SENT': 'sent', 'dreg.remStatus_COVERED': 'covered', 'dreg.remStatus_SKIPPED_NO_RECIPIENT': 'no recipient', 'dreg.remStatus_SKIPPED_CHANNELS_OFF': 'channels off',
+  // ── multi-pod R2a · D2 ──
+  'dreg.remStatus_SENDING': 'sending',
+  'dreg.remStatus_INTERRUPTED': 'interrupted (not resent)',
+  'logtrig.INCIDENT_NOTIFY': 'Incident record notification',
+  'logtrig.NEW_DEVICE': 'New-device sign-in notice',
   'dom.how8': 'Reminder thresholds (default 60/30/14/7/3/1 days): each time a threshold is crossed one e-mail + push goes out (notification group → team chain). When several thresholds are crossed at once only the tightest is sent; the series restarts once a renewal moves the expiry forward. Sent reminders are listed on the Domain Record tab and in the Activity Log.',
   'dom.exportTitle': 'Domain Expiry Monitoring', 'dom.exportCsvHint': '{0} visible records, all fields — Excel friendly', 'dom.exportPdfHint': '{0} visible records — landscape A4 summary table',
   'dom.trendTitle': 'Days-left trend', 'dom.trendEmpty': 'No days-left data in this range.', 'dom.trendError': 'The days-left trend couldn’t be loaded. Reopen the dialog in a moment and try again.',
