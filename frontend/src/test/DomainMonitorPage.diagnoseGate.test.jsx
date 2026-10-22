@@ -87,4 +87,36 @@ describe('DomainMonitorPage — Sorun Tanıla izin kapısı (can_diagnose)', () 
     const d = await openDetail({ ...row, team_id: 9, team_name: 'Takım B', can_diagnose: false })
     expect(d.querySelector('[data-slot="dexp-open"]')).toBeNull()
   })
+
+  // ── FE-5 (20.166 son inceleme): formdaki Sorun Tanıla kayıtlı izlemede satırın kapısıyla ──────────────────────────────
+  async function openForm(r, props = {}) {
+    api.monitoring.getDomainMonitors.mockResolvedValue({ success: true, data: [r] })
+    render(<DomainMonitorPage systemRole="USER" teamId={5} teamName="Takım A" {...props} />)
+    fireEvent.click(await screen.findByRole('button', { name: /own[.]example[.]test — (detayları aç|open details)/i }))
+    await waitFor(() => expect(detail()).toBeTruthy())
+    const edit = within(detail()).getAllByRole('button').find((b) => /(^|— )(Edit|Düzenle)$/.test(b.getAttribute('aria-label') || b.textContent.trim()))
+    fireEvent.click(edit)
+    return waitFor(() => {
+      const f = screen.getAllByRole('dialog').find((d) => /(Edit Domain Monitor|Alan Adı Monitörünü Düzenle)/i.test(d.textContent || ''))
+      if (!f) throw new Error('form yok')
+      return f
+    })
+  }
+  const formDiagnose = (f) => within(f).queryByRole('button', { name: /^(Diagnose|Sorun Tanıla)$/ })
+
+  it('FE-5: kendi izlemesinin düzenleme formunda (can_diagnose) Sorun Tanıla var ve çalışır; alan adı değişince kaybolur', async () => {
+    const f = await openForm({ ...row, can_diagnose: true, can_edit: true })
+    const btn = formDiagnose(f)
+    expect(btn).not.toBeNull()
+    fireEvent.click(btn)
+    await waitFor(() => expect(api.admin.runDomainExpiryDiagnostics).toHaveBeenCalledWith('own.example.test'))
+    fireEvent.change(within(f).getByPlaceholderText('example.com'), { target: { value: 'baska.example.test' } })
+    expect(formDiagnose(f)).toBeNull()
+  })
+
+  it('FE-5: bayrak yoksa (kapsamlı yönetici başka takım, ya da diagnostics.run yok) formda da Sorun Tanıla yok', async () => {
+    const f = await openForm({ ...row, can_diagnose: false, can_edit: true }, { systemRole: 'ADMIN' })
+    expect(formDiagnose(f)).toBeNull()
+  })
 })
+

@@ -745,6 +745,9 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
       onClose={() => setPlanRow(null)} onSaved={applyPlanRow} onCleared={applyPlanRow} />
   )
 
+  // Formdaki "Sorun Tanıla" (FE-5): kayıtlı izleme + satırın tanılama kapısı + alan adı DEĞİŞMEMİŞ (sunucu izlemeyi alan adıyla bulur)
+  const formDiagnosable = !!modal && modal !== 'new' && !dupSource && canDiagnoseRow(modal)
+    && normalizeDomainInput(form.domain) === normalizeDomainInput(modal.domain || '')
   // ── Ekle / Düzenle formu ── (örtü tıklaması ve Escape KAPATMAZ — veri kaybı önlenir; bkz. MonitorFormModal)
   const formModal = modal && (
     <MonitorFormModal onClose={closeEdit} icon={CalendarClock} width={640}
@@ -758,8 +761,10 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
             <FlaskConical size={14} />{t('dom.test')}
           </Button>
           {/* Kayıtsız alan adında tanılama YALNIZ global görüntüleyiciye açık (sunucu requireAdminOrMonitoredDomain) —
-              kapsamlı yönetici 403 + ACCESS_DENIED alıyordu (2026-10-22, UIM-15) */}
-          {globalAdmin && (
+              kapsamlı yönetici 403 + ACCESS_DENIED alıyordu (2026-10-22, UIM-15). KAYITLI izlemenin düzenleme formunda alan adı
+              değişmediyse satırın kapısı (`can_diagnose` = diagnostics.run + takımı çalıştırabilme; sunucu requireDomainExpiryScope)
+              — kapsamlı yönetici / takım üyesi kendi izlemesini formdan da tanılar (FE-5) */}
+          {(globalAdmin || formDiagnosable) && (
             <Button variant="secondary" onClick={() => diagnose({ domain: normalizeDomainInput(form.domain) })} disabled={!form.domain.trim()}>
               <ShieldAlert size={14} />{t('dexp.diagnose')}
             </Button>
