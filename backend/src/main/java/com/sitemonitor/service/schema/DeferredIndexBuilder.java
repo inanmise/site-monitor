@@ -184,7 +184,13 @@ public final class DeferredIndexBuilder {
             // düz metin olduğundan genel plan da kullanabilir. Kurulana dek sorgu checked_at dizininde son 3 saati tarar.
             // PostgreSQL'e özgü (H2'de kısmi indeks yok — aralık sorgusu aynı sonucu verir).
             Spec.postgresOnly("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_dnsr_pending ON dns_records(checked_at)"
-                    + " WHERE change_state = 'PENDING'"));
+                    + " WHERE change_state = 'PENDING'"),
+            // 2026-10-23 (çok pod R2a · D2, MP-45): alan adı bitiş hatırlatması eşik başına TEK satır — gönderimden önce
+            // eklenen SENDING satırının tekilliği (DomainExpiryReminderService.insertClaim; ihlal = "başka tur gönderiyor /
+            // gönderdi"). sent_at kesimi geçmiş satırları (olası eski çiftler) dışarıda tutar: kurulum düşmez, geçmiş silinmez.
+            // Kısmi indeks PostgreSQL'e özgü (H2'de uygulama düzeyindeki ön kontrol + pod içi değerlendirme kilidi).
+            Spec.postgresOnly("CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS ux_der_mon_exp_thr ON domain_expiry_reminders"
+                    + "(monitor_id, expiry_date, threshold_days) WHERE sent_at >= '2026-10-23'"));
 
     /** Bir koşunun özeti. {@code locked=false} → kilit alınamadı, hiçbir şey denenmedi. */
     public record Result(int built, int rebuilt, int valid, int skipped, int failed, boolean locked, long millis) {}
