@@ -171,7 +171,9 @@ Kullanıcılar uygulamaya TLS ile gelir; sertifika **iki yerden birinde** sonlan
 
 Giriş kilidi kademelidir: ihlal başına **30 sn → 2 dk → 10 dk → 30 dk**, sonraki her ihlal yine 30 dk
 (`site.monitor.lockout.durations-seconds`). Başarılı girişte sayaç sıfırlanır. Ayrıca IP bazlı kısa blok vardır
-(`LOGIN_MAX_ATTEMPTS`=10 başarısız deneme → `LOGIN_BLOCK_SECONDS`=30 sn'den başlayan blok).
+(`LOGIN_MAX_ATTEMPTS`=10 başarısız deneme → `LOGIN_BLOCK_SECONDS`=30 sn'den başlayan blok). Çok pod Sürüm 2a'dan
+beri bu IP sayacı veritabanındadır (`rate_limit_counters`, bütün pod'larda ortak) — elle kaldırma:
+[Takılı kayıtlar ve sınırlar](#takılı-kayıtlar-ve-sınırlar-çok-pod-sürüm-2a).
 
 - **Bekleyin:** kilit en fazla 30 dk sürer ve kendiliğinden açılır. *Yeni sürümle (CHANGELOG → Unreleased)
   kalıcı otomatik kilit kaldırıldı.* **v20.86.0 ve öncesinde** 5. ihlal hesabı **kalıcı** kilitler
@@ -568,6 +570,10 @@ bildirimi (RECOVER) önce satıra damgalanır — tek pod gönderir. Değerlendi
 > Çok pod sürüm 1 (2026-10-21). Aynı imaj N replikada koşar; kullanıcı istekleri bütün pod'lara dağılır, **izleme işi
 > tek pod'da (lider) koşar**. İkinci pod yüksek erişilebilirlik ve arayüz / API kapasitesi getirir, izleme kapasitesi
 > getirmez — izleme yükü büyürse önce dikey ölçekleyin (CPU / bellek / `dbPoolMax`). HPA kapalı kalır.
+>
+> Çok pod Sürüm 2a (2026-10-23): pod'lar arası önbellek yolu (bir pod'daki yazma öteki pod'ların önbelleğini ~2 sn
+> içinde boşaltır), küme geneli güvenlik sınırları (giriş IP sınırı, k6 gizli değer gösterimi, oturumsuz giriş yardımı /
+> hata bildirimi) ve rapor / hatırlatma gönderim yollarının sahiplenmesi (yarıda kalan gönderim izlerden kapanır).
 
 ### Kim neyi koşar
 
@@ -575,7 +581,7 @@ bildirimi (RECOVER) önce satıra damgalanır — tek pod gönderir. Değerlendi
 |---|---|---|
 | Dokuz izleme türünün taramaları, envanter erişilebilirlik (HTTP) taraması, doğrulama / kurtarma yeniden kontrolleri, DNS ve alan adı değişiklik tespiti | **Lider** pod | Tarama liderliği kirası (`monitor_check_schedule`, anahtar `lease:sweep-leader`, 180 sn; ayrı iş parçacığında 60 sn'de bir yenilenir) + izleme başına küme vadesi + kirasını kaybetmiş pod'un zamanlanmış sonuçları alarm üretmez |
 | TLS profili işi; takipçide basılan "Şimdi kontrol et" sonucunun alarm değerlendirmesi (`monitor_eval_inbox` üzerinden lidere iletilir, ≤ 5 sn); veritabanı çökükken kendi-kendini-izleme uyarısı | Lider | Kira |
-| Sertifika taramaları (saatlik, bayat, tam), zamanlanmış raporlar / hatırlatmalar / özetler, gece temizliği, push kuyruğu, fırtına yaşam döngüsü, eskalasyon adımları, kendi-kendini-izleme turu, yetim QUEUED_RETRY / çözüm bildirimi süpürücüleri | Kilidi ya da turu ilk alan **herhangi** bir pod | `scheduler_lock` satırı (uzun iş sürdükçe yenilenir) + küme turu (`round:<ad>`, bir dönemde bir kez) + satır başına koşullu sahiplenme (aynı push / posta iki kez gitmez) |
+| Sertifika taramaları (saatlik, bayat, tam), zamanlanmış raporlar / hatırlatmalar / özetler, gece temizliği, push kuyruğu, fırtına yaşam döngüsü, eskalasyon adımları, kendi-kendini-izleme turu, yetim QUEUED_RETRY / çözüm bildirimi süpürücüleri (kanal teknik hata raporu kuyruklarını da sonuçlandırır); Sürüm 2a'dan beri kapatılan türlerin alarm uzlaştırması (`disabled-types-reconcile`), elle saklama temizliği (gece temizliğinin `nightly-cleanup` kilidiyle) ve tek seferlik izleme grubu takım doldurması | Kilidi ya da turu ilk alan **herhangi** bir pod | `scheduler_lock` satırı (uzun iş sürdükçe yenilenir) + küme turu (`round:<ad>`, bir dönemde bir kez) + satır başına koşullu sahiplenme (aynı push / posta iki kez gitmez) |
 | Kullanıcı istekleri, "Şimdi kontrol et", tanılama, dışa aktarım | İsteği alan pod | Oturumlar PostgreSQL'de (`spring_session`) — her pod her oturumu tanır |
 
 ### Lider kim?
@@ -620,7 +626,7 @@ lider 2 saate kadar yeniden kuyruğa alır, değişiklik bildirimi kaybolmaz.
 | Web zarif aşaması (süren istekler biter) | ≤ 20 sn | `SHUTDOWN_PHASE_TIMEOUT` (`spring.lifecycle.timeout-per-shutdown-phase`) |
 | Yürütücü aşaması (süren kontroller / bildirimler biter) | ≤ 20 sn | aynı |
 | Zamanlanmış işler havuzu (süren işler biter, kesilmez) | ≤ 20 sn | `SCHEDULING_AWAIT_TERMINATION` |
-| Geri kalan bütün yok etme beklemeleri (e-posta 421 kuyruğu, push, kod girişi, olay bildirimi, elle kontrol havuzu, bildirim havuzlarının kendisi) | birlikte ≤ 10 sn | `config/ShutdownDeadline.DESTROY_BUDGET_MS` |
+| Geri kalan bütün yok etme beklemeleri (e-posta 421 kuyruğu, push, kod girişi, olay bildirimi, elle kontrol havuzu, bildirim havuzlarının kendisi, önbellek yolunun son yayını) | birlikte ≤ 10 sn | `config/ShutdownDeadline.DESTROY_BUDGET_MS` |
 | **Toplam** | **≈ 100 sn < 120 sn** | Helm `terminationGracePeriodSeconds` (120) |
 
 Birini büyütürseniz grace'i de büyütün: `preStop + boşaltma + 2 × aşama + zamanlanmış bekleme + 10 < grace` (yeni bir
@@ -659,6 +665,82 @@ SELECT name, locked_by, locked_until FROM scheduler_lock ORDER BY name;   -- loc
   bir sonraki fırtına turunda tamamlar; 5 denemede olmazsa yine `DONE` yazılır ve üyelere iz düşer. `recovery_state =
   'UNKNOWN'` = kurtarma postası gitmiş de olabilir, gitmemiş de — `notification_logs`'ta tetik `STORM_RESOLVE`'a bakın;
   yeniden gönderilmez.
+
+### Önbellek yolu (cache_bus)
+
+Bir pod'daki yazma öteki pod'ların önbelleğini ~2 sn içinde boşaltır (tablo `cache_bus`, iş parçacığı `cache-bus`; çok pod
+Sürüm 2a). Sertifika panosu, kart ekleri, nöbet, sessiz saatler, 7/24 ekibi, erişim paylaşımı, bakım pencereleri, sistem
+bakımı, pasif / silinmiş hesap kapısı ve bildirim alıcı süzgeci bu yoldan boşalır; kaydeden sekmenin bir sonraki okuması
+(`X-Cache-Min-Gen` başlığı) geride kalan pod'u en çok 0,5 sn bekletip tazeler. Açılışta her pod'un günlüğünde bir kez
+`Önbellek yolu çalışıyor (yoklama 2000 ms, …)` görünmeli.
+
+- **Belirti:** "kaydettim ama öteki sekmede / pod'da eski görünüyor" 2 sn'den uzun sürüyorsa tüm pod'ların günlüğünde
+  `Önbellek yolu` satırlarına bakın:
+  ```bash
+  kubectl logs -n "$NS" -l app.kubernetes.io/instance="$REL" --prefix --tail=-1 | grep "Önbellek yolu"
+  ```
+  `yoklanamadı` / `yayını başarısız` / `denemede yayınlanamadı` = veritabanı sorunu (en çok dakikada bir WARN; o arada
+  önbellekler TTL ile tazelenir). Tablonun henüz olmaması yalnız ilk açılışın ilk saniyelerinde normaldir (DEBUG düzeyinde
+  yazılır; tablo yoksa pod 30 sn'de bir yeniden bakar, açılış yaması kurunca hemen devreye girer).
+- **Yayın kilidi:** her yayın önce `_global` satırını kilitler; PostgreSQL'de en çok 0,5 sn bekler (`lock_timeout`), sonra
+  geri çekilip yeniden dener. "yayını başarısız … lock timeout" sürekli görünüyorsa o satırı tutan ölü bir oturum vardır:
+  ```sql
+  SELECT pid, state, xact_start, application_name, left(query, 80) FROM pg_stat_activity
+   WHERE state LIKE 'idle in transaction%' ORDER BY xact_start;      -- uzun süredir açık işlemi bulun, gerekirse:
+  -- SELECT pg_terminate_backend(<pid>);
+  ```
+- İstek, yayının yeni kuşağını en çok 0,25 sn bekler; veritabanı yavaşsa yanıt `X-Cache-Gen` başlığı olmadan gider (yayın
+  yine yapılır, yalnız "kaydettiğim veriyi öteki pod'da hemen gör" garantisi o istek için düşer — TTL / sonraki yoklama).
+  İstek iş parçacığı veritabanına hiç dokunmaz.
+- Öteki pod'un boşaltması ucuzdur (veritabanı okumaz; ör. bakım pencereleri yalnız "bayat" işaretlenir, bir sonraki okuma
+  bir kez yeniden yükler) ve önceki görüntüyü silmez, yalnız bayat işaretler: yeniden yükleme veritabanı hatasına düşerse pod
+  önceki veriyle devam eder (hiçbir pod "7/24 ekibi yok / sessiz saat yok / pasif süzgeci yok" durumuna düşmez). Hata
+  veren bir boşaltma o adı uygulanmamış bırakır ve her yoklamada yeniden denenir (günlükte
+  `Önbellek yolu: yerel boşaltma başarısız (<ad>)`).
+- **Durum:** `SELECT name, generation, updated_at FROM cache_bus ORDER BY updated_at DESC;` — `_global` her yayında artar.
+- **Tabloya elle dokunmayın.** `DROP TABLE cache_bus` tabloyu yalnız pod'ların YENİDEN BAŞLATILMASIYLA geri getirir (yama
+  yalnız açılışta koşar): o zamana dek yol kapalıdır (önbellekler TTL ile, her pod 30 sn'de bir yeniden bakar) — geri getirmek
+  için `kubectl rollout restart deploy/<ad> -n "$NS"`. `TRUNCATE` / satır silme yolu bozmaz (satırlar ilk yayında yeniden
+  kurulur, silinen ad her pod'da bir kez boşaltılır), ama kuşak sıfırlandığı için son 30 sn içinde yazan kullanıcıların
+  tarayıcıları daha yüksek bir kuşakla gelir: o kullanıcıların GET'leri ≤ 30 sn boyunca pod başına en çok 500 ms bekler
+  (sonra sunulur) — kendiliğinden geçer, ek adım gerekmez.
+- **Kapatmak:** `site.monitor.cache-bus.enabled=false` (önbellekler yine TTL ile; tek pod davranışı aynı). Yoklama aralığı
+  `site.monitor.cache-bus.poll-ms` (2000), okuma bekleme üst sınırı `site.monitor.cache-bus.min-gen-wait-ms` (500) — ikisi
+  de yalnız açılışta okunur.
+- Ekip üyeliği değişiklikleri (7/24 ekibine / paylaşılan takıma üye ekleme / çıkarma) yine TTL ile (≤ 30 sn) yansır.
+
+### Takılı kayıtlar ve sınırlar (çok pod Sürüm 2a)
+
+- **Bir IP'nin giriş bloğunu elle kaldırma (2026-10-23).** Giriş IP sınırı artık veritabanında, tüm pod'larda ortak:
+  ```sql
+  SELECT * FROM rate_limit_counters ORDER BY updated_at DESC LIMIT 20;
+  DELETE FROM rate_limit_counters WHERE limit_key = 'login-ip:<ip>';   -- uzun değerler login-ip:#<sha256> biçimindedir
+  ```
+  Satır kendiliğinden en geç 60 sn (pencere) / blok süresi sonra etkisizleşir ve saatlik temizlikte silinir. Veritabanı
+  yazılamazken pod kendi belleğindeki eski sınıra döner (WARN `Oran sınırı sayacı yazılamadı — bellek yedeği`). Hesap
+  kilidi (kademeli `lockout_until`) ayrı konudur: [Kilitli admin hesabı](#kilitli-admin-hesabı).
+- **Takılı yönetici özeti (SENDING).** Çok pod Sürüm 2a'dan itibaren gönderen pod ilk BCC diliminden ÖNCE kayda "gönderim
+  başladı" işareti yazar; saatlik telafi, talebi 1 saatten eski SENDING kaydını bu işaret ve dilim izlerine (SMTP günlüğünde
+  tetik `EXECUTIVE_SUMMARY`) göre kendisi kapatır: işaret de iz de yoksa hiçbir şey gitmemiştir → FAILED yazılır ve yeniden
+  gönderilir; işaret var ve planlanan HER dilimin izi varsa sonuç izlerden yazılır (`SKIPPED: Gönderen pod sonucu yazamadan
+  durdu …`); geri kalan her durumda (işaret var ama iz eksik, ya da işaretsiz iz — eski pod) sonuç BİLİNMİYOR: PARTIAL +
+  `FAILED: Sonuç bilinmiyor … yeniden gönderilmedi`, yeniden gönderilmez. Telafi penceresi (72 sa) geçmişse, iz
+  okunamıyorsa ya da sonuç bilinmiyorsa karar sizin: Yönetici Özeti → Alıcılar ve gönderim → "Şimdi gönder" (1 saatten eski
+  talebi devralır; alıcıların bir kısmı postayı ikinci kez alabilir).
+- **Alan adı hatırlatması "yarıda kaldı" (INTERRUPTED).** Gönderen pod e-posta / push sırasında durdu; posta gitmiş olabilir,
+  yeniden gönderilmez. Gerekirse takıma elle haber verin. (`ux_der_mon_exp_thr` yalnız `claim_token` dolu satırları kapsar —
+  eski sürümlerin satırları kurulumu düşüremez.)
+- **Elle saklama temizliği 409 "Temizlik şu an çalışıyor".** Gece temizliği ya da başka bir elle koşu `nightly-cleanup`
+  kilidini tutuyor; birkaç dakika sonra yeniden deneyin (kilidi tutan pod: o pod'un Sistem Sağlığı `scheduler.held_locks`
+  satırı ya da `SELECT * FROM scheduler_lock WHERE name = 'nightly-cleanup';`). Elle koşu gece işinin başladığı saate
+  (03:30 Istanbul) denk gelirse o gecenin işi bir kez atlanır (silme elle koşuda yapıldı; günlük / saatlik toparlamalar
+  ertesi gece yapılır). **503 `DB_UNAVAILABLE`** = kilit alınamadı ve tutan bir satır da yok / okunamadı (geçici veritabanı
+  hatası): hiçbir şey silinmedi; veritabanı düzelince yeniden deneyin.
+- **Kanal teknik hata raporu 409 "Önceki gönderim hâlâ posta kuyruğunda" (`SEND_QUEUED`).** Önceki gönderim posta
+  sunucusunun yeniden deneme kuyruğunda; sonucu 20 dk içinde gelir (5 dk'da bir arka planda sonuçlandırılır). Bu sürede
+  yeniden gönderim reddedilir — iki farklı içerikli kopya gitmesin diye. Gönder penceresi açık kalır, "Gönder" kilitlenir ve
+  ekran mevcut kuyruğun sonucunu bekler: teslim edildiyse pencere kapanır (ikinci gönderim yok), gitmediyse "yeniden
+  gönderebilirsiniz" bandı çıkar, 10 dk'da sonuç gelmezse yeniden deneme bandı. Sonuç kanalın gönderim günlüğünde de görünür.
 
 ### Ön koşullar — 1 → N geçişinden ÖNCE
 
@@ -753,14 +835,45 @@ bilmez. Son eski pod gidene kadar şunlar görülebilir (sonra kendiliğinden bi
 - Eski lider DNS / alan adı değişikliğini taban yapar ama PENDING yazmaz; yeni lider 2 sa (DNS) / 6 sa (alan adı) içinde
   yeni-sürüm satırlarını yeniden kuyruğa alır.
 
+**Çok pod Sürüm 2a'ya geçişte (20.165.x pod'u + yeni pod):**
+
+- **Önbellek yolu:** eski pod ne yayınlar ne yoklar ve `X-Cache-Min-Gen` başlığını yok sayar. Eski pod'un sunduğu yazma
+  yeni pod'a TTL ile ulaşır (sertifika panosu ≤ 5 dk), yeni pod'un yazması eski pod'un önbelleğine hiç ulaşmaz (TTL). Bir
+  şey bozulmaz; silinen kart tarayıcıda yine 10 dk gizli kalır.
+- **Giriş IP sınırı:** eski pod kendi belleğinde sayar — en kötü durumda eski pod başına 10 + yeni pod'larda küme geneli 10
+  deneme. Eski pod'daki başarılı giriş veritabanı sayacını, yeni pod'daki başarılı giriş eski pod'un sayacını temizlemez
+  (≤ 60 sn / blok ≤ 30 sn). Onay bağlantısının sınırı eski pod'da hâlâ ingress adresine göredir.
+- **Kullanıcı kayıtları:** eski pod ayrık `app_users` varlığını hâlâ birleştirerek kaydeder — eşzamanlı bir pasifleştirmeyi
+  geri açabilir. Geçiş bitene kadar (toplu) pasifleştirme yapmayın; yaptıysanız sonra pasif hesapları kontrol edin.
+- **Denetim zinciri:** eski pod işlem içindeki denetim kaydını eski yolla yazar; eski ve yeni pod arasında zincir çatallanması
+  hâlâ mümkündür (bütünlük denetimi bu pencere için yanlış "kurcalama" diyebilir). Yeni pod'ların satırları korunur.
+- **Kanal teknik hata raporu:** eski pod kuyruktaki gönderimin üzerine yeniden göndermeye izin verir (409 `SEND_QUEUED`
+  yok) ve kuyrukları arka planda sonuçlandırmaz — geçiş sırasında "Gönder"e ikinci kez basmayın.
+- **Kapatılan türler:** eski pod her ayar olayında kilitsiz uzlaştırır ve alarmı tüm varlıkla kaydeder — yeni pod'un
+  kapattığı alarmın `resolved_by` değeri yeniden yazılabilir; ikinci ÇÖZÜLDÜ push'unu indeks engeller.
+- **Alan adı hatırlatması:** eski pod "var mı → posta → kaydet" sırasıyla çalışır; eski pod postayı gönderip henüz
+  kaydetmemişken yeni pod da gönderebilir (bugünkü yarış, daha dar). Yeni pod'un `SENDING` satırı eski pod'u durdurur.
+- **Yönetici özeti / envanter raporu:** eski pod küme turu ve planlı tetik denetimi olmadan tetikler; ay satırının tekil
+  sahiplenmesi ikinci yönetici özeti postasını yine önler. Eski pod "gönderim başladı" işaretini yazmaz: yeni pod'lar eski
+  pod'un yarıda bıraktığı SENDING kaydını, izi VARSA PARTIAL yazıp göndermeden kapatır, izi YOKSA yeniden gönderir (eski pod
+  SMTP kabulüyle izi arasında öldüyse ikinci posta mümkün — yalnız geçiş penceresinde).
+- **Geri alma:** yeni tablolar (`cache_bus`, `rate_limit_counters`), sütunlar (`audit_log.seq_locked`,
+  `tech_error_reminders.inflight_at`, `tls_grade_changes.notify_attempts`, `domain_expiry_reminders.claim_token`,
+  `executive_summary_reports` / `executive_summary_team_reports.send_started_claim|send_trace_name`) ve
+  indeksler (`ux_audit_seq`, `ux_der_mon_exp_thr`, `idx_lir_ip_reported`) kalır, eski kod yok sayar. Eski arayüz alan adı
+  hatırlatmasının `INTERRUPTED` durumunu ham anahtar (`dreg.remStatus_INTERRUPTED`) olarak gösterir.
+
 ### Sürüm 2'ye kadar bilinen pod farkları (zararsız ama kafa karıştırır)
 
 - Sistem Sağlığı'nın bazı kartları yanıtı veren pod'un belleğini gösterir: sertifika taraması "çalışıyor / son koşu",
   yürütücü / bellek / havuz kartları. "Tam kontrolü şimdi çalıştır" ilerlemesi diğer pod yanıt verince erken "bitti"
   diyebilir. Kesin bilgi: `scheduler_lock` `cert-check` satırı (tarama sürüyorsa var).
 - Kalp atışı zaman çizelgesi pod sayısı kadar satır sayar ("alınan 2880 / beklenen 1440").
-- Sertifika panosu önbelleği pod başınadır (5 dk): bir pod'da yapılan ekleme / düzenleme diğer pod'dan birkaç dakika
-  eski görünebilir (silme hemen gizlenir).
-- Hız sınırları ve eşzamanlılık izinleri (giriş IP sınırı, tanılama, PDF, test postası) pod başınadır: N pod = N kat.
+- Önbellekler (sertifika panosu, nöbet, erişim paylaşımı, 7/24 ekibi, bakım pencereleri …) çok pod Sürüm 2a'dan beri
+  [önbellek yolu](#önbellek-yolu-cache_bus) ile ~2 sn içinde bütün pod'larda boşalır; yalnız TTL'li ezberler pod başınadır
+  (ör. İzleme Panosu / durum sayfası 30 sn, sertifika ağ kesintisi durumu 10 sn).
+- Güvenlik sınırları (giriş IP sınırı, k6 gizli değer gösterimi, oturumsuz giriş yardımı / hata bildirimi) Sürüm 2a'dan
+  beri küme genelidir; yük sınırları ve eşzamanlılık izinleri (tanılama, PDF, test postası, onay bağlantısı) pod
+  başınadır: N pod = N kat.
 - Çevrimiçi göstergesi sayfa yenilemesinde ≤ ~15 sn "çevrimdışı" görünebilir.
 - Grafana "Okunamayan kaynaklar" paneli bir kaynak her pod'da okunamıyorsa pod sayısı kadar sayar (renk doğrudur).

@@ -63,6 +63,10 @@ class ExecutiveSummaryDeliveryServiceTest {
         when(summaryService.compute(any())).thenReturn(sample());
         when(repo.findByReportYearAndReportMonth(anyInt(), anyInt())).thenReturn(Optional.empty());
         when(repo.saveAndFlush(any())).thenAnswer(i -> i.getArgument(0));
+        // Koşullu bitirme (R2a, MP-42): bütün varlık kaydı yerine; talep edilen satırın alanları nesnede güncellenir
+        when(repo.finishIfClaimed(any(), any(), any(), any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
+        // "Gönderim başladı" işareti (R2a inceleme REP-1): ilk dilimden önce koşullu UPDATE
+        when(repo.markSendStarted(any(), any(), any(), any(), any())).thenReturn(1);
         when(email.sendHtmlBccWithAttachments(any(), anyString(), anyString(), anyString(), anyList())).thenReturn("SENT");
         when(users.findByActiveTrueOrderByUsernameAsc()).thenReturn(List.of());
     }
@@ -168,8 +172,11 @@ class ExecutiveSummaryDeliveryServiceTest {
             assertThat(n.getEmailStatus()).isEqualTo("SENT");
         });
 
+        // Yeniden temel (2026-10-22, R2a MP-42): bitirme koşullu UPDATE — bütün varlık kaydı yok
         ArgumentCaptor<ExecutiveSummaryReport> row = ArgumentCaptor.forClass(ExecutiveSummaryReport.class);
-        verify(repo).save(row.capture());
+        verify(repo).saveAndFlush(row.capture());
+        verify(repo).finishIfClaimed(any(), eq(row.getValue().getClaimedAt()), eq("SENT"), eq(250), eq(3), any(), any(), any(), any(), any());
+        verify(repo, never()).save(any());
         assertThat(row.getValue().getStatus()).isEqualTo(ExecutiveSummaryReport.SENT);
         assertThat(row.getValue().getRecipientCount()).isEqualTo(250);
         assertThat(row.getValue().getChunkCount()).isEqualTo(3);
@@ -225,7 +232,8 @@ class ExecutiveSummaryDeliveryServiceTest {
         ArgumentCaptor<ExecutiveSummaryReport> saved = ArgumentCaptor.forClass(ExecutiveSummaryReport.class);
         var r = svc.runScheduled();
         assertThat(r.status()).isEqualTo(ExecutiveSummaryReport.FAILED);
-        verify(repo, atLeastOnce()).save(saved.capture());
+        verify(repo, atLeastOnce()).saveAndFlush(saved.capture());       // R2a MP-42: koşullu bitirme talep nesnesini günceller
+        verify(repo).finishIfClaimed(any(), any(), eq("FAILED"), any(), any(), any(), any(), any(), any(), any());
         assertThat(saved.getValue().getStatus()).isEqualTo(ExecutiveSummaryReport.FAILED);
         assertThat(saved.getValue().getDetail()).contains("yarıda kesildi");
         verify(email, never()).sendHtmlBccWithAttachments(any(), anyString(), anyString(), anyString(), anyList());   // iz satırı gönderen adresi okur — posta YOK
@@ -276,7 +284,7 @@ class ExecutiveSummaryDeliveryServiceTest {
         ExecutiveSummaryDeliveryService.Result r = svc.runScheduled();               // 1. deneme
         assertThat(r.status()).isEqualTo(ExecutiveSummaryReport.FAILED);
         assertThat(r.detail()).contains("expirations").contains("telafi");
-        verify(repo, atLeastOnce()).save(saved.capture());
+        verify(repo, atLeastOnce()).saveAndFlush(saved.capture());       // R2a MP-42: koşullu bitirme talep nesnesini günceller
         assertThat(saved.getValue().getStatus()).isEqualTo(ExecutiveSummaryReport.FAILED);
         assertThat(saved.getValue().getSummaryJson()).as("yarım görüntü saklanmaz").isNull();
         verify(email, never()).sendHtmlBccWithAttachments(any(), anyString(), anyString(), anyString(), anyList());   // iz satırı gönderen adresi okur — posta YOK
@@ -327,7 +335,8 @@ class ExecutiveSummaryDeliveryServiceTest {
         verify(logs).save(log.capture());
         assertThat(log.getValue().getEmailStatus()).startsWith("SKIPPED: alıcı yok");
         ArgumentCaptor<ExecutiveSummaryReport> row = ArgumentCaptor.forClass(ExecutiveSummaryReport.class);
-        verify(repo).save(row.capture());
+        verify(repo).saveAndFlush(row.capture());                        // R2a MP-42: koşullu bitirme talep nesnesini günceller
+        verify(repo).finishIfClaimed(any(), any(), eq("NO_RECIPIENT"), any(), any(), any(), any(), any(), any(), any());
         assertThat(row.getValue().getStatus()).isEqualTo(ExecutiveSummaryReport.NO_RECIPIENT);
     }
 
@@ -529,5 +538,253 @@ class ExecutiveSummaryDeliveryServiceTest {
         assertThat(svc.catchUp().status()).isEqualTo(ExecutiveSummaryReport.SENT);
         when(summaryService.now()).thenReturn(Instant.parse("2026-10-02T06:00:00Z"));
         assertThat(svc.lastCatchUpChance(YearMonth.of(2026, 9))).isFalse();
+    }
+
+    // ── Çok pod R2a (MP-42, 2026-10-22) ─────────────────────────────────────────────────────────────────────────────
+
+    /** Telafi penceresinin içi: planlı an 1 Ekim 06:00 UTC'den 27 saat sonra. */
+    private static final Instant IN_WINDOW = Instant.parse("2026-10-02T09:00:00Z");
+
+    private ExecutiveSummaryReport stuckSending(Instant claimedAt, int attempts) {
+        ExecutiveSummaryReport stuck = new ExecutiveSummaryReport();
+        stuck.setId(9L);
+        stuck.setReportYear(2026);
+        stuck.setReportMonth(9);
+        stuck.setStatus(ExecutiveSummaryReport.SENDING);
+        stuck.setAttempts(attempts);
+        stuck.setClaimedAt(ExecutiveSummaryContext.UTC_ISO.format(claimedAt));
+        return stuck;
+    }
+
+    /** Postası BAŞLAMIŞ (işaretli) bayat SENDING kaydı: planlanan alıcı / dilim sayısı işaretle yazılmıştı. */
+    private ExecutiveSummaryReport startedSending(Instant claimedAt, int attempts, int recipients, int chunks) {
+        ExecutiveSummaryReport r = stuckSending(claimedAt, attempts);
+        r.setSendStartedClaim(r.getClaimedAt());
+        r.setSendTraceName("Yönetici Özeti");
+        r.setRecipientCount(recipients);
+        r.setChunkCount(chunks);
+        return r;
+    }
+
+    @SuppressWarnings("unchecked")
+    private org.springframework.jdbc.core.JdbcTemplate traces(List<String[]> rows) {
+        org.springframework.jdbc.core.JdbcTemplate j = mock(org.springframework.jdbc.core.JdbcTemplate.class);
+        when(j.query(anyString(), any(org.springframework.jdbc.core.RowMapper.class), any(), any(), any())).thenReturn(rows);
+        return j;
+    }
+
+    @Test
+    @DisplayName("R2a MP-42: SENDING'de ölen pod'un kaydı (1 saatten eski, HİÇBİR dilim izi yok) — telafi koşullu FAILED yazar ve TEK kez yeniden gönderir; ikinci pod (koşullu yazımı kaybeden) göndermez")
+    void staleSendingWithoutTrace_catchUpResendsOnce() {
+        enable("a@x.com", false);
+        when(summaryService.now()).thenReturn(IN_WINDOW);
+        Instant claimed = IN_WINDOW.minus(java.time.Duration.ofHours(2));
+        ExecutiveSummaryReport stuck = stuckSending(claimed, 1);
+        String claimedAt = stuck.getClaimedAt();
+        when(repo.findByReportYearAndReportMonth(2026, 9)).thenReturn(Optional.of(stuck));
+        svc.setJdbc(traces(List.of()));
+        when(repo.finishIfClaimed(eq(9L), eq(claimedAt), eq("FAILED"), any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(1).thenReturn(0);
+        when(repo.reclaim(eq(9L), eq("FAILED"), eq(1), eq(2), anyString(), eq("CATCH_UP"), eq("system"))).thenReturn(1);
+
+        ExecutiveSummaryDeliveryService.Result r = svc.catchUp();
+        assertThat(r.status()).isEqualTo(ExecutiveSummaryReport.SENT);
+        verify(email, times(1)).sendHtmlBccWithAttachments(any(), anyString(), anyString(), anyString(), anyList());
+        ArgumentCaptor<NotificationLog> log = ArgumentCaptor.forClass(NotificationLog.class);
+        verify(logs, atLeastOnce()).save(log.capture());
+        assertThat(log.getAllValues()).anySatisfy(n -> assertThat(n.getEmailStatus()).startsWith("SKIPPED: Gönderen pod yarıda durdu")
+                .contains("yeniden deneniyor"));
+
+        // ikinci pod aynı bayat SENDING kaydını okudu: koşullu FAILED yazımı 0 → hiçbir şey yapmaz
+        ExecutiveSummaryDeliveryService other = new ExecutiveSummaryDeliveryService(summaryService, settings, repo, email, logs,
+                users, userService, appSettings);
+        other.setJdbc(traces(List.of()));
+        when(repo.findByReportYearAndReportMonth(2026, 9)).thenReturn(Optional.of(stuckSending(claimed, 1)));
+        assertThat(other.catchUp().status()).isEqualTo("IN_PROGRESS");
+        verify(email, times(1)).sendHtmlBccWithAttachments(any(), anyString(), anyString(), anyString(), anyList());
+    }
+
+    @Test
+    @DisplayName("R2a MP-42: bayat SENDING'in dilim izi VAR ama gönderim işareti yok (eski sürüm pod — toplam dilim sayısı bilinmiyor) → YENİDEN GÖNDERİLMEZ; PARTIAL + 'sonuç bilinmiyor' izi; taze SENDING ve iz okunamazsa dokunulmaz")
+    void staleSendingWithTraces_partialNoResend() {
+        // Yeniden temel (2026-10-23, R2a inceleme REP-1): işaretsiz izde toplam bilinmediğinden iz artık "SKIPPED: … sonuç
+        // izlerden yazıldı" değil "FAILED: Sonuç bilinmiyor …" (bir dilim izi yazılamadan gitmiş olabilir).
+        enable("a@x.com", false);
+        when(summaryService.now()).thenReturn(IN_WINDOW);
+        ExecutiveSummaryReport stuck = stuckSending(IN_WINDOW.minus(java.time.Duration.ofHours(2)), 1);
+        when(repo.findByReportYearAndReportMonth(2026, 9)).thenReturn(Optional.of(stuck));
+        svc.setJdbc(traces(List.of(new String[] { "BCC×100: a@x.com, b@x.com", "SENT" }, new String[] { "—", "SKIPPED: x" })));
+
+        ExecutiveSummaryDeliveryService.Result r = svc.catchUp();
+        assertThat(r.status()).isEqualTo(ExecutiveSummaryReport.PARTIAL);
+        assertThat(r.recipients()).isEqualTo(100);
+        verify(email, never()).sendHtmlBccWithAttachments(any(), anyString(), anyString(), anyString(), anyList());
+        verify(repo, never()).reclaim(any(), any(), any(), any(), any(), any(), any());
+        verify(repo).finishIfClaimed(eq(9L), any(), eq("PARTIAL"), eq(100), eq(1), any(), any(), any(), any(), any());
+        ArgumentCaptor<NotificationLog> log = ArgumentCaptor.forClass(NotificationLog.class);
+        verify(logs).save(log.capture());
+        assertThat(log.getValue().getEmailStatus()).startsWith("FAILED: Sonuç bilinmiyor").contains("yeniden gönderilmedi");
+
+        // taze (1 saatten yeni) SENDING: gerçekten sürüyor — dokunulmaz
+        org.mockito.Mockito.clearInvocations(repo, logs);
+        when(repo.findByReportYearAndReportMonth(2026, 9)).thenReturn(Optional.of(stuckSending(IN_WINDOW.minusSeconds(600), 1)));
+        assertThat(svc.catchUp().status()).isEqualTo("IN_PROGRESS");
+        verify(repo, never()).finishIfClaimed(any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+        // iz okunamıyor (JdbcTemplate yok): eski kural — yalnız elle devralınır
+        svc.setJdbc(null);
+        when(repo.findByReportYearAndReportMonth(2026, 9)).thenReturn(Optional.of(stuckSending(IN_WINDOW.minus(java.time.Duration.ofHours(2)), 1)));
+        assertThat(svc.catchUp().status()).isEqualTo("IN_PROGRESS");
+        verify(email, never()).sendHtmlBccWithAttachments(any(), anyString(), anyString(), anyString(), anyList());
+    }
+
+    @Test
+    @DisplayName("R2a MP-42: bayat SENDING, iz yok ama deneme hakkı dolmuş → FAILED + iz, gönderilmez (elle karar)")
+    void staleSendingAtMaxAttempts_failedNoResend() {
+        enable("a@x.com", false);
+        when(summaryService.now()).thenReturn(IN_WINDOW);
+        when(repo.findByReportYearAndReportMonth(2026, 9))
+                .thenReturn(Optional.of(stuckSending(IN_WINDOW.minus(java.time.Duration.ofHours(2)), ExecutiveSummaryDeliveryService.MAX_ATTEMPTS)));
+        svc.setJdbc(traces(List.of()));
+        assertThat(svc.catchUp().status()).isEqualTo(ExecutiveSummaryReport.FAILED);
+        verify(email, never()).sendHtmlBccWithAttachments(any(), anyString(), anyString(), anyString(), anyList());
+        ArgumentCaptor<NotificationLog> log = ArgumentCaptor.forClass(NotificationLog.class);
+        verify(logs).save(log.capture());
+        assertThat(log.getValue().getEmailStatus()).startsWith("FAILED: Gönderen pod yarıda durdu").contains("deneme hakkı doldu");
+    }
+
+    @Test
+    @DisplayName("R2a MP-42: bitirme yazımı geçici hatada 3 kez denenir (dilimler gitti — kayıt SENDING'de kalmasın); talep başkasına geçtiyse (0 satır) yeniden denenmez")
+    void finishWriteRetried() {
+        enable("a@x.com", false);
+        when(repo.finishIfClaimed(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+                .thenThrow(new org.springframework.dao.QueryTimeoutException("db"))
+                .thenThrow(new org.springframework.dao.QueryTimeoutException("db"))
+                .thenReturn(1);
+        assertThat(svc.runScheduled().status()).isEqualTo(ExecutiveSummaryReport.SENT);
+        verify(repo, times(3)).finishIfClaimed(any(), any(), eq("SENT"), any(), any(), any(), any(), any(), any(), any());
+        verify(email, times(1)).sendHtmlBccWithAttachments(any(), anyString(), anyString(), anyString(), anyList());
+
+        org.mockito.Mockito.clearInvocations(repo);
+        when(repo.findByReportYearAndReportMonth(2026, 9)).thenReturn(Optional.empty());
+        when(repo.finishIfClaimed(any(), any(), any(), any(), any(), any(), any(), any(), any(), any())).thenReturn(0);
+        svc.sendNow(YearMonth.of(2026, 9), "yonetici");
+        verify(repo, times(1)).finishIfClaimed(any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("R2a inceleme REP-1: 'gönderim başladı' işareti İLK dilimden ÖNCE yazılır (talep anı, iz adı, planlanan 250 alıcı / 3 dilim)")
+    void markerWrittenBeforeFirstChunk() {
+        StringBuilder csv = new StringBuilder();
+        for (int i = 0; i < 250; i++) csv.append(i == 0 ? "" : ",").append("u").append(i).append("@x.com");
+        enable(csv.toString(), false);
+        assertThat(svc.runScheduled().status()).isEqualTo(ExecutiveSummaryReport.SENT);
+        org.mockito.InOrder order = inOrder(repo, email);
+        order.verify(repo).markSendStarted(any(), anyString(), eq("Yönetici Özeti"), eq(250), eq(3));
+        order.verify(email, times(3)).sendHtmlBccWithAttachments(any(), anyString(), anyString(), anyString(), anyList());
+        order.verify(repo).finishIfClaimed(any(), any(), eq("SENT"), eq(250), eq(3), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("R2a inceleme REP-1: işaret yazılamazsa (DB kesintisi, 3 deneme) ya da talep başkasına geçtiyse (0 satır) HİÇBİR dilim gönderilmez + iz")
+    void markerNotWritten_nothingSent() {
+        enable("a@x.com", false);
+        when(repo.markSendStarted(any(), any(), any(), any(), any()))
+                .thenThrow(new org.springframework.dao.QueryTimeoutException("db"));
+        ExecutiveSummaryDeliveryService.Result r = svc.runScheduled();
+        assertThat(r.status()).isEqualTo(ExecutiveSummaryReport.FAILED);
+        verify(repo, times(3)).markSendStarted(any(), any(), any(), any(), any());
+        verify(email, never()).sendHtmlBccWithAttachments(any(), anyString(), anyString(), anyString(), anyList());
+        ArgumentCaptor<NotificationLog> log = ArgumentCaptor.forClass(NotificationLog.class);
+        verify(logs).save(log.capture());
+        assertThat(log.getValue().getEmailStatus()).startsWith("FAILED: gönderim başlatılamadı");
+
+        org.mockito.Mockito.clearInvocations(repo, logs);
+        when(repo.findByReportYearAndReportMonth(2026, 9)).thenReturn(Optional.empty());
+        doReturn(0).when(repo).markSendStarted(any(), any(), any(), any(), any());
+        assertThat(svc.sendNow(YearMonth.of(2026, 9), "yonetici").status()).isEqualTo("NOT_CLAIMED");
+        verify(email, never()).sendHtmlBccWithAttachments(any(), anyString(), anyString(), anyString(), anyList());
+    }
+
+    @Test
+    @DisplayName("R2a inceleme REP-1 (senaryo A/B): işaret VAR, dilim izi YOK (izler DB kesintisinde yazılamadı / pod dilimden hemen sonra öldü) → sonuç bilinmiyor: PARTIAL + iz, YENİDEN GÖNDERİLMEZ")
+    void staleSendingStartedWithoutTraces_unknownNeverResent() {
+        enable("a@x.com", false);
+        when(summaryService.now()).thenReturn(IN_WINDOW);
+        ExecutiveSummaryReport stuck = startedSending(IN_WINDOW.minus(java.time.Duration.ofHours(2)), 1, 1, 1);
+        when(repo.findByReportYearAndReportMonth(2026, 9)).thenReturn(Optional.of(stuck));
+        when(repo.reclaim(any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
+        svc.setJdbc(traces(List.of()));
+
+        ExecutiveSummaryDeliveryService.Result r = svc.catchUp();
+        assertThat(r.status()).isEqualTo(ExecutiveSummaryReport.PARTIAL);
+        verify(email, never()).sendHtmlBccWithAttachments(any(), anyString(), anyString(), anyString(), anyList());
+        verify(repo, never()).reclaim(any(), any(), any(), any(), any(), any(), any());
+        verify(repo).finishIfClaimed(eq(9L), eq(stuck.getClaimedAt()), eq("PARTIAL"), eq(1), eq(0), any(), any(), any(), any(), any());
+        ArgumentCaptor<NotificationLog> log = ArgumentCaptor.forClass(NotificationLog.class);
+        verify(logs).save(log.capture());
+        assertThat(log.getValue().getEmailStatus()).startsWith("FAILED: Sonuç bilinmiyor").contains("yeniden gönderilmedi");
+        // PARTIAL zamanlanmış / telafi yolundan bir daha talep edilmez
+        assertThat(ExecutiveSummaryDeliveryService.RETRYABLE).doesNotContain(ExecutiveSummaryReport.PARTIAL);
+    }
+
+    @Test
+    @DisplayName("R2a inceleme REP-1: izli dilimlerin HEPSİ başarısız ama planlanan dilimlerden biri izsiz (yolda) → yeniden GÖNDERİLMEZ (PARTIAL); bütün dilimlerin izi varsa sonuç izlerden (hepsi başarısız → FAILED, telafi dener)")
+    void staleSendingAllTracedFailed_incompleteNeverResent() {
+        enable("a@x.com", false);
+        when(summaryService.now()).thenReturn(IN_WINDOW);
+        ExecutiveSummaryReport stuck = startedSending(IN_WINDOW.minus(java.time.Duration.ofHours(2)), 1, 150, 2);
+        when(repo.findByReportYearAndReportMonth(2026, 9)).thenReturn(Optional.of(stuck));
+        svc.setJdbc(traces(List.<String[]>of(new String[] { "BCC×100: a@x.com", "FAILED: SMTP 554" })));
+
+        ExecutiveSummaryDeliveryService.Result r = svc.catchUp();
+        assertThat(r.status()).isEqualTo(ExecutiveSummaryReport.PARTIAL);
+        verify(repo).finishIfClaimed(eq(9L), any(), eq("PARTIAL"), eq(150), eq(1), any(), any(), any(), any(), any());
+        verify(email, never()).sendHtmlBccWithAttachments(any(), anyString(), anyString(), anyString(), anyList());
+
+        // bütün dilimlerin (2 / 2) izi var ve hepsi başarısız → gerçekten hiçbiri gitmedi: FAILED (yeniden denenebilir)
+        org.mockito.Mockito.clearInvocations(repo, logs);
+        when(repo.findByReportYearAndReportMonth(2026, 9))
+                .thenReturn(Optional.of(startedSending(IN_WINDOW.minus(java.time.Duration.ofHours(2)), 1, 150, 2)));
+        svc.setJdbc(traces(List.<String[]>of(new String[] { "BCC×100: a@x.com", "FAILED: SMTP 554" },
+                new String[] { "BCC×50: b@x.com", "FAILED: SMTP 554" })));
+        assertThat(svc.catchUp().status()).isEqualTo(ExecutiveSummaryReport.FAILED);
+        verify(repo).finishIfClaimed(eq(9L), any(), eq("FAILED"), eq(150), eq(2), any(), any(), any(), any(), any());
+        ArgumentCaptor<NotificationLog> log = ArgumentCaptor.forClass(NotificationLog.class);
+        verify(logs).save(log.capture());
+        assertThat(log.getValue().getEmailStatus()).startsWith("SKIPPED: Gönderen pod sonucu yazamadan durdu");
+        verify(email, never()).sendHtmlBccWithAttachments(any(), anyString(), anyString(), anyString(), anyList());
+
+        // bütün dilimlerin izi var, hepsi gitti → SENT (bitirme yazımı kaybolmuştu)
+        org.mockito.Mockito.clearInvocations(repo);
+        when(repo.findByReportYearAndReportMonth(2026, 9))
+                .thenReturn(Optional.of(startedSending(IN_WINDOW.minus(java.time.Duration.ofHours(2)), 1, 150, 2)));
+        svc.setJdbc(traces(List.<String[]>of(new String[] { "BCC×100: a@x.com", "SENT" }, new String[] { "BCC×50: b@x.com", "SENT" })));
+        assertThat(svc.catchUp().status()).isEqualTo(ExecutiveSummaryReport.SENT);
+        verify(email, never()).sendHtmlBccWithAttachments(any(), anyString(), anyString(), anyString(), anyList());
+    }
+
+    @Test
+    @DisplayName("R2a MP-42: deneme aralığı — son talebi 30 dk'dan yeni FAILED kaydı zamanlanmış / telafi yolu yeniden TALEP ETMEZ (deneme hakkı boşa yanmaz); elle gönderim bekletmez")
+    void reclaimSpacing() {
+        enable("a@x.com", false);
+        ExecutiveSummaryReport failed = new ExecutiveSummaryReport();
+        failed.setId(7L);
+        failed.setStatus(ExecutiveSummaryReport.FAILED);
+        failed.setAttempts(1);
+        failed.setClaimedAt(ExecutiveSummaryContext.UTC_ISO.format(NOW.minusSeconds(17 * 60)));
+        when(repo.findByReportYearAndReportMonth(2026, 9)).thenReturn(Optional.of(failed));
+        assertThat(svc.runScheduled().status()).isEqualTo("NOT_CLAIMED");
+        verify(repo, never()).reclaim(any(), any(), any(), any(), any(), any(), any());
+        failed.setClaimedAt(ExecutiveSummaryContext.UTC_ISO.format(NOW.minusSeconds(31 * 60)));
+        when(repo.reclaim(eq(7L), eq("FAILED"), eq(1), eq(2), anyString(), eq("SCHEDULED"), eq("system"))).thenReturn(1);
+        assertThat(svc.runScheduled().status()).isEqualTo(ExecutiveSummaryReport.SENT);
+        // elle: taze talep de bekletmez
+        failed.setStatus(ExecutiveSummaryReport.FAILED);
+        failed.setAttempts(2);
+        failed.setClaimedAt(ExecutiveSummaryContext.UTC_ISO.format(NOW.minusSeconds(60)));
+        when(repo.reclaim(eq(7L), eq("FAILED"), eq(2), eq(3), anyString(), eq("MANUAL"), eq("yonetici"))).thenReturn(1);
+        assertThat(svc.sendNow(YearMonth.of(2026, 9), "yonetici").status()).isEqualTo(ExecutiveSummaryReport.SENT);
+        assertThat(ExecutiveSummaryDeliveryService.chunkSize("BCC×37: a@x")).isEqualTo(37);
+        assertThat(ExecutiveSummaryDeliveryService.chunkSize("—")).isZero();
     }
 }

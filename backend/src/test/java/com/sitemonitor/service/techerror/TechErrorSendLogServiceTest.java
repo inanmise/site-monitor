@@ -239,6 +239,7 @@ class TechErrorSendLogServiceTest {
         table.put(TechErrorReminderService.ST_MAINTENANCE, "SYSTEM_MAINTENANCE");
         table.put(com.sitemonitor.service.SystemMaintenanceService.STATUS_SKIPPED, "SYSTEM_MAINTENANCE");
         table.put(TechErrorReminderService.ST_NO_APPROVER_EMAIL, "NO_APPROVER_EMAIL");   // 3. tur: PO adresi, takım adresi değil
+        table.put(TechErrorReminderService.ST_RETAKEN, "RETRIED_AFTER_INTERRUPT");          // R2a inceleme REP-5 (SKIPPED_OTHER değil)
         // Genel kurallar değişmedi: pasif KULLANICI adresleri hâlâ INACTIVE_RECIPIENTS
         table.put("SKIPPED: pasif kullanıcı", "INACTIVE_RECIPIENTS");
         for (var e : table.entrySet()) {

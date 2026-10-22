@@ -9,7 +9,19 @@ import lombok.ToString;
 import java.util.LinkedHashSet;
 import java.util.Set;
 
+/**
+ * Uygulama kullanıcısı.
+ *
+ * <p><b>{@code @DynamicUpdate}</b> (2026-10-23, çok pod Sürüm 2a — MP-51): yönetilen varlığın kaydı yalnız GERÇEKTEN
+ * değişen sütunları yazar. Eskiden her kayıt satırın tamamını yazıyordu: pod B'de girişin (oturum kimliği + damga) işlemi,
+ * pod A'da az önce işlenen pasifleştirmeyi (active=false + TERMINATED: nöbetçisi) eski değerlerle geri yazıp hesabı
+ * yeniden aktifleştirebiliyordu. NOT: ayrık (işlem dışında okunmuş) bir nesnenin {@code save()} ile birleştirilmesini bu
+ * KORUMAZ — merge değişen her sütunu kirli sayar; o yollar hedefli UPDATE kullanır ({@code AppUserRepository#update*},
+ * {@code UserService.applyProfileFieldsAndSave}). Yeni bir yazım yolu ya kullanıcıyı AYNI işlemde okuyup kaydeder ya da
+ * hedefli UPDATE yazar — ayrık nesneyi asla {@code save()} etmez ({@code AppUserDetachedSaveGateTest}).
+ */
 @Entity
+@org.hibernate.annotations.DynamicUpdate
 @Table(name = "app_users",
     indexes = {
         @Index(name = "idx_user_username", columnList = "username"),

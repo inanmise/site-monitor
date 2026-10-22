@@ -98,7 +98,7 @@ class DeferredIndexFallbackH2Test {
             portable++;
             assertThat(indexColumns(s.name())).as("%s kolonları", s.name()).containsExactlyElementsOf(keyColumns(s.fallbackDdl()));
         }
-        assertThat(portable).isEqualTo(11);   // 2026-10-18: + idx_nl_te_channel (H2'de kısmisiz)
+        assertThat(portable).isEqualTo(12);   // 2026-10-18: + idx_nl_te_channel (H2'de kısmisiz); 2026-10-23: + idx_lir_ip_reported (MP-33)
         assertThat(builder.startInBackground()).as("H2'de arka plan kurulumu yok").isNull();
     }
 

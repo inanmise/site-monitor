@@ -1,5 +1,7 @@
 package com.sitemonitor.service.noc;
 
+import com.sitemonitor.service.cache.CacheBus;
+import com.sitemonitor.service.cache.CacheBusNames;
 import com.sitemonitor.controller.SessionScope;
 import com.sitemonitor.model.NocSettings;
 import com.sitemonitor.model.Team;
@@ -256,10 +258,36 @@ public class NocOperatorService {
         return NocGroupIds.parse(NocGroupIds.format(out));
     }
 
-    /** Bu podun önbelleğini düşürür (kayıt sonrası; testler). */
+    /** Bu podun önbelleğini düşürür (kayıt sonrası; testler); öteki pod'lar önbellek veri yoluyla (MP-30). */
     public void invalidate() {
-        snapshot = null;
+        invalidateLocal();
+        CacheBus b = cacheBus;
+        if (b != null) b.bump(CacheBusNames.NOC_OPERATORS);
     }
+
+    /**
+     * Pod'lar arası boşaltma (2026-10-22, çok pod R2-A, MP-30) — 7/24 takımı kaldırılınca üyeleri öteki pod'da kurum geneli
+     * izleme OKUMASINI {@code cacheMs} (30 sn) boyunca tutuyordu; veri yoluyla en geç bir yoklama aralığı (~2 sn). Yoksa
+     * yalnız bu pod.
+     */
+    private volatile CacheBus cacheBus;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setCacheBus(CacheBus bus) {
+        this.cacheBus = bus;
+        if (bus != null) bus.register(CacheBusNames.NOC_OPERATORS, this::invalidateLocal);
+    }
+
+    /** Yalnız bu pod (yeniden yayın yok). Kuşak artar: boşaltmadan ÖNCE başlamış yapım eski görüntüyü saklamaz. */
+    void invalidateLocal() {
+        generation.incrementAndGet();
+        // SİLİNMEZ, bayat işaretlenir: yeniden kurma hata verirse önceki görüntü kullanılır (eskiden boşaltma görüntüyü attığı
+        // için veritabanı hıçkırığında 30 sn boyunca HİÇ 7/24 operatörü yoktu — günlük ise "önceki görüntü" diyordu; C-2)
+        Snapshot s = snapshot;
+        snapshot = s == null ? null : new Snapshot(s.teamIds(), s.operatorTeams(), Long.MIN_VALUE / 2);
+    }
+
+    private final java.util.concurrent.atomic.AtomicLong generation = new java.util.concurrent.atomic.AtomicLong();
 
     // ── İç ───────────────────────────────────────────────────────────────────
 
@@ -270,6 +298,7 @@ public class NocOperatorService {
         synchronized (this) {
             s = snapshot;
             if (s != null && now - s.builtAt() < cacheMs) return s;
+            long gen = generation.get();
             try {
                 s = build(now);
             } catch (Exception e) {
@@ -277,7 +306,7 @@ public class NocOperatorService {
                 s = snapshot != null ? new Snapshot(snapshot.teamIds(), snapshot.operatorTeams(), now)
                                      : new Snapshot(List.of(), Map.of(), now);
             }
-            snapshot = s;
+            if (generation.get() == gen) snapshot = s;   // yapım sırasında boşaltıldıysa saklanmaz (sonraki okuma yeniden kurar)
             return s;
         }
     }

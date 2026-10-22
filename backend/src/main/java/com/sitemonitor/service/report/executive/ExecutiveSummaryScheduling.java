@@ -21,6 +21,12 @@ import java.time.Instant;
  *       özetleri (2026-10-10) aynı tetiklerle, kurum özetinden sonra gider.</li>
  * </ol>
  * Asıl "tam bir kez" kapısı kilit değil, ay kaydının UNIQUE talebidir (kilit kaçsa bile ikinci posta gitmez).
+ *
+ * <p><b>Çok pod R2a (MP-42, 2026-10-22):</b> kilit iş bitince bırakılır; geç tetiklenen ikinci pod (dolu zamanlayıcı havuzu)
+ * aynı tetiği yeniden koşturup ayın deneme hakkını boşa harcıyordu. Planlı tetik artık küme genelinde BİR KEZ
+ * ({@link SchedulerService#claimCronRound} — tur {@value #SCHEDULED_ROUND}) ve yalnız CANLI cron bu dakikada tetikleniyorsa
+ * ({@link com.sitemonitor.service.report.LiveCron}: ayardan sonra değişen zamanlamada eski planlı tetik göndermez); telafi
+ * saatte bir kez ({@link SchedulerService#claimRound} — tur {@value #CATCH_UP_ROUND}, iki aşamalı). Tur adları KALICI.
  */
 @Slf4j
 @Configuration
@@ -29,17 +35,26 @@ public class ExecutiveSummaryScheduling implements SchedulingConfigurer {
 
     static final String LOCK = "executive-summary";
     static final String CATCH_UP_CRON = "0 17 * * * *";
+    /** Planlı tetiğin küme turu (R2a, MP-42) — KALICI ad. */
+    static final String SCHEDULED_ROUND = "executive-summary";
+    /** Saatlik telafinin küme turu (R2a, MP-42) — KALICI ad; aralık bir saatten kısa ki her saatin tetiği vadeli olsun. */
+    static final String CATCH_UP_ROUND = "executive-summary-catchup";
+    static final long CATCH_UP_ROUND_MS = 55L * 60_000L;
 
     private final ExecutiveSummaryDeliveryService delivery;
     private final ExecutiveSummarySettings settings;
     private final SchedulerService schedulerService;
     private final ExecutiveSummaryTeamService teamService;
 
+    /** Koşan planlı tetiğin PLANLI anı (R2a inceleme REP-3: gecikmeden bağımsız karar). */
+    private final com.sitemonitor.service.report.LiveCron.PlannedFire plannedFire =
+            new com.sitemonitor.service.report.LiveCron.PlannedFire();
+
     @Override
     public void configureTasks(ScheduledTaskRegistrar registrar) {
         registrar.addTriggerTask(
-                () -> schedulerService.runWithSchedulerLock(LOCK, delivery::runScheduled),
-                context -> {
+                () -> schedulerService.runWithSchedulerLock(LOCK, () -> scheduledTick(plannedFire.last(), Instant.now())),
+                plannedFire.wrap(context -> {
                     String expr = settings.cron();
                     try {
                         return new CronTrigger(expr, ExecutiveSummaryContext.IST).nextExecution(context);
@@ -52,15 +67,49 @@ public class ExecutiveSummaryScheduling implements SchedulingConfigurer {
                             return (Instant) null;
                         }
                     }
-                });
+                }));
         // Kurum özeti ve bütün takım özetleri kapalıyken (varsayılan) telafi kilide bile dokunmaz — saatlik boş DB
         // yazımı olmasın (takım kapısı tek sayım sorgusu).
         registrar.addTriggerTask(
                 () -> {
                     if (settings.enabled() || teamService.anyEnabled()) {
-                        schedulerService.runWithSchedulerLock(LOCK, delivery::catchUp);
+                        schedulerService.runWithSchedulerLock(LOCK, this::catchUpTick);
                     }
                 },
                 new CronTrigger(CATCH_UP_CRON, ExecutiveSummaryContext.IST));
+    }
+
+    /**
+     * Planlı tetik (kilit altında): CANLI cron tetiğin PLANLI anında ({@code planned}; bilinmiyorsa duvar saati) tetiklenmiyorsa
+     * (zamanlama tetik planlandıktan sonra değişti) iş koşmaz; tetik ne kadar geç koşarsa koşsun karar planlı ana göredir
+     * (R2a inceleme REP-3); tetik küme genelinde bir kez ({@value #SCHEDULED_ROUND} cron turu).
+     */
+    void scheduledTick(Instant planned, Instant now) {
+        String cron = com.sitemonitor.service.report.LiveCron.effective(settings.cron(), ExecutiveSummarySettings.DEFAULT_CRON);
+        if (!com.sitemonitor.service.report.LiveCron.due(cron, ExecutiveSummarySettings.DEFAULT_CRON,
+                ExecutiveSummaryContext.IST, planned, now)) {
+            log.info("Aylık yönetici özeti: planlı tetik ({}) canlı zamanlamaya ({}) uymuyor — zamanlama değişmiş, bu tetikte "
+                    + "gönderilmedi", planned, cron);
+            return;
+        }
+        if (com.sitemonitor.service.report.LiveCron.late(planned, now)) {
+            log.warn("Aylık yönetici özeti: planlı tetik ({}) {} sn geç koştu (dolu zamanlayıcı havuzu) — yine de gönderiliyor",
+                    planned, java.time.Duration.between(planned, now).toSeconds());
+        }
+        if (!schedulerService.claimCronRound(SCHEDULED_ROUND, cron, ExecutiveSummaryContext.IST.getId())) {
+            log.debug("Aylık yönetici özeti: bu planlı tetik başka bir pod'da koştu");
+            return;
+        }
+        delivery.runScheduled();
+    }
+
+    /** Saatlik telafi (kilit altında): küme genelinde saatte bir ({@value #CATCH_UP_ROUND}); hatada tur tamamlanmaz. */
+    void catchUpTick() {
+        if (!schedulerService.claimRound(CATCH_UP_ROUND, CATCH_UP_ROUND_MS)) {
+            log.debug("Aylık yönetici özeti telafisi: bu saatin turu başka bir pod'da koştu");
+            return;
+        }
+        delivery.catchUp();
+        schedulerService.completeRound(CATCH_UP_ROUND);
     }
 }

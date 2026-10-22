@@ -1,5 +1,7 @@
 package com.sitemonitor.service;
 
+import com.sitemonitor.service.cache.CacheBus;
+import com.sitemonitor.service.cache.CacheBusNames;
 import com.sitemonitor.model.CertificateInventory;
 import com.sitemonitor.model.LatestCheck;
 import com.sitemonitor.model.Team;
@@ -91,11 +93,37 @@ public class WeakAlgorithmReportService {
     /**
      * Rapor belleği (2026-10-09, performans): Pano HER kullanıcının girişinde bu raporu ister; her çağrı tüm envanteri,
      * son kontrolleri ve 30 günlük gözlem tablosunu tarıyordu. Görüş kapsamı başına {@code site.monitor.weak-algo.cache-ms};
-     * istisna eklenince/silinince temizlenir; 0 → kapalı (birim testinde varsayılan).
+     * istisna eklenince/silinince temizlenir; 0 → kapalı (birim testinde varsayılan). Öteki pod'lar önbellek veri yoluyla
+     * (2026-10-22, çok pod R2-A, MP-30: {@link CacheBus}, ad {@link CacheBusNames#WEAK_ALGO}) — eskiden pod A'da eklenen istisna
+     * pod B'nin raporunda 120 sn görünmüyordu.
      */
     @org.springframework.beans.factory.annotation.Value("${site.monitor.weak-algo.cache-ms:120000}")
     long cacheMs;
     private final com.sitemonitor.util.TtlMemo<Map<String, Object>> memo = new com.sitemonitor.util.TtlMemo<>(500);
+
+    /** Pod'lar arası boşaltma (MP-30) — yoksa yalnız bu pod. */
+    private volatile CacheBus cacheBus;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setCacheBus(CacheBus bus) {
+        this.cacheBus = bus;
+        if (bus != null) bus.register(CacheBusNames.WEAK_ALGO, this::memoClearLocal);
+    }
+
+    /** Bellek kuşağı: anahtara girer, boşaltmada artar — boşaltmadan ÖNCE başlamış hesap eski raporu okunmayan anahtara yazar. */
+    private final java.util.concurrent.atomic.AtomicLong memoGeneration = new java.util.concurrent.atomic.AtomicLong();
+
+    /** Yalnız bu pod (öteki pod'un yayını da bunu çağırır; yeniden yayın yok). */
+    void memoClearLocal() {
+        memoGeneration.incrementAndGet();
+        memo.clear();
+    }
+
+    private void memoChanged() {
+        memoClearLocal();
+        CacheBus b = cacheBus;
+        if (b != null) b.bump(CacheBusNames.WEAK_ALGO);
+    }
 
     // ── Rapor gövdesi ──────────────────────────────────────────────────────────────────────
 
@@ -122,7 +150,8 @@ public class WeakAlgorithmReportService {
      * tablosundan gelir ve kendi süzgecini ayrıca alır (aşağıya bakınız).
      */
     public Map<String, Object> build(List<Long> viewTeamIds) {
-        Map<String, Object> cached = memo.get(com.sitemonitor.util.TtlMemo.scopeKey(viewTeamIds == null, viewTeamIds),
+        Map<String, Object> cached = memo.get(memoGeneration.get() + "|"
+                        + com.sitemonitor.util.TtlMemo.scopeKey(viewTeamIds == null, viewTeamIds),
                 cacheMs, false, () -> buildUncached(viewTeamIds));
         return cached == null ? null : new java.util.LinkedHashMap<>(cached);   // üst düzey kopya: paylaşılan bellek değişmesin
     }
@@ -464,7 +493,7 @@ public class WeakAlgorithmReportService {
         e.setCreatedBy(actor);
         e.setCreatedAt(ISO.format(Instant.now()));
         WeakAlgorithmException saved = exceptionRepo.save(e);
-        memo.clear();   // rapor istisnayı hemen göstersin
+        memoChanged();   // rapor istisnayı hemen göstersin (öteki pod'larda da)
         return saved;
     }
 
@@ -472,7 +501,7 @@ public class WeakAlgorithmReportService {
         Optional<WeakAlgorithmException> e = exceptionRepo.findByDomain(domain);
         if (e.isEmpty()) return false;
         exceptionRepo.deleteById(e.get().getId());
-        memo.clear();
+        memoChanged();
         return true;
     }
 

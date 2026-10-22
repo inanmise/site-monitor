@@ -32,19 +32,30 @@ public interface TechErrorReminderRepository extends JpaRepository<TechErrorRemi
     @Modifying
     @Transactional
     @Query("UPDATE TechErrorReminder r SET r.lastSentOn = :today, r.refKey = :ref, r.sendCount = r.sendCount + 1, "
-            + "r.claimRev = r.claimRev + 1, r.updatedAt = :now WHERE r.id = :id AND r.claimRev = :rev")
+            + "r.claimRev = r.claimRev + 1, r.updatedAt = :now, r.inflightAt = :now WHERE r.id = :id AND r.claimRev = :rev")
     int claim(@Param("id") Long id, @Param("rev") int rev, @Param("today") String today, @Param("ref") String ref,
               @Param("now") String now);
 
     /**
+     * Talebin KARARI yazıldı (çok pod R2a, MP-41): "sürüyor" damgası temizlenir — yalnız bu talebin sürümü ve damgası
+     * duruyorsa (başka bir pod arada devraldıysa dokunulmaz). 0 = zaten temiz / başka talep.
+     */
+    @Modifying
+    @Transactional
+    @Query("UPDATE TechErrorReminder r SET r.inflightAt = NULL WHERE r.id = :id AND r.claimRev = :rev AND r.inflightAt = :inflight")
+    int finishInflight(@Param("id") Long id, @Param("rev") int rev, @Param("inflight") String inflight);
+
+    /**
      * Talebi geri bırakır (hatırlatma bir alıcıya ulaşmadı → ertesi koşu yeniden dener): önceki gün ve istek anahtarı geri
      * yazılır, yalnız bu talebin sürümü ({@code rev}) duruyorsa. {@code reached}: turun durumu ({@code reached_ids} —
-     * {@code <ref>#<send_count>#<deneme>:<kimlikler>}); aynı koşullu yazım, ayrı bir UPDATE yok.
+     * {@code <ref>#<send_count>#<deneme>:<kimlikler>}); aynı koşullu yazım, ayrı bir UPDATE yok. "Sürüyor" damgası da
+     * temizlenir (R2a, MP-41).
      */
     @Modifying
     @Transactional
     @Query("UPDATE TechErrorReminder r SET r.lastSentOn = :prevDay, r.refKey = :prevRef, r.sendCount = r.sendCount - 1, "
-            + "r.claimRev = r.claimRev + 1, r.updatedAt = :now, r.reachedIds = :reached WHERE r.id = :id AND r.claimRev = :rev")
+            + "r.claimRev = r.claimRev + 1, r.updatedAt = :now, r.reachedIds = :reached, r.inflightAt = NULL "
+            + "WHERE r.id = :id AND r.claimRev = :rev")
     int release(@Param("id") Long id, @Param("rev") int rev, @Param("prevDay") String prevDay, @Param("prevRef") String prevRef,
                 @Param("reached") String reached, @Param("now") String now);
 

@@ -28,6 +28,10 @@ import { MAX_EXTRA_CC, MAX_EXTRA_CC_INPUT, parseExtraCc } from './sendModel.js'
  * alan boş açılıyor, "Gönder" raporu ek adreslersiz (geri alınamaz) yolluyordu. `onEdit(value)` alanın her değişikliğini
  * bildirir (5. tur): çağıran sonraki açılışta kullanıcının SON yazdığını verir — o denemenin eski adreslerini değil.
  *
+ * Önceki gönderim kuyrukta (`kind: 'queued'` — 409 `SEND_QUEUED`; inceleme REP-2): bilgi bandı "önceki gönderimin sonucu
+ * bekleniyor, burada görünecek"; "Gönder" ve Ctrl+Enter KİLİTLİ — çağıran kuyruğu yoklar ve sonuçlanınca bandı değiştirir
+ * (gitmemişse `retry`) ya da pencereyi kapatır. Dönen simge yok (yoklama dakikalar sürebilir), "yeniden denetle" yok.
+ *
  * Sonucu bilinmeyen hata (`kind: 'unsure'` — ağ hatası, gönderim sürüyor, `MAIL_FAILED` dışı 5xx; inceleme 2026-10-18, 3. tur): "Gönder" ve
  * Ctrl+Enter KİLİTLİ — gönderim gitmiş olabilir, ikinci tıklama raporu yöneticilere ikinci kez yollardı. `check`
  * 'checking' = rapor yeniden okunuyor (düğmede dönen simge), 'unknown' = okunamadı → "Durumu yeniden denetle"
@@ -39,9 +43,10 @@ export default function SendDialog({ open, title, message, busy, serverError, fa
   const [clientError, setClientError] = useState(null)
   const inputRef = useRef(null)
   const formId = useId()
-  // Sonucu bilinmeyen gönderim: durum bilinene kadar gönderim YOK (düğme + Ctrl+Enter)
-  const locked = failure?.kind === 'unsure'
-  const checking = locked && failure?.check !== 'unknown'
+  // Sonucu bilinmeyen gönderim / sonucu beklenen önceki kuyruk (REP-2): durum bilinene kadar gönderim YOK (düğme + Ctrl+Enter)
+  const unsure = failure?.kind === 'unsure'
+  const locked = unsure || failure?.kind === 'queued'
+  const checking = unsure && failure?.check !== 'unknown'
 
   // Her açılışta `initialCc` ile (yoksa boş) başlar — ek adresler kanalda saklanmaz; yalnız sonucu bilinmeyen / gitmemiş
   // denemenin adresleri yeniden açılışa taşınır (çağıran verir). Değer AÇILIŞ anında okunur: açıkken değişmesi alanı ezmez
@@ -104,11 +109,11 @@ export default function SendDialog({ open, title, message, busy, serverError, fa
           </Field>
           {failure && (
             <div data-slot="te-send-failure" data-kind={failure.kind}>
-              <AlertBanner tone={failure.kind === 'unsure' ? 'warning' : 'danger'} role="alert" title={failure.title}
-                details={failure.kind === 'unsure' ? undefined : (failure.details || undefined)}>
+              <AlertBanner tone={unsure ? 'warning' : failure.kind === 'queued' ? 'info' : 'danger'} role="alert" title={failure.title}
+                details={locked ? undefined : (failure.details || undefined)}>
                 {failure.message}
               </AlertBanner>
-              {locked && !checking && onRecheck && (
+              {unsure && !checking && onRecheck && (
                 <Button type="button" variant="outline" size="sm" className="mt-2 w-full sm:w-auto pointer-coarse:min-h-10"
                   data-slot="te-send-recheck" onClick={() => onRecheck()}>
                   <RefreshCw aria-hidden="true" /> {t('te.send.recheck')}

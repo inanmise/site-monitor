@@ -57,22 +57,62 @@ public class IncidentNotificationService {
      */
     @jakarta.annotation.PreDestroy
     void shutdownExecutor() {
-        exec.shutdown();
-        try {
-            if (!exec.awaitTermination(com.sitemonitor.config.ShutdownDeadline.waitMs(5_000L), java.util.concurrent.TimeUnit.MILLISECONDS)) exec.shutdownNow();
-        } catch (InterruptedException e) {
-            exec.shutdownNow();
-            Thread.currentThread().interrupt();
-        }
+        // 2026-10-23 (çok pod R2a · D2): kuyruktakiler ortak kapanış süresi içinde gönderilir; başlayamayan her olay postası
+        // için notification_logs satırı (eskiden shutdownNow() onları SESSİZCE düşürüyordu).
+        DroppableTask.drain(exec, drainCapMs, DroppableTask.MAX_TRACES, this::recordDroppedMore);
     }
+
+    /** Kapanışta kuyruğun en çok bekleneceği süre (ortak kapanış süresiyle sınırlı). Paket-özel: testte kısaltılır. */
+    long drainCapMs = 5_000L;
+
+    /** Başlayamayan olay postasının izi için (yoksa yalnız WARN). Alan enjeksiyonu: kurucu ve elle kurulan testler değişmesin. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.repository.NotificationLogRepository notificationLogRepo;
+
+    void setNotificationLogRepo(com.sitemonitor.repository.NotificationLogRepository r) { this.notificationLogRepo = r; }
+
+    /** Olay postası tetikleyicisi — yalnız gönderilemeyen (başlamayan) görevin izinde yazılır. */
+    public static final String TRIGGER_INCIDENT_NOTIFY = "INCIDENT_NOTIFY";
+    static final String STATUS_DROPPED =
+            "FAILED: sonuç yok — pod kapanırken olay kaydı postası kuyrukta kaldı, gönderilmedi";
 
     /** dto = controller'ın ürettiği snake_case olay haritası. kind = NEW | UPDATED | RESOLVED. */
     public void notifyIncident(Map<String, Object> dto, String kind) {
         if (dto == null) return;
-        exec.submit(() -> {
+        DroppableTask.submit(exec, () -> {
             try { doNotify(dto, kind); }
             catch (Exception e) { log.warn("Incident notification failed: {}", e.getMessage()); }
-        });
+        }, () -> recordDropped(dto, kind));
+    }
+
+    /** Başlayamayan olay postasının {@code notification_logs} izi (alıcılar henüz çözülmedi — takım adıyla). */
+    void recordDropped(Map<String, Object> dto, String kind) {
+        String prefix = "RESOLVED".equals(kind) ? "Olay Çözüldü" : "NEW".equals(kind) ? "Yeni Olay" : "Olay Güncellendi";
+        Object teamName = dto.get("team_name");
+        log.warn("Olay kaydı postası başlayamadı (pod kapanıyor): '{}' takım={} — gönderilmedi", dto.get("title"), dto.get("team_id"));
+        saveTrace(teamName == null ? "-" : teamName.toString(), "[Site Monitor] " + prefix + " — " + dto.get("title"), STATUS_DROPPED);
+    }
+
+    /** Görev başı iz sınırını aşan başlamamış postalar için TEK özet satırı. */
+    void recordDroppedMore(int more) {
+        saveTrace("-", "[Site Monitor] Olay kaydı postaları — " + more + " posta daha",
+                "FAILED: sonuç yok — pod kapanırken " + more + " olay kaydı postası daha kuyrukta kaldı, gönderilmedi");
+    }
+
+    private void saveTrace(String name, String subject, String status) {
+        if (notificationLogRepo == null) return;
+        com.sitemonitor.model.NotificationLog n = new com.sitemonitor.model.NotificationLog();
+        n.setAlertEventId(0L);
+        n.setSentAt(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(java.time.ZoneOffset.UTC)
+                .format(java.time.Instant.now()));
+        n.setRecipientName(name);
+        n.setRecipientEmail("");
+        n.setRecipientRole("TEAM");
+        n.setSubject(subject);
+        n.setEmailStatus(status);
+        n.setWebhookStatus("SKIPPED");
+        n.setTrigger(TRIGGER_INCIDENT_NOTIFY);
+        notificationLogRepo.save(n);
     }
 
     /** E-posta deep-link'leri için dış base URL — CANLI okunur (Genel Ayarlar'dan değişebilir);

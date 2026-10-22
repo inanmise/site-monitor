@@ -33,8 +33,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicInteger;
 
 @Slf4j
 @RestController
@@ -212,12 +210,43 @@ public class AuthController {
         return maintenanceActive() && !systemMaintenance.isGlobalAdminAccount(user);
     }
 
-    // Per-IP attempt counter within a sliding 60-second window
-    private final ConcurrentHashMap<String, AtomicInteger> loginAttempts = new ConcurrentHashMap<>();
-    // Per-IP: timestamp when the current counting window started
-    private final ConcurrentHashMap<String, Long> windowStart = new ConcurrentHashMap<>();
-    // Per-IP: absolute timestamp (ms) when the block expires
-    private final ConcurrentHashMap<String, Long> blockedUntil = new ConcurrentHashMap<>();
+    /** IP sayım penceresi (ms) — ilk başarısız denemeyle başlar, bu süre geçince sıfırlanır (20.165.1 ile aynı). */
+    static final long IP_WINDOW_MS = 60_000L;
+    /** Ortak sayaç anahtarının kapsamı ({@code rate_limit_counters.limit_key} = {@code login-ip:<ip>}; ad kalıcı). */
+    static final String IP_LIMIT_SCOPE = "login-ip";
+
+    /**
+     * IP başına giriş oran sınırı (2026-10-23, çok pod Sürüm 2a — MP-31): durum veritabanında ({@code rate_limit_counters}),
+     * TÜM pod'larda ortak — round-robin arkasında aynı IP'den 5 + 5 hata iki pod'da → 11. istek hangisine düşerse 429; bir
+     * pod'da kurulan gerçek oturum sayacı her pod için sıfırlar. Eskiden pod başına üç bellek haritasıydı (N pod × eşik).
+     * İsteğe bağlı: {@code @WebMvcTest} dilimlerinde bean yok → bellek içi örnek (20.165.1 davranışı birebir);
+     * veritabanı hatasında servis aynı bellek yedeğine düşer (giriş asla bu yüzden düşmez).
+     */
+    @Autowired(required = false)
+    private com.sitemonitor.service.lockout.RateLimitCounterService ipLimits;
+
+    /** Bean yokken kullanılan bellek-içi örnek (tembel). */
+    private volatile com.sitemonitor.service.lockout.RateLimitCounterService memoryIpLimits;
+
+    private com.sitemonitor.service.lockout.RateLimitCounterService ipLimits() {
+        var s = ipLimits;
+        if (s != null) return s;
+        s = memoryIpLimits;
+        if (s == null) {
+            synchronized (this) {
+                s = memoryIpLimits;
+                if (s == null) {
+                    s = com.sitemonitor.service.lockout.RateLimitCounterService.memoryOnly();
+                    memoryIpLimits = s;
+                }
+            }
+        }
+        return s;
+    }
+
+    private static String ipLimitKey(String ip) {
+        return com.sitemonitor.service.lockout.RateLimitCounterService.key(IP_LIMIT_SCOPE, ip);
+    }
 
     /** {@code audit_logs.actor} sütun genişliği — daha uzun ad INSERT'i düşürüyordu (persist null → 500). */
     static final int AUDIT_ACTOR_MAX = 100;
@@ -497,9 +526,7 @@ public class AuthController {
         // IP oran sınırı sayaçları YALNIZ gerçekten oturum kurulurken sıfırlanır (2026-10-22, hata avı AUTH-9): 409 dalından
         // önce sıfırlanıyordu — geçerli hesabı olan biri, başka adlara parola püskürtme denemelerinin arasına kendi doğru
         // girişini (oturum kurmayan 409) sıkıştırıp tek püskürtme kontrolü olan IP sınırını hiç tetiklemiyordu.
-        loginAttempts.remove(clientIp);
-        windowStart.remove(clientIp);
-        blockedUntil.remove(clientIp);
+        ipLimits().clear(ipLimitKey(clientIp));   // ortak sayaç: TÜM pod'lar için sıfırlanır (MP-31)
 
         HttpSession oldSession = request.getSession(false);
         if (oldSession != null) oldSession.invalidate();
@@ -1724,51 +1751,24 @@ public class AuthController {
         return clientIpResolver.resolve(request);
     }
 
-    /** Returns seconds remaining in the block, or 0 if not blocked. */
+    /** Returns seconds remaining in the block, or 0 if not blocked (ortak sayaç — tüm pod'lar aynı kalan süreyi görür). */
     private long blockedSecondsRemaining(String ip) {
-        Long until = blockedUntil.get(ip);
-        if (until == null) return 0;
-        long remaining = (until - System.currentTimeMillis() + 999) / 1000; // ceil
-        if (remaining <= 0) {
-            blockedUntil.remove(ip);
-            loginAttempts.remove(ip);
-            windowStart.remove(ip);
-            return 0;
-        }
-        return remaining;
+        return ipLimits().blockedSeconds(ipLimitKey(ip));
     }
 
+    /** Başarısız deneme: {@value #IP_WINDOW_MS} ms pencerede {@code max-attempts}. deneme → {@code block-seconds} blok. */
     private void recordFailedAttempt(String ip) {
-        long now = System.currentTimeMillis();
-        // Reset counter if the 60-second window has expired for this IP
-        long ws = windowStart.computeIfAbsent(ip, k -> now);
-        if (now - ws > 60_000L) {
-            loginAttempts.put(ip, new AtomicInteger(0));
-            windowStart.put(ip, now);
-        }
-        int count = loginAttempts.computeIfAbsent(ip, k -> new AtomicInteger(0)).incrementAndGet();
-        if (count >= maxLoginAttempts) {
-            blockedUntil.put(ip, now + (long) blockSeconds * 1000);
-        }
+        ipLimits().hit(ipLimitKey(ip), new com.sitemonitor.service.lockout.RateLimitCounterService.Limit(
+                IP_WINDOW_MS, maxLoginAttempts, (long) blockSeconds * 1000L));
     }
 
     /**
-     * Periyodik temizlik (saatlik) — IP rate-limit haritalarının sınırsız büyümesini önler.
-     * Bir kez deneyip dönmeyen IP'lerin kayıtları aksi halde süresiz birikir (memory leak).
-     * Penceresi geçmiş (60sn) ve bloğu sona ermiş IP'ler kaldırılır.
+     * Periyodik temizlik (saatlik) — bellek içi sayaç haritasının (bean'siz örnek / veritabanı hatasındaki yedek) sınırsız
+     * büyümesini önler; penceresi geçmiş ve bloğu bitmiş kayıtlar atılır. Veritabanı satırlarını servisin kendi saatlik
+     * temizliği siler.
      */
     @Scheduled(fixedDelay = 3_600_000L)
     void pruneRateLimitState() {
-        long now = System.currentTimeMillis();
-        for (String ip : new ArrayList<>(windowStart.keySet())) {
-            Long until = blockedUntil.get(ip);
-            boolean blocked = until != null && until > now;
-            Long ws = windowStart.get(ip);
-            if (!blocked && (ws == null || now - ws > 60_000L)) {
-                windowStart.remove(ip);
-                loginAttempts.remove(ip);
-                blockedUntil.remove(ip);
-            }
-        }
+        ipLimits().pruneMemory();
     }
 }

@@ -94,6 +94,8 @@ export function approvalOutcome(d, t) {
   if (code === 'SKIPPED') return { tone: 'info', text: t('te.appr.outcome.SKIPPED') }
   if (code === 'APPROVAL_STALE') return { tone: 'error', text: t('te.appr.outcome.APPROVAL_STALE') }
   if (code === 'SEND_IN_PROGRESS') return { tone: 'info', text: t('te.appr.outcome.SEND_IN_PROGRESS') }
+  // Çok pod R2a (MP-41): raporun önceki gönderimi 421 kuyruğunda — ikinci kopya gitmesin diye yöneticilere gönderilmedi
+  if (code === 'SEND_QUEUED') return { tone: 'info', text: t('te.appr.outcome.SEND_QUEUED') }
   if (code === 'PDF_BUSY') return { tone: 'error', text: t('te.appr.outcome.PDF_BUSY') }
   if (code === 'PDF_TOO_LARGE') return { tone: 'error', text: t('te.appr.outcome.PDF_TOO_LARGE') }
   return { tone: 'error', text: t('te.appr.outcome.other') }

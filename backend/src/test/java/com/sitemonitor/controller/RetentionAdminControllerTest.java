@@ -46,6 +46,8 @@ class RetentionAdminControllerTest {
     @MockitoBean UserService userService;
     @MockitoBean AuthController authController;
     @MockitoBean HttpMetricsService httpMetricsService;
+    /** Kilit satırı okuması (inceleme 2026-10-23): tutulan kilit = 409, alınamayan kilit = 503. */
+    @MockitoBean org.springframework.jdbc.core.JdbcTemplate jdbc;
 
     private static final String ACTIVITY_KEY = "site.monitor.activity.retention-days";
 
@@ -215,6 +217,7 @@ class RetentionAdminControllerTest {
     void runNow_holdInactive_executesAndAudits() throws Exception {
         when(retentionService.holdActive()).thenReturn(false);
         when(retentionService.execute(anyBoolean(), anyString())).thenReturn(result(false, 4200));
+        lockFree();
 
         mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
                         .post("/api/admin/retention/run").session(admin()))
@@ -226,6 +229,70 @@ class RetentionAdminControllerTest {
         verify(auditService).recordAction(eq("RETENTION_RUN_MANUAL"),
                 any(jakarta.servlet.http.HttpSession.class), any(jakarta.servlet.http.HttpServletRequest.class),
                 anyString(), anyString(), contains("4200"));
+    }
+
+    /** Kilit boş: {@code callWithSchedulerLock} işi koşturur (MP-46 — elle temizlik gece temizliğinin kilidini alır). */
+    @SuppressWarnings("unchecked")
+    private void lockFree() {
+        when(schedulerService.callWithSchedulerLock(eq("nightly-cleanup"), any(java.time.Duration.class), any()))
+                .thenAnswer(inv -> java.util.Optional.ofNullable(
+                        ((java.util.function.Supplier<Object>) inv.getArgument(2)).get()));
+    }
+
+    @Test
+    @DisplayName("MP-46: gece temizliği başka pod'da sürerken /run 409 RETENTION_RUNNING döner ve HİÇBİR şey silmez")
+    void runNow_whileNightlyHoldsLock_409() throws Exception {
+        when(retentionService.holdActive()).thenReturn(false);
+        when(schedulerService.callWithSchedulerLock(eq("nightly-cleanup"), any(java.time.Duration.class), any()))
+                .thenReturn(java.util.Optional.empty());
+        when(jdbc.queryForObject(contains("scheduler_lock"), eq(String.class), any(Object[].class))).thenReturn("2999-01-01T00:00:00");
+
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .post("/api/admin/retention/run").session(admin()).header("X-Lang", "en"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("RETENTION_RUNNING"))
+                .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("deleted nothing")));
+
+        verify(retentionService, never()).execute(anyBoolean(), anyString());
+        verify(auditService, never()).recordAction(eq("RETENTION_RUN_MANUAL"), any(jakarta.servlet.http.HttpSession.class),
+                any(jakarta.servlet.http.HttpServletRequest.class), anyString(), anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("İnceleme: kilit alınamadı ama geçerli kilit satırı YOK / okunamadı → 503 DB_UNAVAILABLE (\"zaten çalışıyor\" değil)")
+    void runNow_lockCallFailedWithoutHolder_503() throws Exception {
+        when(retentionService.holdActive()).thenReturn(false);
+        when(schedulerService.callWithSchedulerLock(eq("nightly-cleanup"), any(java.time.Duration.class), any()))
+                .thenReturn(java.util.Optional.empty());
+        when(jdbc.queryForObject(contains("scheduler_lock"), eq(String.class), any(Object[].class)))
+                .thenThrow(new org.springframework.dao.DataAccessResourceFailureException("db down"));
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .post("/api/admin/retention/run").session(admin()).header("X-Lang", "en"))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.code").value("DB_UNAVAILABLE"));
+
+        reset(jdbc);   // satır yok (süresi dolmuş / hiç alınmamış)
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .post("/api/admin/retention/run").session(admin()))
+                .andExpect(status().isServiceUnavailable());
+        verify(retentionService, never()).execute(anyBoolean(), anyString());
+    }
+
+    @Test
+    @DisplayName("MP-46: /run gece temizliğinin kilidini alır; dry-run kilitsiz kalır")
+    void runNow_takesNightlyLock_dryRunDoesNot() throws Exception {
+        when(retentionService.execute(anyBoolean(), anyString())).thenReturn(result(false, 1));
+        lockFree();
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .post("/api/admin/retention/run").session(admin()))
+                .andExpect(status().isOk());
+        verify(schedulerService).callWithSchedulerLock(eq("nightly-cleanup"), any(java.time.Duration.class), any());
+
+        clearInvocations(schedulerService);
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .post("/api/admin/retention/dry-run").session(admin()))
+                .andExpect(status().isOk());
+        verify(schedulerService, never()).callWithSchedulerLock(anyString(), any(java.time.Duration.class), any());
     }
 
     @Test

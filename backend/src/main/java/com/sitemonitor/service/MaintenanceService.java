@@ -1,5 +1,7 @@
 package com.sitemonitor.service;
 
+import com.sitemonitor.service.cache.CacheBus;
+import com.sitemonitor.service.cache.CacheBusNames;
 import com.sitemonitor.model.MaintenanceWindow;
 import com.sitemonitor.repository.MaintenanceWindowRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -15,7 +17,10 @@ import java.util.*;
 /**
  * Bakım penceresi motoru: occurrence/recurrence hesabı (DST-güvenli, java.time ZonedDateTime) + bellek-içi aktif-hedef
  * cache'i. Sweep/alarm yolu {@link #isUnderMaintenance(String)} ile O(1) sorgular — per-check DB sorgusu YOK.
- * Cache @Scheduled ile ~30sn'de bir ve her CRUD yazımında ({@link #refresh()}) tazelenir.
+ * Cache @Scheduled ile ~30sn'de bir ve her CRUD yazımında ({@link #refresh()}) tazelenir. Çok pod (2026-10-22, R2-A, MP-30):
+ * CRUD yazımı önbellek veri yoluyla ({@link CacheBus}, ad {@link CacheBusNames#MAINTENANCE_WINDOWS}) öteki pod'lara da
+ * duyurulur — tarama lideri "şimdi başlat" penceresini 30 sn yerine ~2 sn içinde görür (alarm bastırma) ve sertifika kontrol
+ * satırlarının {@code maintenance} damgası o boşlukta yanlış yazılmaz. Zamanlanmış tazeleme yayın YAPMAZ.
  */
 @Slf4j
 @Service
@@ -35,11 +40,61 @@ public class MaintenanceService {
     // ── Bellek cache ─────────────────────────────────────────────────────────
     @Scheduled(fixedDelayString = "${site.monitor.maintenance.refresh-ms:30000}", initialDelayString = "20000")
     public void scheduledRefresh() {
-        try { refresh(); } catch (Exception e) { log.warn("Maintenance cache refresh başarısız: {}", e.getMessage()); }
+        try { reload(); } catch (Exception e) { log.warn("Maintenance cache refresh başarısız: {}", e.getMessage()); }
     }
 
-    /** Etkin pencereleri tarayıp şu an aktif olanların hedeflerini birleştirir. CRUD sonrası da çağrılır (anında etki). */
-    public synchronized void refresh() {
+    /**
+     * CRUD sonrası (anında etki): bu pod'un önbelleğini tazeler ve öteki pod'lara duyurur (MP-30). Okuma hata verirse yine de
+     * duyurulur (öteki pod'lar kendi okumasını dener) ve hata çağırana iletilir (bugünkü davranış).
+     */
+    public void refresh() {
+        try {
+            reload();
+        } finally {
+            CacheBus b = cacheBus;
+            if (b != null) b.bump(CacheBusNames.MAINTENANCE_WINDOWS);
+        }
+    }
+
+    /** Pod'lar arası boşaltma (MP-30) — yoksa yalnız bu pod (30 sn tazeleme). */
+    private volatile CacheBus cacheBus;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setCacheBus(CacheBus bus) {
+        this.cacheBus = bus;
+        if (bus != null) bus.register(CacheBusNames.MAINTENANCE_WINDOWS, this::markStale);
+    }
+
+    /**
+     * Öteki pod'un yayını (veri yolu iş parçacığında, yoklama kilitleri altında): yalnız BAYAT işaretler — veritabanı okuması
+     * yok (çok pod R2-A inceleme: yavaş sorgu veri yolunu dondurmasın). Görüntü bir sonraki okumada tazelenir ({@link #freshen}).
+     */
+    void markStale() {
+        invalidations.incrementAndGet();
+    }
+
+    /** Bayat işaretlerinin sayısı ve görüntünün yansıttığı değer — farklıysa sonraki okuma bir kez yeniden yükler. */
+    private final java.util.concurrent.atomic.AtomicLong invalidations = new java.util.concurrent.atomic.AtomicLong();
+    private volatile long loadedInvalidation;
+
+    /** Bayat işaretlendiyse bir kez yeniden yükler; okuma hata verirse işaret bırakılır (30 sn tazeleme dener — bugünkü davranış). */
+    private void freshen() {
+        if (loadedInvalidation == invalidations.get()) return;
+        synchronized (this) {
+            long want = invalidations.get();
+            if (loadedInvalidation == want) return;
+            try {
+                reload();
+            } catch (Exception e) {
+                loadedInvalidation = want;   // her okumada veritabanına gidilmesin
+                log.warn("Bakım penceresi önbelleği tazelenemedi (30 sn tazeleme yeniden dener): {}", e.getMessage());
+            }
+        }
+    }
+
+    /** Etkin pencereleri tarayıp şu an aktif olanların hedeflerini birleştirir (yalnız bu pod; yayın yok). */
+    synchronized void reload() {
+        long gen = invalidations.get();
         Instant now = Instant.now();
         Set<String> targets = new HashSet<>();
         boolean all = false;
@@ -50,10 +105,12 @@ public class MaintenanceService {
         }
         this.activeTargets = targets;
         this.allActive = all;
+        this.loadedInvalidation = gen;
     }
 
-    /** Bir alarm-anahtarı (host/url/domain) şu an bakımda mı? O(1). */
+    /** Bir alarm-anahtarı (host/url/domain) şu an bakımda mı? O(1) (öteki pod yazdıysa bir kez yeniden yükler). */
     public boolean isUnderMaintenance(String target) {
+        freshen();
         return allActive || (target != null && activeTargets.contains(target));
     }
 
@@ -131,6 +188,7 @@ public class MaintenanceService {
 
     /** /active endpoint'i için: {all, targets}. */
     public Map<String, Object> activeInfo() {
+        freshen();
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("all", allActive);
         m.put("targets", new ArrayList<>(activeTargets));

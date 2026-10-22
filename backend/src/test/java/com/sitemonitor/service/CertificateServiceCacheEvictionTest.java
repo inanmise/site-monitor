@@ -163,6 +163,71 @@ class CertificateServiceCacheEvictionTest {
                 .contains("certificateService.evictAllCaches();");
     }
 
+    /**
+     * Çok pod (2026-10-22, R2-A, MP-30): bu sınıftaki kuralların boşalttığı her önbellek ÖTEKİ pod'larda da boşalmalı.
+     * Yönetici {@code BusAwareCacheManager} — her önbellek boşaltması veri yoluna yayın yapar; bu kapı (1) uygulamanın
+     * yöneticisinin o sınıf olduğunu, (2) kaynakta boşaltılan her önbellek adının veri yolu ad kuralına uyduğunu (yoksa
+     * yayın sessizce atlanır), (3) ısıtıcı kancasının evictAllCaches'in boşalttığı Genel Bakış önbelleklerini kapsadığını pinler.
+     */
+    @Test
+    @DisplayName("Çok pod: boşaltılan her önbellek veri yoluna yayınlanır (yönetici + ad kuralı + ısıtıcı kancası)")
+    void everyEvictedCacheIsPublishedOnTheBus() throws Exception {
+        org.springframework.cache.CacheManager cm = new com.sitemonitor.config.CacheConfig().cacheManager(
+                new org.springframework.beans.factory.support.StaticListableBeanFactory()
+                        .getBeanProvider(com.sitemonitor.service.cache.CacheBus.class));
+        assertThat(cm).isInstanceOf(com.sitemonitor.service.cache.BusAwareCacheManager.class);
+        assertThat(cm.getCache("cert-latest")).isInstanceOf(org.springframework.cache.caffeine.CaffeineCache.class);
+        assertThat(cm.getCache("cert-latest").getClass().getSimpleName()).isEqualTo("BusAwareCaffeineCache");
+
+        Set<String> evicted = new HashSet<>(ThresholdPreviewService.DERIVED_CACHES);
+        Caching caching = CertificateService.class.getMethod("evictAllCaches").getAnnotation(Caching.class);
+        for (CacheEvict e : caching.evict()) evicted.addAll(Arrays.asList(e.value()));
+        java.util.regex.Pattern list = java.util.regex.Pattern.compile("@CacheEvict\\(value = \\{([^}]*)\\}");
+        java.util.regex.Pattern lit = java.util.regex.Pattern.compile("\"([^\"]+)\"");
+        java.util.regex.Pattern getCache = java.util.regex.Pattern.compile("getCache\\(\"([^\"]+)\"\\)");
+        try (var files = java.nio.file.Files.walk(mainRoot())) {
+            for (java.nio.file.Path f : (Iterable<java.nio.file.Path>) files.filter(x -> x.toString().endsWith(".java"))::iterator) {
+                String src = java.nio.file.Files.readString(f);
+                var m = list.matcher(src);
+                while (m.find()) { var l = lit.matcher(m.group(1)); while (l.find()) evicted.add(l.group(1)); }
+                var g = getCache.matcher(src);
+                while (g.find()) evicted.add(g.group(1));
+            }
+        }
+        assertThat(evicted).as("tarama — desen bozuk").contains("cert-latest", "card-extras", "today-monitors", "domain-team-names");
+        java.util.regex.Pattern busName = java.util.regex.Pattern.compile("^[A-Za-z0-9_][A-Za-z0-9_-]{0,59}$");
+        assertThat(evicted).as("veri yolu ad kuralına uymayan önbellek adı — öteki pod'larda boşalmaz").allMatch(n -> busName.matcher(n).matches());
+
+        Set<String> allEvictNames = new HashSet<>();
+        for (CacheEvict e : caching.evict()) allEvictNames.addAll(Arrays.asList(e.value()));
+        assertThat(allEvictNames).as("ısıtıcı kancasının adları evictAllCaches'te").containsAll(CertificateService.WARMED_CACHES);
+        assertThat(CertificateService.WARMED_CACHES).contains("cert-latest", "cert-stats", "card-extras");
+    }
+
+    @Test
+    @DisplayName("Çok pod (D-4): domain-team-names sync yüklenir — boşaltmayla yarışan yükleme kuşak korumasından geçer (300 sn eski ad yok)")
+    void domainTeamNamesIsSync() throws Exception {
+        org.springframework.cache.annotation.Cacheable c = CertificateService.class.getMethod("domainTeamNameMap")
+                .getAnnotation(org.springframework.cache.annotation.Cacheable.class);
+        assertThat(c).isNotNull();
+        assertThat(c.sync()).isTrue();
+        assertThat(c.value()).containsExactly("domain-team-names");
+    }
+
+    @Test
+    @DisplayName("Çok pod: öteki pod'un yayını Genel Bakış önbelleğini boşalttıysa ısıtıcı olayı (CachesEvictedEvent) yayınlanır, diğer adlarda değil")
+    void remoteEvictOfOverviewCachesWarms() {
+        CertificateService svc = org.mockito.Mockito.mock(CertificateService.class,
+                org.mockito.Mockito.withSettings().defaultAnswer(org.mockito.Mockito.CALLS_REAL_METHODS));
+        List<Object> events = new java.util.concurrent.CopyOnWriteArrayList<>();
+        org.springframework.test.util.ReflectionTestUtils.setField(svc, "cacheEvents",
+                (org.springframework.context.ApplicationEventPublisher) events::add);
+        svc.onRemoteCachesEvicted(Set.of("audit-stats", "oncall"));
+        assertThat(events).isEmpty();
+        svc.onRemoteCachesEvicted(Set.of("cert-latest", "card-extras"));
+        assertThat(events).hasSize(1).first().isInstanceOf(CertificateService.CachesEvictedEvent.class);
+    }
+
     private static java.nio.file.Path mainRoot() {
         return java.nio.file.Files.isDirectory(java.nio.file.Path.of("src/main/java"))
                 ? java.nio.file.Path.of("src/main/java") : java.nio.file.Path.of("backend/src/main/java");

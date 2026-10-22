@@ -45,6 +45,29 @@ public class TechErrorApprovalLinkController {
 
     private final ConcurrentHashMap<String, long[]> hits = new ConcurrentHashMap<>();
 
+    /**
+     * Gerçek istemci IP'si (2026-10-23, çok pod Sürüm 2a — MP-33): sınırlayıcı anahtarı ve denetim IP'si eskiden
+     * {@code getRemoteAddr()} = giriş katmanının (ingress / NetScaler) adresiydi — kurum arkasındaki TÜM PO'lar (ve
+     * bağlantıyı önceden açan posta tarayıcıları) tek kovayı paylaşıyor, denetime ingress IP'si yazılıyordu. İsteğe bağlı:
+     * dilimli testte yok → {@code getRemoteAddr()} (eski davranış). Sınır bilerek POD başına kalır: 256 bitlik belirteç
+     * üzerinde bir YÜK sınırıdır, güvenlik sınırı değil.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.ClientIpResolver clientIpResolver;
+
+    /** Test kancası. */
+    void setClientIpResolver(com.sitemonitor.service.ClientIpResolver r) { this.clientIpResolver = r; }
+
+    /** Anahtar üst sınırı — istemci verili başlık değeri haritayı şişirmesin. */
+    private static final int IP_KEY_MAX = 64;
+
+    /** İsteğin gerçek istemci IP'si (çözücü yoksa uzak adres). */
+    String clientIp(HttpServletRequest request) {
+        if (request == null) return "?";
+        String ip = clientIpResolver != null ? clientIpResolver.resolve(request) : request.getRemoteAddr();
+        return ip == null ? "?" : ip;
+    }
+
     public TechErrorApprovalLinkController(TechErrorApprovalService approvals, TeamRepository teams, AuditService auditService) {
         this.approvals = approvals;
         this.teams = teams;
@@ -127,7 +150,7 @@ public class TechErrorApprovalLinkController {
             auditService.recordAction(approve ? "TECH_ERROR_REPORT_APPROVE" : "TECH_ERROR_REPORT_REJECT", u0.getUsername(), u0.getId(),
                     u0.getTeamId(), u0.getSystemRole(), "TECH_ERROR_REPORT", String.valueOf(st.report().getId()),
                     AuditDetail.of("via", "email_token", "outcome", "FAILED", "reason", e.getCode()),
-                    request.getRemoteAddr(), request.getHeader("User-Agent"), null);
+                    clientIp(request), request.getHeader("User-Agent"), null);
             return htmlPage(Msg.t("Karar kaydedilemedi", "The decision wasn't recorded"), "<p class='msg'>" + esc(e.getMessage()) + "</p>", "#d97706");
         } catch (IllegalArgumentException e) {
             // Not kuralı (ör. 1000 karakterden uzun): bağlantı tüketilmedi, geri dönüp düzeltilebilir
@@ -145,7 +168,7 @@ public class TechErrorApprovalLinkController {
                 u.getTeamId(), u.getSystemRole(), "TECH_ERROR_REPORT", String.valueOf(st.report().getId()),
                 AuditDetail.of("via", "email_token", "channel", st.channel().getName(), "send_state",
                         d.send() == null ? d.sendError() : d.send().state()),
-                request.getRemoteAddr(), request.getHeader("User-Agent"), null);
+                clientIp(request), request.getHeader("User-Agent"), null);
         String body;
         if (approve) {
             boolean ok = d.send() != null && ("SENT".equals(d.send().state()) || "QUEUED".equals(d.send().state()));
@@ -257,7 +280,8 @@ public class TechErrorApprovalLinkController {
 
     /** IP başına dakikalık sabit pencere; harita sınırı aşılınca temizlenir. */
     boolean limited(HttpServletRequest request) {
-        String ip = request == null || request.getRemoteAddr() == null ? "?" : request.getRemoteAddr();
+        String ip = clientIp(request);
+        if (ip.length() > IP_KEY_MAX) ip = ip.substring(0, IP_KEY_MAX);
         long minute = System.currentTimeMillis() / 60_000L;
         if (hits.size() > MAX_IPS) hits.clear();
         long[] slot = hits.compute(ip, (k, v) -> {

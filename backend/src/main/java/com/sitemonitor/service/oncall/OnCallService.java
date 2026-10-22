@@ -6,6 +6,8 @@ import com.sitemonitor.model.OnCallSchedule;
 import com.sitemonitor.repository.AppUserRepository;
 import com.sitemonitor.repository.OnCallOverrideRepository;
 import com.sitemonitor.repository.OnCallScheduleRepository;
+import com.sitemonitor.service.cache.CacheBus;
+import com.sitemonitor.service.cache.CacheBusNames;
 import com.sitemonitor.util.Msg;
 import com.sitemonitor.util.TtlMemo;
 import lombok.extern.slf4j.Slf4j;
@@ -32,7 +34,9 @@ import java.util.regex.Pattern;
  *
  * <p><b>Bildirim yolu ucuz:</b> {@link #notifyTargets(Collection)} yalnız {@code notifyOncall} açık çizelgeleri ve geçerli
  * yer değiştirmeleri okur (2 sorgu + kişiler), sonuç takım kümesi başına {@link #CACHE_MS} bellekte — alarm başına
- * sorgu yok. Kayıt / yer değiştirme belleği temizler (diğer pod'lar en geç {@link #CACHE_MS} içinde görür).
+ * sorgu yok. Kayıt / yer değiştirme belleği temizler; öteki pod'lar önbellek veri yoluyla (2026-10-22, çok pod R2-A,
+ * MP-30: {@link CacheBus}, ad {@link CacheBusNames#ONCALL}) en geç bir yoklama aralığında (~2 sn) görür — eskiden
+ * {@link #CACHE_MS} boyunca tarama lideri ÖNCEKİ nöbetçiye alarm gönderiyordu.
  */
 @Slf4j
 @Service
@@ -55,6 +59,34 @@ public class OnCallService {
         this.users = users;
     }
 
+    /** Pod'lar arası boşaltma (MP-30) — yoksa (birim testi, tek pod eski kurulum) yalnız bu pod'un belleği. */
+    private volatile CacheBus cacheBus;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setCacheBus(CacheBus bus) {
+        this.cacheBus = bus;
+        if (bus != null) bus.register(CacheBusNames.ONCALL, this::memoClearLocal);
+    }
+
+    /**
+     * Bellek kuşağı (çok pod R2-A inceleme): anahtara girer ve her boşaltmada artar — boşaltmadan ÖNCE başlamış bir hesap
+     * eski nöbetçiyi eski kuşağın anahtarına yazar, kimse okumaz ({@code TechErrorAnalyticsService} deseni).
+     */
+    private final java.util.concurrent.atomic.AtomicLong memoGeneration = new java.util.concurrent.atomic.AtomicLong();
+
+    /** Yalnız bu pod (öteki pod'un yayını da bunu çağırır; yeniden yayın yok). */
+    void memoClearLocal() {
+        memoGeneration.incrementAndGet();
+        memo.clear();
+    }
+
+    /** Çizelge / yer değiştirme değişti: bu pod'un belleği hemen, öteki pod'larınki veri yoluyla. */
+    private void memoChanged() {
+        memoClearLocal();
+        CacheBus b = cacheBus;
+        if (b != null) b.bump(CacheBusNames.ONCALL);
+    }
+
     /** O anki nöbetçi (bildirim ve ekran). {@code until} = dilim bitişi (UTC ISO). */
     public record OnCallPerson(Long teamId, Long userId, String username, String displayName, String email, boolean active,
                                boolean override, String until) { }
@@ -71,7 +103,7 @@ public class OnCallService {
         for (Long t : teamIds) if (t != null) ids.add(t);
         if (ids.isEmpty()) return Map.of();
         try {
-            return memo.get("notify:" + ids, CACHE_MS, false, () -> computeTargets(ids, true, Instant.now()));
+            return memo.get(memoGeneration.get() + "|notify:" + ids, CACHE_MS, false, () -> computeTargets(ids, true, Instant.now()));
         } catch (Exception e) {
             log.warn("Nöbetçi okunamadı (bildirim nöbetçisiz sürer): {}", e.toString());
             return Map.of();
@@ -84,7 +116,7 @@ public class OnCallService {
         Set<Long> ids = new java.util.TreeSet<>();
         for (Long t : teamIds) if (t != null) ids.add(t);
         if (ids.isEmpty()) return Map.of();
-        return memo.get("current:" + ids, CACHE_MS, false, () -> computeTargets(ids, false, Instant.now()));
+        return memo.get(memoGeneration.get() + "|current:" + ids, CACHE_MS, false, () -> computeTargets(ids, false, Instant.now()));
     }
 
     Map<Long, OnCallPerson> computeTargets(Set<Long> teamIds, boolean onlyNotify, Instant now) {
@@ -237,7 +269,7 @@ public class OnCallService {
         s.setUpdatedAt(ISO.format(Instant.now()));
         s.setUpdatedBy(actor);
         OnCallSchedule saved = schedules.save(s);
-        memo.clear();
+        memoChanged();
         return saved;
     }
 
@@ -271,7 +303,7 @@ public class OnCallService {
         } catch (Exception e) {
             log.debug("eski nöbet yer değiştirmeleri budanamadı: {}", e.toString());
         }
-        memo.clear();
+        memoChanged();
         return saved;
     }
 
@@ -283,7 +315,7 @@ public class OnCallService {
         } catch (Exception e) {
             log.warn("Silinen takımın nöbet çizelgesi temizlenemedi (takım {}): {}", teamId, e.toString());
         }
-        memo.clear();
+        memoChanged();
     }
 
     public OnCallOverride findOverride(Long id) {
@@ -292,7 +324,7 @@ public class OnCallService {
 
     public void deleteOverride(OnCallOverride o) {
         overrides.delete(o);
-        memo.clear();
+        memoChanged();
     }
 
     // ── yardımcılar ──────────────────────────────────────────────────────────────────────────

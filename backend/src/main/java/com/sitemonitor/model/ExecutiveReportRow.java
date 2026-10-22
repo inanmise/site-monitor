@@ -69,4 +69,18 @@ public interface ExecutiveReportRow {
 
     String getCreatedAt();
     void setCreatedAt(String v);
+
+    /**
+     * Postası BAŞLAMIŞ talebin {@code claimed_at} değeri (R2a inceleme REP-1, 2026-10-23) — ilk BCC diliminden ÖNCE koşullu
+     * UPDATE yazar (yalnız o talebin SENDING satırına). Yarıda kalan kayıtta: bu talep için işaret YOK → hiçbir dilim gitmedi
+     * (yeniden gönderilebilir); işaret VAR ama dilimlerin tamamının sonuç izi yok → sonuç bilinmiyor, YENİDEN GÖNDERİLMEZ.
+     * Varlık kaydı bu sütunu yazmaz ({@code insertable/updatable=false}).
+     */
+    String getSendStartedClaim();
+
+    /**
+     * Bu gönderimin iz adı ({@code notification_logs.recipient_name}), işaretle birlikte yazılır — takım sonradan yeniden
+     * adlandırılsa da yarıda kalan gönderimin izleri bulunur (R2a inceleme REP-1).
+     */
+    String getSendTraceName();
 }

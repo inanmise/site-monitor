@@ -67,6 +67,13 @@ class ExecutiveSummaryTeamDeliveryTest {
         when(repo.saveAndFlush(any())).thenAnswer(i -> i.getArgument(0));
         when(teamRepo.findByTeamIdAndReportYearAndReportMonth(anyLong(), anyInt(), anyInt())).thenReturn(Optional.empty());
         when(teamRepo.saveAndFlush(any())).thenAnswer(i -> i.getArgument(0));
+        // Koşullu bitirme (R2a, MP-42): bütün varlık kaydı yerine; talep edilen satırın alanları nesnede güncellenir
+        when(repo.finishIfClaimed(any(), any(), any(), any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
+        // Koşullu bitirme (R2a, MP-42): bütün varlık kaydı yerine; talep edilen satırın alanları nesnede güncellenir
+        when(teamRepo.finishIfClaimed(any(), any(), any(), any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
+        // "Gönderim başladı" işareti (R2a inceleme REP-1)
+        when(repo.markSendStarted(any(), any(), any(), any(), any())).thenReturn(1);
+        when(teamRepo.markSendStarted(any(), any(), any(), any(), any())).thenReturn(1);
         when(email.sendHtmlBccWithAttachments(any(), anyString(), anyString(), anyString(), anyList())).thenReturn("SENT");
         when(users.findByActiveTrueOrderByUsernameAsc()).thenReturn(List.of());
         when(teamService.enabledTeamIds()).thenReturn(List.of(5L, 6L));
@@ -107,8 +114,11 @@ class ExecutiveSummaryTeamDeliveryTest {
         assertThat(subject.getAllValues().get(0)).startsWith("[Site Monitor] Aylık Yönetici Özeti · Ödeme Sistemleri · Eylül 2026");
         assertThat(att.getAllValues().get(0).get(0).fileName()).isEqualTo("site-monitor-yonetici-ozeti-odeme-sistemleri-2026-09.pdf");
 
+        // Yeniden temel (2026-10-22, R2a MP-42): bitirme koşullu UPDATE; talep nesneleri güncellenir
         ArgumentCaptor<ExecutiveSummaryTeamReport> rows = ArgumentCaptor.forClass(ExecutiveSummaryTeamReport.class);
-        verify(teamRepo, times(2)).save(rows.capture());
+        verify(teamRepo, times(2)).saveAndFlush(rows.capture());
+        verify(teamRepo, times(2)).finishIfClaimed(any(), any(), eq("SENT"), any(), any(), any(), any(), any(), any(), any());
+        verify(teamRepo, never()).save(any());
         assertThat(rows.getAllValues()).extracting(ExecutiveSummaryTeamReport::getTeamId).containsExactly(5L, 6L);
         assertThat(rows.getAllValues()).allSatisfy(x -> {
             assertThat(x.getStatus()).isEqualTo(ExecutiveSummaryTeamReport.SENT);
@@ -153,7 +163,7 @@ class ExecutiveSummaryTeamDeliveryTest {
         verify(email, times(1)).sendHtmlBccWithAttachments(bcc.capture(), anyString(), anyString(), anyString(), anyList());
         assertThat(bcc.getValue()).containsExactly("ag@example.com");
         ArgumentCaptor<ExecutiveSummaryTeamReport> rows = ArgumentCaptor.forClass(ExecutiveSummaryTeamReport.class);
-        verify(teamRepo, times(2)).save(rows.capture());
+        verify(teamRepo, times(2)).saveAndFlush(rows.capture());         // R2a MP-42: koşullu bitirme
         assertThat(rows.getAllValues()).extracting(ExecutiveSummaryTeamReport::getStatus)
                 .containsExactly(ExecutiveSummaryTeamReport.FAILED, ExecutiveSummaryTeamReport.SENT);
     }
@@ -167,7 +177,7 @@ class ExecutiveSummaryTeamDeliveryTest {
         svc.runScheduled();
         verify(email, never()).sendHtmlBccWithAttachments(any(), anyString(), anyString(), anyString(), anyList());
         ArgumentCaptor<ExecutiveSummaryTeamReport> rows = ArgumentCaptor.forClass(ExecutiveSummaryTeamReport.class);
-        verify(teamRepo, times(1)).save(rows.capture());
+        verify(teamRepo, times(1)).saveAndFlush(rows.capture());         // R2a MP-42: koşullu bitirme
         assertThat(rows.getValue().getStatus()).isEqualTo(ExecutiveSummaryTeamReport.NO_RECIPIENT);
         ArgumentCaptor<NotificationLog> log = ArgumentCaptor.forClass(NotificationLog.class);
         verify(logs).save(log.capture());
@@ -194,6 +204,44 @@ class ExecutiveSummaryTeamDeliveryTest {
         assertThat(svc.catchUp().status()).isEqualTo("WINDOW_CLOSED");
         when(teamService.anyEnabled()).thenReturn(false);
         assertThat(svc.catchUp().status()).isEqualTo("DISABLED");
+    }
+
+    @Test
+    @DisplayName("R2a inceleme REP-1: takım talepten sonra yeniden adlandırıldı — yarıda kalan gönderimin izleri İŞARETLE saklanan iz adıyla bulunur, yeniden GÖNDERİLMEZ; iz adı işarette yazılır")
+    void renamedTeam_tracesFoundByStoredName() {
+        when(teamService.enabledTeamIds()).thenReturn(List.of(5L));
+        Instant now = Instant.parse("2026-10-01T09:00:00Z");
+        when(summaryService.now()).thenReturn(now);
+        ExecutiveSummaryTeamReport stuck = new ExecutiveSummaryTeamReport();
+        stuck.setId(4L);
+        stuck.setTeamId(5L);
+        stuck.setReportYear(2026);
+        stuck.setReportMonth(9);
+        stuck.setStatus(ExecutiveSummaryTeamReport.SENDING);
+        stuck.setAttempts(1);
+        stuck.setClaimedAt(ExecutiveSummaryContext.UTC_ISO.format(now.minus(java.time.Duration.ofHours(2))));
+        stuck.setSendStartedClaim(stuck.getClaimedAt());
+        stuck.setSendTraceName("Yönetici Özeti · Eski Ödeme");
+        stuck.setRecipientCount(2);
+        stuck.setChunkCount(1);
+        when(teamRepo.findByTeamIdAndReportYearAndReportMonth(5L, 2026, 9)).thenReturn(Optional.of(stuck));
+        when(teamRepo.reclaim(any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
+        org.springframework.jdbc.core.JdbcTemplate j = mock(org.springframework.jdbc.core.JdbcTemplate.class);
+        when(j.query(anyString(), any(org.springframework.jdbc.core.RowMapper.class), eq(ExecutiveSummaryDeliveryService.TRIGGER),
+                eq("Yönetici Özeti · Eski Ödeme"), any()))
+                .thenReturn(List.<String[]>of(new String[] { "BCC×2: mudur@example.com, ayse@example.com", "SENT" }));
+        svc.setJdbc(j);
+
+        svc.catchUp();   // takımın bugünkü adı "Ödeme Sistemleri"
+        verify(email, never()).sendHtmlBccWithAttachments(any(), anyString(), anyString(), anyString(), anyList());
+        verify(teamRepo, never()).reclaim(any(), any(), any(), any(), any(), any(), any());
+        verify(teamRepo).finishIfClaimed(eq(4L), eq(stuck.getClaimedAt()), eq("SENT"), eq(2), eq(1), any(), any(), any(), any(), any());
+
+        // yeni gönderim: işaret takımın o anki iz adıyla yazılır
+        org.mockito.Mockito.clearInvocations(teamRepo);
+        when(teamRepo.findByTeamIdAndReportYearAndReportMonth(5L, 2026, 9)).thenReturn(Optional.empty());
+        svc.runTeams(YearMonth.of(2026, 9), "SCHEDULED", false);
+        verify(teamRepo).markSendStarted(any(), anyString(), eq("Yönetici Özeti · Ödeme Sistemleri"), eq(2), eq(1));
     }
 
     @Test

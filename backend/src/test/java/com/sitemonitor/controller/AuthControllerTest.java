@@ -1590,6 +1590,65 @@ class AuthControllerTest {
     }
 
     @Test
+    @DisplayName("MP-31: IP sınırı pod'lar arası ORTAK — pod A'da 5 hata (doğrudan sayaca) + bu pod'da 5 hata → 11. istek 429, gövde + wait_seconds aynı")
+    void ipLimit_sharedAcrossPods() throws Exception {
+        try (com.sitemonitor.it.MultiPodTestSupport mp = com.sitemonitor.it.MultiPodTestSupport.create(System.currentTimeMillis())) {
+            mp.jdbc().execute(com.sitemonitor.service.lockout.RateLimitCounterSchemaPatch.DDL);
+            var podA = new com.sitemonitor.service.lockout.RateLimitCounterService(mp.jdbc());
+            var podB = new com.sitemonitor.service.lockout.RateLimitCounterService(mp.jdbc());
+            org.springframework.test.util.ReflectionTestUtils.setField(authController, "maxLoginAttempts", 10);
+            org.springframework.test.util.ReflectionTestUtils.setField(authController, "ipLimits", podB);
+            try {
+                when(clientIpResolver.resolve(any())).thenReturn("10.88.1.1");
+                String key = com.sitemonitor.service.lockout.RateLimitCounterService.key("login-ip", "10.88.1.1");
+                var limit = new com.sitemonitor.service.lockout.RateLimitCounterService.Limit(60_000L, 10, 30_000L);
+                for (int i = 0; i < 5; i++) podA.hit(key, limit);   // pod A'nın gördüğü 5 hata
+                for (int i = 0; i < 5; i++) {
+                    mvc.perform(post("/api/login").contentType(MediaType.APPLICATION_JSON)
+                                    .content("{\"username\":\"testuser\",\"password\":\"wrongpass\"}"))
+                            .andExpect(status().isUnauthorized());
+                }
+                mvc.perform(post("/api/login").contentType(MediaType.APPLICATION_JSON)
+                                .content("{\"username\":\"testuser\",\"password\":\"wrongpass\"}"))
+                        .andExpect(status().isTooManyRequests())
+                        .andExpect(jsonPath("$.success").value(false))
+                        .andExpect(jsonPath("$.error").value("Too many login attempts. Please wait."))
+                        .andExpect(jsonPath("$.wait_seconds").value(org.hamcrest.Matchers.allOf(
+                                org.hamcrest.Matchers.greaterThanOrEqualTo(29), org.hamcrest.Matchers.lessThanOrEqualTo(30))));
+                verify(auditService).recordRateLimited(eq("testuser"), eq("10.88.1.1"), any(), any());
+                // Pod A da aynı bloğu görür (bu pod'un hataları ortak satırda)
+                org.assertj.core.api.Assertions.assertThat(podA.blockedSeconds(key)).isBetween(29L, 30L);
+            } finally {
+                org.springframework.test.util.ReflectionTestUtils.setField(authController, "ipLimits", null);
+                org.springframework.test.util.ReflectionTestUtils.setField(authController, "maxLoginAttempts", 1000);
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("MP-31: bu pod'da kurulan GERÇEK oturum ortak sayacı siler — pod A'nın 9 hatası da sıfırlanır")
+    void ipLimit_realSessionClearsSharedCounter() throws Exception {
+        try (com.sitemonitor.it.MultiPodTestSupport mp = com.sitemonitor.it.MultiPodTestSupport.create(System.currentTimeMillis())) {
+            mp.jdbc().execute(com.sitemonitor.service.lockout.RateLimitCounterSchemaPatch.DDL);
+            var podA = new com.sitemonitor.service.lockout.RateLimitCounterService(mp.jdbc());
+            var podB = new com.sitemonitor.service.lockout.RateLimitCounterService(mp.jdbc());
+            org.springframework.test.util.ReflectionTestUtils.setField(authController, "ipLimits", podB);
+            try {
+                when(clientIpResolver.resolve(any())).thenReturn("10.88.1.2");
+                String key = com.sitemonitor.service.lockout.RateLimitCounterService.key("login-ip", "10.88.1.2");
+                var limit = new com.sitemonitor.service.lockout.RateLimitCounterService.Limit(60_000L, 10, 30_000L);
+                for (int i = 0; i < 9; i++) podA.hit(key, limit);
+                mvc.perform(post("/api/login").contentType(MediaType.APPLICATION_JSON)
+                                .content("{\"username\":\"testuser\",\"password\":\"testpass\"}"))
+                        .andExpect(status().isOk());
+                org.assertj.core.api.Assertions.assertThat(podA.hit(key, limit).attempts()).as("sayım sıfırdan").isEqualTo(1);
+            } finally {
+                org.springframework.test.util.ReflectionTestUtils.setField(authController, "ipLimits", null);
+            }
+        }
+    }
+
+    @Test
     @DisplayName("AUTH-3: AD bind başarılı ama AD KANONİK adı YEREL bir hesabın (bootstrap admin) → genel 401, provizyon YOK, parola özeti değişmez")
     void ldapCanonicalName_neverTakesLocalAccount() throws Exception {
         when(clientIpResolver.resolve(any())).thenReturn("10.88.0.20");

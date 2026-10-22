@@ -31,13 +31,48 @@ public interface ExecutiveSummaryTeamReportRepository extends JpaRepository<Exec
     @Query("""
             UPDATE ExecutiveSummaryTeamReport r
                SET r.status = 'SENDING', r.attempts = :nextAttempts, r.claimedAt = :claimedAt,
-                   r.triggerKind = :triggerKind, r.actor = :actor
+                   r.triggerKind = :triggerKind, r.actor = :actor, r.sendStartedClaim = NULL, r.sendTraceName = NULL
              WHERE r.id = :id AND r.status = :expectedStatus AND r.attempts = :expectedAttempts
             """)
     int reclaim(@Param("id") Long id, @Param("expectedStatus") String expectedStatus,
                 @Param("expectedAttempts") Integer expectedAttempts, @Param("nextAttempts") Integer nextAttempts,
                 @Param("claimedAt") String claimedAt, @Param("triggerKind") String triggerKind,
                 @Param("actor") String actor);
+
+    /**
+     * KOŞULLU bitirme (çok pod R2a, MP-42, 2026-10-22): yalnız hâlâ BU talebin ({@code claimedAt}) SENDING satırı yazılır —
+     * yarıda kalan talebi devralan başka bir pod ile eski sahip birbirinin sonucunu ezmez (eskiden bütün varlık kaydediliyordu).
+     * Dönen: güncellenen satır sayısı (0 = talep artık bu çağıranın değil).
+     */
+    @Modifying
+    @Transactional
+    @Query("""
+            UPDATE ExecutiveSummaryTeamReport r
+               SET r.status = :status, r.recipientCount = :recipients, r.chunkCount = :chunks, r.detail = :detail,
+                   r.subject = :subject, r.summaryStatus = :summaryStatus, r.summaryJson = :summaryJson, r.sentAt = :sentAt
+             WHERE r.id = :id AND r.status = 'SENDING' AND r.claimedAt = :claimedAt
+            """)
+    int finishIfClaimed(@Param("id") Long id, @Param("claimedAt") String claimedAt, @Param("status") String status,
+                        @Param("recipients") Integer recipients, @Param("chunks") Integer chunks, @Param("detail") String detail,
+                        @Param("subject") String subject, @Param("summaryStatus") String summaryStatus,
+                        @Param("summaryJson") String summaryJson, @Param("sentAt") String sentAt);
+
+    /**
+     * Gönderim BAŞLADI işareti (R2a inceleme REP-1, 2026-10-23): ilk BCC diliminden ÖNCE, yalnız hâlâ BU talebin
+     * ({@code claimedAt}) SENDING satırına — işaret + iz adı + planlanan alıcı / dilim sayısı. 0 satır = talep başkasına
+     * geçmiş, bu çağıran GÖNDERMEZ.
+     */
+    @Modifying
+    @Transactional
+    @Query("""
+            UPDATE ExecutiveSummaryTeamReport r
+               SET r.sendStartedClaim = :claimedAt, r.sendTraceName = :traceName,
+                   r.recipientCount = :recipients, r.chunkCount = :chunks
+             WHERE r.id = :id AND r.status = 'SENDING' AND r.claimedAt = :claimedAt
+            """)
+    int markSendStarted(@Param("id") Long id, @Param("claimedAt") String claimedAt, @Param("traceName") String traceName,
+                        @Param("recipients") Integer recipients, @Param("chunks") Integer chunks);
+
 
     /**
      * Seçilebilir pencereden eski kayıtlar ({@code yıl × 12 + ay < cutoff}). Zamanlanmış gönderim her koşuda çağırır —

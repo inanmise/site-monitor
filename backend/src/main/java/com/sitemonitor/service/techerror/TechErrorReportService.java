@@ -777,8 +777,28 @@ public class TechErrorReportService {
         return wasSent;
     }
 
+    /** Dönemsel uzlaştırıcının bir turda okuduğu en çok kanal (çok pod R2a, MP-41). */
+    static final int RECONCILE_CHANNELS_PER_ROUND = 200;
+
     /**
-     * Kuyruğa alınmış gönderimleri SONUÇLANDIRIR (okuma uçları çağırır): posta servisi yeniden denemeyi bitirince
+     * Kuyruktaki TÜM gönderimleri sonuçlandırır (çok pod R2a, MP-41, 2026-10-22): {@code MailRetryOrphanSweeper} her turda
+     * (5 dk, kümede tek pod) çağırır — kuyruğun sonucu, gönderen push'u ve SEND_RESULT olayı kimse ekranı açmasa da yazılır
+     * (eskiden yalnız okuma uçları sonuçlandırıyordu: cuma akşamı kuyruğa giren rapor pazartesiye dek "kuyrukta" kalıyordu).
+     * Sonuçlandırma koşullu ve tek kazananlı ({@link #reconcileQueued}); bir tur en çok {@link #RECONCILE_CHANNELS_PER_ROUND}
+     * kanal okur. Hata yutulur (sonraki tur yeniden dener).
+     */
+    public int reconcileAllQueued() {
+        try {
+            List<Long> ids = reports.queuedChannelIds(org.springframework.data.domain.PageRequest.of(0, RECONCILE_CHANNELS_PER_ROUND));
+            return ids == null || ids.isEmpty() ? 0 : reconcileQueued(ids);
+        } catch (RuntimeException e) {
+            log.warn("Kuyruktaki teknik hata raporları dönemsel olarak sonuçlandırılamadı: {}", e.toString());
+            return 0;
+        }
+    }
+
+    /**
+     * Kuyruğa alınmış gönderimleri SONUÇLANDIRIR (okuma uçları ve dönemsel uzlaştırıcı çağırır): posta servisi yeniden denemeyi bitirince
      * gönderimin {@code notification_logs} satırını SENT / FAILED yapar; burada rapor buna göre yazılır (koşullu,
      * yalnız aynı günlük satırı ve QUEUED iken). Bir sorgu + kuyrukta olan her satır için en çok bir UPDATE; okuma
      * hatası okumayı bozmaz (kuyrukta görünmeye devam eder). Sonuçlanan rapor sayısını döner.

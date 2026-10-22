@@ -51,9 +51,19 @@ import java.util.function.Supplier;
  *       ASLA ikinci kez gitmez.</li>
  *   <li>Saatlik telafi ({@link #catchUp}): bu ayın planlı anından sonraki {@value #CATCH_UP_HOURS} saat içinde, önceki ay
  *       gönderilmemişse (kayıt yok — pod kapalıydı) ya da yeniden denenebilir durumdaysa (FAILED / NO_RECIPIENT /
- *       SKIPPED_MAIL_OFF / SKIPPED_DISABLED) ve deneme sayısı {@value #MAX_ATTEMPTS}'ün altındaysa gönderir. Yarıda kalan
- *       SENDING kaydı otomatik YENİDEN gönderilmez (bazı dilimler gitmiş olabilir) — yönetici "Şimdi gönder" ile karar
- *       verir.</li>
+ *       SKIPPED_MAIL_OFF / SKIPPED_DISABLED) ve deneme sayısı {@value #MAX_ATTEMPTS}'ün altındaysa gönderir.</li>
+ *   <li><b>Yarıda kalan SENDING (çok pod R2a, MP-42, 2026-10-22; inceleme REP-1, 2026-10-23):</b> ilk BCC diliminden
+ *       ÖNCE kayda kalıcı bir "gönderim başladı" işareti yazılır ({@code send_started_claim} = talep anı, iz adı, planlanan
+ *       alıcı / dilim sayısı — koşullu UPDATE; yazılamazsa HİÇBİR dilim gönderilmez). Talebi {@link #STALE_SENDING}'den eski
+ *       SENDING kaydı telafide işarete ve izlere ({@code notification_logs}) göre kapanır: işaret YOK ve dilim izi yok →
+ *       posta hiç gitmedi: kayıt koşullu FAILED olur ve aynı telafi yeniden gönderir; işaret VAR ve planlanan dilimlerin
+ *       HEPSİNİN sonuç izi var → sonuç izlerden yazılır (hepsi başarısızsa FAILED — telafi yeniden dener; gerçekten hiçbiri
+ *       gitmedi); işaret var ama izler eksik (DB kesintisinde iz yazılamadı, pod dilim ortasında öldü) ya da işaretsiz iz
+ *       (eski sürüm pod) → SONUÇ BİLİNMİYOR: PARTIAL + {@code FAILED: sonuç bilinmiyor …} izi, YENİDEN GÖNDERİLMEZ (en çok bir
+ *       kez; yönetici "Şimdi gönder" ile karar verir). İzler iz adıyla aranır — takım sonradan yeniden adlandırılsa da bulunur.
+ *       Bitirme yazımı koşulludur ({@code claimed_at}) ve {@value #FINISH_TRIES} kez denenir.</li>
+ *   <li><b>Deneme aralığı:</b> zamanlanmış / telafi yolu son talebi {@link #MIN_RECLAIM_SPACING}'ten yeni bir kaydı yeniden
+ *       talep etmez (aynı saatte geç kalan ikinci pod deneme hakkını boşa harcamasın); elle gönderim bekletmez.</li>
  * </ul>
  *
  * <h2>Takım özetleri (2026-10-10, kullanıcı isteği: "takım bazlı yönetici ayarlaması")</h2>
@@ -114,6 +124,15 @@ public class ExecutiveSummaryDeliveryService {
     @Autowired(required = false)
     private ExecutiveSummaryTeamReportRepository teamReportRepo;
 
+    /**
+     * Yarıda kalan talebin dilim izleri ({@code notification_logs}) bununla okunur (R2a, MP-42). Yoksa (birim testleri) yarıda
+     * kalan SENDING kaydı eski kuraldaki gibi yalnız elle devralınır.
+     */
+    @Autowired(required = false)
+    private org.springframework.jdbc.core.JdbcTemplate jdbc;
+
+    void setJdbc(org.springframework.jdbc.core.JdbcTemplate j) { this.jdbc = j; }
+
     private final Map<String, Deque<Long>> testTimes = new ConcurrentHashMap<>();
 
     public ExecutiveSummaryDeliveryService(ExecutiveSummaryService summaryService, ExecutiveSummarySettings settings,
@@ -171,6 +190,10 @@ public class ExecutiveSummaryDeliveryService {
         void save(ExecutiveReportRow r);
         int reclaim(Long id, String expectedStatus, Integer expectedAttempts, Integer nextAttempts, String claimedAt,
                     String triggerKind, String actor);
+        /** Koşullu bitirme (R2a, MP-42): satırın alanları {@code row}'dan; yalnız hâlâ {@code claimedAt} talebiyse. */
+        int finishIfClaimed(ExecutiveReportRow row, String claimedAt);
+        /** "Gönderim başladı" işareti (R2a inceleme REP-1): yalnız hâlâ {@code claimedAt} talebinin SENDING satırına. */
+        int markSendStarted(ExecutiveReportRow row, String claimedAt, int recipients, int chunks);
     }
 
     private final Slot orgSlot = new Slot() {
@@ -191,6 +214,13 @@ public class ExecutiveSummaryDeliveryService {
         @Override public void save(ExecutiveReportRow r) { reportRepo.save((ExecutiveSummaryReport) r); }
         @Override public int reclaim(Long id, String st, Integer exp, Integer next, String at, String trig, String actor) {
             return reportRepo.reclaim(id, st, exp, next, at, trig, actor);
+        }
+        @Override public int finishIfClaimed(ExecutiveReportRow r, String claimedAt) {
+            return reportRepo.finishIfClaimed(r.getId(), claimedAt, r.getStatus(), r.getRecipientCount(), r.getChunkCount(),
+                    r.getDetail(), r.getSubject(), r.getSummaryStatus(), r.getSummaryJson(), r.getSentAt());
+        }
+        @Override public int markSendStarted(ExecutiveReportRow r, String claimedAt, int recipients, int chunks) {
+            return reportRepo.markSendStarted(r.getId(), claimedAt, traceName(), recipients, chunks);
         }
     };
 
@@ -216,6 +246,13 @@ public class ExecutiveSummaryDeliveryService {
             @Override public void save(ExecutiveReportRow r) { teamReportRepo.save((ExecutiveSummaryTeamReport) r); }
             @Override public int reclaim(Long id, String st, Integer exp, Integer next, String at, String trig, String actor) {
                 return teamReportRepo.reclaim(id, st, exp, next, at, trig, actor);
+            }
+            @Override public int finishIfClaimed(ExecutiveReportRow r, String claimedAt) {
+                return teamReportRepo.finishIfClaimed(r.getId(), claimedAt, r.getStatus(), r.getRecipientCount(),
+                        r.getChunkCount(), r.getDetail(), r.getSubject(), r.getSummaryStatus(), r.getSummaryJson(), r.getSentAt());
+            }
+            @Override public int markSendStarted(ExecutiveReportRow r, String claimedAt, int recipients, int chunks) {
+                return teamReportRepo.markSendStarted(r.getId(), claimedAt, traceName(), recipients, chunks);
             }
         };
     }
@@ -323,7 +360,10 @@ public class ExecutiveSummaryDeliveryService {
             org = new Result("DISABLED", month.toString(), 0, 0, null);
         } else {
             ExecutiveSummaryReport row = reportRepo.findByReportYearAndReportMonth(month.getYear(), month.getMonthValue()).orElse(null);
-            if (row != null && (!RETRYABLE.contains(row.getStatus()) || attempts(row) >= MAX_ATTEMPTS)) {
+            if (row != null && ExecutiveReportRow.SENDING.equals(row.getStatus())) {
+                // Yarıda kalan talep (R2a, MP-42): izlere göre kapatılır; hiçbir dilim gitmediyse yeniden gönderilir
+                org = recoverStaleSending(orgSlot, row, month, () -> deliverOrgSafely(month, "CATCH_UP"));
+            } else if (row != null && (!RETRYABLE.contains(row.getStatus()) || attempts(row) >= MAX_ATTEMPTS)) {
                 org = new Result("NOTHING_TO_DO", month.toString(), 0, 0, row.getStatus());
             } else {
                 org = deliverOrgSafely(month, "CATCH_UP");
@@ -399,6 +439,16 @@ public class ExecutiveSummaryDeliveryService {
                 if (catchUpOnly) {
                     ExecutiveSummaryTeamReport row = teamReportRepo.findByTeamIdAndReportYearAndReportMonth(id,
                             month.getYear(), month.getMonthValue()).orElse(null);
+                    if (row != null && ExecutiveReportRow.SENDING.equals(row.getStatus())) {
+                        // Yarıda kalan takım talebi (R2a, MP-42): izlere göre kapatılır; hiçbir dilim gitmediyse yeniden gönderilir
+                        final Long teamId = id;
+                        final String teamName = names.get(id);
+                        Result r = recoverStaleSending(teamSlot(id, teamName), row, month,
+                                () -> deliverTeam(teamId, teamName, month, trigger, "system", false, rc, shared));
+                        if (ExecutiveReportRow.SENT.equals(r.status()) || ExecutiveReportRow.PARTIAL.equals(r.status())) sent++;
+                        else skipped++;
+                        continue;
+                    }
                     if (row != null && (!RETRYABLE.contains(row.getStatus()) || attempts(row) >= MAX_ATTEMPTS)) {
                         skipped++;
                         continue;
@@ -554,6 +604,16 @@ public class ExecutiveSummaryDeliveryService {
 
         List<String> to = rc.emails();
         recipientCount = to.size();
+        int planned = (to.size() + BCC_CHUNK - 1) / BCC_CHUNK;
+        String notStarted = markSendStarted(slot, row, to.size(), planned);
+        if (notStarted != null) {
+            // İşaret yazılmadan HİÇBİR dilim gitmez (R2a inceleme REP-1): yarıda kalan kayıtta "işaret yok" = posta gitmedi.
+            trace(slot, "—", subject, null, clip(notStarted, 250), TRIGGER);
+            finish(slot, row, ExecutiveReportRow.FAILED, 0, 0, clip(notStarted, 500), subject, summary);
+            log.warn("Aylık yönetici özeti {} ({}): {}", month, slot.label(), notStarted);
+            return new Result(notStarted.startsWith("SKIPPED") ? "NOT_CLAIMED" : ExecutiveReportRow.FAILED, month.toString(),
+                    0, 0, notStarted);
+        }
         for (int i = 0; i < to.size(); i += BCC_CHUNK) {
             List<String> chunk = to.subList(i, Math.min(to.size(), i + BCC_CHUNK));
             chunks++;
@@ -609,6 +669,10 @@ public class ExecutiveSummaryDeliveryService {
             @Override public ExecutiveReportRow saveAndFlush(ExecutiveReportRow r) { throw new UnsupportedOperationException(); }
             @Override public void save(ExecutiveReportRow r) { throw new UnsupportedOperationException(); }
             @Override public int reclaim(Long id, String st, Integer exp, Integer next, String at, String trig, String actor) {
+                throw new UnsupportedOperationException();
+            }
+            @Override public int finishIfClaimed(ExecutiveReportRow r, String claimedAt) { throw new UnsupportedOperationException(); }
+            @Override public int markSendStarted(ExecutiveReportRow r, String claimedAt, int recipients, int chunks) {
                 throw new UnsupportedOperationException();
             }
         };
@@ -681,6 +745,8 @@ public class ExecutiveSummaryDeliveryService {
         // zamanlanmış / telafi yolu SENDING'e hiç dokunmaz (çift gönderim riski) — 2026-10-12.
         if (ExecutiveReportRow.SENDING.equals(status) && !(force && staleSending(row, summaryService.now()))) return null;
         if (!force && (!RETRYABLE.contains(status) || attempts(row) >= MAX_ATTEMPTS)) return null;
+        // Deneme aralığı (R2a, MP-42): son talepten MIN_RECLAIM_SPACING geçmeden zamanlanmış / telafi yolu yeniden talep etmez
+        if (!force && claimedWithin(row, summaryService.now(), MIN_RECLAIM_SPACING)) return null;
         int prevAttempts = attempts(row);
         if (row.getAttempts() == null) {
             // Eski/boş deneme sayısı: koşullu UPDATE'in eşitliği null'da çalışmaz → önce sıfırla.
@@ -700,6 +766,158 @@ public class ExecutiveSummaryDeliveryService {
     /** Elle devralma eşiği: bu süreden eski SENDING talebi yarıda kalmış sayılır. */
     static final Duration STALE_SENDING = Duration.ofHours(1);
 
+    /** Zamanlanmış / telafi yolunun aynı kaydı yeniden talep etmesi için en az aralık (R2a, MP-42). */
+    static final Duration MIN_RECLAIM_SPACING = Duration.ofMinutes(30);
+
+    /** Koşullu bitirme yazımının deneme sayısı (R2a, MP-42). */
+    static final int FINISH_TRIES = 3;
+
+    /** Talep anı {@code window}'dan yeni mi (talep anı yoksa / okunamazsa hayır). */
+    static boolean claimedWithin(ExecutiveReportRow row, Instant now, Duration window) {
+        String at = row.getClaimedAt();
+        if (at == null || at.isBlank()) return false;
+        try {
+            Instant claimed = java.time.LocalDateTime.parse(at.length() > 19 ? at.substring(0, 19) : at).toInstant(java.time.ZoneOffset.UTC);
+            return Duration.between(claimed, now).compareTo(window) < 0;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /**
+     * "Gönderim başladı" işaretini yazar (R2a inceleme REP-1). Başarı → {@code null}; değilse iz / kayıt durumu metni (bu
+     * çağıran HİÇBİR dilim göndermez): talep başkasına geçti ({@code SKIPPED: …}) ya da işaret {@value #FINISH_TRIES}
+     * denemede yazılamadı ({@code FAILED: …}).
+     */
+    private String markSendStarted(Slot slot, ExecutiveReportRow row, int recipients, int chunks) {
+        String claimedAt = row.getClaimedAt();
+        Exception last = null;
+        for (int i = 1; i <= FINISH_TRIES; i++) {
+            try {
+                int n = slot.markSendStarted(row, claimedAt, recipients, chunks);
+                return n == 1 ? null : "SKIPPED: talep başka bir gönderime geçmiş — bu pod göndermedi";
+            } catch (Exception e) {
+                last = e;
+                log.warn("Aylık yönetici özeti ({}): gönderim işareti yazılamadı (deneme {}/{}): {}", slot.label(), i,
+                        FINISH_TRIES, e.toString());
+                if (i < FINISH_TRIES) {
+                    try {
+                        Thread.sleep(200L * i);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                }
+            }
+        }
+        return "FAILED: gönderim başlatılamadı — başlangıç işareti yazılamadı, hiçbir dilim gönderilmedi ("
+                + (last == null ? "kesildi" : last.getClass().getSimpleName()) + ")";
+    }
+
+    /**
+     * Yarıda kalan SENDING kaydı (R2a, MP-42; inceleme REP-1; sınıf belgesi). Talep {@link #STALE_SENDING}'den yeni → hâlâ
+     * sürüyor (IN_PROGRESS). İz okunamaz → eski kural (IN_PROGRESS; elle devralınır). Bu talep için işaret yok + dilim izi yok
+     * → posta gitmedi: kayıt koşullu FAILED olur ve {@code resend} (normal talep yolu) yeniden dener; deneme hakkı dolmuşsa
+     * FAILED kalır. İşaret var + planlanan dilimlerin HEPSİNİN izi var → sonuç izlerden. Diğer her durum (izler eksik,
+     * işaretsiz iz) → sonuç bilinmiyor: PARTIAL, yeniden gönderilmez. Her karar bir iz satırı bırakır; iki pod yarışırsa
+     * koşullu yazımı kazanan karar verir.
+     */
+    Result recoverStaleSending(Slot slot, ExecutiveReportRow row, YearMonth month, Supplier<Result> resend) {
+        Instant now = summaryService.now();
+        if (!staleSending(row, now)) return new Result("IN_PROGRESS", month.toString(), 0, 0, row.getStatus());
+        String claimedAt = row.getClaimedAt();
+        boolean started = claimedAt != null && !claimedAt.isBlank() && claimedAt.equals(row.getSendStartedClaim());
+        String traceName = started && row.getSendTraceName() != null && !row.getSendTraceName().isBlank()
+                ? row.getSendTraceName() : slot.traceName();
+        List<String[]> traces = chunkTraces(slot, traceName, claimedAt);
+        if (traces == null) return new Result("IN_PROGRESS", month.toString(), 0, 0, row.getStatus());
+        if (started || !traces.isEmpty()) {
+            Map<String, Integer> statuses = new LinkedHashMap<>();
+            int traced = 0;
+            for (String[] t : traces) {
+                int n = chunkSize(t[0]);
+                traced += n;
+                statuses.merge(statusKey(t[1]), Math.max(1, n), Integer::sum);
+            }
+            int plannedChunks = started && row.getChunkCount() != null ? row.getChunkCount() : 0;
+            int plannedRecipients = started && row.getRecipientCount() != null ? row.getRecipientCount() : traced;
+            boolean complete = started && plannedChunks > 0 && traces.size() >= plannedChunks;
+            String st;
+            String why;
+            String traceStatus;
+            if (complete) {
+                // Bütün dilimlerin sonucu biliniyor: kayıt izlerden (hepsi başarısızsa FAILED — gerçekten hiçbiri gitmedi,
+                // telafi yeniden dener)
+                st = finalStatus(statuses);
+                why = "Gönderen pod sonucu yazamadan durdu — planlanan " + plannedChunks + " dilimin hepsinin izi var, sonuç "
+                        + "izlerden yazıldı (" + detail(statuses) + ")";
+                traceStatus = "SKIPPED: " + why;
+            } else {
+                // Bir dilim izi yazılamadan gitmiş olabilir (DB kesintisi, dilim ortasında ölen pod, eski sürüm pod) —
+                // "hepsi gitti" de "hiçbiri gitmedi" de denemez: yeniden GÖNDERİLMEZ (en çok bir kez)
+                st = ExecutiveReportRow.PARTIAL;
+                why = "Sonuç bilinmiyor — "
+                        + (started ? "planlanan " + plannedChunks + " dilimin yalnız " + traces.size() + " tanesinin sonucu yazılı"
+                                   : traces.size() + " dilimin sonucu yazılı, toplam dilim sayısı bilinmiyor")
+                        + "; yeniden gönderilmedi (elle karar verin)"
+                        + (statuses.isEmpty() ? "" : " (" + detail(statuses) + ")");
+                traceStatus = "FAILED: " + why;
+            }
+            if (finishRow(slot, row, claimedAt, st, complete ? traced : plannedRecipients, traces.size(), why,
+                    row.getSubject(), null) == 1) {
+                trace(slot, "—", null, null, clip(traceStatus, 250), TRIGGER);
+                log.warn("Aylık yönetici özeti {} ({}): {}", month, slot.label(), why);
+            }
+            return new Result(st, month.toString(), complete ? traced : plannedRecipients, traces.size(), why);
+        }
+        if (attempts(row) >= MAX_ATTEMPTS) {
+            String why = "Gönderen pod yarıda durdu — hiçbir dilim gitmedi; deneme hakkı doldu (elle gönderin)";
+            if (finishRow(slot, row, claimedAt, ExecutiveReportRow.FAILED, 0, 0, why, row.getSubject(), null) == 1) {
+                trace(slot, "—", null, null, clip("FAILED: " + why, 250), TRIGGER);
+                log.warn("Aylık yönetici özeti {} ({}): {}", month, slot.label(), why);
+            }
+            return new Result(ExecutiveReportRow.FAILED, month.toString(), 0, 0, why);
+        }
+        String why = "Gönderen pod yarıda durdu — hiçbir dilim gitmedi; yeniden deneniyor";
+        if (finishRow(slot, row, claimedAt, ExecutiveReportRow.FAILED, 0, 0, why, row.getSubject(), null) != 1) {
+            return new Result("IN_PROGRESS", month.toString(), 0, 0, row.getStatus());   // başka pod karar verdi
+        }
+        trace(slot, "—", null, null, clip("SKIPPED: " + why, 250), TRIGGER);
+        log.warn("Aylık yönetici özeti {} ({}): {}", month, slot.label(), why);
+        return resend.get();
+    }
+
+    /**
+     * Talepten bu yana yazılmış DİLİM izleri ({@code [alıcı alanı, durum]}; alıcı alanı {@code "BCC×n: …"}), iz adıyla
+     * ({@code traceName} — işaretle saklanan ad; yoksa yuvanın bugünkü adı). Okunamazsa {@code null}.
+     */
+    private List<String[]> chunkTraces(Slot slot, String traceName, String claimedAt) {
+        if (jdbc == null || claimedAt == null || claimedAt.isBlank()) return null;
+        try {
+            List<String[]> rows = jdbc.query("SELECT recipient_email, email_status FROM notification_logs "
+                            + "WHERE trigger = ? AND recipient_name = ? AND sent_at >= ?",
+                    (rs, i) -> new String[] { rs.getString(1), rs.getString(2) }, TRIGGER, traceName, claimedAt);
+            List<String[]> out = new ArrayList<>();
+            for (String[] r : rows) if (r[0] != null && r[0].startsWith("BCC×")) out.add(r);
+            return out;
+        } catch (RuntimeException e) {
+            log.warn("Aylık yönetici özeti ({}): dilim izleri okunamadı — yarıda kalan kayıt elle devralınır: {}", slot.label(), e.toString());
+            return null;
+        }
+    }
+
+    /** {@code "BCC×12: a@x, …"} → 12 (okunamazsa 0). */
+    static int chunkSize(String recipients) {
+        if (recipients == null || !recipients.startsWith("BCC×")) return 0;
+        int colon = recipients.indexOf(':');
+        if (colon < 0) return 0;
+        try {
+            return Integer.parseInt(recipients.substring(4, colon).trim());
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
+
     static boolean staleSending(ExecutiveReportRow row, Instant now) {
         String at = row.getClaimedAt();
         if (at == null || at.isBlank()) return true;
@@ -713,6 +931,17 @@ public class ExecutiveSummaryDeliveryService {
 
     private void finish(Slot slot, ExecutiveReportRow row, String status, int recipients, int chunks, String detail,
                         String subject, ExecutiveSummary summary) {
+        finishRow(slot, row, row.getClaimedAt(), status, recipients, chunks, detail, subject, summary);
+    }
+
+    /**
+     * Kaydı KOŞULLU bitirir (R2a, MP-42): yalnız hâlâ {@code claimedAt} talebinin SENDING satırıysa. Yazım hatası
+     * {@value #FINISH_TRIES} kez denenir (bir DB anlık kesintisi dilimler gittikten sonra kaydı SENDING'de bırakmasın);
+     * yine yazılamazsa satır SENDING kalır ve telafi izlere göre kapatır (yeniden göndermeden). Dönen: güncellenen satır (0 =
+     * talep başkasında / yazılamadı).
+     */
+    int finishRow(Slot slot, ExecutiveReportRow row, String claimedAt, String status, int recipients, int chunks, String detail,
+                  String subject, ExecutiveSummary summary) {
         try {
             row.setStatus(status);
             row.setRecipientCount(recipients);
@@ -724,10 +953,30 @@ public class ExecutiveSummaryDeliveryService {
                 row.setSummaryJson(ExecutiveSummaryService.toJson(summary));
             }
             row.setSentAt(UTC_ISO.format(summaryService.now()));
-            slot.save(row);
         } catch (Exception e) {
-            log.warn("Aylık yönetici özeti kaydı yazılamadı ({}): {}", slot.label(), e.toString());
+            log.warn("Aylık yönetici özeti kaydı hazırlanamadı ({}): {}", slot.label(), e.toString());
         }
+        for (int i = 1; i <= FINISH_TRIES; i++) {
+            try {
+                int n = slot.finishIfClaimed(row, claimedAt);
+                if (n == 0) {
+                    log.warn("Aylık yönetici özeti kaydı yazılmadı ({}): talep başka bir gönderime geçmiş (talep anı {})",
+                            slot.label(), claimedAt);
+                }
+                return n;
+            } catch (Exception e) {
+                log.warn("Aylık yönetici özeti kaydı yazılamadı ({}, deneme {}/{}): {}", slot.label(), i, FINISH_TRIES, e.toString());
+                if (i < FINISH_TRIES) {
+                    try {
+                        Thread.sleep(200L * i);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        return 0;
+                    }
+                }
+            }
+        }
+        return 0;
     }
 
     /** Kapalıyken zamanlanmış koşu: kurum ayının kaydı yoksa SKIPPED_DISABLED (iz). */

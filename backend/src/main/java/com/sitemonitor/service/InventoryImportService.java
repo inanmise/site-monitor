@@ -98,7 +98,16 @@ public class InventoryImportService {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.sitemonitor.repository.NotificationGroupRepository notificationGroupRepo;
 
+    /**
+     * Koşullu sessiz kapanış (2026-10-23, çok pod R2a · D2, MP-44): pasife alınan kaydın açık alarmları yalnız hâlâ AÇIKSA
+     * kapanır — okunan alarm varlığı bütünüyle kaydedilmez (başka pod'un kapanışı / onayı ezilmez, çözüm push'u bir kez).
+     * Yokken (elle kurulan testler) bugünkü {@code closeAlertsOnDeactivate} yolu.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private SilentAlarmCloser silentAlarmCloser;
+
     void setEscalationService(EscalationService s) { this.escalationService = s; }
+    void setSilentAlarmCloser(SilentAlarmCloser c) { this.silentAlarmCloser = c; }
     void setNotificationGroupRepo(com.sitemonitor.repository.NotificationGroupRepository r) { this.notificationGroupRepo = r; }
 
     /**
@@ -239,8 +248,9 @@ public class InventoryImportService {
                     // "Son güncelleyen" künyesi (2026-10-22, ADMIN-4): updated_at "şimdi" olurken updated_by eskide kalıyordu.
                     if (session != null) monitorHistory.stampUpdated(ex, session);
                     inventoryRepo.save(ex);
-                    if (wasActive && changes.contains("active") && Boolean.FALSE.equals(ex.getActive()) && escalationService != null) {
-                        escalationService.closeAlertsOnDeactivate(ex.getDomain());
+                    if (wasActive && changes.contains("active") && Boolean.FALSE.equals(ex.getActive())) {
+                        if (silentAlarmCloser != null) silentAlarmCloser.closeOnInventoryDeactivate(ex.getDomain());
+                        else if (escalationService != null) escalationService.closeAlertsOnDeactivate(ex.getDomain());
                     }
                     monitorHistory.record(MonitorHistoryService.INVENTORY, ex.getId(), ex.getDomain(), ex.getTeamId(),
                             MonitorHistoryService.UPDATE, before, AuditDiff.snapshot(ex, HISTORY_FIELDS), "import", session);

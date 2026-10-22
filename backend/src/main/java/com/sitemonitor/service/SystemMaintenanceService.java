@@ -1,5 +1,7 @@
 package com.sitemonitor.service;
 
+import com.sitemonitor.service.cache.CacheBus;
+import com.sitemonitor.service.cache.CacheBusNames;
 import com.sitemonitor.model.AppUser;
 import com.sitemonitor.model.SystemMaintenanceSuppression;
 import com.sitemonitor.model.SystemMaintenanceWindow;
@@ -184,6 +186,7 @@ public class SystemMaintenanceService {
         Snapshot s = snapshot;
         long nowMs = clock.millis();
         if (s != null && nowMs - s.atMs() < cacheMs) return s.windows();
+        long gen = snapshotGeneration.get();
         List<SystemMaintenanceWindow> list;
         try {
             Instant since = Instant.ofEpochMilli(nowMs).minus(Duration.ofMinutes(Math.max(0, endedNoticeMinutes)));
@@ -194,12 +197,40 @@ public class SystemMaintenanceService {
             log.debug("Sistem bakımı durumu okunamadı (son görüntü kullanılıyor): {}", e.getMessage());
             list = s != null ? s.windows() : List.of();
         }
-        snapshot = new Snapshot(List.copyOf(list), nowMs);
-        return snapshot.windows();
+        Snapshot fresh = new Snapshot(List.copyOf(list), nowMs);
+        if (snapshotGeneration.get() == gen) snapshot = fresh;   // okuma sırasında boşaltıldıysa saklanmaz
+        return fresh.windows();
     }
 
-    /** Bu pod'un önbelleğini boşaltır (yönetici yazımından sonra). */
-    public void invalidate() { snapshot = null; }
+    /**
+     * Bu pod'un önbelleğini boşaltır (yönetici yazımından sonra); öteki pod'lar önbellek veri yoluyla (2026-10-22, çok pod
+     * R2-A, MP-30: {@link CacheBus}, ad {@link CacheBusNames#SYSTEM_MAINTENANCE}) — {@code cacheMs} (5 sn) yerine bir
+     * yoklama aralığı ve yazan kullanıcının sonraki okuması (istek başlığı) anında.
+     */
+    public void invalidate() {
+        invalidateLocal();
+        CacheBus b = cacheBus;
+        if (b != null) b.bump(CacheBusNames.SYSTEM_MAINTENANCE);
+    }
+
+    /** Pod'lar arası boşaltma (MP-30) — yoksa yalnız bu pod. */
+    private volatile CacheBus cacheBus;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setCacheBus(CacheBus bus) {
+        this.cacheBus = bus;
+        if (bus != null) bus.register(CacheBusNames.SYSTEM_MAINTENANCE, this::invalidateLocal);
+    }
+
+    /** Yalnız bu pod (yeniden yayın yok). Kuşak artar: boşaltmadan ÖNCE başlamış okuma eski listeyi saklamaz. */
+    void invalidateLocal() {
+        snapshotGeneration.incrementAndGet();
+        // SİLİNMEZ, bayat işaretlenir: yeniden okuma hata verirse son görüntü kullanılır (fail-open "bakım yok" yerine; C-2)
+        Snapshot s = snapshot;
+        snapshot = s == null ? null : new Snapshot(s.windows(), Long.MIN_VALUE / 2);
+    }
+
+    private final java.util.concurrent.atomic.AtomicLong snapshotGeneration = new java.util.concurrent.atomic.AtomicLong();
 
     /** Kullanıcıya görünen en yakın pencere: AKTİF olan, yoksa başlamamış en erken pencere. */
     public Optional<SystemMaintenanceWindow> current() {

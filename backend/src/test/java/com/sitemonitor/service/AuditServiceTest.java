@@ -539,14 +539,56 @@ class AuditServiceTest {
 
         assertThat(saved).isNotNull();
         assertThat(saved.getSeq()).isEqualTo(1L);
+        assertThat(saved.getSeqLocked()).as("PostgreSQL olmadığı BİLİNİYOR → JVM kilidi COMMIT'i kapsar").isTrue();
         verify(jdbc, never()).execute(anyString());
         verify(tx, never()).getTransaction(any());
         verify(auditLogRepo).save(any());
     }
 
     @Test
-    @DisplayName("Çok pod: açık bir dış işlemin içinde kilit alınmaz (kilit dış COMMIT'e dek tutulmasın) — bugünkü davranış")
-    void persist_insideOuterTransaction_noAdvisoryLock() {
+    @DisplayName("Çok pod R2a (MP-38): açık dış işlemin içinde kayıt ŞİMDİ yazılmaz; COMMIT sonrası KENDİ işleminde (REQUIRES_NEW)"
+            + " advisory lock ile eklenir")
+    void persist_insideOuterTransaction_deferredToCommit_thenAdvisoryLockInOwnTransaction() {
+        // Yeniden temel (2026-10-22, MP-38): eskiden işlem içinde kilit HİÇ alınmıyordu (zincir çatallanıyordu) — artık
+        // kayıt COMMIT sonrasına ertelenir ve kilitli yoldan yazılır.
+        var jdbc = chainJdbc("PostgreSQL");
+        var tx = txManager();
+        service.setChainLockSupport(jdbc, tx);
+        when(auditLogRepo.findTopByOrderBySeqDesc()).thenReturn(Optional.empty());
+
+        org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
+        org.springframework.transaction.support.TransactionSynchronizationManager.setActualTransactionActive(true);
+        try {
+            AuditLog pending = service.persist(new AuditLog());
+            assertThat(pending).as("ertelenen kayıt geri döner").isNotNull();
+            assertThat(pending.getId()).as("henüz yazılmadı").isNull();
+            verify(auditLogRepo, never()).save(any());
+            verify(jdbc, never()).execute(anyString());
+
+            var syncs = org.springframework.transaction.support.TransactionSynchronizationManager.getSynchronizations();
+            assertThat(syncs).hasSize(1);
+            syncs.getFirst().afterCommit();   // dış işlem COMMIT oldu
+
+            org.mockito.ArgumentCaptor<org.springframework.transaction.TransactionDefinition> def =
+                    org.mockito.ArgumentCaptor.forClass(org.springframework.transaction.TransactionDefinition.class);
+            InOrder order = inOrder(tx, jdbc, auditLogRepo);
+            order.verify(tx).getTransaction(def.capture());
+            order.verify(jdbc).execute(AuditService.SQL_CHAIN_LOCK);
+            order.verify(auditLogRepo).save(any());
+            order.verify(tx).commit(any());
+            assertThat(def.getValue().getPropagationBehavior())
+                    .isEqualTo(org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+            assertThat(pending.getId()).isEqualTo(1L);
+            assertThat(pending.getSeqLocked()).as("kilit altında yazıldı → ux_audit_seq kapsamında").isTrue();
+        } finally {
+            org.springframework.transaction.support.TransactionSynchronizationManager.setActualTransactionActive(false);
+            org.springframework.transaction.support.TransactionSynchronizationManager.clearSynchronization();
+        }
+    }
+
+    @Test
+    @DisplayName("Çok pod: işlem açık ama Spring senkronizasyonu yoksa (ertelenemez) bugünkü yol — kilit alınmaz, hemen yazılır")
+    void persist_insideTransactionWithoutSynchronization_legacyPath() {
         var jdbc = chainJdbc("PostgreSQL");
         var tx = txManager();
         service.setChainLockSupport(jdbc, tx);
@@ -560,6 +602,78 @@ class AuditServiceTest {
         }
         verify(jdbc, never()).execute(anyString());
         verify(tx, never()).getTransaction(any());
+        ArgumentCaptor<AuditLog> saved = ArgumentCaptor.forClass(AuditLog.class);
+        verify(auditLogRepo).save(saved.capture());
+        // Çağıranın işleminde, kilitsiz: kilit damgası YAZILMAZ (tekil indeks ihlali çağıranın işlemini zehirlemesin)
+        assertThat(saved.getValue().getSeqLocked()).isNull();
+    }
+
+    @Test
+    @DisplayName("Çok pod R2a (inceleme REP-5): kilitli yazımda bütünlük ihlali YENİDEN DENENMEZ — kayıt fallback dosyasına düşer"
+            + " (ux_audit_seq yalnız kilitli satırları kapsar; orada seq çakışması olamaz, ihlal başka bir kısıttır)")
+    void persist_postgres_integrityViolation_notRetried_fallsBack(@TempDir Path tmp) throws IOException {
+        // Yeniden temel (2026-10-23, R2a inceleme REP-5): eskiden her DataIntegrityViolationException "seq başka bir yazıcıyla
+        // çakıştı (eski pod)" diye günlüklenip AYNI kayıtla yeniden deneniyordu — eski pod'ların satırları seq_locked NULL
+        // (indeksin dışında) olduğundan bu çakışma imkânsızdı; yakalanan ihlal (ör. çok uzun değer) ikinci denemede de düşerdi.
+        Path fb = tmp.resolve("audit-fallback.jsonl");
+        ReflectionTestUtils.setField(service, "fallbackFile", fb.toString());
+        var jdbc = chainJdbc("PostgreSQL");
+        var tx = txManager();
+        service.setChainLockSupport(jdbc, tx);
+        when(auditLogRepo.findTopByOrderBySeqDesc()).thenReturn(Optional.empty());
+        doThrow(new org.springframework.dao.DataIntegrityViolationException("value too long for type character varying(255)"))
+                .when(auditLogRepo).save(any());
+
+        assertThat(service.persist(new AuditLog())).isNull();
+        verify(auditLogRepo, times(1)).save(any());
+        verify(jdbc, times(1)).execute(AuditService.SQL_CHAIN_LOCK);
+        assertThat(Files.exists(fb)).as("kayıt kaybolmaz — fallback dosyasında").isTrue();
+    }
+
+    @Test
+    @DisplayName("Çok pod R2a (inceleme REP-4): veritabanı türü okunamazsa JVM kilidiyle yazılır ama seq_locked NULL kalır"
+            + " (advisory lock alınmadan TRUE basılmaz); tür okunabilince kilitli yol + TRUE")
+    void persist_dialectReadFails_noLockedStamp() {
+        org.springframework.jdbc.core.JdbcTemplate jdbc = mock(org.springframework.jdbc.core.JdbcTemplate.class);
+        doThrow(new org.springframework.jdbc.CannotGetJdbcConnectionException("pool exhausted"))
+                .doReturn("PostgreSQL")
+                .when(jdbc).execute(any(org.springframework.jdbc.core.ConnectionCallback.class));
+        var tx = txManager();
+        service.setChainLockSupport(jdbc, tx);
+        when(auditLogRepo.findTopByOrderBySeqDesc()).thenReturn(Optional.empty());
+
+        AuditLog first = service.persist(new AuditLog());
+        assertThat(first).isNotNull();
+        assertThat(first.getSeqLocked()).as("tür bilinmiyor → kilit damgası yok (ux_audit_seq dışında)").isNull();
+        verify(jdbc, never()).execute(AuditService.SQL_CHAIN_LOCK);
+
+        AuditLog second = service.persist(new AuditLog());
+        assertThat(second.getSeqLocked()).as("tür bir sonraki yazımda belirlendi → advisory lock + TRUE").isTrue();
+        verify(jdbc, times(1)).execute(AuditService.SQL_CHAIN_LOCK);
+    }
+
+    @Test
+    @DisplayName("Çok pod R2a (inceleme REP-4): COMMIT sonrası (kendi işleminde) yazımda tür okunamazsa da seq_locked NULL")
+    void persist_afterCommit_dialectReadFails_noLockedStamp() {
+        org.springframework.jdbc.core.JdbcTemplate jdbc = mock(org.springframework.jdbc.core.JdbcTemplate.class);
+        doThrow(new org.springframework.jdbc.CannotGetJdbcConnectionException("pool exhausted"))
+                .when(jdbc).execute(any(org.springframework.jdbc.core.ConnectionCallback.class));
+        var tx = txManager();
+        service.setChainLockSupport(jdbc, tx);
+        when(auditLogRepo.findTopByOrderBySeqDesc()).thenReturn(Optional.empty());
+
+        org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
+        org.springframework.transaction.support.TransactionSynchronizationManager.setActualTransactionActive(true);
+        try {
+            AuditLog pending = service.persist(new AuditLog());
+            org.springframework.transaction.support.TransactionSynchronizationManager.getSynchronizations().getFirst().afterCommit();
+            assertThat(pending.getId()).as("yazıldı (kendi işleminde)").isEqualTo(1L);
+            assertThat(pending.getSeqLocked()).isNull();
+            verify(jdbc, never()).execute(AuditService.SQL_CHAIN_LOCK);
+        } finally {
+            org.springframework.transaction.support.TransactionSynchronizationManager.setActualTransactionActive(false);
+            org.springframework.transaction.support.TransactionSynchronizationManager.clearSynchronization();
+        }
     }
 
     @Test

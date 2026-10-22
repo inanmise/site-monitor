@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import {
   MAX_EXTRA_CC, MAX_EXTRA_CC_INPUT, SENDLOG_KEYS, SENDLOG_KINDS, SENDLOG_KIND_KEYS, SENDLOG_ROLE_KEYS, SENDLOG_SIZE_OPTIONS,
   SENDLOG_STATUSES, SENDLOG_STATUS_KEYS, SENDLOG_REASON_KEYS, isDeliverable, normalizeSendLogKind, normalizeSendLogStatus, parseExtraCc,
-  sendFailureKind, sendLogKindOf, sendLogMore, sendLogReasonKey, sendLogRoleKey, sendLogStatusOf, unsureSendOutcome,
+  pollBaselineForQueuedRefusal, sendFailureCode, sendFailureKind, sendLogKindOf, sendLogMore, sendLogReasonKey, sendLogRoleKey, sendLogStatusOf, unsureSendOutcome,
   SEND_POLL_MS, SEND_POLL_MAX_MS, SEND_STATUS_FIELDS, pollBaselineAfterQueued, sendPollStep, withSendStatus,
 } from '../components/techerror/sendModel.js'
 import { TR } from '../i18n/tr.js'
@@ -80,6 +80,25 @@ describe('gönderim günlüğü modeli', () => {
     for (const r of ['TEAM', 'EXECUTIVE', 'SELF', 'APPROVER', 'APPROVER_INFO', 'REQUESTER']) expect(LOG).toContain(`"${r}"`)
   })
 
+  it('inceleme REP-2: SEND_QUEUED reddinin yoklama tabanı — reddin ardından okunan satır kuyruktaysa o (kendi sonucu), yoksa tıklamadan önceki kuyruk satırı, ikisi de değilse önceki satır own:false', () => {
+    const before = { status: 'queued', send_state: 'QUEUED', last_attempt_at: 'A' }
+    const loaded = { status: 'queued', send_state: 'QUEUED', last_attempt_at: 'B' }
+    expect(pollBaselineForQueuedRefusal(before, loaded)).toEqual({ baseline: loaded, own: true })
+    expect(pollBaselineForQueuedRefusal(before, null)).toEqual({ baseline: before, own: true })
+    const stale = { status: 'draft', send_state: null, last_attempt_at: null }
+    expect(pollBaselineForQueuedRefusal(stale, null)).toEqual({ baseline: stale, own: false })
+    expect(pollBaselineForQueuedRefusal(null, undefined)).toEqual({ baseline: null, own: false })
+    // own: kuyruğun KENDİ sonucu — teslim → gitti, başarısız → gitmedi, hâlâ kuyrukta → sürüyor
+    const poll = pollBaselineForQueuedRefusal(before, null)
+    expect(sendPollStep(poll, { ...before }).outcome).toBe('pending')
+    expect(sendPollStep(poll, { ...before, status: 'sent', send_state: 'SENT', last_sent_at: 'T', send_count: 1 }).outcome).toBe('sent')
+    expect(sendPollStep(poll, { ...before, status: 'draft', send_state: 'FAILED' }).outcome).toBe('notSent')
+    // bayat yerel satır: ilk okuma kuyruğu gösterince taban ona geçer
+    const step = sendPollStep(pollBaselineForQueuedRefusal(stale, null), loaded)
+    expect(step.outcome).toBe('pending')
+    expect(step.poll).toMatchObject({ baseline: loaded, own: true })
+  })
+
   it('sebep kodları (inceleme 2026-10-18): istemci kümesi ve sırası Java REASON_CODES ile aynı; her metin TR ve EN, açıklayıcı; bilinmeyen kod → null', () => {
     const m = /REASON_CODES\s*=\s*List\.of\(([^)]*)\)/.exec(LOG)
     expect(m, 'REASON_CODES Java kaynağında').not.toBeNull()
@@ -120,6 +139,17 @@ describe('gönderim hatası — pencere açık kalsın mı (inceleme 2026-10-18)
     expect(sendFailureKind({ success: false, status: 429, code: 'RATE_LIMITED' })).toBe('retry')
     expect(sendFailureKind({ success: false, status: 429, code: 'PDF_BUSY' })).toBe('retry')
     expect(sendFailureKind({ success: false, errorInfo: { status: 429 } })).toBe('retry')
+  })
+  it('çok pod R2a (MP-41, inceleme REP-2): 409 SEND_QUEUED — önceki gönderim 421 kuyruğunda → queued (o kuyruğun sonucu beklenir, "Gönder" kilitli — "yeniden basın" değil); kod yanıtta ya da errorInfo içinde', () => {
+    // Yeniden temel (2026-10-23, inceleme REP-2): eskiden 'retry' (kilit yok) — kuyruk teslim edilince ikinci tıklama ikinci
+    // kopya yolluyordu
+    expect(sendFailureKind({ success: false, status: 409, code: 'SEND_QUEUED' })).toBe('queued')
+    expect(sendFailureKind({ success: false, errorInfo: { status: 409, code: 'SEND_QUEUED' } })).toBe('queued')
+    expect(sendFailureKind(Object.assign(new Error('kuyrukta'), { status: 409, code: 'SEND_QUEUED' }))).toBe('queued')
+    expect(sendFailureCode({ success: false, errorInfo: { code: 'SEND_QUEUED' } })).toBe('SEND_QUEUED')
+    expect(sendFailureCode(null)).toBeNull()
+    // Sunucu kodu gerçekten var (Java kaynağı) — ad değişirse istemci sessizce "kesin hata" saymasın
+    expect(SENDER).toMatch(/SEND_QUEUED = "SEND_QUEUED"/)
   })
   it('sonucu bilinmeyen: ağ hatası / zaman aşımı (durum 0, ApiError dahil) → unsure', () => {
     expect(sendFailureKind({ success: false, status: 0, code: 'NETWORK_ERROR' })).toBe('unsure')

@@ -468,6 +468,11 @@ public final class RetentionCatalog {
                 + "saatlik siler: son yazımı site.monitor.lockout.unknown-retention-days'ten (365 gün — denetim kaydıyla aynı; "
                 + "mevcut hesabın kademesi kendiliğinden sıfırlanmadığından uzun) eski satırlar ve "
                 + "site.monitor.lockout.unknown-max-rows (50.000) üstündeki en eskiler."),
+        info("rate-limit-counters", "rate_limit_counters", Mode.EXTERNAL, DataClass.PERSONAL,
+                "Pod'lar arası ortak oran sınırı sayacı (2026-10-23, çok pod Sürüm 2a): anahtar başına TEK satır — kapsam + değer "
+                + "(giriş ucunda istemci IP'si: login-ip:<ip>), sabit pencere başlangıcı, deneme sayısı, blok bitişi. Satır "
+                + "expires_at'ten (pencere ve bloğun büyüğü, girişte 60 sn) sonra hiçbir kararı etkilemez; "
+                + "RateLimitCounterService saatlik siler (her pod, idempotent). Başarılı oturum o IP'nin satırını hemen siler."),
         // ── TLS yapılandırma notu (2026-10-10) ──────────────────────────────────────────────────
         age("tls-grade-changes", "tls_grade_changes", "changed_at", "site.monitor.series.certificate.retention-days",
                 180, 30, false, DataClass.OPERATIONAL,

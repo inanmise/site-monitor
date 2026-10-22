@@ -133,6 +133,59 @@ Bu bölüm prod 20.165.0 ya da öncesinden 20.165.1'e ilk geçerken geçerlidir;
       okunur — LDAPS / SMTPS / IMAPS satırlarında boş kalır; (7) DNS'te çözülemeyen alan adı (NXDOMAIN) toplu ağ kesintisi
       oranına sayılmaz (sınıfı DNS, alarm seviyesi UYARI).
 
+### Çok pod Sürüm 2a öncesi kontroller — bir kerelik
+Bu bölüm prod çok pod Sürüm 2a'yı (pod'lar arası önbellek yolu, küme geneli güvenlik sınırları, rapor / hatırlatma gönderim
+yollarının sahiplenmesi) İLK kez aldığında geçerlidir; sonraki dağıtımlarda atlanır. Sorgular salt okur (aksi yazılmadıkça).
+
+- [ ] **20.165.0 tekil indeksi `ux_push_eventless_key_user` kurulabilir mi.** İndeksin `created_at >= '2026-10-21'` kesimi
+      tarihe bağlıdır: prod 2026-10-21'den sonra hâlâ eski bir sürümle (20.164 ya da öncesi) koştuysa eski pod'lar bu
+      tarihten sonra da olaysız push çifti yazmış olabilir. O zaman arka plandaki kurulum HER açılışta düşer (WARN
+      `⚠ Şema yaması BAŞARISIZ (ertelenmiş indeks; sonraki açılış yeniden dener): ux_push_eventless_key_user …`, indeks yok;
+      yazma yolundaki ön denetim çiftleri yine engeller, yani push iki kez gitmez). Boş dönmeli:
+  ```sql
+  SELECT dedupe_key, username, COALESCE(team_id, 0) AS team, count(*), min(id) AS ilk, max(id) AS son
+    FROM user_push_deliveries
+   WHERE alert_event_id IS NULL AND push_trigger NOT IN ('TEST', 'OVERFLOW_SUMMARY') AND created_at >= '2026-10-21'
+   GROUP BY 1, 2, 3 HAVING count(*) > 1;
+  ```
+  Satır dönerse üç yol: **(a)** fazla satırlar geçmiş kaydıdır (gönderilmiş ya da atlanmış push kararları — hiçbir şey
+  yeniden gönderilmez), silinebilir; her grubun en eski satırı kalır (bu sorgu YAZAR — önce "Mevcut durumun dökümü"):
+  ```sql
+  DELETE FROM user_push_deliveries WHERE id IN (SELECT id FROM (
+           SELECT id, ROW_NUMBER() OVER (PARTITION BY dedupe_key, username, COALESCE(team_id, 0) ORDER BY id) AS rn
+             FROM user_push_deliveries
+            WHERE alert_event_id IS NULL AND push_trigger NOT IN ('TEST', 'OVERFLOW_SUMMARY')
+              AND created_at >= '2026-10-21') x WHERE rn > 1);
+  ```
+  **(b)** geçmişi silmeden anahtarı tekilleştirin — [İlk çok pod sürümüne geçiş](#ilk-çok-pod-sürümüne-geçiş-20164-ve-öncesi--bu-sürüm--bir-kerelik)
+  bölümündeki `UPDATE`; **(c)** WARN'ı kabul edin (indeks kurulmaz, her açılışta bir WARN; davranış değişmez). (a) ya da
+  (b)'den sonra indeks bir sonraki açılışta kurulur (aşağıda "İlk 15 dakika" → tekil indeksler).
+- [ ] **`audit_log`'a sütun eklenir** (`seq_locked`, ddl-auto + şema yaması; `ADD COLUMN … BOOLEAN`, varsayılansız —
+      PostgreSQL'de yalnız katalog değişikliği). Kısa ACCESS EXCLUSIVE kilidi `audit_log` üzerindeki uzun bir işlemin arkasında
+      kuyruğa girebilir: dağıtım sırasında denetim günlüğünde uzun süren SQL Playground / dışa aktarım sorgusu koşmayın. Aynısı
+      `executive_summary_reports` / `executive_summary_team_reports` (`send_started_claim`, `send_trace_name`),
+      `tech_error_reminders.inflight_at`, `tls_grade_changes.notify_attempts`, `domain_expiry_reminders.claim_token` için de
+      geçerlidir (küçük tablolar).
+- [ ] **Bu sürümün yeni tekil indeksleri ön kontrol istemez:** `ux_audit_seq` (`WHERE seq_locked IS NOT NULL`) ve
+      `ux_der_mon_exp_thr` (`WHERE claim_token IS NOT NULL`) yalnız yeni kodun yazdığı satırları kapsar — eski sürümlerin
+      satırları (olası çiftleri dahil) dışarıda kalır, arka plan kurulumunu düşüremez.
+- [ ] **Geçiş penceresinde (eski + yeni pod birlikte) beklenenler biliniyor** — [`RUNBOOK.md` → Sürüm geçişi sırasında](RUNBOOK.md#sürüm-geçişi-sırasında-eski--yeni-pod-birlikte):
+      önbellek yolu yalnız yeni pod'lar arasında çalışır (eski pod'un önbelleği TTL ile tazelenir), giriş IP sınırı eski
+      pod'da hâlâ pod başınadır, eski pod kuyruktaki kanal raporunun üzerine yeniden göndermeye izin verir (409 `SEND_QUEUED`
+      yok), eski pod'un denetim kaydı zinciri yeni pod'unkiyle çatallanabilir (bütünlük denetimi bu pencere için yanlış
+      "kurcalama" diyebilir).
+- [ ] **Geçiş bitene kadar (toplu) kullanıcı pasifleştirmesi yapılmayacak** (MP-51): eski pod ayrık `app_users` varlığını
+      hâlâ birleştirerek kaydeder ve eşzamanlı bir pasifleştirmeyi geri açabilir. Geçiş sırasında yapıldıysa, sonra:
+      `SELECT username, active FROM app_users WHERE username IN ('<ad-1>', '<ad-2>');` ile pasifleştirilen hesapların
+      hâlâ `active = false` olduğunu doğrulayın (toplu işlemde: işlemin önizlemesindeki / sonucundaki kullanıcı adları).
+- [ ] Davranış değişiklikleri duyuruldu: (1) kanal teknik hata raporu, önceki gönderimi posta sunucusunun yeniden deneme
+      kuyruğundayken (20 dk) yeniden GÖNDERİLMEZ — 409 "Önceki gönderim hâlâ posta kuyruğunda"; gönder penceresi kilitli
+      kalıp mevcut kuyruğun sonucunu bekler (iki farklı içerikli kopya gitmesin diye); (2) Veri Saklama Politikaları → "Şimdi
+      temizle", gece temizliği ya da başka bir elle koşu sürerken 409 "Temizlik şu an çalışıyor", kilit durumu okunamazsa 503
+      döner (ikisinde de hiçbir şey silinmez); (3) bir pod'da kaydedilen ayar / paylaşım / nöbet değişikliği
+      öteki pod'larda ~2 sn içinde geçerli olur (eskiden 30 sn – 5 dk); (4) giriş IP bloğu bütün pod'larda ortaktır — elle
+      kaldırma: [`RUNBOOK.md` → Takılı kayıtlar ve sınırlar](RUNBOOK.md#takılı-kayıtlar-ve-sınırlar-çok-pod-sürüm-2a).
+
 ### Kapsam ve sürüm
 - [ ] Dağıtılan şey **tag'lenmiş sürüm** (`git checkout v$VERSION`); çalışma ağacındaki commit'lenmemiş iş
       bu dağıtıma dahil değildir. GitHub → Actions'ta o commit için `ci.yml` **dört işi de yeşil**.
@@ -342,6 +395,11 @@ helm upgrade --install "$REL" ./helm/site-monitor --namespace "$NS" \
       çift satırla düştü) → "İlk çok pod sürümüne geçiş" bölümündeki tekilleştirme UPDATE'i, sonra tek pod'u yeniden
       başlatın (ertelenmiş kurucu açılışta yeniden dener). `ux_noe_one_ongoing` boşsa: `kubectl logs $L | grep -i
       'noe-ongoing\|NetworkOutageOngoingDedupe'` — iş saatlik yeniden dener (pod başına en çok 24 deneme).
+- [ ] **Çok pod Sürüm 2a** (açılıştan ~5 dk sonra): her pod'un günlüğünde bir kez `Önbellek yolu çalışıyor`
+      (`kubectl logs $L | grep "Önbellek yolu"` — `yoklanamadı` / `yayını başarısız` satırı olmamalı); yeni tablolar ve
+      indeksler dolu dönmeli:
+      `SELECT to_regclass('cache_bus'), to_regclass('rate_limit_counters'), to_regclass('ux_audit_seq'), to_regclass('ux_der_mon_exp_thr'), to_regclass('idx_lir_ip_reported');`
+      `ux_push_eventless_key_user` bu sürümden sonra da boşsa yukarıdaki "Çok pod Sürüm 2a öncesi kontroller" (a) / (b).
 - [ ] **Ertelenmiş indeksler (2026-10-08):** filtre indeksleri (`DeferredIndexBuilder.CATALOG` — uptime_checks, audit_log,
       activity_log, alert_events, push / bildirim günlükleri, rollup'lar…) açılışta DEĞİL, pod Ready olduktan sonra arka
       planda `CONCURRENTLY` kurulur; readiness beklemez, büyük tabloda dakikalar sürebilir (sorgular o sırada indekssiz,

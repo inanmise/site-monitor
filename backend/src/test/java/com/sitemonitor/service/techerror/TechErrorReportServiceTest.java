@@ -1574,6 +1574,60 @@ class TechErrorReportServiceTest {
     }
 
     @Test
+    @DisplayName("çok pod R2a (MP-41): talep koşulu CANLI kuyruğu dışlar — kuyruk talebi pencere içinde → 0 satır (sahiplenilmez), pencereden eski → sahiplenilir; SENDING kuralı aynen")
+    void claimSendUnlessQueued_refusesLiveQueue() {
+        TechErrorChannel ch = channel(1, "POS");
+        TechErrorReport r = service.createReport(ch, 2026, 9, 7L);
+        Instant claim = service.now().minusSeconds(300);
+        reports.claimSend(r.getId(), claim, claim.minusSeconds(600));
+        Long logId = logRow("QUEUED_RETRY: 421");
+        reports.finishQueued(r.getId(), claim, "QUEUED_RETRY: 421", claim, logId, 7L, "a@b.com", 0L);
+        Instant now = service.now();
+        Instant window = now.minus(TechErrorReportSender.QUEUED_RESULT_WINDOW);
+        assertThat(reports.claimSendUnlessQueued(r.getId(), now, now.minus(TechErrorReportSender.STALE_CLAIM), window)).isZero();
+        assertThat(reports.findById(r.getId()).orElseThrow().getSendState()).isEqualTo("QUEUED");
+        // kuyruk sonucu artık gelemez (pencere talepten önce bitti) → sahiplenilir
+        assertThat(reports.claimSendUnlessQueued(r.getId(), now, now.minus(TechErrorReportSender.STALE_CLAIM), claim.plusSeconds(1)))
+                .isEqualTo(1);
+        // taze SENDING: ikinci talep yine reddedilir
+        assertThat(reports.claimSendUnlessQueued(r.getId(), now.plusSeconds(1), now.minus(TechErrorReportSender.STALE_CLAIM), window)).isZero();
+    }
+
+    @Test
+    @DisplayName("çok pod R2a (MP-41): dönemsel uzlaştırıcı — kimse ekranı açmasa da kuyruk sonuçlanır (posta servisi SENT yazdı → rapor SENT, TEK SEND_RESULT olayı, ikinci tur ve ikinci 'pod' hiçbir şey yapmaz); sonucu henüz gelmemiş genç kuyruk kuyrukta kalır")
+    void reconcileAllQueued_withoutAnyRead() {
+        TechErrorPushService pushes = org.mockito.Mockito.mock(TechErrorPushService.class);
+        service.setPushes(pushes);
+        try {
+            TechErrorChannel ch = channel(1, "POS");
+            TechErrorChannel other = channel(2, "Web");
+            TechErrorReport r = service.createReport(ch, 2026, 9, 7L);
+            Instant claim = service.now().minusSeconds(120);
+            reports.claimSend(r.getId(), claim, claim.minusSeconds(600));
+            Long logId = logRow("QUEUED_RETRY: 421");
+            reports.finishQueued(r.getId(), claim, "QUEUED_RETRY: 421", claim, logId, 7L, "a@b.com", 0L);
+            TechErrorReport young = service.createReport(other, 2026, 9, 7L);
+            reports.claimSend(young.getId(), claim, claim.minusSeconds(600));
+            Long youngLog = logRow("QUEUED_RETRY: 421");
+            reports.finishQueued(young.getId(), claim, "QUEUED_RETRY: 421", claim, youngLog, 7L, "a@b.com", 0L);
+            setLogStatus(logId, "SENT");                              // 421 yeniden denemesi teslim etti (başka pod)
+            assertThat(reports.queuedChannelIds(org.springframework.data.domain.PageRequest.of(0, 200)))
+                    .containsExactlyInAnyOrder(ch.getId(), other.getId());
+            assertThat(service.reconcileAllQueued()).isEqualTo(1);
+            assertThat(reports.findById(r.getId()).orElseThrow().getSendState()).isEqualTo("SENT");
+            assertThat(reports.findById(young.getId()).orElseThrow().getSendState()).as("sonucu gelmedi, süre dolmadı").isEqualTo("QUEUED");
+            assertThat(service.reconcileAllQueued()).as("ikinci tur").isZero();
+            assertThat(events.findAll()).filteredOn(e -> r.getId().equals(e.getReportId()) && "SEND_RESULT".equals(e.getKind())).hasSize(1);
+            org.mockito.Mockito.verify(pushes, org.mockito.Mockito.times(1)).delivered(org.mockito.ArgumentMatchers.any(),
+                    org.mockito.ArgumentMatchers.anyBoolean(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                    org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+            assertThat(reports.queuedChannelIds(org.springframework.data.domain.PageRequest.of(0, 200))).containsExactly(other.getId());
+        } finally {
+            service.setPushes(null);
+        }
+    }
+
+    @Test
     @DisplayName("push (2026-10-18): kuyruktaki gönderim sonuçlanınca bir kez — SENT → delivered (gönderen, sayaç, talep anı; günlük rolü EXECUTIVE → yöneticiler), FAILED → gönderene QUEUE_FAILED; ikinci okuma ikinci push yazmaz")
     void queuedResultPushesOnce() {
         TechErrorPushService pushes = org.mockito.Mockito.mock(TechErrorPushService.class);

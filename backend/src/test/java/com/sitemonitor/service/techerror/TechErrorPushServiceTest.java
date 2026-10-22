@@ -286,6 +286,8 @@ class TechErrorPushServiceTest {
         want.put("APPROVAL_STALE", new String[] { "değişti; gönderilmedi. Onaydan sonra değişti; yeniden onaya gönderin", "submit it for approval again" });
         want.put("SEND_IN_PROGRESS", new String[] { "zaten gönderiliyor. Sonuç Site Monitor'de raporda görünecek", "already being sent. The result will show" });
         want.put("PDF_BUSY", new String[] { "PDF sırası dolu", "PDF queue busy" });
+        // R2a (MP-41): önceki gönderim 421 kuyruğunda — yeniden gönderilmedi
+        want.put("SEND_QUEUED", new String[] { "önceki gönderim kuyrukta. Önceki gönderim posta kuyruğunda", "earlier send still queued" });
         want.put("PDF_TOO_LARGE", new String[] { "PDF çok büyük, gitmedi. PDF yöneticilere e-posta sınırını aşıyor", "the PDF is too large. It exceeds the e-mail limit" });
         want.put("FAILED", new String[] { "yöneticilere ulaşmadı. Raporu Site Monitor'den yeniden gönderin", "did not reach the executives" });
         want.put("MAIL_FAILED", new String[] { "yöneticilere ulaşmadı", "did not reach the executives" });
@@ -316,8 +318,8 @@ class TechErrorPushServiceTest {
         TechErrorPushService.Ctx longCh = new TechErrorPushService.Ctx(42L, 7L, channel, 2026, 9);
         assertThat(channel.length()).isGreaterThanOrEqualTo(60);
         assertThat(adName.length()).isGreaterThanOrEqualTo(68);
-        List<String> codes = List.of("SENT", "QUEUED", "SKIPPED", "FAILED", "APPROVAL_STALE", "SEND_IN_PROGRESS", "PDF_BUSY",
-                "PDF_TOO_LARGE", "MAIL_FAILED", "EXEC_RECIPIENTS_MISSING", "REJECTED");
+        List<String> codes = List.of("SENT", "QUEUED", "SKIPPED", "FAILED", "APPROVAL_STALE", "SEND_IN_PROGRESS", "SEND_QUEUED",
+                "PDF_BUSY", "PDF_TOO_LARGE", "MAIL_FAILED", "EXEC_RECIPIENTS_MISSING", "REJECTED");
         for (int limit : new int[] { TechErrorPushService.MIN_MESSAGE_LIMIT, 120, 200, 320 }) {
             for (String code : codes) {
                 boolean rejected = "REJECTED".equals(code);
@@ -578,8 +580,8 @@ class TechErrorPushServiceTest {
         assertThat(limit).isEqualTo(80);
         String adName = "Ayşe Yılmaz Kayaoğlu (Dijital Kanallar Müdürlüğü / Kıdemli Ürün Sahibi)";
         String channel = "Bireysel Mobil Bankacılık ve Dijital Şube Kanalları Web Uygulaması";
-        List<String> codes = List.of("SENT", "QUEUED", "SKIPPED", "FAILED", "APPROVAL_STALE", "SEND_IN_PROGRESS", "PDF_BUSY",
-                "PDF_TOO_LARGE", "MAIL_FAILED", "SOME_NEW_CODE");
+        List<String> codes = List.of("SENT", "QUEUED", "SKIPPED", "FAILED", "APPROVAL_STALE", "SEND_IN_PROGRESS", "SEND_QUEUED",
+                "PDF_BUSY", "PDF_TOO_LARGE", "MAIL_FAILED", "SOME_NEW_CODE");
         int checked = 0;
         for (int month = 1; month <= 12; month++) {
             for (String ch : List.of("", "Mobil", channel)) {
@@ -617,7 +619,7 @@ class TechErrorPushServiceTest {
                 }
             }
         }
-        assertThat(checked).isEqualTo(12 * 3 * (10 + 1 + 2) * 2);
+        assertThat(checked).isEqualTo(12 * 3 * (11 + 1 + 2) * 2);   // R2a MP-41: + SEND_QUEUED
         // Kısa kanal + kısa ayda öneri sığarsa kalır (önce imza düşer, sonra kanal adı): red notu yönlendirmesi 80'de de görünür
         String shortRej = TechErrorPushService.decisionText(new TechErrorPushService.Ctx(42L, 7L, "Mobil", 2026, 5), false,
                 adName, null, null, null, limit).tr();

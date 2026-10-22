@@ -321,6 +321,33 @@ public class CertificateService {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private org.springframework.context.ApplicationEventPublisher cacheEvents;
 
+    /**
+     * Isıtılan önbellekler — öteki pod'un yayını bunlardan birini boşalttıysa ısıtıcı bu pod'da da koşar (2026-10-22, çok pod
+     * R2-A, MP-30). Boşaltmanın kendisini önbellek yöneticisi ({@code BusAwareCacheManager}) yapar.
+     */
+    static final java.util.Set<String> WARMED_CACHES =
+            java.util.Set.of("cert-latest", "cert-stats", "cert-warnings", "renewal-advice", "card-extras");
+
+    /** Pod'lar arası boşaltma dinleyicisi (MP-30) — veri yolu yoksa (birim testi) bağlanmaz. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setCacheBus(com.sitemonitor.service.cache.CacheBus bus) {
+        if (bus != null) bus.onRemoteEvict(this::onRemoteCachesEvicted);
+    }
+
+    /**
+     * Öteki pod'un yayını Genel Bakış önbelleklerini boşalttı → ısıtıcıya haber (yoklama iş parçacığında, tek olay). Isıtıcının
+     * 2 sn birleştirmesi ve pod'ların farklı yoklama evreleri, iki pod'un tam taramasını aynı ana yığmaz.
+     */
+    void onRemoteCachesEvicted(java.util.Set<String> names) {
+        if (names == null || cacheEvents == null) return;
+        for (String n : names) {
+            if (WARMED_CACHES.contains(n)) {
+                try { cacheEvents.publishEvent(new CachesEvictedEvent()); } catch (RuntimeException ignored) { /* ısıtma isteğe bağlı */ }
+                return;
+            }
+        }
+    }
+
     @Cacheable(value = "cert-latest", sync = true)
     public List<CertificateDto> getAllLatest() {
         // Active inventory'yi TEK SEFER yükle — hem domain set'i hem tier map'i bundan üret
@@ -489,8 +516,12 @@ public class CertificateService {
      * listDns/createPort/updatePort/triggerPort gibi 5+ sıcak uç her çağrıda teams + 1000 satırlık
      * certificate_inventory TAM TARAMASI yaptırıyordu (100 kullanıcı × 5 dk poll → dakikada ~2000
      * gereksiz tarama). Envanter değişince zaten evictAllCaches çalışıyor.
+     *
+     * <p>{@code sync = true} (çok pod R2-A inceleme D-4): eşzamanlı ıskalamalar tek hesabı paylaşır ve kuşak korumalı yükleme
+     * ({@code BusAwareCacheManager}) bir boşaltmayla yarışan hesabı saklamaz — eskiden boşaltmadan önce başlamış bir hesap
+     * eski takım adlarını 300 sn yerleştirebiliyordu.
      */
-    @Cacheable("domain-team-names")
+    @Cacheable(value = "domain-team-names", sync = true)
     public Map<String, String> domainTeamNameMap() {
         Map<Long, String> teamNames = teamRepo.findAll().stream()
                 .filter(tm -> tm.getId() != null && tm.getName() != null)

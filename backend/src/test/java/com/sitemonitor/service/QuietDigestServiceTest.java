@@ -261,4 +261,97 @@ class QuietDigestServiceTest {
     void windowLabel() {
         assertThat(QuietDigestService.windowLabel(List.of(item(10, 1)))).isEqualTo("01.10.2026 22:00–07:00");
     }
+
+    // ── MP-46 (2026-10-23, çok pod R2a · D2): yarıda kalan sahiplenme son duruma geçer, iz bırakır, yeniden gönderilmez ──
+
+    /** Belirteç-koşullu kapanış ve yarım sahiplenme okuması (depo taklidi, {@code db} üstünde). */
+    private void wireClaimRecovery() {
+        when(itemRepo.markStatusIfToken(anyString(), anyString())).thenAnswer(i -> {
+            int n = 0;
+            for (QuietDigestItem x : db.values()) {
+                if (i.getArgument(0).equals(x.getDigestStatus())) { x.setDigestStatus(i.getArgument(1)); n++; }
+            }
+            return n;
+        });
+        when(itemRepo.findStaleClaims(anyString(), anyString())).thenAnswer(i -> staleIn(i.getArgument(0), i.getArgument(1)));
+        when(itemRepo.countStaleClaims(anyString(), anyString())).thenAnswer(i -> (long) staleIn(i.getArgument(0), i.getArgument(1)).size());
+    }
+
+    private List<QuietDigestItem> staleIn(String since, String cutoff) {
+        return db.values().stream()
+                .filter(x -> x.getDigestStatus() != null && x.getDigestStatus().startsWith("SENDING:") && x.getDigestSentAt() != null
+                        && x.getDigestSentAt().compareTo(since) >= 0 && x.getDigestSentAt().compareTo(cutoff) < 0)
+                .toList();
+    }
+
+    @Test
+    @DisplayName("İnceleme J-1: vakti gelen YENİ kayıt yokken de dakikalık iş yarım sahiplenmeyi kapatır (kilit altında, posta yok)")
+    void scheduledRun_noDueItem_stillClosesStaleClaim() {
+        wireClaimRecovery();
+        event(1, "WARNING", false);
+        QuietDigestItem stale = item(10, 1);
+        stale.setDigestStatus("SENDING:deadpod00000");
+        stale.setDigestSentAt("2026-10-02T03:40:00");
+        doAnswer(i -> { ((Runnable) i.getArgument(1)).run(); return null; })
+                .when(schedulerService).runWithSchedulerLock(eq(QuietDigestService.LOCK_NAME), any());
+        // existsByDigestSentAtIsNullAndWindowEndLessThanEqual taklitte false (vakti gelen yeni kayıt yok)
+
+        service.scheduledRun();
+
+        verify(schedulerService).runWithSchedulerLock(eq(QuietDigestService.LOCK_NAME), any());
+        assertThat(stale.getDigestStatus()).isEqualTo(QuietDigestService.STATUS_STALE);
+        assertThat(logs).hasSize(1);
+        verify(itemRepo, never()).findDue(anyString());
+        verify(emailService, never()).sendHtml(any(String[].class), any(), anyString(), anyString(), any());
+
+        clearInvocations(schedulerService);
+        service.scheduledRun();   // artık yarım sahiplenme yok, vakti gelen kayıt yok → kilit de alınmaz
+        verify(schedulerService, never()).runWithSchedulerLock(anyString(), any());
+    }
+
+    @Test
+    @DisplayName("MP-46: sahiplenmeden sonra hata → kayıtlar FAILED (yarıda kaldı), alarm başına QUIET_DIGEST izi, posta yok")
+    void exceptionAfterClaim_failedWithTrace() {
+        wireClaimRecovery();
+        event(1, "WARNING", false);
+        event(2, "HIGH", false);
+        item(10, 1);
+        item(11, 2);
+        doThrow(new IllegalStateException("db okunamadı")).when(alertEventRepo).findAllById(any());
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.run(AFTER)).isInstanceOf(IllegalStateException.class);
+
+        assertThat(db.values()).allSatisfy(i -> assertThat(i.getDigestStatus())
+                .startsWith(QuietDigestService.STATUS_INTERRUPTED).contains("IllegalStateException"));
+        assertThat(logs).hasSize(2).allSatisfy(l -> {
+            assertThat(l.getTrigger()).isEqualTo(EscalationService.TRIGGER_QUIET_DIGEST);
+            assertThat(l.getEmailStatus()).startsWith("FAILED: özet turu yarıda kaldı");
+        });
+        assertThat(logs).extracting(NotificationLog::getAlertEventId).containsExactlyInAnyOrder(1L, 2L);
+        verify(emailService, never()).sendHtml(any(String[].class), any(), anyString(), anyString(), any());
+    }
+
+    @Test
+    @DisplayName("MP-46: ölen pod'un 15 dk'dan eski SENDING sahiplenmesi bir sonraki turda kapanır — iz BİR kez, yeniden gönderim yok")
+    void staleSendingClaim_failedWithTraceOnce() {
+        wireClaimRecovery();
+        event(1, "WARNING", false);
+        QuietDigestItem stale = item(10, 1);
+        stale.setDigestStatus("SENDING:deadpod00000");
+        stale.setDigestSentAt("2026-10-02T03:40:00");   // AFTER = 04:01 UTC → 21 dk önce
+        QuietDigestItem fresh = item(11, 1);
+        fresh.setDigestStatus("SENDING:livepod00000");
+        fresh.setDigestSentAt("2026-10-02T03:55:00");   // 6 dk önce — sahibi yaşıyor olabilir
+
+        service.run(AFTER);
+        service.run(AFTER.plusSeconds(60));
+
+        assertThat(stale.getDigestStatus()).isEqualTo(QuietDigestService.STATUS_STALE);
+        assertThat(fresh.getDigestStatus()).isEqualTo("SENDING:livepod00000");
+        assertThat(logs).hasSize(1);
+        assertThat(logs.get(0).getAlertEventId()).isEqualTo(1L);
+        assertThat(logs.get(0).getEmailStatus()).isEqualTo(QuietDigestService.STATUS_STALE);
+        assertThat(logs.get(0).getRecipientName()).isEqualTo("Ödeme");
+        verify(emailService, never()).sendHtml(any(String[].class), any(), anyString(), anyString(), any());
+    }
 }

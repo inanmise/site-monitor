@@ -38,6 +38,16 @@ public class AuditLog {
     @Column(name = "prev_hash", length = 64)
     private String prevHash;
 
+    /**
+     * Satır zincir kilidi ALTINDA yazıldı (çok pod R2a, MP-38, 2026-10-22): yalnız yeni yazıcı ({@code AuditService} — kendi
+     * işleminde / COMMIT sonrası, PostgreSQL'de advisory lock ile) {@code TRUE} yazar; eski sürüm pod'ların satırları ve bu
+     * sürümden önceki satırlar NULL. Tekil {@code ux_audit_seq} indeksi yalnız bu satırları kapsar
+     * ({@code WHERE seq_locked IS NOT NULL}): eski kodun olası çatalları (dağıtım gününden bağımsız) indeks kurulumunu
+     * düşüremez, yeni yazıcılar arasındaki bir çatal ise veritabanında durur. Hash'e GİRMEZ (zincir doğrulaması değişmez).
+     */
+    @Column(name = "seq_locked", updatable = false)
+    private Boolean seqLocked;
+
     @Column(name = "event_type", nullable = false, length = 50)
     private String eventType;
 

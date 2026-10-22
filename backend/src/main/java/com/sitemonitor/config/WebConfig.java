@@ -93,7 +93,11 @@ public class WebConfig implements WebMvcConfigurer {
                 CorsConfiguration c = new CorsConfiguration();
                 c.setAllowedOrigins(origins);
                 c.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
-                c.setAllowedHeaders(List.of("Content-Type", "X-Requested-With", com.sitemonitor.util.Msg.HEADER));
+                // X-Cache-Min-Gen / X-Cache-Gen (2026-10-22, çok pod R2-A, MP-30): yazdığını-oku kuşağı — çapraz kökenli
+                // geliştirme kurulumunda da istemci başlığı gönderebilsin ve okuyabilsin
+                c.setAllowedHeaders(List.of("Content-Type", "X-Requested-With", com.sitemonitor.util.Msg.HEADER,
+                        com.sitemonitor.service.cache.CacheBus.REQUEST_HEADER));
+                c.setExposedHeaders(List.of(com.sitemonitor.service.cache.CacheBus.RESPONSE_HEADER));
                 c.setAllowCredentials(true);
                 c.setMaxAge(corsMaxAge);
                 return c;

@@ -1,5 +1,7 @@
 package com.sitemonitor.service;
 
+import com.sitemonitor.service.cache.CacheBus;
+import com.sitemonitor.service.cache.CacheBusNames;
 import com.sitemonitor.model.EscalationContact;
 import com.sitemonitor.repository.AppUserRepository;
 import jakarta.mail.Address;
@@ -34,7 +36,9 @@ import java.util.Set;
  *
  * <p><b>Maliyet.</b> Pasif kullanıcıların kimliği + "yalnız pasife ait" adresleri {@code site.monitor.notify.inactive-cache-ms}
  * (varsayılan 60 sn) boyunca bellekte tutulur — e-posta / kişi başına sorgu YOK (tazelemede iki hafif projeksiyon sorgusu).
- * Aktiflik değişince bu pod'da {@link #evict()} (UserService) anında tazeler; diğer pod'lar en geç TTL sonra görür.
+ * Aktiflik değişince bu pod'da {@link #evict()} (UserService) anında tazeler; öteki pod'lar önbellek veri yoluyla (2026-10-22,
+ * çok pod R2-A, MP-30: {@link CacheBus}, ad {@link CacheBusNames#INACTIVE_RECIPIENTS}) en geç bir yoklama aralığında
+ * (~2 sn) görür — eskiden tarama lideri pasife alınan kişiye TTL boyunca posta / webhook gönderiyordu.
  *
  * <p><b>Hiç pasif kullanıcı yokken</b> her çağrı aynı listeyi / mesajı DEĞİŞTİRMEDEN döner — bildirim yolları bayt bayt
  * bugünküyle aynıdır. Okuma hatası = süzgeç yok (fail-open): bir DB hıçkırığı alarm bildirimini düşürmemeli.
@@ -67,10 +71,35 @@ public class InactiveRecipientGuard {
         this.userRepo = userRepo;
     }
 
-    /** Önbelleği düşürür — sonraki çağrı DB'den tazeler (aktiflik değişti). */
+    /** Önbelleği düşürür — sonraki çağrı DB'den tazeler (aktiflik değişti); öteki pod'lar veri yoluyla (MP-30). */
     public void evict() {
-        snapshot = null;
+        evictLocal();
+        CacheBus b = cacheBus;
+        if (b != null) b.bump(CacheBusNames.INACTIVE_RECIPIENTS);
     }
+
+    /** Pod'lar arası boşaltma (MP-30) — yoksa yalnız bu pod. */
+    private volatile CacheBus cacheBus;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setCacheBus(CacheBus bus) {
+        this.cacheBus = bus;
+        if (bus != null) bus.register(CacheBusNames.INACTIVE_RECIPIENTS, this::evictLocal);
+    }
+
+    /**
+     * Yalnız bu pod (öteki pod'un yayını da bunu çağırır; yeniden yayın yok). Kuşak artar: boşaltmadan ÖNCE başlamış bir
+     * yükleme eski listeyi saklamaz (çok pod R2-A inceleme — yoksa pasife alınan kişi TTL boyunca alıcı kalırdı).
+     */
+    void evictLocal() {
+        generation.incrementAndGet();
+        // SİLİNMEZ, bayat işaretlenir (TeamAccessGrantService deseni): yeniden okuma hata verirse önceki liste kullanılır —
+        // eskiden boşaltma görüntüyü attığı için veritabanı hıçkırığında süzgeç TÜM pod'larda kalkıyordu (inceleme C-2)
+        Snapshot s = snapshot;
+        snapshot = s == null ? null : new Snapshot(s.ids(), s.emails(), Long.MIN_VALUE / 2);
+    }
+
+    private final java.util.concurrent.atomic.AtomicLong generation = new java.util.concurrent.atomic.AtomicLong();
 
     Snapshot snapshot() {
         Snapshot s = snapshot;
@@ -79,8 +108,9 @@ public class InactiveRecipientGuard {
         synchronized (this) {
             s = snapshot;
             if (s != null && now - s.atMs() < cacheMs) return s;
+            long gen = generation.get();
             Snapshot fresh = load(now, s);
-            snapshot = fresh;
+            if (generation.get() == gen) snapshot = fresh;   // yükleme sırasında boşaltıldıysa saklanmaz
             return fresh;
         }
     }

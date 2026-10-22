@@ -184,7 +184,27 @@ public final class DeferredIndexBuilder {
             // düz metin olduğundan genel plan da kullanabilir. Kurulana dek sorgu checked_at dizininde son 3 saati tarar.
             // PostgreSQL'e özgü (H2'de kısmi indeks yok — aralık sorgusu aynı sonucu verir).
             Spec.postgresOnly("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_dnsr_pending ON dns_records(checked_at)"
-                    + " WHERE change_state = 'PENDING'"));
+                    + " WHERE change_state = 'PENDING'"),
+            // 2026-10-23 (çok pod Sürüm 2a — MP-33): oturumsuz sorun bildirimi / istemci hatası uçlarının IP başına saatlik
+            // sınırı artık pod belleğinden değil kalıcı satırlardan sayılır — source = ? AND ip_address = ? AND reported_at >= ?
+            // (PersistedRowLimits.issueReports). Küçük tablo; kurulana dek idx_lir_reported_at aralığı taranır.
+            Spec.portable("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_lir_ip_reported ON login_issue_reports(ip_address, reported_at)"),
+            // 2026-10-23 (çok pod R2a · D2, MP-45): alan adı bitiş hatırlatması eşik başına TEK satır — gönderimden önce
+            // eklenen SENDING satırının tekilliği (DomainExpiryReminderService.insertClaim; ihlal = "başka tur gönderiyor /
+            // gönderdi"). Yalnız claim_token dolu satırlar (bu sürümün kodu yazar; 20.164 / 20.165.x hiç yazmaz): eski kodun
+            // yazdığı satırlar — dağıtım gününden bağımsız, olası eski çiftler dahil — indeksin dışında, kurulum düşmez.
+            // Kısmi indeks PostgreSQL'e özgü (H2'de uygulama düzeyindeki ön kontrol + pod içi değerlendirme kilidi).
+            Spec.postgresOnly("CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS ux_der_mon_exp_thr ON domain_expiry_reminders"
+                    + "(monitor_id, expiry_date, threshold_days) WHERE claim_token IS NOT NULL"),
+            // 2026-10-22 (çok pod R2a-D1, MP-38): denetim zincirinin seq tekilliği — işlem içindeki denetim artık COMMIT
+            // sonrası zincir kilidiyle yazılır (AuditService.deferToCommit); bu indeks yeni yazıcılar arasında olası bir
+            // çatallanmayı veritabanında durdurur. Kapsam yalnız YENİ kodun zincir kilidi altında yazdığı satırlar
+            // (seq_locked IS NOT NULL — eski sürüm pod'lar ve geçmiş satırlar bu kolonu hiç yazmaz): eski kodun olası çatalları
+            // dağıtım gününden bağımsız olarak indeksin dışında kalır, kurulum düşmez, onarım işi gerekmez (tarih kesimi
+            // KULLANILMAZ: dağıtım günü bilinmiyor, eski pod'lar o güne dek çatallı satır yazabilir). İhlal ekleme yolunda bir
+            // kez yeniden okunup denenir (AuditService.appendLocked). PostgreSQL'e özgü (H2'de JVM kilidi + COMMIT sonrası yazım).
+            Spec.postgresOnly("CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS ux_audit_seq ON audit_log(seq)"
+                    + " WHERE seq_locked IS NOT NULL"));
 
     /** Bir koşunun özeti. {@code locked=false} → kilit alınamadı, hiçbir şey denenmedi. */
     public record Result(int built, int rebuilt, int valid, int skipped, int failed, boolean locked, long millis) {}

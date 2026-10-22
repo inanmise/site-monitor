@@ -75,6 +75,26 @@ class MailRetryOrphanSweeperTest {
     }
 
     @Test
+    @DisplayName("çok pod R2a (MP-41): aynı tur, yetim satırlar yazıldıktan SONRA kanal teknik hata raporlarının kuyrukları sonuçlandırılır; hatası turu bozmaz")
+    void techErrorQueuesReconciledInSameRound() {
+        Instant now = Instant.now();
+        long old = row(now.minus(Duration.ofMinutes(25)), "QUEUED_RETRY: 421");
+        com.sitemonitor.service.techerror.TechErrorReportService te =
+                mock(com.sitemonitor.service.techerror.TechErrorReportService.class);
+        // Uzlaştırıcı çağrıldığında yetim satır ZATEN yazılmıştır (aynı turda sonuçlanabilsin)
+        when(te.reconcileAllQueued()).thenAnswer(inv -> {
+            assertThat(status(old)).isEqualTo(EmailNotificationService.STATUS_RETRY_ORPHANED);
+            return 1;
+        });
+        MailRetryOrphanSweeper sweeper = new MailRetryOrphanSweeper(mp.jdbc(), email);
+        sweeper.setTechErrorReports(te);
+        assertThat(sweeper.sweep(now)).isEqualTo(1);
+        org.mockito.Mockito.verify(te).reconcileAllQueued();
+        when(te.reconcileAllQueued()).thenThrow(new IllegalStateException("db"));
+        assertThat(sweeper.sweep(now)).isZero();                      // hata yutulur
+    }
+
+    @Test
     @DisplayName("eşik: varsayılan gecikmeyle 20 dk taban; büyük gecikmede zincir + 5 dk")
     void orphanAgeFollowsRetryChain() {
         MailRetryOrphanSweeper sweeper = new MailRetryOrphanSweeper(mp.jdbc(), email);
