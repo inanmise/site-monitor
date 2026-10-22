@@ -7,6 +7,7 @@ import jakarta.mail.Message;
 import jakarta.mail.Session;
 import jakarta.mail.internet.InternetAddress;
 import jakarta.mail.internet.MimeMessage;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -50,6 +51,12 @@ class MailRetrySameMailWriteBackTest {
 
     private static final String SUBJECT = "[Site Monitor] Alarm fırtınası — Takım A (25 izleme)";
     private static final String TO = "takim-a@example.com, mudur@example.com";
+
+    /** NOT_SUPPORTED commits the rows; remove them so later tests of the cached context start clean. */
+    @AfterEach
+    void tearDown() {
+        repo.deleteAll();
+    }
 
     @BeforeEach
     void setUp() {

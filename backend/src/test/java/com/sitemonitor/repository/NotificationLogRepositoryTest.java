@@ -1,6 +1,7 @@
 package com.sitemonitor.repository;
 
 import com.sitemonitor.model.NotificationLog;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -25,6 +26,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 class NotificationLogRepositoryTest {
 
     @Autowired NotificationLogRepository repo;
+
+    /** Other @DataJpaTest classes sharing the cached context may commit rows (NOT_SUPPORTED tests); start clean. */
+    @BeforeEach
+    void clean() {
+        repo.deleteAll();
+    }
 
     @Test
     @DisplayName("countByAlertIds groups SENT and FAILED counts per alert id")
