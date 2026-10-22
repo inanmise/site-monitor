@@ -1,9 +1,226 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-21T18:46:43Z",
+  "generatedAt": "2026-10-22T01:00:15Z",
   "repo": "inanmise/site-monitor",
-  "count": 782,
+  "count": 783,
   "releases": [
+    {
+      "version": "20.165.0",
+      "tag": "v20.165.0",
+      "releasedAt": "2026-10-22T01:00:08Z",
+      "commit": "613c2e34afcf61c08637087e987482cd3b9d0f79",
+      "prevVersion": "20.164.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 3,
+        "fix": 21,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 3,
+        "other": 1
+      },
+      "changes": [
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "613c2e34",
+          "subject": "WebConfig çekirdek fabrikalarının dalları test edildi — JaCoCo sınıf tabanı (0.98) yeniden sağlanır"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "12e23270",
+          "subject": "çok pod sürüm 1 üçüncü tur belgeleri — CLAUDE.md ikinci inceleme düzeltmeleri, haftalık erişilebilirlik penceresi kuralı"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "c0f31960",
+          "subject": "çok pod R1 C2 ikinci inceleme — terfi sahiplenmeden sonraki her adımda geri alınır, push kapanışın başında boşaltılır, 421 geç denemesi yalnız yeniden gönderilen postada düşer, bakım postası iki kez …"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "e5a104d6",
+          "subject": "çok pod C1 ikinci inceleme — süren kesinti 5 dk'lık taramayla kapanmaz, 421 kuyruğu iz yazılamasa da yeniden gönderilmez, kapanan fırtına takımı engellemez"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "f87d8490",
+          "subject": "çok pod ikinci inceleme — elle kontrol iletimi yeteneğe bakar, pencere dışındaki bekleyen değişiklikler süre dolumuyla kapanır"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "2802bf4d",
+          "subject": "çok pod ikinci inceleme — tur kaydı yeniden denemesi kapanışta durur, sonucu bilinmeyen \"düzeldi\" iz bırakır"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "f4a7072a",
+          "subject": "çok pod sürüm 1 son inceleme belgeleri — inceleme düzeltmeleri CLAUDE.md'de, ilk geçiş ve geri alma notları"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "4cf34961",
+          "subject": "Helm bellek oturumu koruması değeri uygulama gibi okur — kırpılmış, büyük/küçük harf duyarsız"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "64b1296c",
+          "subject": "çok pod C1 inceleme düzeltmeleri — fırtına iki aşamalı kapanır, kurtarma tek kez; sonucu yazılamayan push'un kirası tutulur; küçük envanterde kesinti kapanır, yönetici postası kararı iz bırakır"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "8b3679d5",
+          "subject": "çok pod R1 C2 son inceleme — terfi sahiplenmesi seviyeden önce, çözüm postası sahiplenme hatasında çift gitmez, bakım e-postası yarıda kalmaz, 421 geç denemesi gönderilmez, ortak kapanış süresi"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "b9094dee",
+          "subject": "çok pod inceleme düzeltmeleri — takipçi kira gözlemi tek çift, cron turu kaybolmaz, haftalık erişilebilirlik yakalaması, \"düzeldi\" sahiplenmesi"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "0c76adc9",
+          "subject": "çok pod inceleme — eski sürüm liderde elle kontrol yerel değerlendirilir, bekleyen değişiklik sorgusu daraldı, süresi dolan değişiklik iz bırakır"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "083bfdfe",
+          "subject": "çok pod sürüm 1 belgeleri birleştirildi — CLAUDE.md çok pod sözleşmesi, kılavuz, RUNBOOK sayıları"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "6b349442",
+          "subject": "kapanışta liderlik kirası ilk bırakılır, grace 120 sn — bildirim havuzu boşaltması (≤ 20 sn) bütçeye girdi"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "fd681ed7",
+          "subject": "çok pod — 7/24 teslim satırlarının SMTP 421 kuyruk sonucu yazılır, yetim QUEUED_RETRY \"gitti\" sayılmaz"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "02079a2b",
+          "subject": "postgres-it ertelenmiş indeks kapısı tekil ux_ indeksini tanır (olaysız push tekilliği)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "7375e4fe",
+          "subject": "push outbox kirası her batch'ten önce tazelenir, sahiplenme düşerse gönderim yok; olaysız push satırları tekil"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "39b90113",
+          "subject": "fırtına kapanışı koşullu sahiplenilir ve kilit tazelenir, 7/24 teslim satırı CAS ile yeniden alınır — kurtarma bildirimi tek kez"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "6400b60c",
+          "subject": "sertifika ağ kesintisi durumu veritabanında — iki pod'da tek açılış ve tek çözüm postası, her pod'da aynı pano"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "e49034ce",
+          "subject": "haftalık erişilebilirlik postası takım × hafta başına en çok bir kez — takım başına sahiplenme, bir takımın hatası diğerlerini durdurmaz"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "0d716da5",
+          "subject": "haftalık rapor onay/iade/gönder geçişi önce koşullu UPDATE ile alınır — çift tık, iki sekme ya da iki pod müdüre/PO'ya ikinci posta ve push göndermez"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "9acd632d",
+          "subject": "çok pod işletim betikleri ve belgeleri — duman testi, çift-iş dedektörü, node egress denetimi, RUNBOOK \"Çok pod\""
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "8277b0ff",
+          "subject": "çok pod kapanış bütçesi ve Helm korumaları — grace 90 sn, preStop 10 sn, bellek oturumu + çok pod reddi, staging sabit 2 replika"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "3e61098e",
+          "subject": "çok pod — sertifika alarmı sahiplenmeleri, kalıcı çözüm bildirimi, SMTP 421 yetim satırları ve kapanışta bildirim boşaltma"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "93cdfea2",
+          "subject": "çok pod — giriş anomalisi taraması tek pod'da ve deneme damgalı, sistem bakımı sahiplenmeleri yarıda kalmaz"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "d0b7409f",
+          "subject": "çok pod — alarm durumu liderlik devrinden sağ çıkar, değişiklik alarmı kaybolmaz, takipçideki elle kontrol liderde değerlendirilir"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "9dd8a925",
+          "subject": "çok pod koordinasyon çekirdeği — yenilenen küme kilidi, güvenli taraf, iki aşamalı tur, erken kapanış, tıkanmış lider"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "cce03529",
+          "subject": "çok pod temeli — liderlik değişimi olayı ve iki pod test düzeneği"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.164.0",
       "tag": "v20.164.0",
