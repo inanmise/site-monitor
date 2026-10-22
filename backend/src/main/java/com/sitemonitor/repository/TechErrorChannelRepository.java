@@ -50,6 +50,14 @@ public interface TechErrorChannelRepository extends JpaRepository<TechErrorChann
     int updateSortOrder(@Param("id") Long id, @Param("teamId") Long teamId, @Param("order") int order,
                         @Param("at") Instant at, @Param("by") Long by);
 
+    /**
+     * Takımın kanal satırlarını kimlik sırasıyla (artan) KİLİTLER (son inceleme 2026-10-22, kilit sırası): toplu kanal sırası
+     * satırları kullanıcının sırasıyla güncelliyordu; takım taşıma ({@code TeamAdminService.moveAll}) aynı satırları kimlik
+     * sırasıyla tutar — iki yön birbirini bekleyip kilitlenebilirdi. Çağıranın işleminde çalışır; H2 de destekler.
+     */
+    @Query(value = "SELECT id FROM tech_error_channels WHERE team_id = :teamId ORDER BY id FOR UPDATE", nativeQuery = true)
+    List<Long> lockForTeam(@Param("teamId") Long teamId);
+
     /** Takımın kanallarının sıra numaraları (kimlik, sıra) — toplu sıranın yazıldıktan sonraki doğrulaması. */
     @Query("SELECT c.id, c.sortOrder FROM TechErrorChannel c WHERE c.teamId = :teamId")
     List<Object[]> orderRows(@Param("teamId") Long teamId);

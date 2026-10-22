@@ -556,11 +556,13 @@ public class WeakAlgorithmReportService {
         String sig = lc.getSignatureAlgorithm() == null ? "" : lc.getSignatureAlgorithm().toUpperCase(Locale.ROOT);
         if (sig.contains("MD2") || sig.contains("MD5")) keys.add("sig.md5");
         if (sig.contains("SHA1") || sig.contains("SHA-1")) keys.add("sig.sha1");
-        String key = lc.getPublicKeyAlgorithm() == null ? "" : lc.getPublicKeyAlgorithm().toUpperCase(Locale.ROOT);
+        // Anahtar ailesi sağlık kuralıyla AYNI kaynaktan (son inceleme 2026-10-22, DATA-13 paritesi): "DSA" alt dizesi EdDSA /
+        // ML-DSA'yı da yakalıyordu — Ed25519 yaprak sertifika sahte bir key.rsa1024 KRİTİK kural anahtarı alıyordu.
+        String family = CertificateHealthRules.sizedKeyFamily(lc.getPublicKeyAlgorithm());
         Integer size = lc.getPublicKeySize();
-        if (size != null) {
-            if ((key.contains("RSA") || key.contains("DSA")) && size < 2048) keys.add(size <= 1024 ? "key.rsa1024" : "key.rsa2048");
-            else if (key.contains("EC") && size < 256) keys.add(size < 192 ? "key.ec192" : "key.ec256");
+        if (size != null && size > 0) {
+            if (CertificateHealthRules.FAMILY_RSA_DSA.equals(family) && size < 2048) keys.add(size <= 1024 ? "key.rsa1024" : "key.rsa2048");
+            else if (CertificateHealthRules.FAMILY_EC.equals(family) && size < 256) keys.add(size < 192 ? "key.ec192" : "key.ec256");
         }
         return keys;
     }

@@ -296,8 +296,11 @@ public class InventoryImportService {
             if (gid != null && !groupBelongsTo(gid, teamId)) { it.setNotificationGroupId(null); ch.add("notification_group"); }
         }
         if (ugTeamId != null && !Objects.equals(it.getUgTeamId(), ugTeamId)) { it.setUgTeamId(ugTeamId); ch.add("ug_team"); }
-        // UG = SY anlamsız (aynı takım iki rolde): moveAll / transfer ile aynı kural — UG düşer.
-        if (it.getUgTeamId() != null && Objects.equals(it.getUgTeamId(), it.getTeamId())) {
+        // UG = SY anlamsız (aynı takım iki rolde): moveAll / transfer ile aynı kural — UG düşer. YALNIZ bu satırda takım ya da
+        // UG gerçekten değiştiyse (ya da yeni kayıtsa) — son inceleme 2026-10-22: yalnız açıklaması değişen eski satırlar da
+        // UG'sini kaybedip geçmiş / damga / denetim gürültüsü yazıyordu (yönlendirme sonucu aynı).
+        boolean teamTouched = isNew || ch.contains("team") || ch.contains("ug_team");
+        if (teamTouched && it.getUgTeamId() != null && Objects.equals(it.getUgTeamId(), it.getTeamId())) {
             it.setUgTeamId(null);
             if (!ch.remove("ug_team") && !isNew) ch.add("ug_team");
         }

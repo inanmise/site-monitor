@@ -182,6 +182,45 @@ class TeamAdminDocumentsTest {
     }
 
     @Test
+    @DisplayName("Son inceleme 2026-10-22 · kilit sırası: moveAll önce RAPOR satırlarını, sonra KANAL satırlarını kimlik sırasıyla kilitler — "
+            + "ilk kanal UPDATE'inden ÖNCE (kanal silme: raporlar → kanal ile aynı yön)")
+    void moveAllLocksReportsThenChannelsFirst() {
+        TechErrorChannel ch1 = channel(a, "Mobil", 1);
+        report(ch1, 9);
+        List<String> sql = new java.util.ArrayList<>();
+        JdbcTemplate recording = new JdbcTemplate(dataSource) {
+            @Override
+            public <T> List<T> queryForList(String q, Class<T> type, Object... args) {
+                sql.add(q);
+                return super.queryForList(q, type, args);
+            }
+
+            @Override
+            public int update(String q, Object... args) {
+                sql.add(q);
+                return super.update(q, args);
+            }
+        };
+        service.setJdbc(recording);
+
+        service.moveAll(a, b);
+
+        int lockReports = indexOf(sql, "SELECT id FROM tech_error_reports WHERE team_id = ? ORDER BY id FOR UPDATE");
+        int lockChannels = indexOf(sql, "SELECT id FROM tech_error_channels WHERE team_id = ? ORDER BY id FOR UPDATE");
+        int firstChannelUpdate = indexOf(sql, "UPDATE tech_error_channels");
+        int firstReportUpdate = indexOf(sql, "UPDATE tech_error_reports");
+        assertThat(lockReports).as("rapor kilidi var").isGreaterThanOrEqualTo(0);
+        assertThat(lockReports).isLessThan(lockChannels);
+        assertThat(lockChannels).isLessThan(firstChannelUpdate);
+        assertThat(lockChannels).isLessThan(firstReportUpdate);
+    }
+
+    private static int indexOf(List<String> sql, String prefix) {
+        for (int i = 0; i < sql.size(); i++) if (sql.get(i).startsWith(prefix)) return i;
+        return -1;
+    }
+
+    @Test
     @DisplayName("moveAll: hedefte aynı adlı kanal (harf duyarsız) ya da şablon → 409 TEAM_MOVE_*_CLASH, HİÇBİR şey taşınmaz")
     void moveAllRefusesNameClash() {
         channel(a, "Mobil", 1);

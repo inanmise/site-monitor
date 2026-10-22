@@ -2225,6 +2225,22 @@ public class SchedulerService {
     static final String CRON_CRITICAL_DOMAIN = "${site.monitor.domain.critical-check-cron:0 0 16 * * *}";
     private static final String ZONE_IST = "Europe/Istanbul";
 
+    /**
+     * Toplu ağ kesintisi oranına giren hata sayısı: {@code status=error} ve sınıfı {@code DNS} / {@code NETWORK} olan sonuçlar —
+     * bağlanmadan önce DNS'te ÇÖZÜLEMEYEN alan adları HARİÇ ({@link CertificateCheckerService#UNRESOLVABLE_HOST}, son inceleme
+     * 2026-10-22): kaldırılmış / yanlış yazılmış host gerçek bir bulgudur, çıkış kesintisi değil; 20.165.0'da BLOCKED olarak
+     * zaten sayılmıyordu. Bağlantı sırasında çözülemeyen (UnknownHost) sonuçlar eskisi gibi sayılır.
+     */
+    static long networkErrorCount(List<Map<String, Object>> results) {
+        if (results == null) return 0;
+        return results.stream()
+                .filter(r -> r != null && "error".equals(r.get("status")))
+                .filter(r -> !Boolean.TRUE.equals(r.get(CertificateCheckerService.UNRESOLVABLE_HOST)))
+                .map(r -> r.get("error_class"))
+                .filter(c -> "DNS".equals(c) || "NETWORK".equals(c))
+                .count();
+    }
+
     /** Full sweep: runs at the top of every hour (configurable via site.monitor.scheduler.cron). */
     @Scheduled(cron = "${site.monitor.scheduler.cron:0 0 * * * *}")
     public void scheduledHourlyCheck() {
@@ -3138,11 +3154,7 @@ public class SchedulerService {
 
             long errors   = results.stream().filter(r -> "error".equals(r.get("status"))).count();
             long warnings = results.stream().filter(r -> Boolean.TRUE.equals(r.get("warning"))).count();
-            long networkErrors = results.stream()
-                    .filter(r -> "error".equals(r.get("status")))
-                    .map(r -> (String) r.get("error_class"))
-                    .filter(c -> "DNS".equals(c) || "NETWORK".equals(c))
-                    .count();
+            long networkErrors = networkErrorCount(results);
             double networkErrorRate = results.isEmpty() ? 0.0 : (double) networkErrors / results.size();
             log.info("Check complete — runId={}, Total={}, Warning={}, Error={}, NetworkErrors={} (rate={}) [instance={}]",
                     runId, results.size(), warnings, errors, networkErrors,

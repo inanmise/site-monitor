@@ -90,6 +90,8 @@ class CertificateCheckerReviewTest {
         assertThat(r.get("error_class")).isEqualTo("DNS");
         assertThat(r.get("error_stage")).isEqualTo("dns");
         assertThat(r.get("error")).isEqualTo("Domain resolution failed");
+        // Son inceleme 2026-10-22: çözülmeyen ad toplu ağ kesintisi oranına girmez (gerçek bulgu, çıkış kesintisi değil)
+        assertThat(r.get(CertificateCheckerService.UNRESOLVABLE_HOST)).isEqualTo(true);
     }
 
     @Test
@@ -113,9 +115,8 @@ class CertificateCheckerReviewTest {
 
     // ── CHECKS-10 ───────────────────────────────────────────────────────────────────────────────
 
-    @Test
-    @DisplayName("CHECKS-10: 8443 gibi 443 dışı portta http_status O PORTUN HEAD yanıtıdır (443'ün değil)")
-    void nonDefaultPort_httpStatusFromThatPort() throws Exception {
+    /** Yerel HTTPS sunucusu; {@code alpn} null değilse sunucu o protokolü ALPN ile seçer. HEAD sayısı {@code heads}'e yazılır. */
+    private static HttpsServer httpsServer(String alpn, AtomicInteger heads, java.util.concurrent.ExecutorService pool) throws Exception {
         Security.addProvider(new BouncyCastleProvider());
         KeyPairGenerator g = KeyPairGenerator.getInstance("RSA");
         g.initialize(2048);
@@ -129,30 +130,81 @@ class CertificateCheckerReviewTest {
         SSLContext ctx = SSLContext.getInstance("TLS");
         ctx.init(kmf.getKeyManagers(), null, new SecureRandom());
         HttpsServer server = HttpsServer.create(new InetSocketAddress("localhost", 0), 0);
-        server.setHttpsConfigurator(new HttpsConfigurator(ctx));
-        AtomicInteger heads = new AtomicInteger();
+        server.setHttpsConfigurator(new HttpsConfigurator(ctx) {
+            @Override
+            public void configure(com.sun.net.httpserver.HttpsParameters p) {
+                javax.net.ssl.SSLParameters sp = ctx.getDefaultSSLParameters();
+                if (alpn != null) sp.setApplicationProtocols(new String[]{ alpn });
+                p.setSSLParameters(sp);
+            }
+        });
         server.createContext("/", ex -> {
             if ("HEAD".equals(ex.getRequestMethod())) heads.incrementAndGet();
             ex.sendResponseHeaders(204, -1);
             ex.close();
         });
         // Çok iş parçacıklı: kontrolün TLS soketi HEAD sırasında açık kalır; tek iş parçacıklı sunucu ona takılırdı
-        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newCachedThreadPool();
         server.setExecutor(pool);
         server.start();
+        return server;
+    }
+
+    @Test
+    @DisplayName("CHECKS-10: 8443 gibi 443 dışı portta http_status O PORTUN HEAD yanıtıdır (443'ün değil) — el sıkışma ALPN http/1.1 anlaştı")
+    void nonDefaultPort_httpStatusFromThatPort() throws Exception {
+        AtomicInteger heads = new AtomicInteger();
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newCachedThreadPool();
+        HttpsServer server = httpsServer("http/1.1", heads, pool);
         try {
             int port = server.getAddress().getPort();
             SsrfGuard guard = mock(SsrfGuard.class);   // localhost; politika SsrfGuardTest'te
             when(guard.validate(anyString())).thenReturn(List.of());
-            Map<String, Object> r = checker(guard).check("localhost", port);
+            CertificateCheckerService c = checker(guard);
+            ReflectionTestUtils.setField(c, "tlsMode", "browser");   // ALPN [h2, http/1.1] önerilir
+            Map<String, Object> r = c.check("localhost", port);
 
             assertThat(r.get("status")).as("error=%s", r.get("error")).isNotEqualTo("error");
+            assertThat(r.get("alpn")).isEqualTo("http/1.1");
             assertThat(r.get("http_status")).isEqualTo(204);
             assertThat(heads.get()).isGreaterThanOrEqualTo(1);
         } finally {
             server.stop(0);
             pool.shutdownNow();
         }
+    }
+
+    @Test
+    @DisplayName("CHECKS-10 (son inceleme 2026-10-22): ALPN anlaşmayan, bilinmeyen 443 dışı port (LDAPS / SMTPS gibi) → HTTP HEAD GÖNDERİLMEZ, http_status bilinmiyor")
+    void nonHttpPort_noHeadProbe() throws Exception {
+        AtomicInteger heads = new AtomicInteger();
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newCachedThreadPool();
+        HttpsServer server = httpsServer(null, heads, pool);
+        try {
+            int port = server.getAddress().getPort();
+            SsrfGuard guard = mock(SsrfGuard.class);
+            when(guard.validate(anyString())).thenReturn(List.of());
+            Map<String, Object> r = checker(guard).check("localhost", port);   // "default" kip: ALPN önerilmez
+
+            assertThat(r.get("status")).as("error=%s", r.get("error")).isNotEqualTo("error");
+            assertThat(r.get("http_status")).isNull();
+            assertThat(heads.get()).isZero();
+        } finally {
+            server.stop(0);
+            pool.shutdownNow();
+        }
+    }
+
+    @Test
+    @DisplayName("httpLikely: ALPN h2 / http/1.1 ya da bilinen HTTPS portu → yokla; LDAPS / SMTPS / IMAPS / ALPN'siz bilinmeyen port → yoklama")
+    void httpLikelyRule() {
+        assertThat(CertificateCheckerService.httpLikely(12345, "h2")).isTrue();
+        assertThat(CertificateCheckerService.httpLikely(12345, "http/1.1")).isTrue();
+        assertThat(CertificateCheckerService.httpLikely(8443, "")).isTrue();
+        assertThat(CertificateCheckerService.httpLikely(8443, null)).isTrue();
+        assertThat(CertificateCheckerService.httpLikely(636, "")).isFalse();
+        assertThat(CertificateCheckerService.httpLikely(465, null)).isFalse();
+        assertThat(CertificateCheckerService.httpLikely(993, "imap")).isFalse();
+        assertThat(CertificateCheckerService.httpLikely(5671, "amqp")).isFalse();
     }
 
     @Test

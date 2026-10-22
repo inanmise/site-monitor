@@ -154,6 +154,23 @@ class InventoryImportFixesTest {
     }
 
     @Test
+    @DisplayName("Son inceleme 2026-10-22: takımı DEĞİŞMEYEN satırda eski UG = SY dokunulmaz — yalnız gelen alan değişir (geçmiş / denetim gürültüsü yok)")
+    void untouchedTeamKeepsLegacyUg() {
+        CertificateInventory ex = existing("legacy.example.com", 5L);
+        ex.setUgTeamId(5L);
+        ex.setTier(3);
+        var r = service.commit(List.of(row("domain", "legacy.example.com", "tier", "2")), t -> true, "admin", null);
+        assertThat(r.updated()).isEqualTo(1);
+        assertThat(ex.getUgTeamId()).isEqualTo(5L);
+        assertThat(r.rows().get(0).changes()).containsExactly("tier");
+
+        // Değişiklik yoksa satır hiç güncellenmez
+        var none = service.commit(List.of(row("domain", "legacy.example.com", "tier", "2")), t -> true, "admin", null);
+        assertThat(none.updated()).isZero();
+        assertThat(ex.getUgTeamId()).isEqualTo(5L);
+    }
+
+    @Test
     @DisplayName("ADMIN-4: oturumla yapılan içe aktarma güncellemesi 'son güncelleyen' künyesini basar")
     void updateStampsUpdatedBy() {
         CertificateInventory ex = existing("stamp.example.com", 5L);

@@ -449,6 +449,12 @@ public class TeamAdminService {
     /** Planı uygular: kanallar (+ rapor / görsel / geçmiş / şablon sürümü satırlarındaki takım kopyası) ve şablonlar. */
     private void applyDocumentMove(DocumentMove docs, Long from, Long to, Map<String, Integer> moved) {
         if (docs == null || jdbc == null) return;
+        // KİLİT SIRASI (son inceleme 2026-10-22, CLAUDE.md "LOCK ORDER"): önce taşınan RAPOR satırları kimlik sırasıyla, sonra
+        // KANAL satırları kimlik sırasıyla — kanal silme (raporlar → kanal) ve kanal sırası (kanallar kimlik sırasıyla) ile
+        // aynı yön. Eskiden kanallar önce güncelleniyordu: kanal silme raporları tutup kanalı beklerken burada kanal tutulup
+        // raporlar bekleniyordu (PostgreSQL 40P01 → 503 LOCK_CONFLICT).
+        jdbc.queryForList("SELECT id FROM tech_error_reports WHERE team_id = ? ORDER BY id FOR UPDATE", Long.class, from);
+        jdbc.queryForList("SELECT id FROM tech_error_channels WHERE team_id = ? ORDER BY id FOR UPDATE", Long.class, from);
         int order = docs.nextOrder();
         for (Long id : docs.channelIds()) {
             jdbc.update("UPDATE tech_error_channels SET team_id = ?, sort_order = ? WHERE id = ? AND team_id = ?",

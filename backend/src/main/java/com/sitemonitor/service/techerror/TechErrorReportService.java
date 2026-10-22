@@ -335,6 +335,9 @@ public class TechErrorReportService {
      */
     @Transactional
     public ReorderResult reorderChannels(Long teamId, List<Long> ids, Long by) {
+        // Kilit sırası (son inceleme 2026-10-22): takımın kanal satırları ÖNCE kimlik sırasıyla kilitlenir — takım taşımayla
+        // (raporlar → kanallar, kimlik sırasıyla) aynı yön; satırlar kullanıcının sırasıyla güncellenince iki yol kilitlenebilirdi.
+        channels.lockForTeam(teamId);
         List<TechErrorChannel> team = channels(List.of(teamId));          // o anki "Sıra": sıra no artan, boş en sonda, ad
         List<Long> before = new ArrayList<>(team.size());
         Map<Long, TechErrorChannel> byId = new HashMap<>();
