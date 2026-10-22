@@ -894,7 +894,7 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
         week_no: w,
         carry_notes: !!carry,   // geçen haftadan devam (2026-09-13)
       })
-    } catch (e) { failToast(e); return }
+    } catch (e) { failToast(e); return null }
     if (res?.success) {
       setNewReport(null)
       toast.success(t('wr.created'))
@@ -903,9 +903,14 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
       loadYears()
       setWeekMarks({})
       setSelectedId(res.data.id)
+    } else if (res?.field === 'team_id' || res?.fields?.team_id != null) {
+      // K8 (2026-10-22): global olmayan aktörün yabancı team_id'si 400 VALIDATION_FAILED field=team_id — sunucu metni
+      // oluşturma ekranında TAKIM adımının altında gösterilir (yalnız bildirim değil); ekran açık kalır.
+      return { field: 'team_id', error: res.error || res.fields?.team_id || t('wr.actionFailed') }
     } else {
       toast.error(res?.error?.includes('DUPLICATE_WEEK') ? t('wr.duplicateWeek') : (res?.error || t('wr.actionFailed')))
     }
+    return null
   }
 
   async function deleteReport(r) {
