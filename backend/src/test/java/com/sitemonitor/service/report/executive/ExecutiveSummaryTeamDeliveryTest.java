@@ -67,6 +67,10 @@ class ExecutiveSummaryTeamDeliveryTest {
         when(repo.saveAndFlush(any())).thenAnswer(i -> i.getArgument(0));
         when(teamRepo.findByTeamIdAndReportYearAndReportMonth(anyLong(), anyInt(), anyInt())).thenReturn(Optional.empty());
         when(teamRepo.saveAndFlush(any())).thenAnswer(i -> i.getArgument(0));
+        // Koşullu bitirme (R2a, MP-42): bütün varlık kaydı yerine; talep edilen satırın alanları nesnede güncellenir
+        when(repo.finishIfClaimed(any(), any(), any(), any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
+        // Koşullu bitirme (R2a, MP-42): bütün varlık kaydı yerine; talep edilen satırın alanları nesnede güncellenir
+        when(teamRepo.finishIfClaimed(any(), any(), any(), any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
         when(email.sendHtmlBccWithAttachments(any(), anyString(), anyString(), anyString(), anyList())).thenReturn("SENT");
         when(users.findByActiveTrueOrderByUsernameAsc()).thenReturn(List.of());
         when(teamService.enabledTeamIds()).thenReturn(List.of(5L, 6L));
@@ -107,8 +111,11 @@ class ExecutiveSummaryTeamDeliveryTest {
         assertThat(subject.getAllValues().get(0)).startsWith("[Site Monitor] Aylık Yönetici Özeti · Ödeme Sistemleri · Eylül 2026");
         assertThat(att.getAllValues().get(0).get(0).fileName()).isEqualTo("site-monitor-yonetici-ozeti-odeme-sistemleri-2026-09.pdf");
 
+        // Yeniden temel (2026-10-22, R2a MP-42): bitirme koşullu UPDATE; talep nesneleri güncellenir
         ArgumentCaptor<ExecutiveSummaryTeamReport> rows = ArgumentCaptor.forClass(ExecutiveSummaryTeamReport.class);
-        verify(teamRepo, times(2)).save(rows.capture());
+        verify(teamRepo, times(2)).saveAndFlush(rows.capture());
+        verify(teamRepo, times(2)).finishIfClaimed(any(), any(), eq("SENT"), any(), any(), any(), any(), any(), any(), any());
+        verify(teamRepo, never()).save(any());
         assertThat(rows.getAllValues()).extracting(ExecutiveSummaryTeamReport::getTeamId).containsExactly(5L, 6L);
         assertThat(rows.getAllValues()).allSatisfy(x -> {
             assertThat(x.getStatus()).isEqualTo(ExecutiveSummaryTeamReport.SENT);
@@ -153,7 +160,7 @@ class ExecutiveSummaryTeamDeliveryTest {
         verify(email, times(1)).sendHtmlBccWithAttachments(bcc.capture(), anyString(), anyString(), anyString(), anyList());
         assertThat(bcc.getValue()).containsExactly("ag@example.com");
         ArgumentCaptor<ExecutiveSummaryTeamReport> rows = ArgumentCaptor.forClass(ExecutiveSummaryTeamReport.class);
-        verify(teamRepo, times(2)).save(rows.capture());
+        verify(teamRepo, times(2)).saveAndFlush(rows.capture());         // R2a MP-42: koşullu bitirme
         assertThat(rows.getAllValues()).extracting(ExecutiveSummaryTeamReport::getStatus)
                 .containsExactly(ExecutiveSummaryTeamReport.FAILED, ExecutiveSummaryTeamReport.SENT);
     }
@@ -167,7 +174,7 @@ class ExecutiveSummaryTeamDeliveryTest {
         svc.runScheduled();
         verify(email, never()).sendHtmlBccWithAttachments(any(), anyString(), anyString(), anyString(), anyList());
         ArgumentCaptor<ExecutiveSummaryTeamReport> rows = ArgumentCaptor.forClass(ExecutiveSummaryTeamReport.class);
-        verify(teamRepo, times(1)).save(rows.capture());
+        verify(teamRepo, times(1)).saveAndFlush(rows.capture());         // R2a MP-42: koşullu bitirme
         assertThat(rows.getValue().getStatus()).isEqualTo(ExecutiveSummaryTeamReport.NO_RECIPIENT);
         ArgumentCaptor<NotificationLog> log = ArgumentCaptor.forClass(NotificationLog.class);
         verify(logs).save(log.capture());

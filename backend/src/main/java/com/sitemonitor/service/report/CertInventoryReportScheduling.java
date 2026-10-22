@@ -23,6 +23,11 @@ import java.time.ZoneId;
  * <p>Kilit: çok-pod'da tek pod göndersin diye {@link SchedulerService#runWithSchedulerLock}
  * kullanılır — diğer cron işleriyle aynı mekanizma. Ek güvence olarak servis içinde yıl+ay
  * idempotensi var; kilit kaçsa bile ikinci mail gitmez.
+ *
+ * <p><b>Çok pod R2a (MP-42, 2026-10-22):</b> kilit iş bitince bırakılır ve gönderim işlemi COMMIT olmadan "bugün gönderildi"
+ * kapısı görünmez — geç tetiklenen ikinci pod raporu İKİNCİ kez yollayabiliyordu. Tetik artık küme genelinde BİR KEZ
+ * ({@link SchedulerService#claimCronRound}, tur {@value #ROUND}) ve yalnız CANLI cron bu dakikada tetikleniyorsa
+ * ({@link LiveCron} — ayardan sonra değişen zamanlamada eski planlı tetik göndermez). Tur adı KALICI.
  */
 @Slf4j
 @Configuration
@@ -30,6 +35,8 @@ import java.time.ZoneId;
 public class CertInventoryReportScheduling implements SchedulingConfigurer {
 
     static final String LOCK = "cert-inventory-report";
+    /** Planlı tetiğin küme turu (R2a, MP-42) — KALICI ad. */
+    static final String ROUND = "cert-inventory-report";
     private static final ZoneId IST = ZoneId.of("Europe/Istanbul");
 
     private final CertificateInventoryReportService reportService;
@@ -41,8 +48,7 @@ public class CertInventoryReportScheduling implements SchedulingConfigurer {
     @Override
     public void configureTasks(ScheduledTaskRegistrar registrar) {
         registrar.addTriggerTask(
-                () -> schedulerService.runWithSchedulerLock(LOCK,
-                        () -> reportService.sendMonthlyReport(false)),
+                () -> schedulerService.runWithSchedulerLock(LOCK, () -> scheduledTick(Instant.now())),
                 context -> {
                     String expr = reportService.cron();
                     try {
@@ -60,5 +66,20 @@ public class CertInventoryReportScheduling implements SchedulingConfigurer {
                         }
                     }
                 });
+    }
+
+    /** Planlı tetik (kilit altında): canlı cron bu dakikada tetikleniyorsa ve tur bu pod'a düştüyse gönderir. */
+    void scheduledTick(Instant now) {
+        String cron = LiveCron.effective(reportService.cron(), fallbackCron);
+        if (!LiveCron.firesNow(cron, fallbackCron, IST, now)) {
+            log.info("Aylık envanter raporu: planlı tetik canlı zamanlamaya ({}) uymuyor — zamanlama değişmiş, bu tetikte gönderilmedi",
+                    cron);
+            return;
+        }
+        if (!schedulerService.claimCronRound(ROUND, cron, IST.getId())) {
+            log.debug("Aylık envanter raporu: bu planlı tetik başka bir pod'da koştu");
+            return;
+        }
+        reportService.sendMonthlyReport(false);
     }
 }

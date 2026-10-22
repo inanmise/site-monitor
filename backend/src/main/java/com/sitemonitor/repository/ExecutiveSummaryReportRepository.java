@@ -35,4 +35,22 @@ public interface ExecutiveSummaryReportRepository extends JpaRepository<Executiv
                 @Param("expectedAttempts") Integer expectedAttempts, @Param("nextAttempts") Integer nextAttempts,
                 @Param("claimedAt") String claimedAt, @Param("triggerKind") String triggerKind,
                 @Param("actor") String actor);
+
+    /**
+     * KOŞULLU bitirme (çok pod R2a, MP-42, 2026-10-22): yalnız hâlâ BU talebin ({@code claimedAt}) SENDING satırı yazılır —
+     * yarıda kalan talebi devralan başka bir pod ile eski sahip birbirinin sonucunu ezmez (eskiden bütün varlık kaydediliyordu).
+     * Dönen: güncellenen satır sayısı (0 = talep artık bu çağıranın değil).
+     */
+    @Modifying
+    @Transactional
+    @Query("""
+            UPDATE ExecutiveSummaryReport r
+               SET r.status = :status, r.recipientCount = :recipients, r.chunkCount = :chunks, r.detail = :detail,
+                   r.subject = :subject, r.summaryStatus = :summaryStatus, r.summaryJson = :summaryJson, r.sentAt = :sentAt
+             WHERE r.id = :id AND r.status = 'SENDING' AND r.claimedAt = :claimedAt
+            """)
+    int finishIfClaimed(@Param("id") Long id, @Param("claimedAt") String claimedAt, @Param("status") String status,
+                        @Param("recipients") Integer recipients, @Param("chunks") Integer chunks, @Param("detail") String detail,
+                        @Param("subject") String subject, @Param("summaryStatus") String summaryStatus,
+                        @Param("summaryJson") String summaryJson, @Param("sentAt") String sentAt);
 }
