@@ -74,9 +74,21 @@ public class TlsGradeChange {
     @Column(name = "notify_state", length = 60)
     private String notifyState;
 
-    /** Bildirim kararının zamanı (ISO-8601 UTC). */
+    /**
+     * Bildirim kararının zamanı (ISO-8601 UTC). {@code SENDING} iken TALEP anı (çok pod R2a, MP-43, 2026-10-22): yarıda kalan
+     * talep bu damgaya göre yaşlandırılır — eskiden düşüşün zamanına ({@code changed_at}) göre yaşlanıyordu ve bir saatten uzun
+     * bekleyen düşüş talep edildiği anda "yarıda kalmış" sayılabiliyordu.
+     */
     @Column(name = "notified_at", length = 19)
     private String notifiedAt;
+
+    /**
+     * Bildirimin YENİDEN DENENME sayısı (çok pod R2a, MP-43): alıcılar okunamadığında ya da talep hiçbir takıma ulaşmadan
+     * yarıda kaldığında artar; tavan ({@code TlsGradeDropNotifier.READ_RETRY_MAX}) dolunca kalıcı karar. Eskiden pod
+     * belleğindeydi — her yeniden başlama / liderlik değişimi sayacı sıfırlıyordu. Yalnız koşullu sorgular yazar.
+     */
+    @Column(name = "notify_attempts", insertable = false, updatable = false)
+    private Integer notifyAttempts;
 
     public static final String NOTIFY_PENDING = "PENDING";
     public static final String NOTIFY_SENDING = "SENDING";
