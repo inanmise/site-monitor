@@ -516,8 +516,12 @@ public class CertificateService {
      * listDns/createPort/updatePort/triggerPort gibi 5+ sıcak uç her çağrıda teams + 1000 satırlık
      * certificate_inventory TAM TARAMASI yaptırıyordu (100 kullanıcı × 5 dk poll → dakikada ~2000
      * gereksiz tarama). Envanter değişince zaten evictAllCaches çalışıyor.
+     *
+     * <p>{@code sync = true} (çok pod R2-A inceleme D-4): eşzamanlı ıskalamalar tek hesabı paylaşır ve kuşak korumalı yükleme
+     * ({@code BusAwareCacheManager}) bir boşaltmayla yarışan hesabı saklamaz — eskiden boşaltmadan önce başlamış bir hesap
+     * eski takım adlarını 300 sn yerleştirebiliyordu.
      */
-    @Cacheable("domain-team-names")
+    @Cacheable(value = "domain-team-names", sync = true)
     public Map<String, String> domainTeamNameMap() {
         Map<Long, String> teamNames = teamRepo.findAll().stream()
                 .filter(tm -> tm.getId() != null && tm.getName() != null)

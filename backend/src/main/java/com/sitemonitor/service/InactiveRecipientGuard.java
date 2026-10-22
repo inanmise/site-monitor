@@ -93,7 +93,10 @@ public class InactiveRecipientGuard {
      */
     void evictLocal() {
         generation.incrementAndGet();
-        snapshot = null;
+        // SİLİNMEZ, bayat işaretlenir (TeamAccessGrantService deseni): yeniden okuma hata verirse önceki liste kullanılır —
+        // eskiden boşaltma görüntüyü attığı için veritabanı hıçkırığında süzgeç TÜM pod'larda kalkıyordu (inceleme C-2)
+        Snapshot s = snapshot;
+        snapshot = s == null ? null : new Snapshot(s.ids(), s.emails(), Long.MIN_VALUE / 2);
     }
 
     private final java.util.concurrent.atomic.AtomicLong generation = new java.util.concurrent.atomic.AtomicLong();

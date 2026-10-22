@@ -69,11 +69,21 @@ public class BusAwareCacheManager extends CaffeineCacheManager implements SmartI
     }
 
     /**
-     * Boşaltmayı veri yoluna da bildiren Caffeine önbelleği. Kuşak korumalı yükleme (çok pod R2-A inceleme): bir boşaltma
-     * (yerel ya da öteki pod'un yayını) {@code sync = true} yüklemesi SÜRERKEN gelirse yüklenen değer saklanmaz — boşaltmadan
-     * önce okunmuş eski veri TTL boyunca kalmasın; çağıran yine sonucu alır, sonraki okuma yeniden hesaplar.
+     * Boşaltmayı veri yoluna da bildiren Caffeine önbelleği.
+     *
+     * <p><b>Kuşak damgalı değerler (çok pod R2-A inceleme C-1 / D-1).</b> Her değer, yüklemesinin BAŞLADIĞI kuşakla saklanır
+     * ({@link Stamped}); her boşaltma (yerel ya da öteki pod'un yayını) kuşağı artırır. Okunan değerin damgası güncel kuşaktan
+     * eskiyse o değer bir ISKALAMADIR: kaldırılır ve BİR kez yeniden yüklenir. Böylece öteki pod'un yayını uygulandıktan sonra
+     * gelen bir GET, boşaltmadan ÖNCE başlamış bir {@code sync = true} yüklemeye katılsa bile eski listeyi almaz (eskiden yalnız
+     * saklanması önleniyordu). Öteki pod'un yayını ({@link #clearLocal()}) yalnız kuşağı artırır — doğruluk için yeter — ve
+     * fiziksel temizliği kısa ömürlü bir arka plan işine bırakır: yeniden hesaplanan bir girdi Caffeine'in kutu kilidini
+     * tutarken veri yolu iş parçacığı beklemez. Yerel {@code clear()} (istek iş parçacığındaki {@code @CacheEvict}) eskisi
+     * gibi hemen temizler.
      */
     static final class BusAwareCaffeineCache extends CaffeineCache {
+
+        /** Değer + yüklemesinin başladığı kuşak. */
+        record Stamped(long generation, Object value) { }
 
         private final BusAwareCacheManager owner;
         private final java.util.concurrent.atomic.AtomicLong generation = new java.util.concurrent.atomic.AtomicLong();
@@ -85,11 +95,47 @@ public class BusAwareCacheManager extends CaffeineCacheManager implements SmartI
         }
 
         @Override
+        @SuppressWarnings("unchecked")
         public <T> T get(Object key, java.util.concurrent.Callable<T> valueLoader) {
-            long g = generation.get();
-            T v = super.get(key, valueLoader);
-            if (generation.get() != g) getNativeCache().invalidate(key);   // yükleme bir boşaltmayla yarıştı: saklama
-            return v;
+            com.github.benmanes.caffeine.cache.Cache<Object, Object> nc = getNativeCache();
+            for (int attempt = 0; ; attempt++) {
+                Object raw = nc.get(key, k -> {
+                    long started = generation.get();
+                    Object v;
+                    try {
+                        v = valueLoader.call();
+                    } catch (Exception ex) {
+                        throw new ValueRetrievalException(key, valueLoader, ex);
+                    }
+                    return new Stamped(started, toStoreValue(v));
+                });
+                if (!(raw instanceof Stamped st)) return (T) fromStoreValue(raw);
+                if (st.generation() == generation.get()) return (T) fromStoreValue(st.value());
+                nc.asMap().remove(key, raw);   // boşaltmadan önce başlamış yükleme: ıskalama
+                if (attempt >= 1) return (T) fromStoreValue(st.value());   // en çok bir yeniden yükleme (döngü yok)
+            }
+        }
+
+        @Override
+        protected Object lookup(Object key) {
+            com.github.benmanes.caffeine.cache.Cache<Object, Object> nc = getNativeCache();
+            Object raw = nc.getIfPresent(key);
+            if (!(raw instanceof Stamped st)) return raw;
+            if (st.generation() == generation.get()) return st.value();
+            nc.asMap().remove(key, raw);
+            return null;
+        }
+
+        @Override
+        public void put(Object key, @Nullable Object value) {
+            getNativeCache().put(key, new Stamped(generation.get(), toStoreValue(value)));
+        }
+
+        @Override
+        public ValueWrapper putIfAbsent(Object key, @Nullable Object value) {
+            Object existing = getNativeCache().asMap().putIfAbsent(key, new Stamped(generation.get(), toStoreValue(value)));
+            if (existing == null) return null;
+            return toValueWrapper(existing instanceof Stamped st ? st.value() : existing);
         }
 
         @Override
@@ -122,10 +168,29 @@ public class BusAwareCacheManager extends CaffeineCacheManager implements SmartI
             return any;
         }
 
-        /** Yalnız bu pod (öteki pod'un yayını uygulanırken). */
+        /**
+         * Yalnız bu pod (öteki pod'un yayını uygulanırken; veri yolu iş parçacığında): kuşak artar — eski damgalı her değer artık
+         * ıskalamadır — ve fiziksel temizlik arka plana bırakılır; bu çağrı Caffeine kilidini BEKLEMEZ.
+         */
         void clearLocal() {
-            generation.incrementAndGet();
-            super.clear();
+            long cutoff = generation.incrementAndGet();
+            com.github.benmanes.caffeine.cache.Cache<Object, Object> nc = getNativeCache();
+            try {
+                // Yalnız boşaltmadan ÖNCE damgalanmış girdiler silinir — arada yüklenmiş taze değer kalır
+                java.util.concurrent.ForkJoinPool.commonPool().execute(() -> {
+                    for (java.util.Map.Entry<Object, Object> e : nc.asMap().entrySet()) {
+                        Object v = e.getValue();
+                        if (!(v instanceof Stamped st) || st.generation() < cutoff) nc.asMap().remove(e.getKey(), v);
+                    }
+                });
+            } catch (java.util.concurrent.RejectedExecutionException e) {
+                // havuz yok: eski girdiler okununca / TTL ile düşer (doğruluk kuşaktan)
+            }
+        }
+
+        /** Test kancası: güncel kuşak. */
+        long generation() {
+            return generation.get();
         }
     }
 }

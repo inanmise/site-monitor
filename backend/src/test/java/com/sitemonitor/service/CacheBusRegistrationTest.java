@@ -282,6 +282,57 @@ class CacheBusRegistrationTest {
     }
 
     @Test
+    @DisplayName("C-2: uzak boşaltmadan sonra yeniden okuma veritabanı hatası verirse ÖNCEKİ görüntü kullanılır (boş değil)")
+    void remoteEvictThenDbError_keepsPreviousSnapshot() {
+        // Pasif alıcı süzgeci
+        AppUserRepository ur = mock(AppUserRepository.class);
+        when(ur.findInactiveIdsAndEmails()).thenReturn(List.<Object[]>of(new Object[] { 9L, "pasif@example.com" }))
+                .thenThrow(new org.springframework.dao.DataAccessResourceFailureException("db"));
+        InactiveRecipientGuard guard = new InactiveRecipientGuard(ur);
+        assertThat(guard.snapshot().ids()).containsExactly(9L);
+        guard.evictLocal();
+        assertThat(guard.snapshot().ids()).as("süzgeç hıçkırıkta kalkmaz").containsExactly(9L);
+
+        // 7/24 operatör takımları
+        NocSettingsRepository nr = mock(NocSettingsRepository.class);
+        TeamRepository teams = mock(TeamRepository.class);
+        com.sitemonitor.model.NocSettings ns = new com.sitemonitor.model.NocSettings();
+        ns.setOperatorTeamIds("5");
+        com.sitemonitor.model.Team t5 = new com.sitemonitor.model.Team();
+        t5.setId(5L);
+        t5.setActive(true);
+        when(nr.findById(any())).thenReturn(Optional.of(ns)).thenThrow(new org.springframework.dao.DataAccessResourceFailureException("db"));
+        when(teams.findAllById(any())).thenReturn(List.of(t5));
+        NocOperatorService noc = new NocOperatorService(nr, teams, mock(AppUserRepository.class));
+        assertThat(noc.teamIds()).containsExactly(5L);
+        ReflectionTestUtils.invokeMethod(noc, "invalidateLocal");
+        assertThat(noc.teamIds()).as("7/24 takımları hıçkırıkta kaybolmaz").containsExactly(5L);
+
+        // Sessiz saatler
+        TeamRepository qr = mock(TeamRepository.class);
+        com.sitemonitor.model.Team q = new com.sitemonitor.model.Team();
+        q.setId(7L);
+        q.setQuietStart("22:00");
+        q.setQuietEnd("07:00");
+        when(qr.findQuietConfigured()).thenReturn(List.of(q)).thenThrow(new org.springframework.dao.DataAccessResourceFailureException("db"));
+        TeamQuietHoursService quiet = new TeamQuietHoursService(qr, mock(QuietDigestItemRepository.class));
+        assertThat(quiet.isConfigured(7L)).isTrue();
+        quiet.invalidateLocal();
+        assertThat(quiet.isConfigured(7L)).as("sessiz saat hıçkırıkta kalkmaz").isTrue();
+
+        // Sistem bakımı
+        SystemMaintenanceWindowRepository sr = mock(SystemMaintenanceWindowRepository.class);
+        when(sr.findByCancelledAtIsNullAndEndAtGreaterThanOrderByStartAtAsc(anyString()))
+                .thenReturn(List.of(new com.sitemonitor.model.SystemMaintenanceWindow()))
+                .thenThrow(new org.springframework.dao.DataAccessResourceFailureException("db"));
+        SystemMaintenanceService sys = new SystemMaintenanceService(sr, mock(SystemMaintenanceSuppressionRepository.class),
+                mock(AuditService.class), mock(AppUserRepository.class), mock(UserService.class), mock(TeamRepository.class));
+        assertThat(sys.live()).hasSize(1);
+        sys.invalidateLocal();
+        assertThat(sys.live()).as("bakım görüntüsü hıçkırıkta kaybolmaz").hasSize(1);
+    }
+
+    @Test
     @DisplayName("Yarış: zayıf algoritma raporu hesaplanırken boşaltılırsa eski rapor okunmayan anahtara yazılır")
     void weakAlgo_evictDuringBuild_isNotStored() {
         CertificateInventoryRepository inv = mock(CertificateInventoryRepository.class);
