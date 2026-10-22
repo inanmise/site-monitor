@@ -107,11 +107,20 @@ public class WeakAlgorithmReportService {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     void setCacheBus(CacheBus bus) {
         this.cacheBus = bus;
-        if (bus != null) bus.register(CacheBusNames.WEAK_ALGO, memo::clear);
+        if (bus != null) bus.register(CacheBusNames.WEAK_ALGO, this::memoClearLocal);
+    }
+
+    /** Bellek kuşağı: anahtara girer, boşaltmada artar — boşaltmadan ÖNCE başlamış hesap eski raporu okunmayan anahtara yazar. */
+    private final java.util.concurrent.atomic.AtomicLong memoGeneration = new java.util.concurrent.atomic.AtomicLong();
+
+    /** Yalnız bu pod (öteki pod'un yayını da bunu çağırır; yeniden yayın yok). */
+    void memoClearLocal() {
+        memoGeneration.incrementAndGet();
+        memo.clear();
     }
 
     private void memoChanged() {
-        memo.clear();
+        memoClearLocal();
         CacheBus b = cacheBus;
         if (b != null) b.bump(CacheBusNames.WEAK_ALGO);
     }
@@ -141,7 +150,8 @@ public class WeakAlgorithmReportService {
      * tablosundan gelir ve kendi süzgecini ayrıca alır (aşağıya bakınız).
      */
     public Map<String, Object> build(List<Long> viewTeamIds) {
-        Map<String, Object> cached = memo.get(com.sitemonitor.util.TtlMemo.scopeKey(viewTeamIds == null, viewTeamIds),
+        Map<String, Object> cached = memo.get(memoGeneration.get() + "|"
+                        + com.sitemonitor.util.TtlMemo.scopeKey(viewTeamIds == null, viewTeamIds),
                 cacheMs, false, () -> buildUncached(viewTeamIds));
         return cached == null ? null : new java.util.LinkedHashMap<>(cached);   // üst düzey kopya: paylaşılan bellek değişmesin
     }

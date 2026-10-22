@@ -62,11 +62,39 @@ public class MaintenanceService {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     void setCacheBus(CacheBus bus) {
         this.cacheBus = bus;
-        if (bus != null) bus.register(CacheBusNames.MAINTENANCE_WINDOWS, this::reload);
+        if (bus != null) bus.register(CacheBusNames.MAINTENANCE_WINDOWS, this::markStale);
+    }
+
+    /**
+     * Öteki pod'un yayını (veri yolu iş parçacığında, yoklama kilitleri altında): yalnız BAYAT işaretler — veritabanı okuması
+     * yok (çok pod R2-A inceleme: yavaş sorgu veri yolunu dondurmasın). Görüntü bir sonraki okumada tazelenir ({@link #freshen}).
+     */
+    void markStale() {
+        invalidations.incrementAndGet();
+    }
+
+    /** Bayat işaretlerinin sayısı ve görüntünün yansıttığı değer — farklıysa sonraki okuma bir kez yeniden yükler. */
+    private final java.util.concurrent.atomic.AtomicLong invalidations = new java.util.concurrent.atomic.AtomicLong();
+    private volatile long loadedInvalidation;
+
+    /** Bayat işaretlendiyse bir kez yeniden yükler; okuma hata verirse işaret bırakılır (30 sn tazeleme dener — bugünkü davranış). */
+    private void freshen() {
+        if (loadedInvalidation == invalidations.get()) return;
+        synchronized (this) {
+            long want = invalidations.get();
+            if (loadedInvalidation == want) return;
+            try {
+                reload();
+            } catch (Exception e) {
+                loadedInvalidation = want;   // her okumada veritabanına gidilmesin
+                log.warn("Bakım penceresi önbelleği tazelenemedi (30 sn tazeleme yeniden dener): {}", e.getMessage());
+            }
+        }
     }
 
     /** Etkin pencereleri tarayıp şu an aktif olanların hedeflerini birleştirir (yalnız bu pod; yayın yok). */
     synchronized void reload() {
+        long gen = invalidations.get();
         Instant now = Instant.now();
         Set<String> targets = new HashSet<>();
         boolean all = false;
@@ -77,10 +105,12 @@ public class MaintenanceService {
         }
         this.activeTargets = targets;
         this.allActive = all;
+        this.loadedInvalidation = gen;
     }
 
-    /** Bir alarm-anahtarı (host/url/domain) şu an bakımda mı? O(1). */
+    /** Bir alarm-anahtarı (host/url/domain) şu an bakımda mı? O(1) (öteki pod yazdıysa bir kez yeniden yükler). */
     public boolean isUnderMaintenance(String target) {
+        freshen();
         return allActive || (target != null && activeTargets.contains(target));
     }
 
@@ -158,6 +188,7 @@ public class MaintenanceService {
 
     /** /active endpoint'i için: {all, targets}. */
     public Map<String, Object> activeInfo() {
+        freshen();
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("all", allActive);
         m.put("targets", new ArrayList<>(activeTargets));

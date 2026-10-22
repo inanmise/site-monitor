@@ -5,6 +5,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
@@ -19,7 +20,9 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.BooleanSupplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
@@ -50,16 +53,35 @@ class CacheBusH2Test {
     }
 
     CacheBus pod() {
-        CacheBus b = new CacheBus(mp.jdbc(), txm);
+        return pod(mp.jdbc(), txm);
+    }
+
+    CacheBus pod(JdbcTemplate jdbc, org.springframework.transaction.PlatformTransactionManager tm) {
+        CacheBus b = new CacheBus(jdbc, tm);
         b.clock = mp.clockSupplier();
         b.createdAtMs = mp.now();
         buses.add(b);
         return b;
     }
 
+    /** İş parçacığı çalışan pod (dönemsel yoklama uzak — yalnız zorunlu yoklama ve yayın). */
+    CacheBus livePod() throws InterruptedException {
+        CacheBus b = pod();
+        b.pollMs = 60_000;
+        b.start();
+        waitFor(() -> b.appliedGeneration() >= 0, 3000);   // açılış turu (taban)
+        return b;
+    }
+
     long gen(String name) {
         List<Long> l = mp.jdbc().queryForList("SELECT generation FROM cache_bus WHERE name = ?", Long.class, name);
         return l.isEmpty() ? -1 : l.get(0);
+    }
+
+    static void waitFor(BooleanSupplier cond, long ms) throws InterruptedException {
+        long end = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(ms);
+        while (!cond.getAsBoolean() && System.nanoTime() < end) Thread.sleep(10);
+        assertThat(cond.getAsBoolean()).as("koşul " + ms + " ms içinde sağlanmadı").isTrue();
     }
 
     @Test
@@ -142,9 +164,10 @@ class CacheBusH2Test {
     }
 
     @Test
-    @DisplayName("Başarısız yoklama bir sonraki turda yeniden dener — arada kaçan yayın kaybolmaz; başarısız yayın kuyrukta kalır")
-    void failedPoll_retries_failedBump_requeued() {
-        CacheBus a = pod(), b = pod();
+    @DisplayName("Tablo yok: kuyrukta kalır, yeniden bakma süresi dolmadan veritabanına GİDİLMEZ; tablo dönünce yayın + yoklama")
+    void tableMissing_rechecksRarely_thenRecovers() {
+        SlowDataSource ds = new SlowDataSource(mp.dataSource());
+        CacheBus a = pod(new JdbcTemplate(ds), new DataSourceTransactionManager(ds)), b = pod();
         AtomicInteger onB = new AtomicInteger();
         b.register("weak-algo", onB::incrementAndGet);
         a.pollNow();
@@ -154,13 +177,47 @@ class CacheBusH2Test {
         a.bump("weak-algo");
         a.flushPending();
         assertThat(a.hasPending()).as("tablo yok → yayın kuyrukta kalır").isTrue();
+        assertThat(a.status()).containsEntry("table_missing", true);
+        int before = ds.connections.get();
+        a.flushPending();
+        assertThat(a.pollNow()).isFalse();
+        assertThat(ds.connections.get()).as("yeniden bakma süresi dolmadan bağlantı açılmaz").isEqualTo(before);
         assertThat(b.pollNow()).as("yoklama başarısız, istisna yok").isFalse();
 
         mp.jdbc().execute("ALTER TABLE cache_bus_off RENAME TO cache_bus");
+        mp.advance(CacheBus.TABLE_RECHECK_MS);
         a.flushPending();
         assertThat(a.hasPending()).isFalse();
+        b.tableReady();   // açılış yaması bildirimi: beklemeden yeniden dener
         assertThat(b.pollNow()).isTrue();
         assertThat(onB.get()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("Boşaltıcı hata verirse ad uygulanmamış sayılır: genel kuşak ilerlemez, sonraki yoklama yeniden dener")
+    void failingEvictor_isRetriedNextPoll() {
+        CacheBus a = pod(), b = pod();
+        AtomicInteger attempts = new AtomicInteger();
+        b.register("noc-operators", () -> {
+            if (attempts.incrementAndGet() == 1) throw new IllegalStateException("geçici");
+        });
+        AtomicInteger listener = new AtomicInteger();
+        b.onRemoteEvict(names -> listener.incrementAndGet());
+        a.pollNow();
+        b.pollNow();
+        long appliedBefore = b.appliedGeneration();
+        a.bump("noc-operators");
+        a.flushPending();
+
+        b.pollNow();
+        assertThat(attempts.get()).isEqualTo(1);
+        assertThat(b.appliedGeneration()).as("hata → kuşak uygulanmadı").isEqualTo(appliedBefore);
+        assertThat(listener.get()).as("başarısız ad dinleyiciye bildirilmez").isZero();
+        b.pollNow();
+        assertThat(attempts.get()).as("sonraki yoklama yeniden denedi").isEqualTo(2);
+        assertThat(b.appliedGeneration()).isEqualTo(1);
+        b.pollNow();
+        assertThat(attempts.get()).as("başarıdan sonra yeniden çalışmaz").isEqualTo(2);
     }
 
     @Test
@@ -189,32 +246,31 @@ class CacheBusH2Test {
     }
 
     @Test
-    @DisplayName("Yazdığını oku: X-Cache-Min-Gen kuşağı uygulanmamış pod TEK yoklamayla boşaltır (iş parçacığı yok / var)")
-    void minGen_triggersSynchronousApply() throws Exception {
-        CacheBus a = pod(), b = pod();
-        AtomicInteger onB = new AtomicInteger();
-        b.register("cert-latest", onB::incrementAndGet);
+    @DisplayName("Yazdığını oku: iş parçacığı yokken istek beklemez ve kendisi yoklamaz; iş parçacığı TEK zorunlu yoklamayla uygular")
+    void minGen_triggersForcedPollOnWorker() throws Exception {
+        CacheBus a = pod(), idle = pod();
+        AtomicInteger onIdle = new AtomicInteger();
+        idle.register("cert-latest", onIdle::incrementAndGet);
         a.pollNow();
-        b.pollNow();
-
+        idle.pollNow();
         a.bump("cert-latest");
         a.flushPending();
         long g = a.appliedGeneration();
-        assertThat(b.appliedGeneration()).isLessThan(g);
-        assertThat(b.awaitGeneration(g)).as("iş parçacığı yok → satır içi yoklama").isTrue();
-        assertThat(onB.get()).isEqualTo(1);
+        long t0 = System.nanoTime();
+        assertThat(idle.awaitGeneration(g)).as("iş parçacığı yok → istek iş parçacığı yoklamaz").isFalse();
+        assertThat((System.nanoTime() - t0) / 1_000_000).isLessThan(50);
+        assertThat(onIdle.get()).isZero();
 
-        // İş parçacığı var ama dönemsel yoklama uzak: istek ZORUNLU yoklamayı uyandırır
-        b.pollMs = 60_000;
-        b.start();
-        Thread.sleep(150);   // açılış turu (taban zaten var)
+        CacheBus b = livePod();
+        AtomicInteger onB = new AtomicInteger();
+        b.register("cert-latest", onB::incrementAndGet);
         a.bump("cert-latest");
         a.flushPending();
         long g2 = a.appliedGeneration();
-        long t0 = System.nanoTime();
+        t0 = System.nanoTime();
         assertThat(b.awaitGeneration(g2)).isTrue();
         assertThat((System.nanoTime() - t0) / 1_000_000).as("en çok min-gen-wait-ms").isLessThan(CacheBus.DEFAULT_MIN_GEN_WAIT_MS);
-        assertThat(onB.get()).isEqualTo(2);
+        assertThat(onB.get()).isEqualTo(1);
 
         // Kendi yayınının kuşağı: bekleme yok, yoklama yok
         long pollsBefore = (long) a.status().get("polls");
@@ -228,15 +284,15 @@ class CacheBusH2Test {
     }
 
     @Test
-    @DisplayName("İstek iş parçacığı: aynı istekteki yayınlar TEK güncelleme; kalan ad istek bitince arka planda")
-    void requestBatch_coalescesAndCompletes() {
-        CacheBus a = pod();
-        a.pollNow();
+    @DisplayName("İstek iş parçacığı: aynı istekteki yayınlar TEK güncelleme (iş parçacığı yapar), yanıt kuşağı döner")
+    void requestBatch_coalescesViaWorker() throws Exception {
+        CacheBus a = livePod();
         ServletRequestAttributes attrs = new ServletRequestAttributes(new MockHttpServletRequest("POST", "/api/x"),
                 new MockHttpServletResponse());
         RequestContextHolder.setRequestAttributes(attrs);
         a.bump("cert-latest");
         a.bump("cert-stats", "card-extras");
+        Thread.sleep(150);
         assertThat(gen(CacheBus.GLOBAL)).as("yanıt yazılmadan yayın yok").isEqualTo(-1);
         long g = a.flushRequest();
         assertThat(g).isEqualTo(1);
@@ -247,21 +303,71 @@ class CacheBusH2Test {
         a.bump("today-monitors");
         attrs.requestCompleted();
         RequestContextHolder.resetRequestAttributes();
-        assertThat(a.hasPending()).as("gövdesiz biten istek → arka plan kuyruğu").isTrue();
-        a.flushPending();
-        assertThat(gen("today-monitors")).isEqualTo(1);
+        waitFor(() -> gen("today-monitors") == 1, 3000);
+        assertThat(a.openBatchCount()).as("tamamlanan grup açık listeden çıktı").isZero();
     }
 
     @Test
-    @DisplayName("Uzun istek (toplu işlem): grup 2 sn'den uzun bekleyince adlar arka plana devredilir — öteki pod'lar yanıtı beklemez")
-    void longRequest_handsOffToBackground() {
-        CacheBus.RequestBatch b = new CacheBus.RequestBatch();
-        long h = java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(CacheBus.REQUEST_HANDOFF_MS);
-        assertThat(b.add(Set.of("inactive-recipients"), 0, h)).isFalse();
-        assertThat(b.add(Set.of("inactive-recipients"), h - 1, h)).isFalse();
-        assertThat(b.add(Set.of("team-grants"), h + 1, h)).isTrue();
-        assertThat(b.drain()).containsExactlyInAnyOrder("inactive-recipients", "team-grants");
-        assertThat(b.add(Set.of("x"), h + 2, h)).as("boşalınca süre yeniden başlar").isFalse();
+    @DisplayName("Yazma isteği takılmaz: veritabanı yavaşsa (havuz / kilit) yanıt en çok ~250 ms bekler, başlıksız gider; yayın sonra yapılır")
+    void slowDatabase_requestDoesNotStall() throws Exception {
+        SlowDataSource ds = new SlowDataSource(mp.dataSource());
+        CacheBus a = pod(new JdbcTemplate(ds), new DataSourceTransactionManager(ds));
+        a.pollMs = 60_000;
+        a.start();
+        waitFor(() -> a.appliedGeneration() >= 0, 3000);
+        ds.delayMs = 800;
+        RequestContextHolder.setRequestAttributes(new ServletRequestAttributes(new MockHttpServletRequest("POST", "/api/x"),
+                new MockHttpServletResponse()));
+        a.bump("cert-latest");
+        long t0 = System.nanoTime();
+        assertThat(a.flushRequest()).as("kuşak henüz bilinmiyor → başlık yok").isEqualTo(-1);
+        long ms = (System.nanoTime() - t0) / 1_000_000;
+        assertThat(ms).as("istek iş parçacığı veritabanını beklemez").isLessThan(CacheBus.REQUEST_FLUSH_WAIT_MS + 200);
+        assertThat(a.status().get("header_timeouts")).isEqualTo(1L);
+        RequestContextHolder.resetRequestAttributes();
+        waitFor(() -> gen("cert-latest") == 1, 20_000);
+    }
+
+    @Test
+    @DisplayName("İstek tamamlandıktan sonra (süzgeç zincirin dışında) boşaltılan önbellek de yayınlanır — kapalı grup kuyruğa yönlendirir")
+    void bumpAfterDispatcherCompleted_isQueued() {
+        CacheBus a = pod();
+        MockHttpServletRequest req = new MockHttpServletRequest("GET", "/api/x");
+        ServletRequestAttributes outer = new ServletRequestAttributes(req, new MockHttpServletResponse());   // RequestContextFilter
+        ServletRequestAttributes inner = new ServletRequestAttributes(req, new MockHttpServletResponse());   // DispatcherServlet
+        RequestContextHolder.setRequestAttributes(inner);
+        a.bump("card-extras");
+        inner.requestCompleted();
+        assertThat(a.hasPending()).as("tamamlanan grubun adı kuyruğa").isTrue();
+        a.flushPending();
+        RequestContextHolder.setRequestAttributes(outer);   // süzgeç: grup özniteliği istekte duruyor ama KAPALI
+        a.bump("card-extras");
+        assertThat(a.hasPending()).as("kapalı gruba eklenmez → kuyruk").isTrue();
+        a.flushPending();
+        assertThat(gen("card-extras")).isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("Uzun istek: 2 sn'den uzun bekleyen ad, istekte başka yayın olmasa da iş parçacığınca devralınır")
+    void longRequest_agedBatchHandedOff() {
+        CacheBus a = pod();
+        RequestContextHolder.setRequestAttributes(new ServletRequestAttributes(new MockHttpServletRequest("GET", "/api/check/x"),
+                new MockHttpServletResponse()));
+        a.bump("inactive-recipients");
+        assertThat(a.hasPending()).isFalse();
+        a.handOffAgedBatches(System.nanoTime());
+        assertThat(a.hasPending()).as("2 sn dolmadı").isFalse();
+        a.handOffAgedBatches(System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(CacheBus.REQUEST_HANDOFF_MS + 100));
+        assertThat(a.hasPending()).isTrue();
+        a.flushPending();
+        assertThat(gen("inactive-recipients")).isEqualTo(1);
+
+        CacheBus.RequestBatch b = new CacheBus.RequestBatch(0);
+        long h = TimeUnit.MILLISECONDS.toNanos(CacheBus.REQUEST_HANDOFF_MS);
+        assertThat(b.add(Set.of("x"), 0, h)).isEqualTo(CacheBus.RequestBatch.Added.KEPT);
+        assertThat(b.add(Set.of("y"), h + 1, h)).isEqualTo(CacheBus.RequestBatch.Added.HANDOFF);
+        assertThat(b.close()).containsExactlyInAnyOrder("x", "y");
+        assertThat(b.add(Set.of("z"), h + 2, h)).isEqualTo(CacheBus.RequestBatch.Added.CLOSED);
     }
 
     @Test
@@ -322,21 +428,40 @@ class CacheBusH2Test {
     }
 
     @Test
-    @DisplayName("Kapanış: bekleyen yayın TEK denemeyle gider; sonrasında bekleme yapılmaz")
-    void stop_flushesPending_thenNoWaits() {
+    @DisplayName("Kapanış: ContextClosedEvent beklemez ve yoklatmaz; yok etmedeki son yayın sınırlı, son DB işlemi başarısızsa denenmez")
+    void shutdown_boundedFinalFlush() throws Exception {
         CacheBus a = pod();
         a.pollNow();
         a.bump("maintenance-windows");
-        a.onContextClosed(null);
-        assertThat(gen("maintenance-windows")).isEqualTo(1);
         long t0 = System.nanoTime();
+        a.onContextClosed(null);
         assertThat(a.awaitGeneration(999)).isFalse();
         assertThat((System.nanoTime() - t0) / 1_000_000).isLessThan(50);
-
-        // Kapanış dinleyicileri sürerken (ör. bildirim havuzu boşaltması) biten işin boşaltması: yok etmede gönderilir
-        a.bump("maintenance-windows");
-        assertThat(a.hasPending()).isTrue();
+        assertThat(a.hasPending()).as("kapanış dinleyicisi veritabanına gitmez").isTrue();
         a.destroy();
-        assertThat(gen("maintenance-windows")).isEqualTo(2);
+        assertThat(gen("maintenance-windows")).as("yok etmede tek deneme").isEqualTo(1);
+
+        // Yavaş veritabanı: yok etme tavanla sınırlı
+        SlowDataSource ds = new SlowDataSource(mp.dataSource());
+        CacheBus slow = pod(new JdbcTemplate(ds), new DataSourceTransactionManager(ds));
+        slow.pollNow();
+        slow.bump("oncall");
+        ds.delayMs = 5_000;
+        t0 = System.nanoTime();
+        slow.destroy();
+        assertThat((System.nanoTime() - t0) / 1_000_000).as("SHUTDOWN_FLUSH_CAP_MS ile sınırlı")
+                .isLessThan(CacheBus.SHUTDOWN_FLUSH_CAP_MS + 500);
+
+        // Son veritabanı işlemi başarısız: yok etmede denenmez (beklemez)
+        CacheBus broken = pod();
+        broken.pollNow();
+        mp.jdbc().execute("ALTER TABLE cache_bus RENAME TO cache_bus_off");
+        broken.bump("quiet-hours");
+        broken.flushPending();
+        mp.jdbc().execute("ALTER TABLE cache_bus_off RENAME TO cache_bus");
+        t0 = System.nanoTime();
+        broken.destroy();
+        assertThat((System.nanoTime() - t0) / 1_000_000).isLessThan(50);
+        assertThat(gen("quiet-hours")).isEqualTo(-1);
     }
 }

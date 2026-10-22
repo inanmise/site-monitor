@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import {
-  api, rememberCacheGen, cacheMinGenHeaders, CACHE_GEN_TTL_MS, __resetCacheGenForTests,
+  api, rememberCacheGen, cacheMinGenHeaders, CACHE_GEN_TTL_MS, __resetCacheGenForTests, requestInit,
 } from '../api/client.js'
 
 /**
@@ -60,6 +60,20 @@ describe('api request → önbellek kuşağı (X-Cache-Gen / X-Cache-Min-Gen)', 
     expect(cacheMinGenHeaders('GET', CACHE_GEN_TTL_MS)).toEqual({})
     rememberCacheGen('3', CACHE_GEN_TTL_MS + 10)
     expect(cacheMinGenHeaders('GET', CACHE_GEN_TTL_MS + 20)).toEqual({ 'X-Cache-Min-Gen': '3' })
+  })
+
+  it('çağıranın kendi başlıkları varsayılanları SİLMEZ (X-Lang, Content-Type, X-Cache-Min-Gen kalır; aynı adlı ezilir)', () => {
+    rememberCacheGen('21')
+    const init = requestInit({ method: 'GET', headers: { 'X-Custom': '1', 'Content-Type': 'text/csv' }, signal: null }, 'GET', false)
+    expect(init.headers['X-Custom']).toBe('1')
+    expect(init.headers['Content-Type']).toBe('text/csv')
+    expect(init.headers['X-Lang']).toBeTruthy()
+    expect(init.headers['X-Cache-Min-Gen']).toBe('21')
+    expect(init.credentials).toBe('include')
+    expect(init.method).toBe('GET')
+    const form = requestInit({ method: 'POST', body: new FormData() })
+    expect(form.headers['Content-Type']).toBeUndefined()
+    expect(form.headers['X-Cache-Min-Gen']).toBeUndefined()
   })
 
   it('hata yanıtındaki kuşak da saklanır (kısmi yazma boşaltma yaptıysa)', async () => {

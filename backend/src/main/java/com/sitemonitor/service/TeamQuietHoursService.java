@@ -72,6 +72,7 @@ public class TeamQuietHoursService {
     private synchronized Snapshot reload(long nowMs) {
         Snapshot s = snapshot;
         if (s != null && nowMs - s.loadedAtMillis() < CACHE_TTL.toMillis()) return s;
+        long gen = generation.get();
         Map<Long, QuietHours> map = new HashMap<>();
         try {
             for (Team t : teamRepo.findQuietConfigured()) {
@@ -84,13 +85,13 @@ public class TeamQuietHoursService {
             log.debug("Sessiz saat ayarları okunamadı (pencere yok sayıldı): {}", e.getMessage());
         }
         Snapshot fresh = new Snapshot(Map.copyOf(map), nowMs);
-        snapshot = fresh;
+        if (generation.get() == gen) snapshot = fresh;   // yükleme sırasında boşaltıldıysa saklanmaz
         return fresh;
     }
 
     /** Takım ayarı değişti — bu pod'un önbelleği hemen düşer; öteki pod'lar veri yoluyla (MP-30). */
     public void invalidate() {
-        snapshot = null;
+        invalidateLocal();
         CacheBus b = cacheBus;
         if (b != null) b.bump(CacheBusNames.QUIET_HOURS);
     }
@@ -101,8 +102,16 @@ public class TeamQuietHoursService {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     void setCacheBus(CacheBus bus) {
         this.cacheBus = bus;
-        if (bus != null) bus.register(CacheBusNames.QUIET_HOURS, () -> snapshot = null);
+        if (bus != null) bus.register(CacheBusNames.QUIET_HOURS, this::invalidateLocal);
     }
+
+    /** Yalnız bu pod (yeniden yayın yok). Kuşak artar: boşaltmadan ÖNCE başlamış yükleme eski ayarı saklamaz. */
+    void invalidateLocal() {
+        generation.incrementAndGet();
+        snapshot = null;
+    }
+
+    private final java.util.concurrent.atomic.AtomicLong generation = new java.util.concurrent.atomic.AtomicLong();
 
     public boolean anyConfigured() {
         return !configured().isEmpty();

@@ -73,7 +73,7 @@ public class InactiveRecipientGuard {
 
     /** Önbelleği düşürür — sonraki çağrı DB'den tazeler (aktiflik değişti); öteki pod'lar veri yoluyla (MP-30). */
     public void evict() {
-        snapshot = null;
+        evictLocal();
         CacheBus b = cacheBus;
         if (b != null) b.bump(CacheBusNames.INACTIVE_RECIPIENTS);
     }
@@ -84,8 +84,19 @@ public class InactiveRecipientGuard {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     void setCacheBus(CacheBus bus) {
         this.cacheBus = bus;
-        if (bus != null) bus.register(CacheBusNames.INACTIVE_RECIPIENTS, () -> snapshot = null);
+        if (bus != null) bus.register(CacheBusNames.INACTIVE_RECIPIENTS, this::evictLocal);
     }
+
+    /**
+     * Yalnız bu pod (öteki pod'un yayını da bunu çağırır; yeniden yayın yok). Kuşak artar: boşaltmadan ÖNCE başlamış bir
+     * yükleme eski listeyi saklamaz (çok pod R2-A inceleme — yoksa pasife alınan kişi TTL boyunca alıcı kalırdı).
+     */
+    void evictLocal() {
+        generation.incrementAndGet();
+        snapshot = null;
+    }
+
+    private final java.util.concurrent.atomic.AtomicLong generation = new java.util.concurrent.atomic.AtomicLong();
 
     Snapshot snapshot() {
         Snapshot s = snapshot;
@@ -94,8 +105,9 @@ public class InactiveRecipientGuard {
         synchronized (this) {
             s = snapshot;
             if (s != null && now - s.atMs() < cacheMs) return s;
+            long gen = generation.get();
             Snapshot fresh = load(now, s);
-            snapshot = fresh;
+            if (generation.get() == gen) snapshot = fresh;   // yükleme sırasında boşaltıldıysa saklanmaz
             return fresh;
         }
     }
