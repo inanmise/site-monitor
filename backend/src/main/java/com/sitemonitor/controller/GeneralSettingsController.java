@@ -54,6 +54,7 @@ public class GeneralSettingsController {
         @SuppressWarnings("unchecked")
         Map<String, Object> values = body.get("values") instanceof Map<?, ?> m
                 ? (Map<String, Object>) m : Map.of();
+        rejectOwnPageKeys(values);
         Map<String, Object> before = new java.util.LinkedHashMap<>();
         for (String k : values.keySet()) before.put(k, settingsService.getString(k, null));
         // Ortam adı: ham diff override'ı gösterir (boş → prod); denetim ETKİN adı da taşısın
@@ -79,6 +80,27 @@ public class GeneralSettingsController {
     }
 
     // ── helpers ────────────────────────────────────────────────────────────────
+
+    /**
+     * KENDİ SAYFASI olan ayar grupları (2026-10-22, ADMIN-15) — Genel Ayarlar ekranının göstermediği gruplar
+     * ({@code GeneralSettings.jsx SKIP_GROUPS} ile aynı liste). Bu grupların doğrulaması kendi uçlarındadır (marka logosu
+     * boyut / biçim / SVG denetimi, giriş anomalisi eşik ≥ 1, push şablonu yer tutucuları, saklama tabanları …); genel uç onları
+     * atlıyordu. Genel uçtan gelen bu anahtarlar 400 alır — değer kendi sayfasından (o sayfanın kurallarıyla) kaydedilir.
+     */
+    static final java.util.Set<String> OWN_PAGE_GROUPS = java.util.Set.of(
+            "branding", "retention", "userpush", "storm", "login-anomaly", "login-methods", "appearance",
+            "executive-summary", "tech-error-report", "grafana");
+
+    static void rejectOwnPageKeys(Map<String, Object> values) {
+        for (String key : values.keySet()) {
+            com.sitemonitor.service.AppSettingsCatalog.Setting s = com.sitemonitor.service.AppSettingsCatalog.byKey(key);
+            if (s != null && OWN_PAGE_GROUPS.contains(s.group())) {
+                throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException(key, Msg.t(
+                        "Bu ayar Genel Ayarlar'dan kaydedilemez: " + key + ". Kendi ayar sayfasından kaydedin; orada değer o sayfanın kurallarıyla doğrulanır.",
+                        "This setting can't be saved from General settings: " + key + ". Save it from its own settings page, where the value is validated by that page's rules."));
+            }
+        }
+    }
 
     /** Konfigüre bootstrap admin (site.monitor.username) HER ZAMAN erişir (kilitlenme-güvenli fallback —
      *  login'de set edilen 'bootstrapAdmin' bayrağı); aksi halde matris izni (settings.general/edit). */

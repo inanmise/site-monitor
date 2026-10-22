@@ -60,5 +60,10 @@ public class IncidentActionItem {
     @Column(name = "updated_by", length = 100) private String updatedBy;
     @Column(name = "updated_at", length = 30) private String updatedAt;
     @Column(name = "completed_at", length = 30) private String completedAt;
-    @Column(name = "reminded_on", length = 10) private String remindedOn;
+    /**
+     * Son hatırlatma günü — YALNIZ koşullu UPDATE'lerle yazılır ({@code IncidentActionItemRepository} claim / reset;
+     * 2026-10-22, IN-1). Varlık kaydı bu sütunu yazmaz: 09:00 sahiplenmesiyle yarışan bir durum düzenlemesi okuduğu eski
+     * değeri geri yazıp hatırlatmayı tekrarlatıyordu.
+     */
+    @Column(name = "reminded_on", length = 10, updatable = false) private String remindedOn;
 }
