@@ -410,6 +410,11 @@ public class StormService {
                 sendStormAlert(storm, peers, "INITIAL");   // kazanan → TEK toplu alarm (senkron; worker thread)
                 log.warn("🌩🔴 ALARM FIRTINASI başladı — storm #{} [{}] {} monitör (eşik {}) — TEK toplu bildirim gönderildi",
                         storm.getId(), scopeKey, peers.size(), threshold);
+            } else {
+                // Terfi yarışını KAYBEDEN yol da üyelik satırını yazar (ALERTS-4, 2026-10-22): bu alarm (ve kazananın
+                // listesinde olmayan eşler) kazananın açılış postasında YOK; satırı duyurusuz kalır → kapanışta bağı koparılır
+                // ve bireysel İLK bildirim gider. Kazananın yazdığı satırlar ON CONFLICT ile korunur.
+                recordMembers(storm.getId(), peers, null, AlertStormMember.JOIN_ATTACH);
             }
             return StormAction.SUPPRESSED;
 
@@ -645,29 +650,15 @@ public class StormService {
         }
 
         String announcedAt = storm.getLastReAlertAt();
+        Map<Long, String> memberRows = announcedRows(storm.getId());   // ALERTS-4: "duyuruldu" üyelik satırından
         List<Object[]> leaves = new ArrayList<>(members.size());
         int announced = 0, unannounced = 0, failures = 0;
         for (AlertEvent e : stillDown) {
             try {
-                if (notifiedAfter(e, closingAt)) {
-                    // Kapanış SÜRERKEN bireysel bildirildi (fırtına üyeler için kapalı): bağ kopar, KENDİ damgası kalır —
-                    // damgayı sıfırlamak ek INITIAL, fırtına postasına geri sarmak erken tekrar demekti (ikinci inceleme D1).
-                    if (alertEventRepo.releaseFromStormAsNotified(e.getId(), storm.getId(), e.getLastReAlertAt()) == 1) {
-                        announced++;
-                        leave(leaves, storm.getId(), e.getId(), closingAt, AlertStormMember.LEAVE_NOTIFIED);
-                    }
-                } else if (announcedInStorm(e, announcedAt)) {
-                    if (alertEventRepo.releaseFromStormAsNotified(e.getId(), storm.getId(), announcedAt) == 1) {
-                        announced++;
-                        leave(leaves, storm.getId(), e.getId(), closingAt, AlertStormMember.LEAVE_NOTIFIED);
-                    } else {
-                        alertEventRepo.unlinkFromStorm(e.getId(), storm.getId());   // bağ değişmişse (yarış) güvenli taraf: bireysel İLK — yalnız BU fırtınadaysa (2026-10-09)
-                        leave(leaves, storm.getId(), e.getId(), closingAt, AlertStormMember.LEAVE_UNLINKED);
-                    }
-                } else {
-                    alertEventRepo.unlinkFromStorm(e.getId(), storm.getId());   // koşullu — çözülmüş üyeyi diriltmeden, yalnız BU fırtınanın bağını kaldır (M6, 2026-10-09)
-                    leave(leaves, storm.getId(), e.getId(), closingAt, AlertStormMember.LEAVE_UNLINKED);
-                    unannounced++;
+                switch (releaseStillDown(storm, e, closingAt, announcedAt, memberRows, leaves)) {
+                    case 1 -> announced++;
+                    case 2 -> unannounced++;
+                    default -> { /* bağ bu arada değişti — sayılmaz */ }
                 }
             } catch (Exception ex) {
                 failures++;
@@ -686,6 +677,88 @@ public class StormService {
         log.info("🌩✅ Storm #{} çözüldü ({}) — {} kurtuldu, {} hâlâ down ({} duyurulmuş → bildirildi sayıldı, {} duyurulmamış → bireysel ilk bildirim)",
                 storm.getId(), run.reason(), recovered.size(), stillDown.size(), announced, unannounced);
         return new CloseWork(recovered, stillDown, failures);
+    }
+
+    /**
+     * Kapanışta hâlâ düşük TEK üyenin bırakılması — {@link #resolveClose} ve {@link #disbandClose} AYNI kuralı kullanır
+     * (2026-10-22, ALERTS-4 / ALERTS-5).
+     *
+     * <ul>
+     *   <li>Kapanış sürerken bireysel bildirildi ({@link #notifiedAfter}) → bildirildi sayılır, KENDİ damgası kalır.</li>
+     *   <li>Fırtına postasında DUYURULDU → bildirildi sayılır (günlük tekrar kadansı fırtına postasından sürer, ikinci İLK
+     *       yok). "Duyuruldu" kararı üyelik satırından ({@code alert_storm_members.announced_at IS NOT NULL} — postada
+     *       gerçekten listelenen üyeye {@code markAnnounced} yazar). Açılış postası GÖNDERİLİRKEN katılan üye
+     *       ({@code createdAt} damgadan önce, postada yok) eskiden "duyuruldu" sayılıp hiç bildirilmiyordu. Üyelik satırı
+     *       OLMAYAN eski olaylarda (2026-09-30 öncesi) ve satırlar okunamazsa eski kural: {@code createdAt ≤ lastReAlertAt}.</li>
+     *   <li>Duyurulmadı → bağ koparılır, {@code lastReAlertAt=null} → sonraki tur bireysel İLK bildirim.</li>
+     * </ul>
+     *
+     * @return 1 = bildirildi sayıldı, 2 = bağı koparıldı (duyurulmamış), 0 = bağ bu arada değişmişti (yalnız ayrılış)
+     */
+    private int releaseStillDown(AlertStorm storm, AlertEvent e, String closingAt, String announcedAt,
+                                 Map<Long, String> memberRows, List<Object[]> leaves) {
+        if (notifiedAfter(e, closingAt)) {
+            // Kapanış SÜRERKEN bireysel bildirildi (fırtına üyeler için kapalı): bağ kopar, KENDİ damgası kalır —
+            // damgayı sıfırlamak ek INITIAL, fırtına postasına geri sarmak erken tekrar demekti (ikinci inceleme D1).
+            if (alertEventRepo.releaseFromStormAsNotified(e.getId(), storm.getId(), e.getLastReAlertAt()) == 1) {
+                leave(leaves, storm.getId(), e.getId(), closingAt, AlertStormMember.LEAVE_NOTIFIED);
+                return 1;
+            }
+            return 0;
+        }
+        if (announcedInStorm(e, announcedAt, memberRows)) {
+            // Damga: fırtınanın son postası; fırtına damgasızsa üyenin kendi duyuru anı (günlük tekrar kadansı ondan sürer).
+            String stamp = announcedAt != null ? announcedAt
+                    : memberRows != null && e.getId() != null ? memberRows.get(e.getId()) : null;
+            if (alertEventRepo.releaseFromStormAsNotified(e.getId(), storm.getId(), stamp) == 1) {
+                leave(leaves, storm.getId(), e.getId(), closingAt, AlertStormMember.LEAVE_NOTIFIED);
+                return 1;
+            }
+            alertEventRepo.unlinkFromStorm(e.getId(), storm.getId());   // bağ değişmişse (yarış) güvenli taraf: bireysel İLK — yalnız BU fırtınadaysa (2026-10-09)
+            leave(leaves, storm.getId(), e.getId(), closingAt, AlertStormMember.LEAVE_UNLINKED);
+            return 0;
+        }
+        alertEventRepo.unlinkFromStorm(e.getId(), storm.getId());   // koşullu — çözülmüş üyeyi diriltmeden, yalnız BU fırtınanın bağını kaldır (M6, 2026-10-09)
+        leave(leaves, storm.getId(), e.getId(), closingAt, AlertStormMember.LEAVE_UNLINKED);
+        return 2;
+    }
+
+    /** Fırtınanın üyelik satırları: alarm kimliği → {@code announced_at} (satır var, duyurulmadı = null değer). */
+    static final String SQL_MEMBER_ANNOUNCED_READ =
+            "SELECT alert_event_id, announced_at FROM alert_storm_members WHERE storm_id = ?";
+
+    /**
+     * Kapanışın TEK okuması — üye başına sorgu yok. Okunamazsa {@code null}: çağıran eski {@code createdAt} kuralına düşer
+     * (gözlem tablosunun hatası kapanışı düşürmez).
+     */
+    Map<Long, String> announcedRows(Long stormId) {
+        if (stormId == null) return null;
+        try {
+            Map<Long, String> out = new java.util.HashMap<>();
+            for (Map<String, Object> row : jdbcTemplate.queryForList(SQL_MEMBER_ANNOUNCED_READ, stormId)) {
+                Object id = row.get("alert_event_id");
+                if (id == null) id = row.get("ALERT_EVENT_ID");
+                if (!(id instanceof Number n)) continue;
+                Object at = row.containsKey("announced_at") ? row.get("announced_at") : row.get("ANNOUNCED_AT");
+                out.put(n.longValue(), at == null ? null : String.valueOf(at));
+            }
+            return out;
+        } catch (Exception ex) {
+            log.warn("Storm #{} üyelik satırları okunamadı — duyuru kararı açılış zamanından verilecek: {}", stormId, ex.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Üye fırtınanın postasında duyuruldu mu — üyelik satırı varsa YALNIZ ona göre ({@code announced_at} dolu), satırı yoksa
+     * (eski olay) ya da satırlar okunamadıysa açılış zamanı kuralı.
+     */
+    static boolean announcedInStorm(AlertEvent e, String stormLastReAlertAt, Map<Long, String> memberRows) {
+        if (e == null) return false;
+        if (memberRows != null && e.getId() != null && memberRows.containsKey(e.getId())) {
+            return memberRows.get(e.getId()) != null;
+        }
+        return announcedInStorm(e, stormLastReAlertAt);
     }
 
     /**
@@ -797,15 +870,13 @@ public class StormService {
 
         List<Object[]> leaves = new ArrayList<>(stillDown.size() + recovered.size());
         int failures = 0;
+        // ALERTS-5 (2026-10-22): kapanışla AYNI kural. Eskiden duyurulmuş hâlâ-düşük üyenin de bağı koparılıp
+        // lastReAlertAt=null yapılıyordu → özellik kapatılınca her üye için ikinci bir INITIAL (30 üyeli fırtına = 30 posta).
+        String announcedAt = storm.getLastReAlertAt();
+        Map<Long, String> memberRows = announcedRows(storm.getId());
         for (AlertEvent e : stillDown) {
             try {
-                if (notifiedAfter(e, closingAt)) {   // kapanış sürerken bireysel bildirildi: damgası korunur (ikinci inceleme D1)
-                    alertEventRepo.releaseFromStormAsNotified(e.getId(), storm.getId(), e.getLastReAlertAt());
-                    leave(leaves, storm.getId(), e.getId(), closingAt, AlertStormMember.LEAVE_NOTIFIED);
-                    continue;
-                }
-                alertEventRepo.unlinkFromStorm(e.getId(), storm.getId());   // koşullu geri-bağlama (M6, yalnız BU fırtınadan); sonraki sweep bireysel re-alert
-                leave(leaves, storm.getId(), e.getId(), closingAt, AlertStormMember.LEAVE_UNLINKED);
+                releaseStillDown(storm, e, closingAt, announcedAt, memberRows, leaves);
             } catch (Exception ex) {
                 failures++;
                 log.warn("Storm #{} dağıtma: üye #{} bağı koparılamadı (sonraki tur yeniden dener): {}", storm.getId(), e.getId(),
@@ -1647,6 +1718,13 @@ public class StormService {
     /** Per-group modda monitörün grubunu lazy çözer (tip → uygun repo). Grupsuz/cert → null. */
     private String resolveGroup(AlertEvent event, Map<String, Object> ctx) {
         try {
+            // L-S1 (2026-10-22): önce bağlamdaki izleme KİMLİĞİ — URL / ad / host yalnız takım içinde tekildir; iki takım aynı
+            // hedefi izliyorsa kuruluş geneli "ilk kayıt" araması B takımının fırtınasına A takımının grup adını yazıyordu.
+            Long mid = ctx != null && ctx.get("monitor_id") instanceof Number n ? Long.valueOf(n.longValue()) : null;
+            if (mid != null) {
+                Optional<String> byId = groupById(event.getAlertType(), mid);
+                if (byId != null) return byId.orElse(null);
+            }
             String d = event.getDomain();
             return switch (event.getAlertType()) {
                 case EscalationService.TYPE_HTTP_DOWN, EscalationService.TYPE_HTTP_SLOW ->
@@ -1681,6 +1759,32 @@ public class StormService {
             log.debug("Storm grup çözümü başarısız: {} [{}] — {}", event.getDomain(), event.getAlertType(), e.getMessage());
             return null;
         }
+    }
+
+    /**
+     * İzleme kimliğiyle grup adı. Dönüş: {@code null} = bu tür kimlikle çözülmez ya da izleme bulunamadı (eski aramaya düş);
+     * boş Optional = izleme bulundu ama grubu yok (kimlik doğrudur, başka takımın kaydına düşülmez).
+     */
+    private Optional<String> groupById(String alertType, Long id) {
+        return switch (alertType) {
+            case EscalationService.TYPE_HTTP_DOWN, EscalationService.TYPE_HTTP_SLOW ->
+                    httpRepo.findById(id).map(m -> Optional.ofNullable(m.getGroupName())).orElse(null);
+            case EscalationService.TYPE_PAGE_DOWN, EscalationService.TYPE_PAGE_INTEGRITY -> pageRepo == null ? null
+                    : pageRepo.findById(id).map(m -> Optional.ofNullable(m.getGroupName())).orElse(null);
+            case EscalationService.TYPE_SCRIPTED_FAIL, EscalationService.TYPE_SCRIPTED_SLOW -> scriptedRepo == null ? null
+                    : scriptedRepo.findById(id).map(m -> Optional.ofNullable(m.getGroupName())).orElse(null);
+            case EscalationService.TYPE_PAGESPEED_DOWN, EscalationService.TYPE_PAGESPEED_SLOW -> pageSpeedRepo == null ? null
+                    : pageSpeedRepo.findById(id).map(m -> Optional.ofNullable(m.getGroupName())).orElse(null);
+            case EscalationService.TYPE_PING_DOWN, EscalationService.TYPE_PING_SLOW ->
+                    pingRepo.findById(id).map(m -> Optional.ofNullable(m.getGroupName())).orElse(null);
+            case EscalationService.TYPE_DNS_FAILURE ->
+                    dnsRepo.findById(id).map(m -> Optional.ofNullable(m.getGroupName())).orElse(null);
+            case EscalationService.TYPE_PORT_DOWN ->
+                    portRepo.findById(id).map(m -> Optional.ofNullable(m.getGroupName())).orElse(null);
+            case EscalationService.TYPE_KEYWORD ->
+                    keywordRepo.findById(id).map(m -> Optional.ofNullable(m.getGroupName())).orElse(null);
+            default -> null;
+        };
     }
 
     // ── Toplu bildirim (e-posta + webhook) ────────────────────────────────────────

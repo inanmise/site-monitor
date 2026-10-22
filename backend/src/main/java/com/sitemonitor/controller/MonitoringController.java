@@ -670,6 +670,8 @@ public class MonitoringController {
                 }
             }
             closeAlertsOnPause(before.get("active") instanceof Boolean b ? b : null, k6.getActive(), k6.getName(), k6Types, owner);
+        } else {
+            applyRestoreAlarmRules(resolved, entity, before);
         }
         auditService.recordAction("MONITOR_RESTORE", session, resolved + "_MONITOR", String.valueOf(id),
                 row.getResourceName(), effective);
@@ -684,6 +686,83 @@ public class MonitoringController {
         out.put("skipped_masked", maskedSkipped);
         if (!routingSkipped.isEmpty()) out.put("skipped_routing", routingSkipped);
         return ok(out);
+    }
+
+    /** Geri yüklemede alarm kuralı için izlemenin alarm anahtarı, türleri ve sahiplik bağlamı (güncelleme yollarıyla aynı). */
+    private record RestoreAlarmKey(String keyField, String key, Set<String> types, Map<String, Object> owner, Boolean active) {}
+
+    private static RestoreAlarmKey restoreAlarmKey(String kind, Object entity) {
+        return switch (kind) {
+            case MonitorHistoryService.PORT -> {
+                var m = (com.sitemonitor.model.PortMonitor) entity;
+                yield new RestoreAlarmKey("host", m.getHost(), Set.of(EscalationService.TYPE_PORT_DOWN, EscalationService.TYPE_PORT_SLOW),
+                        ownerCtxDual(m.getId(), m.getStandalone(), m.getTeamId()), m.getActive());
+            }
+            case MonitorHistoryService.DNS -> {
+                var m = (DnsMonitor) entity;
+                yield new RestoreAlarmKey("domain", m.getDomain(), DNS_ALERT_TYPES,
+                        ownerCtxDual(m.getId(), m.getStandalone(), m.getTeamId()), m.getActive());
+            }
+            case MonitorHistoryService.KEYWORD -> {
+                var m = (com.sitemonitor.model.KeywordMonitor) entity;
+                yield new RestoreAlarmKey("url", m.getUrl(), Set.of(EscalationService.TYPE_KEYWORD, EscalationService.TYPE_KEYWORD_SLOW,
+                        EscalationService.TYPE_KEYWORD_SSL, EscalationService.TYPE_KEYWORD_DOMAIN_EXPIRY),
+                        ownerCtx(m.getId(), m.getTeamId(), null), m.getActive());
+            }
+            case MonitorHistoryService.HTTP -> {
+                var m = (HttpMonitor) entity;
+                yield new RestoreAlarmKey("url", m.getUrl(), Set.of(EscalationService.TYPE_HTTP_DOWN, EscalationService.TYPE_HTTP_SSL,
+                        EscalationService.TYPE_HTTP_SLOW, EscalationService.TYPE_DOMAIN_EXPIRY),
+                        ownerCtx(m.getId(), m.getTeamId(), null), m.getActive());
+            }
+            case MonitorHistoryService.PAGE -> {
+                var m = (com.sitemonitor.model.PageMonitor) entity;
+                yield new RestoreAlarmKey("url", m.getUrl(), Set.of(EscalationService.TYPE_PAGE_DOWN, EscalationService.TYPE_PAGE_INTEGRITY),
+                        ownerCtx(m.getId(), m.getTeamId(), null), m.getActive());
+            }
+            case MonitorHistoryService.PAGESPEED -> {
+                var m = (com.sitemonitor.model.PageSpeedMonitor) entity;
+                yield new RestoreAlarmKey("url", m.getUrl(), Set.of(EscalationService.TYPE_PAGESPEED_DOWN, EscalationService.TYPE_PAGESPEED_SLOW),
+                        ownerCtx(m.getId(), m.getTeamId(), null), m.getActive());
+            }
+            case MonitorHistoryService.DOMAIN -> {
+                var m = (com.sitemonitor.model.DomainMonitor) entity;
+                yield new RestoreAlarmKey("domain", m.getDomain(), DOMAINMON_ALERT_TYPES,
+                        ownerCtx(m.getId(), m.getTeamId(), null), m.getActive());
+            }
+            case MonitorHistoryService.PING -> {
+                var m = (com.sitemonitor.model.PingMonitor) entity;
+                yield new RestoreAlarmKey("host", m.getHost(), Set.of(EscalationService.TYPE_PING_DOWN, EscalationService.TYPE_PING_SLOW),
+                        ownerCtx(m.getId(), m.getTeamId(), null), m.getActive());
+            }
+            default -> null;
+        };
+    }
+
+    /**
+     * ALERTS-8 / ADMIN-2 (2026-10-22): geri yükleme bir GÜNCELLEMEDİR — güncelleme yolunun alarm kuralları her türde uygulanır
+     * (eskiden yalnız k6'da): duraklatılmış bir duruma dönülürse bu izlemenin açık alarmları sessizce kapanır (duraklatılan
+     * izleme taranmaz, alarm sonsuza dek açık kalırdı); DNS alan adı / ping host'u değiştiyse ESKİ anahtarın alarmları kapanır
+     * (DNS'in öksüz temizliği yok). DNS'te beklenen-değer kilidi kalkıyorsa DNS_UNEXPECTED de kapanır (ALERTS-9).
+     */
+    private void applyRestoreAlarmRules(String kind, Object entity, Map<String, Object> before) {
+        RestoreAlarmKey k = restoreAlarmKey(kind, entity);
+        if (k == null || before == null) return;
+        String oldKey = before.get(k.keyField()) == null ? null : before.get(k.keyField()).toString();
+        // DNS alan adı küçük harfe normalleşir (güncelleme yolu equalsIgnoreCase); diğer anahtarlar birebir saklanır.
+        boolean keyChanged = oldKey != null && k.key() != null
+                && (MonitorHistoryService.DNS.equals(kind) ? !oldKey.equalsIgnoreCase(k.key()) : !oldKey.equals(k.key()));
+        if (keyChanged && (MonitorHistoryService.DNS.equals(kind) || MonitorHistoryService.PING.equals(kind))) {
+            escalationService.resolveOpenAlertsSilently(oldKey, k.types(),
+                    MonitorHistoryService.DNS.equals(kind) ? "Sistem (domain değişti)" : "Sistem (host değişti)", k.owner());
+        }
+        closeAlertsOnPause(before.get("active") instanceof Boolean b ? b : null, k.active(),
+                keyChanged ? oldKey : k.key(), k.types(), k.owner());
+        if (MonitorHistoryService.DNS.equals(kind)) {
+            Object prevExpected = before.get("expectedValue");
+            DnsMonitor dns = (DnsMonitor) entity;
+            closeDisabledDnsChecks(dns, prevExpected == null ? null : prevExpected.toString(), dns.getPropagationCheck());   // yayılım geri yüklenmez
+        }
     }
 
     /** Geri almada kimlik + zaman künyesi. {@code setUpdatedAt} olmayan türde sessizce geçer. */
@@ -1404,6 +1483,25 @@ public class MonitoringController {
     private static final Set<String> DNS_ALERT_TYPES = Set.of(
             EscalationService.TYPE_DNS_FAILURE, EscalationService.TYPE_DNS_CHANGED, EscalationService.TYPE_DNS_SLOW,
             EscalationService.TYPE_DNS_UNEXPECTED, EscalationService.TYPE_DNS_INCONSISTENT);
+
+    /**
+     * ALERTS-9 (2026-10-22): DNS beklenen-değer kilidi ya da yayılım (çoklu resolver) denetimi AÇIK → KAPALI olunca o denetimin
+     * açık alarmı (DNS_UNEXPECTED / DNS_INCONSISTENT) sessizce kapanır — kapalı denetim sweep kalemi üretmez, kurtarma yolu onu
+     * hiç kapatamazdı (HTTP_SLOW kapatılınca aynı kural). Yalnız BU izlemenin olayı (D-b1).
+     */
+    private void closeDisabledDnsChecks(DnsMonitor m, String prevExpected, Boolean prevPropagation) {
+        Map<String, Object> owner = ownerCtxDual(m.getId(), m.getStandalone(), m.getTeamId());
+        boolean hadExpected = prevExpected != null && !prevExpected.isBlank();
+        boolean hasExpected = m.getExpectedValue() != null && !m.getExpectedValue().isBlank();
+        if (hadExpected && !hasExpected) {
+            escalationService.resolveOpenAlertsSilently(m.getDomain(), Set.of(EscalationService.TYPE_DNS_UNEXPECTED),
+                    "Sistem (beklenen değer kilidi kapatıldı)", owner);
+        }
+        if (Boolean.TRUE.equals(prevPropagation) && !Boolean.TRUE.equals(m.getPropagationCheck())) {
+            escalationService.resolveOpenAlertsSilently(m.getDomain(), Set.of(EscalationService.TYPE_DNS_INCONSISTENT),
+                    "Sistem (yayılım denetimi kapatıldı)", owner);
+        }
+    }
 
     /** Keyword adet koşulunu (operator + matchCount) body'den uygular; legacy 'condition' desteklenir;
      *  alertCondition (NOT NULL) operatörden türetilir. */
@@ -2134,6 +2232,12 @@ public class MonitoringController {
                 requireDeletion().deleteStandalonePort(m);
             } else {
                 // Envanter-türevi satırın "silmesi" duraklatmadır (envanterle yaşar; envanter kaydı silinince o da gider).
+                // ALERTS-7 (2026-10-22): duraklatma güncellemedeki gibi BU izlemenin açık alarmlarını sessizce kapatır —
+                // duraklatılan satır taranmaz, öksüz temizliği duraklatılmış host'u "var" sayar: alarm sonsuza dek açık
+                // kalıyor ve aynı host'taki başka takımın gerçek alarmını da engelliyordu (Y-1 yabancı sahip).
+                escalationService.resolveOpenAlertsSilently(m.getHost(),
+                        Set.of(EscalationService.TYPE_PORT_DOWN, EscalationService.TYPE_PORT_SLOW),
+                        "Sistem (izleme duraklatıldı)", ownerCtxDual(m.getId(), m.getStandalone(), m.getTeamId()));
                 m.setActive(false);
                 m.setUpdatedAt(ISO.format(Instant.now()));
                 monitorHistory.stampUpdated(m, session);
@@ -2603,12 +2707,15 @@ public class MonitoringController {
             if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
             if (Boolean.TRUE.equals(m.getStandalone()) && body.containsKey("teamId"))
                 m.setTeamId(_nextTeam);
+            final String _prevExpected = m.getExpectedValue();
+            final Boolean _prevPropagation = m.getPropagationCheck();
             if (body.containsKey("expectedValue")) {   // beklenen-değer kilidi (boş = kilit kapalı)
                 Object ev = body.get("expectedValue");
                 m.setExpectedValue(ev != null && !ev.toString().isBlank() ? ev.toString().trim() : null);
             }
             if (body.containsKey("propagationCheck"))   // çoklu-resolver tutarlılık (opt-in)
                 m.setPropagationCheck(Boolean.TRUE.equals(body.get("propagationCheck")));
+            closeDisabledDnsChecks(m, _prevExpected, _prevPropagation);
             if (body.containsKey("slowThresholdMs"))    // per-monitor yavaş eşiği (boş=global)
                 m.setSlowThresholdMs(clampSlow(body.get("slowThresholdMs")));
             if (body.containsKey("dnsChangeAlertEnabled"))   // DNS_CHANGED aç/kapa (null=açık)
@@ -2659,6 +2766,10 @@ public class MonitoringController {
             if (standalone) {
                 requireDeletion().deleteStandaloneDns(m);
             } else {
+                // ALERTS-7 (2026-10-22): duraklatma BU izlemenin açık DNS alarmlarını sessizce kapatır (Port ile aynı gerekçe;
+                // DNS'in öksüz temizliği de yok — alarm hiç kapanmıyordu).
+                escalationService.resolveOpenAlertsSilently(m.getDomain(), DNS_ALERT_TYPES,
+                        "Sistem (izleme duraklatıldı)", ownerCtxDual(m.getId(), m.getStandalone(), m.getTeamId()));
                 m.setActive(false);
                 m.setUpdatedAt(ISO.format(Instant.now()));
                 dnsMonitorRepo.save(m);
