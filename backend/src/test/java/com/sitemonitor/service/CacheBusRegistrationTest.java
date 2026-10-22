@@ -40,6 +40,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Function;
 
@@ -188,7 +189,7 @@ class CacheBusRegistrationTest {
     }
 
     @Test
-    @DisplayName("Bakım penceresi: pod A'da 'şimdi başlat' → pod B (tarama lideri) bir yoklamada bakımda görür (alarm bastırılır)")
+    @DisplayName("Bakım penceresi: pod A'da 'şimdi başlat' → pod B (tarama lideri) bir yoklamada bakımda görür; yoklama DB okumaz (tembel)")
     void maintenanceWindows() {
         MaintenanceWindowRepository ra = mock(MaintenanceWindowRepository.class), rb = mock(MaintenanceWindowRepository.class);
         when(rb.findByActiveTrue()).thenReturn(List.of());
@@ -207,9 +208,96 @@ class CacheBusRegistrationTest {
         when(ra.findByActiveTrue()).thenReturn(List.of(w));
         when(rb.findByActiveTrue()).thenReturn(List.of(w));
         assertThat(b.isUnderMaintenance("api.example.com")).as("yoklama olmadan B eski görüntüde").isFalse();
-        propagate(busA, busB, CacheBusNames.MAINTENANCE_WINDOWS, a::refresh, () -> { },
-                () -> assertThat(b.isUnderMaintenance("api.example.com")).isTrue());
+
+        a.refresh();
         assertThat(a.isUnderMaintenance("api.example.com")).as("A kendi yazımını hemen görür").isTrue();
+        busA.flushPending();
+        assertThat(gen(CacheBusNames.MAINTENANCE_WINDOWS)).isEqualTo(1);
+        busB.pollNow();
+        verify(rb, times(1)).findByActiveTrue();   // boşaltıcı ucuz: veri yolu iş parçacığı veritabanına gitmedi
+        assertThat(b.isUnderMaintenance("api.example.com")).as("sonraki okuma bir kez yeniden yükler").isTrue();
+        assertThat(b.isUnderMaintenance("x")).isTrue();
+        verify(rb, times(2)).findByActiveTrue();
+        assertThat(gen(CacheBusNames.MAINTENANCE_WINDOWS)).as("B yeniden yayın yapmadı").isEqualTo(1);
+    }
+
+    // ── Kuşak koruması: boşaltmadan ÖNCE başlamış yapım eski görüntüyü saklamaz (inceleme bulgusu 8) ─────────────────────
+
+    @Test
+    @DisplayName("Yarış: yükleme sürerken öteki pod boşaltırsa eski görüntü saklanmaz — pasif süzgeç, 7/24, sessiz saat, sistem bakımı, nöbetçi")
+    void evictDuringBuild_isNotStored() {
+        AppUserRepository ur = mock(AppUserRepository.class);
+        InactiveRecipientGuard guard = new InactiveRecipientGuard(ur);
+        AtomicInteger n1 = new AtomicInteger();
+        when(ur.findInactiveIdsAndEmails()).thenAnswer(i -> { if (n1.incrementAndGet() == 1) guard.evictLocal(); return List.of(); });
+        guard.snapshot();
+        guard.snapshot();
+        assertThat(n1.get()).as("yarışan yükleme saklanmadı → ikinci okuma yeniden yükler").isEqualTo(2);
+        guard.snapshot();
+        assertThat(n1.get()).as("yarışsız yükleme saklandı").isEqualTo(2);
+
+        NocSettingsRepository nr = mock(NocSettingsRepository.class);
+        NocOperatorService noc = new NocOperatorService(nr, mock(TeamRepository.class), mock(AppUserRepository.class));
+        AtomicInteger n2 = new AtomicInteger();
+        when(nr.findById(any())).thenAnswer(i -> {
+            if (n2.incrementAndGet() == 1) ReflectionTestUtils.invokeMethod(noc, "invalidateLocal");
+            return Optional.empty();
+        });
+        noc.teamIds();
+        noc.teamIds();
+        assertThat(n2.get()).isEqualTo(2);
+
+        TeamRepository tr = mock(TeamRepository.class);
+        TeamQuietHoursService quiet = new TeamQuietHoursService(tr, mock(QuietDigestItemRepository.class));
+        AtomicInteger n3 = new AtomicInteger();
+        when(tr.findQuietConfigured()).thenAnswer(i -> { if (n3.incrementAndGet() == 1) quiet.invalidateLocal(); return List.of(); });
+        quiet.anyConfigured();
+        quiet.anyConfigured();
+        assertThat(n3.get()).isEqualTo(2);
+
+        SystemMaintenanceWindowRepository sr = mock(SystemMaintenanceWindowRepository.class);
+        SystemMaintenanceService sys = new SystemMaintenanceService(sr, mock(SystemMaintenanceSuppressionRepository.class),
+                mock(AuditService.class), mock(AppUserRepository.class), mock(UserService.class), mock(TeamRepository.class));
+        AtomicInteger n4 = new AtomicInteger();
+        when(sr.findByCancelledAtIsNullAndEndAtGreaterThanOrderByStartAtAsc(anyString())).thenAnswer(i -> {
+            if (n4.incrementAndGet() == 1) sys.invalidateLocal();
+            return List.of();
+        });
+        sys.live();
+        sys.live();
+        assertThat(n4.get()).isEqualTo(2);
+
+        OnCallScheduleRepository oc = mock(OnCallScheduleRepository.class);
+        OnCallService oncall = new OnCallService(oc, mock(OnCallOverrideRepository.class), mock(AppUserRepository.class));
+        AtomicInteger n5 = new AtomicInteger();
+        when(oc.findByTeamIdIn(anyCollection())).thenAnswer(i -> {
+            if (n5.incrementAndGet() == 1) ReflectionTestUtils.invokeMethod(oncall, "memoClearLocal");
+            return List.of();
+        });
+        oncall.notifyTargets(List.of(5L));
+        oncall.notifyTargets(List.of(5L));
+        assertThat(n5.get()).as("eski nöbetçi hesabı eski kuşağın anahtarına yazıldı").isEqualTo(2);
+        oncall.notifyTargets(List.of(5L));
+        assertThat(n5.get()).isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("Yarış: zayıf algoritma raporu hesaplanırken boşaltılırsa eski rapor okunmayan anahtara yazılır")
+    void weakAlgo_evictDuringBuild_isNotStored() {
+        CertificateInventoryRepository inv = mock(CertificateInventoryRepository.class);
+        WeakAlgorithmReportService svc = new WeakAlgorithmReportService(mock(LatestCheckRepository.class), inv,
+                mock(TeamRepository.class), mock(CertificateCheckRepository.class), mock(WeakAlgorithmExceptionRepository.class));
+        ReflectionTestUtils.setField(svc, "cacheMs", 120_000L);
+        AtomicInteger n = new AtomicInteger();
+        when(inv.findByActiveTrueOrderByDomainAsc()).thenAnswer(i -> {
+            if (n.incrementAndGet() == 1) ReflectionTestUtils.invokeMethod(svc, "memoClearLocal");
+            return List.of();
+        });
+        svc.build(null);
+        svc.build(null);
+        assertThat(n.get()).isEqualTo(2);
+        svc.build(null);
+        assertThat(n.get()).isEqualTo(2);
     }
 
     @Test

@@ -65,12 +65,24 @@ public class OnCallService {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     void setCacheBus(CacheBus bus) {
         this.cacheBus = bus;
-        if (bus != null) bus.register(CacheBusNames.ONCALL, memo::clear);
+        if (bus != null) bus.register(CacheBusNames.ONCALL, this::memoClearLocal);
+    }
+
+    /**
+     * Bellek kuşağı (çok pod R2-A inceleme): anahtara girer ve her boşaltmada artar — boşaltmadan ÖNCE başlamış bir hesap
+     * eski nöbetçiyi eski kuşağın anahtarına yazar, kimse okumaz ({@code TechErrorAnalyticsService} deseni).
+     */
+    private final java.util.concurrent.atomic.AtomicLong memoGeneration = new java.util.concurrent.atomic.AtomicLong();
+
+    /** Yalnız bu pod (öteki pod'un yayını da bunu çağırır; yeniden yayın yok). */
+    void memoClearLocal() {
+        memoGeneration.incrementAndGet();
+        memo.clear();
     }
 
     /** Çizelge / yer değiştirme değişti: bu pod'un belleği hemen, öteki pod'larınki veri yoluyla. */
     private void memoChanged() {
-        memo.clear();
+        memoClearLocal();
         CacheBus b = cacheBus;
         if (b != null) b.bump(CacheBusNames.ONCALL);
     }
@@ -91,7 +103,7 @@ public class OnCallService {
         for (Long t : teamIds) if (t != null) ids.add(t);
         if (ids.isEmpty()) return Map.of();
         try {
-            return memo.get("notify:" + ids, CACHE_MS, false, () -> computeTargets(ids, true, Instant.now()));
+            return memo.get(memoGeneration.get() + "|notify:" + ids, CACHE_MS, false, () -> computeTargets(ids, true, Instant.now()));
         } catch (Exception e) {
             log.warn("Nöbetçi okunamadı (bildirim nöbetçisiz sürer): {}", e.toString());
             return Map.of();
@@ -104,7 +116,7 @@ public class OnCallService {
         Set<Long> ids = new java.util.TreeSet<>();
         for (Long t : teamIds) if (t != null) ids.add(t);
         if (ids.isEmpty()) return Map.of();
-        return memo.get("current:" + ids, CACHE_MS, false, () -> computeTargets(ids, false, Instant.now()));
+        return memo.get(memoGeneration.get() + "|current:" + ids, CACHE_MS, false, () -> computeTargets(ids, false, Instant.now()));
     }
 
     Map<Long, OnCallPerson> computeTargets(Set<Long> teamIds, boolean onlyNotify, Instant now) {

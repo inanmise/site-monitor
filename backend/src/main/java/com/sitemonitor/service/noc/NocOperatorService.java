@@ -260,7 +260,7 @@ public class NocOperatorService {
 
     /** Bu podun önbelleğini düşürür (kayıt sonrası; testler); öteki pod'lar önbellek veri yoluyla (MP-30). */
     public void invalidate() {
-        snapshot = null;
+        invalidateLocal();
         CacheBus b = cacheBus;
         if (b != null) b.bump(CacheBusNames.NOC_OPERATORS);
     }
@@ -275,8 +275,16 @@ public class NocOperatorService {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     void setCacheBus(CacheBus bus) {
         this.cacheBus = bus;
-        if (bus != null) bus.register(CacheBusNames.NOC_OPERATORS, () -> snapshot = null);
+        if (bus != null) bus.register(CacheBusNames.NOC_OPERATORS, this::invalidateLocal);
     }
+
+    /** Yalnız bu pod (yeniden yayın yok). Kuşak artar: boşaltmadan ÖNCE başlamış yapım eski görüntüyü saklamaz. */
+    void invalidateLocal() {
+        generation.incrementAndGet();
+        snapshot = null;
+    }
+
+    private final java.util.concurrent.atomic.AtomicLong generation = new java.util.concurrent.atomic.AtomicLong();
 
     // ── İç ───────────────────────────────────────────────────────────────────
 
@@ -287,6 +295,7 @@ public class NocOperatorService {
         synchronized (this) {
             s = snapshot;
             if (s != null && now - s.builtAt() < cacheMs) return s;
+            long gen = generation.get();
             try {
                 s = build(now);
             } catch (Exception e) {
@@ -294,7 +303,7 @@ public class NocOperatorService {
                 s = snapshot != null ? new Snapshot(snapshot.teamIds(), snapshot.operatorTeams(), now)
                                      : new Snapshot(List.of(), Map.of(), now);
             }
-            snapshot = s;
+            if (generation.get() == gen) snapshot = s;   // yapım sırasında boşaltıldıysa saklanmaz (sonraki okuma yeniden kurar)
             return s;
         }
     }

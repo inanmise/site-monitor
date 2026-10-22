@@ -122,6 +122,32 @@ class BusAwareCacheManagerTest {
     }
 
     @Test
+    @DisplayName("Yarış: sync yükleme sürerken öteki pod'un yayını önbelleği boşaltırsa yüklenen (eski) değer saklanmaz")
+    void syncLoadRacingRemoteEvict_isNotStored() throws Exception {
+        BusAwareCacheManager m = manager(bus());
+        Cache c = m.getCache("cert-latest");
+        java.util.concurrent.CountDownLatch loading = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch evicted = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.ExecutorService ex = java.util.concurrent.Executors.newSingleThreadExecutor();
+        try {
+            java.util.concurrent.Future<String> f = ex.submit(() -> c.get("all", () -> {
+                loading.countDown();
+                assertThat(evicted.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                return "eski";
+            }));
+            assertThat(loading.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            m.localEvictor("cert-latest").run();   // öteki pod'un yayını (yerel boşaltma)
+            evicted.countDown();
+            assertThat(f.get(5, java.util.concurrent.TimeUnit.SECONDS)).as("çağıran yine sonucu alır").isEqualTo("eski");
+        } finally {
+            ex.shutdownNow();
+        }
+        assertThat(c.get("all")).as("yarışan yükleme saklanmadı").isNull();
+        assertThat(c.get("all", () -> "taze")).isEqualTo("taze");
+        assertThat(c.get("all", () -> "yine")).as("yarışsız yükleme saklandı").isEqualTo("taze");
+    }
+
+    @Test
     @DisplayName("Veri yolu yokken yönetici düz Caffeine gibi (dilim testleri)")
     void noBus_plainCaffeine() {
         BusAwareCacheManager m = new BusAwareCacheManager(null);

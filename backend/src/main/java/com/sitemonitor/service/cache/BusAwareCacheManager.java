@@ -68,10 +68,15 @@ public class BusAwareCacheManager extends CaffeineCacheManager implements SmartI
         if (b != null) b.bump(name);
     }
 
-    /** Boşaltmayı veri yoluna da bildiren Caffeine önbelleği. */
+    /**
+     * Boşaltmayı veri yoluna da bildiren Caffeine önbelleği. Kuşak korumalı yükleme (çok pod R2-A inceleme): bir boşaltma
+     * (yerel ya da öteki pod'un yayını) {@code sync = true} yüklemesi SÜRERKEN gelirse yüklenen değer saklanmaz — boşaltmadan
+     * önce okunmuş eski veri TTL boyunca kalmasın; çağıran yine sonucu alır, sonraki okuma yeniden hesaplar.
+     */
     static final class BusAwareCaffeineCache extends CaffeineCache {
 
         private final BusAwareCacheManager owner;
+        private final java.util.concurrent.atomic.AtomicLong generation = new java.util.concurrent.atomic.AtomicLong();
 
         BusAwareCaffeineCache(String name, com.github.benmanes.caffeine.cache.Cache<Object, Object> cache, boolean allowNullValues,
                               BusAwareCacheManager owner) {
@@ -80,13 +85,23 @@ public class BusAwareCacheManager extends CaffeineCacheManager implements SmartI
         }
 
         @Override
+        public <T> T get(Object key, java.util.concurrent.Callable<T> valueLoader) {
+            long g = generation.get();
+            T v = super.get(key, valueLoader);
+            if (generation.get() != g) getNativeCache().invalidate(key);   // yükleme bir boşaltmayla yarıştı: saklama
+            return v;
+        }
+
+        @Override
         public void evict(Object key) {
+            generation.incrementAndGet();
             super.evict(key);
             owner.bump(getName());
         }
 
         @Override
         public boolean evictIfPresent(Object key) {
+            generation.incrementAndGet();
             boolean present = super.evictIfPresent(key);
             owner.bump(getName());   // bu pod'da yoksa da öteki pod'larda olabilir
             return present;
@@ -94,12 +109,14 @@ public class BusAwareCacheManager extends CaffeineCacheManager implements SmartI
 
         @Override
         public void clear() {
+            generation.incrementAndGet();
             super.clear();
             owner.bump(getName());
         }
 
         @Override
         public boolean invalidate() {
+            generation.incrementAndGet();
             boolean any = super.invalidate();
             owner.bump(getName());
             return any;
@@ -107,6 +124,7 @@ public class BusAwareCacheManager extends CaffeineCacheManager implements SmartI
 
         /** Yalnız bu pod (öteki pod'un yayını uygulanırken). */
         void clearLocal() {
+            generation.incrementAndGet();
             super.clear();
         }
     }
