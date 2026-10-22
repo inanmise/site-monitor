@@ -6,6 +6,7 @@ import com.sitemonitor.repository.CertificateInventoryRepository;
 import com.sitemonitor.repository.EscalationContactRepository;
 import com.sitemonitor.repository.PasswordHistoryRepository;
 import com.sitemonitor.repository.TeamRepository;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -83,6 +84,13 @@ class AppUserConcurrentWriteTest {
         u.setUpdatedAt("2026-10-23T08:00:00");
         id = realRepo.save(u).getId();
         afterRead.set(null);
+    }
+
+    /** NOT_SUPPORTED satırları işler — önbellekli @DataJpaTest bağlamını paylaşan sonraki testler temiz başlasın. */
+    @AfterEach
+    void cleanUpCommittedRows() {
+        jdbc.update("DELETE FROM app_user_teams");
+        realRepo.deleteAll();
     }
 
     // ── Yardımcılar ───────────────────────────────────────────────────────────────────────────────────────────

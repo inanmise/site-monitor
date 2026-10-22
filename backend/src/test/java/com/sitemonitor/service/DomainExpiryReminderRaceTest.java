@@ -4,6 +4,7 @@ import com.sitemonitor.it.MultiPodTestSupport;
 import com.sitemonitor.model.DomainExpiryReminder;
 import com.sitemonitor.model.DomainMonitor;
 import com.sitemonitor.repository.DomainExpiryReminderRepository;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -65,6 +66,12 @@ class DomainExpiryReminderRaceTest {
         when(email.buildDomainExpiryReminderHtml(any(), any(), anyInt(), any(), anyInt(), any(), any(), any())).thenReturn("<html/>");
         when(email.sendHtml(any(), any(), any(), any(), any())).thenReturn("SENT");
         when(push.enqueueTeamNoticeLocalized(any(), any(), any(), any(), any(), any(), any(), any())).thenReturn(Map.of("queued", 1));
+    }
+
+    /** NOT_SUPPORTED satırları işler — önbellekli @DataJpaTest bağlamını paylaşan sonraki testler temiz başlasın. */
+    @AfterEach
+    void cleanUpCommittedRows() {
+        repo.deleteAll();
     }
 
     private void uniqueIndex() {

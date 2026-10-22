@@ -5,6 +5,7 @@ import com.sitemonitor.model.CertificateInventory;
 import com.sitemonitor.model.HttpMonitor;
 import com.sitemonitor.repository.*;
 import com.sitemonitor.service.schedule.ClusterLockService;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -63,6 +64,23 @@ class MonitoringGroupBackfillMultiPodTest {
         inv.setActive(true);
         inv.setTeamId(5L);
         inventoryRepo.save(inv);
+    }
+
+    /** NOT_SUPPORTED satırları işler — önbellekli @DataJpaTest bağlamını paylaşan sonraki testler (envanter sorguları) temiz başlasın. */
+    @AfterEach
+    void tearDown() {
+        httpRepo.deleteAll();
+        pingRepo.deleteAll();
+        portRepo.deleteAll();
+        dnsRepo.deleteAll();
+        keywordRepo.deleteAll();
+        domainRepo.deleteAll();
+        pageRepo.deleteAll();
+        scriptedRepo.deleteAll();
+        pageSpeedRepo.deleteAll();
+        inventoryRepo.deleteAll();
+        jdbc.update("DELETE FROM scheduler_lock");
+        jdbc.update("DELETE FROM schema_patch_markers");
     }
 
     private MonitoringGroupBackfill backfill(JdbcTemplate j, ClusterLockService locks) {

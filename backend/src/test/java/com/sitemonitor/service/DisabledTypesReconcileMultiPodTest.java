@@ -9,6 +9,7 @@ import com.sitemonitor.repository.DnsMonitorRepository;
 import com.sitemonitor.repository.DnsRecordRepository;
 import com.sitemonitor.repository.NetworkOutageEventRepository;
 import com.sitemonitor.service.schedule.ClusterLockService;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -61,6 +62,14 @@ class DisabledTypesReconcileMultiPodTest {
         alertEventRepo.deleteAll();
         push = mock(UserPushService.class);
         escalation = mock(EscalationService.class);
+    }
+
+    /** NOT_SUPPORTED satırları işler — önbellekli @DataJpaTest bağlamını paylaşan sonraki testler temiz başlasın. */
+    @AfterEach
+    void tearDown() {
+        alertEventRepo.deleteAll();
+        inventoryRepo.deleteAll();
+        jdbc.update("DELETE FROM scheduler_lock");
     }
 
     @SuppressWarnings("unchecked")

@@ -1,5 +1,6 @@
 package com.sitemonitor.service.lockout;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -44,6 +45,13 @@ class PersistedRowLimitsTest {
         jdbc.update("DELETE FROM audit_log");
         jdbc.update("DELETE FROM login_issue_reports");
         limits = new PersistedRowLimits(jdbc);
+    }
+
+    /** NOT_SUPPORTED satırları işler — önbellekli @DataJpaTest bağlamını paylaşan sonraki testler temiz başlasın. */
+    @AfterEach
+    void cleanUpCommittedRows() {
+        jdbc.update("DELETE FROM audit_log");
+        jdbc.update("DELETE FROM login_issue_reports");
     }
 
     private void reveal(Long actorId, String actor, long atMs) {

@@ -2,6 +2,7 @@ package com.sitemonitor.service;
 
 import com.sitemonitor.model.AuditLog;
 import com.sitemonitor.repository.AuditLogRepository;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -57,6 +58,12 @@ class AuditChainTransactionForkTest {
                 mock(ClientIpResolver.class), mock(AuditGeoEnricher.class));
         svc.setChainLockSupport(jdbc, txManager);
         ReflectionTestUtils.setField(svc, "fallbackFile", tmp.resolve("audit-fallback.jsonl").toString());
+    }
+
+    /** NOT_SUPPORTED satırları işler — önbellekli @DataJpaTest bağlamını paylaşan sonraki testler temiz başlasın. */
+    @AfterEach
+    void cleanUpCommittedRows() {
+        jdbc.update("DELETE FROM audit_log");
     }
 
     private List<AuditLog> chain() {
