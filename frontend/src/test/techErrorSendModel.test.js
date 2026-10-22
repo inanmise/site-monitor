@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import {
   MAX_EXTRA_CC, MAX_EXTRA_CC_INPUT, SENDLOG_KEYS, SENDLOG_KINDS, SENDLOG_KIND_KEYS, SENDLOG_ROLE_KEYS, SENDLOG_SIZE_OPTIONS,
   SENDLOG_STATUSES, SENDLOG_STATUS_KEYS, SENDLOG_REASON_KEYS, isDeliverable, normalizeSendLogKind, normalizeSendLogStatus, parseExtraCc,
-  sendFailureKind, sendLogKindOf, sendLogMore, sendLogReasonKey, sendLogRoleKey, sendLogStatusOf, unsureSendOutcome,
+  sendFailureCode, sendFailureKind, sendLogKindOf, sendLogMore, sendLogReasonKey, sendLogRoleKey, sendLogStatusOf, unsureSendOutcome,
   SEND_POLL_MS, SEND_POLL_MAX_MS, SEND_STATUS_FIELDS, pollBaselineAfterQueued, sendPollStep, withSendStatus,
 } from '../components/techerror/sendModel.js'
 import { TR } from '../i18n/tr.js'
@@ -120,6 +120,15 @@ describe('gönderim hatası — pencere açık kalsın mı (inceleme 2026-10-18)
     expect(sendFailureKind({ success: false, status: 429, code: 'RATE_LIMITED' })).toBe('retry')
     expect(sendFailureKind({ success: false, status: 429, code: 'PDF_BUSY' })).toBe('retry')
     expect(sendFailureKind({ success: false, errorInfo: { status: 429 } })).toBe('retry')
+  })
+  it('çok pod R2a (MP-41): 409 SEND_QUEUED — önceki gönderim 421 kuyruğunda, hiçbir şey sahiplenilmedi / gönderilmedi → retry (kilit yok, pencere açık); kod yanıtta ya da errorInfo içinde', () => {
+    expect(sendFailureKind({ success: false, status: 409, code: 'SEND_QUEUED' })).toBe('retry')
+    expect(sendFailureKind({ success: false, errorInfo: { status: 409, code: 'SEND_QUEUED' } })).toBe('retry')
+    expect(sendFailureKind(Object.assign(new Error('kuyrukta'), { status: 409, code: 'SEND_QUEUED' }))).toBe('retry')
+    expect(sendFailureCode({ success: false, errorInfo: { code: 'SEND_QUEUED' } })).toBe('SEND_QUEUED')
+    expect(sendFailureCode(null)).toBeNull()
+    // Sunucu kodu gerçekten var (Java kaynağı) — ad değişirse istemci sessizce "kesin hata" saymasın
+    expect(SENDER).toMatch(/SEND_QUEUED = "SEND_QUEUED"/)
   })
   it('sonucu bilinmeyen: ağ hatası / zaman aşımı (durum 0, ApiError dahil) → unsure', () => {
     expect(sendFailureKind({ success: false, status: 0, code: 'NETWORK_ERROR' })).toBe('unsure')

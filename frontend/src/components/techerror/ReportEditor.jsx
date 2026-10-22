@@ -30,7 +30,8 @@ import ApprovalCard from './ApprovalCard.jsx'
 import MailPreviewDialog from './MailPreviewDialog.jsx'
 import SendDialog from './SendDialog.jsx'
 import {
-  SEND_POLL_MAX_MS, SEND_POLL_MS, pollBaselineAfterQueued, sendFailureKind, sendPollStep, unsureSendOutcome, withSendStatus,
+  SEND_POLL_MAX_MS, SEND_POLL_MS, pollBaselineAfterQueued, sendFailureCode, sendFailureKind, sendPollStep, unsureSendOutcome,
+  withSendStatus,
 } from './sendModel.js'
 import { bumpMailPreviewContent, mailPreviewContentRev } from './mailPreviewFetch.js'
 import RecipientsSummary from './RecipientsSummary.jsx'
@@ -821,7 +822,10 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
   /** Pencere içi yeniden denenebilir hata bandı: başlık, metin (+ "ek Bilgi korundu"), künye. */
   function sendFailure(kind, res, fallback) {
     const msg = res?.message || res?.error || fallback
-    return { kind, title: t('te.send.retryTitle'), message: `${msg} ${t('te.send.retryKept')}`, details: res?.errorInfo ?? errorInfoOf(res) }
+    // Önceki gönderim 421 kuyruğunda (R2a, MP-41): başlık bunu söyler, metin sunucunun "birkaç dakika sonra sonucu denetleyin"i
+    const queued = sendFailureCode(res) === 'SEND_QUEUED'
+    return { kind, title: t(queued ? 'te.send.queuedTitle' : 'te.send.retryTitle'), message: `${msg} ${t('te.send.retryKept')}`,
+      details: res?.errorInfo ?? errorInfoOf(res) }
   }
 
   /** Sonucu bilinmeyen gönderimin bandı: `check` 'checking' (rapor okunuyor) | 'unknown' (okunamadı) — ikisinde de kilitli. */

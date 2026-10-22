@@ -71,8 +71,11 @@ import java.util.Set;
  * bir {@code notification_logs} satırı (tetikleyici {@value #TRIGGER} / {@value #TRIGGER_APPROVAL}): gönderildi /
  * başarısız / takım adresi yok / modül takıma kapalı / pasif takım / onay akışı kaldırıldı / onaylayıcı adresi yok /
  * sistem bakımı (bakım susturmasında talep YAPILMAZ — ertesi gün yeniden denenir). Pasif kullanıcı adresleri posta
- * hunisinde düşer; push pasif hesaplara gitmez. Bilinçli sınır: talep ile posta arasında ölen pod o günün hatırlatmasını
- * kaybeder (en çok bir kez, çift posta yok).
+ * hunisinde düşer; push pasif hesaplara gitmez. <b>İki aşamalı talep (çok pod R2a, MP-41, 2026-10-22):</b> talep
+ * {@code inflight_at} damgasını yazar, karar yazılınca damga temizlenir. Talep ile karar arasında ölen pod'un damgası
+ * {@link #INFLIGHT_STALE}'den sonra "yarıda kaldı" sayılır: hatırlatma ertesi gün yeniden vadelidir ("bir kez" ayarında da —
+ * eskiden o dönem için kalıcı kayboluyordu) ve bir {@link #ST_RETAKEN} satırı yazılır. En az bir kez: ölen pod postayı
+ * göndermişse bir çift hatırlatma gider (kayıptan iyidir); teslim edilip kararı yazılan hatırlatma asla ikinci kez gitmez.
  */
 @Slf4j
 @Service
@@ -101,6 +104,13 @@ public class TechErrorReminderService {
     static final String ST_NOFLOW = "SKIPPED: kanalın onay akışı kaldırıldı";
     /** Sistem bakımı susturması (genel iz metni — {@link TechErrorSendLogService#reasonOf} bu sabitle eşler). */
     static final String ST_MAINTENANCE = SystemMaintenanceService.STATUS_SKIPPED;
+    /**
+     * Talebi alan pod'un karar yazmadan öldüğü sayılma süresi (R2a, MP-41): hatırlatma turu bir takım / rapor için saniyeler
+     * sürer; 10 dakikadan eski "sürüyor" damgası yarıda kalmış taleptir.
+     */
+    static final java.time.Duration INFLIGHT_STALE = java.time.Duration.ofMinutes(10);
+    /** Yarıda kalmış talebin yeniden alındığı iz (R2a, MP-41) — sessiz yeniden deneme yok. */
+    static final String ST_RETAKEN = "SKIPPED: önceki deneme yarıda kaldı — yeniden deneniyor";
     /** Onay hatırlatması: takımın hiçbir PO'sunun e-postası yok ({@link TechErrorSendLogService#reasonOf} → NO_RECIPIENT). */
     static final String ST_NO_APPROVER_EMAIL = "SKIPPED: onaylayıcı e-postası yok";
 
@@ -312,7 +322,13 @@ public class TechErrorReminderService {
      * Sahiplenilmiş talep: geri bırakmak için önceki gün / anahtar ve yeni sürüm; {@code round} = bu talebin turu
      * ({@code send_count}), {@code prior} = aynı turun önceki denemelerinin kaydı (yoksa {@link RoundState#NONE}).
      */
-    record Claim(Long id, int rev, String prevDay, String prevRef, String ref, int round, RoundState prior) { }
+    record Claim(Long id, int rev, String prevDay, String prevRef, String ref, int round, RoundState prior, String inflight,
+                 boolean retaken) {
+        /** Eski kurulum (testler): damga yok, devralma yok. */
+        Claim(Long id, int rev, String prevDay, String prevRef, String ref, int round, RoundState prior) {
+            this(id, rev, prevDay, prevRef, ref, round, prior, null, false);
+        }
+    }
 
     /**
      * Talep: satır yoksa INSERT (benzersizlik ihlali → başka pod sahiplendi), varsa sürüm eşleşmesiyle UPDATE. Sahiplenilemezse
@@ -320,16 +336,20 @@ public class TechErrorReminderService {
      * {@code existing}'in tur kaydı güncel.
      */
     Claim claim(Long channelId, YearMonth p, String kind, TechErrorReminder existing, String today, String ref) {
-        String now = ISO.format(service.now());
+        Instant at = service.now();
+        String now = ISO.format(at);
         String r = ref == null ? "" : ref;
         if (existing == null) {
             TechErrorReminder saved = insert(channelId, p, kind, today, ref, now);
-            return saved == null ? null : new Claim(saved.getId(), saved.getClaimRev(), null, null, r, saved.getSendCount(), RoundState.NONE);
+            return saved == null ? null : new Claim(saved.getId(), saved.getClaimRev(), null, null, r, saved.getSendCount(),
+                    RoundState.NONE, now, false);
         }
+        // Yarıda kalmış talep (R2a, MP-41): önceki talebi alan pod karar yazmadan öldü — devralınır, iz yazılır
+        boolean retaken = inflightPending(existing) && inflightStale(existing, at);
         if (reminders.claim(existing.getId(), existing.getClaimRev(), today, ref, now) != 1) return null;
         int round = existing.getSendCount() + 1;
         return new Claim(existing.getId(), existing.getClaimRev() + 1, existing.getLastSentOn(), existing.getRefKey(), r, round,
-                RoundState.of(existing.getReachedIds(), r, round));
+                RoundState.of(existing.getReachedIds(), r, round), now, retaken);
     }
 
     /**
@@ -350,6 +370,35 @@ public class TechErrorReminderService {
         return true;
     }
 
+    /**
+     * Talebin kararı yazıldı (R2a, MP-41): "sürüyor" damgası koşullu temizlenir (bu talebin sürümü + damgası). Hata yutulur —
+     * damga kalırsa en kötü ihtimalle hatırlatma {@link #INFLIGHT_STALE} sonrası ertesi gün bir kez daha gider.
+     */
+    void finishInflight(Claim c) {
+        if (c == null || c.inflight() == null) return;
+        try {
+            reminders.finishInflight(c.id(), c.rev(), c.inflight());
+        } catch (RuntimeException e) {
+            log.warn("Teknik hata raporu hatırlatma talebinin 'sürüyor' damgası temizlenemedi (#{}): {}", c.id(), e.toString());
+        }
+    }
+
+    /** "Sürüyor" damgası geçerli mi: dolu ve satırın son güncellemesinden eski değil (eski sürüm pod'un talebi onu geçersiz kılar). */
+    static boolean inflightPending(TechErrorReminder r) {
+        if (r == null || r.getInflightAt() == null || r.getInflightAt().isBlank()) return false;
+        return r.getUpdatedAt() == null || r.getInflightAt().compareTo(r.getUpdatedAt()) >= 0;
+    }
+
+    /** Geçerli "sürüyor" damgası {@link #INFLIGHT_STALE}'den eski mi (okunamıyorsa eski sayılır). */
+    static boolean inflightStale(TechErrorReminder r, Instant now) {
+        try {
+            Instant at = java.time.LocalDateTime.parse(r.getInflightAt()).toInstant(ZoneOffset.UTC);
+            return !at.plus(INFLIGHT_STALE).isAfter(now);
+        } catch (RuntimeException e) {
+            return true;
+        }
+    }
+
     /** İlk satır (talep ya da kapı satırı); başka pod önce eklediyse null. */
     private TechErrorReminder insert(Long channelId, YearMonth p, String kind, String today, String ref, String now) {
         TechErrorReminder row = new TechErrorReminder();
@@ -363,12 +412,24 @@ public class TechErrorReminderService {
         row.setClaimRev(1);
         row.setCreatedAt(now);
         row.setUpdatedAt(now);
+        // Talep satırı "sürüyor" damgasıyla doğar (R2a, MP-41); kapı satırı kararın kendisidir (damgasız)
+        if (TechErrorReminder.KIND_PERIOD.equals(kind) || TechErrorReminder.KIND_APPROVAL.equals(kind)) row.setInflightAt(now);
         try {
             return reminders.saveAndFlush(row);
         } catch (org.springframework.dao.DataIntegrityViolationException race) {
             log.debug("Teknik hata raporu hatırlatması başka pod'da sahiplenildi: kanal {} {} {}", channelId, p, kind);
             return null;
         }
+    }
+
+    /**
+     * {@link #due(TechErrorReminder, LocalDate, int)} + iki aşamalı talep (R2a, MP-41): geçerli "sürüyor" damgası varsa karar
+     * damgaya göre — {@link #INFLIGHT_STALE}'den eskiyse (talebi alan pod öldü) VADELİ (tekrar 0 olsa da), tazeyse değil
+     * (başka bir pod şu an gönderiyor).
+     */
+    static boolean due(TechErrorReminder r, LocalDate today, int everyDays, Instant now) {
+        if (inflightPending(r)) return inflightStale(r, now);
+        return due(r, today, everyDays);
     }
 
     /** Talep satırı bugün için vadeli mi: yok / bırakılmış → evet; {@code everyDays} 0 → bir kez; aksi hâlde son günden bu yana ≥ N gün. */
@@ -507,7 +568,7 @@ public class TechErrorReminderService {
             TechErrorReminderMail.State st = stateOf(row, now, TechErrorApprovalService.approvalRequired(ch));
             if (st == null) continue;
             TechErrorReminder c = claimRows.get(ch.getId());
-            if (!due(c, today, repeat)) continue;
+            if (!due(c, today, repeat, now)) continue;
             byTeam.computeIfAbsent(ch.getTeamId(), k -> new ArrayList<>()).add(new Due(ch, row, c, st));
         }
         if (byTeam.isEmpty()) return;
@@ -557,13 +618,19 @@ public class TechErrorReminderService {
             }
             List<Due> mine = new ArrayList<>();
             List<Claim> claims = new ArrayList<>();
+            List<Due> retaken = new ArrayList<>();
             for (Due d : en.getValue()) {
                 Claim c = claim(d.channel().getId(), period, TechErrorReminder.KIND_PERIOD, d.claimRow(), todayStr, "");
                 if (c == null) continue;                               // başka pod sahiplendi
                 mine.add(d);
                 claims.add(c);
+                if (c.retaken()) retaken.add(d);
             }
             if (mine.isEmpty()) continue;
+            if (!retaken.isEmpty()) {
+                // Önceki talep karar yazılmadan yarıda kaldı (pod öldü): sessiz yeniden deneme yok — iz satırı (R2a, MP-41)
+                saveLog(TRIGGER, team.getName(), to, "TEAM", subject, ST_RETAKEN, channelSummary(retaken, enTpl));
+            }
             try {
                 remindTeam(team, period, mine, claims, enTpl, subject, to, overflow, base, day, repeat, pushOn, todayStr, counts);
             } catch (RuntimeException e) {
@@ -641,6 +708,7 @@ public class TechErrorReminderService {
         else counts[3]++;
         saveLog(TRIGGER, team.getName(), to, "TEAM", subject, status, withNote(summary, pushNote + overflow));
         if (!delivered && queued == 0 && !finalSkip) retryOrGiveUpPeriod(team, to, subject, mine, claims, enTpl, internalFailure(status));
+        else claims.forEach(this::finishInflight);                  // karar yazıldı (R2a, MP-41)
     }
 
     /**
@@ -653,7 +721,10 @@ public class TechErrorReminderService {
                                      boolean error) {
         List<Due> gaveUp = new ArrayList<>();
         for (int k = 0; k < claims.size(); k++) {
-            if (!retryOrGiveUp(claims.get(k), List.of()) && k < mine.size()) gaveUp.add(mine.get(k));
+            if (!retryOrGiveUp(claims.get(k), List.of())) {
+                finishInflight(claims.get(k));                      // vazgeçildi: talep kalır, karar yazıldı (R2a, MP-41)
+                if (k < mine.size()) gaveUp.add(mine.get(k));
+            }
         }
         if (!gaveUp.isEmpty()) {
             log.warn("Teknik hata raporu hatırlatması takım {} için {} denemede ulaşmadı; bu turda vazgeçildi ({} kanal)", team.getId(),
@@ -775,7 +846,7 @@ public class TechErrorReminderService {
             TechErrorReminder existing = reminders.findByChannelIdAndReportYearAndReportMonthAndKind(ch.getId(), p.getYear(),
                     p.getMonthValue(), TechErrorReminder.KIND_APPROVAL).orElse(null);
             boolean fresh = existing == null || !ref.equals(existing.getRefKey());
-            if (!fresh && !due(existing, today, every)) continue;
+            if (!fresh && !due(existing, today, every, now)) continue;
             if (muted) {
                 saveLogFor(r.getChannelId(), r.getId(), TRIGGER_APPROVAL, team.getName(), List.of(), "PO", subject, ST_MAINTENANCE, title);
                 counts[3]++;
@@ -783,6 +854,10 @@ public class TechErrorReminderService {
             }
             Claim c = claim(ch.getId(), p, TechErrorReminder.KIND_APPROVAL, existing, todayStr, ref);
             if (c == null) continue;
+            if (c.retaken()) {
+                // Önceki talep karar yazılmadan yarıda kaldı (pod öldü) — iz satırı (R2a, MP-41)
+                saveLogFor(r.getChannelId(), r.getId(), TRIGGER_APPROVAL, team.getName(), List.of(), "PO", subject, ST_RETAKEN, title);
+            }
             // Bu TURDA (aynı istek + send_count) hatırlatmanın zaten ulaştığı PO'lar (inceleme 2026-10-18): yeniden denemede onlara
             // ne posta ne push gider, ulaşılmış sayılırlar — yalnız ulaşmayanlar yeniden denenir
             Set<Long> already = c.prior().reached();
@@ -809,6 +884,7 @@ public class TechErrorReminderService {
                             withNote(title, pushNote));
                     if (pushed > 0) counts[2]++;
                     else counts[3]++;
+                    finishInflight(c);
                     continue;
                 }
                 Links links = links(r, now);
@@ -847,13 +923,23 @@ public class TechErrorReminderService {
                 else counts[3]++;
                 // Ulaşılamayan bir PO bile varsa talep bırakılır — ertesi gün YALNIZ ulaşmayanlar yeniden denenir (ulaşılanlar
                 // reached_ids'te); turda MAX_TRIES denemeden sonra vazgeçilir (kalıcı geri dönen adres her gün yeniden denetmez)
-                if (missed > 0 && !retryOrGiveUp(c, reachedNow)) approvalGaveUp(r, team, subject, title, missedPos, internal == missed);
+                if (missed > 0) {
+                    if (!retryOrGiveUp(c, reachedNow)) {
+                        approvalGaveUp(r, team, subject, title, missedPos, internal == missed);
+                        finishInflight(c);
+                    }
+                } else {
+                    finishInflight(c);                                   // karar yazıldı (R2a, MP-41)
+                }
             } catch (RuntimeException e) {
                 // Beklenmeyen hata bir raporda kalır: talep bırakılır (ulaşılanlar kayıtlı), iz FAILED — ertesi gün yeniden,
                 // turda en çok MAX_TRIES deneme
                 log.warn("Onay hatırlatması rapor {} için yarıda kaldı: {}", r.getId(), e.toString(), e);
                 saveLogFor(r.getChannelId(), r.getId(), TRIGGER_APPROVAL, team.getName(), List.of(), "PO", subject, "FAILED: " + clip(e.getClass().getSimpleName(), 120), title);
-                if (!retryOrGiveUp(c, reachedNow)) approvalGaveUp(r, team, subject, title, missedPos, true);
+                if (!retryOrGiveUp(c, reachedNow)) {
+                    approvalGaveUp(r, team, subject, title, missedPos, true);
+                    finishInflight(c);
+                }
                 counts[3]++;
             }
         }

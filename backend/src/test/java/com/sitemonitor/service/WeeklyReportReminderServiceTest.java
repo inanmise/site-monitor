@@ -195,4 +195,62 @@ class WeeklyReportReminderServiceTest {
         assertThat(r.skippedDisabled()).isEqualTo(1);   // aday listesindeydi ama modül kapalı diye atlandı
         verify(emailService, never()).sendHtml(any(), any(), anyString(), anyString(), any());
     }
+
+    @Test
+    @DisplayName("çok pod R2a (MP-42): 2. takımın gönderimi patlar → 1. ve 3. takım yine gönderilir; her kararın notification_logs izi (gönderildi / hata / e-posta yok / girilmiş / kapalı)")
+    void teamTwoThrows_teamsOneAndThreeSentAndLogged() {
+        com.sitemonitor.repository.NotificationLogRepository logRepo = mock(com.sitemonitor.repository.NotificationLogRepository.class);
+        service.setLogRepo(logRepo);
+        Team a = team(1L, "AlphaSY", "alpha@x.com");
+        Team b = team(2L, "BetaSY", "beta@x.com");
+        Team c = team(3L, "GammaSY", "gamma@x.com");
+        Team d = team(4L, "DeltaSY", "");                    // e-posta yok
+        Team e = team(5L, "EpsilonSY", "eps@x.com");          // girilmiş
+        Team f = team(6L, "ZetaSY", "zeta@x.com", false);    // hatırlatma kapalı
+        Team g = team(7L, "EtaSY", "eta@x.com");
+        g.setWeeklyReportsEnabled(false);                    // modül kapalı → iz YOK
+        when(teamRepo.findByActiveTrueOrderByNameAsc()).thenReturn(List.of(a, b, c, d, e, f, g));
+        when(reportRepo.findByTeamIdAndReportYearAndWeekNo(anyLong(), anyInt(), anyInt())).thenReturn(Optional.empty());
+        when(reportRepo.findByTeamIdAndReportYearAndWeekNo(eq(5L), anyInt(), anyInt())).thenReturn(Optional.of(reportWithStatus("APPROVED")));
+        when(emailService.sendHtml(any(), any(), anyString(), anyString(), any())).thenAnswer(inv -> {
+            String[] to = inv.getArgument(0);
+            if ("beta@x.com".equals(to[0])) throw new IllegalStateException("şablon bozuk");
+            return "SENT";
+        });
+
+        WeeklyReportReminderService.ReminderResult r = service.sendFridayReminders();
+
+        assertThat(r.sent()).isEqualTo(2);
+        assertThat(r.failed()).isEqualTo(1);
+        ArgumentCaptor<String[]> to = ArgumentCaptor.forClass(String[].class);
+        verify(emailService, times(3)).sendHtml(to.capture(), any(), anyString(), anyString(), any());
+        assertThat(to.getAllValues()).extracting(x -> x[0]).containsExactly("alpha@x.com", "beta@x.com", "gamma@x.com");
+        ArgumentCaptor<com.sitemonitor.model.NotificationLog> logs = ArgumentCaptor.forClass(com.sitemonitor.model.NotificationLog.class);
+        verify(logRepo, times(6)).save(logs.capture());
+        assertThat(logs.getAllValues()).allSatisfy(n -> {
+            assertThat(n.getTrigger()).isEqualTo(WeeklyReportReminderService.TRIGGER);
+            assertThat(n.getAlertEventId()).isZero();
+        });
+        assertThat(logs.getAllValues()).extracting(com.sitemonitor.model.NotificationLog::getRecipientName,
+                        com.sitemonitor.model.NotificationLog::getEmailStatus)
+                .containsExactly(
+                        tuple("AlphaSY", "SENT"),
+                        tuple("BetaSY", "FAILED: IllegalStateException"),
+                        tuple("GammaSY", "SENT"),
+                        tuple("DeltaSY", WeeklyReportReminderService.ST_NO_EMAIL),
+                        tuple("EpsilonSY", WeeklyReportReminderService.ST_DONE),
+                        tuple("ZetaSY", WeeklyReportReminderService.ST_OFF));
+        assertThat(logs.getAllValues().get(0).getMessage()).isEqualTo("<html/>");   // gövde: SMTP günlüğünden yeniden gönderilebilir
+    }
+
+    @Test
+    @DisplayName("çok pod R2a (MP-42): iz yazılamazsa (DB) hatırlatma yine gider — iz hatası kararı değiştirmez")
+    void traceFailureDoesNotStopReminders() {
+        com.sitemonitor.repository.NotificationLogRepository logRepo = mock(com.sitemonitor.repository.NotificationLogRepository.class);
+        when(logRepo.save(any())).thenThrow(new IllegalStateException("db"));
+        service.setLogRepo(logRepo);
+        when(teamRepo.findByActiveTrueOrderByNameAsc()).thenReturn(List.of(team(1L, "AlphaSY", "alpha@x.com"), team(2L, "BetaSY", "beta@x.com")));
+        when(reportRepo.findByTeamIdAndReportYearAndWeekNo(anyLong(), anyInt(), anyInt())).thenReturn(Optional.empty());
+        assertThat(service.sendFridayReminders().sent()).isEqualTo(2);
+    }
 }

@@ -40,6 +40,24 @@ public interface ExecutiveSummaryTeamReportRepository extends JpaRepository<Exec
                 @Param("actor") String actor);
 
     /**
+     * KOŞULLU bitirme (çok pod R2a, MP-42, 2026-10-22): yalnız hâlâ BU talebin ({@code claimedAt}) SENDING satırı yazılır —
+     * yarıda kalan talebi devralan başka bir pod ile eski sahip birbirinin sonucunu ezmez (eskiden bütün varlık kaydediliyordu).
+     * Dönen: güncellenen satır sayısı (0 = talep artık bu çağıranın değil).
+     */
+    @Modifying
+    @Transactional
+    @Query("""
+            UPDATE ExecutiveSummaryTeamReport r
+               SET r.status = :status, r.recipientCount = :recipients, r.chunkCount = :chunks, r.detail = :detail,
+                   r.subject = :subject, r.summaryStatus = :summaryStatus, r.summaryJson = :summaryJson, r.sentAt = :sentAt
+             WHERE r.id = :id AND r.status = 'SENDING' AND r.claimedAt = :claimedAt
+            """)
+    int finishIfClaimed(@Param("id") Long id, @Param("claimedAt") String claimedAt, @Param("status") String status,
+                        @Param("recipients") Integer recipients, @Param("chunks") Integer chunks, @Param("detail") String detail,
+                        @Param("subject") String subject, @Param("summaryStatus") String summaryStatus,
+                        @Param("summaryJson") String summaryJson, @Param("sentAt") String sentAt);
+
+    /**
      * Seçilebilir pencereden eski kayıtlar ({@code yıl × 12 + ay < cutoff}). Zamanlanmış gönderim her koşuda çağırır —
      * tablo takım × 25 aydan fazla büyümez. Dönen: silinen satır sayısı.
      */

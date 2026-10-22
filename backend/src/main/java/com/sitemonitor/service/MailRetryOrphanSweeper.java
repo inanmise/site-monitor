@@ -23,7 +23,8 @@ import java.time.format.DateTimeFormatter;
  * yapar — KOŞULLU tek UPDATE (yalnız hâlâ {@code QUEUED_RETRY} olan satır; iki pod aynı satırı iki kez yazmaz, kilit yalnız
  * boşa iş yapılmasın diye). Tarama son {@link #LOOKBACK} ile sınırlı ({@code idx_nl_sent_at} aralık taraması; tüm tablo okunmaz).
  * Geç gelen gerçek sonuç satırı yine düzeltir. Aynı turda 7/24 teslim satırlarının ({@code noc_deliveries}) kuyruk sonucu da
- * yazılır ({@code NocQueuedRetryReconciler}).
+ * yazılır ({@code NocQueuedRetryReconciler}), ardından kanal teknik hata raporlarının kuyrukları sonuçlandırılır (R2a, MP-41 —
+ * {@code TechErrorReportService.reconcileAllQueued}).
  */
 @Slf4j
 @Component
@@ -71,6 +72,15 @@ public class MailRetryOrphanSweeper {
     @Autowired(required = false)
     private com.sitemonitor.service.noc.NocQueuedRetryReconciler nocReconciler;
 
+    /**
+     * Kanal teknik hata raporlarının kuyruk sonucu (çok pod R2a, MP-41, 2026-10-22) — posta günlüğü yetimleri yazıldıktan
+     * SONRA aynı turda: posta servisinin geri yazdığı SENT / FAILED (ya da bu turda yetim sayılan satır) raporu kimse ekranı
+     * açmasa da sonuçlandırır. Yoksa (dilim testleri) atlanır.
+     */
+    @Autowired(required = false)
+    @org.springframework.context.annotation.Lazy
+    private com.sitemonitor.service.techerror.TechErrorReportService techErrorReports;
+
     public MailRetryOrphanSweeper(JdbcTemplate jdbc, EmailNotificationService emailService) {
         this.jdbc = jdbc;
         this.emailService = emailService;
@@ -84,6 +94,11 @@ public class MailRetryOrphanSweeper {
     /** Test dikişi. */
     public void setNocReconciler(com.sitemonitor.service.noc.NocQueuedRetryReconciler nocReconciler) {
         this.nocReconciler = nocReconciler;
+    }
+
+    /** Test dikişi. */
+    public void setTechErrorReports(com.sitemonitor.service.techerror.TechErrorReportService techErrorReports) {
+        this.techErrorReports = techErrorReports;
     }
 
     @Scheduled(fixedDelayString = "${site.monitor.mail.retry-orphan-sweep-ms:300000}",
@@ -130,6 +145,14 @@ public class MailRetryOrphanSweeper {
                 if (noc > 0) log.info("7/24 teslimlerinin {} tanesinin 421 kuyruk sonucu yazıldı", noc);
             } catch (Exception e) {
                 log.warn("7/24 teslimlerinin kuyruk sonucu yazılamadı (sonraki turda yeniden denenir): {}", e.getMessage());
+            }
+        }
+        if (techErrorReports != null) {
+            try {
+                int te = techErrorReports.reconcileAllQueued();
+                if (te > 0) log.info("Kanal teknik hata raporlarının {} kuyruk gönderiminin sonucu yazıldı", te);
+            } catch (Exception e) {
+                log.warn("Kanal teknik hata raporlarının kuyruk sonucu yazılamadı (sonraki turda yeniden denenir): {}", e.getMessage());
             }
         }
         return n;

@@ -21317,6 +21317,10 @@ export const EN = {
   'te.send.ccRejected': "The extra CC addresses weren't accepted. Check the addresses and try again.",
   'te.send.retryTitle': "The report wasn't sent — you can try again",
   'te.send.retryKept': "The extra CC addresses you typed were kept; press “Send” again in a little while.",
+  // ── multi-pod R2a · D1 ──
+  'te.appr.outcome.SEND_QUEUED': "The report was approved but not sent to the executives, because its previous send is still in the mail server's retry queue (to avoid a second copy). Check the send result in a few minutes and use \"Send to executives\" if needed.",
+  'te.send.queuedTitle': "The previous send is still in the mail queue — the report wasn't sent again",
+  'logtrig.WEEKLY_REPORT_REMINDER': "Weekly report reminder",
   'te.send.unsureTitle': "The send result is unknown",
   'te.send.unsureBody': "It isn't clear whether the send completed on the server; the report's status is being read again. “Send” stays locked until the status is known, so the report doesn't go out twice. The extra CC addresses you typed were kept.",
   'te.send.unsureCheckFailed': "The report's status couldn't be read, so it's still unknown whether the send went out. Press “Check the status again” or look at the channel's send log; “Send” stays locked until the status is known.",

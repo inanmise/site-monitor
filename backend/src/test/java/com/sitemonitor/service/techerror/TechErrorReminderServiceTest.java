@@ -76,6 +76,7 @@ class TechErrorReminderServiceTest {
     @Autowired com.sitemonitor.repository.TechErrorReportImageRepository images;
     @Autowired com.sitemonitor.repository.TechErrorTemplateVersionRepository versions;
     @Autowired com.sitemonitor.repository.UserPushDeliveryRepository pushDeliveries;
+    @Autowired org.springframework.jdbc.core.JdbcTemplate jdbc;
 
     @MockitoBean TechErrorReportSender sender;
     @MockitoBean EmailNotificationService email;
@@ -1283,5 +1284,149 @@ class TechErrorReminderServiceTest {
         assertThat(big.length()).isLessThanOrEqualTo(TechErrorReminderService.RoundState.MAX_CHARS);
         assertThat(TechErrorReminderService.RoundState.of(big, "1700", 1).reached()).isNotEmpty();
         assertThat(TechErrorReminderService.RoundState.of("1700#1#1:" + "9".repeat(5000), "1700", 1)).isSameAs(TechErrorReminderService.RoundState.NONE);
+    }
+
+    // ── Çok pod R2a (MP-41, 2026-10-22): iki aşamalı talep ─────────────────────────────────────────────
+
+    /** Pod'un posta ile karar arasında ölmesinin benzetimi: RuntimeException değil (tur onu yakalar) — tur yarıda kesilir. */
+    static final class PodKilled extends Error {
+        PodKilled() { super("pod öldü"); }
+    }
+
+    private void killNextMail() {
+        when(email.sendHtml(any(String[].class), any(), anyString(), anyString(), any(), any(), anyBoolean(), any()))
+                .thenThrow(new PodKilled()).thenReturn("SENT");
+    }
+
+    @Test
+    @DisplayName("R2a MP-41: talep alındı, pod posta / karar yazmadan öldü — tekrar 0 ('bir kez') olsa da ERTESİ GÜN bir kez hatırlatılır + 'önceki deneme yarıda kaldı' izi; sonra bir daha yok")
+    void claimedThenPodDied_repeatZero_remindedNextDay() {
+        optIn(dijital);
+        settings.put(TechErrorReportSettings.KEY_REMINDER_REPEAT_DAYS, "0");
+        settings.put(TechErrorReportSettings.KEY_REMINDER_PUSH, "false");
+        channel(dijital, "Mobil");
+        killNextMail();
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> job.run()).isInstanceOf(PodKilled.class);
+        TechErrorReminder claimed = reminders.findAll().get(0);
+        assertThat(claimed.getLastSentOn()).isEqualTo("2026-10-05");
+        assertThat(claimed.getInflightAt()).as("talep sürüyor damgası").isNotNull();
+        assertThat(rows(TechErrorReminderService.TRIGGER)).isEmpty();
+
+        // aynı gün (taze damga — başka pod şu an gönderiyor sayılır): yine yok
+        at(OCT5.plus(Duration.ofMinutes(5)));
+        newJob().run();
+        verifyMails(1);
+        // ertesi gün: damga eski → yarıda kalmış talep devralınır, TEK posta + iz
+        at(OCT5.plus(Duration.ofDays(1)));
+        TechErrorReminderService other = newJob();
+        assertThat(other.run().teamsReminded()).isEqualTo(1);
+        verifyMails(2);
+        assertThat(rows(TechErrorReminderService.TRIGGER)).extracting(NotificationLog::getEmailStatus)
+                .containsExactly(TechErrorReminderService.ST_RETAKEN, "SENT");
+        assertThat(reminders.findAll()).singleElement().satisfies(r -> assertThat(r.getInflightAt()).isNull());
+        // karar yazıldı: tekrar 0 → bir daha yok
+        at(OCT5.plus(Duration.ofDays(2)));
+        other.run();
+        verifyMails(2);
+    }
+
+    @Test
+    @DisplayName("R2a MP-41: 'sürüyor' damgası her kararda temizlenir — gönderildi, ulaşmadı (bırakıldı), son SKIPPED (adres yok), vazgeçildi")
+    void inflightClearedOnEveryDecision() {
+        optIn(dijital);
+        settings.put(TechErrorReportSettings.KEY_REMINDER_PUSH, "false");
+        channel(dijital, "Mobil");
+        // gönderildi
+        job.run();
+        assertThat(reminders.findAll()).singleElement().satisfies(r -> assertThat(r.getInflightAt()).isNull());
+        // ulaşmadı → bırakıldı (talep boş, damga yok)
+        reminders.deleteAll();
+        when(email.sendHtml(any(String[].class), any(), anyString(), anyString(), any(), any(), anyBoolean(), any())).thenReturn("FAILED: 550");
+        job.run();
+        assertThat(reminders.findAll()).singleElement().satisfies(r -> {
+            assertThat(r.getLastSentOn()).isNull();
+            assertThat(r.getInflightAt()).isNull();
+        });
+        // üçüncü başarısız deneme: vazgeçildi (talep kalır), damga yine temiz
+        job.run();
+        job.run();
+        assertThat(reminders.findAll()).singleElement().satisfies(r -> {
+            assertThat(r.getLastSentOn()).isEqualTo("2026-10-05");
+            assertThat(r.getInflightAt()).isNull();
+        });
+        // takım adresi yok: son SKIPPED — damga temiz
+        reminders.deleteAll();
+        dijital.setEmail(null);
+        teams.save(dijital);
+        job.run();
+        assertThat(reminders.findAll()).singleElement().satisfies(r -> assertThat(r.getInflightAt()).isNull());
+    }
+
+    @Test
+    @DisplayName("R2a MP-41 dönüşümlü dağıtım: eski sürüm pod'un talebi (updated_at damgadan yeni) damgayı GEÇERSİZ kılar — eski pod gönderdi, yeni pod ertesi gün tekrar GÖNDERMEZ")
+    void oldPodClaimVoidsInflight() {
+        optIn(dijital);
+        settings.put(TechErrorReportSettings.KEY_REMINDER_REPEAT_DAYS, "0");
+        settings.put(TechErrorReportSettings.KEY_REMINDER_PUSH, "false");
+        TechErrorChannel ch = channel(dijital, "Mobil");
+        TechErrorReminder r = new TechErrorReminder();
+        r.setChannelId(ch.getId());
+        r.setReportYear(2026);
+        r.setReportMonth(9);
+        r.setKind(TechErrorReminder.KIND_PERIOD);
+        r.setRefKey("");
+        r.setLastSentOn("2026-10-05");
+        r.setSendCount(1);
+        r.setClaimRev(2);
+        r.setInflightAt("2026-10-05T06:15:00");                       // yeni pod'un eski bir talebi
+        r.setCreatedAt("2026-10-05T06:15:00");
+        r.setUpdatedAt("2026-10-05T06:15:00");
+        reminders.saveAndFlush(r);
+        // eski sürüm pod damgayı bilmeden talep etti / bıraktı → yalnız updated_at ilerledi
+        jdbc.update("UPDATE tech_error_reminders SET updated_at = '2026-10-05T06:20:00' WHERE id = ?", r.getId());
+        at(OCT5.plus(Duration.ofDays(1)));
+        job.run();
+        verifyMails(0);
+        assertThat(TechErrorReminderService.inflightPending(reminders.findAll().get(0))).isFalse();
+    }
+
+    @Test
+    @DisplayName("R2a MP-41: onay hatırlatması da iki aşamalı — PO postası sırasında ölen pod'un turu ertesi gün (pencere beklemeden) yeniden gider, iz rapora bağlı")
+    void approvalClaimedThenPodDied_retakenNextDay() {
+        TechErrorReport r = pendingSince(OCT5.minus(Duration.ofDays(3)));
+        settings.put(TechErrorReportSettings.KEY_APPROVAL_REMINDER_DAYS, "3");
+        killNextMail();
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> job.run()).isInstanceOf(PodKilled.class);
+        assertThat(reminders.findAll()).filteredOn(x -> TechErrorReminder.KIND_APPROVAL.equals(x.getKind()))
+                .singleElement().satisfies(x -> assertThat(x.getInflightAt()).isNotNull());
+        at(OCT5.plus(Duration.ofDays(1)));
+        newJob().run();
+        assertThat(rows(TechErrorReminderService.TRIGGER_APPROVAL)).extracting(NotificationLog::getEmailStatus)
+                .contains(TechErrorReminderService.ST_RETAKEN).filteredOn("SENT"::equals).hasSize(2);
+        assertThat(rows(TechErrorReminderService.TRIGGER_APPROVAL)).filteredOn(n -> TechErrorReminderService.ST_RETAKEN.equals(n.getEmailStatus()))
+                .singleElement().satisfies(n -> assertThat(n.getTechErrorReportId()).isEqualTo(r.getId()));
+        assertThat(reminders.findAll()).filteredOn(x -> TechErrorReminder.KIND_APPROVAL.equals(x.getKind()))
+                .singleElement().satisfies(x -> assertThat(x.getInflightAt()).isNull());
+    }
+
+    @Test
+    @DisplayName("R2a MP-41: vade kuralı — geçerli damga eskiyse vadeli (tekrar 0 da), tazeyse değil; damgasız satır eski kural; okunamayan damga eski sayılır")
+    void dueWithInflight() {
+        Instant now = Instant.parse("2026-10-06T06:15:00Z");
+        java.time.LocalDate today = java.time.LocalDate.of(2026, 10, 6);
+        TechErrorReminder r = new TechErrorReminder();
+        r.setLastSentOn("2026-10-05");
+        r.setUpdatedAt("2026-10-06T06:10:00");
+        r.setInflightAt("2026-10-06T06:10:00");
+        assertThat(TechErrorReminderService.due(r, today, 0, now)).as("taze damga").isFalse();
+        r.setInflightAt("2026-10-06T06:05:00");
+        r.setUpdatedAt("2026-10-06T06:05:00");
+        assertThat(TechErrorReminderService.due(r, today, 0, now)).as("10 dk'lık damga").isTrue();
+        r.setInflightAt(null);
+        assertThat(TechErrorReminderService.due(r, today, 0, now)).as("damgasız, bir kez").isFalse();
+        assertThat(TechErrorReminderService.due(r, today, 1, now)).as("damgasız, her gün").isTrue();
+        r.setInflightAt("bozuk");
+        r.setUpdatedAt(null);
+        assertThat(TechErrorReminderService.due(r, today, 0, now)).isTrue();
     }
 }

@@ -61,6 +61,8 @@ class TlsGradeDropNotifierTest {
 
     final Map<Long, TlsGradeChange> store = new HashMap<>();
     final Map<String, List<Long>> finished = new HashMap<>();
+    /** notification_logs izleri (R2a MP-43: yarıda kalan talebin iz denetimi bunları okur). */
+    final List<NotificationLog> savedLogs = new ArrayList<>();
 
     @BeforeEach
     void setUp() {
@@ -76,6 +78,7 @@ class TlsGradeDropNotifierTest {
         when(escalation.teamEmailsForMonitor(any(), isNull())).thenAnswer(inv -> List.of("takim" + inv.getArgument(0) + "@example.com"));
         when(email.sendHtml(any(), isNull(), anyString(), anyString(), isNull())).thenReturn("SENT");
         when(email.getEmailFrom()).thenReturn("noreply@example.com");
+        when(logRepo.save(any(NotificationLog.class))).thenAnswer(inv -> { savedLogs.add(inv.getArgument(0)); return inv.getArgument(0); });
         when(push.enqueueTeamNoticeLocalized(any(), anyString(), anyString(), anyString(), anyString(), any(), anyString(), any()))
                 .thenReturn(Map.of("queued", 2));
         when(repo.findByNotifyStateOrderByIdAsc(eq(TlsGradeChange.NOTIFY_PENDING), any()))
@@ -99,6 +102,29 @@ class TlsGradeDropNotifierTest {
                     }
                     return k;
                 });
+        // Talep + damga (R2a, MP-43) ve DB sayaçlı yeniden deneme
+        when(repo.claimNotify(anyCollection(), anyString())).thenAnswer(inv -> {
+            int k = 0;
+            for (Long id : (Collection<Long>) inv.getArgument(0)) {
+                TlsGradeChange c = store.get(id);
+                if (c != null && TlsGradeChange.NOTIFY_PENDING.equals(c.getNotifyState())) {
+                    c.setNotifyState(TlsGradeChange.NOTIFY_SENDING); c.setNotifiedAt(inv.getArgument(1)); k++;
+                }
+            }
+            return k;
+        });
+        when(repo.retryNotify(anyCollection())).thenAnswer(inv -> {
+            int k = 0;
+            for (Long id : (Collection<Long>) inv.getArgument(0)) {
+                TlsGradeChange c = store.get(id);
+                if (c != null && TlsGradeChange.NOTIFY_SENDING.equals(c.getNotifyState())) {
+                    c.setNotifyState(TlsGradeChange.NOTIFY_PENDING);
+                    c.setNotifyAttempts((c.getNotifyAttempts() == null ? 0 : c.getNotifyAttempts()) + 1);
+                    k++;
+                }
+            }
+            return k;
+        });
         when(repo.findAllById(anyCollection())).thenAnswer(inv -> {
             List<TlsGradeChange> out = new ArrayList<>();
             for (Long id : (Collection<Long>) inv.getArgument(0)) if (store.containsKey(id)) out.add(store.get(id));
@@ -134,7 +160,7 @@ class TlsGradeDropNotifierTest {
     void nothingPending_orClaimLost() {
         assertThat(n.notifyPending().claimed()).isZero();
         drop(1, "a.example.com", 1L, null, "A", "B");
-        when(repo.transitionNotifyState(anyCollection(), any(), any())).thenReturn(0);
+        when(repo.claimNotify(anyCollection(), anyString())).thenReturn(0);
         assertThat(n.notifyPending().claimed()).isZero();
         verify(email, never()).sendHtml(any(), any(), anyString(), anyString(), any());
     }
@@ -262,15 +288,20 @@ class TlsGradeDropNotifierTest {
     }
 
     @Test
-    @DisplayName("2026-10-12: tur ortasında hata → talep edilen satır SENDING'de KALMAZ, 'yarıda kaldı' olur (yeniden gönderilmez); tur fırlatmaz")
+    @DisplayName("2026-10-12 / R2a MP-43: tur ortasında hata → talep edilen satır SENDING'de KALMAZ; hiçbir takımı DENENMEMİŞ satır PENDING'e döner (kimseye gitmedi), DB sayacı tavanda 'yarıda kaldı'; tur fırlatmaz")
     void failureMidRunMarksInterrupted() {
+        // Yeniden temel (2026-10-22, MP-43): eskiden denenmemiş satır da 'yarıda kaldı' oluyor, düşüş bildirimi kayboluyordu
         drop(1, "a.example.com", 7L, null, "A", "C");
         // takım döngüsünün DIŞINDA (talepten sonra) beklenmeyen hata — takım hatası artık takım başına yakalanır
         when(settings.getString(eq(TlsGradeDropNotifier.KEY_MIN_GRADE), anyString())).thenThrow(new IllegalStateException("ayar okunamadı"));
         TlsGradeDropNotifier.Result r = n.notifyPending();
         assertThat(r.claimed()).isZero();
-        assertThat(store.get(1L).getNotifyState()).isEqualTo(TlsGradeDropNotifier.NOTIFY_INTERRUPTED);
+        assertThat(store.get(1L).getNotifyState()).isEqualTo(TlsGradeChange.NOTIFY_PENDING);
+        assertThat(store.get(1L).getNotifyAttempts()).isEqualTo(1);
+        for (int i = 1; i < TlsGradeDropNotifier.READ_RETRY_MAX; i++) n.notifyPending();
+        assertThat(store.get(1L).getNotifyState()).isEqualTo(TlsGradeDropNotifier.NOTIFY_INTERRUPTED);   // sınırlı
         assertThat(TlsGradeDropNotifier.uiCode(TlsGradeDropNotifier.NOTIFY_INTERRUPTED)).isEqualTo("interrupted");
+        verify(email, never()).sendHtml(any(), any(), anyString(), anyString(), any());
     }
 
     @Test
@@ -312,8 +343,7 @@ class TlsGradeDropNotifierTest {
         drop(1, "a.example.com", 7L, null, "A", "C");
         drop(2, "b.example.com", 8L, null, "A", "C");
         when(teamRepo.findById(7L)).thenThrow(new IllegalStateException("bağlantı koptu"));
-        when(repo.transitionNotifyState(anyCollection(), eq(TlsGradeChange.NOTIFY_SENDING), eq(TlsGradeChange.NOTIFY_PENDING)))
-                .thenThrow(new IllegalStateException("db"));
+        when(repo.retryNotify(anyCollection())).thenThrow(new IllegalStateException("db"));
         n.notifyPending();                                              // tur hatası yakalanıp günlüklenir
         assertThat(store.get(2L).getNotifyState()).isEqualTo(TlsGradeChange.NOTIFY_SENT);
         assertThat(store.get(1L).getNotifyState()).isEqualTo(TlsGradeDropNotifier.NOTIFY_INTERRUPTED);
@@ -349,5 +379,114 @@ class TlsGradeDropNotifierTest {
         });
         n.sweepStaleSending(java.time.Instant.parse("2026-10-12T09:00:00Z"));
         assertThat(store.get(1L).getNotifyState()).isEqualTo(TlsGradeChange.NOTIFY_SENT);
+    }
+
+    // ── Çok pod R2a (MP-43, 2026-10-22) ────────────────────────────────────────────────────────────────
+
+    /** Pod'un tur ortasında ölmesinin benzetimi: Exception değil (notifyPending onu yakalar) — tur yarıda kesilir. */
+    static final class PodKilled extends Error {
+        PodKilled() { super("pod öldü"); }
+    }
+
+    @SuppressWarnings("unchecked")
+    private org.springframework.jdbc.core.JdbcTemplate tracesFromLog() {
+        org.springframework.jdbc.core.JdbcTemplate j = org.mockito.Mockito.mock(org.springframework.jdbc.core.JdbcTemplate.class);
+        when(j.query(anyString(), any(org.springframework.jdbc.core.RowMapper.class), any(), any())).thenAnswer(inv -> {
+            List<String[]> out = new ArrayList<>();
+            for (NotificationLog l : savedLogs) out.add(new String[] { l.getRecipientName(), l.getSentAt() });
+            return out;
+        });
+        return j;
+    }
+
+    private void stubSendingRows() {
+        when(repo.findByNotifyStateOrderByIdAsc(eq(TlsGradeChange.NOTIFY_SENDING), any()))
+                .thenAnswer(inv -> store.values().stream().filter(x -> TlsGradeChange.NOTIFY_SENDING.equals(x.getNotifyState())).toList());
+    }
+
+    @Test
+    @DisplayName("R2a MP-43: pod 1. takımdan sonra ölür → 1. takımın satırı ZATEN SENT (bir kez); 2. takımın satırı izsiz SENDING → bir saat sonra PENDING, sonraki tur 2. takıma TEK posta")
+    void podDiesAfterFirstTeam_secondTeamNotifiedNextTick() {
+        n.setJdbc(tracesFromLog());
+        stubSendingRows();
+        drop(1, "a.example.com", 7L, null, "A", "C");
+        drop(2, "b.example.com", 8L, null, "A", "C");
+        boolean[] killed = { false };
+        when(email.sendHtml(any(), isNull(), anyString(), anyString(), isNull())).thenAnswer(inv -> {
+            if (!killed[0] && java.util.Arrays.toString((Object[]) inv.getArgument(0)).contains("takim8")) {
+                killed[0] = true;
+                throw new PodKilled();
+            }
+            return "SENT";
+        });
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> n.notifyPending()).isInstanceOf(PodKilled.class);
+        assertThat(store.get(1L).getNotifyState()).as("takımı biten satır hemen sonuçlanır").isEqualTo(TlsGradeChange.NOTIFY_SENT);
+        assertThat(store.get(2L).getNotifyState()).isEqualTo(TlsGradeChange.NOTIFY_SENDING);
+        String claim = store.get(2L).getNotifiedAt();
+        assertThat(claim).as("talep damgası").isNotNull();
+
+        // yeni pod, bir saat sonra: izsiz satır PENDING'e döner, sonraki tur 2. takıma gönderir; 1. takıma ikinci posta yok
+        TlsGradeDropNotifier other = new TlsGradeDropNotifier(repo, settings, escalation, email, logRepo, teamRepo);
+        other.setPush(push);
+        other.setJdbc(tracesFromLog());
+        java.time.Instant later = java.time.LocalDateTime.parse(claim).toInstant(java.time.ZoneOffset.UTC).plusSeconds(3700);
+        other.sweepStaleSending(later);
+        assertThat(store.get(2L).getNotifyState()).isEqualTo(TlsGradeChange.NOTIFY_PENDING);
+        assertThat(store.get(2L).getNotifyAttempts()).isEqualTo(1);
+        other.notifyPending();
+        assertThat(store.get(2L).getNotifyState()).isEqualTo(TlsGradeChange.NOTIFY_SENT);
+        verify(email, times(3)).sendHtml(any(), isNull(), anyString(), anyString(), isNull());   // takım7 + (öldü) takım8 + takım8
+        verify(email, times(1)).sendHtml(org.mockito.ArgumentMatchers.argThat(a -> java.util.Arrays.toString((Object[]) a).contains("takim7")),
+                isNull(), anyString(), anyString(), isNull());
+    }
+
+    @Test
+    @DisplayName("R2a MP-43: yarıda kalan satırın sahip takımına talepten sonra iz YAZILMIŞSA (gitmiş olabilir) 'yarıda kaldı' — yeniden gönderilmez")
+    void staleSendingWithTrace_isInterruptedNotResent() {
+        n.setJdbc(tracesFromLog());
+        TlsGradeChange c = drop(1, "a.example.com", 7L, null, "A", "C");
+        c.setNotifyState(TlsGradeChange.NOTIFY_SENDING);
+        c.setNotifiedAt("2026-10-12T08:00:00");
+        NotificationLog trace = new NotificationLog();
+        trace.setRecipientName("Takım 7");
+        trace.setSentAt("2026-10-12T08:00:03");
+        savedLogs.add(trace);
+        stubSendingRows();
+        n.sweepStaleSending(java.time.Instant.parse("2026-10-12T09:30:00Z"));
+        assertThat(store.get(1L).getNotifyState()).isEqualTo(TlsGradeDropNotifier.NOTIFY_INTERRUPTED);
+        // sonraki turun aynı takıma yazdığı iz (pencere dışı) bu satırın gönderildiğini GÖSTERMEZ
+        TlsGradeChange d = drop(2, "b.example.com", 7L, null, "A", "C");
+        d.setNotifyState(TlsGradeChange.NOTIFY_SENDING);
+        d.setNotifiedAt("2026-10-12T06:00:00");
+        n.sweepStaleSending(java.time.Instant.parse("2026-10-12T09:30:00Z"));
+        assertThat(store.get(2L).getNotifyState()).isEqualTo(TlsGradeChange.NOTIFY_PENDING);
+    }
+
+    @Test
+    @DisplayName("R2a MP-43: yarıda kalan talep TALEP damgasına göre yaşlanır — düşüşü günler önce olan ama 5 dk önce talep edilen satıra dokunulmaz")
+    void staleAgedByClaimStampNotChangedAt() {
+        TlsGradeChange c = drop(1, "a.example.com", 7L, null, "A", "C");
+        c.setChangedAt("2026-10-10T08:00:00");                     // düşüş iki gün önce
+        c.setNotifyState(TlsGradeChange.NOTIFY_SENDING);
+        c.setNotifiedAt("2026-10-12T08:55:00");                    // talep 5 dk önce (canlı tur)
+        stubSendingRows();
+        n.sweepStaleSending(java.time.Instant.parse("2026-10-12T09:00:00Z"));
+        assertThat(store.get(1L).getNotifyState()).isEqualTo(TlsGradeChange.NOTIFY_SENDING);
+    }
+
+    @Test
+    @DisplayName("R2a MP-43: yeniden deneme sayacı DB'de — yeni örnek (pod yeniden başladı / lider değişti) sayacı SIFIRLAMAZ, tavan toplamda dolar")
+    void retryCapSurvivesNewInstance() {
+        when(escalation.teamEmailsForMonitor(any(), isNull())).thenThrow(new org.springframework.dao.DataAccessResourceFailureException("db"));
+        when(push.enqueueTeamNoticeLocalized(any(), anyString(), anyString(), anyString(), anyString(), any(), anyString(), any()))
+                .thenReturn(Map.of("queued", 0));
+        drop(1, "a.example.com", 1L, null, "A", "B");
+        for (int i = 0; i < 3; i++) n.notifyPending();
+        assertThat(store.get(1L).getNotifyState()).isEqualTo(TlsGradeChange.NOTIFY_PENDING);
+        assertThat(store.get(1L).getNotifyAttempts()).isEqualTo(3);
+        TlsGradeDropNotifier fresh = new TlsGradeDropNotifier(repo, settings, escalation, email, logRepo, teamRepo);
+        fresh.setPush(push);
+        for (int i = 3; i < TlsGradeDropNotifier.READ_RETRY_MAX; i++) fresh.notifyPending();
+        assertThat(store.get(1L).getNotifyState()).isEqualTo(TlsGradeDropNotifier.NOTIFY_FAILED);
     }
 }

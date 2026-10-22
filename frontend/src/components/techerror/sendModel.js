@@ -51,9 +51,17 @@ export function parseExtraCc(raw) {
 
 /**
  * Yeniden denenebilir gönderim reddi kodları: hiçbir şey gönderilmedi, biraz sonra aynı istek geçebilir (PDF sırası dolu,
- * kişi başı sınır — gönderim talebi alınmadan reddedilir).
+ * kişi başı sınır — gönderim talebi alınmadan reddedilir; 409 `SEND_QUEUED` — önceki gönderim posta sunucusunun 421 yeniden
+ * deneme kuyruğunda, ikinci kopya gitmesin diye reddedildi: çok pod R2a, MP-41, 2026-10-22).
  */
-const RETRYABLE_SEND_CODES = new Set(['PDF_BUSY', 'RATE_LIMITED'])
+const RETRYABLE_SEND_CODES = new Set(['PDF_BUSY', 'RATE_LIMITED', 'SEND_QUEUED'])
+
+/** Gönderim reddinin kodu (yanıt yükü ya da fırlatılan `ApiError`); yoksa `null`. */
+export function sendFailureCode(res) {
+  if (!res || typeof res !== 'object') return null
+  const info = res.errorInfo && typeof res.errorInfo === 'object' ? res.errorInfo : {}
+  return res.code || info.code || null
+}
 /**
  * Sonucu BİLİNMEYEN hatalar (inceleme 2026-10-18, 3. tur): istek sunucuya ulaştı mı, gönderim oldu mu belli değil.
  *  - ağ hatası / zaman aşımı / iptal (durum 0);
@@ -72,7 +80,8 @@ const FINAL_5XX_CODES = new Set(['MAIL_FAILED'])
  * Gönderim hatası penceresi KAPATMALI mı (inceleme 2026-10-18)? Yeniden denenebilir hatada pencere AÇIK kalır ve yazılan ek
  * Bilgi (CC) korunur — eskiden pencere kapanıyor, bir sonraki "Gönder" ek adreslerSİZ (geri alınamaz) gidebiliyordu.
  * `res` bir yanıt yükü ya da fırlatılan `ApiError` olabilir. Dönüş:
- *  - `'retry'`  — 429 (PDF sırası dolu / kişi başı sınır): posta gitmedi, yeniden denenebilir;
+ *  - `'retry'`  — 429 (PDF sırası dolu / kişi başı sınır) ya da 409 `SEND_QUEUED` (önceki gönderim kuyrukta): posta
+ *                 gitmedi, biraz sonra yeniden denenebilir — kilit yok, ek Bilgi korunur;
  *  - `'unsure'` — ağ hatası / zaman aşımı (durum 0), 409 `SEND_IN_PROGRESS`, `MAIL_FAILED` dışındaki HER 5xx (500, 503,
  *                 504, ağ geçidinin 502 sayfası — 4. tur: posta servise verildikten sonra düşen 500 de "gitmiş olabilir"):
  *                 gönderim olmuş ya da sürüyor olabilir — pencere açık, rapor yeniden okunup durum bilinene kadar "Gönder"

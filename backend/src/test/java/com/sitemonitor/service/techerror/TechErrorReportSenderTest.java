@@ -74,7 +74,7 @@ class TechErrorReportSenderTest {
         when(service.report(5L)).thenReturn(report);
         when(service.pdfInput(any(), any(), any())).thenReturn(in);
         pdfReturns(new byte[]{ '%', 'P', 'D', 'F' });
-        when(reports.claimSend(eq(5L), eq(now), any())).thenReturn(1);
+        when(reports.claimSendUnlessQueued(eq(5L), eq(now), any(), any())).thenReturn(1);
         when(reports.finishSent(anyLong(), any(), anyString(), any(), any(), anyString(), any())).thenReturn(1);
         when(reports.releaseClaim(anyLong(), any(), any())).thenReturn(1);
         when(reports.finishNotSent(anyLong(), any(), anyString(), anyString(), any())).thenReturn(1);
@@ -119,7 +119,7 @@ class TechErrorReportSenderTest {
         assertThat(p.maxMailMb()).isEqualTo(sender.maxMailMb);
         assertThat(p.html()).contains("takımının adresi olduğu");  // TEAM dipnotu
         verify(email, never()).sendHtml(any(String[].class), any(), anyString(), anyString(), any(), any(), anyBoolean(), any());
-        verify(reports, never()).claimSend(any(), any(), any());
+        verify(reports, never()).claimSendUnlessQueued(any(), any(), any(), any());
         verify(logs, never()).save(any());
         // Yönetici alıcılı kanal: To yöneticiler, CC takım (yöneticide zaten olan adres tekrar etmez)
         channel.setExecutiveEmails("ceo@example.com, " + TechErrorReportSender.recipients(team).get(0));
@@ -202,7 +202,7 @@ class TechErrorReportSenderTest {
         team.setEmail("  ");
         assertThatThrownBy(() -> sender.send(report, channel, team, 7L)).isInstanceOf(CodedConflictException.class)
                 .extracting(e -> ((CodedConflictException) e).getCode()).isEqualTo("TEAM_EMAIL_MISSING");
-        verify(reports, never()).claimSend(anyLong(), any(), any());
+        verify(reports, never()).claimSendUnlessQueued(anyLong(), any(), any(), any());
         verifyNoInteractions(logs);
         verifyNoInteractions(history);                       // hiçbir şey denenmedi → geçmişe de yazılmaz
     }
@@ -353,12 +353,12 @@ class TechErrorReportSenderTest {
         when(service.history()).thenReturn(history);
         assertThatThrownBy(() -> sender.send(report, channel, team, 7L, TechErrorReportSender.Delivery.TEAM, "bozuk"))
                 .isInstanceOf(com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException.class);
-        verify(reports, never()).claimSend(anyLong(), any(), any());
+        verify(reports, never()).claimSendUnlessQueued(anyLong(), any(), any(), any());
         verifyNoInteractions(logs, history, email);
 
         // Ek Bilgi'siz eski yol: Bilgi yok (takıma gönderim byte-identical)
         org.mockito.Mockito.reset(reports);
-        when(reports.claimSend(eq(5L), eq(now), any())).thenReturn(1);
+        when(reports.claimSendUnlessQueued(eq(5L), eq(now), any(), any())).thenReturn(1);
         when(reports.finishSent(anyLong(), any(), anyString(), any(), any(), anyString(), any())).thenReturn(1);
         mailReturns("SENT");
         channel.setExecutiveEmails(null);
@@ -650,11 +650,13 @@ class TechErrorReportSenderTest {
     }
 
     @Test
-    @DisplayName("kuyruktaki gönderimin üzerine yeniden gönderim: ilk gönderimin sonucu 'bilinmiyor' (SUPERSEDED) olarak yazılır")
+    @DisplayName("sonucu artık gelemeyen (20 dk'dan eski) kuyruğun üzerine yeniden gönderim: ilk gönderimin sonucu 'bilinmiyor' (SUPERSEDED) olarak yazılır")
     void resendOverQueuedRecordsSuperseded() {
+        // Yeniden temel (2026-10-22, R2a MP-41): canlı kuyruk artık 409 SEND_QUEUED — burada sonucu gelemeyecek kuyruk
         TechErrorReport queued = new TechErrorReport();
         queued.setId(5L);
         queued.setSendState("QUEUED");
+        queued.setSendClaimedAt(now.minus(TechErrorReportSender.QUEUED_RESULT_WINDOW).minusSeconds(60));
         when(reports.findById(5L)).thenReturn(java.util.Optional.of(queued));
         report.setLastSendStatus("QUEUED_RETRY: 421");          // talepten sonraki okuma: kuyruktaki gönderim sonuçlanmamış
         mailReturns("SENT");
@@ -687,36 +689,73 @@ class TechErrorReportSenderTest {
     }
 
     @Test
-    @DisplayName("düzeltme incelemesi 2026-10-15: önce kuyruk sonuçlandırılır; kuyruktaki gönderimin üzerine deneme posta servisine ulaşmadıysa kuyruk yaşar")
-    void queuedSendSurvivesAttemptThatNeverReachedMail() {
-        Instant earlier = now.minusSeconds(300);                // kuyruk 5 dk önce: sonucu hâlâ gelebilir
+    @DisplayName("R2a (MP-41, kullanıcı kararı 2026-10-22): önceki gönderim hâlâ 421 kuyruğundayken (sonucu gelebilir) yeniden gönderim 409 SEND_QUEUED — talep / posta / günlük / geçmiş / push YOK; önce kuyruk sonuçlandırılır")
+    void resendOverLiveQueue_refusedWithSendQueued() {
+        // Yeniden temel (2026-10-22): 2026-10-14'ten beri kuyruktaki gönderimin üzerine gönderim kuyruğu "bitiriyordu"; eski
+        // kuyruk yeniden denemede teslim edilince ikinci (farklı içerikli) kopya gidiyordu — artık reddedilir.
+        TechErrorPushService pushes = mock(TechErrorPushService.class);
+        sender.setPushes(pushes);
+        Instant earlier = now.minusSeconds(300);                 // kuyruk 5 dk önce: sonucu hâlâ gelebilir
         TechErrorReport queued = new TechErrorReport();
         queued.setId(5L);
         queued.setSendState("QUEUED");
         queued.setSendClaimedAt(earlier);
         when(reports.findById(5L)).thenReturn(java.util.Optional.of(queued));
         report.setChannelId(10L);
-        report.setLastSendStatus("QUEUED_RETRY: 421");
-        sender.maxMailMb = 5;
-        pdfReturns(new byte[6 * 1024 * 1024]);                    // PDF çok büyük → posta servisine hiçbir şey gitmez
+        assertThatThrownBy(() -> sender.send(report, channel, team, 7L))
+                .isInstanceOfSatisfying(CodedConflictException.class, e -> assertThat(e.getCode()).isEqualTo("SEND_QUEUED"))
+                .hasMessageContaining("yeniden deneme kuyruğunda");
+        verify(service).reconcileQueued(List.of(10L));            // önce kuyruk sonuçlandırılır (teslim edildiyse SENT görünür)
+        verify(reports, never()).claimSendUnlessQueued(anyLong(), any(), any(), any());
+        verify(email, never()).sendHtml(any(String[].class), any(), anyString(), anyString(), any(), any(), anyBoolean(), any());
+        verify(logs, never()).save(any());
+        verifyNoInteractions(history, pushes);
+
+        // Süre sınırı tam üzerinde (20 dk önce) hâlâ canlı; bir saniye eskisi canlı değil (sonuç artık gelemez → eski davranış)
+        queued.setSendClaimedAt(now.minus(TechErrorReportSender.QUEUED_RESULT_WINDOW));
         assertThatThrownBy(() -> sender.send(report, channel, team, 7L)).isInstanceOf(CodedConflictException.class);
-        org.mockito.InOrder order = org.mockito.Mockito.inOrder(service, reports);
-        order.verify(service).reconcileQueued(List.of(10L));      // talepten ÖNCE
-        order.verify(reports).claimSend(eq(5L), eq(now), any());
-        verify(reports).releaseClaim(5L, now, earlier);            // kuyruk yaşar, eski talep zamanı geri gelir
-        verify(reports, never()).finishNotSent(anyLong(), any(), anyString(), anyString(), any());
-        verify(history, never()).recordSend(any(), eq("SEND_RESULT"), any(), any(), any(), any(), any());
-        verify(history).recordSend(eq(report), eq("SEND"), eq(7L), eq("FAILED"), org.mockito.ArgumentMatchers.isNull(),
-                eq("PDF_TOO_LARGE"), eq(now));
+        queued.setSendClaimedAt(now.minus(TechErrorReportSender.QUEUED_RESULT_WINDOW).minusSeconds(1));
+        report.setLastSendStatus("QUEUED_RETRY: 421");
+        mailReturns("SENT");
+        assertThat(sender.send(report, channel, team, 7L).state()).isEqualTo("SENT");
+        verify(history).recordSend(eq(report), eq("SEND_RESULT"), org.mockito.ArgumentMatchers.isNull(), eq("SUPERSEDED"),
+                org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(), eq(now));
+        // Talep koşulu canlı kuyruğu dışlar: pencere talep anına göre (sorgu parametresi)
+        verify(reports).claimSendUnlessQueued(eq(5L), eq(now), eq(now.minus(TechErrorReportSender.STALE_CLAIM)),
+                eq(now.minus(TechErrorReportSender.QUEUED_RESULT_WINDOW)));
     }
 
     @Test
-    @DisplayName("kuyruktaki gönderimin üzerine deneme: servis FAILED / SKIPPED dönerse kuyruk yaşar; servis istisna atarsa teslim bilinmez → SUPERSEDED")
+    @DisplayName("R2a (MP-41): ön okumadan SONRA kuyruğa giren gönderim (başka sekme / pod) — talep koşulu reddeder, neden yeniden okunur → SEND_QUEUED; kuyruk değilse SEND_IN_PROGRESS")
+    void claimRefusedByQueueAfterPreRead_sendQueued() {
+        TechErrorReport sending = new TechErrorReport();
+        sending.setId(5L);
+        sending.setSendState("SENDING");
+        sending.setSendClaimedAt(now.minusSeconds(5));
+        TechErrorReport queuedNow = new TechErrorReport();
+        queuedNow.setId(5L);
+        queuedNow.setSendState("QUEUED");
+        queuedNow.setSendClaimedAt(now.minusSeconds(5));
+        when(reports.findById(5L)).thenReturn(java.util.Optional.of(sending), java.util.Optional.of(queuedNow));
+        when(reports.existsById(5L)).thenReturn(true);
+        when(reports.claimSendUnlessQueued(eq(5L), eq(now), any(), any())).thenReturn(0);
+        assertThatThrownBy(() -> sender.send(report, channel, team, 7L))
+                .isInstanceOfSatisfying(CodedConflictException.class, e -> assertThat(e.getCode()).isEqualTo("SEND_QUEUED"));
+        when(reports.findById(5L)).thenReturn(java.util.Optional.of(sending));
+        assertThatThrownBy(() -> sender.send(report, channel, team, 7L))
+                .isInstanceOfSatisfying(CodedConflictException.class, e -> assertThat(e.getCode()).isEqualTo("SEND_IN_PROGRESS"));
+        verify(email, never()).sendHtml(any(String[].class), any(), anyString(), anyString(), any(), any(), anyBoolean(), any());
+    }
+
+    @Test
+    @DisplayName("kuyruktaki gönderimin üzerine deneme (yalnız sonucu artık gelemeyen kuyrukta ya da yarım kalmış talebin devralınmasında): yarım talepteki kuyruk servis FAILED / SKIPPED dönerse yaşar; süre geçmiş kuyruk bitirilir; servis istisna atarsa teslim bilinmez → SUPERSEDED")
     void queuedSendSurvivesWhenNewAttemptDeliveredNothing() {
+        // Yeniden temel (2026-10-22, R2a MP-41): canlı kuyruğun (< 20 dk) üzerine gönderim artık 409 SEND_QUEUED — "kuyruk
+        // yaşar" yolu yalnız yarım kalmış bir talebin devralınmasında (ön okuma SENDING, talepten sonraki okuma kuyruk sürüyor) kalır.
         Instant earlier = now.minusSeconds(300);                // kuyruk 5 dk önce: sonucu hâlâ gelebilir
         TechErrorReport queued = new TechErrorReport();
         queued.setId(5L);
-        queued.setSendState("QUEUED");
+        queued.setSendState("SENDING");                         // yarım kalmış talep (ör. eski sürüm pod'un kuyruğun üzerine talebi)
         queued.setSendClaimedAt(earlier);
         when(reports.findById(5L)).thenReturn(java.util.Optional.of(queued));
         report.setLastSendStatus("QUEUED_RETRY: 421");
@@ -731,6 +770,7 @@ class TechErrorReportSenderTest {
         // Kuyruk 20 dakikadan eski: yeniden deneme kaybolmuş olabilir (pod yeniden başladı) — rapor sonsuza dek "kuyrukta"
         // kalmasın: başarısız deneme kuyruğu bitirir, ilk gönderim "sonucu bilinmiyor"
         org.mockito.Mockito.clearInvocations(reports, history);
+        queued.setSendState("QUEUED");
         queued.setSendClaimedAt(now.minus(TechErrorReportSender.QUEUED_RESULT_WINDOW).minusSeconds(1));
         mailReturns("FAILED: 554 relay denied");
         sender.send(report, channel, team, 7L);
@@ -738,18 +778,8 @@ class TechErrorReportSenderTest {
         verify(reports).finishNotSent(eq(5L), eq(now), eq("FAILED"), anyString(), eq(now));
         verify(history).recordSend(eq(report), eq("SEND_RESULT"), org.mockito.ArgumentMatchers.isNull(), eq("SUPERSEDED"),
                 org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(), eq(now));
-        queued.setSendClaimedAt(earlier);
 
-        // Yarım kalmış bir talebin devralınması: ön okuma SENDING ama talepten sonraki okuma kuyruk sürüyor diyor → korunur
-        org.mockito.Mockito.clearInvocations(reports, history);
-        queued.setSendState("SENDING");
-        mailReturns("FAILED: 554 relay denied");
-        sender.send(report, channel, team, 7L);
-        verify(reports).releaseClaim(5L, now, earlier);
-        verify(history, never()).recordSend(any(), eq("SEND_RESULT"), any(), any(), any(), any(), any());
-        queued.setSendState("QUEUED");
-
-        // Servis istisna attı: teslim BİLİNMİYOR → bitirilir ve ilk gönderim "sonucu bilinmiyor"
+        // Servis istisna attı (süre geçmiş kuyruk): teslim BİLİNMİYOR → bitirilir ve ilk gönderim "sonucu bilinmiyor"
         org.mockito.Mockito.clearInvocations(reports, history);
         when(email.sendHtml(any(String[].class), any(), anyString(), anyString(), any(), any(), anyBoolean(), any()))
                 .thenThrow(new IllegalStateException("smtp koptu"));
@@ -826,7 +856,7 @@ class TechErrorReportSenderTest {
     @Test
     @DisplayName("talep alınamadı ve rapor artık yok → 404 (\"gönderiliyor\" değil)")
     void claimLostBecauseDeleted() {
-        when(reports.claimSend(eq(5L), eq(now), any())).thenReturn(0);
+        when(reports.claimSendUnlessQueued(eq(5L), eq(now), any(), any())).thenReturn(0);
         when(reports.existsById(5L)).thenReturn(false);
         assertThatThrownBy(() -> sender.send(report, channel, team, 7L)).isInstanceOf(java.util.NoSuchElementException.class);
     }
@@ -854,7 +884,7 @@ class TechErrorReportSenderTest {
         mailReturns("SENT");
         sender.send(report, channel, team, 7L);
         org.mockito.InOrder order = org.mockito.Mockito.inOrder(reports, service);
-        order.verify(reports).claimSend(eq(5L), eq(now), any());
+        order.verify(reports).claimSendUnlessQueued(eq(5L), eq(now), any(), any());
         order.verify(service).report(5L);
         verify(service).pdfInput(org.mockito.ArgumentMatchers.same(fresh), any(), any());
     }
@@ -897,7 +927,7 @@ class TechErrorReportSenderTest {
     @Test
     @DisplayName("aynı rapor başka yerde gönderiliyorsa 409 SEND_IN_PROGRESS; posta gönderilmez")
     void claimLost() {
-        when(reports.claimSend(eq(5L), eq(now), any())).thenReturn(0);
+        when(reports.claimSendUnlessQueued(eq(5L), eq(now), any(), any())).thenReturn(0);
         when(reports.existsById(5L)).thenReturn(true);
         assertThatThrownBy(() -> sender.send(report, channel, team, 7L)).isInstanceOf(CodedConflictException.class)
                 .extracting(e -> ((CodedConflictException) e).getCode()).isEqualTo("SEND_IN_PROGRESS");
@@ -951,7 +981,7 @@ class TechErrorReportSenderTest {
         assertThat(att.getValue().get(0).fileName()).isEqualTo("mobil-teknik-hata-2026-09.pdf");
         assertThat(att.getValue().get(0).contentType()).isEqualTo("application/pdf");
         // Rapor "gönderildi" OLMAZ: talep, sonuç yazımı, geçmiş yok
-        verify(reports, never()).claimSend(anyLong(), any(), any());
+        verify(reports, never()).claimSendUnlessQueued(anyLong(), any(), any(), any());
         verify(reports, never()).finishSent(anyLong(), any(), anyString(), any(), any(), anyString(), any());
         verify(reports, never()).finishQueued(anyLong(), any(), anyString(), any(), any(), any(), anyString(), any());
         verify(reports, never()).finishNotSent(anyLong(), any(), anyString(), anyString(), any());
@@ -977,7 +1007,7 @@ class TechErrorReportSenderTest {
         verify(email).sendHtml(eq(new String[]{ "ayse@example.com" }), org.mockito.ArgumentMatchers.isNull(), anyString(),
                 html.capture(), anyString(), any(), eq(false), any());
         assertThat(html.getValue()).contains("This is a TEST send").contains("yönetici (executive) alıcısı").doesNotContain("ceo@example.com");
-        verify(reports, never()).claimSend(anyLong(), any(), any());
+        verify(reports, never()).claimSendUnlessQueued(anyLong(), any(), any(), any());
         verifyNoInteractions(history);
     }
 
@@ -997,7 +1027,7 @@ class TechErrorReportSenderTest {
         assertThat(log.getAllValues()).extracting(NotificationLog::getEmailStatus).containsExactly("QUEUED_RETRY 421 2/3", "SKIPPED_DISABLED", "FAILED: 554");
         assertThat(log.getAllValues()).extracting(NotificationLog::getTrigger).containsOnly("TECH_ERROR_REPORT_TEST");
         verify(reports, never()).finishQueued(anyLong(), any(), anyString(), any(), any(), any(), anyString(), any());
-        verify(reports, never()).claimSend(anyLong(), any(), any());
+        verify(reports, never()).claimSendUnlessQueued(anyLong(), any(), any(), any());
         verifyNoInteractions(history);
     }
 
@@ -1019,10 +1049,10 @@ class TechErrorReportSenderTest {
         assertThat(log.getValue().getTrigger()).isEqualTo("TECH_ERROR_REPORT_TEST");
         assertThat(log.getValue().getEmailStatus()).startsWith("FAILED: PDF e-posta sınırını aşıyor (6.0 MB > 5 MB)");
         assertThat(log.getValue().getSubject()).startsWith("[TEST] ");
-        verify(reports, never()).claimSend(anyLong(), any(), any());
+        verify(reports, never()).claimSendUnlessQueued(anyLong(), any(), any(), any());
         verifyNoInteractions(history);
         // Gönderimdeki metinle aynı (tek kaynak): send de aynı kodu ve metni verir
-        when(reports.claimSend(eq(5L), eq(now), any())).thenReturn(1);
+        when(reports.claimSendUnlessQueued(eq(5L), eq(now), any(), any())).thenReturn(1);
         assertThatThrownBy(() -> sender.send(report, channel, team, 7L)).isInstanceOf(CodedConflictException.class)
                 .satisfies(e -> assertThat(e.getMessage()).contains("6.0 MB").contains("5 MB"));
         // Toplam kuralı: PDF sınıra yakın + gömülü görsel → görseller düşer ("PDF ekinde"), test postası yine gider
@@ -1069,7 +1099,7 @@ class TechErrorReportSenderTest {
                     .extracting(e -> ((CodedConflictException) e).getCode()).isEqualTo("NO_EMAIL");
         }
         verifyNoInteractions(logs, email, history);
-        verify(reports, never()).claimSend(anyLong(), any(), any());
+        verify(reports, never()).claimSendUnlessQueued(anyLong(), any(), any(), any());
     }
 
     @Test

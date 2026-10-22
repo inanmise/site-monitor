@@ -667,6 +667,12 @@ async function mock(page, { openSections = true, openTopics = true, target = pag
       const sent = req.postData() ? JSON.parse(req.postData()) : null
       sendBodies.push(sent)
       // R18 / C13: sunucunun ek Bilgi alan hatası (Bilgi toplamı 20'yi aşıyor) — `reddet@` adresiyle tetiklenir
+      // Çok pod R2a (MP-41): önceki gönderim 421 kuyruğunda — `kuyruk@` adresiyle tetiklenir (409 SEND_QUEUED, hiçbir şey gönderilmez)
+      if (sent?.extra_cc && sent.extra_cc.includes('kuyruk@')) {
+        await route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ success: false, code: 'SEND_QUEUED',
+          error: 'Bu raporun önceki gönderimi posta sunucusunun yeniden deneme kuyruğunda bekliyor; ikinci bir kopya gitmesin diye rapor yeniden gönderilmedi. Birkaç dakika sonra gönderim sonucunu kontrol edin; gerekirse o zaman yeniden gönderin.' }) })
+        return
+      }
       if (sent?.extra_cc && sent.extra_cc.includes('reddet@')) {
         await route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ success: false, code: 'VALIDATION_FAILED',
           field: 'extra_cc', fields: { extra_cc: 'x' },
@@ -2554,6 +2560,47 @@ for (const vp of VIEWPORTS) {
       await expect(dlg).toHaveCount(0)
       await expect(page.getByText(/Bilgi \(CC\): ek@example\.com, iki@example\.com|CC: ek@example\.com, iki@example\.com/)).toBeVisible()
       expect(await page.evaluate(overflowX), 'yatay taşma yok').toBeLessThanOrEqual(0)
+    })
+
+    test('çok pod R2a (MP-41): önceki gönderim posta kuyruğunda (409 SEND_QUEUED) — pencere AÇIK, kuyruk başlığı + açıklama pencerede, ek Bilgi korunur, "Gönder" kilitsiz; sığar, kesilmez, dokunma hedefleri', async ({ page }) => {
+      await mock(page)
+      await page.goto('/?tab=channelreports&te_view=report&te_rep=100&te_ch=10')
+      await expect(page.locator('[data-slot="te-report"]')).toBeVisible({ timeout: 20_000 })
+      await page.locator('[data-slot="te-send"]').click()
+      const dlg = page.locator('[data-slot="te-send-dialog"]')
+      await expect(dlg).toBeVisible()
+      const cc = dlg.locator('[data-slot="te-send-extra-cc"]')
+      await cc.fill('kuyruk@example.com')
+      await dlg.getByRole('button', { name: /^(Gönder|Send)$/ }).click()
+      const failure = dlg.locator('[data-slot="te-send-failure"]')
+      await expect(failure).toBeVisible()
+      await expect(failure).toHaveAttribute('data-kind', 'retry')
+      await expect(failure).toContainText(/Önceki gönderim hâlâ posta kuyruğunda|The previous send is still in the mail queue/)
+      await expect(failure).toContainText(/yeniden deneme kuyruğunda/)
+      await expect(cc).toHaveValue('kuyruk@example.com')
+      await expect(cc).not.toHaveAttribute('aria-invalid', 'true')
+      const send = dlg.getByRole('button', { name: /^(Gönder|Send)$/ })
+      await expect(send).toBeEnabled()
+      await expect(dlg.locator('[data-slot="te-send-confirm"][data-locked]')).toHaveCount(0)
+      expect(sends, 'hiçbir şey gönderilmedi').toBe(0)
+      await page.waitForTimeout(200)
+      const box = await dlg.boundingBox()
+      expect(box.x + box.width, 'pencere ekrana sığar').toBeLessThanOrEqual(vp.width + 1)
+      expect(await page.evaluate(clipped, '[data-slot="te-send-dialog"]'), 'kırpılan metin (kuyruk bandı)').toEqual([])
+      // Bandın "Teknik ayrıntı" açacağı paylaşılan ui/ErrorDetails'tir (önceden var olan 24 px dokunma hedefi — bütün hata
+      // bantlarında aynı; ayrı istek: delta-R2A-D1.md). Kuyruk bandının KENDİ öğeleri ölçülür
+      if (vp.touch) {
+        const small = (await page.evaluate(smallTargets, '[data-slot="te-send-dialog"]'))
+          .filter((x) => !/^"(Teknik ayrıntı|Technical details)"/.test(x))
+        expect(small, 'küçük hedef (kuyruk bandı)').toEqual([])
+      }
+      expect(await page.evaluate(overflowX), 'yatay taşma yok').toBeLessThanOrEqual(0)
+      await page.screenshot({ path: `test-results/channel-reports-send-queued-${vp.name}.png`, fullPage: false })
+      // Birkaç dakika sonra (kuyruk sonuçlandı) aynı pencereden yeniden gönderim: ek Bilgi ile gider
+      await cc.fill('ek@example.com')
+      await send.click()
+      await expect.poll(() => sends).toBe(1)
+      await expect(dlg).toHaveCount(0)
     })
 
     test('R18: kanal gönderim günlüğü — sekme, tablo (1280) / kart (390), uzun alıcı listesi sararak tam, durum metni; sığar, kesilmez, dokunma hedefleri', async ({ page }) => {

@@ -50,6 +50,13 @@ import java.util.Set;
  * </ul>
  * Zamanlanmış TLS işi ({@link TlsProfileJobService}) her turda, notları karşılaştırdıktan SONRA çağırır (lider +
  * {@code scheduler_lock}); elle yeniden tarama notu karşılaştırmaz — düşüşü bir sonraki tur yazar ve bildirir (2026-10-12).
+ *
+ * <p><b>Pod ölümü (çok pod R2a, MP-43, 2026-10-22):</b> talep {@code notified_at}'e TALEP anını yazar (yarıda kalan talep
+ * düşüşün zamanına göre değil bu damgaya göre yaşlanır); bir satır, sahip takımlarının HEPSİ bitince hemen sonuçlandırılır
+ * (eskiden tüm takımlar bitince — ortada ölen pod henüz denenmemiş takımları da "yarıda kaldı" ile kaybettiriyordu). Yarıda
+ * kalan (SENDING) satır: hiçbir sahip takımına iz ({@code notification_logs}) yazılmamışsa PENDING'e döner ve yeniden
+ * denenir (yalnız uçuştaki takım için en az bir kez); iz varsa "yarıda kaldı" (o takıma gitmiş olabilir — yeniden
+ * gönderilmez). Yeniden deneme sayacı DB'de ({@code notify_attempts}; pod belleğinde değil — yeniden başlama sıfırlamaz).
  */
 @Slf4j
 @Service
@@ -83,10 +90,10 @@ public class TlsGradeDropNotifier {
 
     /**
      * Alıcılar / takım OKUNAMADI ve hiçbir kanal ulaşmadı (inceleme 5): düşüş kalıcı "gönderilemedi" ile kaybolmaz, sonraki
-     * turda (10 dk) yeniden denenir — en çok bu kadar kez (pod başına bellekte sayılır; sınırlı), sonra FAILED.
+     * turda (10 dk) yeniden denenir — en çok bu kadar kez, sonra FAILED. Sayaç DB'de ({@code notify_attempts}, R2a MP-43):
+     * hiçbir takıma ulaşmadan yarıda kalan talebin yeniden denemesi de aynı sayaçtan düşer.
      */
     static final int READ_RETRY_MAX = 6;
-    private final Map<Long, Integer> readRetries = new java.util.concurrent.ConcurrentHashMap<>();
 
     /**
      * Ekran kodu ("Son düşüşler" satırı): sent | pending | off | below | maintenance | no_team | no_recipient; özellikten
@@ -119,6 +126,8 @@ public class TlsGradeDropNotifier {
 
     @Autowired(required = false) private UserPushService push;
     @Autowired(required = false) private SystemMaintenanceService systemMaintenance;
+    /** Yarıda kalan talebin izi ({@code notification_logs}) okunur (R2a, MP-43); yoksa yarıda kalan her satır "yarıda kaldı". */
+    @Autowired(required = false) private org.springframework.jdbc.core.JdbcTemplate jdbc;
 
     public TlsGradeDropNotifier(TlsGradeChangeRepository changeRepo, AppSettingsService appSettings, EscalationService escalation,
                                 EmailNotificationService email, NotificationLogRepository notificationLogRepo, TeamRepository teamRepo) {
@@ -132,6 +141,7 @@ public class TlsGradeDropNotifier {
 
     void setPush(UserPushService p) { this.push = p; }
     void setSystemMaintenance(SystemMaintenanceService s) { this.systemMaintenance = s; }
+    void setJdbc(org.springframework.jdbc.core.JdbcTemplate j) { this.jdbc = j; }
 
     /** Tur özeti (log + test). */
     public record Result(int claimed, int sent, int skipped, int teams) { }
@@ -147,64 +157,168 @@ public class TlsGradeDropNotifier {
     }
 
     private Result run() {
-        sweepStaleSending(Instant.now());
+        Instant at = Instant.now();
+        sweepStaleSending(at);
         List<TlsGradeChange> pending = changeRepo.findByNotifyStateOrderByIdAsc(TlsGradeChange.NOTIFY_PENDING, PageRequest.of(0, BATCH));
         if (pending.isEmpty()) return new Result(0, 0, 0, 0);
         List<Long> ids = pending.stream().map(TlsGradeChange::getId).toList();
-        int claimed = changeRepo.transitionNotifyState(ids, TlsGradeChange.NOTIFY_PENDING, TlsGradeChange.NOTIFY_SENDING);
+        // Talep + damga TEK koşullu UPDATE'te (R2a, MP-43): yarıda kalırsa bu damgaya göre yaşlanır
+        String stamp = ISO.format(at);
+        int claimed = changeRepo.claimNotify(ids, stamp);
         if (claimed <= 0) return new Result(0, 0, 0, 0);
-        // Başka tur bir kısmını aldıysa yalnız bizim talep ettiklerimiz: yeniden okumak yerine durum filtresi
+        // Başka tur bir kısmını aldıysa yalnız bizim talep ettiklerimiz: yeniden okumak yerine durum + damga filtresi
         List<TlsGradeChange> mine = new ArrayList<>();
-        for (TlsGradeChange c : changeRepo.findAllById(ids)) if (TlsGradeChange.NOTIFY_SENDING.equals(c.getNotifyState())) mine.add(c);
+        for (TlsGradeChange c : changeRepo.findAllById(ids)) {
+            if (TlsGradeChange.NOTIFY_SENDING.equals(c.getNotifyState()) && stamp.equals(c.getNotifiedAt())) mine.add(c);
+        }
+        Set<Long> attempted = new LinkedHashSet<>();
         try {
-            return deliver(mine);
+            return deliver(mine, attempted);
         } catch (RuntimeException e) {
-            // Talep edilen satır SENDING'de KALMAZ: sonucu yazılmamış olanlar "yarıda kaldı" olur (yeniden gönderilmez).
-            for (TlsGradeChange c : mine) readRetries.remove(c.getId());
+            // Talep edilen satır SENDING'de KALMAZ (R2a, MP-43): hiçbir sahip takımı denenmemiş satır PENDING'e döner (kimseye
+            // gitmedi — çift bildirim olamaz; DB sayacıyla sınırlı), denenmiş olan "yarıda kaldı" olur (yeniden gönderilmez)
             List<TlsGradeChange> open = new ArrayList<>();
             for (TlsGradeChange c : changeRepo.findAllById(mine.stream().map(TlsGradeChange::getId).toList())) {
                 if (TlsGradeChange.NOTIFY_SENDING.equals(c.getNotifyState())) open.add(c);
             }
-            finish(open, NOTIFY_INTERRUPTED, ISO.format(Instant.now()));
+            List<TlsGradeChange> interrupted = new ArrayList<>();
+            List<TlsGradeChange> untouched = new ArrayList<>();
+            for (TlsGradeChange c : open) (attempted.contains(c.getId()) ? interrupted : untouched).add(c);
+            retryOrFail(untouched, NOTIFY_INTERRUPTED, ISO.format(Instant.now()));
+            finish(interrupted, NOTIFY_INTERRUPTED, ISO.format(Instant.now()));
             throw e;
         }
     }
 
     /**
-     * Önceki turdan SENDING'de kalmış satırlar (pod tur ortasında kapandı) "yarıda kaldı" olur. Bildirim işi kilit
-     * altında tek koşar; yine de yalnız {@link #STALE_SENDING}'den eski satırlara dokunulur.
+     * Önceki turdan SENDING'de kalmış satırlar (pod tur ortasında kapandı / öldü). Yaş TALEP damgasına göre ({@code notified_at};
+     * damgasız eski satırda düşüş zamanı) — {@link #STALE_SENDING}'den eskiyse (R2a, MP-43): sahip takımlarından HİÇBİRİNE
+     * talepten bu yana iz yazılmamışsa PENDING'e döner (kimseye gitmedi; DB sayacıyla sınırlı), iz varsa "yarıda kaldı"
+     * (gitmiş olabilir — yeniden gönderilmez). İz okunamazsa "yarıda kaldı" (bugünkü güvenli karar).
      */
     void sweepStaleSending(Instant now) {
         try {
             String cutoff = ISO.format(now.minus(STALE_SENDING));
             List<TlsGradeChange> stale = new ArrayList<>();
             for (TlsGradeChange c : changeRepo.findByNotifyStateOrderByIdAsc(TlsGradeChange.NOTIFY_SENDING, PageRequest.of(0, BATCH))) {
-                if (c.getChangedAt() != null && c.getChangedAt().compareTo(cutoff) < 0) stale.add(c);
+                String age = c.getNotifiedAt() != null ? c.getNotifiedAt() : c.getChangedAt();
+                if (age != null && age.compareTo(cutoff) < 0) stale.add(c);
             }
             if (stale.isEmpty()) return;
+            List<TlsGradeChange> untraced = new ArrayList<>();
+            List<TlsGradeChange> traced = new ArrayList<>();
+            List<String[]> traces = tracesSince(stale);
+            for (TlsGradeChange c : stale) (traces != null && !hasTrace(c, traces) ? untraced : traced).add(c);
             // Koşullu: yalnız hâlâ SENDING olan satır (bu arada sonuçlanan SENT / SKIPPED ezilmez)
-            List<Long> ids = stale.stream().map(TlsGradeChange::getId).toList();
+            List<Long> ids = traced.stream().map(TlsGradeChange::getId).toList();
             for (int i = 0; i < ids.size(); i += BATCH) {
                 changeRepo.finishNotifyIfState(ids.subList(i, Math.min(ids.size(), i + BATCH)), TlsGradeChange.NOTIFY_SENDING,
                         clip(NOTIFY_INTERRUPTED), ISO.format(now));
             }
-            log.warn("TLS notu düşüş bildirimi: önceki turda yarıda kalan {} düşüş 'yarıda kaldı' işaretlendi (yeniden gönderilmez)",
-                    stale.size());
+            retryOrFail(untraced, NOTIFY_INTERRUPTED, ISO.format(now));
+            log.warn("TLS notu düşüş bildirimi: önceki turda yarıda kalan {} düşüş — {} 'yarıda kaldı' (gitmiş olabilir, yeniden "
+                    + "gönderilmez), {} hiçbir takıma gitmemiş, yeniden denenecek", stale.size(), traced.size(), untraced.size());
         } catch (Exception e) {
             log.debug("TLS notu düşüş bildirimi: yarıda kalan satırlar okunamadı: {}", e.toString());
         }
     }
 
-    private Result deliver(List<TlsGradeChange> mine) {
+    /**
+     * Yarıda kalan satırların en eski talep damgasından bu yana yazılmış {@value #TRIGGER} izleri ({@code [alıcı adı, zaman]});
+     * okunamazsa {@code null} (karar: "yarıda kaldı").
+     */
+    private List<String[]> tracesSince(List<TlsGradeChange> rows) {
+        if (jdbc == null) return null;
+        String from = null;
+        for (TlsGradeChange c : rows) {
+            String st = c.getNotifiedAt() != null ? c.getNotifiedAt() : c.getChangedAt();
+            if (st != null && (from == null || st.compareTo(from) < 0)) from = st;
+        }
+        if (from == null) return null;
+        try {
+            return jdbc.query("SELECT recipient_name, sent_at FROM notification_logs WHERE trigger = ? AND sent_at >= ?",
+                    (rs, i) -> new String[] { rs.getString(1), rs.getString(2) }, TRIGGER, from);
+        } catch (RuntimeException e) {
+            log.debug("TLS notu düşüş bildirimi izleri okunamadı: {}", e.toString());
+            return null;
+        }
+    }
+
+    /**
+     * Talebin turuna ait izin aranacağı süre: tur en çok birkaç dakika sürer (iş turu 8 dk bütçeli, 10 dk arayla) — sonraki
+     * turların aynı takıma yazdığı iz bu satırın gönderildiğini göstermez.
+     */
+    static final java.time.Duration TRACE_WINDOW = java.time.Duration.ofMinutes(10);
+
+    /**
+     * Satırın sahip takımlarından birine talep damgasından sonraki {@link #TRACE_WINDOW} içinde iz yazılmış mı (takım adı ya da
+     * "Takım #id"). Damga okunamazsa {@code true} (güvenli karar: "yarıda kaldı").
+     */
+    private boolean hasTrace(TlsGradeChange c, List<String[]> traces) {
+        String since = c.getNotifiedAt() != null ? c.getNotifiedAt() : c.getChangedAt();
+        String until;
+        try {
+            until = ISO.format(java.time.LocalDateTime.parse(since).toInstant(ZoneOffset.UTC).plus(TRACE_WINDOW));
+        } catch (RuntimeException e) {
+            return true;
+        }
+        Set<String> names = new LinkedHashSet<>();
+        for (Long t : owners(c)) {
+            names.add("Takım #" + t);
+            try {
+                teamRepo.findById(t).map(Team::getName).ifPresent(names::add);
+            } catch (RuntimeException e) {
+                return true;                                            // takım okunamadı: güvenli karar ("yarıda kaldı")
+            }
+        }
+        for (String[] tr : traces) {
+            if (tr[0] != null && names.contains(tr[0]) && tr[1] != null && tr[1].compareTo(since) >= 0 && tr[1].compareTo(until) < 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static Set<Long> owners(TlsGradeChange c) {
+        Set<Long> o = new LinkedHashSet<>();
+        if (c.getTeamId() != null) o.add(c.getTeamId());
+        if (c.getUgTeamId() != null) o.add(c.getUgTeamId());
+        return o;
+    }
+
+    /**
+     * Yeniden denenecek satırlar: DB sayacı tavanın altındaysa PENDING'e döner (sayaç +1), doluysa {@code finalState}. Geçiş
+     * hatası yutulur (satır SENDING kalır; bir saat sonra süpürme karar verir).
+     */
+    private void retryOrFail(List<TlsGradeChange> rows, String finalState, String now) {
+        if (rows == null || rows.isEmpty()) return;
+        List<Long> back = new ArrayList<>();
+        List<TlsGradeChange> capped = new ArrayList<>();
+        for (TlsGradeChange c : rows) {
+            int n = (c.getNotifyAttempts() == null ? 0 : c.getNotifyAttempts()) + 1;
+            if (n < READ_RETRY_MAX) back.add(c.getId());
+            else capped.add(c);
+        }
+        try {
+            if (!capped.isEmpty()) {
+                List<Long> ids = capped.stream().map(TlsGradeChange::getId).toList();
+                changeRepo.finishNotifyIfState(ids, TlsGradeChange.NOTIFY_SENDING, clip(finalState), now);
+            }
+            if (!back.isEmpty()) changeRepo.retryNotify(back);
+        } catch (RuntimeException e) {
+            log.warn("TLS notu düşüş bildirimi: {} düşüş yeniden denemeye bırakılamadı (yarıda kalan satır süpürmesi karar verir): {}",
+                    rows.size(), e.toString());
+        }
+    }
+
+    private Result deliver(List<TlsGradeChange> mine, Set<Long> attempted) {
         String now = ISO.format(Instant.now());
 
         if (!appSettings.getBoolean(KEY_ENABLED, true)) {
-            for (TlsGradeChange c : mine) readRetries.remove(c.getId());   // sonuçlandı — sayaç kalmaz (inceleme 6)
             finish(mine, SKIP_OFF, now);
             return new Result(mine.size(), 0, mine.size(), 0);
         }
         if (systemMaintenance != null && safeMuted()) {
-            for (TlsGradeChange c : mine) readRetries.remove(c.getId());
             finish(mine, SKIP_MAINT, now);
             log.info("TLS notu düşüş bildirimi: {} düşüş sistem bakımı susturmasıyla gönderilmedi", mine.size());
             return new Result(mine.size(), 0, mine.size(), 0);
@@ -223,18 +337,20 @@ public class TlsGradeDropNotifier {
 
         // Takım başına satırlar (SY + UG; aynı takım iki kez gelirse tek satır)
         Map<Long, List<TlsGradeChange>> byTeam = new LinkedHashMap<>();
+        Map<Long, Set<Long>> remaining = new LinkedHashMap<>();
         for (TlsGradeChange c : eligible) {
-            Set<Long> owners = new LinkedHashSet<>();
-            if (c.getTeamId() != null) owners.add(c.getTeamId());
-            if (c.getUgTeamId() != null) owners.add(c.getUgTeamId());
+            Set<Long> owners = owners(c);
+            remaining.put(c.getId(), new LinkedHashSet<>(owners));
             for (Long t : owners) byTeam.computeIfAbsent(t, k -> new ArrayList<>()).add(c);
         }
         Set<Long> delivered = new LinkedHashSet<>();
         Set<Long> failed = new LinkedHashSet<>();
         Set<Long> retry = new LinkedHashSet<>();
+        int[] tally = new int[3];                                       // gönderildi, gönderilemedi, alıcı yok
         int teamsDelivered = 0;
         String appUrl = appSettings.getString("site.monitor.app.base-url", "");
         for (Map.Entry<Long, List<TlsGradeChange>> e : byTeam.entrySet()) {
+            for (TlsGradeChange c : e.getValue()) attempted.add(c.getId());
             Delivery d;
             try {
                 d = sendToTeam(e.getKey(), e.getValue(), appUrl);
@@ -247,40 +363,70 @@ public class TlsGradeDropNotifier {
                 d = Delivery.FAILED;
             }
             if (d == Delivery.DELIVERED) teamsDelivered++;
+            // Sahip takımlarının HEPSİ biten satır HEMEN sonuçlanır (R2a, MP-43): ortada ölen pod yalnız uçuştaki takımın
+            // satırlarını SENDING'de bırakır, bitmiş takımların sonucu yazılmıştır
+            List<TlsGradeChange> done = new ArrayList<>();
             for (TlsGradeChange c : e.getValue()) {
                 if (d == Delivery.DELIVERED) delivered.add(c.getId());
                 else if (d == Delivery.FAILED) failed.add(c.getId());
                 else if (d == Delivery.RETRY) retry.add(c.getId());
+                Set<Long> left = remaining.get(c.getId());
+                if (left != null && left.remove(e.getKey()) && left.isEmpty()) done.add(c);
             }
+            settle(done, delivered, failed, retry, now, tally);
         }
-        // Okuma hatası (yalnız): düşüş PENDING'e döner ve sonraki turda yeniden denenir; tavan dolunca gönderilemedi
-        List<Long> backToPending = new ArrayList<>();
-        for (TlsGradeChange c : eligible) {
+        log.info("TLS notu düşüş bildirimi: {} düşüş · {}/{} takıma ulaştı · {} düşüş gönderilemedi · {} atlandı", mine.size(),
+                teamsDelivered, byTeam.size(), tally[1], below.size() + teamless.size() + tally[2]);
+        return new Result(mine.size(), tally[0], mine.size() - tally[0], byTeam.size());
+    }
+
+    /**
+     * Sahip takımlarının hepsi biten satırların sonucu: en az bir takıma ulaştıysa SENT; hiçbirine ulaşamadı ama denendiyse
+     * FAILED; yalnız okuma hatası → yeniden deneme (DB sayacı, tavanda FAILED); hiç alıcı yoksa "alıcı yok". Yeniden
+     * denenecekler PENDING'e EN SON döner (inceleme 6): bu geçiş hata verirse teslim edilmiş satırların sonucu zaten yazılmıştır.
+     */
+    private void settle(List<TlsGradeChange> done, Set<Long> delivered, Set<Long> failed, Set<Long> retry, String now, int[] tally) {
+        if (done.isEmpty()) return;
+        List<TlsGradeChange> sent = new ArrayList<>();
+        List<TlsGradeChange> notDelivered = new ArrayList<>();
+        List<TlsGradeChange> noRecipient = new ArrayList<>();
+        List<TlsGradeChange> again = new ArrayList<>();
+        for (TlsGradeChange c : done) {
             Long id = c.getId();
-            if (delivered.contains(id) || failed.contains(id) || !retry.contains(id)) continue;
-            int n = readRetries.merge(id, 1, Integer::sum);
-            if (n < READ_RETRY_MAX) backToPending.add(id);
-            else { failed.add(id); readRetries.remove(id); }
+            if (delivered.contains(id)) sent.add(c);
+            else if (failed.contains(id)) notDelivered.add(c);
+            else if (retry.contains(id)) again.add(c);
+            else noRecipient.add(c);
         }
-        // Bu turda sonuçlanan her satırın sayacı düşer (eşik altı / takımsız / alıcısız da — inceleme 6)
-        for (TlsGradeChange c : mine) if (!backToPending.contains(c.getId())) readRetries.remove(c.getId());
-        // En az bir sahip takıma ulaştıysa SENT; hiçbirine ulaşamadı ama denendiyse FAILED; hiç alıcı yoksa "alıcı yok".
-        List<TlsGradeChange> sent = eligible.stream().filter(c -> delivered.contains(c.getId())).toList();
-        List<TlsGradeChange> notDelivered = eligible.stream()
-                .filter(c -> !delivered.contains(c.getId()) && failed.contains(c.getId())).toList();
-        List<TlsGradeChange> noRecipient = eligible.stream()
-                .filter(c -> !delivered.contains(c.getId()) && !failed.contains(c.getId()) && !backToPending.contains(c.getId())).toList();
         finish(sent, TlsGradeChange.NOTIFY_SENT, now);
         finish(notDelivered, NOTIFY_FAILED, now);
         finish(noRecipient, SKIP_NO_RECIPIENT, now);
-        // Yeniden denenecekler PENDING'e EN SON döner (inceleme 6): bu geçiş hata verirse teslim edilmiş satırların sonucu
-        // zaten yazılmıştır — tur hatası onları "yarıda kaldı" yapmaz
-        if (!backToPending.isEmpty()) {
-            changeRepo.transitionNotifyState(backToPending, TlsGradeChange.NOTIFY_SENDING, TlsGradeChange.NOTIFY_PENDING);
+        tally[0] += sent.size();
+        tally[2] += noRecipient.size();
+        int capped = 0;
+        for (TlsGradeChange c : again) if ((c.getNotifyAttempts() == null ? 0 : c.getNotifyAttempts()) + 1 >= READ_RETRY_MAX) capped++;
+        tally[1] += notDelivered.size() + capped;
+        if (again.isEmpty()) return;
+        // Tavanı dolan "gönderilemedi", gerisi PENDING (sayaç +1) — geçiş hatası teslim edilmiş satırlara dokunmaz
+        List<Long> back = new ArrayList<>();
+        List<TlsGradeChange> cappedRows = new ArrayList<>();
+        for (TlsGradeChange c : again) {
+            if ((c.getNotifyAttempts() == null ? 0 : c.getNotifyAttempts()) + 1 < READ_RETRY_MAX) back.add(c.getId());
+            else cappedRows.add(c);
         }
-        log.info("TLS notu düşüş bildirimi: {} düşüş · {}/{} takıma ulaştı · {} düşüş gönderilemedi · {} atlandı", mine.size(),
-                teamsDelivered, byTeam.size(), notDelivered.size(), below.size() + teamless.size() + noRecipient.size());
-        return new Result(mine.size(), sent.size(), mine.size() - sent.size(), byTeam.size());
+        finish(cappedRows, NOTIFY_FAILED, now);
+        if (back.isEmpty()) return;
+        try {
+            changeRepo.retryNotify(back);
+        } catch (RuntimeException e) {
+            // Geçiş yazılamadı: satır SENDING'de kalmaz — "yarıda kaldı" (izi var: alıcılar okunamadı); sıradaki takım sürer
+            log.warn("TLS notu düşüş bildirimi: {} düşüş yeniden denemeye bırakılamadı — 'yarıda kaldı': {}", back.size(), e.toString());
+            try {
+                changeRepo.finishNotifyIfState(back, TlsGradeChange.NOTIFY_SENDING, clip(NOTIFY_INTERRUPTED), now);
+            } catch (RuntimeException ignored) {
+                // bir saat sonra yarıda kalan satır süpürmesi karar verir
+            }
+        }
     }
 
     /**

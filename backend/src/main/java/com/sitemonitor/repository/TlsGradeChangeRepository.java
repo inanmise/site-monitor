@@ -51,6 +51,25 @@ public interface TlsGradeChangeRepository extends JpaRepository<TlsGradeChange, 
     @Query("UPDATE TlsGradeChange c SET c.notifyState = :to WHERE c.id IN :ids AND c.notifyState = :from")
     int transitionNotifyState(@Param("ids") java.util.Collection<Long> ids, @Param("from") String from, @Param("to") String to);
 
+    /**
+     * TALEP + damga (çok pod R2a, MP-43): bekleyen satırlar SENDING olur ve {@code notified_at} talep anını taşır (yarıda kalan
+     * talep düşüş zamanına göre değil bu damgaya göre yaşlanır). Dönen sayı talep edilen satır sayısıdır.
+     */
+    @Modifying
+    @Transactional
+    @Query("UPDATE TlsGradeChange c SET c.notifyState = 'SENDING', c.notifiedAt = :at WHERE c.id IN :ids AND c.notifyState = 'PENDING'")
+    int claimNotify(@Param("ids") java.util.Collection<Long> ids, @Param("at") String at);
+
+    /**
+     * Yeniden deneme (çok pod R2a, MP-43): hâlâ SENDING olan satırlar PENDING'e döner, deneme sayacı +1 (DB'de — pod belleğinde
+     * değil). Dönen sayı geri bırakılan satır sayısıdır.
+     */
+    @Modifying
+    @Transactional
+    @Query("UPDATE TlsGradeChange c SET c.notifyState = 'PENDING', c.notifyAttempts = COALESCE(c.notifyAttempts, 0) + 1 "
+            + "WHERE c.id IN :ids AND c.notifyState = 'SENDING'")
+    int retryNotify(@Param("ids") java.util.Collection<Long> ids);
+
     /** Bildirim sonucu (SENT / "SKIPPED: …") + zamanı. */
     @Modifying
     @Transactional

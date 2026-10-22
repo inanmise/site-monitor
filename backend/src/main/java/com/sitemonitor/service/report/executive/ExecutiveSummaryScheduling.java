@@ -21,6 +21,12 @@ import java.time.Instant;
  *       özetleri (2026-10-10) aynı tetiklerle, kurum özetinden sonra gider.</li>
  * </ol>
  * Asıl "tam bir kez" kapısı kilit değil, ay kaydının UNIQUE talebidir (kilit kaçsa bile ikinci posta gitmez).
+ *
+ * <p><b>Çok pod R2a (MP-42, 2026-10-22):</b> kilit iş bitince bırakılır; geç tetiklenen ikinci pod (dolu zamanlayıcı havuzu)
+ * aynı tetiği yeniden koşturup ayın deneme hakkını boşa harcıyordu. Planlı tetik artık küme genelinde BİR KEZ
+ * ({@link SchedulerService#claimCronRound} — tur {@value #SCHEDULED_ROUND}) ve yalnız CANLI cron bu dakikada tetikleniyorsa
+ * ({@link com.sitemonitor.service.report.LiveCron}: ayardan sonra değişen zamanlamada eski planlı tetik göndermez); telafi
+ * saatte bir kez ({@link SchedulerService#claimRound} — tur {@value #CATCH_UP_ROUND}, iki aşamalı). Tur adları KALICI.
  */
 @Slf4j
 @Configuration
@@ -29,6 +35,11 @@ public class ExecutiveSummaryScheduling implements SchedulingConfigurer {
 
     static final String LOCK = "executive-summary";
     static final String CATCH_UP_CRON = "0 17 * * * *";
+    /** Planlı tetiğin küme turu (R2a, MP-42) — KALICI ad. */
+    static final String SCHEDULED_ROUND = "executive-summary";
+    /** Saatlik telafinin küme turu (R2a, MP-42) — KALICI ad; aralık bir saatten kısa ki her saatin tetiği vadeli olsun. */
+    static final String CATCH_UP_ROUND = "executive-summary-catchup";
+    static final long CATCH_UP_ROUND_MS = 55L * 60_000L;
 
     private final ExecutiveSummaryDeliveryService delivery;
     private final ExecutiveSummarySettings settings;
@@ -38,7 +49,7 @@ public class ExecutiveSummaryScheduling implements SchedulingConfigurer {
     @Override
     public void configureTasks(ScheduledTaskRegistrar registrar) {
         registrar.addTriggerTask(
-                () -> schedulerService.runWithSchedulerLock(LOCK, delivery::runScheduled),
+                () -> schedulerService.runWithSchedulerLock(LOCK, () -> scheduledTick(Instant.now())),
                 context -> {
                     String expr = settings.cron();
                     try {
@@ -58,9 +69,38 @@ public class ExecutiveSummaryScheduling implements SchedulingConfigurer {
         registrar.addTriggerTask(
                 () -> {
                     if (settings.enabled() || teamService.anyEnabled()) {
-                        schedulerService.runWithSchedulerLock(LOCK, delivery::catchUp);
+                        schedulerService.runWithSchedulerLock(LOCK, this::catchUpTick);
                     }
                 },
                 new CronTrigger(CATCH_UP_CRON, ExecutiveSummaryContext.IST));
+    }
+
+    /**
+     * Planlı tetik (kilit altında): CANLI cron bu dakikada tetiklenmiyorsa (zamanlama tetik planlandıktan sonra değişti) iş
+     * koşmaz; tetik küme genelinde bir kez ({@value #SCHEDULED_ROUND} cron turu).
+     */
+    void scheduledTick(Instant now) {
+        String cron = com.sitemonitor.service.report.LiveCron.effective(settings.cron(), ExecutiveSummarySettings.DEFAULT_CRON);
+        if (!com.sitemonitor.service.report.LiveCron.firesNow(cron, ExecutiveSummarySettings.DEFAULT_CRON,
+                ExecutiveSummaryContext.IST, now)) {
+            log.info("Aylık yönetici özeti: planlı tetik canlı zamanlamaya ({}) uymuyor — zamanlama değişmiş, bu tetikte gönderilmedi",
+                    cron);
+            return;
+        }
+        if (!schedulerService.claimCronRound(SCHEDULED_ROUND, cron, ExecutiveSummaryContext.IST.getId())) {
+            log.debug("Aylık yönetici özeti: bu planlı tetik başka bir pod'da koştu");
+            return;
+        }
+        delivery.runScheduled();
+    }
+
+    /** Saatlik telafi (kilit altında): küme genelinde saatte bir ({@value #CATCH_UP_ROUND}); hatada tur tamamlanmaz. */
+    void catchUpTick() {
+        if (!schedulerService.claimRound(CATCH_UP_ROUND, CATCH_UP_ROUND_MS)) {
+            log.debug("Aylık yönetici özeti telafisi: bu saatin turu başka bir pod'da koştu");
+            return;
+        }
+        delivery.catchUp();
+        schedulerService.completeRound(CATCH_UP_ROUND);
     }
 }

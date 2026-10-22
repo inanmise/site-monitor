@@ -311,6 +311,11 @@ public class TechErrorPushService {
             case "SEND_IN_PROGRESS" -> en ? new String[] { "was approved; it is already being sent.",
                     " The result will show on the report in Site Monitor." }
                     : new String[] { "onaylandı; rapor zaten gönderiliyor.", " Sonuç Site Monitor'de raporda görünecek." };
+            // R2a (MP-41, 2026-10-22): önceki gönderim 421 kuyruğunda — ikinci kopya gitmesin diye yeniden gönderilmedi
+            case "SEND_QUEUED" -> en ? new String[] { "was approved; earlier send still queued.",
+                    " The previous send is in the mail retry queue; send it again in a few minutes." }
+                    : new String[] { "onaylandı; önceki gönderim kuyrukta.",
+                    " Önceki gönderim posta kuyruğunda; birkaç dakika sonra Site Monitor'den yeniden gönderin." };
             case "PDF_BUSY" -> en ? new String[] { "was approved; PDF queue busy, not sent.",
                     " The executives did not get it yet; send it again shortly." }
                     : new String[] { "onaylandı; PDF sırası dolu, gitmedi.",

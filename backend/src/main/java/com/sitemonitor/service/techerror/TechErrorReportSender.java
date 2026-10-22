@@ -400,6 +400,27 @@ public class TechErrorReportSender {
     }
 
     /** Oturum kullanıcısının hesabında teslim edilebilir adres yok — test postası gidemez (409 {@code NO_EMAIL}). */
+    /** Hata kodu: önceki gönderim posta sunucusunun yeniden deneme kuyruğunda (R2a, MP-41). */
+    public static final String SEND_QUEUED = "SEND_QUEUED";
+
+    /**
+     * Rapor satırı CANLI bir kuyruk gönderimi taşıyor mu: {@code QUEUED} ve talebi {@code queuedSince}'ten (sonucun
+     * gelebileceği süre, {@link #QUEUED_RESULT_WINDOW}) yeni. Talep zamanı yoksa (eski satır) canlı sayılmaz.
+     */
+    static boolean liveQueue(TechErrorReport r, Instant queuedSince) {
+        return r != null && "QUEUED".equals(r.getSendState()) && r.getSendClaimedAt() != null
+                && !r.getSendClaimedAt().isBefore(queuedSince);
+    }
+
+    /** 409 {@value #SEND_QUEUED}: önceki gönderim kuyrukta — yeniden gönderilmedi. */
+    public static CodedConflictException sendQueued() {
+        return new CodedConflictException(SEND_QUEUED, Msg.t(
+                "Bu raporun önceki gönderimi posta sunucusunun yeniden deneme kuyruğunda bekliyor; ikinci bir kopya gitmesin diye "
+                        + "rapor yeniden gönderilmedi. Birkaç dakika sonra gönderim sonucunu kontrol edin; gerekirse o zaman yeniden gönderin.",
+                "This report's previous send is waiting in the mail server's retry queue, so the report wasn't sent again "
+                        + "(to avoid a second copy). Check the send result in a few minutes and send it again then if needed."));
+    }
+
     public static CodedConflictException noEmail() {
         return new CodedConflictException("NO_EMAIL", Msg.t(
                 "Hesabınızda e-posta adresi yok; test postası gönderilemez. Yöneticinizden adres eklemesini isteyin.",
@@ -568,8 +589,16 @@ public class TechErrorReportSender {
         String stateBefore = before == null ? null : before.getSendState();
         // Talep bırakılırsa önceki talep zamanı geri yüklenir: kuyruktaki gönderim sonuçlanınca "gönderim anı" odur
         Instant prevClaimedAt = before == null ? null : before.getSendClaimedAt();
-        if (reports.claimSend(report.getId(), claimedAt, claimedAt.minus(STALE_CLAIM)) == 0) {
+        // Önceki gönderim hâlâ 421 yeniden deneme kuyruğunda (sonucu gelebilir): YENİDEN GÖNDERİLMEZ (çok pod R2a, MP-41 —
+        // kullanıcı kararı 2026-10-22; 2026-10-14'ün "kuyruğun üzerine gönder" kuralını tersine çevirir). Eski kuyruk yeniden
+        // denemede teslim edilir, yeni gönderim de giderse takım / yöneticiler farklı içerikli İKİ kopya alırdı. Hiçbir şey
+        // sahiplenilmez / gönderilmez / gönderim olarak denetlenmez. Süre geçtiyse (sonuç artık gelemez) eski davranış.
+        Instant queuedSince = claimedAt.minus(QUEUED_RESULT_WINDOW);
+        if (liveQueue(before, queuedSince)) throw sendQueued();
+        if (reports.claimSendUnlessQueued(report.getId(), claimedAt, claimedAt.minus(STALE_CLAIM), queuedSince) == 0) {
             if (!reports.existsById(report.getId())) throw TechErrorReportService.reportNotFound();
+            // Talep koşulu reddetti: ön okumadan sonra kuyruğa giren gönderim (başka sekme / pod) — nedeni yeniden okunur
+            if (liveQueue(reports.findById(report.getId()).orElse(null), queuedSince)) throw sendQueued();
             throw new CodedConflictException("SEND_IN_PROGRESS", Msg.t(
                     "Bu rapor şu anda gönderiliyor (başka bir sekmede ya da başka biri tarafından). Bir dakika sonra durumu yenileyin.",
                     "This report is being sent right now (in another tab or by someone else). Refresh its status in a minute."));
