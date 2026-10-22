@@ -99,16 +99,33 @@ public class TodayPanelService {
      * (bakım sayfasını göremeyen kullanıcıya pencere adlarını panelden sızdırmayalım).
      */
     public Map<String, Object> build(Predicate<Long> canViewTeam, List<Long> ownTeamIds, int limit, boolean showMaintenance) {
-        return build(canViewTeam, ownTeamIds, limit, showMaintenance, Instant.now());
+        return build(canViewTeam, ownTeamIds, limit, showMaintenance, true, Instant.now());
+    }
+
+    /**
+     * {@code showAlerts}: kullanıcının {@code alerts.read} izni (2026-10-22, L-H8) — yoksa açık alarm kartı satırsız döner
+     * ({@code visible:false}); {@code /api/me/open-alerts} ile aynı kural (gidemeyeceği sayfanın içeriğini göstermesin).
+     */
+    public Map<String, Object> build(Predicate<Long> canViewTeam, List<Long> ownTeamIds, int limit, boolean showMaintenance,
+                                     boolean showAlerts) {
+        return build(canViewTeam, ownTeamIds, limit, showMaintenance, showAlerts, Instant.now());
+    }
+
+    /** Eski test imzası — alarm kartı görünür. */
+    Map<String, Object> build(Predicate<Long> canViewTeam, List<Long> ownTeamIds, int limit, boolean showMaintenance, Instant now) {
+        return build(canViewTeam, ownTeamIds, limit, showMaintenance, true, now);
     }
 
     /** Test edilebilir çekirdek — {@code now} enjekte edilir (trend penceresi kayan). */
-    Map<String, Object> build(Predicate<Long> canViewTeam, List<Long> ownTeamIds, int limit, boolean showMaintenance, Instant now) {
+    Map<String, Object> build(Predicate<Long> canViewTeam, List<Long> ownTeamIds, int limit, boolean showMaintenance,
+                              boolean showAlerts, Instant now) {
         Map<String, Object> out = new LinkedHashMap<>();
         List<CertificateInventory> visible = new ArrayList<>();
         try {
+            // SY ya da UG takımı görülebilen kayıt (2026-10-22, ALERTS-3 / DATA-5): UG takımına postalanan sertifika alarmı ve
+            // süresi dolan sertifika "Bugün" panelinde de görünür (Alarm Geçmişi listesiyle aynı kural).
             for (CertificateInventory i : inventoryRepo.findByActiveTrueOrderByDomainAsc())
-                if (canViewTeam.test(i.getTeamId())) visible.add(i);
+                if (canViewTeam.test(i.getTeamId()) || (i.getUgTeamId() != null && canViewTeam.test(i.getUgTeamId()))) visible.add(i);
         } catch (Exception e) { log.debug("today: envanter okunamadı: {}", e.toString()); }
         Set<String> visibleDomains = new HashSet<>();
         Map<String, Long> domainTeam = new HashMap<>();
@@ -117,7 +134,7 @@ public class TodayPanelService {
         try { teamRepo.findAll().forEach(t -> teamNames.put(t.getId(), t.getName())); } catch (Exception ignored) { }
 
         out.put("certs", safe(() -> certs(visibleDomains, domainTeam, teamNames, limit)));
-        out.put("alerts", safe(() -> alerts(canViewTeam, visibleDomains, teamNames, limit)));
+        out.put("alerts", showAlerts ? safe(() -> alerts(canViewTeam, visibleDomains, teamNames, limit)) : hiddenAlerts());
         out.put("weekly", safe(() -> weekly(ownTeamIds, teamNames)));
         // İzleme kartları: tüm-takım anlık görüntü (önbellekli) → görünürlük süzgeci → tavan.
         TodayMonitorInsightsService.Snapshot snap;
@@ -164,7 +181,8 @@ public class TodayPanelService {
                 for (String card : TREND_CARDS) {
                     Object blk = out.get(card);
                     // Görüntüde kart yoksa (o saat kart hata vermiş) prev YAZILMAZ — 0 yazmak sahte "+N kötüleşme" olurdu.
-                    if (!(blk instanceof Map<?, ?> m) || m.containsKey("error") || !prior.cards().containsKey(card)) continue;
+                    if (!(blk instanceof Map<?, ?> m) || m.containsKey("error") || Boolean.FALSE.equals(m.get("visible"))
+                            || !prior.cards().containsKey(card)) continue;
                     @SuppressWarnings("unchecked") Map<String, Object> bm = (Map<String, Object>) blk;
                     bm.put("prev", countVisible(prior.cards().get(card), canViewTeam, visibleDomains, showMaintenance));
                 }
@@ -342,6 +360,16 @@ public class TodayPanelService {
         items.sort(Comparator.comparingInt(m -> (Integer) m.get("days")));
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("count", items.size()); out.put("expired", expired); out.put("items", items.subList(0, Math.min(limit, items.size())));
+        return out;
+    }
+
+    /** {@code alerts.read} yoksa açık alarm kartı: satır ve sayı yok, {@code visible:false} (arayüz kartı gizler). */
+    private static Map<String, Object> hiddenAlerts() {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("visible", false);
+        out.put("count", 0);
+        out.put("critical", 0);
+        out.put("items", List.of());
         return out;
     }
 

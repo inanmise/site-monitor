@@ -100,7 +100,7 @@ class AlertNoiseServiceTest {
     /** Aktif envanter (alan adı, SY takımı) projeksiyonu. */
     private void stubInventory(CertificateInventory... invs) {
         List<Object[]> out = new ArrayList<>();
-        for (CertificateInventory i : invs) out.add(new Object[]{ i.getDomain(), i.getTeamId() });
+        for (CertificateInventory i : invs) out.add(new Object[]{ i.getDomain(), i.getTeamId(), i.getUgTeamId() });
         when(inventoryRepo.findActiveDomainTeams()).thenReturn(out);
     }
 
@@ -449,5 +449,23 @@ class AlertNoiseServiceTest {
         assertThat(t1).containsEntry("total", 2);
         assertThatThrownBy(() -> svc.slot(7, null, canView, 7, 14)).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> svc.slot(7, null, canView, 0, 24)).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    @DisplayName("ALERTS-3 (2026-10-22): UG takımı U, SY'si S olan alanın sertifika alarmını (S damgalı) gürültüde görür; team=U süzgeci de sayar")
+    void ugTeamSeesCertAlarms() {
+        CertificateInventory inv = new CertificateInventory(); inv.setDomain("ug.example.com"); inv.setTeamId(2L); inv.setUgTeamId(3L); inv.setActive(true);
+        stubInventory(inv);
+        stubEvents(List.of(ev(1, "ug.example.com", "EXPIRY", 2L, 5, null), ev(2, "ug.example.com", "CHAIN_BROKEN", 2L, 9, 30),
+                ev(3, "x.example.com", "HTTP_DOWN", 2L, 4, null)));   // S'nin başka alarmı — U göremez
+        AlertNoiseService svc = svc();
+        java.util.function.Predicate<Long> u = t -> t != null && t == 3L;
+        assertThat(svc.build(7, u)).containsEntry("total", 2);
+        assertThat(svc.build(7, 3L, u)).as("team=U süzgeci UG'yi de eşler").containsEntry("total", 2);
+        assertThat(svc.build(7, 2L, t -> true)).as("team=S (SY) iki alarmı + kendi alarmı").containsEntry("total", 3);
+        assertThat(svc.build(7, 9L, t -> true)).containsEntry("total", 0);
+        // Eski iki-sütunlu projeksiyon (UG yok) hâlâ okunur: U hiçbir şey görmez, hata yok
+        when(inventoryRepo.findActiveDomainTeams()).thenReturn(List.<Object[]>of(new Object[]{ "ug.example.com", 2L }));
+        assertThat(svc.build(7, u)).containsEntry("total", 0);
     }
 }

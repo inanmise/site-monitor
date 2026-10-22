@@ -326,4 +326,31 @@ class TodayPanelServiceTest {
         assertThat(cards.get("quiet")).extracting(m -> m.get("k")).contains("MW:1", "MW:2", "MW:3", "HTTP:11", "PORT:13", "EXCEPTION:other.example.com");
         assertThat(cards.get("quiet").get(0)).containsEntry("m", true).containsEntry("a", true);
     }
+
+    @Test
+    @DisplayName("ALERTS-3 / DATA-5 (2026-10-22): yalnız UG takımı görülebilen kayıt — sertifikası ve (SY damgalı) açık alarmı 'Bugün'de görünür")
+    void ugTeamSeesCertAndAlarm() {
+        CertificateInventory other = inv("other.example.com", 2L);
+        other.setUgTeamId(3L);
+        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(inv("soon.example.com", 1L), other));
+        Map<String, Object> b = svc.build(t -> t != null && t == 3L, List.of(3L));
+        assertThat(block(b, "certs")).containsEntry("count", 1);
+        assertThat(items(block(b, "certs")).get(0)).containsEntry("domain", "other.example.com").containsEntry("team_id", 2L);
+        assertThat(block(b, "alerts")).containsEntry("count", 1);
+        assertThat(items(block(b, "alerts")).get(0)).containsEntry("id", 10L);
+        assertThat(b.get("scope_domains")).isEqualTo(1);
+        // UG'si başka takım olan kayıt bu kullanıcıya görünmez
+        assertThat(block(svc.build(t -> t != null && t == 4L, List.of(4L)), "alerts")).containsEntry("count", 0);
+    }
+
+    @Test
+    @DisplayName("L-H8 (2026-10-22): alerts.read yoksa açık alarm kartı satırsız döner (visible:false), diğer kartlar etkilenmez")
+    void alertsCardNeedsAlertsRead() {
+        Map<String, Object> b = svc.build(t -> t != null && t == 1L, List.of(1L), TodayPanelService.TOP, true, false);
+        assertThat(block(b, "alerts")).containsEntry("visible", false).containsEntry("count", 0);
+        assertThat(items(block(b, "alerts"))).isEmpty();
+        assertThat(block(b, "certs")).containsEntry("count", 2);
+        assertThat(block(svc.build(t -> t != null && t == 1L, List.of(1L), TodayPanelService.TOP, true, true), "alerts"))
+                .containsEntry("count", 1).doesNotContainKey("visible");
+    }
 }

@@ -51,9 +51,13 @@ public class AlertTeamStatsService {
 
     public Map<String, Object> build(Predicate<Long> canViewTeam, boolean globalViewer) {
         Map<String, Long> domainTeam = new LinkedHashMap<>();
+        Map<String, Long> domainUg = new LinkedHashMap<>();
         try {
-            for (CertificateInventory i : inventoryRepo.findByActiveTrueOrderByDomainAsc())
-                if (i.getDomain() != null && i.getTeamId() != null) domainTeam.put(i.getDomain(), i.getTeamId());
+            for (CertificateInventory i : inventoryRepo.findByActiveTrueOrderByDomainAsc()) {
+                if (i.getDomain() == null) continue;
+                if (i.getTeamId() != null) domainTeam.put(i.getDomain(), i.getTeamId());
+                if (i.getUgTeamId() != null) domainUg.put(i.getDomain(), i.getUgTeamId());
+            }
         } catch (Exception e) {
             log.debug("takım kırılımı: envanter okunamadı: {}", e.toString());
         }
@@ -76,16 +80,38 @@ public class AlertTeamStatsService {
         java.util.Set<Long> seen = new java.util.HashSet<>();
         for (AlertEvent e : events) {
             if (e.getId() != null && !seen.add(e.getId())) continue;   // iki sorgunun kesişimi bir kez sayılır
-            Long teamId = e.getTeamId() != null ? e.getTeamId()
-                    : (e.getDomain() != null ? domainTeam.get(e.getDomain()) : null);
-            if (teamId == null && !globalViewer) continue;             // takımı çözülemeyen alarm kapsam dışıdır
-            if (teamId != null && !canViewTeam.test(teamId)) continue;
-            Row r = teamId == null ? unassigned : rows.computeIfAbsent(teamId, k -> new Row());
+            // Alarmın takımları (2026-10-22, ALERTS-3 / DATA-5): damga + envanterin SY ve UG takımı — hücre penceresinin
+            // açtığı Alarm Geçmişi süzgeciyle (teamId = X → damga ya da envanter SY / UG) AYNI küme; böylece satırdaki
+            // "(N)" pencerede listelenen satır sayısına eşit olur ve UG takımı kendi alarmlarını görür. Toplamlar her
+            // alarmı BİR kez sayar.
+            java.util.LinkedHashSet<Long> owners = new java.util.LinkedHashSet<>();
+            if (e.getTeamId() != null) owners.add(e.getTeamId());
+            if (e.getDomain() != null) {
+                Long sy = domainTeam.get(e.getDomain());
+                Long ug = domainUg.get(e.getDomain());
+                if (sy != null) owners.add(sy);
+                if (ug != null) owners.add(ug);
+            }
+            List<Row> targets = new ArrayList<>();
+            if (owners.isEmpty()) {
+                if (!globalViewer) continue;                            // takımı çözülemeyen alarm kapsam dışıdır
+                targets.add(unassigned);
+            } else {
+                for (Long t : owners) if (canViewTeam.test(t)) targets.add(rows.computeIfAbsent(t, k -> new Row()));
+                if (targets.isEmpty()) continue;
+            }
             boolean open = !Boolean.TRUE.equals(e.getResolved());
-            if (open) { r.open++; totalOpen++; } else { r.closed++; totalClosed++; }
             String createdAt = e.getCreatedAt();
-            if (createdAt != null && createdAt.compareTo(since30) >= 0) { r.last30++; total30++; }
-            if (createdAt != null && createdAt.compareTo(since7) >= 0) { r.last7++; total7++; }
+            boolean in30 = createdAt != null && createdAt.compareTo(since30) >= 0;
+            boolean in7 = createdAt != null && createdAt.compareTo(since7) >= 0;
+            for (Row r : targets) {
+                if (open) r.open++; else r.closed++;
+                if (in30) r.last30++;
+                if (in7) r.last7++;
+            }
+            if (open) totalOpen++; else totalClosed++;
+            if (in30) total30++;
+            if (in7) total7++;
         }
 
         Map<Long, String> names = new LinkedHashMap<>();

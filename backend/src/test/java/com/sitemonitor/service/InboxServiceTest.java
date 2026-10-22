@@ -64,9 +64,8 @@ class InboxServiceTest {
         CertificateInventory b = new CertificateInventory(); b.setDomain("b.example.com"); b.setTeamId(2L); b.setActive(true);
         when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(a, b));
         when(alertEventRepo.findAllOpenOrderBySeverity()).thenReturn(List.of(ev(1, "a.example.com", 1L, "WARNING", false, 0), ev(2, "a.example.com", 1L, "CRITICAL", false, 0), ev(3, "b.example.com", 2L, "CRITICAL", false, 0)));
-        when(alertEventRepo.findResolvedSinceCreatedSince(anyString(), anyString())).thenReturn(List.of(ev(4, "a.example.com", 1L, "WARNING", true, 3), ev(5, "a.example.com", 1L, "WARNING", true, 30)));
-        // Gelen kutusu GEÇMİŞİ hâlâ 30 günlük sorguyu kullanır (yalnız 24 saatlik "çözülenler" daraldı)
-        when(alertEventRepo.findByCreatedAtGreaterThanEqualOrderByCreatedAtDesc(anyString())).thenReturn(List.of(ev(4, "a.example.com", 1L, "WARNING", true, 3), ev(5, "a.example.com", 1L, "WARNING", true, 30)));
+        // 2026-10-22 (DATA-11): "son 24 saatte çözülenler" ve geçmiş ÇÖZÜLME anıyla okunur — açılış alt sınırı yok
+        when(alertEventRepo.findByResolvedAtGreaterThanEqual(anyString())).thenReturn(List.of(ev(4, "a.example.com", 1L, "WARNING", true, 3), ev(5, "a.example.com", 1L, "WARNING", true, 30)));
         MaintenanceWindow active = new MaintenanceWindow(); active.setId(7L); active.setName("Gece bakımı"); active.setTeamId(1L); active.setActive(true); active.setStartAt(ISO.format(Instant.now().minus(1, ChronoUnit.HOURS)));
         MaintenanceWindow soon = new MaintenanceWindow(); soon.setId(8L); soon.setName("Yarın"); soon.setTeamId(null); soon.setActive(true); soon.setStartAt(ISO.format(Instant.now().plus(5, ChronoUnit.HOURS)));
         MaintenanceWindow far = new MaintenanceWindow(); far.setId(9L); far.setName("Uzak"); far.setTeamId(null); far.setActive(true); far.setStartAt(ISO.format(Instant.now().plus(5, ChronoUnit.DAYS)));
@@ -162,6 +161,52 @@ class InboxServiceTest {
         assertThat(svc.history(t -> t != null && t == 2L, 0, 10).total()).isZero();
     }
 
+
+    @Test
+    @DisplayName("ALERTS-3 / DATA-5 (2026-10-22): yalnız UG takımı görülebilen envanterin alarmı bildirim kutusunda ve geçmişte görünür")
+    void ugTeamSeesAlarm() {
+        CertificateInventory ug = new CertificateInventory(); ug.setDomain("ug.example.com"); ug.setTeamId(2L); ug.setUgTeamId(3L); ug.setActive(true);
+        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(ug));
+        AlertEvent cert = ev(20, "ug.example.com", 2L, "HIGH", false, 0);   // sertifika alarmı SY damgalı
+        when(alertEventRepo.findAllOpenOrderBySeverity()).thenReturn(List.of(cert));
+        AlertEvent done = ev(21, "ug.example.com", 2L, "HIGH", true, 2);
+        when(alertEventRepo.findByResolvedAtGreaterThanEqual(anyString())).thenReturn(List.of(done));
+        List<InboxService.Item> items = svc.build(t -> t != null && t == 3L, List.of(3L));
+        assertThat(items).extracting(InboxService.Item::key).contains("alert:20").anyMatch(k -> k.startsWith("resolved:21:"));
+        assertThat(svc.history(t -> t != null && t == 3L, 0, 10).total()).isEqualTo(1);
+        assertThat(svc.build(t -> t != null && t == 9L, List.of(9L))).extracting(InboxService.Item::key).doesNotContain("alert:20");
+    }
+
+    @Test
+    @DisplayName("DATA-11 (2026-10-22): 60 günden ÖNCE açılıp bugün çözülen alarm '24 saatte çözülenler'de ve geçmişte görünür")
+    void longRunningAlarmResolvedToday() {
+        AlertEvent old = ev(30, "a.example.com", 1L, "WARNING", true, 1);
+        old.setCreatedAt(ISO.format(Instant.now().minus(90, ChronoUnit.DAYS)));
+        when(alertEventRepo.findByResolvedAtGreaterThanEqual(anyString())).thenReturn(List.of(old));
+        assertThat(svc.build(t -> t != null && t == 1L, List.of(1L))).extracting(InboxService.Item::key)
+                .anyMatch(k -> k.startsWith("resolved:30:"));
+        assertThat(svc.history(t -> t != null && t == 1L, 0, 10).total()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("DATA-11: SQL'de sayfalı geçmiş — kapsam listesi sorguya gider, toplam sayfa sorgusundan; global görüntüleyici kapsamsız")
+    void historyPagedInSql() {
+        AlertEvent r1 = ev(40, "a.example.com", 1L, "WARNING", true, 2);
+        when(alertEventRepo.findResolvedHistory(anyString(), eq(true), eq(List.of(1L)), any()))
+                .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(r1), org.springframework.data.domain.PageRequest.of(0, 1), 7));
+        InboxService.HistoryPage h = svc.history(List.of(1L), 0, 1);
+        assertThat(h.total()).isEqualTo(7);
+        assertThat(h.totalPages()).isEqualTo(7);
+        assertThat(h.items()).extracting(InboxService.Item::key).singleElement().asString().startsWith("resolved:40:");
+
+        when(alertEventRepo.findResolvedHistory(anyString(), eq(false), any(), any()))
+                .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of()));
+        assertThat(svc.history((List<Long>) null, 0, 10).total()).isZero();
+        org.mockito.Mockito.verify(alertEventRepo).findResolvedHistory(anyString(), eq(false), eq(List.of(-1L)), any());
+        // Boş kapsam: hiçbir şey eşleşmez (kukla -1), sorgu yine kapsamlı
+        svc.history(List.of(), 0, 10);
+        org.mockito.Mockito.verify(alertEventRepo).findResolvedHistory(anyString(), eq(true), eq(List.of(-1L)), any());
+    }
 
     @Test
     @DisplayName("QA ISSUE-001: sertifika izleme bağlantısı Genel Bakış'a `domain` paramıyla gider (`q` yalnız ilk yüklemede okunur)")

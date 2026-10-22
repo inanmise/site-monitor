@@ -134,4 +134,16 @@ class ExecutiveStatsServiceTest {
         assertThat(c).containsEntry("days", 7).containsEntry("added", 1).containsEntry("removed", 1).containsEntry("renewed", 1)
                 .containsEntry("alerts_opened", 1).containsEntry("alerts_resolved", 0);   // setUp: ev(1) 1 gün önce açık; 45/50 gün öncekiler dışarıda
     }
+
+    @Test
+    @DisplayName("ALERTS-3 / DATA-5 (2026-10-22): yalnız UG takımı (3) görülebilen kayıt — sertifika ve SY damgalı açık alarm istatistik özetine girer")
+    void ugTeamCounted() {
+        CertificateInventory b = inv("bexp.example.com", 2L);
+        b.setUgTeamId(3L);
+        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(inv("ok1.example.com", 1L), b));
+        Map<String, Object> out = svc.build(t -> t != null && t == 3L);
+        assertThat(m(out, "certs")).containsEntry("total", 1).containsEntry("expired", 1);
+        assertThat(m(out, "alerts")).containsEntry("open", 1);
+        assertThat(m(svc.build(t -> t != null && t == 4L), "certs")).containsEntry("total", 0);
+    }
 }
