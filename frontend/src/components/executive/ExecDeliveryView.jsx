@@ -4,6 +4,7 @@ import { api } from '../../api/client'
 import { useT, useLanguage } from '../../i18n/index.jsx'
 import { useDialog } from '../ui/Dialog.jsx'
 import StatusBlock from '../ui/StatusBlock.jsx'
+import AlertBanner from '../ui/AlertBanner.jsx'
 import { LoadingBlock } from '../ui/Progress.jsx'
 import { Button } from '@/components/shadcn/button'
 import { Badge } from '@/components/shadcn/badge'
@@ -89,8 +90,11 @@ export default function ExecDeliveryView({ month, canConfigureOrg = false, selec
 
   const rows = teams.rows
   const shown = useMemo(() => filterTeams(rows, q), [rows, q])
+  // Takım listesi okunamadıysa bağlantıdaki takım (ex_sel / ex_team) DOĞRULANAMAZ ama düşürülmez de (UIA-G6, 2026-10-22):
+  // eskiden sessizce kurum ayarları açılıyordu. Takım ayarı kendi okumasını yapar (görülemiyorsa kendi hatasını söyler).
+  const listFailed = !!teams.error
   const validSel = selected === SEL_ORG ? (canConfigureOrg ? SEL_ORG : null)
-    : (selected && rows.some((r) => String(r.team_id) === String(selected)) ? String(selected) : null)
+    : (selected && (listFailed || rows.some((r) => String(r.team_id) === String(selected))) ? String(selected) : null)
   const current = validSel || (canConfigureOrg ? SEL_ORG : (rows[0] ? String(rows[0].team_id) : null))
   const enabledCount = rows.filter((r) => r.enabled).length
   const onDirty = useCallback((d) => { dirtyRef.current = d }, [])
@@ -111,6 +115,7 @@ export default function ExecDeliveryView({ month, canConfigureOrg = false, selec
     if (typeof requestAnimationFrame === 'function') requestAnimationFrame(reveal); else reveal()
   }
 
+  const retryTeams = () => { setTeams((s) => ({ ...s, loading: true })); loadTeams() }
   if (teams.loading) return <LoadingBlock label={t('exec.team.listLoading')} />
   if (!canConfigureOrg && rows.length === 0) {
     return (
@@ -126,10 +131,21 @@ export default function ExecDeliveryView({ month, canConfigureOrg = false, selec
           <CardContent className="flex min-w-0 flex-col gap-3 px-2 sm:px-3">
             <div className="flex min-w-0 flex-col gap-0.5 px-1">
               <h3 id={listTitleId} className="m-0 text-sm font-semibold">{t('exec.delivery.listTitle')}</h3>
-              <p className="m-0 text-xs text-muted-foreground">
-                {t('exec.delivery.listDesc', enabledCount, rows.length, monthLabel(teams.reportMonth, lang))}
-              </p>
+              {/* Okunamayan liste "0 / 0 takım" diye ÖZETLENMEZ (bilinmeyen ≠ yok) */}
+              {!listFailed && (
+                <p className="m-0 text-xs text-muted-foreground">
+                  {t('exec.delivery.listDesc', enabledCount, rows.length, monthLabel(teams.reportMonth, lang))}
+                </p>
+              )}
             </div>
+            {listFailed && (
+              <div data-slot="ex-delivery-list-error" className="px-1">
+                <AlertBanner tone="danger" className="mb-0"
+                  actions={<Button type="button" variant="outline" size="sm" onClick={retryTeams} className="h-10 lg:h-8 pointer-coarse:h-10">{t('exec.retry')}</Button>}>
+                  {teams.error}
+                </AlertBanner>
+              </div>
+            )}
             {canConfigureOrg && (
               <ListRow active={current === SEL_ORG} onClick={() => choose(SEL_ORG)} icon={Building2} slot="ex-delivery-item"
                 dataKey={SEL_ORG} title={t('exec.org.title')} meta={t('exec.delivery.orgMeta')} />
