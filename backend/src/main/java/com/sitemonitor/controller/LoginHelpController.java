@@ -83,6 +83,21 @@ public class LoginHelpController {
 
     private final Map<String, Deque<Long>> rate = new ConcurrentHashMap<>();
 
+    /**
+     * Küme geneli sayım (2026-10-23, çok pod Sürüm 2a — MP-33): bu IP'den son bir saatte KABUL EDİLMİŞ bildirimler
+     * {@code login_issue_reports}'tan (kaynak {@value #SOURCE}) — round-robin arkasında N pod × sınır kadar yönetici
+     * postası artık yok. Pod kuyruğu ucuz ön süzgeç olarak kalır; sayım okunamazsa ({@code null}) tek kapı odur
+     * (20.165.1 davranışı). İsteğe bağlı: {@code @WebMvcTest} dilimlerinde yok.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.lockout.PersistedRowLimits rowLimits;
+
+    /** Kayıtların {@code source} değeri — sayım yalnız bu uçtan gelen bildirimleri sayar. */
+    static final String SOURCE = "LOGIN";
+
+    /** Test kancası. */
+    void setRowLimits(com.sitemonitor.service.lockout.PersistedRowLimits r) { this.rowLimits = r; }
+
     @PostMapping("/api/login-help")
     public ResponseEntity<Map<String, Object>> report(
             @RequestBody Map<String, Object> body, HttpServletRequest request) {
@@ -213,9 +228,19 @@ public class LoginHelpController {
         synchronized (dq) {
             while (!dq.isEmpty() && now - dq.peekFirst() > WINDOW_MS) dq.pollFirst();
             if (dq.size() >= MAX_PER_WINDOW) return false;
+            // Küme geneli (MP-33): yerel kuyruk izin verse de diğer pod'ların kabul ettikleri sayılır. Reddedilen istek
+            // kuyruğa YAZILMAZ (yalnız kabul edilen) — aksi hâlde sayım düşünce yerel kuyruk bir saat daha reddederdi.
+            if (!clusterAllows(ip, now)) return false;
             dq.addLast(now);
             return true;
         }
+    }
+
+    /** Bu IP'nin son bir saatteki kabul edilmiş bildirimleri sınırın altında mı (okunamazsa EVET — yerel kuyruk geçerli). */
+    private boolean clusterAllows(String ip, long now) {
+        if (rowLimits == null) return true;
+        Integer n = rowLimits.issueReports(SOURCE, ip, now - WINDOW_MS);
+        return n == null || n < MAX_PER_WINDOW;
     }
 
     private ResponseEntity<Map<String, Object>> err(HttpStatus status, String msg) {

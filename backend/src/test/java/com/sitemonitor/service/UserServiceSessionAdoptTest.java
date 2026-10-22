@@ -46,7 +46,7 @@ class UserServiceSessionAdoptTest {
     @Test
     @DisplayName("ping: işaret NULL (restart temizliği) → oturum yeniden sahiplenilir")
     void pingReadoptsClearedSession() {
-        when(userRepo.touchLastSeen(eq("admin"), eq("sid-1"), anyString())).thenReturn(0);
+        when(userRepo.touchLastSeenIfStale(eq("admin"), eq("sid-1"), anyString(), anyString())).thenReturn(0);
         when(userRepo.adoptSessionIfNone(eq("admin"), eq("sid-1"), anyString())).thenReturn(1);
         service.touchActiveSession("admin", "sid-1");
         verify(userRepo).adoptSessionIfNone(eq("admin"), eq("sid-1"), anyString());
@@ -55,7 +55,7 @@ class UserServiceSessionAdoptTest {
     @Test
     @DisplayName("ping: işaret eşleşiyorsa yalnız tazeleme, sahiplenme denenmez")
     void pingTouchOnlyWhenMarkerMatches() {
-        when(userRepo.touchLastSeen(eq("admin"), eq("sid-1"), anyString())).thenReturn(1);
+        when(userRepo.touchLastSeenIfStale(eq("admin"), eq("sid-1"), anyString(), anyString())).thenReturn(1);
         service.touchActiveSession("admin", "sid-1");
         verify(userRepo, never()).adoptSessionIfNone(anyString(), anyString(), anyString());
     }
@@ -63,7 +63,7 @@ class UserServiceSessionAdoptTest {
     @Test
     @DisplayName("ping: başka işaret varken (süpersede/kick) sahiplenme 0 satır — eski oturum geri gelmez")
     void pingDoesNotStealAnotherMarker() {
-        when(userRepo.touchLastSeen(eq("admin"), eq("old-sid"), anyString())).thenReturn(0);
+        when(userRepo.touchLastSeenIfStale(eq("admin"), eq("old-sid"), anyString(), anyString())).thenReturn(0);
         when(userRepo.adoptSessionIfNone(eq("admin"), eq("old-sid"), anyString())).thenReturn(0);   // WHERE activeSessionId IS NULL tutmadı
         service.touchActiveSession("admin", "old-sid");
         verify(userRepo).adoptSessionIfNone(eq("admin"), eq("old-sid"), anyString());

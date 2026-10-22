@@ -278,10 +278,19 @@ public class UserService {
         }
     }
 
-    /** E1 opt-out kalıcılığı — tek alanlık bilinçli dar yüzey (genel save açmıyoruz). */
+    // ── Kişinin kendi tercihleri — HEDEFLİ yazım (2026-10-23, çok pod Sürüm 2a — MP-51) ────────────────────────────
+    //
+    // Çağıran uç kullanıcıyı işlem DIŞINDA okur (findByUsername → ayrık nesne). Eskiden burada save(user) = merge:
+    // satırın TÜM alanları o okumadaki değerlerle yeniden yazılıyordu — tercih kaydı ile başka bir istekteki (başka pod)
+    // pasifleştirme / kilit / rol değişikliği / yeni giriş çakışınca ikincisi geri alınıyor, pasif hesap aktifleşiyordu.
+    // Artık yalnız ilgili sütunlar yazılır (AppUserRepository#updatePush*); dönen nesne bellekte güncellenmiş çağıran
+    // nesnesidir (yanıtlar onu okur). Satır yoksa (arada silindi) hiçbir şey yazılmaz.
+
+    /** E1 opt-out kalıcılığı — tek alanlık bilinçli dar yüzey (genel save açmıyoruz). Değer {@code user.pushOptOut}. */
     @Transactional
     public void savePushOptOut(AppUser user) {
-        userRepo.save(user);
+        if (user == null || user.getId() == null) return;
+        userRepo.updatePushOptOut(user.getId(), Boolean.TRUE.equals(user.getPushOptOut()));
     }
 
     /**
@@ -295,7 +304,8 @@ public class UserService {
         user.setPushQuietEnd(c.end());
         user.setPushQuietDays(c.days());
         user.setPushQuietMinLevel(c.minLevel());
-        return userRepo.save(user);
+        if (user.getId() != null) userRepo.updatePushQuietHours(user.getId(), c.start(), c.end(), c.days(), c.minLevel());
+        return user;
     }
 
     /**
@@ -307,7 +317,8 @@ public class UserService {
         user.setPushMinLevel(minLevel);
         user.setPushFamilies(families);
         user.setPushLang(lang);
-        return userRepo.save(user);
+        if (user.getId() != null) userRepo.updatePushPreferences(user.getId(), minLevel, families, lang);
+        return user;
     }
 
     /** Push susturma (2026-10-04): {@code until} UTC damga (null = kaldır), {@code critical} kritikler yine gelsin mi. */
@@ -315,7 +326,11 @@ public class UserService {
     public AppUser savePushSnooze(AppUser user, String until, Boolean critical) {
         user.setPushSnoozeUntil(until);
         if (critical != null) user.setPushSnoozeCritical(critical);
-        return userRepo.save(user);
+        if (user.getId() != null) {
+            if (critical != null) userRepo.updatePushSnooze(user.getId(), until, critical);
+            else userRepo.updatePushSnoozeUntil(user.getId(), until);
+        }
+        return user;
     }
 
     /** Takım sessiz saati (2026-10-01) — {@code cfg} doğrulanmış/normalize ({@link QuietHours#normalize}); NONE = kaldır. */
@@ -472,29 +487,44 @@ public class UserService {
         userRepo.clearLastSeen(username, sessionId);
     }
 
+    /** Ön yüzün oturum ping aralığı (~15 sn) — SQL debounce eşiği bir aralık erken başlar ki yazım ≈ debounce'da bir olsun. */
+    static final long PING_INTERVAL_MS = 15_000L;
+
     /** Oturum ping'i (frontend ~15 sn): kullanıcının güncel oturumunun lastSeenAt'ini tazeler.
-     *  Süpersede oturum (sid eşleşmez) güncellenmez — interceptor zaten 401 verir. */
+     *  Süpersede oturum (sid eşleşmez) güncellenmez — interceptor zaten 401 verir.
+     *
+     *  <p><b>Debounce SQL'de</b> (2026-10-23, çok pod Sürüm 2a — MP-51; F3'ün yerine): damga yalnız SAKLI değer
+     *  {@code touch-debounce-ms − ping aralığı} (varsayılan 45 sn) eskiyse yazılır → yazım ≈ dakikada bir, tüm pod'lar aynı
+     *  satıra bakarak karar verir. Eskiden debounce pod belleğindeydi: son sekme kapanınca pod A {@link #markLeft} ile
+     *  damgayı siliyor, yeniden açılan sayfanın yoklamaları pod B'ye düşüyor, B'nin taze yerel kaydı yazımı atlıyordu →
+     *  kişi ≤ 60 sn çevrimdışı görünüyor ve başka yerden giriş 409 "başka yerde oturum" onayı almadan eski oturumu
+     *  düşürüyordu. Bellek kaydı ({@code lastTouchAtMs}) artık yalnız yeniden sahiplenme denemesini seyreltir. */
     @Transactional
     public void touchActiveSession(String username, String sessionId) {
         if (username == null || sessionId == null) return;
-        // F3: ping başına UPDATE debounce'u — 60 sn'de en fazla 1 yazma (60+15 < 120 sn tazelik penceresi).
         String key = normalizeUsername(username) + ":" + sessionId;
-        long now = System.currentTimeMillis();
-        Long last = lastTouchAtMs.get(key);
-        if (last != null && now - last < touchDebounceMs) return;
+        long nowMs = System.currentTimeMillis();
+        Instant now = Instant.ofEpochMilli(nowMs);
+        String ts = ISO.format(now);
+        String stale = ISO.format(now.minusMillis(Math.max(0L, touchDebounceMs - PING_INTERVAL_MS)));
+        int touched = userRepo.touchLastSeenIfStale(username, sessionId, ts, stale);
         if (lastTouchAtMs.size() > SESSION_MAP_MAX) lastTouchAtMs.clear();
-        lastTouchAtMs.put(key, now);
-        String ts = ISO.format(Instant.now());
-        int touched = userRepo.touchLastSeen(username, sessionId, ts);
-        if (touched == 0) {
-            // QA ISSUE-002 (2026-09-13): açılış temizliği (clearAllActiveSessions) işareti NULL yaptı ama JDBC oturum
-            // restart'ı yaşadı → kullanıcı içeride, ping'i var, "Aktif Oturum" 0 ve tek-oturum koruması devre dışı.
-            // İşaret NULL ise bu oturumu yeniden sahiplen; başka işaret varsa (süpersede/kick) dokunma.
-            int adopted = userRepo.adoptSessionIfNone(username, sessionId, ts);
-            if (adopted > 0) {
-                activeSessionCache.remove(normalizeUsername(username));   // F2 evict: süpersede sorgusu yeni sid'i görsün
-                log.info("Re-adopted surviving session for {} after restart", username);
-            }
+        if (touched > 0) {
+            lastTouchAtMs.put(key, nowMs);
+            return;
+        }
+        // 0 satır: ya damga taze (SQL debounce — bu ya da başka bir pod yazdı) ya da işaret bu oturum değil. Bu pod işareti
+        // yakın zamanda EŞLEŞİR gördüyse sahiplenme denenmez (ping başına ikinci UPDATE olmasın); aksi hâlde bir kez dener.
+        Long last = lastTouchAtMs.get(key);
+        if (last != null && nowMs - last < touchDebounceMs) return;
+        lastTouchAtMs.put(key, nowMs);
+        // QA ISSUE-002 (2026-09-13): açılış temizliği (clearAllActiveSessions) işareti NULL yaptı ama JDBC oturum
+        // restart'ı yaşadı → kullanıcı içeride, ping'i var, "Aktif Oturum" 0 ve tek-oturum koruması devre dışı.
+        // İşaret NULL ise bu oturumu yeniden sahiplen; başka işaret varsa (süpersede/kick) dokunma.
+        int adopted = userRepo.adoptSessionIfNone(username, sessionId, ts);
+        if (adopted > 0) {
+            activeSessionCache.remove(normalizeUsername(username));   // F2 evict: süpersede sorgusu yeni sid'i görsün
+            log.info("Re-adopted surviving session for {} after restart", username);
         }
     }
 
@@ -1269,6 +1299,25 @@ public class UserService {
         }
     }
 
+    /**
+     * Yönetici oluşturma / güncellemesinin AD-yansıtma profil alanları — KENDİ işleminde, satır TAZE okunarak (2026-10-23,
+     * çok pod Sürüm 2a — MP-51). Eskiden {@code AdminController} {@code updateUser}'ın döndürdüğü (işlemi bitmiş, ayrık)
+     * nesneye {@link #applyProfileFields} uygulayıp {@code userRepo.save} ile birleştiriyordu: arada başka bir istekte
+     * (başka pod) yazılan yeni oturum kimliği, pasifleştirme ya da kilit o eski değerlerle geri yazılıyordu — kullanıcı
+     * profil düzenlemesiyle yarışan girişte {@code /?session=expired}'e düşüyordu. Yönetilen varlık + {@code @DynamicUpdate}
+     * → yalnız gerçekten değişen profil sütunları yazılır.
+     *
+     * @return güncel kullanıcı; kimlik boş → {@code null} (çağıran elindekini kullanır)
+     * @throws NoSuchElementException kullanıcı arada silindiyse
+     */
+    @Transactional
+    public AppUser applyProfileFieldsAndSave(Long id, Map<String, Object> body, boolean sensitiveAllowed) {
+        if (id == null) return null;
+        AppUser u = userRepo.findById(id).orElseThrow(() -> new NoSuchElementException("User not found: " + id));
+        applyProfileFields(u, body, sensitiveAllowed);
+        return userRepo.save(u);   // yönetilen varlık: değişen sütun yoksa UPDATE de yok
+    }
+
     /** Değer GERÇEKTEN değişiyorsa yazar; LDAP hesabında alanı kilitler. */
     private static void set(AppUser u, boolean ldap, String field, String current, String next,
                             java.util.function.Consumer<String> setter) {
@@ -1499,9 +1548,13 @@ public class UserService {
                 long remaining = com.sitemonitor.service.lockout.LockoutLadder.remainingSeconds(
                         u.getLockoutUntil(), lockoutClock.instant());
                 if (remaining > 0) return new LockoutStatus(false, remaining);
-                // Lockout expired — clear it
+                // Lockout expired — clear it. HEDEFLİ, koşullu UPDATE (2026-10-23, çok pod Sürüm 2a — MP-51): bu yol işlem
+                // dışında okunan satırı save() ile birleştiriyordu (giriş yolunda, kilit dolduğu an) — araya giren
+                // pasifleştirme / yönetici kilidi / tercih kaydı geri alınıyordu. Yalnız lockout_until, yalnız okunan değer
+                // hâlâ duruyorsa (araya yeni kilit girdiyse dokunulmaz).
+                String seen = u.getLockoutUntil();
                 u.setLockoutUntil(null);
-                userRepo.save(u);
+                if (u.getId() != null) userRepo.clearExpiredLockout(u.getId(), seen);
             }
             return new LockoutStatus(false, 0);
         }).orElse(new LockoutStatus(false, 0));

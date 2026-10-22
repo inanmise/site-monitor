@@ -14,6 +14,7 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
 /** Ürün turu durumu (2026-09-13): birleştirme kuralları, kalıcı "bir daha gösterme", erteleme tavanı, özet. */
@@ -24,7 +25,7 @@ class TourStateServiceTest {
 
     private TourStateService svc() { return new TourStateService(userRepo); }
 
-    private static AppUser user(String state) { AppUser u = new AppUser(); u.setUsername("u"); u.setActive(true); u.setTourState(state); return u; }
+    private static AppUser user(String state) { AppUser u = new AppUser(); u.setId(7L); u.setUsername("u"); u.setActive(true); u.setTourState(state); return u; }
 
     @Test
     @DisplayName("parse: boş/bozuk → null; geçerli JSON → harita")
@@ -43,7 +44,8 @@ class TourStateServiceTest {
         Map<String, Object> out = svc().apply(u, Map.of("status", "started", "version", 1, "last_step", "sidebar"), false);
         assertThat(out).containsEntry("status", "started").containsEntry("version", 1).containsEntry("last_step", "sidebar").containsKey("updated_at");
         assertThat(u.getTourState()).contains("\"status\":\"started\"");
-        verify(userRepo).save(u);
+        verify(userRepo).updateTourState(7L, u.getTourState());   // yalnız tour_state sütunu (MP-51)
+        verify(userRepo, never()).save(any());
         assertThatThrownBy(() -> svc().apply(u, Map.of("status", "bogus"), false)).isInstanceOf(IllegalArgumentException.class);
     }
 
@@ -92,10 +94,13 @@ class TourStateServiceTest {
     }
 
     @Test
-    @DisplayName("apply: userRepo.save her yazımda çağrılır (kalıcılık kanıtı)")
+    @DisplayName("apply: her yazımda YALNIZ tour_state hedefli yazılır (kalıcılık kanıtı; satır birleştirme yok — MP-51)")
     void savesOnEveryWrite() {
         AppUser u = user(null);
         svc().apply(u, Map.of("version", 3), false);
-        verify(userRepo).save(any(AppUser.class));
+        verify(userRepo).updateTourState(org.mockito.ArgumentMatchers.eq(7L), org.mockito.ArgumentMatchers.contains("\"version\":3"));
+        svc().apply(u, Map.of(), true);
+        verify(userRepo).updateTourState(7L, null);
+        verify(userRepo, never()).save(any(AppUser.class));
     }
 }

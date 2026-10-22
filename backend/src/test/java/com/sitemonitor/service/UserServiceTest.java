@@ -224,16 +224,18 @@ class UserServiceTest {
     }
 
     @Test
-    @DisplayName("expired temp lockout → clears record and returns unblocked")
+    @DisplayName("expired temp lockout → clears record and returns unblocked (hedefli koşullu UPDATE, satır birleştirme YOK — MP-51)")
     void checkLockout_expiredTempLock_clearsAndReturnsUnblocked() {
         AppUser u = user("alice", "hash");
+        u.setId(31L);
         String past = ISO.format(Instant.now().minusSeconds(5));
         u.setLockoutUntil(past);
         when(userRepo.findByUsername("alice")).thenReturn(Optional.of(u));
 
         UserService.LockoutStatus status = service.checkLockout("alice");
         assertThat(status.isBlocked()).isFalse();
-        verify(userRepo).save(u);
+        verify(userRepo).clearExpiredLockout(31L, past);
+        verify(userRepo, never()).save(any());
         assertThat(u.getLockoutUntil()).isNull();
     }
 

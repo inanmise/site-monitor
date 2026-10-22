@@ -3633,9 +3633,10 @@ public class AdminController {
                 requestedRole,
                 requestedTeams,
                 (String) body.get("org_role"));
-        // AD-mirrored profil alanları (ad/soyad/ünvan/telefon/departman/seviye/müdürlük/müdür sicili)
-        userService.applyProfileFields(user, body);
-        user = userRepo.save(user);
+        // AD-mirrored profil alanları (ad/soyad/ünvan/telefon/departman/seviye/müdürlük/müdür sicili) — kendi işleminde, TAZE
+        // satıra (2026-10-23, MP-51: ayrık nesneyi save() ile birleştirmek araya giren değişikliği geri alıyordu)
+        AppUser withProfile = userService.applyProfileFieldsAndSave(user.getId(), body, true);
+        if (withProfile != null) user = withProfile;
         auditService.recordAction("USER_CREATE", session, request,
                 "USER", user.getUsername(),
                 "{\"role\":\"" + user.getSystemRole() + "\",\"teamId\":" + user.getTeamId() + "}");
@@ -3804,8 +3805,10 @@ public class AdminController {
         // global yönetici yazar (2026-10-22, hata avı AUTH-11): 2 argümanlı yol hep true geçiyordu — kapsamlı yazar OTP kişi
         // doğrulamasında ve 7/24 arama listesinde kullanılan AD telefonunu değiştirebiliyor, formu (telefonu görmediği için
         // boş gönderip) temizleyebiliyordu. Yeni kullanıcı oluşturmada bugünkü gibi true.
-        userService.applyProfileFields(user, body, SessionScope.isGlobalAdmin(session));
-        user = userRepo.save(user);
+        // 2026-10-23 (çok pod Sürüm 2a — MP-51): kendi işleminde, TAZE satıra — updateUser'ın döndürdüğü ayrık nesneyi save()
+        // ile birleştirmek arada (başka pod) yazılan yeni oturum kimliğini / pasifleştirmeyi geri yazıyordu.
+        AppUser withProfile = userService.applyProfileFieldsAndSave(user.getId(), body, SessionScope.isGlobalAdmin(session));
+        if (withProfile != null) user = withProfile;
         auditService.recordAction("USER_UPDATE", session, "USER", id.toString(), user.getUsername(),
                 AuditDiff.diff(_before, AuditDiff.snapshot(user, _uf)));
         return user;

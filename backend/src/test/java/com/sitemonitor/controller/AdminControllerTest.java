@@ -3798,8 +3798,11 @@ class AdminControllerTest {
                         .content("{\"system_role\":\"ADMIN\",\"email\":\"a@b.com\",\"team_id\":null}"))
                 .andExpect(status().isOk());
 
-        org.mockito.Mockito.verify(userRepo)
-                .save(org.mockito.ArgumentMatchers.<AppUser>argThat(u -> u.getTeamId() == null));
+        // Yeniden temel (2026-10-23, MP-51): denetleyici updateUser'ın döndürdüğü ayrık nesneyi artık save() ile birleştirmez —
+        // boş takım servise iletilir (takımı servis null'lar), profil alanları kendi işleminde taze satıra yazılır.
+        org.mockito.Mockito.verify(userService).updateUser(eq(7L), any(), any(), any(), eq("ADMIN"), eq(java.util.List.of()), any(), any());
+        org.mockito.Mockito.verify(userService).applyProfileFieldsAndSave(eq(7L), any(), org.mockito.ArgumentMatchers.anyBoolean());
+        org.mockito.Mockito.verify(userRepo, org.mockito.Mockito.never()).save(any(AppUser.class));
     }
 
     @Test
@@ -4904,19 +4907,20 @@ class AdminControllerTest {
     }
 
     @Test
-    @DisplayName("AUTH-11: kapsamlı yazarın gövdesindeki telefon YOK SAYILIR (applyProfileFields sensitiveAllowed=false); global yönetici yazar")
+    @DisplayName("AUTH-11: kapsamlı yazarın gövdesindeki telefon YOK SAYILIR (applyProfileFieldsAndSave sensitiveAllowed=false); global yönetici yazar")
     void scopedWriterCannotSetPhone() throws Exception {
         target(37L, "TEL", "USER", 2L);
         mvc.perform(put("/api/admin/users/37").session(mudur(List.of(2L), List.of(2L)))
                         .contentType(MediaType.APPLICATION_JSON).content("{\"phone\":\"05551112233\"}"))
                 .andExpect(status().isOk());
-        verify(userService).applyProfileFields(any(AppUser.class), any(), eq(false));
+        // MP-51 (2026-10-23): profil alanları kendi işleminde TAZE satıra yazılır (ayrık nesne save() ile birleştirilmez)
+        verify(userService).applyProfileFieldsAndSave(any(), any(), eq(false));
         org.mockito.Mockito.clearInvocations(userService);
         target(37L, "TEL", "USER", 2L);
         mvc.perform(put("/api/admin/users/37").session(authSession())
                         .contentType(MediaType.APPLICATION_JSON).content("{\"phone\":\"05551112233\"}"))
                 .andExpect(status().isOk());
-        verify(userService).applyProfileFields(any(AppUser.class), any(), eq(true));
+        verify(userService).applyProfileFieldsAndSave(any(), any(), eq(true));
     }
 
     @Test

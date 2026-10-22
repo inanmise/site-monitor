@@ -79,7 +79,7 @@ class IssueReportControllerTest {
 
     private AppUser userWithEmail(String email) {
         AppUser u = new AppUser();
-        u.setUsername(username); u.setEmail(email);
+        u.setId(55L); u.setUsername(username); u.setEmail(email);
         return u;
     }
 
@@ -185,12 +185,15 @@ class IssueReportControllerTest {
     void report_saveEmailToProfile() throws Exception {
         AppUser u = userWithEmail(null);
         when(appUserRepository.findByUsername(username)).thenReturn(Optional.of(u));
+        when(appUserRepository.updateEmailIfBlank(55L, "yeni@example.com")).thenReturn(1);
         mvc.perform(post("/api/issue-reports").session(session)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"message\":\"sorun var\",\"email\":\"yeni@example.com\",\"saveEmailToProfile\":true}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.emailSavedToProfile").value(true));
-        verify(appUserRepository).save(argThat((AppUser saved) -> "yeni@example.com".equals(saved.getEmail())));
+        // Hedefli, koşullu yazım (MP-51): yalnız e-posta sütunu, yalnız hâlâ boşsa — satır birleştirme YOK
+        verify(appUserRepository).updateEmailIfBlank(55L, "yeni@example.com");
+        verify(appUserRepository, never()).save(any());
     }
 
     @Test

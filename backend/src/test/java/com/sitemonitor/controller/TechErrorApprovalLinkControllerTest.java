@@ -284,6 +284,53 @@ class TechErrorApprovalLinkControllerTest {
         org.assertj.core.api.Assertions.assertThat(lim.page("x", ip).getStatusCode().value()).isEqualTo(429);
     }
 
+    private static com.sitemonitor.service.ClientIpResolver xffResolver() {
+        com.sitemonitor.service.ClientIpResolver r = new com.sitemonitor.service.ClientIpResolver();
+        org.springframework.test.util.ReflectionTestUtils.setField(r, "headers", new String[] { "X-Forwarded-For" });
+        org.springframework.test.util.ReflectionTestUtils.setField(r, "index", 0);
+        return r;
+    }
+
+    private static org.springframework.mock.web.MockHttpServletRequest behindIngress(String clientIp) {
+        org.springframework.mock.web.MockHttpServletRequest req = new org.springframework.mock.web.MockHttpServletRequest();
+        req.setRemoteAddr("10.250.0.1");   // ingress / NetScaler — herkes için AYNI
+        req.addHeader("X-Forwarded-For", clientIp);
+        return req;
+    }
+
+    @Test
+    @DisplayName("MP-33: sınır GERÇEK istemci IP'sine göre — aynı ingress arkasındaki iki PO ayrı kova (ingress IP'si tek kovaydı)")
+    void limiterKeyedByClientIp() {
+        TechErrorApprovalLinkController c = new TechErrorApprovalLinkController(approvals, teams, auditService);
+        c.setClientIpResolver(xffResolver());
+        var po1 = behindIngress("192.168.10.11");
+        var po2 = behindIngress("192.168.10.12");
+        for (int i = 0; i < TechErrorApprovalLinkController.PER_MINUTE; i++) org.assertj.core.api.Assertions.assertThat(c.limited(po1)).isFalse();
+        org.assertj.core.api.Assertions.assertThat(c.limited(po1)).isTrue();
+        org.assertj.core.api.Assertions.assertThat(c.limited(po2)).as("başka PO aynı ingress arkasında — kendi kovası").isFalse();
+        // Çözücü yoksa (eski davranış) ikisi aynı kovadır — düzeltmenin neyi değiştirdiğinin kanıtı
+        TechErrorApprovalLinkController legacy = new TechErrorApprovalLinkController(approvals, teams, auditService);
+        for (int i = 0; i < TechErrorApprovalLinkController.PER_MINUTE; i++) legacy.limited(po1);
+        org.assertj.core.api.Assertions.assertThat(legacy.limited(po2)).isTrue();
+    }
+
+    @Test
+    @DisplayName("MP-33: karar denetimi ingress'in değil İSTEMCİNİN IP'sini yazar")
+    void decisionAuditCarriesClientIp() {
+        when(approvals.status("ok-ip")).thenReturn(valid());
+        Team t = new Team();
+        t.setId(1L);
+        t.setName("Dijital");
+        when(teams.findById(1L)).thenReturn(Optional.of(t));
+        when(approvals.decideViaToken(eq("ok-ip"), eq(t), eq(false), any())).thenReturn(
+                new TechErrorApprovalService.Decision("REJECTED", null, null, null));
+        TechErrorApprovalLinkController c = new TechErrorApprovalLinkController(approvals, teams, auditService);
+        c.setClientIpResolver(xffResolver());
+        c.reject("ok-ip", "Eksik bölüm var", behindIngress("192.168.10.21"));
+        verify(auditService).recordAction(eq("TECH_ERROR_REPORT_REJECT"), eq("po1"), eq(7L), eq(1L), any(), eq("TECH_ERROR_REPORT"),
+                eq("100"), any(), eq("192.168.10.21"), any(), isNull());
+    }
+
     private static String containsStr(String part) {
         return org.mockito.ArgumentMatchers.argThat(s -> s != null && s.contains(part));
     }

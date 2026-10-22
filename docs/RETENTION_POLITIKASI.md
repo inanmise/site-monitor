@@ -58,6 +58,7 @@ BDDK/iç denetim süreleri esas alınmalıdır.
 | `spring_session_attributes` | harici yönetilir | — | — | — | Oturum öznitelikleri — ebeveyn spring_session satırıyla FK CASCADE silinir. |
 | `remember_me_tokens` | harici yönetilir | — | — | — | RememberMeService saatlik olarak süresi dolmuş token'ları siler (site.monitor.remember.cleanup-interval-ms). |
 | `login_unknown_lockouts` | harici yönetilir | — | — | — | Bilinmeyen kullanıcı adının ilerleyici giriş kilidi (2026-10-09): ad başına TEK satır — kanonik ad, kademe, kilit bitişi, son kilit anı (parola / IP yok). Satır yalnız kaba kuvvet eşiğinde doğar. UnknownUserLockoutService saatlik siler: son yazımı site.monitor.lockout.unknown-retention-days'ten (365 gün — denetim kaydıyla aynı; mevcut hesabın kademesi kendiliğinden sıfırlanmadığından uzun) eski satırlar ve site.monitor.lockout.unknown-max-rows (50.000) üstündeki en eskiler. |
+| `rate_limit_counters` | harici yönetilir | — | — | — | Pod'lar arası ortak oran sınırı sayacı (2026-10-23, çok pod Sürüm 2a): anahtar başına TEK satır — kapsam + değer (giriş ucunda istemci IP'si: login-ip:<ip>), sabit pencere başlangıcı, deneme sayısı, blok bitişi. Satır expires_at'ten (pencere ve bloğun büyüğü, girişte 60 sn) sonra hiçbir kararı etkilemez; RateLimitCounterService saatlik siler (her pod, idempotent). Başarılı oturum o IP'nin satırını hemen siler. |
 | `password_history` | harici yönetilir | — | — | — | UserService her şifre değişiminde kullanıcı başına son N kayda kırpar → kullanıcı başına sınırlı. |
 
 ## Denetim ve Güvenlik

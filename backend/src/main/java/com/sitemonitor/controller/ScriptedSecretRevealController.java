@@ -8,6 +8,7 @@ import com.sitemonitor.repository.ScriptedMonitorRepository;
 import com.sitemonitor.service.AuditService;
 import com.sitemonitor.service.PermissionService;
 import com.sitemonitor.service.ScriptedCheckerService;
+import com.sitemonitor.service.lockout.PersistedRowLimits;
 import com.sitemonitor.util.Msg;
 import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
@@ -42,8 +43,11 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * <p><b>Yanıtlar</b>: izleme yok ya da çağıran göremiyor → 404; görüyor ama gösteremez → 403 (denetimde ACCESS_DENIED);
  * değişken yok / gizli değil / değeri boş → 404 {@code NOT_FOUND}; şifreli değer çözülemiyor (anahtar değişmiş, kayıt
- * bozuk) → 409 {@code SECRET_UNREADABLE}; kullanıcı başına pod'da dakikada {@value #MAX_PER_MINUTE}, saatte
- * {@value #MAX_PER_HOUR} → 429 {@code RATE_LIMITED} + {@code Retry-After}. Başarılı her gösterim denetlenir
+ * bozuk) → 409 {@code SECRET_UNREADABLE}; kullanıcı başına dakikada {@value #MAX_PER_MINUTE}, saatte
+ * {@value #MAX_PER_HOUR} → 429 {@code RATE_LIMITED} + {@code Retry-After}. Sınır KÜME geneli (2026-10-23, çok pod Sürüm
+ * 2a — MP-32): başarılı gösterimler denetim kaydından sayılır ({@link PersistedRowLimits#secretReveals}; yazım eşzamanlı)
+ * — N pod'da N× gösterim artık yok; pod belleğindeki deneme kuyruğu ilk kapı olarak kalır (sayım okunamazsa tek kapı).
+ * Başarılı her gösterim denetlenir
  * ({@code SCRIPTED_SECRET_REVEAL}: izleme kimliği + adı, takım, değişken ADI — değer ASLA). Değer günlüğe, denetime, hata
  * gövdesine, {@code notification_logs}'a ya da değişiklik geçmişine yazılmaz; {@code RequestLoggingFilter}
  * {@code /api/monitoring/scripted} gövdelerini zaten hiç yazmaz.
@@ -72,6 +76,16 @@ public class ScriptedSecretRevealController {
     private final ConcurrentHashMap<String, Deque<Long>> attempts = new ConcurrentHashMap<>();
 
     /**
+     * Küme geneli sayım (MP-32) — isteğe bağlı: {@code @WebMvcTest} dilimlerinde yok → yalnız pod kuyruğu (20.165.1
+     * davranışı); sayım okunamazsa ({@code null}) da yalnız pod kuyruğu.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private PersistedRowLimits rowLimits;
+
+    /** Test kancası. */
+    void setRowLimits(PersistedRowLimits r) { this.rowLimits = r; }
+
+    /**
      * Bu oturum {@code teamId} takımının izlemesindeki gizli değeri görebilir mi — uç kapısı ve satır bayrağı
      * ({@code can_reveal}) TEK kural. Global yönetici her takımda; kapsamlı yönetici yalnız KENDİ yönetim kapsamındaki
      * takımda ({@code manageTeamIds}; erişim paylaşımı bu listeye hiç girmez). Takımsız izleme yalnız global yöneticide.
@@ -98,7 +112,9 @@ public class ScriptedSecretRevealController {
                             + "value; team access sharing doesn't grant it."));
         if (name == null || name.isBlank() || name.length() > MAX_NAME_CHARS) throw notFound();
 
-        long retryAfterSec = tryAcquire(userKey(session));
+        // Önce küme geneli sayım (salt okuma; reddedilen istek pod kuyruğuna YAZILMAZ), sonra pod kuyruğu
+        long retryAfterSec = clusterRetryAfter(session, System.currentTimeMillis());
+        if (retryAfterSec <= 0) retryAfterSec = tryAcquire(userKey(session));
         if (retryAfterSec > 0) {
             Map<String, Object> body = errorBody("RATE_LIMITED", Msg.t(
                     "Çok sık gizli değer gösterimi — kullanıcı başına dakikada en çok " + MAX_PER_MINUTE + ", saatte en çok "
@@ -179,6 +195,32 @@ public class ScriptedSecretRevealController {
             if (inMinute >= MAX_PER_MINUTE) return secondsUntil(oldestInMinute + MINUTE_MS, now);
             dq.addLast(now);
             return 0;
+        }
+    }
+
+    /**
+     * Küme geneli sınır (MP-32): bu kullanıcının son dakikadaki / saatteki BAŞARILI gösterimleri denetim kaydından. Sınır
+     * doluysa yeniden denemeye kalan saniye (≥ 1), değilse ya da sayım okunamazsa 0. Denetim damgası saniyeye yuvarlıdır:
+     * T anındaki satır kesim {@code ≥ T} oldukça sayılır → T + pencere + 1 sn'de düşer (en çok 1 sn daha sıkı).
+     */
+    long clusterRetryAfter(HttpSession session, long now) {
+        if (rowLimits == null || session == null) return 0L;
+        Long uid = longAttr(session.getAttribute("userId"));
+        Object u = session.getAttribute("username");
+        PersistedRowLimits.Window w = rowLimits.secretReveals(uid, u == null ? null : u.toString(), now, MINUTE_MS, HOUR_MS);
+        if (w == null) return 0L;
+        if (w.hour() >= MAX_PER_HOUR && w.hourOldestMs() != null) return secondsUntil(w.hourOldestMs() + HOUR_MS + 1_000L, now);
+        if (w.minute() >= MAX_PER_MINUTE && w.minuteOldestMs() != null) return secondsUntil(w.minuteOldestMs() + MINUTE_MS + 1_000L, now);
+        return 0L;
+    }
+
+    private static Long longAttr(Object v) {
+        if (v == null) return null;
+        if (v instanceof Number n) return n.longValue();
+        try {
+            return Long.parseLong(v.toString());
+        } catch (NumberFormatException e) {
+            return null;
         }
     }
 
