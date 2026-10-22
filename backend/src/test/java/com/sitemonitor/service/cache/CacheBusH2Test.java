@@ -320,5 +320,11 @@ class CacheBusH2Test {
         long t0 = System.nanoTime();
         assertThat(a.awaitGeneration(999)).isFalse();
         assertThat((System.nanoTime() - t0) / 1_000_000).isLessThan(50);
+
+        // Kapanış dinleyicileri sürerken (ör. bildirim havuzu boşaltması) biten işin boşaltması: yok etmede gönderilir
+        a.bump("maintenance-windows");
+        assertThat(a.hasPending()).isTrue();
+        a.destroy();
+        assertThat(gen("maintenance-windows")).isEqualTo(2);
     }
 }

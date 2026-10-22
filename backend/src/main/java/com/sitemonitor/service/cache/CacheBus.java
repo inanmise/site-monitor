@@ -714,18 +714,21 @@ public class CacheBus implements ApplicationContextAware {
         stop(true);
     }
 
+    /**
+     * Yok etme: kapanış dinleyicilerinin (ör. {@code NotifyExecutorDrain}'in ≤ 20 sn boşaltması) sırasında biriken yayınlar
+     * da TEK denemeyle gönderilir — veri kaynağı bu fasulyeden SONRA kapanır (bağımlılık). Başarısızlık yalnız DEBUG.
+     */
     @PreDestroy
     void destroy() {
-        stop(false);
+        stop(true);
     }
 
     void stop(boolean finalFlush) {
-        boolean first = !stopped;
         stopped = true;
         Thread w = worker;
         if (w != null) w.interrupt();
         synchronized (signal) { signal.notifyAll(); }
-        if (first && finalFlush) {
+        if (finalFlush) {
             try {
                 flushAsync(true);
             } catch (RuntimeException e) {

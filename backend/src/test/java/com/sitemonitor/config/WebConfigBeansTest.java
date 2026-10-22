@@ -124,6 +124,9 @@ class WebConfigBeansTest {
         assertThat(c.getAllowCredentials()).isTrue();
         assertThat(c.getMaxAge()).isEqualTo(600L);
         assertThat(c.getAllowedMethods()).contains("GET", "POST", "PUT", "DELETE", "OPTIONS");
+        // Çok pod (2026-10-22, R2-A): yazdığını-oku kuşağı çapraz kökende de gönderilip okunabilir
+        assertThat(c.getAllowedHeaders()).contains("X-Lang", "X-Cache-Min-Gen");
+        assertThat(c.getExposedHeaders()).containsExactly("X-Cache-Gen");
 
         assertThat(cors(corsConfig(null, "*"), "/api/x")).as("yalnız joker → kapalı").isNull();
         assertThat(cors(corsConfig(null, null), "/api/x")).as("hiç köken yok").isNull();
