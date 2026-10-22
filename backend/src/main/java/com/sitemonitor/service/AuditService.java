@@ -136,15 +136,43 @@ public class AuditService {
 
     /** TÜM denetim yazımlarının tek hunisi. Başarısızsa fallback dosyaya yazar, istisna fırlatmaz. */
     AuditLog persist(AuditLog e) {
+        return persist(e, null);
+    }
+
+    /**
+     * {@link #persist(AuditLog)} + kayıt yazıldıktan SONRA koşacak takip işi ({@code afterSave}; yazılamazsa çağrılmaz).
+     *
+     * <p><b>Açık bir işlemin içinde (çok pod R2a, MP-38, 2026-10-22):</b> kayıt şimdi YAZILMAZ — dış işlem COMMIT olunca
+     * kendi işleminde ({@code REQUIRES_NEW}) zincir kilidiyle eklenir; dış işlem geri alınırsa satır hiç yazılmaz (bugünkü
+     * gibi: geri alınan işlemin denetimi yok). Eskiden işlem içindeki kayıt zincir kilidini ATLIYORDU (kilit dış COMMIT'e
+     * dek tutulurdu): işlemdeki satır henüz görünmezken başka bir yazıcı (başka pod ya da aynı pod'da işlem dışı yazım) aynı
+     * son satırı okuyup AYNI {@code seq} + {@code prev_hash} ile ekliyor, zincir çatallanıyor ve bütünlük denetimi sahte bir
+     * "kurcalama" gösteriyordu. COMMIT, {@code @Transactional} metottan dönmeden (aynı istek iş parçacığında) olur — kayıt
+     * yanıttan önce yazılmış olur. Bu durumda dönen değer HENÜZ YAZILMAMIŞ kayıttır ({@code id} boş; anomali bayrakları
+     * hesaplanmış); {@code afterSave} yazımdan sonra çağrılır.
+     */
+    AuditLog persist(AuditLog e, java.util.function.Consumer<AuditLog> afterSave) {
+        if (deferToCommit(e, afterSave)) return e;
+        boolean completing = transactionCompleting() && chainSupported();
+        AuditLog saved = persistNow(e, completing);
+        runAfterSave(saved, afterSave);
+        return saved;
+    }
+
+    /**
+     * Kaydı ŞİMDİ yazar. {@code ownTransaction}: kendi ({@code REQUIRES_NEW}) işleminde, zincir kilidiyle — dış işlemin
+     * COMMIT sonrası geri çağrısından ya da tamamlanmakta olan bir işlemden çağrılır (orada veri erişimi hâlâ dış işleme
+     * KATILIR ve hiçbir COMMIT izlemez; Spring belgesi: "Use PROPAGATION_REQUIRES_NEW for any transactional operation that
+     * is called from here").
+     */
+    private AuditLog persistNow(AuditLog e, boolean ownTransaction) {
         chainLock.lock();
         try {
-            if (useDbChainLock()) {
+            boolean pg = ownTransaction ? chainSupported() && isPostgres() : useDbChainLock();
+            if (pg || ownTransaction) {
                 // Çok pod (2026-10-09): son satırı okuma + ekleme TEK işlemde, PostgreSQL işlem-düzeyi advisory lock
                 // altında — kilit COMMIT'te bırakılır, sıradaki pod (JVM kilidi pod'lar arası geçmez) yeni satırı görür.
-                return chainTx.execute(st -> {
-                    chainJdbc.execute(SQL_CHAIN_LOCK);
-                    return appendToChain(e);
-                });
+                return appendLocked(e, pg);
             }
             return appendToChain(e);
         } catch (Exception ex) {
@@ -153,6 +181,82 @@ public class AuditService {
         } finally {
             chainLock.unlock();
         }
+    }
+
+    /**
+     * Kilitli ekleme (kendi işleminde). Tekil {@code seq} ihlali (MP-38 — {@code ux_audit_seq}: ancak eski sürüm bir pod'un
+     * işlem içi yazımıyla çakışınca) bir kez yeniden okunup denenir; yine olmazsa istisna yukarı (fallback dosyası).
+     */
+    private AuditLog appendLocked(AuditLog e, boolean pg) {
+        try {
+            return chainTx.execute(st -> {
+                if (pg) chainJdbc.execute(SQL_CHAIN_LOCK);
+                return appendToChain(e);
+            });
+        } catch (org.springframework.dao.DataIntegrityViolationException dup) {
+            log.warn("Denetim zinciri: seq {} başka bir yazıcıyla çakıştı — son satır yeniden okunup bir kez deneniyor",
+                    e.getSeq());
+            e.setId(null);
+            return chainTx.execute(st -> {
+                if (pg) chainJdbc.execute(SQL_CHAIN_LOCK);
+                return appendToChain(e);
+            });
+        }
+    }
+
+    /**
+     * Açık işlemin içindeyse yazımı COMMIT sonrasına erteler (MP-38). Ertelenmez (bugünkü yol): işlem yok; senkronizasyon
+     * yok (Spring dışı); işlem altyapısı bağlı değil (elle kurulan birim testleri — orada bugünkü davranış birebir); işlem
+     * zaten tamamlanıyor (bir COMMIT sonrası dinleyicisinin içi — orada kayıt hemen kendi işleminde yazılır,
+     * {@link #transactionCompleting()}).
+     */
+    private boolean deferToCommit(AuditLog e, java.util.function.Consumer<AuditLog> afterSave) {
+        if (!org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()) return false;
+        if (!org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()) return false;
+        if (!chainSupported()) return false;
+        if (transactionCompleting()) return false;
+        org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+                new org.springframework.transaction.support.TransactionSynchronization() {
+                    @Override public void afterCommit() {
+                        // COMMIT sonrası istisna çağırana (COMMIT eden koda) yayılırdı — her şey yutulur; yazım hatası
+                        // persistNow içinde zaten fallback dosyasına düşer.
+                        try {
+                            runAfterSave(persistNow(e, true), afterSave);
+                        } catch (Throwable t) {
+                            log.error("Denetim kaydı COMMIT sonrası yazılamadı (event={}): {}", e.getEventType(), t.toString());
+                        }
+                    }
+                });
+        return true;
+    }
+
+    private static void runAfterSave(AuditLog saved, java.util.function.Consumer<AuditLog> afterSave) {
+        if (saved == null || afterSave == null) return;
+        try {
+            afterSave.accept(saved);
+        } catch (RuntimeException ex) {
+            log.warn("Denetim kaydı sonrası takip işi başarısız (id={}): {}", saved.getId(), ex.toString());
+        }
+    }
+
+    /**
+     * Dış işlem açık görünüyor ama ZATEN COMMIT / ROLLBACK oldu mu (COMMIT sonrası geri çağrı ya da
+     * {@code @TransactionalEventListener(AFTER_COMMIT)} — Spring onları tamamlanma aşamasında koşar; burada kaydedilen bir
+     * senkronizasyon bir daha çağrılmaz ve veri erişimi bitmiş işleme katılır, hiçbir COMMIT izlemez: kayıt sessizce
+     * kaybolurdu). JPA: bağlı {@code EntityManager}'ın işlemi artık etkin değil. Okunamıyorsa {@code false} (açık sayılır).
+     */
+    private static boolean transactionCompleting() {
+        if (!org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()) return false;
+        try {
+            for (Object res : org.springframework.transaction.support.TransactionSynchronizationManager.getResourceMap().values()) {
+                if (res instanceof org.springframework.orm.jpa.EntityManagerHolder h && h.getEntityManager() != null) {
+                    return !h.getEntityManager().getTransaction().isActive();
+                }
+            }
+        } catch (RuntimeException ignored) {
+            // JTA EntityManager'da getTransaction() desteklenmez — işlem açık sayılır
+        }
+        return false;
     }
 
     /** Zincire ekleme: son satırdan seq + prev_hash, kendi hash'i, INSERT (bugünkü gövde birebir). */
@@ -190,24 +294,47 @@ public class AuditService {
     void setChainLockSupport(org.springframework.jdbc.core.JdbcTemplate jdbc,
                              org.springframework.transaction.PlatformTransactionManager tx) {
         this.chainJdbc = jdbc;
-        this.chainTx = tx == null ? null : new org.springframework.transaction.support.TransactionTemplate(tx);
+        this.chainTx = tx == null ? null : newChainTx(tx);
         this.chainPostgres = null;
     }
 
     /**
-     * Veritabanı kilidi kullanılsın mı: yalnız PostgreSQL'de ve AÇIK BİR İŞLEMİN DIŞINDA. Dış işlemin içinde kilit o
-     * işlemin COMMIT'ine dek tutulurdu (diğer tüm denetim yazıcıları beklerdi; JVM kilidiyle çapraz kilitlenme riski) —
-     * orada bugünkü davranış sürer. H2 / diğer veritabanlarında da bugünkü davranış birebir.
+     * Zincir işlemi her zaman YENİ işlem ({@code REQUIRES_NEW}): işlem dışında REQUIRED ile aynıdır; COMMIT sonrası
+     * geri çağrıda (MP-38) dış işleme katılıp kaybolmasın diye şart.
      */
-    private boolean useDbChainLock() {
-        if (org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()) return false;
+    private static org.springframework.transaction.support.TransactionTemplate newChainTx(
+            org.springframework.transaction.PlatformTransactionManager tx) {
+        var t = new org.springframework.transaction.support.TransactionTemplate(tx);
+        t.setPropagationBehavior(org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        return t;
+    }
+
+    /** İşlem altyapısı (JdbcTemplate + işlem yöneticisi) bağlı mı — ilk çağrıda tembel çözülür. */
+    private boolean chainSupported() {
         if (chainJdbc == null || chainTx == null) {
             var j = chainJdbcProvider == null ? null : chainJdbcProvider.getIfUnique();
             var t = chainTxProvider == null ? null : chainTxProvider.getIfUnique();
             if (j == null || t == null) return false;
             chainJdbc = j;
-            chainTx = new org.springframework.transaction.support.TransactionTemplate(t);
+            chainTx = newChainTx(t);
         }
+        return true;
+    }
+
+    /**
+     * Veritabanı kilidi kullanılsın mı (hemen yazım yolu): yalnız PostgreSQL'de ve AÇIK BİR İŞLEMİN DIŞINDA. İşlem içindeki
+     * yazım artık COMMIT sonrasına ertelenir ({@link #deferToCommit}); buraya işlem içinden yalnız işlem altyapısı yokken
+     * (elle kurulan birim testleri) ya da Spring senkronizasyonu kapalıyken gelinir — orada bugünkü davranış birebir.
+     * H2 / diğer veritabanlarında da bugünkü davranış birebir.
+     */
+    private boolean useDbChainLock() {
+        if (org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()) return false;
+        if (!chainSupported()) return false;
+        return isPostgres();
+    }
+
+    /** Veritabanı PostgreSQL mi — ilk başarılı okumada bir kez belirlenir; okunamazsa {@code false} (bu yazımda kilitsiz). */
+    private boolean isPostgres() {
         Boolean pg = chainPostgres;
         if (pg == null) {
             try {
@@ -397,8 +524,8 @@ public class AuditService {
             if (success) log.warn("Security anomaly on login: user={} flags={} IP={}", actor, anomalies, ipAddress);
         }
 
-        AuditLog saved = persist(entry);
-        if (saved != null) {
+        // Takip işleri kaydın id'sine bağlı: işlem içinde yazım COMMIT sonrasına ertelenirse (MP-38) onlar da ertelenir.
+        return persist(entry, saved -> {
             geoEnricher.enrichGeoAsync(saved.getId(), ipAddress);
             // E1: daha önce görülmemiş bir cihazdan giriş → kullanıcıya bilgi maili.
             // Best-effort ve @Async: bildirim GİRİŞİ engellemez, hatası yutulur.
@@ -406,8 +533,7 @@ public class AuditService {
                 newDeviceNotifier.notifyIfNewDevice(saved.getId(), actor, userAgent,
                         ipAddress, entry.getEventTime());
             }
-        }
-        return saved;
+        });
     }
 
     /**
@@ -453,8 +579,7 @@ public class AuditService {
         entry.setFailureReason("Rate limited: too many login attempts from " + ipAddress
                 + (actor != null && !actor.isBlank() ? " (targeting '" + actor + "')" : ""));
         entry.setAnomalyFlags("RATE_LIMITED");
-        AuditLog saved = persist(entry);
-        if (saved != null) geoEnricher.enrichGeoAsync(saved.getId(), ipAddress);
+        persist(entry, saved -> geoEnricher.enrichGeoAsync(saved.getId(), ipAddress));
         log.warn("Rate-limited login blocked: IP={} actor={}", ipAddress, actor);
     }
 
@@ -489,8 +614,7 @@ public class AuditService {
                 + (method == null ? "?" : method) + ")");
         entry.setDetail(methodDetail(method));   // 2026-10-03: giriş kanalı (PASSWORD → LOCAL)
         if (isOffHours()) entry.setAnomalyFlags("OFF_HOURS");
-        AuditLog saved = persist(entry);
-        if (saved != null) geoEnricher.enrichGeoAsync(saved.getId(), ipAddress);
+        persist(entry, saved -> geoEnricher.enrichGeoAsync(saved.getId(), ipAddress));
         log.warn("Pasif hesap girişi reddedildi: actor={} yol={} IP={}", actor, method, ipAddress);
     }
 
@@ -525,8 +649,7 @@ public class AuditService {
                 + (method == null ? "?" : method) + ")");
         entry.setDetail(methodDetail(method));   // 2026-10-03: giriş kanalı (PASSWORD → LOCAL)
         if (isOffHours()) entry.setAnomalyFlags("OFF_HOURS");
-        AuditLog saved = persist(entry);
-        if (saved != null) geoEnricher.enrichGeoAsync(saved.getId(), ipAddress);
+        persist(entry, saved -> geoEnricher.enrichGeoAsync(saved.getId(), ipAddress));
         log.info("Sistem bakımında giriş reddedildi: actor={} yol={} IP={}", actor, method, ipAddress);
     }
 
@@ -600,8 +723,7 @@ public class AuditService {
         }
         entry.setFailureReason(reason);
         if (isOffHours()) entry.setAnomalyFlags("OFF_HOURS");
-        AuditLog saved = persist(entry);
-        if (saved != null && ipAddress != null) geoEnricher.enrichGeoAsync(saved.getId(), ipAddress);
+        persist(entry, ipAddress == null ? null : saved -> geoEnricher.enrichGeoAsync(saved.getId(), ipAddress));
     }
 
     /**
@@ -633,8 +755,7 @@ public class AuditService {
         e.setFailureReason(failureReason);
         e.setDetail(detail);
         if (isOffHours()) e.setAnomalyFlags("OFF_HOURS");
-        AuditLog saved = persist(e);
-        if (saved != null && ipAddress != null) geoEnricher.enrichGeoAsync(saved.getId(), ipAddress);
+        persist(e, ipAddress == null ? null : saved -> geoEnricher.enrichGeoAsync(saved.getId(), ipAddress));
     }
 
     public void recordLogout(String actor, Long actorId, String ipAddress, String sessionId) {

@@ -184,7 +184,14 @@ public final class DeferredIndexBuilder {
             // düz metin olduğundan genel plan da kullanabilir. Kurulana dek sorgu checked_at dizininde son 3 saati tarar.
             // PostgreSQL'e özgü (H2'de kısmi indeks yok — aralık sorgusu aynı sonucu verir).
             Spec.postgresOnly("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_dnsr_pending ON dns_records(checked_at)"
-                    + " WHERE change_state = 'PENDING'"));
+                    + " WHERE change_state = 'PENDING'"),
+            // 2026-10-22 (çok pod R2a-D1, MP-38): denetim zincirinin seq tekilliği — işlem içindeki denetim artık COMMIT
+            // sonrası zincir kilidiyle yazılır (AuditService.deferToCommit); bu indeks yeni bir çatallanmayı (ör. dönüşümlü
+            // dağıtımda eski sürüm bir pod'un işlem içi yazımı) veritabanında durdurur. event_time kesimi: bu sürümden ÖNCEKİ
+            // satırlar (olası eski çatallar) indekse girmez — kurulum düşmez, onarım işi gerekmez. İhlal ekleme yolunda bir kez
+            // yeniden okunup denenir (AuditService.appendLocked). PostgreSQL'e özgü (H2'de JVM kilidi + COMMIT sonrası yazım).
+            Spec.postgresOnly("CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS ux_audit_seq ON audit_log(seq)"
+                    + " WHERE event_time >= '2026-10-23'"));
 
     /** Bir koşunun özeti. {@code locked=false} → kilit alınamadı, hiçbir şey denenmedi. */
     public record Result(int built, int rebuilt, int valid, int skipped, int failed, boolean locked, long millis) {}

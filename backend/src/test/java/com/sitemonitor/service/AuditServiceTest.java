@@ -545,8 +545,48 @@ class AuditServiceTest {
     }
 
     @Test
-    @DisplayName("Çok pod: açık bir dış işlemin içinde kilit alınmaz (kilit dış COMMIT'e dek tutulmasın) — bugünkü davranış")
-    void persist_insideOuterTransaction_noAdvisoryLock() {
+    @DisplayName("Çok pod R2a (MP-38): açık dış işlemin içinde kayıt ŞİMDİ yazılmaz; COMMIT sonrası KENDİ işleminde (REQUIRES_NEW)"
+            + " advisory lock ile eklenir")
+    void persist_insideOuterTransaction_deferredToCommit_thenAdvisoryLockInOwnTransaction() {
+        // Yeniden temel (2026-10-22, MP-38): eskiden işlem içinde kilit HİÇ alınmıyordu (zincir çatallanıyordu) — artık
+        // kayıt COMMIT sonrasına ertelenir ve kilitli yoldan yazılır.
+        var jdbc = chainJdbc("PostgreSQL");
+        var tx = txManager();
+        service.setChainLockSupport(jdbc, tx);
+        when(auditLogRepo.findTopByOrderBySeqDesc()).thenReturn(Optional.empty());
+
+        org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
+        org.springframework.transaction.support.TransactionSynchronizationManager.setActualTransactionActive(true);
+        try {
+            AuditLog pending = service.persist(new AuditLog());
+            assertThat(pending).as("ertelenen kayıt geri döner").isNotNull();
+            assertThat(pending.getId()).as("henüz yazılmadı").isNull();
+            verify(auditLogRepo, never()).save(any());
+            verify(jdbc, never()).execute(anyString());
+
+            var syncs = org.springframework.transaction.support.TransactionSynchronizationManager.getSynchronizations();
+            assertThat(syncs).hasSize(1);
+            syncs.getFirst().afterCommit();   // dış işlem COMMIT oldu
+
+            org.mockito.ArgumentCaptor<org.springframework.transaction.TransactionDefinition> def =
+                    org.mockito.ArgumentCaptor.forClass(org.springframework.transaction.TransactionDefinition.class);
+            InOrder order = inOrder(tx, jdbc, auditLogRepo);
+            order.verify(tx).getTransaction(def.capture());
+            order.verify(jdbc).execute(AuditService.SQL_CHAIN_LOCK);
+            order.verify(auditLogRepo).save(any());
+            order.verify(tx).commit(any());
+            assertThat(def.getValue().getPropagationBehavior())
+                    .isEqualTo(org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+            assertThat(pending.getId()).isEqualTo(1L);
+        } finally {
+            org.springframework.transaction.support.TransactionSynchronizationManager.setActualTransactionActive(false);
+            org.springframework.transaction.support.TransactionSynchronizationManager.clearSynchronization();
+        }
+    }
+
+    @Test
+    @DisplayName("Çok pod: işlem açık ama Spring senkronizasyonu yoksa (ertelenemez) bugünkü yol — kilit alınmaz, hemen yazılır")
+    void persist_insideTransactionWithoutSynchronization_legacyPath() {
         var jdbc = chainJdbc("PostgreSQL");
         var tx = txManager();
         service.setChainLockSupport(jdbc, tx);
@@ -560,6 +600,30 @@ class AuditServiceTest {
         }
         verify(jdbc, never()).execute(anyString());
         verify(tx, never()).getTransaction(any());
+        verify(auditLogRepo).save(any());
+    }
+
+    @Test
+    @DisplayName("Çok pod R2a (MP-38): tekil seq ihlali (eski pod'un işlem içi yazımıyla çakışma) → bir kez yeniden okunup denenir")
+    void persist_postgres_uniqueSeqViolation_retriedOnce() {
+        var jdbc = chainJdbc("PostgreSQL");
+        var tx = txManager();
+        service.setChainLockSupport(jdbc, tx);
+        AuditLog other = new AuditLog();
+        other.setSeq(7L);
+        other.setRowHash("h7");
+        when(auditLogRepo.findTopByOrderBySeqDesc()).thenReturn(Optional.empty(), Optional.of(other));
+        doThrow(new org.springframework.dao.DataIntegrityViolationException("ux_audit_seq"))
+                .doAnswer(inv -> { AuditLog a = inv.getArgument(0); a.setId(9L); return a; })
+                .when(auditLogRepo).save(any());
+
+        AuditLog saved = service.persist(new AuditLog());
+
+        assertThat(saved).isNotNull();
+        assertThat(saved.getSeq()).isEqualTo(8L);
+        assertThat(saved.getPrevHash()).isEqualTo("h7");
+        verify(jdbc, times(2)).execute(AuditService.SQL_CHAIN_LOCK);
+        verify(auditLogRepo, times(2)).save(any());
     }
 
     @Test
