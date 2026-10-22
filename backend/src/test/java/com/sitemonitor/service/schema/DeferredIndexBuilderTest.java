@@ -68,8 +68,8 @@ class DeferredIndexBuilderTest {
                 + "WHERE alert_event_id IS NULL AND push_trigger NOT IN ('TEST', 'OVERFLOW_SUMMARY') AND created_at >= '2026-10-21'");
         // Karar bekleyen DNS değişiklikleri (2026-10-22, çok pod R1-B inceleme CORE-6): kısmi, PG'ye özgü
         EXPECTED.put("idx_dnsr_pending", "dns_records(checked_at) WHERE change_state = 'PENDING'");
-        // Alan adı hatırlatması eşik başına tek satır (2026-10-23, çok pod R2a · D2 — MP-45): kısmi, TEKİL; geçmiş kesimle dışarıda
-        EXPECTED.put("ux_der_mon_exp_thr", "domain_expiry_reminders(monitor_id, expiry_date, threshold_days) WHERE sent_at >= '2026-10-23'");
+        // Alan adı hatırlatması eşik başına tek satır (2026-10-23, çok pod R2a · D2 — MP-45): kısmi, TEKİL; eski kodun satırları dışarıda
+        EXPECTED.put("ux_der_mon_exp_thr", "domain_expiry_reminders(monitor_id, expiry_date, threshold_days) WHERE claim_token IS NOT NULL");
     }
     /** TEKİL indeksler — {@code CREATE UNIQUE INDEX …}, {@code ux_} öneki. */
     private static final Set<String> UNIQUE = Set.of("ux_push_eventless_key_user", "ux_der_mon_exp_thr");

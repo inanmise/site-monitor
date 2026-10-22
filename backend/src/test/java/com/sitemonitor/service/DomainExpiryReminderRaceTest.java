@@ -116,6 +116,8 @@ class DomainExpiryReminderRaceTest {
         assertThat(rows.get(0).get("status")).isEqualTo("SENT");
         assertThat(rows.get(0).get("recipients")).isEqualTo("team@example.com");
         assertThat(rows.get(1).get("status")).isEqualTo("COVERED");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM domain_expiry_reminders WHERE claim_token IS NULL", Integer.class))
+                .as("yeni kodun her satırı belirteç taşır (tekil indeks yalnız onları kapsar)").isZero();
     }
 
     @Test

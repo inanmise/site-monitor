@@ -50,7 +50,8 @@ public class DomainExpiryReminderService {
      * idi: 16:00 kritik alan adı turu ile saatlik alan adı turu (lider pod'da, AYRI kilitlerle) ya da devir anında eski ve yeni
      * lider aynı izlemeyi aynı anda değerlendirince ikisi de "gönderilmemiş" görüp İKİ e-posta atıyordu. Artık eşik satırı
      * {@value #STATUS_SENDING} olarak önce eklenir (tekil indeks {@code ux_der_mon_exp_thr} — {@code DeferredIndexBuilder}
-     * kataloğu, PostgreSQL); ihlal = "başka tur gönderiyor / gönderdi" → bu tur göndermez. Sonuç gönderimden sonra koşullu
+     * kataloğu, PostgreSQL, YALNIZ {@code claim_token} dolu = bu sürümün satırları); ihlal = "başka tur gönderiyor / gönderdi"
+     * → bu tur göndermez. Sonuç gönderimden sonra koşullu
      * yazılır. Hiçbir şey gönderilmeden düşen sahiplenme geri verilir (sonraki tur yeniden dener); gönderim sırasında ölen
      * pod'un satırı {@link #STALE_SENDING_MS} sonra {@value #STATUS_INTERRUPTED} olur — YENİDEN gönderilmez (en çok bir kez).
      */
@@ -154,6 +155,7 @@ public class DomainExpiryReminderService {
         DomainExpiryReminder r = new DomainExpiryReminder();
         r.setMonitorId(m.getId()); r.setExpiryDate(expiry); r.setThresholdDays(threshold);
         r.setDaysRemaining(days); r.setSentAt(now); r.setStatus(status);
+        r.setClaimToken(java.util.UUID.randomUUID().toString());   // 36 karakter; tekil indeks yalnız dolu satırları kapsar
         return r;
     }
 

@@ -26,9 +26,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Alan adı hatırlatmasının kısmi tekil indeksi GERÇEK PostgreSQL'de (2026-10-23, çok pod R2a · D2 — MP-45) —
- * {@code mvn -Ppostgres-it test}: tekil + kısmi tanım; aynı (izleme, bitiş, eşik) kesim sonrası ikinci kez eklenemez, kesim
- * öncesi geçmiş satırlar serbest; 8 eşzamanlı sahiplenmeden TEK satır; çağıranın işlemi içindeki ihlal o işlemi BOZMAZ
- * (ayrı işlem — 25P02 yok).
+ * {@code mvn -Ppostgres-it test}: tekil + kısmi tanım; yeni kodun (belirteçli) aynı (izleme, bitiş, eşik) satırı ikinci kez
+ * eklenemez, eski kodun belirteçsiz satırları (olası eski çiftler, dağıtım gününden bağımsız) serbest; 8 eşzamanlı
+ * sahiplenmeden TEK satır; çağıranın işlemi içindeki ihlal o işlemi BOZMAZ (ayrı işlem — 25P02 yok).
  */
 @PostgresIntegration
 class DomainExpiryReminderPostgresTest {
@@ -43,6 +43,13 @@ class DomainExpiryReminderPostgresTest {
     }
 
     private static DomainExpiryReminder row(long monitorId, String expiry, int threshold, String sentAt) {
+        DomainExpiryReminder r = legacyRow(monitorId, expiry, threshold, sentAt);
+        r.setClaimToken(java.util.UUID.randomUUID().toString());   // yeni kodun satırı
+        return r;
+    }
+
+    /** 20.164 / 20.165.x pod'unun satırı: belirteç yok. */
+    private static DomainExpiryReminder legacyRow(long monitorId, String expiry, int threshold, String sentAt) {
         DomainExpiryReminder r = new DomainExpiryReminder();
         r.setMonitorId(monitorId);
         r.setExpiryDate(expiry);
@@ -54,11 +61,12 @@ class DomainExpiryReminderPostgresTest {
     }
 
     @Test
-    @DisplayName("PostgreSQL: indeks tekil + kısmi; kesim sonrası aynı anahtar eklenemez, kesim öncesi geçmiş serbest")
+    @DisplayName("PostgreSQL: indeks tekil + kısmi; belirteçli aynı anahtar eklenemez, eski kodun belirteçsiz satırları serbest")
     void indexShapeAndScope() throws Exception {
         awaitDeferredIndexes();
         String def = jdbc().queryForObject("SELECT indexdef FROM pg_indexes WHERE indexname = ?", String.class, INDEX);
-        assertThat(def).startsWith("CREATE UNIQUE INDEX").contains("monitor_id, expiry_date, threshold_days").contains("2026-10-23");
+        assertThat(def).startsWith("CREATE UNIQUE INDEX").contains("monitor_id, expiry_date, threshold_days")
+                .contains("claim_token IS NOT NULL");
         DomainExpiryReminderRepository repo = PostgresIt.app().bean(DomainExpiryReminderRepository.class);
         long mid = 900_000L + (System.nanoTime() % 10_000);
         try {
@@ -67,8 +75,9 @@ class DomainExpiryReminderPostgresTest {
                     .isInstanceOf(DataIntegrityViolationException.class);
             repo.save(row(mid, "2027-01-01T00:00:00Z", 14, "2026-10-23T10:00:00"));   // başka eşik
             repo.save(row(mid, "2028-01-01T00:00:00Z", 7, "2026-10-23T10:00:00"));    // yenilendi: yeni bitiş
-            repo.save(row(mid, "2026-11-01T00:00:00Z", 3, "2026-10-20T10:00:00"));    // kesim öncesi geçmiş …
-            repo.save(row(mid, "2026-11-01T00:00:00Z", 3, "2026-10-21T10:00:00"));    // … eski çift indekse girmez
+            repo.save(legacyRow(mid, "2026-11-01T00:00:00Z", 3, "2026-12-20T10:00:00"));   // eski kodun satırı (tarih ne olursa) …
+            repo.save(legacyRow(mid, "2026-11-01T00:00:00Z", 3, "2026-12-21T10:00:00"));   // … eski çift indekse girmez
+            repo.save(legacyRow(mid, "2027-01-01T00:00:00Z", 7, "2026-12-22T10:00:00"));   // yeni satırla aynı anahtar: eski satır serbest
         } finally {
             jdbc().update("DELETE FROM domain_expiry_reminders WHERE monitor_id = ?", mid);
         }
