@@ -199,7 +199,7 @@ class ManualCertificateAnalyzeScopeTest {
     void create_alreadyTrackedByHiddenRecord_namesNothing() throws Exception {
         mvc.perform(multipart("/api/manual-certs").file(leafFile())
                         .param("ref", leafFp).param("domain", "a-yeni")
-                        .param("inventory", "{\"team_id\":1,\"group_name\":\"Grup A\",\"tier\":2,\"port\":443}").session(user(1, List.of(1L))))
+                        .param("inventory", "{\"team_id\":1,\"group_name\":\"Grup A\",\"tags\":\"t1\",\"tier\":2,\"port\":8443,\"use_proxy\":true,\"tls_mode\":\"browser\"}").session(user(1, List.of(1L))))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("ALREADY_TRACKED"))
                 .andExpect(jsonPath("$.domain").doesNotExist())

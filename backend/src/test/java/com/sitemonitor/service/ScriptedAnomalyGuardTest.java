@@ -97,7 +97,7 @@ class ScriptedAnomalyGuardTest {
 
         assertThat(reason).contains("Anomali").contains("5000").contains("200");
         verify(monitorRepo).disableIfActive(eq(7L), eq(reason), anyString());
-        verify(monitorRepo, never()).disableIfActive(anyLong(), anyString(), anyString());   // CHECKS-4: eski varlık ASLA bütünüyle yazılmaz
+        verify(monitorRepo, never()).save(any());   // CHECKS-4: eski varlık ASLA bütünüyle yazılmaz
         assertThat(monitor.getActive()).isFalse();
         assertThat(monitor.getDisabledReason()).isEqualTo(reason);
         assertThat(monitor.getDisabledAt()).isNotBlank();

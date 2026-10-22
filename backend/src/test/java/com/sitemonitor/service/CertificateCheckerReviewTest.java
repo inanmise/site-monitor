@@ -136,6 +136,9 @@ class CertificateCheckerReviewTest {
             ex.sendResponseHeaders(204, -1);
             ex.close();
         });
+        // Çok iş parçacıklı: kontrolün TLS soketi HEAD sırasında açık kalır; tek iş parçacıklı sunucu ona takılırdı
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newCachedThreadPool();
+        server.setExecutor(pool);
         server.start();
         try {
             int port = server.getAddress().getPort();
@@ -148,6 +151,7 @@ class CertificateCheckerReviewTest {
             assertThat(heads.get()).isGreaterThanOrEqualTo(1);
         } finally {
             server.stop(0);
+            pool.shutdownNow();
         }
     }
 
