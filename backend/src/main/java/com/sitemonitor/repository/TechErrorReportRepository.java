@@ -208,6 +208,21 @@ public interface TechErrorReportRepository extends JpaRepository<TechErrorReport
     int claimSend(@Param("id") Long id, @Param("now") Instant now, @Param("stale") Instant stale);
 
     /**
+     * {@link #claimSend} + CANLI KUYRUK REDDİ (çok pod R2a, MP-41, kullanıcı kararı 2026-10-22): önceki gönderim hâlâ posta
+     * sunucusunun yeniden deneme kuyruğundaysa ({@code QUEUED} ve talebi {@code queuedSince}'ten — sonucun gelebileceği süre —
+     * yeni) satır SAHİPLENİLMEZ: eski kuyruk yeniden denemede teslim edilip ikinci (farklı içerikli) bir kopya gitmesin.
+     * Karar talebin KENDİSİNDE (koşullu UPDATE) — iki pod / iki sekme arasında yarış yok. 0 satır: çağıran nedeni yeniden
+     * okur ({@code SEND_QUEUED} / {@code SEND_IN_PROGRESS}). Süre geçmiş kuyruk sahiplenilir (sonucu artık gelemez).
+     */
+    @Modifying
+    @Transactional
+    @Query("UPDATE TechErrorReport r SET r.sendState = 'SENDING', r.sendClaimedAt = :now WHERE r.id = :id "
+            + "AND (r.sendState IS NULL OR r.sendState <> 'SENDING' OR r.sendClaimedAt IS NULL OR r.sendClaimedAt < :stale) "
+            + "AND (r.sendState IS NULL OR r.sendState <> 'QUEUED' OR r.sendClaimedAt IS NULL OR r.sendClaimedAt < :queuedSince)")
+    int claimSendUnlessQueued(@Param("id") Long id, @Param("now") Instant now, @Param("stale") Instant stale,
+                              @Param("queuedSince") Instant queuedSince);
+
+    /**
      * Başarılı gönderim SONUCU — yalnız bu talebin satırına ({@code claimedAt} eşleşirse); sayaç + son gönderim.
      * {@code lastSentAt} = talep anı (gösterim); {@code sentRev} = PDF'in okunduğu andaki içerik sayacı — "gönderimden
      * sonra değişti" bu sayaçla karar verir. Posta servisinin kuyruğa aldığı (QUEUED) gönderim burada YAZILMAZ: teslim
@@ -284,6 +299,14 @@ public interface TechErrorReportRepository extends JpaRepository<TechErrorReport
     @Query("UPDATE TechErrorReport r SET r.sendState = 'FAILED', r.lastSendStatus = :status "
             + "WHERE r.id = :id AND r.sendState = 'QUEUED' AND r.sendLogId = :logId")
     int failQueued(@Param("id") Long id, @Param("logId") Long logId, @Param("status") String status);
+
+    /**
+     * Sonuçlanmamış kuyruk gönderimi olan kanallar (çok pod R2a, MP-41 — dönemsel uzlaştırıcı): kimse ekranı açmasa da
+     * kuyruk sonucu yazılsın diye {@code MailRetryOrphanSweeper} turunda okunur. Çoğu zaman boş; sayfa sınırlı.
+     */
+    @Query("SELECT DISTINCT r.channelId FROM TechErrorReport r WHERE r.sendState = 'QUEUED' AND r.sendLogId IS NOT NULL "
+            + "ORDER BY r.channelId")
+    List<Long> queuedChannelIds(org.springframework.data.domain.Pageable page);
 
     /** Kanalların sonuçlanmamış kuyruk gönderimleri: [rapor id, günlük satırı id]. */
     @Query("SELECT r.id, r.sendLogId FROM TechErrorReport r WHERE r.channelId IN :ids AND r.sendState = 'QUEUED' "

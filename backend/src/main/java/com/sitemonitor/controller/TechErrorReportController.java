@@ -1559,6 +1559,13 @@ public class TechErrorReportController {
             }
         } catch (FieldValidationException e) {
             throw e;            // giriş hatası (ek Bilgi): gönderim denenmedi, denetime yazılmaz
+        } catch (CodedConflictException e) {
+            // Önceki gönderim kuyrukta (R2a, MP-41): hiçbir şey sahiplenilmedi / gönderilmedi — gönderim olarak denetlenmez
+            if (!TechErrorReportSender.SEND_QUEUED.equals(e.getCode())) {
+                auditService.recordAction("TECH_ERROR_REPORT_SEND", session, request, "TECH_ERROR_REPORT", String.valueOf(id),
+                        AuditDetail.of("outcome", "FAILED", "reason", failureReason(e)));
+            }
+            throw e;
         } catch (RuntimeException e) {
             auditService.recordAction("TECH_ERROR_REPORT_SEND", session, request, "TECH_ERROR_REPORT", String.valueOf(id),
                     AuditDetail.of("outcome", e instanceof TechErrorReportService.PdfBusyException ? "SKIPPED" : "FAILED",

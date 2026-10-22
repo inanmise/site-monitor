@@ -214,6 +214,33 @@ describe('gönderim penceresi — ek Bilgi (CC)', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Rapor takıma gönderilsin mi?' })).toBeNull())
   })
 
+  it('çok pod R2a (MP-41): önceki gönderim hâlâ posta kuyruğunda (409 SEND_QUEUED) → pencere AÇIK, kuyruk başlığı + sunucunun açıklaması pencerede, yazılan ek Bilgi korunur, "Gönder" KİLİTLİ DEĞİL; rapor arkada yenilenir', async () => {
+    const queuedMsg = "Bu raporun önceki gönderimi posta sunucusunun yeniden deneme kuyruğunda bekliyor; ikinci bir kopya gitmesin diye rapor yeniden gönderilmedi. Birkaç dakika sonra gönderim sonucunu kontrol edin; gerekirse o zaman yeniden gönderin."
+    te().send
+      .mockResolvedValueOnce({ success: false, status: 409, code: 'SEND_QUEUED', error: queuedMsg })
+      .mockResolvedValueOnce({ success: true, data: { state: 'SENT', to: ['dijital@example.com'], cc: ['ek@example.com'] } })
+    const dlg = await openSendDialog()
+    const input = ccInput(dlg)
+    fireEvent.change(input, { target: { value: 'ek@example.com' } })
+    const loadsBefore = te().report.mock.calls.length
+    fireEvent.click(within(dlg).getByRole('button', { name: 'Gönder' }))
+    const title = await within(dlg).findByText('Önceki gönderim hâlâ posta kuyruğunda — rapor yeniden gönderilmedi')
+    const box = title.closest('[data-slot="te-send-failure"]')
+    expect(box).toHaveAttribute('data-kind', 'retry')
+    expect(within(box).getByText(/yeniden deneme kuyruğunda bekliyor/)).toBeInTheDocument()
+    expect(within(box).getByText(/Yazdığınız ek Bilgi \(CC\) adresleri korundu/)).toBeInTheDocument()
+    expect(input).toHaveValue('ek@example.com')
+    expect(input).not.toHaveAttribute('aria-invalid', 'true')
+    await waitFor(() => expect(te().report.mock.calls.length).toBeGreaterThan(loadsBefore))
+    const sendBtn = within(dlg).getByRole('button', { name: 'Gönder' })
+    expect(sendBtn).not.toBeDisabled()
+    expect(dlg.querySelector('[data-locked="true"]')).toBeNull()
+    fireEvent.click(sendBtn)
+    await waitFor(() => expect(te().send).toHaveBeenCalledTimes(2))
+    expect(te().send.mock.calls.map((c) => c[1])).toEqual([{ extra_cc: 'ek@example.com' }, { extra_cc: 'ek@example.com' }])
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Rapor takıma gönderilsin mi?' })).toBeNull())
+  })
+
   describe('inceleme 2026-10-18 (3. tur): sonucu BİLİNMEYEN gönderim — rapor yeniden okunup durum bilinene kadar "Gönder" ve Ctrl+Enter KİLİTLİ', () => {
     const base = () => reportResponse().data.report
     const reportWith = (patch) => reportResponse({ report: { ...base(), ...patch } })

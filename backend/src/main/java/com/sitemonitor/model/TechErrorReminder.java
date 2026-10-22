@@ -73,6 +73,18 @@ public class TechErrorReminder {
     @Column(name = "reached_ids", length = 4000, updatable = false)
     private String reachedIds;
 
+    /**
+     * Talep SÜRÜYOR damgası (çok pod R2a, MP-41, 2026-10-22): talep (INSERT / koşullu UPDATE) bunu {@code updated_at} ile AYNI
+     * değere yazar; karar (gönderildi / son SKIPPED / bırakıldı / vazgeçildi) koşullu olarak NULL'lar. Damga duruyor ve
+     * {@code TechErrorReminderService.INFLIGHT_STALE}'den eskiyse talebi alan pod posta ile karar arasında ÖLDÜ: hatırlatma
+     * ertesi gün yeniden vadelidir (eskiden "bir kez" ayarında o dönem için KALICI kayboluyordu). En az bir kez: ölen pod
+     * postayı göndermiş olabilir — bir çift hatırlatma kayıptan iyidir. Eski sürüm pod damga yazmaz; onun talebi / bırakması
+     * {@code updated_at}'i ilerletir ve damgayı geçersiz kılar ({@code inflight_at < updated_at} → yok sayılır). Varlık kaydı
+     * yazamaz ({@code updatable=false}); yalnız ilk INSERT ve koşullu sorgular. NULL = talep sürmüyor / eski satır.
+     */
+    @Column(name = "inflight_at", length = 32, updatable = false)
+    private String inflightAt;
+
     @Column(name = "created_at", length = 32)
     private String createdAt;
 

@@ -21346,6 +21346,9 @@ export const TR = {
   'te.send.ccRejected': "Ek bilgi (CC) adresleri kabul edilmedi. Adresleri kontrol edip yeniden deneyin.",
   'te.send.retryTitle': "Rapor gönderilmedi — yeniden deneyebilirsiniz",
   'te.send.retryKept': "Yazdığınız ek Bilgi (CC) adresleri korundu; biraz sonra yeniden “Gönder”e basın.",
+  // ── multi-pod R2a · D1 ──
+  'te.send.queuedTitle': "Önceki gönderim hâlâ posta kuyruğunda — rapor yeniden gönderilmedi",
+  'logtrig.WEEKLY_REPORT_REMINDER': "Haftalık rapor hatırlatması",
   'te.send.unsureTitle': "Gönderimin sonucu bilinmiyor",
   'te.send.unsureBody': "Gönderimin sunucuda tamamlanıp tamamlanmadığı belli değil; raporun durumu yeniden okunuyor. Durum bilinene kadar “Gönder” kilitli — rapor iki kez gitmesin. Yazdığınız ek Bilgi (CC) adresleri korundu.",
   'te.send.unsureCheckFailed': "Raporun durumu okunamadı, gönderimin gidip gitmediği hâlâ bilinmiyor. “Durumu yeniden denetle”ye basın ya da kanalın gönderim günlüğüne bakın; durum bilinene kadar “Gönder” kilitli.",
