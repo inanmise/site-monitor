@@ -120,6 +120,35 @@ public class EmailTemplateBuilder {
     private static boolean isDomain(String t) {
         return t != null && (t.startsWith("DOMAINMON_") || "DOMAIN_EXPIRY".equals(t));
     }
+    /**
+     * HTTP izleme ailesi ({@code HTTP_DOWN} / {@code HTTP_SLOW} / {@code HTTP_SSL}) — 2026-10-22, ALERTS-13. Eskiden
+     * {@link #tabFor}'da dalı yoktu, sertifika varsayılanına düşüyordu: e-posta "Sertifika İzleme" başlığı, sertifika ayrıntı
+     * satırları ve "CA/PKI ekibinden yeni sertifika talep edin" adımlarıyla gidiyordu.
+     */
+    static boolean isHttp(String t) { return t != null && t.startsWith("HTTP_"); }
+    /** Süre bitişi türleri — "yenilendi" / "Yeni bitiş tarihi" dili YALNIZ bunlarda (ALERTS-15). */
+    static boolean isExpiryType(String t) {
+        return "EXPIRY".equals(t) || "DOMAINMON_EXPIRY".equals(t) || "DOMAIN_EXPIRY".equals(t);
+    }
+    /**
+     * Alarmı bir KİŞİ mi kapattı (ALERTS-15)? Sistem kapanışları "Sistem (…)" / "system" ile ya da boş yazılır; başka her değer
+     * kişi adıdır. Elle kapanışta "otomatik olarak kapandı" / "yenilendi" denmez.
+     */
+    static boolean manualResolve(String resolvedBy) {
+        if (resolvedBy == null || resolvedBy.isBlank()) return false;
+        String r = resolvedBy.trim().toLowerCase(java.util.Locale.ROOT);
+        return !(r.startsWith("sistem") || r.startsWith("system"));
+    }
+    /**
+     * Kapanış DOĞRULANMIŞ bir iyileşme mi (sağlıklı kontrolle uzlaştırma: boş / "Sistem (otomatik)" / "system")? Başka bir sistem
+     * gerekçesi ("Sistem (domain değişti)", "Sistem (alarm türü ayardan kapatıldı — sorun sürüyor olabilir)" …) iyileşme
+     * DEĞİLDİR — o çözüm postası "düzeldi / yenilendi" demez, yalnız "otomatik olarak kapandı" der.
+     */
+    static boolean verifiedRecovery(String resolvedBy) {
+        if (resolvedBy == null || resolvedBy.isBlank()) return true;
+        String r = resolvedBy.trim().toLowerCase(java.util.Locale.ROOT);
+        return r.equals("sistem (otomatik)") || r.equals("system") || r.equals("sistem");
+    }
     private static boolean isPage(String t) { return "PAGE_DOWN".equals(t) || "PAGE_INTEGRITY".equals(t); }
     private static boolean isScripted(String t) {
         return "SCRIPTED_FAIL".equals(t) || "SCRIPTED_SLOW".equals(t);
@@ -164,6 +193,7 @@ public class EmailTemplateBuilder {
         if (isPage(t)) return "page";
         if (isPageSpeed(t)) return "pagespeed";
         if (isScripted(t)) return "scripted";
+        if (isHttp(t)) return "http";
         return "dashboard";   // sertifika
     }
 
@@ -182,6 +212,9 @@ public class EmailTemplateBuilder {
             case "CHAIN_BROKEN" -> "Sertifika Zincir Uyarısı";
             case "HOSTNAME_MISMATCH" -> "Sertifika Alan Adı Uyuşmazlığı";
             case "UNTRUSTED_CA" -> "Güvenilmeyen Sertifika Uyarısı";
+            case "HTTP_DOWN" -> "HTTP/Website Erişilemez";
+            case "HTTP_SLOW" -> "HTTP Yavaş Yanıt";
+            case "HTTP_SSL" -> "HTTP İzlemesi — TLS Sertifika Sorunu";
             default -> "İzleme Uyarısı";
         };
     }
@@ -347,9 +380,12 @@ public class EmailTemplateBuilder {
 
         List<Row> rows = new ArrayList<>();
         rows.add(new Row("Alan Adı", "<strong>" + d + "</strong>", nz(domain)));
+        // "Yeni" yalnız süre bitişi alarmının OTOMATİK kapanışında doğrudur (ALERTS-15): kara liste / kilit / durum çözümü ya da
+        // elle kapanış alan adının yenilendiğini söylemez.
+        boolean renewed = isExpiryType(alertType) && verifiedRecovery(resolvedBy);
         if (ctx != null) {
             if (expiryIso != null)
-                rows.add(Row.of(domainType ? "Yeni Bitiş Tarihi" : "Bitiş Tarihi", formatHuman(expiryIso)));
+                rows.add(Row.of(domainType && renewed ? "Yeni Bitiş Tarihi" : "Bitiş Tarihi", formatHuman(expiryIso)));
             if (daysRem != null) rows.add(Row.of("Kalan Süre", daysRem + " gün"));
             if (domainType) {
                 String reg = strCtx(ctx, "registrar");
@@ -431,7 +467,7 @@ public class EmailTemplateBuilder {
         if (resolvedAt != null) rows.add(Row.of("Çözülme", formatHuman(resolvedAt)));
         rows.add(Row.of("Çözen", resolvedBy != null && !resolvedBy.isBlank() ? resolvedBy : "Sistem (otomatik)"));
 
-        String headline = resolvedHeadline(alertType, expiryIso != null);
+        String headline = resolvedHeadline(alertType, expiryIso != null, resolvedBy);
         MailDoc doc = MailDoc.create("[Site Monitor] ÇÖZÜLDÜ · " + nz(domain))
                 .preheader(headline)
                 .kicker(subsystemLabel(alertType));
@@ -439,7 +475,7 @@ public class EmailTemplateBuilder {
         doc.title(nz(domain), headline);
         // Yeni bitiş tarihini öne çıkaran vurgu (varsa) — "yeni expire ne oldu?" sorusuna doğrudan yanıt.
         if (expiryIso != null) {
-            doc.alert(Tone.SUCCESS, (domainType ? "Yeni bitiş tarihi: " : "Güncel bitiş tarihi: ") + formatHuman(expiryIso),
+            doc.alert(Tone.SUCCESS, (domainType && renewed ? "Yeni bitiş tarihi: " : "Güncel bitiş tarihi: ") + formatHuman(expiryIso),
                     daysRem != null ? daysRem + " gün kaldı" : null);
         }
         doc.keyValue("Ayrıntılar", rows);
@@ -458,10 +494,11 @@ public class EmailTemplateBuilder {
         boolean domainType = isDomain(alertType);
         String expiryIso = ctx == null ? null : firstNonNull(strCtx(ctx, "expiry_date"), strCtx(ctx, "not_after"));
         String daysRem = ctx == null ? null : firstNonNull(strCtx(ctx, "days_remaining"), strCtx(ctx, "days"));
+        boolean renewed = isExpiryType(alertType) && verifiedRecovery(resolvedBy);
         StringBuilder sb = new StringBuilder("[Site Monitor] ÇÖZÜLDÜ · " + nz(domain) + "\n"
-                + resolvedHeadline(alertType, expiryIso != null));
+                + resolvedHeadline(alertType, expiryIso != null, resolvedBy));
         if (expiryIso != null)
-            sb.append("\n").append(domainType ? "Yeni Bitiş Tarihi: " : "Bitiş Tarihi: ").append(formatHuman(expiryIso));
+            sb.append("\n").append(domainType && renewed ? "Yeni Bitiş Tarihi: " : "Bitiş Tarihi: ").append(formatHuman(expiryIso));
         if (daysRem != null) sb.append("\nKalan Süre: ").append(daysRem).append(" gün");
         if (ctx != null && domainType) {
             String reg = strCtx(ctx, "registrar"); if (reg != null) sb.append("\nKayıt Kuruluşu: ").append(reg);
@@ -509,12 +546,34 @@ public class EmailTemplateBuilder {
         return sb.toString();
     }
 
-    /** Çözüm alt başlığı — yenileme bağlamı varsa daha açıklayıcı. */
-    private static String resolvedHeadline(String alertType, boolean hasExpiry) {
+    /**
+     * Çözüm alt başlığı — türe ve kapanış biçimine göre (ALERTS-15). "Yenilendi" yalnız süre bitişi türünün otomatik
+     * kapanışında; kişi kapattıysa "elle kapatıldı" (yanında "Çözen: <kişi>" satırı) — "otomatik olarak kapandı" denmez.
+     */
+    static String resolvedHeadline(String alertType, boolean hasExpiry, String resolvedBy) {
+        if (manualResolve(resolvedBy)) return "Alarm elle kapatıldı.";
+        if (!verifiedRecovery(resolvedBy)) return "Alarm otomatik olarak kapandı.";
+        if (alertType != null) {
+            switch (alertType) {
+                case "DOMAINMON_BLACKLIST": return "Alan adı artık kara listede görünmüyor — alarm otomatik olarak kapandı.";
+                case "DOMAINMON_TRANSFER_LOCK": return "Transfer kilidi yeniden etkin — alarm otomatik olarak kapandı.";
+                case "DOMAINMON_STATUS": return "Sorunlu alan adı durumu kalktı — alarm otomatik olarak kapandı.";
+                case "DOMAINMON_UNKNOWN": return "Alan adı kayıt bilgisi yeniden okunabiliyor — alarm otomatik olarak kapandı.";
+                case "CHAIN_BROKEN": return "Sertifika zinciri düzeldi — alarm otomatik olarak kapandı.";
+                case "HOSTNAME_MISMATCH": return "Sertifika alan adıyla yeniden eşleşiyor — alarm otomatik olarak kapandı.";
+                case "UNTRUSTED_CA": return "Sertifika yeniden güvenilir görünüyor — alarm otomatik olarak kapandı.";
+                case "MISMATCH": return "Sertifika dağıtımı yeniden tutarlı — alarm otomatik olarak kapandı.";
+                case "REVOKED": return "Sertifikada iptal durumu artık görülmüyor — alarm otomatik olarak kapandı.";
+                case "HTTP_DOWN": return "Adres yeniden yanıt veriyor — alarm otomatik olarak kapandı.";
+                case "HTTP_SLOW": return "Yanıt süresi eşiğin altına indi — alarm otomatik olarak kapandı.";
+                case "HTTP_SSL": return "TLS sertifika sorunu giderildi — alarm otomatik olarak kapandı.";
+                default: break;
+            }
+        }
         if (isDomain(alertType))
-            return hasExpiry ? "Alan adı yenilendi, alarm otomatik olarak kapandı." : "Alarm otomatik olarak kapandı.";
+            return hasExpiry && isExpiryType(alertType) ? "Alan adı yenilendi, alarm otomatik olarak kapandı." : "Alarm otomatik olarak kapandı.";
         if (isCert(alertType))
-            return hasExpiry ? "Sertifika yenilendi, alarm otomatik olarak kapandı." : "Alarm otomatik olarak kapandı.";
+            return hasExpiry && isExpiryType(alertType) ? "Sertifika yenilendi, alarm otomatik olarak kapandı." : "Alarm otomatik olarak kapandı.";
         if ("PAGE_INTEGRITY".equals(alertType))
             return "Sayfadaki bütünlük sorunu giderildi; kaynaklar yeniden sağlıklı — alarm otomatik olarak kapandı.";
         if ("PAGE_DOWN".equals(alertType))
@@ -576,8 +635,18 @@ public class EmailTemplateBuilder {
     private List<Row> detailRows(AlertMail m) {
         List<Row> out = new ArrayList<>();
         Map<String, Object> c = m.ctx();
-        out.add(new Row("Alan Adı", "<strong>" + esc(m.domain()) + "</strong>", nz(m.domain())));
-        if (isDomain(m.alertType())) {
+        out.add(new Row(isHttp(m.alertType()) ? "Adres" : "Alan Adı", "<strong>" + esc(m.domain()) + "</strong>", nz(m.domain())));
+        if (isHttp(m.alertType())) {   // HTTP izleme — sertifika satırları değil, isteğin sonucu (ALERTS-13)
+            String url = strCtx(c, "url");
+            if (url != null && !url.equals(m.domain())) addIf(out, "URL", url);
+            addIf(out, "HTTP Durumu", strCtx(c, "http_status"));
+            addIf(out, "Yanıt Süresi", strCtx(c, "response_ms") != null ? strCtx(c, "response_ms") + " ms" : null);
+            addIf(out, "Eşik", strCtx(c, "threshold_ms") != null ? strCtx(c, "threshold_ms") + " ms" : null);
+            addIf(out, "Sertifika Kalan Gün", strCtx(c, "ssl_days_remaining"));
+            addIf(out, "Detay", strCtx(c, "detail"));
+            addIf(out, "Hata", firstNonNull(strCtx(c, "error"), strCtx(c, "last_error")));
+            addIf(out, "Son Kontrol", strCtx(c, "checked_at") != null ? formatHuman(strCtx(c, "checked_at")) : null);
+        } else if (isDomain(m.alertType())) {
             addIf(out, "Bitiş Tarihi", strCtx(c, "expiry_date") != null ? formatHuman(strCtx(c, "expiry_date")) : null);
             addIf(out, "Registrar", strCtx(c, "registrar"));
             addIf(out, "Veri Kaynağı", strCtx(c, "source"));
@@ -650,11 +719,52 @@ public class EmailTemplateBuilder {
     private List<String> actionSteps(AlertMail m) {
         if (isDomain(m.alertType())) {
             String reg = strCtx(m.ctx(), "registrar");
-            return List.of(
-                    "Registrar paneline giriş yapın" + (reg != null ? " (" + reg + ")" : ""),
-                    "Alan adını en az 1 yıl yenileyin",
-                    "Auto-renew (otomatik yenileme) özelliğini açın",
-                    "Yenileme sonrası Site Monitor'ün otomatik doğrulamasını bekleyin — alarm kendiliğinden kapanır");
+            String panel = "Registrar paneline giriş yapın" + (reg != null ? " (" + reg + ")" : "");
+            // Adımlar TÜRE göre (ALERTS-15): kara liste / transfer kilidi / durum / veri / değişiklik alarmı "alan adını
+            // yenileyin" demez — yenileme yalnız süre bitişinin çaresidir.
+            return switch (m.alertType()) {
+                case "DOMAINMON_BLACKLIST" -> List.of(
+                        "Alan adının hangi kara listede (DNSBL) göründüğünü yukarıdaki ayrıntılardan kontrol edin",
+                        "Listelenme nedenini giderin (spam gönderimi, ele geçirilmiş sunucu, açık posta aktarıcısı) ve listenin kaldırma (delist) adımlarını izleyin",
+                        "Kara listeden çıkış doğrulanınca alarm kendiliğinden kapanır");
+                case "DOMAINMON_TRANSFER_LOCK" -> List.of(
+                        panel + " ve transfer kilidini (clientTransferProhibited) yeniden açın",
+                        "Kilidi siz kaldırmadıysanız yetkisiz bir transfer girişimi olabilir — registrar ile hemen iletişime geçin",
+                        "Kilit yeniden görülünce alarm kendiliğinden kapanır");
+                case "DOMAINMON_STATUS" -> List.of(
+                        "Yukarıdaki EPP durum kodlarını inceleyin (ör. serverHold, clientHold, pendingDelete, redemptionPeriod)",
+                        panel + " ya da registrar ile iletişime geçip durumun nedenini öğrenin ve giderin",
+                        "Sorunlu durum kalkınca alarm kendiliğinden kapanır");
+                case "DOMAINMON_UNKNOWN" -> List.of(
+                        "Kayıt bilgisinin neden okunamadığını kontrol edin (RDAP / WHOIS erişimi, vekil sunucu, sorgu sınırı)",
+                        "Site Monitor'de alan adı kaydında \"Sorun Tanıla\" ile sorguyu adım adım izleyin",
+                        "Kayıt bilgisi yeniden okunabilince alarm kendiliğinden kapanır");
+                case "DOMAINMON_CHANGED" -> List.of(
+                        "Değişikliğin (registrar, ad sunucuları, durum kodları) planlı olup olmadığını ekibinizle doğrulayın",
+                        "Planlı değilse " + (reg != null ? reg + " registrar'ı" : "registrar") + " ile hemen iletişime geçin",
+                        "İnceleme bitince alarmı Site Monitor'de elle kapatın — değişiklik alarmı kendiliğinden kapanmaz");
+                default -> List.of(
+                        panel,
+                        "Alan adını en az 1 yıl yenileyin",
+                        "Auto-renew (otomatik yenileme) özelliğini açın",
+                        "Yenileme sonrası Site Monitor'ün otomatik doğrulamasını bekleyin — alarm kendiliğinden kapanır");
+            };
+        }
+        if (isHttp(m.alertType())) {   // ALERTS-13: HTTP alarmı sertifika adımlarını almaz (HTTP_SSL hariç)
+            return switch (m.alertType()) {
+                case "HTTP_SLOW" -> List.of(
+                        "Yanıt süresini artıran bileşeni inceleyin (uygulama, veritabanı, yük dengeleyici, ağ)",
+                        "Yukarıdaki yanıt süresi ve eşiği karşılaştırın; eşik gerçekçi değilse izleme ayarını gözden geçirin",
+                        "Yanıt süresi eşiğin altına inince alarm kendiliğinden kapanır");
+                case "HTTP_SSL" -> List.of(
+                        "Adresin TLS sertifikasının geçerliliğini ve zincirini kontrol edin",
+                        "Süresi doluyorsa ya da güvenilmiyorsa CA/PKI ekibinden yeni sertifika talep edip ilgili sunuculara dağıtın",
+                        "Sertifika sorunu giderilince alarm kendiliğinden kapanır");
+                default -> List.of(
+                        "Adresin erişilebilirliğini kontrol edin (sunucu, uygulama, yük dengeleyici, ağ / WAF)",
+                        "Yukarıdaki HTTP durumu ve hata ayrıntısına bakın; gerekirse Site Monitor'de \"Uçtan uca tanıla\" ile isteği izleyin",
+                        "Erişim geri gelince alarm kendiliğinden kapanır");
+            };
         }
         if (isPage(m.alertType())) {
             if ("PAGE_DOWN".equals(m.alertType()))
@@ -695,6 +805,7 @@ public class EmailTemplateBuilder {
         if (isPage(t)) return "Sayfa Bütünlüğü İzleme";
         if (isPageSpeed(t)) return "Sayfa Hızı İzleme";
         if (isScripted(t)) return "Sentetik İzleme";
+        if (isHttp(t)) return "HTTP/Website İzleme";
         return "Sertifika İzleme";
     }
 
@@ -1037,7 +1148,8 @@ public class EmailTemplateBuilder {
      *
      * <p>HTTP ailesi ({@code HTTP_*}) {@link #tabFor}'da ayrı dal olmadığından panoya düşüyor, bağlantı URL'yi alan adı
      * sanıp panoyu süzüyordu (regresyon taraması 2026-09-28). Bağlantı artık HTTP sekmesinde izlemenin kendisini açar
-     * ({@code &monitor=<id>}, bağlamda varsa). {@code tabFor}/{@code isCert} bilinçli olarak DEĞİŞMEDİ (şablon içeriği).
+     * ({@code &monitor=<id>}, bağlamda varsa). 2026-10-22 (ALERTS-13): şablon içeriği de ayrıldı — {@code tabFor} HTTP için
+     * {@code "http"} döner, {@code isCert} HTTP türlerinde false (sertifika satırları / adımları / envanter zenginleştirmesi yok).
      */
     static String alertQuery(String alertType, String domain) { return alertQuery(alertType, domain, null); }
 

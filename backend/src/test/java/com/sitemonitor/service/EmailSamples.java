@@ -297,6 +297,12 @@ final class EmailSamples {
                 LONG_URL, "CRITICAL", "HTTP_DOWN", null,
                 map("monitor_name", "Ödeme portalı", "http_status", 503, "first_failure_at", "2026-09-26T07:00:00", "monitor_id", 43,
                         "team_name", "Takım A", "alert_event_id", 93L, com.sitemonitor.service.mail.RunbookNote.CTX_KEY, runbook));
+        // 2026-10-22 (ALERTS-13): HTTP yavaş yanıt — HTTP şablonu (sertifika başlığı / adımları değil), yanıt süresi + eşik satırı
+        alert("alert-http-slow", "[Site Monitor] YÜKSEK · Ödeme portalı · HTTP Yavaş Yanıt",
+                "YÜKSEK: " + LONG_URL + " HTTP izlemesinde yanıt süresi eşiği aşıldı — 4200 ms (eşik 2000 ms).",
+                LONG_URL, "HIGH", "HTTP_SLOW", null,
+                map("url", LONG_URL, "http_status", 200, "response_ms", 4200, "threshold_ms", 2000, "monitor_id", 44,
+                        "checked_at", "2026-09-26T07:00:00", "team_name", "Takım A", "alert_event_id", 94L));
     }
 
     // ── #7–10 Çözüm ailesi ───────────────────────────────────────────────────
@@ -310,6 +316,11 @@ final class EmailSamples {
                 "2026-09-26T07:15:00", "2026-09-20T09:00:00",
                 map("expiry_date", "2027-10-08T00:00:00", "days_remaining", 377, "registrar", "Örnek Registrar Ltd. Şti.", "source", "RDAP",
                         "status_codes", "clientTransferProhibited, clientDeleteProhibited", "nameservers", "ns1.example.com, ns2.example.com"),
+                "Takım A", null);
+        // 2026-10-22 (ALERTS-15): kara listeden çıkış — "alan adı yenilendi" / "Yeni Bitiş Tarihi" DEMEZ
+        resolved("resolved-domain-blacklist", "[Site Monitor ✅ ÇÖZÜLDÜ] example.com", "example.com", "DOMAINMON_BLACKLIST", "HIGH",
+                "Sistem (otomatik)", "2026-09-26T07:15:00", "2026-09-24T09:00:00",
+                map("expiry_date", "2027-10-08T00:00:00", "days_remaining", 377, "registrar", "Örnek Registrar Ltd. Şti.", "source", "RDAP"),
                 "Takım A", null);
         resolved("resolved-page", "[Site Monitor ✅ ÇÖZÜLDÜ] www.example.com", "https://www.example.com/", "PAGE_INTEGRITY", "HIGH",
                 "Sistem (otomatik)", "2026-09-26T06:42:00", "2026-09-25T16:35:00",
