@@ -104,6 +104,8 @@ public class CacheBus implements ApplicationContextAware {
     static final long FORCED_POLL_GAP_MS = 100L;
     /** Arka plan yayınlarının birleştirme gecikmesi (ör. evictAllCaches'in 6 önbelleği TEK güncelleme). */
     static final long ASYNC_COALESCE_MS = 50L;
+    /** İstek grubu bundan uzun beklerse (uzun toplu istek) adlar arka plana devredilir. */
+    static final long REQUEST_HANDOFF_MS = 2_000L;
     /** Yoklama / yayın sorgularının üst süresi (sn) — asılan veritabanı kilidi sonsuza dek tutmasın. */
     static final int QUERY_TIMEOUT_SECONDS = 3;
     /** Kendi yayınını kaydetmek için kilit beklemesi (istek yolunda) — aşılırsa kayıt atlanır (zararsız: bir fazla boşaltma). */
@@ -278,12 +280,19 @@ public class CacheBus implements ApplicationContextAware {
         }
     }
 
-    /** İstek iş parçacığı → istek grubuna (yanıt yazılırken yayınlanır); değilse arka plan kuyruğuna. Veritabanına dokunmaz. */
+    /**
+     * İstek iş parçacığı → istek grubuna (yanıt yazılırken yayınlanır); değilse arka plan kuyruğuna. Veritabanına dokunmaz.
+     * Uzun süren istekte (toplu işlem: parça parça işlenen binlerce kayıt) grup {@link #REQUEST_HANDOFF_MS}'den uzun
+     * beklediyse adlar arka plan kuyruğuna devredilir — öteki pod'lar yanıtın sonunu beklemez.
+     */
     void dispatch(Set<String> names) {
         if (names == null || names.isEmpty() || !enabled) return;
         RequestBatch batch = currentBatch(true);
         if (batch != null) {
-            batch.add(names);
+            if (batch.add(names, System.nanoTime(), TimeUnit.MILLISECONDS.toNanos(REQUEST_HANDOFF_MS))) {
+                Set<String> early = batch.drain();
+                if (!early.isEmpty()) enqueueAsync(early);
+            }
             return;
         }
         enqueueAsync(names);
@@ -314,8 +323,16 @@ public class CacheBus implements ApplicationContextAware {
     static final class RequestBatch {
         private final Set<String> names = new LinkedHashSet<>();
         private long maxGen = -1;
+        private long firstAddedNs;
 
-        synchronized void add(Collection<String> n) { names.addAll(n); }
+        synchronized void add(Collection<String> n) { add(n, System.nanoTime(), Long.MAX_VALUE); }
+
+        /** @return grup {@code handoffNs}'den uzun süredir bekliyor (devredilmeli) */
+        synchronized boolean add(Collection<String> n, long nowNs, long handoffNs) {
+            if (names.isEmpty()) firstAddedNs = nowNs;
+            names.addAll(n);
+            return nowNs - firstAddedNs > handoffNs;
+        }
 
         synchronized Set<String> drain() {
             Set<String> out = new LinkedHashSet<>(names);

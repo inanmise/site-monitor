@@ -253,6 +253,18 @@ class CacheBusH2Test {
     }
 
     @Test
+    @DisplayName("Uzun istek (toplu işlem): grup 2 sn'den uzun bekleyince adlar arka plana devredilir — öteki pod'lar yanıtı beklemez")
+    void longRequest_handsOffToBackground() {
+        CacheBus.RequestBatch b = new CacheBus.RequestBatch();
+        long h = java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(CacheBus.REQUEST_HANDOFF_MS);
+        assertThat(b.add(Set.of("inactive-recipients"), 0, h)).isFalse();
+        assertThat(b.add(Set.of("inactive-recipients"), h - 1, h)).isFalse();
+        assertThat(b.add(Set.of("team-grants"), h + 1, h)).isTrue();
+        assertThat(b.drain()).containsExactlyInAnyOrder("inactive-recipients", "team-grants");
+        assertThat(b.add(Set.of("x"), h + 2, h)).as("boşalınca süre yeniden başlar").isFalse();
+    }
+
+    @Test
     @DisplayName("İki pod aynı adı eşzamanlı yayınlar: her yayın sayılır, kilitlenme yok; iki pod da en az bir kez boşaltır")
     void concurrentBumps_twoPods() {
         CacheBus a = pod(), b = pod();
