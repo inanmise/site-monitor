@@ -34,7 +34,7 @@ vi.mock('../api/client', () => ({
     weeklyReports: {
       years: vi.fn(), list: vi.fn(), get: vi.fn(), lock: vi.fn(), unlock: vi.fn(), save: vi.fn(), submit: vi.fn(),
       approve: vi.fn(), resend: vi.fn(), previous: vi.fn(), thisWeek: vi.fn(), mails: vi.fn(), create: vi.fn(),
-      kpis: vi.fn(), monitoringStats: vi.fn(), comments: vi.fn(),
+      kpis: vi.fn(), monitoringStats: vi.fn(), comments: vi.fn(), addComment: vi.fn(),
     },
     admin: { getTeams: vi.fn() },
   }),
@@ -174,6 +174,31 @@ describe('WeeklyReportsPage — PKG-8b hata düzeltmeleri', () => {
     expect(api.weeklyReports.save.mock.calls[1][2]).toBe(5)
   })
 
+  it('FE-8: Onaya gönder, uçuştaki kaydı BEKLER — sessizce durmaz; kayıt bitince gönderir', async () => {
+    setup([DRAFT])
+    window.history.replaceState({}, '', '/?tab=weeklyreports&w_id=11')
+    api.weeklyReports.submit.mockResolvedValue({ success: true })
+    renderPage({ globalAdmin: true })
+    const urgent = await screen.findByRole('textbox', { name: /^(Acil|Urgent)$/ })
+    fireEvent.change(urgent, { target: { value: '4' } })
+    // Onay penceresi açıkken otomatik kayıt başlar (gerçek yarış): Onaya gönder → pencere → kayıt uçuşa → kullanıcı onaylar
+    const confirm = deferred()
+    confirmMock.mockImplementationOnce(() => confirm.p)
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(`^${EN['wr.submit']}`) }))
+    await waitFor(() => expect(confirmMock).toHaveBeenCalled())
+    const first = deferred()
+    api.weeklyReports.save.mockImplementationOnce(() => first.p)
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(EN['wr.saveDraft']) }))   // (otomatik kayıt gibi) uçuşta
+    await waitFor(() => expect(api.weeklyReports.save).toHaveBeenCalledTimes(1))
+    await act(async () => { confirm.resolve(true) })
+    await flush()
+    expect(api.weeklyReports.submit).not.toHaveBeenCalled()
+    await act(async () => { first.resolve({ success: true, data: { status: 'DRAFT', version: 5 } }) })
+    await waitFor(() => expect(api.weeklyReports.submit).toHaveBeenCalledWith(11))
+    expect(api.weeklyReports.save).toHaveBeenCalledTimes(1)   // içerik zaten kaydedildi — ikinci kayıt yok
+    expect(toastMock.info).not.toHaveBeenCalledWith(EN['wr.submitNotSaved'])
+  })
+
   it.each([
     ['SENT', 'success', 'wr.approveOk'],
     [undefined, 'success', 'wr.approveOk'],
@@ -272,6 +297,18 @@ describe('WeeklyComments — okuma hatası (UIA-G9)', () => {
     fireEvent.click(screen.getByRole('button', { name: EN['wr.cm.retry'] }))
     await screen.findByText('İade notu')
     expect(api.weeklyReports.comments).toHaveBeenCalledTimes(2)
+  })
+
+  it('FE-8: okuma hatasından sonra gönderilen yorum listeye eklenir ama "okunamadı" bandı KALIR (tek yorum dizinin tamamı değil)', async () => {
+    api.weeklyReports.comments.mockResolvedValueOnce({ success: false, status: 500 })
+    api.weeklyReports.addComment.mockResolvedValueOnce({ success: true, data: { id: 9, kind: 'COMMENT', author: 'ben', text: 'Yeni yorum', created_at: 'x' } })
+    render(<LangProvider><WeeklyComments reportId={9} canWrite /></LangProvider>)
+    await screen.findByText(EN['wr.cm.loadFailed'])
+    fireEvent.change(document.querySelector('[data-slot="wr-comment-input"]'), { target: { value: 'Yeni yorum' } })
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(EN['wr.cm.send']) }))
+    await screen.findByText('Yeni yorum')
+    expect(screen.getByText(EN['wr.cm.loadFailed'])).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: EN['wr.cm.retry'] })).toBeInTheDocument()
   })
 
   it('ağ hatası da "okunamadı" (boş dizi değil)', async () => {

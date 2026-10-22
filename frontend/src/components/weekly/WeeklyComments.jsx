@@ -80,14 +80,19 @@ export default function WeeklyComments({ reportId, canWrite, nonce = 0, classNam
         {items && !loadFailed && <Badge variant="secondary" className="rounded-full px-2 py-px text-[.72em] font-bold text-muted-foreground tabular-nums">{list.length}</Badge>}
       </div>
       <div className="flex min-w-0 flex-col px-4 py-3">
+      {/* Okuma hatası bandı (UIA-G9) okunamayan dizi YERİNE durur; okuma hatasından sonra gönderilen yorum listeye eklense
+          de bant KALIR (2026-10-22, FE-8) — eklenen tek yorum dizinin tamamı değildir. */}
+      {items != null && loadFailed && (
+        <div data-slot="wr-comments-load-failed" className={list.length > 0 ? 'mb-2' : undefined}>
+          <AlertBanner tone="danger" className="mb-0"
+            actions={<Button type="button" variant="secondary" size="sm" className="pointer-coarse:h-10" onClick={() => setRetryNonce((n) => n + 1)}>{t('wr.cm.retry')}</Button>}>
+            {t('wr.cm.loadFailed')}
+          </AlertBanner>
+        </div>
+      )}
       {items == null ? (
         <div className="px-0.5 py-1 text-[.84em] text-muted-foreground">…</div>
-      ) : loadFailed && list.length === 0 ? (
-        <AlertBanner tone="danger" className="mb-0"
-          actions={<Button type="button" variant="secondary" size="sm" className="pointer-coarse:h-10" onClick={() => setRetryNonce((n) => n + 1)}>{t('wr.cm.retry')}</Button>}>
-          {t('wr.cm.loadFailed')}
-        </AlertBanner>
-      ) : list.length === 0 ? (
+      ) : loadFailed && list.length === 0 ? null : list.length === 0 ? (
         <div className="px-0.5 py-1 text-[.84em] text-muted-foreground">{t('wr.cm.empty')}</div>
       ) : (
         <ul className="flex max-h-[28rem] flex-col gap-2 overflow-y-auto">

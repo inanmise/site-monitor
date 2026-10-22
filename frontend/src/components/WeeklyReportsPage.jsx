@@ -438,14 +438,18 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
   const savedJsonRef = useRef(null)
   const versionRef = useRef({})
   const savingRef = useRef(false)
+  // Uçuştaki kaydın sözü (2026-10-22, FE-8): Onaya gönder, otomatik kayıt sürerken SESSİZCE durmasın — önce onu bekler.
+  const savePromiseRef = useRef(null)
+  // Son kaydın sonucu: 'ok' | 'skipped' | 'failed' (hata kendi iletisini zaten gösterdi) — gönderim neden durduğunu söyler
+  const lastSaveRef = useRef('ok')
   const liveDirty = () => !!liveRef.current.content && JSON.stringify(liveRef.current.content) !== savedJsonRef.current
 
   async function save(showToast = true) {
     // Güncel değerler liveRef'ten: art arda iki kayıt (Onaya gönder'in "kalanı da kaydet" turu) eski kapanışın içeriğini
     // ve sürümünü göndermesin.
     const { report: cur, content: c } = liveRef.current
-    if (!cur || !c) return false
-    if (savingRef.current) return false
+    if (!cur || !c) { lastSaveRef.current = 'skipped'; return false }
+    if (savingRef.current) { lastSaveRef.current = 'skipped'; return false }
     // Sürüm yarışı (2026-09-27 regresyon taraması, ORTA): kayıt uçuştayken ◀/▶ ya da otomatik kayıt başka rapora
     // geçerse, A'nın yeni sürümü/durumu B'ye yazılıyordu → B'nin sonraki kaydı sahte VERSION_CONFLICT. Yanıt yalnız
     // KAYDEDİLEN rapora uygulanır (rid); açık rapor değiştiyse kirli/çakışma bayrakları da ona dokunulmaz.
@@ -454,6 +458,9 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
     const sentJson = JSON.stringify(c)
     const version = versionRef.current[rid] ?? cur.version
     savingRef.current = true
+    let settle
+    savePromiseRef.current = new Promise((r) => { settle = r })
+    lastSaveRef.current = 'failed'
     setBusy(true)
     try {
       const res = await api.weeklyReports.save(rid, sentJson, version)
@@ -472,6 +479,7 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
         }
         setReport((p) => (p?.id === rid ? { ...p, status: res.data.status, version: res.data.version } : p))
         loadList()
+        lastSaveRef.current = 'ok'
         return true
       }
       if (res?.error?.includes('VERSION_CONFLICT')) {
@@ -488,12 +496,16 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
       return false
     } finally {
       savingRef.current = false
+      savePromiseRef.current = null
+      settle?.()
       setBusy(false)
     }
   }
 
   /** Kayıt + kayıt sürerken yazılanlar (en fazla iki ek tur). Sunucudaki içerik canlı içeriğe eşitse true. */
   async function saveAll() {
+    // Uçuştaki (otomatik) kayıt önce biter (FE-8) — eskiden save() "meşgul" diye false dönüyor, gönderim sessizce duruyordu
+    for (let i = 0; i < 3 && savingRef.current && savePromiseRef.current; i++) await savePromiseRef.current
     if (liveDirty() && !(await save(false))) return false
     for (let i = 0; i < 2 && liveDirty(); i++) {
       if (!(await save(false))) return false
@@ -671,7 +683,11 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
     if (!ok) return
     // Kaydedilmemiş içerik (kayıt sürerken yazılanlar dahil — UIA-3) önce kaydedilir; hâlâ kaydedilmemiş içerik varsa
     // gönderilmez (gönderim sunucu kopyasını yeniden yükler, son yazılanlar silinirdi) — kirli bayrak kalır.
-    if (!(await saveAll())) return
+    if (!(await saveAll())) {
+      // Kayıt hatası / çakışma kendi iletisini gösterdi; kalan durum (kayıt sürüyor, yazmaya devam ediliyor) sessiz kalmasın
+      if (lastSaveRef.current !== 'failed' && !liveRef.current.conflict) toast.info(t('wr.submitNotSaved'))
+      return
+    }
     setBusy(true)
     try {
       const res = await api.weeklyReports.submit(report.id)
