@@ -70,7 +70,8 @@ export default function InventoryImportModal({ onClose, onDone }) {
 
   const rows = result?.rows || plan?.rows || []
   const summary = result || plan
-  const reasonText = (r) => r.reason ? t(`inv.importReason.${r.reason}`) : (r.changes?.length ? r.changes.join(', ') : '')
+  // Neden metni `{0}` yer tutucusunda satırın sütunlarını taşıyabilir (2026-10-22, `value_too_long`: sınırı aşan sütun adları)
+  const reasonText = (r) => r.reason ? t(`inv.importReason.${r.reason}`, (r.changes || []).join(', ')) : (r.changes?.length ? r.changes.join(', ') : '')
 
   return (
     <ModalShell open onClose={onClose} title={t('inv.importTitle')} icon={Upload} size="lg"

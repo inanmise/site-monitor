@@ -264,8 +264,9 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
         ? exportInventoryCsv(all, teams, t, await loadNocGroupNames())
         : await exportInventoryPdf(all, teams, t)
       toast.success(t('inv.exportSuccess', n))
-    } catch {
-      toast.error(t('inv.exportError'))
+    } catch (e) {
+      // Tarayıcı indirmeyi başlatamadı (2026-10-22, UIM-27): dosya hazırdı ama inmedi — başarı tostu YOK
+      toast.error(e?.code === 'DOWNLOAD_FAILED' ? t('inv.downloadFailed') : t('inv.exportError'))
     } finally {
       setExporting(false)
     }
@@ -445,10 +446,18 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
   }
 
   // ── Satır-içi düzenleme (#8): tier / aktif — tam kayıt + yama (snake_case; uç tam gövde bekler) ──
+  // ADMIN-7 (2026-10-22): uç tüm alanları yazar — listedeki (BAYAT olabilir) satır gönderilirse başka birinin bu arada
+  // yaptığı değişiklik (pasife alma, sorumlular, açıklama) sessizce geri alınırdı. Kayıt önce TAZE okunur, yama onun üstüne.
   async function inlineUpdate(r, patch) {
-    const body = { ...r, ...patch }
-    for (const k of Object.keys(body)) if (k.startsWith('cert_') || k === 'team_name' || k === 'ug_team_name') delete body[k]
     try {
+      let fresh = null
+      try {
+        const cur = await api.admin.getInventoryByDomain(r.domain)
+        fresh = cur?.success && cur.data && String(cur.data.id) === String(r.id) ? cur.data : null
+      } catch { fresh = null }
+      if (!fresh) { toast.error(t('inv.inlineStale', r.domain)); load(); return }
+      const body = { ...fresh, ...patch }
+      for (const k of Object.keys(body)) if (k.startsWith('cert_') || k === 'team_name' || k === 'ug_team_name') delete body[k]
       const res = await api.admin.updateInventory(r.id, body)
       if (res?.success) { toast.success(t('inv.inlineSaved', r.domain)); setItems(list => list.map(x => x.id === r.id ? { ...x, ...patch } : x)); onInventoryChange?.() }
       else toast.error(res?.error || t('inv.saveError'))

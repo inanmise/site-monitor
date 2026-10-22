@@ -58,11 +58,14 @@ const GROUP_ICON = { critical: AlertOctagon, warning: AlertTriangle, info: Calen
  * API: `/api/renewal-advice` satırı kayıtlı planı taşır (`renewal_planned_at` / `_note`, 2026-10-09); bu oturumda
  * kaydedilen/kaldırılan plan onu ezer.
  */
-export default function RenewalAdvice({ onSelectDomain }) {
+export default function RenewalAdvice({ onSelectDomain, canPlanRow }) {
   const t = useT()
   const toast = useToast()
   const isMobile = useIsMobile()
   const canPlan = usePermissions().canEdit('inventory.crud')
+  // Satır başına plan kapısı (2026-10-22, UIM-11): sunucu `canManage` ister (yönetim kapsamı; üyelik / paylaşım yetmez).
+  // App verir (K2 `manage_team_ids`); verilmezse bugünkü kural (yalnız izin).
+  const rowPlannable = (a) => canPlan && (typeof canPlanRow !== 'function' || canPlanRow(a) !== false)
 
   const [advice, setAdvice] = useState([])
   const [loading, setLoading] = useState(true)
@@ -304,7 +307,7 @@ export default function RenewalAdvice({ onSelectDomain }) {
 
       {view === 'table' && filtered.length > 0 && (
         <AdviceTable rows={pager.pageItems} t={t} codeLabel={codeLabel} fpCount={fpCount}
-          onOpen={openCert} onPlan={openPlan} onDiagnose={diagnose} onCopy={copyDomain} />
+          onOpen={openCert} onPlan={openPlan} canPlanRow={rowPlannable} onDiagnose={diagnose} onCopy={copyDomain} />
       )}
 
       {view === 'list' && filtered.length > 0 && (
@@ -324,7 +327,7 @@ export default function RenewalAdvice({ onSelectDomain }) {
                   </h3>
                 )}
                 <AdviceCard item={item} t={t} text={adviceText(item)} codeLabel={codeLabel(item.code)} shared={shared}
-                  plan={planOf(item)} onOpen={openCert} onPlan={openPlan} onDiagnose={diagnose} onCopy={copyDomain}
+                  plan={planOf(item)} onOpen={openCert} onPlan={openPlan && rowPlannable(item) ? openPlan : null} onDiagnose={diagnose} onCopy={copyDomain}
                   onFilterGroup={addTo(setGroups)} onFilterTag={addTo(setTags)} />
               </Fragment>
             )
@@ -339,7 +342,8 @@ export default function RenewalAdvice({ onSelectDomain }) {
       {planRow && (
         <RenewalPlanModal row={planRow} onClose={() => setPlanRow(null)}
           onSaved={(data) => { setPlans((p) => ({ ...p, [planRow.domain]: data || { renewal_planned_at: planRow.renewal_planned_at } })); setPlanRow(null) }}
-          onCleared={() => { setPlans((p) => { const n = { ...p }; delete n[planRow.domain]; return n }); setPlanRow(null) }} />
+          // Kaldırma KAYDEDİLİR (null) — anahtar silinseydi planOf satırın bayat sunucu planına düşer, rozet geri gelirdi (UIM-16)
+          onCleared={() => { setPlans((p) => ({ ...p, [planRow.domain]: null })); setPlanRow(null); load() }} />
       )}
     </div>
   )

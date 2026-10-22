@@ -20,14 +20,23 @@ describe('notesModel', () => {
     expect(isWithinEditWindow(null, NOW)).toBe(false)
   })
 
-  it('izinler: yazar düzenler (pencere içinde), yönetici başkasınınkini siler, silinmişi yalnız yönetici geri alır', () => {
-    const ctx = { currentUser: 'kisi.a', isAdmin: false, now: NOW }
+  // 2026-10-22 (UIM-12): başkasının notunu silme ve geri yükleme yalnız GLOBAL yönetici — sunucu (AdminController notes) aynı;
+  // takım yöneticisi / kapsamlı müdür (eski `isAdmin`) artık yetmez — eskiden düğme çiziliyor, sunucu 403 dönüyordu.
+  it('izinler: yazar düzenler (pencere içinde), GLOBAL yönetici başkasınınkini siler, silinmişi yalnız global yönetici geri alır', () => {
+    const ctx = { currentUser: 'kisi.a', globalAdmin: false, now: NOW }
     expect(notePermissions(n(), ctx)).toMatchObject({ isAuthor: true, canEdit: true, canDelete: true, canRestore: false })
     expect(notePermissions(n({ created_at: '2026-09-26T10:00:00' }), ctx)).toMatchObject({ canEdit: false, canDelete: true })
     expect(notePermissions(n({ author_username: 'kisi.b' }), ctx)).toMatchObject({ canEdit: false, canDelete: false })
-    expect(notePermissions(n({ author_username: 'kisi.b' }), { ...ctx, isAdmin: true })).toMatchObject({ canEdit: false, canDelete: true })
-    expect(notePermissions(n({ deleted_at: '2026-09-28T11:00:00' }), { ...ctx, isAdmin: true })).toMatchObject({ canEdit: false, canDelete: false, canRestore: true })
-    expect(notePermissions(n(), { ...ctx, isAdmin: true, readOnly: true })).toMatchObject({ canEdit: false, canDelete: false, canRestore: false })
+    expect(notePermissions(n({ author_username: 'kisi.b' }), { ...ctx, globalAdmin: true })).toMatchObject({ canEdit: false, canDelete: true })
+    expect(notePermissions(n({ deleted_at: '2026-09-28T11:00:00' }), { ...ctx, globalAdmin: true })).toMatchObject({ canEdit: false, canDelete: false, canRestore: true })
+    expect(notePermissions(n(), { ...ctx, globalAdmin: true, readOnly: true })).toMatchObject({ canEdit: false, canDelete: false, canRestore: false })
+  })
+
+  it('takım yöneticisi (rol ADMIN / TEAM_ADMIN, global değil): başkasının notunu silemez, silineni geri alamaz', () => {
+    const ctx = { currentUser: 'kisi.a', isAdmin: true, now: NOW }
+    expect(notePermissions(n({ author_username: 'kisi.b' }), ctx)).toMatchObject({ canDelete: false })
+    expect(notePermissions(n({ deleted_at: '2026-09-28T11:00:00' }), ctx)).toMatchObject({ canRestore: false })
+    expect(notePermissions(n(), ctx)).toMatchObject({ canDelete: true })   // kendi notu (yazar kuralı)
   })
 
   it('süzme + sayılar: kategori, arama (Türkçe harf duyarsız), silinmişleri gizle', () => {

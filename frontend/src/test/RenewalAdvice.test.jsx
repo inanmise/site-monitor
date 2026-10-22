@@ -229,6 +229,37 @@ describe('RenewalAdvice — yeniden tasarım', () => {
     expect(screen.getByText('d11.example.com').closest('[data-slot="renewal-card"]').querySelector('[data-slot="rn-planned"]')).toBeNull()
   })
 
+  // UIM-16 (2026-10-22): kaldırılan plan KAYDEDİLİR (null) — eskiden oturum kaydı silinince bayat sunucu satırının planı geri
+  // geliyor, rozet kalıyor, "Planla" kaldırılan tarihi yeniden açıyordu
+  it('kayıtlı plan kaldırılınca rozet kalkar, liste yeniden okunur, "Planla" boş form açar (bayat sunucu satırı planı geri getirmez)', async () => {
+    api.getRenewalAdvice.mockResolvedValue({ success: true, data: DATA.map((a) => (a.domain === 'd10.example.com'
+      ? { ...a, renewal_planned_at: '2026-10-20', renewal_planned_note: 'CSR onayda' } : a)), timestamp: '2026-09-26T09:30:00' })
+    api.forecastUnplan.mockResolvedValue({ success: true, data: { domain: 'd10.example.com', renewal_planned_at: null } })
+    render(<RenewalAdvice />)
+    const card = () => screen.getByText('d10.example.com').closest('[data-slot="renewal-card"]')
+    await screen.findByText('d10.example.com')
+    expect(card().querySelector('[data-slot="rn-planned"]')).not.toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'd10.example.com — Plan renewal' }))
+    const dlg = await screen.findByRole('dialog')
+    fireEvent.click(within(dlg).getByRole('button', { name: 'Remove plan' }))
+    const confirm = await screen.findByRole('dialog', { name: 'Remove this plan?' })
+    fireEvent.click(within(confirm).getByRole('button', { name: 'Remove plan' }))
+    await waitFor(() => expect(api.forecastUnplan).toHaveBeenCalledWith('d10.example.com'))
+    await waitFor(() => expect(api.getRenewalAdvice).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(card().querySelector('[data-slot="rn-planned"]')).toBeNull())
+    fireEvent.click(screen.getByRole('button', { name: 'd10.example.com — Plan renewal' }))
+    const again = await screen.findByRole('dialog')
+    expect(within(again).getByRole('textbox', { name: /Not|Note/ })).toHaveValue('')
+  })
+
+  // UIM-11: satır başına plan kapısı (yönetim kapsamı — App verir); kapalı satırda düğme yok, kart ve tablo görünümünde
+  it('canPlanRow false olan satırda "Planla" yok; diğer satırlarda var', async () => {
+    render(<RenewalAdvice canPlanRow={(a) => a.domain !== 'd10.example.com'} />)
+    await screen.findByText('d10.example.com')
+    expect(screen.queryByRole('button', { name: 'd10.example.com — Plan renewal' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'd11.example.com — Plan renewal' })).toBeInTheDocument()
+  })
+
   it('neden faseti (çoklu, sayılı) süzer, çip yazar, URL r_code taşır; arama veren adında da eşleşir', async () => {
     render(<RenewalAdvice />)
     await screen.findByText('d01.example.com')

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor, fireEvent } from './test-utils.jsx'
+import { render, screen, waitFor, fireEvent, within } from './test-utils.jsx'
+import { pressMenuTrigger } from './helpers/dropdownMenu.js'
 import CertificatesTable from '../components/CertificatesTable.jsx'
 import { readView } from '../components/certtable/certTableModel.js'
 
@@ -112,6 +113,22 @@ describe('CertificatesTable', () => {
       fireEvent.click(screen.getByRole('checkbox', { name: /tümünü seç|select all/i }))
       expect(await screen.findByText(/^1 .*(seçili|selected)/i)).toBeInTheDocument()
     })
+  })
+
+  // UIM-43 (2026-10-22): "Düzenle" satırın `can_manage`'ıyla (sunucunun envanter yazma kapısı — üye USER dahil); rol yetmez
+  it('USER (canManage=false): kendi satırı `can_manage:true` → menüde Düzenle var; `can_manage:false` → yok', async () => {
+    api.getCertificatesPaginated.mockResolvedValue(paged([
+      cert({ domain: 'own.example.com', can_manage: true }), cert({ domain: 'other.example.com', can_manage: false }),
+    ]))
+    const onEdit = vi.fn()
+    render(<CertificatesTable onRowClick={() => {}} onOpenReadOnly={() => {}} onEdit={onEdit} canManage={false} />)
+    await screen.findByText('own.example.com')
+    pressMenuTrigger(within(document.querySelector('tr[data-domain="own.example.com"]')).getByLabelText(/Row actions/))
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Edit inventory record' }))
+    expect(onEdit).toHaveBeenCalledWith('own.example.com')
+    pressMenuTrigger(within(document.querySelector('tr[data-domain="other.example.com"]')).getByLabelText(/Row actions/))
+    await screen.findAllByRole('menuitem')
+    expect(screen.queryByRole('menuitem', { name: 'Edit inventory record' })).toBeNull()
   })
 
   it('satıra tıklayınca onRowClick alan adıyla çağrılır', async () => {

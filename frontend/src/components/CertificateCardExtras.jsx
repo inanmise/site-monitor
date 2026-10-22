@@ -118,11 +118,21 @@ function CertificateCardExtras({ cert, extra, reasons = [], onOpenHealth, onConf
   const failed = (health?.failed || []).filter((k) => HF_KEYS.includes(k))
   const covered = new Set(reasons.map((r) => r.key))
   const findings = failed.filter((k) => !(FINDING_REASON[k] || []).some((rk) => covered.has(rk)))
-  const healthTone = failed.length ? (failed.some((k) => CRITICAL_HF.has(k)) ? 'bad' : 'warn') : 'ok'
+  // "Tüm kontroller temiz" YALNIZ her değerlendirilen kural temizken (2026-10-22, UIM-6 — sunucunun allClear() kuralı):
+  // FAIL listesi yalnız FAIL'leri (süre hariç) taşır; UYARI kuralları (HSTS yok …) ve süre FAIL'i `ok`a sayılmaz. Hiç
+  // değerlendirilmedi (0/0) → nötr "değerlendirilmedi" — bilinmeyen yeşil DEĞİL.
+  const evaluated = Number(health?.evaluated) || 0
+  const attention = Math.max(0, evaluated - (Number(health?.ok) || 0))
+  const healthTone = failed.length ? (failed.some((k) => CRITICAL_HF.has(k)) ? 'bad' : 'warn')
+    : evaluated === 0 ? 'info' : attention > 0 ? 'warn' : 'ok'
   const healthValue = health ? `${health.ok}/${health.evaluated}` : null
   const healthSub = !health ? null
-    : failed.length === 0 ? t('certcard.x.allClear')
-    : failed.length === 1 ? t('certcard.x.finding1') : t('certcard.x.findings', failed.length)
+    : failed.length === 1 ? t('certcard.x.finding1')
+    : failed.length > 1 ? t('certcard.x.findings', failed.length)
+    : evaluated === 0 ? t('certcard.x.notEvaluated')
+    : attention === 1 ? t('certcard.x.needsAttention.one')
+    : attention > 1 ? t('certcard.x.needsAttention', attention)
+    : t('certcard.x.allClear')
 
   // Açık alarm
   const alertCount = alerts?.count || 0
@@ -134,7 +144,9 @@ function CertificateCardExtras({ cert, extra, reasons = [], onOpenHealth, onConf
   const upTone = pct == null ? 'info' : pct < 95 ? 'bad' : pct < 99 ? 'warn' : 'ok'
   const lastUp = uptime?.last_status === 'up'
   const lastDown = !!uptime?.last_status && !lastUp
-  const spark = Array.isArray(uptime?.points) && uptime.points.some((p) => p != null)
+  // Kontrolü olmayan saat (null) çizgide 0 % DEĞİL (UIM-42): atlanır — kaçan tarama / yeniden başlatma sahte kesinti çizmesin
+  const sparkPoints = Array.isArray(uptime?.points) ? uptime.points.filter((p) => p != null && Number.isFinite(Number(p))).map(Number) : []
+  const spark = sparkPoints.length > 1
 
   const contactList = contacts ? [['app_dev', contacts.app_dev], ['iis_admin', contacts.iis_admin], ['svc_mgmt', contacts.svc_mgmt], ['waf_admin', contacts.waf_admin]].filter(([, v]) => v) : []
   const contactsText = contactList.length === 1 ? t('certcard.x.contact1') : t('ccx.contacts', contactList.length)
@@ -201,7 +213,7 @@ function CertificateCardExtras({ cert, extra, reasons = [], onOpenHealth, onConf
           </span>
           {spark && (
             <span data-slot="cert-extras-spark" className="flex shrink-0 items-center">
-              <Sparkline data={uptime.points.map((p) => (p == null ? 0 : p))} width={88} height={24}
+              <Sparkline data={sparkPoints} width={88} height={24}
                 className="size-auto h-6 w-[88px]" color={pct != null && pct < 95 ? '#dc2626' : '#059669'} />
             </span>
           )}

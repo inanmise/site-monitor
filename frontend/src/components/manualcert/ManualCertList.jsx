@@ -6,9 +6,9 @@ import StatusBlock from '../ui/StatusBlock.jsx'
 import TeamBadge from '../ui/TeamBadge.jsx'
 import ReadOnlyBadge from '../ui/ReadOnlyBadge.jsx'
 import { CertStatusBadge, CertTierBadge } from '../certcard/CertCardParts.jsx'
-import { TONE_LABEL, dateOnly } from '../certcard/certCardModel.js'
+import { dateOnly } from '../certcard/certCardModel.js'
 import ManualCertBadge from './ManualCertBadge.jsx'
-import { daysText, rowTone } from './manualCertModel.js'
+import { daysText, rowDays, rowTone, rowToneLabel } from './manualCertModel.js'
 import { Button } from '@/components/shadcn/button'
 import { Card } from '@/components/shadcn/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
@@ -95,8 +95,8 @@ export default function ManualCertList({ rows, onOpen, onRenew, onDownload, onEd
                         <CertTierBadge tier={r.tier} />
                       </div>
                       <div className="mt-1.5 flex flex-wrap items-center gap-2">
-                        <CertStatusBadge tone={tone} label={t(TONE_LABEL[tone])} />
-                        <span data-slot="mcert-days" className="text-sm font-semibold tabular-nums">{daysText(t, r.days_remaining)}</span>
+                        <CertStatusBadge tone={tone} label={t(rowToneLabel(tone))} />
+                        <span data-slot="mcert-days" className="text-sm font-semibold tabular-nums">{daysText(t, rowDays(r))}</span>
                       </div>
                     </div>
                     <div className="shrink-0">
@@ -172,10 +172,11 @@ export default function ManualCertList({ rows, onOpen, onRenew, onDownload, onEd
                     </TableCell>
                     <TableCell className="px-3 py-2.5 align-top">
                       <span className="flex flex-col items-start gap-1">
-                        <CertStatusBadge tone={tone} label={t(TONE_LABEL[tone])} />
+                        <CertStatusBadge tone={tone} label={t(rowToneLabel(tone))} />
                         <span data-slot="mcert-days" className={cn('text-xs font-semibold tabular-nums',
-                          tone === 'expired' || tone === 'critical' ? 'text-destructive' : tone === 'valid' ? 'text-muted-foreground' : 'text-amber-700 dark:text-amber-400')}>
-                          {daysText(t, r.days_remaining)}
+                          tone === 'expired' || tone === 'critical' ? 'text-destructive'
+                            : tone === 'valid' || tone === 'paused' || tone === 'unknown' ? 'text-muted-foreground' : 'text-amber-700 dark:text-amber-400')}>
+                          {daysText(t, rowDays(r))}
                         </span>
                       </span>
                     </TableCell>

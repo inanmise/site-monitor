@@ -264,7 +264,8 @@ export default function CertDetailsPanel({ d, tone: toneProp, now: nowProp }) {
               </DefItem>
               {port && <DefItem slot="port" label={t('sslv.f.port')} mono>{String(port)}</DefItem>}
               {clean(d.via) && (
-                <DefItem slot="via" label={t('sslv.f.route')}>{t(d.via === 'proxy' ? 'sslv.via.proxy' : 'sslv.via.direct')}</DefItem>
+                // Yüklenen (manuel) sertifika ağdan okunmadı (UIM-40): "doğrudan bağlantı" değil "Yüklenen dosya" — kartla aynı
+                <DefItem slot="via" label={t('sslv.f.route')}>{t(d.via === 'upload' ? 'card.viaUpload' : d.via === 'proxy' ? 'sslv.via.proxy' : 'sslv.via.direct')}</DefItem>
               )}
               {clean(d.tls_mode_used) && <DefItem slot="tls-mode" label={t('sslv.f.tlsMode')} mono>{clean(d.tls_mode_used)}</DefItem>}
             </DefList>

@@ -89,6 +89,19 @@ describe('CheckRunShell', () => {
     expect(onClose).toHaveBeenCalled()
   })
 
+  // UIM-38 (2026-10-22): adlar KESİLMEZ — hedef / takım hücreleri ve özet takım etiketi sararak tam görünür
+  it('uzun hedef / takım adı kesilmez (truncate yok, sarar); özet takım etiketi tam metin', () => {
+    expect(CELL.target).not.toMatch(/\btruncate\b/)
+    expect(CELL.team).not.toMatch(/\btruncate\b/)
+    expect(CELL.team).toMatch(/whitespace-normal/)
+    const long = 'Dijital Kanallar Uygulama Geliştirme ve Operasyon Müdürlüğü (Çağrı Merkezi / Mobil Bankacılık)'
+    render(<CheckRunShell run={runOf([baseRow()], { teamLabel: long })} nameHeader="İzleme" nameOf={(r) => r.monitor.name}
+      columns={[]} onClose={() => {}} onCancel={() => {}} />)
+    const tag = document.querySelector('[data-slot="check-run-team"]')
+    expect(tag).toHaveTextContent(long)
+    expect(tag.className).not.toMatch(/\btruncate\b/)
+  })
+
   it('run yoksa HİÇBİR ŞEY çizmez', () => {
     render(
       <CheckRunShell run={null} nameHeader="x" nameOf={() => ''} columns={[]}

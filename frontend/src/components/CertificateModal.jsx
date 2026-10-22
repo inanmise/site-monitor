@@ -83,6 +83,10 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
   // Yalnız takım erişim paylaşımıyla görülen kayıt (2026-10-12): `{ check, edit, delete }` paylaşım düzeyinden — tanıla /
   // sağlık yenile EXECUTE, eski sürüm silme DELETE ister. null = paylaşım yok, mevcut kurallar aynen.
   grantAccess = null,
+  // Sunucu kapıları (2026-10-22): `canCheck` — Sağlık yenile / Tanıla (UIM-9; kartın Çalıştır kuralı), `canDelete` — çöp
+  // kutusu (UIM-14; yönetim kapsamı ya da DELETE paylaşımı, üyelik yetmez), `globalAdmin` — başkasının notunu silme / geri
+  // yükleme (UIM-12, K3). Verilmezse (eski çağıran): kapı bugünkü gibi; globalAdmin izin anlık görüntüsünden (K1).
+  canCheck, canDelete, globalAdmin,
                                           onCheckNow, checking = false, onEdit, refreshSignal = 0, initialTab,
   // Pencere içinden veri değişti (manuel sertifika yeni sürümü, 2026-10-09): çağıran (Pano) kart listesini tazeler.
   onDataChanged,
@@ -143,11 +147,16 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
   const canViewInventory = perms.canView('inventory.list')
   // Silme yetkisi backend'deki kapinin AYNISI: inventory.crud/edit (uc ayrica takim kapsami arar).
   // Yetkisi olmayana dugme HIC cizilmez — gorunup 403 vermek kullaniciyi bosuna umutlandirir.
-  const canDeleteCert = !readOnly && perms.canEdit('inventory.crud') && (!grantAccess || grantAccess.delete)
+  const canDeleteCert = !readOnly && perms.canEdit('inventory.crud')
+    && (canDelete != null ? canDelete === true : (!grantAccess || grantAccess.delete))
+  // Not silme (başkasınınki) / geri yükleme yalnız GLOBAL yönetici (sunucu: AdminController notes) — rol değil (UIM-12)
+  const isGlobalAdmin = globalAdmin != null ? globalAdmin === true : perms.scope?.global_admin === true
+  // Sağlık yenile / tanıla: kartın Çalıştır kapısı (7/24 operatörü başka takımda yok — sunucu 403)
+  const checkAllowed = canCheck != null ? canCheck === true : (!grantAccess || grantAccess.check)
   // Tanıla (2026-10-05): rol (ADMIN/TEAM_ADMIN) değil `diagnostics.run` (execute) izni — sunucu (/api/admin/diagnostics/*)
   // aynı izni + takım kapsamlı envanteri zorlar. Başka takımın (salt okunur) kaydında ve önizlemede yok. Kontrol geçmişindeki
   // hata panelinin "Bu kontrolü tanıla" düğmesi de aynı kapıyla aynı pencereyi açar.
-  const canDiagnose = !readOnly && !previewMode && perms.canExecute('diagnostics.run') && (!grantAccess || grantAccess.check)
+  const canDiagnose = !readOnly && !previewMode && perms.canExecute('diagnostics.run') && checkAllowed
   const [deleting, setDeleting] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
   // Bağımlı sekmeler (Sağlık / Alarm / Envanter) kendi verilerini bir kez çekip tutuyor. Bu
@@ -524,8 +533,9 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
             <Suspense fallback={<LoadingBlock label={t('modal.loading')} fullWidth />}>
               {/* key'e DOMAIN de girer: modal kalıcı mount'lu, domain değişince panel
                   remount olmazsa önceki kaydın satırları ekranda kalıyordu. */}
-              <CertHealthPanel key={`${domain}:${reloadKey}`} domain={domain} canRefresh={!readOnly && (!grantAccess || grantAccess.check)}
-                canConfirm={!readOnly && (!grantAccess || grantAccess.edit)} />
+              {/* Onay = envanter düzenleme kapısı (UIM-10): Düzenle verilen kişide; AUDIT / operatör / VIEW paylaşımında yok */}
+              <CertHealthPanel key={`${domain}:${reloadKey}`} domain={domain} canRefresh={!readOnly && checkAllowed}
+                canConfirm={!readOnly && !!onEdit && (!grantAccess || grantAccess.edit)} />
             </Suspense>
           </TabsContent>
         )}
@@ -621,7 +631,7 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
         {!previewMode && (
           <TabsContent value="notes">
             {/* Notlar (2026-09-28 shadcn yeniden tasarım) — certmodal/CertNotesTab; ekle/sil/geri yükle sekme sayacını tazeler. */}
-            <CertNotesTab domain={domain} currentUser={currentUser} isAdmin={isAdmin} readOnly={readOnly} readOnlyTeam={readOnlyTeam}
+            <CertNotesTab domain={domain} currentUser={currentUser} isAdmin={isAdmin} globalAdmin={isGlobalAdmin && !readOnly && !grantAccess} readOnly={readOnly} readOnlyTeam={readOnlyTeam}
               onCountChange={(n) => setTabCounts((c) => (c.notes === n ? c : { ...c, notes: n }))} />
           </TabsContent>
         )}

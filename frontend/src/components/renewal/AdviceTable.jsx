@@ -13,7 +13,7 @@ const TH = 'bg-muted/60 font-medium text-muted-foreground'
  * Sıkı tablo görünümü (shadcn Table — kendi kabında yatay kayar). Düşük öncelikli sütunlar dar ekranda gizlenir;
  * satır eylemleri tek KebabMenu'de (ad satırı ayırt eder).
  */
-export default function AdviceTable({ rows, t, codeLabel, fpCount, onOpen, onPlan, onDiagnose, onCopy }) {
+export default function AdviceTable({ rows, t, codeLabel, fpCount, onOpen, onPlan, canPlanRow, onDiagnose, onCopy }) {
   return (
     <div data-slot="rn-table" className="overflow-hidden rounded-xl border bg-card">
       <Table className="text-sm">
@@ -60,7 +60,7 @@ export default function AdviceTable({ rows, t, codeLabel, fpCount, onOpen, onPla
                     items={[
                       { label: t('renewal.openCert'), icon: <ExternalLink aria-hidden="true" />, onClick: () => onOpen(a.domain) },
                       { label: t('renewal.diagnoseShort'), icon: <Stethoscope aria-hidden="true" />, onClick: () => onDiagnose(a), hidden: a.code !== 'UNREACHABLE' },
-                      { label: t('renewal.plan'), icon: <CalendarPlus aria-hidden="true" />, onClick: () => onPlan?.(a), hidden: !onPlan },
+                      { label: t('renewal.plan'), icon: <CalendarPlus aria-hidden="true" />, onClick: () => onPlan?.(a), hidden: !onPlan || canPlanRow?.(a) === false },
                       { label: t('renewal.copy'), icon: <Copy aria-hidden="true" />, onClick: () => onCopy(a.domain) },
                     ]} />
                 </TableCell>

@@ -15,7 +15,7 @@ import ResultStep from './wizard/ResultStep.jsx'
 import UploadProgress from './wizard/UploadProgress.jsx'
 import {
   EMPTY_TRACKING, MAX_UPLOAD_BYTES, MAX_UPLOAD_MB, NOTE_MAX, compareWithCurrent, defaultRef, extractedFormData, extractionErrorKey,
-  inventoryPayload, trackingErrors, trackingKeyError,
+  canRenewMatch, inventoryPayload, trackingErrors, trackingKeyError,
 } from './manualCertModel.js'
 import { describeUploadFailure, technicalDetail } from './manualCertErrors.js'
 import {
@@ -186,7 +186,8 @@ export default function UploadWizard({
 
   /** Yenilenebilecek kayıtlar: seçilen girdinin aynı konu adaylarını önde, sonra yönetilebilen diğer manuel kayıtlar. */
   const renewOptions = useMemo(() => {
-    const same = (picked[0]?.matches?.same_subject || []).map((s) => ({ ...s, same: true }))
+    // Yalnız YAZILABİLEN eşleşme (UIM-24, K6): başka takımın kaydını yenileme seçeneği sunulmaz (sunucu 403)
+    const same = (picked[0]?.matches?.same_subject || []).filter((s) => canRenewMatch(s, renewCandidates)).map((s) => ({ ...s, same: true }))
     const seen = new Set(same.map((s) => String(s.inventory_id)))
     const others = (renewCandidates || []).filter((r) => r?.can_manage !== false && !seen.has(String(r.inventory_id)))
       .map((r) => ({ inventory_id: r.inventory_id, domain: r.domain, not_after: r.not_after, same: false }))
@@ -339,7 +340,8 @@ export default function UploadWizard({
     if (multi) setMode('new')
     else if (opts.target) { setMode('renew'); setTarget(opts.target) }
     else if (!renewFixed && prefilled !== sig) {
-      const same = byRef(refs[0])?.matches?.same_subject || []
+      // Kendiliğinden yenileme yalnız yazılabilen eşleşmede (UIM-24): başka takımın kaydı hedef seçilmez
+      const same = (byRef(refs[0])?.matches?.same_subject || []).filter((s) => canRenewMatch(s, renewCandidates))
       if (same.length) { setMode('renew'); setTarget(same[0]) } else setMode('new')
     }
     setStep('track')
@@ -585,6 +587,7 @@ export default function UploadWizard({
             onToggle={(ref) => setSelectedSet((s) => { const n = new Set(s); if (n.has(ref)) n.delete(ref); else n.add(ref); return n })}
             renewMode={renewFixed} renewTargetId={renewTarget?.inventory_id ?? null}
             onOpenCert={onOpenCert ? openCert : undefined} onRenewTarget={renewFromEntry}
+            canRenewMatch={(m) => canRenewMatch(m, renewCandidates)}
             onFixPassword={() => { setBanner(null); setPasswordNeeded(true); setPwFix(true); setStep('file') }} extraction={extraction} />
         )}
         {step === 'track' && (

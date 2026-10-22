@@ -350,7 +350,9 @@ export default function CertificatesTable({ onRowClick, refreshKey, onCheckNow, 
                   compact={compact}
                   selected={selected.has(cert.domain)} onToggle={showSelect ? toggleSel : null}
                   onOpen={onRowClick} onCheckNow={cert.can_check === false ? null : onCheckNow} checking={checkingDomain === cert.domain}
-                  onEdit={canManage && manageable(cert) ? onEdit : null} onCopyLink={copyRowLink}
+                  // Düzenle satırın kendi bayrağıyla (UIM-43): `can_manage` = sunucunun envanter yazma kapısı (üye USER dahil);
+                  // bayrak yoksa (eski sunucu) bugünkü rol kuralı
+                  onEdit={onEdit && (cert.can_manage === true || (cert.can_manage == null && canManage)) ? onEdit : null} onCopyLink={copyRowLink}
                   // Erişim paylaşımıyla görülen satır (shared_access, 2026-10-12) yabancı salt okunur DEĞİL: tam pencere açılır,
                   // eylemler satır bayraklarından; toplu seçim yine yalnız değiştirilebilen satırda
                   readOnly={!manageable(cert) && cert.shared_access !== true} selectable={bulkSelectable(cert)}

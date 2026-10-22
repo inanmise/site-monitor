@@ -136,21 +136,33 @@ export function actionLabel(action, item, t) {
  * `{ onOpen, onHealth, onPlan, onCheck, isChecking }`. Varsayılan görünüm outline: tabloda sütun boyu dolu mavi
  * düğme duvarı olmasın (aciliyeti grup başlığı ve çipler taşır); telefon kartı "Hemen müdahale"de dolu çizer.
  */
+/**
+ * Satırın izin verdiği sonraki adım (2026-10-22, UIM-9/11): kontrol / plan sunucunun reddedeceği bir kullanıcıda
+ * "Sertifikayı aç"a düşer (`h.canCheck` / `h.canPlan` satır başına; verilmezse bugünkü davranış).
+ */
+export function allowedAction(action, row, h) {
+  if (action === 'check' && (!h.onCheck || h.canCheck?.(row) === false)) return 'open'
+  if (action === 'plan' && (!h.onPlan || h.canPlan?.(row) === false)) return 'open'
+  if (action === 'health' && !h.onHealth) return 'open'
+  return action
+}
+
 export function NextActionButton({ item, h, className, size = 'sm', variant }) {
   const t = useT()
   const { row, next } = item
-  const Icon = ACTION_ICON[next.action] ?? ExternalLink
-  const label = actionLabel(next.action, item, t)
-  const checking = next.action === 'check' && !!h.isChecking?.(row)
+  const action = allowedAction(next.action, row, h)
+  const Icon = ACTION_ICON[action] ?? ExternalLink
+  const label = actionLabel(action, item, t)
+  const checking = action === 'check' && !!h.isChecking?.(row)
   const run = () => {
-    if (next.action === 'check') h.onCheck(row)
-    else if (next.action === 'health') h.onHealth(row.domain)
-    else if (next.action === 'plan') h.onPlan(row, item.plan)
+    if (action === 'check') h.onCheck(row)
+    else if (action === 'health') h.onHealth(row.domain)
+    else if (action === 'plan') h.onPlan(row, item.plan)
     else h.onOpen(row.domain)
   }
   return (
     <Button type="button" size={size} variant={variant ?? 'outline'}
-      data-slot="attn-next-action" data-action={next.action} disabled={checking} aria-busy={checking || undefined}
+      data-slot="attn-next-action" data-action={action} disabled={checking} aria-busy={checking || undefined}
       aria-label={t('a11y.rowAction', row.domain, label)} title={nextText(next, t)} onClick={run}
       className={cn('pointer-coarse:h-10', className)}>
       {checking ? <Spinner decorative inline /> : <Icon aria-hidden="true" />}{label}
@@ -167,8 +179,8 @@ export function RowMenu({ item, h }) {
     <KebabMenu rowLabel={row.domain} label={t('tbl.actions')} items={[
       { label: t('renewal.openCert'), icon: <ExternalLink aria-hidden="true" />, onClick: () => h.onOpen(row.domain) },
       { label: t('attn.act.health'), icon: <Stethoscope aria-hidden="true" />, onClick: () => h.onHealth(row.domain), hidden: !h.onHealth },
-      { label: planned ? t('forecast.editPlan') : t('forecast.planRenewal'), icon: <CalendarPlus aria-hidden="true" />, onClick: () => h.onPlan(row, item.plan), hidden: !h.onPlan },
-      { label: t('inv.checkNow'), icon: <Play aria-hidden="true" />, onClick: () => h.onCheck(row), hidden: !h.onCheck || !!h.isChecking?.(row) },
+      { label: planned ? t('forecast.editPlan') : t('forecast.planRenewal'), icon: <CalendarPlus aria-hidden="true" />, onClick: () => h.onPlan(row, item.plan), hidden: !h.onPlan || h.canPlan?.(row) === false },
+      { label: t('inv.checkNow'), icon: <Play aria-hidden="true" />, onClick: () => h.onCheck(row), hidden: !h.onCheck || h.canCheck?.(row) === false || !!h.isChecking?.(row) },
       { label: t('attn.act.inventory'), icon: <Boxes aria-hidden="true" />, onClick: () => h.onInventory(row.domain) },
       { label: t('attn.act.mail'), icon: <MailWarning aria-hidden="true" />, onClick: () => h.onMail(row.domain), hidden: !h.onMail || !item.reasons.some((r) => r.key === 'mail') },
     ]} />

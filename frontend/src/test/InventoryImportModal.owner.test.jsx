@@ -41,3 +41,22 @@ describe('InventoryImportModal — sahibi ekip', () => {
     expect(row('new.example.com').querySelector('[data-slot="team-badge"]')).toBeNull()
   })
 })
+
+// PKG-5 isteği (2026-10-22, ADMIN-9): sütun sınırını aşan hücre satırı `value_too_long` + `changes` = taşan sütun(lar)
+describe('InventoryImportModal — değer çok uzun', () => {
+  it('neden metni taşan sütunun adını taşır', async () => {
+    api.admin.importInventory.mockResolvedValue({ success: true, data: {
+      dry_run: true, created: 0, updated: 0, skipped: 0, errors: 1, rows: [
+        { line: 2, domain: 'long.example.com', action: 'error', reason: 'value_too_long', changes: ['svc_mgmt_contact'] },
+      ] } })
+    render(<InventoryImportModal onClose={() => {}} onDone={() => {}} />)
+    fireEvent.change(screen.getByRole('textbox', { name: /Paste CSV text/ }), { target: { value: 'domain\nlong.example.com' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Preview (dry run)' }))
+    const row = await waitFor(() => {
+      const tr = [...document.querySelectorAll('tr[data-action]')].find((x) => x.textContent.includes('long.example.com'))
+      expect(tr).toBeTruthy()
+      return tr
+    })
+    expect(row.textContent).toContain('Column “svc_mgmt_contact” exceeds its length limit')
+  })
+})

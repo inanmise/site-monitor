@@ -82,7 +82,7 @@ const has = (set, d) => !!set && typeof set.has === 'function' && set.has(d)
 
 export default function WarningsPage({
   certs = [], refreshKey = null, cardExtras = null, silentAlertDomains = null, mailFailureDomains = null, weakDomains = null,
-  onOpenCert, onOpenHealth, onPlanRenewal, cardActions, onMailFailure, onCheckAll, checkingAll = false, checkProgress = null,
+  onOpenCert, onOpenHealth, onPlanRenewal, canPlan, cardActions, onMailFailure, onCheckAll, checkingAll = false, checkProgress = null,
 }) {
   const t = useT()
   const isMobile = useIsMobile()
@@ -93,6 +93,8 @@ export default function WarningsPage({
   // ── Veri ──────────────────────────────────────────────────────────────────────────────────────
   const [data, setData] = useState({ rows: null, ts: null, error: null })
   const [outages, setOutages] = useState(null)
+  // Ağ kesinti geçmişi okunamadı (2026-10-22, UIM-28): "Kayıtlı ağ kesintisi yok" DEĞİL — "okunamadı" + Yeniden dene
+  const [outagesFailed, setOutagesFailed] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
   const seq = useRef(0)       // yarış koruması: hızlı yeniden yüklemede YAVAŞ olan eski yanıt yenisini ezmesin
   const alive = useRef(true)  // söküm sonrası gelen yanıt durum yazmasın
@@ -107,8 +109,8 @@ export default function WarningsPage({
     if (wr?.success) setData({ rows: Array.isArray(wr.data) ? wr.data : [], ts: wr.timestamp ?? null, error: null })
     else setData((d) => ({ ...d, error: (w.status === 'rejected' ? w.reason?.message : wr?.error) || 'error' }))
     const or = o.status === 'fulfilled' ? o.value : null
-    if (or?.success && Array.isArray(or.events)) setOutages(or.events)
-    else setOutages((prev) => prev ?? [])
+    if (or?.success && Array.isArray(or.events)) { setOutages(or.events); setOutagesFailed(false) }
+    else setOutagesFailed(true)   // eldeki (gerçek) liste kalır; hiç okunmadıysa liste yok — "yok" denmez
   }, [])
   useEffect(() => {
     alive.current = true   // StrictMode söküm → yeniden kurulum
@@ -186,6 +188,9 @@ export default function WarningsPage({
     onOpen: (d) => onOpenCert?.(d),
     onHealth: onOpenHealth ? (d) => onOpenHealth(d) : null,
     onPlan: onPlanRenewal ? (row, plan) => onPlanRenewal(row, plan) : null,
+    // Satır başına kapı (2026-10-22, UIM-9/11): plan yönetim kapsamı, kontrol kartın Çalıştır kuralı — sunucu reddederdi
+    canPlan: typeof canPlan === 'function' ? (row) => canPlan(row) !== false : null,
+    canCheck: cardActions ? (row) => !!cardActions(row)?.onCheckNow : null,
     onCheck: cardActions ? (row) => cardActions(row)?.onCheckNow?.() : null,
     isChecking: cardActions ? (row) => !!cardActions(row)?.checking : null,
     onInventory: (d) => navigateTo('domains', { i_q: d }),
@@ -213,7 +218,8 @@ export default function WarningsPage({
   const ongoing = (outages || []).some((e) => e.status === 'ONGOING')
   const outageIsOpen = outageOpen ?? ongoing
   const outageHint = ongoing ? t('attn.outageHintOngoing')
-    : outages?.length ? t('attn.outageHint', outages.length, formatDate(outages[0].detected_at)) : t('attn.outageHintNone')
+    : outages?.length ? t('attn.outageHint', outages.length, formatDate(outages[0].detected_at))
+    : outages === null || outagesFailed ? t('attn.outageHintFailed') : t('attn.outageHintNone')
 
   return (
     <div data-slot="attn-page" className="flex min-w-0 flex-col gap-4">
@@ -295,12 +301,26 @@ export default function WarningsPage({
       )}
 
       {/* ── Ağ Erişim Geçmişi — katlanır; süren kesinti varsa açık başlar ── */}
-      {outages !== null && (
+      {(outages !== null || outagesFailed) && (
         <CollapsibleSection data-slot="attn-outage-section" open={outageIsOpen} onOpenChange={setOutageOpen}
           icon={ongoing ? WifiOff : Wifi} label={t('app.networkOutageHistoryTitle')} hint={outageHint}
           toggleLabel={t('app.networkOutageHistoryTitle')} contentClassName="pt-3">
-          <NetworkOutageHistory events={outages} fold={OUTAGE_FOLD} expanded={outageExpanded}
-            onToggleExpanded={() => setOutageExpanded((v) => !v)} heading={false} className="mt-0" />
+          {outagesFailed && (
+            <div data-slot="attn-outage-failed">
+              <AlertBanner tone={outages === null ? 'danger' : 'warning'} className="mb-3" title={t('attn.outageLoadFailed')}
+                actions={(
+                  <Button type="button" variant="outline" size="sm" className="pointer-coarse:h-10" onClick={() => load(true)} disabled={refreshing}>
+                    <RefreshCw aria-hidden="true" />{t('attn.outageRetry')}
+                  </Button>
+                )}>
+                {outages === null ? t('attn.outageLoadFailedHint') : t('attn.outageStaleHint')}
+              </AlertBanner>
+            </div>
+          )}
+          {outages !== null && (
+            <NetworkOutageHistory events={outages} fold={OUTAGE_FOLD} expanded={outageExpanded}
+              onToggleExpanded={() => setOutageExpanded((v) => !v)} heading={false} className="mt-0" />
+          )}
         </CollapsibleSection>
       )}
     </div>

@@ -72,3 +72,26 @@ for (const vp of VIEWPORTS) {
     expect(buf.length).toBeGreaterThan(20_000)
   })
 }
+
+// 2026-10-22 (UIM-27): envanter CSV'si ortak `downloadBlob` ile iner — bağlantı DOM'da, adres hemen iptal edilmez. GERÇEK
+// tarayıcıda indirme olayı gelir, dosya BOM'lu UTF-8 ve bir envanter satırını taşır (eskiden DOM dışı bağlantı + anında
+// iptal Safari / iPad'de indirmeyi hiç başlatmıyordu).
+for (const vp of VIEWPORTS) {
+  test(`envanter CSV dışa aktarımı (${vp.name}): gerçek indirme, BOM + satır`, async ({ page }) => {
+    test.setTimeout(90_000)
+    await page.setViewportSize({ width: vp.width, height: vp.height })
+    await mockApi(page, { perms: PERMS })
+    await page.goto('/?tab=domains')
+    await page.getByRole('button', { name: /^(Export|Dışa Aktar)/ }).first().click({ timeout: 20_000 })
+    const [csv] = await Promise.all([
+      page.waitForEvent('download'),
+      page.getByRole('menuitem', { name: /(Download as CSV|CSV olarak indir|CSV)/ }).first().click(),
+    ])
+    expect(csv.suggestedFilename()).toMatch(/^site-monitor-inventory-\d{4}-\d{2}-\d{2}\.csv$/)
+    const buf = readFileSync(await csv.path())
+    expect([...buf.subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf])
+    expect(buf.toString('utf8')).toContain('www.example.com')
+    // indirme sonrası bağlantı DOM'dan kalkar (sızıntı yok)
+    expect(await page.locator('a[download]').count()).toBe(0)
+  })
+}

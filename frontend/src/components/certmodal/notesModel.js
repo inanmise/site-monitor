@@ -3,10 +3,11 @@
  * (`GET /api/admin/notes/{domain}` → CertificateNote: id, domain, team_id, author_username, author_name, note, category,
  * created_at, updated_at, updated_by, deleted_at, deleted_by — zamanlar UTC, `Z`siz "yyyy-MM-ddTHH:mm:ss").
  *
- * <p>İzin kuralları ESKİ NotesTab'dakiyle birebir (sunucu da aynısını uygular — AdminController notes uçları):
+ * <p>İzin kuralları sunucunun AYNISI (AdminController notes uçları; 2026-10-22, UIM-12):
  *   düzenle  = salt okunur değil · silinmemiş · YAZARI · oluşturulalı 24 saatten az;
- *   sil      = salt okunur değil · silinmemiş · yazarı YA DA yönetici;
- *   geri al  = salt okunur değil · silinmiş · yönetici.
+ *   sil      = salt okunur değil · silinmemiş · yazarı YA DA GLOBAL yönetici (takım yöneticisi / kapsamlı müdür değil);
+ *   geri al  = salt okunur değil · silinmiş · GLOBAL yönetici.
+ * `isAdmin` (ADMIN / TEAM_ADMIN rolü) yalnız not EKLEMEYİ açar (sekmede); silme / geri alma `globalAdmin` ister.
  */
 
 export const NOTE_CATEGORIES = ['NOTE', 'DEPLOYMENT', 'INCIDENT', 'RENEWAL']
@@ -35,15 +36,15 @@ export function noteCategory(n) {
 }
 
 /** Notun çağıran için izinleri — tek yer (liste, düğmeler ve testler aynı kuralı okur). */
-export function notePermissions(n, { currentUser, isAdmin = false, readOnly = false, now = Date.now() } = {}) {
+export function notePermissions(n, { currentUser, globalAdmin = false, readOnly = false, now = Date.now() } = {}) {
   const isDeleted = !!n?.deleted_at
   const isAuthor = !!currentUser && n?.author_username === currentUser
   return {
     isDeleted,
     isAuthor,
     canEdit: !readOnly && !isDeleted && isAuthor && isWithinEditWindow(n?.created_at, now),
-    canDelete: !readOnly && !isDeleted && (isAuthor || isAdmin),
-    canRestore: !readOnly && isDeleted && isAdmin,
+    canDelete: !readOnly && !isDeleted && (isAuthor || globalAdmin === true),
+    canRestore: !readOnly && isDeleted && globalAdmin === true,
   }
 }
 

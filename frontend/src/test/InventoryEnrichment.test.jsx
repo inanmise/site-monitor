@@ -110,7 +110,9 @@ describe('Domain Envanteri — zenginleştirme', () => {
     await waitFor(() => expect(rowsShown()[0]).toBe('c.example.com'))   // 9 gün en üstte
   })
 
+  // 2026-10-22 (ADMIN-7): gövde artık listedeki (bayat olabilir) satır değil, TAZE okunan kayıt + yama
   it('#8 satır-içi: aktif anahtarı PUT ile tam gövde + yama gönderir (cert_* alanları gövdeye girmez)', async () => {
+    api.admin.getInventoryByDomain.mockResolvedValue({ success: true, data: ITEMS[0] })
     renderIm()
     await screen.findByText('a.example.com')
     const row = screen.getByText('a.example.com').closest('tr')
