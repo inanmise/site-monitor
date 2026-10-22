@@ -56,7 +56,8 @@ describe('CertChangesTab', () => {
     expect(updated.textContent).toContain('Kullanıcı B')
     await waitFor(() => expect(api.monitoring.getChanges).toHaveBeenCalledWith('inventory', 42, expect.anything()))
     // Günlük satırları çizilir (aktör adı görünür)
-    expect((await screen.findAllByText(/Kullanıcı B/)).length).toBeGreaterThan(1)
+    // (findAllByText özet kartındaki tek adla hemen döner — günlük satırları gelene kadar bekle)
+    await waitFor(() => expect(screen.getAllByText(/Kullanıcı B/).length).toBeGreaterThan(1))
   })
 
   it('kaydı olmayan alan adı: açıklamalı boş durum, günlük istenmez', async () => {
