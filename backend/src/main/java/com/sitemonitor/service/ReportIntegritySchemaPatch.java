@@ -19,6 +19,9 @@ import java.util.List;
  *       ölen pod'un hatırlatması kaybolmasın).</li>
  *   <li>{@code tls_grade_changes.notify_attempts} — TLS notu düşüş bildiriminin yeniden deneme sayacı (MP-43: pod belleğinde
  *       değil).</li>
+ *   <li>{@code audit_log.seq_locked} — denetim satırı zincir kilidi altında yazıldı (MP-38: {@code ux_audit_seq} kısmi tekil
+ *       indeksinin kapsamı; eski kodun satırları NULL kalır). Büyük tablo: NULLABLE, varsayılansız ekleme yalnız katalog
+ *       değişikliğidir; kilit beklemesi {@link SchemaDdlGuard} ile sınırlı.</li>
  * </ul>
  * Kolonlar varlıklarda da tanımlı (ddl-auto ekler); bu yama ddl-auto'nun sessizce atladığı ortamları kapatır. Hepsi NULLABLE,
  * varsayılansız (NULL = eski satır: damga yok / sayaç 0). Her ifade kendi try/catch'inde ({@link SchemaDdlGuard} kilit
@@ -34,7 +37,8 @@ public class ReportIntegritySchemaPatch {
 
     static final List<Col> COLUMNS = List.of(
             new Col("tech_error_reminders", "inflight_at", "VARCHAR(32)"),
-            new Col("tls_grade_changes", "notify_attempts", "INTEGER"));
+            new Col("tls_grade_changes", "notify_attempts", "INTEGER"),
+            new Col("audit_log", "seq_locked", "BOOLEAN"));
 
     private final JdbcTemplate jdbc;
 

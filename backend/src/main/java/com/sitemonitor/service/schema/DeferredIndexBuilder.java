@@ -186,12 +186,14 @@ public final class DeferredIndexBuilder {
             Spec.postgresOnly("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_dnsr_pending ON dns_records(checked_at)"
                     + " WHERE change_state = 'PENDING'"),
             // 2026-10-22 (çok pod R2a-D1, MP-38): denetim zincirinin seq tekilliği — işlem içindeki denetim artık COMMIT
-            // sonrası zincir kilidiyle yazılır (AuditService.deferToCommit); bu indeks yeni bir çatallanmayı (ör. dönüşümlü
-            // dağıtımda eski sürüm bir pod'un işlem içi yazımı) veritabanında durdurur. event_time kesimi: bu sürümden ÖNCEKİ
-            // satırlar (olası eski çatallar) indekse girmez — kurulum düşmez, onarım işi gerekmez. İhlal ekleme yolunda bir kez
-            // yeniden okunup denenir (AuditService.appendLocked). PostgreSQL'e özgü (H2'de JVM kilidi + COMMIT sonrası yazım).
+            // sonrası zincir kilidiyle yazılır (AuditService.deferToCommit); bu indeks yeni yazıcılar arasında olası bir
+            // çatallanmayı veritabanında durdurur. Kapsam yalnız YENİ kodun zincir kilidi altında yazdığı satırlar
+            // (seq_locked IS NOT NULL — eski sürüm pod'lar ve geçmiş satırlar bu kolonu hiç yazmaz): eski kodun olası çatalları
+            // dağıtım gününden bağımsız olarak indeksin dışında kalır, kurulum düşmez, onarım işi gerekmez (tarih kesimi
+            // KULLANILMAZ: dağıtım günü bilinmiyor, eski pod'lar o güne dek çatallı satır yazabilir). İhlal ekleme yolunda bir
+            // kez yeniden okunup denenir (AuditService.appendLocked). PostgreSQL'e özgü (H2'de JVM kilidi + COMMIT sonrası yazım).
             Spec.postgresOnly("CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS ux_audit_seq ON audit_log(seq)"
-                    + " WHERE event_time >= '2026-10-23'"));
+                    + " WHERE seq_locked IS NOT NULL"));
 
     /** Bir koşunun özeti. {@code locked=false} → kilit alınamadı, hiçbir şey denenmedi. */
     public record Result(int built, int rebuilt, int valid, int skipped, int failed, boolean locked, long millis) {}

@@ -87,6 +87,8 @@ class AuditChainTransactionForkTest {
         List<AuditLog> rows = chain();
         assertThat(rows).extracting(AuditLog::getSeq).containsExactly(1L, 2L);
         assertThat(rows).extracting(AuditLog::getEventType).containsExactly("LOGIN", "DOMAIN_EDIT");
+        // ux_audit_seq kapsamı: yeni yazıcının her satırı (işlem içi → COMMIT sonrası, işlem dışı) kilit damgalı
+        assertThat(rows).extracting(AuditLog::getSeqLocked).containsExactly(true, true);
         AuditService.ChainVerification v = svc.verifyChain();
         assertThat(v.ok()).as("zincir çatallanmamalı: %s", v).isTrue();
         assertThat(v.checked()).isEqualTo(2);

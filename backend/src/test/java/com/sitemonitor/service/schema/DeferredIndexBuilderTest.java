@@ -68,8 +68,8 @@ class DeferredIndexBuilderTest {
                 + "WHERE alert_event_id IS NULL AND push_trigger NOT IN ('TEST', 'OVERFLOW_SUMMARY') AND created_at >= '2026-10-21'");
         // Karar bekleyen DNS değişiklikleri (2026-10-22, çok pod R1-B inceleme CORE-6): kısmi, PG'ye özgü
         EXPECTED.put("idx_dnsr_pending", "dns_records(checked_at) WHERE change_state = 'PENDING'");
-        // Denetim zinciri seq tekilliği (2026-10-22, çok pod R2a-D1 — MP-38): kısmi, TEKİL; geçmiş satırlar kesimle dışarıda
-        EXPECTED.put("ux_audit_seq", "audit_log(seq) WHERE event_time >= '2026-10-23'");
+        // Denetim zinciri seq tekilliği (2026-10-22, çok pod R2a-D1 — MP-38): kısmi, TEKİL; yalnız yeni kodun kilitli satırları
+        EXPECTED.put("ux_audit_seq", "audit_log(seq) WHERE seq_locked IS NOT NULL");
     }
     /** TEKİL indeksler — {@code CREATE UNIQUE INDEX …}, {@code ux_} öneki. */
     private static final Set<String> UNIQUE = Set.of("ux_push_eventless_key_user", "ux_audit_seq");

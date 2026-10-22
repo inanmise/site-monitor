@@ -166,20 +166,29 @@ public class AuditService {
      * is called from here").
      */
     private AuditLog persistNow(AuditLog e, boolean ownTransaction) {
-        chainLock.lock();
         try {
             boolean pg = ownTransaction ? chainSupported() && isPostgres() : useDbChainLock();
-            if (pg || ownTransaction) {
+            if (pg) {
                 // Çok pod (2026-10-09): son satırı okuma + ekleme TEK işlemde, PostgreSQL işlem-düzeyi advisory lock
-                // altında — kilit COMMIT'te bırakılır, sıradaki pod (JVM kilidi pod'lar arası geçmez) yeni satırı görür.
-                return appendLocked(e, pg);
+                // altında — kilit COMMIT'te bırakılır, sıradaki yazıcı (bu ya da başka pod) yeni satırı görür. JVM kilidi
+                // BURADA ALINMAZ (R2a, MP-38): advisory lock zaten her yazıcıyı sıralar; JVM kilidini tutarken havuzdan bağlantı
+                // beklemek, COMMIT sonrası yazımda dış bağlantısını tutan iş parçacıklarıyla çapraz beklemeye yol açardı
+                // (bağlantı önce, kilit sonra — kilidi tutan hiçbir zaman bağlantı beklemez).
+                return appendLocked(e, true);
             }
-            return appendToChain(e);
+            chainLock.lock();
+            try {
+                // H2 / diğer: JVM kilidi COMMIT'i de kapsar (advisory lock yok) — kendi işleminde ya da deponun işleminde.
+                // Dış işlemin içindeki eski yol (ertelenemedi: senkronizasyon / işlem altyapısı yok) kilit damgası YAZMAZ —
+                // tekil indeks ihlali çağıranın işlemini zehirlemesin.
+                boolean outer = org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive();
+                return ownTransaction ? appendLocked(e, false) : appendToChain(e, !outer);
+            } finally {
+                chainLock.unlock();
+            }
         } catch (Exception ex) {
             writeFallback(e, ex);
             return null;
-        } finally {
-            chainLock.unlock();
         }
     }
 
@@ -191,7 +200,7 @@ public class AuditService {
         try {
             return chainTx.execute(st -> {
                 if (pg) chainJdbc.execute(SQL_CHAIN_LOCK);
-                return appendToChain(e);
+                return appendToChain(e, true);
             });
         } catch (org.springframework.dao.DataIntegrityViolationException dup) {
             log.warn("Denetim zinciri: seq {} başka bir yazıcıyla çakıştı — son satır yeniden okunup bir kez deneniyor",
@@ -199,7 +208,7 @@ public class AuditService {
             e.setId(null);
             return chainTx.execute(st -> {
                 if (pg) chainJdbc.execute(SQL_CHAIN_LOCK);
-                return appendToChain(e);
+                return appendToChain(e, true);
             });
         }
     }
@@ -259,8 +268,12 @@ public class AuditService {
         return false;
     }
 
-    /** Zincire ekleme: son satırdan seq + prev_hash, kendi hash'i, INSERT (bugünkü gövde birebir). */
-    private AuditLog appendToChain(AuditLog e) {
+    /**
+     * Zincire ekleme: son satırdan seq + prev_hash, kendi hash'i, INSERT (bugünkü gövde birebir). {@code locked}: satır zincir
+     * kilidi altında yazılıyor — {@code seq_locked = TRUE} (tekil {@code ux_audit_seq} indeksinin kapsamı, MP-38).
+     */
+    private AuditLog appendToChain(AuditLog e, boolean locked) {
+        e.setSeqLocked(locked ? Boolean.TRUE : null);
         AuditLog last = auditLogRepo.findTopByOrderBySeqDesc().orElse(null);
         long seq = (last != null && last.getSeq() != null) ? last.getSeq() + 1 : 1L;
         String prev = (last != null && last.getRowHash() != null) ? last.getRowHash() : GENESIS;

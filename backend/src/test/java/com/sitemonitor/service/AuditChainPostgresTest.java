@@ -54,17 +54,19 @@ class AuditChainPostgresTest {
         awaitDeferredIndexes();
         JdbcTemplate jdbc = jdbc();
         String def = jdbc.queryForObject("SELECT indexdef FROM pg_indexes WHERE indexname = 'ux_audit_seq'", String.class);
-        assertThat(def).startsWith("CREATE UNIQUE INDEX").contains("(seq)").contains("2026-10-23");
+        assertThat(def).startsWith("CREATE UNIQUE INDEX").contains("(seq)").contains("seq_locked IS NOT NULL");
 
         // Dizin kapsamı: NEGATİF seq (zincirin ucunu — MAX(seq) — etkilemez; uygulamanın eşzamanlı yazımları bozulmaz).
         long probe = -1_000_000L - (UUID.randomUUID().getMostSignificantBits() & 0xFFFFF);
-        String ins = "INSERT INTO audit_log (seq, event_type, event_time, actor, outcome) VALUES (?, 'IT_PROBE', ?, 'it', 'SUCCESS')";
+        String locked = "INSERT INTO audit_log (seq, event_type, event_time, actor, outcome, seq_locked) VALUES (?, 'IT_PROBE', ?, 'it', 'SUCCESS', TRUE)";
+        String legacy = "INSERT INTO audit_log (seq, event_type, event_time, actor, outcome) VALUES (?, 'IT_PROBE', ?, 'it', 'SUCCESS')";
         try {
-            jdbc.update(ins, probe, "2026-10-23T00:00:01");
-            assertThatThrownBy(() -> jdbc.update(ins, probe, "2026-10-24T00:00:01"))
+            jdbc.update(locked, probe, "2026-10-23T00:00:01");
+            assertThatThrownBy(() -> jdbc.update(locked, probe, "2026-10-24T00:00:01"))
                     .isInstanceOf(DataIntegrityViolationException.class);
-            jdbc.update(ins, probe - 1, "2026-10-20T00:00:01");
-            jdbc.update(ins, probe - 1, "2026-10-21T00:00:01");   // kesim öncesi (eski olası çatallar) serbest
+            // eski kodun satırı (seq_locked NULL — tarih ne olursa olsun) kapsam dışı: eski çatallar kurulumu düşürmez
+            jdbc.update(legacy, probe, "2026-12-01T00:00:01");
+            jdbc.update(legacy, probe, "2026-12-02T00:00:01");
         } finally {
             jdbc.update("DELETE FROM audit_log WHERE event_type = 'IT_PROBE' AND seq < 0");
         }
@@ -101,6 +103,8 @@ class AuditChainPostgresTest {
             pool.shutdownNow();
         }
         Integer rows = jdbc.queryForObject("SELECT COUNT(*) FROM audit_log WHERE resource_id = ?", Integer.class, tag);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM audit_log WHERE resource_id = ? AND seq_locked = TRUE", Integer.class, tag))
+                .as("yeni yazıcının her satırı kilit damgalı (indeks kapsamında)").isEqualTo(writers * 5);
         Integer distinct = jdbc.queryForObject("SELECT COUNT(DISTINCT seq) FROM audit_log WHERE resource_id = ?", Integer.class, tag);
         assertThat(rows).isEqualTo(writers * 5);
         assertThat(distinct).as("seq'ler tekil").isEqualTo(rows);

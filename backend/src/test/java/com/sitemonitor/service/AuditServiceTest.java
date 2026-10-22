@@ -578,6 +578,7 @@ class AuditServiceTest {
             assertThat(def.getValue().getPropagationBehavior())
                     .isEqualTo(org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
             assertThat(pending.getId()).isEqualTo(1L);
+            assertThat(pending.getSeqLocked()).as("kilit altında yazıldı → ux_audit_seq kapsamında").isTrue();
         } finally {
             org.springframework.transaction.support.TransactionSynchronizationManager.setActualTransactionActive(false);
             org.springframework.transaction.support.TransactionSynchronizationManager.clearSynchronization();
@@ -600,7 +601,10 @@ class AuditServiceTest {
         }
         verify(jdbc, never()).execute(anyString());
         verify(tx, never()).getTransaction(any());
-        verify(auditLogRepo).save(any());
+        ArgumentCaptor<AuditLog> saved = ArgumentCaptor.forClass(AuditLog.class);
+        verify(auditLogRepo).save(saved.capture());
+        // Çağıranın işleminde, kilitsiz: kilit damgası YAZILMAZ (tekil indeks ihlali çağıranın işlemini zehirlemesin)
+        assertThat(saved.getValue().getSeqLocked()).isNull();
     }
 
     @Test
