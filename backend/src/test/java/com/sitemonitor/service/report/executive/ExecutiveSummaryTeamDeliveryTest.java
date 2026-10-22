@@ -71,6 +71,9 @@ class ExecutiveSummaryTeamDeliveryTest {
         when(repo.finishIfClaimed(any(), any(), any(), any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
         // Koşullu bitirme (R2a, MP-42): bütün varlık kaydı yerine; talep edilen satırın alanları nesnede güncellenir
         when(teamRepo.finishIfClaimed(any(), any(), any(), any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
+        // "Gönderim başladı" işareti (R2a inceleme REP-1)
+        when(repo.markSendStarted(any(), any(), any(), any(), any())).thenReturn(1);
+        when(teamRepo.markSendStarted(any(), any(), any(), any(), any())).thenReturn(1);
         when(email.sendHtmlBccWithAttachments(any(), anyString(), anyString(), anyString(), anyList())).thenReturn("SENT");
         when(users.findByActiveTrueOrderByUsernameAsc()).thenReturn(List.of());
         when(teamService.enabledTeamIds()).thenReturn(List.of(5L, 6L));
@@ -201,6 +204,44 @@ class ExecutiveSummaryTeamDeliveryTest {
         assertThat(svc.catchUp().status()).isEqualTo("WINDOW_CLOSED");
         when(teamService.anyEnabled()).thenReturn(false);
         assertThat(svc.catchUp().status()).isEqualTo("DISABLED");
+    }
+
+    @Test
+    @DisplayName("R2a inceleme REP-1: takım talepten sonra yeniden adlandırıldı — yarıda kalan gönderimin izleri İŞARETLE saklanan iz adıyla bulunur, yeniden GÖNDERİLMEZ; iz adı işarette yazılır")
+    void renamedTeam_tracesFoundByStoredName() {
+        when(teamService.enabledTeamIds()).thenReturn(List.of(5L));
+        Instant now = Instant.parse("2026-10-01T09:00:00Z");
+        when(summaryService.now()).thenReturn(now);
+        ExecutiveSummaryTeamReport stuck = new ExecutiveSummaryTeamReport();
+        stuck.setId(4L);
+        stuck.setTeamId(5L);
+        stuck.setReportYear(2026);
+        stuck.setReportMonth(9);
+        stuck.setStatus(ExecutiveSummaryTeamReport.SENDING);
+        stuck.setAttempts(1);
+        stuck.setClaimedAt(ExecutiveSummaryContext.UTC_ISO.format(now.minus(java.time.Duration.ofHours(2))));
+        stuck.setSendStartedClaim(stuck.getClaimedAt());
+        stuck.setSendTraceName("Yönetici Özeti · Eski Ödeme");
+        stuck.setRecipientCount(2);
+        stuck.setChunkCount(1);
+        when(teamRepo.findByTeamIdAndReportYearAndReportMonth(5L, 2026, 9)).thenReturn(Optional.of(stuck));
+        when(teamRepo.reclaim(any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
+        org.springframework.jdbc.core.JdbcTemplate j = mock(org.springframework.jdbc.core.JdbcTemplate.class);
+        when(j.query(anyString(), any(org.springframework.jdbc.core.RowMapper.class), eq(ExecutiveSummaryDeliveryService.TRIGGER),
+                eq("Yönetici Özeti · Eski Ödeme"), any()))
+                .thenReturn(List.<String[]>of(new String[] { "BCC×2: mudur@example.com, ayse@example.com", "SENT" }));
+        svc.setJdbc(j);
+
+        svc.catchUp();   // takımın bugünkü adı "Ödeme Sistemleri"
+        verify(email, never()).sendHtmlBccWithAttachments(any(), anyString(), anyString(), anyString(), anyList());
+        verify(teamRepo, never()).reclaim(any(), any(), any(), any(), any(), any(), any());
+        verify(teamRepo).finishIfClaimed(eq(4L), eq(stuck.getClaimedAt()), eq("SENT"), eq(2), eq(1), any(), any(), any(), any(), any());
+
+        // yeni gönderim: işaret takımın o anki iz adıyla yazılır
+        org.mockito.Mockito.clearInvocations(teamRepo);
+        when(teamRepo.findByTeamIdAndReportYearAndReportMonth(5L, 2026, 9)).thenReturn(Optional.empty());
+        svc.runTeams(YearMonth.of(2026, 9), "SCHEDULED", false);
+        verify(teamRepo).markSendStarted(any(), anyString(), eq("Yönetici Özeti · Ödeme Sistemleri"), eq(2), eq(1));
     }
 
     @Test

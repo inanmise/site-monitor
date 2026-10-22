@@ -539,6 +539,7 @@ class AuditServiceTest {
 
         assertThat(saved).isNotNull();
         assertThat(saved.getSeq()).isEqualTo(1L);
+        assertThat(saved.getSeqLocked()).as("PostgreSQL olmadığı BİLİNİYOR → JVM kilidi COMMIT'i kapsar").isTrue();
         verify(jdbc, never()).execute(anyString());
         verify(tx, never()).getTransaction(any());
         verify(auditLogRepo).save(any());
@@ -608,26 +609,71 @@ class AuditServiceTest {
     }
 
     @Test
-    @DisplayName("Çok pod R2a (MP-38): tekil seq ihlali (eski pod'un işlem içi yazımıyla çakışma) → bir kez yeniden okunup denenir")
-    void persist_postgres_uniqueSeqViolation_retriedOnce() {
+    @DisplayName("Çok pod R2a (inceleme REP-5): kilitli yazımda bütünlük ihlali YENİDEN DENENMEZ — kayıt fallback dosyasına düşer"
+            + " (ux_audit_seq yalnız kilitli satırları kapsar; orada seq çakışması olamaz, ihlal başka bir kısıttır)")
+    void persist_postgres_integrityViolation_notRetried_fallsBack(@TempDir Path tmp) throws IOException {
+        // Yeniden temel (2026-10-23, R2a inceleme REP-5): eskiden her DataIntegrityViolationException "seq başka bir yazıcıyla
+        // çakıştı (eski pod)" diye günlüklenip AYNI kayıtla yeniden deneniyordu — eski pod'ların satırları seq_locked NULL
+        // (indeksin dışında) olduğundan bu çakışma imkânsızdı; yakalanan ihlal (ör. çok uzun değer) ikinci denemede de düşerdi.
+        Path fb = tmp.resolve("audit-fallback.jsonl");
+        ReflectionTestUtils.setField(service, "fallbackFile", fb.toString());
         var jdbc = chainJdbc("PostgreSQL");
         var tx = txManager();
         service.setChainLockSupport(jdbc, tx);
-        AuditLog other = new AuditLog();
-        other.setSeq(7L);
-        other.setRowHash("h7");
-        when(auditLogRepo.findTopByOrderBySeqDesc()).thenReturn(Optional.empty(), Optional.of(other));
-        doThrow(new org.springframework.dao.DataIntegrityViolationException("ux_audit_seq"))
-                .doAnswer(inv -> { AuditLog a = inv.getArgument(0); a.setId(9L); return a; })
+        when(auditLogRepo.findTopByOrderBySeqDesc()).thenReturn(Optional.empty());
+        doThrow(new org.springframework.dao.DataIntegrityViolationException("value too long for type character varying(255)"))
                 .when(auditLogRepo).save(any());
 
-        AuditLog saved = service.persist(new AuditLog());
+        assertThat(service.persist(new AuditLog())).isNull();
+        verify(auditLogRepo, times(1)).save(any());
+        verify(jdbc, times(1)).execute(AuditService.SQL_CHAIN_LOCK);
+        assertThat(Files.exists(fb)).as("kayıt kaybolmaz — fallback dosyasında").isTrue();
+    }
 
-        assertThat(saved).isNotNull();
-        assertThat(saved.getSeq()).isEqualTo(8L);
-        assertThat(saved.getPrevHash()).isEqualTo("h7");
-        verify(jdbc, times(2)).execute(AuditService.SQL_CHAIN_LOCK);
-        verify(auditLogRepo, times(2)).save(any());
+    @Test
+    @DisplayName("Çok pod R2a (inceleme REP-4): veritabanı türü okunamazsa JVM kilidiyle yazılır ama seq_locked NULL kalır"
+            + " (advisory lock alınmadan TRUE basılmaz); tür okunabilince kilitli yol + TRUE")
+    void persist_dialectReadFails_noLockedStamp() {
+        org.springframework.jdbc.core.JdbcTemplate jdbc = mock(org.springframework.jdbc.core.JdbcTemplate.class);
+        doThrow(new org.springframework.jdbc.CannotGetJdbcConnectionException("pool exhausted"))
+                .doReturn("PostgreSQL")
+                .when(jdbc).execute(any(org.springframework.jdbc.core.ConnectionCallback.class));
+        var tx = txManager();
+        service.setChainLockSupport(jdbc, tx);
+        when(auditLogRepo.findTopByOrderBySeqDesc()).thenReturn(Optional.empty());
+
+        AuditLog first = service.persist(new AuditLog());
+        assertThat(first).isNotNull();
+        assertThat(first.getSeqLocked()).as("tür bilinmiyor → kilit damgası yok (ux_audit_seq dışında)").isNull();
+        verify(jdbc, never()).execute(AuditService.SQL_CHAIN_LOCK);
+
+        AuditLog second = service.persist(new AuditLog());
+        assertThat(second.getSeqLocked()).as("tür bir sonraki yazımda belirlendi → advisory lock + TRUE").isTrue();
+        verify(jdbc, times(1)).execute(AuditService.SQL_CHAIN_LOCK);
+    }
+
+    @Test
+    @DisplayName("Çok pod R2a (inceleme REP-4): COMMIT sonrası (kendi işleminde) yazımda tür okunamazsa da seq_locked NULL")
+    void persist_afterCommit_dialectReadFails_noLockedStamp() {
+        org.springframework.jdbc.core.JdbcTemplate jdbc = mock(org.springframework.jdbc.core.JdbcTemplate.class);
+        doThrow(new org.springframework.jdbc.CannotGetJdbcConnectionException("pool exhausted"))
+                .when(jdbc).execute(any(org.springframework.jdbc.core.ConnectionCallback.class));
+        var tx = txManager();
+        service.setChainLockSupport(jdbc, tx);
+        when(auditLogRepo.findTopByOrderBySeqDesc()).thenReturn(Optional.empty());
+
+        org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
+        org.springframework.transaction.support.TransactionSynchronizationManager.setActualTransactionActive(true);
+        try {
+            AuditLog pending = service.persist(new AuditLog());
+            org.springframework.transaction.support.TransactionSynchronizationManager.getSynchronizations().getFirst().afterCommit();
+            assertThat(pending.getId()).as("yazıldı (kendi işleminde)").isEqualTo(1L);
+            assertThat(pending.getSeqLocked()).isNull();
+            verify(jdbc, never()).execute(AuditService.SQL_CHAIN_LOCK);
+        } finally {
+            org.springframework.transaction.support.TransactionSynchronizationManager.setActualTransactionActive(false);
+            org.springframework.transaction.support.TransactionSynchronizationManager.clearSynchronization();
+        }
     }
 
     @Test

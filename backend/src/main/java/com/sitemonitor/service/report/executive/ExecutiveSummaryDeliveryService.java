@@ -52,13 +52,16 @@ import java.util.function.Supplier;
  *   <li>Saatlik telafi ({@link #catchUp}): bu ayın planlı anından sonraki {@value #CATCH_UP_HOURS} saat içinde, önceki ay
  *       gönderilmemişse (kayıt yok — pod kapalıydı) ya da yeniden denenebilir durumdaysa (FAILED / NO_RECIPIENT /
  *       SKIPPED_MAIL_OFF / SKIPPED_DISABLED) ve deneme sayısı {@value #MAX_ATTEMPTS}'ün altındaysa gönderir.</li>
- *   <li><b>Yarıda kalan SENDING (çok pod R2a, MP-42, 2026-10-22):</b> talebi {@link #STALE_SENDING}'den eski SENDING kaydı
- *       telafide İZLERİNE göre kapanır — talepten bu yana hiçbir dilim izi ({@code notification_logs}) yoksa posta hiç
- *       gitmemiştir: kayıt koşullu olarak FAILED olur ve aynı telafi yeniden gönderir (deneme sayacından düşer); dilim izi
- *       varsa (bazı dilimler gitmiş olabilir) YENİDEN GÖNDERİLMEZ, kayıt izlerden PARTIAL / FAILED yazılır + iz satırı
- *       (en çok bir kez kuralı; yönetici "Şimdi gönder" ile karar verir). Eskiden yalnız elle devralınıyordu: konuşlandırma
- *       anında ölen pod ayın özetini kalıcı olarak kaybettiriyordu. Bitirme yazımı koşulludur ({@code claimed_at}) ve
- *       {@value #FINISH_TRIES} kez denenir.</li>
+ *   <li><b>Yarıda kalan SENDING (çok pod R2a, MP-42, 2026-10-22; inceleme REP-1, 2026-10-23):</b> ilk BCC diliminden
+ *       ÖNCE kayda kalıcı bir "gönderim başladı" işareti yazılır ({@code send_started_claim} = talep anı, iz adı, planlanan
+ *       alıcı / dilim sayısı — koşullu UPDATE; yazılamazsa HİÇBİR dilim gönderilmez). Talebi {@link #STALE_SENDING}'den eski
+ *       SENDING kaydı telafide işarete ve izlere ({@code notification_logs}) göre kapanır: işaret YOK ve dilim izi yok →
+ *       posta hiç gitmedi: kayıt koşullu FAILED olur ve aynı telafi yeniden gönderir; işaret VAR ve planlanan dilimlerin
+ *       HEPSİNİN sonuç izi var → sonuç izlerden yazılır (hepsi başarısızsa FAILED — telafi yeniden dener; gerçekten hiçbiri
+ *       gitmedi); işaret var ama izler eksik (DB kesintisinde iz yazılamadı, pod dilim ortasında öldü) ya da işaretsiz iz
+ *       (eski sürüm pod) → SONUÇ BİLİNMİYOR: PARTIAL + {@code FAILED: sonuç bilinmiyor …} izi, YENİDEN GÖNDERİLMEZ (en çok bir
+ *       kez; yönetici "Şimdi gönder" ile karar verir). İzler iz adıyla aranır — takım sonradan yeniden adlandırılsa da bulunur.
+ *       Bitirme yazımı koşulludur ({@code claimed_at}) ve {@value #FINISH_TRIES} kez denenir.</li>
  *   <li><b>Deneme aralığı:</b> zamanlanmış / telafi yolu son talebi {@link #MIN_RECLAIM_SPACING}'ten yeni bir kaydı yeniden
  *       talep etmez (aynı saatte geç kalan ikinci pod deneme hakkını boşa harcamasın); elle gönderim bekletmez.</li>
  * </ul>
@@ -189,6 +192,8 @@ public class ExecutiveSummaryDeliveryService {
                     String triggerKind, String actor);
         /** Koşullu bitirme (R2a, MP-42): satırın alanları {@code row}'dan; yalnız hâlâ {@code claimedAt} talebiyse. */
         int finishIfClaimed(ExecutiveReportRow row, String claimedAt);
+        /** "Gönderim başladı" işareti (R2a inceleme REP-1): yalnız hâlâ {@code claimedAt} talebinin SENDING satırına. */
+        int markSendStarted(ExecutiveReportRow row, String claimedAt, int recipients, int chunks);
     }
 
     private final Slot orgSlot = new Slot() {
@@ -213,6 +218,9 @@ public class ExecutiveSummaryDeliveryService {
         @Override public int finishIfClaimed(ExecutiveReportRow r, String claimedAt) {
             return reportRepo.finishIfClaimed(r.getId(), claimedAt, r.getStatus(), r.getRecipientCount(), r.getChunkCount(),
                     r.getDetail(), r.getSubject(), r.getSummaryStatus(), r.getSummaryJson(), r.getSentAt());
+        }
+        @Override public int markSendStarted(ExecutiveReportRow r, String claimedAt, int recipients, int chunks) {
+            return reportRepo.markSendStarted(r.getId(), claimedAt, traceName(), recipients, chunks);
         }
     };
 
@@ -242,6 +250,9 @@ public class ExecutiveSummaryDeliveryService {
             @Override public int finishIfClaimed(ExecutiveReportRow r, String claimedAt) {
                 return teamReportRepo.finishIfClaimed(r.getId(), claimedAt, r.getStatus(), r.getRecipientCount(),
                         r.getChunkCount(), r.getDetail(), r.getSubject(), r.getSummaryStatus(), r.getSummaryJson(), r.getSentAt());
+            }
+            @Override public int markSendStarted(ExecutiveReportRow r, String claimedAt, int recipients, int chunks) {
+                return teamReportRepo.markSendStarted(r.getId(), claimedAt, traceName(), recipients, chunks);
             }
         };
     }
@@ -593,6 +604,16 @@ public class ExecutiveSummaryDeliveryService {
 
         List<String> to = rc.emails();
         recipientCount = to.size();
+        int planned = (to.size() + BCC_CHUNK - 1) / BCC_CHUNK;
+        String notStarted = markSendStarted(slot, row, to.size(), planned);
+        if (notStarted != null) {
+            // İşaret yazılmadan HİÇBİR dilim gitmez (R2a inceleme REP-1): yarıda kalan kayıtta "işaret yok" = posta gitmedi.
+            trace(slot, "—", subject, null, clip(notStarted, 250), TRIGGER);
+            finish(slot, row, ExecutiveReportRow.FAILED, 0, 0, clip(notStarted, 500), subject, summary);
+            log.warn("Aylık yönetici özeti {} ({}): {}", month, slot.label(), notStarted);
+            return new Result(notStarted.startsWith("SKIPPED") ? "NOT_CLAIMED" : ExecutiveReportRow.FAILED, month.toString(),
+                    0, 0, notStarted);
+        }
         for (int i = 0; i < to.size(); i += BCC_CHUNK) {
             List<String> chunk = to.subList(i, Math.min(to.size(), i + BCC_CHUNK));
             chunks++;
@@ -651,6 +672,9 @@ public class ExecutiveSummaryDeliveryService {
                 throw new UnsupportedOperationException();
             }
             @Override public int finishIfClaimed(ExecutiveReportRow r, String claimedAt) { throw new UnsupportedOperationException(); }
+            @Override public int markSendStarted(ExecutiveReportRow r, String claimedAt, int recipients, int chunks) {
+                throw new UnsupportedOperationException();
+            }
         };
     }
 
@@ -761,34 +785,90 @@ public class ExecutiveSummaryDeliveryService {
     }
 
     /**
-     * Yarıda kalan SENDING kaydı (R2a, MP-42; sınıf belgesi). Talep {@link #STALE_SENDING}'den yeni → hâlâ sürüyor
-     * (IN_PROGRESS). İz okunamaz → eski kural (IN_PROGRESS; elle devralınır). Dilim izi var → yeniden gönderilmez, kayıt
-     * izlerden kapanır. Dilim izi yok → kayıt koşullu FAILED olur ve {@code resend} (normal talep yolu) yeniden dener; deneme
-     * hakkı dolmuşsa FAILED kalır. Her karar bir iz satırı bırakır; iki pod yarışırsa koşullu yazımı kazanan karar verir.
+     * "Gönderim başladı" işaretini yazar (R2a inceleme REP-1). Başarı → {@code null}; değilse iz / kayıt durumu metni (bu
+     * çağıran HİÇBİR dilim göndermez): talep başkasına geçti ({@code SKIPPED: …}) ya da işaret {@value #FINISH_TRIES}
+     * denemede yazılamadı ({@code FAILED: …}).
+     */
+    private String markSendStarted(Slot slot, ExecutiveReportRow row, int recipients, int chunks) {
+        String claimedAt = row.getClaimedAt();
+        Exception last = null;
+        for (int i = 1; i <= FINISH_TRIES; i++) {
+            try {
+                int n = slot.markSendStarted(row, claimedAt, recipients, chunks);
+                return n == 1 ? null : "SKIPPED: talep başka bir gönderime geçmiş — bu pod göndermedi";
+            } catch (Exception e) {
+                last = e;
+                log.warn("Aylık yönetici özeti ({}): gönderim işareti yazılamadı (deneme {}/{}): {}", slot.label(), i,
+                        FINISH_TRIES, e.toString());
+                if (i < FINISH_TRIES) {
+                    try {
+                        Thread.sleep(200L * i);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                }
+            }
+        }
+        return "FAILED: gönderim başlatılamadı — başlangıç işareti yazılamadı, hiçbir dilim gönderilmedi ("
+                + (last == null ? "kesildi" : last.getClass().getSimpleName()) + ")";
+    }
+
+    /**
+     * Yarıda kalan SENDING kaydı (R2a, MP-42; inceleme REP-1; sınıf belgesi). Talep {@link #STALE_SENDING}'den yeni → hâlâ
+     * sürüyor (IN_PROGRESS). İz okunamaz → eski kural (IN_PROGRESS; elle devralınır). Bu talep için işaret yok + dilim izi yok
+     * → posta gitmedi: kayıt koşullu FAILED olur ve {@code resend} (normal talep yolu) yeniden dener; deneme hakkı dolmuşsa
+     * FAILED kalır. İşaret var + planlanan dilimlerin HEPSİNİN izi var → sonuç izlerden. Diğer her durum (izler eksik,
+     * işaretsiz iz) → sonuç bilinmiyor: PARTIAL, yeniden gönderilmez. Her karar bir iz satırı bırakır; iki pod yarışırsa
+     * koşullu yazımı kazanan karar verir.
      */
     Result recoverStaleSending(Slot slot, ExecutiveReportRow row, YearMonth month, Supplier<Result> resend) {
         Instant now = summaryService.now();
         if (!staleSending(row, now)) return new Result("IN_PROGRESS", month.toString(), 0, 0, row.getStatus());
         String claimedAt = row.getClaimedAt();
-        List<String[]> traces = chunkTraces(slot, claimedAt);
+        boolean started = claimedAt != null && !claimedAt.isBlank() && claimedAt.equals(row.getSendStartedClaim());
+        String traceName = started && row.getSendTraceName() != null && !row.getSendTraceName().isBlank()
+                ? row.getSendTraceName() : slot.traceName();
+        List<String[]> traces = chunkTraces(slot, traceName, claimedAt);
         if (traces == null) return new Result("IN_PROGRESS", month.toString(), 0, 0, row.getStatus());
-        if (!traces.isEmpty()) {
+        if (started || !traces.isEmpty()) {
             Map<String, Integer> statuses = new LinkedHashMap<>();
-            int recipients = 0;
+            int traced = 0;
             for (String[] t : traces) {
                 int n = chunkSize(t[0]);
-                recipients += n;
+                traced += n;
                 statuses.merge(statusKey(t[1]), Math.max(1, n), Integer::sum);
             }
-            String st = finalStatus(statuses);
-            // Kaç alıcıya gidecekti bilinmiyor (pod tur ortasında öldü): "hepsi gitti" denmez
-            if (ExecutiveReportRow.SENT.equals(st)) st = ExecutiveReportRow.PARTIAL;
-            String why = "Gönderen pod yarıda durdu — sonuç dilim izlerinden yazıldı, yeniden gönderilmedi (" + detail(statuses) + ")";
-            if (finishRow(slot, row, claimedAt, st, recipients, traces.size(), why, row.getSubject(), null) == 1) {
-                trace(slot, "—", null, null, clip("SKIPPED: " + why, 250), TRIGGER);
+            int plannedChunks = started && row.getChunkCount() != null ? row.getChunkCount() : 0;
+            int plannedRecipients = started && row.getRecipientCount() != null ? row.getRecipientCount() : traced;
+            boolean complete = started && plannedChunks > 0 && traces.size() >= plannedChunks;
+            String st;
+            String why;
+            String traceStatus;
+            if (complete) {
+                // Bütün dilimlerin sonucu biliniyor: kayıt izlerden (hepsi başarısızsa FAILED — gerçekten hiçbiri gitmedi,
+                // telafi yeniden dener)
+                st = finalStatus(statuses);
+                why = "Gönderen pod sonucu yazamadan durdu — planlanan " + plannedChunks + " dilimin hepsinin izi var, sonuç "
+                        + "izlerden yazıldı (" + detail(statuses) + ")";
+                traceStatus = "SKIPPED: " + why;
+            } else {
+                // Bir dilim izi yazılamadan gitmiş olabilir (DB kesintisi, dilim ortasında ölen pod, eski sürüm pod) —
+                // "hepsi gitti" de "hiçbiri gitmedi" de denemez: yeniden GÖNDERİLMEZ (en çok bir kez)
+                st = ExecutiveReportRow.PARTIAL;
+                why = "Sonuç bilinmiyor — "
+                        + (started ? "planlanan " + plannedChunks + " dilimin yalnız " + traces.size() + " tanesinin sonucu yazılı"
+                                   : traces.size() + " dilimin sonucu yazılı, toplam dilim sayısı bilinmiyor")
+                        + "; yeniden gönderilmedi (elle karar verin)"
+                        + (statuses.isEmpty() ? "" : " (" + detail(statuses) + ")");
+                traceStatus = "FAILED: " + why;
+            }
+            if (finishRow(slot, row, claimedAt, st, complete ? traced : plannedRecipients, traces.size(), why,
+                    row.getSubject(), null) == 1) {
+                trace(slot, "—", null, null, clip(traceStatus, 250), TRIGGER);
                 log.warn("Aylık yönetici özeti {} ({}): {}", month, slot.label(), why);
             }
-            return new Result(st, month.toString(), recipients, traces.size(), why);
+            return new Result(st, month.toString(), complete ? traced : plannedRecipients, traces.size(), why);
         }
         if (attempts(row) >= MAX_ATTEMPTS) {
             String why = "Gönderen pod yarıda durdu — hiçbir dilim gitmedi; deneme hakkı doldu (elle gönderin)";
@@ -808,15 +888,15 @@ public class ExecutiveSummaryDeliveryService {
     }
 
     /**
-     * Talepten bu yana yazılmış DİLİM izleri ({@code [alıcı alanı, durum]}; alıcı alanı {@code "BCC×n: …"}). Okunamazsa
-     * {@code null}.
+     * Talepten bu yana yazılmış DİLİM izleri ({@code [alıcı alanı, durum]}; alıcı alanı {@code "BCC×n: …"}), iz adıyla
+     * ({@code traceName} — işaretle saklanan ad; yoksa yuvanın bugünkü adı). Okunamazsa {@code null}.
      */
-    private List<String[]> chunkTraces(Slot slot, String claimedAt) {
+    private List<String[]> chunkTraces(Slot slot, String traceName, String claimedAt) {
         if (jdbc == null || claimedAt == null || claimedAt.isBlank()) return null;
         try {
             List<String[]> rows = jdbc.query("SELECT recipient_email, email_status FROM notification_logs "
                             + "WHERE trigger = ? AND recipient_name = ? AND sent_at >= ?",
-                    (rs, i) -> new String[] { rs.getString(1), rs.getString(2) }, TRIGGER, slot.traceName(), claimedAt);
+                    (rs, i) -> new String[] { rs.getString(1), rs.getString(2) }, TRIGGER, traceName, claimedAt);
             List<String[]> out = new ArrayList<>();
             for (String[] r : rows) if (r[0] != null && r[0].startsWith("BCC×")) out.add(r);
             return out;

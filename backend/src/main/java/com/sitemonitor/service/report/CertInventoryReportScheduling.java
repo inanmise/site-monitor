@@ -45,11 +45,14 @@ public class CertInventoryReportScheduling implements SchedulingConfigurer {
     @Value("${site.monitor.cert-inventory-report.cron:0 0 10 * * FRIL}")
     private String fallbackCron;
 
+    /** Koşan tetiğin PLANLI anı (R2a inceleme REP-3: gecikmeden bağımsız karar). */
+    private final LiveCron.PlannedFire plannedFire = new LiveCron.PlannedFire();
+
     @Override
     public void configureTasks(ScheduledTaskRegistrar registrar) {
         registrar.addTriggerTask(
-                () -> schedulerService.runWithSchedulerLock(LOCK, () -> scheduledTick(Instant.now())),
-                context -> {
+                () -> schedulerService.runWithSchedulerLock(LOCK, () -> scheduledTick(plannedFire.last(), Instant.now())),
+                plannedFire.wrap(context -> {
                     String expr = reportService.cron();
                     try {
                         return new CronTrigger(expr, IST).nextExecution(context);
@@ -65,16 +68,23 @@ public class CertInventoryReportScheduling implements SchedulingConfigurer {
                             return (Instant) null;
                         }
                     }
-                });
+                }));
     }
 
-    /** Planlı tetik (kilit altında): canlı cron bu dakikada tetikleniyorsa ve tur bu pod'a düştüyse gönderir. */
-    void scheduledTick(Instant now) {
+    /**
+     * Planlı tetik (kilit altında): canlı cron tetiğin PLANLI anında ({@code planned}; bilinmiyorsa duvar saati) tetikleniyorsa
+     * ve tur bu pod'a düştüyse gönderir — tetik ne kadar geç koşarsa koşsun (R2a inceleme REP-3).
+     */
+    void scheduledTick(Instant planned, Instant now) {
         String cron = LiveCron.effective(reportService.cron(), fallbackCron);
-        if (!LiveCron.firesNow(cron, fallbackCron, IST, now)) {
-            log.info("Aylık envanter raporu: planlı tetik canlı zamanlamaya ({}) uymuyor — zamanlama değişmiş, bu tetikte gönderilmedi",
-                    cron);
+        if (!LiveCron.due(cron, fallbackCron, IST, planned, now)) {
+            log.info("Aylık envanter raporu: planlı tetik ({}) canlı zamanlamaya ({}) uymuyor — zamanlama değişmiş, bu tetikte "
+                    + "gönderilmedi; sıradaki tetik yeni zamanlamadan", planned, cron);
             return;
+        }
+        if (LiveCron.late(planned, now)) {
+            log.warn("Aylık envanter raporu: planlı tetik ({}) {} sn geç koştu (dolu zamanlayıcı havuzu) — yine de gönderiliyor",
+                    planned, java.time.Duration.between(planned, now).toSeconds());
         }
         if (!schedulerService.claimCronRound(ROUND, cron, IST.getId())) {
             log.debug("Aylık envanter raporu: bu planlı tetik başka bir pod'da koştu");

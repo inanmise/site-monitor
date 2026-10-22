@@ -77,4 +77,12 @@ public class ExecutiveSummaryTeamReport implements ExecutiveReportRow {
 
     @Column(name = "created_at", length = 40)
     private String createdAt;
+
+    /** Postası başlamış talep ({@link ExecutiveReportRow#getSendStartedClaim()}; R2a inceleme REP-1) — yalnız koşullu UPDATE yazar. */
+    @Column(name = "send_started_claim", length = 40, insertable = false, updatable = false)
+    private String sendStartedClaim;
+
+    /** Gönderimin iz adı ({@link ExecutiveReportRow#getSendTraceName()}; R2a inceleme REP-1) — yalnız koşullu UPDATE yazar. */
+    @Column(name = "send_trace_name", length = 200, insertable = false, updatable = false)
+    private String sendTraceName;
 }

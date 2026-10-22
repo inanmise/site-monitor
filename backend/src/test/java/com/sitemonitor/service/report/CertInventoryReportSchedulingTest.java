@@ -143,27 +143,72 @@ class CertInventoryReportSchedulingTest {
     private static final Instant LAST_FRIDAY_10 = Instant.parse("2026-10-30T07:00:00Z");
 
     @Test
-    @DisplayName("R2a MP-42: geç kalan ikinci pod aynı planlı tetikte (cron turu başkasında) GÖNDERMEZ — tek posta")
+    @DisplayName("R2a MP-42: geç kalan ikinci pod aynı planlı tetikte GÖNDERMEZ — GERÇEK küme cron turu (iki pod, ortak H2); ikinci pod 90 sn geç")
     void latePodSameFire_noSecondMail() {
+        // Yeniden temel (2026-10-23, R2a inceleme REP-5): eskiden claimCronRound true/false sahteleniyordu — düzeltme olmadan da
+        // geçerdi. Artık iki pod'un GERÇEK SchedulerService'i aynı veritabanındaki tur kaydını kapışır.
         when(reportService.cron()).thenReturn("0 0 10 * * FRIL");
-        when(schedulerService.claimCronRound(eq(CertInventoryReportScheduling.ROUND), eq("0 0 10 * * FRIL"), eq("Europe/Istanbul")))
-                .thenReturn(true).thenReturn(false);
-        scheduling.scheduledTick(LAST_FRIDAY_10);
-        scheduling.scheduledTick(LAST_FRIDAY_10.plusSeconds(20));   // dolu havuzda geç kalan tetik, kilit bırakıldıktan sonra
-        verify(reportService, org.mockito.Mockito.times(1)).sendMonthlyReport(false);
+        try (com.sitemonitor.it.MultiPodTestSupport mp = com.sitemonitor.it.MultiPodTestSupport.create(LAST_FRIDAY_10.toEpochMilli())) {
+            CertInventoryReportScheduling podA = new CertInventoryReportScheduling(reportService, mp.pod(1).scheduler());
+            CertInventoryReportScheduling podB = new CertInventoryReportScheduling(reportService, mp.pod(2).scheduler());
+            ReflectionTestUtils.setField(podA, "fallbackCron", "0 0 10 * * FRIL");
+            ReflectionTestUtils.setField(podB, "fallbackCron", "0 0 10 * * FRIL");
+
+            mp.advance(5_000);
+            podA.scheduledTick(LAST_FRIDAY_10, Instant.ofEpochMilli(mp.now()));
+            mp.advance(90_000);                                      // dolu havuzda geç kalan tetik, kilit bırakıldıktan sonra
+            podB.scheduledTick(LAST_FRIDAY_10, Instant.ofEpochMilli(mp.now()));
+            verify(reportService, org.mockito.Mockito.times(1)).sendMonthlyReport(false);
+        }
     }
 
     @Test
-    @DisplayName("R2a MP-42: zamanlama tetik planlandıktan SONRA değiştiyse eski planlı tetik göndermez (canlı cron bu dakikada tetiklenmiyor); geçersiz canlı ifade → varsayılan")
+    @DisplayName("R2a inceleme REP-3: planlı tetik 5 dk GEÇ koştu (dolu 8'lik zamanlayıcı havuzu) — karar PLANLI ana göre: rapor yine gider (eskiden 61 sn'den geç tetik 'zamanlama değişmiş' sanılıp ay kayboluyordu)")
+    void lateTrigger_stillSends() {
+        when(reportService.cron()).thenReturn("0 0 10 * * FRIL");
+        when(schedulerService.claimCronRound(eq(CertInventoryReportScheduling.ROUND), eq("0 0 10 * * FRIL"), eq("Europe/Istanbul")))
+                .thenReturn(true);
+        scheduling.scheduledTick(LAST_FRIDAY_10, LAST_FRIDAY_10.plusSeconds(300));
+        verify(reportService).sendMonthlyReport(false);
+    }
+
+    @Test
+    @DisplayName("R2a inceleme REP-3: koşan görev tetikleyicinin HESAPLADIĞI planlı anı kullanır — duvar saati tetik anı olmasa da canlı cron o anda tetikleniyorsa gönderir")
+    void runnableUsesPlannedFireFromTrigger() {
+        when(reportService.cron()).thenReturn("0 30 9 1 * *");
+        when(schedulerService.claimCronRound(eq(CertInventoryReportScheduling.ROUND), eq("0 30 9 1 * *"), eq("Europe/Istanbul")))
+                .thenReturn(true);
+        doAnswer(inv -> { inv.getArgument(1, Runnable.class).run(); return null; })
+                .when(schedulerService).runWithSchedulerLock(eq(CertInventoryReportScheduling.LOCK), any());
+        TriggerTask t = task();
+        Instant planned = nextRun(t.getTrigger());                  // gelecekteki ayın 1'i 09:30 — şimdi DEĞİL
+        assertThat(planned).isAfter(Instant.now());
+        t.getRunnable().run();
+        verify(reportService).sendMonthlyReport(false);
+    }
+
+    @Test
+    @DisplayName("R2a MP-42: zamanlama tetik planlandıktan SONRA değiştiyse eski planlı tetik göndermez (canlı cron planlı anda tetiklenmiyor); geçersiz canlı ifade → varsayılan")
     void oldFireAfterCronChange_notDue() {
         when(reportService.cron()).thenReturn("0 0 10 1 * *");      // yeni: ayın 1'i 10:00
-        scheduling.scheduledTick(LAST_FRIDAY_10);                   // eski planlı tetik (son Cuma) geldi
+        scheduling.scheduledTick(LAST_FRIDAY_10, LAST_FRIDAY_10);   // eski planlı tetik (son Cuma) geldi
         verify(reportService, never()).sendMonthlyReport(anyBooleanValue());
         verify(schedulerService, never()).claimCronRound(any(), any(), any());
-        assertThat(LiveCron.firesNow("bozuk", "0 0 10 * * FRIL", java.time.ZoneId.of("Europe/Istanbul"), LAST_FRIDAY_10)).isTrue();
-        assertThat(LiveCron.firesNow("0 0 10 * * FRIL", null, java.time.ZoneId.of("Europe/Istanbul"), LAST_FRIDAY_10.plusSeconds(60))).isTrue();
-        assertThat(LiveCron.firesNow("0 0 10 * * FRIL", null, java.time.ZoneId.of("Europe/Istanbul"), LAST_FRIDAY_10.plusSeconds(90))).isFalse();
-        assertThat(LiveCron.firesNow("0 0 10 * * FRIL", null, java.time.ZoneId.of("Europe/Istanbul"), LAST_FRIDAY_10.minusSeconds(1))).isTrue();
-        assertThat(LiveCron.firesNow("bozuk", "bu da bozuk", java.time.ZoneId.of("Europe/Istanbul"), LAST_FRIDAY_10)).isTrue();
+        java.time.ZoneId ist = java.time.ZoneId.of("Europe/Istanbul");
+        // Planlı an (asıl yol, R2a inceleme REP-3): gecikmeden bağımsız
+        assertThat(LiveCron.firesAt("0 0 10 * * FRIL", null, ist, LAST_FRIDAY_10)).isTrue();
+        assertThat(LiveCron.firesAt("0 0 10 1 * *", null, ist, LAST_FRIDAY_10)).isFalse();
+        assertThat(LiveCron.firesAt("bozuk", "0 0 10 * * FRIL", ist, LAST_FRIDAY_10)).isTrue();
+        assertThat(LiveCron.due("0 0 10 * * FRIL", null, ist, LAST_FRIDAY_10, LAST_FRIDAY_10.plusSeconds(3600))).isTrue();
+        assertThat(LiveCron.late(LAST_FRIDAY_10, LAST_FRIDAY_10.plusSeconds(90))).isTrue();
+        assertThat(LiveCron.late(LAST_FRIDAY_10, LAST_FRIDAY_10.plusSeconds(30))).isFalse();
+        // Duvar saati (planlı an BİLİNMEZKEN son çare): 61 sn pay. Yeniden temel (2026-10-23, inceleme REP-3): +90 sn'nin
+        // reddi artık yalnız bu son çarede geçerli — gerçek tetik planlı anla karar verir (lateTrigger_stillSends).
+        assertThat(LiveCron.firesNow("bozuk", "0 0 10 * * FRIL", ist, LAST_FRIDAY_10)).isTrue();
+        assertThat(LiveCron.firesNow("0 0 10 * * FRIL", null, ist, LAST_FRIDAY_10.plusSeconds(60))).isTrue();
+        assertThat(LiveCron.firesNow("0 0 10 * * FRIL", null, ist, LAST_FRIDAY_10.plusSeconds(90))).isFalse();
+        assertThat(LiveCron.due("0 0 10 * * FRIL", null, ist, null, LAST_FRIDAY_10.plusSeconds(90))).isFalse();
+        assertThat(LiveCron.firesNow("0 0 10 * * FRIL", null, ist, LAST_FRIDAY_10.minusSeconds(1))).isTrue();
+        assertThat(LiveCron.firesNow("bozuk", "bu da bozuk", ist, LAST_FRIDAY_10)).isTrue();
     }
 }

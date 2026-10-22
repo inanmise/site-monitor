@@ -51,10 +51,16 @@ export function parseExtraCc(raw) {
 
 /**
  * Yeniden denenebilir gönderim reddi kodları: hiçbir şey gönderilmedi, biraz sonra aynı istek geçebilir (PDF sırası dolu,
- * kişi başı sınır — gönderim talebi alınmadan reddedilir; 409 `SEND_QUEUED` — önceki gönderim posta sunucusunun 421 yeniden
- * deneme kuyruğunda, ikinci kopya gitmesin diye reddedildi: çok pod R2a, MP-41, 2026-10-22).
+ * kişi başı sınır — gönderim talebi alınmadan reddedilir).
  */
-const RETRYABLE_SEND_CODES = new Set(['PDF_BUSY', 'RATE_LIMITED', 'SEND_QUEUED'])
+const RETRYABLE_SEND_CODES = new Set(['PDF_BUSY', 'RATE_LIMITED'])
+/**
+ * Önceki gönderimin SONUCU BEKLENEN ret (çok pod R2a, MP-41, 2026-10-22; inceleme REP-2, 2026-10-23): 409 `SEND_QUEUED` —
+ * raporun önceki gönderimi posta sunucusunun 421 yeniden deneme kuyruğunda, ikinci kopya gitmesin diye bu gönderim
+ * reddedildi. "Biraz sonra yeniden basın" DENMEZ: kuyruk teslim edilince sunucu ikinci tıklamayı geçirirdi (ikinci kopya);
+ * pencere kuyruğun sonucunu bekler (`sendPollStep`), "Gönder" kuyruk sonuçlanana dek kilitli.
+ */
+const QUEUED_WAIT_SEND_CODES = new Set(['SEND_QUEUED'])
 
 /** Gönderim reddinin kodu (yanıt yükü ya da fırlatılan `ApiError`); yoksa `null`. */
 export function sendFailureCode(res) {
@@ -80,8 +86,11 @@ const FINAL_5XX_CODES = new Set(['MAIL_FAILED'])
  * Gönderim hatası penceresi KAPATMALI mı (inceleme 2026-10-18)? Yeniden denenebilir hatada pencere AÇIK kalır ve yazılan ek
  * Bilgi (CC) korunur — eskiden pencere kapanıyor, bir sonraki "Gönder" ek adreslerSİZ (geri alınamaz) gidebiliyordu.
  * `res` bir yanıt yükü ya da fırlatılan `ApiError` olabilir. Dönüş:
- *  - `'retry'`  — 429 (PDF sırası dolu / kişi başı sınır) ya da 409 `SEND_QUEUED` (önceki gönderim kuyrukta): posta
- *                 gitmedi, biraz sonra yeniden denenebilir — kilit yok, ek Bilgi korunur;
+ *  - `'retry'`  — 429 (PDF sırası dolu / kişi başı sınır): posta gitmedi, biraz sonra yeniden denenebilir — kilit yok, ek
+ *                 Bilgi korunur;
+ *  - `'queued'` — 409 `SEND_QUEUED` (önceki gönderim posta kuyruğunda; inceleme REP-2): bu gönderim gitmedi, ama önceki
+ *                 gönderimin sonucu bekleniyor — pencere açık, kuyruğun yoklaması sürer, "Gönder" kuyruk sonuçlanana dek
+ *                 KİLİTLİ (sonuç: gitti → pencere kapanır; gitmedi → "yeniden gönderebilirsiniz");
  *  - `'unsure'` — ağ hatası / zaman aşımı (durum 0), 409 `SEND_IN_PROGRESS`, `MAIL_FAILED` dışındaki HER 5xx (500, 503,
  *                 504, ağ geçidinin 502 sayfası — 4. tur: posta servise verildikten sonra düşen 500 de "gitmiş olabilir"):
  *                 gönderim olmuş ya da sürüyor olabilir — pencere açık, rapor yeniden okunup durum bilinene kadar "Gönder"
@@ -96,6 +105,7 @@ export function sendFailureKind(res) {
   const code = res.code || info.code || null
   const status = typeof res.status === 'number' ? res.status : (typeof info.status === 'number' ? info.status : null)
   if (code && UNSURE_SEND_CODES.has(code)) return 'unsure'
+  if (code && QUEUED_WAIT_SEND_CODES.has(code)) return 'queued'
   if (code && RETRYABLE_SEND_CODES.has(code)) return 'retry'
   if (code && FINAL_5XX_CODES.has(code)) return null
   if (status != null && status >= 500) return 'unsure'
@@ -186,6 +196,18 @@ const isQueuedRow = (r) => r?.status === 'queued' || r?.send_state === 'QUEUED'
 export function pollBaselineAfterQueued(before, row) {
   if (row && typeof row === 'object' && row.status !== 'sending' && row.send_state !== 'SENDING'
       && attemptOf(row) !== attemptOf(before)) return { baseline: row, own: true }
+  return { baseline: before ?? null, own: false }
+}
+
+/**
+ * 409 `SEND_QUEUED` reddinden sonra BEKLENEN kuyruğun yoklama tabanı (inceleme REP-2): reddin hemen ardından okunan satır
+ * (`loaded`) kuyruktaysa taban O satır (`own: true` — kuyruğun KENDİ sonucu izlenir: teslim → gitti, başarısız → gitmedi);
+ * yoksa tıklamadan önceki satır kuyruktaysa o; ikisi de değilse (eldeki satır bayat, okuma yok) tıklamadan önceki satır
+ * `own: false` — ilk okuma kuyruğu gösterince taban ona geçer ({@link sendPollStep}).
+ */
+export function pollBaselineForQueuedRefusal(before, loaded) {
+  if (loaded && typeof loaded === 'object' && isQueuedRow(loaded)) return { baseline: loaded, own: true }
+  if (before && typeof before === 'object' && isQueuedRow(before)) return { baseline: before, own: true }
   return { baseline: before ?? null, own: false }
 }
 
@@ -321,6 +343,7 @@ export const SENDLOG_REASON_KEYS = Object.freeze({
   INTERNAL_ERROR: 'te.slog.reason.INTERNAL_ERROR',
   RETRIES_EXHAUSTED: 'te.slog.reason.RETRIES_EXHAUSTED',
   RETRIES_FAILED: 'te.slog.reason.RETRIES_FAILED',
+  RETRIED_AFTER_INTERRUPT: 'te.slog.reason.RETRIED_AFTER_INTERRUPT',
   SKIPPED_OTHER: 'te.slog.reason.SKIPPED_OTHER',
   UNKNOWN: 'te.slog.reason.UNKNOWN',
 })
