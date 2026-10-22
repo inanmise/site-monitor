@@ -1,3 +1,5 @@
+import { downloadBlob } from '../../../utils/csvExport.js'
+
 /**
  * Denetim dışa aktarımını İNDİRİR — `window.open` yerine fetch + blob.
  *
@@ -5,6 +7,10 @@
  * **429** dönüyor (prod kapısı Y-2). Yeni sekmede açılan bir bağlantı bu yanıtı kullanıcıya düz metin bir boş sayfa
  * olarak gösteriyordu; burada durum kodu okunup çağıran dostça bir bildirim gösterebilir. Dosya adı sunucunun
  * `Content-Disposition` başlığından gelir (sunucunun verdiği adla aynı).
+ *
+ * <p>İndirme `utils/csvExport.downloadBlob` ile (20.166, UIA-9): bağlantı DOM'da, URL 60 sn tutulur — 0 ms'de geri
+ * alınan URL Safari / iPad'de indirmeyi başlatmıyordu ama "dışa aktarıldı" yazıyordu. Tarayıcı indirmeyi başlatamazsa
+ * `{ ok: false, status: -1 }`.
  *
  * @returns {Promise<{ ok: boolean, status: number }>}  ağ hatasında status 0
  */
@@ -15,16 +21,7 @@ export async function downloadAuditExport(url, fallbackName) {
     const blob = await res.blob()
     const disp = res.headers.get('Content-Disposition') || ''
     const match = /filename="?([^";]+)"?/.exec(disp)
-    const href = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = href
-    a.download = match ? match[1] : fallbackName
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
-    // Serbest bırakmayı ERTELE: click() indirmeyi eşzamanlı başlatmaz; URL hemen geçersiz kılınırsa bazı
-    // tarayıcılar dosyayı boş indirir (api/client.js downloadWeeklyOutagePdf ile aynı gerekçe).
-    setTimeout(() => URL.revokeObjectURL(href), 0)
+    if (!downloadBlob(match ? match[1] : fallbackName, blob)) return { ok: false, status: -1 }
     return { ok: true, status: res.status }
   } catch {
     return { ok: false, status: 0 }

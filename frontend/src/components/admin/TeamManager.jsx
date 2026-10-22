@@ -54,11 +54,36 @@ import { EMPTY_QUIET, quietFromTeam, quietEqual, quietErrors, quietTeamPayload }
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
 import { cn } from '@/lib/utils'
 import { userRefValue } from '../../utils/userRef'
+import { changedFields } from '../../utils/changedFields.js'
 
 // Haftalık e-postalar opt-in: YENİ takım ikisi de kapalı doğar (backend de createTeam'de false yazar).
 // quiet: sessiz saat form değeri (2026-10-01) — yalnız DEĞİŞTİYSE gövdeye girer (dokunulmamış form = bugünkü gövde).
 const emptyTeam = { name: '', email: '', description: '', active: true, leader_id: '', manager_id: '',
   weekly_reminder_enabled: false, weekly_availability_enabled: false, weekly_channels: '', quiet: EMPTY_QUIET }
+
+/** Takım satırı → düzenleme formu (açılışta ve "değişen alanlar" tabanında AYNI dönüşüm, 20.166). */
+function teamToForm(team) {
+  return { ...team, email: team.email || '', leader_id: String(team.leaderId ?? team.leader_id ?? ''),
+    manager_id: String(team.managerId ?? team.manager_id ?? ''),
+    weekly_reminder_enabled: weeklyFlag(team, 'reminder'),
+    weekly_availability_enabled: weeklyFlag(team, 'availability'),
+    weekly_channels: channelsCsv(team),
+    quiet: quietFromTeam(team) }
+}
+
+/** Form → PUT/POST gövdesi (sessiz saat ayrı eklenir). Lider / müdür opak kullanıcı kimliği. */
+function teamPayload(form) {
+  return {
+    name: String(form.name ?? '').trim(),
+    email: String(form.email ?? '').trim(),
+    description: form.description,
+    active: form.active,
+    leader_id: form.leader_id ? userRefValue(form.leader_id) : null,  // PO optional; opak kimlik (2026-10-08)
+    manager_id: form.manager_id ? userRefValue(form.manager_id) : null,  // elle müdür; null → AD zincirinden türet
+    weekly_reminder_enabled: !!form.weekly_reminder_enabled,
+    weekly_availability_enabled: !!form.weekly_availability_enabled,
+  }
+}
 
 /** Takım kanal şablonu (2026-09-13): sunucu JSON dizi metni tutar (`weekly_channels`); formda CSV. */
 export function channelsCsv(team) {
@@ -117,9 +142,15 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
   // 7/24 izleme ekibi takımı rozeti (2026-10-04): takım rehberinin `noc_team` bayrağı (sağlayıcı yoksa rozet yok)
   const teamDir = useTeamDirectory()
   const isAdmin = systemRole === 'ADMIN'
+  // Takım ekle / sil / AD üyelik denetimi YALNIZ global yönetici (20.166, UIA-A6): createTeam / deleteTeam / impact /
+  // LdapMembershipController sunucuda `isGlobalAdmin` ister — kapsamlı müdüre (ADMIN, viewTeamIds) düğmeler 403'tü.
+  const isGlobal = isAdmin && !!globalAdmin
   const isTeamAdmin = systemRole === 'TEAM_ADMIN'
   const canManage = isAdmin || isTeamAdmin
   const canEditRow = (rowTeamId) => isAdmin || (isTeamAdmin && rowTeamId === ownTeamId)
+  // ADMIN / AUDIT üyeyi yalnız global yönetici düzenler (sunucu requireCanAdministerTarget; 20.166 UIA-13) — diğerine
+  // üye kartındaki kalem düzenleyici yerine salt-okunur ayrıntıyı açar.
+  const elevatedTarget = (u) => !isGlobal && (u?.system_role === 'ADMIN' || u?.system_role === 'AUDIT')
   // Haftalık e-posta anahtarlarını takımın HER üyesi çevirebilir (yalnız kendi takımı için).
   // Üyelik listesi oturumdan gelir; sunucu tarafında ayrıca app_users üzerinden doğrulanır.
   const memberOf = useMemo(() => {
@@ -422,12 +453,7 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
 
   function openAdd() { setForm(emptyTeam); setModal('add'); setMsg(null) }
   function openEdit(team) {
-    setForm({ ...team, email: team.email || '', leader_id: String(team.leaderId ?? team.leader_id ?? ''),
-      manager_id: String(team.managerId ?? team.manager_id ?? ''),
-      weekly_reminder_enabled: weeklyFlag(team, 'reminder'),
-      weekly_availability_enabled: weeklyFlag(team, 'availability'),
-      weekly_channels: channelsCsv(team),
-      quiet: quietFromTeam(team) })
+    setForm(teamToForm(team))
     setModal(team)
     setMsg(null)
   }
@@ -435,7 +461,10 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
 
   async function save() {
     setMsg(null)
-    if (form.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) {
+    const isAdd = modal === 'add'
+    // Yalnız DEĞİŞEN e-posta doğrulanır (sunucu kuralı; saklı eski değer muaf — 20.166 checklist #9)
+    const emailChanged = isAdd || form.email.trim() !== String(modal?.email || '').trim()
+    if (emailChanged && form.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) {
       setMsg(t('team.emailInvalid'))
       return
     }
@@ -443,30 +472,30 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
     const initialQuiet = modal === 'add' ? EMPTY_QUIET : quietFromTeam(modal)
     const quietDirty = !quietEqual(form.quiet || EMPTY_QUIET, initialQuiet)
     if (quietDirty && fe.check(quietErrors(form.quiet, t))) return
+    // Düzenlemede YALNIZ DEĞİŞEN alanlar gider (20.166, UIA-A11): tam gövde, pencere açıkken bir üyenin satırdan çevirdiği
+    // haftalık anahtarı (dar uç) eski değere döndürüyordu. Lider temizlenirse `leader_id: ''` gider (UIA-A10 — sunucu
+    // `null`'u "dokunma" sayar; boş dize temizler).
+    const full = teamPayload(form)
+    let payload = full
+    if (!isAdd) {
+      payload = changedFields(full, teamPayload(teamToForm(modal)))
+      if ('leader_id' in payload && payload.leader_id == null) payload.leader_id = ''
+    }
+    if (quietDirty) Object.assign(payload, quietTeamPayload(form.quiet))
+    const nextCh = channelsList(form.weekly_channels)
+    const prevCh = isAdd ? [] : channelsList(channelsCsv(modal))
+    const channelsDirty = JSON.stringify(nextCh) !== JSON.stringify(prevCh)
+    if (!isAdd && Object.keys(payload).length === 0 && !channelsDirty) { closeModal(); return }   // değişiklik yok → istek yok
     setSaving(true)
     try {
-      const payload = {
-        name: form.name.trim(),
-        email: form.email.trim(),
-        description: form.description,
-        active: form.active,
-        leader_id: form.leader_id ? userRefValue(form.leader_id) : null,  // PO optional; opak kimlik (2026-10-08)
-        manager_id: form.manager_id ? userRefValue(form.manager_id) : null,  // elle müdür; null → AD zincirinden türet
-        weekly_reminder_enabled: !!form.weekly_reminder_enabled,
-        weekly_availability_enabled: !!form.weekly_availability_enabled,
-        ...(quietDirty ? quietTeamPayload(form.quiet) : {}),
-      }
-      const isAdd = modal === 'add'
       const editedId = isAdd ? null : modal.id
       const res = isAdd
         ? await api.admin.createTeam(payload)
-        : await api.admin.updateTeam(editedId, payload)
+        : Object.keys(payload).length > 0 ? await api.admin.updateTeam(editedId, payload) : { success: true }
       if (res?.success) {
         // Kanal şablonu ayrı (dar) uçtan gider: yalnız değiştiyse; yeni takımda dolu girildiyse (2026-09-13)
-        const nextCh = channelsList(form.weekly_channels)
-        const prevCh = isAdd ? [] : channelsList(channelsCsv(modal))
         const chId = isAdd ? res.data?.id : editedId
-        if (chId && JSON.stringify(nextCh) !== JSON.stringify(prevCh)) {
+        if (chId && channelsDirty) {
           const chRes = await api.admin.updateTeamWeeklyNotifications(chId, { weekly_channels: nextCh })
           if (!chRes?.success) toast.error(chRes?.error || t('team.weeklySaveError'))
         }
@@ -477,6 +506,8 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
       } else {
         setMsg(res?.error || 'Error')
       }
+    } catch (e) {
+      setMsg(e?.message || t('team.saveError'))
     } finally {
       setSaving(false)
     }
@@ -663,8 +694,8 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
       { label: t('hist.title'), icon: <History />, onClick: () => setHistFilter({ id: team.id, name: team.name }) },
       // Veri Kalitesi (2026-10-10): takımın puanı + düzeltme listesi (sayfa görüş kapsamını sunucuda uygular)
       { label: t('dq.teamMenu'), icon: <Gauge />, onClick: () => navigateTo('dataquality', { dq_team: String(team.id) }) },
-      { label: t('tla.menu'), icon: <ScanSearch />, onClick: () => setLdapAuditTeam(team), hidden: !isAdmin },
-      { label: t('team.delete'), icon: <Trash2 />, danger: true, onClick: () => del(team.id), hidden: !isAdmin },
+      { label: t('tla.menu'), icon: <ScanSearch />, onClick: () => setLdapAuditTeam(team), hidden: !isGlobal },
+      { label: t('team.delete'), icon: <Trash2 />, danger: true, onClick: () => del(team.id), hidden: !isGlobal },
     ]} />
   )
   const emptyText = gapSel.length > 0 ? t('team.gap.empty') : t('team.noResults')
@@ -680,7 +711,7 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
           <Button variant="outline" className="max-sm:h-10 pointer-coarse:h-10" title={t('team.exportCsv')} onClick={exportCsv}>
             <Download aria-hidden="true" /> {t('team.exportCsv')}
           </Button>
-          {isAdmin && <Button className="max-sm:h-10 pointer-coarse:h-10" onClick={openAdd}><Plus aria-hidden="true" /> {t('team.addBtn')}</Button>}
+          {isGlobal && <Button className="max-sm:h-10 pointer-coarse:h-10" onClick={openAdd}><Plus aria-hidden="true" /> {t('team.addBtn')}</Button>}
         </div>
       </header>
       {msg && !modal && <AlertBanner tone={formMsgTone}>{msg}</AlertBanner>}
@@ -951,7 +982,7 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
           ve satırdaki "Takım Müdürü" sütununda ayrı durur. `teamManager` = o sütunla AYNI kayıt (tüm kullanıcılardan
           türetilir); pencere başlığındaki Takım Müdürü çipi sütunla çelişmesin (2026-09-28 yeniden tasarım). */}
       <TeamMembersModal open={!!membersTeam} team={membersTeam} onClose={() => setMembersTeam(null)}
-        canManage={canManage} onEditUser={setEditingUser} onViewUser={canManage ? openViewUser : undefined}
+        canManage={canManage} onEditUser={(u) => (elevatedTarget(u) ? openViewUser(u) : setEditingUser(u))} onViewUser={canManage ? openViewUser : undefined}
         loadMembers={loadTeamMembers}
         managerLabelFor={managerLabelFor} refreshKey={membersNonce}
         teamManager={membersTeam ? teamManagerEntry(membersTeam) : undefined} />
@@ -962,7 +993,7 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
           teams={teams} isAdmin={isAdmin} globalAdmin={globalAdmin} initialTab={viewTab}
           onClose={() => { setViewUser(null); setViewTab('overview') }}
           onChanged={() => { loadUsers(); setMembersNonce(n => n + 1) }}
-          onEdit={canManage ? () => { const u = viewUser; setViewUser(null); setViewTab('overview'); setEditingUser(u) } : undefined} />
+          onEdit={canManage && !elevatedTarget(viewUser) ? () => { const u = viewUser; setViewUser(null); setViewTab('overview'); setEditingUser(u) } : undefined} />
       )}
       {/* Paylaşılan kullanıcı düzenleyicisi (2026-10-02): Kullanıcılar sekmesiyle AYNI korumalar — görüntüleyenin rolü
           (takım yöneticisi yalnız USER/TEAM_ADMIN verir, kayıtta takım kendi takımına sabitlenir), kendi hesabı kilidi. */}
@@ -976,7 +1007,7 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
           setMembersNonce(n => n + 1)
         }}
         onChanged={() => { loadUsers(); setMembersNonce(n => n + 1) }}
-        onOpenDirectory={isAdmin ? (u) => { setEditingUser(null); setViewTab('directory'); setViewUser(u) } : undefined}
+        onOpenDirectory={isGlobal ? (u) => { setEditingUser(null); setViewTab('directory'); setViewUser(u) } : undefined}
       />
     </section>
   )

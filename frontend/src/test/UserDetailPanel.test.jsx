@@ -160,7 +160,9 @@ describe('UserDetailPanel — yeniden tasarım', () => {
   it('kapsamlı müdür (isAdmin, globalAdmin değil): Değişiklikler sekmesi yok, geçmiş istenmez; diğer yönetici sekmeleri kalır', async () => {
     await renderPanel({ globalAdmin: false, initialTab: 'changes' })
     await waitFor(() => expect(tabByName(/^Permissions/)).toHaveAccessibleName(/^Permissions\s*3$/))
-    expect(tabByName(/Directory \(AD\)/)).toBeInTheDocument()
+    // AD karşılaştırması da yalnız global yönetici (20.166, UIA-A7 — LdapMembershipController requireGlobalAdmin)
+    expect(screen.queryByRole('tab', { name: /Directory \(AD\)/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Check against AD' })).toBeNull()
     expect(screen.queryByRole('tab', { name: /Changes/ })).toBeNull()
     expect(tabByName(/Overview/)).toHaveAttribute('aria-selected', 'true')
     expect(api.admin.history).not.toHaveBeenCalled()
@@ -239,7 +241,7 @@ describe('UserDetailPanel — yeniden tasarım', () => {
   })
 
   it('Dizin (AD): başlıktaki "AD ile denetle" sekmeyi açar; karşılaştırma bileşeni yalnız orada', async () => {
-    await renderPanel()
+    await renderPanel({ globalAdmin: true })
     expect(screen.queryByTestId('ldap-compare')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Check against AD' }))
     expect(tabByName(/Directory \(AD\)/)).toHaveAttribute('aria-selected', 'true')
@@ -332,7 +334,7 @@ describe('UserDetailPanel — yeniden tasarım', () => {
   })
 
   it('telefon: pencere tam ekran (tam genişlik, 100dvh), sekme listesi yatay kayar, dokunma hedefleri ≥ 40 px', async () => {
-    await renderPanel({ onEdit: () => {} })
+    await renderPanel({ onEdit: () => {}, globalAdmin: true })
     const dlg = screen.getByTestId('user-detail')
     expect(dlg.className).toMatch(/(^|\s)w-full(\s|$)/)
     expect(dlg.className).toContain('h-[100dvh]')

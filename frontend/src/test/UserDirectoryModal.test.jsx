@@ -266,10 +266,11 @@ describe('yetki — eylem görünürlüğü (işlem menüsü + ayrıntı paneli)
     fireEvent.click(rowsOf()[1])
     expect(detail().querySelector('[data-slot="udir-admin-actions"]')).toBeNull()
   })
-  it('kapsamlı müdür (ADMIN, global değil): sonlandır / turu sıfırla / yönetimde aç VAR, kilit açma YOK', () => {
+  // 20.166 (UIA-D1): sonlandırma yalnız global yönetici (sunucu requireAdmin) — kapsamlı müdürde menüde yok
+  it('kapsamlı müdür (ADMIN, global değil): turu sıfırla / yönetimde aç VAR, sonlandır ve kilit açma YOK', () => {
     open({ isAdmin: true, globalAdmin: false, username: 'admin' })
     const bobItems = labelsOf(menuOf('bob')).join('|')
-    expect(bobItems).toMatch(/Oturumu sonlandır|End session/); expect(bobItems).toMatch(/Turu sıfırla|Reset the tour/)
+    expect(bobItems).not.toMatch(/Oturumu sonlandır|End session/); expect(bobItems).toMatch(/Turu sıfırla|Reset the tour/)
     expect(bobItems).toMatch(/Kullanıcı yönetiminde aç|Open in user management/)
     closeMenu()
     expect(labelsOf(menuOf('dave')).join('|')).not.toMatch(/Kilidi aç|Unlock/)

@@ -146,9 +146,11 @@ describe('rowActions — yetki matrisi (2026-09-20 dizinindekiyle aynı)', () =>
     expect(rowActions(bob, { isAdmin: false, globalAdmin: false, username: 'fred' }))
       .toEqual({ self: false, openAdmin: false, mail: true, terminate: false, tourReset: false, unlock: false })
   })
-  it('kapsamlı müdür (ADMIN rolü, global değil): sonlandırma + tur + yönetimde aç, KİLİT AÇMA YOK', () => {
+  // 20.166 (UIA-D1): sonlandırma ucu YALNIZ global yönetici (SystemController.terminateSession requireAdmin) — eski
+  // `terminate: true` beklentisi sunucunun her zaman 403 verdiği bir düğmeyi kilitliyordu.
+  it('kapsamlı müdür (ADMIN rolü, global değil): tur + yönetimde aç; SONLANDIRMA ve KİLİT AÇMA YOK', () => {
     const ctx = { isAdmin: true, globalAdmin: false, username: 'admin' }
-    expect(rowActions(bob, ctx)).toMatchObject({ openAdmin: true, terminate: true, tourReset: true, unlock: false })
+    expect(rowActions(bob, ctx)).toMatchObject({ openAdmin: true, terminate: false, tourReset: true, unlock: false })
     expect(rowActions(dave, ctx)).toMatchObject({ unlock: false, tourReset: false, terminate: false, mail: false })
   })
   it('global admin kilit açar; kendi oturumunu sonlandıramaz (harf duyarsız)', () => {

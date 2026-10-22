@@ -61,7 +61,7 @@ describe('SmtpLogView', () => {
   })
 
   it('yükler: KPI şeridi, kırılımlar, tablo satırları; özet + arama AYNI paramla (from 7 gün, to açık uçlu)', async () => {
-    render(<SmtpLogView onBack={() => {}} />)
+    render(<SmtpLogView globalAdmin onBack={() => {}} />)
     await screen.findByText('550 5.1.1 mailbox unavailable')
     expect(smtpLog.summary).toHaveBeenCalledTimes(1)
     const sp = smtpLog.summary.mock.calls[0][0], rp = smtpLog.search.mock.calls[0][0]
@@ -76,7 +76,7 @@ describe('SmtpLogView', () => {
   })
 
   it('KPI "Başarısız" tıklanınca status=FAILED ile yeniden sorgular (2 satır), tekrar tıklayınca süzgeç kalkar; hata sınıfı çubuğu errorClass geçirir', async () => {
-    render(<SmtpLogView onBack={() => {}} />)
+    render(<SmtpLogView globalAdmin onBack={() => {}} />)
     await screen.findByText('550 5.1.1 mailbox unavailable')
     fireEvent.click(screen.getByRole('button', { name: /3\s*Başarısız|3\s*Failed/ }))
     await waitFor(() => expect(smtpLog.search).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'FAILED', page: 0 })))
@@ -92,7 +92,7 @@ describe('SmtpLogView', () => {
   })
 
   it('takım kırılımı satırı teamId süzer; alan satırı domain çipi ekler ve çip kaldırılınca süzgeç düşer', async () => {
-    render(<SmtpLogView onBack={() => {}} />)
+    render(<SmtpLogView globalAdmin onBack={() => {}} />)
     await screen.findByText('550 5.1.1 mailbox unavailable')
     fireEvent.click(within(screen.getByTestId('sml-breakdowns')).getByRole('button', { name: 'Takım B' }))
     await waitFor(() => expect(smtpLog.search).toHaveBeenLastCalledWith(expect.objectContaining({ teamId: '2' })))
@@ -106,7 +106,7 @@ describe('SmtpLogView', () => {
   it('arama kutusu 300 ms sonra q geçirir; sütun başlığı sıralamayı değiştirir; grafik çubuğu o güne süzer (özel aralık)', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     try {
-      render(<SmtpLogView onBack={() => {}} />)
+      render(<SmtpLogView globalAdmin onBack={() => {}} />)
       await screen.findByText('550 5.1.1 mailbox unavailable')
       fireEvent.change(screen.getByPlaceholderText(/Alıcı, konu|Search recipient/), { target: { value: 'mailbox' } })
       await act(async () => { await vi.advanceTimersByTimeAsync(350) })
@@ -122,7 +122,7 @@ describe('SmtpLogView', () => {
 
   it('satır tıklaması detay modalını açar: ham hata, alarm rozeti, zincir (2), önizleme iframe; zincirdeki diğer satıra geçilir; "Alarmı aç" sm:navigate', async () => {
     const nav = vi.fn(); window.addEventListener('sm:navigate', nav)
-    render(<SmtpLogView onBack={() => {}} />)
+    render(<SmtpLogView globalAdmin onBack={() => {}} />)
     await screen.findByText('550 5.1.1 mailbox unavailable')
     fireEvent.click(screen.getAllByText('[CRITICAL] a.example.com down', { selector: 'td' })[0])
     const dlg = await screen.findByRole('dialog')
@@ -148,7 +148,7 @@ describe('SmtpLogView', () => {
     smtpLog.detail.mockImplementation((id) => (id === 1
       ? new Promise((r) => { resolveSecond = r })
       : Promise.resolve({ success: true, data: DETAIL })))
-    render(<SmtpLogView onBack={() => {}} />)
+    render(<SmtpLogView globalAdmin onBack={() => {}} />)
     await screen.findByText('550 5.1.1 mailbox unavailable')
     fireEvent.click(screen.getAllByText('[CRITICAL] a.example.com down', { selector: 'td' })[0])
     const dlg = await screen.findByRole('dialog')
@@ -170,7 +170,7 @@ describe('SmtpLogView', () => {
   })
 
   it('aralık seçenekleri kendi kabında yatay kayar (telefonda kart/sayfa taşmaz)', async () => {
-    render(<SmtpLogView onBack={() => {}} />)
+    render(<SmtpLogView globalAdmin onBack={() => {}} />)
     await screen.findByText('550 5.1.1 mailbox unavailable')
     const range = screen.getByRole('group', { name: /Zaman aralığı|Time range/ })
     const box = range.closest('.overflow-x-auto')
@@ -179,7 +179,7 @@ describe('SmtpLogView', () => {
   })
 
   it('yeniden gönder: yalnız FAILED satırda düğme; onay diyaloğu → api.resend → başarı toast + liste tazelenir; sunucu reddi (ALERT_RESOLVED) hata toast', async () => {
-    render(<SmtpLogView onBack={() => {}} />)
+    render(<SmtpLogView globalAdmin onBack={() => {}} />)
     await screen.findByText('550 5.1.1 mailbox unavailable')
     const resendBtns = document.querySelectorAll('[data-action="resend"]')
     expect(resendBtns).toHaveLength(2)                                   // 3 satırın 2'si FAILED
@@ -202,7 +202,7 @@ describe('SmtpLogView', () => {
     Object.defineProperty(URL, 'createObjectURL', { value: createObjectURL, configurable: true })
     Object.defineProperty(URL, 'revokeObjectURL', { value: revoke, configurable: true })
     const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
-    render(<SmtpLogView onBack={() => {}} />)
+    render(<SmtpLogView globalAdmin onBack={() => {}} />)
     await screen.findByText('550 5.1.1 mailbox unavailable')
     fireEvent.click(screen.getByRole('button', { name: /CSV/ }))
     await waitFor(() => expect(smtpLog.export).toHaveBeenCalledWith(expect.objectContaining({ sort: 'sent_at,desc' })))
@@ -218,7 +218,7 @@ describe('SmtpLogView', () => {
 
   it('geri düğmesi onBack; initial (kart periyodu/derin bağlantı) süzgeçleri kurar: range 24h + status FAILED + domain', async () => {
     const onBack = vi.fn()
-    render(<SmtpLogView onBack={onBack} initial={{ range: '24h', status: 'FAILED', domain: 'a.example.com' }} />)
+    render(<SmtpLogView globalAdmin onBack={onBack} initial={{ range: '24h', status: 'FAILED', domain: 'a.example.com' }} />)
     await waitFor(() => expect(smtpLog.search).toHaveBeenCalledWith(expect.objectContaining({ status: 'FAILED', domain: 'a.example.com' })))
     const from = new Date(smtpLog.search.mock.calls[0][0].from + 'Z')
     expect(Date.now() - from.getTime()).toBeLessThan(24 * 3600e3 + 60e3)
@@ -229,11 +229,31 @@ describe('SmtpLogView', () => {
 
   it('uç hata → uyarı bandı; boş sonuç → durum bloğu', async () => {
     smtpLog.summary.mockResolvedValueOnce({ success: false, error: 'boom' })
-    render(<SmtpLogView onBack={() => {}} />)
+    render(<SmtpLogView globalAdmin onBack={() => {}} />)
     await screen.findByText('boom')
     smtpLog.summary.mockResolvedValue({ success: true, data: { ...SUMMARY, kpi: { total: 0 }, teams: [], error_classes: [], top_recipients: [], top_domains: [], timeline: [] } })
     smtpLog.search.mockResolvedValue({ success: true, data: [], total: 0 })
     fireEvent.click(screen.getByRole('button', { name: /^Yenile$|^Refresh$/ }))
     await screen.findByText(/Filtreyle eşleşen kayıt bulunamadı|No records match the filter/)
+  })
+  // 20.166 (UIA-D1): yeniden gönderim ucu YALNIZ global yönetici (SmtpLogController.isGlobalAdmin) — kapsamlı müdürün
+  // matris yetkisi (system_health.actions) olsa da düğme yok, "yalnız yönetici" ipucu görünür.
+  it('kapsamlı müdür (globalAdmin yok): FAILED satırda "Yeniden gönder" YOK, ipucu var', async () => {
+    render(<SmtpLogView onBack={() => {}} />)
+    await screen.findByText('550 5.1.1 mailbox unavailable')
+    expect(screen.queryByRole('button', { name: /^(Yeniden gönder|Resend)$/ })).toBeNull()
+    const { TR } = await import('../i18n/tr.js'); const { EN } = await import('../i18n/en.js')
+    expect(screen.getByText((c) => c === TR['sml.resendAdminOnly'] || c === EN['sml.resendAdminOnly'])).toBeInTheDocument()
+  })
+
+  // 20.166 (UIA-14): tetik süzgeci, aralıkta görülen tetikleyicileri de (özet `triggers`) etiketiyle sunar; ham kod basılmaz
+  it('özetteki tetikleyiciler süzgeçte etiketiyle; bilinmeyen sabit listede olmayan kod da seçilebilir', async () => {
+    smtpLog.summary.mockResolvedValue({ success: true, data: { ...SUMMARY, triggers: [{ trigger: 'WATCHDOG', count: 2 }, { trigger: 'STORM_INITIAL', count: 1 }] } })
+    render(<SmtpLogView globalAdmin onBack={() => {}} />)
+    await screen.findByText('550 5.1.1 mailbox unavailable')
+    const { triggerLabel } = await import('../components/admin/SmtpLogView.jsx')
+    const tt = (k) => ({ 'logtrig.WATCHDOG': 'Self-monitoring', 'logtrig.STORM_INITIAL': 'Storm started' }[k] || k)
+    expect(triggerLabel('WATCHDOG', tt)).toBe('Self-monitoring')
+    expect(triggerLabel('NO_SUCH_TRIGGER', tt)).toBe('NO_SUCH_TRIGGER')
   })
 })

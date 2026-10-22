@@ -7,6 +7,7 @@ import { useDialog } from '../ui/Dialog.jsx'
 import { useVisibleInterval } from '../../hooks/useVisibleInterval'
 import { useIsMobile } from '../../hooks/use-mobile.js'
 import { usePermissions } from '../../contexts/PermissionsProvider.jsx'
+import { useGlobalAdmin } from './useGlobalAdmin.js'
 import { readUrlParam } from '../../hooks/useUrlQuerySync.js'
 import ChartModal from './ChartModal'
 import HeartbeatHistoryModal from './HeartbeatHistoryModal'
@@ -62,8 +63,12 @@ function initialSection() {
   try { return [...new URLSearchParams(window.location.search).keys()].some((k) => k.startsWith('u_')) ? 'users' : null } catch { return null }
 }
 
-export default function SystemHealth({ systemRole, globalAdmin = false, username, preFilterDomain, openSmtpModalOnLoad, onSmtpPreFilterConsumed }) {
+export default function SystemHealth({ systemRole, globalAdmin: globalAdminProp, username, preFilterDomain, openSmtpModalOnLoad, onSmtpPreFilterConsumed }) {
   const isAdmin = systemRole === 'ADMIN'
+  // Theme G (20.166): global-yalnız eylemler (zorla tarama, kilit bırakma, heartbeat, oturum sonlandırma, SMTP yeniden
+  // gönder, push yeniden kuyruk) `systemRole === 'ADMIN'` ile DEĞİL — kapsamlı müdür de ADMIN ama sunucu 403 verir.
+  // App prop'u verir; yoksa `scope.global_admin` (K1); bilinmiyorsa gizli.
+  const globalAdmin = useGlobalAdmin(globalAdminProp)
   // 2026-09-19 (ürün kararı): HER bölüm her kademeye açık — Kullanıcı/Oturum da. Yazma (anomali onayı, oturum
   // sonlandırma) global admin / AUDIT'te kalır.
   const canViewUserActivity = true
@@ -73,6 +78,8 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
   const { showConfirm } = useDialog()
   const { canView: canViewRes, canEdit: canEditRes, canExecute: canExecRes } = usePermissions()
   const canViewReleases = canViewRes('release_history.read')
+  // Sürüm geçmişi yazma (DeploymentHistoryController.requireEdit): yetki + kapsamlı müdür DEĞİL (bootstrap admin global)
+  const canEditReleases = canEditRes('release_history.edit') && !(isAdmin && !globalAdmin)
 
   const [health, setHealth] = useState(null)
   const [metrics, setMetrics] = useState([])
@@ -232,24 +239,27 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
     try {
       const res = await api.admin.triggerHeartbeat()
       if (res?.success) setHealth((prev) => ({ ...prev, heartbeat: res.data }))
-    } finally { setHbRefreshing(false) }
-  }, [])
+      else setMsg(res?.error || t('sys.error'))
+    } catch (e) { setMsg(e?.message || t('sys.error')) } finally { setHbRefreshing(false) }
+  }, [t])
 
   const refreshPool = useCallback(async () => {
     setPoolCardRefreshing(true)
     try {
       const res = await api.admin.getSystemHealth()
       if (res?.success) { setHealth((prev) => ({ ...prev, ...res.data })); setPoolLastRefreshed(new Date()) }
-    } finally { setPoolCardRefreshing(false) }
-  }, [])
+      else setMsg(res?.error || t('sys.error'))
+    } catch (e) { setMsg(e?.message || t('sys.error')) } finally { setPoolCardRefreshing(false) }
+  }, [t])
 
   const refreshUserActivity = useCallback(async () => {
     setUactRefreshing(true)
     try {
       const res = await api.admin.getUserActivity()
       if (res?.success) setUserActivity(res.data)
-    } finally { setUactRefreshing(false) }
-  }, [])
+      else setMsg(res?.error || t('sys.error'))
+    } catch (e) { setMsg(e?.message || t('sys.error')) } finally { setUactRefreshing(false) }
+  }, [t])
 
   const replaceUrl = (mutate) => {
     try {
@@ -357,14 +367,18 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
     watchdogRef.current = setTimeout(stop, 300_000)
   }, [load])
 
+  // UIA-D3 (20.166): sunucu reddederse (`success:false` — request() HTTP hatasında throw etmez) "tetiklendi" yazılmaz ve
+  // 5 dk'lık 2 sn yoklaması başlamaz; yoklama yalnız gerçekten başlatılan taramada.
   const handleForceRun = async () => {
     setTriggering(true)
+    let started = false
     try {
-      await api.runScheduler()
-      setMsg(t('sys.checkTriggered'))
-    } catch { setMsg(t('sys.error')) }
+      const res = await api.runScheduler()
+      if (res?.success) { started = true; setMsg(t('sys.checkTriggered')) }
+      else setMsg(res?.error || t('sys.error'))
+    } catch (e) { setMsg(e?.message || t('sys.error')) }
     finally { setTriggering(false) }
-    startScanPoll(health?.scan?.last_run)
+    if (started) startScanPoll(health?.scan?.last_run)
   }
 
   // ── Türetimler (saf model) ──
@@ -380,14 +394,14 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
   if (view === 'smtp') {
     return (
       <div data-slot="system-health" className="py-1">
-        <SmtpLogView key={JSON.stringify(smtpInitial)} initial={smtpInitial} onBack={closeSubView} />
+        <SmtpLogView key={JSON.stringify(smtpInitial)} initial={smtpInitial} onBack={closeSubView} globalAdmin={globalAdmin} />
       </div>
     )
   }
   if (view === 'push') {
     return (
       <div data-slot="system-health" className="py-1">
-        <PushLogView key={JSON.stringify(pushInitial)} initial={pushInitial} onBack={closeSubView} />
+        <PushLogView key={JSON.stringify(pushInitial)} initial={pushInitial} onBack={closeSubView} globalAdmin={globalAdmin} />
       </div>
     )
   }
@@ -438,7 +452,7 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
     ),
     sys: () => <SystemSection t={t} health={health} metrics={metrics} metricsError={loadErrors.metrics} onRetry={refreshNow} onOpenChart={setModalChart} />,
     sched: () => (
-      <SchedulerSection t={t} health={health} isAdmin={isAdmin} poolLastRefreshed={poolLastRefreshed} poolRefreshing={poolCardRefreshing} onRefreshPool={refreshPool}
+      <SchedulerSection t={t} health={health} isAdmin={globalAdmin} poolLastRefreshed={poolLastRefreshed} poolRefreshing={poolCardRefreshing} onRefreshPool={refreshPool}
         triggering={triggering} onForceRun={handleForceRun} releasing={releasing} onForceRelease={handleForceRelease} />
     ),
     db: () => (
@@ -451,7 +465,7 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
         onOpenSmtp={openSmtpModal} onOpenPush={openPushView} onOpenWeeklyLogs={() => setWaLogsModal(true)} />
     ),
     heartbeat: () => (
-      <HeartbeatSection t={t} heartbeat={health?.heartbeat} isAdmin={isAdmin} refreshing={hbRefreshing} onRefresh={refreshHeartbeat} onOpenHistory={() => setHbModalOpen(true)} />
+      <HeartbeatSection t={t} heartbeat={health?.heartbeat} isAdmin={globalAdmin} refreshing={hbRefreshing} onRefresh={refreshHeartbeat} onOpenHistory={() => setHbModalOpen(true)} />
     ),
     http: () => <HttpSection t={t} httpMetrics={httpMetrics} error={loadErrors.http} onRetry={refreshNow}
       onOpenExplorer={(focus) => setHttpExp(focus && typeof focus === 'object' && !('nativeEvent' in focus) ? focus : {})} />,
@@ -461,7 +475,7 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
     ),
     releases: () => (
       <Suspense fallback={<LoadingBlock />}>
-        <DeploymentHistoryPanel canEdit={canEditRes('release_history.edit')} />
+        <DeploymentHistoryPanel canEdit={canEditReleases} />
       </Suspense>
     ),
   }

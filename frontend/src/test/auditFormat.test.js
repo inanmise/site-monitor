@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  eventClass, eventLabel, parseDetail, fmtValue, actionSentence,
+  eventClass, eventLabel, parseDetail, fmtValue, actionSentence, summaryLine,
 } from '../components/admin/audit/auditFormat.js'
 import { TR } from '../i18n/tr.js'
 
@@ -126,10 +126,37 @@ describe('auditFormat.parseDetail', () => {
   })
 
   it('boş/bozuk girdiler güvenli', () => {
-    expect(parseDetail({})).toEqual({ changes: null, detailObj: null, detailText: null })
-    expect(parseDetail(null)).toEqual({ changes: null, detailObj: null, detailText: null })
+    // snapshotObj alanı 20.166'da eklendi (UIA-A4) — boş girdide o da null
+    expect(parseDetail({})).toEqual({ changes: null, snapshotObj: null, detailObj: null, detailText: null })
+    expect(parseDetail(null)).toEqual({ changes: null, snapshotObj: null, detailObj: null, detailText: null })
     expect(parseDetail({ changes: '{bozuk', detail: '   ' }).detailText).toBeNull()
     expect(parseDetail({ detail: '[]' }).detailObj, 'boş dizi ayrıntı sayılmaz').toBeNull()
+  })
+})
+
+// UIA-A4 (20.166): bildirim grubu / 7/24 grubu oluştur-sil, yeniden ata olayları `changes` sütununa ANLIK GÖRÜNTÜ yazar —
+// eskiden her alan "— → —" çiziliyordu. Fark yalnız HER değer {from|to} ise; aksi hâlde anahtar → değer.
+describe('auditFormat.parseDetail — anlık görüntü (UIA-A4)', () => {
+  it('fark biçimi olmayan changes → snapshotObj; diff satırı YOK', () => {
+    const r = parseDetail({ changes: '{"name":"Ops","emails":"a@x.com","team_id":5}' })
+    expect(r.changes).toBeNull()
+    expect(r.snapshotObj).toEqual({ name: 'Ops', emails: 'a@x.com', team_id: 5 })
+  })
+  it('yeniden atama {"to":..,"moved":..} da anlık görüntü sayılır', () => {
+    const r = parseDetail({ changes: '{"to":3,"moved":4}' })
+    expect(r.changes).toBeNull()
+    expect(r.snapshotObj).toEqual({ to: 3, moved: 4 })
+  })
+  it('karışık (biri fark biri düz) → anlık görüntü; hepsi fark → diff', () => {
+    expect(parseDetail({ changes: '{"a":{"from":1,"to":2},"b":"x"}' }).changes).toBeNull()
+    const d = parseDetail({ changes: '{"a":{"from":1,"to":2},"b":{"to":"y"}}' })
+    expect(d.changes).toHaveLength(2)
+    expect(d.snapshotObj).toBeNull()
+  })
+  it('summaryLine anlık görüntünün değerlerini yazar (— → — değil)', () => {
+    const line = summaryLine({ resource_type: 'NOTIFICATION_GROUP', resource_id: '5', changes: '{"name":"Ops","emails":"a@x.com","team_id":5}' })
+    expect(line).toBe('NOTIFICATION_GROUP:5 — name: Ops, emails: a@x.com (+1)')
+    expect(line).not.toContain('—  →')
   })
 })
 

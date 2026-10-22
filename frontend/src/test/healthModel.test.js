@@ -167,3 +167,17 @@ describe('healthModel — süre metinleri', () => {
     expect(worstLevel([])).toBe('ok')
   })
 })
+
+// 20.166 (UIA-D5): sunucunun okuyamadığı alt yükler sağlıklı (yeşil) sayılmaz
+describe('healthModel — okunamayan alt yük', () => {
+  it('smtpStats: {error} ve periods yok → unknown, oran null, sayılmaz', () => {
+    const s = smtpStats({ total: 0, attempted: 0, sent: 0, rate: 100, alarm: false, error: 'boom' }, '7d')
+    expect(s.level).toBe('unknown')
+    expect(s.rate).toBeNull()
+    expect(s.unavailable).toBe(true)
+  })
+  it('executorStats: {error} → null (KPI "—", "0 / 0" yeşili yok)', () => {
+    expect(executorStats({ error: 'x' })).toBeNull()
+    expect(executorStats({ queue_size: 0, queue_capacity: 10 })).not.toBeNull()
+  })
+})

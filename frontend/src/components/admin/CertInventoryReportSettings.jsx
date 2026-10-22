@@ -11,6 +11,7 @@ import ModalShell from '../ui/ModalShell.jsx'
 import ToneBadge from './ToneBadge.jsx'
 import { helpLabel, MasterToggleCard, SETTINGS_STACK, SettingsHeader, SettingsSaveBar, SettingsSection } from './SettingsControls.jsx'
 import { mailPreviewSrcDoc, MAIL_PREVIEW_SANDBOX } from '../../utils/mailPreview.js'
+import { sendOutcome, historyBadge } from './reportSendStatus.js'
 import { Button } from '@/components/shadcn/button'
 import { Badge } from '@/components/shadcn/badge'
 import { Input } from '@/components/shadcn/input'
@@ -89,6 +90,8 @@ export default function CertInventoryReportSettings() {
   const [history, setHistory] = useState(null)
   const [viewer, setViewer] = useState(null)
   const blockedId = useId()   // "Şimdi çalıştır" devre dışıyken görünür neden metni
+  // Bildirim tonu sonuca göre: gönderildi = başarı, başarısız = hata, kuyruk / atlandı / alıcı yok = bilgi
+  const toastFor = (o, msg) => (o.tone === 'success' ? toast.success(msg) : o.tone === 'danger' ? toast.error(msg) : toast.info(msg))
 
   const load = useCallback(async () => {
     // AG HATASI DA GORUNUR OLMALI: api/client.js request() ag hatasinda {success:false}
@@ -123,14 +126,18 @@ export default function CertInventoryReportSettings() {
   useEffect(() => { load() }, [load])
 
   useEffect(() => {
-    api.admin.getCertInvReportHistory(24).then(r => { if (r?.success) setHistory(r.data) })
+    api.admin.getCertInvReportHistory(24).then(r => { if (r?.success) setHistory(r.data) }).catch(() => {})
   }, [])
 
   async function toggleEnabled(next) {
     setStatus(s => ({ ...s, enabled: next }))          // optimistik
-    const res = await api.admin.saveCertInvReportSettings({ enabled: next })
-    if (res?.success) { setStatus(res.data); toast.success(t('settings.saved')) }
-    else { setStatus(s => ({ ...s, enabled: !next })); toast.error(res?.error || t('settings.saveError')) }
+    try {
+      const res = await api.admin.saveCertInvReportSettings({ enabled: next })
+      if (res?.success) { setStatus(res.data); toast.success(t('settings.saved')) }
+      else { setStatus(s => ({ ...s, enabled: !next })); toast.error(res?.error || t('settings.saveError')) }
+    } catch (e) {
+      setStatus(s => ({ ...s, enabled: !next })); toast.error(e?.message || t('settings.saveError'))   // ağ hatası sessiz kalmasın
+    }
   }
 
   /** Vazgeç: alıcı/cc/cron alanlarını kaydedilmiş duruma döndürür. */
@@ -156,6 +163,8 @@ export default function CertInventoryReportSettings() {
         // Geçersiz cron backend'de reddedilir; mesaj kullanıcıya aynen gösterilir.
         toast.error(res?.error || t('settings.saveError'))
       }
+    } catch (e) {
+      toast.error(e?.message || t('settings.saveError'))
     } finally {
       setSaving(false)
     }
@@ -172,16 +181,21 @@ export default function CertInventoryReportSettings() {
     }
   }
 
+  // UIA-C2 (20.166): sonuç DURUMDAN okunur — "Rapor gönderildi" yalnız SENT'te; kuyruk bilgi, atlandı / alıcı yok uyarı,
+  // başarısız hata (eskiden `success:true` her durumda yeşil "gönderildi" + ham "durum: FAILED: …" yazıyordu).
   async function runNow() {
     setRunning(true)
     try {
       const res = await api.admin.runCertInvReport()
       if (res?.success) {
-        setResult(res.data)
-        toast.success(t('cir.runDone', res.data.rows ?? 0, res.data.findings ?? 0))
+        const o = sendOutcome(res, t)
+        setResult({ ...res.data, outcome: o })
+        toastFor(o, o.cls === 'sent' ? t('cir.runDone', res.data?.rows ?? 0, res.data?.findings ?? 0) : o.text)
         load()
-        api.admin.getCertInvReportHistory(24).then(r => { if (r?.success) setHistory(r.data) })
+        api.admin.getCertInvReportHistory(24).then(r => { if (r?.success) setHistory(r.data) }).catch(() => {})
       } else toast.error(res?.error || t('cir.actionFailed'))
+    } catch (e) {
+      toast.error(e?.message || t('cir.actionFailed'))
     } finally {
       setRunning(false)
     }
@@ -191,8 +205,11 @@ export default function CertInventoryReportSettings() {
     setSending(true)
     try {
       const res = await api.admin.sendCertInvReportTest(testEmail.trim())
-      if (res?.success) { setResult(res.data); toast.success(t('cir.testSent', testEmail.trim())) }
-      else toast.error(res?.error || t('cir.actionFailed'))
+      const o = sendOutcome(res, t)
+      if (res?.data) setResult({ ...res.data, outcome: o })
+      toastFor(o, o.cls === 'sent' ? t('cir.testSent', testEmail.trim()) : o.text)
+    } catch (e) {
+      toast.error(e?.message || t('cir.actionFailed'))
     } finally {
       setSending(false)
     }
@@ -207,7 +224,6 @@ export default function CertInventoryReportSettings() {
   }
 
   const noRecipients = !status.recipients
-  const HISTORY_TONE = { SENT: 'success', NO_RECIPIENT: 'warning' }
   const SELECT_FULL = '[&>[data-slot=native-select-wrapper]]:w-full'
 
   return (
@@ -318,13 +334,15 @@ export default function CertInventoryReportSettings() {
             {previewing ? <Spinner size={15} inline decorative /> : <Eye size={15} />}
             {t('cir.preview')}
           </Button>
-          <Button variant="secondary" onClick={runNow} disabled={running || noRecipients} aria-busy={running || undefined}
-            aria-describedby={noRecipients ? blockedId : undefined}>
+          {/* UIA-C11 (20.166): kaydedilmemiş zamanlama / alıcı değişikliği varken "Şimdi çalıştır" KAPALI — çalıştırma
+              KAYITLI alıcıları kullanır ve sonrasındaki yeniden yükleme yazılanları siliyordu. */}
+          <Button variant="secondary" onClick={runNow} disabled={running || noRecipients || dirty} aria-busy={running || undefined}
+            aria-describedby={noRecipients || dirty ? blockedId : undefined}>
             {running ? <Spinner size={15} inline decorative /> : <PlayCircle size={15} />}
             {t('cir.runNow')}
           </Button>
           {/* Devre dışı düğmenin nedeni görünür metin (dokunmatikte ipucu açılmaz) */}
-          {noRecipients && <span id={blockedId} className="text-xs text-muted-foreground">{t('cir.noRecipientsNote')}</span>}
+          {(noRecipients || dirty) && <span id={blockedId} className="text-xs text-muted-foreground">{noRecipients ? t('cir.noRecipientsNote') : t('cir.runSaveFirst')}</span>}
         </div>
         <div className="flex flex-col gap-2 sm:max-w-xl sm:flex-row sm:items-center">
           <Input type="email" value={testEmail} placeholder={t('cir.testPlaceholder')} aria-label={t('cir.sendTest')} className="min-w-0 flex-1"
@@ -336,9 +354,14 @@ export default function CertInventoryReportSettings() {
           </Button>
         </div>
         {result && (
-          <AlertBanner tone="success" className="mb-0">
-            {t('cir.resultLine', result.rows ?? 0, result.findings ?? 0, result.status ?? '')}
-          </AlertBanner>
+          <div data-slot="cir-result" data-outcome={result.outcome?.cls}>
+            <AlertBanner tone={result.outcome?.tone || 'success'} className="mb-0">
+              {t('cir.resultLine', result.rows ?? 0, result.findings ?? 0, result.outcome?.text ?? (result.status ?? ''))}
+              {result.outcome?.cls === 'failed' && result.outcome?.raw && (
+                <span className="mt-1 block font-mono text-xs break-words opacity-80" data-slot="cir-result-raw">{result.outcome.raw}</span>
+              )}
+            </AlertBanner>
+          </div>
         )}
       </SettingsSection>
 
@@ -362,7 +385,7 @@ export default function CertInventoryReportSettings() {
                 {history.map(h => (
                   <TableRow key={h.id}>
                     <TableCell>{h.month_label ?? `${h.year}-${h.month}`}</TableCell>
-                    <TableCell><ToneBadge tone={HISTORY_TONE[h.status] || 'danger'} className="font-semibold">{h.status}</ToneBadge></TableCell>
+                    <TableCell>{(() => { const b = historyBadge(h.status, t); return <ToneBadge tone={b.tone} data-status={b.cls} className="font-semibold">{b.label}</ToneBadge> })()}</TableCell>
                     <TableCell className="text-right tabular-nums">{h.rows ?? '—'}</TableCell>
                     <TableCell className="text-right tabular-nums">{h.findings ?? '—'}</TableCell>
                     <TableCell className="hidden max-w-[320px] break-all whitespace-normal md:table-cell">{h.recipients || '—'}</TableCell>

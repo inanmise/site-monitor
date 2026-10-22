@@ -63,9 +63,11 @@ const USERS = [
     auth_source: 'LDAP', title: 'Elle Ünvan', locked_field_keys: ['email', 'title'] },
 ]
 
+// Varsayılan görüntüleyici GLOBAL yönetici (20.166: ADMIN / AUDIT satırları ve sonlandırma yalnız ona; kapsamlı müdür
+// senaryoları `globalAdmin: false` ile dosyanın sonunda ayrıca sınanır)
 const renderUm = (props = {}) => render(
   <LangProvider>
-    <UserManager systemRole="ADMIN" currentUsername="admin1" teams={TEAMS} {...props} />
+    <UserManager systemRole="ADMIN" globalAdmin currentUsername="admin1" teams={TEAMS} {...props} />
   </LangProvider>
 )
 
@@ -124,7 +126,8 @@ describe('UserManager', () => {
     fireEvent.click(await screen.findByRole('button', { name: /^Kaydet$|^Save$/ }))
 
     await waitFor(() => expect(api.admin.updateUser).toHaveBeenCalled())
-    expect(api.admin.updateUser.mock.calls[0][1].team_ids).toEqual([5])
+    // Takım kümesi DEĞİŞMEDİ → anahtar gitmez, sunucu üyeliğe dokunmaz (20.166, UIA-1); TEAM_ADMIN sabitlemesi uygulanmaz
+    expect(api.admin.updateUser.mock.calls[0][1]).not.toHaveProperty('team_ids')
   })
 
   it('düzenleme DOĞRU kullanıcıyı hedefler (satır→id eşlemesi kaymaz)', async () => {
@@ -288,5 +291,44 @@ describe('UserManager', () => {
     await waitFor(() => expect(screen.getByText('çakışma')).toBeInTheDocument())
     expect(screen.getByRole('button', { name: /^Kaydet$|^Save$/ })).toBeInTheDocument()
     expect(toastMock.success).not.toHaveBeenCalled()
+  })
+})
+
+// ── 20.166 bugfix (PKG-8a): kapsamlı müdür (ADMIN, global değil) ─────────────────────────────────────────────────────
+describe('UserManager — kapsamlı müdür (UIA-13 / A7 / A8)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    api.admin.searchUsers.mockResolvedValue({ success: true, data: USERS, total: USERS.length, page: 0, active_admin_count: 2 })
+    api.admin.updateUser.mockResolvedValue({ success: true })
+  })
+  const menuLabels = async (username) => {
+    await openRowMenu(username)
+    return (await screen.findAllByRole('menuitem')).map((m) => m.textContent)
+  }
+
+  it('ADMIN satırında Düzenle / Geçici şifre / Sil YOK (sunucu requireCanAdministerTarget 403); USER satırında Düzenle VAR', async () => {
+    renderUm({ globalAdmin: false })
+    const adminRow = (await screen.findByText('admin2')).closest('tr')
+    expect(within(adminRow).queryByRole('button', { name: /işlem|actions/i })).toBeNull()   // gösterilecek eylem kalmadı
+    const labels = await menuLabels('ali')
+    expect(labels.join('|')).toMatch(/Düzenle|Edit/)
+  })
+
+  it('LDAP hesapta "Geçici şifre gönder" YOK (parolayı AD yönetir, sunucu reddeder); yerel hesapta VAR', async () => {
+    renderUm()
+    const ldap = await menuLabels('adkisi')
+    expect(ldap.join('|')).not.toMatch(/Reset Password|Şifre Sıfırla/)
+    fireEvent.keyDown(document.activeElement, { key: 'Escape' })
+    const local = await menuLabels('ali')
+    expect(local.join('|')).toMatch(/Reset Password|Şifre Sıfırla/)
+  })
+
+  it('düzenleyicide rol seçici yalnız USER / TEAM_ADMIN sunar', async () => {
+    renderUm({ globalAdmin: false })
+    await openRowMenu('ali')
+    fireEvent.click(await screen.findByText(/^Düzenle$|^Edit$/))
+    fireEvent.mouseDown(await screen.findByLabelText(/^(Sistem Rolü|System Role)/))
+    const opts = (await screen.findAllByRole('option')).map((o) => o.textContent)
+    expect(opts).toEqual(['USER', 'TEAM_ADMIN'])
   })
 })

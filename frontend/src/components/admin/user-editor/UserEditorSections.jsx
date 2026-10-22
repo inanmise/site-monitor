@@ -171,7 +171,7 @@ export function AccountSection({ ed }) {
             {({ id }) => (
               <SearchableSelect id={id} value={form.system_role} disabled={!editable || guards.locked}
                 onChange={(v) => ed.set('system_role', v)}
-                options={roleOptionsFor(ed.viewerRole, form.system_role).map((r) => ({ value: r, label: r }))} />
+                options={roleOptionsFor(ed.viewerRole, form.system_role, { globalAdmin: !!ed.globalAdmin }).map((r) => ({ value: r, label: r }))} />
             )}
           </Field>
           <Field label={t('usr.orgRole')} hint={orgHint}>
@@ -228,7 +228,9 @@ export function TeamsSection({ ed }) {
   const selected = form.team_ids || []
   const primary = predictedPrimary(selected, { mode: ed.mode, currentPrimary: user?.team_id })
   const err = ed.fe.fieldProps('teams')
-  const ownName = ed.ownTeamId != null ? (teamMap[ed.ownTeamId] || `#${ed.ownTeamId}`) : null
+  const ownName = ed.ownTeamId != null ? (teamMap[ed.ownTeamId] || t('team.nameUnavailable')) : null
+  // Yönetim kapsamı biliniyorsa (kapsamlı müdür, K2) dışındaki mevcut takım çıkarılamaz — sunucu 403 verir (20.166 UIA-1)
+  const outOfScope = (id) => !!ed.manageIds && !ed.manageIds.has(String(id))
 
   if (ed.isTeamAdmin) {
     return (
@@ -266,7 +268,7 @@ export function TeamsSection({ ed }) {
             <Badge variant="secondary" className="ml-2 h-5 min-w-5 rounded-full px-1.5 align-middle tabular-nums">{selected.length}</Badge>
           </span>
           {primary != null && !isAdd && (
-            <span data-slot="ued-primary-after" className="text-xs text-muted-foreground">{t('ued.primaryAfterSave', teamMap[primary] || `#${primary}`)}</span>
+            <span data-slot="ued-primary-after" className="text-xs text-muted-foreground">{t('ued.primaryAfterSave', teamMap[primary] || t('team.nameUnavailable'))}</span>
           )}
         </div>
         {selected.length === 0 ? (
@@ -274,16 +276,18 @@ export function TeamsSection({ ed }) {
         ) : (
           <ul className="m-0 flex list-none flex-col gap-1.5 p-0">
             {selected.map((id) => {
-              const name = teamMap[id] || `#${id}`
+              const name = teamMap[id] || t('team.nameUnavailable')
               const isPrimary = String(id) === String(primary)
+              const locked = outOfScope(id)
               return (
                 <li key={id} data-slot="ued-team-row" data-team-id={id} data-primary={isPrimary ? 'true' : undefined}
                   className="flex min-w-0 flex-wrap items-center gap-2 rounded-lg border bg-card px-3 py-2">
                   <span className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
                     <TeamBadge teamId={id} teamName={name} size={12} static />
                     {isPrimary && <Badge variant="secondary" data-slot="ued-primary" className="gap-1"><Star aria-hidden="true" className="size-3" />{t('ued.primary')}</Badge>}
+                    {locked && <span data-slot="ued-team-out-of-scope" className="text-xs text-muted-foreground">{t('ued.teamOutOfScope')}</span>}
                   </span>
-                  {editable && (
+                  {editable && !locked && (
                     <span className="flex shrink-0 items-center gap-1">
                       {isAdd && !isPrimary && (
                         <Button type="button" variant="ghost" size="sm" className="h-8 pointer-coarse:h-10 max-sm:h-10"

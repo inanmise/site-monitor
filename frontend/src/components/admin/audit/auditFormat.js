@@ -257,6 +257,69 @@ const SPECIAL = {
   TECH_ERROR_TEAM_TEMPLATE_CREATE: 'audit.ev.TECH_ERROR_TEAM_TEMPLATE_CREATE',
   TECH_ERROR_TEAM_TEMPLATE_UPDATE: 'audit.ev.TECH_ERROR_TEAM_TEMPLATE_UPDATE',
   TECH_ERROR_TEAM_TEMPLATE_DELETE: 'audit.ev.TECH_ERROR_TEAM_TEMPLATE_DELETE',
+  // 20.166 bugfix (UIA-5): katalogdaki 60 tür kurala uymuyor, iki dilde de İngilizce Title-Case yedeğine düşüyordu
+  // ("Session Terminate", "Platform Create" …); 5'inin anahtarı vardı ama okunmuyordu. Kapı: auditEventLabels.test.js
+  // AuditEventCatalog.TYPES'ı okur — hiçbir tür yedeğe düşmez.
+  CERT_HEALTH_REFRESH: 'audit.ev.CERT_HEALTH_REFRESH',
+  CERT_RENEWAL_CONFIRMED: 'audit.ev.CERT_RENEWAL_CONFIRMED',
+  CERT_RENEWAL_PLANNED: 'audit.ev.CERT_RENEWAL_PLANNED',
+  CERT_RENEWAL_PLAN_CLEARED: 'audit.ev.CERT_RENEWAL_PLAN_CLEARED',
+  CRYPTO_INVENTORY_EXPORT: 'audit.ev.CRYPTO_INVENTORY_EXPORT',
+  DIAGNOSTICS_DOMAIN_EXPIRY: 'audit.ev.DIAGNOSTICS_DOMAIN_EXPIRY',
+  DIAGNOSTICS_HSTS: 'audit.ev.DIAGNOSTICS_HSTS',
+  DIAGNOSTICS_NETWORK: 'audit.ev.DIAGNOSTICS_NETWORK',
+  DIAGNOSTICS_OPENSSL: 'audit.ev.DIAGNOSTICS_OPENSSL',
+  DIAGNOSTICS_PROXY_CA_CHAIN: 'audit.ev.DIAGNOSTICS_PROXY_CA_CHAIN',
+  DOMAIN_BULK_ACTIVATE: 'audit.ev.DOMAIN_BULK_ACTIVATE',
+  DOMAIN_BULK_DEACTIVATE: 'audit.ev.DOMAIN_BULK_DEACTIVATE',
+  DOMAIN_BULK_SET_CONTACTS: 'audit.ev.DOMAIN_BULK_SET_CONTACTS',
+  DOMAIN_BULK_SET_TEAM: 'audit.ev.DOMAIN_BULK_SET_TEAM',
+  DOMAIN_BULK_SET_TIER: 'audit.ev.DOMAIN_BULK_SET_TIER',
+  DOMAIN_IMPORT: 'audit.ev.DOMAIN_IMPORT',
+  DOMAIN_TRANSFER_SY: 'audit.ev.DOMAIN_TRANSFER_SY',
+  DOMAIN_TRANSFER_UG: 'audit.ev.DOMAIN_TRANSFER_UG',
+  EXECUTIVE_SUMMARY_EXPORT: 'audit.ev.EXECUTIVE_SUMMARY_EXPORT',
+  EXECUTIVE_SUMMARY_RUN: 'audit.ev.EXECUTIVE_SUMMARY_RUN',
+  EXECUTIVE_SUMMARY_SETTINGS: 'audit.ev.EXECUTIVE_SUMMARY_SETTINGS',
+  EXECUTIVE_SUMMARY_TEAM_SETTINGS: 'audit.ev.EXECUTIVE_SUMMARY_TEAM_SETTINGS',
+  EXECUTIVE_SUMMARY_TEST: 'audit.ev.EXECUTIVE_SUMMARY_TEST',
+  ISSUE_REPORT_COMMENT: 'audit.ev.ISSUE_REPORT_COMMENT',
+  LDAP_ROLE_MAPPING_PREVIEW: 'audit.ev.LDAP_ROLE_MAPPING_PREVIEW',
+  LOGIN_ANOMALY_ACK: 'audit.ev.LOGIN_ANOMALY_ACK',
+  LOGIN_ANOMALY_ALERT: 'audit.ev.LOGIN_ANOMALY_ALERT',
+  LOGIN_ANOMALY_RESOLVED: 'audit.ev.LOGIN_ANOMALY_RESOLVED',
+  LOGIN_ISSUE_COMMENT: 'audit.ev.LOGIN_ISSUE_COMMENT',
+  MONITOR_GROUP_RENAME: 'audit.ev.MONITOR_GROUP_RENAME',
+  MONITOR_RENEWAL_PLANNED: 'audit.ev.MONITOR_RENEWAL_PLANNED',
+  MONITOR_RENEWAL_PLAN_CLEARED: 'audit.ev.MONITOR_RENEWAL_PLAN_CLEARED',
+  NOC_CALL_LIST_UPDATE: 'audit.ev.NOC_CALL_LIST_UPDATE',
+  NOC_CALL_LOG_ADD: 'audit.ev.NOC_CALL_LOG_ADD',
+  NOC_CALL_LOG_DELETE: 'audit.ev.NOC_CALL_LOG_DELETE',
+  NOC_CONFIG_UPDATE: 'audit.ev.NOC_CONFIG_UPDATE',
+  NOC_GROUP_CREATE: 'audit.ev.NOC_GROUP_CREATE',
+  NOC_GROUP_DELETE: 'audit.ev.NOC_GROUP_DELETE',
+  NOC_GROUP_TEST: 'audit.ev.NOC_GROUP_TEST',
+  NOC_GROUP_UPDATE: 'audit.ev.NOC_GROUP_UPDATE',
+  NOC_MONITOR_BULK: 'audit.ev.NOC_MONITOR_BULK',
+  NOC_MONITOR_UPDATE: 'audit.ev.NOC_MONITOR_UPDATE',
+  PLATFORM_CREATE: 'audit.ev.PLATFORM_CREATE',
+  PLATFORM_DELETE: 'audit.ev.PLATFORM_DELETE',
+  PLATFORM_UPDATE: 'audit.ev.PLATFORM_UPDATE',
+  RETENTION_HOLD_ACTIVE: 'audit.ev.RETENTION_HOLD_ACTIVE',
+  RETENTION_ROLLUP_BACKFILL: 'audit.ev.RETENTION_ROLLUP_BACKFILL',
+  RETENTION_RUN_MANUAL: 'audit.ev.RETENTION_RUN_MANUAL',
+  RETENTION_SETTINGS_SHORTENED: 'audit.ev.RETENTION_SETTINGS_SHORTENED',
+  SESSION_REVOKE_ALL: 'audit.ev.SESSION_REVOKE_ALL',
+  SESSION_TERMINATE: 'audit.ev.SESSION_TERMINATE',
+  SYSTEM_DEPLOYMENT_BACKFILL: 'audit.ev.SYSTEM_DEPLOYMENT_BACKFILL',
+  SYSTEM_DEPLOYMENT_MANUAL: 'audit.ev.SYSTEM_DEPLOYMENT_MANUAL',
+  SYSTEM_SHUTDOWN: 'audit.ev.SYSTEM_SHUTDOWN',
+  SYSTEM_STARTUP: 'audit.ev.SYSTEM_STARTUP',
+  TEAM_LDAP_RESYNC: 'audit.ev.TEAM_LDAP_RESYNC',
+  TEAM_MOVE_ASSETS: 'audit.ev.TEAM_MOVE_ASSETS',
+  TEAM_MEMBER_REMOVE: 'audit.ev.TEAM_MEMBER_REMOVE',
+  TEAM_WEEKLY_NOTIFICATIONS: 'audit.ev.TEAM_WEEKLY_NOTIFICATIONS',
+  TECH_ERROR_REPORT_TEST_MAIL: 'audit.ev.TECH_ERROR_REPORT_TEST_MAIL',
 }
 
 /**
@@ -326,11 +389,21 @@ export function parseDetail(row) {
   const changes = changesObj ? Object.entries(changesObj) : null
   const detailObj = tryJson(row?.detail)
   const raw = row?.detail
+  // UIA-A4 (20.166): `changes` sütununa bazı olaylar FARK değil ANLIK GÖRÜNTÜ yazar (bildirim grubu / 7/24 grubu oluştur /
+  // sil, yeniden ata `{"to":..,"moved":..}`). Fark tablosu yalnız HER değer `{from|to}` biçimindeyse; aksi hâlde değerler
+  // anahtar → değer olarak gösterilir (eskiden her alan "— → —" çiziliyordu, değerler yalnız ham kayıtta kalıyordu).
+  const isDiff = !!changes && changes.length > 0 && !Array.isArray(changesObj) && changes.every(([, v]) => isDiffValue(v))
   return {
-    changes: changes && changes.length ? changes : null,
+    changes: isDiff ? changes : null,
+    snapshotObj: changes && changes.length && !isDiff ? changesObj : null,
     detailObj: detailObj && Object.keys(detailObj).length ? detailObj : null,
     detailText: detailObj ? null : (raw && String(raw).trim() ? String(raw) : null),
   }
+}
+
+/** Fark değeri mi: `{ from, to }` (ikisinden biri yeter), dizi değil. */
+function isDiffValue(v) {
+  return !!v && typeof v === 'object' && !Array.isArray(v) && ('from' in v || 'to' in v)
 }
 
 /** Diff/ayrıntı hücresi: nesne ve diziler `[object Object]` yerine okunur JSON olur. */
@@ -373,11 +446,14 @@ export function resourceLabel(row) {
  */
 export function summaryLine(row) {
   if (!row) return ''
-  const { changes, detailObj, detailText } = parseDetail(row)
+  const { changes, snapshotObj, detailObj, detailText } = parseDetail(row)
   let tail = ''
   if (changes) {
     tail = changes.slice(0, 2).map(([f, c]) => `${f}: ${fmtValue(c?.from)} → ${fmtValue(c?.to)}`).join(', ')
       + (changes.length > 2 ? ` (+${changes.length - 2})` : '')
+  } else if (snapshotObj) {
+    const entries = Object.entries(snapshotObj)
+    tail = entries.slice(0, 2).map(([k, v]) => `${k}: ${fmtValue(v)}`).join(', ') + (entries.length > 2 ? ` (+${entries.length - 2})` : '')
   } else if (row.failure_reason) {
     tail = row.failure_reason
   } else if (detailObj) {

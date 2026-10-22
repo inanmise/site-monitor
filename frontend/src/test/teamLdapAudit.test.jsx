@@ -80,7 +80,7 @@ describe('UserDetailPanel — üyelik kaynağı + AD ile karşılaştır', () =>
 
   it('AD ile karşılaştır: desteklenmeyen üyelik + eşitleme sonucu + müdür nitelik uyuşmazlığı; yeniden eşitle onayla çalışır', async () => {
     const onChanged = vi.fn()
-    await renderAct(<UserDetailPanel user={X} teams={TEAMS} isAdmin onClose={() => {}} onChanged={onChanged} />)
+    await renderAct(<UserDetailPanel user={X} teams={TEAMS} isAdmin globalAdmin onClose={() => {}} onChanged={onChanged} />)
     openTab(/Dizin \(AD\)|Directory \(AD\)/)
     const box = await screen.findByTestId('ldap-compare')
     fireEvent.click(within(box).getByRole('button', { name: /AD ile karşılaştır|Compare with AD/ }))
@@ -119,7 +119,12 @@ describe('UserDetailPanel — üyelik kaynağı + AD ile karşılaştır', () =>
     expect(adEntry()).toBeNull()
     expect(screen.queryByTestId('ldap-compare')).toBeNull()
     second.unmount()
-    await renderAct(<UserDetailPanel user={X} teams={TEAMS} isAdmin onClose={() => {}} />)
+    // Kapsamlı müdür (ADMIN, global değil): uç requireGlobalAdmin → sekme / giriş YOK (20.166, UIA-A7)
+    const third = await renderAct(<UserDetailPanel user={X} teams={TEAMS} isAdmin globalAdmin={false} onClose={() => {}} />)
+    expect(dirTab()).toBeNull()
+    expect(adEntry()).toBeNull()
+    third.unmount()
+    await renderAct(<UserDetailPanel user={X} teams={TEAMS} isAdmin globalAdmin onClose={() => {}} />)
     expect(dirTab()).not.toBeNull()
     expect(adEntry()).not.toBeNull()
   })

@@ -9,6 +9,7 @@ import { useVisibleInterval } from '../../hooks/useVisibleInterval'
 import { useUrlQuerySync, readUrlInt } from '../../hooks/useUrlQuerySync.js'
 import { useElementWidth } from '../../hooks/useElementWidth.js'
 import { usePermissions } from '../../contexts/PermissionsProvider.jsx'
+import { useGlobalAdmin } from './useGlobalAdmin.js'
 import { useDialog } from '../ui/Dialog.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import { navigateTo } from '../../utils/navigate.js'
@@ -74,12 +75,14 @@ const TABLE_MIN_WIDTH = 760
  * `pl-list`, `pl-row` (`data-kind`), `pl-detail`, `pl-flow`; `data-testid="sml-table"` (tablo), `pl-cards`, `pbp`;
  * durum sayıları `[data-slot="stat-item"][data-key]`.
  */
-export default function PushLogView({ onBack, initial }) {
+export default function PushLogView({ onBack, initial, globalAdmin: globalAdminProp }) {
   const t = useT()
   const toast = useToast()
   const { showConfirm } = useDialog()
   const { canExecute } = usePermissions()
-  const canRequeue = canExecute('system_health.actions')
+  // Yeniden kuyruğa alma YALNIZ global yönetici (PushLogController: isGlobalAdmin; 20.166 UIA-D1). Prop yoksa K1.
+  const globalAdmin = useGlobalAdmin(globalAdminProp)
+  const canRequeue = globalAdmin && canExecute('system_health.actions')
 
   const [f, setF] = useState(() => readInitial(initial))
   const [qInput, setQInput] = useState(f.q)

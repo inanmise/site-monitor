@@ -523,3 +523,102 @@ describe('SystemHealth — kendi kendini izleme (2026-10-11)', () => {
     expect(screen.getByRole('button', { name: /Evaluate now|Şimdi değerlendir/ })).toBeInTheDocument()
   })
 })
+
+// ── 20.166 bugfix (PKG-8a) — Theme G / UIA-D1..D5 ─────────────────────────────────────────────────────────────────────
+describe('SystemHealth — kapsamlı müdür (ADMIN, global değil): sunucunun reddettiği eylemler YOK (UIA-D1 / D2)', () => {
+  const open = async (sec) => { const user = userEvent.setup(); await user.click(toggleOf(sec)) }
+
+  it('Zamanlayıcı: "Şimdi çalıştır" ve kilidi zorla aç YOK; heartbeat yenile YOK', async () => {
+    api.admin.getSystemHealth.mockResolvedValue({ success: true, data: { ...HEALTH, lock: { held: true, held_by_me: false, locked_by: 'pod-b', locked_until: '2099-01-01T00:00:00' } } })
+    await renderLoaded({ systemRole: 'ADMIN', globalAdmin: false })
+    await open('sched')
+    expect(screen.queryByRole('button', { name: /^(Run Now|Şimdi Çalıştır)$/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^(Force Release Lock|Kilidi Zorla Aç)$/ })).toBeNull()
+    await open('heartbeat')
+    const hb = document.querySelector('[data-card="heartbeat"]')
+    expect([...hb.querySelectorAll('button[aria-label]')].map((b) => b.getAttribute('aria-label'))).not.toContain('Refresh')
+    expect([...hb.querySelectorAll('button[aria-label]')].map((b) => b.getAttribute('aria-label'))).not.toContain('Yenile')
+  })
+
+  it('Entegrasyonlar: haftalık erişilebilirlik kartında gönderim logu CTA YOK, kart tıklanmaz (uç global-yalnız)', async () => {
+    await renderLoaded({ systemRole: 'ADMIN', globalAdmin: false })
+    await open('integrations')
+    expect(screen.queryByRole('button', { name: /Click to view delivery logs|Gönderim loglarını görmek için tıklayın/ })).toBeNull()
+  })
+
+  it('Sürüm & Dağıtım: kapsamlı müdür matris yetkisi olsa da elle kayıt / geri doldurma YOK (requireNotScopedAdmin)', async () => {
+    await renderLoaded({ systemRole: 'ADMIN', globalAdmin: false })
+    await open('releases')
+    await waitFor(() => expect(document.querySelector('[data-slot="deploy-actions"]')).not.toBeNull(), { timeout: 5000 })
+    expect(screen.queryByRole('button', { name: /Elle kayıt ekle|Add manual record/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Denetimden geri doldur|Backfill from audit/ })).toBeNull()
+  })
+
+  it('global yönetici: aynı eylemler görünür', async () => {
+    api.admin.getSystemHealth.mockResolvedValue({ success: true, data: { ...HEALTH, lock: { held: true, held_by_me: false, locked_by: 'pod-b', locked_until: '2099-01-01T00:00:00' } } })
+    await renderLoaded()
+    await open('sched')
+    expect(screen.getByRole('button', { name: /^(Run Now|Şimdi Çalıştır)$/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^(Force Release Lock|Kilidi Zorla Aç)$/ })).toBeInTheDocument()
+    await open('integrations')
+    expect(screen.getByRole('button', { name: /Click to view delivery logs|Gönderim loglarını görmek için tıklayın/ })).toBeInTheDocument()
+    await open('releases')
+    await waitFor(() => expect(document.querySelector('[data-slot="deploy-actions"]')).not.toBeNull(), { timeout: 5000 })
+    expect(screen.getByRole('button', { name: /Elle kayıt ekle|Add manual record/ })).toBeInTheDocument()
+  })
+})
+
+describe('SystemHealth — "Şimdi çalıştır" reddi (UIA-D3)', () => {
+  it('sunucu success:false → hata iletisi, "tetiklendi" YOK, 2 sn yoklama BAŞLAMAZ', async () => {
+    await renderLoaded()
+    api.runScheduler.mockResolvedValueOnce({ success: false, error: 'Bu işlem yalnız global yöneticiye açık.' })
+    const user = userEvent.setup()
+    await user.click(toggleOf('sched'))
+    const calls = api.admin.getSystemHealth.mock.calls.length
+    vi.useFakeTimers()
+    try {
+      await act(async () => { fireEvent.click(screen.getByRole('button', { name: /^(Run Now|Şimdi Çalıştır)$/ })) })
+      await act(async () => { await Promise.resolve() })
+      expect(screen.getByText('Bu işlem yalnız global yöneticiye açık.')).toBeInTheDocument()
+      expect(screen.queryByText(/^(Check triggered\.|Kontrol başlatıldı\.)$/)).toBeNull()
+      await act(async () => { vi.advanceTimersByTime(6500) })
+      expect(api.admin.getSystemHealth.mock.calls.length).toBe(calls)   // yoklama yok
+    } finally { vi.useRealTimers() }
+  })
+})
+
+describe('SystemHealth — okunamayan alt yük yeşil çizilmez (UIA-D5)', () => {
+  it('kilit okunamadı ({held:false, error}) → "Serbest" değil "Bilinmiyor"', async () => {
+    api.admin.getSystemHealth.mockResolvedValue({ success: true, data: { ...HEALTH, lock: { held: false, error: 'db down' } } })
+    await renderLoaded()
+    const user = userEvent.setup()
+    await user.click(toggleOf('sched'))
+    const card = document.querySelector('[data-card="lock"]')
+    expect(card.querySelector('[data-kind="unknown"]')).not.toBeNull()
+    expect(card.querySelector('[data-kind="free"]')).toBeNull()
+    expect(card.querySelector('[data-slot="lock-unavailable"]')).not.toBeNull()
+  })
+
+  it('SMTP özeti okunamadı ({error}, periods yok) → seviye "unknown", %100 yazılmaz', async () => {
+    api.admin.getSystemHealth.mockResolvedValue({ success: true, data: { ...HEALTH, smtp: { total: 0, attempted: 0, sent: 0, rate: 100, alarm: false, error: 'boom' } } })
+    await renderLoaded()
+    const user = userEvent.setup()
+    await user.click(toggleOf('integrations'))
+    expect(document.querySelector('[data-integration="smtp"]')).toHaveAttribute('data-level', 'unknown')
+    expect(document.querySelector('[data-slot="smtp-unavailable"]')).not.toBeNull()
+  })
+})
+
+describe('SystemHealth — bekçi test bildirimi başarısız (UIA-D9)', () => {
+  it('toast hangi kanalın ne olduğunu arayüz dilinde söyler; ham Türkçe sunucu durumu basılmaz', async () => {
+    api.admin.testWatchdog.mockResolvedValue({ success: true, data: { outcome: 'FAILED', email: 'SKIPPED: alıcı yok', webhook: 'FAILED: yanıt yok', push: null } })
+    const user = userEvent.setup()
+    await renderLoaded()
+    await user.click(toggleOf('watchdog'))
+    await user.click(await screen.findByRole('button', { name: /Send test notification|Test bildirimi gönder/ }))
+    const msg = await screen.findByText(/(e-mail|e-posta): (Skipped|Atlandı) · webhook: (Not delivered|Gönderilemedi) · push: —/)
+    expect(msg.textContent).not.toContain('alıcı yok')
+    expect(msg.textContent).not.toContain('yanıt yok')
+  })
+})
+

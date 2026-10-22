@@ -56,6 +56,11 @@ export function pushStats(kpi) {
 
 /** SMTP: seçili periyot verisi + seviye (alarm sunucudan; oran %80'in altına inmişse kritik). */
 export function smtpStats(smtp, period) {
+  // UIA-D5 (20.166): sunucu SMTP özetini okuyamadıysa (`error`, `periods` yok, yer tutucu rate 100) "%100 sağlıklı"
+  // DEĞİL — bilinmiyor. Seviye `unknown`, oran/adet yok.
+  if (smtp?.error && !smtp?.periods) {
+    return { data: {}, rate: null, alarm: false, level: 'unknown', rateTone: null, sent: null, attempted: null, unavailable: true }
+  }
   const data = smtp?.periods?.[period] ?? smtp ?? {}
   const rate = data.rate ?? 100
   const alarm = !!data.alarm
@@ -99,9 +104,9 @@ export function integrationList({ health, pushKpi, smtpPeriod = '7d', configChec
   return out
 }
 
-/** Yürütücü havuzu durumu. */
+/** Yürütücü havuzu durumu. Okunamadıysa (`error`) null — "0 / 0 boş kuyruk" yeşili çizilmez (UIA-D5). */
 export function executorStats(ex) {
-  if (!ex) return null
+  if (!ex || ex.error) return null
   const queue = ex.queue_size ?? 0, cap = Math.max(1, ex.queue_capacity ?? 1)
   const saturated = !!ex.saturated || queue > cap * 0.8
   const callerRuns = ex.caller_runs ?? 0

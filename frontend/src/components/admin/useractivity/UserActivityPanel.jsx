@@ -376,7 +376,7 @@ export default function UserActivityPanel({ data, error, refreshing, onRefresh, 
                     <TableCell className={TD} data-label={t('uact.colAction')}>
                       <span className="inline-flex flex-wrap gap-1.5">
                         <Button type="button" variant="secondary" size="sm" onClick={() => setSessionDetail(u)}>{t('uact.openDetail')}</Button>
-                        {isAdmin && !self && <Button type="button" variant="destructive" size="sm" disabled={busyUser === u.username} onClick={() => setTerminate({ username: u.username })}>{busyUser === u.username ? t('uact.terminating') : t('uact.terminate')}</Button>}
+                        {globalAdmin && !self && <Button type="button" variant="destructive" size="sm" disabled={busyUser === u.username} onClick={() => setTerminate({ username: u.username })}>{busyUser === u.username ? t('uact.terminating') : t('uact.terminate')}</Button>}
                       </span>
                     </TableCell>
                   </TableRow>
@@ -573,7 +573,7 @@ export default function UserActivityPanel({ data, error, refreshing, onRefresh, 
       {directory && <UserDirectoryModal data={ua} initial={directory} isAdmin={isAdmin} globalAdmin={globalAdmin} username={username} refreshing={refreshing} onClose={() => setDirectory(null)}
         onUser={(row) => setSessionDetail(row)} onTerminate={(u) => setTerminate({ username: u })} onRefresh={onRefresh} />}
       {sessionDetail && <SessionDetailModal row={sessionDetail} full={detailRecord(sessionDetail.username)}
-        isAdmin={isAdmin} globalAdmin={globalAdmin} identityMasked={idMasked} self={username && String(sessionDetail.username).toLowerCase() === String(username).toLowerCase()} activeSet={activeSet}
+        isAdmin={isAdmin} globalAdmin={globalAdmin} canAck={canAck} identityMasked={idMasked} self={username && String(sessionDetail.username).toLowerCase() === String(username).toLowerCase()} activeSet={activeSet}
         onClose={() => setSessionDetail(null)} onTerminate={(u) => setTerminate({ username: u })} onAck={doAck} ackBusy={ackBusy} onRefresh={onRefresh} teams={ua.role_team?.by_team || []} />}
       {terminate && <TerminateModal target={terminate.username} busy={busyUser === terminate.username} onClose={() => setTerminate(null)} onConfirm={(reason) => doTerminate(terminate.username, reason)} />}
       {ackTarget && <AckModal row={ackTarget} busy={ackBusy === ackTarget.id} onClose={() => setAckTarget(null)} onConfirm={(note) => doAck(ackTarget, true, note)} />}

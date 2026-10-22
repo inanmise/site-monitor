@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, within } from './test-utils.jsx'
 import TeamManager from '../components/admin/TeamManager.jsx'
+import { pressMenuTrigger } from './helpers/dropdownMenu.js'
 
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
 
@@ -114,8 +115,9 @@ describe('TeamManager — business-card members', () => {
     expect(document.querySelector('[data-slot="team-member-card"]')).not.toBeNull()
   })
 
+  // 20.166 (UIA-13): üye ADMIN rollü — onu yalnız GLOBAL yönetici düzenler (sunucu requireCanAdministerTarget)
   it('opens the user edit modal when a member card is clicked (admin only)', async () => {
-    render(<TeamManager systemRole="ADMIN" onTeamsChange={() => {}} />)
+    render(<TeamManager systemRole="ADMIN" globalAdmin onTeamsChange={() => {}} />)
     await waitFor(() => expect(screen.getByText('Payments')).toBeDefined())
     fireEvent.click(teamBadge('Payments'))
     await waitFor(() => expect(document.querySelector('[data-slot="team-member-open"]')).not.toBeNull())
@@ -262,12 +264,68 @@ describe('TeamManager — haftalık e-posta anahtarları', () => {
   })
 
   it('yeni takım formu iki anahtarı da KAPALI açar', async () => {
-    render(<TeamManager systemRole="ADMIN" ownTeamId={1} myTeamIds={[1]} onTeamsChange={() => {}} />)
+    // Takım ekleme yalnız global yönetici (20.166, UIA-A6 — sunucu createTeam requireAdmin)
+    render(<TeamManager systemRole="ADMIN" globalAdmin ownTeamId={1} myTeamIds={[1]} onTeamsChange={() => {}} />)
     await waitFor(() => expect(screen.getByText('Payments')).toBeDefined())
 
     fireEvent.click(screen.getByRole('button', { name: /Takım Ekle|Add Team/i }))
     const formPills = within(screen.getByTestId('tm-weekly-form')).getAllByRole('switch')
     expect(formPills).toHaveLength(2)
     formPills.forEach(p => expect(p.getAttribute('aria-checked')).toBe('false'))
+  })
+})
+
+// ── 20.166 bugfix (PKG-8a) ──────────────────────────────────────────────────────────────────────────────────────────
+describe('TeamManager — kapsamlı müdür (UIA-A6 / 13) ve değişen alanlar (UIA-A10 / A11)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    api.admin.getTeams.mockResolvedValue({ success: true, data: sampleTeams })
+    api.admin.getUsers.mockResolvedValue({ success: true, data: sampleMembers })
+    api.admin.getTeamUsers.mockResolvedValue({ success: true, data: sampleMembers })
+    api.admin.updateTeam.mockResolvedValue({ success: true, data: {} })
+  })
+  const openMenu = () => pressMenuTrigger(screen.getByRole('button', { name: /^Payments — (Actions|İşlemler)$/ }))
+
+  it('kapsamlı müdür: "Takım ekle" YOK, menüde Sil / AD denetimi YOK (sunucu requireAdmin = global)', async () => {
+    render(<TeamManager systemRole="ADMIN" globalAdmin={false} onTeamsChange={() => {}} />)
+    await waitFor(() => expect(screen.getByText('Payments')).toBeDefined())
+    expect(screen.queryByRole('button', { name: /^(Add Team|Takım Ekle)$/ })).toBeNull()
+    openMenu()
+    const labels = (await screen.findAllByRole('menuitem')).map((m) => m.textContent)
+    expect(labels.some((l) => /^(Delete|Sil)$/.test(l))).toBe(false)
+    expect(labels.some((l) => /AD/.test(l) && /(memberships|üyelik)/i.test(l))).toBe(false)
+    expect(labels.some((l) => /^(Edit|Düzenle)$/.test(l))).toBe(true)
+  })
+
+  it('global yönetici: Takım ekle + Sil + AD denetimi görünür', async () => {
+    render(<TeamManager systemRole="ADMIN" globalAdmin onTeamsChange={() => {}} />)
+    await waitFor(() => expect(screen.getByText('Payments')).toBeDefined())
+    expect(screen.getByRole('button', { name: /^(Add Team|Takım Ekle)$/ })).toBeInTheDocument()
+    openMenu()
+    const labels = (await screen.findAllByRole('menuitem')).map((m) => m.textContent)
+    expect(labels.some((l) => /^(Delete|Sil)$/.test(l))).toBe(true)
+  })
+
+  it('kapsamlı müdür: ADMIN rollü üyenin kartı düzenleyiciyi DEĞİL salt-okunur ayrıntıyı açar', async () => {
+    render(<TeamManager systemRole="ADMIN" globalAdmin={false} onTeamsChange={() => {}} />)
+    await waitFor(() => expect(screen.getByText('Payments')).toBeDefined())
+    fireEvent.click(screen.getAllByRole('button', { name: /Payments/ })[0])
+    await waitFor(() => expect(document.querySelector('[data-slot="team-member-open"]')).not.toBeNull())
+    fireEvent.click(document.querySelector('[data-slot="team-member-open"]'))
+    await waitFor(() => expect(screen.getByTestId('user-detail')).toBeInTheDocument())
+    expect(screen.queryByDisplayValue('ali@example.com')).toBeNull()
+  })
+
+  it('lider temizlenince gövde YALNIZ { leader_id: "" } (sunucu null değeri dokunma sayar)', async () => {
+    render(<TeamManager systemRole="ADMIN" globalAdmin onTeamsChange={() => {}} />)
+    await waitFor(() => expect(screen.getByText('Payments')).toBeDefined())
+    openMenu()
+    fireEvent.click(await screen.findByRole('menuitem', { name: /^(Edit|Düzenle)$/ }))
+    const dlg = await screen.findByRole('dialog')
+    fireEvent.mouseDown(within(dlg).getByRole('combobox', { name: /Team Leader \/ PO|Takım Lideri/ }))
+    fireEvent.mouseDown([...document.querySelectorAll('[cmdk-item]')].find((o) => /— (Select Leader|Lider Seçin|Lider seçin) —/.test(o.textContent)))
+    fireEvent.click(within(dlg).getByRole('button', { name: /^(Save|Kaydet)$/ }))
+    await waitFor(() => expect(api.admin.updateTeam).toHaveBeenCalledTimes(1))
+    expect(api.admin.updateTeam.mock.calls[0][1]).toEqual({ leader_id: '' })
   })
 })

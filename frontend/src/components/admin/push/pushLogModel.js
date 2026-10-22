@@ -1,6 +1,7 @@
 // Webhook Push Gönderim Logu — sabitler ve saf yardımcılar (2026-10-01 yeniden tasarımında PushLogView'dan ayrıldı).
 import { CheckCircle, XCircle, MinusCircle, Clock, Ban, HelpCircle } from 'lucide-react'
 import { readUrlParam } from '../../../hooks/useUrlQuerySync.js'
+import { triggerText } from '../logTriggers.js'
 
 export const RANGES = ['24h', '7d', '30d']
 export const STATUSES = ['SENT', 'FAILED', 'PENDING', 'BLOCKED', 'SKIPPED']
@@ -11,7 +12,9 @@ export const TRIGGERS = ['OPEN', 'ESCALATION', 'RE_ALERT', 'RESOLVE', 'RESEND', 
   // 2026-10-17 (12. sürüm): kanal teknik hata raporu dönem hatırlatması (takım push'u)
   'TECH_ERROR_REMINDER',
   // 2026-10-18: teknik hata raporu onay isteği / onay hatırlatması / karar / gönderildi / gönderilemedi
-  'TECH_ERROR_APPROVAL', 'TECH_ERROR_APPROVAL_REMINDER', 'TECH_ERROR_DECISION', 'TECH_ERROR_SENT', 'TECH_ERROR_SEND_FAILED']
+  'TECH_ERROR_APPROVAL', 'TECH_ERROR_APPROVAL_REMINDER', 'TECH_ERROR_DECISION', 'TECH_ERROR_SENT', 'TECH_ERROR_SEND_FAILED',
+  // 20.166 (UIA-C4): TLS notu düşüş bildirimi (TlsGradeDropNotifier takım push'u) süzülebilir
+  'TLS_GRADE_DROP']
 export const LEVELS = ['CRITICAL', 'HIGH', 'WARNING', 'INFO']
 export const ERROR_CLASSES = ['AUTH', 'NOT_FOUND', 'RATE', 'SERVER', 'CLIENT', 'CONFIG', 'TIMEOUT', 'CONNECT', 'OTHER']
 /** Sunucunun kabul ettiği sıralama alanları (PushLogController). */
@@ -30,11 +33,9 @@ export const STATUS_META = {
 /** Grafik renkleri (gönderildi / başarısız / kuyrukta / atlandı). */
 export const SERIES_COLORS = { sent: '#059669', failed: '#dc2626', pending: '#d97706', skipped: '#a1a1aa' }
 
+/** Tetikleyici etiketi — sözlük `../logTriggers.js` (SMTP + push tek kaynak, 20.166); bilinmeyen ham gösterilir. */
 export function triggerLabel(trigger, t) {
-  if (!trigger) return '—'
-  const k = `userpush.trigger.${trigger}`
-  const v = t(k)
-  return v === k ? trigger : v
+  return triggerText(trigger, t, 'push')
 }
 
 /** Durum etiketi — anahtarlar AÇIKÇA yazılı (kullanılmayan anahtar kapısı dinamik anahtarı göremez). */

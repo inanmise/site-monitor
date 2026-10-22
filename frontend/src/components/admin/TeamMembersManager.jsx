@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
-import { UserPlus, UserMinus, Users } from 'lucide-react'
+import { UserPlus, UserMinus, Users, UserX } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
@@ -12,6 +12,7 @@ import { LoadingBlock } from '../ui/Progress.jsx'
 import SimpleTooltip from '../ui/SimpleTooltip.jsx'
 import { SystemRoleBadge } from './ToneBadge.jsx'
 import { Button } from '@/components/shadcn/button'
+import { Badge } from '@/components/shadcn/badge'
 import { userRefValue } from '../../utils/userRef'
 
 /**
@@ -38,6 +39,10 @@ export default function TeamMembersManager({ team, users = [], canManage, onClos
   useEffect(() => { load() }, [team.id])   // eslint-disable-line react-hooks/exhaustive-deps
 
   const memberIds = useMemo(() => new Set((members || []).map(m => m.id)), [members])
+  // Pasif üyeler SONDA ve belirgin "Pasif" rozetiyle (20.166, UIA-A7 — CLAUDE.md "Team member lists show passive members
+  // last"): takım eksikleri "pasif üyesi var" diye buraya yönlendiriyor; kimin çıkarılacağı görünsün. Sıra kararlı.
+  const ordered = useMemo(() => (members || []).map((m, i) => [m, i])
+    .sort((a, b) => ((a[0].active === false) - (b[0].active === false)) || (a[1] - b[1])).map(([m]) => m), [members])
   const candidates = useMemo(() => users.filter(u => !memberIds.has(u.id) && u.active !== false), [users, memberIds])
 
   async function add() {
@@ -47,7 +52,7 @@ export default function TeamMembersManager({ team, users = [], canManage, onClos
       const res = await api.admin.addTeamMember(team.id, userRefValue(pick))
       if (res?.success) { toast.success(t('team.memberAdded')); setPick(''); await load(); onChanged?.() }
       else toast.error(res?.error || 'Error')
-    } finally { setBusy(false) }
+    } catch (e) { toast.error(e?.message || t('team.saveError')) } finally { setBusy(false) }
   }
 
   async function remove(u) {
@@ -63,7 +68,7 @@ export default function TeamMembersManager({ team, users = [], canManage, onClos
       const res = await api.admin.removeTeamMember(team.id, u.id)
       if (res?.success) { toast.success(t('team.memberRemoved')); await load(); onChanged?.() }
       else toast.error(res?.error || 'Error')
-    } finally { setBusy(false) }
+    } catch (e) { toast.error(e?.message || t('team.saveError')) } finally { setBusy(false) }
   }
 
   return (
@@ -85,9 +90,15 @@ export default function TeamMembersManager({ team, users = [], canManage, onClos
           )}
           {members.length === 0 ? <p className="text-xs text-muted-foreground">{t('team.membersEmpty')}</p> : (
             <ul className="flex list-none flex-col gap-1.5" data-testid="team-members">
-              {members.map(u => (
-                <li key={u.id} className="flex items-center gap-2.5 rounded-lg border px-2 py-1.5 border-border">
+              {ordered.map(u => (
+                <li key={u.id} data-inactive={u.active === false ? 'true' : undefined}
+                  className="flex flex-wrap items-center gap-2.5 rounded-lg border px-2 py-1.5 border-border">
                   <UserBadge displayName={u.display_name} username={u.username} email={u.email} inline size="sm" />
+                  {u.active === false && (
+                    <Badge variant="destructive" data-slot="team-member-inactive" title={t('team.memberInactiveTip')}>
+                      <UserX aria-hidden="true" /> {t('team.memberInactive')}
+                    </Badge>
+                  )}
                   <span className="ml-auto inline-flex items-center gap-1.5">
                     {u.system_role && <SystemRoleBadge role={u.system_role} />}
                     {u.team_id === team.id && <span className="text-xs text-muted-foreground">{t('team.memberPrimary')}</span>}

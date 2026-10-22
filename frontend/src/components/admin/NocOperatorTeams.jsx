@@ -64,7 +64,12 @@ export default function NocOperatorTeams({ readOnly = false }) {
       setSettings(s)
       setDraft(s.ids)
       const d = unwrap(dir)
-      setDirectory(d.ok && Array.isArray(d.data) ? d.data : [])
+      // Takım rehberi okunamasa da seçili takımlar ADLARIYLA görünür (20.166, UIA-C12): ayar yanıtı `teams [{id, name,
+      // active}]` taşır — eskiden yalnız rehber okunuyordu ve her çip / onay metni çıplak "#12" yazıyordu.
+      const fromCfg = Array.isArray(r.data?.teams) ? r.data.teams : []
+      const dirRows = d.ok && Array.isArray(d.data) ? d.data : []
+      const known = new Set(dirRows.map((x) => Number(x?.id)))
+      setDirectory([...dirRows, ...fromCfg.filter((x) => !known.has(Number(x?.id)))])
     } catch (e) {
       if (alive.current && id === loadSeq.current) setLoadError(e?.message || t('noc.ot.loadError'))
     }
@@ -96,8 +101,8 @@ export default function NocOperatorTeams({ readOnly = false }) {
     return () => clearTimeout(timer)
   }, [draftKey, settings]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const options = useMemo(() => teamOptions(directory, draft, t('noc.ot.inactiveTeam')), [directory, draft, t])
-  const nameOf = (id) => options.find((o) => o.value === id)?.name ?? `#${id}`
+  const options = useMemo(() => teamOptions(directory, draft, t('noc.ot.inactiveTeam'), (_id, n, c) => (c > 1 ? `${t('team.nameUnavailable')} ${n}` : t('team.nameUnavailable'))), [directory, draft, t])
+  const nameOf = (id) => options.find((o) => o.value === id)?.name ?? t('team.nameUnavailable')
   const dirty = !!settings && isDirty(settings.ids, draft)
   const max = settings?.maxTeams ?? 50
 
@@ -183,10 +188,11 @@ export default function NocOperatorTeams({ readOnly = false }) {
                     return (
                       <li key={id} className="min-w-0">
                         <Badge variant="outline" data-slot="noc-ot-chip" data-team-id={id}
-                          className={cn('h-10 max-w-full gap-1.5 rounded-full bg-primary/5 pr-1 pl-2.5 font-medium sm:h-8 sm:pointer-coarse:h-10',
+                          // Uzun takım adı SARAR (20.166, UIA-C9): sarılan hap köşeleri kırpmasın diye rounded-md + overflow-visible
+                          className={cn('h-auto min-h-10 max-w-full gap-1.5 overflow-visible rounded-md bg-primary/5 py-1 pr-1 pl-2.5 font-medium whitespace-normal sm:min-h-8 sm:pointer-coarse:min-h-10',
                             info && !info.active && 'border-dashed text-muted-foreground')}>
-                          <Users aria-hidden="true" className="size-3.5 text-primary" />
-                          <span className="max-w-[14rem] truncate" title={name}>{name}</span>
+                          <Users aria-hidden="true" className="size-3.5 shrink-0 text-primary" />
+                          <span className="min-w-0 [overflow-wrap:anywhere]">{name}</span>
                           {info && (
                             <span data-slot="noc-ot-chip-count" className="text-xs text-muted-foreground tabular-nums">
                               {info.active ? t('noc.ot.members', info.memberCount) : t('noc.ot.inactiveTeam')}
@@ -227,8 +233,8 @@ export default function NocOperatorTeams({ readOnly = false }) {
                   <ul data-slot="noc-ot-users" className="m-0 grid list-none grid-cols-1 gap-1.5 p-0 sm:grid-cols-2 xl:grid-cols-3">
                     {shownUsers.map((u) => (
                       <li key={u.user_id} data-slot="noc-ot-user" className="flex min-w-0 flex-col rounded-md border bg-card px-2.5 py-1.5">
-                        <span className="truncate text-sm font-medium" title={u.display_name}>{u.display_name}</span>
-                        <span className="truncate text-xs text-muted-foreground" title={(u.team_names || []).join(', ')}>
+                        <span className="text-sm font-medium [overflow-wrap:anywhere]">{u.display_name}</span>
+                        <span className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
                           {(u.team_names || []).join(', ')}
                         </span>
                       </li>

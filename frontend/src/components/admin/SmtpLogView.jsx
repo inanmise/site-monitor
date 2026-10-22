@@ -6,6 +6,8 @@ import { useT } from '../../i18n/index.jsx'
 import { useVisibleInterval } from '../../hooks/useVisibleInterval'
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../../hooks/useUrlQuerySync.js'
 import { usePermissions } from '../../contexts/PermissionsProvider.jsx'
+import { useGlobalAdmin } from './useGlobalAdmin.js'
+import { triggerText } from './logTriggers.js'
 import { useDialog } from '../ui/Dialog.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import { navigateTo } from '../../utils/navigate.js'
@@ -79,13 +81,9 @@ function rangeFrom(range, now = new Date()) {
   return new Date(now.getTime() - ms)
 }
 
+/** Tetikleyici etiketi — sözlük `logTriggers.js`'te (SMTP + push tek kaynak, 20.166 UIA-14); bilinmeyen ham. */
 export function triggerLabel(trigger, t) {
-  const map = { INITIAL: 'health.triggerInitial', ESCALATION: 'health.triggerEscalation', ESCALATION_STEP: 'health.triggerEscalationStep', DAILY_REALERT: 'health.triggerDailyRealert', MANUAL: 'health.triggerManual', RESOLUTION: 'health.triggerResolution',
-    // 2026-10-01: sessiz saat — karar satırı ve pencere sonunda giden özet e-postası
-    QUIET_HOURS: 'health.triggerQuietHours', QUIET_DIGEST: 'health.triggerQuietDigest',
-    // 2026-10-02: sistem bakımı — bildirim susturuldu (karar satırı)
-    SYSTEM_MAINTENANCE: 'health.triggerSystemMaintenance' }
-  return map[trigger] ? t(map[trigger]) : (trigger || '—')
+  return triggerText(trigger, t, 'smtp')
 }
 
 export function StatusBadge({ kind, error, t, compact = false }) {
@@ -111,12 +109,15 @@ function readInitial(initial) {
   }
 }
 
-export default function SmtpLogView({ onBack, initial }) {
+export default function SmtpLogView({ onBack, initial, globalAdmin: globalAdminProp }) {
   const t = useT()
   const toast = useToast()
   const { showConfirm } = useDialog()
   const { canExecute } = usePermissions()
-  const canResend = canExecute('system_health.actions')
+  // Yeniden gönderim YALNIZ global yönetici (SmtpLogController: isGlobalAdmin) — matris yetkisi tek başına yetmez
+  // (kapsamlı müdürün ADMIN satırında da var → 403'tü; 20.166 UIA-D1). Prop yoksa scope.global_admin (K1).
+  const globalAdmin = useGlobalAdmin(globalAdminProp)
+  const canResend = globalAdmin && canExecute('system_health.actions')
 
   const [f, setF] = useState(() => readInitial(initial))
   const [qInput, setQInput] = useState(f.q)
@@ -196,6 +197,10 @@ export default function SmtpLogView({ onBack, initial }) {
   }, [detailId])
 
   const kpi = summary?.kpi || {}
+  // Süzgeç seçenekleri: sabit liste + aralıkta gerçekten görülen tetikleyiciler (özet `triggers`) — eskiden yalnız 6 kod
+  // seçilebiliyordu; fırtına / 7/24 / bekçi / rapor satırları süzülemiyordu (20.166 UIA-14).
+  const triggerOptions = useMemo(() => [...new Set([...TRIGGERS, ...(summary?.triggers || []).map((x) => x?.trigger)
+    .filter((x) => x && x !== '-'), ...(f.trigger ? [f.trigger] : [])])], [summary, f.trigger])
   const teams = useMemo(() => summary?.teams || [], [summary])
   const teamOptions = useMemo(() => [{ value: '', label: t('sml.allTeams') },
     ...teams.filter((x) => x.team_id != null).map((x) => ({ value: String(x.team_id), label: x.team_name || `#${x.team_id}` }))], [teams, t])
@@ -297,7 +302,7 @@ export default function SmtpLogView({ onBack, initial }) {
           </span>
           <span className={SELECT_BOX}>
             <SearchableSelect value={f.trigger} onChange={(v) => patch({ trigger: v })} ariaLabel={t('health.emailDetailTrigger')}
-              options={[{ value: '', label: t('sml.allTriggers') }, ...TRIGGERS.map((x) => ({ value: x, label: triggerLabel(x, t) }))]} />
+              options={[{ value: '', label: t('sml.allTriggers') }, ...triggerOptions.map((x) => ({ value: x, label: triggerLabel(x, t) }))]} />
           </span>
           <span className={SELECT_BOX}>
             <SearchableSelect value={f.teamId} onChange={(v) => patch({ teamId: v })} ariaLabel={t('sml.colTeam')} options={teamOptions} />

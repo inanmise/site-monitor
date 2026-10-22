@@ -44,20 +44,30 @@ export function toForm(view) {
   }
 }
 
-/** Kaydetme gövdesi (PUT). */
+/**
+ * Kaydetme gövdesi (PUT). SİLİNMİŞ hesaplar (`missing`) GİTMEZ (20.166, UIA-A5 / K11): silinen bir kişi hiç nöbetçi
+ * olamaz; eski sunucu bilinmeyen kimliği reddediyordu ("listedeki bir kişi bulunamadı — sayfayı yenileyin", yenilemek de
+ * bir şey değiştirmiyordu), yenisi sessizce düşürür. Kapsamlı görüntüleyicide silinmiş kişinin kimliği zaten null'dır.
+ */
 export function buildPayload(form) {
   return {
     enabled: !!form.enabled,
     rotation: form.rotation === 'DAILY' ? 'DAILY' : 'WEEKLY',
     anchor: form.anchor,
     notify_oncall: !!form.notify,
-    members: form.members.map((m) => m.id),
+    members: form.members.filter((m) => !m.missing && m.id != null).map((m) => m.id),
   }
 }
 
-/** Form değişti mi (kaydet düğmesi). */
+/** Form değişti mi (kaydet düğmesi). Silinmiş satırı listeden çıkarmak da değişikliktir (kaydedince sunucudan düşer). */
 export function isDirty(form, base) {
-  return JSON.stringify(buildPayload(form)) !== JSON.stringify(buildPayload(base))
+  const shape = (f) => ({ ...buildPayload(f), members: f.members.map((m) => (m.missing ? '∅' : String(m.id))) })
+  return JSON.stringify(shape(form)) !== JSON.stringify(shape(base))
+}
+
+/** Listede silinmiş hesap var mı (pencerede uyarı bandı). */
+export function hasMissingMembers(form) {
+  return !!form?.members?.some((m) => m.missing)
 }
 
 export const MAX_MEMBERS = 50

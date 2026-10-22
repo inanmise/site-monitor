@@ -56,7 +56,7 @@ describe('PushLogView', () => {
   })
 
   it('yükler: KPI (kuyrukta/engellendi dâhil), kırılımlar, satırlar; özet + arama aynı from', async () => {
-    render(<PushLogView onBack={() => {}} />)
+    render(<PushLogView globalAdmin onBack={() => {}} />)
     await screen.findByText('Internal error')
     expect(pushLog.summary.mock.calls[0][0].from).toBe(pushLog.search.mock.calls[0][0].from)
     expect(document.querySelector('[data-slot="pl-rate"]').textContent).toMatch(/^(%33\.3|33\.3%)$/)
@@ -77,7 +77,7 @@ describe('PushLogView', () => {
   })
 
   it('KPI Engellendi → status=BLOCKED; seviye kırılımı → level; alıcı satırı → username çipi; filtreleri temizle', async () => {
-    render(<PushLogView onBack={() => {}} />)
+    render(<PushLogView globalAdmin onBack={() => {}} />)
     await screen.findByText('Internal error')
     fireEvent.click(statusBox('BLOCKED'))
     await waitFor(() => expect(pushLog.search).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'BLOCKED' })))
@@ -100,7 +100,7 @@ describe('PushLogView', () => {
 
   it('detay: mesaj, ham yanıt, batch alıcıları (2), "Alarmı aç"; yeniden kuyruk onay → api.requeue → toast', async () => {
     const nav = vi.fn(); window.addEventListener('sm:navigate', nav)
-    render(<PushLogView onBack={() => {}} />)
+    render(<PushLogView globalAdmin onBack={() => {}} />)
     await screen.findByText('Internal error')
     fireEvent.click(document.querySelectorAll('[data-action="resend"]')[0])           // satır #2 FAILED → yeniden kuyruk
     const confirm = await screen.findByRole('dialog')
@@ -127,7 +127,7 @@ describe('PushLogView', () => {
     Object.defineProperty(URL, 'revokeObjectURL', { value: vi.fn(), configurable: true })
     const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
     const onBack = vi.fn()
-    render(<PushLogView onBack={onBack} initial={{ range: '24h', status: 'FAILED' }} />)
+    render(<PushLogView globalAdmin onBack={onBack} initial={{ range: '24h', status: 'FAILED' }} />)
     await waitFor(() => expect(pushLog.search).toHaveBeenCalledWith(expect.objectContaining({ status: 'FAILED' })))
     await screen.findByText('Internal error')
     fireEvent.click(screen.getByRole('button', { name: /CSV/ }))
@@ -138,7 +138,7 @@ describe('PushLogView', () => {
   })
 
   it('takım / alıcı rozetine tıklamak satır detayını AÇMAZ (2026-09-20 kullanıcı bildirimi); hata sınıfları paneli kaldırıldı, mini tablolar sabit yerleşimli', async () => {
-    render(<PushLogView onBack={() => {}} />)
+    render(<PushLogView globalAdmin onBack={() => {}} />)
     await screen.findByText('Internal error')
     const row = tableRows()[0]
     const stop = row.querySelector('[data-row-stop]')
@@ -152,7 +152,7 @@ describe('PushLogView', () => {
   })
 
   it('kırılım paneli v2: takım satırında "Başarısız" rakamı → teamId + status=FAILED; ikinci tıklama süzgeci kaldırır; izleme satırı q ile süzer; başlık daraltılır', async () => {
-    render(<PushLogView onBack={() => {}} />)
+    render(<PushLogView globalAdmin onBack={() => {}} />)
     await screen.findByText('Internal error')
     const rowOf = (re) => pbpRows().find((r) => re.test(r.textContent))
     const teamRow = rowOf(/Takım A/)
@@ -177,7 +177,7 @@ describe('PushLogView', () => {
   })
 
   it('süzgeç çipleri: her etkin süzgeç ayrı çip, × kaldırır; aralık çipi varsayılana döner; telefon süzgeç düğmesi seçicileri açar', async () => {
-    render(<PushLogView onBack={() => {}} initial={{ range: '24h', status: 'FAILED', level: 'HIGH' }} />)
+    render(<PushLogView globalAdmin onBack={() => {}} initial={{ range: '24h', status: 'FAILED', level: 'HIGH' }} />)
     await screen.findByText('Internal error')
     const chips = () => document.querySelector('[data-slot="pl-chips"]')
     expect(chips().textContent).toMatch(/(Zaman aralığı|Time range): (Son 24 saat|Last 24 hours)/)
@@ -196,10 +196,27 @@ describe('PushLogView', () => {
 
   it('yükleme hatası: bant + "Tekrar dene" yeniden ister', async () => {
     pushLog.summary.mockResolvedValueOnce({ success: false, error: 'özet yok' })
-    render(<PushLogView onBack={() => {}} />)
+    render(<PushLogView globalAdmin onBack={() => {}} />)
     expect(await screen.findByText('özet yok')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /Tekrar dene|Try again/ }))
     await screen.findByText('Internal error')
     expect(screen.queryByText('özet yok')).toBeNull()
+  })
+  // 20.166 (UIA-D1): yeniden kuyruğa alma ucu YALNIZ global yönetici (PushLogController.isGlobalAdmin)
+  it('kapsamlı müdür (globalAdmin yok): yeniden kuyruk düğmesi YOK, "yalnız yönetici" ipucu var', async () => {
+    render(<PushLogView onBack={() => {}} />)
+    await screen.findByText('Internal error')
+    expect(document.querySelectorAll('[data-action="resend"]')).toHaveLength(0)
+    const { TR } = await import('../i18n/tr.js'); const { EN } = await import('../i18n/en.js')
+    expect(screen.getByText((c) => c === TR['pl.requeueAdminOnly'] || c === EN['pl.requeueAdminOnly'])).toBeInTheDocument()
+  })
+
+  // 20.166 (UIA-C4): TLS notu düşüş push'u süzgeç listesinde ve etiketiyle
+  it('TLS_GRADE_DROP tetikleyicisi süzgeçte seçilebilir ve etiketlidir (ham kod değil)', async () => {
+    const { TRIGGERS, triggerLabel } = await import('../components/admin/push/pushLogModel.js')
+    expect(TRIGGERS).toContain('TLS_GRADE_DROP')
+    const { TR } = await import('../i18n/tr.js'); const { EN } = await import('../i18n/en.js')
+    expect(triggerLabel('TLS_GRADE_DROP', (k) => EN[k] ?? k)).toBe('TLS grade dropped')
+    expect(triggerLabel('TLS_GRADE_DROP', (k) => TR[k] ?? k)).toBe('TLS notu düştü')
   })
 })

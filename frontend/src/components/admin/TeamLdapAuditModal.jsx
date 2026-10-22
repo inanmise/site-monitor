@@ -101,7 +101,7 @@ export default function TeamLdapAuditModal({ team, managerInfo, onClose, onChang
             {members.map((m) => (
               <li key={m.user_id} data-user-id={m.user_id} className="flex min-w-0 flex-col gap-1 rounded-md border border-border px-2.5 py-2">
                 <span className="flex min-w-0 flex-wrap items-center gap-1.5">
-                  <strong className="min-w-0 truncate" title={m.username}>{m.display_name || m.username}</strong>
+                  <strong className="min-w-0 [overflow-wrap:anywhere]">{m.display_name || m.username}</strong>
                   {m.primary && <span className={HINT}>{t('tla.primary')}</span>}
                   {!m.active && <ToneBadge tone="muted">{t('tla.inactive')}</ToneBadge>}
                   {m.auth_source !== 'LDAP' && <ToneBadge tone="muted">{t('tla.local')}</ToneBadge>}

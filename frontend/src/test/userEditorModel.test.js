@@ -50,9 +50,12 @@ describe('userEditorModel — kablo sözleşmesi', () => {
     expect(now.org_role).toBe('TECH')
   })
 
-  it('boş org rolü null gider; takımsız kullanıcıda team_id null', () => {
+  // 20.166 (UIA-A2): kayıtlı rol YOKSA boş org rolü null (dokunma) gider; kayıtlı rol varken boş form rolü TEMİZLER (aşağı)
+  it('boş org rolü (taban yok / kayıtlı rol yok) null gider; takımsız kullanıcıda team_id null', () => {
     const p = buildPayload({ ...toForm(USER), org_role: '', team_ids: [], system_role: 'ADMIN' })
     expect(p.org_role).toBeNull()
+    const noRole = toForm({ ...USER, org_role: null })
+    expect(buildPayload({ ...noRole, title: 'X' }, { baseline: noRole }).org_role).toBeNull()
     expect(p.team_ids).toEqual([])
     expect(p.team_id).toBeNull()
   })
@@ -182,5 +185,50 @@ describe('userEditorModel — korumalar ve yardımcılar', () => {
     expect(lockoutState({ lockout_until: '2026-10-02T10:30:00' }, now)).toEqual({ kind: 'temp', until: '2026-10-02T10:30:00' })
     expect(lockoutState({ lockout_until: '2026-10-02T09:30:00Z' }, now)).toBeNull()
     expect(lockoutState({}, now)).toBeNull()
+  })
+})
+
+// ── 20.166 bugfix (PKG-8a): düzenleme tabanı ────────────────────────────────────────────────────────────────────────
+describe('userEditorModel — düzenleme tabanı (UIA-1 / A2 / A3 / 13)', () => {
+  const base = toForm(USER)
+
+  it('UIA-1: takım kümesi değişmediyse team_ids / team_id GİTMEZ; sıra farkı değişiklik değildir', () => {
+    const p = buildPayload({ ...base, phone: '556' }, { viewerRole: 'ADMIN', baseline: base })
+    expect(p).not.toHaveProperty('team_ids')
+    expect(p).not.toHaveProperty('team_id')
+    expect(p.phone).toBe('556')
+    expect(buildPayload({ ...base, team_ids: [4, 3] }, { baseline: base })).not.toHaveProperty('team_ids')
+  })
+
+  it('UIA-1: takım eklenince / çıkarılınca bütün küme gider (birincil = ilk eleman sözleşmesi korunur)', () => {
+    const p = buildPayload({ ...base, team_ids: [3, 4, 8] }, { baseline: base })
+    expect(p.team_ids).toEqual([3, 4, 8])
+    expect(p.team_id).toBe(3)
+    expect(buildPayload({ ...base, team_ids: [4] }, { baseline: base }).team_ids).toEqual([4])
+  })
+
+  it('UIA-A2: kayıtlı org rolü varken "Rol yok" seçilince boş dize gider (sunucu yalnız boş dizeyi temizler)', () => {
+    expect(buildPayload({ ...base, org_role: '' }, { baseline: base }).org_role).toBe('')
+    expect(buildPayload({ ...base, org_role: 'PO' }, { baseline: base }).org_role).toBe('PO')
+    // ekle kipinde taban yok → eski davranış
+    expect(buildCreatePayload({ ...emptyForm(), username: 'y', password: 'abcd', email: 'y@x.co', team_ids: [1] }, { baseline: base }).org_role).toBeNull()
+  })
+
+  it('UIA-A3: düzenlemede DEĞİŞMEYEN e-posta (boş dâhil) yeniden doğrulanmaz; yeni yazılan değer denetlenir', () => {
+    const noMail = toForm({ ...USER, email: null })
+    expect(validateForm(noMail, { mode: 'edit', baseline: noMail })).toEqual({})
+    expect(validateForm({ ...noMail, email: 'bozuk' }, { mode: 'edit', baseline: noMail }).email.key).toBe('usr.emailInvalid')
+    const legacyBad = toForm({ ...USER, email: 'eski@adres' })
+    expect(validateForm(legacyBad, { mode: 'edit', baseline: legacyBad })).toEqual({})
+    // dolu tabandan silmek yine zorunlu hatası
+    expect(validateForm({ ...base, email: '' }, { mode: 'edit', baseline: base }).email.key).toBe('ued.emailRequired')
+    // ekle kipinde taban yok sayılır
+    expect(validateForm({ ...emptyForm(), username: 'a', password: 'abcd', team_ids: [1] }, { mode: 'add', baseline: emptyForm() }).email.key).toBe('ued.emailRequired')
+  })
+
+  it('UIA-13: kapsamlı müdür (ADMIN, global değil) yalnız USER / TEAM_ADMIN verir; global yönetici dört rol', () => {
+    expect(roleOptionsFor('ADMIN', 'USER', { globalAdmin: false })).toEqual(['USER', 'TEAM_ADMIN'])
+    expect(roleOptionsFor('ADMIN', 'USER', { globalAdmin: true })).toEqual(['USER', 'TEAM_ADMIN', 'AUDIT', 'ADMIN'])
+    expect(roleOptionsFor('ADMIN', 'AUDIT', { globalAdmin: false })).toEqual(['USER', 'TEAM_ADMIN', 'AUDIT'])
   })
 })

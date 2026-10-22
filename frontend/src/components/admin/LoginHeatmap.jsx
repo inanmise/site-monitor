@@ -1,4 +1,5 @@
 import { Card } from '@/components/shadcn/card'
+import { useT } from '../../i18n/index.jsx'
 
 // Peak login ısı haritası — saf SVG, 7 (hafta-günü) × 24 (saat). MiniChart gibi bağımsız.
 // props: matrix [7][24] login sayıları, failed [7][24] başarısız login sayıları, max (en yoğun hücre),
@@ -12,6 +13,8 @@ export default function LoginHeatmap({
   matrix = [], failed = [], max = 0, dayLabels = [], title, hourLabel, onCellClick,
   todayDow = -1, rowTotals = [], colTotals = [], total = 0, cell = 32, isOff, marks,
 }) {
+  // İpucu metni arayüz dilinde (20.166, UIA-11): "başarısız" / "mesai dışı" İngilizce arayüzde Türkçe çıkıyordu
+  const t = useT()
   const cols = 24, rows = 7
   const gap = cell > 22 ? 3 : 2
   const leftPad = Math.round(cell * 1.3), topPad = 8
@@ -77,7 +80,7 @@ export default function LoginHeatmap({
                       fill={color(v, f > 0)}
                       style={clickable ? { cursor: 'pointer' } : undefined}
                       onClick={clickable ? () => onCellClick(r, c) : undefined}>
-                      <title>{`${dayLabels[r] || ''} ${hh}:00–${hh}:59 — ${v}${f > 0 ? ` (${f} başarısız)` : ''}${off ? ' · mesai dışı' : ''}`}</title>
+                      <title>{`${dayLabels[r] || ''} ${hh}:00–${hh}:59 — ${v}${f > 0 ? ` ${t('heatmap.unsuccessfulSuffix', f)}` : ''}${off ? ` · ${t('heatmap.offHours')}` : ''}`}</title>
                     </rect>
                     {off && <rect x={leftPad + c * cell} y={y} width={cell - gap} height={cell - gap} rx="3" fill="url(#lh-off)" pointerEvents="none" />}
                     {mark ? <circle cx={leftPad + c * cell + cell - gap - 4} cy={y + 4} r={Math.max(2, cell * 0.09)} fill="#dc2626" pointerEvents="none" /> : null}

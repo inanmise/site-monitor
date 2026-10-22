@@ -182,6 +182,7 @@ export default function AuditLogViewer({ fullScope = true, teamNames }) {
     setExporting(null)
     if (res.ok) toast.success(t('audit.exportDone'))
     else if (res.status === 429) toast.info(t('audit.exportBusy'))
+    else if (res.status === -1) toast.error(t('audit.exportDownloadFailed'))
     else toast.error(t('audit.exportFailed', res.status || '—'))
   }
 

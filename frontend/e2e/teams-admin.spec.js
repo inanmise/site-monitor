@@ -193,3 +193,68 @@ for (const vp of VIEWPORTS) {
     })
   })
 }
+
+// ── 20.166 bugfix (PKG-8a, UIA-1 / UIA-13): kapsamlı müdür, yönetmediği bir takımı da olan kullanıcıyı düzenler ──────────
+// Eskiden her kayıt bütün takım kümesini gönderiyor, sunucu kapsam dışı takımı görünce 403 veriyordu; takım çıplak "#99"
+// çiziliyordu. Şimdi değişmeyen takım kümesi GİTMEZ, kapsam dışı takım dizinden ADIYLA görünür ve çıkarılamaz.
+const OTHER_TEAM = 'Başka Müdürlüğün Kurumsal Ödeme Altyapısı Uzun Adlı Takımı'
+async function mockScoped(page, puts) {
+  await page.addInitScript(() => {
+    try { localStorage.setItem('sm.tour', JSON.stringify({ status: 'dismissed', version: 99 })) } catch { /* yoksay */ }
+  })
+  const user = { id: 7, username: 'KULLANICI_X', display_name: LONG_A, employee_id: '100007', email: 'x@example.com',
+    system_role: 'USER', org_role: 'TECH', team_id: 1, team_ids: [1, 99], active: true, auth_source: 'LOCAL' }
+  await page.route((u) => new URL(u).pathname.startsWith('/api/'), async (route) => {
+    const req = route.request()
+    const p = new URL(req.url()).pathname
+    let body = { success: true, data: [] }
+    if (p === '/api/me') {
+      body = { success: true, username: 'mudur', system_role: 'ADMIN', global_admin: false, team_id: 1, team_name: TEAMS[0].name,
+        team_ids: [1], team_names: [TEAMS[0].name], manage_team_ids: [1, 3], tour: { status: 'dismissed', version: 99 } }
+    } else if (p === '/api/admin/teams') body = { success: true, data: TEAMS.filter((t) => t.id === 1 || t.id === 3) }
+    else if (p === '/api/teams/directory') body = { success: true, data: [...TEAMS, { id: 99, name: OTHER_TEAM, active: true }] }
+    else if (p === '/api/admin/users/search') body = { success: true, data: [user], total: 1, page: 0, active_admin_count: 2 }
+    else if (p === '/api/admin/users/7' && req.method() === 'PUT') {
+      puts.push(JSON.parse(req.postData() || '{}'))
+      body = { success: true, data: user }
+    }
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
+  })
+}
+
+for (const vp of [VIEWPORTS[0], VIEWPORTS[2]]) {
+  test.describe(`Kullanıcı düzenleme (kapsamlı müdür) — ${vp.name} ${vp.width}`, () => {
+    test.use({ viewport: { width: vp.width, height: vp.height }, hasTouch: vp.touch, isMobile: vp.touch })
+
+    test('kapsam dışı takım adıyla görünür, çıkarılamaz; telefon kaydı takımları göndermez', async ({ page }) => {
+      test.setTimeout(90_000)
+      const puts = []
+      await mockScoped(page, puts)
+      await page.goto('/?tab=admin&g_tab=users')
+      await expect(page.getByText('KULLANICI_X').first()).toBeVisible({ timeout: 20_000 })
+      await page.getByRole('button', { name: /(İşlemler|Actions)/ }).first().click()
+      await page.getByRole('menuitem', { name: /^(Düzenle|Edit)$/ }).click()
+      const dlg = page.getByRole('dialog')
+      await expect(dlg).toBeVisible()
+      // Rol seçici yalnız USER / TEAM_ADMIN (UIA-13)
+      await dlg.getByRole('combobox', { name: /^(Sistem Rolü|System Role)/ }).click()
+      await expect(page.getByRole('option')).toHaveText(['USER', 'TEAM_ADMIN'])
+      await page.keyboard.press('Escape')
+      await dlg.getByRole('tab', { name: /^(Takımlar|Teams)/ }).click()
+      const row = dlg.locator('[data-slot="ued-team-row"][data-team-id="99"]')
+      await expect(row).toContainText(OTHER_TEAM)
+      await expect(dlg).not.toContainText('#99')
+      await expect(row.locator('[data-slot="ued-team-out-of-scope"]')).toBeVisible()
+      await expect(row.getByRole('button')).toHaveCount(0)
+      expect(await row.evaluate((el) => el.scrollWidth <= el.clientWidth + 1), 'takım satırı taşmaz').toBe(true)
+      await dlg.getByRole('tab', { name: /^(Profil|Profile)/ }).click()
+      await dlg.getByLabel(/^(Telefon|Phone)/).fill('5551112233')
+      await dlg.getByRole('button', { name: /^(Kaydet|Save)$/ }).click()
+      await expect.poll(() => puts.length, { timeout: 10_000 }).toBe(1)
+      expect(puts[0].phone).toBe('5551112233')
+      expect(puts[0]).not.toHaveProperty('team_ids')
+      expect(puts[0]).not.toHaveProperty('team_id')
+    })
+  })
+}
+

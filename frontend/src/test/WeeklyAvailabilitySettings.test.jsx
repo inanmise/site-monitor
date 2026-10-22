@@ -60,6 +60,26 @@ describe('WeeklyAvailabilitySettings — kesinti PDF indirme', () => {
     return view
   }
 
+  // 20.166 (UIA-C2 / K9): test gönderimi sonucu DURUMDAN — SKIPPED "gönderildi" değildir, ham Türkçe durum ana metin değildir
+  it('test gönderimi SKIPPED (K9: success:false) → atlandı bandı, hata tostu YOK; FAILED → hata + ham metin', async () => {
+    api.admin.sendWeeklyAvailTest.mockResolvedValueOnce({ success: false, message: 'SKIPPED: pasif kullanıcı', data: { status: 'SKIPPED: pasif kullanıcı' } })
+    await renderReady()
+    const pickers = screen.getAllByRole('combobox', { name: /^(Select team|Takım seçin)$/ })
+    fireEvent.mouseDown(pickers[pickers.length - 1])
+    fireEvent.mouseDown([...document.querySelectorAll('[cmdk-item]')].find((o) => o.textContent.includes('TakimA')))
+    fireEvent.change(screen.getByPlaceholderText('recipient@example.com'), { target: { value: 'me@example.com' } })
+    fireEvent.click(screen.getByRole('button', { name: /^(Send|Gönder)$/ }))
+    await waitFor(() => expect(document.querySelector('[data-slot="wa-send-result"]')).toHaveAttribute('data-outcome', 'skipped'))
+    expect(toastError).not.toHaveBeenCalled()
+    expect(document.querySelector('[data-slot="wa-send-result"]').textContent).not.toContain('pasif kullanıcı')
+
+    api.admin.sendWeeklyAvailTest.mockResolvedValueOnce({ success: false, message: 'FAILED: 535 auth', data: { status: 'FAILED: 535 auth' } })
+    fireEvent.click(screen.getByRole('button', { name: /^(Send|Gönder)$/ }))
+    await waitFor(() => expect(document.querySelector('[data-slot="wa-send-result"]')).toHaveAttribute('data-outcome', 'failed'))
+    expect(toastError).toHaveBeenCalled()
+    expect(document.querySelector('[data-slot="wa-send-raw"]')).toHaveTextContent('FAILED: 535 auth')
+  })
+
   it('Takım seçilene kadar düğme PASİF — teamId olmadan istek atılmaz', async () => {
     api.admin.getWeeklyAvailStatus.mockResolvedValue({
       success: true,

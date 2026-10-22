@@ -18,7 +18,7 @@ import { Input } from '@/components/shadcn/input'
 import { ItemGroup, Item } from '@/components/shadcn/item'
 import { cn } from '@/lib/utils'
 import {
-  MAX_MEMBERS, addMember, anchorToUtc, buildPayload, isDirty, move, toForm, utcToAnchor, validate, validateOverride,
+  MAX_MEMBERS, addMember, anchorToUtc, buildPayload, hasMissingMembers, isDirty, move, toForm, utcToAnchor, validate, validateOverride,
 } from './oncallModel.js'
 
 const SECTION = 'flex min-w-0 flex-col gap-3 rounded-lg border bg-card p-3 sm:p-4'
@@ -218,30 +218,37 @@ export default function OnCallScheduleModal({ team, onClose, onSaved }) {
               </div>
               <p className="m-0 text-xs text-muted-foreground">{t('oncall.orderHint')}</p>
               {errors.members && <p className="m-0 text-sm font-medium text-destructive" role="alert">{t(errors.members)}</p>}
+              {hasMissingMembers(form) && (
+                <div data-slot="oncall-missing-note"><AlertBanner tone="warning" className="mb-0">{canEdit ? t('oncall.deletedNote') : t('oncall.deletedNoteRo')}</AlertBanner></div>
+              )}
               {form.members.length === 0 ? (
                 <p className="m-0 text-sm text-muted-foreground">{t('oncall.noMembers')}</p>
               ) : (
                 <ItemGroup aria-label={t('oncall.order')} className="flex flex-col gap-1.5">
                   {form.members.map((m, i) => (
-                    <Item key={String(m.id)} role="listitem" variant="outline" data-slot="oncall-member" data-index={i}
+                    // Silinmiş kişinin kimliği kapsamlı görüntüleyicide null — anahtar sıradan (iki silinmiş = iki "null" anahtarı)
+                    <Item key={m.id != null ? String(m.id) : `missing-${i}`} role="listitem" variant="outline" data-slot="oncall-member" data-index={i}
+                      data-missing={m.missing ? 'true' : undefined}
                       className="min-w-0 flex-nowrap items-center gap-2 bg-background p-2">
                       <span aria-hidden="true" className="flex size-7 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-bold tabular-nums">{i + 1}</span>
                       <span className="min-w-0 flex-1 text-sm font-medium [overflow-wrap:anywhere]">
-                        {m.name}
-                        {!m.active && <ToneBadge tone="danger" className="ml-1.5">{t('oncall.passiveBadge')}</ToneBadge>}
+                        {m.missing ? t('oncall.deletedName') : m.name}
+                        {m.missing
+                          ? <ToneBadge tone="danger" className="ml-1.5 whitespace-normal" data-slot="oncall-member-deleted">{t('oncall.deletedMember')}</ToneBadge>
+                          : !m.active && <ToneBadge tone="danger" className="ml-1.5">{t('oncall.passiveBadge')}</ToneBadge>}
                       </span>
                       {canEdit && (
                         <span className="flex shrink-0 items-center gap-1">
                           <Button type="button" variant="ghost" size="icon-sm" className={TOUCH} disabled={i === 0}
-                            aria-label={t('a11y.rowAction', m.name, t('oncall.up'))} onClick={() => set({ members: move(form.members, i, -1) })}>
+                            aria-label={t('a11y.rowAction', m.missing ? t('oncall.deletedName') : m.name, t('oncall.up'))} onClick={() => set({ members: move(form.members, i, -1) })}>
                             <ArrowUp aria-hidden="true" />
                           </Button>
                           <Button type="button" variant="ghost" size="icon-sm" className={TOUCH} disabled={i === form.members.length - 1}
-                            aria-label={t('a11y.rowAction', m.name, t('oncall.down'))} onClick={() => set({ members: move(form.members, i, 1) })}>
+                            aria-label={t('a11y.rowAction', m.missing ? t('oncall.deletedName') : m.name, t('oncall.down'))} onClick={() => set({ members: move(form.members, i, 1) })}>
                             <ArrowDown aria-hidden="true" />
                           </Button>
                           <Button type="button" variant="ghost" size="icon-sm" className={cn(TOUCH, 'hover:text-destructive')}
-                            aria-label={t('a11y.rowAction', m.name, t('oncall.remove'))}
+                            aria-label={t('a11y.rowAction', m.missing ? t('oncall.deletedName') : m.name, t('oncall.remove'))}
                             onClick={() => set({ members: form.members.filter((_, j) => j !== i) })}>
                             <X aria-hidden="true" />
                           </Button>

@@ -13,6 +13,7 @@ import TagInput from '../ui/TagInput.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
 import SegmentedControl from '../ui/SegmentedControl.jsx'
 import StatusBlock from '../ui/StatusBlock.jsx'
+import { triggerLabel as pushTriggerLabel } from './push/pushLogModel.js'
 import PaginationBar from '../ui/PaginationBar.jsx'
 import { useServerPagination } from '../../hooks/useServerPagination.js'
 import UserBadge from '../ui/UserBadge.jsx'
@@ -80,7 +81,7 @@ const STATUS_OPTIONS = ['SENT', 'FAILED', 'PENDING', 'RATE_LIMITED', 'CIRCUIT_OP
 const TRIGGERS = ['OPEN', 'ESCALATION', 'RE_ALERT', 'RESOLVE', 'RESEND', 'WEAK_ALGO', 'WEEKLY_REPORT', 'TEST',
   'STORM', 'STORM_RESOLVED', 'SCRIPTED_DISABLED', 'DOMAIN_EXPIRY_REMINDER', 'OVERFLOW_SUMMARY', 'ESCALATION_STEP',
   'TECH_ERROR_REMINDER', 'TECH_ERROR_APPROVAL', 'TECH_ERROR_APPROVAL_REMINDER', 'TECH_ERROR_DECISION', 'TECH_ERROR_SENT',
-  'TECH_ERROR_SEND_FAILED']   // 2026-10-04; 2026-10-17: teknik hata raporu hatırlatması; 2026-10-18: onay / karar / gönderim push'ları   // WEAK_ALGO: rapor 'takıma bildir' (2026-09-12); WEEKLY_REPORT: onay → takıma (2026-09-13)
+  'TECH_ERROR_SEND_FAILED', 'TLS_GRADE_DROP']   // 20.166: TLS notu düşüş bildirimi (UIA-C4); 2026-10-04; 2026-10-17: teknik hata raporu hatırlatması; 2026-10-18: onay / karar / gönderim push'ları   // WEAK_ALGO: rapor 'takıma bildir' (2026-09-12); WEEKLY_REPORT: onay → takıma (2026-09-13)
 
 /** İzleme tipleri — ikonlar Nav/ChangeKindCards ile AYNI: kullanıcı yeni görsel dil öğrenmez. */
 const TYPES = [
@@ -176,8 +177,8 @@ function DeliveryRow({ r, isOpen, onToggle, userTeams, t, statusTone }) {
             <TeamBadge key={tn} teamName={tn} size={11} as="span" className="ml-1.5 align-middle" />
           ))}
         </span>
-        <span className="col-start-2 truncate @min-[720px]:col-start-auto">{r.monitor_name || '—'}</span>
-        <span className="col-start-2 text-[0.8em] text-muted-foreground @min-[720px]:col-start-auto">{t('userpush.trigger.' + r.trigger)}</span>
+        <span className="col-start-2 min-w-0 [overflow-wrap:anywhere] @min-[720px]:col-start-auto">{r.monitor_name || '—'}</span>
+        <span className="col-start-2 text-[0.8em] text-muted-foreground @min-[720px]:col-start-auto">{pushTriggerLabel(r.trigger, t)}</span>
         <span className="col-start-2 font-mono text-[0.8em] whitespace-nowrap text-muted-foreground @min-[720px]:col-start-auto">{formatDateSec(r.created_at)}</span>
       </CollapsibleTrigger>
       <CollapsibleContent className="border-t border-dashed px-3 pt-2 pb-2.5 border-border">
@@ -212,9 +213,9 @@ function DeliveryList({ children }) {
  * Basılabilir seçim çipi — shadcn Toggle (aria-pressed; kapalı = soluk, açık = dolgulu).
  * Tip/takım matrisi ve KPI modalının durum/takım süzgeçleri aynı çipi kullanır.
  */
-function ChipToggle({ pressed, onPress, title, children }) {
+function ChipToggle({ pressed, onPress, title, children, disabled = false }) {
   return (
-    <Toggle variant="outline" size="sm" pressed={!!pressed} onPressedChange={() => onPress()} title={title}
+    <Toggle variant="outline" size="sm" pressed={!!pressed} onPressedChange={() => onPress()} title={title} disabled={disabled}
       className="group/chip h-8 rounded-full px-3 text-[0.86em] font-normal text-muted-foreground hover:border-primary hover:bg-transparent hover:text-foreground data-[state=on]:border-primary data-[state=on]:bg-primary/10 data-[state=on]:font-bold data-[state=on]:text-primary">
       {children}
     </Toggle>
@@ -266,9 +267,9 @@ function WindowModal({ win, status, counts, teams: teamRows, windowFrom, statusT
           setRows(res.data?.deliveries || [])
           setWinTotal(res.data?.total || 0)
           setUserTeams((prev) => ({ ...prev, ...(res.data?.user_teams || {}) }))
-        } else setRows([])
+        } else setRows('error')
       })
-      .catch(() => { if (alive) setRows([]) })
+      .catch(() => { if (alive) setRows('error') })   // okunamadı ≠ kayıt yok (20.166, UIA-C5)
     return () => { alive = false }
   }, [win, status, team, page, winSize, from, setWinTotal])
 
@@ -313,7 +314,9 @@ function WindowModal({ win, status, counts, teams: teamRows, windowFrom, statusT
         </div>
       )}
       {rows === null ? <LoadingBlock label={t('modal.loading')} />
-        : rows.length === 0 ? (
+        : rows === 'error' ? (
+          <div data-slot="userpush-win-error"><StatusBlock tone="danger" icon={BellRing} title={t('userpush.logLoadFailed')} /></div>
+        ) : rows.length === 0 ? (
           <StatusBlock tone="neutral" icon={BellRing} title={t('userpush.winEmpty')} description={t('userpush.logEmpty')} />
         ) : (
           <DeliveryList>
@@ -376,9 +379,9 @@ function preview(template, lang = 'tr') {
 }
 
 /** Basılabilir ikonlu seçim çipi (tip/takım kapsamı) — açıkken onay işareti. */
-function ToggleChip({ on, onToggle, Icon, label }) {
+function ToggleChip({ on, onToggle, Icon, label, disabled = false }) {
   return (
-    <ChipToggle pressed={on} onPress={onToggle}>
+    <ChipToggle pressed={on} onPress={onToggle} disabled={disabled}>
       {Icon && <Icon size={14} aria-hidden="true" />}
       <span>{label}</span>
       {on && <Check size={13} className="flex-none" aria-hidden="true" />}
@@ -442,6 +445,12 @@ export default function UserPushSettings() {
   // alta yapışık kayıt şeridi). Kapsam (tür/takım) ve ana anahtar ANINDA kaydedildiği için şeride girmez.
   const [savedSnap, setSavedSnap] = useState(null)
   const snapshotOf = (s, h, g) => JSON.stringify({ s, h, g })
+  // Ayarlar okunamadıysa form ÇİZİLMEZ (20.166, UIA-C5): eskiden boş/varsayılan değerler (push kapalı, URL boş) ve "Tüm
+  // değişiklikler kaydedildi" görünüyordu.
+  const [loadFailed, setLoadFailed] = useState(null)
+  // Kapsamlı müdür kilitleri (K10, 20.166 UIA-C3): sunucu hangi anahtarların salt okunur olduğunu, tür kapsamını
+  // değiştirip değiştiremeyeceğini ve yönettiği takımları söyler. Alan yoksa (eski sunucu) bugünkü davranış.
+  const [access, setAccess] = useState({ readOnlyKeys: new Set(), canEditTypes: null, manageIds: null })
   const [scopes, setScopes] = useState([])
   const [defaults, setDefaults] = useState({ templates: {}, placeholders: [] })
   const [health, setHealth] = useState({})
@@ -484,8 +493,9 @@ export default function UserPushSettings() {
     let alive = true
     setExLoading(true)
     Promise.resolve(api.admin.userPush.explain?.(exTeam, exLevel))
-      .then(r => { if (alive) setExRows(r?.success ? (r.data?.members || []) : []) })
-      .catch(() => { if (alive) setExRows([]) })
+      // 403 (kapsamlı müdür izlediği ama yönetmediği takım) ya da ağ hatası "üye yok" DEĞİL (20.166, UIA-C5)
+      .then(r => { if (alive) setExRows(r?.success ? (r.data?.members || []) : { error: r?.error || true }) })
+      .catch((e) => { if (alive) setExRows({ error: e?.message || true }) })
       .finally(() => { if (alive) setExLoading(false) })
     return () => { alive = false }
   }, [exTeam, exLevel])
@@ -559,6 +569,12 @@ export default function UserPushSettings() {
       ])
       if (res?.success) {
         const d = res.data
+        setLoadFailed(null)
+        setAccess({
+          readOnlyKeys: new Set(Array.isArray(d.read_only_keys) ? d.read_only_keys : []),
+          canEditTypes: typeof d.can_edit_types === 'boolean' ? d.can_edit_types : null,
+          manageIds: Array.isArray(d.manage_team_ids) ? new Set(d.manage_team_ids.map(String)) : null,
+        })
         setSettings(d.settings || {})
         setHeaders(Array.isArray(d.settings?.[KEY('headers')]) ? d.settings[KEY('headers')] : [])
         setScopes(d.scopes || [])
@@ -571,9 +587,12 @@ export default function UserPushSettings() {
         setSavedSnap(snapshotOf(d.settings || {}, h, Object.keys(g).length ? normalizeGroups(g) : defaultGroups()))
       } else {
         toast.error(res?.error || t('settings.loadError'))
+        setLoadFailed(res?.error || t('settings.loadError'))
       }
       if (teamsRes?.success) setTeams(Array.isArray(teamsRes.data) ? teamsRes.data : [])
       if (statsRes?.success) setStats(statsRes.data)
+    } catch (e) {
+      setLoadFailed(e?.message || t('settings.loadError'))
     } finally {
       setLoading(false)
     }
@@ -614,7 +633,12 @@ export default function UserPushSettings() {
     setSaving(true)
     try {
       const body = { ...settings }
-      body[KEY('headers')] = headers
+      // URL ve başlıklar YALNIZ değiştiyse gider (20.166, UIA-C3): ikisi GLOBAL_ONLY — kapsamlı müdür hiç başlık saklanmamış
+      // bir kurulumda `headers: []` gönderince (saklı değer yok ≠ "[]") HER kaydı 403'lüyordu. Salt okunur anahtar hiç gitmez.
+      const snap = savedSnap ? JSON.parse(savedSnap) : null
+      if (!snap || JSON.stringify(headers) !== JSON.stringify(snap.h)) body[KEY('headers')] = headers
+      if (snap && (settings[KEY('url')] ?? '') === (snap.s?.[KEY('url')] ?? '')) delete body[KEY('url')]
+      for (const k of access.readOnlyKeys) delete body[k]
       body[KEY('role-groups')] = JSON.stringify(groupsSafe)
       const res = await api.admin.userPush.saveSettings(body)
       if (res?.success) {
@@ -627,16 +651,26 @@ export default function UserPushSettings() {
       } else {
         toast.error(res?.error || t('settings.saveError'))
       }
+    } catch (e) {
+      toast.error(e?.message || t('settings.saveError'))   // ağ hatası sessiz kalmasın (UIA-8)
     } finally {
       setSaving(false)
     }
   }
 
   async function saveScopeRows(rowsToSave) {
-    const res = await api.admin.userPush.saveScopes(rowsToSave)
-    if (res?.success) setScopes(res.data?.data ?? res.data ?? [])
-    else toast.error(res?.error || t('settings.saveError'))
+    if (!rowsToSave.length) return
+    try {
+      const res = await api.admin.userPush.saveScopes(rowsToSave)
+      if (res?.success) setScopes(res.data?.data ?? res.data ?? [])
+      else toast.error(res?.error || t('settings.saveError'))
+    } catch (e) {
+      toast.error(e?.message || t('settings.saveError'))
+    }
   }
+  /** Takım kapsamı satırı bu görüntüleyicide değiştirilebilir mi (yönetim kapsamı biliniyorsa yalnız o takımlar). */
+  const teamManageable = (id) => !access.manageIds || access.manageIds.has(String(id))
+  const roKey = (k) => access.readOnlyKeys.has(KEY(k))
 
   const toggleScope = (scopeType, scopeKey, current) =>
     saveScopeRows([{ scopeType, scopeKey: String(scopeKey), enabled: !current }])
@@ -653,8 +687,9 @@ export default function UserPushSettings() {
     return q ? teams.filter((tm) => (tm.name || '').toLowerCase().includes(q)) : teams
   }, [teams, teamQuery])
 
+  // Yalnız GÖRÜNEN ve YÖNETİLEBİLEN takımlar (20.166, UIA-C3): sunucu toplu isteği tek yönetilmeyen takımda bütünüyle 403'lüyordu
   const bulkTeams = (enabledVal) =>
-    saveScopeRows(visibleTeams.map((tm) => ({ scopeType: 'TEAM', scopeKey: String(tm.id), enabled: enabledVal })))
+    saveScopeRows(visibleTeams.filter((tm) => teamManageable(tm.id)).map((tm) => ({ scopeType: 'TEAM', scopeKey: String(tm.id), enabled: enabledVal })))
 
   async function sendTest() {
     const usernames = testSicils.split(',').map((s) => s.trim()).filter(Boolean)
@@ -670,6 +705,8 @@ export default function UserPushSettings() {
         refreshLogSoon()      // durum PENDING → SENT/FAILED akışını ekranda göster
       }
       else toast.error(res?.error || t('userpush.testFailed'))
+    } catch (e) {
+      toast.error(e?.message || t('userpush.testFailed'))
     } finally {
       setTesting(false)
     }
@@ -690,14 +727,15 @@ export default function UserPushSettings() {
     if (fNotifId) params.notificationId = fNotifId
     const from = windowFrom(fWindow)
     if (from) params.from = from
-    const res = await api.admin.userPush.getDeliveries(params)
+    let res = null
+    try { res = await api.admin.userPush.getDeliveries(params) } catch { res = null }
     if (mySeq !== seqRef.current) return   // daha yeni bir istek var -> bu yaniti YOK SAY
     if (res?.success) {
       setRows(res.data?.deliveries || [])
       logPager.setTotal(res.data?.total || 0)
       setUserTeams(res.data?.user_teams || {})
     } else {
-      setRows([])
+      setRows('error')   // okunamadı ≠ "teslimat kaydı yok" (20.166, UIA-C5)
     }
   }, [page, pageSize, fUser, fStatus, fTrigger, fNotifId, fWindow, logNonce])   // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -705,6 +743,14 @@ export default function UserPushSettings() {
 
   if (loading) {
     return <LoadingBlock label={t('settings.loading')} className="justify-start px-0 py-6" />
+  }
+  if (loadFailed) {
+    return (
+      <div data-slot="userpush-load-error">
+        <StatusBlock tone="danger" icon={BellRing} title={t('settings.loadError')} description={typeof loadFailed === 'string' ? loadFailed : undefined}
+          actions={<Button type="button" variant="outline" onClick={load}>{t('err.reload')}</Button>} />
+      </div>
+    )
   }
 
   const statusTone = (st) => st === 'SENT' ? 'ok' : (st === 'FAILED' || st === 'CIRCUIT_OPEN') ? 'danger'
@@ -768,7 +814,7 @@ export default function UserPushSettings() {
                     <span className="mt-1 flex flex-col gap-0.5 border-t border-dashed pt-1 text-[0.74em] text-muted-foreground border-border">
                       {top.map((tr) => (
                         <span key={tr.team_id} className="flex min-w-0 items-center gap-1.5" title={`SENT ${tr.SENT} · FAILED ${tr.FAILED}`}>
-                          <span className="min-w-0 flex-1 truncate">{tr.team_name}</span>
+                          <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{tr.team_name}</span>
                           <b className="font-bold text-foreground">{tr.total}</b>{tr.FAILED > 0 && <b className="font-bold text-destructive">{tr.FAILED}</b>}
                         </span>
                       ))}
@@ -805,7 +851,7 @@ export default function UserPushSettings() {
           <Field label={helpLabel(t('userpush.url'), 'help.set.site.monitor.userpush.url')}>
             {({ id, describedBy }) => (
               <Input id={id} aria-describedby={describedBy} type="text" value={val('url')} placeholder="http://..."
-                onChange={(e) => setVal('url', e.target.value)} />
+                disabled={roKey('url')} onChange={(e) => setVal('url', e.target.value)} />
             )}
           </Field>
           <div className="grid grid-cols-2 gap-3">
@@ -823,29 +869,32 @@ export default function UserPushSettings() {
             </Field>
           </div>
 
+          {(roKey('url') || roKey('headers')) && (
+            <p className="m-0 text-xs text-muted-foreground" data-slot="userpush-global-only">{t('userpush.globalOnlyConn')}</p>
+          )}
           <SubHead>{t('userpush.headers')}<HelpTip helpKey="help.set.site.monitor.userpush.headers" label={t('userpush.headers')} /></SubHead>
           <p className="mb-2 text-xs text-muted-foreground">{t('userpush.headersHint')}</p>
           {headers.map((h, i) => {
             const rowName = h.name || String(i + 1)
             return (
               <div key={i} className="mb-2 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 sm:grid-cols-[1fr_1.4fr_auto_auto] [&>input]:col-span-2 sm:[&>input]:col-span-1">
-                <Input type="text" placeholder={t('userpush.headerName')} value={h.name || ''}
+                <Input type="text" placeholder={t('userpush.headerName')} value={h.name || ''} disabled={roKey('headers')}
                   aria-label={t('a11y.rowAction', String(i + 1), t('userpush.headerName'))}
                   onChange={(e) => setHeaders(headers.map((x, j) => j === i ? { ...x, name: e.target.value } : x))} />
                 <Input type={h.secret ? 'password' : 'text'} placeholder={t('userpush.headerValue')} autoComplete="new-password"
-                  value={h.value || ''} aria-label={t('a11y.rowAction', rowName, t('userpush.headerValue'))}
+                  value={h.value || ''} disabled={roKey('headers')} aria-label={t('a11y.rowAction', rowName, t('userpush.headerValue'))}
                   onChange={(e) => setHeaders(headers.map((x, j) => j === i ? { ...x, value: e.target.value } : x))} />
                 <span className="inline-flex items-center">
                   <SecretCheckbox checked={!!h.secret} label={t('userpush.headerSecret')}
                     onChange={(v) => setHeaders(headers.map((x, j) => j === i ? { ...x, secret: v } : x))} />
                   <HelpTip helpKey="help.userpush.headerRow" label={t('userpush.headerSecret')} />
                 </span>
-                <Button type="button" variant="outline" size="icon-sm" aria-label={t('userpush.headerDelete', rowName)}
+                <Button type="button" variant="outline" size="icon-sm" aria-label={t('userpush.headerDelete', rowName)} disabled={roKey('headers')}
                   onClick={() => setHeaders(headers.filter((_, j) => j !== i))}><Trash2 size={14} /></Button>
               </div>
             )
           })}
-          <Button type="button" variant="outline" size="sm" onClick={() => setHeaders([...headers, { name: '', value: '', secret: true }])}>
+          <Button type="button" variant="outline" size="sm" disabled={roKey('headers')} onClick={() => setHeaders([...headers, { name: '', value: '', secret: true }])}>
             <Plus size={14} /> {t('userpush.addHeader')}
           </Button>
 
@@ -938,10 +987,11 @@ export default function UserPushSettings() {
           <div className="mt-2 mb-1 flex flex-wrap gap-2" role="group" aria-label={t('userpush.typeMatrix')}>
             {TYPES.map(({ key, Icon }) => (
               <ToggleChip key={key} Icon={Icon} label={t('userpush.type.' + key)}
-                on={scopeOn('TYPE', key)}
+                on={scopeOn('TYPE', key)} disabled={access.canEditTypes === false}
                 onToggle={() => toggleScope('TYPE', key, scopeOn('TYPE', key))} />
             ))}
           </div>
+          {access.canEditTypes === false && <p className="m-0 text-xs text-muted-foreground" data-slot="userpush-types-locked">{t('userpush.typesGlobalOnly')}</p>}
 
           <div className="mt-4 flex flex-wrap items-center gap-2.5">
             <SubHead className="m-0">{t('userpush.teamMatrix')}
@@ -955,7 +1005,7 @@ export default function UserPushSettings() {
           <div className="mt-2 mb-1 flex flex-wrap gap-2" role="group" aria-label={t('userpush.teamMatrix')}>
             {visibleTeams.map((tm) => (
               <ToggleChip key={tm.id} label={tm.name}
-                on={scopeOn('TEAM', tm.id)}
+                on={scopeOn('TEAM', tm.id)} disabled={!teamManageable(tm.id)}
                 onToggle={() => toggleScope('TEAM', tm.id, scopeOn('TEAM', tm.id))} />
             ))}
             {visibleTeams.length === 0 && <span className="text-xs text-muted-foreground">{t('userpush.noTeamMatch')}</span>}
@@ -1126,10 +1176,15 @@ export default function UserPushSettings() {
             options={['WARNING', 'HIGH', 'CRITICAL'].map(l => ({ value: l, label: l }))} />
         </div>
         {exTeam && exLoading && <LoadingBlock label={t('modal.loading')} />}
-        {exTeam && !exLoading && exRows && exRows.length === 0 && (
+        {exTeam && !exLoading && exRows && !Array.isArray(exRows) && (
+          <div data-slot="userpush-explain-error">
+            <StatusBlock tone="danger" title={t('userpush.explainFailed')} description={typeof exRows.error === 'string' ? exRows.error : undefined} className="py-6" />
+          </div>
+        )}
+        {exTeam && !exLoading && Array.isArray(exRows) && exRows.length === 0 && (
           <StatusBlock tone="neutral" description={t('userpush.explainEmpty')} className="py-6" />
         )}
-        {exTeam && !exLoading && exRows && exRows.length > 0 && (
+        {exTeam && !exLoading && Array.isArray(exRows) && exRows.length > 0 && (
           <div className="overflow-hidden rounded-lg border border-border">
             <Table>
               <TableHeader className="bg-muted/50">
@@ -1180,7 +1235,7 @@ export default function UserPushSettings() {
                 ...STATUS_OPTIONS.map((s) => ({ value: s, label: s }))]} searchThreshold={8} ariaLabel={t('flt.status')} />
             <SearchableSelect value={fTrigger} onChange={(v) => { setFTrigger(v) }}
               options={[{ value: '', label: t('userpush.allTriggers') },
-                ...TRIGGERS.map((s) => ({ value: s, label: t('userpush.trigger.' + s) }))]} searchThreshold={8} ariaLabel={t('flt.trigger')} />
+                ...TRIGGERS.map((s) => ({ value: s, label: pushTriggerLabel(s, t) }))]} searchThreshold={8} ariaLabel={t('flt.trigger')} />
             <Input type="text" className="w-full sm:w-auto sm:max-w-[200px]" placeholder="notificationId" value={fNotifId}
               aria-label={t('userpush.filterNotifId')}
               onChange={(e) => { setFNotifId(e.target.value) }} />
@@ -1195,7 +1250,12 @@ export default function UserPushSettings() {
           </div>
 
           {rows === null ? <LoadingBlock label={t('modal.loading')} />
-            : rows.length === 0 ? (
+            : rows === 'error' ? (
+              <div data-slot="userpush-log-error">
+                <StatusBlock tone="danger" icon={BellRing} title={t('userpush.logLoadFailed')}
+                  actions={<Button type="button" variant="outline" size="sm" onClick={loadDeliveries}>{t('err.reload')}</Button>} />
+              </div>
+            ) : rows.length === 0 ? (
               <StatusBlock tone="neutral" icon={BellRing} title={t('userpush.logEmptyTitle')}
                 description={t('userpush.logEmpty')} />
             ) : (

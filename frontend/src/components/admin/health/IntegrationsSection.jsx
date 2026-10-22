@@ -72,11 +72,12 @@ export default function IntegrationsSection({
     switch (it.key) {
       case 'smtp': return (
         <>
-          {it.level !== 'ok' && <AlertBanner tone={it.level === 'down' ? 'danger' : 'warning'} className="mb-0">{t('health.smtpAlarmFor', t(`health.smtpPeriod${smtpPeriod}`))}</AlertBanner>}
+          {d.unavailable && <div data-slot="smtp-unavailable"><AlertBanner tone="warning" className="mb-0">{t('health.statsUnavailable')}</AlertBanner></div>}
+          {!d.unavailable && it.level !== 'ok' && <AlertBanner tone={it.level === 'down' ? 'danger' : 'warning'} className="mb-0">{t('health.smtpAlarmFor', t(`health.smtpPeriod${smtpPeriod}`))}</AlertBanner>}
           <PeriodPicker t={t} value={smtpPeriod} onChange={onSmtpPeriod} keys={['1d', '7d', '15d', '30d']} labelOf={(p) => t(`health.smtpPeriod${p}`)} />
           <KvList>
-            <dt>{t('health.smtpSent')}</dt><dd>{d.sent} / {d.attempted}</dd>
-            <dt>{t('health.smtpRate')}</dt><dd className={rateTone[d.rateTone]}>{formatPercent(d.rate)}</dd>
+            <dt>{t('health.smtpSent')}</dt><dd>{d.unavailable ? '—' : `${d.sent} / ${d.attempted}`}</dd>
+            <dt>{t('health.smtpRate')}</dt><dd className={d.unavailable ? undefined : rateTone[d.rateTone]}>{d.rate == null ? '—' : formatPercent(d.rate)}</dd>
           </KvList>
           <p className="text-xs text-muted-foreground">{t('health.smtpPeriodActive', t(`health.smtpPeriod${smtpPeriod}`))}</p>
           <CardCta icon={Mail} label={t('health.smtpClickHint')} badge={t(`health.smtpPeriod${smtpPeriod}`)} onClick={onOpenSmtp} />
@@ -114,7 +115,8 @@ export default function IntegrationsSection({
               </>
             )}
           </KvList>
-          <CardCta icon={Mail} label={t('waLogs.clickHint')} onClick={onOpenWeeklyLogs} />
+          {/* UIA-D2 (20.166): gönderim kayıtları ucu yalnız global yönetici (SystemController.requireAdmin) — diğerlerine CTA yok */}
+          {globalAdmin && <CardCta icon={Mail} label={t('waLogs.clickHint')} onClick={onOpenWeeklyLogs} />}
         </>
       )
       case 'domain': {
@@ -174,7 +176,7 @@ export default function IntegrationsSection({
       {list.map((it) => (
         <SysCard key={it.key} icon={ICON[it.key]} iconClass={LEVEL_T[it.level]} title={t(TITLE_KEY[it.key])} cardKey={it.key}
           alarm={it.level === 'down'} testId={it.key === 'push' ? 'push-card' : undefined}
-          onOpen={it.key === 'smtp' ? onOpenSmtp : it.key === 'push' ? onOpenPush : it.key === 'weekly' ? onOpenWeeklyLogs : undefined}
+          onOpen={it.key === 'smtp' ? onOpenSmtp : it.key === 'push' ? onOpenPush : it.key === 'weekly' && globalAdmin ? onOpenWeeklyLogs : undefined}
           right={<span data-integration={it.key} data-level={it.level} className="inline-flex"><LevelBadge level={it.level} t={t} /></span>}>
           {body(it)}
         </SysCard>
