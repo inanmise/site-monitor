@@ -11962,6 +11962,7 @@ export const TR = {
   'team.memberAdminOnly': 'ADMIN ve AUDIT hesaplarını yalnız global yönetici takıma ekler ya da takımdan çıkarır.',
   'team.memberAdminLocked': 'Yalnız global yönetici',
   'wr.submitNotSaved': 'Son değişiklikler henüz kaydedilmedi, rapor onaya gönderilmedi. Birkaç saniye bekleyip Onaya Gönder ile yeniden deneyin.',
+  'alh.renotifyModal.emailMonitorOff': 'Bu izlemede e-posta kanalı alarm anında kapalıydı — yeniden bildirimde e-posta gönderilmez; push / webhook alıcıları aşağıda.',
   // ── /20.166 bugfix · FE review ──
   'alh.whyAuto': 'kontroller düzelince kendiliğinden kapanır',
   'alh.whyAutoTip': 'Bu alarm, kaynağı art arda sağlıklı kontrol verdiğinde kendiliğinden kapanır; onay ya da kime bildirim gittiği kapanışı etkilemez. Aynı hedefi izleyen takımınızın başka bir izlemesi hâlâ düşükse alarm açık kalır; bu türün bildirimleri kapatılırsa alarm bildirimsiz kapanır. İzleme uzun süredir sağlıklı görünüyorsa alarmı elle çözebilirsiniz.',

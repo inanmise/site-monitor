@@ -27,8 +27,12 @@ function RecipientRow({ checked, disabled, onToggle, title, children }) {
  * "Tekrar Bildir" onayı: gönderim ÖNCESİ alıcı listesi, KANAL KANAL. E-posta ve webhook alıcıları ayrı ayrı
  * çıkarılabilir; gönderilemeyecek webhook alıcıları da SEBEBİYLE, pasif satır olarak görünür.
  */
-export default function ReNotifyConfirmModal({ domain, recipients, webhook, sending, onSend, onClose }) {
+export default function ReNotifyConfirmModal({ domain, recipients, webhook, emailBlockReason = null, sending, onSend, onClose }) {
   const t = useT()
+  // İzlemenin e-posta kanalı alarm anında kapalıysa (2026-10-22, sunucu `email_block_reason: SKIPPED_MONITOR_OFF`) gönderim
+  // e-postayı atlar — genel "alıcı yok" yerine nedeni söylenir, e-posta satırı sayılmaz. Alan yoksa bugünkü ekran.
+  const emailMonitorOff = emailBlockReason === 'SKIPPED_MONITOR_OFF'
+  const emailRows = emailMonitorOff ? [] : (recipients || [])
   const [uncheckedEmails, setUncheckedEmails] = useState(() => new Set())
   const [uncheckedUsers, setUncheckedUsers] = useState(() => new Set())
 
@@ -40,7 +44,7 @@ export default function ReNotifyConfirmModal({ domain, recipients, webhook, send
   const toggleEmail = toggleIn(setUncheckedEmails)
   const toggleUser = toggleIn(setUncheckedUsers)
 
-  const selectedEmails = recipients.length - uncheckedEmails.size
+  const selectedEmails = emailRows.length - uncheckedEmails.size
   const selectedUsers = sendableUsers.length - uncheckedUsers.size
   const selectedCount = selectedEmails + selectedUsers
 
@@ -59,7 +63,9 @@ export default function ReNotifyConfirmModal({ domain, recipients, webhook, send
 
       <div className="mb-3">
         <strong>{t('alh.renotifyModal.emailSection')}</strong>
-        {recipients.length === 0 ? <div className={EMPTY}>{t('alh.renotifyModal.noRecipients')}</div> : recipients.map((r) => (
+        {emailMonitorOff
+          ? <div className={EMPTY} data-slot="renotify-email-monitor-off">{t('alh.renotifyModal.emailMonitorOff')}</div>
+          : emailRows.length === 0 ? <div className={EMPTY}>{t('alh.renotifyModal.noRecipients')}</div> : emailRows.map((r) => (
           <RecipientRow key={r.email} checked={!uncheckedEmails.has(r.email)} onToggle={() => toggleEmail(r.email)}>
             <strong>{r.name || r.email}</strong>
             <SystemRoleBadge role={r.kind === 'TEAM' ? (r.role || t('alh.renotifyModal.kindTeam')) : (r.role || '')} />

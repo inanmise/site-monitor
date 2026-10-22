@@ -11942,6 +11942,7 @@ export const EN = {
   'team.memberAdminOnly': 'Only a global administrator can add ADMIN and AUDIT accounts to a team or remove them from it.',
   'team.memberAdminLocked': 'Global admin only',
   'wr.submitNotSaved': 'Your latest changes are not saved yet, so the report was not sent for approval. Wait a few seconds and use Submit for Approval again.',
+  'alh.renotifyModal.emailMonitorOff': 'E-mail was switched off for this monitor when the alert opened — the resend sends no e-mail; push / webhook recipients are below.',
   // ── /20.166 bugfix · FE review ──
   'alh.whyAuto': 'closes by itself once checks pass again',
   'alh.whyAutoTip': 'This alert closes on its own once its source passes several checks in a row; acknowledging it, or who was notified, makes no difference to that. It stays open while another of your team’s monitors on the same target is still failing, and it closes without a notification if alerts for this type are switched off. If the monitor has looked healthy for a while, you can resolve the alert by hand.',

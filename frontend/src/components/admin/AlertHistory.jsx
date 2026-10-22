@@ -269,13 +269,17 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
     return () => { window.removeEventListener('sm:navigate', onNav); window.removeEventListener('popstate', onPop) }
   }, [urlSync, resetPage])
 
-  const openDetail = useCallback((a) => { setNocFocus(null); setDetail(a) }, [])
-  const closeDetail = useCallback(() => setDetail(null), [])
+  // Isı haritası / takım dağılımı hücresinden açılan tekil okuma (openFullAlert) sıra numarası — kullanıcı arada başka bir
+  // alarmı açar ya da pencereyi kapatırsa geç gelen yanıt pencereyi yeniden AÇMAZ / değiştirmez (2026-10-22, FE-8)
+  const slotOpenSeq = useRef(0)
+  const openDetail = useCallback((a) => { slotOpenSeq.current++; setNocFocus(null); setDetail(a) }, [])
+  const closeDetail = useCallback(() => { slotOpenSeq.current++; setDetail(null) }, [])
   /** "Arama kaydet": telefonda alttan hızlı giriş, masaüstünde detay + form odakta. Gömülü kullanımda (izleme penceresi,
    *  ModalShell 2000+) alttan Sheet pencerenin ALTINDA kalırdı → orada her zaman detay penceresi + form odakta. */
   const logCall = useCallback((a) => {
     if (!a) return
     if (phone && !embedded) { setQuickCall(a); return }
+    slotOpenSeq.current++
     setDetail(a)
     setNocFocus((f) => ({ id: a.id, n: (f?.n ?? 0) + 1 }))
   }, [phone, embedded])
@@ -386,7 +390,6 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
   // Gürültü ısı haritası / takım dağılımı hücresinden alarm açma (2026-10-22, UIM-31): o satırlar KISMİ (sayaçlar,
   // act_scope / notify_scope yok) — detay "0 e-posta", "kimseye ulaşmadı", "İlk kez" ve sunucunun reddedeceği eylemler
   // gösteriyordu. Tam satır tekil uçtan okunur (derin bağlantı yolu gibi, sıra korumalı); okunamazsa pencere açılmaz.
-  const slotOpenSeq = useRef(0)
   function openFullAlert(a) {
     if (!a || a.id == null) return
     setTab(a.resolved ? 'closed' : 'open')
@@ -406,7 +409,8 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
     let res
     try { res = await api.admin.previewReNotify(a.id) } catch { res = null } finally { setNotifying(null) }
     if (res?.success) {
-      setRenotifyModal({ alertId: a.id, domain: a.domain || '', recipients: res.data?.recipients || [], webhook: res.data?.webhook || null })
+      setRenotifyModal({ alertId: a.id, domain: a.domain || '', recipients: res.data?.recipients || [], webhook: res.data?.webhook || null,
+        emailBlockReason: res.data?.email_block_reason || null })
     } else {
       toast.error(res?.error || t('alh.renotifyModal.previewError'))
     }
@@ -759,6 +763,7 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
 
       {renotifyModal && (
         <ReNotifyConfirmModal domain={renotifyModal.domain} recipients={renotifyModal.recipients} webhook={renotifyModal.webhook}
+          emailBlockReason={renotifyModal.emailBlockReason}
           sending={renotifySending} onSend={sendReNotify} onClose={() => { if (!renotifySending) setRenotifyModal(null) }} />
       )}
 
