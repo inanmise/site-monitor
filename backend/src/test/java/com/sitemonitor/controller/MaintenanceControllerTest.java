@@ -371,7 +371,69 @@ class MaintenanceControllerTest {
         mvc.perform(post("/api/monitoring/maintenance/quick").session(session())
                         .contentType("application/json").content("{\"minutes\":60,\"targets\":" + targetsBody("b.example.com") + "}"))
                 .andExpect(status().isOk());
-        verify(targetOwnership, never()).ownerTeams(any());
+        // 2026-10-22 (ADMIN-5): kapsam için değil, SAHİP takımı türetmek için hedef sahipliği bir kez sorulur.
+        verify(targetOwnership, times(1)).ownerTeams(any());
+    }
+
+    // ── SAHİP (ADMIN-5, 2026-10-22): pencerenin takımı hedeflerin takımıdır, yaratanın birincil takımı değil ──────
+
+    private MaintenanceWindow captureSaved() {
+        org.mockito.ArgumentCaptor<MaintenanceWindow> c = org.mockito.ArgumentCaptor.forClass(MaintenanceWindow.class);
+        verify(repo, atLeastOnce()).save(c.capture());
+        return c.getValue();
+    }
+
+    @Test
+    @DisplayName("SAHİP: birincil takımı 5 olan, 7'yi de yöneten TEAM_ADMIN 7'nin hedefi için pencere açar → sahip 7")
+    void create_ownerIsTargetsTeam() throws Exception {
+        MockHttpSession s = teamAdminSession();
+        s.setAttribute("teamId", 5L);
+        s.setAttribute("manageTeamIds", new java.util.ArrayList<>(List.of(5L, 7L)));
+        owners(java.util.Map.of("b.example.com", java.util.Set.of(7L)));
+        saveEchoes();
+        mvc.perform(post("/api/monitoring/maintenance").session(s).contentType("application/json")
+                        .content("{\"name\":\"B bakımı\",\"startAt\":\"2026-05-01T02:00:00\",\"durationMinutes\":60,\"targets\":"
+                                + targetsBody("b.example.com") + "}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.team_id").value(7));
+        org.assertj.core.api.Assertions.assertThat(captureSaved().getTeamId()).isEqualTo(7L);
+    }
+
+    @Test
+    @DisplayName("SAHİP: birincil takımı OLMAYAN kapsamlı müdür kendi açtığı pencereyi düzenler (sahip = hedefin takımı, null değil)")
+    void scopedAdminWithoutPrimaryTeam_canEditOwnWindow() throws Exception {
+        owners(java.util.Map.of("a.example.com", java.util.Set.of(2L)));
+        saveEchoes();
+        mvc.perform(post("/api/monitoring/maintenance/quick").session(scopedAdminSession()).contentType("application/json")
+                        .content("{\"minutes\":30,\"targets\":" + targetsBody("a.example.com") + "}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.team_id").value(2));
+        MaintenanceWindow saved = captureSaved();
+        org.assertj.core.api.Assertions.assertThat(saved.getTeamId()).isEqualTo(2L);
+        when(repo.findById(11L)).thenReturn(Optional.of(saved));
+        mvc.perform(post("/api/monitoring/maintenance/11/pause").session(scopedAdminSession()))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("SAHİP: hedefler iki takıma aitse yaratanın yönetim kapsamındaki İLK sahip takım; global yönetici 'tüm izlemeler' → sahipsiz")
+    void owner_severalTeams_andGlobalAll() throws Exception {
+        MockHttpSession s = teamAdminSession();
+        s.setAttribute("manageTeamIds", new java.util.ArrayList<>(List.of(9L, 5L)));
+        owners(java.util.Map.of("a.example.com", java.util.Set.of(5L), "b.example.com", java.util.Set.of(9L)));
+        saveEchoes();
+        mvc.perform(post("/api/monitoring/maintenance").session(s).contentType("application/json")
+                        .content("{\"name\":\"İki\",\"startAt\":\"2026-05-01T02:00:00\",\"durationMinutes\":60,\"targets\":"
+                                + targetsBody("a.example.com", "b.example.com") + "}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.team_id").value(9));
+
+        MockHttpSession g = session();
+        g.setAttribute("teamId", 4L);
+        mvc.perform(post("/api/monitoring/maintenance/quick").session(g)
+                        .contentType("application/json").content("{\"allMonitors\":true,\"minutes\":60}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.team_id").value(org.hamcrest.Matchers.nullValue()));
     }
 
     @Test
