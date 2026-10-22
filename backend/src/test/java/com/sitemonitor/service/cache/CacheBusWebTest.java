@@ -66,6 +66,11 @@ class CacheBusWebTest {
     void writeOnA_thenReadOnB_isFresh() throws Exception {
         AtomicInteger evictedOnB = new AtomicInteger();
         podB.register("cert-latest", evictedOnB::incrementAndGet);
+        // Yayın ve zorunlu yoklama veri yolu iş parçacığında (istek iş parçacığı veritabanına dokunmaz); dönemsel yoklama uzak
+        for (CacheBus p : new CacheBus[] { podA, podB }) {
+            p.pollMs = 60_000;
+            p.start();
+        }
 
         // Pod A: "Şimdi kontrol et" (işlemsiz) → istek grubuna; gövde yazılırken yayın + başlık
         MockHttpServletRequest write = new MockHttpServletRequest("GET", "/api/certificates/check/a.example.com");

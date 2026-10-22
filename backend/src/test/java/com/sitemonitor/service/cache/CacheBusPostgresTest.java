@@ -75,7 +75,11 @@ class CacheBusPostgresTest {
                     for (int i = 0; i < rounds; i++) {
                         Set<String> names = reversed ? new java.util.LinkedHashSet<>(List.of(shared2, own, shared1))
                                 : new java.util.LinkedHashSet<>(List.of(shared1, shared2, own));
-                        if (bus.bumpNow(names) != null) ok++;
+                        // lock_timeout (500 ms) aşılırsa üretimde geri çekilip yeniden denenir — test de en çok 3 kez dener;
+                        // başarısız deneme işlemle birlikte geri alınır (sayaç artmaz)
+                        for (int attempt = 0; attempt < 3; attempt++) {
+                            if (bus.bumpNow(names) != null) { ok++; break; }
+                        }
                     }
                     return ok;
                 }));
@@ -91,6 +95,27 @@ class CacheBusPostgresTest {
     }
 
     @Test
+    @DisplayName("PostgreSQL: _global satırını tutan asılı oturum yayını en çok lock_timeout kadar bekletir (3 sn sorgu sınırı değil)")
+    void lockedGlobalRow_failsFastWithLockTimeout() throws Exception {
+        String n = name();
+        CacheBus a = pod();
+        assertThat(a.bumpNow(Set.of(n))).isNotNull();   // satırlar var
+        try (java.sql.Connection holder = PostgresIt.app().newSession()) {
+            holder.setAutoCommit(false);
+            try (java.sql.Statement st = holder.createStatement()) {
+                st.executeUpdate("UPDATE cache_bus SET generation = generation WHERE name = '" + CacheBus.GLOBAL + "'");
+            }
+            long t0 = System.nanoTime();
+            assertThat(a.bumpNow(Set.of(n))).as("kilit beklemesi aşıldı → yayın başarısız (yeniden denenecek)").isNull();
+            long ms = (System.nanoTime() - t0) / 1_000_000;
+            assertThat(ms).isLessThan(CacheBus.LOCK_TIMEOUT_MS + 1_000);
+            holder.rollback();
+        }
+        assertThat(a.bumpNow(Set.of(n))).isNotNull();
+        assertThat(gen(n)).isEqualTo(2);
+    }
+
+    @Test
     @DisplayName("PostgreSQL: A yayınlar → B bir yoklamada boşaltır; B yeniden yayın yapmaz; yazdığını-oku bekleyişi tek yoklama")
     void bumpOnA_evictsOnB() {
         String n = name();
@@ -99,12 +124,18 @@ class CacheBusPostgresTest {
         b.register(n, onB::incrementAndGet);
         a.pollNow();
         b.pollNow();
-        Long g = a.bumpNow(Set.of(n));
-        assertThat(g).isNotNull();
-        assertThat(b.awaitGeneration(g)).isTrue();
-        assertThat(onB.get()).isEqualTo(1);
-        b.pollNow();
-        assertThat(onB.get()).isEqualTo(1);
-        assertThat(gen(n)).isEqualTo(1);
+        b.pollMs = 60_000;   // yalnız zorunlu yoklama (iş parçacığında)
+        b.start();
+        try {
+            Long g = a.bumpNow(Set.of(n));
+            assertThat(g).isNotNull();
+            assertThat(b.awaitGeneration(g)).isTrue();
+            assertThat(onB.get()).isEqualTo(1);
+            b.pollNow();
+            assertThat(onB.get()).isEqualTo(1);
+            assertThat(gen(n)).isEqualTo(1);
+        } finally {
+            b.stop(false);
+        }
     }
 }

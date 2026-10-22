@@ -1,5 +1,6 @@
 package com.sitemonitor.service.cache;
 
+import com.sitemonitor.config.ShutdownDeadline;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
@@ -14,6 +15,7 @@ import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.BadSqlGrammarException;
+import org.springframework.jdbc.core.ConnectionCallback;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
@@ -36,9 +38,11 @@ import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
@@ -59,25 +63,32 @@ import java.util.regex.Pattern;
  * <p><b>Nasıl.</b> Tablo {@code cache_bus(name PK, generation, updated_at)} ad başına bir sayaç tutar; {@code _global}
  * satırı her yayında birlikte artar (istemcinin gördüğü tek sayı).
  * <ul>
- *   <li>{@link #bump(String...)}: işlem içindeyse işlem İŞLENDİKTEN sonra (geri alınan işlem yayın yapmaz), işlemsizse
- *       hemen. İstek iş parçacığında ad istek sonuna dek biriktirilir ve yanıt gövdesi yazılmadan önce TEK güncelleme ile
- *       yayınlanır ({@link #flushRequest()}, {@code CacheBusResponseAdvice}); yanıt {@value #RESPONSE_HEADER} başlığında
- *       yeni genel kuşağı taşır. Arka plan iş parçacıklarında yayın veri yolunun kendi iş parçacığında, kısa birleştirmeyle
- *       yapılır. Asla atmaz; başarısız yayın geri çekilerek yeniden denenir (sınırlı).</li>
+ *   <li>{@link #bump(String...)}: işlem içindeyse işlem TAMAMLANDIKTAN sonra (geri alınan işlem yayın yapmaz). İstek iş
+ *       parçacığında adlar istek boyunca biriktirilir; yanıt gövdesi yazılmadan önce ({@code CacheBusResponseAdvice},
+ *       {@link #flushRequest()}) veri yolu İŞ PARÇACIĞINA devredilir ve en çok {@value #REQUEST_FLUSH_WAIT_MS} ms kuşak
+ *       beklenir — gelirse yanıt {@value #RESPONSE_HEADER} taşır, gelmezse başlıksız gider (istemci bugünkü gibi davranır),
+ *       yayın yine yapılır. İstek iş parçacığı veritabanına HİÇ dokunmaz (havuz beklemesi / kilit isteği tıkamaz). 2 sn'den
+ *       uzun bekleyen istek grubu (uzun toplu istek) iş parçacığına devredilir; istek bittikten sonra gelen ad doğrudan
+ *       kuyruğa gider. Arka plan iş parçacıklarında yayın 50 ms birleştirmeyle yapılır. Asla atmaz; başarısız yayın geri
+ *       çekilerek yeniden denenir (sınırlı).</li>
  *   <li>Kendi daemon iş parçacığı ({@code cache-bus}, paylaşılan zamanlayıcı havuzu DEĞİL) {@code site.monitor.cache-bus.poll-ms}
  *       (2 sn) aralıkla {@code SELECT name, generation} okur; kuşağı DEĞİŞEN (kıyas {@code !=} — elle silinen / yeniden
- *       kurulan satır da görülür) her ad için kayıtlı yerel boşaltıcıyı yeniden yayın YAPMADAN çalıştırır.</li>
+ *       kurulan satır da görülür) her ad için kayıtlı yerel boşaltıcıyı yeniden yayın YAPMADAN çalıştırır. Boşaltıcılar UCUZ
+ *       olmalı (bayat işaretle / temizle); biri hata verirse o ad uygulanmamış sayılır ve sonraki yoklamada yeniden denenir.</li>
  *   <li>Yazdığını oku: istemci gördüğü en yüksek kuşağı GET'lerde {@value #REQUEST_HEADER} ile gönderir; uygulanmış kuşağı
  *       daha düşük olan pod yanıtlamadan önce TEK zorunlu yoklama ister ve en çok {@code site.monitor.cache-bus.min-gen-wait-ms}
  *       (500 ms) bekler ({@link #awaitGeneration(long)}, {@code CacheBusRequestFilter}). Başlık yoksa bugünkü davranış.</li>
  *   <li>Kendi yayınını yeniden uygulamaz: yayının döndürdüğü kuşaklar art arda geliyorsa (araya başka pod girmediyse) "görüldü"
  *       ilerletilir — yazan pod kendi önbelleğini ikinci kez boşaltmaz, ısıtıcı iki kez koşmaz.</li>
+ *   <li>Kilit: her yayın önce {@code _global} satırını kilitler (tek sıra — iki pod kilitlenmez); PostgreSQL'de
+ *       {@code SET LOCAL lock_timeout} {@value #LOCK_TIMEOUT_MS} ms — o satırı tutup ölen bir oturum yayınları en çok bu kadar
+ *       bekletir, sonra geri çekilip yeniden denenir.</li>
  * </ul>
  *
- * <p><b>Geriye uyum.</b> Tablo yoksa ({@code BadSqlGrammarException} — ilk açılışın ilk saniyeleri ya da yaması düşmüş
- * veritabanı) yol sessizce devre dışıdır: önbellekler TTL'le çalışır (bugünkü davranış). 20.165.1 pod'u ne yayın yapar ne
- * dinler — karışık dağıtımda o pod TTL'le kalır. Tek pod: kendi yayınları kendi önbelleğini boşaltmaz, istek başlığı
- * beklemeye yol açmaz — davranış aynı.
+ * <p><b>Geriye uyum.</b> Tablo yoksa ({@code BadSqlGrammarException} — yaması düşmüş veritabanı) yol sessizce devre dışıdır:
+ * önbellekler TTL'le çalışır (bugünkü davranış); tablo {@value #TABLE_RECHECK_MS} ms'de bir yeniden denenir. 20.165.1 pod'u ne
+ * yayın yapar ne dinler — karışık dağıtımda o pod TTL'le kalır. Tek pod: kendi yayınları kendi önbelleğini boşaltmaz, istek
+ * başlığı beklemeye yol açmaz — davranış aynı.
  */
 @Slf4j
 @Service
@@ -104,11 +115,15 @@ public class CacheBus implements ApplicationContextAware {
     static final long FORCED_POLL_GAP_MS = 100L;
     /** Arka plan yayınlarının birleştirme gecikmesi (ör. evictAllCaches'in 6 önbelleği TEK güncelleme). */
     static final long ASYNC_COALESCE_MS = 50L;
-    /** İstek grubu bundan uzun beklerse (uzun toplu istek) adlar arka plana devredilir. */
+    /** İstek grubu bundan uzun beklerse (uzun toplu istek) adlar iş parçacığına devredilir. */
     static final long REQUEST_HANDOFF_MS = 2_000L;
+    /** Yanıt yazılırken kuşak için en uzun bekleme — aşılırsa yanıt başlıksız gider (yayın yine yapılır). */
+    static final long REQUEST_FLUSH_WAIT_MS = 250L;
+    /** PostgreSQL {@code lock_timeout} (yayın işleminin içinde, SET LOCAL). */
+    static final long LOCK_TIMEOUT_MS = 500L;
     /** Yoklama / yayın sorgularının üst süresi (sn) — asılan veritabanı kilidi sonsuza dek tutmasın. */
     static final int QUERY_TIMEOUT_SECONDS = 3;
-    /** Kendi yayınını kaydetmek için kilit beklemesi (istek yolunda) — aşılırsa kayıt atlanır (zararsız: bir fazla boşaltma). */
+    /** Kendi yayınını kaydetmek için kilit beklemesi — aşılırsa kayıt atlanır (zararsız: bir fazla boşaltma). */
     static final long OWN_RECORD_LOCK_MS = 50L;
     /** Başarısız arka plan yayınının en çok deneme sayısı (geri çekilme 1 → 30 sn); aşılırsa ad bırakılır (TTL'e düşer). */
     static final int MAX_ASYNC_ATTEMPTS = 12;
@@ -117,6 +132,14 @@ public class CacheBus implements ApplicationContextAware {
     static final long BASELINE_MARGIN_MS = 30_000L;
     /** Bir adın bekleyen kendi-yayın kümesinin üst sınırı. */
     static final int MAX_OWN_PENDING = 64;
+    /** Tablo yokken veritabanına en sık bu aralıkla yeniden bakılır. */
+    static final long TABLE_RECHECK_MS = 30_000L;
+    /** Yok etmedeki son yayının tavanı (ortak kapanış süresi {@link ShutdownDeadline#waitMs} ile kısalır). */
+    public static final long SHUTDOWN_FLUSH_CAP_MS = 2_000L;
+    /** Açık istek grubu bundan eskiyse (tamamlanma geri çağrısı hiç gelmedi) iş parçacığı onu bırakır (sızıntı olmasın). */
+    static final long BATCH_MAX_AGE_MS = 10 * 60_000L;
+    /** Açık istek grubu varken iş parçacığının en uzun uykusu (devir denetimi). */
+    static final long BATCH_CHECK_MS = 500L;
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS").withZone(ZoneOffset.UTC);
@@ -150,6 +173,8 @@ public class CacheBus implements ApplicationContextAware {
     private volatile long appliedGlobal = -1;
     /** Varlığı bilinen satırlar (eklemeyi atla). */
     private final Set<String> knownRows = ConcurrentHashMap.newKeySet();
+    /** Tamamlanmamış istek grupları — iş parçacığı 2 sn'yi aşanları devralır. */
+    private final Set<RequestBatch> openBatches = ConcurrentHashMap.newKeySet();
 
     /** İş parçacığı eşgüdümü — {@link #signal} altında. */
     private final Object signal = new Object();
@@ -159,9 +184,14 @@ public class CacheBus implements ApplicationContextAware {
     private final Set<String> asyncPending = new LinkedHashSet<>();
     private int asyncAttempts;
     private long asyncNotBeforeNs;
+    /** Yanıt bekleyen istek(ler)in kuşak sözü — bekleyen adlarla AYNI kilit altında alınır, onları yayınlayan tur tamamlar. */
+    private CompletableFuture<Long> urgent;
     private final ReentrantLock pollLock = new ReentrantLock();
 
     private volatile Thread worker;
+    /** ContextClosedEvent: yoklama / bekleme yok (yayınlar sürer). */
+    private volatile boolean closing;
+    /** Yok etme: iş parçacığı durur. */
     private volatile boolean stopped;
     private ApplicationContext context;
 
@@ -171,10 +201,16 @@ public class CacheBus implements ApplicationContextAware {
     private final AtomicLong polls = new AtomicLong();
     private final AtomicLong pollFailures = new AtomicLong();
     private final AtomicLong remoteEvictions = new AtomicLong();
+    private final AtomicLong evictorFailures = new AtomicLong();
     private final AtomicLong forcedWaits = new AtomicLong();
     private final AtomicLong droppedNames = new AtomicLong();
+    private final AtomicLong headerTimeouts = new AtomicLong();
     private volatile long lastPollOkAtMs;
     private volatile boolean tableMissing;
+    private volatile long tableMissingAtMs;
+    /** Son veritabanı işlemi (yayın / yoklama) başarısız mıydı — yok etmede son yayın denenmez. */
+    private volatile boolean lastDbFailed;
+    private volatile Boolean postgres;
     private volatile long lastWarnAtMs;
 
     @Autowired
@@ -209,7 +245,11 @@ public class CacheBus implements ApplicationContextAware {
 
     // ── Kayıt ────────────────────────────────────────────────────────────────────────────────────────────────
 
-    /** Bir adın YEREL boşaltıcısı — başka pod yayın yaptığında çalışır (yeniden yayın yapmamalı). */
+    /**
+     * Bir adın YEREL boşaltıcısı — başka pod yayın yaptığında yoklama kilitleri altında çalışır: UCUZ olmalı (alanı boşalt /
+     * bayat işaretle; veritabanı okuması YOK — gerekirse sonraki okumada tembel tazele) ve asla yeniden yayın yapmamalı. Hata
+     * verirse ad uygulanmamış sayılır, sonraki yoklamada yeniden denenir.
+     */
     public void register(String name, Runnable localEvict) {
         if (!valid(name) || localEvict == null) return;
         evictors.computeIfAbsent(name, k -> new CopyOnWriteArrayList<>()).add(localEvict);
@@ -220,7 +260,7 @@ public class CacheBus implements ApplicationContextAware {
         if (resolver != null) resolvers.add(resolver);
     }
 
-    /** Başka pod'un yayınıyla boşaltılan adlar (yoklama sonunda, boşaltıcılardan sonra). */
+    /** Başka pod'un yayınıyla boşaltılan adlar (yoklama sonunda, kilitler bırakıldıktan sonra). */
     public void onRemoteEvict(Consumer<Set<String>> listener) {
         if (listener != null) remoteListeners.add(listener);
     }
@@ -228,8 +268,8 @@ public class CacheBus implements ApplicationContextAware {
     // ── Yayın ────────────────────────────────────────────────────────────────────────────────────────────────
 
     /**
-     * Adların önbelleği değişti — öteki pod'lar da boşaltsın. İşlem içindeyse işlem işlendikten sonra (geri alınırsa hiç),
-     * istek iş parçacığındaysa yanıt yazılmadan önce, değilse arka planda. Asla atmaz; çağıranın akışını bozmaz.
+     * Adların önbelleği değişti — öteki pod'lar da boşaltsın. İşlem içindeyse işlem tamamlandıktan sonra (geri alınırsa hiç),
+     * istek iş parçacığındaysa yanıt yazılırken, değilse arka planda. Asla atmaz; çağıranın akışını bozmaz, veritabanına dokunmaz.
      */
     public void bump(String... names) {
         if (!enabled || names == null || names.length == 0) return;
@@ -281,19 +321,22 @@ public class CacheBus implements ApplicationContextAware {
     }
 
     /**
-     * İstek iş parçacığı → istek grubuna (yanıt yazılırken yayınlanır); değilse arka plan kuyruğuna. Veritabanına dokunmaz.
-     * Uzun süren istekte (toplu işlem: parça parça işlenen binlerce kayıt) grup {@link #REQUEST_HANDOFF_MS}'den uzun
-     * beklediyse adlar arka plan kuyruğuna devredilir — öteki pod'lar yanıtın sonunu beklemez.
+     * İstek iş parçacığı → istek grubuna (yanıt yazılırken iş parçacığına devredilir); değilse arka plan kuyruğuna.
+     * Veritabanına dokunmaz. Uzun süren istekte grup {@link #REQUEST_HANDOFF_MS}'den uzun beklediyse adlar hemen devredilir;
+     * istek tamamlandıktan sonra gelen ad (süzgeç zincirin dışında boşalttı) doğrudan kuyruğa gider.
      */
     void dispatch(Set<String> names) {
         if (names == null || names.isEmpty() || !enabled) return;
         RequestBatch batch = currentBatch(true);
         if (batch != null) {
-            if (batch.add(names, System.nanoTime(), TimeUnit.MILLISECONDS.toNanos(REQUEST_HANDOFF_MS))) {
+            RequestBatch.Added r = batch.add(names, System.nanoTime(), TimeUnit.MILLISECONDS.toNanos(REQUEST_HANDOFF_MS));
+            if (r == RequestBatch.Added.KEPT) return;
+            if (r == RequestBatch.Added.HANDOFF) {
                 Set<String> early = batch.drain();
                 if (!early.isEmpty()) enqueueAsync(early);
+                return;
             }
-            return;
+            // CLOSED: istek bitmiş — kuyruğa
         }
         enqueueAsync(names);
     }
@@ -306,32 +349,43 @@ public class CacheBus implements ApplicationContextAware {
             Object o = ra.getAttribute(batchAttr, RequestAttributes.SCOPE_REQUEST);
             if (o instanceof RequestBatch b) return b;
             if (!create) return null;
-            RequestBatch b = new RequestBatch();
+            RequestBatch b = new RequestBatch(System.nanoTime());
             ra.setAttribute(batchAttr, b, RequestAttributes.SCOPE_REQUEST);
-            // Güvenlik ağı: yanıt gövdesi yazılmadan biten istekte (void uç, akış) kalan adlar arka planda yayınlanır
-            ra.registerDestructionCallback(batchAttr, () -> {
-                Set<String> left = b.drain();
-                if (!left.isEmpty()) enqueueAsync(left);
-            }, RequestAttributes.SCOPE_REQUEST);
+            // İstek tamamlandı (gövdesiz yanıt, akış): grup kapanır, kalan adlar ve sonradan gelenler kuyruğa
+            ra.registerDestructionCallback(batchAttr, () -> completeBatch(b), RequestAttributes.SCOPE_REQUEST);
+            openBatches.add(b);
             return b;
         } catch (IllegalStateException requestNotActive) {
             return null;
         }
     }
 
+    void completeBatch(RequestBatch b) {
+        openBatches.remove(b);
+        Set<String> left = b.close();
+        if (!left.isEmpty()) enqueueAsync(left);
+    }
+
     /** Bir isteğin bekleyen yayın adları + bu istekte dönen en yüksek genel kuşak. */
     static final class RequestBatch {
+        enum Added { KEPT, HANDOFF, CLOSED }
+
         private final Set<String> names = new LinkedHashSet<>();
+        private final long createdNs;
         private long maxGen = -1;
         private long firstAddedNs;
+        private boolean closed;
 
-        synchronized void add(Collection<String> n) { add(n, System.nanoTime(), Long.MAX_VALUE); }
+        RequestBatch(long createdNs) { this.createdNs = createdNs; }
 
-        /** @return grup {@code handoffNs}'den uzun süredir bekliyor (devredilmeli) */
-        synchronized boolean add(Collection<String> n, long nowNs, long handoffNs) {
+        RequestBatch() { this(System.nanoTime()); }
+
+        /** @return KEPT (grupta), HANDOFF (grup {@code handoffNs}'den uzun bekliyor — devret) ya da CLOSED (istek bitmiş) */
+        synchronized Added add(Collection<String> n, long nowNs, long handoffNs) {
+            if (closed) return Added.CLOSED;
             if (names.isEmpty()) firstAddedNs = nowNs;
             names.addAll(n);
-            return nowNs - firstAddedNs > handoffNs;
+            return nowNs - firstAddedNs > handoffNs ? Added.HANDOFF : Added.KEPT;
         }
 
         synchronized Set<String> drain() {
@@ -340,24 +394,60 @@ public class CacheBus implements ApplicationContextAware {
             return out;
         }
 
+        /** Bekleyen adlar en az {@code ageNs} yaşındaysa boşaltır (iş parçacığının devir denetimi); değilse boş. */
+        synchronized Set<String> drainIfOlderThan(long nowNs, long ageNs) {
+            if (names.isEmpty() || nowNs - firstAddedNs <= ageNs) return Set.of();
+            return drain();
+        }
+
+        synchronized Set<String> close() {
+            closed = true;
+            return drain();
+        }
+
+        synchronized boolean closed() { return closed; }
+
+        long createdNs() { return createdNs; }
+
         synchronized void recordGen(long g) { if (g > maxGen) maxGen = g; }
 
         synchronized long maxGen() { return maxGen; }
     }
 
     /**
-     * Bu isteğin bekleyen yayınlarını TEK güncellemeyle yapar (yanıt gövdesi yazılmadan önce). İşlem dışında çağrılmalı.
-     * @return bu istekte yayınlanan en yüksek genel kuşak; yayın yoksa / başarısızsa -1 (başarısız olan arka planda denenir)
+     * Bu isteğin bekleyen yayınlarını iş parçacığına devreder ve en çok {@value #REQUEST_FLUSH_WAIT_MS} ms yeni kuşağı bekler
+     * (yanıt gövdesi yazılmadan önce). İstek iş parçacığı veritabanına dokunmaz. İş parçacığı yoksa (açılış öncesi) adlar
+     * kuyrukta kalır. Asla atmaz.
+     * @return bu istekte yayınlanan en yüksek genel kuşak; bilinmiyorsa -1 (yanıt başlıksız; yayın yine yapılır)
      */
     public long flushRequest() {
         if (!enabled) return -1;
         RequestBatch b = currentBatch(false);
         if (b == null) return -1;
         Set<String> names = b.drain();
-        if (!names.isEmpty()) {
-            Long g = bumpNow(names);
-            if (g == null) enqueueAsync(names);
-            else b.recordGen(g);
+        if (names.isEmpty()) return b.maxGen();
+        Thread w = worker;
+        if (w == null || !w.isAlive() || stopped) {
+            enqueueAsync(names);
+            return b.maxGen();
+        }
+        CompletableFuture<Long> f;
+        synchronized (signal) {
+            asyncPending.addAll(names);
+            if (urgent == null) urgent = new CompletableFuture<>();
+            f = urgent;
+            if (asyncAttempts == 0) asyncNotBeforeNs = System.nanoTime();   // birleştirme beklemesi yok (geri çekilme korunur)
+            signal.notifyAll();
+        }
+        try {
+            Long g = f.get(REQUEST_FLUSH_WAIT_MS, TimeUnit.MILLISECONDS);
+            if (g != null) b.recordGen(g);
+        } catch (java.util.concurrent.TimeoutException e) {
+            headerTimeouts.incrementAndGet();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } catch (Exception e) {
+            log.debug("Önbellek yolu: istek yayını beklenemedi: {}", e.toString());
         }
         return b.maxGen();
     }
@@ -375,20 +465,31 @@ public class CacheBus implements ApplicationContextAware {
         if (stopped && log.isDebugEnabled()) log.debug("Önbellek yolu kapandı — yayın yapılmadı: {}", names);
     }
 
-    /** Bekleyen arka plan yayınlarını hemen yapar (test ve kapanış). */
+    /** Bekleyen arka plan yayınlarını hemen yapar (test). */
     public void flushPending() {
         flushAsync(true);
     }
 
     private void flushAsync(boolean ignoreBackoff) {
         Set<String> names;
+        CompletableFuture<Long> promise;
         synchronized (signal) {
-            if (asyncPending.isEmpty()) return;
+            if (asyncPending.isEmpty()) {
+                if (urgent != null) { urgent.complete(null); urgent = null; }
+                return;
+            }
             if (!ignoreBackoff && System.nanoTime() - asyncNotBeforeNs < 0) return;
             names = new LinkedHashSet<>(asyncPending);
             asyncPending.clear();
+            promise = urgent;
+            urgent = null;
         }
-        Long g = bumpNow(names);
+        Long g = null;
+        try {
+            g = bumpNow(names);
+        } finally {
+            if (promise != null) promise.complete(g);
+        }
         synchronized (signal) {
             if (g != null) {
                 asyncAttempts = 0;
@@ -397,8 +498,8 @@ public class CacheBus implements ApplicationContextAware {
             asyncAttempts++;
             if (asyncAttempts > MAX_ASYNC_ATTEMPTS) {
                 droppedNames.addAndGet(names.size());
-                log.warn("Önbellek yolu: {} denemede yayınlanamadı, bırakıldı (öteki pod'lar TTL ile tazeler): {}",
-                        MAX_ASYNC_ATTEMPTS, names);
+                warnRateLimited("Önbellek yolu: " + MAX_ASYNC_ATTEMPTS + " denemede yayınlanamadı, bırakıldı (öteki pod'lar TTL ile "
+                        + "tazeler): " + names);
                 asyncAttempts = 0;
                 return;
             }
@@ -408,9 +509,27 @@ public class CacheBus implements ApplicationContextAware {
         }
     }
 
+    /** Tablo yok sayılıyor ve yeniden bakma zamanı gelmedi mi (veritabanına boşuna gidilmez). */
+    private boolean skipBecauseTableMissing() {
+        return tableMissing && clock.getAsLong() - tableMissingAtMs < TABLE_RECHECK_MS;
+    }
+
+    private void markTableMissing(Exception e) {
+        if (!tableMissing) log.debug("Önbellek yolu tablosu yok (TTL ile devam; {} ms'de bir yeniden bakılır): {}",
+                TABLE_RECHECK_MS, e.getMessage());
+        tableMissing = true;
+        tableMissingAtMs = clock.getAsLong();
+    }
+
+    /** Açılış yaması tabloyu kurdu / buldu — yeniden bakma beklenmez. */
+    public void tableReady() {
+        tableMissing = false;
+    }
+
     /**
-     * Yayını hemen yapar (çağıran iş parçacığında; işlem DIŞINDA). Önce {@code _global} satırı kilitlenir — tüm yayınlar
-     * aynı sırayla kilitler, iki pod kilitlenmez. Ad satırı eksikse (elle silinmiş) işlem geri alınır ve yeniden denenir.
+     * Yayını hemen yapar (veri yolu iş parçacığında; işlem DIŞINDA). Önce {@code _global} satırı kilitlenir — tüm yayınlar aynı
+     * sırayla kilitler, iki pod kilitlenmez; PostgreSQL'de kilit beklemesi {@value #LOCK_TIMEOUT_MS} ms ile sınırlı. Ad satırı
+     * eksikse (elle silinmiş) işlem geri alınır ve yeniden denenir.
      * @return yeni genel kuşak; başarısızsa null (asla atmaz)
      */
     @Nullable
@@ -418,28 +537,36 @@ public class CacheBus implements ApplicationContextAware {
         List<String> sorted = new ArrayList<>(new TreeSet<>(names));
         sorted.remove(GLOBAL);
         if (sorted.isEmpty()) return null;
+        if (skipBecauseTableMissing()) {
+            bumpFailures.incrementAndGet();
+            return null;
+        }
         String now = ISO.format(Instant.ofEpochMilli(clock.getAsLong()));
         try {
             ensureRows(sorted);
-            Map<String, Long> gens = tx != null ? tx.execute(status -> doBump(sorted, now)) : doBump(sorted, now);
+            boolean pg = isPostgres();
+            Map<String, Long> gens = tx != null ? tx.execute(status -> doBump(sorted, now, pg)) : doBump(sorted, now, false);
             if (gens == null) return null;
             bumps.incrementAndGet();
             tableMissing = false;
+            lastDbFailed = false;
             recordOwn(gens);
             return gens.get(GLOBAL);
         } catch (BadSqlGrammarException e) {
-            tableMissing = true;
+            markTableMissing(e);
             bumpFailures.incrementAndGet();
-            log.debug("Önbellek yolu tablosu yok (yayın atlandı): {}", e.getMessage());
+            lastDbFailed = true;
             return null;
         } catch (RuntimeException e) {
             bumpFailures.incrementAndGet();
+            lastDbFailed = true;
             warnRateLimited("Önbellek yolu yayını başarısız (" + names + "): " + e);
             return null;
         }
     }
 
-    private Map<String, Long> doBump(List<String> names, String now) {
+    private Map<String, Long> doBump(List<String> names, String now, boolean setLockTimeout) {
+        if (setLockTimeout) jdbc.execute("SET LOCAL lock_timeout = '" + LOCK_TIMEOUT_MS + "ms'");
         int g = jdbc.update("UPDATE cache_bus SET generation = generation + 1, updated_at = ? WHERE name = ?", now, GLOBAL);
         if (g == 0) {
             knownRows.remove(GLOBAL);
@@ -460,6 +587,20 @@ public class CacheBus implements ApplicationContextAware {
         jdbc.query("SELECT name, generation FROM cache_bus WHERE name IN (" + marks(all.size()) + ")",
                 rs -> { out.put(rs.getString(1), rs.getLong(2)); }, all.toArray());
         return out;
+    }
+
+    /** PostgreSQL mi (SET LOCAL lock_timeout yalnız orada) — bilinen yanıt saklanır, okunamazsa bu tur "hayır". */
+    private boolean isPostgres() {
+        Boolean p = postgres;
+        if (p != null) return p;
+        try {
+            String product = jdbc.execute((ConnectionCallback<String>) c -> c.getMetaData().getDatabaseProductName());
+            p = product != null && product.toLowerCase(Locale.ROOT).contains("postgres");
+            postgres = p;
+            return p;
+        } catch (RuntimeException e) {
+            return false;
+        }
     }
 
     /** Eksik satırları kuşak 0 ile ekler (işlem dışı; başka pod aynı anda eklediyse yinelenen anahtar = zaten var). */
@@ -514,7 +655,7 @@ public class CacheBus implements ApplicationContextAware {
 
     private record Row(String name, long generation, String updatedAt) { }
 
-    /** Bir yoklama turu (iş parçacığı, satır içi zorunlu yoklama ve testler). @return başarılı mı */
+    /** Bir yoklama turu (iş parçacığı ve testler). @return başarılı mı */
     public boolean pollNow() {
         pollLock.lock();
         try {
@@ -526,7 +667,12 @@ public class CacheBus implements ApplicationContextAware {
 
     private boolean pollLocked() {
         if (!enabled) return false;
+        if (skipBecauseTableMissing()) {
+            pollFailures.incrementAndGet();
+            return false;
+        }
         Set<String> changed = new LinkedHashSet<>();
+        Set<String> failed = new LinkedHashSet<>();
         state.lock();
         try {
             List<Row> rows;
@@ -534,18 +680,22 @@ public class CacheBus implements ApplicationContextAware {
                 rows = jdbc.query("SELECT name, generation, updated_at FROM cache_bus",
                         (rs, i) -> new Row(rs.getString(1), rs.getLong(2), rs.getString(3)));
             } catch (BadSqlGrammarException e) {
-                tableMissing = true;
+                markTableMissing(e);
                 pollFailures.incrementAndGet();
-                log.debug("Önbellek yolu tablosu yok (yoklama atlandı): {}", e.getMessage());
+                lastDbFailed = true;
                 return false;
             } catch (RuntimeException e) {
                 pollFailures.incrementAndGet();
+                lastDbFailed = true;
                 warnRateLimited("Önbellek yolu yoklanamadı (öteki pod'ların boşaltmaları TTL ile gelir): " + e);
                 return false;
             }
             tableMissing = false;
+            lastDbFailed = false;
             Map<String, Row> byName = new LinkedHashMap<>();
             for (Row r : rows) if (r.name() != null) byName.put(r.name(), r);
+            Map<String, Long> before = new HashMap<>(seen);
+            boolean wasBaseline = !baselined;
             if (!baselined) {
                 String since = ISO.format(Instant.ofEpochMilli(createdAtMs - BASELINE_MARGIN_MS));
                 for (Row r : byName.values()) {
@@ -571,13 +721,25 @@ public class CacheBus implements ApplicationContextAware {
             }
             changed.remove(GLOBAL);
             // Boşaltıcılar kilit İÇİNDE ve uygulanan kuşak yayınlanmadan ÖNCE: bekleyen istek boşaltma bitmeden sunulmasın
-            for (String n : changed) evictLocal(n);
-            appliedGlobal = seen.getOrDefault(GLOBAL, 0L);
+            for (String n : changed) if (!evictLocal(n)) failed.add(n);
+            if (!failed.isEmpty()) {
+                // Başarısız ad uygulanmamış sayılır: görülen kuşağı geri alınır (sonraki yoklama yeniden dener), genel kuşak da
+                // ilerlemez (bekleyen istek sunulmadan önce yeniden yoklatır)
+                for (String n : failed) {
+                    Long prev = before.get(n);
+                    if (prev == null) seen.remove(n); else seen.put(n, prev);
+                }
+                Long prevGlobal = before.get(GLOBAL);
+                if (prevGlobal == null) seen.remove(GLOBAL); else seen.put(GLOBAL, prevGlobal);
+                if (wasBaseline) baselined = false;   // taban turu tekrarlanır (yeni adlar yeniden değerlendirilir)
+            }
+            appliedGlobal = baselined ? seen.getOrDefault(GLOBAL, 0L) : -1;
             polls.incrementAndGet();
             lastPollOkAtMs = clock.getAsLong();
         } finally {
             state.unlock();
         }
+        changed.removeAll(failed);
         if (!changed.isEmpty()) {
             remoteEvictions.addAndGet(changed.size());
             Set<String> view = Set.copyOf(changed);
@@ -592,7 +754,8 @@ public class CacheBus implements ApplicationContextAware {
         return true;
     }
 
-    private void evictLocal(String name) {
+    /** @return bütün boşaltıcılar başarılı mı */
+    private boolean evictLocal(String name) {
         List<Runnable> list = new ArrayList<>(evictors.getOrDefault(name, new CopyOnWriteArrayList<>()));
         for (Function<String, Runnable> r : resolvers) {
             try {
@@ -602,41 +765,34 @@ public class CacheBus implements ApplicationContextAware {
                 log.debug("Önbellek yolu çözücüsü hata verdi ({}): {}", name, e.toString());
             }
         }
+        boolean ok = true;
         for (Runnable run : list) {
             try {
                 run.run();
             } catch (RuntimeException e) {
-                log.warn("Önbellek yolu: yerel boşaltma başarısız ({}): {}", name, e.toString());
+                ok = false;
+                evictorFailures.incrementAndGet();
+                warnRateLimited("Önbellek yolu: yerel boşaltma başarısız (" + name + ", sonraki yoklamada yeniden): " + e);
             }
         }
+        return ok;
     }
 
     /**
      * Yazdığını oku: istemcinin gördüğü genel kuşak bu pod'da uygulanmadıysa TEK yoklama ister (başka bir yoklama sürüyorsa
      * isteğin GELİŞİNDEN SONRA başlayan yoklamayı bekler) ve en çok {@code min-gen-wait-ms} bekler. Süre dolarsa istek yine
-     * sunulur (bugünkü davranış). Asla atmaz.
+     * sunulur (bugünkü davranış). İş parçacığı yoksa (açılış öncesi) ya da kapanış başladıysa beklemez — istek iş parçacığı
+     * kendisi yoklamaz. Asla atmaz.
      * @return kuşak uygulandı mı
      */
     public boolean awaitGeneration(long min) {
         if (!enabled || min <= 0) return true;
         if (appliedGlobal >= min) return true;
-        if (stopped) return false;
-        forcedWaits.incrementAndGet();
-        long waitMs = Math.max(0, minGenWaitMs);
         Thread w = worker;
+        if (closing || stopped || w == null || !w.isAlive()) return false;
+        forcedWaits.incrementAndGet();
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(Math.max(0, minGenWaitMs));
         try {
-            if (w == null || !w.isAlive()) {
-                // İş parçacığı yok (açılış öncesi / test): satır içi tek yoklama
-                if (pollLock.tryLock(waitMs, TimeUnit.MILLISECONDS)) {
-                    try {
-                        if (appliedGlobal < min) pollLocked();
-                    } finally {
-                        pollLock.unlock();
-                    }
-                }
-                return appliedGlobal >= min;
-            }
-            long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(waitMs);
             synchronized (signal) {
                 long ticket = pollsStarted + 1;
                 pollRequested = true;
@@ -663,7 +819,7 @@ public class CacheBus implements ApplicationContextAware {
 
     /** Yoklama iş parçacığını başlatır (idempotent; kapalıysa / durdurulduysa başlamaz). */
     public synchronized void start() {
-        if (!enabled || stopped || (worker != null && worker.isAlive())) return;
+        if (!enabled || stopped || closing || (worker != null && worker.isAlive())) return;
         Thread t = new Thread(this::runLoop, "cache-bus");
         t.setDaemon(true);
         worker = t;
@@ -681,7 +837,7 @@ public class CacheBus implements ApplicationContextAware {
                 long now = System.nanoTime();
                 boolean forced;
                 synchronized (signal) { forced = pollRequested; }
-                if ((forced && now - lastPollNs >= gapNs) || now - nextPollNs >= 0) {
+                if (!closing && ((forced && now - lastPollNs >= gapNs) || now - nextPollNs >= 0)) {
                     long ticket;
                     synchronized (signal) {
                         pollRequested = false;
@@ -698,14 +854,16 @@ public class CacheBus implements ApplicationContextAware {
                     }
                     nextPollNs = System.nanoTime() + pollNs;
                 }
+                handOffAgedBatches(System.nanoTime());
                 // Önce yoklama, sonra yayın: açılışın ilk turunda taban kendi yayınımızdan ÖNCE alınır
                 flushAsync(false);
                 synchronized (signal) {
                     if (stopped) break;
                     long t = System.nanoTime();
-                    long waitNs = nextPollNs - t;
-                    if (pollRequested) waitNs = Math.min(waitNs, gapNs - (t - lastPollNs));
+                    long waitNs = closing ? TimeUnit.MILLISECONDS.toNanos(BATCH_CHECK_MS) : nextPollNs - t;
+                    if (pollRequested && !closing) waitNs = Math.min(waitNs, gapNs - (t - lastPollNs));
                     if (!asyncPending.isEmpty()) waitNs = Math.min(waitNs, asyncNotBeforeNs - t);
+                    if (!openBatches.isEmpty()) waitNs = Math.min(waitNs, TimeUnit.MILLISECONDS.toNanos(BATCH_CHECK_MS));
                     if (waitNs > 0) signal.wait(Math.max(1, TimeUnit.NANOSECONDS.toMillis(waitNs)));
                 }
             } catch (InterruptedException e) {
@@ -721,19 +879,39 @@ public class CacheBus implements ApplicationContextAware {
         }
     }
 
+    /** Uzun süren isteklerin 2 sn'yi aşan adlarını kuyruğa alır; tamamlanmayan (geri çağrısı gelmeyen) eski grupları bırakır. */
+    void handOffAgedBatches(long nowNs) {
+        if (openBatches.isEmpty()) return;
+        long handoff = TimeUnit.MILLISECONDS.toNanos(REQUEST_HANDOFF_MS);
+        long maxAge = TimeUnit.MILLISECONDS.toNanos(BATCH_MAX_AGE_MS);
+        for (RequestBatch b : openBatches) {
+            if (b.closed()) { openBatches.remove(b); continue; }
+            if (nowNs - b.createdNs() > maxAge) {   // tamamlanma geri çağrısı hiç gelmedi: sızıntı olmasın
+                completeBatch(b);
+                continue;
+            }
+            Set<String> aged = b.drainIfOlderThan(nowNs, handoff);
+            if (!aged.isEmpty()) enqueueAsync(aged);
+        }
+    }
+
     /**
-     * Kapanış: yeni yoklama / bekleme yok (CLAUDE.md "Things that bite": kapanışta yeni iş başlamaz); bekleyen arka plan
-     * yayınları TEK denemeyle gönderilir (biten işin boşaltması öteki pod'lara ulaşsın — veritabanı hâlâ açık).
+     * Kapanış başladı: yeni yoklama ve yazdığını-oku beklemesi YOK (CLAUDE.md "Things that bite": kapanışta yeni iş başlamaz);
+     * iş parçacığı yalnız bekleyen yayınları göndermeyi sürdürür (biten işin boşaltması öteki pod'lara ulaşsın). Bu dinleyici
+     * hiç beklemez — ortak kapanış süresini tüketmez.
      */
     @EventListener(ContextClosedEvent.class)
     public void onContextClosed(ContextClosedEvent event) {
         if (context != null && event != null && event.getApplicationContext() != context) return;
-        stop(true);
+        closing = true;
+        synchronized (signal) { signal.notifyAll(); }
     }
 
     /**
-     * Yok etme: kapanış dinleyicilerinin (ör. {@code NotifyExecutorDrain}'in ≤ 20 sn boşaltması) sırasında biriken yayınlar
-     * da TEK denemeyle gönderilir — veri kaynağı bu fasulyeden SONRA kapanır (bağımlılık). Başarısızlık yalnız DEBUG.
+     * Yok etme: iş parçacığı durur; bekleyen yayın (kapanış dinleyicileri sırasında biten işler) TEK denemeyle, ortak kapanış
+     * süresiyle sınırlı ({@link ShutdownDeadline#waitMs}, tavan {@value #SHUTDOWN_FLUSH_CAP_MS} ms) ayrı bir iş parçacığında
+     * gönderilir. Tablo yoksa ya da son veritabanı işlemi başarısızsa denenmez (kapanışı boşuna bekletmesin). Veri kaynağı bu
+     * fasulyeden SONRA kapanır (bağımlılık).
      */
     @PreDestroy
     void destroy() {
@@ -741,16 +919,30 @@ public class CacheBus implements ApplicationContextAware {
     }
 
     void stop(boolean finalFlush) {
+        closing = true;
         stopped = true;
         Thread w = worker;
         if (w != null) w.interrupt();
-        synchronized (signal) { signal.notifyAll(); }
-        if (finalFlush) {
+        synchronized (signal) {
+            if (urgent != null) { urgent.complete(null); urgent = null; }
+            signal.notifyAll();
+        }
+        if (!finalFlush || !hasPending() || tableMissing || lastDbFailed) return;
+        long budget = ShutdownDeadline.waitMs(SHUTDOWN_FLUSH_CAP_MS);
+        if (budget <= 0) return;
+        Thread t = new Thread(() -> {
             try {
                 flushAsync(true);
             } catch (RuntimeException e) {
                 log.debug("Önbellek yolu son yayını yapılamadı: {}", e.toString());
             }
+        }, "cache-bus-final");
+        t.setDaemon(true);
+        t.start();
+        try {
+            t.join(budget);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
     }
 
@@ -794,14 +986,22 @@ public class CacheBus implements ApplicationContextAware {
         m.put("polls", polls.get());
         m.put("poll_failures", pollFailures.get());
         m.put("remote_evictions", remoteEvictions.get());
+        m.put("evictor_failures", evictorFailures.get());
         m.put("forced_waits", forcedWaits.get());
+        m.put("header_timeouts", headerTimeouts.get());
         m.put("dropped_names", droppedNames.get());
         synchronized (signal) { m.put("pending", asyncPending.size()); }
+        m.put("open_request_batches", openBatches.size());
         return m;
     }
 
     /** Test kancası: bekleyen arka plan yayını var mı. */
     boolean hasPending() {
         synchronized (signal) { return !asyncPending.isEmpty(); }
+    }
+
+    /** Test kancası: açık istek grubu sayısı. */
+    int openBatchCount() {
+        return openBatches.size();
     }
 }

@@ -144,6 +144,25 @@ class ShutdownBudgetGateTest {
         assertThat(count(web, "setWaitForTasksToCompleteOnShutdown(true)")).isEqualTo(count(web, "new DeadlineAwareTaskExecutor("));
     }
 
+    /**
+     * Çok pod R2-A (2026-10-22, önbellek yolu inceleme bulgusu 2): {@code CacheBus}'ın kapanıştaki son yayını ortak yok etme
+     * süresi içinde kalır — {@code ContextClosedEvent} dinleyicisi beklemez / veritabanına gitmez (yalnız bayrak), yok etmedeki
+     * tek deneme {@code ShutdownDeadline.waitMs(tavan)} kadar beklenen ayrı bir iş parçacığında.
+     */
+    @Test
+    @DisplayName("Önbellek yolu: kapanış dinleyicisi beklemez, yok etmedeki son yayın ortak süreyle sınırlı")
+    void cacheBusFinalFlushUsesTheSharedDeadline() throws IOException {
+        String src = Files.readString(Path.of("src/main/java/com/sitemonitor/service/cache/CacheBus.java"), StandardCharsets.UTF_8);
+        assertThat(src).contains("ShutdownDeadline.waitMs(SHUTDOWN_FLUSH_CAP_MS)").contains(".join(budget)");
+        int closed = src.indexOf("public void onContextClosed(");
+        assertThat(closed).isPositive();
+        String body = src.substring(closed, src.indexOf("\n    }", closed));
+        assertThat(body).as("ContextClosedEvent dinleyicisi yayın / bekleme yapmaz").doesNotContain("flush").doesNotContain("join")
+                .doesNotContain("stop(");
+        assertThat(com.sitemonitor.service.cache.CacheBus.SHUTDOWN_FLUSH_CAP_MS)
+                .as("tavan ortak yok etme süresinin altında").isLessThan(ShutdownDeadline.DESTROY_BUDGET_MS);
+    }
+
     private static int count(String s, String needle) {
         int n = 0;
         for (int i = s.indexOf(needle); i >= 0; i = s.indexOf(needle, i + needle.length())) n++;
