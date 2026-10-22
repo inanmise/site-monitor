@@ -169,6 +169,8 @@ public class EscalationService {
     }
 
     static final String TRIGGER_MANUAL = "MANUAL";
+    /** Elle gönderimde e-posta alıcılarının hepsi onay penceresinde çıkarıldı (yalnız push / webhook gitti). */
+    static final String STATUS_SKIPPED_EMAIL_DESELECTED = "SKIPPED: e-posta alıcısı seçilmedi (elle gönderim — yalnız push / webhook)";
 
     /**
      * Sistem bakımı susturmasının İZİ ("never silent"): alarmın bildirim günlüğüne {@code SYSTEM_MAINTENANCE /
@@ -863,6 +865,9 @@ public class EscalationService {
         }
         ReNotifyTargets targets = resolveReNotifyTargets(event);
         requireOwned(event, targets);
+        // C2 (son inceleme 2026-10-22): izlemenin "E-posta" kanalı alarm anında kapalıysa gönderim e-postayı atlar
+        // (reNotifyAsync → sendCombinedAlert, alarm anı damgası) — önizleme de e-posta alıcısı listelemez (önizleme = gönderim).
+        if (reNotifyMailDisabled(event)) return List.of();
         List<ReNotifyRecipient> out = new ArrayList<>();
         Set<String> seen = new HashSet<>();
         for (String[] team : collectTeamRecipients(targets.domainTeamId(), targets.ugTeamId(),
@@ -902,6 +907,28 @@ public class EscalationService {
     }
 
     /**
+     * Elle yeniden gönderimde e-posta kanalı KAPALI mı (C2, son inceleme 2026-10-22): izleme türlerinde gönderim bağlamı
+     * alarm anı anlık görüntüsünü taşır ({@link #reNotifyAsync}) ve {@code sendCombinedAlert} onun {@code mail_disabled}
+     * damgasıyla e-postayı atlar (push'un {@code push_disabled} kuralıyla aynı — izleme bayrağı alarm anında karar verir).
+     * Önizleme ve kuyruk sayısı BUNU okur; sertifika alarmının bağlamı {@code latest_checks}'ten gelir, damga okunmaz.
+     */
+    public boolean reNotifyMailDisabled(Long alertId) {
+        try {
+            return alertId != null && alertEventRepo.findById(alertId).map(this::reNotifyMailDisabled).orElse(false);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private boolean reNotifyMailDisabled(AlertEvent event) {
+        if (event == null) return false;
+        String type = event.getAlertType();
+        if (!MONITORING_ALERT_TYPES.contains(type) && !isDomainMon(type)) return false;
+        Map<String, Object> snapshot = deserializeContext(event.getContextJson());
+        return snapshot != null && Boolean.TRUE.equals(snapshot.get("mail_disabled"));
+    }
+
+    /**
      * Manuel re-notify — {@code excludeEmails}: kullanıcının onay pop-up'ında listeden çıkardığı
      * adresler (case-insensitive). Hariç tutulan KONTAĞIN e-postası da webhook'u da gönderilmez
      * (tek filtrelenmiş contacts listesi ikisini de besler). Send, alıcıları CANLI yeniden çözer;
@@ -935,19 +962,22 @@ public class EscalationService {
                         || !excluded.contains(c.getEmail().trim().toLowerCase()))
                 .toList();
 
-        // Count actual recipients (team emails + contacts, deduped, exclusions applied) — same logic as sendCombinedAlert
-        List<String> teamEmails = collectTeamEmails(domainTeamId, ugTeamId, targets.stampedGroupId());
+        // Count actual recipients (team emails + contacts, deduped, exclusions applied) — same logic as sendCombinedAlert.
+        // C2: izlemenin e-posta kanalı alarm anında kapalıysa gönderim e-postayı atlar → sayı 0 (önizleme de boş liste döner).
+        boolean mailOff = reNotifyMailDisabled(event);
+        List<String> teamEmails = mailOff ? List.of() : collectTeamEmails(domainTeamId, ugTeamId, targets.stampedGroupId());
         Set<String> seen = new HashSet<>();
         int recipientCount = 0;
         for (String e : teamEmails) {
             if (e != null && !e.isBlank() && !excluded.contains(e.trim().toLowerCase())
                     && seen.add(e.trim().toLowerCase())) recipientCount++;   // D8
         }
-        for (EscalationContact c : contacts) {
+        for (EscalationContact c : mailOff ? List.<EscalationContact>of() : contacts) {
             if (c.getEmail() != null && !c.getEmail().isBlank()
                     && seen.add(c.getEmail().trim().toLowerCase())) recipientCount++;
         }
-        for (var p : oncallFor(domainTeamId, ugTeamId, event.getAlertLevel())) {
+        for (var p : mailOff ? List.<com.sitemonitor.service.oncall.OnCallService.OnCallPerson>of()
+                : oncallFor(domainTeamId, ugTeamId, event.getAlertLevel())) {
             if (p.email() != null && !p.email().isBlank() && !excluded.contains(p.email().trim().toLowerCase())
                     && seen.add(p.email().trim().toLowerCase())) recipientCount++;
         }
@@ -3365,7 +3395,11 @@ public class EscalationService {
         if (skipMail) {
             // Pasif kullanıcı izi (2026-10-02): alıcı listesi pasif kişiler düştüğü için boşaldıysa neden "alıcı yok" değil
             // "pasif kullanıcı"dır (getContactsForLevel'in döndürdüğü liste düşen sayıyı taşır; pasif yoksa 0 → bugünkü yol).
+            // Elle gönderimde kullanıcı onay penceresinde TÜM e-posta alıcılarını çıkardıysa (yalnız push / webhook — K13) neden
+            // "alıcı yok" değil, bilinçli seçimdir (son inceleme 2026-10-22).
             emailStatus = mailDisabled ? "SKIPPED: e-posta kanalı kapalı"
+                    : TRIGGER_MANUAL.equals(trigger) && !excludeEmails.isEmpty() && allEmails.isEmpty()
+                        ? STATUS_SKIPPED_EMAIL_DESELECTED
                     : InactiveRecipientGuard.droppedCount(contacts) > 0 ? InactiveRecipientGuard.STATUS_SKIPPED
                     : "SKIPPED: alıcı yok";
             // İZ (2026-09-30): atlanan e-posta da tek satırla günlüğe girer — neden gitmediği ekranda okunur.

@@ -118,6 +118,21 @@ class MailRetrySameMailWriteBackTest {
     }
 
     @Test
+    @DisplayName("C1 (son inceleme 2026-10-22): 255 karakteri aşan 'FAILED: <SMTP hatası>' kardeşlere de KIRPILMIŞ yazılır — UPDATE düşmez")
+    void longFailedStatusReachesSiblingsFitted() throws Exception {
+        for (long i = 1; i <= 3; i++) log(i, TO, "STORM_INITIAL", "2026-10-22T06:00:00", "QUEUED_RETRY: 421");
+        String failed = "FAILED: Failed messages: org.eclipse.angus.mail.smtp.SMTPSendFailedException: 421 4.7.0 "
+                + "Try again later; message exception details (1) are: " + "x".repeat(400);
+
+        service.writeBackRetryStatus(message(), failed);
+
+        List<String> statuses = repo.findAll().stream().map(NotificationLog::getEmailStatus).toList();
+        String fitted = NotificationLog.fit(failed, NotificationLog.VARCHAR_MAX);
+        assertThat(fitted.length()).isLessThanOrEqualTo(NotificationLog.VARCHAR_MAX);
+        assertThat(statuses).hasSize(3).containsOnly(fitted);
+    }
+
+    @Test
     @DisplayName("yetim sayılmış satırların geç gelen gerçek sonucu da hepsine yazılır (önek 'FAILED: sonuç yok' — LIKE kaçışlı)")
     void lateResultCorrectsAllOrphanedRows() throws Exception {
         for (long i = 1; i <= 3; i++) log(i, TO, "QUIET_DIGEST", "2026-10-22T06:00:00", EmailNotificationService.STATUS_RETRY_ORPHANED);

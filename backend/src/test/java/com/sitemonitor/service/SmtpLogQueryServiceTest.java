@@ -256,6 +256,24 @@ class SmtpLogQueryServiceTest {
     }
 
     @Test
+    @DisplayName("Son inceleme 2026-10-22 (e): teknik hata RAPORU / test / onay satırı gövde saklamaz → yeniden gönderilmez (NO_BODY) — "
+            + "çok alıcılı (To + CC) yönetici satırı PDF'siz gitmez, rapor durumu değişmeden kalmaz")
+    void techErrorReportRowsAreNotResendable() {
+        for (String trigger : List.of(com.sitemonitor.service.techerror.TechErrorReportSender.TRIGGER,
+                com.sitemonitor.service.techerror.TechErrorReportSender.TEST_TRIGGER,
+                com.sitemonitor.service.techerror.TechErrorApprovalService.TRIGGER)) {
+            NotificationLog n = new NotificationLog(); n.setId(51L); n.setAlertEventId(0L); n.setSentAt(at(3)); n.setRecipientName("Dijital");
+            n.setRecipientEmail("yonetici1@example.com, yonetici2@example.com"); n.setCc("dijital@example.com");
+            n.setSubject("Mobil Kanalı — Eylül 2026 Teknik Hata Raporu"); n.setRecipientRole("EXECUTIVE");
+            n.setEmailStatus("FAILED: 550 x"); n.setTrigger(trigger);
+            when(logRepo.findById(51L)).thenReturn(Optional.of(n));
+            assertThat(svc.resend(51L, SmtpLogQueryService.Scope.all(), "admin").reason()).as(trigger).isEqualTo("NO_BODY");
+        }
+        verify(emailService, never()).resendStoredHtml(any(), any(), any(), any(), any());
+        verify(logRepo, never()).save(any());
+    }
+
+    @Test
     @DisplayName("dışa aktarma: süzgeçle eşleşen tüm satırlar, tavan uygulanır")
     void export() {
         assertThat(svc.exportRows(f("FAILED", null, null, null), SmtpLogQueryService.Scope.all(), 2, NOW)).hasSize(2);

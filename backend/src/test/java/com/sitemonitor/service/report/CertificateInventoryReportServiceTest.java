@@ -331,4 +331,35 @@ class CertificateInventoryReportServiceTest {
             assertThat(service.sendMonthlyReport(false).status()).as(st).isEqualTo("ALREADY_SENT");
         }
     }
+
+    @Test
+    @DisplayName("Son inceleme 2026-10-22: ayın SENT satırını sonraki ulaşmayan deneme (QUEUED / SKIPPED / FAILED / alıcı yok) EZMEZ; yeni SENT günceller")
+    void sentRowIsNeverOverwrittenByUndeliveredAttempt() {
+        stubMinimalBuild();
+        for (String mail : new String[]{"QUEUED_RETRY: 421", "SKIPPED_DISABLED", "FAILED: Connection refused"}) {
+            var row = logRow("2026-10-01T06:00:00");
+            row.setStatus("SENT");
+            when(logRepo.findByReportYearAndMonthNo(anyInt(), anyInt())).thenReturn(java.util.Optional.of(row));
+            when(emailService.sendHtmlWithAttachments(any(), any(), anyString(), any(), any(), any())).thenReturn(mail);
+            org.mockito.Mockito.clearInvocations(logRepo);
+            assertThat(service.sendMonthlyReport(true).status()).isEqualTo(mail);
+            org.mockito.Mockito.verify(logRepo, org.mockito.Mockito.never()).save(any());
+            assertThat(row.getStatus()).as(mail).isEqualTo("SENT");
+            assertThat(row.getSentAt()).isEqualTo("2026-10-01T06:00:00");
+        }
+        // Alıcı yok yolu da aynı kapıdan geçer.
+        var row = logRow("2026-10-01T06:00:00");
+        row.setStatus("SENT");
+        when(logRepo.findByReportYearAndMonthNo(anyInt(), anyInt())).thenReturn(java.util.Optional.of(row));
+        when(appSettings.getString(eq(CertificateInventoryReportService.EXTRA_TO_KEY), any())).thenReturn("");
+        org.mockito.Mockito.clearInvocations(logRepo);
+        assertThat(service.sendMonthlyReport(true).status()).isEqualTo("NO_RECIPIENT");
+        org.mockito.Mockito.verify(logRepo, org.mockito.Mockito.never()).save(any());
+        // Yeni bir SENT ayın satırını günceller.
+        when(appSettings.getString(eq(CertificateInventoryReportService.EXTRA_TO_KEY), any())).thenReturn("ek@example.com");
+        when(emailService.sendHtmlWithAttachments(any(), any(), anyString(), any(), any(), any())).thenReturn("SENT");
+        service.sendMonthlyReport(true);
+        org.mockito.Mockito.verify(logRepo).save(row);
+        assertThat(row.getSentAt()).isNotEqualTo("2026-10-01T06:00:00");
+    }
 }

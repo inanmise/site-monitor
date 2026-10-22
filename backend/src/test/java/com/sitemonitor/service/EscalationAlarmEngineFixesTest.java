@@ -402,4 +402,59 @@ class EscalationAlarmEngineFixesTest {
         assertThat(EscalationService.mailDelivered("SKIPPED: pasif kullanıcı")).isFalse();
         assertThat(EscalationService.mailDelivered(null)).isFalse();
     }
+
+    // ── Son inceleme 2026-10-22 · C2 / (c) ────────────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("C2: alarm anında e-posta kanalı kapalı → önizleme e-posta alıcısı LİSTELEMEZ, sayı 0 — gönderimle aynı (önizleme = gönderim)")
+    void reNotify_mailDisabledSnapshot_previewEqualsSend() {
+        open(801L, "https://api.example.com/health", EscalationService.TYPE_HTTP_DOWN, "CRITICAL",
+                "{\"url\":\"https://api.example.com/health\",\"mail_disabled\":true,\"team_id\":7}", "KRİTİK: düştü.");
+
+        assertThat(service.reNotifyMailDisabled(801L)).isTrue();
+        assertThat(service.previewReNotify(801L)).isEmpty();
+        Map<String, Object> result = service.reNotify(801L);
+        assertThat(result.get("recipients_queued")).isEqualTo(0);
+        verify(emailService, never()).sendAlert(any(String[].class), anyString(), anyString(), anyString(), anyString(), anyString(), any(), any());
+    }
+
+    @Test
+    @DisplayName("C2 regresyon: e-posta kanalı açık → önizleme takım adresini listeler, sayı 1, posta gider")
+    void reNotify_mailEnabled_previewListsTeamAndSends() {
+        open(802L, "https://api.example.com/health", EscalationService.TYPE_HTTP_DOWN, "CRITICAL",
+                "{\"url\":\"https://api.example.com/health\",\"team_id\":7}", "KRİTİK: düştü.");
+
+        assertThat(service.reNotifyMailDisabled(802L)).isFalse();
+        assertThat(service.previewReNotify(802L)).extracting(EscalationService.ReNotifyRecipient::email).containsExactly(TEAM_MAIL);
+        assertThat(service.reNotify(802L).get("recipients_queued")).isEqualTo(1);
+        verify(emailService).sendAlert(any(String[].class), anyString(), anyString(), anyString(), anyString(), anyString(), any(), any());
+    }
+
+    @Test
+    @DisplayName("C2: sertifika alarmının bağlamı latest_checks'ten gelir — eski anlık görüntüdeki mail_disabled önizlemeyi kapatmaz")
+    void reNotify_certAlarm_ignoresSnapshotMailFlag() {
+        AlertEvent e = open(803L, "cert.example.com", "EXPIRY", "HIGH", "{\"mail_disabled\":true}", "YÜKSEK: sertifika doluyor.");
+        e.setTeamId(null);
+        CertificateInventory inv = new CertificateInventory();
+        inv.setDomain("cert.example.com"); inv.setTeamId(TEAM); inv.setActive(true);
+        when(inventoryRepo.findByDomain("cert.example.com")).thenReturn(Optional.of(inv));
+
+        assertThat(service.reNotifyMailDisabled(803L)).isFalse();
+        assertThat(service.previewReNotify(803L)).extracting(EscalationService.ReNotifyRecipient::email).contains(TEAM_MAIL);
+    }
+
+    @Test
+    @DisplayName("(c): yalnız push elle gönderim — e-posta satırı 'alıcı yok' DEĞİL, bilinçli seçim olarak yazılır")
+    void reNotify_pushOnly_logsDeselectedNotNoRecipient() {
+        open(804L, "push.example.com", EscalationService.TYPE_HTTP_DOWN, "CRITICAL", "{\"team_id\":7}", "KRİTİK: push.example.com düştü.");
+        pushPreview("PENDING", "ali.veli");
+
+        service.reNotify(804L, Set.of(TEAM_MAIL), Set.of());
+
+        ArgumentCaptor<NotificationLog> logs = ArgumentCaptor.forClass(NotificationLog.class);
+        verify(notificationLogRepo, atLeastOnce()).save(logs.capture());
+        assertThat(logs.getAllValues()).extracting(NotificationLog::getEmailStatus)
+                .contains(EscalationService.STATUS_SKIPPED_EMAIL_DESELECTED)
+                .doesNotContain("SKIPPED: alıcı yok");
+    }
 }

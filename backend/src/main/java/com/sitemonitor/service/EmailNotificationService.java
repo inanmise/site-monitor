@@ -508,7 +508,9 @@ public class EmailNotificationService {
             org.springframework.jdbc.core.JdbcTemplate j = jdbc;
             if (j != null) {
                 java.util.List<Object> args = new java.util.ArrayList<>();
-                args.add(status);
+                // Ham JDBC UPDATE @PreUpdate'i (NotificationLog.fitColumns) atlar: uzun "FAILED: <SMTP hatası>" PostgreSQL'de
+                // 22001 ile düşüp kardeşleri kuyrukta bırakıyordu — eşleşen satırın aldığı AYNI kırpılmış metin yazılır.
+                args.add(com.sitemonitor.model.NotificationLog.fit(status, com.sitemonitor.model.NotificationLog.VARCHAR_MAX));
                 String where = sameMailWhere(row, subject, statusPrefix, args);
                 return j.update("UPDATE notification_logs SET email_status = ?" + where, args.toArray());
             }

@@ -448,6 +448,13 @@ public class CertificateInventoryReportService {
         try {
             CertInventoryReportLog l = logRepo.findByReportYearAndMonthNo(year, month)
                     .orElseGet(CertInventoryReportLog::new);
+            // Ayın tek satırı GÖNDERİLMİŞ (SENT) raporu taşıyorsa sonraki ulaşmayan deneme (kuyruk / atlandı / alıcı yok /
+            // hata — çoğu elle "Şimdi çalıştır") onu EZMEZ (son inceleme 2026-10-22): ay gönderilmiş görünmeye devam eder;
+            // denemenin kendisi e-posta günlüğünde (arşiv satırı) ve uygulama günlüğünde kalır.
+            if ("SENT".equals(l.getStatus()) && !"SENT".equals(status)) {
+                log.info("Aylık rapor {}-{}: ayın gönderilmiş satırı korunur — sonraki deneme {} geçmişe yazılmadı", year, month, status);
+                return;
+            }
             l.setReportYear(year);
             l.setMonthNo(month);
             l.setStatus(status);
