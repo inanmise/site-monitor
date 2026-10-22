@@ -269,15 +269,6 @@ public class WebConfig implements WebMvcConfigurer {
     public static final int NOTIFY_AWAIT_SECONDS = 20;
 
     /**
-     * Bildirim {@code @Async} işleri için AYRI küçük havuz (2026-10-21, çok pod R1 / MP-07): çözüm postası
-     * ({@code EscalationService.sendResolutionNotificationAsync}) ve elle yeniden gönderim ({@code reNotifyAsync}) eskiden
-     * {@code certCheckExecutor}'da kontrol işlerinin ARKASINDA kuyruğa giriyordu; o havuz kapanışta beklemiyor ve reddi
-     * sessizce yutuyordu — her yayılımda / pod küçülmesinde "ÇÖZÜLDÜ" postaları kayboluyordu. Bu havuz kapanışta kuyruğunu
-     * {@link #NOTIFY_AWAIT_SECONDS} kadar bitirir ({@code NotifyExecutorDrain} bağlam kapanırken, kalanı yok etme anında);
-     * yine de kaybolan çözüm postasını kalıcı işaret ({@code alert_events.resolution_notify}) + {@code ResolutionNotifySweeper}
-     * başka pod'dan BİR kez gönderir. Doluysa çağıranda koşar (kapanmıyorsa); kapanmışsa WARN (iş kalıcı işaretle kurtulur).
-     */
-    /**
      * Yok etme anındaki beklemesi ORTAK kapanış süresinden düşülen havuz (inceleme D-1): {@code shutdown()} (yok etme) anında
      * bekleme {@code min(kendi tavanı, ShutdownDeadline kalan)} olur — havuzların asıl boşaltması {@code NotifyExecutorDrain}'de.
      */
@@ -296,6 +287,15 @@ public class WebConfig implements WebMvcConfigurer {
         }
     }
 
+    /**
+     * Bildirim {@code @Async} işleri için AYRI küçük havuz (2026-10-21, çok pod R1 / MP-07): çözüm postası
+     * ({@code EscalationService.sendResolutionNotificationAsync}) ve elle yeniden gönderim ({@code reNotifyAsync}) eskiden
+     * {@code certCheckExecutor}'da kontrol işlerinin ARKASINDA kuyruğa giriyordu; o havuz kapanışta beklemiyor ve reddi
+     * sessizce yutuyordu — her yayılımda / pod küçülmesinde "ÇÖZÜLDÜ" postaları kayboluyordu. Bu havuz kapanışta kuyruğunu
+     * {@link #NOTIFY_AWAIT_SECONDS} kadar bitirir ({@code NotifyExecutorDrain} bağlam kapanırken, kalanı yok etme anında);
+     * yine de kaybolan çözüm postasını kalıcı işaret ({@code alert_events.resolution_notify}) + {@code ResolutionNotifySweeper}
+     * başka pod'dan BİR kez gönderir. Doluysa çağıranda koşar (kapanmıyorsa); kapanmışsa WARN (iş kalıcı işaretle kurtulur).
+     */
     @Bean(name = "notifyExecutor")
     public ThreadPoolTaskExecutor notifyExecutor() {
         ThreadPoolTaskExecutor executor = new DeadlineAwareTaskExecutor(NOTIFY_AWAIT_SECONDS * 1000L);
