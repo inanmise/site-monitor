@@ -243,4 +243,62 @@ class KeywordCheckerServiceTest {
             server.stop(0);
         }
     }
+
+    // ── CHECKS-3 (2026-10-22): "İ" küçültülünce 2 karakter olur — alıntı konumu özgün metne çevrilmeli ──────────
+
+    @Test
+    @DisplayName("CHECKS-3: 100 × 'İ' + abc + akbank (harf duyarsız) → bulundu, hata YOK, alıntıda anahtar kelime var")
+    void check_turkishDottedI_beforeMatch_neverFailsAndSnippetHasKeyword() throws IOException {
+        HttpServer server = serve("İ".repeat(100) + "abc" + "akbank");
+        try {
+            Map<String, Object> r = newChecker()
+                    .check("http://127.0.0.1:" + server.getAddress().getPort() + "/", "akbank", 3000);
+            assertThat(r.get("error")).isNull();
+            assertThat(r.get("found")).isEqualTo(true);
+            assertThat(r.get("count")).isEqualTo(1);
+            assertThat((String) r.get("snippet")).contains("akbank");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    @DisplayName("CHECKS-3: eşleşmeden önceki 'İ'ler alıntıyı kaydırmaz — uzun gövdede alıntı anahtar kelimeyi içerir")
+    void check_turkishDottedI_snippetNotShifted() throws IOException {
+        String body = "GİRİŞ İLETİŞİM BİREYSEL İŞLEMLER ".repeat(6) + "DURUM: TAMAM akbank " + "x".repeat(300);
+        HttpServer server = serve(body);
+        try {
+            Map<String, Object> r = newChecker()
+                    .check("http://127.0.0.1:" + server.getAddress().getPort() + "/", "akbank", 3000);
+            assertThat(r.get("error")).isNull();
+            assertThat((String) r.get("snippet")).contains("akbank").contains("DURUM");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    @DisplayName("CHECKS-3: anahtar kelimenin kendisi 'İ' içeriyor (İLETİŞİM) → alıntı özgün metinden, tam kelimeyle")
+    void snippet_keywordWithDottedI() {
+        String body = "ana sayfa İLETİŞİM formu";
+        String hay = body.toLowerCase(java.util.Locale.ROOT);
+        String needle = "İLETİŞİM".toLowerCase(java.util.Locale.ROOT);
+        int idx = hay.indexOf(needle);
+        assertThat(idx).isGreaterThanOrEqualTo(0);
+        assertThat(KeywordCheckerService.snippet(body, hay, idx, needle.length())).isEqualTo(body);
+        assertThat(KeywordCheckerService.toBodyIndex(body, idx)).isEqualTo(body.indexOf("İLETİŞİM"));
+        assertThat(KeywordCheckerService.toBodyIndex(body, idx + needle.length()))
+                .isEqualTo(body.indexOf("İLETİŞİM") + "İLETİŞİM".length());
+    }
+
+    @Test
+    @DisplayName("CHECKS-3: snippet — eşit uzunlukta konum aynen; geçersiz konum boş alıntı (istisna yok)")
+    void snippet_bounds() {
+        String body = "abc keyword def";
+        assertThat(KeywordCheckerService.snippet(body, body, 4, 7)).isEqualTo(body);
+        assertThat(KeywordCheckerService.snippet(body, body, -1, 7)).isEmpty();
+        assertThat(KeywordCheckerService.snippet(null, null, 0, 1)).isEmpty();
+        // hay'deki konum gövdenin ötesine taşsa bile kesim sınırlar içinde kalır
+        assertThat(KeywordCheckerService.snippet("İİ", "i̇i̇x", 4, 1)).isEqualTo("İİ");
+    }
 }
