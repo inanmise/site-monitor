@@ -35,6 +35,14 @@ const inflight = new Map()
 
 const newId = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
 
+// Sekme kapanırken / gezinirken tarayıcı uçuştaki istekleri zaten iptal eder — duyurular da hemen kalksın (öteki sekmenin girişi
+// ölü bir duyuruyu iptal anına kadar beklemesin).
+try {
+  globalThis.addEventListener?.('pagehide', () => {
+    for (const id of inflight.keys()) { try { store()?.removeItem(LOGOUT_INFLIGHT_PREFIX + id) } catch { /* yoksay */ } }
+  })
+} catch { /* pencere yok */ }
+
 function store() {
   try { return globalThis.localStorage || null } catch { return null }
 }

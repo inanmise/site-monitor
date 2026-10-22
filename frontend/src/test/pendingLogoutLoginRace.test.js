@@ -77,6 +77,15 @@ describe('settleLogoutsBeforeLogin', () => {
     expect(waited).toBeLessThan(2000)
   })
 
+  it('sekme kapanırken (pagehide) bu sekmenin duyuruları kalkar — öteki sekmenin girişi ölü duyuruyu beklemez', async () => {
+    const log = []
+    tryServerLogout(hangingLogout(log), 50)
+    expect(Object.keys(localStorage).some((k) => k.startsWith(LOGOUT_INFLIGHT_PREFIX))).toBe(true)
+    window.dispatchEvent(new Event('pagehide'))
+    expect(Object.keys(localStorage).some((k) => k.startsWith(LOGOUT_INFLIGHT_PREFIX))).toBe(false)
+    await settleLogoutsBeforeLogin(vi.fn(), 50)   // bu sekmenin isteğini iptal eder (temizlik)
+  })
+
   it('süresi dolmuş duyuru beklenmez ve temizlenir', async () => {
     const key = `${LOGOUT_INFLIGHT_PREFIX}olu-sekme`
     localStorage.setItem(key, String(Date.now() - 1))
