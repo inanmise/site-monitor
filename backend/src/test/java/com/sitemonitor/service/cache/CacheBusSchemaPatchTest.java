@@ -30,6 +30,25 @@ class CacheBusSchemaPatchTest {
     }
 
     @Test
+    @DisplayName("İki pod aynı anda açılır: CREATE yarışı kaybedilse de tablo varsa hata yok; veri yoluna 'hazır' bildirilir")
+    void createRaceLost_isTolerated_andBusNotified() {
+        org.springframework.jdbc.core.JdbcTemplate racing = new org.springframework.jdbc.core.JdbcTemplate(mp.dataSource()) {
+            @Override
+            public void execute(String sql) {
+                super.execute(sql);   // öteki pod kurdu …
+                throw new org.springframework.dao.DuplicateKeyException("pg_type_typname_nsp_index");   // … bu pod yarışı kaybetti
+            }
+        };
+        CacheBus bus = org.mockito.Mockito.mock(CacheBus.class);
+        org.springframework.beans.factory.support.StaticListableBeanFactory f = new org.springframework.beans.factory.support.StaticListableBeanFactory();
+        f.addBean("cacheBus", bus);
+        CacheBusSchemaPatch p = new CacheBusSchemaPatch(racing, f.getBeanProvider(CacheBus.class));
+        assertThat(p.apply()).isFalse();
+        assertThat(p.tableExists()).isTrue();
+        org.mockito.Mockito.verify(bus).tableReady();
+    }
+
+    @Test
     @DisplayName("Veritabanı hatası açılışı durdurmaz (WARN)")
     void failureIsSwallowed() {
         org.springframework.jdbc.core.JdbcTemplate broken = new org.springframework.jdbc.core.JdbcTemplate(

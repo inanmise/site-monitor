@@ -287,6 +287,24 @@ function historyPath(kind, id) {
   return `/monitoring/${kind}/${id}/history`
 }
 
+/**
+ * `request()`'in fetch seçenekleri. X-Lang: sunucu tost/hata metinlerini arayüz dilinde döner (backend Msg.t; eskiden her
+ * ayar sayfası İngilizce arayüzde Türkçe "Ayarlar kaydedildi…" basıyordu, QA ISSUE-001). X-Cache-Min-Gen (2026-10-22, çok
+ * pod): son yazmanın önbellek kuşağı — öteki pod önce boşaltır ({@link cacheMinGenHeaders}). Başlıklar `...opts`'tan SONRA
+ * birleştirilir: çağıranın kendi `headers`'ı varsayılanları silmez, yalnız aynı adlıyı ezer (eskiden `...opts` bütün başlık
+ * nesnesinin yerine geçiyordu).
+ */
+export function requestInit(opts = {}, method = String(opts.method || 'GET').toUpperCase(), isForm = opts.body instanceof FormData) {
+  return {
+    credentials: 'include',
+    ...opts,
+    headers: {
+      ...(isForm ? {} : { 'Content-Type': 'application/json' }), 'X-Lang': uiLang(), ...cacheMinGenHeaders(method),
+      ...opts.headers,
+    },
+  }
+}
+
 /** Boş/null paramları atarak query string üretir (mevcut get*ResponseSeries deseniyle aynı). */
 function historyQuery(params) {
   return new URLSearchParams(
@@ -310,17 +328,7 @@ async function request(path, options = {}) {
   const timeoutMs = timeoutOpt != null ? timeoutOpt : (method === 'GET' || method === 'HEAD' ? DEFAULT_READ_TIMEOUT_MS : 0)
   let res
   try {
-    const init = {
-      credentials: 'include',
-      // X-Lang: sunucu tost/hata metinlerini arayüz dilinde döner (backend Msg.t). Eskiden her
-      // ayar sayfası İngilizce arayüzde Türkçe "Ayarlar kaydedildi…" basıyordu (QA ISSUE-001).
-      // X-Cache-Min-Gen (2026-10-22, çok pod): son yazmanın önbellek kuşağı — öteki pod önce boşaltır (cacheMinGenHeaders)
-      headers: {
-        ...(isForm ? {} : { 'Content-Type': 'application/json' }), 'X-Lang': uiLang(), ...cacheMinGenHeaders(method),
-        ...opts.headers,
-      },
-      ...opts,
-    }
+    const init = requestInit(opts, method, isForm)
     if (transport) {
       res = await transport(`${BASE}${path}`, init)
     } else {
