@@ -138,6 +138,10 @@ public class ManualCertificateAnalyzer {
         Map<String, Object> alreadyTracked;
         final List<Map<String, Object>> sameSubject = new ArrayList<>();
         final List<Map<String, Object>> networkMonitored = new ArrayList<>();
+        /** Eşleşmelerin envanter satırları (JSON'a YAZILMAZ) — {@link Analysis#applyScope} görünürlüğü bunlarla süzer. */
+        CertificateInventory alreadyTrackedInv;
+        final List<CertificateInventory> sameSubjectInv = new ArrayList<>();
+        final List<CertificateInventory> networkInv = new ArrayList<>();
         final Instant now;
 
         Entry(X509Certificate cert, List<X509Certificate> chain, String ref, String alias, boolean keyEntry,
@@ -156,6 +160,8 @@ public class ManualCertificateAnalyzer {
         public String suggestedKey() { return suggestedKey; }
         public List<Warning> warnings() { return warnings; }
         public Map<String, Object> alreadyTracked() { return alreadyTracked; }
+        /** Aynı parmak izini zaten takip eden kayıt (kapsamdan bağımsız) — oluşturma reddinin kaynağı. */
+        public CertificateInventory alreadyTrackedInventory() { return alreadyTrackedInv; }
 
         public String cn() {
             String cn = CertificateFacts.extractCn(cert.getSubjectX500Principal().getName());
@@ -256,6 +262,12 @@ public class ManualCertificateAnalyzer {
         }
     }
 
+    /** Eşleşme görünürlüğü — çağıranın oturum kapsamı (denetleyici kurar). */
+    public interface MatchScope {
+        boolean canRead(CertificateInventory inv);
+        boolean canWrite(CertificateInventory inv);
+    }
+
     /** Analiz sonucu. */
     public static final class Analysis {
         public final CertificateFileParser.Result parsed;
@@ -283,6 +295,55 @@ public class ManualCertificateAnalyzer {
             this.certificateCount = certificateCount;
             this.folded = folded;
             this.warningDays = warningDays;
+        }
+
+        /**
+         * Eşleşmeleri ÇAĞIRANIN görebildiği kayıtlarla sınırlar ve her görünür kayda {@code can_write} ekler (UIM-24 /
+         * K6, 2026-10-22). Eskiden {@code same_subject} / {@code already_tracked} / {@code network_monitored} TÜM
+         * takımların kayıtlarını içeriyordu: başka takımın takip adı ve alan adları açığa çıkıyor, sihirbaz "Bu kaydı
+         * yenile"yi o kayda kuruyor ve kaydetme 403 alıyordu. Görünmeyen eşleşmenin uyarısı da düşer. Oluşturma reddi
+         * ({@code ALREADY_TRACKED}) bundan etkilenmez — {@link Entry#alreadyTrackedInventory} kapsamsız kalır.
+         */
+        public Analysis applyScope(MatchScope scope) {
+            if (scope == null) return this;
+            for (Entry e : entries) {
+                Set<String> hidden = new HashSet<>();
+                if (e.alreadyTracked != null && e.alreadyTrackedInv != null) {
+                    if (scope.canRead(e.alreadyTrackedInv)) {
+                        e.alreadyTracked.put("can_write", scope.canWrite(e.alreadyTrackedInv));
+                    } else {
+                        hidden.add(warnKey("ALREADY_TRACKED", e.alreadyTrackedInv.getDomain()));
+                        e.alreadyTracked = null;
+                    }
+                }
+                for (int i = e.sameSubject.size() - 1; i >= 0; i--) {
+                    CertificateInventory inv = i < e.sameSubjectInv.size() ? e.sameSubjectInv.get(i) : null;
+                    if (inv != null && scope.canRead(inv)) {
+                        e.sameSubject.get(i).put("can_write", scope.canWrite(inv));
+                    } else {
+                        hidden.add(warnKey("SAME_SUBJECT_TRACKED", String.valueOf(e.sameSubject.get(i).get("domain"))));
+                        e.sameSubject.remove(i);
+                        if (i < e.sameSubjectInv.size()) e.sameSubjectInv.remove(i);
+                    }
+                }
+                for (int i = e.networkMonitored.size() - 1; i >= 0; i--) {
+                    CertificateInventory inv = i < e.networkInv.size() ? e.networkInv.get(i) : null;
+                    if (inv == null || !scope.canRead(inv)) {
+                        hidden.add(warnKey("NETWORK_MONITORED", String.valueOf(e.networkMonitored.get(i).get("domain"))));
+                        e.networkMonitored.remove(i);
+                        if (i < e.networkInv.size()) e.networkInv.remove(i);
+                    }
+                }
+                if (!hidden.isEmpty()) {
+                    e.warnings.removeIf(w -> w.params() != null
+                            && hidden.contains(warnKey(w.code(), String.valueOf(w.params().get("domain")))));
+                }
+            }
+            return this;
+        }
+
+        private static String warnKey(String code, String domain) {
+            return code + "|" + domain;
         }
 
         /** Seçilebilir girdi (zincir başı); katlanan zincir üyesi için null — bkz. {@link #headOf}. */
@@ -559,7 +620,7 @@ public class ManualCertificateAnalyzer {
                 if (inv.getId() != null && inv.isManual() && inv.getDeletedAt() == null) manualRows.put(inv.getId(), inv);
             }
         }
-        Map<String, List<String>> networkByFp = new HashMap<>();
+        Map<String, List<CertificateInventory>> networkByFp = new HashMap<>();
         List<LatestCheck> served = safe(() -> latestCheckRepo.findByFingerprintIn(fps));
         if (!served.isEmpty()) {
             Set<String> domains = new LinkedHashSet<>();
@@ -572,7 +633,7 @@ public class ManualCertificateAnalyzer {
                 CertificateInventory inv = invByDomain.get(lc.getDomain());
                 if (inv == null || inv.isManual() || inv.getDeletedAt() != null || lc.getFingerprint() == null) continue;
                 networkByFp.computeIfAbsent(lc.getFingerprint().toUpperCase(Locale.ROOT), k -> new ArrayList<>())
-                        .add(lc.getDomain());
+                        .add(inv);
             }
         }
         for (Entry e : entries) {
@@ -583,6 +644,7 @@ public class ManualCertificateAnalyzer {
                     at.put("inventory_id", inv.getId());
                     at.put("domain", inv.getDomain());
                     e.alreadyTracked = at;
+                    e.alreadyTrackedInv = inv;
                     e.warnings.add(new Warning("ALREADY_TRACKED", CertificateFileParser.SEV_WARN,
                             Map.of("domain", inv.getDomain())));
                     break;
@@ -599,11 +661,14 @@ public class ManualCertificateAnalyzer {
                 ss.put("domain", inv.getDomain());
                 ss.put("not_after", v.getNotAfter());
                 e.sameSubject.add(ss);
+                e.sameSubjectInv.add(inv);
                 e.warnings.add(new Warning("SAME_SUBJECT_TRACKED", CertificateFileParser.SEV_INFO,
                         Map.of("domain", inv.getDomain())));
             }
-            for (String d : networkByFp.getOrDefault(e.ref.toUpperCase(Locale.ROOT), List.of())) {
-                e.networkMonitored.add(Map.<String, Object>of("domain", d));
+            for (CertificateInventory ninv : networkByFp.getOrDefault(e.ref.toUpperCase(Locale.ROOT), List.of())) {
+                String d = ninv.getDomain();
+                e.networkMonitored.add(new LinkedHashMap<>(Map.<String, Object>of("domain", d)));
+                e.networkInv.add(ninv);
                 e.warnings.add(new Warning("NETWORK_MONITORED", CertificateFileParser.SEV_INFO, Map.of("domain", d)));
             }
         }

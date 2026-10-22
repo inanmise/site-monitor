@@ -1123,7 +1123,23 @@ public class CertificateService {
         List<String> errorDomains    = new ArrayList<>();
         Set<String> warnDomainSet    = new HashSet<>();
 
-        for (CertificateDto c : warnings) {
+        // UIM-18 / K12 (2026-10-22): kovalar satırın GÖSTERDİĞİ seviyeyi (alert_level — tier eşikleri) izler. Aday
+        // kümesi eskiden yalnız saklı `warning` bayrağıydı (global site.monitor.warning-days, 30): tier uyarı / yüksek
+        // eşiği 30 günün üstündeyse (ör. T1 uyarı 60, yüksek 45) 40 günlük sertifika kartta turuncu "Yüksek" görünürken
+        // sayaçlarda "Geçerli" sayılıyordu. Uyarı listesinde olmayan ama seviyesi uyarı / yüksek / kritik / dolmuş olan
+        // satırlar da aday; kovaya aynı tier eşikleriyle (daysFor) yerleşir — eşikler eşitken çıktı birebir aynı.
+        List<CertificateDto> candidates = new ArrayList<>(warnings);
+        Set<String> inWarnings = new HashSet<>();
+        for (CertificateDto c : warnings) inWarnings.add(c.getDomain());
+        for (CertificateDto c : all) {
+            if (c.getDomain() == null || inWarnings.contains(c.getDomain())) continue;
+            String lvl = c.getAlertLevel();
+            if ("warning".equals(lvl) || "high".equals(lvl) || "critical".equals(lvl) || "expired".equals(lvl)) {
+                candidates.add(c);
+            }
+        }
+
+        for (CertificateDto c : candidates) {
             warnDomainSet.add(c.getDomain());
             boolean isError = "error".equals(c.getStatus());
             Integer d = c.getDaysRemaining();

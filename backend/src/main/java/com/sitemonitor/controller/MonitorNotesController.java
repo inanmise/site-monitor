@@ -62,6 +62,10 @@ public class MonitorNotesController {
     /** Rehber hedef yetkisi (2026-09-28): rehber takım kolonu taşımaz → hedefi izleyen izlemelerin takımından türetilir. */
     private final com.sitemonitor.service.MonitorTargetTeams targetTeams;
 
+    /** Not satırını uygulamanın JSON adlandırmasıyla haritaya çevirmek için (yoksa satırlar bayraksız döner — bugünkü hâl). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private tools.jackson.databind.ObjectMapper objectMapper;
+
     /** Rehber + notlar (hedefe göre). */
     @GetMapping
     public ResponseEntity<Map<String, Object>> get(
@@ -86,7 +90,9 @@ public class MonitorNotesController {
                         .stream().filter(n -> noteVisible(session, n)).toList();
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("guide", guide);
-        data.put("notes", notes);
+        data.put("notes", withModifyFlags(session, notes));
+        // K5 (2026-10-22): rehberi düzenleme / not ekleme kapısı da yanıtta — arayüz sunucunun reddedeceği düğmeyi göstermesin
+        data.put("can_edit_guide", canWrite(session) && targetTeams.canOperate(session, t, tg));
         return ok(Map.of("data", data));
     }
 
@@ -226,18 +232,62 @@ public class MonitorNotesController {
      * de yok). Kapı artık notun kendi takım damgasına bağlı.
      */
     private void requireModify(HttpSession session, MonitorNote n) {
+        ModifyDenial d = modifyDenial(session, n);
+        if (d == ModifyDenial.TEAMLESS)
+            throw new SecurityException(com.sitemonitor.util.Msg.t(
+                    "Bu notu yalnız ekleyen ya da yönetici değiştirebilir",
+                    "Only the person who added this note or an administrator can change it"));
+        if (d == ModifyDenial.OTHER_TEAM)
+            throw new SecurityException(com.sitemonitor.util.Msg.t(
+                    "Bu not sizin takımınıza ait değil; yalnız ekleyen ya da takımın yöneticisi değiştirebilir",
+                    "This note doesn't belong to your team; only the person who added it or the team's manager can change it"));
+    }
+
+    private enum ModifyDenial { NONE, TEAMLESS, OTHER_TEAM }
+
+    /** {@link #requireModify} kuralının TEK kaynağı — GET satır bayrağı {@code can_modify} de bunu kullanır (K5). */
+    private ModifyDenial modifyDenial(HttpSession session, MonitorNote n) {
         String user = (String) session.getAttribute("username");
         // Kendi notu — ama takımın kaydına hâlâ YAZABİLİYORSA (inceleme 5): paylaşımla not yazan kişinin paylaşımı
         // kaldırılınca notu (sahip takım damgalı) düzenlemesi / silmesi sürmesin. Takımsız eski not: yazarı değiştirebilir.
         if (user != null && user.equals(n.getAuthorUsername())
-                && (n.getTeamId() == null || SessionScope.canOperateTeam(session, n.getTeamId()))) return;
-        if (SessionScope.isGlobalAdmin(session)) return;
+                && (n.getTeamId() == null || SessionScope.canOperateTeam(session, n.getTeamId()))) return ModifyDenial.NONE;
+        if (SessionScope.isGlobalAdmin(session)) return ModifyDenial.NONE;
         // Takımsız (eski) kayıt: kime ait olduğu bilinmediği için yalnız global admin ya da yazarı
         // değiştirebilir — rol dizesine geri düşmek kapıyı yeniden açardı.
-        if (n.getTeamId() == null)
-            throw new SecurityException("Bu notu yalnız ekleyen ya da yönetici değiştirebilir");
-        if (!SessionScope.canManage(session, n.getTeamId()))
-            throw new SecurityException("Bu not sizin takımınıza ait değil");
+        if (n.getTeamId() == null) return ModifyDenial.TEAMLESS;
+        if (!SessionScope.canManage(session, n.getTeamId())) return ModifyDenial.OTHER_TEAM;
+        return ModifyDenial.NONE;
+    }
+
+    /** Yazma izni (monitoring.crud/edit) — düzenle / sil / ekle uçlarının ilk kapısı; okuma bayrakları için atmadan sorulur. */
+    private boolean canWrite(HttpSession session) {
+        return permissionService.allows(session, "monitoring.crud", "edit");
+    }
+
+    /**
+     * Not satırları + {@code can_modify} (K5, UIM-13, 2026-10-22): düzenle / sil uçlarının kapısıyla AYNI yüklem
+     * (yazma izni ∧ {@link #modifyDenial} = yok). Eskiden arayüz her okuyana Düzenle / Sil gösteriyordu; AUDIT, 7/24
+     * operatörü ya da meslektaşının notuna bakan USER tıklayınca 403 + ACCESS_DENIED güvenlik olayı alıyordu.
+     */
+    private List<Object> withModifyFlags(HttpSession session, List<MonitorNote> notes) {
+        if (objectMapper == null) return new java.util.ArrayList<>(notes);
+        boolean write = canWrite(session);
+        List<Object> out = new java.util.ArrayList<>(notes.size());
+        for (MonitorNote n : notes) {
+            Map<String, Object> row;
+            try {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> m = objectMapper.convertValue(n, Map.class);
+                row = new LinkedHashMap<>(m);
+            } catch (RuntimeException e) {
+                out.add(n);
+                continue;
+            }
+            row.put("can_modify", write && modifyDenial(session, n) == ModifyDenial.NONE);
+            out.add(row);
+        }
+        return out;
     }
 
     /**
