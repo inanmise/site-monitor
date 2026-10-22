@@ -77,7 +77,11 @@ public final class PushDecisionAccess {
             }
             out.put("push", rows);
         } catch (RuntimeException e) {
-            out.put("push_error", e.getMessage());
+            // Hata sözleşmesi (2026-10-22, L-P5): istisna metni (SQL, sınıf adı …) istemciye gitmez — dostça metin, ayrıntı günlükte.
+            log.warn("push alıcı açıklaması okunamadı (takım {}): {}", teamId, e.toString());
+            out.put("push_error", com.sitemonitor.util.ErrorTexts.safeMessage(e,
+                    "Push alıcıları şu an okunamadı; birkaç saniye sonra yeniden deneyin.",
+                    "Push recipients could not be read right now; try again in a few seconds."));
         }
         return out;
     }

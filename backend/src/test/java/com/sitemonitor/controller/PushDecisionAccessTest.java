@@ -191,6 +191,14 @@ class PushDecisionAccessTest {
         when(noChannel.scenarioChannel(anyLong(), anyString(), anyBoolean())).thenThrow(new IllegalStateException("x"));
         Map<String, Object> leg2 = PushDecisionAccess.pushLeg(globalAdmin(), 5L, "HIGH", false, resolver, noChannel);
         assertThat(leg2).doesNotContainKey("push_channel").containsKey("push");
+
+        // L-P5 (2026-10-22): teknik istisna metni (SQL / sınıf adı) istemciye gitmez — dostça metin
+        UserPushRecipientResolver sqlBroken = mock(UserPushRecipientResolver.class);
+        when(sqlBroken.explain(anyLong(), anyString())).thenThrow(new org.springframework.dao.DataAccessResourceFailureException(
+                "org.postgresql.util.PSQLException: Connection to db.kurum.local:5432 refused"));
+        Map<String, Object> leg3 = PushDecisionAccess.pushLeg(globalAdmin(), 5L, "HIGH", false, sqlBroken, pushService);
+        assertThat(String.valueOf(leg3.get("push_error"))).doesNotContain("PSQLException").doesNotContain("5432")
+                .contains("Push");
     }
 
     @Test

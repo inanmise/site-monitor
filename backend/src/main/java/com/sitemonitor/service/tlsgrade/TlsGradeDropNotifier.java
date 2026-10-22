@@ -344,8 +344,10 @@ public class TlsGradeDropNotifier {
                 String msgEn = rows.size() == 1
                         ? "TLS configuration grade of " + first.getDomain() + " dropped " + first.getFromGrade() + " → " + first.getToGrade()
                         : "The TLS configuration grade dropped on " + rows.size() + " certificates (lowest " + worst + ")";
+                // Anahtar TÜM satır kimliklerini taşır; kolona (60) push servisi sığdırır (önek + tüm anahtarın özeti —
+                // UserPushDelivery.fitDedupeKey). Eskiden 180'e kırpılıyordu: 60'ı aşan anahtar INSERT'i düşürüyor, push
+                // sessizce kayboluyordu (ALERTS-12); kırpma da farklı düşüş kümelerini aynı anahtara indirebilirdi.
                 String dedupe = "tls-drop:" + teamId + ":" + rows.stream().map(c -> String.valueOf(c.getId())).reduce((a, b) -> a + "," + b).orElse("");
-                if (dedupe.length() > 180) dedupe = dedupe.substring(0, 180);
                 Map<String, Object> pr = push.enqueueTeamNoticeLocalized(teamId, TRIGGER, level, "CERT",
                         rows.size() == 1 ? first.getDomain() : teamName, new UserPushService.LocalizedText(msg, msgEn), dedupe, Set.of());
                 queued = pr.get("queued") instanceof Number n ? n.intValue() : 0;
