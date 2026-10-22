@@ -160,6 +160,12 @@ yollarının sahiplenmesi) İLK kez aldığında geçerlidir; sonraki dağıtım
   **(b)** geçmişi silmeden anahtarı tekilleştirin — [İlk çok pod sürümüne geçiş](#ilk-çok-pod-sürümüne-geçiş-20164-ve-öncesi--bu-sürüm--bir-kerelik)
   bölümündeki `UPDATE`; **(c)** WARN'ı kabul edin (indeks kurulmaz, her açılışta bir WARN; davranış değişmez). (a) ya da
   (b)'den sonra indeks bir sonraki açılışta kurulur (aşağıda "İlk 15 dakika" → tekil indeksler).
+- [ ] **`audit_log`'a sütun eklenir** (`seq_locked`, ddl-auto + şema yaması; `ADD COLUMN … BOOLEAN`, varsayılansız —
+      PostgreSQL'de yalnız katalog değişikliği). Kısa ACCESS EXCLUSIVE kilidi `audit_log` üzerindeki uzun bir işlemin arkasında
+      kuyruğa girebilir: dağıtım sırasında denetim günlüğünde uzun süren SQL Playground / dışa aktarım sorgusu koşmayın. Aynısı
+      `executive_summary_reports` / `executive_summary_team_reports` (`send_started_claim`, `send_trace_name`),
+      `tech_error_reminders.inflight_at`, `tls_grade_changes.notify_attempts`, `domain_expiry_reminders.claim_token` için de
+      geçerlidir (küçük tablolar).
 - [ ] **Bu sürümün yeni tekil indeksleri ön kontrol istemez:** `ux_audit_seq` (`WHERE seq_locked IS NOT NULL`) ve
       `ux_der_mon_exp_thr` (`WHERE claim_token IS NOT NULL`) yalnız yeni kodun yazdığı satırları kapsar — eski sürümlerin
       satırları (olası çiftleri dahil) dışarıda kalır, arka plan kurulumunu düşüremez.
@@ -173,9 +179,10 @@ yollarının sahiplenmesi) İLK kez aldığında geçerlidir; sonraki dağıtım
       `SELECT username, active FROM app_users WHERE username IN ('<ad-1>', '<ad-2>');` ile pasifleştirilen hesapların
       hâlâ `active = false` olduğunu doğrulayın (toplu işlemde: işlemin önizlemesindeki / sonucundaki kullanıcı adları).
 - [ ] Davranış değişiklikleri duyuruldu: (1) kanal teknik hata raporu, önceki gönderimi posta sunucusunun yeniden deneme
-      kuyruğundayken (20 dk) yeniden GÖNDERİLMEZ — 409 "Önceki gönderim hâlâ posta kuyruğunda" (iki farklı içerikli kopya
-      gitmesin diye); (2) Veri Saklama Politikaları → "Şimdi temizle", gece temizliği ya da başka bir elle koşu sürerken 409
-      "Temizlik şu an çalışıyor" döner (hiçbir şey silinmez); (3) bir pod'da kaydedilen ayar / paylaşım / nöbet değişikliği
+      kuyruğundayken (20 dk) yeniden GÖNDERİLMEZ — 409 "Önceki gönderim hâlâ posta kuyruğunda"; gönder penceresi kilitli
+      kalıp mevcut kuyruğun sonucunu bekler (iki farklı içerikli kopya gitmesin diye); (2) Veri Saklama Politikaları → "Şimdi
+      temizle", gece temizliği ya da başka bir elle koşu sürerken 409 "Temizlik şu an çalışıyor", kilit durumu okunamazsa 503
+      döner (ikisinde de hiçbir şey silinmez); (3) bir pod'da kaydedilen ayar / paylaşım / nöbet değişikliği
       öteki pod'larda ~2 sn içinde geçerli olur (eskiden 30 sn – 5 dk); (4) giriş IP bloğu bütün pod'larda ortaktır — elle
       kaldırma: [`RUNBOOK.md` → Takılı kayıtlar ve sınırlar](RUNBOOK.md#takılı-kayıtlar-ve-sınırlar-çok-pod-sürüm-2a).
 

@@ -693,10 +693,17 @@ bakımı, pasif / silinmiş hesap kapısı ve bildirim alıcı süzgeci bu yolda
   yine yapılır, yalnız "kaydettiğim veriyi öteki pod'da hemen gör" garantisi o istek için düşer — TTL / sonraki yoklama).
   İstek iş parçacığı veritabanına hiç dokunmaz.
 - Öteki pod'un boşaltması ucuzdur (veritabanı okumaz; ör. bakım pencereleri yalnız "bayat" işaretlenir, bir sonraki okuma
-  bir kez yeniden yükler). Hata veren bir boşaltma o adı uygulanmamış bırakır ve her yoklamada yeniden denenir (günlükte
+  bir kez yeniden yükler) ve önceki görüntüyü silmez, yalnız bayat işaretler: yeniden yükleme veritabanı hatasına düşerse pod
+  önceki veriyle devam eder (hiçbir pod "7/24 ekibi yok / sessiz saat yok / pasif süzgeci yok" durumuna düşmez). Hata
+  veren bir boşaltma o adı uygulanmamış bırakır ve her yoklamada yeniden denenir (günlükte
   `Önbellek yolu: yerel boşaltma başarısız (<ad>)`).
 - **Durum:** `SELECT name, generation, updated_at FROM cache_bus ORDER BY updated_at DESC;` — `_global` her yayında artar.
-- Tabloyu elle silmek / boşaltmak güvenlidir (pod'lar satırları yeniden kurar, kayıp boşaltmalar TTL ile tazelenir).
+- **Tabloya elle dokunmayın.** `DROP TABLE cache_bus` tabloyu yalnız pod'ların YENİDEN BAŞLATILMASIYLA geri getirir (yama
+  yalnız açılışta koşar): o zamana dek yol kapalıdır (önbellekler TTL ile, her pod 30 sn'de bir yeniden bakar) — geri getirmek
+  için `kubectl rollout restart deploy/<ad> -n "$NS"`. `TRUNCATE` / satır silme yolu bozmaz (satırlar ilk yayında yeniden
+  kurulur, silinen ad her pod'da bir kez boşaltılır), ama kuşak sıfırlandığı için son 30 sn içinde yazan kullanıcıların
+  tarayıcıları daha yüksek bir kuşakla gelir: o kullanıcıların GET'leri ≤ 30 sn boyunca pod başına en çok 500 ms bekler
+  (sonra sunulur) — kendiliğinden geçer, ek adım gerekmez.
 - **Kapatmak:** `site.monitor.cache-bus.enabled=false` (önbellekler yine TTL ile; tek pod davranışı aynı). Yoklama aralığı
   `site.monitor.cache-bus.poll-ms` (2000), okuma bekleme üst sınırı `site.monitor.cache-bus.min-gen-wait-ms` (500) — ikisi
   de yalnız açılışta okunur.
@@ -712,10 +719,14 @@ bakımı, pasif / silinmiş hesap kapısı ve bildirim alıcı süzgeci bu yolda
   Satır kendiliğinden en geç 60 sn (pencere) / blok süresi sonra etkisizleşir ve saatlik temizlikte silinir. Veritabanı
   yazılamazken pod kendi belleğindeki eski sınıra döner (WARN `Oran sınırı sayacı yazılamadı — bellek yedeği`). Hesap
   kilidi (kademeli `lockout_until`) ayrı konudur: [Kilitli admin hesabı](#kilitli-admin-hesabı).
-- **Takılı yönetici özeti (SENDING).** Çok pod Sürüm 2a'dan itibaren saatlik telafi, talebi 1 saatten eski SENDING kaydını
-  dilim izlerine göre kendisi kapatır (iz yoksa yeniden gönderir, iz varsa PARTIAL yazar ve göndermez; SMTP günlüğünde
-  tetik `EXECUTIVE_SUMMARY`, `SKIPPED: Gönderen pod yarıda durdu …`). Telafi penceresi (72 sa) geçmişse ya da iz
-  okunamıyorsa: Yönetici Özeti → Alıcılar ve gönderim → "Şimdi gönder" (1 saatten eski talebi devralır).
+- **Takılı yönetici özeti (SENDING).** Çok pod Sürüm 2a'dan itibaren gönderen pod ilk BCC diliminden ÖNCE kayda "gönderim
+  başladı" işareti yazar; saatlik telafi, talebi 1 saatten eski SENDING kaydını bu işaret ve dilim izlerine (SMTP günlüğünde
+  tetik `EXECUTIVE_SUMMARY`) göre kendisi kapatır: işaret de iz de yoksa hiçbir şey gitmemiştir → FAILED yazılır ve yeniden
+  gönderilir; işaret var ve planlanan HER dilimin izi varsa sonuç izlerden yazılır (`SKIPPED: Gönderen pod sonucu yazamadan
+  durdu …`); geri kalan her durumda (işaret var ama iz eksik, ya da işaretsiz iz — eski pod) sonuç BİLİNMİYOR: PARTIAL +
+  `FAILED: Sonuç bilinmiyor … yeniden gönderilmedi`, yeniden gönderilmez. Telafi penceresi (72 sa) geçmişse, iz
+  okunamıyorsa ya da sonuç bilinmiyorsa karar sizin: Yönetici Özeti → Alıcılar ve gönderim → "Şimdi gönder" (1 saatten eski
+  talebi devralır; alıcıların bir kısmı postayı ikinci kez alabilir).
 - **Alan adı hatırlatması "yarıda kaldı" (INTERRUPTED).** Gönderen pod e-posta / push sırasında durdu; posta gitmiş olabilir,
   yeniden gönderilmez. Gerekirse takıma elle haber verin. (`ux_der_mon_exp_thr` yalnız `claim_token` dolu satırları kapsar —
   eski sürümlerin satırları kurulumu düşüremez.)
@@ -723,10 +734,13 @@ bakımı, pasif / silinmiş hesap kapısı ve bildirim alıcı süzgeci bu yolda
   kilidini tutuyor; birkaç dakika sonra yeniden deneyin (kilidi tutan pod: o pod'un Sistem Sağlığı `scheduler.held_locks`
   satırı ya da `SELECT * FROM scheduler_lock WHERE name = 'nightly-cleanup';`). Elle koşu gece işinin başladığı saate
   (03:30 Istanbul) denk gelirse o gecenin işi bir kez atlanır (silme elle koşuda yapıldı; günlük / saatlik toparlamalar
-  ertesi gece yapılır).
+  ertesi gece yapılır). **503 `DB_UNAVAILABLE`** = kilit alınamadı ve tutan bir satır da yok / okunamadı (geçici veritabanı
+  hatası): hiçbir şey silinmedi; veritabanı düzelince yeniden deneyin.
 - **Kanal teknik hata raporu 409 "Önceki gönderim hâlâ posta kuyruğunda" (`SEND_QUEUED`).** Önceki gönderim posta
   sunucusunun yeniden deneme kuyruğunda; sonucu 20 dk içinde gelir (5 dk'da bir arka planda sonuçlandırılır). Bu sürede
-  yeniden gönderim reddedilir — iki farklı içerikli kopya gitmesin diye. Sonuç kanalın gönderim günlüğünde görünür.
+  yeniden gönderim reddedilir — iki farklı içerikli kopya gitmesin diye. Gönder penceresi açık kalır, "Gönder" kilitlenir ve
+  ekran mevcut kuyruğun sonucunu bekler: teslim edildiyse pencere kapanır (ikinci gönderim yok), gitmediyse "yeniden
+  gönderebilirsiniz" bandı çıkar, 10 dk'da sonuç gelmezse yeniden deneme bandı. Sonuç kanalın gönderim günlüğünde de görünür.
 
 ### Ön koşullar — 1 → N geçişinden ÖNCE
 
@@ -839,11 +853,13 @@ bilmez. Son eski pod gidene kadar şunlar görülebilir (sonra kendiliğinden bi
   kapattığı alarmın `resolved_by` değeri yeniden yazılabilir; ikinci ÇÖZÜLDÜ push'unu indeks engeller.
 - **Alan adı hatırlatması:** eski pod "var mı → posta → kaydet" sırasıyla çalışır; eski pod postayı gönderip henüz
   kaydetmemişken yeni pod da gönderebilir (bugünkü yarış, daha dar). Yeni pod'un `SENDING` satırı eski pod'u durdurur.
-- **Yönetici özeti / envanter raporu:** eski pod küme turu ve canlı cron denetimi olmadan tetikler; ay satırının tekil
-  sahiplenmesi ikinci yönetici özeti postasını yine önler. Yeni pod'lar eski pod'un yarıda bıraktığı SENDING kaydını da
-  izlerden kapatır.
+- **Yönetici özeti / envanter raporu:** eski pod küme turu ve planlı tetik denetimi olmadan tetikler; ay satırının tekil
+  sahiplenmesi ikinci yönetici özeti postasını yine önler. Eski pod "gönderim başladı" işaretini yazmaz: yeni pod'lar eski
+  pod'un yarıda bıraktığı SENDING kaydını, izi VARSA PARTIAL yazıp göndermeden kapatır, izi YOKSA yeniden gönderir (eski pod
+  SMTP kabulüyle izi arasında öldüyse ikinci posta mümkün — yalnız geçiş penceresinde).
 - **Geri alma:** yeni tablolar (`cache_bus`, `rate_limit_counters`), sütunlar (`audit_log.seq_locked`,
-  `tech_error_reminders.inflight_at`, `tls_grade_changes.notify_attempts`, `domain_expiry_reminders.claim_token`) ve
+  `tech_error_reminders.inflight_at`, `tls_grade_changes.notify_attempts`, `domain_expiry_reminders.claim_token`,
+  `executive_summary_reports` / `executive_summary_team_reports.send_started_claim|send_trace_name`) ve
   indeksler (`ux_audit_seq`, `ux_der_mon_exp_thr`, `idx_lir_ip_reported`) kalır, eski kod yok sayar. Eski arayüz alan adı
   hatırlatmasının `INTERRUPTED` durumunu ham anahtar (`dreg.remStatus_INTERRUPTED`) olarak gösterir.
 
