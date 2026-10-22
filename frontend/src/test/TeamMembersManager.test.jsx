@@ -15,7 +15,7 @@ import { api } from '../api/client'
 import TeamMembersManager from '../components/admin/TeamMembersManager.jsx'
 
 /**
- * "Üyeleri yönet" penceresi (20.166 bugfix, UIA-A7): pasif üyeler SONDA ve belirgin "Pasif" rozetiyle — takım eksikleri
+ * "Üyeleri yönet" penceresi (20.165.1 bugfix, UIA-A7): pasif üyeler SONDA ve belirgin "Pasif" rozetiyle — takım eksikleri
  * "pasif üyesi var, çıkarılmaları gerekebilir" diye buraya yönlendiriyor; kimin çıkarılacağı görünmeliydi
  * (CLAUDE.md "Team member lists show passive members last, with a destructive 'Pasif' badge"). Ağ hatası sessiz kalmaz.
  */
@@ -51,7 +51,7 @@ describe('TeamMembersManager — pasif üyeler', () => {
   })
 })
 
-// ── 20.166 erişim incelemesi (A3): ADMIN / AUDIT hesabının takımlarına yalnız GLOBAL yönetici dokunur (sunucu 403) ──────────
+// ── 20.165.1 erişim incelemesi (A3): ADMIN / AUDIT hesabının takımlarına yalnız GLOBAL yönetici dokunur (sunucu 403) ──────────
 describe('TeamMembersManager — ADMIN / AUDIT hedefleri yalnız global yöneticide', () => {
   const MIXED = [
     { id: 11, username: 'mudur1', display_name: 'Müdür Bir', active: true, system_role: 'ADMIN', team_id: 5 },

@@ -58,7 +58,7 @@ describe('NotificationsTab — kişisel push tercihleri', () => {
   })
 })
 
-// 20.166 (UIA-6): takımsız (eski) eskalasyon kişisi alarm ALICISI DEĞİLDİR — "Tüm takımlar" tam tersini söylüyordu
+// 20.165.1 (UIA-6): takımsız (eski) eskalasyon kişisi alarm ALICISI DEĞİLDİR — "Tüm takımlar" tam tersini söylüyordu
 describe('NotificationsTab — takımsız eskalasyon kişisi', () => {
   it('team_id yok → "Takıma atanmamış — bildirim almaz" uyarı rozeti; "Tüm takımlar" yazmaz; adı okunamayan takım #id değil', () => {
     const contacts = { data: [

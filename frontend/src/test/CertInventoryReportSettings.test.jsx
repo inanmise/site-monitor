@@ -126,7 +126,7 @@ describe('CertInventoryReportSettings', () => {
     expect(screen.getAllByRole('combobox')[0]).toHaveAttribute('data-slot', 'native-select')
     const table = await screen.findByTestId('cir-history')
     expect(table).toHaveAttribute('data-slot', 'table')
-    // Durum ham kod değil, arayüz dilinde etiket (20.166, UIA-C2 / C11): SENT → "Sent", FAILED → "Not delivered"
+    // Durum ham kod değil, arayüz dilinde etiket (20.165.1, UIA-C2 / C11): SENT → "Sent", FAILED → "Not delivered"
     const hist = screen.getByTestId('cir-history')
     expect(hist.querySelector('[data-status="sent"]')).toHaveAttribute('data-tone', 'success')
     expect(hist.querySelector('[data-status="sent"]')).toHaveTextContent(/^(Sent|Gönderildi)$/)
@@ -140,7 +140,7 @@ describe('CertInventoryReportSettings', () => {
   })
 })
 
-// 20.166 bugfix (UIA-C2 / C11): sonuç DURUMDAN okunur; kaydedilmemiş değişiklikte "Şimdi çalıştır" kapalı
+// 20.165.1 bugfix (UIA-C2 / C11): sonuç DURUMDAN okunur; kaydedilmemiş değişiklikte "Şimdi çalıştır" kapalı
 describe('CertInventoryReportSettings — gönderim sonucu', () => {
   beforeEach(() => {
     vi.clearAllMocks()

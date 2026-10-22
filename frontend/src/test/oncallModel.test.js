@@ -52,7 +52,7 @@ describe('oncallModel', () => {
   })
 })
 
-// 20.166 (UIA-A5 / K11): silinmiş hesap nöbetçi olamaz — gövdeye girmez, ama listeden çıkarılması değişikliktir
+// 20.165.1 (UIA-A5 / K11): silinmiş hesap nöbetçi olamaz — gövdeye girmez, ama listeden çıkarılması değişikliktir
 describe('oncallModel — silinmiş üye', () => {
   const view = { enabled: true, rotation: 'WEEKLY', anchor: '2026-10-05T09:00', members: [
     { user_id: 7, name: 'A', active: true }, { user_id: null, missing: true, active: false }, { user_id: 9, missing: true, active: false }] }

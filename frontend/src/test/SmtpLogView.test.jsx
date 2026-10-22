@@ -236,7 +236,7 @@ describe('SmtpLogView', () => {
     fireEvent.click(screen.getByRole('button', { name: /^Yenile$|^Refresh$/ }))
     await screen.findByText(/Filtreyle eşleşen kayıt bulunamadı|No records match the filter/)
   })
-  // 20.166 (UIA-D1): yeniden gönderim ucu YALNIZ global yönetici (SmtpLogController.isGlobalAdmin) — kapsamlı müdürün
+  // 20.165.1 (UIA-D1): yeniden gönderim ucu YALNIZ global yönetici (SmtpLogController.isGlobalAdmin) — kapsamlı müdürün
   // matris yetkisi (system_health.actions) olsa da düğme yok, "yalnız yönetici" ipucu görünür.
   it('kapsamlı müdür (globalAdmin yok): FAILED satırda "Yeniden gönder" YOK, ipucu var', async () => {
     render(<SmtpLogView onBack={() => {}} />)
@@ -246,7 +246,7 @@ describe('SmtpLogView', () => {
     expect(screen.getByText((c) => c === TR['sml.resendAdminOnly'] || c === EN['sml.resendAdminOnly'])).toBeInTheDocument()
   })
 
-  // 20.166 (UIA-14): tetik süzgeci, aralıkta görülen tetikleyicileri de (özet `triggers`) etiketiyle sunar; ham kod basılmaz
+  // 20.165.1 (UIA-14): tetik süzgeci, aralıkta görülen tetikleyicileri de (özet `triggers`) etiketiyle sunar; ham kod basılmaz
   it('özetteki tetikleyiciler süzgeçte etiketiyle; bilinmeyen sabit listede olmayan kod da seçilebilir', async () => {
     smtpLog.summary.mockResolvedValue({ success: true, data: { ...SUMMARY, triggers: [{ trigger: 'WATCHDOG', count: 2 }, { trigger: 'STORM_INITIAL', count: 1 }] } })
     render(<SmtpLogView globalAdmin onBack={() => {}} />)

@@ -266,7 +266,7 @@ describe('yetki — eylem görünürlüğü (işlem menüsü + ayrıntı paneli)
     fireEvent.click(rowsOf()[1])
     expect(detail().querySelector('[data-slot="udir-admin-actions"]')).toBeNull()
   })
-  // 20.166 (UIA-D1): sonlandırma yalnız global yönetici (sunucu requireAdmin) — kapsamlı müdürde menüde yok
+  // 20.165.1 (UIA-D1): sonlandırma yalnız global yönetici (sunucu requireAdmin) — kapsamlı müdürde menüde yok
   it('kapsamlı müdür (ADMIN, global değil): turu sıfırla / yönetimde aç VAR, sonlandır ve kilit açma YOK', () => {
     open({ isAdmin: true, globalAdmin: false, username: 'admin' })
     const bobItems = labelsOf(menuOf('bob')).join('|')

@@ -494,7 +494,7 @@ describe('UserPushSettings', () => {
   })
 })
 
-// ── 20.166 bugfix (PKG-8a): kapsamlı müdür kilitleri (K10, UIA-C3) + okunamayan yükler (UIA-C5) + TLS düşüş etiketi (C4) ──
+// ── 20.165.1 bugfix (PKG-8a): kapsamlı müdür kilitleri (K10, UIA-C3) + okunamayan yükler (UIA-C5) + TLS düşüş etiketi (C4) ──
 describe('UserPushSettings — K10 kilitleri ve okunamayan yükler', () => {
   const K = (k) => `site.monitor.userpush.${k}`
   function stubScoped({ settings = { ...SETTINGS, [K('headers')]: [] } } = {}) {

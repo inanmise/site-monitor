@@ -141,7 +141,7 @@ describe('TechErrorPushSettings', () => {
     expect(within(bad).getByRole('button', { name: /Tekrar dene/ })).toBeInTheDocument()
   })
 
-  // 20.166 bugfix (UIA-E5): "Push ayarlarını aç" sayfanın ayrılma onayını atlayıp kaydedilmemiş push taslağını sessizce atıyordu
+  // 20.165.1 bugfix (UIA-E5): "Push ayarlarını aç" sayfanın ayrılma onayını atlayıp kaydedilmemiş push taslağını sessizce atıyordu
   it('"Push ayarlarını aç": taslak varken önce sorar (Vazgeç → kalır, onay → gider); temizken doğrudan gider', async () => {
     api.admin.techErrorPushSettings.mockResolvedValue(pushOk({ push_enabled: false }))
     const seen = []

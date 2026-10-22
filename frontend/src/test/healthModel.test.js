@@ -168,7 +168,7 @@ describe('healthModel — süre metinleri', () => {
   })
 })
 
-// 20.166 (UIA-D5): sunucunun okuyamadığı alt yükler sağlıklı (yeşil) sayılmaz
+// 20.165.1 (UIA-D5): sunucunun okuyamadığı alt yükler sağlıklı (yeşil) sayılmaz
 describe('healthModel — okunamayan alt yük', () => {
   it('smtpStats: {error} ve periods yok → unknown, oran null, sayılmaz', () => {
     const s = smtpStats({ total: 0, attempted: 0, sent: 0, rate: 100, alarm: false, error: 'boom' }, '7d')

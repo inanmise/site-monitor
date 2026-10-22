@@ -56,7 +56,7 @@ export function pushStats(kpi) {
 
 /** SMTP: seçili periyot verisi + seviye (alarm sunucudan; oran %80'in altına inmişse kritik). */
 export function smtpStats(smtp, period) {
-  // UIA-D5 (20.166): sunucu SMTP özetini okuyamadıysa (`error`, `periods` yok, yer tutucu rate 100) "%100 sağlıklı"
+  // UIA-D5 (20.165.1): sunucu SMTP özetini okuyamadıysa (`error`, `periods` yok, yer tutucu rate 100) "%100 sağlıklı"
   // DEĞİL — bilinmiyor. Seviye `unknown`, oran/adet yok.
   if (smtp?.error && !smtp?.periods) {
     return { data: {}, rate: null, alarm: false, level: 'unknown', rateTone: null, sent: null, attempted: null, unavailable: true }

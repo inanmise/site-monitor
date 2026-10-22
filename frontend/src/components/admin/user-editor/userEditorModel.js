@@ -104,7 +104,7 @@ export function effectiveTeamIds(form, { viewerRole, ownTeamId } = {}) {
 /**
  * PUT /admin/users/{id} gövdesi — eski iki `save()` ile birebir aynı alanlar ve sıra.
  *
- * <p><b>Düzenleme kuralları (20.166 bugfix, `ctx.baseline` verilince — UserEditor düzenleme kipinde verir):</b>
+ * <p><b>Düzenleme kuralları (20.165.1 bugfix, `ctx.baseline` verilince — UserEditor düzenleme kipinde verir):</b>
  * <ul>
  *   <li>UIA-1: takım kümesi değişmediyse `team_ids` / `team_id` GÖNDERİLMEZ (sunucu "null = takımlara dokunma"). Eskiden
  *       her kayıt bütün kümeyi gönderiyordu; kapsamlı müdür, yönetmediği bir takımı da olan kullanıcının telefonunu bile
@@ -201,7 +201,7 @@ export function validateForm(form, { mode, viewerRole, ownTeamId, baseline } = {
   if (add && !String(form.username ?? '').trim()) errs.username = { key: 'ued.usernameRequired' }
   if (add && String(form.password ?? '').length < MIN_PASSWORD) errs.password = { key: 'ued.passwordShort', args: [MIN_PASSWORD] }
   const email = String(form.email ?? '').trim()
-  // UIA-A3 (20.166): düzenlemede DEĞİŞMEYEN e-posta yeniden doğrulanmaz (sunucu da yalnız değişeni denetler) — AD'de
+  // UIA-A3 (20.165.1): düzenlemede DEĞİŞMEYEN e-posta yeniden doğrulanmaz (sunucu da yalnız değişeni denetler) — AD'de
   // `mail`'i boş bir hesap (ya da e-postasız eski yerel hesap) başka hiçbir alanı kaydedilemiyordu. Boş, yalnız zaten
   // boşsa serbest; yeni yazılan değer her zaman denetlenir.
   const unchangedEmail = !add && baseline != null && email === String(baseline.email ?? '').trim()
@@ -248,7 +248,7 @@ export function editorGuards(user, { mode, currentUsername, activeAdminCount } =
 
 /**
  * Seçilebilir sistem rolleri: global olmayan yazar USER/TEAM_ADMIN; mevcut değer listede yoksa (ör. AUDIT) eklenir.
- * Kapsamlı müdür (ADMIN, `globalAdmin: false`) de global DEĞİLDİR (20.166, UIA-13 — sunucu `requireAssignableRole`
+ * Kapsamlı müdür (ADMIN, `globalAdmin: false`) de global DEĞİLDİR (20.165.1, UIA-13 — sunucu `requireAssignableRole`
  * ADMIN / AUDIT atamasını 403'ler). `globalAdmin` verilmezse eski davranış (ADMIN = tüm roller).
  */
 export function roleOptionsFor(viewerRole, current, { globalAdmin } = {}) {

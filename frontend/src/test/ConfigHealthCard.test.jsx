@@ -39,7 +39,7 @@ describe('ConfigHealthCard', () => {
     expect(onOpen).toHaveBeenCalledWith('smtp', null)   // ikinci arg: odaklanacak alan anahtarı (yalnız general satırları)
     fireEvent.click(rows[1].querySelector('[data-go]'))
     await waitFor(() => expect(nav).toHaveBeenCalled())
-    // Sunucunun `inventory` sekmesi uygulamada `domains` (Envanter) — eskiden Yönetim'e (Eşikler) gidiyordu (20.166, UIA-12)
+    // Sunucunun `inventory` sekmesi uygulamada `domains` (Envanter) — eskiden Yönetim'e (Eşikler) gidiyordu (20.165.1, UIA-12)
     expect(nav.mock.calls[0][0].detail.tab).toBe('domains')
     window.removeEventListener('sm:navigate', nav)
   })

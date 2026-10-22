@@ -45,7 +45,7 @@ export function toForm(view) {
 }
 
 /**
- * Kaydetme gövdesi (PUT). SİLİNMİŞ hesaplar (`missing`) GİTMEZ (20.166, UIA-A5 / K11): silinen bir kişi hiç nöbetçi
+ * Kaydetme gövdesi (PUT). SİLİNMİŞ hesaplar (`missing`) GİTMEZ (20.165.1, UIA-A5 / K11): silinen bir kişi hiç nöbetçi
  * olamaz; eski sunucu bilinmeyen kimliği reddediyordu ("listedeki bir kişi bulunamadı — sayfayı yenileyin", yenilemek de
  * bir şey değiştirmiyordu), yenisi sessizce düşürür. Kapsamlı görüntüleyicide silinmiş kişinin kimliği zaten null'dır.
  */

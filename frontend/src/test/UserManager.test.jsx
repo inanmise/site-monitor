@@ -63,7 +63,7 @@ const USERS = [
     auth_source: 'LDAP', title: 'Elle Ünvan', locked_field_keys: ['email', 'title'] },
 ]
 
-// Varsayılan görüntüleyici GLOBAL yönetici (20.166: ADMIN / AUDIT satırları ve sonlandırma yalnız ona; kapsamlı müdür
+// Varsayılan görüntüleyici GLOBAL yönetici (20.165.1: ADMIN / AUDIT satırları ve sonlandırma yalnız ona; kapsamlı müdür
 // senaryoları `globalAdmin: false` ile dosyanın sonunda ayrıca sınanır)
 const renderUm = (props = {}) => render(
   <LangProvider>
@@ -126,7 +126,7 @@ describe('UserManager', () => {
     fireEvent.click(await screen.findByRole('button', { name: /^Kaydet$|^Save$/ }))
 
     await waitFor(() => expect(api.admin.updateUser).toHaveBeenCalled())
-    // Takım kümesi DEĞİŞMEDİ → anahtar gitmez, sunucu üyeliğe dokunmaz (20.166, UIA-1); TEAM_ADMIN sabitlemesi uygulanmaz
+    // Takım kümesi DEĞİŞMEDİ → anahtar gitmez, sunucu üyeliğe dokunmaz (20.165.1, UIA-1); TEAM_ADMIN sabitlemesi uygulanmaz
     expect(api.admin.updateUser.mock.calls[0][1]).not.toHaveProperty('team_ids')
   })
 
@@ -294,7 +294,7 @@ describe('UserManager', () => {
   })
 })
 
-// ── 20.166 bugfix (PKG-8a): kapsamlı müdür (ADMIN, global değil) ─────────────────────────────────────────────────────
+// ── 20.165.1 bugfix (PKG-8a): kapsamlı müdür (ADMIN, global değil) ─────────────────────────────────────────────────────
 describe('UserManager — kapsamlı müdür (UIA-13 / A7 / A8)', () => {
   beforeEach(() => {
     vi.clearAllMocks()

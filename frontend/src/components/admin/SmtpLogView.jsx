@@ -81,7 +81,7 @@ function rangeFrom(range, now = new Date()) {
   return new Date(now.getTime() - ms)
 }
 
-/** Tetikleyici etiketi — sözlük `logTriggers.js`'te (SMTP + push tek kaynak, 20.166 UIA-14); bilinmeyen ham. */
+/** Tetikleyici etiketi — sözlük `logTriggers.js`'te (SMTP + push tek kaynak, 20.165.1 UIA-14); bilinmeyen ham. */
 export function triggerLabel(trigger, t) {
   return triggerText(trigger, t, 'smtp')
 }
@@ -115,7 +115,7 @@ export default function SmtpLogView({ onBack, initial, globalAdmin: globalAdminP
   const { showConfirm } = useDialog()
   const { canExecute } = usePermissions()
   // Yeniden gönderim YALNIZ global yönetici (SmtpLogController: isGlobalAdmin) — matris yetkisi tek başına yetmez
-  // (kapsamlı müdürün ADMIN satırında da var → 403'tü; 20.166 UIA-D1). Prop yoksa scope.global_admin (K1).
+  // (kapsamlı müdürün ADMIN satırında da var → 403'tü; 20.165.1 UIA-D1). Prop yoksa scope.global_admin (K1).
   const globalAdmin = useGlobalAdmin(globalAdminProp)
   const canResend = globalAdmin && canExecute('system_health.actions')
 
@@ -198,7 +198,7 @@ export default function SmtpLogView({ onBack, initial, globalAdmin: globalAdminP
 
   const kpi = summary?.kpi || {}
   // Süzgeç seçenekleri: sabit liste + aralıkta gerçekten görülen tetikleyiciler (özet `triggers`) — eskiden yalnız 6 kod
-  // seçilebiliyordu; fırtına / 7/24 / bekçi / rapor satırları süzülemiyordu (20.166 UIA-14).
+  // seçilebiliyordu; fırtına / 7/24 / bekçi / rapor satırları süzülemiyordu (20.165.1 UIA-14).
   const triggerOptions = useMemo(() => [...new Set([...TRIGGERS, ...(summary?.triggers || []).map((x) => x?.trigger)
     .filter((x) => x && x !== '-'), ...(f.trigger ? [f.trigger] : [])])], [summary, f.trigger])
   const teams = useMemo(() => summary?.teams || [], [summary])

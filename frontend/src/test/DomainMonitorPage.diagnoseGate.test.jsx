@@ -88,7 +88,7 @@ describe('DomainMonitorPage — Sorun Tanıla izin kapısı (can_diagnose)', () 
     expect(d.querySelector('[data-slot="dexp-open"]')).toBeNull()
   })
 
-  // ── FE-5 (20.166 son inceleme): formdaki Sorun Tanıla kayıtlı izlemede satırın kapısıyla ──────────────────────────────
+  // ── FE-5 (20.165.1 son inceleme): formdaki Sorun Tanıla kayıtlı izlemede satırın kapısıyla ──────────────────────────────
   async function openForm(r, props = {}) {
     api.monitoring.getDomainMonitors.mockResolvedValue({ success: true, data: [r] })
     render(<DomainMonitorPage systemRole="USER" teamId={5} teamName="Takım A" {...props} />)

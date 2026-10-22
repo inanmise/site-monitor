@@ -65,7 +65,7 @@ function initialSection() {
 
 export default function SystemHealth({ systemRole, globalAdmin: globalAdminProp, username, preFilterDomain, openSmtpModalOnLoad, onSmtpPreFilterConsumed }) {
   const isAdmin = systemRole === 'ADMIN'
-  // Theme G (20.166): global-yalnız eylemler (zorla tarama, kilit bırakma, heartbeat, oturum sonlandırma, SMTP yeniden
+  // Theme G (20.165.1): global-yalnız eylemler (zorla tarama, kilit bırakma, heartbeat, oturum sonlandırma, SMTP yeniden
   // gönder, push yeniden kuyruk) `systemRole === 'ADMIN'` ile DEĞİL — kapsamlı müdür de ADMIN ama sunucu 403 verir.
   // App prop'u verir; yoksa `scope.global_admin` (K1); bilinmiyorsa gizli.
   const globalAdmin = useGlobalAdmin(globalAdminProp)
@@ -367,7 +367,7 @@ export default function SystemHealth({ systemRole, globalAdmin: globalAdminProp,
     watchdogRef.current = setTimeout(stop, 300_000)
   }, [load])
 
-  // UIA-D3 (20.166): sunucu reddederse (`success:false` — request() HTTP hatasında throw etmez) "tetiklendi" yazılmaz ve
+  // UIA-D3 (20.165.1): sunucu reddederse (`success:false` — request() HTTP hatasında throw etmez) "tetiklendi" yazılmaz ve
   // 5 dk'lık 2 sn yoklaması başlamaz; yoklama yalnız gerçekten başlatılan taramada.
   const handleForceRun = async () => {
     setTriggering(true)

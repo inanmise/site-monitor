@@ -60,7 +60,7 @@ describe('WeeklyAvailabilitySettings — kesinti PDF indirme', () => {
     return view
   }
 
-  // 20.166 (UIA-C2 / K9): test gönderimi sonucu DURUMDAN — SKIPPED "gönderildi" değildir, ham Türkçe durum ana metin değildir
+  // 20.165.1 (UIA-C2 / K9): test gönderimi sonucu DURUMDAN — SKIPPED "gönderildi" değildir, ham Türkçe durum ana metin değildir
   it('test gönderimi SKIPPED (K9: success:false) → atlandı bandı, hata tostu YOK; FAILED → hata + ham metin', async () => {
     api.admin.sendWeeklyAvailTest.mockResolvedValueOnce({ success: false, message: 'SKIPPED: pasif kullanıcı', data: { status: 'SKIPPED: pasif kullanıcı' } })
     await renderReady()

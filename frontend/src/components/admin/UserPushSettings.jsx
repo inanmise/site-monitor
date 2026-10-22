@@ -81,7 +81,7 @@ const STATUS_OPTIONS = ['SENT', 'FAILED', 'PENDING', 'RATE_LIMITED', 'CIRCUIT_OP
 const TRIGGERS = ['OPEN', 'ESCALATION', 'RE_ALERT', 'RESOLVE', 'RESEND', 'WEAK_ALGO', 'WEEKLY_REPORT', 'TEST',
   'STORM', 'STORM_RESOLVED', 'SCRIPTED_DISABLED', 'DOMAIN_EXPIRY_REMINDER', 'OVERFLOW_SUMMARY', 'ESCALATION_STEP',
   'TECH_ERROR_REMINDER', 'TECH_ERROR_APPROVAL', 'TECH_ERROR_APPROVAL_REMINDER', 'TECH_ERROR_DECISION', 'TECH_ERROR_SENT',
-  'TECH_ERROR_SEND_FAILED', 'TLS_GRADE_DROP']   // 20.166: TLS notu düşüş bildirimi (UIA-C4); 2026-10-04; 2026-10-17: teknik hata raporu hatırlatması; 2026-10-18: onay / karar / gönderim push'ları   // WEAK_ALGO: rapor 'takıma bildir' (2026-09-12); WEEKLY_REPORT: onay → takıma (2026-09-13)
+  'TECH_ERROR_SEND_FAILED', 'TLS_GRADE_DROP']   // 20.165.1: TLS notu düşüş bildirimi (UIA-C4); 2026-10-04; 2026-10-17: teknik hata raporu hatırlatması; 2026-10-18: onay / karar / gönderim push'ları   // WEAK_ALGO: rapor 'takıma bildir' (2026-09-12); WEEKLY_REPORT: onay → takıma (2026-09-13)
 
 /** İzleme tipleri — ikonlar Nav/ChangeKindCards ile AYNI: kullanıcı yeni görsel dil öğrenmez. */
 const TYPES = [
@@ -269,7 +269,7 @@ function WindowModal({ win, status, counts, teams: teamRows, windowFrom, statusT
           setUserTeams((prev) => ({ ...prev, ...(res.data?.user_teams || {}) }))
         } else setRows('error')
       })
-      .catch(() => { if (alive) setRows('error') })   // okunamadı ≠ kayıt yok (20.166, UIA-C5)
+      .catch(() => { if (alive) setRows('error') })   // okunamadı ≠ kayıt yok (20.165.1, UIA-C5)
     return () => { alive = false }
   }, [win, status, team, page, winSize, from, setWinTotal])
 
@@ -472,10 +472,10 @@ export default function UserPushSettings() {
   // alta yapışık kayıt şeridi). Kapsam (tür/takım) ve ana anahtar ANINDA kaydedildiği için şeride girmez.
   const [savedSnap, setSavedSnap] = useState(null)
   const snapshotOf = (s, h, g) => JSON.stringify({ s, h, g })
-  // Ayarlar okunamadıysa form ÇİZİLMEZ (20.166, UIA-C5): eskiden boş/varsayılan değerler (push kapalı, URL boş) ve "Tüm
+  // Ayarlar okunamadıysa form ÇİZİLMEZ (20.165.1, UIA-C5): eskiden boş/varsayılan değerler (push kapalı, URL boş) ve "Tüm
   // değişiklikler kaydedildi" görünüyordu.
   const [loadFailed, setLoadFailed] = useState(null)
-  // Kapsamlı müdür kilitleri (K10, 20.166 UIA-C3): sunucu hangi anahtarların salt okunur olduğunu, tür kapsamını
+  // Kapsamlı müdür kilitleri (K10, 20.165.1 UIA-C3): sunucu hangi anahtarların salt okunur olduğunu, tür kapsamını
   // değiştirip değiştiremeyeceğini ve yönettiği takımları söyler. Alan yoksa (eski sunucu) bugünkü davranış.
   const [access, setAccess] = useState({ readOnlyKeys: new Set(), canEditTypes: null, manageIds: null })
   const [scopes, setScopes] = useState([])
@@ -520,7 +520,7 @@ export default function UserPushSettings() {
     let alive = true
     setExLoading(true)
     Promise.resolve(api.admin.userPush.explain?.(exTeam, exLevel))
-      // 403 (kapsamlı müdür izlediği ama yönetmediği takım) ya da ağ hatası "üye yok" DEĞİL (20.166, UIA-C5)
+      // 403 (kapsamlı müdür izlediği ama yönetmediği takım) ya da ağ hatası "üye yok" DEĞİL (20.165.1, UIA-C5)
       .then(r => { if (alive) setExRows(r?.success ? (r.data?.members || []) : { error: r?.error || true }) })
       .catch((e) => { if (alive) setExRows({ error: e?.message || true }) })
       .finally(() => { if (alive) setExLoading(false) })
@@ -659,7 +659,7 @@ export default function UserPushSettings() {
   async function save() {
     setSaving(true)
     try {
-      // YALNIZ değişen anahtarlar (20.166 UIA-C3 + FE-7): değişmeyen GLOBAL_ONLY değer (URL, başlıklar) hiç gitmez — eski
+      // YALNIZ değişen anahtarlar (20.165.1 UIA-C3 + FE-7): değişmeyen GLOBAL_ONLY değer (URL, başlıklar) hiç gitmez — eski
       // (read_only_keys bilmeyen) pod'da da kapsamlı müdürün kaydı 403'lemez. Salt okunur anahtar hiç gitmez.
       const snap = savedSnap ? JSON.parse(savedSnap) : null
       const body = changedPushSettingsBody({ settings, headers, groups: groupsSafe, snap, readOnlyKeys: access.readOnlyKeys,
@@ -712,7 +712,7 @@ export default function UserPushSettings() {
     return q ? teams.filter((tm) => (tm.name || '').toLowerCase().includes(q)) : teams
   }, [teams, teamQuery])
 
-  // Yalnız GÖRÜNEN ve YÖNETİLEBİLEN takımlar (20.166, UIA-C3): sunucu toplu isteği tek yönetilmeyen takımda bütünüyle 403'lüyordu
+  // Yalnız GÖRÜNEN ve YÖNETİLEBİLEN takımlar (20.165.1, UIA-C3): sunucu toplu isteği tek yönetilmeyen takımda bütünüyle 403'lüyordu
   const bulkTeams = (enabledVal) =>
     saveScopeRows(visibleTeams.filter((tm) => teamManageable(tm.id)).map((tm) => ({ scopeType: 'TEAM', scopeKey: String(tm.id), enabled: enabledVal })))
 
@@ -760,7 +760,7 @@ export default function UserPushSettings() {
       logPager.setTotal(res.data?.total || 0)
       setUserTeams(res.data?.user_teams || {})
     } else {
-      setRows('error')   // okunamadı ≠ "teslimat kaydı yok" (20.166, UIA-C5)
+      setRows('error')   // okunamadı ≠ "teslimat kaydı yok" (20.165.1, UIA-C5)
     }
   }, [page, pageSize, fUser, fStatus, fTrigger, fNotifId, fWindow, logNonce])   // eslint-disable-line react-hooks/exhaustive-deps
 

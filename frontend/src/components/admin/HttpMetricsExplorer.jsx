@@ -97,7 +97,7 @@ export default function HttpMetricsExplorer({ initialFocus = null }) {
 
   const downloadCsv = useCallback(() => {
     const csv = endpointCsv(rows, t)
-    // downloadBlob (20.166, UIA-9): bağlantı DOM'da, URL 60 sn tutulur — 0 ms'de geri alınan URL Safari / iPad'de indirmedi
+    // downloadBlob (20.165.1, UIA-9): bağlantı DOM'da, URL 60 sn tutulur — 0 ms'de geri alınan URL Safari / iPad'de indirmedi
     try {
       const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
       if (!downloadBlob(`http-istekleri-${new Date().toISOString().slice(0, 10)}.csv`, blob)) toast.error(t('hreq.tbl.csvError'))

@@ -179,7 +179,7 @@ export default function WeeklyAvailabilitySettings() {
     try {
       setSendResult(null)
       const res = await api.admin.sendWeeklyAvailTest(testTeamId, testEmail.trim())
-      // UIA-C2 (20.166): sonuç DURUMDAN — SKIPPED_DISABLED / "SKIPPED: …" artık "gönderildi" değil (ham Türkçe durum da
+      // UIA-C2 (20.165.1): sonuç DURUMDAN — SKIPPED_DISABLED / "SKIPPED: …" artık "gönderildi" değil (ham Türkçe durum da
       // gösterilmez; yalnız "Teknik ayrıntı"da)
       const o = sendOutcome(res, t)
       setSendResult(o)

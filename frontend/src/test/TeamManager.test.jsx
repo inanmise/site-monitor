@@ -115,7 +115,7 @@ describe('TeamManager — business-card members', () => {
     expect(document.querySelector('[data-slot="team-member-card"]')).not.toBeNull()
   })
 
-  // 20.166 (UIA-13): üye ADMIN rollü — onu yalnız GLOBAL yönetici düzenler (sunucu requireCanAdministerTarget)
+  // 20.165.1 (UIA-13): üye ADMIN rollü — onu yalnız GLOBAL yönetici düzenler (sunucu requireCanAdministerTarget)
   it('opens the user edit modal when a member card is clicked (admin only)', async () => {
     render(<TeamManager systemRole="ADMIN" globalAdmin onTeamsChange={() => {}} />)
     await waitFor(() => expect(screen.getByText('Payments')).toBeDefined())
@@ -264,7 +264,7 @@ describe('TeamManager — haftalık e-posta anahtarları', () => {
   })
 
   it('yeni takım formu iki anahtarı da KAPALI açar', async () => {
-    // Takım ekleme yalnız global yönetici (20.166, UIA-A6 — sunucu createTeam requireAdmin)
+    // Takım ekleme yalnız global yönetici (20.165.1, UIA-A6 — sunucu createTeam requireAdmin)
     render(<TeamManager systemRole="ADMIN" globalAdmin ownTeamId={1} myTeamIds={[1]} onTeamsChange={() => {}} />)
     await waitFor(() => expect(screen.getByText('Payments')).toBeDefined())
 
@@ -275,7 +275,7 @@ describe('TeamManager — haftalık e-posta anahtarları', () => {
   })
 })
 
-// ── 20.166 bugfix (PKG-8a) ──────────────────────────────────────────────────────────────────────────────────────────
+// ── 20.165.1 bugfix (PKG-8a) ──────────────────────────────────────────────────────────────────────────────────────────
 describe('TeamManager — kapsamlı müdür (UIA-A6 / 13) ve değişen alanlar (UIA-A10 / A11)', () => {
   beforeEach(() => {
     vi.clearAllMocks()

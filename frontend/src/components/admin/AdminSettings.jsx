@@ -110,7 +110,7 @@ function initialSection() {
 // Modül görünürlüğü kurumsal bir karardır: kapsamlı müdür kendi takımına açamaz (2026-09-16).
 // Sistem Bakım Modu (2026-10-02): yalnız global yönetici sistemi bakıma alır — sunucu her uçta 403.
 // Giriş Yöntemleri (2026-10-02): kimin nasıl kimlik doğrulayacağı kurum geneli güvenlik politikası — sunucu her uçta 403.
-// Haftalık erişilebilirlik + Envanter raporu (20.166, UIA-C1): SystemController'daki her uç `requireAdmin` (global) —
+// Haftalık erişilebilirlik + Envanter raporu (20.165.1, UIA-C1): SystemController'daki her uç `requireAdmin` (global) —
 // kapsamlı müdüre açık bölüm iki 403 tostu + ACCESS_DENIED güvenlik olayı üretiyordu.
 const GLOBAL_ONLY_SECTIONS = new Set(['smtp', 'ldap', 'database', 'secrets', 'weeklyreports', 'sysmaint', 'loginmethods',
   'weeklyavail', 'certinvreport'])

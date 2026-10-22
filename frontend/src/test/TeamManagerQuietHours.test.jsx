@@ -55,7 +55,7 @@ describe('TeamManager — sessiz saatler', () => {
     return screen.findByRole('dialog')
   }
 
-  // 20.166 (UIA-A11): düzenleme YALNIZ değişen alanları yollar — dokunulmamış form hiç istek atmaz (eskiden tam gövde
+  // 20.165.1 (UIA-A11): düzenleme YALNIZ değişen alanları yollar — dokunulmamış form hiç istek atmaz (eskiden tam gövde
   // gidiyor, pencere açıkken satırdan çevrilen haftalık anahtarı eski değere döndürüyordu).
   it('dokunulmamış form: istek YOK, pencere kapanır; tek alan değişince gövde yalnız o alan (quiet_* yok)', async () => {
     const { dlg } = await openEdit('Payments')

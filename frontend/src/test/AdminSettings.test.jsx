@@ -24,7 +24,7 @@ vi.mock('../components/admin/NocSettings.jsx', () => ({ default: ({ readOnly }) 
 // Login Anomali (2026-09-28): saklama süresi GLOBAL_ONLY → kapsamlı müdürde retentionReadOnly geçtiği sınanır
 vi.mock('../components/admin/LoginAnomalySettings', () => ({ default: ({ retentionReadOnly }) => <div data-testid="sec-loginanomaly" data-retention-ro={String(!!retentionReadOnly)} /> }))
 vi.mock('../components/admin/LdapSettings', () => ({ default: () => <div data-testid="sec-ldap" /> }))
-// Alan Adı Tanılama (20.166, UIA-C7): proxy CA yakalama global-yalnız → kabuk globalAdmin'i geçirir
+// Alan Adı Tanılama (20.165.1, UIA-C7): proxy CA yakalama global-yalnız → kabuk globalAdmin'i geçirir
 vi.mock('../components/admin/DomainDiagnostics', () => ({ default: ({ globalAdmin }) => <div data-testid="sec-domaindiag" data-global={String(!!globalAdmin)} /> }))
 // Veri Saklama (2026-09-28): readOnly prop'u stub'a yazılır — kapsamlı müdürde salt okunur geçtiği sınanır
 vi.mock('../components/admin/RetentionSettings', () => ({ default: ({ readOnly }) => <div data-testid="sec-retention" data-readonly={String(!!readOnly)} /> }))
@@ -338,7 +338,7 @@ describe('AdminSettings — kapsamlı müdür kilitleri', () => {
     expect(screen.getByTestId('sec-themes')).toBeInTheDocument()
   })
 
-  // 20.166 (UIA-C1): Haftalık erişilebilirlik + Envanter raporu uçlarının HEPSİ global-yalnız (SystemController.requireAdmin)
+  // 20.165.1 (UIA-C1): Haftalık erişilebilirlik + Envanter raporu uçlarının HEPSİ global-yalnız (SystemController.requireAdmin)
   it('müdür: Haftalık erişilebilirlik ve Envanter raporu KİLİTLİ (kurum geneli not), bileşen çizilmez', () => {
     render(<AdminSettings globalAdmin={false} />)
     for (const [re, tid] of [[/^(Weekly Email|Haftalık E-posta)$/i, 'sec-weeklyavail'], [/Inventory report|Envanter Raporu/i, 'sec-certinvreport']]) {

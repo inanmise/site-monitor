@@ -1,6 +1,6 @@
 /**
  * Rapor e-postası gönderim sonucu — Envanter raporu "Şimdi çalıştır" / test gönderimi ve Haftalık erişilebilirlik test
- * gönderimi için TEK sınıflandırma (20.166 bugfix, UIA-C2 / K9). Eskiden ekran `success:true` gördü mü "Rapor gönderildi"
+ * gönderimi için TEK sınıflandırma (20.165.1 bugfix, UIA-C2 / K9). Eskiden ekran `success:true` gördü mü "Rapor gönderildi"
  * yazıyor, durum alanını ham basıyordu: SMTP bozukken yeşil bantta "durum: FAILED: Connection refused", e-posta kanalı
  * kapalıyken (SKIPPED_DISABLED) "test gönderildi". Kural CLAUDE.md checklist #8: SKIPPED ≠ FAILED ≠ SENT; kuyruk
  * (QUEUED) teslim değildir.

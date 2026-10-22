@@ -31,7 +31,7 @@ export default function SchedulerSection({
 }) {
   const { scheduler, lock, executor_pool: executorPool, pool, scan, scan_alarm: scanAlarm, db_ms: dbMs } = health || {}
   const isRunning = !!scheduler?.running
-  // UIA-D5 (20.166): kilit satırı okunamadıysa sunucu `{held:false, error}` döner — "Serbest" yeşili değil, bilinmiyor.
+  // UIA-D5 (20.165.1): kilit satırı okunamadıysa sunucu `{held:false, error}` döner — "Serbest" yeşili değil, bilinmiyor.
   const lockUnknown = !!lock?.error
   const ex = executorStats(executorPool)
   const pl = poolStats(pool, dbMs)

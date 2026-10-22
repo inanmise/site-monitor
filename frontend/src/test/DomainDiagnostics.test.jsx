@@ -182,7 +182,7 @@ describe('DomainDiagnostics', () => {
     expect(alert).toHaveTextContent('tanı ucu yanıt vermedi')
   })
 
-  // 20.166 (UIA-C7): varsayılan host (data.iana.org) envanterde değil → sunucu kapsamlı müdüre her zaman 403 verir;
+  // 20.165.1 (UIA-C7): varsayılan host (data.iana.org) envanterde değil → sunucu kapsamlı müdüre her zaman 403 verir;
   // yakalanan PEM'in gittiği güven paketi de GLOBAL_ONLY. Düğme yalnız global yöneticiye.
   it('proxy CA yakalama: global yönetici düğmeyi görür; kapsamlı müdür (ya da bilinmeyen) görmez, not görür', () => {
     const { unmount } = render(<DomainDiagnostics globalAdmin />)

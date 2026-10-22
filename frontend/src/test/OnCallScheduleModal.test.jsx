@@ -104,7 +104,7 @@ describe('OnCallScheduleModal', () => {
   })
 })
 
-// 20.166 (UIA-A5 / K11): sırada SİLİNMİŞ bir hesap (sunucu `missing:true`, ad yok, kapsamlı görüntüleyicide kimlik null)
+// 20.165.1 (UIA-A5 / K11): sırada SİLİNMİŞ bir hesap (sunucu `missing:true`, ad yok, kapsamlı görüntüleyicide kimlik null)
 describe('OnCallScheduleModal — silinmiş üye', () => {
   const WITH_GONE = { ...VIEW, members: [
     { user_id: 11, name: LONG, active: true },

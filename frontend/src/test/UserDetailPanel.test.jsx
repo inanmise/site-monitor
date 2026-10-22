@@ -160,7 +160,7 @@ describe('UserDetailPanel — yeniden tasarım', () => {
   it('kapsamlı müdür (isAdmin, globalAdmin değil): Değişiklikler sekmesi yok, geçmiş istenmez; diğer yönetici sekmeleri kalır', async () => {
     await renderPanel({ globalAdmin: false, initialTab: 'changes' })
     await waitFor(() => expect(tabByName(/^Permissions/)).toHaveAccessibleName(/^Permissions\s*3$/))
-    // AD karşılaştırması da yalnız global yönetici (20.166, UIA-A7 — LdapMembershipController requireGlobalAdmin)
+    // AD karşılaştırması da yalnız global yönetici (20.165.1, UIA-A7 — LdapMembershipController requireGlobalAdmin)
     expect(screen.queryByRole('tab', { name: /Directory \(AD\)/ })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Check against AD' })).toBeNull()
     expect(screen.queryByRole('tab', { name: /Changes/ })).toBeNull()

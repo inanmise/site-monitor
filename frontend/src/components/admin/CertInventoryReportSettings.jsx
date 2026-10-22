@@ -181,7 +181,7 @@ export default function CertInventoryReportSettings() {
     }
   }
 
-  // UIA-C2 (20.166): sonuç DURUMDAN okunur — "Rapor gönderildi" yalnız SENT'te; kuyruk bilgi, atlandı / alıcı yok uyarı,
+  // UIA-C2 (20.165.1): sonuç DURUMDAN okunur — "Rapor gönderildi" yalnız SENT'te; kuyruk bilgi, atlandı / alıcı yok uyarı,
   // başarısız hata (eskiden `success:true` her durumda yeşil "gönderildi" + ham "durum: FAILED: …" yazıyordu).
   async function runNow() {
     setRunning(true)
@@ -334,7 +334,7 @@ export default function CertInventoryReportSettings() {
             {previewing ? <Spinner size={15} inline decorative /> : <Eye size={15} />}
             {t('cir.preview')}
           </Button>
-          {/* UIA-C11 (20.166): kaydedilmemiş zamanlama / alıcı değişikliği varken "Şimdi çalıştır" KAPALI — çalıştırma
+          {/* UIA-C11 (20.165.1): kaydedilmemiş zamanlama / alıcı değişikliği varken "Şimdi çalıştır" KAPALI — çalıştırma
               KAYITLI alıcıları kullanır ve sonrasındaki yeniden yükleme yazılanları siliyordu. */}
           <Button variant="secondary" onClick={runNow} disabled={running || noRecipients || dirty} aria-busy={running || undefined}
             aria-describedby={noRecipients || dirty ? blockedId : undefined}>

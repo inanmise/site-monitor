@@ -80,7 +80,7 @@ export default function PushLogView({ onBack, initial, globalAdmin: globalAdminP
   const toast = useToast()
   const { showConfirm } = useDialog()
   const { canExecute } = usePermissions()
-  // Yeniden kuyruğa alma YALNIZ global yönetici (PushLogController: isGlobalAdmin; 20.166 UIA-D1). Prop yoksa K1.
+  // Yeniden kuyruğa alma YALNIZ global yönetici (PushLogController: isGlobalAdmin; 20.165.1 UIA-D1). Prop yoksa K1.
   const globalAdmin = useGlobalAdmin(globalAdminProp)
   const canRequeue = globalAdmin && canExecute('system_health.actions')
 

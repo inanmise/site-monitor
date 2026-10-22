@@ -239,7 +239,7 @@ export default function TechErrorReportSettings({ readOnly = false }) {
     if (leaveNeedsConfirm() && !(await askLeave(remDirty || pushDirty ? 'te.set.leaveBodyAny' : 'te.set.leaveBody'))) return
     navigateTo('channelreports', { [TE_VIEW]: VIEW_CHANNEL, [TE_CHANNEL]: String(ch.id) })
   }
-  // Push kartının "Push ayarlarını aç" bağlantısı da aynı onaydan geçer (20.166 bugfix, UIA-E5: sessizce taslağı atıyordu)
+  // Push kartının "Push ayarlarını aç" bağlantısı da aynı onaydan geçer (20.165.1 bugfix, UIA-E5: sessizce taslağı atıyordu)
   async function openPushSettings() {
     if (leaveNeedsConfirm() && !(await askLeave('te.set.leaveBodyPush'))) return
     navigateTo('settings', { sec: 'userpush' })

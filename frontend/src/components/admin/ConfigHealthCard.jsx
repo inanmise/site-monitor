@@ -58,7 +58,7 @@ export default function ConfigHealthCard({ onOpenSection, onData }) {
     // Bölüm zaten açıksa "Aç" hiçbir şey yapmıyor gibi görünüyordu (QA ISSUE-012): ilgili alan anahtarı
     // da iletilir; GeneralSettings alana kaydırır, odaklar ve kısa süre vurgular.
     if (SETTINGS_SECTIONS.has(c.tab)) { onOpenSection?.(c.tab, CHECK_SETTING_KEY[c.key] || null); return }
-    // Sunucunun `inventory` sekmesi uygulamada `domains` (Envanter) — eskiden Yönetim'e (Eşikler) gidiyordu (20.166, UIA-12)
+    // Sunucunun `inventory` sekmesi uygulamada `domains` (Envanter) — eskiden Yönetim'e (Eşikler) gidiyordu (20.165.1, UIA-12)
     navigateTo(c.tab === 'inventory' ? 'domains' : c.tab)
   }
 

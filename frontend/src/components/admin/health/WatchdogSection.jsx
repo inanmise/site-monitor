@@ -71,7 +71,7 @@ export default function WatchdogSection({ t, data, error, canAct, globalAdmin, o
         const o = res.data?.outcome
         if (o === 'DELIVERED') toast.success(t('wd.testDelivered'))
         else if (o === 'NO_CHANNEL') toast.error(t('wd.testNoChannel'))
-        // UIA-D9 (20.166): hangi kanalın ne olduğunu söyler (eskiden yalnız e-postanın HAM Türkçe durumu basılıyordu — ör.
+        // UIA-D9 (20.165.1): hangi kanalın ne olduğunu söyler (eskiden yalnız e-postanın HAM Türkçe durumu basılıyordu — ör.
         // "SKIPPED: alıcı yok" — başarısız olan webhook / push adı geçmiyordu)
         else toast.error(t('wd.testFailedChannels', channelSummary(res.data, t)))
       } else toast.error(res?.error || t('wd.actionError'))

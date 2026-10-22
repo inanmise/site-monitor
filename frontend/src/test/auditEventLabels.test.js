@@ -5,7 +5,7 @@ import { eventLabel } from '../components/admin/audit/auditFormat.js'
 import { readJavaMain } from './helpers/javaTable.js'
 
 /**
- * DENETİM OLAY ETİKETİ KAPISI (20.166 bugfix, UIA-5). Denetim günlüğünde 238 türün 60'ı kurala (SPECIAL / nesne + eylem)
+ * DENETİM OLAY ETİKETİ KAPISI (20.165.1 bugfix, UIA-5). Denetim günlüğünde 238 türün 60'ı kurala (SPECIAL / nesne + eylem)
  * uymuyor, iki dilde de İngilizce Title-Case yedeğine düşüyordu ("Session Terminate", "Platform Create" …); 5'inin
  * `audit.ev.*` anahtarı vardı ama SPECIAL'da olmadığı için okunmuyordu. Hiçbir kapı kataloğu i18n'le karşılaştırmıyordu.
  *

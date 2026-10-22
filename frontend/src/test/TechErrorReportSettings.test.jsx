@@ -393,7 +393,7 @@ describe('TechErrorReportSettings — hatırlatmalar ve posta sınırları', () 
     expect(remBar()).toHaveAttribute('data-dirty', 'true')
   })
 
-  // 20.166 bugfix (UIA-E6): takım seçicinin hatası `reminder_team_ids` altında; seçimi değiştirmek `team_ids` siliyordu → hata kalıcıydı
+  // 20.165.1 bugfix (UIA-E6): takım seçicinin hatası `reminder_team_ids` altında; seçimi değiştirmek `team_ids` siliyordu → hata kalıcıydı
   it('takım seçicinin sunucu hatası seçim değişince kalkar', async () => {
     api.admin.techErrorSettings.mockResolvedValue(settings())
     api.admin.techErrorReminderSettings.mockResolvedValue(remOk())

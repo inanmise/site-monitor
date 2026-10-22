@@ -524,7 +524,7 @@ describe('SystemHealth — kendi kendini izleme (2026-10-11)', () => {
   })
 })
 
-// ── 20.166 bugfix (PKG-8a) — Theme G / UIA-D1..D5 ─────────────────────────────────────────────────────────────────────
+// ── 20.165.1 bugfix (PKG-8a) — Theme G / UIA-D1..D5 ─────────────────────────────────────────────────────────────────────
 describe('SystemHealth — kapsamlı müdür (ADMIN, global değil): sunucunun reddettiği eylemler YOK (UIA-D1 / D2)', () => {
   const open = async (sec) => { const user = userEvent.setup(); await user.click(toggleOf(sec)) }
 

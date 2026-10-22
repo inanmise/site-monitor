@@ -118,12 +118,12 @@ export default function UserEditor({
 
   const baseline = useMemo(() => (isAdd ? emptyForm() : toForm(user)), [isAdd, user])
   // Düzenlemede taban kayıt gövdesine de girer (değişmeyen takım kümesi / temizlenen org rolü / değişmeyen e-posta —
-  // userEditorModel.buildPayload / validateForm, 20.166 UIA-1 / A2 / A3).
+  // userEditorModel.buildPayload / validateForm, 20.165.1 UIA-1 / A2 / A3).
   const ctx = useMemo(() => ({ mode, viewerRole, ownTeamId, baseline: isAdd ? null : baseline }), [mode, viewerRole, ownTeamId, isAdd, baseline])
   const changes = useMemo(() => (isAdd || isView ? [] : diffChanges(baseline, form, ctx)), [isAdd, isView, baseline, form, ctx])
   const dirty = isAdd ? isAddFormTouched(form) : changes.length > 0
   const guards = useMemo(() => editorGuards(user, { mode, currentUsername, activeAdminCount }), [user, mode, currentUsername, activeAdminCount])
-  // Takım adları (20.166, UIA-1): `teams` görüntüleyenin GÖRÜŞ kapsamıdır (kapsamlı müdür) — kullanıcının kapsam dışı
+  // Takım adları (20.165.1, UIA-1): `teams` görüntüleyenin GÖRÜŞ kapsamıdır (kapsamlı müdür) — kullanıcının kapsam dışı
   // takımı eskiden çıplak `#id` çiziliyordu. Herkese açık takım dizini (yalnız ad) eksik adları tamamlar; o da okunamazsa
   // "takım adı görünmüyor" yazılır, asla kimlik.
   const [dirNames, setDirNames] = useState(null)

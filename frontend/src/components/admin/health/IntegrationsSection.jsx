@@ -115,7 +115,7 @@ export default function IntegrationsSection({
               </>
             )}
           </KvList>
-          {/* UIA-D2 (20.166): gönderim kayıtları ucu yalnız global yönetici (SystemController.requireAdmin) — diğerlerine CTA yok */}
+          {/* UIA-D2 (20.165.1): gönderim kayıtları ucu yalnız global yönetici (SystemController.requireAdmin) — diğerlerine CTA yok */}
           {globalAdmin && <CardCta icon={Mail} label={t('waLogs.clickHint')} onClick={onOpenWeeklyLogs} />}
         </>
       )

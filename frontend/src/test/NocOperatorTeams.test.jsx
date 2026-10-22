@@ -157,7 +157,7 @@ describe('operatorTeamsModel', () => {
   })
 })
 
-// 20.166 (UIA-C12): takım rehberi okunamasa da seçili takımlar ayar yanıtındaki ADLARIYLA görünür, asla çıplak "#3"
+// 20.165.1 (UIA-C12): takım rehberi okunamasa da seçili takımlar ayar yanıtındaki ADLARIYLA görünür, asla çıplak "#3"
 describe('NocOperatorTeams — rehber okunamadı', () => {
   it('rehber başarısız: çip adı ayar yanıtının `teams` alanından; o da yoksa "adı okunamayan takım"', async () => {
     api.teams.directory.mockResolvedValue({ success: false })

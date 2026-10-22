@@ -87,8 +87,8 @@ Bu bölüm yalnız prod çok pod sürüm 1'i (2026-10-21) İLK kez aldığında 
       postası, eski yolla kapanan fırtınanın ikinci kurtarma postası, eski pod'da sahiplenmesiz push / haftalık rapor —
       [`RUNBOOK.md` → Sürüm geçişi sırasında](RUNBOOK.md#sürüm-geçişi-sırasında-eski--yeni-pod-birlikte).
 
-### 20.166 öncesi kontroller (hata düzeltme sürümü) — bir kerelik
-Bu bölüm prod 20.165 ya da öncesinden 20.166'ya ilk geçerken geçerlidir; sonraki dağıtımlarda atlanır. Sorgular salt okur.
+### 20.165.1 öncesi kontroller (hata düzeltme sürümü) — bir kerelik
+Bu bölüm prod 20.165.0 ya da öncesinden 20.165.1'e ilk geçerken geçerlidir; sonraki dağıtımlarda atlanır. Sorgular salt okur.
 
 - [ ] **Anahtar kelime izlemesi çiftleri yok** — yeni tekil indeks `uq_kwm_team_url_kw` = `(team_id, LOWER(url), LOWER(keyword))`
       (uygulamanın kuralı) bu satırlarla kurulamaz; o durumda bir WARN yazılır ve eski `uq_kwm_team_url` yerinde kalır. Boş dönmeli:
@@ -118,7 +118,7 @@ Bu bölüm prod 20.165 ya da öncesinden 20.166'ya ilk geçerken geçerlidir; so
   ```
 - [ ] **Geçiş sırasında elle "Şimdi kontrol et" yok** — eski (20.165) ve yeni pod'un birlikte çalıştığı pencerede eski pod'a düşen
       elle sertifika kontrolü EC / keyEncipherment'sız RSA kaydını yeniden UNTRUSTED yazar; sonraki TLS profili turu bunu A → F
-      not DÜŞÜŞÜ sayar ve takıma "TLS notu düştü" postası + push gider. Takımlara dağıtım bitene (tüm pod'lar 20.166) kadar
+      not DÜŞÜŞÜ sayar ve takıma "TLS notu düştü" postası + push gider. Takımlara dağıtım bitene (tüm pod'lar 20.165.1) kadar
       kartlardan / toplu "Şimdi kontrol et" kullanmamalarını duyurun. Sertifika taramaları lidere bağlı DEĞİLDİR (kilidi alan
       pod koşar): dağıtımı saat başından (`:00` saatlik tarama) uzak bir zamana koyun — taramayı eski pod alırsa etki aynıdır.
 - [ ] `SELECT count(*) FROM escalation_contacts;` — `webhook_url` TEXT'e genişler (`ALTER COLUMN … TYPE TEXT`); küçük tablo,

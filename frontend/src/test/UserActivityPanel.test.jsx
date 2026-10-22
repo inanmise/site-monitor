@@ -79,7 +79,7 @@ describe('UserActivityPanel', () => {
     await waitFor(() => expect(api.admin.getLoginSeries).toHaveBeenCalled())
   })
 
-  // Oturum sonlandırma YALNIZ global yönetici (20.166, UIA-D1 — SystemController.terminateSession requireAdmin)
+  // Oturum sonlandırma YALNIZ global yönetici (20.165.1, UIA-D1 — SystemController.terminateSession requireAdmin)
   it('oturum tablosu: boşta bandı, son sayfa etiketi, kendi oturumu sonlandırılamaz, sıralama düğmesi aria-sort taşır', () => {
     renderPanel({ globalAdmin: true })
     const table = screen.getByTestId('uact-sessions')
@@ -171,7 +171,7 @@ describe('UserActivityPanel', () => {
     expect(document.querySelectorAll('[data-tl]').length).toBe(2)
   })
 
-  // 20.166 (UIA-D4): zaman çizelgesindeki "Onayla" yalnız onaylayabilene (global admin / AUDIT — SystemController.ackAnomaly)
+  // 20.165.1 (UIA-D4): zaman çizelgesindeki "Onayla" yalnız onaylayabilene (global admin / AUDIT — SystemController.ackAnomaly)
   it('detay modalı: canAck yoksa işaretli olayda "Onayla" bağlantısı YOK; canAck varsa VAR', async () => {
     const { unmount } = renderPanel({ canAck: false })
     let table = screen.getByTestId('uact-sessions')

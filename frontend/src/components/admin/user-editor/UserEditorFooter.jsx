@@ -11,7 +11,7 @@ function displayValue(t, key, v, teamMap) {
   if (key === 'active') return v ? t('usr.active') : t('usr.inactive')
   if (key === 'team_ids') {
     const ids = Array.isArray(v) ? v : []
-    return ids.length ? ids.map((id) => teamMap[id] || t('team.nameUnavailable')).join(', ') : t('ued.emptyValue')   // asla çıplak #id (20.166 UIA-1)
+    return ids.length ? ids.map((id) => teamMap[id] || t('team.nameUnavailable')).join(', ') : t('ued.emptyValue')   // asla çıplak #id (20.165.1 UIA-1)
   }
   if (key === 'org_role') return v ? t('usr.orgRoleVal.' + v) : t('usr.orgRoleNone')
   if (v == null || String(v).trim() === '') return t('ued.emptyValue')

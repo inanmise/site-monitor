@@ -111,7 +111,7 @@ describe('TeamDeleteImpactModal', () => {
   })
 })
 
-// 20.166 (ADMIN-1, PKG-5 sözleşmesi): takımın BELGELERİ etki listesinde — kanal raporları, şablon kütüphanesi, süren / yaklaşan
+// 20.165.1 (ADMIN-1, PKG-5 sözleşmesi): takımın BELGELERİ etki listesinde — kanal raporları, şablon kütüphanesi, süren / yaklaşan
 // bakım pencereleri silmeyi engeller ("Taşı" taşır); yönetici özeti ayarı / geçmişi takımla silinir (yalnız bilgi satırı).
 describe('TeamDeleteImpactModal — takım belgeleri (ADMIN-1)', () => {
   beforeEach(() => { vi.clearAllMocks() })

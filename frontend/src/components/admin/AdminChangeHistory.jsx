@@ -298,7 +298,7 @@ export default function AdminChangeHistory({ resource, filter = null, onClearFil
             <div className="mb-2.5 flex flex-wrap items-center gap-2">
               {filter && (
                 // Etkin kayıt süzgeci: X'li rozet (kaldırınca tüm kayıtlar)
-                // Uzun AD adı SARAR (20.166, UIA-D10): hap köşeleri sarılan metni kırpmasın → rounded-md + overflow-visible
+                // Uzun AD adı SARAR (20.165.1, UIA-D10): hap köşeleri sarılan metni kırpmasın → rounded-md + overflow-visible
                 <Badge variant="outline" data-testid="history-filter" className="h-auto min-h-7 max-w-full gap-1 overflow-visible rounded-md border-primary/40 bg-primary/10 py-0.5 pr-0.5 pl-2.5 whitespace-normal text-primary">
                   <History aria-hidden="true" className="size-3 shrink-0" />
                   <span className="min-w-0 [overflow-wrap:anywhere]">{t('hist.filterBadge', filter.name)}</span>

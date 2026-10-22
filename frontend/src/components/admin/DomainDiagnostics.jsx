@@ -30,7 +30,7 @@ import { cn } from '@/lib/utils'
  */
 export default function DomainDiagnostics({ globalAdmin: globalAdminProp } = {}) {
   const t = useT()
-  // Proxy CA zinciri yakalama yalnız global yönetici (20.166, UIA-C7): varsayılan host `data.iana.org` envanterde değil →
+  // Proxy CA zinciri yakalama yalnız global yönetici (20.165.1, UIA-C7): varsayılan host `data.iana.org` envanterde değil →
   // sunucu `requireAdminOrMonitoredDomain` kapsamlı müdüre her zaman 403 (+ ACCESS_DENIED); yakalanan PEM'in yapıştırılacağı
   // `trust.ca-bundle-pem` de GLOBAL_ONLY. Prop yoksa scope.global_admin (K1).
   const globalAdmin = useGlobalAdmin(globalAdminProp)

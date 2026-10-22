@@ -127,7 +127,7 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
   // Kullanıcı değişiklik geçmişi yalnız GLOBAL yönetici: sunucu kapsamlı müdüre 403 verir (requireNotScopedAdmin).
   const canSeeUserHistory = isAdmin && !!globalAdmin
   const isSelf = (u) => u?.username === currentUsername
-  // ADMIN / AUDIT hesabını YALNIZ global yönetici yönetir (20.166, UIA-13): sunucu `requireCanAdministerTarget` kapsamlı
+  // ADMIN / AUDIT hesabını YALNIZ global yönetici yönetir (20.165.1, UIA-13): sunucu `requireCanAdministerTarget` kapsamlı
   // müdüre ve TEAM_ADMIN'e düzenle / parola sıfırla / sil için 403 verir — menüde bu satırlarda yok.
   const elevatedTarget = (u) => !globalAdmin && (u?.system_role === 'ADMIN' || u?.system_role === 'AUDIT')
   const isAudit = systemRole === 'AUDIT'
@@ -433,7 +433,7 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
   const menuItems = (u) => (canManage ? [
     { label: t('usr.edit'), icon: <Pencil size={14} />, onClick: () => openEdit(u), hidden: elevatedTarget(u) },
     { label: t('hist.title'), icon: <History size={14} />, onClick: () => setHistFilter({ id: u.id, name: nameOf(u) }), hidden: !canSeeUserHistory },
-    // Geçici parola LDAP hesabında YOK (20.166, UIA-A8): parolayı AD yönetir, sunucu `requireLocalForPassword` reddeder
+    // Geçici parola LDAP hesabında YOK (20.165.1, UIA-A8): parolayı AD yönetir, sunucu `requireLocalForPassword` reddeder
     { label: t('usr.autoResetBtn'), icon: <KeyRound size={14} />, onClick: () => setAutoResetModal(u), hidden: elevatedTarget(u) || u?.auth_source === 'LDAP' },
     { label: t('usr.unlock'), icon: <LockOpen size={14} />, onClick: () => unlock(u.id), hidden: !u.permanent_lock },
     { label: t('usr.roleUnlock'), icon: <LockOpen size={14} />, onClick: () => roleUnlock(u.id), hidden: !u.role_locked },

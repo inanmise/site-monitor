@@ -157,7 +157,7 @@ describe('UserEditor — düzenleme, değişiklik özeti, kapatma onayı', () =>
     expect(saveBtn()).not.toBeDisabled()
     fireEvent.click(saveBtn())
     await waitFor(() => expect(api.admin.updateUser).toHaveBeenCalled())
-    // KABLO SÖZLEŞMESİ: eski formun gövdesi, yalnız değişen alan farklı — DEĞİŞMEYEN takım kümesi artık GİTMEZ (20.166,
+    // KABLO SÖZLEŞMESİ: eski formun gövdesi, yalnız değişen alan farklı — DEĞİŞMEYEN takım kümesi artık GİTMEZ (20.165.1,
     // UIA-1: sunucu her gönderilen takımı kapsamda arıyordu; kapsam dışı takımı olan kullanıcı hiç kaydedilemiyordu)
     expect(api.admin.updateUser.mock.calls[0]).toEqual([7, {
       username: 'ALI', display_name: 'Ali Veli', email: 'ali@example.com', employee_id: '12345', system_role: 'USER',
@@ -265,7 +265,7 @@ describe('UserEditor — korumalar', () => {
     fireEvent.change(screen.getByLabelText(/^(E-posta|Email)/), { target: { value: 'n@example.com' } })
     fireEvent.click(saveBtn())
     await waitFor(() => expect(api.admin.updateUser).toHaveBeenCalled())
-    // Kendi takımına sabitlenen küme kayıtlıyla AYNI → takım anahtarları gitmez (20.166, UIA-1; sunucu TEAM_ADMIN'in
+    // Kendi takımına sabitlenen küme kayıtlıyla AYNI → takım anahtarları gitmez (20.165.1, UIA-1; sunucu TEAM_ADMIN'in
     // üyelik değişikliğini zaten yok sayar)
     expect(api.admin.updateUser.mock.calls[0][1]).not.toHaveProperty('team_ids')
     expect(api.admin.updateUser.mock.calls[0][1]).not.toHaveProperty('team_id')
@@ -386,7 +386,7 @@ describe('UserEditor — AD kilitleri, güvenlik eylemleri', () => {
   })
 })
 
-// ── 20.166 bugfix (PKG-8a): kapsamlı müdür + yönetim kapsamı dışındaki takım (UIA-1 / UIA-13) ──────────────────────────
+// ── 20.165.1 bugfix (PKG-8a): kapsamlı müdür + yönetim kapsamı dışındaki takım (UIA-1 / UIA-13) ──────────────────────────
 describe('UserEditor — kapsamlı müdür, kapsam dışı takım', () => {
   beforeEach(() => {
     vi.clearAllMocks()

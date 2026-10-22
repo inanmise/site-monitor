@@ -54,7 +54,7 @@ let savedOverflow = ''
  */
 export default function UserDetailPanel({ user, teams = [], isAdmin, globalAdmin = false, onClose, onEdit, onChanged, onUnlock, stacked = false, initialTab = 'overview' }) {
   const t = useT()
-  // AD karşılaştırması (Dizin sekmesi + başlık düğmesi) YALNIZ global yönetici (20.166, UIA-A7): LdapMembershipController
+  // AD karşılaştırması (Dizin sekmesi + başlık düğmesi) YALNIZ global yönetici (20.165.1, UIA-A7): LdapMembershipController
   // `requireGlobalAdmin` — kapsamlı müdüre sekme her açılışta 403 banttı.
   const showDirectory = !!isAdmin && !!globalAdmin && user.auth_source === 'LDAP'
   // Kullanıcı değişiklik geçmişi YALNIZ global yönetici: sunucu (`/api/admin/history?resource=USER`) kapsamlı müdüre

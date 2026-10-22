@@ -245,7 +245,7 @@ export function TeamsSection({ ed }) {
   const primary = predictedPrimary(selected, { mode: ed.mode, currentPrimary: user?.team_id })
   const err = ed.fe.fieldProps('teams')
   const ownName = ed.ownTeamId != null ? (teamMap[ed.ownTeamId] || t('team.nameUnavailable')) : null
-  // Yönetim kapsamı biliniyorsa (kapsamlı müdür, K2) dışındaki mevcut takım çıkarılamaz — sunucu 403 verir (20.166 UIA-1)
+  // Yönetim kapsamı biliniyorsa (kapsamlı müdür, K2) dışındaki mevcut takım çıkarılamaz — sunucu 403 verir (20.165.1 UIA-1)
   const outOfScope = (id) => !!ed.manageIds && !ed.manageIds.has(String(id))
 
   if (ed.isTeamAdmin) {

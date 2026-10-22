@@ -50,7 +50,7 @@ describe('userEditorModel — kablo sözleşmesi', () => {
     expect(now.org_role).toBe('TECH')
   })
 
-  // 20.166 (UIA-A2): kayıtlı rol YOKSA boş org rolü null (dokunma) gider; kayıtlı rol varken boş form rolü TEMİZLER (aşağı)
+  // 20.165.1 (UIA-A2): kayıtlı rol YOKSA boş org rolü null (dokunma) gider; kayıtlı rol varken boş form rolü TEMİZLER (aşağı)
   it('boş org rolü (taban yok / kayıtlı rol yok) null gider; takımsız kullanıcıda team_id null', () => {
     const p = buildPayload({ ...toForm(USER), org_role: '', team_ids: [], system_role: 'ADMIN' })
     expect(p.org_role).toBeNull()
@@ -188,7 +188,7 @@ describe('userEditorModel — korumalar ve yardımcılar', () => {
   })
 })
 
-// ── 20.166 bugfix (PKG-8a): düzenleme tabanı ────────────────────────────────────────────────────────────────────────
+// ── 20.165.1 bugfix (PKG-8a): düzenleme tabanı ────────────────────────────────────────────────────────────────────────
 describe('userEditorModel — düzenleme tabanı (UIA-1 / A2 / A3 / 13)', () => {
   const base = toForm(USER)
 

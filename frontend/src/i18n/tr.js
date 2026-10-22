@@ -3079,7 +3079,7 @@ export const TR = {
   'ff.clear':              'Seçimi temizle',
   'app.noCerts':        'Sertifika bulunamadı',
   'app.loadingCerts':   'Sertifikalar yükleniyor…',
-  // ── 20.166 bugfix · PKG-6 ──
+  // ── 20.165.1 bugfix · PKG-6 ──
   'app.logoutPendingNotice': 'Bu cihazda çıkış yapıldı ama sunucuya ulaşılamadı; oturum bağlantı gelince sunucuda da kapatılacak.',
   'app.certsLoadFailed': 'Sertifika listesi okunamadı',
   'app.certsLoadFailedHint': 'Sunucu yanıt vermedi ya da isteği reddetti. Bağlantınızı kontrol edip "Yeniden dene" ile tekrar isteyin.',
@@ -6894,7 +6894,7 @@ export const TR = {
   'usr.forcedPwdVerify':         'Geçici şifreniz (email\'den)',
   'usr.formConfirmPwd':          'Yeni Şifre (Tekrar)',
   'usr.pwdMismatch':             'Şifreler eşleşmiyor',
-  // ── 20.166 bugfix · PKG-8a ──
+  // ── 20.165.1 bugfix · PKG-8a ──
   'health.statsUnavailable': "Bu bilgi okunamadı — değer bilinmiyor. Sayfayı yenileyin; sürerse sunucu günlüğüne bakın.",
   'settings.globalOnlyBodyOrg': "Bu bölüm kurum geneli bir ayardır; takım-kapsamlı yönetici hesabıyla görüntülenemez ve değiştirilemez. Değişiklik için global yöneticiye başvurun.",
   'dexp.caGlobalOnly': "Proxy CA zinciri yakalama yalnız global yöneticiye açıktır: yakalanan PEM, yalnız global yöneticinin değiştirebildiği güven paketine yapıştırılır.",
@@ -9810,7 +9810,7 @@ export const TR = {
 
   // ── Haftalık Raporlar ──
   'wr.title':            'Haftalık Raporlar',
-  // ── 20.166 bugfix · PKG-8b ──
+  // ── 20.165.1 bugfix · PKG-8b ──
   'pwd.lengthRule': "Şifre {0}–{1} karakter olmalıdır.",
   'pwd.tooShort': "Şifre çok kısa — en az {0} karakter olmalı.",
   'pwd.tooLong': "Şifre çok uzun — en fazla {0} karakter olabilir.",
@@ -11897,7 +11897,7 @@ export const TR = {
   'alh.whyPushTip': 'Gönderildi {0} · başarısız {1} · atlandı {2}',
   'alh.whyPushNone': 'push: kayıt yok',
   'alh.whyNobody': 'kimseye ulaşmadı — alıcı kuralını kontrol edin',
-  // ── 20.166 bugfix · PKG-7 ──
+  // ── 20.165.1 bugfix · PKG-7 ──
   'mo.unavailable.title': 'Bazı veriler okunamadı',
   'mo.unavailable.alerts': 'Açık alarmlar okunamadı: alarm sayıları gösterilmiyor ve durumlar alarmlar olmadan hesaplandı — sorunlu görünmeyen bir izlemenin açık alarmı olabilir.',
   'mo.unavailable.types': 'İzleme listesi okunamadı: {0} — bu türlerin izlemeleri sayılara ve listeye girmedi.',
@@ -11940,8 +11940,8 @@ export const TR = {
   'storm.live.loadFailed': 'Fırtına durumu okunamadı — bağlantınızı kontrol edip yeniden deneyin.',
   'storm.live.staleData': 'Son yenileme başarısız — gösterilen durum son başarılı okumaya ait.',
   'noc.passiveNoCall': 'Pasif hesap — aranmaz',
-  // ── /20.166 bugfix · PKG-7 ──
-  // ── 20.166 bugfix · FE review ──
+  // ── /20.165.1 bugfix · PKG-7 ──
+  // ── 20.165.1 bugfix · FE review ──
   'ued.phoneGlobalOnly': 'Telefonu yalnız global yönetici görür ve değiştirir; buradan kaydedilmez.',
   'ued.managerGlobalOnly': 'Müdür sicilini yalnız global yönetici değiştirir (görüş ve yönetim kapsamını belirler).',
   'team.movedList': 'Taşındı: {0}',
@@ -11963,7 +11963,7 @@ export const TR = {
   'team.memberAdminLocked': 'Yalnız global yönetici',
   'wr.submitNotSaved': 'Son değişiklikler henüz kaydedilmedi, rapor onaya gönderilmedi. Birkaç saniye bekleyip Onaya Gönder ile yeniden deneyin.',
   'alh.renotifyModal.emailMonitorOff': 'Bu izlemede e-posta kanalı alarm anında kapalıydı — yeniden bildirimde e-posta gönderilmez; push / webhook alıcıları aşağıda.',
-  // ── /20.166 bugfix · FE review ──
+  // ── /20.165.1 bugfix · FE review ──
   'alh.whyAuto': 'kontroller düzelince kendiliğinden kapanır',
   'alh.whyAutoTip': 'Bu alarm, kaynağı art arda sağlıklı kontrol verdiğinde kendiliğinden kapanır; onay ya da kime bildirim gittiği kapanışı etkilemez. Aynı hedefi izleyen takımınızın başka bir izlemesi hâlâ düşükse alarm açık kalır; bu türün bildirimleri kapatılırsa alarm bildirimsiz kapanır. İzleme uzun süredir sağlıklı görünüyorsa alarmı elle çözebilirsiniz.',
   'alh.whyManual': 'yalnız elle kapanır',

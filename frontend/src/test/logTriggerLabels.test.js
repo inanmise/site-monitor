@@ -8,7 +8,7 @@ import { TRIGGERS as PUSH_TRIGGERS } from '../components/admin/push/pushLogModel
 import { REPO_ROOT } from './helpers/javaTable.js'
 
 /**
- * GÖNDERİM GÜNLÜĞÜ TETİKLEYİCİ KAPISI (20.166 bugfix, UIA-14 / UIA-C4). SMTP logu 9, push logu ~20 kodu tanıyordu; fırtına,
+ * GÖNDERİM GÜNLÜĞÜ TETİKLEYİCİ KAPISI (20.165.1 bugfix, UIA-14 / UIA-C4). SMTP logu 9, push logu ~20 kodu tanıyordu; fırtına,
  * 7/24, bekçi, yönetici özeti, kanal raporu, TLS notu düşüşü … iki dilde de HAM kod basılıyordu ve TLS_GRADE_DROP push
  * süzgecinde yoktu.
  *

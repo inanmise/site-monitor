@@ -119,7 +119,7 @@ describe('UserDetailPanel — üyelik kaynağı + AD ile karşılaştır', () =>
     expect(adEntry()).toBeNull()
     expect(screen.queryByTestId('ldap-compare')).toBeNull()
     second.unmount()
-    // Kapsamlı müdür (ADMIN, global değil): uç requireGlobalAdmin → sekme / giriş YOK (20.166, UIA-A7)
+    // Kapsamlı müdür (ADMIN, global değil): uç requireGlobalAdmin → sekme / giriş YOK (20.165.1, UIA-A7)
     const third = await renderAct(<UserDetailPanel user={X} teams={TEAMS} isAdmin globalAdmin={false} onClose={() => {}} />)
     expect(dirTab()).toBeNull()
     expect(adEntry()).toBeNull()

@@ -8,7 +8,7 @@ import { downloadBlob } from '../../../utils/csvExport.js'
  * olarak gösteriyordu; burada durum kodu okunup çağıran dostça bir bildirim gösterebilir. Dosya adı sunucunun
  * `Content-Disposition` başlığından gelir (sunucunun verdiği adla aynı).
  *
- * <p>İndirme `utils/csvExport.downloadBlob` ile (20.166, UIA-9): bağlantı DOM'da, URL 60 sn tutulur — 0 ms'de geri
+ * <p>İndirme `utils/csvExport.downloadBlob` ile (20.165.1, UIA-9): bağlantı DOM'da, URL 60 sn tutulur — 0 ms'de geri
  * alınan URL Safari / iPad'de indirmeyi başlatmıyordu ama "dışa aktarıldı" yazıyordu. Tarayıcı indirmeyi başlatamazsa
  * `{ ok: false, status: -1 }`.
  *

@@ -257,7 +257,7 @@ const SPECIAL = {
   TECH_ERROR_TEAM_TEMPLATE_CREATE: 'audit.ev.TECH_ERROR_TEAM_TEMPLATE_CREATE',
   TECH_ERROR_TEAM_TEMPLATE_UPDATE: 'audit.ev.TECH_ERROR_TEAM_TEMPLATE_UPDATE',
   TECH_ERROR_TEAM_TEMPLATE_DELETE: 'audit.ev.TECH_ERROR_TEAM_TEMPLATE_DELETE',
-  // 20.166 bugfix (UIA-5): katalogdaki 60 tür kurala uymuyor, iki dilde de İngilizce Title-Case yedeğine düşüyordu
+  // 20.165.1 bugfix (UIA-5): katalogdaki 60 tür kurala uymuyor, iki dilde de İngilizce Title-Case yedeğine düşüyordu
   // ("Session Terminate", "Platform Create" …); 5'inin anahtarı vardı ama okunmuyordu. Kapı: auditEventLabels.test.js
   // AuditEventCatalog.TYPES'ı okur — hiçbir tür yedeğe düşmez.
   CERT_HEALTH_REFRESH: 'audit.ev.CERT_HEALTH_REFRESH',
@@ -389,7 +389,7 @@ export function parseDetail(row) {
   const changes = changesObj ? Object.entries(changesObj) : null
   const detailObj = tryJson(row?.detail)
   const raw = row?.detail
-  // UIA-A4 (20.166): `changes` sütununa bazı olaylar FARK değil ANLIK GÖRÜNTÜ yazar (bildirim grubu / 7/24 grubu oluştur /
+  // UIA-A4 (20.165.1): `changes` sütununa bazı olaylar FARK değil ANLIK GÖRÜNTÜ yazar (bildirim grubu / 7/24 grubu oluştur /
   // sil, yeniden ata `{"to":..,"moved":..}`). Fark tablosu yalnız HER değer `{from|to}` biçimindeyse; aksi hâlde değerler
   // anahtar → değer olarak gösterilir (eskiden her alan "— → —" çiziliyordu, değerler yalnız ham kayıtta kalıyordu).
   const isDiff = !!changes && changes.length > 0 && !Array.isArray(changesObj) && changes.every(([, v]) => isDiffValue(v))

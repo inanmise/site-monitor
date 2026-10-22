@@ -76,7 +76,7 @@ export default function UserEditorSecurity({ ed }) {
           ) : !canAct && <p className="m-0 text-sm text-muted-foreground">{t('ued.pwdNothingPending')}</p>}
           {ed.resetResult === 'sent' && <AlertBanner tone="success" className="mb-0">{t('usr.autoResetSent')}</AlertBanner>}
           {ed.resetResult === 'failed' && <AlertBanner tone="danger" className="mb-0">{t('usr.autoResetFailed')}</AlertBanner>}
-          {/* LDAP hesabının parolasını AD yönetir — sunucu geçici parolayı reddeder (20.166, UIA-A8): düğme yerine açıklama */}
+          {/* LDAP hesabının parolasını AD yönetir — sunucu geçici parolayı reddeder (20.165.1, UIA-A8): düğme yerine açıklama */}
           {canAct && user.auth_source === 'LDAP' && (
             <p className="m-0 text-xs text-muted-foreground" data-slot="ued-auto-reset-ldap">{t('ued.pwdLdapManaged')}</p>
           )}

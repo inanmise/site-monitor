@@ -740,7 +740,7 @@ describe('CertificateModal — başlıkta 7/24 göstergesi', () => {
       fireEvent.click(triggerOf(indicator()))
       const pop = await screen.findByRole('dialog', { name: `example.com — ${EN['nocs.label.on']}` })
       fireEvent.click(within(pop).getByRole('link', { name: EN['nocs.viewCoverage'] }))
-      expect(nav.mock.calls.at(-1)[0].detail).toEqual({ tab: 'noc', params: { n_type: 'SSL', n_q: 'example.com', n_view: 'coverage' } })   // 20.166 UIM-30: operatörün varsayılanı konsol
+      expect(nav.mock.calls.at(-1)[0].detail).toEqual({ tab: 'noc', params: { n_type: 'SSL', n_q: 'example.com', n_view: 'coverage' } })   // 20.165.1 UIM-30: operatörün varsayılanı konsol
       expect(onClose).toHaveBeenCalledTimes(1)
     } finally {
       window.removeEventListener('sm:navigate', nav)

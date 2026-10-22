@@ -39,7 +39,7 @@ const GROUP_META = {
  * müdür salt okunur görür (kayıt çubuğu yok). Değerler sayfanın okuma dalgasıyla gelir (`state` = `pushState`); kayıt AYRI
  * uca (`PUT …/settings/push`) YALNIZ değişen anahtarlarla gider. Eski pod 404 / 405 → "henüz desteklenmiyor", salt okunur,
  * taslak korunur. Genel push kanalı kapalıysa (`push_enabled: false`) kart bunu söyler ve Push ayarlarına götürür
- * (sayfa `onOpenPushSettings` verirse önce onun kaydedilmemiş değişiklik onayı — 20.166 bugfix, UIA-E5).
+ * (sayfa `onOpenPushSettings` verirse önce onun kaydedilmemiş değişiklik onayı — 20.165.1 bugfix, UIA-E5).
  * Sayfayla eşgüdüm hatırlatma kartıyla aynı (`onSaving` / `onSaved` / `onUnsupported` / `onDirtyChange`). Kancalar `tes-push-*`.
  */
 export default function TechErrorPushSettings({

@@ -13,7 +13,7 @@ export const TRIGGERS = ['OPEN', 'ESCALATION', 'RE_ALERT', 'RESOLVE', 'RESEND', 
   'TECH_ERROR_REMINDER',
   // 2026-10-18: teknik hata raporu onay isteği / onay hatırlatması / karar / gönderildi / gönderilemedi
   'TECH_ERROR_APPROVAL', 'TECH_ERROR_APPROVAL_REMINDER', 'TECH_ERROR_DECISION', 'TECH_ERROR_SENT', 'TECH_ERROR_SEND_FAILED',
-  // 20.166 (UIA-C4): TLS notu düşüş bildirimi (TlsGradeDropNotifier takım push'u) süzülebilir
+  // 20.165.1 (UIA-C4): TLS notu düşüş bildirimi (TlsGradeDropNotifier takım push'u) süzülebilir
   'TLS_GRADE_DROP']
 export const LEVELS = ['CRITICAL', 'HIGH', 'WARNING', 'INFO']
 export const ERROR_CLASSES = ['AUTH', 'NOT_FOUND', 'RATE', 'SERVER', 'CLIENT', 'CONFIG', 'TIMEOUT', 'CONNECT', 'OTHER']
@@ -33,7 +33,7 @@ export const STATUS_META = {
 /** Grafik renkleri (gönderildi / başarısız / kuyrukta / atlandı). */
 export const SERIES_COLORS = { sent: '#059669', failed: '#dc2626', pending: '#d97706', skipped: '#a1a1aa' }
 
-/** Tetikleyici etiketi — sözlük `../logTriggers.js` (SMTP + push tek kaynak, 20.166); bilinmeyen ham gösterilir. */
+/** Tetikleyici etiketi — sözlük `../logTriggers.js` (SMTP + push tek kaynak, 20.165.1); bilinmeyen ham gösterilir. */
 export function triggerLabel(trigger, t) {
   return triggerText(trigger, t, 'push')
 }

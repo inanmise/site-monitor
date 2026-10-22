@@ -202,7 +202,7 @@ describe('PushLogView', () => {
     await screen.findByText('Internal error')
     expect(screen.queryByText('özet yok')).toBeNull()
   })
-  // 20.166 (UIA-D1): yeniden kuyruğa alma ucu YALNIZ global yönetici (PushLogController.isGlobalAdmin)
+  // 20.165.1 (UIA-D1): yeniden kuyruğa alma ucu YALNIZ global yönetici (PushLogController.isGlobalAdmin)
   it('kapsamlı müdür (globalAdmin yok): yeniden kuyruk düğmesi YOK, "yalnız yönetici" ipucu var', async () => {
     render(<PushLogView onBack={() => {}} />)
     await screen.findByText('Internal error')
@@ -211,7 +211,7 @@ describe('PushLogView', () => {
     expect(screen.getByText((c) => c === TR['pl.requeueAdminOnly'] || c === EN['pl.requeueAdminOnly'])).toBeInTheDocument()
   })
 
-  // 20.166 (UIA-C4): TLS notu düşüş push'u süzgeç listesinde ve etiketiyle
+  // 20.165.1 (UIA-C4): TLS notu düşüş push'u süzgeç listesinde ve etiketiyle
   it('TLS_GRADE_DROP tetikleyicisi süzgeçte seçilebilir ve etiketlidir (ham kod değil)', async () => {
     const { TRIGGERS, triggerLabel } = await import('../components/admin/push/pushLogModel.js')
     expect(TRIGGERS).toContain('TLS_GRADE_DROP')

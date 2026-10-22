@@ -64,7 +64,7 @@ export default function NocOperatorTeams({ readOnly = false }) {
       setSettings(s)
       setDraft(s.ids)
       const d = unwrap(dir)
-      // Takım rehberi okunamasa da seçili takımlar ADLARIYLA görünür (20.166, UIA-C12): ayar yanıtı `teams [{id, name,
+      // Takım rehberi okunamasa da seçili takımlar ADLARIYLA görünür (20.165.1, UIA-C12): ayar yanıtı `teams [{id, name,
       // active}]` taşır — eskiden yalnız rehber okunuyordu ve her çip / onay metni çıplak "#12" yazıyordu.
       const fromCfg = Array.isArray(r.data?.teams) ? r.data.teams : []
       const dirRows = d.ok && Array.isArray(d.data) ? d.data : []
@@ -188,7 +188,7 @@ export default function NocOperatorTeams({ readOnly = false }) {
                     return (
                       <li key={id} className="min-w-0">
                         <Badge variant="outline" data-slot="noc-ot-chip" data-team-id={id}
-                          // Uzun takım adı SARAR (20.166, UIA-C9): sarılan hap köşeleri kırpmasın diye rounded-md + overflow-visible
+                          // Uzun takım adı SARAR (20.165.1, UIA-C9): sarılan hap köşeleri kırpmasın diye rounded-md + overflow-visible
                           className={cn('h-auto min-h-10 max-w-full gap-1.5 overflow-visible rounded-md bg-primary/5 py-1 pr-1 pl-2.5 font-medium whitespace-normal sm:min-h-8 sm:pointer-coarse:min-h-10',
                             info && !info.active && 'border-dashed text-muted-foreground')}>
                           <Users aria-hidden="true" className="size-3.5 shrink-0 text-primary" />

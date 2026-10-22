@@ -3075,7 +3075,7 @@ export const EN = {
   'ff.clear':              'Clear selection',
   'app.noCerts':        'No certificates found',
   'app.loadingCerts':   'Loading certificates…',
-  // ── 20.166 bugfix · PKG-6 ──
+  // ── 20.165.1 bugfix · PKG-6 ──
   'app.logoutPendingNotice': 'You are signed out on this device, but the server could not be reached; the server session will be closed as soon as the connection is back.',
   'app.certsLoadFailed': 'Couldn’t load the certificate list',
   'app.certsLoadFailedHint': 'The server did not answer or refused the request. Check your connection and request it again with "Try again".',
@@ -6880,7 +6880,7 @@ export const EN = {
   'usr.forcedPwdVerify':         'Your temporary password (from email)',
   'usr.formConfirmPwd':          'New Password (Confirm)',
   'usr.pwdMismatch':             'Passwords don’t match',
-  // ── 20.166 bugfix · PKG-8a ──
+  // ── 20.165.1 bugfix · PKG-8a ──
   'health.statsUnavailable': "This information could not be read — the value is unknown. Refresh the page; if it persists, check the server log.",
   'settings.globalOnlyBodyOrg': "This section is an organisation-wide setting and cannot be viewed or changed with a team-scoped administrator account. Ask a global administrator to make changes.",
   'dexp.caGlobalOnly': "Capturing the proxy CA chain is available to global administrators only: the captured PEM goes into the trust bundle, which only a global administrator can change.",
@@ -9795,7 +9795,7 @@ export const EN = {
 
   // ── Weekly Reports ──
   'wr.title':            'Weekly Reports',
-  // ── 20.166 bugfix · PKG-8b ──
+  // ── 20.165.1 bugfix · PKG-8b ──
   'pwd.lengthRule': "The password must be {0}–{1} characters long.",
   'pwd.tooShort': "The password is too short — use at least {0} characters.",
   'pwd.tooLong': "The password is too long — use at most {0} characters.",
@@ -11877,7 +11877,7 @@ export const EN = {
   'alh.whyPushTip': 'Sent {0} · failed {1} · skipped {2}',
   'alh.whyPushNone': 'push: no record',
   'alh.whyNobody': 'reached nobody — check the recipient rules',
-  // ── 20.166 bugfix · PKG-7 ──
+  // ── 20.165.1 bugfix · PKG-7 ──
   'mo.unavailable.title': 'Some data could not be read',
   'mo.unavailable.alerts': 'Open alerts could not be read: alert counts are not shown and statuses were worked out without alerts — a monitor that looks fine may still have an open alert.',
   'mo.unavailable.types': 'The monitor list could not be read: {0} — these types are missing from the counts and the list.',
@@ -11920,8 +11920,8 @@ export const EN = {
   'storm.live.loadFailed': 'Storm status could not be read — check your connection and try again.',
   'storm.live.staleData': 'The last refresh failed — the status shown is from the last successful read.',
   'noc.passiveNoCall': 'Passive account — do not call',
-  // ── /20.166 bugfix · PKG-7 ──
-  // ── 20.166 bugfix · FE review ──
+  // ── /20.165.1 bugfix · PKG-7 ──
+  // ── 20.165.1 bugfix · FE review ──
   'ued.phoneGlobalOnly': 'Only a global administrator can see and change the phone number; it is not saved from here.',
   'ued.managerGlobalOnly': 'Only a global administrator can change the manager ID (it sets the view and management scope).',
   'team.movedList': 'Moved: {0}',
@@ -11943,7 +11943,7 @@ export const EN = {
   'team.memberAdminLocked': 'Global admin only',
   'wr.submitNotSaved': 'Your latest changes are not saved yet, so the report was not sent for approval. Wait a few seconds and use Submit for Approval again.',
   'alh.renotifyModal.emailMonitorOff': 'E-mail was switched off for this monitor when the alert opened — the resend sends no e-mail; push / webhook recipients are below.',
-  // ── /20.166 bugfix · FE review ──
+  // ── /20.165.1 bugfix · FE review ──
   'alh.whyAuto': 'closes by itself once checks pass again',
   'alh.whyAutoTip': 'This alert closes on its own once its source passes several checks in a row; acknowledging it, or who was notified, makes no difference to that. It stays open while another of your team’s monitors on the same target is still failing, and it closes without a notification if alerts for this type are switched off. If the monitor has looked healthy for a while, you can resolve the alert by hand.',
   'alh.whyManual': 'closes only when resolved by hand',

@@ -13,7 +13,7 @@ export default function LoginHeatmap({
   matrix = [], failed = [], max = 0, dayLabels = [], title, hourLabel, onCellClick,
   todayDow = -1, rowTotals = [], colTotals = [], total = 0, cell = 32, isOff, marks,
 }) {
-  // İpucu metni arayüz dilinde (20.166, UIA-11): "başarısız" / "mesai dışı" İngilizce arayüzde Türkçe çıkıyordu
+  // İpucu metni arayüz dilinde (20.165.1, UIA-11): "başarısız" / "mesai dışı" İngilizce arayüzde Türkçe çıkıyordu
   const t = useT()
   const cols = 24, rows = 7
   const gap = cell > 22 ? 3 : 2

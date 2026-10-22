@@ -61,7 +61,7 @@ import { changedFields } from '../../utils/changedFields.js'
 const emptyTeam = { name: '', email: '', description: '', active: true, leader_id: '', manager_id: '',
   weekly_reminder_enabled: false, weekly_availability_enabled: false, weekly_channels: '', quiet: EMPTY_QUIET }
 
-/** Takım satırı → düzenleme formu (açılışta ve "değişen alanlar" tabanında AYNI dönüşüm, 20.166). */
+/** Takım satırı → düzenleme formu (açılışta ve "değişen alanlar" tabanında AYNI dönüşüm, 20.165.1). */
 function teamToForm(team) {
   return { ...team, email: team.email || '', leader_id: String(team.leaderId ?? team.leader_id ?? ''),
     manager_id: String(team.managerId ?? team.manager_id ?? ''),
@@ -142,13 +142,13 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
   // 7/24 izleme ekibi takımı rozeti (2026-10-04): takım rehberinin `noc_team` bayrağı (sağlayıcı yoksa rozet yok)
   const teamDir = useTeamDirectory()
   const isAdmin = systemRole === 'ADMIN'
-  // Takım ekle / sil / AD üyelik denetimi YALNIZ global yönetici (20.166, UIA-A6): createTeam / deleteTeam / impact /
+  // Takım ekle / sil / AD üyelik denetimi YALNIZ global yönetici (20.165.1, UIA-A6): createTeam / deleteTeam / impact /
   // LdapMembershipController sunucuda `isGlobalAdmin` ister — kapsamlı müdüre (ADMIN, viewTeamIds) düğmeler 403'tü.
   const isGlobal = isAdmin && !!globalAdmin
   const isTeamAdmin = systemRole === 'TEAM_ADMIN'
   const canManage = isAdmin || isTeamAdmin
   const canEditRow = (rowTeamId) => isAdmin || (isTeamAdmin && rowTeamId === ownTeamId)
-  // ADMIN / AUDIT üyeyi yalnız global yönetici düzenler (sunucu requireCanAdministerTarget; 20.166 UIA-13) — diğerine
+  // ADMIN / AUDIT üyeyi yalnız global yönetici düzenler (sunucu requireCanAdministerTarget; 20.165.1 UIA-13) — diğerine
   // üye kartındaki kalem düzenleyici yerine salt-okunur ayrıntıyı açar.
   const elevatedTarget = (u) => !isGlobal && (u?.system_role === 'ADMIN' || u?.system_role === 'AUDIT')
   // Haftalık e-posta anahtarlarını takımın HER üyesi çevirebilir (yalnız kendi takımı için).
@@ -462,7 +462,7 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
   async function save() {
     setMsg(null)
     const isAdd = modal === 'add'
-    // Yalnız DEĞİŞEN e-posta doğrulanır (sunucu kuralı; saklı eski değer muaf — 20.166 checklist #9)
+    // Yalnız DEĞİŞEN e-posta doğrulanır (sunucu kuralı; saklı eski değer muaf — 20.165.1 checklist #9)
     const emailChanged = isAdd || form.email.trim() !== String(modal?.email || '').trim()
     if (emailChanged && form.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) {
       setMsg(t('team.emailInvalid'))
@@ -472,7 +472,7 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
     const initialQuiet = modal === 'add' ? EMPTY_QUIET : quietFromTeam(modal)
     const quietDirty = !quietEqual(form.quiet || EMPTY_QUIET, initialQuiet)
     if (quietDirty && fe.check(quietErrors(form.quiet, t))) return
-    // Düzenlemede YALNIZ DEĞİŞEN alanlar gider (20.166, UIA-A11): tam gövde, pencere açıkken bir üyenin satırdan çevirdiği
+    // Düzenlemede YALNIZ DEĞİŞEN alanlar gider (20.165.1, UIA-A11): tam gövde, pencere açıkken bir üyenin satırdan çevirdiği
     // haftalık anahtarı (dar uç) eski değere döndürüyordu. Lider temizlenirse `leader_id: ''` gider (UIA-A10 — sunucu
     // `null`'u "dokunma" sayar; boş dize temizler).
     const full = teamPayload(form)

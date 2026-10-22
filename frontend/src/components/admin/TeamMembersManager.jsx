@@ -48,7 +48,7 @@ export default function TeamMembersManager({ team, users = [], canManage, global
   useEffect(() => { load() }, [team.id])   // eslint-disable-line react-hooks/exhaustive-deps
 
   const memberIds = useMemo(() => new Set((members || []).map(m => m.id)), [members])
-  // Pasif üyeler SONDA ve belirgin "Pasif" rozetiyle (20.166, UIA-A7 — CLAUDE.md "Team member lists show passive members
+  // Pasif üyeler SONDA ve belirgin "Pasif" rozetiyle (20.165.1, UIA-A7 — CLAUDE.md "Team member lists show passive members
   // last"): takım eksikleri "pasif üyesi var" diye buraya yönlendiriyor; kimin çıkarılacağı görünsün. Sıra kararlı.
   const ordered = useMemo(() => (members || []).map((m, i) => [m, i])
     .sort((a, b) => ((a[0].active === false) - (b[0].active === false)) || (a[1] - b[1])).map(([m]) => m), [members])

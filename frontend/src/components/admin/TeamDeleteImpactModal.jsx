@@ -11,7 +11,7 @@ import { Button } from '@/components/shadcn/button'
 import { Card, CardTitle } from '@/components/shadcn/card'
 import { Label } from '@/components/shadcn/label'
 
-// ug_domains: UG olarak bağlı kayıtlar (2026-09-28). te_channels / te_templates / maintenance_windows (20.166, ADMIN-1):
+// ug_domains: UG olarak bağlı kayıtlar (2026-09-28). te_channels / te_templates / maintenance_windows (20.165.1, ADMIN-1):
 // takımın BELGELERİ — kanal raporları, şablon kütüphanesi, süren / yaklaşan bakım pencereleri silmeyi ENGELLER, "Taşı" taşır
 // (eskiden etki listesinde yoktu; silinen takımın kanal raporları saklama temizliğinde kalıcı siliniyordu). Eski sunucu
 // göndermezse bölüm çizilmez (bugünkü davranış).
@@ -96,7 +96,7 @@ export default function TeamDeleteImpactModal({ team, teams = [], onClose, onDel
             <AlertBanner tone="warning">{t('team.impactWarn')}</AlertBanner>
           )}
           {Number(impact.open_alerts) > 0 && <p className="text-xs text-muted-foreground">{t('team.impactOpenAlertsMoved', impact.open_alerts)}</p>}
-          {/* Yönetici özeti takım ayarı / gönderim geçmişi takımla SİLİNİR — engellemez, yalnız bilgi (20.166, ADMIN-1) */}
+          {/* Yönetici özeti takım ayarı / gönderim geçmişi takımla SİLİNİR — engellemez, yalnız bilgi (20.165.1, ADMIN-1) */}
           {(impact.executive_summary?.settings || Number(impact.executive_summary?.reports) > 0) && (
             <p className="text-xs text-muted-foreground" data-slot="team-impact-exec">{t('team.impactExecDeleted')}</p>
           )}

@@ -238,7 +238,7 @@ export default function AuditDetailPanel({
         </Section>
       )}
 
-      {/* ── Anlık görüntü: fark DEĞİL, olayın yazdığı değerler (20.166, UIA-A4) ── */}
+      {/* ── Anlık görüntü: fark DEĞİL, olayın yazdığı değerler (20.165.1, UIA-A4) ── */}
       {snapshotObj && (
         <Section title={t('audit.sectionSnapshot')}>
           <dl className={KV} data-slot="audit-snapshot">

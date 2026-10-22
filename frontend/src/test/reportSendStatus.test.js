@@ -4,7 +4,7 @@ import { TR } from '../i18n/tr.js'
 import { EN } from '../i18n/en.js'
 
 /**
- * Rapor e-postası gönderim sonucu (20.166 bugfix, UIA-C2 / K9). Eskiden `success:true` her durumda "gönderildi" sayılıyor,
+ * Rapor e-postası gönderim sonucu (20.165.1 bugfix, UIA-C2 / K9). Eskiden `success:true` her durumda "gönderildi" sayılıyor,
  * SMTP bozukken yeşil bantta ham "FAILED: …", e-posta kanalı kapalıyken "test gönderildi" yazılıyordu.
  * Kural (CLAUDE.md checklist #8): SKIPPED ≠ FAILED ≠ SENT; kuyruk (QUEUED) teslim değildir.
  */

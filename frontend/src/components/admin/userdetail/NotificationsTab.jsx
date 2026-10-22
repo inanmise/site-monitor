@@ -36,7 +36,7 @@ function roleLabel(t, role) {
  */
 export default function NotificationsTab({ user, isAdmin, push, contacts, teamMap, onChanged }) {
   const t = useT()
-  const teamName = (id) => teamMap[Number(id)] || t('team.nameUnavailable')   // asla çıplak #id (20.166)
+  const teamName = (id) => teamMap[Number(id)] || t('team.nameUnavailable')   // asla çıplak #id (20.165.1)
   const p = push.data
 
   return (
@@ -81,7 +81,7 @@ export default function NotificationsTab({ user, isAdmin, push, contacts, teamMa
                   className={cn('flex min-w-0 flex-col gap-1.5 rounded-lg border px-3 py-2.5 sm:flex-row sm:flex-wrap sm:items-center', !c.active && 'bg-muted/40')}>
                   <span className="flex min-w-0 flex-wrap items-center gap-1.5">
                     {/* Takımsız (eski) kişi alarm ALICISI DEĞİLDİR (2026-09-28 kuralı) — "Tüm takımlar" tam tersini söylüyordu
-                        (20.166, UIA-6); Eskalasyon Kişileri sayfasıyla aynı uyarı rozeti. */}
+                        (20.165.1, UIA-6); Eskalasyon Kişileri sayfasıyla aynı uyarı rozeti. */}
                     {c.team_id ? <TeamBadge teamId={c.team_id} teamName={teamName(c.team_id)} size={12} />
                       : <ToneBadge tone="warning" data-slot="ud-contact-no-team" className="whitespace-normal">{t('ec.noTeamBadge')}</ToneBadge>}
                     <OrgRoleBadge role={c.role}>{roleLabel(t, c.role)}</OrgRoleBadge>

@@ -126,7 +126,7 @@ describe('auditFormat.parseDetail', () => {
   })
 
   it('boş/bozuk girdiler güvenli', () => {
-    // snapshotObj alanı 20.166'da eklendi (UIA-A4) — boş girdide o da null
+    // snapshotObj alanı 20.165.1'de eklendi (UIA-A4) — boş girdide o da null
     expect(parseDetail({})).toEqual({ changes: null, snapshotObj: null, detailObj: null, detailText: null })
     expect(parseDetail(null)).toEqual({ changes: null, snapshotObj: null, detailObj: null, detailText: null })
     expect(parseDetail({ changes: '{bozuk', detail: '   ' }).detailText).toBeNull()
@@ -134,7 +134,7 @@ describe('auditFormat.parseDetail', () => {
   })
 })
 
-// UIA-A4 (20.166): bildirim grubu / 7/24 grubu oluştur-sil, yeniden ata olayları `changes` sütununa ANLIK GÖRÜNTÜ yazar —
+// UIA-A4 (20.165.1): bildirim grubu / 7/24 grubu oluştur-sil, yeniden ata olayları `changes` sütununa ANLIK GÖRÜNTÜ yazar —
 // eskiden her alan "— → —" çiziliyordu. Fark yalnız HER değer {from|to} ise; aksi hâlde anahtar → değer.
 describe('auditFormat.parseDetail — anlık görüntü (UIA-A4)', () => {
   it('fark biçimi olmayan changes → snapshotObj; diff satırı YOK', () => {

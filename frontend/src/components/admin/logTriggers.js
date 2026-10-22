@@ -1,5 +1,5 @@
 /**
- * Gönderim günlüğü tetikleyici etiketleri — SMTP logu ve webhook push logu için TEK kaynak (20.166 bugfix, UIA-14 /
+ * Gönderim günlüğü tetikleyici etiketleri — SMTP logu ve webhook push logu için TEK kaynak (20.165.1 bugfix, UIA-14 /
  * UIA-C4). Eskiden SMTP logu 9 kodu, push logu `userpush.trigger.*` anahtarlarını tanıyordu; geri kalanı (fırtına,
  * 7/24, bekçi, yönetici özeti, kanal raporu, TLS notu düşüşü …) iki dilde de HAM kod basılıyordu.
  *

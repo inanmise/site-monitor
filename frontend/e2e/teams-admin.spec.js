@@ -194,7 +194,7 @@ for (const vp of VIEWPORTS) {
   })
 }
 
-// ── 20.166 bugfix (PKG-8a, UIA-1 / UIA-13): kapsamlı müdür, yönetmediği bir takımı da olan kullanıcıyı düzenler ──────────
+// ── 20.165.1 bugfix (PKG-8a, UIA-1 / UIA-13): kapsamlı müdür, yönetmediği bir takımı da olan kullanıcıyı düzenler ──────────
 // Eskiden her kayıt bütün takım kümesini gönderiyor, sunucu kapsam dışı takımı görünce 403 veriyordu; takım çıplak "#99"
 // çiziliyordu. Şimdi değişmeyen takım kümesi GİTMEZ, kapsam dışı takım dizinden ADIYLA görünür ve çıkarılamaz.
 const OTHER_TEAM = 'Başka Müdürlüğün Kurumsal Ödeme Altyapısı Uzun Adlı Takımı'

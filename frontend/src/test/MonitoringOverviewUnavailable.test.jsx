@@ -156,7 +156,7 @@ describe('İzleme Panosu — okunamayan parça "0 / sağlıklı" gösterilmez', 
   })
 })
 
-// ── 20.166 son inceleme (FE-2 / FE-8) ──────────────────────────────────────────────────────────────────────────────────
+// ── 20.165.1 son inceleme (FE-2 / FE-8) ──────────────────────────────────────────────────────────────────────────────────
 describe('İzleme Panosu — son inceleme: takım özeti, tür tonu, alarm penceresi derin bağlantısı', () => {
   beforeEach(() => { vi.clearAllMocks(); window.history.replaceState({}, '', '/?tab=monitoring'); try { localStorage.clear() } catch { /* yok */ } })
 

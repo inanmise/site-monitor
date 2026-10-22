@@ -5,7 +5,7 @@ import { EN } from '../i18n/en.js'
 import { TR } from '../i18n/tr.js'
 
 /**
- * Giriş ısı haritası hücre ipucu (20.166 bugfix, UIA-11): "başarısız" ve "mesai dışı" kodda Türkçe sabitti — İngilizce
+ * Giriş ısı haritası hücre ipucu (20.165.1 bugfix, UIA-11): "başarısız" ve "mesai dışı" kodda Türkçe sabitti — İngilizce
  * arayüzde "Mon 09:00–09:59 — 12 (3 başarısız) · mesai dışı" yazıyordu. Metin artık arayüz dilinden.
  */
 const zero = () => Array.from({ length: 7 }, () => Array(24).fill(0))

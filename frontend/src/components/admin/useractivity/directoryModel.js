@@ -238,7 +238,7 @@ export function facetOptions(rows, now = Date.now()) {
 /**
  * Satır eylemlerinin görünürlüğü — TEK kaynak (işlem menüsü + ayrıntı paneli). Yetki kuralları 2026-09-20 dizininden
  * AYNEN: `isAdmin` = sistem rolü ADMIN (global admin VE kapsamlı müdür; sunucu yine kendi kapısını uygular), kilit açma
- * YALNIZ global admin; kişi kendi oturumunu sonlandıramaz. Oturum sonlandırma da YALNIZ global admin (20.166, UIA-D1:
+ * YALNIZ global admin; kişi kendi oturumunu sonlandıramaz. Oturum sonlandırma da YALNIZ global admin (20.165.1, UIA-D1:
  * `SystemController.terminateSession` → `requireAdmin` = `SessionScope.isGlobalAdmin`; kapsamlı müdüre düğme 403'tü).
  */
 export function rowActions(r, { isAdmin = false, globalAdmin = false, username = '' } = {}) {

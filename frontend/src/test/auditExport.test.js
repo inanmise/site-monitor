@@ -7,7 +7,7 @@ vi.mock('../utils/csvExport.js', () => ({
 import { downloadAuditExport } from '../components/admin/audit/auditExport.js'
 
 /**
- * Denetim dışa aktarma indirmesi (20.166 bugfix, UIA-9): `utils/csvExport.downloadBlob` (bağlantı DOM'da, URL 60 sn) —
+ * Denetim dışa aktarma indirmesi (20.165.1 bugfix, UIA-9): `utils/csvExport.downloadBlob` (bağlantı DOM'da, URL 60 sn) —
  * 0 ms'de geri alınan URL Safari / iPad'de indirmeyi başlatmıyor ama "dışa aktarıldı" yazıyordu. Tarayıcı indirmeyi
  * başlatamazsa sonuç başarı DEĞİL (`status: -1`).
  */
