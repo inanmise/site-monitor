@@ -765,6 +765,56 @@ class SystemControllerTest {
                 .require(any(jakarta.servlet.http.HttpSession.class), eq("system_health.read"), eq("view"));
     }
 
+    // ── 2026-10-22 hata düzeltme paketi (PKG-3) ─────────────────────────────────────────────
+
+    @Test
+    @DisplayName("UIA-D11: GET /api/admin/system system_health.read/view ister — matristen geri alınan kullanıcı 403 (kardeş uçlar gibi)")
+    void getHealth_withoutSystemHealthRead_returns403() throws Exception {
+        org.mockito.Mockito.doThrow(new SecurityException("system_health.read"))
+                .when(permissionService).require(any(jakarta.servlet.http.HttpSession.class), eq("system_health.read"), eq("view"));
+        mvc.perform(get("/api/admin/system").session(userSession()))
+                .andExpect(status().isForbidden());
+        verify(schedulerService, never()).getSystemHealth();
+    }
+
+    @Test
+    @DisplayName("UIA-C2 / K9: haftalık test postası SKIPPED (kanal kapalı / alıcı pasif) → success:false; QUEUED_RETRY → success:true")
+    void weeklySendTest_skippedIsNotSuccess() throws Exception {
+        when(weeklyAvailabilityReportService.sendTest(org.mockito.ArgumentMatchers.anyLong(),
+                org.mockito.ArgumentMatchers.anyString())).thenReturn("SKIPPED_DISABLED");
+        mvc.perform(post("/api/admin/system/weekly-availability/send-test").session(adminSession())
+                        .contentType("application/json").content("{\"teamId\":5,\"email\":\"a@b.com\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.data.status").value("SKIPPED_DISABLED"));
+        when(weeklyAvailabilityReportService.sendTest(org.mockito.ArgumentMatchers.anyLong(),
+                org.mockito.ArgumentMatchers.anyString())).thenReturn("QUEUED_RETRY: 421");
+        mvc.perform(post("/api/admin/system/weekly-availability/send-test").session(adminSession())
+                        .contentType("application/json").content("{\"teamId\":5,\"email\":\"a@b.com\"}"))
+                .andExpect(jsonPath("$.success").value(true));
+    }
+
+    @Test
+    @DisplayName("UIA-C2 / K9: envanter raporu test postası SKIPPED → success:false; 'Şimdi çalıştır' gerçek sonucu (outcome) döner")
+    void certInventory_realOutcome() throws Exception {
+        var skipped = new com.sitemonitor.service.report.CertificateInventoryReportService.SendResult(
+                "SKIPPED: pasif kullanıcı", 3, 1, new String[]{"a@b.com"}, "Konu");
+        when(certificateInventoryReportService.sendTest("a@b.com")).thenReturn(skipped);
+        mvc.perform(post("/api/admin/system/cert-inventory-report/send-test").session(adminSession())
+                        .contentType("application/json").content("{\"email\":\"a@b.com\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(false));
+        var failed = new com.sitemonitor.service.report.CertificateInventoryReportService.SendResult(
+                "FAILED: Connection refused", 3, 1, new String[]{"a@b.com"}, "Konu");
+        when(certificateInventoryReportService.sendMonthlyReport(true)).thenReturn(failed);
+        mvc.perform(post("/api/admin/system/cert-inventory-report/run").session(adminSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("FAILED: Connection refused"))
+                .andExpect(jsonPath("$.data.outcome").value("FAILED"))
+                .andExpect(jsonPath("$.data.rows").value(3))
+                .andExpect(jsonPath("$.data.to[0]").value("a@b.com"));
+    }
+
     private MockHttpSession userSession() {
         MockHttpSession s = new MockHttpSession();
         s.setAttribute("authenticated", Boolean.TRUE);

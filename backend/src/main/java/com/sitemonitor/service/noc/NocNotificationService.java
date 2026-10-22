@@ -623,11 +623,27 @@ public class NocNotificationService {
     }
 
     private List<NocMailComposer.Member> members(List<AlertEvent> list, Map<String, NocDelivery> rows) {
+        // "Takım" sütunu (2026-10-22, L-N2): satırlar takım adı OLMADAN kuruluyordu — çözüm postasında her satır "—". Ad, açılış
+        // teslim satırının takımından (açılış postasıyla aynı sahip) tek sorguyla okunur; okunamazsa sütun eskisi gibi boş kalır.
+        java.util.Set<Long> teamIds = new java.util.LinkedHashSet<>();
+        for (AlertEvent e : list) {
+            NocDelivery open = rows.get("alert:" + e.getId() + ":" + NocDelivery.OPEN);
+            if (open != null && open.getTeamId() != null) teamIds.add(open.getTeamId());
+        }
+        Map<Long, String> names = Map.of();
+        if (!teamIds.isEmpty()) {
+            try {
+                names = callLists.teamNames(teamIds);
+            } catch (Exception ex) {
+                log.debug("7/24 fırtına çözüm postası takım adları okunamadı: {}", ex.toString());
+            }
+        }
         List<NocMailComposer.Member> out = new ArrayList<>();
         for (AlertEvent e : list) {
             NocDelivery open = rows.get("alert:" + e.getId() + ":" + NocDelivery.OPEN);
             NocType type = open == null ? null : NocType.parse(open.getMonitorType());
-            out.add(new NocMailComposer.Member(e.getDomain(), type == null ? null : typeLabel(type, e.getAlertType()), null, null, null));
+            String teamName = open == null || open.getTeamId() == null || names == null ? null : names.get(open.getTeamId());
+            out.add(new NocMailComposer.Member(e.getDomain(), type == null ? null : typeLabel(type, e.getAlertType()), teamName, null, null));
         }
         return out;
     }

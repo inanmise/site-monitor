@@ -101,6 +101,32 @@ class OnCallServiceTest {
     }
 
     @Test
+    @DisplayName("UIA-A5 / K11: silinmiş üye kayıtta sessizce düşer (sıra korunur); görünüm onu missing:true ile gösterir")
+    void deletedMemberDroppedOnSave() {
+        // 77 silinmiş (findAllById döndürmez), 10 ve 11 var
+        org.mockito.Mockito.doAnswer(i -> {
+            List<AppUser> out = new ArrayList<>();
+            for (Object id : (Iterable<?>) i.getArgument(0)) if ((Long) id != 77L) out.add(user((Long) id, true));
+            return out;
+        }).when(users).findAllById(any());
+        OnCallSchedule saved = svc.save(3L, true, "WEEKLY", "2026-10-05T09:00", List.of(11L, 77L, 10L), false, "a");
+        assertThat(saved.getMemberIds()).isEqualTo("11,10");
+        // Kayıttan önce silinen kişi görünümde "missing" kalır (istemci "silinmiş hesap" der); kayıt artık reddedilmez
+        rows.removeIf(r -> r.getTeamId().equals(3L));
+        OnCallSchedule legacy = new OnCallSchedule();
+        legacy.setTeamId(3L);
+        legacy.setEnabled(true);
+        legacy.setRotation("WEEKLY");
+        legacy.setAnchor("2026-10-05T09:00");
+        legacy.setMemberIds("11,77");
+        rows.add(legacy);
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> members = (List<Map<String, Object>>) svc.view(3L, java.time.Instant.now()).get("members");
+        assertThat(members).extracting(m -> m.get("missing")).containsExactly(false, true);
+        assertThat(svc.save(3L, true, "WEEKLY", "2026-10-05T09:00", List.of(11L, 77L), false, "a").getMemberIds()).isEqualTo("11");
+    }
+
+    @Test
     @DisplayName("bellek: aynı takım kümesi 30 sn içinde yeniden sorgulanmaz; kayıt belleği temizler")
     void cached() {
         schedule(1L, true, List.of(10L));
@@ -122,9 +148,12 @@ class OnCallServiceTest {
                 .hasMessageContaining("geçerli");
         assertThatThrownBy(() -> svc.save(1L, true, "WEEKLY", "2026-10-05T09:00", List.of(), false, "a"))
                 .hasMessageContaining("en az bir");
+        // Silinmiş hesap (2026-10-22, UIA-A5 / K11): kayıt REDDEDİLMEZ, kişi listeden düşer; açık çizelgede kimse kalmazsa
+        // "en az bir nöbetçi" kuralı devreye girer.
         org.mockito.Mockito.doReturn(List.of()).when(users).findAllById(any());
-        assertThatThrownBy(() -> svc.save(1L, false, "WEEKLY", "2026-10-05T09:00", List.of(10L), false, "a"))
-                .hasMessageContaining("bulunamadı");
+        assertThat(svc.save(1L, false, "WEEKLY", "2026-10-05T09:00", List.of(10L), false, "a").getMemberIds()).isNull();
+        assertThatThrownBy(() -> svc.save(1L, true, "WEEKLY", "2026-10-05T09:00", List.of(10L), false, "a"))
+                .hasMessageContaining("en az bir");
         List<Long> many = new ArrayList<>();
         for (long i = 0; i < 51; i++) many.add(i);
         assertThatThrownBy(() -> svc.save(1L, false, "WEEKLY", "2026-10-05T09:00", many, false, "a"))

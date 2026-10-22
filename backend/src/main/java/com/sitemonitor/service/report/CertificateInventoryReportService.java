@@ -299,10 +299,33 @@ public class CertificateInventoryReportService {
                 built.subject(), built.html(), null, built.attachments());
 
         archive(built, to, cc, status, "CERT_INVENTORY_REPORT");
-        record(year, month, status.startsWith("FAILED") ? "FAILED" : "SENT", built, String.join(", ", to));
-        log.info("Aylık envanter raporu gönderildi: {} → {} ({} kayıt, {} bulgu)",
-                built.monthLabel(), Arrays.toString(to), built.rowCount(), built.findingCount());
+        // Geçmiş satırı postanın GERÇEK sonucunu taşır (2026-10-22, UIA-C2): eskiden FAILED olmayan her şey SENT yazılıyordu —
+        // kanal kapalı (SKIPPED_DISABLED), alıcıların hepsi pasif (SKIPPED: …) ya da 421 kuyruğu (QUEUED_RETRY) "gönderildi"
+        // görünüyor ve "son gönderim" olarak raporlanıyordu.
+        record(year, month, historyStatus(status), built, String.join(", ", to));
+        log.info("Aylık envanter raporu: {} → {} ({} kayıt, {} bulgu) — durum {}",
+                built.monthLabel(), com.sitemonitor.service.SecretMask.maskEmails(to), built.rowCount(), built.findingCount(), status);
         return new SendResult(status, built.rowCount(), built.findingCount(), to, built.subject());
+    }
+
+    /**
+     * E-posta gönderim sonucunu geçmiş durumuna indirger (UIA-C2): {@code SENT} → SENT, {@code QUEUED…} → QUEUED (421 kuyruğu —
+     * sonucu e-posta günlüğünde), {@code SKIPPED…} → SKIPPED (kanal kapalı / alıcılar pasif — denenmedi), başka her şey
+     * (FAILED: …, boş) → FAILED. SKIPPED de QUEUED de "gönderildi" DEĞİLDİR.
+     */
+    public static String historyStatus(String mailStatus) {
+        if (mailStatus == null || mailStatus.isBlank()) return "FAILED";
+        if ("SENT".equals(mailStatus)) return "SENT";
+        if (mailStatus.startsWith("QUEUED")) return "QUEUED";
+        if (mailStatus.startsWith("SKIPPED")) return "SKIPPED";
+        if ("NO_RECIPIENT".equals(mailStatus) || "DISABLED".equals(mailStatus) || "ALREADY_SENT".equals(mailStatus)) return mailStatus;
+        return "FAILED";
+    }
+
+    /** Posta alıcıya ulaştı / teslim kuyruğunda mı (test gönderiminin "başarılı" kuralı — UIA-C2). */
+    public static boolean delivered(String mailStatus) {
+        String h = historyStatus(mailStatus);
+        return "SENT".equals(h) || "QUEUED".equals(h);
     }
 
     /** Ayarlar sayfasındaki "şimdi test gönder" — idempotency kaydı YAZILMAZ. */
@@ -403,6 +426,10 @@ public class CertificateInventoryReportService {
      */
     private boolean sentToday(int year, int month) {
         return logRepo.findByReportYearAndMonthNo(year, month)
+                // Ulaşmayan deneme (FAILED / SKIPPED / alıcı yok) planlı gönderimi ENGELLEMEZ (UIA-C2): sabah elle "Şimdi
+                // çalıştır" SMTP kapalıyken düştüyse ayın planlı raporu yine gider. Eski satırların durumu (SENT / boş) eskisi gibi engeller.
+                .filter(l -> l.getStatus() == null
+                        || !("FAILED".equals(l.getStatus()) || "SKIPPED".equals(l.getStatus()) || "NO_RECIPIENT".equals(l.getStatus())))
                 .map(CertInventoryReportLog::getSentAt)
                 .filter(v -> v != null && !v.isBlank())
                 .map(v -> {

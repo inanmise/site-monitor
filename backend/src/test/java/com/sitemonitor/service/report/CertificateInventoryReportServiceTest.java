@@ -278,4 +278,57 @@ class CertificateInventoryReportServiceTest {
 
         assertThat(service.sendMonthlyReport(false).status()).isNotEqualTo("ALREADY_SENT");
     }
+
+    // ── 2026-10-22 (UIA-C2 / K9): geçmiş satırı gerçek sonucu taşır ─────────────────────────
+
+    private void stubMinimalBuild() {
+        when(appSettings.getBoolean(eq(CertificateInventoryReportService.ENABLED_KEY),
+                org.mockito.ArgumentMatchers.anyBoolean())).thenReturn(true);
+        when(hygieneService.analyze(any(), anyInt())).thenReturn(new InventoryHygieneService.Result(List.of(), 0));
+        when(hygieneService.counts(any())).thenReturn(java.util.Map.of());
+        when(appSettings.getString(eq(CertificateInventoryReportService.EXTRA_TO_KEY), any())).thenReturn("ek@example.com");
+    }
+
+    @Test
+    @DisplayName("UIA-C2: kanal kapalı (SKIPPED_DISABLED) gönderim geçmişe SKIPPED yazılır — SENT değil; 421 kuyruğu QUEUED; hata FAILED")
+    void historyStatusFollowsMailResult() {
+        stubMinimalBuild();
+        when(logRepo.findByReportYearAndMonthNo(anyInt(), anyInt())).thenReturn(java.util.Optional.empty());
+        org.mockito.ArgumentCaptor<com.sitemonitor.model.CertInventoryReportLog> cap =
+                org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.CertInventoryReportLog.class);
+        for (String[] c : new String[][]{{"SKIPPED_DISABLED", "SKIPPED"}, {"SKIPPED: pasif kullanıcı", "SKIPPED"},
+                {"QUEUED_RETRY: 421", "QUEUED"}, {"FAILED: Connection refused", "FAILED"}, {"SENT", "SENT"}}) {
+            org.mockito.Mockito.clearInvocations(logRepo);
+            when(emailService.sendHtmlWithAttachments(any(), any(), anyString(), any(), any(), any())).thenReturn(c[0]);
+            var r = service.sendMonthlyReport(true);
+            assertThat(r.status()).isEqualTo(c[0]);
+            org.mockito.Mockito.verify(logRepo).save(cap.capture());
+            assertThat(cap.getValue().getStatus()).as(c[0]).isEqualTo(c[1]);
+        }
+        assertThat(CertificateInventoryReportService.delivered("QUEUED_RETRY")).isTrue();
+        assertThat(CertificateInventoryReportService.delivered("SENT")).isTrue();
+        assertThat(CertificateInventoryReportService.delivered("SKIPPED_DISABLED")).isFalse();
+        assertThat(CertificateInventoryReportService.delivered(null)).isFalse();
+    }
+
+    @Test
+    @DisplayName("UIA-C2: bugün ULAŞMAYAN deneme (FAILED / SKIPPED / alıcı yok) planlı gönderimi engellemez; SENT / QUEUED / eski boş durum engeller")
+    void sameDayGuardIgnoresUndeliveredAttempts() {
+        stubMinimalBuild();
+        String today = java.time.LocalDateTime.now(java.time.ZoneOffset.UTC)
+                .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss"));
+        when(emailService.sendHtmlWithAttachments(any(), any(), anyString(), any(), any(), any())).thenReturn("SENT");
+        for (String st : new String[]{"FAILED", "SKIPPED", "NO_RECIPIENT"}) {
+            var row = logRow(today);
+            row.setStatus(st);
+            when(logRepo.findByReportYearAndMonthNo(anyInt(), anyInt())).thenReturn(java.util.Optional.of(row));
+            assertThat(service.sendMonthlyReport(false).status()).as(st).isNotEqualTo("ALREADY_SENT");
+        }
+        for (String st : new String[]{"SENT", "QUEUED"}) {
+            var row = logRow(today);
+            row.setStatus(st);
+            when(logRepo.findByReportYearAndMonthNo(anyInt(), anyInt())).thenReturn(java.util.Optional.of(row));
+            assertThat(service.sendMonthlyReport(false).status()).as(st).isEqualTo("ALREADY_SENT");
+        }
+    }
 }
