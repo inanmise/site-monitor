@@ -1,5 +1,7 @@
 package com.sitemonitor.service.access;
 
+import com.sitemonitor.service.cache.CacheBus;
+import com.sitemonitor.service.cache.CacheBusNames;
 import com.sitemonitor.config.GlobalExceptionHandler;
 import com.sitemonitor.controller.SessionScope;
 import com.sitemonitor.model.AppUser;
@@ -133,8 +135,28 @@ public class TeamAccessGrantService {
         }
     }
 
-    /** Bu podun görüntüsünü düşürür (kayıt sonrası; testler). */
+    /**
+     * Bu podun görüntüsünü düşürür (kayıt sonrası; testler); öteki pod'lar önbellek veri yoluyla (2026-10-22, çok pod R2-A,
+     * MP-30: {@link CacheBus}, ad {@link CacheBusNames#TEAM_GRANTS}) en geç bir yoklama aralığında (~2 sn) — eskiden geri
+     * alınan / düşürülen paylaşım öteki pod'da {@code cacheMs} (30 sn) boyunca düzenleme / silme yetkisi veriyordu.
+     */
     public void invalidate() {
+        invalidateLocal();
+        CacheBus b = cacheBus;
+        if (b != null) b.bump(CacheBusNames.TEAM_GRANTS);
+    }
+
+    /** Pod'lar arası boşaltma (MP-30) — yoksa yalnız bu pod. */
+    private volatile CacheBus cacheBus;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setCacheBus(CacheBus bus) {
+        this.cacheBus = bus;
+        if (bus != null) bus.register(CacheBusNames.TEAM_GRANTS, this::invalidateLocal);
+    }
+
+    /** Yalnız bu pod (öteki pod'un yayını uygulanırken; yeniden yayın yok). */
+    void invalidateLocal() {
         generation.incrementAndGet();
         // Görüntü SİLİNMEZ, bayat işaretlenir: bir sonraki okuma yeniden kurar; o kurulum hata verirse önceki görüntü
         // kullanılır (eskiden null'a düşüp HERKESİN paylaşımı 30 sn boşalıyordu).

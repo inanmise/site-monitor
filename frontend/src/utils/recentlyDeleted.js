@@ -6,7 +6,11 @@ import { useMemo, useSyncExternalStore } from 'react'
  *
  * <p><b>Sorun.</b> Silme başarılı dönünce sayfalar kartı ancak tam liste yeniden yüklenince kaldırıyordu (bekleme). Daha
  * kötüsü: sertifika listesi önbellekleri ({@code cert-latest} …) POD BAŞINADIR; silme yalnız isteği işleyen pod'un
- * önbelleğini boşaltır, sonraki GET başka pod'a düşerse silinen kayıt önbellek süresi boyunca GERİ GELİR.
+ * önbelleğini boşaltırdı, sonraki GET başka pod'a düşerse silinen kayıt önbellek süresi boyunca GERİ GELİRDİ. 2026-10-22'den
+ * (çok pod R2-A, MP-30) beri sunucunun önbellek veri yolu öteki pod'ları ~2 sn içinde boşaltır ve silmeyi yapan sekmenin
+ * sonraki GET'i `X-Cache-Min-Gen` ile gider (api/client.js) — işaret yine KALIR: veri yolunun yetişemediği durumlar
+ * (yuvarlanan dağıtımda başlığı tanımayan 20.165.1 pod'u, veri yolu tablosu henüz yok, veritabanı hıçkırığı) ve arka plan
+ * iş parçacığında yapılan boşaltmalar için kartın bir an geri gelmemesinin tek güvencesi.
  *
  * <p><b>Çözüm.</b> Başarılı silmede sayfa öğeyi hemen yerel durumdan çıkarır ve burada işaretler ({@link markDeleted});
  * sunucudan gelen HER liste {@link filterDeleted} ile süzülür — işaret {@link DELETED_TTL_MS} (10 dk, önbellek ömrünün

@@ -235,6 +235,39 @@ function deadlineSignal(signal, ms) {
   return { signal: c.signal, done: () => { clearTimeout(timer); signal?.removeEventListener?.('abort', onAbort) } }
 }
 
+/**
+ * Yazdığını oku — önbellek kuşağı (2026-10-22, çok pod R2-A, MP-30). Yazma yanıtı sunucunun önbellek veri yolu kuşağını
+ * `X-Cache-Gen` başlığında döner; istemci gördüğü EN YÜKSEK değeri {@link CACHE_GEN_TTL_MS} boyunca saklar ve GET / HEAD
+ * isteklerinde `X-Cache-Min-Gen` olarak gönderir. İstek öteki pod'a düşerse o pod önce o kuşağa kadar önbelleklerini
+ * boşaltır (en çok ~500 ms), sonra sunar — "Şimdi kontrol et" / kaydet sonrası liste yeniden yüklemesi eski veriyi göstermez.
+ * Başlığı tanımayan eski pod onu yok sayar (bugünkü davranış). Bozuk / sayı olmayan başlık yok sayılır. Yalnız bu sekmenin
+ * belleğinde (tarayıcı deposu yok); süre dolunca gönderilmez (veritabanı geri yüklenip sayaç küçüldüyse sonsuza dek
+ * beklenmesin).
+ */
+const CACHE_GEN_HEADER = 'X-Cache-Gen'
+const CACHE_MIN_GEN_HEADER = 'X-Cache-Min-Gen'
+export const CACHE_GEN_TTL_MS = 30_000
+let cacheGen = { gen: 0, at: 0 }
+
+/** Yanıt başlığındaki kuşağı saklar (en yüksek kazanır; süresi dolmuşsa yenisi her koşulda). */
+export function rememberCacheGen(raw, now = Date.now()) {
+  const s = raw == null ? '' : String(raw).trim()
+  if (!/^\d{1,15}$/.test(s)) return
+  const g = Number(s)
+  if (!Number.isSafeInteger(g) || g <= 0) return
+  if (g > cacheGen.gen || now - cacheGen.at >= CACHE_GEN_TTL_MS) cacheGen = { gen: g, at: now }
+}
+
+/** GET / HEAD için gönderilecek başlık (yoksa boş nesne). */
+export function cacheMinGenHeaders(method, now = Date.now()) {
+  if (method !== 'GET' && method !== 'HEAD') return {}
+  if (!(cacheGen.gen > 0) || now - cacheGen.at >= CACHE_GEN_TTL_MS) return {}
+  return { [CACHE_MIN_GEN_HEADER]: String(cacheGen.gen) }
+}
+
+/** Test kancası. */
+export function __resetCacheGenForTests() { cacheGen = { gen: 0, at: 0 } }
+
 // Son başarısız API çağrıları (Sorun Bildir otomatik bağlamı) — yalnız yol + durum kodu + zaman.
 // Gövde/başlık ASLA saklanmaz; query string de atılır (gizlilik). Halka tampon: en yeni 5 kayıt.
 const FAILED_RING_MAX = 5
@@ -281,7 +314,11 @@ async function request(path, options = {}) {
       credentials: 'include',
       // X-Lang: sunucu tost/hata metinlerini arayüz dilinde döner (backend Msg.t). Eskiden her
       // ayar sayfası İngilizce arayüzde Türkçe "Ayarlar kaydedildi…" basıyordu (QA ISSUE-001).
-      headers: { ...(isForm ? {} : { 'Content-Type': 'application/json' }), 'X-Lang': uiLang(), ...opts.headers },
+      // X-Cache-Min-Gen (2026-10-22, çok pod): son yazmanın önbellek kuşağı — öteki pod önce boşaltır (cacheMinGenHeaders)
+      headers: {
+        ...(isForm ? {} : { 'Content-Type': 'application/json' }), 'X-Lang': uiLang(), ...cacheMinGenHeaders(method),
+        ...opts.headers,
+      },
       ...opts,
     }
     if (transport) {
@@ -307,6 +344,7 @@ async function request(path, options = {}) {
     recordFailure(path, 0)
     throw e instanceof ApiError ? e : networkError(e)
   }
+  rememberCacheGen(headerOf(res, CACHE_GEN_HEADER))
   if (!res.ok) recordFailure(path, res.status)
   if (res.status === 401) {
     // PASİF HESAP (2026-10-02, kullanıcı kararı): gövde ACCOUNT_INACTIVE taşıyorsa YÖNLENDİRME YOK — uygulama bloklayan

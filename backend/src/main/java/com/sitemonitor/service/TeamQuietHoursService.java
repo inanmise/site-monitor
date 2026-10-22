@@ -1,5 +1,7 @@
 package com.sitemonitor.service;
 
+import com.sitemonitor.service.cache.CacheBus;
+import com.sitemonitor.service.cache.CacheBusNames;
 import com.sitemonitor.model.QuietDigestItem;
 import com.sitemonitor.model.Team;
 import com.sitemonitor.repository.QuietDigestItemRepository;
@@ -28,7 +30,9 @@ import java.util.*;
  *
  * <p><b>Maliyet.</b> Ayarlar bellek-içi önbellekten okunur: dakikada en çok BİR sorgu ({@code findQuietConfigured}),
  * alarm/alıcı başına sorgu YOK. Tanımlı takım yoksa harita boştur ve gönderim yolu bugünküyle bayt bayt aynıdır. Ayar
- * değişince bu pod'da önbellek hemen düşer ({@link #invalidate}); diğer pod'lar en geç {@link #CACHE_TTL} içinde görür.
+ * değişince bu pod'da önbellek hemen düşer ({@link #invalidate}); öteki pod'lar önbellek veri yoluyla (2026-10-22, çok pod
+ * R2-A, MP-30: {@link CacheBus}, ad {@link CacheBusNames#QUIET_HOURS}) en geç bir yoklama aralığında (~2 sn) görür —
+ * eskiden {@link #CACHE_TTL} boyunca tarama lideri kapatılan pencerede UYARI postasını özete erteliyordu (ya da tersi).
  */
 @Slf4j
 @Service
@@ -84,9 +88,20 @@ public class TeamQuietHoursService {
         return fresh;
     }
 
-    /** Takım ayarı değişti — bu pod'un önbelleği hemen düşer. */
+    /** Takım ayarı değişti — bu pod'un önbelleği hemen düşer; öteki pod'lar veri yoluyla (MP-30). */
     public void invalidate() {
         snapshot = null;
+        CacheBus b = cacheBus;
+        if (b != null) b.bump(CacheBusNames.QUIET_HOURS);
+    }
+
+    /** Pod'lar arası boşaltma (MP-30) — yoksa yalnız bu pod. */
+    private volatile CacheBus cacheBus;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setCacheBus(CacheBus bus) {
+        this.cacheBus = bus;
+        if (bus != null) bus.register(CacheBusNames.QUIET_HOURS, () -> snapshot = null);
     }
 
     public boolean anyConfigured() {

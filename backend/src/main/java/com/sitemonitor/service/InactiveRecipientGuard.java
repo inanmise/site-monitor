@@ -1,5 +1,7 @@
 package com.sitemonitor.service;
 
+import com.sitemonitor.service.cache.CacheBus;
+import com.sitemonitor.service.cache.CacheBusNames;
 import com.sitemonitor.model.EscalationContact;
 import com.sitemonitor.repository.AppUserRepository;
 import jakarta.mail.Address;
@@ -34,7 +36,9 @@ import java.util.Set;
  *
  * <p><b>Maliyet.</b> Pasif kullanıcıların kimliği + "yalnız pasife ait" adresleri {@code site.monitor.notify.inactive-cache-ms}
  * (varsayılan 60 sn) boyunca bellekte tutulur — e-posta / kişi başına sorgu YOK (tazelemede iki hafif projeksiyon sorgusu).
- * Aktiflik değişince bu pod'da {@link #evict()} (UserService) anında tazeler; diğer pod'lar en geç TTL sonra görür.
+ * Aktiflik değişince bu pod'da {@link #evict()} (UserService) anında tazeler; öteki pod'lar önbellek veri yoluyla (2026-10-22,
+ * çok pod R2-A, MP-30: {@link CacheBus}, ad {@link CacheBusNames#INACTIVE_RECIPIENTS}) en geç bir yoklama aralığında
+ * (~2 sn) görür — eskiden tarama lideri pasife alınan kişiye TTL boyunca posta / webhook gönderiyordu.
  *
  * <p><b>Hiç pasif kullanıcı yokken</b> her çağrı aynı listeyi / mesajı DEĞİŞTİRMEDEN döner — bildirim yolları bayt bayt
  * bugünküyle aynıdır. Okuma hatası = süzgeç yok (fail-open): bir DB hıçkırığı alarm bildirimini düşürmemeli.
@@ -67,9 +71,20 @@ public class InactiveRecipientGuard {
         this.userRepo = userRepo;
     }
 
-    /** Önbelleği düşürür — sonraki çağrı DB'den tazeler (aktiflik değişti). */
+    /** Önbelleği düşürür — sonraki çağrı DB'den tazeler (aktiflik değişti); öteki pod'lar veri yoluyla (MP-30). */
     public void evict() {
         snapshot = null;
+        CacheBus b = cacheBus;
+        if (b != null) b.bump(CacheBusNames.INACTIVE_RECIPIENTS);
+    }
+
+    /** Pod'lar arası boşaltma (MP-30) — yoksa yalnız bu pod. */
+    private volatile CacheBus cacheBus;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setCacheBus(CacheBus bus) {
+        this.cacheBus = bus;
+        if (bus != null) bus.register(CacheBusNames.INACTIVE_RECIPIENTS, () -> snapshot = null);
     }
 
     Snapshot snapshot() {

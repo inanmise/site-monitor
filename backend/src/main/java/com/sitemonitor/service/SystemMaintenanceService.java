@@ -1,5 +1,7 @@
 package com.sitemonitor.service;
 
+import com.sitemonitor.service.cache.CacheBus;
+import com.sitemonitor.service.cache.CacheBusNames;
 import com.sitemonitor.model.AppUser;
 import com.sitemonitor.model.SystemMaintenanceSuppression;
 import com.sitemonitor.model.SystemMaintenanceWindow;
@@ -198,8 +200,25 @@ public class SystemMaintenanceService {
         return snapshot.windows();
     }
 
-    /** Bu pod'un önbelleğini boşaltır (yönetici yazımından sonra). */
-    public void invalidate() { snapshot = null; }
+    /**
+     * Bu pod'un önbelleğini boşaltır (yönetici yazımından sonra); öteki pod'lar önbellek veri yoluyla (2026-10-22, çok pod
+     * R2-A, MP-30: {@link CacheBus}, ad {@link CacheBusNames#SYSTEM_MAINTENANCE}) — {@code cacheMs} (5 sn) yerine bir
+     * yoklama aralığı ve yazan kullanıcının sonraki okuması (istek başlığı) anında.
+     */
+    public void invalidate() {
+        snapshot = null;
+        CacheBus b = cacheBus;
+        if (b != null) b.bump(CacheBusNames.SYSTEM_MAINTENANCE);
+    }
+
+    /** Pod'lar arası boşaltma (MP-30) — yoksa yalnız bu pod. */
+    private volatile CacheBus cacheBus;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setCacheBus(CacheBus bus) {
+        this.cacheBus = bus;
+        if (bus != null) bus.register(CacheBusNames.SYSTEM_MAINTENANCE, () -> snapshot = null);
+    }
 
     /** Kullanıcıya görünen en yakın pencere: AKTİF olan, yoksa başlamamış en erken pencere. */
     public Optional<SystemMaintenanceWindow> current() {

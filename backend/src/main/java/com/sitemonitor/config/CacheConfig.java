@@ -1,9 +1,11 @@
 package com.sitemonitor.config;
 
 import com.github.benmanes.caffeine.cache.Caffeine;
+import com.sitemonitor.service.cache.BusAwareCacheManager;
+import com.sitemonitor.service.cache.CacheBus;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.cache.CacheManager;
 import org.springframework.cache.annotation.EnableCaching;
-import org.springframework.cache.caffeine.CaffeineCacheManager;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -22,6 +24,11 @@ import java.util.List;
  * Bu CacheManager bean'i, otokonfigürasyondaki tek-spec Caffeine yerine per-cache
  * TTL sağlar (ConditionalOnMissingBean → auto-config geri çekilir; application.properties'teki
  * spring.cache.caffeine.spec artık kullanılmaz).
+ *
+ * <p><b>Çok pod (2026-10-22, R2-A, MP-30).</b> Yönetici {@link BusAwareCacheManager}'dır: her önbelleğin boşaltılması
+ * ({@code @CacheEvict}, {@code evictAllCaches}, elle {@code clear()}) {@link CacheBus} ile öteki pod'lara da duyurulur —
+ * çağrı yerlerinde değişiklik yok. Veri yolu fasulyesi yoksa (dilim testleri, {@code CertificateServiceCacheTest}) yönetici
+ * düz Caffeine gibi çalışır.
  */
 @Configuration
 @EnableCaching
@@ -57,8 +64,8 @@ public class CacheConfig {
     private static final long      MAX_SIZE   = 1000;
 
     @Bean
-    public CacheManager cacheManager() {
-        CaffeineCacheManager mgr = new CaffeineCacheManager();
+    public CacheManager cacheManager(ObjectProvider<CacheBus> cacheBus) {
+        BusAwareCacheManager mgr = new BusAwareCacheManager(cacheBus);
         // Varsayılan spec: isimli-özel olmayan tüm cache'ler 60 sn / 1000 (eski davranış).
         mgr.setCaffeine(Caffeine.newBuilder().recordStats().maximumSize(MAX_SIZE).expireAfterWrite(DEFAULT_TTL));
         // Cert dashboard cache'leri: uzun TTL (yenileme aralığıyla hizalı).

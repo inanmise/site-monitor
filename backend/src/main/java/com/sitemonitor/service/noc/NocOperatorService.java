@@ -1,5 +1,7 @@
 package com.sitemonitor.service.noc;
 
+import com.sitemonitor.service.cache.CacheBus;
+import com.sitemonitor.service.cache.CacheBusNames;
 import com.sitemonitor.controller.SessionScope;
 import com.sitemonitor.model.NocSettings;
 import com.sitemonitor.model.Team;
@@ -256,9 +258,24 @@ public class NocOperatorService {
         return NocGroupIds.parse(NocGroupIds.format(out));
     }
 
-    /** Bu podun önbelleğini düşürür (kayıt sonrası; testler). */
+    /** Bu podun önbelleğini düşürür (kayıt sonrası; testler); öteki pod'lar önbellek veri yoluyla (MP-30). */
     public void invalidate() {
         snapshot = null;
+        CacheBus b = cacheBus;
+        if (b != null) b.bump(CacheBusNames.NOC_OPERATORS);
+    }
+
+    /**
+     * Pod'lar arası boşaltma (2026-10-22, çok pod R2-A, MP-30) — 7/24 takımı kaldırılınca üyeleri öteki pod'da kurum geneli
+     * izleme OKUMASINI {@code cacheMs} (30 sn) boyunca tutuyordu; veri yoluyla en geç bir yoklama aralığı (~2 sn). Yoksa
+     * yalnız bu pod.
+     */
+    private volatile CacheBus cacheBus;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setCacheBus(CacheBus bus) {
+        this.cacheBus = bus;
+        if (bus != null) bus.register(CacheBusNames.NOC_OPERATORS, () -> snapshot = null);
     }
 
     // ── İç ───────────────────────────────────────────────────────────────────

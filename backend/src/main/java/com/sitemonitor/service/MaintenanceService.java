@@ -1,5 +1,7 @@
 package com.sitemonitor.service;
 
+import com.sitemonitor.service.cache.CacheBus;
+import com.sitemonitor.service.cache.CacheBusNames;
 import com.sitemonitor.model.MaintenanceWindow;
 import com.sitemonitor.repository.MaintenanceWindowRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -15,7 +17,10 @@ import java.util.*;
 /**
  * Bakım penceresi motoru: occurrence/recurrence hesabı (DST-güvenli, java.time ZonedDateTime) + bellek-içi aktif-hedef
  * cache'i. Sweep/alarm yolu {@link #isUnderMaintenance(String)} ile O(1) sorgular — per-check DB sorgusu YOK.
- * Cache @Scheduled ile ~30sn'de bir ve her CRUD yazımında ({@link #refresh()}) tazelenir.
+ * Cache @Scheduled ile ~30sn'de bir ve her CRUD yazımında ({@link #refresh()}) tazelenir. Çok pod (2026-10-22, R2-A, MP-30):
+ * CRUD yazımı önbellek veri yoluyla ({@link CacheBus}, ad {@link CacheBusNames#MAINTENANCE_WINDOWS}) öteki pod'lara da
+ * duyurulur — tarama lideri "şimdi başlat" penceresini 30 sn yerine ~2 sn içinde görür (alarm bastırma) ve sertifika kontrol
+ * satırlarının {@code maintenance} damgası o boşlukta yanlış yazılmaz. Zamanlanmış tazeleme yayın YAPMAZ.
  */
 @Slf4j
 @Service
@@ -35,11 +40,33 @@ public class MaintenanceService {
     // ── Bellek cache ─────────────────────────────────────────────────────────
     @Scheduled(fixedDelayString = "${site.monitor.maintenance.refresh-ms:30000}", initialDelayString = "20000")
     public void scheduledRefresh() {
-        try { refresh(); } catch (Exception e) { log.warn("Maintenance cache refresh başarısız: {}", e.getMessage()); }
+        try { reload(); } catch (Exception e) { log.warn("Maintenance cache refresh başarısız: {}", e.getMessage()); }
     }
 
-    /** Etkin pencereleri tarayıp şu an aktif olanların hedeflerini birleştirir. CRUD sonrası da çağrılır (anında etki). */
-    public synchronized void refresh() {
+    /**
+     * CRUD sonrası (anında etki): bu pod'un önbelleğini tazeler ve öteki pod'lara duyurur (MP-30). Okuma hata verirse yine de
+     * duyurulur (öteki pod'lar kendi okumasını dener) ve hata çağırana iletilir (bugünkü davranış).
+     */
+    public void refresh() {
+        try {
+            reload();
+        } finally {
+            CacheBus b = cacheBus;
+            if (b != null) b.bump(CacheBusNames.MAINTENANCE_WINDOWS);
+        }
+    }
+
+    /** Pod'lar arası boşaltma (MP-30) — yoksa yalnız bu pod (30 sn tazeleme). */
+    private volatile CacheBus cacheBus;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setCacheBus(CacheBus bus) {
+        this.cacheBus = bus;
+        if (bus != null) bus.register(CacheBusNames.MAINTENANCE_WINDOWS, this::reload);
+    }
+
+    /** Etkin pencereleri tarayıp şu an aktif olanların hedeflerini birleştirir (yalnız bu pod; yayın yok). */
+    synchronized void reload() {
         Instant now = Instant.now();
         Set<String> targets = new HashSet<>();
         boolean all = false;

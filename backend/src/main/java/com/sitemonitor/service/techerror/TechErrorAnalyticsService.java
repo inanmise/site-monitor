@@ -1,5 +1,7 @@
 package com.sitemonitor.service.techerror;
 
+import com.sitemonitor.service.cache.CacheBus;
+import com.sitemonitor.service.cache.CacheBusNames;
 import com.sitemonitor.model.TechErrorChannel;
 import com.sitemonitor.repository.TechErrorChannelRepository;
 import com.sitemonitor.repository.TechErrorReportRepository;
@@ -207,8 +209,27 @@ public class TechErrorAnalyticsService {
      * yeni anahtara yazmaz.
      */
     public void invalidate() {
+        invalidateLocal();
+        CacheBus b = cacheBus;
+        if (b != null) b.bump(CacheBusNames.TECH_ERROR_ANALYTICS);
+    }
+
+    /** Yalnız bu pod (öteki pod'un yayını uygulanırken; yeniden yayın yok). */
+    void invalidateLocal() {
         generation.incrementAndGet();
         memo.clear();
+    }
+
+    /**
+     * Pod'lar arası boşaltma (2026-10-22, çok pod R2-A, MP-30: ad {@link CacheBusNames#TECH_ERROR_ANALYTICS}) — eskiden pod A'da
+     * kaydedilen değer pod B'nin analiz sekmesinde 60 sn görünmüyordu. Yoksa yalnız bu pod.
+     */
+    private volatile CacheBus cacheBus;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setCacheBus(CacheBus bus) {
+        this.cacheBus = bus;
+        if (bus != null) bus.register(CacheBusNames.TECH_ERROR_ANALYTICS, this::invalidateLocal);
     }
 
     /**
