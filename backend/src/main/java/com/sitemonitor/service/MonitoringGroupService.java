@@ -103,6 +103,21 @@ public class MonitoringGroupService {
         }
     }
 
+    /**
+     * {@link #getOrCreate}'in YAZMAYAN ikizi (2026-10-22, ADMIN-8): kayıtlı grubun kanonik adı; grup yoksa YENİ olacağı ad
+     * (kırpılmış ham ad). İçe aktarma önizlemesi bununla karşılaştırır — önizleme {@code monitoring_groups}'a satır eklemez.
+     * Boş ad → null.
+     */
+    @Transactional(readOnly = true)
+    public String canonicalOrNew(Long teamId, String type, String rawName) {
+        if (rawName == null) return null;
+        String name = rawName.trim();
+        if (name.isEmpty()) return null;
+        if (teamId == null) return name;
+        return groupRepo.findByTeamIdAndTypeAndNameLower(teamId, type, name.toLowerCase(Locale.ROOT))
+                .map(MonitoringGroup::getName).orElse(name);
+    }
+
     /** Monitör nesnesinden İZLEME TÜRÜNÜ çıkararak get-or-create (controller'larda tek-satır, tür-agnostik kullanım). */
     @Transactional
     public String getOrCreateFor(Object monitor, Long teamId, String rawName, String actor) {

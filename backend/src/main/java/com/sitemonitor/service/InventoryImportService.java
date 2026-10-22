@@ -86,6 +86,29 @@ public class InventoryImportService {
      */
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private PermanentDeletionService permanentDeletion;
+    /**
+     * İçe aktarmayla pasife alınan kaydın açık alarmları (2026-10-22, ADMIN-6): düzenleme ve toplu pasifleştirme
+     * {@code closeAlertsOnDeactivate} çağırıyordu, içe aktarma çağırmıyordu — tarama kaydı atlar, alarm sonsuza dek açık
+     * kalırdı. Alan enjeksiyonu + {@code @Lazy} (döngü yok, kurucu / {@code @InjectMocks} testleri değişmesin); yokken atlanır.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    @org.springframework.context.annotation.Lazy
+    private EscalationService escalationService;
+    /** Takım değişince yabancı bildirim grubu bağı düşer (2026-10-22, ADMIN-13) — {@code AdminController.validInventoryGroup} ile aynı kural. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.repository.NotificationGroupRepository notificationGroupRepo;
+
+    void setEscalationService(EscalationService s) { this.escalationService = s; }
+    void setNotificationGroupRepo(com.sitemonitor.repository.NotificationGroupRepository r) { this.notificationGroupRepo = r; }
+
+    /**
+     * Sütun genişlikleri (2026-10-22, ADMIN-9): {@link CertificateInventory}'deki VARCHAR sınırları. Aşan hücre önizlemede
+     * "güncellenecek" görünüp işlemede tüm dosyayı (tek işlem) geri alıyordu; artık satır {@code value_too_long} hatasıyla
+     * düşer, sütun anahtarı {@code changes}'te. TEXT sütunlar eski 2000 karakter kırpmasıyla kalır.
+     */
+    static final Map<String, Integer> COLUMN_CAPS = Map.of(
+            "purchased_by", 200, "svc_mgmt_contact", 300, "app_dev_contact", 300, "iis_admin_contact", 300,
+            "waf_admin_contact", 300, "platform_detail", 160, "group", 255);
 
     /**
      * Satır sonucu: {@code action} = create | update | skip | error; {@code reason} makine kodu.
@@ -181,6 +204,9 @@ public class InventoryImportService {
                 if (platform == null) { out.add(new RowResult(line, domain, "error", "unknown_platform", List.of())); errors++; continue; }
             }
 
+            String tooLong = tooLongColumn(r);
+            if (tooLong != null) { out.add(new RowResult(line, domain, "error", "value_too_long", List.of(tooLong))); errors++; continue; }
+
             String nocGroups;
             try { nocGroups = resolveNocGroups(r.get("noc_groups")); }
             catch (IllegalArgumentException e) { out.add(new RowResult(line, domain, "error", "unknown_noc_group", List.of())); errors++; continue; }
@@ -205,11 +231,17 @@ public class InventoryImportService {
                     out.add(new RowResult(line, domain, "skip", "scope", List.of())); skipped++; continue;
                 }
                 Map<String, Object> before = AuditDiff.snapshot(ex, HISTORY_FIELDS);
-                List<String> changes = apply(ex, r, teamId, ugTeamId, port, tier, platform, actor, false);
+                boolean wasActive = !Boolean.FALSE.equals(ex.getActive());
+                List<String> changes = apply(ex, r, teamId, ugTeamId, port, tier, platform, actor, false, dryRun);
                 if (changes.isEmpty()) { out.add(new RowResult(line, domain, "skip", "no_change", List.of())); skipped++; continue; }
                 if (!dryRun) {
                     ex.setUpdatedAt(now);
+                    // "Son güncelleyen" künyesi (2026-10-22, ADMIN-4): updated_at "şimdi" olurken updated_by eskide kalıyordu.
+                    if (session != null) monitorHistory.stampUpdated(ex, session);
                     inventoryRepo.save(ex);
+                    if (wasActive && changes.contains("active") && Boolean.FALSE.equals(ex.getActive()) && escalationService != null) {
+                        escalationService.closeAlertsOnDeactivate(ex.getDomain());
+                    }
                     monitorHistory.record(MonitorHistoryService.INVENTORY, ex.getId(), ex.getDomain(), ex.getTeamId(),
                             MonitorHistoryService.UPDATE, before, AuditDiff.snapshot(ex, HISTORY_FIELDS), "import", session);
                     // Takım değiştiyse türev Port/DNS izlemeleri de yeni takıma geçer — düzenleme, toplu set-team ve
@@ -232,7 +264,7 @@ public class InventoryImportService {
                 it.setPort(port != null ? port : 443);
                 it.setActive(true);
                 it.setTeamId(teamId);
-                List<String> changes = apply(it, r, teamId, ugTeamId, port, tier, platform, actor, true);
+                List<String> changes = apply(it, r, teamId, ugTeamId, port, tier, platform, actor, true, dryRun);
                 if (!dryRun) {
                     // Aynı adlı eski çöp satırı (harf duyarsız) önce kalıcı silinir — DB'nin UNIQUE(domain) kısıtına çarpmasın.
                     if (permanentDeletion != null) permanentDeletion.purgeLegacyBinRows(domain);
@@ -253,17 +285,31 @@ public class InventoryImportService {
 
     /** Dolu gelen alanları uygular; değişen alan adlarını döner. {@code isNew}: port/team her zaman yazılır. */
     private List<String> apply(CertificateInventory it, Map<String, Object> r, Long teamId, Long ugTeamId,
-                               Integer port, Integer tier, String platform, String actor, boolean isNew) {
+                               Integer port, Integer tier, String platform, String actor, boolean isNew, boolean dryRun) {
         List<String> ch = new ArrayList<>();
         if (port != null && !isNew && !Objects.equals(it.getPort(), port)) { it.setPort(port); ch.add("port"); }
-        if (teamId != null && !isNew && !Objects.equals(it.getTeamId(), teamId)) { it.setTeamId(teamId); ch.add("team"); }
+        if (teamId != null && !isNew && !Objects.equals(it.getTeamId(), teamId)) {
+            it.setTeamId(teamId); ch.add("team");
+            // Takım değişti (2026-10-22, ADMIN-13): eski takımın bildirim grubu yeni takımda geçersizdir (gönderimde yok
+            // sayılır, formda "okunamayan grup" diye kilitli görünür, kayıt geri dönerse sessizce yeniden uygulanırdı).
+            Long gid = it.getNotificationGroupId();
+            if (gid != null && !groupBelongsTo(gid, teamId)) { it.setNotificationGroupId(null); ch.add("notification_group"); }
+        }
         if (ugTeamId != null && !Objects.equals(it.getUgTeamId(), ugTeamId)) { it.setUgTeamId(ugTeamId); ch.add("ug_team"); }
+        // UG = SY anlamsız (aynı takım iki rolde): moveAll / transfer ile aynı kural — UG düşer.
+        if (it.getUgTeamId() != null && Objects.equals(it.getUgTeamId(), it.getTeamId())) {
+            it.setUgTeamId(null);
+            if (!ch.remove("ug_team") && !isNew) ch.add("ug_team");
+        }
         if (tier != null && !Objects.equals(it.getTier(), tier)) { it.setTier(tier); ch.add("tier"); }
         Boolean active = boolOrNull(r.get("active"));
         if (active != null && !Objects.equals(it.getActive(), active)) { it.setActive(active); ch.add("active"); }
         String group = str(r.get("group"));
         if (!group.isBlank()) {
-            String g = monitoringGroupService.getOrCreate(it.getTeamId(), "cert", group, actor);
+            // Kuru koşu grubu YARATMAZ (2026-10-22, ADMIN-8): getOrCreate REQUIRES_NEW ile hemen yazıyordu — yalnız "Önizle"
+            // denen dosyanın grup adları monitoring_groups'a düşüyordu.
+            String g = dryRun ? previewGroup(it.getTeamId(), group)
+                              : monitoringGroupService.getOrCreate(it.getTeamId(), "cert", group, actor);
             if (!Objects.equals(it.getGroupName(), g)) { it.setGroupName(g); ch.add("group"); }
         }
         text(r, "description", it.getDescription(), v -> it.setDescription(v), ch);
@@ -331,6 +377,33 @@ public class InventoryImportService {
         Map<String, Object> copy = new HashMap<>(r);
         copy.put(NOC_GROUPS_RESOLVED, ids);
         return copy;
+    }
+
+    /** Önizlemede grubun kanonik adı (kayıtlıysa) ya da yeni olacağı ad — hiçbir şey yazılmaz. */
+    private String previewGroup(Long teamId, String raw) {
+        String g = monitoringGroupService.canonicalOrNew(teamId, "cert", raw);
+        return g != null ? g : raw.trim();
+    }
+
+    /** Sütun sınırını aşan ilk hücrenin anahtarı (kırpılmış değer üstünden); yoksa null. */
+    static String tooLongColumn(Map<String, Object> r) {
+        for (String key : COLUMNS) {
+            Integer cap = COLUMN_CAPS.get(key);
+            if (cap == null) continue;
+            if (str(r.get(key)).trim().length() > cap) return key;
+        }
+        return null;
+    }
+
+    /** Bildirim grubu bu takımın mı? Depo yoksa (dilimli test) ya da okunamazsa bağ korunur (eski davranış). */
+    private boolean groupBelongsTo(Long groupId, Long teamId) {
+        if (notificationGroupRepo == null) return true;
+        try {
+            return notificationGroupRepo.findById(groupId).map(g -> Objects.equals(g.getTeamId(), teamId)).orElse(false);
+        } catch (Exception e) {
+            log.debug("import: bildirim grubu okunamadı {}: {}", groupId, e.toString());
+            return true;
+        }
     }
 
     private static void text(Map<String, Object> r, String key, String cur, java.util.function.Consumer<String> set, List<String> ch) {

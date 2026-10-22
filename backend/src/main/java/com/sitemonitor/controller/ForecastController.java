@@ -68,6 +68,7 @@ public class ForecastController {
         inv.setRenewalPlannedByName(dn != null ? dn.toString() : String.valueOf(session.getAttribute("username")));
         inv.setRenewalPlannedNote(note == null || note.isBlank() ? null : note);
         inv.setUpdatedAt(ISO.format(Instant.now()));
+        monitorHistory.stampUpdated(inv, session);   // "Son güncelleyen" künyesi (2026-10-22, ADMIN-4)
         inventoryRepo.save(inv);
         monitorHistory.record(MonitorHistoryService.INVENTORY, inv.getId(), inv.getDomain(), inv.getTeamId(),
                 MonitorHistoryService.UPDATE, before, snapshot(inv), "renewal-plan", session);
@@ -84,6 +85,7 @@ public class ForecastController {
         String was = inv.getRenewalPlannedAt();
         inv.setRenewalPlannedAt(null); inv.setRenewalPlannedBy(null); inv.setRenewalPlannedByName(null); inv.setRenewalPlannedNote(null);
         inv.setUpdatedAt(ISO.format(Instant.now()));
+        monitorHistory.stampUpdated(inv, session);   // "Son güncelleyen" künyesi (2026-10-22, ADMIN-4)
         inventoryRepo.save(inv);
         monitorHistory.record(MonitorHistoryService.INVENTORY, inv.getId(), inv.getDomain(), inv.getTeamId(),
                 MonitorHistoryService.UPDATE, before, snapshot(inv), "renewal-plan", session);

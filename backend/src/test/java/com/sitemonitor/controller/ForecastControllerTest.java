@@ -101,6 +101,8 @@ class ForecastControllerTest {
                 .andExpect(jsonPath("$.data.renewal_planned_at").isEmpty());
         verify(auditService).recordAction(eq("CERT_RENEWAL_PLAN_CLEARED"), any(jakarta.servlet.http.HttpSession.class), any(jakarta.servlet.http.HttpServletRequest.class),
                 eq("CERTIFICATE"), eq("a.example.com"), anyString());
+        // ADMIN-4 (2026-10-22): plan yaz / sil "son güncelleyen" künyesini basar (updated_at "şimdi" olurken updated_by eskide kalıyordu)
+        verify(monitorHistory, times(2)).stampUpdated(same(inv), any(jakarta.servlet.http.HttpSession.class));
     }
 
     @Test
