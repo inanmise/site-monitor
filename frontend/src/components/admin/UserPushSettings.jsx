@@ -422,14 +422,41 @@ const ICON_TONE = {
 }
 
 /** Başlık satırındaki "sır" işareti — form seçeneği (Kaydet'le gider) → shadcn Checkbox + bağlı Label. */
-function SecretCheckbox({ checked, onChange, label }) {
+function SecretCheckbox({ checked, onChange, label, disabled = false }) {
   const id = useId()
   return (
     <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
-      <Checkbox id={id} checked={checked} onCheckedChange={(v) => onChange(v === true)} />
-      <Label htmlFor={id} className="cursor-pointer font-normal">{label}</Label>
+      <Checkbox id={id} checked={checked} disabled={disabled} onCheckedChange={(v) => onChange(v === true)} />
+      <Label htmlFor={id} className={cn('font-normal', disabled ? 'cursor-not-allowed opacity-70' : 'cursor-pointer')}>{label}</Label>
     </span>
   )
+}
+
+/**
+ * Kayıt gövdesi = YALNIZ değişen anahtarlar (2026-10-22, FE-7). Sunucu yalnız gönderilen anahtarları yazar
+ * (`UserPushController.saveSettings`); değişmeyen GLOBAL_ONLY değer (URL, başlıklar) hiç gitmez — kapsamlı müdür 20.165.0
+ * pod'una (read_only_keys bilmez) düşen bir kayıtta da 403 almaz. Başlık listesi yalnız değiştiyse ve okunabilir anahtarsa,
+ * rol grupları yalnız değiştiyse gider. Kayıtlı anlık görüntü yoksa (okuma başarısız) eski davranış: tüm ayarlar.
+ * @returns {object} gövde (boş olabilir)
+ */
+function changedPushSettingsBody({ settings, headers, groups, snap, readOnlyKeys = new Set(), headersKey, groupsKey }) {
+  const body = {}
+  const same = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null)
+  if (!snap) {
+    Object.assign(body, settings)
+    body[headersKey] = headers
+  } else {
+    for (const [k, v] of Object.entries(settings || {})) {
+      if (k === headersKey || k === groupsKey) continue
+      if (!same(v, snap.s?.[k])) body[k] = v
+    }
+    delete body[headersKey]
+    if (!same(headers, snap.h)) body[headersKey] = headers
+  }
+  if (!snap || !same(groups, snap.g)) body[groupsKey] = JSON.stringify(groups)
+  else delete body[groupsKey]
+  for (const k of readOnlyKeys) delete body[k]
+  return body
 }
 
 export default function UserPushSettings() {
@@ -632,14 +659,12 @@ export default function UserPushSettings() {
   async function save() {
     setSaving(true)
     try {
-      const body = { ...settings }
-      // URL ve başlıklar YALNIZ değiştiyse gider (20.166, UIA-C3): ikisi GLOBAL_ONLY — kapsamlı müdür hiç başlık saklanmamış
-      // bir kurulumda `headers: []` gönderince (saklı değer yok ≠ "[]") HER kaydı 403'lüyordu. Salt okunur anahtar hiç gitmez.
+      // YALNIZ değişen anahtarlar (20.166 UIA-C3 + FE-7): değişmeyen GLOBAL_ONLY değer (URL, başlıklar) hiç gitmez — eski
+      // (read_only_keys bilmeyen) pod'da da kapsamlı müdürün kaydı 403'lemez. Salt okunur anahtar hiç gitmez.
       const snap = savedSnap ? JSON.parse(savedSnap) : null
-      if (!snap || JSON.stringify(headers) !== JSON.stringify(snap.h)) body[KEY('headers')] = headers
-      if (snap && (settings[KEY('url')] ?? '') === (snap.s?.[KEY('url')] ?? '')) delete body[KEY('url')]
-      for (const k of access.readOnlyKeys) delete body[k]
-      body[KEY('role-groups')] = JSON.stringify(groupsSafe)
+      const body = changedPushSettingsBody({ settings, headers, groups: groupsSafe, snap, readOnlyKeys: access.readOnlyKeys,
+        headersKey: KEY('headers'), groupsKey: KEY('role-groups') })
+      if (Object.keys(body).length === 0) return   // değişiklik yok → istek yok (düğme zaten kapalı)
       const res = await api.admin.userPush.saveSettings(body)
       if (res?.success) {
         toast.success(t('userpush.saved'))
@@ -885,7 +910,7 @@ export default function UserPushSettings() {
                   value={h.value || ''} disabled={roKey('headers')} aria-label={t('a11y.rowAction', rowName, t('userpush.headerValue'))}
                   onChange={(e) => setHeaders(headers.map((x, j) => j === i ? { ...x, value: e.target.value } : x))} />
                 <span className="inline-flex items-center">
-                  <SecretCheckbox checked={!!h.secret} label={t('userpush.headerSecret')}
+                  <SecretCheckbox checked={!!h.secret} label={t('userpush.headerSecret')} disabled={roKey('headers')}
                     onChange={(v) => setHeaders(headers.map((x, j) => j === i ? { ...x, secret: v } : x))} />
                   <HelpTip helpKey="help.userpush.headerRow" label={t('userpush.headerSecret')} />
                 </span>

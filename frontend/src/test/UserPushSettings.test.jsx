@@ -553,6 +553,23 @@ describe('UserPushSettings — K10 kilitleri ve okunamayan yükler', () => {
     expect(body).not.toHaveProperty(K('url'))
   })
 
+  it('FE-7: eski pod (read_only_keys YOK) — kapsamlı müdür yalnız başlığı değiştirir: gövde YALNIZ değişen anahtar (başlıklar / URL / rol grupları / diğerleri yok)', async () => {
+    stubAll()   // 20.165.0 yanıtı: read_only_keys, can_edit_types, manage_team_ids yok
+    api.admin.userPush.saveSettings.mockResolvedValue({ success: true, data: { settings: { ...SETTINGS, [K('title')]: 'Yeni' } } })
+    render(<UserPushSettings />)
+    fireEvent.change(await screen.findByDisplayValue('Site Monitor'), { target: { value: 'Yeni' } })
+    fireEvent.click(within(saveBar()).getByRole('button', { name: /^(Save|Kaydet)$/ }))
+    await waitFor(() => expect(api.admin.userPush.saveSettings).toHaveBeenCalled())
+    expect(api.admin.userPush.saveSettings.mock.calls[0][0]).toEqual({ [K('title')]: 'Yeni' })
+  })
+
+  it('FE-7: salt okunur başlıkların "gizli" kutusu da kilitli', async () => {
+    stubScoped({ settings: SETTINGS })
+    render(<UserPushSettings />)
+    await screen.findByDisplayValue('Authorization')
+    expect(screen.getByRole('checkbox', { name: /^(Sır|Secret)$/ })).toBeDisabled()
+  })
+
   it('toplu aç/kapa yalnız YÖNETİLEN görünen takımları gönderir', async () => {
     stubScoped()
     api.admin.userPush.saveScopes.mockResolvedValue({ success: true, data: { data: [] } })
