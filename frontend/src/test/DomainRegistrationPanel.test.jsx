@@ -135,6 +135,31 @@ describe('DomainRegistrationPanel — tam RDAP kaydı', () => {
     expect(r).toHaveTextContent('→ ekip@example.com · push 2')
   })
 
+  it('hatırlatmalar (çok pod R2a): SENDING mavi "gönderiliyor", INTERRUPTED turuncu "yarıda kaldı" — kanal kapalı sarısı değil, açıklama satırı', () => {
+    const claims = {
+      thresholds: [30, 7],
+      items: [
+        { id: 3, threshold_days: 7, expiry_date: day(20), days_remaining: 6, status: 'SENDING', sent_at: hoursAgo(0), recipients: null, push_queued: null },
+        { id: 4, threshold_days: 30, expiry_date: day(20), days_remaining: 29, status: 'INTERRUPTED', sent_at: hoursAgo(30), recipients: null, push_queued: null },
+      ],
+    }
+    render(<DomainRegistrationPanel reg={rdap} rem={claims} remPager={pager(claims.items)} />)
+    const r = q('domain-reminders')
+    const chips = [...r.querySelectorAll('[data-slot="badge"][data-state]')]
+    expect(chips.map((c) => [c.textContent, c.dataset.state])).toEqual([['30 days', 'interrupted'], ['7 days', 'sending']])
+    expect(chips[0].className).toContain('orange')
+    expect(chips[1].className).toContain('primary')
+    expect(chips.some((c) => c.className.includes('amber'))).toBe(false)
+    expect(r).toHaveTextContent('interrupted (not resent)')
+    expect(r).toHaveTextContent('sending')
+    expect(q('domain-reminders-claim-legend', r)).toHaveTextContent('orange: interrupted — the sending pod stopped')
+  })
+
+  it('hatırlatmalar: SENDING / INTERRUPTED yoksa ek açıklama satırı çizilmez', () => {
+    render(<DomainRegistrationPanel reg={rdap} rem={rem} remPager={pager(rem.items)} />)
+    expect(q('domain-reminders-claim-legend', q('domain-reminders'))).toBeNull()
+  })
+
   it('kayıt verisi (JSON): kapalı başlar; açılınca normalleştirilmiş kayıt + kopyala panoya yazar', async () => {
     const writeText = vi.fn(() => Promise.resolve())
     Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })

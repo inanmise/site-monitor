@@ -13948,6 +13948,7 @@ export const TR = {
   // ── multi-pod R2a · D2 ──
   'dreg.remStatus_SENDING': 'gönderiliyor',
   'dreg.remStatus_INTERRUPTED': 'yarıda kaldı (yeniden gönderilmedi)',
+  'dreg.remLegendClaim': 'Mavi: gönderiliyor (sahiplenildi, sonucu henüz yazılmadı) · turuncu: yarıda kaldı — gönderen pod durdu, posta gitmiş olabilir; yeniden gönderilmedi',
   'logtrig.INCIDENT_NOTIFY': 'Olay kaydı bildirimi',
   'logtrig.NEW_DEVICE': 'Yeni cihazdan giriş bildirimi',
   'dom.how8': 'Hatırlatma eşikleri (varsayılan 60/30/14/7/3/1 gün): her eşik geçildiğinde bir kez e-posta + push gider (bildirim grubu → takım zinciri). Aynı anda birden çok eşik aşılmışsa yalnız en sıkısı gönderilir; yenilemeyle bitiş ileri gidince seri sıfırlanır. Gönderilenler Domain Kaydı sekmesinde ve Aktivite Logu\'nda görünür.',

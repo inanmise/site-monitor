@@ -19,8 +19,8 @@ public interface DomainExpiryReminderRepository extends JpaRepository<DomainExpi
     @Query("DELETE FROM DomainExpiryReminder r WHERE r.monitorId = :monitorId")
     int deleteByMonitorId(@Param("monitorId") Long monitorId);
 
-    /** İzlemenin verilen durumdaki satırları (MP-45: yarıda kalmış {@code SENDING} sahiplenmeleri). Küçük küme. */
-    List<DomainExpiryReminder> findByMonitorIdAndStatus(Long monitorId, String status);
+    /** İzlemenin verilen durumdaki EN ESKİ 20 satırı (MP-45: yarıda kalmış {@code SENDING} sahiplenmeleri) — sınırlı okuma. */
+    List<DomainExpiryReminder> findTop20ByMonitorIdAndStatusOrderBySentAtAsc(Long monitorId, String status);
 
     /**
      * MP-45 (2026-10-23, çok pod R2a · D2): gönderim sonrası sonucu YALNIZ bu sahiplenmenin {@code SENDING} satırına yazar
