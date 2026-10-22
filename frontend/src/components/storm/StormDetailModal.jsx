@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { CloudLightning, ExternalLink, Mail, Send, Smartphone, Zap } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT, useDateLocale } from '../../i18n/index.jsx'
+import { alertTypeLabel } from '../../utils/alertTypeMeta.js'
 import { useIsMobile } from '../../hooks/use-mobile.js'
 import { usePagination } from '../../hooks/usePagination.js'
 import { navigateTo } from '../../utils/navigate.js'
@@ -49,7 +50,7 @@ function MemberRow({ m, phone }) {
           <span className="truncate font-semibold" title={m.domain || ''}>{m.domain || `#${m.event_id}`}</span>
         </div>
         <div className="flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
-          <Badge variant="outline" className="text-[10px]">{m.alert_type}</Badge>
+          <Badge variant="outline" className="text-[10px]" title={m.alert_type}>{alertTypeLabel(t, m.alert_type)}</Badge>
           <AlertLevelBadge level={m.alert_level} />
         </div>
       </div>

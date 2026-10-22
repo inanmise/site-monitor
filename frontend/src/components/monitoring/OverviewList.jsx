@@ -60,7 +60,7 @@ export function OverviewTable({ rows, nowMs, sort, onSort, groups }) {
               <TableCell className="align-top whitespace-normal">
                 {/* Genişlik kaba göre (cqw): uzun ad/hedef/hata kırpılır, diğer sütunlar ekranda kalır */}
                 <div className="w-[clamp(11rem,22cqw,22rem)] min-w-0">
-                <div className="truncate font-semibold" title={r.name}>{r.name}</div>
+                <div className="font-semibold [overflow-wrap:anywhere]">{r.name}</div>
                 {r.target && r.target !== r.name && <div className="truncate font-mono text-xs text-muted-foreground" title={r.target}>{r.target}</div>}
                 {r.last_error && r.status === 'down' && <div className="line-clamp-1 text-xs text-destructive" title={r.last_error}>{r.last_error}</div>}
                 {r.inventory_inactive && <InvBadge className="mt-1 text-[11px]" />}
@@ -114,7 +114,7 @@ export function OverviewCards({ rows, nowMs }) {
                 <Badge variant="outline" className="ml-auto max-w-full gap-1 text-[11px] font-normal"><TypeLabel type={r.type} iconClassName="size-3" /></Badge>
               </div>
               <div className="min-w-0">
-                <div className="truncate text-sm font-semibold" title={r.name}>{r.name}</div>
+                <div className="text-sm font-semibold [overflow-wrap:anywhere]">{r.name}</div>
                 {r.target && r.target !== r.name && <div className="truncate font-mono text-xs text-muted-foreground" title={r.target}>{r.target}</div>}
                 {r.inventory_inactive && <InvBadge className="mt-1 text-[11px]" />}
               </div>

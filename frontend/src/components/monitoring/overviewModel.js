@@ -178,14 +178,35 @@ export function distribution(totals = {}) {
   ]
 }
 
-/** Filo hükmü — başlık cümlesi + ton. `key` i18n anahtarı, `n` sayı. */
-export function verdict(totals = {}) {
+/**
+ * Sunucunun OKUMA HATASI işaretleri (2026-10-22, UIM-5): `MonitoringOverviewService` bir okuma düşünce yanıta ek alan
+ * yazar — üstte `alerts_unavailable` (açık alarmlar okunamadı → alarm sayıları 0, durumlar alarmsız hesaplandı), türde
+ * `unavailable` (izleme listesi okunamadı → o tür 0 izleme), `checks_unavailable` (son kontroller okunamadı → izlemeler
+ * "bilinmiyor"), `stats_unavailable` (pencere koşum sayıları okunamadı → 0). Alanlar YALNIZ hata varken gelir; yoksa
+ * (normal yanıt / eski sunucu) hiçbir şey değişmez. Bu işaretler varken pano "Sorun yok" / "Tüm türler sağlıklı" DEMEZ.
+ */
+export function overviewGaps(data) {
+  const types = Array.isArray(data?.types) ? data.types : []
+  const pick = (flag) => types.filter((ty) => ty && ty[flag] === true).map((ty) => ty.type)
+  const alerts = data?.alerts_unavailable === true
+  const listed = pick('unavailable'), checks = pick('checks_unavailable'), stats = pick('stats_unavailable')
+  return { alerts, types: listed, checks, stats,
+    allStats: types.length > 0 && stats.length === types.length,
+    any: alerts || listed.length > 0 || checks.length > 0 || stats.length > 0 }
+}
+
+/**
+ * Filo hükmü — başlık cümlesi + ton. `key` i18n anahtarı, `n` sayı. `gaps` ({@link overviewGaps}) okunamayan bir parça
+ * bildiriyorsa "Tüm izlemeler sağlıklı" yerine nötr "eksik veri" hükmü (sorunlu / gecikmiş hükmü gerçek bulgudur, kalır).
+ */
+export function verdict(totals = {}, gaps = null) {
   const active = Number(totals.active ?? 0), total = Number(totals.total ?? 0)
   const down = Number(totals.down ?? 0), stale = Number(totals.stale ?? 0), unknown = Number(totals.unknown ?? 0)
-  if (total === 0) return { tone: 'neutral', key: 'mo.health.empty', n: 0 }
+  if (total === 0) return gaps?.any ? { tone: 'neutral', key: 'mo.health.partial', n: 0 } : { tone: 'neutral', key: 'mo.health.empty', n: 0 }
   if (down > 0) return { tone: 'bad', key: 'mo.health.down', n: down }
   if (stale > 0) return { tone: 'warn', key: 'mo.health.stale', n: stale }
   if (unknown > 0) return { tone: 'neutral', key: 'mo.health.unknown', n: unknown }
+  if (gaps?.any) return { tone: 'neutral', key: 'mo.health.partial', n: 0 }
   if (active === 0) return { tone: 'neutral', key: 'mo.health.allPaused', n: 0 }
   return { tone: 'ok', key: 'mo.health.ok', n: active }
 }
@@ -198,18 +219,27 @@ export function verdictHeadline(v, t) {
     case 'mo.health.unknown': return t('mo.health.unknown', v.n)
     case 'mo.health.allPaused': return t('mo.health.allPaused')
     case 'mo.health.empty': return t('mo.health.empty')
+    case 'mo.health.partial': return t('mo.unavailable.verdict')
     default: return t('mo.health.ok')
   }
 }
 
+/** Takımın aktif (duraklatılmamış) izlemelerinin HEPSİ "bilinmiyor" mu (hiç kontrol yok / son kontroller okunamadı)? */
+export function teamAllUnknown(g) {
+  const active = Number(g?.total ?? 0) - Number(g?.paused ?? 0)
+  return active > 0 && Number(g?.unknown ?? 0) >= active
+}
+
 /**
  * Takım sağlığı özeti (pano akordiyonu başlığı): sorunu olan takım sayısı (sorunlu / gecikmiş / açık alarm) ve ton —
- * sorunlu izlemesi olan takım varsa kötü, yalnız gecikme/alarm varsa uyarı, aksi iyi.
+ * sorunlu izlemesi olan takım varsa kötü, yalnız gecikme/alarm varsa uyarı; aktif izlemelerinin hepsi bilinmeyen takım
+ * (`unknown`) ya da okunamayan alarmlar (`alertsUnknown`) varsa nötr — bilinmeyen asla yeşil değildir (2026-10-22); aksi iyi.
  */
-export function teamsDigest(groups = []) {
+export function teamsDigest(groups = [], { alertsUnknown = false } = {}) {
   const issues = groups.filter((g) => g.down > 0 || g.stale > 0 || g.openAlerts > 0).length
-  const tone = groups.some((g) => g.down > 0) ? 'bad' : issues > 0 ? 'warn' : 'ok'
-  return { count: groups.length, issues, tone }
+  const unknown = groups.filter((g) => !(g.down > 0 || g.stale > 0 || g.openAlerts > 0) && teamAllUnknown(g)).length
+  const tone = groups.some((g) => g.down > 0) ? 'bad' : issues > 0 ? 'warn' : (unknown > 0 || alertsUnknown) ? 'neutral' : 'ok'
+  return { count: groups.length, issues, unknown, tone }
 }
 
 /**

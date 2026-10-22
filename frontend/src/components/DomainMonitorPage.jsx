@@ -209,7 +209,9 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
   const [sortBy, setSortBy] = useState(() => (SORTS.includes(readUrlParam('sort', 'days_asc')) ? readUrlParam('sort', 'days_asc') : 'days_asc'))
   const [quick, setQuick] = useState(() => { const v = readUrlParam('dq', 'all'); return QUICK.includes(v) ? v : 'all' })   // hızlı süzgeç (2026-09-22)
   const [statFilter, setStatFilter] = useState(() => { const v = readUrlParam('stat', null); return v === 'total' ? null : v })
-  const [statsVisible, setStatsVisible] = useState(false)
+  // Etkin bir sayım süzgeci (paylaşılan bağlantı / kayıtlı görünüm / yeniden yükleme) şeritle AÇIK gelir: süzgeç bandı ve
+  // "Filtreyi temizle" katlanmış şeridin içinde kalıp liste sessizce süzülmesin (2026-10-22, UIM-20)
+  const [statsVisible, setStatsVisible] = useState(() => statFilter != null)
   const [loadNonce, setLoadNonce] = useState(0)   // her başarılı yüklemede artar: başlık çipi geri sayımı kendisi sayar, sayfa saniyede bir çizilmez (2026-10-01)
   // Dışa aktarım menüsü (2026-09-22, D): görünen (süzülmüş + sıralanmış) liste CSV/PDF. shadcn DropdownMenu —
   // dış tıklama / Escape / odak iadesi Radix'te (eskiden elle document dinleyicileri vardı).
@@ -755,7 +757,9 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
           <Button variant="secondary" onClick={runTest} aria-busy={testing || undefined} disabled={testing || !form.domain.trim()}>
             <FlaskConical size={14} />{t('dom.test')}
           </Button>
-          {isAdmin && (
+          {/* Kayıtsız alan adında tanılama YALNIZ global görüntüleyiciye açık (sunucu requireAdminOrMonitoredDomain) —
+              kapsamlı yönetici 403 + ACCESS_DENIED alıyordu (2026-10-22, UIM-15) */}
+          {globalAdmin && (
             <Button variant="secondary" onClick={() => diagnose({ domain: normalizeDomainInput(form.domain) })} disabled={!form.domain.trim()}>
               <ShieldAlert size={14} />{t('dexp.diagnose')}
             </Button>
@@ -953,7 +957,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
         <>
         <BulkActionBar selected={bulkSel} items={pager.pageItems.filter(canManageRow)} teams={teams} canDelete={canDeleteRow} nocType="DOMAIN"
           api={{ update: api.monitoring.updateDomainMonitor, remove: api.monitoring.deleteDomainMonitor }}
-          onClear={() => setBulkSel(new Set())} onDone={load}
+          onClear={() => setBulkSel(new Set())} onPrune={setBulkSel} onDone={load}
           onToggleAll={() => setBulkSel((s) => { const vis = pager.pageItems.filter(canManageRow); const all = vis.every((m) => s.has(m.id)); return all ? new Set() : new Set(vis.map((m) => m.id)) })} />
         {/* Süzgeç/arama hiçbir izlemeyi bırakmadıysa boş alan yerine açık mesaj (2026-09-22) */}
         {displayMonitors.length === 0 && <StatusBlock tone="neutral" icon={Inbox} title={t('mon.noFilterMatch')} description={t('empty.hintFilter')} />}
@@ -1081,7 +1085,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
               <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>
                 <MonitorNotes type="DOMAIN" target={selected.domain}
                   // Yalnız paylaşımla görülen izlemede not / rehber yazmak DÜZENLEME ister (2026-10-12); diğerinde varsayılan
-                  canManage={selected.shared_access === true ? canManageRow(selected) : undefined} />
+                  canManage={canManageRow(selected)} />
               </Suspense>
             </TabsContent>
 

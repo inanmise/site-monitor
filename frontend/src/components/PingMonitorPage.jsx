@@ -156,7 +156,9 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
   const [groupFilter, setGroupFilter] = useState(() => readUrlParam('group', 'all'))
   const [tagFilter, setTagFilter] = useState(() => readUrlParam('tag', 'all'))   // etiket filtresi (2026-09-18)
   const [statFilter, setStatFilter] = useState(() => { const v = readUrlParam('stat', null); return v === 'total' ? null : v })
-  const [statsVisible, setStatsVisible] = useState(false)
+  // Etkin bir sayım süzgeci (paylaşılan bağlantı / kayıtlı görünüm / yeniden yükleme) şeritle AÇIK gelir: süzgeç bandı ve
+  // "Filtreyi temizle" katlanmış şeridin içinde kalıp liste sessizce süzülmesin (2026-10-22, UIM-20)
+  const [statsVisible, setStatsVisible] = useState(() => statFilter != null)
   const [loadNonce, setLoadNonce] = useState(0)   // her başarılı yüklemede artar: başlık çipi geri sayımı kendisi sayar, sayfa saniyede bir çizilmez (2026-10-01)
   const [detailTab, setDetailTab] = useState('control')
   const deepLinkTab = useDeepLinkTab()   // ?monitor=…&mtab=changes derin bağlantısı — ilk açılışta bir kez
@@ -754,7 +756,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
         <>
         <BulkActionBar selected={bulkSel} items={pager.pageItems.filter(canManageRow)} teams={teams} canDelete={canDeleteRow} nocType="PING"
           api={{ update: api.monitoring.updatePingMonitor, remove: api.monitoring.deletePingMonitor }}
-          onClear={() => setBulkSel(new Set())} onDone={load}
+          onClear={() => setBulkSel(new Set())} onPrune={setBulkSel} onDone={load}
           onToggleAll={() => setBulkSel((s) => { const vis = pager.pageItems.filter(canManageRow); const all = vis.every((m) => s.has(m.id)); return all ? new Set() : new Set(vis.map((m) => m.id)) })} />
         <div className="upt-grid" data-density={density}>
           {pager.pageItems.map(m => (
@@ -868,7 +870,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
               <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>
                 <MonitorNotes type="PING" target={selected.host}
                   // Yalnız paylaşımla görülen izlemede not / rehber yazmak DÜZENLEME ister (2026-10-12); diğerinde varsayılan
-                  canManage={selected.shared_access === true ? canManageRow(selected) : undefined} />
+                  canManage={canManageRow(selected)} />
               </Suspense>
             </TabsContent>
 

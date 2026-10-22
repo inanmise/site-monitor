@@ -31,8 +31,9 @@ function PersonRow({ person, position, t }) {
         </span>
       )}
       <span className="flex min-w-0 flex-1 flex-col">
-        <span className="truncate text-sm font-semibold" title={person?.name}>{person?.name || '—'}</span>
-        {person?.title && <span className="truncate text-xs text-muted-foreground" title={person.title}>{person.title}</span>}
+        {/* Ad ve AD unvanı SARAR, kırpılmaz (2026-10-22, UIM-38 / L-N6 — dokunmatikte title görünmez) */}
+        <span data-slot="noc-sheet-person-name" className="text-sm font-semibold [overflow-wrap:anywhere]">{person?.name || '—'}</span>
+        {person?.title && <span className="text-xs text-muted-foreground [overflow-wrap:anywhere]">{person.title}</span>}
       </span>
       {href ? (
         <Button asChild variant="outline" size="sm" className="h-10 shrink-0 font-mono tabular-nums sm:h-8 sm:pointer-coarse:h-10">

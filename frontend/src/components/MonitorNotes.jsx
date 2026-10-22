@@ -60,11 +60,19 @@ export default function MonitorNotes({ type, target, canManage = true }) {
       const res = await api.monitoring.getMonitorNotes(type, target)
       if (seq !== loadSeq.current) return
       if (res?.success) { setGuide(res.data.guide || null); setNotes(res.data.notes || []) }
-      else toast.error(res?.error || 'Error')
+      else toast.error(res?.error || t('mnote.notesLoadFailed'))
+    } catch (e) {
+      // Ağ hatası (request() fırlatır) — işlenmemiş ret yerine okunur ileti (2026-10-22)
+      if (seq === loadSeq.current) toast.error(e?.message || t('mnote.notesLoadFailed'))
     } finally {
-      setLoading(false)
+      if (seq === loadSeq.current) setLoading(false)
     }
   }
+
+  // Not başına yazma kapısı (2026-10-22, UIM-13 / K5): sunucu her nota `can_modify` koyar (requireModify ile AYNI kural:
+  // yazar ∧ takımı işletebiliyor, global admin ya da takımı yöneten). Bayrak varsa O karar verir; yoksa (eski sunucu)
+  // satırın yazma kapısı (canManage) — bugünkü davranış.
+  const canModify = (n) => (typeof n?.can_modify === 'boolean' ? n.can_modify : canManage)
 
   async function saveGuide() {
     setSavingGuide(true)
@@ -241,7 +249,8 @@ export default function MonitorNotes({ type, target, canManage = true }) {
           )}
 
           {notes.map(n => (
-            <NoteCard key={n.id} n={n} onEdit={canManage ? startEdit : null} onDelete={canManage ? del : null} />
+            <NoteCard key={n.id} n={n} onEdit={canModify(n) ? startEdit : null} onDelete={canModify(n) ? del : null}
+              locked={canManage && n.can_modify === false} />
           ))}
         </CardContent>
       </Card>
@@ -308,7 +317,7 @@ function NoteRow({ label, value }) {
 // tetiğe basınca alanlar açılır. Düzenle/Sil başlıkta hep görünür — tetiğin KARDEŞİ oldukları için
 // (içinde değil) basmak akordiyonu açmaz; eskiden role="button" başlığın içinde iç içe duruyorlardı.
 // onEdit/onDelete null ise (yalnız görüntüleyen) düğmeler çizilmez.
-function NoteCard({ n, onEdit, onDelete }) {
+function NoteCard({ n, onEdit, onDelete, locked = false }) {
   const t = useT()
   const [open, setOpen] = useState(false)
   const title = n.problem || t('mnote.fProblem')
@@ -323,13 +332,22 @@ function NoteCard({ n, onEdit, onDelete }) {
                 className={cn('shrink-0 text-muted-foreground transition-transform duration-150 motion-reduce:transition-none', open && 'rotate-90')} />
               <span className="flex min-w-0 flex-1 flex-col gap-px">
                 <span className="truncate text-[13px] font-semibold group-hover/note:text-primary">{title}</span>
-                <span className="truncate text-xs text-muted-foreground">
+                <span className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
                   {n.author_name || n.author_username} · {fmt(n.created_at)}
                   {n.updated_at ? ` · ${t('mnote.edited')}` : ''}
                 </span>
               </span>
             </Button>
           </CollapsibleTrigger>
+          {/* Başkasının notu (yalnız yazarı / takım yöneticisi değiştirir) — neden düğme yok, söylenir */}
+          {locked && !onEdit && !onDelete && (
+            <SimpleTooltip content={t('mnote.cannotModify')}>
+              <span data-slot="note-locked" role="img" aria-label={t('mnote.cannotModify')}
+                className="inline-flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground pointer-coarse:size-10">
+                <Lock size={13} aria-hidden="true" />
+              </span>
+            </SimpleTooltip>
+          )}
           {(onEdit || onDelete) && (
             <span className="inline-flex shrink-0 gap-1.5">
               {onEdit && (

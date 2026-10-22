@@ -335,7 +335,7 @@ describe('7/24 arama listesi sekmesi', () => {
     fireEvent.click(within(dialog()).getByRole('button', { name: new RegExp(L('team.clOpen')) }))
     expect(onClose).toHaveBeenCalled()
     expect(nav).toHaveBeenCalledTimes(1)
-    expect(nav.mock.calls[0][0].detail).toEqual({ tab: 'noc', params: { n_ct: '1' } })
+    expect(nav.mock.calls[0][0].detail).toEqual({ tab: 'noc', params: { n_view: 'coverage', n_ct: '1' } })
     window.removeEventListener('sm:navigate', nav)
   })
 

@@ -165,8 +165,8 @@ export default function NocCallListCard({ t, teamOptions = [], teamId, onTeamCha
                 className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border px-3 py-2">
                 <span aria-hidden="true" className="inline-flex size-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary tabular-nums">{i + 1}</span>
                 <div className="min-w-[9rem] flex-1">
-                  <p className="truncate text-sm font-medium">{m.display_name}</p>
-                  {m.title && <p className="truncate text-xs text-muted-foreground">{m.title}</p>}
+                  <p className="text-sm font-medium [overflow-wrap:anywhere]">{m.display_name}</p>
+                  {m.title && <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">{m.title}</p>}
                 </div>
                 {m.has_phone
                   ? <ToneBadge tone="success" className="gap-1"><Phone aria-hidden="true" />{t('noc.clHasPhone')}</ToneBadge>

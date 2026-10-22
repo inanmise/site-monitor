@@ -1,4 +1,5 @@
 // Alarm fırtınası gözlem ekranı — saf yardımcılar (2026-09-30). Sayfa ve Ayarlar paneli buradan okur; birim testi kolay.
+import { alertTypeLabel } from '../../utils/alertTypeMeta.js'
 import { parseUtc } from '../../utils/incidentMeta.js'
 
 /** Takım durumu → rozet tonu + etiket anahtarı (sunucu: StormStatusService.STATUS_*). */
@@ -87,7 +88,7 @@ export function stormTimeline(storm, t) {
   if (!storm) return []
   const ev = []
   ev.push({ kind: 'opened', at: storm.created_at, text: t('sf.tl.opened', storm.targets_at_open ?? storm.member_count ?? 0, storm.threshold_effective ?? '—') })
-  if (storm.trigger?.domain) ev.push({ kind: 'trigger', at: storm.trigger.created_at || storm.created_at, text: t('sf.tl.trigger', storm.trigger.domain, storm.trigger.alert_type || '') })
+  if (storm.trigger?.domain) ev.push({ kind: 'trigger', at: storm.trigger.created_at || storm.created_at, text: t('sf.tl.trigger', storm.trigger.domain, alertTypeLabel(t, storm.trigger.alert_type) || '') })
   if (storm.last_re_alert_at && storm.last_re_alert_at !== storm.created_at) ev.push({ kind: 'mail', at: storm.last_re_alert_at, text: t('sf.tl.lastMail') })
   if (storm.last_member_at && storm.last_member_at !== storm.created_at) ev.push({ kind: 'member', at: storm.last_member_at, text: t('sf.tl.lastMember') })
   if (!storm.resolved && storm.seal_at) ev.push({ kind: storm.sealed ? 'sealed' : 'seal', at: storm.seal_at, text: t('sf.tl.sealAt', storm.quiet_minutes ?? '—'), future: !storm.sealed })

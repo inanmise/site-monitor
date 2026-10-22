@@ -185,7 +185,9 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
   const [tagFilter, setTagFilter] = useState(() => readUrlParam('tag', 'all'))   // etiket filtresi (2026-09-18)
   const [proxyFilter, setProxyFilter] = useState(() => readUrlParam('via', 'all'))   // vekil süzgeci (2026-09-22): all | proxy | direct
   const [statFilter, setStatFilter] = useState(() => { const v = readUrlParam('stat', null); return v === 'total' ? null : v })
-  const [statsVisible, setStatsVisible] = useState(false)
+  // Etkin bir sayım süzgeci (paylaşılan bağlantı / kayıtlı görünüm / yeniden yükleme) şeritle AÇIK gelir: süzgeç bandı ve
+  // "Filtreyi temizle" katlanmış şeridin içinde kalıp liste sessizce süzülmesin (2026-10-22, UIM-20)
+  const [statsVisible, setStatsVisible] = useState(() => statFilter != null)
   const [loadNonce, setLoadNonce] = useState(0)   // her başarılı yüklemede artar: başlık çipi geri sayımı kendisi sayar, sayfa saniyede bir çizilmez (2026-10-01)
 
   // Liste yüklemesi sıra damgalı (2026-10-09): 60 sn yoklaması kaydetmeden ÖNCE başlayıp SONRA dönerse eski liste
@@ -331,7 +333,9 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
       const res = await api.monitoring.testKeyword({
         url: normalizeUrl(form.url), keyword: form.keyword, operator: form.operator,
         matchCount: Number(form.matchCount), timeoutMs: Number(form.timeoutMs),
-        customHeaders: form.customHeaders?.trim() || null, caseSensitive: form.caseSensitive, useProxy: form.useProxy || 'AUTO',
+        // Özel başlıklar YALNIZ global admin'de (2026-10-22, UIM-15): sunucu kapsamlı yöneticinin başlıklarını yok sayar —
+        // gönderilen başlıklar testi yanıltırdı
+        customHeaders: globalAdmin ? (form.customHeaders?.trim() || null) : null, caseSensitive: form.caseSensitive, useProxy: form.useProxy || 'AUTO',
       })
       if (my !== testSeq.current) return   // geç yanıt: başka formun (ya da kapanmış formun) sonucu DEĞİL
       setTestResult(res?.success ? res.data : { error: res?.error || t('keyword.testError') })
@@ -369,7 +373,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
       }
       // Başlıklar YALNIZ admin ve alan DOLUYKEN gönderilir: boş bırakmak "değiştirme"
       // demektir (kardeşi PageSpeedMonitorPage ile aynı write-only sözleşme).
-      if (isAdmin && form.customHeaders?.trim()) payload.customHeaders = form.customHeaders.trim()
+      if (globalAdmin && form.customHeaders?.trim()) payload.customHeaders = form.customHeaders.trim()   // sunucu: isGlobalAdmin
       // Not yalnız YAZILDIYSA gönderilir — boş alan payload'a girmez.
       if (changeNote.trim()) payload.changeNote = changeNote.trim()
       const res = modal === 'new'
@@ -680,7 +684,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
         </>}>
           {({ id, describedBy }) => (
             <Textarea id={id} aria-describedby={describedBy} rows={2} value={form.customHeaders} spellCheck={false}
-              placeholder={t('keyword.customHeadersPh')} disabled={!isAdmin}
+              placeholder={t('keyword.customHeadersPh')} disabled={!globalAdmin}
               onChange={e => setForm(f => ({ ...f, customHeaders: e.target.value }))} />
           )}
         </FormField>
@@ -848,7 +852,9 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
   return (
     <div className="upt-page">
       <MonitorPageHeader type="keyword" title={t('keyword.title')} subtitle={t('keyword.subtitle')}
-        count={loading ? null : monitors.length} down={counts.down}
+        // "Arızalı" = kartı kırmızı olan her izleme: yanlış kod (down) + yanıt alınamayan (error: zaman aşımı / DNS / TLS)
+        // — statusKey ikisini de 'down' çizer ve önce sıralar (2026-10-22, UIM-22)
+        count={loading ? null : monitors.length} down={counts.down + counts.error}
         refreshEvery={REFRESH_INTERVAL} refreshResetKey={loadNonce} onRefresh={load} refreshing={loading}
         check={{ count: checkable.length, running: checkRun.running, done: checkRun.run?.rows.length ?? 0, total: checkRun.run?.total ?? 0, onOpen: checkRun.openPicker }}
         canWrite={canWrite} onNew={openNew} newLabel={t('keyword.addMonitor')} />
@@ -886,7 +892,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
         <>
         <BulkActionBar selected={bulkSel} items={pager.pageItems.filter(canManageRow)} teams={teams} canDelete={canDeleteRow} nocType="KEYWORD"
           api={{ update: api.monitoring.updateKeywordMonitor, remove: api.monitoring.deleteKeywordMonitor }}
-          onClear={() => setBulkSel(new Set())} onDone={load}
+          onClear={() => setBulkSel(new Set())} onPrune={setBulkSel} onDone={load}
           onToggleAll={() => setBulkSel((s) => { const vis = pager.pageItems.filter(canManageRow); const all = vis.every((m) => s.has(m.id)); return all ? new Set() : new Set(vis.map((m) => m.id)) })} />
         {/* Süzgeç/arama hiçbir izlemeyi bırakmadıysa boş alan yerine açık mesaj (2026-09-22; vekil süzgeciyle görünür oldu) */}
         {displayMonitors.length === 0 && <StatusBlock tone="neutral" icon={Inbox} title={t('mon.noFilterMatch')} description={t('empty.hintFilter')} />}
@@ -1015,7 +1021,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
               <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>
                 <MonitorNotes type="KEYWORD" target={selected.url}
                   // Yalnız paylaşımla görülen izlemede not / rehber yazmak DÜZENLEME ister (2026-10-12); diğerinde varsayılan
-                  canManage={selected.shared_access === true ? canManageRow(selected) : undefined} />
+                  canManage={canManageRow(selected)} />
               </Suspense>
             </TabsContent>
 

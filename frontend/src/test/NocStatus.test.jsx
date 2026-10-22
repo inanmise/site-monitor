@@ -119,9 +119,9 @@ describe('NocStatus — eylem yetkiye göre', () => {
     const dlg = await open(/— (7\/24 açık|24\/7 on)$/)
     expect(within(dlg).queryByRole('link', { name: /7\/24 ayarını düzenle|Edit 24\/7 setting/ })).toBeNull()
     const link = within(dlg).getByRole('link', { name: /7\/24 Kapsamı’nda gör|View in 24\/7 Coverage/ })
-    expect(link.getAttribute('href')).toMatch(/\?tab=noc&n_type=PORT&n_q=db\.example\.com%3A5432$/)
+    expect(link.getAttribute('href')).toMatch(/\?tab=noc&n_view=coverage&n_type=PORT&n_q=db\.example\.com%3A5432$/)
     fireEvent.click(link)
-    expect(nav).toHaveBeenCalledWith('noc', { n_type: 'PORT', n_q: 'db.example.com:5432' })
+    expect(nav).toHaveBeenCalledWith('noc', { n_view: 'coverage', n_type: 'PORT', n_q: 'db.example.com:5432' })
   })
 
   it('Ctrl/⌘ tık ya da orta tık tarayıcıya kalır (yeni sekme) — uygulama içi gezinme yok', async () => {

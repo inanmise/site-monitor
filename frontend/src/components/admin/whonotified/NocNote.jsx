@@ -95,7 +95,7 @@ export default function NocNote({ teamId, kind, level, className }) {
         <p className="text-xs text-muted-foreground">{t('wn.nocPerMonitor')}</p>
         <div>
           <Button type="button" variant="outline" size="sm" className="h-10 w-full sm:w-auto md:h-8" data-action="wn-open-noc"
-            onClick={() => navigateTo('noc', { n_team: String(teamId), ...(kind === 'CERT' ? { n_type: SSL } : {}) })}>
+            onClick={() => navigateTo('noc', { n_view: 'coverage', n_team: String(teamId), ...(kind === 'CERT' ? { n_type: SSL } : {}) })}>
             {t('wn.nocOpen')} <ArrowRight aria-hidden="true" />
           </Button>
         </div>

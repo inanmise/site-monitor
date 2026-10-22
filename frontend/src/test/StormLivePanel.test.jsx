@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from './test-utils.jsx'
+import { render, screen, fireEvent, waitFor, within } from './test-utils.jsx'
 import StormLivePanel from '../components/admin/storm/StormLivePanel.jsx'
 
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
@@ -34,14 +34,35 @@ describe('Ayarlar → Alarm Fırtınası → Canlı durum paneli (2026-09-30)', 
     expect(events.at(-1)).toEqual({ tab: 'storms', params: undefined })
   })
 
-  it('geri dönüş dizi verisi ({data: []}) ve hata → boş durum metni, uyarı bandı yok', async () => {
+  it('geri dönüş dizi verisi ({data: []}) → boş durum metni, uyarı bandı yok', async () => {
     api.monitoring.storm.status.mockResolvedValueOnce({ success: true, data: [] })
     const { container } = render(<StormLivePanel />)
     await waitFor(() => expect(container.querySelector('[data-slot="sf-live-empty"]')).not.toBeNull())
     expect(container.querySelector('[data-slot="alert"][data-tone="warning"]')).toBeNull()
+  })
+
+  // 2026-10-22 (L-S3 / UIA-C6): eski test "hata → boş durum" pinliyordu — okuma hatası "0 fırtına / takım yok" DEĞİLDİR.
+  it('ilk okuma hatası → "okunamadı" + yeniden dene, sayaçlar "—" (0 değil), boş durum metni YOK', async () => {
     api.monitoring.storm.status.mockRejectedValueOnce(new Error('x'))
+    const { container } = render(<StormLivePanel />)
+    await waitFor(() => expect(container.querySelector('[data-slot="sf-live-error"]')).not.toBeNull())
+    expect(container.querySelector('[data-slot="sf-live-empty"]')).toBeNull()
+    expect(container.querySelector('[data-slot="sf-live-storming"]').textContent).toContain('—')
+    expect(container.querySelector('[data-slot="sf-live-storming"]').textContent).not.toMatch(/\b0\b/)
+    api.monitoring.storm.status.mockResolvedValueOnce({ success: true, data: { teams: [], totals: { storming: 0, near: 0, open_storms: 0 } } })
+    fireEvent.click(within(container.querySelector('[data-slot="sf-live-error"]')).getByRole('button'))
+    await waitFor(() => expect(container.querySelector('[data-slot="sf-live-empty"]')).not.toBeNull())
+    expect(container.querySelector('[data-slot="sf-live-error"]')).toBeNull()
+  })
+
+  it('iyi veriden sonra başarısız yoklama eldeki veriyi SİLMEZ — uyarı şeridi çıkar', async () => {
+    api.monitoring.storm.status.mockResolvedValueOnce({ success: true, data: { teams: [], totals: { storming: 2, near: 1, open_storms: 2 } } })
+    const { container } = render(<StormLivePanel />)
+    await waitFor(() => expect(container.querySelector('[data-slot="sf-live-storming"]').textContent).toContain('2'))
+    api.monitoring.storm.status.mockResolvedValueOnce({ success: false, error: 'boom' })
     fireEvent.click(screen.getByRole('button', { name: /yenile|refresh/i }))
-    await waitFor(() => expect(api.monitoring.storm.status).toHaveBeenCalledTimes(2))
-    expect(container.querySelector('[data-slot="sf-live-empty"]')).not.toBeNull()
+    await waitFor(() => expect(container.querySelector('[data-slot="sf-live-stale"]')).not.toBeNull())
+    expect(container.querySelector('[data-slot="sf-live-storming"]').textContent).toContain('2')
+    expect(container.querySelector('[data-slot="sf-live-error"]')).toBeNull()
   })
 })

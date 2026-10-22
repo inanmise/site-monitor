@@ -111,7 +111,7 @@ export default function NocCoverageBanner({ globalAdmin = false, refreshKey = nu
       <AlertBanner tone="warning" icon={MoonStar} className="mb-0" title={n === 1 ? t('noc.bannerTitle1') : t('noc.bannerTitle', n)}
         actions={closeBtn}>
         <span className="block">{t('noc.bannerBody')}</span>
-        <Button type="button" variant="outline" size="sm" className="mt-2 h-10 sm:h-8 sm:pointer-coarse:h-10" data-action="noc-banner-review" onClick={() => navigateTo('noc')}>
+        <Button type="button" variant="outline" size="sm" className="mt-2 h-10 sm:h-8 sm:pointer-coarse:h-10" data-action="noc-banner-review" onClick={() => navigateTo('noc', { n_view: 'coverage' })}>
           {t('noc.bannerReview')}
         </Button>
       </AlertBanner>

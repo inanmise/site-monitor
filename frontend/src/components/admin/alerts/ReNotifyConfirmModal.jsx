@@ -50,7 +50,7 @@ export default function ReNotifyConfirmModal({ domain, recipients, webhook, send
         <>
           <Button variant="secondary" onClick={onClose} disabled={sending}>{t('alh.renotifyModal.cancel')}</Button>
           <Button variant="warning" disabled={sending || selectedCount === 0} aria-busy={sending || undefined}
-            onClick={() => onSend([...uncheckedEmails], [...uncheckedUsers])}>
+            onClick={() => onSend([...uncheckedEmails], [...uncheckedUsers], { pushCount: Math.max(0, selectedUsers) })}>
             {t('alh.renotifyModal.send')}
           </Button>
         </>

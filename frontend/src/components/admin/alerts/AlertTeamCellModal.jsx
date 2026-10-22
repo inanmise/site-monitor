@@ -81,7 +81,10 @@ export default function AlertTeamCellModal({ cell, onClose, onOpenAlert }) {
           <TableBody>{state.rows.map((a) => (
             <TableRow key={a.id} data-cell-row="">
               <TableCell className="py-2 align-top">
-                <Badge className={cn('rounded-full px-1.5 text-[0.68em] font-bold', LEVEL_BG[levelClass(a.alert_level)])}>{a.alert_level}</Badge>
+                {/* Seviye ETİKETİ (2026-10-22, UIM-36): ham CRITICAL/HIGH/WARNING iki dilde de basılıyordu */}
+                <Badge className={cn('rounded-full px-1.5 text-[0.68em] font-bold', LEVEL_BG[levelClass(a.alert_level)])} title={a.alert_level}>
+                  {levelClass(a.alert_level) === 'unknown' ? a.alert_level : t('alh.level.' + levelClass(a.alert_level))}
+                </Badge>
               </TableCell>
               <TableCell className="overflow-hidden py-2 align-top">
                 {onOpenAlert

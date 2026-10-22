@@ -161,7 +161,7 @@ export function AlertDetailBody({
         )}
         <AlertSourceLink alert={a} className="h-9 pointer-coarse:h-10" />
         {/* Olay kaydı (2026-10-01): "Olay kaydı aç" (incidents.manage) ya da bağlı kaydın bağlantısı "Olay kaydı #N" */}
-        <AlertIncidentLink alert={a} teamName={teamName} />
+        <AlertIncidentLink alert={a} teamName={teamName} actBlocked={actBlocked} />
         {/* Sahiplen/çöz/tekrar bildir kapalı (7/24 operatörü başka takımın uyarısında ya da alerts.actions izni yok) — nedeni yazılır */}
         {open && actBlocked && <ActBlockedNote reason={actBlocked === true ? 'team' : actBlocked} />}
         <CopyLinkButton variant="outline" className="h-9 pointer-coarse:h-10" url={alertLink(a)} />
@@ -215,8 +215,12 @@ export function AlertDetailBody({
             <Fact label={t('alh.fact.notified')} className="sm:col-span-2">
               <span className="flex flex-wrap gap-1.5">
                 {contacts.map((c, i) => (
-                  <Badge key={c.email ?? `nc-${i}`} variant="outline" className="gap-1 rounded-full font-normal" title={c.email}>
-                    <UserBadge displayName={c.name} email={c.email} inline size="sm" />{c.role && <em className="text-muted-foreground">({c.role})</em>}
+                  // Ad + e-posta + rol SARAR, kırpılmaz (2026-10-22, L-H7 — dokunmatikte title görünmez)
+                  <Badge key={c.email ?? `nc-${i}`} variant="outline" data-slot="alert-contact"
+                    className="h-auto max-w-full flex-wrap gap-1 overflow-visible rounded-md text-left font-normal whitespace-normal">
+                    <span className="font-medium [overflow-wrap:anywhere]">{c.name || c.email}</span>
+                    {c.name && c.email && <span className="text-muted-foreground [overflow-wrap:anywhere]">{c.email}</span>}
+                    {c.role && <em className="text-muted-foreground">({c.role})</em>}
                   </Badge>
                 ))}
               </span>

@@ -36,7 +36,7 @@ const summaryOf = (r) => ({ id: r.id, title: r.title, status: r.status })
  * ayrıntısı. İkinci bir kayıt gerekiyorsa Olay & Hata Geçmişi'nden açılır (tek, tutarlı yol; aynı alarm için yanlışlıkla
  * mükerrer kayıt açılmaz).
  */
-export default function AlertIncidentLink({ alert: a, teamName }) {
+export default function AlertIncidentLink({ alert: a, teamName, actBlocked = false }) {
   const t = useT()
   const toast = useToast()
   const { showConfirm } = useDialog()
@@ -81,7 +81,14 @@ export default function AlertIncidentLink({ alert: a, teamName }) {
   if (!a || alertId == null) return null
   if (!canCreate && linked.length === 0) return null
 
-  const openForm = () => setForm({ initial: { ...EMPTY_FORM, ...incidentPrefillFromAlert(a, t, { teamName }) } })
+  // Kullanıcının KENDİ kapsamı dışındaki alarmda (paylaşımla görülen / başka takımın / başka takımın bağımsız izlemesi —
+  // actBlockReason 'shared' | 'team' | 'owner') sahip takım ön doldurulmaz: sunucu olay kaydını o takıma yazdırmaz (403,
+  // 2026-10-22, UIM-34). Kullanıcı formda kendi takımını seçer.
+  const foreignOwner = actBlocked === true || actBlocked === 'shared' || actBlocked === 'team' || actBlocked === 'owner'
+  const openForm = () => {
+    const prefill = incidentPrefillFromAlert(a, t, { teamName })
+    setForm({ initial: { ...EMPTY_FORM, ...prefill, ...(foreignOwner ? { team_id: '', team_name: '' } : {}) } })
+  }
 
   async function submit(payload) {
     try {

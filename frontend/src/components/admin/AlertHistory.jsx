@@ -383,6 +383,23 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
     return { ok: true }
   }
 
+  // Gürültü ısı haritası / takım dağılımı hücresinden alarm açma (2026-10-22, UIM-31): o satırlar KISMİ (sayaçlar,
+  // act_scope / notify_scope yok) — detay "0 e-posta", "kimseye ulaşmadı", "İlk kez" ve sunucunun reddedeceği eylemler
+  // gösteriyordu. Tam satır tekil uçtan okunur (derin bağlantı yolu gibi, sıra korumalı); okunamazsa pencere açılmaz.
+  const slotOpenSeq = useRef(0)
+  function openFullAlert(a) {
+    if (!a || a.id == null) return
+    setTab(a.resolved ? 'closed' : 'open')
+    setFilters({ ...FILTER_DEFAULTS, q: a.domain || '' })
+    const my = ++slotOpenSeq.current
+    Promise.resolve().then(() => api.admin.getAlert(a.id)).catch(() => null).then((res) => {
+      if (my !== slotOpenSeq.current) return
+      const one = res?.success && res.data && !Array.isArray(res.data) && String(res.data.id) === String(a.id) ? res.data : null
+      if (one) setDetail(one)
+      else toast.error(res?.error || t('alh.openAlertFailed'))
+    })
+  }
+
   // Tekrar Bildir: önce alıcı önizlemesi → onay penceresi; gönderim sendReNotify ile.
   async function reNotify(a) {
     setNotifying(a.id)
@@ -395,7 +412,7 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
     }
   }
 
-  async function sendReNotify(excludeEmails, excludeUsernames = []) {
+  async function sendReNotify(excludeEmails, excludeUsernames = [], { pushCount = 0 } = {}) {
     if (!renotifyModal) return
     setRenotifySending(true)
     try {
@@ -404,12 +421,18 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
       if (excludeUsernames.length) body.excludeUsernames = excludeUsernames
       const res = await api.admin.reNotifyAlert(renotifyModal.alertId, Object.keys(body).length ? body : undefined)
       if (res?.success) {
-        toast.success(t('alh.notifyQueued', res.data?.recipients_queued ?? res.data?.contacts_queued ?? 0))
+        // Yalnız push (2026-10-22, UIM-8 / K13): tüm e-postalar hariç, push alıcısı kaldı → sunucu kabul eder ama e-posta
+        // sayısı 0'dır; "0 alıcıya gönderiliyor" demek yerine push kişi sayısı söylenir
+        const mails = res.data?.recipients_queued ?? res.data?.contacts_queued ?? 0
+        toast.success(Number(mails) === 0 && pushCount > 0 ? t('alh.notifyQueuedPush', pushCount) : t('alh.notifyQueued', mails))
         setRenotifyModal(null)
         load()
       } else {
-        toast.error(res?.error || t('alh.loadError'))
+        toast.error(res?.error || t('alh.renotifyFailed'))
       }
+    } catch (e) {
+      // Ağ hatası (request() fırlatır): işlenmemiş ret yerine okunur ileti
+      toast.error(e?.message || t('alh.renotifyFailed'))
     } finally {
       setRenotifySending(false)
     }
@@ -697,11 +720,11 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
         <div className="flex min-w-0 flex-col gap-2">
           <AlertTeamStatsPanel activeTeamId={filters.team}
             onPickTeam={(id) => patch({ team: String(id) })}
-            onOpenAlert={(a) => { setTab(a.resolved ? 'closed' : 'open'); setFilters({ ...FILTER_DEFAULTS, q: a.domain || '' }); setDetail(a) }} />
+            onOpenAlert={openFullAlert} />
           <Suspense fallback={<NoisePanelSkeleton />}>
             <AlertNoisePanel onPickDomain={(d) => patch({ q: d })}
               onPickDay={(day) => { setTab('all'); patch({ from: day, to: day, range: '' }) }}
-              onOpenAlert={(a) => { setTab(a.resolved ? 'closed' : 'open'); setFilters({ ...FILTER_DEFAULTS, q: a.domain || '' }); setDetail(a) }} />
+              onOpenAlert={openFullAlert} />
           </Suspense>
         </div>
       )}

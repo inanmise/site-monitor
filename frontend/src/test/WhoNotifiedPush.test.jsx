@@ -242,7 +242,7 @@ describe('Who gets notified — per-person push decisions', () => {
     expect(noc.querySelector('[data-noc="types"]')).toHaveTextContent('24/7 is on for this alert type')
     expect(noc.querySelector('[data-noc="coverage"]')).toHaveTextContent('1 of 2 monitors in this team currently notify the 24/7 team')
     fireEvent.click(screen.getByRole('button', { name: 'Open 24/7 Coverage' }))
-    expect(navEvents.at(-1)).toEqual({ tab: 'noc', params: { n_team: '7', n_type: 'SSL' } })
+    expect(navEvents.at(-1)).toEqual({ tab: 'noc', params: { n_view: 'coverage', n_team: '7', n_type: 'SSL' } })
   })
 
   it('24/7 note for monitor alerts lists types switched off for 24/7 and never invents a per-monitor answer', async () => {

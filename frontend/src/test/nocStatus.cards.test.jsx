@@ -120,7 +120,7 @@ describe('dokuz izleme kartı — yer, yoğunluk, durum', () => {
       const dlg2 = await screen.findByRole('dialog')
       expect(within(dlg2).queryByRole('link', { name: /7\/24 ayarını düzenle|Edit 24\/7 setting/ })).toBeNull()
       fireEvent.click(within(dlg2).getByRole('link', { name: /7\/24 Kapsamı’nda gör|View in 24\/7 Coverage/ }))
-      expect(nav).toHaveBeenCalledWith('noc', { n_type: type, n_q: label(base) })
+      expect(nav).toHaveBeenCalledWith('noc', { n_view: 'coverage', n_type: type, n_q: label(base) })
       expect(onOpen).not.toHaveBeenCalled()
     })
   }
@@ -195,7 +195,7 @@ describe('Genel Bakış sertifika kartı', () => {
     fireEvent.click(triggerOf(indicators()[0]))
     const dlg = await screen.findByRole('dialog')
     fireEvent.click(within(dlg).getByRole('link', { name: /7\/24 Kapsamı’nda gör|View in 24\/7 Coverage/ }))
-    expect(nav).toHaveBeenCalledWith('noc', { n_type: 'SSL', n_q: 'www.example.com' })
+    expect(nav).toHaveBeenCalledWith('noc', { n_view: 'coverage', n_type: 'SSL', n_q: 'www.example.com' })
   })
 
   it('satır noc_notify taşımıyorsa (eski sunucu yanıtı) gösterge YOK ve istek atılmaz; katman yerinde kalır', async () => {

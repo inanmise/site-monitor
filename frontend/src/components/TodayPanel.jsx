@@ -5,6 +5,11 @@ import { useT } from '../i18n/index.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval.js'
 import { navigateTo } from '../utils/navigate.js'
 import { alertNavParams } from './admin/alerts/alertHistoryModel.js'
+import { alertTypeLabel } from '../utils/alertTypeMeta.js'
+
+// Açık alarm satırının seviye etiketi (2026-10-22, UIM-36): ham CRITICAL/HIGH/WARNING yerine alh.level.*; bilinmeyen ham kalır
+const LEVEL_KEY = { CRITICAL: 'critical', HIGH: 'high', WARNING: 'warning' }
+const levelText = (t, level) => (LEVEL_KEY[String(level || '').toUpperCase()] ? t('alh.level.' + LEVEL_KEY[String(level).toUpperCase()]) : (level || ''))
 import TeamBadge from './ui/TeamBadge.jsx'
 import TodayListModal from './TodayListModal.jsx'
 import { MonitorRowBody, NotificationRowBody, HealthRowBody, QuietRowBody, MONITOR_SECTION_TAB, MONITOR_TAB, monitorRowKey, openMonitor, openNotification, openQuiet } from './todayMonitorRows.jsx'
@@ -186,9 +191,9 @@ export default function TodayPanel({ onOpenDomain }) {
             <ul className="today-list">
               {(alerts.items || []).map((a) => (
                 <li key={a.id}>
-                  <span className={`today-level today-level--${(a.level || '').toLowerCase()}`}>{a.level}</span>
-                  <Button type="button" variant="link" className="h-auto min-w-0 max-w-full justify-start p-0 font-semibold" onClick={() => navigateTo('alerthistory', alertNavParams({ id: a.id, alert_type: a.type, domain: a.domain }))}><span className="truncate">{a.domain || a.type}</span></Button>
-                  <span className="today-muted">{a.type}{a.acknowledged ? ` · ${t('today.acked')}` : ''}</span>
+                  <span className={`today-level today-level--${(a.level || '').toLowerCase()}`} title={a.level || undefined}>{levelText(t, a.level)}</span>
+                  <Button type="button" variant="link" className="h-auto min-w-0 max-w-full justify-start p-0 font-semibold" onClick={() => navigateTo('alerthistory', alertNavParams({ id: a.id, alert_type: a.type, domain: a.domain }))}><span className="truncate">{a.domain || alertTypeLabel(t, a.type)}</span></Button>
+                  <span className="today-muted">{alertTypeLabel(t, a.type)}{a.acknowledged ? ` · ${t('today.acked')}` : ''}</span>
                 </li>
               ))}
             </ul>

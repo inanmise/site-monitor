@@ -28,14 +28,20 @@ export default function ScriptedVersionsTab({ t, monitor, canEdit, onLoadIntoEdi
   const [sel, setSel] = useState(null)        // seçili sürüm (liste satırı)
   const [bodies, setBodies] = useState({})    // versionId -> gövde (script + env). Memoize: seçim ileri-geri gezinmesi bedava.
   const [view, setView] = useState('diff')    // 'diff' | 'script'
+  // Okuma hatası (2026-10-22, UIM-45): `success:false` "Henüz sürüm yok", ağ hatası sonsuz bekleme gösteriyordu
+  const [listError, setListError] = useState(null)
+  const [listTry, setListTry] = useState(0)
 
   useEffect(() => {
     let alive = true
-    api.monitoring.getScriptedVersions?.(monitor.id).then(r => {
-      if (alive) setRows(r?.success ? (r.data?.versions || []) : [])
-    })
+    setRows(null); setListError(null)
+    Promise.resolve(api.monitoring.getScriptedVersions?.(monitor.id)).then(r => {
+      if (!alive) return
+      if (r?.success) setRows(r.data?.versions || [])
+      else setListError(r?.error || t('scripted.versionsLoadFailed'))
+    }).catch(e => { if (alive) setListError(e?.message || t('scripted.versionsLoadFailed')) })
     return () => { alive = false }
-  }, [monitor.id])
+  }, [monitor.id, listTry]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Seçili sürüm VE bir öncekinin gövdesi gerekiyor (diff için). İkisi de yalnız bir kez çekilir.
   const prev = useMemo(() => {
@@ -49,13 +55,22 @@ export default function ScriptedVersionsTab({ t, monitor, canEdit, onLoadIntoEdi
     let alive = true
     const want = [sel.id, prev?.id].filter(id => id != null && bodies[id] === undefined)
     want.forEach(id => {
-      api.monitoring.getScriptedVersion?.(monitor.id, id).then(r => {
-        if (alive && r?.success) setBodies(b => ({ ...b, [id]: r.data }))
-      })
+      // Gövde okunamazsa işaret düşülür (yeniden istek döngüsü olmaz) — önizleme "yükleniyor"da asılı kalmaz
+      Promise.resolve(api.monitoring.getScriptedVersion?.(monitor.id, id)).then(r => {
+        if (alive) setBodies(b => ({ ...b, [id]: r?.success ? r.data : { __error: true } }))
+      }).catch(() => { if (alive) setBodies(b => ({ ...b, [id]: { __error: true } })) })
     })
     return () => { alive = false }
   }, [monitor.id, sel, prev, bodies])
 
+  if (rows === null && listError) {
+    return (
+      <div data-slot="sc-versions-error">
+        <StatusBlock tone="danger" title={t('scripted.versionsLoadFailed')} description={String(listError)}
+          actions={<Button size="sm" variant="outline" className="pointer-coarse:h-10" onClick={() => setListTry(n => n + 1)}>{t('hist.retry')}</Button>} />
+      </div>
+    )
+  }
   if (rows === null) return <LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />
   if (rows.length === 0) {
     return <StatusBlock tone="neutral" title={t('scripted.versionNone')} description={t('scripted.versionEmptyHint')} />
@@ -67,8 +82,17 @@ export default function ScriptedVersionsTab({ t, monitor, canEdit, onLoadIntoEdi
     return t('scripted.versionEventEDIT')
   }
 
-  const detail = sel ? bodies[sel.id] : null
-  const prevDetail = prev ? bodies[prev.id] : null
+  const failedBody = (b) => b?.__error === true
+  const detailRaw = sel ? bodies[sel.id] : null
+  const prevRaw = prev ? bodies[prev.id] : null
+  const bodyFailed = failedBody(detailRaw) || failedBody(prevRaw)
+  const detail = failedBody(detailRaw) ? null : detailRaw
+  const prevDetail = failedBody(prevRaw) ? null : prevRaw
+  const retryBodies = () => setBodies(b => {
+    const next = { ...b }
+    for (const id of [sel?.id, prev?.id]) if (id != null && failedBody(next[id])) delete next[id]
+    return next
+  })
 
   return (
     <div className="sc-versions">
@@ -103,7 +127,13 @@ export default function ScriptedVersionsTab({ t, monitor, canEdit, onLoadIntoEdi
           </div>
 
           <div className="sc-ver-preview-body">
-            {view === 'script' || !prev
+            {bodyFailed && (
+              <div data-slot="sc-version-body-error" className="mb-2 flex flex-wrap items-center gap-2 text-sm text-destructive">
+                <span>{t('scripted.versionBodyLoadFailed')}</span>
+                <Button size="sm" variant="outline" className="pointer-coarse:h-10" onClick={retryBodies}>{t('hist.retry')}</Button>
+              </div>
+            )}
+            {bodyFailed ? null : view === 'script' || !prev
               ? (detail
                   ? <CodeEditor value={detail.script || ''} onChange={() => {}} readOnly textareaId={`k6-version-${sel.id}`} />
                   : <LoadingBlock label={t('modal.loading')} />)
