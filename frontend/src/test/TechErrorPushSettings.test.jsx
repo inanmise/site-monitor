@@ -140,4 +140,36 @@ describe('TechErrorPushSettings', () => {
     expect(within(card()).queryByRole('switch')).toBeNull()
     expect(within(bad).getByRole('button', { name: /Tekrar dene/ })).toBeInTheDocument()
   })
+
+  // 20.166 bugfix (UIA-E5): "Push ayarlarını aç" sayfanın ayrılma onayını atlayıp kaydedilmemiş push taslağını sessizce atıyordu
+  it('"Push ayarlarını aç": taslak varken önce sorar (Vazgeç → kalır, onay → gider); temizken doğrudan gider', async () => {
+    api.admin.techErrorPushSettings.mockResolvedValue(pushOk({ push_enabled: false }))
+    const seen = []
+    const onNav = (e) => seen.push(e.detail)
+    window.addEventListener('sm:navigate', onNav)
+    try {
+      const c = await openCard()
+      const open = () => within(document.querySelector('[data-slot="tes-push-channel-off"]')).getByRole('button', { name: 'Push ayarlarını aç' })
+      // temiz: onay yok, doğrudan Push ayarları
+      fireEvent.click(open())
+      expect(seen).toEqual([{ tab: 'settings', params: { sec: 'userpush' } }])
+      expect(document.querySelector('[role="dialog"]')).toBeNull()
+      // taslak: önce sorar
+      fireEvent.click(within(c).getByRole('switch', { name: LABELS.decision }))
+      await waitFor(() => expect(bar()).toHaveAttribute('data-dirty', 'true'))
+      fireEvent.click(open())
+      const dlg = await screen.findByRole('dialog')
+      expect(within(dlg).getByText(/Push ayarlarına geçerseniz/)).toBeInTheDocument()
+      fireEvent.click(within(dlg).getByRole('button', { name: 'Vazgeç' }))
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+      expect(seen).toHaveLength(1)
+      expect(bar()).toHaveAttribute('data-dirty', 'true')
+      fireEvent.click(open())
+      fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Kaydetmeden geç' }))
+      await waitFor(() => expect(seen).toHaveLength(2))
+      expect(seen[1]).toEqual({ tab: 'settings', params: { sec: 'userpush' } })
+    } finally {
+      window.removeEventListener('sm:navigate', onNav)
+    }
+  })
 })

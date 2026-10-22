@@ -7017,6 +7017,7 @@ export const TR = {
   'team.impact.te_templates': "{0} teknik hata raporu şablonu (takım kütüphanesi)",
   'team.impact.maintenance_windows': "{0} süren / yaklaşan bakım penceresi",
   'team.impactExecDeleted': "Takımın yönetici özeti ayarı ve gönderim geçmişi takımla birlikte silinir.",
+  'te.set.leaveBodyPush': "Bu sayfada kaydetmediğiniz ayar değişikliği var. Push ayarlarına geçerseniz bu değişiklikler kaybolur; önce Kaydet'e basabilirsiniz.",
   // ── /PKG-8a ──
   'usr.pwdReused':               'Yeni şifre son 3 şifreden biri olamaz',
   'usr.pwdStrength.weak':        'Zayıf',
