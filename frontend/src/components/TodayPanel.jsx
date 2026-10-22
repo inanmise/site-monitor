@@ -76,7 +76,10 @@ export default function TodayPanel({ onOpenDomain }) {
   useVisibleInterval(load, 120_000, true)
 
   if (!data) return settled ? null : <TodayPanelSkeleton label={t('today.title')} />
-  const certs = data.certs || {}, alerts = data.alerts || {}, weekly = data.weekly || {}
+  // Alarm okuma izni yoksa (2026-10-22, L-H8 / PKG-5): sunucu `alerts.visible === false` döner — kart çizilmez, toplama ve
+  // "Sorun yok" şeridine girmez (bilinmeyen "sorun yok" değildir). Alan yoksa (eski sunucu) bugünkü davranış.
+  const alertsHidden = data.alerts?.visible === false
+  const certs = data.certs || {}, alerts = alertsHidden ? {} : (data.alerts || {}), weekly = data.weekly || {}
   const flapping = data.flapping || {}, slow = data.slow || {}, stale = data.stale || {}, domains = data.domains || {}
   const notif = data.notifications || {}, health = data.health || {}, quiet = data.quiet || {}, recent = data.recent || null
   const total = (certs.count || 0) + (alerts.count || 0) + (weekly.missing || 0)
@@ -138,7 +141,7 @@ export default function TodayPanel({ onOpenDomain }) {
     ['certs', t('today.certs'), certs], ['alerts', t('today.alerts'), alerts], ['flapping', t('today.flapping'), flapping],
     ['slow', t('today.slow'), slow], ['stale', t('today.stale'), stale], ['domains', t('today.domains'), domains],
     ['notifications', t('today.notif'), notif], ['health', t('today.health'), health], ['quiet', t('today.quiet'), quiet],
-  ].filter(([, , b]) => !b.count).map(([key, title, b]) => ({ key, title, prev: b.prev }))
+  ].filter(([key, , b]) => !b.count && !(key === 'alerts' && alertsHidden)).map(([key, title, b]) => ({ key, title, prev: b.prev }))
   if (weekly.count > 0 && !weekly.missing) clearCards.push({ key: 'weekly', title: t('today.weekly', weekly.week) })
   // Tekil ayrı anahtar (QA 2026-09-24, ISSUE-003): EN "alerts opened: 3" etiketin kendi iki noktasıyla
   // "Last 24 hours: alerts opened: 3" diye okunuyordu; artık "3 alerts opened" / "1 alert opened".
