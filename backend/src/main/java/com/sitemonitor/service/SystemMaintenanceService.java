@@ -225,7 +225,9 @@ public class SystemMaintenanceService {
     /** Yalnız bu pod (yeniden yayın yok). Kuşak artar: boşaltmadan ÖNCE başlamış okuma eski listeyi saklamaz. */
     void invalidateLocal() {
         snapshotGeneration.incrementAndGet();
-        snapshot = null;
+        // SİLİNMEZ, bayat işaretlenir: yeniden okuma hata verirse son görüntü kullanılır (fail-open "bakım yok" yerine; C-2)
+        Snapshot s = snapshot;
+        snapshot = s == null ? null : new Snapshot(s.windows(), Long.MIN_VALUE / 2);
     }
 
     private final java.util.concurrent.atomic.AtomicLong snapshotGeneration = new java.util.concurrent.atomic.AtomicLong();

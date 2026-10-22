@@ -281,7 +281,10 @@ public class NocOperatorService {
     /** Yalnız bu pod (yeniden yayın yok). Kuşak artar: boşaltmadan ÖNCE başlamış yapım eski görüntüyü saklamaz. */
     void invalidateLocal() {
         generation.incrementAndGet();
-        snapshot = null;
+        // SİLİNMEZ, bayat işaretlenir: yeniden kurma hata verirse önceki görüntü kullanılır (eskiden boşaltma görüntüyü attığı
+        // için veritabanı hıçkırığında 30 sn boyunca HİÇ 7/24 operatörü yoktu — günlük ise "önceki görüntü" diyordu; C-2)
+        Snapshot s = snapshot;
+        snapshot = s == null ? null : new Snapshot(s.teamIds(), s.operatorTeams(), Long.MIN_VALUE / 2);
     }
 
     private final java.util.concurrent.atomic.AtomicLong generation = new java.util.concurrent.atomic.AtomicLong();

@@ -205,6 +205,16 @@ class CertificateServiceCacheEvictionTest {
     }
 
     @Test
+    @DisplayName("Çok pod (D-4): domain-team-names sync yüklenir — boşaltmayla yarışan yükleme kuşak korumasından geçer (300 sn eski ad yok)")
+    void domainTeamNamesIsSync() throws Exception {
+        org.springframework.cache.annotation.Cacheable c = CertificateService.class.getMethod("domainTeamNameMap")
+                .getAnnotation(org.springframework.cache.annotation.Cacheable.class);
+        assertThat(c).isNotNull();
+        assertThat(c.sync()).isTrue();
+        assertThat(c.value()).containsExactly("domain-team-names");
+    }
+
+    @Test
     @DisplayName("Çok pod: öteki pod'un yayını Genel Bakış önbelleğini boşalttıysa ısıtıcı olayı (CachesEvictedEvent) yayınlanır, diğer adlarda değil")
     void remoteEvictOfOverviewCachesWarms() {
         CertificateService svc = org.mockito.Mockito.mock(CertificateService.class,

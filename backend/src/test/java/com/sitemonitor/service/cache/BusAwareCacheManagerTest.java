@@ -28,6 +28,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Spring önbellekleri veri yoluna bağlı (2026-10-22, çok pod R2-A, MP-30): {@code @CacheEvict} / {@code clear()} pod A'da →
@@ -122,29 +123,86 @@ class BusAwareCacheManagerTest {
     }
 
     @Test
-    @DisplayName("Yarış: sync yükleme sürerken öteki pod'un yayını önbelleği boşaltırsa yüklenen (eski) değer saklanmaz")
-    void syncLoadRacingRemoteEvict_isNotStored() throws Exception {
+    @DisplayName("Yazdığını oku (C-1): yayın uygulandıktan SONRA gelen okuma, boşaltmadan önce başlamış yüklemeye katılsa da eski listeyi ALMAZ")
+    void joinerOfLoadStartedBeforeEvict_getsFreshValue() throws Exception {
         BusAwareCacheManager m = manager(bus());
         Cache c = m.getCache("cert-latest");
         java.util.concurrent.CountDownLatch loading = new java.util.concurrent.CountDownLatch(1);
-        java.util.concurrent.CountDownLatch evicted = new java.util.concurrent.CountDownLatch(1);
-        java.util.concurrent.ExecutorService ex = java.util.concurrent.Executors.newSingleThreadExecutor();
-        try {
-            java.util.concurrent.Future<String> f = ex.submit(() -> c.get("all", () -> {
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicInteger loads = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.Callable<String> loader = () -> {
+            if (loads.incrementAndGet() == 1) {   // ilk yükleme A'nın yazmasından ÖNCE okudu
                 loading.countDown();
-                assertThat(evicted.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                assertThat(release.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
                 return "eski";
-            }));
+            }
+            return "taze";
+        };
+        java.util.concurrent.ExecutorService ex = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            java.util.concurrent.Future<String> starter = ex.submit(() -> c.get("all", loader));   // ısıtıcı / başka kullanıcı
             assertThat(loading.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
-            m.localEvictor("cert-latest").run();   // öteki pod'un yayını (yerel boşaltma)
-            evicted.countDown();
-            assertThat(f.get(5, java.util.concurrent.TimeUnit.SECONDS)).as("çağıran yine sonucu alır").isEqualTo("eski");
+            m.localEvictor("cert-latest").run();   // öteki pod'un yayını uygulandı (zorunlu yoklama)
+            java.util.concurrent.Future<String> reader = ex.submit(() -> c.get("all", loader));   // X-Cache-Min-Gen'li GET
+            Thread.sleep(200);   // okuyucu süren yüklemeye katıldı
+            release.countDown();
+            assertThat(reader.get(5, java.util.concurrent.TimeUnit.SECONDS)).as("katılan okuyucu eski listeyi almaz").isEqualTo("taze");
+            assertThat(starter.get(5, java.util.concurrent.TimeUnit.SECONDS)).isEqualTo("taze");
         } finally {
             ex.shutdownNow();
         }
-        assertThat(c.get("all")).as("yarışan yükleme saklanmadı").isNull();
-        assertThat(c.get("all", () -> "taze")).isEqualTo("taze");
-        assertThat(c.get("all", () -> "yine")).as("yarışsız yükleme saklandı").isEqualTo("taze");
+        assertThat(c.get("all", () -> "yine")).as("taze değer saklandı").isEqualTo("taze");
+        assertThat(loads.get()).as("en çok bir yeniden yükleme (her çağıran için)").isLessThanOrEqualTo(3);
+    }
+
+    @Test
+    @DisplayName("Kuşak damgası: boşaltmadan önce konmuş değer lookup / put / putIfAbsent yollarında da ıskalama; null değer korunur")
+    void stampedValues_staleIsMiss_nullSupported() {
+        BusAwareCacheManager m = manager(bus());
+        Cache c = m.getCache("domain-team-names");
+        c.put("k", "eski");
+        assertThat(c.get("k", String.class)).isEqualTo("eski");
+        m.localEvictor("domain-team-names").run();
+        assertThat(c.get("k")).as("boşaltmadan önce konmuş: ıskalama").isNull();
+        c.put("n", null);
+        assertThat(c.get("n")).isNotNull();
+        assertThat(c.get("n").get()).isNull();
+        assertThat(c.putIfAbsent("n", "x").get()).isNull();
+        assertThat(c.putIfAbsent("y", "ilk")).isNull();
+        assertThat(c.get("y", String.class)).isEqualTo("ilk");
+        Object z = c.get("z", () -> null);
+        assertThat(z).isNull();
+        assertThatThrownBy(() -> c.get("err", () -> { throw new IllegalStateException("db"); }))
+                .isInstanceOf(Cache.ValueRetrievalException.class);
+    }
+
+    @Test
+    @DisplayName("D-1: öteki pod'un yayını, Caffeine kilidini tutan süren hesabı BEKLEMEZ (veri yolu iş parçacığı takılmaz)")
+    void remoteClear_doesNotBlockOnRecomputingEntry() throws Exception {
+        BusAwareCacheManager m = manager(bus());
+        Cache c = m.getCache("cert-latest");
+        c.put("all", "eski");
+        @SuppressWarnings("unchecked")
+        com.github.benmanes.caffeine.cache.Cache<Object, Object> nc =
+                (com.github.benmanes.caffeine.cache.Cache<Object, Object>) c.getNativeCache();
+        java.util.concurrent.CountDownLatch holding = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.ExecutorService ex = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            ex.submit(() -> nc.asMap().compute("all", (k, v) -> {   // süresi dolmuş girdinin yeniden hesabı kutu kilidini tutar
+                holding.countDown();
+                try { release.await(10, java.util.concurrent.TimeUnit.SECONDS); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+                return v;
+            }));
+            assertThat(holding.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            java.util.concurrent.Future<?> evict = ex.submit(() -> m.localEvictor("cert-latest").run());
+            evict.get(1, java.util.concurrent.TimeUnit.SECONDS);   // eskiden hesap bitene dek beklerdi → zaman aşımı
+        } finally {
+            release.countDown();
+            ex.shutdown();
+            assertThat(ex.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        }
+        assertThat(c.get("all")).as("eski damgalı değer ıskalama").isNull();
     }
 
     @Test

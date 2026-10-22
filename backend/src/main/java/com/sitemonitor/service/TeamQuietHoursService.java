@@ -81,8 +81,13 @@ public class TeamQuietHoursService {
                 if (q != null) map.put(t.getId(), q);
             }
         } catch (Exception e) {
-            // Kolon henüz yoksa (yama öncesi) ya da DB anlık düştüyse: sessiz saat YOK say — bildirim asla engellenmez.
-            log.debug("Sessiz saat ayarları okunamadı (pencere yok sayıldı): {}", e.getMessage());
+            // DB anlık düştüyse: bilinen son ayar (bayat işaretli önceki görüntü) kullanılır — öteki pod'un boşaltması hıçkırıkta
+            // tüm pod'larda sessiz saati kaldırmasın (çok pod R2-A inceleme C-2). Önceki görüntü yoksa (açılış, kolon henüz yok):
+            // sessiz saat YOK say — bildirim asla engellenmez (eski davranış).
+            map.clear();
+            if (s != null) map.putAll(s.byTeam());
+            log.debug("Sessiz saat ayarları okunamadı ({}): {}", s != null ? "önceki ayar kullanılıyor" : "pencere yok sayıldı",
+                    e.getMessage());
         }
         Snapshot fresh = new Snapshot(Map.copyOf(map), nowMs);
         if (generation.get() == gen) snapshot = fresh;   // yükleme sırasında boşaltıldıysa saklanmaz
@@ -108,7 +113,9 @@ public class TeamQuietHoursService {
     /** Yalnız bu pod (yeniden yayın yok). Kuşak artar: boşaltmadan ÖNCE başlamış yükleme eski ayarı saklamaz. */
     void invalidateLocal() {
         generation.incrementAndGet();
-        snapshot = null;
+        // SİLİNMEZ, bayat işaretlenir: yeniden okuma hata verirse önceki ayar kullanılır (C-2)
+        Snapshot s = snapshot;
+        snapshot = s == null ? null : new Snapshot(s.byTeam(), Long.MIN_VALUE / 2);
     }
 
     private final java.util.concurrent.atomic.AtomicLong generation = new java.util.concurrent.atomic.AtomicLong();
