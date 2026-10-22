@@ -106,8 +106,10 @@ describe('Pano — kart eylemleri sunucunun kapısıyla', () => {
   })
   afterEach(() => { window.history.replaceState({}, '', '/') })
 
+  // Yeniden taban (FE-1): satır sahip takımları (`owner_team_ids`) taşır — kural /check/{domain}'in birebir aynası
   it('UIM-9: 7/24 operatörü başka takımın kartında "Şimdi kontrol et" görmez; toplu koşu yalnız kendi takımı', async () => {
     fx.me = { system_role: 'USER', noc_operator: true, team_ids: [1], team_names: ['Takım A'] }
+    fx.certs = () => ok([cert('a.example.com', { owner_team_ids: [1] }), cert('b.example.com', { team_id: 2, team_name: 'Takım B', owner_team_ids: [2] })])
     await renderApp()
     await cardsShown()
     expect(btn('a.example.com', 'Check Now')).not.toBeNull()
@@ -117,6 +119,36 @@ describe('Pano — kart eylemleri sunucunun kapısıyla', () => {
     expect(within(picker).queryByText('Takım B')).toBeNull()
     fireEvent.click(within(picker).getByRole('button', { name: 'Start check' }))
     await waitFor(() => expect(fx.calls.checks).toEqual(['a.example.com']))
+  })
+
+  it('FE-1: sunucunun kabul ettiği her yol düğmeyi açar — UG takımı üyesi, müdürün görüş kapsamı, UG takımında EXECUTE paylaşımı', async () => {
+    fx.certs = () => ok([
+      cert('ug.example.com', { team_id: 2, team_name: 'Takım B', owner_team_ids: [2, 1] }),        // kullanıcının takımı UG
+      cert('ast.example.com', { team_id: 3, team_name: 'Takım C', owner_team_ids: [3] }),          // müdürün astının takımı
+      cert('pay.example.com', { team_id: 4, team_name: 'Takım D', owner_team_ids: [4, 5] }),       // UG'de EXECUTE paylaşımı
+      cert('yabanci.example.com', { team_id: 6, team_name: 'Takım E', owner_team_ids: [6, 7] }),   // hiçbiri → sunucu 403
+    ])
+    fx.me = { system_role: 'ADMIN', noc_operator: true, team_ids: [1], team_names: ['Takım A'], view_team_ids: [1, 3],
+      manage_team_ids: [1, 3], access_grants: [{ team_id: 5, team_name: 'Takım P', level: 'EXECUTE' }, { team_id: 7, team_name: 'Takım Q', level: 'VIEW' }] }
+    await renderApp()
+    await cardsShown()
+    expect(btn('ug.example.com', 'Check Now')).not.toBeNull()
+    expect(btn('ast.example.com', 'Check Now')).not.toBeNull()
+    expect(btn('pay.example.com', 'Check Now')).not.toBeNull()
+    expect(btn('yabanci.example.com', 'Check Now')).toBeNull()
+    fireEvent.click(document.querySelector('[data-tour="check-now"]'))
+    const picker = await screen.findByRole('dialog', { name: 'Which teams should be checked?' })
+    expect(within(picker).queryByText('Takım E')).toBeNull()
+    fireEvent.click(within(picker).getByRole('button', { name: 'Start check' }))
+    await waitFor(() => expect([...fx.calls.checks].sort()).toEqual(['ast.example.com', 'pay.example.com', 'ug.example.com']))
+  })
+
+  it('FE-1: satır sahip takımları taşımıyorsa (eski sunucu) 7/24 operatörü düğmeyi kaybetmez — 20.165.0 davranışı, sunucu karar verir', async () => {
+    fx.me = { system_role: 'USER', noc_operator: true, team_ids: [1], team_names: ['Takım A'] }
+    await renderApp()
+    await cardsShown()
+    expect(btn('a.example.com', 'Check Now')).not.toBeNull()
+    expect(btn('b.example.com', 'Check Now')).not.toBeNull()
   })
 
   it('UIM-9: 7/24 operatörü olmayan üye kendi listesinde (sunucu süzer) bugünkü gibi her kartı kontrol eder', async () => {

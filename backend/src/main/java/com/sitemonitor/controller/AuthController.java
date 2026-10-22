@@ -930,6 +930,7 @@ public class AuthController {
         resp.put("global_admin", SessionScope.isGlobalAdmin(session));
         resp.put("scoped", session.getAttribute("viewTeamIds") != null);
         putManageTeamIds(resp, session);
+        putViewTeamIds(resp, session);
         // Haftalık Raporlar modülü bu kullanıcıya görünür mü (2026-09-16)? Takım bazlı açılır, varsayılan
         // KAPALI — sekme yalnız açık takımlara (ve en az bir takım açıksa yönetici/denetçiye) çizilir.
         resp.put("weekly_reports_visible", weeklyReportsVisible(resp, session));
@@ -1569,6 +1570,7 @@ public class AuthController {
         resp.put("global_admin", SessionScope.isGlobalAdmin(session));
         resp.put("scoped", session.getAttribute("viewTeamIds") != null);
         putManageTeamIds(resp, session);
+        putViewTeamIds(resp, session);
         // Giriş yanıtına da konur: /me yalnız açılışta koşuyor — konmazsa sekme ancak F5'ten sonra görünürdü.
         resp.put("weekly_reports_visible", weeklyReportsVisible(resp, session));
         putMaintenance(resp);   // Sistem Bakım Modu (2026-10-02): global yönetici bakımda girince admin şeridi hemen görünsün
@@ -1585,6 +1587,19 @@ public class AuthController {
         if (SessionScope.isGlobalAdmin(session)) return;
         List<Long> manage = SessionScope.manageTeamIds(session);
         resp.put("manage_team_ids", manage == null ? List.of() : new ArrayList<>(manage));
+    }
+
+    /**
+     * GÖRÜŞ kapsamı (2026-10-22, hata avı FE-1): {@code view_team_ids} = oturumun {@code viewTeamIds} listesi — sunucunun
+     * {@link SessionScope#canView} takımları. Arayüz sertifikanın "Şimdi kontrol et" kapısını {@code /check/{domain}}
+     * kuralıyla (SY ya da UG takımı bu kapsamda / EXECUTE paylaşımında) birebir kurar; 7/24 operatörü kartların hepsini
+     * görür ama çalıştırma kendi kapsamındadır. Global görüntüleyicide (global yönetici / AUDIT; kapsam yok = sınırsız)
+     * alan YAZILMAZ. Ek alan — eski istemci yok sayar; alan yoksa istemci üyelik + yönetim kapsamından türetir.
+     */
+    private static void putViewTeamIds(Map<String, Object> resp, HttpSession session) {
+        if (SessionScope.isGlobalViewer(session)) return;
+        List<Long> view = SessionScope.viewTeamIds(session);
+        resp.put("view_team_ids", view == null ? List.of() : new ArrayList<>(view));
     }
 
     /**

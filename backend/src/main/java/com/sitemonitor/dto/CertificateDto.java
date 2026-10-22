@@ -248,6 +248,25 @@ public class CertificateDto {
     private Boolean canCheck;
 
     /**
+     * Kaydın SAHİP takımları (2026-10-22, hata avı FE-1): envanterin SY + UG takımı (null olmayan, tekil, SY önce). Kaydın
+     * KENDİ verisidir — görüntüleyiciye göre değişmez, bu yüzden önbellekteki ({@code getAllLatest}) nesneye yazılması
+     * güvenlidir. İstemci "Şimdi kontrol et" kapısını {@code /check/{domain}} kuralıyla birebir kurar (SY ya da UG görüş
+     * kapsamında ya da EXECUTE+ paylaşımında). Yalnız envanterden kurulan pano listeleri doldurur; diğer uçlarda null →
+     * YAZILMAZ ve istemci bugünkü kuralı uygular. Takım kimliği — kullanıcı kimliği değil.
+     */
+    @JsonProperty("owner_team_ids")
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    private List<Long> ownerTeamIds;
+
+    /** {@link #ownerTeamIds} değeri: SY + UG (null olmayan, tekil, sıra korunur). */
+    public static List<Long> ownerTeamIdsOf(Long syTeamId, Long ugTeamId) {
+        java.util.LinkedHashSet<Long> ids = new java.util.LinkedHashSet<>();
+        if (syTeamId != null) ids.add(syTeamId);
+        if (ugTeamId != null) ids.add(ugTeamId);
+        return List.copyOf(ids);
+    }
+
+    /**
      * Elle yüklenen sertifika (2026-10-06): {@code "MANUAL"}; ağdan kontrol edilen satırda null → YAZILMAZ (yanıt
      * bugünküyle bayt bayt aynı kalır). Envanter satırını okuyan listeler ({@code getAllLatest}) doldurur.
      */

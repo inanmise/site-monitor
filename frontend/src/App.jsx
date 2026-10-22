@@ -12,6 +12,7 @@ import { useToast } from './components/ui/Toast.jsx'
 import { useT } from './i18n/index.jsx'
 import { usePagination } from './hooks/usePagination.js'
 import { teamsFromMe, grantWriteTeamsFromMe, grantLevelsFromMe, mergeWriteTeams, rowGrantAccess } from './hooks/useMonitorTeamPick.js'
+import { canCheckCertRow } from './utils/certCheckScope.js'
 import { matchesTag, tagNamesOf, matchesGroupOrTagText, matchesSearchText } from './utils/monitorFilters.js'
 import PaginationBar from './components/ui/PaginationBar.jsx'
 import InactivityCountdownText from './components/ui/InactivityCountdownText.jsx'
@@ -297,6 +298,14 @@ function manageIdsFrom(r) {
   return Array.isArray(r?.manage_team_ids) ? r.manage_team_ids : null
 }
 
+/**
+ * Görüş kapsamı (2026-10-22, FE-1): `/me` (ve giriş yanıtı) `view_team_ids` = oturumun `viewTeamIds` listesi (sunucunun
+ * `canView` takımları — sertifika `/check/{domain}` kapısı). Alan yoksa (eski sunucu, global görüntüleyici) null.
+ */
+function viewIdsFrom(r) {
+  return Array.isArray(r?.view_team_ids) ? r.view_team_ids : null
+}
+
 /** "Geçerli" sertifika (UIM-18, K12): sunucu hükmü (`alert_level`) varsa yalnız `valid`; yoksa eski 30 gün bayrağı. */
 function isValidCert(c) {
   if (c?.alert_level) return c.alert_level === 'valid'
@@ -345,6 +354,8 @@ export default function App() {
   const [myTeamIds, setMyTeamIds] = useState([])
   // Yönetim kapsamındaki takımlar (K2, 2026-10-22) — null = bilinmiyor (alan yok); bkz. manageIdsFrom
   const [manageTeamIds, setManageTeamIds] = useState(null)
+  // Görüş kapsamındaki takımlar (FE-1, 2026-10-22) — null = bilinmiyor (alan yok); bkz. viewIdsFrom
+  const [viewTeamIds, setViewTeamIds] = useState(null)
   // Üyesi olunan takımlar (id+ad): izleme formlarında takım seçimi (2026-09-18) — /me team_ids × team_names
   const [myTeams, setMyTeams] = useState([])
   // Takım erişim paylaşımıyla düzenlenebilen takımlar (2026-10-12) — yalnız izleme / envanter formlarının takım seçicisine
@@ -517,16 +528,14 @@ export default function App() {
     return canManageInventory && (m == null ? true : m)
   }
   /**
-   * "Şimdi kontrol et" (kart, toplu koşu, pencere Çalıştır / Sağlık yenile — 2026-10-22, UIM-9): sunucu `/check/{domain}`
-   * KENDİ görüş kapsamını ister (7/24 genişlemesi yazma/çalıştırma yollarına girmez). 7/24 operatörü (global görüntüleyici
-   * değil) tüm takımların kartlarını görür → yalnız üyesi / yöneticisi olduğu ya da EXECUTE+ paylaşımı olan takımda.
+   * "Şimdi kontrol et" (kart, Uyarılar satırı, toplu koşu, pencere Çalıştır / Sağlık yenile / Tanıla): sunucunun
+   * `/check/{domain}` kuralının aynası (`utils/certCheckScope`, 2026-10-22 UIM-9 + FE-1) — SY ya da UG takımı kendi görüş
+   * kapsamında ya da EXECUTE+ paylaşımında. 7/24 genişlemesi çalıştırmaya girmez; satır sahip takımları taşımıyorsa
+   * (eski sunucu) bugünkü kural — sunucunun kabul edeceği düğme hiç gizlenmez.
    */
-  const canCheckCert = (cert) => {
-    const ga = certGrantAccess(cert)
-    if (ga) return ga.check
-    if (!noc.operator || globalViewer) return true
-    return isMemberTeam(cert?.team_id) || inManageScope(cert?.team_id) === true
-  }
+  const checkCtx = useMemo(() => ({ globalViewer, viewTeamIds, memberTeamIds: myTeamIds, manageTeamIds, systemRole, grantLevels }),
+    [globalViewer, viewTeamIds, myTeamIds, manageTeamIds, systemRole, grantLevels])
+  const canCheckCert = (cert) => canCheckCertRow(cert, checkCtx)
   /** Yenileme planı (UIM-11): sunucu `inventory.crud` + `canManage` ister — paylaşım ve üyelik yetmez. K2 yoksa bugünkü kural. */
   const canPlanCert = (cert) => {
     if (!canAddInventory || certGrantAccess(cert)) return false
@@ -602,6 +611,7 @@ export default function App() {
         setSystemRole(res.system_role || 'USER')
         setGlobalAdmin(!!res.global_admin)
         setManageTeamIds(manageIdsFrom(res))
+        setViewTeamIds(viewIdsFrom(res))
         setWeeklyReportsVisible(!!res.weekly_reports_visible)
         setNoc(nocFrom(res))
         setTeamId(res.team_id ?? null)
@@ -1243,6 +1253,7 @@ export default function App() {
     setTeamId(null)
     setTeamName(null)
     setManageTeamIds(null)
+    setViewTeamIds(null)
     setInactivityWarning(false)
     setRefreshing(false)
     setSessionExpiredNotice(false)   // varsa "oturum süresi doldu" bildirimini temizle
@@ -1586,6 +1597,7 @@ export default function App() {
     setSystemRole(userData.system_role || 'USER')
     setGlobalAdmin(!!userData.global_admin)
     setManageTeamIds(manageIdsFrom(userData))
+    setViewTeamIds(viewIdsFrom(userData))
     setWeeklyReportsVisible(!!userData.weekly_reports_visible)
     setNoc(nocFrom(userData))
     setTeamId(userData.team_id ?? null)
@@ -1631,21 +1643,14 @@ export default function App() {
     return idx
   }, [certs])
 
-  // "Şimdi Kontrol Et" kapsamı (2026-10-12): yalnız paylaşımla GÖRÜLEN (EXECUTE'u olmayan) kartlar listelenmez — sunucu
-  // reddederdi; paylaşımı olmayan kullanıcıda liste `certs`'in kendisi.
-  // 7/24 operatörü (2026-10-22, UIM-9): liste tüm takımları gösterir ama toplu koşu yalnız üyesi / yöneticisi olduğu takımları
-  // kapsar — sunucu öteki her alan adına 403 dönüyordu (koşu tablosu yabancı alan adı başına hata satırıyla dolardı).
-  const nocOperatorLimited = noc.operator && !globalViewer
+  // "Şimdi Kontrol Et" kapsamı: kartla AYNI kural (`canCheckCertRow`) — sunucunun reddedeceği alan adı toplu koşuya girmez
+  // (7/24 operatörü tüm takımları görür, paylaşımla yalnız GÖRÜLEN kart da öyle; 2026-10-12 / UIM-9), kabul edeceği hiçbiri
+  // de düşmez (UG takımı, müdürün astlarının takımı, UG'de EXECUTE paylaşımı — FE-1). Hepsi geçiyorsa AYNI dizi döner.
   const checkableCerts = useMemo(() => {
-    if (!Object.keys(grantLevels).length && !nocOperatorLimited) return certs
-    const own = (teamId) => teamId != null && (myTeamIds.some((id) => String(id) === String(teamId))
-      || (manageTeamIds || []).some((id) => String(id) === String(teamId)))
-    return certs.filter((c) => {
-      const ga = rowGrantAccess(c?.team_id, { memberTeamIds: myTeamIds, grantLevels, globalViewer })
-      if (ga) return ga.check
-      return !nocOperatorLimited || own(c?.team_id)
-    })
-  }, [certs, grantLevels, myTeamIds, globalViewer, nocOperatorLimited, manageTeamIds])
+    if (globalViewer) return certs
+    const out = certs.filter((c) => canCheckCertRow(c, checkCtx))
+    return out.length === certs.length ? certs : out
+  }, [certs, globalViewer, checkCtx])
 
   const issuerStats = useMemo(() => {
     const reachable = certs.filter(c => c.status !== 'error')

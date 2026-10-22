@@ -1481,6 +1481,43 @@ class AuthControllerTest {
     }
 
     @Test
+    @DisplayName("FE-1: /me görüş kapsamını (view_team_ids — /check/{domain} kuralı) taşır; global görüntüleyicide alan YOK")
+    void me_carriesViewTeamIds() throws Exception {
+        MockHttpSession scoped = new MockHttpSession();
+        scoped.setAttribute("authenticated", Boolean.TRUE);
+        scoped.setAttribute("username", "mudur");
+        scoped.setAttribute("systemRole", "ADMIN");
+        scoped.setAttribute("viewTeamIds", new java.util.ArrayList<>(List.of(5L, 6L, 7L)));
+        scoped.setAttribute("manageTeamIds", new java.util.ArrayList<>(List.of(5L, 6L)));
+        mvc.perform(get("/api/me").session(scoped))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.view_team_ids.length()").value(3))
+                .andExpect(jsonPath("$.view_team_ids[2]").value(7));
+
+        MockHttpSession noScope = new MockHttpSession();   // savunma: kapsamı olmayan USER oturumu → boş liste (asla "tümü")
+        noScope.setAttribute("authenticated", Boolean.TRUE);
+        noScope.setAttribute("username", "kullanici");
+        noScope.setAttribute("systemRole", "USER");
+        mvc.perform(get("/api/me").session(noScope))
+                .andExpect(jsonPath("$.view_team_ids").isArray())
+                .andExpect(jsonPath("$.view_team_ids.length()").value(0));
+
+        MockHttpSession audit = new MockHttpSession();
+        audit.setAttribute("authenticated", Boolean.TRUE);
+        audit.setAttribute("username", "denetci");
+        audit.setAttribute("systemRole", "AUDIT");
+        mvc.perform(get("/api/me").session(audit))
+                .andExpect(jsonPath("$.view_team_ids").doesNotExist());
+
+        MockHttpSession global = new MockHttpSession();
+        global.setAttribute("authenticated", Boolean.TRUE);
+        global.setAttribute("username", "admin");
+        global.setAttribute("systemRole", "ADMIN");
+        mvc.perform(get("/api/me").session(global))
+                .andExpect(jsonPath("$.view_team_ids").doesNotExist());
+    }
+
+    @Test
     @DisplayName("AUTH-8: username / password JSON null → genel 401, asla 500")
     void login_nullFields_generic401() throws Exception {
         when(clientIpResolver.resolve(any())).thenReturn("10.88.0.1");
