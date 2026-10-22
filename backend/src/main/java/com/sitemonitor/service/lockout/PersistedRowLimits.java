@@ -45,7 +45,7 @@ public class PersistedRowLimits {
             + "MIN(CASE WHEN event_time >= ? THEN event_time END) "
             + "FROM audit_log WHERE event_type = '" + EVENT_SECRET_REVEAL + "' AND %s AND event_time >= ?";
 
-    static final String SQL_REPORTS = "SELECT COUNT(*) FROM login_issue_reports "
+    static final String SQL_REPORTS = "SELECT COUNT(*), MIN(reported_at) FROM login_issue_reports "
             + "WHERE source = ? AND ip_address = ? AND reported_at >= ?";
 
     private final JdbcTemplate jdbc;
@@ -83,18 +83,23 @@ public class PersistedRowLimits {
         }
     }
 
+    /** Pencere içindeki kabul edilmiş bildirimler: sayı ve EN ESKİSİNİN anı (epoch ms, saniye; yoksa null). */
+    public record Reports(int count, Long oldestMs) {}
+
     /**
-     * Bir IP'den {@code sinceMs}'ten bu yana kabul edilmiş bildirim sayısı ({@code source} = {@code LOGIN} /
-     * {@code CLIENT_ERROR}).
+     * Bir IP'den {@code sinceMs}'ten bu yana kabul edilmiş bildirimler ({@code source} = {@code LOGIN} /
+     * {@code CLIENT_ERROR}) — sayı ve en eskisinin anı (ilk boşalan yerin zamanı: en eski + pencere).
      *
-     * @return sayı; okunamadı → {@code null}
+     * @return sayım; okunamadı → {@code null}
      */
-    public Integer issueReports(String source, String ip, long sinceMs) {
+    public Reports issueReports(String source, String ip, long sinceMs) {
         String key = ip == null ? null : ip.strip();
         if (key != null && key.length() > IP_MAX) key = key.substring(0, IP_MAX);
         if (source == null || key == null || key.isEmpty()) return null;
         try {
-            return jdbc.queryForObject(SQL_REPORTS, Integer.class, source, key, ISO.format(Instant.ofEpochMilli(sinceMs)));
+            List<Reports> rows = jdbc.query(SQL_REPORTS, (rs, i) -> new Reports(rs.getInt(1), parse(rs.getString(2))),
+                    source, key, ISO.format(Instant.ofEpochMilli(sinceMs)));
+            return rows.isEmpty() ? new Reports(0, null) : rows.getFirst();
         } catch (Exception e) {
             log.warn("Sorun bildirimi sayısı okunamadı — yalnız pod sınırı uygulanır: {}", e.getMessage());
             return null;

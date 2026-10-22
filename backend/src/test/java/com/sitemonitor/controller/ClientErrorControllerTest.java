@@ -181,7 +181,8 @@ class ClientErrorControllerTest {
     void clusterLimit_otherPodsAlreadyAccepted() throws Exception {
         var limits = org.mockito.Mockito.mock(com.sitemonitor.service.lockout.PersistedRowLimits.class);
         when(clientIpResolver.resolve(any())).thenReturn("10.67.6.1");
-        when(limits.issueReports(eq("CLIENT_ERROR"), eq("10.67.6.1"), anyLong())).thenReturn(5);
+        when(limits.issueReports(eq("CLIENT_ERROR"), eq("10.67.6.1"), anyLong())).thenReturn(
+                new com.sitemonitor.service.lockout.PersistedRowLimits.Reports(5, System.currentTimeMillis() - 600_000L));
         controller.setRowLimits(limits);
         try {
             String body = "{\"errorText\":\"crash\"}";
@@ -189,14 +190,43 @@ class ClientErrorControllerTest {
                 mvc.perform(post("/api/client-error-report").contentType(MediaType.APPLICATION_JSON).content(body))
                         .andExpect(status().isTooManyRequests());
             }
-            // Diğer pod'ların bildirimleri pencereden çıktı → bu pod tam sınırı kullanabilir (reddedilenler sayılmadı)
-            when(limits.issueReports(eq("CLIENT_ERROR"), eq("10.67.6.1"), anyLong())).thenReturn(0);
+            // LIM-4: red önbelleği — sınırdaki IP'nin sonraki istekleri veritabanına GİTMEZ (tek sayım)
+            verify(limits, org.mockito.Mockito.times(1)).issueReports(eq("CLIENT_ERROR"), eq("10.67.6.1"), anyLong());
+            // Diğer pod'ların bildirimleri pencereden çıktı (red önbelleğinin süresi doldu) → bu pod tam sınırı kullanabilir
+            // (reddedilenler pod kuyruğuna sayılmadı)
+            ((java.util.Map<?, ?>) org.springframework.test.util.ReflectionTestUtils.getField(controller, "clusterRefusedUntil")).clear();
+            when(limits.issueReports(eq("CLIENT_ERROR"), eq("10.67.6.1"), anyLong()))
+                    .thenReturn(new com.sitemonitor.service.lockout.PersistedRowLimits.Reports(0, null));
             for (int i = 0; i < 5; i++) {
                 mvc.perform(post("/api/client-error-report").contentType(MediaType.APPLICATION_JSON).content(body))
                         .andExpect(status().isOk());
             }
             mvc.perform(post("/api/client-error-report").contentType(MediaType.APPLICATION_JSON).content(body))
                     .andExpect(status().isTooManyRequests());   // pod kuyruğu hâlâ ilk kapı
+        } finally {
+            controller.setRowLimits(null);
+        }
+    }
+
+    @Test
+    @DisplayName("LIM-4: küme reddi en eski kabul + 1 sa (+1 sn) dolana dek önbellekte — o ana kadar sayım YOK, sonra yeniden sayılır")
+    void clusterRefusal_cachedUntilFirstSlotFrees() {
+        var limits = org.mockito.Mockito.mock(com.sitemonitor.service.lockout.PersistedRowLimits.class);
+        long t = 9_000_000_000L;
+        long oldest = t - 600_000L;   // 10 dk önce kabul edilmiş en eski bildirim
+        when(limits.issueReports(eq("CLIENT_ERROR"), eq("10.67.6.3"), anyLong()))
+                .thenReturn(new com.sitemonitor.service.lockout.PersistedRowLimits.Reports(5, oldest));
+        controller.setRowLimits(limits);
+        try {
+            org.assertj.core.api.Assertions.assertThat(controller.allow("10.67.6.3", t)).isFalse();
+            org.assertj.core.api.Assertions.assertThat(controller.allow("10.67.6.3", t + 60_000L)).isFalse();
+            org.assertj.core.api.Assertions.assertThat(controller.allow("10.67.6.3", oldest + 3_600_000L + 999L)).isFalse();
+            verify(limits, org.mockito.Mockito.times(1)).issueReports(any(), any(), anyLong());
+            when(limits.issueReports(eq("CLIENT_ERROR"), eq("10.67.6.3"), anyLong()))
+                    .thenReturn(new com.sitemonitor.service.lockout.PersistedRowLimits.Reports(4, oldest + 1_000L));
+            org.assertj.core.api.Assertions.assertThat(controller.allow("10.67.6.3", oldest + 3_600_000L + 1_000L))
+                    .as("ilk yer boşaldı → yeniden sayılır ve kabul").isTrue();
+            verify(limits, org.mockito.Mockito.times(2)).issueReports(any(), any(), anyLong());
         } finally {
             controller.setRowLimits(null);
         }

@@ -46,7 +46,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * bozuk) → 409 {@code SECRET_UNREADABLE}; kullanıcı başına dakikada {@value #MAX_PER_MINUTE}, saatte
  * {@value #MAX_PER_HOUR} → 429 {@code RATE_LIMITED} + {@code Retry-After}. Sınır KÜME geneli (2026-10-23, çok pod Sürüm
  * 2a — MP-32): başarılı gösterimler denetim kaydından sayılır ({@link PersistedRowLimits#secretReveals}; yazım eşzamanlı)
- * — N pod'da N× gösterim artık yok; pod belleğindeki deneme kuyruğu ilk kapı olarak kalır (sayım okunamazsa tek kapı).
+ * — N pod'da N× gösterim artık yok. Sıra: ÖNCE küme sayımı (salt okuma; reddedilen istek pod kuyruğuna yazılmaz), SONRA
+ * pod belleğindeki deneme kuyruğu (sayım okunamazsa tek kapı odur).
  * Başarılı her gösterim denetlenir
  * ({@code SCRIPTED_SECRET_REVEAL}: izleme kimliği + adı, takım, değişken ADI — değer ASLA). Değer günlüğe, denetime, hata
  * gövdesine, {@code notification_logs}'a ya da değişiklik geçmişine yazılmaz; {@code RequestLoggingFilter}
@@ -76,8 +77,8 @@ public class ScriptedSecretRevealController {
     private final ConcurrentHashMap<String, Deque<Long>> attempts = new ConcurrentHashMap<>();
 
     /**
-     * Küme geneli sayım (MP-32) — isteğe bağlı: {@code @WebMvcTest} dilimlerinde yok → yalnız pod kuyruğu (20.165.1
-     * davranışı); sayım okunamazsa ({@code null}) da yalnız pod kuyruğu.
+     * Küme geneli sayım (MP-32) — pod kuyruğundan ÖNCE sorulur. İsteğe bağlı: {@code @WebMvcTest} dilimlerinde yok → yalnız
+     * pod kuyruğu (20.165.1 davranışı); sayım okunamazsa ({@code null}) da yalnız pod kuyruğu.
      */
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private PersistedRowLimits rowLimits;

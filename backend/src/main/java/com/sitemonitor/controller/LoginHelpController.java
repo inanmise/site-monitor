@@ -98,6 +98,13 @@ public class LoginHelpController {
     /** Test kancası. */
     void setRowLimits(com.sitemonitor.service.lockout.PersistedRowLimits r) { this.rowLimits = r; }
 
+    /**
+     * Küme sayımıyla REDDEDİLEN IP → ilk yerin boşalacağı an (en eski kabul + pencere + 1 sn yuvarlama). Bu süre dolana
+     * dek aynı IP'nin istekleri veritabanına gitmeden reddedilir (sınırdaki bir IP istek başına bir COUNT'a mal olmasın).
+     * Yalnız RED önbelleği: kabul kararı her zaman sayımdan. Harita sınırlı.
+     */
+    private final Map<String, Long> clusterRefusedUntil = new ConcurrentHashMap<>();
+
     @PostMapping("/api/login-help")
     public ResponseEntity<Map<String, Object>> report(
             @RequestBody Map<String, Object> body, HttpServletRequest request) {
@@ -222,25 +229,44 @@ public class LoginHelpController {
 
     /** IP başına sliding-window (1 saat / 3 bildirim); map boyutu sınırlı (heap koruması). */
     private boolean allow(String ip) {
-        long now = System.currentTimeMillis();
+        return allow(ip, System.currentTimeMillis());
+    }
+
+    /** Paket-özel: testler saati verir. */
+    boolean allow(String ip, long now) {
         if (rate.size() > MAX_MAP_ENTRIES) rate.clear();
-        Deque<Long> dq = rate.computeIfAbsent(ip != null ? ip : "?", k -> new ArrayDeque<>());
+        String key = ip != null ? ip : "?";
+        Deque<Long> dq = rate.computeIfAbsent(key, k -> new ArrayDeque<>());
         synchronized (dq) {
             while (!dq.isEmpty() && now - dq.peekFirst() > WINDOW_MS) dq.pollFirst();
             if (dq.size() >= MAX_PER_WINDOW) return false;
             // Küme geneli (MP-33): yerel kuyruk izin verse de diğer pod'ların kabul ettikleri sayılır. Reddedilen istek
-            // kuyruğa YAZILMAZ (yalnız kabul edilen) — aksi hâlde sayım düşünce yerel kuyruk bir saat daha reddederdi.
-            if (!clusterAllows(ip, now)) return false;
+            // kuyruğa YAZILMAZ (yalnız kabul edilen) — aksi hâlde sayım düşünce yerel kuyruk bir saat daha reddederdi;
+            // reddin süresi ayrı red önbelleğinde (veritabanına gitmeden, ilk yer boşalana dek).
+            Long refusedUntil = clusterRefusedUntil.get(key);
+            if (refusedUntil != null) {
+                if (refusedUntil > now) return false;
+                clusterRefusedUntil.remove(key, refusedUntil);
+            }
+            if (!clusterAllows(key, ip, now)) return false;
             dq.addLast(now);
             return true;
         }
     }
 
-    /** Bu IP'nin son bir saatteki kabul edilmiş bildirimleri sınırın altında mı (okunamazsa EVET — yerel kuyruk geçerli). */
-    private boolean clusterAllows(String ip, long now) {
+    /**
+     * Bu IP'nin son bir saatteki kabul edilmiş bildirimleri sınırın altında mı (okunamazsa EVET — yerel kuyruk geçerli).
+     * Sınırdaysa red, ilk yerin boşalacağı ana dek önbelleğe yazılır (bildirim damgası saniyeye yuvarlı → +1 sn).
+     */
+    private boolean clusterAllows(String key, String ip, long now) {
         if (rowLimits == null) return true;
-        Integer n = rowLimits.issueReports(SOURCE, ip, now - WINDOW_MS);
-        return n == null || n < MAX_PER_WINDOW;
+        com.sitemonitor.service.lockout.PersistedRowLimits.Reports r = rowLimits.issueReports(SOURCE, ip, now - WINDOW_MS);
+        if (r == null || r.count() < MAX_PER_WINDOW) return true;
+        long until = r.oldestMs() != null ? r.oldestMs() + WINDOW_MS + 1_000L : now + 60_000L;
+        if (until <= now) until = now + 1_000L;
+        if (clusterRefusedUntil.size() > MAX_MAP_ENTRIES) clusterRefusedUntil.clear();
+        clusterRefusedUntil.put(key, until);
+        return false;
     }
 
     private ResponseEntity<Map<String, Object>> err(HttpStatus status, String msg) {
