@@ -94,14 +94,30 @@ const LABEL_KEY = {
 const labelKeyOf = (k) => LABEL_KEY[k] || k
 
 /** Düz metin alanı (AD ipucuyla). */
+/**
+ * Yalnız global yöneticinin YAZABİLDİĞİ profil alanları (2026-10-22, FE-6) — sunucu `UserService.applyProfileFields`: telefon
+ * düzenlemede yalnız global yöneticide yazılır (oluşturmada herkes; görmediği alanı boşa çekmesin), müdür sicili HER yolda
+ * yalnız global yöneticide (görüş / yönetim kapsamını belirler). Başkasına alan kilitli + kısa açıklama — "kaydedildi" denip
+ * sessizce yok sayılmaz.
+ */
+function globalOnlyHintKey(ed, k) {
+  if (ed.globalAdmin) return null
+  if (k === 'manager_sicil') return 'ued.managerGlobalOnly'
+  if (k === 'phone' && !ed.isAdd) return 'ued.phoneGlobalOnly'
+  return null
+}
+
 function TextField({ ed, k, type = 'text', inputMode, autoComplete }) {
   const t = useT()
+  const globalOnly = globalOnlyHintKey(ed, k)
   const locked = ed.ldap && ed.lockedKeys.has(FORM_LOCK_KEY[k])
   return (
-    <Field label={t(labelKeyOf(k))} hint={adHint(ed, t, k)} hintTone={locked ? 'warn' : undefined} {...ed.fe.fieldProps(k)}>
+    <Field label={t(labelKeyOf(k))} hint={globalOnly ? t(globalOnly) : adHint(ed, t, k)} hintTone={locked && !globalOnly ? 'warn' : undefined}
+      {...ed.fe.fieldProps(k)}>
       {({ id, describedBy, invalid }) => (
         <Input id={id} type={type} inputMode={inputMode} autoComplete={autoComplete} aria-describedby={describedBy} aria-invalid={invalid}
-          value={ed.form[k] ?? ''} disabled={!ed.editable} onChange={(e) => ed.set(k, e.target.value)} />
+          data-global-only={globalOnly ? 'true' : undefined}
+          value={ed.form[k] ?? ''} disabled={!ed.editable || !!globalOnly} onChange={(e) => ed.set(k, e.target.value)} />
       )}
     </Field>
   )

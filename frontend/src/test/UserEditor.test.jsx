@@ -396,7 +396,8 @@ describe('UserEditor — kapsamlı müdür, kapsam dışı takım', () => {
     api.getMe.mockResolvedValue({ success: true, username: 'mudur', manage_team_ids: [3, 4] })
   })
 
-  it('kapsam dışı takım ADIYLA görünür (asla #id), çıkarılamaz; seçici yalnız yönetilen takımları sunar; telefon kaydı takımları göndermez', async () => {
+  // Yeniden taban (FE-6): değişiklik alanı telefon değil ünvan — sunucu kapsamlı yazarın telefonunu sessizce yok sayar
+  it('kapsam dışı takım ADIYLA görünür (asla #id), çıkarılamaz; seçici yalnız yönetilen takımları sunar; ünvan kaydı takımları göndermez', async () => {
     renderEditor({ globalAdmin: false, user: { ...LOCAL, team_ids: [3, 77], team_id: 3 } })
     openTab(/^(Takımlar|Teams)/)
     const row = await waitFor(() => {
@@ -413,13 +414,34 @@ describe('UserEditor — kapsamlı müdür, kapsam dışı takım', () => {
     expect(labels).not.toContain('Ops')
     fireEvent.keyDown(document.activeElement, { key: 'Escape' })
     openTab(/^(Profil|Profile)/)
-    fireEvent.change(screen.getByLabelText(/^(Telefon|Phone)/), { target: { value: '5551112233' } })
+    fireEvent.change(screen.getByLabelText(/^(Ünvan|Title)/), { target: { value: 'Kıdemli Uzman' } })
     fireEvent.click(saveBtn())
     await waitFor(() => expect(api.admin.updateUser).toHaveBeenCalled())
     const body = api.admin.updateUser.mock.calls[0][1]
-    expect(body.phone).toBe('5551112233')
+    expect(body.title).toBe('Kıdemli Uzman')
     expect(body).not.toHaveProperty('team_ids')
     expect(body).not.toHaveProperty('team_id')
+  })
+
+  it('FE-6: global olmayan yönetici düzenlemede telefonu ve müdür sicilini DEĞİŞTİREMEZ (sunucu yok sayar) — alan kilitli + açıklama', async () => {
+    renderEditor({ globalAdmin: false, user: { ...LOCAL, team_ids: [3], team_id: 3, manager_sicil: 'M100' } })
+    openTab(/^(Profil|Profile)/)
+    const phone = screen.getByLabelText(/^(Telefon|Phone)/)
+    const mgr = screen.getByLabelText(/^(Müdür|Manager)/)
+    expect(phone).toBeDisabled()
+    expect(mgr).toBeDisabled()
+    expect(mgr).toHaveValue('M100')
+    expect(document.body.textContent).toMatch(/(yalnız global yönetici görür ve değiştirir|Only a global administrator can see and change the phone number)/)
+    expect(document.body.textContent).toMatch(/(Müdür sicilini yalnız global yönetici|Only a global administrator can change the manager ID)/)
+    // Ünvan (gerçekten yazılan alan) açık
+    expect(screen.getByLabelText(/^(Ünvan|Title)/)).not.toBeDisabled()
+  })
+
+  it('FE-6: global yönetici telefonu ve müdür sicilini düzenler (bugünkü davranış)', async () => {
+    renderEditor({ globalAdmin: true, user: { ...LOCAL, team_ids: [3], team_id: 3 } })
+    openTab(/^(Profil|Profile)/)
+    expect(screen.getByLabelText(/^(Telefon|Phone)/)).not.toBeDisabled()
+    expect(screen.getByLabelText(/^(Müdür|Manager)/)).not.toBeDisabled()
   })
 
   it('takım adı hiçbir yerden okunamazsa "adı okunamayan takım" yazar, kimlik değil', async () => {

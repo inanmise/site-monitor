@@ -226,7 +226,7 @@ for (const vp of [VIEWPORTS[0], VIEWPORTS[2]]) {
   test.describe(`Kullanıcı düzenleme (kapsamlı müdür) — ${vp.name} ${vp.width}`, () => {
     test.use({ viewport: { width: vp.width, height: vp.height }, hasTouch: vp.touch, isMobile: vp.touch })
 
-    test('kapsam dışı takım adıyla görünür, çıkarılamaz; telefon kaydı takımları göndermez', async ({ page }) => {
+    test('kapsam dışı takım adıyla görünür, çıkarılamaz; ünvan kaydı takımları göndermez; telefon kilitli', async ({ page }) => {
       test.setTimeout(90_000)
       const puts = []
       await mockScoped(page, puts)
@@ -248,10 +248,12 @@ for (const vp of [VIEWPORTS[0], VIEWPORTS[2]]) {
       await expect(row.getByRole('button')).toHaveCount(0)
       expect(await row.evaluate((el) => el.scrollWidth <= el.clientWidth + 1), 'takım satırı taşmaz').toBe(true)
       await dlg.getByRole('tab', { name: /^(Profil|Profile)/ }).click()
-      await dlg.getByLabel(/^(Telefon|Phone)/).fill('5551112233')
+      // Telefon kapsamlı müdürde kilitli (sunucu yok sayar, FE-6); gerçekten yazılan alan ünvan
+      await expect(dlg.getByLabel(/^(Telefon|Phone)/)).toBeDisabled()
+      await dlg.getByLabel(/^(Ünvan|Title)/).fill('Kıdemli Uzman')
       await dlg.getByRole('button', { name: /^(Kaydet|Save)$/ }).click()
       await expect.poll(() => puts.length, { timeout: 10_000 }).toBe(1)
-      expect(puts[0].phone).toBe('5551112233')
+      expect(puts[0].title).toBe('Kıdemli Uzman')
       expect(puts[0]).not.toHaveProperty('team_ids')
       expect(puts[0]).not.toHaveProperty('team_id')
     })
