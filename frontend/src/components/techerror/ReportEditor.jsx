@@ -147,6 +147,17 @@ function imageTopicIds(values, tpl) {
  * kaydı bekler (iki kayıt aynı sürümle yarışmaz). Sunucu aynı kişinin 15 dk içindeki otomatik kayıtlarını geçmişte tek
  * satırda birleştirir.
  */
+/**
+ * Onay isteği kaydedildi ama hiçbir PO'ya e-posta gitmedi: `mail_problem` kodu → cümle (UIA-E3, 2026-10-22). Eskiden ham kod
+ * ya da "—" basılıyordu; NO_APPROVER_EMAIL'de "gönderilemedi" de yanıltıcıydı (hiç denenmedi — çözüm PO'ların AD e-postası).
+ */
+export function requestNoMailText(problem, t) {
+  if (problem === 'NO_APPROVER_EMAIL') return t('te.appr.noMail.NO_APPROVER_EMAIL')
+  if (problem === 'PDF_BUSY') return t('te.appr.noMail.PDF_BUSY')
+  if (problem === 'MAIL_FAILED') return t('te.appr.noMail.MAIL_FAILED')
+  return t('te.appr.noMail.other')
+}
+
 export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenReport, focusTitleRef, backLabel = null }) {
   const t = useT()
   const { lang: uiLang } = useLanguage()
@@ -714,7 +725,7 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
       const res = await api.techErrors.requestApproval(reportId)
       if (res?.success && res.data) {
         if ((res.data.mailed || 0) > 0) toast.success(t('te.appr.requested', res.data.mailed))
-        else toast.info(t('te.appr.requestedNoMail', res.data.mail_problem || '—'))
+        else toast.info(requestNoMailText(res.data.mail_problem, t), 8000)
       } else {
         toast.error(res?.error || t('te.appr.requestError'), { details: res?.errorInfo })
       }
@@ -1465,7 +1476,8 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
           {backup.version === base.version ? t('te.backupBody') : t('te.backupBodyStale')}
         </AlertBanner>
       )}
-      {!readOnly && canSend && data.team_email_set === false && (
+      {/* Onay akışlı kanalda rapor YÖNETİCİLERE gider, takım adresi yalnız CC (UIA-E4): "gönderilemez" uyarısı yanlıştı */}
+      {!readOnly && canSend && !approvalRequired && data.team_email_set === false && (
         <AlertBanner tone="warning" icon={MailWarning} title={t('te.noTeamEmailTitle')}>{t('te.noTeamEmailBody')}</AlertBanner>
       )}
       {report.status === 'changed' && !readOnly && canSend && (

@@ -132,7 +132,9 @@ export default function ChannelsView({ team, onTeamChange, onOpenChannel, onOpen
   const libraryTeams = useMemo(() => teams.filter((tm) => tm.library_read === true), [teams])
   const teamOptions = useMemo(() => [{ value: ALL, label: t('te.allTeams') },
     ...teams.map((tm) => ({ value: String(tm.id), label: tm.name || `#${tm.id}` }))], [teams, t])
-  const noEmail = teams.filter((tm) => tm.can_edit && !tm.has_email && channels.some((c) => c.team_id === tm.id))
+  // Onay akışlı kanalda takım adresi yalnız CC — rapor yöneticilere gider (UIA-E4); uyarı yalnız akışsız kanallar için
+  const noEmail = teams.filter((tm) => tm.can_edit && !tm.has_email
+    && channels.some((c) => c.team_id === tm.id && !c.approval_required))
   const counts = useMemo(() => channelCounts(channels), [channels])
   const visible = useMemo(() => sortChannels(filterChannels(channels, { q, status }), sort), [channels, q, status, sort])
   // Sıra kipinde komşuluk TÜM listede (süzgeçsiz) hesaplanır; süzgeç / arama açıkken taşıma zaten kapalıdır (orderLocked)
