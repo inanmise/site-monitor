@@ -42,7 +42,7 @@ const SENT = base({ id: 12, status: 'APPROVED', sent_at: '2026-09-01T10:00:00', 
 const THIS_WEEK = { year: 2026, week: 37, week_label: '2026-W37', due_at: '2099-01-01T12:00:00', is_past: false, deadline_day: 'FRI', deadline_time: '15:00',
   teams: [{ team_id: 5, team_name: 'SY-A', status: 'PENDING_APPROVAL', report_id: 10 }, { team_id: 6, team_name: 'SY-B', status: 'MISSING', report_id: null }] }
 
-const renderPage = (role = 'ADMIN') => render(<LangProvider><WeeklyReportsPage systemRole={role} teamId={5} teamName="SY-A" /></LangProvider>)
+const renderPage = (role = 'ADMIN') => render(<LangProvider><WeeklyReportsPage systemRole={role} globalAdmin={role === 'ADMIN'} teamId={5} teamName="SY-A" /></LangProvider>)
 
 describe('WeeklyReportsPage — zenginleştirme (2026-09-13)', () => {
   beforeEach(() => {

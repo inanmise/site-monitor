@@ -60,7 +60,7 @@ const REPORT = {
 const GET_OK = { success: true, data: { report: REPORT, images: [] } }
 
 const renderPage = () =>
-  render(<LangProvider><WeeklyReportsPage systemRole="ADMIN" teamId={5} teamName="Takım A" /></LangProvider>)
+  render(<LangProvider><WeeklyReportsPage systemRole="ADMIN" globalAdmin teamId={5} teamName="Takım A" /></LangProvider>)
 
 /** Liste satırına tıklar ve detay isteğinin çıktığını bekler (yanıt test tarafından tutulur). */
 async function clickFirstRow() {

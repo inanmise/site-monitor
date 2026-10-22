@@ -177,6 +177,20 @@ export function buildYearSummaryCsv(data, t) {
 const YS_COLORS = { MISSING: '#e4e4e7', DRAFT: '#fde68a', PENDING_APPROVAL: '#bfdbfe', APPROVED: '#bbf7d0', REJECTED: '#fecaca' }
 const escHtml = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
 
+/** "yyyy-MM-dd HH:mm" Europe/Istanbul (UTC+3, yaz saati yok — Intl yoksa sabit fark). */
+export function istanbulStamp(date) {
+  const d = date instanceof Date ? date : new Date(date)
+  if (Number.isNaN(d.getTime())) return ''
+  try {
+    const parts = Object.fromEntries(new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Europe/Istanbul', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+    }).formatToParts(d).map((p) => [p.type, p.value]))
+    return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`
+  } catch {
+    return new Date(d.getTime() + 3 * 3600000).toISOString().slice(0, 16).replace('T', ' ')
+  }
+}
+
 /** Yıl özetinin kendi başına yazdırılabilir HTML'i (gizli iframe → print → "PDF olarak kaydet").
  *  Uygulama CSS'inden bağımsızdır: A4 yatay, takım × hafta ızgarası, hücrede skor, altta lejant. */
 export function buildYearSummaryHtml(data, t, { generatedAt = new Date() } = {}) {
@@ -201,7 +215,8 @@ export function buildYearSummaryHtml(data, t, { generatedAt = new Date() } = {})
   }).join('')
   const legend = Object.keys(YS_COLORS).map((k) => `<span class="lg"><i style="background:${YS_COLORS[k]}"></i>${escHtml(st(k))}</span>`).join('')
   const title = `${escHtml(t('wr.yearSummary'))} · ${escHtml(data?.year ?? '')}`
-  const stamp = escHtml(generatedAt.toISOString().slice(0, 16).replace('T', ' '))
+  // Türkiye saati (UIA-10, 2026-10-22): eskiden toISOString → UTC, 3 saat geride ve bölge belirtilmeden basılıyordu
+  const stamp = `${escHtml(istanbulStamp(generatedAt))} (${escHtml(t('wr.ys.tz'))})`
   return `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><style>
 @page{size:A4 landscape;margin:12mm}
 body{font:11px/1.35 -apple-system,"Segoe UI",Roboto,Arial,sans-serif;color:#111;margin:0}

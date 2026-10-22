@@ -9,6 +9,7 @@ import WeeklySummaryBrief from './WeeklySummaryBrief.jsx'
 import WeeklyMonitoringStrip from './WeeklyMonitoringStrip.jsx'
 import { api, formatDate } from '../api/client'
 import { useT, useLanguage } from '../i18n/index.jsx'
+import { usePermissions } from '../contexts/PermissionsProvider.jsx'
 import { useToast } from './ui/Toast.jsx'
 import { useDialog } from './ui/Dialog.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
@@ -84,12 +85,19 @@ const DRAFT_BACKUP_PREFIX = 'wr.draft.'
  * kalp atışı + açılış yarışı koruması (R11), otomatik kayıt + yerel yedek, URL anahtarları (`w_*`, yeni `w_q`),
  * derin bağlantılar, yazdırma, yorumlar, hatırlatmalar, yıl özeti belgesi.
  */
-export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetNonce }) {
+export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetNonce, globalAdmin }) {
   const t = useT()
   const { lang } = useLanguage()
   const toast = useToast()
   const { showConfirm } = useDialog()
-  const isAdmin = systemRole === 'ADMIN'
+  const { scope } = usePermissions()
+  // "Yönetici" = GLOBAL yönetici (WR-2 / UIA-G1, 2026-10-22): sunucu (WeeklyReportService.Actor.isAdmin) kapsamlı müdürü
+  // (ADMIN rolü + viewTeamIds) kendi takımının kullanıcısı sayar — eskiden arayüz rol dizesine bakıyor, müdüre takım
+  // süzgeci / takım seçici / aktarım / silme / revize / kilit devralma / hatırlatma sunuyordu; seçilen takım sunucuda
+  // sessizce müdürün takımına dönüyor, rapor YANLIŞ takıma açılıyordu. Kaynak: App'in `globalAdmin` prop'u (K3); yoksa
+  // izin anlık görüntüsünün `scope.global_admin`'i (K1); ikisi de bilinmiyorsa global DEĞİL (gizle).
+  const isGlobalAdmin = globalAdmin !== undefined ? !!globalAdmin : scope?.global_admin === true
+  const isAdmin = systemRole === 'ADMIN' && isGlobalAdmin
   const isAudit = systemRole === 'AUDIT'
   const isTeamAdmin = systemRole === 'TEAM_ADMIN'
   const phone = useIsMobile()
@@ -304,14 +312,20 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
       setManagerMissing(!!res.data.manager_contact_missing)
       setTeamChannels(Array.isArray(res.data.team_channels) ? res.data.team_channels : [])
       // Durum dağılımı her zaman dört anahtarlı nesne (eski rapor: sıfırlar; status_text korunur) — 2026-09-27
-      try { setContent(normaliseContent(JSON.parse(r.content_json))) } catch { setContent(null) }
+      let loaded = null
+      try { loaded = normaliseContent(JSON.parse(r.content_json)) } catch { loaded = null }
+      setContent(loaded)
+      savedJsonRef.current = loaded ? JSON.stringify(loaded) : null
+      versionRef.current[r.id] = r.version
       setDirty(false)
       setLastAutoSave(null)
       setConflict(null)
       // Düzenleme kilidi: yetkimiz varsa almayı dene; başkasındaysa salt-okunur bant
       setLockHeld(false)
       setLockHolder(res.data.lock_holder ?? null)
-      if (canModifyRow(r)) {
+      // Güncel kural (useCallback([]) kapanışı ilk render'ın yetkisini görürdü — izin anlık görüntüsü sonradan gelebilir)
+      const canMod = liveRef.current.canModifyRow || canModifyRow
+      if (canMod(r)) {
         const lk = await api.weeklyReports.lock(r.id)
         if (stale()) {
           // Kilit bu arada alındıysa bırak — aynı raporu yeniden açan daha yeni bir yükleme yoksa
@@ -331,7 +345,7 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
       // Oturum kesintisinden kalan yerel yedek var mı? (yalnız düzenlenebilirken anlamlı)
       try {
         const raw = localStorage.getItem(DRAFT_BACKUP_PREFIX + r.id)
-        if (raw && canModifyRow(r)) {
+        if (raw && canMod(r)) {
           setPendingBackup(JSON.parse(raw))
         } else {
           if (raw) localStorage.removeItem(DRAFT_BACKUP_PREFIX + r.id)
@@ -415,20 +429,47 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
     setDirty(true)
   }
 
+  // Kayıt yarışı (UIA-3, 2026-10-22): kayıt uçuştayken yazılanlar "kaydedildi" sayılıyordu — başarıda kirli bayrak
+  // koşulsuz iniyor, sonraki otomatik kayıt çalışmıyor, Onaya gönder sunucu kopyasını yeniden yükleyip son yazılanları
+  // siliyordu. Artık gönderilen içerik saklanır; kirli bayrak yalnız CANLI içerik hâlâ gönderilene eşitse iner.
+  // `savedJsonRef` = sunucuda olduğu bilinen son içerik (açılışta yüklenen, her başarılı kayıtta gönderilen).
+  // `versionRef` (rapor id → sürüm): arka arkaya iki kayıt aynı render'ın kapanışından çalışsa da yeni sürümle gider.
+  // `savingRef`: aynı anda tek kayıt (otomatik kayıt, elle kayıtla aynı sürümü gönderip sahte çakışma üretmesin).
+  const savedJsonRef = useRef(null)
+  const versionRef = useRef({})
+  const savingRef = useRef(false)
+  const liveDirty = () => !!liveRef.current.content && JSON.stringify(liveRef.current.content) !== savedJsonRef.current
+
   async function save(showToast = true) {
-    if (!report || !content) return false
+    // Güncel değerler liveRef'ten: art arda iki kayıt (Onaya gönder'in "kalanı da kaydet" turu) eski kapanışın içeriğini
+    // ve sürümünü göndermesin.
+    const { report: cur, content: c } = liveRef.current
+    if (!cur || !c) return false
+    if (savingRef.current) return false
     // Sürüm yarışı (2026-09-27 regresyon taraması, ORTA): kayıt uçuştayken ◀/▶ ya da otomatik kayıt başka rapora
     // geçerse, A'nın yeni sürümü/durumu B'ye yazılıyordu → B'nin sonraki kaydı sahte VERSION_CONFLICT. Yanıt yalnız
     // KAYDEDİLEN rapora uygulanır (rid); açık rapor değiştiyse kirli/çakışma bayrakları da ona dokunulmaz.
-    const rid = report.id
+    const rid = cur.id
     const stillOpen = () => liveRef.current.report?.id === rid
+    const sentJson = JSON.stringify(c)
+    const version = versionRef.current[rid] ?? cur.version
+    savingRef.current = true
     setBusy(true)
     try {
-      const res = await api.weeklyReports.save(rid, JSON.stringify(content), report.version)
+      const res = await api.weeklyReports.save(rid, sentJson, version)
       if (res?.success) {
         if (showToast) toast.success(t('wr.saved'))
-        if (stillOpen()) setDirty(false)
-        try { localStorage.removeItem(DRAFT_BACKUP_PREFIX + rid) } catch { /* */ }
+        versionRef.current[rid] = res.data?.version
+        if (stillOpen()) {
+          savedJsonRef.current = sentJson
+          // Kayıt sürerken yazılan varsa kirli kalır ve yerel yedek SİLİNMEZ (sonraki kayıt onları da gönderir)
+          if (JSON.stringify(liveRef.current.content) === sentJson) {
+            setDirty(false)
+            try { localStorage.removeItem(DRAFT_BACKUP_PREFIX + rid) } catch { /* */ }
+          }
+        } else {
+          try { localStorage.removeItem(DRAFT_BACKUP_PREFIX + rid) } catch { /* */ }
+        }
         setReport((p) => (p?.id === rid ? { ...p, status: res.data.status, version: res.data.version } : p))
         loadList()
         return true
@@ -440,15 +481,33 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
       }
       toast.error(res?.error || t('wr.saveFailed'))
       return false
+    } catch (e) {
+      // Ağ kesintisi: eskiden yakalanmamış söz reddiydi (UIA-8) — kullanıcı kaydın gitmediğini bilmiyordu
+      if (stillOpen()) writeBackupNow()
+      toast.error(e?.message || t('wr.saveFailed'))
+      return false
     } finally {
+      savingRef.current = false
       setBusy(false)
     }
   }
 
+  /** Kayıt + kayıt sürerken yazılanlar (en fazla iki ek tur). Sunucudaki içerik canlı içeriğe eşitse true. */
+  async function saveAll() {
+    if (liveDirty() && !(await save(false))) return false
+    for (let i = 0; i < 2 && liveDirty(); i++) {
+      if (!(await save(false))) return false
+    }
+    return !liveDirty()
+  }
+
+  /** Yakalanan ağ hatası → ileti (ApiError metni zaten açıklayıcı). */
+  const failToast = (e) => toast.error(e?.message || t('wr.actionFailed'))
+
   // ── Autosave + oturum kesintisi yedeği + kilit ────────────────────────────
   // Zamanlayıcılar/kapanış handler'ı güncel state'i bu ref üzerinden okur
   const liveRef = useRef({})
-  liveRef.current = { report, content, dirty, editable, save, lockHeld, conflict }
+  liveRef.current = { report, content, dirty, editable, save, lockHeld, conflict, canModifyRow }
 
   function writeBackupNow() {
     const { report: r, content: c, dirty: d, editable: e } = liveRef.current
@@ -524,13 +583,32 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
     if (s.startsWith('QUEUED_RETRY')) return { label: t('wr.mailStatusQueued'), cls: 'bg-amber-600 text-white' }
     if (s === 'SKIPPED_NO_CONTACT') return { label: t('wr.mailStatusNoContact'), cls: 'bg-destructive text-white' }
     if (s === 'SKIPPED_DISABLED') return { label: t('wr.mailStatusDisabled'), cls: 'bg-muted-foreground text-white' }
+    // "SKIPPED: pasif kullanıcı" (InactiveRecipientGuard) — atlandı, HATA değil (UIA-G5)
+    if (s.startsWith('SKIPPED')) return { label: t('wr.mailStatusSkipped'), cls: 'bg-muted-foreground text-white' }
     return { label: t('wr.mailStatusFailed'), cls: 'bg-destructive text-white' } // FAILED:*
   }
 
   const mailProblem = (s) => !!s && (s.startsWith('FAILED') || s === 'SKIPPED_NO_CONTACT')
 
+  /**
+   * Onay / tekrar gönderim yanıtının `mail_status`'u → doğru ileti (UIA-G2, 2026-10-22). Eskiden her başarıda "müdüre
+   * mail gönderildi" deniyordu; posta düştüğünde, kuyruğa girdiğinde ya da kanal kapalıyken de. Durum geçişi her
+   * durumda olmuştur (sunucu `success:true`); yalnız postanın akıbeti değişir. Alan yoksa (eski sunucu) bugünkü metin.
+   * @param kind 'approved' | 'resend'
+   */
+  function mailOutcomeToast(status, kind) {
+    const s = typeof status === 'string' ? status : ''
+    const okKey = kind === 'resend' ? 'wr.resendOk' : 'wr.approveOk'
+    if (!s || s === 'SENT') { toast.success(t(okKey)); return }
+    if (s.startsWith('QUEUED')) { toast.info(t(kind === 'resend' ? 'wr.mail.resendQueued' : 'wr.mail.approvedQueued'), 8000); return }
+    if (s === 'SKIPPED_DISABLED') { toast.info(t(kind === 'resend' ? 'wr.mail.resendSkippedOff' : 'wr.mail.approvedSkippedOff'), 8000); return }
+    if (s.startsWith('SKIPPED')) { toast.info(t(kind === 'resend' ? 'wr.mail.resendSkippedRecipients' : 'wr.mail.approvedSkippedRecipients'), 8000); return }
+    toast.error(t(kind === 'resend' ? 'wr.mail.resendFailed' : 'wr.mail.approvedFailed'), { duration: 8000 })
+  }
+
   async function openMailHistory(r) {
-    const res = await api.weeklyReports.mails(r.id)
+    let res
+    try { res = await api.weeklyReports.mails(r.id) } catch (e) { failToast(e); return }
     if (res?.success) {
       setOpenMailBody(null)
       setMailHistory({ report: r, items: res.data ?? [] })
@@ -554,7 +632,8 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
       cancelText: t('wr.cancel'),
     })
     if (!ok) return
-    const res = await api.weeklyReports.lock(report.id, true)
+    let res
+    try { res = await api.weeklyReports.lock(report.id, true) } catch (e) { failToast(e); return }
     if (res?.success && res.data?.acquired) {
       setLockHeld(true)
       setLockHolder(null)
@@ -590,7 +669,9 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
       cancelText: t('wr.cancel'),
     })
     if (!ok) return
-    if (dirty && !(await save(false))) return
+    // Kaydedilmemiş içerik (kayıt sürerken yazılanlar dahil — UIA-3) önce kaydedilir; hâlâ kaydedilmemiş içerik varsa
+    // gönderilmez (gönderim sunucu kopyasını yeniden yükler, son yazılanlar silinirdi) — kirli bayrak kalır.
+    if (!(await saveAll())) return
     setBusy(true)
     try {
       const res = await api.weeklyReports.submit(report.id)
@@ -600,6 +681,8 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
       } else {
         toast.error(res?.error || t('wr.actionFailed'))
       }
+    } catch (e) {
+      failToast(e)
     } finally {
       setBusy(false)
     }
@@ -617,11 +700,13 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
     try {
       const res = await api.weeklyReports.approve(report.id)
       if (res?.success) {
-        toast.success(t('wr.approveOk'))
+        mailOutcomeToast(res.mail_status, 'approved')
         loadReport(report.id); loadList()
       } else {
         toast.error(res?.error || t('wr.actionFailed'))
       }
+    } catch (e) {
+      failToast(e)
     } finally {
       setBusy(false)
     }
@@ -634,8 +719,8 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
     setBusy(true)
     try {
       const res = await api.weeklyReports.approve(id)
-      if (res?.success) { toast.success(t('wr.approveOk')); loadList() } else toast.error(res?.error || t('wr.actionFailed'))
-    } finally { setBusy(false) }
+      if (res?.success) { mailOutcomeToast(res.mail_status, 'approved'); loadList() } else toast.error(res?.error || t('wr.actionFailed'))
+    } catch (e) { failToast(e) } finally { setBusy(false) }
   }
   async function approveSelected() {
     const ids = [...selectedIds].filter((id) => reports.find((r) => r.id === id)?.status === 'PENDING_APPROVAL')
@@ -643,13 +728,20 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
     const ok = await showConfirm({ title: t('wr.bulkApproveTitle'), message: t('wr.bulkApproveMsg', ids.length), confirmText: t('wr.approve'), cancelText: t('wr.cancel') })
     if (!ok) return
     setBusy(true)
-    let okN = 0, fail = 0
+    let okN = 0, fail = 0, mailNotSent = 0
     try {
-      for (const id of ids) { try { const r = await api.weeklyReports.approve(id); if (r?.success) okN++; else fail++ } catch { fail++ } }
+      for (const id of ids) {
+        try {
+          const r = await api.weeklyReports.approve(id)
+          if (r?.success) { okN++; if (r.mail_status && r.mail_status !== 'SENT') mailNotSent++ } else fail++
+        } catch { fail++ }
+      }
     } finally {
       setBusy(false)
     }
     if (fail === 0) toast.success(t('bulk.done', okN)); else toast.error(t('bulk.partial', okN, fail))
+    // Onaylanan ama müdür postası gitmeyen / sırada olan raporlar ayrıca söylenir (UIA-G2)
+    if (mailNotSent > 0) toast.info(t('wr.mail.bulkNotSent', mailNotSent), 8000)
     setSelectedIds(new Set()); loadList()
   }
   /** Komşu hafta (2026-09-13): listede varsa aç; yoksa "Yeni Hafta Raporu" ekranını o haftayla aç. */
@@ -694,6 +786,8 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
       } else {
         toast.error(res?.error || t('wr.actionFailed'))
       }
+    } catch (e) {
+      failToast(e)
     } finally {
       setBusy(false)
     }
@@ -712,11 +806,13 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
     try {
       const res = await api.weeklyReports.resend(report.id)
       if (res?.success) {
-        toast.success(t('wr.resendOk'))
+        mailOutcomeToast(res.mail_status, 'resend')
         loadReport(report.id); loadList()
       } else {
         toast.error(res?.error || t('wr.actionFailed'))
       }
+    } catch (e) {
+      failToast(e)
     } finally {
       setBusy(false)
     }
@@ -736,6 +832,8 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
       } else {
         toast.error(res?.error || t('wr.actionFailed'))
       }
+    } catch (e) {
+      failToast(e)
     } finally {
       setBusy(false)
     }
@@ -743,14 +841,16 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
 
   async function openPreview() {
     if (dirty && !(await save(false))) return
-    const res = await api.weeklyReports.preview(report.id)
+    let res
+    try { res = await api.weeklyReports.preview(report.id) } catch (e) { failToast(e); return }
     if (res?.success) setPreviewHtml(res.html)
     else toast.error(res?.error || t('wr.actionFailed'))
   }
 
   // Liste kebabından: raporu (editörü) açmadan doğrudan mail önizlemesi
   async function openPreviewById(id) {
-    const res = await api.weeklyReports.preview(id)
+    let res
+    try { res = await api.weeklyReports.preview(id) } catch (e) { failToast(e); return }
     if (res?.success) setPreviewHtml(res.html)
     else toast.error(res?.error || t('wr.actionFailed'))
   }
@@ -784,12 +884,17 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
   }
 
   async function createReport({ teamId: tid, year: y, week: w, carry }) {
-    const res = await api.weeklyReports.create({
-      team_id: tid ? Number(tid) : undefined,
-      year: y,
-      week_no: w,
-      carry_notes: !!carry,   // geçen haftadan devam (2026-09-13)
-    })
+    // Takım yalnız global yöneticide gönderilir; diğerlerinde sunucu kendi takımını kullanır (yabancı team_id'yi 400
+    // VALIDATION_FAILED field=team_id ile reddeder — K8; ileti aşağıda sunucunun metniyle gösterilir).
+    let res
+    try {
+      res = await api.weeklyReports.create({
+        team_id: isAdmin && tid ? Number(tid) : undefined,
+        year: y,
+        week_no: w,
+        carry_notes: !!carry,   // geçen haftadan devam (2026-09-13)
+      })
+    } catch (e) { failToast(e); return }
     if (res?.success) {
       setNewReport(null)
       toast.success(t('wr.created'))
@@ -825,6 +930,8 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
       } else {
         toast.error(res?.error || t('wr.actionFailed'))
       }
+    } catch (e) {
+      failToast(e)
     } finally {
       setBusy(false)
     }
@@ -865,6 +972,8 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
       } else {
         toast.error(res?.error || t('wr.transferError'))
       }
+    } catch (e) {
+      failToast(e)
     } finally {
       setTransferring(false)
     }

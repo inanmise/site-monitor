@@ -45,7 +45,7 @@ const A = base({ id: 11, week_no: 36, week_label: '2026-W36' })
 const B = base({ id: 15, week_no: 37, week_label: '2026-W37' })
 let ALL = [A, B]
 const deferred = () => { let resolve; const p = new Promise((r) => { resolve = r }); return { p, resolve } }
-const renderPage = (role = 'ADMIN') => render(<LangProvider><WeeklyReportsPage systemRole={role} teamId={5} teamName="Takım A" /></LangProvider>)
+const renderPage = (role = 'ADMIN') => render(<LangProvider><WeeklyReportsPage systemRole={role} globalAdmin={role === 'ADMIN'} teamId={5} teamName="Takım A" /></LangProvider>)
 const flush = () => act(() => new Promise((r) => setTimeout(r, 0)))
 const rows = () => document.querySelectorAll('[data-testid="wr-table"] tbody tr')
 const nextWeek = () => screen.getByRole('button', { name: /^(Sonraki hafta|Next week)$/ })
