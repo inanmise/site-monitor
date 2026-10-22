@@ -21347,6 +21347,7 @@ export const TR = {
   'te.send.retryTitle': "Rapor gönderilmedi — yeniden deneyebilirsiniz",
   'te.send.retryKept': "Yazdığınız ek Bilgi (CC) adresleri korundu; biraz sonra yeniden “Gönder”e basın.",
   // ── multi-pod R2a · D1 ──
+  'te.appr.outcome.SEND_QUEUED': "Rapor onaylandı ama raporun önceki gönderimi posta sunucusunun yeniden deneme kuyruğunda olduğundan yöneticilere gönderilmedi (ikinci kopya gitmesin diye). Birkaç dakika sonra gönderim sonucuna bakıp gerekirse \"Yöneticilere gönder\" ile gönderin.",
   'te.send.queuedTitle': "Önceki gönderim hâlâ posta kuyruğunda — rapor yeniden gönderilmedi",
   'logtrig.WEEKLY_REPORT_REMINDER': "Haftalık rapor hatırlatması",
   'te.send.unsureTitle': "Gönderimin sonucu bilinmiyor",

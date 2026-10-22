@@ -21313,6 +21313,7 @@ export const EN = {
   'te.send.retryTitle': "The report wasn't sent — you can try again",
   'te.send.retryKept': "The extra CC addresses you typed were kept; press “Send” again in a little while.",
   // ── multi-pod R2a · D1 ──
+  'te.appr.outcome.SEND_QUEUED': "The report was approved but not sent to the executives, because its previous send is still in the mail server's retry queue (to avoid a second copy). Check the send result in a few minutes and use \"Send to executives\" if needed.",
   'te.send.queuedTitle': "The previous send is still in the mail queue — the report wasn't sent again",
   'logtrig.WEEKLY_REPORT_REMINDER': "Weekly report reminder",
   'te.send.unsureTitle': "The send result is unknown",

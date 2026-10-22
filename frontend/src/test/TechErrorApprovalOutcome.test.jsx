@@ -56,6 +56,7 @@ describe('UIA-E1 — onay sonrası gönderim sonucu', () => {
     [{ send_state: 'SKIPPED' }, 'info', TR['te.appr.outcome.SKIPPED']],
     [{ send_state: null, send_error: 'APPROVAL_STALE' }, 'error', TR['te.appr.outcome.APPROVAL_STALE']],
     [{ send_state: null, send_error: 'SEND_IN_PROGRESS' }, 'info', TR['te.appr.outcome.SEND_IN_PROGRESS']],
+    [{ send_state: null, send_error: 'SEND_QUEUED' }, 'info', TR['te.appr.outcome.SEND_QUEUED']],   // çok pod R2a (MP-41)
     [{ send_state: null, send_error: 'PDF_BUSY' }, 'error', TR['te.appr.outcome.PDF_BUSY']],
     [{ send_state: null, send_error: 'PDF_TOO_LARGE' }, 'error', TR['te.appr.outcome.PDF_TOO_LARGE']],
     [{ send_state: 'FAILED' }, 'error', TR['te.appr.outcome.other']],
