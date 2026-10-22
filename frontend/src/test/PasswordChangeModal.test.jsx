@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from './test-utils.jsx'
-import PasswordChangeModal from '../components/admin/PasswordChangeModal.jsx'
+import PasswordChangeModal, { PWD_MAX_LENGTH, PWD_MIN_LENGTH, serverLengthMessage } from '../components/admin/PasswordChangeModal.jsx'
+import { EN } from '../i18n/en.js'
 
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
 
@@ -145,6 +146,57 @@ describe('PasswordChangeModal', () => {
     fireEvent.click(submitBtn())
 
     await waitFor(() => expect(api.me.changePassword).toHaveBeenCalled())
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
+  // ── UIA-H1 / H11 (2026-10-22): istemci kuralı sunucunun 6–64'ü; maxLength YOK (eskiden 10'da sessizce kesiyordu) ──
+  it('UIA-H1: 30 karakterlik parola KESİLMEDEN gönderilir (eskiden maxLength=10 ilk 10 karakteri yazdırıyordu)', async () => {
+    const pass = 'uzun-ve-guvenli-bir-parola-30c'
+    expect(pass.length).toBe(30)
+    const { container } = render(<PasswordChangeModal mode="self" targetUser={USER} onClose={() => {}} />)
+    const inputs = fill(container, { next: pass, confirm: pass })
+    expect(inputs[1]).not.toHaveAttribute('maxlength')
+    expect(inputs[2]).not.toHaveAttribute('maxlength')
+    expect(inputs[1].value).toHaveLength(30)
+    expect(submitBtn()).not.toBeDisabled()
+    fireEvent.click(submitBtn())
+    await waitFor(() => expect(api.me.changePassword).toHaveBeenCalledWith('eski123', pass))
+  })
+
+  it('UIA-H1: 64 karakter kabul, 65 karakter → Kaydet kapalı ve alan altında "en fazla 64" uyarısı', () => {
+    const ok = 'a'.repeat(PWD_MAX_LENGTH)
+    const { container, rerender } = render(<PasswordChangeModal mode="self" targetUser={USER} onClose={() => {}} />)
+    fill(container, { next: ok, confirm: ok })
+    expect(submitBtn()).not.toBeDisabled()
+    const tooLong = 'a'.repeat(PWD_MAX_LENGTH + 1)
+    fill(container, { next: tooLong, confirm: tooLong })
+    rerender(<PasswordChangeModal mode="self" targetUser={USER} onClose={() => {}} />)
+    expect(submitBtn()).toBeDisabled()
+    expect(screen.getByRole('dialog').textContent).toContain(EN['pwd.tooLong'].replace('{0}', String(PWD_MAX_LENGTH)))
+  })
+
+  it('UIA-H1: sunucunun "too short (min 12 chars)" iletisi yapılandırılmış sınırla yerelleştirilir', async () => {
+    api.me.changePassword.mockResolvedValue({ success: false, status: 400, error: 'Password too short (min 12 chars)' })
+    const { container } = render(<PasswordChangeModal mode="self" targetUser={USER} onClose={() => {}} />)
+    fill(container, { next: 'yeni1234', confirm: 'yeni1234' })
+    fireEvent.click(submitBtn())
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toBe(EN['pwd.tooShort'].replace('{0}', '12')))
+  })
+
+  it('serverLengthMessage: kısa / uzun / ilgisiz ileti', () => {
+    const t = (k, n) => `${k}:${n}`
+    expect(serverLengthMessage('Password too long (max 40 chars)', t)).toBe('pwd.tooLong:40')
+    expect(serverLengthMessage('Password too short', t)).toBe(`pwd.tooShort:${PWD_MIN_LENGTH}`)
+    expect(serverLengthMessage('Current password wrong', t)).toBeNull()
+  })
+
+  it('UIA-H11: ağ hatasında ileti gösterilir (yakalanmamış söz reddi değil), modal açık kalır', async () => {
+    api.me.changePassword.mockRejectedValue(Object.assign(new Error('Sunucuya ulaşılamadı. Bağlantınızı kontrol edin.'), { status: 0 }))
+    const onClose = vi.fn()
+    const { container } = render(<PasswordChangeModal mode="forced-change" targetUser={USER} onClose={onClose} />)
+    fill(container)
+    fireEvent.click(submitBtn())
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Sunucuya ulaşılamadı'))
     expect(onClose).not.toHaveBeenCalled()
   })
 })
