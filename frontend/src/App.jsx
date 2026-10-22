@@ -651,7 +651,8 @@ export default function App() {
     if (!isLogoutPending()) {
       bootMe()   // bugünkü yol: hemen (eşzamanlı) — bekleyen çıkış yoksa açılış sırası değişmez
     } else {
-      settlePendingLogout(() => api.logout()).then((done) => {
+      // Süren bir giriş varsa (öteki sekme) açılış çıkışı başlatmaz — yanıtı yeni oturumun çerezini silebilirdi (D1)
+      settlePendingLogout((signal) => api.logout({ signal }), undefined, { respectLoginHold: true }).then((done) => {
         if (cancelled) return
         if (done) bootMe()
         else setAuthChecked(true)
@@ -1267,7 +1268,7 @@ export default function App() {
   async function logoutEverywhere() {
     clearInterval(countdownInterval.current)
     await boundedFlush(prefsFlushRef.current?.())   // bekleyen tercih yazımı (öneri 23)
-    const { ok, late } = await tryServerLogout(() => api.logout())
+    const { ok, late } = await tryServerLogout((signal) => api.logout({ signal }))
     if (!ok) {
       const token = markLogoutPending()
       late.then((v) => { if (v) clearLogoutPending(token) }).catch(() => {})
@@ -1299,7 +1300,7 @@ export default function App() {
   // Giriş formu açıkken bekleyen sunucu çıkışını yeniden dene (UIM-1): çevrimiçi olunca ve aralıkla, sınırlı sayıda.
   useEffect(() => {
     if (!authChecked || user) return undefined
-    return startPendingLogoutRetry(() => api.logout())
+    return startPendingLogoutRetry((signal) => api.logout({ signal }))
   }, [authChecked, user])
 
   // Sekmeler arası kimlik (UIM-2, 2026-10-22): öteki sekmede çıkış / başka kullanıcının girişi `sm.storage.owner`'ı

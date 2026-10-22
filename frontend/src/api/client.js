@@ -10,7 +10,7 @@ import { claimExpiredRedirect, signalSessionExpired } from '../utils/sessionExpi
 import { isMaintenancePayload, signalMaintenance } from '../utils/systemMaintenance.js'
 import { isUsernamePrefixPayload, prefixesOf, signalUsernamePrefix } from '../utils/usernamePrefix.js'
 import { downloadBlob } from '../utils/csvExport.js'
-import { isLogoutPending, settlePendingLogout } from '../utils/pendingLogout.js'
+import { clearLogoutPending, holdLoginStart, settleLogoutsBeforeLogin } from '../utils/pendingLogout.js'
 import {
   ApiError, attachErrorInfo, errorInfoOf, networkMessage, nonJsonMessage, normalizeErrorBody, parseRetryAfter, rememberErrorInfo,
 } from '../utils/errorMessages.js'
@@ -467,6 +467,50 @@ async function manualUpload(path, formData, { onProgress, signal } = {}) {
   return res
 }
 
+/** Sunucu çıkışı (iptal edilebilir) — `api.logout` ve girişten önceki bekleyen çıkış denemesi aynı isteği kullanır. */
+function logoutRequest(signal) {
+  return request('/logout', { method: 'POST', ...(signal ? { signal } : {}) })
+}
+
+/** `/login` isteği — `api.login` bekleyen çıkışları kapattıktan SONRA çağırır. */
+async function loginRequest(username, password, rememberMe, forceLogin) {
+  let r
+  try {
+    r = await fetchWithTimeout(`${BASE}/login`, {
+      method: 'POST',
+      credentials: 'include',
+      // X-Lang (2026-10-08): giriş hata metni de arayüz dilinde gelsin — başlık yokken sunucu tarayıcının
+      // Accept-Language'ına düşüyor, İngilizce arayüzde Türkçe "hatalı parola" çıkabiliyordu.
+      headers: { 'Content-Type': 'application/json', 'X-Lang': uiLang() },
+      body: JSON.stringify({
+        username, password,
+        remember_me: String(rememberMe),
+        force_login: String(forceLogin),
+      }),
+    })
+  } catch (e) {
+    // Login isteği asılır/başarısız olursa buton sonsuz "bekliyor"da kalmasın
+    const kind = e?.name === 'AbortError' ? 'timeout' : 'network'
+    return {
+      success: false,
+      status: 0,
+      networkError: kind === 'network',
+      error: networkMessage({ lang: uiLang(), kind }),
+    }
+  }
+  let body
+  try { body = await r.json() } catch { body = nonJsonErrorPayload(r.status, r) }
+  // Flag a successful login so the 401 handler in request() knows that any
+  // subsequent 401 is a *lost* session (worth a hard reload to /?session=
+  // expired), not the initial unauthenticated bootstrap.
+  if (r.ok && body?.success && typeof window !== 'undefined') {
+    try { sessionStorage.setItem('sm.session.active', '1') } catch {}
+  }
+  // Oturum kuruldu: bekleyen çıkış işareti HEMEN düşer (öteki sekmelerin yeniden denemesi durur; App.handleLogin'i beklemez)
+  if (r.ok && body?.success) clearLogoutPending()
+  return body
+}
+
 export const api = {
   /** Komut paleti (2026-09-12, #1): alan / izleme / takım — takım kapsamlı. */
   search: (q) => request(`/search?q=${encodeURIComponent(q)}`),
@@ -791,49 +835,22 @@ export const api = {
   },
 
   login: async (username, password, rememberMe = false, forceLogin = false) => {
-    // Önceki çıkış sunucuya ulaşamadıysa (UIM-1, 2026-10-22) o oturum ÖNCE kapatılır (≤ 3 sn) — yeni girişten sonra
-    // giden gecikmiş bir yeniden deneme YENİ oturumu kapatamasın.
-    if (isLogoutPending()) await settlePendingLogout(() => request('/logout', { method: 'POST' }))
-    let r
+    // Önceki çıkış sunucuya ulaşamadıysa (UIM-1, 2026-10-22) o oturum ÖNCE kapatılır; uçuştaki her çıkış isteği bitirilir ya da
+    // İPTAL edilir, öteki sekmelerinki beklenir (D1) — geç biten bir /logout yanıtı yeni oturumun çerezini silemez.
+    const releaseHold = holdLoginStart()
     try {
-      r = await fetchWithTimeout(`${BASE}/login`, {
-        method: 'POST',
-        credentials: 'include',
-        // X-Lang (2026-10-08): giriş hata metni de arayüz dilinde gelsin — başlık yokken sunucu tarayıcının
-        // Accept-Language'ına düşüyor, İngilizce arayüzde Türkçe "hatalı parola" çıkabiliyordu.
-        headers: { 'Content-Type': 'application/json', 'X-Lang': uiLang() },
-        body: JSON.stringify({
-          username, password,
-          remember_me: String(rememberMe),
-          force_login: String(forceLogin),
-        }),
-      })
-    } catch (e) {
-      // Login isteği asılır/başarısız olursa buton sonsuz "bekliyor"da kalmasın
-      const kind = e?.name === 'AbortError' ? 'timeout' : 'network'
-      return {
-        success: false,
-        status: 0,
-        networkError: kind === 'network',
-        error: networkMessage({ lang: uiLang(), kind }),
-      }
+      await settleLogoutsBeforeLogin(logoutRequest)
+      return await loginRequest(username, password, rememberMe, forceLogin)
+    } finally {
+      releaseHold()
     }
-    let body
-    try { body = await r.json() } catch { body = nonJsonErrorPayload(r.status, r) }
-    // Flag a successful login so the 401 handler in request() knows that any
-    // subsequent 401 is a *lost* session (worth a hard reload to /?session=
-    // expired), not the initial unauthenticated bootstrap.
-    if (r.ok && body?.success && typeof window !== 'undefined') {
-      try { sessionStorage.setItem('sm.session.active', '1') } catch {}
-    }
-    return body
   },
 
-  logout: async () => {
+  logout: async ({ signal } = {}) => {
     if (typeof window !== 'undefined') {
       try { sessionStorage.removeItem('sm.session.active') } catch {}
     }
-    return request('/logout', { method: 'POST' })
+    return logoutRequest(signal)
   },
 
   getMe: () => request('/me', { timeoutMs: DEFAULT_TIMEOUT_MS }),
@@ -865,14 +882,20 @@ export const api = {
     // Eşleşmeme de AYNI 200'dür; boşsa 400 PHONE_REQUIRED / EMAIL_REQUIRED (+ field). Gövde hiçbir yerde loglanmaz.
     request: (username, channel, contact) => otpPost('/login/otp/request', { username, channel, ...(contact || {}) }),
     verify: async (challengeId, code, rememberMe = false, forceLogin = false) => {
-      if (isLogoutPending()) await settlePendingLogout(() => request('/logout', { method: 'POST' }))   // bkz. login (UIM-1)
-      const body = await otpPost('/login/otp/verify', {
-        challenge_id: challengeId, code, remember_me: !!rememberMe, forceLogin: !!forceLogin,
-      })
-      if (body?.success && typeof window !== 'undefined') {
-        try { sessionStorage.setItem('sm.session.active', '1') } catch { /* sessionStorage yok */ }
+      const releaseHold = holdLoginStart()   // bkz. login (UIM-1, D1)
+      try {
+        await settleLogoutsBeforeLogin(logoutRequest)
+        const body = await otpPost('/login/otp/verify', {
+          challenge_id: challengeId, code, remember_me: !!rememberMe, forceLogin: !!forceLogin,
+        })
+        if (body?.success && typeof window !== 'undefined') {
+          try { sessionStorage.setItem('sm.session.active', '1') } catch { /* sessionStorage yok */ }
+        }
+        if (body?.success) clearLogoutPending()   // oturum kuruldu — bekleyen çıkış işareti hemen düşer
+        return body
+      } finally {
+        releaseHold()
       }
-      return body
     },
   },
 
