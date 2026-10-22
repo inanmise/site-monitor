@@ -76,6 +76,70 @@ describe('Yönetici Özeti — PKG-8b', () => {
   })
 })
 
+describe('Yönetici Özeti — gönderim görünümü, son inceleme (FE-3 / FE-4)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    try { localStorage.clear(); localStorage.setItem(LANG_STORAGE_KEY, 'tr') } catch { /* yok */ }
+    ex().get.mockResolvedValue(response())
+    ex().getSettings.mockResolvedValue({ success: true, data: SETTINGS })
+    ex().team.mockResolvedValue({ success: true, data: TEAM_DETAIL })
+  })
+
+  it('FE-3: "Tekrar dene" açık takım ayarını kaldırmaz — kaydedilmemiş ek adres yerinde kalır, liste gelince de', async () => {
+    window.history.replaceState({}, '', '/?tab=executive&ex_view=delivery&ex_sel=5')
+    let release
+    ex().teams
+      .mockResolvedValueOnce({ success: false, status: 500, error: 'Takım listesi okunamadı (sunucu).' })
+      .mockImplementationOnce(() => new Promise((r) => { release = () => r({ success: true, data: TEAMS }) }))
+    render(<ExecutiveSummaryPage globalAdmin />)
+    const panel = await openDelivery()
+    const extra = await waitFor(() => {
+      const el = panel.querySelector('[data-slot="ex-settings"][data-scope="team"] textarea')
+      expect(el).not.toBeNull()
+      return el
+    })
+    fireEvent.change(extra, { target: { value: 'dagitim@example.com' } })
+    const retry = panel.querySelector('[data-slot="ex-delivery-list-error"] [data-slot="ex-delivery-retry"]')
+    fireEvent.click(retry)
+    await waitFor(() => expect(ex().teams).toHaveBeenCalledTimes(2))
+    // Okuma sürerken tam ekran yükleme bloğu YOK, ayrıntı bağlı, düğme meşgul
+    expect(panel.querySelector('[data-slot="ex-settings"][data-scope="team"] textarea')).toBe(extra)
+    expect(extra.value).toBe('dagitim@example.com')
+    expect(panel.querySelector('[data-slot="ex-delivery-retry"]')).toBeDisabled()
+    release()
+    await waitFor(() => expect(panel.querySelector('[data-slot="ex-delivery-list-error"]')).toBeNull())
+    expect(panel.querySelector('[data-slot="ex-settings"][data-scope="team"] textarea')).toBe(extra)
+    expect(extra.value).toBe('dagitim@example.com')
+  })
+
+  it('FE-4: kapsamlı müdürde liste okunamadı ve seçim yok → hata + Tekrar dene (düğmesiz nötr blok değil); tekrar dene listeyi getirir', async () => {
+    window.history.replaceState({}, '', '/?tab=executive&ex_view=delivery')
+    ex().teams
+      .mockResolvedValueOnce({ success: false, status: 500, error: 'Takım listesi okunamadı (sunucu).' })
+      .mockResolvedValueOnce({ success: true, data: TEAMS })
+    render(<ExecutiveSummaryPage globalAdmin={false} />)
+    const panel = await openDelivery()
+    const retry = await waitFor(() => {
+      const b = panel.querySelector('[data-slot="ex-delivery-retry"]')
+      expect(b).not.toBeNull()
+      return b
+    })
+    expect(panel.textContent).toContain('Takım listesi okunamadı (sunucu).')
+    fireEvent.click(retry)
+    await waitFor(() => expect(panel.querySelectorAll('[data-slot="ex-delivery-item"]').length).toBeGreaterThan(0))
+  })
+
+  it('FE-4: kapsamlı müdürde liste okunamadı ama bağlantıda takım var → takım ayarı açılır, bant + Tekrar dene görünür (ex_sel düşmez)', async () => {
+    window.history.replaceState({}, '', '/?tab=executive&ex_view=delivery&ex_sel=5')
+    ex().teams.mockResolvedValue({ success: false, status: 500, error: 'Takım listesi okunamadı (sunucu).' })
+    render(<ExecutiveSummaryPage globalAdmin={false} />)
+    const panel = await openDelivery()
+    await waitFor(() => expect(panel.querySelector('[data-slot="ex-delivery-list-error"] [data-slot="ex-delivery-retry"]')).not.toBeNull())
+    await waitFor(() => expect(ex().team).toHaveBeenCalledWith('5'))
+    expect(window.location.search).toContain('ex_sel=5')
+  })
+})
+
 describe('KpiTile — bölüm başlığı (UIA-G10)', () => {
   it('başlık kesilmez (truncate yok), sarar', () => {
     render(<KpiTile sectionKey="crypto-readiness" caption={TR['exec.crypto-readiness.title']}

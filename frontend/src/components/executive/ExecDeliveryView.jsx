@@ -115,12 +115,30 @@ export default function ExecDeliveryView({ month, canConfigureOrg = false, selec
     if (typeof requestAnimationFrame === 'function') requestAnimationFrame(reveal); else reveal()
   }
 
-  const retryTeams = () => { setTeams((s) => ({ ...s, loading: true })); loadTeams() }
+  // "Tekrar dene" (2026-10-22, FE-3): yalnız liste yeniden okunur — tam ekran yükleme bloğu çizilmez, açık ayar ayrıntısı
+  // (kaydedilmemiş değişikliğiyle) bağlı KALIR. Düğme okuma süresince meşgul.
+  const retryTeams = async () => {
+    if (teams.retrying) return
+    setTeams((s) => ({ ...s, retrying: true }))
+    await loadTeams()
+  }
+  const retryButton = (
+    <Button type="button" variant="outline" size="sm" onClick={retryTeams} disabled={!!teams.retrying} aria-busy={teams.retrying || undefined}
+      data-slot="ex-delivery-retry" className="h-10 lg:h-8 pointer-coarse:h-10">{t('exec.retry')}</Button>
+  )
   if (teams.loading) return <LoadingBlock label={t('exec.team.listLoading')} />
-  if (!canConfigureOrg && rows.length === 0) {
+  // Kapsamlı müdür (FE-4): liste okunamadıysa ve bağlantıda seçili takım yoksa hata + Tekrar dene (eskiden düğmesiz nötr blok);
+  // seçili takım (ex_sel) varsa aşağıdaki düzen o takımın ayarını açar ve listenin üstünde aynı bant + Tekrar dene görünür.
+  if (!canConfigureOrg && listFailed && !validSel) {
     return (
-      <StatusBlock tone="neutral" icon={teams.error ? CircleAlert : Inbox} title={teams.error ? t('exec.team.listError') : t('exec.team.noneTitle')}
-        description={teams.error || t('exec.team.noneDesc')} className="rounded-xl border py-10" />
+      <StatusBlock tone="danger" icon={CircleAlert} title={t('exec.team.listError')} description={teams.error}
+        actions={retryButton} className="rounded-xl border py-10" />
+    )
+  }
+  if (!canConfigureOrg && rows.length === 0 && !listFailed) {
+    return (
+      <StatusBlock tone="neutral" icon={Inbox} title={t('exec.team.noneTitle')} description={t('exec.team.noneDesc')}
+        className="rounded-xl border py-10" />
     )
   }
   return (
@@ -140,8 +158,7 @@ export default function ExecDeliveryView({ month, canConfigureOrg = false, selec
             </div>
             {listFailed && (
               <div data-slot="ex-delivery-list-error" className="px-1">
-                <AlertBanner tone="danger" className="mb-0"
-                  actions={<Button type="button" variant="outline" size="sm" onClick={retryTeams} className="h-10 lg:h-8 pointer-coarse:h-10">{t('exec.retry')}</Button>}>
+                <AlertBanner tone="danger" className="mb-0" actions={retryButton}>
                   {teams.error}
                 </AlertBanner>
               </div>
