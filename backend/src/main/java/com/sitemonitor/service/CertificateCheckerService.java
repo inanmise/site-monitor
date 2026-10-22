@@ -161,6 +161,12 @@ public class CertificateCheckerService {
         // SSRF: hedef host'u bağlanmadan önce doğrula (cloud-metadata/loopback/link-local blok; iç ağ ayara bağlı).
         try {
             ssrfGuard.validate(domain);
+        } catch (SsrfGuard.UnresolvableHostException ue) {
+            // DNS'te çözülmeyen host bir POLİTİKA reddi değil, ulaşılamazlıktır (CHECKS-2, 2026-10-22): sınıf DNS olmalı.
+            // BLOCKED yazıldığında alarm seviyesi KRİTİK'e düşüyordu (yalnız NETWORK/DNS "erişilemedi" = UYARI) ve toplu ağ
+            // kesintisi tespiti (yalnız DNS/NETWORK sayar) kurumsal DNS çökünce devreye girmiyordu. Biçim aşağıdaki
+            // UnknownHostException dalıyla aynı.
+            return errorWithClass(domain, "Domain resolution failed", "DNS", "dns", List.of());
         } catch (SsrfGuard.BlockedException be) {
             return errorWithClass(domain, be.getMessage(), "BLOCKED");
         }
@@ -482,22 +488,27 @@ public class CertificateCheckerService {
                 }
 
                 // HSTS check via HTTP HEAD — reuse the SSLSocketFactory that already succeeded
+                boolean defaultPort = isDefaultHttpsPort(port);
                 HttpURLConnection hc = null;
                 try {
                     hc = openHstsFollowingSafely("https://" + domain + "/", useProxy, factory);
                     result.put("hsts", hc.getHeaderField("Strict-Transport-Security") != null);
                     // Aynı HEAD'den HTTP durum kodu — ek istek YOK. "Şimdi Kontrol Et" tablosunda
                     // erişilebilirlik kolonunu besler (sertifika geçerli ama uygulama 503 olabilir).
-                    result.put("http_status", hc.getResponseCode());
+                    if (defaultPort) result.put("http_status", hc.getResponseCode());
                 } catch (Exception e) {
                     log.debug("HSTS check failed for {}: {}", domain, e.getMessage());
                     result.put("hsts", null);
-                    result.put("http_status", null);
+                    if (defaultPort) result.put("http_status", null);
                 } finally {
                     if (hc != null) {
                         try { hc.disconnect(); } catch (Exception ignored) { }
                     }
                 }
+                // CHECKS-10 (2026-10-22): sertifika 443 DIŞINDA bir portta kontrol ediliyorsa (8443 …) erişilebilirlik
+                // durumu O PORTUN yanıtıdır — 443'teki başka servisin (ya da dinlemeyen portun) kodu değil. HSTS ise
+                // host geneli bir politikadır; yukarıdaki 443 HEAD'inden okunmaya devam eder.
+                if (!defaultPort) result.put("http_status", httpStatusOnPort(domain, port, useProxy, factory));
 
                 long elapsed = System.currentTimeMillis() - startMs;
                 // Map.getOrDefault, anahtar VAR ama değeri null ise varsayılanı DEĞİL null döner →
@@ -946,6 +957,29 @@ public class CertificateCheckerService {
      * zincir burada {@link SafeRedirect} kurallarıyla ilerler (şema allow-list, host zorunluluğu,
      * https→http düşürümü engeli, hop tavanı).
      */
+    static boolean isDefaultHttpsPort(int port) {
+        return port <= 0 || port == 443;
+    }
+
+    /**
+     * Kontrol edilen portun HTTP durum kodu (HEAD, yönlendirmeler HSTS yoklamasıyla AYNI güvenli takip kurallarıyla) —
+     * 443 dışı portlar için; okunamazsa {@code null} (bilinmiyor, "erişilemez" değil).
+     */
+    Integer httpStatusOnPort(String domain, int port, boolean useProxy, SSLSocketFactory factory) {
+        HttpURLConnection hc = null;
+        try {
+            hc = openHstsFollowingSafely("https://" + domain + ":" + port + "/", useProxy, factory);
+            return hc.getResponseCode();
+        } catch (Exception e) {
+            log.debug("HTTP status probe failed for {}:{}: {}", domain, port, e.getMessage());
+            return null;
+        } finally {
+            if (hc != null) {
+                try { hc.disconnect(); } catch (Exception ignored) { }
+            }
+        }
+    }
+
     // Paket-gorunur: kapi testi (HstsProbeRedirectGuardTest) yerel sunucuya karsi dogrudan surer.
     HttpURLConnection openHstsFollowingSafely(String startUrl, boolean useProxy,
                                               SSLSocketFactory factory) throws Exception {
