@@ -1,9 +1,303 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-22T11:15:13Z",
+  "generatedAt": "2026-10-22T23:20:51Z",
   "repo": "inanmise/site-monitor",
-  "count": 784,
+  "count": 785,
   "releases": [
+    {
+      "version": "20.166.0",
+      "tag": "v20.166.0",
+      "releasedAt": "2026-10-22T23:20:43Z",
+      "commit": "ddbd9118dc282465b61dcffa4082f17fd156be30",
+      "prevVersion": "20.165.1",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 33,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 3,
+        "other": 2
+      },
+      "changes": [
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "ddbd9118",
+          "subject": "çok pod Sürüm 2a son inceleme turu — önbellek yükleme kuşak damgası, bayat işaretleme (önceki görüntü korunur), user-gate kuşak koruması, cache_bus DROP / TRUNCATE düzeltmesi, N pod notu; gösterim ka…"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "62cf3638",
+          "subject": "R2a inceleme düzeltmeleri — yönetici özeti \"gönderim başladı\" işareti, SEND_QUEUED kuyruğu bekler, planlı tetik anı, seq_locked yalnız kilitle (çok pod R2a, REP-1…REP-5)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "7548ad0b",
+          "subject": "elle temizlikte DB hatası 503, kapanış izleri sınırlı"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "4595ce7a",
+          "subject": "yarım alan adı hatırlatması seriden bağımsız kapanır, ekranda dürüst etiket (inceleme J-3)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "f9a0255d",
+          "subject": "kapatılan türün teyit zinciri alarm açmaz, tazeleme tek uzlaştırma denemesi yapar (inceleme J-2)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "e54199c1",
+          "subject": "sessiz saat özeti yarım sahiplenmeyi yeni kayıt beklemeden kapatır (inceleme J-1)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "91da2632",
+          "subject": "önbellek yolu yazdığını-oku açığı, uzak boşaltmada önceki görüntü korunur"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "3d848dbc",
+          "subject": "sınırdaki IP'nin küme reddi önbelleğe alınır; gösterim kapısı sırası belgede düzeltildi (inceleme LIM-4, LIM-2)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "b9832bc8",
+          "subject": "AppUser ayrık-kayıt kapısı parametre olarak gelen nesneyi de yakalar (inceleme LIM-1)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "6bce6943",
+          "subject": "kullanıcı kapısı önbelleklerinde kuşak koruması — boşaltmayla yarışan okuma eski pasiflik bayrağını / eski oturum kimliğini saklamaz; yerel boşaltma COMMIT sonrası da tekrarlanır (son inceleme C-3)"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "c820f440",
+          "subject": "yeni NOT_SUPPORTED testleri işledikleri satırları siler — önbellekli @DataJpaTest bağlamındaki envanter / kullanıcı / denetim sorgu testleri temiz başlar (CI'da sıra bağımlı düşüş)"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "42c7abdd",
+          "subject": "çok pod Sürüm 2a önbellek yolu — inceleme turu sonrası kurallar: istek yayını veri yolu iş parçacığında (≤ 250 ms, geç kalırsa başlıksız), PostgreSQL lock_timeout 500 ms, ucuz uzak boşaltıcılar ve ku…"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "2dcb63b2",
+          "subject": "çok pod Sürüm 2a belgeleri — önbellek yolu (user-gate dahil), küme geneli güvenlik sınırları, app_users hedefli yazımlar, denetim zinciri, rapor / hatırlatma gönderim yolları, iş hijyeni; RUNBOOK sor…"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "dbfc3b9f",
+          "subject": "önbellek yolu şema yaması yarışa dayanıklı, istemci başlıkları birleştirilir"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "f59e750b",
+          "subject": "uzak boşaltıcılar ucuz, boşaltmayla yarışan yükleme eski veriyi saklamaz"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "63004a32",
+          "subject": "önbellek yolu istek iş parçacığında veritabanına dokunmaz, kapanışta sınırlı"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "ec280d2c",
+          "subject": "onay sonrası yöneticilere gönderim önceki kuyruk yüzünden reddedildiyse (SEND_QUEUED) onay kartı kendi cümlesini söyler (çok pod R2a, MP-41)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "9fa84cf3",
+          "subject": "ux_audit_seq yalnız yeni yazıcının kilitli satırlarını kapsar (seq_locked) — tarih kesimi yok; PostgreSQL'de bağlantı önce, kilit sonra (çok pod R2a, MP-38)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "4f8c8760",
+          "subject": "alan adı hatırlatması tekil indeksi yalnız yeni kodun satırlarını kapsar (MP-45)"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "5668b301",
+          "subject": "işlem dışı denetim kaydı eşzamanlı ve hemen görünür (R2a-B gizli değer sınırı) + talep koşulu canlı kuyruğu dışlar + e2e SEND_QUEUED adımı"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "44448f23",
+          "subject": "pasif / silinmiş hesap kapısı ve süpersede önbelleği pod'lar arası önbellek yolunda — öteki pod ~2 sn'de keser; cache_bus saklama envanterinde"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "f43ee481",
+          "subject": "izleme grubu doldurmasında eski varlık kaydı yolu kaldırıldı"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "305a83a5",
+          "subject": "kapanışta başlayamayan olay ve yeni cihaz postaları iz bırakır"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "7bfc1629",
+          "subject": "sessiz saat özeti yarıda kalan sahiplenmeyi kapatır ve iz bırakır (MP-46)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "9475d929",
+          "subject": "TLS notu düşüş bildirimi — satır takımı bitince sonuçlanır, talep damgası, DB'de yeniden deneme sayacı (çok pod R2a, MP-43)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "850cd8d2",
+          "subject": "yönetici özeti / envanter raporu / haftalık hatırlatma — yarıda kalan gönderim izlerden kapanır, cron turu + canlı cron, takım başına yalıtım (çok pod R2a, MP-42)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "dc51e9f1",
+          "subject": "kanal teknik hata raporu — kuyruk dönemsel sonuçlanır, canlı kuyruğun üzerine gönderim 409 SEND_QUEUED, hatırlatma iki aşamalı (çok pod R2a, MP-41)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "9cf3b167",
+          "subject": "uzun istekte önbellek yolu yayını yanıtın sonunu beklemez"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "194c9438",
+          "subject": "app_users yazımları eşzamanlı pasifleştirmeyi geri almaz; ping debounce SQL'de (MP-51)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "b2a052c3",
+          "subject": "gizli değer gösterimi ve oturumsuz bildirim sınırları küme geneli; onay bağlantısı gerçek istemci IP'si (MP-32, MP-33)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "82be7861",
+          "subject": "giriş IP sınırı pod'lar arası ortak — rate_limit_counters (MP-31)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "9cbeb65c",
+          "subject": "işlem içindeki denetim kaydı COMMIT sonrası zincir kilidiyle yazılır — hash zinciri çatallanmaz (çok pod R2a, MP-38)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "259db884",
+          "subject": "önbellek yolu kapanışta biriken boşaltmaları yok etmede de gönderir"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "02faea82",
+          "subject": "izleme grubu açılış doldurması koşullu UPDATE + sürümlü nişan (MP-46)"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "65f97336",
+          "subject": "pod'lar arası önbellek boşaltma veri yolu (çok pod R2-A, MP-30)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "cad6180c",
+          "subject": "elle saklama temizliği gece temizliğinin kilidini alır (MP-46)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "616d6721",
+          "subject": "sayfa kullanımı iki pod'dan yazılınca çift sayılmaz (MP-46)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "80234d61",
+          "subject": "alan adı bitiş hatırlatması gönderimden önce sahiplenilir (MP-45)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "6f1e98df",
+          "subject": "kapalı türlerin alarm uzlaştırması tek pod'da ve koşullu kapanışla (MP-44)"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.165.1",
       "tag": "v20.165.1",
