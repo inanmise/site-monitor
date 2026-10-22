@@ -36,4 +36,16 @@ public interface ScriptedMonitorRepository extends JpaRepository<ScriptedMonitor
      *  toplu tasima icin. Talep uzerine calisir (silme/kullanim ekrani), sweep yolunda DEGIL. */
     java.util.List<ScriptedMonitor> findByNotificationGroupId(Long notificationGroupId);
 
+    /**
+     * Anomali guard'ının OTOMATİK kapatması (CHECKS-4, 2026-10-22) — yalnız dört alan, yalnız hâlâ AÇIK satırda. Guard,
+     * sweep'in başında okunmuş (dakikalarca eski) varlığı {@code save} ediyordu; {@code ScriptedMonitor}'da sürüm alanı
+     * olmadığından birleştirme TÜM kolonları eski hâliyle yazıyor, kullanıcının o arada kaydettiği script / env / yönlendirme
+     * değişikliğini iz bırakmadan geri alıyordu. 0 = kullanıcı zaten kapattı (ya da satır silindi) → bildirim yok.
+     */
+    @org.springframework.transaction.annotation.Transactional
+    @Modifying
+    @Query("UPDATE ScriptedMonitor m SET m.active = false, m.disabledReason = :reason, m.disabledAt = :at, "
+         + "m.updatedAt = :at WHERE m.id = :id AND m.active = true")
+    int disableIfActive(@Param("id") Long id, @Param("reason") String reason, @Param("at") String at);
+
 }

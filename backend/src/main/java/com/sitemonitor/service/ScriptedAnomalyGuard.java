@@ -96,8 +96,7 @@ public class ScriptedAnomalyGuard {
             String reason = severeViolation(res);
             if (reason == null) reason = timeoutStreak(m, res);
             if (reason == null) return null;
-            disable(m, reason);
-            return reason;
+            return disable(m, reason) ? reason : null;
         } catch (Exception e) {
             log.warn("Anomali guard'ı çalıştırılamadı ({}): {}", m.getName(), e.toString());
             return null;
@@ -137,33 +136,64 @@ public class ScriptedAnomalyGuard {
                 limit, limit, m.getTimeoutSeconds() == null ? 0 : m.getTimeoutSeconds());
     }
 
-    /** Kapat + sebebi yaz + açık alarmı kapat + aktivite kaydı + sahibine bildir. */
-    private void disable(ScriptedMonitor m, String reason) {
+    /**
+     * Kapat + sebebi yaz + açık alarmı kapat + aktivite kaydı + sahibine bildir.
+     *
+     * <p>CHECKS-4 (2026-10-22): kapatma HEDEFLİ, koşullu bir UPDATE'tir ({@code active=false, disabled_reason,
+     * disabled_at, updated_at WHERE id=? AND active=true}). {@code m} sweep başında okunmuş eski bir kopya olabilir; onu
+     * {@code save} etmek kullanıcının arada kaydettiği script / env / ad / yönlendirme değişikliğini geri yazıyordu.
+     * Güncel satır kapatmadan SONRA yeniden okunur — alarm kapanışı, aktivite ve bildirim güncel adla gider.
+     *
+     * @return kapatıldı mı (0 satır = kullanıcı zaten kapattı / satır silindi → bildirim yok)
+     */
+    private boolean disable(ScriptedMonitor m, String reason) {
         String now = ISO.format(Instant.now());
+        int changed = monitorRepo.disableIfActive(m.getId(), reason, now);
+        if (changed == 0) {
+            log.info("Anomali guard'ı: {} zaten kapalı ya da silinmiş — kapatma/bildirim atlandı", m.getName());
+            return false;
+        }
+        // Çağıranın elindeki kopya da kapalı görünsün (aynı sweep içinde ikinci bir değerlendirme yeniden kapatmasın).
         m.setActive(false);
         m.setDisabledReason(reason);
         m.setDisabledAt(now);
         m.setUpdatedAt(now);
-        monitorRepo.save(m);
-        log.error("Sentetik izleme otomatik devre dışı bırakıldı — {} · {}", m.getName(), reason);
-
-        // Kapatılan izleme artık sweep üretmez → açık alarm kendiliğinden ASLA çözülemezdi.
+        ScriptedMonitor cur = m;
         try {
-            escalationService.resolveOpenAlertsSilently(m.getName(),
+            cur = monitorRepo.findById(m.getId()).orElse(m);
+        } catch (Exception e) {
+            log.debug("Anomali guard'ı: güncel satır okunamadı ({}): {}", m.getName(), e.toString());
+        }
+        log.error("Sentetik izleme otomatik devre dışı bırakıldı — {} · {}", cur.getName(), reason);
+
+        // Kapatılan izleme artık sweep üretmez → açık alarm kendiliğinden ASLA çözülemezdi. YALNIZ bu izlemenin olayı
+        // (L-M3, 2026-10-22): ad yalnız takım içinde benzersiz; sahiplik bağlamı olmadan başka takımın aynı adlı
+        // senaryosunun açık alarmı da sessizce kapanıyordu (silme yolundaki D-b1 kuralıyla aynı bağlam).
+        try {
+            escalationService.resolveOpenAlertsSilently(cur.getName(),
                     Set.of(EscalationService.TYPE_SCRIPTED_FAIL, EscalationService.TYPE_SCRIPTED_SLOW),
-                    ACTOR);
+                    ACTOR, ownerCtx(cur));
         } catch (Exception e) {
-            log.warn("Anomali kapatmasında açık alarmlar çözülemedi ({}): {}", m.getName(), e.toString());
+            log.warn("Anomali kapatmasında açık alarmlar çözülemedi ({}): {}", cur.getName(), e.toString());
         }
 
         try {
-            activityLog.recordLifecycle(ActivityLogService.SCRIPTED, m.getId(), m.getName(), m.getName(),
-                    m.getTeamId(), "PAUSED", ACTOR);
+            activityLog.recordLifecycle(ActivityLogService.SCRIPTED, cur.getId(), cur.getName(), cur.getName(),
+                    cur.getTeamId(), "PAUSED", ACTOR);
         } catch (Exception e) {
-            log.warn("Anomali kapatması aktivite akışına yazılamadı ({}): {}", m.getName(), e.toString());
+            log.warn("Anomali kapatması aktivite akışına yazılamadı ({}): {}", cur.getName(), e.toString());
         }
 
-        notifyOwners(m, reason);
+        notifyOwners(cur, reason, now);
+        return true;
+    }
+
+    /** İzlemenin sahiplik bağlamı — {@code MonitoringController.ownerCtx} ile aynı biçim (sentetik izleme bağımsızdır). */
+    static Map<String, Object> ownerCtx(ScriptedMonitor m) {
+        Map<String, Object> c = new java.util.HashMap<>();
+        if (m.getId() != null) c.put("monitor_id", m.getId());
+        if (m.getTeamId() != null) c.put("team_id", m.getTeamId());
+        return c;
     }
 
     /**
@@ -174,7 +204,7 @@ public class ScriptedAnomalyGuard {
      * izlemenin durumu zaten aktivite akışında ve ekranda görünür. Gövde standart alarm şablonuyla
      * kurulur (Outlook-güvenli işaretleme oradan gelir, elle HTML yazılmaz).
      */
-    private void notifyOwners(ScriptedMonitor m, String reason) {
+    private void notifyOwners(ScriptedMonitor m, String reason, String disabledAt) {
         String body = reason + "\n\nİzleme: " + m.getName()
                 + "\nDurum: DEVRE DIŞI (otomatik)\n"
                 + "Yeniden açmak için izlemeyi düzenleyip aktif hâle getirmeniz yeterli; "
@@ -208,7 +238,7 @@ public class ScriptedAnomalyGuard {
                     new UserPushService.LocalizedText(
                             "Sentetik izleme otomatik olarak DEVRE DIŞI bırakıldı: " + m.getName() + " — " + reason,
                             "Synthetic monitor was automatically DISABLED: " + m.getName() + " — " + reason),
-                    "scripted-disabled:" + m.getId() + ":" + m.getDisabledAt(), java.util.Set.of());
+                    "scripted-disabled:" + m.getId() + ":" + disabledAt, java.util.Set.of());
         } catch (Exception e) {
             log.warn("Anomali push'u gönderilemedi ({}): {}", m.getName(), e.toString());
         }
