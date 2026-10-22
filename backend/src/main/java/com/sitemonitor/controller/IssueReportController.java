@@ -128,10 +128,12 @@ public class IssueReportController {
             if (bodyEmail.length() > MAX_EMAIL || !EMAIL.matcher(bodyEmail).matches())
                 return err(HttpStatus.BAD_REQUEST, "Geçerli bir e-posta adresi giriniz");
             email = bodyEmail;
-            if (Boolean.TRUE.equals(body.get("saveEmailToProfile")) && user != null) {
-                user.setEmail(email);
-                appUserRepository.save(user);
-                savedToProfile = true;
+            if (Boolean.TRUE.equals(body.get("saveEmailToProfile")) && user != null && user.getId() != null) {
+                // Hedefli, koşullu yazım (2026-10-23, çok pod Sürüm 2a — MP-51): yalnız e-posta sütunu ve yalnız hâlâ boşsa.
+                // Eskiden işlem dışında okunan satır save() ile birleştiriliyordu — araya giren pasifleştirme / kilit /
+                // yeni oturum kimliği geri yazılıyordu.
+                savedToProfile = appUserRepository.updateEmailIfBlank(user.getId(), email) > 0;
+                if (savedToProfile) user.setEmail(email);
             }
         }
 

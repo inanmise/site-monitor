@@ -55,12 +55,16 @@ public class TourStateService {
     /**
      * Yamayı mevcut duruma uygular ve kaydeder. Döner: yeni durum (null = sıfırlandı).
      * {@code reset=true} tüm durumu siler (kullanıcı "turu yeniden başlat" ya da yönetici sıfırlama).
+     *
+     * <p>Yazım YALNIZ {@code tour_state} sütunu (2026-10-23, çok pod Sürüm 2a — MP-51): çağıran kullanıcıyı işlem dışında
+     * okur; eskiden {@code save(user)} (merge) her tur adımında satırın tamamını o okumadaki değerlerle yeniden yazıyor,
+     * araya giren pasifleştirmeyi / kilidi / yeni oturum kimliğini geri alıyordu.
      */
     @SuppressWarnings("unchecked")
     public Map<String, Object> apply(AppUser user, Map<String, Object> patch, boolean reset) {
         if (reset) {
             user.setTourState(null);
-            userRepo.save(user);
+            write(user);
             return null;
         }
         Map<String, Object> cur = parse(user.getTourState());
@@ -101,8 +105,13 @@ public class TourStateService {
         } catch (Exception e) {
             throw new IllegalArgumentException("tour_state yazılamadı: " + e.getMessage());
         }
-        userRepo.save(user);
+        write(user);
         return cur;
+    }
+
+    /** Hedefli yazım: yalnız bu kullanıcının {@code tour_state} sütunu. */
+    private void write(AppUser user) {
+        if (user.getId() != null) userRepo.updateTourState(user.getId(), user.getTourState());
     }
 
     /** Yönetici özeti: aktif kullanıcılar arasında tamamlayan / kapatan / hiç görmeyen. */

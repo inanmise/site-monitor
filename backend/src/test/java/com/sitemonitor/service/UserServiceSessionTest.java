@@ -288,10 +288,10 @@ class UserServiceSessionTest {
     // ── touchActiveSession (ping → lastSeenAt tazele) ────────────────────────────
 
     @Test
-    @DisplayName("touchActiveSession: repo.touchLastSeen'i kullanıcı+oturum ile çağırır")
+    @DisplayName("touchActiveSession: repo.touchLastSeenIfStale'i kullanıcı+oturum ile çağırır (debounce SQL'de — MP-51)")
     void touchActiveSession_callsRepo() {
         service.touchActiveSession("alice", "S1");
-        verify(userRepo).touchLastSeen(eq("alice"), eq("S1"), any());
+        verify(userRepo).touchLastSeenIfStale(eq("alice"), eq("S1"), any(), any());
     }
 
     @Test
@@ -299,7 +299,7 @@ class UserServiceSessionTest {
     void touchActiveSession_null_noop() {
         service.touchActiveSession(null, "S1");
         service.touchActiveSession("alice", null);
-        verify(userRepo, never()).touchLastSeen(any(), any(), any());
+        verify(userRepo, never()).touchLastSeenIfStale(any(), any(), any(), any());
     }
 
     @Test
@@ -388,16 +388,25 @@ class UserServiceSessionTest {
     }
 
     @Test
-    @DisplayName("F3: aynı kullanıcı+oturum için hızlı ardışık ping'lerde UPDATE 1 kez; farklı oturum yazar")
+    @DisplayName("F3 → MP-51: debounce SQL'de — her ping koşullu UPDATE'e gider, eşik 'şimdi − (debounce − ping aralığı)' = 45 sn")
     void touch_debounced_perSession() {
+        // Yeniden temel (2026-10-23, çok pod Sürüm 2a): pod belleğindeki debounce ping'i hiç göndermiyordu; pod A'da
+        // "ayrıldım" sonrası pod B'nin taze yerel kaydı yazımı atlıyordu. Karar artık satırdan (touchLastSeenIfStale).
         ReflectionTestUtils.setField(service, "touchDebounceMs", 60_000L);
+        when(userRepo.touchLastSeenIfStale(any(), any(), any(), any())).thenReturn(1, 0);   // 2. ping: damga taze → 0
 
         service.touchActiveSession("alice", "S1");
-        service.touchActiveSession("alice", "S1");   // debounce penceresi içinde → yazma yok
-        service.touchActiveSession("alice", "S2");   // farklı oturum → yazar
+        service.touchActiveSession("alice", "S1");   // SQL eşiği tutmadı → yazım yok, sahiplenme de denenmez (bu pod eşleşmeyi az önce gördü)
+        service.touchActiveSession("alice", "S2");
 
-        verify(userRepo, times(1)).touchLastSeen(eq("alice"), eq("S1"), any());
-        verify(userRepo, times(1)).touchLastSeen(eq("alice"), eq("S2"), any());
+        org.mockito.ArgumentCaptor<String> ts = org.mockito.ArgumentCaptor.forClass(String.class);
+        org.mockito.ArgumentCaptor<String> stale = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(userRepo, times(2)).touchLastSeenIfStale(eq("alice"), eq("S1"), ts.capture(), stale.capture());
+        verify(userRepo, times(1)).touchLastSeenIfStale(eq("alice"), eq("S2"), any(), any());
+        verify(userRepo, never()).adoptSessionIfNone(eq("alice"), eq("S1"), any());
+        java.time.Duration gap = java.time.Duration.between(
+                java.time.LocalDateTime.parse(stale.getValue()), java.time.LocalDateTime.parse(ts.getValue()));
+        assertThat(gap.getSeconds()).isEqualTo(45L);
     }
 
     @Test
@@ -410,7 +419,7 @@ class UserServiceSessionTest {
         service.touchActiveSession("alice", "S1");   // geri dönüş/yenileme: 60 sn beklemeden YAZAR
 
         verify(userRepo).clearLastSeen("alice", "S1");
-        verify(userRepo, times(2)).touchLastSeen(eq("alice"), eq("S1"), any());
+        verify(userRepo, times(2)).touchLastSeenIfStale(eq("alice"), eq("S1"), any(), any());
     }
 
     @Test

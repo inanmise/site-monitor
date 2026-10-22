@@ -194,10 +194,72 @@ public interface AppUserRepository extends JpaRepository<AppUser, Long> {
         + "AND u.activeSessionId NOT LIKE 'TERMINATED:%'")
     int clearAllActiveSessions();
 
-    /** Oturum ping'i: yalnız kullanıcının GÜNCEL oturumu için lastSeenAt'i tazeler (tek statement). */
+    /**
+     * Oturum ping'i, debounce SQL'de (2026-10-23, çok pod Sürüm 2a — MP-51): lastSeenAt yalnız SAKLI değer {@code :stale}'den
+     * eskiyse (ya da boşsa) yazılır. Eskiden debounce pod belleğindeydi: kullanıcının son sekmesi kapanınca pod A
+     * ({@link #clearLastSeen}) damgayı siliyor, yeniden açılan sayfanın yoklamaları pod B'ye düşüyor ve B'nin 60 sn'lik
+     * yerel kaydı yazımı atlıyordu → kişi ≤ 60 sn çevrimdışı görünüyor, başka yerden giriş 409 onayı ALMADAN eski oturumu
+     * düşürüyordu. Karar artık satırdan — tüm pod'lar aynı. Tek statement; eşleşmezse 0.
+     */
     @Modifying
-    @Query("UPDATE AppUser u SET u.lastSeenAt = :ts WHERE UPPER(u.username) = UPPER(:username) AND u.activeSessionId = :sid")
-    int touchLastSeen(@Param("username") String username, @Param("sid") String sid, @Param("ts") String ts);
+    @org.springframework.transaction.annotation.Transactional
+    @Query("UPDATE AppUser u SET u.lastSeenAt = :ts WHERE UPPER(u.username) = UPPER(:username) AND u.activeSessionId = :sid "
+        + "AND (u.lastSeenAt IS NULL OR u.lastSeenAt < :stale)")
+    int touchLastSeenIfStale(@Param("username") String username, @Param("sid") String sid, @Param("ts") String ts,
+                             @Param("stale") String stale);
+
+    // ── Hedefli kullanıcı satırı yazımları (2026-10-23, çok pod Sürüm 2a — MP-51) ──────────────────────────────────
+    //
+    // Kişinin kendi tercihleri (push, ürün turu, profil e-postası) ve süresi dolmuş kilidin temizliği eskiden işlem DIŞINDA
+    // okunmuş (detached) bir AppUser'ı save() ile birleştiriyordu: merge satırı yeniden okur ve ayrık nesnenin TÜM
+    // alanlarını üstüne kopyalar → bu arada başka bir istekte (başka pod) yazılan pasifleştirme (active=false +
+    // TERMINATED: nöbetçisi), kilit, rol ya da yeni oturum kimliği geri alınıyordu (@DynamicUpdate de bunu önlemez:
+    // değişen her sütun "kirli" sayılır). Bu yöntemler YALNIZ ilgili sütunları yazar.
+
+    @Modifying
+    @org.springframework.transaction.annotation.Transactional
+    @Query("UPDATE AppUser u SET u.pushOptOut = :optOut WHERE u.id = :id")
+    int updatePushOptOut(@Param("id") Long id, @Param("optOut") Boolean optOut);
+
+    @Modifying
+    @org.springframework.transaction.annotation.Transactional
+    @Query("UPDATE AppUser u SET u.pushQuietStart = :start, u.pushQuietEnd = :end, u.pushQuietDays = :days, "
+        + "u.pushQuietMinLevel = :minLevel WHERE u.id = :id")
+    int updatePushQuietHours(@Param("id") Long id, @Param("start") String start, @Param("end") String end,
+                             @Param("days") String days, @Param("minLevel") String minLevel);
+
+    @Modifying
+    @org.springframework.transaction.annotation.Transactional
+    @Query("UPDATE AppUser u SET u.pushMinLevel = :minLevel, u.pushFamilies = :families, u.pushLang = :lang WHERE u.id = :id")
+    int updatePushPreferences(@Param("id") Long id, @Param("minLevel") String minLevel, @Param("families") String families,
+                              @Param("lang") String lang);
+
+    @Modifying
+    @org.springframework.transaction.annotation.Transactional
+    @Query("UPDATE AppUser u SET u.pushSnoozeUntil = :until WHERE u.id = :id")
+    int updatePushSnoozeUntil(@Param("id") Long id, @Param("until") String until);
+
+    @Modifying
+    @org.springframework.transaction.annotation.Transactional
+    @Query("UPDATE AppUser u SET u.pushSnoozeUntil = :until, u.pushSnoozeCritical = :critical WHERE u.id = :id")
+    int updatePushSnooze(@Param("id") Long id, @Param("until") String until, @Param("critical") Boolean critical);
+
+    @Modifying
+    @org.springframework.transaction.annotation.Transactional
+    @Query("UPDATE AppUser u SET u.tourState = :state WHERE u.id = :id")
+    int updateTourState(@Param("id") Long id, @Param("state") String state);
+
+    /** Profil e-postası YALNIZ hâlâ boşsa yazılır (sorun bildiriminde "profile kaydet"; araya giren kayıt ezilmez). */
+    @Modifying
+    @org.springframework.transaction.annotation.Transactional
+    @Query("UPDATE AppUser u SET u.email = :email WHERE u.id = :id AND (u.email IS NULL OR TRIM(u.email) = '')")
+    int updateEmailIfBlank(@Param("id") Long id, @Param("email") String email);
+
+    /** Süresi dolmuş geçici kilidin temizliği — yalnız okunan değer hâlâ duruyorsa (araya giren yeni kilit korunur). */
+    @Modifying
+    @org.springframework.transaction.annotation.Transactional
+    @Query("UPDATE AppUser u SET u.lockoutUntil = null WHERE u.id = :id AND u.lockoutUntil = :seen")
+    int clearExpiredLockout(@Param("id") Long id, @Param("seen") String seen);
 
     /** Sekme/tarayıcı kapandı ("ayrıldım" sinyali, 2026-10-02): yalnız BU oturumun lastSeenAt'i silinir → kullanıcı
      *  çevrimiçi sayımından ve "başka yerde açık oturum" kararından hemen düşer. Kayıtlı oturum başka bir sid ise

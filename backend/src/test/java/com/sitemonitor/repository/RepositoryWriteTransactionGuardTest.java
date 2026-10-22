@@ -79,7 +79,6 @@ class RepositoryWriteTransactionGuardTest {
             // Kullanıcı satırı damgaları — UserService (@Transactional): recordFailedLogin (satır ~249),
             // touchActiveSession (~257), clearAllActiveSessions (~318).
             "AppUserRepository#bumpFailedLogin",
-            "AppUserRepository#touchLastSeen",
             "AppUserRepository#adoptSessionIfNone",   // touchActiveSession (@Transactional) — restart sonrası yeniden sahiplenme (QA ISSUE-002, 2026-09-13)
             "AppUserRepository#clearAllActiveSessions"
     );
