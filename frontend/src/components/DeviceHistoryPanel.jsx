@@ -13,6 +13,7 @@ import { Button } from '@/components/shadcn/button'
 import { Badge } from '@/components/shadcn/badge'
 import { Card } from '@/components/shadcn/card'
 import { cn } from '@/lib/utils'
+import { reasonText } from './myactivity/activityModel.js'
 
 /**
  * Cihaz Geçmişi / Oturum Güvenliği.
@@ -85,6 +86,9 @@ export default function DeviceHistoryPanel({ userId = null, onChangePassword = n
 
   const [failed, setFailed] = useState([])
   const [failedOpen, setFailedOpen] = useState(false)
+  // Başarısız denemeler okuması (UIA-G4, 2026-10-22): null = okunmadı, 'ok', 'error'. Eskiden okuma düşünce "Başarısız
+  // deneme yok" çiziliyordu (güvenlik panelinde "yok" ≠ "okunamadı"); atılan istek yakalanmamış söz reddiydi.
+  const [failedState, setFailedState] = useState(null)
   const [retentionDays, setRetentionDays] = useState(null)
 
   const FAILED_PREVIEW = 50   // "Başarısız denemeler" bölümü: son 50 kayıt (sınırlı önizleme, çubuksuz)
@@ -135,17 +139,24 @@ export default function DeviceHistoryPanel({ userId = null, onChangePassword = n
   }, [isAdminView, userId, loginPage, loginSize, setLoginTotal])
 
   const loadFailed = useCallback(async () => {
-    const res = isAdminView
-      ? await api.admin.getUserDeviceLogins(userId, { page: 0, size: FAILED_PREVIEW, failed: true })
-      : await api.me.getMyDeviceLogins({ page: 0, size: FAILED_PREVIEW, failed: true })
-    if (res?.success) setFailed(res.data?.rows ?? [])
+    try {
+      const res = isAdminView
+        ? await api.admin.getUserDeviceLogins(userId, { page: 0, size: FAILED_PREVIEW, failed: true })
+        : await api.me.getMyDeviceLogins({ page: 0, size: FAILED_PREVIEW, failed: true })
+      if (res?.success) { setFailed(res.data?.rows ?? []); setFailedState('ok') } else setFailedState('error')
+    } catch {
+      setFailedState('error')
+    }
   }, [isAdminView, userId])
 
   useEffect(() => { loadDevices() }, [loadDevices])
   useEffect(() => { loadLogins() }, [loadLogins])
 
   // Başarısız denemeler YALNIZ bölüm açılınca çekilir — kapalıyken sorgu yapmak boşuna yük.
-  useEffect(() => { if (failedOpen && failed.length === 0) loadFailed() }, [failedOpen, failed.length, loadFailed])
+  // Başka kullanıcının geçmişi (yönetici görünümü) → eski satırlar / durum düşer
+  useEffect(() => { setFailedState(null); setFailed([]) }, [loadFailed])
+  // Bir kez okunur (hata durumunda Tekrar dene ile); başarısız okuma kendini döngüde yeniden tetiklemez.
+  useEffect(() => { if (failedOpen && failedState == null) loadFailed() }, [failedOpen, failedState, loadFailed])
 
   async function revokeRemembered(row) {
     const ok = await showConfirm({
@@ -376,7 +387,17 @@ export default function DeviceHistoryPanel({ userId = null, onChangePassword = n
           {t('dev.failedTitle')}
         </Button>
         {failedOpen && (
-          failed.length === 0
+          failedState == null
+            ? <div className="dev-empty-inline" aria-busy="true">{t('app.loading')}</div>
+          : failedState === 'error'
+            ? (
+              <div data-slot="dev-failed-error">
+                <StatusBlock tone="danger" role="alert" icon={ShieldAlert} description={t('dev.failedAttemptsLoadFailed')}
+                  actions={<Button type="button" variant="outline" className="pointer-coarse:h-10"
+                    onClick={() => { setFailedState(null) }}>{t('dev.retry')}</Button>} />
+              </div>
+            )
+          : failed.length === 0
             ? <div className="dev-empty-inline">{t('dev.noFailed')}</div>
             : (
               <ul className="dev-list dev-list--failed">
@@ -389,7 +410,9 @@ export default function DeviceHistoryPanel({ userId = null, onChangePassword = n
                         <AnomalyChips flags={row.anomaly_flags} t={t} />
                       </div>
                       <div className="dev-row-meta">
-                        {metaLine([locationText(row, t), formatDateSec(row.at), row.failure_reason])}
+                        {/* Gerekçe çevrilir (Etkinliklerim ile aynı kural) — ham "KOD: Türkçe metin" basılmaz */}
+                        {metaLine([locationText(row, t), formatDateSec(row.at),
+                          reasonText({ event_type: 'LOGIN_FAILED', outcome: row.outcome, failure_reason: row.failure_reason }, t)])}
                       </div>
                     </div>
                   </li>
