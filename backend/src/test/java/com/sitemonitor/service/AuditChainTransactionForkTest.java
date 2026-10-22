@@ -93,6 +93,26 @@ class AuditChainTransactionForkTest {
     }
 
     @Test
+    @DisplayName("İŞLEM DIŞINDA denetim kaydı EŞZAMANLI — çağrı dönünce satır COMMIT edilmiş ve görünür (R2a-B: k6 gizli değer "
+            + "gösterme sınırı audit_log'daki SCRIPTED_SECRET_REVEAL satırlarını bir sonraki istekte sayar); oturum yüklemesi de")
+    void outsideTransaction_writtenSynchronously_visibleImmediately() {
+        assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+        svc.recordAction("SCRIPTED_SECRET_REVEAL", "ayse", 7L, 3L, "ADMIN", "SCRIPTED_MONITOR", "12",
+                "{\"variable\":\"TOKEN\"}", "10.0.0.1", "ua", "s1");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM audit_log WHERE event_type = 'SCRIPTED_SECRET_REVEAL' AND actor_id = 7",
+                Integer.class)).as("başka bir bağlantıdan, çağrı döner dönmez").isEqualTo(1);
+        org.springframework.mock.web.MockHttpSession session = new org.springframework.mock.web.MockHttpSession();
+        session.setAttribute("username", "ayse");
+        session.setAttribute("userId", 7L);
+        session.setAttribute("systemRole", "ADMIN");
+        svc.recordAction("SCRIPTED_SECRET_REVEAL", session, new org.springframework.mock.web.MockHttpServletRequest(),
+                "SCRIPTED_MONITOR", "12", "{}");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM audit_log WHERE event_type = 'SCRIPTED_SECRET_REVEAL' AND actor_id = 7",
+                Integer.class)).isEqualTo(2);
+        assertThat(svc.verifyChain().ok()).isTrue();
+    }
+
+    @Test
     @DisplayName("işlem içinde: COMMIT'ten önce satır YOK, COMMIT'ten sonra var (yanıt dönmeden, aynı iş parçacığında)")
     void deferredUntilCommit() {
         TransactionTemplate tt = new TransactionTemplate(txManager);
