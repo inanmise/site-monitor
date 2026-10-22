@@ -174,15 +174,20 @@ public class AuditService {
                 // BURADA ALINMAZ (R2a, MP-38): advisory lock zaten her yazıcıyı sıralar; JVM kilidini tutarken havuzdan bağlantı
                 // beklemek, COMMIT sonrası yazımda dış bağlantısını tutan iş parçacıklarıyla çapraz beklemeye yol açardı
                 // (bağlantı önce, kilit sonra — kilidi tutan hiçbir zaman bağlantı beklemez).
-                return appendLocked(e, true);
+                return appendLocked(e, true, true);
             }
             chainLock.lock();
             try {
                 // H2 / diğer: JVM kilidi COMMIT'i de kapsar (advisory lock yok) — kendi işleminde ya da deponun işleminde.
                 // Dış işlemin içindeki eski yol (ertelenemedi: senkronizasyon / işlem altyapısı yok) kilit damgası YAZMAZ —
                 // tekil indeks ihlali çağıranın işlemini zehirlemesin.
+                // Kilit damgası (seq_locked) YALNIZ veritabanının PostgreSQL OLMADIĞI BİLİNİYORSA (R2a inceleme REP-4): tür
+                // okunamadıysa (havuz dolu, bağlantı hatası) bu yol PostgreSQL'de advisory lock'suz yazıyor olabilir — TRUE
+                // basılırsa başka pod'un kilitli satırıyla aynı seq'i alıp ux_audit_seq'i bozabilirdi (indeks henüz yoksa
+                // CONCURRENTLY kurulumu her açılışta düşerdi). Tür bilinmiyor → NULL (indeksin dışında, bugünkü eski satırlar gibi).
+                boolean lockedRow = Boolean.FALSE.equals(chainPostgres);
                 boolean outer = org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive();
-                return ownTransaction ? appendLocked(e, false) : appendToChain(e, !outer);
+                return ownTransaction ? appendLocked(e, false, lockedRow) : appendToChain(e, !outer && lockedRow);
             } finally {
                 chainLock.unlock();
             }
@@ -193,24 +198,18 @@ public class AuditService {
     }
 
     /**
-     * Kilitli ekleme (kendi işleminde). Tekil {@code seq} ihlali (MP-38 — {@code ux_audit_seq}: ancak eski sürüm bir pod'un
-     * işlem içi yazımıyla çakışınca) bir kez yeniden okunup denenir; yine olmazsa istisna yukarı (fallback dosyası).
+     * Kilitli ekleme (kendi işleminde). {@code locked}: satır {@code seq_locked = TRUE} ile yazılır (advisory lock altında
+     * ya da PostgreSQL olmadığı BİLİNEN veritabanında JVM kilidiyle). Hata (bütünlük ihlali dahil) yukarı çıkar →
+     * {@link #persistNow} kaydı fallback dosyasına yazar. YENİDEN DENEME YOK (R2a inceleme REP-5): {@code ux_audit_seq}
+     * yalnız kilitli satırları kapsar ve kilitli satırlar advisory lock ile sıralanır — eski pod'ların satırları NULL
+     * (indeksin dışında), yani bir seq çakışması burada OLAMAZ; yakalanan bir ihlal başka bir kısıttır (ör. çok uzun değer)
+     * ve aynı kayıtla yeniden denemek yine düşerdi.
      */
-    private AuditLog appendLocked(AuditLog e, boolean pg) {
-        try {
-            return chainTx.execute(st -> {
-                if (pg) chainJdbc.execute(SQL_CHAIN_LOCK);
-                return appendToChain(e, true);
-            });
-        } catch (org.springframework.dao.DataIntegrityViolationException dup) {
-            log.warn("Denetim zinciri: seq {} başka bir yazıcıyla çakıştı — son satır yeniden okunup bir kez deneniyor",
-                    e.getSeq());
-            e.setId(null);
-            return chainTx.execute(st -> {
-                if (pg) chainJdbc.execute(SQL_CHAIN_LOCK);
-                return appendToChain(e, true);
-            });
-        }
+    private AuditLog appendLocked(AuditLog e, boolean pg, boolean locked) {
+        return chainTx.execute(st -> {
+            if (pg) chainJdbc.execute(SQL_CHAIN_LOCK);
+            return appendToChain(e, locked);
+        });
     }
 
     /**

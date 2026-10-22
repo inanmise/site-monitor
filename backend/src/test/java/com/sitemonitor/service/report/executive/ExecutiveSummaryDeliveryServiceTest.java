@@ -65,6 +65,8 @@ class ExecutiveSummaryDeliveryServiceTest {
         when(repo.saveAndFlush(any())).thenAnswer(i -> i.getArgument(0));
         // Koşullu bitirme (R2a, MP-42): bütün varlık kaydı yerine; talep edilen satırın alanları nesnede güncellenir
         when(repo.finishIfClaimed(any(), any(), any(), any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
+        // "Gönderim başladı" işareti (R2a inceleme REP-1): ilk dilimden önce koşullu UPDATE
+        when(repo.markSendStarted(any(), any(), any(), any(), any())).thenReturn(1);
         when(email.sendHtmlBccWithAttachments(any(), anyString(), anyString(), anyString(), anyList())).thenReturn("SENT");
         when(users.findByActiveTrueOrderByUsernameAsc()).thenReturn(List.of());
     }
@@ -554,6 +556,16 @@ class ExecutiveSummaryDeliveryServiceTest {
         return stuck;
     }
 
+    /** Postası BAŞLAMIŞ (işaretli) bayat SENDING kaydı: planlanan alıcı / dilim sayısı işaretle yazılmıştı. */
+    private ExecutiveSummaryReport startedSending(Instant claimedAt, int attempts, int recipients, int chunks) {
+        ExecutiveSummaryReport r = stuckSending(claimedAt, attempts);
+        r.setSendStartedClaim(r.getClaimedAt());
+        r.setSendTraceName("Yönetici Özeti");
+        r.setRecipientCount(recipients);
+        r.setChunkCount(chunks);
+        return r;
+    }
+
     @SuppressWarnings("unchecked")
     private org.springframework.jdbc.core.JdbcTemplate traces(List<String[]> rows) {
         org.springframework.jdbc.core.JdbcTemplate j = mock(org.springframework.jdbc.core.JdbcTemplate.class);
@@ -593,8 +605,10 @@ class ExecutiveSummaryDeliveryServiceTest {
     }
 
     @Test
-    @DisplayName("R2a MP-42: bayat SENDING'in dilim izi VAR (bazı dilimler gitmiş olabilir) → YENİDEN GÖNDERİLMEZ; izlerden PARTIAL + iz satırı; taze SENDING ve iz okunamazsa dokunulmaz")
+    @DisplayName("R2a MP-42: bayat SENDING'in dilim izi VAR ama gönderim işareti yok (eski sürüm pod — toplam dilim sayısı bilinmiyor) → YENİDEN GÖNDERİLMEZ; PARTIAL + 'sonuç bilinmiyor' izi; taze SENDING ve iz okunamazsa dokunulmaz")
     void staleSendingWithTraces_partialNoResend() {
+        // Yeniden temel (2026-10-23, R2a inceleme REP-1): işaretsiz izde toplam bilinmediğinden iz artık "SKIPPED: … sonuç
+        // izlerden yazıldı" değil "FAILED: Sonuç bilinmiyor …" (bir dilim izi yazılamadan gitmiş olabilir).
         enable("a@x.com", false);
         when(summaryService.now()).thenReturn(IN_WINDOW);
         ExecutiveSummaryReport stuck = stuckSending(IN_WINDOW.minus(java.time.Duration.ofHours(2)), 1);
@@ -609,7 +623,7 @@ class ExecutiveSummaryDeliveryServiceTest {
         verify(repo).finishIfClaimed(eq(9L), any(), eq("PARTIAL"), eq(100), eq(1), any(), any(), any(), any(), any());
         ArgumentCaptor<NotificationLog> log = ArgumentCaptor.forClass(NotificationLog.class);
         verify(logs).save(log.capture());
-        assertThat(log.getValue().getEmailStatus()).startsWith("SKIPPED: Gönderen pod yarıda durdu").contains("yeniden gönderilmedi");
+        assertThat(log.getValue().getEmailStatus()).startsWith("FAILED: Sonuç bilinmiyor").contains("yeniden gönderilmedi");
 
         // taze (1 saatten yeni) SENDING: gerçekten sürüyor — dokunulmaz
         org.mockito.Mockito.clearInvocations(repo, logs);
@@ -655,6 +669,98 @@ class ExecutiveSummaryDeliveryServiceTest {
         when(repo.finishIfClaimed(any(), any(), any(), any(), any(), any(), any(), any(), any(), any())).thenReturn(0);
         svc.sendNow(YearMonth.of(2026, 9), "yonetici");
         verify(repo, times(1)).finishIfClaimed(any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("R2a inceleme REP-1: 'gönderim başladı' işareti İLK dilimden ÖNCE yazılır (talep anı, iz adı, planlanan 250 alıcı / 3 dilim)")
+    void markerWrittenBeforeFirstChunk() {
+        StringBuilder csv = new StringBuilder();
+        for (int i = 0; i < 250; i++) csv.append(i == 0 ? "" : ",").append("u").append(i).append("@x.com");
+        enable(csv.toString(), false);
+        assertThat(svc.runScheduled().status()).isEqualTo(ExecutiveSummaryReport.SENT);
+        org.mockito.InOrder order = inOrder(repo, email);
+        order.verify(repo).markSendStarted(any(), anyString(), eq("Yönetici Özeti"), eq(250), eq(3));
+        order.verify(email, times(3)).sendHtmlBccWithAttachments(any(), anyString(), anyString(), anyString(), anyList());
+        order.verify(repo).finishIfClaimed(any(), any(), eq("SENT"), eq(250), eq(3), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("R2a inceleme REP-1: işaret yazılamazsa (DB kesintisi, 3 deneme) ya da talep başkasına geçtiyse (0 satır) HİÇBİR dilim gönderilmez + iz")
+    void markerNotWritten_nothingSent() {
+        enable("a@x.com", false);
+        when(repo.markSendStarted(any(), any(), any(), any(), any()))
+                .thenThrow(new org.springframework.dao.QueryTimeoutException("db"));
+        ExecutiveSummaryDeliveryService.Result r = svc.runScheduled();
+        assertThat(r.status()).isEqualTo(ExecutiveSummaryReport.FAILED);
+        verify(repo, times(3)).markSendStarted(any(), any(), any(), any(), any());
+        verify(email, never()).sendHtmlBccWithAttachments(any(), anyString(), anyString(), anyString(), anyList());
+        ArgumentCaptor<NotificationLog> log = ArgumentCaptor.forClass(NotificationLog.class);
+        verify(logs).save(log.capture());
+        assertThat(log.getValue().getEmailStatus()).startsWith("FAILED: gönderim başlatılamadı");
+
+        org.mockito.Mockito.clearInvocations(repo, logs);
+        when(repo.findByReportYearAndReportMonth(2026, 9)).thenReturn(Optional.empty());
+        doReturn(0).when(repo).markSendStarted(any(), any(), any(), any(), any());
+        assertThat(svc.sendNow(YearMonth.of(2026, 9), "yonetici").status()).isEqualTo("NOT_CLAIMED");
+        verify(email, never()).sendHtmlBccWithAttachments(any(), anyString(), anyString(), anyString(), anyList());
+    }
+
+    @Test
+    @DisplayName("R2a inceleme REP-1 (senaryo A/B): işaret VAR, dilim izi YOK (izler DB kesintisinde yazılamadı / pod dilimden hemen sonra öldü) → sonuç bilinmiyor: PARTIAL + iz, YENİDEN GÖNDERİLMEZ")
+    void staleSendingStartedWithoutTraces_unknownNeverResent() {
+        enable("a@x.com", false);
+        when(summaryService.now()).thenReturn(IN_WINDOW);
+        ExecutiveSummaryReport stuck = startedSending(IN_WINDOW.minus(java.time.Duration.ofHours(2)), 1, 1, 1);
+        when(repo.findByReportYearAndReportMonth(2026, 9)).thenReturn(Optional.of(stuck));
+        when(repo.reclaim(any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
+        svc.setJdbc(traces(List.of()));
+
+        ExecutiveSummaryDeliveryService.Result r = svc.catchUp();
+        assertThat(r.status()).isEqualTo(ExecutiveSummaryReport.PARTIAL);
+        verify(email, never()).sendHtmlBccWithAttachments(any(), anyString(), anyString(), anyString(), anyList());
+        verify(repo, never()).reclaim(any(), any(), any(), any(), any(), any(), any());
+        verify(repo).finishIfClaimed(eq(9L), eq(stuck.getClaimedAt()), eq("PARTIAL"), eq(1), eq(0), any(), any(), any(), any(), any());
+        ArgumentCaptor<NotificationLog> log = ArgumentCaptor.forClass(NotificationLog.class);
+        verify(logs).save(log.capture());
+        assertThat(log.getValue().getEmailStatus()).startsWith("FAILED: Sonuç bilinmiyor").contains("yeniden gönderilmedi");
+        // PARTIAL zamanlanmış / telafi yolundan bir daha talep edilmez
+        assertThat(ExecutiveSummaryDeliveryService.RETRYABLE).doesNotContain(ExecutiveSummaryReport.PARTIAL);
+    }
+
+    @Test
+    @DisplayName("R2a inceleme REP-1: izli dilimlerin HEPSİ başarısız ama planlanan dilimlerden biri izsiz (yolda) → yeniden GÖNDERİLMEZ (PARTIAL); bütün dilimlerin izi varsa sonuç izlerden (hepsi başarısız → FAILED, telafi dener)")
+    void staleSendingAllTracedFailed_incompleteNeverResent() {
+        enable("a@x.com", false);
+        when(summaryService.now()).thenReturn(IN_WINDOW);
+        ExecutiveSummaryReport stuck = startedSending(IN_WINDOW.minus(java.time.Duration.ofHours(2)), 1, 150, 2);
+        when(repo.findByReportYearAndReportMonth(2026, 9)).thenReturn(Optional.of(stuck));
+        svc.setJdbc(traces(List.<String[]>of(new String[] { "BCC×100: a@x.com", "FAILED: SMTP 554" })));
+
+        ExecutiveSummaryDeliveryService.Result r = svc.catchUp();
+        assertThat(r.status()).isEqualTo(ExecutiveSummaryReport.PARTIAL);
+        verify(repo).finishIfClaimed(eq(9L), any(), eq("PARTIAL"), eq(150), eq(1), any(), any(), any(), any(), any());
+        verify(email, never()).sendHtmlBccWithAttachments(any(), anyString(), anyString(), anyString(), anyList());
+
+        // bütün dilimlerin (2 / 2) izi var ve hepsi başarısız → gerçekten hiçbiri gitmedi: FAILED (yeniden denenebilir)
+        org.mockito.Mockito.clearInvocations(repo, logs);
+        when(repo.findByReportYearAndReportMonth(2026, 9))
+                .thenReturn(Optional.of(startedSending(IN_WINDOW.minus(java.time.Duration.ofHours(2)), 1, 150, 2)));
+        svc.setJdbc(traces(List.<String[]>of(new String[] { "BCC×100: a@x.com", "FAILED: SMTP 554" },
+                new String[] { "BCC×50: b@x.com", "FAILED: SMTP 554" })));
+        assertThat(svc.catchUp().status()).isEqualTo(ExecutiveSummaryReport.FAILED);
+        verify(repo).finishIfClaimed(eq(9L), any(), eq("FAILED"), eq(150), eq(2), any(), any(), any(), any(), any());
+        ArgumentCaptor<NotificationLog> log = ArgumentCaptor.forClass(NotificationLog.class);
+        verify(logs).save(log.capture());
+        assertThat(log.getValue().getEmailStatus()).startsWith("SKIPPED: Gönderen pod sonucu yazamadan durdu");
+        verify(email, never()).sendHtmlBccWithAttachments(any(), anyString(), anyString(), anyString(), anyList());
+
+        // bütün dilimlerin izi var, hepsi gitti → SENT (bitirme yazımı kaybolmuştu)
+        org.mockito.Mockito.clearInvocations(repo);
+        when(repo.findByReportYearAndReportMonth(2026, 9))
+                .thenReturn(Optional.of(startedSending(IN_WINDOW.minus(java.time.Duration.ofHours(2)), 1, 150, 2)));
+        svc.setJdbc(traces(List.<String[]>of(new String[] { "BCC×100: a@x.com", "SENT" }, new String[] { "BCC×50: b@x.com", "SENT" })));
+        assertThat(svc.catchUp().status()).isEqualTo(ExecutiveSummaryReport.SENT);
+        verify(email, never()).sendHtmlBccWithAttachments(any(), anyString(), anyString(), anyString(), anyList());
     }
 
     @Test

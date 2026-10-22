@@ -49,8 +49,17 @@ class ExecutiveSummarySchedulingTest {
     void twoPodsSameFire_oneRun() {
         when(scheduler.claimCronRound(eq(ExecutiveSummaryScheduling.SCHEDULED_ROUND), eq(ExecutiveSummarySettings.DEFAULT_CRON),
                 eq("Europe/Istanbul"))).thenReturn(true).thenReturn(false);
-        scheduling.scheduledTick(FIRE);
-        scheduling.scheduledTick(FIRE.plusSeconds(30));
+        scheduling.scheduledTick(FIRE, FIRE);
+        scheduling.scheduledTick(FIRE, FIRE.plusSeconds(30));
+        verify(delivery, times(1)).runScheduled();
+    }
+
+    @Test
+    @DisplayName("R2a inceleme REP-3: planlı tetik 4 dk geç koştu (dolu zamanlayıcı havuzu) — karar PLANLI ana göre, özet yine gider")
+    void lateTrigger_stillRuns() {
+        when(scheduler.claimCronRound(eq(ExecutiveSummaryScheduling.SCHEDULED_ROUND), eq(ExecutiveSummarySettings.DEFAULT_CRON),
+                eq("Europe/Istanbul"))).thenReturn(true);
+        scheduling.scheduledTick(FIRE, FIRE.plusSeconds(240));
         verify(delivery, times(1)).runScheduled();
     }
 
@@ -59,10 +68,11 @@ class ExecutiveSummarySchedulingTest {
     void oldFireAfterCronChange_notDue() {
         when(appSettings.getString(eq(ExecutiveSummarySettings.CRON_KEY), any())).thenReturn("0 0 9 2 * *");
         when(scheduler.claimCronRound(anyString(), anyString(), anyString())).thenReturn(true);
-        scheduling.scheduledTick(FIRE);                                   // eski planlı tetik
+        scheduling.scheduledTick(FIRE, FIRE.plusSeconds(5));              // eski planlı tetik
         verify(delivery, never()).runScheduled();
         verify(scheduler, never()).claimCronRound(anyString(), anyString(), anyString());
-        scheduling.scheduledTick(FIRE.plusSeconds(24 * 3600));            // 2'si 09:00
+        Instant second = FIRE.plusSeconds(24 * 3600);                     // 2'si 09:00
+        scheduling.scheduledTick(second, second.plusSeconds(5));
         verify(delivery, times(1)).runScheduled();
     }
 
@@ -91,5 +101,20 @@ class ExecutiveSummarySchedulingTest {
         doAnswer(inv -> null).when(scheduler).runWithSchedulerLock(eq(ExecutiveSummaryScheduling.LOCK), any());
         registrar.getTriggerTaskList().get(0).getRunnable().run();
         verify(scheduler).runWithSchedulerLock(eq("executive-summary"), any());
+    }
+
+    @Test
+    @DisplayName("R2a inceleme REP-3: koşan planlı görev tetikleyicinin hesapladığı planlı anı kullanır (duvar saati değil)")
+    void runnableUsesPlannedFire() {
+        ScheduledTaskRegistrar registrar = new ScheduledTaskRegistrar();
+        scheduling.configureTasks(registrar);
+        var task = registrar.getTriggerTaskList().get(0);
+        Instant planned = task.getTrigger().nextExecution(new org.springframework.scheduling.support.SimpleTriggerContext());
+        assertThat(planned).isAfter(Instant.now());                       // gelecekteki ayın 1'i 09:00 — şimdi DEĞİL
+        when(scheduler.claimCronRound(anyString(), anyString(), anyString())).thenReturn(true);
+        doAnswer(inv -> { inv.getArgument(1, Runnable.class).run(); return null; })
+                .when(scheduler).runWithSchedulerLock(eq(ExecutiveSummaryScheduling.LOCK), any());
+        task.getRunnable().run();
+        verify(delivery, times(1)).runScheduled();
     }
 }

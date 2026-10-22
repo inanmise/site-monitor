@@ -22,6 +22,8 @@ import java.util.List;
  *   <li>{@code audit_log.seq_locked} — denetim satırı zincir kilidi altında yazıldı (MP-38: {@code ux_audit_seq} kısmi tekil
  *       indeksinin kapsamı; eski kodun satırları NULL kalır). Büyük tablo: NULLABLE, varsayılansız ekleme yalnız katalog
  *       değişikliğidir; kilit beklemesi {@link SchemaDdlGuard} ile sınırlı.</li>
+ *   <li>{@code executive_summary_reports|executive_summary_team_reports.send_started_claim|send_trace_name} — yönetici özeti
+ *       postasının "gönderim başladı" işareti ve iz adı (inceleme REP-1: yarıda kalan gönderim en çok bir kez).</li>
  * </ul>
  * Kolonlar varlıklarda da tanımlı (ddl-auto ekler); bu yama ddl-auto'nun sessizce atladığı ortamları kapatır. Hepsi NULLABLE,
  * varsayılansız (NULL = eski satır: damga yok / sayaç 0). Her ifade kendi try/catch'inde ({@link SchemaDdlGuard} kilit
@@ -38,7 +40,11 @@ public class ReportIntegritySchemaPatch {
     static final List<Col> COLUMNS = List.of(
             new Col("tech_error_reminders", "inflight_at", "VARCHAR(32)"),
             new Col("tls_grade_changes", "notify_attempts", "INTEGER"),
-            new Col("audit_log", "seq_locked", "BOOLEAN"));
+            new Col("audit_log", "seq_locked", "BOOLEAN"),
+            new Col("executive_summary_reports", "send_started_claim", "VARCHAR(40)"),
+            new Col("executive_summary_reports", "send_trace_name", "VARCHAR(200)"),
+            new Col("executive_summary_team_reports", "send_started_claim", "VARCHAR(40)"),
+            new Col("executive_summary_team_reports", "send_trace_name", "VARCHAR(200)"));
 
     private final JdbcTemplate jdbc;
 

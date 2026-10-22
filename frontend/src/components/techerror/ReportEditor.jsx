@@ -30,8 +30,8 @@ import ApprovalCard from './ApprovalCard.jsx'
 import MailPreviewDialog from './MailPreviewDialog.jsx'
 import SendDialog from './SendDialog.jsx'
 import {
-  SEND_POLL_MAX_MS, SEND_POLL_MS, pollBaselineAfterQueued, sendFailureCode, sendFailureKind, sendPollStep, unsureSendOutcome,
-  withSendStatus,
+  SEND_POLL_MAX_MS, SEND_POLL_MS, pollBaselineAfterQueued, pollBaselineForQueuedRefusal, sendFailureKind, sendPollStep,
+  unsureSendOutcome, withSendStatus,
 } from './sendModel.js'
 import { bumpMailPreviewContent, mailPreviewContentRev } from './mailPreviewFetch.js'
 import RecipientsSummary from './RecipientsSummary.jsx'
@@ -202,6 +202,10 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
   // bilinene kadar "Gönder" kilitli; pencere kapatılıp yeniden açılırsa kilit VE yazılan ek Bilgi taşınır (4. tur: bant "ek
   // Bilgi korundu" diyordu ama alan boş açılıyor, rapor ek adreslersiz gidiyordu) ve durum yeniden denetlenir
   const unsureSend = useRef(null)
+  // Önceki gönderim posta kuyruğunda (409 SEND_QUEUED; inceleme REP-2, 2026-10-23): { pollId } — o kuyruğun yoklaması
+  // sürerken pencere "sonuç bekleniyor" bandıyla açılır ve "Gönder" KİLİTLİ (kuyruk teslim edilince ikinci tıklama ikinci
+  // kopya yollardı); yoklama sonuçlanınca (ya da süre dolunca) kalkar
+  const queuedWait = useRef(null)
   // Gönderim "gitmemiş" çözüldü (belirsiz gönderim ya da yoklama): { details, mark } — bir sonraki açılış "gitmemiş" bandını
   // ve ek Bilgi'yi getirir (yeni deneme siler)
   const resumeSend = useRef(null)
@@ -755,6 +759,11 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
    */
   async function send() {
     if (!(await ensureSaved())) return
+    if (queuedWaiting()) {
+      // Önceki kuyruğun sonucu hâlâ bekleniyor (REP-2): pencere aynı kilitli bantla, taşınan ek Bilgi'yle açılır
+      setSendDialog({ error: null, failure: queuedFailure(), initialCc: ccCarry.current })
+      return
+    }
     if (unsureSend.current) {
       // Çözülmemiş belirsiz gönderim: pencere kilitli açılır, taşınan ek Bilgi'yle (bant "korundu" der) ve durum yeniden
       // denetlenir (taze, kilitsiz, boş pencere değil)
@@ -822,10 +831,37 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
   /** Pencere içi yeniden denenebilir hata bandı: başlık, metin (+ "ek Bilgi korundu"), künye. */
   function sendFailure(kind, res, fallback) {
     const msg = res?.message || res?.error || fallback
-    // Önceki gönderim 421 kuyruğunda (R2a, MP-41): başlık bunu söyler, metin sunucunun "birkaç dakika sonra sonucu denetleyin"i
-    const queued = sendFailureCode(res) === 'SEND_QUEUED'
-    return { kind, title: t(queued ? 'te.send.queuedTitle' : 'te.send.retryTitle'), message: `${msg} ${t('te.send.retryKept')}`,
+    return { kind, title: t('te.send.retryTitle'), message: `${msg} ${t('te.send.retryKept')}`,
       details: res?.errorInfo ?? errorInfoOf(res) }
+  }
+
+  /**
+   * Önceki gönderim posta kuyruğunda (409 `SEND_QUEUED`; inceleme REP-2): bilgi bandı "ilk gönderim posta sunucusunun
+   * sonucunu bekliyor — sonuç burada görünecek"; "yeniden basın" DENMEZ, "Gönder" kilitli (`SendDialog` `kind: 'queued'`).
+   */
+  function queuedFailure() {
+    return { kind: 'queued', title: t('te.send.queuedTitle'), message: t('te.send.queuedWait'), details: null }
+  }
+
+  /** Önceki kuyruğun sonucu hâlâ bekleniyor mu (bekleme kaydı + AYNI yoklama sürüyor). */
+  function queuedWaiting() {
+    const w = queuedWait.current
+    const p = sendPollRef.current
+    return !!(w && p && p.id === w.pollId)
+  }
+
+  /**
+   * Bekleyen kuyruğun yoklaması BİTTİ (REP-2): pencere hâlâ bekleme bandını gösteriyorsa `next` ile değiştirilir (`null` =
+   * pencere kapanır, `undefined` = bant kalkar, kilit açılır); bekleme kaydı silinir.
+   */
+  function endQueuedWait(pollId, next) {
+    if (!queuedWait.current || queuedWait.current.pollId !== pollId) return
+    queuedWait.current = null
+    setSendDialog((d) => {
+      if (!d || d.failure?.kind !== 'queued') return d
+      if (next === null) return null
+      return { ...d, failure: next === undefined ? null : next }
+    })
   }
 
   /** Sonucu bilinmeyen gönderimin bandı: `check` 'checking' (rapor okunuyor) | 'unknown' (okunamadı) — ikisinde de kilitli. */
@@ -919,6 +955,9 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
     if (Date.now() > p.until) {
       stopSendPoll()
       toast.info(t('te.send.pollUnknown', Math.round(SEND_POLL_MAX_MS / 60000)), 12000)
+      // Bekleyen kuyruk 10 dk'da sonuçlanmadı (REP-2): kilit kalkar — sunucu kuyruk hâlâ sürüyorsa yeni gönderimi yine reddeder
+      endQueuedWait(p.id, { kind: 'retry', title: t('te.send.queuedTitle'),
+        message: t('te.send.queuedTimeout', Math.round(SEND_POLL_MAX_MS / 60000)), details: null })
       return
     }
     const my = ++pollSeq.current
@@ -942,17 +981,22 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
       ccCarry.current = ''
       resumeSend.current = null
       toast.success(t('te.send.pollSent'))
+      endQueuedWait(cur.id, null)                      // bekleyen kuyruk teslim edildi: ikinci gönderim yok, pencere kapanır
     } else if (step.outcome === 'notSent') {
       // Gitmedi: "Gönder" açık; sonraki açılış "gitmemiş" bandı + bu denemenin ek Bilgi'siyle (pencere açıksa kullanıcının
       // yazdığına dokunulmaz)
       if (!sendDialogRef.current) ccCarry.current = cur.extraCc || ''
       resumeSend.current = { details: null, mark: sendMarkOf(fresh) }
+      queuedWait.current = null
       setSendDialog((d) => (d ? { ...d, failure: notSentFailure(null) } : d))
       toast.error(cur.extraCc ? t('te.send.pollNotSentCc') : t('te.send.pollNotSent'), 12000)
     } else if (step.outcome === 'superseded') {
       toast.info(t('te.send.pollSuperseded'), 12000)
+      endQueuedWait(cur.id, null)
     } else {
       toast.info(t('te.send.pollUnknown', Math.round(SEND_POLL_MAX_MS / 60000)), 12000)
+      endQueuedWait(cur.id, { kind: 'retry', title: t('te.send.queuedTitle'),
+        message: t('te.send.queuedTimeout', Math.round(SEND_POLL_MAX_MS / 60000)), details: null })
     }
   }
   useVisibleInterval(pollSendStatus, sendPoll ? SEND_POLL_MS : null, false)
@@ -960,7 +1004,7 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
   useEffect(() => () => { pollSeq.current++ }, [])
 
   async function confirmSend(extraCc) {
-    if (busy != null || unsureSend.current) return
+    if (busy != null || unsureSend.current || queuedWaiting()) return
     // Gönderimden ÖNCEKİ rapor satırı: sonucu bilinmeyen hatada yeniden okunanla karşılaştırılır
     const before = data?.report || null
     setBusy('send')
@@ -972,6 +1016,7 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
     let refresh = true
     let unsure = null
     let queued = false
+    let queuedRefusal = false
     let refreshing = null
     const markUnsure = (r) => {
       keepOpen = true
@@ -1006,6 +1051,12 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
         setSendDialog({ error: res.error || t('te.send.ccRejected'), failure: null })
       } else if (kind === 'unsure') {
         markUnsure(res)
+      } else if (kind === 'queued') {
+        // Önceki gönderim posta kuyruğunda (REP-2): bu gönderim gitmedi; o kuyruğun sonucu beklenir, "Gönder" kilitli
+        keepOpen = true
+        queuedRefusal = true
+        ccCarry.current = extraCc || ''
+        setSendDialog({ error: null, failure: queuedFailure(), initialCc: ccCarry.current })
       } else if (kind) {
         keepOpen = true
         setSendDialog({ error: null, failure: sendFailure(kind, res, t('te.sendError')) })
@@ -1015,7 +1066,12 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
     } catch (e) {
       const kind = sendFailureKind(e)
       if (kind === 'unsure') markUnsure(e)
-      else if (kind) {
+      else if (kind === 'queued') {
+        keepOpen = true
+        queuedRefusal = true
+        ccCarry.current = extraCc || ''
+        setSendDialog({ error: null, failure: queuedFailure(), initialCc: ccCarry.current })
+      } else if (kind) {
         keepOpen = true
         setSendDialog({ error: null, failure: sendFailure(kind, e, t('te.sendError')) })
       } else toast.error(e?.message || t('te.sendError'))
@@ -1024,6 +1080,15 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
       if (!keepOpen) setSendDialog(null)
       // Pencere açık kalsa da rapor arkada yenilenir (gönderim başka sekmede sürüyor)
       if (refresh) refreshing = load({ keepDraft: true })
+    }
+    if (queuedRefusal) {
+      // Önceki kuyruğun sonucu (REP-2): yoklama o kuyruğu izler — reddin ardından okunan satır kuyruktaysa taban o satır
+      // (kuyruğun KENDİ sonucu), yoksa tıklamadan önceki satır
+      const id = startSendPoll(pollBaselineForQueuedRefusal(before, null), extraCc)
+      queuedWait.current = { pollId: id }
+      const loaded = refreshing ? await refreshing : null
+      const cur = sendPollRef.current
+      if (cur && cur.id === id) setPoll({ ...cur, ...pollBaselineForQueuedRefusal(before, loaded?.report) })
     }
     if (queued) {
       // Kuyruğa alındı: yoklama gönderimden önceki satırla başlar; yanıttan hemen sonraki okuma bu denemenin kuyruğunu

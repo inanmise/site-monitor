@@ -399,7 +399,6 @@ public class TechErrorReportSender {
         }
     }
 
-    /** Oturum kullanıcısının hesabında teslim edilebilir adres yok — test postası gidemez (409 {@code NO_EMAIL}). */
     /** Hata kodu: önceki gönderim posta sunucusunun yeniden deneme kuyruğunda (R2a, MP-41). */
     public static final String SEND_QUEUED = "SEND_QUEUED";
 
@@ -421,6 +420,7 @@ public class TechErrorReportSender {
                         + "(to avoid a second copy). Check the send result in a few minutes and send it again then if needed."));
     }
 
+    /** Oturum kullanıcısının hesabında teslim edilebilir adres yok — test postası gidemez (409 {@code NO_EMAIL}). */
     public static CodedConflictException noEmail() {
         return new CodedConflictException("NO_EMAIL", Msg.t(
                 "Hesabınızda e-posta adresi yok; test postası gönderilemez. Yöneticinizden adres eklemesini isteyin.",

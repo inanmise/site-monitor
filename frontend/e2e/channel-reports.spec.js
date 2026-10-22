@@ -2562,8 +2562,12 @@ for (const vp of VIEWPORTS) {
       expect(await page.evaluate(overflowX), 'yatay taşma yok').toBeLessThanOrEqual(0)
     })
 
-    test('çok pod R2a (MP-41): önceki gönderim posta kuyruğunda (409 SEND_QUEUED) — pencere AÇIK, kuyruk başlığı + açıklama pencerede, ek Bilgi korunur, "Gönder" kilitsiz; sığar, kesilmez, dokunma hedefleri', async ({ page }) => {
+    test('çok pod R2a (MP-41, inceleme REP-2): önceki gönderim posta kuyruğunda (409 SEND_QUEUED) — pencere AÇIK, "sonuç burada görünecek" bandı, ek Bilgi korunur, "Gönder" KİLİTLİ; kuyruk teslim edilince pencere kendiliğinden kapanır, ikinci gönderim YOK; sığar, kesilmez, dokunma hedefleri', async ({ page }) => {
+      // Yeniden temel (2026-10-23, inceleme REP-2): eskiden bant "yeniden deneyebilirsiniz" deyip "Gönder"i açık bırakıyordu ve
+      // ikinci tıklama gidiyordu — kuyruk teslim edilince sunucu onu geçirir, ekip / yöneticiler ikinci kopyayı alırdı
       await mock(page)
+      const queuedRow = { status: 'queued', send_state: 'QUEUED', last_attempt_at: '2026-10-18T07:00:05Z', send_count: 0 }
+      reportOverride = { ...REPORT, report: { ...REPORT.report, ...queuedRow } }
       await page.goto('/?tab=channelreports&te_view=report&te_rep=100&te_ch=10')
       await expect(page.locator('[data-slot="te-report"]')).toBeVisible({ timeout: 20_000 })
       await page.locator('[data-slot="te-send"]').click()
@@ -2574,33 +2578,32 @@ for (const vp of VIEWPORTS) {
       await dlg.getByRole('button', { name: /^(Gönder|Send)$/ }).click()
       const failure = dlg.locator('[data-slot="te-send-failure"]')
       await expect(failure).toBeVisible()
-      await expect(failure).toHaveAttribute('data-kind', 'retry')
+      await expect(failure).toHaveAttribute('data-kind', 'queued')
       await expect(failure).toContainText(/Önceki gönderim hâlâ posta kuyruğunda|The previous send is still in the mail queue/)
-      await expect(failure).toContainText(/yeniden deneme kuyruğunda/)
+      await expect(failure).toContainText(/sonuç birkaç dakika içinde burada görünür|the result will appear here/)
+      await expect(failure).not.toContainText(/yeniden “Gönder”e basın|press “Send” again/)
       await expect(cc).toHaveValue('kuyruk@example.com')
       await expect(cc).not.toHaveAttribute('aria-invalid', 'true')
       const send = dlg.getByRole('button', { name: /^(Gönder|Send)$/ })
-      await expect(send).toBeEnabled()
-      await expect(dlg.locator('[data-slot="te-send-confirm"][data-locked]')).toHaveCount(0)
+      await expect(send).toBeDisabled()
+      await expect(dlg.locator('[data-slot="te-send-confirm"][data-locked="true"]')).toHaveCount(1)
       expect(sends, 'hiçbir şey gönderilmedi').toBe(0)
       await page.waitForTimeout(200)
       const box = await dlg.boundingBox()
       expect(box.x + box.width, 'pencere ekrana sığar').toBeLessThanOrEqual(vp.width + 1)
       expect(await page.evaluate(clipped, '[data-slot="te-send-dialog"]'), 'kırpılan metin (kuyruk bandı)').toEqual([])
-      // Bandın "Teknik ayrıntı" açacağı paylaşılan ui/ErrorDetails'tir (önceden var olan 24 px dokunma hedefi — bütün hata
-      // bantlarında aynı; ayrı istek: delta-R2A-D1.md). Kuyruk bandının KENDİ öğeleri ölçülür
       if (vp.touch) {
-        const small = (await page.evaluate(smallTargets, '[data-slot="te-send-dialog"]'))
-          .filter((x) => !/^"(Teknik ayrıntı|Technical details)"/.test(x))
-        expect(small, 'küçük hedef (kuyruk bandı)').toEqual([])
+        expect(await page.evaluate(smallTargets, '[data-slot="te-send-dialog"]'), 'küçük hedef (kuyruk bandı)').toEqual([])
       }
       expect(await page.evaluate(overflowX), 'yatay taşma yok').toBeLessThanOrEqual(0)
       await page.screenshot({ path: `test-results/channel-reports-send-queued-${vp.name}.png`, fullPage: false })
-      // Birkaç dakika sonra (kuyruk sonuçlandı) aynı pencereden yeniden gönderim: ek Bilgi ile gider
-      await cc.fill('ek@example.com')
-      await send.click()
-      await expect.poll(() => sends).toBe(1)
-      await expect(dlg).toHaveCount(0)
+      // Kuyruk teslim edildi (aynı deneme damgası, SENT): yoklama (10 sn) okur — pencere kapanır, "gönderildi" bildirimi
+      reportOverride = { ...REPORT, report: { ...REPORT.report, ...queuedRow, status: 'sent', send_state: 'SENT',
+        last_sent_at: '2026-10-18T07:03:00Z', send_count: 1 } }
+      await expect(dlg).toHaveCount(0, { timeout: 30_000 })
+      await expect(page.getByText(/Gönderim tamamlandı: rapor gönderildi|The send has completed: the report was sent/)).toBeVisible()
+      expect(sends, 'ikinci gönderim yok').toBe(0)
+      expect(sendBodies).toHaveLength(1)
     })
 
     test('R18: kanal gönderim günlüğü — sekme, tablo (1280) / kart (390), uzun alıcı listesi sararak tam, durum metni; sığar, kesilmez, dokunma hedefleri', async ({ page }) => {

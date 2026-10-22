@@ -214,31 +214,79 @@ describe('gönderim penceresi — ek Bilgi (CC)', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Rapor takıma gönderilsin mi?' })).toBeNull())
   })
 
-  it('çok pod R2a (MP-41): önceki gönderim hâlâ posta kuyruğunda (409 SEND_QUEUED) → pencere AÇIK, kuyruk başlığı + sunucunun açıklaması pencerede, yazılan ek Bilgi korunur, "Gönder" KİLİTLİ DEĞİL; rapor arkada yenilenir', async () => {
+  describe('çok pod R2a (MP-41, inceleme REP-2): önceki gönderim hâlâ posta kuyruğunda (409 SEND_QUEUED)', () => {
+    // Yeniden temel (2026-10-23, inceleme REP-2): eskiden bant "yeniden deneyebilirsiniz" (retry) idi, "Gönder" açıktı ve
+    // ikinci tıklama gidiyordu — kuyruk teslim edilince sunucu onu geçirir, ekip / yöneticiler İKİNCİ kopyayı alırdı.
     const queuedMsg = "Bu raporun önceki gönderimi posta sunucusunun yeniden deneme kuyruğunda bekliyor; ikinci bir kopya gitmesin diye rapor yeniden gönderilmedi. Birkaç dakika sonra gönderim sonucunu kontrol edin; gerekirse o zaman yeniden gönderin."
-    te().send
-      .mockResolvedValueOnce({ success: false, status: 409, code: 'SEND_QUEUED', error: queuedMsg })
-      .mockResolvedValueOnce({ success: true, data: { state: 'SENT', to: ['dijital@example.com'], cc: ['ek@example.com'] } })
-    const dlg = await openSendDialog()
-    const input = ccInput(dlg)
-    fireEvent.change(input, { target: { value: 'ek@example.com' } })
-    const loadsBefore = te().report.mock.calls.length
-    fireEvent.click(within(dlg).getByRole('button', { name: 'Gönder' }))
-    const title = await within(dlg).findByText('Önceki gönderim hâlâ posta kuyruğunda — rapor yeniden gönderilmedi')
-    const box = title.closest('[data-slot="te-send-failure"]')
-    expect(box).toHaveAttribute('data-kind', 'retry')
-    expect(within(box).getByText(/yeniden deneme kuyruğunda bekliyor/)).toBeInTheDocument()
-    expect(within(box).getByText(/Yazdığınız ek Bilgi \(CC\) adresleri korundu/)).toBeInTheDocument()
-    expect(input).toHaveValue('ek@example.com')
-    expect(input).not.toHaveAttribute('aria-invalid', 'true')
-    await waitFor(() => expect(te().report.mock.calls.length).toBeGreaterThan(loadsBefore))
-    const sendBtn = within(dlg).getByRole('button', { name: 'Gönder' })
-    expect(sendBtn).not.toBeDisabled()
-    expect(dlg.querySelector('[data-locked="true"]')).toBeNull()
-    fireEvent.click(sendBtn)
-    await waitFor(() => expect(te().send).toHaveBeenCalledTimes(2))
-    expect(te().send.mock.calls.map((c) => c[1])).toEqual([{ extra_cc: 'ek@example.com' }, { extra_cc: 'ek@example.com' }])
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Rapor takıma gönderilsin mi?' })).toBeNull())
+    const queuedRow = { status: 'queued', send_state: 'QUEUED', last_attempt_at: '2026-10-18T07:00:05Z', send_count: 0 }
+    const withRow = (patch) => reportResponse({ report: { ...reportResponse().data.report, ...queuedRow, ...patch } })
+    beforeEach(() => {
+      vi.useFakeTimers({ shouldAdvanceTime: true })
+      te().report.mockResolvedValue(withRow({}))
+      te().send.mockResolvedValueOnce({ success: false, status: 409, code: 'SEND_QUEUED', error: queuedMsg })
+    })
+    afterEach(() => { vi.useRealTimers() })
+
+    it('pencere AÇIK, "sonuç burada görünecek" bandı ("yeniden basın" YOK), "Gönder" KİLİTLİ; kuyruk teslim edilince pencere kapanır, "gönderildi" bildirimi, ikinci istek GİTMEZ', async () => {
+      const dlg = await openSendDialog()
+      const input = ccInput(dlg)
+      fireEvent.change(input, { target: { value: 'ek@example.com' } })
+      fireEvent.click(within(dlg).getByRole('button', { name: 'Gönder' }))
+      const title = await within(dlg).findByText('Önceki gönderim hâlâ posta kuyruğunda — rapor yeniden gönderilmedi')
+      const box = title.closest('[data-slot="te-send-failure"]')
+      expect(box).toHaveAttribute('data-kind', 'queued')
+      expect(within(box).getByText(/sonuç birkaç dakika içinde burada görünür/)).toBeInTheDocument()
+      expect(within(box).queryByText(/yeniden “Gönder”e basın/)).toBeNull()
+      expect(input).toHaveValue('ek@example.com')
+      const sendBtn = within(dlg).getByRole('button', { name: 'Gönder' })
+      expect(sendBtn).toBeDisabled()
+      expect(sendBtn).toHaveAttribute('data-locked', 'true')
+      // Ctrl+Enter da gönderemez
+      fireEvent.keyDown(input, { key: 'Enter', ctrlKey: true })
+      // Bir tur: hâlâ kuyrukta → kilit sürer
+      await act(async () => { await vi.advanceTimersByTimeAsync(10_000) })
+      expect(within(dlg).getByRole('button', { name: 'Gönder' })).toBeDisabled()
+      // Sonraki tur: kuyruk teslim edildi (aynı deneme damgası, SENT)
+      te().report.mockResolvedValue(withRow({ status: 'sent', send_state: 'SENT', last_sent_at: '2026-10-18T07:03:00Z', send_count: 1 }))
+      await act(async () => { await vi.advanceTimersByTimeAsync(10_000) })
+      expect(await screen.findByText('Gönderim tamamlandı: rapor gönderildi. Alıcılar ve ayrıntılar kanalın gönderim günlüğünde.')).toBeInTheDocument()
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Rapor takıma gönderilsin mi?' })).toBeNull())
+      expect(te().send).toHaveBeenCalledTimes(1)
+    })
+
+    it('pencere kapatılıp yeniden açılınca bekleme bandı + ek Bilgi geri gelir; kuyruk başarısız biterse "gönderilmemiş" bandı, kilit kalkar, yeniden gönderim ek Bilgi ile', async () => {
+      te().send.mockResolvedValueOnce({ success: true, data: { state: 'SENT', to: ['dijital@example.com'], cc: ['ek@example.com'] } })
+      const dlg = await openSendDialog()
+      fireEvent.change(ccInput(dlg), { target: { value: 'ek@example.com' } })
+      fireEvent.click(within(dlg).getByRole('button', { name: 'Gönder' }))
+      await within(dlg).findByText('Önceki gönderim hâlâ posta kuyruğunda — rapor yeniden gönderilmedi')
+      fireEvent.click(within(dlg).getByRole('button', { name: 'Vazgeç' }))
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Rapor takıma gönderilsin mi?' })).toBeNull())
+      fireEvent.click(screen.getByRole('button', { name: 'Takıma gönder' }))
+      const again = await screen.findByRole('dialog', { name: 'Rapor takıma gönderilsin mi?' })
+      expect(again.querySelector('[data-slot="te-send-failure"]')).toHaveAttribute('data-kind', 'queued')
+      expect(ccInput(again)).toHaveValue('ek@example.com')
+      expect(within(again).getByRole('button', { name: 'Gönder' })).toBeDisabled()
+      // Kuyruk başarısız bitti (aynı deneme, FAILED)
+      te().report.mockResolvedValue(withRow({ status: 'draft', send_state: 'FAILED' }))
+      await act(async () => { await vi.advanceTimersByTimeAsync(10_000) })
+      expect(await within(again).findByText('Rapor gönderilmemiş — yeniden gönderebilirsiniz')).toBeInTheDocument()
+      const btn = within(again).getByRole('button', { name: 'Gönder' })
+      await waitFor(() => expect(btn).not.toBeDisabled())
+      fireEvent.click(btn)
+      await waitFor(() => expect(te().send).toHaveBeenCalledTimes(2))
+      expect(te().send.mock.calls.map((c) => c[1])).toEqual([{ extra_cc: 'ek@example.com' }, { extra_cc: 'ek@example.com' }])
+    })
+
+    it('10 dakikada sonuç gelmezse kilit kalkar, bant "günlüğe bakın — kuyruk sürüyorsa sunucu yine reddeder" der', async () => {
+      const dlg = await openSendDialog()
+      fireEvent.click(within(dlg).getByRole('button', { name: 'Gönder' }))
+      await within(dlg).findByText('Önceki gönderim hâlâ posta kuyruğunda — rapor yeniden gönderilmedi')
+      await act(async () => { await vi.advanceTimersByTimeAsync(10 * 60_000 + 10_000) })
+      expect(await within(dlg).findByText(/Önceki gönderimin sonucu 10 dakika içinde gelmedi/)).toBeInTheDocument()
+      expect(dlg.querySelector('[data-slot="te-send-failure"]')).toHaveAttribute('data-kind', 'retry')
+      await waitFor(() => expect(within(dlg).getByRole('button', { name: 'Gönder' })).not.toBeDisabled())
+    })
   })
 
   describe('inceleme 2026-10-18 (3. tur): sonucu BİLİNMEYEN gönderim — rapor yeniden okunup durum bilinene kadar "Gönder" ve Ctrl+Enter KİLİTLİ', () => {

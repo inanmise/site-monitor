@@ -46,11 +46,15 @@ public class ExecutiveSummaryScheduling implements SchedulingConfigurer {
     private final SchedulerService schedulerService;
     private final ExecutiveSummaryTeamService teamService;
 
+    /** Koşan planlı tetiğin PLANLI anı (R2a inceleme REP-3: gecikmeden bağımsız karar). */
+    private final com.sitemonitor.service.report.LiveCron.PlannedFire plannedFire =
+            new com.sitemonitor.service.report.LiveCron.PlannedFire();
+
     @Override
     public void configureTasks(ScheduledTaskRegistrar registrar) {
         registrar.addTriggerTask(
-                () -> schedulerService.runWithSchedulerLock(LOCK, () -> scheduledTick(Instant.now())),
-                context -> {
+                () -> schedulerService.runWithSchedulerLock(LOCK, () -> scheduledTick(plannedFire.last(), Instant.now())),
+                plannedFire.wrap(context -> {
                     String expr = settings.cron();
                     try {
                         return new CronTrigger(expr, ExecutiveSummaryContext.IST).nextExecution(context);
@@ -63,7 +67,7 @@ public class ExecutiveSummaryScheduling implements SchedulingConfigurer {
                             return (Instant) null;
                         }
                     }
-                });
+                }));
         // Kurum özeti ve bütün takım özetleri kapalıyken (varsayılan) telafi kilide bile dokunmaz — saatlik boş DB
         // yazımı olmasın (takım kapısı tek sayım sorgusu).
         registrar.addTriggerTask(
@@ -76,16 +80,21 @@ public class ExecutiveSummaryScheduling implements SchedulingConfigurer {
     }
 
     /**
-     * Planlı tetik (kilit altında): CANLI cron bu dakikada tetiklenmiyorsa (zamanlama tetik planlandıktan sonra değişti) iş
-     * koşmaz; tetik küme genelinde bir kez ({@value #SCHEDULED_ROUND} cron turu).
+     * Planlı tetik (kilit altında): CANLI cron tetiğin PLANLI anında ({@code planned}; bilinmiyorsa duvar saati) tetiklenmiyorsa
+     * (zamanlama tetik planlandıktan sonra değişti) iş koşmaz; tetik ne kadar geç koşarsa koşsun karar planlı ana göredir
+     * (R2a inceleme REP-3); tetik küme genelinde bir kez ({@value #SCHEDULED_ROUND} cron turu).
      */
-    void scheduledTick(Instant now) {
+    void scheduledTick(Instant planned, Instant now) {
         String cron = com.sitemonitor.service.report.LiveCron.effective(settings.cron(), ExecutiveSummarySettings.DEFAULT_CRON);
-        if (!com.sitemonitor.service.report.LiveCron.firesNow(cron, ExecutiveSummarySettings.DEFAULT_CRON,
-                ExecutiveSummaryContext.IST, now)) {
-            log.info("Aylık yönetici özeti: planlı tetik canlı zamanlamaya ({}) uymuyor — zamanlama değişmiş, bu tetikte gönderilmedi",
-                    cron);
+        if (!com.sitemonitor.service.report.LiveCron.due(cron, ExecutiveSummarySettings.DEFAULT_CRON,
+                ExecutiveSummaryContext.IST, planned, now)) {
+            log.info("Aylık yönetici özeti: planlı tetik ({}) canlı zamanlamaya ({}) uymuyor — zamanlama değişmiş, bu tetikte "
+                    + "gönderilmedi", planned, cron);
             return;
+        }
+        if (com.sitemonitor.service.report.LiveCron.late(planned, now)) {
+            log.warn("Aylık yönetici özeti: planlı tetik ({}) {} sn geç koştu (dolu zamanlayıcı havuzu) — yine de gönderiliyor",
+                    planned, java.time.Duration.between(planned, now).toSeconds());
         }
         if (!schedulerService.claimCronRound(SCHEDULED_ROUND, cron, ExecutiveSummaryContext.IST.getId())) {
             log.debug("Aylık yönetici özeti: bu planlı tetik başka bir pod'da koştu");
