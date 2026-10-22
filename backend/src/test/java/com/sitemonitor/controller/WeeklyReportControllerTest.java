@@ -705,4 +705,51 @@ class WeeklyReportControllerTest {
                 .andExpect(jsonPath("$.data.day_en").value("Thursday"))
                 .andExpect(jsonPath("$.data.valid").value(true));
     }
+
+    @Test
+    @DisplayName("AUTH-14 (2026-10-22): bağlantı sayfası beklenmeyen istisnanın metnini (SQL) GÖSTERMEZ; servisin kendi iletisi gösterilir")
+    void approveLink_unexpectedError_genericText() throws Exception {
+        when(service.approveViaToken("T1")).thenThrow(new RuntimeException(
+                "could not execute statement; SQL [update weekly_reports set status=?] constraint [uk_x]"));
+        mvc.perform(post("/api/weekly-reports/approve-link/confirm").param("token", "T1"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("Onay Başarısız")))
+                .andExpect(content().string(containsString("beklenmeyen bir hata")))
+                .andExpect(content().string(org.hamcrest.Matchers.not(containsString("SQL"))))
+                .andExpect(content().string(org.hamcrest.Matchers.not(containsString("weekly_reports"))));
+        org.mockito.Mockito.verify(auditService).recordSecurityEvent(eq("WEEKLY_REPORT_APPROVE"), any(), isNull(),
+                eq("WEEKLY_REPORT"), eq("email-token"), eq("unexpected: RuntimeException"));
+
+        when(service.rejectViaToken(any(), any())).thenThrow(new org.springframework.dao.DataIntegrityViolationException(
+                "ERROR: duplicate key value violates unique constraint"));
+        mvc.perform(post("/api/weekly-reports/approve-link/reject").param("token", "T1").param("reason", "x"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("İade Başarısız")))
+                .andExpect(content().string(org.hamcrest.Matchers.not(containsString("duplicate key"))));
+
+        when(service.approveViaToken("T2")).thenThrow(new IllegalStateException("MANAGER_CONTACT_MISSING"));
+        mvc.perform(post("/api/weekly-reports/approve-link/confirm").param("token", "T2"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("müdür e-posta adresi tanımlı olmadığı")))
+                .andExpect(content().string(org.hamcrest.Matchers.not(containsString("MANAGER_CONTACT_MISSING"))));
+    }
+
+    @Test
+    @DisplayName("AUTH-14 (2026-10-22): ham posta durumu (sunucu adı / SMTP metni) oturumsuz sayfada GÖSTERİLMEZ — yalnız gitti / gitmedi")
+    void approveLink_mailStatus_notLeaked() throws Exception {
+        when(service.approveViaToken("T1")).thenReturn(Map.of("data", report(5L, 2L, "APPROVED"),
+                "mail_status", "FAILED: smtp.kurum.local:25 Connection refused"));
+        mvc.perform(post("/api/weekly-reports/approve-link/confirm").param("token", "T1"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("müdür e-postası gönderilemedi")))
+                .andExpect(content().string(org.hamcrest.Matchers.not(containsString("smtp.kurum.local"))))
+                .andExpect(content().string(org.hamcrest.Matchers.not(containsString("FAILED"))));
+
+        when(service.rejectViaToken(eq("T1"), any())).thenReturn(Map.of("data", report(5L, 2L, "REJECTED"),
+                "mail_status", "QUEUED_RETRY: 421 try later"));
+        mvc.perform(post("/api/weekly-reports/approve-link/reject").param("token", "T1").param("reason", "x"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("ekibe e-posta ile iletildi")))
+                .andExpect(content().string(org.hamcrest.Matchers.not(containsString("421"))));
+    }
 }

@@ -381,6 +381,15 @@ public class WeeklyReportService {
      *                   false → yalnız yapı (kanallar, takip URL'leri) kalıtılır (2026-09-13).
      */
     public WeeklyReport create(Long requestedTeamId, int year, int weekNo, Actor actor, boolean carryNotes) {
+        // Başka takım istenirse SESSİZCE kendi takıma çevrilmez (2026-10-22, WR-2): kapsamlı müdür B'yi seçip "Yeni rapor"
+        // dediğinde rapor A'da açılıyor (ya da A'nın haftası doluysa DUPLICATE_WEEK) ve kullanıcı bunu fark etmiyordu.
+        // Global yönetici dışındaki aktör yalnız kendi (birincil) takımına rapor açar → alan hatası (400 VALIDATION_FAILED).
+        if (!actor.isAdmin() && requestedTeamId != null && !Objects.equals(requestedTeamId, actor.teamId())) {
+            throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException("team_id",
+                    com.sitemonitor.util.Msg.t(
+                            "Haftalık rapor yalnız kendi takımınız için açılabilir; başka bir takımın raporunu o takımın üyesi ya da bir global yönetici açar.",
+                            "You can only open a weekly report for your own team; a member of that team or a global administrator opens another team's report."));
+        }
         Long teamId = actor.isAdmin() ? requestedTeamId : actor.teamId();
         if (teamId == null) throw new IllegalArgumentException("Takım belirlenemedi");
         if (weekNo < 1 || weekNo > 53) throw new IllegalArgumentException("Geçersiz hafta numarası: " + weekNo);
@@ -1608,6 +1617,23 @@ public class WeeklyReportService {
 
     // ── Mail gönderim geçmişi ────────────────────────────────────────────────
 
+    /**
+     * E-posta onay / iade bağlantısının belirteci (2026-10-22, WR-1). PO postası {@code …/approve-link?token=…} taşır;
+     * gönderim geçmişi ({@code GET /{id}/mails}) bu gövdeyi raporu okuyabilen HERKESE (USER, AUDIT) döndürüyordu — belirteç
+     * oturumsuz onay yetkisidir, PO olmayan biri geçmişten alıp raporu "PO adına" onaylayabiliyordu. Belirteç kayda
+     * yazılmadan ÖNCE ve geçmiş okunurken (eski satırlar) maskelenir; giden posta DEĞİŞMEZ. Desen doğrusaldır (sabit önek +
+     * tek karakter sınıfı; geri izleme yok).
+     */
+    private static final Pattern APPROVAL_TOKEN_IN_URL =
+            Pattern.compile("((?:approve|reject)-link(?:/confirm|/reject)?\\?token=)[A-Za-z0-9_%\\-]+");
+    static final String REDACTED_TOKEN = "•••";
+
+    /** Gövdedeki onay / iade bağlantısı belirteçlerini maskeler; null → null. */
+    static String redactApprovalTokens(String html) {
+        if (html == null || html.indexOf("-link") < 0) return html;
+        return APPROVAL_TOKEN_IN_URL.matcher(html).replaceAll("$1" + REDACTED_TOKEN);
+    }
+
     /** Her gönderim DENEMESİNİ kaydeder — kayıt hatası mail akışını bozmaz. */
     private void recordMail(WeeklyReport r, String type, List<String> to, List<String> cc,
                             String subject, String html, String status, Actor actor) {
@@ -1619,7 +1645,8 @@ public class WeeklyReportService {
             m.setToAddresses(to != null ? String.join(", ", to) : "");
             m.setCcAddresses(cc != null && !cc.isEmpty() ? String.join(", ", cc) : null);
             m.setSubject(subject);
-            m.setBodyHtml(html);
+            // Onay belirteci geçmişe YAZILMAZ (WR-1) — posta zaten gönderildi, kayıt yalnız "ne gitti" izidir.
+            m.setBodyHtml(redactApprovalTokens(html));
             m.setStatus(status != null ? status : "UNKNOWN");
             m.setCreatedBy(actor.display());
             m.setCreatedAt(now());
@@ -1631,17 +1658,33 @@ public class WeeklyReportService {
     }
 
     /** Raporun gönderim geçmişi (yeni → eski). Body'deki cid referansları UI
-     *  iframe'inin görselleri oturumla yükleyebilmesi için /api'ye çevrilir. */
+     *  iframe'inin görselleri oturumla yükleyebilmesi için /api'ye çevrilir.
+     *  Onay / iade belirteci MASKELENİR (WR-1): bu düzeltmeden önce yazılmış satırlar belirteci hâlâ taşıyabilir.
+     *  Satırlar yeni nesneye kopyalanır — okunan varlık hiçbir işlemde değiştirilmez (geçmiş kaydı asla yeniden yazılmaz). */
     public List<WeeklyReportMail> mails(Long reportId, Actor actor) {
         get(reportId, actor); // okuma yetkisi kontrolü
         List<WeeklyReportMail> list = mailRepo.findByReportIdOrderByIdDesc(reportId);
-        for (WeeklyReportMail m : list) {
-            if (m.getBodyHtml() != null) {
-                m.setBodyHtml(m.getBodyHtml()
-                        .replaceAll("cid:img(\\d+)", "/api/weekly-reports/images/$1"));
+        List<WeeklyReportMail> out = new ArrayList<>(list.size());
+        for (WeeklyReportMail src : list) {
+            WeeklyReportMail m = new WeeklyReportMail();
+            m.setId(src.getId());
+            m.setReportId(src.getReportId());
+            m.setMailType(src.getMailType());
+            m.setFromAddress(src.getFromAddress());
+            m.setToAddresses(src.getToAddresses());
+            m.setCcAddresses(src.getCcAddresses());
+            m.setSubject(src.getSubject());
+            m.setStatus(src.getStatus());
+            m.setCreatedBy(src.getCreatedBy());
+            m.setCreatedAt(src.getCreatedAt());
+            String body = src.getBodyHtml();
+            if (body != null) {
+                body = redactApprovalTokens(body).replaceAll("cid:img(\\d+)", "/api/weekly-reports/images/$1");
             }
+            m.setBodyHtml(body);
+            out.add(m);
         }
-        return list;
+        return out;
     }
 
     /** Liste rozetleri: rapor başına EN SON gönderim kaydının status'u. */
