@@ -626,7 +626,7 @@ lider 2 saate kadar yeniden kuyruğa alır, değişiklik bildirimi kaybolmaz.
 | Web zarif aşaması (süren istekler biter) | ≤ 20 sn | `SHUTDOWN_PHASE_TIMEOUT` (`spring.lifecycle.timeout-per-shutdown-phase`) |
 | Yürütücü aşaması (süren kontroller / bildirimler biter) | ≤ 20 sn | aynı |
 | Zamanlanmış işler havuzu (süren işler biter, kesilmez) | ≤ 20 sn | `SCHEDULING_AWAIT_TERMINATION` |
-| Geri kalan bütün yok etme beklemeleri (e-posta 421 kuyruğu, push, kod girişi, olay bildirimi, elle kontrol havuzu, bildirim havuzlarının kendisi) | birlikte ≤ 10 sn | `config/ShutdownDeadline.DESTROY_BUDGET_MS` |
+| Geri kalan bütün yok etme beklemeleri (e-posta 421 kuyruğu, push, kod girişi, olay bildirimi, elle kontrol havuzu, bildirim havuzlarının kendisi, önbellek yolunun son yayını) | birlikte ≤ 10 sn | `config/ShutdownDeadline.DESTROY_BUDGET_MS` |
 | **Toplam** | **≈ 100 sn < 120 sn** | Helm `terminationGracePeriodSeconds` (120) |
 
 Birini büyütürseniz grace'i de büyütün: `preStop + boşaltma + 2 × aşama + zamanlanmış bekleme + 10 < grace` (yeni bir
@@ -681,7 +681,20 @@ bakımı, pasif / silinmiş hesap kapısı ve bildirim alıcı süzgeci bu yolda
   ```
   `yoklanamadı` / `yayını başarısız` / `denemede yayınlanamadı` = veritabanı sorunu (en çok dakikada bir WARN; o arada
   önbellekler TTL ile tazelenir). Tablonun henüz olmaması yalnız ilk açılışın ilk saniyelerinde normaldir (DEBUG düzeyinde
-  yazılır).
+  yazılır; tablo yoksa pod 30 sn'de bir yeniden bakar, açılış yaması kurunca hemen devreye girer).
+- **Yayın kilidi:** her yayın önce `_global` satırını kilitler; PostgreSQL'de en çok 0,5 sn bekler (`lock_timeout`), sonra
+  geri çekilip yeniden dener. "yayını başarısız … lock timeout" sürekli görünüyorsa o satırı tutan ölü bir oturum vardır:
+  ```sql
+  SELECT pid, state, xact_start, application_name, left(query, 80) FROM pg_stat_activity
+   WHERE state LIKE 'idle in transaction%' ORDER BY xact_start;      -- uzun süredir açık işlemi bulun, gerekirse:
+  -- SELECT pg_terminate_backend(<pid>);
+  ```
+- İstek, yayının yeni kuşağını en çok 0,25 sn bekler; veritabanı yavaşsa yanıt `X-Cache-Gen` başlığı olmadan gider (yayın
+  yine yapılır, yalnız "kaydettiğim veriyi öteki pod'da hemen gör" garantisi o istek için düşer — TTL / sonraki yoklama).
+  İstek iş parçacığı veritabanına hiç dokunmaz.
+- Öteki pod'un boşaltması ucuzdur (veritabanı okumaz; ör. bakım pencereleri yalnız "bayat" işaretlenir, bir sonraki okuma
+  bir kez yeniden yükler). Hata veren bir boşaltma o adı uygulanmamış bırakır ve her yoklamada yeniden denenir (günlükte
+  `Önbellek yolu: yerel boşaltma başarısız (<ad>)`).
 - **Durum:** `SELECT name, generation, updated_at FROM cache_bus ORDER BY updated_at DESC;` — `_global` her yayında artar.
 - Tabloyu elle silmek / boşaltmak güvenlidir (pod'lar satırları yeniden kurar, kayıp boşaltmalar TTL ile tazelenir).
 - **Kapatmak:** `site.monitor.cache-bus.enabled=false` (önbellekler yine TTL ile; tek pod davranışı aynı). Yoklama aralığı
