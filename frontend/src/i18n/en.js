@@ -6880,7 +6880,6 @@ export const EN = {
   'usr.forcedPwdVerify':         'Your temporary password (from email)',
   'usr.formConfirmPwd':          'New Password (Confirm)',
   'usr.pwdMismatch':             'Passwords don’t match',
-  'usr.pwdLengthRule':           'Password must be 6-10 characters',
   // ── 20.166 bugfix · PKG-8a ──
   'health.statsUnavailable': "This information could not be read — the value is unknown. Refresh the page; if it persists, check the server log.",
   'settings.globalOnlyBodyOrg': "This section is an organisation-wide setting and cannot be viewed or changed with a team-scoped administrator account. Ask a global administrator to make changes.",
@@ -20976,7 +20975,6 @@ export const EN = {
   'te.appr.noteRequired': "Write a reason to reject.",
   'te.appr.approved': "The report was approved and sent to the executives ({0}).",
   'te.appr.approvedQueued': "The report was approved; the mail server is retrying delivery to the executives.",
-  'te.appr.approvedNotSent': "The report was approved, but it could not be sent to the executives ({0}). Try again with \"Send to executives\".",
   'te.appr.rejected': "The report was rejected; the team received your note by e-mail.",
   'te.appr.decideError': "The decision could not be recorded. Reload the page and check the state; if it keeps failing, tell a system administrator.",
   'te.appr.sendExec': "Send to executives",

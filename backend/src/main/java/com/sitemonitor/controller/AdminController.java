@@ -3426,7 +3426,10 @@ public class AdminController {
         Map<String, Integer> moved = teamAdminService.moveAll(id, target);
         auditService.recordAction("TEAM_MOVE_ASSETS", session, request, "TEAM", id.toString(),
                 AuditDetail.of("from", fromName, "to", toName, "to_id", target, "domains", moved.get("domains"),
-                        "monitors", moved.get("monitors"), "users", moved.get("users"), "contacts", moved.get("contacts"), "groups", moved.get("groups")));
+                        "monitors", moved.get("monitors"), "users", moved.get("users"), "contacts", moved.get("contacts"), "groups", moved.get("groups"),
+                        // Takım belgeleri (2026-10-22, ADMIN-1): kanal teknik hata raporları, şablon kütüphanesi, bakım pencereleri
+                        "te_channels", moved.get("te_channels"), "te_reports", moved.get("te_reports"),
+                        "te_templates", moved.get("te_templates"), "maintenance_windows", moved.get("maintenance_windows")));
         return ok(Map.of("data", moved));
     }
 
@@ -3502,8 +3505,10 @@ public class AdminController {
         Map<String, Object> impact = teamAdminService.impact(id);
         if (impact != null && !impact.isEmpty() && !Boolean.TRUE.equals(impact.get("empty"))) {
             throw new IllegalStateException(com.sitemonitor.util.Msg.t(
-                    "Bu takıma bağlı alan adı, izleme, kişi ya da bildirim grubu var — önce başka bir takıma taşıyın.",
-                    "This team still has domains, monitors, people or notification groups — move them to another team first."));
+                    "Bu takıma bağlı alan adı, izleme, kişi, bildirim grubu, teknik hata raporu kanalı / şablonu ya da süren"
+                            + " bakım penceresi var — önce başka bir takıma taşıyın.",
+                    "This team still has domains, monitors, people, notification groups, technical error report channels /"
+                            + " templates or live maintenance windows — move them to another team first."));
         }
         userService.deleteTeam(id);
         if (onCallService != null) onCallService.deleteForTeam(id);

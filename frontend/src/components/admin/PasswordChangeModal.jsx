@@ -83,6 +83,8 @@ export default function PasswordChangeModal({ mode, targetUser, onClose, onSucce
   const [confirmPwd, setConfirmPwd] = useState('')
   const [saving, setSaving]         = useState(false)
   const [msg, setMsg]               = useState(null)
+  // Sunucunun YENİ parola alanı hatası (`field: "password"`, ör. baştaki / sondaki boşluk — AUTH-7) alanın altında gösterilir
+  const [newPwdErr, setNewPwdErr]   = useState(null)
   const strengthId = useId()
 
   const isForced       = mode === 'forced-change'
@@ -112,6 +114,9 @@ export default function PasswordChangeModal({ mode, targetUser, onClose, onSucce
           setMsg(t('usr.pwdReused'))
         } else if (lengthMsg) {
           setMsg(lengthMsg)
+        } else if (res?.field === 'password' && err) {
+          setMsg(null)
+          setNewPwdErr(err)
         } else {
           setMsg(err || t('pwd.changeFailed'))
         }
@@ -148,13 +153,13 @@ export default function PasswordChangeModal({ mode, targetUser, onClose, onSucce
         )}
       </Field>
       {/* maxLength YOK: tarayıcı fazlasını sessizce keserdi (parola değişirdi); fazla uzunluk görünür uyarıyla söylenir */}
-      <Field label={t('usr.formNewPwd')} required hintTone={tooLong ? 'warn' : undefined}
-        hint={tooLong ? t('pwd.tooLong', PWD_MAX_LENGTH) : t('pwd.lengthRule', PWD_MIN_LENGTH, PWD_MAX_LENGTH)}>
+      <Field label={t('usr.formNewPwd')} required hintTone={tooLong || newPwdErr ? 'warn' : undefined}
+        hint={tooLong ? t('pwd.tooLong', PWD_MAX_LENGTH) : (newPwdErr || t('pwd.lengthRule', PWD_MIN_LENGTH, PWD_MAX_LENGTH))}>
         {({ id, describedBy }) => (
           <>
-            <Input id={id} type="password" value={newPwd} aria-invalid={tooLong || undefined}
+            <Input id={id} type="password" value={newPwd} aria-invalid={tooLong || !!newPwdErr || undefined}
               aria-describedby={[describedBy, newPwd ? strengthId : null].filter(Boolean).join(' ') || undefined}
-              onChange={(e) => setNewPwd(e.target.value)} autoComplete="new-password" />
+              onChange={(e) => { setNewPwd(e.target.value); setNewPwdErr(null) }} autoComplete="new-password" />
             <PwdStrengthMeter pwd={newPwd} t={t} id={strengthId} />
           </>
         )}

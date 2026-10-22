@@ -62,6 +62,8 @@ describe('mailLogoVariant — backend BrandMailAssets.variantForLevel ile aynı 
   it('çözülme maili daima ok', () => {
     expect(mailLogoVariant({ trigger: 'RESOLUTION', level: 'CRITICAL' })).toBe('ok')
     expect(mailLogoVariant({ trigger: 'resolution' })).toBe('ok')
+    // Elle çözüm postası (MANUAL_RESOLVE) da yeşil — SMTP günlüğü önizlemesi alarm geçmişiyle aynı (2026-10-22)
+    expect(mailLogoVariant({ trigger: 'MANUAL_RESOLVE', level: 'CRITICAL' })).toBe('ok')
   })
 
   it('CRITICAL alarm critical, diğer tüm seviyeler warning', () => {

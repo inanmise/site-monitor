@@ -1751,6 +1751,35 @@ class AdminControllerTest {
     }
 
     @Test
+    @DisplayName("ADMIN-1: silme reddi takım belgelerini de adlandırır; taşıma denetimi kanal / şablon / bakım sayılarını taşır")
+    void teamDocuments_deleteTextAndMoveAudit() throws Exception {
+        when(teamAdminService.impact(7L)).thenReturn(Map.of("te_channels", Map.of("count", 1), "empty", false));
+        mvc.perform(delete("/api/admin/teams/7").session(authSession()))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("teknik hata raporu kanalı")))
+                .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("bakım penceresi")));
+        verify(userService, never()).deleteTeam(7L);
+
+        com.sitemonitor.model.Team a = new com.sitemonitor.model.Team(); a.setId(7L); a.setName("Takım A");
+        com.sitemonitor.model.Team b = new com.sitemonitor.model.Team(); b.setId(9L); b.setName("Takım B");
+        when(teamRepo.findById(7L)).thenReturn(Optional.of(a));
+        when(teamRepo.findById(9L)).thenReturn(Optional.of(b));
+        java.util.Map<String, Integer> moved = new java.util.LinkedHashMap<>();
+        moved.put("domains", 0); moved.put("te_channels", 2); moved.put("te_reports", 5);
+        moved.put("te_templates", 1); moved.put("maintenance_windows", 3);
+        when(teamAdminService.moveAll(7L, 9L)).thenReturn(moved);
+        mvc.perform(post("/api/admin/teams/7/move").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"target_team_id\":9}"))
+                .andExpect(status().isOk());
+        org.mockito.ArgumentCaptor<String> detail = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(auditService).recordAction(eq("TEAM_MOVE_ASSETS"), any(jakarta.servlet.http.HttpSession.class),
+                any(jakarta.servlet.http.HttpServletRequest.class), eq("TEAM"), eq("7"), detail.capture());
+        org.assertj.core.api.Assertions.assertThat(detail.getValue())
+                .contains("\"te_channels\":2").contains("\"te_reports\":5")
+                .contains("\"te_templates\":1").contains("\"maintenance_windows\":3");
+    }
+
+    @Test
     @DisplayName("POST/DELETE /teams/{id}/members: üyelik kümesi updateUser ile yazılır; son takım çıkarılamaz (409)")
     void teamMembers() throws Exception {
         AppUser u = new AppUser(); u.setId(42L); u.setUsername("ali"); u.setSystemRole("USER"); u.setTeamId(9L);

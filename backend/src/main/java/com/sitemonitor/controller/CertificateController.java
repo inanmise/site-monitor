@@ -698,7 +698,9 @@ public class CertificateController {
         if (inv == null) return notFoundBody();
 
         LatestCheck lc = latestCheckRepo.findById(domain).orElse(null);
-        boolean hasPageMonitor = pageMonitorRepo.existsByUrlContainingIgnoreCaseAndActiveTrue(domain);
+        // DATA-9 (2026-10-22): host TAM eşleşmesi — LIKE %domain% başka host'un (www., internet…) sayfa izlemesini de
+        // buluyor, "sayfa izlemesi ekleyin" önerisini yanlışlıkla gizliyordu.
+        boolean hasPageMonitor = pageMonitorRepo.existsActiveForHost(domain);
         var result = healthService.evaluate(lc, inv, hasPageMonitor);
 
         Map<String, Object> out = new LinkedHashMap<>();

@@ -6894,7 +6894,6 @@ export const TR = {
   'usr.forcedPwdVerify':         'Geçici şifreniz (email\'den)',
   'usr.formConfirmPwd':          'Yeni Şifre (Tekrar)',
   'usr.pwdMismatch':             'Şifreler eşleşmiyor',
-  'usr.pwdLengthRule':           'Şifre 6-10 karakter olmalıdır',
   // ── 20.166 bugfix · PKG-8a ──
   'health.statsUnavailable': "Bu bilgi okunamadı — değer bilinmiyor. Sayfayı yenileyin; sürerse sunucu günlüğüne bakın.",
   'settings.globalOnlyBodyOrg': "Bu bölüm kurum geneli bir ayardır; takım-kapsamlı yönetici hesabıyla görüntülenemez ve değiştirilemez. Değişiklik için global yöneticiye başvurun.",
@@ -21010,7 +21009,6 @@ export const TR = {
   'te.appr.noteRequired': "Reddetmek için gerekçe yazın.",
   'te.appr.approved': "Rapor onaylandı ve yöneticilere gönderildi ({0}).",
   'te.appr.approvedQueued': "Rapor onaylandı; posta sunucusu yöneticilere teslimi yeniden deniyor.",
-  'te.appr.approvedNotSent': "Rapor onaylandı; ancak yöneticilere gönderilemedi ({0}). \"Yöneticilere gönder\" ile yeniden deneyin.",
   'te.appr.rejected': "Rapor reddedildi; ekip notunuzu e-postayla aldı.",
   'te.appr.decideError': "Karar kaydedilemedi. Sayfayı yenileyip durumu kontrol edin; sorun sürerse sistem yöneticisine bildirin.",
   'te.appr.sendExec': "Yöneticilere gönder",

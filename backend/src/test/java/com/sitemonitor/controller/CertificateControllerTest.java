@@ -631,6 +631,27 @@ class CertificateControllerTest {
     }
 
     @Test
+    @DisplayName("DATA-9: karışık içerik satırının kaynağı host TAM eşleşmesiyle — başka host'un sayfa izlemesi sayılmaz")
+    void health_pageMonitorFlagUsesExactHost() throws Exception {
+        when(inventoryRepo.findByDomain("a.example.com")).thenReturn(java.util.Optional.of(invOf(5L, 443)));
+        when(latestCheckRepo.findById("a.example.com")).thenReturn(java.util.Optional.of(latestOf()));
+        // LIKE %a.example.com% başka host'u (www.a.example.com) bulur — eski kod bunu "sayfa izlemesi var" sayıyordu
+        when(pageMonitorRepo.existsByUrlContainingIgnoreCaseAndActiveTrue("a.example.com")).thenReturn(true);
+        when(pageMonitorRepo.existsActiveForHost("a.example.com")).thenReturn(false);
+
+        mvc.perform(get("/api/certificates/a.example.com/health").session(teamSession(5L)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.rows[?(@.key=='mixedContent')].evidence.source")
+                        .value(org.hamcrest.Matchers.contains("onDemand")));
+
+        when(pageMonitorRepo.existsActiveForHost("a.example.com")).thenReturn(true);
+        mvc.perform(get("/api/certificates/a.example.com/health").session(teamSession(5L)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.rows[?(@.key=='mixedContent')].evidence.source")
+                        .value(org.hamcrest.Matchers.contains("pageMonitor")));
+    }
+
+    @Test
     @DisplayName("SÖZLEŞME: yanıttaki satır anahtarları çekirdeğin kanonik listesiyle birebir")
     void health_rowKeysMatchCanonicalContract() throws Exception {
         when(inventoryRepo.findByDomain("a.example.com")).thenReturn(java.util.Optional.of(invOf(5L, 443)));

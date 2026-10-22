@@ -183,6 +183,20 @@ describe('PasswordChangeModal', () => {
     await waitFor(() => expect(screen.getByRole('alert').textContent).toBe(EN['pwd.tooShort'].replace('{0}', '12')))
   })
 
+  it('AUTH-7: sunucunun yeni parola alan hatası (field: password) YENİ PAROLA alanının altında; yazınca kalkar', async () => {
+    const text = 'The password can't start or end with a space: remove the spaces and try again.'
+    api.me.changePassword.mockResolvedValue({ success: false, code: 'VALIDATION_FAILED', field: 'password', error: text })
+    render(<PasswordChangeModal mode="self" targetUser={USER} onClose={() => {}} />)
+    const inputs = fill(null, { next: 'yeni12 ', confirm: 'yeni12 ' })
+    fireEvent.click(submitBtn())
+    await waitFor(() => expect(inputs[1]).toHaveAttribute('aria-invalid', 'true'))
+    const describedBy = inputs[1].getAttribute('aria-describedby').split(' ')
+    expect(describedBy.some((id) => document.getElementById(id)?.textContent === text)).toBe(true)
+    expect(screen.queryByRole('alert')).toBeNull()
+    fireEvent.change(inputs[1], { target: { value: 'yeni12' } })
+    expect(inputs[1]).not.toHaveAttribute('aria-invalid')
+  })
+
   it('serverLengthMessage: kısa / uzun / ilgisiz ileti', () => {
     const t = (k, n) => `${k}:${n}`
     expect(serverLengthMessage('Password too long (max 40 chars)', t)).toBe('pwd.tooLong:40')

@@ -86,6 +86,9 @@ public class OnCallController {
                         "A schedule can have at most " + OnCallService.MAX_MEMBERS + " people."));
             }
             for (Object o : list) {
+                // Silinmiş hesabın görünümdeki kimliği null'dır (K11, 2026-10-22) — eski istemci onu geri yollar; servis
+                // silinmiş üyeleri zaten düşürür. Boş olmayan ama bilinmeyen kimlik 400 kalır.
+                if (o == null) continue;
                 Long id = UserPublicIds.resolve(userPublicIds, o, session);
                 if (id == null) {
                     throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException("members", Msg.t(

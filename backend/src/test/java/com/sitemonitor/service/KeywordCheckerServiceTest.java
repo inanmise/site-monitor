@@ -247,16 +247,16 @@ class KeywordCheckerServiceTest {
     // ── CHECKS-3 (2026-10-22): "İ" küçültülünce 2 karakter olur — alıntı konumu özgün metne çevrilmeli ──────────
 
     @Test
-    @DisplayName("CHECKS-3: 100 × 'İ' + abc + akbank (harf duyarsız) → bulundu, hata YOK, alıntıda anahtar kelime var")
+    @DisplayName("CHECKS-3: 100 × 'İ' + abc + acmebank (harf duyarsız) → bulundu, hata YOK, alıntıda anahtar kelime var")
     void check_turkishDottedI_beforeMatch_neverFailsAndSnippetHasKeyword() throws IOException {
-        HttpServer server = serve("İ".repeat(100) + "abc" + "akbank");
+        HttpServer server = serve("İ".repeat(100) + "abc" + "acmebank");
         try {
             Map<String, Object> r = newChecker()
-                    .check("http://127.0.0.1:" + server.getAddress().getPort() + "/", "akbank", 3000);
+                    .check("http://127.0.0.1:" + server.getAddress().getPort() + "/", "acmebank", 3000);
             assertThat(r.get("error")).isNull();
             assertThat(r.get("found")).isEqualTo(true);
             assertThat(r.get("count")).isEqualTo(1);
-            assertThat((String) r.get("snippet")).contains("akbank");
+            assertThat((String) r.get("snippet")).contains("acmebank");
         } finally {
             server.stop(0);
         }
@@ -265,13 +265,13 @@ class KeywordCheckerServiceTest {
     @Test
     @DisplayName("CHECKS-3: eşleşmeden önceki 'İ'ler alıntıyı kaydırmaz — uzun gövdede alıntı anahtar kelimeyi içerir")
     void check_turkishDottedI_snippetNotShifted() throws IOException {
-        String body = "GİRİŞ İLETİŞİM BİREYSEL İŞLEMLER ".repeat(6) + "DURUM: TAMAM akbank " + "x".repeat(300);
+        String body = "GİRİŞ İLETİŞİM BİREYSEL İŞLEMLER ".repeat(6) + "DURUM: TAMAM acmebank " + "x".repeat(300);
         HttpServer server = serve(body);
         try {
             Map<String, Object> r = newChecker()
-                    .check("http://127.0.0.1:" + server.getAddress().getPort() + "/", "akbank", 3000);
+                    .check("http://127.0.0.1:" + server.getAddress().getPort() + "/", "acmebank", 3000);
             assertThat(r.get("error")).isNull();
-            assertThat((String) r.get("snippet")).contains("akbank").contains("DURUM");
+            assertThat((String) r.get("snippet")).contains("acmebank").contains("DURUM");
         } finally {
             server.stop(0);
         }
