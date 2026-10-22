@@ -1608,6 +1608,15 @@ public class MonitoringOutageService {
             return;
         }
         boolean change = isChangeType(item.alertType());
+        // İnceleme J-2 (2026-10-23, çok pod R2a): zincir sürerken türün alarm bildirimleri KAPATILDIYSA yeni alarm açılmaz
+        // (kapalı türün açık alarmı uzlaştırmada zaten sessizce kapanır; açılsaydı INITIAL / eskalasyon adımı gidiyordu).
+        // Değişiklik türünün bekleyen satırı SUPPRESSED olur (bilerek alarmlanmadı). Kurtarma ve elle kontrol kuralları aynı.
+        if (!alertEnabled(item.alertType())) {
+            log.info("Teyit tamamlandı ama {} türünün alarm bildirimleri kapalı — alarm açılmadı: {}", item.alertType(), key);
+            if (change) markChange(item, ChangeStates.SUPPRESSED);
+            releaseChain(key, chainId);
+            return;
+        }
         // SOAK-1 (2026-10-22): zincir şüphe AÇILMADAN önce başladıysa (pencere bir turun sağlıklı sonuçlarını hâlâ taşıyordu)
         // ve teyit bittiğinde tür için ağ kesintisi şüphesi açıksa ağ-sınıfı hata yeni alarm AÇMAZ — bastırma yalnız yeni
         // alarmı durdurur (kurtarma sürer). Şüphe kalkınca sonraki DOWN turu yeniden teyit eder. Değişiklik türü hariç.
@@ -1870,15 +1879,17 @@ public class MonitoringOutageService {
             phase = org.springframework.transaction.event.TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
     public void onSettingsChanged(AppSettingsChangedEvent ev) {
         if (ev == null) return;
-        // MP-44 (2026-10-23, çok pod R2a): başka pod'un kaydını DB tazelemesinde ({@code source="refresh"}, ~10 sn) fark eden
-        // pod uzlaştırmayı YİNELEMEZ — kaydı yapan pod koşturur (kilit altında), açılış uzlaştırması da her pod açılışında
-        // kilit altında koşar (kayıttan hemen sonra ölen pod yeniden başlarken telafi eder).
-        if ("refresh".equals(ev.source())) return;
         boolean relevant = ev.changedKeys() == null || ev.changedKeys().isEmpty() || ev.changedKeys().stream()
                 .anyMatch(k -> k != null && (k.endsWith(".alert-enabled") || "site.monitor.scripted.enabled".equals(k)));
         if (!relevant) return;
+        // MP-44 (2026-10-23, çok pod R2a): kaydı yapan pod kilit meşgulken yeniden dener; başka pod'un kaydını DB tazelemesinde
+        // ({@code source="refresh"}, ~10 sn) gören pod da TEK deneme yapar (kilit altında, idempotent — push yalnız kapatanda):
+        // kaydı yapan pod'un turundan SONRA biten teyit zincirlerinin (lider) açtığı alarmlar da kapanır (inceleme J-2).
+        boolean refresh = "refresh".equals(ev.source());
         try {
-            settingsReconcileExecutor.execute(() -> closeAlarmsOfDisabledTypesWithRetry("ayar değişikliği"));
+            settingsReconcileExecutor.execute(refresh
+                    ? () -> closeAlarmsOfDisabledTypes("ayar tazelemesi")
+                    : () -> closeAlarmsOfDisabledTypesWithRetry("ayar değişikliği"));
         } catch (Exception ex) {
             log.warn("Kapalı türlerin alarm uzlaştırması kuyruğa alınamadı: {}", ex.getMessage());
         }
