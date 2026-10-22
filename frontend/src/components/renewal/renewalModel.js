@@ -154,3 +154,34 @@ export function tagFacetOptions(advice, noneLabel) {
   if (none && noneLabel) opts.push({ value: NONE, label: noneLabel, count: none })
   return opts
 }
+
+/** Yerel plan geçersiz kılmasının en uzun ömrü — sunucu yanıtı bu süre içinde yakalamazsa yine sunucu kazanır. */
+export const PLAN_OVERRIDE_TTL_MS = 120_000
+
+/**
+ * Bu oturumda kaydedilen / kaldırılan planların yerel geçersiz kılmaları (`plans[domain]`: plan nesnesi ya da `null`)
+ * sunucu listesi geldikçe ayıklanır (2026-10-22, son inceleme FE-8). Sunucu YAKALADIYSA (aynı tarih / plan yok), satır listede
+ * yoksa ya da geçersiz kılma `PLAN_OVERRIDE_TTL_MS`'den eskiyse düşer — sonra başkasının eklediği / değiştirdiği plan görünür.
+ * Bayat önbellekten dönen eski plan ise kısa süre geçersiz kılmayla örtülür (UIM-16). Değişiklik yoksa AYNI nesne döner.
+ * @param {Record<string, object|null>} plans
+ * @param {object[]} advice sunucu satırları (`domain`, `renewal_planned_at`)
+ * @param {Record<string, number>} stamps alan adı → geçersiz kılmanın yazıldığı an (ms)
+ */
+export function reconcilePlanOverrides(plans, advice, stamps = {}, now = Date.now()) {
+  const keys = Object.keys(plans || {})
+  if (!keys.length) return plans
+  const byDomain = new Map((advice || []).map((a) => [a?.domain, a]))
+  let out = null
+  for (const d of keys) {
+    const row = byDomain.get(d)
+    const ov = plans[d]
+    const server = row?.renewal_planned_at || null
+    const caught = !row || (ov == null ? !server : server === (ov.renewal_planned_at || null))
+    const expired = stamps[d] != null && now - stamps[d] > PLAN_OVERRIDE_TTL_MS
+    if (caught || expired) {
+      if (!out) out = { ...plans }
+      delete out[d]
+    }
+  }
+  return out || plans
+}

@@ -252,6 +252,31 @@ describe('RenewalAdvice — yeniden tasarım', () => {
     expect(within(again).getByRole('textbox', { name: /Not|Note/ })).toHaveValue('')
   })
 
+  // FE-8 (son inceleme): sunucu kaldırmayı yakalayınca yerel "plan yok" kaydı düşer — başkasının SONRADAN eklediği plan,
+  // sayfa yeniden açılmadan Yenile ile görünür (eskiden null kaydı oturum boyu kalıyor, yeni plan gizleniyordu)
+  it('kaldırılan plan sunucuda da yoksa yerel kayıt düşer; başkasının sonra eklediği plan Yenile ile görünür', async () => {
+    const withPlan = (at, note) => ({ success: true, timestamp: '2026-09-26T09:30:00', data: DATA.map((a) => (a.domain === 'd10.example.com'
+      ? { ...a, renewal_planned_at: at, renewal_planned_note: note } : a)) })
+    api.getRenewalAdvice
+      .mockResolvedValueOnce(withPlan('2026-10-20', 'CSR onayda'))
+      .mockResolvedValueOnce({ success: true, timestamp: '2026-09-26T09:31:00', data: DATA })
+      .mockResolvedValueOnce(withPlan('2026-11-05', 'Başka ekip planladı'))
+    api.forecastUnplan.mockResolvedValue({ success: true, data: { domain: 'd10.example.com', renewal_planned_at: null } })
+    render(<RenewalAdvice />)
+    const card = () => screen.getByText('d10.example.com').closest('[data-slot="renewal-card"]')
+    await screen.findByText('d10.example.com')
+    fireEvent.click(screen.getByRole('button', { name: 'd10.example.com — Plan renewal' }))
+    const dlg = await screen.findByRole('dialog')
+    fireEvent.click(within(dlg).getByRole('button', { name: 'Remove plan' }))
+    const confirm = await screen.findByRole('dialog', { name: 'Remove this plan?' })
+    fireEvent.click(within(confirm).getByRole('button', { name: 'Remove plan' }))
+    await waitFor(() => expect(api.getRenewalAdvice).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(card().querySelector('[data-slot="rn-planned"]')).toBeNull())
+    fireEvent.click(screen.getByRole('button', { name: /^(Refresh|Yenile)$/ }))
+    await waitFor(() => expect(api.getRenewalAdvice).toHaveBeenCalledTimes(3))
+    await waitFor(() => expect(card().querySelector('[data-slot="rn-planned"]')).not.toBeNull())
+  })
+
   // UIM-11: satır başına plan kapısı (yönetim kapsamı — App verir); kapalı satırda düğme yok, kart ve tablo görünümünde
   it('canPlanRow false olan satırda "Planla" yok; diğer satırlarda var', async () => {
     render(<RenewalAdvice canPlanRow={(a) => a.domain !== 'd10.example.com'} />)
