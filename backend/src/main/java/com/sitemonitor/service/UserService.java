@@ -148,9 +148,36 @@ public class UserService {
         this.cacheBus = bus;
         if (bus != null) {
             bus.register(com.sitemonitor.service.cache.CacheBusNames.USER_GATE, () -> {
+                gateGeneration.incrementAndGet();
                 inactiveCache.clear();
                 activeSessionCache.clear();
             });
+        }
+    }
+
+    /**
+     * Kullanıcı kapısı önbelleklerinin kuşağı (son inceleme 2026-10-23, C-3): her boşaltma (yerel ya da öteki pod'dan) artırır;
+     * DB okumasından ÖNCE alınan kuşak değiştiyse okunan değer önbelleğe YAZILMAZ — boşaltmayla yarışan bir okuma eski pasiflik
+     * bayrağını / eski sid'i 5 sn geri getiremez (pasif kapısı + zorla oturum kapatma bir güvenlik kapısıdır).
+     */
+    private final java.util.concurrent.atomic.AtomicLong gateGeneration = new java.util.concurrent.atomic.AtomicLong();
+
+    /** Bu pod'da kapı önbelleğinden bir kullanıcıyı düşürür: hemen, kuşak artar, açık işlem varsa COMMIT sonrası bir kez daha. */
+    private void evictGateEntry(String key, boolean inactiveToo) {
+        Runnable evict = () -> {
+            gateGeneration.incrementAndGet();
+            if (inactiveToo) inactiveCache.remove(key);
+            activeSessionCache.remove(key);
+        };
+        evict.run();
+        if (org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()) {
+            org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+                    new org.springframework.transaction.support.TransactionSynchronization() {
+                        @Override
+                        public void afterCommit() {
+                            evict.run();
+                        }
+                    });
         }
     }
 
@@ -263,13 +290,14 @@ public class UserService {
         long now = System.currentTimeMillis();
         InactiveEntry e = inactiveCache.get(key);
         if (e != null && now - e.atMs() < inactiveCacheMs) return e;
+        long gen = gateGeneration.get();
         Optional<Boolean> flag = userRepo.findActiveFlagByUsername(username);
         boolean inactive = flag.map(a -> !Boolean.TRUE.equals(a)).orElse(false);
         // Boş projeksiyon iki şey olabilir: satır yok ya da aktiflik kolonu NULL (eski satır) — yalnız ilkinde "silinmiş".
         boolean gone = flag.isEmpty() && !userRepo.existsByUsername(username);
         InactiveEntry fresh = new InactiveEntry(inactive, gone, now);
         if (inactiveCache.size() > SESSION_MAP_MAX) inactiveCache.clear();
-        inactiveCache.put(key, fresh);
+        if (gateGeneration.get() == gen) inactiveCache.put(key, fresh);   // boşaltmayla yarıştıysa saklanmaz (C-3)
         return fresh;
     }
 
@@ -280,8 +308,7 @@ public class UserService {
     public void forgetUserCaches(String username) {
         String key = normalizeUsername(username);
         if (key == null) return;
-        inactiveCache.remove(key);
-        activeSessionCache.remove(key);
+        evictGateEntry(key, true);
         publishUserGate();
         if (inactiveRecipientGuard != null) {
             try { inactiveRecipientGuard.evict(); } catch (Exception ignored) { /* bildirim süzgeci best-effort */ }
@@ -582,9 +609,12 @@ public class UserService {
             // bayat kaydı (eski sid) yüzünden 401 alıp öldürülüyordu. Oturumu kapatmadan önce DB'den yeniden okunur.
         }
         // Sıcak yol: tam entity + EAGER teamIds join yerine tek-kolon projeksiyon (bkz. repo).
+        long gen = gateGeneration.get();
         String active = userRepo.findActiveSessionIdByUsername(username).orElse(null);
         if (activeSessionCache.size() > SESSION_MAP_MAX) activeSessionCache.clear();
-        activeSessionCache.put(key, new ActiveSidEntry(active, now));   // null sid de cache'lenir
+        if (gateGeneration.get() == gen) {
+            activeSessionCache.put(key, new ActiveSidEntry(active, now));   // null sid de cache'lenir; yarış → saklanmaz (C-3)
+        }
         return active != null && !active.equals(sessionId);
     }
 
@@ -595,17 +625,8 @@ public class UserService {
      */
     private void evictActiveSessionCache(String username) {
         String key = normalizeUsername(username);
-        activeSessionCache.remove(key);
+        evictGateEntry(key, false);   // hemen + COMMIT sonrası; kuşak artar (yarışan okuma eski sid'i saklamaz)
         publishUserGate();   // öteki pod'ların süpersede belleği (zorla oturum kapatma, rol değişikliği, çıkış)
-        if (org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()) {
-            org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
-                    new org.springframework.transaction.support.TransactionSynchronization() {
-                        @Override
-                        public void afterCommit() {
-                            activeSessionCache.remove(key);
-                        }
-                    });
-        }
     }
 
     /**
@@ -1205,10 +1226,7 @@ public class UserService {
      */
     private void onActiveChanged(AppUser u, boolean deactivated) {
         String key = normalizeUsername(u.getUsername());
-        if (key != null) {
-            inactiveCache.remove(key);
-            activeSessionCache.remove(key);
-        }
+        if (key != null) evictGateEntry(key, true);   // hemen + COMMIT sonrası (commit öncesi okuma eski bayrağı geri yazamaz)
         publishUserGate();
         if (inactiveRecipientGuard != null) inactiveRecipientGuard.evict();
         if (deactivated) {
