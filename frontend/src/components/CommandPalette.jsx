@@ -88,6 +88,8 @@ export default function CommandPalette({ tabs = [], onTabChange, globalAdmin, sy
   const [open, setOpen] = useState(false)
   const [q, setQ] = useState('')
   const [remote, setRemote] = useState([])
+  // Sunucu araması okunamadı (UIA-H8): eskiden "'x' için sonuç yok" deniyordu — kullanıcı kaydın olmadığını sanıyordu
+  const [searchFailed, setSearchFailed] = useState(false)
   const [loading, setLoading] = useState(false)
   const [certs, setCerts] = useState(null)      // alan → sertifika DTO'su; null = henüz yok/yükleniyor
   const [users, setUsers] = useState(null)      // kullanıcı dizini (yalnız admin) — açılış başına bir kez
@@ -162,9 +164,10 @@ export default function CommandPalette({ tabs = [], onTabChange, globalAdmin, sy
     userMoved.current = false   // yeni sorgu / açılış: vurgu yine ilk sonucu izler
     if (!open) { seq.current++; return undefined }
     const needle = q.trim()
-    if (needle.length < MIN_QUERY) { seq.current++; setRemote([]); setCerts(null); setLoading(false); return undefined }
+    if (needle.length < MIN_QUERY) { seq.current++; setRemote([]); setCerts(null); setLoading(false); setSearchFailed(false); return undefined }
     const my = ++seq.current
     setLoading(true)
+    setSearchFailed(false)
     setExpanded(new Set())
     const h = setTimeout(async () => {
       const certReq = Promise.resolve()
@@ -174,8 +177,10 @@ export default function CommandPalette({ tabs = [], onTabChange, globalAdmin, sy
       try {
         const r = await api.search(needle)
         if (my !== seq.current) return
-        setRemote(r?.success && Array.isArray(r.data) ? r.data : [])
-      } catch { if (my === seq.current) setRemote([]) }
+        const ok = r?.success && Array.isArray(r.data)
+        setRemote(ok ? r.data : [])
+        setSearchFailed(!ok)
+      } catch { if (my === seq.current) { setRemote([]); setSearchFailed(true) } }
       finally { if (my === seq.current) setLoading(false) }
       await certReq
     }, HIT_SETTLE_MS)
@@ -396,7 +401,13 @@ export default function CommandPalette({ tabs = [], onTabChange, globalAdmin, sy
             </div>
 
             <CommandList className="min-h-0 flex-1 max-h-none scroll-py-2 overscroll-contain p-1.5 pb-[max(0.375rem,env(safe-area-inset-bottom))] md:max-h-[min(60vh,480px)] md:p-2 [&_[cmdk-group-heading]]:px-2.5 [&_[cmdk-group-heading]]:pt-2 [&_[cmdk-group-heading]]:pb-1 [&_[cmdk-group-heading]]:text-[11px] [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:tracking-wide [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:text-muted-foreground">
-              {!loading && (
+              {/* Arama düştüyse "sonuç yok" DENMEZ — sayfa / eylem eşleşmeleri yine listelenir */}
+              {!loading && active && searchFailed && (
+                <div data-slot="palette-search-failed" role="alert" className="px-1 pb-1.5">
+                  <StatusBlock tone="danger" icon={SearchX} className="py-4" title={t('palette.searchFailed')} />
+                </div>
+              )}
+              {!loading && !(active && searchFailed) && (
                 <CommandEmpty className="py-2">
                   <StatusBlock icon={SearchX} className="py-6 md:py-8"
                     title={active ? t('palette.noResultsFor', needle) : t('palette.hint')}

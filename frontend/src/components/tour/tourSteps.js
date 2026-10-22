@@ -13,7 +13,8 @@ export const isAdminCtx = (c) => c?.role === 'ADMIN' || c?.role === 'TEAM_ADMIN'
 
 export const MAIN_STEPS = [
   { id: 'welcome',   center: true, since: 1, help: '14.30' },
-  { id: 'sidebar',   target: 'nav-groups', placement: 'right', since: 1, help: '14.3', before: { reveal: 'dashboard' } },
+  // Yardım: menü / sekme dizini §14.2 (UIA-H6 — eskiden §14.3 "Giriş Ekranı" açılıyordu)
+  { id: 'sidebar',   target: 'nav-groups', placement: 'right', since: 1, help: '14.2', before: { reveal: 'dashboard' } },
   { id: 'dashboard', target: 'dash-stats', tab: 'dashboard', placement: 'bottom', since: 1, help: '14.4' },
   { id: 'filters',   target: 'dash-filters', tab: 'dashboard', placement: 'bottom', since: 1, help: '14.4' },
   { id: 'check-now', target: 'check-now', tab: 'dashboard', placement: 'bottom', since: 1, help: '14.4' },

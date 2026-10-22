@@ -26,8 +26,9 @@ export default function PaletteRow({ value, Icon, label, sub, meta, trailing, on
         {Icon ? <Icon /> : null}
       </span>
       <span className="flex min-w-0 flex-1 flex-col">
-        <span className="truncate text-sm font-medium">{label}</span>
-        {sub ? <span className="truncate text-xs text-muted-foreground">{sub}</span> : null}
+        {/* Adlar (alan adı, AD görünen adı) KESİLMEZ — telefonda benzer adlar ayırt edilsin (UIA-H9): sarar */}
+        <span className="text-sm font-medium [overflow-wrap:anywhere]">{label}</span>
+        {sub ? <span className="text-xs text-muted-foreground [overflow-wrap:anywhere]">{sub}</span> : null}
         {meta ? <span className="mt-1 flex flex-wrap items-center gap-1">{meta}</span> : null}
       </span>
       {trailing ? <span className="ml-auto flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">{trailing}</span> : null}

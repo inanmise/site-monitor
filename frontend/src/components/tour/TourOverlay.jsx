@@ -28,6 +28,10 @@ const LINK = 'h-auto gap-1 px-1 py-0.5 text-[.84em] font-semibold'
  * (kırık tur yerine eksik adım). Sekme geçişi, menü açma (`sm:nav-reveal`) ve modal kapatma adım
  * meta'sından (`tab`, `before`, `after`) sürülür. Konum her 200 ms ve kaydırma/boyut olayında tazelenir.
  */
+/** Tur tuşlarının KARIŞMADIĞI hedefler (UIA-H4): açık pencere / yan panel ve düğme / bağlantı (Enter kendi işini yapar). */
+const DIALOG_SEL = '[role=dialog],[role=alertdialog]'
+const INTERACTIVE_SEL = 'button,a[href],[role=button],[role=link]'
+
 export default function TourOverlay({ active, onNext, onPrev, onStop, navigate }) {
   const t = useT()
   const { steps, index, kind } = active
@@ -124,8 +128,13 @@ export default function TourOverlay({ active, onNext, onPrev, onStop, navigate }
     const onKey = (e) => {
       const a = keyAction(e)
       if (!a) return
-      // Balon içindeki düğmelere Enter normal davransın
-      if (a === 'next' && e.key === 'Enter' && tipRef.current?.contains(e.target)) return
+      const tgt = e.target instanceof Element ? e.target : null
+      const inTip = !!(tgt && tipRef.current?.contains(tgt))
+      // Tur sırasında açılan pencere / yan panel (ör. "Daha fazla" → yardım çekmecesi) kendi tuşlarını alır (UIA-H4): Esc
+      // pencereyi kapatır (turu değil), Enter düğmeyi çalıştırır, oklar turu çevirmez. Balonun kendisi bu kuralın dışında.
+      if (!inTip && tgt?.closest?.(DIALOG_SEL)) return
+      // Düğme / bağlantı üzerinde Enter normal davransın (balon içinde ya da sayfada — ör. "card" adımındaki aç düğmesi)
+      if (a === 'next' && e.key === 'Enter' && tgt !== tipRef.current && tgt?.closest?.(INTERACTIVE_SEL)) return
       e.preventDefault(); e.stopPropagation()
       if (a === 'next') { if (index >= total - 1) onStop('done'); else if (!step?.advanceOn) onNext() }
       else if (a === 'prev') onPrev()

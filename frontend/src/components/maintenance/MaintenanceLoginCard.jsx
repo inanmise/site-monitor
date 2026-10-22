@@ -35,26 +35,32 @@ export default function MaintenanceLoginCard({ status, sessionEnded = false }) {
       </Alert>
     )
   }
+  // Oturum bakımla kapandı ama sayfa açık kalırken bakım bitti ve YENİ bir pencere duyuruldu (`announced` / `warning`): kart
+  // o yaklaşan pencereyi "sürüyor" diye anlatıyor, "yalnız yöneticiler girer" diyordu — giriş açıkken (UIA-H10, 2026-10-22).
+  // "Oturum kapatıldı" kipi yalnız bakım sürerken (`active`) ya da durum bilinmiyorken; yaklaşan pencere normal kartla.
+  const upcomingAfterEnd = sessionEnded && (state === 'announced' || state === 'warning')
+  const ended = sessionEnded && !upcomingAfterEnd
   // Bakım bittiyse (public durum `none`) ama adres hâlâ ?session=maintenance: "yeniden giriş yapabilirsiniz"
-  const over = sessionEnded && status?.state === 'none'
-  const active = state === 'active' || (sessionEnded && !state && !over)
+  const over = ended && status?.state === 'none'
+  const active = state === 'active' || (ended && !state && !over)
   const win = windowText(status)
   const msg = messageFor(status, lang)
-  const title = sessionEnded ? t('sysmaint.login.titleEnded')
+  const title = ended ? t('sysmaint.login.titleEnded')
     : active ? t('sysmaint.login.titleActive') : t('sysmaint.login.titleUpcoming')
   return (
     <Alert variant={active ? 'warning' : 'info'} role="status" aria-live="polite" data-slot="login-maintenance"
-      data-state={sessionEnded ? 'ended' : state}>
+      data-state={ended ? 'ended' : state}>
       {active ? <Wrench aria-hidden="true" /> : <CalendarClock aria-hidden="true" />}
       <AlertTitle className="line-clamp-none font-bold">{title}</AlertTitle>
       <AlertDescription className="[overflow-wrap:anywhere]">
+        {upcomingAfterEnd && <span data-slot="login-maintenance-prev" className="block">{t('sysmaint.login.prevSessionEnded')}</span>}
         {win && (
           <span data-slot="login-maintenance-window" className="block">
-            {active || sessionEnded ? t('sysmaint.login.windowActive', win) : t('sysmaint.login.windowUpcoming', win)}
+            {active || ended ? t('sysmaint.login.windowActive', win) : t('sysmaint.login.windowUpcoming', win)}
           </span>
         )}
         <span className="block">
-          {over ? t('sysmaint.login.overHint') : active || sessionEnded ? t('sysmaint.login.onlyAdmins') : t('sysmaint.login.upcomingHint')}
+          {over ? t('sysmaint.login.overHint') : active || ended ? t('sysmaint.login.onlyAdmins') : t('sysmaint.login.upcomingHint')}
         </span>
         {msg && <span className="mt-1 block">{msg}</span>}
         {status?.contact && (

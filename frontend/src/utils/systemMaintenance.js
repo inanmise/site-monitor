@@ -94,7 +94,7 @@ export function onMaintenance(handler) {
 
 export function maintenanceSignaled() { return signaled }
 
-/** Test kancası: sayfa ömrü bayrağını sıfırlar. */
+/** Sayfa ömrü bayrağını sıfırlar — başarılı girişte (pages/Login completeLogin, UIA-H2) ve testlerde. */
 export function resetMaintenanceSignal() { signaled = false }
 
 /** Adres bakım bildirimi taşıyor mu (`?session=maintenance`)? */
