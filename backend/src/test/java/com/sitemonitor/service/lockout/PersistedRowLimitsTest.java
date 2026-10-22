@@ -96,9 +96,14 @@ class PersistedRowLimitsTest {
         String longIp = "f".repeat(80);
         report("LOGIN", longIp.substring(0, 50), NOW - 10_000L);
 
-        assertThat(limits.issueReports("LOGIN", "10.1.2.3", NOW - 3_600_000L)).isEqualTo(2);
-        assertThat(limits.issueReports("CLIENT_ERROR", " 10.1.2.3 ", NOW - 3_600_000L)).isEqualTo(1);
-        assertThat(limits.issueReports("LOGIN", longIp, NOW - 3_600_000L)).isEqualTo(1);
+        PersistedRowLimits.Reports login = limits.issueReports("LOGIN", "10.1.2.3", NOW - 3_600_000L);
+        assertThat(login.count()).isEqualTo(2);
+        assertThat(login.oldestMs()).as("ilk yerin boşalma anı = en eski + pencere").isEqualTo(NOW - 3_000_000L);
+        assertThat(limits.issueReports("CLIENT_ERROR", " 10.1.2.3 ", NOW - 3_600_000L).count()).isEqualTo(1);
+        assertThat(limits.issueReports("LOGIN", longIp, NOW - 3_600_000L).count()).isEqualTo(1);
+        PersistedRowLimits.Reports none = limits.issueReports("LOGIN", "10.0.0.250", NOW - 3_600_000L);
+        assertThat(none.count()).isZero();
+        assertThat(none.oldestMs()).isNull();
         assertThat(limits.issueReports("LOGIN", null, NOW - 3_600_000L)).isNull();
     }
 
