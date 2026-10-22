@@ -116,13 +116,22 @@ Bu bölüm prod 20.165 ya da öncesinden 20.166'ya ilk geçerken geçerlidir; so
   SELECT public_key_algorithm, public_key_size, count(*) FROM latest_checks
    WHERE public_key_algorithm ILIKE '%dsa%' OR public_key_size < 0 GROUP BY 1, 2;
   ```
+- [ ] **Geçiş sırasında elle "Şimdi kontrol et" yok** — eski (20.165) ve yeni pod'un birlikte çalıştığı pencerede eski pod'a düşen
+      elle sertifika kontrolü EC / keyEncipherment'sız RSA kaydını yeniden UNTRUSTED yazar; sonraki TLS profili turu bunu A → F
+      not DÜŞÜŞÜ sayar ve takıma "TLS notu düştü" postası + push gider. Takımlara dağıtım bitene (tüm pod'lar 20.166) kadar
+      kartlardan / toplu "Şimdi kontrol et" kullanmamalarını duyurun. Sertifika taramaları lidere bağlı DEĞİLDİR (kilidi alan
+      pod koşar): dağıtımı saat başından (`:00` saatlik tarama) uzak bir zamana koyun — taramayı eski pod alırsa etki aynıdır.
 - [ ] `SELECT count(*) FROM escalation_contacts;` — `webhook_url` TEXT'e genişler (`ALTER COLUMN … TYPE TEXT`); küçük tablo,
       kilit kaygısı yok (sayı binlerle ölçülmüyorsa ek bir şey gerekmez).
-- [ ] Davranış değişiklikleri duyuruldu: (1) bir kullanıcının **sistem rolü** gerçekten değiştirilince (ve yöneticinin "otomatik
-      parola sıfırlama"sında) o kişinin oturumu kapanır, yeni rolüyle yeniden girer; (2) **silinen kullanıcının** açık oturumu ve
+- [ ] Davranış değişiklikleri duyuruldu: (1) bir kullanıcının **sistem rolü** gerçekten değiştirilince (elle, yöneticinin "AD'den
+      yeniden eşitle"siyle ya da AD grup → rol eşlemesiyle; ve yöneticinin "otomatik parola sıfırlama"sında) o kişinin oturumu
+      kapanır, yeni rolüyle yeniden girer; (2) **silinen kullanıcının** açık oturumu ve
       "beni hatırla" çerezi bir sonraki istekte düşer; (3) kanal teknik hata raporu kanalı / şablonu ya da süren bakım penceresi
       olan **takım silinemez** — önce "Taşı"; (4) başında / sonunda boşluk olan yeni parola reddedilir (girişteki kırpma aynı);
-      (5) kapsamlı müdür başka takım için **haftalık rapor** açamaz (400, takım adımının altında gerekçe).
+      (5) kapsamlı müdür başka takım için **haftalık rapor** açamaz (400, takım adımının altında gerekçe); (6) 443 dışı portta
+      kontrol edilen sertifikanın "HTTP durumu" yalnız port HTTP konuşuyorsa (ALPN h2 / http/1.1 ya da bilinen HTTPS portu)
+      okunur — LDAPS / SMTPS / IMAPS satırlarında boş kalır; (7) DNS'te çözülemeyen alan adı (NXDOMAIN) toplu ağ kesintisi
+      oranına sayılmaz (sınıfı DNS, alarm seviyesi UYARI).
 
 ### Kapsam ve sürüm
 - [ ] Dağıtılan şey **tag'lenmiş sürüm** (`git checkout v$VERSION`); çalışma ağacındaki commit'lenmemiş iş
