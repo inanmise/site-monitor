@@ -264,6 +264,76 @@ class ScriptedSecretRevealControllerTest {
         assertThat(controller.tryAcquire("u:minute", t1 + ScriptedSecretRevealController.MINUTE_MS)).isZero();
     }
 
+    // ── Küme geneli sınır (2026-10-23, çok pod Sürüm 2a — MP-32) ──────────────────────────────────────────────
+
+    @Test
+    @DisplayName("MP-32: başka pod'larda bu dakika 10 gösterim (denetim kaydı) → bu pod'da İLK istek bile 429; Retry-After en eskiden; pod kuyruğuna yazılmaz")
+    void clusterMinuteLimit_otherPods() throws Exception {
+        var limits = org.mockito.Mockito.mock(com.sitemonitor.service.lockout.PersistedRowLimits.class);
+        long now = System.currentTimeMillis();
+        when(limits.secretReveals(eq(91L), eq("kullanici91"), org.mockito.ArgumentMatchers.anyLong(), eq(60_000L), eq(3_600_000L)))
+                .thenReturn(new com.sitemonitor.service.lockout.PersistedRowLimits.Window(10, now - 20_000L, 10, now - 20_000L));
+        controller.setRowLimits(limits);
+        try {
+            String body = mvc.perform(post(URL).session(base("ADMIN", 91L)))
+                    .andExpect(status().isTooManyRequests())
+                    .andExpect(jsonPath("$.code").value("RATE_LIMITED"))
+                    .andExpect(header().exists("Retry-After"))
+                    .andExpect(jsonPath("$.retry_after_seconds").value(org.hamcrest.Matchers.allOf(
+                            org.hamcrest.Matchers.greaterThanOrEqualTo(38), org.hamcrest.Matchers.lessThanOrEqualTo(42))))
+                    .andReturn().getResponse().getContentAsString();
+            assertThat(body).doesNotContain(SECRET);
+            verify(scriptedChecker, never()).revealSecret(any(), anyString());
+            @SuppressWarnings("unchecked")
+            var attempts = (java.util.Map<String, ?>) org.springframework.test.util.ReflectionTestUtils.getField(controller, "attempts");
+            assertThat(attempts).as("reddedilen istek pod kuyruğuna yazılmaz").doesNotContainKey("u:91");
+        } finally {
+            controller.setRowLimits(null);
+        }
+    }
+
+    @Test
+    @DisplayName("MP-32: son saatte 30 gösterim → 429, Retry-After = en eski + 1 sa (+1 sn yuvarlama) − şimdi")
+    void clusterHourLimit() {
+        var limits = org.mockito.Mockito.mock(com.sitemonitor.service.lockout.PersistedRowLimits.class);
+        long now = 5_000_000_000L;
+        when(limits.secretReveals(eq(92L), any(), eq(now), anyLongValue(), anyLongValue()))
+                .thenReturn(new com.sitemonitor.service.lockout.PersistedRowLimits.Window(2, now - 5_000L, 30, now - 3_000_000L));
+        controller.setRowLimits(limits);
+        try {
+            long retry = controller.clusterRetryAfter(base("ADMIN", 92L), now);
+            assertThat(retry).isEqualTo((3_600_000L - 3_000_000L + 1_000L) / 1000L);
+        } finally {
+            controller.setRowLimits(null);
+        }
+    }
+
+    @Test
+    @DisplayName("MP-32: sayım okunamadı (null) ya da sınırın altında → pod kuyruğu tek kapı (20.165.1 davranışı)")
+    void clusterUnreadable_localGateStillApplies() throws Exception {
+        var limits = org.mockito.Mockito.mock(com.sitemonitor.service.lockout.PersistedRowLimits.class);
+        when(limits.secretReveals(any(), any(), org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyLong(),
+                org.mockito.ArgumentMatchers.anyLong())).thenReturn(null);
+        controller.setRowLimits(limits);
+        try {
+            MockHttpSession admin = base("ADMIN", 93L);
+            for (int i = 0; i < ScriptedSecretRevealController.MAX_PER_MINUTE; i++) {
+                mvc.perform(post(URL).session(admin)).andExpect(status().isOk());
+            }
+            mvc.perform(post(URL).session(admin)).andExpect(status().isTooManyRequests());
+            when(limits.secretReveals(any(), any(), org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyLong(),
+                    org.mockito.ArgumentMatchers.anyLong()))
+                    .thenReturn(new com.sitemonitor.service.lockout.PersistedRowLimits.Window(3, 1L, 3, 1L));
+            mvc.perform(post(URL).session(base("ADMIN", 94L))).andExpect(status().isOk());
+        } finally {
+            controller.setRowLimits(null);
+        }
+    }
+
+    private static long anyLongValue() {
+        return org.mockito.ArgumentMatchers.anyLong();
+    }
+
     @Test
     @DisplayName("istek / yanıt günlüğü TRACE iken bile değer HİÇBİR günlük satırına düşmez (gövde atlandı izi var)")
     void valueNeverLogged() throws Exception {

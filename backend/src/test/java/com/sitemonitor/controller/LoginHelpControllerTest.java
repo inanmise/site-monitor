@@ -41,6 +41,7 @@ class LoginHelpControllerTest {
     private static final String EMAIL = "user@example.com";
 
     @Autowired MockMvc mvc;
+    @Autowired LoginHelpController controller;
 
     @MockitoBean AppSettingsService appSettings;
     @MockitoBean LoginIssueMailService loginIssueMailService;
@@ -218,5 +219,53 @@ class LoginHelpControllerTest {
     private void expect400(String body) throws Exception {
         mvc.perform(post("/api/login-help").contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isBadRequest());
+    }
+
+    // ── Küme geneli sınır (2026-10-23, çok pod Sürüm 2a — MP-33) ──────────────────────────────────────────────
+
+    @Test
+    @DisplayName("MP-33: diğer pod'lar bu IP'den son saatte 3 bildirimi KABUL ETTİ (kalıcı satır) → bu pod'daki ilk istek bile 429; reddedilen pod kuyruğuna yazılmaz")
+    void clusterLimit_otherPodsAlreadyAccepted() throws Exception {
+        var limits = org.mockito.Mockito.mock(com.sitemonitor.service.lockout.PersistedRowLimits.class);
+        when(clientIpResolver.resolve(any())).thenReturn("10.66.6.1");
+        when(limits.issueReports(eq("LOGIN"), eq("10.66.6.1"), anyLong())).thenReturn(3);
+        controller.setRowLimits(limits);
+        try {
+            String body = "{\"username\":\"N1\",\"email\":\"" + EMAIL + "\",\"message\":\"deneme\"}";
+            for (int i = 0; i < 3; i++) {
+                mvc.perform(post("/api/login-help").contentType(MediaType.APPLICATION_JSON).content(body))
+                        .andExpect(status().isTooManyRequests());
+            }
+            // Diğer pod'ların bildirimleri pencereden çıktı → bu pod tam sınırı kullanabilir (reddedilenler sayılmadı)
+            when(limits.issueReports(eq("LOGIN"), eq("10.66.6.1"), anyLong())).thenReturn(0);
+            for (int i = 0; i < 3; i++) {
+                mvc.perform(post("/api/login-help").contentType(MediaType.APPLICATION_JSON).content(body))
+                        .andExpect(status().isOk());
+            }
+            mvc.perform(post("/api/login-help").contentType(MediaType.APPLICATION_JSON).content(body))
+                    .andExpect(status().isTooManyRequests());   // pod kuyruğu hâlâ ilk kapı
+        } finally {
+            controller.setRowLimits(null);
+        }
+    }
+
+    @Test
+    @DisplayName("MP-33: sayım okunamadı (null) → pod kuyruğu tek kapı (20.165.1 davranışı)")
+    void clusterUnreadable_localDequeApplies() throws Exception {
+        var limits = org.mockito.Mockito.mock(com.sitemonitor.service.lockout.PersistedRowLimits.class);
+        when(clientIpResolver.resolve(any())).thenReturn("10.66.6.2");
+        when(limits.issueReports(any(), any(), anyLong())).thenReturn(null);
+        controller.setRowLimits(limits);
+        try {
+            String body = "{\"username\":\"N1\",\"email\":\"" + EMAIL + "\",\"message\":\"deneme\"}";
+            for (int i = 0; i < 3; i++) {
+                mvc.perform(post("/api/login-help").contentType(MediaType.APPLICATION_JSON).content(body))
+                        .andExpect(status().isOk());
+            }
+            mvc.perform(post("/api/login-help").contentType(MediaType.APPLICATION_JSON).content(body))
+                    .andExpect(status().isTooManyRequests());
+        } finally {
+            controller.setRowLimits(null);
+        }
     }
 }

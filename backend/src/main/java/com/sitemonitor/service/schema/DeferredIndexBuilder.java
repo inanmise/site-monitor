@@ -184,7 +184,11 @@ public final class DeferredIndexBuilder {
             // düz metin olduğundan genel plan da kullanabilir. Kurulana dek sorgu checked_at dizininde son 3 saati tarar.
             // PostgreSQL'e özgü (H2'de kısmi indeks yok — aralık sorgusu aynı sonucu verir).
             Spec.postgresOnly("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_dnsr_pending ON dns_records(checked_at)"
-                    + " WHERE change_state = 'PENDING'"));
+                    + " WHERE change_state = 'PENDING'"),
+            // 2026-10-23 (çok pod Sürüm 2a — MP-33): oturumsuz sorun bildirimi / istemci hatası uçlarının IP başına saatlik
+            // sınırı artık pod belleğinden değil kalıcı satırlardan sayılır — source = ? AND ip_address = ? AND reported_at >= ?
+            // (PersistedRowLimits.issueReports). Küçük tablo; kurulana dek idx_lir_reported_at aralığı taranır.
+            Spec.portable("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_lir_ip_reported ON login_issue_reports(ip_address, reported_at)"));
 
     /** Bir koşunun özeti. {@code locked=false} → kilit alınamadı, hiçbir şey denenmedi. */
     public record Result(int built, int rebuilt, int valid, int skipped, int failed, boolean locked, long millis) {}
