@@ -218,7 +218,8 @@ public class CertificateAppLayerProbe {
     /** Aktif sayfa izlemelerinin EN YENİ kontrolünden karışık içerik durumu; yoksa null. */
     private String fromPageMonitor(String domain) {
         try {
-            List<PageMonitor> monitors = pageMonitorRepo.findByUrlContainingIgnoreCaseAndActiveTrue(domain);
+            // Host TAM eşleşmesi (DATA-9): LIKE yalnız ön süzgeç — www.example.com ya da internetbank.com.tr bu kaydı beslemez
+            List<PageMonitor> monitors = pageMonitorRepo.findActiveForHost(domain);
             boolean sawResult = false;
             for (PageMonitor m : monitors) {
                 var last = pageCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(m.getId()).orElse(null);

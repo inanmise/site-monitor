@@ -24,8 +24,15 @@ public interface CertificateCheckRepository extends JpaRepository<CertificateChe
            OR upper(c.signatureAlgorithm) LIKE '%MD5%'
            OR upper(c.signatureAlgorithm) LIKE '%SHA1%'
            OR upper(c.signatureAlgorithm) LIKE '%SHA-1%'
-           OR ((upper(c.publicKeyAlgorithm) LIKE '%RSA%' OR upper(c.publicKeyAlgorithm) LIKE '%DSA%') AND c.publicKeySize < 2048)
-           OR (upper(c.publicKeyAlgorithm) LIKE '%EC%' AND c.publicKeySize < 256))
+           OR (c.publicKeySize > 0 AND c.publicKeySize < 2048
+               AND upper(c.publicKeyAlgorithm) NOT LIKE 'EC%'
+               AND upper(c.publicKeyAlgorithm) NOT LIKE '%EDDSA%' AND upper(c.publicKeyAlgorithm) NOT LIKE '%ED25519%'
+               AND upper(c.publicKeyAlgorithm) NOT LIKE '%ED448%' AND upper(c.publicKeyAlgorithm) NOT LIKE '%ML-DSA%'
+               AND upper(c.publicKeyAlgorithm) NOT LIKE '%MLDSA%' AND upper(c.publicKeyAlgorithm) NOT LIKE '%SLH-DSA%'
+               AND upper(c.publicKeyAlgorithm) NOT LIKE '%SLHDSA%' AND upper(c.publicKeyAlgorithm) NOT LIKE '%FN-DSA%'
+               AND upper(c.publicKeyAlgorithm) NOT LIKE '%FNDSA%'
+               AND (upper(c.publicKeyAlgorithm) LIKE '%RSA%' OR upper(c.publicKeyAlgorithm) LIKE '%DSA%'))
+           OR (c.publicKeySize > 0 AND upper(c.publicKeyAlgorithm) LIKE 'EC%' AND c.publicKeySize < 256))
         """)
     List<Object[]> weakObservationsSince(@Param("cutoff") String cutoff);
 

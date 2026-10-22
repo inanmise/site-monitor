@@ -715,4 +715,28 @@ class ChainValidationServiceTest {
         X509CertificateHolder holder = builder.build(signer);
         return new JcaX509CertificateConverter().getCertificate(holder);
     }
+
+    // ── DATA-14 (2026-10-22): crl_url sütuna (VARCHAR 255) sığar ─────────────────────────────────
+
+    private static final String LONG_LDAP_CDP = "ldap:///CN=Kurumsal%20Issuing%20CA%20G2%20Uzun%20Ad,CN=PKISRV01,"
+            + "CN=CDP,CN=Public%20Key%20Services,CN=Services,CN=Configuration,DC=corp,DC=ornek,DC=com,DC=tr"
+            + "?certificateRevocationList?base?objectClass=cRLDistributionPoint&extra=" + "x".repeat(40);
+
+    @Test
+    @DisplayName("DATA-14: uzun LDAP CDP önce, HTTP CDP sonra → saklanan adres SIĞAN HTTP adresi")
+    void extractCrlUrl_prefersFirstUrlThatFits() throws Exception {
+        assertThat(LONG_LDAP_CDP.length()).isGreaterThan(255);
+        X509Certificate cert = generateCertWithCrlDp("crl-fit", LONG_LDAP_CDP, "http://pki.ornek.com.tr/crl/issuing.crl");
+        assertThat(service.extractCrlUrl(cert)).isEqualTo("http://pki.ornek.com.tr/crl/issuing.crl");
+    }
+
+    @Test
+    @DisplayName("DATA-14: hiçbir CDP sığmıyorsa ilki 255 karaktere kırpılır ('…'); kısa adres aynen")
+    void extractCrlUrl_clipsWhenNoneFits() throws Exception {
+        X509Certificate cert = generateCertWithCrlDp("crl-clip", LONG_LDAP_CDP);
+        String url = service.extractCrlUrl(cert);
+        assertThat(url).hasSize(255).endsWith("…").startsWith("ldap:///CN=Kurumsal");
+        assertThat(service.extractCrlUrl(generateCertWithCrlDp("crl-short", "http://a.test/c.crl"))).isEqualTo("http://a.test/c.crl");
+        assertThat(service.extractCrlUrl(generateCert("crl-none", 30))).isNull();
+    }
 }

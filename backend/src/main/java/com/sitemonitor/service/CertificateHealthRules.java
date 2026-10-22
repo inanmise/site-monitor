@@ -120,11 +120,37 @@ public final class CertificateHealthRules {
 
     /** RSA/DSA &lt; 2048 bit, EC &lt; 256 bit → FAIL (NIST SP 800-57 ile aynı çizgi). */
     public static Status keySizeStatus(String keyAlgorithm, Integer keySize) {
-        if (isBlank(keyAlgorithm) || keySize == null || keySize <= 0) return Status.UNKNOWN;
-        String up = keyAlgorithm.toUpperCase(Locale.ROOT);
-        if (up.contains("RSA") || up.contains("DSA")) return keySize < 2048 ? Status.FAIL : Status.OK;
-        if (up.contains("EC")) return keySize < 256 ? Status.FAIL : Status.OK;
+        if (keySize == null || keySize <= 0) return Status.UNKNOWN;
+        String family = sizedKeyFamily(keyAlgorithm);
+        if (FAMILY_RSA_DSA.equals(family)) return keySize < 2048 ? Status.FAIL : Status.OK;
+        if (FAMILY_EC.equals(family)) return keySize < 256 ? Status.FAIL : Status.OK;
         return Status.UNKNOWN;
+    }
+
+    static final String FAMILY_RSA_DSA = "RSA_DSA";
+    static final String FAMILY_EC = "EC";
+
+    /**
+     * Adı "DSA" içerse de bit eşiğiyle ÖLÇÜLMEYEN anahtar aileleri (DATA-13, 2026-10-22): EdDSA (Ed25519 / Ed448) ve
+     * kuantum-sonrası imzalar (ML-DSA, SLH-DSA, FN-DSA). Eskiden {@code contains("DSA")} onları DSA sayıyor, boyu
+     * okunamadığı için -1 &lt; 2048 → "Short key -1-bit" KRİTİK, zayıf algoritma listesi ve TLS notu F veriyordu.
+     * {@code LatestCheckRepository.findWeakAlgorithmCandidates} / {@code CertificateCheckRepository.weakObservationsSince}
+     * aynı listeyi SQL'de dışlar — değiştirirseniz ikisini de değiştirin ({@code WeakKeySqlParityTest}).
+     */
+    public static final List<String> NON_SIZED_KEY_TOKENS = List.of(
+            "EDDSA", "ED25519", "ED448", "ML-DSA", "MLDSA", "SLH-DSA", "SLHDSA", "FN-DSA", "FNDSA");
+
+    /**
+     * Bit eşiği uygulanacak aile: {@code EC} (ad "EC" ile başlar — "ECDSA" "DSA" içerdiği için ÖNCE bakılır),
+     * {@code RSA_DSA}, ya da null (EdDSA / PQC / bilinmeyen — boy hükmü yok).
+     */
+    static String sizedKeyFamily(String keyAlgorithm) {
+        if (isBlank(keyAlgorithm)) return null;
+        String up = keyAlgorithm.toUpperCase(Locale.ROOT);
+        if (up.startsWith("EC")) return FAMILY_EC;
+        for (String t : NON_SIZED_KEY_TOKENS) if (up.contains(t)) return null;
+        if (up.contains("RSA") || up.contains("DSA")) return FAMILY_RSA_DSA;
+        return null;
     }
 
     /**
@@ -150,14 +176,15 @@ public final class CertificateHealthRules {
             }
         }
 
-        if (!isBlank(keyAlgorithm) && keySize != null) {
-            String up = keyAlgorithm.toUpperCase(Locale.ROOT);
-            if (up.contains("RSA") || up.contains("DSA")) {
+        // Boyu okunamayan anahtar (-1 / null — EdDSA, ML-DSA …) "kısa" DEĞİLDİR (DATA-13); aile sırası keySizeStatus ile aynı.
+        if (keySize != null && keySize > 0) {
+            String family = sizedKeyFamily(keyAlgorithm);
+            if (FAMILY_RSA_DSA.equals(family)) {
                 if (keySize < 2048) {
                     found.add("Short key: " + keyAlgorithm + " " + keySize + "-bit");
                     maxSev = worst(maxSev, keySize <= 1024 ? "CRITICAL" : "HIGH");
                 }
-            } else if (up.contains("EC") && keySize < 256) {
+            } else if (FAMILY_EC.equals(family) && keySize < 256) {
                 found.add("Short EC key: " + keySize + "-bit");
                 maxSev = worst(maxSev, keySize < 192 ? "CRITICAL" : "HIGH");
             }
