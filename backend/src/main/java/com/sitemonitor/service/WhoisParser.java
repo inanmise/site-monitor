@@ -72,7 +72,11 @@ public interface WhoisParser {
         try { return OffsetDateTime.parse(v).toLocalDate().toString(); } catch (Exception ignore) {}
         for (String p : DATE_PATTERNS) {
             try {
-                DateTimeFormatter f = DateTimeFormatter.ofPattern(p, Locale.ENGLISH);
+                // Büyük/küçük harf DUYARSIZ ay adı (CHECKS-11, 2026-10-22): bazı kayıt kuruluşları "14-AUG-2025" /
+                // "14-aug-2025" basar; duyarlı biçimleyici yalnız "14-Aug-2025"yi okuyordu → bitiş tarihi null →
+                // alan adı UNKNOWN + DOMAINMON_UNKNOWN alarmı.
+                DateTimeFormatter f = new java.time.format.DateTimeFormatterBuilder()
+                        .parseCaseInsensitive().appendPattern(p).toFormatter(Locale.ENGLISH);
                 return LocalDate.parse(v, f).toString();
             } catch (Exception ignore) {}
         }
