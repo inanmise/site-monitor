@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
-import { UserPlus, UserMinus, Users, UserX } from 'lucide-react'
+import { UserPlus, UserMinus, Users, UserX, Lock } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
@@ -14,14 +14,23 @@ import { SystemRoleBadge } from './ToneBadge.jsx'
 import { Button } from '@/components/shadcn/button'
 import { Badge } from '@/components/shadcn/badge'
 import { userRefValue } from '../../utils/userRef'
+import { usePermissions } from '../../contexts/PermissionsProvider.jsx'
+
+/** ADMIN / AUDIT hesabının takımlarına yalnız GLOBAL yönetici dokunur (sunucu `requireCanAdministerTarget`, AUTH-6). */
+const GLOBAL_ONLY_ROLES = new Set(['ADMIN', 'AUDIT'])
 
 /**
  * Takım üyelerini tek yerden yönet (2026-09-20): listele, ekle, çıkar. Eskiden üyelik yalnız kullanıcı
  * formundan (takım kutusu) değişiyordu — "bu takıma kimler üye, birini ekle" için kullanıcı kullanıcı
  * gezmek gerekiyordu. Sunucu: POST/DELETE /teams/{id}/members (kullanıcının son takımı çıkarılamaz).
  */
-export default function TeamMembersManager({ team, users = [], canManage, onClose, onChanged }) {
+export default function TeamMembersManager({ team, users = [], canManage, globalAdmin, onClose, onChanged }) {
   const t = useT()
+  const { scope } = usePermissions()
+  // Global yönetici mi (K1): prop verilmişse o, yoksa izin anlık görüntüsünün scope.global_admin'i; bilinmiyor = değil
+  const isGlobal = globalAdmin === undefined ? scope?.global_admin === true : !!globalAdmin
+  // Sunucunun reddedeceği hedef (2026-10-22, A3): global olmayan yönetici ADMIN / AUDIT hesabını ekleyemez / çıkaramaz
+  const adminOnly = (u) => !isGlobal && GLOBAL_ONLY_ROLES.has(String(u?.system_role || '').toUpperCase())
   const toast = useToast()
   const { showConfirm } = useDialog()
   const [members, setMembers] = useState(null)
@@ -43,7 +52,8 @@ export default function TeamMembersManager({ team, users = [], canManage, onClos
   // last"): takım eksikleri "pasif üyesi var" diye buraya yönlendiriyor; kimin çıkarılacağı görünsün. Sıra kararlı.
   const ordered = useMemo(() => (members || []).map((m, i) => [m, i])
     .sort((a, b) => ((a[0].active === false) - (b[0].active === false)) || (a[1] - b[1])).map(([m]) => m), [members])
-  const candidates = useMemo(() => users.filter(u => !memberIds.has(u.id) && u.active !== false), [users, memberIds])
+  const candidates = useMemo(() => users.filter(u => !memberIds.has(u.id) && u.active !== false && !adminOnly(u)),
+    [users, memberIds, isGlobal])   // eslint-disable-line react-hooks/exhaustive-deps
 
   async function add() {
     if (!pick) return
@@ -88,6 +98,9 @@ export default function TeamMembersManager({ team, users = [], canManage, onClos
               <Button onClick={add} disabled={!pick || busy}><UserPlus size={14} /> {t('team.memberAdd')}</Button>
             </div>
           )}
+          {canManage && !isGlobal && (members.some(adminOnly) || users.some((u) => !memberIds.has(u.id) && u.active !== false && adminOnly(u))) && (
+            <p className="-mt-1 mb-3 text-xs text-muted-foreground" data-slot="team-member-admin-hint">{t('team.memberAdminOnly')}</p>
+          )}
           {members.length === 0 ? <p className="text-xs text-muted-foreground">{t('team.membersEmpty')}</p> : (
             <ul className="flex list-none flex-col gap-1.5" data-testid="team-members">
               {ordered.map(u => (
@@ -103,7 +116,13 @@ export default function TeamMembersManager({ team, users = [], canManage, onClos
                     {u.system_role && <SystemRoleBadge role={u.system_role} />}
                     {u.team_id === team.id && <span className="text-xs text-muted-foreground">{t('team.memberPrimary')}</span>}
                   </span>
-                  {canManage && (
+                  {canManage && adminOnly(u) && (
+                    <span data-slot="team-member-admin-locked" title={t('team.memberAdminOnly')}
+                      className="inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
+                      <Lock aria-hidden="true" className="size-3.5" />{t('team.memberAdminLocked')}
+                    </span>
+                  )}
+                  {canManage && !adminOnly(u) && (
                     <SimpleTooltip content={t('team.memberRemove')}>
                       <Button variant="secondary" size="icon-sm" className="shrink-0" onClick={() => remove(u)} disabled={busy}
                         aria-label={t('a11y.rowAction', u.display_name || u.username, t('team.memberRemove'))}><UserMinus size={13} /></Button>

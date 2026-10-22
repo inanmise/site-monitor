@@ -961,7 +961,7 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
       </ModalShell>
 
       {manageTeam && (
-        <TeamMembersManager team={manageTeam} users={users} canManage={canEditRow(manageTeam.id)}
+        <TeamMembersManager team={manageTeam} users={users} canManage={canEditRow(manageTeam.id)} globalAdmin={globalAdmin}
           onClose={() => setManageTeam(null)} onChanged={() => { loadStats(); setMembersNonce(n => n + 1); onTeamsChange?.() }} />
       )}
       {oncallTeam && (

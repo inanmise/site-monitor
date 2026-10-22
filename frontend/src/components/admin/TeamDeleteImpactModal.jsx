@@ -17,6 +17,15 @@ import { Label } from '@/components/shadcn/label'
 // göndermezse bölüm çizilmez (bugünkü davranış).
 const SECTIONS = ['domains', 'ug_domains', 'monitors', 'users', 'contacts', 'groups', 'te_channels', 'te_templates', 'maintenance_windows']
 
+/** Taşıma özeti (2026-10-22, FE-8): sunucunun saydığı HER taşınan şey, sıfırlar yazılmaz — yalnız kanalı / şablonu / bakım
+ *  penceresi olan takımda "0 domain, 0 izleme, 0 kullanıcı" yanlış izlenimi kalkar. Bilinmeyen anahtar yok sayılır. */
+const MOVED_KEYS = ['domains', 'ug_domains', 'monitors', 'users', 'contacts', 'groups', 'te_channels', 'te_templates', 'maintenance_windows', 'open_alerts']
+export function movedSummary(data, t) {
+  const m = data || {}
+  const parts = MOVED_KEYS.filter((k) => Number(m[k]) > 0).map((k) => t(`team.mv.${k}`, Number(m[k])))
+  return parts.length ? t('team.movedList', parts.join(', ')) : t('team.movedNothing')
+}
+
 /**
  * Takım silme ETKİ önizlemesi (2026-09-20): silmeden önce "bu takıma bağlı N domain, M izleme, K kullanıcı,
  * C kişi, G grup, A açık alarm" listesi + hedef takıma taşı. Bildirim grubundaki "409 → taşı" deseni.
@@ -48,8 +57,7 @@ export default function TeamDeleteImpactModal({ team, teams = [], onClose, onDel
       if (!empty) {
         const mv = await api.admin.teamMove(team.id, Number(target))
         if (!mv?.success) { toast.error(mv?.error || t('team.moveError')); return }
-        const m = mv.data || {}
-        toast.success(t('team.moved', m.domains ?? 0, m.monitors ?? 0, m.users ?? 0))
+        toast.success(movedSummary(mv.data, t))
       }
       if (deleteAfter) {
         const res = await api.admin.deleteTeam(team.id)
