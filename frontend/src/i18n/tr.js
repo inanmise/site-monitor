@@ -11816,6 +11816,7 @@ export const TR = {
   'act.detailLoadFailed': 'Kayıt geçmişi okunamadı — yeniden deneyin.',
   'storm.live.loadFailed': 'Fırtına durumu okunamadı — bağlantınızı kontrol edip yeniden deneyin.',
   'storm.live.staleData': 'Son yenileme başarısız — gösterilen durum son başarılı okumaya ait.',
+  'noc.passiveNoCall': 'Pasif hesap — aranmaz',
   // ── /20.166 bugfix · PKG-7 ──
   'alh.whyAuto': 'kontroller düzelince kendiliğinden kapanır',
   'alh.whyAutoTip': 'Bu alarm, kaynağı art arda sağlıklı kontrol verdiğinde kendiliğinden kapanır; onay ya da kime bildirim gittiği kapanışı etkilemez. Aynı hedefi izleyen takımınızın başka bir izlemesi hâlâ düşükse alarm açık kalır; bu türün bildirimleri kapatılırsa alarm bildirimsiz kapanır. İzleme uzun süredir sağlıklı görünüyorsa alarmı elle çözebilirsiniz.',

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { UserRoundCheck } from 'lucide-react'
 import { api, formatDate } from '../../../api/client'
 import { useT } from '../../../i18n/index.jsx'
+import { Badge } from '@/components/shadcn/badge'
 
 /**
  * Alarm ayrıntısında sahip takım(lar)ın şu anki nöbetçisi (2026-10-11). Yalnız AÇIK alarmda ve yalnız çizelgesi olan
@@ -35,6 +36,13 @@ export default function AlertOnCall({ alert: a, Fact }) {
             <span className="min-w-0 [overflow-wrap:anywhere]">
               <span className="font-semibold">{p.name}</span>
               <span className="text-xs text-muted-foreground"> · {t('oncall.untilShort', formatDate(p.until))}</span>
+              {/* Pasif (devre dışı) nöbetçi (2026-10-22, L-N1 / PKG-3): aranmaz — alan yoksa bugünkü davranış */}
+              {p.active === false && (
+                <Badge variant="outline" data-slot="alert-oncall-passive"
+                  className="ml-1.5 h-auto overflow-visible rounded-md border-destructive/40 bg-destructive/10 align-middle text-destructive whitespace-normal">
+                  {t('noc.passiveNoCall')}
+                </Badge>
+              )}
             </span>
           </li>
         ))}

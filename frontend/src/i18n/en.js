@@ -11796,6 +11796,7 @@ export const EN = {
   'act.detailLoadFailed': 'The record history could not be read — try again.',
   'storm.live.loadFailed': 'Storm status could not be read — check your connection and try again.',
   'storm.live.staleData': 'The last refresh failed — the status shown is from the last successful read.',
+  'noc.passiveNoCall': 'Passive account — do not call',
   // ── /20.166 bugfix · PKG-7 ──
   'alh.whyAuto': 'closes by itself once checks pass again',
   'alh.whyAutoTip': 'This alert closes on its own once its source passes several checks in a row; acknowledging it, or who was notified, makes no difference to that. It stays open while another of your team’s monitors on the same target is still failing, and it closes without a notification if alerts for this type are switched off. If the monitor has looked healthy for a while, you can resolve the alert by hand.',
