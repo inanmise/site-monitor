@@ -32,8 +32,10 @@ public final class CacheBusNames {
     public static final String MAINTENANCE_WINDOWS = "maintenance-windows";
     /** Sistem bakımı — {@code SystemMaintenanceService}. */
     public static final String SYSTEM_MAINTENANCE = "system-maintenance";
+    /** Pasif / silinmiş hesap kapısı + tek-oturum (süpersede) önbelleği — {@code UserService}. */
+    public static final String USER_GATE = "user-gate";
 
     /** Hepsi (kapı testi: biçim + tekillik). */
     public static final List<String> ALL = List.of(WEAK_ALGO, TECH_ERROR_ANALYTICS, ONCALL, QUIET_HOURS, INACTIVE_RECIPIENTS,
-            NOC_OPERATORS, TEAM_GRANTS, MAINTENANCE_WINDOWS, SYSTEM_MAINTENANCE);
+            NOC_OPERATORS, TEAM_GRANTS, MAINTENANCE_WINDOWS, SYSTEM_MAINTENANCE, USER_GATE);
 }

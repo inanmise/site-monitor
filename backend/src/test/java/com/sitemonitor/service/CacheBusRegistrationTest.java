@@ -268,6 +268,29 @@ class CacheBusRegistrationTest {
     }
 
     @Test
+    @DisplayName("Kullanıcı kapısı: pod A'da hesap silindi / pasife alındı → pod B pasif kapısını DB'den yeniden okur (5 sn beklemez)")
+    void userGate() {
+        AppUserRepository ua = mock(AppUserRepository.class), ub = mock(AppUserRepository.class);
+        when(ub.findActiveFlagByUsername("ayse")).thenReturn(Optional.of(Boolean.TRUE));
+        UserService a = new UserService(ua, mock(TeamRepository.class), mock(CertificateInventoryRepository.class),
+                mock(com.sitemonitor.repository.EscalationContactRepository.class),
+                mock(com.sitemonitor.repository.PasswordHistoryRepository.class));
+        UserService b = new UserService(ub, mock(TeamRepository.class), mock(CertificateInventoryRepository.class),
+                mock(com.sitemonitor.repository.EscalationContactRepository.class),
+                mock(com.sitemonitor.repository.PasswordHistoryRepository.class));
+        ReflectionTestUtils.setField(a, "inactiveCacheMs", 60_000L);
+        ReflectionTestUtils.setField(b, "inactiveCacheMs", 60_000L);
+        CacheBus busA = bus(), busB = bus();
+        bind(a, busA);
+        bind(b, busB);
+        b.isAccountInactive("ayse");
+        b.isAccountInactive("ayse");
+        verify(ub, times(1)).findActiveFlagByUsername("ayse");
+        propagate(busA, busB, CacheBusNames.USER_GATE, () -> a.forgetUserCaches("ayse"),
+                () -> b.isAccountInactive("ayse"), () -> verify(ub, times(2)).findActiveFlagByUsername("ayse"));
+    }
+
+    @Test
     @DisplayName("Veri yolu yoksa (birim testi / eski kurulum) her servis yalnız kendi belleğini boşaltır — istisna yok")
     void withoutBus_localOnly() {
         new TeamQuietHoursService(mock(TeamRepository.class), mock(QuietDigestItemRepository.class)).invalidate();

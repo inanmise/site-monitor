@@ -137,6 +137,29 @@ public class UserService {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private InactiveRecipientGuard inactiveRecipientGuard;
 
+    /**
+     * Pod'lar arası boşaltma (2026-10-22, çok pod R2a): pasif / silinmiş hesap kapısı ve süpersede önbelleği bir hesapta
+     * değişince öteki pod'lar kendi belleklerini ~2 sn içinde düşürür (eskiden ≤ 5 sn TTL). Yoksa (birim testi) yalnız bu pod.
+     */
+    private volatile com.sitemonitor.service.cache.CacheBus cacheBus;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setCacheBus(com.sitemonitor.service.cache.CacheBus bus) {
+        this.cacheBus = bus;
+        if (bus != null) {
+            bus.register(com.sitemonitor.service.cache.CacheBusNames.USER_GATE, () -> {
+                inactiveCache.clear();
+                activeSessionCache.clear();
+            });
+        }
+    }
+
+    /** Öteki pod'lara "kullanıcı kapısı değişti" — commit sonrası yayınlanır ({@code CacheBus.bump}), asla fırlatmaz. */
+    private void publishUserGate() {
+        com.sitemonitor.service.cache.CacheBus b = cacheBus;
+        if (b != null) b.bump(com.sitemonitor.service.cache.CacheBusNames.USER_GATE);
+    }
+
     /** Test kancası. */
     void setRememberMeService(RememberMeService rememberMeService) {
         this.rememberMeService = rememberMeService;
@@ -259,6 +282,7 @@ public class UserService {
         if (key == null) return;
         inactiveCache.remove(key);
         activeSessionCache.remove(key);
+        publishUserGate();
         if (inactiveRecipientGuard != null) {
             try { inactiveRecipientGuard.evict(); } catch (Exception ignored) { /* bildirim süzgeci best-effort */ }
         }
@@ -572,6 +596,7 @@ public class UserService {
     private void evictActiveSessionCache(String username) {
         String key = normalizeUsername(username);
         activeSessionCache.remove(key);
+        publishUserGate();   // öteki pod'ların süpersede belleği (zorla oturum kapatma, rol değişikliği, çıkış)
         if (org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()) {
             org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
                     new org.springframework.transaction.support.TransactionSynchronization() {
@@ -1184,6 +1209,7 @@ public class UserService {
             inactiveCache.remove(key);
             activeSessionCache.remove(key);
         }
+        publishUserGate();
         if (inactiveRecipientGuard != null) inactiveRecipientGuard.evict();
         if (deactivated) {
             if (rememberMeService != null) rememberMeService.invalidateAllForUser(u.getUsername());
