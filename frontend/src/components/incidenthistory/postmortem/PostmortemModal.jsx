@@ -21,7 +21,7 @@ import { cn } from '@/lib/utils'
 import { ActionForm, ActionRow, activePeople } from './ActionItemParts.jsx'
 import {
   MAX_SECTION_CHARS, SECTIONS, STATUSES, STATUS_TONE, actionCounts, buildMarkdown, changedFields, formFromPostmortem, isDirty,
-  markdownFileName, sectionErrors, timelineText,
+  markdownFileName, mergeAfterSave, sectionErrors, timelineText,
 } from './postmortemModel.js'
 
 const TL_ICON = {
@@ -123,13 +123,15 @@ export default function PostmortemModal({ incident, onClose, onChanged }) {
       return
     }
     const body = { ...changedFields(form, original, !!pm?.exists), version: pm?.version ?? null }
+    const sent = form
     setSaving(true)
     let res = null
     try { res = await api.incidents.savePostmortem(incident.id, body) } catch (e) { res = { success: false, error: e?.message } } finally { setSaving(false) }
     if (res?.success && res.data) {
       const f = formFromPostmortem(res.data)
       setData((d) => ({ ...d, postmortem: res.data }))
-      setForm(f)
+      // Kayıt sürerken yazılanlar kalır (UIA-4) — yalnız değişmemiş alanlar sunucu kopyasını alır
+      setForm((cur) => mergeAfterSave(cur, sent, f))
       setOriginal(f)
       changed.current = true
       toast.success(t('pm.saved'))
