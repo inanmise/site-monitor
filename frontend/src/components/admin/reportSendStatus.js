@@ -51,7 +51,10 @@ export function historyBadge(status, t) {
  */
 export function sendOutcome(res, t, statusOf = (r) => r?.data?.status ?? r?.message) {
   const raw = statusOf(res)
-  let cls = sendStatusClass(raw)
+  // K9: "Şimdi çalıştır" yanıtı sınıflanmış `data.outcome` (SENT | QUEUED | SKIPPED | FAILED | NO_RECIPIENT) taşır — varsa o
+  // kazanır, yoksa (eski sunucu) ham durumdan türetilir.
+  const outcome = typeof res?.data?.outcome === 'string' ? res.data.outcome : null
+  let cls = sendStatusClass(outcome || raw)
   if (cls === 'unknown') cls = res?.success ? 'sent' : 'failed'
   const text = cls === 'failed' && !raw && res?.error ? res.error : sendStatusText(cls, t)
   return { cls, text, tone: SEND_TONE[cls], raw: raw || null }

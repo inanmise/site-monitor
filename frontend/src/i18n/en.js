@@ -6999,6 +6999,10 @@ export const EN = {
   'audit.ev.TEAM_MOVE_ASSETS': "Team's assets moved to another team",
   'audit.ev.TEAM_MEMBER_REMOVE': "Member removed from team",
   'audit.ev.TEAM_WEEKLY_NOTIFICATIONS': "Team's weekly e-mail settings changed",
+  'team.impact.te_channels': "{0} technical error report channels (moved with their reports)",
+  'team.impact.te_templates': "{0} technical error report templates (team library)",
+  'team.impact.maintenance_windows': "{0} live or upcoming maintenance windows",
+  'team.impactExecDeleted': "The team's executive summary settings and send history are deleted with the team.",
   // ── /PKG-8a ──
   'usr.pwdReused':               'New password cannot match any of the last 3',
   'usr.pwdStrength.weak':        'Weak',

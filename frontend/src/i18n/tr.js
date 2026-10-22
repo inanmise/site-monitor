@@ -7013,6 +7013,10 @@ export const TR = {
   'audit.ev.TEAM_MOVE_ASSETS': "Takımın varlıkları başka takıma taşındı",
   'audit.ev.TEAM_MEMBER_REMOVE': "Takımdan üye çıkarıldı",
   'audit.ev.TEAM_WEEKLY_NOTIFICATIONS': "Takımın haftalık e-posta ayarları değiştirildi",
+  'team.impact.te_channels': "{0} teknik hata raporu kanalı (raporlarıyla birlikte taşınır)",
+  'team.impact.te_templates': "{0} teknik hata raporu şablonu (takım kütüphanesi)",
+  'team.impact.maintenance_windows': "{0} süren / yaklaşan bakım penceresi",
+  'team.impactExecDeleted': "Takımın yönetici özeti ayarı ve gönderim geçmişi takımla birlikte silinir.",
   // ── /PKG-8a ──
   'usr.pwdReused':               'Yeni şifre son 3 şifreden biri olamaz',
   'usr.pwdStrength.weak':        'Zayıf',

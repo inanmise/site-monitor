@@ -66,4 +66,9 @@ describe('oncallModel — silinmiş üye', () => {
     expect(hasMissingMembers(f)).toBe(true)
     expect(hasMissingMembers({ ...f, members: [] })).toBe(false)
   })
+  it('validate: açık çizelgede yalnız silinmiş hesaplar kaldıysa "en az bir kişi" hatası (sunucu 400 verirdi)', () => {
+    const f = toForm({ ...view, members: [{ user_id: null, missing: true, active: false }] })
+    expect(validate(f).members).toBe('oncall.err.noMembers')
+    expect(validate({ ...f, enabled: false }).members).toBeUndefined()
+  })
 })

@@ -110,3 +110,36 @@ describe('TeamDeleteImpactModal', () => {
     expect(api.admin.teamMove).not.toHaveBeenCalled()
   })
 })
+
+// 20.166 (ADMIN-1, PKG-5 sözleşmesi): takımın BELGELERİ etki listesinde — kanal raporları, şablon kütüphanesi, süren / yaklaşan
+// bakım pencereleri silmeyi engeller ("Taşı" taşır); yönetici özeti ayarı / geçmişi takımla silinir (yalnız bilgi satırı).
+describe('TeamDeleteImpactModal — takım belgeleri (ADMIN-1)', () => {
+  beforeEach(() => { vi.clearAllMocks() })
+  const base = { empty: false, open_alerts: 0, domains: { count: 0, items: [] }, monitors: { count: 0, items: [] },
+    users: { count: 0, items: [] }, contacts: { count: 0, items: [] }, groups: { count: 0, items: [] } }
+
+  it('kanal / şablon / bakım penceresi bölümleri ve yönetici özeti bilgi satırı çizilir; hedef seçilmeden silinmez', async () => {
+    api.admin.teamImpact.mockResolvedValue({ success: true, data: { ...base,
+      te_channels: { count: 2, items: ['Mobil Kanal', 'İnternet Şubesi'], reports: 14 },
+      te_templates: { count: 1, items: ['Aylık şablon'] },
+      maintenance_windows: { count: 1, items: ['Gece bakımı'] },
+      executive_summary: { settings: true, reports: 3 } } })
+    render(<TeamDeleteImpactModal team={TEAM} teams={TEAMS} onClose={() => {}} onDeleted={() => {}} />)
+    expect(await screen.findByText('Mobil Kanal')).toBeInTheDocument()
+    expect(screen.getByText(/2 teknik hata raporu kanalı|2 technical error report channels/)).toBeInTheDocument()
+    expect(screen.getByText(/1 teknik hata raporu şablonu|1 technical error report templates/)).toBeInTheDocument()
+    expect(screen.getByText(/1 süren \/ yaklaşan bakım penceresi|1 live or upcoming maintenance windows/)).toBeInTheDocument()
+    expect(screen.getByText('Gece bakımı')).toBeInTheDocument()
+    expect(document.querySelector('[data-slot="team-impact-exec"]')).not.toBeNull()
+    expect(screen.getByRole('button', { name: /Taşı ve sil|Move and delete/ })).toBeDisabled()
+  })
+
+  it('eski sunucu (alanlar yok): bugünkü görünüm, yönetici özeti satırı yok', async () => {
+    api.admin.teamImpact.mockResolvedValue({ success: true, data: { ...base, empty: true } })
+    render(<TeamDeleteImpactModal team={TEAM} teams={TEAMS} onClose={() => {}} onDeleted={() => {}} />)
+    await screen.findByRole('button', { name: /^Sil$|^Delete$/ })
+    expect(document.querySelector('[data-slot="team-impact-exec"]')).toBeNull()
+    expect(screen.queryByText(/technical error report|teknik hata raporu/)).toBeNull()
+  })
+})
+

@@ -76,7 +76,8 @@ export const MAX_MEMBERS = 50
 export function validate(form) {
   const errs = {}
   if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(form.anchor || '')) errs.anchor = 'oncall.err.anchor'
-  if (form.enabled && form.members.length === 0) errs.members = 'oncall.err.noMembers'
+  // Silinmiş hesaplar sayılmaz: gövdeden düşer, açık çizelge yalnız onlarla kalırsa sunucu 400 verir (K11)
+  if (form.enabled && form.members.filter((m) => !m.missing).length === 0) errs.members = 'oncall.err.noMembers'
   if (form.members.length > MAX_MEMBERS) errs.members = 'oncall.err.tooMany'
   return errs
 }

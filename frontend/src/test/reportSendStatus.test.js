@@ -40,6 +40,11 @@ describe('reportSendStatus — yanıt sonucu (eski + K9 sunucu)', () => {
     const o = sendOutcome({ success: false, error: 'Geçerli bir e-posta adresi gerekli' }, t)
     expect(o).toMatchObject({ cls: 'failed', text: 'Geçerli bir e-posta adresi gerekli' })
   })
+  it('K9: data.outcome varsa ham durumdan ÖNCE gelir (eski sunucuda yok → durumdan)', () => {
+    expect(sendOutcome({ success: true, data: { status: 'QUEUED_RETRY 1/5', outcome: 'QUEUED' } }, t).cls).toBe('queued')
+    expect(sendOutcome({ success: true, data: { status: 'SENT', outcome: 'NO_RECIPIENT' } }, t).cls).toBe('noRecipient')
+    expect(sendOutcome({ success: true, data: { status: 'SKIPPED_DISABLED', outcome: 'SKIPPED' } }, t)).toMatchObject({ cls: 'skipped', raw: 'SKIPPED_DISABLED' })
+  })
   it('kuyruk bilgi tonudur', () => {
     expect(sendOutcome({ success: true, data: { status: 'QUEUED_RETRY' } }, t).tone).toBe('info')
   })
