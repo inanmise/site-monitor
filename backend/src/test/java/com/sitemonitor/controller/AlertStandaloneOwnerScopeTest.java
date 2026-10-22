@@ -456,6 +456,29 @@ class AlertStandaloneOwnerScopeTest {
     }
 
     @Test
+    @DisplayName("A1 (son inceleme 2026-10-22): paylaşımla çözen kişinin yanıtı KOPYADA maskelenir — servisin döndürdüğü (zaman uyumsuz çözüm "
+            + "bildirimine verilen) örnek notified_contacts'ı korur, NULL kaydedilemez")
+    void grantOnlyResolve_masksCopyNotTheServiceInstance() throws Exception {
+        MockHttpSession execD = grantOnlyD(true);
+        pingB.setNotifiedContacts(CONTACTS);
+        pingB.setNocLastCall(Map.of("caller", "7/24 Operatörü"));
+        mvc.perform(post("/api/admin/alerts/60/resolve").session(execD)
+                        .contentType(MediaType.APPLICATION_JSON).content(NOTE))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.id").value(60))
+                .andExpect(jsonPath("$.data.notified_contacts").isEmpty())
+                .andExpect(jsonPath("$.data.noc_last_call").isEmpty());
+        org.assertj.core.api.Assertions.assertThat(pingB.getNotifiedContacts()).isEqualTo(CONTACTS);
+        org.assertj.core.api.Assertions.assertThat(pingB.getNocLastCall()).isNotNull();
+
+        mvc.perform(post("/api/admin/alerts/60/acknowledge").session(execD)
+                        .contentType(MediaType.APPLICATION_JSON).content(NOTE))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.notified_contacts").isEmpty());
+        org.assertj.core.api.Assertions.assertThat(pingB.getNotifiedContacts()).isEqualTo(CONTACTS);
+    }
+
+    @Test
     @DisplayName("ALERTS-18 / K4: paylaşımla okunan alarmın push satırları — kişi adı gizli (null), SİSTEM karar satırı '-' korunur")
     void grantOnlyPushRows_keepSystemMarker() throws Exception {
         com.sitemonitor.model.UserPushDelivery person = new com.sitemonitor.model.UserPushDelivery();

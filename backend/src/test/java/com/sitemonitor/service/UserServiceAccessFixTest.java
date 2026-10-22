@@ -103,9 +103,14 @@ class UserServiceAccessFixTest {
     }
 
     @Test
-    @DisplayName("AUTH-1: okuma hatası → silinmiş değil (açık düşer, DB kesintisi herkesi atmaz); boş ad → false")
-    void gone_readFailure_failsOpen() {
+    @DisplayName("AUTH-1: okuma hatası — kesicinin ÖNCE sorduğu pasif kapısı FIRLATIR (istek 5xx, kimse atılmaz); isAccountGone doğrudan "
+            + "çağrılırsa güvenlik ağı false döner; boş ad → false")
+    void gone_readFailure_inactiveGateThrows_goneDirectCallFalse() {
         when(userRepo.findActiveFlagByUsername("ALICE")).thenThrow(new org.springframework.dao.DataAccessResourceFailureException("db down"));
+        // Gerçek yol (AuthInterceptor): pasif kapısı aynı okumayı yapar — hata yayılır, oturuma dokunulmaz.
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.isAccountInactive("ALICE"))
+                .isInstanceOf(org.springframework.dao.DataAccessResourceFailureException.class);
+        // Doğrudan çağıran için güvenlik ağı: silinmiş sayılmaz.
         assertThat(service.isAccountGone("ALICE")).isFalse();
         assertThat(service.isAccountGone(null)).isFalse();
         assertThat(service.isAccountGone(" ")).isFalse();

@@ -217,8 +217,12 @@ public class UserService {
      * Hesap SİLİNMİŞ mi (2026-10-22, hata avı AUTH-1)? Kullanıcı satırı yoksa true. Silinen kullanıcının oturumu eskiden
      * tam yetkiyle (giriş anındaki rol / kapsam oturum özniteliklerinden okunur) çalışmaya devam ediyordu — SPA her 15 sn
      * yokladığı için 24 saatlik boşta kalma süresi de hiç dolmuyordu. Pasif kapısıyla AYNI önbellek kaydını kullanır (ek
-     * sorgu yalnız aktiflik okunamadığında, yani satır yokken / kolon NULL iken). OKUMA HATASI = silinmemiş (açık düşer):
-     * veritabanı kesintisi herkesi dışarı atmasın.
+     * sorgu yalnız aktiflik okunamadığında, yani satır yokken / kolon NULL iken).
+     *
+     * <p><b>Veritabanı okunamazsa (gerçek davranış, son inceleme 2026-10-22).</b> {@code AuthInterceptor} bu kapıdan ÖNCE
+     * {@link #isAccountInactive} sorar ve AYNI okuma ({@code accountState}) orada fırlar: istek 5xx / {@code DB_UNAVAILABLE}
+     * ile düşer, oturum kapatılmaz, hatırlanan girişler silinmez — kimse dışarı atılmaz (bir sonraki istek yeniden dener).
+     * Aşağıdaki yakalama yalnız bu metodu doğrudan çağıranlar için bir güvenlik ağıdır (okuma hatası = silinmemiş).
      */
     public boolean isAccountGone(String username) {
         if (username == null || username.isBlank()) return false;
@@ -567,6 +571,14 @@ public class UserService {
             }
         });
         evictActiveSessionCache(username);   // F2 evict (commit sonrası da)
+    }
+
+    /**
+     * Tek kullanıcının süpersede önbelleği — tek-oturum işareti bu servisin DIŞINDA bir varlık kaydıyla değiştiğinde
+     * (A2, 2026-10-22: AD'den gelen rol değişikliği {@code LdapProvisioningService}). Hemen ve commit sonrası.
+     */
+    public void evictActiveSessionCacheFor(String username) {
+        if (username != null) evictActiveSessionCache(username);
     }
 
     /** Süpersede önbelleğini boşaltır — tek-oturum işaretleri bu servisin DIŞINDA (SQL ile) değiştiğinde

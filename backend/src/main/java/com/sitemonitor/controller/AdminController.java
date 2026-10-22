@@ -2642,8 +2642,8 @@ public class AdminController {
         auditService.recordAction("ALERT_ACKNOWLEDGE", session, request,
                 "ALERT_EVENT", id.toString(),
                 auditDetail(Map.of("domain", nz(event.getDomain()), "note", note)));
-        maskGrantOnlyPeople(event, session);   // paylaşımla (EXECUTE) sahiplenen kişi alıcıları görmez (2026-10-22)
-        return ok(Map.of("data", event, "message", "Alert acknowledged"));
+        // paylaşımla (EXECUTE) sahiplenen kişi alıcıları görmez (2026-10-22) — yanıt KOPYADA maskelenir
+        return ok(Map.of("data", maskGrantOnlyPeople(event, session), "message", "Alert acknowledged"));
     }
 
     @PostMapping("/alerts/{id}/resolve")
@@ -2659,8 +2659,9 @@ public class AdminController {
         auditService.recordAction("ALERT_RESOLVE", session, request,
                 "ALERT_EVENT", id.toString(),
                 auditDetail(Map.of("domain", nz(event.getDomain()), "note", note)));
-        maskGrantOnlyPeople(event, session);   // paylaşımla (EXECUTE) çözen kişi alıcıları görmez (2026-10-22)
-        return ok(Map.of("data", event, "message", "Alert resolved"));
+        // paylaşımla (EXECUTE) çözen kişi alıcıları görmez (2026-10-22) — yanıt KOPYADA maskelenir: aynı örnek çözüm
+        // bildirimi için zaman uyumsuz gönderime verildi ve orada kaydedilebiliyor (A1, son inceleme 2026-10-22)
+        return ok(Map.of("data", maskGrantOnlyPeople(event, session), "message", "Alert resolved"));
     }
 
     /** "Tekrar Bildir" onay pop-up'ı için alıcı önizlemesi — gönderim/yazma YAPMAZ.
@@ -2698,6 +2699,9 @@ public class AdminController {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("alert_id",   id);
         data.put("recipients", recipients);          // e-posta kanali (mevcut sozlesme korunur)
+        // C2 (2026-10-22): izlemenin e-posta kanali alarm aninda kapaliysa gonderim e-postayi atlar; liste bos doner ve
+        // nedeni push'taki block_reason gibi soylenir (eklenen alan — yoksa bugunku davranis).
+        if (escalationService.reNotifyMailDisabled(id)) data.put("email_block_reason", "SKIPPED_MONITOR_OFF");
         Map<String, Object> webhook = new LinkedHashMap<>();
         webhook.put("channel_enabled", push.channelEnabled());
         webhook.put("block_reason",    push.blockReason());
@@ -2896,13 +2900,17 @@ public class AdminController {
     /**
      * Tek alarmın yanıtı (sahiplen / çöz) için {@link #maskGrantOnlyNocCalls} karşılığı (2026-10-22, hata avı ALERTS-17):
      * erişim paylaşımında EXECUTE düzeyi olan kişi alarmı sahiplenip çözebilir; yanıttaki varlık bilgilendirilen kişileri
-     * ve son 7/24 aramasını taşımaz. Varlık servis kaydından SONRA döner — bu değişiklik kaydedilmez.
+     * ve son 7/24 aramasını taşımaz. Maskeleme bir KOPYADA yapılır (A1, son inceleme 2026-10-22): {@code resolve}'un döndürdüğü
+     * örnek çözüm bildirimine zaman uyumsuz verilmişti ve orada {@code alertEventRepo.save} ile kaydedilebiliyordu — aynı
+     * örneği maskelemek {@code notified_contacts}'ı veritabanında herkes için NULL yazıyordu (push teslimatı yolundaki gibi).
      */
-    private void maskGrantOnlyPeople(AlertEvent ev, HttpSession session) {
-        if (ev != null && alertReadOnlyViaGrant(session, ev)) {
-            ev.setNotifiedContacts(null);
-            ev.setNocLastCall(null);
-        }
+    private AlertEvent maskGrantOnlyPeople(AlertEvent ev, HttpSession session) {
+        if (ev == null || !alertReadOnlyViaGrant(session, ev)) return ev;
+        AlertEvent c = new AlertEvent();
+        org.springframework.beans.BeanUtils.copyProperties(ev, c);
+        c.setNotifiedContacts(null);
+        c.setNocLastCall(null);
+        return c;
     }
 
     @GetMapping("/alerts/{id}/notifications")
@@ -4497,7 +4505,13 @@ public class AdminController {
         if (target != null && !TEAM_ADMIN_ASSIGNABLE_ROLES.contains(target.getSystemRole())) {
             log.warn("Non-global admin attempted to administer {} account user={} target={}",
                     target.getSystemRole(), actor(session), target.getUsername());
-            throw new SecurityException("Only a global admin can administer an " + target.getSystemRole() + " account");
+            // A3 (son inceleme 2026-10-22): metin UI dilinde (hata sözleşmesi) — Türkçe ekranda İngilizce ret görünüyordu.
+            String role = target.getSystemRole();
+            throw new SecurityException(com.sitemonitor.util.Msg.t(
+                    "Bu bir " + role + " hesabı — parolasını, takımlarını, rolünü ya da etkinliğini yalnız global yönetici "
+                            + "değiştirebilir. Gerekiyorsa bir global yöneticiden yapmasını isteyin.",
+                    "This is an " + role + " account — only a global administrator can change its password, teams, role or "
+                            + "status. If needed, ask a global administrator to do it."));
         }
     }
 

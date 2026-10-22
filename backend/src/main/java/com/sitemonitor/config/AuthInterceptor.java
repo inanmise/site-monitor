@@ -225,7 +225,8 @@ public class AuthInterceptor implements HandlerInterceptor {
                     // SİLİNMİŞ HESAP KAPISI (2026-10-22, hata avı AUTH-1) — pasif kapısının hemen ardından: kullanıcı satırı
                     // yoksa oturum kapatılır, hatırlanan girişleri silinir ve istemci "oturum düştü" (/?session=expired) alır.
                     // Eskiden silinen kullanıcı oturum özniteliklerindeki rol / kapsamla (global yönetici dâhil) çalışmaya
-                    // devam ediyordu. Okuma hatası kapıyı AÇIK bırakır (UserService.isAccountGone).
+                    // devam ediyordu. Veritabanı okunamazsa bu kapıya gelinmez: pasif kapısı aynı okumayı yapar ve hata orada
+                    // isteği 5xx ile düşürür — oturum kapanmaz, kimse dışarı atılmaz (UserService.isAccountGone).
                     if (userService.isAccountGone(username)) {
                         try { session.invalidate(); } catch (IllegalStateException ignored) { /* zaten kapalı */ }
                         try { rememberMeService.invalidateAllForUser(username); } catch (Exception ignored) { /* best-effort */ }

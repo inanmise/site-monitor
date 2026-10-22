@@ -4938,6 +4938,21 @@ class AdminControllerTest {
     }
 
     @Test
+    @DisplayName("A3 (son inceleme 2026-10-22): ADMIN / AUDIT hesabı reddinin metni UI dilinde — Türkçe varsayılan, X-Lang en İngilizce")
+    void teamMemberRefusal_isLocalized() throws Exception {
+        target(41L, "DENETCI", "AUDIT", 5L);
+        mvc.perform(post("/api/admin/teams/2/members").session(teamAdminSession())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"user_id\":41}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("yalnız global yönetici")))
+                .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("AUDIT")));
+        mvc.perform(post("/api/admin/teams/2/members").session(teamAdminSession()).header("X-Lang", "en")
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"user_id\":41}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("only a global administrator")));
+    }
+
+    @Test
     @DisplayName("UIA-2: kapsamlı müdür (görüş {2, 3}) kullanıcı aramasında teamId=3 → 3'ün üyeleri; teamId yok → tüm görüş kapsamı; kapsam dışı 99 → boş, sorgu yok; birincil takımı OLMAYAN müdür de arar")
     void searchUsers_scopedAdminUsesViewScope() throws Exception {
         when(userRepo.findFilteredInTeams(any(), any(), any(), any(), any(), any(), anyBoolean(), any()))

@@ -435,7 +435,7 @@ class AuthInterceptorTest {
     }
 
     @Test
-    @DisplayName("AUTH-1: hesap varlığı okunamadı / hesap var → kapı açık, istek geçer (isAccountGone false)")
+    @DisplayName("AUTH-1: hesap var → kapı açık, istek geçer (isAccountGone false)")
     void liveSession_existingUser_passesGoneGate() throws Exception {
         MockHttpServletRequest req = new MockHttpServletRequest("GET", "/api/certificates");
         MockHttpSession s = liveSession("ALICE");
@@ -445,6 +445,24 @@ class AuthInterceptorTest {
         assertThat(interceptor.preHandle(req, new MockHttpServletResponse(), new Object())).isTrue();
         verify(userService).isAccountGone("ALICE");
         assertThat(s.isInvalid()).isFalse();
+    }
+
+    @Test
+    @DisplayName("AUTH-1 (son inceleme 2026-10-22): hesap durumu OKUNAMAZSA pasif kapısı fırlatır — istek hatayla düşer, oturum "
+            + "kapanmaz, token silinmez, silinmiş kapısına gelinmez (kimse dışarı atılmaz)")
+    void liveSession_accountStateUnreadable_requestFailsNobodyLoggedOut() {
+        MockHttpServletRequest req = new MockHttpServletRequest("GET", "/api/certificates");
+        MockHttpSession s = liveSession("ALICE");
+        req.setSession(s);
+        when(userService.isAccountInactive("ALICE"))
+                .thenThrow(new org.springframework.dao.DataAccessResourceFailureException("db down"));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                        () -> interceptor.preHandle(req, new MockHttpServletResponse(), new Object()))
+                .isInstanceOf(org.springframework.dao.DataAccessResourceFailureException.class);
+        assertThat(s.isInvalid()).isFalse();
+        verify(userService, never()).isAccountGone(any());
+        verify(rememberMeService, never()).invalidateAllForUser(any());
     }
 
     @Test

@@ -173,4 +173,48 @@ class LdapRoleMappingProvisioningTest {
         AppUser u = service.provisionFromAd("hata", "CN=hata,DC=example,DC=com", attrs(ADMINS_DN));
         assertThat(u.getSystemRole()).isEqualTo("USER");
     }
+
+    // ── A2 (son inceleme 2026-10-22): AD'den rol değişikliği canlı oturuma ulaşır ─────────────────────────────
+
+    @Test
+    @DisplayName("A2: yöneticinin 'AD'den yeniden eşitle'si rolü düşürünce (ADMIN → USER) canlı oturum TERMINATED nöbetçisiyle biter, önbellek boşalır")
+    void adminResync_roleChange_endsLiveSession() {
+        UserService users = org.mockito.Mockito.mock(UserService.class);
+        service.setUserService(users);
+        mapping("DERIVED", new LdapRoleMapping.Rule(AUDIT_DN, "USER"));
+        AppUser u = existing("DUSEN", "ADMIN", null);
+        u.setActiveSessionId("canli-oturum-1");
+
+        AppUser after = service.resyncFromAd("dusen", attrs(AUDIT_DN)).user();
+
+        assertThat(after.getSystemRole()).isEqualTo("USER");
+        assertThat(after.getActiveSessionId()).startsWith(UserService.SESSION_TERMINATED_PREFIX);
+        verify(users).evictActiveSessionCacheFor("DUSEN");
+    }
+
+    @Test
+    @DisplayName("A2: rol DEĞİŞMEDİYSE yeniden eşitleme oturuma dokunmaz; giriş yolu (LOGIN) rol değişse de nöbetçi yazmaz; pasif hesap yazılmaz")
+    void noRoleChange_loginPath_andPassive_keepSession() {
+        UserService users = org.mockito.Mockito.mock(UserService.class);
+        service.setUserService(users);
+        mapping("DERIVED", new LdapRoleMapping.Rule(AUDIT_DN, "AUDIT"));
+
+        AppUser same = existing("AYNI", "AUDIT", null);
+        same.setActiveSessionId("canli-2");
+        assertThat(service.resyncFromAd("ayni", attrs(AUDIT_DN)).user().getActiveSessionId()).isEqualTo("canli-2");
+
+        AppUser login = existing("GIRIS", "USER", null);
+        login.setActiveSessionId("canli-3");
+        AppUser l = service.provisionFromAd("giris", "CN=giris,DC=example,DC=com", attrs(AUDIT_DN));
+        assertThat(l.getSystemRole()).isEqualTo("AUDIT");
+        assertThat(l.getActiveSessionId()).isEqualTo("canli-3");
+
+        AppUser passive = existing("PASIF", "USER", null);
+        passive.setActive(false);
+        passive.setActiveSessionId("TERMINATED:bulk-op-7");
+        AppUser p = service.resyncFromAd("pasif", attrs(AUDIT_DN)).user();
+        assertThat(p.getSystemRole()).isEqualTo("AUDIT");
+        assertThat(p.getActiveSessionId()).isEqualTo("TERMINATED:bulk-op-7");   // toplu pasifleştirmenin işareti korunur
+        verify(users, never()).evictActiveSessionCacheFor(anyString());
+    }
 }

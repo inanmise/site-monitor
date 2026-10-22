@@ -92,6 +92,16 @@ public class LdapProvisioningService {
 
     void setLdapSettings(LdapSettingsService s) { this.ldapSettings = s; }   // test kancası
 
+    /**
+     * Tek-oturum önbelleğini boşaltmak için (A2, son inceleme 2026-10-22) — isteğe bağlı ve tembel: dilim / birim testlerinde
+     * yoksa nöbetçi yine yazılır, yalnız bu pod'un ≤ 5 sn'lik süpersede önbelleği kendiliğinden dolar.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    @org.springframework.context.annotation.Lazy
+    private UserService userService;
+
+    void setUserService(UserService s) { this.userService = s; }   // test kancası
+
     /** Hangi yoldan çağrıldı — budama kuralı ve denetim kaydı buna göre. */
     public enum Mode { LOGIN, MANAGER, ADMIN_RESYNC }
 
@@ -141,6 +151,7 @@ public class LdapProvisioningService {
             throw new IllegalStateException("LDAP provizyonu yerel hesaba dokunmaz (user=" + uname + ", mode=" + mode + ")");
         }
         List<Long> teamsBefore = isNew ? List.of() : ownTeams(u);
+        String roleBefore = isNew ? null : u.getSystemRole();
         String mgrSicilBefore = u.getManagerSicil();
         Long mgrIdBefore = u.getManagerId();
         String emailBefore = u.getEmail();
@@ -206,8 +217,28 @@ public class LdapProvisioningService {
             ensureManagerEscalationContact(u.getTeamId(), u.getManagerId());
         }
 
+        // A2 (son inceleme 2026-10-22): AD'den gelen GERÇEK rol değişikliği canlı oturuma ulaşır — UserService.updateUser
+        // (AUTH-4) ile AYNI nöbetçi: rol ve kapsam yalnız girişte oturuma yazılır; yöneticinin "AD'den yeniden eşitle"si,
+        // müdür provizyonu ya da grup → rol eşlemesi (ADMIN'den düşürme dahil) eski rolü çıkışa dek bırakıyordu. Sonraki istekte
+        // 401 "oturum düştü", yeni rolle yeniden giriş. Giriş yolunda (LOGIN) yazılmaz: kişi zaten şimdi yeni rolle oturum açıyor.
+        // Pasif hesapta yazılmaz (pasif kapısı keser; toplu pasifleştirmenin geri alma işareti korunur).
+        boolean roleChanged = !isNew && mode != Mode.LOGIN && roleBefore != null
+                && !Objects.equals(roleBefore, u.getSystemRole()) && Boolean.TRUE.equals(u.getActive());
+        if (roleChanged) u.setActiveSessionId(UserService.SESSION_TERMINATED_PREFIX + java.util.UUID.randomUUID());
+
         u.setUpdatedAt(now);
         AppUser saved = userRepo.save(u);
+        if (roleChanged) {
+            log.info("AD'den sistem rolü değişti ({} → {}, {}) — canlı oturum sonlandırıldı (yeni rolle yeniden giriş): user={}",
+                    roleBefore, saved.getSystemRole(), mode, uname);
+            if (userService != null) {
+                try {
+                    userService.evictActiveSessionCacheFor(saved.getUsername());
+                } catch (RuntimeException e) {
+                    log.debug("Tek-oturum önbelleği boşaltılamadı (user={}): {}", uname, e.toString());
+                }
+            }
+        }
         // A1-O2: AD'de e-posta/ad değiştiyse user_id bağlı eskalasyon kişileri de tazelenir (yönetici yolu ile aynı yardımcı).
         if (!isNew && (!Objects.equals(emailBefore, saved.getEmail()) || !Objects.equals(displayNameBefore, saved.getDisplayName()))) {
             int n = UserContactSync.sync(contactRepo, saved);

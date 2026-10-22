@@ -333,9 +333,15 @@ public class CertificateController {
         // Kaydı YALNIZ takım erişim paylaşımıyla okuyan kişi (kendi kapsamı / 7/24 değil) bilgilendirilen eskalasyon
         // kişilerini (ad / e-posta / rol) görmez — paylaşım izlemeleri açar, takımın insanlarını değil. Varlıklar bağlamdan
         // kopuk (open-in-view kapalı): değişiklik kaydedilmez.
-        boolean ownRead = SessionScope.canViewMonitoringOwn(session, inv.getTeamId())
-                || (inv.getUgTeamId() != null && SessionScope.canViewMonitoringOwn(session, inv.getUgTeamId()));
-        if (!ownRead) for (AlertEvent a : alerts) a.setNotifiedContacts(null);
+        // D2 (son inceleme 2026-10-22): karar ALARMIN SAHİBİNE göre (AlertOwnership, eylem kapılarıyla aynı yüklem) — liste
+        // alan adının bütün alarmlarını taşır; aynı host'taki başka takımın BAĞIMSIZ alarmı (Ping / HTTP …) envanter takımının
+        // üyesine o takımın kişilerini gösteriyordu. Sahipsiz alarmın kişileri yalnız tüm izlemeyi görene (7/24, global).
+        for (AlertEvent a : alerts) {
+            java.util.Set<Long> owners = com.sitemonitor.service.AlertOwnership.ownerTeamIds(a, inv.getTeamId(), inv.getUgTeamId());
+            boolean ownRead = owners.isEmpty() ? SessionScope.canViewMonitoringOwn(session, null)
+                    : owners.stream().anyMatch(t -> SessionScope.canViewMonitoringOwn(session, t));
+            if (!ownRead) a.setNotifiedContacts(null);
+        }
         return ok(Map.of("success", true, "domain", domain, "data", alerts, "timestamp", now()));
     }
 
