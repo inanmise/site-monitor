@@ -2486,6 +2486,14 @@ export const TR = {
   'general.lbl.site.monitor.network.error-rate-threshold': 'Ağ Hata Oranı Eşiği (0–1)',
   'general.lbl.site.monitor.network.min-errors':           'Minimum Ağ Hatası Sayısı',
   'general.lbl.site.monitor.scheduler.stale-minutes':      'Bayat Veri Eşiği (dakika)',
+  // ── multi-pod R3-1 · P0 ──
+  'general.lbl.site.monitor.eval-state.mode': 'Kalıcı değerlendirme durumu (çok pod)',
+  'general.lbl.site.monitor.scheduler.leader-yield.enabled': 'Yan işleri tarama liderinden uzaklaştır (çok pod)',
+  'help.set.site.monitor.eval-state.mode':
+    "Ne işe yarar: Tarama liderinin bellekteki alarm değerlendirme durumunu (kurtarma sayaçları, son gözlemler, bastırma, süren teyitler) veritabanına da yazar; verify ayrıca 5 dakikada bir bellekle tabloyu karşılaştırır. Alarm kararları her kipte bellekten verilir.\nFaydası: Pod devrinde durumu taşıyacak sonraki sürüm için kanıt toplar; off, veritabanı yazım yükünü hemen keser.\nÖnerilen değer: verify (varsayılan). Yalnız veritabanı yükü sorun olursa geçici olarak off.",
+  'help.set.site.monitor.scheduler.leader-yield.enabled':
+    "Ne işe yarar: Başka canlı pod varken tarama lideri cron yan işlerini (raporlar, hatırlatmalar, gece temizliği, sertifika taramaları) 20 sn erteler ve tur tabanlı ağır işleri diğer pod'a bırakır.\nFaydası: Lider izleme taramalarına odaklanır, kontrol gecikmesi azalır; iş diğer pod'da yapılmazsa lider kısa bir gecikmeyle kendisi yapar, iş kaybolmaz.\nÖnerilen değer: true (varsayılan). false = önceki sürümün yerleşimi; tek pod'da fark yoktur.",
+  // ── /multi-pod R3-1 · P0 ──
   'general.lbl.site.monitor.uptime.alert-enabled':         'Uptime Alarmı',
   'general.lbl.site.monitor.port.alert-enabled':           'Port Alarmı',
   'general.lbl.site.monitor.dns.alert-enabled':            'DNS Alarmı',

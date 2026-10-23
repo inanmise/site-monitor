@@ -4684,6 +4684,35 @@ public class SchedulerService {
         return isSweepLeader();
     }
 
+    // ── R3-1 P0 (çok pod Sürüm 3-1, ortak sözleşme) ─────────────────────────────────────────────────────────────────
+    // Yalnız uçucu alan okumaları — VERİTABANI YOK, kira yenilenmez, olay yayınlanmaz. Tüketiciler: kalıcı değerlendirme
+    // durumu kaydedicisi (enqueue kapısı), yan iş yerleşimi (lider erteleme), ölçüm aktarıcısı (kurum geneli aileler).
+
+    /**
+     * Bu pod'un tarama liderliği hakkındaki SON bilinen karar — veritabanına sormadan (2026-10-23, çok pod R3-1 P0).
+     * Kapanış başladıysa ({@code ContextClosedEvent}) false; küme kaydı yoksa (tek pod / elle kurulum) true;
+     * aksi hâlde son kira kararı ({@code sweepLeaderHeld}) ve bu pod kirayı bırakmadıysa ({@code sweepLeaderStopped}).
+     *
+     * <p><b>İpucu, karar değil:</b> kira yenilenene dek (≤ TTL/3) eski değeri gösterebilir; alarm kararı hâlâ
+     * {@link #isSweepLeader()} ve sonuç çiti üzerinden verilir. Kira TABLOSU yokken yerel koşu (eski davranış) bu ipucunda
+     * false görünür — tüketiciler bu durumda bugünkü davranışı seçer (yazma yok, erteleme yok, aktarıcı dışa aktarır).
+     */
+    public boolean sweepLeaderHint() {
+        if (shutdownStarted) return false;
+        if (clusterSchedule == null) return true;
+        return sweepLeaderHeld && !sweepLeaderStopped;
+    }
+
+    /**
+     * Bu pod'un tarama liderliğini SON kazandığı an (zamanlayıcı saati, ms) — hiç kazanmadıysa {@code -1}. Yalnız
+     * {@link #sweepLeaderHint()} true iken anlamlıdır (liderlik kaybedilince değer sıfırlanmaz). Küme kaydı yoksa hep
+     * {@code -1}. Pod saatine bağlıdır: iki pod'un yazılarını SIRALAMAK için kullanılmaz (çit belirteci DB kuşağıdır).
+     */
+    public long sweepLeaderSinceMs() {
+        return sweepLeaderSince;
+    }
+    // ── /R3-1 P0 ─────────────────────────────────────────────────────────────────────────────────────────────────────
+
     /**
      * Kirayı veritabanında alır / yeniler ve kararı önbelleğe yazar. {@link #sweepLeaderMonitor} altında çağrılır.
      * Karar değiştiyse (alındı / kaybedildi) {@link SweepLeadershipChangedEvent} yayınlar — kararlı durumda yayınlamaz.

@@ -47,6 +47,10 @@ public class ClusterHealthStore {
 
     /** Gözlem adları — kalıcı. */
     public static final String OBS_RDAP = "rdap-source";
+    /** Kalıcı değerlendirme durumunun son doğrulama turu — tarama lideri yayımlar (çok pod R3-1, plan 3a; R3-1 P0). */
+    public static final String OBS_EVAL_STATE_VERIFY = "eval-state-verify";
+    /** Kurum geneli ölçü ailelerini son dışa aktaran pod — aktarıcı yerleşimi (çok pod R3-1, plan 3e; R3-1 P0). */
+    public static final String OBS_METRICS_ORG = "metrics-org";
 
     public static final String SCAN_DDL = "CREATE TABLE IF NOT EXISTS " + SCAN_TABLE + " ("
             + "kind VARCHAR(20) NOT NULL PRIMARY KEY, "

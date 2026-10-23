@@ -2484,6 +2484,14 @@ export const EN = {
   'general.lbl.site.monitor.network.error-rate-threshold': 'Network Error Rate Threshold (0–1)',
   'general.lbl.site.monitor.network.min-errors':           'Minimum Network Errors',
   'general.lbl.site.monitor.scheduler.stale-minutes':      'Stale Data Threshold (minutes)',
+  // ── multi-pod R3-1 · P0 ──
+  'general.lbl.site.monitor.eval-state.mode': 'Durable evaluation state (multi-pod)',
+  'general.lbl.site.monitor.scheduler.leader-yield.enabled': 'Move side jobs off the sweep leader (multi-pod)',
+  'help.set.site.monitor.eval-state.mode':
+    "What it does: Also writes the sweep leader's in-memory alert evaluation state (recovery counters, last observations, suppression, running confirmations) to the database; verify also compares memory with the tables every 5 minutes. Alert decisions are always taken from memory, in every mode.\nBenefit: Collects the evidence for the next release, which will carry this state across a pod handover; off stops the database write load at once.\nRecommended: verify (the default). Switch to off only for a while if the database load becomes a problem.",
+  'help.set.site.monitor.scheduler.leader-yield.enabled':
+    "What it does: While another live pod exists, the sweep leader defers cron side jobs (reports, reminders, nightly cleanup, certificate sweeps) by 20 s and leaves round-based heavy jobs to the other pod.\nBenefit: The leader concentrates on the monitoring sweeps, so check delay drops; if the other pod does not do the job, the leader does it itself after a short delay and nothing is lost.\nRecommended: true (the default). false = the previous release's placement; a single pod sees no difference.",
+  // ── /multi-pod R3-1 · P0 ──
   'general.lbl.site.monitor.uptime.alert-enabled':         'Uptime Alerts',
   'general.lbl.site.monitor.port.alert-enabled':           'Port Alerts',
   'general.lbl.site.monitor.dns.alert-enabled':            'DNS Alerts',
