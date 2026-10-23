@@ -1,7 +1,7 @@
 import { formatDate } from '../../../api/client'
 import ToneBadge from '../ToneBadge.jsx'
 import { relTime } from './healthModel.js'
-import { EVAL_VERIFY_TONE, EVAL_UNKNOWN_REASONS, SIDE_JOB_STATE_TONE } from './clusterRuntimeModel.js'
+import { EVAL_VERIFY_TONE, EVAL_UNKNOWN_REASONS, SIDE_JOB_STATE_TONE, otherPodState } from './clusterRuntimeModel.js'
 import { KvList, PodChip, SubTitle, WARN_T } from './HealthParts.jsx'
 
 /**
@@ -26,7 +26,8 @@ const KIND_LABEL = {
 const REASON_LABEL = {
   flush_lag: 'hmp.esReason.flush_lag', read_failed: 'hmp.esReason.read_failed', no_generation: 'hmp.esReason.no_generation',
   snapshot_failed: 'hmp.esReason.snapshot_failed', resync: 'hmp.esReason.resync', verifier_error: 'hmp.esReason.verifier_error',
-  payload_too_large: 'hmp.esReason.payload_too_large',
+  payload_too_large: 'hmp.esReason.payload_too_large', leadership_changed: 'hmp.esReason.leadership_changed',
+  nothing_compared: 'hmp.esReason.nothing_compared',
 }
 const MODE_LABEL = { off: 'hmp.esMode.off', write: 'hmp.esMode.write', verify: 'hmp.esMode.verify' }
 const JOB_STATE_LABEL = { running: 'hmp.sjStateRunning', queued: 'hmp.sjStateQueued' }
@@ -147,10 +148,27 @@ export function EvalRecorderRows({ t, es }) {
   )
 }
 
+/** "Başka canlı pod" metni (R3-1 inceleme L4): takipçide "yalnız lider bakar", lider önbelleği boşken son görülen gözlem. */
+function otherPodText(t, sj, state) {
+  const seenAt = sj.otherLivePodSeen?.at
+  const ago = seenAt ? (relTime(seenAt, t) || formatDate(seenAt)) : '—'
+  switch (state) {
+    case 'off': return null
+    case 'yes': return t('hmp.sjOtherPodYes')
+    case 'no': return t('hmp.sjOtherPodNo')
+    case 'leaderOnly': return t('hmp.sjOtherPodLeaderOnly')
+    case 'seenYes': return t('hmp.sjOtherPodSeenYes', ago)
+    case 'seenNo': return t('hmp.sjOtherPodSeenNo', ago)
+    case 'notChecked': return t('hmp.sjOtherPodNotChecked')
+    default: return t('hmp.sjOtherPodUnknown')
+  }
+}
+
 /** Bu pod'un yan işleri — "Bu pod" `<KvList>` satırı. */
 export function SideJobsRows({ t, sj }) {
   if (!sj) return null
-  const otherPod = sj.otherLivePod === true ? t('hmp.sjOtherPodYes') : sj.otherLivePod === false ? t('hmp.sjOtherPodNo') : t('hmp.sjOtherPodUnknown')
+  const podState = otherPodState(sj)
+  const otherPod = otherPodText(t, sj, podState)
   return (
     <>
       <dt>{t('hmp.sjTitle')}</dt>
@@ -163,8 +181,8 @@ export function SideJobsRows({ t, sj }) {
                 : t('hmp.sjIdle')}
             </span>
             <span className="text-muted-foreground">{t('hmp.sjCounters', sj.deferred ?? '—', sj.yielded ?? '—')}</span>
-            <span className="text-muted-foreground" data-slot="side-jobs-yield">
-              {sj.leaderYield == null ? null : `${sj.leaderYield ? t('hmp.sjYieldOn') : t('hmp.sjYieldOff')} · `}{otherPod}
+            <span className="text-muted-foreground [overflow-wrap:anywhere]" data-slot="side-jobs-yield" data-other-pod={podState}>
+              {[sj.leaderYield == null ? null : sj.leaderYield ? t('hmp.sjYieldOn') : t('hmp.sjYieldOff'), otherPod].filter(Boolean).join(' · ')}
             </span>
             {sj.threads === 0 && <span className="text-muted-foreground">{t('hmp.sjInline')}</span>}
             {sj.accepting === false && sj.threads !== 0 && <span className="text-muted-foreground" data-slot="side-jobs-closing">{t('hmp.sjNotAccepting')}</span>}

@@ -17,9 +17,12 @@ export const EVAL_KINDS = ['recovery', 'sibling', 'suppression', 'round_seen', '
 export const EVAL_MEASURED_KINDS = ['descriptor', 'window_seed']
 /** Bilinen kipler (`site.monitor.eval-state.mode`). */
 export const EVAL_MODES = ['off', 'write', 'verify']
-/** Bilinmeyen tur nedenleri (sunucu `EvalVerifyReport.REASON_*`). */
+/**
+ * Bilinmeyen tur nedenleri (sunucu `EvalVerifyReport.REASON_*`). `leadership_changed` / `nothing_compared`: R3-1 inceleme
+ * düzeltmeleri (2026-10-23) — tur sırasında liderlik değişti / karşılaştırılacak kayıt yoktu (hepsi atlandı) → bilinmiyor.
+ */
 export const EVAL_UNKNOWN_REASONS = ['flush_lag', 'read_failed', 'no_generation', 'snapshot_failed', 'resync', 'verifier_error',
-  'payload_too_large']
+  'payload_too_large', 'leadership_changed', 'nothing_compared']
 /** Doğrulama gözlemi bu kadar doğrulama aralığından eskiyse "eski" (sunucu `stale` alanı yoksa yedek eşik: 3 × 5 dk). */
 export const EVAL_VERIFY_STALE_MS = 15 * 60_000
 
@@ -59,12 +62,14 @@ export function evalStateModel(health) {
   }
   const rec = isObj(es.this_pod) ? es.this_pod : null
   const mode = rec && EVAL_MODES.includes(rec.mode) ? rec.mode : null
-  // Kaydedici: şu an yazamıyor → uyarı; tablolar yok (ilk açılış) / bilinmiyor → gri; kapalı → kapalı; aksi hâlde normal
+  // Kaydedici: şu an yazamıyor → uyarı; tablolar yok (ilk açılış) / bilinmiyor → gri; kapalı → kapalı; aksi hâlde normal.
+  // Yalnız YAZAN kaydedici "şu an başarısız" olabilir (R3-1 inceleme M2): liderliği kaybeden pod'un eski hatası yeniden
+  // denenmez — kartı günlerce uyarıya çekmesin (sunucu da `failing`'i yalnız `active` iken verir; bu ikinci emniyet).
   let recorderLevel = 'unknown'
   if (rec) {
-    const failing = rec.failing === true
+    const failing = rec.active !== false && (rec.failing === true
       || (rec.failing == null && rec.last_failure_at != null && (rec.last_flush_at == null
-        || Date.parse(toUtc(String(rec.last_failure_at))) > Date.parse(toUtc(String(rec.last_flush_at)))))
+        || Date.parse(toUtc(String(rec.last_failure_at))) > Date.parse(toUtc(String(rec.last_flush_at))))))
     recorderLevel = mode === 'off' ? 'off' : rec.table_missing ? 'unknown' : failing ? 'warn' : mode ? 'ok' : 'unknown'
   }
 
@@ -117,8 +122,11 @@ function verifyModel(es, mode, serverNow) {
 
 /**
  * Yan işler modeli. `null` = alan yok (eski sunucu / koşucu yok).
+ * `otherLivePodSeen` = bu pod'da SON görülen dolu "başka canlı pod" gözlemi (`{value, at}`; R3-1 inceleme L4 — koşucunun
+ * önbelleği yalnız liderin kararından sonra ~1 dk dolu) ya da `null`.
  * @returns {null | {known: boolean, threads: number|null, accepting: boolean|null, leaderYield: boolean|null,
- *   leaderHint: boolean|null, otherLivePod: boolean|null, active: Array, failedJobs: Array, running: number, queued: number,
+ *   leaderHint: boolean|null, otherLivePod: boolean|null, otherLivePodSeen: {value: boolean, at: string|null}|null,
+ *   active: Array, failedJobs: Array, running: number, queued: number,
  *   deferred: number|null, yielded: number|null, skipped: number|null, jobs: Array}}
  */
 export function sideJobsModel(health) {
@@ -136,6 +144,9 @@ export function sideJobsModel(health) {
     leaderYield: typeof sj.leader_yield_enabled === 'boolean' ? sj.leader_yield_enabled : null,
     leaderHint: typeof sj.leader_hint === 'boolean' ? sj.leader_hint : null,
     otherLivePod: typeof sj.other_live_pod === 'boolean' ? sj.other_live_pod : null,
+    otherLivePodSeen: isObj(sj.other_live_pod_seen) && typeof sj.other_live_pod_seen.value === 'boolean'
+      ? { value: sj.other_live_pod_seen.value, at: typeof sj.other_live_pod_seen.at === 'string' ? sj.other_live_pod_seen.at : null }
+      : null,
     running: num(sj.running) ?? jobs.filter((j) => j.state === 'running').length,
     queued: num(sj.queued) ?? jobs.filter((j) => j.state === 'queued').length,
     deferred: num(sj.deferred_total) ?? sum('deferred_count'),
@@ -145,4 +156,23 @@ export function sideJobsModel(health) {
     failedJobs: jobs.filter((j) => j.last_outcome === 'failed' || j.last_outcome === 'interrupted'),
     jobs,
   }
+}
+
+/**
+ * "Başka canlı pod" satırının hâli (R3-1 inceleme L4) — ekran metni seçer:
+ * - `off`: lider erteleme kapalı → gözlem kullanılmaz (satır yalnız "kapalı" der)
+ * - `leaderOnly`: bu pod tarama lideri değil → yalnız lider bakar (takipçide gözlem hiç dolmaz; "bilinmiyor" yanıltıcıydı)
+ * - `yes` / `no`: şu anki (taze) gözlem
+ * - `seenYes` / `seenNo`: önbellek boş ama bu pod'da son görülen gözlem var (zamanıyla)
+ * - `notChecked`: lider ama henüz hiç bakılmadı (bir sonraki yan iş tetiğinde)
+ * - `unknown`: eski sunucu (lider bilgisi yok) — eski davranış
+ */
+export function otherPodState(sj) {
+  if (!sj || !sj.known) return 'unknown'
+  if (sj.leaderYield === false) return 'off'
+  if (sj.otherLivePod === true) return 'yes'
+  if (sj.otherLivePod === false) return 'no'
+  if (sj.leaderHint === false) return 'leaderOnly'
+  if (sj.otherLivePodSeen) return sj.otherLivePodSeen.value ? 'seenYes' : 'seenNo'
+  return sj.leaderHint === true ? 'notChecked' : 'unknown'
 }

@@ -222,6 +222,15 @@ export function exporterState(exp, nowMs = Date.now()) {
   return 'running'
 }
 
+/**
+ * Bu pod son turda kurum ailelerini (izleme, alarm, sertifika, alan adı…) yaydı mı (çok pod R3-1, inceleme L8): `false` =
+ * yalnız kendi pod ölçülerini yaydı (tarama lideri; kurum ailelerini başka pod yayıyor — kayıt sayıları o turda yok),
+ * `true` = yaydı, `null` = bilinmiyor (eski sunucu alanı göndermez / tur yok) → eski görünüm.
+ */
+export function exportsOrgFamilies(exp) {
+  return typeof exp?.org_families === 'boolean' ? exp.org_families : null
+}
+
 /** Okunamayan kaynak adları. */
 export function failedSources(exp) {
   return (exp?.sources || []).filter((s) => s && s.up === false).map((s) => String(s.source))

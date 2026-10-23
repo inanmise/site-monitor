@@ -129,6 +129,55 @@ class ClusterRuntimeHealthTest {
     }
 
     @Test
+    @DisplayName("R3-1 inceleme M2: YAZMAYAN kaydedicinin (eski lider / çitlenmiş) eski hatası 'şu an başarısız' sayılmaz — yalnız yazan "
+            + "kaydedicinin son hatası son boşaltmadan yeniyse failing")
+    @SuppressWarnings("unchecked")
+    void failingOnlyWhileActive() {
+        EvalStateSink sink = mock(EvalStateSink.class);
+        // Eski lider: DB kesintisinde son yazımı başarısız oldu, liderliği kaybetti → artık yazmıyor, yeniden denemiyor
+        when(sink.status()).thenReturn(new EvalStateSink.Status("verify", false, "sitemonitor-a-0000000a", null, 0, 0, 40, 3,
+                NOW - 600_000, NOW - 300_000, "CannotGetJdbcConnectionException", false, null, null));
+        Map<String, Object> p = (Map<String, Object>) ClusterRuntimeHealth.evalState(sink, null, NOW, 300_000).get("this_pod");
+        assertThat(p).containsEntry("active", false).containsEntry("failing", false)
+                .containsEntry("last_failure", "CannotGetJdbcConnectionException").containsEntry("write_failures", 3L);
+        // Aynı geçmiş, yazan lider → failing
+        when(sink.status()).thenReturn(new EvalStateSink.Status("verify", true, "sitemonitor-a-0000000a", 4L, 0, 0, 40, 3,
+                NOW - 600_000, NOW - 300_000, "CannotGetJdbcConnectionException", false, null, null));
+        p = (Map<String, Object>) ClusterRuntimeHealth.evalState(sink, null, NOW, 300_000).get("this_pod");
+        assertThat(p).containsEntry("failing", true);
+    }
+
+    @Test
+    @DisplayName("R3-1 inceleme L4: koşucunun 'başka canlı pod' gözlemi yalnız lider kararından sonra ~1 dk dolu; son dolu değer ve zamanı "
+            + "bellekte tutulur (other_live_pod_seen) — ekran sürekli 'bilinmiyor' demez; hiç görülmediyse alan yok")
+    @SuppressWarnings("unchecked")
+    void sideJobsRemembersLastSeenOtherPod() {
+        SideJobRunner runner = mock(SideJobRunner.class);
+        ClusterRuntimeHealth.OtherPodSeen seen = new ClusterRuntimeHealth.OtherPodSeen();
+        when(runner.status()).thenReturn(new SideJobRunner.Status(3, true, true, true, null, List.of()));
+        assertThat(ClusterRuntimeHealth.sideJobs(runner, seen, NOW)).containsEntry("other_live_pod", null)
+                .doesNotContainKey("other_live_pod_seen");
+
+        when(runner.status()).thenReturn(new SideJobRunner.Status(3, true, true, true, true, List.of()));
+        assertThat((Map<String, Object>) ClusterRuntimeHealth.sideJobs(runner, seen, NOW - 120_000).get("other_live_pod_seen"))
+                .containsEntry("value", true).containsEntry("at", ClusterRuntimeHealth.iso(NOW - 120_000));
+
+        // Önbellek boşaldı (karar 1 dk'dan eski): son görülen kalır
+        when(runner.status()).thenReturn(new SideJobRunner.Status(3, true, true, true, null, List.of()));
+        Map<String, Object> m = ClusterRuntimeHealth.sideJobs(runner, seen, NOW);
+        assertThat(m).containsEntry("other_live_pod", null);
+        assertThat((Map<String, Object>) m.get("other_live_pod_seen")).containsEntry("value", true)
+                .containsEntry("at", ClusterRuntimeHealth.iso(NOW - 120_000));
+
+        // Yeni gözlem eskisinin yerine geçer
+        when(runner.status()).thenReturn(new SideJobRunner.Status(3, true, true, true, false, List.of()));
+        assertThat((Map<String, Object>) ClusterRuntimeHealth.sideJobs(runner, seen, NOW).get("other_live_pod_seen"))
+                .containsEntry("value", false).containsEntry("at", ClusterRuntimeHealth.iso(NOW));
+        // Bellek parametresiz eski çağrı biçimi alanı eklemez
+        assertThat(ClusterRuntimeHealth.sideJobs(runner)).doesNotContainKey("other_live_pod_seen");
+    }
+
+    @Test
     @DisplayName("yan işler: iş satırları + özet sayaçlar (koşan, kuyrukta, son koşusu hatalı, ertelenen, bırakılan); başka canlı pod "
             + "bilinmiyorsa null; durum okunamazsa error")
     @SuppressWarnings("unchecked")

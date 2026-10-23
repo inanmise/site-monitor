@@ -162,6 +162,40 @@ describe('SystemHealth — Küme kartı, çok pod R3-1 (kalıcı değerlendirme 
     expect(card().querySelector('[data-slot="cluster-eval-recorder"]').textContent).toMatch(/Unknown|Bilinmiyor/)
   })
 
+  // R3-1 inceleme M2 (FX-OBS): DB kesintisinde liderliği kaybeden pod artık yazmıyor — eski hatası "yeniden deneniyor" uyarısı ve
+  // uyarı kart başlığı göstermez (yanıt iki pod'a düşünce kart uyarı ↔ normal arasında gidip geliyordu)
+  it('eski lider (yazmıyor) + eski son hata → uyarı yok, kart başlığı normal', async () => {
+    await open({ ...BASE, eval_state: { this_pod: { ...REC, active: false, failing: true, write_failures: 3,
+      last_failure_at: '2026-10-23T08:30:00', last_flush_at: '2026-10-23T08:20:00', last_failure: 'CannotGetJdbcConnectionException' },
+    verify: VERIFY }, side_jobs: SIDE })
+    const rec = card().querySelector('[data-slot="cluster-eval-recorder"]')
+    expect(rec).toHaveAttribute('data-level', 'ok')
+    expect(rec.querySelector('[data-slot="es-failing"]')).toBeNull()
+    expect(card().querySelector('[data-kind="leader"]')).toHaveAttribute('data-tone', 'success')
+  })
+
+  // R3-1 inceleme L4 (FX-OBS): "başka canlı pod" satırı takipçide sürekli "bilinmiyor" demez
+  it('yan işler başka canlı pod: takipçide "yalnız tarama lideri bakar", lider önbelleği boşken son görülen gözlem', async () => {
+    const first = await open({ ...BASE, eval_state: { this_pod: REC, verify: VERIFY }, side_jobs: { ...SIDE, other_live_pod: null } })
+    let line = card().querySelector('[data-slot="side-jobs-yield"]')
+    expect(line).toHaveAttribute('data-other-pod', 'leaderOnly')
+    expect(line.textContent).toMatch(/only the sweep leader checks|yalnız tarama lideri bakar/)
+    expect(line.textContent).not.toMatch(/unknown|bilinmiyor/)
+    first.unmount()
+
+    const second = await open({ ...BASE, eval_state: { this_pod: REC, verify: VERIFY }, side_jobs: { ...SIDE, leader_hint: true,
+      other_live_pod: null, other_live_pod_seen: { value: true, at: '2026-10-23T08:57:00' } } })
+    line = card().querySelector('[data-slot="side-jobs-yield"]')
+    expect(line).toHaveAttribute('data-other-pod', 'seenYes')
+    expect(line.textContent).toMatch(/another live pod at the last check|son bakışta başka canlı pod vardı/)
+    second.unmount()
+
+    await open({ ...BASE, eval_state: { this_pod: REC, verify: VERIFY }, side_jobs: { ...SIDE, leader_hint: true, other_live_pod: null } })
+    line = card().querySelector('[data-slot="side-jobs-yield"]')
+    expect(line).toHaveAttribute('data-other-pod', 'notChecked')
+    expect(line.textContent).toMatch(/not checked yet|henüz bakılmadı/)
+  })
+
   it('eski sunucu (eval_state / side_jobs yok) → satırlar gizli, kart her zamanki gibi', async () => {
     await open(BASE)
     expect(card().querySelector('[data-slot="cluster-eval-verify"]')).toBeNull()

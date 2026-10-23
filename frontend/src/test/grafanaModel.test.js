@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
 import {
-  FIELD_KEYS, SECTION_IDS, TOKEN_FILE_PLACEHOLDER, changedFields, errorsForChanges, exporterState, failedSources, formToBody, isDirty, namespaceOf, orderSections,
+  FIELD_KEYS, SECTION_IDS, TOKEN_FILE_PLACEHOLDER, changedFields, errorsForChanges, exporterState, exportsOrgFamilies, failedSources, formToBody, isDirty, namespaceOf, orderSections,
   scrapeSnippet, selectorOk, toForm, urlOk, validateForm,
 } from '../components/admin/grafana/grafanaModel.js'
 
@@ -114,6 +114,15 @@ describe('grafanaModel — aktarıcı durumu ve kazıma örneği', () => {
     expect(exporterState(null)).toBe('unknown')
     expect(exporterState({ state: 'weird' })).toBe('unknown')
     expect(failedSources({ sources: [{ source: 'alerts', up: false }, { source: 'x', up: true }] })).toEqual(['alerts'])
+  })
+
+  // Çok pod R3-1 inceleme L8 (FX-OBS): yalnız POD aileleri yayan tur (tarama lideri) — ekran nedenini söyler
+  it('exportsOrgFamilies: false = başka pod yayıyor, true = bu pod yaydı, alan yok / bozuk = bilinmiyor (eski görünüm)', () => {
+    expect(exportsOrgFamilies({ ...base, org_families: false })).toBe(false)
+    expect(exportsOrgFamilies({ ...base, org_families: true })).toBe(true)
+    expect(exportsOrgFamilies(base)).toBeNull()
+    expect(exportsOrgFamilies({ ...base, org_families: 'false' })).toBeNull()
+    expect(exportsOrgFamilies(null)).toBeNull()
   })
 
   it('kazıma örneği eşleyicideki ad alanını kullanır; yoksa yer tutucu', () => {

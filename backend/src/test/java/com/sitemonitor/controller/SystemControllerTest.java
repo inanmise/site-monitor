@@ -768,8 +768,15 @@ class SystemControllerTest {
                     .andExpect(jsonPath("$.data.eval_state.verify.kinds.recovery.compared").value(4))
                     .andExpect(jsonPath("$.data.side_jobs.threads").value(3))
                     .andExpect(jsonPath("$.data.side_jobs.other_live_pod").value(true))
+                    .andExpect(jsonPath("$.data.side_jobs.other_live_pod_seen.value").value(true))
                     .andExpect(jsonPath("$.data.side_jobs.jobs[0].name").value("cert-hourly"))
                     .andExpect(jsonPath("$.data.side_jobs.deferred_total").value(2));
+            // R3-1 inceleme L4: canlılık önbelleği boşalınca (null) son görülen değer istekler arasında korunur
+            when(runner.status()).thenReturn(new com.sitemonitor.service.schedule.SideJobRunner.Status(3, true, true, true, null, List.of()));
+            mvc.perform(get("/api/admin/system").session(userSession()))
+                    .andExpect(jsonPath("$.data.side_jobs.other_live_pod").value(org.hamcrest.Matchers.nullValue()))
+                    .andExpect(jsonPath("$.data.side_jobs.other_live_pod_seen.value").value(true))
+                    .andExpect(jsonPath("$.data.side_jobs.other_live_pod_seen.at").isString());
 
             when(store.read(com.sitemonitor.service.health.ClusterHealthStore.OBS_EVAL_STATE_VERIFY)).thenThrow(new IllegalStateException("db"));
             when(runner.status()).thenThrow(new IllegalStateException("x"));
