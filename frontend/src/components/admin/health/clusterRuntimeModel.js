@@ -18,7 +18,8 @@ export const EVAL_MEASURED_KINDS = ['descriptor', 'window_seed']
 /** Bilinen kipler (`site.monitor.eval-state.mode`). */
 export const EVAL_MODES = ['off', 'write', 'verify']
 /** Bilinmeyen tur nedenleri (sunucu `EvalVerifyReport.REASON_*`). */
-export const EVAL_UNKNOWN_REASONS = ['flush_lag', 'read_failed', 'no_generation', 'snapshot_failed']
+export const EVAL_UNKNOWN_REASONS = ['flush_lag', 'read_failed', 'no_generation', 'snapshot_failed', 'resync', 'verifier_error',
+  'payload_too_large']
 /** Doğrulama gözlemi bu kadar doğrulama aralığından eskiyse "eski" (sunucu `stale` alanı yoksa yedek eşik: 3 × 5 dk). */
 export const EVAL_VERIFY_STALE_MS = 15 * 60_000
 

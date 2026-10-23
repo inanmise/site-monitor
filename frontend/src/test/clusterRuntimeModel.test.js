@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest'
-import { evalStateModel, sideJobsModel, EVAL_KINDS, EVAL_VERIFY_TONE } from '../components/admin/health/clusterRuntimeModel.js'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { evalStateModel, sideJobsModel, EVAL_KINDS, EVAL_VERIFY_TONE, EVAL_UNKNOWN_REASONS } from '../components/admin/health/clusterRuntimeModel.js'
+import { TR } from '../i18n/index.jsx'
+import { EN } from '../i18n/en.js'
 import { clusterModel } from '../components/admin/health/healthModel.js'
 
 // Çok pod Sürüm 3-1 (2026-10-23, paket B): Küme kartının kalıcı değerlendirme durumu + yan iş modeli. Bilinmeyen ASLA yeşil değil.
@@ -128,5 +132,26 @@ describe('clusterModel — R3-1 alanları', () => {
     expect(single.available).toBe(false)
     expect(single.evalState.verify.level).toBe('ok')
     expect(single.sideJobs.known).toBe(true)
+  })
+})
+
+// Entegrasyon (2026-10-23): sunucunun gönderebileceği her "bilinmiyor" nedeni çevrilir — ham kod ("neden: resync") gösterilmez.
+describe('doğrulama nedenleri sunucu sabitleriyle eşleşir', () => {
+  const evalDir = resolve(__dirname, '../../../backend/src/main/java/com/sitemonitor/service/evalstate')
+  const read = (f) => readFileSync(resolve(evalDir, f), 'utf8')
+  const constants = (src) => [...src.matchAll(/public static final String REASON_[A-Z_]+ = "([a-z_]+)"/g)].map((m) => m[1])
+  const server = new Set([
+    ...constants(read('EvalVerifyReport.java')),
+    ...constants(read('EvalStateVerifier.java')),
+    ...constants(read('EvalStateRecorder.java')),
+    ...[...read('EvalStateVerifier.java').matchAll(/"(payload_too_large)"/g)].map((m) => m[1]),
+  ])
+  it('her sunucu nedeni modelde ve TR + EN çevirisi var', () => {
+    expect(server.size).toBeGreaterThanOrEqual(7)
+    for (const r of server) {
+      expect(EVAL_UNKNOWN_REASONS, r).toContain(r)
+      expect(TR[`hmp.esReason.${r}`], r).toBeTruthy()
+      expect(EN[`hmp.esReason.${r}`], r).toBeTruthy()
+    }
   })
 })

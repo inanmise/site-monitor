@@ -25,7 +25,8 @@ const KIND_LABEL = {
 }
 const REASON_LABEL = {
   flush_lag: 'hmp.esReason.flush_lag', read_failed: 'hmp.esReason.read_failed', no_generation: 'hmp.esReason.no_generation',
-  snapshot_failed: 'hmp.esReason.snapshot_failed',
+  snapshot_failed: 'hmp.esReason.snapshot_failed', resync: 'hmp.esReason.resync', verifier_error: 'hmp.esReason.verifier_error',
+  payload_too_large: 'hmp.esReason.payload_too_large',
 }
 const MODE_LABEL = { off: 'hmp.esMode.off', write: 'hmp.esMode.write', verify: 'hmp.esMode.verify' }
 const JOB_STATE_LABEL = { running: 'hmp.sjStateRunning', queued: 'hmp.sjStateQueued' }
