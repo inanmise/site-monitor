@@ -12,7 +12,7 @@
 #   4. /metrics → sitemonitor_schema_patch_failed = 0 ve _locked = 1 (yamalar advisory lock altında koştu)
 #   5. günlük: "Şema yamaları:" özet satırı VAR, hiçbir yama/özet satırında "BAŞARISIZ" YOK
 #   6. günlük: ERROR düzeyinde satır yok, "APPLICATION FAILED TO START" / ana iş parçacığı istisnası yok
-#   7. (3. argüman = imajdan alınmış own-assets.txt / carried-assets.txt dizini — 2026-10-23, çok pod R2b · MP-47)
+#   7. (3. argüman = imajdan alınmış own-assets.txt / carried-assets.txt / carry-report.json dizini — 2026-10-23, çok pod R2b · MP-47)
 #      bu derlemenin bir varlığı ve önceki sürümden TAŞINAN bir varlık 200 + "immutable"; taşınan liste bu derlemeyle
 #      çakışmıyor ve sınırlı (≤ 5000); olmayan bir varlık düz metin 404 + no-store (SpaNotFoundAdvice); /boot-guard.js
 #      200 + no-store (sürüm bağımsız açılış koruması hiç önbelleğe alınmaz).
@@ -107,11 +107,11 @@ if [ -n "$LISTS" ]; then
   if [ ! -f "$carried_list" ]; then
     err "imajda /app/frontend/carried-assets.txt yok (Dockerfile asset-carry çalışmadı mı?)"
   elif [ ! -s "$carried_list" ]; then
-    echo "::notice::önceki sürümden taşınan sayfa dosyası yok (ilk derleme ya da önceki imaj okunamadı) — yuvarlanan dağıtımda eski sekmeler bir kez yenilenir"
+    echo "::notice::önceki sürümlerden taşınan sayfa dosyası yok — arayüz paketi son sürümlerden beri değişmemiş, ilk derleme ya da önceki imaj okunamadı (carry-report.json: $(cat "$LISTS/carry-report.json" 2>/dev/null || echo yok)) — hata değil"
   else
     carried="$(grep -c . "$carried_list")"
     echo "önceki sürümden taşınan sayfa dosyası: $carried"
-    [ "$carried" -le 5000 ] || err "taşınan dosya sayısı $carried > 5000 — yalnız BİR önceki sürümün varlıkları taşınmalı"
+    [ "$carried" -le 5000 ] || err "taşınan dosya sayısı $carried > 5000 — yalnız son birkaç sürümün varlıkları taşınmalı (sınır)"
     overlap="$(grep -cxF -f "$own_list" "$carried_list" || true)"
     [ "${overlap:-0}" = "0" ] || err "$overlap taşınan ad bu derlemede de var (taşıma yeni derlemenin adlarını atlamalı)"
     for name in "$(grep -m1 . "$carried_list")" "$(grep . "$carried_list" | tail -1)"; do

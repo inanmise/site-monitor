@@ -1,3 +1,22 @@
+{{- /*
+Container env of the OpenTelemetry Java agent (config.otel.agent.enabled) as a YAML map — rendered below, and the
+ConfigMap refuses config.extraEnv keys it contains (container env would silently win over envFrom). Defaults: no client
+spans / traceparent on checks to monitored sites, metrics stay on Prometheus, Spring Boot must not map the agent's OTEL_*
+variables into its own exporter, log MDC keys stay traceId/spanId, credential query parameters redacted in url.query.
+config.otel.agent.extraEnv wins over every default. Kept in THIS file: OtelAgentQueryRedactionGateTest checks here that
+the agent env wires site-monitor.otelSensitiveQueryParameters.
+(Spring @Scheduled instrumentation stays ON on purpose — 2026-10-23 review: without the tick span the agent's JDBC
+instrumentation, which needs no parent, would turn every statement of a tick into its own ROOT trace.)
+*/ -}}
+{{- define "site-monitor.agentEnv" -}}
+{{- $otel := .Values.config.otel | default dict -}}
+{{- $agent := $otel.agent | default dict -}}
+{{- $env := dict "OTEL_SERVICE_NAME" ($agent.serviceName | default (include "site-monitor.fullname" .)) "OTEL_METRICS_EXPORTER" "none" "OTEL_INSTRUMENTATION_JAVA_HTTP_CLIENT_ENABLED" "false" "OTEL_INSTRUMENTATION_HTTP_URL_CONNECTION_ENABLED" "false" "MANAGEMENT_OPENTELEMETRY_MAP_ENVIRONMENT_VARIABLES" "false" "OTEL_INSTRUMENTATION_COMMON_LOGGING_TRACE_ID_KEY" "traceId" "OTEL_INSTRUMENTATION_COMMON_LOGGING_SPAN_ID_KEY" "spanId" "OTEL_INSTRUMENTATION_SANITIZATION_URL_EXPERIMENTAL_SENSITIVE_QUERY_PARAMETERS" (include "site-monitor.otelSensitiveQueryParameters" .) -}}
+{{- with $otel.resourceAttributes -}}
+{{- $_ := set $env "OTEL_RESOURCE_ATTRIBUTES" . -}}
+{{- end -}}
+{{- toYaml (mergeOverwrite $env ($agent.extraEnv | default dict)) -}}
+{{- end -}}
 {{- /* OpenTelemetry Java agent via the OpenTelemetry Operator (2026-10-21) - see values.yaml config.otel.agent */ -}}
 {{- $otel := .Values.config.otel | default dict -}}
 {{- $agent := $otel.agent | default dict -}}
@@ -120,7 +139,6 @@ spec:
             # Spring Boot must not map the agent's OTEL_* variables into its own exporter; log MDC keys stay traceId/spanId;
             # approval-link tokens (?token=) and other credential query parameters are redacted in url.query (the
             # setting REPLACES the agent's built-in list, so that list is repeated in site-monitor.otelSensitiveQueryParameters).
-            # No span per @Scheduled tick (2026-10-23): 54 jobs on every pod, most of them a "skipped, held elsewhere" no-op on followers.
             {{- range $name, $value := include "site-monitor.agentEnv" . | fromYaml }}
             - name: {{ $name }}
               value: {{ $value | toString | quote }}

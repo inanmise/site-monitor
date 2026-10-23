@@ -149,6 +149,14 @@ describe('boot-guard.js — paketin kendi dosyası yüklenemedi', () => {
 })
 
 describe('boot-guard.js ↔ utils/chunkReloadGuard.js — tek kayıt, tek kural', () => {
+  it('eski biçimdeki kaydın {version, count} alanları yeniden yazarken korunur (geri alma: eski paket yalnız onları okur)', () => {
+    sessionStorage.setItem(CHUNK_RELOAD_KEY, JSON.stringify({ version: '20.166.0', count: 1 }))
+    const { reload } = install()
+    entry('AAA')
+    expect(reload).toHaveBeenCalledTimes(1)
+    expect(stored()).toEqual({ v: 2, at: T0, builds: { '20.166.0': 1, '/assets/index-AAA.js': 1 }, version: '20.166.0', count: 1 })
+  })
+
   it('açılış koruması hakkı kullandıysa uygulama (ErrorBoundary / dil) aynı paket için yenilemez — ve tersi', () => {
     install(); entry('AAA')
     expect(currentBuildId()).toBe('/assets/index-AAA.js')                   // ikisi de aynı paket kimliğini görür

@@ -16,16 +16,20 @@ ARG K6_DIGEST=sha256:8cd78f9d0de5f50bc8821cceecf356d5d9e839e6611c226a3fcf13c5910
 ARG PREVIOUS_IMAGE=
 FROM grafana/k6:${K6_VERSION}@${K6_DIGEST} AS k6-bin
 
-# Previous release's page files (2026-10-23, multi-pod release 2b · MP-47). During a rolling update old and new pods
+# Previous releases' page files (2026-10-23, multi-pod release 2b · MP-47). During a rolling update old and new pods
 # serve together: an old pod's index.html asks for its own hashed /assets/* files and the request may land on a new
 # pod (and a tab opened before the deploy loads a lazy chunk later) → 404 → blank page. The image therefore also
-# carries the PREVIOUS release's OWN assets (only those: scripts/carry-previous-assets.mjs, ≈ 14 MB, never a growing
-# pile — each image lists its own assets in /app/frontend/own-assets.txt, outside the served dist).
-# PREVIOUS_IMAGE = full reference of the previous release image, ideally digest-pinned (release.yml / docker-build.yml
-# resolve it with scripts/resolve-previous-image.sh). Empty (default, local builds, the very first build) = today's
-# build: nothing is carried. The ARG itself is declared at the top (global ARGs must precede the first FROM).
+# carries the OWN assets of the last CARRY_RELEASES releases (default 5 — prod is deployed by hand and skips releases;
+# scripts/carry-previous-assets.mjs). Each image writes /app/frontend/asset-history.json (outside the served dist:
+# itself + the releases it carried, newest first); the next build reads only the PREVIOUS image and takes the files of
+# that list's first CARRY_RELEASES entries — bounded (older releases drop out, ≤ 5000 files / 200 MB, oldest first).
+# PREVIOUS_IMAGE = full reference of the previous release image, ideally digest-pinned (release.yml / docker-build.yml /
+# build-image.ps1 resolve it with scripts/resolve-previous-image.sh). Empty (default, local builds, the very first
+# build) = today's build: nothing is carried. The ARG itself is declared at the top (global ARGs must precede the
+# first FROM). The other direction (new index → OLD pod) cannot be carried — public/boot-guard.js reloads once.
 FROM scratch AS previous-release-none
 COPY VERSION /app/frontend/NO_PREVIOUS_RELEASE
+COPY VERSION /app/VERSION
 FROM ${PREVIOUS_IMAGE:-previous-release-none} AS previous-release
 
 # ── Stage 1: React build ─────────────────────────────
@@ -38,16 +42,25 @@ COPY VERSION /app/VERSION
 COPY frontend/ .
 RUN npm run build
 
-# ── Stage 1b: carry the previous release's own assets (MP-47) ────
-# Same node image (node runs the script); only /carry/out goes into the runtime image.
+# ── Stage 1b: carry the previous releases' own assets (MP-47) ────
+# Same node image (node runs the script); only /carry/out goes into the runtime image. /carry/check-previous = the
+# previous image's inputs (asset listing + lists) for the independent CI check (scripts/check-carry-output.mjs).
 FROM frontend-build AS asset-carry
+ARG CARRY_RELEASES=5
 COPY scripts/carry-previous-assets.mjs /carry/carry-previous-assets.mjs
 COPY --from=previous-release /app/frontend/ /carry/previous/
-RUN node /carry/carry-previous-assets.mjs --previous /carry/previous --own /app/frontend/dist/assets --out /carry/out
+COPY --from=previous-release /app/VERSION /carry/previous-VERSION
+RUN node /carry/carry-previous-assets.mjs --previous /carry/previous --own /app/frontend/dist/assets --out /carry/out \
+      --release "$(tr -d '[:space:]' < /app/VERSION)" --previous-release "$(tr -d '[:space:]' < /carry/previous-VERSION)" \
+      --releases "${CARRY_RELEASES}" \
+ && mkdir -p /carry/check-previous \
+ && (ls -1A /carry/previous/dist/assets 2>/dev/null || true) > /carry/check-previous/assets.txt \
+ && for f in asset-history.json own-assets.txt; do if [ -f "/carry/previous/$f" ]; then cp "/carry/previous/$f" /carry/check-previous/; fi; done
 
-# CI check target (ci.yml "image-assets"): only the carry result, without the node_modules of the build stage.
+# CI check target (ci.yml "image-assets"): the carry result + the previous image's inputs, without node_modules.
 FROM scratch AS asset-carry-check
-COPY --from=asset-carry /carry/out/ /
+COPY --from=asset-carry /carry/out/ /out/
+COPY --from=asset-carry /carry/check-previous/ /previous/
 
 # ── Stage 2: Spring Boot build ───────────────────────
 FROM maven:3.9.16-eclipse-temurin-25-noble@sha256:dd8e01b3be719853578c07b57ff8d9bbbbfe746f802226f05b19689420815221 AS backend-build
@@ -94,11 +107,11 @@ RUN mkdir -p /app/data && chown -R appuser:appgroup /app
 
 COPY --from=backend-build --chown=appuser:appgroup /app/target/*.jar app.jar
 # Carried previous-release assets FIRST, then this build's dist on top (a hashed name never differs in content; the
-# carry already skips names this build has). Lists outside dist (never served): own-assets.txt (read by the NEXT
-# build), carried-assets.txt (image boot check).
+# carry already skips names this build has). Lists outside dist (never served): asset-history.json (read by the NEXT
+# build), own-assets.txt, carried-assets.txt and carry-report.json (image boot check, runbook).
 COPY --from=asset-carry --chown=appuser:appgroup /carry/out/assets/ ./frontend/dist/assets/
 COPY --from=frontend-build --chown=appuser:appgroup /app/frontend/dist ./frontend/dist
-COPY --from=asset-carry --chown=appuser:appgroup /carry/out/own-assets.txt /carry/out/carried-assets.txt ./frontend/
+COPY --from=asset-carry --chown=appuser:appgroup /carry/out/own-assets.txt /carry/out/carried-assets.txt /carry/out/asset-history.json /carry/out/carry-report.json ./frontend/
 # Ürün sürümü (AppVersion.resolve → /app/VERSION). Olmadığında jar manifest'ine (pom <version>, bayat)
 # düşülüyor ve pod logu yanlış sürüm raporluyordu — hangi release'in koştuğu loglardan doğrulanamıyordu.
 COPY --chown=appuser:appgroup VERSION /app/VERSION

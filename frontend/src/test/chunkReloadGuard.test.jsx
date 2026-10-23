@@ -63,6 +63,26 @@ describe('claimChunkReload — paket başına tek hak + bekleme süresi', () => 
     vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('blocked') })
     expect(claimChunkReload('v3', T0 + 20 * RELOAD_COOLDOWN_MS)).toBe(false)
   })
+
+  it('eski sürümün paketiyle (geri alma, ≤ 20.166.0) yan yana: eski {version, count} alanları korunur — iki taraf birbirinin hakkını sıfırlayamaz (D-4)', () => {
+    // ≤ 20.166.0 kuralının birebir kopyası: yalnız {version, count} okur ve yazar (yeni alanları siler)
+    const oldClaim = (version) => {
+      let prev = null
+      try { prev = JSON.parse(sessionStorage.getItem(CHUNK_RELOAD_KEY) || 'null') } catch { prev = null }
+      const count = prev && typeof prev === 'object' && prev.version === version ? Number(prev.count) || 0 : 0
+      if (count >= 1) return false
+      sessionStorage.setItem(CHUNK_RELOAD_KEY, JSON.stringify({ version, count: count + 1 }))
+      return true
+    }
+    let reloads = 0
+    for (let i = 0; i < 10; i++) {
+      // eski ve yeni paket sırayla yüklenemiyor (bekleme süresi dışında: her adım 2 dk sonra)
+      if (claimChunkReload('/assets/index-NEW.js', T0 + i * 2 * RELOAD_COOLDOWN_MS)) reloads++
+      if (oldClaim('20.166.0')) reloads++
+    }
+    expect(reloads).toBeLessThanOrEqual(3)                                // düzeltme olmadan 20 (sonsuz gidip gelme)
+    expect(stored()).toMatchObject({ version: '20.166.0', count: 1 })
+  })
 })
 
 describe('currentBuildId — paket kimliği giriş betiğinden (boot-guard.js ile aynı kural)', () => {
