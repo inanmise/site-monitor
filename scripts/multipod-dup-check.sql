@@ -76,9 +76,14 @@ FROM scheduler_lock ORDER BY name;
 -- "TLS profili turu dönem başına bir kez" buradan SAYILAMAZ: monitor_check_schedule satırı yalnız SON sahiplenmeyi tutar
 -- (geçmiş yok) ve tls_profiles yalnız her ucun son yoklamasını; teklik turun koşullu sahiplenmesi (CAS) + tls-profile
 -- kilidiyle sağlanır, ikinci bir tık da vadesi gelmemiş ucu yeniden yoklamaz (vade kümesi probed_at'ten).
+-- round:<tur>:done = turu son BAŞARIYLA bitiren pod ve an (Sürüm 3-1 FX-SIDE; cert-stale, tls-profile,
+-- executive-summary-catchup): lider bir turu yalnız buna bakarak bırakır — yalnız sahiplenip hata veren takipçi kanıt
+-- değildir. Bu satırlarda claimed_at = bitiş anı ve next_due_at aynı an (vade DEĞİL); "satir" sütunu ikisini ayırır.
 \echo
 \echo '── 0b. Küme turlarının son sahibi (bilgi, sayılmaz — Sürüm 3-1: yan iş turları çoğunlukla takipçide)'
-SELECT r.monitor_key AS tur, r.claimed_by AS son_sahiplenen,
+SELECT r.monitor_key AS tur,
+       CASE WHEN r.monitor_key LIKE 'round:%:done' THEN 'son TAMAMLAYAN (vade değil)' ELSE 'son sahiplenen' END AS satir,
+       r.claimed_by AS son_sahiplenen,
        CASE WHEN l.claimed_by IS NULL OR r.claimed_by IS NULL THEN '—'
             WHEN r.claimed_by = l.claimed_by THEN 'lider' ELSE 'takipçi' END AS kim,
        to_char(to_timestamp(r.claimed_at / 1000.0) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS') AS sahiplenme_utc,

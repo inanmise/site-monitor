@@ -458,12 +458,20 @@ saatleri arası fark — `max(sitemonitor_clock_skew_seconds) - min(…)`, kaybe
 TAKİPÇİ yayar: takipçi tam bir kuruluş turundan sonra `cluster_observations` satırı `metrics-org`'u yazar; lider o satırı
 2,5 × yenileme aralığı içinde taze görürse yalnız kendi pod ölçülerini yayar (`sitemonitor_exporter_org_families` 0).
 Takipçinin aktarıcısı takılır ya da okuyamazsa satır eskir ve lider kendisi yaymaya döner (boşluk yerine kısa örtüşme).
+Kapanan pod (dağıtım, tahliye, ölçek küçültme) gözlem YAZMAZ; satır kendisininse yerine bir kapanış işareti yazar ve lider
+10 sn içinde kurum ölçülerini yaymaya başlar (lider yalnız kendi pod ölçülerini yayarken satırı 10 sn'de bir denetler;
+yayımlayan pod'un öldüğü biliniyorsa satır da yok sayılır). **Sürüm 3-1'den beri iş verisi için de POD BAŞINA kazıma
+şarttır:** Service / statik hedef üzerinden yük dengeli kazıma lidere düştüğünde iş serisi bulamaz (seriler gidip gelir,
+alarm kuralları kapanıp yeniden açılır); belirteç değişiminde de `kubectl rollout restart` tamamlanmadan pod'lar farklı
+belirteç taşıyabilir — her pod'un `up{job=…}` serisi 1 olmalı. Gözlem satırı aktarıcının yaydığını kanıtlar, Prometheus'un
+kazıdığını değil: kazımayı `up` ve "Veri tazeliği" şeridiyle denetleyin.
 Tek pod, eski (20.167.0) komşu ya da okunamayan satır → lider eskisi gibi yayar. "Kurum ölçülerini yayan pod" paneli 0 ise
 iş panelleri boş kalır: takipçinin `sitemonitor_exporter_*` ölçümlerine ve günlüğüne bakın. Yeni pod'a özgü ölçümler:
 `sitemonitor_eval_state_mode`, `_pending`, `_write_failures`, `_verify_mismatches{kind}`, `_verify_timestamp_seconds`
-(son ikisi yalnız YAZAN liderde; bilinmeyen turda uyuşmazlık serisi yazılmaz — 0 değil, "veri yok"),
-`sitemonitor_exporter_org_families`. Pano revizyonu 5 (sağlık bölümünün sonunda kalıcı değerlendirme durumu ve kurum
-ölçüsü yerleşimi panelleri) — yeni JSON'u indirip aynı UID ile içe aktarın.
+(son ikisi yalnız `verify` kipinde YAZAN liderde — `write` kipine geçince son rapor da yayılmaz; bilinmeyen turda
+uyuşmazlık serisi yazılmaz — 0 değil, "veri yok"), `sitemonitor_exporter_org_families`. Pano revizyonu 6 ("Veri tazeliği"
+şeridi yalnız kurum ölçülerini yayan pod'ların son turunu sayar — iş panelleri boşken "Güncel" demez; sağlık bölümünün
+sonunda kalıcı değerlendirme durumu ve kurum ölçüsü yerleşimi panelleri) — yeni JSON'u indirip aynı UID ile içe aktarın.
 
 Örnek Prometheus alarm kuralları:
 
@@ -662,7 +670,8 @@ Sürüm 3-1'den beri tarama lideri izlemeye ayrılır; uzun "her pod" işleri ba
 
 - **Başka canlı pod** = son 3 dk içinde heartbeat yazmış, kapanış işareti olmayan, adı dolu (`instance_id`) başka bir pod
   (Sistem Sağlığı → Heartbeat → "Pod'lar" kartında "canlı"). Karar pod başına 30 sn önbelleklenir; okunamazsa "yok" sayılır
-  — lider o zaman hiçbir şeyi bırakmaz (tek pod davranışı). 20.166.0 pod'ları (adsız heartbeat) sayılmaz.
+  — lider o zaman hiçbir şeyi bırakmaz (tek pod davranışı). 20.166.0 pod'ları (adsız heartbeat) sayılmaz; bu pod'un kirli
+  yeniden başlatmadan (OOM, SIGKILL — kapanış işareti yazılamadı) önceki süreci de (aynı pod adı, başka kimlik) sayılmaz.
 - **Cron yan işleri** (saatlik sertifika taraması, gece temizliği, alan adı süre yenilemesi, CA sabitleme yenilemesi, haftalık
   erişilebilirlik + telafisi, Cuma haftalık rapor hatırlatması, sorun bildirimi özeti, envanter raporu, aylık yönetici özeti,
   olay aksiyonu ve kanal raporu hatırlatmaları, veri kalitesi anlık görüntüsü): lider tetiği 20 sn erteler
@@ -671,25 +680,39 @@ Sürüm 3-1'den beri tarama lideri izlemeye ayrılır; uzun "her pod" işleri ba
   tetik kaybolmaz, iş iki kez koşmaz (kilit, tur ve kayıt başına sahiplenme aynen). Günlükte (saatte bir):
   `Tarama lideri '<iş>' tetiğini 20 sn erteledi`.
 - **Tur tabanlı ağır işler** (bayat sertifika taraması 5 dk, TLS profili 10 dk, yönetici özeti telafisi 55 dk): turu son 2
-  dönemde BAŞKA bir pod aldıysa lider bırakır (`Tarama lideri '<tur>' turunu bıraktı`); kanıt yoksa (takipçi yeni açıldı,
-  takıldı, eski sürüm) lider en geç 2 dönemde kendisi alır. Tek seferlik ping toparlaması: lider en çok 2 saat üst üste
-  bırakır, sonra koşar.
+  dönemde BAŞKA bir pod BAŞARIYLA TAMAMLADIYSA lider bırakır (`Tarama lideri '<tur>' turunu bıraktı — … tamamladı`; kanıt
+  `round:<tur>:done` satırı: turu son bitiren pod ve an). Yalnız sahiplenip her turda hata veren takipçi kanıt değildir;
+  bu pod'un kirli yeniden başlatmadan önceki süreci (aynı pod adı) ne canlı pod ne kanıt sayılır. Kanıt yoksa (takipçi yeni
+  açıldı, takıldı, her turda hata veriyor, eski sürüm) lider son tamamlanmadan en geç 2 dönem sonra kendisi alır. Tek
+  seferlik ping toparlaması: lider en çok 2 saat üst üste bırakır, sonra koşar.
 - **Yan iş koşucusu:** uzun işler (saatlik / bayat sertifika taraması, gece temizliği, ping toparlaması, alan adı süre
   yenilemesi, haftalık erişilebilirlik + telafisi, TLS profili, envanter raporu, yönetici özeti + telafisi, veri kalitesi)
-  8 iş parçacıklı zamanlayıcı havuzunu artık tutmaz; her pod'da 3 iş parçacıklı ayrı bir koşucuda koşar
-  (`site.monitor.scheduler.side-jobs.threads`, açılışta okunur; 0 = eskisi gibi zamanlayıcı iş parçacığında). Aynı iş,
-  öncekisi sürerken yeniden tetiklenirse atlanır. Kısa işler (CA sabitleme, Cuma hatırlatması, sorun özeti, olay / kanal
-  raporu hatırlatmaları) havuzda kalır, yalnız ertelenir. Hafif kilit işleri (fırtına, eskalasyon adımı, sistem bakımı,
-  sessiz saat özeti, süpürücüler, push, kendi-kendini-izleme turu) ve izleme taramaları DEĞİŞMEDİ.
+  8 iş parçacıklı zamanlayıcı havuzunu artık tutmaz; her pod'da ayrı bir koşucuda koşar. Uzun iş şeridi en az 8 iş
+  parçacığıdır (`site.monitor.scheduler.side-jobs.threads`, varsayılan 8, env `SCHEDULER_SIDE_JOBS_THREADS`, açılışta
+  okunur; daha küçük değer 8'e, zamanlayıcı havuzu `SCHEDULING_POOL_SIZE` daha büyükse ona yükseltilir, en çok 32; 0 = eskisi
+  gibi zamanlayıcı iş parçacığında): bir uzun iş ancak aynı pod'da 8 başka uzun iş koşarken bekler (20.167.0'ın 8 iş
+  parçacıklı havuzu o durumda zaten doluydu). Liderin ertelediği kısa cron denemeleri ayrı, 5 iş parçacıklı kısa şeritte
+  koşar — uzun işlerin arkasında beklemez. Sabit gecikmeli işler (bayat tarama 5 dk, TLS profili 10 dk, ping toparlaması
+  1 sa) bu pod'daki son koşunun BİTİŞİNDEN gecikme kadar sonra başlar (arada "kuyrukta" görünür — normal) — tek pod'da
+  kadans 20.167.0 ile aynı. Aynı iş, öncekisi sürerken yeniden tetiklenirse atlanır. Kısa işler (CA sabitleme, Cuma
+  hatırlatması, sorun özeti, olay / kanal raporu hatırlatmaları) havuzda kalır, yalnız ertelenir; olay aksiyonu hatırlatması
+  da artık tetik başına küme turu alır (`round:incident-action-reminder`): sistem bakımı susturmasında sahip başına günde
+  TEK "SKIPPED: sistem bakımı" satırı. Hafif kilit işleri (fırtına, eskalasyon adımı, sistem bakımı, sessiz saat özeti,
+  süpürücüler, push, kendi-kendini-izleme turu) ve izleme taramaları DEĞİŞMEDİ. Kapanışta TLS profili turu ~200 ms içinde
+  durur (biten yoklamalar kaydedilir, tur tamamlanmaz — sonraki tur sürdürür).
 - **Durum:** Sistem Sağlığı → Zamanlayıcı ve yürütücüler → Küme kartı → "Yanıtlayan pod" → **Yan işler** (YANITLAYAN
   pod'un koşucusu): koşan / kuyruktaki işler, açılıştan beri ertelenen / başka pod'a bırakılan sayısı, lider ertelemesi açık /
-  kapalı, başka canlı pod var / yok / bilinmiyor, son koşusu hatayla biten ya da kapanışta kesilen işler. Lider pod'da
-  "ertelendi / başka pod'a bırakıldı" sayaçları artar; takipçide işler koşar. Kümenin tamamı (turun son sahiplenen pod'u;
-  `scripts/multipod-dup-check.sql` bölüm 0b aynısını yazar):
+  kapalı, başka canlı pod var / yok (takipçide "yalnız tarama lideri bakar"; liderde önbellek boşken "son bakışta …
+  (N dk önce)" ya da "henüz bakılmadı"), son koşusu hatayla biten ya da kapanışta kesilen işler. Gösterilen iş parçacığı
+  sayısı uzun iş şerididir (kısa şerit gösterilmez). Lider pod'da "ertelendi / başka pod'a bırakıldı" sayaçları artar;
+  takipçide işler koşar. Kümenin tamamı (turun son sahiplenen pod'u; `scripts/multipod-dup-check.sql` bölüm 0b aynısını
+  yazar):
   ```sql
   SELECT monitor_key, claimed_by, to_timestamp(claimed_at / 1000.0) AS sahiplenme
     FROM monitor_check_schedule WHERE monitor_key LIKE 'round:%' ORDER BY monitor_key;
   ```
+  `round:<tur>:done` satırları turu SON BAŞARIYLA bitiren pod'u ve anı gösterir (bayat sertifika, TLS profili, yönetici
+  özeti telafisi); bu satırlarda `next_due_at` vade değil, bitiş anıdır.
 - **Yük yine lidere yığılıyorsa:** takipçinin heartbeat'i yazılıyor mu ("Pod'lar" kartında "canlı"), takipçinin günlüğünde
   `Yan iş '<iş>' başarısız` var mı (`kubectl logs $L | grep "Yan iş"`, [Kanaryalar](#kanaryalar--her-zaman-tüm-podlar)).
   Takipçi 20.167.0 ise de sorun yok: eski pod tetikte işi alır, lider ertelediği denemede turu alınmış bulur.
@@ -698,7 +721,8 @@ Sürüm 3-1'den beri tarama lideri izlemeye ayrılır; uzun "her pod" işleri ba
   artık ertelemez / bırakmaz (her pod tetikte yarışır, kilidi kim alırsa); uzun işler yine yan iş koşucusunda koşar. Kalıcı
   varsayılan env ile: `SCHEDULER_LEADER_YIELD_ENABLED=false` (Ayarlar'da kaydedilen değer env'i ezer).
 - **Çıkış eşitliği:** TLS profili yoklaması artık herhangi bir pod'dan çıkar — [P1](#ön-koşullar--1--n-geçişinden-önce)
-  (her node'dan aynı çıkış) sertifika taramalarıyla aynı hedefler üzerinden onu da kapsar.
+  (her node'dan aynı çıkış) sertifika taramalarıyla aynı hedefler üzerinden onu da kapsar; P1 betiği her TLS hedefine
+  doğrudan bir TLS el sıkışması da dener ve sertifikayı vereni yazar (`TLS_TARGETS`).
 
 ### Devir süreleri
 
@@ -724,7 +748,11 @@ kayıt kapalıyken, yazamazken ya da tablolar yokken de her alarm / bildirim kar
 toplamak: devirde durumu tablodan yüklemek güvenli mi.
 
 - **Kim yazar:** yalnız tarama lideri, veritabanından aldığı bir **kuşak** numarasıyla (saatle değil). Yeni lider yeni kuşak
-  alır; eski lider bir sonraki yazımında daha yeni kuşağı görür ve yazmayı bırakır (iki lider aynı satırı ezmez). Ham değer:
+  alır — kuşak yalnız tarama lideri KİRASINI tutan pod'a verilir (kira denetimi aynı SQL ifadesinde), kirayı kaybetmiş eski
+  bir lider kuşak alamaz. Eski lider bir sonraki yazımında daha yeni kuşağı görür ve yazmayı bırakır (iki lider aynı satırı
+  ezmez). Lider bir şekilde çitlenmiş kalırsa (ör. kirayı kısa süre tutup kapanan bir pod kuşağı aldıysa), `'*'` satırının
+  sahibi 3 dakika nabız atmadığında kendini onarır ve yeni kuşak alır (INFO `… çitten çıkıp yeni kuşak alacak`). `'*'`
+  satırı elle silinirse var olan en büyük kuşağın üstünden yeniden başlar. Ham değer:
   ```sql
   SELECT gen AS kusak, writer AS yazan, to_timestamp(updated_ms / 1000.0) AS son_nabiz
     FROM monitor_eval_type_state WHERE alert_type = '*';      -- yazan = lider pod, son_nabiz en çok ~60 sn eski
@@ -741,26 +769,41 @@ toplamak: devirde durumu tablodan yüklemek güvenli mi.
     "eşitleniyor — sonraki tur karşılaştırır" (kuşağın ilk turu ve 15 dk'dan uzun bir aradan sonraki tur — devirden ya da
     `off` kipinden dönüşten hemen sonra NORMAL), "yazma kuşağı henüz alınmadı", "yazıcı yetişemedi", "kalıcı tablolar
     okunamadı", "bellek görüntüsü alınamadı", "doğrulayıcı beklenmedik bir hatayla durdu", "tur sonucu kaydedilemeyecek
-    kadar büyüktü". Taze bir uyuşmazlık kartı uyarıya çeker; liderin günlüğünde turda bir WARN
+    kadar büyüktü", "tur sırasında tarama liderliği değişti" (kuşak bırakıldı ya da çitlendi — bu tur yayımlanmaz, sonraki
+    tur yeniden doğrular), "karşılaştırılacak kayıt yoktu (hepsi atlandı)" (her anahtar tur sırasında yeniden yazıldı ya da
+    kirli — sonraki tur yeniden dener). "Hâlâ izleniyor mu" sorgusu hata verirse o anahtar atlanır, uyuşmazlık sayılmaz.
+    Taze bir uyuşmazlık kartı uyarıya çeker; liderin günlüğünde turda bir WARN
     `Kalıcı değerlendirme doğrulaması: N uyuşmazlık — …` (karar etkilenmez).
   - **"Yanıtlayan pod" → "Değerlendirme kaydı":** YANITLAYAN pod'un kaydedicisi — kip, "yazıyor (kuşak N)" / "yazmıyor"
     (takipçide "yazmıyor" normaldir), bekleyen yazım, yazma hatası, sınır yüzünden düşen işlem, son yazım, "son yazım
-    başarısız — kararlar etkilenmez, yeniden deneniyor" uyarısı, "tablolar henüz yok" ve **devralınan** satırlar (bu pod
-    lider olunca önceki kuşaktan sayılan kurtarma sayacı, DOWN kardeş, bastırma, terk edilen zincir — karara GİRMEZ; 3-2'nin
-    devirde taşıyacağı durumun kanıtı). Lideri görmek için sayfayı lider pod yanıtlayana dek yenileyin ("Lider mi: Evet").
-    Ham değer: `GET /api/admin/system` → `data.eval_state.this_pod` (`flushes`, `write_failures`, `inherited` …) ve
-    `data.eval_state.verify`.
-- **Grafana** (sağlık bölümünün sonu, pano revizyonu 5): "Değerlendirme durumu kipi", "Doğrulama uyuşmazlığı" (0 olmalı;
+    başarısız — kararlar etkilenmez, yeniden deneniyor" uyarısı (yalnız YAZAN kaydedicide; liderliği kaybeden pod'un eski
+    hatası uyarı değildir), çitlenme uyarısı (bu pod lider ama yazma kuşağını başka bir pod almış — yazmıyor; o kuşağın
+    sahibi 3 dk sessiz kalınca kendiliğinden devralır; yalnız lider pod yanıtlarken gösterilir — 3 dk'dan uzun sürerse kuşak
+    satırını yukarıdaki SQL ile okuyun: `yazan` hangi pod, `son_nabiz` taze mi), kanca hatası sayısı (açılıştan beri; soluk
+    satır — ayna eksik kalmış olabilir, kararlar etkilenmez), "tablolar henüz yok" ve **devralınan** satırlar (bu pod lider
+    olunca YALNIZ bir önceki kuşaktan sayılan kurtarma sayacı, DOWN kardeş, bastırma, terk edilen zincir — karara GİRMEZ;
+    3-2'nin devirde taşıyacağı durumun kanıtı). Lideri görmek için sayfayı lider pod yanıtlayana dek yenileyin ("Lider mi:
+    Evet"). Ham değer: `GET /api/admin/system` → `data.eval_state.this_pod` (`flushes`, `write_failures`, `fenced`,
+    `hook_failures`, `inherited` …) ve `data.eval_state.verify`.
+- **Grafana** (sağlık bölümünün sonu, pano revizyonu 6): "Değerlendirme durumu kipi", "Doğrulama uyuşmazlığı" (0 olmalı;
   "veri yok" = tur bilinmiyor ya da doğrulama kapalı, 0 değil), "Son doğrulama" (≤ 15 dk), "Bekleyen durum yazımı",
   "Durum yazma hatası (24 sa)", "Kurum ölçülerini yayan pod", "Doğrulama uyuşmazlığı (tür)" zaman serisi.
 - **Günlük:** `Kalıcı değerlendirme durumu yazılamadı — karar etkilenmez (bellek kaynak)` (en çok dakikada bir WARN) yalnız
   ayna yazımının aksadığını söyler; yazımlar 1 → 30 sn geri çekilerek yeniden denenir. Kuşak alımı (`kuşak N alındı` +
-  devralınan sayılar), daha yeni lider yüzünden durma ve budama INFO'dur. Tüm pod'lar:
+  devralınan sayılar — yalnız bir önceki kuşağın satırları), daha yeni lider yüzünden durma, kuşak sahibi sessiz kalınca
+  kendini onarma ve budama INFO'dur; tanınmayan bir kip değeri bir kez WARN `Kalıcı değerlendirme durumu kipi tanınmadı`.
+  Tüm pod'lar:
   `kubectl logs $L | grep "Kalıcı değerlendirme"`.
 - **Kapatmak:** Ayarlar → Genel → İzleme Alarmları → "Kalıcı değerlendirme durumu (çok pod)"
   (`site.monitor.eval-state.mode`) — yalnız GLOBAL admin, canlı (~10 sn): `off` = hiç kayıt ve yazım yok (veritabanı yazım
   yükü sorun olursa acil kapatma; karar etkilenmez), `write` = yalnız yazım, `verify` (varsayılan) = yazım + 5 dk'da bir
-  doğrulama. `off`'tan dönüşte ilk doğrulama turu "eşitleniyor" olur. Kalıcı varsayılan env ile: `EVAL_STATE_MODE`.
+  doğrulama. `off`'a geçince kayıt kuşağı bırakılır; dönüşte yeni kuşak alınır ve ilk doğrulama turu "eşitleniyor" olur
+  (eski kuşağın satırları karşılaştırılmaz). Tanınmayan bir değer (yazım hatası) `verify` gibi çalışır ve günlüğe bir WARN
+  yazar. Kalıcı varsayılan env ile: `EVAL_STATE_MODE`. Yazım yükü (tahmin): kararlı durumda kabaca (izleme × alarm türü
+  kalemi) ÷ 2 upsert / dk (`monitor_last_status`, 120 sn tazeleme) + boşaltma başına bir `'*'` nabzı; bugünkü ~700 izlemede
+  günde 0,5 GB WAL'in çok altında, 3 kat ölçekte (≈ 12 bin kalem) ≈ 100 upsert / sn ve checkpoint sayfa görüntüleriyle
+  günde 3–5 GB WAL. Sık güncellenen üç tabloda güncellemeler HOT kalır (fillfactor 70). İfadelerin 15 sn sorgu zaman aşımı
+  vardır — kilitli bir satır yazıcıyı en çok 15 sn bekletir.
 - **3-2'ye geçiş ölçütü (öneri):** prod'da 2 pod'la en az 7 gün `verify` kipinde:
   1. Her BİLİNEN doğrulama turunda kurtarma, kardeş, bastırma, ilk tur ve teyit zinciri uyuşmazlıkları 0 ("0 uyuşmazlık" =
      bu beş türün toplamı; bilinmeyen turlar — "eşitleniyor", "yazıcı yetişemedi" … — sayılmaz, ama 7 gün boyunca
@@ -775,7 +818,8 @@ toplamak: devirde durumu tablodan yüklemek güvenli mi.
   zaman serisi (7 günlük aralıkla — geçmiş turlar) ve liderin günlüğündeki `Kalıcı değerlendirme doğrulaması` WARN'ları
   (hiç olmamalı).
 - **Geri alma:** tablolar kalır, eski kod kullanmaz (dış anahtar / tetikleyici yok). Tablolar küçüktür (izleme × alarm
-  türü); kaydedici kendi budar (son durum 7 gün, sıfır kurtarma satırı 7 gün, zincir 1 saat).
+  türü); kaydedici kendi budar (son durum 7 gün — duraklatılan / silinen izlemenin DOWN satırı bellek onu budadığı anda;
+  kurtarma satırı 7 gün: sıfır olanlar ve önceki kuşaklarınkiler; önceki kuşağın tür satırları 7 gün; zincir 1 saat).
 
 ### Kapanış ve süre bütçesi
 
@@ -947,14 +991,22 @@ Ayrıntılı komutlar ve onay kutuları: [`PROD_DEPLOY_CHECKLIST.md` → Çok po
    ```bash
    # Ek hedefler: LDAP / AD, push ağ geçidi ve doğrudan (vekilsiz) kontrol edilen birkaç iç hedef (host:port).
    # SMTP ve vekil ConfigMap'ten gelir. Node verilmezse kümedeki bütün node'lar denenir — pod'ların koşabileceği
-   # node'ları verin (nodeSelector / taint'ler).
+   # node'ları verin (nodeSelector / taint'ler). TLS_TARGETS verilmezse TARGETS kullanılır; düz metin bir hedefi
+   # (ör. SMTP 25) TLS_TARGETS'a koymayın.
    NS="$NS" REL="$REL" TARGETS="<ldap-host>:636 <push-host>:443 <iç-hedef-1>:443" \
+     TLS_TARGETS="<ldap-host>:636 <push-host>:443 <envanter-alanı-1>:443 <envanter-alanı-2>:443" \
      bash scripts/multipod-egress-check.sh <node-1> <node-2> <node-3>
    ```
-   Beklenen: her node'da `rdap 200` (vekil üzerinden) ve bütün hedefler `OK`; çıkış kodu 0. Bir node başarısızsa ya
+   Beklenen: her node'da `rdap 200` (vekil üzerinden), bütün hedefler `OK`, bütün TLS hedefleri `TLS OK` ve her TLS
+   hedefinin `veren` değeri node'dan node'a AYNI; çıkış kodu 0. Bir node başarısızsa ya
    kural düzeltilir ya da pod'lar sağlam node'lara sabitlenir (Helm `nodeSelector` / `affinity`). Node havuzu her
    değiştiğinde (yeni node, yükseltme) yeniden koşun. Sürüm 3-1'den beri TLS profili yoklaması da (sertifika taramaları
-   gibi) herhangi bir pod'dan çıkar: aynı hedefler, P1 onu da kapsar.
+   gibi) herhangi bir pod'dan — iki pod'da çoğunlukla takipçiden — çıkar: `TLS_TARGETS`'a envanterden birkaç doğrudan
+   kontrol edilen alan adı (`host:443`) ekleyin. TCP açık ama `TLS FAIL` ya da node'a göre farklı `veren` = o node'da
+   TLS'i kesen / değiştiren bir ara kutu (TLS sonlandıran vekil, SSL denetimi) var: o node'dan sertifika taramaları ağ
+   hatası, TLS profili "başarısız" ya da farklı sürüm desteği görür (A'ya sınırlı not, sahte düşüş bildirimi). Turları
+   normal tamamlayan ama farklı sonuç gören bir node'u liderin "bırakma" kuralı yakalamaz (ağ hatası bir sonuçtur) — bunu
+   yalnız bu TLS denetimi yakalar.
 2. **P2 — Saat (NTP).** Kira ve kilitler pod saatiyle karşılaştırılır; ~120 sn'den büyük kayma iki lider üretir. Egress
    betiğinin her node için yazdığı `saat <epoch>` değerleri birbirinden ve yerel `date -u +%s` /
    `SELECT extract(epoch from now())` (DB) değerinden en çok 1-2 sn farklı olmalı; fazlası platform ekibine (chrony / NTP).
@@ -967,7 +1019,8 @@ Ayrıntılı komutlar ve onay kutuları: [`PROD_DEPLOY_CHECKLIST.md` → Çok po
    3 × 3Gi / 2 CPU limit) ve bir node'da yeni pod'a yer olmalı: `kubectl describe resourcequota -n "$NS"`.
 5. **P5 — Prometheus pod keşfi.** Kazıma `role: pod` ile her pod'u ayrı hedef olarak okumalı (bkz. "Grafana panosu ve
    Prometheus"); Service üzerinden kazıma pod'a özgü serileri (`sitemonitor_sweep_leader`, JVM) karıştırır. Kontrol:
-   `up{job="site-monitor"}` pod başına bir seri.
+   `up{job="site-monitor"}` pod başına bir seri. Sürüm 3-1'den beri iş ölçümleri (`/metrics/sitemonitor`) için de ŞART:
+   kurum aileleri tek pod'da (takipçi) yayılır.
 
 ### 1 → 2 geçişi (ve geri)
 
@@ -1099,14 +1152,19 @@ bilmez. Son eski pod gidene kadar şunlar görülebilir (sonra kendiliğinden bi
   tetikte işi alır (kilit + tur), liderin ertelenen denemesi turu alınmış bulur — çift iş yok. Eski pod `round:tls-profile`
   turunu hiç almaz → TLS profilini yeni lider koşar. Eski lider + yeni takipçi: kimse ertelemez; yeni takipçi TLS profilini
   tur kaydıyla, eski lider kilit-yalnız tıklarıyla koşar → geçişte dönem başına en çok bir fazla TLS tıkı (uçların vadesi
-  veritabanında, kilit sıralar — aynı uç iki kez üst üste yoklanmaz).
+  veritabanında, kilit sıralar — aynı uç iki kez üst üste yoklanmaz). Eski pod tamamlanma damgası (`round:<tur>:done`)
+  yazmaz → yeni lider bayat sertifika taramasını ve yönetici özeti telafisini ona bırakmaz (20.167.0'daki gibi yarışırlar;
+  tur ikinci koşuyu önler). Eski pod `round:incident-action-reminder` turunu almaz → eski takipçi 09:00'da koştuysa liderin
+  ertelenen denemesi gövdeyi yeniden koşar: öğe başına sahiplenme ikinci postayı önler, sistem bakımı susturmasının olduğu
+  günde sahip başına bir fazla `SKIPPED: sistem bakımı` satırı olabilir (yalnız geçiş penceresinde).
 - **Kalıcı değerlendirme durumu:** eski lider yazmaz (yeni takipçiler lider değildir → o sırada kimse yazmaz); yeni lider
   yazar ve doğrular. Yeni → eski → yeni liderlikte ikinci yeni lider YENİ kuşak alır, öncekinin satırları "devralınan"
   sayılır (karara girmez).
 - **Kurum ölçüleri (Grafana):** eski pod `metrics-org` gözlemini yazmaz → yeni lider kurum ailelerini de yayar (bugünkü
   gibi; pano `max by` ile birleştirir).
 - **Geri alma:** dört tablo (`monitor_eval_state`, `monitor_last_status`, `monitor_eval_type_state`,
-  `monitor_confirmations`) ve `round:tls-profile` satırı kalır, eski kod yok sayar; `cluster_observations` satırları
+  `monitor_confirmations`), `round:tls-profile`, `round:incident-action-reminder` ve `round:<tur>:done` satırları kalır,
+  eski kod yok sayar (eski pod'un budaması `round:` satırlarına dokunmaz); `cluster_observations` satırları
   `eval-state-verify` / `metrics-org` okunmaz; iki ayar anahtarı kalır, yok sayılır. Eski sürümde TLS profili yine yalnız
   liderde koşar.
 
