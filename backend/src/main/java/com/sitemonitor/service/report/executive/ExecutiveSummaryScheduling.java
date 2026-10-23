@@ -138,5 +138,8 @@ public class ExecutiveSummaryScheduling implements SchedulingConfigurer {
         }
         delivery.catchUp();
         schedulerService.completeRound(CATCH_UP_ROUND);
+        // FX-SIDE #4: normal biten tur tamamlanma damgası bırakır — tarama liderinin "bu turu başka pod koşturuyor" kanıtı
+        // yalnız bu damgadır (yalnız sahiplenip hata veren takipçiye lider sonsuza dek bırakmasın)
+        schedulerService.noteSideRoundCompleted(CATCH_UP_ROUND);
     }
 }

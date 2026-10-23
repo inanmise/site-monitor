@@ -266,6 +266,39 @@ public class ClusterScheduleService {
         return rows.isEmpty() ? null : rows.get(0);
     }
 
+    // ── Tur tamamlanma damgası (2026-10-23, çok pod R3-1 FX-SIDE #4) ──────────────────────────────────────────────
+
+    /**
+     * Tamamlanma damgası anahtarının son eki: {@code round:<ad>:done} — KALICI biçim. {@value #ROUND_PREFIX} önekiyle yaşar,
+     * böylece {@link #prune} (ve 20.167.0 pod'larının gece budaması) silmez. Satır: {@code claimed_by} = turu SON normal bitiren
+     * pod, {@code claimed_at} = bitiş anı (o pod'un saati), {@code next_due_at} = aynı an (vade DEĞİL — hiçbir tur bu satırı
+     * sahiplenmez). Liderin "takipçi bu turu gerçekten koşturuyor" kanıtı yalnız bu satırdır (sahiplenme değil).
+     */
+    public static final String DONE_SUFFIX = ":done";
+
+    /** Bir tur anahtarının ({@code round:<ad>}) tamamlanma damgası anahtarı. */
+    public static String doneKey(String roundKey) {
+        return roundKey + DONE_SUFFIX;
+    }
+
+    /** Daha yeni bir damgayı ezmez (iki pod'un yarışında en yeni bitiş kalır). */
+    static final String SQL_DONE_UPDATE = "UPDATE monitor_check_schedule SET next_due_at = ?, claimed_by = ?, claimed_at = ? "
+            + "WHERE monitor_key = ? AND (claimed_at IS NULL OR claimed_at <= ?)";
+
+    /**
+     * Turun bu pod'da NORMAL bittiğini damgalar ({@link #doneKey}): satır varsa ve damgası bundan eski değilse güncellenir,
+     * yoksa eklenir ({@code ON CONFLICT DO NOTHING} — eşzamanlı ekleme kaybeden tarafta hata değil). Yalnız tanı / yerleşim
+     * kanıtıdır; hiçbir kararın kilidi değildir.
+     *
+     * @return satır yazıldı mı (false = daha yeni bir damga var)
+     * @throws org.springframework.dao.DataAccessException veritabanı hatasında (çağıran yutar — kanıt yoksa lider bırakmaz)
+     */
+    public boolean markDone(String roundKey, long nowMs) {
+        String key = doneKey(roundKey);
+        if (jdbc.update(SQL_DONE_UPDATE, nowMs, owner, nowMs, key, nowMs) == 1) return true;
+        return jdbc.update(SQL_INSERT, key, nowMs, owner, nowMs) == 1;
+    }
+
     /**
      * Canlı izleme kümesinde olmayan anahtarların satırlarını siler (silinen izlemeler birikmesin). Tur
      * ({@value #ROUND_PREFIX}) ve kira ({@value #LEASE_PREFIX}) satırlarına dokunmaz. Gece temizliğinden, tek pod'da

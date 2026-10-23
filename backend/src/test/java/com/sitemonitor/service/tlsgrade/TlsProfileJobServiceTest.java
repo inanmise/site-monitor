@@ -229,6 +229,77 @@ class TlsProfileJobServiceTest {
     }
 
     @Test
+    @DisplayName("FX-SIDE #5: kapanış bayrağı (ContextClosedEvent) kalkınca yoklama turu 1 sn içinde döner — biten yoklama kaydedilir, "
+            + "bitmeyenler kesilir, not karşılaştırması / düşüş bildirimi yok, tur 'yarıda' (tamamlanmaz)")
+    void tickReturnsWithinOneSecondOfShutdownFlag() throws Exception {
+        TlsGradeDropNotifier notifier = mock(TlsGradeDropNotifier.class);
+        job.setDropNotifier(notifier);
+        for (int i = 0; i < 4; i++) add("slow" + i + ".example.com");
+        add("fast.example.com");
+        java.util.concurrent.atomic.AtomicBoolean stopping = new java.util.concurrent.atomic.AtomicBoolean();
+        when(scheduler.sideJobsStopping()).thenAnswer(i -> stopping.get());
+        java.util.concurrent.CountDownLatch slowStarted = new java.util.concurrent.CountDownLatch(1);
+        AtomicInteger interruptedProbes = new AtomicInteger();
+        when(probe.probe(anyString(), anyInt(), anyBoolean(), anyString(), any())).thenAnswer(i -> {
+            String d = i.getArgument(0);
+            if (d.startsWith("fast")) return profile(d, "OK");
+            slowStarted.countDown();
+            try {
+                Thread.sleep(30_000);
+            } catch (InterruptedException e) {
+                interruptedProbes.incrementAndGet();
+                throw e;
+            }
+            return profile(d, "OK");
+        });
+        job.concurrency = 5;
+        java.util.concurrent.atomic.AtomicReference<TlsProfileJobService.TickResult> out =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        Thread t = new Thread(() -> out.set(job.runTick(Instant.now())), "tls-tick-test");
+        t.start();
+        assertThat(slowStarted.await(5, TimeUnit.SECONDS)).isTrue();
+        Thread.sleep(300);                                       // hızlı yoklama bitsin
+        long t0 = System.nanoTime();
+        stopping.set(true);                                      // ContextClosedEvent
+        t.join(5_000);
+        long tookMs = (System.nanoTime() - t0) / 1_000_000L;
+        assertThat(t.isAlive()).isFalse();
+        assertThat(tookMs).as("bayraktan sonra en geç 1 sn").isLessThan(1_000L);
+        TlsProfileJobService.TickResult r = out.get();
+        assertThat(r.stopped()).isTrue();
+        assertThat(r.probed()).as("biten yoklama kaydedildi").isEqualTo(1);
+        assertThat(profiles).containsOnlyKeys("fast.example.com");
+        verify(grades, never()).reconcile(any());
+        verify(notifier, never()).notifyPending();
+        long deadline = System.currentTimeMillis() + 5_000;
+        while (interruptedProbes.get() < 4 && System.currentTimeMillis() < deadline) Thread.sleep(10);
+        assertThat(interruptedProbes).as("bitmeyen yoklamalar kesildi").hasValue(4);
+
+        // kapanış zaten başladıysa yeni tur hiç yoklamaz; zamanlanmış tık turu TAMAMLAMAZ
+        doAnswer(i -> { ((Runnable) i.getArgument(1)).run(); return null; })
+                .when(scheduler).runWithSchedulerLock(eq(TlsProfileJobService.LOCK_NAME), any());
+        when(scheduler.claimRound("tls-profile", 600_000L)).thenReturn(true);
+        org.mockito.Mockito.clearInvocations(probe);
+        job.scheduledTick();
+        verify(probe, never()).probe(anyString(), anyInt(), anyBoolean(), anyString(), any());
+        verify(scheduler).finishSideRound("tls-profile", false);
+        verify(scheduler, never()).finishSideRound("tls-profile", true);
+        job.shutdown();
+    }
+
+    @Test
+    @DisplayName("FX-SIDE #1: zamanlanmış tık sabit gecikmeli yan iş olarak verilir (gecikme = tick-ms)")
+    void scheduledTickIsAFixedDelaySideJob() {
+        when(scheduler.offloadSideJob(any())).thenReturn(true);
+        job.scheduledTick();
+        org.mockito.ArgumentCaptor<com.sitemonitor.service.schedule.SideJob> sj =
+                org.mockito.ArgumentCaptor.forClass(com.sitemonitor.service.schedule.SideJob.class);
+        verify(scheduler).offloadSideJob(sj.capture());
+        assertThat(sj.getValue().fixedDelayMs()).isEqualTo(600_000L);
+        assertThat(sj.getValue().heavy()).isTrue();
+    }
+
+    @Test
     @DisplayName("Not karşılaştırması: notlu satırlar envanter kaydıyla eşlenip servise verilir; değişim varsa önbellek boşaltılır")
     void reconcileFeedsGradeService() {
         CertificateInventory a = add("a.example.com");

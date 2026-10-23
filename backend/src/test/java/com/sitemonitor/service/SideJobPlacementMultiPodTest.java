@@ -353,7 +353,7 @@ class SideJobPlacementMultiPodTest {
             beat(1);
             beat(2);
             lead(a);
-            a.s().checkStaleInventory();                     // lider ÖNCE tıklasa da bırakır (kanıt: takipçi aldı)
+            a.s().checkStaleInventory();                     // lider ÖNCE tıklasa da bırakır (kanıt: takipçi TAMAMLADI)
             idle(a);
             b.s().checkStaleInventory();
             idle(b);
@@ -451,7 +451,8 @@ class SideJobPlacementMultiPodTest {
         lead(a);
         tlsB.scheduledTick();                                // takipçi koşar (eskiden takipçide HİÇ koşmuyordu)
         idle(b);
-        tlsB.scheduledTick();                                // aynı aralık: tur alınmış
+        tlsB.scheduledTick();                                // aynı aralık: sabit gecikme bekletir (FX-SIDE #1) …
+        assertThat(b.runner().runDeferredNow()).isEqualTo(1);   // … bekleme dolunca da tur alınmış → yoklama yok
         idle(b);
         assertThat(calls(inv, "findByActiveTrueOrderByDomainAsc")).isEqualTo(1);
         for (int k = 0; k < ROUNDS; k++) {
@@ -718,5 +719,351 @@ class SideJobPlacementMultiPodTest {
 
         mp.jdbc().execute("DROP TABLE monitor_check_schedule");
         assertThat(s.cronRoundTaken("x-hourly", "0 0 * * * *", null)).as("okunamadı → gövde koşar").isFalse();
+    }
+
+    // ── FX-SIDE (inceleme 2026-10-23) ────────────────────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("FX-SIDE #1: tek pod'da TLS profili kadansı 20.167.0'daki gibi 'bitiş + tick-ms' — 7 dk süren turdan sonra Spring'in "
+            + "10. dk tıkı yeni tur BAŞLATMAZ, tur bitiş + 10 dk'da başlar")
+    void tlsProfile_singlePodCadenceIsFinishPlusTick() {
+        P a = pod(1);
+        TlsProfileJobService tlsA = tls(a);
+        CertificateInventoryRepository inv = mp.mock(CertificateInventoryRepository.class);
+        when(inv.findByActiveTrueOrderByDomainAsc()).thenAnswer(i -> {
+            mp.advance(7 * MIN);                             // tur 7 dk sürer (birikmiş vade)
+            return List.of();
+        });
+        long tick = 10 * MIN;
+        beat(1);
+        lead(a);
+        long t0 = mp.now();
+        tlsA.scheduledTick();
+        idle(a);
+        long finish = t0 + 7 * MIN;
+        assertThat(calls(inv, "findByActiveTrueOrderByDomainAsc")).isEqualTo(1);
+        assertThat(job(a.runner(), "tls-profile").lastOutcome()).isEqualTo(SideJobRunner.OUTCOME_OK);
+        assertThat(job(a.runner(), "tls-profile").lastFinishedAtMs()).isEqualTo(finish);
+        assertThat(roundRow("tls-profile")).containsEntry("claimed_at", t0);
+
+        mp.clock().set(t0 + tick);                           // Spring: hemen dönen çağrıdan 10 dk sonra yeniden tetikler
+        beat(1);
+        tlsA.scheduledTick();
+        assertThat(calls(inv, "findByActiveTrueOrderByDomainAsc")).as("bitiş + 10 dk'dan önce ikinci tur yok").isEqualTo(1);
+        assertThat(job(a.runner(), "tls-profile").state()).isEqualTo(SideJobRunner.STATE_QUEUED);
+
+        mp.clock().set(finish + tick);                       // koşucunun beklemesi bitiş + 10 dk'da çalar
+        beat(1);
+        assertThat(a.runner().runDeferredNow()).isEqualTo(1);
+        assertThat(calls(inv, "findByActiveTrueOrderByDomainAsc")).isEqualTo(2);
+        assertThat(roundRow("tls-profile")).as("tur bitiş + tick-ms'de").containsEntry("claimed_at", finish + tick);
+    }
+
+    @Test
+    @DisplayName("FX-SIDE #1: tek pod'da bayat sertifika kadansı 'bitiş + 5 dk' (3 dk süren süpürmeden sonra 5. dk tıkı beklemede)")
+    void staleSweep_singlePodCadenceIsFinishPlusInterval() {
+        P a = pod(1);
+        LatestCheckRepository latest = mp.mock(LatestCheckRepository.class);
+        when(latest.findByCheckedAtGreaterThanEqual(any())).thenAnswer(i -> {
+            mp.advance(3 * MIN);
+            return java.util.Set.of();
+        });
+        long period = 5 * MIN;
+        beat(1);
+        lead(a);
+        long t0 = mp.now();
+        a.s().checkStaleInventory();
+        idle(a);
+        assertThat(calls(latest, "findByCheckedAtGreaterThanEqual")).isEqualTo(1);
+        assertThat(job(a.runner(), "cert-stale").lastOutcome()).isEqualTo(SideJobRunner.OUTCOME_OK);
+
+        mp.clock().set(t0 + period);
+        beat(1);
+        a.s().checkStaleInventory();
+        assertThat(calls(latest, "findByCheckedAtGreaterThanEqual")).as("bitiş + 5 dk'dan önce yok").isEqualTo(1);
+
+        mp.clock().set(t0 + 3 * MIN + period);
+        beat(1);
+        assertThat(a.runner().runDeferredNow()).isEqualTo(1);
+        assertThat(calls(latest, "findByCheckedAtGreaterThanEqual")).isEqualTo(2);
+        assertThat(roundRow("cert-stale")).containsEntry("claimed_at", t0 + 3 * MIN + period);
+    }
+
+    @Test
+    @DisplayName("FX-SIDE #4: lider yalnız TAMAMLANMIŞ tura bırakır — gövdesi her turda hata veren takipçinin çıplak sahiplenmesi kanıt "
+            + "değil; bir kez tamamlayan takipçi sonra hep hata verirse lider son tamamlanmadan en geç 2 periyot sonra alır")
+    void staleSweep_followerFailsEveryPeriod_leaderClaimsWithinTwoPeriods() {
+        P a = pod(1);
+        P b = pod(2);
+        LatestCheckRepository latest = mp.mock(LatestCheckRepository.class);
+        AtomicBoolean failing = new AtomicBoolean();
+        when(latest.findByCheckedAtGreaterThanEqual(any())).thenAnswer(i -> {
+            if (failing.get()) throw new IllegalStateException("takipçinin node'u: çıkış hatası");
+            return java.util.Set.of();
+        });
+        long period = 5 * MIN;
+        beat(1);
+        beat(2);
+        lead(a);
+
+        // (1) takipçi hiç tamamlamadı: sahiplenip hata verdi → lider ilk vadede kendisi alır
+        failing.set(true);
+        b.s().checkStaleInventory();
+        idle(b);
+        failing.set(false);
+        assertThat(roundRow("cert-stale")).containsEntry("claimed_by", MultiPodTestSupport.owner(2));
+        mp.advance(period);
+        beat(1);
+        beat(2);
+        lead(a);
+        a.s().checkStaleInventory();
+        idle(a);
+        assertThat(job(a.runner(), "cert-stale").yieldedCount()).as("çıplak sahiplenme kanıt değil").isZero();
+        assertThat(job(a.runner(), "cert-stale").runs()).isEqualTo(1);
+        assertThat(roundRow("cert-stale")).containsEntry("claimed_by", MultiPodTestSupport.owner(1));
+
+        // (2) takipçi bir kez tamamlar → lider bırakır; sonra takipçinin gövdesi HER turda hata verir
+        mp.advance(period);
+        beat(1);
+        beat(2);
+        b.s().checkStaleInventory();
+        idle(b);
+        assertThat(mp.jdbc().queryForMap("SELECT claimed_by FROM monitor_check_schedule WHERE monitor_key = ?",
+                "round:cert-stale:done")).containsEntry("claimed_by", MultiPodTestSupport.owner(2));
+        for (int k = 1; k <= 3; k++) {
+            mp.advance(period);
+            beat(1);
+            beat(2);
+            lead(a);
+            a.s().checkStaleInventory();                     // lider önce tıklar
+            idle(a);
+            failing.set(true);
+            b.s().checkStaleInventory();
+            idle(b);
+            failing.set(false);
+            if (k <= 2) {
+                assertThat(job(a.runner(), "cert-stale").runs()).as("periyot %d: son tamamlanma ≤ 2 periyot — bırakır", k)
+                        .isEqualTo(1);
+            }
+        }
+        assertThat(job(a.runner(), "cert-stale").yieldedCount()).isEqualTo(2);
+        assertThat(job(a.runner(), "cert-stale").runs()).as("3. periyot: kanıt eskidi → lider aldı (sahiplenme hâlâ tazeyken)")
+                .isEqualTo(2);
+        assertThat(roundRow("cert-stale")).containsEntry("claimed_by", MultiPodTestSupport.owner(1));
+    }
+
+    @Test
+    @DisplayName("FX-SIDE #3: kirli yeniden başlatma — aynı POD ADININ önceki süreci (işaretsiz taze heartbeat, son tamamlanma damgası) "
+            + "ne 'başka canlı pod' ne de bırakma kanıtıdır; tek pod'da ertelenmez / bırakılmaz")
+    void uncleanRestart_previousProcessOfSamePodIsNeitherLiveNorEvidence() {
+        P a = pod(1);
+        String previous = MultiPodTestSupport.host(1) + "-0000abcd";   // aynı pod adı, OOM / SIGKILL ile ölen süreç
+        beat(1);
+        prevBeat(previous);
+        mp.schedule(previous).markDone("round:cert-stale", mp.now() - MIN);
+        mp.schedule(previous).claimRun("round:cert-stale", mp.now() - MIN, 5 * MIN, null, 5 * MIN, null);
+        lead(a);
+        assertThat(a.live().anotherLivePod()).as("önceki süreç canlı pod sayılmaz").isFalse();
+
+        mp.advance(5 * MIN);                                 // önceki sürecin koşu kirası doldu
+        beat(1);
+        prevBeat(previous);
+        a.live().invalidate();
+        lead(a);
+        a.s().checkStaleInventory();
+        idle(a);
+        assertThat(job(a.runner(), "cert-stale").runs()).as("var olmayan pod'a bırakılmadı").isEqualTo(1);
+        assertThat(job(a.runner(), "cert-stale").yieldedCount()).isZero();
+
+        // gerçek bir takipçi de canlıyken önceki sürecin damgası yine kanıt değil
+        pod(2);
+        mp.advance(5 * MIN);
+        beat(1);
+        beat(2);
+        prevBeat(previous);
+        a.live().invalidate();
+        mp.schedule(previous).markDone("round:cert-stale", mp.now() - SEC);
+        lead(a);
+        a.s().checkStaleInventory();
+        idle(a);
+        assertThat(job(a.runner(), "cert-stale").runs()).isEqualTo(2);
+        assertThat(job(a.runner(), "cert-stale").yieldedCount()).isZero();
+    }
+
+    void prevBeat(String instance) {
+        mp.jdbc().update("INSERT INTO system_heartbeat(recorded_at, instance_id, shutdown_marker) VALUES (?, ?, NULL)",
+                LocalDateTime.ofInstant(Instant.ofEpochMilli(mp.now()), ZoneOffset.UTC), instance);
+    }
+
+    // ── FX-SIDE #2: olay aksiyonu ve kanal raporu hatırlatmaları, GERÇEK zamanlayıcılarla ────────────────────────────
+
+    /** Olay aksiyonu hatırlatması (09:00 İstanbul) — pod'un gerçek zamanlayıcısıyla; susturmalı bakımda sahip başına bir iz satırı. */
+    com.sitemonitor.service.incident.IncidentActionReminderService incident(P p, com.sitemonitor.repository.NotificationLogRepository logs,
+                                                                          boolean muted) {
+        com.sitemonitor.repository.IncidentActionItemRepository actions =
+                Mockito.mock(com.sitemonitor.repository.IncidentActionItemRepository.class);
+        com.sitemonitor.model.IncidentActionItem item = new com.sitemonitor.model.IncidentActionItem();
+        item.setId(7L);
+        item.setIncidentId(3L);
+        item.setOwnerUserId(11L);
+        item.setOwnerName("Ayşe Yılmaz");
+        item.setTitle("Düzelt");
+        item.setDueDate(java.time.LocalDate.now(java.time.ZoneId.of("Europe/Istanbul")).toString());
+        when(actions.reminderCandidates(org.mockito.ArgumentMatchers.anyString())).thenReturn(List.of(item));
+        SystemMaintenanceService maint = Mockito.mock(SystemMaintenanceService.class);
+        when(maint.notificationsMuted()).thenReturn(muted);
+        com.sitemonitor.service.incident.IncidentActionReminderService svc =
+                new com.sitemonitor.service.incident.IncidentActionReminderService(actions,
+                        Mockito.mock(com.sitemonitor.repository.IncidentRecordRepository.class),
+                        Mockito.mock(com.sitemonitor.repository.AppUserRepository.class),
+                        Mockito.mock(EmailNotificationService.class), logs, Mockito.mock(AppSettingsService.class));
+        ReflectionTestUtils.setField(svc, "scheduler", p.s());
+        ReflectionTestUtils.setField(svc, "maintenance", maint);
+        return svc;
+    }
+
+    @Test
+    @DisplayName("FX-SIDE #2 — olay aksiyonu hatırlatması ×20 gün, susturmalı bakım: lider erteler, takipçi koşar, liderin ertelenen "
+            + "denemesi turu alınmış görür → sahip başına GÜNDE TEK 'SKIPPED: sistem bakımı' satırı")
+    void incidentActionReminder_mutedMaintenance_oneRowPerOwnerPerDay() {
+        P a = pod(1);
+        P b = pod(2);
+        com.sitemonitor.repository.NotificationLogRepository logs =
+                Mockito.mock(com.sitemonitor.repository.NotificationLogRepository.class);
+        var ia = incident(a, logs, true);
+        var ib = incident(b, logs, true);
+        long first = Instant.parse("2026-10-21T06:00:00Z").toEpochMilli();   // 09:00 İstanbul
+        for (int k = 0; k < ROUNDS; k++) {
+            mp.clock().set(first + k * DAY);
+            beat(1);
+            beat(2);
+            lead(a);
+            ia.scheduled();                                  // lider: ertelendi (kısa cron şeridi)
+            assertThat(job(a.runner(), "incident-action-reminder").deferredCount()).isEqualTo(k + 1);
+            assertThat(calls(logs, "save")).as("lider T'de yazmadı").isEqualTo(k);
+            ib.scheduled();                                  // takipçi: T'de, kilit + tur altında
+            assertThat(calls(logs, "save")).isEqualTo(k + 1);
+            mp.advance(DEFER_MS);
+            assertThat(a.runner().runDeferredNow()).isEqualTo(1);
+            assertThat(calls(logs, "save")).as("gün %d: sahip başına tek satır", k).isEqualTo(k + 1);
+            assertThat(roundRow("incident-action-reminder")).containsEntry("claimed_by", MultiPodTestSupport.owner(2));
+            assertThat(job(a.runner(), "incident-action-reminder").skippedCount()).isEqualTo(k + 1);
+        }
+    }
+
+    @Test
+    @DisplayName("FX-SIDE #2 — olay aksiyonu hatırlatması: takipçi sessizse lider T + 20 sn'de koşar; başka canlı pod yoksa T'de "
+            + "(tek pod 20.167.0) — tetik kaybolmaz")
+    void incidentActionReminder_silentFollowerOrAlone_leaderRuns() {
+        P a = pod(1);
+        com.sitemonitor.repository.NotificationLogRepository logs =
+                Mockito.mock(com.sitemonitor.repository.NotificationLogRepository.class);
+        var ia = incident(a, logs, true);
+        long first = Instant.parse("2026-10-21T06:00:00Z").toEpochMilli();
+        mp.clock().set(first);
+        beat(1);
+        lead(a);
+        ia.scheduled();                                      // tek pod: ertelenmez
+        assertThat(calls(logs, "save")).isEqualTo(1);
+        assertThat(job(a.runner(), "incident-action-reminder").deferredCount()).isZero();
+
+        pod(2);
+        mp.clock().set(first + DAY);
+        beat(1);
+        beat(2);
+        lead(a);
+        ia.scheduled();                                      // takipçi canlı ama hiç koşmuyor
+        assertThat(calls(logs, "save")).isEqualTo(1);
+        mp.advance(DEFER_MS);
+        assertThat(a.runner().runDeferredNow()).isEqualTo(1);
+        assertThat(calls(logs, "save")).as("ertelenen deneme koştu").isEqualTo(2);
+        assertThat(roundRow("incident-action-reminder")).containsEntry("claimed_by", MultiPodTestSupport.owner(1))
+                .containsEntry("claimed_at", first + DAY + DEFER_MS);
+    }
+
+    /** Kanal teknik hata raporu hatırlatması (09:15 İstanbul) — gerçek zamanlayıcı + pod'un tur kaydı; susturmada takım başına bir satır. */
+    com.sitemonitor.service.techerror.TechErrorReminderService techError(P p, com.sitemonitor.repository.NotificationLogRepository logs,
+                                                                        com.sitemonitor.repository.TechErrorReminderRepository reminders) {
+        com.sitemonitor.service.techerror.TechErrorReportService svc =
+                Mockito.mock(com.sitemonitor.service.techerror.TechErrorReportService.class);
+        when(svc.now()).thenAnswer(i -> Instant.ofEpochMilli(mp.now()));
+        com.sitemonitor.model.TechErrorChannel ch = new com.sitemonitor.model.TechErrorChannel();
+        ch.setId(9L);
+        ch.setTeamId(5L);
+        ch.setName("Mobil");
+        ch.setActive(true);
+        ch.setCreatedAt(Instant.parse("2026-01-01T00:00:00Z"));
+        when(svc.channels(any())).thenReturn(List.of(ch));
+        com.sitemonitor.model.Team team = new com.sitemonitor.model.Team();
+        team.setId(5L);
+        team.setName("Mobil Ekip");
+        team.setEmail("mobil@example.com");
+        team.setActive(true);
+        com.sitemonitor.repository.TeamRepository teams = Mockito.mock(com.sitemonitor.repository.TeamRepository.class);
+        when(teams.findAllById(any())).thenReturn(List.of(team));
+        com.sitemonitor.service.techerror.TechErrorVisibilityService visibility =
+                Mockito.mock(com.sitemonitor.service.techerror.TechErrorVisibilityService.class);
+        when(visibility.teamVisible(5L)).thenReturn(true);
+        AppSettingsService settings = Mockito.mock(AppSettingsService.class);
+        when(settings.getString(com.sitemonitor.service.techerror.TechErrorReportSettings.KEY_REMINDER_TEAM_IDS, ""))
+                .thenReturn("5");
+        when(settings.getInt(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyInt()))
+                .thenAnswer(i -> i.getArgument(1));
+        when(settings.getBoolean(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyBoolean()))
+                .thenAnswer(i -> i.getArgument(1));
+        when(settings.getString(org.mockito.ArgumentMatchers.eq("site.monitor.app.base-url"),
+                org.mockito.ArgumentMatchers.anyString())).thenReturn("");
+        SystemMaintenanceService maint = Mockito.mock(SystemMaintenanceService.class);
+        when(maint.notificationsMuted()).thenReturn(true);
+        com.sitemonitor.service.techerror.TechErrorReminderService r = new com.sitemonitor.service.techerror.TechErrorReminderService(
+                svc, reminders, Mockito.mock(com.sitemonitor.repository.TechErrorReportRepository.class),
+                Mockito.mock(com.sitemonitor.repository.TechErrorChannelRepository.class),
+                Mockito.mock(com.sitemonitor.service.techerror.TechErrorApprovalService.class),
+                Mockito.mock(com.sitemonitor.repository.TechErrorApprovalTokenRepository.class), teams,
+                Mockito.mock(EmailNotificationService.class), logs, settings, visibility);
+        ReflectionTestUtils.setField(r, "scheduler", p.s());
+        ReflectionTestUtils.setField(r, "clusterSchedule", p.pod().schedule());
+        ReflectionTestUtils.setField(r, "maintenance", maint);
+        return r;
+    }
+
+    @Test
+    @DisplayName("FX-SIDE #2 — kanal raporu hatırlatması ×20 gün, susturmalı bakım: lider erteler, takipçi günün turunu alır, liderin "
+            + "ertelenen denemesi turu alınmış görür → takım başına GÜNDE TEK satır; takipçi sessizse lider T + 20 sn'de")
+    void techErrorReminder_mutedMaintenance_oneRowPerTeamPerDay() {
+        P a = pod(1);
+        P b = pod(2);
+        com.sitemonitor.repository.NotificationLogRepository logs =
+                Mockito.mock(com.sitemonitor.repository.NotificationLogRepository.class);
+        com.sitemonitor.repository.TechErrorReminderRepository reminders =
+                Mockito.mock(com.sitemonitor.repository.TechErrorReminderRepository.class);
+        var ta = techError(a, logs, reminders);
+        var tb = techError(b, logs, reminders);
+        long first = Instant.parse("2026-10-05T06:15:00Z").toEpochMilli();   // 5 Ekim 09:15 İstanbul (hatırlatma günü 5)
+        for (int k = 0; k < ROUNDS; k++) {
+            mp.clock().set(first + k * DAY);
+            beat(1);
+            beat(2);
+            lead(a);
+            ta.scheduled();
+            assertThat(job(a.runner(), "tech-error-reminder").deferredCount()).isEqualTo(k + 1);
+            assertThat(calls(logs, "save")).isEqualTo(k);
+            tb.scheduled();
+            assertThat(calls(logs, "save")).as("takipçi susturma satırı yazdı").isEqualTo(k + 1);
+            mp.advance(DEFER_MS);
+            assertThat(a.runner().runDeferredNow()).isEqualTo(1);
+            assertThat(calls(logs, "save")).as("gün %d: takım başına tek satır", k).isEqualTo(k + 1);
+            assertThat(calls(reminders, "deleteNotUpdatedSince")).as("gün %d: tek koşu", k).isEqualTo(k + 1);
+        }
+        // takipçi sessiz: lider ertelenen denemede günün turunu alır ve koşar
+        mp.clock().set(first + ROUNDS * DAY);
+        beat(1);
+        beat(2);
+        lead(a);
+        ta.scheduled();
+        mp.advance(DEFER_MS);
+        assertThat(a.runner().runDeferredNow()).isEqualTo(1);
+        assertThat(calls(logs, "save")).isEqualTo(ROUNDS + 1);
+        assertThat(roundRow("tech-error-reminder")).containsEntry("claimed_by", MultiPodTestSupport.owner(1));
     }
 }
