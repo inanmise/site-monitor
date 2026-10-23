@@ -229,24 +229,35 @@ aldığında geçerlidir; sonraki dağıtımlarda atlanır. Ayrıntı: [`RUNBOOK
       `monitor_confirmations` + `idx_mls_type_domain` (tabloyla birlikte, boşken); PostgreSQL'de üçüne `fillfactor = 70`.
       Uygulama kullanıcısının `CREATE TABLE` hakkı olmalı (öteki şema yamaları gibi).
 - [ ] **Veritabanı yazım yükü kabul edilebilir:** lider, değişen değerleri saniyede bir toplu yazar (izleme başına son sonuç
-      değişince ya da 2 dk'da bir) — bugünkü ölçeğin 3 katında tahmin ≤ ~50 satır/sn, toplu kesintide kısa patlamalar. Sorun
+      değişince ya da 2 dk'da bir) — bugünkü ölçeğin 3 katında tahmin ≈ 100 upsert/sn (≈ 12 bin kalem ÷ 120 sn), günde
+      3–5 GB WAL; toplu kesintide kısa patlamalar; her ifadenin 15 sn sorgu zaman aşımı var ([`RUNBOOK.md` → Kalıcı
+      değerlendirme durumu → Kapatmak](RUNBOOK.md#kalıcı-değerlendirme-durumu-çok-pod-sürüm-3-1)). Sorun
       olursa canlı kapatma: Ayarlar → Genel → İzleme Alarmları → `site.monitor.eval-state.mode` = `off` (yalnız GLOBAL admin;
       alarm kararları etkilenmez).
 - [ ] **İki pod'da P1 çıkış eşitliği TLS profilini de kapsar:** TLS profili yoklaması artık herhangi bir pod'dan çıkar
-      (sertifika taramalarıyla aynı hedefler). Tek pod'da etkisi yok.
+      (sertifika taramalarıyla aynı hedefler); `scripts/multipod-egress-check.sh` her `TLS_TARGETS` hedefine doğrudan TLS el
+      sıkışması dener — her node'da `TLS OK` ve aynı `veren`. Tek pod'da etkisi yok.
 - [ ] **Geçiş penceresinde beklenenler biliniyor** — [`RUNBOOK.md` → Sürüm geçişi sırasında](RUNBOOK.md#sürüm-geçişi-sırasında-eski--yeni-pod-birlikte):
       eski lider + yeni takipçide dönem başına en çok bir fazla TLS tıkı; eski pod kalıcı durumu yazmaz; yeni lider, eski
-      takipçinin heartbeat'ini görünce cron yan işlerini 20 sn erteler (eski takipçi alır — çift iş yok).
+      takipçinin heartbeat'ini görünce cron yan işlerini 20 sn erteler (eski takipçi alır — çift iş yok); eski pod tamamlanma
+      damgası yazmadığı için yeni lider bayat taramayı / yönetici özeti telafisini ona bırakmaz (20.167.0'daki gibi yarışırlar);
+      olay aksiyonu hatırlatmasında susturulmuş bakım gününde sahip başına bir fazla `SKIPPED` satırı olabilir (posta değil).
 - [ ] **Ayarlar:** iki yeni GLOBAL_ONLY anahtar — `site.monitor.eval-state.mode` (`verify`; env `EVAL_STATE_MODE`) ve
       `site.monitor.scheduler.leader-yield.enabled` (açık; env `SCHEDULER_LEADER_YIELD_ENABLED`); açılış anahtarları
-      `site.monitor.scheduler.side-jobs.threads` (3) ve `site.monitor.scheduler.leader-yield.cron-defer-ms` (20000, en çok
-      25000). Helm değeri gerekmez (varsayılanlar `application.properties`'te).
+      `site.monitor.scheduler.side-jobs.threads` (8, env `SCHEDULER_SIDE_JOBS_THREADS`; uzun iş şeridi — daha küçük değer 8'e,
+      zamanlayıcı havuzu `SCHEDULING_POOL_SIZE` daha büyükse ona yükseltilir, en çok 32, 0 = satır içi; ayrıca liderin ertelenen
+      kısa cron denemeleri için 5 iş parçacıklı sabit kısa şerit) ve `site.monitor.scheduler.leader-yield.cron-defer-ms`
+      (20000, en çok 25000). Helm değeri gerekmez (varsayılanlar `application.properties`'te).
 - [ ] **Davranış değişiklikleri duyuruldu** (iki pod'da): (1) saatlik sertifika taraması, gece temizliği, raporlar ve
       hatırlatmalar çoğunlukla TAKİPÇİ pod'da koşar (günlükte o pod'un adıyla); tetiğe göre en çok 20 sn gecikebilir (cron payı
       içinde); (2) Sistem Sağlığı → Küme kartında yeni bölümler: "Kalıcı değerlendirme durumu" (Küme), "Yanıtlayan pod" altında
-      "Değerlendirme kaydı" ve "Yan işler"; (3) Grafana kurum ölçülerini takipçi yayar (lider yalnız kendi pod ölçülerini).
-- [ ] **Grafana panosu:** revizyon 5 (sağlık bölümünün sonunda kalıcı değerlendirme durumu ve kurum ölçüsü yerleşimi
-      panelleri) — dağıtımdan sonra Ayarlar → Grafana panosu → JSON indir ve aynı UID ile içe aktarın.
+      "Değerlendirme kaydı" ve "Yan işler"; (3) Grafana kurum ölçülerini takipçi yayar (lider yalnız kendi pod ölçülerini);
+      tek pod'da bayat tarama / TLS profili kadansı 20.167.0 ile aynı ("bitiş + gecikme").
+- [ ] **Grafana panosu:** revizyon 6 (sağlık bölümünün sonunda kalıcı değerlendirme durumu ve kurum ölçüsü yerleşimi
+      panelleri; "Veri tazeliği" yalnız kurum ölçülerini yayan pod'ları sayar) — dağıtımdan sonra Ayarlar → Grafana panosu →
+      JSON indir ve aynı UID ile içe aktarın.
+- [ ] **Prometheus her pod'u ayrı kazıyor** (`role: pod`, Service üzerinden değil) — Sürüm 3-1'den beri iki pod'da iş ölçümleri
+      (`/metrics/sitemonitor`) yalnız takipçide; yük dengeli kazımada iş serileri gidip gelir.
 
 **Sonrası** (açılıştan ~15 dk sonra; günlükler TÜM pod'lardan — aşağıdaki "İlk 15 dakika" `L`)
 - [ ] Tablolar kuruldu — dördü dolu dönmeli:
@@ -259,15 +270,18 @@ aldığında geçerlidir; sonraki dağıtımlarda atlanır. Ayrıntı: [`RUNBOOK
       = Küme kartındaki tarama lideri (`<pod adı>-<8 hane>`), zaman en çok ~60 sn önce.
 - [ ] Sistem Sağlığı → Zamanlayıcı ve yürütücüler → Küme kartı → "Kalıcı değerlendirme durumu": ilk ~5 dk "henüz doğrulama
       yok", sonra bir tur "bilinmiyor — eşitleniyor" (normal), ~10-15 dk'da **"bellek ve tablolar uyuşuyor"**. "Yanıtlayan pod"
-      lider iken "Değerlendirme kaydı" = "yazıyor (kuşak N)", yazma hatası 0, "son yazım başarısız" uyarısı yok.
+      lider iken "Değerlendirme kaydı" = "yazıyor (kuşak N)", yazma hatası 0, "son yazım başarısız" uyarısı yok, çitlenme
+      uyarısı (lider ama yazma kuşağı başka pod'da) yok, kanca hatası 0 ya da hiç gösterilmiyor.
 - [ ] Kanaryalar: `kubectl logs $L | grep -c "Kalıcı değerlendirme doğrulaması"` → 0 (uyuşmazlık WARN'ı);
       `kubectl logs $L | grep -c "Kalıcı değerlendirme durumu yazılamadı"` → 0; `kubectl logs $L | grep "Yan iş .* başarısız"` → boş.
-- [ ] Tek pod: "Yan işler" satırı "başka canlı pod yok", ertelenen / bırakılan 0 (bugünkü yerleşim). İki pod: aşağıdaki
+- [ ] Tek pod: "Yan işler" satırı "başka canlı pod yok" (ya da "son bakışta başka canlı pod yoktu" / "henüz bakılmadı"),
+      ertelenen / bırakılan 0 (bugünkü yerleşim). İki pod: aşağıdaki
       "Çok pod (1 → 2 replika)" → 4. adım.
 - [ ] Bir hafta boyunca günlük: Küme kartı "uyuşuyor", Grafana "Doğrulama uyuşmazlığı (tür)" 0 — 3-2 geçiş ölçütü için
       kayıt tutun ([RUNBOOK → Kalıcı değerlendirme durumu](RUNBOOK.md#kalıcı-değerlendirme-durumu-çok-pod-sürüm-3-1)).
 
-**Geri alma:** `helm rollback` yeterli. Dört tablo, `round:tls-profile` satırı, `cluster_observations` satırları
+**Geri alma:** `helm rollback` yeterli. Dört tablo, `round:tls-profile` / `round:incident-action-reminder` / `round:<tur>:done`
+satırları, `cluster_observations` satırları
 `eval-state-verify` / `metrics-org` ve iki ayar anahtarı kalır, eski kod kullanmaz (dış anahtar / tetikleyici yok — silmeyin,
 yeniden yükseltmede kaldığı yerden yazılır); eski sürümde TLS profili yine yalnız liderde koşar ve her pod kurum ölçülerini
 yayar.
@@ -548,10 +562,13 @@ kubectl get pod -n "$NS" -l app.kubernetes.io/instance="$REL" \
       geçidi ve doğrudan kontrol edilen iç hedefler erişilebilir:
       ```bash
       NS="$NS" REL="$REL" TARGETS="<ldap-host>:636 <push-host>:443 <iç-hedef>:443" \
+        TLS_TARGETS="<ldap-host>:636 <push-host>:443 <envanter-alanı>:443" \
         bash scripts/multipod-egress-check.sh <node-1> <node-2> <node-3>      # çıkış kodu 0 olmalı
       ```
       Bir node başarısızsa: kural düzeltilir ya da pod'lar sağlam node'lara sabitlenir (`master.yaml` → `nodeSelector` /
       `affinity`). Bu yapılmadan ikinci pod açılmaz — ilk devirde toplu "kesinti" alarmı ya da sessiz posta kaybı olur.
+      Her TLS hedefi her node'da `TLS OK` ve `veren` node'dan node'a aynı olmalı (düz metin hedefleri — ör. SMTP 25 —
+      `TLS_TARGETS`'a koymayın; verilmezse `TARGETS` kullanılır).
 - [ ] **P2 — Saat.** Egress betiğinin yazdığı node saatleri (`saat <epoch>`) birbirinden ve DB saatinden
       (`SELECT extract(epoch from now());`) en çok 1-2 sn farklı.
 - [ ] **P3 — DB bağlantıları.** `SHOW max_connections;` ≥ `3 × dbPoolMax + 25` (2 replika + rollout'ta 1 ek pod).
@@ -597,11 +614,13 @@ kubectl get pod -n "$NS" -l app.kubernetes.io/instance="$REL" \
       → diğer pod ≤ ~35 sn'de lider olur, izleme kesintisiz devam eder. Sürüm 3-1'den beri: yeni lider pod yanıtlarken
       Küme kartı → "Değerlendirme kaydı" → "devralınan (kuşak N)" satırı dolu ve ~10 dk içinde "Kalıcı değerlendirme
       durumu" yeni kuşakta yine "uyuşuyor" (aradaki "eşitleniyor" turu normal).
-- [ ] **Çok pod Sürüm 3-1 — yan işler takipçide:** Küme kartı → "Yanıtlayan pod" → "Yan işler": her iki pod'da "başka
-      canlı pod var", "lider erteleme açık"; ilk saat başından sonra lider pod'da "ertelendi" sayacı > 0 ve Sertifika
+- [ ] **Çok pod Sürüm 3-1 — yan işler takipçide:** Küme kartı → "Yanıtlayan pod" → "Yan işler": lider pod yanıtlarken
+      "başka canlı pod var" (ya da "son bakışta başka canlı pod vardı"), takipçi yanıtlarken "yalnız tarama lideri bakar";
+      her iki pod'da "lider erteleme açık"; ilk saat başından sonra lider pod'da "ertelendi" sayacı > 0 ve Sertifika
       taraması kartında saatlik turu koşturan pod çoğunlukla takipçi. Kümenin tamamı: dedektörün bölüm 0b'si (turların son
-      sahiplenen pod'u — `round:cert-hourly`, `round:cert-stale`, `round:tls-profile` çoğunlukla takipçide). Grafana "Kurum
-      ölçülerini yayan pod" ≥ 1 (lider `sitemonitor_exporter_org_families` 0, takipçi 1).
+      sahiplenen pod'u — `round:cert-hourly`, `round:cert-stale`, `round:tls-profile` çoğunlukla takipçide; `round:<tur>:done`
+      satırları turu son BAŞARIYLA bitiren pod — lider yalnız buna bakarak bırakır). Grafana "Kurum ölçülerini yayan pod"
+      ≥ 1 (lider `sitemonitor_exporter_org_families` 0, takipçi 1).
 
 ### 5. Geri dönüş (2 → 1)
 - [ ] `master.yaml`: `replicaCount: 1` **ve** `podDisruptionBudget.enabled: false` (tek replikada `minAvailable: 1`
