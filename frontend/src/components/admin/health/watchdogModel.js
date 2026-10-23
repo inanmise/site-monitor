@@ -46,6 +46,55 @@ export function watchdogReasons(data) {
   return out
 }
 
+/** Saat uyumu eşikleri (ms) — sunucudaki `WatchdogProbes.SKEW_WARN_MS` / `SKEW_PROBLEM_MS` ile aynı. */
+export const SKEW_WARN_MS = 5000
+export const SKEW_PROBLEM_MS = 30000
+
+/**
+ * Saat farkı → işaretli saniye metni, bir ondalık, arayüz dilinde ("+1,2" / "−0,4"; dil `tr` → virgül). Sayı değilse null
+ * (ölçülmedi — "0" uydurulmaz).
+ */
+export function formatSkewSeconds(ms, lang = 'tr') {
+  if (typeof ms !== 'number' || !Number.isFinite(ms)) return null
+  const abs = new Intl.NumberFormat(lang === 'en' ? 'en-GB' : 'tr-TR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
+    .format(Math.abs(ms) / 1000)
+  if (ms > 0) return `+${abs}`
+  if (ms < 0) return `−${abs}`
+  return abs
+}
+
+/** Saat farkının tonu: 30 sn üstü danger, 5 sn üstü warning, aksi success. */
+export function skewTone(ms) {
+  const a = Math.abs(ms)
+  if (a > SKEW_PROBLEM_MS) return 'danger'
+  if (a > SKEW_WARN_MS) return 'warning'
+  return 'success'
+}
+
+/**
+ * Saat uyumu kontrolünün pod başına farkları (sunucu sırası: en büyük fark önce). Pod adı ya da sayı olmayan satır
+ * atlanır; liste yoksa boş dizi. (2026-10-23, çok pod R2b, MP-37c)
+ */
+export function skewPods(c) {
+  const list = Array.isArray(c?.facts?.pods) ? c.facts.pods : []
+  return list
+    .filter((p) => p && typeof p.pod === 'string' && p.pod && typeof p.skew_ms === 'number')
+    .map((p) => ({ pod: p.pod, ms: p.skew_ms, tone: skewTone(p.skew_ms) }))
+}
+
+/**
+ * Turu değerlendiren pod — yalnız pod'a özgü BİLGİ taşıyan kontrollerde (push devre kesicisi, değerlendiren pod'un havuzu /
+ * şema yaması). Karar küme genelindeki verilere göredir; ekran bu bilgiyi pod adıyla etiketler (MP-36). Yoksa null.
+ */
+export function evaluatedBy(c) {
+  const f = c?.facts
+  const pod = typeof f?.evaluated_by === 'string' && f.evaluated_by.trim() ? f.evaluated_by.trim() : null
+  if (!pod) return null
+  const podLocal = f.circuit_open === true || (typeof f.evaluating_pod_schema_failed === 'number' && f.evaluating_pod_schema_failed > 0)
+    || (typeof f.evaluating_pod_pool === 'string' && f.evaluating_pod_pool !== 'UP')
+  return podLocal ? pod : null
+}
+
 const NOTIFIED_SUFFIX = { '': '', _FAILED: 'Failed', _MUTED: 'Muted', _NOCHANNEL: 'NoChannel' }
 const NOTIFIED_RE = /^(ALERT|REMIND|RECOVER)(_FAILED|_MUTED|_NOCHANNEL)?$/
 

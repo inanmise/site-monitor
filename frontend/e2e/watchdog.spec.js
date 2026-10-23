@@ -17,8 +17,15 @@ const WATCHDOG = {
       detail: 'Zamanında kontrol edilmeyen izlemeler (gecikmiş/etkin): http 12/20, keyword 9/11, pagespeed 4/6, scripted 7/9' }),
     C('cert_sweep', 'Sertifika taraması'),
     C('notifications', 'Bildirim gönderimi'),
-    C('push_outbox', 'Push kuyruğu', { last_result: 'NA', detail: 'Uygulanmaz: kişisel push kapalı.' }),
+    C('push_outbox', 'Push kuyruğu', { detail: "0 push 10 dk'dan uzun süredir gecikmede. Bilgi: bu turu değerlendiren pod'da devre kesici açık.",
+      facts: { stuck: 0, circuit_open: true, evaluated_by: 'sitemonitor-prod-7d9f8c6b5d-x2k4p' } }),
     C('database', 'Veritabanı'),
+    // Saat uyumu (2026-10-23, çok pod R2b, MP-37c): pod başına fark; uzun pod adı kırpılmaz
+    C('clock_skew', 'Saat uyumu', { status: 'PROBLEM', last_result: 'PROBLEM', severity: 'HIGH', since: iso(5 * 60_000),
+      detail: "sitemonitor-prod-7d9f8c6b5d-x2k4p pod'unun saati veritabanı saatinden 45,0 sn ileride (uyarı 5 sn, ciddi 30 sn üstü).",
+      facts: { pods: [{ pod: 'sitemonitor-prod-7d9f8c6b5d-x2k4p', skew_ms: 45000 },
+        { pod: 'sitemonitor-prod-7d9f8c6b5d-uzun-bir-pod-adi-kirpilmamali-q9w8e', skew_ms: -6200 },
+        { pod: 'sitemonitor-prod-7d9f8c6b5d-m3n5b', skew_ms: 300 }], max_abs_ms: 45000 } }),
   ],
   channels: { email_recipients: 3, push_users: 2, webhook: true, reminder_hours: 6, confirm_checks: 2 },
 }
@@ -74,7 +81,7 @@ for (const vp of VIEWPORTS) {
       await expect(page.locator('[data-slot="health-overall"]')).toHaveAttribute('data-level', 'down')
       const sections = await page.locator('[data-section]').evaluateAll((els) => els.map((e) => e.getAttribute('data-section')))
       expect(sections[0]).toBe('watchdog')
-      await expect(sec.locator('[data-slot="watchdog-check"]')).toHaveCount(6)
+      await expect(sec.locator('[data-slot="watchdog-check"]')).toHaveCount(7)
       await expect(sec.locator('[data-key="sweep_leader"]')).toHaveAttribute('data-state', 'problem')
       await sec.scrollIntoViewIfNeeded()
       expect(await page.evaluate(overflowIn, '[data-slot="watchdog-section"]'), 'yatay taşma').toEqual([])
@@ -82,6 +89,15 @@ for (const vp of VIEWPORTS) {
       const clipped = await sec.evaluate((root) => [...root.querySelectorAll('[data-slot="watchdog-check"] p, [data-slot="watchdog-check"] [role="heading"]')]
         .filter((n) => n.scrollWidth > n.clientWidth + 1 || getComputedStyle(n).textOverflow === 'ellipsis').map((n) => n.textContent.slice(0, 30)))
       expect(clipped, 'kırpılan metin').toEqual([])
+      // Çok pod (R2b): saat uyumu pod rozetleri ve değerlendiren pod satırı — sararak tam, taşmadan
+      const skew = sec.locator('[data-key="clock_skew"] [data-slot="watchdog-skew-pods"]')
+      await expect(skew.locator('[data-slot="badge"]')).toHaveCount(3)
+      await expect(skew.locator('[data-slot="badge"]').first()).toHaveAttribute('data-tone', 'danger')
+      const badgeClipped = await skew.evaluate((root) => [...root.querySelectorAll('[data-slot="badge"]')]
+        .filter((n) => n.scrollWidth > n.clientWidth + 1 || n.getBoundingClientRect().right > root.getBoundingClientRect().right + 1)
+        .map((n) => n.textContent.slice(0, 40)))
+      expect(badgeClipped, 'kırpılan pod rozeti').toEqual([])
+      await expect(sec.locator('[data-key="push_outbox"] [data-slot="watchdog-evaluated-by"]')).toContainText('sitemonitor-prod-7d9f8c6b5d-x2k4p')
       await expect(sec.locator('[data-slot="watchdog-public-url"]')).toContainText('/api/public/health/watchdog')
       await sec.screenshot({ path: `test-results/watchdog-${vp.name}.png` })
     })

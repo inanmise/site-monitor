@@ -130,6 +130,9 @@ public class ClusterLockService {
     private final boolean backgroundRenewer;
     private final ConcurrentHashMap<String, Hold> holds = new ConcurrentHashMap<>();
     private final AtomicLong renewWarnAt = new AtomicLong();
+    /** Yenileme sırasında KAYBEDİLEN kilit sayısı (bu pod, açılıştan beri) — {@code sitemonitor_cluster_lock_lost} POD ölçümü
+     *  (2026-10-23, çok pod R2b). Tutuş başına en çok bir kez sayılır (WARN ile aynı an). */
+    private final AtomicLong lostCount = new AtomicLong();
     private volatile ScheduledExecutorService renewer;
     private volatile boolean closed;
     /** Kapanış başladı ({@code ContextClosedEvent}): YENİ kilit verilmez; tutulanlar yenilenmeye devam eder (süren iş bitsin). */
@@ -327,11 +330,17 @@ public class ClusterLockService {
             h.state = State.LOST;
             if (!h.renewWarned) {
                 h.renewWarned = true;
+                lostCount.incrementAndGet();
                 log.warn("Dağıtık kilit '{}' KAYBEDİLDİ — satır artık bu pod'da değil (başka pod aldı ya da zorla bırakıldı); "
                         + "uzun iş sonucunu yazmayacak [owner={}]", h.name, owner);
             }
             return false;
         }
+    }
+
+    /** Bu pod'un açılıştan beri yenilemede KAYBETTİĞİ kilit sayısı (başka pod aldı ya da yönetici zorla bıraktı). */
+    public long lostCount() {
+        return lostCount.get();
     }
 
     /** System Health: bu pod'un tuttuğu kilitler (ad, durum, bitiş). */

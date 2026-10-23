@@ -1631,6 +1631,8 @@ class UserPushServiceTest {
         assertThat(out).extracting(UserPushDelivery::getId).containsExactly(71L);
         assertThat(mine.getNextAttemptAt()).as("yeni kira").isNotEqualTo("2026-10-21T06:02:00.000000001").contains(".");
         assertThat(taken.getNextAttemptAt()).as("başka pod'un kirasına dokunulmaz").isEqualTo("2026-10-21T06:03:00.999999999");
+        // 2026-10-23 (çok pod R2b): sitemonitor_push_lease_renew_failed{reason="lost"} sayacı
+        assertThat(service.leaseRenewFailures()).containsEntry("lost", 1L).containsEntry("error", 0L);
     }
 
     @Test
@@ -1642,6 +1644,7 @@ class UserPushServiceTest {
         doThrow(new RuntimeException("db kapalı")).when(deliveryRepo).renewLease(any(), anyString(), anyString());
 
         assertThat(service.renewForSend(List.of(mine, idless))).containsExactly(idless);
+        assertThat(service.leaseRenewFailures()).containsEntry("error", 1L).containsEntry("lost", 0L);
     }
 
     @Test

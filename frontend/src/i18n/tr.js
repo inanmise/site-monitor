@@ -8817,6 +8817,10 @@ export const TR = {
   'wd.reason': 'Kendi kendini izleme: {0}',
   'wd.reasonStale': 'Kendi kendini izleme değerlendirmesi koşmuyor',
   'wd.problemCount': '{0} sorun',
+  // ── multi-pod R2b · C2 ──
+  'wd.skewPods': 'Pod başına saat farkı (veritabanı saatine göre):',
+  'wd.skewValue': '{0}: {1} sn',
+  'wd.evaluatedBy': "Değerlendiren pod: {0} — devre kesici, bağlantı havuzu ve şema yaması gibi bu pod'a özgü olgular yalnız bilgidir; karar küme genelindeki verilere göre verilir.",
   'health.sectionFailed':  'Bu bölüm yüklenemedi.',
   'health.stOk':           'Sağlıklı',
   'health.stWarn':         'Bozuk',

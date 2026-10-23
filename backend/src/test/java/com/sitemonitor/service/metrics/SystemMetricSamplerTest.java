@@ -254,4 +254,41 @@ class SystemMetricSamplerTest {
         assertThat(b.getHttpRequests()).as("kırpıldı: en yeni 10 dakika").isEqualTo(10L);
         assertThat(b.getHttpMinutes()).as("alınan aralık 10:17 → 10:26").isEqualTo(10);
     }
+
+    @Test
+    @DisplayName("saat farkı (MP-37c): pod − veritabanı, gerçek H2 CURRENT_TIMESTAMP; kaymış pod saati farkı verir; "
+            + "veritabanı yok / uzun gidiş-dönüş → null (0 uydurulmaz)")
+    void clockSkewMeasuredAgainstDatabase() {
+        com.sitemonitor.it.MultiPodTestSupport mp = com.sitemonitor.it.MultiPodTestSupport.create();
+        try {
+            SystemMetricSampler s = sampler();
+            assertThat(s.measureClockSkew()).as("JdbcTemplate yok").isNull();
+            s.jdbc = mp.jdbc();
+            Long aligned = s.measureClockSkew();
+            assertThat(aligned).isNotNull();
+            assertThat(Math.abs(aligned)).as("aynı JVM saati").isLessThan(1_500L);
+
+            s.wallClock = () -> System.currentTimeMillis() + 45_000L;   // pod saati 45 sn ileride
+            Long ahead = s.measureClockSkew();
+            assertThat(ahead).isBetween(43_500L, 46_500L);
+            SystemMetricSample sample = s.capture(Instant.parse("2031-03-01T11:00:07Z"));
+            assertThat(sample.getClockSkewMs()).isBetween(43_500L, 46_500L);
+            assertThat(s.lastClockSkewMs()).isBetween(43_500L, 46_500L);
+
+            long[] ticks = {0L};
+            s.wallClock = () -> { ticks[0] += 3_000L; return System.currentTimeMillis() + ticks[0]; };   // gidiş-dönüş 3 sn
+            assertThat(s.measureClockSkew()).as("uzun gidiş-dönüş — belirsiz").isNull();
+
+            s.jdbc = mock(org.springframework.jdbc.core.JdbcTemplate.class, inv -> { throw new IllegalStateException("db down"); });
+            s.wallClock = System::currentTimeMillis;
+            SystemMetricSample down = s.capture(Instant.parse("2031-03-01T11:01:07Z"));
+            assertThat(down.getClockSkewMs()).isNull();
+            assertThat(s.lastClockSkewMs()).as("son ölçüm başarısız → yayılmaz").isNull();
+
+            s.enabled = false;
+            assertThat(s.lastClockSkewMs()).isNull();
+        } finally {
+            mp.close();
+        }
+    }
 }

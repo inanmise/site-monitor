@@ -97,6 +97,62 @@ class DeploymentTransitionTest {
         assertThat(kinds(out)).containsExactly(Kind.FIRST_SEEN, Kind.RESTART, Kind.RESTART, Kind.UPGRADE, Kind.RESTART);
     }
 
+    /** Canlılık bilgili STARTUP satırı (çok pod türetimi, 2026-10-23 MP-37e). */
+    private static DeploymentHistory live(long id, String startedAt, String version, String pod, Integer helmRev,
+                                          String lastSeenAt, String endedAt) {
+        DeploymentHistory d = row(id, startedAt, version);
+        d.setPodName(pod);
+        d.setHostname(pod);
+        d.setHelmRevision(helmRev);
+        d.setLastSeenAt(lastSeenAt);
+        d.setEndedAt(endedAt);
+        return d;
+    }
+
+    @Test
+    @DisplayName("MP-37e: eski ReplicaSet'in geç kalan pod'u (daha yüksek revizyonlu canlı pod var) RESTART — sahte ROLLBACK yok, "
+            + "sürüm ilerlemez; ardından açılan yeni pod ek replika")
+    void stragglerOfOlderRevisionIsNotARollback() {
+        List<Derived> out = DeploymentHistoryService.deriveKinds(List.of(
+                live(1, "2026-10-23T10:00:00Z", "1.0.0", "pod-a", 7, "2026-10-23T10:20:30Z", "2026-10-23T10:20:30Z"),
+                live(2, "2026-10-23T10:20:00Z", "1.1.0", "pod-c", 8, "2026-10-23T11:00:00Z", null),
+                live(3, "2026-10-23T10:20:40Z", "1.0.0", "pod-x", 7, "2026-10-23T11:00:00Z", null),
+                live(4, "2026-10-23T10:21:00Z", "1.1.0", "pod-d", 8, "2026-10-23T11:00:00Z", null)));
+        assertThat(kinds(out)).containsExactly(Kind.FIRST_SEEN, Kind.UPGRADE, Kind.RESTART, Kind.RESTART);
+        assertThat(out.get(2).countedRestart()).as("geç kalan pod yeniden başlatma sayılmaz").isFalse();
+        assertThat(out.get(3).replica()).isTrue();
+        assertThat(out.get(2).previousVersion()).as("ortamın sürümü 1.1.0 kaldı").isEqualTo("1.1.0");
+    }
+
+    @Test
+    @DisplayName("MP-37e: pod adı olmayan yerel kurulum (sabit makine adı) — gerçek geri alma ROLLBACK kalır; aynı sürümle "
+            + "yeniden açılış sayılan RESTART")
+    void sameHostnameAcrossVersions_realTransitionsKept() {
+        List<Derived> out = DeploymentHistoryService.deriveKinds(List.of(
+                live(1, "2026-10-01T10:00:00Z", "1.0.0", "laptop", null, "2026-10-01T18:00:00Z", "2026-10-01T18:00:00Z"),
+                live(2, "2026-10-02T10:00:00Z", "1.1.0", "laptop", null, "2026-10-02T18:00:00Z", "2026-10-02T18:00:00Z"),
+                live(3, "2026-10-03T10:00:00Z", "1.0.0", "laptop", null, "2026-10-03T18:00:00Z", "2026-10-03T18:00:00Z"),
+                live(4, "2026-10-04T10:00:00Z", "1.0.0", "laptop", null, "2026-10-04T18:00:00Z", null)));
+        assertThat(kinds(out)).containsExactly(Kind.FIRST_SEEN, Kind.UPGRADE, Kind.ROLLBACK, Kind.RESTART);
+        assertThat(out.get(3).countedRestart()).isTrue();
+    }
+
+    @Test
+    @DisplayName("MP-37e: 2 replikalı ilk kurulum + dağıtım — yeni sürümün ikinci pod'u ek replika (sayılmaz); tek pod'un "
+            + "kapanıp yenisinin açılması (canlı aynı sürüm yok) sayılır")
+    void replicaVersusRestart() {
+        List<Derived> out = DeploymentHistoryService.deriveKinds(List.of(
+                live(1, "2026-10-23T09:00:00Z", "1.0.0", "pod-a", 7, "2026-10-23T10:05:00Z", "2026-10-23T10:05:00Z"),
+                live(2, "2026-10-23T09:00:20Z", "1.0.0", "pod-b", 7, "2026-10-23T10:06:00Z", "2026-10-23T10:06:00Z"),
+                live(3, "2026-10-23T10:04:00Z", "1.1.0", "pod-c", 8, "2026-10-23T12:00:00Z", "2026-10-23T12:00:00Z"),
+                live(4, "2026-10-23T10:05:30Z", "1.1.0", "pod-d", 8, "2026-10-23T12:00:00Z", "2026-10-23T12:00:00Z"),
+                live(5, "2026-10-23T12:30:00Z", "1.1.0", "pod-e", 8, "2026-10-23T13:00:00Z", null)));
+        assertThat(kinds(out)).containsExactly(Kind.FIRST_SEEN, Kind.RESTART, Kind.UPGRADE, Kind.RESTART, Kind.RESTART);
+        assertThat(out.get(1).countedRestart()).as("ilk kurulumun ikinci replikası").isFalse();
+        assertThat(out.get(3).countedRestart()).as("dağıtımın ikinci yeni pod'u").isFalse();
+        assertThat(out.get(4).countedRestart()).as("hepsi kapandıktan sonra açılan pod — yeniden başlatma").isTrue();
+    }
+
     @Test
     @DisplayName("boş liste → boş çıktı")
     void emptyInput() {

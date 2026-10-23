@@ -135,6 +135,12 @@ public class UserPushService {
 
     // ── Devre kesici (K7) — bellek içi; pod yeniden başlarsa temiz başlar (bilinçli) ──
     private final AtomicInteger consecutiveFailures = new AtomicInteger();
+
+    // ── Kira tazeleme hataları (2026-10-23, çok pod R2b) — {@code sitemonitor_push_lease_renew_failed} POD ölçümü ──
+    /** Tazeleme SORGUSU düştü (batch gönderilmedi; kira dolunca yeniden alınır). */
+    private final java.util.concurrent.atomic.AtomicLong leaseRenewErrors = new java.util.concurrent.atomic.AtomicLong();
+    /** Satırların (bir kısmının) kirası başka pod'a geçmişti — bu pod onları göndermedi. */
+    private final java.util.concurrent.atomic.AtomicLong leaseRenewLost = new java.util.concurrent.atomic.AtomicLong();
     private volatile long circuitOpenUntil = 0L;
 
     @Autowired
@@ -1607,16 +1613,19 @@ public class UserPushService {
             try {
                 renewed = deliveryRepo.renewLease(ids, e.getKey(), lease);
             } catch (Exception ex) {
+                leaseRenewErrors.incrementAndGet();
                 log.warn("user-push kira tazelenemedi ({} satır) — bu batch GÖNDERİLMİYOR (kira dolunca yeniden alınır): {}",
                         ids.size(), ex.toString());
                 continue;
             }
             if (renewed <= 0) {
+                leaseRenewLost.incrementAndGet();
                 log.info("user-push: {} satırın kirası başka pod'a geçmiş — bu pod göndermiyor", ids.size());
                 continue;
             }
             List<UserPushDelivery> kept = rows;
             if (renewed < ids.size()) {
+                leaseRenewLost.incrementAndGet();
                 Set<Long> stillMine = new java.util.HashSet<>();
                 try {
                     for (UserPushDelivery x : deliveryRepo.findByIdInAndNextAttemptAtOrderByIdAsc(ids, lease)) stillMine.add(x.getId());
@@ -1831,11 +1840,13 @@ public class UserPushService {
             if (n == 1) {
                 sentUnrecorded.replace(id, s, s.withLease(next));
             } else {
+                leaseRenewLost.incrementAndGet();
                 // Kira artık bu pod'un değil (başka pod aldı ya da satır sonuçlandı) — ileri alınacak bir şey yok.
                 sentUnrecorded.replace(id, s, s.withLease(null));
                 log.warn("user-push satır #{}: sonucu yazılamamış gönderimin kirası artık bu pod'da değil", id);
             }
         } catch (Exception ex) {
+            leaseRenewErrors.incrementAndGet();
             log.debug("user-push satır #{}: kira ileri alınamadı (sonraki süpürme yeniden dener): {}", id, ex.toString());
         }
     }
@@ -2123,6 +2134,17 @@ public class UserPushService {
      * hata olursa {@code fail()}'in tavanlı retry + backoff'u devralır.
      */
     private boolean circuitOpen() { return System.currentTimeMillis() < circuitOpenUntil; }
+
+    /**
+     * Bu pod'un açılıştan beri kira tazeleme hataları (2026-10-23, çok pod R2b): {@code error} = tazeleme sorgusu düştü,
+     * {@code lost} = satırların kirası başka pod'a geçmişti (bu pod göndermedi). Sağlıklı kümede ikisi de 0 kalır.
+     */
+    public Map<String, Long> leaseRenewFailures() {
+        Map<String, Long> out = new LinkedHashMap<>();
+        out.put("error", leaseRenewErrors.get());
+        out.put("lost", leaseRenewLost.get());
+        return out;
+    }
 
     /** E4 sağlık kartı için anlık durum. */
     public Map<String, Object> healthSnapshot() {

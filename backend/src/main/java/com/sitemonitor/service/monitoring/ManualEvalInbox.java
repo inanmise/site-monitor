@@ -165,6 +165,16 @@ public class ManualEvalInbox {
     }
 
     /**
+     * Gelen kutusunda bekleyen satır sayısı (2026-10-23, çok pod R2b) — {@code sitemonitor_eval_inbox_depth} küme ölçümü; tek
+     * {@code COUNT(*)} (küçük tablo: lider 5 sn'de bir boşaltır, 10 dk'dan eski satırı atar). Tablo yok / DB hatası → istisna
+     * (ölçüm aktarıcısı kaynağı "okunamadı" sayar, sahte 0 yazmaz).
+     */
+    public long depth() {
+        Long n = jdbc.queryForObject("SELECT COUNT(*) FROM " + TABLE, Long.class);
+        return n == null ? 0L : n;
+    }
+
+    /**
      * En çok {@code limit} satırı bu sahip adına {@link #LEASE_MS} süreyle sahiplenir. Kirası dolmuş (sahibi ölmüş) satır da
      * sahiplenilebilir. Hata → boş liste (sonraki turda yeniden denenir).
      */
