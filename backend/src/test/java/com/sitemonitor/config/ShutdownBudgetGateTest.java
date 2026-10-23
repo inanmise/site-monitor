@@ -184,6 +184,8 @@ class ShutdownBudgetGateTest {
         String runner = Files.readString(Path.of("src/main/java/com/sitemonitor/service/schedule/SideJobRunner.java"),
                 StandardCharsets.UTF_8);
         assertThat(runner).contains("ShutdownDeadline.waitMs(SHUTDOWN_WAIT_CAP_MS)");
+        // FX-SIDE #1: kısa cron şeridi AYNI bekleme bütçesinin kalanıyla beklenir (ikinci bir tam tavan değil)
+        assertThat(runner).contains("awaitRest(shortEx, waitStart, waitMs)").contains("awaitRest(shortEx, unwindStart, unwindMs)");
         assertThat(com.sitemonitor.service.schedule.SideJobRunner.SHUTDOWN_WAIT_CAP_MS)
                 .as("tavan ortak yok etme süresinin altında").isLessThan(ShutdownDeadline.DESTROY_BUDGET_MS);
         int closed = runner.indexOf("public void onContextClosed(");

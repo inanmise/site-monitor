@@ -30,9 +30,26 @@ import java.util.function.LongSupplier;
  *
  * <p><b>Neden.</b> 65 {@code @Scheduled} iş her pod'da TEK 8 iş parçacıklı havuzu paylaşır; uzun işler (saatlik / bayat
  * sertifika taraması, gece temizliği, raporlar, TLS profili) havuz iş parçacığını dakikalarca–saatlerce tutar ve tarama
- * liderinin izleme tıklarını geciktirir. Bu koşucu uzun işlerin GÖVDESİNİ ayrı, küçük bir havuzda
- * ({@code site.monitor.scheduler.side-jobs.threads}, vars. 3; açılışta okunur) koşturur ve liderin ertelediği cron
+ * liderinin izleme tıklarını geciktirir. Bu koşucu uzun işlerin GÖVDESİNİ ayrı bir havuzda
+ * ({@code site.monitor.scheduler.side-jobs.threads}; açılışta okunur) koşturur ve liderin ertelediği cron
  * denemelerini zamanlar. Gövdeler kilit / tur / öğe sahiplenme çağrılarını AYNEN taşır — yalnız iş parçacığı değişir.
+ *
+ * <p><b>İki şerit (inceleme 2026-10-23, FX-SIDE #1).</b> Koşucu işleri 20.167.0'ın 8 iş parçacıklı havuzundan DAHA ÇOK
+ * bekletmemeli:
+ * <ul>
+ *   <li><b>Uzun iş şeridi</b> ({@code side-job-N}): en az {@value #MIN_THREADS} iş parçacığı ve en az zamanlayıcı havuzunun
+ *       boyu ({@code spring.task.scheduling.pool.size}) — {@link #effectiveThreads}. Bir uzun iş ancak bu pod'da en az o kadar
+ *       BAŞKA uzun iş koşarken bekler; 20.167.0'da aynı anda o kadar uzun iş koşarken havuz (üstelik 50'den fazla başka işle
+ *       paylaşılan) zaten doluydu. Ayar daha küçükse yükseltilir; 0 = satır içi kip.</li>
+ *   <li><b>Kısa cron şeridi</b> ({@code side-job-short-N}, {@value #SHORT_LANE_THREADS} iş parçacığı): liderin ertelediği
+ *       KISA cron denemeleri (CA sabitleme, Cuma hatırlatması, sorun özeti, olay / kanal raporu hatırlatmaları — bugün 5 iş,
+ *       her birine bir iş parçacığı) uzun işlerin arkasında hiç beklemez.</li>
+ * </ul>
+ *
+ * <p><b>Sabit gecikmeli işler</b> ({@link #submitAfterGap}: bayat sertifika, TLS profili, ping özet yeniden hesabı): Spring'in
+ * {@code fixedDelay} tıkı gövde koşucuya verildiği için hemen döner — sonraki tık "bitiş + gecikme" değil "tık + gecikme"de
+ * gelir. Koşucu bu yüzden gövdeyi bu pod'daki son koşunun BİTİŞİNDEN en erken gecikme kadar sonra başlatır (gerekirse
+ * bekletir) — tek pod'daki kadans 20.167.0'daki gibi "bitiş + gecikme" kalır.
  *
  * <p><b>İş başına birleştirme:</b> aynı adlı işten en çok BİR örnek kuyrukta-ya-da-koşuyor olabilir; Spring iş sürerken sabit
  * gecikmeli / cron tıklarını tetiklemeye devam eder — ikinci gönderim atlanır (sayılır; saatte bir günlük). Kilit zaten
@@ -69,8 +86,19 @@ public class SideJobRunner {
     public static final long SHUTDOWN_WAIT_CAP_MS = 5_000L;
     /** Kesilen (interrupt) işin adımını bırakması için ek bekleme tavanı (ms) — yine ortak yok etme süresinden düşer. */
     public static final long INTERRUPT_UNWIND_CAP_MS = 1_000L;
+    /**
+     * Uzun iş şeridinin en az iş parçacığı (FX-SIDE #1) = 20.167.0'ın zamanlayıcı havuzu
+     * ({@code spring.task.scheduling.pool.size} varsayılanı 8): koşucu hiçbir uzun işi o havuzdan daha çok bekletmez.
+     */
+    public static final int MIN_THREADS = 8;
     /** İş parçacığı sayısının üst sınırı. */
-    public static final int MAX_THREADS = 16;
+    public static final int MAX_THREADS = 32;
+    /**
+     * Kısa cron şeridinin iş parçacığı sayısı (FX-SIDE #1): liderin ertelediği kısa cron denemeleri (bugün 5 iş: CA sabitleme,
+     * Cuma hatırlatması, sorun özeti, olay aksiyonu ve kanal raporu hatırlatmaları) — her birine bir iş parçacığı, iş başına
+     * birleştirme ile ikisi aynı işten olamaz → biri ötekini hiç beklemez. Gövdeler milisaniye–saniye sürer.
+     */
+    public static final int SHORT_LANE_THREADS = 5;
     /** Birleştirme / kabul edilmeme günlüğünün iş başına en sık aralığı (ms). */
     static final long SKIP_LOG_INTERVAL_MS = 60L * 60 * 1000;
 
@@ -136,7 +164,10 @@ public class SideJobRunner {
     private record Pending(ScheduledFuture<?> future, Runnable task) {}
 
     private final int threads;
+    /** Uzun iş şeridi (gönderilen işler + liderin ertelediği UZUN cron denemeleri + sabit gecikme beklemeleri). */
     private final ScheduledThreadPoolExecutor executor;
+    /** Kısa cron şeridi (liderin ertelediği KISA cron denemeleri) — {@link #executor} ile birlikte var / yok. */
+    private final ScheduledThreadPoolExecutor shortExecutor;
     private final LongSupplier clock;
     private final Map<String, JobState> jobs = new ConcurrentHashMap<>();
     private volatile boolean accepting = true;
@@ -154,30 +185,61 @@ public class SideJobRunner {
         this(0, System::currentTimeMillis);
     }
 
+    /**
+     * Bean kurucusu: ayardaki iş parçacığı sayısı {@link #effectiveThreads} ile en az {@value #MIN_THREADS} ve en az zamanlayıcı
+     * havuzunun boyuna yükseltilir (FX-SIDE #1); 0 = satır içi kip.
+     */
     @Autowired
-    public SideJobRunner(@Value("${site.monitor.scheduler.side-jobs.threads:3}") int threads) {
-        this(threads, System::currentTimeMillis);
+    public SideJobRunner(@Value("${site.monitor.scheduler.side-jobs.threads:" + MIN_THREADS + "}") int threads,
+                         @Value("${spring.task.scheduling.pool.size:8}") int schedulingPoolSize) {
+        this(effectiveThreads(threads, schedulingPoolSize), System::currentTimeMillis);
     }
 
-    /** Testler: iş parçacığı sayısı ve (durum zaman damgaları için) saat. */
+    /** Ayardaki sayıyla (zamanlayıcı havuzu varsayılan 8 sayılır) — {@link #effectiveThreads} uygulanır. */
+    public SideJobRunner(int threads) {
+        this(threads, MIN_THREADS);
+    }
+
+    /**
+     * Testler: uzun iş şeridinin iş parçacığı sayısı TAM verilir (alt sınır uygulanmaz; 0 = satır içi) ve (durum zaman
+     * damgaları + sabit gecikme için) saat. Kısa cron şeridi {@value #SHORT_LANE_THREADS} iş parçacığıyla birlikte kurulur.
+     */
     public SideJobRunner(int threads, LongSupplier clock) {
         this.threads = Math.max(0, Math.min(MAX_THREADS, threads));
         this.clock = clock == null ? System::currentTimeMillis : clock;
         if (this.threads > 0) {
-            AtomicInteger seq = new AtomicInteger();
-            ThreadFactory tf = r -> {
-                Thread t = new Thread(r, "side-job-" + seq.incrementAndGet());
-                t.setDaemon(false);
-                return t;
-            };
-            ScheduledThreadPoolExecutor ex = new ScheduledThreadPoolExecutor(this.threads, tf);
-            ex.setRemoveOnCancelPolicy(true);
-            ex.setExecuteExistingDelayedTasksAfterShutdownPolicy(false);   // kapanışta ertelenmiş denemeler iptal
-            ex.setContinueExistingPeriodicTasksAfterShutdownPolicy(false);
-            this.executor = ex;
+            this.executor = newExecutor(this.threads, "side-job-");
+            this.shortExecutor = newExecutor(SHORT_LANE_THREADS, "side-job-short-");
         } else {
             this.executor = null;
+            this.shortExecutor = null;
         }
+    }
+
+    /**
+     * Üretimde koşan uzun iş şeridi boyu: ayar 0 (ya da negatif) → 0 = satır içi; aksi hâlde ayar, {@value #MIN_THREADS} ve
+     * zamanlayıcı havuzunun boyundan BÜYÜK olanı, en çok {@value #MAX_THREADS}. Neden alt sınır: 20.167.0'da uzun işler
+     * zamanlayıcı havuzunun iş parçacıklarında koşuyordu; koşucunun daha az iş parçacığı olsaydı aynı anda tetiklenen uzun işler
+     * (gece temizliği + saatlik tarama + TLS turu …) birbirini bugünkünden daha uzun beklerdi (inceleme 2026-10-23).
+     */
+    public static int effectiveThreads(int configured, int schedulingPoolSize) {
+        if (configured <= 0) return 0;
+        int floor = Math.max(MIN_THREADS, schedulingPoolSize);
+        return Math.min(MAX_THREADS, Math.max(configured, floor));
+    }
+
+    private static ScheduledThreadPoolExecutor newExecutor(int size, String prefix) {
+        AtomicInteger seq = new AtomicInteger();
+        ThreadFactory tf = r -> {
+            Thread t = new Thread(r, prefix + seq.incrementAndGet());
+            t.setDaemon(false);
+            return t;
+        };
+        ScheduledThreadPoolExecutor ex = new ScheduledThreadPoolExecutor(size, tf);
+        ex.setRemoveOnCancelPolicy(true);
+        ex.setExecuteExistingDelayedTasksAfterShutdownPolicy(false);   // kapanışta ertelenmiş denemeler iptal
+        ex.setContinueExistingPeriodicTasksAfterShutdownPolicy(false);
+        return ex;
     }
 
     /** Satır içi koşucu (fabrika). */
@@ -221,17 +283,45 @@ public class SideJobRunner {
      * @return kabul edildi mi (false: birleştirildi, kapanıyor ya da satır içi kip)
      */
     public boolean submit(String name, Runnable body) {
-        return enqueue(name, body, null, 0L, false);
+        return enqueue(name, body, null, 0L, false, false, false);
     }
 
     /**
-     * Liderin ertelediği cron denemesi: {@code delayMs} sonra, {@code alreadyDone} true ise gövde koşmaz (atlandı), değilse
-     * gövde koşar. Kabul edilirse ertelenen sayacı artar.
+     * Sabit GECİKMELİ uzun iş (FX-SIDE #1; {@code @Scheduled(fixedDelay = gapMs)}): bu pod'daki son koşu
+     * {@code gapMs}'ten daha yeni bittiyse gövde, bitiş + {@code gapMs} anına dek bekletilir (uzun iş şeridinde); değilse
+     * hemen gönderilir. İş kuyrukta / koşuyor / bekliyorsa tık sessizce düşer (sayılmaz: 20.167.0'da sabit gecikmeli işin
+     * tıkı gövde sürerken hiç gelmezdi). Böylece kadans tek pod'da 20.167.0'daki gibi "bitiş + gecikme" kalır; saf atlama
+     * ("son bitişten {@code gapMs} geçmediyse tıkı at") kadansı iki katına çıkarırdı.
+     *
+     * @return kabul edildi mi (false: zaten kuyrukta / koşuyor, kapanıyor ya da satır içi kip)
+     */
+    public boolean submitAfterGap(String name, long gapMs, Runnable body) {
+        if (name == null || body == null || executor == null) return false;
+        Long last = state(name).lastFinishedAt;
+        long wait = 0L;
+        if (gapMs > 0 && last != null) {
+            long since = clock.getAsLong() - last;
+            if (since < gapMs) wait = Math.min(gapMs, gapMs - since);   // saat geri gittiyse en çok bir gecikme
+        }
+        return enqueue(name, body, null, wait, wait > 0, false, true);
+    }
+
+    /**
+     * Liderin ertelediği UZUN cron denemesi: {@code delayMs} sonra, {@code alreadyDone} true ise gövde koşmaz (atlandı),
+     * değilse gövde koşar. Kabul edilirse ertelenen sayacı artar.
      *
      * @return kabul edildi mi (false: birleştirildi, kapanıyor ya da satır içi kip)
      */
     public boolean defer(String name, long delayMs, BooleanSupplier alreadyDone, Runnable body) {
-        boolean ok = enqueue(name, body, alreadyDone, Math.max(0L, delayMs), true);
+        return defer(name, delayMs, true, alreadyDone, body);
+    }
+
+    /**
+     * Liderin ertelediği cron denemesi; {@code heavy = false} (kısa iş) ise deneme KISA cron şeridinde koşar — uzun işler
+     * koşucunun bütün iş parçacıklarını tutsa da zamanında başlar (FX-SIDE #1).
+     */
+    public boolean defer(String name, long delayMs, boolean heavy, BooleanSupplier alreadyDone, Runnable body) {
+        boolean ok = enqueue(name, body, alreadyDone, Math.max(0L, delayMs), true, !heavy, false);
         if (ok) state(name).deferred.incrementAndGet();
         return ok;
     }
@@ -246,9 +336,11 @@ public class SideJobRunner {
         if (name != null) state(name).skipped.incrementAndGet();
     }
 
-    private boolean enqueue(String name, Runnable body, BooleanSupplier alreadyDone, long delayMs, boolean deferred) {
+    private boolean enqueue(String name, Runnable body, BooleanSupplier alreadyDone, long delayMs, boolean deferred,
+                            boolean shortLane, boolean quietWhenBusy) {
         if (name == null || body == null) return false;
-        if (executor == null) return false;
+        ScheduledThreadPoolExecutor ex = shortLane ? shortExecutor : executor;
+        if (ex == null) return false;
         JobState st = state(name);
         if (!accepting()) {
             st.skipped.incrementAndGet();
@@ -256,6 +348,10 @@ public class SideJobRunner {
             return false;
         }
         if (!st.busy.compareAndSet(false, true)) {
+            if (quietWhenBusy) {
+                log.trace("Yan iş '{}' kuyrukta / koşuyor / gecikmesini bekliyor — sabit gecikmeli tık düştü", name);
+                return false;
+            }
             st.skipped.incrementAndGet();
             logSkip(st, "Yan iş '{}' zaten kuyrukta / koşuyor — bu tetik birleştirildi (atlandı)");
             return false;
@@ -264,10 +360,10 @@ public class SideJobRunner {
         Runnable task = () -> runJob(st, body, alreadyDone);
         try {
             if (deferred) {
-                ScheduledFuture<?> f = executor.schedule(task, delayMs, TimeUnit.MILLISECONDS);
+                ScheduledFuture<?> f = ex.schedule(task, delayMs, TimeUnit.MILLISECONDS);
                 st.pending = new Pending(f, task);
             } else {
-                executor.execute(task);
+                ex.execute(task);
             }
             return true;
         } catch (RejectedExecutionException e) {
@@ -401,15 +497,20 @@ public class SideJobRunner {
         if (stopCalled.getAndSet(true)) return;                  // idempotent: @PreDestroy yedeği ortak süreyi yeniden harcamaz
         stopped = true;
         ScheduledThreadPoolExecutor ex = executor;
-        if (ex == null || ex.isTerminated()) return;
+        ScheduledThreadPoolExecutor shortEx = shortExecutor;
+        if (ex == null || (ex.isTerminated() && (shortEx == null || shortEx.isTerminated()))) return;
         ex.shutdown();
+        if (shortEx != null) shortEx.shutdown();
         long waitMs = ShutdownDeadline.waitMs(SHUTDOWN_WAIT_CAP_MS);
+        long waitStart = System.nanoTime();
         try {
-            if (waitMs > 0 && ex.awaitTermination(waitMs, TimeUnit.MILLISECONDS)) return;
+            if (waitMs > 0 && ex.awaitTermination(waitMs, TimeUnit.MILLISECONDS)
+                    && awaitRest(shortEx, waitStart, waitMs)) return;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
-        List<Runnable> dropped = ex.shutdownNow();
+        List<Runnable> dropped = new ArrayList<>(ex.shutdownNow());
+        if (shortEx != null) dropped.addAll(shortEx.shutdownNow());
         List<String> running = new ArrayList<>();
         for (JobState st : jobs.values()) if (STATE_RUNNING.equals(st.state)) running.add(st.name);
         if (!running.isEmpty() || !dropped.isEmpty()) {
@@ -417,11 +518,20 @@ public class SideJobRunner {
         }
         // Kesilen iş adımını bırakıp kendi kilit tutuşunu (LockTicket) çözsün — çağıran iş kilitlerini BUNDAN SONRA bırakır.
         long unwindMs = ShutdownDeadline.waitMs(INTERRUPT_UNWIND_CAP_MS);
+        long unwindStart = System.nanoTime();
         try {
-            if (unwindMs > 0) ex.awaitTermination(unwindMs, TimeUnit.MILLISECONDS);
+            if (unwindMs > 0 && ex.awaitTermination(unwindMs, TimeUnit.MILLISECONDS)) awaitRest(shortEx, unwindStart, unwindMs);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
+    }
+
+    /** Aynı (ortak süreden alınmış) bekleme bütçesinin kalanı kadar ikinci şeridi bekler; bitti mi. */
+    private static boolean awaitRest(ScheduledThreadPoolExecutor ex, long startNs, long budgetMs)
+            throws InterruptedException {
+        if (ex == null || ex.isTerminated()) return true;
+        long left = budgetMs - (System.nanoTime() - startNs) / 1_000_000L;
+        return left > 0 && ex.awaitTermination(left, TimeUnit.MILLISECONDS);
     }
 
     @jakarta.annotation.PreDestroy

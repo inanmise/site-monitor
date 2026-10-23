@@ -52,7 +52,28 @@ class IncidentActionReminderSideJobTest {
         assertThat(c.getValue().cron()).isEqualTo(IncidentActionReminderService.CRON);
         assertThat(c.getValue().heavy()).isFalse();
         assertThat(c.getValue().alreadyDone()).isNull();
-        assertThat(c.getValue().cronRound()).isNull();
+        // FX-SIDE #2: tetik başına küme turu — ertelenen denemenin ön denetimi bu tur (cronRoundTaken)
+        assertThat(c.getValue().cronRound()).isEqualTo("incident-action-reminder");
+        assertThat(c.getValue().zone()).isEqualTo("Europe/Istanbul");
+    }
+
+    @Test
+    @DisplayName("FX-SIDE #2: kilit altında önce tetiğin küme turu (öğe korumalı) sahiplenilir — alınamazsa (başka pod koştu) "
+            + "hatırlatma koşmaz; alınırsa koşar")
+    void claimsTheCronRoundInsideTheLock() {
+        IncidentActionReminderService j = job();
+        IncidentActionItemRepository actions = (IncidentActionItemRepository)
+                ReflectionTestUtils.getField(j, "actions");
+        when(scheduler.callWithSchedulerLock(eq(IncidentActionReminderService.LOCK), any())).thenAnswer(i ->
+                java.util.Optional.ofNullable(((java.util.function.Supplier<?>) i.getArgument(1)).get()));
+        j.scheduled();
+        verify(scheduler).claimItemProtectedCronRound("incident-action-reminder", IncidentActionReminderService.CRON,
+                "Europe/Istanbul");
+        verify(actions, never()).reminderCandidates(anyString());
+
+        when(scheduler.claimItemProtectedCronRound(anyString(), anyString(), anyString())).thenReturn(true);
+        j.scheduled();
+        verify(actions).reminderCandidates(anyString());
     }
 
     @Test

@@ -74,24 +74,45 @@ public class IncidentActionReminderService {
     /** Zamanlanmış tetiğin cron ifadesi (annotation ve yan iş kaydı aynı sabiti okur). */
     static final String CRON = "${site.monitor.incident.action-reminder-cron:0 0 9 * * *}";
 
+    /** Zamanlanmış tetiğin dilimi (annotation, tur kaydı ve yan iş kaydı aynı sabiti okur). */
+    static final String ZONE = "Europe/Istanbul";
+
     /**
-     * Günlük tetik (R3-1 3e, 2026-10-23): tarama lideri başka canlı pod varken tetiği erteler (öğe başına sahiplenme ikinci
-     * koşuyu zararsız kılar — ön denetim yok); kısa iş, yan iş koşucusuna taşınmaz.
+     * Tetiğin küme turu ({@code round:incident-action-reminder}) — KALICI ad (inceleme 2026-10-23, FX-SIDE #2). Kilit tur
+     * bitince bırakılır; tur kaydı bırakılmaz → aynı 09:00 tetiği küme genelinde BİR KEZ koşar.
      */
-    @Scheduled(cron = CRON, zone = "Europe/Istanbul")
+    static final String ROUND = LOCK;
+
+    /**
+     * Günlük tetik (R3-1 3e, 2026-10-23): tarama lideri başka canlı pod varken tetiği erteler; ertelenen denemede bu tetiğin
+     * turu ({@value #ROUND}) başka pod'da alındıysa gövde koşmaz. Kısa iş, yan iş koşucusuna taşınmaz.
+     */
+    @Scheduled(cron = CRON, zone = ZONE)
     public void scheduled() {
         if (!enabled) return;
         SchedulerService s = scheduler;
-        if (s == null || !s.offloadSideJob(com.sitemonitor.service.schedule.SideJob.cron(LOCK, false, null, CRON,
-                "Europe/Istanbul", null, this::scheduledNow))) {
+        if (s == null || !s.offloadSideJob(com.sitemonitor.service.schedule.SideJob.cron(LOCK, false, ROUND, CRON,
+                ZONE, null, this::scheduledNow))) {
             scheduledNow();
         }
     }
 
+    /**
+     * Kilit altında, tetik başına küme turu (FX-SIDE #2): öğe sahiplenmeleri ikinci koşuda POSTAYI önlüyordu, ama sistem
+     * bakımı susturmasında sahiplenme yapılmaz ve her koşu sahip başına bir "SKIPPED: sistem bakımı" satırı yazar — kilidi
+     * milisaniyede bırakan takipçinin ardından liderin ertelenen denemesi aynı gün İKİNCİ satırı yazıyordu. Tur kaydı geçici
+     * hatayla okunamazsa iş yine de koşar (öğe başına sahiplenme çift postayı önler — {@code claimItemProtectedCronRound}).
+     */
     private void scheduledNow() {
         try {
             if (scheduler == null) run(LocalDate.now(IncidentPostmortemService.IST));
-            else scheduler.callWithSchedulerLock(LOCK, () -> run(LocalDate.now(IncidentPostmortemService.IST)));
+            else scheduler.callWithSchedulerLock(LOCK, () -> {
+                if (!scheduler.claimItemProtectedCronRound(ROUND, CRON, ZONE)) {
+                    log.debug("Olay aksiyonu hatırlatması: bu tetiğin turu başka bir pod'da koştu");
+                    return null;
+                }
+                return run(LocalDate.now(IncidentPostmortemService.IST));
+            });
         } catch (Exception e) {
             log.error("Olay aksiyonu hatırlatması başarısız: {}", e.getMessage(), e);
         }

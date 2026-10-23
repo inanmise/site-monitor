@@ -2347,7 +2347,10 @@ public class SchedulerService {
         if (!roundMayBeDue("cert-stale", staleCheckIntervalMs)) return;
         // R3-1 3e: lider, turu son 2 aralıkta başka pod aldıysa bırakır; gövde (tur sahiplenmesi dahil) yan iş koşucusunda.
         if (leaderYieldsRound("cert-stale", staleCheckIntervalMs)) return;
-        runSideJob(com.sitemonitor.service.schedule.SideJob.heavy("cert-stale", this::checkStaleInventoryClaimed));
+        // FX-SIDE #1: sabit gecikmeli — koşucu gövdeyi bu pod'daki son bitişten en erken bir aralık sonra başlatır (tek pod'da
+        // kadans 20.167.0'daki gibi "bitiş + 5 dk"; tık gövdeyi koşucuya verip hemen döndüğü için aksi hâlde "tık + 5 dk" olurdu).
+        runSideJob(com.sitemonitor.service.schedule.SideJob.fixedDelay("cert-stale", staleCheckIntervalMs,
+                this::checkStaleInventoryClaimed));
     }
 
     /** Bayat süpürmesinin gövdesi: iki aşamalı tur + tarama (bugünkü {@link #checkStaleInventory} gövdesi aynen). */
@@ -2358,7 +2361,7 @@ public class SchedulerService {
             checkStaleInventoryRound();
             done = true;
         } finally {
-            finishRound("cert-stale", done);
+            finishSideRound("cert-stale", done);   // FX-SIDE #4: normal biten tur tamamlanma damgası bırakır (lider bırakma kanıtı)
         }
     }
 
@@ -2756,14 +2759,20 @@ public class SchedulerService {
      * (eskiden geçici bağlantı hatası "PostgreSQL değil" sayılıp nişan yazılıyor, iş kalıcı olarak atlanıyordu). PostgreSQL
      * dışında (H2) özet işi yok; onarım koşar, nişan yazılır.
      */
-    @Scheduled(initialDelayString = "${site.monitor.ping-rollup-rebuild.initial-delay-ms:300000}", fixedDelay = 3_600_000L)
+    @Scheduled(initialDelayString = "${site.monitor.ping-rollup-rebuild.initial-delay-ms:300000}",
+               fixedDelay = PING_ROLLUP_REBUILD_TICK_MS)
     public void rebuildPingRollupsOnce() {
         if (pingRebuildFailures.get() >= PING_ROLLUP_REBUILD_MAX_ATTEMPTS) return;   // bu pod denemeyi bıraktı (bir kez ERROR)
         if (pingRollupRebuildDone()) return;
         // R3-1 3e: lider, başka canlı pod varken en çok 2 ardışık saat bırakır (sonra kendisi koşar); gövde koşucuda.
         if (leaderSkipsPingRebuild()) return;
-        runSideJob(com.sitemonitor.service.schedule.SideJob.heavy("ping-rollup-rebuild", this::rebuildPingRollupsUnderLock));
+        // FX-SIDE #1: sabit gecikmeli — tek pod'da yeniden deneme kadansı 20.167.0'daki gibi "bitiş + 1 saat".
+        runSideJob(com.sitemonitor.service.schedule.SideJob.fixedDelay("ping-rollup-rebuild", PING_ROLLUP_REBUILD_TICK_MS,
+                this::rebuildPingRollupsUnderLock));
     }
+
+    /** Ping özet yeniden hesabının tık aralığı (ms, {@code @Scheduled(fixedDelay)} ve yan iş gecikmesi aynı sabit). */
+    static final long PING_ROLLUP_REBUILD_TICK_MS = 3_600_000L;
 
     private void rebuildPingRollupsUnderLock() {
         if (!tryAcquireSchedulerLock("ping-rollup-rebuild", PING_ROLLUP_REBUILD_LOCK_MINUTES)) {
@@ -4837,14 +4846,16 @@ public class SchedulerService {
                     : job.cronRound() != null ? () -> cronRoundTaken(job.cronRound(), job.cron(), job.zone())
                             || roundClaimedSince(job.cronRound(), firedAt - SIDE_JOB_CLAIM_SKEW_MS) : null;
             long delay = placement.cronDeferMs();
-            if (runner.defer(job.name(), delay, done, job.body())) {
+            // FX-SIDE #1: kısa işin ertelenen denemesi kısa cron şeridinde — uzun işler koşucuyu doldursa da zamanında başlar
+            if (runner.defer(job.name(), delay, job.heavy(), done, job.body())) {
                 logSkipInfo("Tarama lideri '{}' tetiğini {} sn erteledi — başka canlı pod üstlensin (R3-1) [instance={}]",
                         job.name(), delay / 1000, INSTANCE_ID);
             }
             return true;
         }
         if (job.heavy()) {
-            runner.submit(job.name(), job.body());
+            if (job.fixedDelayMs() > 0) runner.submitAfterGap(job.name(), job.fixedDelayMs(), job.body());   // FX-SIDE #1
+            else runner.submit(job.name(), job.body());
             return true;
         }
         return false;
@@ -4923,36 +4934,84 @@ public class SchedulerService {
 
     /**
      * Sabit periyotlu tur için lider bu tıkı başka pod'a BIRAKMALI mı (tasarım R3-1 §3.2): kural açık, bu pod tarama lideri,
-     * başka canlı pod var VE tur satırını son {@code 2 × periodMs} içinde BAŞKA bir sahip almış (takipçi bu işi gerçekten
-     * koşturuyor kanıtı). Kanıt yoksa (eski takipçiler, dağıtımdan sonraki ilk turlar, takipçi takıldı) false — lider bugünkü
-     * gibi sahiplenir; kanıt 2 periyotta eskir → geri dönüş kendiliğinden. Okuma hatası → false. Hiç fırlatmaz.
+     * başka canlı pod var VE turu son {@code 2 × periodMs} içinde BAŞKA bir sahip TAMAMLAMIŞ (takipçi bu işi gerçekten ve
+     * BAŞARIYLA koşturuyor kanıtı: {@code round:<ad>:done} damgası, {@link #noteSideRoundCompleted}). Kanıt yoksa (eski
+     * takipçiler, dağıtımdan sonraki ilk turlar, takipçi takıldı ya da gövdesi her turda hata verip turu bırakıyor) false —
+     * lider bugünkü gibi sahiplenir; kanıt 2 periyotta eskir → geri dönüş kendiliğinden. Okuma hatası → false. Hiç fırlatmaz.
+     *
+     * <p><b>Neden sahiplenme değil tamamlanma (inceleme 2026-10-23, FX-SIDE #4):</b> yalnız SAHİPLENEN takipçi (gövdesi her
+     * turda istisnayla biten, turu bırakan) kanıtı taze tutup lideri sonsuza dek bırakmaya zorluyordu. Bu pod'un ÖNCEKİ süreci
+     * (aynı pod adı, kirli yeniden başlatma — FX-SIDE #3) başka sahip sayılmaz.
      */
     public boolean leaderYieldsRound(String round, long periodMs) {
         if (round == null || clusterSchedule == null) return false;
         com.sitemonitor.service.schedule.SideJobPlacement placement = sideJobPlacement;
         if (placement == null || !placement.leaderShouldYield(sweepLeaderHint())) return false;
-        com.sitemonitor.service.schedule.ClusterScheduleService.Row row;
+        com.sitemonitor.service.schedule.ClusterScheduleService.Row done;
         try {
-            row = clusterSchedule.row(ROUND_KEY_PREFIX + round);
+            done = clusterSchedule.row(com.sitemonitor.service.schedule.ClusterScheduleService.doneKey(ROUND_KEY_PREFIX + round));
         } catch (Exception e) {
-            log.debug("Tur satırı okunamadı ({}) — lider bırakmıyor: {}", round, e.toString());
+            log.debug("Tur tamamlanma damgası okunamadı ({}) — lider bırakmıyor: {}", round, e.toString());
             return false;
         }
-        if (row == null || row.claimedBy() == null || row.claimedAt() == null) return false;
-        if (row.claimedBy().equals(clusterSchedule.owner())) return false;
-        long age = scheduleClock.getAsLong() - row.claimedAt();
+        if (done == null || done.claimedBy() == null || done.claimedAt() == null) return false;
+        if (samePod(done.claimedBy(), clusterSchedule.owner())) return false;
+        long age = scheduleClock.getAsLong() - done.claimedAt();
         long window = 2L * Math.max(1L, periodMs);
         if (age > window || age < -com.sitemonitor.service.schedule.ClusterScheduleService.SKEW_SLACK_MS) return false;
         com.sitemonitor.service.schedule.SideJobRunner runner = sideJobs;
         if (runner != null) runner.noteYielded(round);
-        logSkip("Tarama lideri '{}' turunu bıraktı — {} sn önce başka pod ({}) aldı (R3-1) [instance={}]",
-                round, Math.max(0L, age) / 1000, row.claimedBy(), INSTANCE_ID);
+        logSkip("Tarama lideri '{}' turunu bıraktı — {} sn önce başka pod ({}) tamamladı (R3-1) [instance={}]",
+                round, Math.max(0L, age) / 1000, done.claimedBy(), INSTANCE_ID);
         return true;
     }
 
-    /** İki aşamalı turun sonu — paket dışı yan işler (TLS profili): normal bittiyse tamamla, değilse bırak. */
+    /** İki kimlik aynı pod'un mu (aynı kimlik ya da aynı pod adı — {@code ClusterHealthStore.podOf}: kirli yeniden başlatma). */
+    static boolean samePod(String a, String b) {
+        if (a == null || b == null) return false;
+        if (a.equals(b)) return true;
+        String pa = com.sitemonitor.service.health.ClusterHealthStore.podOf(a);
+        return pa != null && pa.equals(com.sitemonitor.service.health.ClusterHealthStore.podOf(b));
+    }
+
+    /**
+     * İki aşamalı turun sonu — yan işler (bayat sertifika, TLS profili): normal bittiyse tamamla ve tamamlanma damgasını bırak
+     * ({@link #noteSideRoundCompleted}), değilse bırak.
+     */
     public void finishSideRound(String name, boolean completed) {
         finishRound(name, completed);
+        if (completed) noteSideRoundCompleted(name);
+    }
+
+    /**
+     * Turun bu pod'da NORMAL bittiği damga ({@code round:<ad>:done}: sahip = bu pod, an = şimdi; daha yeni damga ezilmez) —
+     * liderin {@link #leaderYieldsRound} kanıtı (FX-SIDE #4). Tur başına tek PK yazımı; hata yutulur (kanıt yoksa lider
+     * yalnız bugünkü gibi sahiplenir — çift koşu değil). Küme kaydı yoksa hiçbir şey.
+     */
+    public void noteSideRoundCompleted(String name) {
+        if (name == null || clusterSchedule == null) return;
+        try {
+            clusterSchedule.markDone(ROUND_KEY_PREFIX + name, scheduleClock.getAsLong());
+        } catch (Exception e) {
+            log.debug("Tur tamamlanma damgası yazılamadı ({}): {}", name, e.toString());
+        }
+    }
+
+    /**
+     * Öğe başına sahiplenmeyle korunan işin cron turu (FX-SIDE #2; olay aksiyonu hatırlatması): bu tetik küme genelinde bir
+     * kez — {@link #claimCronRound} gibi, ama tur kaydı geçici hatayla okunamazsa iş YİNE DE koşar (WARN; yinelenen koşu çift
+     * posta üretmez — {@code cronRoundDue(…, claimProtected = true)}).
+     */
+    public boolean claimItemProtectedCronRound(String name, String cronExpr, String zone) {
+        return cronRoundDue(name, cronExpr, zone, true);
+    }
+
+    /**
+     * Kapanış başladı mı (FX-SIDE #5) — uzun yan işler (TLS profili turu) adımlar arasında bakar ve kapanış başlayınca kalan
+     * işi bırakıp döner; koşucu {@code onShutdown}'a vardığında boşta olur, ortak yok etme süresi bildirim boşaltmalarına kalır.
+     */
+    public boolean sideJobsStopping() {
+        return stopping();
     }
 
     /**
