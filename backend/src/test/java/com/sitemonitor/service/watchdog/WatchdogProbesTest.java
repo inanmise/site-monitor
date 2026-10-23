@@ -117,7 +117,7 @@ class WatchdogProbesTest {
     }
 
     @Test
-    @DisplayName("push kuyruğu: kapalı → NA; takılan satır eşiği ya da devre kesici açık → PROBLEM")
+    @DisplayName("push kuyruğu: kapalı → NA; takılan satır eşiği → PROBLEM; devre kesici YALNIZ bilgi (MP-36, pod'a özgü)")
     void pushOutbox() {
         when(push.enabled()).thenReturn(false);
         assertThat(probes.pushOutbox(NOW).result()).isEqualTo(Result.NA);
@@ -127,20 +127,32 @@ class WatchdogProbesTest {
         assertThat(probes.pushOutbox(NOW).result()).isEqualTo(Result.OK);
         when(jdbc.queryForObject(anyString(), eq(Long.class), any(), any())).thenReturn(12L);
         assertThat(probes.pushOutbox(NOW).result()).isEqualTo(Result.PROBLEM);
+        // Yeniden taban (2026-10-23, MP-36): açık devre turu kazanan pod'un belleğidir — tek başına durumu değiştirmez, olgu kalır
         when(jdbc.queryForObject(anyString(), eq(Long.class), any(), any())).thenReturn(0L);
         when(push.healthSnapshot()).thenReturn(Map.of("circuit_open", true));
-        assertThat(probes.pushOutbox(NOW).result()).isEqualTo(Result.PROBLEM);
+        WatchdogProbes.Probe p = probes.pushOutbox(NOW);
+        assertThat(p.result()).isEqualTo(Result.OK);
+        assertThat(p.facts()).containsEntry("circuit_open", true).containsKey("evaluated_by");
+        // İnceleme W-2: ölü ağ geçidi küme genelindeki sonuç oranından görünür (satırlar takılmadan FAILED olur)
+        when(jdbc.query(eq(WatchdogProbes.SQL_PUSH_OUTCOMES), any(org.springframework.jdbc.core.RowMapper.class), anyString()))
+                .thenReturn(List.<Object[]>of(new Object[]{"SENT", 1L}, new Object[]{"FAILED", 4L}));
+        WatchdogProbes.Probe down = probes.pushOutbox(NOW);
+        assertThat(down.result()).isEqualTo(Result.PROBLEM);
+        assertThat(down.facts()).containsEntry("recent_failed", 4L).containsEntry("recent_sent", 1L);
+        when(jdbc.query(eq(WatchdogProbes.SQL_PUSH_OUTCOMES), any(org.springframework.jdbc.core.RowMapper.class), anyString()))
+                .thenReturn(List.<Object[]>of(new Object[]{"FAILED", 2L}));
+        assertThat(probes.pushOutbox(NOW).result()).as("en az 3 sonuç gerekir").isEqualTo(Result.OK);
     }
 
     @Test
     @DisplayName("veritabanı: UP → OK, DEGRADED → orta, DOWN → kritik; bir yoklamanın hatası UNKNOWN (diğerleri sürer)")
     void databaseAndFailure() {
         when(db.current()).thenReturn(new DatabaseHealthService.Snapshot(Map.of(), DatabaseHealthService.DEGRADED, 0L));
-        assertThat(probes.database().severity()).isEqualTo("MEDIUM");
+        assertThat(probes.database(NOW).severity()).isEqualTo("MEDIUM");
         when(db.current()).thenReturn(new DatabaseHealthService.Snapshot(Map.of(), DatabaseHealthService.DOWN, 0L));
-        assertThat(probes.database().severity()).isEqualTo("CRITICAL");
+        assertThat(probes.database(NOW).severity()).isEqualTo("CRITICAL");
         when(db.current()).thenReturn(new DatabaseHealthService.Snapshot(Map.of(), DatabaseHealthService.UP, 0L));
-        assertThat(probes.database().result()).isEqualTo(Result.OK);
+        assertThat(probes.database(NOW).result()).isEqualTo(Result.OK);
 
         when(cluster.lease(anyString())).thenThrow(new RuntimeException("bağlantı yok"));
         List<WatchdogProbes.Probe> all = probes.runAll(NOW);

@@ -50,27 +50,33 @@ jobs:
           SHORT_SHA="${GIT_SHA:0:7}"
           BRANCH="$GITHUB_REF_NAME"
 
+          # PREV: o ortamın şu an dağıtılmış imajının hareketli etiketi (bu push onu ezmeden ÖNCE okunur) — yeni imaj
+          # onun sayfa dosyalarını da taşır (2026-10-23, çok pod R2b · MP-47; Dockerfile "previous-release").
           case "$BRANCH" in
             main)
               TAGS="${REGISTRY}/${IMAGE}:${VERSION},${REGISTRY}/${IMAGE}:latest"
               PRIMARY="${VERSION}"
               ENV_VALUES="helm/site-monitor/environments/master.yaml"
+              PREV="${REGISTRY}/${IMAGE}:latest"
               ;;
             release/*)
               TAGS="${REGISTRY}/${IMAGE}:${VERSION}-rc,${REGISTRY}/${IMAGE}:staging"
               PRIMARY="${VERSION}-rc"
               ENV_VALUES="helm/site-monitor/environments/release.yaml"
+              PREV="${REGISTRY}/${IMAGE}:staging"
               ;;
             develop)
               TAGS="${REGISTRY}/${IMAGE}:develop-${SHORT_SHA},${REGISTRY}/${IMAGE}:develop"
               PRIMARY="develop-${SHORT_SHA}"
               ENV_VALUES="helm/site-monitor/environments/develop.yaml"
+              PREV="${REGISTRY}/${IMAGE}:develop"
               ;;
             *)
               SAFE=$(echo "$BRANCH" | tr '/' '-' | tr -cd '[:alnum:]-')
               TAGS="${REGISTRY}/${IMAGE}:${SAFE}-${SHORT_SHA}"
               PRIMARY="${SAFE}-${SHORT_SHA}"
               ENV_VALUES=""
+              PREV=""
               ;;
           esac
 
@@ -78,6 +84,7 @@ jobs:
           echo "primary=${PRIMARY}"       >> "$GITHUB_OUTPUT"
           echo "env_values=${ENV_VALUES}" >> "$GITHUB_OUTPUT"
           echo "short_sha=${SHORT_SHA}"   >> "$GITHUB_OUTPUT"
+          echo "prev_ref=${PREV}"         >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
@@ -89,6 +96,13 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Önceki imaj (MP-47): özete sabitlenir; yoksa boş → sayfa dosyası taşımadan bugünkü derleme.
+      - name: Resolve previous image
+        id: prev
+        env:
+          PREV_REF: ${{ steps.tags.outputs.prev_ref }}
+        run: echo "image=$(bash scripts/resolve-previous-image.sh "$PREV_REF")" >> "$GITHUB_OUTPUT"
+
       - name: Build and push
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
@@ -99,6 +113,7 @@ jobs:
             VERSION=${{ steps.version.outputs.value }}
             BUILD_DATE=${{ github.event.head_commit.timestamp }}
             GIT_COMMIT=${{ steps.tags.outputs.short_sha }}
+            PREVIOUS_IMAGE=${{ steps.prev.outputs.image }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

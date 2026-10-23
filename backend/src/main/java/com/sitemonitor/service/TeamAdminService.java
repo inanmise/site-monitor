@@ -89,6 +89,12 @@ public class TeamAdminService {
     void setJdbc(org.springframework.jdbc.core.JdbcTemplate jdbc) { this.jdbc = jdbc; }
     void setMaintenanceRepo(com.sitemonitor.repository.MaintenanceWindowRepository repo) { this.maintenanceRepo = repo; }
 
+    /** Açık alarmların takım damgası taşıması hedefli (R2b · F) — isteğe bağlı; yokken eski yol. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.AlertEventFieldWriter alertFieldWriter;
+
+    void setAlertFieldWriter(com.sitemonitor.service.AlertEventFieldWriter w) { this.alertFieldWriter = w; }
+
     /** Taşıma çakışması: hedef takımda aynı adlı kanal / şablon ya da hedefin sınırı dolu → 409, HİÇBİR şey taşınmaz. */
     public static class MoveConflictException extends com.sitemonitor.config.GlobalExceptionHandler.CodedConflictException {
         public MoveConflictException(String code, String message) { super(code, message, null); }
@@ -337,12 +343,19 @@ public class TeamAdminService {
         // tekrar bildir / fırtınada envanterden ÖNCE okunur; taşınmazsa açık alarm eski (ya da silinmiş) takıma
         // gitmeye devam ederdi — adresi ve kişileri artık hedefte. KAPANMIŞ olayların damgası tarih kaydıdır, dokunulmaz.
         // Bildirim grubu damgası taşınan gruba işaret ettiği için tutarlı kalır.
+        // R2b · F (2026-10-23): TEK hedefli UPDATE (yalnız team_id, yalnız AÇIK alarm) — okunan alarmların bütünüyle kaydı,
+        // okuma ile işlem sonu arasında kapanan alarmı (resolved = false geri yazılarak) yeniden açıyor, arada yazılmış onayı /
+        // damgayı geri alıyordu; işlem içindeki yönetilen varlık da hiç okunmaz / kirlenmez. Yazıcı yokken (birim testi) eski yol.
         n = 0;
-        for (AlertEvent a : alertEventRepo.findAllOpenOrderBySeverity()) {
-            if (!Objects.equals(a.getTeamId(), from) || Boolean.TRUE.equals(a.getResolved())) continue;
-            a.setTeamId(to);
-            alertEventRepo.save(a);
-            n++;
+        if (alertFieldWriter != null) {
+            n = alertFieldWriter.moveOpenAlertsToTeam(from, to);
+        } else {
+            for (AlertEvent a : alertEventRepo.findAllOpenOrderBySeverity()) {
+                if (!Objects.equals(a.getTeamId(), from) || Boolean.TRUE.equals(a.getResolved())) continue;
+                a.setTeamId(to);
+                alertEventRepo.save(a);
+                n++;
+            }
         }
         moved.put("open_alerts", n);
         applyDocumentMove(docs, from, to, moved);

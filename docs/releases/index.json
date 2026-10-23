@@ -1,9 +1,191 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-22T23:20:51Z",
+  "generatedAt": "2026-10-23T08:45:56Z",
   "repo": "inanmise/site-monitor",
-  "count": 785,
+  "count": 786,
   "releases": [
+    {
+      "version": "20.167.0",
+      "tag": "v20.167.0",
+      "releasedAt": "2026-10-23T08:45:48Z",
+      "commit": "9d63e00a8ebea4616814bd30739432b437630c89",
+      "prevVersion": "20.166.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 4,
+        "fix": 17,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 2,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "3f9f5004",
+          "subject": "canlı pod kararında aynı dakikanın SON yazılan satırı geçerli — aynı JVM'de yeniden açılan bağlam durmuş sayılmıyordu (çok pod R2b, postgres-it)"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "a66bf59f",
+          "subject": "çok pod Sürüm 2b son inceleme turu — Sistem Sağlığı kapsam etiketleri, bilinmeyen tarama durumu, \"yerine yenisi geldi\" pod durumu, önbellek yolu ve kilit uyarıları, sınırlı kapanış işareti; kendi ken…"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "88305ad9",
+          "subject": "açılış dil hatası bildirimi StrictMode'da kaybolmaz, ortak yenileme kaydı eski alanları korur, e2e kararlı (çok pod R2b, PR #68 CI / inceleme D-4)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "9d80b368",
+          "subject": "son 5 sürümün sayfa dosyaları taşınır, değişmeyen arayüz CI'ı kırmaz, elle derlemede önceki imaj (çok pod R2b, inceleme D-1 / D-2 / D-6)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "5885f26c",
+          "subject": "OTel ajan ortamı 20.166.0 ile aynı — @Scheduled açılımı açık kalır, ajan ortamı tanımı deployment.yaml'da (çok pod R2b, PR #68 CI / inceleme D-5)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "1b99cbf8",
+          "subject": "sistem sağlığı inceleme düzeltmeleri (ekran) — KPI kapsam etiketleri ve pod adlı sebepler, okunamayan küme durumu yeşil değil, canlı pod yokken nötr, önbellek yolu yoklama bayatlığı, kilit durumları …"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "b9d238da",
+          "subject": "sistem sağlığı inceleme düzeltmeleri (sunucu) — tarama durumu yazımı kilit bırakmayı asla atlatmaz, haftalık kart canlı kilit, yerine yenisi gelen pod, kapanış işareti bütçeli (çok pod R2b, C1: H7 / …"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "913cabbd",
+          "subject": "Sürüm & Dağıtım geçmişinde ek pod rozeti — replica satırları \"Ek pod\" (çok pod R2b, MP-37e)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "ef7353b1",
+          "subject": "inceleme düzeltmeleri — helm geri alması eski pod canlıyken de ROLLBACK, ölü push ağ geçidi, şema yaması ve saat yayılımı (çok pod R2b, W-1…W-4)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "e126cc4d",
+          "subject": "kaybedilen onay 409 döner ve denetlenmez, yazılmayan çözüm notu dönmez, fırtına bağı yalnız açık alarma yazılır (çok pod R2b · F, inceleme AL-1…AL-5)"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "350a72af",
+          "subject": "çok pod Sürüm 2b belgeleri — Sistem Sağlığı kümeyi gösterir (Küme kartı, scan_runs, pod başına heartbeat, RDAP gözlemi), kendi kendini izleme küme gerçekleri + saat uyumu, çok pod ölçümleri ve Grafan…"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "3c94386f",
+          "subject": "haftalık erişilebilirlik raporu ek replikayı yeniden başlatma saymaz; scan_runs / cluster_observations saklama envanterinde (çok pod R2b entegrasyon)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "72d98709",
+          "subject": "küme sağlık zaman damgaları sabit genişlikte (yyyy-MM-ddTHH:mm:ss) — LocalDateTime.toString saniye 0'da kısalıyordu (çok pod R2b, C1)"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "d5f51c42",
+          "subject": "Sistem Sağlığı ekranı — Küme kartı, \"Bu pod / Küme\" etiketleri, pod'lar kartı, kümeden biten tarama yoklaması (çok pod R2b, MP-34 / MP-35 / MP-37a / N1 / N4)"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "1088babf",
+          "subject": "Sistem Sağlığı kümeyi gösterir — tarama durumu, heartbeat pod listesi, RDAP gözlemi, yanıtlayan pod (çok pod R2b, MP-34 / MP-35 / MP-37a / MP-37d / N1–N5)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "8bffce2e",
+          "subject": "oturum özniteliği tür kapısı ve DB_POOL_MIN notu (çok pod R2b, MP-50 / MP-49)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "591f608f",
+          "subject": "yuvarlanan dağıtımda boş sayfa yok — önceki sürümün sayfa dosyaları imajda, yüklenemeyen paket bir kez yenilenir (çok pod R2b, MP-47)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "1f056108",
+          "subject": "sürüm geçişi bildirimi kümede bir kez, yeniden başlatma pod başına sayılır (çok pod R2b, MP-37e)"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "6fd9d415",
+          "subject": "çok pod çalışma ölçümleri ve Grafana panelleri; okunamayan kaynak pod başına bir kez sayılır (çok pod R2b, MP-37b)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "a9c9b4cf",
+          "subject": "kendi kendini izleme küme genelindeki gerçeklerle karar verir, saat uyumu kontrolü (çok pod R2b, MP-36, MP-37c)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "22b16f08",
+          "subject": "bayat alarm kaydı kapanmış alarmı yeniden açmaz — onay, gönderim sonrası kayıtlar, yeniden bildirim, takım damgası ve anahtar taşıma hedefli yazılır (çok pod R2b · F)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "a903bad8",
+          "subject": "Helm çok pod sertleştirmesi — HPA şablonu, PDB koruması, DB_POOL_MIN / extraEnv, yerleşim ve geçici disk (çok pod R2b, MP-48 / MP-49 / MP-50)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "113a60ba",
+          "subject": "alarm kapanışları bayat varlığı bütünüyle kaydetmez — sessiz kapanış, envanter silme / pasifleştirme ve CAS sonrası çözüm koşullu yazılır (çok pod R2b · F)"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.166.0",
       "tag": "v20.166.0",

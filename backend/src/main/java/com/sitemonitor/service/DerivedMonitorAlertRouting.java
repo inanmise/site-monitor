@@ -15,6 +15,7 @@ import tools.jackson.databind.ObjectMapper;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 
 /**
@@ -53,6 +54,12 @@ public class DerivedMonitorAlertRouting {
     private final CertificateInventoryRepository inventoryRepo;
     private final ObjectMapper objectMapper;
 
+    /** Hedefli yazım (R2b · F) — isteğe bağlı; yokken (elle kurulan test) eski {@code save}. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private AlertEventFieldWriter fieldWriter;
+
+    void setFieldWriter(AlertEventFieldWriter w) { this.fieldWriter = w; }
+
     @EventListener(ApplicationReadyEvent.class)
     public void onReady() {
         try {
@@ -90,6 +97,7 @@ public class DerivedMonitorAlertRouting {
                     : dnsMonitorRepo.findById(monitorId).map(m -> new Long[]{Boolean.TRUE.equals(m.getStandalone()) ? 1L : 0L, m.getTeamId()});
             if (row.isEmpty()) continue;   // satır yok: dokunma
             boolean standaloneRow = row.get()[0] == 1L;
+            Long teamBefore = e.getTeamId();
             Map<String, Object> next = new LinkedHashMap<>(ctx);
             if (!standaloneRow && stamped) {
                 // O2: türev satırın eski kopya damgası → envanter yönlendirmesi
@@ -109,7 +117,16 @@ public class DerivedMonitorAlertRouting {
             } catch (Exception ex) {
                 continue;
             }
-            alertEventRepo.save(e);
+            AlertEventFieldWriter w = fieldWriter;
+            if (w != null && e.getId() != null) {
+                // R2b · F: yalnız değişen kolonlar (bağlam, değiştiyse takım), yalnız hâlâ AÇIK olay — okuma ile kayıt arasında
+                // kapanan alarm bütün varlık kaydıyla yeniden açılırdı. 0 satır = kapandı: sayılmaz.
+                String[] props = Objects.equals(teamBefore, e.getTeamId())
+                        ? new String[]{"contextJson"} : new String[]{"contextJson", "teamId"};
+                if (w.write(e, true, props) == 0) continue;
+            } else {
+                alertEventRepo.save(e);
+            }
             n++;
         }
         return n;

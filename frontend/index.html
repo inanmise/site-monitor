@@ -14,6 +14,9 @@
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/site.webmanifest" />
+    <!-- Boot guard (public/boot-guard.js, multi-pod release 2b): unhashed, no-store, BEFORE the app bundle — reloads the
+         page once when the bundle's own files fail to load during a rolling update (CSP: no inline script). -->
+    <script src="/boot-guard.js"></script>
   </head>
   <body>
     <div id="root"></div>

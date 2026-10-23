@@ -12,10 +12,15 @@
 #   4. /metrics → sitemonitor_schema_patch_failed = 0 ve _locked = 1 (yamalar advisory lock altında koştu)
 #   5. günlük: "Şema yamaları:" özet satırı VAR, hiçbir yama/özet satırında "BAŞARISIZ" YOK
 #   6. günlük: ERROR düzeyinde satır yok, "APPLICATION FAILED TO START" / ana iş parçacığı istisnası yok
+#   7. (3. argüman = imajdan alınmış own-assets.txt / carried-assets.txt / carry-report.json dizini — 2026-10-23, çok pod R2b · MP-47)
+#      bu derlemenin bir varlığı ve önceki sürümden TAŞINAN bir varlık 200 + "immutable"; taşınan liste bu derlemeyle
+#      çakışmıyor ve sınırlı (≤ 5000); olmayan bir varlık düz metin 404 + no-store (SpaNotFoundAdvice); /boot-guard.js
+#      200 + no-store (sürüm bağımsız açılış koruması hiç önbelleğe alınmaz).
 set -uo pipefail
 
-BASE="${1:?kullanım: image-boot-check.sh <base-url> <log-dosyası>}"
-LOG="${2:?kullanım: image-boot-check.sh <base-url> <log-dosyası>}"
+BASE="${1:?kullanım: image-boot-check.sh <base-url> <log-dosyası> [varlık-listeleri-dizini]}"
+LOG="${2:?kullanım: image-boot-check.sh <base-url> <log-dosyası> [varlık-listeleri-dizini]}"
+LISTS="${3:-}"
 fail=0
 err() { echo "::error::$*"; fail=1; }
 
@@ -77,6 +82,50 @@ else
     err "açılış istisnası:"
     printf '%s\n' "$fatal_lines"
   fi
+fi
+
+# ── 7: sayfa dosyaları — önceki sürümden taşınanlar (MP-47) ───────────────────────────────
+# headers <yol> → "HTTP-kodu|Content-Type|Cache-Control" (küçük harfli başlık adları)
+headers() {
+  curl -s -o /dev/null -D - --max-time 10 "$BASE$1" | tr -d '\r' | awk '
+    NR == 1 { code = $2 }
+    tolower($0) ~ /^content-type:/ { sub(/^[^:]*: */, ""); ct = $0 }
+    tolower($0) ~ /^cache-control:/ { sub(/^[^:]*: */, ""); cc = $0 }
+    END { print code "|" ct "|" cc }'
+}
+if [ -n "$LISTS" ]; then
+  own_list="$LISTS/own-assets.txt"
+  carried_list="$LISTS/carried-assets.txt"
+  if [ ! -s "$own_list" ]; then
+    err "imajda /app/frontend/own-assets.txt yok ya da boş — sonraki sürüm bu sürümün sayfa dosyalarını TAŞIYAMAZ (Dockerfile asset-carry)"
+  else
+    first_own="$(grep -m1 . "$own_list")"
+    h="$(headers "/assets/$first_own")"
+    echo "bu derlemenin varlığı /assets/$first_own → $h"
+    case "$h" in 200\|*\|*immutable*) ;; *) err "bu derlemenin varlığı 200 + immutable değil: /assets/$first_own → $h" ;; esac
+  fi
+  if [ ! -f "$carried_list" ]; then
+    err "imajda /app/frontend/carried-assets.txt yok (Dockerfile asset-carry çalışmadı mı?)"
+  elif [ ! -s "$carried_list" ]; then
+    echo "::notice::önceki sürümlerden taşınan sayfa dosyası yok — arayüz paketi son sürümlerden beri değişmemiş, ilk derleme ya da önceki imaj okunamadı (carry-report.json: $(cat "$LISTS/carry-report.json" 2>/dev/null || echo yok)) — hata değil"
+  else
+    carried="$(grep -c . "$carried_list")"
+    echo "önceki sürümden taşınan sayfa dosyası: $carried"
+    [ "$carried" -le 5000 ] || err "taşınan dosya sayısı $carried > 5000 — yalnız son birkaç sürümün varlıkları taşınmalı (sınır)"
+    overlap="$(grep -cxF -f "$own_list" "$carried_list" || true)"
+    [ "${overlap:-0}" = "0" ] || err "$overlap taşınan ad bu derlemede de var (taşıma yeni derlemenin adlarını atlamalı)"
+    for name in "$(grep -m1 . "$carried_list")" "$(grep . "$carried_list" | tail -1)"; do
+      h="$(headers "/assets/$name")"
+      echo "önceki sürümün varlığı /assets/$name → $h"
+      case "$h" in 200\|*\|*immutable*) ;; *) err "önceki sürümden taşınan varlık sunulmuyor (200 + immutable beklenir): /assets/$name → $h" ;; esac
+    done
+  fi
+  h="$(headers "/assets/boot-check-missing-$RANDOM$RANDOM.js")"
+  echo "olmayan varlık → $h"
+  case "$h" in 404\|text/plain*\|*no-store*) ;; *) err "olmayan /assets/*.js düz metin 404 + no-store değil (SpaNotFoundAdvice — immutable bir 404 yıllarca beyaz ekran demek): $h" ;; esac
+  h="$(headers "/boot-guard.js")"
+  echo "/boot-guard.js → $h"
+  case "$h" in 200\|*javascript*\|*no-store*) ;; *) err "/boot-guard.js 200 + javascript + no-store değil (açılış koruması): $h" ;; esac
 fi
 
 if [ "$fail" -ne 0 ]; then

@@ -145,6 +145,28 @@ class ExtendedHealthServiceStatusTest {
     }
 
     @Test
+    @DisplayName("D2: kapanış işareti yazımı ortak kapanış bütçesiyle sınırlı — veritabanı takılırsa kapanışı bekletmez")
+    void shutdownMarkerIsBoundedByShutdownDeadline() throws Exception {
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        when(heartbeatRepo.save(any(SystemHeartbeat.class))).thenAnswer(i -> { release.await(30, java.util.concurrent.TimeUnit.SECONDS); return i.getArgument(0); });
+        com.sitemonitor.config.ShutdownDeadline d = new com.sitemonitor.config.ShutdownDeadline();
+        d.remainingMs(0, System.nanoTime() - 60_000_000_000L);   // ortak süre 60 sn önce başladı → bitti
+        com.sitemonitor.config.ShutdownDeadline.activate(d);
+        try {
+            // HATA ÖNCESİ: save 30 sn (gerçekte bağlantı zaman aşımı 10 sn) bekletirdi
+            org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(java.time.Duration.ofSeconds(2), () -> service.recordShutdownMarker());
+        } finally {
+            com.sitemonitor.config.ShutdownDeadline.activate(null);
+            release.countDown();
+        }
+        // bütçe yokken (normal test bağlamı) kendi tavanı kadar bekler ve yazar
+        org.mockito.Mockito.doAnswer(i -> i.getArgument(0)).when(heartbeatRepo).save(any(SystemHeartbeat.class));
+        service.recordShutdownMarker();
+        verify(heartbeatRepo, org.mockito.Mockito.timeout(2_000).atLeast(2)).save(org.mockito.ArgumentMatchers.argThat(
+                (SystemHeartbeat hb) -> hb != null && Boolean.TRUE.equals(hb.getShutdownMarker())));
+    }
+
+    @Test
     @DisplayName("getHeartbeatStatus: repo patlarsa alarm + error alanı (kart 'bilinmiyor' yerine alarm gösterir)")
     void heartbeatStatus_repoThrows_alarmWithError() {
         when(heartbeatRepo.findTop5ByOrderByRecordedAtDesc()).thenThrow(new RuntimeException("timeout"));
@@ -215,9 +237,9 @@ class ExtendedHealthServiceStatusTest {
     @Test
     @DisplayName("getHeartbeatTimeline(1): 10 dk kovalar; 3 dk önceki (en yeni) heartbeat son KISMİ kovaya düşer, kaybolmaz")
     void timeline_oneDay_tenMinuteBuckets() {
-        SystemHeartbeat hb = new SystemHeartbeat();
-        hb.setRecordedAt(LocalDateTime.now(ZoneOffset.UTC).minusMinutes(3));   // EN YENİ heartbeat — son (kısmi) kovaya düşmeli
-        when(heartbeatRepo.findByRecordedAtAfterOrderByRecordedAtAsc(any())).thenReturn(List.of(hb));
+        // EN YENİ heartbeat — son (kısmi) kovaya düşmeli (2026-10-23: hafif izdüşüm [recordedAt, instanceId])
+        when(heartbeatRepo.findBeatsAfter(any())).thenReturn(List.<Object[]>of(
+                new Object[] {LocalDateTime.now(ZoneOffset.UTC).minusMinutes(3), null}));
 
         Map<String, Object> out = service.getHeartbeatTimeline(1);
 
@@ -233,7 +255,7 @@ class ExtendedHealthServiceStatusTest {
     @Test
     @DisplayName("getHeartbeatTimeline: son kova KISMİ — expected kalan dakika kadar (10/3 yanlış kaybı üretmez), önceki kovalar tam")
     void timeline_lastBucketIsPartial() {
-        when(heartbeatRepo.findByRecordedAtAfterOrderByRecordedAtAsc(any())).thenReturn(List.of());
+        when(heartbeatRepo.findBeatsAfter(any())).thenReturn(List.of());
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> buckets = (List<Map<String, Object>>) service.getHeartbeatTimeline(1).get("buckets");
         Map<String, Object> last = buckets.get(buckets.size() - 1);
@@ -248,7 +270,7 @@ class ExtendedHealthServiceStatusTest {
     @Test
     @DisplayName("getHeartbeatTimeline: gün sayısı [1,30] aralığına sıkıştırılır, >1 günde 60 dk kova")
     void timeline_clampsDaysAndUsesHourBuckets() {
-        when(heartbeatRepo.findByRecordedAtAfterOrderByRecordedAtAsc(any())).thenReturn(List.of());
+        when(heartbeatRepo.findBeatsAfter(any())).thenReturn(List.of());
         assertThat(service.getHeartbeatTimeline(90)).containsEntry("days", 30).containsEntry("bucket_minutes", 60);
         assertThat(service.getHeartbeatTimeline(-4)).containsEntry("days", 1).containsEntry("bucket_minutes", 10);
     }

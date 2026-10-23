@@ -186,6 +186,37 @@ yollarının sahiplenmesi) İLK kez aldığında geçerlidir; sonraki dağıtım
       öteki pod'larda ~2 sn içinde geçerli olur (eskiden 30 sn – 5 dk); (4) giriş IP bloğu bütün pod'larda ortaktır — elle
       kaldırma: [`RUNBOOK.md` → Takılı kayıtlar ve sınırlar](RUNBOOK.md#takılı-kayıtlar-ve-sınırlar-çok-pod-sürüm-2a).
 
+### Çok pod Sürüm 2b öncesi kontroller — bir kerelik
+Bu bölüm prod çok pod Sürüm 2b'yi (Sistem Sağlığı kümeyi gösterir, kendi kendini izleme küme gerçekleriyle + saat uyumu,
+yuvarlanan dağıtımda boş sayfa yok, alarm yazımları hedefli, sürüm bildirimi kümede bir kez, chart sertleştirmesi) İLK kez
+aldığında geçerlidir; sonraki dağıtımlarda atlanır.
+
+- [ ] **Kota geçici diski kabul ediyor:** chart artık `ephemeral-storage` request 1Gi / limit 4Gi ister (rollout'ta
+      replika + 1 pod). Namespace ResourceQuota `requests.ephemeral-storage` / `limits.ephemeral-storage` tanımlıysa yer
+      olmalı; LimitRange daha küçük bir tavan koyuyorsa yeni pod `Pending` / reddedilir ve `--atomic` geri alır:
+      `kubectl describe resourcequota -n "$NS"; kubectl describe limitrange -n "$NS"`.
+- [ ] **DB boşta bağlantısı düşer:** Helm artık `DB_POOL_MIN=5` yazar (önceden uygulama varsayılanı 10). Değiştirmek
+      için `config.dbPoolMin` (0 … dbPoolMax).
+- [ ] **PDB değeri:** prod'da PDB açıksa `minAvailable` replika sayısından küçük olmalı (`helm template` aksi hâlde
+      reddeder) — tek replikada PDB kapalı kalır (`master.yaml`).
+- [ ] **İlk dağıtım penceresi:** 20.166.0 pod'larında `boot-guard.js` ve taşınan sayfa dosyaları yoktur; geçiş
+      sırasında bir kullanıcı bir kez boş sayfa görebilir — **F5 düzeltir**; destek / 7/24 ekibine önceden söyleyin.
+      Sonraki dağıtımlarda eski sekmeler son 5 sürümün taşınan dosyalarıyla çalışır; yeni sürümün dosyası eski pod'a
+      düşerse sayfa kendini bir kez yeniler.
+- [ ] **İmaj önceki sürümlerin sayfa dosyalarını taşıyor:** release iş akışının derleme günlüğünde `::warning::önceki sürüm
+      imajı okunamadı` YOK (varsa imaj yine çalışır ama taşınan dosya 0 olur — dağıtım penceresinde boş sayfa riski sürer).
+      Prod'da çalışan sürüm 5'ten çok sürüm geride ise eski sekmeler bir kez yenilenir (beklenen).
+- [ ] **Staging:** `topologySpreadConstraints.matchLabelKeys` Kubernetes ≥ 1.27 ister (1.25–1.26'da alfa / kapalı, ≤ 1.24'te
+      Helm doğrulama hatası) — `kubectl version` ile doğrulayın; eskiyse staging için `matchLabelKeys: []` +
+      `whenUnsatisfiable: ScheduleAnyway`.
+- [ ] **Geri alma yalnız `helm rollback` ile** (`kubectl rollout undo` sürüm geçmişini şaşırtır: ROLLBACK satırı / bildirimi
+      düşmez — [`RUNBOOK.md` → Geri alma](RUNBOOK.md#geri-alma-rollback)).
+- [ ] Geçiş penceresinde (eski + yeni pod birlikte) beklenenler biliniyor — [`RUNBOOK.md` → Sürüm geçişi sırasında](RUNBOOK.md#sürüm-geçişi-sırasında-eski--yeni-pod-birlikte):
+      eski pod alarmı hâlâ bütün varlıkla kaydeder (yeni pod'un kapattığı bir alarmı yeniden açabilir — son eski pod
+      gidince biter), eski pod heartbeat'i pod adı olmadan yazar, tarama kartı bir süre eski pod'un koşusunu göstermeyebilir.
+- [ ] **Grafana panosu:** revizyon 4 (sağlık bölümünün sonunda çok pod çalışma panelleri) — dağıtımdan sonra Ayarlar →
+      Grafana panosu → JSON indir ve aynı UID ile içe aktarın.
+
 ### Kapsam ve sürüm
 - [ ] Dağıtılan şey **tag'lenmiş sürüm** (`git checkout v$VERSION`); çalışma ağacındaki commit'lenmemiş iş
       bu dağıtıma dahil değildir. GitHub → Actions'ta o commit için `ci.yml` **dört işi de yeşil**.
@@ -304,8 +335,9 @@ ulaşmadı. Bu dağıtım onu **ilk kez** uygular — aşağıdaki değişiklikl
   ```
   Kota ya da node yetmezse yeni pod `Pending` kalır ve `--atomic` zaman aşımında geri alır.
 - [ ] Registry erişimi: küme `$IMAGE_REPO:v$VERSION`'ı çekebiliyor (özel paket → `imagePullSecrets`).
-- [ ] `/var/log` emptyDir'i DEBUG hacmini taşıyabilir: log dosyaları toplam ≈1,2 GB ile sınırlı
-      (FILE 500 MB, ERROR 200 MB, AUDIT 500 MB); node'un ephemeral-storage payı buna yetmeli.
+- [ ] `/var/log` emptyDir'i DEBUG hacmini taşıyabilir: log dosyaları toplam ≈1,2 GB ile sınırlı (FILE 500 MB, ERROR 200 MB,
+      AUDIT 500 MB); chart `sizeLimit: 2Gi` ve `ephemeral-storage` 1Gi request / 4Gi limit koyar — düğümün ephemeral-storage
+      payı ve namespace kotası buna yetmeli.
 
 ### Log seviyesi kararı
 - [ ] Prod **DEBUG** ile koşar — bu kullanıcının **bilinçli** kararıdır; komut `--set config.logLevel=DEBUG`
@@ -395,6 +427,12 @@ helm upgrade --install "$REL" ./helm/site-monitor --namespace "$NS" \
       çift satırla düştü) → "İlk çok pod sürümüne geçiş" bölümündeki tekilleştirme UPDATE'i, sonra tek pod'u yeniden
       başlatın (ertelenmiş kurucu açılışta yeniden dener). `ux_noe_one_ongoing` boşsa: `kubectl logs $L | grep -i
       'noe-ongoing\|NetworkOutageOngoingDedupe'` — iş saatlik yeniden dener (pod başına en çok 24 deneme).
+- [ ] Sayfa dosyaları taşındı (RUNBOOK "Yuvarlanan dağıtımda sayfa dosyaları"):
+      `kubectl exec -n "$NS" <pod> -- cat /app/frontend/carry-report.json` → `included` dağıtımdan önce çalışan sürümü
+      içeriyor ya da o sürümden beri arayüz değişmedi (`carried: 0` o zaman doğrudur) ve
+      `curl -sI https://<host>/boot-guard.js | grep -i cache-control` → `no-store`.
+- [ ] **Çok pod Sürüm 2b:** Sistem Sağlığı → Kendi kendini izleme → "Saat uyumu" Sağlıklı (pod saatleri arası fark < 5 sn); Zamanlayıcı ve
+      yürütücüler → Küme kartında tarama lideri dolu; Heartbeat → "Pod'lar" kartında "sessiz" pod yok.
 - [ ] **Çok pod Sürüm 2a** (açılıştan ~5 dk sonra): her pod'un günlüğünde bir kez `Önbellek yolu çalışıyor`
       (`kubectl logs $L | grep "Önbellek yolu"` — `yoklanamadı` / `yayını başarısız` satırı olmamalı); yeni tablolar ve
       indeksler dolu dönmeli:
@@ -482,8 +520,10 @@ kubectl get pod -n "$NS" -l app.kubernetes.io/instance="$REL" \
 
 ### 4. Sonrası (iki pod)
 - [ ] `kubectl get pod -n "$NS" -l app.kubernetes.io/instance="$REL" -o wide` → iki pod Ready, tercihen farklı node'larda.
-- [ ] Sistem Sağlığı → `session_store: jdbc`; Zamanlayıcı → `sweep_leader.owner` TEK pod (sayfayı birkaç kez yenileyin:
-      iki pod da aynı sahibi göstermeli; `held_by_me` yalnız birinde true).
+- [ ] Sistem Sağlığı → `session_store: jdbc`; Zamanlayıcı ve yürütücüler → Küme kartı: "Tarama lideri" TEK pod adı (sayfayı
+      birkaç kez yenileyin — yanıtlayan pod değişse de lider adı aynı kalmalı; "Lider mi: Evet" yalnız o pod yanıtlayınca).
+- [ ] Heartbeat → "Pod'lar" kartı: iki pod "canlı", "sessiz" yok; Sertifika taraması kartı son koşuyu ve koşturan pod'u gösterir
+      (hangi pod yanıtlarsa aynı).
 - [ ] Grafana: `sum(sitemonitor_sweep_leader) == 1`; Sistem Sağlığı → Metrikler sayfasında iki canlı pod.
 - [ ] Giriş yapın, birkaç sayfa gezin: oturum düşmüyor (istekler iki pod'a dağılır).
 - [ ] Kanaryalar iki pod'da da temiz (`kubectl logs $L …`, yukarıda); `kubectl logs $L | grep "Tarama liderliği"` →

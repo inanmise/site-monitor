@@ -166,6 +166,24 @@ class TeamAdminServiceTest {
         assertThat(service.impact(8L)).containsEntry("empty", true);   // taşındıktan sonra silinebilir
     }
 
+    @Test
+    @DisplayName("R2b · F: hedefli yazıcı varken moveAll açık alarmların damgasını TEK koşullu UPDATE ile taşır — okunan alarm kaydedilmez / değiştirilmez")
+    void moveAll_withFieldWriter_singleTargetedUpdate() {
+        when(inventoryRepo.findByTeamIdOrderByDomainAsc(8L)).thenReturn(List.of());
+        AlertEvent open8 = new AlertEvent(); open8.setId(1L); open8.setTeamId(8L); open8.setResolved(false);
+        when(alertEventRepo.findAllOpenOrderBySeverity()).thenReturn(List.of(open8));
+        AlertEventFieldWriter writer = org.mockito.Mockito.mock(AlertEventFieldWriter.class);
+        when(writer.moveOpenAlertsToTeam(8L, 9L)).thenReturn(1);
+        service.setAlertFieldWriter(writer);
+
+        Map<String, Integer> moved = service.moveAll(8L, 9L);
+
+        assertThat(moved).containsEntry("open_alerts", 1);
+        verify(writer).moveOpenAlertsToTeam(8L, 9L);
+        verify(alertEventRepo, never()).save(any());
+        assertThat(open8.getTeamId()).as("işlem içindeki varlık kirletilmez").isEqualTo(8L);
+    }
+
     /**
      * 2026-09-28: UG bağı da takım bütünlüğünün parçası. Eskiden impact UG kayıtlarını saymıyor ("boş" diyip silmeye
      * izin veriyor), moveAll da taşımıyordu → takım silinince kaydın UG'si silinmiş takımı gösteriyor, yalnız UG'li

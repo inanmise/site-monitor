@@ -111,3 +111,31 @@ the weekly / technical-error report approval links. Single source: OpenTelemetry
 {{- define "site-monitor.otelSensitiveQueryParameters" -}}
 AWSAccessKeyId,Signature,X-Amz-Signature,X-Amz-Credential,X-Amz-Security-Token,sig,X-Goog-Signature,token,access_token,api_key,apiKey,apikey,key,code,password,secret,signature,client_secret,subscription-key,auth,jsessionid,otp
 {{- end }}
+
+{{/*
+Environment names config.extraEnv must not use (2026-10-23): the container env of the Deployment (it wins over the
+ConfigMap) and the keys of the chart's Secret (envFrom secretRef comes after the ConfigMap and wins; a secret also does
+not belong in a ConfigMap). Keep in step with templates/deployment.yaml `env:` and templates/secret.yaml —
+scripts/helm-template-check.sh renders the Deployment and refuses every container env name through config.extraEnv.
+*/}}
+{{- define "site-monitor.reservedEnvNames" -}}
+NODE_NAME POD_NAME POD_IP APP_ENVIRONMENT HELM_RELEASE_NAME HELM_RELEASE_REVISION HELM_CHART_VERSION APP_IMAGE_REF CONFIG_CHECKSUM ADMIN_USERNAME ADMIN_PASSWORD DB_PASSWORD SPRING_MAIL_USERNAME SPRING_MAIL_PASSWORD SITE_MONITOR_EMAIL_FROM SITE_MONITOR_SECRET_KEY SITE_MONITOR_SECRET_KEY_PREVIOUS METRICS_EXPORT_TOKEN HTTP_PROXY_USER HTTP_PROXY_PASS
+{{- end }}
+
+{{/*
+DB_POOL_MIN (2026-10-23): config.dbPoolMin, default "5"; 0 is a valid value (Hikari minimum-idle 0). helm template
+fails for a non-number or a value above config.dbPoolMax (Hikari would silently raise maximum-pool-size).
+*/}}
+{{- define "site-monitor.dbPoolMin" -}}
+{{- $v := .Values.config.dbPoolMin -}}
+{{- $min := "5" -}}
+{{- if and (not (kindIs "invalid" $v)) (ne (toString $v) "") -}}{{- $min = toString $v -}}{{- end -}}
+{{- if not (regexMatch "^[0-9]+$" $min) -}}
+{{- fail (printf "config.dbPoolMin must be a whole number ≥ 0, got %q" $min) -}}
+{{- end -}}
+{{- $max := toString .Values.config.dbPoolMax -}}
+{{- if and (regexMatch "^[0-9]+$" $max) (gt (int $min) (int $max)) -}}
+{{- fail (printf "config.dbPoolMin (%s) must not be larger than config.dbPoolMax (%s): it is the number of idle connections kept per pod, the pool still grows to dbPoolMax" $min $max) -}}
+{{- end -}}
+{{- $min -}}
+{{- end }}

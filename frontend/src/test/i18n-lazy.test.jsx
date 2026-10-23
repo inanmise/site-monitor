@@ -35,11 +35,22 @@ async function freshI18n({ enModule } = {}) {
   const status = await import('../components/LanguageStatus.jsx')
   const toast = await import('../components/ui/Toast.jsx')
   const dateLocale = await import('../i18n/dateLocale.js')
-  return { ...i18n, ...status, ToastProvider: toast.ToastProvider, dateLocale }
+  // Aynı modül kaydındaki örnek: i18n/index.jsx bunu kullanır (resetModules sonrası yeni örnek)
+  const guard = await import('../utils/chunkReloadGuard.js')
+  return { ...i18n, ...status, ToastProvider: toast.ToastProvider, dateLocale, guard }
+}
+
+/** Açılış hatasında tek yenileme hakkı (çok pod R2b, MP-47) bu testte zaten KULLANILMIŞ: Türkçe yedek yol sınanır. */
+function reloadAlreadyUsed(m) {
+  vi.spyOn(m.guard.reloader, 'reload').mockImplementation(() => {})
+  expect(m.guard.claimChunkReload(undefined, Date.now() - 10 * m.guard.RELOAD_COOLDOWN_MS)).toBe(true)
 }
 
 afterEach(() => {
+  vi.restoreAllMocks()
+  sessionStorage.removeItem('eb-chunk-reload')
   vi.doUnmock(EN_MODULE)
+  vi.doUnmock('../components/ui/Toast.jsx')
   vi.resetModules()
   globalThis.__smI18nDicts.en = EN          // diğer testler için kayıt eski hâline
   localStorage.removeItem(STORAGE_KEY)
@@ -140,18 +151,46 @@ describe('i18n — İngilizce sözlük ayrı chunk (öneri 22)', () => {
         </m.ToastProvider>
       </m.LangProvider>,
     )
+    const reload = vi.spyOn(m.guard.reloader, 'reload').mockImplementation(() => {})
     let ok
     await act(async () => { ok = await toggle() })
     expect(ok).toBe(false)
+    expect(reload).not.toHaveBeenCalled()                                    // çalışırken hata sayfayı YENİLEMEZ
     expect(screen.getByTestId('text')).toHaveTextContent(`${TR['stat.total']}|tr|-|1`)
     expect(localStorage.getItem(STORAGE_KEY)).toBe('tr')
     expect(await screen.findByText(TR['lang.loadFailed'])).toBeInTheDocument()
     expect(m.isLanguageLoaded('en')).toBe(false)                               // başarısız indirme önbelleğe alınmaz
   })
 
-  it('açılışta indirme hatası: uygulama Türkçe açılır, saklı tercih KORUNUR, X-Lang bu oturumda tr, bildirim', async () => {
+  it("açılışta İLK indirme hatası (yuvarlanan dağıtım): sayfa BİR KEZ yenilenir, açılış ekranı kalır, Türkçe'ye düşülmez", async () => {
+    localStorage.setItem(STORAGE_KEY, 'en')
+    const m = await freshI18n({ enModule: () => { throw new Error('chunk 404') } })
+    const reload = vi.spyOn(m.guard.reloader, 'reload').mockImplementation(() => {})
+    function App() {
+      const t = m.useT()
+      return <p data-testid="app">{t('stat.total')}</p>
+    }
+    render(
+      <m.LangProvider fallback={<m.LanguageBootSplash />}>
+        <m.ToastProvider>
+          <m.LanguageLoadNotice />
+          <App />
+        </m.ToastProvider>
+      </m.LangProvider>,
+    )
+    await vi.waitFor(() => expect(reload).toHaveBeenCalledTimes(1))
+    await act(async () => { await Promise.resolve() })
+    expect(screen.queryByTestId('app')).toBeNull()                         // yenilenene kadar açılış ekranı
+    expect(screen.getByRole('status').textContent).toContain(EN['app.loading'])
+    expect(m.dateLocale.sessionLangOverride()).toBeNull()                    // X-Lang Türkçe'ye zorlanmadı
+    expect(screen.queryByText(TR['lang.loadFailed'])).toBeNull()
+    expect(localStorage.getItem(STORAGE_KEY)).toBe('en')
+  })
+
+  it('açılışta indirme hatası (yenileme hakkı kullanılmış): uygulama Türkçe açılır, saklı tercih KORUNUR, X-Lang bu oturumda tr, bildirim', async () => {
     localStorage.setItem(STORAGE_KEY, 'en')
     const m = await freshI18n({ enModule: () => { throw new Error('offline') } })
+    reloadAlreadyUsed(m)
 
     function App() {
       const t = m.useT()
@@ -172,9 +211,48 @@ describe('i18n — İngilizce sözlük ayrı chunk (öneri 22)', () => {
     expect(await screen.findByText(TR['lang.loadFailed'])).toBeInTheDocument()
   })
 
+  it('StrictMode (geliştirme): açılış hatası bildirimi sağlayıcıyla aynı işlemede doğsa da KAYBOLMAZ', async () => {
+    // Gerçek ToastProvider'ın sözleşmesi: sökümünde (StrictMode'un sahte sökümü dahil) açık bütün kutuları kapatır.
+    // Bildirim bileşeni sağlayıcıyla AYNI işlemede doğar (dil hazır olunca ağaç ilk kez çizilir) — yeniden kurulumda
+    // bildirimi yeniden açmalı. jsdom'da Sonner'ın kapatma yarışı görünmediği için sağlayıcı burada sadeleştirilmiş eşi.
+    vi.doMock('../components/ui/Toast.jsx', async () => {
+      const React = await import('react')
+      const Ctx = React.createContext(null)
+      function ToastProvider({ children }) {
+        const [items, setItems] = React.useState([])
+        const api = React.useMemo(() => ({ error: (msg) => setItems((xs) => [...xs, msg]) }), [])
+        React.useEffect(() => () => setItems([]), [])                       // söküm: açık kutular kapanır
+        return <Ctx.Provider value={api}>{children}<ul data-testid="toasts">{items.map((x, i) => <li key={i}>{x}</li>)}</ul></Ctx.Provider>
+      }
+      return { ToastProvider, useToast: () => React.useContext(Ctx) }
+    })
+    localStorage.setItem(STORAGE_KEY, 'en')
+    const m = await freshI18n({ enModule: () => { throw new Error('offline') } })
+    reloadAlreadyUsed(m)
+    const { StrictMode } = await import('react')
+    function App() {
+      const t = m.useT()
+      return <p data-testid="app">{t('stat.total')}</p>
+    }
+    render(
+      <StrictMode>
+        <m.LangProvider fallback={<m.LanguageBootSplash />}>
+          <m.ToastProvider>
+            <m.LanguageLoadNotice />
+            <App />
+          </m.ToastProvider>
+        </m.LangProvider>
+      </StrictMode>,
+    )
+    expect(await screen.findByTestId('app')).toHaveTextContent(TR['stat.total'])
+    await act(async () => { await Promise.resolve() })
+    expect(screen.getByTestId('toasts')).toHaveTextContent(TR['lang.loadFailed'])
+  })
+
   it('açılışta sözlük HİÇ inmezse (asılı istek): zaman aşımında Türkçe yedek yol — açılış ekranında sonsuza dek kalınmaz (2026-10-09)', async () => {
     localStorage.setItem(STORAGE_KEY, 'en')
     const m = await freshI18n({ enModule: () => new Promise(() => {}) })
+    reloadAlreadyUsed(m)
     function App() {
       const t = m.useT()
       return <p data-testid="app">{t('stat.total')}</p>

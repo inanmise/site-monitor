@@ -128,7 +128,9 @@ kurucusu `pg_try_advisory_lock` (oturum kilidi) alır, `SchemaDdlGuard` aynı ba
 
 Pod başına sabit yük (N ile çarpılır, küçük): ayar / LDAP / SMTP / izin önbelleklerinin 10 sn'lik tazelemesi, dakikalık
 kalp atışı / sistem metriği / HTTP metriği / şema kayıt satırları, takipçinin 5 sn'lik kira kontrolü, Spring Session
-temizliği, iş ölçümü aktarıcısının dakikalık özeti (belirteç varsa) ve Hikari `minimum-idle` (10) bağlantı.
+temizliği, iş ölçümü aktarıcısının dakikalık özeti (belirteç varsa), önbellek yolunun 2 sn'lik yoklaması (çok pod Sürüm 2a;
+tek satırlık tablo) ve Hikari `minimum-idle` bağlantısı (Helm `config.dbPoolMin` → `DB_POOL_MIN`, varsayılan 5; Helm dışı
+çalıştırmada uygulama varsayılanı 10).
 
 ## 4. Teşhis & migration script'leri (`scripts/`)
 
@@ -180,8 +182,11 @@ opt-in'dir, gece temizlik/rollup dağıtık-kilitlidir → çok-pod'da tek pod �
 ### DEPLOY SONRASI (smoke doğrulama)
 - Monitör-liste sayfaları açılıyor (LATERAL en-güncel sorguları) + Denetim/Aktivite ekranları.
 - `/metrics` içinde `db_table_rows{table=...}` gauge'ları görünüyor.
-- İlk gece (03:30) `cleanupOldLogs` logu: yalnız **tek pod** "Nightly cleanup" yazar (diğerleri
-  "lock başka pod'da, atlanıyor"); rollup satırları `monitor_check_daily` ve `monitor_check_hourly`
+- İlk gece (03:30) `cleanupOldLogs` günlüğü: yalnız **tek pod** "Gece temizliği: N politika, …" (INFO) yazar; diğerleri
+  DEBUG düzeyinde (saatte en çok bir kez) "Gece temizlik/rollup — bu gecenin turu başka pod'da sahiplenildi, atlanıyor" ya
+  da kilit meşgulken "… lock başka pod'da, yeniden denenecek" yazar (tüm pod'ların günlüğü:
+  `kubectl logs -n "$NS" -l app.kubernetes.io/instance="$REL" --prefix --tail=-1`); rollup satırları `monitor_check_daily` ve
+  `monitor_check_hourly`
   tablolarını dolduruyor ("Daily rollup: ..." + "Saatlik rollup: ... kova").
 - `psql -f scripts/db-health.sql` ile tablo boyutları/bloat/en yavaş sorgular gözden geçir.
 

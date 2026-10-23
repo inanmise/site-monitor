@@ -44,6 +44,10 @@ public class SystemController {
     private final com.sitemonitor.service.AppSettingsService appSettingsService;
     private final AuditService auditService;
 
+    /** Bu pod'un önbellek yolu (2026-10-23, çok pod R2b, N1) — Küme kartı "bu pod" bölümü; bean yoksa alan eklenmez. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.cache.CacheBus cacheBus;
+
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
 
@@ -60,7 +64,20 @@ public class SystemController {
         data.put("domain_expiry", extendedHealthService.getDomainExpirySourceStatus());
         // Gece temizliği kendi kendini izler: "N saattir çalışmadı" / hatalı politika sinyali.
         data.put("cleanup",   extendedHealthService.getCleanupStatus());
+        if (cacheBus != null) {
+            try { data.put("cache_bus", cacheBus.status()); }
+            catch (RuntimeException e) { data.put("cache_bus", Map.of("error", e.getClass().getSimpleName())); }
+        }
         return ok(Map.of("data", data));
+    }
+
+    /**
+     * Yanıtlayan pod (2026-10-23, çok pod R2b, MP-37a): JVM grafikleri ve HTTP özeti bu pod'un BELLEĞİNDEN gelir ve
+     * Sistem Sağlığı'nın ana isteğinden AYRI istekle — başka pod'a düşebilir. Ekran her bölümü yanıtlayan pod'la etiketler.
+     */
+    private static void putServedBy(Map<String, Object> body) {
+        body.put("served_by", SchedulerService.instanceId());
+        body.put("served_by_pod", com.sitemonitor.service.health.ClusterHealthStore.podOf(SchedulerService.instanceId()));
     }
 
     // IZIN KAPISI (system_health.read): asagidaki dort uc `session` parametresini ALIYOR ama
@@ -100,7 +117,10 @@ public class SystemController {
     @GetMapping("/metrics")
     public ResponseEntity<Map<String, Object>> getMetrics(HttpSession session) {
         permissionService.require(session, "system_health.read", "view");
-        return ok(Map.of("data", metricsService.getHistory()));
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("data", metricsService.getHistory());
+        putServedBy(body);
+        return ok(body);
     }
 
     @GetMapping("/http-metrics")
@@ -120,7 +140,12 @@ public class SystemController {
                     .warn("[HTTP-METRICS] top endpoints unavailable: {}", e.getClass().getSimpleName());
         }
         data.put("top_endpoints", top);
-        return ok(Map.of("data", data));
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("data", data);
+        putServedBy(body);
+        data.put("served_by", body.get("served_by"));
+        data.put("served_by_pod", body.get("served_by_pod"));
+        return ok(body);
     }
 
     /**

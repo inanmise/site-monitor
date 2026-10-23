@@ -110,6 +110,18 @@ public final class MonitoringMetricNames {
     public static final String DATABASE_STATUS = "sitemonitor.database.status";
     public static final String SYSTEM_MAINTENANCE = "sitemonitor.system.maintenance.state";
 
+    // ── Çok pod çalışma ölçümleri (2026-10-23, R2b) ─────────────────────────────────────────────────────────
+    /** Bu pod'un açılıştan beri yenilemede kaybettiği iş kilitleri (birikimli; gauge — {@code _total} son eki YOK). */
+    public static final String CLUSTER_LOCK_LOST = "sitemonitor.cluster.lock.lost";
+    /** Bu pod'un açılıştan beri gördüğü tarama liderliği geçişleri, nedene göre (birikimli). */
+    public static final String SWEEP_LEADER_TRANSITIONS = "sitemonitor.sweep.leader.transitions";
+    /** Elle kontrol gelen kutusunda (takipçiden lidere) bekleyen satır — küme geneli. */
+    public static final String EVAL_INBOX_DEPTH = "sitemonitor.eval.inbox.depth";
+    /** Bu pod'un açılıştan beri push kira tazeleme hataları, nedene göre (birikimli). */
+    public static final String PUSH_LEASE_RENEW_FAILED = "sitemonitor.push.lease.renew.failed";
+    /** Bu pod'un saati − veritabanı saati (sn; pozitif = pod ileride). */
+    public static final String CLOCK_SKEW = "sitemonitor.clock.skew.seconds";
+
     // ── Aktarıcının kendisi ──────────────────────────────────────────────────────────────────────────────
     public static final String EXPORTER_ENABLED = "sitemonitor.exporter.enabled";
     public static final String EXPORTER_PER_MONITOR = "sitemonitor.exporter.per.monitor";
@@ -205,6 +217,17 @@ public final class MonitoringMetricNames {
         l.add(new Def(DATABASE_STATUS, Scope.POD, List.of(), "Database health seen by this pod: 0 up, 1 degraded, 2 down"));
         l.add(new Def(SYSTEM_MAINTENANCE, Scope.CLUSTER, List.of(),
                 "SiteMonitor maintenance: 0 none, 1 announced, 2 warning, 3 active, 4 recently ended"));
+        // Çok pod çalışma ölçümleri
+        l.add(new Def(CLUSTER_LOCK_LOST, Scope.POD, List.of(),
+                "Job locks this pod lost while holding them (renewal found the row gone or owned by another pod), since the pod started"));
+        l.add(new Def(SWEEP_LEADER_TRANSITIONS, Scope.POD, List.of("reason"),
+                "Sweep leadership transitions seen by this pod since it started, by reason (GAINED, LOST, RELEASED)"));
+        l.add(new Def(EVAL_INBOX_DEPTH, Scope.CLUSTER, List.of(),
+                "Manual check results waiting in the follower-to-leader evaluation inbox"));
+        l.add(new Def(PUSH_LEASE_RENEW_FAILED, Scope.POD, List.of("reason"),
+                "Push outbox lease renewals that failed on this pod since it started (error = query failed, lost = another pod took the rows)"));
+        l.add(new Def(CLOCK_SKEW, Scope.POD, List.of(),
+                "This pod's clock minus the database clock in seconds (positive = pod ahead); absent while unmeasured"));
         // Aktarıcı
         l.add(new Def(EXPORTER_ENABLED, Scope.POD, List.of(), "1 when the monitoring metrics exporter is enabled"));
         l.add(new Def(EXPORTER_PER_MONITOR, Scope.POD, List.of(), "1 when per-monitor / per-certificate series are exported"));

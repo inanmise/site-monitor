@@ -99,6 +99,30 @@ class SpaNotFoundAdviceTest {
         }
     }
 
+    /**
+     * Yuvarlanan dağıtım (2026-10-23, çok pod R2b · MP-47): index.html'deki hash'siz açılış koruması
+     * ({@code /boot-guard.js}, klasik betik) HER ZAMAN no-store sunulur (güncellenmiş koruma bir sonraki yüklemede
+     * gelir), bu sürümden önceki bir podda yoksa düz metin 404 alır (HTML kabuğu bir klasik betikte sözdizimi hatası
+     * olurdu) ve sayfa koruma olmadan bugünkü gibi açılır. Önceki sürümden taşınan hash'li bir varlık immutable sunulur;
+     * olmayan bir hash'li varlık düz metin 404 + no-store (yukarıdaki test) — yenilemeden sonra taze index gelir.
+     */
+    @Test
+    @DisplayName("boot-guard.js: var olan no-store; eski podda yok → düz metin 404 (HTML değil); taşınan varlık immutable")
+    void bootGuardAndCarriedAssetCachePolicy() throws Exception {
+        MvcResult missing = mvc.perform(get("/boot-guard.js").accept(MediaType.ALL)).andExpect(status().isNotFound()).andReturn();
+        assertThat(missing.getResponse().getContentType()).startsWith("text/plain");
+        assertThat(missing.getResponse().getContentAsString(StandardCharsets.UTF_8)).doesNotContain("<html").doesNotContain(SHELL_MARKER);
+        assertThat(missing.getResponse().getHeader("Cache-Control")).contains("no-store");
+
+        var filter = new WebConfig().securityHeadersFilter();
+        var present = new MockHttpServletResponse();
+        filter.doFilter(new MockHttpServletRequest("GET", "/boot-guard.js"), present, new org.springframework.mock.web.MockFilterChain());
+        assertThat(present.getHeader("Cache-Control")).contains("no-store").doesNotContain("immutable").doesNotContain("max-age");
+
+        MvcResult carried = mvc.perform(get("/assets/app.js")).andExpect(status().isOk()).andReturn();
+        assertThat(carried.getResponse().getHeader("Cache-Control")).contains("immutable");
+    }
+
     @Test
     @DisplayName("Bilinmeyen /api (oturumlu) → JSON 404 code=NOT_FOUND, tarayıcı text/html istese bile; ileti istek dilinde")
     void unknownApi_isJson404() throws Exception {

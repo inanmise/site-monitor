@@ -1439,6 +1439,201 @@ class EscalationServiceTest {
         verifyNoInteractions(emailService);
     }
 
+    // ── R2b · F (2026-10-23): kapanışlar koşullu yazılır — bayat varlık bütünüyle kaydedilmez ─────────
+
+    /** Gerçek {@link SilentAlarmCloser}, sahte koşullu-yazım deposuyla; servise bağlanır. Push servisin kendi kanalından. */
+    @SuppressWarnings("unchecked")
+    private AlertEventSilentCloseRepository withCloser() {
+        AlertEventSilentCloseRepository closeRepo = mock(AlertEventSilentCloseRepository.class);
+        org.springframework.beans.factory.ObjectProvider<UserPushService> provider =
+                mock(org.springframework.beans.factory.ObjectProvider.class);
+        service.setSilentAlarmCloser(new SilentAlarmCloser(closeRepo, alertEventRepo, inventoryRepo, provider));
+        return closeRepo;
+    }
+
+    private static AlertEvent openStale(long id, String domain, String type) {
+        AlertEvent e = new AlertEvent();
+        e.setId(id); e.setDomain(domain); e.setAlertType(type); e.setAlertLevel("WARNING");
+        e.setTeamId(7L); e.setResolved(false); e.setAcknowledged(false);
+        return e;
+    }
+
+    @Test
+    @DisplayName("R2b · F: sessiz kapanışta alarm başka yolda zaten kapanmışsa İKİNCİ push yok, satır yeniden yazılmaz (bütün varlık kaydı yok)")
+    void closeQuietly_alreadyClosed_noSecondPushNoOverwrite() {
+        String domain = "https://deleted.example.com/";
+        AlertEvent stale = openStale(41L, domain, "HTTP_DOWN");   // okunduğunda açık; arada başka pod / elle çözüm kapattı
+        when(alertEventRepo.findByDomainAndAlertTypeInAndResolvedFalse(eq(domain), anyCollection())).thenReturn(List.of(stale));
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        AlertEventSilentCloseRepository closeRepo = withCloser();
+        when(closeRepo.closeSilentlyIfOpen(eq(41L), anyString(), anyString())).thenReturn(0);
+
+        service.resolveOpenAlertsSilently(domain, Set.of("HTTP_DOWN"), "Sistem (izleme silindi)");
+
+        verify(closeRepo).closeSilentlyIfOpen(eq(41L), anyString(), eq("Sistem (izleme silindi)"));
+        verify(alertEventRepo, never()).save(any());          // resolved_by / resolved_at ezilmez
+        verify(userPushService, never()).enqueueResolve(any(), any(), any());
+        assertThat(stale.getResolved()).as("okunan varlık değiştirilmez").isFalse();
+        assertThat(stale.getResolvedBy()).isNull();
+        verifyNoInteractions(emailService, webhookService);
+    }
+
+    @Test
+    @DisplayName("R2b · F: sessiz kapanış koşullu yazımla kapatır; çözüm push'u kapanmış KOPYAYLA (susturma işaretli), okunan varlık ve bütün kayıt yok")
+    void closeQuietly_withCloser_conditionalClose_pushesClosedCopy() {
+        String domain = "https://paused.example.com/";
+        AlertEvent stale = openStale(42L, domain, "HTTP_DOWN");
+        when(alertEventRepo.findByDomainAndAlertTypeInAndResolvedFalse(eq(domain), anyCollection())).thenReturn(List.of(stale));
+        AlertEventSilentCloseRepository closeRepo = withCloser();
+        when(closeRepo.closeSilentlyIfOpen(eq(42L), anyString(), anyString())).thenReturn(1);
+        com.sitemonitor.service.noc.NocNotificationService noc = mock(com.sitemonitor.service.noc.NocNotificationService.class);
+        ReflectionTestUtils.setField(service, "nocNotifications", noc);
+
+        service.resolveOpenAlertsSilently(domain, Set.of("HTTP_DOWN"), "Sistem (izleme duraklatıldı)");
+
+        ArgumentCaptor<AlertEvent> cap = ArgumentCaptor.forClass(AlertEvent.class);
+        verify(userPushService).enqueueResolve(cap.capture(), any(), eq(7L));
+        AlertEvent pushed = cap.getValue();
+        assertThat(pushed).isNotSameAs(stale);
+        assertThat(pushed.getId()).isEqualTo(42L);
+        assertThat(pushed.getResolved()).isTrue();
+        assertThat(pushed.getResolvedSilently()).isTrue();
+        assertThat(pushed.getResolvedBy()).isEqualTo("Sistem (izleme duraklatıldı)");
+        assertThat(pushed.getResolvedAt()).isNotBlank();
+        verify(alertEventRepo, never()).save(any());
+        verify(closeRepo, never()).closeRecoveredIfOpen(any(), any(), any());
+        assertThat(stale.getResolved()).isFalse();
+        verifyNoInteractions(noc);   // susturma dalı 7/24 çözümü göndermez (bugünkü kural)
+        verifyNoInteractions(emailService, webhookService);
+    }
+
+    @Test
+    @DisplayName("R2b · F: bakımda gerçekten düzelen alarm — koşullu kapanış resolved_silently'ye DOKUNMAZ ve 7/24 çözümü kapanmış kopyayla gider")
+    void quietlyRecovered_withCloser_keepsSilencedFlag_notifiesNoc() {
+        String domain = "maint.example.com";
+        AlertEvent stale = openStale(43L, domain, "ACCESSIBILITY");
+        when(alertEventRepo.findByDomainAndAlertTypeInAndResolvedFalse(eq(domain), anyCollection())).thenReturn(List.of(stale));
+        AlertEventSilentCloseRepository closeRepo = withCloser();
+        when(closeRepo.closeRecoveredIfOpen(eq(43L), anyString(), anyString())).thenReturn(1);
+        com.sitemonitor.service.noc.NocNotificationService noc = mock(com.sitemonitor.service.noc.NocNotificationService.class);
+        ReflectionTestUtils.setField(service, "nocNotifications", noc);
+
+        service.resolveOpenAlertsQuietlyRecovered(domain, Set.of("ACCESSIBILITY"), "Sistem (bakım penceresi — sessiz kapanış)");
+
+        verify(closeRepo, never()).closeSilentlyIfOpen(any(), any(), any());
+        ArgumentCaptor<AlertEvent> cap = ArgumentCaptor.forClass(AlertEvent.class);
+        verify(noc).onAlertResolved(cap.capture());
+        assertThat(cap.getValue().getResolved()).isTrue();
+        assertThat(cap.getValue().getResolvedSilently()).as("kurtuldu, susturulmadı (O-c1)").isNull();
+        verify(userPushService).enqueueResolve(any(AlertEvent.class), any(), eq(7L));
+        verify(alertEventRepo, never()).save(any());
+
+        // Başka yolda kapanmışsa: 7/24 çözümü de push da yok.
+        reset(noc, userPushService);
+        when(closeRepo.closeRecoveredIfOpen(eq(43L), anyString(), anyString())).thenReturn(0);
+        service.resolveOpenAlertsQuietlyRecovered(domain, Set.of("ACCESSIBILITY"), "Sistem (bakım penceresi — sessiz kapanış)");
+        verifyNoInteractions(noc);
+        verify(userPushService, never()).enqueueResolve(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("R2b · F: envanter silme / pasifleştirme koşullu kapatır — yalnız BU çağrının kapattığı sayılır, başka yolda kapanmışa push yok; bağımsız izlemenin olayı kapanmaz")
+    void inventoryClose_withCloser_countsOwnClosesOnly() {
+        String domain = "inv.example.com";
+        AlertEvent expiry = openStale(51L, domain, "EXPIRY");
+        AlertEvent chain = openStale(52L, domain, "CHAIN_BROKEN");
+        AlertEvent standalone = openStale(53L, domain, EscalationService.TYPE_PORT_DOWN);
+        standalone.setContextJson("{\"monitor_id\":9,\"team_id\":99,\"standalone\":true}");
+        when(alertEventRepo.findByDomainAndResolvedFalse(domain)).thenReturn(List.of(expiry, chain, standalone));
+        AlertEventSilentCloseRepository closeRepo = withCloser();
+        when(closeRepo.closeSilentlyIfOpen(eq(51L), anyString(), anyString())).thenReturn(1);
+        when(closeRepo.closeSilentlyIfOpen(eq(52L), anyString(), anyString())).thenReturn(0);   // arada kapandı
+
+        assertThat(service.closeAlertsOnDeactivate(domain)).isEqualTo(1);
+
+        verify(closeRepo).closeSilentlyIfOpen(eq(51L), anyString(), eq("inventory_deactivate"));
+        verify(closeRepo, never()).closeSilentlyIfOpen(eq(53L), any(), any());
+        verify(userPushService, times(1)).enqueueResolve(argThat(e -> e != null && e.getId() == 51L
+                && Boolean.TRUE.equals(e.getResolvedSilently())), any(), any());
+        verify(alertEventRepo, never()).save(any());
+
+        reset(closeRepo);
+        when(closeRepo.closeSilentlyIfOpen(anyLong(), anyString(), anyString())).thenReturn(1);
+        assertThat(service.closeAlertsOnInventoryDelete(domain)).isEqualTo(2);
+        verify(closeRepo, times(2)).closeSilentlyIfOpen(anyLong(), anyString(), eq("inventory_delete"));
+        verifyNoInteractions(emailService);
+    }
+
+    @Test
+    @DisplayName("R2b · F: elle çözüm koşullu kapanışı kazanınca bütün varlık kaydedilmez — not yalnız bu kapanışın satırına yazılır")
+    void manualResolve_withCloser_noWholeEntitySave_noteTargeted() {
+        AlertEvent stale = openStale(61L, "man.example.com", "EXPIRY");
+        when(alertEventRepo.findById(61L)).thenReturn(Optional.of(stale));
+        AlertEventSilentCloseRepository closeRepo = withCloser();
+        when(closeRepo.writeResolvedNote(eq(61L), anyString(), anyString(), anyString())).thenReturn(1);
+        EscalationService selfMock = mock(EscalationService.class);
+        ReflectionTestUtils.setField(service, "self", selfMock);
+
+        AlertEvent out = service.resolve(61L, "Ayşe Yılmaz", "  sertifika yenilendi  ");
+
+        ArgumentCaptor<String> at = ArgumentCaptor.forClass(String.class);
+        verify(alertEventRepo).markResolvedIfOpen(eq(61L), at.capture(), eq("Ayşe Yılmaz"));
+        verify(closeRepo).writeResolvedNote(61L, at.getValue(), "Ayşe Yılmaz", "sertifika yenilendi");
+        verify(alertEventRepo, never()).save(any());
+        assertThat(out.getResolved()).isTrue();
+        assertThat(out.getResolvedAt()).isEqualTo(at.getValue());
+        assertThat(out.getResolvedNote()).isEqualTo("sertifika yenilendi");
+        verify(selfMock).sendResolutionNotificationAsync(same(out), eq("Ayşe Yılmaz"), eq("MANUAL_RESOLVE"));
+
+        // Notsuz elle çözüm: not yazımı da yok.
+        AlertEvent other = openStale(62L, "man2.example.com", "EXPIRY");
+        when(alertEventRepo.findById(62L)).thenReturn(Optional.of(other));
+        service.resolve(62L, "Ayşe Yılmaz", null);
+        verify(closeRepo, never()).writeResolvedNote(eq(62L), any(), any(), any());
+        verify(alertEventRepo, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("R2b · F (AL-3): elle çözümün notu bu kapanışın satırına yazılamadıysa yanıtta ve çözüm postasında GÖRÜNMEZ")
+    void manualResolve_noteNotWritten_notReturned() {
+        AlertEvent stale = openStale(63L, "man3.example.com", "EXPIRY");
+        when(alertEventRepo.findById(63L)).thenReturn(Optional.of(stale));
+        AlertEventSilentCloseRepository closeRepo = withCloser();
+        when(closeRepo.writeResolvedNote(eq(63L), anyString(), anyString(), anyString())).thenReturn(0);   // satır başka yolda yeniden yazıldı
+        EscalationService selfMock = mock(EscalationService.class);
+        ReflectionTestUtils.setField(service, "self", selfMock);
+
+        AlertEvent out = service.resolve(63L, "Ayşe Yılmaz", "sertifika yenilendi");
+
+        assertThat(out.getResolved()).isTrue();
+        assertThat(out.getResolvedNote()).as("yazılmayan not 'kaydedildi' gibi dönmez").isNull();
+        verify(selfMock).sendResolutionNotificationAsync(argThat(e -> e != null && e.getResolvedNote() == null),
+                eq("Ayşe Yılmaz"), eq("MANUAL_RESOLVE"));
+        verify(alertEventRepo, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("R2b · F: otomatik çözüm koşullu kapanıştan sonra bütün varlığı kaydetmez; kapanış anı CAS'ın yazdığıyla aynı")
+    void autoResolve_withCloser_noWholeEntitySaveAfterCas() {
+        String domain = "auto.example.com";
+        AlertEvent stale = openStale(71L, domain, EscalationService.TYPE_PORT_DOWN);
+        when(maintenanceService.isUnderMaintenance(domain)).thenReturn(false);
+        when(alertEventRepo.findByDomainAndAlertTypeInAndResolvedFalse(eq(domain), anyCollection())).thenReturn(List.of(stale));
+        withCloser();
+        EscalationService selfMock = mock(EscalationService.class);
+        ReflectionTestUtils.setField(service, "self", selfMock);
+
+        service.resolveMonitoringAlertsForDomain(domain, EscalationService.TYPE_PORT_DOWN);
+
+        ArgumentCaptor<String> at = ArgumentCaptor.forClass(String.class);
+        verify(alertEventRepo).markResolvedIfOpen(eq(71L), at.capture(), eq("system"));
+        verify(alertEventRepo, never()).save(any());
+        ArgumentCaptor<AlertEvent> sent = ArgumentCaptor.forClass(AlertEvent.class);
+        verify(selfMock).sendResolutionNotificationAsync(sent.capture(), eq("Sistem (otomatik)"), eq("RESOLUTION"));
+        assertThat(sent.getValue().getResolved()).isTrue();
+        assertThat(sent.getValue().getResolvedAt()).isEqualTo(at.getValue());
+    }
+
     /**
      * Prod olayı 2026-09-30 (SY takımı, SCRIPTED_FAIL #412/#413/#414): fırtınaya sessizce bağlanan alarm hiçbir kanal
      * çalıştırmıyor ve eskiden hiçbir iz bırakmıyordu — ekran "0 bildirim", push "önce bildirim gitmemişti". Artık

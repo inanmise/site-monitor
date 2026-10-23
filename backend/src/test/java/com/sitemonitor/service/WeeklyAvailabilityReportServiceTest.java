@@ -808,6 +808,21 @@ class WeeklyAvailabilityReportServiceTest {
     }
 
     @Test
+    @DisplayName("E2 (çok pod R2b, MP-37e): ek replika / dağıtımdaki ikinci pod RESTART olarak gelir ama yeniden başlatma SAYILMAZ")
+    void deployments_replicaRestartNotCounted() {
+        WeeklyAvailabilityReportService.Window w = service.lastFullWeekWindow();
+        String inside = java.time.LocalDateTime.parse(w.fromUtc()).plusHours(12).format(java.time.format.DateTimeFormatter.ISO_LOCAL_DATE_TIME);
+        var restart = com.sitemonitor.service.DeploymentHistoryService.Kind.RESTART;
+        when(deploymentHistory.derivedFor("prod")).thenReturn(List.of(
+                new com.sitemonitor.service.DeploymentHistoryService.Derived(dep(1, inside, "1.1.0"), restart, "1.1.0", false),   // ek replika
+                new com.sitemonitor.service.DeploymentHistoryService.Derived(dep(2, inside, "1.1.0"), restart, "1.1.0", true)));  // gerçek yeniden başlatma
+        EmailNotificationService.DeploymentWeekly d = service.collectDeployments(w);
+        assertThat(d).isNotNull();
+        assertThat(d.restarts()).isEqualTo(1);
+        assertThat(d.deployments()).isZero();
+    }
+
+    @Test
     @DisplayName("E2: geçmiş boşsa sıfır satırı; servis patlarsa null (rapor satırsız gider) — mail yine HTML üreticisine ulaşır")
     void deployments_emptyAndFailureTolerant() {
         WeeklyAvailabilityReportService.Window w = service.lastFullWeekWindow();

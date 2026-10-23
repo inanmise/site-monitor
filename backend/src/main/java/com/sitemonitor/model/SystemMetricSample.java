@@ -86,4 +86,18 @@ public class SystemMetricSample {
     @Column(name = "log_error_delta") private Long logErrorDelta;
     @Column(name = "cache_hits_delta") private Long cacheHitsDelta;
     @Column(name = "cache_misses_delta") private Long cacheMissesDelta;
+
+    /**
+     * Saat farkı (2026-10-23, çok pod R2b, MP-37c): bu podun saati − veritabanı saati (ms; pozitif = pod ileride), dakikalık
+     * örnekte tek {@code SELECT CURRENT_TIMESTAMP} gidiş-dönüşünün ortasından. Ölçülemedi / gidiş-dönüş çok uzun → null.
+     * Kira ve kilit SQL'i pod saatiyle karşılaştırır — kendi kendini izleme {@code clock_skew} kontrolü bunu okur.
+     * {@code SystemMetricsSchemaPatch} ekler; eski pod'un satırlarında null.
+     */
+    @Column(name = "clock_skew_ms") private Long clockSkewMs;
+
+    /**
+     * Bu pod'un açılışında BAŞARISIZ olan şema yaması sayısı (2026-10-23, çok pod R2b, inceleme W-3) — kendi kendini izleme
+     * veritabanı kontrolü "herhangi bir canlı pod'da başarısız yama" kararını buradan verir. Yamalar henüz koşmadı → null.
+     */
+    @Column(name = "schema_failed_patches") private Integer schemaFailedPatches;
 }

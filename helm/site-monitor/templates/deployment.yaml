@@ -1,3 +1,22 @@
+{{- /*
+Container env of the OpenTelemetry Java agent (config.otel.agent.enabled) as a YAML map — rendered below, and the
+ConfigMap refuses config.extraEnv keys it contains (container env would silently win over envFrom). Defaults: no client
+spans / traceparent on checks to monitored sites, metrics stay on Prometheus, Spring Boot must not map the agent's OTEL_*
+variables into its own exporter, log MDC keys stay traceId/spanId, credential query parameters redacted in url.query.
+config.otel.agent.extraEnv wins over every default. Kept in THIS file: OtelAgentQueryRedactionGateTest checks here that
+the agent env wires site-monitor.otelSensitiveQueryParameters.
+(Spring @Scheduled instrumentation stays ON on purpose — 2026-10-23 review: without the tick span the agent's JDBC
+instrumentation, which needs no parent, would turn every statement of a tick into its own ROOT trace.)
+*/ -}}
+{{- define "site-monitor.agentEnv" -}}
+{{- $otel := .Values.config.otel | default dict -}}
+{{- $agent := $otel.agent | default dict -}}
+{{- $env := dict "OTEL_SERVICE_NAME" ($agent.serviceName | default (include "site-monitor.fullname" .)) "OTEL_METRICS_EXPORTER" "none" "OTEL_INSTRUMENTATION_JAVA_HTTP_CLIENT_ENABLED" "false" "OTEL_INSTRUMENTATION_HTTP_URL_CONNECTION_ENABLED" "false" "MANAGEMENT_OPENTELEMETRY_MAP_ENVIRONMENT_VARIABLES" "false" "OTEL_INSTRUMENTATION_COMMON_LOGGING_TRACE_ID_KEY" "traceId" "OTEL_INSTRUMENTATION_COMMON_LOGGING_SPAN_ID_KEY" "spanId" "OTEL_INSTRUMENTATION_SANITIZATION_URL_EXPERIMENTAL_SENSITIVE_QUERY_PARAMETERS" (include "site-monitor.otelSensitiveQueryParameters" .) -}}
+{{- with $otel.resourceAttributes -}}
+{{- $_ := set $env "OTEL_RESOURCE_ATTRIBUTES" . -}}
+{{- end -}}
+{{- toYaml (mergeOverwrite $env ($agent.extraEnv | default dict)) -}}
+{{- end -}}
 {{- /* OpenTelemetry Java agent via the OpenTelemetry Operator (2026-10-21) - see values.yaml config.otel.agent */ -}}
 {{- $otel := .Values.config.otel | default dict -}}
 {{- $agent := $otel.agent | default dict -}}
@@ -31,7 +50,10 @@ metadata:
   labels:
     {{- include "site-monitor.labels" . | nindent 4 }}
 spec:
+  {{- /* With the HPA the HPA owns the replica count; rendering it here reset the count on every helm upgrade (2026-10-23) */}}
+  {{- if not .Values.autoscaling.enabled }}
   replicas: {{ .Values.replicaCount }}
+  {{- end }}
   selector:
     matchLabels:
       {{- include "site-monitor.selectorLabels" . | nindent 6 }}
@@ -59,6 +81,9 @@ spec:
         checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
     spec:
       serviceAccountName: {{ include "site-monitor.serviceAccountName" . }}
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . | quote }}
+      {{- end }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -114,11 +139,7 @@ spec:
             # Spring Boot must not map the agent's OTEL_* variables into its own exporter; log MDC keys stay traceId/spanId;
             # approval-link tokens (?token=) and other credential query parameters are redacted in url.query (the
             # setting REPLACES the agent's built-in list, so that list is repeated in site-monitor.otelSensitiveQueryParameters).
-            {{- $agentEnv := dict "OTEL_SERVICE_NAME" ($agent.serviceName | default (include "site-monitor.fullname" .)) "OTEL_METRICS_EXPORTER" "none" "OTEL_INSTRUMENTATION_JAVA_HTTP_CLIENT_ENABLED" "false" "OTEL_INSTRUMENTATION_HTTP_URL_CONNECTION_ENABLED" "false" "MANAGEMENT_OPENTELEMETRY_MAP_ENVIRONMENT_VARIABLES" "false" "OTEL_INSTRUMENTATION_COMMON_LOGGING_TRACE_ID_KEY" "traceId" "OTEL_INSTRUMENTATION_COMMON_LOGGING_SPAN_ID_KEY" "spanId" "OTEL_INSTRUMENTATION_SANITIZATION_URL_EXPERIMENTAL_SENSITIVE_QUERY_PARAMETERS" (include "site-monitor.otelSensitiveQueryParameters" .) }}
-            {{- with $otel.resourceAttributes }}
-            {{- $_ := set $agentEnv "OTEL_RESOURCE_ATTRIBUTES" . }}
-            {{- end }}
-            {{- range $name, $value := mergeOverwrite $agentEnv ($agent.extraEnv | default dict) }}
+            {{- range $name, $value := include "site-monitor.agentEnv" . | fromYaml }}
             - name: {{ $name }}
               value: {{ $value | toString | quote }}
             {{- end }}
@@ -174,11 +195,24 @@ spec:
               mountPath: /tmp
             - name: varlog
               mountPath: /var/log
+      {{- $storage := .Values.storage | default dict }}
       volumes:
         - name: tmp
+          {{- with $storage.tmpSizeLimit }}
+          emptyDir:
+            sizeLimit: {{ . | quote }}
+          {{- else }}
           emptyDir: {}
+          {{- end }}
+        # sizeLimit (2026-10-23): logback caps itself at ~1.25 GB; past the limit the kubelet evicts the pod instead of
+        # filling the node disk. Counts toward resources.*.ephemeral-storage.
         - name: varlog
+          {{- with $storage.varLogSizeLimit }}
+          emptyDir:
+            sizeLimit: {{ . | quote }}
+          {{- else }}
           emptyDir: {}
+          {{- end }}
       # 120 s (was 60): the worst-case Spring shutdown (notification-pool drain + web phase + executor phase +
       # @Scheduled await + @PreDestroy) plus the preStop sleep must finish before SIGKILL. The sweep-leader lease is
       # released first (ContextClosedEvent); a SIGKILL still cuts in-flight work and leaves job locks to their TTL.
@@ -195,16 +229,33 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- if .Values.topologySpreadConstraints.enabled }}
+      {{- $tsc := .Values.topologySpreadConstraints | default dict }}
+      {{- $zone := $tsc.zone | default dict }}
+      {{- if or $tsc.enabled $zone.enabled }}
       topologySpreadConstraints:
-        - maxSkew: {{ .Values.topologySpreadConstraints.maxSkew }}
-          topologyKey: {{ .Values.topologySpreadConstraints.topologyKey }}
-          whenUnsatisfiable: {{ .Values.topologySpreadConstraints.whenUnsatisfiable | default "DoNotSchedule" }}
+        {{- if $tsc.enabled }}
+        - maxSkew: {{ $tsc.maxSkew }}
+          topologyKey: {{ $tsc.topologyKey }}
+          whenUnsatisfiable: {{ $tsc.whenUnsatisfiable | default "DoNotSchedule" }}
           labelSelector:
             matchLabels:
               {{- include "site-monitor.selectorLabels" . | nindent 14 }}
-          {{- with .Values.topologySpreadConstraints.matchLabelKeys }}
+          {{- with $tsc.matchLabelKeys }}
           matchLabelKeys:
             {{- toYaml . | nindent 12 }}
           {{- end }}
+        {{- end }}
+        {{- if $zone.enabled }}
+        # Zones (2026-10-23): a preference by default (ScheduleAnyway) — a single-zone cluster still schedules.
+        - maxSkew: {{ $zone.maxSkew | default 1 }}
+          topologyKey: {{ $zone.topologyKey | default "topology.kubernetes.io/zone" }}
+          whenUnsatisfiable: {{ $zone.whenUnsatisfiable | default "ScheduleAnyway" }}
+          labelSelector:
+            matchLabels:
+              {{- include "site-monitor.selectorLabels" . | nindent 14 }}
+          {{- with $tsc.matchLabelKeys }}
+          matchLabelKeys:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+        {{- end }}
       {{- end }}

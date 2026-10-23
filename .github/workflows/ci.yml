@@ -401,3 +401,90 @@ jobs:
       # çok pod koruması, staging sabit 2 replika / HPA yok, yerleşim kancaları (scripts/helm-template-check.sh).
       - name: Template checks (shutdown budget, multi-pod guards)
         run: bash scripts/helm-template-check.sh
+
+  # ──────────────────────────────────────────────
+  # 4. Image assets — previous release's page files (2026-10-23, multi-pod release 2b · MP-47)
+  # ──────────────────────────────────────────────
+  # Main's image is built only by release.yml AFTER the merge; this job exercises the Dockerfile carry stages on the
+  # PR so a broken stage never reaches a release: the carry script's own tests, the "first build" path (no previous
+  # image: nothing carried) and the real path (previous release = :latest, digest-pinned: the last CARRY_RELEASES
+  # releases' own assets carried, bounded, none colliding with this build — or nothing, with a notice, when the frontend
+  # did not change). Builds only the carry stages (frontend build + carry), no push.
+  image-assets:
+    name: Image assets (previous release carry)
+    runs-on: ubuntu-latest
+    # Sonsuz bekleme savunması (2026-10-09): takılan bir adım işi GitHub'ın 6 saatlik sınırına dek tutmasın.
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read   # ghcr.io pull of the previous release image
+
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Set up Node 24
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+
+      - name: Carry script tests
+        run: node --test scripts/__tests__/carry-previous-assets.test.mjs
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4
+        continue-on-error: true   # no package access (e.g. a fork) → only the "no previous image" path runs
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve previous release image (:latest)
+        id: prev
+        env:
+          PREV_REF: ghcr.io/${{ github.repository_owner }}/site-monitor:latest
+        run: echo "image=$(bash scripts/resolve-previous-image.sh "$PREV_REF")" >> "$GITHUB_OUTPUT"
+
+      - name: Carry stage without a previous image (first build)
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        with:
+          context: .
+          target: asset-carry-check
+          push: false
+          build-args: |
+            PREVIOUS_IMAGE=
+          outputs: type=local,dest=carry-none
+          cache-from: type=gha
+
+      - name: Carry stage with the previous release image
+        if: steps.prev.outputs.image != ''
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        with:
+          context: .
+          target: asset-carry-check
+          push: false
+          build-args: |
+            PREVIOUS_IMAGE=${{ steps.prev.outputs.image }}
+          outputs: type=local,dest=carry-prev
+          cache-from: type=gha
+
+      # scripts/check-carry-output.mjs recomputes the expected set independently (previous image's history / own list /
+      # asset listing ∩ files present − this build's names): carried must equal it. Expected empty — the frontend did not
+      # change in the last CARRY_RELEASES releases (backend-only PR) — is a ::notice::, not an error (D-1, 2026-10-23).
+      - name: Check carry output
+        env:
+          HAS_PREV: ${{ steps.prev.outputs.image != '' }}
+        run: |
+          set -uo pipefail
+          fail=0
+          node scripts/check-carry-output.mjs --out carry-none/out --previous carry-none/previous || fail=1
+          if [ "$HAS_PREV" = "true" ]; then
+            node scripts/check-carry-output.mjs --out carry-prev/out --previous carry-prev/previous --expect-previous || fail=1
+            cmp -s carry-none/out/own-assets.txt carry-prev/out/own-assets.txt               || { echo "::error::own-assets.txt iki derlemede farklı (aynı kaynak)"; fail=1; }
+            echo "carried: $(grep -c . carry-prev/out/carried-assets.txt || true) files ($(du -sh carry-prev/out/assets | cut -f1))"
+          else
+            echo "::notice::önceki sürüm imajı okunamadı — yalnız ilk derleme yolu denetlendi"
+          fi
+          exit $fail

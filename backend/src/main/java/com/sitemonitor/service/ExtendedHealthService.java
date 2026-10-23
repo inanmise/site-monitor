@@ -46,16 +46,125 @@ public class ExtendedHealthService {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private SchedulerService schedulerService;
 
-    /** Domain-expiry veri kaynağı (RDAP) durumu — Sistem Sağlığı kartı için. */
+    /** Küme durumu deposu (2026-10-23, çok pod R2b) — bean yoksa (elle kurulum / test) kendi JdbcTemplate'imizle kurulur. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.health.ClusterHealthStore clusterHealthStore;
+    private volatile com.sitemonitor.service.health.ClusterHealthStore fallbackStore;
+
+    /** Bu pod'un örnek kimliği — testler iki "pod"u ayrı kimlikle canlandırır. */
+    java.util.function.Supplier<String> instanceIdSupplier = SchedulerService::instanceId;
+
+    /** Bu pod'un en son yayınladığı RDAP gözleminin anı (epoch ms; -1 = hiç). */
+    private volatile long lastPublishedRdapMs = -1L;
+
+    private static final com.fasterxml.jackson.databind.ObjectMapper JSON = new com.fasterxml.jackson.databind.ObjectMapper();
+
+    /** Pod son heartbeat'i bu kadar dakikadan yeniyse canlı (Metrikler sayfasıyla aynı kural, {@code LIVE_MINUTES}). */
+    static final int POD_LIVE_MINUTES = 3;
+    /** Heartbeat pod listesinin penceresi (saat) ve en çok satır. */
+    static final int POD_WINDOW_HOURS = 24;
+    static final int POD_LIST_MAX = 20;
+    /** Zaman çizelgesindeki pod başına satır tavanı (30 gün × sık dağıtım = yüzlerce örnek). */
+    static final int TIMELINE_POD_MAX = 12;
+
+    com.sitemonitor.service.health.ClusterHealthStore store() {
+        com.sitemonitor.service.health.ClusterHealthStore s = clusterHealthStore;
+        if (s != null) return s;
+        s = fallbackStore;
+        if (s == null) {
+            s = new com.sitemonitor.service.health.ClusterHealthStore(jdbcTemplate);
+            fallbackStore = s;
+        }
+        return s;
+    }
+
+    private String instanceId() {
+        return instanceIdSupplier.get();
+    }
+
+    /**
+     * Domain-expiry veri kaynağı (RDAP) durumu — Sistem Sağlığı kartı için. <b>Küme geneli</b> (2026-10-23, çok pod R2b, N4):
+     * RDAP sorgusunu yalnız alan adı taramalarını koşturan pod (tarama lideri) — ve elle tanı / kayıt sekmesi açan pod —
+     * yapar; durum o pod'un belleğindeydi, takipçi "boşta" diyor ve RDAP kesintisini gizliyordu. Her pod son gözlemini
+     * heartbeat ritminde {@code cluster_observations}'a yayınlar ({@link #publishDomainExpirySource}); burada bu pod'un
+     * belleği ile kümedeki son gözlemden YENİ olanı döner, {@code observed_by} (gözlemleyen pod) ve {@code scope}
+     * ({@code cluster}; tablo okunamazsa {@code local} — yalnız bu pod) ile. Hiçbir pod sorgu yapmadıysa {@code IDLE}.
+     */
     public Map<String, Object> getDomainExpirySourceStatus() {
+        Map<String, Object> local;
         try {
-            return rdapDomainClient.getSourceStatus();
+            local = new LinkedHashMap<>(rdapDomainClient.getSourceStatus());
         } catch (Exception e) {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("source", "NONE");
             m.put("alarm", true);
             m.put("reason", e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
+            m.put("scope", "local");
+            m.put("observed_by", instanceId());
+            m.put("observed_by_pod", com.sitemonitor.service.health.ClusterHealthStore.podOf(instanceId()));
             return m;
+        }
+        long localMs = rdapEventMs(local);
+        java.util.Optional<com.sitemonitor.service.health.ClusterHealthStore.Observation> row;
+        try {
+            row = store().read(com.sitemonitor.service.health.ClusterHealthStore.OBS_RDAP);
+        } catch (Exception e) {
+            log.debug("RDAP küme gözlemi okunamadı — bu pod'un durumu gösteriliyor: {}", e.toString());
+            return withObserver(local, "local", localMs >= 0 ? instanceId() : null, localMs);
+        }
+        if (row.isPresent() && row.get().observedMs() > localMs) {
+            Map<String, Object> remote = parsePayload(row.get().payload());
+            if (remote != null) return withObserver(remote, "cluster", row.get().instanceId(), row.get().observedMs());
+        }
+        return withObserver(local, "cluster", localMs >= 0 ? instanceId() : null, localMs);
+    }
+
+    private static Map<String, Object> withObserver(Map<String, Object> m, String scope, String by, long atMs) {
+        m.put("scope", scope);
+        m.put("observed_by", by);
+        m.put("observed_by_pod", com.sitemonitor.service.health.ClusterHealthStore.podOf(by));
+        m.put("observed_at", atMs >= 0 ? java.time.Instant.ofEpochMilli(atMs).toString() : null);
+        return m;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> parsePayload(String json) {
+        if (json == null || json.isBlank()) return null;
+        try {
+            Object o = JSON.readValue(json, Map.class);
+            return o instanceof Map<?, ?> m ? new LinkedHashMap<>((Map<String, Object>) m) : null;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** RDAP durumunun son olay anı (son başarı / son hata — hangisi yeniyse), epoch ms; hiç sorgu yoksa -1. */
+    static long rdapEventMs(Map<String, Object> s) {
+        long best = -1L;
+        if (s == null) return best;
+        for (String k : new String[] {"last_success", "last_error"}) {
+            Object v = s.get(k);
+            if (v == null) continue;
+            try { best = Math.max(best, java.time.Instant.parse(String.valueOf(v)).toEpochMilli()); }
+            catch (Exception ignore) { /* biçim dışı → yok say */ }
+        }
+        return best;
+    }
+
+    /**
+     * Bu pod'un RDAP gözlemini kümeye yayınlar (heartbeat ritmi): yalnız son yayından bu yana YENİ bir sorgu olduysa ve
+     * satırdakinden yeniyse yazılır (pod başına en çok dakikada bir yazım; sorgu yoksa hiç). Hiç fırlatmaz.
+     */
+    void publishDomainExpirySource() {
+        try {
+            Map<String, Object> s = rdapDomainClient.getSourceStatus();
+            long ms = rdapEventMs(s);
+            if (ms < 0 || ms <= lastPublishedRdapMs) return;
+            var r = store().publish(com.sitemonitor.service.health.ClusterHealthStore.OBS_RDAP, instanceId(), ms,
+                    JSON.writeValueAsString(s), LocalDateTime.now(ZoneOffset.UTC).format(DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss")));
+            if (r != com.sitemonitor.service.health.ClusterHealthStore.Publish.FAILED) lastPublishedRdapMs = ms;
+        } catch (Exception e) {
+            log.debug("RDAP gözlemi yayınlanamadı: {}", e.toString());
         }
     }
 
@@ -104,24 +213,72 @@ public class ExtendedHealthService {
         try {
             SystemHeartbeat hb = new SystemHeartbeat();
             hb.setRecordedAt(LocalDateTime.now(ZoneOffset.UTC));
+            hb.setInstanceId(instanceId());   // çok pod (2026-10-23, R2b, MP-35): hangi pod yazdı
             heartbeatRepo.save(hb);
             log.debug("Heartbeat recorded at {}", hb.getRecordedAt());
             if (deploymentHistory != null) deploymentHistory.touch();
             if (schemaRegistry != null) schemaRegistry.tick();   // dakika hassasiyetinde "son veri değişimi"
         } catch (Exception e) {
             log.warn("Failed to record heartbeat: {}", e.getMessage());
+            return;
+        }
+        publishDomainExpirySource();   // RDAP kaynağının son gözlemi kümeye (N4) — hiç fırlatmaz
+    }
+
+    /**
+     * Düzgün kapanış işareti (2026-10-23, çok pod R2b, MP-35): pod listesinde bu örnek "durdu" görünür (dağıtım /
+     * ölçekleme — uyarı değil); işaret yazılamadan ölen pod "sessiz" kalır (uyarı). Sayımlara katılmaz. Hiç fırlatmaz.
+     */
+    @jakarta.annotation.PreDestroy
+    public void recordShutdownMarker() {
+        // Yok etme anı DB yazımı (inceleme D2): ortak kapanış bütçesiyle sınırlı (ShutdownDeadline) — veritabanı erişilemezse
+        // bağlantı zaman aşımı (10 sn) kapanışı geciktirmez; ayrı (daemon) iş parçacığında yazılır, süre dolarsa bırakılır.
+        Runnable write = () -> {
+            try {
+                SystemHeartbeat hb = new SystemHeartbeat();
+                hb.setRecordedAt(LocalDateTime.now(ZoneOffset.UTC));
+                hb.setInstanceId(instanceId());
+                hb.setShutdownMarker(Boolean.TRUE);
+                heartbeatRepo.save(hb);
+            } catch (Exception e) {
+                log.debug("Heartbeat kapanış işareti yazılamadı: {}", e.toString());
+            }
+        };
+        long waitMs = com.sitemonitor.config.ShutdownDeadline.waitMs(SHUTDOWN_MARKER_CAP_MS);
+        Thread t = new Thread(write, "heartbeat-shutdown-marker");
+        t.setDaemon(true);
+        t.start();
+        if (waitMs <= 0) return;   // ortak süre bitti — bekleme yok (join(0) sonsuza dek beklerdi)
+        try {
+            t.join(waitMs);
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
         }
     }
 
+    /** Kapanış işareti yazımının kendi tavanı (ms) — ortak kapanış bütçesinden fazla beklemez. */
+    static final long SHUTDOWN_MARKER_CAP_MS = 2_000L;
+
+    /**
+     * Heartbeat durumu — <b>küme geneli</b> (2026-10-23, çok pod R2b, MP-35): son sinyal ve alarm HERHANGİ bir pod'un son
+     * heartbeat'idir ("uygulama yaşıyor mu"); {@code pods} her pod'un ayrı durumudur (son {@value #POD_WINDOW_HOURS} saat):
+     * {@code live} (son heartbeat < {@value #POD_LIVE_MINUTES} dk), {@code silent} (işaretsiz sustu — çöktü / zamanlayıcısı
+     * takıldı: UYARI), {@code restarted} (sustu ama aynı adlı pod'un yeni süreci canlı — konteyner yeniden başladı, uyarı
+     * değil), {@code stopped} (kapanış işareti — dağıtım / ölçekleme). Eskiden tek bir "son heartbeat" vardı: ikinci pod
+     * yazmaya devam ettikçe ölen / takılan pod hiç görünmüyordu. Kapanış işaretleri son sinyal sayılmaz.
+     */
     public Map<String, Object> getHeartbeatStatus() {
         try {
-            List<SystemHeartbeat> recent5 = heartbeatRepo.findTop5ByOrderByRecordedAtDesc();
+            List<SystemHeartbeat> recent5 = heartbeatRepo.findTop5ByOrderByRecordedAtDesc().stream()
+                    .filter(hb -> !Boolean.TRUE.equals(hb.getShutdownMarker()))
+                    .toList();
             if (recent5.isEmpty()) {
                 Map<String, Object> m = new LinkedHashMap<>();
                 m.put("last_heartbeat", null);
                 m.put("minutes_since", -1);
                 m.put("alarm", true);
                 m.put("recent", List.of());
+                putPods(m);
                 return m;
             }
             LocalDateTime lastTs = recent5.get(0).getRecordedAt();
@@ -134,6 +291,7 @@ public class ExtendedHealthService {
             m.put("minutes_since", minutes);
             m.put("alarm", minutes > 3);
             m.put("recent", recentList);
+            putPods(m);
             return m;
         } catch (Exception e) {
             log.warn("getHeartbeatStatus failed: {}", e.getMessage());
@@ -145,6 +303,111 @@ public class ExtendedHealthService {
             m.put("error", e.getMessage());
             return m;
         }
+    }
+
+    /** Pod listesi + sayaçlar; okunamazsa {@code pods_error} (pod listesi bilinmiyor — "hepsi canlı" denmez). */
+    private void putPods(Map<String, Object> m) {
+        m.put("served_by", instanceId());
+        m.put("served_by_pod", com.sitemonitor.service.health.ClusterHealthStore.podOf(instanceId()));
+        try {
+            LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+            List<Map<String, Object>> pods = podStates(heartbeatRepo.podSummariesSince(now.minusHours(POD_WINDOW_HOURS)), now);
+            m.put("pods_total", pods.size());
+            m.put("pods_live", pods.stream().filter(p -> "live".equals(p.get("state"))).count());
+            m.put("pods_silent", pods.stream().filter(p -> "silent".equals(p.get("state"))).count());
+            m.put("pods", pods.size() > POD_LIST_MAX ? new ArrayList<>(pods.subList(0, POD_LIST_MAX)) : pods);
+        } catch (Exception e) {
+            log.debug("Heartbeat pod listesi okunamadı: {}", e.toString());
+            m.put("pods", null);
+            m.put("pods_error", e.getClass().getSimpleName());
+        }
+    }
+
+    /**
+     * Pod özet satırları ({@code [instanceId, ilk, son, işaret sayısı]}) → durumlu, sıralı liste (canlı → sessiz →
+     * yeniden başladı → durdu; aynı durumda en yeni süreç önce). Aynı adlı birden çok süreç kimliğin son ekiyle ayrılır.
+     */
+    static List<Map<String, Object>> podStates(List<Object[]> rows, LocalDateTime now) {
+        List<Map<String, Object>> all = new ArrayList<>();
+        LocalDateTime liveSince = now.minusMinutes(POD_LIVE_MINUTES);
+        java.util.Set<String> livePods = new java.util.HashSet<>();
+        for (Object[] r : rows == null ? List.<Object[]>of() : rows) {
+            if (r == null || r.length < 3 || r[0] == null || !(r[2] instanceof LocalDateTime last)) continue;
+            String id = String.valueOf(r[0]);
+            LocalDateTime first = r[1] instanceof LocalDateTime f ? f : last;
+            boolean marker = r.length > 3 && r[3] instanceof Number n && n.longValue() > 0;
+            String state = marker ? "stopped" : !last.isBefore(liveSince) ? "live" : "silent";
+            String pod = com.sitemonitor.service.health.ClusterHealthStore.podOf(id);
+            if ("live".equals(state)) livePods.add(pod);
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("id", id);
+            m.put("pod", pod);
+            m.put("name", pod);
+            m.put("state", state);
+            m.put("first_seen", first.toString());
+            m.put("last_seen", last.toString());
+            m.put("minutes_since", Math.max(0L, ChronoUnit.MINUTES.between(last, now)));
+            all.add(m);
+        }
+        Map<String, Integer> sameName = new java.util.HashMap<>();
+        for (Map<String, Object> m : all) sameName.merge(String.valueOf(m.get("pod")), 1, Integer::sum);
+        for (Map<String, Object> m : all) {
+            String pod = String.valueOf(m.get("pod"));
+            if ("silent".equals(m.get("state")) && livePods.contains(pod)) m.put("state", "restarted");
+            if (sameName.get(pod) > 1) m.put("name", pod + " · " + suffixOf(String.valueOf(m.get("id"))));
+        }
+        markReplaced(all);
+        all.sort(java.util.Comparator
+                .<Map<String, Object>>comparingInt(m -> podRank(m.get("state")))
+                .thenComparing(m -> String.valueOf(m.get("first_seen")), java.util.Comparator.reverseOrder())
+                .thenComparing(m -> String.valueOf(m.get("id"))));
+        return all;
+    }
+
+    /**
+     * Yerine yenisi gelen sessiz pod (inceleme D1): Deployment ölen / tahliye edilen pod'u YENİ adla değiştirir — eski süreç
+     * 24 saat "sessiz" (uyarı) kalıyordu. Sessiz pod, susmasından SONRA ilk kez görünen ve adı o ana dek HİÇ görülmemiş bir
+     * canlı pod'la eşlenirse {@code replaced} (nötr) olur; her yeni pod en çok bir sessiz pod'u karşılar. Takılı ama hâlâ
+     * çalışan pod'un yerine yeni pod gelmez → "sessiz" (uyarı) kalır; aynı adla yeniden başlayan konteyner zaten "yeniden
+     * başladı". Zamanlar aynı biçimli UTC metni — sözlük sırası zaman sırasıdır.
+     */
+    static void markReplaced(List<Map<String, Object>> pods) {
+        List<Map<String, Object>> silent = new ArrayList<>();
+        List<Map<String, Object>> live = new ArrayList<>();
+        for (Map<String, Object> p : pods) {
+            if ("silent".equals(p.get("state"))) silent.add(p);
+            else if ("live".equals(p.get("state"))) live.add(p);
+        }
+        if (silent.isEmpty() || live.isEmpty()) return;
+        silent.sort(java.util.Comparator.comparing(p -> String.valueOf(p.get("last_seen"))));
+        java.util.Set<Map<String, Object>> used = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        for (Map<String, Object> s : silent) {
+            String wentSilent = String.valueOf(s.get("last_seen"));
+            for (Map<String, Object> l : live) {
+                if (used.contains(l)) continue;
+                String name = String.valueOf(l.get("pod"));
+                if (String.valueOf(l.get("first_seen")).compareTo(wentSilent) <= 0) continue;   // susmadan önce de vardı
+                boolean nameSeenBefore = pods.stream().anyMatch(o -> name.equals(String.valueOf(o.get("pod")))
+                        && String.valueOf(o.get("first_seen")).compareTo(wentSilent) <= 0);
+                if (nameSeenBefore) continue;                                                     // eski pod'un yeniden başlaması
+                used.add(l);
+                s.put("state", "replaced");
+                s.put("replaced_by", l.get("name"));
+                break;
+            }
+        }
+    }
+
+    private static int podRank(Object state) {
+        if ("live".equals(state)) return 0;
+        if ("silent".equals(state)) return 1;
+        if ("restarted".equals(state) || "replaced".equals(state)) return 2;
+        return 3;
+    }
+
+    private static String suffixOf(String id) {
+        int dash = id.lastIndexOf('-');
+        return dash >= 0 && dash < id.length() - 1 ? id.substring(dash + 1) : id;
     }
 
     /**
@@ -186,6 +449,12 @@ public class ExtendedHealthService {
         }
     }
 
+    /**
+     * Heartbeat zaman çizelgesi — <b>küme</b> (2026-10-23, çok pod R2b, MP-35): kovada heartbeat ALAN dakika sayısı
+     * (farklı dakika; iki pod aynı dakikada yazınca 1). Eskiden satır sayılıyordu: 2 pod → "2880 / 1440 alınan", bir pod
+     * ölse de şerit yeşil kalıyordu. {@code pods}: pod başına alınan / beklenen dakika (ilk heartbeat'inden son
+     * heartbeat'ine — canlıysa şimdiye); en yeni {@value #TIMELINE_POD_MAX} süreç, fazlası {@code pods_more}.
+     */
     public Map<String, Object> getHeartbeatTimeline(int days) {
         int d = Math.max(1, Math.min(days, 30));
         int bucketMinutes = (d == 1) ? 10 : 60;
@@ -201,32 +470,75 @@ public class ExtendedHealthService {
         // `expected`i kalan dakika kadardır — "10 beklenen / 3 gelen" yanlış kaybı üretmesin.
         int totalBuckets = (int) Math.ceil(totalMinutes / (double) bucketMinutes);
         if (totalBuckets <= 0) totalBuckets = 1;
-        long[] counts = new long[totalBuckets];
+        int span = totalBuckets * bucketMinutes;
 
-        List<SystemHeartbeat> rows = heartbeatRepo.findByRecordedAtAfterOrderByRecordedAtAsc(cutoff);
-        for (SystemHeartbeat hb : rows) {
-            long minutesFromCutoff = ChronoUnit.MINUTES.between(cutoff, hb.getRecordedAt());
-            int idx = (int)(minutesFromCutoff / bucketMinutes);
-            if (idx >= 0 && idx < totalBuckets) counts[idx]++;
+        java.util.BitSet cluster = new java.util.BitSet(span);
+        Map<String, java.util.BitSet> perPod = new LinkedHashMap<>();
+        for (Object[] row : heartbeatRepo.findBeatsAfter(cutoff)) {
+            if (row == null || row.length < 1 || !(row[0] instanceof LocalDateTime at)) continue;
+            long minute = ChronoUnit.MINUTES.between(cutoff, at);
+            if (minute < 0 || minute >= span) continue;
+            cluster.set((int) minute);
+            Object id = row.length > 1 ? row[1] : null;
+            if (id != null) perPod.computeIfAbsent(String.valueOf(id), k -> new java.util.BitSet(span)).set((int) minute);
         }
 
         List<Map<String, Object>> buckets = new ArrayList<>(totalBuckets);
         for (int i = 0; i < totalBuckets; i++) {
             Map<String, Object> b = new LinkedHashMap<>();
-            long bucketStartMin = (long) i * bucketMinutes;
+            int bucketStartMin = i * bucketMinutes;
             // Son kova kısmi olabilir: beklenen = pencerede kalan dakika (en az 1).
             int expected = (int) Math.max(1, Math.min(bucketMinutes, totalMinutes - bucketStartMin));
             b.put("start",    cutoff.plusMinutes(bucketStartMin).toString());
             b.put("expected", expected);
-            b.put("received", (int) counts[i]);
+            b.put("received", cluster.get(bucketStartMin, bucketStartMin + bucketMinutes).cardinality());
             buckets.add(b);
         }
 
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("days",           d);
         out.put("bucket_minutes", bucketMinutes);
+        out.put("counting",       "distinct_minutes");
         out.put("buckets",        buckets);
+        out.put("served_by",      instanceId());
+        putTimelinePods(out, perPod, cutoff, now, totalMinutes);
         return out;
+    }
+
+    private void putTimelinePods(Map<String, Object> out, Map<String, java.util.BitSet> perPod, LocalDateTime cutoff,
+                                 LocalDateTime now, long totalMinutes) {
+        Map<String, Map<String, Object>> states = new LinkedHashMap<>();
+        try {
+            for (Map<String, Object> p : podStates(heartbeatRepo.podSummariesSince(cutoff), now)) states.put(String.valueOf(p.get("id")), p);
+        } catch (Exception e) {
+            log.debug("Zaman çizelgesi pod durumları okunamadı: {}", e.toString());
+        }
+        List<Map<String, Object>> pods = new ArrayList<>();
+        for (Map.Entry<String, java.util.BitSet> e : perPod.entrySet()) {
+            java.util.BitSet bits = e.getValue();
+            int first = bits.nextSetBit(0);
+            int last = bits.length() - 1;
+            if (first < 0) continue;
+            Map<String, Object> st = states.get(e.getKey());
+            String state = st != null ? String.valueOf(st.get("state")) : null;
+            // Canlı pod şimdiye kadar beklenir; diğerleri son heartbeat'lerine kadar (durdu / sustu sonrası "kayıp" değil).
+            long end = "live".equals(state) ? Math.max(last, totalMinutes - 1) : last;
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("id", e.getKey());
+            m.put("name", st != null ? st.get("name") : com.sitemonitor.service.health.ClusterHealthStore.podOf(e.getKey()));
+            m.put("state", state);
+            m.put("first_seen", cutoff.plusMinutes(first).toString());
+            m.put("last_seen", cutoff.plusMinutes(last).toString());
+            m.put("received", bits.cardinality());
+            m.put("expected", (int) Math.max(1L, end - first + 1));
+            pods.add(m);
+        }
+        pods.sort(java.util.Comparator
+                .<Map<String, Object>>comparingInt(m -> podRank(m.get("state")))
+                .thenComparing(m -> String.valueOf(m.get("last_seen")), java.util.Comparator.reverseOrder())
+                .thenComparing(m -> String.valueOf(m.get("id"))));
+        out.put("pods_more", Math.max(0, pods.size() - TIMELINE_POD_MAX));
+        out.put("pods", pods.size() > TIMELINE_POD_MAX ? new ArrayList<>(pods.subList(0, TIMELINE_POD_MAX)) : pods);
     }
 
     // ── SMTP stats ────────────────────────────────────────────────────────────

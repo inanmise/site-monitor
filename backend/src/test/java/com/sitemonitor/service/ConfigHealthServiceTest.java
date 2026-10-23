@@ -62,7 +62,14 @@ class ConfigHealthServiceTest {
         when(auditLogRepo.findTopByEventTypeOrderByEventTimeDesc(anyString())).thenReturn(Optional.empty());
         when(inventoryRepo.countByActiveTrueAndTeamIdIsNull()).thenReturn(0L);
         when(latestCheckRepo.findWeakAlgorithmCandidates()).thenReturn(List.of());
-        when(schedulerService.getStatus()).thenReturn(Map.of("last_run", LocalDateTime.now(ZoneOffset.UTC).minusMinutes(20).toString()));
+        // 2026-10-23 (çok pod R2b, N3): denetim küme tarama durumunu okur (getStatus'un "Not yet run" metni değil)
+        when(schedulerService.clusterScanStatus()).thenReturn(scan(LocalDateTime.now(ZoneOffset.UTC).minusMinutes(20).withNano(0).toString(), false, null));
+    }
+
+    static SchedulerService.ScanStatus scan(String lastRun, boolean running, String runningOn) {
+        Long age = lastRun == null ? null : java.time.Duration.between(LocalDateTime.parse(lastRun), LocalDateTime.now(ZoneOffset.UTC)).toMillis();
+        return new SchedulerService.ScanStatus(lastRun, "hourly", "pod1-00000001", "r1", 1L, 1, 0, 0, null, null,
+                running, runningOn, "cluster", Map.of(), Map.of("held", running), age);
     }
 
     private Map<String, Object> check(Map<String, Object> body, String key) {
@@ -93,7 +100,7 @@ class ConfigHealthServiceTest {
         when(userPushService.healthSnapshot()).thenReturn(Map.of("enabled", true, "circuit_open", true, "consecutive_failures", 4));
         ReflectionTestUtils.setField(svc, "reminderCron", "0 0 9 ? * FRI");
         when(appSettings.getString(eq(WeeklyReportDeadline.KEY_DAY), any())).thenReturn("THU");
-        when(schedulerService.getStatus()).thenReturn(Map.of("last_run", LocalDateTime.now(ZoneOffset.UTC).minusHours(3).toString()));
+        when(schedulerService.clusterScanStatus()).thenReturn(scan(LocalDateTime.now(ZoneOffset.UTC).minusHours(3).withNano(0).toString(), false, null));
         when(appSettings.getString(eq("site.monitor.app.base-url"), any())).thenReturn("http://localhost:5173");
         when(inventoryRepo.countByActiveTrueAndTeamIdIsNull()).thenReturn(5L);
 
@@ -112,10 +119,20 @@ class ConfigHealthServiceTest {
     @Test
     @DisplayName("bir kontrol istisna fırlatırsa kart yine döner: o satır bad + error:<sınıf>")
     void probeFailureIsIsolated() {
-        when(schedulerService.getStatus()).thenThrow(new IllegalStateException("boom"));
+        when(schedulerService.clusterScanStatus()).thenThrow(new IllegalStateException("boom"));
         Map<String, Object> b = svc.build();
         assertThat(check(b, "scheduler")).containsEntry("status", "bad").containsEntry("detail", "error:IllegalStateException");
         assertThat(check(b, "push")).containsEntry("status", "ok");
+    }
+
+    @Test
+    @DisplayName("zamanlayıcı (N3): kümede hiç koşu yok → warn never (eskiden 'Not yet run' → unparsable); başka pod'da koşuyor → ok running; 3 sa eski ama koşu sürüyor → bayat değil")
+    void schedulerCheckUsesClusterStatus() {
+        when(schedulerService.clusterScanStatus()).thenReturn(scan(null, false, null));
+        assertThat(check(svc.build(), "scheduler")).containsEntry("status", "warn").containsEntry("detail", "never");
+        when(schedulerService.clusterScanStatus()).thenReturn(scan(LocalDateTime.now(ZoneOffset.UTC).minusHours(3).withNano(0).toString(), true,
+                "site-monitor-7d9f-x2k4p-1a2b3c4d"));
+        assertThat(check(svc.build(), "scheduler")).containsEntry("status", "ok").containsEntry("detail", "running:site-monitor-7d9f-x2k4p");
     }
 
     @Test

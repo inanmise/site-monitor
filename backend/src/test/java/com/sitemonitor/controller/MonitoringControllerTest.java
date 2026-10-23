@@ -1301,6 +1301,39 @@ class MonitoringControllerTest {
                 (com.sitemonitor.model.AlertEvent a) -> "yeni-ad".equals(a.getDomain())));
     }
 
+    @Autowired org.springframework.context.ApplicationContext applicationContext;
+
+    @Test
+    @DisplayName("R2b · F: hedefli yazıcı varken rename açık alarmın yalnız domain kolonunu, yalnız hâlâ AÇIKSA yazar — bütün varlık kaydı yok, okunan alarm değişmez")
+    void scriptedRename_withFieldWriter_rekeysTargeted() throws Exception {
+        com.sitemonitor.model.ScriptedMonitor m = new com.sitemonitor.model.ScriptedMonitor();
+        m.setId(4L); m.setName("eski-ad");
+        when(scriptedMonitorRepo.findById(4L)).thenReturn(Optional.of(m));
+        when(scriptedMonitorRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+        when(scriptedCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(4L)).thenReturn(Optional.empty());
+        com.sitemonitor.model.AlertEvent open = new com.sitemonitor.model.AlertEvent();
+        open.setId(77L); open.setDomain("eski-ad"); open.setAlertType(com.sitemonitor.service.EscalationService.TYPE_SCRIPTED_FAIL);
+        when(alertEventRepo.findOpenAlerts(eq("eski-ad"), eq(com.sitemonitor.service.EscalationService.TYPE_SCRIPTED_FAIL)))
+                .thenReturn(List.of(open));
+        com.sitemonitor.service.AlertEventFieldWriter writer =
+                org.mockito.Mockito.mock(com.sitemonitor.service.AlertEventFieldWriter.class);
+        MonitoringController target = org.springframework.test.util.AopTestUtils.getTargetObject(
+                applicationContext.getBean(MonitoringController.class));
+        org.springframework.test.util.ReflectionTestUtils.setField(target, "alertFieldWriter", writer);
+        try {
+            mvc.perform(put("/api/monitoring/scripted/4").session(session("ADMIN"))
+                            .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                            .content("{\"name\":\"yeni-ad\"}"))
+                    .andExpect(status().isOk());
+        } finally {
+            org.springframework.test.util.ReflectionTestUtils.setField(target, "alertFieldWriter", null);
+        }
+
+        verify(writer).writeValues(77L, java.util.Map.of("domain", "yeni-ad"), true);
+        verify(alertEventRepo, never()).save(any(com.sitemonitor.model.AlertEvent.class));
+        assertThat(open.getDomain()).as("okunan alarm değiştirilmez").isEqualTo("eski-ad");
+    }
+
     // ── 2026-10-09 düzeltmeleri: rename sahipliği, Test özel başlığı, geri yükleme kaybı, alan adı silme türleri ──
 
     private static com.sitemonitor.model.AlertEvent scriptedAlarm(String name, long monitorId, long teamId) {

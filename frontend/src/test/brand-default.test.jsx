@@ -114,9 +114,13 @@ describe('varsayılan marka logosu (turp) — koruma', () => {
     expect(html).toMatch(/<meta name="theme-color" content="#813387" media="\(prefers-color-scheme: light\)"/)
     expect(html).toMatch(/<meta name="theme-color" content="#[0-9a-f]{6}" media="\(prefers-color-scheme: dark\)"/)
     const scripts = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/g)]
-    expect(scripts).toHaveLength(1)
-    expect(scripts[0][1]).toMatch(/type="module" src="\/src\/main\.jsx"/)
-    expect(scripts[0][2].trim()).toBe('')
+    // Çok pod R2b (2026-10-23, MP-47): uygulama paketinden ÖNCE harici, hash'siz açılış koruması (public/boot-guard.js;
+    // klasik betik — modül değil, ertelenmez: paketin yükleme hatasını yakalayabilmesi için önce kurulmalı).
+    expect(scripts).toHaveLength(2)
+    expect(scripts[0][1].trim()).toBe('src="/boot-guard.js"')
+    expect(fs.existsSync(path.join(PUB, 'boot-guard.js'))).toBe(true)
+    expect(scripts[1][1]).toMatch(/type="module" src="\/src\/main\.jsx"/)
+    for (const s of scripts) expect(s[2].trim()).toBe('')                   // satır içi betik yok (CSP)
     expect(html).not.toMatch(/\son[a-z]+=/i)
   })
 

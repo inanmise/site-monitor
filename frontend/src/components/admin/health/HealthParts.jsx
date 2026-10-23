@@ -1,4 +1,4 @@
-import { RefreshCw } from 'lucide-react'
+import { Network, RefreshCw, Server } from 'lucide-react'
 import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
 import { Card } from '@/components/shadcn/card'
@@ -73,7 +73,8 @@ export function SectionToolbar({ left, children }) {
 export function RefreshButton({ onClick, busy, label, size = 'icon' }) {
   return (
     <SimpleTooltip content={label}>
-      <Button type="button" variant="ghost" size={size} onClick={onClick} disabled={busy} aria-label={label} aria-busy={busy || undefined}>
+      <Button type="button" variant="ghost" size={size} onClick={onClick} disabled={busy} aria-label={label} aria-busy={busy || undefined}
+        className="pointer-coarse:size-10">
         <RefreshCw aria-hidden="true" className={cn(busy && 'animate-spin motion-reduce:animate-none')} />
       </Button>
     </SimpleTooltip>
@@ -117,7 +118,7 @@ export function KvList({ children, className }) {
 /** Kart alt eylem düğmesi (kartı açan tıklamanın KLAVYE yolu). */
 export function CardCta({ icon: Icon, label, badge, onClick, variant = 'outline' }) {
   return (
-    <Button type="button" variant={variant} size="sm" className="mt-1 h-10 w-full justify-start gap-2 sm:h-9"
+    <Button type="button" variant={variant} size="sm" className="mt-1 h-10 w-full justify-start gap-2 sm:h-9 pointer-coarse:h-10"
       onClick={(e) => { e.stopPropagation(); onClick() }}>
       {Icon && <Icon aria-hidden="true" />}
       <span className="min-w-0 flex-1 truncate text-left">{label}</span>
@@ -169,5 +170,22 @@ export function HealthSkeleton({ sections = 8, label }) {
       </div>
       {Array.from({ length: sections }, (_, i) => <Skeleton key={i} className={cn('h-11 rounded-[10px]', sk)} />)}
     </div>
+  )
+}
+
+/**
+ * Kapsam etiketi (2026-10-23, çok pod R2b, MP-37a): "Bu pod: <ad>" (değer yanıtlayan pod'un belleğinden — diğer pod'lar kendi
+ * değerlerini tutar) ya da "Küme" (veritabanından; hangi pod yanıtlarsa aynı). Pod adı SARAR, kırpılmaz. Test kancası:
+ * `data-slot="pod-chip"` + `data-scope`.
+ */
+export function PodChip({ t, scope = 'pod', pod, className }) {
+  const Icon = scope === 'cluster' ? Network : Server
+  const label = scope === 'cluster' ? t('hmp.scopeCluster') : pod ? t('hmp.thisPodNamed', pod) : t('hmp.thisPod')
+  return (
+    <Badge variant="outline" data-slot="pod-chip" data-scope={scope}
+      className={cn('h-auto max-w-full justify-start overflow-visible rounded-md py-0.5 text-left font-normal tracking-normal whitespace-normal text-muted-foreground normal-case [overflow-wrap:anywhere]', className)}>
+      <Icon aria-hidden="true" />
+      <span className="min-w-0">{label}</span>
+    </Badge>
   )
 }

@@ -111,7 +111,7 @@
       }
     } ]
   },
-  "description" : "SiteMonitor izleme durumu, alarmlar, sertifikalar ve sistemin kendi sağlığı — takım ve tür süzgeçli. Pano revizyonu 2 · SiteMonitor 0.0.0-gate.",
+  "description" : "SiteMonitor izleme durumu, alarmlar, sertifikalar ve sistemin kendi sağlığı — takım ve tür süzgeçli. Pano revizyonu 4 · SiteMonitor 0.0.0-gate.",
   "editable" : true,
   "fiscalYearStartMonth" : 0,
   "graphTooltip" : 1,
@@ -8663,7 +8663,7 @@
     }, {
       "type" : "state-timeline",
       "title" : "Kendi kendini izleme kontrolleri",
-      "description" : "Tarama liderliği, izleme ve sertifika taramaları, bildirim, push kuyruğu ve veritabanı kontrollerinin durumu, zamanla.",
+      "description" : "Tarama liderliği, izleme ve sertifika taramaları, bildirim, push kuyruğu, veritabanı ve saat uyumu kontrollerinin durumu, zamanla.",
       "datasource" : {
         "type" : "prometheus",
         "uid" : "${datasource}"
@@ -9249,7 +9249,7 @@
     }, {
       "type" : "stat",
       "title" : "Okunamayan kaynak",
-      "description" : "Aktarıcının son turda okuyamadığı kaynaklar (o kaynağın panelleri \"veri yok\" gösterir).",
+      "description" : "Aktarıcının son turda en az bir pod'da okuyamadığı kaynaklar — kaynak başına bir kez sayılır (o kaynağın panelleri \"veri yok\" gösterebilir).",
       "datasource" : {
         "type" : "prometheus",
         "uid" : "${datasource}"
@@ -9280,7 +9280,7 @@
           "uid" : "${datasource}"
         },
         "editorMode" : "code",
-        "expr" : "(count(sitemonitor_exporter_source_up{namespace=\"site-monitor-prod\", job=~\"$job\", instance=~\"$instance\"} == 0)) or (vector(0) and on() (max(sitemonitor_exporter_source_up{namespace=\"site-monitor-prod\", source=\"overview\"}) == 1))",
+        "expr" : "(count(min by (source) (sitemonitor_exporter_source_up{namespace=\"site-monitor-prod\", job=~\"$job\", instance=~\"$instance\"}) == 0)) or (vector(0) and on() (max(sitemonitor_exporter_source_up{namespace=\"site-monitor-prod\", source=\"overview\"}) == 1))",
         "instant" : false,
         "legendFormat" : "__auto",
         "range" : true,
@@ -9491,6 +9491,430 @@
         "y" : 251
       },
       "id" : 96
+    }, {
+      "type" : "stat",
+      "title" : "Elle kontrol gelen kutusu",
+      "description" : "Takipçi pod'dan lidere iletilip henüz değerlendirilmemiş elle kontrol sonuçları (küme). Lider 5 sn'de bir boşaltır; birikiyorsa lider boşaltmıyordur.",
+      "datasource" : {
+        "type" : "prometheus",
+        "uid" : "${datasource}"
+      },
+      "fieldConfig" : {
+        "defaults" : {
+          "unit" : "short",
+          "thresholds" : {
+            "mode" : "absolute",
+            "steps" : [ {
+              "color" : "green",
+              "value" : null
+            }, {
+              "color" : "orange",
+              "value" : 10
+            }, {
+              "color" : "red",
+              "value" : 50
+            } ]
+          },
+          "color" : {
+            "mode" : "thresholds"
+          },
+          "noValue" : "Veri yok"
+        },
+        "overrides" : [ ]
+      },
+      "targets" : [ {
+        "datasource" : {
+          "type" : "prometheus",
+          "uid" : "${datasource}"
+        },
+        "editorMode" : "code",
+        "expr" : "max(sitemonitor_eval_inbox_depth{namespace=\"site-monitor-prod\"})",
+        "instant" : false,
+        "legendFormat" : "__auto",
+        "range" : true,
+        "refId" : "A"
+      } ],
+      "transformations" : [ ],
+      "options" : {
+        "colorMode" : "background",
+        "graphMode" : "area",
+        "justifyMode" : "auto",
+        "orientation" : "auto",
+        "percentChangeColorMode" : "standard",
+        "reduceOptions" : {
+          "calcs" : [ "lastNotNull" ],
+          "fields" : "",
+          "values" : false
+        },
+        "showPercentChange" : false,
+        "textMode" : "auto",
+        "wideLayout" : true
+      },
+      "gridPos" : {
+        "h" : 4,
+        "w" : 6,
+        "x" : 12,
+        "y" : 251
+      },
+      "id" : 97
+    }, {
+      "type" : "stat",
+      "title" : "Pod saatleri arası fark",
+      "description" : "En ileri ve en geri pod saati arasındaki fark (veritabanı saatine göre ölçülür; ortak kayma farkı değiştirmez). 5 sn üstü uyarı, 30 sn üstü liderlik kirası ve kilitler için risk.",
+      "datasource" : {
+        "type" : "prometheus",
+        "uid" : "${datasource}"
+      },
+      "fieldConfig" : {
+        "defaults" : {
+          "unit" : "s",
+          "thresholds" : {
+            "mode" : "absolute",
+            "steps" : [ {
+              "color" : "green",
+              "value" : null
+            }, {
+              "color" : "orange",
+              "value" : 5
+            }, {
+              "color" : "red",
+              "value" : 30
+            } ]
+          },
+          "color" : {
+            "mode" : "thresholds"
+          },
+          "noValue" : "Veri yok"
+        },
+        "overrides" : [ ]
+      },
+      "targets" : [ {
+        "datasource" : {
+          "type" : "prometheus",
+          "uid" : "${datasource}"
+        },
+        "editorMode" : "code",
+        "expr" : "max(sitemonitor_clock_skew_seconds{namespace=\"site-monitor-prod\", job=~\"$job\", instance=~\"$instance\"}) - min(sitemonitor_clock_skew_seconds{namespace=\"site-monitor-prod\", job=~\"$job\", instance=~\"$instance\"})",
+        "instant" : false,
+        "legendFormat" : "__auto",
+        "range" : true,
+        "refId" : "A"
+      } ],
+      "transformations" : [ ],
+      "options" : {
+        "colorMode" : "background",
+        "graphMode" : "area",
+        "justifyMode" : "auto",
+        "orientation" : "auto",
+        "percentChangeColorMode" : "standard",
+        "reduceOptions" : {
+          "calcs" : [ "lastNotNull" ],
+          "fields" : "",
+          "values" : false
+        },
+        "showPercentChange" : false,
+        "textMode" : "auto",
+        "wideLayout" : true
+      },
+      "gridPos" : {
+        "h" : 4,
+        "w" : 6,
+        "x" : 18,
+        "y" : 251
+      },
+      "id" : 98
+    }, {
+      "type" : "stat",
+      "title" : "Kaybedilen kilit (24 sa)",
+      "description" : "Son 24 saatte pod'ların yenileme sırasında kaybettiği iş kilitleri (başka pod aldı ya da zorla bırakıldı). 0 olmalı.",
+      "datasource" : {
+        "type" : "prometheus",
+        "uid" : "${datasource}"
+      },
+      "fieldConfig" : {
+        "defaults" : {
+          "unit" : "short",
+          "thresholds" : {
+            "mode" : "absolute",
+            "steps" : [ {
+              "color" : "green",
+              "value" : null
+            }, {
+              "color" : "orange",
+              "value" : 1
+            }, {
+              "color" : "red",
+              "value" : 5
+            } ]
+          },
+          "color" : {
+            "mode" : "thresholds"
+          },
+          "noValue" : "Veri yok"
+        },
+        "overrides" : [ ]
+      },
+      "targets" : [ {
+        "datasource" : {
+          "type" : "prometheus",
+          "uid" : "${datasource}"
+        },
+        "editorMode" : "code",
+        "expr" : "sum(increase(sitemonitor_cluster_lock_lost{namespace=\"site-monitor-prod\", job=~\"$job\", instance=~\"$instance\"}[24h]))",
+        "instant" : false,
+        "legendFormat" : "__auto",
+        "range" : true,
+        "refId" : "A"
+      } ],
+      "transformations" : [ ],
+      "options" : {
+        "colorMode" : "background",
+        "graphMode" : "area",
+        "justifyMode" : "auto",
+        "orientation" : "auto",
+        "percentChangeColorMode" : "standard",
+        "reduceOptions" : {
+          "calcs" : [ "lastNotNull" ],
+          "fields" : "",
+          "values" : false
+        },
+        "showPercentChange" : false,
+        "textMode" : "auto",
+        "wideLayout" : true
+      },
+      "gridPos" : {
+        "h" : 4,
+        "w" : 6,
+        "x" : 0,
+        "y" : 259
+      },
+      "id" : 99
+    }, {
+      "type" : "stat",
+      "title" : "Push kira hatası (24 sa)",
+      "description" : "Son 24 saatte push kuyruğu kira tazelemesinin düştüğü ya da satırların başka pod'a geçtiği batch'ler. 0 olmalı.",
+      "datasource" : {
+        "type" : "prometheus",
+        "uid" : "${datasource}"
+      },
+      "fieldConfig" : {
+        "defaults" : {
+          "unit" : "short",
+          "thresholds" : {
+            "mode" : "absolute",
+            "steps" : [ {
+              "color" : "green",
+              "value" : null
+            }, {
+              "color" : "orange",
+              "value" : 1
+            }, {
+              "color" : "red",
+              "value" : 10
+            } ]
+          },
+          "color" : {
+            "mode" : "thresholds"
+          },
+          "noValue" : "Veri yok"
+        },
+        "overrides" : [ ]
+      },
+      "targets" : [ {
+        "datasource" : {
+          "type" : "prometheus",
+          "uid" : "${datasource}"
+        },
+        "editorMode" : "code",
+        "expr" : "sum(increase(sitemonitor_push_lease_renew_failed{namespace=\"site-monitor-prod\", job=~\"$job\", instance=~\"$instance\"}[24h]))",
+        "instant" : false,
+        "legendFormat" : "__auto",
+        "range" : true,
+        "refId" : "A"
+      } ],
+      "transformations" : [ ],
+      "options" : {
+        "colorMode" : "background",
+        "graphMode" : "area",
+        "justifyMode" : "auto",
+        "orientation" : "auto",
+        "percentChangeColorMode" : "standard",
+        "reduceOptions" : {
+          "calcs" : [ "lastNotNull" ],
+          "fields" : "",
+          "values" : false
+        },
+        "showPercentChange" : false,
+        "textMode" : "auto",
+        "wideLayout" : true
+      },
+      "gridPos" : {
+        "h" : 4,
+        "w" : 6,
+        "x" : 6,
+        "y" : 259
+      },
+      "id" : 100
+    }, {
+      "type" : "timeseries",
+      "title" : "Saat farkı (pod başına)",
+      "description" : "Her pod'un saati eksi veritabanı saati (pozitif = pod ileride). Çizgilerin birbirinden uzaklaşması risktir; hepsinin birlikte kayması yalnız veritabanı saatinin farkıdır.",
+      "datasource" : {
+        "type" : "prometheus",
+        "uid" : "${datasource}"
+      },
+      "fieldConfig" : {
+        "defaults" : {
+          "unit" : "s",
+          "color" : {
+            "mode" : "palette-classic"
+          },
+          "custom" : {
+            "axisPlacement" : "auto",
+            "barAlignment" : 0,
+            "drawStyle" : "line",
+            "fillOpacity" : 12,
+            "gradientMode" : "opacity",
+            "lineInterpolation" : "smooth",
+            "lineWidth" : 2,
+            "pointSize" : 4,
+            "showPoints" : "never",
+            "spanNulls" : false,
+            "stacking" : {
+              "group" : "A",
+              "mode" : "none"
+            },
+            "thresholdsStyle" : {
+              "mode" : "off"
+            }
+          }
+        },
+        "overrides" : [ ]
+      },
+      "targets" : [ {
+        "datasource" : {
+          "type" : "prometheus",
+          "uid" : "${datasource}"
+        },
+        "editorMode" : "code",
+        "expr" : "max by (instance) (sitemonitor_clock_skew_seconds{namespace=\"site-monitor-prod\", job=~\"$job\", instance=~\"$instance\"})",
+        "instant" : false,
+        "legendFormat" : "{{instance}}",
+        "range" : true,
+        "refId" : "A"
+      } ],
+      "transformations" : [ ],
+      "options" : {
+        "legend" : {
+          "calcs" : [ "lastNotNull", "max" ],
+          "displayMode" : "table",
+          "placement" : "bottom",
+          "showLegend" : true
+        },
+        "tooltip" : {
+          "hideZeros" : false,
+          "mode" : "multi",
+          "sort" : "desc"
+        }
+      },
+      "gridPos" : {
+        "h" : 8,
+        "w" : 12,
+        "x" : 12,
+        "y" : 259
+      },
+      "id" : 101
+    }, {
+      "type" : "timeseries",
+      "title" : "Küme olayları (pod başına, saatlik)",
+      "description" : "Son bir saatte kaybedilen kilit, tarama liderliği geçişleri (GAINED / LOST / RELEASED) ve push kira hataları. Sık liderlik geçişi kira yenilemesinin aksadığını gösterir.",
+      "datasource" : {
+        "type" : "prometheus",
+        "uid" : "${datasource}"
+      },
+      "fieldConfig" : {
+        "defaults" : {
+          "unit" : "short",
+          "color" : {
+            "mode" : "palette-classic"
+          },
+          "custom" : {
+            "axisPlacement" : "auto",
+            "barAlignment" : 0,
+            "drawStyle" : "line",
+            "fillOpacity" : 12,
+            "gradientMode" : "opacity",
+            "lineInterpolation" : "smooth",
+            "lineWidth" : 2,
+            "pointSize" : 4,
+            "showPoints" : "never",
+            "spanNulls" : false,
+            "stacking" : {
+              "group" : "A",
+              "mode" : "none"
+            },
+            "thresholdsStyle" : {
+              "mode" : "off"
+            }
+          }
+        },
+        "overrides" : [ ]
+      },
+      "targets" : [ {
+        "datasource" : {
+          "type" : "prometheus",
+          "uid" : "${datasource}"
+        },
+        "editorMode" : "code",
+        "expr" : "sum by (instance) (increase(sitemonitor_cluster_lock_lost{namespace=\"site-monitor-prod\", job=~\"$job\", instance=~\"$instance\"}[1h]))",
+        "instant" : false,
+        "legendFormat" : "{{instance}} kaybedilen kilit",
+        "range" : true,
+        "refId" : "A"
+      }, {
+        "datasource" : {
+          "type" : "prometheus",
+          "uid" : "${datasource}"
+        },
+        "editorMode" : "code",
+        "expr" : "sum by (instance, reason) (increase(sitemonitor_sweep_leader_transitions{namespace=\"site-monitor-prod\", job=~\"$job\", instance=~\"$instance\"}[1h]))",
+        "instant" : false,
+        "legendFormat" : "{{instance}} liderlik {{reason}}",
+        "range" : true,
+        "refId" : "B"
+      }, {
+        "datasource" : {
+          "type" : "prometheus",
+          "uid" : "${datasource}"
+        },
+        "editorMode" : "code",
+        "expr" : "sum by (instance, reason) (increase(sitemonitor_push_lease_renew_failed{namespace=\"site-monitor-prod\", job=~\"$job\", instance=~\"$instance\"}[1h]))",
+        "instant" : false,
+        "legendFormat" : "{{instance}} push kira {{reason}}",
+        "range" : true,
+        "refId" : "C"
+      } ],
+      "transformations" : [ ],
+      "options" : {
+        "legend" : {
+          "calcs" : [ "lastNotNull", "max" ],
+          "displayMode" : "table",
+          "placement" : "bottom",
+          "showLegend" : true
+        },
+        "tooltip" : {
+          "hideZeros" : false,
+          "mode" : "multi",
+          "sort" : "desc"
+        }
+      },
+      "gridPos" : {
+        "h" : 8,
+        "w" : 12,
+        "x" : 0,
+        "y" : 267
+      },
+      "id" : 102
     } ]
   }, {
     "type" : "row",
@@ -9500,9 +9924,9 @@
       "h" : 1,
       "w" : 24,
       "x" : 0,
-      "y" : 259
+      "y" : 275
     },
-    "id" : 97,
+    "id" : 103,
     "panels" : [ {
       "type" : "timeseries",
       "title" : "HTTP istek hızı",
@@ -9569,9 +9993,9 @@
         "h" : 8,
         "w" : 8,
         "x" : 0,
-        "y" : 260
+        "y" : 276
       },
-      "id" : 98
+      "id" : 104
     }, {
       "type" : "timeseries",
       "title" : "API gecikmesi (p50 / p95 / p99)",
@@ -9660,9 +10084,9 @@
         "h" : 8,
         "w" : 8,
         "x" : 8,
-        "y" : 260
+        "y" : 276
       },
-      "id" : 99
+      "id" : 105
     }, {
       "type" : "stat",
       "title" : "5xx oranı (5 dk)",
@@ -9727,9 +10151,9 @@
         "h" : 8,
         "w" : 4,
         "x" : 16,
-        "y" : 260
+        "y" : 276
       },
-      "id" : 100
+      "id" : 106
     }, {
       "type" : "stat",
       "title" : "≤ 500 ms API isteği",
@@ -9794,9 +10218,9 @@
         "h" : 8,
         "w" : 4,
         "x" : 20,
-        "y" : 260
+        "y" : 276
       },
-      "id" : 101
+      "id" : 107
     }, {
       "type" : "timeseries",
       "title" : "En yoğun uçlar",
@@ -9863,9 +10287,9 @@
         "h" : 8,
         "w" : 12,
         "x" : 0,
-        "y" : 268
+        "y" : 284
       },
-      "id" : 102
+      "id" : 108
     }, {
       "type" : "timeseries",
       "title" : "En yavaş uçlar (ortalama)",
@@ -9932,9 +10356,9 @@
         "h" : 8,
         "w" : 12,
         "x" : 12,
-        "y" : 268
+        "y" : 284
       },
-      "id" : 103
+      "id" : 109
     }, {
       "type" : "timeseries",
       "title" : "JVM bellek (heap)",
@@ -10012,9 +10436,9 @@
         "h" : 8,
         "w" : 8,
         "x" : 0,
-        "y" : 276
+        "y" : 292
       },
-      "id" : 104
+      "id" : 110
     }, {
       "type" : "timeseries",
       "title" : "JVM bellek (non-heap)",
@@ -10081,9 +10505,9 @@
         "h" : 8,
         "w" : 8,
         "x" : 8,
-        "y" : 276
+        "y" : 292
       },
-      "id" : 105
+      "id" : 111
     }, {
       "type" : "timeseries",
       "title" : "GC duraklaması",
@@ -10150,9 +10574,9 @@
         "h" : 8,
         "w" : 8,
         "x" : 16,
-        "y" : 276
+        "y" : 292
       },
-      "id" : 106
+      "id" : 112
     }, {
       "type" : "timeseries",
       "title" : "CPU",
@@ -10230,9 +10654,9 @@
         "h" : 8,
         "w" : 8,
         "x" : 0,
-        "y" : 284
+        "y" : 300
       },
-      "id" : 107
+      "id" : 113
     }, {
       "type" : "timeseries",
       "title" : "İş parçacıkları",
@@ -10299,9 +10723,9 @@
         "h" : 8,
         "w" : 8,
         "x" : 8,
-        "y" : 284
+        "y" : 300
       },
-      "id" : 108
+      "id" : 114
     }, {
       "type" : "timeseries",
       "title" : "Günlük uyarı / hata hızı",
@@ -10368,9 +10792,9 @@
         "h" : 8,
         "w" : 8,
         "x" : 16,
-        "y" : 284
+        "y" : 300
       },
-      "id" : 109
+      "id" : 115
     }, {
       "type" : "timeseries",
       "title" : "Veritabanı bağlantı havuzu",
@@ -10470,9 +10894,9 @@
         "h" : 8,
         "w" : 12,
         "x" : 0,
-        "y" : 292
+        "y" : 308
       },
-      "id" : 110
+      "id" : 116
     }, {
       "type" : "timeseries",
       "title" : "Bağlantı alma süresi",
@@ -10550,9 +10974,9 @@
         "h" : 8,
         "w" : 12,
         "x" : 12,
-        "y" : 292
+        "y" : 308
       },
-      "id" : 111
+      "id" : 117
     }, {
       "type" : "timeseries",
       "title" : "Kontrol iş havuzu",
@@ -10641,9 +11065,9 @@
         "h" : 8,
         "w" : 12,
         "x" : 0,
-        "y" : 300
+        "y" : 316
       },
-      "id" : 112
+      "id" : 118
     }, {
       "type" : "timeseries",
       "title" : "Sentetik (k6) koşucu",
@@ -10743,9 +11167,9 @@
         "h" : 8,
         "w" : 12,
         "x" : 12,
-        "y" : 300
+        "y" : 316
       },
-      "id" : 113
+      "id" : 119
     }, {
       "type" : "timeseries",
       "title" : "Önbellek isabet oranı",
@@ -10812,9 +11236,9 @@
         "h" : 8,
         "w" : 12,
         "x" : 0,
-        "y" : 308
+        "y" : 324
       },
-      "id" : 114
+      "id" : 120
     } ]
   } ],
   "refresh" : "1m",
@@ -11080,6 +11504,6 @@
   "timezone" : "browser",
   "title" : "SiteMonitor — Uçtan uca izleme",
   "uid" : "sitemonitor-overview",
-  "version" : 2,
+  "version" : 4,
   "weekStart" : "monday"
 }

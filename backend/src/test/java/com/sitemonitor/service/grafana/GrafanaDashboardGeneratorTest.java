@@ -404,4 +404,35 @@ class GrafanaDashboardGeneratorTest {
         Map<String, Object> dash = GrafanaDashboardGenerator.generate(defaults()).dashboard();
         assertThat(dash).containsKey("panels");
     }
+
+    /** Başlığa göre panelin ilk hedef ifadesi. */
+    static String exprOf(JsonNode d, String title) {
+        for (JsonNode p : contentPanels(d)) {
+            if (title.equals(p.get("title").asString())) return p.get("targets").get(0).get("expr").asString();
+        }
+        throw new AssertionError("panel yok: " + title);
+    }
+
+    @Test
+    @DisplayName("çok pod (R2b): okunamayan kaynak pod sayısıyla çoğalmaz (kaynak başına bir kez); yeni çok pod panelleri sağlık "
+            + "bölümünde — pod serileri instance'a göre, küme serisi max")
+    void multiPodHealthPanels() {
+        JsonNode d = tree(defaults());
+        String unreadable = exprOf(d, "Okunamayan kaynak");
+        assertThat(unreadable).startsWith("(count(min by (source) (sitemonitor_exporter_source_up{")
+                .doesNotContain("count(sitemonitor_exporter_source_up");
+        assertThat(exprOf(d, "Elle kontrol gelen kutusu")).isEqualTo("max(sitemonitor_eval_inbox_depth{namespace=\"site-monitor-prod\"})");
+        // İnceleme W-4: risk pod'lar arası YAYILIM — veritabanına göre ortak kayma değil
+        assertThat(exprOf(d, "Pod saatleri arası fark")).startsWith("max(sitemonitor_clock_skew_seconds{").contains(") - min(sitemonitor_clock_skew_seconds{").doesNotContain("abs(");
+        assertThat(exprOf(d, "Saat farkı (pod başına)")).startsWith("max by (instance) (sitemonitor_clock_skew_seconds{");
+        assertThat(exprOf(d, "Kaybedilen kilit (24 sa)")).contains("increase(sitemonitor_cluster_lock_lost{").contains("[24h]");
+        assertThat(exprOf(d, "Push kira hatası (24 sa)")).contains("increase(sitemonitor_push_lease_renew_failed{");
+        JsonNode events = contentPanels(d).stream().filter(p -> "Küme olayları (pod başına, saatlik)".equals(p.get("title").asString()))
+                .findFirst().orElseThrow();
+        assertThat(events.get("targets").get(1).get("expr").asString())
+                .startsWith("sum by (instance, reason) (increase(sitemonitor_sweep_leader_transitions{");
+        JsonNode en = tree(opts("en", GrafanaDashboardGenerator.SECTIONS, true, "", ""));
+        assertThat(exprOf(en, "Unreadable sources")).contains("min by (source)");
+        assertThat(exprOf(en, "Clock spread between pods")).contains("sitemonitor_clock_skew_seconds");
+    }
 }

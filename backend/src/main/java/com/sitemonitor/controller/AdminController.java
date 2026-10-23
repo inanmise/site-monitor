@@ -2777,6 +2777,8 @@ public class AdminController {
                     case "re-notify"   -> escalationService.reNotify(id);
                 }
                 processed++;
+            } catch (EscalationService.AlertClosedMeanwhileException e) {
+                skipped++;   // R2b · F (AL-1): alarm bu arada kapandı — onay yazılmadı, işlenmiş sayılmaz
             } catch (Exception e) {
                 failed++;   // bulunamadı / zaten kapalı / bildirim hatası — say ama batch'i durdurma
                 log.warn("Bulk alert '{}' failed for id={}: {}", action, id, e.getMessage());

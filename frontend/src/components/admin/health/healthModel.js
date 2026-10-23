@@ -133,32 +133,39 @@ export function poolStats(pool, dbMs) {
 export function deriveOverall({ health, httpMetrics, pushKpi, smtpPeriod = '7d', configChecks = null, loadErrors = {}, watchdog = null }) {
   const h = health || {}
   const reasons = []
-  const add = (level, code, section, args = []) => reasons.push({ level, code, section, args })
+  const add = (level, code, section, args = [], pod = null) => reasons.push(pod ? { level, code, section, args, pod } : { level, code, section, args })
+  // Pod başına değerler (bellek, yürütücü, havuz, DB süresi — sağlık isteğini yanıtlayan pod; HTTP — /http-metrics'i yanıtlayan
+  // pod) sebep metninde pod adıyla (çok pod R2b inceleme H1). Pod bilinmiyorsa (eski sunucu) ad eklenmez.
+  const hp = h.served_by_pod || h.served_by || null
+  const httpPod = httpMetrics?.served_by_pod || httpMetrics?.served_by || null
   // Kendi kendini izleme (2026-10-11): onaylı sorunlar ve durmuş değerlendirme genel duruma katılır
   for (const r of watchdogReasons(watchdog)) reasons.push(r)
 
   if (loadErrors.health) add('down', 'loadHealth', null)
   if (h.heartbeat?.alarm) add('down', 'hbAlarm', 'heartbeat')
+  // Çok pod (2026-10-23, R2b, MP-35): işaretsiz susan pod (çöktü / zamanlayıcısı takıldı) — kümenin son sinyali başka pod'dan
+  // geldiği için yukarıdaki alarm onu göstermez. Uyarı (kritik değil: küme yaşıyor).
+  if (!h.heartbeat?.alarm && Number(h.heartbeat?.pods_silent) > 0) add('warn', 'podSilent', 'heartbeat', [h.heartbeat.pods_silent])
   if (h.scan_alarm) add('down', 'scanAlarm', 'sched')
   if (h.network?.alarm) add('down', 'networkAlarm', 'integrations')
 
   const memPct = h.memory?.used_pct
   const memLevel = h.memory ? pctLevel(memPct, MEMORY_PCT) : 'unknown'
-  if (memLevel === 'warn' || memLevel === 'down') add(memLevel, 'memory', 'sys', [memPct])
+  if (memLevel === 'warn' || memLevel === 'down') add(memLevel, 'memory', 'sys', [memPct], hp)
 
   const ex = executorStats(h.executor_pool)
-  if (ex?.saturated) add('warn', 'queueSaturated', 'sched')
-  if (ex && ex.callerRuns > 0) add('warn', 'callerRuns', 'sched', [ex.callerRuns])
+  if (ex?.saturated) add('warn', 'queueSaturated', 'sched', [], hp)
+  if (ex && ex.callerRuns > 0) add('warn', 'callerRuns', 'sched', [ex.callerRuns], hp)
   const pool = poolStats(h.pool, h.db_ms)
-  if (pool && pool.waiting > 0) add('warn', 'poolWaiting', 'sched', [pool.waiting])
-  if (pool && pool.ms != null && pool.ms >= HEALTH_THRESHOLDS.dbMs.crit) add('warn', 'dbSlow', 'db', [pool.ms])
+  if (pool && pool.waiting > 0) add('warn', 'poolWaiting', 'sched', [pool.waiting], hp)
+  if (pool && pool.ms != null && pool.ms >= HEALTH_THRESHOLDS.dbMs.crit) add('warn', 'dbSlow', 'db', [pool.ms], hp)
 
   const errPct = httpMetrics?.summary?.error_rate_pct
   const errLevel = httpMetrics ? pctLevel(errPct ?? 0, { warn: HTTP_ERR_PCT.warn, crit: HTTP_ERR_PCT.crit }) : 'unknown'
-  if (errLevel === 'down') add('down', 'httpErr', 'http', [errPct])
-  else if (errLevel === 'warn') add('warn', 'httpErr', 'http', [errPct])
+  if (errLevel === 'down') add('down', 'httpErr', 'http', [errPct], httpPod)
+  else if (errLevel === 'warn') add('warn', 'httpErr', 'http', [errPct], httpPod)
   const avgMs = httpMetrics?.summary?.avg_ms
-  if (avgMs != null && avgMs >= HEALTH_THRESHOLDS.httpMs.crit) add('warn', 'httpSlow', 'http', [avgMs])
+  if (avgMs != null && avgMs >= HEALTH_THRESHOLDS.httpMs.crit) add('warn', 'httpSlow', 'http', [avgMs], httpPod)
 
   for (const it of integrationList({ health, pushKpi, smtpPeriod, configChecks })) {
     if (it.level !== 'warn' && it.level !== 'down') continue
@@ -194,8 +201,15 @@ export function sectionLevels(reasons) {
 }
 
 /** KPI ızgarasının sayıları/serileri — ekran yalnız etiket + ikon ekler. */
-export function deriveKpis({ health, httpMetrics, metrics, pushKpi, smtpPeriod = '7d', configChecks = null }) {
+export function deriveKpis({ health, httpMetrics, metrics, metricsPod = null, pushKpi, smtpPeriod = '7d', configChecks = null }) {
   const h = health || {}
+  const hp = h.served_by_pod || h.served_by || null
+  const httpPod = httpMetrics?.served_by_pod || httpMetrics?.served_by || null
+  // Bellek değeri sağlık isteğinin pod'undan, kıvılcımı /metrics'i yanıtlayan pod'dan (ayrı istek) — iki pod farklıysa kıvılcım
+  // çizilmez (bir pod'un değeri öbürünün grafiğiyle yan yana durmasın; inceleme H1). Pod bilinmiyorsa eski davranış.
+  const memSeriesOk = !metricsPod || !hp || metricsPod === hp
+  // Tarama durumu bu pod'un belleğindense (scan_runs okunamadı) zamanlayıcı kutucuğu "bilinmiyor" (inceleme H2)
+  const schedLocal = h.scheduler?.status_source === 'local' || h.scan?.source === 'local'
   const series = (arr, pick) => (Array.isArray(arr) ? arr : []).map((p) => ({ v: Number(pick(p)) || 0 }))
   const hbMin = h.heartbeat?.minutes_since ?? -1
   const ex = executorStats(h.executor_pool)
@@ -210,7 +224,7 @@ export function deriveKpis({ health, httpMetrics, metrics, pushKpi, smtpPeriod =
     uptime: { seconds: h.build?.uptime_seconds ?? null, since: h.build?.started_at ?? null, hbMinutes: hbMin,
       level: h.heartbeat ? (h.heartbeat.alarm ? 'down' : 'ok') : 'unknown' },
     scheduler: { running: !!h.scheduler?.running, nextRun: h.scheduler?.next_run ?? null, lastRun: h.scheduler?.last_run ?? null,
-      level: h.scan_alarm ? 'down' : h.scheduler ? 'ok' : 'unknown' },
+      level: h.scan_alarm ? 'down' : !h.scheduler || schedLocal ? 'unknown' : 'ok' },
     executor: ex ? { ...ex } : null,
     db: pool,
     httpMs: { value: avgMs ?? null, level: avgMs == null ? 'unknown' : pctLevel(avgMs, HEALTH_THRESHOLDS.httpMs),
@@ -218,9 +232,10 @@ export function deriveKpis({ health, httpMetrics, metrics, pushKpi, smtpPeriod =
     httpErr: { value: errPct ?? null, level: errPct == null ? 'unknown' : pctLevel(errPct, HTTP_ERR_PCT),
       series: series(httpMetrics?.history, (b) => b.errors) },
     memory: h.memory ? { pct: memPct, usedMb: h.memory.used_mb, maxMb: h.memory.max_mb, level: pctLevel(memPct, MEMORY_PCT),
-      series: series(metrics, (p) => p.heap_pct) } : null,
+      series: memSeriesOk ? series(metrics, (p) => p.heap_pct) : [] } : null,
     integrations: { ok: counted.filter((i) => i.level === 'ok').length, total: counted.length, list: ints,
       level: worstLevel(ints.map((i) => i.level)) },
+    pods: { health: hp, http: httpPod, metrics: metricsPod || null },
   }
 }
 
@@ -260,3 +275,94 @@ export function relTime(iso, t, now = Date.now()) {
   const txt = formatDurationShort(Math.abs(diff) / 1000, t)
   return diff >= 0 ? t('health.inFuture', txt) : t('health.ago', txt)
 }
+
+// ── Çok pod R2b (2026-10-23, paket C1): küme kartı, tarama yoklaması, pod durumları ────────────────────────────────
+
+/** Tarama türleri (sunucu `scan.runs` anahtarları) — ekran sırası. */
+export const SCAN_KINDS = ['hourly', 'full', 'stale']
+
+/**
+ * "Şimdi çalıştır" hızlı yoklamasının bir adımı (MP-34). Biter: kümede canlı `cert-check` kilidi GÖRÜLDÜ ve artık yok, ya da
+ * kümenin son koşusu (`scan.last_run`, veritabanından) başlangıçtakinden farklı. Yanıtlar farklı pod'lardan gelse de değerler
+ * kümenindir — ilk yanıtı başka pod verdi diye erken bitmez. Kilit okunamadıysa "koşuyor mu" bilinmez → karar verilmez;
+ * tarama durumu bu pod'un belleğindense (`source: local`) son koşu kıyaslanmaz (başka pod'un değeri olabilir).
+ * @returns {{seenLive: boolean, done: boolean}}
+ */
+export function scanPollStep(state, data, prevScan) {
+  const st = state || {}
+  // Kıyas tabanı: yalnız KÜME değeri (`source: 'cluster'`) kümenin değeriyle kıyaslanır (inceleme H6). Tıklamadaki yanıt küme
+  // değeri taşımıyorsa (eski sürüm pod'u, tablo okunamadı) taban ilk küme yanıtından alınır — o yanıt "bitti" saymaz. Eski pod'un
+  // yanıtı (source yok, başka zaman biçimi) son koşuyu hiç değiştirmez; kararı kilit verir.
+  let baseline = st.baseline
+  if (baseline === undefined && prevScan?.source === 'cluster') baseline = prevScan.last_run ?? null
+  if (!data) return { seenLive: !!st.seenLive, baseline, done: false }
+  const lockKnown = !data.lock?.error
+  const live = lockKnown ? !!(data.lock?.held || data.scheduler?.running) : null
+  const seenLive = !!st.seenLive || live === true
+  let changed = false
+  if (data.scan?.source === 'cluster') {
+    const last = data.scan.last_run ?? null
+    if (baseline === undefined) baseline = last
+    else changed = last != null && last !== baseline
+  }
+  return { seenLive, baseline, done: (seenLive && live === false) || changed }
+}
+
+/**
+ * Küme kartı modeli (N1). `scheduler.sweep_leader` kümenin kira satırıdır (hangi pod okursa okusun aynı); `held_by_me`,
+ * son tarama tıkı, tıkanma, tutulan kilitler, tur hataları, atlanan turlar ve önbellek yolu YANITLAYAN POD'undur — ekran
+ * öyle etiketler. Bilinmeyen asla "sağlıklı" sayılmaz: kira okunamadıysa `leader.known = false`, alan yoksa null.
+ */
+export function clusterModel(health) {
+  const h = health || {}
+  const sch = h.scheduler || {}
+  const sl = sch.sweep_leader
+  const pod = { id: h.served_by ?? sch.instance_id ?? null, name: h.served_by_pod ?? h.served_by ?? sch.instance_id ?? null }
+  if (!sl) return { available: false, pod, leader: null, thisPod: null, cacheBus: h.cache_bus ?? null, level: 'unknown' }
+  const known = !sl.error
+  const leaderless = known && (!sl.owner || !!sl.expired)
+  const leader = { known, owner: sl.owner ?? null, ownerPod: sl.owner_pod ?? sl.owner ?? null, until: sl.until ?? null,
+    expired: !!sl.expired, leaderless, error: sl.error ?? null }
+  const thisPod = {
+    isLeader: known ? !!sl.held_by_me : null,
+    renewer: sl.renewer ?? null,
+    lastTick: sl.last_sweep_tick ?? null,
+    wedgeYieldedAt: sl.wedge_yielded_at ?? null,
+    heldLocks: Array.isArray(sch.held_locks) ? sch.held_locks : null,
+    roundClaimFailures: sch.round_claim_failures ?? null,
+    lastRoundClaimFailure: sch.last_round_claim_failure ?? null,
+    skippedRounds: Array.isArray(sch.skipped_rounds) ? sch.skipped_rounds : null,
+  }
+  const cb = h.cache_bus ?? null
+  const cacheStale = cacheBusStale(cb, h.timestamp)
+  const cacheLevel = !cb ? null : cb.error ? 'unknown'
+    : cb.enabled === false ? 'ok'
+      : (cb.running === false || cb.table_missing || cacheStale === true) ? 'warn' : cacheStale == null ? 'unknown' : 'ok'
+  const lostLocks = (thisPod.heldLocks || []).filter((l) => l?.state === 'LOST').length
+  const level = !known ? 'unknown'
+    : leaderless || thisPod.wedgeYieldedAt || cacheLevel === 'warn' || lostLocks > 0 || (thisPod.skippedRounds?.length || 0) > 0 ? 'warn' : 'ok'
+  return { available: true, pod, leader, thisPod, cacheBus: cb, cacheLevel, cacheStale, lostLocks, level }
+}
+
+/** Önbellek yolu yoklamasının bayatlık sınırı (ms) — yoklama 2 sn'de bir; 15 yoklama başarısızsa uyarı. */
+export const CACHE_POLL_STALE_MS = 30_000
+
+/**
+ * Önbellek yolu son başarılı yoklaması bayat mı (inceleme H4): sunucu saatine (`health.timestamp`) göre `last_poll_ok_at`
+ * {@link CACHE_POLL_STALE_MS}'den eski → true; hiç başarılı yoklama yok ama yoklama / hata sayılmış → true; ikisi de yok
+ * (yeni açıldı) → null (bilinmiyor); yol kapalı / tablo yok → false (ayrı kural). İş parçacığı "çalışıyor" görünse de yoklamaları
+ * düşüyorsa diğer pod'ların yazmaları bu poda ulaşmaz.
+ */
+export function cacheBusStale(cb, serverNow) {
+  if (!cb || cb.error || cb.enabled === false || cb.table_missing) return false
+  const now = serverNow ? Date.parse(toUtc(String(serverNow))) : Date.now()
+  const last = cb.last_poll_ok_at ? Date.parse(toUtc(String(cb.last_poll_ok_at))) : NaN
+  if (Number.isNaN(last)) return Number(cb.polls) > 0 || Number(cb.poll_failures) > 0 ? true : null
+  return (Number.isNaN(now) ? Date.now() : now) - last > CACHE_POLL_STALE_MS
+}
+
+/** Heartbeat pod durumu → rozet tonu (canlı yeşil; sessiz uyarı; yeniden başladı / durdu nötr; bilinmeyen gri). */
+export const POD_STATE_TONE = { live: 'success', silent: 'warning', restarted: 'muted', replaced: 'muted', stopped: 'muted' }
+
+/** Tutulan kilit durumu (ClusterLockService.State) → ton; LOST uyarıdır (kilit başka pod'a geçti / zorla bırakıldı). */
+export const LOCK_STATE_TONE = { HELD: 'success', CAPPED: 'warning', LOST: 'warning', RELEASED: 'muted' }

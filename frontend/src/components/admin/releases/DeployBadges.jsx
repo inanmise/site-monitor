@@ -1,3 +1,4 @@
+import { Layers } from 'lucide-react'
 import { useT } from '../../../i18n/index.jsx'
 import { dateLocale } from '../../../i18n/dateLocale.js'
 import { DEPLOY_KIND_STYLE, deployKindTone, fmtDuration } from '../../../utils/releaseUi.js'
@@ -42,10 +43,22 @@ export function kindIcon(kind) {
   return (DEPLOY_KIND_STYLE[kind] || DEPLOY_KIND_STYLE.UNKNOWN).icon
 }
 
-/** Dağıtım türü rozeti: ikon + ad; bilinmeyen sürüm kesikli. */
-export function KindBadge({ kind, className }) {
+/**
+ * Dağıtım türü rozeti: ikon + ad; bilinmeyen sürüm kesikli. `replica` (2026-10-23, çok pod R2b, MP-37e): sunucu satırı
+ * `replica: true` taşıyorsa (aynı sürüm başka canlı pod'da koşarken açılan EK POD — 2 replikalı dağıtımın ikinci pod'u,
+ * ölçek büyütme) RESTART "Ek pod" olarak nötr tonla çizilir; yeniden başlatma sayılmaz. Alan yoksa bugünkü etiket.
+ */
+export function KindBadge({ kind, replica = false, className }) {
   const t = useT()
   const k = kind || 'UNKNOWN'
+  if (replica && k === 'RESTART') {
+    return (
+      <Badge variant="outline" data-kind={k} data-replica="true"
+        className={cn('gap-1 rounded-md px-1.5 font-semibold whitespace-nowrap', TONE_CLASS.muted, className)}>
+        <Layers aria-hidden="true" className="size-3" />{t('version.kind.REPLICA')}
+      </Badge>
+    )
+  }
   const Icon = kindIcon(k)
   return (
     <Badge variant="outline" data-kind={k}

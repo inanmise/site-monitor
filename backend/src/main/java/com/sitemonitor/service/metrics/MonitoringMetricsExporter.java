@@ -133,6 +133,10 @@ public class MonitoringMetricsExporter {
     private DatabaseHealthService database;
     private SystemMaintenanceService maintenance;
     private UserPushService push;
+    private com.sitemonitor.service.schedule.ClusterLockService lockService;
+    private SweepLeadershipCounter leadership;
+    private com.sitemonitor.service.monitoring.ManualEvalInbox inbox;
+    private SystemMetricSampler sampler;
 
     private Supplier<Instant> clock = Instant::now;
     private volatile TeamDirectory lastTeams;
@@ -184,6 +188,10 @@ public class MonitoringMetricsExporter {
     @Autowired(required = false) @Lazy public void setDatabase(DatabaseHealthService v) { this.database = v; }
     @Autowired(required = false) @Lazy public void setMaintenance(SystemMaintenanceService v) { this.maintenance = v; }
     @Autowired(required = false) @Lazy public void setPush(UserPushService v) { this.push = v; }
+    @Autowired(required = false) @Lazy public void setLockService(com.sitemonitor.service.schedule.ClusterLockService v) { this.lockService = v; }
+    @Autowired(required = false) public void setLeadership(SweepLeadershipCounter v) { this.leadership = v; }
+    @Autowired(required = false) @Lazy public void setInbox(com.sitemonitor.service.monitoring.ManualEvalInbox v) { this.inbox = v; }
+    @Autowired(required = false) @Lazy public void setSampler(SystemMetricSampler v) { this.sampler = v; }
 
     /** Testler: saat enjeksiyonu. */
     void setClock(Supplier<Instant> clock) { this.clock = clock; }
@@ -445,6 +453,12 @@ public class MonitoringMetricsExporter {
                 : jdbc.query(SQL_LOCKS, (rs, i) -> new Object[]{rs.getString(1), rs.getString(2)}));
         if (locks != null) MonitoringMetricsModel.schedulerLocks(f, locks, now, MAX_LOCK_NAMES);
 
+        // Çok pod çalışma ölçümleri (2026-10-23, R2b): pod'a özgü birikimli sayaçlar bu pod'un belleğinden (okuma hatası
+        // olamaz), elle kontrol gelen kutusu derinliği küme genelinden (tek COUNT; okunamazsa seri düşer, sahte 0 yok)
+        podRuntime(f);
+        Long depth = read(sources, "eval_inbox", () -> inbox == null ? null : Long.valueOf(inbox.depth()));
+        if (depth != null) f.add(MonitoringMetricNames.EVAL_INBOX_DEPTH, depth);
+
         // Veritabanı sağlığı (bu pod, 5 sn önbellek) ve sistem bakımı
         mergeInto(f, read(sources, "database", () -> {
             Families t = new Families();
@@ -461,6 +475,29 @@ public class MonitoringMetricsExporter {
             if (code != null) t.add(MonitoringMetricNames.SYSTEM_MAINTENANCE, code);
             return t;
         }));
+    }
+
+    /**
+     * Pod'a özgü çalışma sayaçları: kaybedilen kilit, liderlik geçişleri (neden), push kira tazeleme hataları (neden) — hepsi
+     * bu pod açıldığından beri birikimli; pano {@code increase()} ile pod başına okur. Saat farkı yalnız TAZE ölçüm varsa
+     * (örnekleyici kapalı / ölçülemedi → seri yok, "0 sn" uydurulmaz).
+     */
+    private void podRuntime(Families f) {
+        if (lockService != null) f.add(MonitoringMetricNames.CLUSTER_LOCK_LOST, lockService.lostCount());
+        if (leadership != null) {
+            for (Map.Entry<String, Long> e : leadership.snapshot().entrySet()) {
+                f.add(MonitoringMetricNames.SWEEP_LEADER_TRANSITIONS, e.getValue(), "reason", e.getKey());
+            }
+        }
+        if (push != null) {
+            for (Map.Entry<String, Long> e : push.leaseRenewFailures().entrySet()) {
+                f.add(MonitoringMetricNames.PUSH_LEASE_RENEW_FAILED, e.getValue(), "reason", e.getKey());
+            }
+        }
+        if (sampler != null) {
+            Long skew = sampler.lastClockSkewMs();
+            if (skew != null) f.add(MonitoringMetricNames.CLOCK_SKEW, skew / 1000.0);
+        }
     }
 
     /** Geçici aile kümesini (kaynak tamamen okunduysa) asıl kümeye ekler — yarım okunan kaynak satır bırakmaz. */

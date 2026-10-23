@@ -50,7 +50,7 @@ public final class GrafanaDashboardGenerator {
      * Pano içerik revizyonu — içerik (panel, sorgu, değişken) değişen HER sürümde artır ve
      * {@code src/test/resources/grafana/dashboard-content.sha256} dosyasını güncelle (kapı mesajı yeni satırı yazar).
      */
-    public static final int DASHBOARD_REVISION = 2;
+    public static final int DASHBOARD_REVISION = 4;
     /** "Kritik / yüksek alarm açıldı" anotasyonunun penceresi (sn) — açılış zamanı bu kadar yeni olan alarmlar. */
     static final int ALERT_OPENED_WINDOW_S = 900;
     /** Aktarıcı tazelik eşiği (sn) — sunucunun {@code max(180, 3 × refresh-seconds)} kuralının varsayılan değeri. */
@@ -1683,8 +1683,8 @@ public final class GrafanaDashboardGenerator {
             add(maint);
 
             Panel checks = new Panel("state-timeline", t("Kendi kendini izleme kontrolleri", "Self-monitoring checks"),
-                    t("Tarama liderliği, izleme ve sertifika taramaları, bildirim, push kuyruğu ve veritabanı kontrollerinin durumu, zamanla.",
-                            "State of the sweep leadership, monitor and certificate sweeps, notification, push queue and database checks over time."));
+                    t("Tarama liderliği, izleme ve sertifika taramaları, bildirim, push kuyruğu, veritabanı ve saat uyumu kontrollerinin durumu, zamanla.",
+                            "State of the sweep leadership, monitor and certificate sweeps, notification, push queue, database and clock alignment checks over time."));
             checks.w = 16; checks.h = 8;
             checks.target("max by (check) (" + metric(MonitoringMetricNames.WATCHDOG_CHECK) + ")", "{{check}}", false);
             Map<String, Object> to = new LinkedHashMap<>();
@@ -1737,9 +1737,9 @@ public final class GrafanaDashboardGenerator {
                     "Time since the last refresh of the metrics exporter that feeds this dashboard (per pod)."),
                     "time() - min(" + metric(MonitoringMetricNames.EXPORTER_LAST_REFRESH, RT) + ")", "dtdurations",
                     thresholds(GREEN, null, AMBER, 180, RED, 600), "background", null).size(6, 4));
-            add(stat(t("Okunamayan kaynak", "Unreadable sources"), t("Aktarıcının son turda okuyamadığı kaynaklar (o kaynağın panelleri \"veri yok\" gösterir).",
-                    "Sources the exporter could not read in its last refresh (their panels show \"no data\")."),
-                    guard("count(" + metric(MonitoringMetricNames.EXPORTER_SOURCE, RT) + " == 0)", "overview"), "short",
+            add(stat(t("Okunamayan kaynak", "Unreadable sources"), t("Aktarıcının son turda en az bir pod'da okuyamadığı kaynaklar — kaynak başına bir kez sayılır (o kaynağın panelleri \"veri yok\" gösterebilir).",
+                    "Sources the exporter could not read in its last refresh on at least one pod — each source counted once (their panels may show \"no data\")."),
+                    guard("count(min by (source) (" + metric(MonitoringMetricNames.EXPORTER_SOURCE, RT) + ") == 0)", "overview"), "short",
                     thresholds(GREEN, null, RED, 1), "background", null).size(6, 4));
 
             Panel growth = new Panel("timeseries", t("En büyük tablolar", "Largest tables"),
@@ -1760,6 +1760,51 @@ public final class GrafanaDashboardGenerator {
                     t("{{instance}} izleme başına seri kapalı", "{{instance}} per-monitor series off"), false);
             exp.timeseries("short", false, "line");
             add(exp);
+
+            clusterRuntime();
+        }
+
+        /**
+         * Çok pod çalışma ölçümleri (2026-10-23, R2b): elle kontrol gelen kutusu (küme), saat farkı, kaybedilen kilit, liderlik
+         * geçişleri ve push kira tazeleme hataları (pod başına, {@code instance}). Birikimli pod sayaçları {@code increase()}
+         * ile okunur — pod yeniden başlayınca sıfırdan sayar, Prometheus bunu sayaç sıfırlaması gibi işler.
+         */
+        void clusterRuntime() {
+            add(stat(t("Elle kontrol gelen kutusu", "Manual check inbox"), t("Takipçi pod'dan lidere iletilip henüz değerlendirilmemiş elle kontrol sonuçları (küme). Lider 5 sn'de bir boşaltır; birikiyorsa lider boşaltmıyordur.",
+                            "Manual check results forwarded from a follower pod and not yet evaluated by the leader (cluster). The leader drains every 5 s; a growing number means it does not."),
+                    "max(" + metric(MonitoringMetricNames.EVAL_INBOX_DEPTH) + ")", "short", thresholds(GREEN, null, AMBER, 10, RED, 50), "background", null).size(6, 4));
+            // Risk pod'lar ARASI farktır (kira ve kilitler pod saatini kullanır) — veritabanına göre ortak kayma yayılımı değiştirmez
+            add(stat(t("Pod saatleri arası fark", "Clock spread between pods"), t("En ileri ve en geri pod saati arasındaki fark (veritabanı saatine göre ölçülür; ortak kayma farkı değiştirmez). 5 sn üstü uyarı, 30 sn üstü liderlik kirası ve kilitler için risk.",
+                            "Difference between the most advanced and the most delayed pod clock (measured against the database clock; a common offset does not change it). Above 5 s is a warning, above 30 s risks the leader lease and job locks."),
+                    "max(" + metric(MonitoringMetricNames.CLOCK_SKEW, RT) + ") - min(" + metric(MonitoringMetricNames.CLOCK_SKEW, RT) + ")",
+                    "s", thresholds(GREEN, null, AMBER, 5, RED, 30), "background", null).size(6, 4));
+            add(stat(t("Kaybedilen kilit (24 sa)", "Lost locks (24 h)"), t("Son 24 saatte pod'ların yenileme sırasında kaybettiği iş kilitleri (başka pod aldı ya da zorla bırakıldı). 0 olmalı.",
+                            "Job locks the pods lost during renewal in the last 24 hours (another pod took them or they were force-released). Should be 0."),
+                    "sum(increase(" + metric(MonitoringMetricNames.CLUSTER_LOCK_LOST, RT) + "[24h]))", "short", thresholds(GREEN, null, AMBER, 1, RED, 5), "background", null).size(6, 4));
+            add(stat(t("Push kira hatası (24 sa)", "Push lease failures (24 h)"), t("Son 24 saatte push kuyruğu kira tazelemesinin düştüğü ya da satırların başka pod'a geçtiği batch'ler. 0 olmalı.",
+                            "Push outbox batches in the last 24 hours whose lease renewal failed or whose rows had moved to another pod. Should be 0."),
+                    "sum(increase(" + metric(MonitoringMetricNames.PUSH_LEASE_RENEW_FAILED, RT) + "[24h]))", "short", thresholds(GREEN, null, AMBER, 1, RED, 10), "background", null).size(6, 4));
+
+            Panel skew = new Panel("timeseries", t("Saat farkı (pod başına)", "Clock difference (per pod)"),
+                    t("Her pod'un saati eksi veritabanı saati (pozitif = pod ileride). Çizgilerin birbirinden uzaklaşması risktir; hepsinin birlikte kayması yalnız veritabanı saatinin farkıdır.",
+                            "Each pod's clock minus the database clock (positive = pod ahead). Lines drifting apart are the risk; all lines shifted together is only a database clock offset."));
+            skew.w = 12; skew.h = 8;
+            skew.target("max by (instance) (" + metric(MonitoringMetricNames.CLOCK_SKEW, RT) + ")", "{{instance}}", false);
+            skew.timeseries("s", false, "line");
+            add(skew);
+
+            Panel events = new Panel("timeseries", t("Küme olayları (pod başına, saatlik)", "Cluster events (per pod, hourly)"),
+                    t("Son bir saatte kaybedilen kilit, tarama liderliği geçişleri (GAINED / LOST / RELEASED) ve push kira hataları. Sık liderlik geçişi kira yenilemesinin aksadığını gösterir.",
+                            "Lost locks, sweep leadership transitions (GAINED / LOST / RELEASED) and push lease failures in the last hour. Frequent leadership changes mean lease renewal is struggling."));
+            events.w = 12; events.h = 8;
+            events.target("sum by (instance) (increase(" + metric(MonitoringMetricNames.CLUSTER_LOCK_LOST, RT) + "[1h]))",
+                    t("{{instance}} kaybedilen kilit", "{{instance}} lost locks"), false);
+            events.target("sum by (instance, reason) (increase(" + metric(MonitoringMetricNames.SWEEP_LEADER_TRANSITIONS, RT) + "[1h]))",
+                    t("{{instance}} liderlik {{reason}}", "{{instance}} leadership {{reason}}"), false);
+            events.target("sum by (instance, reason) (increase(" + metric(MonitoringMetricNames.PUSH_LEASE_RENEW_FAILED, RT) + "[1h]))",
+                    t("{{instance}} push kira {{reason}}", "{{instance}} push lease {{reason}}"), false);
+            events.timeseries("short", false, "line");
+            add(events);
         }
 
         // ── Çalışma zamanı ───────────────────────────────────────────────────────────────────────────────

@@ -19,7 +19,7 @@ import { LoadingBlock } from '../ui/Progress.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import { Button } from '@/components/shadcn/button'
 import { Card } from '@/components/shadcn/card'
-import { SECTION_KEYS, deriveOverall, deriveKpis, sectionLevels, executorStats, poolStats, relTime, formatDurationShort } from './health/healthModel.js'
+import { SECTION_KEYS, deriveOverall, deriveKpis, sectionLevels, executorStats, poolStats, relTime, formatDurationShort, scanPollStep } from './health/healthModel.js'
 import { HealthSection, HealthSkeleton } from './health/HealthParts.jsx'
 import { HealthStatusBanner, HealthStickyBar, HealthKpiGrid } from './health/HealthStatusBanner.jsx'
 import SystemSection from './health/SystemSection.jsx'
@@ -83,6 +83,7 @@ export default function SystemHealth({ systemRole, globalAdmin: globalAdminProp,
 
   const [health, setHealth] = useState(null)
   const [metrics, setMetrics] = useState([])
+  const [metricsPod, setMetricsPod] = useState(null)   // JVM grafiklerini yanıtlayan pod (çok pod R2b, MP-37a) — ayrı istek
   const [httpMetrics, setHttpMetrics] = useState(null)
   const [userActivity, setUserActivity] = useState(null)
   const [configChecks, setConfigChecks] = useState(null)   // yapılandırma sağlığı (LDAP) — yalnız global admin
@@ -127,7 +128,7 @@ export default function SystemHealth({ systemRole, globalAdmin: globalAdminProp,
   const [triggering, setTriggering] = useState(false)
   const fastPollRef = useRef(null)   // { timer } — tarama hızlı yoklamasının KUŞAĞI (null = durdu)
   const watchdogRef = useRef(null)   // id ref'te: iptal edilebilir, unmount'ta temizlenir, kuşak kontrolü
-  const seenRunning = useRef(false)
+  const pollState = useRef({ seenLive: false })
   const [modalChart, setModalChart] = useState(null)
   const [httpExp, setHttpExp] = useState(null)   // İstek Gezgini: null = kapalı | { endpoint? } (bölümden bir uçla açılış)
   const [waLogsModal, setWaLogsModal] = useState(false)
@@ -189,8 +190,10 @@ export default function SystemHealth({ systemRole, globalAdmin: globalAdminProp,
     if (healthRes.status === 'fulfilled' && healthRes.value?.success) {
       setHealth(healthRes.value.data); setPoolLastRefreshed(new Date())
     } else { errs.health = true }
-    if (metricsRes.status === 'fulfilled' && metricsRes.value?.success) setMetrics(metricsRes.value.data)
-    else errs.metrics = true
+    if (metricsRes.status === 'fulfilled' && metricsRes.value?.success) {
+      setMetrics(metricsRes.value.data)
+      setMetricsPod(metricsRes.value.served_by_pod || metricsRes.value.served_by || null)
+    } else errs.metrics = true
     if (httpRes.status === 'fulfilled' && httpRes.value?.success) setHttpMetrics(httpRes.value.data)
     else errs.http = true
     if (canViewUserActivity) {
@@ -337,11 +340,13 @@ export default function SystemHealth({ systemRole, globalAdmin: globalAdminProp,
    * Tarama hızlı yoklaması (2 sn) — ZİNCİRLİ setTimeout (2026-10-09): bir sonraki istek ancak öncekinin yanıtından
    * sonra planlanır. Eskiden setInterval + await, yavaş sunucuda (GET 90 sn zaman aşımı) 5 dk boyunca ~45 ağır isteği
    * üst üste biriktirebiliyordu. Kuşak nesnesi: yeni tarama / watchdog / unmount eskisini durdurur, uçuştaki yanıt yok sayılır.
+   * Bitiş kararı KÜMEDEN (2026-10-23, çok pod R2b, MP-34): canlı cert-check kilidi görüldü ve bitti, ya da kümenin son koşusu
+   * değişti (`scanPollStep`) — eskiden yanıtlayan pod'un kendi bayrağına bakıyordu; ikinci pod'un ilk yanıtı "bitti" sayılıyordu.
    */
-  const startScanPoll = useCallback((prevLastRun) => {
+  const startScanPoll = useCallback((prevScan) => {
     if (fastPollRef.current) clearTimeout(fastPollRef.current.timer)
     if (watchdogRef.current) clearTimeout(watchdogRef.current)
-    seenRunning.current = false
+    pollState.current = { seenLive: false }
     const gen = { timer: null }
     const alive = () => fastPollRef.current === gen
     const stop = () => { if (alive()) { clearTimeout(gen.timer); fastPollRef.current = null } }
@@ -352,12 +357,10 @@ export default function SystemHealth({ systemRole, globalAdmin: globalAdminProp,
       if (!alive()) return
       if (res?.success) {
         setHealth(res.data)
-        const isRunning = res.data?.scheduler?.running
-        const newLastRun = res.data?.scan?.last_run
-        if (isRunning) seenRunning.current = true
-        // Tamamlandı: running false'a döndü VEYA last_run değişti (hızlı tarama)
-        const done = (seenRunning.current && !isRunning) || (newLastRun && newLastRun !== prevLastRun)
-        if (done) { stop(); load(); return }
+        // Tamamlandı: kümede canlı kilit görüldü ve bitti VEYA kümenin son koşusu değişti (hızlı tarama)
+        const step = scanPollStep(pollState.current, res.data, prevScan)
+        pollState.current = { seenLive: step.seenLive, baseline: step.baseline }
+        if (step.done) { stop(); load(); return }
       }
       gen.timer = setTimeout(step, 2000)
     }
@@ -378,14 +381,14 @@ export default function SystemHealth({ systemRole, globalAdmin: globalAdminProp,
       else setMsg(res?.error || t('sys.error'))
     } catch (e) { setMsg(e?.message || t('sys.error')) }
     finally { setTriggering(false) }
-    if (started) startScanPoll(health?.scan?.last_run)
+    if (started) startScanPoll(health?.scan)
   }
 
   // ── Türetimler (saf model) ──
   const overall = useMemo(() => deriveOverall({ health, httpMetrics, pushKpi, smtpPeriod, configChecks, loadErrors, watchdog }),
     [health, httpMetrics, pushKpi, smtpPeriod, configChecks, loadErrors, watchdog])
-  const kpis = useMemo(() => (health ? deriveKpis({ health, httpMetrics, metrics, pushKpi, smtpPeriod, configChecks }) : null),
-    [health, httpMetrics, metrics, pushKpi, smtpPeriod, configChecks])
+  const kpis = useMemo(() => (health ? deriveKpis({ health, httpMetrics, metrics, metricsPod, pushKpi, smtpPeriod, configChecks }) : null),
+    [health, httpMetrics, metrics, metricsPod, pushKpi, smtpPeriod, configChecks])
   const levels = useMemo(() => sectionLevels(overall.reasons), [overall])
   const sectionLabel = useCallback((key) => t(SECTION_META[key]?.label || key), [t])
 
@@ -450,7 +453,8 @@ export default function SystemHealth({ systemRole, globalAdmin: globalAdminProp,
       <WatchdogSection t={t} data={watchdog} error={watchdogError} canAct={canActSystem} globalAdmin={!!globalAdmin}
         onChanged={(d) => setWatchdog(d)} />
     ),
-    sys: () => <SystemSection t={t} health={health} metrics={metrics} metricsError={loadErrors.metrics} onRetry={refreshNow} onOpenChart={setModalChart} />,
+    sys: () => <SystemSection t={t} health={health} metrics={metrics} metricsPod={metricsPod} metricsError={loadErrors.metrics} onRetry={refreshNow}
+      onOpenChart={setModalChart} onOpenMetrics={openMetricsView} />,
     sched: () => (
       <SchedulerSection t={t} health={health} isAdmin={globalAdmin} poolLastRefreshed={poolLastRefreshed} poolRefreshing={poolCardRefreshing} onRefreshPool={refreshPool}
         triggering={triggering} onForceRun={handleForceRun} releasing={releasing} onForceRelease={handleForceRelease} />

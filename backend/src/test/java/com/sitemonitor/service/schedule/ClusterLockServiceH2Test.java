@@ -95,6 +95,12 @@ class ClusterLockServiceH2Test {
         assertThat(a.renewAll()).isZero();
         assertThat(a.held("cert-check")).isFalse();
         assertThat(a.hold("cert-check")).map(ClusterLockService.Hold::state).contains(ClusterLockService.State.LOST);
+        // 2026-10-23 (çok pod R2b): kayıp sayacı (sitemonitor_cluster_lock_lost) tutuş başına BİR kez artar
+        assertThat(a.lostCount()).isEqualTo(1);
+        mp.advance(30 * SEC);
+        a.renewAll();
+        assertThat(a.lostCount()).as("aynı tutuş ikinci kez sayılmaz").isEqualTo(1);
+        assertThat(owner(2).lostCount()).as("pod başına").isZero();
     }
 
     @Test

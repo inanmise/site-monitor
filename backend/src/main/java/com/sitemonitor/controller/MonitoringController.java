@@ -100,6 +100,28 @@ public class MonitoringController {
     private DomainExpiryReminderService domainReminders;
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.sitemonitor.service.DomainRenewalPlanService domainRenewalPlans;   // yenileme planı (2026-09-22, H)
+    /**
+     * Açık alarmın anahtar taşıması HEDEFLİ (2026-10-23, çok pod R2b · F) — isteğe bağlı: @WebMvcTest diliminde yoktur ve
+     * yol bugünküyle aynıdır ({@link #rekeyOpenAlarm}).
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.AlertEventFieldWriter alertFieldWriter;
+
+    /**
+     * Sentetik izlemenin adı değişince açık alarmının anahtarı ({@code domain} = ad) yeni ada taşınır — R2b · F'den beri yalnız
+     * {@code domain} kolonu, yalnız alarm hâlâ AÇIKSA: okunan alarm bütünüyle kaydedilirdi; okumadan sonra kapanmış alarm
+     * ({@code resolved = false} geri yazılarak) yeniden açılır, arada yazılmış onay / damga geri alınırdı. Okunan varlık
+     * değiştirilmez. Yazıcı yokken eski yol.
+     */
+    private void rekeyOpenAlarm(com.sitemonitor.model.AlertEvent a, String newKey) {
+        com.sitemonitor.service.AlertEventFieldWriter w = alertFieldWriter;
+        if (w == null || a.getId() == null || newKey == null) {
+            a.setDomain(newKey);
+            alertEventRepo.save(a);
+            return;
+        }
+        w.writeValues(a.getId(), Map.of("domain", newKey), true);
+    }
     private final DomainCheckerService domainChecker;
     private final PublicSuffixService publicSuffixService;
     private final ActivityLogService activityLog;   // birleşik aktivite akışı (yaşam döngüsü olayları, best-effort)
@@ -664,8 +686,7 @@ public class MonitoringController {
                 for (String t : k6Types) {
                     for (com.sitemonitor.model.AlertEvent a : alertEventRepo.findOpenAlerts(k6OldName, t)) {
                         if (!EscalationService.closableBy(a, owner)) continue;
-                        a.setDomain(k6.getName());
-                        alertEventRepo.save(a);
+                        rekeyOpenAlarm(a, k6.getName());
                     }
                 }
             }
@@ -5165,8 +5186,7 @@ public class MonitoringController {
                 for (String t : List.of(EscalationService.TYPE_SCRIPTED_FAIL, EscalationService.TYPE_SCRIPTED_SLOW)) {
                     for (com.sitemonitor.model.AlertEvent a : alertEventRepo.findOpenAlerts(oldName, t)) {
                         if (!EscalationService.closableBy(a, owner)) continue;
-                        a.setDomain(m.getName());
-                        alertEventRepo.save(a);
+                        rekeyOpenAlarm(a, m.getName());
                     }
                 }
             }

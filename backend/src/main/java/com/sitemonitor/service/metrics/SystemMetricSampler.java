@@ -21,6 +21,7 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cache.CacheManager;
 import org.springframework.cache.caffeine.CaffeineCache;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.stereotype.Service;
@@ -37,6 +38,7 @@ import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
+import java.util.function.LongSupplier;
 
 /**
  * SiteMonitor'ün kendi metriklerini POD BAŞINA dakikada bir kalıcı örnek olarak yazar (2026-10-13, Sistem Sağlığı →
@@ -61,6 +63,10 @@ public class SystemMetricSampler {
 
     @Autowired(required = false) MeterRegistry registry;
     @Autowired(required = false) CacheManager cacheManager;
+    /** Saat farkı ölçümü (MP-37c) — yoksa (birim testleri) ölçülmez, kolon null kalır. */
+    @Autowired(required = false) JdbcTemplate jdbc;
+    /** Pod saati (testler kaymış saat verir). */
+    LongSupplier wallClock = System::currentTimeMillis;
 
     @Value("${site.monitor.metrics.system.enabled:true}")
     boolean enabled = true;
@@ -73,6 +79,13 @@ public class SystemMetricSampler {
     /** Tüketilen son HTTP dakikası ({@code ts}) — aynı dakika iki kez sayılmaz. */
     private String prevHttpTs;
     private volatile long lastWarnMs = Long.MIN_VALUE / 2;
+    /** Son ölçülen saat farkı (ms; null = ölçülemedi / henüz yok) — {@code sitemonitor_clock_skew_seconds} POD ölçümü okur. */
+    private volatile Long lastClockSkewMs;
+
+    /** Veritabanı saati — tek ucuz sorgu (PostgreSQL ve H2). */
+    static final String SQL_DB_NOW = "SELECT CURRENT_TIMESTAMP";
+    /** Gidiş-dönüş bundan uzunsa ölçüm güvenilmez (belirsizlik gidiş-dönüşün yarısı) → null yazılır. */
+    static final long MAX_SKEW_RTT_MS = 2_000L;
 
     public SystemMetricSampler(SystemMetricSampleRepository repo, DataSource dataSource,
                                @Qualifier("certCheckExecutor") ThreadPoolTaskExecutor certCheckExecutor,
@@ -181,7 +194,81 @@ public class SystemMetricSampler {
         http(s);
         logEvents(s);
         caches(s);
+        clockSkew(s);
+        try { s.setSchemaFailedPatches(schemaFailedPatches.get()); } catch (Exception ignored) { /* bilinmiyor */ }
         return s;
+    }
+
+    /**
+     * Bu pod'un açılışındaki başarısız şema yaması sayısı (inceleme W-3) — yamalar henüz koşmadıysa null. Testler sabit değer
+     * verir.
+     */
+    java.util.function.Supplier<Integer> schemaFailedPatches = () -> {
+        com.sitemonitor.service.schema.SchemaPatchRunner.Summary sum = com.sitemonitor.service.schema.SchemaPatchRunner.last();
+        return sum == null ? null : sum.failed();
+    };
+
+    /**
+     * Saat farkı (2026-10-23, çok pod R2b, MP-37c): pod saati − veritabanı saati. Kira ve kilit SQL'i pod saatiyle
+     * karşılaştırır ({@code locked_until < ?}, {@code next_due_at < ?}); 30 sn'yi aşan fark R1'in güvenli kira payını
+     * ({@code LEASE_SAFETY_MARGIN_MS}) aşındırır. Her pod kendi farkını kendi satırına yazar — kendi kendini izleme turunu
+     * hangi pod kazanırsa kazansın HER canlı pod'un farkını okur (yalnız turu kazanan pod'u ölçen bir yoklama diğerlerini
+     * göremezdi).
+     */
+    private void clockSkew(SystemMetricSample s) {
+        Long skew = measureClockSkew();
+        s.setClockSkewMs(skew);
+        lastClockSkewMs = skew;
+        lastClockSkewAtMs = System.currentTimeMillis();
+    }
+
+    /** Pod − DB (ms), gidiş-dönüşün ortası; ölçülemedi (bağlantı, sorgu, uzun gidiş-dönüş, tanınmayan tür) → null. */
+    Long measureClockSkew() {
+        JdbcTemplate j = jdbc;
+        if (j == null) return null;
+        try {
+            long t0 = wallClock.getAsLong();
+            Long dbMs = j.query(SQL_DB_NOW, rs -> rs.next() ? epochMs(rs) : null);
+            long t1 = wallClock.getAsLong();
+            if (dbMs == null || t1 < t0 || t1 - t0 > MAX_SKEW_RTT_MS) return null;
+            return (t0 + t1) / 2 - dbMs;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** Sürücünün döndürdüğü zaman damgası → epoch ms (PostgreSQL: Timestamp, H2: OffsetDateTime). */
+    private static Long epochMs(java.sql.ResultSet rs) throws java.sql.SQLException {
+        Object o = rs.getObject(1);
+        if (o instanceof java.time.OffsetDateTime odt) return odt.toInstant().toEpochMilli();
+        if (o instanceof java.time.ZonedDateTime zdt) return zdt.toInstant().toEpochMilli();
+        if (o instanceof Instant i) return i.toEpochMilli();
+        if (o instanceof java.sql.Timestamp ts) return ts.getTime();
+        java.sql.Timestamp ts = rs.getTimestamp(1);
+        return ts == null ? null : ts.getTime();
+    }
+
+    /**
+     * Son ölçülen saat farkı (ms) — yoksa null (örnekleyici kapalı, ölçülemedi, henüz ilk örnek yok, son ölçüm
+     * {@link #SKEW_FRESH_MS}'den eski — durmuş örnekleyicinin eski değeri "güncel" yayılmasın).
+     */
+    public Long lastClockSkewMs() {
+        if (!enabled) return null;
+        Long v = lastClockSkewMs;
+        return v != null && System.currentTimeMillis() - lastClockSkewAtMs <= SKEW_FRESH_MS ? v : null;
+    }
+
+    /** Son ölçümün bu süreden eski olması = bayat (dakikalık örnekleyici en az iki turu kaçırdı). */
+    static final long SKEW_FRESH_MS = 3 * 60_000L;
+    private volatile long lastClockSkewAtMs;
+
+    /** Bu podun gösterim adı (POD_NAME ya da makine adı) — kendi kendini izleme olgularında "değerlendiren pod". */
+    public static String currentPodName() {
+        try {
+            return podName();
+        } catch (Throwable t) {
+            return "unknown";
+        }
     }
 
     private void jvm(SystemMetricSample s) {

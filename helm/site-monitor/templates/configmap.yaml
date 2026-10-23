@@ -1,11 +1,8 @@
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: {{ include "site-monitor.fullname" . }}-config
-  namespace: {{ .Release.Namespace }}
-  labels:
-    {{- include "site-monitor.labels" . | nindent 4 }}
-data:
+{{- /*
+ConfigMap keys the chart manages. Kept as a define (2026-10-23, multi-pod release 2b) so config.extraEnv can be checked
+against them below: a duplicate key would render an invalid ConfigMap or silently replace the chart's value.
+*/ -}}
+{{- define "site-monitor.configData" }}
   SPRING_PROFILES_ACTIVE: {{ .Values.config.springProfile | quote }}
   # Log seviyesi ve @Scheduled havuzu chart'ta YOKTU → pod'a elle set edilen değer her helm upgrade'de
   # sessizce kayboluyordu. Artık chart'tan yönetiliyor (runtime override: Ayarlar → Loglama).
@@ -37,6 +34,8 @@ data:
   DB_USER: {{ .Values.config.dbUser | quote }}
   {{- end }}
   DB_POOL_MAX: {{ .Values.config.dbPoolMax | quote }}
+  # Hikari minimum-idle (2026-10-23): idle connections per pod; the pool still grows to DB_POOL_MAX under load.
+  DB_POOL_MIN: {{ include "site-monitor.dbPoolMin" . | quote }}
   # PostgreSQL JDBC soket okuma zaman aşımı (sn) — sessizce düşen DB bağlantısı iş parçacığını süresiz tutmasın.
   DB_SOCKET_TIMEOUT_SECONDS: {{ .Values.config.dbSocketTimeoutSeconds | default "1800" | quote }}
   SITE_MONITOR_EMAIL_ENABLED: {{ .Values.config.emailEnabled | quote }}
@@ -82,4 +81,52 @@ data:
   # yalniz public CA'lar. CA rotasyonunda bu value'yu guncelle (see docs/RUNBOOK.md, proxy CA rotation).
   {{- if .Values.config.caBundlePem }}
   TRUST_CA_BUNDLE_PEM: {{ .Values.config.caBundlePem | quote }}
+  {{- end }}
+{{- end }}
+{{- $data := include "site-monitor.configData" . -}}
+{{- $managed := $data | fromYaml -}}
+{{- if hasKey $managed "Error" -}}
+{{- fail (printf "internal: the ConfigMap data does not parse as YAML: %v" (get $managed "Error")) -}}
+{{- end -}}
+{{- /* config.extraEnv (2026-10-23): extra NON-secret application keys; never one the chart already sets */ -}}
+{{- $extra := .Values.config.extraEnv | default dict -}}
+{{- if not (kindIs "map" $extra) -}}
+{{- fail "config.extraEnv must be a map of NAME: value" -}}
+{{- end -}}
+{{- $reserved := splitList " " (include "site-monitor.reservedEnvNames" .) -}}
+{{- $agentNames := list -}}
+{{- if ((.Values.config.otel | default dict).agent | default dict).enabled -}}
+{{- $agentNames = keys (include "site-monitor.agentEnv" . | fromYaml) -}}
+{{- end -}}
+{{- range $name, $value := $extra -}}
+{{- if not (regexMatch "^[A-Za-z_][A-Za-z0-9_]*$" $name) -}}
+{{- fail (printf "config.extraEnv: %q is not an environment variable name ([A-Za-z_][A-Za-z0-9_]*)" $name) -}}
+{{- end -}}
+{{- if hasKey $managed $name -}}
+{{- fail (printf "config.extraEnv.%s: the chart already sets %s in the ConfigMap - change it through its own config.* key instead" $name $name) -}}
+{{- end -}}
+{{- if has $name $reserved -}}
+{{- fail (printf "config.extraEnv.%s: the chart already sets %s as container env or through its Secret, and that value wins over the ConfigMap. Secrets go into secret.* / existingSecret, never into the ConfigMap." $name $name) -}}
+{{- end -}}
+{{- if has $name $agentNames -}}
+{{- fail (printf "config.extraEnv.%s: the OpenTelemetry agent block sets %s as container env (it wins over the ConfigMap) - use config.otel.agent.extraEnv" $name $name) -}}
+{{- end -}}
+{{- if or (kindIs "map" $value) (kindIs "slice" $value) -}}
+{{- fail (printf "config.extraEnv.%s: the value must be a plain string / number / boolean" $name) -}}
+{{- end -}}
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "site-monitor.fullname" . }}-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "site-monitor.labels" . | nindent 4 }}
+data:
+{{- $data }}
+  {{- with $extra }}
+  # config.extraEnv (values) — extra non-secret application keys
+  {{- range $name, $value := . }}
+  {{ $name }}: {{ $value | toString | quote }}
+  {{- end }}
   {{- end }}

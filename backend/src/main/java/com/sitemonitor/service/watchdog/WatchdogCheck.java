@@ -32,11 +32,26 @@ public enum WatchdogCheck {
             "Push kuyruğu", "Push queue",
             "Kişisel push kuyruğunda zamanı geçtiği hâlde gönderilmeyen bildirimler birikti.",
             "Personal push notifications are piling up in the queue past their send time."),
-    /** Veritabanı yavaş / havuz dolu (DEGRADED) ya da erişilemez (DOWN → kritik). */
+    /**
+     * Veritabanı yavaş (DEGRADED) ya da erişilemez / salt okunur (DOWN → kritik). 2026-10-23 (çok pod R2b, MP-36): yalnız
+     * veritabanı GENELİNDEKİ ölçümler (bağlantı, sorgu, yazılabilirlik) ve HER canlı pod'un örneğinden havuz doluluğu karar
+     * verir; turu kazanan pod'un kendi havuzu ve açılış şema yaması sonucu yalnız bilgidir.
+     */
     DATABASE("database", Severity.MEDIUM,
             "Veritabanı", "Database",
             "Veritabanı sağlık kontrolü sorun bildiriyor.",
-            "The database health check reports a problem.");
+            "The database health check reports a problem."),
+    /**
+     * Pod saatleri birbirinden kaymış (2026-10-23, çok pod R2b, MP-37c; inceleme W-4): kira ve kilit karşılaştırmaları pod
+     * saatiyle yapılır — pod'lar arası fark 5 sn üstü orta, 30 sn üstü yüksek önem (R1'in güvenli kira payı aşınır). Her canlı
+     * pod'un son örneğinden; veritabanı saatinin farkı yalnız bilgi.
+     */
+    CLOCK_SKEW("clock_skew", Severity.MEDIUM,
+            "Saat uyumu", "Clock alignment",
+            "Pod'ların saatleri birbirinden kaymış; liderlik kirası ve iş kilitleri yanlış zamanda düşebilir (çift tarama riski). "
+                    + "Düğümlerin NTP / chrony eşitlemesini denetleyin.",
+            "The pods' clocks have drifted apart; the leader lease and job locks may expire at the wrong time (risk of double sweeps). "
+                    + "Check NTP / chrony synchronisation on the nodes.");
 
     public enum Severity { CRITICAL, HIGH, MEDIUM }
 

@@ -1,4 +1,24 @@
 {{- if .Values.autoscaling.enabled -}}
+{{- /*
+2026-10-23 (multi-pod release 2b): the Deployment renders no `replicas:` while this HPA exists, each metric only when
+its target is set (memory empty by default — a JVM heap never shrinks, so a memory target pins the HPA at
+maxReplicas), and `behavior` from values. The HPA stays OFF in every environment: see values.yaml "autoscaling".
+*/ -}}
+{{- $as := .Values.autoscaling -}}
+{{- $cpu := toString ($as.targetCPUUtilizationPercentage | default "") -}}
+{{- $mem := toString ($as.targetMemoryUtilizationPercentage | default "") -}}
+{{- if and (eq $cpu "") (eq $mem "") -}}
+{{- fail "autoscaling.enabled needs at least one metric target: set autoscaling.targetCPUUtilizationPercentage (and, only if you really want it, targetMemoryUtilizationPercentage)" -}}
+{{- end -}}
+{{- range $pair := list (list "targetCPUUtilizationPercentage" $cpu) (list "targetMemoryUtilizationPercentage" $mem) -}}
+{{- $v := index $pair 1 -}}
+{{- if and (ne $v "") (not (regexMatch "^[1-9][0-9]*$" $v)) -}}
+{{- fail (printf "autoscaling.%s must be a whole number above 0 (percent of the request) or empty, got %q" (index $pair 0) $v) -}}
+{{- end -}}
+{{- end -}}
+{{- if gt (int $as.minReplicas) (int $as.maxReplicas) -}}
+{{- fail (printf "autoscaling.minReplicas (%v) must not be larger than autoscaling.maxReplicas (%v)" $as.minReplicas $as.maxReplicas) -}}
+{{- end -}}
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
@@ -11,19 +31,27 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: {{ include "site-monitor.fullname" . }}
-  minReplicas: {{ .Values.autoscaling.minReplicas }}
-  maxReplicas: {{ .Values.autoscaling.maxReplicas }}
+  minReplicas: {{ $as.minReplicas }}
+  maxReplicas: {{ $as.maxReplicas }}
   metrics:
+    {{- if ne $cpu "" }}
     - type: Resource
       resource:
         name: cpu
         target:
           type: Utilization
-          averageUtilization: {{ .Values.autoscaling.targetCPUUtilizationPercentage }}
+          averageUtilization: {{ $cpu }}
+    {{- end }}
+    {{- if ne $mem "" }}
     - type: Resource
       resource:
         name: memory
         target:
           type: Utilization
-          averageUtilization: {{ .Values.autoscaling.targetMemoryUtilizationPercentage }}
+          averageUtilization: {{ $mem }}
+    {{- end }}
+  {{- with $as.behavior }}
+  behavior:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 {{- end }}
