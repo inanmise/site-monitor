@@ -39,8 +39,12 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Lazy;
+import org.springframework.context.event.ContextClosedEvent;
 import org.springframework.context.event.EventListener;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
@@ -55,6 +59,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
@@ -82,7 +87,12 @@ import java.util.function.Supplier;
  *       yormaz. Gözlemi kurum ailelerini EKSİKSİZ (hiç kaynak düşmeden) aktaran LİDER OLMAYAN pod yazar (bkz.
  *       {@link #exportOrgFamilies}). Tek pod, okunamayan gözlem, 20.167.0 komşu (gözlem yazmaz) → lider de yayar
  *       (bugünkü davranış). Lider değişince yeni lider, eski lider takipçi olarak yayana dek yaymayı sürdürür (örtüşme, boşluk
- *       yok).</li>
+ *       yok). <b>Kapanış ve takip (2026-10-23, R3-1 inceleme M1):</b> {@code ContextClosedEvent}'ten sonra pod gözlem YAZMAZ
+ *       (liderliği bırakan eski lider "takipçi" olarak yazıp yeni lideri susturmasın); satır bu pod'unsa yerine bir KAPANIŞ
+ *       işareti ({@code {"stopping":true}}) yazılır — lider onu "başka yayan yok" sayar. Yalnız POD aileleri yayan lider satırı
+ *       {@value #ORG_RECHECK_MS} ms'de bir (tek PK okuması) yeniden denetler; satır yok / eski / kapanış işareti / yayımlayanı
+ *       artık canlı değil (heartbeat + kapanış işareti, {@code PodLiveness}) ise hemen kurum ailelerini yayan bir tur koşar.
+ *       Gözlem turun BİTİŞ anını ve süresini taşır; tazelik penceresi {@code 2,5 × aralık + son tur süresi}.</li>
  *   <li><b>Dürüstlük:</b> okunamayan kaynak o ailenin serilerini DÜŞÜRÜR ({@code sitemonitor_exporter_source_up=0}); sahte 0
  *       ya da "up" yazılmaz. Silinmiş / envanterden çıkmış izleme "down" yayılmaz.</li>
  *   <li><b>Kardinalite:</b> izleme / sertifika / alan adı / alarm başına seriler {@code per-monitor} anahtarıyla kapanır;
@@ -124,6 +134,14 @@ public class MonitoringMetricsExporter {
     static final String SQL_LOCKS = "SELECT name, locked_until FROM scheduler_lock";
     /** Kurum geneli aileleri başka pod yayıyor sayılması için gözlemin en çok yaşı: {@code refresh-seconds} × bu çarpan. */
     static final double ORG_OBSERVATION_FRESH_FACTOR = 2.5;
+    /**
+     * Yalnız POD aileleri yayan liderin {@code metrics-org} satırını yeniden denetleme aralığı (ms) — kurum ailelerini yayan
+     * pod giderse (kapanış işareti) lider en geç bu süre + bir tur içinde yaymaya döner (tam {@code refresh-seconds} beklemez).
+     */
+    static final long ORG_RECHECK_MS = 10_000L;
+    /** Gözlem yükündeki kapanış işareti alanı: yazan pod kapanıyor, kurum ailelerini artık yaymayacak. */
+    static final String ORG_PAYLOAD_STOPPING = "stopping";
+    private static final tools.jackson.databind.ObjectMapper PAYLOAD_JSON = tools.jackson.databind.json.JsonMapper.builder().build();
 
     private final MeterRegistry registry;
     private final AppSettingsService settings;
@@ -160,7 +178,21 @@ public class MonitoringMetricsExporter {
     private volatile Status lastStatus;
     private final AtomicLong capWarnAt = new AtomicLong();
     private volatile boolean stopping;
-    private ScheduledExecutorService executor;
+    /** {@code ContextClosedEvent} geldi (R3-1 inceleme M1): gözlem yazılmaz; tur yine koşar (pod ölene dek yayar). */
+    private volatile boolean closing;
+    private volatile ScheduledExecutorService executor;
+    /** {@code ContextClosedEvent}'in BU bağlamdan geldiğini ayırt etmek için (alt bağlamın kapanışı kapanış saymasın). */
+    private ApplicationContext context;
+    /** Gözlemde kullanılan örnek kimliği; null = {@link #instanceId()} (testler iki aktarıcıya ayrı kimlik verir). */
+    private volatile String selfId;
+    /**
+     * Gözlemi yazan pod canlı mı (heartbeat + kapanış işareti) — aktarıcının KENDİ örneği (yan iş yerleşiminin önbelleğini
+     * ısıtmasın / değiştirmesin); yalnız aktarıcı başladığında kurulur. Null = denetim yok (satıra güvenilir).
+     */
+    private volatile com.sitemonitor.service.schedule.PodLiveness liveness;
+    /** İlk tur gecikmesi ve POD-only yeniden denetim aralığı (ms) — testler kısaltır. */
+    long initialDelayMs = 45_000L;
+    long recheckMs = ORG_RECHECK_MS;
 
     /**
      * Son turun özeti — Ayarlar → Grafana panosu "canlı kontrol" kartı (bu pod). {@code orgFamilies} false = bu pod yalnız
@@ -226,8 +258,22 @@ public class MonitoringMetricsExporter {
     /** Kaydedici (paket A1) isteğe bağlı ve döngüsüz: tur anında çözülür; yoksa değerlendirme durumu ölçümleri yazılmaz. */
     @Autowired(required = false) public void setEvalState(ObjectProvider<EvalStateSink> v) { this.evalState = v; }
 
+    @Autowired(required = false) public void setContext(ApplicationContext v) { this.context = v; }
+
     /** Testler: saat enjeksiyonu. */
     void setClock(Supplier<Instant> clock) { this.clock = clock; }
+
+    /** Testler: aynı JVM'deki iki aktarıcı ayrı pod gibi gözlem yazsın (üretimde {@link #instanceId()}). */
+    void setInstanceIdForTest(String id) { this.selfId = id; }
+
+    /** Testler: gözlemi yazanın canlılık denetimi (üretimde aktarıcı başlarken kendi örneğini kurar). */
+    void setLivenessForTest(com.sitemonitor.service.schedule.PodLiveness v) { this.liveness = v; }
+
+    /** Bu aktarıcının örnek kimliği. */
+    String self() {
+        String id = selfId;
+        return id != null ? id : instanceId();
+    }
 
     // ── Zamanlama ─────────────────────────────────────────────────────────────────────────────────────────
 
@@ -241,12 +287,16 @@ public class MonitoringMetricsExporter {
                     MetricsExportToken.ENV);
             return;
         }
+        // Gözlemi yazanın canlılığı: aktarıcının KENDİ örneği (yan iş yerleşiminin paylaşılan önbelleğine dokunmaz)
+        if (liveness == null && jdbc != null) {
+            liveness = new com.sitemonitor.service.schedule.PodLiveness(jdbc, self(), () -> clock.get().toEpochMilli());
+        }
         executor = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "metrics-exporter");
             t.setDaemon(true);
             return t;
         });
-        executor.schedule(this::loop, 45, TimeUnit.SECONDS);
+        executor.schedule(this::loop, initialDelayMs, TimeUnit.MILLISECONDS);
     }
 
     private void loop() {
@@ -256,17 +306,113 @@ public class MonitoringMetricsExporter {
         } catch (Throwable t) {
             log.warn("İzleme ölçümleri tazelenemedi: {}", t.toString());
         } finally {
-            if (!stopping && executor != null) {
-                try {
-                    executor.schedule(this::loop, MetricsExportSettings.refreshSeconds(settings), TimeUnit.SECONDS);
-                } catch (Exception ignored) { /* kapanıyor */ }
-            }
+            scheduleNext();
         }
+    }
+
+    /**
+     * Sonraki turu planlar. Lider yalnız POD aileleri yaydıysa (kurum ailelerini başka pod yayıyor) tur aralığı boyunca satırı
+     * {@link #recheckMs} ms'de bir denetler ({@link #watch}); aksi hâlde bugünkü gibi {@code refresh-seconds} sonra.
+     */
+    private void scheduleNext() {
+        ScheduledExecutorService ex = executor;
+        if (stopping || ex == null) return;
+        try {
+            long refreshMs = MetricsExportSettings.refreshSeconds(settings) * 1000L;
+            Status s = lastStatus;
+            if (s != null && s.enabled() && !s.orgFamilies() && recheckMs > 0 && recheckMs < refreshMs) {
+                long dueNanos = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(refreshMs);
+                ex.schedule(() -> watch(dueNanos), recheckMs, TimeUnit.MILLISECONDS);
+            } else {
+                ex.schedule(this::loop, refreshMs, TimeUnit.MILLISECONDS);
+            }
+        } catch (RuntimeException ignored) { /* kapanıyor */ }
+    }
+
+    /**
+     * POD-only lider beklemesi (R3-1 inceleme M1): tur zamanı geldiyse ya da kurum ailelerini artık bu pod'un yayması
+     * gerekiyorsa ({@link #orgPlacementChanged}) HEMEN tur koşar; aksi hâlde {@link #recheckMs} sonra yeniden bakar.
+     */
+    private void watch(long dueNanos) {
+        if (stopping) return;
+        boolean runNow;
+        try {
+            runNow = System.nanoTime() - dueNanos >= 0 || orgPlacementChanged();
+        } catch (Throwable t) {
+            runNow = true;
+        }
+        if (runNow) {
+            loop();
+            return;
+        }
+        ScheduledExecutorService ex = executor;
+        if (ex == null) return;
+        try {
+            long leftMs = Math.max(1L, TimeUnit.NANOSECONDS.toMillis(dueNanos - System.nanoTime()));
+            ex.schedule(() -> watch(dueNanos), Math.min(recheckMs, leftMs), TimeUnit.MILLISECONDS);
+        } catch (RuntimeException ignored) { /* kapanıyor */ }
+    }
+
+    /**
+     * Yalnız POD aileleri yayan pod'un kararı değişti mi: artık lider değil (takipçi kurum ailelerini yayar) ya da kurum
+     * ailelerini yayan başka pod kalmadı ({@link #exportOrgFamilies} — satır yok / eski / kapanış işareti / yayımlayan canlı
+     * değil). Tek PK okuması; canlılık kararı 30 sn önbellekli.
+     */
+    boolean orgPlacementChanged() {
+        if (!(tokenConfigured && MetricsExportSettings.enabled(settings))) return false;
+        if (!leaderHint()) return true;
+        return exportOrgFamilies(clock.get());
+    }
+
+    /**
+     * Kapanış başladı (R3-1 inceleme M1): bu andan sonra {@code metrics-org} gözlemi YAZILMAZ — liderliği bırakan pod'un
+     * ipucu false olur ve "takipçi" olarak yazdığı gözlem kalan pod'u yalnız POD ailelerine düşürürdü. Satır bu pod'unsa
+     * aktarıcının kendi iş parçacığında (süren turdan SONRA) kapanış işareti yazılır; dinleyici beklemez, veritabanına gitmez
+     * (ortak kapanış bütçesi değişmez). Tur yine koşar: pod ölene dek kurum ailelerini de yayar (örtüşme, boşluk değil).
+     * Tarama liderliği kirası bırakıldıktan hemen SONRA, bildirim havuzu boşaltmasından (≤ 20 sn) ÖNCE.
+     */
+    @EventListener(ContextClosedEvent.class)
+    @Order(Ordered.HIGHEST_PRECEDENCE + 1)
+    public void onContextClosed(ContextClosedEvent event) {
+        if (context != null && event != null && event.getApplicationContext() != context) return;
+        closing = true;
+        ScheduledExecutorService ex = executor;
+        if (ex == null) return;   // aktarıcı hiç başlamadı (belirteç yok) → gözlem de yazılmadı
+        try {
+            ex.execute(this::writeTombstone);
+        } catch (RejectedExecutionException ignored) { /* zaten duruyor */ }
+    }
+
+    /**
+     * Kapanış işareti: satır BU pod'un gözlemiyse (başka takipçinin taze gözlemi ezilmesin) aynı satıra "yayan kapanıyor"
+     * yazılır (en yeni kazanır — satırdakinden 1 ms yeni). Hiç fırlatmaz.
+     */
+    void writeTombstone() {
+        com.sitemonitor.service.health.ClusterHealthStore store = clusterHealth;
+        if (store == null) return;
+        try {
+            java.util.Optional<com.sitemonitor.service.health.ClusterHealthStore.Observation> o =
+                    store.read(com.sitemonitor.service.health.ClusterHealthStore.OBS_METRICS_ORG);
+            if (o == null || o.isEmpty() || !selfObserver().equals(o.get().instanceId())) return;
+            if (OrgPayload.parse(o.get().payload()).stopping()) return;
+            long at = Math.max(clock.get().toEpochMilli(), o.get().observedMs() + 1);
+            String iso = ISO.format(Instant.ofEpochMilli(at));
+            store.publish(com.sitemonitor.service.health.ClusterHealthStore.OBS_METRICS_ORG, self(), at,
+                    "{\"at\":\"" + iso + "\",\"" + ORG_PAYLOAD_STOPPING + "\":true}", iso);
+        } catch (RuntimeException e) {
+            log.debug("Kurum ölçüleri kapanış işareti yazılamadı: {}", e.toString());
+        }
+    }
+
+    /** Kapanış başladı mı (testler). */
+    boolean closing() {
+        return closing;
     }
 
     @PreDestroy
     public void stop() {
         stopping = true;
+        closing = true;
         if (executor != null) executor.shutdownNow();
     }
 
@@ -325,10 +471,14 @@ public class MonitoringMetricsExporter {
         Status s = new Status(enabled, perEntity, ISO.format(now), durationMs, total, entities, sources,
                 List.copyOf(f.capped().keySet()), MetricsExportSettings.refreshSeconds(settings), maxEntities, org);
         lastStatus = s;
-        lastCompletedMs = clock.get().toEpochMilli();
+        long doneMs = clock.get().toEpochMilli();
+        lastCompletedMs = doneMs;
         // Kurum ailelerini EKSİKSİZ yayan lider OLMAYAN pod gözlemi yazar; lider yazmaz — yazsaydı takipçinin gözlemini
-        // ezip (en yeni kazanır) kendini bir sonraki turda yine "tek yayan" görebilirdi.
-        if (enabled && org && !leader && !sources.containsValue(Boolean.FALSE)) publishOrgObservation(now, total);
+        // ezip (en yeni kazanır) kendini bir sonraki turda yine "tek yayan" görebilirdi. Kapanan pod yazmaz (M1: liderliği
+        // bırakan pod'un ipucu false olur); gözlem turun BİTİŞ anını taşır (L3: döngü bitişten sonra bekler).
+        if (enabled && org && !leader && !closing && !sources.containsValue(Boolean.FALSE)) {
+            publishOrgObservation(doneMs, total, durationMs);
+        }
         return s;
     }
 
@@ -346,8 +496,10 @@ public class MonitoringMetricsExporter {
 
     /**
      * Lider bu turda kurum geneli aileleri de yayacak mı: yalnız BAŞKA bir pod'un {@code metrics-org} gözlemi son
-     * {@code 2,5 × refresh-seconds} içindeyse HAYIR. Gözlem yok / kendi gözlemi / eski / okunamadı / küme deposu yok → EVET
-     * (bugünkü davranış: veri boşluğu yerine çift yayın — pano {@code max by} ile birleştirir).
+     * {@code 2,5 × refresh-seconds + yayımlayanın son tur süresi} içindeyse, kapanış işareti DEĞİLSE ve yayımlayan canlıysa
+     * (heartbeat; bilinmiyorsa satıra güvenilir) HAYIR. Gözlem yok / kendi gözlemi / eski / kapanış işareti / yayımlayan canlı
+     * değil / okunamadı / küme deposu yok → EVET (bugünkü davranış: veri boşluğu yerine çift yayın — pano {@code max by} ile
+     * birleştirir).
      */
     boolean exportOrgFamilies(Instant now) {
         if (clusterHealth == null) return true;
@@ -357,28 +509,63 @@ public class MonitoringMetricsExporter {
             if (o == null || o.isEmpty()) return true;
             String by = o.get().instanceId();
             if (by == null || by.isBlank() || by.equals(selfObserver())) return true;
-            long windowMs = (long) (ORG_OBSERVATION_FRESH_FACTOR * MetricsExportSettings.refreshSeconds(settings) * 1000L);
-            return o.get().observedMs() < now.toEpochMilli() - windowMs;
+            OrgPayload p = OrgPayload.parse(o.get().payload());
+            if (p.stopping()) return true;                              // yayan pod kapanıyor (M1)
+            long windowMs = (long) (ORG_OBSERVATION_FRESH_FACTOR * MetricsExportSettings.refreshSeconds(settings) * 1000L)
+                    + Math.min(Math.max(0L, p.durationMs()), staleAfterMs());  // yavaş takipçinin tur süresi (L3)
+            if (o.get().observedMs() < now.toEpochMilli() - windowMs) return true;
+            return publisherKnownGone(by);
         } catch (RuntimeException e) {
             log.debug("Kurum ölçüleri gözlemi okunamadı — bu pod da yayıyor: {}", e.toString());
             return true;
         }
     }
 
+    /**
+     * Gözlemi yazan pod KESİNLİKLE canlı değil mi (heartbeat penceresinde yok ya da kapanış işareti yazmış). Canlılık
+     * okunamadı / denetim yok → false (satıra güvenilir). Hiç fırlatmaz.
+     */
+    private boolean publisherKnownGone(String by) {
+        com.sitemonitor.service.schedule.PodLiveness l = liveness;
+        if (l == null) return false;
+        try {
+            if (l.otherLivePods().isEmpty()) return false;
+            return !l.cachedOtherPods().contains(by);
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
     /** Gözlem satırına yazılan örnek kimliği ({@code ClusterHealthStore} 120 karakterde kırpar — karşılaştırma da öyle). */
-    private static String selfObserver() {
-        String id = instanceId();
+    private String selfObserver() {
+        String id = self();
         return id.length() <= 120 ? id : id.substring(0, 119) + "…";
     }
 
-    private void publishOrgObservation(Instant now, int seriesTotal) {
+    private void publishOrgObservation(long atMs, int seriesTotal, long durationMs) {
         if (clusterHealth == null) return;
         try {
-            String at = ISO.format(now);
-            clusterHealth.publish(com.sitemonitor.service.health.ClusterHealthStore.OBS_METRICS_ORG, instanceId(), now.toEpochMilli(),
-                    "{\"at\":\"" + at + "\",\"series\":" + seriesTotal + "}", at);
+            String at = ISO.format(Instant.ofEpochMilli(atMs));
+            clusterHealth.publish(com.sitemonitor.service.health.ClusterHealthStore.OBS_METRICS_ORG, self(), atMs,
+                    "{\"at\":\"" + at + "\",\"series\":" + seriesTotal + ",\"duration_ms\":" + Math.max(0L, durationMs) + "}", at);
         } catch (RuntimeException e) {
             log.debug("Kurum ölçüleri gözlemi yazılamadı: {}", e.toString());
+        }
+    }
+
+    /** {@code metrics-org} gözlem yükü: kapanış işareti mi, yayımlayanın son tur süresi (ms; yoksa 0). Bozuk yük = sıradan gözlem. */
+    record OrgPayload(boolean stopping, long durationMs) {
+        static OrgPayload parse(String payload) {
+            if (payload == null || payload.isBlank()) return new OrgPayload(false, 0L);
+            try {
+                Object o = PAYLOAD_JSON.readValue(payload, Map.class);
+                if (!(o instanceof Map<?, ?> m)) return new OrgPayload(false, 0L);
+                boolean stop = Boolean.TRUE.equals(m.get(ORG_PAYLOAD_STOPPING));
+                long d = m.get("duration_ms") instanceof Number n ? n.longValue() : 0L;
+                return new OrgPayload(stop, d);
+            } catch (RuntimeException e) {
+                return new OrgPayload(false, 0L);
+            }
         }
     }
 
@@ -616,7 +803,8 @@ public class MonitoringMetricsExporter {
 
     /**
      * Bu pod'un kalıcı değerlendirme durumu kaydedicisi (çok pod R3-1, plan 3a): kip, bekleyen, yazma hatası (her pod);
-     * son doğrulama turu yalnız bu pod YAZAN liderken ({@code active}) — eski liderin bayat raporu yayılmaz. Bilinmeyen tur
+     * son doğrulama turu yalnız bu pod YAZAN liderken ({@code active}) VE kip doğrulamayken ({@code verify}) — eski liderin ya da
+     * doğrulaması kapatılmış ({@code write}) kaydedicinin bayat raporu yayılmaz. Bilinmeyen tur
      * ({@code unknown}) uyuşmazlık serisi yazmaz (sahte 0 yok); kaydedici yok / durum yok → hiçbir seri.
      */
     void evalStateMeters(Families f) {
@@ -635,7 +823,9 @@ public class MonitoringMetricsExporter {
         f.add(MonitoringMetricNames.EVAL_STATE_PENDING, s.pending());
         f.add(MonitoringMetricNames.EVAL_STATE_WRITE_FAILURES, s.writeFailures());
         EvalVerifyReport v = s.lastVerify();
-        if (!s.active() || v == null) return;
+        // Doğrulama ölçümleri yalnız doğrulama KİPİNDE (R3-1 inceleme L1): verify → write geçişinde kaydedici son raporu
+        // bellekte tutar; onu yaymak eski turu "güncel" gösterirdi (pano metni: doğrulama kapalıyken veri yok)
+        if (!s.active() || v == null || !Integer.valueOf(2).equals(mode)) return;
         f.add(MonitoringMetricNames.EVAL_STATE_VERIFY_AT, v.atMs() / 1000.0);
         if (v.unknown()) return;
         for (String kind : EvalVerifyReport.KINDS) {

@@ -327,7 +327,7 @@ class GrafanaDashboardGeneratorTest {
         JsonNode fresh = contentPanels(d).stream().filter(p -> "Veri tazeliği".equals(p.get("title").asString())).findFirst().orElseThrow();
         assertThat(fresh.get("gridPos").get("w").asInt()).isEqualTo(24);
         assertThat(fresh.get("targets").get(0).get("expr").asString())
-                .startsWith("time() - max(sitemonitor_exporter_last_refresh_timestamp_seconds{");
+                .startsWith("time() - max((sitemonitor_exporter_last_refresh_timestamp_seconds{");   // R3-1 L2: yalnız kurum ailesi yayanlar
         assertThat(fresh.get("fieldConfig").get("defaults").get("noValue").asString()).contains("/metrics/sitemonitor");
         assertThat(fresh.get("fieldConfig").get("defaults").get("mappings").get(0).get("type").asString()).isEqualTo("range");
     }
@@ -456,5 +456,23 @@ class GrafanaDashboardGeneratorTest {
         JsonNode en = tree(opts("en", GrafanaDashboardGenerator.SECTIONS, true, "", ""));
         assertThat(exprOf(en, "Pods exporting org metrics")).contains("sitemonitor_exporter_org_families");
         assertThat(exprOf(en, "Verify mismatches")).contains("sitemonitor_eval_state_verify_mismatches");
+    }
+
+    @Test
+    @DisplayName("R3-1 inceleme L2: Veri tazeliği şeridi yalnız kurum ailelerini yayan pod'ların (org_families == 1) son turunu sayar; "
+            + "R3-1 öncesi pod'lar (ölçüm yok) sayılır; yalnız POD aileleri yayan liderin taze turu şeridi 'Güncel' yapmaz")
+    void freshnessCountsOnlyOrgExporters() {
+        JsonNode d = tree(defaults());
+        String expr = exprOf(d, "Veri tazeliği");
+        assertThat(expr).startsWith("time() - max((sitemonitor_exporter_last_refresh_timestamp_seconds{")
+                .contains(" and on(job, instance) (sitemonitor_exporter_org_families{")
+                .contains(" == 1)) or (sitemonitor_exporter_last_refresh_timestamp_seconds{")
+                .contains(" unless on(job, instance) sitemonitor_exporter_org_families{")
+                .endsWith("}))");
+        assertThat(GrafanaDashboardGenerator.metricsIn(expr)).containsExactlyInAnyOrder(
+                "sitemonitor_exporter_last_refresh_timestamp_seconds", "sitemonitor_exporter_org_families");
+        JsonNode en = tree(opts("en", GrafanaDashboardGenerator.SECTIONS, true, "", ""));
+        assertThat(exprOf(en, "Data freshness")).contains("and on(job, instance)").contains("unless on(job, instance)");
+        assertThat(GrafanaDashboardGenerator.DASHBOARD_REVISION).isGreaterThanOrEqualTo(6);
     }
 }

@@ -556,6 +556,156 @@ class MonitoringMetricsExporterTest {
         assertThat(exists(MonitoringMetricNames.MONITOR_STATE)).isTrue();
     }
 
+    // ── R3-1 inceleme düzeltmeleri (FX-OBS, 2026-10-23): M1 kapanış / kapanış işareti / canlılık, L3 bitiş anı, L1 ──────────
+
+    static java.util.Optional<com.sitemonitor.service.health.ClusterHealthStore.Observation> observation(String by, long observedMs, String payload) {
+        return java.util.Optional.of(new com.sitemonitor.service.health.ClusterHealthStore.Observation(by, observedMs, payload, "x"));
+    }
+
+    static org.springframework.context.event.ContextClosedEvent closedEvent() {
+        return new org.springframework.context.event.ContextClosedEvent(mock(org.springframework.context.ApplicationContext.class));
+    }
+
+    @Test
+    @DisplayName("orgFamiliesPlacement (M1): ContextClosedEvent'ten sonra takipçi (liderliği bırakan eski lider dahil) kurum ailelerini "
+            + "yaymayı sürdürür ama gözlem YAZMAZ — kalan pod'u yalnız POD ailelerine düşürmesin")
+    void orgFamiliesPlacement_noPublishAfterContextClosed() {
+        com.sitemonitor.service.health.ClusterHealthStore store = placement(false, java.util.Optional.empty());
+        exporter.onContextClosed(closedEvent());
+        assertThat(exporter.closing()).isTrue();
+        MonitoringMetricsExporter.Status s = exporter.refresh();
+        assertThat(s.orgFamilies()).isTrue();
+        assertThat(exists(MonitoringMetricNames.MONITOR_STATE)).as("pod ölene dek yayar (örtüşme, boşluk değil)").isTrue();
+        verify(store, never()).publish(anyString(), anyString(), anyLong(), anyString(), anyString());
+        // Başka bağlamın kapanışı (alt bağlam) kapanış sayılmaz
+        MonitoringMetricsExporter other = new MonitoringMetricsExporter(new SimpleMeterRegistry(), settings);
+        other.setContext(mock(org.springframework.context.ApplicationContext.class));
+        other.onContextClosed(closedEvent());
+        assertThat(other.closing()).isFalse();
+    }
+
+    @Test
+    @DisplayName("orgFamiliesPlacement (M1): kapanış işareti yalnız satır BU pod'unsa yazılır (satırdakinden 1 ms yeni, \"stopping\":true); "
+            + "başka takipçinin satırı ezilmez; işaret zaten varsa / okunamazsa yazılmaz")
+    void orgFamiliesPlacement_tombstoneOnlyOverOwnRow() {
+        com.sitemonitor.service.health.ClusterHealthStore store = placement(false, observation(SELF, NOW.toEpochMilli() + 5_000));
+        exporter.writeTombstone();
+        verify(store).publish(eq(com.sitemonitor.service.health.ClusterHealthStore.OBS_METRICS_ORG), eq(SELF),
+                eq(NOW.toEpochMilli() + 5_001), contains("\"stopping\":true"), anyString());
+
+        store = placement(false, observation("sitemonitor-other-0000000b", NOW.toEpochMilli() - 1_000));
+        exporter.writeTombstone();
+        verify(store, never()).publish(anyString(), anyString(), anyLong(), anyString(), anyString());
+
+        store = placement(false, observation(SELF, NOW.toEpochMilli(), "{\"stopping\":true}"));
+        exporter.writeTombstone();
+        verify(store, never()).publish(anyString(), anyString(), anyLong(), anyString(), anyString());
+
+        store = placement(false, java.util.Optional.empty());
+        when(store.read(anyString())).thenThrow(new RuntimeException("db"));
+        exporter.writeTombstone();
+        verify(store, never()).publish(anyString(), anyString(), anyLong(), anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("orgFamiliesPlacement (M1): BAŞKA pod'un taze kapanış işareti → lider kurum ailelerini yayar; POD-only lider bir sonraki "
+            + "denetimde (orgPlacementChanged) hemen tur koşar; sıradan taze gözlem → beklemeye devam; lider değilse → hemen tur")
+    void orgFamiliesPlacement_tombstoneMakesLeaderExportNextCheck() {
+        com.sitemonitor.service.health.ClusterHealthStore store =
+                placement(true, observation("sitemonitor-other-0000000b", NOW.toEpochMilli() - 1_000));
+        assertThat(exporter.refresh().orgFamilies()).isFalse();
+        assertThat(exporter.orgPlacementChanged()).as("takipçi yayıyor — bekle").isFalse();
+
+        when(store.read(com.sitemonitor.service.health.ClusterHealthStore.OBS_METRICS_ORG))
+                .thenReturn(observation("sitemonitor-other-0000000b", NOW.toEpochMilli(), "{\"at\":\"x\",\"stopping\":true}"));
+        assertThat(exporter.orgPlacementChanged()).as("yayan pod kapanıyor → hemen tur").isTrue();
+        MonitoringMetricsExporter.Status s = exporter.refresh();
+        assertThat(s.orgFamilies()).isTrue();
+        assertThat(exists(MonitoringMetricNames.MONITOR_STATE)).isTrue();
+
+        // Liderliği kaybeden POD-only pod da hemen tur koşar (takipçi olarak kurum ailelerini yaysın)
+        placement(false, observation("sitemonitor-other-0000000b", NOW.toEpochMilli() - 1_000));
+        assertThat(exporter.orgPlacementChanged()).isTrue();
+        // Denetim aralığı ≤ 10 sn (kapanan takipçi → lider en geç ~10 sn + bir tur içinde yayar)
+        assertThat(MonitoringMetricsExporter.ORG_RECHECK_MS).isLessThanOrEqualTo(10_000L);
+    }
+
+    @Test
+    @DisplayName("orgFamiliesPlacement (M1 sertleştirme): taze gözlemi yazan pod canlı DEĞİLSE (heartbeat yok / kapanış işareti) lider "
+            + "yayar; canlıysa ya da canlılık okunamadıysa satıra güvenilir (yalnız POD aileleri)")
+    void orgFamiliesPlacement_publisherLiveness() {
+        com.sitemonitor.service.schedule.PodLiveness liveness = mock(com.sitemonitor.service.schedule.PodLiveness.class);
+        exporter.setLivenessForTest(liveness);
+        placement(true, observation("sitemonitor-other-0000000b", NOW.toEpochMilli() - 1_000));
+
+        when(liveness.otherLivePods()).thenReturn(java.util.Optional.of(1));
+        when(liveness.cachedOtherPods()).thenReturn(List.of("sitemonitor-other-0000000b"));
+        assertThat(exporter.refresh().orgFamilies()).as("yayımlayan canlı").isFalse();
+
+        when(liveness.cachedOtherPods()).thenReturn(List.of("sitemonitor-third-0000000c"));
+        assertThat(exporter.refresh().orgFamilies()).as("yayımlayan artık canlı değil").isTrue();
+
+        when(liveness.otherLivePods()).thenReturn(java.util.Optional.of(0));
+        when(liveness.cachedOtherPods()).thenReturn(List.of());
+        assertThat(exporter.refresh().orgFamilies()).as("başka canlı pod yok").isTrue();
+
+        when(liveness.otherLivePods()).thenReturn(java.util.Optional.empty());
+        assertThat(exporter.refresh().orgFamilies()).as("canlılık bilinmiyor → satıra güven").isFalse();
+
+        when(liveness.otherLivePods()).thenThrow(new IllegalStateException("x"));
+        assertThat(exporter.refresh().orgFamilies()).as("canlılık okunamadı → satıra güven").isFalse();
+    }
+
+    @Test
+    @DisplayName("orgFamiliesPlacement (L3): gözlem turun BİTİŞ anını ve süresini taşır; lider tazelik penceresine yayımlayanın son tur "
+            + "süresini ekler — yavaş takipçi (tur > 45 sn) liderin her döngüde bir tur yaymasına yol açmaz")
+    void orgFamiliesPlacement_completionTimeAndSlowFollower() {
+        java.util.concurrent.atomic.AtomicLong calls = new java.util.concurrent.atomic.AtomicLong();
+        exporter.setClock(() -> NOW.plusSeconds(70 * calls.getAndIncrement()));   // her okuma 70 sn sonra: tur 70 sn sürmüş
+        com.sitemonitor.service.health.ClusterHealthStore store = placement(false, java.util.Optional.empty());
+        exporter.refresh();
+        org.mockito.ArgumentCaptor<Long> at = org.mockito.ArgumentCaptor.forClass(Long.class);
+        org.mockito.ArgumentCaptor<String> payload = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(store).publish(eq(com.sitemonitor.service.health.ClusterHealthStore.OBS_METRICS_ORG), eq(SELF), at.capture(),
+                payload.capture(), eq("2026-10-18T08:01:10"));
+        assertThat(at.getValue()).as("bitiş anı (başlangıç değil)").isEqualTo(NOW.plusSeconds(70).toEpochMilli());
+        assertThat(payload.getValue()).contains("\"duration_ms\":");
+
+        // Lider: takipçinin gözlemi 150 sn + 90 sn tur süresi içinde → taze (yalnız POD aileleri); süre yoksa 151 sn eski = bayat
+        exporter.setClock(() -> NOW);
+        placement(true, observation("sitemonitor-other-0000000b", NOW.toEpochMilli() - 200_000, "{\"duration_ms\":90000}"));
+        assertThat(exporter.refresh().orgFamilies()).isFalse();
+        placement(true, observation("sitemonitor-other-0000000b", NOW.toEpochMilli() - 151_000, "{\"series\":3}"));
+        assertThat(exporter.refresh().orgFamilies()).isTrue();
+        // Bozuk / aşırı süre tavanlı (≤ 3 × aralık, en az 3 dk): 10 saatlik "süre" gözlemi sonsuza dek taze yapmaz
+        placement(true, observation("sitemonitor-other-0000000b", NOW.toEpochMilli() - 400_000, "{\"duration_ms\":36000000}"));
+        assertThat(exporter.refresh().orgFamilies()).isTrue();
+        placement(true, observation("sitemonitor-other-0000000b", NOW.toEpochMilli() - 100_000, "bozuk{"));
+        assertThat(exporter.refresh().orgFamilies()).as("bozuk yük = sıradan gözlem").isFalse();
+    }
+
+    @Test
+    @DisplayName("değerlendirme durumu (L1): kip yalnız yazma (write) iken bellekteki son doğrulama raporu YAYILMAZ (eski tur güncel "
+            + "görünmesin); kip / bekleyen / yazma hatası yine yayılır")
+    void evalStateMeters_writeModeHidesOldVerify() {
+        Map<String, com.sitemonitor.service.evalstate.EvalVerifyReport.KindResult> kinds = new LinkedHashMap<>();
+        kinds.put("sibling", new com.sitemonitor.service.evalstate.EvalVerifyReport.KindResult(12, 2, 0, null));
+        com.sitemonitor.service.evalstate.EvalVerifyReport old = new com.sitemonitor.service.evalstate.EvalVerifyReport(
+                NOW.toEpochMilli() - 3_600_000, "pod-a", 3, "mismatch", null, kinds, List.of());
+        com.sitemonitor.service.evalstate.EvalStateSink sink = mock(com.sitemonitor.service.evalstate.EvalStateSink.class);
+        when(sink.status()).thenReturn(evalStatus("write", true, old));
+        attachEvalState(sink);
+        exporter.refresh();
+        assertThat(gauge(MonitoringMetricNames.EVAL_STATE_MODE)).isEqualTo(1);
+        assertThat(gauge(MonitoringMetricNames.EVAL_STATE_PENDING)).isEqualTo(7);
+        assertThat(exists(MonitoringMetricNames.EVAL_STATE_VERIFY_AT)).isFalse();
+        assertThat(exists(MonitoringMetricNames.EVAL_STATE_VERIFY_MISMATCHES)).isFalse();
+        // Doğrulama kipine dönünce yine yayılır
+        when(sink.status()).thenReturn(evalStatus("verify", true, old));
+        exporter.refresh();
+        assertThat(gauge(MonitoringMetricNames.EVAL_STATE_VERIFY_MISMATCHES, "kind", "sibling")).isEqualTo(2);
+    }
+
     @SuppressWarnings("unchecked")
     void attachEvalState(com.sitemonitor.service.evalstate.EvalStateSink sink) {
         org.springframework.beans.factory.ObjectProvider<com.sitemonitor.service.evalstate.EvalStateSink> p =
