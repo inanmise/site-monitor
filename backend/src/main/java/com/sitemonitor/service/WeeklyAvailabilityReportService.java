@@ -814,7 +814,7 @@ public class WeeklyAvailabilityReportService {
                 String at = stripZ(d.row().getStartedAt());
                 if (at == null || at.compareTo(from) < 0 || at.compareTo(to) > 0) continue;
                 switch (d.kind()) {
-                    case RESTART -> restarts++;
+                    case RESTART -> { if (d.countedRestart()) restarts++; }   // ek replika / dağıtım yeniden başlatma sayılmaz (çok pod R2b, MP-37e)
                     case UNKNOWN -> { /* sürümsüz backfill satırı — sayılmaz */ }
                     default -> {
                         deployments++;

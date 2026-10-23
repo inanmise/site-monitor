@@ -31,7 +31,7 @@ class RetentionCoverageTest {
      */
     private static final List<String> RAW_DDL_TABLES = List.of(
             "scheduler_lock", "login_anomaly_state", "monitor_check_daily", "app_user_teams", "page_usage_daily", "login_anomaly_ack",
-            "schema_patch_markers", "monitor_check_schedule", "cache_bus");
+            "schema_patch_markers", "monitor_check_schedule", "cache_bus", "scan_runs", "cluster_observations");
 
     /** Muafiyetler — HER BİRİ gerekçeli. Gerekçesiz muafiyet eklenemez (değer boş olamaz). */
     private static final Map<String, String> EXEMPT = Map.ofEntries(
@@ -69,6 +69,8 @@ class RetentionCoverageTest {
                     + "tarama lideri 5 sn'de bir boşaltır (satır işlenmeden önce silinir), 10 dakikadan eski satır "
                     + "değerlendirilmeden silinir; birikmez."),
             Map.entry("login_anomaly_state", "Tarama imleci — tek satır."),
+            Map.entry("scan_runs", "Sertifika taramasının küme durumu (2026-10-23, çok pod R2b, MP-34) — tarama türü başına TEK satır (hourly / full / stale), güncellenir, birikmez."),
+            Map.entry("cluster_observations", "Pod belleğindeki kaynakların kümedeki son gözlemi (2026-10-23, çok pod R2b, N4) — gözlem adı başına TEK satır (bugün yalnız rdap-source), güncellenir, birikmez."),
             Map.entry("cache_bus", "Pod'lar arası önbellek boşaltma kuşakları (2026-10-22, çok pod R2-A) — önbellek adı başına TEK satır (~25), güncellenir, birikmez."),
             Map.entry("schema_patch_markers", "Tek seferlik veri yamalarının nişanı — yama başına TEK satır, SİLİNMEZ "
                     + "(silinirse yama yeniden koşar; ör. sonradan duraklatılan DNS/Port izlemelerini silinmiş işaretlerdi)."),
