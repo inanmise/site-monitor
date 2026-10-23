@@ -1594,6 +1594,25 @@ class EscalationServiceTest {
     }
 
     @Test
+    @DisplayName("R2b · F (AL-3): elle çözümün notu bu kapanışın satırına yazılamadıysa yanıtta ve çözüm postasında GÖRÜNMEZ")
+    void manualResolve_noteNotWritten_notReturned() {
+        AlertEvent stale = openStale(63L, "man3.example.com", "EXPIRY");
+        when(alertEventRepo.findById(63L)).thenReturn(Optional.of(stale));
+        AlertEventSilentCloseRepository closeRepo = withCloser();
+        when(closeRepo.writeResolvedNote(eq(63L), anyString(), anyString(), anyString())).thenReturn(0);   // satır başka yolda yeniden yazıldı
+        EscalationService selfMock = mock(EscalationService.class);
+        ReflectionTestUtils.setField(service, "self", selfMock);
+
+        AlertEvent out = service.resolve(63L, "Ayşe Yılmaz", "sertifika yenilendi");
+
+        assertThat(out.getResolved()).isTrue();
+        assertThat(out.getResolvedNote()).as("yazılmayan not 'kaydedildi' gibi dönmez").isNull();
+        verify(selfMock).sendResolutionNotificationAsync(argThat(e -> e != null && e.getResolvedNote() == null),
+                eq("Ayşe Yılmaz"), eq("MANUAL_RESOLVE"));
+        verify(alertEventRepo, never()).save(any());
+    }
+
+    @Test
     @DisplayName("R2b · F: otomatik çözüm koşullu kapanıştan sonra bütün varlığı kaydetmez; kapanış anı CAS'ın yazdığıyla aynı")
     void autoResolve_withCloser_noWholeEntitySaveAfterCas() {
         String domain = "auto.example.com";

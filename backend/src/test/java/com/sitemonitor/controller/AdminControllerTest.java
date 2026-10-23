@@ -2943,6 +2943,43 @@ class AdminControllerTest {
     }
 
     @Test
+    @DisplayName("R2b · F (AL-1): alarm bu arada kapandıysa onay 409 ALERT_ALREADY_RESOLVED + açık metin; denetim kaydı YAZILMAZ")
+    void acknowledge_alarmClosedMeanwhile_409_noAudit() throws Exception {
+        when(escalationService.acknowledge(anyLong(), any(), any()))
+                .thenThrow(new EscalationService.AlertClosedMeanwhileException());
+
+        mvc.perform(post("/api/admin/alerts/1/acknowledge").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"note\":\"bilinen sorun takip ediliyor\"}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("ALERT_ALREADY_RESOLVED"))
+                .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("kapandı")));
+
+        org.mockito.Mockito.verify(auditService, never()).recordAction(
+                eq("ALERT_ACKNOWLEDGE"), any(), any(jakarta.servlet.http.HttpServletRequest.class), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("R2b · F (AL-1): toplu onayda arada kapanmış alarm İŞLENMİŞ değil ATLANDI sayılır; silinmiş alarm başarısız")
+    void bulkAcknowledge_closedMeanwhile_countedSkipped() throws Exception {
+        AlertEvent ev = new AlertEvent(); ev.setId(1L);
+        when(escalationService.acknowledge(anyLong(), any(), any())).thenReturn(ev);
+        when(escalationService.acknowledge(eq(2L), any(), any()))
+                .thenThrow(new EscalationService.AlertClosedMeanwhileException());
+        when(escalationService.acknowledge(eq(3L), any(), any()))
+                .thenThrow(new java.util.NoSuchElementException("Alert not found: 3"));
+
+        mvc.perform(post("/api/admin/alerts/bulk").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"acknowledge\",\"ids\":[1,2,3],"
+                               + "\"note\":\"fırtına sonrası toplu kapatma\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.processed").value(1))
+                .andExpect(jsonPath("$.data.skipped").value(1))
+                .andExpect(jsonPath("$.data.failed").value(1));
+    }
+
+    @Test
     @DisplayName("TEKRAR BİLDİR toplu işlemi not İSTEMEZ — orada alarm kapatılmıyor")
     void bulkRenotify_doesNotRequireNote() throws Exception {
         when(escalationService.reNotify(anyLong())).thenReturn(java.util.Map.of("ok", true));
