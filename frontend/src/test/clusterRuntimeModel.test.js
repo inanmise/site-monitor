@@ -187,6 +187,13 @@ describe('doğrulama nedenleri sunucu sabitleriyle eşleşir', () => {
       expect(EN[`hmp.esReason.${r}`], r).toBeTruthy()
     }
   })
+  it('R3-1 inceleme sözleşmesi: leadership_changed ve nothing_compared modelde ve TR + EN çevirili (ham kod basılmaz)', () => {
+    for (const r of ['leadership_changed', 'nothing_compared']) {
+      expect(EVAL_UNKNOWN_REASONS, r).toContain(r)
+      expect(TR[`hmp.esReason.${r}`], r).toBeTruthy()
+      expect(EN[`hmp.esReason.${r}`], r).toBeTruthy()
+    }
+  })
   // R3-1 inceleme düzeltmeleri (2026-10-23): iki yeni neden (FX-STATE sunucuda, FX-OBS çeviride) — liste İKİ YÖNDE eşit (sunucuda
   // olmayan ölü neden yok). FX-OBS dalı tek başına KIRMIZI (sunucu sabitleri FX-STATE'te); birleşince yeşil.
   it('model listesi sunucu sabitleriyle iki yönde eşit; yeni nedenler (leadership_changed, nothing_compared) sunucuda tanımlı', () => {
