@@ -8,6 +8,7 @@ import { ProgressBar, Spinner } from '../../ui/Progress.jsx'
 import ToneBadge from '../ToneBadge.jsx'
 import { executorStats, poolStats, clusterModel, relTime, SCAN_KINDS, HEALTH_THRESHOLDS, BADGE_TONE, LOCK_STATE_TONE } from './healthModel.js'
 import { CARD_GRID, ERR_T, OK_T, WARN_T, KvList, PodChip, RefreshButton, SectionToolbar, SubTitle, SysCard } from './HealthParts.jsx'
+import { EvalRecorderRows, EvalVerifySection, SideJobsRows } from './ClusterRuntimeParts.jsx'
 
 // Birimler sözlükten (QA 2026-09-12, ISSUE-010): "3.1 sn" / "1 dk" İngilizce arayüze sızıyordu.
 function fmsDuration(ms, t) {
@@ -27,7 +28,9 @@ const PodName = ({ children }) => <span className="font-mono text-xs [overflow-w
  * Küme kartı (2026-10-23, çok pod R2b, N1): tarama lideri (kira satırı — KÜME, hangi pod okursa okusun aynı) + yanıtlayan pod'un
  * kendi durumu (lider mi, son tarama tıkı, tıkanma, tuttuğu kilitler, tur kaydı hataları, atlanan turlar, önbellek yolu —
  * BU POD; diğer pod'lar kendi sayaçlarını tutar). RUNBOOK / dağıtım listesi operatörü "tek lider" doğrulaması için buraya
- * gönderir. Kira okunamadıysa "bilinmiyor" — asla yeşil değil.
+ * gönderir. Kira okunamadıysa "bilinmiyor" — asla yeşil değil. Çok pod Sürüm 3-1 (paket B): kalıcı değerlendirme durumunun
+ * KÜME doğrulaması (ayrı bölüm, "Küme") ve bu pod'un kaydedicisi + yan işleri ("Bu pod" bölümünde); eski sunucu alanları
+ * göndermezse satırlar gizlenir.
  */
 function ClusterCard({ t, health }) {
   const c = clusterModel(health)
@@ -43,7 +46,19 @@ function ClusterCard({ t, health }) {
     <SysCard icon={Network} cardKey="cluster" iconClass={c.level === 'warn' ? WARN_T : c.level === 'ok' ? OK_T : 'text-muted-foreground'}
       title={t('hmp.clusterTitle')} right={badge}>
       {!c.available ? (
-        <p className="text-[0.9em] text-muted-foreground" data-slot="cluster-single">{t('hmp.singleHint')}</p>
+        <div className="flex flex-col gap-3">
+          <p className="text-[0.9em] text-muted-foreground" data-slot="cluster-single">{t('hmp.singleHint')}</p>
+          <EvalVerifySection t={t} es={c.evalState} />
+          {(c.evalState || c.sideJobs) && (
+            <section data-slot="cluster-this-pod" aria-labelledby="hmp-pod-title-single" className="flex flex-col gap-1.5 border-t pt-2.5">
+              <SubTitle className="mt-0 text-[12px]"><span id="hmp-pod-title-single">{t('hmp.podSection')}</span><PodChip t={t} pod={c.pod.name} /></SubTitle>
+              <KvList>
+                <EvalRecorderRows t={t} es={c.evalState} />
+                <SideJobsRows t={t} sj={c.sideJobs} />
+              </KvList>
+            </section>
+          )}
+        </div>
       ) : (
         <div className="flex flex-col gap-3">
           <section data-slot="cluster-leader" aria-labelledby="hmp-leader-title" className="flex flex-col gap-1.5">
@@ -61,6 +76,8 @@ function ClusterCard({ t, health }) {
             )}
             {c.leader.leaderless && <AlertBanner tone="warning" className="mb-0">{t('hmp.leaderlessHint')}</AlertBanner>}
           </section>
+
+          <EvalVerifySection t={t} es={c.evalState} />
 
           <section data-slot="cluster-this-pod" aria-labelledby="hmp-pod-title" className="flex flex-col gap-1.5 border-t pt-2.5">
             <SubTitle className="mt-0 text-[12px]"><span id="hmp-pod-title">{t('hmp.podSection')}</span><PodChip t={t} pod={c.pod.name} /></SubTitle>
@@ -127,6 +144,8 @@ function ClusterCard({ t, health }) {
                   </dd>
                 </>
               )}
+              <EvalRecorderRows t={t} es={c.evalState} />
+              <SideJobsRows t={t} sj={c.sideJobs} />
             </KvList>
             <p className="text-xs text-muted-foreground" data-slot="cluster-per-pod-note">{t('hmp.perPodNote')}</p>
           </section>

@@ -48,6 +48,22 @@ public class SystemController {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.sitemonitor.service.cache.CacheBus cacheBus;
 
+    /**
+     * Çok pod Sürüm 3-1 (2026-10-23, paket B) — Küme kartı: bu pod'un kalıcı değerlendirme durumu kaydedicisi, kümenin son
+     * doğrulama gözlemi ve bu pod'un yan iş koşucusu. Hepsi isteğe bağlı; bean yoksa alan eklenmez / "bilinmiyor" gösterilir.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.evalstate.EvalStateSink evalStateSink;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.health.ClusterHealthStore clusterHealthStore;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.schedule.SideJobRunner sideJobRunner;
+    /** Yan işlerin "başka canlı pod" gözleminin bu pod'da son görülen hâli (R3-1 inceleme L4; yalnız bellek). */
+    private final ClusterRuntimeHealth.OtherPodSeen sideJobOtherPodSeen = new ClusterRuntimeHealth.OtherPodSeen();
+    /** Doğrulama aralığı (kaydedicinin açılış ayarı) — gözlemin "eski" eşiği bunun 3 katı. */
+    @org.springframework.beans.factory.annotation.Value("${site.monitor.eval-state.verify-ms:300000}")
+    private long evalVerifyMs = 300_000L;
+
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
 
@@ -67,6 +83,17 @@ public class SystemController {
         if (cacheBus != null) {
             try { data.put("cache_bus", cacheBus.status()); }
             catch (RuntimeException e) { data.put("cache_bus", Map.of("error", e.getClass().getSimpleName())); }
+        }
+        // Çok pod R3-1: kalıcı değerlendirme durumu (bu pod + küme doğrulaması) ve bu pod'un yan işleri — okuma hatası alanı
+        // "bilinmiyor" yapar, yanıtı düşürmez
+        if (evalStateSink != null || clusterHealthStore != null) {
+            try { data.put("eval_state", ClusterRuntimeHealth.evalState(evalStateSink, clusterHealthStore, System.currentTimeMillis(), evalVerifyMs,
+                    schedulerService.sweepLeaderHint())); }
+            catch (RuntimeException e) { data.put("eval_state", Map.of("error", e.getClass().getSimpleName())); }
+        }
+        if (sideJobRunner != null) {
+            try { data.put("side_jobs", ClusterRuntimeHealth.sideJobs(sideJobRunner, sideJobOtherPodSeen, System.currentTimeMillis())); }
+            catch (RuntimeException e) { data.put("side_jobs", Map.of("error", e.getClass().getSimpleName())); }
         }
         return ok(Map.of("data", data));
     }

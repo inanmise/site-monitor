@@ -148,6 +148,10 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.executor.queue-capacity",      "executor",   Type.INT),
         // A12: gunluk alan-adi bitis tazelemesi ac/kapa — kodda okunuyordu, katalogda yoktu.
         new Setting("site.monitor.scheduler.domain-expiry-refresh.enabled", "scheduler", Type.BOOL),
+        // Çok pod Sürüm 3-1 (2026-10-23, plan 3e): tarama lideri cron yan işlerini 20 sn erteler, tur tabanlı ağır işleri
+        // (bayat sertifika, TLS profili, yönetici özeti telafisi) başka canlı pod varken bırakır. false = 20.167.0 yerleşimi.
+        // CANLI (SideJobPlacement); tüm pod'ların yük dağılımını belirler → GLOBAL_ONLY (aşağıda). Anahtar: SideJob.LEADER_YIELD_KEY.
+        new Setting("site.monitor.scheduler.leader-yield.enabled", "scheduler", Type.BOOL),
         new Setting("site.monitor.uptime.alert-enabled",         "monitoring", Type.BOOL),
         new Setting("site.monitor.port.alert-enabled",           "monitoring", Type.BOOL),
         // SSRF koruması — giden izleme/tanılama hedefleri (SsrfGuard). Metadata/loopback/link-local her zaman blok.
@@ -158,6 +162,10 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.keyword.alert-enabled",        "monitoring", Type.BOOL),
         new Setting("site.monitor.ping.alert-enabled",           "monitoring", Type.BOOL),
         new Setting("site.monitor.http.alert-enabled",           "monitoring", Type.BOOL),
+        // Çok pod Sürüm 3-1 (2026-10-23, plan 3a): kalıcı değerlendirme durumu — off (kayıt yok) | write (ikili yazım) |
+        // verify (yazım + 5 dk'da bir bellek ↔ tablo doğrulaması, varsayılan). Hiçbir kip alarm kararını değiştirmez; off = DB
+        // yükü için acil kapatma. CANLI (EvalStateRecorder); kurum geneli → GLOBAL_ONLY (aşağıda). Anahtar: EvalStateMode.SETTING_KEY.
+        new Setting("site.monitor.eval-state.mode",              "monitoring", Type.ENUM, List.of("off", "write", "verify")),
         new Setting("site.monitor.http.rdap-base-url",           "monitoring", Type.STRING),
         // Sayfa Bütünlüğü (9. tür) — alarm aç/kapa + kaynak-doğrulama eşzamanlılığı (nezaket + tek-pod yük).
         new Setting("site.monitor.page.alert-enabled",           "monitoring", Type.BOOL),
@@ -699,7 +707,11 @@ public final class AppSettingsCatalog {
         "site.monitor.metrics.export.enabled",
         "site.monitor.metrics.export.per-monitor",
         "site.monitor.metrics.export.max-entities",
-        "site.monitor.metrics.export.refresh-seconds"
+        "site.monitor.metrics.export.refresh-seconds",
+        // 2026-10-23 (çok pod Sürüm 3-1): kalıcı değerlendirme durumu kipi (DB yazım yükü + doğrulama) ve lider erteleme /
+        // tur bırakma kuralı — ikisi de TÜM pod'ların yükünü ve iş yerleşimini belirler; kurum geneli karar.
+        "site.monitor.eval-state.mode",
+        "site.monitor.scheduler.leader-yield.enabled"
     ));
 
     /**

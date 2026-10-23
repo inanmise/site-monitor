@@ -144,6 +144,25 @@ class GrafanaDashboardControllerTest {
     }
 
     @Test
+    @DisplayName("GET (R3-1 inceleme L8): org_families — bu pod son turda kurum ailelerini yaydı mı; yalnız POD aileleri yayan turda false "
+            + "(kayıt sayıları boş — ekran nedenini söyler), eski imzalı durum (R3-1 öncesi) → true")
+    void exporterOrgFamilies() throws Exception {
+        mvc.perform(get("/api/admin/grafana/settings").session(session("ADMIN", false)))
+                .andExpect(jsonPath("$.data.exporter.org_families").value(true))
+                .andExpect(jsonPath("$.data.exporter.entities.monitors").value(640));
+        when(exporter.lastStatus()).thenReturn(new MonitoringMetricsExporter.Status(true, true, "2026-10-18T08:00:00", 4, 31,
+                Map.of(), Map.of("cluster", true), List.of(), 60, 5000, false));
+        mvc.perform(get("/api/admin/grafana/settings").session(session("ADMIN", true)))
+                .andExpect(jsonPath("$.data.exporter.state").value("running"))
+                .andExpect(jsonPath("$.data.exporter.org_families").value(false))
+                .andExpect(jsonPath("$.data.exporter.entities").isEmpty());
+        // Kapalı / bekleyen turda alan yok (canlı sayılar gibi)
+        when(exporter.lastStatus()).thenReturn(null);
+        mvc.perform(get("/api/admin/grafana/settings").session(session("ADMIN", false)))
+                .andExpect(jsonPath("$.data.exporter.org_families").doesNotExist());
+    }
+
+    @Test
     @DisplayName("GET: belirteç yok → no_token, yalnız EVET / HAYIR (değer asla); canlı sayılar yok; yanıtta belirteç değeri geçmez")
     void exporterWithoutToken() throws Exception {
         when(exporter.tokenConfigured()).thenReturn(false);

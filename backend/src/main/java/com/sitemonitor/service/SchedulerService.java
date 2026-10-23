@@ -2274,10 +2274,18 @@ public class SchedulerService {
     /** Full sweep: runs at the top of every hour (configurable via site.monitor.scheduler.cron). */
     @Scheduled(cron = "${site.monitor.scheduler.cron:0 0 * * * *}")
     public void scheduledHourlyCheck() {
+        String cron = (sweepCron == null || sweepCron.isBlank()) ? "0 0 * * * *" : sweepCron;   // nextCertificateSweepAt ile aynı
+        // R3-1 3e (2026-10-23): gövde yan iş koşucusunda; tarama lideri başka canlı pod varken tetiği erteler — ertelenen
+        // denemede bu saatin turu başka pod'da alındıysa kilide HİÇ dokunmaz (60 sn bekleme / "kilit alınamadı" yok).
+        runSideJob(com.sitemonitor.service.schedule.SideJob.cron("cert-hourly", true, "cert-hourly", cron, null, null,
+                () -> scheduledHourlyCheckNow(cron)));
+    }
+
+    /** Saatlik turun gövdesi (bugünkü {@link #scheduledHourlyCheck} — kilit, tur, tarama aynen). */
+    private void scheduledHourlyCheckNow(String cron) {
         // Küme tur kaydı (2026-10-09): bu saatlik tetik tek pod'da koşar. Kilit ("cert-check") yalnız çakışmayı
         // engelliyordu; geç tetiklenen pod (dolu zamanlayıcı havuzu) aynı saatin turunu bitmişken yeniden başlatabiliyordu.
         // Elle "Şimdi kontrol et" (runCheck) bu kayda bakmaz.
-        String cron = (sweepCron == null || sweepCron.isBlank()) ? "0 0 * * * *" : sweepCron;   // nextCertificateSweepAt ile aynı
         // Önce kilit, SONRA tur (2026-10-21, çok pod R1-A, MP-15): eskiden tur kaydı önce tüketiliyor, ardından "cert-check"
         // kilidi başka pod'un 5 dk'lık bayat taramasında olduğu için alınamıyordu → o saatin turu kümede hiç koşmuyordu.
         // Bayat taramalar kısa sürer; kilit en çok HOURLY_LOCK_WAIT_MS boyunca yeniden denenir. Alınamazsa tur TÜKETİLMEZ.
@@ -2337,13 +2345,23 @@ public class SchedulerService {
         // değil); N pod → N kat tetik ve uzun bir saatlik turla çakışma. Artık aralık başına kümede bir tur (iki aşamalı:
         // yarıda kalırsa koşu kirası dolunca yeniden). Sertifika taramaları liderliğe BAĞLANMAZ (yük lidere yığılmasın).
         if (!roundMayBeDue("cert-stale", staleCheckIntervalMs)) return;
+        // R3-1 3e: lider, turu son 2 aralıkta başka pod aldıysa bırakır; gövde (tur sahiplenmesi dahil) yan iş koşucusunda.
+        if (leaderYieldsRound("cert-stale", staleCheckIntervalMs)) return;
+        // FX-SIDE #1: sabit gecikmeli — koşucu gövdeyi bu pod'daki son bitişten en erken bir aralık sonra başlatır (tek pod'da
+        // kadans 20.167.0'daki gibi "bitiş + 5 dk"; tık gövdeyi koşucuya verip hemen döndüğü için aksi hâlde "tık + 5 dk" olurdu).
+        runSideJob(com.sitemonitor.service.schedule.SideJob.fixedDelay("cert-stale", staleCheckIntervalMs,
+                this::checkStaleInventoryClaimed));
+    }
+
+    /** Bayat süpürmesinin gövdesi: iki aşamalı tur + tarama (bugünkü {@link #checkStaleInventory} gövdesi aynen). */
+    private void checkStaleInventoryClaimed() {
         if (!claimRound("cert-stale", staleCheckIntervalMs)) return;
         boolean done = false;
         try {
             checkStaleInventoryRound();
             done = true;
         } finally {
-            finishRound("cert-stale", done);
+            finishSideRound("cert-stale", done);   // FX-SIDE #4: normal biten tur tamamlanma damgası bırakır (lider bırakma kanıtı)
         }
     }
 
@@ -2399,6 +2417,12 @@ public class SchedulerService {
     @Scheduled(cron = CRON_CA_PIN_REFRESH, zone = ZONE_IST)
     public void runCaPinRefresh() {
         if (!caAutoPinService.isEnabled()) return;
+        // R3-1 3e: lider başka canlı pod varken tetiği erteler (kısa iş — koşucuya taşınmaz).
+        runSideJob(com.sitemonitor.service.schedule.SideJob.cron("ca-pin-refresh", false, "ca-pin-refresh",
+                CRON_CA_PIN_REFRESH, ZONE_IST, null, this::runCaPinRefreshNow));
+    }
+
+    private void runCaPinRefreshNow() {
         if (!tryAcquireSchedulerLock("ca-pin-refresh", sweepLockTtlMinutes)) {
             logSkip("CA pin refresh skipped — lock held by another instance");
             return;
@@ -2426,6 +2450,12 @@ public class SchedulerService {
     @Scheduled(cron = CRON_DOMAIN_EXPIRY_REFRESH, zone = ZONE_IST)
     public void runDomainExpiryRefresh() {
         if (!appSettings.getBoolean("site.monitor.scheduler.domain-expiry-refresh.enabled", true)) return;
+        // R3-1 3e: RDAP / WHOIS ile bütün kayıtlı alan adları — lider erteler, gövde yan iş koşucusunda.
+        runSideJob(com.sitemonitor.service.schedule.SideJob.cron("domain-expiry-refresh", true, "domain-expiry-refresh",
+                CRON_DOMAIN_EXPIRY_REFRESH, ZONE_IST, null, this::runDomainExpiryRefreshNow));
+    }
+
+    private void runDomainExpiryRefreshNow() {
         if (!tryAcquireSchedulerLock("domain-expiry-refresh", sweepLockTtlMinutes)) {
             logSkip("Domain-expiry refresh skipped — lock held by another instance");
             return;
@@ -2450,6 +2480,13 @@ public class SchedulerService {
     // Europe/Istanbul'a sabitli; bu tek istisnaydı. İfade RetentionCatalog'dan gelir (tek kaynak).
     @Scheduled(cron = CRON_NIGHTLY_CLEANUP, zone = RetentionCatalog.CLEANUP_ZONE)
     public void cleanupOldLogs() {
+        // R3-1 3e: saatler süren iş — lider erteler (bu gecenin turu başka pod'da alındıysa ertelenen deneme koşmaz), gövde
+        // yan iş koşucusunda (kapanışta onShutdown iş kilitlerinden ÖNCE durdurur).
+        runSideJob(com.sitemonitor.service.schedule.SideJob.cron("nightly-cleanup", true, "nightly-cleanup",
+                CRON_NIGHTLY_CLEANUP, RetentionCatalog.CLEANUP_ZONE, null, this::cleanupOldLogsNow));
+    }
+
+    private void cleanupOldLogsNow() {
         // HA: prod çok-replikalı (master overlay 3 pod). Kilit olmadan 3 pod aynı anda batch-DELETE +
         // rollup ON CONFLICT koşar → kilit çekişmesi/deadlock riski + 3× boşa iş. Yalnız BİR pod çalışsın.
         // TTL 60dk: batch silme (tablo başına 10dk cap) tüm tabloları için normal gecede fazlasıyla yeter.
@@ -2722,10 +2759,22 @@ public class SchedulerService {
      * (eskiden geçici bağlantı hatası "PostgreSQL değil" sayılıp nişan yazılıyor, iş kalıcı olarak atlanıyordu). PostgreSQL
      * dışında (H2) özet işi yok; onarım koşar, nişan yazılır.
      */
-    @Scheduled(initialDelayString = "${site.monitor.ping-rollup-rebuild.initial-delay-ms:300000}", fixedDelay = 3_600_000L)
+    @Scheduled(initialDelayString = "${site.monitor.ping-rollup-rebuild.initial-delay-ms:300000}",
+               fixedDelay = PING_ROLLUP_REBUILD_TICK_MS)
     public void rebuildPingRollupsOnce() {
         if (pingRebuildFailures.get() >= PING_ROLLUP_REBUILD_MAX_ATTEMPTS) return;   // bu pod denemeyi bıraktı (bir kez ERROR)
         if (pingRollupRebuildDone()) return;
+        // R3-1 3e: lider, başka canlı pod varken en çok 2 ardışık saat bırakır (sonra kendisi koşar); gövde koşucuda.
+        if (leaderSkipsPingRebuild()) return;
+        // FX-SIDE #1: sabit gecikmeli — tek pod'da yeniden deneme kadansı 20.167.0'daki gibi "bitiş + 1 saat".
+        runSideJob(com.sitemonitor.service.schedule.SideJob.fixedDelay("ping-rollup-rebuild", PING_ROLLUP_REBUILD_TICK_MS,
+                this::rebuildPingRollupsUnderLock));
+    }
+
+    /** Ping özet yeniden hesabının tık aralığı (ms, {@code @Scheduled(fixedDelay)} ve yan iş gecikmesi aynı sabit). */
+    static final long PING_ROLLUP_REBUILD_TICK_MS = 3_600_000L;
+
+    private void rebuildPingRollupsUnderLock() {
         if (!tryAcquireSchedulerLock("ping-rollup-rebuild", PING_ROLLUP_REBUILD_LOCK_MINUTES)) {
             logSkip("ping-rollup-rebuild — kilit başka pod'da, atlanıyor");
             return;
@@ -2876,6 +2925,12 @@ public class SchedulerService {
      */
     @Scheduled(cron = CRON_WEEKLY_REPORT_REMINDER, zone = ZONE_IST)
     public void scheduledWeeklyReportReminder() {
+        // R3-1 3e: lider erteler (kısa iş — koşucuya taşınmaz).
+        runSideJob(com.sitemonitor.service.schedule.SideJob.cron("weekly-report-reminder", false, "weekly-report-reminder",
+                CRON_WEEKLY_REPORT_REMINDER, ZONE_IST, null, this::scheduledWeeklyReportReminderNow));
+    }
+
+    private void scheduledWeeklyReportReminderNow() {
         if (!tryAcquireSchedulerLock("weekly-report-reminder", lockTtlMinutes)) {
             logSkip("Haftalık rapor hatırlatması — lock başka pod'da, atlanıyor");
             return;
@@ -2910,6 +2965,12 @@ public class SchedulerService {
     public void scheduledIssueReportDigest() {
         if (!appSettings.getBoolean("site.monitor.issue-reports.daily-digest", false)) return;
         if (loginIssueMailService == null || loginIssueReportRepo == null) return;   // manuel-kurulum güvenlik ağı
+        // R3-1 3e: lider erteler (kısa iş — koşucuya taşınmaz).
+        runSideJob(com.sitemonitor.service.schedule.SideJob.cron("issue-report-digest", false, "issue-report-digest",
+                CRON_ISSUE_REPORT_DIGEST, ZONE_IST, null, this::scheduledIssueReportDigestNow));
+    }
+
+    private void scheduledIssueReportDigestNow() {
         if (!tryAcquireSchedulerLock("issue-report-digest", lockTtlMinutes)) {
             logSkip("Sorun bildirimi özeti — lock başka pod'da, atlanıyor");
             return;
@@ -2948,6 +3009,12 @@ public class SchedulerService {
      */
     @Scheduled(cron = CRON_WEEKLY_AVAILABILITY, zone = ZONE_IST)
     public void scheduledWeeklyAvailabilityReport() {
+        // R3-1 3e: lider erteler; gövde (takım başına rapor + posta) yan iş koşucusunda.
+        runSideJob(com.sitemonitor.service.schedule.SideJob.cron("weekly-availability", true, "weekly-availability",
+                CRON_WEEKLY_AVAILABILITY, ZONE_IST, null, this::scheduledWeeklyAvailabilityReportNow));
+    }
+
+    private void scheduledWeeklyAvailabilityReportNow() {
         if (!tryAcquireSchedulerLock("weekly-availability", lockTtlMinutes)) {
             logSkip("Haftalık erişilebilirlik raporu — lock başka pod'da, atlanıyor");
             return;
@@ -2985,6 +3052,12 @@ public class SchedulerService {
     @Scheduled(cron = CRON_WEEKLY_AVAILABILITY_CATCHUP, zone = ZONE_IST)
     public void scheduledWeeklyAvailabilityCatchUp() {
         if (!weeklyAvailabilityCatchUpWindow(scheduleClock.getAsLong())) return;
+        // R3-1 3e: lider erteler (bu saatin yakalama turu başka pod'da alındıysa ertelenen deneme koşmaz); gövde koşucuda.
+        runSideJob(com.sitemonitor.service.schedule.SideJob.cron("weekly-availability-catchup", true, "weekly-availability-catchup",
+                CRON_WEEKLY_AVAILABILITY_CATCHUP, ZONE_IST, null, this::scheduledWeeklyAvailabilityCatchUpNow));
+    }
+
+    private void scheduledWeeklyAvailabilityCatchUpNow() {
         if (!tryAcquireSchedulerLock("weekly-availability", lockTtlMinutes)) {
             logSkip("Haftalık erişilebilirlik yakalaması — asıl koşu / başka pod sürüyor, atlanıyor");
             return;
@@ -4684,6 +4757,295 @@ public class SchedulerService {
         return isSweepLeader();
     }
 
+    // ── R3-1 P0 (çok pod Sürüm 3-1, ortak sözleşme) ─────────────────────────────────────────────────────────────────
+    // Yalnız uçucu alan okumaları — VERİTABANI YOK, kira yenilenmez, olay yayınlanmaz. Tüketiciler: kalıcı değerlendirme
+    // durumu kaydedicisi (enqueue kapısı), yan iş yerleşimi (lider erteleme), ölçüm aktarıcısı (kurum geneli aileler).
+
+    /**
+     * Bu pod'un tarama liderliği hakkındaki SON bilinen karar — veritabanına sormadan (2026-10-23, çok pod R3-1 P0).
+     * Kapanış başladıysa ({@code ContextClosedEvent}) false; küme kaydı yoksa (tek pod / elle kurulum) true;
+     * aksi hâlde son kira kararı ({@code sweepLeaderHeld}) ve bu pod kirayı bırakmadıysa ({@code sweepLeaderStopped}).
+     *
+     * <p><b>İpucu, karar değil:</b> kira yenilenene dek (≤ TTL/3) eski değeri gösterebilir; alarm kararı hâlâ
+     * {@link #isSweepLeader()} ve sonuç çiti üzerinden verilir. Kira TABLOSU yokken yerel koşu (eski davranış) bu ipucunda
+     * false görünür — tüketiciler bu durumda bugünkü davranışı seçer (yazma yok, erteleme yok, aktarıcı dışa aktarır).
+     */
+    public boolean sweepLeaderHint() {
+        if (shutdownStarted) return false;
+        if (clusterSchedule == null) return true;
+        return sweepLeaderHeld && !sweepLeaderStopped;
+    }
+
+    /**
+     * Bu pod'un tarama liderliğini SON kazandığı an (zamanlayıcı saati, ms) — hiç kazanmadıysa {@code -1}. Yalnız
+     * {@link #sweepLeaderHint()} true iken anlamlıdır (liderlik kaybedilince değer sıfırlanmaz). Küme kaydı yoksa hep
+     * {@code -1}. Pod saatine bağlıdır: iki pod'un yazılarını SIRALAMAK için kullanılmaz (çit belirteci DB kuşağıdır).
+     */
+    public long sweepLeaderSinceMs() {
+        return sweepLeaderSince;
+    }
+    // ── /R3-1 P0 ─────────────────────────────────────────────────────────────────────────────────────────────────────
+
+    // ── R3-1 side jobs (çok pod Sürüm 3-1 3e, paket C) ─────────────────────────────────────────────────────────────
+    // Uzun "her pod" işlerinin gövdesi pod'un yan iş koşucusunda koşar; tarama lideri başka canlı pod varken cron yan
+    // işlerini erteler ve tur tabanlı ağır işleri (bayat sertifika, TLS profili, yönetici özeti telafisi) başka pod'a
+    // bırakır. Kilit / tur / öğe sahiplenmeleri AYNEN gövdededir — çift koşuyu yine onlar engeller. Bean'ler yoksa (elle
+    // kurulum / testler) her şey bugünkü gibi satır içi koşar.
+
+    /** Lider erteleme / tur bırakma kuralları (R3-1 3e) — alan enjeksiyonu (G2: kurucu değişmez); null = bugünkü yerleşim. */
+    @Autowired(required = false)
+    private com.sitemonitor.service.schedule.SideJobPlacement sideJobPlacement;
+
+    /** Pod başına yan iş koşucusu (R3-1 3e); null = gövdeler çağıranın iş parçacığında (bugün). */
+    private volatile com.sitemonitor.service.schedule.SideJobRunner sideJobs;
+
+    /** Ping özet yeniden hesabında liderin üst üste bıraktığı saat sayısı (pod belleği). */
+    private final java.util.concurrent.atomic.AtomicInteger pingRebuildLeaderSkips = new java.util.concurrent.atomic.AtomicInteger();
+
+    /** Liderin ping özet yeniden hesabını başka canlı pod'a bırakabileceği en çok ardışık saat (sonra kendisi koşar). */
+    static final int PING_REBUILD_LEADER_MAX_SKIPS = 2;
+
+    /** Yan iş koşucusunu bağlar (liderlik ipucu durum satırı için koşucuya verilir). */
+    @Autowired(required = false)
+    public void setSideJobRunner(com.sitemonitor.service.schedule.SideJobRunner runner) {
+        this.sideJobs = runner;
+        if (runner != null) runner.bindLeaderHint(this::sweepLeaderHint);
+    }
+
+    /** Yerleşim kuralları (testler; üretimde alan enjeksiyonu). */
+    public void setSideJobPlacement(com.sitemonitor.service.schedule.SideJobPlacement placement) {
+        this.sideJobPlacement = placement;
+    }
+
+    /**
+     * Yan işi pod'un yerleşim kurallarına göre ÜSTLENİR mi (tasarım R3-1 §3.2): true → iş ertelendi, koşucuya verildi ya da
+     * atlandı (kapanış / birleştirme) — çağıran gövdeyi KOŞMAZ; false → çağıran gövdeyi kendi iş parçacığında koşar (bugün).
+     * Sıra:
+     * <ol>
+     *   <li>kapanış başladı ({@code ContextClosedEvent}) → atlanır (yeni iş yok);</li>
+     *   <li>cron işi ve bu pod tarama lideri ve başka canlı pod VAR ve kural açık → tetik {@code cron-defer-ms} (20 sn)
+     *       ertelenir; ertelenen denemede {@code alreadyDone} (yoksa {@link #cronRoundTaken} ile cron turu) "yapıldı" derse
+     *       gövde koşmaz, demezse gövde (kilit + tur aynen) koşar;</li>
+     *   <li>uzun iş ({@code heavy}) → koşucuya gönderilir (aynı adlı iş sürüyorsa birleştirilir = atlanır);</li>
+     *   <li>diğerleri → false (satır içi).</li>
+     * </ol>
+     * Bir Mockito sahtesi her zaman false döner — sahte zamanlayıcıyla kurulan testlerde gövde bugünkü gibi satır içi koşar.
+     */
+    public boolean offloadSideJob(com.sitemonitor.service.schedule.SideJob job) {
+        if (job == null) return true;
+        if (shutdownStarted) {
+            log.debug("Yan iş '{}' başlatılmadı — pod kapanıyor [instance={}]", job.name(), INSTANCE_ID);
+            return true;
+        }
+        com.sitemonitor.service.schedule.SideJobRunner runner = sideJobs;
+        if (runner == null || !runner.canOffload()) return false;
+        com.sitemonitor.service.schedule.SideJobPlacement placement = sideJobPlacement;
+        if (job.cronTriggered() && placement != null && placement.leaderShouldYield(sweepLeaderHint())) {
+            long firedAt = scheduleClock.getAsLong();
+            java.util.function.BooleanSupplier done = job.alreadyDone() != null ? job.alreadyDone()
+                    : job.cronRound() != null ? () -> cronRoundTaken(job.cronRound(), job.cron(), job.zone())
+                            || roundClaimedSince(job.cronRound(), firedAt - SIDE_JOB_CLAIM_SKEW_MS) : null;
+            long delay = placement.cronDeferMs();
+            // FX-SIDE #1: kısa işin ertelenen denemesi kısa cron şeridinde — uzun işler koşucuyu doldursa da zamanında başlar
+            if (runner.defer(job.name(), delay, job.heavy(), done, job.body())) {
+                logSkipInfo("Tarama lideri '{}' tetiğini {} sn erteledi — başka canlı pod üstlensin (R3-1) [instance={}]",
+                        job.name(), delay / 1000, INSTANCE_ID);
+            }
+            return true;
+        }
+        if (job.heavy()) {
+            if (job.fixedDelayMs() > 0) runner.submitAfterGap(job.name(), job.fixedDelayMs(), job.body());   // FX-SIDE #1
+            else runner.submit(job.name(), job.body());
+            return true;
+        }
+        return false;
+    }
+
+    /** {@link #offloadSideJob} üstlenmezse gövdeyi şimdi, bu iş parçacığında koşturur. */
+    public void runSideJob(com.sitemonitor.service.schedule.SideJob job) {
+        if (!offloadSideJob(job)) job.body().run();
+    }
+
+    /**
+     * Bu cron tetiğinin turu ({@code round:<round>}) başka (ya da bu) pod'da ZATEN alındı mı — salt okunur, tek birincil anahtar
+     * okuması. Alınmış tur, sıradaki tetikten cron payı kadar önceye ilerlemiştir: satırın vadesi ileride ve
+     * {@link #cronRoundDue}'nun "vade gelmedi" dediği aralıkta ise true. Okunamazsa / küme kaydı yoksa false (gövde koşar —
+     * kendi kilidi ve {@code cronRoundDue}'su yine karar verir, asla çift koşu değil). Sabit periyotlu turlarda
+     * ({@code roundDue}) da çalışır: alınmış turun vadesi sıradaki tetikten önce ama ileridedir.
+     *
+     * @param zone null = cron ifadesi JVM dilimiyle tetiklenir (UTC ve İstanbul adaylarından erken olan; cronRoundDue gibi)
+     */
+    public boolean cronRoundTaken(String round, String cron, String zone) {
+        if (clusterSchedule == null || round == null) return false;
+        long nowMs = scheduleClock.getAsLong();
+        try {
+            com.sitemonitor.service.schedule.ClusterScheduleService.Row row = clusterSchedule.row(ROUND_KEY_PREFIX + round);
+            if (row == null || row.nextDueAt() <= nowMs) return false;
+            Long until = cronRoundUntil(cron, zone, nowMs);
+            if (until == null) return true;                      // ifade çözülemedi: vadesi ileride = alınmış
+            return !com.sitemonitor.service.schedule.ClusterScheduleService.isDue(row.nextDueAt(), nowMs,
+                    Math.max(1L, until - nowMs));
+        } catch (Exception e) {
+            log.debug("Cron turu okunamadı ({}) — ertelenen deneme gövdeyi koşturuyor (kilit / tur karar verir): {}",
+                    round, e.toString());
+            return false;
+        }
+    }
+
+    /**
+     * Ertelenen denemenin ikinci ön denetimi: tur satırı bu tetik ATEŞLENDİKTEN sonra (pod saatleri arası
+     * {@value #SIDE_JOB_CLAIM_SKEW_MS} ms pay) sahiplenildiyse bu tetik için alınmıştır. Sabit periyotlu turda
+     * ({@code roundDue} — haftalık erişilebilirlik yakalaması) ızgaranın sıradaki vadesi tetikten birkaç saniye sonraya
+     * düşebilir; vade okuması o zaman "alınmamış" der, sahiplenme anı demez. Önceki tetiğin sahiplenmesi (en az bir tetik aralığı
+     * önce) sayılmaz.
+     */
+    static final long SIDE_JOB_CLAIM_SKEW_MS = 30_000L;
+
+    /** Tur satırı {@code sinceMs}'ten sonra (sahiplenen pod'un saatiyle) sahiplenildi mi; okunamazsa false. */
+    boolean roundClaimedSince(String round, long sinceMs) {
+        if (clusterSchedule == null || round == null) return false;
+        try {
+            com.sitemonitor.service.schedule.ClusterScheduleService.Row row = clusterSchedule.row(ROUND_KEY_PREFIX + round);
+            return row != null && row.claimedAt() != null && row.claimedAt() >= sinceMs;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** {@link #cronRoundDue}'nun yazacağı vade (sıradaki tetik − pay); çözülemezse null. Yan hesaptır — kaydı değiştirmez. */
+    private Long cronRoundUntil(String cronExpr, String zone, long nowMs) {
+        if (cronExpr == null || cronExpr.isBlank()) return null;
+        try {
+            java.time.ZoneId[] zones = zone == null
+                    ? new java.time.ZoneId[] { java.time.ZoneOffset.UTC, java.time.ZoneId.of(ZONE_IST) }
+                    : new java.time.ZoneId[] { java.time.ZoneId.of(zone) };
+            var expr = org.springframework.scheduling.support.CronExpression.parse(resolvePlaceholder(cronExpr));
+            long nextMs = Long.MAX_VALUE;
+            for (java.time.ZoneId z : zones) {
+                var next = expr.next(Instant.ofEpochMilli(nowMs + CRON_EARLY_TOLERANCE_MS).atZone(z));
+                if (next != null) nextMs = Math.min(nextMs, next.toInstant().toEpochMilli());
+            }
+            if (nextMs == Long.MAX_VALUE) return null;
+            return nextMs - Math.min(CRON_ROUND_SLACK_MS, Math.max(0L, nextMs - nowMs) / 2);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * Sabit periyotlu tur için lider bu tıkı başka pod'a BIRAKMALI mı (tasarım R3-1 §3.2): kural açık, bu pod tarama lideri,
+     * başka canlı pod var VE turu son {@code 2 × periodMs} içinde BAŞKA bir sahip TAMAMLAMIŞ (takipçi bu işi gerçekten ve
+     * BAŞARIYLA koşturuyor kanıtı: {@code round:<ad>:done} damgası, {@link #noteSideRoundCompleted}). Kanıt yoksa (eski
+     * takipçiler, dağıtımdan sonraki ilk turlar, takipçi takıldı ya da gövdesi her turda hata verip turu bırakıyor) false —
+     * lider bugünkü gibi sahiplenir; kanıt 2 periyotta eskir → geri dönüş kendiliğinden. Okuma hatası → false. Hiç fırlatmaz.
+     *
+     * <p><b>Neden sahiplenme değil tamamlanma (inceleme 2026-10-23, FX-SIDE #4):</b> yalnız SAHİPLENEN takipçi (gövdesi her
+     * turda istisnayla biten, turu bırakan) kanıtı taze tutup lideri sonsuza dek bırakmaya zorluyordu. Bu pod'un ÖNCEKİ süreci
+     * (aynı pod adı, kirli yeniden başlatma — FX-SIDE #3) başka sahip sayılmaz.
+     */
+    public boolean leaderYieldsRound(String round, long periodMs) {
+        if (round == null || clusterSchedule == null) return false;
+        com.sitemonitor.service.schedule.SideJobPlacement placement = sideJobPlacement;
+        if (placement == null || !placement.leaderShouldYield(sweepLeaderHint())) return false;
+        com.sitemonitor.service.schedule.ClusterScheduleService.Row done;
+        try {
+            done = clusterSchedule.row(com.sitemonitor.service.schedule.ClusterScheduleService.doneKey(ROUND_KEY_PREFIX + round));
+        } catch (Exception e) {
+            log.debug("Tur tamamlanma damgası okunamadı ({}) — lider bırakmıyor: {}", round, e.toString());
+            return false;
+        }
+        if (done == null || done.claimedBy() == null || done.claimedAt() == null) return false;
+        if (samePod(done.claimedBy(), clusterSchedule.owner())) return false;
+        long age = scheduleClock.getAsLong() - done.claimedAt();
+        long window = 2L * Math.max(1L, periodMs);
+        if (age > window || age < -com.sitemonitor.service.schedule.ClusterScheduleService.SKEW_SLACK_MS) return false;
+        com.sitemonitor.service.schedule.SideJobRunner runner = sideJobs;
+        if (runner != null) runner.noteYielded(round);
+        logSkip("Tarama lideri '{}' turunu bıraktı — {} sn önce başka pod ({}) tamamladı (R3-1) [instance={}]",
+                round, Math.max(0L, age) / 1000, done.claimedBy(), INSTANCE_ID);
+        return true;
+    }
+
+    /** İki kimlik aynı pod'un mu (aynı kimlik ya da aynı pod adı — {@code ClusterHealthStore.podOf}: kirli yeniden başlatma). */
+    static boolean samePod(String a, String b) {
+        if (a == null || b == null) return false;
+        if (a.equals(b)) return true;
+        String pa = com.sitemonitor.service.health.ClusterHealthStore.podOf(a);
+        return pa != null && pa.equals(com.sitemonitor.service.health.ClusterHealthStore.podOf(b));
+    }
+
+    /**
+     * İki aşamalı turun sonu — yan işler (bayat sertifika, TLS profili): normal bittiyse tamamla ve tamamlanma damgasını bırak
+     * ({@link #noteSideRoundCompleted}), değilse bırak.
+     */
+    public void finishSideRound(String name, boolean completed) {
+        finishRound(name, completed);
+        if (completed) noteSideRoundCompleted(name);
+    }
+
+    /**
+     * Turun bu pod'da NORMAL bittiği damga ({@code round:<ad>:done}: sahip = bu pod, an = şimdi; daha yeni damga ezilmez) —
+     * liderin {@link #leaderYieldsRound} kanıtı (FX-SIDE #4). Tur başına tek PK yazımı; hata yutulur (kanıt yoksa lider
+     * yalnız bugünkü gibi sahiplenir — çift koşu değil). Küme kaydı yoksa hiçbir şey.
+     */
+    public void noteSideRoundCompleted(String name) {
+        if (name == null || clusterSchedule == null) return;
+        try {
+            clusterSchedule.markDone(ROUND_KEY_PREFIX + name, scheduleClock.getAsLong());
+        } catch (Exception e) {
+            log.debug("Tur tamamlanma damgası yazılamadı ({}): {}", name, e.toString());
+        }
+    }
+
+    /**
+     * Öğe başına sahiplenmeyle korunan işin cron turu (FX-SIDE #2; olay aksiyonu hatırlatması): bu tetik küme genelinde bir
+     * kez — {@link #claimCronRound} gibi, ama tur kaydı geçici hatayla okunamazsa iş YİNE DE koşar (WARN; yinelenen koşu çift
+     * posta üretmez — {@code cronRoundDue(…, claimProtected = true)}).
+     */
+    public boolean claimItemProtectedCronRound(String name, String cronExpr, String zone) {
+        return cronRoundDue(name, cronExpr, zone, true);
+    }
+
+    /**
+     * Kapanış başladı mı (FX-SIDE #5) — uzun yan işler (TLS profili turu) adımlar arasında bakar ve kapanış başlayınca kalan
+     * işi bırakıp döner; koşucu {@code onShutdown}'a vardığında boşta olur, ortak yok etme süresi bildirim boşaltmalarına kalır.
+     */
+    public boolean sideJobsStopping() {
+        return stopping();
+    }
+
+    /**
+     * Ping özet yeniden hesabı: lider başka canlı pod varken en çok {@value #PING_REBUILD_LEADER_MAX_SKIPS} ardışık saat bırakır,
+     * sonra kendisi koşar (takipçi işi bitirmediyse). Lider değilse / tek pod'da sayaç sıfırlanır.
+     */
+    private boolean leaderSkipsPingRebuild() {
+        com.sitemonitor.service.schedule.SideJobPlacement placement = sideJobPlacement;
+        com.sitemonitor.service.schedule.SideJobRunner runner = sideJobs;
+        if (placement != null && runner != null && runner.canOffload() && placement.leaderShouldYield(sweepLeaderHint())) {
+            int n = pingRebuildLeaderSkips.incrementAndGet();
+            if (n <= PING_REBUILD_LEADER_MAX_SKIPS) {
+                runner.noteYielded("ping-rollup-rebuild");
+                logSkip("ping-rollup-rebuild — tarama lideri bu saati başka canlı pod'a bıraktı ({}/{}) [instance={}]",
+                        n, PING_REBUILD_LEADER_MAX_SKIPS, INSTANCE_ID);
+                return true;
+            }
+        }
+        pingRebuildLeaderSkips.set(0);
+        return false;
+    }
+
+    /** Yan iş koşucusunu ortak yok etme süresi içinde durdurur ({@link #onShutdown}, iş kilitleri bırakılmadan önce). */
+    private void stopSideJobs() {
+        com.sitemonitor.service.schedule.SideJobRunner runner = sideJobs;
+        if (runner == null) return;
+        try {
+            runner.stopAndWait();
+        } catch (Exception e) {
+            log.warn("Yan iş koşucusu kapanışta durdurulamadı: {}", e.getMessage());
+        }
+    }
+    // ── /R3-1 side jobs ──────────────────────────────────────────────────────────────────────────────────────────────
+
     /**
      * Kirayı veritabanında alır / yeniler ve kararı önbelleğe yazar. {@link #sweepLeaderMonitor} altında çağrılır.
      * Karar değiştiyse (alındı / kaybedildi) {@link SweepLeadershipChangedEvent} yayınlar — kararlı durumda yayınlamaz.
@@ -4834,6 +5196,7 @@ public class SchedulerService {
         stopSweepLeaderRenewer();
         releaseSweepLeadership();
         shutdownManualRunPool();
+        stopSideJobs();   // R3-1 3e: yan işler (ortak süreyle) durur, kilitleri SONRA bırakılır — koşan işin kilidi bırakılmasın
         // Bu pod'un iş kilitleri (2026-10-21, çok pod R1-A, MP-08): zamanlayıcı durduktan ve manuel koşu havuzu kapandıktan
         // SONRA bırakılır — ölen pod'un kilidi işi (izleyici, eskalasyon adımları, …) süre boyunca kümede durdurmasın.
         if (lockService != null) {

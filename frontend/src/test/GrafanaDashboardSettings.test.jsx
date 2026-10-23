@@ -213,6 +213,21 @@ describe('GrafanaDashboardSettings', () => {
     expect(slot('grafana-token')).toBeNull()
   })
 
+  // Çok pod R3-1 inceleme L8 (FX-OBS): ayar sayfası iki pod'dan birine düşer — lider yalnız kendi pod ölçülerini yayarken sayılar "—"
+  // görünüyordu; nedeni tek cümleyle söylenir, sayı kutuları gizlenir
+  it('aktarıcı bu turda yalnız POD ailelerini yaydı (org_families false) → bilgi cümlesi, kayıt sayıları gizli; true / alan yok → sayılar', async () => {
+    await mount(ok({ exporter: { ...data().exporter, org_families: false, entities: {} } }))
+    expect(slot('grafana-exporter')).toHaveAttribute('data-state', 'running')
+    expect(slot('grafana-exporter-org-elsewhere')).toHaveTextContent('başka bir pod yayıyor')
+    expect(slot('grafana-exporter-stats')).toBeNull()
+  })
+
+  it('aktarıcı kurum ailelerini yaydı (org_families true) → bilgi cümlesi yok, sayılar görünür', async () => {
+    await mount(ok({ exporter: { ...data().exporter, org_families: true } }))
+    expect(slot('grafana-exporter-org-elsewhere')).toBeNull()
+    expect(within(slot('grafana-exporter-stats')).getByText('640')).toBeInTheDocument()
+  })
+
   it('aktarıcı kapalı ve bekliyor durumları; sayılar gizli', async () => {
     await mount(ok({ exporter: { state: 'disabled', enabled: false, refresh_seconds: 60 } }))
     expect(slot('grafana-exporter')).toHaveAttribute('data-state', 'disabled')

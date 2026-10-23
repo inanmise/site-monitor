@@ -171,9 +171,38 @@ public class TechErrorReminderService {
         static final Result NONE = new Result(0, 0, 0, 0);
     }
 
-    @Scheduled(cron = "${site.monitor.tech-error-report.reminder-cron:0 15 9 * * *}", zone = "Europe/Istanbul")
+    /** Zamanlanmış tetiğin cron ifadesi (annotation ve yan iş kaydı aynı sabiti okur). */
+    static final String CRON = "${site.monitor.tech-error-report.reminder-cron:0 15 9 * * *}";
+
+    /**
+     * Günlük tetik (R3-1 3e, 2026-10-23): tarama lideri başka canlı pod varken tetiği erteler; ertelenen denemede bugünün turu
+     * ({@link #ROUND}) başka pod'da alındıysa gövde koşmaz ({@link #roundTaken}). Kısa iş, yan iş koşucusuna taşınmaz.
+     */
+    @Scheduled(cron = CRON, zone = "Europe/Istanbul")
     public void scheduled() {
         if (!enabled) return;
+        SchedulerService s = scheduler;
+        if (s == null || !s.offloadSideJob(com.sitemonitor.service.schedule.SideJob.cron(LOCK, false, null, CRON,
+                "Europe/Istanbul", () -> roundTaken(service.now()), this::scheduledNow))) {
+            scheduledNow();
+        }
+    }
+
+    /**
+     * Bugünün turu ZATEN alındı mı (salt okunur; ertelenen denemenin ön denetimi): satırın vadesi {@link #roundDue}'nun "vade
+     * gelmedi" dediği aralıkta. Kayıt yoksa / okunamazsa false (gövde koşar — tur ve talepler karar verir).
+     */
+    boolean roundTaken(Instant now) {
+        if (clusterSchedule == null) return false;
+        try {
+            ClusterScheduleService.Row row = clusterSchedule.row(ROUND);
+            return row != null && !ClusterScheduleService.isDue(row.nextDueAt(), now.toEpochMilli(), DAY_MS);
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
+    private void scheduledNow() {
         try {
             if (scheduler == null) runRound();
             else scheduler.callWithSchedulerLock(LOCK, this::runRound);

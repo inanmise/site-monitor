@@ -2,7 +2,8 @@
 // (dokunmatik) / 1280: Zamanlayıcı bölümünde Küme kartı (tarama lideri = küme, yanıtlayan pod ayrı), yürütücü / havuz
 // "Bu pod: <ad>", zamanlayıcı / kilit / tarama "Küme"; Heartbeat bölümünde Pod'lar kartı (sessiz pod); Entegrasyonlar'da RDAP
 // kartının gözlemleyen pod'u; Uygulama bölümünde JVM grafiklerinin pod'u + Metrikler bağlantısı. Gerçek uzunlukta pod adları
-// SARAR (kırpılmaz), yatay taşma yok, dokunma hedefleri ≥ 40 px. API mock'lu.
+// SARAR (kırpılmaz), yatay taşma yok, dokunma hedefleri ≥ 40 px. API mock'lu. Çok pod Sürüm 3-1 (paket B): Küme kartında kalıcı
+// değerlendirme durumunun küme doğrulaması (gözlemleyen pod, tür başına sayılar) + bu pod'un kaydedicisi ve yan işleri; bilinmeyen gri.
 import { test, expect } from '@playwright/test'
 import { mockApi } from './support/monitorMocks.js'
 
@@ -48,15 +49,40 @@ const HEALTH = {
   domain_expiry: { source: 'RDAP', alarm: false, last_success: fmt(NOW - 3_600_000), scope: 'cluster', observed_by: B, observed_by_pod: POD_B, observed_at: fmt(NOW - 3_600_000) },
   weekly_availability: { enabled: true, running: false, next_run: fmt(NOW + 86_400_000), last_run_at: fmt(NOW - 86_400_000), last_run_sent: 7, last_run_teams: 8, last_run_failed: 0, last_run_no_recipient: 1 },
   cleanup: { hold_active: false, last_run: fmt(NOW - 4 * 3_600_000), hours_since: 4, total_deleted: 18230, failed_count: 0, duration_ms: 42100, never_run: false, alarm: false },
+  // Çok pod R3-1: kalıcı değerlendirme durumu (lider B doğruladı, A yazmıyor) + A'nın yan işleri
+  eval_state: {
+    this_pod: { mode: 'verify', active: false, writer: A, writer_pod: POD_A, generation: null, pending: 0, dropped: 0, flushes: 0,
+      write_failures: 0, last_flush_at: null, last_failure_at: null, last_failure: null, table_missing: false, failing: false,
+      inherited: { at: fmt(NOW - 86_400_000), previous_generation: 11, recovery_counters: 3, down_siblings: 1, active_suppressions: 0, abandoned_chains: 2 },
+      last_verify: null },
+    verify: { observed_by: B, observed_by_pod: POD_B, observed_at: fmt(NOW - 120_000), age_seconds: 120, stale_after_seconds: 900, stale: false,
+      at: fmt(NOW - 120_000), pod: B, generation: 12, status: 'mismatch', reason: null, pass_fail_mismatches: 1,
+      kinds: {
+        recovery: { compared: 412, mismatches: 0, skipped: 3, max_delta: null, measured: false },
+        sibling: { compared: 380, mismatches: 1, skipped: 0, max_delta: null, measured: false },
+        suppression: { compared: 9, mismatches: 0, skipped: 0, max_delta: null, measured: false },
+        round_seen: { compared: 9, mismatches: 0, skipped: 0, max_delta: null, measured: false },
+        confirmation: { compared: 4, mismatches: 0, skipped: 1, max_delta: null, measured: false },
+        descriptor: { compared: 4, mismatches: 0, skipped: 0, max_delta: null, measured: true },
+        window_seed: { compared: 9, mismatches: 1, skipped: 0, max_delta: 0.0731, measured: true },
+      },
+      first_mismatches: ['sibling:0123456789ab'] },
+  },
+  side_jobs: { threads: 3, accepting: true, leader_yield_enabled: true, leader_hint: false, other_live_pod: true, running: 1, queued: 1, failed: 1,
+    deferred_total: 14, yielded_total: 6, skipped_total: 2, jobs: [
+      { name: 'cert-hourly', state: 'running', started_at: fmt(NOW - 45_000), last_finished_at: fmt(NOW - 3_600_000), last_outcome: 'ok', runs: 9, deferred_count: 8, yielded_count: 0, skipped_count: 1 },
+      { name: 'executive-summary-catchup', state: 'queued', started_at: null, last_finished_at: null, last_outcome: null, runs: 0, deferred_count: 0, yielded_count: 6, skipped_count: 0 },
+      { name: 'tls-profile', state: 'idle', started_at: null, last_finished_at: fmt(NOW - 3_600_000), last_outcome: 'failed', runs: 4, deferred_count: 0, yielded_count: 0, skipped_count: 1 },
+    ] },
 }
 const TIMELINE = { days: 1, bucket_minutes: 10, counting: 'distinct_minutes', served_by: A, pods_more: 0,
   buckets: Array.from({ length: 144 }, (_, i) => ({ start: fmt(NOW - (144 - i) * 600_000), expected: 10, received: i === 120 ? 4 : 10 })),
   pods: HEALTH.heartbeat.pods.map((p) => ({ ...p, received: p.state === 'silent' ? 900 : 1430, expected: p.state === 'silent' ? 1020 : 1440 })) }
 
-async function mock(page) {
+async function mock(page, health = HEALTH) {
   await mockApi(page)
   const json = (data, extra = {}) => (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data, ...extra }) })
-  await page.route((u) => new URL(u).pathname === '/api/admin/system', json(HEALTH))
+  await page.route((u) => new URL(u).pathname === '/api/admin/system', json(health))
   await page.route((u) => new URL(u).pathname === '/api/admin/system/heartbeat-timeline', json(TIMELINE))
   await page.route((u) => new URL(u).pathname === '/api/admin/system/metrics', json(
     Array.from({ length: 12 }, (_, i) => ({ ts: fmt(NOW - (12 - i) * 300_000), cpu_process: 20 + i, heap_pct: 40 + i, threads: 80 + i })),
@@ -129,6 +155,17 @@ for (const vp of VIEWPORTS) {
       await expect(page.locator('[data-card="executor"] [data-slot="pod-chip"]')).toHaveAttribute('data-scope', 'pod')
       await expect(page.locator('[data-card="scheduler"] [data-slot="pod-chip"]')).toHaveAttribute('data-scope', 'cluster')
       await expect(page.locator('[data-slot="scan-run"]')).toHaveCount(3)
+      // Çok pod R3-1: kalıcı değerlendirme durumu (küme doğrulaması) + bu pod'un kaydedicisi ve yan işleri
+      const es = card.locator('[data-slot="cluster-eval-verify"]')
+      await expect(es).toHaveAttribute('data-level', 'mismatch')
+      await expect(es.locator('[data-slot="pod-chip"]')).toHaveAttribute('data-scope', 'cluster')
+      await expect(es.locator('[data-slot="es-verified-by"]')).toContainText(POD_B)
+      await expect(es.locator('[data-slot="es-kind"]')).toHaveCount(7)
+      await expect(es.locator('[data-slot="es-kind"][data-warn="true"]')).toHaveCount(1)
+      await expect(card.locator('[data-slot="cluster-eval-recorder"]')).toHaveAttribute('data-level', 'ok')
+      await expect(card.locator('[data-slot="es-inherited"]')).toBeVisible()
+      await expect(card.locator('[data-slot="cluster-side-jobs"] [data-slot="side-job"]')).toHaveCount(2)
+      await expect(card.locator('[data-slot="side-job-failed"]')).toContainText('tls-profile')
       // KPI ızgarası (inceleme H1): kapsam etiketleri + yanıtlayan pod başlığı; taşma / kırpma yok
       await expect(page.locator('[data-kpi="memory"] [data-slot="kpi-scope"]')).toHaveAttribute('data-scope', 'pod')
       await expect(page.locator('[data-kpi="scheduler"] [data-slot="kpi-scope"]')).toHaveAttribute('data-scope', 'cluster')
@@ -138,6 +175,57 @@ for (const vp of VIEWPORTS) {
       expect(await page.evaluate(overflowIn, '[data-section="sched"]'), 'yatay taşma').toEqual([])
       expect(await page.evaluate(clippedIn, '[data-section="sched"]'), 'kırpılan ad / metin').toEqual([])
       if (vp.touch) expect(await page.evaluate(smallTargets, '[data-section="sched"]'), 'dokunma hedefi < 40 px').toEqual([])
+    })
+
+    test('Küme kartı R3-1: doğrulama okunamadı → gri (yeşil değil); kaydedici yazamıyor → uyarı; yan iş durumu bilinmiyor', async ({ page }) => {
+      test.setTimeout(90_000)
+      await mock(page, { ...HEALTH,
+        eval_state: { this_pod: { ...HEALTH.eval_state.this_pod, active: true, generation: 13, failing: true, write_failures: 4, last_failure_at: fmt(NOW - 5_000) },
+          verify: null, verify_error: 'CannotGetJdbcConnectionException' },
+        side_jobs: { error: 'IllegalStateException' } })
+      await page.goto('/?tab=health&sec=sched')
+      const card = page.locator('[data-card="cluster"]')
+      await expect(card).toBeVisible({ timeout: 30_000 })
+      const es = card.locator('[data-slot="cluster-eval-verify"]')
+      await expect(es).toHaveAttribute('data-level', 'unknown')
+      await expect(es.locator('[data-slot="es-verify-status"] [data-tone]')).toHaveAttribute('data-tone', 'muted')
+      await expect(es.locator('[data-slot="es-verify-hint"]')).toBeVisible()
+      await expect(card.locator('[data-slot="cluster-eval-recorder"]')).toHaveAttribute('data-level', 'warn')
+      await expect(card.locator('[data-slot="es-failing"]')).toBeVisible()
+      await expect(card.locator('[data-slot="cluster-side-jobs"]')).toHaveAttribute('data-known', 'false')
+      await page.waitForTimeout(300)
+      expect(await page.evaluate(overflowIn, '[data-section="sched"]'), 'yatay taşma').toEqual([])
+      expect(await page.evaluate(clippedIn, '[data-card="cluster"]'), 'kırpılan metin').toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-card="cluster"]'), 'dokunma hedefi < 40 px').toEqual([])
+    })
+
+    // R3-1 inceleme düzeltmeleri (FX-OBS): M2 eski liderin eski yazma hatası uyarı değil; L4 takipçide "yalnız tarama lideri
+    // bakar"; yeni bilinmiyor nedeni (leadership_changed) ham kod olarak basılmaz
+    test('Küme kartı R3-1 (FX-OBS): eski liderin eski hatası uyarı değil; takipçide yalnız lider bakar; yeni neden çevrilir', async ({ page }) => {
+      test.setTimeout(90_000)
+      await mock(page, { ...HEALTH,
+        eval_state: {
+          this_pod: { ...HEALTH.eval_state.this_pod, active: false, failing: true, write_failures: 4, last_failure_at: fmt(NOW - 300_000),
+            last_flush_at: fmt(NOW - 600_000), last_failure: 'CannotGetJdbcConnectionException' },
+          verify: { ...HEALTH.eval_state.verify, status: 'unknown', reason: 'leadership_changed', pass_fail_mismatches: null, kinds: {},
+            first_mismatches: [] } },
+        side_jobs: { ...HEALTH.side_jobs, other_live_pod: null } })
+      await page.goto('/?tab=health&sec=sched')
+      const card = page.locator('[data-card="cluster"]')
+      await expect(card).toBeVisible({ timeout: 30_000 })
+      await expect(card.locator('[data-slot="cluster-eval-recorder"]')).toHaveAttribute('data-level', 'ok')
+      await expect(card.locator('[data-slot="es-failing"]')).toHaveCount(0)
+      const es = card.locator('[data-slot="cluster-eval-verify"]')
+      await expect(es).toHaveAttribute('data-level', 'unknown')
+      await expect(es.locator('[data-slot="es-verify-status"]')).toContainText(/leadership changed|liderliği değişti/)
+      await expect(es.locator('[data-slot="es-verify-status"]')).not.toContainText('leadership_changed')
+      const yieldLine = card.locator('[data-slot="side-jobs-yield"]')
+      await expect(yieldLine).toHaveAttribute('data-other-pod', 'leaderOnly')
+      await expect(yieldLine).toContainText(/only the sweep leader checks|yalnız tarama lideri bakar/)
+      await page.waitForTimeout(300)
+      expect(await page.evaluate(overflowIn, '[data-section="sched"]'), 'yatay taşma').toEqual([])
+      expect(await page.evaluate(clippedIn, '[data-card="cluster"]'), 'kırpılan metin').toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-card="cluster"]'), 'dokunma hedefi < 40 px').toEqual([])
     })
 
     test('Heartbeat: Pod’lar kartı sessiz süreci gösterir; geçmiş penceresinde pod başına satırlar', async ({ page }) => {

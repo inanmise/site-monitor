@@ -183,6 +183,30 @@ class SettingsScopedAdminGateTest {
     }
 
     @Test
+    @DisplayName("2026-10-23 (çok pod R3-1): kalıcı değerlendirme kipi + lider erteleme anahtarları katalogda, doğru tip/grupta ve GLOBAL_ONLY")
+    void multiPodR31Keys_globalOnly() {
+        String mode = com.sitemonitor.service.evalstate.EvalStateMode.SETTING_KEY;
+        String yield = com.sitemonitor.service.schedule.SideJob.LEADER_YIELD_KEY;
+        assertThat(mode).isEqualTo("site.monitor.eval-state.mode");
+        assertThat(yield).isEqualTo("site.monitor.scheduler.leader-yield.enabled");
+        assertThat(AppSettingsCatalog.GLOBAL_ONLY).contains(mode, yield);
+
+        AppSettingsCatalog.Setting m = AppSettingsCatalog.byKey(mode);
+        assertThat(m).as("katalogda: " + mode).isNotNull();
+        assertThat(m.group()).isEqualTo("monitoring");
+        assertThat(m.type()).isEqualTo(AppSettingsCatalog.Type.ENUM);
+        // Seçenekler kipin kalıcı değerleriyle AYNI (ayarda saklanan dize = EvalStateMode.key()).
+        assertThat(m.enumOptions()).containsExactly(
+                java.util.Arrays.stream(com.sitemonitor.service.evalstate.EvalStateMode.values())
+                        .map(com.sitemonitor.service.evalstate.EvalStateMode::key).toArray(String[]::new));
+
+        AppSettingsCatalog.Setting y = AppSettingsCatalog.byKey(yield);
+        assertThat(y).as("katalogda: " + yield).isNotNull();
+        assertThat(y.group()).isEqualTo("scheduler");
+        assertThat(y.type()).isEqualTo(AppSettingsCatalog.Type.BOOL);
+    }
+
+    @Test
     @DisplayName("2026-09-28: sistem geneli yüzeyler (Veri Saklama yazma uçları, Sorun Bildirimleri yönetimi) requireNotScopedAdmin TAŞIR")
     void systemWideSurfaces_keepGate() throws IOException {
         for (String c : List.of("RetentionAdminController", "LoginIssueController")) {

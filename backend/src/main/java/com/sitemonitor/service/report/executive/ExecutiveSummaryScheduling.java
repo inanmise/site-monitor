@@ -53,7 +53,7 @@ public class ExecutiveSummaryScheduling implements SchedulingConfigurer {
     @Override
     public void configureTasks(ScheduledTaskRegistrar registrar) {
         registrar.addTriggerTask(
-                () -> schedulerService.runWithSchedulerLock(LOCK, () -> scheduledTick(plannedFire.last(), Instant.now())),
+                this::fireScheduled,
                 plannedFire.wrap(context -> {
                     String expr = settings.cron();
                     try {
@@ -72,11 +72,38 @@ public class ExecutiveSummaryScheduling implements SchedulingConfigurer {
         // yazımı olmasın (takım kapısı tek sayım sorgusu).
         registrar.addTriggerTask(
                 () -> {
-                    if (settings.enabled() || teamService.anyEnabled()) {
-                        schedulerService.runWithSchedulerLock(LOCK, this::catchUpTick);
-                    }
+                    if (settings.enabled() || teamService.anyEnabled()) fireCatchUp();
                 },
                 new CronTrigger(CATCH_UP_CRON, ExecutiveSummaryContext.IST));
+    }
+
+    /**
+     * Planlı tetik görevi (R3-1 3e, 2026-10-23): PLANLI an tetik anında yakalanır (tetikleyici sıradaki anı görev DÖNÜNCE
+     * hesaplar — ertelenen / koşucuya verilen gövde planlı anı sonradan okuyamaz), gövde kilit altında {@link #scheduledTick}.
+     * Tarama lideri başka canlı pod varken tetiği erteler; ertelenen denemede bu tetiğin turu ({@value #SCHEDULED_ROUND}) başka
+     * pod'da alındıysa gövde koşmaz. Gövde pod'un yan iş koşucusunda.
+     */
+    void fireScheduled() {
+        Instant planned = plannedFire.last();
+        Runnable body = () -> schedulerService.runWithSchedulerLock(LOCK, () -> scheduledTick(planned, Instant.now()));
+        String zone = ExecutiveSummaryContext.IST.getId();
+        com.sitemonitor.service.schedule.SideJob job = com.sitemonitor.service.schedule.SideJob.cron(SCHEDULED_ROUND, true,
+                null, liveCron(), zone, () -> schedulerService.cronRoundTaken(SCHEDULED_ROUND, liveCron(), zone), body);
+        if (!schedulerService.offloadSideJob(job)) body.run();
+    }
+
+    /**
+     * Saatlik telafi görevi (R3-1 3e): tarama lideri, telafi turunu ({@value #CATCH_UP_ROUND}) son 2 periyotta başka pod
+     * aldıysa bırakır; gövde (kilit + tur) pod'un yan iş koşucusunda.
+     */
+    void fireCatchUp() {
+        if (schedulerService.leaderYieldsRound(CATCH_UP_ROUND, CATCH_UP_ROUND_MS)) return;
+        Runnable body = () -> schedulerService.runWithSchedulerLock(LOCK, this::catchUpTick);
+        if (!schedulerService.offloadSideJob(com.sitemonitor.service.schedule.SideJob.heavy(CATCH_UP_ROUND, body))) body.run();
+    }
+
+    private String liveCron() {
+        return com.sitemonitor.service.report.LiveCron.effective(settings.cron(), ExecutiveSummarySettings.DEFAULT_CRON);
     }
 
     /**
@@ -111,5 +138,8 @@ public class ExecutiveSummaryScheduling implements SchedulingConfigurer {
         }
         delivery.catchUp();
         schedulerService.completeRound(CATCH_UP_ROUND);
+        // FX-SIDE #4: normal biten tur tamamlanma damgası bırakır — tarama liderinin "bu turu başka pod koşturuyor" kanıtı
+        // yalnız bu damgadır (yalnız sahiplenip hata veren takipçiye lider sonsuza dek bırakmasın)
+        schedulerService.noteSideRoundCompleted(CATCH_UP_ROUND);
     }
 }

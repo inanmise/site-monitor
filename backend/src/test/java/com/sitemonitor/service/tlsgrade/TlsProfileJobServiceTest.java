@@ -39,7 +39,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * TLS profili işi (2026-10-10): lider kapısı + kendi kilidi, vade seçimi (hiç yoklanmamış önce, sınırlı tur), elle
+ * TLS profili işi (2026-10-10): kendi kilidi + (2026-10-23, R3-1 3e) her pod'da iki aşamalı tur ve lider bırakma, vade seçimi (hiç yoklanmamış önce, sınırlı tur), elle
  * yüklenen kayıtların dışlanması, havuzun eşzamanlılık sınırı ve tur bütçesi, not karşılaştırması + önbellek boşaltma.
  */
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
@@ -96,19 +96,54 @@ class TlsProfileJobServiceTest {
     }
 
     @Test
-    @DisplayName("Lider değilse tur koşmaz; liderse kendi scheduler_lock anahtarıyla koşar")
-    void leaderGateAndLock() {
+    @DisplayName("R3-1 3e: tur artık lidere bağlı DEĞİL — her pod'da kilit 'tls-profile' + iki aşamalı tur 'tls-profile' altında; "
+            + "lider turu başka pod'a bıraktıysa koşmaz; koşucu üstlenirse gövde burada koşmaz; kesilen tur tamamlanmaz")
+    void anyPodRoundAndLeaderYield() {
         add("a.example.com");
-        when(scheduler.isSweepLeaderNow()).thenReturn(false);
-        job.scheduledTick();
-        verify(scheduler, never()).runWithSchedulerLock(anyString(), any());
-
-        when(scheduler.isSweepLeaderNow()).thenReturn(true);
         doAnswer(i -> { ((Runnable) i.getArgument(1)).run(); return null; })
                 .when(scheduler).runWithSchedulerLock(eq(TlsProfileJobService.LOCK_NAME), any());
+
+        // lider ve tur son 2 aralıkta başka pod'da → bırakır: kilit / tur / yoklama yok
+        when(scheduler.leaderYieldsRound("tls-profile", 600_000L)).thenReturn(true);
+        job.scheduledTick();
+        verify(scheduler, never()).runWithSchedulerLock(anyString(), any());
+        verify(scheduler, never()).claimRound(anyString(), org.mockito.ArgumentMatchers.anyLong());
+
+        // bırakmıyor, tur başka pod'da alınmış → kilit altında tur sorulur, yoklama yok
+        when(scheduler.leaderYieldsRound("tls-profile", 600_000L)).thenReturn(false);
         job.scheduledTick();
         verify(scheduler).runWithSchedulerLock(eq("tls-profile"), any());
+        verify(scheduler).claimRound("tls-profile", 600_000L);
+        verify(probe, never()).probe(anyString(), anyInt(), anyBoolean(), anyString(), any());
+
+        // tur bu pod'da → yoklar ve turu tamamlar
+        when(scheduler.claimRound("tls-profile", 600_000L)).thenReturn(true);
+        job.scheduledTick();
         verify(probe).probe(eq("a.example.com"), eq(443), eq(false), eq(TlsProfile.TRIGGER_SCHEDULED), any());
+        verify(scheduler).finishSideRound("tls-profile", true);
+        verify(scheduler, never()).isSweepLeaderNow();          // ÖNCE: takipçide hiç koşmuyordu (lider kapısı)
+
+        // kesilen tur (kapanış) tamamlanmaz → koşu kirası dolunca yeniden koşar
+        profiles.clear();
+        Thread.currentThread().interrupt();
+        try {
+            job.scheduledTick();
+        } finally {
+            Thread.interrupted();
+        }
+        verify(scheduler).finishSideRound("tls-profile", false);
+
+        // yan iş koşucusu üstlendi (gövde orada koşar) → burada kilit yok
+        org.mockito.Mockito.clearInvocations(scheduler);
+        when(scheduler.offloadSideJob(any())).thenReturn(true);
+        job.scheduledTick();
+        org.mockito.ArgumentCaptor<com.sitemonitor.service.schedule.SideJob> sj =
+                org.mockito.ArgumentCaptor.forClass(com.sitemonitor.service.schedule.SideJob.class);
+        verify(scheduler).offloadSideJob(sj.capture());
+        assertThat(sj.getValue().name()).isEqualTo("tls-profile");
+        assertThat(sj.getValue().heavy()).isTrue();
+        assertThat(sj.getValue().cronTriggered()).as("sabit periyotlu: lider ertelemesi değil, tur bırakma").isFalse();
+        verify(scheduler, never()).runWithSchedulerLock(anyString(), any());
     }
 
     @Test
@@ -191,6 +226,77 @@ class TlsProfileJobServiceTest {
         assertThat(System.currentTimeMillis() - t0).isLessThan(20_000);
         assertThat(r.probed()).isZero();
         job.shutdown();
+    }
+
+    @Test
+    @DisplayName("FX-SIDE #5: kapanış bayrağı (ContextClosedEvent) kalkınca yoklama turu 1 sn içinde döner — biten yoklama kaydedilir, "
+            + "bitmeyenler kesilir, not karşılaştırması / düşüş bildirimi yok, tur 'yarıda' (tamamlanmaz)")
+    void tickReturnsWithinOneSecondOfShutdownFlag() throws Exception {
+        TlsGradeDropNotifier notifier = mock(TlsGradeDropNotifier.class);
+        job.setDropNotifier(notifier);
+        for (int i = 0; i < 4; i++) add("slow" + i + ".example.com");
+        add("fast.example.com");
+        java.util.concurrent.atomic.AtomicBoolean stopping = new java.util.concurrent.atomic.AtomicBoolean();
+        when(scheduler.sideJobsStopping()).thenAnswer(i -> stopping.get());
+        java.util.concurrent.CountDownLatch slowStarted = new java.util.concurrent.CountDownLatch(1);
+        AtomicInteger interruptedProbes = new AtomicInteger();
+        when(probe.probe(anyString(), anyInt(), anyBoolean(), anyString(), any())).thenAnswer(i -> {
+            String d = i.getArgument(0);
+            if (d.startsWith("fast")) return profile(d, "OK");
+            slowStarted.countDown();
+            try {
+                Thread.sleep(30_000);
+            } catch (InterruptedException e) {
+                interruptedProbes.incrementAndGet();
+                throw e;
+            }
+            return profile(d, "OK");
+        });
+        job.concurrency = 5;
+        java.util.concurrent.atomic.AtomicReference<TlsProfileJobService.TickResult> out =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        Thread t = new Thread(() -> out.set(job.runTick(Instant.now())), "tls-tick-test");
+        t.start();
+        assertThat(slowStarted.await(5, TimeUnit.SECONDS)).isTrue();
+        Thread.sleep(300);                                       // hızlı yoklama bitsin
+        long t0 = System.nanoTime();
+        stopping.set(true);                                      // ContextClosedEvent
+        t.join(5_000);
+        long tookMs = (System.nanoTime() - t0) / 1_000_000L;
+        assertThat(t.isAlive()).isFalse();
+        assertThat(tookMs).as("bayraktan sonra en geç 1 sn").isLessThan(1_000L);
+        TlsProfileJobService.TickResult r = out.get();
+        assertThat(r.stopped()).isTrue();
+        assertThat(r.probed()).as("biten yoklama kaydedildi").isEqualTo(1);
+        assertThat(profiles).containsOnlyKeys("fast.example.com");
+        verify(grades, never()).reconcile(any());
+        verify(notifier, never()).notifyPending();
+        long deadline = System.currentTimeMillis() + 5_000;
+        while (interruptedProbes.get() < 4 && System.currentTimeMillis() < deadline) Thread.sleep(10);
+        assertThat(interruptedProbes).as("bitmeyen yoklamalar kesildi").hasValue(4);
+
+        // kapanış zaten başladıysa yeni tur hiç yoklamaz; zamanlanmış tık turu TAMAMLAMAZ
+        doAnswer(i -> { ((Runnable) i.getArgument(1)).run(); return null; })
+                .when(scheduler).runWithSchedulerLock(eq(TlsProfileJobService.LOCK_NAME), any());
+        when(scheduler.claimRound("tls-profile", 600_000L)).thenReturn(true);
+        org.mockito.Mockito.clearInvocations(probe);
+        job.scheduledTick();
+        verify(probe, never()).probe(anyString(), anyInt(), anyBoolean(), anyString(), any());
+        verify(scheduler).finishSideRound("tls-profile", false);
+        verify(scheduler, never()).finishSideRound("tls-profile", true);
+        job.shutdown();
+    }
+
+    @Test
+    @DisplayName("FX-SIDE #1: zamanlanmış tık sabit gecikmeli yan iş olarak verilir (gecikme = tick-ms)")
+    void scheduledTickIsAFixedDelaySideJob() {
+        when(scheduler.offloadSideJob(any())).thenReturn(true);
+        job.scheduledTick();
+        org.mockito.ArgumentCaptor<com.sitemonitor.service.schedule.SideJob> sj =
+                org.mockito.ArgumentCaptor.forClass(com.sitemonitor.service.schedule.SideJob.class);
+        verify(scheduler).offloadSideJob(sj.capture());
+        assertThat(sj.getValue().fixedDelayMs()).isEqualTo(600_000L);
+        assertThat(sj.getValue().heavy()).isTrue();
     }
 
     @Test

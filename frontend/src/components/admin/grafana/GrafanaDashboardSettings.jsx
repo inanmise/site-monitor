@@ -17,7 +17,7 @@ import { downloadBlob } from '../../../utils/csvExport.js'
 import { agoText } from '../../../utils/relativeTime.js'
 import { SETTINGS_STACK, SettingsHeader, SettingsSaveBar, SettingsSection, ToggleRow } from '../SettingsControls.jsx'
 import {
-  SECTION_IDS, changedFields, errorsForChanges, exporterState, failedSources, isDirty, orderSections, scrapeSnippet, toForm, utcMs,
+  SECTION_IDS, changedFields, errorsForChanges, exporterState, exportsOrgFamilies, failedSources, isDirty, orderSections, scrapeSnippet, toForm, utcMs,
   validateForm,
 } from './grafanaModel.js'
 import { Badge } from '@/components/shadcn/badge'
@@ -528,7 +528,10 @@ function ExporterCard({ t, exporter }) {
   const at = utcMs(exporter?.refreshed_at)
   const now = Number.isFinite(utcMs(exporter?.server_now)) ? utcMs(exporter?.server_now) : Date.now()
   const entities = exporter?.entities || {}
-  const showNumbers = st === 'running' || st === 'degraded' || st === 'stale'
+  const live = st === 'running' || st === 'degraded' || st === 'stale'
+  // R3-1 (inceleme L8): yalnız kendi pod ölçülerini yayan turda kayıt sayıları yok — "—" yerine nedeni söylenir
+  const orgElsewhere = live && exportsOrgFamilies(exporter) === false
+  const showNumbers = live && !orgElsewhere
   return (
     <SettingsSection title={t('grafana.exp.title')} description={t('grafana.exp.desc')} contentClassName="flex flex-col gap-3">
       <div data-slot="grafana-exporter" data-state={st} className="flex min-w-0 flex-col gap-3">
@@ -538,6 +541,11 @@ function ExporterCard({ t, exporter }) {
           </Badge>
           <span className="text-sm text-muted-foreground [overflow-wrap:anywhere]">{t(`grafana.exp.stateHint.${st}`)}</span>
         </div>
+        {orgElsewhere && (
+          <div data-slot="grafana-exporter-org-elsewhere">
+            <AlertBanner tone="info" className="mb-0">{t('grafana.exp.orgElsewhere')}</AlertBanner>
+          </div>
+        )}
         {showNumbers && (
           <dl data-slot="grafana-exporter-stats" className="m-0 grid min-w-0 grid-cols-2 gap-2 @xl:grid-cols-4">
             {['monitors', 'certificates', 'domains', 'alerts'].map((k) => (

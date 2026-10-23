@@ -237,6 +237,68 @@ public class ClusterScheduleService {
         return rows.isEmpty() ? null : rows.get(0);
     }
 
+    // ── Salt okunur satır (2026-10-23, çok pod R3-1 3e) ───────────────────────────────────────────────────────────
+
+    static final String SQL_ROW_READ = "SELECT next_due_at, claimed_by, claimed_at FROM monitor_check_schedule "
+            + "WHERE monitor_key = ?";
+
+    /**
+     * Bir satırın anlık hâli: vade, son sahiplenen pod ve sahiplenme anı (epoch ms, sahiplenenin saati). Yalnız TANI ve
+     * yerleşim kanıtı içindir ("bu turu son kim, ne zaman aldı" — {@code SchedulerService.leaderYieldsRound}); karar yine
+     * {@link #claim} / {@link #claimRun}'ın koşullu UPDATE'idir.
+     *
+     * @param claimedBy {@code claimed_by} (null olabilir)
+     * @param claimedAt {@code claimed_at} (null = bilinmiyor)
+     */
+    public record Row(String key, long nextDueAt, String claimedBy, Long claimedAt) {}
+
+    /**
+     * Anahtarın satırını TEK birincil anahtar okumasıyla döner (R3-1 3e — yan iş yerleşimi); satır yoksa null. Yazmaz.
+     *
+     * @throws org.springframework.dao.DataAccessException veritabanı hatasında (çağıran "kanıt yok" sayar)
+     */
+    public Row row(String key) {
+        List<Row> rows = jdbc.query(SQL_ROW_READ, (rs, i) -> {
+            long claimedAt = rs.getLong("claimed_at");
+            Long at = rs.wasNull() ? null : claimedAt;
+            return new Row(key, rs.getLong("next_due_at"), rs.getString("claimed_by"), at);
+        }, key);
+        return rows.isEmpty() ? null : rows.get(0);
+    }
+
+    // ── Tur tamamlanma damgası (2026-10-23, çok pod R3-1 FX-SIDE #4) ──────────────────────────────────────────────
+
+    /**
+     * Tamamlanma damgası anahtarının son eki: {@code round:<ad>:done} — KALICI biçim. {@value #ROUND_PREFIX} önekiyle yaşar,
+     * böylece {@link #prune} (ve 20.167.0 pod'larının gece budaması) silmez. Satır: {@code claimed_by} = turu SON normal bitiren
+     * pod, {@code claimed_at} = bitiş anı (o pod'un saati), {@code next_due_at} = aynı an (vade DEĞİL — hiçbir tur bu satırı
+     * sahiplenmez). Liderin "takipçi bu turu gerçekten koşturuyor" kanıtı yalnız bu satırdır (sahiplenme değil).
+     */
+    public static final String DONE_SUFFIX = ":done";
+
+    /** Bir tur anahtarının ({@code round:<ad>}) tamamlanma damgası anahtarı. */
+    public static String doneKey(String roundKey) {
+        return roundKey + DONE_SUFFIX;
+    }
+
+    /** Daha yeni bir damgayı ezmez (iki pod'un yarışında en yeni bitiş kalır). */
+    static final String SQL_DONE_UPDATE = "UPDATE monitor_check_schedule SET next_due_at = ?, claimed_by = ?, claimed_at = ? "
+            + "WHERE monitor_key = ? AND (claimed_at IS NULL OR claimed_at <= ?)";
+
+    /**
+     * Turun bu pod'da NORMAL bittiğini damgalar ({@link #doneKey}): satır varsa ve damgası bundan eski değilse güncellenir,
+     * yoksa eklenir ({@code ON CONFLICT DO NOTHING} — eşzamanlı ekleme kaybeden tarafta hata değil). Yalnız tanı / yerleşim
+     * kanıtıdır; hiçbir kararın kilidi değildir.
+     *
+     * @return satır yazıldı mı (false = daha yeni bir damga var)
+     * @throws org.springframework.dao.DataAccessException veritabanı hatasında (çağıran yutar — kanıt yoksa lider bırakmaz)
+     */
+    public boolean markDone(String roundKey, long nowMs) {
+        String key = doneKey(roundKey);
+        if (jdbc.update(SQL_DONE_UPDATE, nowMs, owner, nowMs, key, nowMs) == 1) return true;
+        return jdbc.update(SQL_INSERT, key, nowMs, owner, nowMs) == 1;
+    }
+
     /**
      * Canlı izleme kümesinde olmayan anahtarların satırlarını siler (silinen izlemeler birikmesin). Tur
      * ({@value #ROUND_PREFIX}) ve kira ({@value #LEASE_PREFIX}) satırlarına dokunmaz. Gece temizliğinden, tek pod'da
