@@ -239,4 +239,61 @@ class LeadershipChangeResetTest {
                 () -> status("up"))), true);
         verify(escalation, times(1)).resolveMonitoringAlertsForDomain(HOST, TYPE);
     }
+
+    // ── Çok pod Sürüm 3-1: kalıcı değerlendirme kaydedicisi bağlıyken anlam AYNI (tasarım R3-1 I-1, §2.5) ─────────────
+
+    @Test
+    @DisplayName("3-1: her pod'a FIRLATAN kaydedici bağlı — lider → takipçi → lider; ilk sağlıklı sonuç yine KAPATMAZ, üçüncü kapatır")
+    void regainedLeader_withThrowingRecorder_sameSemantics() {
+        MonitoringMultiPodKit.PodWithMos a = MonitoringMultiPodKit.podWithMos(mp, 1);
+        MonitoringMultiPodKit.PodWithMos b = MonitoringMultiPodKit.podWithMos(mp, 2);
+        a.mos().setEvalStateSink(com.sitemonitor.service.evalstate.RecordingSink.throwing());
+        b.mos().setEvalStateSink(com.sitemonitor.service.evalstate.RecordingSink.throwing());
+        openAlarm();
+        a.mos().handleSweepResults(TYPE, List.of(item(true, 3, () -> status("up"))));
+        mp.advance(60_000);
+        a.mos().handleSweepResults(TYPE, List.of(item(true, 3, () -> status("up"))));
+        flipAwayAndBack(a, b, () -> {
+            b.mos().handleSweepResults(TYPE, List.of(item(false, 3, () -> status("down"))));
+            mp.advance(60_000);
+            b.mos().handleSweepResults(TYPE, List.of(item(false, 3, () -> status("down"))));
+        });
+        a.mos().handleSweepResults(TYPE, List.of(item(true, 3, () -> status("up"))));
+        verify(escalation, never()).resolveMonitoringAlertsForDomain(anyString(), anyString());
+        mp.advance(60_000);
+        a.mos().handleSweepResults(TYPE, List.of(item(true, 3, () -> status("up"))));
+        mp.advance(60_000);
+        a.mos().handleSweepResults(TYPE, List.of(item(true, 3, () -> status("up"))));
+        verify(escalation, times(1)).resolveMonitoringAlertsForDomain(HOST, TYPE);
+        assertThat(a.mos().evalStateHookFailures()).isPositive();
+    }
+
+    @Test
+    @DisplayName("3-1: kaydedici bağlıyken sıfırlama — kanca ÇAĞIRMAZ (kaydedici aynı olayı dinler), kaynak boş, yeni zincir kayda girer")
+    void reset_withRecorderAttached_noHooksSourceEmpty() {
+        MonitoringOutageService s = MonitoringMultiPodKit.mos(mp);
+        MonitoringMultiPodKit.Manual ex = new MonitoringMultiPodKit.Manual();
+        ReflectionTestUtils.setField(s, "confirmExecutor", ex);
+        com.sitemonitor.service.evalstate.RecordingSink sink = com.sitemonitor.service.evalstate.RecordingSink.recording();
+        s.setEvalStateSink(sink);
+        when(alertRepo.findOpenByDomainIn(anyCollection())).thenReturn(List.of());
+        s.handleSweepResults(TYPE, List.of(item(false, 3, () -> status("down"))));
+        assertThat(sink.ops("chainStart")).hasSize(1);
+        sink.clear();
+
+        s.onSweepLeadershipChanged(new SweepLeadershipChangedEvent(false, "pod1", 0L, SweepLeadershipChangedEvent.LOST));
+        assertThat(sink.ops()).as("sıfırlama kanca çağırmaz").isEmpty();
+        assertThat(s.verifySnapshot().inFlight()).isEmpty();
+        assertThat(s.typeValues(TYPE)).isEqualTo(com.sitemonitor.service.evalstate.EvalStateSource.TypeValues.NONE);
+
+        ex.drain();   // eski zincirin geç adımı: hiçbir kancaya dokunmaz (kayıt yok, dönem eski)
+        assertThat(sink.ops()).isEmpty();
+        verify(escalation, never()).processConfirmedOutage(anyString(), anyString(), anyString(), any());
+
+        s.handleSweepResults(TYPE, List.of(item(false, 3, () -> status("down"))));
+        assertThat(sink.ops("chainStart")).hasSize(1);
+        ex.drain();
+        verify(escalation, times(1)).processConfirmedOutage(eq(HOST), eq(TYPE), anyString(), any());
+        assertThat(sink.ops("chainEnd")).hasSize(1);
+    }
 }

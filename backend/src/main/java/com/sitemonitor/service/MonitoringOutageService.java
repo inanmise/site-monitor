@@ -6,6 +6,9 @@ import com.sitemonitor.model.DnsRecord;
 import com.sitemonitor.repository.AlertEventRepository;
 import com.sitemonitor.repository.DnsMonitorRepository;
 import com.sitemonitor.repository.DnsRecordRepository;
+import com.sitemonitor.service.evalstate.EvalSnapshot;
+import com.sitemonitor.service.evalstate.EvalStateSink;
+import com.sitemonitor.service.evalstate.EvalStateSource;
 import com.sitemonitor.service.monitoring.ChangeStates;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
@@ -58,11 +61,18 @@ import java.util.function.Supplier;
  * (DOWN→UP) aranmaz. recoveryChecks kadar ardışık sağlıklı tur (ya da aktif doğrulama zinciri) alarmı kapatır —
  * toplu-kesinti bastırması ve tür bildirimlerinin kapalı olması kapanışı DURDURMAZ, yalnız yeni alarmı durdurur.
  * Aynı anahtarı paylaşan kardeş izlemenin son gözlemi DOWN ise kapanış bekler (bkz. recoverDomain).
+ *
+ * Kalıcı değerlendirme durumu — İKİLİ YAZIM (2026-10-23, çok pod Sürüm 3-1, plan 3a): yukarıdaki bellek durumunun her
+ * mutasyonundan SONRA bir kanca ({@code note*}) değeri {@link EvalStateSink}'e (kaydedici, pod başına bir) KUYRUĞA alır;
+ * tek bir daemon yazıcı tablolara boşaltır. Kararlar 3-1'de HER ZAMAN bellekten verilir — kaydedici yok, NOOP, kapalı
+ * ya da her çağrıda fırlatıyor olsa da her alarm / kurtarma / bastırma / teyit kararı aynıdır (değişmez I-1); kanca
+ * veritabanına gitmez, beklemez, istisnasını yutar. Doğrulama için bellek görüntüsü {@link #verifySnapshot()}; güncel
+ * değerin dar okuma yüzü {@link EvalStateSource}. Yeni bir bellek durumu alanı = yeni kanca + doğrulama türü.
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
-public class MonitoringOutageService {
+public class MonitoringOutageService implements EvalStateSource {
 
     private final AlertEventRepository alertEventRepo;
     private final EscalationService escalationService;
@@ -92,7 +102,12 @@ public class MonitoringOutageService {
         this.stillMonitored = stillMonitored;
     }
 
-    boolean stillMonitored(SweepItem item) {
+    /**
+     * Hedef hâlâ izleniyor mu (kayıtlı yüklem; yoksa / hata verirse true). Çok pod Sürüm 3-1'den beri {@code public}:
+     * kalıcı değerlendirme doğrulayıcısı ({@code EvalStateVerifier}, kaydedicinin yazıcı iş parçacığında) bellekte
+     * budanmış kardeş gözleminin ve sürdürülemeyecek teyit satırının kararını AYNI kuralla verir. Karar yolunu değiştirmez.
+     */
+    public boolean stillMonitored(SweepItem item) {
         java.util.function.Predicate<SweepItem> p = stillMonitored;
         if (p == null) return true;
         try { return p.test(item); }
@@ -329,6 +344,7 @@ public class MonitoringOutageService {
         long gen = recoveryGenerationSeq.incrementAndGet();
         if (recoveryGeneration.putIfAbsent(key, gen) != null) return -1L;
         recoveryStartedAt.put(key, nowMs.getAsLong());
+        noteRecovery(key);   // 3-1 ikili yazım: zincir alanları (mutasyondan SONRA)
         return gen;
     }
 
@@ -337,8 +353,9 @@ public class MonitoringOutageService {
      * kuşağını doğrulayamaz ve düşer; bir sonraki düzelme turu yeni (farklı numaralı) zincir başlatabilir.
      */
     private void endRecovery(String key) {
-        recoveryGeneration.remove(key);
-        recoveryStartedAt.remove(key);
+        boolean changed = recoveryGeneration.remove(key) != null;
+        changed |= recoveryStartedAt.remove(key) != null;
+        if (changed) noteRecovery(key);   // 3-1 ikili yazım: yalnız gerçekten silindiyse (değişmeyen anahtar = işlem yok)
     }
 
     /** Bu görev hâlâ GEÇERLİ kuşağa mı ait? Hem girişte hem alarm kapatmadan önce sorulur. */
@@ -390,6 +407,331 @@ public class MonitoringOutageService {
                 reason, chains, recoveries);
     }
 
+    // ── Kalıcı değerlendirme durumu: ikili yazım kancaları (2026-10-23, çok pod Sürüm 3-1 A2, tasarım R3-1 §2.5) ───────
+    //
+    // Sıfırlama (resetVolatileState) kanca ÇAĞIRMAZ: kaydedici aynı liderlik olayını dinler (LOST / RELEASED → bekleyenleri
+    // atar, kuşağı unutur; GAINED → yeni kuşak). Kancalar bellek mutasyonundan SONRA çağrılır: doğrulayıcı "anahtar s0'dan
+    // sonra kuyruğa alındı mı" sorusuyla yarışan anahtarları atlar — kanca mutasyondan önce olsaydı görüntü eski değeri,
+    // tablo yeniyi taşıyıp sahte uyuşmazlık doğabilirdi.
+
+    /**
+     * Kalıcı değerlendirme durumu kaydedicisi — yalnız AYNA (hiçbir karar okumaz, değişmez I-1). null = kaydedici yok
+     * (bugünkü davranış; elle kurulan testler). Kancalar yalnız kuyruğa alır (I-2) ve istisnayı yutar.
+     */
+    private volatile EvalStateSink evalState;
+
+    /** Spring bağlaması için tembel sağlayıcı — bkz. {@link #bindEvalStateSink()}. */
+    private volatile org.springframework.beans.factory.ObjectProvider<EvalStateSink> evalStateSinkProvider;
+
+    /** Kanca istisnası sayacı (tanı / test) — karar etkilenmez. */
+    private final java.util.concurrent.atomic.AtomicLong evalStateHookFailures = new java.util.concurrent.atomic.AtomicLong();
+    private final java.util.concurrent.atomic.AtomicLong evalStateHookLogAt = new java.util.concurrent.atomic.AtomicLong();
+
+    /**
+     * Kaydediciyi bağlar ve bu servisi güncel değerlerin kaynağı yapar ({@link EvalStateSink#bindSource}). null = kaydedici
+     * yok. {@code bindSource} hata verse de bağlama kalır (kancalar zaten her çağrıyı yalıtır) — açılış asla düşmez.
+     */
+    public void setEvalStateSink(EvalStateSink s) {
+        evalState = s;
+        if (s == null) return;
+        try {
+            s.bindSource(this);
+        } catch (Exception e) {
+            evalStateHookFailed("bindSource", e);
+        }
+    }
+
+    /** Bağlı kaydedici (tanı / test); null = yok. */
+    EvalStateSink evalStateSink() {
+        return evalState;
+    }
+
+    /** Kanca istisnası sayısı (birikimli; tanı / test). */
+    long evalStateHookFailures() {
+        return evalStateHookFailures.get();
+    }
+
+    /**
+     * Spring bağlaması DÖNGÜSÜZ: kaydedici {@code SchedulerService}'e (lider ipucu), {@code SchedulerService} kurucusu bu
+     * servise bağlıdır — ayarlayıcıyla doğrudan kaydedici istemek "oluşturulmakta olan bean" döngüsü kurardı (Spring Boot
+     * döngüsel referansa izin vermez). Sağlayıcı burada yalnız saklanır; kaydedici bağlam yenilendiğinde (tüm tekil
+     * bean'ler hazır) çözülür. Zamanlanmış taramalar zaten o andan sonra başlar.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setEvalStateSinkProvider(org.springframework.beans.factory.ObjectProvider<EvalStateSink> provider) {
+        this.evalStateSinkProvider = provider;
+    }
+
+    /** Bağlam yenilendi → kaydedici (varsa, tekse) bağlanır. İdempotent; hata açılışı düşürmez (kaydedicisiz = bugün). */
+    @org.springframework.context.event.EventListener(org.springframework.context.event.ContextRefreshedEvent.class)
+    public void bindEvalStateSink() {
+        if (evalState != null) return;
+        org.springframework.beans.factory.ObjectProvider<EvalStateSink> p = evalStateSinkProvider;
+        if (p == null) return;
+        try {
+            EvalStateSink s = p.getIfUnique();
+            if (s != null) setEvalStateSink(s);
+        } catch (Exception e) {
+            log.warn("Kalıcı değerlendirme durumu kaydedicisi bağlanamadı — ikili yazım kapalı, kararlar etkilenmez: {}",
+                    e.toString());
+        }
+    }
+
+    private void evalStateHookFailed(String hook, Exception e) {
+        evalStateHookFailures.incrementAndGet();
+        long now = System.currentTimeMillis();
+        long last = evalStateHookLogAt.get();
+        if (now - last >= 60_000L && evalStateHookLogAt.compareAndSet(last, now)) {
+            log.debug("Kalıcı değerlendirme durumu kancası hata verdi ({}) — karar etkilenmez (bellek kaynak): {}", hook,
+                    e.toString());
+        }
+    }
+
+    /** Kurtarma anahtarı ({@code "tür:alan adı"}) değişti — kaydedici güncel değeri {@link #recoveryValues} ile okur. */
+    private void noteRecovery(String rkey) {
+        EvalStateSink s = evalState;
+        if (s == null || rkey == null) return;
+        try {
+            int i = rkey.indexOf(':');   // alarm türü ':' içermez; alan adı içerebilir (IPv6 / host:port)
+            if (i <= 0) return;
+            s.recovery(rkey, rkey.substring(0, i), rkey.substring(i + 1));
+        } catch (Exception e) {
+            evalStateHookFailed("recovery", e);
+        }
+    }
+
+    /**
+     * Kalemin son gözlemi ({@code monitor_last_status}). Kaydediciye İNCE kopya gider (recheck lambdası / izleme varlığı
+     * tutulmaz — D-5 ile aynı gerekçe; bekleyen işlem DB kesintisinde birikebilir).
+     */
+    private void noteObservation(String alertType, SweepItem item, boolean manual, long atMs) {
+        EvalStateSink s = evalState;
+        if (s == null || alertType == null || item == null || item.domain() == null) return;
+        try {
+            s.observation(alertType, observationCopy(item), manual, atMs);
+        } catch (Exception e) {
+            evalStateHookFailed("observation", e);
+        }
+    }
+
+    /** Türün bayrakları değişti — kaydedici güncel değeri {@link #typeValues} ile okur. */
+    private void noteTypeState(String alertType) {
+        EvalStateSink s = evalState;
+        if (s == null || alertType == null) return;
+        try {
+            s.typeState(alertType);
+        } catch (Exception e) {
+            evalStateHookFailed("typeState", e);
+        }
+    }
+
+    private void noteChainStart(String key, long chainId, SweepItem item, ConfirmState state, long delayMs) {
+        EvalStateSink s = evalState;
+        if (s == null) return;
+        try {
+            s.chainStart(key, chainId, item, state, state.startedAt(), delayMs);
+        } catch (Exception e) {
+            evalStateHookFailed("chainStart", e);
+        }
+    }
+
+    private void noteChainProgress(String key, long chainId, ConfirmState state, List<Map<String, Object>> attempts) {
+        EvalStateSink s = evalState;
+        if (s == null || state == null) return;
+        try {
+            s.chainProgress(key, chainId, state, attempts == null ? List.of() : List.copyOf(attempts));
+        } catch (Exception e) {
+            evalStateHookFailed("chainProgress", e);
+        }
+    }
+
+    private void noteChainFinishing(String key, long chainId, int lockTry) {
+        EvalStateSink s = evalState;
+        if (s == null) return;
+        try {
+            s.chainFinishing(key, chainId, lockTry);
+        } catch (Exception e) {
+            evalStateHookFailed("chainFinishing", e);
+        }
+    }
+
+    private void noteChainEnd(String key, long chainId) {
+        EvalStateSink s = evalState;
+        if (s == null) return;
+        try {
+            s.chainEnd(key, chainId);
+        } catch (Exception e) {
+            evalStateHookFailed("chainEnd", e);
+        }
+    }
+
+    private void noteSweepEnd(String alertType) {
+        EvalStateSink s = evalState;
+        if (s == null || alertType == null) return;
+        try {
+            s.sweepEnd(alertType);
+        } catch (Exception e) {
+            evalStateHookFailed("sweepEnd", e);
+        }
+    }
+
+    /** Gözlem kancasının ince kopyası: tür, alan adı, detay, durum, hata + sahiplik bağlamı (recheck yok). */
+    private static SweepItem observationCopy(SweepItem it) {
+        Map<String, Object> ctx = new HashMap<>();
+        for (String k : List.of("monitor_id", "team_id", "standalone")) {
+            Object v = it.ctxExtra() == null ? null : it.ctxExtra().get(k);
+            if (v != null) ctx.put(k, v);
+        }
+        return new SweepItem(it.alertType(), it.domain(), it.detail(), it.up(), it.error(), ctx, null);
+    }
+
+    // ── EvalStateSource: güncel bellek değerlerinin dar okuma yüzü (kaydedici seq ayırdıktan SONRA okur) ──────────────
+
+    @Override
+    public RecoveryValues recoveryValues(String rkey) {
+        if (rkey == null) return RecoveryValues.NONE;
+        Integer up = recoveryUpCount.get(rkey);
+        Long last = recoveryLastCountedAt.get(rkey);
+        Long gen = recoveryGeneration.get(rkey);
+        Long started = recoveryStartedAt.get(rkey);
+        if (up == null && last == null && gen == null && started == null) return RecoveryValues.NONE;
+        return new RecoveryValues(up == null ? 0 : up, last, gen, started);
+    }
+
+    @Override
+    public TypeValues typeValues(String alertType) {
+        if (alertType == null) return TypeValues.NONE;
+        Boolean active = suppressionActive.get(alertType);
+        boolean seen = scheduledRoundSeen.contains(alertType);
+        Long interval = null;
+        long[] tick = suppressionTick.get(alertType);
+        if (tick != null) {
+            synchronized (tick) {
+                if (tick[1] > 0) interval = tick[1];
+            }
+        }
+        if (active == null && !seen && interval == null) return TypeValues.NONE;
+        return new TypeValues(active, seen, interval);
+    }
+
+    @Override
+    public String errorClass(String error, String domain) {
+        return classifyError(error, domain);
+    }
+
+    // ── Doğrulama (VERIFY) için bellek görüntüsü — karar yolu okumaz ─────────────────────────────────────────────────
+
+    /**
+     * Bellek durumunun DEĞİŞMEZ kopyası (kaydedicinin yazıcı iş parçacığında, {@code EvalStateVerifier} çağırır): kurtarma
+     * haritaları, kardeş DOWN gözlemleri (ince — ham hata metni yerine sınıfı), bastırma ve tur bayrakları, teyit zincirleri
+     * ve tür başına pencere örneği ({@link #peekWindowSample} — pencere işaretlerini ve tur saatini YAZMAZ). Kilitsiz
+     * kopya (eşzamanlı haritalar); doğrulayıcı görüntü sırasında değişen anahtarları sıra numarasıyla atlar.
+     */
+    public EvalSnapshot verifySnapshot() {
+        long at = nowMs.getAsLong();
+        Map<String, EvalSnapshot.Down> down = new LinkedHashMap<>();
+        for (Map.Entry<String, DownObservation> e : downObserved.entrySet()) {
+            DownObservation o = e.getValue();
+            if (o == null || o.item() == null) continue;
+            String k = e.getKey();
+            int bar = k.lastIndexOf('|');
+            String type = bar > 0 ? k.substring(0, bar) : o.item().alertType();
+            Map<String, Object> ctx = o.item().ctxExtra();
+            down.put(k, new EvalSnapshot.Down(type, o.domain(), o.item().detail(), monitorIdOf(o.item()),
+                    ctx != null && ctx.get("team_id") instanceof Number n ? n.longValue() : null,
+                    ctx != null && ctx.get("standalone") instanceof Boolean b ? b : null,
+                    classifyError(o.item().error(), o.domain()), o.atMs()));
+        }
+        Map<String, EvalSnapshot.Window> windows = new LinkedHashMap<>();
+        Set<String> types = new TreeSet<>(suppressionWindow.keySet());
+        types.addAll(suppressionTick.keySet());
+        for (String t : types) {
+            WindowSample ws = peekWindowSample(t);
+            windows.put(t, new EvalSnapshot.Window(ws.networkDown(), ws.total(), windowLengthMs(t)));
+        }
+        return new EvalSnapshot(at, recoveryUpCount, recoveryLastCountedAt, recoveryGeneration, recoveryStartedAt, down,
+                suppressionActive, scheduledRoundSeen, inFlight, chainOwner, windows);
+    }
+
+    /**
+     * {@link #windowedOutageSample} ile AYNI aritmetik ama YAZMADAN: türün mevcut işaretlerinden, son bilinen tur
+     * aralığıyla hesaplanan pencere içindekileri sayar (işaret eklemez / budamaz, tur saatini ilerletmez).
+     */
+    WindowSample peekWindowSample(String alertType) {
+        Map<String, OutcomeMark> marks = alertType == null ? null : suppressionWindow.get(alertType);
+        if (marks == null || marks.isEmpty()) return new WindowSample(0, 0);
+        long cutoff = suppressionClock.getAsLong() - windowLengthMs(alertType);
+        int down = 0, total = 0;
+        for (OutcomeMark m : marks.values()) {
+            if (m.atMs() < cutoff) continue;
+            total++;
+            if (m.networkDown()) down++;
+        }
+        return new WindowSample(down, total);
+    }
+
+    /** Türün güncel pencere uzunluğu: {@code max(3 × son tur aralığı, taban)}, en çok {@link #SUPPRESSION_WINDOW_CAP_MS}. */
+    long windowLengthMs(String alertType) {
+        long interval = 0L;
+        long[] tick = alertType == null ? null : suppressionTick.get(alertType);
+        if (tick != null) {
+            synchronized (tick) {
+                interval = tick[1];
+            }
+        }
+        return Math.min(SUPPRESSION_WINDOW_CAP_MS, Math.max(Math.max(0L, suppressionWindowFloorMs), 3L * interval));
+    }
+
+    /**
+     * Verilen pencere örneği için bastırma kararı — {@link #handleSweepResults} ile AYNI kural ({@link #suppressDecision}),
+     * türün GÜNCEL histerezis durumuyla. Yalnız okur (doğrulayıcının pencere tohumu ölçümü; karar yolu kullanmaz).
+     */
+    public boolean wouldSuppress(String alertType, int networkDown, int total) {
+        boolean active = alertType != null && Boolean.TRUE.equals(suppressionActive.get(alertType));
+        return suppressDecision(active, networkDown, total == 0 ? 0 : (double) networkDown / total);
+    }
+
+    /**
+     * Bellekteki tüm durumu kaydediciye YENİDEN kuyruğa alır (doğrulayıcının "eşitleme" turu: yeni kuşak ya da uzun boşluk —
+     * kip kapalıyken kaydedici toplu düşüş yapar ve o ana kadarki anahtarları doğrulamada atlar; yeniden kuyruğa alınan
+     * anahtar yine karşılaştırılabilir olur). Kurtarma anahtarları, tür bayrakları ve kardeş DOWN gözlemleri (kendi gözlem
+     * anlarıyla). Bellekte OLMAYAN anahtar oynatılmaz: kaydedicinin "son yazılan" belleği düşüşte silindiği için "yok"
+     * değeri no-op sayılıp yazılmaz, ama anahtar karşılaştırılabilir olurdu — bayat satır sahte uyuşmazlık verirdi; oynatılmayan
+     * anahtar düşüş kuralıyla atlanır. Teyit zincirleri de OYNATILMAZ (kalem bağlamı zincirin kapanışındadır; eksik
+     * betimleyici satırı bozardı) — kısa ömürlüdürler. Yalnız bellek; asla fırlatmaz.
+     *
+     * @return kuyruğa alınan işlem sayısı (kaydedici yoksa 0)
+     */
+    public int replayEvalState() {
+        if (evalState == null) return 0;
+        int n = 0;
+        Set<String> rkeys = new LinkedHashSet<>();
+        rkeys.addAll(recoveryUpCount.keySet());
+        rkeys.addAll(recoveryLastCountedAt.keySet());
+        rkeys.addAll(recoveryGeneration.keySet());
+        rkeys.addAll(recoveryStartedAt.keySet());
+        for (String k : rkeys) {
+            noteRecovery(k);
+            n++;
+        }
+        Set<String> types = new LinkedHashSet<>(suppressionActive.keySet());
+        types.addAll(scheduledRoundSeen);
+        types.addAll(suppressionTick.keySet());
+        for (String t : types) {
+            noteTypeState(t);
+            n++;
+        }
+        for (Map.Entry<String, DownObservation> e : downObserved.entrySet()) {
+            DownObservation o = e.getValue();
+            if (o == null || o.item() == null) continue;
+            String k = e.getKey();
+            int bar = k.lastIndexOf('|');
+            noteObservation(bar > 0 ? k.substring(0, bar) : o.item().alertType(), o.item(), false, o.atMs());
+            n++;
+        }
+        return n;
+    }
+
     @PreDestroy
     void shutdown() {
         confirmExecutor.shutdownNow();
@@ -439,15 +781,26 @@ public class MonitoringOutageService {
      *               (canlı veride {@code uptime_checks.error = 'www.akbank.com'} biçiminde 1000+ satır).
      */
     static boolean isOutageClass(String error, String domain) {
-        if (error == null || error.isBlank()) return false;
+        String c = classifyError(error, domain);
+        return ERROR_NETWORK.equals(c) || ERROR_DNS.equals(c);
+    }
+
+    /**
+     * Hata metninin sınıfı — {@link #isOutageClass}'ın TEK kaynağı (2026-10-23, çok pod Sürüm 3-1: kalıcı durumun
+     * {@code error_class} / {@code network_down} sütunları ve 3-2'nin pencere tohumu aynı sınıflandırmayı kullansın).
+     * Sıra eskisiyle aynı: boş → null; yapılandırma / politika işareti EZER → CONFIG; hata metni = çıplak hedef → DNS
+     * (UnknownHost); DNS işaretleri → DNS; taşıma katmanı → NETWORK; tanınmayan → OTHER.
+     */
+    static String classifyError(String error, String domain) {
+        if (error == null || error.isBlank()) return null;
         String e = error.toLowerCase(Locale.ROOT);
-        for (String m : CONFIG_ERROR_MARKS) if (e.contains(m)) return false;   // yapılandırma EZER
+        for (String m : CONFIG_ERROR_MARKS) if (e.contains(m)) return ERROR_CONFIG;   // yapılandırma EZER
         if (domain != null && !domain.isBlank() && e.trim().equals(domain.trim().toLowerCase(Locale.ROOT))) {
-            return true;                                                        // çıplak host = UnknownHost
+            return ERROR_DNS;                                                          // çıplak host = UnknownHost
         }
-        for (String m : DNS_ERROR_MARKS)     if (e.contains(m)) return true;
-        for (String m : NETWORK_ERROR_MARKS) if (e.contains(m)) return true;
-        return false;
+        for (String m : DNS_ERROR_MARKS)     if (e.contains(m)) return ERROR_DNS;
+        for (String m : NETWORK_ERROR_MARKS) if (e.contains(m)) return ERROR_NETWORK;
+        return ERROR_OTHER;
     }
 
     // ── Bastırmanın görünürlüğü ─────────────────────────────────────────────────
@@ -465,6 +818,7 @@ public class MonitoringOutageService {
         double rate = totalDomains == 0 ? 0 : (double) networkDown / totalDomains;
         boolean wasActive = Boolean.TRUE.equals(suppressionActive.put(alertType, true));
         outageReconciled.remove(alertType);   // kesinti yeniden açıldı → sonraki temiz turda DB'ye yine bakılsın
+        if (!wasActive) noteTypeState(alertType);   // 3-1 ikili yazım: yalnız geçişte
         if (wasActive) {
             log.debug("{} sweep: bastırma sürüyor ({}/{} ağ-sınıfı DOWN)", alertType, networkDown, totalDomains);
             return;
@@ -513,6 +867,7 @@ public class MonitoringOutageService {
 
     private void clearSuppression(String alertType) {
         boolean wasActive = Boolean.TRUE.equals(suppressionActive.put(alertType, false));
+        if (wasActive) noteTypeState(alertType);   // 3-1 ikili yazım: yalnız geçişte (null → false değişiklik sayılmaz)
         if (!wasActive && !outageReconciled.add(alertType)) return;   // zaten kapalıydı ve DB bir kez uzlaştırıldı
         if (wasActive) {
             log.info("{} sweep: ağ kesintisi şüphesi kalktı — alarm işleme normale döndü", alertType);
@@ -555,11 +910,17 @@ public class MonitoringOutageService {
         long now = suppressionClock.getAsLong();
         long[] tick = suppressionTick.computeIfAbsent(alertType, k -> new long[]{0L, 0L});
         long window;
+        long prevInterval;
+        long newInterval;
         synchronized (tick) {
+            prevInterval = tick[1];
             if (tick[0] > 0 && now > tick[0]) tick[1] = now - tick[0];
             tick[0] = now;
+            newInterval = tick[1];
             window = Math.min(SUPPRESSION_WINDOW_CAP_MS, Math.max(Math.max(0L, suppressionWindowFloorMs), 3L * tick[1]));
         }
+        // 3-1 ikili yazım: tur aralığı (pencere uzunluğu girdisi) yalnız %10'dan fazla değişince kuyruğa alınır.
+        if (intervalChanged(prevInterval, newInterval)) noteTypeState(alertType);
         Map<String, OutcomeMark> marks = suppressionWindow.computeIfAbsent(alertType, k -> new ConcurrentHashMap<>());
         for (Map.Entry<String, List<SweepItem>> e : byDomain.entrySet()) {
             if (e.getKey() == null) continue;
@@ -575,6 +936,24 @@ public class MonitoringOutageService {
             if (m.networkDown()) down++;
         }
         return new WindowSample(down, total);
+    }
+
+    /**
+     * Bastırma kararı (SOAK-1 histerezisi) — TEK kaynak: tarama turu ({@link #handleSweepResults}) ve doğrulayıcının pencere
+     * tohumu ölçümü ({@link #wouldSuppress}). Girme: ≥ {@code bulkMinErrors} ağ-sınıfı DOWN ve oran ≥ eşik; sürme (açıkken):
+     * ≥ 1 ağ-sınıfı DOWN ve oran ≥ eşik.
+     */
+    private boolean suppressDecision(boolean active, int networkDown, double rate) {
+        return active
+                ? networkDown > 0 && rate >= bulkRateThreshold
+                : networkDown >= bulkMinErrors && rate >= bulkRateThreshold;
+    }
+
+    /** Tur aralığı kayda değer değişti mi (ilk ölçüm ya da %10'dan fazla) — ikili yazımın tür satırı için. */
+    static boolean intervalChanged(long prev, long now) {
+        if (now <= 0) return false;
+        if (prev <= 0) return true;
+        return Math.abs(now - prev) * 10 > prev;
     }
 
     /** Ağ kesintisi şüphesi bu tür için şu an AÇIK mı (pencere kararı — teyit zincirinin son adımı da sorar). */
@@ -645,6 +1024,15 @@ public class MonitoringOutageService {
      * sweep'in normal teyit kurallarıyla alarm açmasını ENGELLEMEZ. Kapı: {@code ManualCheckNoAlarmTest}.
      */
     public void handleSweepResults(String alertType, List<SweepItem> items, boolean manual) {
+        try {
+            evaluateSweepResults(alertType, items, manual);
+        } finally {
+            noteSweepEnd(alertType);   // 3-1 ikili yazım: yazıcıya boşaltma ipucu (beklemez, karar sonrası)
+        }
+    }
+
+    /** {@link #handleSweepResults}'ın gövdesi (2026-10-23'ten beri ayrı: çağıran turun sonunda boşaltma ipucunu verir). */
+    private void evaluateSweepResults(String alertType, List<SweepItem> items, boolean manual) {
         if (items == null || items.isEmpty()) return;
         if (!manual && !scheduledResultsAllowed(alertType, items.size())) return;
 
@@ -655,8 +1043,11 @@ public class MonitoringOutageService {
         }
         // Aynı anahtarı paylaşan izlemelerin son gözlemi (D2) — her kontrol bir gözlemdir; bastırma/kapalı bildirim
         // bunu değiştirmez.
-        recordObservations(alertType, items);
-        if (!manual) scheduledRoundSeen.add(alertType);   // D-6: bu türün kardeş gözlemleri en az bir kez dolduruldu
+        recordObservations(alertType, items, manual);
+        if (!manual) {
+            scheduledRoundSeen.add(alertType);   // D-6: bu türün kardeş gözlemleri en az bir kez dolduruldu
+            noteTypeState(alertType);            // 3-1 ikili yazım: tur damgası (kaydedici tür başına 60 sn'de bire indirir)
+        }
 
         // Elle kontrol (2026-09-29): yalnız kapanış uzlaştırması — yukarıdaki Javadoc.
         if (manual) {
@@ -682,9 +1073,7 @@ public class MonitoringOutageService {
         // küçük örneği şüpheyi ne açar ne her turda kapatır.
         WindowSample sample = windowedOutageSample(alertType, byDomain);
         boolean active = Boolean.TRUE.equals(suppressionActive.get(alertType));
-        boolean suppress = active
-                ? sample.networkDown() > 0 && sample.rate() >= bulkRateThreshold
-                : sample.networkDown() >= bulkMinErrors && sample.rate() >= bulkRateThreshold;
+        boolean suppress = suppressDecision(active, sample.networkDown(), sample.rate());
         if (suppress) {
             noteSuppression(alertType, sample.networkDown(), sample.total());
             // K1 (prod 2026-09-29, kök neden): bastırma eskiden burada HİÇBİR alan adını işlemeden dönüyordu. Amacı
@@ -956,6 +1345,7 @@ public class MonitoringOutageService {
         if (count) {
             up = recoveryUpCount.merge(rkey, 1, Integer::sum);
             recoveryLastCountedAt.put(rkey, now);
+            noteRecovery(rkey);   // 3-1 ikili yazım (mutasyondan SONRA)
         } else {
             up = recoveryUpCount.getOrDefault(rkey, 0);
         }
@@ -1049,8 +1439,9 @@ public class MonitoringOutageService {
 
     /** Ardışık sağlıklı sayacını ve son sayım anını birlikte sıfırlar (O-1). */
     private void resetRecoveryCount(String rkey) {
-        recoveryUpCount.remove(rkey);
-        recoveryLastCountedAt.remove(rkey);
+        boolean changed = recoveryUpCount.remove(rkey) != null;
+        changed |= recoveryLastCountedAt.remove(rkey) != null;
+        if (changed) noteRecovery(rkey);   // 3-1 ikili yazım: her sağlıklı alarmsız alan adı her turda buraya gelir — sıfır kuyruk
     }
 
     /** "tip:domain" → son SAYILMIŞ sağlıklı sonucun anı (ms) — elle tıklama aralığı (O-1). */
@@ -1063,6 +1454,11 @@ public class MonitoringOutageService {
 
     /** Kardeş gözleminin geçerlilik süresi — günlük kadanslı izlemeleri (alan adı) de kapsar; daha eskisi yok sayılır. */
     static final long SIBLING_TTL_MS = 26L * 60 * 60 * 1000;
+
+    /** {@link #SIBLING_TTL_MS} — kalıcı durum doğrulayıcısı aynı TTL ile "budanmış = tutarlı" der (3-1). */
+    public static long siblingTtlMs() {
+        return SIBLING_TTL_MS;
+    }
 
     /** Gözlem haritası budama aralığı (D-5): TTL'i aşan ya da artık izlenmeyen kayıtlar bu sıklıkla silinir. */
     static final long OBSERVATION_PRUNE_INTERVAL_MS = 10L * 60 * 1000;
@@ -1094,14 +1490,17 @@ public class MonitoringOutageService {
         return new SweepItem(it.alertType(), it.domain(), it.detail(), false, it.error(), ctx, null);
     }
 
-    private void recordObservations(String alertType, List<SweepItem> items) {
+    private void recordObservations(String alertType, List<SweepItem> items, boolean manual) {
         long now = nowMs.getAsLong();
         for (SweepItem it : items) {
             Long id = monitorIdOf(it);
-            if (id == null || it.domain() == null) continue;
-            String k = alertType + "|" + id;
-            if (it.up()) downObserved.remove(k);
-            else downObserved.put(k, new DownObservation(it.domain(), slim(it), now));
+            if (id != null && it.domain() != null) {
+                String k = alertType + "|" + id;
+                if (it.up()) downObserved.remove(k);
+                else downObserved.put(k, new DownObservation(it.domain(), slim(it), now));
+            }
+            // 3-1 ikili yazım: HER kalemin son durumu (kimliksiz kalemler dâhil — tablo belleğin üst kümesi), mutasyondan sonra.
+            noteObservation(alertType, it, manual, now);
         }
         if (now - lastObservationPruneMs >= OBSERVATION_PRUNE_INTERVAL_MS) {
             lastObservationPruneMs = now;
@@ -1124,7 +1523,12 @@ public class MonitoringOutageService {
     /** Teyit zincirinde yeniden kontrol SAĞLIKLI döndü (geçici dalgalanma) → o izlemenin DOWN gözlemi düşer. */
     private void clearDownObservation(SweepItem item) {
         Long id = monitorIdOf(item);
-        if (id != null) downObserved.remove(item.alertType() + "|" + id);
+        if (id != null && downObserved.remove(item.alertType() + "|" + id) != null && item.domain() != null) {
+            // 3-1 ikili yazım: teyit yeniden kontrolü SAĞLIKLI döndü — bu da kalemin bir gözlemidir; tablo "DOWN" kalırsa
+            // bellek (kayıt yok) ile ayrışırdı (tasarım §2.5'te "kanca yok" denmişti; doğrulama bunu yanlış uyuşmazlık sayardı).
+            noteObservation(item.alertType(), new SweepItem(item.alertType(), item.domain(), item.detail(), true, null,
+                    item.ctxExtra(), null), false, nowMs.getAsLong());
+        }
     }
 
     /**
@@ -1163,6 +1567,16 @@ public class MonitoringOutageService {
     public void handleDnsSweep(List<SweepItem> failureItems, List<SweepItem> slowItems,
                                List<DnsChange> changes,
                                List<SweepItem> unexpectedItems, List<SweepItem> inconsistentItems) {
+        try {
+            evaluateDnsSweep(failureItems, slowItems, changes, unexpectedItems, inconsistentItems);
+        } finally {
+            noteSweepEnd(EscalationService.TYPE_DNS_CHANGED);   // 3-1 ikili yazım: boşaltma ipucu
+        }
+    }
+
+    private void evaluateDnsSweep(List<SweepItem> failureItems, List<SweepItem> slowItems,
+                                  List<DnsChange> changes,
+                                  List<SweepItem> unexpectedItems, List<SweepItem> inconsistentItems) {
         // Zamanlanmış DNS turu — değişiklik teyidi de alarm durumuna yazar: kirayı kaybeden pod'da hiçbiri işlenmez (2026-10-09).
         if (!scheduledResultsAllowed(EscalationService.TYPE_DNS_FAILURE, failureItems == null ? 0 : failureItems.size())) return;
         handleSweepResults(EscalationService.TYPE_DNS_FAILURE, failureItems);
@@ -1232,6 +1646,14 @@ public class MonitoringOutageService {
      * @return başlatılan teyit sayısı
      */
     public int requeueDnsChanges(List<DnsChange> changes) {
+        try {
+            return requeueDnsChangesInner(changes);
+        } finally {
+            noteSweepEnd(EscalationService.TYPE_DNS_CHANGED);   // 3-1 ikili yazım: boşaltma ipucu
+        }
+    }
+
+    private int requeueDnsChangesInner(List<DnsChange> changes) {
         if (changes == null || changes.isEmpty()) return 0;
         if (!scheduledResultsAllowed(EscalationService.TYPE_DNS_CHANGED, changes.size())) return 0;
         if (!appSettings.getBoolean("site.monitor.dns.alert-enabled", dnsAlertEnabled)) {
@@ -1532,6 +1954,7 @@ public class MonitoringOutageService {
             return;
         }
         chainOwner.put(key, chainId);
+        noteChainStart(key, chainId, item, initial, effDelayMs(item));   // 3-1 ikili yazım (mutasyondan SONRA)
         if (confirmEpoch.get() != epoch) {   // liderlik değişimi tam bu arada sıfırladı → bu zincir eski döneme ait
             releaseChain(key, chainId);
             return;
@@ -1582,11 +2005,15 @@ public class MonitoringOutageService {
     /** Anahtarı YALNIZ bu zincir tutuyorsa bırakır (sıfırlama sonrası başlayan yeni zincirin kaydı silinmez). */
     private void releaseChain(String key, long chainId) {
         if (chainId == LEGACY_CHAIN) {
-            chainOwner.remove(key);
-            inFlight.remove(key);
+            Long prev = chainOwner.remove(key);
+            ConfirmState st = inFlight.remove(key);
+            if (prev != null || st != null) noteChainEnd(key, prev != null ? prev : LEGACY_CHAIN);   // 3-1 ikili yazım
             return;
         }
-        if (chainOwner.remove(key, chainId)) inFlight.remove(key);
+        if (chainOwner.remove(key, chainId)) {
+            inFlight.remove(key);
+            noteChainEnd(key, chainId);   // 3-1 ikili yazım: yalnız kaydı GERÇEKTEN bu zincir bıraktıysa
+        }
     }
 
     /**
@@ -1655,6 +2082,7 @@ public class MonitoringOutageService {
         if (lockTry < CHANGE_LOCK_RETRIES) {
             log.info("Değişiklik alarmı son adımı ertelendi ({}), {} ms sonra yeniden denenecek ({}/{}): {}",
                     unreadable.get() ? "durum okunamadı" : out, changeLockRetryMs, lockTry + 1, CHANGE_LOCK_RETRIES, key);
+            noteChainFinishing(key, chainId, lockTry + 1);   // 3-1 ikili yazım — planlamadan ÖNCE (eşzamanlı yürütücüde sıra)
             try {
                 confirmExecutor.schedule(() -> {
                     try {
@@ -1715,8 +2143,9 @@ public class MonitoringOutageService {
                 return;
             }
             // Canlı durum: bu deneme koşuyor; sonraki (varsa) effDelayMs sonra — UI 30sn poll'unda "X/N" görünür.
-            inFlight.computeIfPresent(key, (k, s) -> new ConfirmState(s.alertType(), s.domain(), s.detail(),
-                    n, s.totalAttempts(), s.startedAt(), System.currentTimeMillis() + effDelayMs(item)));
+            ConfirmState progressed = inFlight.computeIfPresent(key, (k, s) -> new ConfirmState(s.alertType(), s.domain(),
+                    s.detail(), n, s.totalAttempts(), s.startedAt(), System.currentTimeMillis() + effDelayMs(item)));
+            if (progressed != null) noteChainProgress(key, chainId, progressed, attempts);   // 3-1 ikili yazım
             Map<String, Object> r = item.recheck().get();
             if (!chainCurrent(key, chainId, epoch)) {   // yeniden kontrol saniyeler sürdü; o arada liderlik değişti
                 log.debug("Teyit zinciri liderlik değişiminde düştü ({}. deneme sonrası): {}", n, key);
@@ -1728,6 +2157,8 @@ public class MonitoringOutageService {
             attempt.put("status", r.get("status"));
             attempt.put("error", r.get("error"));
             attempts.add(attempt);
+            ConfirmState current = inFlight.get(key);
+            if (current != null) noteChainProgress(key, chainId, current, attempts);   // 3-1 ikili yazım: deneme listesi
 
             if ("up".equals(r.get("status"))) {
                 log.info("Geçici dalgalanma: {} — {}. doğrulama denemesinde düzeldi, alarm üretilmedi", key, n);
