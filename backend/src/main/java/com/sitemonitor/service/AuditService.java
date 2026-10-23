@@ -272,10 +272,19 @@ public class AuditService {
      * kilidi altında yazılıyor — {@code seq_locked = TRUE} (tekil {@code ux_audit_seq} indeksinin kapsamı, MP-38).
      */
     private AuditLog appendToChain(AuditLog e, boolean locked) {
+        return appendToChain(e, locked, false);
+    }
+
+    /**
+     * {@code genesis}: satır YENİ bir zincir dönemi başlatır ({@link #restartChainIfDegenerate}) — seq yine ucun bir
+     * fazlası, ama {@code prev_hash = GENESIS}. Uç = en yüksek seq'li ZİNCİRLİ satır (seq NULL eski satırlar hariç —
+     * PostgreSQL NULL'ları DESC'te öne koyar; bkz. {@link AuditLogRepository#findTopBySeqIsNotNullOrderBySeqDescIdDesc}).
+     */
+    private AuditLog appendToChain(AuditLog e, boolean locked, boolean genesis) {
         e.setSeqLocked(locked ? Boolean.TRUE : null);
-        AuditLog last = auditLogRepo.findTopByOrderBySeqDesc().orElse(null);
+        AuditLog last = auditLogRepo.findTopBySeqIsNotNullOrderBySeqDescIdDesc().orElse(null);
         long seq = (last != null && last.getSeq() != null) ? last.getSeq() + 1 : 1L;
-        String prev = (last != null && last.getRowHash() != null) ? last.getRowHash() : GENESIS;
+        String prev = !genesis && last != null && last.getRowHash() != null ? last.getRowHash() : GENESIS;
         e.setSeq(seq);
         e.setPrevHash(prev);
         e.setRowHash(sha256(canonical(e) + SEP + prev));
@@ -419,30 +428,136 @@ public class AuditService {
     }
     private static String n(String s) { return s == null ? "" : s.replace("\"", "'"); }
 
+    // ── Zincirin yeniden başlatılması (2026-10-23, kullanıcı kararı: "yeni zincir dönemi") ─────────────
+    //
+    // Zincirden önce yazılmış (seq NULL) satırları tutan PostgreSQL veritabanında eski uç sorgusu NULL satırı "son" sanıyordu
+    // (NULLS FIRST): 2026-07-28'den beri her satır seq = 1 + prev_hash = GENESIS aldı. Eski satırlar YAZILDIĞI GİBİ kalır (hiçbir
+    // hash'li kolon yeniden yazılmaz); işaretli bir yeniden başlatma satırı doğru zinciri onarımdan itibaren başlatır ve
+    // doğrulama oradan yapılır — öncesi "onarımdan önce yazıldı, doğrulanamaz" diye sayılır.
+
+    /** Yeni zincir döneminin ilk satırının olay türü (katalogda; arayüz etiketi {@code audit.ev.AUDIT_CHAIN_RESTART}). */
+    public static final String EVENT_CHAIN_RESTART = "AUDIT_CHAIN_RESTART";
+
+    /** Bozuk zincir: birden fazla {@code seq = 1} satırı (her bozuk satır seq 1 aldı). İki satır okunur — ucuz. */
+    static final String SQL_SEQ_ONE_PROBE = "SELECT id FROM audit_log WHERE seq = 1 FETCH FIRST 2 ROWS ONLY";
+    /** Yeniden başlatma satırının ayrıntısı — kilit içinde, bir kez (tek tarama). Kullanıcı verisi yok. */
+    static final String SQL_RESTART_STATS = "SELECT COUNT(*) AS rows_before,"
+            + " SUM(CASE WHEN seq = 1 THEN 1 ELSE 0 END) AS seq1_rows,"
+            + " MIN(CASE WHEN seq = 1 THEN event_time END) AS period_from,"
+            + " MAX(event_time) AS period_to FROM audit_log WHERE seq IS NOT NULL";
+
+    public enum RestartOutcome { WRITTEN, ALREADY_RESTARTED, NOT_DEGENERATE }
+
+    /** Yeniden başlatma denemesinin sonucu; {@code row} yazılan ya da zaten var olan yeniden başlatma satırı. */
+    public record ChainRestart(RestartOutcome outcome, AuditLog row) {}
+
+    /** En yeni yeniden başlatma satırı; yoksa {@code null}. */
+    AuditLog latestChainRestart() {
+        return auditLogRepo.findTopByEventTypeAndSeqIsNotNullOrderBySeqDescIdDesc(EVENT_CHAIN_RESTART).orElse(null);
+    }
+
+    /**
+     * Zincir bozuksa (birden fazla {@code seq = 1}) ve henüz yeniden başlatılmadıysa YENİ bir zincir dönemi başlatır:
+     * {@code seq = uç + 1}, {@code prev_hash = GENESIS}, olay {@value #EVENT_CHAIN_RESTART}. Yazıcılarla AYNI kilit altında
+     * (PostgreSQL: {@link #SQL_CHAIN_LOCK} aynı işlemde; diğer: JVM kilidi) — yeniden başlatma satırı ile normal satırlar
+     * iç içe geçmez; "zaten var mı / bozuk mu" kararı kilidin İÇİNDE yeniden verilir (iki pod iki satır yazamaz).
+     * Fallback dosyasına DÜŞMEZ: her hata yukarı çıkar (çağıran iş deneme sayar). Veritabanı türü okunamazsa hata
+     * ("sonra yeniden dene") — tür bilinmeden kilit seçilemez.
+     */
+    ChainRestart restartChainIfDegenerate() {
+        if (!chainSupported()) throw new IllegalStateException("denetim zinciri altyapısı (JdbcTemplate + işlem yöneticisi) yok");
+        boolean pg = isPostgres();
+        if (chainPostgres == null) throw new IllegalStateException("veritabanı türü okunamadı — sonra yeniden denenecek");
+        if (pg) {
+            return chainTx.execute(st -> {
+                chainJdbc.execute(SQL_CHAIN_LOCK);
+                return restartLocked();
+            });
+        }
+        chainLock.lock();
+        try {
+            return chainTx.execute(st -> restartLocked());
+        } finally {
+            chainLock.unlock();
+        }
+    }
+
+    private ChainRestart restartLocked() {
+        AuditLog existing = latestChainRestart();
+        if (existing != null) return new ChainRestart(RestartOutcome.ALREADY_RESTARTED, existing);
+        if (chainJdbc.queryForList(SQL_SEQ_ONE_PROBE, Long.class).size() < 2) {
+            return new ChainRestart(RestartOutcome.NOT_DEGENERATE, null);
+        }
+        Map<String, Object> st = chainJdbc.queryForMap(SQL_RESTART_STATS);
+        AuditLog tail = auditLogRepo.findTopBySeqIsNotNullOrderBySeqDescIdDesc().orElse(null);
+        AuditLog e = new AuditLog();
+        e.setEventType(EVENT_CHAIN_RESTART);
+        e.setEventTime(now());
+        e.setActor("SYSTEM");
+        e.setActorRole("SYSTEM");
+        e.setResourceType("SYSTEM");
+        e.setResourceId("audit_log");
+        e.setDetail(AuditDetail.of(
+                "reason", "degenerate_chain",
+                "rows_before", num(st.get("rows_before")),
+                "max_seq_before", tail == null ? null : tail.getSeq(),
+                "seq1_rows", num(st.get("seq1_rows")),
+                "period_from", st.get("period_from"),
+                "period_to", st.get("period_to")));
+        e.setOutcome("SUCCESS");
+        return new ChainRestart(RestartOutcome.WRITTEN, appendToChain(e, true, true));
+    }
+
+    private static Long num(Object o) {
+        return o instanceof Number n ? n.longValue() : null;
+    }
+
     // ── Bütünlük doğrulama ───────────────────────────────────────────────────────
 
-    public record ChainVerification(boolean ok, Long brokenSeq, Long brokenId, long checked) {}
+    /** Doğrulanan bölümün başı: en yeni zincir yeniden başlatma satırı. */
+    public record VerifiedFrom(Long id, Long seq, String eventTime) {}
 
-    /** Zinciri baştan yeniden hesaplayıp saklanan hash'lerle karşılaştırır; ilk kırık satırı döner. */
+    /**
+     * Doğrulama sonucu. {@code verifiedFrom}: yeniden başlatma satırı varsa doğrulama ORADAN başladı (yoksa {@code null},
+     * bugünkü gibi baştan); {@code unverified}: o bölümün DIŞINDA kalan zincirli satır sayısı (onarımdan önce yazıldı —
+     * doğrulanamaz; seq'siz eski satırlar sayılmaz).
+     */
+    public record ChainVerification(boolean ok, Long brokenSeq, Long brokenId, long checked,
+                                    VerifiedFrom verifiedFrom, long unverified) {
+        public ChainVerification(boolean ok, Long brokenSeq, Long brokenId, long checked) {
+            this(ok, brokenSeq, brokenId, checked, null, 0L);
+        }
+    }
+
+    /**
+     * Zinciri baştan yeniden hesaplayıp saklanan hash'lerle karşılaştırır; ilk kırık satırı döner. Bir yeniden başlatma
+     * satırı ({@value #EVENT_CHAIN_RESTART}) varsa doğrulama EN YENİSİNDEN başlar ({@code seq >= onun seq'i}, yeni
+     * {@code GENESIS}); öncesi {@code unverified} olarak sayılır. Satır yoksa davranış bugünküyle birebir.
+     */
     public ChainVerification verifyChain() {
+        AuditLog restart = latestChainRestart();
+        VerifiedFrom from = restart == null ? null : new VerifiedFrom(restart.getId(), restart.getSeq(), restart.getEventTime());
+        long unverified = restart == null ? 0L : auditLogRepo.countBySeqLessThan(restart.getSeq());
         String prev = GENESIS;
         long checked = 0;
         int page = 0, size = 1000;
         while (true) {
-            List<AuditLog> rows = auditLogRepo.findBySeqNotNullOrderBySeqAsc(PageRequest.of(page, size));
+            List<AuditLog> rows = restart == null
+                    ? auditLogRepo.findBySeqNotNullOrderBySeqAsc(PageRequest.of(page, size))
+                    : auditLogRepo.findBySeqGreaterThanEqualOrderBySeqAscIdAsc(restart.getSeq(), PageRequest.of(page, size));
             if (rows.isEmpty()) break;
             for (AuditLog r : rows) {
                 String expectHash = sha256(canonical(r) + SEP + prev);
                 String storedPrev = r.getPrevHash() == null ? GENESIS : r.getPrevHash();
                 if (!prev.equals(storedPrev) || expectHash == null || !expectHash.equals(r.getRowHash())) {
-                    return new ChainVerification(false, r.getSeq(), r.getId(), checked);
+                    return new ChainVerification(false, r.getSeq(), r.getId(), checked, from, unverified);
                 }
                 prev = r.getRowHash();
                 checked++;
             }
             page++;
         }
-        return new ChainVerification(true, null, null, checked);
+        return new ChainVerification(true, null, null, checked, from, unverified);
     }
 
     // ── Login / Logout ─────────────────────────────────────────────────────────

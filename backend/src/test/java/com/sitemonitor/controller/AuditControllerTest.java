@@ -258,7 +258,24 @@ class AuditControllerTest {
         mvc.perform(get("/api/admin/audit/integrity").session(session("ADMIN")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.ok").value(true))
-                .andExpect(jsonPath("$.data.checked").value(42));
+                .andExpect(jsonPath("$.data.checked").value(42))
+                .andExpect(jsonPath("$.data.unverified").value(0))
+                .andExpect(jsonPath("$.data.verified_from").doesNotExist());
+    }
+
+    @Test
+    @DisplayName("integrity (2026-10-23): yeniden başlatma satırından doğrulandıysa verified_from + unverified ek alanları döner")
+    void integrity_verifiedFromRestart() throws Exception {
+        when(auditService.verifyChain()).thenReturn(new com.sitemonitor.service.AuditService.ChainVerification(
+                true, null, null, 12, new com.sitemonitor.service.AuditService.VerifiedFrom(5000L, 4899L, "2026-10-23T10:15:00"), 4897));
+        mvc.perform(get("/api/admin/audit/integrity").session(session("AUDIT")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.ok").value(true))
+                .andExpect(jsonPath("$.data.checked").value(12))
+                .andExpect(jsonPath("$.data.broken_seq").value(""))
+                .andExpect(jsonPath("$.data.unverified").value(4897))
+                .andExpect(jsonPath("$.data.verified_from.seq").value(4899))
+                .andExpect(jsonPath("$.data.verified_from.event_time").value("2026-10-23T10:15:00"));
     }
 
     @Test

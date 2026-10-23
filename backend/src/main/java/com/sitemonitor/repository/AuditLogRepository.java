@@ -36,8 +36,27 @@ public interface AuditLogRepository extends Repository<AuditLog, Long> {
                   @Param("org") String org, @Param("host") String host);
 
     // ── Hash zinciri ─────────────────────────────────────────────────────────────
-    /** Zincirin ucu (en yüksek seq) — persist() bir sonraki seq/prev_hash'i buradan alır. */
-    Optional<AuditLog> findTopByOrderBySeqDesc();
+    /**
+     * Zincirin ucu (en yüksek seq'li ZİNCİRLİ satır) — persist() bir sonraki seq/prev_hash'i buradan alır.
+     *
+     * <p>{@code seq IS NOT NULL} ŞART (2026-10-23 prod hatası): PostgreSQL {@code ORDER BY seq DESC}'te NULL'ları ÖNE koyar.
+     * Zincirden önce yazılmış (seq NULL) eski satırları hâlâ tutan veritabanında eski {@code findTopByOrderBySeqDesc} hep o
+     * satırlardan birini "son" sanıyordu: 2026-07-28'den beri her yeni satır {@code seq = 1} + {@code prev_hash = GENESIS}
+     * aldı, doğrulama ikinci seq-1 satırında kırıldı ve {@code ux_audit_seq} hiç kurulamadı. H2 NULL'ları SONA koyduğu için
+     * hiçbir test görmedi ({@code AuditChainNullsFirstH2Test} H2'yi {@code DEFAULT_NULL_ORDERING=HIGH} ile PostgreSQL gibi
+     * sıralatır). {@code id DESC}: aynı seq'li satırlar (bozuk dönem) arasında belirlenimci seçim. {@code idx_audit_seq}
+     * geriye taranır ({@code seq IS NOT NULL} indeks koşulu).
+     */
+    Optional<AuditLog> findTopBySeqIsNotNullOrderBySeqDescIdDesc();
+
+    /** En yeni zincir yeniden başlatma satırı ({@code AUDIT_CHAIN_RESTART}) — doğrulamanın başladığı yer; yoksa boş. */
+    Optional<AuditLog> findTopByEventTypeAndSeqIsNotNullOrderBySeqDescIdDesc(String eventType);
+
+    /** Yeniden başlatmadan itibaren doğrulanan bölüm: {@code seq >= from}, seq (eşitse id) sırasıyla sayfalı. */
+    List<AuditLog> findBySeqGreaterThanEqualOrderBySeqAscIdAsc(Long seq, Pageable pageable);
+
+    /** Doğrulanan bölümün DIŞINDA kalan zincirli satır sayısı ({@code seq < from}; seq'siz eski satırlar sayılmaz). */
+    long countBySeqLessThan(Long seq);
     /** Yapılandırma sağlığı kartı (2026-09-12): son SMTP_TEST / LDAP_TEST sonucu. */
     Optional<AuditLog> findTopByEventTypeOrderByEventTimeDesc(String eventType);
 

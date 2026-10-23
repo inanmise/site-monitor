@@ -70,6 +70,7 @@ public final class AuditEventCatalog {
             "ALERT_DELETE",
             "ALERT_RENOTIFY",
             "ALERT_RESOLVE",
+            "AUDIT_CHAIN_RESTART",   // denetim zincirinin tek seferlik yeniden başlatılması (2026-10-23, AuditChainRestartJob)
             "AUDIT_EXPORT",
             "AUDIT_RETENTION_PURGE",
             "AUTH_REQUIRED",
