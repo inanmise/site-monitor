@@ -56,14 +56,14 @@ export function EvalVerifySection({ t, es }) {
       <SubTitle className="mt-0 text-[12px]"><span id="hmp-es-title">{t('hmp.esTitle')}</span><PodChip t={t} scope="cluster" /></SubTitle>
       <KvList>
         <dt>{t('hmp.esVerify')}</dt>
-        <dd data-slot="es-verify-status" data-level={v.level} className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
-          <ToneBadge tone={tone} className="h-auto overflow-visible rounded-md font-semibold whitespace-normal">{t(VERIFY_LABEL[v.level] || 'hmp.esVerifyUnknown')}</ToneBadge>
+        <dd data-slot="es-verify-status" data-level={v.level} className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 [overflow-wrap:anywhere]">
+          <ToneBadge tone={tone} className="h-auto max-w-full overflow-visible rounded-md font-semibold whitespace-normal [overflow-wrap:anywhere]">{t(VERIFY_LABEL[v.level] || 'hmp.esVerifyUnknown')}</ToneBadge>
           {v.mismatches != null && (v.level === 'ok' || v.level === 'mismatch') && (
-            <span className={v.level === 'mismatch' ? WARN_T : 'text-muted-foreground'} data-slot="es-verify-mismatches">
+            <span className={`min-w-0 [overflow-wrap:anywhere] ${v.level === 'mismatch' ? WARN_T : 'text-muted-foreground'}`} data-slot="es-verify-mismatches">
               {t('hmp.esKindCount', v.mismatches, v.kinds.filter((k) => !k.measured).reduce((n, k) => n + (k.compared || 0), 0))}
             </span>
           )}
-          {reason && <span className="text-muted-foreground">· {reason}</span>}
+          {reason && <span className="min-w-0 text-muted-foreground [overflow-wrap:anywhere]">· {reason}</span>}
         </dd>
         {v.observedAt && (
           <>
@@ -76,7 +76,7 @@ export function EvalVerifySection({ t, es }) {
         {v.kinds.length > 0 && (
           <>
             <dt>{t('hmp.esKinds')}</dt>
-            <dd>
+            <dd className="min-w-0 [overflow-wrap:anywhere]">
               <ul data-slot="es-kinds" className="flex list-none flex-col gap-0.5">
                 {v.kinds.map((k) => {
                   const warn = !k.measured && v.level === 'mismatch' && (k.mismatches || 0) > 0
@@ -119,7 +119,7 @@ export function EvalRecorderRows({ t, es }) {
   return (
     <>
       <dt>{t('hmp.esRecorder')}</dt>
-      <dd data-slot="cluster-eval-recorder" data-level={es.recorderLevel}>
+      <dd data-slot="cluster-eval-recorder" data-level={es.recorderLevel} className="min-w-0 [overflow-wrap:anywhere]">
         {!r ? t('health.stUnknown') : (
           <span className="flex flex-col gap-0.5">
             <span className={warn ? WARN_T : undefined}>
@@ -177,7 +177,7 @@ export function SideJobsRows({ t, sj }) {
   return (
     <>
       <dt>{t('hmp.sjTitle')}</dt>
-      <dd data-slot="cluster-side-jobs" data-known={sj.known ? 'true' : 'false'}>
+      <dd data-slot="cluster-side-jobs" data-known={sj.known ? 'true' : 'false'} className="min-w-0 [overflow-wrap:anywhere]">
         {!sj.known ? t('health.stUnknown') : (
           <span className="flex flex-col gap-0.5">
             <span data-slot="side-jobs-summary">
