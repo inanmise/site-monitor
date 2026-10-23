@@ -545,6 +545,67 @@ class EvalStateRecorderTest {
     }
 
     @Test
+    @DisplayName("B sözleşmesi: active = tam olarak kuşak sahibi olarak yazarken (kip, lider, kuşak, tablo); lastVerify durumu ne olursa kalır")
+    void activeExactlyWhileWritingAsGenerationHolder() {
+        AtomicReference<EvalStateVerification> v = new AtomicReference<>();
+        EvalStateRecorder r = EvalStateRecorder.builder(mp.jdbc()).writer("pod1").leaderHint(leader::get).mode(mode::get)
+                .clock(clock::get).verifier(v::get).build();
+        r.bindSource(src);
+        built.add(r);
+        assertThat(r.status().active()).as("tablo yok, kuşak yok").isFalse();
+        r.flushNow();
+        assertThat(r.status().tableMissing()).isTrue();
+        assertThat(r.status().active()).as("tablo yok").isFalse();
+        schema();
+        r.flushNow();
+        assertThat(r.status().active()).as("kip yazar + lider + kuşak + tablo").isTrue();
+        mode.set(EvalStateMode.OFF);
+        assertThat(r.status().active()).as("kip off (kuşak tutulsa da)").isFalse();
+        mode.set(EvalStateMode.VERIFY);
+        assertThat(r.status().active()).isTrue();
+        leader.set(false);
+        assertThat(r.status().active()).as("lider ipucu false").isFalse();
+        leader.set(true);
+        v.set(ctx -> EvalVerifyReport.unknown(ctx.nowMs(), ctx.writer(), ctx.generation(), EvalVerifyReport.REASON_FLUSH_LAG));
+        EvalVerifyReport unknown = r.verifyNow();
+        assertThat(r.status().lastVerify()).as("bilinmeyen tur da saklanır").isSameAs(unknown);
+        v.set(null);
+        assertThat(r.verifyNow()).isNull();
+        assertThat(r.status().lastVerify()).as("doğrulayıcı yokken son tur korunur").isSameAs(unknown);
+        assertThat(new EvalStateSql(mp.jdbc()).acquireGeneration("pod2", clock.get())).isPositive();
+        r.recovery("PING_DOWN:h", "PING_DOWN", "h");
+        r.flushNow();   // çit nabzı 0 satır
+        assertThat(r.status().active()).as("çit dışı").isFalse();
+        assertThat(r.status().generation()).isNull();
+        assertThat(r.status().lastVerify()).as("çitte de son tur korunur").isSameAs(unknown);
+        r.onContextClosed(null);
+        r.onSweepLeadershipChanged(new SweepLeadershipChangedEvent(true, "pod1", clock.get(), SweepLeadershipChangedEvent.GAINED));
+        assertThat(r.flushNow()).as("kapanışta boşaltma yok").isFalse();
+        assertThat(r.status().active()).as("kapanışta yazmaz").isFalse();
+        assertThat(r.generation()).isZero();
+    }
+
+    @Test
+    @DisplayName("B sözleşmesi: Spring'te kaydedici EvalStateSink türüyle görünür; olay dinleyicisi bağlı; kapanışta durur")
+    void registeredAsEvalStateSinkBean() {
+        schema();
+        try (var ctx = new org.springframework.context.annotation.AnnotationConfigApplicationContext()) {
+            ctx.registerBean(JdbcTemplate.class, mp::jdbc);
+            ctx.register(EvalStateRecorder.class);
+            ctx.refresh();
+            assertThat(ctx.getBeanNamesForType(EvalStateSink.class)).hasSize(1);
+            EvalStateSink sink = ctx.getBeanProvider(EvalStateSink.class).getIfAvailable();
+            assertThat(sink).isInstanceOf(EvalStateRecorder.class);
+            EvalStateSink.Status s = sink.status();
+            assertThat(s).isNotNull();
+            assertThat(s.mode()).as("ayar servisi yok → varsayılan").isEqualTo("verify");
+            assertThat(s.active()).as("zamanlayıcı yok → lider ipucu false").isFalse();
+            ctx.publishEvent(new SweepLeadershipChangedEvent(true, "x", 1L, SweepLeadershipChangedEvent.GAINED));
+            assertThat(((EvalStateRecorder) sink).generation()).isZero();
+        }
+    }
+
+    @Test
     @DisplayName("Kapanış: ContextClosedEvent beklemez / boşaltmaz; yok etme ShutdownDeadline ile sınırlı birleşir")
     void shutdownUsesTheSharedDeadline() throws Exception {
         String srcText = Files.readString(Path.of("src/main/java/com/sitemonitor/service/evalstate/EvalStateRecorder.java"),

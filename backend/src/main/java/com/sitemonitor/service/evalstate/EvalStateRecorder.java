@@ -876,7 +876,7 @@ public class EvalStateRecorder implements EvalStateSink, ApplicationContextAware
     public boolean flushNow() {
         EvalStateMode m = mode();
         if (gapRequested || (!m.writes() && hasAnyState())) applyGap();
-        if (!m.writes() || !leaderHint() || fencedOut) return false;
+        if (!m.writes() || closing || !leaderHint() || fencedOut) return false;
         if (tableMissing && !tablesPresent()) return false;
         tableMissing = false;
         return flushOnce();
