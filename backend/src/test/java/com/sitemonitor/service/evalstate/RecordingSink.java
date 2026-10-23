@@ -74,6 +74,16 @@ public final class RecordingSink implements EvalStateSink {
         add(new Op("observation", alertType + "|" + EvalStateKeys.itemKey(item), item, manual + "@" + atMs));
     }
 
+    /** {@code extra} = kanca anında bellekte o kalemin DOWN kaydı hâlâ var mı (mutasyondan SONRA → false beklenir). */
+    @Override
+    public void observationPruned(String alertType, SweepItem item) {
+        EvalStateSource s = source;
+        Object id = item == null || item.ctxExtra() == null ? null : item.ctxExtra().get("monitor_id");
+        EvalStateSource.DownValues dv = s == null || !(id instanceof Number n) ? null : s.downObservation(alertType, n.longValue());
+        add(new Op("observationPruned", alertType + "|" + EvalStateKeys.itemKey(item), item,
+                dv == null ? null : dv.present()));
+    }
+
     @Override
     public void typeState(String alertType) {
         EvalStateSource s = source;

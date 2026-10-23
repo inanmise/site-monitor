@@ -62,7 +62,13 @@ public class EvalStateSchemaPatch {
                 guard.executeBounded(EvalStateSql.DDL_LAST_STATUS_INDEX, false);
             }
         } catch (Exception e) {
-            log.warn("Kalıcı değerlendirme durumu: idx_mls_type_domain kurulamadı — {}", e.getMessage());
+            // İki pod aynı anda açılırsa kaybeden CREATE INDEX katalog yarışında düşebilir (PostgreSQL
+            // pg_class_relname_nsp_index) — dizin öteki pod'da kurulduysa sorun yok (R3-1 FX-STATE bulgu #7).
+            if (indexPresent(guard)) {
+                log.debug("idx_mls_type_domain öteki pod tarafından aynı anda kuruldu: {}", e.getMessage());
+            } else {
+                log.warn("Kalıcı değerlendirme durumu: idx_mls_type_domain kurulamadı — {}", e.getMessage());
+            }
         }
         if (Boolean.TRUE.equals(DeferredIndexBuilder.postgresOrNull(jdbc.getDataSource()))) {
             for (String ddl : EvalStateSql.FILLFACTOR_DDL) {
@@ -90,6 +96,25 @@ public class EvalStateSchemaPatch {
                 return false;
             }
             log.warn("Kalıcı değerlendirme durumu: {} tablosu kurulamadı — {}", table, e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * {@code idx_mls_type_domain} var mı — PostgreSQL'de {@link SchemaDdlGuard#alreadyInPlace} ({@code to_regclass}), diğer
+     * türde {@code information_schema.indexes}. Okunamazsa false (WARN yazılır — sessiz yutulmaz).
+     */
+    boolean indexPresent(SchemaDdlGuard guard) {
+        try {
+            if (guard.alreadyInPlace(EvalStateSql.DDL_LAST_STATUS_INDEX)) return true;
+        } catch (Exception e) {
+            // aşağıdaki taşınabilir okuma denenir
+        }
+        try {
+            Integer n = jdbc.queryForObject("SELECT COUNT(*) FROM information_schema.indexes "
+                    + "WHERE lower(index_name) = 'idx_mls_type_domain'", Integer.class);
+            return n != null && n > 0;
+        } catch (Exception e) {
             return false;
         }
     }

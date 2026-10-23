@@ -82,6 +82,50 @@ class EvalStateSchemaPatchTest {
     }
 
     @Test
+    @DisplayName("FX #7: iki pod aynı anda açılır — CREATE INDEX yarışı kaybedilse de dizin varsa WARN yok (DEBUG)")
+    void indexRaceLost_noWarnWhenIndexExists() {
+        ch.qos.logback.classic.Logger logger =
+                (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(EvalStateSchemaPatch.class);
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> logs =
+                new ch.qos.logback.core.read.ListAppender<>();
+        logs.start();
+        logger.addAppender(logs);
+        try {
+            AtomicInteger lost = new AtomicInteger();
+            JdbcTemplate racing = new JdbcTemplate(mp.dataSource()) {
+                @Override
+                public void execute(String sql) {
+                    super.execute(sql);   // öteki pod kurdu …
+                    if (sql.startsWith("CREATE INDEX")) {
+                        lost.incrementAndGet();
+                        throw new DuplicateKeyException("pg_class_relname_nsp_index");   // … bu pod yarışı kaybetti
+                    }
+                }
+            };
+            EvalStateSchemaPatch p = new EvalStateSchemaPatch(racing);
+            assertThatCode(p::apply).doesNotThrowAnyException();
+            assertThat(lost).hasValue(1);
+            assertThat(p.indexPresent(new com.sitemonitor.service.schema.SchemaDdlGuard(racing))).isTrue();
+            assertThat(logs.list).noneMatch(e -> e.getLevel() == ch.qos.logback.classic.Level.WARN);
+
+            // Dizin gerçekten yoksa (kurulamadı) WARN yazılır — sessiz yutulmaz.
+            mp.jdbc().execute("DROP INDEX idx_mls_type_domain");
+            JdbcTemplate failing = new JdbcTemplate(mp.dataSource()) {
+                @Override
+                public void execute(String sql) {
+                    if (sql.startsWith("CREATE INDEX")) throw new DuplicateKeyException("başka hata");
+                    super.execute(sql);
+                }
+            };
+            new EvalStateSchemaPatch(failing).apply();
+            assertThat(logs.list).anyMatch(e -> e.getLevel() == ch.qos.logback.classic.Level.WARN
+                    && e.getFormattedMessage().contains("idx_mls_type_domain"));
+        } finally {
+            logger.detachAppender(logs);
+        }
+    }
+
+    @Test
     @DisplayName("Veritabanı hatası açılışı durdurmaz (WARN)")
     void failureIsSwallowed() {
         JdbcTemplate broken = new JdbcTemplate(new DriverManagerDataSource("jdbc:h2:mem:evalstate-yok;IFEXISTS=TRUE"));

@@ -52,6 +52,13 @@ import java.util.TreeSet;
  * <p>Türler ({@link EvalVerifyReport#KINDS}): {@code recovery}, {@code sibling}, {@code suppression}, {@code round_seen},
  * {@code confirmation} (geçti / kaldı), {@code descriptor} ve {@code window_seed} (yalnız ölçülür). Rapor açık anahtar /
  * alan adı / bağlam taşımaz — yalnız {@link EvalStateKeys#shortHash}.
+ *
+ * <p><b>Dönem bekçisi (R3-1 FX-STATE F1):</b> boşaltma beklemesinden sonra ve karşılaştırmalardan sonra
+ * {@link Context#stillCurrent()} sorulur — liderlik değiştiyse, kuşak bırakıldıysa ya da pod çitlendiyse tur
+ * {@link EvalVerifyReport#REASON_LEADERSHIP_CHANGED}; ve yalnız hâlâ kuşak sahibi olan pod raporunu YAYIMLAR (eski lider
+ * küme gözlemini sahte "uyuşmazlık" / boş "ok" ile ezemez). Hiçbir geçti / kaldı türünde karşılaştırma yoksa ama atlanan
+ * varsa tur {@link EvalVerifyReport#REASON_NOTHING_COMPARED} (bilinmeyen ≠ yeşil). "Hâlâ izleniyor mu" sorgusu hata
+ * verirse anahtar ATLANIR (uyuşmazlık sayılmaz, F5). Okumaların kendi sorgu zaman aşımı vardır.
  */
 @Slf4j
 @Component
@@ -101,7 +108,7 @@ public class EvalStateVerifier implements EvalStateVerification {
     @Autowired
     public EvalStateVerifier(MonitoringOutageService mos, JdbcTemplate jdbc) {
         this.mos = mos;
-        this.jdbc = jdbc;
+        this.jdbc = EvalStateSql.withQueryTimeout(jdbc, EvalStateSql.QUERY_TIMEOUT_SECONDS);
     }
 
     void setClusterHealthStore(ClusterHealthStore store) {
@@ -130,7 +137,11 @@ public class EvalStateVerifier implements EvalStateVerification {
             report = EvalVerifyReport.unknown(at, pod, gen, EvalVerifyReport.REASON_READ_FAILED);
         }
         lastReport = report;
-        publish(report);
+        if (stillCurrent(ctx)) {
+            publish(report);
+        } else {
+            log.debug("Kalıcı değerlendirme doğrulaması: bu pod artık kuşak sahibi değil — rapor yayımlanmadı (kuşak {})", gen);
+        }
         if (EvalVerifyReport.STATUS_MISMATCH.equals(report.status())) {
             log.warn("Kalıcı değerlendirme doğrulaması: {} uyuşmazlık — {}: {} (kuşak {}; karar etkilenmez, bellek kaynak)",
                     report.passFailMismatches(), mismatchKinds(report), report.firstMismatches(), gen);
@@ -162,7 +173,10 @@ public class EvalStateVerifier implements EvalStateVerification {
             return EvalVerifyReport.unknown(at, pod, gen, EvalVerifyReport.REASON_SNAPSHOT_FAILED);
         }
         long s1 = ctx.seq();
-        if (!ctx.awaitFlushed(s1, FLUSH_WAIT_MS)) {
+        boolean flushed = ctx.awaitFlushed(s1, FLUSH_WAIT_MS);
+        // Boşaltma beklemesi sırasında liderlik olayı / toplu düşüş / çit: karşılaştırma penceresi geçersiz (F1).
+        if (!stillCurrent(ctx)) return EvalVerifyReport.unknown(at, pod, gen, EvalVerifyReport.REASON_LEADERSHIP_CHANGED);
+        if (!flushed) {
             return EvalVerifyReport.unknown(at, pod, gen, EvalVerifyReport.REASON_FLUSH_LAG);
         }
 
@@ -185,7 +199,33 @@ public class EvalStateVerifier implements EvalStateVerification {
         kinds.put(EvalVerifyReport.KIND_CONFIRMATION, compareConfirmations(ctx, s0, snap, rows.confirmations, first));
         kinds.put(EvalVerifyReport.KIND_DESCRIPTOR, checkDescriptors(ctx, s0, rows.confirmations, first));
         kinds.put(EvalVerifyReport.KIND_WINDOW_SEED, measureWindowSeed(snap, rows.lastStatus, first));
+        // Karşılaştırma sürerken olay / düşüş / çit → sonuç bu kuşağın değil (F1).
+        if (!stillCurrent(ctx)) return EvalVerifyReport.unknown(at, pod, gen, EvalVerifyReport.REASON_LEADERSHIP_CHANGED);
+        if (nothingCompared(kinds)) {
+            return new EvalVerifyReport(at, pod, gen, EvalVerifyReport.STATUS_UNKNOWN,
+                    EvalVerifyReport.REASON_NOTHING_COMPARED, kinds, List.of());
+        }
         return new EvalVerifyReport(at, pod, gen, EvalVerifyReport.statusOf(kinds), null, kinds, first);
+    }
+
+    /** Geçti / kaldı türlerinin hiçbirinde karşılaştırma yok ama atlanan var → "0 uyuşmazlık" denemez. */
+    static boolean nothingCompared(Map<String, EvalVerifyReport.KindResult> kinds) {
+        int compared = 0, skipped = 0;
+        for (String k : EvalVerifyReport.PASS_FAIL_KINDS) {
+            EvalVerifyReport.KindResult r = kinds.get(k);
+            if (r == null) continue;
+            compared += Math.max(0, r.compared());
+            skipped += Math.max(0, r.skipped());
+        }
+        return compared == 0 && skipped > 0;
+    }
+
+    private static boolean stillCurrent(Context ctx) {
+        try {
+            return ctx.stillCurrent();
+        } catch (Exception e) {
+            return false;   // bilinmiyor → güvenli taraf: bu turun sonucu kuşağın değil, yayımlanmaz
+        }
     }
 
     // ── Karşılaştırmalar ──────────────────────────────────────────────────────────────────────────────────────────────
@@ -271,14 +311,18 @@ public class EvalStateVerifier implements EvalStateVerification {
                 continue;
             }
             lookups++;
-            compared++;
-            boolean monitored;
+            Boolean monitored;
             try {
-                monitored = mos.stillMonitored(new EvalSnapshot.Down(r.alertType(), r.domain(), null, r.monitorId(),
+                monitored = mos.stillMonitoredOrNull(new EvalSnapshot.Down(r.alertType(), r.domain(), null, r.monitorId(),
                         r.teamId(), r.standalone(), null, r.observedMs()).slimItem());
             } catch (Exception ex) {
-                monitored = true;   // bilinmiyor → güvenli taraf: uyuşmazlık say (bellek yüklemi zaten hatada true döner)
+                monitored = null;
             }
+            if (monitored == null) {   // "izleniyor mu" okunamadı (DB hatası) → bilinmiyor: atla, uyuşmazlık sayma (F5)
+                skipped++;
+                continue;
+            }
+            compared++;
             if (monitored) {
                 mismatches++;
                 mismatch(EvalVerifyReport.KIND_SIBLING, lk, first);
@@ -378,19 +422,25 @@ public class EvalStateVerifier implements EvalStateVerification {
                 skipped++;
                 continue;
             }
-            compared++;
             boolean resolvable = r.monitorType() != null && !r.monitorType().isBlank();
             if (resolvable) {
                 lookups++;
                 Map<String, Object> ctxMap = new HashMap<>();
                 if (r.monitorId() != null) ctxMap.put("monitor_id", r.monitorId());
+                Boolean monitored;
                 try {
-                    resolvable = mos.stillMonitored(new SweepItem(r.alertType(), r.domain(), r.detail(), false, null,
+                    monitored = mos.stillMonitoredOrNull(new SweepItem(r.alertType(), r.domain(), r.detail(), false, null,
                             ctxMap, null));
                 } catch (Exception ex) {
-                    resolvable = false;
+                    monitored = null;
                 }
+                if (monitored == null) {   // okunamadı → bilinmiyor: atla (F5)
+                    skipped++;
+                    continue;
+                }
+                resolvable = monitored;
             }
+            compared++;
             if (!resolvable) {
                 mismatches++;
                 mismatch(EvalVerifyReport.KIND_DESCRIPTOR, e.getKey(), first);

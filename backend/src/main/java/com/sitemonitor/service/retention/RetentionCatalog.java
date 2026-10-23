@@ -498,20 +498,24 @@ public final class RetentionCatalog {
         info("monitor-eval-state", "monitor_eval_state", Mode.EXTERNAL, DataClass.OPERATIONAL,
                 "Alarm anahtarı (tür × alan adı) başına kurtarma durumu — tarama liderinin belleğinin aynası (ardışık sağlıklı "
                 + "sayısı, son sayım, etkin kurtarma zinciri; 3-1'de karara girmez). İzleme × alarm türü kadar satır, "
-                + "zaman serisi değil. EvalStateRecorder günde bir siler: sayaçsız ve zincirsiz, 7 günden eski satırlar. "
-                + "Kişisel veri yok."),
+                + "zaman serisi değil. EvalStateRecorder günde bir siler: 7 günden eski satırlardan sayaçsız ve zincirsiz "
+                + "olanlar ile daha eski bir kuşağın (önceki liderin) olanlar, sayıdan bağımsız. Kişisel veri yok."),
         info("monitor-last-status", "monitor_last_status", Mode.EXTERNAL, DataClass.OPERATIONAL,
                 "İzleme kalemi başına son gözlenen sonuç (UP/DOWN, ağ sınıfı, sahiplik kimlikleri; ham hata metni YOK) — "
                 + "tarama liderinin kardeş / pencere belleğinin aynası. İzleme × alarm türü kadar satır, durum değişince ya "
-                + "da en çok 120 sn'de bir güncellenir. EvalStateRecorder günde bir siler: son gözlemi 7 günden eski kalemler. "
-                + "Kişisel veri yok."),
+                + "da en çok 120 sn'de bir güncellenir; bellek bir kalemin DOWN gözlemini budayınca (izleme duraklatıldı / "
+                + "silindi, 26 sa'lik TTL) satırı da silinir. EvalStateRecorder günde bir siler: son gözlemi 7 günden eski "
+                + "kalemler. Kişisel veri yok."),
         info("monitor-eval-type-state", "monitor_eval_type_state", Mode.EXTERNAL, DataClass.OPERATIONAL,
                 "Alarm türü başına bayraklar (ağ kesintisi bastırması, ilk zamanlanmış tur, tur aralığı) + kuşak / yazan "
-                + "nabzı satırı ('*'). Alarm türü kadar satır (≤ 31), güncellenir, birikmez; budanmaz. Kişisel veri yok."),
+                + "nabzı satırı ('*'). Alarm türü kadar satır (≤ 31), güncellenir, birikmez. EvalStateRecorder günde bir "
+                + "siler: daha eski bir kuşağın 7 günden eski satırları (artık taranmayan türler); '*' satırı asla. Kişisel "
+                + "veri yok."),
         info("monitor-confirmations", "monitor_confirmations", Mode.EXTERNAL, DataClass.OPERATIONAL,
                 "Süren teyit zincirleri (tarama liderinin belleğinin aynası; deneme sayısı, bağlam JSON'u ≤ 16 KB). Zincir "
-                + "bitince satır silinir; önceki liderin zincirleri devirde ABANDONED işaretlenir. EvalStateRecorder günde "
-                + "bir siler: ABANDONED ya da 1 saattir güncellenmeyen satırlar. İzleme sayısıyla sınırlı, kişisel veri yok.")
+                + "bitince satır silinir; önceki kuşakların zincirleri her yeni kuşakta ABANDONED işaretlenir. "
+                + "EvalStateRecorder günde bir siler: ABANDONED ya da 1 saattir güncellenmeyen satırlar. İzleme sayısıyla "
+                + "sınırlı, kişisel veri yok.")
     );
 
     /** Yalnız gerçekten satır silen kurallar (çalıştırma sırasında). */

@@ -479,7 +479,9 @@ class EvalStateVerifierTest {
         mos.handleSweepResults(PORT, List.of(item(PORT, DB, "5432/TCP", true, 7L, Map.of("monitor_recovery_checks", 3), null)));
         rec.setRecording(true);
         EvalVerifyReport r = verifier.verify(rec);   // boşluk eşiği altında → karşılaştırır (eşitleme yok)
-        assertThat(r.status()).isEqualTo(EvalVerifyReport.STATUS_OK);
+        // FX-STATE: düşüşten hemen sonra HER anahtar atlanır → "0 uyuşmazlık / ok" değil, bilinmiyor (nothing_compared).
+        assertThat(r.status()).isEqualTo(EvalVerifyReport.STATUS_UNKNOWN);
+        assertThat(r.reason()).isEqualTo(EvalVerifyReport.REASON_NOTHING_COMPARED);
         assertThat(kind(r, EvalVerifyReport.KIND_RECOVERY).mismatches()).isZero();
         assertThat(kind(r, EvalVerifyReport.KIND_RECOVERY).skipped()).isEqualTo(1);
 
@@ -488,6 +490,7 @@ class EvalStateVerifierTest {
         mos.handleSweepResults(PORT, List.of(item(PORT, DB, "5432/TCP", true, 7L, Map.of("monitor_recovery_checks", 5), null)));
         EvalVerifyReport again = verifier.verify(rec);
         assertThat(kind(again, EvalVerifyReport.KIND_RECOVERY)).isEqualTo(new EvalVerifyReport.KindResult(1, 0, 0, null));
+        assertThat(again.status()).as("bir anahtar karşılaştırıldı").isEqualTo(EvalVerifyReport.STATUS_OK);
     }
 
     // ── Yayın ──────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -577,6 +580,225 @@ class EvalStateVerifierTest {
         assertThat(parsed.reason()).isEqualTo("payload_too_large");
     }
 
+    // ── R3-1 FX-STATE ───────────────────────────────────────────────────────────────────────────────────────────────
+
+    EvalStateRecorder realRecorder(EvalStateVerifier v, Supplier<EvalStateMode> mode) {
+        new EvalStateSchemaPatch(h2).apply();
+        return EvalStateRecorder.builder(h2).writer("pod-r-00000001").leaderHint(() -> true).mode(mode)
+                .clock(mp.clockSupplier()).verifier(() -> v).flushMs(50).build();
+    }
+
+    /** Gerçek kaydediciyle eşitlenmiş başlangıç: gerçekçi turlar → boşalt → eşitleme turu → boşalt. */
+    EvalStateVerifier settledReal(EvalStateRecorder real, EvalStateVerifier v) {
+        mos.setEvalStateSink(real);
+        realisticRounds();
+        assertThat(real.flushNow()).isTrue();
+        assertThat(real.verifyNow().reason()).isEqualTo(EvalStateVerifier.REASON_RESYNC);
+        mp.advance(1_000);
+        assertThat(real.flushNow()).isTrue();
+        mp.advance(1_000);
+        return v;
+    }
+
+    String publishedReason() {
+        return EvalStateVerifier.fromJson(store.read(EvalVerifyReport.OBSERVATION).orElseThrow().payload()).reason();
+    }
+
+    @Test
+    @DisplayName("FX F1: tur sürerken liderlik kaybedilir (LOST) → bilinmiyor 'leadership_changed', rapor YAYIMLANMAZ")
+    void leadershipLostDuringVerifyRound() {
+        EvalStateVerifier v = new EvalStateVerifier(mos, h2);
+        v.setClusterHealthStore(store);
+        EvalStateRecorder real = realRecorder(v, () -> EvalStateMode.VERIFY);
+        try {
+            settledReal(real, v);
+            EvalStateVerification.Context base = real.verificationContext();
+            EvalVerifyReport r = v.verify(new DelegatingContext(base) {
+                @Override
+                public boolean awaitFlushed(long seq, long timeoutMs) {
+                    com.sitemonitor.service.schedule.SweepLeadershipChangedEvent lost =
+                            new com.sitemonitor.service.schedule.SweepLeadershipChangedEvent(false, "pod-b", 0L,
+                                    com.sitemonitor.service.schedule.SweepLeadershipChangedEvent.LOST);
+                    mos.onSweepLeadershipChanged(lost);
+                    real.onSweepLeadershipChanged(lost);
+                    return super.awaitFlushed(seq, timeoutMs);
+                }
+            });
+            assertThat(r.status()).as(String.valueOf(r)).isEqualTo(EvalVerifyReport.STATUS_UNKNOWN);
+            assertThat(r.reason()).isEqualTo(EvalVerifyReport.REASON_LEADERSHIP_CHANGED);
+            assertThat(r.kinds()).isEmpty();
+            assertThat(publishedReason()).as("eski liderin turu küme gözlemini ezmedi").isEqualTo(EvalStateVerifier.REASON_RESYNC);
+        } finally {
+            real.stop();
+        }
+    }
+
+    @Test
+    @DisplayName("FX F1: tur sürerken başka pod daha yeni kuşak alır (çit) → bilinmiyor, asla boş 'ok'; yayımlanmaz")
+    void fencedDuringVerifyRound() {
+        EvalStateVerifier v = new EvalStateVerifier(mos, h2);
+        v.setClusterHealthStore(store);
+        EvalStateRecorder real = realRecorder(v, () -> EvalStateMode.VERIFY);
+        try {
+            settledReal(real, v);
+            mos.handleSweepResults(PORT, List.of(item(PORT, DB, "5432/TCP", true, 7L, Map.of("monitor_recovery_checks", 3),
+                    null)));
+            EvalStateVerification.Context base = real.verificationContext();
+            EvalVerifyReport r = v.verify(new DelegatingContext(base) {
+                @Override
+                public boolean awaitFlushed(long seq, long timeoutMs) {
+                    assertThat(real.sql().acquireGeneration("pod-b-00000002", mp.now())).isEqualTo(2);
+                    return super.awaitFlushed(seq, timeoutMs);
+                }
+            });
+            assertThat(real.generation()).as("çitlendi").isZero();
+            assertThat(r.status()).as(String.valueOf(r)).isEqualTo(EvalVerifyReport.STATUS_UNKNOWN);
+            assertThat(r.reason()).isEqualTo(EvalVerifyReport.REASON_LEADERSHIP_CHANGED);
+            assertThat(publishedReason()).isEqualTo(EvalStateVerifier.REASON_RESYNC);
+        } finally {
+            real.stop();
+        }
+    }
+
+    @Test
+    @DisplayName("FX F2: DOWN izleme duraklatılır (bellek budar) sonra yeniden açılır — satır da silindiği için uyuşmazlık yok")
+    void pausedThenResumedDownMonitor() {
+        EvalStateVerifier v = new EvalStateVerifier(mos, h2);
+        v.setClusterHealthStore(store);
+        EvalStateRecorder real = realRecorder(v, () -> EvalStateMode.VERIFY);
+        try {
+            mos.setEvalStateSink(real);
+            realisticRounds();   // izleme 9 DOWN (bellek + satır)
+            real.flushNow();
+            real.verifyNow();    // eşitleme
+            monitored.put(9L, false);   // kullanıcı duraklattı
+            mp.advance(11 * 60_000L);   // > gözlem budama aralığı
+            mos.handleSweepResults(KW, List.of(item(KW, "k1.example.com", "kw", true, 21L, null, null)));
+            real.flushNow();
+            mp.advance(1_000);
+            EvalVerifyReport paused = real.verifyNow();
+            assertThat(paused.status()).as(String.valueOf(paused)).isEqualTo(EvalVerifyReport.STATUS_OK);
+            assertThat(h2.queryForObject("SELECT COUNT(*) FROM monitor_last_status WHERE item_key = 'm:9'", Integer.class))
+                    .as("budanan kalemin satırı silindi").isZero();
+            monitored.put(9L, true);    // yeniden açıldı, henüz gözlenmedi
+            mp.advance(60_000);
+            EvalVerifyReport resumed = real.verifyNow();
+            assertThat(resumed.status()).as(String.valueOf(resumed)).isEqualTo(EvalVerifyReport.STATUS_OK);
+            assertThat(kind(resumed, EvalVerifyReport.KIND_SIBLING).mismatches()).isZero();
+        } finally {
+            real.stop();
+        }
+    }
+
+    @Test
+    @DisplayName("FX F3: DOWN kalan izlemenin hedefi değişir (tazeleme süresi içinde) — satır hemen yazılır, uyuşmazlık yok")
+    void downMonitorHostRenamedWithinRefresh() {
+        EvalStateVerifier v = new EvalStateVerifier(mos, h2);
+        v.setClusterHealthStore(store);
+        EvalStateRecorder real = realRecorder(v, () -> EvalStateMode.VERIFY);
+        try {
+            settledReal(real, v);
+            mp.advance(30_000);
+            mos.handleSweepResults(PORT, List.of(item(PORT, "renamed.example.com", "5433/TCP", false, 9L,
+                    Map.of("team_id", 4L, "standalone", true), () -> status("down", "connect timed out"))));
+            real.flushNow();
+            mp.advance(1_000);
+            EvalVerifyReport r = real.verifyNow();
+            assertThat(r.status()).as(String.valueOf(r)).isEqualTo(EvalVerifyReport.STATUS_OK);
+            assertThat(kind(r, EvalVerifyReport.KIND_SIBLING).mismatches()).isZero();
+            assertThat(h2.queryForObject("SELECT domain FROM monitor_last_status WHERE alert_type = ? AND item_key = 'm:9'",
+                    String.class, PORT)).isEqualTo("renamed.example.com");
+        } finally {
+            real.stop();
+        }
+    }
+
+    @Test
+    @DisplayName("FX #2: kip off → on aynı liderlikte → yeni kuşak + eşitleme; sonra sıfırlanan sayaç sahte uyuşmazlık vermez")
+    void modeToggleThenReset_verifyStaysClean() {
+        java.util.concurrent.atomic.AtomicReference<EvalStateMode> mode =
+                new java.util.concurrent.atomic.AtomicReference<>(EvalStateMode.VERIFY);
+        EvalStateVerifier v = new EvalStateVerifier(mos, h2);
+        v.setClusterHealthStore(store);
+        EvalStateRecorder real = realRecorder(v, mode::get);
+        try {
+            settledReal(real, v);
+            assertThat(real.verifyNow().status()).isEqualTo(EvalVerifyReport.STATUS_OK);
+            long gen = real.generation();
+            mode.set(EvalStateMode.OFF);
+            mos.handleSweepResults(KW, List.of(item(KW, "k1.example.com", "kw", false, 21L, null, null)));
+            real.flushNow();
+            mode.set(EvalStateMode.VERIFY);
+            mp.advance(60_000);
+            // sahibin DOWN'u: kurtarma sayacı sıfırlanır (kaydedicinin temizlenmiş tabanına karşı no-op)
+            mos.handleSweepResults(PORT, List.of(item(PORT, DB, "5432/TCP", false, 7L, Map.of("monitor_recovery_checks", 3),
+                    () -> status("down", "connect timed out"))));
+            assertThat(real.flushNow()).isTrue();
+            assertThat(real.generation()).as("geri dönüşte yeni kuşak").isGreaterThan(gen);
+            mp.advance(1_000);
+            EvalVerifyReport first = real.verifyNow();
+            assertThat(first.reason()).as(String.valueOf(first)).isEqualTo(EvalStateVerifier.REASON_RESYNC);
+            mp.advance(1_000);
+            real.flushNow();
+            EvalVerifyReport after = real.verifyNow();
+            assertThat(after.status()).as(String.valueOf(after)).isEqualTo(EvalVerifyReport.STATUS_OK);
+            assertThat(kind(after, EvalVerifyReport.KIND_RECOVERY).mismatches()).isZero();
+        } finally {
+            real.stop();
+        }
+    }
+
+    @Test
+    @DisplayName("FX F5: 'hâlâ izleniyor mu' okunamazsa anahtar atlanır — bilinmeyen uyuşmazlığa dönmez (kardeş + betimleyici)")
+    void stillMonitoredLookupFails_skippedNotMismatch() {
+        realisticRounds();
+        settledRound();
+        insertDownRow(PORT, 77L, "gone.example.com", mp.now());
+        mos.setStillMonitored(it -> {
+            Object id = it.ctxExtra() == null ? null : it.ctxExtra().get("monitor_id");
+            if (id instanceof Number n && (n.longValue() == 77L || n.longValue() == 9L)) {
+                throw new IllegalStateException("havuz tükendi (test)");
+            }
+            return true;
+        });
+        EvalVerifyReport r = verifier.verify(rec);
+        assertThat(kind(r, EvalVerifyReport.KIND_SIBLING).mismatches()).isZero();
+        assertThat(kind(r, EvalVerifyReport.KIND_SIBLING).skipped()).isEqualTo(1);
+        assertThat(kind(r, EvalVerifyReport.KIND_DESCRIPTOR)).isEqualTo(new EvalVerifyReport.KindResult(0, 0, 1, null));
+        assertThat(r.status()).isEqualTo(EvalVerifyReport.STATUS_OK);
+        MonitoringOutageService.SweepItem gone = new EvalSnapshot.Down(PORT, "x", null, 77L, null, null, null, 0L).slimItem();
+        assertThat(mos.stillMonitored(gone)).as("karar yolu yine fail-open").isTrue();
+        assertThat(mos.stillMonitoredOrNull(gone)).as("doğrulayıcı yolu: bilinmiyor").isNull();
+    }
+
+    @Test
+    @DisplayName("Kesişim: hiçbir geçti/kaldı türünde karşılaştırma yok ama atlanan var → bilinmiyor 'nothing_compared' (asla yeşil)")
+    void nothingCompared_isUnknown() {
+        realisticRounds();
+        settledRound();
+        EvalStateVerification.Context allSkipped = new DelegatingContext(rec) {
+            @Override
+            public boolean changedSince(EvalStateKeys.Table table, String key, long seq) {
+                return true;
+            }
+        };
+        EvalVerifyReport r = verifier.verify(allSkipped);
+        assertThat(r.status()).isEqualTo(EvalVerifyReport.STATUS_UNKNOWN);
+        assertThat(r.reason()).isEqualTo(EvalVerifyReport.REASON_NOTHING_COMPARED);
+        assertThat(kind(r, EvalVerifyReport.KIND_RECOVERY).skipped()).isPositive();
+        assertThat(r.firstMismatches()).isEmpty();
+        assertThat(EvalStateVerifier.nothingCompared(Map.of(EvalVerifyReport.KIND_RECOVERY,
+                new EvalVerifyReport.KindResult(0, 0, 0, null)))).as("hiç anahtar yok = tutarlı, bilinmiyor değil").isFalse();
+    }
+
+    @Test
+    @DisplayName("FX #6: doğrulayıcının okumaları sorgu zaman aşımlı kendi şablonunda")
+    void verifierReadsUseQueryTimeout() {
+        JdbcTemplate t = (JdbcTemplate) ReflectionTestUtils.getField(new EvalStateVerifier(mos, h2), "jdbc");
+        assertThat(t.getQueryTimeout()).isEqualTo(EvalStateSql.QUERY_TIMEOUT_SECONDS);
+        assertThat(t.getDataSource()).isSameAs(h2.getDataSource());
+    }
+
     void insertDownRow(String type, long monitorId, String domain, long observedMs) {
         h2.update("INSERT INTO monitor_last_status (alert_type, item_key, domain, monitor_id, up, network_down, source, "
                         + "observed_ms, changed_ms, writer, gen, seq, updated_ms, updated_at) "
@@ -600,5 +822,6 @@ class EvalStateVerifierTest {
         @Override public boolean awaitFlushed(long seq, long timeoutMs) { return d.awaitFlushed(seq, timeoutMs); }
         @Override public boolean changedSince(EvalStateKeys.Table t, String k, long s) { return d.changedSince(t, k, s); }
         @Override public long lastStatusRefreshMs() { return d.lastStatusRefreshMs(); }
+        @Override public boolean stillCurrent() { return d.stillCurrent(); }
     }
 }

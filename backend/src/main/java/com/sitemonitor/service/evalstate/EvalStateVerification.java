@@ -49,5 +49,14 @@ public interface EvalStateVerification {
 
         /** {@code monitor_last_status} tazeleme aralığı (ms) — kardeş gözleminin {@code atMs} toleransı. */
         long lastStatusRefreshMs();
+
+        /**
+         * Bu bağlam hâlâ geçerli mi: bağlam kurulduğundan beri liderlik dönemi değişmedi, kuşak bırakılmadı ve pod çitlenmedi
+         * (2026-10-23, R3-1 FX-STATE). false → tur {@link EvalVerifyReport#REASON_LEADERSHIP_CHANGED} ve rapor
+         * YAYIMLANMAZ (artık kuşak sahibi olmayan pod küme gözlemini ezmesin). Varsayılan true (sabit test bağlamları).
+         */
+        default boolean stillCurrent() {
+            return true;
+        }
     }
 }

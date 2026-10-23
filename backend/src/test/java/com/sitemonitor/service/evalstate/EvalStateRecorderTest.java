@@ -31,6 +31,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -654,12 +655,362 @@ class EvalStateRecorderTest {
                 .containsEntry("standalone", true).containsEntry("item_key", "m:2");
     }
 
+    // ── R3-1 FX-STATE ───────────────────────────────────────────────────────────────────────────────────────────────
+
+    private void lease(String owner) {
+        mp.jdbc().update("DELETE FROM monitor_check_schedule WHERE monitor_key = ?", EvalStateSql.LEASE_KEY);
+        mp.jdbc().update("INSERT INTO monitor_check_schedule (monitor_key, next_due_at, claimed_by, claimed_at) "
+                + "VALUES (?, ?, ?, ?)", EvalStateSql.LEASE_KEY, Long.MAX_VALUE, owner, 0L);
+    }
+
+    private EvalStateRecorder leaseBound(String writer, AtomicBoolean hint) {
+        EvalStateRecorder r = EvalStateRecorder.builder(mp.jdbc()).writer(writer).leaderHint(hint::get).mode(mode::get)
+                .clock(clock::get).flushMs(50).leaseOwner(writer).build();
+        r.bindSource(src);
+        built.add(r);
+        return r;
+    }
+
+    private Integer dbCount(long gen, String key) {
+        return mp.jdbc().query("SELECT recovery_up_count FROM monitor_eval_state WHERE alert_type || ':' || domain = ? "
+                + "AND gen = ?", (rs, i) -> rs.getInt(1), key, gen).stream().findFirst().orElse(null);
+    }
+
+    @Test
+    @DisplayName("FX #1: kirayı kaybetmiş eski liderin (ipucu hâlâ true) geç kuşak denemesi kira sahibini çitleyemez")
+    void staleFormerLeaderLateAcquire_cannotFenceLeaseHolder() {
+        schema();
+        lease("podB-0000000b");
+        AtomicBoolean hintA = new AtomicBoolean(true);
+        EvalStateRecorder a = leaseBound("podA-0000000a", hintA);
+        EvalStateRecorder b = leaseBound("podB-0000000b", new AtomicBoolean(true));
+        src.recovery.put("PING_DOWN:h", new RecoveryValues(1, 1L, null, null));
+        b.recovery("PING_DOWN:h", "PING_DOWN", "h");
+        assertThat(b.flushNow()).isTrue();
+        assertThat(b.generation()).isEqualTo(1);
+
+        assertThat(a.flushNow()).as("eski lider: kira B'de → kuşak yok").isFalse();
+        assertThat(a.generation()).isZero();
+        hintA.set(false);
+        a.onSweepLeadershipChanged(new SweepLeadershipChangedEvent(false, "podA", clock.get(), SweepLeadershipChangedEvent.LOST));
+
+        for (int i = 0; i < 3; i++) {
+            clock.addAndGet(120_000);
+            src.recovery.put("PING_DOWN:h", new RecoveryValues(5 + i, 2L + i, null, null));
+            b.recovery("PING_DOWN:h", "PING_DOWN", "h");
+            assertThat(b.flushNow()).as("gerçek lider yazmaya devam eder").isTrue();
+        }
+        assertThat(b.status().active()).isTrue();
+        assertThat(b.status().fenced()).isFalse();
+        assertThat(b.generation()).isEqualTo(1);
+        assertThat(countOf("h")).isEqualTo(7);
+        assertThat(b.sql().generationRow().writer()).isEqualTo("podB-0000000b");
+    }
+
+    @Test
+    @DisplayName("FX #1: çitlenen lider, kuşak sahibi 3 nabız sessiz kalınca kendini onarır; sahip nabız atarken onarmaz")
+    void fencedLeaderRecoversWhenHolderSilent() {
+        EvalStateRecorder a = recorder();
+        src.recovery.put("PING_DOWN:h", new RecoveryValues(1, 1L, null, null));
+        a.recovery("PING_DOWN:h", "PING_DOWN", "h");
+        assertThat(a.flushNow()).isTrue();
+        EvalStateSql other = new EvalStateSql(mp.jdbc());
+        assertThat(other.acquireGeneration("pod2-00000002", clock.get())).isEqualTo(2);   // ör. kısa süre kira tutup kapanan pod
+        a.recovery("PING_DOWN:h", "PING_DOWN", "h");
+        assertThat(a.flushNow()).isFalse();
+        assertThat(a.status().fenced()).isTrue();
+        assertThat(a.status().generation()).isNull();
+
+        clock.addAndGet(61_000);
+        assertThat(a.flushNow()).as("sahip yeni (61 sn) — onarma yok").isFalse();
+        assertThat(other.heartbeat(2, "pod2-00000002", clock.get())).isTrue();
+        clock.addAndGet(61_000);
+        assertThat(a.flushNow()).as("sahip nabız attı — onarma yok").isFalse();
+        assertThat(a.status().fenced()).isTrue();
+
+        clock.addAndGet(200_000);   // sahip 261 sn sessiz (> 3 × 60 sn)
+        assertThat(a.flushNow()).as("onarıldı, yeni kuşak").isTrue();
+        assertThat(a.status().fenced()).isFalse();
+        assertThat(a.generation()).isEqualTo(3);
+        src.recovery.put("PING_DOWN:h", new RecoveryValues(4, 9L, null, null));
+        a.recovery("PING_DOWN:h", "PING_DOWN", "h");
+        assertThat(a.flushNow()).isTrue();
+        assertThat(dbCount(3, "PING_DOWN:h")).isEqualTo(4);
+        assertThat(logs.list).anyMatch(e -> e.getLevel() == Level.INFO && e.getFormattedMessage().contains("çitten çıkıp"));
+    }
+
+    @Test
+    @DisplayName("FX #2: kip off → on aynı liderlikte kuşağı bırakır; sonraki sıfırlamada bayat satır güncel kuşakta kalmaz")
+    void modeOffOnThenReset_noStaleRowCompared() {
+        EvalStateRecorder r = recorder();
+        String k = "PING_DOWN:h";
+        src.recovery.put(k, new RecoveryValues(2, 1L, null, null));
+        r.recovery(k, "PING_DOWN", "h");
+        assertThat(r.flushNow()).isTrue();
+        long gen = r.generation();
+        assertThat(dbCount(gen, k)).isEqualTo(2);
+
+        mode.set(EvalStateMode.OFF);
+        r.recovery("PING_DOWN:other", "PING_DOWN", "other");
+        r.flushNow();
+        assertThat(r.status().generation()).as("kip kapalı: kuşak bırakıldı").isNull();
+        mode.set(EvalStateMode.VERIFY);
+
+        src.recovery.remove(k);   // MOS sayacı sıfırladı (alarm kapandı / alan adı düştü)
+        r.recovery(k, "PING_DOWN", "h");
+        assertThat(r.flushNow()).isTrue();
+        assertThat(r.generation()).as("geri dönüşte YENİ kuşak").isGreaterThan(gen);
+        assertThat(dbCount(r.generation(), k)).as("bayat sayaç güncel kuşakta yok (doğrulayıcı görmez)").isNull();
+    }
+
+    @Test
+    @DisplayName("FX #2: kuşak tutarken hiç işlem yokken de kip off kuşağı bırakır (boş görülen harita)")
+    void modeOffWithoutStateStillDropsGeneration() {
+        EvalStateRecorder r = recorder();
+        assertThat(r.flushNow()).isTrue();   // kuşak boşaltmayla alındı, hiç işlem yok
+        long gen = r.generation();
+        mode.set(EvalStateMode.OFF);
+        r.flushNow();
+        assertThat(r.generation()).isZero();
+        mode.set(EvalStateMode.WRITE);
+        assertThat(r.flushNow()).isTrue();
+        assertThat(r.generation()).isGreaterThan(gen);
+    }
+
+    @Test
+    @DisplayName("FX #3: eski kuşağın bayat sayacı sonraki liderliklerde devralınmış sayılmaz; 7 günden eskiyse budanır")
+    void staleOldGenerationCounterNotInheritedAndPruned() {
+        EvalStateRecorder r = recorder();
+        src.recovery.put("PING_DOWN:h", new RecoveryValues(2, 1L, null, null));
+        r.recovery("PING_DOWN:h", "PING_DOWN", "h");
+        assertThat(r.flushNow()).isTrue();
+        for (int i = 0; i < 3; i++) {
+            src.recovery.clear();
+            r.onSweepLeadershipChanged(new SweepLeadershipChangedEvent(true, "pod1", clock.get(), SweepLeadershipChangedEvent.GAINED));
+            assertThat(r.flushNow()).isTrue();
+            clock.addAndGet(8L * 24 * 60 * 60 * 1000);
+        }
+        assertThat(r.generation()).isEqualTo(4);
+        assertThat(r.status().inherited().recoveryCounters()).as("yalnız kuşak 3'ün satırları").isZero();
+        assertThat(r.status().inherited().previousGeneration()).isEqualTo(3L);
+        long now = clock.get();
+        r.sql().prune(r.generation(), now - 7L * 24 * 3600 * 1000, now - 7L * 24 * 3600 * 1000, now - 3600_000L);
+        assertThat(dbCount(1, "PING_DOWN:h")).as("eski kuşağın bayat sayacı budandı").isNull();
+    }
+
+    @Test
+    @DisplayName("FX #6: üretim kaydedicisinin ifadeleri sorgu zaman aşımlı kendi şablonunda; paylaşılan şablon değişmez")
+    void productionRecorderUsesQueryTimeout() {
+        EvalStateRecorder r = productionRecorder(null);
+        assertThat(r.sql().jdbc().getQueryTimeout()).isEqualTo(EvalStateSql.QUERY_TIMEOUT_SECONDS);
+        assertThat(mp.jdbc().getQueryTimeout()).isNotEqualTo(EvalStateSql.QUERY_TIMEOUT_SECONDS);
+        assertThat(EvalStateRecorder.builder(mp.jdbc()).queryTimeoutSeconds(3).build().sql().jdbc().getQueryTimeout())
+                .isEqualTo(3);
+    }
+
+    @Test
+    @DisplayName("FX #6: kaydedicinin HER ifadesi sorgu zaman aşımıyla koşar (kuşak, nabız, toplu yazım, okuma, budama)")
+    void everyStatementCarriesTheQueryTimeout() {
+        schema();
+        List<Integer> timeouts = new CopyOnWriteArrayList<>();
+        AtomicInteger statements = new AtomicInteger();
+        DelegatingDataSource spying = new DelegatingDataSource(mp.dataSource()) {
+            @Override
+            public Connection getConnection() throws SQLException {
+                return timeoutSpy(super.getConnection(), timeouts, statements);
+            }
+        };
+        EvalStateRecorder r = EvalStateRecorder.builder(new JdbcTemplate(spying)).writer("pod1").leaderHint(leader::get)
+                .mode(mode::get).clock(clock::get).queryTimeoutSeconds(7).build();
+        r.bindSource(src);
+        built.add(r);
+        src.recovery.put("PING_DOWN:h", new RecoveryValues(1, 1L, null, null));
+        r.recovery("PING_DOWN:h", "PING_DOWN", "h");
+        r.observation("PORT_DOWN", item("PORT_DOWN", 9, "p.example", false, "Connection timed out"), false, clock.get());
+        assertThat(r.flushNow()).isTrue();
+        r.sql().prune(r.generation(), 0L, 0L, 0L);
+        r.sql().readEvalState(r.generation());
+        assertThat(statements.get()).isGreaterThan(5);
+        assertThat(timeouts).hasSize(statements.get()).containsOnly(7);
+    }
+
+    /** Bağlantı vekili: açılan her ifadeyi sayar ve {@code setQueryTimeout} değerlerini kaydeder. */
+    static Connection timeoutSpy(Connection real, List<Integer> timeouts, AtomicInteger statements) {
+        return (Connection) java.lang.reflect.Proxy.newProxyInstance(EvalStateRecorderTest.class.getClassLoader(),
+                new Class<?>[] {Connection.class}, (proxy, m, args) -> {
+                    Object out;
+                    try {
+                        out = m.invoke(real, args);
+                    } catch (java.lang.reflect.InvocationTargetException e) {
+                        throw e.getCause();
+                    }
+                    if (!(out instanceof java.sql.Statement st)) return out;
+                    statements.incrementAndGet();
+                    Class<?> iface = out instanceof java.sql.PreparedStatement ? java.sql.PreparedStatement.class
+                            : java.sql.Statement.class;
+                    return java.lang.reflect.Proxy.newProxyInstance(EvalStateRecorderTest.class.getClassLoader(),
+                            new Class<?>[] {iface}, (p2, m2, a2) -> {
+                                if ("setQueryTimeout".equals(m2.getName())) timeouts.add((Integer) a2[0]);
+                                try {
+                                    return m2.invoke(st, a2);
+                                } catch (java.lang.reflect.InvocationTargetException e) {
+                                    throw e.getCause();
+                                }
+                            });
+                });
+    }
+
+    @Test
+    @DisplayName("FX F3: aynı durumdaki kalemin alan adı değişince tazeleme süresi beklenmeden yazılır")
+    void domainChangeIsAStateChange() {
+        EvalStateRecorder r = recorder();
+        r.observation("PORT_DOWN", item("PORT_DOWN", 9, "old.example", false, "Connection timed out"), false, clock.get());
+        r.flushNow();
+        r.observation("PORT_DOWN", item("PORT_DOWN", 9, "renamed.example", false, "Connection timed out"), false,
+                clock.get() + 30_000);
+        assertThat(r.status().pending()).as("alan adı durumun parçası").isEqualTo(1);
+        r.flushNow();
+        assertThat(mp.jdbc().queryForObject("SELECT domain FROM monitor_last_status", String.class)).isEqualTo("renamed.example");
+    }
+
+    @Test
+    @DisplayName("FX F4: kimlikli kalemin satırı seq'ten SONRA bellekten okunur — ters sırada gelen eski DOWN yeni UP'ı ezemez")
+    void observationFollowsMemoryAfterSeq() {
+        EvalStateRecorder r = recorder();
+        src.downSupported = true;
+        SweepItem down = item("PORT_DOWN", 9, "p.example", false, "Connection timed out");
+        SweepItem up = item("PORT_DOWN", 9, "p.example", true, null);
+        // Bellek: T1 DOWN koydu, T2 UP ile kaldırdı → kayıt yok. Kancalar TERS sırada: önce T2'nin UP'ı, sonra T1'in DOWN'u.
+        r.observation("PORT_DOWN", up, false, clock.get());
+        r.observation("PORT_DOWN", down, false, clock.get());
+        r.flushNow();
+        assertThat(mp.jdbc().queryForObject("SELECT up FROM monitor_last_status", Boolean.class))
+                .as("satır belleği izler (UP)").isTrue();
+
+        // Bellekte DOWN var (alan adı / ekip bellekten), geç gelen UP kancası onu ezemez.
+        clock.addAndGet(1_000);
+        src.downs.put("PORT_DOWN|9", new EvalStateSource.DownValues(true, "p.example", "443", 7L, false,
+                EvalStateSource.ERROR_NETWORK, clock.get()));
+        r.observation("PORT_DOWN", down, false, clock.get());
+        r.observation("PORT_DOWN", up, false, clock.get());
+        r.flushNow();
+        Map<String, Object> row = mp.jdbc().queryForMap("SELECT up, network_down, team_id, standalone FROM monitor_last_status");
+        assertThat(row).containsEntry("up", false).containsEntry("network_down", true).containsEntry("team_id", 7L)
+                .containsEntry("standalone", false);
+
+        // Kimliksiz kalem: çağıranın değerleri (bellek sorulmaz).
+        SweepItem noId = new SweepItem("ACCESSIBILITY", "h.example", "443", false, "Connection refused", Map.of(), null);
+        r.observation("ACCESSIBILITY", noId, false, clock.get());
+        r.flushNow();
+        assertThat(mp.jdbc().queryForObject("SELECT up FROM monitor_last_status WHERE item_key = 'd:h.example|443'",
+                Boolean.class)).isFalse();
+    }
+
+    @Test
+    @DisplayName("FX F2: budanan gözlem satırı siler (yalnız bir kez); bellekte yeniden DOWN varsa silmez, DOWN yazar")
+    void prunedObservationDeletesRow() {
+        EvalStateRecorder r = recorder();
+        src.downSupported = true;
+        SweepItem down = item("PORT_DOWN", 9, "p.example", false, "Connection timed out");
+        src.downs.put("PORT_DOWN|9", new EvalStateSource.DownValues(true, "p.example", "443", 3L, true,
+                EvalStateSource.ERROR_NETWORK, clock.get()));
+        r.observation("PORT_DOWN", down, false, clock.get());
+        r.flushNow();
+        assertThat(rows("monitor_last_status")).isEqualTo(1);
+
+        src.downs.clear();   // bellek budadı (duraklatıldı / TTL)
+        r.observationPruned("PORT_DOWN", down);
+        r.flushNow();
+        assertThat(rows("monitor_last_status")).as("budanan kalemin satırı silindi").isZero();
+        r.observationPruned("PORT_DOWN", down);
+        assertThat(r.status().pending()).as("ikinci budama no-op").isZero();
+
+        src.downs.put("PORT_DOWN|9", new EvalStateSource.DownValues(true, "p.example", "443", 3L, true,
+                EvalStateSource.ERROR_NETWORK, clock.get()));
+        r.observationPruned("PORT_DOWN", down);   // geç gelen budama kancası — bellekte yeniden DOWN var
+        r.flushNow();
+        assertThat(mp.jdbc().queryForObject("SELECT up FROM monitor_last_status", Boolean.class)).isFalse();
+    }
+
+    @Test
+    @DisplayName("FX F7 + çit: durum 'fenced' ve kanca istisnası sayısını (MOS kaynağı + kaydedici) taşır; 14'lü kurucu eskisi gibi")
+    void statusCarriesFencedAndHookFailures() {
+        EvalStateRecorder r = recorder();
+        src.hookFailures = 3;
+        assertThat(r.status().hookFailures()).isEqualTo(3);
+        assertThat(r.status().fenced()).isFalse();
+        r.flushNow();
+        new EvalStateSql(mp.jdbc()).acquireGeneration("pod2", clock.get());
+        r.flushNow();
+        assertThat(r.status().fenced()).isTrue();
+        assertThat(r.status().active()).isFalse();
+        EvalStateSink.Status legacy = new EvalStateSink.Status("verify", true, "w", 1L, 0, 0, 0, 0, null, null, null, false,
+                null, null);
+        assertThat(legacy.fenced()).isFalse();
+        assertThat(legacy.hookFailures()).isZero();
+    }
+
+    @Test
+    @DisplayName("Kip nit: tanınmayan ayar değeri bir kez WARN (değer değişince yeniden); geçerli / boş değer uyarmaz")
+    void unknownModeWarnsOnce() {
+        AtomicReference<String> raw = new AtomicReference<>("kapali");
+        EvalStateRecorder r = productionRecorder(raw);
+        r.status();
+        r.status();
+        assertThat(warnCount()).isEqualTo(1);
+        assertThat(logs.list.stream().filter(e -> e.getLevel() == Level.WARN).findFirst().orElseThrow().getFormattedMessage())
+                .contains("tanınmadı").contains("kapali").contains("verify");
+        assertThat(r.status().mode()).isEqualTo("verify");
+        raw.set("yazmaa");
+        r.status();
+        assertThat(warnCount()).isEqualTo(2);
+        raw.set("off");
+        r.status();
+        raw.set(null);
+        r.status();
+        assertThat(warnCount()).isEqualTo(2);
+    }
+
+    /** Spring kurucusuyla (sağlayıcılar sahte) üretim kaydedicisi; {@code mode} null → ayar servisi yok. */
+    @SuppressWarnings("unchecked")
+    private EvalStateRecorder productionRecorder(AtomicReference<String> modeRaw) {
+        org.springframework.beans.factory.ObjectProvider<com.sitemonitor.service.AppSettingsService> settings =
+                org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class);
+        if (modeRaw != null) {
+            com.sitemonitor.service.AppSettingsService s = org.mockito.Mockito.mock(com.sitemonitor.service.AppSettingsService.class);
+            org.mockito.Mockito.when(s.getString(org.mockito.ArgumentMatchers.eq(EvalStateMode.SETTING_KEY),
+                    org.mockito.ArgumentMatchers.any())).thenAnswer(i -> modeRaw.get());
+            org.mockito.Mockito.when(settings.getIfAvailable()).thenReturn(s);
+        }
+        EvalStateRecorder r = new EvalStateRecorder(mp.jdbc(), settings,
+                org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class),
+                org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class),
+                org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class), 1_000, 300_000, 120_000);
+        built.add(r);
+        return r;
+    }
+
     /** Elle doldurulan sahte bellek. */
     static final class FakeSource implements EvalStateSource {
         final Map<String, RecoveryValues> recovery = new ConcurrentHashMap<>();
         final Map<String, TypeValues> types = new ConcurrentHashMap<>();
+        /** "tür|kimlik" → bellekteki DOWN gözlemi (F4); {@link #downSupported} false iken sorgu desteklenmez (null). */
+        final Map<String, DownValues> downs = new ConcurrentHashMap<>();
+        volatile boolean downSupported;
+        volatile long hookFailures;
         volatile Runnable onRecoveryRead = () -> {};
         volatile boolean throwing;
+
+        @Override
+        public DownValues downObservation(String alertType, long monitorId) {
+            if (!downSupported) return null;
+            return downs.getOrDefault(alertType + "|" + monitorId, DownValues.ABSENT);
+        }
+
+        @Override
+        public long hookFailures() {
+            return hookFailures;
+        }
 
         @Override
         public RecoveryValues recoveryValues(String rkey) {

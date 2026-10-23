@@ -43,6 +43,33 @@ public interface EvalStateSource {
     String errorClass(String error, String domain);
 
     /**
+     * Kimlikli bir kalemin bellekteki GÜNCEL DOWN gözlemi ({@code downObserved["tür|kimlik"]}) — kaydedici gözlem işleminin
+     * seq'ini ALDIKTAN SONRA okur (R3-1 FX-STATE, F4): iki iş parçacığının mutasyon → kanca aralığı iç içe geçse de satır
+     * belleği izler (eski DOWN yeni UP'ı ezemez). Dönüş: {@link DownValues#ABSENT} = bellekte DOWN kaydı yok (kalem UP ya da
+     * budanmış); null = kaynak bu sorguyu desteklemiyor (çağıranın değerleri kullanılır — eski sözleşme).
+     */
+    default DownValues downObservation(String alertType, long monitorId) {
+        return null;
+    }
+
+    /** Kanca istisnası sayısı (birikimli; R3-1 FX-STATE, F7) — kaydedicinin durumunda görünür. Varsayılan 0. */
+    default long hookFailures() {
+        return 0L;
+    }
+
+    /**
+     * Bellekteki DOWN gözleminin dar kopyası — ham hata metni YOK, yalnız sınıfı.
+     *
+     * @param present    bellekte DOWN kaydı var mı ({@link #ABSENT} = yok)
+     * @param errorClass {@link #errorClass} sonucu
+     * @param atMs       gözlem anı (MOS saati)
+     */
+    record DownValues(boolean present, String domain, String detail, Long teamId, Boolean standalone, String errorClass,
+                      long atMs) {
+        public static final DownValues ABSENT = new DownValues(false, null, null, null, null, null, 0L);
+    }
+
+    /**
      * Bir kurtarma anahtarının değerleri. {@code upCount} 0 = sayaç yok (bellekte anahtar yok); diğerleri null = yok.
      * {@code chainGen} pod'a özgü zincir kuşağıdır (bilgi amaçlı), {@code chainStartedMs} zincirin başlama anı.
      */

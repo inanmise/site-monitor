@@ -195,9 +195,10 @@ class EvalStateSqlH2Test {
 
         assertThat(sql.markAbandoned(2, now)).isEqualTo(2);
         assertThat(sql.markAbandoned(2, now)).as("ikinci kez değişmez").isZero();
-        assertThat(sql.countInheritedRecovery(2)).isEqualTo(1);
-        assertThat(sql.countInheritedSiblings(2, now - EvalStateRecorder.SIBLING_TTL_MS)).as("TTL içi, kimlikli DOWN").isEqualTo(1);
-        assertThat(sql.countInheritedSuppressions(2)).isEqualTo(1);
+        // Sayımlar ÖNCEKİ kuşağın (2'nin yerini aldığı 1) satırlarıdır (FX-STATE #3: parametre önceki kuşak).
+        assertThat(sql.countInheritedRecovery(1)).isEqualTo(1);
+        assertThat(sql.countInheritedSiblings(1, now - EvalStateRecorder.SIBLING_TTL_MS)).as("TTL içi, kimlikli DOWN").isEqualTo(1);
+        assertThat(sql.countInheritedSuppressions(1)).isEqualTo(1);
         assertThat(sql.previousGeneration(2)).isEqualTo(1L);
         assertThat(sql.previousGeneration(1)).isNull();
     }
@@ -221,12 +222,113 @@ class EvalStateSqlH2Test {
         mp.jdbc().update("UPDATE monitor_confirmations SET state = 'ABANDONED' WHERE confirm_key = 'abandoned'");
         sql.writeTypeState(List.of(new TypeRow("PING_DOWN", false, null, old, null, 4)), "pod1", 1, old);
 
-        int[] n = sql.prune(now - 7L * 24 * 60 * 60 * 1000, now - 7L * 24 * 60 * 60 * 1000, now - 60L * 60 * 1000);
-        assertThat(n).containsExactly(1, 1, 2);
+        int[] n = sql.prune(1, now - 7L * 24 * 60 * 60 * 1000, now - 7L * 24 * 60 * 60 * 1000, now - 60L * 60 * 1000);
+        assertThat(n).as("kuşak 1 güncel: eski kuşak kuralı devreye girmez").containsExactly(1, 1, 2, 0);
         assertThat(mp.jdbc().queryForList("SELECT domain FROM monitor_eval_state ORDER BY domain", String.class))
                 .containsExactly("chain-old", "count-old", "zero-new");
         assertThat(mp.jdbc().queryForList("SELECT confirm_key FROM monitor_confirmations", String.class)).containsExactly("fresh");
         assertThat(mp.jdbc().queryForObject("SELECT COUNT(*) FROM monitor_eval_type_state", Integer.class)).isEqualTo(1);
+    }
+
+    // ── R3-1 FX-STATE ───────────────────────────────────────────────────────────────────────────────────────────────
+
+    private void lease(String owner) {
+        mp.jdbc().update("DELETE FROM monitor_check_schedule WHERE monitor_key = ?", EvalStateSql.LEASE_KEY);
+        if (owner != null) {
+            mp.jdbc().update("INSERT INTO monitor_check_schedule (monitor_key, next_due_at, claimed_by, claimed_at) "
+                    + "VALUES (?, ?, ?, ?)", EvalStateSql.LEASE_KEY, Long.MAX_VALUE, owner, 0L);
+        }
+    }
+
+    @Test
+    @DisplayName("FX #1: kiraya bağlı CAS — kira başkasında / yokken kuşak alınamaz, '*' değişmez; kira sahibi alır")
+    void leaseBoundCas_onlyTheLeaseHolderTakesAGeneration() {
+        assertThat(sql.acquireGeneration("podB", 1_000L, "podB", () -> true)).as("kira yok").isZero();
+        lease("podB");
+        assertThat(sql.acquireGeneration("podB", 1_000L, "podB", () -> true)).isEqualTo(1);
+        assertThat(sql.acquireGeneration("podA", 2_000L, "podA", () -> true)).as("kira B'de — eski lider A").isZero();
+        assertThat(sql.generationRow()).isEqualTo(new EvalStateSql.GenerationRow(1, "podB", 1_000L));
+        assertThat(sql.heartbeat(1, "podB", 3_000L)).as("gerçek lider çitlenmedi").isTrue();
+        AtomicBoolean asked = new AtomicBoolean();
+        assertThat(sql.acquireGeneration("podB", 4_000L, "podB", () -> { asked.set(true); return false; }))
+                .as("artık istenmiyor: CAS yapılmaz").isZero();
+        assertThat(asked).isTrue();
+        assertThat(sql.generationRow().gen()).isEqualTo(1);
+        lease("podA");
+        assertThat(sql.acquireGeneration("podA", 5_000L, "podA", () -> true)).as("kira A'ya geçti").isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("FX #5: '*' satırı silinmişse var olan en büyük kuşağın üstünden tohumlanır (eski satırlar ezilebilir kalır)")
+    void reseedStartsAboveExistingGenerations() {
+        sql.writeRecovery(List.of(rec("a", 2, 1)), "old", 7, 1_000L);
+        sql.writeTypeState(List.of(new TypeRow("PORT_DOWN", true, 1L, 1L, 1L, 1)), "old", 9, 1_000L);
+        assertThat(sql.generationRow()).isNull();
+        long g = sql.acquireGeneration("pod1", 2_000L);
+        assertThat(g).as("en büyük kuşak 9 → yeni kuşak 10").isEqualTo(10);
+        sql.writeRecovery(List.of(rec("a", 0, 1)), "pod1", g, 3_000L);
+        assertThat(countOf("a")).as("yeni kuşak eski satırı ezer").isZero();
+    }
+
+    @Test
+    @DisplayName("FX #3: devralınan sayılar YALNIZ önceki kuşağın satırları; önceki kuşak = kuşak − 1 (satırı olmasa da)")
+    void inheritedCountsOnlyThePreviousGeneration() {
+        long now = 100L * 60 * 60 * 1000;
+        sql.writeRecovery(List.of(rec("stale1", 2, 1), rec("stale2", 3, 2)), "old", 1, now);
+        sql.writeRecovery(List.of(rec("prev", 1, 1)), "prev", 3, now);
+        sql.writeTypeState(List.of(new TypeRow("PORT_DOWN", true, now, now, 1L, 1)), "old", 1, now);
+        assertThat(sql.previousGeneration(4)).isEqualTo(3L);
+        assertThat(sql.previousGeneration(5)).as("CAS'ın yerini aldığı kuşak, satırı olmasa da").isEqualTo(4L);
+        assertThat(sql.countInheritedRecovery(3)).as("kuşak 1'in bayat sayaçları sayılmaz").isEqualTo(1);
+        assertThat(sql.countInheritedSuppressions(3)).isZero();
+    }
+
+    @Test
+    @DisplayName("FX #3: eski kuşağın 7 günden eski satırları sayıdan bağımsız budanır (güncel kuşağınki ve '*' kalır)")
+    void pruneOldGenerationsRegardlessOfCount() {
+        long now = 30L * 24 * 60 * 60 * 1000;
+        long old = now - 8L * 24 * 60 * 60 * 1000;
+        long cut = now - 7L * 24 * 60 * 60 * 1000;
+        sql.acquireGeneration("pod1", old);
+        sql.acquireGeneration("pod1", old);   // '*' = kuşak 2
+        sql.writeRecovery(List.of(rec("gen1-old", 2, 1)), "pod1", 1, old);
+        sql.writeRecovery(List.of(rec("gen1-new", 2, 2)), "pod1", 1, now);
+        sql.writeRecovery(List.of(rec("gen2-old", 2, 3)), "pod1", 2, old);
+        sql.writeTypeState(List.of(new TypeRow("PORT_DOWN", true, old, old, 1L, 1)), "pod1", 1, old);
+        sql.writeTypeState(List.of(new TypeRow("DNS_FAILURE", true, old, old, 1L, 2)), "pod1", 2, old);
+        int[] n = sql.prune(2, cut, cut, now - 60L * 60 * 1000);
+        assertThat(n[1]).as("kuşak 1'in eski sayacı").isEqualTo(1);
+        assertThat(n[3]).as("kuşak 1'in eski tür satırı").isEqualTo(1);
+        assertThat(mp.jdbc().queryForList("SELECT domain FROM monitor_eval_state ORDER BY domain", String.class))
+                .containsExactly("gen1-new", "gen2-old");
+        assertThat(mp.jdbc().queryForList("SELECT alert_type FROM monitor_eval_type_state ORDER BY alert_type", String.class))
+                .containsExactly("*", "DNS_FAILURE");
+    }
+
+    @Test
+    @DisplayName("FX F2: son durum silme koşullu — daha eski kuşak / küçük seq silinmez; daha yeni (gen, seq) siler")
+    void lastStatusDeleteIsGuarded() {
+        sql.writeLastStatus(List.of(new LastStatusRow("PORT_DOWN", "m:9", "h", null, 9L, null, null, false, true, "NETWORK",
+                "S", 1L, 1L, 5)), "pod1", 2, 1L);
+        assertThat(sql.deleteLastStatus(List.of(new EvalStateSql.LastStatusDelete("PORT_DOWN", "m:9", 99)), 1))
+                .as("eski kuşak").isZero();
+        assertThat(sql.deleteLastStatus(List.of(new EvalStateSql.LastStatusDelete("PORT_DOWN", "m:9", 4)), 2))
+                .as("küçük seq").isZero();
+        assertThat(sql.deleteLastStatus(List.of(new EvalStateSql.LastStatusDelete("PORT_DOWN", "m:9", 6)), 2)).isEqualTo(1);
+        assertThat(sql.readLastStatus(2)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("FX #6: sorgu zaman aşımlı şablon aynı veri kaynağında; sahte (veri kaynaksız) şablon olduğu gibi kalır")
+    void withQueryTimeout() {
+        JdbcTemplate t = EvalStateSql.withQueryTimeout(mp.jdbc(), 15);
+        assertThat(t).isNotSameAs(mp.jdbc());
+        assertThat(t.getQueryTimeout()).isEqualTo(15);
+        assertThat(t.getDataSource()).isSameAs(mp.jdbc().getDataSource());
+        assertThat(mp.jdbc().getQueryTimeout()).as("paylaşılan şablon değişmez").isNotEqualTo(15);
+        JdbcTemplate noDs = new JdbcTemplate();
+        assertThat(EvalStateSql.withQueryTimeout(noDs, 15)).isSameAs(noDs);
+        assertThat(EvalStateSql.withQueryTimeout(mp.jdbc(), 0)).isSameAs(mp.jdbc());
     }
 
     @Test

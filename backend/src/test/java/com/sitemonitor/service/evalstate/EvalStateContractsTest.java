@@ -119,6 +119,49 @@ class EvalStateContractsTest {
     }
 
     @Test
+    @DisplayName("R3-1 FX-STATE sözleşmeleri: yeni neden kodları kalıcı; Status sona eklenen bileşenler + eski 14'lü kurucu; varsayılanlar")
+    void fixStateContracts() {
+        assertThat(EvalVerifyReport.REASON_LEADERSHIP_CHANGED).isEqualTo("leadership_changed");
+        assertThat(EvalVerifyReport.REASON_NOTHING_COMPARED).isEqualTo("nothing_compared");
+        var components = EvalStateSink.Status.class.getRecordComponents();
+        assertThat(components).hasSize(16);
+        assertThat(components[14].getName()).isEqualTo("fenced");
+        assertThat(components[15].getName()).isEqualTo("hookFailures");
+        EvalStateSink.Status legacy = new EvalStateSink.Status("write", false, "w", null, 0, 0, 0, 0, null, null, null,
+                false, null, null);
+        assertThat(legacy.fenced()).isFalse();
+        assertThat(legacy.hookFailures()).isZero();
+
+        assertThat(EvalStateMode.unrecognized("kapali")).isTrue();
+        assertThat(EvalStateMode.unrecognized(" Verify ")).isFalse();
+        assertThat(EvalStateMode.unrecognized(null)).isFalse();
+        assertThat(EvalStateMode.unrecognized("  ")).isFalse();
+
+        EvalStateSource bare = new EvalStateSource() {
+            @Override public RecoveryValues recoveryValues(String rkey) { return RecoveryValues.NONE; }
+            @Override public TypeValues typeValues(String alertType) { return TypeValues.NONE; }
+            @Override public String errorClass(String error, String domain) { return null; }
+        };
+        assertThat(bare.downObservation("PORT_DOWN", 1L)).as("desteklenmiyor → çağıranın değerleri").isNull();
+        assertThat(bare.hookFailures()).isZero();
+        assertThat(EvalStateSource.DownValues.ABSENT.present()).isFalse();
+        assertThatCode(() -> EvalStateSink.NOOP.observationPruned("PORT_DOWN",
+                new SweepItem("PORT_DOWN", "a.com", "443", false, "x", Map.of("monitor_id", 1L), null)))
+                .doesNotThrowAnyException();
+        EvalStateVerification.Context fixed = new EvalStateVerification.Context() {
+            @Override public String writer() { return "w"; }
+            @Override public long generation() { return 1; }
+            @Override public long generationStartMs() { return 0; }
+            @Override public long nowMs() { return 0; }
+            @Override public long seq() { return 0; }
+            @Override public boolean awaitFlushed(long seq, long timeoutMs) { return true; }
+            @Override public boolean changedSince(EvalStateKeys.Table table, String key, long seq) { return false; }
+            @Override public long lastStatusRefreshMs() { return 0; }
+        };
+        assertThat(fixed.stillCurrent()).as("sabit test bağlamı").isTrue();
+    }
+
+    @Test
     @DisplayName("anlık görüntü: kopya alır, null anahtar/değer atar, değiştirilemez; ince kalem stillMonitored için")
     void snapshotIsImmutableCopy() {
         Map<String, Integer> up = new HashMap<>();

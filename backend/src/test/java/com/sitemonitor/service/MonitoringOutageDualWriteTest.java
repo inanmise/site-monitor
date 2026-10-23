@@ -508,6 +508,89 @@ class MonitoringOutageDualWriteTest {
         assertThat(mos.replayEvalState()).as("kaydedici yok → hiçbir şey").isZero();
     }
 
+    // ── R3-1 FX-STATE: budama kancaları, bellek okuma yüzü, sayaç ───────────────────────────────────────────────────
+
+    final Map<Long, Boolean> monitored = new HashMap<>();
+
+    void trackMonitored() {
+        mos.setStillMonitored(it -> {
+            Object id = it.ctxExtra() == null ? null : it.ctxExtra().get("monitor_id");
+            return !(id instanceof Number n) || monitored.getOrDefault(n.longValue(), true);
+        });
+    }
+
+    @Test
+    @DisplayName("FX F2: pruneObservations duraklatılan izlemenin DOWN gözlemini budayınca kanca (mutasyondan SONRA, ince kopya)")
+    void pruneObservations_enqueuesPrunedObservation() {
+        trackMonitored();
+        mos.handleSweepResults(PORT, List.of(item(PORT, "p.example.com", "443/TCP", false, 9L, Map.of("team_id", 4L),
+                () -> status("down", "connect timed out"))));
+        assertThat(mos.downObservation(PORT, 9L).present()).isTrue();
+        sink.clear();
+        monitored.put(9L, false);
+        clock.addAndGet(11 * 60_000L);   // > OBSERVATION_PRUNE_INTERVAL_MS
+        mos.handleSweepResults(PORT, List.of(item(PORT, "q.example.com", "443/TCP", true, 10L, null, null)));
+        List<RecordingSink.Op> pruned = sink.ops("observationPruned");
+        assertThat(pruned).extracting(RecordingSink.Op::key).containsExactly(PORT + "|m:9");
+        assertThat(pruned.get(0).extra()).as("kanca anında bellekte kayıt yok (mutasyondan sonra)").isEqualTo(false);
+        assertThat(((MonitoringOutageService.SweepItem) pruned.get(0).value()).recheck()).isNull();
+        assertThat(mos.downObservation(PORT, 9L)).isEqualTo(EvalStateSource.DownValues.ABSENT);
+    }
+
+    @Test
+    @DisplayName("FX F2: downSibling duraklatılan kardeşi budayınca kanca; budanmayan / izlenen kardeş için kanca yok")
+    void downSiblingRemoval_enqueuesPrunedObservation() {
+        trackMonitored();
+        AlertEvent e = openAlarm(PORT, "s.example.com");
+        e.setContextJson("{\"monitor_id\":1}");
+        mos.handleSweepResults(PORT, List.of(item(PORT, "s.example.com", "5433/TCP", false, 2L, null,
+                () -> status("down", "connect timed out"))));
+        clock.addAndGet(30_000);
+        sink.clear();
+        mos.handleSweepResults(PORT, List.of(item(PORT, "s.example.com", "5432/TCP", true, 1L, null, () -> status("up", null))));
+        assertThat(sink.ops("observationPruned")).as("kardeş izleniyor — budanmadı").isEmpty();
+        monitored.put(2L, false);
+        clock.addAndGet(30_000);
+        sink.clear();
+        mos.handleSweepResults(PORT, List.of(item(PORT, "s.example.com", "5432/TCP", true, 1L, null, () -> status("up", null))));
+        assertThat(sink.ops("observationPruned")).extracting(RecordingSink.Op::key).containsExactly(PORT + "|m:2");
+        assertThat(sink.ops("observationPruned").get(0).extra()).isEqualTo(false);
+    }
+
+    @Test
+    @DisplayName("FX F4: downObservation = bellekteki DOWN kaydı (alan adı, detay, sahiplik, sınıf, an); yoksa ABSENT")
+    void downObservation_readsMemory() {
+        mos.handleSweepResults(PORT, List.of(item(PORT, HOST, "5432/TCP", false, 7L, Map.of("team_id", 3L, "standalone", true),
+                () -> status("down", "connect timed out"))));
+        EvalStateSource.DownValues dv = mos.downObservation(PORT, 7L);
+        assertThat(dv).isEqualTo(new EvalStateSource.DownValues(true, HOST, "5432/TCP", 3L, true,
+                EvalStateSource.ERROR_NETWORK, MultiPodTestSupport.T0));
+        assertThat(mos.downObservation(PORT, 8L)).isEqualTo(EvalStateSource.DownValues.ABSENT);
+        assertThat(mos.downObservation(null, 7L)).isEqualTo(EvalStateSource.DownValues.ABSENT);
+        mos.handleSweepResults(PORT, List.of(item(PORT, HOST, "5432/TCP", true, 7L, null, null)));
+        assertThat(mos.downObservation(PORT, 7L).present()).isFalse();
+    }
+
+    @Test
+    @DisplayName("FX F5: stillMonitoredOrNull üç durumlu (yok → true, hata → null); karar yolunun stillMonitored'ı fail-open kalır")
+    void stillMonitoredOrNull_triState() {
+        MonitoringOutageService.SweepItem it = item(PORT, HOST, "1", false, 5L, null, null);
+        assertThat(mos.stillMonitoredOrNull(it)).isTrue();
+        mos.setStillMonitored(x -> false);
+        assertThat(mos.stillMonitoredOrNull(it)).isFalse();
+        mos.setStillMonitored(x -> { throw new IllegalStateException("db"); });
+        assertThat(mos.stillMonitoredOrNull(it)).isNull();
+        assertThat(mos.stillMonitored(it)).isTrue();
+    }
+
+    @Test
+    @DisplayName("FX F7: kanca istisnası sayacı kaynak yüzünden okunur (kaydedicinin durumuna girer)")
+    void hookFailuresExposedThroughSource() {
+        mos.setEvalStateSink(RecordingSink.throwing());
+        mos.handleSweepResults(PORT, List.of(item(PORT, HOST, "5432/TCP", true, 7L, null, null)));
+        assertThat(mos.hookFailures()).isPositive().isEqualTo(mos.evalStateHookFailures());
+    }
+
     // ── Bozuk kaydedici ─────────────────────────────────────────────────────────────────────────────────────────────
 
     @Test
