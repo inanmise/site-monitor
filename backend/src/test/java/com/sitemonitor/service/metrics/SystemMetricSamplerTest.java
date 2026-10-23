@@ -269,10 +269,12 @@ class SystemMetricSamplerTest {
             assertThat(Math.abs(aligned)).as("aynı JVM saati").isLessThan(1_500L);
 
             s.wallClock = () -> System.currentTimeMillis() + 45_000L;   // pod saati 45 sn ileride
+            s.schemaFailedPatches = () -> 3;                              // inceleme W-3: açılış yaması sonucu örnekte
             Long ahead = s.measureClockSkew();
             assertThat(ahead).isBetween(43_500L, 46_500L);
             SystemMetricSample sample = s.capture(Instant.parse("2031-03-01T11:00:07Z"));
             assertThat(sample.getClockSkewMs()).isBetween(43_500L, 46_500L);
+            assertThat(sample.getSchemaFailedPatches()).isEqualTo(3);
             assertThat(s.lastClockSkewMs()).isBetween(43_500L, 46_500L);
 
             long[] ticks = {0L};

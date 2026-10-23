@@ -111,7 +111,7 @@
       }
     } ]
   },
-  "description" : "SiteMonitor izleme durumu, alarmlar, sertifikalar ve sistemin kendi sağlığı — takım ve tür süzgeçli. Pano revizyonu 3 · SiteMonitor 0.0.0-gate.",
+  "description" : "SiteMonitor izleme durumu, alarmlar, sertifikalar ve sistemin kendi sağlığı — takım ve tür süzgeçli. Pano revizyonu 4 · SiteMonitor 0.0.0-gate.",
   "editable" : true,
   "fiscalYearStartMonth" : 0,
   "graphTooltip" : 1,
@@ -9559,8 +9559,8 @@
       "id" : 97
     }, {
       "type" : "stat",
-      "title" : "En büyük saat farkı",
-      "description" : "Pod saati ile veritabanı saati arasındaki en büyük fark (mutlak). 5 sn üstü uyarı, 30 sn üstü liderlik kirası ve kilitler için risk.",
+      "title" : "Pod saatleri arası fark",
+      "description" : "En ileri ve en geri pod saati arasındaki fark (veritabanı saatine göre ölçülür; ortak kayma farkı değiştirmez). 5 sn üstü uyarı, 30 sn üstü liderlik kirası ve kilitler için risk.",
       "datasource" : {
         "type" : "prometheus",
         "uid" : "${datasource}"
@@ -9594,7 +9594,7 @@
           "uid" : "${datasource}"
         },
         "editorMode" : "code",
-        "expr" : "max(abs(sitemonitor_clock_skew_seconds{namespace=\"site-monitor-prod\", job=~\"$job\", instance=~\"$instance\"}))",
+        "expr" : "max(sitemonitor_clock_skew_seconds{namespace=\"site-monitor-prod\", job=~\"$job\", instance=~\"$instance\"}) - min(sitemonitor_clock_skew_seconds{namespace=\"site-monitor-prod\", job=~\"$job\", instance=~\"$instance\"})",
         "instant" : false,
         "legendFormat" : "__auto",
         "range" : true,
@@ -9758,7 +9758,7 @@
     }, {
       "type" : "timeseries",
       "title" : "Saat farkı (pod başına)",
-      "description" : "Her pod'un saati eksi veritabanı saati (pozitif = pod ileride). Kira ve kilit karşılaştırmaları pod saatiyle yapılır.",
+      "description" : "Her pod'un saati eksi veritabanı saati (pozitif = pod ileride). Çizgilerin birbirinden uzaklaşması risktir; hepsinin birlikte kayması yalnız veritabanı saatinin farkıdır.",
       "datasource" : {
         "type" : "prometheus",
         "uid" : "${datasource}"
@@ -11504,6 +11504,6 @@
   "timezone" : "browser",
   "title" : "SiteMonitor — Uçtan uca izleme",
   "uid" : "sitemonitor-overview",
-  "version" : 3,
+  "version" : 4,
   "weekStart" : "monday"
 }

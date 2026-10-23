@@ -42,13 +42,16 @@ public enum WatchdogCheck {
             "Veritabanı sağlık kontrolü sorun bildiriyor.",
             "The database health check reports a problem."),
     /**
-     * Pod saati veritabanı saatinden kaymış (2026-10-23, çok pod R2b, MP-37c): kira ve kilit karşılaştırmaları pod saatiyle
-     * yapılır — 5 sn üstü orta, 30 sn üstü yüksek önem (R1'in güvenli kira payı aşınır). Her canlı pod'un son örneğinden.
+     * Pod saatleri birbirinden kaymış (2026-10-23, çok pod R2b, MP-37c; inceleme W-4): kira ve kilit karşılaştırmaları pod
+     * saatiyle yapılır — pod'lar arası fark 5 sn üstü orta, 30 sn üstü yüksek önem (R1'in güvenli kira payı aşınır). Her canlı
+     * pod'un son örneğinden; veritabanı saatinin farkı yalnız bilgi.
      */
     CLOCK_SKEW("clock_skew", Severity.MEDIUM,
             "Saat uyumu", "Clock alignment",
-            "Bir pod'un saati veritabanı saatinden kaymış; liderlik kirası ve iş kilitleri yanlış zamanda düşebilir (çift tarama riski).",
-            "A pod's clock has drifted from the database clock; the leader lease and job locks may expire at the wrong time (risk of double sweeps).");
+            "Pod'ların saatleri birbirinden kaymış; liderlik kirası ve iş kilitleri yanlış zamanda düşebilir (çift tarama riski). "
+                    + "Düğümlerin NTP / chrony eşitlemesini denetleyin.",
+            "The pods' clocks have drifted apart; the leader lease and job locks may expire at the wrong time (risk of double sweeps). "
+                    + "Check NTP / chrony synchronisation on the nodes.");
 
     public enum Severity { CRITICAL, HIGH, MEDIUM }
 
