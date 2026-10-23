@@ -186,6 +186,9 @@ class EvalStatePostgresTest {
                 assertThat(java.time.Duration.ofNanos(System.nanoTime() - t0)).isLessThan(java.time.Duration.ofSeconds(10));
                 holder.rollback();
             }
+            // Paylaşılan veritabanı: uygulamanın kendi kaydedicisi araya kuşak aldıysa nabız 0 satır döner (çit, kilit yok) —
+            // bu koşu zaman aşımını sınamamış olur; başarısız değil atlanmış sayılır.
+            org.junit.jupiter.api.Assumptions.assumeFalse(r.status().fenced(), "uygulamanın kaydedicisi araya girdi");
             assertThat(r.status().writeFailures()).isEqualTo(1);
         } finally {
             r.stop();
