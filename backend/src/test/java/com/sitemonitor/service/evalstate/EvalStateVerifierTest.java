@@ -509,6 +509,44 @@ class EvalStateVerifierTest {
     }
 
     @Test
+    @DisplayName("Gerçek kaydedici (A1) ile uçtan uca: boşalt → doğrula (eşitleme) → boşalt → doğrula: tüm geçti/kaldı türlerinde 0")
+    void realRecorder_zeroMismatches() {
+        new EvalStateSchemaPatch(h2).apply();
+        EvalStateVerifier v = new EvalStateVerifier(mos, h2);
+        v.setClusterHealthStore(store);
+        EvalStateRecorder real = EvalStateRecorder.builder(h2).writer("pod-r-00000001").leaderHint(() -> true)
+                .mode(() -> EvalStateMode.VERIFY).clock(mp.clockSupplier()).verifier(() -> v).flushMs(50).build();
+        try {
+            mos.setEvalStateSink(real);
+            realisticRounds();
+            assertThat(real.flushNow()).isTrue();
+            assertThat(real.generation()).isEqualTo(1L);
+            assertThat(real.verifyNow().reason()).isEqualTo(EvalStateVerifier.REASON_RESYNC);
+            mp.advance(1_000);
+            assertThat(real.flushNow()).isTrue();
+            EvalVerifyReport r = real.verifyNow();
+            assertThat(r.status()).as(String.valueOf(r)).isEqualTo(EvalVerifyReport.STATUS_OK);
+            for (String k : EvalVerifyReport.PASS_FAIL_KINDS) {
+                assertThat(kind(r, k).mismatches()).as(k).isZero();
+                assertThat(kind(r, k).compared()).as(k + " karşılaştırıldı").isPositive();
+            }
+            assertThat(kind(r, EvalVerifyReport.KIND_DESCRIPTOR)).as("RecheckRefs: port")
+                    .isEqualTo(new EvalVerifyReport.KindResult(1, 0, 0, null));
+            assertThat(kind(r, EvalVerifyReport.KIND_WINDOW_SEED).mismatches()).isZero();
+            assertThat(real.status().lastVerify()).isEqualTo(r);
+            assertThat(EvalStateVerifier.fromJson(store.read(EvalVerifyReport.OBSERVATION).orElseThrow().payload()))
+                    .isEqualTo(r);
+
+            // Gerçek kaydedicinin yazdığı satır kurcalanınca yakalanır.
+            h2.update("UPDATE monitor_eval_state SET recovery_up_count = 9 WHERE domain = ?", DB);
+            mp.advance(1_000);
+            assertThat(kind(real.verifyNow(), EvalVerifyReport.KIND_RECOVERY).mismatches()).isEqualTo(1);
+        } finally {
+            real.stop();
+        }
+    }
+
+    @Test
     @DisplayName("En kötü yük (7 türün hepsi azami sayılarla uyuşmaz, 5 özet, 200 karakter pod) < 4000 karakter, geçerli JSON, durum var")
     void worstCasePayloadFits() {
         Map<String, EvalVerifyReport.KindResult> kinds = new LinkedHashMap<>();

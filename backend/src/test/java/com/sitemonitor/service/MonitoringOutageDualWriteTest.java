@@ -7,6 +7,9 @@ import com.sitemonitor.repository.DnsMonitorRepository;
 import com.sitemonitor.repository.DnsRecordRepository;
 import com.sitemonitor.repository.NetworkOutageEventRepository;
 import com.sitemonitor.service.evalstate.EvalSnapshot;
+import com.sitemonitor.service.evalstate.EvalStateMode;
+import com.sitemonitor.service.evalstate.EvalStateRecorder;
+import com.sitemonitor.service.evalstate.EvalStateSchemaPatch;
 import com.sitemonitor.service.evalstate.EvalStateKeys;
 import com.sitemonitor.service.evalstate.EvalStateSink;
 import com.sitemonitor.service.evalstate.EvalStateSource;
@@ -50,8 +53,8 @@ import static org.mockito.Mockito.when;
  * beklenen kaydedici çağrısı (ve o andaki kaynak değeri — "kanca mutasyondan SONRA"). Kancalar karar yolunu değiştirmez
  * (I-1 ayrı sınıfta: {@link MonitoringOutageDualWriteDecisionTest}); burada içerik ve sıra.
  *
- * <p>Gerçek kaydedici (A1) birleşince aynı senaryoların H2 tablosu sonuçları {@code delta-R3-1-A2.md}'deki bekleyen testte;
- * burada tablo sonucu, sözleşmeye sadık eşzamanlı ayna ({@link MirrorRecorder}) ile doğrulanır.
+ * <p>Tablo sonuçları hem sözleşmeye sadık eşzamanlı aynayla ({@link MirrorRecorder}) hem gerçek kaydediciyle
+ * ({@code EvalStateRecorder}, boşaltma sonrası) doğrulanır.
  */
 class MonitoringOutageDualWriteTest {
 
@@ -560,6 +563,61 @@ class MonitoringOutageDualWriteTest {
             mos.onSweepLeadershipChanged(new SweepLeadershipChangedEvent(false, "p", 0L, SweepLeadershipChangedEvent.LOST));
             assertThat(mp.jdbc().queryForObject("SELECT COUNT(*) FROM monitor_confirmations", Integer.class))
                     .as("sıfırlama kanca çağırmaz — eski kuşak satırı kalır (kaydedici ABANDONED işaretler)").isEqualTo(1);
+        }
+    }
+
+    @Test
+    @DisplayName("Gerçek kaydedici (A1) H2'de: kanca noktaları → boşaltma sonrası satırlar (kuşak 1, yazan pod, RecheckRefs betimleyici)")
+    void realRecorderTuplesOnH2() {
+        try (MultiPodTestSupport mp = MultiPodTestSupport.create()) {
+            new EvalStateSchemaPatch(mp.jdbc()).apply();
+            EvalStateRecorder rec = EvalStateRecorder.builder(mp.jdbc()).writer("pod-a-00000001").leaderHint(() -> true)
+                    .mode(() -> EvalStateMode.WRITE).clock(clock::get).flushMs(50).build();
+            try {
+                mos.setEvalStateSink(rec);
+                openAlarm(PORT, HOST);
+                ScheduledThreadPoolExecutor hold = new ScheduledThreadPoolExecutor(1) {
+                    @Override
+                    public ScheduledFuture<?> schedule(Runnable command, long delay, TimeUnit unit) {
+                        return null;
+                    }
+                };
+                ReflectionTestUtils.setField(mos, "confirmExecutor", hold);
+                mos.handleSweepResults(PORT, List.of(
+                        item(PORT, HOST, "5432/TCP", true, 7L, Map.of("monitor_recovery_checks", 3), null),
+                        item(PORT, "down.example.com", "1/TCP", false, 8L, Map.of("team_id", 2L), () -> status("down", "x"))));
+                assertThat(mp.jdbc().queryForObject("SELECT COUNT(*) FROM monitor_eval_state", Integer.class))
+                        .as("kuyruk — boşaltmadan önce satır yok (I-2)").isZero();
+                assertThat(rec.flushNow()).isTrue();
+
+                assertThat(mp.jdbc().queryForMap("SELECT recovery_up_count, recovery_last_counted_ms, gen, writer "
+                        + "FROM monitor_eval_state WHERE alert_type = ? AND domain = ?", PORT, HOST))
+                        .containsEntry("RECOVERY_UP_COUNT", 1).containsEntry("RECOVERY_LAST_COUNTED_MS", MultiPodTestSupport.T0)
+                        .containsEntry("GEN", 1L).containsEntry("WRITER", "pod-a-00000001");
+                assertThat(mp.jdbc().queryForMap("SELECT up, network_down, error_class, source, team_id FROM monitor_last_status "
+                        + "WHERE alert_type = ? AND item_key = ?", PORT, "m:8"))
+                        .containsEntry("UP", false).containsEntry("NETWORK_DOWN", true).containsEntry("ERROR_CLASS", "NETWORK")
+                        .containsEntry("SOURCE", "S").containsEntry("TEAM_ID", 2L);
+                assertThat(mp.jdbc().queryForObject("SELECT up FROM monitor_last_status WHERE item_key = 'm:7'", Boolean.class))
+                        .isTrue();
+                assertThat(mp.jdbc().queryForObject("SELECT last_scheduled_round_ms FROM monitor_eval_type_state "
+                        + "WHERE alert_type = ?", Long.class, PORT)).isNotNull();
+                String key = PORT + ":down.example.com:1/TCP";
+                assertThat(mp.jdbc().queryForMap("SELECT state, monitor_type, monitor_id, attempt, total_attempts FROM "
+                        + "monitor_confirmations WHERE key_hash = ?", EvalStateKeys.keyHash(key)))
+                        .containsEntry("STATE", "RUNNING").containsEntry("MONITOR_TYPE", "port")
+                        .containsEntry("MONITOR_ID", 8L).containsEntry("ATTEMPT", 0).containsEntry("TOTAL_ATTEMPTS", 3);
+
+                // Kurtarma kapanınca satır sıfır değerle KALIR (silinmez).
+                clock.addAndGet(60_000);
+                mos.handleSweepResults(PORT, List.of(item(PORT, HOST, "5432/TCP", false, 7L, Map.of("monitor_recovery_checks", 3),
+                        () -> status("down", "x"))));
+                assertThat(rec.flushNow()).isTrue();
+                assertThat(mp.jdbc().queryForObject("SELECT recovery_up_count FROM monitor_eval_state WHERE domain = ?",
+                        Integer.class, HOST)).isZero();
+            } finally {
+                rec.stop();
+            }
         }
     }
 }

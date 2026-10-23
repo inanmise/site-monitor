@@ -20,33 +20,15 @@ import java.util.function.LongSupplier;
  * parçacığında boşaltır, no-op süzer — doğrulama sonucu açısından eşdeğerdir: aynı (anahtar → son değer) aynası. Bu yüzden
  * "kancalar eksiksiz mi" sorusunun kahinidir: MOS senaryosundan sonra doğrulama 0 uyuşmazlık vermeli.
  *
- * <p>DDL'ler tasarım R3-1 §2.2 / A1 {@code EvalStateSql} ile birebir (birleşmeden sonra o sabitlere çevrilebilir).
+ * <p>DDL = A1 {@link EvalStateSql} sabitleri; betimleyici = {@link RecheckRefs}. Gerçek kaydediciyle uçtan uca sürüm:
+ * {@code EvalStateMultiPodTest}, {@code EvalStateVerifierTest.realRecorder_zeroMismatches}.
  * Ayrıca {@link EvalStateVerification.Context}: sıra numarası, anahtar başına son seq, kirli anahtarlar.
  */
 public final class MirrorRecorder implements EvalStateSink, EvalStateVerification.Context {
 
-    private static final String COMMON = "writer VARCHAR(200) NOT NULL, gen BIGINT NOT NULL, seq BIGINT NOT NULL, "
-            + "updated_ms BIGINT NOT NULL, updated_at VARCHAR(19) NOT NULL";
-
-    /** Dört tablo (A1 {@code EvalStateSql.DDL_*} ile aynı). */
-    public static final List<String> DDL = List.of(
-            "CREATE TABLE IF NOT EXISTS monitor_eval_state (alert_type VARCHAR(40) NOT NULL, domain VARCHAR(500) NOT NULL, "
-                    + "recovery_up_count INT NOT NULL, recovery_last_counted_ms BIGINT, recovery_chain_gen BIGINT, "
-                    + "recovery_chain_started_ms BIGINT, " + COMMON + ", PRIMARY KEY (alert_type, domain))",
-            "CREATE TABLE IF NOT EXISTS monitor_last_status (alert_type VARCHAR(40) NOT NULL, item_key VARCHAR(600) NOT NULL, "
-                    + "domain VARCHAR(500) NOT NULL, detail VARCHAR(255), monitor_id BIGINT, team_id BIGINT, standalone BOOLEAN, "
-                    + "up BOOLEAN NOT NULL, network_down BOOLEAN NOT NULL, error_class VARCHAR(16), source CHAR(1) NOT NULL, "
-                    + "observed_ms BIGINT NOT NULL, changed_ms BIGINT NOT NULL, " + COMMON + ", PRIMARY KEY (alert_type, item_key))",
-            "CREATE INDEX IF NOT EXISTS idx_mls_type_domain ON monitor_last_status(alert_type, domain)",
-            "CREATE TABLE IF NOT EXISTS monitor_eval_type_state (alert_type VARCHAR(40) NOT NULL PRIMARY KEY, "
-                    + "suppression_active BOOLEAN, suppression_since_ms BIGINT, last_scheduled_round_ms BIGINT, "
-                    + "round_interval_ms BIGINT, " + COMMON + ")",
-            "CREATE TABLE IF NOT EXISTS monitor_confirmations (key_hash VARCHAR(64) NOT NULL PRIMARY KEY, confirm_key TEXT NOT NULL, "
-                    + "chain_id BIGINT NOT NULL, alert_type VARCHAR(40) NOT NULL, domain VARCHAR(500) NOT NULL, detail VARCHAR(255), "
-                    + "monitor_type VARCHAR(20), monitor_id BIGINT, attempt INT NOT NULL, total_attempts INT NOT NULL, "
-                    + "delay_ms BIGINT NOT NULL, first_failure_at VARCHAR(19) NOT NULL, next_attempt_ms BIGINT, "
-                    + "attempts_json TEXT, ctx_json TEXT, ctx_truncated BOOLEAN NOT NULL, state VARCHAR(16) NOT NULL, "
-                    + "created_ms BIGINT NOT NULL, " + COMMON + ")");
+    /** Dört tablo — A1'in DDL'i (doğrulayıcının okuduğu şema ile aynı kaynak). */
+    public static final List<String> DDL = List.of(EvalStateSql.DDL_EVAL_STATE, EvalStateSql.DDL_LAST_STATUS,
+            EvalStateSql.DDL_LAST_STATUS_INDEX, EvalStateSql.DDL_TYPE_STATE, EvalStateSql.DDL_CONFIRMATIONS);
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -245,20 +227,9 @@ public final class MirrorRecorder implements EvalStateSink, EvalStateVerificatio
         return null;
     }
 
-    /** {@code RecheckRefs.monitorType} benzeri test eşlemesi (yalnız betimleyici sütununu doldurmak için). */
+    /** Betimleyici sütunu — gerçek kaydedicinin eşlemesi. */
     static String monitorType(String alertType) {
-        if (alertType == null) return null;
-        if ("ACCESSIBILITY".equals(alertType)) return "uptime";
-        if (alertType.startsWith("PORT_")) return "port";
-        if (alertType.startsWith("DNS_")) return "dns";
-        if (alertType.startsWith("KEYWORD")) return "keyword";
-        if (alertType.startsWith("PING_")) return "ping";
-        if (alertType.startsWith("HTTP_") || "DOMAIN_EXPIRY".equals(alertType)) return "http";
-        if (alertType.startsWith("PAGESPEED_")) return "pagespeed";
-        if (alertType.startsWith("PAGE_")) return "page";
-        if (alertType.startsWith("SCRIPTED_")) return "scripted";
-        if (alertType.startsWith("DOMAINMON_")) return "domain";
-        return null;
+        return RecheckRefs.monitorType(alertType);
     }
 
     // ── EvalStateVerification.Context ─────────────────────────────────────────────────────────────────────────────

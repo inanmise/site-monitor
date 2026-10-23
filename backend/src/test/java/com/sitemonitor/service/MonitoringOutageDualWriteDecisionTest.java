@@ -49,7 +49,7 @@ import static org.mockito.Mockito.when;
 
 /**
  * Çok pod Sürüm 3-1 — değişmez I-1 (tasarım R3-1): kalıcı değerlendirme durumu kaydedicisi YOK, KAYDEDİYOR (sahte /
- * H2 aynası) ya da HER ÇAĞRIDA FIRLATIYOR olsa da {@link MonitoringOutageService}'in dış dünyayla etkileşimi — her
+ * H2 aynası / gerçek kaydedici), JDBC'si HATA veriyor ya da HER ÇAĞRIDA FIRLATIYOR olsa da {@link MonitoringOutageService}'in dış dünyayla etkileşimi — her
  * {@code EscalationService} çağrısı (alarm açma, kapatma, yeniden uyarı, push / posta yolu), {@code notification_logs} izi,
  * ağ kesintisi kaydı, kilit / değişiklik SQL'i, ayar okuması — sırasıyla ve argümanlarıyla BİREBİR aynıdır.
  *
@@ -57,11 +57,12 @@ import static org.mockito.Mockito.when;
  * {@code MonitoringOutageWindowedSuppressionTest}, {@code MonitoringOutageSweepReconcileRegressionTest},
  * {@code ManualCheckNoAlarmTest}, {@code LeadershipChangeResetTest}). Tutanak = tüm sahte bağımlılıkların çağrıları, küresel
  * Mockito sıra numarasıyla; ISO zaman damgaları normalize edilir (çalıştırmalar arası saniye sınırı).
- * Gerçek kaydedici (A1) varyantı birleşmeden sonra eklenir (delta-R3-1-A2.md).
+ * Gerçek kaydedici (A1 {@code EvalStateRecorder}) iki varyantla: H2'ye yazan ve JDBC'si her çağrıda fırlatan (yazım hatası
+ * sayılır, karar aynı); ikisinde de senaryodan sonra boşaltılır.
  */
 class MonitoringOutageDualWriteDecisionTest {
 
-    enum Variant { NONE, RECORDING, MIRROR_H2, THROWING }
+    enum Variant { NONE, RECORDING, MIRROR_H2, THROWING, REAL_RECORDER, REAL_RECORDER_FAILING_JDBC }
 
     static final String PORT = EscalationService.TYPE_PORT_DOWN;
     static final String ACC = EscalationService.TYPE_ACCESSIBILITY;
@@ -81,6 +82,7 @@ class MonitoringOutageDualWriteDecisionTest {
         final MonitoringOutageService mos;
         final RecordingSink recording;
         MultiPodTestSupport h2;
+        com.sitemonitor.service.evalstate.EvalStateRecorder real;
 
         Env(Variant v) {
             mos = new MonitoringOutageService(alertRepo, escalation, jdbc, dnsRecordRepo, dnsMonitorRepo, settings, outageRepo);
@@ -109,6 +111,25 @@ class MonitoringOutageDualWriteDecisionTest {
                 case MIRROR_H2 -> {
                     h2 = MultiPodTestSupport.create();
                     yield new MirrorRecorder(h2.jdbc(), "pod-a", 1L, clock::get);
+                }
+                case REAL_RECORDER -> {
+                    h2 = MultiPodTestSupport.create();
+                    new com.sitemonitor.service.evalstate.EvalStateSchemaPatch(h2.jdbc()).apply();
+                    real = com.sitemonitor.service.evalstate.EvalStateRecorder.builder(h2.jdbc()).writer("pod-a-00000001")
+                            .leaderHint(() -> true)
+                            .mode(() -> com.sitemonitor.service.evalstate.EvalStateMode.VERIFY)
+                            .clock(clock::get).flushMs(50).build();
+                    yield real;
+                }
+                case REAL_RECORDER_FAILING_JDBC -> {
+                    JdbcTemplate broken = mock(JdbcTemplate.class, inv -> {
+                        throw new org.springframework.dao.DataAccessResourceFailureException("db down (test)");
+                    });
+                    real = com.sitemonitor.service.evalstate.EvalStateRecorder.builder(broken).writer("pod-a-00000001")
+                            .leaderHint(() -> true)
+                            .mode(() -> com.sitemonitor.service.evalstate.EvalStateMode.VERIFY)
+                            .clock(clock::get).flushMs(50).build();
+                    yield real;
                 }
             };
             recording = sink instanceof RecordingSink r ? r : null;
@@ -166,6 +187,7 @@ class MonitoringOutageDualWriteDecisionTest {
 
         @Override
         public void close() {
+            if (real != null) real.stop();
             if (h2 != null) h2.close();
         }
     }
@@ -205,7 +227,11 @@ class MonitoringOutageDualWriteDecisionTest {
             try (Env env = new Env(v)) {
                 env.begin();
                 scenario.run(env);
+                if (env.real != null) env.real.flushNow();
                 out.put(v, env.transcript());
+                if (v == Variant.REAL_RECORDER_FAILING_JDBC) {
+                    assertThat(env.real.status().writeFailures()).as("kaydedici gerçekten yazamadı").isPositive();
+                }
                 if (env.recording != null && v == Variant.RECORDING) {
                     assertThat(env.recording.ops()).as("kaydedici gerçekten çağrıldı").isNotEmpty();
                 }
