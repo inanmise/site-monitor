@@ -24,7 +24,8 @@
 #   9. PDB: tek pod + minAvailable 1 (ve HPA minReplicas 1) → BAŞARISIZ; minAvailable + maxUnavailable birlikte →
 #      BAŞARISIZ; maxUnavailable 0 ve minAvailable "100%" → BAŞARISIZ; maxUnavailable tek başına render olur.
 #  10. priorityClassName ve bölge (zone) yayılımı yalnız verilince render edilir; staging pod-template-hash taşır.
-#  11. OTel ajanı: OTEL_INSTRUMENTATION_SPRING_SCHEDULING_ENABLED=false varsayılan, agent.extraEnv ile ezilebilir.
+#  11. OTel ajanı: @Scheduled açılımı AÇIK kalır (varsayılan ortamda OTEL_INSTRUMENTATION_SPRING_SCHEDULING_ENABLED yok —
+#      kapalıyken tikin her SQL deyimi ayrı kök iz olur), ajan ortamı değişmedi, agent.extraEnv yine ezer.
 #  12. ephemeral-storage request / limit ve /var/log emptyDir sizeLimit her ortamda; /tmp sizeLimit yalnız verilince.
 #  13. DB_POOL_MIN (varsayılan 5; > dbPoolMax ya da sayı değil → BAŞARISIZ) ve config.extraEnv render edilir;
 #      ConfigMap / container env / Secret anahtarıyla çakışan ya da geçersiz adlı extraEnv → BAŞARISIZ.
@@ -229,12 +230,16 @@ n="$(grep -c 'topologyKey:' <<<"$spread")"
 # ── 11: OTel ajanı ortamı ───────────────────────────────────────────────────────────────────
 echo "── OTel ajanı (çok pod sürüm 2b)"
 out="$(render --set config.otel.agent.enabled=true)"
+if grep -q 'OTEL_INSTRUMENTATION_SPRING_SCHEDULING_ENABLED' <<<"$out"; then
+  err "ajan ortamı @Scheduled açılımını kapatıyor (kapalıyken JDBC deyimlerinin her biri ayrı KÖK iz olur — tik izi gruplamalı)"
+else ok "ajan: @Scheduled açılımı varsayılanda açık (tik başına bir iz)"; fi
+names="$(awk '/^          env:/ { d = 1; next } d && /^          envFrom:/ { exit } d && /- name: OTEL_|- name: MANAGEMENT_/ { printf "%s ", $3 }' <<<"$out")"
+expected_names="MANAGEMENT_OPENTELEMETRY_MAP_ENVIRONMENT_VARIABLES OTEL_INSTRUMENTATION_COMMON_LOGGING_SPAN_ID_KEY OTEL_INSTRUMENTATION_COMMON_LOGGING_TRACE_ID_KEY OTEL_INSTRUMENTATION_HTTP_URL_CONNECTION_ENABLED OTEL_INSTRUMENTATION_JAVA_HTTP_CLIENT_ENABLED OTEL_INSTRUMENTATION_SANITIZATION_URL_EXPERIMENTAL_SENSITIVE_QUERY_PARAMETERS OTEL_METRICS_EXPORTER OTEL_SERVICE_NAME "
+[ "$names" = "$expected_names" ] && ok "ajan ortamı 20.166.0 ile aynı (8 değişken)" || err "ajan ortamı değişti: $names"
+out="$(render --set config.otel.agent.enabled=true --set-string config.otel.agent.extraEnv.OTEL_INSTRUMENTATION_SPRING_SCHEDULING_ENABLED=false)"
 v="$(env_value "$out" OTEL_INSTRUMENTATION_SPRING_SCHEDULING_ENABLED)"
-[ "$v" = '"false"' ] && ok "ajan: OTEL_INSTRUMENTATION_SPRING_SCHEDULING_ENABLED=false" || err "ajan ortamında @Scheduled açılımı kapalı değil (değer: '$v')"
-out="$(render --set config.otel.agent.enabled=true --set-string config.otel.agent.extraEnv.OTEL_INSTRUMENTATION_SPRING_SCHEDULING_ENABLED=true)"
-v="$(env_value "$out" OTEL_INSTRUMENTATION_SPRING_SCHEDULING_ENABLED)"
-[ "$v" = '"true"' ] && ok "ajan: agent.extraEnv varsayılanı ezer" || err "agent.extraEnv OTEL_INSTRUMENTATION_SPRING_SCHEDULING_ENABLED'ı ezemedi (değer: '$v')"
-if grep -q 'OTEL_INSTRUMENTATION_SPRING_SCHEDULING_ENABLED' <<<"$default_out"; then err "ajan kapalıyken OTEL ortamı render edildi"; else ok "ajan kapalıyken OTEL ortamı yok"; fi
+[ "$v" = '"false"' ] && ok "ajan: agent.extraEnv ek değişken yazar" || err "agent.extraEnv render edilmedi (değer: '$v')"
+if grep -q 'OTEL_INSTRUMENTATION' <<<"$default_out"; then err "ajan kapalıyken OTEL ortamı render edildi"; else ok "ajan kapalıyken OTEL ortamı yok"; fi
 
 # ── 12: geçici disk ─────────────────────────────────────────────────────────────────────────
 echo "── geçici disk (çok pod sürüm 2b)"

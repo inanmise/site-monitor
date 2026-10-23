@@ -125,11 +125,11 @@ config:
       # "<namespace>/<Instrumentation name>", just "<name>" (release namespace) or "true" (the only one there).
       instrumentation: "opentelemetry/opentelemetry-instrumentation"
       serviceName: ""
-      # Default since 2026-10-23 (multi-pod release 2b): OTEL_INSTRUMENTATION_SPRING_SCHEDULING_ENABLED=false —
-      # the agent would otherwise open one span per @Scheduled tick (54 jobs, several every 5-30 s, on EVERY pod;
-      # followers skip most of them) and flood the trace backend with empty "skipped" spans.
       # Extra container env for the agent; wins over the defaults above and over the Instrumentation
-      # resource. e.g. OTEL_LOGS_EXPORTER: "none", OTEL_INSTRUMENTATION_SPRING_SCHEDULING_ENABLED: "true" (back on).
+      # resource. e.g. OTEL_LOGS_EXPORTER: "none". Leave the @Scheduled instrumentation ON (agent default): with
+      # OTEL_INSTRUMENTATION_SPRING_SCHEDULING_ENABLED=false each SQL statement of a scheduled tick becomes its OWN
+      # root trace (the agent's JDBC instrumentation needs no parent span) — more traces, not fewer. To thin the
+      # per-tick traces use the sampler of the Instrumentation resource instead.
       extraEnv: {}
   # @Scheduled havuzu (33 zamanlanmış iş; 4'ü 30 sn'lik sweep, 4'ü 10 sn'lik ayar-cache refresh).
   # Sayfa bütünlüğü kontrolü tek başına 120 sn sürebildiği için dar havuz cron işlerini geciktirir.

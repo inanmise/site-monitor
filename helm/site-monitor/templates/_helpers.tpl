@@ -113,23 +113,6 @@ AWSAccessKeyId,Signature,X-Amz-Signature,X-Amz-Credential,X-Amz-Security-Token,s
 {{- end }}
 
 {{/*
-Container env of the OpenTelemetry Java agent (config.otel.agent.enabled) as a YAML map — the deployment renders it,
-the ConfigMap refuses config.extraEnv keys it contains (container env would silently win over envFrom). Defaults: no
-client spans / traceparent on checks to monitored sites, metrics stay on Prometheus, Spring Boot must not map the
-agent's OTEL_* variables into its own exporter, log MDC keys stay traceId/spanId, credential query parameters redacted
-in url.query, and (2026-10-23) no span per @Scheduled tick. config.otel.agent.extraEnv wins over every default.
-*/}}
-{{- define "site-monitor.agentEnv" -}}
-{{- $otel := .Values.config.otel | default dict -}}
-{{- $agent := $otel.agent | default dict -}}
-{{- $env := dict "OTEL_SERVICE_NAME" ($agent.serviceName | default (include "site-monitor.fullname" .)) "OTEL_METRICS_EXPORTER" "none" "OTEL_INSTRUMENTATION_JAVA_HTTP_CLIENT_ENABLED" "false" "OTEL_INSTRUMENTATION_HTTP_URL_CONNECTION_ENABLED" "false" "MANAGEMENT_OPENTELEMETRY_MAP_ENVIRONMENT_VARIABLES" "false" "OTEL_INSTRUMENTATION_COMMON_LOGGING_TRACE_ID_KEY" "traceId" "OTEL_INSTRUMENTATION_COMMON_LOGGING_SPAN_ID_KEY" "spanId" "OTEL_INSTRUMENTATION_SANITIZATION_URL_EXPERIMENTAL_SENSITIVE_QUERY_PARAMETERS" (include "site-monitor.otelSensitiveQueryParameters" .) "OTEL_INSTRUMENTATION_SPRING_SCHEDULING_ENABLED" "false" -}}
-{{- with $otel.resourceAttributes -}}
-{{- $_ := set $env "OTEL_RESOURCE_ATTRIBUTES" . -}}
-{{- end -}}
-{{- toYaml (mergeOverwrite $env ($agent.extraEnv | default dict)) -}}
-{{- end }}
-
-{{/*
 Environment names config.extraEnv must not use (2026-10-23): the container env of the Deployment (it wins over the
 ConfigMap) and the keys of the chart's Secret (envFrom secretRef comes after the ConfigMap and wins; a secret also does
 not belong in a ConfigMap). Keep in step with templates/deployment.yaml `env:` and templates/secret.yaml —
