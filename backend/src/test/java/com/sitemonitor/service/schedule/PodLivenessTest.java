@@ -92,6 +92,21 @@ class PodLivenessTest {
     }
 
     @Test
+    @DisplayName("FX-SIDE #3: aynı POD ADININ başka kimliği (kirli yeniden başlatmadan önceki süreç, işaretsiz taze heartbeat) "
+            + "sayılmaz; başka pod adı sayılır")
+    void samePodNameOtherProcessNotCounted() {
+        beat("site-monitor-7d9f-x2k4p-0a1b2c3d", T0 - 20_000, null);   // aynı pod, önceki süreç (OOM / SIGKILL — işaret yok)
+        PodLiveness l = liveness("site-monitor-7d9f-x2k4p-9f8e7d6c");
+        assertThat(l.otherLivePods()).as("tek pod'un kendi önceki süreci 'başka canlı pod' değil").contains(0);
+        assertThat(l.anotherLivePod()).isFalse();
+
+        beat("site-monitor-7d9f-b7q2m-11223344", T0 - 20_000, null);   // gerçekten başka pod
+        l.invalidate();
+        assertThat(l.otherLivePods()).contains(1);
+        assertThat(l.cachedOtherPods()).containsExactly("site-monitor-7d9f-b7q2m-11223344");
+    }
+
+    @Test
     @DisplayName("NULL instance_id (20.166.0 pod'u) sayılmaz")
     void nullInstanceIgnored() {
         beat(null, T0 - 10_000, null);

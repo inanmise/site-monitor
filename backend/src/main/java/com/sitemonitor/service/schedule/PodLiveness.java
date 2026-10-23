@@ -2,6 +2,7 @@ package com.sitemonitor.service.schedule;
 
 import com.sitemonitor.service.ExtendedHealthService;
 import com.sitemonitor.service.SchedulerService;
+import com.sitemonitor.service.health.ClusterHealthStore;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -25,7 +26,8 @@ import java.util.function.Supplier;
  * Sistem Sağlığı pod listesinin ({@code ExtendedHealthService.podStates}) "canlı" kuralının AYNISI: {@code instance_id} dolu,
  * bu pod değil ({@code SchedulerService.instanceId()}), kapanış işareti yok ve son heartbeat ≥ şimdi −
  * {@value ExtendedHealthService#POD_LIVE_MINUTES} dk. 20.166.0 pod'ları (NULL {@code instance_id}) görünmez = sayılmaz
- * (güvenli: lider bugünkü gibi koşar).
+ * (güvenli: lider bugünkü gibi koşar). Aynı POD ADININ başka kimliği ({@code ClusterHealthStore.podOf}) de sayılmaz: bu
+ * pod'un kirli yeniden başlatmadan önceki süreci (FX-SIDE #3 — tek pod'da 3 dk boyunca "başka canlı pod" sanılıyordu).
  *
  * <p><b>Önbellek:</b> karar pod başına {@value #CACHE_MS} ms tutulur (dakikada en çok iki küçük sorgu). Okunamazsa (tablo /
  * kolon yok, bağlantı hatası) sonuç BİLİNMİYOR = "başka canlı pod yok" sayılır — bilinmeyende asla ertelenmez / bırakılmaz;
@@ -123,6 +125,7 @@ public class PodLiveness {
 
     private Snapshot read(long now) {
         String me = self.get();
+        String myPod = ClusterHealthStore.podOf(me);
         LocalDateTime since = LocalDateTime.ofInstant(Instant.ofEpochMilli(now), ZoneOffset.UTC)
                 .minusMinutes(ExtendedHealthService.POD_LIVE_MINUTES);
         try {
@@ -131,6 +134,9 @@ public class PodLiveness {
                 String id = rs.getString(1);
                 long markers = rs.getLong(2);
                 if (id == null || id.isBlank() || id.equals(me) || markers > 0) return;
+                // FX-SIDE #3: aynı pod ADININ başka kimliği = bu pod'un ÖNCEKİ süreci (kirli yeniden başlatma: OOM / SIGKILL,
+                // kapanış işareti yok) — "başka canlı pod" değil (bir host'ta tek uygulama: clearStaleLocksForThisHost ile aynı)
+                if (myPod != null && myPod.equals(ClusterHealthStore.podOf(id))) return;
                 live.add(id);
             }, since);
             live.sort(String::compareTo);
