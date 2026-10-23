@@ -11,9 +11,6 @@ import org.springframework.stereotype.Service;
 
 import java.time.DayOfWeek;
 import java.time.Duration;
-import java.time.Instant;
-import java.time.LocalDateTime;
-import java.time.ZoneOffset;
 import java.util.*;
 
 /**
@@ -177,18 +174,24 @@ public class ConfigHealthService {
         return new Check("weak_algo", n == 0 ? "ok" : "warn", String.valueOf(n), "weakalgo");
     }
 
+    /**
+     * Sertifika taramasının KÜME durumu (2026-10-23, çok pod R2b, MP-34 / N3): eskiden yanıtlayan pod'un belleğindeki son
+     * koşuya bakıyordu — hiç tarama koşturmamış takipçi pod "Not yet run" döndürüp burada {@code "never"} ile eşleşmiyor,
+     * "son koşu zamanı okunamadı" uyarısı veriyordu; son turları başka pod'da koşan pod da "2 saatten eski" diyordu. Artık son
+     * koşu ve "şu an koşuyor" (canlı {@code cert-check} kilidi) kümeden; kilit canlıyken eski bir son koşu "bayat" sayılmaz.
+     */
     private Check scheduler() {
-        Map<String, Object> st = schedulerService.getStatus();
-        Object lr = st.get("last_run");
-        if (lr == null || "never".equals(String.valueOf(lr))) return new Check("scheduler", "warn", "never", "health");
-        try {
-            LocalDateTime t = LocalDateTime.parse(String.valueOf(lr));
-            Duration age = Duration.between(t.toInstant(ZoneOffset.UTC), Instant.now());
-            if (age.toHours() >= 2) return new Check("scheduler", "bad", "stale:" + age.toMinutes() + "m", "health");
-            return new Check("scheduler", "ok", "last_run:" + lr, "health");
-        } catch (Exception e) {
-            return new Check("scheduler", "warn", "unparsable", "health");
+        SchedulerService.ScanStatus st = schedulerService.clusterScanStatus();
+        if (st.running()) {
+            String pod = com.sitemonitor.service.health.ClusterHealthStore.podOf(st.runningOn());
+            return new Check("scheduler", "ok", "running:" + (pod != null ? pod : ""), "health");
         }
+        String lr = st.lastRun();
+        if (lr == null || lr.isBlank()) return new Check("scheduler", "warn", "never", "health");
+        if (st.lastRunAgeMs() == null) return new Check("scheduler", "warn", "unparsable", "health");
+        Duration age = Duration.ofMillis(st.lastRunAgeMs());
+        if (age.toHours() >= 2) return new Check("scheduler", "bad", "stale:" + age.toMinutes() + "m", "health");
+        return new Check("scheduler", "ok", "last_run:" + lr, "health");
     }
 
     private static boolean isBlank(String s) { return s == null || s.trim().isEmpty(); }

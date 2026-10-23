@@ -394,6 +394,36 @@ public class SchedulerService {
      *  sessizce yanmasın — eskiden istisna yalnız Spring'in generic log satırına düşüyordu. */
     private final AtomicReference<String> lastRunFailure = new AtomicReference<>(null);
 
+    /**
+     * Küme tarama durumu (2026-10-23, çok pod R2b, MP-34): yukarıdaki alanlar taramayı KOŞTURAN pod'un belleğiydi; Sistem
+     * Sağlığı'nı başka pod yanıtlayınca "tarama 2 saattir yok" bandı, "hiç çalışmadı" ve erken biten "Şimdi çalıştır" yoklaması
+     * çıkıyordu. Her tur bitişinde ({@code runCheckForDomains}'in finally'si) türün satırı {@code scan_runs}'a yazılır; okumalar
+     * oradan. Bean yoksa (elle kurulum / test) aynı sınıf bu servisin JdbcTemplate'iyle kurulur; tablo okunamazsa bu pod'un
+     * belleği ({@code source: "local"}).
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.health.ClusterHealthStore clusterHealthStore;
+    private volatile com.sitemonitor.service.health.ClusterHealthStore fallbackHealthStore;
+
+    com.sitemonitor.service.health.ClusterHealthStore healthStore() {
+        com.sitemonitor.service.health.ClusterHealthStore s = clusterHealthStore;
+        if (s != null) return s;
+        s = fallbackHealthStore;
+        if (s == null) {
+            s = new com.sitemonitor.service.health.ClusterHealthStore(jdbcTemplate);
+            fallbackHealthStore = s;
+        }
+        return s;
+    }
+
+    /** Taramanın 2 saatten eski son koşusu (canlı kilit yokken) → {@code scan_alarm}. */
+    static final long SCAN_STALE_MS = 2L * 60 * 60 * 1000;
+
+    /** Bu pod'un kilit / kira sahip kimliği (üretimde {@link #instanceId()}; çok pod testlerinde pod başına ayrı). */
+    private String ownerId() {
+        return lockService != null ? lockService.owner() : INSTANCE_ID;
+    }
+
     // Toplu ağ kesintisi durumu (2026-10-21, çok pod — MP-01): eskiden bu pod'un belleğindeydi (AtomicBoolean'lar); artık
     // veritabanı satırı durum makinesidir — CertNetworkOutageService. Bean yoksa (bağlamsız birim testi) aynı servis bu
     // sınıfın kendi bağımlılıklarıyla kurulur: davranış iki yolda da aynı (veritabanı + yönetici postası).
@@ -2260,7 +2290,7 @@ public class SchedulerService {
         boolean handedOff = false;
         try {
             if (!cronRoundDue("cert-hourly", cron, null)) {
-                log.info("Hourly scheduled check — bu saatin turu başka pod'da koştu, atlanıyor [instance={}]", INSTANCE_ID);
+                logSkipInfo("Hourly scheduled check — bu saatin turu başka pod'da koştu, atlanıyor [instance={}]", INSTANCE_ID);
                 return;
             }
             log.info("Hourly scheduled check triggered [instance={}]", INSTANCE_ID);
@@ -2270,7 +2300,7 @@ public class SchedulerService {
                 log.warn("Hourly check: no domain due (inventory empty or all on longer intervals) — skipping");
             } else {
                 handedOff = true;
-                runCheckForDomains(due, true, lock);   // kilidi o bırakır
+                runCheckForDomains(due, true, lock, com.sitemonitor.service.health.ClusterHealthStore.KIND_HOURLY);   // kilidi o bırakır
             }
         } finally {
             if (!handedOff) releaseLock(lock);
@@ -2340,7 +2370,7 @@ public class SchedulerService {
             log.debug("Stale sweep: all active domains are fresh");
         } else {
             log.info("Stale sweep: {} domain(s) not checked in {} min", staleDomains.size(), staleMin);
-            runCheckForDomains(staleDomains, false);   // stale alt-küme → evict etme, 300 sn TTL tazelesin
+            runCheckForDomains(staleDomains, false, null, com.sitemonitor.service.health.ClusterHealthStore.KIND_STALE);   // stale alt-küme → evict etme, 300 sn TTL tazelesin
         }
         // Elle yüklenen sertifikalardan bayat olanlar (2026-10-06) — aynı tazelik + sıklık süzgeci, ayrı adım.
         runManualCertificateStep(true, freshDomains);
@@ -2370,12 +2400,12 @@ public class SchedulerService {
     public void runCaPinRefresh() {
         if (!caAutoPinService.isEnabled()) return;
         if (!tryAcquireSchedulerLock("ca-pin-refresh", sweepLockTtlMinutes)) {
-            log.debug("CA pin refresh skipped — lock held by another instance");
+            logSkip("CA pin refresh skipped — lock held by another instance");
             return;
         }
         try {
             if (!cronRoundDue("ca-pin-refresh", CRON_CA_PIN_REFRESH, ZONE_IST, true)) {   // yalnız süresi yaklaşanı döndürür
-                log.debug("CA pin refresh — bu tetiğin turu başka pod'da koştu, atlanıyor");
+                logSkip("CA pin refresh — bu tetiğin turu başka pod'da koştu, atlanıyor");
                 return;
             }
             int rotated = caAutoPinService.refreshExpiringPins();
@@ -2397,12 +2427,12 @@ public class SchedulerService {
     public void runDomainExpiryRefresh() {
         if (!appSettings.getBoolean("site.monitor.scheduler.domain-expiry-refresh.enabled", true)) return;
         if (!tryAcquireSchedulerLock("domain-expiry-refresh", sweepLockTtlMinutes)) {
-            log.debug("Domain-expiry refresh skipped — lock held by another instance");
+            logSkip("Domain-expiry refresh skipped — lock held by another instance");
             return;
         }
         try {
             if (!cronRoundDue("domain-expiry-refresh", CRON_DOMAIN_EXPIRY_REFRESH, ZONE_IST)) {
-                log.debug("Domain-expiry refresh — bu tetiğin turu başka pod'da koştu, atlanıyor");
+                logSkip("Domain-expiry refresh — bu tetiğin turu başka pod'da koştu, atlanıyor");
                 return;
             }
             int n = domainExpiryRefreshService.refreshAll();
@@ -2423,14 +2453,16 @@ public class SchedulerService {
         // HA: prod çok-replikalı (master overlay 3 pod). Kilit olmadan 3 pod aynı anda batch-DELETE +
         // rollup ON CONFLICT koşar → kilit çekişmesi/deadlock riski + 3× boşa iş. Yalnız BİR pod çalışsın.
         // TTL 60dk: batch silme (tablo başına 10dk cap) tüm tabloları için normal gecede fazlasıyla yeter.
-        if (!tryAcquireSchedulerLock("nightly-cleanup", 60)) {
-            log.debug("Gece temizlik/rollup — lock başka pod'da, atlanıyor");
-            return;
-        }
+        // Kilit meşgulse (2026-10-23, çok pod R2b — R2a inceleme isteği): yöneticinin "Şimdi çalıştır"ı (POST
+        // /api/admin/retention/run) AYNI kilidi tutuyorsa gece işi (rollup + temizlik + budama) o gece hiç koşmuyordu.
+        // Kilit 30 sn'de bir, en çok 15 dk yeniden denenir — bu gecenin turu başka pod'da zaten sahiplenildiyse beklenmez.
+        // Bıraktığı TUTUŞTUR (LockTicket), ad değil.
+        LockTicket lock = acquireNightlyCleanupLock();
+        if (lock == null) return;
         try {
             // Küme tur kaydı (2026-10-09): kilit bırakıldıktan sonra geç tetiklenen pod aynı gecenin işini yinelemesin.
             if (!cronRoundDue("nightly-cleanup", CRON_NIGHTLY_CLEANUP, RetentionCatalog.CLEANUP_ZONE)) {
-                log.debug("Gece temizlik/rollup — bu gecenin turu başka pod'da koştu, atlanıyor");
+                logSkip("Gece temizlik/rollup — bu gecenin turu başka pod'da koştu, atlanıyor");
                 return;
             }
             // ÖNCE rollup (ham kontrol serilerini özete al) — SONRA purge. Böylece ham kısa
@@ -2475,8 +2507,101 @@ public class SchedulerService {
         } catch (Exception e) {
             log.warn("Nightly cleanup failed: {}", e.getMessage());
         } finally {
-            releaseSchedulerLock("nightly-cleanup");
+            releaseLock(lock);
         }
+    }
+
+    /** Gece temizliği kilidinin yeniden deneme aralığı ve toplam bekleme tavanı (ms) — testler kısaltır. */
+    private long nightlyLockRetryMs = 30_000L;
+    private long nightlyLockWaitMs = 15L * 60 * 1000;
+    /** Bekleme dilimi (ms): kapanış her dilimde denetlenir — uzun bir uyku kapanışı geciktirmesin. */
+    private long nightlyLockSliceMs = 1_000L;
+
+    /**
+     * Gece temizliği kilidi: alınamazsa {@link #nightlyLockRetryMs}'de bir, en çok {@link #nightlyLockWaitMs} boyunca yeniden
+     * dener. Vazgeçer: bu gecenin turu başka pod'da sahiplenildiyse (normal gece — kazanan pod koşuyor), kapanış başladıysa,
+     * süre dolduysa (WARN). Bekleme sınırlıdır ve dilimlidir (kapanışta en çok bir dilim gecikir).
+     */
+    LockTicket acquireNightlyCleanupLock() {
+        long deadline = System.nanoTime() + Math.max(0L, nightlyLockWaitMs) * 1_000_000L;
+        int attempts = 0;
+        while (true) {
+            LockTicket t = acquireLock("nightly-cleanup", 60);
+            if (t != null) {
+                if (attempts > 0) log.info("Gece temizlik/rollup — kilit {}. denemede alındı [instance={}]", attempts + 1, INSTANCE_ID);
+                return t;
+            }
+            attempts++;
+            if (stopping()) return null;
+            if (nightlyRoundClaimedElsewhere()) {
+                logSkip("Gece temizlik/rollup — bu gecenin turu başka pod'da sahiplenildi, atlanıyor");
+                return null;
+            }
+            long remainingMs = (deadline - System.nanoTime()) / 1_000_000L;
+            if (remainingMs <= 0 || nightlyLockRetryMs <= 0) {
+                log.warn("Gece temizlik/rollup — 'nightly-cleanup' kilidi {} dk boyunca başka işteydi (yöneticinin 'Şimdi çalıştır'ı?), "
+                        + "bu gece atlandı; sonraki gece telafi eder [instance={}]", Math.max(1L, nightlyLockWaitMs / 60_000L), INSTANCE_ID);
+                return null;
+            }
+            if (attempts == 1) logSkip("Gece temizlik/rollup — lock başka pod'da, yeniden denenecek");
+            if (!sleepUnlessStopping(Math.min(nightlyLockRetryMs, remainingMs))) return null;
+        }
+    }
+
+    /** Bu gecenin cron turu ({@code round:nightly-cleanup}) zaten sahiplenilmiş mi (vadesi ileride). Okunamazsa false (dene). */
+    private boolean nightlyRoundClaimedElsewhere() {
+        if (clusterSchedule == null) return false;
+        try {
+            List<Long> rows = jdbcTemplate.queryForList("SELECT next_due_at FROM monitor_check_schedule WHERE monitor_key = ?",
+                    Long.class, ROUND_KEY_PREFIX + "nightly-cleanup");
+            return !rows.isEmpty() && rows.get(0) != null && rows.get(0) > scheduleClock.getAsLong();
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** {@code ms} kadar dilim dilim uyur; kapanış başlarsa ya da kesilirse false. */
+    private boolean sleepUnlessStopping(long ms) {
+        long end = System.nanoTime() + Math.max(0L, ms) * 1_000_000L;
+        while (true) {
+            if (stopping()) return false;
+            long left = (end - System.nanoTime()) / 1_000_000L;
+            if (left <= 0) return true;
+            try {
+                Thread.sleep(Math.max(1L, Math.min(left, Math.max(1L, nightlyLockSliceMs))));
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        }
+    }
+
+    /**
+     * "Başka pod'da, atlanıyor" günlüğü (2026-10-23, çok pod R2b): üretim DEBUG koşuyor; bu satırlar her takipçi tıkında
+     * (~35 iş) yazılıp günlüğü dolduruyordu. Aynı satır saatte en çok BİR kez özgün düzeyinde, aradakiler TRACE.
+     */
+    static final long SKIP_LOG_INTERVAL_MS = 60L * 60 * 1000;
+    private final java.util.concurrent.ConcurrentHashMap<String, Long> skipLogAt = new java.util.concurrent.ConcurrentHashMap<>();
+
+    void logSkip(String message, Object... args) {
+        logSkip(false, message, args);
+    }
+
+    void logSkipInfo(String message, Object... args) {
+        logSkip(true, message, args);
+    }
+
+    private void logSkip(boolean info, String message, Object... args) {
+        long now = System.currentTimeMillis();
+        boolean[] first = {false};
+        String key = args != null && args.length > 0 ? message + "|" + args[0] : message;
+        skipLogAt.compute(key, (k, last) -> {
+            if (last == null || now - last >= SKIP_LOG_INTERVAL_MS) { first[0] = true; return now; }
+            return last;
+        });
+        if (!first[0]) log.trace(message, args);
+        else if (info) log.info(message, args);
+        else log.debug(message, args);
     }
 
     // NOT: safeDelete / safeDeleteBatched buradan KALDIRILDI (2026-08). Silme mantığı artık
@@ -2602,7 +2727,7 @@ public class SchedulerService {
         if (pingRebuildFailures.get() >= PING_ROLLUP_REBUILD_MAX_ATTEMPTS) return;   // bu pod denemeyi bıraktı (bir kez ERROR)
         if (pingRollupRebuildDone()) return;
         if (!tryAcquireSchedulerLock("ping-rollup-rebuild", PING_ROLLUP_REBUILD_LOCK_MINUTES)) {
-            log.debug("ping-rollup-rebuild — kilit başka pod'da, atlanıyor");
+            logSkip("ping-rollup-rebuild — kilit başka pod'da, atlanıyor");
             return;
         }
         try {
@@ -2752,13 +2877,13 @@ public class SchedulerService {
     @Scheduled(cron = CRON_WEEKLY_REPORT_REMINDER, zone = ZONE_IST)
     public void scheduledWeeklyReportReminder() {
         if (!tryAcquireSchedulerLock("weekly-report-reminder", lockTtlMinutes)) {
-            log.debug("Haftalık rapor hatırlatması — lock başka pod'da, atlanıyor");
+            logSkip("Haftalık rapor hatırlatması — lock başka pod'da, atlanıyor");
             return;
         }
         try {
             // Küme tur kaydı (2026-10-09): kilit bırakılınca geç tetiklenen pod hatırlatmayı İKİNCİ kez göndermesin.
             if (!cronRoundDue("weekly-report-reminder", CRON_WEEKLY_REPORT_REMINDER, ZONE_IST)) {
-                log.debug("Haftalık rapor hatırlatması — bu tetiğin turu başka pod'da koştu, atlanıyor");
+                logSkip("Haftalık rapor hatırlatması — bu tetiğin turu başka pod'da koştu, atlanıyor");
                 return;
             }
             weeklyReportReminderService.sendFridayReminders(true);   // yalnız son giriş gününde gönderir
@@ -2786,12 +2911,12 @@ public class SchedulerService {
         if (!appSettings.getBoolean("site.monitor.issue-reports.daily-digest", false)) return;
         if (loginIssueMailService == null || loginIssueReportRepo == null) return;   // manuel-kurulum güvenlik ağı
         if (!tryAcquireSchedulerLock("issue-report-digest", lockTtlMinutes)) {
-            log.debug("Sorun bildirimi özeti — lock başka pod'da, atlanıyor");
+            logSkip("Sorun bildirimi özeti — lock başka pod'da, atlanıyor");
             return;
         }
         try {
             if (!cronRoundDue("issue-report-digest", CRON_ISSUE_REPORT_DIGEST, ZONE_IST)) {   // çift özet maili yok
-                log.debug("Sorun bildirimi özeti — bu tetiğin turu başka pod'da koştu, atlanıyor");
+                logSkip("Sorun bildirimi özeti — bu tetiğin turu başka pod'da koştu, atlanıyor");
                 return;
             }
             String adminEmail = appSettings.getString("site.monitor.system-admin.email", "");
@@ -2824,13 +2949,13 @@ public class SchedulerService {
     @Scheduled(cron = CRON_WEEKLY_AVAILABILITY, zone = ZONE_IST)
     public void scheduledWeeklyAvailabilityReport() {
         if (!tryAcquireSchedulerLock("weekly-availability", lockTtlMinutes)) {
-            log.debug("Haftalık erişilebilirlik raporu — lock başka pod'da, atlanıyor");
+            logSkip("Haftalık erişilebilirlik raporu — lock başka pod'da, atlanıyor");
             return;
         }
         try {
             // takım × hafta sahiplenmesi (uk_wal_team_week) çift postayı önler → kayıt hatasında da koşar (CORE-2)
             if (!cronRoundDue("weekly-availability", CRON_WEEKLY_AVAILABILITY, ZONE_IST, true)) {   // çift rapor maili yok
-                log.debug("Haftalık erişilebilirlik raporu — bu tetiğin turu başka pod'da koştu, atlanıyor");
+                logSkip("Haftalık erişilebilirlik raporu — bu tetiğin turu başka pod'da koştu, atlanıyor");
                 return;
             }
             weeklyAvailabilityReportService.sendWeeklyReports(false);
@@ -2861,7 +2986,7 @@ public class SchedulerService {
     public void scheduledWeeklyAvailabilityCatchUp() {
         if (!weeklyAvailabilityCatchUpWindow(scheduleClock.getAsLong())) return;
         if (!tryAcquireSchedulerLock("weekly-availability", lockTtlMinutes)) {
-            log.debug("Haftalık erişilebilirlik yakalaması — asıl koşu / başka pod sürüyor, atlanıyor");
+            logSkip("Haftalık erişilebilirlik yakalaması — asıl koşu / başka pod sürüyor, atlanıyor");
             return;
         }
         try {
@@ -2936,7 +3061,7 @@ public class SchedulerService {
     public void runWithSchedulerLock(String lockName, Runnable task) {
         LockTicket lock = acquireLock(lockName, lockTtlMinutes);
         if (lock == null) {
-            log.debug("{} — lock başka pod'da, atlanıyor", lockName);
+            logSkip("{} — lock başka pod'da, atlanıyor", lockName);
             return;
         }
         try {
@@ -2957,7 +3082,7 @@ public class SchedulerService {
                initialDelayString = "${site.monitor.failed-login.scan-ms:600000}")
     public void scheduledFailedLoginAnomalyScan() {
         if (!tryAcquireSchedulerLock("failed-login-anomaly", lockTtlMinutes)) {
-            log.debug("Başarısız-login anomali taraması — lock başka pod'da, atlanıyor");
+            logSkip("Başarısız-login anomali taraması — lock başka pod'da, atlanıyor");
             return;
         }
         try {
@@ -2988,7 +3113,7 @@ public class SchedulerService {
         if (domains.isEmpty()) {
             log.warn("No active domains in inventory — skipping check");
         } else {
-            runCheckForDomains(domains, true);   // tam sweep → cache evict
+            runCheckForDomains(domains, true, null, com.sitemonitor.service.health.ClusterHealthStore.KIND_FULL);   // tam sweep → cache evict
         }
         // Elle yüklenen sertifikalar (2026-10-06): tam tur — sıklık süzgeci yok (runCheck ile aynı kural).
         runManualCertificateStep(false, null);
@@ -3030,7 +3155,7 @@ public class SchedulerService {
             }
             if (rows.isEmpty()) return;
             if (!tryAcquireSchedulerLock(MANUAL_CERT_LOCK, lockTtlMinutes)) {
-                log.debug("Manuel sertifika adımı — kilit başka instance'da, atlanıyor");
+                logSkip("Manuel sertifika adımı — kilit başka instance'da, atlanıyor");
                 return;
             }
             try {
@@ -3068,14 +3193,16 @@ public class SchedulerService {
     }
 
     private void runCheckForDomains(List<Map<String, Object>> domains, boolean evictCaches) {
-        runCheckForDomains(domains, evictCaches, null);
+        runCheckForDomains(domains, evictCaches, null, evictCaches
+                ? com.sitemonitor.service.health.ClusterHealthStore.KIND_FULL : com.sitemonitor.service.health.ClusterHealthStore.KIND_STALE);
     }
 
     /**
      * @param preHeld çağıranın zaten aldığı "cert-check" kilidi (saatlik tur: önce kilit, sonra tur — MP-15); null → burada
      *                alınır. Her iki durumda kilidi bu metot bırakır.
+     * @param kind    küme tarama durumundaki tür ({@code hourly} / {@code full} / {@code stale}) — turun sonucu bu satıra yazılır
      */
-    private void runCheckForDomains(List<Map<String, Object>> domains, boolean evictCaches, LockTicket preHeld) {
+    private void runCheckForDomains(List<Map<String, Object>> domains, boolean evictCaches, LockTicket preHeld, String kind) {
         // 1. In-process guard (fast fail for same JVM)
         if (!running.compareAndSet(false, true)) {
             log.warn("Check already in progress (runId={}) — skipping duplicate trigger", currentRunId.get());
@@ -3088,7 +3215,7 @@ public class SchedulerService {
         LockTicket certLock = preHeld != null ? preHeld : acquireLock("cert-check", lockTtlMinutes);
         if (certLock == null) {
             running.set(false);
-            log.info("Scheduler lock held by another instance [{}], skipping", INSTANCE_ID);
+            logSkipInfo("Scheduler lock held by another instance [{}], skipping", INSTANCE_ID);
             return;
         }
 
@@ -3102,6 +3229,11 @@ public class SchedulerService {
         long startMs = System.currentTimeMillis();
         log.info("Certificate check started — runId={}, {} domain(s) [instance={}]",
                 runId, domains.size(), INSTANCE_ID);
+        // Küme tarama durumu (MP-34): tur BİTTİYSE (sonuçlar kaydedildi ya da hatayla düştü) finally'de yazılır; kapanış /
+        // kilit kaybı erken dönüşleri yazmaz (tur sayılmaz — sonraki tur telafi eder).
+        boolean finished = false;
+        Integer runTotal = null, runWarnings = null, runErrors = null;
+        String runFailure = null;
 
         try {
             List<CompletableFuture<Map<String, Object>>> futures = domains.stream()
@@ -3166,6 +3298,10 @@ public class SchedulerService {
             lastRunFailure.set(null);   // temiz tur: önceki hata kaydı düşer
             lastRunErrors.set((int) errors);
             lastRunWarnings.set((int) warnings);
+            finished = true;
+            runTotal = results.size();
+            runWarnings = (int) warnings;
+            runErrors = (int) errors;
 
             int    minErrors = appSettings.getInt("site.monitor.network.min-errors", networkMinErrors);
             double rateThreshold = appSettings.getDouble("site.monitor.network.error-rate-threshold", networkErrorRateThreshold);
@@ -3200,9 +3336,16 @@ public class SchedulerService {
             // "Unexpected error occurred in scheduled task" satırıydı. Artık hata sahiplenilip sayılıyor;
             // scan_alarm de bu sayaç üzerinden anlamlı kalıyor.
             lastRunFailure.set(ISO.format(Instant.now()) + " — " + e.getClass().getSimpleName() + ": " + e.getMessage());
+            finished = true;
+            runFailure = lastRunFailure.get();
             log.error("Sertifika sweep'i BAŞARISIZ (runId={}): sonuçlar kaydedilemedi/alarm işlenemedi — {}",
                     runId, e.toString(), e);
         } finally {
+            if (finished) {
+                healthStore().recordScanRun(kind, runId, ownerId(), ISO.format(Instant.ofEpochMilli(scheduleClock.getAsLong())),
+                        runTotal != null ? Long.valueOf(System.currentTimeMillis() - startMs) : null,
+                        runTotal, runWarnings, runErrors, runFailure);
+            }
             running.set(false);
             lastRunId.set(currentRunId.get());
             currentRunId.set("");
@@ -3445,15 +3588,142 @@ public class SchedulerService {
     }
 
     public Map<String, Object> getStatus() {
+        // Küme durumu (2026-10-23, çok pod R2b, MP-34): son koşu / çalışıyor mu artık veritabanından (bu pod'un belleği değil).
+        ScanStatus st = clusterScanStatus();
         Map<String, Object> m = new LinkedHashMap<>();
-        m.put("last_run",       lastRun.get() != null ? lastRun.get().toString() : "Not yet run");
+        m.put("last_run",       st.lastRun() != null ? st.lastRun() : "Not yet run");
         m.put("next_run",       nextCertificateSweepAt());
         m.put("active_domains", inventoryRepo.countByActiveTrue());
         m.put("schedule",       "Hourly (top of every hour) + stale sweep every 5 minutes");
-        m.put("running",        running.get());
+        m.put("running",        st.running());
+        m.put("running_on",     st.runningOn());
+        m.put("running_here",   running.get());
         m.put("current_run_id", currentRunId.get());
-        m.put("last_run_id",    lastRunId.get());
+        m.put("last_run_id",    st.lastRunId() != null ? st.lastRunId() : lastRunId.get());
         m.put("instance_id",    INSTANCE_ID);
+        m.put("source",         st.source());
+        return m;
+    }
+
+    /**
+     * Sertifika taramasının KÜME durumu (2026-10-23, çok pod R2b, MP-34).
+     *
+     * @param lastRun      son tamamlanan koşu (UTC {@code yyyy-MM-ddTHH:mm:ss}; tür fark etmez) — null = hiç
+     * @param running      tarama ŞU AN kümede koşuyor mu: canlı {@code cert-check} kilidi ({@code locked_until} geçmemiş) ya da
+     *                     bu pod'un kendi bayrağı (kilit tablosu yok / okunamadı)
+     * @param runningOn    koşturan pod'un kimliği (kilit sahibi; bilinmiyorsa null)
+     * @param source       {@code cluster} (veritabanı) | {@code local} (tablo okunamadı — bu pod'un belleği)
+     * @param runs         tür → son koşu (yalnız {@code cluster})
+     * @param lock         {@code cert-check} kilit satırının durumu (System Health "Dağıtık kilit" kartı)
+     * @param lastRunAgeMs son koşunun yaşı (servisin saatiyle; bilinmiyorsa null)
+     */
+    public record ScanStatus(String lastRun, String lastRunKind, String lastRunBy, String lastRunId, Long durationMs,
+                             Integer total, Integer warnings, Integer errors, String lastFailure, String lastFailureBy,
+                             boolean running, String runningOn, String source,
+                             Map<String, com.sitemonitor.service.health.ClusterHealthStore.ScanRun> runs, Map<String, Object> lock,
+                             Long lastRunAgeMs) {
+
+        /** Kilit yokken son koşu {@link #SCAN_STALE_MS}'den eski mi (System Health {@code scan_alarm}, yapılandırma sağlığı). */
+        public boolean stale() {
+            return !running && lastRunAgeMs != null && lastRunAgeMs >= SCAN_STALE_MS;
+        }
+    }
+
+    /** Son koşunun yaşı (ms) servisin saatiyle; biçim dışı / yok → null. */
+    private Long ageOf(String lastRunIso) {
+        Instant at = parseIsoInstant(lastRunIso);
+        return at == null ? null : Long.valueOf(Math.max(0L, scheduleClock.getAsLong() - at.toEpochMilli()));
+    }
+
+    /** Küme tarama durumu: {@code scan_runs} + canlı {@code cert-check} kilidi; tablo okunamazsa bu pod'un belleği. Fırlatmaz. */
+    public ScanStatus clusterScanStatus() {
+        Map<String, Object> lock = certLockState();
+        boolean lockKnown = !lock.containsKey("error");
+        boolean lockLive = Boolean.TRUE.equals(lock.get("held"));
+        boolean runningNow = lockLive || running.get();
+        String runningOn = lockLive ? (String) lock.get("locked_by") : running.get() ? ownerId() : null;
+        if (!lockKnown && !running.get()) runningOn = null;
+        Map<String, com.sitemonitor.service.health.ClusterHealthStore.ScanRun> runs;
+        try {
+            runs = healthStore().readScanRuns();
+        } catch (Exception e) {
+            log.debug("Küme tarama durumu okunamadı — bu pod'un belleği gösteriliyor: {}", e.toString());
+            LocalDateTime lr = lastRun.get();
+            String failure = lastRunFailure.get();
+            Long age = lr == null ? null : Long.valueOf(Math.max(0L, java.time.Duration.between(lr, LocalDateTime.now(ZoneOffset.UTC)).toMillis()));
+            return new ScanStatus(lr != null ? lr.withNano(0).toString() : null, null, lr != null ? ownerId() : null,
+                    lastRunId.get().isEmpty() ? null : lastRunId.get(), lastRunDurationMs.get(), lastRunTotal.get(),
+                    lastRunWarnings.get(), lastRunErrors.get(), failure, failure != null ? ownerId() : null,
+                    runningNow, runningOn, "local", Map.of(), lock, age);
+        }
+        com.sitemonitor.service.health.ClusterHealthStore.ScanRun newestRun = null;      // en yeni tamamlanan (sonuçlu) koşu
+        com.sitemonitor.service.health.ClusterHealthStore.ScanRun newestFinish = null;   // en yeni biten tur (hatalı da olabilir)
+        for (var r : runs.values()) {
+            if (r.lastRunAt() != null && (newestRun == null || r.lastRunAt().compareTo(newestRun.lastRunAt()) > 0)) newestRun = r;
+            if (r.updatedAt() != null && (newestFinish == null || r.updatedAt().compareTo(newestFinish.updatedAt()) > 0)) newestFinish = r;
+        }
+        String failure = newestFinish != null && newestFinish.failure() != null
+                && newestFinish.updatedAt().equals(newestFinish.failureAt()) ? newestFinish.failure() : null;
+        return new ScanStatus(
+                newestRun == null ? null : newestRun.lastRunAt(),
+                newestRun == null ? null : newestRun.kind(),
+                newestRun == null ? null : newestRun.instanceId(),
+                newestRun == null ? null : newestRun.runId(),
+                newestRun == null ? null : newestRun.durationMs(),
+                newestRun == null ? null : newestRun.total(),
+                newestRun == null ? null : newestRun.warnings(),
+                newestRun == null ? null : newestRun.errors(),
+                failure, failure != null ? newestFinish.failureBy() : null,
+                runningNow, runningOn, "cluster", runs, lock, newestRun == null ? null : ageOf(newestRun.lastRunAt()));
+    }
+
+    /**
+     * {@code cert-check} kilit satırı: {@code held} = satır VAR ve süresi geçmemiş (2026-10-23 — eskiden yalnız "satır var":
+     * sahibi ölmüş, süresi dolmuş satır "kilitli" görünüyordu); {@code expired} = satır var ama süresi dolmuş; biçimi
+     * okunamayan süre "tutuluyor" sayılır (bilinmeyen serbest sayılmaz). Okunamazsa {@code error}.
+     */
+    private Map<String, Object> certLockState() {
+        Map<String, Object> lockMap = new LinkedHashMap<>();
+        try {
+            List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+                "SELECT locked_by, locked_until FROM scheduler_lock WHERE name = ?", "cert-check");
+            if (rows == null || rows.isEmpty()) {
+                lockMap.put("held", false);
+                return lockMap;
+            }
+            Map<String, Object> row = rows.get(0);
+            String by = row.get("locked_by") == null ? null : String.valueOf(row.get("locked_by"));
+            String until = row.get("locked_until") == null ? null : String.valueOf(row.get("locked_until"));
+            Instant untilAt = parseIsoInstant(until);
+            boolean live = untilAt == null || untilAt.toEpochMilli() >= scheduleClock.getAsLong();
+            lockMap.put("held",        live);
+            lockMap.put("expired",     !live);
+            lockMap.put("locked_by",   by);
+            lockMap.put("locked_by_pod", com.sitemonitor.service.health.ClusterHealthStore.podOf(by));
+            lockMap.put("locked_until", until);
+            lockMap.put("held_by_me",  live && ownerId().equals(by));
+        } catch (Exception e) {
+            lockMap.put("held", false);
+            lockMap.put("error", e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
+        }
+        return lockMap;
+    }
+
+    private static Map<String, Object> scanRunMap(com.sitemonitor.service.health.ClusterHealthStore.ScanRun r) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("kind",        r.kind());
+        m.put("last_run",    r.lastRunAt());
+        m.put("run_id",      r.runId());
+        m.put("by",          r.instanceId());
+        m.put("by_pod",      com.sitemonitor.service.health.ClusterHealthStore.podOf(r.instanceId()));
+        m.put("duration_ms", r.durationMs());
+        m.put("total",       r.total());
+        m.put("warnings",    r.warnings());
+        m.put("errors",      r.errors());
+        m.put("failure",     r.failure());
+        m.put("failure_at",  r.failureAt());
+        m.put("failure_by_pod", com.sitemonitor.service.health.ClusterHealthStore.podOf(r.failureBy()));
+        m.put("finished_at", r.updatedAt());
         return m;
     }
 
@@ -3461,12 +3731,19 @@ public class SchedulerService {
     public Map<String, Object> getSystemHealth() {
         Map<String, Object> h = new LinkedHashMap<>();
 
-        // Scheduler state
+        // Scheduler state — KÜME (2026-10-23, çok pod R2b, MP-34): çalışıyor mu = canlı "cert-check" kilidi (hangi pod'da
+        // olursa olsun), son koşu = scan_runs. Bu pod'un kendi bayrağı ayrıca (running_here).
+        ScanStatus scan = clusterScanStatus();
         Map<String, Object> schedulerMap = new LinkedHashMap<>();
-        schedulerMap.put("running",        running.get());
+        schedulerMap.put("running",        scan.running());
+        schedulerMap.put("running_on",     scan.runningOn());
+        schedulerMap.put("running_on_pod", com.sitemonitor.service.health.ClusterHealthStore.podOf(scan.runningOn()));
+        schedulerMap.put("running_here",   running.get());
         schedulerMap.put("current_run_id", currentRunId.get());
-        schedulerMap.put("last_run_id",    lastRunId.get());
-        schedulerMap.put("last_run",       lastRun.get() != null ? lastRun.get().toString() : null);
+        schedulerMap.put("last_run_id",    scan.lastRunId() != null ? scan.lastRunId() : lastRunId.get());
+        schedulerMap.put("last_run",       scan.lastRun());
+        schedulerMap.put("last_run_by_pod", com.sitemonitor.service.health.ClusterHealthStore.podOf(scan.lastRunBy()));
+        schedulerMap.put("status_source",  scan.source());
         // Eskiden "sonraki saat başı" varsayılıyordu; cron yapılandırılabilir olduğu için
         // (ör. yarım saatte bir) bu yanlış zaman gösterebiliyordu — artık ifadeden hesaplanıyor.
         schedulerMap.put("next_run",       nextCertificateSweepAt());
@@ -3487,6 +3764,9 @@ public class SchedulerService {
             catch (RuntimeException e) { log.debug("Kilit özeti alınamadı: {}", e.toString()); }
         }
         h.put("scheduler", schedulerMap);
+        // Yanıtlayan pod (2026-10-23, çok pod R2b, MP-37a): bellek / havuz / yürütücü kartları BU pod'undur — ekran etiketler.
+        h.put("served_by", ownerId());
+        h.put("served_by_pod", com.sitemonitor.service.health.ClusterHealthStore.podOf(ownerId()));
         // Oturum deposu (2026-10-09): jdbc | memory + canlı oturum sayısı — dağıtım sonrası doğrulama için
         if (sessionStore != null) {
             try { h.put("session_store", sessionStore.status()); } catch (RuntimeException e) { log.debug("Oturum deposu özeti alınamadı: {}", e.toString()); }
@@ -3506,24 +3786,8 @@ public class SchedulerService {
             h.put("build", build);
         }
 
-        // Distributed lock state
-        try {
-            List<Map<String, Object>> rows = jdbcTemplate.queryForList(
-                "SELECT locked_by, locked_until FROM scheduler_lock WHERE name = ?", "cert-check");
-            if (!rows.isEmpty()) {
-                Map<String, Object> row = rows.get(0);
-                Map<String, Object> lockMap = new LinkedHashMap<>();
-                lockMap.put("held",        true);
-                lockMap.put("locked_by",   row.get("locked_by"));
-                lockMap.put("locked_until",row.get("locked_until"));
-                lockMap.put("held_by_me",  INSTANCE_ID.equals(row.get("locked_by")));
-                h.put("lock", lockMap);
-            } else {
-                h.put("lock", Map.of("held", false));
-            }
-        } catch (Exception e) {
-            h.put("lock", Map.of("held", false, "error", e.getMessage()));
-        }
+        // Distributed lock state (cert-check; satır + süresi — küme gerçeği)
+        h.put("lock", scan.lock());
 
         // Haftalık erişilebilirlik scheduler kartı — açık/duraklatılmış, cron, sıradaki/son çalışma + kilit (şu an çalışıyor mu)
         try {
@@ -3592,17 +3856,26 @@ public class SchedulerService {
         memMap.put("used_pct", maxMem > 0 ? (int)(usedMem * 100L / maxMem) : 0);
         h.put("memory", memMap);
 
-        // Scan statistics
-        LocalDateTime lr = lastRun.get();
-        boolean scanAlarm = !running.get() && lr != null
-                && ChronoUnit.HOURS.between(lr, LocalDateTime.now(ZoneOffset.UTC)) >= 2;
+        // Scan statistics — KÜME (MP-34): son koşu hangi pod'da olursa olsun; alarm = canlı kilit yok VE son koşu ≥ 2 saat.
+        boolean scanAlarm = scan.stale();
         Map<String, Object> scanMap = new LinkedHashMap<>();
-        scanMap.put("last_run",    lr != null ? lr.toString() : null);
-        scanMap.put("duration_ms", lastRunDurationMs.get());
-        scanMap.put("total",       lastRunTotal.get());
-        scanMap.put("warnings",    lastRunWarnings.get());
-        scanMap.put("errors",      lastRunErrors.get());
-        scanMap.put("last_failure", lastRunFailure.get());   // null = son tur temiz bitti
+        scanMap.put("last_run",    scan.lastRun());
+        scanMap.put("last_run_kind", scan.lastRunKind());
+        scanMap.put("last_run_by_pod", com.sitemonitor.service.health.ClusterHealthStore.podOf(scan.lastRunBy()));
+        scanMap.put("duration_ms", scan.durationMs() != null ? scan.durationMs() : 0L);
+        scanMap.put("total",       scan.total() != null ? scan.total() : 0);
+        scanMap.put("warnings",    scan.warnings() != null ? scan.warnings() : 0);
+        scanMap.put("errors",      scan.errors() != null ? scan.errors() : 0);
+        scanMap.put("last_failure", scan.lastFailure());   // null = son tur temiz bitti
+        scanMap.put("last_failure_by_pod", com.sitemonitor.service.health.ClusterHealthStore.podOf(scan.lastFailureBy()));
+        scanMap.put("source",      scan.source());
+        Map<String, Object> runsMap = new LinkedHashMap<>();
+        for (String k : List.of(com.sitemonitor.service.health.ClusterHealthStore.KIND_HOURLY,
+                com.sitemonitor.service.health.ClusterHealthStore.KIND_FULL, com.sitemonitor.service.health.ClusterHealthStore.KIND_STALE)) {
+            var r = scan.runs().get(k);
+            if (r != null) runsMap.put(k, scanRunMap(r));
+        }
+        scanMap.put("runs",        runsMap);
         h.put("scan",       scanMap);
         h.put("scan_alarm", scanAlarm);
 
@@ -3760,6 +4033,36 @@ public class SchedulerService {
         // Tur anahtarları ("round:…") izleme değildir — budanırsa sıradaki tık DB'den yeniden okur, yine de dokunma.
         lastMonitorCheckAt.keySet().removeIf(k -> !k.startsWith(ROUND_KEY_PREFIX) && !liveKeys.contains(k));
         return before - lastMonitorCheckAt.size();
+    }
+
+    /** Liderlik bırakılınca: izleme vade önbelleğinin izleme anahtarları atılır (tur anahtarları kalır). @return atılan sayı */
+    int clearMonitorCheckState() {
+        int before = lastMonitorCheckAt.size();
+        lastMonitorCheckAt.keySet().removeIf(k -> !k.startsWith(ROUND_KEY_PREFIX));
+        return before - lastMonitorCheckAt.size();
+    }
+
+    /** Test / tanı: izleme vade önbelleğindeki İZLEME anahtarı sayısı (tur anahtarları hariç). */
+    int monitorCheckStateSize() {
+        return (int) lastMonitorCheckAt.keySet().stream().filter(k -> !k.startsWith(ROUND_KEY_PREFIX)).count();
+    }
+
+    /**
+     * Pod başına günlük budama (2026-10-23, çok pod R2b, MP-37d): izleme vade önbelleği eskiden yalnız gece temizliğinde —
+     * 'nightly-cleanup'ı KAZANAN pod'da — budanıyordu; o geceyi hiç kazanamayan lider pod'un önbelleği silinmiş izlemelerin
+     * anahtarlarıyla büyüyordu. Her pod KENDİ önbelleğini budar (kilit yok — yalnız kendi belleği). Önbellekte izleme anahtarı
+     * yoksa (takipçi) veritabanına hiç gidilmez. Hata sessiz (WARN).
+     */
+    @Scheduled(cron = "${site.monitor.scheduler.monitor-state-prune-cron:0 50 3 * * *}", zone = ZONE_IST)
+    public void pruneOwnMonitorCheckState() {
+        if (stopping()) return;
+        if (monitorCheckStateSize() == 0) return;
+        try {
+            int pruned = pruneMonitorCheckState(collectLiveMonitorKeys());
+            if (pruned > 0) log.info("İzleme vade önbelleği budandı: {} silinmiş izleme anahtarı [instance={}]", pruned, INSTANCE_ID);
+        } catch (Exception e) {
+            log.warn("İzleme vade önbelleği budanamadı (yarın yeniden): {}", e.getMessage());
+        }
     }
 
     /** Küme zamanlama tablosundan silinmiş izlemelerin satırlarını atar (gece temizliği, tek pod); hata sessiz. */
@@ -4480,6 +4783,10 @@ public class SchedulerService {
      */
     private void publishSweepLeadership(boolean leader, long atMs, String reason) {
         if (eventPublisher == null || clusterSchedule == null) return;
+        // Liderlik bitti (2026-10-23, çok pod R2b, MP-37d): izleme vade önbelleği yalnız lider dolduruyor; takipçide işe
+        // yaramaz ve gece budaması yalnız 'nightly-cleanup'ı kazanan pod'da koştuğu için silinmiş izlemelerin anahtarları
+        // burada birikiyordu. Önbellek — boşalınca sıradaki vade DB'den okunur. Tur anahtarları korunur.
+        if (!leader) clearMonitorCheckState();
         try {
             eventPublisher.publishEvent(new SweepLeadershipChangedEvent(leader, clusterSchedule.owner(), atMs, reason));
         } catch (Exception e) {
@@ -4720,6 +5027,7 @@ public class SchedulerService {
             var lease = clusterSchedule.lease(SWEEP_LEADER);
             long now = scheduleClock.getAsLong();
             m.put("owner", lease == null ? null : lease.owner());
+            m.put("owner_pod", lease == null ? null : com.sitemonitor.service.health.ClusterHealthStore.podOf(lease.owner()));
             m.put("until", lease == null ? null : ISO.format(Instant.ofEpochMilli(lease.untilMs())));
             m.put("expired", lease == null || lease.untilMs() < now);
             m.put("held_by_me", lease != null && lease.untilMs() >= now && clusterSchedule.owner().equals(lease.owner()));
@@ -4772,7 +5080,7 @@ public class SchedulerService {
         if (!roundMayBeDue("uptime", uptimeIntervalMs)) return;   // bu pod biliyor: tur vadesi gelmedi → sorgu yok
         // HA: tüm-tur dağıtık kilit — 2+ pod'da bir turu yalnız bir pod çalıştırır (çakışma); tur kaydı tekrarı önler.
         if (!tryAcquireSchedulerLock("uptime-sweep", sweepLockTtlMinutes)) {
-            log.debug("Uptime sweep — lock başka instance'da, atlanıyor");
+            logSkip("Uptime sweep — lock başka instance'da, atlanıyor");
             return;
         }
         try {
@@ -4872,7 +5180,7 @@ public class SchedulerService {
         if (!isSweepLeader()) return;   // tarama liderliği (2026-10-09): alarm hattını besleyen taramalar küme genelinde TEK pod'da
         // HA: tüm-tur dağıtık kilit — 2+ pod'da bir turu yalnız bir pod çalıştırır.
         if (!tryAcquireSchedulerLock("port-sweep", sweepLockTtlMinutes)) {
-            log.debug("Port sweep — lock başka instance'da, atlanıyor");
+            logSkip("Port sweep — lock başka instance'da, atlanıyor");
             return;
         }
         try {
@@ -5035,7 +5343,7 @@ public class SchedulerService {
         if (!isSweepLeader()) return;   // tarama liderliği (2026-10-09): alarm hattını besleyen taramalar küme genelinde TEK pod'da
         // HA: tüm-tur dağıtık kilit — 2+ pod'da bir turu yalnız bir pod çalıştırır.
         if (!tryAcquireSchedulerLock("keyword-sweep", sweepLockTtlMinutes)) {
-            log.debug("Keyword sweep — lock başka instance'da, atlanıyor");
+            logSkip("Keyword sweep — lock başka instance'da, atlanıyor");
             return;
         }
         try {
@@ -5150,7 +5458,7 @@ public class SchedulerService {
         if (!appSettings.getBoolean("site.monitor.http.alert-enabled", true)) return;   // izleme duraklatıldı → kontrol+alarm yok
         if (!isSweepLeader()) return;   // tarama liderliği (2026-10-09): alarm hattını besleyen taramalar küme genelinde TEK pod'da
         if (!tryAcquireSchedulerLock("http-sweep", sweepLockTtlMinutes)) {
-            log.debug("HTTP sweep — lock başka instance'da, atlanıyor");
+            logSkip("HTTP sweep — lock başka instance'da, atlanıyor");
             return;
         }
         try {
@@ -6006,7 +6314,7 @@ public class SchedulerService {
         if (!appSettings.getBoolean("site.monitor.page.alert-enabled", true)) return;
         if (!isSweepLeader()) return;   // tarama liderliği (2026-10-09): alarm hattını besleyen taramalar küme genelinde TEK pod'da
         if (!tryAcquireSchedulerLock("page-sweep", sweepLockTtlMinutes)) {
-            log.debug("Page sweep — lock başka instance'da, atlanıyor");
+            logSkip("Page sweep — lock başka instance'da, atlanıyor");
             return;
         }
         try { runPageChecksLocked(); }
@@ -6065,7 +6373,7 @@ public class SchedulerService {
         if (!isSweepLeader()) return;   // tarama liderliği (2026-10-09): alarm hattını besleyen taramalar küme genelinde TEK pod'da
         if (!roundMayBeDue("page-crawl", pageCrawlIntervalMs)) return;
         if (!tryAcquireSchedulerLock("page-crawl", sweepLockTtlMinutes)) {
-            log.debug("Page crawl — lock başka instance'da, atlanıyor");
+            logSkip("Page crawl — lock başka instance'da, atlanıyor");
             return;
         }
         try {
@@ -6506,7 +6814,7 @@ public class SchedulerService {
         if (!appSettings.getBoolean("site.monitor.pagespeed.alert-enabled", true)) return;
         if (!isSweepLeader()) return;   // tarama liderliği (2026-10-09): alarm hattını besleyen taramalar küme genelinde TEK pod'da
         if (!tryAcquireSchedulerLock("pagespeed-sweep", sweepLockTtlMinutes)) {
-            log.debug("Sayfa hızı sweep — lock başka instance'da, atlanıyor");
+            logSkip("Sayfa hızı sweep — lock başka instance'da, atlanıyor");
             return;
         }
         try { runPageSpeedChecksLocked(); }
@@ -6814,7 +7122,7 @@ public class SchedulerService {
             return;
         }
         if (!tryAcquireSchedulerLock("scripted-sweep", sweepLockTtlMinutes)) {
-            log.debug("Scripted sweep — lock başka instance'da, atlanıyor");
+            logSkip("Scripted sweep — lock başka instance'da, atlanıyor");
             return;
         }
         try { runScriptedChecksLocked(); }
@@ -7226,7 +7534,7 @@ public class SchedulerService {
         if (!isSweepLeader()) return;   // tarama liderliği (2026-10-09): alarm hattını besleyen taramalar küme genelinde TEK pod'da
         if (!roundMayBeDue("http-ssl-domain", httpSslDomainIntervalMs)) return;
         if (!tryAcquireSchedulerLock("http-ssl-domain-sweep", sweepLockTtlMinutes)) {
-            log.debug("HTTP SSL/Domain sweep — lock başka instance'da, atlanıyor");
+            logSkip("HTTP SSL/Domain sweep — lock başka instance'da, atlanıyor");
             return;
         }
         try {
@@ -7472,7 +7780,7 @@ public class SchedulerService {
         if (!isSweepLeader()) return;   // tarama liderliği (2026-10-09): alarm hattını besleyen taramalar küme genelinde TEK pod'da
         if (!roundMayBeDue("keyword-ssl-domain", keywordSslDomainIntervalMs)) return;
         if (!tryAcquireSchedulerLock("keyword-ssl-domain-sweep", sweepLockTtlMinutes)) {
-            log.debug("Keyword SSL/Domain sweep — lock başka instance'da, atlanıyor");
+            logSkip("Keyword SSL/Domain sweep — lock başka instance'da, atlanıyor");
             return;
         }
         try {
@@ -7613,7 +7921,7 @@ public class SchedulerService {
         if (!appSettings.getBoolean("site.monitor.domain.alert-enabled", true)) return;
         if (!isSweepLeader()) return;   // tarama liderliği (2026-10-09): alarm hattını besleyen taramalar küme genelinde TEK pod'da
         if (!tryAcquireSchedulerLock("domain-sweep", sweepLockTtlMinutes)) {
-            log.debug("Domain sweep — lock başka instance'da, atlanıyor");
+            logSkip("Domain sweep — lock başka instance'da, atlanıyor");
             return;
         }
         try {
@@ -7636,14 +7944,14 @@ public class SchedulerService {
         if (!appSettings.getBoolean("site.monitor.domain.critical-check-enabled", true)) return;   // ikinci kontrol ops kill-switch
         if (!isSweepLeader()) return;   // tarama liderliği (2026-10-09): alarm hattını besleyen taramalar küme genelinde TEK pod'da
         if (!tryAcquireSchedulerLock("domain-critical-sweep", sweepLockTtlMinutes)) {
-            log.debug("Kritik domain sweep — lock başka instance'da, atlanıyor");
+            logSkip("Kritik domain sweep — lock başka instance'da, atlanıyor");
             return;
         }
         try {
             // Küme tur kaydı (2026-10-09): az domainli hızlı tur kilidi saniyeler içinde bırakır; geç tetiklenen pod
             // aynı 16:00 turunu (RDAP/WHOIS sorguları + domain_checks satırları) yinelemesin.
             if (!cronRoundDue("domain-critical-sweep", CRON_CRITICAL_DOMAIN, ZONE_IST)) {
-                log.debug("Kritik domain sweep — bu tetiğin turu başka pod'da koştu, atlanıyor");
+                logSkip("Kritik domain sweep — bu tetiğin turu başka pod'da koştu, atlanıyor");
                 return;
             }
             runCriticalDomainChecksLocked();
@@ -7948,7 +8256,7 @@ public class SchedulerService {
         if (!isSweepLeader()) return;   // tarama liderliği (2026-10-09): alarm hattını besleyen taramalar küme genelinde TEK pod'da
         // HA: tüm-tur dağıtık kilit — 2+ pod'da bir turu (öksüz-alarm temizliği dahil) yalnız bir pod çalıştırır.
         if (!tryAcquireSchedulerLock("ping-sweep", sweepLockTtlMinutes)) {
-            log.debug("Ping sweep — lock başka instance'da, atlanıyor");
+            logSkip("Ping sweep — lock başka instance'da, atlanıyor");
             return;
         }
         try {
@@ -8052,7 +8360,7 @@ public class SchedulerService {
         if (!isSweepLeader()) return;   // tarama liderliği (2026-10-09): alarm hattını besleyen taramalar küme genelinde TEK pod'da
         // HA: tüm-tur dağıtık kilit — 2+ pod'da bir turu yalnız bir pod çalıştırır.
         if (!tryAcquireSchedulerLock("dns-sweep", sweepLockTtlMinutes)) {
-            log.debug("DNS sweep — lock başka instance'da, atlanıyor");
+            logSkip("DNS sweep — lock başka instance'da, atlanıyor");
             return;
         }
         try {
