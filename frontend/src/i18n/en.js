@@ -8984,6 +8984,8 @@ export const EN = {
   'hmp.esDropped': '{0} operations dropped at the limit',
   'hmp.esLastFlush': 'last write {0}',
   'hmp.esFailingNow': 'the last write did not go through — decisions are not affected, retrying',
+  'hmp.esFenced': 'this pod is the leader but another pod took the write generation — not writing; it takes over by itself once that holder has been silent for 3 minutes (decisions are not affected)',
+  'hmp.esHookFailures': '{0} hook failures (since start) — the mirror may be incomplete, decisions are not affected',
   'hmp.esTableMissing': 'tables not created yet — retrying quietly',
   'hmp.esInherited': 'inherited (generation {0}): {1} counters · {2} siblings · {3} suppressions · {4} chains',
   'hmp.sjTitle': 'Side jobs',

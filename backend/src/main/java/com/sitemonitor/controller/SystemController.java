@@ -87,7 +87,8 @@ public class SystemController {
         // Çok pod R3-1: kalıcı değerlendirme durumu (bu pod + küme doğrulaması) ve bu pod'un yan işleri — okuma hatası alanı
         // "bilinmiyor" yapar, yanıtı düşürmez
         if (evalStateSink != null || clusterHealthStore != null) {
-            try { data.put("eval_state", ClusterRuntimeHealth.evalState(evalStateSink, clusterHealthStore, System.currentTimeMillis(), evalVerifyMs)); }
+            try { data.put("eval_state", ClusterRuntimeHealth.evalState(evalStateSink, clusterHealthStore, System.currentTimeMillis(), evalVerifyMs,
+                    schedulerService.sweepLeaderHint())); }
             catch (RuntimeException e) { data.put("eval_state", Map.of("error", e.getClass().getSimpleName())); }
         }
         if (sideJobRunner != null) {

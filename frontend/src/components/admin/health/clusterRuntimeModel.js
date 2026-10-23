@@ -70,7 +70,10 @@ export function evalStateModel(health) {
     const failing = rec.active !== false && (rec.failing === true
       || (rec.failing == null && rec.last_failure_at != null && (rec.last_flush_at == null
         || Date.parse(toUtc(String(rec.last_failure_at))) > Date.parse(toUtc(String(rec.last_flush_at))))))
-    recorderLevel = mode === 'off' ? 'off' : rec.table_missing ? 'unknown' : failing ? 'warn' : mode ? 'ok' : 'unknown'
+    // Çitlenmiş lider (R3-1 inceleme durable #1): bu pod lider ama yazma kuşağını başka pod aldı → yazmıyor → uyarı
+    // (sunucu `fenced`'i yalnız bu pod liderken true verir).
+    const fenced = rec.fenced === true
+    recorderLevel = mode === 'off' ? 'off' : rec.table_missing ? 'unknown' : failing || fenced ? 'warn' : mode ? 'ok' : 'unknown'
   }
 
   const verify = verifyModel(es, mode, health?.timestamp)

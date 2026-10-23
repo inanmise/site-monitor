@@ -148,6 +148,27 @@ class ClusterRuntimeHealthTest {
     }
 
     @Test
+    @DisplayName("R3-1 entegrasyon: çit bayrağı yalnız bu pod LİDERKEN 'fenced' — liderliği kaybeden pod'un kalan bayrağı uyarı "
+            + "yapmaz; ipucu bilinmiyorsa (zamanlayıcı yok) bayrak olduğu gibi; kanca hataları sayısı geçer")
+    @SuppressWarnings("unchecked")
+    void fencedOnlyWhileLeader() {
+        EvalStateSink sink = mock(EvalStateSink.class);
+        when(sink.status()).thenReturn(new EvalStateSink.Status("verify", false, "sitemonitor-a-0000000a", null, 0, 0, 40, 0,
+                NOW - 600_000, null, null, false, null, null, true, 7L));
+        Map<String, Object> leader = (Map<String, Object>) ClusterRuntimeHealth.evalState(sink, null, NOW, 300_000, true).get("this_pod");
+        assertThat(leader).containsEntry("fenced", true).containsEntry("hook_failures", 7L);
+        Map<String, Object> follower = (Map<String, Object>) ClusterRuntimeHealth.evalState(sink, null, NOW, 300_000, false).get("this_pod");
+        assertThat(follower).containsEntry("fenced", false).containsEntry("hook_failures", 7L);
+        Map<String, Object> unknown = (Map<String, Object>) ClusterRuntimeHealth.evalState(sink, null, NOW, 300_000).get("this_pod");
+        assertThat(unknown).containsEntry("fenced", true);
+        // Çitlenmemiş pod liderken de false
+        when(sink.status()).thenReturn(new EvalStateSink.Status("verify", true, "sitemonitor-a-0000000a", 4L, 0, 0, 40, 0,
+                NOW - 1_000, null, null, false, null, null));
+        Map<String, Object> ok = (Map<String, Object>) ClusterRuntimeHealth.evalState(sink, null, NOW, 300_000, true).get("this_pod");
+        assertThat(ok).containsEntry("fenced", false).containsEntry("hook_failures", 0L);
+    }
+
+    @Test
     @DisplayName("R3-1 inceleme L4: koşucunun 'başka canlı pod' gözlemi yalnız lider kararından sonra ~1 dk dolu; son dolu değer ve zamanı "
             + "bellekte tutulur (other_live_pod_seen) — ekran sürekli 'bilinmiyor' demez; hiç görülmediyse alan yok")
     @SuppressWarnings("unchecked")

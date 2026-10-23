@@ -174,6 +174,17 @@ describe('SystemHealth — Küme kartı, çok pod R3-1 (kalıcı değerlendirme 
     expect(card().querySelector('[data-kind="leader"]')).toHaveAttribute('data-tone', 'success')
   })
 
+  // R3-1 entegrasyon: çitlenmiş lider → "yazmıyor, kendiliğinden devralır" uyarısı (yeniden deneniyor DEĞİL); kanca hataları satırı
+  it('çitlenmiş lider uyarısı ve kanca hatası sayısı', async () => {
+    await open({ ...BASE, eval_state: { this_pod: { ...REC, active: false, generation: null, fenced: true, hook_failures: 2 },
+      verify: VERIFY }, side_jobs: SIDE })
+    const rec = card().querySelector('[data-slot="cluster-eval-recorder"]')
+    expect(rec).toHaveAttribute('data-level', 'warn')
+    expect(rec.querySelector('[data-slot="es-fenced"]').textContent).toMatch(/another pod took the write generation|başka pod aldı/)
+    expect(rec.querySelector('[data-slot="es-failing"]')).toBeNull()
+    expect(rec.querySelector('[data-slot="es-hook-failures"]').textContent).toMatch(/2/)
+  })
+
   // R3-1 inceleme L4 (FX-OBS): "başka canlı pod" satırı takipçide sürekli "bilinmiyor" demez
   it('yan işler başka canlı pod: takipçide "yalnız tarama lideri bakar", lider önbelleği boşken son görülen gözlem', async () => {
     const first = await open({ ...BASE, eval_state: { this_pod: REC, verify: VERIFY }, side_jobs: { ...SIDE, other_live_pod: null } })

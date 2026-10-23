@@ -93,6 +93,18 @@ describe('evalStateModel — kalıcı değerlendirme durumu (R3-1)', () => {
 
   // R3-1 inceleme M2 (FX-OBS): DB kesintisinde liderliği kaybeden pod artık yazmıyor ve yeniden denemiyor — eski hatası kartı
   // günlerce uyarıya çekmemeli (sunucu `failing`'i yalnız yazarken verir; model ikinci emniyet)
+  // R3-1 entegrasyon (inceleme durable #1): lider ama yazma kuşağını başka pod almış (çitlenmiş) → uyarı; sunucu `fenced`'i yalnız
+  // bu pod liderken true gönderir; alan yoksa (eski sunucu) eski davranış
+  it('çitlenmiş lider → kaydedici uyarı; fenced false / yok → normal; kapalı kipte kapalı', () => {
+    const fenced = { ...REC, active: false, generation: null, fenced: true }
+    expect(evalStateModel(H({ this_pod: fenced, verify: VERIFY })).recorderLevel).toBe('warn')
+    expect(evalStateModel(H({ this_pod: fenced, verify: VERIFY })).level).toBe('warn')
+    expect(evalStateModel(H({ this_pod: { ...fenced, fenced: false }, verify: VERIFY })).recorderLevel).toBe('ok')
+    const { fenced: _f, ...noField } = fenced
+    expect(evalStateModel(H({ this_pod: noField, verify: VERIFY })).recorderLevel).toBe('ok')
+    expect(evalStateModel(H({ this_pod: { ...fenced, mode: 'off' } })).recorderLevel).toBe('off')
+  })
+
   it('eski lider (yazmıyor) + eski hata → uyarı değil; aynı geçmiş yazan liderde → uyarı', () => {
     const former = { ...REC, active: false, generation: null, write_failures: 3, last_failure_at: '2026-10-23T08:30:00',
       last_flush_at: '2026-10-23T08:20:00', last_failure: 'CannotGetJdbcConnectionException' }

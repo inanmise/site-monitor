@@ -53,13 +53,24 @@ final class ClusterRuntimeHealth {
      *                 {@value #VERIFY_STALE_ROUNDS} katı
      */
     static Map<String, Object> evalState(EvalStateSink sink, ClusterHealthStore store, long nowMs, long verifyMs) {
+        return evalState(sink, store, nowMs, verifyMs, null);
+    }
+
+    /**
+     * {@link #evalState(EvalStateSink, ClusterHealthStore, long, long)} + bu pod'un tarama lideri ipucu (veritabanısız;
+     * {@code SchedulerService.sweepLeaderHint()}). {@code fenced} yalnız bu pod liderken "yazmıyor" anlamı taşır: çit bayrağı
+     * liderlik bitince de kalır (yalnız GAINED / kuşak sahibi sessizleşince kalkar) — lider olmayan pod'da uyarı olmasın.
+     * {@code leaderHint == null} (zamanlayıcı yok — testler) → bayrak olduğu gibi.
+     */
+    static Map<String, Object> evalState(EvalStateSink sink, ClusterHealthStore store, long nowMs, long verifyMs,
+                                         Boolean leaderHint) {
         Map<String, Object> out = new LinkedHashMap<>();
         if (sink == null) {
             out.put("this_pod", null);
         } else {
             try {
                 EvalStateSink.Status s = sink.status();
-                out.put("this_pod", s == null ? null : recorder(s));
+                out.put("this_pod", s == null ? null : recorder(s, leaderHint));
             } catch (RuntimeException e) {
                 out.put("this_pod", null);
                 out.put("this_pod_error", e.getClass().getSimpleName());
@@ -94,6 +105,11 @@ final class ClusterRuntimeHealth {
 
     /** Bu pod'un kaydedici durumu → yanıt haritası. */
     static Map<String, Object> recorder(EvalStateSink.Status s) {
+        return recorder(s, null);
+    }
+
+    /** Bu pod'un kaydedici durumu → yanıt haritası; {@code leaderHint} için bkz. {@link #evalState}. */
+    static Map<String, Object> recorder(EvalStateSink.Status s, Boolean leaderHint) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("mode", s.mode());
         m.put("active", s.active());
@@ -108,6 +124,10 @@ final class ClusterRuntimeHealth {
         m.put("last_failure_at", iso(s.lastFailureMs()));
         m.put("last_failure", s.lastFailure());
         m.put("table_missing", s.tableMissing());
+        // Çitlenmiş lider (R3-1 inceleme durable #1): bu pod lider ama kuşağı başka pod aldı — yazmıyor, kuşak sahibi
+        // sessizleşince kendini onarır. Lider olmayan pod'un eski çit bayrağı gösterilmez.
+        m.put("fenced", s.fenced() && (leaderHint == null || leaderHint));
+        m.put("hook_failures", s.hookFailures());
         // Şu an yazamıyor mu: YAZAN kaydedicinin son hatası son başarılı boşaltmadan yeni (ya da hiç başarılı boşaltma yok).
         // Yazmayan (eski lider, çitlenmiş, kapalı) kaydedici yeniden denemez — eski hatası "şu an başarısız" sayılmaz (R3-1
         // inceleme M2: liderliği DB kesintisinde kaybeden pod günlerce uyarı gösteriyordu).

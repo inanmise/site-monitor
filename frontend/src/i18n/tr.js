@@ -8999,6 +8999,8 @@ export const TR = {
   'hmp.esDropped': '{0} işlem sınır yüzünden düştü',
   'hmp.esLastFlush': 'son yazım {0}',
   'hmp.esFailingNow': 'son yazım başarısız — kararlar etkilenmez, yeniden deneniyor',
+  'hmp.esFenced': 'bu pod lider ama yazma kuşağını başka pod aldı — yazmıyor; kuşak sahibi 3 dakika sessiz kalınca kendiliğinden devralır (kararlar etkilenmez)',
+  'hmp.esHookFailures': '{0} kanca hatası (açılıştan beri) — ayna eksik kalabilir, kararlar etkilenmez',
   'hmp.esTableMissing': 'tablolar henüz yok — sessizce yeniden deneniyor',
   'hmp.esInherited': 'devralınan (kuşak {0}): {1} sayaç · {2} kardeş · {3} bastırma · {4} zincir',
   'hmp.sjTitle': 'Yan işler',

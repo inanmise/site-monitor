@@ -133,7 +133,12 @@ export function EvalRecorderRows({ t, es }) {
                 {r.last_flush_at ? ` · ${t('hmp.esLastFlush', relTime(r.last_flush_at, t) || formatDate(r.last_flush_at))}` : ''}
               </span>
             )}
-            {warn && <span className={WARN_T} data-slot="es-failing">{t('hmp.esFailingNow')}</span>}
+            {warn && r.fenced === true && es.mode !== 'off'
+              && <span className={WARN_T} data-slot="es-fenced">{t('hmp.esFenced')}</span>}
+            {warn && r.fenced !== true && <span className={WARN_T} data-slot="es-failing">{t('hmp.esFailingNow')}</span>}
+            {Number(r.hook_failures) > 0 && es.mode !== 'off' && (
+              <span className="text-muted-foreground" data-slot="es-hook-failures">{t('hmp.esHookFailures', r.hook_failures)}</span>
+            )}
             {r.table_missing && <span className="text-muted-foreground" data-slot="es-table-missing">{t('hmp.esTableMissing')}</span>}
             {inh && (
               <span className="text-muted-foreground [overflow-wrap:anywhere]" data-slot="es-inherited">
