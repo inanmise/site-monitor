@@ -54,21 +54,26 @@ resources:
 
 # HPA OFF (2026-10-21, multi-pod release 1): the memory metric of a JVM never falls (heap is sized to the limit), so
 # the HPA pinned staging at maxReplicas; every scale-in could remove the sweep leader (handover + in-memory alarm
-# state reset), and extra pods take no monitoring work anyway (it all runs on the lease holder). The chart also
-# renders `replicas` next to an HPA, so each `helm upgrade` fought the HPA's count. Re-enable only after the
-# chart change of release 2 (CPU-only metric + behavior block).
+# state reset), and extra pods take no monitoring work anyway (it all runs on the lease holder). Release 2b fixed the
+# chart (no `replicas` next to an HPA, CPU-only metric by default, behavior block — values.yaml "autoscaling"), but the
+# HPA stays OFF: it still adds no monitoring throughput.
 autoscaling:
   enabled: false
   minReplicas: 2
   maxReplicas: 5
   targetCPUUtilizationPercentage: 70
-  targetMemoryUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: ""
 
+# minAvailable 1 of 2 replicas: one pod may be drained at a time (helm template fails for minAvailable ≥ replicaCount).
 podDisruptionBudget:
   enabled: true
   minAvailable: 1
 
+# pod-template-hash (2026-10-23, multi-pod release 2b): spread counts only the pods of the SAME ReplicaSet — without it
+# the old pods of a rollout skewed the placement and both new pods could end up on one node. Needs Kubernetes ≥ 1.27
+# and ≥ 2 schedulable nodes (DoNotSchedule); a single-node cluster: whenUnsatisfiable: ScheduleAnyway.
 topologySpreadConstraints:
   enabled: true
   maxSkew: 1
   topologyKey: kubernetes.io/hostname
+  matchLabelKeys: ["pod-template-hash"]

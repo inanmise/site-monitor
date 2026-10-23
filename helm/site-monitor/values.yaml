@@ -28,6 +28,10 @@ preStopSleepSeconds: 10
 nodeSelector: {}
 affinity: {}
 tolerations: []
+# Optional PriorityClass (2026-10-23, multi-pod release 2b): with a cluster PriorityClass above the default, a node
+# under pressure evicts lower-priority workloads before SiteMonitor (the sweep-leader pod runs ALL monitoring).
+# The class must exist in the cluster (`kubectl get priorityclass`). Empty = not rendered.
+priorityClassName: ""
 
 image:
   repository: ghcr.io/inanmise/site-monitor
@@ -121,8 +125,11 @@ config:
       # "<namespace>/<Instrumentation name>", just "<name>" (release namespace) or "true" (the only one there).
       instrumentation: "opentelemetry/opentelemetry-instrumentation"
       serviceName: ""
+      # Default since 2026-10-23 (multi-pod release 2b): OTEL_INSTRUMENTATION_SPRING_SCHEDULING_ENABLED=false —
+      # the agent would otherwise open one span per @Scheduled tick (54 jobs, several every 5-30 s, on EVERY pod;
+      # followers skip most of them) and flood the trace backend with empty "skipped" spans.
       # Extra container env for the agent; wins over the defaults above and over the Instrumentation
-      # resource. e.g. OTEL_LOGS_EXPORTER: "none", OTEL_INSTRUMENTATION_SPRING_SCHEDULING_ENABLED: "false".
+      # resource. e.g. OTEL_LOGS_EXPORTER: "none", OTEL_INSTRUMENTATION_SPRING_SCHEDULING_ENABLED: "true" (back on).
       extraEnv: {}
   # @Scheduled havuzu (33 zamanlanmış iş; 4'ü 30 sn'lik sweep, 4'ü 10 sn'lik ayar-cache refresh).
   # Sayfa bütünlüğü kontrolü tek başına 120 sn sürebildiği için dar havuz cron işlerini geciktirir.
@@ -137,6 +144,10 @@ config:
   # dbPoolMax = min(30, floor((max_connections − 25) / (replica + 1))). PgBouncer yalnız SESSION kipinde
   # (advisory lock + SET lock_timeout oturum ister; transaction kipi uyumsuz). Ayrıntı: docs/db-scaling.md.
   dbPoolMax: "25"
+  # Hikari minimum-idle (DB_POOL_MIN, 2026-10-23): connections each pod keeps open while idle; the pool still grows to
+  # dbPoolMax under load. 5 (the application default without Helm stays 10): during a rollout replica + 1 pods hold
+  # their idle connections at the same time. 0 … dbPoolMax (helm template fails when it is larger than dbPoolMax).
+  dbPoolMin: "5"
   # PostgreSQL JDBC socketTimeout (sn). pgjdbc varsayılanı sınırsız: sessizce düşen bir bağlantı (NAT/LB/yük devri)
   # kullanımdaki sorguyu ve iş parçacığını sonsuza dek tutar. Cömert (30 dk) — açılış CREATE INDEX'leri kesilmesin.
   # 0 = kapalı.
@@ -235,6 +246,18 @@ config:
   #     ...corporate root CA...
   #     -----END CERTIFICATE-----
 
+  # ── Extra environment (2026-10-23, multi-pod release 2b) ─────────────────
+  # NON-secret application keys the chart has no value for (any application.properties ${ENV_VAR}), rendered into
+  # the ConfigMap, e.g.
+  #   extraEnv:
+  #     TOMCAT_MAX_THREADS: "200"
+  #     SITE_MONITOR_TRACING_DEFER_TO_AGENT: "true"
+  # Names: [A-Za-z_][A-Za-z0-9_]*, values: plain scalars. helm template FAILS for a name the chart already sets
+  # (ConfigMap, Secret, container env) — change that value through its own key instead; secrets never go here
+  # (ConfigMaps are readable by everyone with namespace read access) — use secret.* / existingSecret. Agent env:
+  # config.otel.agent.extraEnv.
+  extraEnv: {}
+
 # Sensitive values — provide via --set or external secret manager
 # Do NOT commit real values here
 #
@@ -308,13 +331,29 @@ secret:
 # AKSİYON: node'un bu pod'a 4 CPU / 3Gi verebildiğini doğrula.
 # Senaryo İzleme (10. tür): her kontrolde kısa ömürlü k6 alt süreci JVM RSS'inin ÜSTÜNE bellek ekler
 # (havuz varsayılan 2 eşzamanlı × ~50-150Mi). Bu yük için memory limit 3Gi→3.5Gi, request 1.5→1.75Gi yükseltildi.
+# ephemeral-storage (2026-10-23, multi-pod release 2b): the root FS is read-only, so the pod's node disk use is the
+# /var/log and /tmp emptyDirs (storage.* below) + the container's stdout log. The request lets the scheduler place the
+# pod on a node with room; above the limit the kubelet EVICTS the pod (a runaway log or temp file never fills the
+# node). logback keeps ≤ ~1.25 GB in /var/log (archives 500 + 200 + 500 MB + current files). The namespace
+# ResourceQuota / LimitRange must admit these values (twice during a rollout). The environment files override only
+# cpu / memory; these keys come from here.
 resources:
   requests:
     memory: "1792Mi"
     cpu: "1500m"
+    ephemeral-storage: "1Gi"
   limits:
     memory: "3584Mi"
     cpu: "4000m"
+    ephemeral-storage: "4Gi"
+
+# Writable pod volumes (the root FS is read-only). sizeLimit: the kubelet evicts the pod when the volume grows past it.
+#   varLogSizeLimit — /var/log (logback files, ≤ ~1.25 GB by its own caps); empty = no limit.
+#   tmpSizeLimit    — /tmp (k6 scripts, upload / PDF buffers, JVM temp); empty = no limit (default — a too small
+#                     value would evict the pod in the middle of a k6 run).
+storage:
+  varLogSizeLimit: "2Gi"
+  tmpSizeLimit: ""
 
 # Kubernetes/OpenShift sağlık probe'ları — Spring Boot Actuator grupları:
 #   /health/readiness → readinessState (warmup boyunca uygulama REFUSING_TRAFFIC ile gate eder →
@@ -341,16 +380,45 @@ probes:
     timeoutSeconds: 5
     failureThreshold: 6         # cömert → geçici yavaşlık restart etmesin
 
+# HorizontalPodAutoscaler — OFF in every environment (multi-pod releases 1-2b): ALL monitoring runs on the
+# sweep-leader pod, so extra pods add HA and UI / API capacity but no monitoring throughput; a scale-in can remove
+# the leader at any moment (handover + in-memory alarm state reset). Scale the leader vertically (resources).
+# If it is ever turned on (2026-10-23 chart fixes):
+#   - the Deployment carries NO `replicas:` (the HPA owns the count; a `helm upgrade` no longer resets it). The FIRST
+#     upgrade that turns the HPA on removes the field, and Kubernetes falls back to 1 replica until the HPA's first sync
+#     (≈ 15 s) — do it outside business hours, with minReplicas ≥ 2;
+#   - each metric is rendered only when its target is set; the memory target is EMPTY by default: a JVM heap is sized
+#     to the limit and never shrinks, so a memory metric pins the HPA at maxReplicas;
+#   - behavior: scale down at most 1 pod per 5 min after a 10 min quiet window, scale up at most 1 pod per 2 min.
 autoscaling:
   enabled: false
   minReplicas: 1
   maxReplicas: 5
   targetCPUUtilizationPercentage: 70
-  targetMemoryUtilizationPercentage: 80
+  # empty = no memory metric (see above). A number (e.g. 80) adds it.
+  targetMemoryUtilizationPercentage: ""
+  # autoscaling/v2 HorizontalPodAutoscalerBehavior, rendered as given ({} = Kubernetes defaults).
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 600
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 300
+    scaleUp:
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 120
 
+# PodDisruptionBudget — set EXACTLY ONE of minAvailable / maxUnavailable (helm template fails with both or neither;
+# clear the default with `minAvailable: null` when you use maxUnavailable). helm template also fails when an integer
+# minAvailable ≥ replicaCount (HPA on: ≥ autoscaling.minReplicas), a "100%" minAvailable, or a maxUnavailable of 0 /
+# "0%": such a PDB never allows a voluntary eviction, so a node drain / cluster upgrade blocks forever.
 podDisruptionBudget:
   enabled: false
   minAvailable: 1
+  maxUnavailable: ""
 
 podAnnotations:
   prometheus.io/scrape: "true"
@@ -389,6 +457,14 @@ topologySpreadConstraints:
   topologyKey: kubernetes.io/hostname
   whenUnsatisfiable: DoNotSchedule
   matchLabelKeys: []
+  # Optional SECOND constraint across zones (2026-10-23, multi-pod release 2b) — independent of `enabled` above, same
+  # pod selector and matchLabelKeys. ScheduleAnyway (default) is a preference: it never keeps a rollout's surge pod
+  # Pending in a single-zone cluster. The topologyKey label must be on the nodes (`kubectl get nodes -L <key>`).
+  zone:
+    enabled: false
+    maxSkew: 1
+    topologyKey: topology.kubernetes.io/zone
+    whenUnsatisfiable: ScheduleAnyway
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PostgreSQL subchart (Bitnami) — disabled by default
