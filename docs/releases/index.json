@@ -1,9 +1,254 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-23T08:45:56Z",
+  "generatedAt": "2026-10-23T13:57:48Z",
   "repo": "inanmise/site-monitor",
-  "count": 786,
+  "count": 787,
   "releases": [
+    {
+      "version": "20.168.0",
+      "tag": "v20.168.0",
+      "releasedAt": "2026-10-23T13:57:41Z",
+      "commit": "f293f2cc8337ee293e565010aa42e9cf37ee3663",
+      "prevVersion": "20.167.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 9,
+        "fix": 16,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 6,
+        "other": 1
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "f293f2cc",
+          "subject": "Küme kartı doğrulama satırı dar sütunda kırpılmaz — kelime içinde de sarar (CI Linux 390 px, çok pod R3-1)"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "a196d130",
+          "subject": "çok pod Sürüm 3-1 inceleme düzeltmeleri RUNBOOK ve dağıtım listesinde — kuşak yalnız kira sahibine, çitlenme uyarısı, yeni bilinmeyen tur nedenleri, kip off kuşağı bırakır, yazım yükü tahmini; yan iş…"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "044058cc",
+          "subject": "çok pod Sürüm 3-1 inceleme düzeltmeleri CLAUDE.md'de — kiraya bağlı kuşak + kendini onarma, budanan gözlem satırı, sorgu zaman aşımı, doğrulama dönem bekçisi; yan işlerde uzun / kısa şerit, \"bitiş + …"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "14591da6",
+          "subject": "Küme kartında çitlenmiş lider uyarısı ve kanca hatası sayısı — yalnız bu pod liderken gösterilir (çok pod R3-1 inceleme durable #1 / F7)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "17316227",
+          "subject": "kalıcı değerlendirme durumu PostgreSQL testi — paylaşılan veritabanında uygulamanın kaydedicisi araya kuşak alırsa kilit zaman aşımı turu atlanır, kırmızı olmaz (çok pod R3-1 FX-STATE)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "6e846fd9",
+          "subject": "yan iş koşucusu uzun şerit varsayılanı 8 iş parçacığı — kodla aynı (çok pod R3-1 FX-SIDE)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "13066c9e",
+          "subject": "P1 çıkış denetimi her TLS hedefine doğrudan TLS el sıkışması da dener (çok pod Sürüm 3-1, FX-SIDE #4)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "4136db09",
+          "subject": "yan işler — tek pod kadansı, olay aksiyonu hatırlatmasına tetik başına küme turu, lider yalnız TAMAMLANMIŞ tura bırakır, TLS turu kapanışta durur (çok pod Sürüm 3-1, FX-SIDE #1 #2 #3 #4 #5)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "9872bcbb",
+          "subject": "yan iş koşucusu tek pod zamanlamasını korur — sabit gecikmeli işler \"bitiş + gecikme\", uzun iş şeridi en az 8 iş parçacığı, kısa cron denemelerine ayrı şerit (çok pod Sürüm 3-1, FX-SIDE #1)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "f69337e0",
+          "subject": "kirli yeniden başlatmada pod'un önceki süreci \"başka canlı pod\" sayılmaz (çok pod Sürüm 3-1, FX-SIDE #3)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "32cd4c56",
+          "subject": "kalıcı değerlendirme durumu — kuşak kiraya bağlı + kendini onarma, toplu düşüş kuşağı bırakır, devralınan yalnız önceki kuşak, doğrulama dönem bekçisi (çok pod R3-1 FX-STATE)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "66752d01",
+          "subject": "çok pod R3-1 — yeni doğrulama nedenlerinin (leadership_changed, nothing_compared) çevirisi FX-STATE'ten bağımsız kapıyla sınanır"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "f93d71b0",
+          "subject": "çok pod R3-1 — Küme kartı eski liderin eski yazma hatasını uyarı saymaz, yan işlerde \"yalnız lider bakar\" / son görülen gözlem; Grafana aktarıcı kartı yalnız pod ölçülerini yayan turu söyler"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "7995a9c8",
+          "subject": "çok pod R3-1 — ölçüm aktarıcısı kapanışta kurum gözlemi yazmaz, yayan takipçi giderken lider ≤ 10 sn'de yaymaya döner; Grafana tazelik şeridi yalnız kurum ölçülerini yayan pod'ları sayar"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "7df79671",
+          "subject": "çok pod Sürüm 3-1 — duman testi her devirden sonra kalıcı değerlendirme durumunu denetler (kayıt yazıyor, yeni kuşakta doğrulama 0 uyuşmazlık, resync / no_generation turları sınırlı beklenir, devralı…"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "2527f2c1",
+          "subject": "çok pod Sürüm 3-1 — PROD_DEPLOY_CHECKLIST: öncesi / sonrası kontroller (açılışta kurulan dört tablo, yazım yükü ve canlı kapatma, TLS profili çıkış eşitliği, kuşak satırı ve Küme kartı doğrulaması, k…"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "e179fd7b",
+          "subject": "çok pod Sürüm 3-1 — RUNBOOK \"Çok pod\": yan işler ve lider ertelemesi, kalıcı değerlendirme durumu (Küme kartı satırları, kip / lider ertelemesi kapatma, 3-2 geçiş ölçütü), TLS profili her pod'da ve P…"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "3b3565b4",
+          "subject": "çok pod Sürüm 3-1 — CLAUDE.md: yan işler tarama liderinden alındı (3e, TLS profili her pod'da), kalıcı değerlendirme durumu ikili yazımı + doğrulama (3a), Grafana revizyon 5 ve kurum ölçüsü yerleşimi…"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "f39ef365",
+          "subject": "Küme kartı doğrulama nedenleri resync / verifier_error / payload_too_large çevrildi, sunucu sabitleriyle eşleşme kapısı (çok pod R3-1)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "eb3002fd",
+          "subject": "kalıcı değerlendirme durumu — gerçek kaydediciyle (A1) uçtan uca testler: iki pod kuşak çiti, karar değişmezliği, H2 satırları, doğrulama (çok pod Sürüm 3-1 A2)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "31348cfc",
+          "subject": "çok pod Sürüm 3-1 A1 — kaydedici durumu B sözleşmesine kilitlendi; elle boşaltma kapanışta yazmaz"
+        },
+        {
+          "type": "chore",
+          "scope": null,
+          "breaking": false,
+          "sha": "9874e0e9",
+          "subject": "yan iş koşucusu ve lider erteleme süresi açılış ayarları application.properties'te belgelendi (çok pod R3-1)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "98adb70a",
+          "subject": "yan iş testleri — cronRoundTaken anlamı ve ertelenen denemenin ön denetimi ayrıca sınanır; Sistem Sağlığı durum sözleşmesi (sıralı, epoch ms, hiç fırlatmaz)"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "2ab3f3f3",
+          "subject": "kalıcı değerlendirme durumu doğrulayıcısı — bellek ↔ tablo karşılaştırması, eşitleme turu, eval-state-verify küme gözlemi (çok pod Sürüm 3-1 A2)"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "2f094e06",
+          "subject": "kalıcı değerlendirme durumu ikili yazım kancaları — MOS bellek mutasyonlarından sonra kaydediciye kuyruklama, doğrulama görüntüsü (çok pod Sürüm 3-1 A2)"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "8eedea55",
+          "subject": "Sistem Sağlığı Küme kartında kalıcı değerlendirme durumu ve yan işler (çok pod R3-1 · B)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "399dca82",
+          "subject": "çok pod Sürüm 3-1 A1 — kalıcı değerlendirme tabloları saklama kataloğunda (EXTERNAL, kaydedici kendi budar)"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "e6de7d0e",
+          "subject": "çok pod Sürüm 3-1 A1 — kalıcı değerlendirme durumu deposu ve kaydedici (ikili yazım, davranış değişmez)"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "8a3d58e2",
+          "subject": "çok pod Sürüm 3-1 yan işler (3e) — tarama lideri cron yan işlerini erteler, tur tabanlı ağır işleri canlı takipçiye bırakır; uzun işler pod başına yan iş koşucusunda"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "bb64ace1",
+          "subject": "kurum geneli ölçü aileleri tarama liderinden alındı, kalıcı değerlendirme durumu ölçümleri ve Grafana revizyon 5 (çok pod R3-1 · B)"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "9814f768",
+          "subject": "çok pod Sürüm 3-1 ayar varsayılanları (değerlendirme durumu kipi, lider yan iş erteleme)"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "b8bce405",
+          "subject": "çok pod Sürüm 3-1 ortak sözleşmeleri (P0) — liderlik ipucu, kalıcı değerlendirme durumu ve yan iş arabirimleri"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.167.0",
       "tag": "v20.167.0",
