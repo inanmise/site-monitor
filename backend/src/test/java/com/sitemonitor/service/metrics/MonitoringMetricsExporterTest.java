@@ -421,4 +421,212 @@ class MonitoringMetricsExporterTest {
         assertThat(exists(MonitoringMetricNames.ALERTS_OPEN_BY_LEVEL)).isFalse();
         assertThat(gauge(MonitoringMetricNames.EXPORTER_SOURCE, "source", "alerts")).isEqualTo(0);
     }
+
+    // ── Çok pod R3-1 (2026-10-23, paket B, plan 3e §3.6): kurum geneli ailelerin yerleşimi + değerlendirme durumu ölçümleri ──
+
+    static final String SELF = com.sitemonitor.service.SchedulerService.instanceId();
+
+    com.sitemonitor.service.health.ClusterHealthStore placement(boolean leader, java.util.Optional<com.sitemonitor.service.health.ClusterHealthStore.Observation> obs) {
+        com.sitemonitor.service.SchedulerService scheduler = mock(com.sitemonitor.service.SchedulerService.class);
+        when(scheduler.sweepLeaderHint()).thenReturn(leader);
+        com.sitemonitor.service.health.ClusterHealthStore store = mock(com.sitemonitor.service.health.ClusterHealthStore.class);
+        when(store.read(com.sitemonitor.service.health.ClusterHealthStore.OBS_METRICS_ORG)).thenReturn(obs);
+        when(store.publish(anyString(), anyString(), anyLong(), anyString(), anyString()))
+                .thenReturn(com.sitemonitor.service.health.ClusterHealthStore.Publish.WRITTEN);
+        exporter.setScheduler(scheduler);
+        exporter.setClusterHealth(store);
+        return store;
+    }
+
+    static java.util.Optional<com.sitemonitor.service.health.ClusterHealthStore.Observation> observation(String by, long observedMs) {
+        return java.util.Optional.of(new com.sitemonitor.service.health.ClusterHealthStore.Observation(by, observedMs, "{}", "x"));
+    }
+
+    @Test
+    @DisplayName("orgFamiliesPlacement: lider + başka pod'un TAZE gözlemi → yalnız POD aileleri (kurum kaynakları hiç okunmaz, "
+            + "KÜME aileleri ve kaynak satırları yok — yok ≠ 0); lider bayrağı / veritabanı / push devre kesicisi var; gözlem yazılmaz")
+    void orgFamiliesPlacement_leaderWithFreshOtherExporter_onlyPodFamilies() {
+        com.sitemonitor.service.health.ClusterHealthStore store =
+                placement(true, observation("sitemonitor-other-0000000b", NOW.toEpochMilli() - 30_000));
+        MonitoringMetricsExporter.Status s = exporter.refresh();
+
+        assertThat(s.orgFamilies()).isFalse();
+        assertThat(s.entities()).as("bu pod kurum ailesi saymadı — '0 izleme' değil, boş").isEmpty();
+        assertThat(gauge(MonitoringMetricNames.EXPORTER_ORG_FAMILIES)).isEqualTo(0);
+        for (MonitoringMetricNames.Def d : MonitoringMetricNames.ALL) {
+            if (d.scope() != MonitoringMetricNames.Scope.POD) {
+                assertThat(exists(d.name())).as("POD dışı aile yayılmamalı: " + d.name()).isFalse();
+            }
+        }
+        assertThat(gauge(MonitoringMetricNames.SWEEP_LEADER)).isEqualTo(1);
+        assertThat(gauge(MonitoringMetricNames.DATABASE_STATUS)).isEqualTo(0);
+        assertThat(gauge(MonitoringMetricNames.PUSH_CIRCUIT)).isEqualTo(0);
+        assertThat(gauge(MonitoringMetricNames.EXPORTER_ENABLED)).isEqualTo(1);
+        assertThat(gauge(MonitoringMetricNames.EXPORTER_LAST_REFRESH)).isEqualTo(NOW.getEpochSecond());
+        assertThat(gauge(MonitoringMetricNames.EXPORTER_SOURCE, "source", "cluster")).isEqualTo(1);
+        // Kurum kaynaklarının source_up satırları YOK (pano guard() başka pod'un okuyamadığını sahte 0 yapmasın); tavan da yok
+        for (String src : List.of("overview", "alerts", "certificates", "push", "notifications", "watchdog", "teams", "eval_inbox", "maintenance")) {
+            assertThat(exists(MonitoringMetricNames.EXPORTER_SOURCE, "source", src)).as("kaynak satırı: " + src).isFalse();
+        }
+        assertThat(exists(MonitoringMetricNames.EXPORTER_CAPPED)).isFalse();
+        // Kurum kaynakları hiç okunmaz (liderin yükü kalkar)
+        verifyNoInteractions(overview, alerts, inventory, certs, domains, storms, teams, jdbc, watchdog, maintenance);
+        verify(store, never()).publish(anyString(), anyString(), anyLong(), anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("orgFamiliesPlacement: gözlem eski (> 2,5 × aralık) / kendi gözlemi / yok (tek pod, 20.167.0 komşu) / okunamadı → lider de "
+            + "kurum ailelerini yayar; lider gözlem YAZMAZ")
+    void orgFamiliesPlacement_leaderFallsBackToExporting() {
+        long now = NOW.toEpochMilli();
+        java.util.List<java.util.Optional<com.sitemonitor.service.health.ClusterHealthStore.Observation>> cases = List.of(
+                observation("sitemonitor-other-0000000b", now - 151_000),     // eski: varsayılan 60 sn × 2,5 = 150 sn
+                observation(SELF, now - 10_000),                              // kendi (eski takipçi gözlemi)
+                java.util.Optional.empty());                                  // tek pod / 20.167.0 komşu
+        for (var obs : cases) {
+            com.sitemonitor.service.health.ClusterHealthStore store = placement(true, obs);
+            MonitoringMetricsExporter.Status s = exporter.refresh();
+            assertThat(s.orgFamilies()).as(String.valueOf(obs)).isTrue();
+            assertThat(gauge(MonitoringMetricNames.EXPORTER_ORG_FAMILIES)).isEqualTo(1);
+            assertThat(gauge(MonitoringMetricNames.MONITOR_STATE, "monitor_id", "2")).isEqualTo(2);
+            assertThat(gauge(MonitoringMetricNames.SWEEP_LEASE)).isEqualTo(60);
+            assertThat(s.entities()).containsEntry("monitors", 2);
+            verify(store, never()).publish(anyString(), anyString(), anyLong(), anyString(), anyString());
+        }
+        // gözlem okunamadı (tablo yok / DB) → yine yayar (veri boşluğu yerine çift yayın)
+        com.sitemonitor.service.health.ClusterHealthStore store = placement(true, java.util.Optional.empty());
+        when(store.read(com.sitemonitor.service.health.ClusterHealthStore.OBS_METRICS_ORG)).thenThrow(new RuntimeException("tablo yok"));
+        assertThat(exporter.refresh().orgFamilies()).isTrue();
+        assertThat(exists(MonitoringMetricNames.MONITOR_STATE)).isTrue();
+        // 150 sn sınırı kendi aralık ayarını izler: 300 sn aralık → 750 sn içindeki gözlem taze
+        placement(true, observation("sitemonitor-other-0000000b", now - 600_000));
+        when(settings.getInt(eq(MetricsExportSettings.KEY_REFRESH_SECONDS), anyInt())).thenReturn(300);
+        assertThat(exporter.refresh().orgFamilies()).isFalse();
+    }
+
+    @Test
+    @DisplayName("orgFamiliesPlacement: takipçi her zaman yayar ve tam turdan SONRA gözlem yazar (kendi kimliği, tur anı); bir kaynak "
+            + "okunamadıysa yazmaz (lider yaymayı sürdürsün); kapalı aktarıcı gözlem okumaz / yazmaz")
+    void orgFamiliesPlacement_followerPublishesAfterCompleteExport() {
+        com.sitemonitor.service.health.ClusterHealthStore store =
+                placement(false, observation("sitemonitor-other-0000000b", NOW.toEpochMilli()));
+        MonitoringMetricsExporter.Status s = exporter.refresh();
+        assertThat(s.orgFamilies()).isTrue();
+        assertThat(exists(MonitoringMetricNames.MONITOR_STATE)).isTrue();
+        verify(store, never()).read(anyString());
+        verify(store).publish(eq(com.sitemonitor.service.health.ClusterHealthStore.OBS_METRICS_ORG), eq(SELF),
+                eq(NOW.toEpochMilli()), contains("\"series\":"), eq("2026-10-18T08:00:00"));
+
+        clearInvocations(store);
+        when(certs.getAllLatest()).thenThrow(new RuntimeException("db"));
+        assertThat(exporter.refresh().orgFamilies()).isTrue();
+        verify(store, never()).publish(anyString(), anyString(), anyLong(), anyString(), anyString());
+
+        clearInvocations(store);
+        when(settings.getBoolean(eq(MetricsExportSettings.KEY_ENABLED), anyBoolean())).thenReturn(false);
+        exporter.refresh();
+        verifyNoInteractions(store);
+    }
+
+    @Test
+    @DisplayName("orgFamiliesPlacement: lider POD-only'ye geçince önceki turun kurum serileri silinir; gözlem eskiyince bir sonraki "
+            + "turda geri gelir (boşluk en çok 2,5 × aralık + 1 tur)")
+    void orgFamiliesPlacement_switchesBothWays() {
+        java.util.concurrent.atomic.AtomicReference<Instant> now = new java.util.concurrent.atomic.AtomicReference<>(NOW);
+        exporter.setClock(now::get);
+        placement(true, java.util.Optional.empty());
+        exporter.refresh();
+        assertThat(exists(MonitoringMetricNames.MONITOR_STATE)).isTrue();
+        placement(true, observation("sitemonitor-other-0000000b", NOW.toEpochMilli()));
+        exporter.refresh();
+        assertThat(exists(MonitoringMetricNames.MONITOR_STATE)).isFalse();
+        assertThat(exists(MonitoringMetricNames.ALERTS_OPEN_BY_LEVEL)).isFalse();
+        now.set(NOW.plusSeconds(151));
+        exporter.refresh();
+        assertThat(exists(MonitoringMetricNames.MONITOR_STATE)).as("takipçinin gözlemi eskidi → lider yeniden yayar").isTrue();
+        assertThat(gauge(MonitoringMetricNames.EXPORTER_ORG_FAMILIES)).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("liderlik ipucu / küme deposu yok (elle kurulum, eski davranış) → her şey yayılır, karar okunmaz")
+    void orgFamiliesPlacement_noSchedulerMeansExport() {
+        MonitoringMetricsExporter.Status s = exporter.refresh();
+        assertThat(s.orgFamilies()).isTrue();
+        assertThat(gauge(MonitoringMetricNames.EXPORTER_ORG_FAMILIES)).isEqualTo(1);
+        assertThat(exists(MonitoringMetricNames.MONITOR_STATE)).isTrue();
+    }
+
+    @SuppressWarnings("unchecked")
+    void attachEvalState(com.sitemonitor.service.evalstate.EvalStateSink sink) {
+        org.springframework.beans.factory.ObjectProvider<com.sitemonitor.service.evalstate.EvalStateSink> p =
+                mock(org.springframework.beans.factory.ObjectProvider.class);
+        when(p.getIfAvailable()).thenReturn(sink);
+        exporter.setEvalState(p);
+    }
+
+    static com.sitemonitor.service.evalstate.EvalStateSink.Status evalStatus(String mode, boolean active,
+                                                                              com.sitemonitor.service.evalstate.EvalVerifyReport v) {
+        return new com.sitemonitor.service.evalstate.EvalStateSink.Status(mode, active, "pod-a", active ? 3L : null, 7, 0, 120, 2,
+                NOW.toEpochMilli(), null, null, false, null, v);
+    }
+
+    @Test
+    @DisplayName("değerlendirme durumu (R3-1): kip / bekleyen / yazma hatası her pod; doğrulama yalnız YAZAN liderken; bilinmeyen tur "
+            + "uyuşmazlık yazmaz (sahte 0 yok); kaydedici yok / durumu null → seri yok; POD-only turda da yayılır")
+    void evalStateMeters() {
+        Map<String, com.sitemonitor.service.evalstate.EvalVerifyReport.KindResult> kinds = new LinkedHashMap<>();
+        kinds.put("recovery", new com.sitemonitor.service.evalstate.EvalVerifyReport.KindResult(40, 0, 1, null));
+        kinds.put("sibling", new com.sitemonitor.service.evalstate.EvalVerifyReport.KindResult(12, 2, 0, null));
+        kinds.put("window_seed", new com.sitemonitor.service.evalstate.EvalVerifyReport.KindResult(9, 1, 0, 0.12));
+        com.sitemonitor.service.evalstate.EvalVerifyReport ok = new com.sitemonitor.service.evalstate.EvalVerifyReport(
+                NOW.toEpochMilli() - 60_000, "pod-a", 3, "mismatch", null, kinds, List.of("sibling:abc"));
+        com.sitemonitor.service.evalstate.EvalStateSink sink = mock(com.sitemonitor.service.evalstate.EvalStateSink.class);
+        when(sink.status()).thenReturn(evalStatus("verify", true, ok));
+        attachEvalState(sink);
+
+        exporter.refresh();
+        assertThat(gauge(MonitoringMetricNames.EVAL_STATE_MODE)).isEqualTo(2);
+        assertThat(gauge(MonitoringMetricNames.EVAL_STATE_PENDING)).isEqualTo(7);
+        assertThat(gauge(MonitoringMetricNames.EVAL_STATE_WRITE_FAILURES)).isEqualTo(2);
+        assertThat(gauge(MonitoringMetricNames.EVAL_STATE_VERIFY_AT)).isEqualTo(NOW.getEpochSecond() - 60);
+        assertThat(gauge(MonitoringMetricNames.EVAL_STATE_VERIFY_MISMATCHES, "kind", "recovery")).isEqualTo(0);
+        assertThat(gauge(MonitoringMetricNames.EVAL_STATE_VERIFY_MISMATCHES, "kind", "sibling")).isEqualTo(2);
+        assertThat(gauge(MonitoringMetricNames.EVAL_STATE_VERIFY_MISMATCHES, "kind", "window_seed")).isEqualTo(1);
+        assertThat(exists(MonitoringMetricNames.EVAL_STATE_VERIFY_MISMATCHES, "kind", "confirmation")).as("raporda olmayan tür").isFalse();
+
+        // Bilinmeyen tur: zaman var, uyuşmazlık serisi YOK
+        when(sink.status()).thenReturn(evalStatus("verify", true,
+                com.sitemonitor.service.evalstate.EvalVerifyReport.unknown(NOW.toEpochMilli(), "pod-a", 3, "flush_lag")));
+        exporter.refresh();
+        assertThat(gauge(MonitoringMetricNames.EVAL_STATE_VERIFY_AT)).isEqualTo(NOW.getEpochSecond());
+        assertThat(exists(MonitoringMetricNames.EVAL_STATE_VERIFY_MISMATCHES)).isFalse();
+
+        // Eski lider (yazmıyor): bayat rapor yayılmaz; kip yine yayılır (yalnız yazma = 1)
+        when(sink.status()).thenReturn(evalStatus("write", false, ok));
+        exporter.refresh();
+        assertThat(gauge(MonitoringMetricNames.EVAL_STATE_MODE)).isEqualTo(1);
+        assertThat(exists(MonitoringMetricNames.EVAL_STATE_VERIFY_AT)).isFalse();
+        assertThat(exists(MonitoringMetricNames.EVAL_STATE_VERIFY_MISMATCHES)).isFalse();
+
+        // POD-only turda da (lider kurum ailelerini başkasına bıraktı)
+        when(sink.status()).thenReturn(evalStatus("off", true, null));
+        placement(true, observation("sitemonitor-other-0000000b", NOW.toEpochMilli()));
+        exporter.refresh();
+        assertThat(gauge(MonitoringMetricNames.EVAL_STATE_MODE)).isEqualTo(0);
+        assertThat(exists(MonitoringMetricNames.MONITOR_STATE)).isFalse();
+
+        // Kaydedici durumu yok (NOOP) / tanınmayan kip / okunamadı → seri yok, tur düşmez
+        when(sink.status()).thenReturn(null);
+        exporter.refresh();
+        assertThat(exists(MonitoringMetricNames.EVAL_STATE_MODE)).isFalse();
+        assertThat(exists(MonitoringMetricNames.EVAL_STATE_PENDING)).isFalse();
+        when(sink.status()).thenReturn(evalStatus("bogus", true, null));
+        exporter.refresh();
+        assertThat(exists(MonitoringMetricNames.EVAL_STATE_MODE)).isFalse();
+        assertThat(exists(MonitoringMetricNames.EVAL_STATE_PENDING)).isTrue();
+        when(sink.status()).thenThrow(new IllegalStateException("x"));
+        assertThat(exporter.refresh().enabled()).isTrue();
+        assertThat(exists(MonitoringMetricNames.EVAL_STATE_PENDING)).isFalse();
+        assertThat(MonitoringMetricsExporter.evalModeCode(null)).isNull();
+    }
 }

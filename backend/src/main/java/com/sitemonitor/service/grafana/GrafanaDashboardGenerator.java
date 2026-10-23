@@ -50,7 +50,7 @@ public final class GrafanaDashboardGenerator {
      * Pano içerik revizyonu — içerik (panel, sorgu, değişken) değişen HER sürümde artır ve
      * {@code src/test/resources/grafana/dashboard-content.sha256} dosyasını güncelle (kapı mesajı yeni satırı yazar).
      */
-    public static final int DASHBOARD_REVISION = 4;
+    public static final int DASHBOARD_REVISION = 5;
     /** "Kritik / yüksek alarm açıldı" anotasyonunun penceresi (sn) — açılış zamanı bu kadar yeni olan alarmlar. */
     static final int ALERT_OPENED_WINDOW_S = 900;
     /** Aktarıcı tazelik eşiği (sn) — sunucunun {@code max(180, 3 × refresh-seconds)} kuralının varsayılan değeri. */
@@ -1805,6 +1805,59 @@ public final class GrafanaDashboardGenerator {
                     t("{{instance}} push kira {{reason}}", "{{instance}} push lease {{reason}}"), false);
             events.timeseries("short", false, "line");
             add(events);
+
+            evalStateAndPlacement();
+        }
+
+        /**
+         * Çok pod Sürüm 3-1 (2026-10-23): kalıcı değerlendirme durumu (ikili yazım + doğrulama — kararlar her kipte bellekten)
+         * ve kurum geneli ölçülerin hangi pod'dan yayıldığı. Ölçümler POD kapsamlı ({@code instance} başına); doğrulama
+         * ölçümleri yalnız YAZAN liderde vardır ve bilinmeyen tur uyuşmazlık serisi yazmaz — panel "veri yok" der, asla 0 değil.
+         */
+        void evalStateAndPlacement() {
+            String passFail = String.join("|", com.sitemonitor.service.evalstate.EvalVerifyReport.PASS_FAIL_KINDS);
+            Panel mode = stat(t("Değerlendirme durumu kipi", "Evaluation state mode"), t("Kalıcı değerlendirme durumunun kipi (Ayarlar → Genel → İzleme Alarmları): kapalı, yalnız yazma ya da yazma + doğrulama. Alarm kararları her kipte bellekten verilir; tablolar yalnız aynadır.",
+                            "Mode of the durable evaluation state (Settings → General → Monitoring Alerts): off, write only, or write + verify. Alarm decisions always come from memory; the tables are only a mirror."),
+                    "max(" + metric(MonitoringMetricNames.EVAL_STATE_MODE, RT) + ")", "none", thresholds(GREY, null, BLUE, 1, GREEN, 2), "background", null).size(4, 4);
+            mode.mappings(List.of(valueMap(new Object[][]{{0, t("Kapalı", "Off"), GREY}, {1, t("Yalnız yazma", "Write only"), BLUE},
+                    {2, t("Yazma + doğrulama", "Write + verify"), GREEN}})));
+            add(mode);
+            add(stat(t("Doğrulama uyuşmazlığı", "Verify mismatches"), t("Bellek ile kalıcı tablolar arasındaki son doğrulama turunun uyuşmazlıkları (kurtarma, kardeş, bastırma, ilk tur, teyit). 0 olmalı. Veri yoksa tur bilinmiyor ya da doğrulama kapalı — 0 sayılmaz.",
+                            "Mismatches of the last memory vs durable table verify round (recovery, sibling, suppression, first round, confirmation). Should be 0. No data means the round was unknown or verification is off — not 0."),
+                    "sum(max by (kind) (" + metric(MonitoringMetricNames.EVAL_STATE_VERIFY_MISMATCHES, RT, "kind=~\"" + passFail + "\"") + "))", "short",
+                    thresholds(GREEN, null, RED, 1), "background", null).size(4, 4));
+            add(stat(t("Son doğrulama", "Last verify"), t("Tarama liderinin son doğrulama turundan bu yana geçen süre (5 dakikada bir koşar).",
+                            "Time since the sweep leader's last verify round (runs every 5 minutes)."),
+                    "time() - max(" + metric(MonitoringMetricNames.EVAL_STATE_VERIFY_AT, RT) + ")", "dtdurations",
+                    thresholds(GREEN, null, AMBER, 900, RED, 1800), "background", null).size(4, 4));
+            add(stat(t("Bekleyen durum yazımı", "Pending state writes"), t("Kaydedicinin veritabanına yazmayı beklediği (birleştirilmiş) değerler — en yüksek pod. Sürekli büyüyorsa yazıcı yetişemiyor ya da veritabanı yazılamıyor.",
+                            "Values (coalesced) the recorder still has to write to the database — highest pod. A steadily growing number means the writer falls behind or the database cannot be written."),
+                    "max(" + metric(MonitoringMetricNames.EVAL_STATE_PENDING, RT) + ")", "short", thresholds(GREEN, null, AMBER, 1000, RED, 10000), "value", null).size(4, 4));
+            add(stat(t("Durum yazma hatası (24 sa)", "State write failures (24 h)"), t("Son 24 saatte başarısız olan kalıcı durum boşaltmaları. Kararları etkilemez; sürekli artıyorsa veritabanına bakın.",
+                            "Durable state flushes that failed in the last 24 hours. Decisions are not affected; if it keeps rising, check the database."),
+                    "sum(increase(" + metric(MonitoringMetricNames.EVAL_STATE_WRITE_FAILURES, RT) + "[24h]))", "short", thresholds(GREEN, null, AMBER, 1, RED, 50), "background", null).size(4, 4));
+            add(stat(t("Kurum ölçülerini yayan pod", "Pods exporting org metrics"), t("Son turunda kurum geneli aileleri (izleme, alarm, sertifika…) yayan pod sayısı. Tarama lideri, başka bir pod yayıyorsa yalnız kendi pod ölçülerini yayar. 0 = bu panonun iş panelleri boş kalır.",
+                            "Pods that exported the organisation-wide families (monitors, alerts, certificates…) in their last refresh. The sweep leader exports only its own pod metrics while another pod exports them. 0 = the business panels of this dashboard stay empty."),
+                    "sum(" + metric(MonitoringMetricNames.EXPORTER_ORG_FAMILIES, RT) + ")", "short", thresholds(RED, null, GREEN, 1), "background", null).size(4, 4));
+
+            Panel kinds = new Panel("timeseries", t("Doğrulama uyuşmazlığı (tür)", "Verify mismatches (kind)"),
+                    t("Son doğrulama turunun tür başına uyuşmazlıkları. descriptor ve window_seed ÖLÇÜMDÜR (sonraki sürümün kararı için kanıt); diğerleri 0 olmalı.",
+                            "Mismatches per kind of the last verify round. descriptor and window_seed are MEASUREMENTS (evidence for the next release); the others should be 0."));
+            kinds.w = 12; kinds.h = 8;
+            kinds.target("max by (kind) (" + metric(MonitoringMetricNames.EVAL_STATE_VERIFY_MISMATCHES, RT) + ")", "{{kind}}", false);
+            kinds.timeseries("short", false, "line");
+            add(kinds);
+
+            Panel placement = new Panel("timeseries", t("Kurum ölçüleri ve durum kaydı (pod başına)", "Org metrics and state recorder (per pod)"),
+                    t("Hangi pod'un kurum geneli aileleri yaydığı (1 / 0) ve kaydedicinin bekleyen yazımları, pod başına. Liderlik değişince kısa bir süre iki pod birden yayabilir (boşluk yerine örtüşme).",
+                            "Which pod exported the organisation-wide families (1 / 0) and the recorder's pending writes, per pod. After a leadership change two pods may export for a short while (overlap instead of a gap)."));
+            placement.w = 12; placement.h = 8;
+            placement.target("max by (instance) (" + metric(MonitoringMetricNames.EXPORTER_ORG_FAMILIES, RT) + ")",
+                    t("{{instance}} kurum ölçüleri", "{{instance}} org metrics"), false);
+            placement.target("max by (instance) (" + metric(MonitoringMetricNames.EVAL_STATE_PENDING, RT) + ")",
+                    t("{{instance}} bekleyen yazım", "{{instance}} pending writes"), false);
+            placement.timeseries("short", false, "line");
+            add(placement);
         }
 
         // ── Çalışma zamanı ───────────────────────────────────────────────────────────────────────────────

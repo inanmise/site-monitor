@@ -733,6 +733,58 @@ class SystemControllerTest {
         }
     }
 
+    @Test
+    @DisplayName("R3-1: sağlık yanıtı bu pod'un değerlendirme durumu kaydedicisini, kümenin son doğrulama gözlemini (gözlemleyen pod ile) "
+            + "ve bu pod'un yan işlerini taşır; bean yoksa alan yok; okunamazsa alan 'bilinmiyor' — yanıt düşmez")
+    void healthCarriesEvalStateAndSideJobs() throws Exception {
+        mvc.perform(get("/api/admin/system").session(userSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.eval_state").doesNotExist())
+                .andExpect(jsonPath("$.data.side_jobs").doesNotExist());
+
+        com.sitemonitor.service.evalstate.EvalStateSink sink = org.mockito.Mockito.mock(com.sitemonitor.service.evalstate.EvalStateSink.class);
+        when(sink.status()).thenReturn(new com.sitemonitor.service.evalstate.EvalStateSink.Status("verify", true, "sitemonitor-a-0000000a",
+                3L, 2, 0, 10, 0, System.currentTimeMillis(), null, null, false, null, null));
+        com.sitemonitor.service.health.ClusterHealthStore store = org.mockito.Mockito.mock(com.sitemonitor.service.health.ClusterHealthStore.class);
+        when(store.read(com.sitemonitor.service.health.ClusterHealthStore.OBS_EVAL_STATE_VERIFY)).thenReturn(java.util.Optional.of(
+                new com.sitemonitor.service.health.ClusterHealthStore.Observation("sitemonitor-b-0000000b", System.currentTimeMillis(),
+                        "{\"at_ms\":1,\"pod\":\"sitemonitor-b-0000000b\",\"generation\":3,\"status\":\"ok\",\"kinds\":{\"recovery\":"
+                                + "{\"compared\":4,\"mismatches\":0,\"skipped\":0}},\"first_mismatches\":[]}", "x")));
+        com.sitemonitor.service.schedule.SideJobRunner runner = org.mockito.Mockito.mock(com.sitemonitor.service.schedule.SideJobRunner.class);
+        when(runner.status()).thenReturn(new com.sitemonitor.service.schedule.SideJobRunner.Status(3, true, true, false, true, List.of(
+                new com.sitemonitor.service.schedule.SideJobRunner.Status.Job("cert-hourly", "running", 1L, null, null, 1, 2, 0, 0))));
+        org.springframework.test.util.ReflectionTestUtils.setField(controller, "evalStateSink", sink);
+        org.springframework.test.util.ReflectionTestUtils.setField(controller, "clusterHealthStore", store);
+        org.springframework.test.util.ReflectionTestUtils.setField(controller, "sideJobRunner", runner);
+        try {
+            mvc.perform(get("/api/admin/system").session(userSession()))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.eval_state.this_pod.mode").value("verify"))
+                    .andExpect(jsonPath("$.data.eval_state.this_pod.writer_pod").value("sitemonitor-a"))
+                    .andExpect(jsonPath("$.data.eval_state.this_pod.generation").value(3))
+                    .andExpect(jsonPath("$.data.eval_state.verify.observed_by_pod").value("sitemonitor-b"))
+                    .andExpect(jsonPath("$.data.eval_state.verify.status").value("ok"))
+                    .andExpect(jsonPath("$.data.eval_state.verify.stale").value(false))
+                    .andExpect(jsonPath("$.data.eval_state.verify.kinds.recovery.compared").value(4))
+                    .andExpect(jsonPath("$.data.side_jobs.threads").value(3))
+                    .andExpect(jsonPath("$.data.side_jobs.other_live_pod").value(true))
+                    .andExpect(jsonPath("$.data.side_jobs.jobs[0].name").value("cert-hourly"))
+                    .andExpect(jsonPath("$.data.side_jobs.deferred_total").value(2));
+
+            when(store.read(com.sitemonitor.service.health.ClusterHealthStore.OBS_EVAL_STATE_VERIFY)).thenThrow(new IllegalStateException("db"));
+            when(runner.status()).thenThrow(new IllegalStateException("x"));
+            mvc.perform(get("/api/admin/system").session(userSession()))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.eval_state.verify_error").value("IllegalStateException"))
+                    .andExpect(jsonPath("$.data.eval_state.this_pod.mode").value("verify"))
+                    .andExpect(jsonPath("$.data.side_jobs.error").value("IllegalStateException"));
+        } finally {
+            org.springframework.test.util.ReflectionTestUtils.setField(controller, "evalStateSink", null);
+            org.springframework.test.util.ReflectionTestUtils.setField(controller, "clusterHealthStore", null);
+            org.springframework.test.util.ReflectionTestUtils.setField(controller, "sideJobRunner", null);
+        }
+    }
+
     // Regresyon: Sistem Sagligi sekmesi TUM rollere acik (Nav `show: true`) ve
     // `system_health.read` USER varsayilanlarinda VAR — kapi eklendi diye siradan
     // kullanicinin ekrani kirilmamali. Dordu de izin varken 200 donmeli.
