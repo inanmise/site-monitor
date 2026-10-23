@@ -37,7 +37,8 @@ Post-deploy checklist (smoke steps, 24h watch, rollback): docs/PROD_DEPLOY_CHECK
 {{- if or (gt (int .Values.replicaCount) 1) .Values.autoscaling.enabled }}
 
 More than one pod: exactly ONE pod must hold the sweep-leader lease (it runs all monitoring sweeps).
-    System Health -> Scheduler -> sweep_leader.owner, or Grafana sum(sitemonitor_sweep_leader) == 1;
+    System Health -> Scheduler & executors -> Cluster card: "Sweep leader" shows ONE pod name on every refresh
+    (cluster value; "Answering pod" is whichever pod served the page), or Grafana sum(sitemonitor_sweep_leader) == 1;
     System Health -> session_store must say jdbc. Runbook: docs/RUNBOOK.md "Çok pod".
 {{- end }}
 

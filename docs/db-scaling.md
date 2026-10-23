@@ -128,7 +128,9 @@ kurucusu `pg_try_advisory_lock` (oturum kilidi) alır, `SchemaDdlGuard` aynı ba
 
 Pod başına sabit yük (N ile çarpılır, küçük): ayar / LDAP / SMTP / izin önbelleklerinin 10 sn'lik tazelemesi, dakikalık
 kalp atışı / sistem metriği / HTTP metriği / şema kayıt satırları, takipçinin 5 sn'lik kira kontrolü, Spring Session
-temizliği, iş ölçümü aktarıcısının dakikalık özeti (belirteç varsa) ve Hikari `minimum-idle` (10) bağlantı.
+temizliği, iş ölçümü aktarıcısının dakikalık özeti (belirteç varsa), önbellek yolunun 2 sn'lik yoklaması (çok pod Sürüm 2a;
+tek satırlık tablo) ve Hikari `minimum-idle` bağlantısı (Helm `config.dbPoolMin` → `DB_POOL_MIN`, varsayılan 5; Helm dışı
+çalıştırmada uygulama varsayılanı 10).
 
 ## 4. Teşhis & migration script'leri (`scripts/`)
 
