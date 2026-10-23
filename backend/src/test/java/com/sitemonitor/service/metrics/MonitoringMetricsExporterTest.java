@@ -372,6 +372,46 @@ class MonitoringMetricsExporterTest {
     }
 
     @Test
+    @DisplayName("çok pod ölçümleri (R2b): kaybedilen kilit, liderlik geçişleri, push kira hataları, saat farkı (pod) + gelen kutusu "
+            + "(küme); gelen kutusu okunamazsa seri düşer (sahte 0 yok), saat farkı ölçülmediyse seri yok")
+    void multiPodRuntimeMeters() {
+        com.sitemonitor.service.schedule.ClusterLockService lock = mock(com.sitemonitor.service.schedule.ClusterLockService.class);
+        when(lock.lostCount()).thenReturn(2L);
+        SweepLeadershipCounter leadership = new SweepLeadershipCounter();
+        leadership.onLeadershipChanged(new com.sitemonitor.service.schedule.SweepLeadershipChangedEvent(true, "pod-a", 1L, "GAINED"));
+        leadership.onLeadershipChanged(new com.sitemonitor.service.schedule.SweepLeadershipChangedEvent(false, "pod-a", 2L, "LOST"));
+        leadership.onLeadershipChanged(new com.sitemonitor.service.schedule.SweepLeadershipChangedEvent(true, "pod-a", 3L, "GAINED"));
+        com.sitemonitor.service.monitoring.ManualEvalInbox inbox = mock(com.sitemonitor.service.monitoring.ManualEvalInbox.class);
+        when(inbox.depth()).thenReturn(3L);
+        SystemMetricSampler sampler = mock(SystemMetricSampler.class);
+        when(sampler.lastClockSkewMs()).thenReturn(-1_500L);
+        when(push.leaseRenewFailures()).thenReturn(new LinkedHashMap<>(Map.of("error", 1L, "lost", 0L)));
+        exporter.setLockService(lock);
+        exporter.setLeadership(leadership);
+        exporter.setInbox(inbox);
+        exporter.setSampler(sampler);
+
+        exporter.refresh();
+        assertThat(gauge(MonitoringMetricNames.CLUSTER_LOCK_LOST)).isEqualTo(2);
+        assertThat(gauge(MonitoringMetricNames.SWEEP_LEADER_TRANSITIONS, "reason", "GAINED")).isEqualTo(2);
+        assertThat(gauge(MonitoringMetricNames.SWEEP_LEADER_TRANSITIONS, "reason", "LOST")).isEqualTo(1);
+        assertThat(gauge(MonitoringMetricNames.SWEEP_LEADER_TRANSITIONS, "reason", "RELEASED")).as("sabit etiket kümesi").isEqualTo(0);
+        assertThat(gauge(MonitoringMetricNames.PUSH_LEASE_RENEW_FAILED, "reason", "error")).isEqualTo(1);
+        assertThat(gauge(MonitoringMetricNames.PUSH_LEASE_RENEW_FAILED, "reason", "lost")).isEqualTo(0);
+        assertThat(gauge(MonitoringMetricNames.CLOCK_SKEW)).isEqualTo(-1.5);
+        assertThat(gauge(MonitoringMetricNames.EVAL_INBOX_DEPTH)).isEqualTo(3);
+        assertThat(gauge(MonitoringMetricNames.EXPORTER_SOURCE, "source", "eval_inbox")).isEqualTo(1);
+
+        when(inbox.depth()).thenThrow(new RuntimeException("tablo yok"));
+        when(sampler.lastClockSkewMs()).thenReturn(null);
+        exporter.refresh();
+        assertThat(exists(MonitoringMetricNames.EVAL_INBOX_DEPTH)).as("okunamadı — sahte 0 değil").isFalse();
+        assertThat(gauge(MonitoringMetricNames.EXPORTER_SOURCE, "source", "eval_inbox")).isEqualTo(0);
+        assertThat(exists(MonitoringMetricNames.CLOCK_SKEW)).as("ölçülmedi — seri yok").isFalse();
+        assertThat(gauge(MonitoringMetricNames.CLUSTER_LOCK_LOST)).isEqualTo(2);
+    }
+
+    @Test
     @DisplayName("açık alarm okuma tavanı aşılırsa alarm aileleri dürüstçe düşer")
     void openAlertCap() {
         List<Object[]> many = new ArrayList<>();
