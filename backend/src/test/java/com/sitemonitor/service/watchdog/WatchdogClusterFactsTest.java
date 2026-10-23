@@ -123,6 +123,23 @@ class WatchdogClusterFactsTest {
                 .containsExactlyInAnyOrder("pod-a", "pod-b", "pod-e", "pod-f (6666)", "pod-f (7777)");
     }
 
+    @Test
+    @DisplayName("aynı JVM'de bağlam yeniden açıldı (örnek kimliği aynı): aynı dakikada ÖNCE kapanış işareti SONRA ölçüm → pod canlı "
+            + "(son yazılan satır karar verir); ölçüm sonra işaret → durdu. postgres-it'nin iki açılışı tam bunu yapar")
+    void contextRestartInSameJvmStaysLive() {
+        sample("pod-x-1111", "pod-x", 0, 0L, 0, 3, 30);
+        marker("pod-a-2222", "pod-a", 0, 41_000L);                  // ilk bağlam kapandı (aynı JVM saati — aynı dakika)
+        sample("pod-a-2222", "pod-a", 0, 41_000L, 0, 3, 30);        // aynı JVM, ikinci bağlam aynı dakikada ölçtü
+        List<WatchdogProbes.PodSample> live = probes().livePods(NOW);
+        assertThat(live).extracting(WatchdogProbes.PodSample::pod).containsExactlyInAnyOrder("pod-x", "pod-a");
+        WatchdogProbes.Probe clock = probes().clockSkew(NOW);
+        assertThat(clock.severity()).as("iki canlı pod arasında 41 sn yayılım").isEqualTo("HIGH");
+        assertThat(clock.facts()).containsEntry("max_pod", "pod-a").containsEntry("spread_ms", 41_000L);
+
+        marker("pod-a-2222", "pod-a", 0, 41_000L);                  // ikinci bağlam da kapandı — son satır işaret
+        assertThat(probes().livePods(NOW)).extracting(WatchdogProbes.PodSample::pod).containsExactly("pod-x");
+    }
+
     // ── Saat uyumu (MP-37c) ──────────────────────────────────────────────────────────────────
 
     @Test

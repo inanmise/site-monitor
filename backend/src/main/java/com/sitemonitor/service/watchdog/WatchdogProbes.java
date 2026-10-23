@@ -69,13 +69,13 @@ public class WatchdogProbes {
      * {@code idx_sms_instance_sampled}).
      */
     static final String SQL_POD_SAMPLES = "SELECT s.instance_id, s.pod_name, s.sampled_at, s.shutdown_marker, s.db_pending, "
-            + "s.db_active, s.db_max, s.clock_skew_ms, s.schema_failed_patches FROM system_metric_samples s "
+            + "s.db_active, s.db_max, s.clock_skew_ms, s.schema_failed_patches, s.id FROM system_metric_samples s "
             + "JOIN (SELECT instance_id, MAX(sampled_at) AS m "
             + "FROM system_metric_samples WHERE sampled_at >= ? GROUP BY instance_id) x "
             + "ON x.instance_id = s.instance_id AND x.m = s.sampled_at";
     /** R2b kolonları ({@code clock_skew_ms}, {@code schema_failed_patches}) henüz yokken — fark ve yama sonucu "bilinmiyor". */
     static final String SQL_POD_SAMPLES_NO_SKEW = "SELECT s.instance_id, s.pod_name, s.sampled_at, s.shutdown_marker, s.db_pending, "
-            + "s.db_active, s.db_max FROM system_metric_samples s JOIN (SELECT instance_id, MAX(sampled_at) AS m "
+            + "s.db_active, s.db_max, s.id FROM system_metric_samples s JOIN (SELECT instance_id, MAX(sampled_at) AS m "
             + "FROM system_metric_samples WHERE sampled_at >= ? GROUP BY instance_id) x "
             + "ON x.instance_id = s.instance_id AND x.m = s.sampled_at";
     /**
@@ -415,20 +415,31 @@ public class WatchdogProbes {
         try {
             rows = jdbc.query(SQL_POD_SAMPLES, (rs, i) -> new Object[]{rs.getString(1), rs.getString(2), rs.getString(3),
                     rs.getObject(4), intOrNull(rs.getObject(5)), intOrNull(rs.getObject(6)), intOrNull(rs.getObject(7)),
-                    longOrNull(rs.getObject(8)), intOrNull(rs.getObject(9))}, since);
+                    longOrNull(rs.getObject(8)), intOrNull(rs.getObject(9)), longOrNull(rs.getObject(10))}, since);
         } catch (Exception e) {
             // R2b kolonları yok (eski şema / yama henüz koşmadı) — kolonsuz okuma, fark ve yama sonucu "bilinmiyor"
             rows = jdbc.query(SQL_POD_SAMPLES_NO_SKEW, (rs, i) -> new Object[]{rs.getString(1), rs.getString(2), rs.getString(3),
-                    rs.getObject(4), intOrNull(rs.getObject(5)), intOrNull(rs.getObject(6)), intOrNull(rs.getObject(7)), null, null},
-                    since);
+                    rs.getObject(4), intOrNull(rs.getObject(5)), intOrNull(rs.getObject(6)), intOrNull(rs.getObject(7)), null, null,
+                    longOrNull(rs.getObject(8))}, since);
         }
+        // En yeni dakikada SON YAZILAN satır karar verir (satır kimliği yazım sırasıdır): kapanış işareti → durdu, ölçüm → canlı.
+        // Aynı dakikada önce işaret sonra ölçüm = aynı JVM'de bağlam yeniden açıldı (örnek kimliği JVM başınadır — DevTools,
+        // postgres-it'nin iki açılışı): pod canlıdır. Eskiden dakikadaki HERHANGİ bir işaret pod'u durmuş sayıyordu.
+        Map<String, Object[]> lastWritten = new LinkedHashMap<>();
         Map<String, Object[]> newest = new LinkedHashMap<>();
-        Map<String, Boolean> stopped = new HashMap<>();
         for (Object[] r : rows) {
             String inst = (String) r[0];
             if (inst == null) continue;
-            if (truthy(r[3])) { stopped.put(inst, true); continue; }   // en yeni dakikada kapanış işareti → durdu
-            newest.putIfAbsent(inst, r);
+            Object[] prevLast = lastWritten.get(inst);
+            if (prevLast == null || idOf(r) > idOf(prevLast)) lastWritten.put(inst, r);
+            if (!truthy(r[3])) {
+                Object[] prevSample = newest.get(inst);
+                if (prevSample == null || idOf(r) > idOf(prevSample)) newest.put(inst, r);
+            }
+        }
+        Map<String, Boolean> stopped = new HashMap<>();
+        for (Map.Entry<String, Object[]> e : lastWritten.entrySet()) {
+            if (truthy(e.getValue()[3])) stopped.put(e.getKey(), true);
         }
         String self = SchedulerService.instanceId();
         Object[] own = newest.get(self);
@@ -456,6 +467,11 @@ public class WatchdogProbes {
         }
         out.sort(Comparator.comparing(PodSample::pod));
         return out;
+    }
+
+    /** Satır kimliği (yazım sırası); bilinmiyorsa en küçük. */
+    private static long idOf(Object[] r) {
+        return r.length > 9 && r[9] instanceof Long l ? l : Long.MIN_VALUE;
     }
 
     private static String displayName(Object[] r) {
