@@ -12,6 +12,7 @@ import com.sitemonitor.repository.CertificateInventoryRepository;
 import com.sitemonitor.repository.LatestCheckRepository;
 import com.sitemonitor.repository.PortMonitorRepository;
 import com.sitemonitor.service.health.ClusterHealthSchemaPatch;
+import com.sitemonitor.service.health.ClusterHealthStore;
 import com.sitemonitor.service.retention.RetentionService;
 import com.sitemonitor.service.schedule.ClusterLockService;
 import org.junit.jupiter.api.AfterEach;
@@ -414,6 +415,41 @@ class SystemHealthClusterMultiPodTest {
         long trace = app.list.stream().filter(e -> e.getLevel() == Level.TRACE).count();
         assertThat(debug).isEqualTo(3);
         assertThat(trace).isEqualTo(2);
+    }
+
+    // ── İnceleme H7 / H8 ─────────────────────────────────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("H7: küme durumu yazımı patlasa da (istisna ya da Error) bayrak ve cert-check kilidi HER ZAMAN bırakılır")
+    void scanRunWriteFailure_neverSkipsRelease() {
+        inventory("a.example.com");
+        instantValidChecks();
+        Pod a = pod(1);
+        ClusterHealthStore broken = mock(ClusterHealthStore.class);
+        when(broken.recordScanRun(any(), any(), any(), any(), any(), any(), any(), any(), any()))
+                .thenThrow(new IllegalStateException("store patladı"));
+        ReflectionTestUtils.setField(a.scheduler(), "clusterHealthStore", broken);
+
+        a.scheduler().runCheck();   // HATA ÖNCESİ: istisna finally'den kaçar, running=true kalır, kilit bırakılmazdı
+        assertThat(a.scheduler().isRunning()).isFalse();
+        assertThat(mp.schedulerLockHolder("cert-check")).isNull();
+
+        doThrow(new AssertionError("Error türü")).when(broken).recordScanRun(any(), any(), any(), any(), any(), any(), any(), any(), any());
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> a.scheduler().runCheck()).isInstanceOf(AssertionError.class);
+        assertThat(a.scheduler().isRunning()).isFalse();
+        assertThat(mp.schedulerLockHolder("cert-check")).as("Error'da da kilit bırakıldı").isNull();
+    }
+
+    @Test
+    @DisplayName("H8: haftalık erişilebilirlik 'çalışıyor' = canlı kilit satırı; ölmüş pod'un süresi dolmuş satırı çalışıyor sayılmaz")
+    void weeklyAvailabilityRunningNeedsLiveLock() {
+        when(mp.mock(WeeklyAvailabilityReportService.class).schedulerHealth()).thenReturn(Map.of("enabled", true));
+        Pod a = pod(1);
+        mp.jdbc().update("INSERT INTO scheduler_lock(name, locked_by, locked_until) VALUES (?, ?, ?)",
+                "weekly-availability", "pod9-000000ab", isoAt(mp.now() - 10 * MIN));
+        assertThat(sub(a.scheduler().getSystemHealth(), "weekly_availability")).containsEntry("running", false);
+        mp.jdbc().update("UPDATE scheduler_lock SET locked_until = ? WHERE name = 'weekly-availability'", isoAt(mp.now() + 2 * MIN));
+        assertThat(sub(a.scheduler().getSystemHealth(), "weekly_availability")).containsEntry("running", true);
     }
 
     @Test

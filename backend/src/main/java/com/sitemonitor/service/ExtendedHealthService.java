@@ -231,16 +231,33 @@ public class ExtendedHealthService {
      */
     @jakarta.annotation.PreDestroy
     public void recordShutdownMarker() {
+        // Yok etme anı DB yazımı (inceleme D2): ortak kapanış bütçesiyle sınırlı (ShutdownDeadline) — veritabanı erişilemezse
+        // bağlantı zaman aşımı (10 sn) kapanışı geciktirmez; ayrı (daemon) iş parçacığında yazılır, süre dolarsa bırakılır.
+        Runnable write = () -> {
+            try {
+                SystemHeartbeat hb = new SystemHeartbeat();
+                hb.setRecordedAt(LocalDateTime.now(ZoneOffset.UTC));
+                hb.setInstanceId(instanceId());
+                hb.setShutdownMarker(Boolean.TRUE);
+                heartbeatRepo.save(hb);
+            } catch (Exception e) {
+                log.debug("Heartbeat kapanış işareti yazılamadı: {}", e.toString());
+            }
+        };
+        long waitMs = com.sitemonitor.config.ShutdownDeadline.waitMs(SHUTDOWN_MARKER_CAP_MS);
+        Thread t = new Thread(write, "heartbeat-shutdown-marker");
+        t.setDaemon(true);
+        t.start();
+        if (waitMs <= 0) return;   // ortak süre bitti — bekleme yok (join(0) sonsuza dek beklerdi)
         try {
-            SystemHeartbeat hb = new SystemHeartbeat();
-            hb.setRecordedAt(LocalDateTime.now(ZoneOffset.UTC));
-            hb.setInstanceId(instanceId());
-            hb.setShutdownMarker(Boolean.TRUE);
-            heartbeatRepo.save(hb);
-        } catch (Exception e) {
-            log.debug("Heartbeat kapanış işareti yazılamadı: {}", e.toString());
+            t.join(waitMs);
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
         }
     }
+
+    /** Kapanış işareti yazımının kendi tavanı (ms) — ortak kapanış bütçesinden fazla beklemez. */
+    static final long SHUTDOWN_MARKER_CAP_MS = 2_000L;
 
     /**
      * Heartbeat durumu — <b>küme geneli</b> (2026-10-23, çok pod R2b, MP-35): son sinyal ve alarm HERHANGİ bir pod'un son
@@ -339,6 +356,7 @@ public class ExtendedHealthService {
             if ("silent".equals(m.get("state")) && livePods.contains(pod)) m.put("state", "restarted");
             if (sameName.get(pod) > 1) m.put("name", pod + " · " + suffixOf(String.valueOf(m.get("id"))));
         }
+        markReplaced(all);
         all.sort(java.util.Comparator
                 .<Map<String, Object>>comparingInt(m -> podRank(m.get("state")))
                 .thenComparing(m -> String.valueOf(m.get("first_seen")), java.util.Comparator.reverseOrder())
@@ -346,10 +364,44 @@ public class ExtendedHealthService {
         return all;
     }
 
+    /**
+     * Yerine yenisi gelen sessiz pod (inceleme D1): Deployment ölen / tahliye edilen pod'u YENİ adla değiştirir — eski süreç
+     * 24 saat "sessiz" (uyarı) kalıyordu. Sessiz pod, susmasından SONRA ilk kez görünen ve adı o ana dek HİÇ görülmemiş bir
+     * canlı pod'la eşlenirse {@code replaced} (nötr) olur; her yeni pod en çok bir sessiz pod'u karşılar. Takılı ama hâlâ
+     * çalışan pod'un yerine yeni pod gelmez → "sessiz" (uyarı) kalır; aynı adla yeniden başlayan konteyner zaten "yeniden
+     * başladı". Zamanlar aynı biçimli UTC metni — sözlük sırası zaman sırasıdır.
+     */
+    static void markReplaced(List<Map<String, Object>> pods) {
+        List<Map<String, Object>> silent = new ArrayList<>();
+        List<Map<String, Object>> live = new ArrayList<>();
+        for (Map<String, Object> p : pods) {
+            if ("silent".equals(p.get("state"))) silent.add(p);
+            else if ("live".equals(p.get("state"))) live.add(p);
+        }
+        if (silent.isEmpty() || live.isEmpty()) return;
+        silent.sort(java.util.Comparator.comparing(p -> String.valueOf(p.get("last_seen"))));
+        java.util.Set<Map<String, Object>> used = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        for (Map<String, Object> s : silent) {
+            String wentSilent = String.valueOf(s.get("last_seen"));
+            for (Map<String, Object> l : live) {
+                if (used.contains(l)) continue;
+                String name = String.valueOf(l.get("pod"));
+                if (String.valueOf(l.get("first_seen")).compareTo(wentSilent) <= 0) continue;   // susmadan önce de vardı
+                boolean nameSeenBefore = pods.stream().anyMatch(o -> name.equals(String.valueOf(o.get("pod")))
+                        && String.valueOf(o.get("first_seen")).compareTo(wentSilent) <= 0);
+                if (nameSeenBefore) continue;                                                     // eski pod'un yeniden başlaması
+                used.add(l);
+                s.put("state", "replaced");
+                s.put("replaced_by", l.get("name"));
+                break;
+            }
+        }
+    }
+
     private static int podRank(Object state) {
         if ("live".equals(state)) return 0;
         if ("silent".equals(state)) return 1;
-        if ("restarted".equals(state)) return 2;
+        if ("restarted".equals(state) || "replaced".equals(state)) return 2;
         return 3;
     }
 
