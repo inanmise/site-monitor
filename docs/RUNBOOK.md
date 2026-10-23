@@ -78,6 +78,9 @@ kubectl rollout status "$DEPLOY" -n "$NS"
 
 - İmaj **ve** values birlikte döner. `secret.existingSecret` kullanılıyorsa Secret'a dokunulmaz; chart Secret'ı
   render ediyorsa önceki revizyonun Secret içeriği geri yazılır.
+- **`kubectl rollout undo` kullanmayın** (çok pod Sürüm 2b): eski Helm revizyon numarasını geri getirir, o pod'lar eski
+  ReplicaSet'in artığı sayılır — Sürüm & Dağıtım geçmişine ROLLBACK satırı / bildirim düşmez ve ortam sonraki Helm sürümüne
+  dek yeni sürümü gösterir. `helm rollback` yeni revizyon açar; eski sürüm pod'u hâlâ ayaktayken bile ROLLBACK + bildirim üretir.
 - **Önceki imajın digest'i** (tag yeniden basılmış olabilir, `release.yml` var olan tag'i silip yeniden oluşturur):
   ```bash
   # çalışan / çalışmış pod'un gerçek imajı
@@ -447,9 +450,10 @@ birleştirin (ör. `sum(max by (type, team, team_id, state) (sitemonitor_monitor
 `sitemonitor_sweep_leader` (toplamı 1 olmalı), `sitemonitor_exporter_*`, `sitemonitor_database_status`,
 `sitemonitor_push_circuit_open`; çok pod Sürüm 2b'den beri ayrıca `sitemonitor_cluster_lock_lost`,
 `sitemonitor_sweep_leader_transitions{reason}`, `sitemonitor_push_lease_renew_failed{reason}`, `sitemonitor_clock_skew_seconds`
-(küme geneli olan: `sitemonitor_eval_inbox_depth`). Sağlık bölümünün sonunda çok pod çalışma panelleri (gelen kutusu, saat
-farkı, kaybedilen kilit, push kira hatası, küme olayları) var; "Okunamayan kaynaklar" her kaynağı pod sayısından bağımsız
-bir kez sayar. Pano revizyonu 3 — yeni JSON'u indirip aynı UID ile içe aktarın.
+(küme geneli olan: `sitemonitor_eval_inbox_depth`). Sağlık bölümünün sonunda çok pod çalışma panelleri (gelen kutusu, pod
+saatleri arası fark — `max(sitemonitor_clock_skew_seconds) - min(…)`, kaybedilen kilit, push kira hatası, küme olayları) var;
+"Okunamayan kaynaklar" her kaynağı pod sayısından bağımsız bir kez sayar. Pano revizyonu 4 — yeni JSON'u indirip aynı UID ile
+içe aktarın.
 
 Örnek Prometheus alarm kuralları:
 
@@ -511,7 +515,6 @@ groups:
   |---|---|
   | `OTEL_INSTRUMENTATION_JAVA_HTTP_CLIENT_ENABLED=false`, `OTEL_INSTRUMENTATION_HTTP_URL_CONNECTION_ENABLED=false` | Uygulama izlenen sitelere (HTTP / Keyword / Sayfa / Sayfa hızı, HSTS, OCSP/CRL, RDAP, web-WHOIS) ve webhook / push / GeoIP servislerine `java.net.http` ve `HttpURLConnection` ile gider. Ajan bu istemcileri izlerse her isteğe `traceparent` ekler (izlenen siteye iç iz kimliğimiz gider, bazı WAF'lar tanımadığı başlığı reddedebilir) ve her kontrol için bir istemci span'ı üretir (saatte binlerce). SMTP, LDAP ve DNS ajan tarafından zaten izlenmiyor; ham soket kontrolleri (port, TLS profili, ham HTTP tanılama) da. |
   | `OTEL_METRICS_EXPORTER=none` | Metrikler Prometheus'ta (`/metrics`, `/metrics/sitemonitor`); ajanın OTLP metrikleri ikinci bir kaynak olurdu. |
-  | `OTEL_INSTRUMENTATION_SPRING_SCHEDULING_ENABLED=false` (2026-10-23) | Her pod'da her `@Scheduled` tikinin (takipçide çoğu "başka pod'da" atlaması) ayrı bir span olarak iz arka ucunu doldurmasını önler. Geri açmak: `config.otel.agent.extraEnv.OTEL_INSTRUMENTATION_SPRING_SCHEDULING_ENABLED: "true"`. |
   | `OTEL_SERVICE_NAME` | `config.otel.agent.serviceName`, boşsa Deployment adı. |
   | `MANAGEMENT_OPENTELEMETRY_MAP_ENVIRONMENT_VARIABLES=false` | Boot ajanın değişkenlerini kendi dışa aktarıcısına eşlemesin (eski sürümlerde açılışı düşüren şey; uygulama bunu kendisi de yapar). |
   | `OTEL_INSTRUMENTATION_COMMON_LOGGING_TRACE_ID_KEY=traceId`, `…_SPAN_ID_KEY=spanId` | JSON günlükte alan adları `traceId` / `spanId` kalır (ajanın varsayılanı `trace_id` / `span_id`; eski ajan sürümleri bu anahtarı tanımaz → `trace_id`, düz metin `trace=` ikisini de okur). |
@@ -519,8 +522,9 @@ groups:
   | `OTEL_INSTRUMENTATION_SANITIZATION_URL_EXPERIMENTAL_SENSITIVE_QUERY_PARAMETERS=AWSAccessKeyId,Signature,X-Amz-Signature,X-Amz-Credential,X-Amz-Security-Token,sig,X-Goog-Signature,token,access_token,api_key,apiKey,apikey,key,code,password,secret,signature,client_secret,subscription-key,auth,jsessionid,otp` | Ajan sunucu span'larında `url.query`'yi kaydeder; 2.32 yalnız `AWSAccessKeyId`, `Signature`, `X-Amz-*`, `sig`, `X-Goog-Signature`'ı gizler. Haftalık rapor ve teknik hata raporu onay bağlantıları (`GET /api/weekly-reports/approve-link?token=…`, `GET /api/tech-error-reports/approve-link?token=…`) 14 gün geçerli, oturumsuz onay belirteci taşır — gizlenmezse iz arka ucunu okuyan herkes raporu onaylayabilir. Ayar ajanın listesinin YERİNE geçer (genişletmez), o yüzden yerleşik adlar tekrar yazılır; eşleşme büyük/küçük harf duyarlı, kodlanmamış ad üzerinden. Uygulamada sorgu dizesinden kimlik alan başka uç yok (oturum çerezde, giriş / OTP gövdede, metrik belirteci `Authorization` başlığında) ve URL YOLUNDA kimlik taşınmaz (kapı `OtelAgentQueryRedactionGateTest`); listedeki diğer adlar derinlemesine savunma. Liste değişirse tek kaynak `OpenTelemetryAgentProbe.SENSITIVE_QUERY_PARAMETERS`. |
 
   Ek değişken: `config.otel.agent.extraEnv` (ör. `OTEL_LOGS_EXPORTER: none` — ajan varsayılanda uygulama günlüklerini de
-  OTLP ile gönderir; `OTEL_INSTRUMENTATION_SPRING_SCHEDULING_ENABLED: "true"` — 2026-10-23'ten beri varsayılan kapalı
-  olan zamanlanmış iş span'larını geri açar). Ek açıklamayı
+  OTLP ile gönderir). Zamanlanmış iş açılımını (`OTEL_INSTRUMENTATION_SPRING_SCHEDULING_ENABLED`) KAPATMAYIN: ajanın JDBC
+  açılımı ebeveyn istemez, tik span'ı olmadan tikin her SQL deyimi ayrı bir kök iz olur (daha çok iz). İz hacmini
+  Instrumentation kaynağının örnekleyicisiyle azaltın. Ek açıklamayı
   `podAnnotations`'a ELLE yazmayın: yukarıdaki ortam eklenmez (uygulama yine açılır ama izlenen sitelere `traceparent`
   gider ve günlükte bunu söyleyen bir UYARI çıkar; `helm install/upgrade` notları da uyarır).
 
@@ -561,9 +565,9 @@ sistem yöneticisi adresi; isteğe bağlı webhook ve doğrudan push). Ekran: Si
 | İzleme taramaları | Bir türde etkin izlemelerin ≥ %50'si zamanında kontrol edilmiyor | Görev havuzu doygunluğu (Zamanlayıcı ve yürütücüler), vekil |
 | Sertifika taraması | Son sertifika sonucu 4 saatten eski | `scheduler_lock` `cert-check`, tarama günlüğü |
 | Bildirim gönderimi | Son 30 dk'da ≥ 3 e-postanın ≥ %50'si başarısız | [SMTP düştü](#smtp-düştü) |
-| Push kuyruğu | ≥ 10 push 10 dk'dan uzun gecikmede (devre kesicinin açık olması tek başına sorun değil; bilgi olarak gösterilir) | Push ağ geçidi, Webhook Push Gönderim Logu |
-| Veritabanı (DOWN kritik) | Bağlantı / sorgu / yazılabilirlik DEGRADED/DOWN, ya da HERHANGİ bir canlı pod'un havuzu dolu (son sistem metriği örneği) | [DB dolması](#db-dolması), `/api/public/health/db`, Sistem Sağlığı → Metrikler (pod başına havuz) |
-| Saat uyumu (2026-10-23) | Canlı bir pod'un saati veritabanı saatinden > 5 sn (uyarı) / > 30 sn (ciddi) farklı | Düğümün NTP / chrony durumu (ön koşul P2); `system_metric_samples.clock_skew_ms` |
+| Push kuyruğu | ≥ 10 push 10 dk'dan uzun gecikmede ya da son 30 dk'da ≥ 3 sonuçtan ≥ %50'si FAILED (ölü ağ geçidi; test gönderimleri sayılmaz) — devre kesicinin açık olması tek başına sorun değil, bilgi olarak gösterilir | Push ağ geçidi, Webhook Push Gönderim Logu |
+| Veritabanı (DOWN kritik) | Bağlantı / sorgu / yazılabilirlik DEGRADED/DOWN, ya da HERHANGİ bir canlı pod'un havuzu dolu ya da açılış şema yamalarında hatası var (son sistem metriği örneği; örnek yoksa değerlendiren pod'un kendi havuzu / yaması) | [DB dolması](#db-dolması), `/api/public/health/db`, Sistem Sağlığı → Metrikler (pod başına havuz), `Şema yamaları:` günlük satırı |
+| Saat uyumu (2026-10-23) | Canlı pod'ların saatleri ARASINDAKİ fark (en ileri − en geri) > 5 sn (uyarı) / > 30 sn (ciddi); veritabanı saatinin farkı yalnız bilgidir | Düğümün NTP / chrony durumu (ön koşul P2); `system_metric_samples.clock_skew_ms` |
 
 Bildirimler `notification_logs`'ta tetik `WATCHDOG` (test `WATCHDOG_TEST`). Hiçbir kanaldan gidemeyen bildirim 15 dk'da
 bir yeniden denenir; sistem bakımı "bildirimler sussun" açıkken gönderilmez (iz `SKIPPED: sistem bakımı`). Veritabanı
@@ -573,8 +577,9 @@ son okuduğu kira yenilenmemiş görünüyorsa ve üstünden bir kira süresi + 
 bildirimi (RECOVER) önce satıra damgalanır — tek pod gönderir. Değerlendirme kilidi `watchdog` 2 dk TTL ile yenilenir.
 
 Çok pod Sürüm 2b'den beri kontrollerin durumu yalnız küme genelindeki gerçeklerle değişir (değerlendiren pod'un belleğiyle
-değil — turu hangi pod alırsa alsın sonuç aynı). Saat uyumu kontrolü pod başına saat farkını gösterir; 5 sn üstü uyarı,
-30 sn üstü ciddi — düğümün NTP / chrony durumunu düzeltin (P2). Push ve veritabanı kontrollerinde "Değerlendiren pod"
+değil — turu hangi pod alırsa alsın sonuç aynı). Saat uyumu kontrolü pod başına saat sapmasını (ortancaya göre) gösterir ve
+pod'lar arasındaki en büyük farka göre karar verir (kira ve kilitler pod saatlerini karşılaştırır); 5 sn üstü uyarı, 30 sn üstü
+ciddi — düğümün NTP / chrony durumunu düzeltin (P2). Veritabanı saatinin pod'lardan farkı (`db_offset_ms`) yalnız bilgidir. Push ve veritabanı kontrollerinde "Değerlendiren pod"
 satırı yalnız bilgidir. Sistem metrikleri örneklemesi kapalıysa (`site.monitor.metrics.system.enabled=false`) saat uyumu
 "uygulanmaz" görünür.
 
@@ -590,7 +595,7 @@ satırı yalnız bilgidir. Sistem metrikleri örneklemesi kapalıysa (`site.moni
 >
 > Çok pod Sürüm 2b (2026-10-23): Sistem Sağlığı kümeyi gösterir (Küme kartı, "Küme" / "Bu pod: <ad>" etiketleri, pod'lar
 > kartı), kendi kendini izleme küme genelindeki gerçeklerle karar verir (+ saat uyumu), yuvarlanan dağıtımda boş sayfa
-> olmaz (önceki sürümün sayfa dosyaları imajda, yüklenemeyen paket bir kez yenilenir), alarm kapanışları ve alarm
+> olmaz (son 5 sürümün sayfa dosyaları imajda, yüklenemeyen paket bir kez yenilenir), alarm kapanışları ve alarm
 > yazımları bayat varlığı bütünüyle kaydetmez, sürüm geçişi bildirimi kümede bir kez gider.
 >
 > Chart HPA şablonu 2026-10-23'te düzeltildi (HPA açıkken Deployment `replicas` taşımaz, bellek metriği varsayılan yok,
@@ -699,17 +704,26 @@ SELECT name, locked_by, locked_until FROM scheduler_lock ORDER BY name;   -- loc
 
 ### Sistem Sağlığı çok podda — ne küme, ne bu pod
 
-- **Küme (veritabanı; hangi pod yanıtlarsa aynı):** Zamanlayıcı kartı (çalışıyor mu = canlı `cert-check` kilidi, koşturan pod,
-  son koşu ve koşturan pod), Dağıtık kilit, Sertifika taraması (`scan_runs`: saatlik / tam / bayat turun son koşusu, pod'u,
-  sayıları, son hata), Heartbeat (son sinyal, şerit, "Pod'lar" kartı), RDAP kaynağı (kümedeki en yeni gözlem + gözlemleyen pod),
-  SMTP / push / haftalık / ağ / temizlik kartları. Kartta "Küme" etiketi.
-- **Bu pod ("Bu pod: <ad>"):** JVM belleği ve grafikleri, görev yürütücüsü, DB bağlantı havuzu, HTTP özeti, Küme kartının
-  "Yanıtlayan pod" bölümü. Pod başına geçmiş: Sistem Sağlığı → Metrikler.
-- **Heartbeat "sessiz" pod:** kapanış işareti yazmadan heartbeat göndermeyi bıraktı (çöktü / zamanlayıcısı takıldı) — genel
-  bant uyarı verir. Pod hâlâ çalışıyorsa günlüğüne ve `kubectl describe pod` çıktısına bakın; yerine yeni pod geldiyse satır
-  24 saat sonra düşer. "Yeniden başladı" (aynı pod adının yeni süreci canlı) ve "durdu" (dağıtım) uyarı değildir.
-- Tablo okunamazsa (açılışın ilk saniyeleri, yama düştü) tarama / RDAP kartı bu pod'un belleğini "yalnız bu pod" notuyla
-  gösterir.
+- **"Küme" etiketli kartlar (veritabanı; hangi pod yanıtlarsa aynı):** Zamanlayıcı (çalışıyor mu = canlı `cert-check` kilidi,
+  koşturan pod, son koşu ve koşturan pod), Dağıtık kilit, Sertifika taraması (`scan_runs`: saatlik / tam / bayat turun son
+  koşusu, pod'u, sayıları, son hata), Heartbeat Sinyali, "Pod'lar" kartı, Alan Adı Süre Kaynağı (RDAP — kümedeki en yeni gözlem
+  + gözlemleyen pod), Küme kartının "Tarama lideri" bölümü; üstteki KPI'lardan Zamanlayıcı ve Entegrasyonlar.
+- **Etiketsiz ama veritabanından okunan kartlar:** SMTP, webhook push, haftalık erişilebilirlik e-postası, ağ erişimi, gece
+  temizliği (gönderim / koşu kayıtlarından — hangi pod yanıtlarsa aynı).
+- **"Bu pod" etiketli (sayfayı yanıtlayan pod'un belleği):** JVM belleği ve grafikleri, görev yürütücüsü, DB bağlantı havuzu,
+  HTTP özeti, Küme kartının "Yanıtlayan pod" bölümü; üstteki KPI'lardan çalışma süresi, yürütücü, DB bağlantıları, HTTP süre /
+  hata ve bellek (KPI'ların altındaki satır pod'un adını söyler; HTTP isteği başka pod'a düştüyse onu da). Genel banttaki bellek /
+  yürütücü / havuz / HTTP sebepleri "(pod: <ad>)" taşır. JVM grafikleri ayrı istekle gelir, kendi "Bu pod: <ad>" etiketi vardır;
+  bellek KPI'sının kıvılcımı yalnız aynı pod'un grafiğinden çizilir. Pod başına geçmiş: Sistem Sağlığı → Metrikler.
+- **Heartbeat "sessiz" pod:** kapanış işareti yazmadan heartbeat göndermeyi bıraktı ve yerine yeni pod gelmedi (çöktü ve
+  dönmedi, ya da zamanlayıcısı takıldı) — genel bant uyarı verir. Pod hâlâ çalışıyorsa günlüğüne ve `kubectl describe pod`
+  çıktısına bakın. "Yerine yenisi geldi" (sustuktan sonra YENİ adla bir pod açıldı — tahliye / node kaybı), "yeniden başladı"
+  (aynı pod adının yeni süreci canlı) ve "durdu" (dağıtım, kapanış işareti) uyarı değildir; satırlar 24 saat sonra düşer.
+  Hiç canlı pod yoksa (ör. 20.166.0'dan geçişin ilk dakikaları) "Pod'lar" kartı yeşil değil, nötrdür.
+- Tablo okunamazsa (açılışın ilk saniyeleri, yama düştü) tarama kartı "Bilinmiyor" ve "Bu pod" etiketiyle, RDAP kartı "yalnız
+  bu pod" notuyla bu pod'un belleğini gösterir; Zamanlayıcı KPI'sı "bilinmiyor".
+- Küme kartında bu pod'un "kaybedildi" durumundaki kilidi (başka pod aldı / zorla bırakıldı) ve son başarılı yoklaması 30 sn'den
+  eski önbellek yolu kartı uyarıya çeker.
 
 ### Önbellek yolu (cache_bus)
 
@@ -942,17 +956,24 @@ bilmez. Son eski pod gidene kadar şunlar görülebilir (sonra kendiliğinden bi
 Eski ve yeni pod birlikte sunarken bir sayfa yüklemesi iki sürümün dosyalarını karıştırabilir (index.html bir poddan,
 `/assets/<ad>-<hash>.js` öbüründen). Önlemler, yapışkan oturum (sticky session) OLMADAN:
 
-- **İmaj önceki sürümün sayfa dosyalarını da taşır** (yalnız o sürümün KENDİ dosyaları, ~14 MB; ondan öncekiler gelmez).
-  Kontrol (yeni pod): `kubectl exec -n "$NS" <pod> -- sh -c 'wc -l /app/frontend/own-assets.txt /app/frontend/carried-assets.txt'`
-  → ikisi de > 0 (ilk derlemede ya da önceki imaj okunamadıysa taşınan 0 olur; derleme günlüğünde `::warning::önceki sürüm imajı okunamadı`).
-  Bir dosya: `kubectl exec -n "$NS" <pod> -- sh -c 'curl -sI http://localhost:8080/assets/$(head -1 /app/frontend/carried-assets.txt)'`
-  → `200` + `Cache-Control: public, max-age=31536000, immutable`.
+- **İmaj son 5 sürümün sayfa dosyalarını da taşır** (her sürümün KENDİ dosyaları; prod sürüm atlasa da 5 sürüme kadar geriye;
+  yalnız arka uç değişen bir sürüm paketi aynı olduğu için hiçbir şey taşımaz ama geçmişi taşır). Kontrol (yeni pod):
+  `kubectl exec -n "$NS" <pod> -- cat /app/frontend/carry-report.json` → `included` dağıtımdan ÖNCE çalışan sürümü
+  içermeli (Sistem Sağlığı → Sürüm & Dağıtım) ya da o sürümden beri arayüz değişmemiş olmalı (`carried: 0` o zaman
+  doğrudur — hata değil); `reason` `ok` (ya da ilk derlemede `no-previous`; `cap` = en eski sürümler sığmadı). Önceki imaj
+  okunamadıysa derleme günlüğünde `::warning::önceki sürüm imajı okunamadı` (taşınan 0).
+  Bir taşınan dosya (varsa): `kubectl exec -n "$NS" <pod> -- sh -c 'f=$(head -1 /app/frontend/carried-assets.txt); [ -z "$f" ] || curl -sI http://localhost:8080/assets/$f'`
+  → `200` + `Cache-Control: public, max-age=31536000, immutable`. Prod 5'ten çok sürüm atlarsa eski index → yeni pod
+  yönü de açılış korumasına (bir yenileme) düşer.
 - **Sayfa paketi yüklenemezse sayfa kendini BİR KEZ yeniler** (`/boot-guard.js`, önbelleksiz). İkinci kez de yüklenemezse
   boş sayfa yerine "SiteMonitor güncelleniyor … Yeniden yükle" uyarısı çıkar; dağıtım bitince "Yeniden yükle" düzeltir.
   Sayaç oturum başına: paket başına bir otomatik yenileme, herhangi bir otomatik yenilemeden sonra 60 sn bekleme — döngü olmaz.
   İngilizce sözlük açılışta inmezse de önce bir yenileme; yine inmezse eskisi gibi Türkçe + "dil yüklenemedi" bildirimi.
 - **Bilinen sınır:** bu sürümün İLK dağıtımı 20.166.0 pod'larıyla karışır — onlarda `boot-guard.js` ve taşınan dosyalar
-  yoktur; o pencerede bir kullanıcı bir kez boş sayfa görebilir (F5 düzeltir). Sonraki her dağıtım korunur.
+  yoktur; o pencerede bir kullanıcı bir kez boş sayfa görebilir (F5 düzeltir). Sonraki dağıtımlarda: eski index → yeni pod
+  yönü son 5 sürüm için taşınan dosyalarla çalışır; yeni index → ESKİ pod yönü taşımayla çözülemez — sayfa bir kez
+  kendiliğinden yenilenir, yine olmazsa uyarı + "Yeniden yükle" (1 yeni + 2 eski pod'lu pencerede yeni index'li açılışların
+  çoğu bu bir yenilemeyi yaşar).
   Geri alma (`helm rollback` önceki imaja): yeni sürümün sayfa dosyaları eski imajda yoktur; açık sekmeler bir kez yenilenir.
 
 ### Sürüm 2'ye kadar bilinen pod farkları (zararsız ama kafa karıştırır)

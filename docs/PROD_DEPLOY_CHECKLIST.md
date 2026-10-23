@@ -201,13 +201,20 @@ aldığında geçerlidir; sonraki dağıtımlarda atlanır.
       reddeder) — tek replikada PDB kapalı kalır (`master.yaml`).
 - [ ] **İlk dağıtım penceresi:** 20.166.0 pod'larında `boot-guard.js` ve taşınan sayfa dosyaları yoktur; geçiş
       sırasında bir kullanıcı bir kez boş sayfa görebilir — **F5 düzeltir**; destek / 7/24 ekibine önceden söyleyin.
-      Sonraki dağıtımlarda sayfa kendini bir kez yeniler.
-- [ ] **İmaj önceki sürümün sayfa dosyalarını taşıyor:** release iş akışının derleme günlüğünde `::warning::önceki sürüm
+      Sonraki dağıtımlarda eski sekmeler son 5 sürümün taşınan dosyalarıyla çalışır; yeni sürümün dosyası eski pod'a
+      düşerse sayfa kendini bir kez yeniler.
+- [ ] **İmaj önceki sürümlerin sayfa dosyalarını taşıyor:** release iş akışının derleme günlüğünde `::warning::önceki sürüm
       imajı okunamadı` YOK (varsa imaj yine çalışır ama taşınan dosya 0 olur — dağıtım penceresinde boş sayfa riski sürer).
+      Prod'da çalışan sürüm 5'ten çok sürüm geride ise eski sekmeler bir kez yenilenir (beklenen).
+- [ ] **Staging:** `topologySpreadConstraints.matchLabelKeys` Kubernetes ≥ 1.27 ister (1.25–1.26'da alfa / kapalı, ≤ 1.24'te
+      Helm doğrulama hatası) — `kubectl version` ile doğrulayın; eskiyse staging için `matchLabelKeys: []` +
+      `whenUnsatisfiable: ScheduleAnyway`.
+- [ ] **Geri alma yalnız `helm rollback` ile** (`kubectl rollout undo` sürüm geçmişini şaşırtır: ROLLBACK satırı / bildirimi
+      düşmez — [`RUNBOOK.md` → Geri alma](RUNBOOK.md#geri-alma-rollback)).
 - [ ] Geçiş penceresinde (eski + yeni pod birlikte) beklenenler biliniyor — [`RUNBOOK.md` → Sürüm geçişi sırasında](RUNBOOK.md#sürüm-geçişi-sırasında-eski--yeni-pod-birlikte):
       eski pod alarmı hâlâ bütün varlıkla kaydeder (yeni pod'un kapattığı bir alarmı yeniden açabilir — son eski pod
       gidince biter), eski pod heartbeat'i pod adı olmadan yazar, tarama kartı bir süre eski pod'un koşusunu göstermeyebilir.
-- [ ] **Grafana panosu:** revizyon 3 (sağlık bölümünün sonunda çok pod çalışma panelleri) — dağıtımdan sonra Ayarlar →
+- [ ] **Grafana panosu:** revizyon 4 (sağlık bölümünün sonunda çok pod çalışma panelleri) — dağıtımdan sonra Ayarlar →
       Grafana panosu → JSON indir ve aynı UID ile içe aktarın.
 
 ### Kapsam ve sürüm
@@ -421,9 +428,10 @@ helm upgrade --install "$REL" ./helm/site-monitor --namespace "$NS" \
       başlatın (ertelenmiş kurucu açılışta yeniden dener). `ux_noe_one_ongoing` boşsa: `kubectl logs $L | grep -i
       'noe-ongoing\|NetworkOutageOngoingDedupe'` — iş saatlik yeniden dener (pod başına en çok 24 deneme).
 - [ ] Sayfa dosyaları taşındı (RUNBOOK "Yuvarlanan dağıtımda sayfa dosyaları"):
-      `kubectl exec -n "$NS" <pod> -- sh -c 'wc -l /app/frontend/carried-assets.txt'` > 0 ve
+      `kubectl exec -n "$NS" <pod> -- cat /app/frontend/carry-report.json` → `included` dağıtımdan önce çalışan sürümü
+      içeriyor ya da o sürümden beri arayüz değişmedi (`carried: 0` o zaman doğrudur) ve
       `curl -sI https://<host>/boot-guard.js | grep -i cache-control` → `no-store`.
-- [ ] **Çok pod Sürüm 2b:** Sistem Sağlığı → Kendi kendini izleme → "Saat uyumu" Sağlıklı (her pod < 5 sn); Zamanlayıcı ve
+- [ ] **Çok pod Sürüm 2b:** Sistem Sağlığı → Kendi kendini izleme → "Saat uyumu" Sağlıklı (pod saatleri arası fark < 5 sn); Zamanlayıcı ve
       yürütücüler → Küme kartında tarama lideri dolu; Heartbeat → "Pod'lar" kartında "sessiz" pod yok.
 - [ ] **Çok pod Sürüm 2a** (açılıştan ~5 dk sonra): her pod'un günlüğünde bir kez `Önbellek yolu çalışıyor`
       (`kubectl logs $L | grep "Önbellek yolu"` — `yoklanamadı` / `yayını başarısız` satırı olmamalı); yeni tablolar ve
