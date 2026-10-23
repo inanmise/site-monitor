@@ -161,7 +161,7 @@ public class ExtendedHealthService {
             long ms = rdapEventMs(s);
             if (ms < 0 || ms <= lastPublishedRdapMs) return;
             var r = store().publish(com.sitemonitor.service.health.ClusterHealthStore.OBS_RDAP, instanceId(), ms,
-                    JSON.writeValueAsString(s), LocalDateTime.now(ZoneOffset.UTC).withNano(0).toString());
+                    JSON.writeValueAsString(s), LocalDateTime.now(ZoneOffset.UTC).format(DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss")));
             if (r != com.sitemonitor.service.health.ClusterHealthStore.Publish.FAILED) lastPublishedRdapMs = ms;
         } catch (Exception e) {
             log.debug("RDAP gözlemi yayınlanamadı: {}", e.toString());

@@ -59,7 +59,7 @@ class ClusterHealthPostgresTest {
     @DisplayName("PostgreSQL: tarama satırı + getSystemHealth (salt okunur işlem) küme durumunu okur")
     void scanRunAndSystemHealth() {
         ClusterHealthStore store = PostgresIt.app().bean(ClusterHealthStore.class);
-        String at = LocalDateTime.now(ZoneOffset.UTC).withNano(0).toString();
+        String at = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").format(LocalDateTime.now(ZoneOffset.UTC));
         assertThat(store.recordScanRun("full", "itrun", "pod1-00000001", at, 10L, 3, 0, 0, null)).isTrue();
         Map<String, Object> h = PostgresIt.app().bean(SchedulerService.class).getSystemHealth();
         @SuppressWarnings("unchecked") Map<String, Object> scan = (Map<String, Object>) h.get("scan");

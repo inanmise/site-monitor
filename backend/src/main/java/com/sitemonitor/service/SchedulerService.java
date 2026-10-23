@@ -3651,7 +3651,7 @@ public class SchedulerService {
             LocalDateTime lr = lastRun.get();
             String failure = lastRunFailure.get();
             Long age = lr == null ? null : Long.valueOf(Math.max(0L, java.time.Duration.between(lr, LocalDateTime.now(ZoneOffset.UTC)).toMillis()));
-            return new ScanStatus(lr != null ? lr.withNano(0).toString() : null, null, lr != null ? ownerId() : null,
+            return new ScanStatus(lr != null ? ISO.format(lr.toInstant(ZoneOffset.UTC)) : null, null, lr != null ? ownerId() : null,
                     lastRunId.get().isEmpty() ? null : lastRunId.get(), lastRunDurationMs.get(), lastRunTotal.get(),
                     lastRunWarnings.get(), lastRunErrors.get(), failure, failure != null ? ownerId() : null,
                     runningNow, runningOn, "local", Map.of(), lock, age);
