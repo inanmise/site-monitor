@@ -86,7 +86,7 @@ class AuditIntegrityTest {
         svc.recordSystemEvent("E1", "SYSTEM", "r1", "a");
         svc.recordSystemEvent("E2", "SYSTEM", "r2", "b");
         em.flush();
-        Long id = repo.findTopByOrderBySeqDesc().orElseThrow().getId();
+        Long id = repo.findTopBySeqIsNotNullOrderBySeqDesc().orElseThrow().getId();
 
         repo.updateGeo(id, "Türkiye", "İstanbul", "Example", "host.example");
         em.flush(); em.clear();

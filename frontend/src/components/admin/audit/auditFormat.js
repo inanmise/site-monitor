@@ -26,7 +26,7 @@ export function eventClass(et) {
   if (t === 'MONITOR_TEST' || t.endsWith('_TEST') || t.endsWith('_TEST_EMAIL')) return 'ev-test'
   if (t.endsWith('_EXPORT')) return 'ev-export'
   if (t.startsWith('SYSTEM_') || t.startsWith('SCHEDULER_') || t.startsWith('RETENTION_')
-      || t === 'SCHEMA_PATCH' || t === 'AUDIT_REPLAY') return 'ev-system'
+      || t === 'SCHEMA_PATCH' || t === 'AUDIT_REPLAY' || t === 'AUDIT_CHAIN_RESTART') return 'ev-system'
   if (t.endsWith('_DELETE') || t.endsWith('_PURGE')) return 'ev-delete'
   if (t.endsWith('_CREATE') || t.endsWith('_ADD')) return 'ev-create'
   if (t.endsWith('_EDIT') || t.endsWith('_UPDATE') || t.endsWith('_SAVE')) return 'ev-edit'
@@ -180,6 +180,7 @@ const SPECIAL = {
   CA_PINNED: 'audit.ev.CA_PINNED',
   CA_ROTATED: 'audit.ev.CA_ROTATED',
   AUDIT_REPLAY: 'audit.ev.AUDIT_REPLAY',
+  AUDIT_CHAIN_RESTART: 'audit.ev.AUDIT_CHAIN_RESTART',   // denetim zinciri yeni dönemle yeniden başlatıldı (2026-10-23)
   // Sistem geneli toplu pasife alma + geri alma; pasif hesabın haftalık rapor onay bağlantısı reddi (2026-10-02)
   USER_BULK_DEACTIVATE: 'audit.ev.USER_BULK_DEACTIVATE',
   USER_BULK_DEACTIVATE_UNDO: 'audit.ev.USER_BULK_DEACTIVATE_UNDO',

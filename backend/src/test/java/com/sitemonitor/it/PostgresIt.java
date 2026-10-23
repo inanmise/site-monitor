@@ -295,7 +295,10 @@ public final class PostgresIt implements ExecutionCondition, BeforeAllCallback {
                 "--site.monitor.scheduler.startup-check-delay-ms=3600000",
                 "--site.monitor.userpush.outbox-sweep-initial-ms=3600000",
                 "--site.monitor.userpush.outbox-sweep-ms=3600000",
-                "--site.monitor.today.trend-snapshot-initial-ms=3600000"));
+                "--site.monitor.today.trend-snapshot-initial-ms=3600000",
+                // Denetim zincirinin yeniden başlatılması (2026-10-23): AuditChainPostgresTest işi kendisi koşar — 10 dk
+                // sonra uygulamanın kendi turu testin ortasında paylaşılan veritabanına satır yazmasın.
+                "--site.monitor.audit.chain-restart.initial-delay-ms=86400000"));
         return a.toArray(String[]::new);
     }
 

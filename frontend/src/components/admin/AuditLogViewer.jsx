@@ -47,6 +47,28 @@ const EVENT_TYPES_FALLBACK = [
   'SYSTEM_STARTUP', 'SYSTEM_SHUTDOWN',
 ]
 
+/**
+ * Doğrulamanın başladığı yer (yalnız başarılı doğrulamada çizilir). `kind`: `retention` — saklama silmesinden sonra kalan ilk
+ * kayıt; diğer (`restart`, eski sunucuda yok) — zincirin yeniden başlatıldığı satır, öncesindeki N kayıt doğrulanamaz.
+ */
+function IntegrityVerifiedFrom({ integrity, locale, t }) {
+  const from = integrity.verified_from
+  const when = formatExact(from.event_time, locale)
+  const retention = from.kind === 'retention'
+  const n = integrity.unverified
+  const count = typeof n === 'number' ? n.toLocaleString(locale) : '—'
+  return (
+    <div data-slot="audit-integrity-verified-from" data-kind={retention ? 'retention' : 'restart'}>
+      <AlertBanner tone="info" className="mb-0"
+        title={t(retention ? 'audit.integrityRetentionTitle' : 'audit.integrityVerifiedFromTitle')}>
+        {retention
+          ? t('audit.integrityRetentionBody', when)
+          : t(n === 1 ? 'audit.integrityVerifiedFromBody.one' : 'audit.integrityVerifiedFromBody', when, count)}
+      </AlertBanner>
+    </div>
+  )
+}
+
 /** Ayrıntı bölmesi (xl) ile yan Sheet arasındaki TEK JS eşiği — Tailwind `xl` ile aynı (1280). */
 const SPLIT_MIN_PX = 1280
 
@@ -86,7 +108,7 @@ export default function AuditLogViewer({ fullScope = true, teamNames }) {
   const [selectedId, setSelectedId] = useState(() => readUrlInt(URL_PREFIX + 'sel', null))
   const [extraRows, setExtraRows] = useState({})           // id → satır: ilişkili listeden / derin bağlantıdan açılan, sayfada olmayan
   const [sheetOpen, setSheetOpen] = useState(() => readUrlInt(URL_PREFIX + 'sel', null) != null)
-  const [integrity, setIntegrity] = useState(null)         // { loading } | { ok, checked, broken_seq } | { error }
+  const [integrity, setIntegrity] = useState(null)         // { loading } | { ok, checked, broken_seq, unverified?, verified_from? } | { error }
   const [autoRefresh, setAutoRefresh] = useState(false)
   const [exporting, setExporting] = useState(null)         // 'csv' | 'json' | null
 
@@ -284,6 +306,13 @@ export default function AuditLogViewer({ fullScope = true, teamNames }) {
         <AlertBanner tone="danger" role="alert" title={t('audit.integrityBroken')} className="mb-0">
           {t('audit.integrityBrokenBody', integrity.broken_seq || '?')}
         </AlertBanner>
+      )}
+      {/* Doğrulama GENESIS'ten başlamadıysa (2026-10-23) nereden başladığı: zincirin yeniden başlatıldığı satır (öncesi onarımdan
+          önce yazıldı — doğrulanamaz) ya da saklama silmesinden sonra kalan ilk kayıt. YALNIZ doğrulama başarılıysa (inceleme F2):
+          başarısız bir doğrulamanın yanında "doğrulandı" demek yanıltır — kırık şeridi tek başına kalır. Eski sunucu bu alanı
+          göndermez → bugünkü metin. */}
+      {integrity && !integrity.loading && !integrity.error && integrity.ok && integrity.verified_from && (
+        <IntegrityVerifiedFrom integrity={integrity} locale={locale} t={t} />
       )}
 
       {/* ── Özet + eğilim (yalnız tam kapsam; yalnız sunucunun döndürdüğü sayılar) ── */}

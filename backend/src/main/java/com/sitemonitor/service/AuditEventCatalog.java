@@ -70,6 +70,7 @@ public final class AuditEventCatalog {
             "ALERT_DELETE",
             "ALERT_RENOTIFY",
             "ALERT_RESOLVE",
+            "AUDIT_CHAIN_RESTART",   // denetim zincirinin tek seferlik yeniden başlatılması (2026-10-23, AuditChainRestartJob)
             "AUDIT_EXPORT",
             "AUDIT_RETENTION_PURGE",
             "AUTH_REQUIRED",
@@ -442,6 +443,8 @@ public final class AuditEventCatalog {
         if (t.startsWith("SMTP_") || t.startsWith("LDAP_") || t.startsWith("NOTIFICATION_GROUP_")
                 || t.startsWith("CONTACT_")) return INTEGRATION;
 
+        // Zincirin yeniden başlatılması bir SİSTEM olayıdır (arayüz auditFormat.eventClass da ev-system der) — AUDIT_ → DATA'dan ÖNCE
+        if (t.equals("AUDIT_CHAIN_RESTART")) return SYSTEM;
         if (t.startsWith("AUDIT_") || t.equals("SQL_EXECUTE") || t.endsWith("_EXPORT")
                 || t.startsWith("RETENTION_")) return DATA;
 

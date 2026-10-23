@@ -1,9 +1,72 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-23T13:57:48Z",
+  "generatedAt": "2026-10-23T22:21:04Z",
   "repo": "inanmise/site-monitor",
-  "count": 787,
+  "count": 788,
   "releases": [
+    {
+      "version": "20.168.1",
+      "tag": "v20.168.1",
+      "releasedAt": "2026-10-23T22:20:53Z",
+      "commit": "09c4528724e5c4bc470fbfcdb889f24100eb05a1",
+      "prevVersion": "20.168.0",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 4,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 1,
+        "other": 1
+      },
+      "changes": [
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "09c45287",
+          "subject": "denetim zinciri düzeltmesi — NULLS FIRST kuyruk hatası, yeniden başlatma satırı, doğrulama çapası, ux_audit_seq kurulumu, geri alma adımı"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "579b4b26",
+          "subject": "denetim logu \"doğrulandı\" şeridini yalnız başarılı doğrulamada gösterir; tekil metin ve saklama çapası"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "5efa3bd9",
+          "subject": "denetim zinciri inceleme düzeltmeleri — uç sorgusu eşitlik kırıcısız, doğrulama en eski yeniden başlatmadan, tek indeks kurulumu"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "79aee59b",
+          "subject": "denetim logu bütünlük doğrulaması zincirin yeniden başlatıldığı yeri ve doğrulanamayan kayıt sayısını söyler"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "f7f5a28a",
+          "subject": "denetim zinciri PG testi indeks kurulumunu katalog DDL'iyle yapar, elle kurulan pod'lar fallback dosyası alır"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "ff135d97",
+          "subject": "denetim zinciri seq'siz eski satırları uç saymaz + tek seferlik zincir yeniden başlatma (PostgreSQL NULLS FIRST)"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.168.0",
       "tag": "v20.168.0",

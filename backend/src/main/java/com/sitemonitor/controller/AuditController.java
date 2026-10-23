@@ -161,9 +161,24 @@ public class AuditController {
         requireAuditAccess(session);
         permissionService.require(session, "audit_log.read", "view");
         AuditService.ChainVerification v = auditService.verifyChain();
-        return ok(Map.of("data", Map.of("ok", v.ok(), "checked", v.checked(),
-                "broken_seq", v.brokenSeq() == null ? "" : v.brokenSeq(),
-                "broken_id", v.brokenId() == null ? "" : v.brokenId())));
+        Map<String, Object> data = new java.util.LinkedHashMap<>();
+        data.put("ok", v.ok());
+        data.put("checked", v.checked());
+        data.put("broken_seq", v.brokenSeq() == null ? "" : v.brokenSeq());
+        data.put("broken_id", v.brokenId() == null ? "" : v.brokenId());
+        // Ek alanlar (2026-10-23, zincirin yeniden başlatılması): doğrulama GENESIS'ten başlamadıysa nereden (verified_from;
+        // kind = restart: en eski yeniden başlatma satırı, retention: saklama silmesinden sonra kalan ilk satır) ve öncesinde
+        // kaç zincirli kaydın doğrulanamadığı (unverified). Baştan doğrulandıysa verified_from yok.
+        data.put("unverified", v.unverified());
+        if (v.verifiedFrom() != null) {
+            Map<String, Object> from = new java.util.LinkedHashMap<>();
+            from.put("id", v.verifiedFrom().id());
+            from.put("seq", v.verifiedFrom().seq());
+            from.put("event_time", v.verifiedFrom().eventTime());
+            from.put("kind", v.verifiedFrom().kind());
+            data.put("verified_from", from);
+        }
+        return ok(Map.of("data", data));
     }
 
     /** Filtreli sonucun CSV/JSON dışa aktarımı — DIŞA AKTARMA İŞLEMİ KENDİSİ DE denetlenir (AUDIT_EXPORT). */

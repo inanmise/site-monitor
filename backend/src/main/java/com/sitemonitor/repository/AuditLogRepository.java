@@ -36,8 +36,38 @@ public interface AuditLogRepository extends Repository<AuditLog, Long> {
                   @Param("org") String org, @Param("host") String host);
 
     // ── Hash zinciri ─────────────────────────────────────────────────────────────
-    /** Zincirin ucu (en yüksek seq) — persist() bir sonraki seq/prev_hash'i buradan alır. */
-    Optional<AuditLog> findTopByOrderBySeqDesc();
+    /**
+     * Zincirin ucu (en yüksek seq'li ZİNCİRLİ satır) — persist() bir sonraki seq/prev_hash'i buradan alır.
+     *
+     * <p>{@code seq IS NOT NULL} ŞART (2026-10-23 prod hatası): PostgreSQL {@code ORDER BY seq DESC}'te NULL'ları ÖNE koyar.
+     * Zincirden önce yazılmış (seq NULL) eski satırları hâlâ tutan veritabanında eski {@code findTopByOrderBySeqDesc} hep o
+     * satırlardan birini "son" sanıyordu: 2026-07-28'den beri her yeni satır {@code seq = 1} + {@code prev_hash = GENESIS}
+     * aldı, doğrulama ikinci seq-1 satırında kırıldı ve {@code ux_audit_seq} hiç kurulamadı. H2 NULL'ları SONA koyduğu için
+     * hiçbir test görmedi ({@code AuditChainNullsFirstH2Test} H2'yi {@code DEFAULT_NULL_ORDERING=HIGH} ile PostgreSQL gibi
+     * sıralatır).
+     *
+     * <p>Eşitlik kırıcı ({@code , id DESC}) YOK (inceleme F1): {@code idx_audit_seq(seq)} onu taşımaz; bozuk veritabanının
+     * istatistiği ("zincirli satırların hepsi seq 1") ile PostgreSQL planlayıcısı her denetim yazımında — küme genelindeki
+     * zincir kilidini tutarken — bütün zincirli satırları okuyup sıralıyordu (1 M satırda ~190 ms). Bu hâliyle tek satırlık
+     * geriye indeks taraması ({@code seq IS NOT NULL} indeks koşulu); aynı en yüksek seq'li satırlar yalnız bozuk dönemde
+     * (doğrulanamaz) ya da bir çatalda (zaten kırık) olur. Kapı: {@code AuditChainPostgresTest.tailQueryPlan_*}.
+     */
+    Optional<AuditLog> findTopBySeqIsNotNullOrderBySeqDesc();
+
+    /**
+     * EN ESKİ zincir yeniden başlatma satırı ({@code AUDIT_CHAIN_RESTART}) — doğrulamanın başladığı yer; yoksa boş. Meşru
+     * olarak yalnız biri yazılır; en eskiden başlamak sonradan eklenmiş sahte bir ikincisini kırık gösterir.
+     */
+    Optional<AuditLog> findTopByEventTypeAndSeqIsNotNullOrderBySeqAsc(String eventType);
+
+    /** En düşük seq'li KALAN zincirli satır — yeniden başlatma yoksa doğrulamanın çapası (saklama silmesinden sonra da). */
+    Optional<AuditLog> findTopBySeqIsNotNullOrderBySeqAsc();
+
+    /** Doğrulanan bölüm: {@code seq >= from}, seq sırasıyla sayfalı ({@code idx_audit_seq} ileri taranır). */
+    List<AuditLog> findBySeqGreaterThanEqualOrderBySeqAsc(Long seq, Pageable pageable);
+
+    /** Doğrulanan bölümün DIŞINDA kalan zincirli satır sayısı ({@code seq < from}; seq'siz eski satırlar sayılmaz). */
+    long countBySeqLessThan(Long seq);
     /** Yapılandırma sağlığı kartı (2026-09-12): son SMTP_TEST / LDAP_TEST sonucu. */
     Optional<AuditLog> findTopByEventTypeOrderByEventTimeDesc(String eventType);
 
