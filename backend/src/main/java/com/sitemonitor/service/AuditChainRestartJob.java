@@ -29,20 +29,25 @@ import java.util.function.Supplier;
  * 2026-07-28'den beri her yeni satır {@code seq = 1}, {@code prev_hash = GENESIS} aldı. Doğrulama ikinci seq-1 satırında
  * "kırık" diyordu; çok pod Sürüm 2a'nın {@code ux_audit_seq} tekil indeksi (yalnız {@code seq_locked} satırları) yinelenen
  * seq 1'ler yüzünden hiç kurulamadı — çatal koruması kapalıydı. Uç sorgusu artık seq'siz satırları atlar
- * ({@link com.sitemonitor.repository.AuditLogRepository#findTopBySeqIsNotNullOrderBySeqDescIdDesc}).
+ * ({@link com.sitemonitor.repository.AuditLogRepository#findTopBySeqIsNotNullOrderBySeqDesc}).
  *
  * <p><b>Bu iş.</b> (1) Zincir bozuksa (birden fazla {@code seq = 1}) ve yeniden başlatma satırı yoksa yazıcılarla AYNI zincir
  * kilidi altında bir {@value AuditService#EVENT_CHAIN_RESTART} satırı yazar ({@code seq = uç + 1}, {@code prev_hash = GENESIS};
  * {@link AuditService#restartChainIfDegenerate}); doğrulama artık oradan başlar, öncesi "onarımdan önce yazıldı, doğrulanamaz"
- * sayılır. ESKİ SATIRLARIN HİÇBİR hash'li kolonu yeniden yazılmaz. Nişan ({@value #MARKER}) yalnız başarıdan sonra, kilit
- * İÇİNDE yeniden okunarak yazılır. (2) Her koşuda (ucuz): yeniden başlatma satırının seq'inin ALTINDA kalan, kilit damgalı
+ * sayılır. ESKİ SATIRLARIN HİÇBİR hash'li kolonu yeniden yazılmaz. Nişan ({@value #MARKER}) yalnız yeniden başlatma satırı
+ * yazıldığında ya da zaten varken, kilit İÇİNDE yeniden okunarak yazılır; zincir bozuk DEĞİLSE nişan yazılmaz, iş yalnız bu
+ * pod'da biter ve bir sonraki açılış yeniden yoklar (inceleme F3: nişan bir kez "bozuk değil" diye yazılsa, sonra eski pod'ların
+ * yazdığı seq-1 satırları hiç onarılmazdı; yoklama 2 satırlık indeks okumasıdır). (2) PostgreSQL'de {@code ux_audit_seq} zaten
+ * geçerliyse burada biter (inceleme F8: damgalı çift olamaz; her açılışta bölüm altını taramaya gerek yok). Değilse (ucuz):
+ * yeniden başlatma satırının seq'inin ALTINDA kalan, kilit damgalı
  * ({@code seq_locked}) satırlar arasında seq'i YİNELENENLERİN damgası koşullu UPDATE ile kaldırılır ({@code seq_locked} hash'e
  * girmez) — doğrulanan bölüme dokunulmaz; seq ölçütü, yeniden başlatmadan SONRA eski bir pod'un yazdığı seq-1 satırlarını da
- * kapsar. (3) PostgreSQL'de indeks geçerli değilse ertelenmiş indeks kurucusu ({@link DeferredIndexBuilder}) bir kez daha
- * başlatılır (kurucu başarısız bir indeksi aynı açılışta yalnız 60 sn sonra BİR kez daha dener, sonra ancak sonraki açılışta —
- * bu iş açılıştan 10 dk sonra koştuğu için o açılışın kurulumu çoktan düşmüş olur). Son 10 dk içinde seq 1 yazan eski bir pod
- * varsa (yayılım sürüyor) kurulum bir saat ertelenir: indeks varken eski pod'un ikinci seq-1 satırı tekil ihlale düşüp
- * fallback dosyasına giderdi. Pod başına en çok {@value #MAX_INDEX_KICKS} kurulum; indeks geçerli olunca bu pod durur.
+ * kapsar. (3) Ardından YALNIZ {@code ux_audit_seq}'i kuran ertelenmiş kurucu başlatılır ({@link DeferredIndexBuilder#only},
+ * inceleme F6 — tüm katalog değil; kurucu başarısız bir indeksi aynı açılışta yalnız 60 sn sonra BİR kez daha dener, sonra
+ * ancak sonraki açılışta — bu iş açılıştan 10 dk sonra koştuğu için o açılışın kurulumu çoktan düşmüş olur). Son 10 dk içinde
+ * bölümün altına yazan eski bir pod varsa ({@link DeferredIndexBuilder#SQL_AUDIT_SEQ_OLD_WRITER_RECENT} — açılış kurulumunun
+ * bekçisiyle AYNI sorgu, inceleme F7) kurulum bir saat ertelenir: indeks varken eski pod'un ikinci seq-1 satırı tekil ihlale
+ * düşüp fallback dosyasına giderdi. Pod başına en çok {@value #MAX_INDEX_KICKS} kurulum; indeks geçerli olunca bu pod durur.
  *
  * <p><b>Zamanlama.</b> Açılış yolunda değil: açılıştan {@code site.monitor.audit.chain-restart.initial-delay-ms} (10 dk) sonra
  * — yayılım çoğunlukla bitmiştir — sonra saatte bir, iş bitene dek. Kendi {@code scheduler_lock}'u ({@value #LOCK}) ile tek pod.
@@ -62,8 +67,6 @@ public class AuditChainRestartJob {
     static final int MAX_ATTEMPTS = 24;
     static final int MAX_INDEX_KICKS = 3;
     static final String INDEX = "ux_audit_seq";
-    /** Bu kadar süredir seq < yeniden başlatma seq'i yazan yoksa eski pod'lar gitmiş sayılır (indeks kurulabilir). */
-    static final long STRAGGLER_QUIET_MS = 10 * 60_000L;
 
     /**
      * Doğrulanan bölümün ALTINDA (seq &lt; yeniden başlatma seq'i), kilit damgası taşıyan ve seq'i yinelenen satırların
@@ -73,8 +76,6 @@ public class AuditChainRestartJob {
             + " WHERE seq_locked IS NOT NULL AND seq < ?"
             + " AND seq IN (SELECT d.seq FROM audit_log d WHERE d.seq_locked IS NOT NULL AND d.seq < ?"
             + " GROUP BY d.seq HAVING COUNT(*) > 1)";
-    /** Yeniden başlatmadan SONRA, bölümün altına (seq 1) yeni satır yazan eski pod var mı (son {@link #STRAGGLER_QUIET_MS}). */
-    static final String SQL_STRAGGLERS = "SELECT COUNT(*) FROM audit_log WHERE id > ? AND seq < ? AND event_time >= ?";
     static final String SQL_INDEX_VALID = "SELECT i.indisvalid FROM pg_class c"
             + " JOIN pg_namespace n ON n.oid = c.relnamespace JOIN pg_index i ON i.indexrelid = c.oid"
             + " WHERE n.nspname = current_schema() AND c.relname = '" + INDEX + "'";
@@ -109,7 +110,7 @@ public class AuditChainRestartJob {
                 },
                 () -> DeferredIndexBuilder.postgresOrNull(jdbc.getDataSource()),
                 null,
-                () -> new DeferredIndexBuilder(jdbc).startInBackground(),
+                () -> DeferredIndexBuilder.only(jdbc, INDEX).startInBackground(),
                 System::currentTimeMillis);
     }
 
@@ -151,6 +152,8 @@ public class AuditChainRestartJob {
         if (marker == null) throw new IllegalStateException("nişan okunamadı");
         if (!marker) {
             AuditService.ChainRestart r = audit.restartChainIfDegenerate();
+            // Bozuk değil: nişan YAZILMAZ (F3) — bu pod bitti, sonraki açılış yeniden yoklar (eski pod sonradan bozarsa onarılır)
+            if (r.outcome() == AuditService.RestartOutcome.NOT_DEGENERATE) return true;
             if (r.outcome() == AuditService.RestartOutcome.WRITTEN) {
                 AuditLog row = r.row();
                 log.warn("Denetim zinciri YENİDEN BAŞLATILDI (bozuk dönem: birden fazla seq 1): yeniden başlatma satırı id={} seq={}"
@@ -161,27 +164,26 @@ public class AuditChainRestartJob {
                     MARKER, ISO.format(Instant.ofEpochMilli(clock.getAsLong())),
                     r.outcome() == AuditService.RestartOutcome.WRITTEN ? 1 : 0);
         }
-        AuditLog restart = audit.latestChainRestart();
+        AuditLog restart = audit.firstChainRestart();
         if (restart == null || restart.getSeq() == null) return true;   // zincir hiç bozulmamış — iş yok
+        Boolean pg = postgres.get();
+        if (pg == null) throw new IllegalStateException("veritabanı türü okunamadı — sonra yeniden denenecek");
+        if (pg && indexValid.getAsBoolean()) return true;               // F8: indeks geçerli → damgalı çift olamaz
         int released = jdbc.update(SQL_RELEASE_DUPLICATE_LOCKS, restart.getSeq(), restart.getSeq());
         if (released > 0) {
             log.info("Denetim zinciri: yeniden başlatma öncesi {} satırın yinelenen seq kilit damgası kaldırıldı (ux_audit_seq kapsamı)",
                     released);
         }
-        return ensureUniqueIndex(restart);
+        return !pg || kickUniqueIndex();
     }
 
-    /** Dönüş: bitti mi. PostgreSQL değilse indeks yok (bitti); geçerliyse bitti; değilse kurucuyu başlatır (sınırlı). */
-    private boolean ensureUniqueIndex(AuditLog restart) {
-        Boolean pg = postgres.get();
-        if (pg == null) throw new IllegalStateException("veritabanı türü okunamadı — sonra yeniden denenecek");
-        if (!pg) return true;
-        if (indexValid.getAsBoolean()) return true;
-        String since = ISO.format(Instant.ofEpochMilli(clock.getAsLong() - STRAGGLER_QUIET_MS));
-        Integer recent = jdbc.queryForObject(SQL_STRAGGLERS, Integer.class, restart.getId(), restart.getSeq(), since);
+    /** Dönüş: bitti mi. Eski pod son 10 dk yazdıysa ertelenir; değilse yalnız ux_audit_seq kurulur (pod başına sınırlı). */
+    private boolean kickUniqueIndex() {
+        String since = ISO.format(Instant.ofEpochMilli(clock.getAsLong() - DeferredIndexBuilder.OLD_WRITER_QUIET_MS));
+        Long recent = jdbc.queryForObject(DeferredIndexBuilder.SQL_AUDIT_SEQ_OLD_WRITER_RECENT, Long.class, since);
         if (recent != null && recent > 0) {
             log.info("Denetim zinciri: eski sürüm bir pod hâlâ seq 1 yazıyor ({} satır, son {} dk) — {} kurulumu bir saat ertelendi",
-                    recent, STRAGGLER_QUIET_MS / 60_000, INDEX);
+                    recent, DeferredIndexBuilder.OLD_WRITER_QUIET_MS / 60_000, INDEX);
             return false;
         }
         if (kicks.get() >= MAX_INDEX_KICKS) {
@@ -190,7 +192,7 @@ public class AuditChainRestartJob {
         }
         kicks.incrementAndGet();
         lastKick = indexKicker.get();
-        log.info("Denetim zinciri: {} geçerli değil — ertelenmiş indeks kurulumu yeniden başlatıldı", INDEX);
+        log.info("Denetim zinciri: {} geçerli değil — yalnız bu indeks için ertelenmiş kurulum başlatıldı", INDEX);
         return false;
     }
 

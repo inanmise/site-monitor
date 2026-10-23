@@ -44,16 +44,27 @@ public interface AuditLogRepository extends Repository<AuditLog, Long> {
      * satırlardan birini "son" sanıyordu: 2026-07-28'den beri her yeni satır {@code seq = 1} + {@code prev_hash = GENESIS}
      * aldı, doğrulama ikinci seq-1 satırında kırıldı ve {@code ux_audit_seq} hiç kurulamadı. H2 NULL'ları SONA koyduğu için
      * hiçbir test görmedi ({@code AuditChainNullsFirstH2Test} H2'yi {@code DEFAULT_NULL_ORDERING=HIGH} ile PostgreSQL gibi
-     * sıralatır). {@code id DESC}: aynı seq'li satırlar (bozuk dönem) arasında belirlenimci seçim. {@code idx_audit_seq}
-     * geriye taranır ({@code seq IS NOT NULL} indeks koşulu).
+     * sıralatır).
+     *
+     * <p>Eşitlik kırıcı ({@code , id DESC}) YOK (inceleme F1): {@code idx_audit_seq(seq)} onu taşımaz; bozuk veritabanının
+     * istatistiği ("zincirli satırların hepsi seq 1") ile PostgreSQL planlayıcısı her denetim yazımında — küme genelindeki
+     * zincir kilidini tutarken — bütün zincirli satırları okuyup sıralıyordu (1 M satırda ~190 ms). Bu hâliyle tek satırlık
+     * geriye indeks taraması ({@code seq IS NOT NULL} indeks koşulu); aynı en yüksek seq'li satırlar yalnız bozuk dönemde
+     * (doğrulanamaz) ya da bir çatalda (zaten kırık) olur. Kapı: {@code AuditChainPostgresTest.tailQueryPlan_*}.
      */
-    Optional<AuditLog> findTopBySeqIsNotNullOrderBySeqDescIdDesc();
+    Optional<AuditLog> findTopBySeqIsNotNullOrderBySeqDesc();
 
-    /** En yeni zincir yeniden başlatma satırı ({@code AUDIT_CHAIN_RESTART}) — doğrulamanın başladığı yer; yoksa boş. */
-    Optional<AuditLog> findTopByEventTypeAndSeqIsNotNullOrderBySeqDescIdDesc(String eventType);
+    /**
+     * EN ESKİ zincir yeniden başlatma satırı ({@code AUDIT_CHAIN_RESTART}) — doğrulamanın başladığı yer; yoksa boş. Meşru
+     * olarak yalnız biri yazılır; en eskiden başlamak sonradan eklenmiş sahte bir ikincisini kırık gösterir.
+     */
+    Optional<AuditLog> findTopByEventTypeAndSeqIsNotNullOrderBySeqAsc(String eventType);
 
-    /** Yeniden başlatmadan itibaren doğrulanan bölüm: {@code seq >= from}, seq (eşitse id) sırasıyla sayfalı. */
-    List<AuditLog> findBySeqGreaterThanEqualOrderBySeqAscIdAsc(Long seq, Pageable pageable);
+    /** En düşük seq'li KALAN zincirli satır — yeniden başlatma yoksa doğrulamanın çapası (saklama silmesinden sonra da). */
+    Optional<AuditLog> findTopBySeqIsNotNullOrderBySeqAsc();
+
+    /** Doğrulanan bölüm: {@code seq >= from}, seq sırasıyla sayfalı ({@code idx_audit_seq} ileri taranır). */
+    List<AuditLog> findBySeqGreaterThanEqualOrderBySeqAsc(Long seq, Pageable pageable);
 
     /** Doğrulanan bölümün DIŞINDA kalan zincirli satır sayısı ({@code seq < from}; seq'siz eski satırlar sayılmaz). */
     long countBySeqLessThan(Long seq);

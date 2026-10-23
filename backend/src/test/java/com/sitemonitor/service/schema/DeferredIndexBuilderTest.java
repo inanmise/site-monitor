@@ -236,6 +236,16 @@ class DeferredIndexBuilderTest {
 
         @Override
         public void close() { closed = true; }
+
+        /** Kurulum bekçisi (denetim zinciri, inceleme F7): döndürülecek sayım + sorulan sorgular. */
+        long guardRows;
+        final List<String> guardQueries = new ArrayList<>();
+
+        @Override
+        public long guardCount(String sql, String sinceIso) {
+            guardQueries.add(sql);
+            return guardRows;
+        }
     }
 
     private static DeferredIndexBuilder builder(FakeSession s, boolean postgres, long lockWaitMs, AtomicInteger sleeps) {
@@ -487,5 +497,58 @@ class DeferredIndexBuilderTest {
         Result r = b.startInBackground().get(10, TimeUnit.SECONDS);
         assertThat(r.failed()).isEqualTo(1);
         assertThat(r.locked()).isFalse();
+    }
+
+    // ── Denetim zinciri düzeltmesi (inceleme 2026-10-24) ─────────────────────────────────────────────────────────────
+
+    private static String auditSeqDdl() {
+        return DeferredIndexBuilder.CATALOG.stream().filter(x -> x.name().equals("ux_audit_seq")).findFirst().orElseThrow().postgresDdl();
+    }
+
+    @Test
+    @DisplayName("F7: eski sürüm bir pod son 10 dk'da zincirin bozuk bölümüne yazdıysa açılış kurulumu ux_audit_seq'i ATLAR, diğerlerini kurar")
+    void run_auditSeqGuard_skipsWhileOldWriterActive() throws Exception {
+        FakeSession s = new FakeSession();
+        s.guardRows = 2;
+        Result r = builder(s, true, 0, new AtomicInteger()).run(s);
+
+        assertThat(s.executed).doesNotContain(auditSeqDdl());
+        assertThat(s.executed).hasSize(EXPECTED.size() - 1);
+        assertThat(r.skipped()).isEqualTo(1);
+        assertThat(r.failed()).isZero();
+        assertThat(s.guardQueries).as("bekçi yalnız ux_audit_seq için sorulur").containsExactly(
+                DeferredIndexBuilder.SQL_AUDIT_SEQ_OLD_WRITER_RECENT);
+    }
+
+    @Test
+    @DisplayName("F7: bekçi 0 → ux_audit_seq kurulur; yarıda kalmış (INVALID) kalıntı bekçi engellerken düşürülür, yeniden kurulmaz")
+    void run_auditSeqGuard_quietBuilds_invalidDroppedWhenBlocked() throws Exception {
+        FakeSession quiet = new FakeSession();
+        builder(quiet, true, 0, new AtomicInteger()).run(quiet);
+        assertThat(quiet.executed).contains(auditSeqDdl());
+
+        FakeSession busy = new FakeSession();
+        busy.guardRows = 1;
+        busy.states.put("ux_audit_seq", State.INVALID);
+        builder(busy, true, 0, new AtomicInteger()).run(busy);
+        assertThat(busy.executed).contains("DROP INDEX CONCURRENTLY IF EXISTS ux_audit_seq").doesNotContain(auditSeqDdl());
+    }
+
+    @Test
+    @DisplayName("F6: only(…) yalnız tek katalog girdisini kurar ve açılış koşusunun kaydını (lastRun) değiştirmez; bilinmeyen ad → hata")
+    void only_buildsSingleIndex_doesNotRecordLastRun() throws Exception {
+        assertThat(DeferredIndexBuilder.onlySpecs("ux_audit_seq")).extracting(Spec::name).containsExactly("ux_audit_seq");
+        assertThatThrownBy(() -> DeferredIndexBuilder.onlySpecs("yok_boyle_indeks")).isInstanceOf(IllegalArgumentException.class);
+
+        FakeSession s = new FakeSession();
+        CompletableFuture<Result> before = DeferredIndexBuilder.lastRun();
+        DeferredIndexBuilder b = new DeferredIndexBuilder(DeferredIndexBuilder.onlySpecs("ux_audit_seq"), () -> true, () -> s,
+                ms -> { }, 0, 60_000, 1, 0, false);
+        Result r = b.startInBackground().get(30, TimeUnit.SECONDS);
+
+        assertThat(s.executed).containsExactly(auditSeqDdl());
+        assertThat(r.built()).isEqualTo(1);
+        assertThat(r.valid() + r.skipped() + r.failed()).isZero();
+        assertThat(DeferredIndexBuilder.lastRun()).as("açılış koşusu kaydı aynı").isSameAs(before);
     }
 }

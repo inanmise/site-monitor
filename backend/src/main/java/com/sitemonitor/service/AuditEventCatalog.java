@@ -443,6 +443,8 @@ public final class AuditEventCatalog {
         if (t.startsWith("SMTP_") || t.startsWith("LDAP_") || t.startsWith("NOTIFICATION_GROUP_")
                 || t.startsWith("CONTACT_")) return INTEGRATION;
 
+        // Zincirin yeniden başlatılması bir SİSTEM olayıdır (arayüz auditFormat.eventClass da ev-system der) — AUDIT_ → DATA'dan ÖNCE
+        if (t.equals("AUDIT_CHAIN_RESTART")) return SYSTEM;
         if (t.startsWith("AUDIT_") || t.equals("SQL_EXECUTE") || t.endsWith("_EXPORT")
                 || t.startsWith("RETENTION_")) return DATA;
 

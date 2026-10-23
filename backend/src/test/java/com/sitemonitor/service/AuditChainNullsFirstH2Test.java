@@ -49,11 +49,23 @@ import static org.mockito.Mockito.when;
 @TestPropertySource(properties = {
         "spring.datasource.url=jdbc:h2:mem:auditnullsfirst;DB_CLOSE_DELAY=-1;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH",
         "spring.datasource.driver-class-name=org.h2.Driver",
-        "spring.jpa.hibernate.ddl-auto=create-drop"})
+        "spring.jpa.hibernate.ddl-auto=create-drop",
+        "spring.jpa.properties.hibernate.session_factory.statement_inspector=com.sitemonitor.service.AuditChainNullsFirstH2Test$SqlCapture"})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class AuditChainNullsFirstH2Test {
 
     private static final DateTimeFormatter ISO = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
+
+    /** Hibernate'in bu bağlamda ürettiği her SQL (uç sorgusunun biçimi — inceleme F1). */
+    public static class SqlCapture implements org.hibernate.resource.jdbc.spi.StatementInspector {
+        static final List<String> SQL = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+        @Override
+        public String inspect(String sql) {
+            if (SQL.size() < 5000) SQL.add(sql);
+            return sql;
+        }
+    }
 
     @Autowired AuditLogRepository repo;
     @Autowired PlatformTransactionManager txManager;
@@ -114,7 +126,7 @@ class AuditChainNullsFirstH2Test {
     }
 
     private AuditLog restartRow() {
-        return repo.findTopByEventTypeAndSeqIsNotNullOrderBySeqDescIdDesc(AuditService.EVENT_CHAIN_RESTART).orElse(null);
+        return repo.findTopByEventTypeAndSeqIsNotNullOrderBySeqAsc(AuditService.EVENT_CHAIN_RESTART).orElse(null);
     }
 
     private Integer marker() {
@@ -263,7 +275,7 @@ class AuditChainNullsFirstH2Test {
         j.run();
 
         assertThat(restartRow()).isNull();
-        assertThat(marker()).isZero();
+        assertThat(marker()).as("bozuk değil → nişan yazılmaz, sonraki açılış yeniden yoklar (F3)").isNull();
         assertThat(j.finished()).isTrue();
         AuditService.ChainVerification v = svc.verifyChain();
         assertThat(v.ok()).isTrue();
@@ -362,5 +374,151 @@ class AuditChainNullsFirstH2Test {
         assertThat(failing.failures()).isEqualTo(AuditChainRestartJob.MAX_ATTEMPTS);
         assertThat(restartRow()).isNull();
         assertThat(marker()).as("başarısızlıkta nişan yazılmaz").isNull();
+    }
+
+    // ── İnceleme düzeltmeleri (2026-10-24) ──────────────────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("F1: yazıcının uç sorgusu eşitlik kırıcısız — 'seq is not null order by seq desc' (idx_audit_seq geriye; PostgreSQL planı: AuditChainPostgresTest)")
+    void tailQuery_hasNoTieBreak() {
+        insertLegacy("2026-06-01T08:00:00");
+        SqlCapture.SQL.clear();
+        svc.recordSystemEvent("SYSTEM_STARTUP", "SYSTEM", "app", "boot");
+
+        String tail = SqlCapture.SQL.stream().map(q -> q.toLowerCase(java.util.Locale.ROOT))
+                .filter(q -> q.contains("from audit_log") && q.contains("seq is not null") && q.contains(" desc"))
+                .findFirst().orElseThrow(() -> new AssertionError("uç sorgusu yakalanmadı: " + SqlCapture.SQL));
+        assertThat(tail).containsPattern("where \\w+\\.seq is not null order by \\w+\\.seq desc (fetch first|offset|limit)");
+        assertThat(tail).as("eşitlik kırıcı (id DESC) idx_audit_seq'le taşınmaz → PostgreSQL bütün zincirli satırları sıralar")
+                .doesNotContainPattern("\\.id desc");
+    }
+
+    @Test
+    @DisplayName("F3: iş 'bozuk değil' gördüğünde nişan yazmaz; sonra eski pod'lar seq 1 yazarsa sonraki açılış zinciri yeniden başlatır")
+    void notDegenerate_noMarker_laterDegenerationRepairedNextBoot() {
+        insertLegacy("2026-06-01T08:00:00");
+        insertDegenerate("2026-07-28T10:00:00", true);                     // tek seq-1 satırı: henüz bozuk değil
+        AuditChainRestartJob first = job(svc);
+        first.run();
+        assertThat(restartRow()).isNull();
+        assertThat(marker()).as("nişan YOK").isNull();
+        assertThat(first.finished()).as("bu pod bitti").isTrue();
+
+        insertDegenerate("2026-10-23T08:00:00", true);                     // yayılım / geri dönüş: eski pod yine seq 1 yazdı
+        insertDegenerate("2026-10-23T09:00:00", true);
+        AuditChainRestartJob nextBoot = job(pod());
+        nextBoot.run();
+
+        assertThat(restartRow()).as("sonraki açılış onardı").isNotNull();
+        assertThat(marker()).isEqualTo(1);
+        AuditService.ChainVerification v = svc.verifyChain();
+        assertThat(v.ok()).as("%s", v).isTrue();
+        assertThat(v.unverified()).isEqualTo(3);
+    }
+
+    @Test
+    @DisplayName("F4: yeniden başlatma yokken saklama en eski satırları silerse doğrulama kalan ilk satırın prev_hash'inden sürer (kırık değil)")
+    void retentionPurge_withoutRestart_verifiesFromLowestRemaining() {
+        for (int i = 1; i <= 5; i++) svc.recordSystemEvent("E" + i, "SYSTEM", "r" + i, "x");
+        assertThat(svc.verifyChain().verifiedFrom()).as("silinmemiş sağlam zincir: GENESIS'ten, bugünkü gibi").isNull();
+
+        jdbc.update("DELETE FROM audit_log WHERE seq <= 2");                // saklama süresi en eski iki satırı sildi
+        AuditService.ChainVerification v = svc.verifyChain();
+
+        assertThat(v.ok()).as("%s", v).isTrue();
+        assertThat(v.checked()).isEqualTo(3);
+        assertThat(v.verifiedFrom()).isNotNull();
+        assertThat(v.verifiedFrom().seq()).isEqualTo(3L);
+        assertThat(v.verifiedFrom().kind()).isEqualTo(AuditService.VerifiedFrom.RETENTION);
+        assertThat(v.unverified()).isZero();
+
+        jdbc.update("UPDATE audit_log SET detail = 'TAMPERED' WHERE seq = 4");   // kalan bölüm gerçekten doğrulanır
+        assertThat(svc.verifyChain().brokenSeq()).isEqualTo(4L);
+    }
+
+    @Test
+    @DisplayName("F4: yeniden başlatma varken saklama öncesini, sonra yeniden başlatma satırının kendisini silerse doğrulama sağlam kalır")
+    void retentionPurge_withRestart_staysOk() {
+        degenerateChain();
+        job(svc).run();
+        AuditLog r = restartRow();
+        svc.recordSystemEvent("A1", "SYSTEM", "x", "a");
+        svc.recordSystemEvent("A2", "SYSTEM", "x", "b");
+        svc.recordSystemEvent("A3", "SYSTEM", "x", "c");
+
+        jdbc.update("DELETE FROM audit_log WHERE seq < ?", r.getSeq());     // bozuk dönem saklamayla gitti
+        AuditService.ChainVerification v = svc.verifyChain();
+        assertThat(v.ok()).as("%s", v).isTrue();
+        assertThat(v.verifiedFrom().kind()).isEqualTo(AuditService.VerifiedFrom.RESTART);
+        assertThat(v.unverified()).isZero();
+        assertThat(v.checked()).isEqualTo(4);
+
+        jdbc.update("DELETE FROM audit_log WHERE seq <= ?", r.getSeq() + 1); // bir yıl sonra yeniden başlatma satırı da gitti
+        v = svc.verifyChain();
+        assertThat(v.ok()).as("%s", v).isTrue();
+        assertThat(v.verifiedFrom().kind()).isEqualTo(AuditService.VerifiedFrom.RETENTION);
+        assertThat(v.verifiedFrom().seq()).isEqualTo(r.getSeq() + 2);
+        assertThat(v.checked()).isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("F4: sonradan eklenmiş SAHTE ikinci yeniden başlatma satırı (GENESIS + doğru hash) doğrulamada kırık görünür — öncesini gizleyemez")
+    void forgedSecondRestartRow_isABreak() {
+        degenerateChain();
+        job(svc).run();
+        svc.recordSystemEvent("A1", "SYSTEM", "x", "a");
+        svc.recordSystemEvent("A2", "SYSTEM", "x", "b");
+        AuditLog forged = new AuditLog();
+        forged.setEventType(AuditService.EVENT_CHAIN_RESTART);
+        forged.setEventTime(ISO.format(Instant.now()));
+        forged.setActor("SYSTEM");
+        forged.setActorRole("SYSTEM");
+        forged.setResourceType("SYSTEM");
+        forged.setResourceId("audit_log");
+        forged.setOutcome("SUCCESS");
+        AuditLog saved = ReflectionTestUtils.invokeMethod(svc, "appendToChain", forged, true, true);   // seq = uç + 1, GENESIS
+        assertThat(saved.getPrevHash()).isEqualTo("GENESIS");
+
+        AuditService.ChainVerification v = svc.verifyChain();
+        assertThat(v.ok()).as("en eskiden doğrulanır: sahte satır kırık").isFalse();
+        assertThat(v.brokenSeq()).isEqualTo(saved.getSeq());
+        assertThat(v.verifiedFrom().id()).as("doğrulama MEŞRU (en eski) yeniden başlatmadan").isEqualTo(restartRow().getId());
+    }
+
+    @Test
+    @DisplayName("F8: PostgreSQL'de ux_audit_seq zaten geçerliyse iş temizliği (bölüm altı taraması) yapmadan biter")
+    void validIndex_skipsCleanup() {
+        degenerateChain();
+        job(svc).run();                                                      // H2: yeniden başlatma + temizlik
+        insertDegenerate("2026-10-23T08:00:00", true);
+        insertDegenerate("2026-10-23T09:00:00", true);                     // iki yeni damgalı çift
+        AtomicInteger kicks = new AtomicInteger();
+        AuditChainRestartJob j = job(pod(), (name, task) -> Optional.ofNullable(task.get()), () -> Boolean.TRUE,
+                () -> true, () -> { kicks.incrementAndGet(); return null; });
+        j.run();
+
+        assertThat(j.finished()).isTrue();
+        assertThat(kicks.get()).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM audit_log WHERE seq = 1 AND seq_locked IS NOT NULL", Integer.class))
+                .as("indeks geçerli → UPDATE hiç koşmadı").isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("F7: açılış kurulumunun bekçi sorgusu = işin denetimi — yeniden başlatmadan sonra son 10 dk'da bölüm altına yazan eski pod")
+    void oldWriterRecentSql_onRealRows() {
+        String since = ISO.format(Instant.now().minusMillis(DeferredIndexBuilder.OLD_WRITER_QUIET_MS));
+        String sql = DeferredIndexBuilder.SQL_AUDIT_SEQ_OLD_WRITER_RECENT;
+        degenerateChain();
+        assertThat(jdbc.queryForObject(sql, Long.class, since)).as("yeniden başlatma yok → 0").isZero();
+
+        job(svc).run();
+        assertThat(jdbc.queryForObject(sql, Long.class, since)).as("bozuk satırlar yeniden başlatmadan ÖNCE yazıldı → 0").isZero();
+        svc.recordSystemEvent("NEW_POD", "SYSTEM", "x", "seq > yeniden başlatma");
+        assertThat(jdbc.queryForObject(sql, Long.class, since)).as("yeni kodun satırı sayılmaz").isZero();
+
+        insertDegenerate(ISO.format(Instant.now()), false);                // eski pod ŞİMDİ seq 1 yazdı
+        assertThat(jdbc.queryForObject(sql, Long.class, since)).isEqualTo(1);
+        jdbc.update("UPDATE audit_log SET event_time = '2026-10-23T00:00:00' WHERE seq = 1 AND id > ?", restartRow().getId());
+        assertThat(jdbc.queryForObject(sql, Long.class, since)).as("10 dk'dan eski → 0").isZero();
     }
 }

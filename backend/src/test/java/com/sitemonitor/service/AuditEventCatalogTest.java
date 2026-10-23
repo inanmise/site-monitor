@@ -105,6 +105,15 @@ class AuditEventCatalogTest {
     }
 
     @Test
+    @DisplayName("denetim zinciri yeniden başlatma (2026-10-23): katalogda ve SİSTEM kategorisinde (arayüzdeki ev-system ile aynı)")
+    void auditChainRestartIsSystem() {
+        assertThat(AuditEventCatalog.contains(AuditService.EVENT_CHAIN_RESTART)).isTrue();
+        assertThat(AuditEventCatalog.categoryOf(AuditService.EVENT_CHAIN_RESTART)).isEqualTo(AuditEventCatalog.SYSTEM);
+        assertThat(AuditEventCatalog.categoryOf("AUDIT_EXPORT")).as("diğer AUDIT_ türleri veri kategorisinde kalır")
+                .isEqualTo(AuditEventCatalog.DATA);
+    }
+
+    @Test
     @DisplayName("katalogdaki hiçbir tür OTHER'da kalmamalı (kural her türü tanımalı)")
     void everyCatalogTypeHasRealCategory() {
         List<String> uncategorised = AuditEventCatalog.TYPES.stream()

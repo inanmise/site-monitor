@@ -384,7 +384,7 @@ class AuditServiceTest {
     void persist_dbFailure_writesFallbackFileNoThrow(@TempDir Path tmp) throws IOException {
         Path fb = tmp.resolve("audit-fallback.jsonl");
         ReflectionTestUtils.setField(service, "fallbackFile", fb.toString());
-        when(auditLogRepo.findTopBySeqIsNotNullOrderBySeqDescIdDesc()).thenReturn(Optional.empty());
+        when(auditLogRepo.findTopBySeqIsNotNullOrderBySeqDesc()).thenReturn(Optional.empty());
         doThrow(new RuntimeException("db down")).when(auditLogRepo).save(any());   // doThrow: mevcut answer'ı tetiklemez
 
         assertThatCode(() -> service.recordSystemEvent("SYSTEM_STARTUP", "SYSTEM", "app", "boot"))
@@ -401,7 +401,7 @@ class AuditServiceTest {
         ReflectionTestUtils.setField(service, "fallbackFile", blocker.resolve("logs/audit-fallback.jsonl").toString());
         Path tempDir = Files.createDirectories(tmp.resolve("tmp"));
         ReflectionTestUtils.setField(service, "fallbackSecondaryDir", tempDir.toString());
-        when(auditLogRepo.findTopBySeqIsNotNullOrderBySeqDescIdDesc()).thenReturn(Optional.empty());
+        when(auditLogRepo.findTopBySeqIsNotNullOrderBySeqDesc()).thenReturn(Optional.empty());
         doThrow(new RuntimeException("db down")).when(auditLogRepo).save(any());
 
         service.recordSystemEvent("SYSTEM_STARTUP", "SYSTEM", "app", "boot");
@@ -417,7 +417,7 @@ class AuditServiceTest {
         Path blocker = Files.writeString(tmp.resolve("app"), "dosya");
         ReflectionTestUtils.setField(service, "fallbackFile", blocker.resolve("logs/audit-fallback.jsonl").toString());
         ReflectionTestUtils.setField(service, "fallbackSecondaryDir", blocker.toString());   // o da bir DOSYA
-        when(auditLogRepo.findTopBySeqIsNotNullOrderBySeqDescIdDesc()).thenReturn(Optional.empty());
+        when(auditLogRepo.findTopBySeqIsNotNullOrderBySeqDesc()).thenReturn(Optional.empty());
         doThrow(new RuntimeException("db down")).when(auditLogRepo).save(any());
 
         assertThatCode(() -> service.recordSystemEvent("SYSTEM_STARTUP", "SYSTEM", "app", "boot"))
@@ -505,12 +505,36 @@ class AuditServiceTest {
     }
 
     @Test
+    @DisplayName("Zincir yeniden başlatma (inceleme F5): ayrıntı taraması advisory lock'tan ÖNCE; kilit içinde yalnız yoklama + uç + INSERT")
+    void restart_statsScanBeforeAdvisoryLock() {
+        var jdbc = chainJdbc("PostgreSQL");
+        var tx = txManager();
+        service.setChainLockSupport(jdbc, tx);
+        when(jdbc.queryForList(AuditService.SQL_SEQ_ONE_PROBE, Long.class)).thenReturn(List.of(1L, 2L));
+        when(jdbc.queryForMap(AuditService.SQL_RESTART_STATS)).thenReturn(java.util.Map.of("rows_before", 4L, "seq1_rows", 4L));
+
+        AuditService.ChainRestart r = service.restartChainIfDegenerate();
+
+        assertThat(r.outcome()).isEqualTo(AuditService.RestartOutcome.WRITTEN);
+        assertThat(r.row().getPrevHash()).isEqualTo("GENESIS");
+        InOrder order = inOrder(jdbc, tx, auditLogRepo);
+        order.verify(jdbc).queryForMap(AuditService.SQL_RESTART_STATS);   // tam tarama — kilitsiz
+        order.verify(tx).getTransaction(any());
+        order.verify(jdbc).execute(AuditService.SQL_CHAIN_LOCK);
+        order.verify(jdbc).queryForList(AuditService.SQL_SEQ_ONE_PROBE, Long.class);   // kilit içinde yeniden yoklama
+        order.verify(auditLogRepo, times(2)).findTopBySeqIsNotNullOrderBySeqDesc();      // ayrıntı (max_seq_before) + ekleme
+        order.verify(auditLogRepo).save(any());
+        order.verify(tx).commit(any());
+        verify(jdbc, times(1)).queryForMap(AuditService.SQL_RESTART_STATS);
+    }
+
+    @Test
     @DisplayName("Çok pod: PostgreSQL'de son satırı okuma + ekleme TEK işlemde, önce pg_advisory_xact_lock alınır")
     void persist_postgres_takesAdvisoryXactLockInSameTransaction() {
         var jdbc = chainJdbc("PostgreSQL");
         var tx = txManager();
         service.setChainLockSupport(jdbc, tx);
-        when(auditLogRepo.findTopBySeqIsNotNullOrderBySeqDescIdDesc()).thenReturn(Optional.empty());
+        when(auditLogRepo.findTopBySeqIsNotNullOrderBySeqDesc()).thenReturn(Optional.empty());
 
         service.recordSystemEvent("SYSTEM_STARTUP", "SYSTEM", "app", "boot");
         service.recordSystemEvent("SCHEMA_PATCH", "SYSTEM", "db", "patch-1");
@@ -518,7 +542,7 @@ class AuditServiceTest {
         InOrder order = inOrder(tx, jdbc, auditLogRepo);
         order.verify(tx).getTransaction(any());
         order.verify(jdbc).execute(AuditService.SQL_CHAIN_LOCK);
-        order.verify(auditLogRepo).findTopBySeqIsNotNullOrderBySeqDescIdDesc();
+        order.verify(auditLogRepo).findTopBySeqIsNotNullOrderBySeqDesc();
         order.verify(auditLogRepo).save(any());
         order.verify(tx).commit(any());
         verify(jdbc, times(2)).execute(AuditService.SQL_CHAIN_LOCK);
@@ -533,7 +557,7 @@ class AuditServiceTest {
         var jdbc = chainJdbc("H2");
         var tx = txManager();
         service.setChainLockSupport(jdbc, tx);
-        when(auditLogRepo.findTopBySeqIsNotNullOrderBySeqDescIdDesc()).thenReturn(Optional.empty());
+        when(auditLogRepo.findTopBySeqIsNotNullOrderBySeqDesc()).thenReturn(Optional.empty());
 
         AuditLog saved = service.persist(new AuditLog());
 
@@ -554,7 +578,7 @@ class AuditServiceTest {
         var jdbc = chainJdbc("PostgreSQL");
         var tx = txManager();
         service.setChainLockSupport(jdbc, tx);
-        when(auditLogRepo.findTopBySeqIsNotNullOrderBySeqDescIdDesc()).thenReturn(Optional.empty());
+        when(auditLogRepo.findTopBySeqIsNotNullOrderBySeqDesc()).thenReturn(Optional.empty());
 
         org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
         org.springframework.transaction.support.TransactionSynchronizationManager.setActualTransactionActive(true);
@@ -592,7 +616,7 @@ class AuditServiceTest {
         var jdbc = chainJdbc("PostgreSQL");
         var tx = txManager();
         service.setChainLockSupport(jdbc, tx);
-        when(auditLogRepo.findTopBySeqIsNotNullOrderBySeqDescIdDesc()).thenReturn(Optional.empty());
+        when(auditLogRepo.findTopBySeqIsNotNullOrderBySeqDesc()).thenReturn(Optional.empty());
 
         org.springframework.transaction.support.TransactionSynchronizationManager.setActualTransactionActive(true);
         try {
@@ -620,7 +644,7 @@ class AuditServiceTest {
         var jdbc = chainJdbc("PostgreSQL");
         var tx = txManager();
         service.setChainLockSupport(jdbc, tx);
-        when(auditLogRepo.findTopBySeqIsNotNullOrderBySeqDescIdDesc()).thenReturn(Optional.empty());
+        when(auditLogRepo.findTopBySeqIsNotNullOrderBySeqDesc()).thenReturn(Optional.empty());
         doThrow(new org.springframework.dao.DataIntegrityViolationException("value too long for type character varying(255)"))
                 .when(auditLogRepo).save(any());
 
@@ -640,7 +664,7 @@ class AuditServiceTest {
                 .when(jdbc).execute(any(org.springframework.jdbc.core.ConnectionCallback.class));
         var tx = txManager();
         service.setChainLockSupport(jdbc, tx);
-        when(auditLogRepo.findTopBySeqIsNotNullOrderBySeqDescIdDesc()).thenReturn(Optional.empty());
+        when(auditLogRepo.findTopBySeqIsNotNullOrderBySeqDesc()).thenReturn(Optional.empty());
 
         AuditLog first = service.persist(new AuditLog());
         assertThat(first).isNotNull();
@@ -660,7 +684,7 @@ class AuditServiceTest {
                 .when(jdbc).execute(any(org.springframework.jdbc.core.ConnectionCallback.class));
         var tx = txManager();
         service.setChainLockSupport(jdbc, tx);
-        when(auditLogRepo.findTopBySeqIsNotNullOrderBySeqDescIdDesc()).thenReturn(Optional.empty());
+        when(auditLogRepo.findTopBySeqIsNotNullOrderBySeqDesc()).thenReturn(Optional.empty());
 
         org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
         org.springframework.transaction.support.TransactionSynchronizationManager.setActualTransactionActive(true);
@@ -684,7 +708,7 @@ class AuditServiceTest {
         var jdbc = chainJdbc("PostgreSQL");
         var tx = txManager();
         service.setChainLockSupport(jdbc, tx);
-        when(auditLogRepo.findTopBySeqIsNotNullOrderBySeqDescIdDesc()).thenReturn(Optional.empty());
+        when(auditLogRepo.findTopBySeqIsNotNullOrderBySeqDesc()).thenReturn(Optional.empty());
         doThrow(new RuntimeException("db down")).when(auditLogRepo).save(any());
 
         assertThat(service.persist(new AuditLog())).isNull();

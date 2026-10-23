@@ -166,14 +166,16 @@ public class AuditController {
         data.put("checked", v.checked());
         data.put("broken_seq", v.brokenSeq() == null ? "" : v.brokenSeq());
         data.put("broken_id", v.brokenId() == null ? "" : v.brokenId());
-        // Ek alanlar (2026-10-23, zincirin yeniden başlatılması): doğrulama bir yeniden başlatma satırından başladıysa
-        // nereden (verified_from) ve öncesinde kaç zincirli kaydın doğrulanamadığı (unverified). Yoksa verified_from yok.
+        // Ek alanlar (2026-10-23, zincirin yeniden başlatılması): doğrulama GENESIS'ten başlamadıysa nereden (verified_from;
+        // kind = restart: en eski yeniden başlatma satırı, retention: saklama silmesinden sonra kalan ilk satır) ve öncesinde
+        // kaç zincirli kaydın doğrulanamadığı (unverified). Baştan doğrulandıysa verified_from yok.
         data.put("unverified", v.unverified());
         if (v.verifiedFrom() != null) {
             Map<String, Object> from = new java.util.LinkedHashMap<>();
             from.put("id", v.verifiedFrom().id());
             from.put("seq", v.verifiedFrom().seq());
             from.put("event_time", v.verifiedFrom().eventTime());
+            from.put("kind", v.verifiedFrom().kind());
             data.put("verified_from", from);
         }
         return ok(Map.of("data", data));

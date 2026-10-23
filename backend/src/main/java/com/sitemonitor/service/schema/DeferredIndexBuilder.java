@@ -72,6 +72,27 @@ public final class DeferredIndexBuilder {
     static final long RETRY_DELAY_MS = 60_000;
 
     /**
+     * Denetim zincirinin yeniden başlatılması (2026-10-23, inceleme F7): en eski {@code AUDIT_CHAIN_RESTART} satırından SONRA
+     * (id) ama onun seq'inin ALTINA (hatalı uç sorgusunun seq 1'i) son {@link #OLD_WRITER_QUIET_MS} içinde satır yazıldı mı.
+     * Yazıldıysa hatalı kodu taşıyan eski (20.168.0) bir pod hâlâ çalışıyor: {@code ux_audit_seq} kurulursa onun ikinci
+     * seq-1 yazımı tekil ihlale düşer ve kaydı (pod'la birlikte silinen) fallback dosyasına gider. Açılış kurulumu bu
+     * durumda indeksi ATLAR; {@code AuditChainRestartJob} AYNI sorguyla bekler ve sonra yalnız bu indeksi kurar. Yeniden
+     * başlatma satırı yoksa alt sorgular NULL → 0. Tek parametre: şimdi − {@link #OLD_WRITER_QUIET_MS} (ISO, UTC). Seçici
+     * koşul {@code event_time >= ?} ({@code idx_audit_event_time}, son 10 dk). {@code 'AUDIT_CHAIN_RESTART'} =
+     * {@code AuditService.EVENT_CHAIN_RESTART} (H2 testi sorguyu gerçek satırlarla koşar).
+     */
+    public static final String SQL_AUDIT_SEQ_OLD_WRITER_RECENT = "SELECT COUNT(*) FROM audit_log a WHERE a.event_time >= ?"
+            + " AND a.id > (SELECT r.id FROM audit_log r WHERE r.event_type = 'AUDIT_CHAIN_RESTART' AND r.seq IS NOT NULL"
+            + " ORDER BY r.seq FETCH FIRST 1 ROWS ONLY)"
+            + " AND a.seq < (SELECT r.seq FROM audit_log r WHERE r.event_type = 'AUDIT_CHAIN_RESTART' AND r.seq IS NOT NULL"
+            + " ORDER BY r.seq FETCH FIRST 1 ROWS ONLY)";
+    public static final long OLD_WRITER_QUIET_MS = 10 * 60_000L;
+    /** Kurulumdan önce sorulan bekçiler: indeks adı → sayım sorgusu (parametre: {@code since}); &gt; 0 → bu koşuda atla. */
+    static final java.util.Map<String, String> BUILD_GUARDS = java.util.Map.of("ux_audit_seq", SQL_AUDIT_SEQ_OLD_WRITER_RECENT);
+    private static final java.time.format.DateTimeFormatter GUARD_ISO =
+            java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(java.time.ZoneOffset.UTC);
+
+    /**
      * Bir ertelenmiş indeks: PostgreSQL DDL'i (CONCURRENTLY + IF NOT EXISTS) ve PostgreSQL dışı için yedek DDL
      * ({@code null} = PG'ye özgü, H2'de kurulmaz).
      */
@@ -226,6 +247,8 @@ public final class DeferredIndexBuilder {
         boolean tableExists(String table) throws SQLException;
         State state(String index) throws SQLException;
         void execute(String ddl) throws SQLException;
+        /** Kurulum bekçisi ({@link #BUILD_GUARDS}): sayım; &gt; 0 → indeks bu koşuda atlanır. */
+        default long guardCount(String sql, String sinceIso) throws SQLException { return 0L; }
         @Override void close();
     }
 
@@ -249,6 +272,8 @@ public final class DeferredIndexBuilder {
     private final long patchYieldMs;
     private final long pollMs;
     private final long retryDelayMs;
+    /** {@link #lastRun()}'a yazılsın mı — yalnız açılıştaki TAM katalog koşusu (postgres-it onu bekler); {@link #only} yazmaz. */
+    private final boolean recordLast;
 
     public DeferredIndexBuilder(JdbcTemplate jdbc) {
         this(CATALOG, memoKnown(() -> postgresOrNull(jdbc.getDataSource())), () -> JdbcSession.open(jdbc.getDataSource()),
@@ -257,6 +282,12 @@ public final class DeferredIndexBuilder {
 
     DeferredIndexBuilder(List<Spec> specs, java.util.function.Supplier<Boolean> postgres, SessionFactory sessions, Sleeper sleeper,
                          long lockWaitMs, long patchYieldMs, long pollMs, long retryDelayMs) {
+        this(specs, postgres, sessions, sleeper, lockWaitMs, patchYieldMs, pollMs, retryDelayMs, true);
+    }
+
+    DeferredIndexBuilder(List<Spec> specs, java.util.function.Supplier<Boolean> postgres, SessionFactory sessions, Sleeper sleeper,
+                         long lockWaitMs, long patchYieldMs, long pollMs, long retryDelayMs, boolean recordLast) {
+        this.recordLast = recordLast;
         this.specs = List.copyOf(specs);
         this.postgres = postgres;
         this.sessions = sessions;
@@ -265,6 +296,24 @@ public final class DeferredIndexBuilder {
         this.patchYieldMs = patchYieldMs;
         this.pollMs = Math.max(1, pollMs);
         this.retryDelayMs = Math.max(0, retryDelayMs);
+    }
+
+    /**
+     * Katalogdan YALNIZ verilen indeksi kuran kurucu (inceleme F6, 2026-10-23): {@code AuditChainRestartJob} {@code ux_audit_seq}'i
+     * yeniden denerken tüm kataloğu (ilgisiz başarısız bir indeksi de, CONCURRENTLY taramalarıyla) baştan koşmasın. Aynı kilit
+     * ({@link #LOCK_KEY}), aynı onarım / yeniden deneme / bekçi kuralları; {@link #lastRun()}'a yazmaz (o açılış koşusudur).
+     */
+    public static DeferredIndexBuilder only(JdbcTemplate jdbc, String indexName) {
+        return new DeferredIndexBuilder(onlySpecs(indexName), memoKnown(() -> postgresOrNull(jdbc.getDataSource())),
+                () -> JdbcSession.open(jdbc.getDataSource()), Thread::sleep, LOCK_WAIT_MS, PATCH_YIELD_MS, POLL_MS,
+                RETRY_DELAY_MS, false);
+    }
+
+    /** Katalogdaki tek girdi; yoksa hata (yanlış ad sessizce "hiçbir şey kurma"ya dönmesin). */
+    static List<Spec> onlySpecs(String indexName) {
+        List<Spec> one = CATALOG.stream().filter(s -> s.name().equals(indexName)).toList();
+        if (one.size() != 1) throw new IllegalArgumentException("katalogda yok: " + indexName);
+        return one;
     }
 
     /**
@@ -296,7 +345,7 @@ public final class DeferredIndexBuilder {
         Boolean pg = readNow ? postgres.get() : ((KnownMemo) postgres).peek();
         if (Boolean.FALSE.equals(pg)) return null;
         CompletableFuture<Result> done = new CompletableFuture<>();
-        LAST.set(done);
+        if (recordLast) LAST.set(done);
         Thread t = new Thread(() -> {
             try {
                 Boolean known = pg != null || readNow ? pg : postgres.get();
@@ -376,6 +425,18 @@ public final class DeferredIndexBuilder {
             if (st == State.BUILDING) {
                 log.info("Ertelenmiş indeks atlandı: {} şu an başka bir oturumda kuruluyor", spec.name());
                 return Outcome.SKIPPED;
+            }
+            String guard = BUILD_GUARDS.get(spec.name());
+            if (guard != null) {
+                String since = GUARD_ISO.format(java.time.Instant.now().minusMillis(OLD_WRITER_QUIET_MS));
+                long recent = s.guardCount(guard, since);
+                if (recent > 0) {
+                    log.info("Ertelenmiş indeks atlandı: {} — eski sürüm bir pod son {} dk içinde zincirin bozuk bölümüne yazdı"
+                            + " ({} satır); AuditChainRestartJob sessiz 10 dakikadan sonra kurar", spec.name(),
+                            OLD_WRITER_QUIET_MS / 60_000, recent);
+                    if (st == State.INVALID) dropIfInvalid(s, spec.name());
+                    return Outcome.SKIPPED;
+                }
             }
             yieldToSchemaPatching(s);
             if (st == State.INVALID) {
@@ -603,6 +664,14 @@ public final class DeferredIndexBuilder {
                 }
             } catch (SQLException e) {
                 return State.INVALID;
+            }
+        }
+
+        @Override
+        public long guardCount(String sql, String sinceIso) throws SQLException {
+            try (PreparedStatement ps = conn.prepareStatement(sql)) {
+                ps.setString(1, sinceIso);
+                try (ResultSet rs = ps.executeQuery()) { return rs.next() ? rs.getLong(1) : 0L; }
             }
         }
 
