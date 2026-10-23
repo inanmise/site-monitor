@@ -39,7 +39,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * TLS profili işi (2026-10-10): lider kapısı + kendi kilidi, vade seçimi (hiç yoklanmamış önce, sınırlı tur), elle
+ * TLS profili işi (2026-10-10): kendi kilidi + (2026-10-23, R3-1 3e) her pod'da iki aşamalı tur ve lider bırakma, vade seçimi (hiç yoklanmamış önce, sınırlı tur), elle
  * yüklenen kayıtların dışlanması, havuzun eşzamanlılık sınırı ve tur bütçesi, not karşılaştırması + önbellek boşaltma.
  */
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
@@ -96,19 +96,54 @@ class TlsProfileJobServiceTest {
     }
 
     @Test
-    @DisplayName("Lider değilse tur koşmaz; liderse kendi scheduler_lock anahtarıyla koşar")
-    void leaderGateAndLock() {
+    @DisplayName("R3-1 3e: tur artık lidere bağlı DEĞİL — her pod'da kilit 'tls-profile' + iki aşamalı tur 'tls-profile' altında; "
+            + "lider turu başka pod'a bıraktıysa koşmaz; koşucu üstlenirse gövde burada koşmaz; kesilen tur tamamlanmaz")
+    void anyPodRoundAndLeaderYield() {
         add("a.example.com");
-        when(scheduler.isSweepLeaderNow()).thenReturn(false);
-        job.scheduledTick();
-        verify(scheduler, never()).runWithSchedulerLock(anyString(), any());
-
-        when(scheduler.isSweepLeaderNow()).thenReturn(true);
         doAnswer(i -> { ((Runnable) i.getArgument(1)).run(); return null; })
                 .when(scheduler).runWithSchedulerLock(eq(TlsProfileJobService.LOCK_NAME), any());
+
+        // lider ve tur son 2 aralıkta başka pod'da → bırakır: kilit / tur / yoklama yok
+        when(scheduler.leaderYieldsRound("tls-profile", 600_000L)).thenReturn(true);
+        job.scheduledTick();
+        verify(scheduler, never()).runWithSchedulerLock(anyString(), any());
+        verify(scheduler, never()).claimRound(anyString(), org.mockito.ArgumentMatchers.anyLong());
+
+        // bırakmıyor, tur başka pod'da alınmış → kilit altında tur sorulur, yoklama yok
+        when(scheduler.leaderYieldsRound("tls-profile", 600_000L)).thenReturn(false);
         job.scheduledTick();
         verify(scheduler).runWithSchedulerLock(eq("tls-profile"), any());
+        verify(scheduler).claimRound("tls-profile", 600_000L);
+        verify(probe, never()).probe(anyString(), anyInt(), anyBoolean(), anyString(), any());
+
+        // tur bu pod'da → yoklar ve turu tamamlar
+        when(scheduler.claimRound("tls-profile", 600_000L)).thenReturn(true);
+        job.scheduledTick();
         verify(probe).probe(eq("a.example.com"), eq(443), eq(false), eq(TlsProfile.TRIGGER_SCHEDULED), any());
+        verify(scheduler).finishSideRound("tls-profile", true);
+        verify(scheduler, never()).isSweepLeaderNow();          // ÖNCE: takipçide hiç koşmuyordu (lider kapısı)
+
+        // kesilen tur (kapanış) tamamlanmaz → koşu kirası dolunca yeniden koşar
+        profiles.clear();
+        Thread.currentThread().interrupt();
+        try {
+            job.scheduledTick();
+        } finally {
+            Thread.interrupted();
+        }
+        verify(scheduler).finishSideRound("tls-profile", false);
+
+        // yan iş koşucusu üstlendi (gövde orada koşar) → burada kilit yok
+        org.mockito.Mockito.clearInvocations(scheduler);
+        when(scheduler.offloadSideJob(any())).thenReturn(true);
+        job.scheduledTick();
+        org.mockito.ArgumentCaptor<com.sitemonitor.service.schedule.SideJob> sj =
+                org.mockito.ArgumentCaptor.forClass(com.sitemonitor.service.schedule.SideJob.class);
+        verify(scheduler).offloadSideJob(sj.capture());
+        assertThat(sj.getValue().name()).isEqualTo("tls-profile");
+        assertThat(sj.getValue().heavy()).isTrue();
+        assertThat(sj.getValue().cronTriggered()).as("sabit periyotlu: lider ertelemesi değil, tur bırakma").isFalse();
+        verify(scheduler, never()).runWithSchedulerLock(anyString(), any());
     }
 
     @Test

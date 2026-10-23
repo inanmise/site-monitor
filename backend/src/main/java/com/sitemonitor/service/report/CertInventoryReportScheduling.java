@@ -51,7 +51,7 @@ public class CertInventoryReportScheduling implements SchedulingConfigurer {
     @Override
     public void configureTasks(ScheduledTaskRegistrar registrar) {
         registrar.addTriggerTask(
-                () -> schedulerService.runWithSchedulerLock(LOCK, () -> scheduledTick(plannedFire.last(), Instant.now())),
+                this::fire,
                 plannedFire.wrap(context -> {
                     String expr = reportService.cron();
                     try {
@@ -69,6 +69,23 @@ public class CertInventoryReportScheduling implements SchedulingConfigurer {
                         }
                     }
                 }));
+    }
+
+    /**
+     * Tetik görevi (R3-1 3e, 2026-10-23): PLANLI an tetik anında yakalanır (tetikleyici sıradaki anı görev DÖNÜNCE hesaplar —
+     * ertelenen / koşucuya verilen gövde planlı anı sonradan okuyamaz), gövde kilit altında {@link #scheduledTick}. Tarama
+     * lideri başka canlı pod varken tetiği erteler; ertelenen denemede bu tetiğin turu ({@value #ROUND}) başka pod'da
+     * alındıysa gövde koşmaz. Gövde pod'un yan iş koşucusunda.
+     */
+    void fire() {
+        Instant planned = plannedFire.last();
+        Runnable body = () -> schedulerService.runWithSchedulerLock(LOCK, () -> scheduledTick(planned, Instant.now()));
+        com.sitemonitor.service.schedule.SideJob job = com.sitemonitor.service.schedule.SideJob.cron(ROUND, true, null,
+                LiveCron.effective(reportService.cron(), fallbackCron), IST.getId(),
+                () -> schedulerService.cronRoundTaken(ROUND, LiveCron.effective(reportService.cron(), fallbackCron),
+                        IST.getId()),
+                body);
+        if (!schedulerService.offloadSideJob(job)) body.run();
     }
 
     /**

@@ -635,4 +635,88 @@ class SchedulerMultiPodCoordinationTest {
         }
         assertThat(c.scheduler().isSweepLeader()).isTrue();
     }
+
+    // ── R3-1 3e: yan iş koşucusu ─────────────────────────────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("R3-1 3e: saatlik sertifika turu yan iş koşucusunda — zamanlayıcı iş parçacığı hemen döner, tur sürerken yeniden tetik "
+            + "birleştirilir; başka pod'un bayat taraması cert-check kilidini alamaz (tek tarama), sonuçlar bir kez işlenir")
+    void hourlySweepOnSideRunner_coalesced_otherPodSkips() throws Exception {
+        mp.clock().set(Instant.parse("2026-10-21T07:00:00Z").toEpochMilli());
+        inventory("a.example.com");
+        CompletableFuture<Map<String, Object>> slow = new CompletableFuture<>();
+        AtomicInteger checks = slowChecks(slow);
+        Pod a = pod(1);
+        Pod b = pod(2);
+        com.sitemonitor.service.schedule.SideJobRunner runner =
+                new com.sitemonitor.service.schedule.SideJobRunner(2, mp.clockSupplier());
+        a.scheduler().setSideJobRunner(runner);
+        try {
+            a.scheduler().scheduledHourlyCheck();            // döner; gövde koşucuda
+            long deadline = System.currentTimeMillis() + 10_000;
+            while (checks.get() == 0 && System.currentTimeMillis() < deadline) Thread.sleep(5);
+            assertThat(checks).hasValue(1);
+            assertThat(mp.schedulerLockHolder("cert-check")).isEqualTo(a.owner());
+
+            a.scheduler().scheduledHourlyCheck();            // Spring sürerken yeniden tetikler → birleştirilir
+            assertThat(runner.status().jobs()).filteredOn(j -> j.name().equals("cert-hourly"))
+                    .singleElement().satisfies(j -> {
+                        assertThat(j.skippedCount()).isEqualTo(1);
+                        assertThat(j.state()).isEqualTo(com.sitemonitor.service.schedule.SideJobRunner.STATE_RUNNING);
+                    });
+            b.scheduler().checkStaleInventory();             // b: satır içi (koşucusuz, 20.167.0 gibi) — kilit a'da
+            assertThat(checks).as("tek tarama").hasValue(1);
+
+            slow.complete(Map.of());
+            assertThat(runner.awaitIdle(10_000)).isTrue();
+            verify(mp.mock(CertificateService.class), times(1)).saveResult(any());
+            verify(mp.mock(EscalationService.class), times(1)).processResults(anyList());
+            assertThat(mp.schedulerLockHolder("cert-check")).as("bitince bırakıldı").isNull();
+        } finally {
+            runner.stopAndWait();
+        }
+    }
+
+    @Test
+    @DisplayName("R3-1 3e: kapanışta yan iş koşucusu iş kilitlerinden ÖNCE durur — koşan gece temizliği kesilip adımını bırakmadan "
+            + "pod'un kilitleri bırakılmaz (kilit başka pod'a geçip iş iki kez koşmasın)")
+    void shutdown_stopsSideJobsBeforeReleasingOwnLocks() throws Exception {
+        mp.clock().set(Instant.parse("2026-10-21T00:00:00Z").toEpochMilli());   // 03:00 İstanbul
+        Pod a = pod(1);
+        AtomicBoolean interrupted = new AtomicBoolean();
+        AtomicBoolean jobStoppedBeforeRelease = new AtomicBoolean();
+        java.util.concurrent.CountDownLatch started = new java.util.concurrent.CountDownLatch(1);
+        com.sitemonitor.service.schedule.ClusterLockService locks = new com.sitemonitor.service.schedule.ClusterLockService(
+                mp.jdbc(), a.owner(), mp.clockSupplier(), false) {
+            @Override
+            public int releaseAllOwn() {
+                jobStoppedBeforeRelease.set(interrupted.get());
+                return super.releaseAllOwn();
+            }
+        };
+        ReflectionTestUtils.setField(a.scheduler(), "lockService", locks);
+        ReflectionTestUtils.setField(a.scheduler(), "nightlyLockWaitMs", 0L);
+        when(mp.mock(com.sitemonitor.service.retention.RetentionService.class).runCleanup()).thenAnswer(i -> {
+            started.countDown();
+            try {
+                Thread.sleep(60_000);
+            } catch (InterruptedException e) {
+                interrupted.set(true);                       // bayrak yeniden kurulmaz: iş adımını bırakıp kilidini çözer
+            }
+            return null;
+        });
+        com.sitemonitor.service.schedule.SideJobRunner runner =
+                new com.sitemonitor.service.schedule.SideJobRunner(1, mp.clockSupplier());
+        a.scheduler().setSideJobRunner(runner);
+
+        a.scheduler().cleanupOldLogs();
+        assertThat(started.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        assertThat(mp.schedulerLockHolder("nightly-cleanup")).isEqualTo(a.owner());
+
+        a.scheduler().onShutdown();                          // koşucu: ortak süre (testte 5 sn) → kes → adımı bırakmasını bekle → kilitler
+        assertThat(interrupted).as("koşan iş kesildi").isTrue();
+        assertThat(jobStoppedBeforeRelease).as("iş kilitleri, yan iş durduktan SONRA bırakıldı").isTrue();
+        assertThat(mp.schedulerLockHolder("nightly-cleanup")).isNull();
+        assertThat(runner.accepting()).isFalse();
+    }
 }

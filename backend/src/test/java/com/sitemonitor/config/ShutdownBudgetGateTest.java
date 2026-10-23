@@ -163,6 +163,35 @@ class ShutdownBudgetGateTest {
                 .as("tavan ortak yok etme süresinin altında").isLessThan(ShutdownDeadline.DESTROY_BUDGET_MS);
     }
 
+    /**
+     * Çok pod R3-1 3e (2026-10-23): uzun "her pod" işleri artık yan iş koşucusunda koşar. Kapanışta koşucu, iş kilitleri
+     * ({@code releaseAllOwn}) bırakılmadan ÖNCE durdurulur — koşan işin kilidi başka pod'a geçip aynı iş iki kez koşmasın; bekleme
+     * ortak yok etme süresinden düşer (tavan ortak sürenin altında).
+     */
+    @Test
+    @DisplayName("Yan iş koşucusu: onShutdown'da iş kilitlerinden ÖNCE durur, beklemesi ortak süreyle sınırlı")
+    void sideJobsStopBeforeOwnLocksAreReleased() throws IOException {
+        String src = Files.readString(Path.of("src/main/java/com/sitemonitor/service/SchedulerService.java"), StandardCharsets.UTF_8);
+        int start = src.indexOf("void onShutdown() {");
+        assertThat(start).isPositive();
+        String body = src.substring(start, src.indexOf("\n    }", start));
+        int stop = body.indexOf("stopSideJobs();");
+        int release = body.indexOf("releaseAllOwn()");
+        assertThat(stop).as("onShutdown yan işleri durdurur").isPositive();
+        assertThat(release).isPositive();
+        assertThat(stop).as("yan işler iş kilitlerinden ÖNCE durur").isLessThan(release);
+
+        String runner = Files.readString(Path.of("src/main/java/com/sitemonitor/service/schedule/SideJobRunner.java"),
+                StandardCharsets.UTF_8);
+        assertThat(runner).contains("ShutdownDeadline.waitMs(SHUTDOWN_WAIT_CAP_MS)");
+        assertThat(com.sitemonitor.service.schedule.SideJobRunner.SHUTDOWN_WAIT_CAP_MS)
+                .as("tavan ortak yok etme süresinin altında").isLessThan(ShutdownDeadline.DESTROY_BUDGET_MS);
+        int closed = runner.indexOf("public void onContextClosed(");
+        String closedBody = runner.substring(closed, runner.indexOf("\n    }", closed));
+        assertThat(closedBody).as("ContextClosedEvent dinleyicisi beklemez (yalnız kabul kapanır)")
+                .doesNotContain("await").doesNotContain("stopAndWait").doesNotContain("shutdown");
+    }
+
     private static int count(String s, String needle) {
         int n = 0;
         for (int i = s.indexOf(needle); i >= 0; i = s.indexOf(needle, i + needle.length())) n++;
