@@ -295,6 +295,20 @@ kubectl cp "$NS/<pod>:/var/log/site-monitor/audit-fallback.jsonl" ./audit-fallba
 Dosyayı **pod yeniden başlatılmadan / dağıtım yapılmadan önce** dışarı alın, olay kaydına ekleyin; DB sorunu
 (disk, bağlantı, kilit) giderilince kayıtlar denetim zincirinde **yoktur** — bu bir denetim boşluğu olarak raporlanır.
 
+**Denetim zinciri yeniden başlatıldı (2026-10-23).** Zincirden önce yazılmış (seq'siz) satırları tutan veritabanında
+2026-07-28'den beri her denetim satırı `seq = 1` aldı (PostgreSQL NULL'ları azalan sırada öne koyar); bu sürümden
+sonra açılıştan ~10 dk sonra bir kez `AUDIT_CHAIN_RESTART` satırı yazılır, pod günlüğünde
+`Denetim zinciri YENİDEN BAŞLATILDI` görünür ve "Bütünlüğü doğrula" sağlam zincirde "Zincir <tarih> tarihinden itibaren
+doğrulandı — öncesindeki N kayıt onarımdan önce yazıldı, doğrulanamaz" der. Bu bir kurcalama DEĞİL, bilinen hatanın
+izidir; eski satırlar yazıldığı gibi durur. Doğrulama hep EN ESKİ yeniden başlatma satırından başlar: ikinci bir
+`AUDIT_CHAIN_RESTART` satırı meşru olarak yazılmaz — doğrulamada kırık görünürse elle eklenmiş demektir (olay kaydı açın).
+Yeniden başlatma satırı yoksa doğrulama en eski kalan kayıttan başlar; saklama süresi (365 gün) en eski kayıtları
+sildiyse şerit "daha eski kayıtlar saklama süresi dolduğu için silindi" der — kırık DEĞİLDİR. `ux_audit_seq` arka planda
+YALNIZ bu indeks için kurulur (`grep "ux_audit_seq"`; eski sürüm bir pod son 10 dk'da zincirin bozuk bölümüne yazdıysa
+hem açılış kurulumu hem iş bekler, iş bir saat sonra yeniden dener). Bu sürümden önceye GERİ DÖNÜLECEKSE önce
+`DROP INDEX CONCURRENTLY IF EXISTS ux_audit_seq;` — yoksa eski kod ikinci denetim yazımından itibaren her kaydı fallback
+dosyasına düşürür (`AUDIT DB yazımı BAŞARISIZ`).
+
 ## Bellek
 
 Tek pod'da `OOMKilled` = tam kesinti. Prod: limit **3Gi**, request **1.5Gi**, `-XX:MaxRAMPercentage=75`
@@ -1101,6 +1115,10 @@ bilmez. Son eski pod gidene kadar şunlar görülebilir (sonra kendiliğinden bi
 - Eski saatlik tarama önce turu alır: kilidi yeni pod'un bayat taraması tutuyorsa o saat atlanır (bir sonraki saat tarar).
 - Eski lider DNS / alan adı değişikliğini taban yapar ama PENDING yazmaz; yeni lider 2 sa (DNS) / 6 sa (alan adı) içinde
   yeni-sürüm satırlarını yeniden kuyruğa alır.
+- **Denetim zinciri (2026-10-23 düzeltmesi):** eski (20.168.0) pod geçiş süresince `seq = 1 / GENESIS` yazmaya devam
+  eder; bu satırlar doğrulanan bölümün dışındadır ve "doğrulanamaz" sayısına girer. Yeniden başlatma satırı ilk yeni
+  pod'un açılışından ~10 dk sonra yazılır — o ana dek bütünlük denetimi kırık göstermeye devam eder. Eski pod yazdığı
+  sürece `ux_audit_seq` kurulmaz (açılış kurulumu da, iş de 10 sessiz dakika bekler).
 
 **Çok pod Sürüm 2a'ya geçişte (20.165.x pod'u + yeni pod):**
 

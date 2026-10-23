@@ -286,6 +286,17 @@ satırları, `cluster_observations` satırları
 yeniden yükseltmede kaldığı yerden yazılır); eski sürümde TLS profili yine yalnız liderde koşar ve her pod kurum ölçülerini
 yayar.
 
+### Denetim zinciri düzeltmesi öncesi — bir kerelik
+- [ ] **Prod etkileniyor mu (salt okunur):**
+      `SELECT count(*) FILTER (WHERE seq IS NULL) AS seqsiz_eski, count(*) FILTER (WHERE seq = 1) AS seq_bir,
+              count(*) FILTER (WHERE seq = 1 AND seq_locked) AS seq_bir_kilitli,
+              min(event_time) FILTER (WHERE seq = 1) AS bozuk_donem_baslangici, to_regclass('ux_audit_seq') AS indeks
+       FROM audit_log;`
+      `seq_bir > 1` → etkileniyor (beklenen: `seqsiz_eski > 0`, `indeks` boş). Değerleri not edin — dağıtımdan sonra
+      yeniden başlatma satırının `rows_before` / `seq1_rows` ayrıntısıyla karşılaştırılır (ayrıntı kilitten hemen önce
+      sayılır; birkaç satır fark olabilir). `seq_bir ≤ 1` → yeniden başlatma YAZILMAZ ve işaret (marker) de yazılmaz (beklenen;
+      her açılışta iki satırlık bir yoklama yapılır).
+
 ### Kapsam ve sürüm
 - [ ] Dağıtılan şey **tag'lenmiş sürüm** (`git checkout v$VERSION`); çalışma ağacındaki commit'lenmemiş iş
       bu dağıtıma dahil değildir. GitHub → Actions'ta o commit için `ci.yml` **dört işi de yeşil**.
@@ -539,6 +550,14 @@ kubectl get pod -n "$NS" -l app.kubernetes.io/instance="$REL" \
       (`kubectl top pod -n "$NS"`); aşıyorsa RUNBOOK → Bellek.
 - [ ] 5xx oranı, sweep süreleri (Sistem Sağlığı), Bildirim Geçmişi'nde FAILED artışı yok, push outbox birikmiyor,
       Postgres bağlantı sayısı `max_connections`'ın altında rahat.
+- [ ] **Denetim zinciri (açılıştan ~15 dk sonra):** `SELECT id, seq, event_time, detail FROM audit_log WHERE event_type = 'AUDIT_CHAIN_RESTART';`
+      → etkilenen ortamda TEK satır (`prev_hash = 'GENESIS'`); TÜM pod'ların günlüğünde bir kez
+      `kubectl logs -n "$NS" -l app.kubernetes.io/instance="$REL" --prefix --tail=-1 | grep "Denetim zinciri YENİDEN BAŞLATILDI"`.
+      ~1 saat içinde `SELECT to_regclass('ux_audit_seq');` dolu (değilse günlükte `ux_audit_seq` satırına bakın — eski pod
+      yazıyorsa ertelenir, 3 denemeden sonra bir sonraki açılış kurar). Denetim Logu → "Bütünlüğü doğrula": "Zincir sağlam"
+      + "Zincir … tarihinden itibaren doğrulandı — öncesindeki N kayıt …". Yeni bir denetim yazımının planı (isteğe bağlı,
+      salt okunur): `EXPLAIN SELECT * FROM audit_log WHERE seq IS NOT NULL ORDER BY seq DESC LIMIT 1;` → `Index Scan Backward
+      using idx_audit_seq`, Sort YOK.
 
 ## Çok pod (1 → 2 replika)
 
@@ -645,6 +664,9 @@ kubectl rollout status "$DEPLOY" -n "$NS"
   `--set image.tag="v<önceki>@sha256:<Öncesi'nde kaydedilen imageID digest'i>"` ile koşun. Digest'i etiketin
   içine yazmak **her** chart sürümünde çalışır (`repo:tag@sha256:…`); ayrı `image.digest` değeri yalnız
   v20.86.0'dan sonraki chart'larda vardır.
+- **Denetim zinciri düzeltmesinden ÖNCEYE dönülüyorsa** (20.168.0 ve öncesi): `helm rollback`'ten önce (ya da hemen
+  ardından) `DROP INDEX CONCURRENTLY IF EXISTS ux_audit_seq;` — eski kod her satıra seq 1 yazar; indeks varken ikinci
+  yazımdan itibaren denetim kayıtları fallback dosyasına düşer. Yeniden yükseltmede iş çiftleri temizler, indeks yeniden kurulur.
 - **Şema:** yamalar yalnız ekler (`ADD COLUMN` / `CREATE TABLE`, `ddl-auto=update`) → eski sürüm yeni şemada
   açılır; yeni kolonlara yazılan veri eski sürümde görünmez ama kaybolmaz. İstisna: varsayılansız `NOT NULL`
   kolon eski sürümün INSERT'ünü kırar — sürümün CHANGELOG'unda böyle bir şema notu varsa geri almadan önce okuyun.
