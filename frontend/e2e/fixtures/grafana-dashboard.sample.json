@@ -111,7 +111,7 @@
       }
     } ]
   },
-  "description" : "SiteMonitor izleme durumu, alarmlar, sertifikalar ve sistemin kendi sağlığı — takım ve tür süzgeçli. Pano revizyonu 5 · SiteMonitor 0.0.0-gate.",
+  "description" : "SiteMonitor izleme durumu, alarmlar, sertifikalar ve sistemin kendi sağlığı — takım ve tür süzgeçli. Pano revizyonu 6 · SiteMonitor 0.0.0-gate.",
   "editable" : true,
   "fiscalYearStartMonth" : 0,
   "graphTooltip" : 1,
@@ -208,7 +208,7 @@
   }, {
     "type" : "stat",
     "title" : "Veri tazeliği",
-    "description" : "İş ölçümleri aktarıcısının son turundan beri geçen süre (her pod). 3 tazeleme aralığından (en az 3 dk) eskiyse /metrics/sitemonitor iş değerlerini yayınlamaz ve paneller \"veri yok\" gösterir — pod günlüğünde \"İzleme ölçümleri tazelenemedi\" arayın. \"Veri yok\": uç kazınmıyor (belirteç / Prometheus işi).",
+    "description" : "Kurum ölçülerini (izleme, alarm, sertifika…) yayan aktarıcının son turundan beri geçen süre (bu aileleri yayan en taze pod; yalnız kendi pod ölçülerini yayan tarama lideri sayılmaz). 3 tazeleme aralığından (en az 3 dk) eskiyse /metrics/sitemonitor iş değerlerini yayınlamaz ve paneller \"veri yok\" gösterir — pod günlüğünde \"İzleme ölçümleri tazelenemedi\" arayın. \"Veri yok\": kurum ölçülerini yayan pod yok ya da uç kazınmıyor (belirteç / Prometheus işi — her pod ayrı kazınmalı).",
     "datasource" : {
       "type" : "prometheus",
       "uid" : "${datasource}"
@@ -232,7 +232,7 @@
         "color" : {
           "mode" : "thresholds"
         },
-        "noValue" : "Veri yok — /metrics/sitemonitor kazınmıyor",
+        "noValue" : "Veri yok — kurum ölçülerini yayan pod yok ya da /metrics/sitemonitor kazınmıyor",
         "mappings" : [ {
           "options" : {
             "from" : 0.0,
@@ -254,7 +254,7 @@
         "uid" : "${datasource}"
       },
       "editorMode" : "code",
-      "expr" : "time() - max(sitemonitor_exporter_last_refresh_timestamp_seconds{namespace=\"site-monitor-prod\"})",
+      "expr" : "time() - max((sitemonitor_exporter_last_refresh_timestamp_seconds{namespace=\"site-monitor-prod\"} and on(job, instance) (sitemonitor_exporter_org_families{namespace=\"site-monitor-prod\"} == 1)) or (sitemonitor_exporter_last_refresh_timestamp_seconds{namespace=\"site-monitor-prod\"} unless on(job, instance) sitemonitor_exporter_org_families{namespace=\"site-monitor-prod\"}))",
       "instant" : false,
       "legendFormat" : "__auto",
       "range" : true,
@@ -12063,6 +12063,6 @@
   "timezone" : "browser",
   "title" : "SiteMonitor — Uçtan uca izleme",
   "uid" : "sitemonitor-overview",
-  "version" : 5,
+  "version" : 6,
   "weekStart" : "monday"
 }

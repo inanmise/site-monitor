@@ -231,6 +231,9 @@ public class GrafanaDashboardController {
             m.put("duration_ms", s.durationMs());
             m.put("series_total", s.seriesTotal());
             m.put("entities", s.entities());
+            // Çok pod R3-1 (inceleme L8): false = bu pod son turda yalnız kendi (POD) ailelerini yaydı — kurum ailelerini başka
+            // pod yayıyor; kayıt sayıları o turda yok (ekran "—" yerine nedenini söyler)
+            m.put("org_families", s.orgFamilies());
             List<Map<String, Object>> sources = new ArrayList<>();
             for (Map.Entry<String, Boolean> e : s.sources().entrySet()) {
                 Map<String, Object> r = new LinkedHashMap<>();

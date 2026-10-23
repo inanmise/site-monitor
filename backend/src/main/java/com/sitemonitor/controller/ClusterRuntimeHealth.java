@@ -27,7 +27,8 @@ import java.util.Optional;
  *       {@code observed_by} ile; satır yok → {@code null}); okunamadı / bozuk → {@code verify_error} (ekran "Bilinmiyor" —
  *       asla "0 uyuşmazlık" ya da yeşil değil).</li>
  *   <li>{@code side_jobs}: BU POD'un yan iş koşucusu ({@code SideJobRunner.status()}) — iş başına durum, ertelenen / bırakılan
- *       sayaçlar, lider erteleme kuralı ve "başka canlı pod" gözlemi ({@code null} = bilinmiyor).</li>
+ *       sayaçlar, lider erteleme kuralı ve "başka canlı pod" gözlemi ({@code null} = şu an önbellekte yok) +
+ *       {@code other_live_pod_seen} = bu pod'da son görülen dolu gözlem ve zamanı (yalnız bellek; hiç görülmediyse yok).</li>
  * </ul>
  * Zamanlar UTC {@code yyyy-MM-ddTHH:mm:ss} (ekranın diğer alanlarıyla aynı). Kişi verisi yok; doğrulama anahtarları
  * yalnız kısa özet (gözlemdeki gibi).
@@ -107,8 +108,11 @@ final class ClusterRuntimeHealth {
         m.put("last_failure_at", iso(s.lastFailureMs()));
         m.put("last_failure", s.lastFailure());
         m.put("table_missing", s.tableMissing());
-        // Şu an yazamıyor mu: son hata son başarılı boşaltmadan yeni (ya da hiç başarılı boşaltma yok)
-        m.put("failing", s.lastFailureMs() != null && (s.lastFlushMs() == null || s.lastFailureMs() > s.lastFlushMs()));
+        // Şu an yazamıyor mu: YAZAN kaydedicinin son hatası son başarılı boşaltmadan yeni (ya da hiç başarılı boşaltma yok).
+        // Yazmayan (eski lider, çitlenmiş, kapalı) kaydedici yeniden denemez — eski hatası "şu an başarısız" sayılmaz (R3-1
+        // inceleme M2: liderliği DB kesintisinde kaybeden pod günlerce uyarı gösteriyordu).
+        m.put("failing", s.active() && s.lastFailureMs() != null
+                && (s.lastFlushMs() == null || s.lastFailureMs() > s.lastFlushMs()));
         EvalStateSink.Inherited in = s.inherited();
         if (in == null) {
             m.put("inherited", null);
@@ -201,8 +205,41 @@ final class ClusterRuntimeHealth {
 
     // ── Yan işler ─────────────────────────────────────────────────────────────────────────────────────────────
 
+    /**
+     * "Başka canlı pod" gözleminin bu pod'da SON görülen hâli (R3-1 inceleme L4). Koşucunun gözlemi canlılık önbelleğidir ve
+     * yalnız liderin yerleşim kararından sonraki ~1 dk dolu döner (yan iş tetikleri, 5 dk'lık tarama tıkı); Sistem Sağlığı
+     * istekleri arasında son dolu değer ve zamanı burada tutulur — ekran sürekli "bilinmiyor" yerine "son görülen" der.
+     * Yalnız bellek, veritabanı yok.
+     */
+    static final class OtherPodSeen {
+        private volatile Boolean value;
+        private volatile long atMs;
+
+        void note(Boolean v, long nowMs) {
+            if (v == null) return;
+            atMs = nowMs;
+            value = v;
+        }
+
+        Boolean value() {
+            return value;
+        }
+
+        long atMs() {
+            return atMs;
+        }
+    }
+
     /** {@code side_jobs} alanı; durum okunamazsa {@code {error}}. */
     static Map<String, Object> sideJobs(SideJobRunner runner) {
+        return sideJobs(runner, null, System.currentTimeMillis());
+    }
+
+    /**
+     * {@code side_jobs} alanı. {@code seen} verilirse koşucunun dolu "başka canlı pod" gözlemi kaydedilir ve son görülen
+     * değer {@code other_live_pod_seen} = {@code {value, at}} olarak eklenir (hiç görülmediyse alan yok).
+     */
+    static Map<String, Object> sideJobs(SideJobRunner runner, OtherPodSeen seen, long nowMs) {
         Map<String, Object> m = new LinkedHashMap<>();
         SideJobRunner.Status s;
         try {
@@ -220,6 +257,16 @@ final class ClusterRuntimeHealth {
         m.put("leader_yield_enabled", s.leaderYieldEnabled());
         m.put("leader_hint", s.leaderHint());
         m.put("other_live_pod", s.otherLivePod());
+        if (seen != null) {
+            seen.note(s.otherLivePod(), nowMs);
+            Boolean last = seen.value();
+            if (last != null) {
+                Map<String, Object> sv = new LinkedHashMap<>();
+                sv.put("value", last);
+                sv.put("at", iso(seen.atMs()));
+                m.put("other_live_pod_seen", sv);
+            }
+        }
         List<Map<String, Object>> jobs = new ArrayList<>();
         long deferred = 0, yielded = 0, skipped = 0;
         int running = 0, queued = 0, failed = 0;

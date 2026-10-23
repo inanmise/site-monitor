@@ -9005,6 +9005,15 @@ export const EN = {
   'hmp.sjOutcomeInterrupted': 'last run was cut at shutdown',
   'hmp.sjFinished': 'finished: {0}',
   // ── /multi-pod R3-1 · B ──
+  // ── multi-pod R3-1 · FX-OBS ──
+  'hmp.esReason.leadership_changed': 'the sweep leadership changed during the round — the comparison was discarded, the next round verifies again',
+  'hmp.esReason.nothing_compared': 'there was nothing to compare (every key was skipped) — the next round tries again',
+  'hmp.sjOtherPodLeaderOnly': 'other live pods: only the sweep leader checks (this pod is not the leader)',
+  'hmp.sjOtherPodSeenYes': 'another live pod at the last check ({0})',
+  'hmp.sjOtherPodSeenNo': 'no other live pod at the last check ({0})',
+  'hmp.sjOtherPodNotChecked': 'other live pods: not checked yet — the leader checks at the next side-job trigger',
+  'grafana.exp.orgElsewhere': "This pod exported only its own pod metrics in its last refresh (sweep leader) — another pod exports the organisation metrics (monitors, alerts, certificates, domains); the counts show on that pod's refresh.",
+  // ── /multi-pod R3-1 · FX-OBS ──
   'health.httpOpenExplorer': 'Open request explorer',
   'health.reasonUnavailable': 'Data unavailable: {0}',
 

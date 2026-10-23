@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { evalStateModel, sideJobsModel, EVAL_KINDS, EVAL_VERIFY_TONE, EVAL_UNKNOWN_REASONS } from '../components/admin/health/clusterRuntimeModel.js'
+import { evalStateModel, sideJobsModel, otherPodState, EVAL_KINDS, EVAL_VERIFY_TONE, EVAL_UNKNOWN_REASONS } from '../components/admin/health/clusterRuntimeModel.js'
 import { TR } from '../i18n/index.jsx'
 import { EN } from '../i18n/en.js'
 import { clusterModel } from '../components/admin/health/healthModel.js'
@@ -91,6 +91,19 @@ describe('evalStateModel — kalıcı değerlendirme durumu (R3-1)', () => {
     expect(noRec.verify.level).toBe('ok')
   })
 
+  // R3-1 inceleme M2 (FX-OBS): DB kesintisinde liderliği kaybeden pod artık yazmıyor ve yeniden denemiyor — eski hatası kartı
+  // günlerce uyarıya çekmemeli (sunucu `failing`'i yalnız yazarken verir; model ikinci emniyet)
+  it('eski lider (yazmıyor) + eski hata → uyarı değil; aynı geçmiş yazan liderde → uyarı', () => {
+    const former = { ...REC, active: false, generation: null, write_failures: 3, last_failure_at: '2026-10-23T08:30:00',
+      last_flush_at: '2026-10-23T08:20:00', last_failure: 'CannotGetJdbcConnectionException' }
+    expect(evalStateModel(H({ this_pod: { ...former, failing: true }, verify: VERIFY })).recorderLevel).toBe('ok')
+    expect(evalStateModel(H({ this_pod: { ...former, failing: true }, verify: VERIFY })).level).toBe('ok')
+    const { failing, ...noFlag } = former   // eski sunucu: failing yok → zamanlardan (son hata son yazımdan yeni)
+    expect(failing).toBe(false)
+    expect(evalStateModel(H({ this_pod: noFlag, verify: VERIFY })).recorderLevel).toBe('ok')
+    expect(evalStateModel(H({ this_pod: { ...former, active: true, failing: true }, verify: VERIFY })).recorderLevel).toBe('warn')
+  })
+
   it('bilinmeyen (yeni sürümün) tür sonda, ham adıyla; bilinen türler sırası sunucuyla aynı', () => {
     expect(EVAL_KINDS).toEqual(['recovery', 'sibling', 'suppression', 'round_seen', 'confirmation', 'descriptor', 'window_seed'])
     const m = evalStateModel(H({ this_pod: REC, verify: { ...VERIFY, kinds: { brand_new: { compared: 1, mismatches: 0 }, ...VERIFY.kinds } } }))
@@ -112,6 +125,26 @@ describe('sideJobsModel — bu pod’un yan işleri (R3-1)', () => {
     expect(m).toMatchObject({ known: true, threads: 3, running: 1, queued: 1, deferred: 5, yielded: 2, otherLivePod: null, leaderYield: true })
     expect(m.active.map((j) => j.name)).toEqual(['cert-hourly', 'nightly-cleanup'])
     expect(m.failedJobs.map((j) => j.name)).toEqual(['tls-profile'])
+  })
+
+  // R3-1 inceleme L4 (FX-OBS): "başka canlı pod" satırı takipçide "yalnız lider bakar", lider önbelleği boşken son görülen
+  it('başka canlı pod: takipçi → yalnız lider; lider + boş önbellek → son görülen (zamanıyla) ya da henüz bakılmadı; erteleme kapalı → gösterilmez', () => {
+    const at = '2026-10-23T08:57:00'
+    expect(otherPodState(sideJobsModel({ side_jobs: SJ }))).toBe('leaderOnly')
+    expect(otherPodState(sideJobsModel({ side_jobs: { ...SJ, leader_hint: true } }))).toBe('notChecked')
+    const seen = sideJobsModel({ side_jobs: { ...SJ, leader_hint: true, other_live_pod_seen: { value: true, at } } })
+    expect(seen.otherLivePodSeen).toEqual({ value: true, at })
+    expect(otherPodState(seen)).toBe('seenYes')
+    expect(otherPodState(sideJobsModel({ side_jobs: { ...SJ, leader_hint: true, other_live_pod_seen: { value: false, at } } }))).toBe('seenNo')
+    expect(otherPodState(sideJobsModel({ side_jobs: { ...SJ, leader_hint: true, other_live_pod: true } }))).toBe('yes')
+    expect(otherPodState(sideJobsModel({ side_jobs: { ...SJ, leader_hint: true, other_live_pod: false } }))).toBe('no')
+    expect(otherPodState(sideJobsModel({ side_jobs: { ...SJ, leader_yield_enabled: false } }))).toBe('off')
+    // Eski sunucu (lider bilgisi yok) → eski "bilinmiyor"; bozuk alan → yok sayılır
+    const { leader_hint, ...old } = SJ
+    expect(leader_hint).toBe(false)
+    expect(otherPodState(sideJobsModel({ side_jobs: old }))).toBe('unknown')
+    expect(sideJobsModel({ side_jobs: { ...SJ, other_live_pod_seen: { value: 'x' } } }).otherLivePodSeen).toBeNull()
+    expect(otherPodState({ known: false })).toBe('unknown')
   })
 
   it('özet sayaçları yoksa işlerden hesaplanır; okunamadı → known false', () => {
@@ -150,6 +183,24 @@ describe('doğrulama nedenleri sunucu sabitleriyle eşleşir', () => {
     expect(server.size).toBeGreaterThanOrEqual(7)
     for (const r of server) {
       expect(EVAL_UNKNOWN_REASONS, r).toContain(r)
+      expect(TR[`hmp.esReason.${r}`], r).toBeTruthy()
+      expect(EN[`hmp.esReason.${r}`], r).toBeTruthy()
+    }
+  })
+  it('R3-1 inceleme sözleşmesi: leadership_changed ve nothing_compared modelde ve TR + EN çevirili (ham kod basılmaz)', () => {
+    for (const r of ['leadership_changed', 'nothing_compared']) {
+      expect(EVAL_UNKNOWN_REASONS, r).toContain(r)
+      expect(TR[`hmp.esReason.${r}`], r).toBeTruthy()
+      expect(EN[`hmp.esReason.${r}`], r).toBeTruthy()
+    }
+  })
+  // R3-1 inceleme düzeltmeleri (2026-10-23): iki yeni neden (FX-STATE sunucuda, FX-OBS çeviride) — liste İKİ YÖNDE eşit (sunucuda
+  // olmayan ölü neden yok). FX-OBS dalı tek başına KIRMIZI (sunucu sabitleri FX-STATE'te); birleşince yeşil.
+  it('model listesi sunucu sabitleriyle iki yönde eşit; yeni nedenler (leadership_changed, nothing_compared) sunucuda tanımlı', () => {
+    expect(server.has('leadership_changed')).toBe(true)
+    expect(server.has('nothing_compared')).toBe(true)
+    for (const r of EVAL_UNKNOWN_REASONS) {
+      expect(server.has(r), r).toBe(true)
       expect(TR[`hmp.esReason.${r}`], r).toBeTruthy()
       expect(EN[`hmp.esReason.${r}`], r).toBeTruthy()
     }

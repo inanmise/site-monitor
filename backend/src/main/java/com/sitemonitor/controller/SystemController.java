@@ -58,6 +58,8 @@ public class SystemController {
     private com.sitemonitor.service.health.ClusterHealthStore clusterHealthStore;
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.sitemonitor.service.schedule.SideJobRunner sideJobRunner;
+    /** Yan işlerin "başka canlı pod" gözleminin bu pod'da son görülen hâli (R3-1 inceleme L4; yalnız bellek). */
+    private final ClusterRuntimeHealth.OtherPodSeen sideJobOtherPodSeen = new ClusterRuntimeHealth.OtherPodSeen();
     /** Doğrulama aralığı (kaydedicinin açılış ayarı) — gözlemin "eski" eşiği bunun 3 katı. */
     @org.springframework.beans.factory.annotation.Value("${site.monitor.eval-state.verify-ms:300000}")
     private long evalVerifyMs = 300_000L;
@@ -89,7 +91,7 @@ public class SystemController {
             catch (RuntimeException e) { data.put("eval_state", Map.of("error", e.getClass().getSimpleName())); }
         }
         if (sideJobRunner != null) {
-            try { data.put("side_jobs", ClusterRuntimeHealth.sideJobs(sideJobRunner)); }
+            try { data.put("side_jobs", ClusterRuntimeHealth.sideJobs(sideJobRunner, sideJobOtherPodSeen, System.currentTimeMillis())); }
             catch (RuntimeException e) { data.put("side_jobs", Map.of("error", e.getClass().getSimpleName())); }
         }
         return ok(Map.of("data", data));

@@ -9020,6 +9020,15 @@ export const TR = {
   'hmp.sjOutcomeInterrupted': 'son koşu kapanışta kesildi',
   'hmp.sjFinished': 'bitiş: {0}',
   // ── /multi-pod R3-1 · B ──
+  // ── multi-pod R3-1 · FX-OBS ──
+  'hmp.esReason.leadership_changed': 'tur sırasında tarama liderliği değişti — karşılaştırma geçersiz sayıldı, sonraki tur yeniden doğrular',
+  'hmp.esReason.nothing_compared': 'karşılaştırılacak kayıt yoktu (hepsi atlandı) — sonraki tur yeniden dener',
+  'hmp.sjOtherPodLeaderOnly': 'başka canlı pod: yalnız tarama lideri bakar (bu pod lider değil)',
+  'hmp.sjOtherPodSeenYes': 'son bakışta başka canlı pod vardı ({0})',
+  'hmp.sjOtherPodSeenNo': 'son bakışta başka canlı pod yoktu ({0})',
+  'hmp.sjOtherPodNotChecked': 'başka canlı pod: henüz bakılmadı — lider bir sonraki yan iş tetiğinde bakar',
+  'grafana.exp.orgElsewhere': "Bu pod son turda yalnız kendi pod ölçülerini yaydı (tarama lideri) — kurum ölçülerini (izleme, alarm, sertifika, alan adı) başka bir pod yayıyor; kayıt sayıları o pod'un turunda görünür.",
+  // ── /multi-pod R3-1 · FX-OBS ──
   'health.httpOpenExplorer': 'İstek gezginini aç',
   'health.reasonUnavailable': 'Veri alınamadı: {0}',
 

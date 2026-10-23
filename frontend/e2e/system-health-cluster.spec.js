@@ -199,6 +199,35 @@ for (const vp of VIEWPORTS) {
       if (vp.touch) expect(await page.evaluate(smallTargets, '[data-card="cluster"]'), 'dokunma hedefi < 40 px').toEqual([])
     })
 
+    // R3-1 inceleme düzeltmeleri (FX-OBS): M2 eski liderin eski yazma hatası uyarı değil; L4 takipçide "yalnız tarama lideri
+    // bakar"; yeni bilinmiyor nedeni (leadership_changed) ham kod olarak basılmaz
+    test('Küme kartı R3-1 (FX-OBS): eski liderin eski hatası uyarı değil; takipçide yalnız lider bakar; yeni neden çevrilir', async ({ page }) => {
+      test.setTimeout(90_000)
+      await mock(page, { ...HEALTH,
+        eval_state: {
+          this_pod: { ...HEALTH.eval_state.this_pod, active: false, failing: true, write_failures: 4, last_failure_at: fmt(NOW - 300_000),
+            last_flush_at: fmt(NOW - 600_000), last_failure: 'CannotGetJdbcConnectionException' },
+          verify: { ...HEALTH.eval_state.verify, status: 'unknown', reason: 'leadership_changed', pass_fail_mismatches: null, kinds: {},
+            first_mismatches: [] } },
+        side_jobs: { ...HEALTH.side_jobs, other_live_pod: null } })
+      await page.goto('/?tab=health&sec=sched')
+      const card = page.locator('[data-card="cluster"]')
+      await expect(card).toBeVisible({ timeout: 30_000 })
+      await expect(card.locator('[data-slot="cluster-eval-recorder"]')).toHaveAttribute('data-level', 'ok')
+      await expect(card.locator('[data-slot="es-failing"]')).toHaveCount(0)
+      const es = card.locator('[data-slot="cluster-eval-verify"]')
+      await expect(es).toHaveAttribute('data-level', 'unknown')
+      await expect(es.locator('[data-slot="es-verify-status"]')).toContainText(/leadership changed|liderliği değişti/)
+      await expect(es.locator('[data-slot="es-verify-status"]')).not.toContainText('leadership_changed')
+      const yieldLine = card.locator('[data-slot="side-jobs-yield"]')
+      await expect(yieldLine).toHaveAttribute('data-other-pod', 'leaderOnly')
+      await expect(yieldLine).toContainText(/only the sweep leader checks|yalnız tarama lideri bakar/)
+      await page.waitForTimeout(300)
+      expect(await page.evaluate(overflowIn, '[data-section="sched"]'), 'yatay taşma').toEqual([])
+      expect(await page.evaluate(clippedIn, '[data-card="cluster"]'), 'kırpılan metin').toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-card="cluster"]'), 'dokunma hedefi < 40 px').toEqual([])
+    })
+
     test('Heartbeat: Pod’lar kartı sessiz süreci gösterir; geçmiş penceresinde pod başına satırlar', async ({ page }) => {
       test.setTimeout(90_000)
       await mock(page)

@@ -50,7 +50,7 @@ public final class GrafanaDashboardGenerator {
      * Pano içerik revizyonu — içerik (panel, sorgu, değişken) değişen HER sürümde artır ve
      * {@code src/test/resources/grafana/dashboard-content.sha256} dosyasını güncelle (kapı mesajı yeni satırı yazar).
      */
-    public static final int DASHBOARD_REVISION = 5;
+    public static final int DASHBOARD_REVISION = 6;
     /** "Kritik / yüksek alarm açıldı" anotasyonunun penceresi (sn) — açılış zamanı bu kadar yeni olan alarmlar. */
     static final int ALERT_OPENED_WINDOW_S = 900;
     /** Aktarıcı tazelik eşiği (sn) — sunucunun {@code max(180, 3 × refresh-seconds)} kuralının varsayılan değeri. */
@@ -922,18 +922,28 @@ public final class GrafanaDashboardGenerator {
 
             // Tazelik şeridi: aktarıcının son turundan beri geçen süre. Sunucu, son tamamlanan tur 3 tazeleme aralığından (en az
             // 3 dk) eskiyse iş değerlerini yayınlamaz → iş panelleri "veri yok"; bu şerit nedenini söyler (takılmış iş parçacığı
-            // eski değerleri "güncel" gösteremez).
-            String freshExpr = "time() - max(" + metric(MonitoringMetricNames.EXPORTER_LAST_REFRESH) + ")";
+            // eski değerleri "güncel" gösteremez). Çok pod R3-1 (inceleme L2): yalnız KURUM AİLELERİNİ yayan pod'lar sayılır
+            // (org_families == 1) — yalnız kendi POD ailelerini yayan tarama liderinin taze turu iş panelleri boşken şeridi
+            // "Güncel" yapmasın; R3-1 öncesi pod'lar (org_families yok) her şeyi yaydığı için sayılır (or … unless).
+            String lastRefresh = metric(MonitoringMetricNames.EXPORTER_LAST_REFRESH);
+            String orgFamilies = metric(MonitoringMetricNames.EXPORTER_ORG_FAMILIES);
+            String freshExpr = "time() - max((" + lastRefresh + " and on(job, instance) (" + orgFamilies + " == 1)) or ("
+                    + lastRefresh + " unless on(job, instance) " + orgFamilies + "))";
             Panel fresh = stat(t("Veri tazeliği", "Data freshness"), t(
-                    "İş ölçümleri aktarıcısının son turundan beri geçen süre (her pod). 3 tazeleme aralığından (en az 3 dk) eskiyse "
-                            + "/metrics/sitemonitor iş değerlerini yayınlamaz ve paneller \"veri yok\" gösterir — pod günlüğünde "
-                            + "\"İzleme ölçümleri tazelenemedi\" arayın. \"Veri yok\": uç kazınmıyor (belirteç / Prometheus işi).",
-                    "Time since the metrics exporter's last refresh (any pod). When it is older than 3 refresh intervals (at least 3 min) "
-                            + "/metrics/sitemonitor stops serving business values and the panels show \"no data\" — look for "
-                            + "\"İzleme ölçümleri tazelenemedi\" in the pod log. \"No data\": the endpoint is not scraped (token / Prometheus job)."),
+                    "Kurum ölçülerini (izleme, alarm, sertifika…) yayan aktarıcının son turundan beri geçen süre (bu aileleri yayan "
+                            + "en taze pod; yalnız kendi pod ölçülerini yayan tarama lideri sayılmaz). 3 tazeleme aralığından (en az 3 dk) "
+                            + "eskiyse /metrics/sitemonitor iş değerlerini yayınlamaz ve paneller \"veri yok\" gösterir — pod günlüğünde "
+                            + "\"İzleme ölçümleri tazelenemedi\" arayın. \"Veri yok\": kurum ölçülerini yayan pod yok ya da uç kazınmıyor "
+                            + "(belirteç / Prometheus işi — her pod ayrı kazınmalı).",
+                    "Time since the last refresh of the exporter that serves the organisation metrics (monitors, alerts, certificates…) "
+                            + "— the freshest pod exporting them; a sweep leader exporting only its own pod metrics does not count. When it "
+                            + "is older than 3 refresh intervals (at least 3 min) /metrics/sitemonitor stops serving business values and the "
+                            + "panels show \"no data\" — look for \"İzleme ölçümleri tazelenemedi\" in the pod log. \"No data\": no pod "
+                            + "exports the organisation metrics or the endpoint is not scraped (token / Prometheus job — scrape every pod)."),
                     freshExpr, "dtdurations", thresholds(GREEN, null, AMBER, EXPORTER_STALE_S, RED, 600), "background", null).size(24, 3);
             fresh.mappings(List.<Object>of(rangeMap(0, EXPORTER_STALE_S - 0.001, t("Güncel", "Up to date"), GREEN)));
-            fresh.defaults.put("noValue", t("Veri yok — /metrics/sitemonitor kazınmıyor", "No data — /metrics/sitemonitor is not scraped"));
+            fresh.defaults.put("noValue", t("Veri yok — kurum ölçülerini yayan pod yok ya da /metrics/sitemonitor kazınmıyor",
+                    "No data — no pod exports the organisation metrics or /metrics/sitemonitor is not scraped"));
             add(fresh);
 
             String up = "sum(" + agg(MonitoringMetricNames.MONITORS, MA, "state=\"up\"") + ")";

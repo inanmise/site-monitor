@@ -34,7 +34,7 @@ const SUMMARY = {
   file_name: FILE_NAME, revision: 1, links: true, title: 'SiteMonitor — Uçtan uca izleme', uid: 'sitemonitor-overview',
 }
 
-function settingsData(values, readOnly) {
+function settingsData(values, readOnly, exporterExtra = {}) {
   return {
     values, app_base_url: 'https://sitemonitor.example.org', effective_link_base_url: 'https://sitemonitor.example.org', read_only: readOnly,
     options: {
@@ -47,7 +47,7 @@ function settingsData(values, readOnly) {
       pod: 'site-monitor-7c9d6f8b5-xk2lq', server_now: new Date().toISOString().slice(0, 19),
       refreshed_at: new Date(Date.now() - 20_000).toISOString().slice(0, 19), duration_ms: 140, series_total: 9120,
       entities: { monitors: 640, certificates: 210, domains: 30, alerts: 12 },
-      sources: [{ source: 'overview', up: true }, { source: 'alerts', up: true }], capped: [] },
+      sources: [{ source: 'overview', up: true }, { source: 'alerts', up: true }], capped: [], ...exporterExtra },
     summary: SUMMARY, revision: 1, schema_version: 41, grafana_min_version: '12.0.0', app_version: '20.157.0', metrics_path: '/metrics/sitemonitor',
     runtime_metrics_path: '/metrics', token_env: 'METRICS_EXPORT_TOKEN',
     metrics: [
@@ -63,7 +63,7 @@ function settingsData(values, readOnly) {
 const json = (body, status = 200) => (route) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) })
 
 /** mockApi'den SONRA kaydedilen yollar önceliklidir. Arayüz dili TR. */
-async function routes(page, { readOnly = false } = {}) {
+async function routes(page, { readOnly = false, exporter = {} } = {}) {
   await page.addInitScript(() => { try { localStorage.setItem('site-monitor-lang', 'tr') } catch { /* yok */ } })
   await mockApi(page, { role: 'ADMIN', globalAdmin: !readOnly })
   const calls = { puts: [], previews: [], downloads: 0 }
@@ -76,9 +76,9 @@ async function routes(page, { readOnly = false } = {}) {
         return json({ success: false, code: 'VALIDATION_FAILED', field: 'uid', error: 'Pano kimliği (UID) yalnız harf, rakam, - ve _ içerebilir.' }, 400)(route)
       }
       values = { ...values, ...body }
-      return json({ success: true, message: 'Grafana panosu ayarları kaydedildi (yeniden başlatma gerekmez).', data: settingsData(values, false) })(route)
+      return json({ success: true, message: 'Grafana panosu ayarları kaydedildi (yeniden başlatma gerekmez).', data: settingsData(values, false, exporter) })(route)
     }
-    return json({ success: true, data: settingsData(values, readOnly) })(route)
+    return json({ success: true, data: settingsData(values, readOnly, exporter) })(route)
   })
   await page.route((u) => new URL(u).pathname === '/api/admin/grafana/dashboard/preview', (route) => {
     calls.previews.push(JSON.parse(route.request().postData() || '{}'))
@@ -177,6 +177,23 @@ for (const vp of VIEWPORTS) {
       const pre = root.locator('[data-slot="grafana-scrape"] pre')
       expect(await pre.evaluate((el) => getComputedStyle(el).overflowX)).toBe('auto')
       await page.screenshot({ path: `test-results/settings-grafana-${vp.name}.png`, fullPage: false })
+    })
+
+    // Çok pod R3-1 inceleme L8 (FX-OBS): ayar sayfası tarama liderine düşünce (yalnız kendi pod ölçülerini yayar) sayılar "—"
+    // yerine tek cümleyle nedeni; sığar, kırpılmaz
+    test('aktarıcı bu pod’da yalnız pod ölçülerini yaydı → bilgi cümlesi, sayı kutuları yok; sığar, kırpılmaz', async ({ page }) => {
+      test.setTimeout(90_000)
+      await routes(page, { exporter: { org_families: false, entities: {}, series_total: 31 } })
+      await page.goto('/?tab=settings&sec=grafana')
+      const root = page.locator(ROOT)
+      await expect(root).toHaveAttribute('data-state', 'ok', { timeout: 20_000 })
+      await expect(root.locator('[data-slot="grafana-exporter"]')).toHaveAttribute('data-state', 'running')
+      await expect(root.locator('[data-slot="grafana-exporter-org-elsewhere"]')).toContainText('başka bir pod yayıyor')
+      await expect(root.locator('[data-slot="grafana-exporter-stats"]')).toHaveCount(0)
+      await page.waitForTimeout(300)
+      expect(await page.evaluate(overflowX), `@${vp.name}: yatay taşma`).toBeLessThanOrEqual(1)
+      expect(await page.evaluate(offenders, '[data-slot="grafana-exporter"]'), `@${vp.name}: ekran dışına taşan öğe`).toEqual([])
+      expect(await page.evaluate(clipped, '[data-slot="grafana-exporter"]'), `@${vp.name}: kırpılan metin`).toEqual([])
     })
 
     test('JSON indir gerçek dosya indirir: içe aktarılabilir pano (DS_PROMETHEUS, takım / tür değişkenleri, 30+ panel, boş başlık yok)', async ({ page }) => {
