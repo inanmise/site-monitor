@@ -27,8 +27,11 @@ import java.util.Map;
  * resolved_silently = true} (fırtına çözümü bunu "kurtarıldı" saymaz), açılış push'u gittiyse çözüm push'u gider, 7/24 yok.
  *
  * <p><b>Kullananlar.</b> Bildirimi kapatılan türlerin uzlaştırması ({@code MonitoringOutageService.closeAlarmsOfDisabledTypes})
- * ve envanter içe aktarmasıyla pasife alınan kaydın kapanışı ({@code InventoryImportService}). Diğer sessiz kapanış yolları
- * {@code EscalationService}'te; aynı kalıba geçirilmeleri o dosyanın sahibine istek olarak yazıldı.
+ * ve envanter içe aktarmasıyla pasife alınan kaydın kapanışı ({@code InventoryImportService}). R2b · F'den (2026-10-23) beri
+ * {@code EscalationService}'in dört kapanış yolu da: sessiz kapanış ({@code resolveOpenAlertsSilently} /
+ * {@code resolveOpenAlertsQuietlyRecovered} — {@link #closeCopyIfOpen}, push / 7-24 çağıranın), envanter silme /
+ * pasifleştirme ({@code closeAlertsOnInventoryDelete|Deactivate}) ve koşullu kapanışı (CAS) kazanmış elle / otomatik
+ * çözümün ardından bütün varlık kaydı yerine yalnız not ({@link #writeResolvedNote}).
  *
  * <p>Okunan varlık DEĞİŞTİRİLMEZ (çağıranın işleminde yönetiliyor olabilir — kirli kontrol bütün satırı yazardı); push için
  * kopyası kullanılır.
@@ -65,12 +68,31 @@ public class SilentAlarmCloser {
      * başka yol zaten kapatmıştı ya da yazım düştü (push yok, satıra dokunulmadı).
      */
     public boolean closeIfOpen(AlertEvent event, String resolvedBy) {
-        if (event == null || event.getId() == null) return false;
+        AlertEvent closed = closeCopyIfOpen(event, resolvedBy, true);
+        if (closed == null) return false;
+        enqueueResolvePushQuietly(closed);
+        log.info("✅ Alarm sessizce kapatıldı ({}, mail yok): {} [{}]", closed.getResolvedBy(), event.getDomain(),
+                event.getAlertType());
+        return true;
+    }
+
+    /**
+     * Yalnız KOŞULLU YAZIM (2026-10-23, çok pod R2b · F) — push / 7-24 YOK, onları çağıran kendi kanalından gönderir
+     * ({@code EscalationService}'in sessiz kapanışları bugünkü push / NOC yolunu korur). Dönüş: bu çağrı kapattıysa okunan
+     * varlığın kapanmış KOPYASI (kapanış kolonları dolu; okunan varlık değiştirilmez), başka yol zaten kapatmışsa {@code null}.
+     *
+     * @param markSilenced {@code true} = {@code resolved_silently = true} (susturma: silme / duraklatma / tür kapalı);
+     *                     {@code false} = işarete DOKUNULMAZ (bakımda gerçekten düzelen alarm — O-c1)
+     * @throws RuntimeException yazım düşerse (WARN yazılır, çağıran eski yoldaki gibi istisnayı görür)
+     */
+    public AlertEvent closeCopyIfOpen(AlertEvent event, String resolvedBy, boolean markSilenced) {
+        if (event == null || event.getId() == null) return null;
         String by = resolvedBy != null && !resolvedBy.isBlank() ? resolvedBy : "Sistem (izleme silindi)";
         String at = ISO.format(Instant.now());
         int n;
         try {
-            n = closeRepo.closeSilentlyIfOpen(event.getId(), at, by);
+            n = markSilenced ? closeRepo.closeSilentlyIfOpen(event.getId(), at, by)
+                    : closeRepo.closeRecoveredIfOpen(event.getId(), at, by);
         } catch (RuntimeException e) {
             log.warn("Sessiz kapanış yazılamadı: {} [{}] #{} — {}", event.getDomain(), event.getAlertType(), event.getId(),
                     e.getMessage());
@@ -79,17 +101,24 @@ public class SilentAlarmCloser {
         if (n == 0) {
             log.debug("Sessiz kapanış atlandı: {} [{}] #{} başka yolda zaten kapanmış", event.getDomain(),
                     event.getAlertType(), event.getId());
-            return false;
+            return null;
         }
         AlertEvent closed = new AlertEvent();
         BeanUtils.copyProperties(event, closed);
         closed.setResolved(true);
         closed.setResolvedAt(at);
         closed.setResolvedBy(by);
-        closed.setResolvedSilently(true);
-        enqueueResolvePushQuietly(closed);
-        log.info("✅ Alarm sessizce kapatıldı ({}, mail yok): {} [{}]", by, event.getDomain(), event.getAlertType());
-        return true;
+        if (markSilenced) closed.setResolvedSilently(true);
+        return closed;
+    }
+
+    /**
+     * Koşullu kapanışı (CAS) KAZANMIŞ elle çözümün notu (2026-10-23, çok pod R2b · F) — bütün varlık kaydı yerine yalnız not
+     * kolonu, yalnız bu kapanışın satırına ({@code resolved_at} + {@code resolved_by} eşleşir). {@code true} = yazıldı.
+     */
+    public boolean writeResolvedNote(Long id, String at, String by, String note) {
+        if (id == null || note == null || note.isBlank()) return false;
+        return closeRepo.writeResolvedNote(id, at, by, note) == 1;
     }
 
     /**

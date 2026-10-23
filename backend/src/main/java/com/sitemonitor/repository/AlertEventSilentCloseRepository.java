@@ -27,4 +27,27 @@ public interface AlertEventSilentCloseRepository extends Repository<AlertEvent, 
     @Query("UPDATE AlertEvent e SET e.resolved = true, e.resolvedAt = :at, e.resolvedBy = :by, e.resolvedSilently = true "
             + "WHERE e.id = :id AND e.resolved = false")
     int closeSilentlyIfOpen(@Param("id") Long id, @Param("at") String at, @Param("by") String by);
+
+    /**
+     * {@link #closeSilentlyIfOpen} ikizi — {@code resolved_silently}'ye DOKUNMAZ (2026-10-23, çok pod R2b · F). Bakım
+     * penceresinde GERÇEKTEN düzelen alarmın e-postasız kapanışı ({@code EscalationService.resolveOpenAlertsQuietlyRecovered}):
+     * alarm susturulmadı, kurtuldu — fırtına çözümü onu "kurtarıldı" saysın diye işaret yazılmaz (O-c1).
+     */
+    @Transactional
+    @Modifying
+    @Query("UPDATE AlertEvent e SET e.resolved = true, e.resolvedAt = :at, e.resolvedBy = :by "
+            + "WHERE e.id = :id AND e.resolved = false")
+    int closeRecoveredIfOpen(@Param("id") Long id, @Param("at") String at, @Param("by") String by);
+
+    /**
+     * Elle çözümün notu (2026-10-23, çok pod R2b · F) — yalnız BU kapanışın yazdığı satıra ({@code resolved_at} +
+     * {@code resolved_by} eşleşir): koşullu kapanışı kazanan çağıran notu ayrıca yazar; bütün varlık kaydedilmez (okumadan
+     * sonra yazılmış onay / damga ezilmesin).
+     */
+    @Transactional
+    @Modifying
+    @Query("UPDATE AlertEvent e SET e.resolvedNote = :note "
+            + "WHERE e.id = :id AND e.resolved = true AND e.resolvedAt = :at AND e.resolvedBy = :by")
+    int writeResolvedNote(@Param("id") Long id, @Param("at") String at, @Param("by") String by,
+                          @Param("note") String note);
 }

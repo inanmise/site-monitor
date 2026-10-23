@@ -155,6 +155,21 @@ public class EscalationService {
         this.lockOwner = lockOwner;
     }
 
+    /**
+     * Kapanışların KOŞULLU yazımı (2026-10-23, çok pod R2b · F): sessiz kapanış, envanter silme / pasifleştirme ve koşullu
+     * kapanışı (CAS) kazanmış çözümün ardından okunan alarm varlığı BÜTÜNÜYLE kaydedilmez ({@code AlertEvent}'te
+     * {@code @Version} / {@code @DynamicUpdate} yok — bayat kopyanın kaydı okumadan sonra yazılmış onayı, yeniden uyarı
+     * damgasını, başka yolun çözümünü geri alıyor, kapanmış alarmın {@code resolved_by}'ını ezip ikinci çözüm push'unu
+     * deniyordu). Alan enjeksiyonu + isteğe bağlı: elle kurulan birim testlerinde yoktur ve yollar bugünküyle aynıdır.
+     */
+    @Autowired(required = false)
+    private SilentAlarmCloser silentAlarmCloser;
+
+    /** Test dikişi. */
+    void setSilentAlarmCloser(SilentAlarmCloser silentAlarmCloser) {
+        this.silentAlarmCloser = silentAlarmCloser;
+    }
+
     /** Test kancası. */
     void setSystemMaintenance(SystemMaintenanceService s) { this.systemMaintenance = s; }
 
@@ -1289,7 +1304,7 @@ public class EscalationService {
         event.setResolvedAt(at);
         event.setResolvedBy(by);
         if (note != null && !note.isBlank()) event.setResolvedNote(note.trim());
-        AlertEvent saved = alertEventRepo.save(event);
+        AlertEvent saved = saveAfterCloseCas(event, at, by, note != null && !note.isBlank() ? note.trim() : null);
         keepResolutionMarker(event, saved);   // salt okunur işaret kayıt dönüşünde de bilinsin (F3)
         // D-A3-3 (2026-09-29): fırtına üyesi elle çözülünce de bireysel ÇÖZÜLDÜ e-postası GİTMEZ — otomatik yolla aynı
         // kural (resolveOpenAlertsForDomain): tek toplu kurtarma fırtına dağılınca gider; aksi hâlde takım aynı üyeyi
@@ -1347,16 +1362,19 @@ public class EscalationService {
             // postası gidecekse yazılır; karar kapanıştan sonra yeniden verilseydi arada kapanan fırtına işaretli ama
             // gönderilmeyen satır bırakır, süpürücü üyeye bireysel posta atardı.
             boolean stormMember = event.getStormId() != null && stormService.isActive(event.getStormId());
+            // Kapanış anı TEK: koşullu kapanışın yazdığı değer bellekteki kopyayla aynı (R2b · F — sonradan bütün varlık
+            // kaydedilmediği için ikinci bir now() satıra hiç yazılmaz).
+            String closedAt = now();
             if (event.getId() != null
-                    && markResolvedIfOpenNotify(event, now(), "system", !stormMember) == 0) {
+                    && markResolvedIfOpenNotify(event, closedAt, "system", !stormMember) == 0) {
                 log.debug("Alarm zaten çözülmüş (yarış) — otomatik kapanış atlandı: {} [{}]",
                         domain, event.getAlertType());
                 continue;
             }
             event.setResolved(true);
-            event.setResolvedAt(now());
+            event.setResolvedAt(closedAt);
             event.setResolvedBy("system");
-            AlertEvent saved = alertEventRepo.save(event);
+            AlertEvent saved = saveAfterCloseCas(event, closedAt, "system", null);
             keepResolutionMarker(event, saved);   // salt okunur işaret kayıt dönüşünde de bilinsin (F3)
             // Storm üyesi + storm hâlâ aktif → bireysel çözüm e-postası GÖNDERME
             // (TEK toplu recovery, fırtına dağıldığında storm sweep'inden gider). Incident yine kapandı.
@@ -1432,22 +1450,55 @@ public class EscalationService {
                         domain, event.getAlertType(), event.getId(), by);
                 continue;
             }
-            event.setResolved(true);
-            event.setResolvedAt(now());
-            event.setResolvedBy(by);
-            if (markSilenced) event.setResolvedSilently(true);   // O-b2: fırtına çözümü bunu "kurtarıldı" saymaz (O-c1: bakımda değil)
-            AlertEvent saved = alertEventRepo.save(event);   // mail YOK — sendResolutionNotification çağrılmaz
+            // O-b2: susturma işareti — fırtına çözümü bunu "kurtarıldı" saymaz (O-c1: bakımda değil). Mail YOK —
+            // sendResolutionNotification çağrılmaz. R2b · F: koşullu kapanış; başka yolda kapanmışsa push / 7-24 de yok.
+            AlertEvent closed = closeSilentlyIfOpen(event, by, markSilenced);
+            if (closed == null) continue;
             // Push AÇILIŞTA gittiyse çözümü de gitsin (simetri kuralı enqueueResolve içinde): bakım
             // penceresinde kurtarma / silme / duraklatma mail'siz kapanır ama telefon "DÜZELDİ"yi
             // hiç görmüyordu — açık alarm bildirimi ekranda sonsuza kadar kalıyordu.
-            enqueueResolvePushQuietly(saved != null ? saved : event);
+            enqueueResolvePushQuietly(closed);
             // O-A3-3 (2026-09-29): bakım penceresinde GERÇEKTEN kurtulan alarm (işaretsiz dal) — 7/24 (NOC) ÇÖZÜLDÜ postası
             // takımın e-postasından BAĞIMSIZDIR: açılış NOC'a gittiyse çözüm de gider (karar serviste; açılış gitmediyse
             // hiçbir şey göndermez, çift gönderim yok). Eskiden yalnız sendResolutionNotification çağırıyordu; push-tek
             // takımda / e-postası kapalı izlemede NOC "kesinti sürüyor" sanıyordu. Susturma (silme/duraklatma) dalı değil.
-            if (!markSilenced) notifyNocResolved(saved != null ? saved : event);
+            if (!markSilenced) notifyNocResolved(closed);
             log.info("✅ Alarm sessizce kapatıldı (izleme silindi, mail yok): {} [{}]", domain, event.getAlertType());
         }
+    }
+
+    /**
+     * Sessiz kapanışın yazımı (2026-10-23, çok pod R2b · F). {@link SilentAlarmCloser} varken TEK koşullu UPDATE (yalnız
+     * kapanış kolonları, yalnız hâlâ AÇIK satır): okunan varlık bütünüyle kaydedilmez — okumadan sonra yazılmış onay / yeniden
+     * uyarı damgası / başka yolun çözümü ezilmez, başka yolda kapanmış alarm {@code null} döner (push / 7-24 yok, satıra
+     * dokunulmadı). {@code markSilenced=false} {@code resolved_silently}'yi DEĞİŞTİRMEZ. Okunan varlık değiştirilmez
+     * (çağıranın işleminde yönetiliyor olabilir); dönen değer kapanmış kopyadır. Yokken (elle kurulan testler) eski yol.
+     */
+    private AlertEvent closeSilentlyIfOpen(AlertEvent event, String by, boolean markSilenced) {
+        SilentAlarmCloser closer = silentAlarmCloser;
+        if (closer != null && event.getId() != null) return closer.closeCopyIfOpen(event, by, markSilenced);
+        event.setResolved(true);
+        event.setResolvedAt(now());
+        event.setResolvedBy(by);
+        if (markSilenced) event.setResolvedSilently(true);
+        AlertEvent saved = alertEventRepo.save(event);
+        return saved != null ? saved : event;
+    }
+
+    /**
+     * Koşullu kapanışı (CAS — {@link #markResolvedIfOpenNotify}) KAZANMIŞ çözümün ardından (2026-10-23, çok pod R2b · F):
+     * CAS {@code resolved / resolved_at / resolved_by}'ı zaten yazdı; bütün varlık kaydı okumadan sonra yazılmış onayı,
+     * yeniden uyarı damgasını, fırtına bağını geri alıyordu. {@link SilentAlarmCloser} varken yalnız (varsa) not yazılır ve
+     * bellekteki varlık döner; yokken (elle kurulan testler) ya da kimliksiz satırda eski yol (kayıt).
+     */
+    private AlertEvent saveAfterCloseCas(AlertEvent event, String at, String by, String note) {
+        SilentAlarmCloser closer = silentAlarmCloser;
+        if (closer == null || event.getId() == null) return alertEventRepo.save(event);
+        if (note != null && !closer.writeResolvedNote(event.getId(), at, by, note)) {
+            log.warn("Çözüm notu yazılamadı (satır bu kapanışla eşleşmedi): {} [{}] #{}", event.getDomain(),
+                    event.getAlertType(), event.getId());
+        }
+        return event;
     }
 
     /**
@@ -2383,12 +2434,11 @@ public class EscalationService {
         int closed = 0;
         for (AlertEvent event : alertEventRepo.findByDomainAndResolvedFalse(domain)) {
             if (!closableByInventory(event, reason)) continue;
-            event.setResolved(true);
-            event.setResolvedAt(now());
-            event.setResolvedBy(resolvedBy);
-            event.setResolvedSilently(true);   // O-b2: envanter silindi/pasifleşti — kurtulmadı, susturuldu
-            AlertEvent saved = alertEventRepo.save(event);
-            enqueueResolvePushQuietly(saved != null ? saved : event);   // resolveOpenAlertsSilently ile aynı gerekçe
+            // O-b2: envanter silindi/pasifleşti — kurtulmadı, susturuldu. R2b · F: koşullu kapanış; başka yolda kapanmış
+            // alarm sayılmaz, push'u da gitmez.
+            AlertEvent saved = closeSilentlyIfOpen(event, resolvedBy, true);
+            if (saved == null) continue;
+            enqueueResolvePushQuietly(saved);   // resolveOpenAlertsSilently ile aynı gerekçe
             log.info("Alarm kapatıldı ({}): {} [{}]", reason, domain, event.getAlertType());
             closed++;
         }
