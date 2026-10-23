@@ -9654,6 +9654,10 @@ export const TR = {
   // Zincirin yeniden başlatılması (2026-10-23): doğrulama en yeni yeniden başlatma satırından başlar
   'audit.integrityVerifiedFromTitle': 'Zincir onarımdan itibaren doğrulandı',
   'audit.integrityVerifiedFromBody': 'Zincir {0} tarihinden itibaren doğrulandı — öncesindeki {1} kayıt onarımdan önce yazıldı, doğrulanamaz.',
+  'audit.integrityVerifiedFromBody.one': 'Zincir {0} tarihinden itibaren doğrulandı — öncesindeki {1} kayıt onarımdan önce yazıldı, doğrulanamaz.',
+  // Saklama süresi en eski kayıtları sildiyse doğrulama kalan ilk kayıttan başlar (yeniden başlatma satırı yoksa)
+  'audit.integrityRetentionTitle': 'Zincir en eski saklanan kayıttan itibaren doğrulandı',
+  'audit.integrityRetentionBody': 'Zincir {0} tarihli kayıttan itibaren doğrulandı; daha eski kayıtlar saklama süresi dolduğu için silindi.',
   'audit.statsError':     'Özet kartları yüklenemedi; kayıt listesi yine de kullanılabilir. Sayfayı yenileyip tekrar deneyin.',
   'audit.tile.events':    'Olaylar (7 gün)',
   'audit.tile.eventsHint':'Son 7 günde kaydedilen tüm denetim olayları.',

@@ -524,17 +524,46 @@ describe('AuditLogViewer', () => {
     expect(document.querySelector('[data-slot="audit-integrity-verified-from"]')).toBeNull()
   })
 
-  it('yeniden başlatmadan sonra kırık: kırık şeridi + doğrulamanın başladığı yer birlikte', async () => {
+  // İnceleme F2: başarısız doğrulamanın yanında "doğrulandı" denmez — yalnız kırık şeridi
+  it('yeniden başlatmadan sonra KIRIK: yalnız kırık şeridi; "doğrulandı" şeridi çizilmez', async () => {
     api.admin.getAuditIntegrity.mockResolvedValue({ success: true, data: {
       ok: false, checked: 3, broken_seq: 4902, broken_id: 5003, unverified: 10,
-      verified_from: { id: 5000, seq: 4899, event_time: '2026-10-23T10:15:00' },
+      verified_from: { id: 5000, seq: 4899, event_time: '2026-10-23T10:15:00', kind: 'restart' },
     } })
     render(<AuditLogViewer />)
     await waitFor(() => expect(api.admin.getAuditLogs).toHaveBeenCalled())
     fireEvent.click(screen.getByRole('button', { name: /Bütünlüğü doğrula|Verify integrity/ }))
     const alert = await screen.findByRole('alert')
     expect(alert.textContent).toMatch(/#4902/)
-    expect(document.querySelector('[data-slot="audit-integrity-verified-from"]').textContent).toMatch(/\b10\b/)
+    expect(document.querySelector('[data-slot="audit-integrity-verified-from"]')).toBeNull()
+    expect(document.body.textContent).not.toMatch(/onarımdan itibaren doğrulandı|verified since the repair|tarihinden itibaren doğrulandı|verified from/)
+  })
+
+  it('tek doğrulanamayan kayıt → tekil metin (.one); saklama çapası → "daha eski kayıtlar saklama süresiyle silindi"', async () => {
+    api.admin.getAuditIntegrity.mockResolvedValue({ success: true, data: {
+      ok: true, checked: 7, unverified: 1,
+      verified_from: { id: 5000, seq: 4899, event_time: '2026-10-23T10:15:00', kind: 'restart' },
+    } })
+    render(<AuditLogViewer />)
+    await waitFor(() => expect(api.admin.getAuditLogs).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole('button', { name: /Bütünlüğü doğrula|Verify integrity/ }))
+    const one = await waitFor(() => {
+      const el = document.querySelector('[data-slot="audit-integrity-verified-from"]')
+      expect(el).not.toBeNull()
+      return el
+    })
+    expect(one.textContent).toMatch(/öncesindeki 1 kayıt|the 1 record before it was/)
+
+    api.admin.getAuditIntegrity.mockResolvedValue({ success: true, data: {
+      ok: true, checked: 900, unverified: 0,
+      verified_from: { id: 7000, seq: 9000, event_time: '2027-11-01T03:30:00', kind: 'retention' },
+    } })
+    fireEvent.click(screen.getByRole('button', { name: /Bütünlüğü doğrula|Verify integrity/ }))
+    await waitFor(() => expect(document.querySelector('[data-slot="audit-integrity-verified-from"]')
+      ?.getAttribute('data-kind')).toBe('retention'))
+    const ret = document.querySelector('[data-slot="audit-integrity-verified-from"]')
+    expect(ret.textContent).toMatch(/saklama süresi dolduğu için silindi|retention period ended/)
+    expect(ret.textContent).not.toMatch(/onarımdan önce|before the repair/)
   })
 
   // ── Ayrıntı içeriği ─────────────────────────────────────────────────────────────────────

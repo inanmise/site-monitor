@@ -47,6 +47,28 @@ const EVENT_TYPES_FALLBACK = [
   'SYSTEM_STARTUP', 'SYSTEM_SHUTDOWN',
 ]
 
+/**
+ * Doğrulamanın başladığı yer (yalnız başarılı doğrulamada çizilir). `kind`: `retention` — saklama silmesinden sonra kalan ilk
+ * kayıt; diğer (`restart`, eski sunucuda yok) — zincirin yeniden başlatıldığı satır, öncesindeki N kayıt doğrulanamaz.
+ */
+function IntegrityVerifiedFrom({ integrity, locale, t }) {
+  const from = integrity.verified_from
+  const when = formatExact(from.event_time, locale)
+  const retention = from.kind === 'retention'
+  const n = integrity.unverified
+  const count = typeof n === 'number' ? n.toLocaleString(locale) : '—'
+  return (
+    <div data-slot="audit-integrity-verified-from" data-kind={retention ? 'retention' : 'restart'}>
+      <AlertBanner tone="info" className="mb-0"
+        title={t(retention ? 'audit.integrityRetentionTitle' : 'audit.integrityVerifiedFromTitle')}>
+        {retention
+          ? t('audit.integrityRetentionBody', when)
+          : t(n === 1 ? 'audit.integrityVerifiedFromBody.one' : 'audit.integrityVerifiedFromBody', when, count)}
+      </AlertBanner>
+    </div>
+  )
+}
+
 /** Ayrıntı bölmesi (xl) ile yan Sheet arasındaki TEK JS eşiği — Tailwind `xl` ile aynı (1280). */
 const SPLIT_MIN_PX = 1280
 
@@ -285,16 +307,12 @@ export default function AuditLogViewer({ fullScope = true, teamNames }) {
           {t('audit.integrityBrokenBody', integrity.broken_seq || '?')}
         </AlertBanner>
       )}
-      {/* Zincir yeniden başlatıldıysa (2026-10-23) doğrulama o satırdan başlar; öncesi onarımdan önce yazıldı — doğrulanamaz.
-          Eski sunucu bu alanı göndermez → bugünkü metin. */}
-      {integrity && !integrity.loading && !integrity.error && integrity.verified_from && (
-        <div data-slot="audit-integrity-verified-from">
-          <AlertBanner tone="info" title={t('audit.integrityVerifiedFromTitle')} className="mb-0">
-            {t('audit.integrityVerifiedFromBody',
-              formatExact(integrity.verified_from.event_time, locale),
-              typeof integrity.unverified === 'number' ? integrity.unverified.toLocaleString(locale) : '—')}
-          </AlertBanner>
-        </div>
+      {/* Doğrulama GENESIS'ten başlamadıysa (2026-10-23) nereden başladığı: zincirin yeniden başlatıldığı satır (öncesi onarımdan
+          önce yazıldı — doğrulanamaz) ya da saklama silmesinden sonra kalan ilk kayıt. YALNIZ doğrulama başarılıysa (inceleme F2):
+          başarısız bir doğrulamanın yanında "doğrulandı" demek yanıltır — kırık şeridi tek başına kalır. Eski sunucu bu alanı
+          göndermez → bugünkü metin. */}
+      {integrity && !integrity.loading && !integrity.error && integrity.ok && integrity.verified_from && (
+        <IntegrityVerifiedFrom integrity={integrity} locale={locale} t={t} />
       )}
 
       {/* ── Özet + eğilim (yalnız tam kapsam; yalnız sunucunun döndürdüğü sayılar) ── */}

@@ -9639,6 +9639,10 @@ export const EN = {
   // Audit chain restart (2026-10-23): verification starts at the newest restart record
   'audit.integrityVerifiedFromTitle': 'Chain verified since the repair',
   'audit.integrityVerifiedFromBody': 'The chain was verified from {0} onwards — the {1} records before it were written before the repair and cannot be verified.',
+  'audit.integrityVerifiedFromBody.one': 'The chain was verified from {0} onwards — the {1} record before it was written before the repair and cannot be verified.',
+  // Retention deleted the oldest records: verification starts at the first record kept (when no restart record remains)
+  'audit.integrityRetentionTitle': 'Chain verified from the oldest kept record',
+  'audit.integrityRetentionBody': 'The chain was verified from the record of {0} onwards; older records were deleted when their retention period ended.',
   'audit.statsError':     'The summary cards couldn’t be loaded; the log list still works. Reload the page and try again.',
   'audit.tile.events':    'Events (7 days)',
   'audit.tile.eventsHint':'Every audit event recorded in the last 7 days.',
