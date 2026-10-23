@@ -70,7 +70,7 @@ export default function DeployRecords({ rows, narrow, canEdit, onDelete, sort, d
                 </TableCell>
                 <TableCell className={TD}>
                   <span className="flex flex-col items-start gap-0.5">
-                    <KindBadge kind={r.kind} />
+                    <KindBadge kind={r.kind} replica={r.replica === true} />
                     {r.previousVersion && r.kind !== 'RESTART' && (
                       <span className="text-xs text-muted-foreground">{t('deploy.fromVersion', `v${r.previousVersion}`)}</span>
                     )}

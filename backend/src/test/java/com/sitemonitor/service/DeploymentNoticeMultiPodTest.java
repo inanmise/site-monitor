@@ -74,6 +74,10 @@ class DeploymentNoticeMultiPodTest {
 
     /** Bir pod'un dağıtım servisi: kendi BuildInfo'su (sürüm, helm revizyonu, pod adı, JVM başlangıcı), ortak veritabanı. */
     DeploymentHistoryService pod(String version, Integer helmRev, String podName, String startedAt) {
+        return pod(version, helmRev, podName, startedAt, repo);
+    }
+
+    DeploymentHistoryService pod(String version, Integer helmRev, String podName, String startedAt, DeploymentHistoryRepository view) {
         BuildInfo bi = mock(BuildInfo.class);
         when(bi.get()).thenReturn(new BuildInfo.Snapshot(version, "env", "abc123", "2026-10-23T08:00:00Z", version,
                 "ghcr.io/x/site-monitor:v" + version, "prod", "sitemonitor", helmRev, version, "cfg",
@@ -83,7 +87,7 @@ class DeploymentNoticeMultiPodTest {
         when(ri.find(any())).thenReturn(Optional.empty());
         when(ri.all()).thenReturn(List.of());
         ApplicationEventPublisher pub = events::add;
-        return new DeploymentHistoryService(repo, bi, ri, jdbc, pub, new MockEnvironment());
+        return new DeploymentHistoryService(view, bi, ri, jdbc, pub, new MockEnvironment());
     }
 
     /** Hâlâ koşan (son görülme şimdi) önceki sürüm pod'u. */
@@ -108,21 +112,64 @@ class DeploymentNoticeMultiPodTest {
         return out;
     }
 
+    /**
+     * Pod'un okuma görünümü: ortam satırlarını okumadan ÖNCE iki pod'un da kaydını yazmasını bekler (engel) ve öbür yeni pod'un
+     * satırını GİZLER — commit edilmemiş satırı göremeyen gerçek yarışı (iki pod da birbirini görmeden UPGRADE türetir)
+     * belirlenimci kurar. Gerisi gerçek depoya gider.
+     */
+    DeploymentHistoryRepository blindTo(String otherPod, CyclicBarrier bothSaved) {
+        return (DeploymentHistoryRepository) java.lang.reflect.Proxy.newProxyInstance(getClass().getClassLoader(),
+                new Class<?>[]{DeploymentHistoryRepository.class}, (proxy, m, args) -> {
+                    if ("findByEnvironmentOrderByStartedAtAscIdAsc".equals(m.getName())) {
+                        bothSaved.await(10, TimeUnit.SECONDS);
+                        List<DeploymentHistory> rows = new ArrayList<>(repo.findByEnvironmentOrderByStartedAtAscIdAsc((String) args[0]));
+                        rows.removeIf(r -> otherPod.equals(r.getPodName()));
+                        return rows;
+                    }
+                    try {
+                        return m.invoke(repo, args);
+                    } catch (java.lang.reflect.InvocationTargetException e) {
+                        throw e.getCause();
+                    }
+                });
+    }
+
     @Test
-    @DisplayName("iki yeni sürüm pod'u AYNI ANDA açılır (20 tur) → her turda TEK UPGRADE olayı")
+    @DisplayName("iki yeni sürüm pod'u AYNI ANDA açılır, ikisi de birbirini görmeden UPGRADE türetir (20 tur) → nişan yarışını "
+            + "TEK pod kazanır, tek UPGRADE olayı")
     void twoNewPodsStartTogether_oneNotice() throws Exception {
         for (int round = 0; round < 20; round++) {
             clean();
             alive("1.0.0", 7, "sm-old-a", ago(3_600));
             alive("1.0.0", 7, "sm-old-b", ago(3_590));
             String start = ago(5);
-            DeploymentHistoryService c = pod("1.1.0", 8, "sm-new-c", start);
-            DeploymentHistoryService d = pod("1.1.0", 8, "sm-new-d", start);
+            CyclicBarrier bothSaved = new CyclicBarrier(2);
+            DeploymentHistoryService c = pod("1.1.0", 8, "sm-new-c", start, blindTo("sm-new-d", bothSaved));
+            DeploymentHistoryService d = pod("1.1.0", 8, "sm-new-d", start, blindTo("sm-new-c", bothSaved));
             race(c::recordStartup, d::recordStartup);
-            assertThat(transitions()).as("tur " + round).hasSize(1);
+            assertThat(transitions()).as("tur " + round + ": iki pod da UPGRADE türetti, nişanı biri ekledi").hasSize(1);
             assertThat(transitions().get(0).kind()).isEqualTo(Kind.UPGRADE);
             assertThat(transitions().get(0).fromVersion()).isEqualTo("1.0.0");
+            assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM schema_patch_markers WHERE patch_key LIKE 'deploy-notice:%'",
+                    Integer.class)).isEqualTo(1);
         }
+    }
+
+    @Test
+    @DisplayName("inceleme W-1: v2 açıldı ama hazır olamadı, eski v1 pod'u canlıyken `helm rollback` / --atomic yeni revizyonla v1 "
+            + "başlatır → ROLLBACK bildirimi, ortam sürümü v1; geri almanın ikinci pod'u ek replika")
+    void atomicRollbackWhileOldPodAlive() {
+        alive("1.0.0", 5, "sm-old-p", ago(3_600));
+        pod("1.1.0", 6, "sm-new-q", ago(120)).recordStartup();
+        pod("1.0.0", 7, "sm-rb-r", ago(60)).recordStartup();
+        pod("1.0.0", 7, "sm-rb-s", ago(50)).recordStartup();
+        assertThat(transitions()).extracting(TransitionEvent::kind).containsExactly(Kind.UPGRADE, Kind.ROLLBACK);
+        assertThat(transitions().get(1).fromVersion()).isEqualTo("1.1.0");
+        assertThat(transitions().get(1).toVersion()).isEqualTo("1.0.0");
+        DeploymentHistoryService reader = pod("1.0.0", 7, "sm-reader", ago(1));
+        assertThat(reader.current("prod").version()).isEqualTo("1.0.0");
+        assertThat(reader.current("prod").liveKind()).isEqualTo(Kind.ROLLBACK);
+        assertThat(reader.summary("prod").get("rollbacks")).isEqualTo(1);
     }
 
     @Test

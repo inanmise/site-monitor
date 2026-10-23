@@ -69,14 +69,25 @@ public class WatchdogProbes {
      * {@code idx_sms_instance_sampled}).
      */
     static final String SQL_POD_SAMPLES = "SELECT s.instance_id, s.pod_name, s.sampled_at, s.shutdown_marker, s.db_pending, "
-            + "s.db_active, s.db_max, s.clock_skew_ms FROM system_metric_samples s JOIN (SELECT instance_id, MAX(sampled_at) AS m "
+            + "s.db_active, s.db_max, s.clock_skew_ms, s.schema_failed_patches FROM system_metric_samples s "
+            + "JOIN (SELECT instance_id, MAX(sampled_at) AS m "
             + "FROM system_metric_samples WHERE sampled_at >= ? GROUP BY instance_id) x "
             + "ON x.instance_id = s.instance_id AND x.m = s.sampled_at";
-    /** Saat farkı kolonu henüz yokken (açılışın ilk saniyeleri, yama düşmüş) — fark "ölçülmedi". */
+    /** R2b kolonları ({@code clock_skew_ms}, {@code schema_failed_patches}) henüz yokken — fark ve yama sonucu "bilinmiyor". */
     static final String SQL_POD_SAMPLES_NO_SKEW = "SELECT s.instance_id, s.pod_name, s.sampled_at, s.shutdown_marker, s.db_pending, "
             + "s.db_active, s.db_max FROM system_metric_samples s JOIN (SELECT instance_id, MAX(sampled_at) AS m "
             + "FROM system_metric_samples WHERE sampled_at >= ? GROUP BY instance_id) x "
             + "ON x.instance_id = s.instance_id AND x.m = s.sampled_at";
+    /**
+     * Push sonuçları (inceleme W-2, 2026-10-23): son {@value #PUSH_OUTCOME_WINDOW_MIN} dk'da oluşturulan, sonuçlanmış (SENT /
+     * FAILED) satırlar — test gönderimi hariç. Ağ geçidi düşünce satırlar devre kesici bekleme süresi + geri çekilme içinde
+     * FAILED olur (takılı PENDING sayısı yükselmez); kesinti bu oranla, küme genelinde görünür.
+     */
+    static final String SQL_PUSH_OUTCOMES = "SELECT status, COUNT(*) FROM user_push_deliveries WHERE created_at >= ? "
+            + "AND status IN ('SENT', 'FAILED') AND push_trigger <> 'TEST' GROUP BY status";
+    static final int PUSH_OUTCOME_WINDOW_MIN = 30;
+    static final int PUSH_OUTCOME_MIN = 3;
+    static final int PUSH_FAIL_PERCENT = 50;
 
     /** Tek yoklama sonucu. */
     public record Probe(WatchdogCheck check, Result result, String severity, Map<String, Object> facts) {
@@ -87,9 +98,12 @@ public class WatchdogProbes {
         }
     }
 
-    /** Canlı bir pod'un son ölçüm örneği (kapanış işareti olmayan). {@code skewMs} null = ölçülmedi (eski pod / kolon yok). */
+    /**
+     * Canlı bir pod'un son ölçüm örneği (kapanış işareti olmayan). {@code skewMs} / {@code schemaFailed} null = bilinmiyor
+     * (eski pod / kolon yok).
+     */
     public record PodSample(String instanceId, String pod, String sampledAt, Integer dbPending, Integer dbActive, Integer dbMax,
-                            Long skewMs) {
+                            Long skewMs, Integer schemaFailed) {
         /** Havuz doygun mu: bağlantı bekleyen iş parçacığı var ya da havuz tamamen dolu ({@code DatabaseHealthService} kuralı). */
         boolean poolSaturated() {
             return (dbPending != null && dbPending > 0) || (dbMax != null && dbMax > 0 && dbActive != null && dbActive >= dbMax);
@@ -224,10 +238,12 @@ public class WatchdogProbes {
     }
 
     /**
-     * Push kuyruğu: karar YALNIZ takılı PENDING satır sayısıyla (veritabanı geneli). Devre kesici pod'a özgü bellek durumudur
-     * (her pod kendi ağ geçidi hatalarını sayar) — olgu olarak değerlendiren pod'un adıyla saklanır, durumu değiştirmez
-     * (MP-36: A'da açık / B'de kapalı devre turdan tura onay sayacını döndürüyordu). Açık devre gönderimi durdurur → satırlar
-     * takılır → sayı eşiği aşınca yine sorun açılır.
+     * Push kuyruğu: karar YALNIZ veritabanı genelindeki gerçeklerle — takılı PENDING satır sayısı ve son
+     * {@value #PUSH_OUTCOME_WINDOW_MIN} dk'nın sonuç oranı (FAILED / (SENT + FAILED) ≥ %{@value #PUSH_FAIL_PERCENT}, en az
+     * {@value #PUSH_OUTCOME_MIN} sonuç). Devre kesici pod'a özgü bellek durumudur (her pod kendi ağ geçidi hatalarını sayar) —
+     * olgu olarak değerlendiren pod'un adıyla saklanır, durumu değiştirmez (MP-36: A'da açık / B'de kapalı devre turdan tura
+     * onay sayacını döndürüyordu). Ölü ağ geçidi (inceleme W-2): satırlar devre kesici bekleme süresi + geri çekilme içinde
+     * FAILED olur — takılı sayı yükselmez, sonuç oranı yükselir.
      */
     Probe pushOutbox(Instant now) {
         if (push == null || !push.enabled()) return Probe.na(WatchdogCheck.PUSH_OUTBOX, "push_disabled");
@@ -235,6 +251,13 @@ public class WatchdogProbes {
         String due = WatchdogTransition.ISO.format(now.minus(Duration.ofMinutes(PUSH_STUCK_MINUTES)));
         Long stuck = jdbc.queryForObject("SELECT COUNT(*) FROM user_push_deliveries WHERE status = 'PENDING' "
                 + "AND created_at < ? AND (next_attempt_at IS NULL OR next_attempt_at < ?)", Long.class, created, due);
+        long sent = 0, failed = 0;
+        String since = WatchdogTransition.ISO.format(now.minus(Duration.ofMinutes(PUSH_OUTCOME_WINDOW_MIN)));
+        for (Object[] r : jdbc.query(SQL_PUSH_OUTCOMES, (rs, i) -> new Object[]{rs.getString(1), rs.getLong(2)}, since)) {
+            long n = r[1] instanceof Number x ? x.longValue() : 0L;
+            if ("SENT".equals(r[0])) sent += n;
+            else if ("FAILED".equals(r[0])) failed += n;
+        }
         Boolean circuitOpen = null;
         try {
             circuitOpen = Boolean.TRUE.equals(push.healthSnapshot().get("circuit_open"));
@@ -244,17 +267,24 @@ public class WatchdogProbes {
         Map<String, Object> f = new LinkedHashMap<>();
         f.put("stuck", stuck == null ? 0 : stuck);
         f.put("stuck_minutes", PUSH_STUCK_MINUTES);
+        f.put("recent_sent", sent);
+        f.put("recent_failed", failed);
+        f.put("outcome_window_minutes", PUSH_OUTCOME_WINDOW_MIN);
         f.put("circuit_open", circuitOpen);
         f.put("evaluated_by", SystemMetricSampler.currentPodName());
-        boolean problem = stuck != null && stuck >= PUSH_STUCK_THRESHOLD;
+        long outcomes = sent + failed;
+        boolean failing = outcomes >= PUSH_OUTCOME_MIN && failed * 100 >= (long) PUSH_FAIL_PERCENT * outcomes;
+        boolean problem = failing || (stuck != null && stuck >= PUSH_STUCK_THRESHOLD);
         return new Probe(WatchdogCheck.PUSH_OUTBOX, problem ? Result.PROBLEM : Result.OK, WatchdogCheck.PUSH_OUTBOX.severity().name(), f);
     }
 
     /**
      * Veritabanı: karar veritabanı GENELİNDEKİ kontrollerle (bağlantı, sorgu süresi, yazılabilirlik — DOWN → kritik,
-     * DEGRADED → orta) ve her CANLI pod'un son örneğindeki havuz doluluğuyla (bekleyen bağlantı ya da tam dolu havuz → orta).
-     * Turu kazanan pod'un kendi havuzu ve açılış şema yaması sonucu yalnız olgu ({@code evaluated_by} ile). Veritabanına
-     * erişilemiyorsa (DOWN) örnekler okunmaz (yerel kip — {@link WatchdogService#evaluateLocalDatabase}).
+     * DEGRADED → orta) ve HER canlı pod'un son örneğiyle: havuz doluluğu (bekleyen bağlantı ya da tam dolu havuz) ya da
+     * açılışta başarısız şema yaması olan pod → orta. Pod örneği yoksa (örnekleyici kapalı, örnekler okunamadı ya da henüz
+     * canlı pod örneği yok) karar eskisi gibi DEĞERLENDİREN pod'un kendi havuzu ve şema yamasıyla verilir ve öyle etiketlenir
+     * ({@code decision_source = evaluating_pod}; inceleme W-3). Veritabanına erişilemiyorsa (DOWN) örnekler okunmaz (yerel kip —
+     * {@link WatchdogService#evaluateLocalDatabase}).
      */
     Probe database(Instant now) {
         if (database == null) return Probe.na(WatchdogCheck.DATABASE, "no_health_service");
@@ -262,42 +292,65 @@ public class WatchdogProbes {
         Map<?, ?> checks = s.body() != null && s.body().get("checks") instanceof Map<?, ?> m ? m : null;
         // Gövde kontrol ayrıntısı taşımıyorsa (eski / sade gövde) genel durum aynen kullanılır
         String dbWide = checks == null ? s.status() : worst(checks, List.of("connection", "query", "writable"));
+        String self = SystemMetricSampler.currentPodName();
         Map<String, Object> f = new LinkedHashMap<>();
         f.put("database_status", dbWide);
-        f.put("evaluated_by", SystemMetricSampler.currentPodName());
+        f.put("evaluated_by", self);
+        boolean ownPoolDegraded = false;
+        int ownSchemaFailed = 0;
         if (checks != null) {
-            if (checks.get("pool") instanceof Map<?, ?> pool) f.put("evaluating_pod_pool", String.valueOf(pool.get("status")));
+            if (checks.get("pool") instanceof Map<?, ?> pool) {
+                f.put("evaluating_pod_pool", String.valueOf(pool.get("status")));
+                ownPoolDegraded = DatabaseHealthService.DEGRADED.equals(String.valueOf(pool.get("status")));
+            }
             if (checks.get("schema") instanceof Map<?, ?> schema && schema.get("failed_patches") instanceof Number n && n.intValue() > 0) {
-                f.put("evaluating_pod_schema_failed", n.intValue());
+                ownSchemaFailed = n.intValue();
+                f.put("evaluating_pod_schema_failed", ownSchemaFailed);
             }
         }
         if (DatabaseHealthService.DOWN.equals(dbWide)) {
             f.put("status", DatabaseHealthService.DOWN);
             return new Probe(WatchdogCheck.DATABASE, Result.PROBLEM, WatchdogCheck.Severity.CRITICAL.name(), f);
         }
-        // Küme havuzu: her canlı pod'un son örneği (okunamazsa yalnız "bilinmiyor" olgusu — karara girmez)
+        // Küme: her canlı pod'un son örneği. Örnek yoksa değerlendiren pod'un kendi olguları karar verir (etiketli).
         List<String> saturated = new ArrayList<>();
+        List<String> schemaFailed = new ArrayList<>();
+        List<PodSample> pods = null;
         if (samplesEnabled) {
             try {
-                List<PodSample> pods = livePods(now);
-                for (PodSample p : pods) if (p.poolSaturated() && saturated.size() < MAX_FACT_PODS) saturated.add(p.pod());
+                pods = livePods(now);
                 f.put("pool_pods_read", pods.size());
             } catch (Exception e) {
                 f.put("pool_unknown", true);
                 log.debug("watchdog: pod havuz örnekleri okunamadı: {}", e.toString());
             }
         }
+        if (pods != null && !pods.isEmpty()) {
+            f.put("decision_source", "cluster_samples");
+            for (PodSample p : pods) {
+                if (p.poolSaturated() && saturated.size() < MAX_FACT_PODS) saturated.add(p.pod());
+                if (p.schemaFailed() != null && p.schemaFailed() > 0 && schemaFailed.size() < MAX_FACT_PODS) schemaFailed.add(p.pod());
+            }
+        } else {
+            f.put("decision_source", "evaluating_pod");
+            if (ownPoolDegraded) saturated.add(self);
+            if (ownSchemaFailed > 0) schemaFailed.add(self);
+        }
         if (!saturated.isEmpty()) f.put("pool_saturated_pods", saturated);
-        boolean degraded = DatabaseHealthService.DEGRADED.equals(dbWide) || !saturated.isEmpty();
+        if (!schemaFailed.isEmpty()) f.put("schema_failed_pods", schemaFailed);
+        boolean degraded = DatabaseHealthService.DEGRADED.equals(dbWide) || !saturated.isEmpty() || !schemaFailed.isEmpty();
         f.put("status", degraded ? DatabaseHealthService.DEGRADED : DatabaseHealthService.UP);
         if (!degraded) return new Probe(WatchdogCheck.DATABASE, Result.OK, null, f);
         return new Probe(WatchdogCheck.DATABASE, Result.PROBLEM, WatchdogCheck.Severity.MEDIUM.name(), f);
     }
 
     /**
-     * Saat uyumu (MP-37c): her canlı pod'un son örneğindeki {@code clock_skew_ms} (pod − veritabanı). En büyük mutlak fark
-     * {@link #SKEW_PROBLEM_MS} üstü → yüksek, {@link #SKEW_WARN_MS} üstü → orta önemli sorun. Hiçbir canlı pod'un farkı
-     * bilinmiyorsa (eski sürüm pod'lar, açılışın ilk dakikası) UNKNOWN — sayaçlar değişmez.
+     * Saat uyumu (MP-37c; inceleme W-4): kira ve kilitler YALNIZ pod saatleriyle karşılaştırılır — risk pod'lar ARASI farktır.
+     * Her canlı pod'un son örneğindeki {@code clock_skew_ms} (pod − veritabanı) okunur; önem pod'lar arası YAYILIMDAN (en büyük −
+     * en küçük): {@link #SKEW_PROBLEM_MS} üstü → yüksek, {@link #SKEW_WARN_MS} üstü → orta. Veritabanı saatinin pod'lardan farkı
+     * (ortanca) yalnız olgudur ({@code db_offset_ms}) — saatleri uyumlu pod'lar ve 40 sn kaymış bir veritabanı "sorun" değildir.
+     * Pod başına {@code deviation_ms} = pod'un ortancadan sapması. Hiçbir canlı pod'un farkı bilinmiyorsa (eski sürüm pod'lar,
+     * açılışın ilk dakikası) UNKNOWN — sayaçlar değişmez.
      */
     Probe clockSkew(Instant now) {
         if (!samplesEnabled) return Probe.na(WatchdogCheck.CLOCK_SKEW, "metrics_disabled");
@@ -316,23 +369,37 @@ public class WatchdogProbes {
             f.put("reason", pods.isEmpty() ? "no_live_samples" : "skew_unknown");
             return new Probe(WatchdogCheck.CLOCK_SKEW, Result.UNKNOWN, null, f);
         }
-        known.sort(Comparator.comparingLong((PodSample p) -> -Math.abs(p.skewMs())).thenComparing(PodSample::pod));
+        List<Long> values = new ArrayList<>();
+        for (PodSample p : known) values.add(p.skewMs());
+        values.sort(Long::compare);
+        int n = values.size();
+        long median = n % 2 == 1 ? values.get(n / 2) : Math.round((values.get(n / 2 - 1) + values.get(n / 2)) / 2.0);
+        PodSample min = known.get(0), max = known.get(0);
+        for (PodSample p : known) {
+            if (p.skewMs() < min.skewMs() || (p.skewMs().equals(min.skewMs()) && p.pod().compareTo(min.pod()) < 0)) min = p;
+            if (p.skewMs() > max.skewMs() || (p.skewMs().equals(max.skewMs()) && p.pod().compareTo(max.pod()) < 0)) max = p;
+        }
+        long spread = max.skewMs() - min.skewMs();
+        known.sort(Comparator.comparingLong((PodSample p) -> -Math.abs(p.skewMs() - median)).thenComparing(PodSample::pod));
         List<Map<String, Object>> list = new ArrayList<>();
         for (PodSample p : known) {
             if (list.size() >= MAX_FACT_PODS) break;
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("pod", p.pod());
             m.put("skew_ms", p.skewMs());
+            m.put("deviation_ms", p.skewMs() - median);
             list.add(m);
         }
-        PodSample worst = known.get(0);
-        long maxAbs = Math.abs(worst.skewMs());
         f.put("pods", list);
-        f.put("max_abs_ms", maxAbs);
-        f.put("worst_pod", worst.pod());
-        f.put("worst_skew_ms", worst.skewMs());
-        if (maxAbs > SKEW_PROBLEM_MS) return new Probe(WatchdogCheck.CLOCK_SKEW, Result.PROBLEM, WatchdogCheck.Severity.HIGH.name(), f);
-        if (maxAbs > SKEW_WARN_MS) return new Probe(WatchdogCheck.CLOCK_SKEW, Result.PROBLEM, WatchdogCheck.Severity.MEDIUM.name(), f);
+        f.put("known_pods", known.size());
+        f.put("spread_ms", spread);
+        f.put("db_offset_ms", median);
+        if (known.size() > 1) {
+            f.put("min_pod", min.pod());
+            f.put("max_pod", max.pod());
+        }
+        if (spread > SKEW_PROBLEM_MS) return new Probe(WatchdogCheck.CLOCK_SKEW, Result.PROBLEM, WatchdogCheck.Severity.HIGH.name(), f);
+        if (spread > SKEW_WARN_MS) return new Probe(WatchdogCheck.CLOCK_SKEW, Result.PROBLEM, WatchdogCheck.Severity.MEDIUM.name(), f);
         return new Probe(WatchdogCheck.CLOCK_SKEW, Result.OK, null, f);
     }
 
@@ -348,11 +415,12 @@ public class WatchdogProbes {
         try {
             rows = jdbc.query(SQL_POD_SAMPLES, (rs, i) -> new Object[]{rs.getString(1), rs.getString(2), rs.getString(3),
                     rs.getObject(4), intOrNull(rs.getObject(5)), intOrNull(rs.getObject(6)), intOrNull(rs.getObject(7)),
-                    longOrNull(rs.getObject(8))}, since);
+                    longOrNull(rs.getObject(8)), intOrNull(rs.getObject(9))}, since);
         } catch (Exception e) {
-            // Saat farkı kolonu yok (eski şema / yama henüz koşmadı) — kolonsuz okuma, fark "ölçülmedi"
+            // R2b kolonları yok (eski şema / yama henüz koşmadı) — kolonsuz okuma, fark ve yama sonucu "bilinmiyor"
             rows = jdbc.query(SQL_POD_SAMPLES_NO_SKEW, (rs, i) -> new Object[]{rs.getString(1), rs.getString(2), rs.getString(3),
-                    rs.getObject(4), intOrNull(rs.getObject(5)), intOrNull(rs.getObject(6)), intOrNull(rs.getObject(7)), null}, since);
+                    rs.getObject(4), intOrNull(rs.getObject(5)), intOrNull(rs.getObject(6)), intOrNull(rs.getObject(7)), null, null},
+                    since);
         }
         Map<String, Object[]> newest = new LinkedHashMap<>();
         Map<String, Boolean> stopped = new HashMap<>();
@@ -383,7 +451,8 @@ public class WatchdogProbes {
             String name = displayName(r);
             String inst = (String) r[0];
             if (nameCount.getOrDefault(name, 0) > 1) name = name + " (" + suffix(inst) + ")";
-            out.add(new PodSample(inst, name, (String) r[2], (Integer) r[4], (Integer) r[5], (Integer) r[6], (Long) r[7]));
+            out.add(new PodSample(inst, name, (String) r[2], (Integer) r[4], (Integer) r[5], (Integer) r[6], (Long) r[7],
+                    (Integer) r[8]));
         }
         out.sort(Comparator.comparing(PodSample::pod));
         return out;

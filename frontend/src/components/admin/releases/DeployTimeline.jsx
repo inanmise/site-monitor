@@ -81,7 +81,8 @@ export function DeployCard({ d, duration, showEnv = false, canEdit = false, onDe
   const showFrom = d.previousVersion && kind !== 'RESTART'
   return (
     <Collapsible open={open} onOpenChange={setOpen} asChild>
-      <article data-slot="deploy-card" data-id={d.id} data-kind={kind} data-current={d.current ? 'true' : undefined}
+      <article data-slot="deploy-card" data-id={d.id} data-kind={kind} data-replica={d.replica === true ? 'true' : undefined}
+        data-current={d.current ? 'true' : undefined}
         aria-label={label}
         className={cn('min-w-0 rounded-lg border bg-card px-3 py-2.5 shadow-xs',
           d.current && 'border-success/50 ring-1 ring-success/20 dark:border-success/60')}>
@@ -89,7 +90,7 @@ export function DeployCard({ d, duration, showEnv = false, canEdit = false, onDe
           <span className={cn('font-mono text-[15px] font-bold tracking-tight', !d.version && 'text-muted-foreground')}>
             {d.version ? `v${d.version}` : '—'}
           </span>
-          <KindBadge kind={kind} />
+          <KindBadge kind={kind} replica={d.replica === true} />
           {showFrom && <span className="text-xs text-muted-foreground">{t('deploy.fromVersion', `v${d.previousVersion}`)}</span>}
           {d.current && <CurrentBadge />}
           {showEnv && <EnvBadge env={d.environment} />}

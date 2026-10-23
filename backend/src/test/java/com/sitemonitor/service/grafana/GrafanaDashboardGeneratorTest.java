@@ -422,7 +422,8 @@ class GrafanaDashboardGeneratorTest {
         assertThat(unreadable).startsWith("(count(min by (source) (sitemonitor_exporter_source_up{")
                 .doesNotContain("count(sitemonitor_exporter_source_up");
         assertThat(exprOf(d, "Elle kontrol gelen kutusu")).isEqualTo("max(sitemonitor_eval_inbox_depth{namespace=\"site-monitor-prod\"})");
-        assertThat(exprOf(d, "En büyük saat farkı")).startsWith("max(abs(sitemonitor_clock_skew_seconds{");
+        // İnceleme W-4: risk pod'lar arası YAYILIM — veritabanına göre ortak kayma değil
+        assertThat(exprOf(d, "Pod saatleri arası fark")).startsWith("max(sitemonitor_clock_skew_seconds{").contains(") - min(sitemonitor_clock_skew_seconds{").doesNotContain("abs(");
         assertThat(exprOf(d, "Saat farkı (pod başına)")).startsWith("max by (instance) (sitemonitor_clock_skew_seconds{");
         assertThat(exprOf(d, "Kaybedilen kilit (24 sa)")).contains("increase(sitemonitor_cluster_lock_lost{").contains("[24h]");
         assertThat(exprOf(d, "Push kira hatası (24 sa)")).contains("increase(sitemonitor_push_lease_renew_failed{");
@@ -432,6 +433,6 @@ class GrafanaDashboardGeneratorTest {
                 .startsWith("sum by (instance, reason) (increase(sitemonitor_sweep_leader_transitions{");
         JsonNode en = tree(opts("en", GrafanaDashboardGenerator.SECTIONS, true, "", ""));
         assertThat(exprOf(en, "Unreadable sources")).contains("min by (source)");
-        assertThat(exprOf(en, "Largest clock difference")).contains("sitemonitor_clock_skew_seconds");
+        assertThat(exprOf(en, "Clock spread between pods")).contains("sitemonitor_clock_skew_seconds");
     }
 }

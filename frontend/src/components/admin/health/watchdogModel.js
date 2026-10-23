@@ -72,27 +72,37 @@ export function skewTone(ms) {
 }
 
 /**
- * Saat uyumu kontrolünün pod başına farkları (sunucu sırası: en büyük fark önce). Pod adı ya da sayı olmayan satır
- * atlanır; liste yoksa boş dizi. (2026-10-23, çok pod R2b, MP-37c)
+ * Saat uyumu kontrolünün pod başına SAPMASI (pod'ların ortanca saatine göre, `deviation_ms`; inceleme W-4: risk pod'lar
+ * arası farktır, veritabanına göre ortak kayma değil). Eski olgu (yalnız `skew_ms`) → veritabanına göre fark. Sunucu sırası
+ * (en büyük sapma önce); pod adı ya da sayı olmayan satır atlanır; liste yoksa boş dizi. (2026-10-23, çok pod R2b, MP-37c)
  */
 export function skewPods(c) {
   const list = Array.isArray(c?.facts?.pods) ? c.facts.pods : []
   return list
-    .filter((p) => p && typeof p.pod === 'string' && p.pod && typeof p.skew_ms === 'number')
-    .map((p) => ({ pod: p.pod, ms: p.skew_ms, tone: skewTone(p.skew_ms) }))
+    .filter((p) => p && typeof p.pod === 'string' && p.pod && (typeof p.deviation_ms === 'number' || typeof p.skew_ms === 'number'))
+    .map((p) => {
+      const ms = typeof p.deviation_ms === 'number' ? p.deviation_ms : p.skew_ms
+      return { pod: p.pod, ms, tone: skewTone(ms) }
+    })
 }
 
 /**
- * Turu değerlendiren pod — yalnız pod'a özgü BİLGİ taşıyan kontrollerde (push devre kesicisi, değerlendiren pod'un havuzu /
- * şema yaması). Karar küme genelindeki verilere göredir; ekran bu bilgiyi pod adıyla etiketler (MP-36). Yoksa null.
+ * Turu değerlendiren pod — yalnız pod'a özgü bilgi taşıyan kontrollerde (push devre kesicisi, değerlendiren pod'un havuzu /
+ * şema yaması) ya da pod örneği olmadığı için kararı o pod'un kendi olgularının verdiği durumda. Karar normalde küme
+ * genelindeki verilere göredir; ekran bu bilgiyi pod adıyla etiketler (MP-36, inceleme W-3). Yoksa null.
  */
 export function evaluatedBy(c) {
   const f = c?.facts
   const pod = typeof f?.evaluated_by === 'string' && f.evaluated_by.trim() ? f.evaluated_by.trim() : null
   if (!pod) return null
   const podLocal = f.circuit_open === true || (typeof f.evaluating_pod_schema_failed === 'number' && f.evaluating_pod_schema_failed > 0)
-    || (typeof f.evaluating_pod_pool === 'string' && f.evaluating_pod_pool !== 'UP')
+    || (typeof f.evaluating_pod_pool === 'string' && f.evaluating_pod_pool !== 'UP') || f.decision_source === 'evaluating_pod'
   return podLocal ? pod : null
+}
+
+/** Kararı değerlendiren pod'un kendi olguları mı verdi (sistem metrikleri örnekleyicisi kapalı / pod örneği yok)? */
+export function evaluatingPodDecides(c) {
+  return c?.facts?.decision_source === 'evaluating_pod'
 }
 
 const NOTIFIED_SUFFIX = { '': '', _FAILED: 'Failed', _MUTED: 'Muted', _NOCHANNEL: 'NoChannel' }

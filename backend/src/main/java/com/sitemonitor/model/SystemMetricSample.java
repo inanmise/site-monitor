@@ -94,4 +94,10 @@ public class SystemMetricSample {
      * {@code SystemMetricsSchemaPatch} ekler; eski pod'un satırlarında null.
      */
     @Column(name = "clock_skew_ms") private Long clockSkewMs;
+
+    /**
+     * Bu pod'un açılışında BAŞARISIZ olan şema yaması sayısı (2026-10-23, çok pod R2b, inceleme W-3) — kendi kendini izleme
+     * veritabanı kontrolü "herhangi bir canlı pod'da başarısız yama" kararını buradan verir. Yamalar henüz koşmadı → null.
+     */
+    @Column(name = "schema_failed_patches") private Integer schemaFailedPatches;
 }

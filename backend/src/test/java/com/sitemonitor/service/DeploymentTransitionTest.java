@@ -154,6 +154,26 @@ class DeploymentTransitionTest {
     }
 
     @Test
+    @DisplayName("inceleme W-1: v2 hazır olamadı, eski v1 pod'u canlıyken yeni Helm revizyonuyla v1 açıldı → ROLLBACK (ek replika "
+            + "değil); geri almanın ikinci pod'u ek replika; Helm'siz kurulumda eski kural (geçiş)")
+    void rollbackWhileOldVersionPodAlive() {
+        List<Derived> out = DeploymentHistoryService.deriveKinds(List.of(
+                live(1, "2026-10-23T09:00:00Z", "1.0.0", "pod-p", 5, "2026-10-23T11:00:00Z", null),
+                live(2, "2026-10-23T10:00:00Z", "1.1.0", "pod-q", 6, "2026-10-23T10:20:00Z", "2026-10-23T10:20:00Z"),
+                live(3, "2026-10-23T10:10:00Z", "1.0.0", "pod-r", 7, "2026-10-23T11:00:00Z", null),
+                live(4, "2026-10-23T10:11:00Z", "1.0.0", "pod-s", 7, "2026-10-23T11:00:00Z", null)));
+        assertThat(kinds(out)).containsExactly(Kind.FIRST_SEEN, Kind.UPGRADE, Kind.ROLLBACK, Kind.RESTART);
+        assertThat(out.get(2).previousVersion()).isEqualTo("1.1.0");
+        assertThat(out.get(3).replica()).isTrue();
+
+        List<Derived> noHelm = DeploymentHistoryService.deriveKinds(List.of(
+                live(1, "2026-10-23T09:00:00Z", "1.0.0", "pod-p", null, "2026-10-23T11:00:00Z", null),
+                live(2, "2026-10-23T10:00:00Z", "1.1.0", "pod-q", null, "2026-10-23T11:00:00Z", null),
+                live(3, "2026-10-23T10:10:00Z", "1.0.0", "pod-r", null, "2026-10-23T11:00:00Z", null)));
+        assertThat(kinds(noHelm)).containsExactly(Kind.FIRST_SEEN, Kind.UPGRADE, Kind.ROLLBACK);
+    }
+
+    @Test
     @DisplayName("boş liste → boş çıktı")
     void emptyInput() {
         assertThat(DeploymentHistoryService.deriveKinds(List.of())).isEmpty();

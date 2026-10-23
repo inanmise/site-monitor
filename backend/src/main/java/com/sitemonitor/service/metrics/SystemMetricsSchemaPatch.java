@@ -17,6 +17,8 @@ import java.util.List;
  * <ul>
  *   <li>{@code system_metric_samples.clock_skew_ms} — pod saati − veritabanı saati (ms), {@link SystemMetricSampler}
  *       dakikalık örnekte yazar; kendi kendini izleme {@code clock_skew} kontrolü her canlı pod'un son örneğinden okur.</li>
+ *   <li>{@code system_metric_samples.schema_failed_patches} — pod'un açılışında başarısız şema yaması sayısı; veritabanı
+ *       kontrolü "herhangi bir canlı pod'da" karar verir (inceleme W-3).</li>
  * </ul>
  * Kolon varlıkta da tanımlı (ddl-auto ekler); bu yama ddl-auto'nun sessizce atladığı ortamları kapatır. NULLABLE, varsayılansız
  * (eski satırlar ve 20.166.0 pod'larının satırları null = ölçülmedi). Her ifade kendi try/catch'inde ({@link SchemaDdlGuard});
@@ -32,7 +34,8 @@ public class SystemMetricsSchemaPatch {
     record Col(String table, String column, String type) { }
 
     static final List<Col> COLUMNS = List.of(
-            new Col("system_metric_samples", "clock_skew_ms", "BIGINT"));
+            new Col("system_metric_samples", "clock_skew_ms", "BIGINT"),
+            new Col("system_metric_samples", "schema_failed_patches", "INTEGER"));
 
     private final JdbcTemplate jdbc;
 

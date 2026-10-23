@@ -50,7 +50,7 @@ public final class GrafanaDashboardGenerator {
      * Pano içerik revizyonu — içerik (panel, sorgu, değişken) değişen HER sürümde artır ve
      * {@code src/test/resources/grafana/dashboard-content.sha256} dosyasını güncelle (kapı mesajı yeni satırı yazar).
      */
-    public static final int DASHBOARD_REVISION = 3;
+    public static final int DASHBOARD_REVISION = 4;
     /** "Kritik / yüksek alarm açıldı" anotasyonunun penceresi (sn) — açılış zamanı bu kadar yeni olan alarmlar. */
     static final int ALERT_OPENED_WINDOW_S = 900;
     /** Aktarıcı tazelik eşiği (sn) — sunucunun {@code max(180, 3 × refresh-seconds)} kuralının varsayılan değeri. */
@@ -1773,9 +1773,11 @@ public final class GrafanaDashboardGenerator {
             add(stat(t("Elle kontrol gelen kutusu", "Manual check inbox"), t("Takipçi pod'dan lidere iletilip henüz değerlendirilmemiş elle kontrol sonuçları (küme). Lider 5 sn'de bir boşaltır; birikiyorsa lider boşaltmıyordur.",
                             "Manual check results forwarded from a follower pod and not yet evaluated by the leader (cluster). The leader drains every 5 s; a growing number means it does not."),
                     "max(" + metric(MonitoringMetricNames.EVAL_INBOX_DEPTH) + ")", "short", thresholds(GREEN, null, AMBER, 10, RED, 50), "background", null).size(6, 4));
-            add(stat(t("En büyük saat farkı", "Largest clock difference"), t("Pod saati ile veritabanı saati arasındaki en büyük fark (mutlak). 5 sn üstü uyarı, 30 sn üstü liderlik kirası ve kilitler için risk.",
-                            "Largest difference between a pod clock and the database clock (absolute). Above 5 s is a warning, above 30 s risks the leader lease and job locks."),
-                    "max(abs(" + metric(MonitoringMetricNames.CLOCK_SKEW, RT) + "))", "s", thresholds(GREEN, null, AMBER, 5, RED, 30), "background", null).size(6, 4));
+            // Risk pod'lar ARASI farktır (kira ve kilitler pod saatini kullanır) — veritabanına göre ortak kayma yayılımı değiştirmez
+            add(stat(t("Pod saatleri arası fark", "Clock spread between pods"), t("En ileri ve en geri pod saati arasındaki fark (veritabanı saatine göre ölçülür; ortak kayma farkı değiştirmez). 5 sn üstü uyarı, 30 sn üstü liderlik kirası ve kilitler için risk.",
+                            "Difference between the most advanced and the most delayed pod clock (measured against the database clock; a common offset does not change it). Above 5 s is a warning, above 30 s risks the leader lease and job locks."),
+                    "max(" + metric(MonitoringMetricNames.CLOCK_SKEW, RT) + ") - min(" + metric(MonitoringMetricNames.CLOCK_SKEW, RT) + ")",
+                    "s", thresholds(GREEN, null, AMBER, 5, RED, 30), "background", null).size(6, 4));
             add(stat(t("Kaybedilen kilit (24 sa)", "Lost locks (24 h)"), t("Son 24 saatte pod'ların yenileme sırasında kaybettiği iş kilitleri (başka pod aldı ya da zorla bırakıldı). 0 olmalı.",
                             "Job locks the pods lost during renewal in the last 24 hours (another pod took them or they were force-released). Should be 0."),
                     "sum(increase(" + metric(MonitoringMetricNames.CLUSTER_LOCK_LOST, RT) + "[24h]))", "short", thresholds(GREEN, null, AMBER, 1, RED, 5), "background", null).size(6, 4));
@@ -1784,8 +1786,8 @@ public final class GrafanaDashboardGenerator {
                     "sum(increase(" + metric(MonitoringMetricNames.PUSH_LEASE_RENEW_FAILED, RT) + "[24h]))", "short", thresholds(GREEN, null, AMBER, 1, RED, 10), "background", null).size(6, 4));
 
             Panel skew = new Panel("timeseries", t("Saat farkı (pod başına)", "Clock difference (per pod)"),
-                    t("Her pod'un saati eksi veritabanı saati (pozitif = pod ileride). Kira ve kilit karşılaştırmaları pod saatiyle yapılır.",
-                            "Each pod's clock minus the database clock (positive = pod ahead). Lease and lock comparisons use the pod clock."));
+                    t("Her pod'un saati eksi veritabanı saati (pozitif = pod ileride). Çizgilerin birbirinden uzaklaşması risktir; hepsinin birlikte kayması yalnız veritabanı saatinin farkıdır.",
+                            "Each pod's clock minus the database clock (positive = pod ahead). Lines drifting apart are the risk; all lines shifted together is only a database clock offset."));
             skew.w = 12; skew.h = 8;
             skew.target("max by (instance) (" + metric(MonitoringMetricNames.CLOCK_SKEW, RT) + ")", "{{instance}}", false);
             skew.timeseries("s", false, "line");

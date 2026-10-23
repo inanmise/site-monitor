@@ -42,6 +42,7 @@ class WatchdogClusterFactsPostgresTest {
         s.setDbActive(5);
         s.setDbMax(30);
         s.setClockSkewMs(41_000L);
+        s.setSchemaFailedPatches(1);
         repo.save(s);
 
         WatchdogProbes probes = PostgresIt.app().bean(WatchdogProbes.class);
@@ -50,10 +51,11 @@ class WatchdogClusterFactsPostgresTest {
             assertThat(p.skewMs()).isEqualTo(41_000L);
             assertThat(p.dbPending()).isEqualTo(2);
             assertThat(p.poolSaturated()).isTrue();
+            assertThat(p.schemaFailed()).isEqualTo(1);
         });
         WatchdogProbes.Probe clock = probes.clockSkew(Instant.now());
-        assertThat(clock.result()).isEqualTo(WatchdogTransition.Result.PROBLEM);
-        assertThat(clock.facts()).containsEntry("worst_pod", inst);
+        assertThat(clock.result()).as("41 sn ileri pod, uygulamanın kendi pod'una göre ~41 sn yayılım").isEqualTo(WatchdogTransition.Result.PROBLEM);
+        assertThat(clock.facts()).containsEntry("max_pod", inst);
         repo.delete(s);
     }
 }

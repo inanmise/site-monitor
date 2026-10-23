@@ -195,8 +195,18 @@ public class SystemMetricSampler {
         logEvents(s);
         caches(s);
         clockSkew(s);
+        try { s.setSchemaFailedPatches(schemaFailedPatches.get()); } catch (Exception ignored) { /* bilinmiyor */ }
         return s;
     }
+
+    /**
+     * Bu pod'un açılışındaki başarısız şema yaması sayısı (inceleme W-3) — yamalar henüz koşmadıysa null. Testler sabit değer
+     * verir.
+     */
+    java.util.function.Supplier<Integer> schemaFailedPatches = () -> {
+        com.sitemonitor.service.schema.SchemaPatchRunner.Summary sum = com.sitemonitor.service.schema.SchemaPatchRunner.last();
+        return sum == null ? null : sum.failed();
+    };
 
     /**
      * Saat farkı (2026-10-23, çok pod R2b, MP-37c): pod saati − veritabanı saati. Kira ve kilit SQL'i pod saatiyle

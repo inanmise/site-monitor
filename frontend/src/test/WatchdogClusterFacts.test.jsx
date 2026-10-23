@@ -10,7 +10,7 @@ import { LANG_STORAGE_KEY } from '../i18n/dateLocale.js'
 import { useT } from '../i18n/index.jsx'
 import WatchdogSection from '../components/admin/health/WatchdogSection.jsx'
 import {
-  evaluatedBy, formatSkewSeconds, skewPods, skewTone, SKEW_PROBLEM_MS, SKEW_WARN_MS,
+  evaluatedBy, evaluatingPodDecides, formatSkewSeconds, skewPods, skewTone, SKEW_PROBLEM_MS, SKEW_WARN_MS,
 } from '../components/admin/health/watchdogModel.js'
 
 /**
@@ -24,8 +24,8 @@ function check(overrides = {}) {
     key: 'clock_skew', label: 'Saat uyumu', status: 'PROBLEM', last_result: 'PROBLEM', severity: 'HIGH',
     since: '2026-10-23T10:00:00', evaluated_at: '2026-10-23T10:05:00',
     detail: 'sm-b pod\'unun saati veritabanı saatinden 45,0 sn ileride.',
-    facts: { pods: [{ pod: 'sm-b', skew_ms: 45000 }, { pod: LONG_POD, skew_ms: -6200 }, { pod: 'sm-a', skew_ms: 300 }],
-      max_abs_ms: 45000, worst_pod: 'sm-b' },
+    facts: { pods: [{ pod: 'sm-b', skew_ms: 85000, deviation_ms: 45000 }, { pod: LONG_POD, skew_ms: 33800, deviation_ms: -6200 },
+      { pod: 'sm-a', skew_ms: 40300, deviation_ms: 300 }], spread_ms: 51200, db_offset_ms: 40000, max_pod: 'sm-b', min_pod: LONG_POD },
     ...overrides,
   }
 }
@@ -52,9 +52,10 @@ describe('watchdogModel — küme gerçekleri', () => {
     expect(skewTone(30001)).toBe('danger')
   })
 
-  it('pod listesi: geçersiz satırlar atlanır, sıra sunucudan; liste yoksa boş', () => {
-    const pods = skewPods({ facts: { pods: [{ pod: 'a', skew_ms: 100 }, { pod: '', skew_ms: 1 }, { pod: 'b' }, null] } })
-    expect(pods).toEqual([{ pod: 'a', ms: 100, tone: 'success' }])
+  it('pod listesi: SAPMA (ortancaya göre) gösterilir, yoksa veritabanına göre fark; geçersiz satır atlanır; liste yoksa boş', () => {
+    const pods = skewPods({ facts: { pods: [{ pod: 'a', skew_ms: 40000, deviation_ms: 100 }, { pod: 'x', skew_ms: 100 },
+      { pod: '', skew_ms: 1 }, { pod: 'b' }, null] } })
+    expect(pods).toEqual([{ pod: 'a', ms: 100, tone: 'success' }, { pod: 'x', ms: 100, tone: 'success' }])
     expect(skewPods({})).toEqual([])
     expect(skewPods(null)).toEqual([])
   })
@@ -66,6 +67,11 @@ describe('watchdogModel — küme gerçekleri', () => {
     expect(evaluatedBy({ facts: { evaluated_by: 'sm-a', circuit_open: false, evaluating_pod_pool: 'UP' } })).toBeNull()
     expect(evaluatedBy({ facts: { circuit_open: true } })).toBeNull()
     expect(evaluatedBy(null)).toBeNull()
+    // inceleme W-3: pod örneği yokken karar değerlendiren pod'un kendi olgularıyla — etiketlenir
+    const decides = { facts: { evaluated_by: 'sm-c', evaluating_pod_pool: 'UP', decision_source: 'evaluating_pod' } }
+    expect(evaluatedBy(decides)).toBe('sm-c')
+    expect(evaluatingPodDecides(decides)).toBe(true)
+    expect(evaluatingPodDecides({ facts: { decision_source: 'cluster_samples' } })).toBe(false)
   })
 })
 
@@ -76,7 +82,7 @@ describe('WatchdogSection — küme gerçekleri', () => {
 
   it('saat uyumu: pod başına fark rozetleri (en büyük önce, eşik tonu, uzun pod adı tam)', async () => {
     render(<Harness data={{ status: 'DEGRADED', enabled: true, interval_seconds: 60, confirm_checks: 2, checks: [check()], channels: {} }} />)
-    const list = await screen.findByText('Pod başına saat farkı (veritabanı saatine göre):')
+    const list = await screen.findByText("Pod başına saat sapması (pod'ların ortanca saatine göre):")
     const box = list.closest('[data-slot="watchdog-skew-pods"]')
     const badges = within(box).getAllByText(/sn$/)
     expect(badges.map((b) => b.textContent)).toEqual(['sm-b: +45,0 sn', `${LONG_POD}: −6,2 sn`, 'sm-a: +0,3 sn'])
@@ -96,6 +102,15 @@ describe('WatchdogSection — küme gerçekleri', () => {
     expect(rows[0].textContent).toContain('sm-a')
     expect(rows[0].closest('[data-slot="watchdog-check"]').getAttribute('data-key')).toBe('push_outbox')
     expect(document.querySelector('[data-slot="watchdog-skew-pods"]')).toBeNull()
+  })
+
+  it('pod örneği yokken kararı değerlendiren pod verdi: ayrı metin', async () => {
+    const db = { key: 'database', label: 'Veritabanı', status: 'PROBLEM', last_result: 'PROBLEM', severity: 'MEDIUM',
+      since: '2026-10-23T10:00:00', detail: 'Veritabanı durumu: DEGRADED.',
+      facts: { status: 'DEGRADED', evaluating_pod_pool: 'DEGRADED', evaluated_by: 'sm-c', decision_source: 'evaluating_pod' } }
+    render(<Harness data={{ status: 'DEGRADED', enabled: true, checks: [db], channels: {} }} />)
+    const line = await screen.findByText(/^Değerlendiren pod: sm-c/)
+    expect(line.textContent).toContain('kendi bilgisiyle verildi')
   })
 
   it('bekleyen (henüz ölçülmemiş) kontrol pod bilgisi çizmez', async () => {

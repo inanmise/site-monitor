@@ -8818,9 +8818,11 @@ export const TR = {
   'wd.reasonStale': 'Kendi kendini izleme değerlendirmesi koşmuyor',
   'wd.problemCount': '{0} sorun',
   // ── multi-pod R2b · C2 ──
-  'wd.skewPods': 'Pod başına saat farkı (veritabanı saatine göre):',
+  'wd.skewPods': "Pod başına saat sapması (pod'ların ortanca saatine göre):",
   'wd.skewValue': '{0}: {1} sn',
   'wd.evaluatedBy': "Değerlendiren pod: {0} — devre kesici, bağlantı havuzu ve şema yaması gibi bu pod'a özgü olgular yalnız bilgidir; karar küme genelindeki verilere göre verilir.",
+  'wd.evaluatedByDecides': "Değerlendiren pod: {0} — pod örneği olmadığından (sistem metrikleri örnekleyicisi kapalı ya da henüz örnek yok) havuz ve şema yaması kararı bu pod'un kendi bilgisiyle verildi.",
+  'version.kind.REPLICA': 'Ek pod',
   'health.sectionFailed':  'Bu bölüm yüklenemedi.',
   'health.stOk':           'Sağlıklı',
   'health.stWarn':         'Bozuk',

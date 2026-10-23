@@ -32,7 +32,8 @@ class SystemMetricsSchemaPatchTest {
         mp.jdbc().execute("CREATE TABLE system_metric_samples (id BIGINT PRIMARY KEY, instance_id VARCHAR(80), sampled_at VARCHAR(25))");
         mp.jdbc().update("INSERT INTO system_metric_samples(id, instance_id, sampled_at) VALUES (1, 'pod-a', '2026-10-23T10:00:00')");
         SystemMetricsSchemaPatch patch = new SystemMetricsSchemaPatch(mp.jdbc());
-        assertThat(patch.apply()).isEqualTo(1);
+        assertThat(patch.apply()).isEqualTo(2);
+        assertThat(patch.columnExists("system_metric_samples", "schema_failed_patches")).isTrue();
         assertThat(patch.columnExists("system_metric_samples", "clock_skew_ms")).isTrue();
         assertThat(patch.apply()).isZero();
         assertThat(mp.jdbc().queryForObject("SELECT clock_skew_ms FROM system_metric_samples WHERE id = 1", Long.class)).isNull();

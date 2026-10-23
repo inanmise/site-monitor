@@ -42,16 +42,25 @@ public final class WatchdogMessages {
                     : "Son " + f.get("window_minutes") + " dk'da " + f.get("attempted") + " e-postanın " + f.get("failed") + "'i gönderilemedi.";
             case PUSH_OUTBOX -> {
                 boolean open = Boolean.TRUE.equals(f.get("circuit_open"));
-                String base = en
+                StringBuilder base = new StringBuilder(en
                         ? f.get("stuck") + " pushes overdue by more than " + f.get("stuck_minutes") + " min."
-                        : f.get("stuck") + " push " + f.get("stuck_minutes") + " dk'dan uzun süredir gecikmede.";
-                if (!open) yield base;
-                String pod = podOf(f);
-                yield base + (en
-                        ? " For information: the push gateway circuit breaker is open on the pod that ran this round (" + pod
-                                + "); the decision uses the cluster-wide overdue count."
-                        : " Bilgi: bu turu değerlendiren pod'da (" + pod + ") push ağ geçidi devre kesici açık; karar küme genelindeki "
-                                + "geciken satır sayısına göre verilir.");
+                        : f.get("stuck") + " push " + f.get("stuck_minutes") + " dk'dan uzun süredir gecikmede.");
+                long failed = f.get("recent_failed") instanceof Number n ? n.longValue() : 0;
+                long sent = f.get("recent_sent") instanceof Number n ? n.longValue() : 0;
+                if (failed + sent > 0) {
+                    base.append(en
+                            ? " " + failed + " of " + (failed + sent) + " pushes failed in the last " + f.get("outcome_window_minutes") + " min."
+                            : " Son " + f.get("outcome_window_minutes") + " dk'da " + (failed + sent) + " push'un " + failed + "'i gönderilemedi.");
+                }
+                if (open) {
+                    String pod = podOf(f);
+                    base.append(en
+                            ? " For information: the push gateway circuit breaker is open on the pod that ran this round (" + pod
+                                    + "); the decision uses cluster-wide push outcomes."
+                            : " Bilgi: bu turu değerlendiren pod'da (" + pod + ") push ağ geçidi devre kesici açık; karar küme genelindeki "
+                                    + "push sonuçlarına göre verilir.");
+                }
+                yield base.toString();
             }
             case DATABASE -> database(f, en);
             case CLOCK_SKEW -> clockSkew(f, en);
@@ -61,13 +70,20 @@ public final class WatchdogMessages {
     private static String database(Map<String, Object> f, boolean en) {
         StringBuilder sb = new StringBuilder(en ? "Database status: " + f.get("status") + "." : "Veritabanı durumu: " + f.get("status") + ".");
         if (f.get("pool_saturated_pods") instanceof List<?> l && !l.isEmpty()) {
-            List<String> names = new ArrayList<>();
-            for (Object o : l) names.add(String.valueOf(o));
             sb.append(en ? " Connection pool full / waiting for a connection on: " : " Bağlantı havuzu dolu / bağlantı bekleyen pod: ")
-                    .append(String.join(", ", names)).append('.');
+                    .append(join(l)).append('.');
         }
-        if (f.get("evaluating_pod_schema_failed") instanceof Number n && n.intValue() > 0) {
-            String pod = podOf(f);
+        if (f.get("schema_failed_pods") instanceof List<?> l && !l.isEmpty()) {
+            sb.append(en ? " Schema patches failed at the start of: " : " Açılışta şema yaması başarısız olan pod: ")
+                    .append(join(l)).append('.');
+        }
+        String pod = podOf(f);
+        if ("evaluating_pod".equals(f.get("decision_source"))) {
+            sb.append(en
+                    ? " No per-pod samples were available, so the pool and schema patches of the evaluating pod (" + pod + ") decided."
+                    : " Pod örneği olmadığından havuz ve şema yaması için değerlendiren pod'un (" + pod + ") kendi bilgisi kullanıldı.");
+        } else if (f.get("evaluating_pod_schema_failed") instanceof Number n && n.intValue() > 0
+                && !(f.get("schema_failed_pods") instanceof List<?>)) {
             sb.append(en
                     ? " For information: " + n.intValue() + " schema patch(es) failed at the start of the evaluating pod (" + pod + ")."
                     : " Bilgi: değerlendiren pod'un (" + pod + ") açılışında " + n.intValue() + " şema yaması başarısız oldu.");
@@ -76,23 +92,41 @@ public final class WatchdogMessages {
     }
 
     private static String clockSkew(Map<String, Object> f, boolean en) {
-        Object worst = f.get("worst_pod");
-        Object skew = f.get("worst_skew_ms");
         long unknown = f.get("unknown_pods") instanceof Number n ? n.longValue() : 0;
         String tail = unknown > 0 ? (en ? " Not measured on " + unknown + " pod(s)." : " " + unknown + " pod'da ölçülmedi.") : "";
+        if (!(f.get("spread_ms") instanceof Number sp)) return (en ? "No clock measurement." : "Saat ölçümü yok.") + tail;
+        long spread = sp.longValue();
         String thresholds = en
                 ? " (warning above " + f.get("warn_seconds") + " s, serious above " + f.get("problem_seconds") + " s)"
                 : " (uyarı " + f.get("warn_seconds") + " sn, ciddi " + f.get("problem_seconds") + " sn üstü)";
-        if (worst == null || !(skew instanceof Number s)) return (en ? "No clock measurement." : "Saat ölçümü yok.") + tail;
-        long ms = s.longValue();
-        String value = seconds(ms, en);
-        if (Math.abs(ms) <= WatchdogProbes.SKEW_WARN_MS) {
-            return (en ? "Every pod's clock matches the database clock (largest difference " + value + " on " + worst + ")."
-                    : "Tüm pod'ların saati veritabanı saatiyle uyumlu (en büyük fark " + worst + ": " + value + ").") + tail;
+        String main;
+        Object minPod = f.get("min_pod"), maxPod = f.get("max_pod");
+        if (minPod == null || maxPod == null) {
+            main = en ? "Only one pod's clock was measured; there is no difference between pods."
+                    : "Yalnız bir pod'un saati ölçüldü; pod'lar arasında fark yok.";
+        } else if (spread <= WatchdogProbes.SKEW_WARN_MS) {
+            main = en ? "The pods' clocks agree (largest difference " + seconds(spread, true) + ")."
+                    : "Pod'ların saatleri birbiriyle uyumlu (en büyük fark " + seconds(spread, false) + ").";
+        } else {
+            main = en ? "The clocks of " + maxPod + " and " + minPod + " differ by " + seconds(spread, true) + thresholds + "."
+                    : maxPod + " ile " + minPod + " pod'larının saatleri arasında " + seconds(spread, false) + " fark var" + thresholds + ".";
         }
-        String dir = ms > 0 ? (en ? "ahead of" : "ileride") : (en ? "behind" : "geride");
-        return (en ? "The clock of " + worst + " is " + value + " " + dir + " the database clock" + thresholds + "."
-                : worst + " pod'unun saati veritabanı saatinden " + value + " " + dir + thresholds + ".") + tail;
+        String db = "";
+        if (f.get("db_offset_ms") instanceof Number off && Math.abs(off.longValue()) > WatchdogProbes.SKEW_WARN_MS) {
+            long o = off.longValue();
+            // o = pod − veritabanı: pozitif → pod'lar ileride, yani veritabanı geride
+            db = en ? " For information: the database clock is " + seconds(o, true) + (o > 0 ? " behind" : " ahead of")
+                    + " the pods (leases and locks use the pod clocks)."
+                    : " Bilgi: veritabanı saati pod'lardan " + seconds(o, false) + (o > 0 ? " geride" : " ileride")
+                    + " (kira ve kilitler pod saatini kullanır).";
+        }
+        return main + db + tail;
+    }
+
+    private static String join(List<?> l) {
+        List<String> names = new ArrayList<>();
+        for (Object o : l) names.add(String.valueOf(o));
+        return String.join(", ", names);
     }
 
     /** Değerlendiren pod adı (olgu yoksa "?"). */

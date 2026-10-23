@@ -14,7 +14,7 @@ import { Button } from '@/components/shadcn/button'
 import { ItemGroup, Item, ItemTitle } from '@/components/shadcn/item'
 import { cn } from '@/lib/utils'
 import { relTime } from './healthModel.js'
-import { OVERALL_TONE, checkState, checkTone, evaluatedBy, formatSkewSeconds, notifiedKey, skewPods } from './watchdogModel.js'
+import { OVERALL_TONE, checkState, checkTone, evaluatedBy, evaluatingPodDecides, formatSkewSeconds, notifiedKey, skewPods } from './watchdogModel.js'
 
 const STATE_ICON = {
   problem: AlertOctagon, watch: Activity, ok: CheckCircle2, unknown: HelpCircle, na: MinusCircle, pending: CircleDashed,
@@ -160,7 +160,7 @@ export default function WatchdogSection({ t, data, error, canAct, globalAdmin, o
               {state !== 'pending' && <SkewPods t={t} lang={lang} check={c} />}
               {state !== 'pending' && evaluatedBy(c) && (
                 <p data-slot="watchdog-evaluated-by" className="m-0 text-xs text-muted-foreground [overflow-wrap:anywhere]">
-                  {t('wd.evaluatedBy', evaluatedBy(c))}
+                  {t(evaluatingPodDecides(c) ? 'wd.evaluatedByDecides' : 'wd.evaluatedBy', evaluatedBy(c))}
                 </p>
               )}
               <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground">

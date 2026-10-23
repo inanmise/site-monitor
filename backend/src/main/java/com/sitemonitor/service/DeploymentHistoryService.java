@@ -267,7 +267,10 @@ public class DeploymentHistoryService {
      * <p><b>Çok pod (2026-10-23, R2b, MP-37e).</b> Ortamın sürümü ({@code prev}) yalnız GERÇEK geçişte ilerler. Bir satır
      * geçiş DEĞİLDİR (RESTART) ve {@code prev}'i ilerletmez, eğer açılış anında:
      * <ul>
-     *   <li>aynı sürümü koşan BAŞKA canlı pod vardı (2 replikalı dağıtımın ikinci pod'u, ölçek büyütme) — ek replika;</li>
+     *   <li>aynı sürümü koşan BAŞKA canlı pod vardı (2 replikalı dağıtımın ikinci pod'u, ölçek büyütme) — ek replika; ancak
+     *       satırın sürümü ortamın sürümünden farklı ve Helm revizyonu canlı her pod'unkinden büyükse GEÇİŞTİR (v2 hazır
+     *       olamadan {@code --atomic} / {@code helm rollback} yeni revizyonla v1 başlattı, eski v1 pod'u hâlâ canlı →
+     *       ROLLBACK, inceleme W-1);</li>
      *   <li>aynı pod'un (pod adı / makine adı) bir önceki satırı aynı sürümdeydi (konteyner yeniden başladı — dağıtımın
      *       ortasında yeniden başlayan ESKİ sürüm pod'u sahte ROLLBACK + ardından sahte UPGRADE üretmesin);</li>
      *   <li>daha yüksek Helm revizyonlu, başka sürümde canlı pod vardı (eski ReplicaSet'in geç kalan pod'u).</li>
@@ -275,6 +278,10 @@ public class DeploymentHistoryService {
      * "Canlı": daha önce açılmış {@code STARTUP} satırı, bitişi ({@code ended_at}, yoksa {@code last_seen_at} +
      * {@link #ALIVE_SLACK_MS}) bu satırın açılışından sonra. Canlılık bilgisi olmayan satırlar (BACKFILL, MANUAL) eski kuralla:
      * aynı sürüm RESTART, farklı sürüm geçiş.
+     *
+     * <p><b>Bilinen sınır:</b> {@code kubectl rollout undo} eski şablonu ESKİ Helm revizyon numarasıyla geri getirir — pod'lar
+     * eski ReplicaSet'in geç kalanı sayılır (geri alma satırı ve bildirimi yok, ortam sürümü bir sonraki Helm sürümüne dek
+     * yeni sürümde görünür). Belgelenen geri alma yolu {@code helm rollback}'tir (yeni revizyon → ROLLBACK + bildirim).
      */
     public static List<Derived> deriveKinds(List<DeploymentHistory> rowsAsc) {
         List<Derived> out = new ArrayList<>(rowsAsc.size());
@@ -297,18 +304,29 @@ public class DeploymentHistoryService {
             String v = r.getVersion();
             if (v == null || v.isBlank()) { out.add(new Derived(r, Kind.UNKNOWN, prev, false)); continue; }
             boolean sameVersionOtherPodAlive = false, straggler = false;
+            // Bu satırın Helm revizyonu canlı HER pod'unkinden büyük mü (yeni bir sürüm — yükseltme ya da `helm rollback` —
+            // açılıyor); revizyonu bilinmeyen canlı pod varsa karşılaştırılamaz → hayır.
+            boolean newestRevision = r.getHelmRevision() != null;
             for (DeploymentHistory x : alive) {
                 if (v.equals(x.getVersion()) && !Objects.equals(pod, podKey(x))) sameVersionOtherPodAlive = true;
                 if (r.getHelmRevision() != null && x.getHelmRevision() != null && x.getHelmRevision() > r.getHelmRevision()
                         && !v.equals(x.getVersion())) straggler = true;
+                if (r.getHelmRevision() != null && (x.getHelmRevision() == null || x.getHelmRevision() >= r.getHelmRevision())) {
+                    newestRevision = false;
+                }
             }
+            // Aynı sürümü koşan başka canlı pod satırı EK REPLİKA yapar — ama yalnız ortam zaten o sürümdeyse ya da bu satır yeni
+            // bir Helm revizyonu DEĞİLSE (inceleme W-1, 2026-10-23: v1 canlıyken açılan v2 hazır olamadı, `--atomic` / `helm
+            // rollback` yeni revizyonla v1 başlattı — eski v1 hâlâ canlı diye geri alma "ek replika" sayılıyor, bildirim gitmiyor,
+            // ortam v2'de kalıyordu). Helm revizyonu olmayan satır (yerel / Helm'siz) eski kuralla: farklı sürüm = geçiş.
+            boolean replica = sameVersionOtherPodAlive && (v.equals(prev) || (r.getHelmRevision() != null && !newestRevision));
             boolean containerRestart = pod != null && v.equals(lastVersionByPod.get(pod));
             Kind k;
             boolean counted = false;
             if (prev == null) {
                 k = Kind.FIRST_SEEN;
                 prev = v;
-            } else if (v.equals(prev) || sameVersionOtherPodAlive || containerRestart || straggler) {
+            } else if (v.equals(prev) || replica || containerRestart || straggler) {
                 k = Kind.RESTART;
                 counted = containerRestart || (v.equals(prev) && !sameVersionOtherPodAlive && !straggler);
             } else {
