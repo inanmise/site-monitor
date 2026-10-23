@@ -5,10 +5,19 @@
 #   .\scripts\build-image.ps1
 #   .\scripts\build-image.ps1 -Push
 #   .\scripts\build-image.ps1 -Registry "ghcr.io/your-org" -Push
+#   .\scripts\build-image.ps1 -Registry "ghcr.io/your-org" -PreviousImage "ghcr.io/your-org/site-monitor:v20.166.0"
+#
+# Previous releases' page files (2026-10-23, multi-pod release 2b · MP-47): the image also carries the own assets of
+# the last releases (Dockerfile PREVIOUS_IMAGE) so a rolling update does not serve a blank page. With -Registry the
+# previous image defaults to this branch's moving tag in that registry (master → latest, release/* → staging,
+# develop → develop), digest-pinned; -PreviousImage <ref> picks another one (e.g. the image running in prod),
+# -NoPrevious builds without it (like a local build). Not readable → built without carried files (warning).
 # ─────────────────────────────────────────────────────────────────────────────
 param(
     [string]$Registry = "",
-    [switch]$Push
+    [switch]$Push,
+    [string]$PreviousImage = "",
+    [switch]$NoPrevious
 )
 
 Set-StrictMode -Version Latest
@@ -48,12 +57,36 @@ $Prefix      = if ($Registry) { "$Registry/" } else { "" }
 $PrimaryTag  = $Tags[0]
 $FullImage   = "${Prefix}${ImageName}:${PrimaryTag}"
 
+# ── Previous image (MP-47): digest-pinned, empty = nothing carried ──
+$PrevRef = ""
+if (-not $NoPrevious) {
+    if ($PreviousImage) { $PrevRef = $PreviousImage }
+    elseif ($Registry -and $Tags.Count -gt 1) { $PrevRef = "${Registry}/${ImageName}:$($Tags[-1])" }
+}
+$PrevPinned = ""
+if ($PrevRef) {
+    if ($PrevRef -match '@sha256:[0-9a-f]{64}$') {
+        $PrevPinned = $PrevRef
+    } else {
+        # Windows PowerShell 5.1: native stderr under ErrorActionPreference=Stop would throw — read it non-fatally.
+        $digest = ""
+        $saved = $ErrorActionPreference
+        try {
+            $ErrorActionPreference = "Continue"
+            $digest = (& docker buildx imagetools inspect $PrevRef --format '{{json .Manifest.Digest}}' 2>$null | Out-String).Trim().Trim('"')
+        } catch { $digest = "" } finally { $ErrorActionPreference = $saved }
+        if ($digest -match '^sha256:[0-9a-f]{64}$') { $PrevPinned = "${PrevRef}@${digest}" }
+        else { Write-Warning "Previous image $PrevRef could not be read - building WITHOUT the previous releases' page files" }
+    }
+}
+
 Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
 Write-Host "  Branch    : $Branch"
 Write-Host "  Version   : $Version"
 Write-Host "  Git SHA   : $GitSha"
 Write-Host "  Tags      : $($Tags -join ', ')"
 Write-Host "  Registry  : $(if ($Registry) { $Registry } else { '<local>' })"
+Write-Host "  Previous  : $(if ($PrevPinned) { $PrevPinned } else { '<none - nothing carried>' })"
 Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
 
 # ── Build ────────────────────────────────────────────────────
@@ -61,6 +94,7 @@ docker build `
     --build-arg VERSION="$Version" `
     --build-arg BUILD_DATE="$BuildDate" `
     --build-arg GIT_COMMIT="$GitSha" `
+    --build-arg PREVIOUS_IMAGE="$PrevPinned" `
     -t $FullImage `
     .
 

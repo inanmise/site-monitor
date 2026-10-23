@@ -116,6 +116,7 @@ jobs:
           mkdir -p asset-lists
           docker cp sm:/app/frontend/own-assets.txt asset-lists/ || echo "::warning::own-assets.txt not in the image"
           docker cp sm:/app/frontend/carried-assets.txt asset-lists/ || echo "::warning::carried-assets.txt not in the image"
+          docker cp sm:/app/frontend/carry-report.json asset-lists/ || echo "::warning::carry-report.json not in the image"
           bash scripts/image-boot-check.sh http://localhost:8080 boot.log asset-lists
 
       - name: Container log (last 200 lines)

@@ -407,8 +407,9 @@ jobs:
   # ──────────────────────────────────────────────
   # Main's image is built only by release.yml AFTER the merge; this job exercises the Dockerfile carry stages on the
   # PR so a broken stage never reaches a release: the carry script's own tests, the "first build" path (no previous
-  # image: nothing carried) and the real path (previous release = :latest, digest-pinned: its own assets carried,
-  # bounded, none colliding with this build). Builds only the carry stages (frontend build + carry), no push.
+  # image: nothing carried) and the real path (previous release = :latest, digest-pinned: the last CARRY_RELEASES
+  # releases' own assets carried, bounded, none colliding with this build — or nothing, with a notice, when the frontend
+  # did not change). Builds only the carry stages (frontend build + carry), no push.
   image-assets:
     name: Image assets (previous release carry)
     runs-on: ubuntu-latest
@@ -469,27 +470,20 @@ jobs:
           outputs: type=local,dest=carry-prev
           cache-from: type=gha
 
+      # scripts/check-carry-output.mjs recomputes the expected set independently (previous image's history / own list /
+      # asset listing ∩ files present − this build's names): carried must equal it. Expected empty — the frontend did not
+      # change in the last CARRY_RELEASES releases (backend-only PR) — is a ::notice::, not an error (D-1, 2026-10-23).
       - name: Check carry output
         env:
           HAS_PREV: ${{ steps.prev.outputs.image != '' }}
         run: |
           set -uo pipefail
           fail=0
-          err() { echo "::error::$*"; fail=1; }
-          own=$(grep -c . carry-none/own-assets.txt || true)
-          [ "$own" -gt 0 ] && echo "own assets: $own" || err "carry-none: own-assets.txt boş (bu derlemenin varlık listesi yazılmadı)"
-          [ ! -s carry-none/carried-assets.txt ] || err "önceki imaj yokken dosya taşındı"
-          [ -z "$(ls -A carry-none/assets 2>/dev/null)" ] || err "önceki imaj yokken carry-none/assets dolu"
+          node scripts/check-carry-output.mjs --out carry-none/out --previous carry-none/previous || fail=1
           if [ "$HAS_PREV" = "true" ]; then
-            carried=$(grep -c . carry-prev/carried-assets.txt || true)
-            [ "$carried" -gt 0 ] || err "önceki sürüm imajı var ama hiçbir dosya taşınmadı"
-            [ "$carried" -le 5000 ] || err "taşınan dosya sayısı $carried > 5000 (yalnız BİR önceki sürümün varlıkları taşınmalı)"
-            while IFS= read -r name; do
-              [ -f "carry-prev/assets/$name" ] || err "listede var ama taşınmadı: $name"
-              ! grep -qxF "$name" carry-prev/own-assets.txt || err "bu derlemede de olan ad taşındı: $name"
-            done < carry-prev/carried-assets.txt
-            echo "carried from the previous release: $carried files ($(du -sh carry-prev/assets | cut -f1))"
-            cmp -s carry-none/own-assets.txt carry-prev/own-assets.txt || err "own-assets.txt iki derlemede farklı (aynı kaynak)"
+            node scripts/check-carry-output.mjs --out carry-prev/out --previous carry-prev/previous --expect-previous || fail=1
+            cmp -s carry-none/out/own-assets.txt carry-prev/out/own-assets.txt               || { echo "::error::own-assets.txt iki derlemede farklı (aynı kaynak)"; fail=1; }
+            echo "carried: $(grep -c . carry-prev/out/carried-assets.txt || true) files ($(du -sh carry-prev/out/assets | cut -f1))"
           else
             echo "::notice::önceki sürüm imajı okunamadı — yalnız ilk derleme yolu denetlendi"
           fi
