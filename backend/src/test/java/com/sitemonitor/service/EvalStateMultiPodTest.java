@@ -69,6 +69,7 @@ class EvalStateMultiPodTest {
         EvalStateVerifier verifier = new EvalStateVerifier(p.mos(), mp.jdbc());
         EvalStateRecorder rec = EvalStateRecorder.builder(mp.jdbc()).writer(p.pod().owner())
                 .leaderHint(p.scheduler()::sweepLeaderHint).mode(() -> EvalStateMode.VERIFY).clock(mp.clockSupplier())
+                .leaseOwner(p.pod().schedule().owner())   // üretimdeki gibi: kuşak CAS'ı tarama lideri kirasına bağlı
                 .verifier(() -> verifier).flushMs(50).verifyMs(300_000).lastStatusRefreshMs(120_000).build();
         p.pod().events().listen(SweepLeadershipChangedEvent.class, rec::onSweepLeadershipChanged);
         p.mos().setEvalStateSink(rec);
@@ -153,6 +154,40 @@ class EvalStateMultiPodTest {
         EvalVerifyReport rb = b.rec().verifyNow();
         assertThat(rb.status()).isEqualTo(EvalVerifyReport.STATUS_OK);
         assertThat(rb.generation()).isEqualTo(2L);
+    }
+
+    @Test
+    @DisplayName("FX #1: kira B'ye geçti, A henüz fark etmedi (ipucu true, kuşak denemesi gecikti) — A kuşak alamaz, B yazmaya devam eder")
+    void staleFormerLeaderCannotFenceLeaseHolder() {
+        PodRec a = podWithRecorder(1);
+        PodRec b = podWithRecorder(2);
+        openAlarm();
+        assertThat(a.pod().scheduler().isSweepLeaderNow()).isTrue();   // A lider ama ilk kuşak denemesi henüz koşmadı
+        mp.advance(TTL + 1_000);
+        assertThat(b.pod().scheduler().isSweepLeaderNow()).as("B kirayı aldı").isTrue();
+        b.mos().handleSweepResults(TYPE, List.of(item(true, 5432, () -> status("up"))));
+        assertThat(b.rec().flushNow()).isTrue();
+        assertThat(b.rec().generation()).isEqualTo(1);
+
+        assertThat(a.pod().scheduler().sweepLeaderHint()).as("A olayı henüz görmedi").isTrue();
+        assertThat(a.rec().flushNow()).as("A'nın geç kuşak denemesi kirada takılır").isFalse();
+        assertThat(a.rec().generation()).isZero();
+
+        mp.advance(60_000);
+        b.mos().handleSweepResults(TYPE, List.of(item(true, 5432, () -> status("up"))));
+        assertThat(b.rec().flushNow()).as("B çitlenmedi").isTrue();
+        assertThat(b.rec().generation()).isEqualTo(1);
+        assertThat(b.rec().status().fenced()).isFalse();
+        assertThat(b.rec().status().active()).isTrue();
+        assertThat(rows("monitor_eval_type_state", "alert_type = '*' AND gen = 1 AND writer = ?", b.pod().pod().owner()))
+                .isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("FX #4 / F6: hem MOS hem kaydedici olayı dinler — MOS önce sıfırlar (dinleyici sırası), kaydedici sonra temizler")
+    void leadershipListenerOrder() {
+        assertThat(MonitoringOutageService.LEADERSHIP_LISTENER_ORDER)
+                .isLessThan(EvalStateRecorder.LEADERSHIP_LISTENER_ORDER);
     }
 
     @Test

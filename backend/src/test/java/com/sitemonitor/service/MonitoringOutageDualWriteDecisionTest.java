@@ -364,6 +364,36 @@ class MonitoringOutageDualWriteDecisionTest {
                     () -> status("down", "timeout"))));
             env.mos.onSettingsChanged(new AppSettingsChangedEvent(java.util.Set.of("site.monitor.port.alert-enabled"), "save"));
         }),
+        // R3-1 FX-STATE (F2): budama kancaları — duraklatılan kardeşi downSibling budar (kapanış sürer), duraklatılan DOWN
+        // gözlemini pruneObservations budar; kaydedici ne olursa olsun kararlar aynı.
+        PRUNE_HOOKS_SIBLING_AND_PAUSED(env -> {
+            Map<Long, Boolean> monitored = new HashMap<>();
+            env.mos.setStillMonitored(it -> {
+                Object id = it.ctxExtra() == null ? null : it.ctxExtra().get("monitor_id");
+                return !(id instanceof Number n) || monitored.getOrDefault(n.longValue(), true);
+            });
+            AlertEvent e = env.openAlarm(PORT, "s.example.com");
+            e.setContextJson("{\"monitor_id\":1}");
+            env.mos.handleSweepResults(PORT, List.of(item(PORT, "s.example.com", "5433/TCP", false, 2L, null,
+                    () -> status("down", "timeout"))));
+            monitored.put(2L, false);
+            env.advance(30_000);
+            for (int i = 0; i < 3; i++) {
+                env.mos.handleSweepResults(PORT, List.of(item(PORT, "s.example.com", "5432/TCP", true, 1L,
+                        Map.of("monitor_recovery_checks", 3), () -> status("up", null))));
+                env.advance(60_000);
+            }
+            env.mos.handleSweepResults(PORT, List.of(item(PORT, "p.example.com", "443/TCP", false, 3L, null,
+                    () -> status("down", "timeout"))));
+            monitored.put(3L, false);
+            env.advance(11 * 60_000L);
+            env.mos.handleSweepResults(PORT, List.of(item(PORT, "q.example.com", "443/TCP", true, 4L, null,
+                    () -> status("up", null))));
+            if (env.recording != null) {
+                assertThat(env.recording.ops("observationPruned")).as("iki budama yolu da çalıştı")
+                        .extracting(RecordingSink.Op::key).containsExactly(PORT + "|m:2", PORT + "|m:3");
+            }
+        }),
         IMMEDIATE_MODE_AND_CONFIG_ERROR_CLOSE(env -> {
             env.mos.handleSweepResults(PORT, List.of(item(PORT, "i.example.com", "443/TCP", false, 71L,
                     Map.of("monitor_confirm_attempts", 0), () -> status("down", "timeout"))));

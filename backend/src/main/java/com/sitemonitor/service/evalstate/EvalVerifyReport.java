@@ -38,6 +38,17 @@ public record EvalVerifyReport(long atMs, String pod, long generation, String st
     public static final String REASON_READ_FAILED = "read_failed";
     public static final String REASON_NO_GENERATION = "no_generation";
     public static final String REASON_SNAPSHOT_FAILED = "snapshot_failed";
+    /**
+     * Tur sürerken liderlik dönemi değişti, kuşak bırakıldı (kip kapandı / toplu düşüş) ya da pod çitlendi — karşılaştırma
+     * penceresi geçersiz (2026-10-23, R3-1 FX-STATE). Böyle bir rapor yalnız bu pod hâlâ kuşak sahibiyse yayımlanır —
+     * pratikte hiç (yalnız bu pod'un {@code lastVerify}'ında kalır).
+     */
+    public static final String REASON_LEADERSHIP_CHANGED = "leadership_changed";
+    /**
+     * Geçti / kaldı türlerinin HİÇBİRİNDE karşılaştırılan anahtar yok ama atlanan var (ör. toplu düşüşten hemen sonra, kirli
+     * küme taşması) — "0 uyuşmazlık" denemez (R3-1 FX-STATE). Bu raporda {@link #kinds} atlama sayılarını taşır.
+     */
+    public static final String REASON_NOTHING_COMPARED = "nothing_compared";
 
     /** Karşılaştırma türleri — adlar kalıcı (ölçü etiketi {@code kind}). */
     public static final String KIND_RECOVERY = "recovery";

@@ -53,11 +53,24 @@ public enum EvalStateMode {
      * Asla fırlatmaz.
      */
     public static EvalStateMode parse(String raw) {
-        if (raw == null) return DEFAULT;
+        EvalStateMode m = parseOrNull(raw);
+        return m == null ? DEFAULT : m;
+    }
+
+    /**
+     * Değer boş değil ama tanınmıyor mu (yazım hatası, ör. {@code "kapali"}) — kaydedici bir kez WARN yazar (R3-1 FX-STATE);
+     * null / boş değer "ayarlanmamış" sayılır (uyarı yok).
+     */
+    public static boolean unrecognized(String raw) {
+        return raw != null && !raw.isBlank() && parseOrNull(raw) == null;
+    }
+
+    private static EvalStateMode parseOrNull(String raw) {
+        if (raw == null) return null;
         String v = raw.trim().toLowerCase(Locale.ROOT);
         for (EvalStateMode m : values()) {
             if (m.key.equals(v)) return m;
         }
-        return DEFAULT;
+        return null;
     }
 }

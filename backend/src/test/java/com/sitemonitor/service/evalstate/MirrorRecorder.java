@@ -151,6 +151,14 @@ public final class MirrorRecorder implements EvalStateSink, EvalStateVerificatio
     }
 
     @Override
+    public void observationPruned(String alertType, SweepItem item) {
+        if (!recording) return;
+        String itemKey = EvalStateKeys.itemKey(item);
+        next(EvalStateKeys.Table.LAST_STATUS, EvalStateKeys.lastStatusKey(alertType, itemKey));
+        jdbc.update("DELETE FROM monitor_last_status WHERE alert_type = ? AND item_key = ?", alertType, itemKey);
+    }
+
+    @Override
     public void typeState(String alertType) {
         if (!recording || source == null) return;
         long s = next(EvalStateKeys.Table.TYPE_STATE, alertType);

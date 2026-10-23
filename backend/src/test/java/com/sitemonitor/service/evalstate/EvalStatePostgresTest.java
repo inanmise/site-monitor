@@ -156,6 +156,45 @@ class EvalStatePostgresTest {
         assertThat(sql.heartbeat(row.gen() - 1, row.writer(), System.currentTimeMillis())).isFalse();
     }
 
+    @Test
+    @DisplayName("FX #1 PostgreSQL: kiraya bağlı CAS (EXISTS alt sorgusu) geçerli; kira sahibi olmayan yazan kuşak alamaz")
+    void leaseBoundCas_notTheHolderGetsNothing() {
+        EvalStateSql sql = new EvalStateSql(jdbc());
+        assertThat(sql.acquireGeneration("it-seed", System.currentTimeMillis())).isPositive();   // '*' satırı olsun
+        long g = sql.acquireGeneration("it-stale", System.currentTimeMillis(), "it-not-the-lease-holder-" + TYPE, () -> true);
+        assertThat(g).as("kira başkasında / yok → kuşak yok").isZero();
+        assertThat(sql.generationRow().writer()).isNotEqualTo("it-stale");
+        assertThat(sql.acquireGeneration("it-stale", System.currentTimeMillis(), null, () -> false))
+                .as("istenmiyor → CAS yapılmaz").isZero();
+    }
+
+    @Test
+    @DisplayName("FX #6 PostgreSQL: '*' satırı kilitliyken nabız sorgu zaman aşımıyla kesilir — yazıcı soket süresince takılmaz")
+    void lockWaitIsCutByQueryTimeout() throws Exception {
+        EvalStateRecorder r = EvalStateRecorder.builder(jdbc()).writer("it-hang-" + TYPE).leaderHint(() -> true)
+                .mode(() -> EvalStateMode.WRITE).queryTimeoutSeconds(1).build();
+        r.bindSource(new EvalStateRecorderTest.FakeSource());
+        try {
+            assertThat(r.flushNow()).as("kuşak alındı").isTrue();
+            try (java.sql.Connection holder = jdbc().getDataSource().getConnection()) {
+                holder.setAutoCommit(false);
+                try (java.sql.Statement st = holder.createStatement()) {
+                    st.executeUpdate("UPDATE monitor_eval_type_state SET updated_ms = updated_ms WHERE alert_type = '*'");
+                }
+                long t0 = System.nanoTime();
+                assertThat(r.flushNow()).as("nabız kilitte bekledi, iptal edildi").isFalse();
+                assertThat(java.time.Duration.ofNanos(System.nanoTime() - t0)).isLessThan(java.time.Duration.ofSeconds(10));
+                holder.rollback();
+            }
+            // Paylaşılan veritabanı: uygulamanın kendi kaydedicisi araya kuşak aldıysa nabız 0 satır döner (çit, kilit yok) —
+            // bu koşu zaman aşımını sınamamış olur; başarısız değil atlanmış sayılır.
+            org.junit.jupiter.api.Assumptions.assumeFalse(r.status().fenced(), "uygulamanın kaydedicisi araya girdi");
+            assertThat(r.status().writeFailures()).isEqualTo(1);
+        } finally {
+            r.stop();
+        }
+    }
+
     private static <T> List<T> runTogether(List<Callable<T>> tasks) throws Exception {
         ExecutorService pool = Executors.newFixedThreadPool(tasks.size());
         try {

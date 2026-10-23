@@ -114,6 +114,18 @@ public class MonitoringOutageService implements EvalStateSource {
         catch (Exception e) { return true; }   // kimlik çözümlenemezse eski davranış (fail-open)
     }
 
+    /**
+     * Üç durumlu "hâlâ izleniyor mu" — YALNIZ doğrulayıcı için (R3-1 FX-STATE F5): yüklem hata verirse {@code null}
+     * (bilinmiyor — doğrulayıcı anahtarı atlar; karar yolunun {@link #stillMonitored} fail-open kuralı uyuşmazlık uydurmasın).
+     * Yüklem yoksa true. Karar yolu bunu KULLANMAZ.
+     */
+    public Boolean stillMonitoredOrNull(SweepItem item) {
+        java.util.function.Predicate<SweepItem> p = stillMonitored;
+        if (p == null) return Boolean.TRUE;
+        try { return p.test(item); }
+        catch (Exception e) { return null; }
+    }
+
     @Value("${site.monitor.uptime.alert-enabled:true}")
     private boolean uptimeAlertEnabled;
 
@@ -367,6 +379,13 @@ public class MonitoringOutageService implements EvalStateSource {
     // ── Liderlik devri = yeniden başlatma (2026-10-21, çok pod R1-B, MP-12) ───────────────────────────────────────────
 
     /**
+     * Liderlik olayı dinleyicisinin sırası: kalıcı değerlendirme durumu kaydedicisinden ({@code EvalStateRecorder},
+     * {@code LOWEST_PRECEDENCE}) ÖNCE — bellek önce sıfırlanır, arada kuyruğa giren işlem sıfırlanmış değeri okur (R3-1
+     * FX-STATE bulgu #4 / F6). Öteki dinleyici yalnız ölçü sayacıdır; karar sırası etkilenmez.
+     */
+    public static final int LEADERSHIP_LISTENER_ORDER = org.springframework.core.Ordered.LOWEST_PRECEDENCE - 1000;
+
+    /**
      * Tarama liderliği bu pod'da değişti (alındı / kaybedildi / bırakıldı) → bellek içi alarm durumu SIFIRLANIR.
      *
      * <p><b>Neden.</b> Takipçi pod zamanlanmış sonuç işlemez (kapı), belleği donar. Liderlik geri dönünce eski sayaçlar
@@ -376,6 +395,7 @@ public class MonitoringOutageService implements EvalStateSource {
      * başlatılmasıyla aynı başlar. Hızlıdır (yalnız harita temizliği) — olay liderlik kilidi tutulurken eşzamanlı gelir.
      */
     @org.springframework.context.event.EventListener
+    @org.springframework.core.annotation.Order(LEADERSHIP_LISTENER_ORDER)
     public void onSweepLeadershipChanged(com.sitemonitor.service.schedule.SweepLeadershipChangedEvent ev) {
         if (ev == null) return;
         resetVolatileState(ev.reason());
@@ -514,6 +534,22 @@ public class MonitoringOutageService implements EvalStateSource {
         }
     }
 
+    /**
+     * Bellek bir kalemin DOWN gözlemini YENİ sonuç olmadan budadı (D-5: TTL / artık izlenmiyor) — tablodaki satır da silinsin
+     * (R3-1 FX-STATE F2): duraklatılıp yeniden açılan izleme, yeniden gözlenene dek bellekte olmayan DOWN kardeş satırı
+     * bırakmasın.
+     */
+    private void noteObservationPruned(String key, DownObservation o) {
+        EvalStateSink s = evalState;
+        if (s == null || key == null || o == null || o.item() == null) return;
+        try {
+            int bar = key.lastIndexOf('|');
+            s.observationPruned(bar > 0 ? key.substring(0, bar) : o.item().alertType(), o.item());
+        } catch (Exception e) {
+            evalStateHookFailed("observationPruned", e);
+        }
+    }
+
     /** Türün bayrakları değişti — kaydedici güncel değeri {@link #typeValues} ile okur. */
     private void noteTypeState(String alertType) {
         EvalStateSink s = evalState;
@@ -617,6 +653,23 @@ public class MonitoringOutageService implements EvalStateSource {
     @Override
     public String errorClass(String error, String domain) {
         return classifyError(error, domain);
+    }
+
+    @Override
+    public DownValues downObservation(String alertType, long monitorId) {
+        if (alertType == null) return DownValues.ABSENT;
+        DownObservation o = downObserved.get(alertType + "|" + monitorId);
+        if (o == null || o.item() == null) return DownValues.ABSENT;
+        Map<String, Object> ctx = o.item().ctxExtra();
+        return new DownValues(true, o.domain(), o.item().detail(),
+                ctx != null && ctx.get("team_id") instanceof Number n ? n.longValue() : null,
+                ctx != null && ctx.get("standalone") instanceof Boolean b ? b : null,
+                classifyError(o.item().error(), o.domain()), o.atMs());
+    }
+
+    @Override
+    public long hookFailures() {
+        return evalStateHookFailures.get();
     }
 
     // ── Doğrulama (VERIFY) için bellek görüntüsü — karar yolu okumaz ─────────────────────────────────────────────────
@@ -1514,7 +1567,10 @@ public class MonitoringOutageService implements EvalStateSource {
         for (Map.Entry<String, DownObservation> e : downObserved.entrySet()) {
             DownObservation o = e.getValue();
             if (now - o.atMs() > SIBLING_TTL_MS || !stillMonitored(o.item())) {
-                if (downObserved.remove(e.getKey(), o)) removed++;
+                if (downObserved.remove(e.getKey(), o)) {
+                    removed++;
+                    noteObservationPruned(e.getKey(), o);   // 3-1 ikili yazım: satır da silinsin (F2), mutasyondan SONRA
+                }
             }
         }
         return removed;
@@ -1549,7 +1605,7 @@ public class MonitoringOutageService implements EvalStateSource {
             if (!domain.equals(o.domain())) continue;
             if (inBatch.contains(monitorIdOf(o.item()))) continue;
             if (now - o.atMs() > SIBLING_TTL_MS || !stillMonitored(o.item())) {
-                downObserved.remove(e.getKey(), o);
+                if (downObserved.remove(e.getKey(), o)) noteObservationPruned(e.getKey(), o);   // 3-1 ikili yazım (F2)
                 continue;
             }
             if (openEvent != null && !isOwnerItem(o.item(), openEvent)) continue;   // Y-1: başka sahibin izlemesi

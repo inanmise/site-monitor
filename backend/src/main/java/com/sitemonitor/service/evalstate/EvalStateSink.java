@@ -81,6 +81,17 @@ public interface EvalStateSink {
     /** Tarama çağrısı bitti — bekleyen işlem varsa yazıcıya hemen boşaltma ipucu (beklemez). */
     void sweepEnd(String alertType);
 
+    /**
+     * Bellek bir kalemin DOWN gözlemini YENİ bir sonuç olmadan bıraktı (D-5 budaması: TTL doldu ya da hedef artık
+     * izlenmiyor — {@code pruneObservations} / {@code downSibling}) → tablodaki satırı da silinir (2026-10-23, R3-1 FX-STATE).
+     * Aksi hâlde duraklatılıp yeniden açılan bir izleme, yeniden gözlenene dek bellekte olmayan bir DOWN kardeş satırı
+     * bırakırdı. Varsayılan: hiçbir şey (P0 uygulayıcıları derlenir).
+     *
+     * @param alertType bellek anahtarının türü
+     * @param item      budanan kalemin ince kopyası ({@code monitor_id} taşır)
+     */
+    default void observationPruned(String alertType, SweepItem item) {}
+
     // ── Bağlama ve durum ────────────────────────────────────────────────────────────────────────────────────────────
 
     /**
@@ -114,18 +125,33 @@ public interface EvalStateSink {
      * @param tableMissing  tablolar henüz yok (ilk açılışın ilk saniyeleri) — sessizce yeniden denenir
      * @param inherited     son GAINED'de devralınan önceki kuşak satırları; null = hesaplanmadı / okunamadı
      * @param lastVerify    bu pod'un son doğrulama turu; null = henüz tur yok
+     * @param fenced        bu pod çit dışı (daha yeni bir kuşak alındı; GAINED ya da kuşak sahibi sessiz kalınca kalkar) —
+     *                      lider ipucu true iken uzun süre true kalması = bu pod yazmıyor (R3-1 FX-STATE, SONA eklendi)
+     * @param hookFailures  kanca / kuyruğa alma istisnaları (birikimli; MOS kancaları + kaydedicinin kendi yakaladıkları) —
+     *                      karar etkilenmez ama ayna eksik kalabilir (R3-1 FX-STATE, SONA eklendi)
      */
     record Status(String mode, boolean active, String writer, Long generation,
                   long pending, long dropped, long flushes, long writeFailures,
                   Long lastFlushMs, Long lastFailureMs, String lastFailure, boolean tableMissing,
-                  Inherited inherited, EvalVerifyReport lastVerify) {}
+                  Inherited inherited, EvalVerifyReport lastVerify, boolean fenced, long hookFailures) {
+
+        /** Eski (14 bileşenli) biçim — mevcut çağıranlar derlensin; {@code fenced = false}, {@code hookFailures = 0}. */
+        public Status(String mode, boolean active, String writer, Long generation,
+                      long pending, long dropped, long flushes, long writeFailures,
+                      Long lastFlushMs, Long lastFailureMs, String lastFailure, boolean tableMissing,
+                      Inherited inherited, EvalVerifyReport lastVerify) {
+            this(mode, active, writer, generation, pending, dropped, flushes, writeFailures, lastFlushMs, lastFailureMs,
+                    lastFailure, tableMissing, inherited, lastVerify, false, 0L);
+        }
+    }
 
     /**
      * Liderliği kazanınca bir kez sayılan, ÖNCEKİ kuşaklardan kalan satırlar (3-2'nin devirde taşıyacağının doğrudan kanıtı;
      * 3-1'de karara GİRMEZ).
      *
      * @param atMs               sayım anı
-     * @param previousGeneration en yeni önceki kuşak (yoksa null)
+     * @param previousGeneration bu pod'un CAS'ının yerini aldığı kuşak (= kuşak − 1; ilk kuşakta null) — sayılar YALNIZ bu
+     *                           kuşağın satırlarıdır (daha eski kuşakların bayat satırları sayılmaz, R3-1 FX-STATE)
      * @param recoveryCounters   {@code recovery_up_count > 0} satırları
      * @param downSiblings       TTL içindeki {@code up = false} ve {@code monitor_id} dolu satırlar
      * @param activeSuppressions {@code suppression_active = true} türler

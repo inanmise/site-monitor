@@ -1,5 +1,6 @@
 package com.sitemonitor.service.evalstate;
 
+import com.sitemonitor.service.schedule.ClusterScheduleService;
 import com.sitemonitor.service.schema.DeferredIndexBuilder;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.BadSqlGrammarException;
@@ -12,6 +13,7 @@ import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.BooleanSupplier;
 
 /**
  * Kalıcı değerlendirme durumu tablolarının DDL'i ve SQL'i (2026-10-23, çok pod Sürüm 3-1, paket A1; tasarım R3-1 §2.2 /
@@ -31,7 +33,10 @@ import java.util.List;
  * bir liderin geç kalan boşaltması yeni liderin satırını ezemez.
  *
  * <p><b>Kuşak:</b> {@link #acquireGeneration} {@code '*'} satırında CAS (taşınabilir: oku → {@code gen = v + 1 WHERE gen =
- * v}); {@link #heartbeat} her boşaltmanın başında çit denetimi — 0 satır = daha yeni bir lider kuşak aldı.
+ * v}); küme kaydı varken CAS AYNI ifadede tarama lideri kirasına bağlıdır ({@code lease:sweep-leader} satırı bu yazanın) —
+ * kirayı kaybetmiş eski bir lider asla kuşak alamaz (R3-1 FX-STATE). {@link #heartbeat} her boşaltmanın başında çit
+ * denetimi — 0 satır = daha yeni bir lider kuşak aldı. {@code '*'} satırı yoksa (ilk açılış ya da elle silindi) var olan
+ * satırların en büyük kuşağıyla tohumlanır: yeni kuşak her eski satırın üstündedir.
  *
  * <p>Değer metinleri asla günlüğe yazılmaz ({@code ctx_json} / {@code attempts_json} bağlamda kontrol çıktısı taşıyabilir).
  */
@@ -59,6 +64,13 @@ public final class EvalStateSql {
     public static final int ISO_MAX = 19;
     /** {@code attempts_json} / {@code ctx_json} üst sınırı (UTF-8 bayt); aşan değer yazılmaz (null). */
     public static final int JSON_MAX_BYTES = 16 * 1024;
+    /**
+     * Kaydedici / doğrulayıcı ifadelerinin sorgu zaman aşımı (sn; R3-1 FX-STATE) — bir kilit beklemesi ya da yarı açık
+     * bağlantı tek yazıcı iş parçacığını (ayna + doğrulama) havuzun soket zaman aşımına (30 dk) dek durdurmasın.
+     */
+    public static final int QUERY_TIMEOUT_SECONDS = 15;
+    /** Tarama lideri kirasının {@code monitor_check_schedule} anahtarı ({@code SchedulerService.SWEEP_LEADER}; test eşitler). */
+    public static final String LEASE_KEY = ClusterScheduleService.LEASE_PREFIX + "sweep-leader";
 
     /** {@code monitor_confirmations.state} değerleri (kalıcı). */
     public static final String STATE_RUNNING = "RUNNING";
@@ -205,9 +217,16 @@ public final class EvalStateSql {
     static final String SQL_GEN_READ = "SELECT gen FROM " + TYPE_STATE + " WHERE alert_type = ?";
     static final String SQL_GEN_SEED = "INSERT INTO " + TYPE_STATE + " (alert_type, suppression_active, suppression_since_ms, "
             + "last_scheduled_round_ms, round_interval_ms, writer, gen, seq, updated_ms, updated_at) "
-            + "VALUES (?, NULL, NULL, NULL, NULL, ?, 0, 0, ?, ?) ON CONFLICT DO NOTHING";
+            + "VALUES (?, NULL, NULL, NULL, NULL, ?, ?, 0, ?, ?) ON CONFLICT DO NOTHING";
     static final String SQL_GEN_CAS = "UPDATE " + TYPE_STATE + " SET gen = ?, writer = ?, seq = 0, updated_ms = ?, "
             + "updated_at = ? WHERE alert_type = ? AND gen = ?";
+    /**
+     * Kiraya bağlı CAS (R3-1 FX-STATE, bulgu #1): kuşak yalnız {@code lease:sweep-leader} satırı BU yazanınken alınır —
+     * aynı ifadede, ayrı bir okuma değil. Gerçek lider kuşağını kirayı ALDIKTAN sonra CAS'lar; kirayı kaybetmiş pod'un geç
+     * CAS'ı ya gerçek liderinkinden önce işlenir (sonra çitlenir) ya da kirayı başkasında görür (0 satır).
+     */
+    static final String SQL_GEN_CAS_LEASE = SQL_GEN_CAS + " AND EXISTS (SELECT 1 FROM monitor_check_schedule "
+            + "WHERE monitor_key = ? AND claimed_by = ?)";
     static final String SQL_HEARTBEAT = "UPDATE " + TYPE_STATE + " SET updated_ms = ?, updated_at = ? "
             + "WHERE alert_type = ? AND gen = ? AND writer = ?";
     static final String SQL_GEN_ROW = "SELECT gen, writer, updated_ms FROM " + TYPE_STATE + " WHERE alert_type = ?";
@@ -217,18 +236,30 @@ public final class EvalStateSql {
     static final String SQL_MARK_ABANDONED = "UPDATE " + CONFIRMATIONS + " SET state = '" + STATE_ABANDONED
             + "', updated_ms = ?, updated_at = ? WHERE gen < ? AND state <> '" + STATE_ABANDONED + "'";
 
+    /** Kalemin son durum satırını koşullu siler (bellek DOWN gözlemini budadı) — "yalnız daha yeni (gen, seq)" koruması. */
+    static final String SQL_LAST_STATUS_DELETE = "DELETE FROM " + LAST_STATUS
+            + " WHERE alert_type = ? AND item_key = ? AND (gen < ? OR (gen = ? AND seq < ?))";
+
     static final String SQL_PRUNE_LAST_STATUS = "DELETE FROM " + LAST_STATUS + " WHERE observed_ms < ?";
+    /**
+     * Kurtarma budaması: sayaçsız + zincirsiz eski satır, YA DA daha eski bir kuşağın eski satırı (sayıdan bağımsız — bayat
+     * sayaç hiç yeniden yazılmazsa sonsuza dek kalır ve "devralınan" görünürdü; R3-1 FX-STATE, bulgu #3).
+     */
     static final String SQL_PRUNE_EVAL_STATE = "DELETE FROM " + EVAL_STATE
-            + " WHERE recovery_up_count = 0 AND recovery_chain_gen IS NULL AND updated_ms < ?";
+            + " WHERE updated_ms < ? AND ((recovery_up_count = 0 AND recovery_chain_gen IS NULL) OR gen < ?)";
     static final String SQL_PRUNE_CONFIRMATIONS = "DELETE FROM " + CONFIRMATIONS
             + " WHERE state = '" + STATE_ABANDONED + "' OR updated_ms < ?";
+    /** Tür satırları: yalnız daha eski kuşağın eski satırları ({@code '*'} asla). */
+    static final String SQL_PRUNE_TYPE_STATE = "DELETE FROM " + TYPE_STATE
+            + " WHERE alert_type <> ? AND gen < ? AND updated_ms < ?";
 
+    /** Devralınan sayılar YALNIZ bir önceki kuşağın (bu pod'un CAS'ının yerini aldığı) satırları — bulgu #3. */
     static final String SQL_INHERITED_RECOVERY = "SELECT COUNT(*) FROM " + EVAL_STATE
-            + " WHERE gen < ? AND recovery_up_count > 0";
+            + " WHERE gen = ? AND recovery_up_count > 0";
     static final String SQL_INHERITED_SIBLINGS = "SELECT COUNT(*) FROM " + LAST_STATUS
-            + " WHERE gen < ? AND up = FALSE AND monitor_id IS NOT NULL AND observed_ms >= ?";
+            + " WHERE gen = ? AND up = FALSE AND monitor_id IS NOT NULL AND observed_ms >= ?";
     static final String SQL_INHERITED_SUPPRESSIONS = "SELECT COUNT(*) FROM " + TYPE_STATE
-            + " WHERE gen < ? AND alert_type <> ? AND suppression_active = TRUE";
+            + " WHERE gen = ? AND alert_type <> ? AND suppression_active = TRUE";
 
     /** JDBC toplu yazım parça boyu. */
     static final int CHUNK = 200;
@@ -278,6 +309,9 @@ public final class EvalStateSql {
     /** Zincir bitti: satırı koşullu sil (anahtar + zincir + yazan + kuşak ≤ benim). */
     public record ChainDelete(String keyHash, long chainId, long seq) {}
 
+    /** Bellek kalemin DOWN gözlemini budadı: son durum satırını koşullu sil ("yalnız daha yeni (gen, seq)"). */
+    public record LastStatusDelete(String alertType, String itemKey, long seq) {}
+
     /** Okunan bir satır + yazım üst verisi. */
     public record Stored<R>(R row, String writer, long gen, long updatedMs) {}
 
@@ -292,6 +326,21 @@ public final class EvalStateSql {
 
     public EvalStateSql(JdbcTemplate jdbc) {
         this.jdbc = jdbc;
+    }
+
+    /**
+     * Aynı veri kaynağı üzerinde, sorgu zaman aşımı {@code seconds} olan KENDİ şablonu (R3-1 FX-STATE, bulgu #6) — paylaşılan
+     * şablonun ayarlarına dokunulmaz. Veri kaynağı yoksa (sahte şablon) ya da {@code seconds ≤ 0} ise şablon olduğu gibi
+     * döner. Hata çevirici paylaşılır ({@code BadSqlGrammarException} ayrımı aynı kalır).
+     */
+    public static JdbcTemplate withQueryTimeout(JdbcTemplate base, int seconds) {
+        if (base == null || seconds <= 0 || base.getDataSource() == null) return base;
+        JdbcTemplate t = new JdbcTemplate(base.getDataSource());
+        t.setExceptionTranslator(base.getExceptionTranslator());
+        t.setFetchSize(base.getFetchSize());
+        t.setMaxRows(base.getMaxRows());
+        t.setQueryTimeout(seconds);
+        return t;
     }
 
     /** Test: türü sabitler (gerçek PostgreSQL'de taşınabilir yolu da sınamak için; null = bilinmiyor → taşınabilir). */
@@ -332,27 +381,60 @@ public final class EvalStateSql {
 
     // ── Kuşak ───────────────────────────────────────────────────────────────────────────────────────────────────────
 
-    /**
-     * {@code '*'} satırında yeni kuşak alır (≤ {@value #GEN_CAS_TRIES} CAS denemesi; satır yoksa {@code gen = 0} ile
-     * tohumlanır, ilk kuşak 1). @return alınan kuşak (> 0) ya da her CAS kaybedildiyse 0.
-     */
+    /** Kiraya bağlanmadan kuşak alır (tek pod / küme kaydı yok / testler) — {@link #acquireGeneration(String, long, String, BooleanSupplier)}. */
     public long acquireGeneration(String writer, long nowMs) {
+        return acquireGeneration(writer, nowMs, null, () -> true);
+    }
+
+    /**
+     * {@code '*'} satırında yeni kuşak alır (≤ {@value #GEN_CAS_TRIES} CAS denemesi). Satır yoksa var olan satırların en büyük
+     * kuşağıyla (hiç yoksa 0) tohumlanır — yeni kuşak her eski satırın üstünde (bulgu #5).
+     *
+     * @param leaseOwner  null değilse CAS {@code lease:sweep-leader} satırının bu sahipte olmasına bağlıdır (aynı ifade); kira
+     *                    başkasındaysa 0 döner (değer değişmediyse yeniden denenmez)
+     * @param stillWanted HER denemeden önce sorulur (lider ipucu + liderlik dönemi hâlâ aynı mı) — false → 0, CAS yapılmaz
+     * @return alınan kuşak (> 0) ya da 0 (kira yok / istenmiyor / her CAS kaybedildi)
+     */
+    public long acquireGeneration(String writer, long nowMs, String leaseOwner, BooleanSupplier stillWanted) {
+        String w = clip(writer, WRITER_MAX);
         for (int i = 0; i < GEN_CAS_TRIES; i++) {
+            if (stillWanted != null && !stillWanted.getAsBoolean()) return 0L;
             List<Long> rows = jdbc.queryForList(SQL_GEN_READ, Long.class, EvalStateKeys.GENERATION_ROW);
             if (rows.isEmpty() || rows.get(0) == null) {
                 try {
-                    jdbc.update(SQL_GEN_SEED, EvalStateKeys.GENERATION_ROW, clip(writer, WRITER_MAX), nowMs, iso(nowMs));
+                    jdbc.update(SQL_GEN_SEED, EvalStateKeys.GENERATION_ROW, w, maxExistingGeneration(), nowMs, iso(nowMs));
                 } catch (DuplicateKeyException race) {
                     // öteki pod aynı anda tohumladı — yeniden oku
                 }
                 continue;
             }
             long v = rows.get(0);
-            int n = jdbc.update(SQL_GEN_CAS, v + 1, clip(writer, WRITER_MAX), nowMs, iso(nowMs),
-                    EvalStateKeys.GENERATION_ROW, v);
+            if (stillWanted != null && !stillWanted.getAsBoolean()) return 0L;
+            int n = leaseOwner == null
+                    ? jdbc.update(SQL_GEN_CAS, v + 1, w, nowMs, iso(nowMs), EvalStateKeys.GENERATION_ROW, v)
+                    : jdbc.update(SQL_GEN_CAS_LEASE, v + 1, w, nowMs, iso(nowMs), EvalStateKeys.GENERATION_ROW, v,
+                            LEASE_KEY, clip(leaseOwner, WRITER_MAX));
             if (n == 1) return v + 1;
+            if (leaseOwner != null) {
+                // Değer değişmediyse kaybın nedeni kira (başkasında / yok) — yeniden denemek anlamsız.
+                List<Long> again = jdbc.queryForList(SQL_GEN_READ, Long.class, EvalStateKeys.GENERATION_ROW);
+                if (!again.isEmpty() && again.get(0) != null && again.get(0) == v) return 0L;
+            }
         }
         return 0L;
+    }
+
+    /** Dört tablodaki en büyük kuşak ({@code '*'} hariç; hiç satır yoksa 0) — {@code '*'} yeniden tohumlanırken taban. */
+    long maxExistingGeneration() {
+        long max = 0L;
+        for (String t : TABLES) {
+            Long g = TYPE_STATE.equals(t)
+                    ? jdbc.queryForObject("SELECT MAX(gen) FROM " + t + " WHERE alert_type <> ?", Long.class,
+                            EvalStateKeys.GENERATION_ROW)
+                    : jdbc.queryForObject("SELECT MAX(gen) FROM " + t, Long.class);
+            if (g != null && g > max) max = g;
+        }
+        return max;
     }
 
     /** Çit nabzı: {@code '*'} satırı hâlâ bu kuşak + bu yazanın mı (1 satır) — değilse daha yeni bir lider kuşak aldı. */
@@ -397,6 +479,19 @@ public final class EvalStateSql {
                         s(r.firstFailureAt()), l(r.nextAttemptMs()), s(r.attemptsJson()), s(r.ctxJson()),
                         b(r.ctxTruncated()), s(r.state()), l(r.createdMs())},
                 ChainRow::seq, writer, gen, nowMs);
+    }
+
+    /** Budanan kalemlerin son durum satırlarını koşullu siler (daha yeni (gen, seq)'li satıra dokunmaz). */
+    public int deleteLastStatus(List<LastStatusDelete> rows, long gen) {
+        int n = 0;
+        for (int from = 0; from < rows.size(); from += CHUNK) {
+            List<Object[]> args = new ArrayList<>();
+            for (LastStatusDelete d : rows.subList(from, Math.min(rows.size(), from + CHUNK))) {
+                args.add(new Object[] {s(d.alertType()), s(d.itemKey()), l(gen), l(gen), l(d.seq())});
+            }
+            for (int c : jdbc.batchUpdate(SQL_LAST_STATUS_DELETE, args)) n += Math.max(0, c);
+        }
+        return n;
     }
 
     /** Biten zincirlerin satırlarını koşullu siler (başka yazanın / daha yeni kuşağın satırına dokunmaz). */
@@ -501,46 +596,44 @@ public final class EvalStateSql {
         return jdbc.update(SQL_MARK_ABANDONED, nowMs, iso(nowMs), myGen);
     }
 
-    /** Veri tablolarında {@code gen < myGen} olan en büyük kuşak (yoksa null). */
+    /**
+     * Bu pod'un CAS'ının yerini aldığı kuşak: {@code myGen − 1} ({@code '*'} satırı yalnız CAS ile +1 ilerler); ilk kuşakta
+     * null. Devralınan sayılar YALNIZ bu kuşağın satırlarıdır (bulgu #3 — daha eski kuşakların bayat satırları değil).
+     */
     public Long previousGeneration(long myGen) {
-        Long best = null;
-        for (String t : TABLES) {
-            String sql = TYPE_STATE.equals(t)
-                    ? "SELECT MAX(gen) FROM " + t + " WHERE gen < ? AND alert_type <> ?"
-                    : "SELECT MAX(gen) FROM " + t + " WHERE gen < ?";
-            Long g = TYPE_STATE.equals(t)
-                    ? jdbc.queryForObject(sql, Long.class, myGen, EvalStateKeys.GENERATION_ROW)
-                    : jdbc.queryForObject(sql, Long.class, myGen);
-            if (g != null && (best == null || g > best)) best = g;
-        }
-        return best;
+        return myGen > 1 ? Long.valueOf(myGen - 1) : null;
     }
 
-    public int countInheritedRecovery(long myGen) {
-        Integer n = jdbc.queryForObject(SQL_INHERITED_RECOVERY, Integer.class, myGen);
+    /** Önceki kuşağın ({@code previousGen}) sayacı > 0 kurtarma satırları. */
+    public int countInheritedRecovery(long previousGen) {
+        Integer n = jdbc.queryForObject(SQL_INHERITED_RECOVERY, Integer.class, previousGen);
         return n == null ? 0 : n;
     }
 
-    public int countInheritedSiblings(long myGen, long observedSinceMs) {
-        Integer n = jdbc.queryForObject(SQL_INHERITED_SIBLINGS, Integer.class, myGen, observedSinceMs);
+    /** Önceki kuşağın TTL içindeki kimlikli DOWN satırları. */
+    public int countInheritedSiblings(long previousGen, long observedSinceMs) {
+        Integer n = jdbc.queryForObject(SQL_INHERITED_SIBLINGS, Integer.class, previousGen, observedSinceMs);
         return n == null ? 0 : n;
     }
 
-    public int countInheritedSuppressions(long myGen) {
-        Integer n = jdbc.queryForObject(SQL_INHERITED_SUPPRESSIONS, Integer.class, myGen, EvalStateKeys.GENERATION_ROW);
+    /** Önceki kuşağın bastırması açık tür satırları. */
+    public int countInheritedSuppressions(long previousGen) {
+        Integer n = jdbc.queryForObject(SQL_INHERITED_SUPPRESSIONS, Integer.class, previousGen, EvalStateKeys.GENERATION_ROW);
         return n == null ? 0 : n;
     }
 
     /**
-     * Günlük budama (idempotent, kilitsiz): son gözlemi {@code lastStatusBeforeMs}'den eski kalemler; sayaçsız, zincirsiz ve
-     * {@code evalStateBeforeMs}'den eski kurtarma satırları; ABANDONED ya da {@code confirmationsBeforeMs}'den eski zincirler.
-     * {@code monitor_eval_type_state} budanmaz (≤ 31 satır). @return {son durum, kurtarma, zincir} silinen satır sayıları.
+     * Günlük budama (idempotent, kilitsiz): son gözlemi {@code lastStatusBeforeMs}'den eski kalemler;
+     * {@code evalStateBeforeMs}'den eski kurtarma satırlarından sayaçsız + zincirsiz olanlar VE {@code myGen}'den eski kuşağın
+     * olanları (sayıdan bağımsız); ABANDONED ya da {@code confirmationsBeforeMs}'den eski zincirler; {@code evalStateBeforeMs}'den
+     * eski, daha eski kuşağın tür satırları ({@code '*'} asla). @return {son durum, kurtarma, zincir, tür} silinen satır sayıları.
      */
-    public int[] prune(long lastStatusBeforeMs, long evalStateBeforeMs, long confirmationsBeforeMs) {
+    public int[] prune(long myGen, long lastStatusBeforeMs, long evalStateBeforeMs, long confirmationsBeforeMs) {
         int a = jdbc.update(SQL_PRUNE_LAST_STATUS, lastStatusBeforeMs);
-        int b = jdbc.update(SQL_PRUNE_EVAL_STATE, evalStateBeforeMs);
+        int b = jdbc.update(SQL_PRUNE_EVAL_STATE, evalStateBeforeMs, myGen);
         int c = jdbc.update(SQL_PRUNE_CONFIRMATIONS, confirmationsBeforeMs);
-        return new int[] {a, b, c};
+        int d = jdbc.update(SQL_PRUNE_TYPE_STATE, EvalStateKeys.GENERATION_ROW, myGen, evalStateBeforeMs);
+        return new int[] {a, b, c, d};
     }
 
     // ── Okuyucular (doğrulama ve testler; yalnız verilen kuşağın satırları) ──────────────────────────────────────────
