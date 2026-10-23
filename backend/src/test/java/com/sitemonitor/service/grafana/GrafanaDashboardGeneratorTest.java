@@ -435,4 +435,26 @@ class GrafanaDashboardGeneratorTest {
         assertThat(exprOf(en, "Unreadable sources")).contains("min by (source)");
         assertThat(exprOf(en, "Clock spread between pods")).contains("sitemonitor_clock_skew_seconds");
     }
+
+    @Test
+    @DisplayName("çok pod R3-1: değerlendirme durumu ve kurum ölçüleri yerleşimi panelleri sağlık bölümünün sonunda — uyuşmazlık yalnız "
+            + "geçti/kaldı türlerinden (ölçüm türleri ayrı grafikte), son doğrulama zamanı, kurum ölçülerini yayan pod sayısı (0 = kırmızı)")
+    void multiPodR31Panels() {
+        JsonNode d = tree(defaults());
+        assertThat(exprOf(d, "Değerlendirme durumu kipi")).startsWith("max(sitemonitor_eval_state_mode{");
+        assertThat(exprOf(d, "Doğrulama uyuşmazlığı")).startsWith("sum(max by (kind) (sitemonitor_eval_state_verify_mismatches{")
+                .contains("kind=~\"recovery|sibling|suppression|round_seen|confirmation\"").doesNotContain("window_seed");
+        assertThat(exprOf(d, "Son doğrulama")).startsWith("time() - max(sitemonitor_eval_state_verify_timestamp_seconds{namespace=\"site-monitor-prod\", job=~\"$job\"");
+        assertThat(exprOf(d, "Bekleyen durum yazımı")).startsWith("max(sitemonitor_eval_state_pending{");
+        assertThat(exprOf(d, "Durum yazma hatası (24 sa)")).contains("increase(sitemonitor_eval_state_write_failures{").contains("[24h]");
+        assertThat(exprOf(d, "Kurum ölçülerini yayan pod")).startsWith("sum(sitemonitor_exporter_org_families{");
+        assertThat(exprOf(d, "Doğrulama uyuşmazlığı (tür)")).startsWith("max by (kind) (sitemonitor_eval_state_verify_mismatches{");
+        // Panel sırası: sağlık bölümü, R2b küme olaylarının ARDINDAN
+        List<String> titles = contentPanels(d).stream().map(p -> p.get("title").asString()).toList();
+        assertThat(titles.indexOf("Değerlendirme durumu kipi")).isGreaterThan(titles.indexOf("Küme olayları (pod başına, saatlik)"));
+        assertThat(titles.indexOf("Kurum ölçüleri ve durum kaydı (pod başına)")).isLessThan(titles.indexOf("HTTP istek hızı"));
+        JsonNode en = tree(opts("en", GrafanaDashboardGenerator.SECTIONS, true, "", ""));
+        assertThat(exprOf(en, "Pods exporting org metrics")).contains("sitemonitor_exporter_org_families");
+        assertThat(exprOf(en, "Verify mismatches")).contains("sitemonitor_eval_state_verify_mismatches");
+    }
 }

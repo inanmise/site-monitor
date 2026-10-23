@@ -122,6 +122,18 @@ public final class MonitoringMetricNames {
     /** Bu pod'un saati − veritabanı saati (sn; pozitif = pod ileride). */
     public static final String CLOCK_SKEW = "sitemonitor.clock.skew.seconds";
 
+    // ── Kalıcı değerlendirme durumu (2026-10-23, çok pod R3-1, plan 3a — hepsi bu pod'un kaydedicisinden) ───────────
+    /** Kayıt kipi: 0 kapalı ({@code off}), 1 yalnız yazma ({@code write}), 2 yazma + doğrulama ({@code verify}). */
+    public static final String EVAL_STATE_MODE = "sitemonitor.eval.state.mode";
+    /** Yazıcının boşaltmayı bekleyen (birleştirilmiş) işlemleri. */
+    public static final String EVAL_STATE_PENDING = "sitemonitor.eval.state.pending";
+    /** Başarısız boşaltmalar (açılıştan beri birikimli; gauge — {@code _total} son eki YOK). */
+    public static final String EVAL_STATE_WRITE_FAILURES = "sitemonitor.eval.state.write.failures";
+    /** Son doğrulama turunun tür başına uyuşmazlığı — yalnız bu pod yazan liderken ve tur BİLİNİYORSA (bilinmeyen ≠ 0). */
+    public static final String EVAL_STATE_VERIFY_MISMATCHES = "sitemonitor.eval.state.verify.mismatches";
+    /** Son doğrulama turunun anı (sn) — yalnız bu pod yazan liderken (bilinmeyen tur da tur sayılır). */
+    public static final String EVAL_STATE_VERIFY_AT = "sitemonitor.eval.state.verify.timestamp.seconds";
+
     // ── Aktarıcının kendisi ──────────────────────────────────────────────────────────────────────────────
     public static final String EXPORTER_ENABLED = "sitemonitor.exporter.enabled";
     public static final String EXPORTER_PER_MONITOR = "sitemonitor.exporter.per.monitor";
@@ -130,6 +142,11 @@ public final class MonitoringMetricNames {
     public static final String EXPORTER_SOURCE = "sitemonitor.exporter.source.up";
     public static final String EXPORTER_SERIES = "sitemonitor.exporter.series";
     public static final String EXPORTER_CAPPED = "sitemonitor.exporter.capped";
+    /**
+     * Bu pod kurum geneli aileleri (izleme / alarm / sertifika / … — POD dışı kapsamlar) dışa aktardı mı (1 / 0; çok pod R3-1,
+     * plan 3e §3.6): tarama lideri, başka bir pod'un taze {@code metrics-org} gözlemini görünce yalnız POD ailelerini yayar.
+     */
+    public static final String EXPORTER_ORG_FAMILIES = "sitemonitor.exporter.org.families";
 
     /** HTTP sunucu gecikme histogramı (Timer, uç etiketi YOK) — {@link HttpLatencyMetrics}. */
     public static final String HTTP_DURATION = "sitemonitor.http.server.duration";
@@ -228,6 +245,17 @@ public final class MonitoringMetricNames {
                 "Push outbox lease renewals that failed on this pod since it started (error = query failed, lost = another pod took the rows)"));
         l.add(new Def(CLOCK_SKEW, Scope.POD, List.of(),
                 "This pod's clock minus the database clock in seconds (positive = pod ahead); absent while unmeasured"));
+        // Kalıcı değerlendirme durumu (R3-1, plan 3a)
+        l.add(new Def(EVAL_STATE_MODE, Scope.POD, List.of(),
+                "Durable evaluation state mode on this pod: 0 off, 1 write, 2 write + verify (decisions always come from memory)"));
+        l.add(new Def(EVAL_STATE_PENDING, Scope.POD, List.of(),
+                "Durable evaluation state writes waiting for the writer thread on this pod (coalesced per key)"));
+        l.add(new Def(EVAL_STATE_WRITE_FAILURES, Scope.POD, List.of(),
+                "Durable evaluation state flushes that failed on this pod since it started (decisions are not affected)"));
+        l.add(new Def(EVAL_STATE_VERIFY_MISMATCHES, Scope.POD, List.of("kind"),
+                "Mismatches of the last memory vs table verify round by kind, while this pod is the writing leader; absent when the round was unknown"));
+        l.add(new Def(EVAL_STATE_VERIFY_AT, Scope.POD, List.of(),
+                "Time of the last verify round (any result) while this pod is the writing leader, seconds since epoch"));
         // Aktarıcı
         l.add(new Def(EXPORTER_ENABLED, Scope.POD, List.of(), "1 when the monitoring metrics exporter is enabled"));
         l.add(new Def(EXPORTER_PER_MONITOR, Scope.POD, List.of(), "1 when per-monitor / per-certificate series are exported"));
@@ -237,6 +265,8 @@ public final class MonitoringMetricNames {
                 "1 when the source was read in the last refresh, 0 when it failed (its series are dropped, never faked)"));
         l.add(new Def(EXPORTER_SERIES, Scope.POD, List.of("family"), "Series exported per family in the last refresh"));
         l.add(new Def(EXPORTER_CAPPED, Scope.POD, List.of("family"), "1 when the family hit the series cap"));
+        l.add(new Def(EXPORTER_ORG_FAMILIES, Scope.POD, List.of(),
+                "1 when this pod exported the organisation-wide families in the last refresh; 0 when it exported only its own pod families"));
         ALL = Collections.unmodifiableList(l);
         Map<String, Def> m = new LinkedHashMap<>();
         for (Def d : l) {
