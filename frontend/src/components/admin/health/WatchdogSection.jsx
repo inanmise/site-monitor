@@ -4,6 +4,7 @@ import {
   Activity, AlertOctagon, Bell, CheckCircle2, CircleDashed, HelpCircle, Mail, MinusCircle, Play, Radar, Send, Smartphone, Webhook,
 } from 'lucide-react'
 import { api, formatDateSec } from '../../../api/client'
+import { useLanguage } from '../../../i18n/index.jsx'
 import { useToast } from '../../ui/Toast.jsx'
 import AlertBanner from '../../ui/AlertBanner.jsx'
 import CopyableRef from '../../ui/CopyableRef.jsx'
@@ -13,7 +14,7 @@ import { Button } from '@/components/shadcn/button'
 import { ItemGroup, Item, ItemTitle } from '@/components/shadcn/item'
 import { cn } from '@/lib/utils'
 import { relTime } from './healthModel.js'
-import { OVERALL_TONE, checkState, checkTone, notifiedKey } from './watchdogModel.js'
+import { OVERALL_TONE, checkState, checkTone, evaluatedBy, formatSkewSeconds, notifiedKey, skewPods } from './watchdogModel.js'
 
 const STATE_ICON = {
   problem: AlertOctagon, watch: Activity, ok: CheckCircle2, unknown: HelpCircle, na: MinusCircle, pending: CircleDashed,
@@ -26,7 +27,8 @@ const STATE_ICON = {
  * hatırlatma), "Şimdi değerlendir" (eylem izni), "Test bildirimi" (global yönetici) ve dış izleyici adresi.
  *
  * Test kancaları: `data-slot="watchdog-section"` (+ `data-status`), `watchdog-check` (+ `data-key`, `data-state`),
- * `watchdog-channels`, `watchdog-public-url`.
+ * `watchdog-channels`, `watchdog-public-url`, `watchdog-skew-pods` (saat uyumu: pod başına fark), `watchdog-evaluated-by`
+ * (pod'a özgü bilgi taşıyan kontrolde değerlendiren pod — 2026-10-23, çok pod R2b, MP-36 / MP-37c).
  */
 /** Test sonucundaki kanal durumları → "e-posta: atlandı · webhook: gönderilemedi · push: —" (arayüz dilinde). */
 function channelSummary(data, t) {
@@ -38,8 +40,32 @@ function channelSummary(data, t) {
   ].join(' · ')
 }
 
+/**
+ * Saat uyumu kontrolünün pod başına farkları (küme: her canlı pod'un son örneği). Rozet tonu eşiğe göre; pod adları sarar,
+ * kırpılmaz. Liste yoksa hiçbir şey çizilmez.
+ */
+function SkewPods({ t, lang, check }) {
+  const pods = skewPods(check)
+  if (pods.length === 0) return null
+  return (
+    <div data-slot="watchdog-skew-pods" className="flex min-w-0 flex-col gap-1">
+      <span className="text-xs font-semibold text-muted-foreground">{t('wd.skewPods')}</span>
+      <ul className="m-0 flex min-w-0 list-none flex-wrap gap-1.5 p-0">
+        {pods.map((p) => (
+          <li key={p.pod} className="min-w-0 max-w-full">
+            <ToneBadge tone={p.tone} data-pod={p.pod} className="max-w-full whitespace-normal rounded-md overflow-visible text-left [overflow-wrap:anywhere]">
+              {t('wd.skewValue', p.pod, formatSkewSeconds(p.ms, lang))}
+            </ToneBadge>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
 export default function WatchdogSection({ t, data, error, canAct, globalAdmin, onChanged }) {
   const toast = useToast()
+  const { lang } = useLanguage()
   const [busy, setBusy] = useState(null)   // 'eval' | 'test'
   if (error && !data) {
     return <AlertBanner tone="danger" role="alert" title={t('wd.loadError')} className="mb-0">{typeof error === 'string' ? error : t('wd.loadErrorBody')}</AlertBanner>
@@ -131,6 +157,12 @@ export default function WatchdogSection({ t, data, error, canAct, globalAdmin, o
               </div>
               <p className="m-0 text-sm [overflow-wrap:anywhere]">{state === 'pending' ? t('wd.pendingText') : c.detail}</p>
               {state === 'problem' && c.problem_text && <p className="m-0 text-xs text-muted-foreground">{c.problem_text}</p>}
+              {state !== 'pending' && <SkewPods t={t} lang={lang} check={c} />}
+              {state !== 'pending' && evaluatedBy(c) && (
+                <p data-slot="watchdog-evaluated-by" className="m-0 text-xs text-muted-foreground [overflow-wrap:anywhere]">
+                  {t('wd.evaluatedBy', evaluatedBy(c))}
+                </p>
+              )}
               <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
                 {c.since && state !== 'pending' && (
                   <span title={formatDateSec(c.since)}>{state === 'problem' ? t('wd.problemSince', relTime(c.since, t)) : t('wd.okSince', relTime(c.since, t))}</span>

@@ -8802,6 +8802,10 @@ export const EN = {
   'wd.reason': 'Self-monitoring: {0}',
   'wd.reasonStale': 'The self-monitoring evaluation isn\'t running',
   'wd.problemCount': '{0} problems',
+  // ── multi-pod R2b · C2 ──
+  'wd.skewPods': 'Clock difference per pod (against the database clock):',
+  'wd.skewValue': '{0}: {1} s',
+  'wd.evaluatedBy': "Evaluating pod: {0} — pod-local facts such as the circuit breaker, the connection pool and schema patches are informational only; the decision uses cluster-wide data.",
   'health.sectionFailed':  'This section could not be loaded.',
   'health.stOk':           'Healthy',
   'health.stWarn':         'Degraded',
