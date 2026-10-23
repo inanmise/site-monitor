@@ -47,6 +47,10 @@ class AuditChainPostgresTest {
         AuditService s = new AuditService(PostgresIt.app().bean(AuditLogRepository.class), mock(GeoIpService.class),
                 mock(NewDeviceNotifier.class), mock(ClientIpResolver.class), mock(AuditGeoEnricher.class));
         s.setChainLockSupport(jdbc(), PostgresIt.app().bean(PlatformTransactionManager.class));
+        // Elle kurulan pod'da @Value yok: yazılamayan kayıt (ör. ux_audit_seq ihlali) NPE yerine fallback dosyasına düşsün —
+        // gerilemede test açık bir satır sayısı farkıyla düşer.
+        org.springframework.test.util.ReflectionTestUtils.setField(s, "fallbackFile",
+                java.nio.file.Path.of(System.getProperty("java.io.tmpdir"), "site-monitor-it", "audit-fallback-" + UUID.randomUUID() + ".jsonl").toString());
         return s;
     }
 
@@ -206,9 +210,14 @@ class AuditChainPostgresTest {
             assertThat(pod().verifyChain().ok()).as("bugünkü davranış: bozuk dönem kırık görünür").isFalse();
 
             AuditService svc = pod();
+            // Kurulum: katalogdaki ux_audit_seq DDL'inin AYNISI (CONCURRENTLY, otomatik commit). Üretimde iş ertelenmiş kurucuyu
+            // (DeferredIndexBuilder.startInBackground) başlatır; burada başlatmak SchemaPatchPostgresTest'in okuduğu "son koşu"yu
+            // (lastRun, statik) değiştirirdi.
+            String ddl = DeferredIndexBuilder.CATALOG.stream().filter(s -> s.name().equals(AuditChainRestartJob.INDEX))
+                    .findFirst().orElseThrow().postgresDdl();
             AuditChainRestartJob job = new AuditChainRestartJob(svc, jdbc, (n, t) -> Optional.ofNullable(t.get()),
                     () -> DeferredIndexBuilder.postgresOrNull(jdbc.getDataSource()), null,
-                    () -> new DeferredIndexBuilder(jdbc).startInBackground(), System::currentTimeMillis);
+                    () -> CompletableFuture.runAsync(() -> jdbc.execute(ddl)), System::currentTimeMillis);
             job.run();
 
             AuditLog restart = PostgresIt.app().bean(AuditLogRepository.class)
