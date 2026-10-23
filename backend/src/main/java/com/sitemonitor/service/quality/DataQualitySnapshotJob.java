@@ -35,7 +35,14 @@ public class DataQualitySnapshotJob {
         this.enabled = enabled;
     }
 
-    @Scheduled(cron = "${site.monitor.data-quality.snapshot-cron:0 25 * * * *}", zone = "Europe/Istanbul")
+    /** Zamanlanmış tetiğin cron ifadesi (annotation ve yan iş kaydı aynı sabiti okur). */
+    static final String CRON = "${site.monitor.data-quality.snapshot-cron:0 25 * * * *}";
+
+    /**
+     * Saatlik tık. R3-1 3e (2026-10-23): yazım gövdesi pod'un yan iş koşucusunda; tarama lideri başka canlı pod varken tetiği
+     * erteler ve ertelenen denemede görüntü başka pod'da yazıldıysa ({@code snapshotWritten}) hiçbir şey yapmaz.
+     */
+    @Scheduled(cron = CRON, zone = "Europe/Istanbul")
     public void tick() {
         if (!enabled) return;
         Instant now = Instant.now();
@@ -45,8 +52,11 @@ public class DataQualitySnapshotJob {
             log.debug("Veri kalitesi görüntü ön kapısı okunamadı (tablo henüz yok?): {}", e.getMessage());
             return;
         }
-        schedulerService.runWithSchedulerLock(LOCK_NAME, () -> {
+        Runnable body = () -> schedulerService.runWithSchedulerLock(LOCK_NAME, () -> {
             if (!service.snapshotWritten(now)) service.writeDailySnapshot(now);
         });
+        com.sitemonitor.service.schedule.SideJob job = com.sitemonitor.service.schedule.SideJob.cron(LOCK_NAME, true, null,
+                CRON, "Europe/Istanbul", () -> service.snapshotWritten(now), body);
+        if (!schedulerService.offloadSideJob(job)) body.run();
     }
 }

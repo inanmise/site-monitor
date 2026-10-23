@@ -71,9 +71,24 @@ public class IncidentActionReminderService {
 
     public record Result(int owners, int sent, int skipped, int items) { }
 
-    @Scheduled(cron = "${site.monitor.incident.action-reminder-cron:0 0 9 * * *}", zone = "Europe/Istanbul")
+    /** Zamanlanmış tetiğin cron ifadesi (annotation ve yan iş kaydı aynı sabiti okur). */
+    static final String CRON = "${site.monitor.incident.action-reminder-cron:0 0 9 * * *}";
+
+    /**
+     * Günlük tetik (R3-1 3e, 2026-10-23): tarama lideri başka canlı pod varken tetiği erteler (öğe başına sahiplenme ikinci
+     * koşuyu zararsız kılar — ön denetim yok); kısa iş, yan iş koşucusuna taşınmaz.
+     */
+    @Scheduled(cron = CRON, zone = "Europe/Istanbul")
     public void scheduled() {
         if (!enabled) return;
+        SchedulerService s = scheduler;
+        if (s == null || !s.offloadSideJob(com.sitemonitor.service.schedule.SideJob.cron(LOCK, false, null, CRON,
+                "Europe/Istanbul", null, this::scheduledNow))) {
+            scheduledNow();
+        }
+    }
+
+    private void scheduledNow() {
         try {
             if (scheduler == null) run(LocalDate.now(IncidentPostmortemService.IST));
             else scheduler.callWithSchedulerLock(LOCK, () -> run(LocalDate.now(IncidentPostmortemService.IST)));

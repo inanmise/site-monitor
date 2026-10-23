@@ -42,10 +42,11 @@ import java.util.concurrent.atomic.AtomicInteger;
  * tanesini — en eskiden başlayarak — yoklar; yük güne yayılır, tek seferde tüm envanter taranmaz. Vade bilgisi
  * {@code tls_profiles.probed_at}'tadır (veritabanı) → yeniden başlatma ya da pod değişimi turu sıfırlamaz.
  *
- * <p><b>Küme kuralları.</b> Tur yalnız TARAMA LİDERİ pod'da koşar ({@code SchedulerService.isSweepLeaderNow}; kira
- * okunamazsa yerel koşu — mevcut sözleşme) ve kendi {@code scheduler_lock} anahtarı ({@value #LOCK_NAME}) altında: iki pod
- * aynı anda yoklamaz. Elle "Şimdi kontrol et" bu yoklamayı TETİKLEMEZ; ayrı bir "TLS profilini yeniden tara" ucu vardır
- * ({@link #rescan}).
+ * <p><b>Küme kuralları.</b> 2026-10-23'ten (çok pod R3-1 3e) beri tur HERHANGİ bir pod'da koşar — kümede tık aralığı başına
+ * TEK tur ({@code round:tls-profile} iki aşamalı tur kaydı) ve kendi {@code scheduler_lock} anahtarı ({@value #LOCK_NAME})
+ * altında: iki pod aynı anda yoklamaz, aralık başına bir pod yoklar. Tarama lideri başka canlı pod varken turu bırakır
+ * (yük liderden uzaklaşır); eskiden tur yalnız liderde koşuyordu. Elle "Şimdi kontrol et" bu yoklamayı TETİKLEMEZ; ayrı bir
+ * "TLS profilini yeniden tara" ucu vardır ({@link #rescan}).
  *
  * <p><b>Sınırlar.</b> Ayrı ve küçük bir iş havuzu ({@code concurrency}, vars. 4 iş parçacığı, kuyruk = tur boyutu); tur
  * {@code tick-budget-ms} (vars. 8 dk) içinde biter — kalan işler iptal edilir ve sonraki tura kalır. Her yoklamanın kendi
@@ -78,7 +79,7 @@ public class TlsProfileJobService {
 
     void setDropNotifier(TlsGradeDropNotifier n) { this.dropNotifier = n; }
 
-    /** Lider kapısı + dağıtık kilit — isteğe bağlı: birim testinde yok (her çağrı yerel koşar). */
+    /** Tur kaydı + dağıtık kilit + yan iş yerleşimi — isteğe bağlı: birim testinde yok (her çağrı yerel koşar). */
     @Autowired(required = false)
     @Lazy
     private SchedulerService schedulerService;
@@ -118,15 +119,46 @@ public class TlsProfileJobService {
     /** Tur özeti (log + test). */
     public record TickResult(int due, int probed, int failed, TlsGradeService.ReconcileResult grades) { }
 
+    /**
+     * Turun küme kaydı ({@code round:tls-profile}, iki aşamalı; 2026-10-23, çok pod R3-1 3e) — KALICI ad. Aralık = tık
+     * aralığı: kümede aralık başına bir tur.
+     */
+    public static final String ROUND_NAME = "tls-profile";
+
+    /** Tık / tur aralığı (ms) — {@code @Scheduled} ile aynı ayar. */
+    @Value("${site.monitor.tls-profile.tick-ms:600000}")
+    long tickMs = 600_000L;
+
+    /**
+     * Zamanlanmış tık (R3-1 3e, 2026-10-23): artık yalnız tarama liderinde DEĞİL, herhangi bir pod'da koşar — kümede aralık
+     * başına TEK tur ({@value #ROUND_NAME} iki aşamalı tur kaydı, kilit {@value #LOCK_NAME} altında). Tarama lideri, turu son
+     * 2 aralıkta başka pod aldıysa bırakır ({@code SchedulerService.leaderYieldsRound}); gövde pod'un yan iş koşucusunda.
+     * Kesilen (kapanış) ya da hata veren tur tamamlanmaz → koşu kirası dolunca yeniden koşar. Yoklama çıkışı sertifika
+     * taramalarıyla aynıdır (onlar da R1'den beri her pod'da koşar).
+     */
     @Scheduled(fixedDelayString = "${site.monitor.tls-profile.tick-ms:600000}",
                initialDelayString = "${site.monitor.tls-profile.initial-delay-ms:420000}")
     public void scheduledTick() {
         if (!enabled) return;
-        if (schedulerService != null && !schedulerService.isSweepLeaderNow()) return;
-        if (schedulerService != null) {
-            schedulerService.runWithSchedulerLock(LOCK_NAME, this::tickAndLog);
-        } else {
+        SchedulerService s = schedulerService;
+        if (s == null) {
             tickAndLog();
+            return;
+        }
+        if (s.leaderYieldsRound(ROUND_NAME, tickMs)) return;
+        Runnable body = () -> s.runWithSchedulerLock(LOCK_NAME, () -> claimedTick(s));
+        if (!s.offloadSideJob(com.sitemonitor.service.schedule.SideJob.heavy(ROUND_NAME, body))) body.run();
+    }
+
+    /** Kilit altında: tur bu pod'a düştüyse tık; normal bittiyse (kesilmediyse) tur tamamlanır. */
+    private void claimedTick(SchedulerService s) {
+        if (!s.claimRound(ROUND_NAME, tickMs)) return;
+        boolean done = false;
+        try {
+            tickAndLog();
+            done = !Thread.currentThread().isInterrupted();
+        } finally {
+            s.finishSideRound(ROUND_NAME, done);
         }
     }
 

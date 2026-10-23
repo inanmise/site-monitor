@@ -237,6 +237,35 @@ public class ClusterScheduleService {
         return rows.isEmpty() ? null : rows.get(0);
     }
 
+    // ── Salt okunur satır (2026-10-23, çok pod R3-1 3e) ───────────────────────────────────────────────────────────
+
+    static final String SQL_ROW_READ = "SELECT next_due_at, claimed_by, claimed_at FROM monitor_check_schedule "
+            + "WHERE monitor_key = ?";
+
+    /**
+     * Bir satırın anlık hâli: vade, son sahiplenen pod ve sahiplenme anı (epoch ms, sahiplenenin saati). Yalnız TANI ve
+     * yerleşim kanıtı içindir ("bu turu son kim, ne zaman aldı" — {@code SchedulerService.leaderYieldsRound}); karar yine
+     * {@link #claim} / {@link #claimRun}'ın koşullu UPDATE'idir.
+     *
+     * @param claimedBy {@code claimed_by} (null olabilir)
+     * @param claimedAt {@code claimed_at} (null = bilinmiyor)
+     */
+    public record Row(String key, long nextDueAt, String claimedBy, Long claimedAt) {}
+
+    /**
+     * Anahtarın satırını TEK birincil anahtar okumasıyla döner (R3-1 3e — yan iş yerleşimi); satır yoksa null. Yazmaz.
+     *
+     * @throws org.springframework.dao.DataAccessException veritabanı hatasında (çağıran "kanıt yok" sayar)
+     */
+    public Row row(String key) {
+        List<Row> rows = jdbc.query(SQL_ROW_READ, (rs, i) -> {
+            long claimedAt = rs.getLong("claimed_at");
+            Long at = rs.wasNull() ? null : claimedAt;
+            return new Row(key, rs.getLong("next_due_at"), rs.getString("claimed_by"), at);
+        }, key);
+        return rows.isEmpty() ? null : rows.get(0);
+    }
+
     /**
      * Canlı izleme kümesinde olmayan anahtarların satırlarını siler (silinen izlemeler birikmesin). Tur
      * ({@value #ROUND_PREFIX}) ve kira ({@value #LEASE_PREFIX}) satırlarına dokunmaz. Gece temizliğinden, tek pod'da

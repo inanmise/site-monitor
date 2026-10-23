@@ -59,8 +59,11 @@ public class ExtendedHealthService {
 
     private static final com.fasterxml.jackson.databind.ObjectMapper JSON = new com.fasterxml.jackson.databind.ObjectMapper();
 
-    /** Pod son heartbeat'i bu kadar dakikadan yeniyse canlı (Metrikler sayfasıyla aynı kural, {@code LIVE_MINUTES}). */
-    static final int POD_LIVE_MINUTES = 3;
+    /**
+     * Pod son heartbeat'i bu kadar dakikadan yeniyse canlı (Metrikler sayfasıyla aynı kural, {@code LIVE_MINUTES}). Genel
+     * (2026-10-23, çok pod R3-1 3e): yan iş yerleşimi ({@code schedule.PodLiveness}) aynı kuralı okur — tek kaynak.
+     */
+    public static final int POD_LIVE_MINUTES = 3;
     /** Heartbeat pod listesinin penceresi (saat) ve en çok satır. */
     static final int POD_WINDOW_HOURS = 24;
     static final int POD_LIST_MAX = 20;
