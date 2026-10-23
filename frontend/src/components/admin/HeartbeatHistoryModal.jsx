@@ -9,6 +9,8 @@ import SegmentedControl from '../ui/SegmentedControl.jsx'
 import { Button } from '@/components/shadcn/button'
 import { Card } from '@/components/shadcn/card'
 import { cn } from '@/lib/utils'
+import ToneBadge from './ToneBadge.jsx'
+import { POD_STATE_TONE } from './health/healthModel.js'
 
 const RANGE_OPTIONS = [1, 7, 15, 30]
 
@@ -141,9 +143,34 @@ export default function HeartbeatHistoryModal({ onClose }) {
               {hovered.received} / {hovered.expected} {t('health.hbBeats')}
             </div>
           )}
-          <div className="mt-2 text-right text-[.82em] text-muted-foreground">
-            {t('health.hbTotal')}: {totalReceived} / {totalExpected} {t('health.hbBeats')}
+          <div className="mt-2 flex flex-wrap items-baseline justify-between gap-2 text-[.82em] text-muted-foreground">
+            <span data-slot="hb-cluster-note">{t('hmp.stripCluster')}</span>
+            <span>{t('health.hbTotal')}: {totalReceived} / {totalExpected} {t('health.hbBeats')}</span>
           </div>
+          {Array.isArray(timeline?.pods) && timeline.pods.length > 0 && (
+            <section data-slot="hb-pod-rows" aria-labelledby="hb-pod-rows-title" className="mt-3 rounded-md border px-3 py-2.5">
+              <h3 id="hb-pod-rows-title" className="mb-2 text-[.8em] font-bold tracking-wide text-muted-foreground uppercase">{t('hmp.perPodTitle')}</h3>
+              <ul className="flex list-none flex-col gap-2">
+                {timeline.pods.map((p) => {
+                  const s = statusOf({ received: p.received, expected: p.expected })
+                  return (
+                    <li key={p.id} data-slot="hb-pod-row" data-state={p.state || 'unknown'} data-status={s}
+                      className="flex flex-col gap-0.5 border-b pb-2 text-[.86em] last:border-b-0 last:pb-0">
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <span className="min-w-0 font-mono text-xs [overflow-wrap:anywhere]">{p.name}</span>
+                        {p.state && <ToneBadge tone={POD_STATE_TONE[p.state] || 'muted'} className="font-semibold">{t(`hmp.podState.${p.state}`)}</ToneBadge>}
+                      </div>
+                      <span className="text-muted-foreground">
+                        <b className={cn('tabular-nums', STATUS_TEXT[s])}>{p.received} / {p.expected}</b> {t('health.hbBeats')}
+                        {' · '}{formatDate(p.first_seen)} — {formatDate(p.last_seen)}
+                      </span>
+                    </li>
+                  )
+                })}
+              </ul>
+              {Number(timeline.pods_more) > 0 && <p className="mt-2 text-[.82em] text-muted-foreground">{t('hmp.podsMore', timeline.pods_more)}</p>}
+            </section>
+          )}
           {selected && (() => {
             const b = selected.b
             const missed = Math.max(0, b.expected - b.received)

@@ -22,6 +22,7 @@ const REASON_TEXT = {
   loadHealth: (t) => t('health.reasonUnavailable', t('health.partHealth')),
   loadPart: (t, [part]) => t('health.reasonUnavailable', t(`health.part${part.charAt(0).toUpperCase() + part.slice(1)}`)),
   hbAlarm: (t) => t('health.hbAlarm'),
+  podSilent: (t, [n]) => t('hmp.reasonPodSilent', n),
   scanAlarm: (t) => t('health.scanAlarm'),
   networkAlarm: (t) => t('health.networkAlarm'),
   memory: (t, [pct]) => t('health.reasonMemory', formatPercent(pct)),

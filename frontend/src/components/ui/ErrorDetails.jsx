@@ -26,7 +26,7 @@ export function errorDetailText(info) {
  * bileşenleri çağrı yerlerine dokunmadan künyeyi bulur. Künye yoksa HİÇBİR ŞEY çizilmez.
  *
  * `onOpenChange`: açılınca bildirimin kendiliğinden kapanma süresi durdurulur (Toast). Test kancası:
- * kök `data-slot="error-details"`.
+ * kök `data-slot="error-details"`. Dokunmatikte (pointer-coarse) aç/kapa ve kopyala ≥ 40 px (2026-10-23 — 24 px'ti).
  */
 export default function ErrorDetails({ info, message, onOpenChange, className }) {
   const t = useT()
@@ -46,7 +46,7 @@ export default function ErrorDetails({ info, message, onOpenChange, className })
     <Collapsible data-slot="error-details" onOpenChange={onOpenChange} className={cn('w-full text-xs', className)}>
       <CollapsibleTrigger asChild>
         <Button type="button" variant="link" size="xs"
-          className="group/errinfo h-auto min-h-6 px-0 text-current opacity-80 hover:opacity-100">
+          className="group/errinfo h-auto min-h-6 px-0 text-current opacity-80 hover:opacity-100 pointer-coarse:min-h-10 pointer-coarse:pr-2">
           <ChevronRight className="transition-transform group-data-[state=open]/errinfo:rotate-90" aria-hidden="true" />
           {t('errinfo.toggle')}
         </Button>
@@ -63,7 +63,7 @@ export default function ErrorDetails({ info, message, onOpenChange, className })
         <div className="mt-1 flex flex-wrap items-center gap-2">
           <span className="opacity-80">{t('errinfo.hint')}</span>
           <CopyButton value={errorDetailText(resolved)} label={t('errinfo.copy')} copiedLabel={t('errinfo.copied')}
-            variant="ghost" buttonSize="icon-xs" size={12} />
+            variant="ghost" buttonSize="icon-xs" size={12} className="pointer-coarse:size-10" />
         </div>
       </CollapsibleContent>
     </Collapsible>

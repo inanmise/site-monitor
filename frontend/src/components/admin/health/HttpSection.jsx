@@ -2,7 +2,7 @@ import { useMemo } from 'react'
 import { Maximize2 } from 'lucide-react'
 import { Button } from '@/components/shadcn/button'
 import { HEALTH_THRESHOLDS, HTTP_ERR_PCT } from './healthModel.js'
-import { SectionError, SectionToolbar } from './HealthParts.jsx'
+import { PodChip, SectionError, SectionToolbar } from './HealthParts.jsx'
 import { Tile } from '../httpmetrics/HttpParts.jsx'
 import HttpSparkCharts from '../httpmetrics/HttpSparkCharts.jsx'
 import HttpTopLists from '../httpmetrics/HttpTopLists.jsx'
@@ -32,7 +32,14 @@ export default function HttpSection({ t, httpMetrics, error, onRetry, onOpenExpl
 
   return (
     <div data-slot="hreq-section" className="flex flex-col gap-3">
-      <SectionToolbar left={t('hreq.sec.window')}>
+      <SectionToolbar left={<span className="flex flex-col gap-1.5">
+        <span>{t('hreq.sec.window')}</span>
+        {/* Özet / grafikler bu pod'un belleğinden (MP-37a); en yavaş / hatalı uç listeleri kalıcı seriden (küme) */}
+        <span className="flex flex-wrap items-center gap-1.5" data-slot="hreq-scope">
+          <PodChip t={t} pod={httpMetrics?.served_by_pod || httpMetrics?.served_by} />
+          <span>{t('hmp.httpListsCluster')}</span>
+        </span>
+      </span>}>
         <Button type="button" size="sm" className="h-10 w-full sm:w-auto lg:h-9 pointer-coarse:h-10" onClick={() => open()}>
           <Maximize2 aria-hidden="true" />{t('health.httpOpenExplorer')}
         </Button>

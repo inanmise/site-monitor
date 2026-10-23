@@ -151,3 +151,35 @@ describe('HeartbeatHistoryModal', () => {
     expect(document.querySelector('[data-hb-cell]')).toBeNull()
   })
 })
+
+// ── Çok pod R2b (2026-10-23, MP-35): küme şeridi + pod başına satırlar ──────────────────────────────────────────────
+describe('HeartbeatHistoryModal — pod başına (çok pod)', () => {
+  beforeEach(() => { vi.clearAllMocks() })
+
+  it('pod satırları: ad (sarar), durum rozeti, alınan / beklenen ve oran tonu; fazlası "+N"', async () => {
+    api.admin.getHeartbeatTimeline.mockResolvedValue({ success: true, data: timeline({
+      counting: 'distinct_minutes', pods_more: 3,
+      pods: [
+        { id: 'sm-aaaa-0000000a', name: 'sitemonitor-6b7c9d-aaaaa', state: 'live', first_seen: '2026-09-07T09:00:00', last_seen: '2026-09-07T10:19:00', received: 80, expected: 80 },
+        { id: 'sm-bbbb-0000000b', name: 'sitemonitor-6b7c9d-bbbbb', state: 'silent', first_seen: '2026-09-07T09:00:00', last_seen: '2026-09-07T09:40:00', received: 20, expected: 41 },
+      ],
+    }) })
+    render(<HeartbeatHistoryModal onClose={() => {}} />)
+    const rows = await waitFor(() => { const r = [...document.querySelectorAll('[data-slot="hb-pod-row"]')]; expect(r).toHaveLength(2); return r })
+    expect(rows[0]).toHaveAttribute('data-state', 'live')
+    expect(rows[0]).toHaveAttribute('data-status', 'ok')
+    expect(rows[1]).toHaveAttribute('data-state', 'silent')
+    expect(rows[1]).toHaveAttribute('data-status', 'low')
+    expect(rows[1].textContent).toContain('20 / 41')
+    expect(rows[1].textContent).toContain('sitemonitor-6b7c9d-bbbbb')
+    expect(document.querySelector('[data-slot="hb-pod-rows"]').textContent).toMatch(/\+3/)
+    expect(document.querySelector('[data-slot="hb-cluster-note"]')).not.toBeNull()
+  })
+
+  it('eski sunucu (pods yok) → pod bölümü çizilmez, şerit aynen', async () => {
+    api.admin.getHeartbeatTimeline.mockResolvedValue({ success: true, data: timeline() })
+    render(<HeartbeatHistoryModal onClose={() => {}} />)
+    await waitFor(() => expect(document.querySelector('[data-hb-cell]')).not.toBeNull())
+    expect(document.querySelector('[data-slot="hb-pod-rows"]')).toBeNull()
+  })
+})

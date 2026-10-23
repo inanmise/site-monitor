@@ -139,6 +139,9 @@ export function deriveOverall({ health, httpMetrics, pushKpi, smtpPeriod = '7d',
 
   if (loadErrors.health) add('down', 'loadHealth', null)
   if (h.heartbeat?.alarm) add('down', 'hbAlarm', 'heartbeat')
+  // Çok pod (2026-10-23, R2b, MP-35): işaretsiz susan pod (çöktü / zamanlayıcısı takıldı) — kümenin son sinyali başka pod'dan
+  // geldiği için yukarıdaki alarm onu göstermez. Uyarı (kritik değil: küme yaşıyor).
+  if (!h.heartbeat?.alarm && Number(h.heartbeat?.pods_silent) > 0) add('warn', 'podSilent', 'heartbeat', [h.heartbeat.pods_silent])
   if (h.scan_alarm) add('down', 'scanAlarm', 'sched')
   if (h.network?.alarm) add('down', 'networkAlarm', 'integrations')
 
@@ -260,3 +263,61 @@ export function relTime(iso, t, now = Date.now()) {
   const txt = formatDurationShort(Math.abs(diff) / 1000, t)
   return diff >= 0 ? t('health.inFuture', txt) : t('health.ago', txt)
 }
+
+// ── Çok pod R2b (2026-10-23, paket C1): küme kartı, tarama yoklaması, pod durumları ────────────────────────────────
+
+/** Tarama türleri (sunucu `scan.runs` anahtarları) — ekran sırası. */
+export const SCAN_KINDS = ['hourly', 'full', 'stale']
+
+/**
+ * "Şimdi çalıştır" hızlı yoklamasının bir adımı (MP-34). Biter: kümede canlı `cert-check` kilidi GÖRÜLDÜ ve artık yok, ya da
+ * kümenin son koşusu (`scan.last_run`, veritabanından) başlangıçtakinden farklı. Yanıtlar farklı pod'lardan gelse de değerler
+ * kümenindir — ilk yanıtı başka pod verdi diye erken bitmez. Kilit okunamadıysa "koşuyor mu" bilinmez → karar verilmez;
+ * tarama durumu bu pod'un belleğindense (`source: local`) son koşu kıyaslanmaz (başka pod'un değeri olabilir).
+ * @returns {{seenLive: boolean, done: boolean}}
+ */
+export function scanPollStep(state, data, prevLastRun) {
+  const prev = state || { seenLive: false }
+  if (!data) return { seenLive: !!prev.seenLive, done: false }
+  const lockKnown = !data.lock?.error
+  const live = lockKnown ? !!(data.lock?.held || data.scheduler?.running) : null
+  const seenLive = !!prev.seenLive || live === true
+  const last = data.scan?.source === 'local' ? null : (data.scan?.last_run || null)
+  const done = (seenLive && live === false) || (last != null && last !== (prevLastRun ?? null))
+  return { seenLive, done }
+}
+
+/**
+ * Küme kartı modeli (N1). `scheduler.sweep_leader` kümenin kira satırıdır (hangi pod okursa okusun aynı); `held_by_me`,
+ * son tarama tıkı, tıkanma, tutulan kilitler, tur hataları, atlanan turlar ve önbellek yolu YANITLAYAN POD'undur — ekran
+ * öyle etiketler. Bilinmeyen asla "sağlıklı" sayılmaz: kira okunamadıysa `leader.known = false`, alan yoksa null.
+ */
+export function clusterModel(health) {
+  const h = health || {}
+  const sch = h.scheduler || {}
+  const sl = sch.sweep_leader
+  const pod = { id: h.served_by ?? sch.instance_id ?? null, name: h.served_by_pod ?? h.served_by ?? sch.instance_id ?? null }
+  if (!sl) return { available: false, pod, leader: null, thisPod: null, cacheBus: h.cache_bus ?? null, level: 'unknown' }
+  const known = !sl.error
+  const leaderless = known && (!sl.owner || !!sl.expired)
+  const leader = { known, owner: sl.owner ?? null, ownerPod: sl.owner_pod ?? sl.owner ?? null, until: sl.until ?? null,
+    expired: !!sl.expired, leaderless, error: sl.error ?? null }
+  const thisPod = {
+    isLeader: known ? !!sl.held_by_me : null,
+    renewer: sl.renewer ?? null,
+    lastTick: sl.last_sweep_tick ?? null,
+    wedgeYieldedAt: sl.wedge_yielded_at ?? null,
+    heldLocks: Array.isArray(sch.held_locks) ? sch.held_locks : null,
+    roundClaimFailures: sch.round_claim_failures ?? null,
+    lastRoundClaimFailure: sch.last_round_claim_failure ?? null,
+    skippedRounds: Array.isArray(sch.skipped_rounds) ? sch.skipped_rounds : null,
+  }
+  const cb = h.cache_bus ?? null
+  const cacheLevel = !cb ? null : cb.error ? 'unknown' : (cb.enabled !== false && (cb.running === false || cb.table_missing)) ? 'warn' : 'ok'
+  const level = !known ? 'unknown'
+    : leaderless || thisPod.wedgeYieldedAt || cacheLevel === 'warn' || (thisPod.skippedRounds?.length || 0) > 0 ? 'warn' : 'ok'
+  return { available: true, pod, leader, thisPod, cacheBus: cb, cacheLevel, level }
+}
+
+/** Heartbeat pod durumu → rozet tonu (canlı yeşil; sessiz uyarı; yeniden başladı / durdu nötr; bilinmeyen gri). */
+export const POD_STATE_TONE = { live: 'success', silent: 'warning', restarted: 'muted', stopped: 'muted' }

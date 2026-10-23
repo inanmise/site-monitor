@@ -7,7 +7,7 @@ import AlertBanner from '../../ui/AlertBanner.jsx'
 import SegmentedControl from '../../ui/SegmentedControl.jsx'
 import { useToast } from '../../ui/Toast.jsx'
 import { integrationList, formatDurationShort, cfgDetailText } from './healthModel.js'
-import { CARD_GRID, ERR_T, LEVEL_T, OK_T, WARN_T, CardCta, KvList, LevelBadge, SysCard } from './HealthParts.jsx'
+import { CARD_GRID, ERR_T, LEVEL_T, OK_T, WARN_T, CardCta, KvList, LevelBadge, PodChip, SysCard } from './HealthParts.jsx'
 
 /** ISO yıl+hafta → "31 August – 6 September 2026" (arayüz yerelinde; sunucu etiketi yalnız Türkçe). */
 export function isoWeekRange(year, weekNo) {
@@ -122,14 +122,25 @@ export default function IntegrationsSection({
       case 'domain': {
         const src = d.source || 'IDLE'
         const label = src === 'RDAP' ? t('health.domSrcRdap') : src === 'FALLBACK' ? t('health.domSrcFallback') : src === 'NONE' ? t('health.domSrcNone') : t('health.domSrcIdle')
+        // Çok pod (2026-10-23, R2b, N4): kümedeki EN YENİ gözlem + gözlemleyen pod; tablo okunamadıysa yalnız bu pod (`local`)
         return (
           <>
+            {d.scope === 'local' ? <PodChip t={t} pod={health?.served_by_pod || health?.served_by} /> : d.scope && <PodChip t={t} scope="cluster" />}
             {d.alarm && <AlertBanner tone="danger" className="mb-0">{t('health.domAlarm')}</AlertBanner>}
             <KvList>
               <dt>{t('health.domSource')}</dt><dd className={LEVEL_T[it.level]}>{label}</dd>
               <dt>{t('health.domLastOk')}</dt><dd>{d.last_success ? formatDate(d.last_success) : t('sys.never')}</dd>
               {d.reason && (<><dt>{t('health.domReason')}</dt><dd className={ERR_T}>{d.reason}</dd></>)}
+              {d.observed_by && (
+                <>
+                  <dt>{t('hmp.observedBy')}</dt>
+                  <dd data-slot="dom-observed-by"><span className="font-mono text-xs [overflow-wrap:anywhere]">{d.observed_by_pod || d.observed_by}</span>
+                    {d.observed_at && <span className="text-muted-foreground"> · {formatDate(d.observed_at)}</span>}</dd>
+                </>
+              )}
             </KvList>
+            {d.scope === 'local' && <p className="text-xs text-muted-foreground" data-slot="dom-local">{t('hmp.domLocal')}</p>}
+            {src === 'IDLE' && d.scope === 'cluster' && <p className="text-xs text-muted-foreground" data-slot="dom-idle">{t('hmp.domIdleCluster')}</p>}
           </>
         )
       }
