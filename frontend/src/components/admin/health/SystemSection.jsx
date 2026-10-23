@@ -1,4 +1,5 @@
-import { Cpu, MemoryStick, Package } from 'lucide-react'
+import { ChevronRight, Cpu, MemoryStick, Package } from 'lucide-react'
+import { Button } from '@/components/shadcn/button'
 import { formatDate } from '../../../api/client'
 import { formatPercent } from '../../../i18n/dateLocale.js'
 import { ProgressBar } from '../../ui/Progress.jsx'
@@ -6,14 +7,17 @@ import MiniChart from '../MiniChart'
 import ToneBadge from '../ToneBadge.jsx'
 import { EnvBadge } from '../releases/DeployBadges.jsx'
 import { HEALTH_THRESHOLDS, MEMORY_PCT, formatDurationShort } from './healthModel.js'
-import { CARD_GRID, CHART_GRID, ERR_T, OK_T, WARN_T, KvList, SectionError, SubTitle, SysCard } from './HealthParts.jsx'
+import { CARD_GRID, CHART_GRID, ERR_T, OK_T, WARN_T, KvList, PodChip, SectionError, SubTitle, SysCard } from './HealthParts.jsx'
 
 /**
  * Uygulama ve JVM bölümü: sürüm/örnek kartı, JVM bellek kartı ve son 24 saatin CPU / heap / thread grafikleri
  * (MiniChart → tıklanınca ChartModal). Metrik ucu düşerse grafiklerin yerinde hata bloğu + "Tekrar dene".
+ * Hepsi BU POD'undur (2026-10-23, çok pod R2b, MP-37a / N5): grafikler ayrı istekle gelir ve başka pod'a düşebilir — her biri
+ * yanıtlayan pod'la etiketlenir; pod başına kalıcı seriler Metrikler sayfasında.
  */
-export default function SystemSection({ t, health, metrics, metricsError, onRetry, onOpenChart }) {
+export default function SystemSection({ t, health, metrics, metricsPod, metricsError, onRetry, onOpenChart, onOpenMetrics }) {
   const { build, memory, scheduler } = health || {}
+  const servedPod = health?.served_by_pod || health?.served_by || scheduler?.instance_id || null
   // Oturum deposu (2026-10-09): jdbc = veritabanı (pod yeniden başlayınca oturum sürer), memory = pod belleği
   const sessionStore = health?.session_store
   const memLevel = !memory ? 'ok' : memory.used_pct >= MEMORY_PCT.crit ? 'crit' : memory.used_pct >= MEMORY_PCT.warn ? 'warn' : undefined
@@ -43,8 +47,9 @@ export default function SystemSection({ t, health, metrics, metricsError, onRetr
             <dt>{t('deploy.uptime')}</dt>
             <dd>{build?.uptime_seconds != null ? formatDurationShort(build.uptime_seconds, t) : '—'}
               {build?.started_at && <span className="text-muted-foreground"> · {t('health.uptimeSince', formatDate(build.started_at))}</span>}</dd>
-            <dt>{t('sys.instanceId')}</dt>
-            <dd className={monoSm}>{scheduler?.instance_id || '—'}</dd>
+            <dt>{t('hmp.servingPod')}</dt>
+            <dd className={`${monoSm} [overflow-wrap:anywhere]`} data-slot="serving-pod">{servedPod || '—'}
+              {scheduler?.instance_id && scheduler.instance_id !== servedPod && <span className="block text-muted-foreground">{scheduler.instance_id}</span>}</dd>
             {sessionStore?.store && (
               <>
                 <dt>{t('health.sessionStore')}</dt>
@@ -65,6 +70,7 @@ export default function SystemSection({ t, health, metrics, metricsError, onRetr
 
         <SysCard icon={MemoryStick} iconClass={memTone} title={t('sys.memTitle')} cardKey="memory" alarm={memLevel === 'crit'}
           right={memory && <ToneBadge tone={memLevel === 'crit' ? 'danger' : memLevel === 'warn' ? 'warning' : 'success'} className="font-semibold">{formatPercent(memory.used_pct)}</ToneBadge>}>
+          <PodChip t={t} pod={servedPod} />
           {memory ? (
             <>
               <ProgressBar value={memory.used_pct} max={100} size="sm" showValue label={t('sys.memUsed')} tone={memLevel} />
@@ -79,7 +85,17 @@ export default function SystemSection({ t, health, metrics, metricsError, onRetr
         </SysCard>
       </div>
 
-      <SubTitle><Cpu size={14} aria-hidden="true" className="text-primary" />{t('health.sectionCpu')} · {t('sys.metricsTitle')}</SubTitle>
+      <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+        <SubTitle className="mt-0"><Cpu size={14} aria-hidden="true" className="text-primary" />{t('health.sectionCpu')} · {t('sys.metricsTitle')}</SubTitle>
+        <div className="flex flex-wrap items-center gap-2">
+          {!metricsError && <PodChip t={t} pod={metricsPod} />}
+          {onOpenMetrics && (
+            <Button type="button" variant="outline" size="sm" onClick={onOpenMetrics} className="pointer-coarse:h-10" data-slot="jvm-open-metrics">
+              {t('hmp.openMetrics')}<ChevronRight aria-hidden="true" />
+            </Button>
+          )}
+        </div>
+      </div>
       {metricsError ? (
         <SectionError t={t} onRetry={onRetry} />
       ) : (

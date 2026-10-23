@@ -115,3 +115,15 @@ describe('Toast hata bildirimi', () => {
     expect(screen.queryByText('Kaydedilemedi: sunucu yanıt vermedi')).toBeNull()   // açılmadı → süre işledi
   })
 })
+
+// 2026-10-23 (çok pod R2b, C1): aç/kapa tetiği dokunmatikte 24 px'ti — ≥ 40 px (pointer-coarse), kopyala düğmesi de
+describe('ErrorDetails — dokunma hedefi', () => {
+  it('tetik ve kopyala düğmesi pointer-coarse altında ≥ 40 px sınıfları taşır', () => {
+    wrap(<ErrorDetails info={{ status: 500, code: 'X', request_id: 'r-1' }} />)
+    const trigger = toggle()
+    expect(trigger.className).toMatch(/pointer-coarse:min-h-10/)
+    fireEvent.click(trigger)
+    const copy = screen.getByRole('button', { name: new RegExp(TR['errinfo.copy']) })
+    expect(copy.className).toMatch(/pointer-coarse:size-10/)
+  })
+})

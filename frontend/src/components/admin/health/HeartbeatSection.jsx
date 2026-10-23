@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react'
-import { HeartPulse, History } from 'lucide-react'
+import { HeartPulse, History, Server } from 'lucide-react'
 import { api, formatDate } from '../../../api/client'
 import { Skeleton } from '@/components/shadcn/skeleton'
 import { ChartContainer, ChartTooltip, ChartTooltipContent, BarChart, Bar, Cell, XAxis, YAxis } from '@/components/shadcn/chart'
 import { cn } from '@/lib/utils'
 import AlertBanner from '../../ui/AlertBanner.jsx'
-import { CARD_GRID, ERR_T, OK_T, CardCta, KvList, RefreshButton, SectionError, SysCard } from './HealthParts.jsx'
+import ToneBadge from '../ToneBadge.jsx'
+import { POD_STATE_TONE, relTime } from './healthModel.js'
+import { CARD_GRID, ERR_T, OK_T, WARN_T, CardCta, KvList, PodChip, RefreshButton, SectionError, SysCard } from './HealthParts.jsx'
 
 const FILL = { ok: '#10b981', partial: '#f59e0b', low: '#f97316', missing: '#dc2626' }
 function statusOf(b) {
@@ -18,7 +20,49 @@ function statusOf(b) {
  * Heartbeat: durum kartı (son sinyal, dakika, son sinyaller, geçmiş penceresi) + son 24 saatin sinyal şeridi
  * (ChartContainer çubuk grafiği; kova rengi = alınan/beklenen oranı). Şerit bölüm açılınca `heartbeat-timeline`
  * ucundan çekilir; hata → StatusBlock + "Tekrar dene". Eski `.hb-ecg-*` EKG süsü kaldırıldı.
+ * Çok pod (2026-10-23, R2b, MP-35): son sinyal ve şerit KÜMENİN (dakikada bir pod yazdıysa tam); "Pod'lar" kartı her pod'un
+ * durumunu ayrı gösterir — ikinci pod yazmaya devam ederken susan (çöken / takılan) pod artık görünür.
  */
+const STOPPED_SHOWN = 3
+
+function PodsCard({ t, heartbeat }) {
+  const pods = heartbeat?.pods
+  const silent = Number(heartbeat?.pods_silent) || 0
+  // Durmuş süreçler (dağıtımla kapanan, kapanış işaretli) listeyi uzatmasın: en yeni 3'ü, kalanı sayı (sunucu sırası: canlı →
+  // sessiz → yeniden başladı → durdu)
+  const stopped = Array.isArray(pods) ? pods.filter((p) => p.state === 'stopped') : []
+  const shown = Array.isArray(pods) ? [...pods.filter((p) => p.state !== 'stopped'), ...stopped.slice(0, STOPPED_SHOWN)] : []
+  const stoppedMore = Math.max(0, stopped.length - STOPPED_SHOWN)
+  return (
+    <SysCard icon={Server} cardKey="heartbeat-pods" iconClass={silent > 0 ? WARN_T : pods?.length ? OK_T : 'text-muted-foreground'} title={t('hmp.podsTitle')}
+      right={pods == null ? <ToneBadge tone="muted" className="font-semibold">{t('health.stUnknown')}</ToneBadge>
+        : <ToneBadge tone={silent > 0 ? 'warning' : 'success'} className="font-semibold tabular-nums" data-slot="hb-pods-live">
+          {t('hmp.podsLive', heartbeat.pods_live ?? 0)}{silent > 0 && ` · ${t('hmp.podsSilentCount', silent)}`}</ToneBadge>}>
+      <PodChip t={t} scope="cluster" />
+      {pods == null ? (
+        <p className="text-[0.9em] text-muted-foreground" data-slot="hb-pods-unknown">{t('hmp.podsUnknown')}</p>
+      ) : pods.length === 0 ? (
+        <p className="text-[0.9em] text-muted-foreground" data-slot="hb-pods-empty">{t('hmp.podsEmpty')}</p>
+      ) : (
+        <ul className="flex list-none flex-col gap-2" data-slot="hb-pods">
+          {shown.map((p) => (
+            <li key={p.id} data-slot="hb-pod" data-state={p.state} className="flex flex-col gap-0.5 border-b pb-2 last:border-b-0 last:pb-0">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <span className="min-w-0 font-mono text-xs [overflow-wrap:anywhere]">{p.name}</span>
+                <ToneBadge tone={POD_STATE_TONE[p.state] || 'muted'} className="font-semibold">{t(`hmp.podState.${p.state}`)}</ToneBadge>
+                {p.id === heartbeat?.served_by && <span className="text-xs text-muted-foreground">· {t('hmp.servingThis')}</span>}
+              </div>
+              <span className="text-xs text-muted-foreground">{t('hmp.lastBeat', formatDate(p.last_seen), relTime(p.last_seen, t) || '')}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {stoppedMore > 0 && <p className="text-xs text-muted-foreground" data-slot="hb-pods-stopped-more">{t('hmp.podsStoppedMore', stoppedMore)}</p>}
+      {silent > 0 && <AlertBanner tone="warning" className="mb-0">{t('hmp.podSilentHint')}</AlertBanner>}
+    </SysCard>
+  )
+}
+
 export default function HeartbeatSection({ t, heartbeat, isAdmin, refreshing, onRefresh, onOpenHistory }) {
   const [timeline, setTimeline] = useState(null)
   const [error, setError] = useState(null)
@@ -46,6 +90,7 @@ export default function HeartbeatSection({ t, heartbeat, isAdmin, refreshing, on
     <div className={CARD_GRID}>
       <SysCard icon={HeartPulse} cardKey="heartbeat" iconClass={alarm ? cn(ERR_T, 'animate-pulse motion-reduce:animate-none') : OK_T} title={t('health.hbTitle')} alarm={alarm}
         right={isAdmin && <RefreshButton onClick={onRefresh} busy={refreshing} label={t('sys.poolRefresh')} />}>
+        <PodChip t={t} scope="cluster" />
         {alarm && <AlertBanner tone="danger" className="mb-0">{t('health.hbAlarm')}</AlertBanner>}
         <KvList>
           <dt>{t('health.hbLast')}</dt>
@@ -69,12 +114,15 @@ export default function HeartbeatSection({ t, heartbeat, isAdmin, refreshing, on
         <CardCta icon={History} label={t('health.hbHistoryHint')} onClick={onOpenHistory} />
       </SysCard>
 
+      <PodsCard t={t} heartbeat={heartbeat} />
+
       <SysCard icon={HeartPulse} cardKey="heartbeat-strip" iconClass="text-primary" title={t('health.hbStrip')} className="md:col-span-2"
         right={timeline && (
           <span className="text-xs text-muted-foreground tabular-nums">
             {t('health.hbDetailReceived')} {received} / {expected}{missing > 0 && <span className={ERR_T}> · {missing} {t('health.hbLegMissing').toLowerCase()}</span>}
           </span>
         )}>
+        <p className="text-xs text-muted-foreground" data-slot="hb-strip-scope">{t('hmp.stripCluster')}</p>
         {loading ? (
           <Skeleton className="h-20 w-full rounded-lg motion-reduce:animate-none" data-testid="hb-strip-skeleton" />
         ) : error ? (

@@ -630,3 +630,156 @@ describe('SystemHealth — bekçi test bildirimi başarısız (UIA-D9)', () => {
   })
 })
 
+
+// ── Çok pod R2b (2026-10-23, paket C1): Sistem Sağlığı KÜMEYİ doğru gösterir ─────────────────────────────────────────
+describe('SystemHealth — çok pod (MP-34 / MP-35 / MP-37a / N1 / N4)', () => {
+  const A = 'sitemonitor-6b7c9d-aaaaa-0000000a'
+  const B = 'sitemonitor-6b7c9d-bbbbb-0000000b'
+  const CLUSTER = {
+    ...HEALTH,
+    served_by: A, served_by_pod: 'sitemonitor-6b7c9d-aaaaa',
+    scheduler: { ...HEALTH.scheduler, instance_id: A, running_here: false, last_run_by_pod: 'sitemonitor-6b7c9d-bbbbb', status_source: 'cluster',
+      sweep_leader: { owner: B, owner_pod: 'sitemonitor-6b7c9d-bbbbb', until: '2026-09-27T05:03:00', expired: false, held_by_me: false,
+        renewer: true, last_sweep_tick: null },
+      held_locks: [{ name: 'watchdog', state: 'HELD', until: '2026-09-27T05:02:00' }],
+      round_claim_failures: 2, last_round_claim_failure: '2026-09-27T04:00:00', skipped_rounds: [{ round: 'nightly-cleanup', at: '2026-09-27T00:30:00' }] },
+    cache_bus: { enabled: true, running: true, table_missing: false, applied_generation: 12, last_poll_ok_at: '2026-09-27T04:59:58', poll_failures: 0 },
+    scan: { ...HEALTH.scan, last_run_kind: 'hourly', last_run_by_pod: 'sitemonitor-6b7c9d-bbbbb', source: 'cluster',
+      runs: { hourly: { kind: 'hourly', last_run: '2026-09-27T04:00:00', total: 214, by_pod: 'sitemonitor-6b7c9d-bbbbb', finished_at: '2026-09-27T04:00:42' },
+        stale: { kind: 'stale', last_run: '2026-09-27T03:55:00', total: 2, by_pod: 'sitemonitor-6b7c9d-aaaaa', finished_at: '2026-09-27T03:55:03' } } },
+    heartbeat: { ...HEALTH.heartbeat, served_by: A, pods_total: 2, pods_live: 1, pods_silent: 1, pods: [
+      { id: A, name: 'sitemonitor-6b7c9d-aaaaa', state: 'live', last_seen: '2026-09-27T04:59:00', minutes_since: 0 },
+      { id: B, name: 'sitemonitor-6b7c9d-bbbbb', state: 'silent', last_seen: '2026-09-27T04:40:00', minutes_since: 19 } ] },
+    domain_expiry: { source: 'NONE', alarm: true, reason: 'connect timed out', scope: 'cluster', observed_by: B,
+      observed_by_pod: 'sitemonitor-6b7c9d-bbbbb', observed_at: '2026-09-27T04:00:00' },
+  }
+  const open = async (sec, data = CLUSTER) => {
+    api.admin.getSystemHealth.mockResolvedValue({ success: true, data })
+    window.history.replaceState(null, '', `/?sec=${sec}`)
+    await renderLoaded()
+  }
+
+  it('Küme kartı: lider pod KÜME etiketli; yanıtlayan pod lider değil; tutulan kilit, tur hataları, atlanan tur, önbellek yolu "bu pod" bölümünde', async () => {
+    await open('sched')
+    const card = document.querySelector('[data-card="cluster"]')
+    expect(card).not.toBeNull()
+    expect(card.querySelector('[data-slot="cluster-leader-pod"]').textContent).toContain('sitemonitor-6b7c9d-bbbbb')
+    expect(card.querySelector('[data-slot="cluster-leader"] [data-slot="pod-chip"]')).toHaveAttribute('data-scope', 'cluster')
+    const podPart = card.querySelector('[data-slot="cluster-this-pod"]')
+    expect(podPart.querySelector('[data-slot="pod-chip"]')).toHaveAttribute('data-scope', 'pod')
+    expect(podPart.querySelector('[data-slot="pod-chip"]').textContent).toContain('sitemonitor-6b7c9d-aaaaa')
+    expect(podPart.querySelector('[data-slot="cluster-is-leader"]')).toHaveAttribute('data-value', 'false')
+    expect(podPart.querySelector('[data-slot="cluster-held-locks"]').textContent).toContain('watchdog')
+    expect(podPart.querySelector('[data-slot="cluster-round-failures"]').textContent).toContain('2')
+    expect(podPart.querySelector('[data-slot="cluster-skipped-rounds"]').textContent).toContain('nightly-cleanup')
+    expect(podPart.querySelector('[data-slot="cluster-cache-bus"]')).toHaveAttribute('data-level', 'ok')
+    expect(podPart.querySelector('[data-slot="cluster-per-pod-note"]')).not.toBeNull()
+  })
+
+  it('kira okunamadı → Küme kartı "bilinmiyor" (yeşil değil)', async () => {
+    await open('sched', { ...CLUSTER, scheduler: { ...CLUSTER.scheduler, sweep_leader: { error: 'db down' } } })
+    const card = document.querySelector('[data-card="cluster"]')
+    expect(card.querySelector('[data-kind="unknown"]')).not.toBeNull()
+    expect(card.querySelector('[data-slot="cluster-leader-unknown"]')).not.toBeNull()
+    expect(card.querySelector('[data-slot="cluster-is-leader"]')).toHaveAttribute('data-value', 'unknown')
+  })
+
+  it('yürütücü / havuz "Bu pod: <ad>"; zamanlayıcı / kilit / tarama "Küme"; tarama türleri ve koşturan pod', async () => {
+    await open('sched')
+    const scope = (card) => document.querySelector(`[data-card="${card}"] [data-slot="pod-chip"]`).getAttribute('data-scope')
+    expect(scope('executor')).toBe('pod')
+    expect(scope('pool')).toBe('pod')
+    expect(scope('scheduler')).toBe('cluster')
+    expect(scope('lock')).toBe('cluster')
+    expect(scope('scan')).toBe('cluster')
+    expect(document.querySelector('[data-card="executor"] [data-slot="pod-chip"]').textContent).toContain('sitemonitor-6b7c9d-aaaaa')
+    const runs = [...document.querySelectorAll('[data-slot="scan-run"]')].map((r) => r.getAttribute('data-kind'))
+    expect(runs).toEqual(['hourly', 'stale'])
+    expect(document.querySelector('[data-card="scan"]').textContent).toContain('sitemonitor-6b7c9d-bbbbb')
+  })
+
+  it('tarama başka pod’da sürüyor: "Koşturan pod" + çalıştır düğmesi kapalı', async () => {
+    await open('sched', { ...CLUSTER, scheduler: { ...CLUSTER.scheduler, running: true, running_on: B, running_on_pod: 'sitemonitor-6b7c9d-bbbbb' },
+      lock: { held: true, locked_by: B, locked_by_pod: 'sitemonitor-6b7c9d-bbbbb', locked_until: '2026-09-27T05:03:00', held_by_me: false, expired: false } })
+    expect(document.querySelector('[data-slot="sched-running-on"]').textContent).toContain('sitemonitor-6b7c9d-bbbbb')
+    expect(document.querySelector('[data-slot="sched-elsewhere"]')).not.toBeNull()
+    expect(screen.getByRole('button', { name: /Run Now|Şimdi Çalıştır/ })).toBeDisabled()
+  })
+
+  it('süresi dolmuş kilit satırı: "Kilitli" değil — serbest + açıklama + sahip', async () => {
+    await open('sched', { ...CLUSTER, lock: { held: false, expired: true, locked_by: B, locked_by_pod: 'sitemonitor-6b7c9d-bbbbb', locked_until: '2026-09-27T03:00:00' } })
+    const card = document.querySelector('[data-card="lock"]')
+    expect(card.querySelector('[data-kind="free"]')).not.toBeNull()
+    expect(card.querySelector('[data-slot="lock-expired"]').textContent).toContain('sitemonitor-6b7c9d-bbbbb')
+  })
+
+  it('"Şimdi çalıştır" yoklaması iki pod arasında gidip gelen yanıtlarda erken bitmez; küme kilidi bitince biter', async () => {
+    await open('sched', HEALTH)
+    const before = api.admin.getSystemHealth.mock.calls.length
+    const live = (pod) => ({ success: true, data: { ...HEALTH, scheduler: { ...HEALTH.scheduler, running: true, running_here: pod === 'B' },
+      lock: { held: true, locked_by: B, held_by_me: pod === 'B' } } })
+    const answers = [live('A'), live('B'), live('A'), { success: true, data: HEALTH }]
+    api.admin.getSystemHealth.mockImplementation(() => Promise.resolve(answers.length > 1 ? answers.shift() : answers[0]))
+    vi.useFakeTimers()
+    try {
+      fireEvent.click(screen.getByRole('button', { name: /Run Now|Şimdi Çalıştır/ }))
+      for (let i = 0; i < 3; i++) await act(async () => { await vi.advanceTimersByTimeAsync(2100) })
+      expect(api.admin.getSystemHealth.mock.calls.length - before).toBe(3)   // canlı kilit boyunca yoklama sürüyor
+      await act(async () => { await vi.advanceTimersByTimeAsync(2100) })   // kilit bitti → yoklama durur, tam yükleme
+      const afterDone = api.admin.getSystemHealth.mock.calls.length
+      await act(async () => { await vi.advanceTimersByTimeAsync(10_000) })
+      expect(api.admin.getSystemHealth.mock.calls.length).toBe(afterDone)   // 2 sn yoklama artık yok
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('heartbeat: Pod’lar kartı sessiz pod’u gösterir; genel bant "pod heartbeat göndermiyor" uyarısı (küme alarmı yok)', async () => {
+    await open('heartbeat', { ...CLUSTER, domain_expiry: HEALTH.domain_expiry, scheduler: { ...CLUSTER.scheduler, skipped_rounds: [] } })
+    const pods = [...document.querySelectorAll('[data-slot="hb-pod"]')]
+    expect(pods.map((p) => p.getAttribute('data-state'))).toEqual(['live', 'silent'])
+    expect(pods[1].textContent).toContain('sitemonitor-6b7c9d-bbbbb')
+    expect(document.querySelector('[data-slot="hb-pods-live"]').textContent).toMatch(/1 (live|canlı) · 1 (silent|sessiz)/)
+    expect(overall()).toHaveAttribute('data-level', 'warn')
+    expect(overall().textContent).toMatch(/1 pod/)
+  })
+
+  it('heartbeat pod listesi okunamadı → "bilinmiyor" (hepsi canlı denmez)', async () => {
+    await open('heartbeat', { ...CLUSTER, heartbeat: { ...CLUSTER.heartbeat, pods: null, pods_error: 'X', pods_silent: undefined } })
+    expect(document.querySelector('[data-slot="hb-pods-unknown"]')).not.toBeNull()
+  })
+
+  it('RDAP kartı: kümedeki son gözlem ve gözlemleyen pod', async () => {
+    await open('integrations')
+    const card = document.querySelector('[data-card="domain"]')
+    expect(card.querySelector('[data-slot="dom-observed-by"]').textContent).toContain('sitemonitor-6b7c9d-bbbbb')
+    expect(card.querySelector('[data-slot="pod-chip"]')).toHaveAttribute('data-scope', 'cluster')
+    expect(document.querySelector('[data-integration="domain"]')).toHaveAttribute('data-level', 'down')
+  })
+
+  it('JVM grafikleri ayrı istekten gelen pod’la etiketli; Metrikler sayfasına bağlantı; "Yanıtlayan pod" satırı', async () => {
+    api.admin.getMetrics.mockResolvedValue({ success: true, data: METRICS, served_by: B, served_by_pod: 'sitemonitor-6b7c9d-bbbbb' })
+    await open('sys')
+    const sec = document.querySelector('[data-section="sys"]')
+    const chips = [...sec.querySelectorAll('[data-slot="pod-chip"]')].map((c) => c.textContent)
+    expect(chips.some((c) => c.includes('sitemonitor-6b7c9d-bbbbb'))).toBe(true)   // grafikler B'den
+    expect(chips.some((c) => c.includes('sitemonitor-6b7c9d-aaaaa'))).toBe(true)   // bellek kartı A'dan (ana istek)
+    expect(sec.querySelector('[data-slot="serving-pod"]').textContent).toContain('sitemonitor-6b7c9d-aaaaa')
+    fireEvent.click(sec.querySelector('[data-slot="jvm-open-metrics"]'))
+    await waitFor(() => expect(window.location.search).toContain('view=metrics'))
+  })
+})
+
+describe('SystemHealth — Pod’lar kartı durmuş süreçleri kısaltır', () => {
+  it('dağıtımla kapanan (durdu) süreçlerden yalnız en yeni 3’ü listelenir, kalanı sayı; durmuş süreç uyarı değil', async () => {
+    const stopped = Array.from({ length: 5 }, (_, i) => ({ id: `sm-old${i}-0000000${i}`, name: `sm-old${i}`, state: 'stopped', last_seen: '2026-09-27T03:00:00' }))
+    api.admin.getSystemHealth.mockResolvedValue({ success: true, data: { ...HEALTH, heartbeat: { ...HEALTH.heartbeat, pods_live: 1, pods_silent: 0,
+      pods: [{ id: 'sm-new-0000000a', name: 'sm-new', state: 'live', last_seen: '2026-09-27T04:59:00' }, ...stopped] } } })
+    window.history.replaceState(null, '', '/?sec=heartbeat')
+    await renderLoaded()
+    const rows = [...document.querySelectorAll('[data-slot="hb-pod"]')]
+    expect(rows.map((r) => r.getAttribute('data-state'))).toEqual(['live', 'stopped', 'stopped', 'stopped'])
+    expect(document.querySelector('[data-slot="hb-pods-stopped-more"]').textContent).toMatch(/\+2/)
+    expect(overall()).toHaveAttribute('data-level', 'ok')
+  })
+})

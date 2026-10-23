@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   deriveOverall, deriveKpis, sectionLevels, integrationList, pushStats, smtpStats, executorStats, poolStats,
-  worstLevel, formatDurationShort, relTime, SECTION_KEYS,
+  worstLevel, formatDurationShort, relTime, SECTION_KEYS, scanPollStep, clusterModel, SCAN_KINDS, POD_STATE_TONE,
 } from '../components/admin/health/healthModel.js'
 
 /**
@@ -189,5 +189,82 @@ describe('healthModel — okunamayan alt yük', () => {
       .toEqual([['smtp', 'integrations'], ['lock', 'sched'], ['executor', 'sched']])
     // Yalnız SMTP: dönem verisi varsa (periods) okunmuş sayılır — sebep yok
     expect(deriveOverall({ health: { ...CLEAN, smtp: { error: 'eski', periods: { '7d': { rate: 100 } } } }, httpMetrics: HTTP_OK, pushKpi: PUSH_OK }).level).toBe('ok')
+  })
+})
+
+// ── Çok pod R2b (2026-10-23, paket C1) ─────────────────────────────────────────────────────────────────────────────
+describe('scanPollStep — "Şimdi çalıştır" yoklaması kümeden biter (MP-34)', () => {
+  const ans = (over = {}) => ({ scheduler: { running: false }, lock: { held: false }, scan: { last_run: '2026-10-23T05:00:00', source: 'cluster' }, ...over })
+  it('yanıtlar iki pod arasında gidip gelse de erken bitmez: kilit canlıyken her yanıt "koşuyor" der', () => {
+    let st = { seenLive: false }
+    // A koşturuyor: canlı kilit (DB) — hem A hem B aynı değeri döner
+    for (const pod of ['A', 'B', 'A', 'B']) {
+      const r = scanPollStep(st, ans({ lock: { held: true, locked_by: 'A' }, scheduler: { running: true, running_here: pod === 'A' } }), '2026-10-23T05:00:00')
+      expect(r.done, pod).toBe(false)
+      st = r
+    }
+    // kilit bırakıldı → bitti (hangi pod yanıtlarsa)
+    expect(scanPollStep(st, ans(), '2026-10-23T05:00:00').done).toBe(true)
+  })
+  it('hızlı tarama (kilit hiç görülmedi): kümenin son koşusu değişince biter; aynıysa bitmez', () => {
+    expect(scanPollStep({ seenLive: false }, ans(), '2026-10-23T05:00:00').done).toBe(false)
+    expect(scanPollStep({ seenLive: false }, ans({ scan: { last_run: '2026-10-23T06:00:00', source: 'cluster' } }), '2026-10-23T05:00:00').done).toBe(true)
+  })
+  it('kilit okunamadı → "koşuyor mu" bilinmez, karar verilmez; bu pod belleği (local) son koşu kıyaslanmaz', () => {
+    const prev = '2026-10-23T05:00:00'
+    const live = scanPollStep({ seenLive: false }, ans({ lock: { held: true } }), prev)
+    expect(live).toEqual({ seenLive: true, done: false })
+    expect(scanPollStep(live, ans({ lock: { held: false, error: 'x' } }), prev).done).toBe(false)
+    expect(scanPollStep({ seenLive: false }, ans({ scan: { last_run: '2026-10-23T09:00:00', source: 'local' } }), '2026-10-23T05:00:00').done).toBe(false)
+    expect(scanPollStep({ seenLive: false }, null, null)).toEqual({ seenLive: false, done: false })
+  })
+})
+
+describe('clusterModel — Küme kartı (N1)', () => {
+  const H = {
+    served_by: 'sm-aaaa-0000000a', served_by_pod: 'sm-aaaa',
+    scheduler: { instance_id: 'sm-aaaa-0000000a',
+      sweep_leader: { owner: 'sm-bbbb-0000000b', owner_pod: 'sm-bbbb', until: '2026-10-23T05:03:00', expired: false, held_by_me: false, renewer: true, last_sweep_tick: null },
+      held_locks: [{ name: 'watchdog', state: 'HELD', until: '2026-10-23T05:02:00' }], round_claim_failures: 0, last_round_claim_failure: null, skipped_rounds: [] },
+    cache_bus: { enabled: true, running: true, table_missing: false, applied_generation: 12, poll_failures: 0 },
+  }
+  it('lider = kira sahibi (küme); "bu pod" değerleri ayrı; sağlıklı → ok', () => {
+    const c = clusterModel(H)
+    expect(c.available).toBe(true)
+    expect(c.leader).toMatchObject({ known: true, ownerPod: 'sm-bbbb', leaderless: false })
+    expect(c.thisPod.isLeader).toBe(false)
+    expect(c.pod.name).toBe('sm-aaaa')
+    expect(c.level).toBe('ok')
+  })
+  it('kira okunamadı → bilinmiyor (asla yeşil değil); kira dolmuş / sahipsiz → warn; tıkanma / atlanan tur / durmuş önbellek yolu → warn', () => {
+    expect(clusterModel({ ...H, scheduler: { ...H.scheduler, sweep_leader: { error: 'db' } } })).toMatchObject({ level: 'unknown', leader: { known: false }, thisPod: { isLeader: null } })
+    expect(clusterModel({ ...H, scheduler: { ...H.scheduler, sweep_leader: { ...H.scheduler.sweep_leader, expired: true } } }).level).toBe('warn')
+    expect(clusterModel({ ...H, scheduler: { ...H.scheduler, sweep_leader: { owner: null, expired: true } } }).leader.leaderless).toBe(true)
+    expect(clusterModel({ ...H, scheduler: { ...H.scheduler, sweep_leader: { ...H.scheduler.sweep_leader, wedge_yielded_at: '2026-10-23T05:00:00' } } }).level).toBe('warn')
+    expect(clusterModel({ ...H, scheduler: { ...H.scheduler, skipped_rounds: [{ round: 'nightly-cleanup', at: 'x' }] } }).level).toBe('warn')
+    expect(clusterModel({ ...H, cache_bus: { ...H.cache_bus, running: false } })).toMatchObject({ level: 'warn', cacheLevel: 'warn' })
+    expect(clusterModel({ ...H, cache_bus: { error: 'X' } }).cacheLevel).toBe('unknown')
+  })
+  it('küme kaydı yok (eski / tek pod) → available=false; alanlar yoksa null (uydurma 0 yok)', () => {
+    expect(clusterModel({ scheduler: { instance_id: 'x' } })).toMatchObject({ available: false, level: 'unknown' })
+    const c = clusterModel({ ...H, scheduler: { sweep_leader: H.scheduler.sweep_leader } })
+    expect(c.thisPod.heldLocks).toBeNull()
+    expect(c.thisPod.roundClaimFailures).toBeNull()
+    expect(c.thisPod.skippedRounds).toBeNull()
+  })
+  it('sabitler: tarama türleri ve pod durumu tonları', () => {
+    expect(SCAN_KINDS).toEqual(['hourly', 'full', 'stale'])
+    expect(POD_STATE_TONE).toEqual({ live: 'success', silent: 'warning', restarted: 'muted', stopped: 'muted' })
+  })
+})
+
+describe('deriveOverall — sessiz pod (MP-35)', () => {
+  it('küme alarmı yokken sessiz pod → warn "podSilent" (heartbeat bölümü); küme alarmı varsa yalnız kritik sebep', () => {
+    const o = deriveOverall({ health: { ...CLEAN, heartbeat: { ...CLEAN.heartbeat, pods_silent: 1 } }, httpMetrics: HTTP_OK, pushKpi: PUSH_OK })
+    expect(o.level).toBe('warn')
+    expect(o.reasons).toContainEqual(expect.objectContaining({ code: 'podSilent', section: 'heartbeat', args: [1] }))
+    const d = deriveOverall({ health: { ...CLEAN, heartbeat: { ...CLEAN.heartbeat, alarm: true, pods_silent: 2 } }, httpMetrics: HTTP_OK, pushKpi: PUSH_OK })
+    expect(d.reasons.some((r) => r.code === 'podSilent')).toBe(false)
+    expect(deriveOverall({ health: { ...CLEAN, heartbeat: { ...CLEAN.heartbeat, pods_silent: 0 } }, httpMetrics: HTTP_OK, pushKpi: PUSH_OK }).level).toBe('ok')
   })
 })

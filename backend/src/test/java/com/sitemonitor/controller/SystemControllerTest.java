@@ -688,6 +688,51 @@ class SystemControllerTest {
                 .andExpect(jsonPath("$.data.top_endpoints").doesNotExist());
     }
 
+    // ── Çok pod R2b (2026-10-23, MP-37a / N1): yanıtlayan pod + bu pod'un önbellek yolu ─────────────────────
+
+    @Autowired
+    SystemController controller;
+
+    @Test
+    @DisplayName("MP-37a: /metrics ve /http-metrics yanıtlayan pod'u taşır (JVM grafikleri ve HTTP özeti pod belleğinden — ekran etiketler)")
+    void metricsCarryServedBy() throws Exception {
+        when(metricsService.getHistory()).thenReturn(List.of());
+        when(httpMetricsService.getSummary()).thenReturn(Map.of("total_requests", 1));
+        when(httpMetricsService.getHistory()).thenReturn(List.of());
+        String id = SchedulerService.instanceId();
+        String pod = com.sitemonitor.service.health.ClusterHealthStore.podOf(id);
+        mvc.perform(get("/api/admin/system/metrics").session(userSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.served_by").value(id))
+                .andExpect(jsonPath("$.served_by_pod").value(pod))
+                .andExpect(jsonPath("$.data").isArray());
+        mvc.perform(get("/api/admin/system/http-metrics").session(userSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.served_by").value(id))
+                .andExpect(jsonPath("$.data.served_by_pod").value(pod))
+                .andExpect(jsonPath("$.data.summary.total_requests").value(1));
+    }
+
+    @Test
+    @DisplayName("N1: bu pod'un önbellek yolu durumu sağlık yanıtında (bean varsa); okunamazsa error — yanıt düşmez")
+    void healthCarriesCacheBusStatus() throws Exception {
+        com.sitemonitor.service.cache.CacheBus bus = org.mockito.Mockito.mock(com.sitemonitor.service.cache.CacheBus.class);
+        when(bus.status()).thenReturn(Map.of("running", true, "applied_generation", 7L));
+        org.springframework.test.util.ReflectionTestUtils.setField(controller, "cacheBus", bus);
+        try {
+            mvc.perform(get("/api/admin/system").session(userSession()))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.cache_bus.running").value(true))
+                    .andExpect(jsonPath("$.data.cache_bus.applied_generation").value(7));
+            when(bus.status()).thenThrow(new IllegalStateException("x"));
+            mvc.perform(get("/api/admin/system").session(userSession()))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.cache_bus.error").value("IllegalStateException"));
+        } finally {
+            org.springframework.test.util.ReflectionTestUtils.setField(controller, "cacheBus", null);
+        }
+    }
+
     // Regresyon: Sistem Sagligi sekmesi TUM rollere acik (Nav `show: true`) ve
     // `system_health.read` USER varsayilanlarinda VAR — kapi eklendi diye siradan
     // kullanicinin ekrani kirilmamali. Dordu de izin varken 200 donmeli.
