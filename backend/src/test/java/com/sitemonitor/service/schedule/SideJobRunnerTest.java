@@ -218,4 +218,33 @@ class SideJobRunnerTest {
         assertThat(src).contains("ShutdownDeadline.waitMs(SHUTDOWN_WAIT_CAP_MS)").contains(".awaitTermination(waitMs");
         assertThat(SideJobRunner.SHUTDOWN_WAIT_CAP_MS).isLessThan(ShutdownDeadline.DESTROY_BUDGET_MS);
     }
+
+    @Test
+    @DisplayName("Sistem Sağlığı sözleşmesi (paket B): status() iş adına göre sıralı, zamanlar epoch ms, yerleşim / ipucu fırlatsa da "
+            + "fırlatmaz ve veritabanı okumaz")
+    void statusContractForSystemHealth() {
+        long before = System.currentTimeMillis();
+        SideJobRunner r = runner(2);
+        PodLiveness boom = org.mockito.Mockito.mock(PodLiveness.class);
+        org.mockito.Mockito.when(boom.cachedAnotherLivePod()).thenThrow(new IllegalStateException("db"));
+        r.setPlacement(new SideJobPlacement(() -> { throw new IllegalStateException("settings"); }, boom, 0));
+        r.bindLeaderHint(() -> { throw new IllegalStateException("hint"); });
+        assertThat(r.submit("weekly-availability", () -> { })).isTrue();
+        assertThat(r.submit("cert-hourly", () -> { })).isTrue();
+        r.noteYielded("tls-profile");
+        assertThat(r.awaitIdle(5_000)).isTrue();
+
+        SideJobRunner.Status s = r.status();
+        assertThat(s.jobs()).extracting(SideJobRunner.Status.Job::name)
+                .containsExactly("cert-hourly", "tls-profile", "weekly-availability");
+        SideJobRunner.Status.Job j = job(r, "cert-hourly");
+        assertThat(j.startedAtMs()).as("epoch ms").isBetween(before, System.currentTimeMillis());
+        assertThat(j.lastFinishedAtMs()).isGreaterThanOrEqualTo(j.startedAtMs());
+        assertThat(job(r, "tls-profile").startedAtMs()).as("hiç koşmadı").isNull();
+        assertThat(s.leaderHint()).as("ipucu fırlattı → false").isFalse();
+        assertThat(s.leaderYieldEnabled()).as("ayar okunamadı → varsayılan").isEqualTo(SideJob.LEADER_YIELD_DEFAULT);
+        assertThat(s.otherLivePod()).as("gözlem okunamadı → bilinmiyor").isNull();
+        org.mockito.Mockito.verify(boom, org.mockito.Mockito.never()).otherLivePods();
+        org.mockito.Mockito.verify(boom, org.mockito.Mockito.never()).anotherLivePod();
+    }
 }

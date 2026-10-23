@@ -514,6 +514,8 @@ class SideJobPlacementMultiPodTest {
             assertThat(a.runner().runDeferredNow()).isEqualTo(1);
             idle(a);
             assertThat(calls(report, "sendMonthlyReport")).as("ay %d", k).isEqualTo(k + 1);
+            assertThat(job(a.runner(), "cert-inventory-report").skippedCount())
+                    .as("ertelenen deneme turu alınmış gördü — kilide / tura gitmedi").isEqualTo(k + 1);
         }
         // takipçi sessiz: lider ertelenen denemede, YAKALANAN planlı anla gönderir
         Instant at = t.plusMonths(ROUNDS).toInstant();
@@ -557,6 +559,7 @@ class SideJobPlacementMultiPodTest {
             assertThat(a.runner().runDeferredNow()).isEqualTo(1);
             idle(a);
             assertThat(calls(delivery, "runScheduled")).as("ay %d", k).isEqualTo(k + 1);
+            assertThat(job(a.runner(), "executive-summary").skippedCount()).isEqualTo(k + 1);
         }
 
         long catchUp = 55 * MIN;
@@ -684,5 +687,36 @@ class SideJobPlacementMultiPodTest {
         assertThat(sum).as("üretim varsayılanı (~30 sn)").isGreaterThan(25_000L);
         assertThat(SideJobPlacement.MAX_CRON_DEFER_MS + sum).isLessThan(SchedulerService.CRON_ROUND_SLACK_MS);
         assertThat(DEFER_MS).isEqualTo(SideJobPlacement.DEFAULT_CRON_DEFER_MS);
+    }
+
+    @Test
+    @DisplayName("cronRoundTaken: tetik alınmadan false, alındıktan sonra true, sıradaki tetikte false; kayıt aralık kısalmış gibi "
+            + "çok ileride ise false (cronRoundDue onu vadeli sayar); dilimsiz cron (saatlik) iki adayla; okunamazsa false")
+    void cronRoundTakenSemantics() {
+        P a = pod(1);
+        P b = pod(2);
+        SchedulerService s = a.s();
+        String daily = "0 0 9 * * *";
+        mp.clock().set(Instant.parse("2026-10-21T06:00:00Z").toEpochMilli());   // 09:00 İstanbul
+        assertThat(s.cronRoundTaken("x-daily", daily, "Europe/Istanbul")).as("satır yok").isFalse();
+        assertThat(b.s().claimCronRound("x-daily", daily, "Europe/Istanbul")).isTrue();
+        mp.advance(DEFER_MS);
+        assertThat(s.cronRoundTaken("x-daily", daily, "Europe/Istanbul")).as("takipçi aldı").isTrue();
+        mp.advance(DAY - DEFER_MS);
+        assertThat(s.cronRoundTaken("x-daily", daily, "Europe/Istanbul")).as("ertesi günün tetiği").isFalse();
+
+        mp.jdbc().update("UPDATE monitor_check_schedule SET next_due_at = ? WHERE monitor_key = 'round:x-daily'",
+                mp.now() + 10 * DAY);
+        assertThat(s.cronRoundTaken("x-daily", daily, "Europe/Istanbul")).as("aralık kısaldı → vadeli").isFalse();
+        assertThat(s.claimCronRound("x-daily", daily, "Europe/Istanbul")).as("cronRoundDue de vadeli sayar").isTrue();
+
+        mp.clock().set(Instant.parse("2026-10-21T07:00:00Z").toEpochMilli());
+        assertThat(b.s().claimCronRound("x-hourly", "0 0 * * * *", null)).isTrue();
+        mp.advance(DEFER_MS);
+        assertThat(s.cronRoundTaken("x-hourly", "0 0 * * * *", null)).isTrue();
+        assertThat(s.cronRoundTaken("x-hourly", "bozuk ifade", null)).as("ifade çözülemezse: vadesi ileride = alınmış").isTrue();
+
+        mp.jdbc().execute("DROP TABLE monitor_check_schedule");
+        assertThat(s.cronRoundTaken("x-hourly", "0 0 * * * *", null)).as("okunamadı → gövde koşar").isFalse();
     }
 }
