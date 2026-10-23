@@ -69,6 +69,54 @@ FROM monitor_check_schedule WHERE monitor_key = 'lease:sweep-leader';
 SELECT name AS kilit, locked_by AS sahip, locked_until AS bitis_utc
 FROM scheduler_lock ORDER BY name;
 
+-- ── 0b. Bilgi (sayılmaz): küme turlarının son sahiplenen pod'u — çok pod Sürüm 3-1 yan işleri ───
+-- Sürüm 3-1'den beri tarama lideri, başka canlı pod varken cron yan işlerini 20 sn erteler ve tur tabanlı ağır işleri
+-- (cert-stale, tls-profile, executive-summary-catchup) bırakır: iki pod'da bu turların claimed_by'ı çoğunlukla TAKİPÇİ
+-- olmalı (lider = section 0'daki kira sahibi). Liderin kendi tarama turları (uptime, page-crawl …) liderde kalır.
+-- "TLS profili turu dönem başına bir kez" buradan SAYILAMAZ: monitor_check_schedule satırı yalnız SON sahiplenmeyi tutar
+-- (geçmiş yok) ve tls_profiles yalnız her ucun son yoklamasını; teklik turun koşullu sahiplenmesi (CAS) + tls-profile
+-- kilidiyle sağlanır, ikinci bir tık da vadesi gelmemiş ucu yeniden yoklamaz (vade kümesi probed_at'ten).
+\echo
+\echo '── 0b. Küme turlarının son sahibi (bilgi, sayılmaz — Sürüm 3-1: yan iş turları çoğunlukla takipçide)'
+SELECT r.monitor_key AS tur, r.claimed_by AS son_sahiplenen,
+       CASE WHEN l.claimed_by IS NULL OR r.claimed_by IS NULL THEN '—'
+            WHEN r.claimed_by = l.claimed_by THEN 'lider' ELSE 'takipçi' END AS kim,
+       to_char(to_timestamp(r.claimed_at / 1000.0) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS') AS sahiplenme_utc,
+       to_char(to_timestamp(r.next_due_at / 1000.0) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS') AS sonraki_vade_utc
+FROM monitor_check_schedule r
+LEFT JOIN monitor_check_schedule l ON l.monitor_key = 'lease:sweep-leader'
+WHERE r.monitor_key LIKE 'round:%'
+ORDER BY r.monitor_key;
+
+-- ── 0c. Bilgi (sayılmaz): kalıcı değerlendirme durumu — çok pod Sürüm 3-1 ─────────────────────
+-- Kuşak satırını ('*') yazan = tarama lideri, nabız en çok ~60 sn eski beklenir (eski — 20.167.0 — bir lider yazmaz; o
+-- sırada nabız eskir, hata değildir). Tablo yoksa (Sürüm 3-1 öncesi) bölüm atlanır.
+SELECT to_regclass('monitor_eval_type_state') IS NOT NULL
+   AND to_regclass('monitor_eval_state') IS NOT NULL
+   AND to_regclass('monitor_last_status') IS NOT NULL
+   AND to_regclass('monitor_confirmations') IS NOT NULL AS has_eval_state \gset
+\if :has_eval_state
+\echo
+\echo '── 0c. Kalıcı değerlendirme durumu (bilgi, sayılmaz): kuşak satırını yazan = tarama lideri, nabız en çok ~60 sn'
+SELECT t.gen AS kusak, t.writer AS yazan,
+       CASE WHEN l.claimed_by IS NULL THEN 'kira yok' WHEN l.claimed_by = t.writer THEN 'lider' ELSE 'LİDER DEĞİL' END AS yazan_kim,
+       ROUND(((EXTRACT(EPOCH FROM now()) * 1000) - t.updated_ms) / 1000.0) AS nabiz_yasi_sn
+FROM monitor_eval_type_state t
+LEFT JOIN monitor_check_schedule l ON l.monitor_key = 'lease:sweep-leader'
+WHERE t.alert_type = '*';
+WITH g AS (SELECT COALESCE(MAX(gen), 0) AS gen FROM monitor_eval_type_state WHERE alert_type = '*')
+SELECT 'monitor_eval_state' AS tablo, COUNT(*) AS satir, COUNT(*) FILTER (WHERE s.gen < g.gen) AS onceki_kusak
+  FROM monitor_eval_state s, g
+UNION ALL
+SELECT 'monitor_last_status', COUNT(*), COUNT(*) FILTER (WHERE s.gen < g.gen) FROM monitor_last_status s, g
+UNION ALL
+SELECT 'monitor_eval_type_state', COUNT(*), COUNT(*) FILTER (WHERE s.gen < g.gen)
+  FROM monitor_eval_type_state s, g WHERE s.alert_type <> '*'
+UNION ALL
+SELECT 'monitor_confirmations (RUNNING/FINISHING)', COUNT(*), COUNT(*) FILTER (WHERE s.gen < g.gen)
+  FROM monitor_confirmations s, g WHERE s.state <> 'ABANDONED';
+\endif
+
 -- ── 1. Aynı izlemenin aynı anda iki kontrolü (son :hours saat, ardışık satır aralığı < :dup_gap_s sn) ──
 \echo
 \echo '── 1. İzleme kontrol çiftleri (aynı izleme, ardışık iki satır <' :dup_gap_s 'sn arayla)'

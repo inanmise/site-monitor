@@ -217,6 +217,61 @@ aldığında geçerlidir; sonraki dağıtımlarda atlanır.
 - [ ] **Grafana panosu:** revizyon 4 (sağlık bölümünün sonunda çok pod çalışma panelleri) — dağıtımdan sonra Ayarlar →
       Grafana panosu → JSON indir ve aynı UID ile içe aktarın.
 
+### Çok pod Sürüm 3-1 öncesi / sonrası kontroller — bir kerelik
+Bu bölüm prod çok pod Sürüm 3-1'i (uzun yan işler tarama liderinden alınır, TLS profili her pod'da, kurum geneli Grafana
+ölçülerini takipçi yayar, alarm değerlendirme durumu dört tabloya aynalanır + doğrulanır — kararlar yine bellekten) İLK kez
+aldığında geçerlidir; sonraki dağıtımlarda atlanır. Ayrıntı: [`RUNBOOK.md` → Yan işler](RUNBOOK.md#yan-işler-ve-lider-ertelemesi-çok-pod-sürüm-3-1),
+[Kalıcı değerlendirme durumu](RUNBOOK.md#kalıcı-değerlendirme-durumu-çok-pod-sürüm-3-1).
+
+**Öncesi**
+- [ ] **Şema: dört yeni, boş tablo açılışta kurulur** — ön kontrol / yedek gerekmez, mevcut tablolara sütun eklenmez. İlk yeni
+      pod Ready olunca `EvalStateSchemaPatch`: `monitor_eval_state`, `monitor_last_status`, `monitor_eval_type_state`,
+      `monitor_confirmations` + `idx_mls_type_domain` (tabloyla birlikte, boşken); PostgreSQL'de üçüne `fillfactor = 70`.
+      Uygulama kullanıcısının `CREATE TABLE` hakkı olmalı (öteki şema yamaları gibi).
+- [ ] **Veritabanı yazım yükü kabul edilebilir:** lider, değişen değerleri saniyede bir toplu yazar (izleme başına son sonuç
+      değişince ya da 2 dk'da bir) — bugünkü ölçeğin 3 katında tahmin ≤ ~50 satır/sn, toplu kesintide kısa patlamalar. Sorun
+      olursa canlı kapatma: Ayarlar → Genel → İzleme Alarmları → `site.monitor.eval-state.mode` = `off` (yalnız GLOBAL admin;
+      alarm kararları etkilenmez).
+- [ ] **İki pod'da P1 çıkış eşitliği TLS profilini de kapsar:** TLS profili yoklaması artık herhangi bir pod'dan çıkar
+      (sertifika taramalarıyla aynı hedefler). Tek pod'da etkisi yok.
+- [ ] **Geçiş penceresinde beklenenler biliniyor** — [`RUNBOOK.md` → Sürüm geçişi sırasında](RUNBOOK.md#sürüm-geçişi-sırasında-eski--yeni-pod-birlikte):
+      eski lider + yeni takipçide dönem başına en çok bir fazla TLS tıkı; eski pod kalıcı durumu yazmaz; yeni lider, eski
+      takipçinin heartbeat'ini görünce cron yan işlerini 20 sn erteler (eski takipçi alır — çift iş yok).
+- [ ] **Ayarlar:** iki yeni GLOBAL_ONLY anahtar — `site.monitor.eval-state.mode` (`verify`; env `EVAL_STATE_MODE`) ve
+      `site.monitor.scheduler.leader-yield.enabled` (açık; env `SCHEDULER_LEADER_YIELD_ENABLED`); açılış anahtarları
+      `site.monitor.scheduler.side-jobs.threads` (3) ve `site.monitor.scheduler.leader-yield.cron-defer-ms` (20000, en çok
+      25000). Helm değeri gerekmez (varsayılanlar `application.properties`'te).
+- [ ] **Davranış değişiklikleri duyuruldu** (iki pod'da): (1) saatlik sertifika taraması, gece temizliği, raporlar ve
+      hatırlatmalar çoğunlukla TAKİPÇİ pod'da koşar (günlükte o pod'un adıyla); tetiğe göre en çok 20 sn gecikebilir (cron payı
+      içinde); (2) Sistem Sağlığı → Küme kartında yeni bölümler: "Kalıcı değerlendirme durumu" (Küme), "Yanıtlayan pod" altında
+      "Değerlendirme kaydı" ve "Yan işler"; (3) Grafana kurum ölçülerini takipçi yayar (lider yalnız kendi pod ölçülerini).
+- [ ] **Grafana panosu:** revizyon 5 (sağlık bölümünün sonunda kalıcı değerlendirme durumu ve kurum ölçüsü yerleşimi
+      panelleri) — dağıtımdan sonra Ayarlar → Grafana panosu → JSON indir ve aynı UID ile içe aktarın.
+
+**Sonrası** (açılıştan ~15 dk sonra; günlükler TÜM pod'lardan — aşağıdaki "İlk 15 dakika" `L`)
+- [ ] Tablolar kuruldu — dördü dolu dönmeli:
+      `SELECT to_regclass('monitor_eval_state'), to_regclass('monitor_last_status'), to_regclass('monitor_eval_type_state'), to_regclass('monitor_confirmations');`
+      Günlükte her pod'da bir kez `Kalıcı değerlendirme durumu kaydedicisi çalışıyor`, ilk yeni pod'da
+      `Kalıcı değerlendirme durumu şeması: N değişiklik uygulandı`, lider pod'da `Kalıcı değerlendirme durumu: kuşak N alındı`
+      (`kubectl logs $L | grep "Kalıcı değerlendirme"`).
+- [ ] Kuşak satırını lider yazıyor ve nabız taze:
+      `SELECT gen, writer, to_timestamp(updated_ms / 1000.0) FROM monitor_eval_type_state WHERE alert_type = '*';` → `writer`
+      = Küme kartındaki tarama lideri (`<pod adı>-<8 hane>`), zaman en çok ~60 sn önce.
+- [ ] Sistem Sağlığı → Zamanlayıcı ve yürütücüler → Küme kartı → "Kalıcı değerlendirme durumu": ilk ~5 dk "henüz doğrulama
+      yok", sonra bir tur "bilinmiyor — eşitleniyor" (normal), ~10-15 dk'da **"bellek ve tablolar uyuşuyor"**. "Yanıtlayan pod"
+      lider iken "Değerlendirme kaydı" = "yazıyor (kuşak N)", yazma hatası 0, "son yazım başarısız" uyarısı yok.
+- [ ] Kanaryalar: `kubectl logs $L | grep -c "Kalıcı değerlendirme doğrulaması"` → 0 (uyuşmazlık WARN'ı);
+      `kubectl logs $L | grep -c "Kalıcı değerlendirme durumu yazılamadı"` → 0; `kubectl logs $L | grep "Yan iş .* başarısız"` → boş.
+- [ ] Tek pod: "Yan işler" satırı "başka canlı pod yok", ertelenen / bırakılan 0 (bugünkü yerleşim). İki pod: aşağıdaki
+      "Çok pod (1 → 2 replika)" → 4. adım.
+- [ ] Bir hafta boyunca günlük: Küme kartı "uyuşuyor", Grafana "Doğrulama uyuşmazlığı (tür)" 0 — 3-2 geçiş ölçütü için
+      kayıt tutun ([RUNBOOK → Kalıcı değerlendirme durumu](RUNBOOK.md#kalıcı-değerlendirme-durumu-çok-pod-sürüm-3-1)).
+
+**Geri alma:** `helm rollback` yeterli. Dört tablo, `round:tls-profile` satırı, `cluster_observations` satırları
+`eval-state-verify` / `metrics-org` ve iki ayar anahtarı kalır, eski kod kullanmaz (dış anahtar / tetikleyici yok — silmeyin,
+yeniden yükseltmede kaldığı yerden yazılır); eski sürümde TLS profili yine yalnız liderde koşar ve her pod kurum ölçülerini
+yayar.
+
 ### Kapsam ve sürüm
 - [ ] Dağıtılan şey **tag'lenmiş sürüm** (`git checkout v$VERSION`); çalışma ağacındaki commit'lenmemiş iş
       bu dağıtıma dahil değildir. GitHub → Actions'ta o commit için `ci.yml` **dört işi de yeşil**.
@@ -431,6 +486,8 @@ helm upgrade --install "$REL" ./helm/site-monitor --namespace "$NS" \
       `kubectl exec -n "$NS" <pod> -- cat /app/frontend/carry-report.json` → `included` dağıtımdan önce çalışan sürümü
       içeriyor ya da o sürümden beri arayüz değişmedi (`carried: 0` o zaman doğrudur) ve
       `curl -sI https://<host>/boot-guard.js | grep -i cache-control` → `no-store`.
+- [ ] **Çok pod Sürüm 3-1** (ilk kez alındıysa): yukarıdaki ["Çok pod Sürüm 3-1 öncesi / sonrası kontroller"](#çok-pod-sürüm-3-1-öncesi--sonrası-kontroller--bir-kerelik)
+      → **Sonrası** maddeleri (tablolar, kuşak satırı, Küme kartı doğrulaması, kanaryalar).
 - [ ] **Çok pod Sürüm 2b:** Sistem Sağlığı → Kendi kendini izleme → "Saat uyumu" Sağlıklı (pod saatleri arası fark < 5 sn); Zamanlayıcı ve
       yürütücüler → Küme kartında tarama lideri dolu; Heartbeat → "Pod'lar" kartında "sessiz" pod yok.
 - [ ] **Çok pod Sürüm 2a** (açılıştan ~5 dk sonra): her pod'un günlüğünde bir kez `Önbellek yolu çalışıyor`
@@ -483,7 +540,8 @@ kubectl get pod -n "$NS" -l app.kubernetes.io/instance="$REL" \
       yok. Eski HPA'nın büyüttüğü sayı kaldıysa (Helm 4 sunucu tarafı uygulamada alan sahipliği HPA'da kalabilir):
       `kubectl scale deploy/<ad> -n <staging-ns> --replicas=2`; HPA nesnesi durduysa `kubectl delete hpa/<ad> -n <staging-ns>`.
 - [ ] (Önerilen) Yeni imajla iki pod duman testi koşuldu: `SMOKE_IMAGE=<imaj> bash scripts/multipod-smoke.sh`
-      (Docker; tek lider, A'da açılan oturum B'de geçerli, lidere SIGTERM → devir ≤ 40 sn, çift iş yok).
+      (Docker; tek lider, A'da açılan oturum B'de geçerli, lidere SIGTERM → devir ≤ 40 sn ve geri, Sürüm 3-1'den beri her
+      devirden sonra kalıcı değerlendirme durumu doğrulaması 0 uyuşmazlık + devralınan satırlar, çift iş yok).
 
 ### 1. Ön koşullar (P1-P5) — her biri kanıtıyla
 - [ ] **P1 — Her node'dan aynı çıkış.** Pod'ların koşabileceği her node'da vekil (RDAP), SMTP, LDAP / AD, push ağ
@@ -536,7 +594,14 @@ kubectl get pod -n "$NS" -l app.kubernetes.io/instance="$REL" \
       `DUP_TOTAL=0` ve `STUCK_TOTAL=0` beklenir; tek tük kontrol çifti (hatadan sonraki doğrulama kontrolü) normaldir —
       satırların anlamı: [`RUNBOOK.md` → Çok pod](RUNBOOK.md#çok-pod).
 - [ ] (İsteğe bağlı) Devir provası, düşük trafikli bir saatte: lider pod'u silin (`kubectl delete pod -n "$NS" <lider>`)
-      → diğer pod ≤ ~35 sn'de lider olur, izleme kesintisiz devam eder.
+      → diğer pod ≤ ~35 sn'de lider olur, izleme kesintisiz devam eder. Sürüm 3-1'den beri: yeni lider pod yanıtlarken
+      Küme kartı → "Değerlendirme kaydı" → "devralınan (kuşak N)" satırı dolu ve ~10 dk içinde "Kalıcı değerlendirme
+      durumu" yeni kuşakta yine "uyuşuyor" (aradaki "eşitleniyor" turu normal).
+- [ ] **Çok pod Sürüm 3-1 — yan işler takipçide:** Küme kartı → "Yanıtlayan pod" → "Yan işler": her iki pod'da "başka
+      canlı pod var", "lider erteleme açık"; ilk saat başından sonra lider pod'da "ertelendi" sayacı > 0 ve Sertifika
+      taraması kartında saatlik turu koşturan pod çoğunlukla takipçi. Kümenin tamamı: dedektörün bölüm 0b'si (turların son
+      sahiplenen pod'u — `round:cert-hourly`, `round:cert-stale`, `round:tls-profile` çoğunlukla takipçide). Grafana "Kurum
+      ölçülerini yayan pod" ≥ 1 (lider `sitemonitor_exporter_org_families` 0, takipçi 1).
 
 ### 5. Geri dönüş (2 → 1)
 - [ ] `master.yaml`: `replicaCount: 1` **ve** `podDisruptionBudget.enabled: false` (tek replikada `minAvailable: 1`
@@ -566,6 +631,8 @@ kubectl rollout status "$DEPLOY" -n "$NS"
   kolon eski sürümün INSERT'ünü kırar — sürümün CHANGELOG'unda böyle bir şema notu varsa geri almadan önce okuyun.
   Çok pod sürüm 1'in iki tekil indeksi (`ux_push_eventless_key_user`, `ux_noe_one_ongoing`) geri almada kalır ve silinmez:
   eski sürümün yazımları önce "var mı?" diye bakar ve tekil ihlalini yakalar (ayrıntı: [`RUNBOOK.md` → Geri alma](RUNBOOK.md#geri-alma-rollback)).
+  Çok pod Sürüm 3-1'in dört tablosu (`monitor_eval_state`, `monitor_last_status`, `monitor_eval_type_state`,
+  `monitor_confirmations`) ve `round:tls-profile` satırı da kalır; eski sürüm onları hiç okumaz.
 - **Secret key bu dağıtımda değiştiyse** rollback kurtarmaz: yeni anahtarla şifrelenen girişler eski anahtarla
   çözülemez. Bu yüzden anahtar değişimi hiçbir yayınla birlikte yapılmaz.
 - Son çare: DB yedeğinden geri yükleme (veri kaybı: yedekten sonraki kayıtlar) — platform ekibiyle.
