@@ -493,6 +493,50 @@ describe('AuditLogViewer', () => {
     expect(alert.textContent).toMatch(/#7/)
   })
 
+  // Zincirin yeniden başlatılması (2026-10-23): doğrulama en yeni yeniden başlatma satırından başlar
+  it('zincir yeniden başlatıldıysa: doğrulandığı tarih + öncesindeki doğrulanamayan kayıt sayısı söylenir', async () => {
+    api.admin.getAuditIntegrity.mockResolvedValue({ success: true, data: {
+      ok: true, checked: 12, broken_seq: '', broken_id: '', unverified: 4897,
+      verified_from: { id: 5000, seq: 4899, event_time: '2026-10-23T10:15:00' },
+    } })
+    render(<AuditLogViewer />)
+    await waitFor(() => expect(api.admin.getAuditLogs).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole('button', { name: /Bütünlüğü doğrula|Verify integrity/ }))
+    expect(await screen.findByText(/Zincir sağlam|Chain intact/)).toBeInTheDocument()
+    const note = await waitFor(() => {
+      const el = document.querySelector('[data-slot="audit-integrity-verified-from"]')
+      expect(el).not.toBeNull()
+      return el
+    })
+    expect(note.textContent).toMatch(/onarımdan itibaren doğrulandı|verified since the repair/)
+    expect(note.textContent).toMatch(/4[.,]897/)
+    expect(note.textContent).toMatch(/2026/)
+    expect(note.textContent).toMatch(/doğrulanamaz|cannot be verified/)
+    expect(screen.queryByRole('alert')).toBeNull()   // sağlam: kırık şeridi yok
+  })
+
+  it('eski sunucu (verified_from / unverified yok) → bugünkü metin, ek şerit çizilmez', async () => {
+    api.admin.getAuditIntegrity.mockResolvedValue({ success: true, data: { ok: true, checked: 42 } })
+    render(<AuditLogViewer />)
+    await waitFor(() => expect(api.admin.getAuditLogs).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole('button', { name: /Bütünlüğü doğrula|Verify integrity/ }))
+    expect(await screen.findByText(/Zincir sağlam|Chain intact/)).toBeInTheDocument()
+    expect(document.querySelector('[data-slot="audit-integrity-verified-from"]')).toBeNull()
+  })
+
+  it('yeniden başlatmadan sonra kırık: kırık şeridi + doğrulamanın başladığı yer birlikte', async () => {
+    api.admin.getAuditIntegrity.mockResolvedValue({ success: true, data: {
+      ok: false, checked: 3, broken_seq: 4902, broken_id: 5003, unverified: 10,
+      verified_from: { id: 5000, seq: 4899, event_time: '2026-10-23T10:15:00' },
+    } })
+    render(<AuditLogViewer />)
+    await waitFor(() => expect(api.admin.getAuditLogs).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole('button', { name: /Bütünlüğü doğrula|Verify integrity/ }))
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toMatch(/#4902/)
+    expect(document.querySelector('[data-slot="audit-integrity-verified-from"]').textContent).toMatch(/\b10\b/)
+  })
+
   // ── Ayrıntı içeriği ─────────────────────────────────────────────────────────────────────
   it('DÜZ METİN ayrıntı ekranda gösterilir (JSON olmayan detail sessizce düşmez)', async () => {
     api.admin.getAuditLogs.mockResolvedValue(list([row({ id: 91, event_type: 'USER_PUSH_TEST', resource_type: 'USER_PUSH', resource_id: 'test',

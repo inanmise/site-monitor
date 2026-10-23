@@ -86,7 +86,7 @@ export default function AuditLogViewer({ fullScope = true, teamNames }) {
   const [selectedId, setSelectedId] = useState(() => readUrlInt(URL_PREFIX + 'sel', null))
   const [extraRows, setExtraRows] = useState({})           // id → satır: ilişkili listeden / derin bağlantıdan açılan, sayfada olmayan
   const [sheetOpen, setSheetOpen] = useState(() => readUrlInt(URL_PREFIX + 'sel', null) != null)
-  const [integrity, setIntegrity] = useState(null)         // { loading } | { ok, checked, broken_seq } | { error }
+  const [integrity, setIntegrity] = useState(null)         // { loading } | { ok, checked, broken_seq, unverified?, verified_from? } | { error }
   const [autoRefresh, setAutoRefresh] = useState(false)
   const [exporting, setExporting] = useState(null)         // 'csv' | 'json' | null
 
@@ -284,6 +284,17 @@ export default function AuditLogViewer({ fullScope = true, teamNames }) {
         <AlertBanner tone="danger" role="alert" title={t('audit.integrityBroken')} className="mb-0">
           {t('audit.integrityBrokenBody', integrity.broken_seq || '?')}
         </AlertBanner>
+      )}
+      {/* Zincir yeniden başlatıldıysa (2026-10-23) doğrulama o satırdan başlar; öncesi onarımdan önce yazıldı — doğrulanamaz.
+          Eski sunucu bu alanı göndermez → bugünkü metin. */}
+      {integrity && !integrity.loading && !integrity.error && integrity.verified_from && (
+        <div data-slot="audit-integrity-verified-from">
+          <AlertBanner tone="info" title={t('audit.integrityVerifiedFromTitle')} className="mb-0">
+            {t('audit.integrityVerifiedFromBody',
+              formatExact(integrity.verified_from.event_time, locale),
+              typeof integrity.unverified === 'number' ? integrity.unverified.toLocaleString(locale) : '—')}
+          </AlertBanner>
+        </div>
       )}
 
       {/* ── Özet + eğilim (yalnız tam kapsam; yalnız sunucunun döndürdüğü sayılar) ── */}

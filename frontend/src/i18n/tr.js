@@ -9567,6 +9567,7 @@ export const TR = {
   'audit.ev.CA_PINNED': 'Sertifika otoritesi sabitlendi',
   'audit.ev.CA_ROTATED': 'Sertifika otoritesi değişti',
   'audit.ev.AUDIT_REPLAY': 'Denetim kaydı geri alındı',
+  'audit.ev.AUDIT_CHAIN_RESTART': 'Denetim zinciri yeniden başlatıldı',
   'audit.ev.USER_BULK_DEACTIVATE': 'Kullanıcılar toplu pasife alındı',
   'audit.ev.USER_BULK_DEACTIVATE_UNDO': 'Toplu pasife alma geri alındı',
   'audit.ev.WEEKLY_REPORT_LINK_DENIED': 'Pasif hesabın haftalık rapor onay bağlantısı reddedildi',
@@ -9650,6 +9651,9 @@ export const TR = {
   'audit.exportDone':     'Dışa aktarma indirildi.',
   'audit.integrityRunning': 'Doğrulanıyor…',
   'audit.integrityBrokenBody': 'Zincir #{0} numaralı kayıtta kopuyor. Kayıtlar değiştirilmiş ya da silinmiş olabilir.',
+  // Zincirin yeniden başlatılması (2026-10-23): doğrulama en yeni yeniden başlatma satırından başlar
+  'audit.integrityVerifiedFromTitle': 'Zincir onarımdan itibaren doğrulandı',
+  'audit.integrityVerifiedFromBody': 'Zincir {0} tarihinden itibaren doğrulandı — öncesindeki {1} kayıt onarımdan önce yazıldı, doğrulanamaz.',
   'audit.statsError':     'Özet kartları yüklenemedi; kayıt listesi yine de kullanılabilir. Sayfayı yenileyip tekrar deneyin.',
   'audit.tile.events':    'Olaylar (7 gün)',
   'audit.tile.eventsHint':'Son 7 günde kaydedilen tüm denetim olayları.',
