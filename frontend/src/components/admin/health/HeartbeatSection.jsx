@@ -28,15 +28,19 @@ const STOPPED_SHOWN = 3
 function PodsCard({ t, heartbeat }) {
   const pods = heartbeat?.pods
   const silent = Number(heartbeat?.pods_silent) || 0
+  const live = Number(heartbeat?.pods_live) || 0
+  // Yeşil yalnız en az bir canlı pod varken (inceleme H3): liste boş / yalnız durmuş-yeniden başlamış süreçler (20.166.0'dan
+  // yükseltme — eski pod'ların heartbeat'i pod taşımaz) → nötr + dürüst açıklama
+  const tone = silent > 0 ? 'warning' : live >= 1 ? 'success' : 'muted'
   // Durmuş süreçler (dağıtımla kapanan, kapanış işaretli) listeyi uzatmasın: en yeni 3'ü, kalanı sayı (sunucu sırası: canlı →
   // sessiz → yeniden başladı → durdu)
   const stopped = Array.isArray(pods) ? pods.filter((p) => p.state === 'stopped') : []
   const shown = Array.isArray(pods) ? [...pods.filter((p) => p.state !== 'stopped'), ...stopped.slice(0, STOPPED_SHOWN)] : []
   const stoppedMore = Math.max(0, stopped.length - STOPPED_SHOWN)
   return (
-    <SysCard icon={Server} cardKey="heartbeat-pods" iconClass={silent > 0 ? WARN_T : pods?.length ? OK_T : 'text-muted-foreground'} title={t('hmp.podsTitle')}
+    <SysCard icon={Server} cardKey="heartbeat-pods" iconClass={tone === 'warning' ? WARN_T : tone === 'success' ? OK_T : 'text-muted-foreground'} title={t('hmp.podsTitle')}
       right={pods == null ? <ToneBadge tone="muted" className="font-semibold">{t('health.stUnknown')}</ToneBadge>
-        : <ToneBadge tone={silent > 0 ? 'warning' : 'success'} className="font-semibold tabular-nums" data-slot="hb-pods-live">
+        : <ToneBadge tone={tone} className="font-semibold tabular-nums" data-slot="hb-pods-live" data-tone={tone}>
           {t('hmp.podsLive', heartbeat.pods_live ?? 0)}{silent > 0 && ` · ${t('hmp.podsSilentCount', silent)}`}</ToneBadge>}>
       <PodChip t={t} scope="cluster" />
       {pods == null ? (
@@ -44,6 +48,8 @@ function PodsCard({ t, heartbeat }) {
       ) : pods.length === 0 ? (
         <p className="text-[0.9em] text-muted-foreground" data-slot="hb-pods-empty">{t('hmp.podsEmpty')}</p>
       ) : (
+        <>
+        {live === 0 && <p className="text-[0.9em] text-muted-foreground" data-slot="hb-pods-none-live">{t('hmp.podsNoneLive')}</p>}
         <ul className="flex list-none flex-col gap-2" data-slot="hb-pods">
           {shown.map((p) => (
             <li key={p.id} data-slot="hb-pod" data-state={p.state} className="flex flex-col gap-0.5 border-b pb-2 last:border-b-0 last:pb-0">
@@ -52,10 +58,12 @@ function PodsCard({ t, heartbeat }) {
                 <ToneBadge tone={POD_STATE_TONE[p.state] || 'muted'} className="font-semibold">{t(`hmp.podState.${p.state}`)}</ToneBadge>
                 {p.id === heartbeat?.served_by && <span className="text-xs text-muted-foreground">· {t('hmp.servingThis')}</span>}
               </div>
-              <span className="text-xs text-muted-foreground">{t('hmp.lastBeat', formatDate(p.last_seen), relTime(p.last_seen, t) || '')}</span>
+              <span className="text-xs text-muted-foreground">{t('hmp.lastBeat', formatDate(p.last_seen), relTime(p.last_seen, t) || '')}
+                {p.replaced_by && <span className="[overflow-wrap:anywhere]"> · {t('hmp.replacedBy', p.replaced_by)}</span>}</span>
             </li>
           ))}
         </ul>
+        </>
       )}
       {stoppedMore > 0 && <p className="text-xs text-muted-foreground" data-slot="hb-pods-stopped-more">{t('hmp.podsStoppedMore', stoppedMore)}</p>}
       {silent > 0 && <AlertBanner tone="warning" className="mb-0">{t('hmp.podSilentHint')}</AlertBanner>}

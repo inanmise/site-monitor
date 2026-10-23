@@ -44,7 +44,9 @@ const REASON_TEXT = {
 }
 export function reasonText(r, t) {
   const f = REASON_TEXT[r.code]
-  return f ? f(t, r.args || []) : r.code
+  const base = f ? f(t, r.args || []) : r.code
+  // Pod başına değer (bellek, yürütücü, havuz, HTTP): hangi pod'un değeri olduğu söylenir (çok pod R2b, inceleme H1)
+  return r.pod ? t('hmp.reasonOnPod', base, r.pod) : base
 }
 
 /** "Son kontrol 12:29:41 · 30 sn'de bir" çipi + Duraklat/Sürdür + Yenile. */
@@ -160,35 +162,52 @@ export function HealthKpiGrid({ t, kpis, onGoSection, sectionLabel }) {
   const ex = kpis.executor
   const db = kpis.db
   const ints = kpis.integrations
+  // Kapsam (çok pod R2b, inceleme H1): çalışma süresi / yürütücü / DB / bellek sağlık isteğini yanıtlayan pod'un, HTTP
+  // kutucukları /http-metrics'i yanıtlayan pod'un (ayrı istek — başka pod olabilir); zamanlayıcı ve entegrasyonlar küme.
+  const pods = kpis.pods || {}
+  const scopeTag = (scope) => (
+    <span data-slot="kpi-scope" data-scope={scope} className="rounded-md border px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
+      {scope === 'cluster' ? t('hmp.scopeCluster') : t('hmp.thisPod')}
+    </span>
+  )
   const items = [
-    { key: 'uptime', section: 'heartbeat', icon: Activity, label: t('deploy.uptime'), tone: tone(hb.level),
+    { key: 'uptime', section: 'heartbeat', icon: Activity, label: t('deploy.uptime'), tone: tone(hb.level), scope: 'pod',
       value: hb.seconds != null ? formatDurationShort(hb.seconds, t) : '—', sub: `${t('health.hbSignal')}: ${hbText}` },
     // Değer: çalışıyorsa "Çalışıyor", sıradaki koşu gelecekteyse "30 dk sonra", aksi hâlde "Boşta" (geçmiş zaman uzar, sığmaz)
-    { key: 'scheduler', section: 'sched', icon: Clock, label: t('sys.schedulerTitle'), tone: tone(sch.level),
+    { key: 'scheduler', section: 'sched', icon: Clock, label: t('sys.schedulerTitle'), tone: tone(sch.level), scope: 'cluster',
       value: sch.running ? t('sys.running') : (isFuture(sch.nextRun) ? relTime(sch.nextRun, t) : t('sys.idle')),
       sub: sch.lastRun ? `${t('sys.lastRun')}: ${relTime(sch.lastRun, t) || '—'}` : t('sys.never') },
-    { key: 'executor', section: 'sched', icon: Zap, label: t('health.kpiExecutor'), tone: ex ? tone(ex.level) : undefined,
+    { key: 'executor', section: 'sched', icon: Zap, label: t('health.kpiExecutor'), tone: ex ? tone(ex.level) : undefined, scope: 'pod',
       value: ex ? `${ex.active} / ${ex.pool}` : '—', sub: ex ? t('health.queueShort', ex.queue, ex.cap) : t('sys.poolUnavailable') },
-    { key: 'db', section: 'db', icon: Database, label: t('health.kpiDbConn'), tone: db ? tone(db.level) : undefined,
+    { key: 'db', section: 'db', icon: Database, label: t('health.kpiDbConn'), tone: db ? tone(db.level) : undefined, scope: 'pod',
       value: db ? `${db.active} / ${db.max}` : '—', sub: db && db.ms != null ? `${t('health.dbResponseMs')}: ${db.ms} ms` : t('sys.poolUnavailable') },
-    { key: 'http-ms', section: 'http', icon: Timer, label: t('health.kpiHttpMs'), tone: tone(kpis.httpMs.level),
+    { key: 'http-ms', section: 'http', icon: Timer, label: t('health.kpiHttpMs'), tone: tone(kpis.httpMs.level), scope: 'pod',
       value: kpis.httpMs.value != null ? `${kpis.httpMs.value} ms` : '—', sub: t('sys.metricsTitle'), spark: kpis.httpMs.series, color: '#f59e0b' },
-    { key: 'http-err', section: 'http', icon: Percent, label: t('health.kpiErrRate'), tone: tone(kpis.httpErr.level),
+    { key: 'http-err', section: 'http', icon: Percent, label: t('health.kpiErrRate'), tone: tone(kpis.httpErr.level), scope: 'pod',
       value: kpis.httpErr.value != null ? formatPercent(kpis.httpErr.value) : '—', sub: t('sys.metricsTitle'), spark: kpis.httpErr.series, color: '#ef4444' },
-    { key: 'memory', section: 'sys', icon: MemoryStick, label: t('sys.memTitle'), tone: kpis.memory ? tone(kpis.memory.level) : undefined,
+    { key: 'memory', section: 'sys', icon: MemoryStick, label: t('sys.memTitle'), tone: kpis.memory ? tone(kpis.memory.level) : undefined, scope: 'pod',
       value: kpis.memory ? formatPercent(kpis.memory.pct) : '—', sub: kpis.memory ? `${kpis.memory.usedMb} / ${kpis.memory.maxMb} MB` : '—',
       spark: kpis.memory?.series, color: '#10b981' },
-    { key: 'integrations', section: 'integrations', icon: Plug, label: t('health.kpiIntegrations'), tone: tone(ints.level),
+    { key: 'integrations', section: 'integrations', icon: Plug, label: t('health.kpiIntegrations'), tone: tone(ints.level), scope: 'cluster',
       value: `${ints.ok} / ${ints.total}`, sub: t('health.kpiIntegrationsSub', ints.ok, ints.total) },
   ]
+  const httpOther = pods.http && pods.health && pods.http !== pods.health
   return (
-    <div data-slot="health-kpis" role="group" aria-label={t('health.kpiGridLabel')}
-      className="grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3 lg:grid-cols-4 2xl:grid-cols-8">
-      {items.map((it) => (
-        <KpiCard key={it.key} kpiKey={it.key} icon={it.icon} value={it.value} label={it.label} sub={it.sub} tone={it.tone}
-          title={t('health.kpiHint', sectionLabel(it.section))} onClick={() => onGoSection(it.section)}
-          spark={it.spark && it.spark.length > 1 ? <HealthSpark data={it.spark} color={it.color} /> : null} />
-      ))}
+    <div className="flex flex-col gap-1.5">
+      <div data-slot="health-kpis" role="group" aria-label={t('health.kpiGridLabel')}
+        className="grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3 lg:grid-cols-4 2xl:grid-cols-8">
+        {items.map((it) => (
+          <KpiCard key={it.key} kpiKey={it.key} icon={it.icon} value={it.value} label={it.label} sub={it.sub} tone={it.tone}
+            top={scopeTag(it.scope)}
+            title={t('health.kpiHint', sectionLabel(it.section))} onClick={() => onGoSection(it.section)}
+            spark={it.spark && it.spark.length > 1 ? <HealthSpark data={it.spark} color={it.color} /> : null} />
+        ))}
+      </div>
+      {pods.health && (
+        <p data-slot="kpi-pods" className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
+          {t('hmp.kpiPods', pods.health)}{httpOther && ` · ${t('hmp.kpiPodsHttp', pods.http)}`}
+        </p>
+      )}
     </div>
   )
 }
