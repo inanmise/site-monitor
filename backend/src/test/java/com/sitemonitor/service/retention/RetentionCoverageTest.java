@@ -31,7 +31,9 @@ class RetentionCoverageTest {
      */
     private static final List<String> RAW_DDL_TABLES = List.of(
             "scheduler_lock", "login_anomaly_state", "monitor_check_daily", "app_user_teams", "page_usage_daily", "login_anomaly_ack",
-            "schema_patch_markers", "monitor_check_schedule", "cache_bus", "scan_runs", "cluster_observations");
+            "schema_patch_markers", "monitor_check_schedule", "cache_bus", "scan_runs", "cluster_observations",
+            // Kalıcı değerlendirme durumu (2026-10-23, çok pod Sürüm 3-1, A1) — EvalStateSchemaPatch, ham DDL
+            "monitor_eval_state", "monitor_last_status", "monitor_eval_type_state", "monitor_confirmations");
 
     /** Muafiyetler — HER BİRİ gerekçeli. Gerekçesiz muafiyet eklenemez (değer boş olamaz). */
     private static final Map<String, String> EXEMPT = Map.ofEntries(
