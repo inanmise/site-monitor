@@ -2,6 +2,7 @@ import { createContext, useContext, useState, useCallback, useEffect, useMemo, u
 
 import { LANG_STORAGE_KEY, localeFor, setDateLocale, setSessionLang } from './dateLocale.js'
 import { TR } from './tr.js'
+import { reloadForStaleBundle } from '../utils/chunkReloadGuard.js'
 
 // Anahtar ve dil→yerel eslemesi dateLocale.js'te TEK kaynakta: `api/client.js`'teki duz
 // formatlayicilar da oradan okuyor, iki yerde yazilsa sessizce ayrisirlardi.
@@ -144,6 +145,11 @@ const LangCtx = (globalThis.__smLangCtx ??= createContext(FALLBACK_CTX))
  *   <li>İndirme başarısız: arayüz Türkçe kalır, {@code loadFailures} artar (LanguageLoadNotice bildirim gösterir).
  *       Açılışta başarısızsa saklı tercih DEĞİŞMEZ (geçici hata kalıcı tercihi bozmasın); sunucu iletileri arayüzle
  *       aynı dilde kalsın diye X-Lang bu oturum için 'tr'ye zorlanır (dateLocale.setSessionLang).</li>
+ *   <li>Açılışta ilk başarısızlık (2026-10-23, çok pod R2b · MP-47): önce sayfa BİR KEZ yenilenir (yuvarlanan
+ *       dağıtımda bu paketin İngilizce parçası öbür podda olabilir — yenileme taze index'i ve onun parçalarını getirir;
+ *       açılış ekranı yenilenene kadar kalır). Hak açılış koruması ve ErrorBoundary ile ORTAK
+ *       (utils/chunkReloadGuard.js); hak yoksa ya da yenileme sonrası yine inmezse yukarıdaki Türkçe yedek yol.
+ *       Çalışırken TR→EN geçişindeki hata sayfayı YENİLEMEZ (kaydedilmemiş iş kaybolmasın) — eskisi gibi bildirim.</li>
  * </ul>
  */
 export function LangProvider({ children, fallback = null }) {
@@ -177,6 +183,7 @@ export function LangProvider({ children, fallback = null }) {
       () => { if (!cancelled) setState((s) => ({ ...s, ready: true })) },
       () => {
         if (cancelled) return
+        if (reloadForStaleBundle()) return                          // bir kez yenile; açılış ekranı yerinde kalır
         langRef.current = 'tr'
         setSessionLang('tr')
         setState((s) => ({ ...s, lang: 'tr', ready: true, loadFailures: s.loadFailures + 1 }))

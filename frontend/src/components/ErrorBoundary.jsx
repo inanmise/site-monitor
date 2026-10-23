@@ -1,6 +1,6 @@
 import { Component, useState } from 'react'
 import { currentVersion } from '../utils/appVersion.js'
-import { claimChunkReload } from '../utils/chunkReloadGuard.js'
+import { reloadForStaleBundle } from '../utils/chunkReloadGuard.js'
 import { AlertOctagon, Bug, ChevronDown } from 'lucide-react'
 import { useT } from '../i18n/index.jsx'
 import IssueReportModal from './IssueReportModal.jsx'
@@ -110,12 +110,15 @@ function ErrorFallback({ onReload, errorText, reportRef, reportState }) {
 // tarayıcı eski index.html'deki hash'li chunk'ı ister → 404 → ChunkLoadError). Lazy
 // sekmeler (Olaylar, Admin, Raporlar…) bu yüzden "Bir şey ters gitti" verebilir.
 // Yenileme döngüsü koruması SAYAÇLA (2026-10-09) — `utils/chunkReloadGuard.js`: paket sürümü başına oturumda en çok
-// bir otomatik yenileme; sonrası bu hata ekranı.
+// bir otomatik yenileme; sonrası bu hata ekranı. Hak açılış koruması (public/boot-guard.js) ve dil yükleyiciyle ORTAK
+// (2026-10-23, çok pod R2b · MP-47): üçü birlikte en çok bir kez yeniler.
+// "Unable to preload CSS": tembel parçanın CSS'i yüklenemedi (Vite __vitePreload) — yuvarlanan dağıtımın tipik hatası;
+// eskiden "bilinmeyen hata" sayılıp yöneticiye hata bildirimi olarak gidiyordu.
 function isChunkLoadError(error) {
   const name = error?.name || ''
   const msg = error?.message || ''
   return name === 'ChunkLoadError'
-    || /Loading chunk|Loading CSS chunk|dynamically imported module|Importing a module script failed|Failed to fetch dynamically imported/i.test(msg)
+    || /Loading chunk|Loading CSS chunk|dynamically imported module|Importing a module script failed|Failed to fetch dynamically imported|Unable to preload CSS/i.test(msg)
 }
 
 // Otomatik bildirim dedupe'u: aynı hata imzası oturumda bir kez, toplamda oturum başına en çok 3
@@ -140,10 +143,7 @@ export default class ErrorBoundary extends Component {
     console.error('[ErrorBoundary]', error, stack)
     // Bayat bundle → chunk yüklenemedi: bu paket sürümü için oturumda bir kez zorla tam yenile (sonsuz
     // döngü olmasın diye sessionStorage sayacı ile korunur). Kalıcı hata ise fallback kalır.
-    if (isChunkLoadError(error) && claimChunkReload()) {
-      window.location.reload()
-      return
-    }
+    if (isChunkLoadError(error) && reloadForStaleBundle()) return
     // Component stack'i de fallback'te göster (hangi bileşende patladığı görünür).
     if (stack) {
       this.setState(s => ({ errorText: `${s.errorText}\n\nComponent stack:${stack}` }))

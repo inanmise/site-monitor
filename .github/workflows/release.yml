@@ -351,6 +351,15 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Önceki sürümün sayfa dosyaları (2026-10-23, çok pod R2b · MP-47): yuvarlanan dağıtımda eski podun index.html'i
+      # kendi hash'li /assets/* dosyalarını yeni poda da sorabilir. Yeni imaj önceki sürümün (prev_tag) KENDİ varlıklarını
+      # da taşır (Dockerfile "previous-release"); imaj yoksa boş → bugünkü derleme. Özete sabitlenir (scripts/resolve-previous-image.sh).
+      - name: Resolve previous release image
+        id: prev
+        env:
+          PREV_REF: ghcr.io/${{ github.repository_owner }}/site-monitor:${{ steps.ver.outputs.prev_tag }}
+        run: echo "image=$(bash scripts/resolve-previous-image.sh "$PREV_REF")" >> "$GITHUB_OUTPUT"
+
       - name: Build and push Docker image
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
@@ -363,6 +372,7 @@ jobs:
             VERSION=${{ steps.ver.outputs.next }}
             BUILD_DATE=${{ steps.ver.outputs.build_time }}
             GIT_COMMIT=${{ github.sha }}
+            PREVIOUS_IMAGE=${{ steps.prev.outputs.image }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

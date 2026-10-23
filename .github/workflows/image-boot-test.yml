@@ -108,10 +108,15 @@ jobs:
           echo "::error::/health/readiness did not report UP within 180 s"
           exit 1
 
-      - name: Boot checks (health, auth gate, schema patches, startup log)
+      # asset-lists/: the image's own and carried asset lists (MP-47, 2026-10-23) — image-boot-check.sh step 7 asks the
+      # running app for one own and one carried previous-release asset (200 + immutable) and a missing one (plain 404).
+      - name: Boot checks (health, auth gate, schema patches, startup log, carried assets)
         run: |
           docker logs sm > boot.log 2>&1
-          bash scripts/image-boot-check.sh http://localhost:8080 boot.log
+          mkdir -p asset-lists
+          docker cp sm:/app/frontend/own-assets.txt asset-lists/ || echo "::warning::own-assets.txt not in the image"
+          docker cp sm:/app/frontend/carried-assets.txt asset-lists/ || echo "::warning::carried-assets.txt not in the image"
+          bash scripts/image-boot-check.sh http://localhost:8080 boot.log asset-lists
 
       - name: Container log (last 200 lines)
         if: failure()
