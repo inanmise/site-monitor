@@ -240,7 +240,7 @@ class AlertEventStaleWriteMultiPodTest {
     // ── onay ────────────────────────────────────────────────────────────────────────────────────────────────
 
     @Test
-    @DisplayName("Onay: okuma ile yazım arasında kapanan alarm KAPALI kalır (onay yazılmaz), yanıt taze satır")
+    @DisplayName("Onay: okuma ile yazım arasında kapanan alarm KAPALI kalır, onay yazılmaz ve çağıran 409 ALERT_ALREADY_RESOLVED alır (AL-1)")
     void acknowledge_closedBetweenReadAndWrite_staysClosed() {
         AlertEvent a = open("ack.example.com", PORT, "HIGH", CTX, ago(1, ChronoUnit.HOURS), ago(1, ChronoUnit.HOURS));
         AlertEventRepository repo = delegating();
@@ -250,12 +250,32 @@ class AlertEventStaleWriteMultiPodTest {
             return r;
         }).doAnswer(i -> realRepo.findById(i.getArgument(0))).when(repo).findById(a.getId());
 
-        AlertEvent out = pod(repo).acknowledge(a.getId(), "Ayşe Yılmaz", "bakıyoruz");
+        EscalationService p = pod(repo);
+        assertThatThrownBy(() -> p.acknowledge(a.getId(), "Ayşe Yılmaz", "bakıyoruz"))
+                .isInstanceOf(EscalationService.AlertClosedMeanwhileException.class)
+                .satisfies(e -> assertThat(((EscalationService.AlertClosedMeanwhileException) e).getCode())
+                        .isEqualTo("ALERT_ALREADY_RESOLVED"));
 
         AlertEvent r = row(a.getId());
         assertClosedBy(r, "kullanici");
         assertThat(r.getAcknowledged()).as("kapanmış alarma onay yazılmaz").isFalse();
-        assertThat(out.getResolved()).as("yanıt taze satır").isTrue();
+    }
+
+    @Test
+    @DisplayName("Onay: okuma ile yazım arasında SİLİNEN alarm — bayat açık satır dönmez, 404 (AL-1)")
+    void acknowledge_deletedBetweenReadAndWrite_notFound() {
+        AlertEvent a = open("ack-del.example.com", PORT, "HIGH", CTX, ago(1, ChronoUnit.HOURS), ago(1, ChronoUnit.HOURS));
+        AlertEventRepository repo = delegating();
+        doAnswer(i -> {
+            Optional<AlertEvent> r = realRepo.findById(i.getArgument(0));
+            jdbc.update("DELETE FROM alert_events WHERE id = ?", a.getId());
+            return r;
+        }).doAnswer(i -> realRepo.findById(i.getArgument(0))).when(repo).findById(a.getId());
+
+        EscalationService p = pod(repo);
+        assertThatThrownBy(() -> p.acknowledge(a.getId(), "Ayşe Yılmaz", "bakıyoruz"))
+                .isInstanceOf(java.util.NoSuchElementException.class);
+        assertThat(realRepo.findById(a.getId())).isEmpty();
     }
 
     @Test
@@ -425,22 +445,69 @@ class AlertEventStaleWriteMultiPodTest {
     }
 
     @Test
-    @DisplayName("İzleme ilk bildirimi (fırtınaya bağlandı): değerlendirme sırasında kapanan alarm yeniden AÇILMAZ; fırtına bağı yazılır")
+    @DisplayName("İzleme ilk bildirimi (fırtınaya bağlandı): değerlendirme sırasında ELLE ÇÖZÜLEN alarm yeniden AÇILMAZ ve üye YAPILMAZ (AL-4) — gözlem satırı 'düzeldi'")
     void monitoringInitial_stormSuppressed_closedMeanwhile_staysClosed() {
         String domain = "mon-storm.example.com";
         when(storm.evaluate(any(), any())).thenAnswer(i -> {
             AlertEvent e = i.getArgument(0);
-            closeElsewhere(e.getId());
+            jdbc.update("INSERT INTO alert_storm_members (storm_id, alert_event_id, joined_at, join_kind) VALUES (5, ?, ?, 'ATTACH')",
+                    e.getId(), ISO.format(Instant.now()));
+            closeElsewhere(e.getId());   // elle çözüm: o an fırtına üyesi değildi → bireysel çözüm postası gitti
             e.setStormId(5L);
             return StormService.StormAction.SUPPRESSED;
         });
 
         pod(delegating()).processConfirmedOutage(domain, PORT, "CRITICAL", monitorCtx());
 
-        AlertEvent r = row(onlyId(domain));
+        Long id = onlyId(domain);
+        AlertEvent r = row(id);
         assertClosedBy(r, "kullanici");
+        assertThat(r.getStormId()).as("kapanmış alarm fırtınaya bağlanmaz — kurtarma onu ikinci kez saymaz").isNull();
+        assertThat(jdbc.queryForObject("SELECT leave_kind FROM alert_storm_members WHERE storm_id = 5 AND alert_event_id = ?",
+                String.class, id)).isEqualTo("RECOVERED");
+        assertThat(jdbc.queryForObject("SELECT left_at FROM alert_storm_members WHERE storm_id = 5 AND alert_event_id = ?",
+                String.class, id)).isNotNull();
+    }
+
+    @Test
+    @DisplayName("İzleme ilk bildirimi (fırtınaya bağlandı, açık): bağ + grup + damga yazılır")
+    void monitoringInitial_stormSuppressed_open_linkWritten() {
+        String domain = "mon-storm-open.example.com";
+        when(storm.evaluate(any(), any())).thenAnswer(i -> {
+            AlertEvent e = i.getArgument(0);
+            e.setStormId(5L);
+            e.setGroupName("Ödeme");
+            return StormService.StormAction.SUPPRESSED;
+        });
+
+        pod(delegating()).processConfirmedOutage(domain, PORT, "CRITICAL", monitorCtx());
+
+        AlertEvent r = row(onlyId(domain));
+        assertThat(r.getResolved()).isFalse();
         assertThat(r.getStormId()).isEqualTo(5L);
+        assertThat(r.getGroupName()).isEqualTo("Ödeme");
         assertThat(r.getLastReAlertAt()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("İzleme ilk bildirimi (bireysel): gönderim sırasında BAŞKA fırtınanın açılışı bu alarmı eş olarak bağladıysa bağ korunur (AL-2) — çözümde fırtına üyesi sayılır")
+    void monitoringInitial_individual_keepsConcurrentStormLink() {
+        String domain = "mon-peer.example.com";
+        when(storm.evaluate(any(), any())).thenReturn(StormService.StormAction.SEND_INDIVIDUAL);
+        duringSend("INITIAL", () -> jdbc.update("UPDATE alert_events SET storm_id = 9 WHERE domain = ?", domain));
+
+        EscalationService p = pod(delegating());
+        p.processConfirmedOutage(domain, PORT, "CRITICAL", monitorCtx());
+
+        Long id = onlyId(domain);
+        assertThat(row(id).getStormId()).as("eş bağı ezilmez (eski bütün kayıt NULL yazardı)").isEqualTo(9L);
+        assertThat(row(id).getLastReAlertAt()).isNotNull();
+
+        when(storm.isActive(9L)).thenReturn(true);
+        p.resolveMonitoringAlertsForDomain(domain, PORT);
+        assertThat(row(id).getResolved()).isTrue();
+        verify(selfMock, never()).sendResolutionNotificationAsync(any(), any(), any());   // toplu kurtarma fırtınadan
+        verify(push).enqueueResolve(org.mockito.ArgumentMatchers.argThat(e -> e != null && id.equals(e.getId())), any(), any());
     }
 
     @Test

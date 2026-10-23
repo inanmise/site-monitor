@@ -20,7 +20,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -193,6 +192,34 @@ public class EscalationService {
         if (writer == null || event == null || event.getId() == null) return alertEventRepo.save(event);
         writer.write(event, false, props);
         return event;
+    }
+
+    /** {@link #persist} — yalnız alarm hâlâ AÇIKSA; {@code false} = arada kapandı, hiçbir şey yazılmadı. Yazıcı yokken eski kayıt. */
+    private boolean persistIfOpen(AlertEvent event, String... props) {
+        AlertEventFieldWriter writer = fieldWriter;
+        if (writer == null || event == null || event.getId() == null) {
+            alertEventRepo.save(event);
+            return true;
+        }
+        return writer.write(event, true, props) > 0;
+    }
+
+    /**
+     * Fırtınaya bağlanan YENİ alarm, bağ yazılmadan önce kapandı (elle çözüm — inceleme AL-4): üye değildir. Bellekteki bağ
+     * düşer (bağlanma doğrulaması atlanır) ve gözlem satırı "düzeldi" ile kapanır (yoksa üye listesinde süresiz katılmış görünürdü).
+     */
+    private void leftStormClosedMeanwhile(AlertEvent event) {
+        Long stormId = event.getStormId();
+        event.setStormId(null);
+        log.info("🌩 Alarm fırtınaya bağlanırken kapandı — üye yapılmadı: {} [{}] #{} (storm #{})", event.getDomain(),
+                event.getAlertType(), event.getId(), stormId);
+        if (stormId == null || jdbcTemplate == null) return;
+        try {
+            jdbcTemplate.update(StormService.SQL_MEMBER_LEFT, now(), com.sitemonitor.model.AlertStormMember.LEAVE_RECOVERED,
+                    stormId, event.getId());
+        } catch (Exception e) {
+            log.debug("Fırtına üyelik ayrılışı yazılamadı (storm #{}, olay {}): {}", stormId, event.getId(), e.getMessage());
+        }
     }
 
     /** Test kancası. */
@@ -702,8 +729,10 @@ public class EscalationService {
         }
     }
 
-    @Transactional
-    /** Geriye uyumlu: notsuz onay (eski çağrılar / not gerektirmeyen yollar). */
+    /**
+     * Geriye uyumlu: notsuz onay (eski çağrılar / not gerektirmeyen yollar). R2b · F: işlem AÇMAZ (eskiden {@code @Transactional}
+     * idi — yarışı kaybeden onayın taze okuması işlem içindeki önbellekten bayat satırı döndürüyordu); 3 parametreli yolla aynı.
+     */
     public AlertEvent acknowledge(Long eventId, String acknowledgedBy) {
         return acknowledge(eventId, acknowledgedBy, null);
     }
@@ -733,6 +762,20 @@ public class EscalationService {
      * kalır, taze satır döner (yanıt ve denetim sözleşmesi aynı — çağıran olayı alır). Okunan varlık değiştirilmez (işlem içi
      * çağıranda kirli kontrol bütün satırı yazardı); başarıda onay alanları dolu KOPYA döner.
      */
+    /**
+     * Onay yazılamadı: alarm kapalı (okumadan sonra kapandı ya da zaten kapalıydı) — 409 {@link #CODE} (2026-10-23, inceleme
+     * AL-1). Tekil uç 409 + açık metin döner ve denetim kaydı YAZMAZ; toplu uç bu kimliği "atlandı" sayar.
+     */
+    public static class AlertClosedMeanwhileException extends com.sitemonitor.config.GlobalExceptionHandler.CodedConflictException {
+        public static final String CODE = "ALERT_ALREADY_RESOLVED";
+
+        public AlertClosedMeanwhileException() {
+            super(CODE, com.sitemonitor.util.Msg.t(
+                    "Alarm bu arada kapandı — onaylanacak bir şey kalmadı. Listeyi yenileyin.",
+                    "The alert was closed meanwhile — there is nothing to acknowledge. Refresh the list."));
+        }
+    }
+
     private AlertEvent acknowledgeIfOpen(AlertEventFieldWriter writer, AlertEvent event, String by, String note) {
         String at = now();
         String trimmed = note != null && !note.isBlank() ? note.trim() : null;
@@ -742,9 +785,12 @@ public class EscalationService {
         values.put("acknowledgedAt", at);
         if (trimmed != null) values.put("acknowledgedNote", trimmed);
         if (writer.writeValues(event.getId(), values, true) == 0) {
+            // İnceleme AL-1: onay YAZILMADI — çağıran "onaylandı" demesin, denetim kaydı yazmasın, toplu işlem atlandı saysın.
+            if (alertEventRepo.findById(event.getId()).isEmpty())
+                throw new NoSuchElementException("Alert not found: " + event.getId());
             log.info("Onay atlandı — alarm aynı anda kapandı (yarış), yeniden açılmadı: {} [{}] #{}", event.getDomain(),
                     event.getAlertType(), event.getId());
-            return alertEventRepo.findById(event.getId()).orElse(event);
+            throw new AlertClosedMeanwhileException();
         }
         AlertEvent out = new AlertEvent();
         org.springframework.beans.BeanUtils.copyProperties(event, out);
@@ -1555,8 +1601,10 @@ public class EscalationService {
         SilentAlarmCloser closer = silentAlarmCloser;
         if (closer == null || event.getId() == null) return alertEventRepo.save(event);
         if (note != null && !closer.writeResolvedNote(event.getId(), at, by, note)) {
-            log.warn("Çözüm notu yazılamadı (satır bu kapanışla eşleşmedi): {} [{}] #{}", event.getDomain(),
-                    event.getAlertType(), event.getId());
+            // İnceleme AL-3: yazılmayan not yanıtta / çözüm postasında "kaydedildi" gibi görünmesin.
+            log.warn("Çözüm notu yazılamadı (satır bu kapanışla eşleşmedi — başka yol kapanışı yeniden yazdı): {} [{}] #{}",
+                    event.getDomain(), event.getAlertType(), event.getId());
+            event.setResolvedNote(null);
         }
         return event;
     }
@@ -1846,8 +1894,10 @@ public class EscalationService {
             StormService.StormAction stormAction = stormService.evaluate(event, outageContext);
             if (stormAction == StormService.StormAction.SUPPRESSED) {
                 event.setLastReAlertAt(now());
-                // R2b · F: fırtına değerlendirmesinin damgaladığı bağ + grup ve yeniden uyarı damgası — başka kolon değil.
-                persist(event, "lastReAlertAt", "stormId", "groupName");
+                // R2b · F: fırtına değerlendirmesinin damgaladığı bağ + grup ve yeniden uyarı damgası — başka kolon değil; yalnız
+                // alarm hâlâ AÇIKSA (inceleme AL-4): arada elle çözülen alarm üye YAPILMAZ — çözüm kararı onu "fırtına üyesi değil"
+                // görüp bireysel çözüm postasını gönderdi; bağ yazılsaydı fırtına kurtarması aynı alarmı ikinci kez "düzeldi" sayardı.
+                if (!persistIfOpen(event, "lastReAlertAt", "stormId", "groupName")) leftStormClosedMeanwhile(event);
                 // İZ (2026-09-30, prod olayı): bu dal eskiden hiçbir kanal çalıştırmıyor ve hiçbir kayıt da bırakmıyordu —
                 // alarm penceresi "0 bildirim", push "önce bildirim gitmemişti" diyor, takım neden haber almadığını
                 // göremiyordu. Bildirim günlüğü satırı: "bireysel e-posta (ayar kapalıysa push da) fırtına #N'e devredildi".
