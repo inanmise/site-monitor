@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   deriveOverall, deriveKpis, sectionLevels, integrationList, pushStats, smtpStats, executorStats, poolStats,
-  worstLevel, formatDurationShort, relTime, SECTION_KEYS, scanPollStep, clusterModel, SCAN_KINDS, POD_STATE_TONE,
+  worstLevel, formatDurationShort, relTime, SECTION_KEYS, scanPollStep, clusterModel, SCAN_KINDS, POD_STATE_TONE, cacheBusStale,
 } from '../components/admin/health/healthModel.js'
 
 /**
@@ -195,28 +195,40 @@ describe('healthModel — okunamayan alt yük', () => {
 // ── Çok pod R2b (2026-10-23, paket C1) ─────────────────────────────────────────────────────────────────────────────
 describe('scanPollStep — "Şimdi çalıştır" yoklaması kümeden biter (MP-34)', () => {
   const ans = (over = {}) => ({ scheduler: { running: false }, lock: { held: false }, scan: { last_run: '2026-10-23T05:00:00', source: 'cluster' }, ...over })
+  const PREV = { last_run: '2026-10-23T05:00:00', source: 'cluster' }
   it('yanıtlar iki pod arasında gidip gelse de erken bitmez: kilit canlıyken her yanıt "koşuyor" der', () => {
     let st = { seenLive: false }
     // A koşturuyor: canlı kilit (DB) — hem A hem B aynı değeri döner
     for (const pod of ['A', 'B', 'A', 'B']) {
-      const r = scanPollStep(st, ans({ lock: { held: true, locked_by: 'A' }, scheduler: { running: true, running_here: pod === 'A' } }), '2026-10-23T05:00:00')
+      const r = scanPollStep(st, ans({ lock: { held: true, locked_by: 'A' }, scheduler: { running: true, running_here: pod === 'A' } }), PREV)
       expect(r.done, pod).toBe(false)
       st = r
     }
     // kilit bırakıldı → bitti (hangi pod yanıtlarsa)
-    expect(scanPollStep(st, ans(), '2026-10-23T05:00:00').done).toBe(true)
+    expect(scanPollStep(st, ans(), PREV).done).toBe(true)
   })
   it('hızlı tarama (kilit hiç görülmedi): kümenin son koşusu değişince biter; aynıysa bitmez', () => {
-    expect(scanPollStep({ seenLive: false }, ans(), '2026-10-23T05:00:00').done).toBe(false)
-    expect(scanPollStep({ seenLive: false }, ans({ scan: { last_run: '2026-10-23T06:00:00', source: 'cluster' } }), '2026-10-23T05:00:00').done).toBe(true)
+    expect(scanPollStep({ seenLive: false }, ans(), PREV).done).toBe(false)
+    expect(scanPollStep({ seenLive: false }, ans({ scan: { last_run: '2026-10-23T06:00:00', source: 'cluster' } }), PREV).done).toBe(true)
   })
   it('kilit okunamadı → "koşuyor mu" bilinmez, karar verilmez; bu pod belleği (local) son koşu kıyaslanmaz', () => {
-    const prev = '2026-10-23T05:00:00'
-    const live = scanPollStep({ seenLive: false }, ans({ lock: { held: true } }), prev)
-    expect(live).toEqual({ seenLive: true, done: false })
-    expect(scanPollStep(live, ans({ lock: { held: false, error: 'x' } }), prev).done).toBe(false)
-    expect(scanPollStep({ seenLive: false }, ans({ scan: { last_run: '2026-10-23T09:00:00', source: 'local' } }), '2026-10-23T05:00:00').done).toBe(false)
-    expect(scanPollStep({ seenLive: false }, null, null)).toEqual({ seenLive: false, done: false })
+    const live = scanPollStep({ seenLive: false }, ans({ lock: { held: true } }), PREV)
+    expect(live).toMatchObject({ seenLive: true, done: false })
+    expect(scanPollStep(live, ans({ lock: { held: false, error: 'x' } }), PREV).done).toBe(false)
+    expect(scanPollStep({ seenLive: false }, ans({ scan: { last_run: '2026-10-23T09:00:00', source: 'local' } }), PREV).done).toBe(false)
+    expect(scanPollStep({ seenLive: false }, null, null)).toMatchObject({ seenLive: false, done: false })
+  })
+  it('H6 — yuvarlanan dağıtım: 20.166.0 pod’unun yanıtı (source yok, başka zaman biçimi) yoklamayı bitirmez', () => {
+    const old = ans({ scan: { last_run: '2026-10-23T04:59:58.123456' }, lock: { held: false }, scheduler: { running: false } })
+    // canlı kilit henüz görülmedi; eski pod'un farklı biçimli son koşusu "değişti" sayılmaz
+    expect(scanPollStep({ seenLive: false }, old, PREV).done).toBe(false)
+  })
+  it('H6 — tıklamadaki yanıt eski pod’dansa taban İLK küme yanıtından alınır (o yanıt bitirmez), sonraki değişim bitirir', () => {
+    const oldPrev = { last_run: '2026-10-23T04:59:58.123456' }
+    const st = scanPollStep({ seenLive: false }, ans(), oldPrev)
+    expect(st).toMatchObject({ done: false, baseline: '2026-10-23T05:00:00' })
+    expect(scanPollStep(st, ans(), oldPrev).done).toBe(false)
+    expect(scanPollStep(st, ans({ scan: { last_run: '2026-10-23T06:00:00', source: 'cluster' } }), oldPrev).done).toBe(true)
   })
 })
 
@@ -254,7 +266,7 @@ describe('clusterModel — Küme kartı (N1)', () => {
   })
   it('sabitler: tarama türleri ve pod durumu tonları', () => {
     expect(SCAN_KINDS).toEqual(['hourly', 'full', 'stale'])
-    expect(POD_STATE_TONE).toEqual({ live: 'success', silent: 'warning', restarted: 'muted', stopped: 'muted' })
+    expect(POD_STATE_TONE).toEqual({ live: 'success', silent: 'warning', restarted: 'muted', replaced: 'muted', stopped: 'muted' })
   })
 })
 
@@ -266,5 +278,47 @@ describe('deriveOverall — sessiz pod (MP-35)', () => {
     const d = deriveOverall({ health: { ...CLEAN, heartbeat: { ...CLEAN.heartbeat, alarm: true, pods_silent: 2 } }, httpMetrics: HTTP_OK, pushKpi: PUSH_OK })
     expect(d.reasons.some((r) => r.code === 'podSilent')).toBe(false)
     expect(deriveOverall({ health: { ...CLEAN, heartbeat: { ...CLEAN.heartbeat, pods_silent: 0 } }, httpMetrics: HTTP_OK, pushKpi: PUSH_OK }).level).toBe('ok')
+  })
+})
+
+describe('İnceleme H1 / H2 / H4 / H5 (2026-10-23)', () => {
+  const H = { ...CLEAN, served_by: 'sm-a-0000000a', served_by_pod: 'sm-a', memory: { ...CLEAN.memory, used_pct: 90 } }
+  it('H1: pod başına sebepler pod adını taşır (bellek → sağlık pod’u, HTTP → /http-metrics pod’u); küme sebepleri taşımaz', () => {
+    const o = deriveOverall({ health: { ...H, heartbeat: { ...CLEAN.heartbeat, pods_silent: 1 } },
+      httpMetrics: { ...HTTP_OK, served_by_pod: 'sm-b', summary: { ...HTTP_OK.summary, error_rate_pct: 7 } }, pushKpi: PUSH_OK })
+    expect(o.reasons.find((r) => r.code === 'memory').pod).toBe('sm-a')
+    expect(o.reasons.find((r) => r.code === 'httpErr').pod).toBe('sm-b')
+    expect(o.reasons.find((r) => r.code === 'podSilent').pod).toBeUndefined()
+  })
+  it('H1: bellek kıvılcımı yalnız aynı pod’dan (metrics pod’u farklıysa çizilmez); pod adları KPI modelinde', () => {
+    const metrics = [{ heap_pct: 40 }, { heap_pct: 50 }]
+    expect(deriveKpis({ health: H, httpMetrics: HTTP_OK, metrics, metricsPod: 'sm-a', pushKpi: PUSH_OK }).memory.series).toHaveLength(2)
+    expect(deriveKpis({ health: H, httpMetrics: HTTP_OK, metrics, metricsPod: 'sm-b', pushKpi: PUSH_OK }).memory.series).toHaveLength(0)
+    expect(deriveKpis({ health: CLEAN, httpMetrics: HTTP_OK, metrics, pushKpi: PUSH_OK }).memory.series).toHaveLength(2)   // eski sunucu
+    expect(deriveKpis({ health: H, httpMetrics: { ...HTTP_OK, served_by_pod: 'sm-b' }, metrics, metricsPod: 'sm-c', pushKpi: PUSH_OK }).pods)
+      .toEqual({ health: 'sm-a', http: 'sm-b', metrics: 'sm-c' })
+  })
+  it('H2: tarama durumu bu pod belleğindeyse (local) zamanlayıcı KPI "bilinmiyor"; alarm varsa yine kritik', () => {
+    expect(deriveKpis({ health: { ...CLEAN, scheduler: { ...CLEAN.scheduler, status_source: 'local' } }, pushKpi: PUSH_OK }).scheduler.level).toBe('unknown')
+    expect(deriveKpis({ health: { ...CLEAN, scan: { ...CLEAN.scan, source: 'local' }, scan_alarm: true }, pushKpi: PUSH_OK }).scheduler.level).toBe('down')
+    expect(deriveKpis({ health: CLEAN, pushKpi: PUSH_OK }).scheduler.level).toBe('ok')
+  })
+  it('H4: önbellek yolu son başarılı yoklaması 30 sn’den eski / hiç yok ama yoklama sayılmış → bayat (warn); yeni açılmış → bilinmiyor', () => {
+    const now = '2026-10-23T05:00:00'
+    expect(cacheBusStale({ enabled: true, running: true, last_poll_ok_at: '2026-10-23T04:59:58' }, now)).toBe(false)
+    expect(cacheBusStale({ enabled: true, running: true, last_poll_ok_at: '2026-10-23T04:58:00' }, now)).toBe(true)
+    expect(cacheBusStale({ enabled: true, running: true, last_poll_ok_at: null, poll_failures: 12 }, now)).toBe(true)
+    expect(cacheBusStale({ enabled: true, running: true, last_poll_ok_at: null, polls: 0 }, now)).toBeNull()
+    expect(cacheBusStale({ enabled: false }, now)).toBe(false)
+    const base = { served_by_pod: 'sm-a', timestamp: now, scheduler: { sweep_leader: { owner: 'x-0000000a', owner_pod: 'x', expired: false, held_by_me: false } } }
+    expect(clusterModel({ ...base, cache_bus: { enabled: true, running: true, last_poll_ok_at: '2026-10-23T04:58:00', poll_failures: 60 } }))
+      .toMatchObject({ cacheLevel: 'warn', cacheStale: true, level: 'warn' })
+    expect(clusterModel({ ...base, cache_bus: { enabled: true, running: true, last_poll_ok_at: '2026-10-23T04:59:59' } })).toMatchObject({ cacheLevel: 'ok', level: 'ok' })
+  })
+  it('H5: LOST kilit kartı uyarıya çeker', () => {
+    const base = { scheduler: { sweep_leader: { owner: 'x-0000000a', owner_pod: 'x', expired: false, held_by_me: true } } }
+    expect(clusterModel({ ...base, scheduler: { ...base.scheduler, held_locks: [{ name: 'watchdog', state: 'HELD' }] } }).level).toBe('ok')
+    expect(clusterModel({ ...base, scheduler: { ...base.scheduler, held_locks: [{ name: 'watchdog', state: 'LOST' }] } }))
+      .toMatchObject({ level: 'warn', lostLocks: 1 })
   })
 })

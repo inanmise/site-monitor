@@ -129,6 +129,11 @@ for (const vp of VIEWPORTS) {
       await expect(page.locator('[data-card="executor"] [data-slot="pod-chip"]')).toHaveAttribute('data-scope', 'pod')
       await expect(page.locator('[data-card="scheduler"] [data-slot="pod-chip"]')).toHaveAttribute('data-scope', 'cluster')
       await expect(page.locator('[data-slot="scan-run"]')).toHaveCount(3)
+      // KPI ızgarası (inceleme H1): kapsam etiketleri + yanıtlayan pod başlığı; taşma / kırpma yok
+      await expect(page.locator('[data-kpi="memory"] [data-slot="kpi-scope"]')).toHaveAttribute('data-scope', 'pod')
+      await expect(page.locator('[data-kpi="scheduler"] [data-slot="kpi-scope"]')).toHaveAttribute('data-scope', 'cluster')
+      await expect(page.locator('[data-slot="kpi-pods"]')).toContainText(POD_A)
+      expect(await page.evaluate(overflowIn, '[data-slot="health-kpis"]'), 'KPI ızgarası taşması').toEqual([])
       await page.waitForTimeout(300)
       expect(await page.evaluate(overflowIn, '[data-section="sched"]'), 'yatay taşma').toEqual([])
       expect(await page.evaluate(clippedIn, '[data-section="sched"]'), 'kırpılan ad / metin').toEqual([])

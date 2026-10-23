@@ -47,8 +47,20 @@ class HeartbeatMultiPodTest {
 
     @BeforeEach
     void setUp() {
+        // Kapanış işareti ayrı iş parçacığında (ortak kapanış bütçesi, D2) kendi işleminde yazılır — testin işlemi geri
+        // alınınca silinmez; her test temiz tabloyla başlar.
+        jdbc.update("DELETE FROM system_heartbeat");
         podA = service(A);
         now = LocalDateTime.now(ZoneOffset.UTC).withSecond(0).withNano(0);
+    }
+
+    /** Ayrı iş parçacığında yazılmış (işlenmiş) işaret satırları paylaşılan test veritabanında kalmasın — silme İŞLENİR. */
+    @org.junit.jupiter.api.AfterEach
+    void cleanCommitted() {
+        if (!org.springframework.test.context.transaction.TestTransaction.isActive()) return;
+        jdbc.update("DELETE FROM system_heartbeat");
+        org.springframework.test.context.transaction.TestTransaction.flagForCommit();
+        org.springframework.test.context.transaction.TestTransaction.end();
     }
 
     ExtendedHealthService service(String instance) {
@@ -135,7 +147,7 @@ class HeartbeatMultiPodTest {
         beats(B, 30, 20);
         service(B).recordShutdownMarker();                 // B düzgün kapandı (işaret şimdi)
         beat(B2, now.minusMinutes(1));                     // aynı pod adının yeni süreci
-        beat("sitemonitor-6b7c-ccccc-0000000d", now.minusMinutes(40));   // C işaretsiz sustu, yeni süreci yok
+        beat("sitemonitor-6b7c-ccccc-0000000d", now.minusMinutes(20));   // C işaretsiz sustu; yerine YENİ adlı pod gelmedi
 
         Map<String, Object> st = podA.getHeartbeatStatus();
         Map<String, String> states = new java.util.HashMap<>();
@@ -155,6 +167,34 @@ class HeartbeatMultiPodTest {
         Map<String, String> st2 = new java.util.HashMap<>();
         for (Map<String, Object> p : list(podA.getHeartbeatStatus(), "pods")) st2.put((String) p.get("id"), (String) p.get("state"));
         assertThat(st2).containsEntry(B2, "restarted").containsEntry("sitemonitor-6b7c-bbbbb-0000000e", "live");
+    }
+
+    @Test
+    @DisplayName("D1: susan pod'un yerine YENİ adlı pod geldiyse 'yerine yenisi geldi' (uyarı değil); yeni pod yoksa ya da yalnız eski pod yeniden başladıysa 'sessiz' kalır")
+    void replacedSilentPodIsNotAWarning() {
+        beats(A, 120, 1);                                          // A uzun süredir canlı
+        beats(B, 120, 61);                                         // B 60 dk önce sustu (tahliye / node kaybı)
+        String c = "sitemonitor-6b7c-ccccc-0000000c";             // Deployment'ın yeni pod'u (yeni ad), B sustuktan sonra
+        for (int m = 50; m >= 1; m--) beat(c, now.minusMinutes(m));
+
+        Map<String, Object> st = podA.getHeartbeatStatus();
+        Map<String, Object> b = list(st, "pods").stream().filter(p -> B.equals(p.get("id"))).findFirst().orElseThrow();
+        // HATA ÖNCESİ: B 24 saat "sessiz" kalıyor, genel bant sarı
+        assertThat(b).containsEntry("state", "replaced").containsEntry("replaced_by", "sitemonitor-6b7c-ccccc");
+        assertThat(st).containsEntry("pods_silent", 0L);
+    }
+
+    @Test
+    @DisplayName("D1: takılı pod (yerine yeni pod gelmedi) ve yalnız ESKİ pod'un yeniden başlaması → 'sessiz' (uyarı) kalır")
+    void hungPodWithoutReplacementStaysSilent() {
+        beats(A, 120, 1);
+        beats(B, 120, 61);                                         // B takıldı
+        String a2 = "sitemonitor-6b7c-aaaaa-0000000f";            // A'nın konteyneri yeniden başladı (AYNI ad) — yeni pod sayılmaz
+        for (int m = 40; m >= 1; m--) beat(a2, now.minusMinutes(m));
+        Map<String, Object> st = podA.getHeartbeatStatus();
+        Map<String, Object> b = list(st, "pods").stream().filter(p -> B.equals(p.get("id"))).findFirst().orElseThrow();
+        assertThat(b).containsEntry("state", "silent");
+        assertThat(st).containsEntry("pods_silent", 1L);
     }
 
     @Test

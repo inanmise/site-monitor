@@ -637,6 +637,7 @@ describe('SystemHealth — çok pod (MP-34 / MP-35 / MP-37a / N1 / N4)', () => {
   const B = 'sitemonitor-6b7c9d-bbbbb-0000000b'
   const CLUSTER = {
     ...HEALTH,
+    timestamp: '2026-09-27T05:00:00',
     served_by: A, served_by_pod: 'sitemonitor-6b7c9d-aaaaa',
     scheduler: { ...HEALTH.scheduler, instance_id: A, running_here: false, last_run_by_pod: 'sitemonitor-6b7c9d-bbbbb', status_source: 'cluster',
       sweep_leader: { owner: B, owner_pod: 'sitemonitor-6b7c9d-bbbbb', until: '2026-09-27T05:03:00', expired: false, held_by_me: false,
@@ -780,6 +781,82 @@ describe('SystemHealth — Pod’lar kartı durmuş süreçleri kısaltır', () 
     const rows = [...document.querySelectorAll('[data-slot="hb-pod"]')]
     expect(rows.map((r) => r.getAttribute('data-state'))).toEqual(['live', 'stopped', 'stopped', 'stopped'])
     expect(document.querySelector('[data-slot="hb-pods-stopped-more"]').textContent).toMatch(/\+2/)
+    expect(overall()).toHaveAttribute('data-level', 'ok')
+  })
+})
+
+// ── İnceleme düzeltmeleri (2026-10-23, r2a-review-health H1–H5, D1) ────────────────────────────────────────────────────
+describe('SystemHealth — inceleme H1–H5 / D1', () => {
+  const A = 'sitemonitor-6b7c9d-aaaaa-0000000a'
+  const BASE = { ...HEALTH, timestamp: '2026-09-27T05:00:00', served_by: A, served_by_pod: 'sitemonitor-6b7c9d-aaaaa',
+    scheduler: { ...HEALTH.scheduler, status_source: 'cluster',
+      sweep_leader: { owner: A, owner_pod: 'sitemonitor-6b7c9d-aaaaa', until: '2026-09-27T05:03:00', expired: false, held_by_me: true, renewer: true } },
+    scan: { ...HEALTH.scan, source: 'cluster' } }
+  const open = async (sec, data) => {
+    api.admin.getSystemHealth.mockResolvedValue({ success: true, data })
+    window.history.replaceState(null, '', sec ? `/?sec=${sec}` : '/')
+    await renderLoaded()
+  }
+
+  it('H1: KPI kutucukları kapsamını söyler (bu pod / küme); başlıkta yanıtlayan pod; HTTP başka pod’dansa o da; sebep metninde pod adı', async () => {
+    api.admin.getHttpMetrics.mockResolvedValue({ success: true, data: { ...HTTP, served_by_pod: 'sitemonitor-6b7c9d-bbbbb' } })
+    await open(null, { ...BASE, memory: { ...BASE.memory, used_pct: 90 } })
+    const scope = (k) => document.querySelector(`[data-kpi="${k}"] [data-slot="kpi-scope"]`).getAttribute('data-scope')
+    expect(scope('memory')).toBe('pod')
+    expect(scope('executor')).toBe('pod')
+    expect(scope('http-ms')).toBe('pod')
+    expect(scope('scheduler')).toBe('cluster')
+    expect(scope('integrations')).toBe('cluster')
+    const cap = document.querySelector('[data-slot="kpi-pods"]').textContent
+    expect(cap).toContain('sitemonitor-6b7c9d-aaaaa')
+    expect(cap).toContain('sitemonitor-6b7c9d-bbbbb')
+    expect(overall().textContent).toMatch(/\(pod: sitemonitor-6b7c9d-aaaaa\)/)   // bellek sebebi pod'u söyler
+  })
+
+  it('H1: bellek kıvılcımı başka pod’un grafiğinden çizilmez', async () => {
+    api.admin.getMetrics.mockResolvedValue({ success: true, data: METRICS, served_by_pod: 'sitemonitor-6b7c9d-bbbbb' })
+    await open(null, BASE)
+    expect(document.querySelector('[data-kpi="memory"] [data-slot="health-spark"]')).toBeNull()
+    expect(document.querySelector('[data-kpi="http-ms"] [data-slot="health-spark"]')).not.toBeNull()
+  })
+
+  it('H2: küme tarama kaydı okunamadı (local) → tarama "Bilinmiyor" (yeşil "Tamam" değil), zamanlayıcı "Bu pod", KPI bilinmiyor', async () => {
+    await open('sched', { ...BASE, scheduler: { ...BASE.scheduler, status_source: 'local', last_run: null },
+      scan: { last_run: null, duration_ms: 0, total: 0, warnings: 0, errors: 0, source: 'local', runs: {} } })
+    const scan = document.querySelector('[data-card="scan"]')
+    expect(scan.querySelector('[data-kind="unknown"]')).not.toBeNull()
+    expect(scan.textContent).not.toMatch(/\bOK\b|Tamam/)
+    expect(document.querySelector('[data-card="scheduler"] [data-slot="pod-chip"]')).toHaveAttribute('data-scope', 'pod')
+    expect(document.querySelector('[data-kpi="scheduler"]')).not.toHaveAttribute('data-tone', 'ok')
+  })
+
+  it('H3: Pod’lar kartı canlı pod yokken yeşil değil + açıklama (20.166.0’dan yükseltme)', async () => {
+    await open('heartbeat', { ...BASE, heartbeat: { ...HEALTH.heartbeat, pods_live: 0, pods_silent: 0,
+      pods: [{ id: 'sm-old-0000000e', name: 'sm-old', state: 'stopped', last_seen: '2026-09-27T03:00:00' }] } })
+    expect(document.querySelector('[data-slot="hb-pods-live"]')).toHaveAttribute('data-tone', 'muted')
+    expect(document.querySelector('[data-slot="hb-pods-none-live"]')).not.toBeNull()
+  })
+
+  it('H4 / H5: yoklaması düşen önbellek yolu uyarı; kilit durumları çevrili, LOST kartı uyarıya çeker', async () => {
+    await open('sched', { ...BASE,
+      cache_bus: { enabled: true, running: true, table_missing: false, applied_generation: 3, last_poll_ok_at: '2026-09-27T04:50:00', poll_failures: 300 },
+      scheduler: { ...BASE.scheduler, held_locks: [{ name: 'watchdog', state: 'LOST', until: '2026-09-27T05:01:00' }, { name: 'quiet-digest', state: 'HELD' }] } })
+    const card = document.querySelector('[data-card="cluster"]')
+    expect(card.querySelector('[data-slot="cluster-cache-bus"]')).toHaveAttribute('data-level', 'warn')
+    const locks = [...card.querySelectorAll('[data-slot="cluster-held-lock"]')]
+    expect(locks.map((l) => l.getAttribute('data-state'))).toEqual(['LOST', 'HELD'])
+    expect(locks[0].textContent).not.toMatch(/\bLOST\b/)       // ham enum basılmaz
+    expect(locks[0].textContent).toMatch(/lost|kaybedildi/i)
+    expect(card.querySelector('[data-kind="leader"]')).toHaveAttribute('data-tone', 'warning')
+  })
+
+  it('D1: yerine yenisi gelen pod nötr "yerine yenisi geldi" ve yeni pod’un adı', async () => {
+    await open('heartbeat', { ...BASE, heartbeat: { ...HEALTH.heartbeat, pods_live: 1, pods_silent: 0, pods: [
+      { id: 'sm-new-0000000a', name: 'sm-new', state: 'live', last_seen: '2026-09-27T04:59:00' },
+      { id: 'sm-old-0000000b', name: 'sm-old', state: 'replaced', replaced_by: 'sm-new', last_seen: '2026-09-27T03:00:00' } ] } })
+    const rows = [...document.querySelectorAll('[data-slot="hb-pod"]')]
+    expect(rows.map((r) => r.getAttribute('data-state'))).toEqual(['live', 'replaced'])
+    expect(rows[1].textContent).toContain('sm-new')
     expect(overall()).toHaveAttribute('data-level', 'ok')
   })
 })

@@ -343,7 +343,7 @@ export default function SystemHealth({ systemRole, globalAdmin: globalAdminProp,
    * Bitiş kararı KÜMEDEN (2026-10-23, çok pod R2b, MP-34): canlı cert-check kilidi görüldü ve bitti, ya da kümenin son koşusu
    * değişti (`scanPollStep`) — eskiden yanıtlayan pod'un kendi bayrağına bakıyordu; ikinci pod'un ilk yanıtı "bitti" sayılıyordu.
    */
-  const startScanPoll = useCallback((prevLastRun) => {
+  const startScanPoll = useCallback((prevScan) => {
     if (fastPollRef.current) clearTimeout(fastPollRef.current.timer)
     if (watchdogRef.current) clearTimeout(watchdogRef.current)
     pollState.current = { seenLive: false }
@@ -358,8 +358,8 @@ export default function SystemHealth({ systemRole, globalAdmin: globalAdminProp,
       if (res?.success) {
         setHealth(res.data)
         // Tamamlandı: kümede canlı kilit görüldü ve bitti VEYA kümenin son koşusu değişti (hızlı tarama)
-        const step = scanPollStep(pollState.current, res.data, prevLastRun)
-        pollState.current = { seenLive: step.seenLive }
+        const step = scanPollStep(pollState.current, res.data, prevScan)
+        pollState.current = { seenLive: step.seenLive, baseline: step.baseline }
         if (step.done) { stop(); load(); return }
       }
       gen.timer = setTimeout(step, 2000)
@@ -381,14 +381,14 @@ export default function SystemHealth({ systemRole, globalAdmin: globalAdminProp,
       else setMsg(res?.error || t('sys.error'))
     } catch (e) { setMsg(e?.message || t('sys.error')) }
     finally { setTriggering(false) }
-    if (started) startScanPoll(health?.scan?.last_run)
+    if (started) startScanPoll(health?.scan)
   }
 
   // ── Türetimler (saf model) ──
   const overall = useMemo(() => deriveOverall({ health, httpMetrics, pushKpi, smtpPeriod, configChecks, loadErrors, watchdog }),
     [health, httpMetrics, pushKpi, smtpPeriod, configChecks, loadErrors, watchdog])
-  const kpis = useMemo(() => (health ? deriveKpis({ health, httpMetrics, metrics, pushKpi, smtpPeriod, configChecks }) : null),
-    [health, httpMetrics, metrics, pushKpi, smtpPeriod, configChecks])
+  const kpis = useMemo(() => (health ? deriveKpis({ health, httpMetrics, metrics, metricsPod, pushKpi, smtpPeriod, configChecks }) : null),
+    [health, httpMetrics, metrics, metricsPod, pushKpi, smtpPeriod, configChecks])
   const levels = useMemo(() => sectionLevels(overall.reasons), [overall])
   const sectionLabel = useCallback((key) => t(SECTION_META[key]?.label || key), [t])
 

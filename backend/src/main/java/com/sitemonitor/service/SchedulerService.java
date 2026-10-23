@@ -3341,15 +3341,24 @@ public class SchedulerService {
             log.error("Sertifika sweep'i BAŞARISIZ (runId={}): sonuçlar kaydedilemedi/alarm işlenemedi — {}",
                     runId, e.toString(), e);
         } finally {
-            if (finished) {
-                healthStore().recordScanRun(kind, runId, ownerId(), ISO.format(Instant.ofEpochMilli(scheduleClock.getAsLong())),
-                        runTotal != null ? Long.valueOf(System.currentTimeMillis() - startMs) : null,
-                        runTotal, runWarnings, runErrors, runFailure);
+            // Küme durumu kilit BIRAKILMADAN yazılır (yoklama "kilit bitti"yi görünce yeni son koşuyu okusun) ama hiçbir hata
+            // (çalışma zamanı istisnası ya da Error) bayrağı ve kilidi bırakmayı atlatamaz — iç finally (inceleme H7).
+            try {
+                if (finished) {
+                    try {
+                        healthStore().recordScanRun(kind, runId, ownerId(), ISO.format(Instant.ofEpochMilli(scheduleClock.getAsLong())),
+                                runTotal != null ? Long.valueOf(System.currentTimeMillis() - startMs) : null,
+                                runTotal, runWarnings, runErrors, runFailure);
+                    } catch (RuntimeException e) {
+                        log.warn("Tarama koşusu küme durumuna yazılamadı (runId={}): {}", runId, e.toString());
+                    }
+                }
+            } finally {
+                running.set(false);
+                lastRunId.set(currentRunId.get());
+                currentRunId.set("");
+                releaseLock(certLock);
             }
-            running.set(false);
-            lastRunId.set(currentRunId.get());
-            currentRunId.set("");
-            releaseLock(certLock);
         }
     }
 
@@ -3694,8 +3703,7 @@ public class SchedulerService {
             Map<String, Object> row = rows.get(0);
             String by = row.get("locked_by") == null ? null : String.valueOf(row.get("locked_by"));
             String until = row.get("locked_until") == null ? null : String.valueOf(row.get("locked_until"));
-            Instant untilAt = parseIsoInstant(until);
-            boolean live = untilAt == null || untilAt.toEpochMilli() >= scheduleClock.getAsLong();
+            boolean live = lockRowLive(row);
             lockMap.put("held",        live);
             lockMap.put("expired",     !live);
             lockMap.put("locked_by",   by);
@@ -3707,6 +3715,13 @@ public class SchedulerService {
             lockMap.put("error", e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
         }
         return lockMap;
+    }
+
+    /** Kilit satırı canlı mı: süresi geçmemiş; biçimi okunamayan süre "tutuluyor" sayılır (bilinmeyen serbest sayılmaz). */
+    private boolean lockRowLive(Map<String, Object> row) {
+        Object until = row == null ? null : row.get("locked_until");
+        Instant untilAt = until == null ? null : parseIsoInstant(String.valueOf(until));
+        return untilAt == null || untilAt.toEpochMilli() >= scheduleClock.getAsLong();
     }
 
     private static Map<String, Object> scanRunMap(com.sitemonitor.service.health.ClusterHealthStore.ScanRun r) {
@@ -3794,9 +3809,10 @@ public class SchedulerService {
             Map<String, Object> wa = new LinkedHashMap<>(weeklyAvailabilityReportService.schedulerHealth());
             boolean lockHeld = false;
             try {
+                // Canlı satır (inceleme H8, cert-check ile aynı kural): ölmüş pod'un süresi dolmuş satırı "çalışıyor" sayılmaz
                 List<Map<String, Object>> waRows = jdbcTemplate.queryForList(
-                    "SELECT locked_by FROM scheduler_lock WHERE name = ?", "weekly-availability");
-                lockHeld = !waRows.isEmpty();
+                    "SELECT locked_by, locked_until FROM scheduler_lock WHERE name = ?", "weekly-availability");
+                lockHeld = waRows != null && waRows.stream().anyMatch(this::lockRowLive);
             } catch (Exception ignore) { /* lock tablosu yoksa/erişilemezse running=false varsay */ }
             wa.put("running", lockHeld);
             h.put("weekly_availability", wa);

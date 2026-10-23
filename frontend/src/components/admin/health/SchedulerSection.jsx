@@ -6,7 +6,7 @@ import AlertBanner from '../../ui/AlertBanner.jsx'
 import HintPopover from '../../ui/HintPopover.jsx'
 import { ProgressBar, Spinner } from '../../ui/Progress.jsx'
 import ToneBadge from '../ToneBadge.jsx'
-import { executorStats, poolStats, clusterModel, relTime, SCAN_KINDS, HEALTH_THRESHOLDS, BADGE_TONE } from './healthModel.js'
+import { executorStats, poolStats, clusterModel, relTime, SCAN_KINDS, HEALTH_THRESHOLDS, BADGE_TONE, LOCK_STATE_TONE } from './healthModel.js'
 import { CARD_GRID, ERR_T, OK_T, WARN_T, KvList, PodChip, RefreshButton, SectionToolbar, SubTitle, SysCard } from './HealthParts.jsx'
 
 // Birimler sözlükten (QA 2026-09-12, ISSUE-010): "3.1 sn" / "1 dk" İngilizce arayüze sızıyordu.
@@ -79,9 +79,12 @@ function ClusterCard({ t, health }) {
                 {c.thisPod.heldLocks == null ? '—' : c.thisPod.heldLocks.length === 0 ? t('hmp.none') : (
                   <ul className="flex list-none flex-col gap-0.5">
                     {c.thisPod.heldLocks.map((l) => (
-                      <li key={l.name} className="[overflow-wrap:anywhere]">
+                      <li key={l.name} data-slot="cluster-held-lock" data-state={l.state} className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 [overflow-wrap:anywhere]">
                         <span className="font-mono text-xs">{l.name}</span>
-                        <span className="text-muted-foreground"> · {l.state}{l.until ? ` · ${formatDate(l.until)}` : ''}</span>
+                        <ToneBadge tone={LOCK_STATE_TONE[l.state] || 'muted'} className="font-semibold">
+                          {LOCK_STATE_TONE[l.state] ? t(`hmp.lockState.${l.state}`) : t('health.stUnknown')}
+                        </ToneBadge>
+                        {l.until && <span className="text-muted-foreground">{formatDate(l.until)}</span>}
                       </li>
                     ))}
                   </ul>
@@ -110,7 +113,9 @@ function ClusterCard({ t, health }) {
                       <span className="flex flex-col gap-0.5">
                         <span className={c.cacheLevel === 'warn' ? WARN_T : undefined}>
                           {c.cacheBus.enabled === false ? t('health.stOff') : c.cacheBus.table_missing ? t('hmp.cacheTableMissing')
-                            : c.cacheBus.running ? t('hmp.cacheRunning') : t('hmp.cacheStopped')}
+                            : !c.cacheBus.running ? t('hmp.cacheStopped')
+                              : c.cacheStale === true ? t('hmp.cachePollStale')
+                                : c.cacheStale == null ? t('hmp.cacheNoPollYet') : t('hmp.cacheRunning')}
                         </span>
                         <span className="text-muted-foreground">
                           {t('hmp.cacheGen', c.cacheBus.applied_generation ?? '—')}
@@ -168,7 +173,8 @@ export default function SchedulerSection({
         <SysCard icon={Clock} cardKey="scheduler" iconClass={isRunning ? 'text-violet-500 animate-pulse motion-reduce:animate-none' : 'text-muted-foreground'}
           title={t('sys.schedulerTitle')}
           right={<ToneBadge tone={isRunning ? 'info' : 'muted'} data-kind={isRunning ? 'running' : 'idle'} className="font-semibold">{isRunning ? t('sys.running') : t('sys.idle')}</ToneBadge>}>
-          <PodChip t={t} scope="cluster" />
+          {/* Küme değeri yalnız scan_runs okunduysa; okunamadıysa son koşu bu pod'un belleği (inceleme H2) */}
+          {scheduler?.status_source === 'local' ? <PodChip t={t} pod={servedPod} /> : <PodChip t={t} scope="cluster" />}
           <KvList>
             {isRunning && scheduler?.running_on && (
               <>
@@ -292,8 +298,11 @@ export default function SchedulerSection({
         </SysCard>
 
         {/* Sertifika taraması — KÜME (scan_runs; tablo okunamazsa bu pod'un belleği) */}
-        <SysCard icon={Radar} cardKey="scan" iconClass={scanAlarm ? ERR_T : OK_T} title={t('health.scanTitle')} alarm={!!scanAlarm}
-          right={<ToneBadge tone={scanAlarm ? 'danger' : 'success'} className="font-semibold">{scanAlarm ? t('health.scanAlarm') : t('health.stOk')}</ToneBadge>}>
+        <SysCard icon={Radar} cardKey="scan" iconClass={scanAlarm ? ERR_T : scanLocal ? 'text-muted-foreground' : OK_T} title={t('health.scanTitle')} alarm={!!scanAlarm}
+          right={scanAlarm ? <ToneBadge tone="danger" className="font-semibold">{t('health.scanAlarm')}</ToneBadge>
+            // Küme kaydı okunamadıysa "Tamam" denmez — bu pod'un belleği kümeyi söylemez (inceleme H2: unknown ≠ OK)
+            : scanLocal ? <ToneBadge tone="muted" data-kind="unknown" className="font-semibold">{t('health.stUnknown')}</ToneBadge>
+              : <ToneBadge tone="success" className="font-semibold">{t('health.stOk')}</ToneBadge>}>
           {scanLocal ? <PodChip t={t} pod={servedPod} /> : <PodChip t={t} scope="cluster" />}
           {scanAlarm && <AlertBanner tone="danger" className="mb-0">{t('health.scanAlarm')}</AlertBanner>}
           {scanLocal && <p className="text-xs text-muted-foreground" data-slot="scan-local">{t('hmp.scanLocal')}</p>}
