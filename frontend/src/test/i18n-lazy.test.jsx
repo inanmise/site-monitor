@@ -50,6 +50,7 @@ afterEach(() => {
   vi.restoreAllMocks()
   sessionStorage.removeItem('eb-chunk-reload')
   vi.doUnmock(EN_MODULE)
+  vi.doUnmock('../components/ui/Toast.jsx')
   vi.resetModules()
   globalThis.__smI18nDicts.en = EN          // diğer testler için kayıt eski hâline
   localStorage.removeItem(STORAGE_KEY)
@@ -208,6 +209,44 @@ describe('i18n — İngilizce sözlük ayrı chunk (öneri 22)', () => {
     expect(localStorage.getItem(STORAGE_KEY)).toBe('en')
     expect(m.dateLocale.sessionLangOverride()).toBe('tr')
     expect(await screen.findByText(TR['lang.loadFailed'])).toBeInTheDocument()
+  })
+
+  it('StrictMode (geliştirme): açılış hatası bildirimi sağlayıcıyla aynı işlemede doğsa da KAYBOLMAZ', async () => {
+    // Gerçek ToastProvider'ın sözleşmesi: sökümünde (StrictMode'un sahte sökümü dahil) açık bütün kutuları kapatır.
+    // Bildirim bileşeni sağlayıcıyla AYNI işlemede doğar (dil hazır olunca ağaç ilk kez çizilir) — yeniden kurulumda
+    // bildirimi yeniden açmalı. jsdom'da Sonner'ın kapatma yarışı görünmediği için sağlayıcı burada sadeleştirilmiş eşi.
+    vi.doMock('../components/ui/Toast.jsx', async () => {
+      const React = await import('react')
+      const Ctx = React.createContext(null)
+      function ToastProvider({ children }) {
+        const [items, setItems] = React.useState([])
+        const api = React.useMemo(() => ({ error: (msg) => setItems((xs) => [...xs, msg]) }), [])
+        React.useEffect(() => () => setItems([]), [])                       // söküm: açık kutular kapanır
+        return <Ctx.Provider value={api}>{children}<ul data-testid="toasts">{items.map((x, i) => <li key={i}>{x}</li>)}</ul></Ctx.Provider>
+      }
+      return { ToastProvider, useToast: () => React.useContext(Ctx) }
+    })
+    localStorage.setItem(STORAGE_KEY, 'en')
+    const m = await freshI18n({ enModule: () => { throw new Error('offline') } })
+    reloadAlreadyUsed(m)
+    const { StrictMode } = await import('react')
+    function App() {
+      const t = m.useT()
+      return <p data-testid="app">{t('stat.total')}</p>
+    }
+    render(
+      <StrictMode>
+        <m.LangProvider fallback={<m.LanguageBootSplash />}>
+          <m.ToastProvider>
+            <m.LanguageLoadNotice />
+            <App />
+          </m.ToastProvider>
+        </m.LangProvider>
+      </StrictMode>,
+    )
+    expect(await screen.findByTestId('app')).toHaveTextContent(TR['stat.total'])
+    await act(async () => { await Promise.resolve() })
+    expect(screen.getByTestId('toasts')).toHaveTextContent(TR['lang.loadFailed'])
   })
 
   it('açılışta sözlük HİÇ inmezse (asılı istek): zaman aşımında Türkçe yedek yol — açılış ekranında sonsuza dek kalınmaz (2026-10-09)', async () => {

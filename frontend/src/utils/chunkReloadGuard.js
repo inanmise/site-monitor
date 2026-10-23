@@ -51,16 +51,21 @@ export function currentBuildId(doc = globalThis.document, fallback = BUILD_VERSI
   }
 }
 
-/** Kaydı okur: yeni biçim {v:2, at, builds:{id:sayı}}; eski {version, count} biçimi de okunur; bozuksa boş. */
+/**
+ * Kaydı okur: yeni biçim {v:2, at, builds:{id:sayı}}; eski {version, count} biçimi de okunur; bozuksa boş.
+ * Eski biçimin {version, count} alanları ({@code legacy}) yeniden yazarken KORUNUR (2026-10-23 inceleme, D-4): eski
+ * sürümün paketi (geri alma, ≤ 20.166.0) yalnız onları okur — silinseler o paket kendi hakkını yeniden kazanırdı.
+ */
 function readRecord(raw) {
   let prev = null
   try { prev = JSON.parse(raw || 'null') } catch { prev = null }
-  if (!prev || typeof prev !== 'object') return { at: NaN, builds: {} }
+  if (!prev || typeof prev !== 'object') return { at: NaN, builds: {}, legacy: null }
+  const legacy = typeof prev.version === 'string' ? { version: prev.version, count: Number(prev.count) || 0 } : null
   if (prev.builds && typeof prev.builds === 'object') {
-    return { at: Number(prev.at), builds: { ...prev.builds } }
+    return { at: Number(prev.at), builds: { ...prev.builds }, legacy }
   }
-  if (typeof prev.version === 'string') return { at: NaN, builds: { [prev.version]: Number(prev.count) || 0 } }
-  return { at: NaN, builds: {} }
+  if (legacy) return { at: NaN, builds: { [legacy.version]: legacy.count }, legacy }
+  return { at: NaN, builds: {}, legacy: null }
 }
 
 /** Hak varsa sayacı artırır ve true döner; yoksa (hak bitti / bekleme süresinde / depolama yok) false. Asla fırlatmaz. */
@@ -76,7 +81,9 @@ export function claimChunkReload(version = currentBuildId(), now = Date.now()) {
     rec.builds[v] = count + 1                                // en sona: en yeni
     const ids = Object.keys(rec.builds)
     for (const old of ids.slice(0, Math.max(0, ids.length - MAX_REMEMBERED_BUILDS))) delete rec.builds[old]
-    sessionStorage.setItem(CHUNK_RELOAD_KEY, JSON.stringify({ v: 2, at: now, builds: rec.builds }))
+    const next = { v: 2, at: now, builds: rec.builds }
+    if (rec.legacy) { next.version = rec.legacy.version; next.count = rec.legacy.count }
+    sessionStorage.setItem(CHUNK_RELOAD_KEY, JSON.stringify(next))
     return true
   } catch {
     return false

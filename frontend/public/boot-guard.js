@@ -51,8 +51,10 @@
   function readRecord(raw) {
     var prev = null
     try { prev = JSON.parse(raw || 'null') } catch { prev = null }
-    var rec = { at: NaN, builds: {} }
+    var rec = { at: NaN, builds: {}, legacy: null }
     if (!prev || typeof prev !== 'object') return rec
+    // Eski biçimin {version, count} alanları korunur (eski sürümün paketi yalnız onları okur) — chunkReloadGuard ile aynı.
+    if (typeof prev.version === 'string') rec.legacy = { version: prev.version, count: Number(prev.count) || 0 }
     if (prev.builds && typeof prev.builds === 'object') {
       for (var k in prev.builds) if (Object.prototype.hasOwnProperty.call(prev.builds, k)) rec.builds[k] = prev.builds[k]
       rec.at = Number(prev.at)
@@ -75,7 +77,9 @@
       rec.builds[v] = count + 1
       var ids = Object.keys(rec.builds)
       for (var i = 0; i < ids.length - MAX_REMEMBERED_BUILDS; i++) delete rec.builds[ids[i]]
-      storage.setItem(KEY, JSON.stringify({ v: 2, at: now, builds: rec.builds }))
+      var next = { v: 2, at: now, builds: rec.builds }
+      if (rec.legacy) { next.version = rec.legacy.version; next.count = rec.legacy.count }
+      storage.setItem(KEY, JSON.stringify(next))
       return true
     } catch {
       return false

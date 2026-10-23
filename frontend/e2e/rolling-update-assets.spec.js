@@ -112,13 +112,23 @@ test.describe('rolling update — İngilizce sözlük parçası açılışta inm
     await mockApi(page)
     await presetLanguage(page, 'en')
     const docs = countDocuments(page)
+    // Türkçe yedek yolun GERÇEK işareti: sunucu istekleri bu oturumda X-Lang: tr taşır (dateLocale.setSessionLang).
+    // Bildirim 8 sn sonra kendiliğinden kapanır — yavaş CI'da uygulama çizimini bekledikten SONRA aranırsa kaçabiliyordu
+    // (2026-10-23, CI Linux); şimdi gezinmeden hemen sonra beklenir ve ayrıca kalıcı işaretler denetlenir.
+    const xLang = []
+    page.on('request', (r) => { if (new URL(r.url()).pathname.startsWith('/api/')) xLang.push(r.headers()['x-lang'] || '') })
     await page.route(EN_CHUNK, (route) => route.fulfill(NOT_FOUND))
     await page.goto('/?tab=dashboard')
+    await expect(page.getByText(TR['lang.loadFailed']).first()).toBeVisible({ timeout: 45_000 })
     await page.locator('.app-main').waitFor({ timeout: 30_000 })
     await expect(page.getByRole('heading', { name: TR['app.dashTitle'], exact: true })).toBeVisible()
-    await expect(page.getByText(TR['lang.loadFailed'])).toBeVisible({ timeout: 10_000 })
+    await expect(page.locator('html')).toHaveAttribute('lang', 'tr')
+    // yedek yol: oturum Türkçe'ye zorlandı — hiçbir istek "en" taşımaz (X-Lang'sız ham istekler — ör. ping — sayılmaz)
+    await expect.poll(() => xLang.filter(Boolean)).toContain('tr')
+    expect(xLang.filter((v) => v === 'en')).toEqual([])
     expect(await page.evaluate((k) => localStorage.getItem(k), LANG_KEY)).toBe('en')   // tercih korunur
-    await page.waitForTimeout(1500)
-    expect(docs.n).toBe(2)
+    const rec = await page.evaluate(() => JSON.parse(sessionStorage.getItem('eb-chunk-reload')))
+    expect(Object.values(rec.builds)).toEqual([1])                          // hak bir kez kullanıldı
+    expect(docs.n).toBe(2)                                                   // ilk açılış + tek yenileme
   })
 })

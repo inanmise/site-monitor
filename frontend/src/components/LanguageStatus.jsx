@@ -40,5 +40,10 @@ export function LanguageLoadNotice() {
     shown.current = loadFailures
     toast.error(t('lang.loadFailed'), 8000)
   }, [loadFailures, t, toast])
+  // Açılış hatasında bu bileşen ToastProvider ile AYNI işlemede doğar (dil hazır olunca ağaç ilk kez çizilir). React
+  // StrictMode (geliştirme) efektleri bir kez söküp yeniden kurar: sağlayıcının sökümü ilk bildirimi kapatıyor, sayaç
+  // "gösterildi" dediği için ikinci kurulumda bildirim yeniden açılmıyordu (2026-10-23, e2e rolling-update — Linux
+  // CI'da yarışlı). Söküm sayacı sıfırlar: yeniden kurulum bildirimi yeniden açar; üretimde (tek kurulum) davranış aynı.
+  useEffect(() => () => { shown.current = 0 }, [])
   return null
 }
