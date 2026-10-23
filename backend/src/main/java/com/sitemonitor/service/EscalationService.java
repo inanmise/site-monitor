@@ -170,6 +170,31 @@ public class EscalationService {
         this.silentAlarmCloser = silentAlarmCloser;
     }
 
+    /**
+     * Gönderim sonrası / damga / terfi / onay kayıtlarının HEDEFLİ yazımı (2026-10-23, çok pod R2b · F): okunan alarm bütünüyle
+     * kaydedilmez, yalnız yolun değiştirdiği kolonlar yazılır ({@link AlertEventFieldWriter}; kapanış kolonlarını hiç yazmaz).
+     * Okuma ile kayıt arasında (çoğu zaman SMTP gönderimi) kapanan alarm YENİDEN AÇILMAZ, arada yazılmış onay / damga / fırtına
+     * bağı geri alınmaz. Alan enjeksiyonu + isteğe bağlı: yokken (elle kurulan birim testleri) bugünkü {@code save}.
+     */
+    @Autowired(required = false)
+    private AlertEventFieldWriter fieldWriter;
+
+    /** Test dikişi. */
+    void setFieldWriter(AlertEventFieldWriter fieldWriter) {
+        this.fieldWriter = fieldWriter;
+    }
+
+    /**
+     * {@code props} kolonlarını bellekteki değerlerle hedefli yazar ve {@code event}'i döndürür; yazıcı yokken ya da kimliksiz
+     * satırda eski yol ({@code save} — dönüşü kullanılır).
+     */
+    private AlertEvent persist(AlertEvent event, String... props) {
+        AlertEventFieldWriter writer = fieldWriter;
+        if (writer == null || event == null || event.getId() == null) return alertEventRepo.save(event);
+        writer.write(event, false, props);
+        return event;
+    }
+
     /** Test kancası. */
     void setSystemMaintenance(SystemMaintenanceService s) { this.systemMaintenance = s; }
 
@@ -527,7 +552,7 @@ public class EscalationService {
 
                         event.setNotifiedContacts(serializeContacts(contacts));
                         event.setLastReAlertAt(now());
-                        alertEventRepo.save(event);
+                        persist(event, AlertEventFieldWriter.NOTIFIED);   // R2b · F: gönderim sırasında gelen kapanış / onay geri alınmaz
                     } finally {
                         if (heldKeyLock != null) releaseAlertKeyLock(heldKeyLock);
                     }
@@ -536,7 +561,7 @@ public class EscalationService {
                     AlertEvent event = existing.get();
                     if (event.getTeamId() == null && domainTeamId != null) {
                         event.setTeamId(domainTeamId);          // eski (damgasız) açık olayları tek seferlik geri doldur
-                        alertEventRepo.save(event);
+                        persist(event, "teamId");
                     }
                     // E10: alarm AÇIKKEN envanter başka takıma devredilirse ESCALATION / RE-ALERT e-postası,
                     // kontaklar ve 7/24 arama listesi CANLI envanter takımına (Takım B) gidiyor, push ve çözüm
@@ -580,7 +605,7 @@ public class EscalationService {
                             // eskalasyon push'u SKIPPED, 13 saat sonraki elle yeniden gönderim 5 kişiye SENT).
                             event.setNotifiedContacts(serializeContacts(contacts));
                             event.setLastReAlertAt(claimAt);
-                            event = alertEventRepo.save(event);
+                            event = persist(event, AlertEventFieldWriter.CERT_ESCALATION);   // geri almanın kolonlarıyla aynı
 
                             sendCombinedAlert(domainTeamId, ugTeamId, contacts, domain, alertLevel, alertType, message,
                                     "", event.getId(), "ESCALATION", daysRemaining, result);
@@ -634,7 +659,8 @@ public class EscalationService {
                             event.setDaysRemaining(daysRemaining);
                             if (notAfterOf(result) != null) event.setNotAfter(notAfterOf(result));
                             event.setMessage(sendMessage);
-                            saveUnlessClosedMeanwhile(event);
+                            saveUnlessClosedMeanwhile(event, "notifiedContacts", "lastReAlertAt", "daysRemaining", "notAfter",
+                                    "message");
                             log.warn("🔴 Yarıda kalmış ilk sertifika bildirimi tamamlandı: {} [{}] — alarm {} tarihinde açılmıştı",
                                     domain, alertType, event.getCreatedAt());
                             continue;
@@ -662,7 +688,8 @@ public class EscalationService {
                             event.setDaysRemaining(daysRemaining);
                             if (notAfterOf(result) != null) event.setNotAfter(notAfterOf(result));
                             event.setMessage(sendMessage);
-                            saveUnlessClosedMeanwhile(event);
+                            saveUnlessClosedMeanwhile(event, "lastReAlertAt", "realertCount", "daysRemaining", "notAfter",
+                                    "message");
                             log.info("Re-alert sent: {} [{}] — previous day: {}",
                                     domain, sendLevel, lastAlertTime.substring(0, 10));
                         } else {
@@ -690,11 +717,42 @@ public class EscalationService {
     public AlertEvent acknowledge(Long eventId, String acknowledgedBy, String note) {
         AlertEvent event = alertEventRepo.findById(eventId)
                 .orElseThrow(() -> new NoSuchElementException("Alert not found: " + eventId));
+        AlertEventFieldWriter writer = fieldWriter;
+        if (writer != null && event.getId() != null) return acknowledgeIfOpen(writer, event, acknowledgedBy, note);
         event.setAcknowledged(true);
         event.setAcknowledgedBy(acknowledgedBy);
         event.setAcknowledgedAt(now());
         if (note != null && !note.isBlank()) event.setAcknowledgedNote(note.trim());
         return alertEventRepo.save(event);
+    }
+
+    /**
+     * Onayın KOŞULLU yazımı (2026-10-23, çok pod R2b · F): yalnız onay kolonları, yalnız hâlâ AÇIK satıra. Eskiden okunan varlık
+     * bütünüyle kaydediliyordu — onay ile kapanış yarışınca (silme / duraklatma / otomatik çözüm / başka pod) bayat kopya
+     * {@code resolved = false}'u geri yazıp alarmı YENİDEN AÇIYORDU. 0 satır = alarm bu arada kapandı: onay yazılmaz, alarm kapalı
+     * kalır, taze satır döner (yanıt ve denetim sözleşmesi aynı — çağıran olayı alır). Okunan varlık değiştirilmez (işlem içi
+     * çağıranda kirli kontrol bütün satırı yazardı); başarıda onay alanları dolu KOPYA döner.
+     */
+    private AlertEvent acknowledgeIfOpen(AlertEventFieldWriter writer, AlertEvent event, String by, String note) {
+        String at = now();
+        String trimmed = note != null && !note.isBlank() ? note.trim() : null;
+        Map<String, Object> values = new LinkedHashMap<>();
+        values.put("acknowledged", Boolean.TRUE);
+        values.put("acknowledgedBy", by);
+        values.put("acknowledgedAt", at);
+        if (trimmed != null) values.put("acknowledgedNote", trimmed);
+        if (writer.writeValues(event.getId(), values, true) == 0) {
+            log.info("Onay atlandı — alarm aynı anda kapandı (yarış), yeniden açılmadı: {} [{}] #{}", event.getDomain(),
+                    event.getAlertType(), event.getId());
+            return alertEventRepo.findById(event.getId()).orElse(event);
+        }
+        AlertEvent out = new AlertEvent();
+        org.springframework.beans.BeanUtils.copyProperties(event, out);
+        out.setAcknowledged(true);
+        out.setAcknowledgedBy(by);
+        out.setAcknowledgedAt(at);
+        if (trimmed != null) out.setAcknowledgedNote(trimmed);
+        return out;
     }
 
     /**
@@ -1008,10 +1066,11 @@ public class EscalationService {
                     "Every recipient was excluded — select at least one e-mail or push recipient."));
         }
 
-        // Quick DB write — commits before async dispatch
+        // Quick DB write — commits before async dispatch. R2b · F: hedefli (yalnız bu iki kolon) — okumadan sonra gelen
+        // kapanış alarmı yeniden açmaz, onay geri alınmaz.
         event.setNotifiedContacts(serializeContacts(contacts));
         event.setLastReAlertAt(now());
-        alertEventRepo.save(event);
+        persist(event, AlertEventFieldWriter.NOTIFIED);
 
         // Fire-and-forget async (self-proxy needed for @Async to engage)
         self.reNotifyAsync(event.getId(), domainTeamId, ugTeamId, contacts,
@@ -1247,7 +1306,7 @@ public class EscalationService {
      * artık açık/onaysız değilse entity YAZILMAZ: bildirim gitti, ama kullanıcının kararı korunur. Satır okunamazsa
      * (yok/arıza) eski davranış: kaydedilir.
      */
-    private void saveUnlessClosedMeanwhile(AlertEvent event) {
+    private void saveUnlessClosedMeanwhile(AlertEvent event, String... props) {
         if (event.getId() != null) {
             try {
                 AlertEvent fresh = alertEventRepo.findById(event.getId()).orElse(null);
@@ -1260,7 +1319,8 @@ public class EscalationService {
                 log.debug("Taze alarm satırı okunamadı (#{}), kaydediliyor: {}", event.getId(), e.toString());
             }
         }
-        alertEventRepo.save(event);
+        // R2b · F: taze okuma ile kayıt arasındaki pencerede de kapanış geri alınmasın — yalnız yolun değiştirdiği kolonlar.
+        persist(event, props);
     }
 
     /** Catch-up adayı mı: ilk bildirimi yarıda kalmış (E9) ya da tür re-alert aralığı dolmuş. */
@@ -1786,7 +1846,8 @@ public class EscalationService {
             StormService.StormAction stormAction = stormService.evaluate(event, outageContext);
             if (stormAction == StormService.StormAction.SUPPRESSED) {
                 event.setLastReAlertAt(now());
-                alertEventRepo.save(event);
+                // R2b · F: fırtına değerlendirmesinin damgaladığı bağ + grup ve yeniden uyarı damgası — başka kolon değil.
+                persist(event, "lastReAlertAt", "stormId", "groupName");
                 // İZ (2026-09-30, prod olayı): bu dal eskiden hiçbir kanal çalıştırmıyor ve hiçbir kayıt da bırakmıyordu —
                 // alarm penceresi "0 bildirim", push "önce bildirim gitmemişti" diyor, takım neden haber almadığını
                 // göremiyordu. Bildirim günlüğü satırı: "bireysel e-posta (ayar kapalıysa push da) fırtına #N'e devredildi".
@@ -1815,7 +1876,9 @@ public class EscalationService {
 
                 event.setNotifiedContacts(serializeContacts(contacts));
                 event.setLastReAlertAt(now());
-                alertEventRepo.save(event);
+                // R2b · F: grup adı fırtına değerlendirmesinden (grup kipi); fırtına bağına DOKUNULMAZ (bu yol bağlamadı — eşzamanlı
+                // terfi bu olayı eş olarak bağlamış olabilir).
+                persist(event, "notifiedContacts", "lastReAlertAt", "groupName");
                 log.warn("🔴 İzleme alarmı oluşturuldu: {} [{}] {} — takım bilgilendirildi",
                         domain, alertType,
                         outageContext != null ? outageContext.getOrDefault("detail", "") : "");
@@ -1915,7 +1978,11 @@ public class EscalationService {
                     // @Transactional da yok — dirty-checking kurtarmiyordu. Terfi bellekte kalip
                     // kayboluyor, araya giren bir cozum bildirimini ESKI (dusuk) seviyeyle gonderiyor
                     // ve mudur atlanabiliyordu (Y5'in alt-dali).
-                    alertEventRepo.save(event);
+                    // R2b · F: yalnız terfinin değiştirdiği kolonlar — onay yalnız düşürüldüyse, damga yalnız sahiplenildiyse.
+                    List<String> cols = new ArrayList<>(List.of("alertLevel", "message"));
+                    if (acked) cols.addAll(List.of(AlertEventFieldWriter.ACK));
+                    if (!stormMember) cols.add("lastReAlertAt");
+                    persist(event, cols.toArray(new String[0]));
                     if (!stormMember) {
                         contacts = teamOnly ? List.of() : recipientsNow(alertLevel, domainTeamId, ugTeamId, event.getId());
                         sendCombinedAlert(domainTeamId, ugTeamId, contacts, domain, alertLevel, alertType,
@@ -1928,7 +1995,7 @@ public class EscalationService {
                 if (!stormMember) {
                     event.setNotifiedContacts(serializeContacts(contacts));
                     event.setLastReAlertAt(claimAt);
-                    alertEventRepo.save(event);
+                    persist(event, AlertEventFieldWriter.NOTIFIED);
                     log.warn("⬆ İzleme alarmı {} seviyesine yükseltildi: {} [{}] — bildirim gönderildi{}",
                             alertLevel, domain, alertType, acked ? " (ack düşürüldü)" : "");
                 } else if (stormPushIndividual()) {
@@ -1983,7 +2050,7 @@ public class EscalationService {
                 event.setNotifiedContacts(serializeContacts(contacts));
                 event.setLastReAlertAt(claimAt);
                 event.setMessage(message);
-                alertEventRepo.save(event);
+                persist(event, "notifiedContacts", "lastReAlertAt", "message");
                 log.warn("🔴 Yarıda kalmış ilk bildirim tamamlandı: {} [{}] — alarm {} tarihinde açılmıştı",
                         domain, alertType, event.getCreatedAt());
                 return;
@@ -2006,7 +2073,7 @@ public class EscalationService {
                 event.setLastReAlertAt(claimAt);
                 event.setRealertCount((event.getRealertCount() == null ? 0 : event.getRealertCount()) + 1);
                 event.setMessage(message);
-                alertEventRepo.save(event);
+                persist(event, "lastReAlertAt", "realertCount", "message");
                 log.info("İzleme re-alert gönderildi: {} [{}] — önceki gün: {}",
                         domain, alertType, lastAlertTime.substring(0, 10));
             } else {
@@ -2545,7 +2612,7 @@ public class EscalationService {
                 // aynı takımı görsün (açılış yolundaki geri doldurmanın çözüm eşleniği).
                 if (event.getTeamId() == null && invTeamId != null) {
                     event.setTeamId(invTeamId);
-                    try { alertEventRepo.save(event); } catch (Exception ignore) { /* damga best-effort */ }
+                    try { persist(event, "teamId"); } catch (Exception ignore) { /* damga best-effort */ }
                 }
             }
             // Sahipsiz kayıt (2026-09-28): açılışla AYNI kapı — takımı olmayan alarmın çözümü de hiçbir kanaldan gitmez
