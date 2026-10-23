@@ -219,6 +219,142 @@ class SideJobRunnerTest {
         assertThat(SideJobRunner.SHUTDOWN_WAIT_CAP_MS).isLessThan(ShutdownDeadline.DESTROY_BUDGET_MS);
     }
 
+    // ── FX-SIDE #1 (inceleme 2026-10-23): tek pod zamanlaması ve sıraya girme ───────────────────────────────────────
+
+    @Test
+    @DisplayName("FX-SIDE #1: 3 uzun iş koşucunun BÜTÜN uzun iş parçacıklarını tutarken liderin ertelediği KISA cron denemesi "
+            + "zamanında başlar (kısa cron şeridi) — uzun işlerin arkasında beklemez")
+    void deferredShortCronAttemptStartsOnTimeWhileThreeLongJobsRun() throws Exception {
+        SideJobRunner r = runner(3);
+        CountDownLatch longStarted = new CountDownLatch(3);
+        CountDownLatch release = new CountDownLatch(1);
+        Runnable longJob = () -> {
+            longStarted.countDown();
+            try {
+                release.await(30, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        };
+        try {
+            assertThat(r.submit("nightly-cleanup", longJob)).isTrue();
+            assertThat(r.submit("cert-hourly", longJob)).isTrue();
+            assertThat(r.submit("tls-profile", longJob)).isTrue();
+            assertThat(longStarted.await(5, TimeUnit.SECONDS)).as("3 uzun iş 3 iş parçacığını tutuyor").isTrue();
+
+            CountDownLatch shortRan = new CountDownLatch(1);
+            AtomicReference<String> thread = new AtomicReference<>();
+            long t0 = System.nanoTime();
+            assertThat(r.defer("incident-action-reminder", 50, false, null, () -> {
+                thread.set(Thread.currentThread().getName());
+                shortRan.countDown();
+            })).isTrue();
+            assertThat(shortRan.await(3, TimeUnit.SECONDS)).as("kısa deneme uzun işler bitmeden koştu").isTrue();
+            long tookMs = (System.nanoTime() - t0) / 1_000_000L;
+            assertThat(tookMs).as("gecikmesi (50 ms) dolunca başladı").isLessThan(2_000L);
+            assertThat(thread.get()).startsWith("side-job-short-");
+            assertThat(job(r, "nightly-cleanup").state()).as("uzun işler hâlâ koşuyor").isEqualTo(SideJobRunner.STATE_RUNNING);
+        } finally {
+            release.countDown();
+        }
+        assertThat(r.awaitIdle(5_000)).isTrue();
+    }
+
+    @Test
+    @DisplayName("FX-SIDE #1: liderin ertelediği UZUN cron denemesi uzun iş şeridinde (eski 4 bağımsız değişkenli defer aynen)")
+    void deferredHeavyAttemptRunsOnTheLongLane() throws Exception {
+        SideJobRunner r = runner(2);
+        AtomicReference<String> thread = new AtomicReference<>();
+        assertThat(r.defer("cert-hourly", 10, () -> false, () -> thread.set(Thread.currentThread().getName()))).isTrue();
+        long deadline = System.currentTimeMillis() + 5_000;
+        while (thread.get() == null && System.currentTimeMillis() < deadline) Thread.sleep(5);
+        assertThat(thread.get()).startsWith("side-job-").doesNotStartWith("side-job-short-");
+    }
+
+    @Test
+    @DisplayName("FX-SIDE #1: üretimde uzun iş şeridi en az 8 iş parçacığı ve en az zamanlayıcı havuzu boyu (ayar daha küçükse "
+            + "yükseltilir); 0 = satır içi; üst sınır 32")
+    void productionThreadFloor() {
+        assertThat(SideJobRunner.effectiveThreads(3, 8)).isEqualTo(8);
+        assertThat(SideJobRunner.effectiveThreads(1, 8)).isEqualTo(8);
+        assertThat(SideJobRunner.effectiveThreads(12, 8)).isEqualTo(12);
+        assertThat(SideJobRunner.effectiveThreads(3, 10)).as("zamanlayıcı havuzu büyütülmüşse o kadar").isEqualTo(10);
+        assertThat(SideJobRunner.effectiveThreads(3, 2)).as("havuz küçültülse de en az 8").isEqualTo(8);
+        assertThat(SideJobRunner.effectiveThreads(0, 8)).as("0 = satır içi").isZero();
+        assertThat(SideJobRunner.effectiveThreads(-1, 8)).isZero();
+        assertThat(SideJobRunner.effectiveThreads(100, 8)).isEqualTo(SideJobRunner.MAX_THREADS);
+        assertThat(SideJobRunner.effectiveThreads(3, 100)).isEqualTo(SideJobRunner.MAX_THREADS);
+        SideJobRunner bean = new SideJobRunner(3, 8);                // Spring kurucusu (application.properties: 3)
+        runners.add(bean);
+        assertThat(bean.threads()).isEqualTo(SideJobRunner.MIN_THREADS);
+        SideJobRunner one = new SideJobRunner(3);
+        runners.add(one);
+        assertThat(one.threads()).isEqualTo(SideJobRunner.MIN_THREADS);
+        assertThat(SideJobRunner.MIN_THREADS).as("20.167.0'ın zamanlayıcı havuzu (spring.task.scheduling.pool.size)").isEqualTo(8);
+    }
+
+    @Test
+    @DisplayName("FX-SIDE #1: sabit gecikmeli iş son BİTİŞTEN gecikme kadar sonra başlar (tık + gecikme değil); bekleyen / koşan "
+            + "işin tıkı sessizce düşer (atlandı sayılmaz); saat geri gittiyse en çok bir gecikme beklenir")
+    void submitAfterGap_holdsUntilFinishPlusGap() throws Exception {
+        java.util.concurrent.atomic.AtomicLong clock = new java.util.concurrent.atomic.AtomicLong(1_000_000L);
+        SideJobRunner r = new SideJobRunner(2, clock::get);
+        runners.add(r);
+        long gap = 600_000L;
+        AtomicInteger runs = new AtomicInteger();
+        Runnable sevenMinutes = () -> {
+            runs.incrementAndGet();
+            clock.addAndGet(7 * 60_000L);                              // tur 7 dk sürer
+        };
+        long t0 = clock.get();
+        assertThat(r.submitAfterGap("tls-profile", gap, sevenMinutes)).as("geçmiş yok → hemen").isTrue();
+        assertThat(r.awaitIdle(5_000)).isTrue();
+        assertThat(runs).hasValue(1);
+        assertThat(job(r, "tls-profile").lastFinishedAtMs()).isEqualTo(t0 + 7 * 60_000L);
+
+        clock.set(t0 + gap);                                           // Spring'in tıkı: gönderimden 10 dk sonra
+        assertThat(r.submitAfterGap("tls-profile", gap, sevenMinutes)).as("bitiş + 10 dk'ya dek bekletildi").isTrue();
+        assertThat(runs).as("bitişten 3 dk sonra koşmadı").hasValue(1);
+        assertThat(job(r, "tls-profile").state()).isEqualTo(SideJobRunner.STATE_QUEUED);
+        assertThat(r.submitAfterGap("tls-profile", gap, sevenMinutes)).as("bekleyen işin tıkı düştü").isFalse();
+        assertThat(job(r, "tls-profile").skippedCount()).as("sabit gecikmeli tık atlandı sayılmaz").isZero();
+        assertThat(job(r, "tls-profile").deferredCount()).as("lider ertelemesi değil").isZero();
+
+        clock.set(t0 + 7 * 60_000L + gap);                             // bekleme zamanlayıcısı bitiş + 10 dk'da çalar
+        assertThat(r.runDeferredNow()).isEqualTo(1);
+        assertThat(runs).hasValue(2);
+
+        clock.set(job(r, "tls-profile").lastFinishedAtMs() + gap);     // tam bitiş + gecikme → beklemeden
+        assertThat(r.submitAfterGap("tls-profile", gap, sevenMinutes)).isTrue();
+        assertThat(r.awaitIdle(5_000)).isTrue();
+        assertThat(runs).hasValue(3);
+
+        clock.addAndGet(-3_600_000L);                                  // saat bir saat geri gitti
+        assertThat(r.submitAfterGap("tls-profile", gap, sevenMinutes)).isTrue();
+        assertThat(job(r, "tls-profile").state()).as("en çok bir gecikme bekler (koşmaz, sonsuz da beklemez)")
+                .isEqualTo(SideJobRunner.STATE_QUEUED);
+        assertThat(r.runDeferredNow()).isEqualTo(1);
+        assertThat(runs).hasValue(4);
+    }
+
+    @Test
+    @DisplayName("FX-SIDE #1: kapanışta iki şerit de ortak süreyle beklenir; ertelenmiş kısa ve sabit gecikme beklemeleri iptal")
+    void stopAndWaitCoversBothLanes() throws Exception {
+        java.util.concurrent.atomic.AtomicLong clock = new java.util.concurrent.atomic.AtomicLong(1_000_000L);
+        SideJobRunner r = new SideJobRunner(1, clock::get);
+        runners.add(r);
+        AtomicInteger body = new AtomicInteger();
+        assertThat(r.submitAfterGap("cert-stale", 300_000L, body::incrementAndGet)).isTrue();
+        assertThat(r.awaitIdle(5_000)).isTrue();
+        assertThat(r.submitAfterGap("cert-stale", 300_000L, body::incrementAndGet)).as("bekletildi").isTrue();
+        assertThat(r.defer("ca-pin-refresh", 60_000, false, null, body::incrementAndGet)).isTrue();
+        long t0 = System.nanoTime();
+        r.stopAndWait();
+        assertThat((System.nanoTime() - t0) / 1_000_000L).as("koşan iş yok → beklemeden").isLessThan(2_000L);
+        assertThat(r.runDeferredNow()).as("iptal edildiler").isZero();
+        assertThat(body).hasValue(1);
+    }
+
     @Test
     @DisplayName("Sistem Sağlığı sözleşmesi (paket B): status() iş adına göre sıralı, zamanlar epoch ms, yerleşim / ipucu fırlatsa da "
             + "fırlatmaz ve veritabanı okumaz")
