@@ -1,4 +1,40 @@
 {{- if .Values.podDisruptionBudget.enabled -}}
+{{- /*
+2026-10-23 (multi-pod release 2b): exactly one of minAvailable / maxUnavailable, and never a budget that forbids every
+voluntary eviction (a node drain / cluster upgrade would block forever) — see values.yaml "podDisruptionBudget".
+*/ -}}
+{{- $pdb := .Values.podDisruptionBudget -}}
+{{- $min := "" -}}
+{{- if and (hasKey $pdb "minAvailable") (not (kindIs "invalid" $pdb.minAvailable)) -}}{{- $min = toString $pdb.minAvailable -}}{{- end -}}
+{{- $max := "" -}}
+{{- if and (hasKey $pdb "maxUnavailable") (not (kindIs "invalid" $pdb.maxUnavailable)) -}}{{- $max = toString $pdb.maxUnavailable -}}{{- end -}}
+{{- if and (ne $min "") (ne $max "") -}}
+{{- fail (printf "podDisruptionBudget: set either minAvailable (%s) or maxUnavailable (%s), not both - clear the other one (e.g. --set podDisruptionBudget.minAvailable=null)" $min $max) -}}
+{{- end -}}
+{{- if and (eq $min "") (eq $max "") -}}
+{{- fail "podDisruptionBudget.enabled needs minAvailable or maxUnavailable" -}}
+{{- end -}}
+{{- $pods := int .Values.replicaCount -}}
+{{- $podsFrom := "replicaCount" -}}
+{{- if .Values.autoscaling.enabled -}}{{- $pods = int .Values.autoscaling.minReplicas -}}{{- $podsFrom = "autoscaling.minReplicas" -}}{{- end -}}
+{{- if ne $min "" -}}
+{{- if regexMatch "^[0-9]+$" $min -}}
+{{- if ge (int $min) $pods -}}
+{{- fail (printf "podDisruptionBudget.minAvailable (%s) must be below %s (%d): otherwise no voluntary eviction is ever allowed and a node drain / cluster upgrade blocks forever. One pod: turn the PDB off. Two pods: minAvailable 1." $min $podsFrom $pods) -}}
+{{- end -}}
+{{- else if not (regexMatch "^[0-9]+%$" $min) -}}
+{{- fail (printf "podDisruptionBudget.minAvailable must be a whole number or a percentage (\"50%%\"), got %q" $min) -}}
+{{- else if ge (int (trimSuffix "%" $min)) 100 -}}
+{{- fail (printf "podDisruptionBudget.minAvailable %s never allows a voluntary eviction (node drains block forever)" $min) -}}
+{{- end -}}
+{{- end -}}
+{{- if ne $max "" -}}
+{{- if not (regexMatch "^[0-9]+%?$" $max) -}}
+{{- fail (printf "podDisruptionBudget.maxUnavailable must be a whole number or a percentage (\"50%%\"), got %q" $max) -}}
+{{- else if eq (int (trimSuffix "%" $max)) 0 -}}
+{{- fail (printf "podDisruptionBudget.maxUnavailable %s never allows a voluntary eviction (node drains block forever) - use 1" $max) -}}
+{{- end -}}
+{{- end -}}
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
@@ -7,7 +43,11 @@ metadata:
   labels:
     {{- include "site-monitor.labels" . | nindent 4 }}
 spec:
-  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  {{- if ne $min "" }}
+  minAvailable: {{ if regexMatch "^[0-9]+$" $min }}{{ $min }}{{ else }}{{ $min | quote }}{{ end }}
+  {{- else }}
+  maxUnavailable: {{ if regexMatch "^[0-9]+$" $max }}{{ $max }}{{ else }}{{ $max | quote }}{{ end }}
+  {{- end }}
   selector:
     matchLabels:
       {{- include "site-monitor.selectorLabels" . | nindent 6 }}

@@ -73,8 +73,9 @@ config:
   # sabitleniyor. Gerekçe: oturumlar JDBC'de (spring.session.store-type=jdbc), yani HER istek
   # DB'ye uğruyor; buna arka plan işleri (executor 50, parallel-workers 20, scheduling 8)
   # ekleniyor. 10 bağlantı 100 eşzamanlı kullanıcıda ilk darboğaz oluyordu.
-  # minimum-idle 10'da bırakıldı (DB_POOL_MIN ezilmiyor): boşta tutulan bağlantı sayısı
-  # artmaz, havuz yük geldikçe 30'a kadar büyür.
+  # minimum-idle: chart varsayılanı config.dbPoolMin = 5 (2026-10-23, çok pod sürüm 2b; önceden uygulama
+  # varsayılanı 10 geçerliydi): boşta pod başına 5 bağlantı tutulur, havuz yük geldikçe 30'a kadar büyür. Rollout'ta
+  # replica + 1 pod boşta bağlantılarını birlikte tutar (2 replikada 3 × 5 = 15).
   # DİKKAT: bu değer POD BAŞINA. Tek pod profilinde DB'de 30 bağlantı demektir; rollout'ta
   # (maxSurge 1) replica + 1 pod birlikte koşar. Kural: max_connections ≥ (replica + 1) × dbPoolMax + 25
   # → 2 replikada 30 için ≥ 115 (pratikte 120), max_connections 100 ise 25 (docs/db-scaling.md).
@@ -120,10 +121,11 @@ autoscaling:
   minReplicas: 1
   maxReplicas: 5
   targetCPUUtilizationPercentage: 70
-  targetMemoryUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: ""   # bellek metriği yok (JVM yığını hiç küçülmez, HPA en üste kilitlenirdi)
 
-# DİKKAT: tek replikayla minAvailable=2 bir PDB TUZAĞIDIR — voluntary eviction hiçbir zaman
-# izin almaz, yani node drain / cluster upgrade süresiz bloke olur. Replika 1 iken kapalı kalmalı.
+# DİKKAT: tek replikayla minAvailable=1 (ya da 2) bir PDB TUZAĞIDIR — voluntary eviction hiçbir zaman
+# izin almaz, yani node drain / cluster upgrade süresiz bloke olur. Replika 1 iken kapalı kalmalı
+# (2026-10-23'ten beri helm template bunu reddeder: minAvailable ≥ replicaCount).
 podDisruptionBudget:
   enabled: false
   minAvailable: 1
