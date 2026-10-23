@@ -32,8 +32,25 @@ public class DeploymentHistoryService {
 
     public enum Kind { FIRST_SEEN, UPGRADE, RESTART, ROLLBACK, CHANGED, UNKNOWN }
 
-    /** Türetilmiş satır: kayıt + tür + önceki sürüm. */
-    public record Derived(DeploymentHistory row, Kind kind, String previousVersion) {}
+    /**
+     * Türetilmiş satır: kayıt + tür + önceki sürüm + bu satır bir YENİDEN BAŞLATMA olarak sayılır mı.
+     *
+     * <p>{@code countedRestart} (2026-10-23, çok pod R2b, MP-37e): {@link Kind#RESTART} satırlarının hepsi yeniden başlatma
+     * değildir — 2 replikalı bir dağıtımın ikinci yeni pod'u, ölçek büyütme ya da başka bir pod aynı sürümü koşarken açılan
+     * pod bir EK REPLİKADIR. Sayılan yeniden başlatma: aynı pod'un (pod adı, yoksa makine adı) bir önceki satırı aynı sürümü
+     * koşuyordu (konteyner yeniden başladı) ya da açılış anında aynı sürümü koşan başka canlı pod yoktu (tek pod deseni).
+     */
+    public record Derived(DeploymentHistory row, Kind kind, String previousVersion, boolean countedRestart) {
+        /** Eski çağıranlar (denetleyici, testler): RESTART sayılır — tek pod davranışı. */
+        public Derived(DeploymentHistory row, Kind kind, String previousVersion) {
+            this(row, kind, previousVersion, kind == Kind.RESTART);
+        }
+
+        /** Ek replika: aynı sürüm başka canlı pod'da koşarken açıldı (yeniden başlatma sayılmaz, geçiş de değil). */
+        public boolean replica() {
+            return kind == Kind.RESTART && !countedRestart;
+        }
+    }
 
     /** Ortamda koşan sürüm ve o sürümün canlıya geçiş anı. */
     public record Current(String version, String liveSince, Kind liveKind, String previousVersion,
@@ -54,6 +71,15 @@ public class DeploymentHistoryService {
     // seçimi sessizce 100 satır getiriyor, sayfa etiketleri kayıyor ve kayıtların bir kısmı erişilemez oluyordu (2026-09-27).
     public static final int MAX_PAGE = 200;
     public static final int CSV_MAX_ROWS = 5000;
+    /**
+     * "Açılışta canlı" payı (2026-10-23, MP-37e): bitişi yazılmamış bir pod'un son görülmesi ({@code last_seen_at}, 60 sn'de bir)
+     * bu kadar içindeyse, açılan satır onu canlı görür (kalp atışı aralığı + gecikme).
+     */
+    static final long ALIVE_SLACK_MS = 2 * 60_000L;
+    /** Dağıtım bildirimi küme sahiplenmesinin nişan öneki ({@code schema_patch_markers}) — KALICI ad. */
+    public static final String NOTICE_MARKER_PREFIX = "deploy-notice:";
+    /** {@code schema_patch_markers.patch_key} kolon boyu. */
+    static final int MARKER_KEY_MAX = 120;
 
     private final DeploymentHistoryRepository repo;
     private final BuildInfo buildInfo;
@@ -114,14 +140,53 @@ public class DeploymentHistoryService {
                     b.environment(), b.version(), kind, mine != null ? mine.previousVersion() : null,
                     b.commitShort(), b.helmRevision(), saved.getId());
             if (kind == Kind.UPGRADE || kind == Kind.ROLLBACK || kind == Kind.CHANGED) {
-                try {
-                    events.publishEvent(new TransitionEvent(kind, b.environment(), mine.previousVersion(), b.version(), saved));
-                } catch (Exception e) {
-                    log.warn("Deployment transition listeners failed: {}", e.toString());
+                // Kümede TEK yayın (2026-10-23, çok pod R2b, MP-37e): aynı anda açılan iki yeni sürüm pod'u birbirinin satırını
+                // henüz görmeden ikisi de UPGRADE türetebilir → iki e-posta. Nişanı ilk ekleyen pod yayınlar.
+                if (claimNotice(b.environment(), b.version(), b.helmRevision())) {
+                    try {
+                        events.publishEvent(new TransitionEvent(kind, b.environment(), mine.previousVersion(), b.version(), saved));
+                    } catch (Exception e) {
+                        log.warn("Deployment transition listeners failed: {}", e.toString());
+                    }
+                } else {
+                    log.info("Deployment transition {} {}→{} already announced by another pod (marker present) — not published",
+                            kind, mine.previousVersion(), b.version());
                 }
             }
         } catch (Exception e) {
             log.warn("Deployment history startup record failed (continuing): {}", e.toString());
+        }
+    }
+
+    /**
+     * Sürüm geçişi bildiriminin küme sahiplenmesi: {@code schema_patch_markers}'a {@code deploy-notice:<ortam>:<sürüm>:<helm rev>}
+     * önce EKLENİR; ekleyen pod yayınlar, birincil anahtar çakışması (başka pod ekledi) → yayın yok. Başka bir hata (tablo
+     * oluşturulamadı, bağlantı) → yayınlanır (eski davranış: çift bildirim sessiz kalmaktan iyidir). Helm revizyonu yoksa
+     * {@code -} (yerel / Helm'siz kurulum).
+     */
+    boolean claimNotice(String environment, String version, Integer helmRevision) {
+        String key = noticeKey(environment, version, helmRevision);
+        try {
+            jdbc.execute(StandaloneMonitorDeletionBackfill.MARKERS_DDL);
+            jdbc.update("INSERT INTO schema_patch_markers (patch_key, applied_at, rows_affected) VALUES (?, ?, 0)", key, now());
+            return true;
+        } catch (org.springframework.dao.DuplicateKeyException e) {
+            return false;
+        } catch (Exception e) {
+            log.warn("Deployment notice marker could not be written ({}) — publishing anyway: {}", key, e.toString());
+            return true;
+        }
+    }
+
+    /** Nişan anahtarı; kolon boyunu aşarsa (uzun ortam / sürüm) önek + SHA-256 özeti. */
+    static String noticeKey(String environment, String version, Integer helmRevision) {
+        String key = NOTICE_MARKER_PREFIX + environment + ":" + version + ":" + (helmRevision == null ? "-" : helmRevision);
+        if (key.length() <= MARKER_KEY_MAX) return key;
+        try {
+            byte[] d = java.security.MessageDigest.getInstance("SHA-256").digest(key.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            return NOTICE_MARKER_PREFIX + java.util.HexFormat.of().formatHex(d);
+        } catch (Exception e) {
+            return key.substring(0, MARKER_KEY_MAX);
         }
     }
 
@@ -196,48 +261,122 @@ public class DeploymentHistoryService {
 
     // ── Türetim ──────────────────────────────────────────────────────────────────────────────
 
-    /** Ortam bazında {@code started_at,id} ARTAN sıralı satırlar → tür. Saf, test edilebilir. */
+    /**
+     * Ortam bazında {@code started_at,id} ARTAN sıralı satırlar → tür. Saf, test edilebilir.
+     *
+     * <p><b>Çok pod (2026-10-23, R2b, MP-37e).</b> Ortamın sürümü ({@code prev}) yalnız GERÇEK geçişte ilerler. Bir satır
+     * geçiş DEĞİLDİR (RESTART) ve {@code prev}'i ilerletmez, eğer açılış anında:
+     * <ul>
+     *   <li>aynı sürümü koşan BAŞKA canlı pod vardı (2 replikalı dağıtımın ikinci pod'u, ölçek büyütme) — ek replika;</li>
+     *   <li>aynı pod'un (pod adı / makine adı) bir önceki satırı aynı sürümdeydi (konteyner yeniden başladı — dağıtımın
+     *       ortasında yeniden başlayan ESKİ sürüm pod'u sahte ROLLBACK + ardından sahte UPGRADE üretmesin);</li>
+     *   <li>daha yüksek Helm revizyonlu, başka sürümde canlı pod vardı (eski ReplicaSet'in geç kalan pod'u).</li>
+     * </ul>
+     * "Canlı": daha önce açılmış {@code STARTUP} satırı, bitişi ({@code ended_at}, yoksa {@code last_seen_at} +
+     * {@link #ALIVE_SLACK_MS}) bu satırın açılışından sonra. Canlılık bilgisi olmayan satırlar (BACKFILL, MANUAL) eski kuralla:
+     * aynı sürüm RESTART, farklı sürüm geçiş.
+     */
     public static List<Derived> deriveKinds(List<DeploymentHistory> rowsAsc) {
         List<Derived> out = new ArrayList<>(rowsAsc.size());
         String prev = null;
+        List<DeploymentHistory> active = new ArrayList<>();     // açılışta canlı olabilecek önceki STARTUP satırları
+        Map<String, String> lastVersionByPod = new HashMap<>();
         for (DeploymentHistory r : rowsAsc) {
+            Long start = epochMs(r.getStartedAt());
+            String pod = podKey(r);
+            List<DeploymentHistory> alive = new ArrayList<>();
+            if (start != null) {
+                for (java.util.Iterator<DeploymentHistory> it = active.iterator(); it.hasNext();) {
+                    DeploymentHistory x = it.next();
+                    Long end = endMs(x);
+                    if (end == null || end < start - ALIVE_SLACK_MS) { it.remove(); continue; }   // artık hiçbir sonraki için canlı değil
+                    boolean ended = x.getEndedAt() != null && !x.getEndedAt().isBlank();
+                    if (!ended || end >= start) alive.add(x);
+                }
+            }
             String v = r.getVersion();
-            if (v == null || v.isBlank()) { out.add(new Derived(r, Kind.UNKNOWN, prev)); continue; }
+            if (v == null || v.isBlank()) { out.add(new Derived(r, Kind.UNKNOWN, prev, false)); continue; }
+            boolean sameVersionOtherPodAlive = false, straggler = false;
+            for (DeploymentHistory x : alive) {
+                if (v.equals(x.getVersion()) && !Objects.equals(pod, podKey(x))) sameVersionOtherPodAlive = true;
+                if (r.getHelmRevision() != null && x.getHelmRevision() != null && x.getHelmRevision() > r.getHelmRevision()
+                        && !v.equals(x.getVersion())) straggler = true;
+            }
+            boolean containerRestart = pod != null && v.equals(lastVersionByPod.get(pod));
             Kind k;
-            if (prev == null) k = Kind.FIRST_SEEN;
-            else if (v.equals(prev)) k = Kind.RESTART;
-            else {
+            boolean counted = false;
+            if (prev == null) {
+                k = Kind.FIRST_SEEN;
+                prev = v;
+            } else if (v.equals(prev) || sameVersionOtherPodAlive || containerRestart || straggler) {
+                k = Kind.RESTART;
+                counted = containerRestart || (v.equals(prev) && !sameVersionOtherPodAlive && !straggler);
+            } else {
                 Optional<Integer> cmp = Semver.compare(v, prev);
                 k = cmp.isEmpty() ? Kind.CHANGED : (cmp.get() > 0 ? Kind.UPGRADE : Kind.ROLLBACK);
             }
-            out.add(new Derived(r, k, prev));
-            prev = v;
+            out.add(new Derived(r, k, k == Kind.FIRST_SEEN ? null : prev, counted));
+            if (k != Kind.RESTART) prev = v;
+            if (pod != null) lastVersionByPod.put(pod, v);
+            if (start != null && DeploymentHistory.SOURCE_STARTUP.equals(r.getSource()) && endMs(r) != null) active.add(r);
         }
         return out;
+    }
+
+    /** Pod kimliği: pod adı, yoksa makine adı; ikisi de yoksa null (elle / geri doldurma satırı). */
+    static String podKey(DeploymentHistory r) {
+        if (r.getPodName() != null && !r.getPodName().isBlank()) return r.getPodName().trim();
+        if (r.getHostname() != null && !r.getHostname().isBlank()) return r.getHostname().trim();
+        return null;
+    }
+
+    /** Satırın bitişi: {@code ended_at}, yoksa {@code last_seen_at} (+ pay çağıranda), yoksa null. */
+    static Long endMs(DeploymentHistory r) {
+        Long e = epochMs(r.getEndedAt());
+        if (e != null) return e;
+        return epochMs(r.getLastSeenAt());
+    }
+
+    static Long epochMs(String iso) {
+        if (iso == null || iso.isBlank()) return null;
+        try {
+            return Instant.parse(iso).toEpochMilli();
+        } catch (Exception e) {
+            try {
+                return java.time.LocalDateTime.parse(iso.length() > 19 ? iso.substring(0, 19) : iso).toInstant(ZoneOffset.UTC).toEpochMilli();
+            } catch (Exception ignored) {
+                return null;
+            }
+        }
     }
 
     public List<Derived> derivedFor(String environment) {
         return deriveKinds(repo.findByEnvironmentOrderByStartedAtAscIdAsc(environment));
     }
 
-    /** Koşan sürüm ve canlıya geçiş anı (aynı sürümün koşusundaki ilk geçiş satırı). */
+    /**
+     * Koşan sürüm ve canlıya geçiş anı: son GEÇİŞ satırı (FIRST_SEEN / UPGRADE / ROLLBACK / CHANGED) ortamın sürümünü
+     * belirler (2026-10-23, MP-37e: dağıtım ortasında yeniden başlayan eski sürüm pod'u "koşan sürüm" sayılmaz); yeniden
+     * başlatma sayısı o geçişten sonraki, aynı sürümdeki SAYILAN yeniden başlatmalar (ek replikalar sayılmaz).
+     */
     public Current current(String environment) {
         List<Derived> all = derivedFor(environment);
         Derived last = null;
+        int transitionAt = -1;
         for (int i = all.size() - 1; i >= 0; i--) {
-            if (all.get(i).kind() != Kind.UNKNOWN) { last = all.get(i); break; }
-        }
-        if (last == null) return new Current(null, null, null, null, 0, null, null);
-        int restarts = 0;
-        Derived transition = last;
-        for (int i = all.indexOf(last); i >= 0; i--) {
             Derived d = all.get(i);
-            if (d.kind() == Kind.UNKNOWN) continue;
-            if (!Objects.equals(d.row().getVersion(), last.row().getVersion())) break;
-            transition = d;
-            if (d.kind() == Kind.RESTART) restarts++;
+            if (last == null && d.kind() != Kind.UNKNOWN) last = d;
+            if (d.kind() != Kind.UNKNOWN && d.kind() != Kind.RESTART) { transitionAt = i; break; }
         }
-        return new Current(last.row().getVersion(), transition.row().getStartedAt(), transition.kind(),
+        if (last == null || transitionAt < 0) return new Current(null, null, null, null, 0, null, null);
+        Derived transition = all.get(transitionAt);
+        String version = transition.row().getVersion();
+        int restarts = 0;
+        for (int i = transitionAt + 1; i < all.size(); i++) {
+            Derived d = all.get(i);
+            if (d.countedRestart() && Objects.equals(d.row().getVersion(), version)) restarts++;
+        }
+        return new Current(version, transition.row().getStartedAt(), transition.kind(),
                 transition.previousVersion(), restarts, last.row().getStartedAt(), last.row().getId());
     }
 
@@ -250,7 +389,7 @@ public class DeploymentHistoryService {
         int restarts = 0, unknown = 0;
         for (int i = all.size() - 1; i >= 0; i--) {
             Derived d = all.get(i);
-            if (d.kind() == Kind.RESTART) { restarts++; continue; }
+            if (d.kind() == Kind.RESTART) { if (d.countedRestart()) restarts++; continue; }
             if (d.kind() == Kind.UNKNOWN) unknown++;
             transitions.add(toMap(d));
         }
@@ -275,7 +414,7 @@ public class DeploymentHistoryService {
         for (Derived d : all) {
             boolean transition = d.kind() == Kind.UPGRADE || d.kind() == Kind.ROLLBACK || d.kind() == Kind.CHANGED || d.kind() == Kind.FIRST_SEEN;
             if (transition && d.row().getStartedAt().compareTo(cutoff30) >= 0) deployments30++;
-            if (d.kind() == Kind.RESTART && d.row().getStartedAt().compareTo(cutoff7) >= 0) restarts7++;
+            if (d.countedRestart() && d.row().getStartedAt().compareTo(cutoff7) >= 0) restarts7++;
             if (d.kind() == Kind.ROLLBACK) rollbacks++;
             if (transition && d.row().getVersion() != null) {
                 Long lag = leadTimeSeconds(d.row().getVersion(), d.row().getStartedAt());
@@ -526,6 +665,8 @@ public class DeploymentHistoryService {
         m.put("version", r.getVersion());
         m.put("previousVersion", d.previousVersion());
         m.put("kind", d.kind().name());
+        // Ek replika (2026-10-23, MP-37e): aynı sürüm başka canlı pod'da koşarken açıldı — yeniden başlatma sayılmaz
+        if (d.replica()) m.put("replica", true);
         m.put("source", r.getSource());
         m.put("commit", r.getGitCommit());
         m.put("commitShort", r.getGitCommit() == null ? null : r.getGitCommit().substring(0, Math.min(8, r.getGitCommit().length())));
