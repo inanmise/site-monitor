@@ -259,6 +259,12 @@ for (const vp of VIEWPORTS) {
           tone: 'muted', scope: 'cluster', cardWarn: false },
         { name: 'podFallback', health: withEs({ load: null }, { last_load: none('no_previous_generation') }), level: 'none',
           tone: 'muted', scope: 'pod', cardWarn: false, reason: /first leader|ilk lider/ },
+        // inceleme 2026-10-28 L-1: gözlem önceki dönemin lideri A'nın (şimdiki lider B yayımlamadı) → güncel değil, gri
+        { name: 'stale', health: withEs({ load: { ...LOAD, pod: A, pod_name: POD_A, observed_by: A, observed_by_pod: POD_A } }),
+          level: 'stale', tone: 'muted', scope: 'cluster', cardWarn: false, hint: /earlier term|önceki bir devre/ },
+        // L-3: bu pod kapanıyor → "Pod kapanıyor" (lider değil yerine)
+        { name: 'closing', health: withEs({}, { closing: true, marker_columns_missing: false }), level: 'full', tone: 'success',
+          scope: 'cluster', cardWarn: false, hoReason: 'recorder_closing' },
       ]
       let current = CASES[0].health
       await mock(page)
@@ -275,9 +281,14 @@ for (const vp of VIEWPORTS) {
         await expect(sec.locator('[data-slot="pod-chip"]'), c.name).toHaveAttribute('data-scope', c.scope)
         await expect(sec.locator('[data-slot="es-load-outcome"] [data-tone]'), c.name).toHaveAttribute('data-tone', c.tone)
         if (c.reason) await expect(sec.locator('[data-slot="es-load-reason"]'), c.name).toContainText(c.reason)
+        if (c.hint) {
+          await expect(sec.locator('[data-slot="es-load-hint"]'), c.name).toContainText(c.hint)
+          await expect(sec.locator('[data-slot="es-load-hint"]'), c.name).toContainText(POD_A)
+        }
         if (c.scope === 'pod') await expect(sec.locator('[data-slot="pod-chip"]'), c.name).toContainText(POD_A)
         if (c.name === 'full') {
           await expect(sec.locator('[data-slot="es-load-from"]')).toContainText(POD_A)
+          await expect(sec.locator('[data-slot="es-load-from"]')).toContainText(/written 9 sec before|9 sn önce yazılmıştı/)
           await expect(sec.locator('[data-slot="es-load-by"]')).toContainText(POD_B)
           await expect(sec.locator('[data-slot="es-load-counts"]')).toContainText('412')
           await expect(sec.locator('[data-slot="es-load-waited"]')).toContainText('140')
@@ -285,7 +296,7 @@ for (const vp of VIEWPORTS) {
         // A bu pod (takipçi) → devir hazırlığı "lider değil"; ayar kapalıyken "okuma ayarı kapalı"; son devir boşaltması çevrili
         const ho = card.locator('[data-slot="cluster-this-pod"] [data-slot="cluster-handover"]')
         await expect(ho, c.name).toHaveAttribute('data-ready', 'false')
-        await expect(ho, c.name).toHaveAttribute('data-reason', c.name === 'off' ? 'setting_off' : 'not_leader')
+        await expect(ho, c.name).toHaveAttribute('data-reason', c.hoReason ?? (c.name === 'off' ? 'setting_off' : 'not_leader'))
         await expect(ho.locator('[data-slot="handover-last"]'), c.name).toHaveAttribute('data-result', 'written')
         await expect(card.locator('[data-kind="leader"]'), c.name).toHaveAttribute('data-tone', c.cardWarn ? 'warning' : 'success')
         await page.waitForTimeout(250)
