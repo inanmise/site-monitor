@@ -209,6 +209,25 @@ class EvalStateRecorderReadTest {
         assertThat(a.rec.generationComplete()).isTrue();
     }
 
+    @Test
+    @DisplayName("Üst sınır 1 (yarısı 0): düşüşten sonra kuyruk boşalınca yine yeniden oynatılır (sonsuza dek eksik kalmaz)")
+    void tinyPendingCapStillReplays() {
+        Pod a = new Pod(A, mp.jdbc(), 1, null);
+        a.src.recovery.put(RK, new RecoveryValues(1, 1L, null, null));
+        assertThat(a.rec.flushNow()).isTrue();
+        assertThat(a.rec.generationComplete()).isTrue();
+        a.src.recovery.put(PORT + ":x.example", new RecoveryValues(1, 1L, null, null));
+        a.rec.recovery(PORT + ":x.example", PORT, "x.example");
+        a.src.recovery.put(PORT + ":w.example", new RecoveryValues(1, 1L, null, null));
+        a.rec.recovery(PORT + ":w.example", PORT, "w.example");   // düşer
+        assertThat(a.rec.generationComplete()).isFalse();
+        a.rec.flushNow();
+        a.rec.tick();
+        a.rec.flushNow();
+        assertThat(wCount()).isEqualTo(1);
+        assertThat(a.rec.generationComplete()).isTrue();
+    }
+
     Integer wCount() {
         List<Integer> v = mp.jdbc().queryForList("SELECT recovery_up_count FROM monitor_eval_state WHERE domain = 'w.example'",
                 Integer.class);

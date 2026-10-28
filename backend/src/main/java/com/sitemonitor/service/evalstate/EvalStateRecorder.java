@@ -1289,7 +1289,7 @@ public class EvalStateRecorder implements EvalStateSink, ApplicationContextAware
      */
     private void maybeReplay() {
         if (myGen <= 0 || complete || replaySeq != 0 || !readEnabled()) return;
-        if (pendingSize() >= maxPending / 2) return;
+        if (pendingSize() >= Math.max(1, maxPending / 2)) return;
         replayNow();
     }
 
@@ -1870,12 +1870,17 @@ public class EvalStateRecorder implements EvalStateSink, ApplicationContextAware
             result = HandoverResult.FLUSH_FAILED;
         }
         lastHandover = result;
-        long ms = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t0);
-        if (result == HandoverResult.WRITTEN) {
-            log.info("Devir öncesi kalıcı durum boşaltıldı ve işaretlendi (kuşak {}, {} işlem, {} ms)", gen, written.get(), ms);
-        } else {
-            log.info("Devir öncesi kalıcı durum işaretlenemedi ({}) — halef yalnız gözlemleri ya da hiçbir durumu yüklemez",
-                    result.key());
+        try {
+            long ms = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t0);
+            if (result == HandoverResult.WRITTEN) {
+                log.info("Devir öncesi kalıcı durum boşaltıldı ve işaretlendi (kuşak {}, {} işlem, {} ms)", gen, written.get(),
+                        ms);
+            } else {
+                log.info("Devir öncesi kalıcı durum işaretlenemedi ({}) — halef yalnız gözlemleri ya da hiçbir durumu "
+                        + "yüklemez", result.key());
+            }
+        } catch (RuntimeException e) {
+            // günlük yazılamadı — sonuç yine döner (asla fırlatmaz)
         }
         return result;
     }
