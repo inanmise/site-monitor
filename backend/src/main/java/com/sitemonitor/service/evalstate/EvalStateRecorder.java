@@ -160,6 +160,8 @@ public class EvalStateRecorder implements EvalStateSink, ApplicationContextAware
     public static final String HANDOVER_THREAD_NAME = "eval-state-handover";
     /** Başarısız yükleme raporu yayınının yeniden deneme aralığı. */
     static final long PUBLISH_RETRY_MS = 60_000L;
+    /** Kanca hatası / kirli taşma kaynaklı yeniden oynatmalar (ve taşmada istenen boşluk) arasında en az bu süre (3-2, L-5). */
+    static final long REREPLAY_MIN_INTERVAL_MS = 60_000L;
 
     private static final ObjectMapper JSON = JsonMapper.builder().build();
 
@@ -270,6 +272,19 @@ public class EvalStateRecorder implements EvalStateSink, ApplicationContextAware
     private volatile boolean backoffResetRequested;
     /** Devir yardımcısının bütçesi doldu — yardımcı işaret ifadesine başlamadıysa yazmaz. */
     private volatile boolean handoverAborted;
+    /**
+     * Devir işareti YAZILDI (inceleme 2026-10-28, L-3): bundan sonra hiçbir kaydedici ifadesi {@code '*'} satırına dokunmaz —
+     * {@link #flushLock}'u bekleyen bir boşaltma (lider ipucu denetimini işaretten önce geçmiş yazıcı turu / doğrulama)
+     * işaretli nabızla {@code handover_ms = NULL} yazıp temiz devri sessizce geçersiz kılardı. Her liderlik olayı temizler.
+     */
+    private volatile boolean handoverMarked;
+    /**
+     * Kanca hatası / kirli taşma kaynaklı YENİDEN oynatmalar seyreltilir (inceleme L-5): sürekli istisna veren bir kanca her
+     * yazıcı turunda belleğin tamamını yeniden kuyruğa alırdı. Kaydedici saatiyle son başarılı oynatmanın anı.
+     */
+    private volatile long lastReplayAtMs = Long.MIN_VALUE;
+    /** Kuşak bir kanca hatası yüzünden eksik düştü — sonraki oynatma {@link #REREPLAY_MIN_INTERVAL_MS}'i bekler. */
+    private volatile boolean replayRateLimited;
     private volatile HandoverResult lastHandover;
     /** Yayımlanan son yükleme raporunun anı (yalnız yazıcı iş parçacığında / {@link #flushNow()}). */
     private long lastPublishedLoadAtMs = Long.MIN_VALUE;
@@ -849,6 +864,15 @@ public class EvalStateRecorder implements EvalStateSink, ApplicationContextAware
         return n;
     }
 
+    /** Zincir kuyruğu hariç bekleyenler (devir işaretinin "bekleyen yok" koşulu — zincirler yüklenmez; 3-2, L-6). */
+    private long pendingSizeExceptChains() {
+        long n = 0;
+        for (Lane l : lanes) {
+            if (l != chainLane) n += l.pending.mappingCount();
+        }
+        return n;
+    }
+
     private long dirtySize() {
         long n = 0;
         for (Lane l : lanes) n += l.dirty.size();
@@ -978,6 +1002,7 @@ public class EvalStateRecorder implements EvalStateSink, ApplicationContextAware
             myGen = 0L;
             resetCompleteness();
             handoverOpen = false;   // 3-2: RELEASED (ve her olay) devri kapatır
+            handoverMarked = false;
             coverageStartMs = safeClock();
             if (SweepLeadershipChangedEvent.GAINED.equals(event.reason())) {
                 fencedOut = false;
@@ -1152,6 +1177,8 @@ public class EvalStateRecorder implements EvalStateSink, ApplicationContextAware
     }
 
     private boolean flushLocked() {
+        // 3-2 (L-3): devir işareti yazıldıysa hiçbir şey yazılmaz — kilidi bekleyen boşaltma işareti silmesin.
+        if (handoverMarked) return false;
         long epoch = leadershipEpoch.get();
         long now = safeClock();
         try {
@@ -1259,7 +1286,12 @@ public class EvalStateRecorder implements EvalStateSink, ApplicationContextAware
     private void updateCompleteness() {
         long rs = replaySeq;
         if (rs <= 0) return;
-        if (dropped.get() != dropsAtReplay || hookFailures() != hooksAtReplay || dirtyOverflow) {
+        boolean drop = dropped.get() != dropsAtReplay;
+        boolean hooks = hookFailures() != hooksAtReplay;
+        if (drop || hooks || dirtyOverflow) {
+            // L-5: kanca hatası yüzünden eksikse sonraki oynatma seyreltilir (sürekli düşen kanca her turda yeniden oynatma
+            // yaptırmasın); yalnız düşüş kaynaklı oynatma kuyruk boşalınca hemen (3-2 davranışı).
+            if (hooks) replayRateLimited = true;
             noteIncomplete();
             return;
         }
@@ -1294,6 +1326,8 @@ public class EvalStateRecorder implements EvalStateSink, ApplicationContextAware
         dropsAtReplay = d;
         hooksAtReplay = h;
         replaySeq = Math.max(1L, seqGen.get());
+        lastReplayAtMs = safeClock();
+        replayRateLimited = false;
     }
 
     /**
@@ -1302,8 +1336,23 @@ public class EvalStateRecorder implements EvalStateSink, ApplicationContextAware
      */
     private void maybeReplay() {
         if (myGen <= 0 || complete || replaySeq != 0 || !readEnabled()) return;
+        if (dirtyOverflow) {
+            // L-5: kirli taşma yalnız kuşak değişiminde temizlenir — aynı kuşakta oynatma asla eksiksiz yapmaz. Boşluk istenir
+            // (yeni kuşak + tam oynatma); seyreltilmiş: taşma yinelenirse her turda kuşak değişmesin.
+            if (!gapRequested && !recentReplay()) gapRequested = true;
+            return;
+        }
+        if (replayRateLimited && recentReplay()) return;
         if (pendingSize() >= Math.max(1, maxPending / 2)) return;
         replayNow();
+    }
+
+    /** Son başarılı oynatma {@link #REREPLAY_MIN_INTERVAL_MS}'ten yakın mı (kaydedici saati; saat geri gittiyse hayır). */
+    private boolean recentReplay() {
+        long last = lastReplayAtMs;
+        if (last == Long.MIN_VALUE) return false;
+        long now = safeClock();
+        return now >= last && now - last < REREPLAY_MIN_INTERVAL_MS;
     }
 
     /** İşaret sütunları bilinen eksik mi — eksikse {@link #TABLE_RECHECK_MS}'de bir yeniden bakar (yalnız ayar açıkken çağrılır). */
@@ -1435,7 +1484,8 @@ public class EvalStateRecorder implements EvalStateSink, ApplicationContextAware
                 src.evalLoadSkipped(token, c.noneReport(now, writer));
                 return;
             }
-            EvalStateLoader.Outcome o = EvalStateLoader.read(sql, c, token, () -> tokenOf(src), writer, now, maxLoadRows);
+            EvalStateLoader.Outcome o = EvalStateLoader.read(sql, c, token, () -> tokenOf(src), writer, now, maxLoadRows,
+                    src::windowLengthMsFor);
             if (o.aborted()) return;   // belirteç eskidi (zaman aşımı / liderlik) — MOS raporunu yazdı
             if (o.load() == null) {
                 if (o.failure() != null) {
@@ -1447,7 +1497,16 @@ public class EvalStateRecorder implements EvalStateSink, ApplicationContextAware
             }
             src.applyEvalLoad(o.load());
         } catch (RuntimeException e) {
-            log.debug("Kalıcı değerlendirme durumu: devir yükü uygulanamadı (karar etkilenmez): {}", shortText(e));
+            // L-4: beklenmeyen hata (yük kaydı / uygulama istisnası) kapıyı 20 sn LOADING bırakmasın — hemen "okunamadı"
+            // (kapı yükü zaten bitirdiyse belirteç eskidir, MOS yok sayar). Yeniden başlatma semantiği.
+            // Yalnız istisna sınıfları (ileti değer / alan adı taşıyabilir).
+            log.warn("Kalıcı değerlendirme durumu devirde yüklenemedi — yüklenmiyor, yeniden başlatma semantiği: {}",
+                    EvalStateLoader.shortText(e));
+            try {
+                src.evalLoadSkipped(token, EvalLoadReport.none(now, writer, EvalLoadReport.REASON_READ_FAILED));
+            } catch (RuntimeException e2) {
+                log.debug("Kalıcı değerlendirme durumu: yükleme kapısı kapatılamadı: {}", shortText(e2));
+            }
         }
     }
 
@@ -1928,9 +1987,14 @@ public class EvalStateRecorder implements EvalStateSink, ApplicationContextAware
             written.set(n);
             sql.abandonOwn(writer, gen, now);
             if (!quiet) return HandoverResult.NOT_QUIESCENT;
-            if (!complete || pendingSize() > 0 || dropped.get() != droppedAtStart) return HandoverResult.INCOMPLETE;
+            // Zincir kuyruğu sayılmaz (L-6): zincirler yüklenmez (D-2), takipçi listesi için kendi zincirleri zaten bırakıldı.
+            if (!complete || pendingSizeExceptChains() > 0 || dropped.get() != droppedAtStart) {
+                return HandoverResult.INCOMPLETE;
+            }
             if (handoverAborted || System.nanoTime() - deadlineNs > 0) return HandoverResult.BUDGET_EXCEEDED;
-            return sql.handoverMark(gen, writer, safeClock()) ? HandoverResult.WRITTEN : HandoverResult.FENCED;
+            if (!sql.handoverMark(gen, writer, safeClock())) return HandoverResult.FENCED;
+            handoverMarked = true;   // L-3: bundan sonra flushLocked hiçbir şey yazmaz (sonraki liderlik olayına dek)
+            return HandoverResult.WRITTEN;
         } catch (RuntimeException e) {
             failure(e, safeClock());
             return HandoverResult.FLUSH_FAILED;

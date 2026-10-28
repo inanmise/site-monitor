@@ -7,7 +7,6 @@ import com.sitemonitor.service.evalstate.EvalStateSql.LoadRecoveryRow;
 import com.sitemonitor.service.evalstate.EvalStateSql.LoadSiblingRow;
 import com.sitemonitor.service.evalstate.EvalStateSql.LoadTypeRow;
 import com.sitemonitor.service.evalstate.EvalStateSql.PriorGeneration;
-import org.springframework.dao.DataAccessException;
 
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -20,18 +19,22 @@ import java.util.function.LongSupplier;
 /**
  * Devirde kalıcı durumu OKUYAN taraf (2026-10-28, çok pod Sürüm 3-2; tasarım R3-2 §3.4) — durumsuz; kaydedicinin yazıcı iş
  * parçacığında, kiraya bağlı kuşak CAS'ından HEMEN SONRA (önceki sahip o anda çitlenmiştir) ve kaydedicinin 15 sn sorgu zaman
- * aşımlı şablonuyla koşar. YALNIZ {@code gen = prior.gen} satırları (pencere satırları hariç: her kuşak), en çok 5 ifade:
+ * aşımlı şablonuyla koşar. YALNIZ {@code gen = prior.gen} satırları (pencere satırları hariç: her kuşak), en çok 6 ifade:
  *
  * <ol>
  *   <li>(FULL aday) ara lider sayısı — {@link EvalStateSql#SQL_INTERMEDIATE}; &gt; 0 → OBSERVATIONS / {@code intermediate_leader}</li>
+ *   <li>(hâlâ FULL aday) gelen kutusu — {@link EvalStateSql#SQL_INBOX_PENDING}; satır varsa OBSERVATIONS /
+ *       {@code pending_manual_results} (inceleme 2026-10-28, MOS M-1)</li>
  *   <li>(FULL) kurtarma sayaçları — {@code recovery_up_count > 0}</li>
  *   <li>DOWN kardeşler — {@code up = FALSE}, kimlikli, TTL ({@link MonitoringOutageService#siblingTtlMs()}) içinde</li>
  *   <li>tür satırları — FULL: bastırma TRUE + tur görüldü; her iki katman: tur aralığı</li>
- *   <li>pencere satırları — son {@link EvalWindowSeed#WINDOW_CAP_MS}, {@link EvalWindowSeed#marks}</li>
+ *   <li>pencere satırları — son {@link EvalWindowSeed#WINDOW_CAP_MS}; işaretler TÜR BAŞINA kesimle
+ *       ({@link EvalWindowSeed#loadMarks}, VERIFY'ın ölçtüğü kural — inceleme 2026-10-28, kaydedici M-2)</li>
  * </ol>
  *
  * <p><b>Ya hep ya hiç (J-3):</b> her okuma {@code limit + 1} satır ister; sınırı aşan okuma → NONE / {@code too_large} (kısmi
- * yük ASLA); herhangi bir {@code DataAccessException} → NONE / {@code read_failed}. İfadeler arasında yükleme belirteci
+ * yük ASLA); herhangi bir istisna ({@code DataAccessException}, eşleme hatası, geçersiz kayıt) → NONE / {@code read_failed}
+ * (inceleme L-4: kapı 20 sn beklemeden açılır). İfadeler arasında yükleme belirteci
  * ({@link EvalStateSource#evalLoadToken()}) sorulur: değiştiyse (zaman aşımı / liderlik değişti) okuma bırakılır, hiçbir şey
  * uygulanmaz (MOS kapısı zaten raporunu yazdı). Değer / alan adı günlüğe yazılmaz.
  */
@@ -77,6 +80,16 @@ public final class EvalStateLoader {
      */
     public static Outcome read(EvalStateSql sql, Decision decision, long token, LongSupplier currentToken, String me,
                                long nowMs, int maxRows) {
+        return read(sql, decision, token, currentToken, me, nowMs, maxRows, EvalWindowSeed.DEFAULT_WINDOW_LENGTH);
+    }
+
+    /**
+     * Süreklilik kararına göre okur; pencere tohumu türün KENDİ pencere uzunluğuyla kesilir.
+     *
+     * @param windowLength tür + tur aralığı → pencere uzunluğu ({@link EvalStateSource#windowLengthMsFor}; null = varsayılan)
+     */
+    public static Outcome read(EvalStateSql sql, Decision decision, long token, LongSupplier currentToken, String me,
+                               long nowMs, int maxRows, EvalWindowSeed.WindowLength windowLength) {
         if (decision == null || decision.tier() == Tier.NONE) {
             return Outcome.skipped(decision == null ? EvalLoadReport.none(nowMs, me, EvalLoadReport.REASON_NO_PREVIOUS_GENERATION)
                     : decision.noneReport(nowMs, me), null);
@@ -90,6 +103,11 @@ public final class EvalStateLoader {
             if (d.tier() == Tier.FULL) {
                 int n = sql.countIntermediate(d.intermediateSinceMs(), prior.writer(), me);
                 d = EvalLoadContinuity.afterIntermediate(d, n);
+                if (!same(token, currentToken)) return Outcome.abort();
+            }
+            if (d.tier() == Tier.FULL) {
+                // Devir aralığında takipçiden gelen / eski liderin boşaltamadığı elle sonuç → sayaç taşınmaz (MOS M-1)
+                d = EvalLoadContinuity.afterPendingManual(d, sql.inboxHasPendingRows());
                 if (!same(token, currentToken)) return Outcome.abort();
             }
             boolean full = d.tier() == Tier.FULL;
@@ -128,15 +146,17 @@ public final class EvalStateLoader {
             if (!same(token, currentToken)) return Outcome.abort();
             List<EvalWindowSeed.Row> windowRows = sql.loadWindow(nowMs - EvalWindowSeed.WINDOW_CAP_MS, cap + 1);
             if (windowRows.size() > cap) return tooLarge(d, me, nowMs, t0);
-            Map<String, Map<String, EvalLoad.SeedMark>> window = EvalWindowSeed.marks(windowRows,
-                    nowMs - EvalWindowSeed.WINDOW_CAP_MS);
+            Map<String, Map<String, EvalLoad.SeedMark>> window = EvalWindowSeed.loadMarks(windowRows, nowMs, intervals,
+                    windowLength);
             if (!same(token, currentToken)) return Outcome.abort();
             long readMs = elapsedMs(t0);
             EvalLoad.Meta meta = new EvalLoad.Meta(gen, prior.writer(), d.handoverAgeMs(),
                     d.durableAgeMs() == null ? 0L : d.durableAgeMs(), full ? null : d.reason(), readMs);
             return Outcome.loaded(new EvalLoad(token, d.loadTier(), recovery, siblings, suppression, roundSeen, window,
                     intervals, meta));
-        } catch (DataAccessException e) {
+        } catch (RuntimeException e) {
+            // DataAccessException ya da eşleme / kayıt hatası (IllegalStateException, IllegalArgumentException …): kapı hemen
+            // açılsın (20 sn beklemesin) — kısmi yük yok, yeniden başlatma semantiği.
             return Outcome.skipped(EvalLoadReport.none(nowMs, me, EvalLoadReport.REASON_READ_FAILED, d.loadTier(),
                     d.fromGeneration(), d.fromWriter(), d.handoverAgeMs(), d.durableAgeMs(), elapsedMs(t0)), shortText(e));
         }

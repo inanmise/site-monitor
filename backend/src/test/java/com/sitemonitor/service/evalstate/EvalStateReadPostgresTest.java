@@ -6,6 +6,7 @@ import com.sitemonitor.service.MonitoringOutageService;
 import com.sitemonitor.service.evalstate.EvalStateSql.LastStatusRow;
 import com.sitemonitor.service.evalstate.EvalStateSql.RecoveryRow;
 import com.sitemonitor.service.evalstate.EvalStateSql.TypeRow;
+import com.sitemonitor.service.monitoring.ManualEvalInbox;
 import com.sitemonitor.service.schedule.ClusterScheduleService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -38,7 +39,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  * {@code acquireGenerationWithPrior} kiraya bağlı, 8 iş parçacığı → her kuşağın tek kazananı, her kazananın öncülü yerine
  * geçtiği satır; {@code SQL_INTERMEDIATE} gerçek {@code monitor_check_schedule} satırlarında; yükleyici okumaları gerçek
  * türlerle (BOOLEAN / BIGINT null'ları); eski sahip bir bağlantıda boşaltırken halef öbüründe CAS + okuma yapar (hata yok,
- * kuşak süzgeci geçerli); devir işaretinden sonra 3-1 biçimli bir nabız işareti geçersiz kılar.
+ * kuşak süzgeci geçerli); devir işaretinden sonra 3-1 biçimli bir nabız işareti geçersiz kılar; gelen kutusu sorgusu
+ * (inceleme 2026-10-28, MOS M-1: tablo yok → satır yok, boş → yok, satır → gözlemler).
  */
 @PostgresIntegration
 class EvalStateReadPostgresTest {
@@ -167,6 +169,33 @@ class EvalStateReadPostgresTest {
         jdbc.update(ins, "lease:eval-inbox-drainer", 1L, "third", 1_000L);
         jdbc.update(ins, "keyword:9", 1L, "third", 5_000L);
         assertThat(sql.countIntermediate(1_000L, "old", "me")).isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("PostgreSQL: gelen kutusu sorgusu — bu şemada tablo yok → satır yok (BadSqlGrammar); boş → yok; satır → var; "
+            + "yükleyici FULL adayı gözlemlere indirir (pending_manual_results)")
+    void inboxPendingOnPostgres() {
+        new EvalStateSchemaPatch(jdbc).apply();
+        EvalStateSql sql = new EvalStateSql(jdbc);
+        Boolean visible = jdbc.queryForObject("SELECT to_regclass('monitor_eval_inbox') IS NOT NULL", Boolean.class);
+        if (!Boolean.TRUE.equals(visible)) assertThat(sql.inboxHasPendingRows()).as("tablo yok").isFalse();
+        // Şema nitelikli: paylaşılan uygulamanın kutusuna asla yazılmaz
+        jdbc.execute(ManualEvalInbox.DDL.replace("monitor_eval_inbox", schema + ".monitor_eval_inbox"));
+        assertThat(sql.inboxHasPendingRows()).as("boş").isFalse();
+        long now = System.currentTimeMillis();
+        jdbc.update("INSERT INTO " + schema + ".monitor_eval_inbox(monitor_type, monitor_id, manual, result_json, "
+                + "checked_ms, source_pod, created_ms) VALUES (?,?,?,?,?,?,?)", ManualEvalInbox.TYPE_PORT, 7L, true, "{}",
+                now, "pod-c", now);
+        jdbc.update("INSERT INTO " + schema + ".monitor_eval_inbox(monitor_type, monitor_id, manual, result_json, "
+                + "checked_ms, source_pod, created_ms) VALUES (?,?,?,?,?,?,?)", ManualEvalInbox.TYPE_PORT, 8L, true, "{}",
+                now, "pod-c", now);
+        assertThat(sql.inboxHasPendingRows()).as("satır var (LIMIT 1)").isTrue();
+        long t = now - 5_000;
+        EvalStateSql.PriorGeneration prior = new EvalStateSql.PriorGeneration(5, "old", t, 5L, t, t);
+        EvalStateLoader.Outcome o = EvalStateLoader.read(sql, EvalLoadContinuity.decide(prior, "me", now, false), 1,
+                () -> 1L, "me", now, EvalStateLoader.MAX_LOAD_ROWS);
+        assertThat(o.load()).as(String.valueOf(o.skipped())).isNotNull();
+        assertThat(o.load().meta().partialReason()).isEqualTo(EvalLoadReport.REASON_PENDING_MANUAL_RESULTS);
     }
 
     @Test

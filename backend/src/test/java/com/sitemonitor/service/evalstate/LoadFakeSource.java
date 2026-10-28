@@ -37,6 +37,8 @@ final class LoadFakeSource implements EvalStateSource {
     volatile boolean throwOnReplay;
     /** Raporların anı (yayın sırası için). */
     volatile java.util.function.LongSupplier clock = System::currentTimeMillis;
+    /** Pencere uzunluğu kuralı (null = {@link EvalStateSource} varsayılanı) — MOS'un geçersiz kılmasını taklit eder. */
+    volatile EvalWindowSeed.WindowLength windowLength;
 
     long arm(long t) {
         token.set(t);
@@ -119,6 +121,13 @@ final class LoadFakeSource implements EvalStateSource {
     @Override
     public long hookFailures() {
         return hookFailures;
+    }
+
+    @Override
+    public long windowLengthMsFor(String alertType, long roundIntervalMs) {
+        EvalWindowSeed.WindowLength w = windowLength;
+        return w != null ? w.windowMs(alertType, roundIntervalMs)
+                : EvalStateSource.super.windowLengthMsFor(alertType, roundIntervalMs);
     }
 
     @Override

@@ -7,13 +7,17 @@ import com.sitemonitor.service.evalstate.EvalStateSql.LastStatusRow;
 import com.sitemonitor.service.evalstate.EvalStateSql.PriorGeneration;
 import com.sitemonitor.service.evalstate.EvalStateSql.RecoveryRow;
 import com.sitemonitor.service.evalstate.EvalStateSql.TypeRow;
+import com.sitemonitor.service.monitoring.ManualEvalInbox;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowMapper;
 
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -21,8 +25,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Çok pod Sürüm 3-2 A — devir yükleyicisi H2'de (tasarım R3-2 §3.4): her okuma yalnız {@code gen = prior.gen} (pencere
- * satırları hariç), katmana göre eşleme, ara lider sorgusu, üst sınır → {@code too_large}, belirteç değişince bırakma, okuma
- * hatası → {@code read_failed}, kısmi yük ASLA, en çok 5 ifade.
+ * satırları hariç), katmana göre eşleme, ara lider sorgusu, gelen kutusu (bekleyen elle sonuç → gözlemler), pencere tohumu
+ * tür başına kesimle, üst sınır → {@code too_large}, belirteç değişince bırakma, okuma / eşleme hatası → {@code read_failed},
+ * kısmi yük ASLA, en çok 6 ifade.
  */
 class EvalStateLoaderTest {
 
@@ -114,7 +119,8 @@ class EvalStateLoaderTest {
         assertThat(l.meta().handoverAgeMs()).isEqualTo(10_000L);
         assertThat(l.meta().durableAgeMs()).isEqualTo(10_000L);
         assertThat(l.meta().partialReason()).isNull();
-        assertThat(recording.statements()).as("en çok 5 ifade (ara lider + 4 okuma)").hasSize(5);
+        assertThat(recording.statements()).as("en çok 6 ifade (ara lider + gelen kutusu + 4 okuma)").hasSize(6)
+                .contains(EvalStateSql.SQL_INBOX_PENDING + " LIMIT 1");
     }
 
     @Test
@@ -132,8 +138,9 @@ class EvalStateLoaderTest {
         assertThat(l.window()).isNotEmpty();
         assertThat(l.meta().partialReason()).isEqualTo(EvalLoadReport.REASON_NO_HANDOVER);
         assertThat(l.meta().handoverAgeMs()).isNull();
-        assertThat(recording.statements()).as("ara lider + kurtarma okunmaz").hasSize(3)
-                .noneMatch(q -> q.contains("monitor_check_schedule") || q.contains("recovery_up_count > 0"));
+        assertThat(recording.statements()).as("ara lider + gelen kutusu + kurtarma okunmaz").hasSize(3)
+                .noneMatch(q -> q.contains("monitor_check_schedule") || q.contains("recovery_up_count > 0")
+                        || q.contains(ManualEvalInbox.TABLE));
     }
 
     @Test
@@ -181,7 +188,7 @@ class EvalStateLoaderTest {
                 now);
         recording.clear();
         assertThat(read(cleanPrior(), 3, new AtomicLong(3), 1).skipped().reason()).isEqualTo(EvalLoadReport.REASON_TOO_LARGE);
-        assertThat(recording.statements()).as("ara lider + kurtarma, sonra durur").hasSize(2);
+        assertThat(recording.statements()).as("ara lider + gelen kutusu + kurtarma, sonra durur").hasSize(3);
         assertThat(EvalStateLoader.MAX_LOAD_ROWS).isEqualTo(200_000);
     }
 
@@ -195,7 +202,7 @@ class EvalStateLoaderTest {
         assertThat(o.aborted()).isTrue();
         assertThat(o.load()).isNull();
         assertThat(o.skipped()).isNull();
-        assertThat(recording.statements()).as("ara lider + kurtarma, sonra bırakıldı").hasSize(2);
+        assertThat(recording.statements()).as("ara lider + gelen kutusu, sonra bırakıldı").hasSize(2);
     }
 
     @Test
@@ -218,5 +225,118 @@ class EvalStateLoaderTest {
         assertThat(recording.statements()).isEmpty();
         assertThat(EvalStateLoader.read(sql, null, 1, () -> 1L, ME, now, 1000).skipped().reason())
                 .isEqualTo(EvalLoadReport.REASON_NO_PREVIOUS_GENERATION);
+    }
+
+    // ── İnceleme düzeltmeleri (2026-10-28) ──────────────────────────────────────────────────────────────────────────
+
+    void inboxRow() {
+        mp.jdbc().update("INSERT INTO monitor_eval_inbox(monitor_type, monitor_id, manual, result_json, checked_ms, "
+                + "source_pod, created_ms) VALUES (?,?,?,?,?,?,?)", ManualEvalInbox.TYPE_PORT, 7L, true, "{}", now,
+                "pod-c-00000003", now);
+    }
+
+    @Test
+    @DisplayName("M-1: gelen kutusunda değerlendirilmemiş elle sonuç → tam aday gözlemlere iner (pending_manual_results); "
+            + "boş kutu / tablo yok = tam; gözlem adayı kutuyu okumaz; kutu okunamazsa read_failed")
+    void pendingManualResultsDowngrade() {
+        mp.jdbc().execute(ManualEvalInbox.DDL);
+        assertThat(read(cleanPrior(), 2, new AtomicLong(2), 1000).load().full()).as("boş kutu").isTrue();
+        inboxRow();
+        recording.clear();
+        EvalStateLoader.Outcome o = read(cleanPrior(), 2, new AtomicLong(2), 1000);
+        EvalLoad l = o.load();
+        assertThat(l.tier()).isEqualTo(EvalLoad.TIER_OBSERVATIONS);
+        assertThat(l.meta().partialReason()).isEqualTo(EvalLoadReport.REASON_PENDING_MANUAL_RESULTS);
+        assertThat(l.recovery()).as("sayaç taşınmaz (bekleyen DOWN sıfırlaması kaybolmasın)").isEmpty();
+        assertThat(l.suppressionActive()).isEmpty();
+        assertThat(l.roundSeen()).isEmpty();
+        assertThat(l.siblings()).as("gözlemler taşınır").containsKey(EvalLoad.siblingKey(PORT, 7));
+        assertThat(l.meta().handoverAgeMs()).as("geçerli devir işaretinin yaşı raporda").isEqualTo(10_000L);
+        assertThat(recording.statements()).contains(EvalStateSql.SQL_INBOX_PENDING + " LIMIT 1")
+                .noneMatch(q -> q.contains("recovery_up_count > 0"));
+
+        recording.clear();
+        assertThat(read(crashPrior(), 3, new AtomicLong(3), 1000).load().tier()).isEqualTo(EvalLoad.TIER_OBSERVATIONS);
+        assertThat(recording.statements()).as("gözlem adayı kutuyu okumaz").noneMatch(q -> q.contains(ManualEvalInbox.TABLE));
+
+        recording.failWhen = q -> q.contains(ManualEvalInbox.TABLE);
+        EvalStateLoader.Outcome failed = read(cleanPrior(), 4, new AtomicLong(4), 1000);
+        assertThat(failed.load()).isNull();
+        assertThat(failed.skipped().reason()).isEqualTo(EvalLoadReport.REASON_READ_FAILED);
+        assertThat(failed.skipped().attemptedTier()).isEqualTo(EvalLoad.TIER_FULL);
+    }
+
+    @Test
+    @DisplayName("M-1: kutu tablosu yoksa (BadSqlGrammar) satır yok sayılır — tam; ara lider zaten indirdiyse kutu okunmaz")
+    void inboxMissingTableAndIntermediateOrder() {
+        assertThat(sql.inboxHasPendingRows()).isFalse();
+        assertThat(read(cleanPrior(), 1, new AtomicLong(1), 1000).load().full()).isTrue();
+        mp.jdbc().execute(ManualEvalInbox.DDL);
+        inboxRow();
+        mp.jdbc().update("INSERT INTO monitor_check_schedule(monitor_key, next_due_at, claimed_by, claimed_at) "
+                + "VALUES (?,?,?,?)", "port:9", now, "pod-c-00000003", now - 5_000);
+        recording.clear();
+        EvalStateLoader.Outcome o = read(cleanPrior(), 1, new AtomicLong(1), 1000);
+        assertThat(o.load().meta().partialReason()).as("ilk düşen denetim").isEqualTo(EvalLoadReport.REASON_INTERMEDIATE_LEADER);
+        assertThat(recording.statements()).noneMatch(q -> q.contains(ManualEvalInbox.TABLE));
+    }
+
+    @Test
+    @DisplayName("M-2: pencere tohumu türün KENDİ penceresiyle (VERIFY kuralı) — 40 dk önceki ağ DOWN + 1 dk önceki UP → "
+            + "işaret ağ DOWN DEĞİL; pencere uzunluğu kuralı yüklenen tur aralığıyla sorulur")
+    void windowSeedUsesTheTypeWindow() {
+        new EvalStateSql(mp.jdbc()).writeLastStatus(List.of(
+                lastStatus(PORT, 30, "slow.example", false, true, "NETWORK", now - 40 * 60_000L),
+                lastStatus(PORT, 31, "slow.example", true, false, null, now - 60_000L)), OLD, 5, now);
+        Map<String, Long> asked = new ConcurrentHashMap<>();
+        Decision d = EvalLoadContinuity.decide(cleanPrior(), ME, now, false);
+        EvalLoad l = EvalStateLoader.read(sql, d, 1, () -> 1L, ME, now, 1000, (type, interval) -> {
+            asked.put(type, interval);
+            return EvalWindowSeed.DEFAULT_WINDOW_LENGTH.windowMs(type, interval);
+        }).load();
+        assertThat(asked).as("tür başına, önceki kuşağın tur aralığıyla").containsEntry(PORT, 30_000L)
+                .containsEntry(KW, 60_000L);
+        assertThat(l.window().get(PORT).get("slow.example")).as("PORT penceresi 5 dk: 40 dk önceki satır dışarıda")
+                .isEqualTo(new EvalLoad.SeedMark(false, now - 60_000L));
+        assertThat(l.window().get(PORT).get("db.example")).as("pencere içindeki ağ DOWN yine sayılır")
+                .isEqualTo(new EvalLoad.SeedMark(true, now - 60_000));
+        // Varsayılan kural (7 bağımsız değişkenli okuma) aynı sonucu verir
+        assertThat(read(cleanPrior(), 1, new AtomicLong(1), 1000).load().window()).isEqualTo(l.window());
+        // Kural pencereyi 60 dk derse eski satır içeride → ağ DOWN (kuralın gerçekten kullanıldığı)
+        EvalLoad wide = EvalStateLoader.read(sql, d, 1, () -> 1L, ME, now, 1000,
+                (type, interval) -> EvalWindowSeed.WINDOW_CAP_MS).load();
+        assertThat(wide.window().get(PORT).get("slow.example").networkDown()).isTrue();
+        // Kural istisna verirse o tür tohumlanmaz (boş pencere = yeniden başlatma), yük yine uygulanır
+        EvalLoad broken = EvalStateLoader.read(sql, d, 1, () -> 1L, ME, now, 1000, (type, interval) -> {
+            if (PORT.equals(type)) throw new IllegalStateException("kural");
+            return 300_000L;
+        }).load();
+        assertThat(broken.window()).doesNotContainKey(PORT).containsKey(KW);
+        assertThat(broken.recovery()).isNotEmpty();
+    }
+
+    @Test
+    @DisplayName("L-4: eşleme hatası (DataAccessException DEĞİL, ör. IllegalStateException) → NONE / read_failed hemen, kısa "
+            + "teknik özet (değer yok), kısmi yük yok")
+    void mapperFailureIsReadFailed() {
+        JdbcTemplate throwing = new JdbcTemplate(recording) {
+            @Override
+            public <T> List<T> query(String q, RowMapper<T> rm, Object... args) {
+                if (q.contains("FROM monitor_last_status WHERE gen = ?")) {
+                    RowMapper<T> bad = (rs, n) -> {
+                        throw new IllegalStateException("eşleme hatası db.example");
+                    };
+                    return super.query(q, bad, args);
+                }
+                return super.query(q, rm, args);
+            }
+        };
+        EvalStateLoader.Outcome o = EvalStateLoader.read(new EvalStateSql(throwing),
+                EvalLoadContinuity.decide(cleanPrior(), ME, now, false), 5, () -> 5L, ME, now, 1000);
+        assertThat(o.aborted()).isFalse();
+        assertThat(o.load()).isNull();
+        assertThat(o.skipped().reason()).isEqualTo(EvalLoadReport.REASON_READ_FAILED);
+        assertThat(o.skipped().attemptedTier()).isEqualTo(EvalLoad.TIER_FULL);
+        assertThat(o.failure()).contains("IllegalStateException").doesNotContain("db.example");
     }
 }

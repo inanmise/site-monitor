@@ -99,6 +99,94 @@ class EvalWindowSeedTest {
     }
 
     @Test
+    @DisplayName("İnceleme M-2: yükleyici tohumu TÜR penceresiyle — a/b/c'nin yavaş izlemesi 40 dk önce ağ DOWN, hızlısı 1 dk "
+            + "önce UP, d UP: tür penceresiyle (0, 4) (VERIFY'ın ölçtüğü), tek 60 dk kesimle (3, 4) olurdu (bastırmaya girerdi)")
+    void loaderSeedUsesTheTypeWindow() {
+        long now = 100_000_000L;
+        String port = "PORT_DOWN";
+        List<EvalWindowSeed.Row> rows = new ArrayList<>();
+        for (String h : List.of("a", "b", "c")) {
+            rows.add(new EvalWindowSeed.Row(port, h + ".example", false, true, now - 40 * 60_000L));
+            rows.add(new EvalWindowSeed.Row(port, h + ".example", true, false, now - 60_000L));
+        }
+        rows.add(new EvalWindowSeed.Row(port, "d.example", true, false, now - 60_000L));
+        Map<String, Long> intervals = Map.of(port, 30_000L);   // tur 30 sn → pencere 5 dk (taban)
+        long typeWindow = EvalWindowSeed.DEFAULT_WINDOW_LENGTH.windowMs(port, 30_000L);
+        assertThat(typeWindow).isEqualTo(300_000L);
+        long cutoff = now - typeWindow;
+
+        Map<String, EvalLoad.SeedMark> loaded = EvalWindowSeed.loadMarks(rows, now, intervals,
+                EvalWindowSeed.DEFAULT_WINDOW_LENGTH).get(port);
+        assertThat(EvalWindowSeed.sample(loaded, cutoff)).as("yükleyici = VERIFY kuralı")
+                .isEqualTo(new EvalWindowSeed.Sample(0, 4));
+        assertThat(EvalWindowSeed.sample(EvalWindowSeed.marksOfType(rows, port, cutoff), cutoff))
+                .isEqualTo(new EvalWindowSeed.Sample(0, 4));
+        assertThat(EvalWindowSeed.sample(EvalWindowSeed.marks(rows, now - EvalWindowSeed.WINDOW_CAP_MS).get(port), cutoff))
+                .as("eski kural (tek 60 dk kesim) — hata buydu").isEqualTo(new EvalWindowSeed.Sample(3, 4));
+    }
+
+    @RepeatedTest(25)
+    @DisplayName("loadMarks(…).get(t) = marksOfType(satırlar, t, şimdi − pencere(t, aralık(t))) — rastgele satır + aralık; "
+            + "aralık yok = taban; pencere [0, 60 dk]'ya sıkışır; kuralı istisna veren tür tohumlanmaz")
+    void loadMarksIsMarksOfTypeWithTheTypeCutoff() {
+        Random rnd = new Random();
+        long seed = rnd.nextLong();
+        rnd = new Random(seed);
+        long now = 80_000_000L;
+        List<EvalWindowSeed.Row> rows = new ArrayList<>();
+        int n = rnd.nextInt(300);
+        for (int i = 0; i < n; i++) {
+            String type = rnd.nextInt(12) == 0 ? null : TYPES.get(rnd.nextInt(TYPES.size()));
+            String domain = rnd.nextInt(15) == 0 ? null : "d" + rnd.nextInt(25) + ".example";
+            rows.add(new EvalWindowSeed.Row(type, domain, rnd.nextBoolean(), rnd.nextBoolean(),
+                    now - rnd.nextInt(2 * 3_600_000)));
+        }
+        Map<String, Long> intervals = new HashMap<>();
+        for (String t : TYPES) {
+            int pick = rnd.nextInt(5);
+            if (pick == 0) continue;   // tür satırı yok → taban
+            intervals.put(t, switch (pick) {
+                case 1 -> 15_000L;
+                case 2 -> 200_000L;
+                case 3 -> 1_500_000L;   // 3 × aralık > 60 dk → sıkışır
+                default -> -5L;
+            });
+        }
+        EvalWindowSeed.WindowLength rule = (type, interval) -> {
+            if ("DNS_FAILURE".equals(type) && interval == 200_000L) throw new IllegalStateException("kural");
+            return EvalWindowSeed.DEFAULT_WINDOW_LENGTH.windowMs(type, interval);
+        };
+        Map<String, Map<String, EvalLoad.SeedMark>> loaded = EvalWindowSeed.loadMarks(rows, now, intervals, rule);
+        for (String type : TYPES) {
+            long interval = Math.max(0L, intervals.getOrDefault(type, 0L));
+            if ("DNS_FAILURE".equals(type) && interval == 200_000L) {
+                assertThat(loaded).as("tohum %d: kural düştü → tür yok", seed).doesNotContainKey(type);
+                continue;
+            }
+            long window = Math.min(EvalWindowSeed.WINDOW_CAP_MS, Math.max(300_000L, 3 * interval));
+            Map<String, EvalLoad.SeedMark> expected = EvalWindowSeed.marksOfType(rows, type, now - window);
+            assertThat(loaded.getOrDefault(type, Map.of())).as("tohum %d, tür %s", seed, type).isEqualTo(expected);
+        }
+        assertThat(EvalWindowSeed.loadMarks(null, now, intervals, rule)).isEmpty();
+        assertThat(EvalWindowSeed.loadMarks(rows, now, null, null))
+                .as("aralık / kural yok = taban, varsayılan kural").isEqualTo(EvalWindowSeed.loadMarks(rows, now, Map.of(),
+                        EvalWindowSeed.DEFAULT_WINDOW_LENGTH));
+        assertThat(EvalWindowSeed.cutoffOf("X", now, Map.of(), (t, i) -> -1L)).as("negatif pencere → 0").isEqualTo(now);
+        assertThat(EvalWindowSeed.cutoffOf("X", now, Map.of(), (t, i) -> Long.MAX_VALUE))
+                .isEqualTo(now - EvalWindowSeed.WINDOW_CAP_MS);
+    }
+
+    @Test
+    @DisplayName("Varsayılan pencere kuralı EvalStateSource varsayılanının BİREBİR aynası (MOS kendi tabanıyla geçersiz kılar)")
+    void defaultWindowLengthMirrorsSource() {
+        EvalStateSource src = new LoadFakeSource();
+        for (long iv : new long[] {-5L, 0L, 1L, 60_000L, 100_000L, 100_001L, 1_200_000L, 1_200_001L, 10_000_000L}) {
+            assertThat(EvalWindowSeed.DEFAULT_WINDOW_LENGTH.windowMs("PORT_DOWN", iv)).as("aralık %d", iv)
+                    .isEqualTo(src.windowLengthMsFor("PORT_DOWN", iv));
+        }
+    }
+
+    @Test
     @DisplayName("Kesim: EvalWindowSeed.WINDOW_CAP_MS = MonitoringOutageService.SUPPRESSION_WINDOW_CAP_MS (60 dk)")
     void capMirrorsMos() throws Exception {
         Field f = MonitoringOutageService.class.getDeclaredField("SUPPRESSION_WINDOW_CAP_MS");
