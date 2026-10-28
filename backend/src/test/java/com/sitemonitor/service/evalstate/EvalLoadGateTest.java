@@ -163,8 +163,31 @@ class EvalLoadGateTest {
     }
 
     @Test
-    @DisplayName("uygulama uçuştaki değerlendirmeyi bekler (araya sızan sayılır), gövde izleyici altında ve sıfır uçuşla koşar")
-    void applyWaitsForInFlightSlipIn() throws Exception {
+    @DisplayName("uygulama gövdesi izleyici altında ve sıfır uçuşla koşar; LOADING'de bekleyen giriş sayılmaz, uygulamadan sonra geçer")
+    void applyBodyRunsUnderMonitorWithZeroInFlight() throws Exception {
+        gate.arm(8L, T0 + 20_000);
+        CountDownLatch entered = new CountDownLatch(1);
+        enterOn(entered, null);                       // kurulumdan SONRA geldi — bekler, sayılmaz
+        awaitTrue(() -> gate.waiters() == 1);
+        AtomicLong inFlightAtBody = new AtomicLong(-1);
+        AtomicBoolean heldLock = new AtomicBoolean();
+        EvalLoadGate.ApplyOutcome out = gate.apply(8L, () -> true, () -> {
+            inFlightAtBody.set(gate.inFlight());
+            heldLock.set(Thread.holdsLock(gate));
+            return null;
+        });
+        assertThat(out.applied()).isTrue();
+        assertThat(out.stale()).isFalse();
+        assertThat(out.waiters()).isEqualTo(1);
+        assertThat(inFlightAtBody.get()).isZero();
+        assertThat(heldLock).isTrue();
+        assertThat(entered.await(2, TimeUnit.SECONDS)).as("uygulamadan sonra bekleyen geçer").isTrue();
+        assertThat(gate.state()).isEqualTo(EvalLoadGate.State.NONE);
+    }
+
+    @Test
+    @DisplayName("uygulama araya sızan (kurulumdan önce giren) değerlendirmeyi bekler, sonra yükü atar (evaluated_before_load) — gövde koşmaz")
+    void applyWaitsForInFlightSlipInThenDiscards() throws Exception {
         CountDownLatch entered = new CountDownLatch(1);
         CountDownLatch hold = new CountDownLatch(1);
         enterOn(entered, hold);                       // kapı NONE iken girdi (kurulumdan önce — araya sızma)
@@ -172,30 +195,51 @@ class EvalLoadGateTest {
         gate.arm(9L, T0 + 20_000);
         AtomicReference<EvalLoadGate.ApplyOutcome> out = new AtomicReference<>();
         AtomicBoolean bodyRan = new AtomicBoolean();
-        AtomicLong inFlightAtBody = new AtomicLong(-1);
         Thread applier = new Thread(() -> out.set(gate.apply(9L, () -> true, () -> {
             bodyRan.set(true);
-            inFlightAtBody.set(gate.inFlight());
-            assertThat(Thread.holdsLock(gate)).isTrue();
             return null;
         })));
         applier.setDaemon(true);
         started.add(applier);
         applier.start();
         Thread.sleep(150);
-        assertThat(bodyRan).as("araya sızan değerlendirme sürüyor — uygulama bekler").isFalse();
+        assertThat(out.get()).as("araya sızan değerlendirme sürüyor — uygulama bekler").isNull();
         hold.countDown();
         applier.join(3_000);
-        assertThat(bodyRan).isTrue();
-        assertThat(inFlightAtBody.get()).isZero();
-        assertThat(out.get().applied()).isTrue();
+        assertThat(bodyRan).isFalse();
+        assertThat(out.get().applied()).isFalse();
         assertThat(out.get().stale()).isFalse();
+        assertThat(out.get().reason()).isEqualTo(EvalLoadReport.REASON_EVALUATED_BEFORE_LOAD);
         assertThat(gate.state()).isEqualTo(EvalLoadGate.State.NONE);
     }
 
     @Test
-    @DisplayName("uçuştaki değerlendirme son tarihe dek bitmezse evaluation_busy — gövde koşmaz")
-    void applyEvaluationBusyAtDeadline() throws Exception {
+    @DisplayName("L-3: araya sızan değerlendirme belleğe hiçbir şey yazmadan çıksa da yük atılır (bellek boşluğu yetmez)")
+    void slipInThatLeftNoTraceStillDiscards() throws Exception {
+        CountDownLatch entered = new CountDownLatch(1);
+        CountDownLatch hold = new CountDownLatch(1);
+        Thread t = enterOn(entered, hold);
+        assertThat(entered.await(2, TimeUnit.SECONDS)).isTrue();
+        gate.arm(19L, T0 + 20_000);
+        hold.countDown();                              // değerlendirme yalnız SİLDİ / hiçbir şey yazmadı ve çıktı
+        t.join(2_000);
+        assertThat(gate.inFlight()).isZero();
+        AtomicBoolean bodyRan = new AtomicBoolean();
+        EvalLoadGate.ApplyOutcome out = gate.apply(19L, () -> true, () -> {
+            bodyRan.set(true);
+            return null;                               // gövde boş belleği kabul ederdi
+        });
+        assertThat(out.applied()).isFalse();
+        assertThat(out.reason()).isEqualTo(EvalLoadReport.REASON_EVALUATED_BEFORE_LOAD);
+        assertThat(bodyRan).isFalse();
+        // Sonraki kurulumda uçuşta değerlendirme yok → uygulanır.
+        gate.arm(20L, T0 + 20_000);
+        assertThat(gate.apply(20L, () -> true, () -> null).applied()).isTrue();
+    }
+
+    @Test
+    @DisplayName("C-1: uygulama uçuştakini beklerken son tarih gelirse timeout (evaluation_busy değil) — gövde koşmaz")
+    void applyWaitEndedByDeadlineIsTimeout() throws Exception {
         CountDownLatch entered = new CountDownLatch(1);
         CountDownLatch hold = new CountDownLatch(1);
         enterOn(entered, hold);
@@ -213,11 +257,77 @@ class EvalLoadGateTest {
         awaitTrue(() -> applier.getState() == Thread.State.TIMED_WAITING);   // uygulama uçuştakini bekliyor
         clock.addAndGet(20_000);   // son tarih uygulama beklerken geldi
         applier.join(3_000);
-        assertThat(out.get().reason()).isEqualTo(EvalLoadReport.REASON_EVALUATION_BUSY);
+        assertThat(out.get().reason()).isEqualTo(EvalLoadReport.REASON_TIMEOUT);
         assertThat(out.get().applied()).isFalse();
         assertThat(out.get().stale()).isFalse();
         assertThat(bodyRan).isFalse();
+        assertThat(expired).as("bitiş uygulamanın sonucunda — ayrıca bildirilmez").isEmpty();
         hold.countDown();
+    }
+
+    @Test
+    @DisplayName("C-1: uçuştaki değerlendirme durulma sınırında (son tarih değil) bitmezse evaluation_busy — gövde koşmaz")
+    void applyEvaluationBusyAtQuiesceCap() throws Exception {
+        EvalLoadGate g = new EvalLoadGate(clock::get, expired::add, null, 150L);
+        CountDownLatch entered = new CountDownLatch(1);
+        CountDownLatch hold = new CountDownLatch(1);
+        Thread t = new Thread(() -> {
+            try (EvalLoadGate.Ticket ignored = g.enter()) {
+                entered.countDown();
+                hold.await(10, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        });
+        t.setDaemon(true);
+        started.add(t);
+        t.start();
+        assertThat(entered.await(2, TimeUnit.SECONDS)).isTrue();
+        g.arm(11L, T0 + 20_000);
+        AtomicBoolean bodyRan = new AtomicBoolean();
+        EvalLoadGate.ApplyOutcome out = g.apply(11L, () -> true, () -> {
+            bodyRan.set(true);
+            return null;
+        });
+        assertThat(out.reason()).isEqualTo(EvalLoadReport.REASON_EVALUATION_BUSY);
+        assertThat(out.applied()).isFalse();
+        assertThat(bodyRan).isFalse();
+        assertThat(g.state()).isEqualTo(EvalLoadGate.State.NONE);
+        hold.countDown();
+    }
+
+    @Test
+    @DisplayName("L-1: kurulumdan sonra (gövdeden önce ya da gövde sürerken) liderlik olayı başladıysa leadership_changed — uygulandı sayılmaz")
+    void leadershipChangeDuringApplyIsNotApplied() {
+        AtomicLong seq = new AtomicLong();
+        EvalLoadGate g = new EvalLoadGate(clock::get, expired::add, seq::get);
+        g.arm(1L, T0 + 20_000);
+        seq.incrementAndGet();                         // olay başladı (dinleyici henüz sökmedi)
+        AtomicBoolean bodyRan = new AtomicBoolean();
+        EvalLoadGate.ApplyOutcome before = g.apply(1L, () -> true, () -> {
+            bodyRan.set(true);
+            return null;
+        });
+        assertThat(before.applied()).isFalse();
+        assertThat(before.stale()).isFalse();
+        assertThat(before.reason()).isEqualTo(EvalLoadReport.REASON_LEADERSHIP_CHANGED);
+        assertThat(bodyRan).as("gövde koşmaz").isFalse();
+        assertThat(g.state()).isEqualTo(EvalLoadGate.State.NONE);
+
+        g.arm(2L, T0 + 20_000);
+        EvalLoadGate.ApplyOutcome during = g.apply(2L, () -> true, () -> {
+            seq.incrementAndGet();                     // olay gövde sürerken başladı
+            return null;
+        });
+        assertThat(during.applied()).isFalse();
+        assertThat(during.reason()).isEqualTo(EvalLoadReport.REASON_LEADERSHIP_CHANGED);
+
+        g.arm(3L, T0 + 20_000);
+        assertThat(g.apply(3L, () -> true, () -> null).applied()).as("sıra değişmedi → uygulanır").isTrue();
+        EvalLoadGate broken = new EvalLoadGate(clock::get, null, () -> { throw new IllegalStateException("x"); });
+        broken.arm(4L, T0 + 20_000);
+        assertThat(broken.apply(4L, () -> true, () -> null).reason()).as("sıra okunamadı = değişti (güvenli taraf)")
+                .isEqualTo(EvalLoadReport.REASON_LEADERSHIP_CHANGED);
     }
 
     @Test
@@ -288,7 +398,15 @@ class EvalLoadGateTest {
     }
 
     @Test
-    @DisplayName("HANDOVER: yeni giriş en çok ~1 sn bekler (gerçek zaman) ya da devir bitince hemen geçer; LOADING'de devir başlamaz")
+    @DisplayName("kaydedici L-1: HANDOVER giriş beklemesi devir bütçesinden (durulma + boşaltma) en az 1 sn uzun")
+    void handoverWaitOutlastsHandoverBudget() {
+        assertThat(EvalLoadGate.HANDOVER_WAIT_MS)
+                .isGreaterThanOrEqualTo(EvalStateSink.HANDOVER_BUDGET_MS + 1_000L);
+        assertThat(EvalLoadGate.HARD_CAP_SLACK_MS).as("LOADING üst sınır payı ayrı (1 sn)").isEqualTo(1_000L);
+    }
+
+    @Test
+    @DisplayName("HANDOVER: yeni giriş en çok HANDOVER_WAIT_MS bekler (gerçek zaman) ya da devir bitince hemen geçer; LOADING'de devir başlamaz")
     void handoverWaitIsBounded() throws Exception {
         gate.beginHandover();
         assertThat(gate.state()).isEqualTo(EvalLoadGate.State.HANDOVER);
@@ -341,6 +459,114 @@ class EvalLoadGateTest {
         }).start();
         assertThat(gate.awaitQuiescent(2_000)).isTrue();
         gate.endHandover();
+    }
+
+    @Test
+    @DisplayName("M-1 yol 2: sürmekte olan zincir adımı durulmayı engeller; bitince durulur — tek bütçe, girişlerle birlikte")
+    void chainStepBlocksQuiescence() throws Exception {
+        EvalLoadGate.Ticket step = gate.enterChainStep();
+        assertThat(step).as("NONE'da adım sayılır, bilet döner").isNotNull();
+        assertThat(gate.chainStepsInFlight()).isEqualTo(1);
+        assertThat(gate.inFlight()).as("giriş sayacı ayrı").isZero();
+        gate.beginHandover();
+        long start = System.nanoTime();
+        assertThat(gate.awaitQuiescent(120)).as("yeniden kontrol sürüyor — işaret yazılmamalı").isFalse();
+        assertThat(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start)).isLessThan(1_000);
+        Thread closer = new Thread(() -> {
+            try {
+                Thread.sleep(100);
+            } catch (InterruptedException ignored) {
+                Thread.currentThread().interrupt();
+            }
+            step.close();
+        });
+        closer.setDaemon(true);
+        started.add(closer);
+        closer.start();
+        assertThat(gate.awaitQuiescent(2_000)).isTrue();
+        assertThat(gate.chainStepsInFlight()).isZero();
+
+        // giriş VE adım birlikte: ikisi de bitmeden durulmaz
+        CountDownLatch entered = new CountDownLatch(1);
+        CountDownLatch hold = new CountDownLatch(1);
+        gate.endHandover();
+        enterOn(entered, hold);
+        assertThat(entered.await(2, TimeUnit.SECONDS)).isTrue();
+        EvalLoadGate.Ticket step2 = gate.enterChainStep();
+        gate.beginHandover();
+        hold.countDown();
+        awaitTrue(() -> gate.inFlight() == 0);
+        assertThat(gate.awaitQuiescent(100)).as("giriş bitti ama adım sürüyor").isFalse();
+        step2.close();
+        assertThat(gate.awaitQuiescent(100)).isTrue();
+        gate.endHandover();
+    }
+
+    @Test
+    @DisplayName("M-1 yol 2: HANDOVER'da başlayan zincir adımı sayılmaz ve null döner (belleğe dokunmadan çıkar); LOADING / NONE'da sayılır")
+    void chainStepRefusedDuringHandover() {
+        gate.beginHandover();
+        assertThat(gate.enterChainStep()).isNull();
+        assertThat(gate.chainStepsInFlight()).isZero();
+        assertThat(gate.awaitQuiescent(10)).isTrue();
+        gate.endHandover();
+        EvalLoadGate.Ticket t = gate.enterChainStep();
+        assertThat(t).isNotNull();
+        t.close();
+        gate.arm(1L, T0 + 20_000);
+        EvalLoadGate.Ticket loading = gate.enterChainStep();
+        assertThat(loading).as("LOADING'de eski dönemin adımı kendi denetimiyle düşer; kapı reddetmez").isNotNull();
+        assertThat(gate.state()).isEqualTo(EvalLoadGate.State.LOADING);
+        loading.close();
+        assertThat(gate.chainStepsInFlight()).isZero();
+        gate.disarm();
+        gate.beginHandover();
+        assertThat(gate.enterChainStep()).isNull();
+        gate.disarm();
+        assertThat(gate.enterChainStep()).as("RELEASED'in sökmesi devri bitirir").isNotNull();
+    }
+
+    @Test
+    @DisplayName("L-2: zaman aşımı bildirimi Error fırlatsa da giriş sayımı ve iş parçacığı derinliği geri alınır; sonraki giriş LOADING'de bekler")
+    void expiredNotificationErrorDoesNotLeak() throws Exception {
+        EvalLoadGate g = new EvalLoadGate(clock::get, e -> { throw new AssertionError("bildirim çöktü (test)"); });
+        g.arm(1L, T0 + 20_000);
+        Thread advancer = new Thread(() -> {
+            awaitTrue(() -> g.waiters() == 1);
+            clock.addAndGet(20_001);
+        });
+        advancer.setDaemon(true);
+        started.add(advancer);
+        advancer.start();
+        // Bu (test) iş parçacığında girilir — derinlik iş parçacığı yereldir; beklemeler kapının üst sınırıyla sınırlı.
+        AssertionError err = null;
+        try {
+            g.enter();
+        } catch (AssertionError e) {
+            err = e;
+        }
+        assertThat(err).as("Error yutulmaz").isNotNull();
+        advancer.join(2_000);
+        assertThat(g.inFlight()).as("sayım geri alındı").isZero();
+        assertThat(g.state()).isEqualTo(EvalLoadGate.State.NONE);
+
+        // Aynı iş parçacığı: derinlik sıfır → yeni LOADING'de BEKLER (iç içe sayılıp geçmez).
+        g.arm(2L, clock.get() + 20_000);
+        AtomicReference<EvalLoadGate.Ended> skipped = new AtomicReference<>();
+        Thread skipper = new Thread(() -> {
+            awaitTrue(() -> g.waiters() == 1);
+            skipped.set(g.skip(2L));
+        });
+        skipper.setDaemon(true);
+        started.add(skipper);
+        skipper.start();
+        try (EvalLoadGate.Ticket t = g.enter()) {
+            assertThat(g.inFlight()).isEqualTo(1);
+        }
+        skipper.join(2_000);
+        assertThat(skipped.get()).as("giriş gerçekten bekledi (iç içe sayılıp geçmedi)").isNotNull();
+        assertThat(skipped.get().waiters()).isEqualTo(1);
+        assertThat(g.inFlight()).isZero();
     }
 
     @Test

@@ -410,8 +410,13 @@ public class MonitoringOutageService implements EvalStateSource {
     @org.springframework.core.annotation.Order(LEADERSHIP_LISTENER_ORDER)
     public void onSweepLeadershipChanged(com.sitemonitor.service.schedule.SweepLeadershipChangedEvent ev) {
         if (ev == null) return;
+        // 3-2 (inceleme 2026-10-28, L-1): olay sırası ÖNCE artar, kapı sıfırlamadan ÖNCE sökülür — sökme süren bir uygulama
+        // gövdesini (kapı izleyicisi) bekler; sıfırlama sonra gövdenin yazdığını siler ve uygulama leadership_changed
+        // sayılır. Ayar kapalıyken kapı hiç kurulmadığından sökme işlem yapmaz, günlük sırası aynı (J-1).
+        evalLeadershipSeq.incrementAndGet();
+        disarmEvalLoad();
         resetVolatileState(ev.reason());
-        onEvalLoadLeadership(ev);   // 3-2: kapıyı kur / sök (yalnız bellek; ayar kapalıyken kurulmaz)
+        onEvalLoadLeadership(ev);   // 3-2: GAINED → kapıyı kur (yalnız bellek; ayar kapalıyken kurulmaz)
     }
 
     /**
@@ -448,8 +453,15 @@ public class MonitoringOutageService implements EvalStateSource {
     /** Liderlik dönemi (yükleme belirteci) kaynağı — her GAINED'de artar, asla geri sarılmaz. */
     private final java.util.concurrent.atomic.AtomicLong evalEpoch = new java.util.concurrent.atomic.AtomicLong();
 
+    /**
+     * Liderlik olaylarının sırası — her olayın (GAINED / LOST / RELEASED) dinleyicisinin İLK adımında artar. Kapı kurulumdan
+     * sonra değiştiyse yükü {@code leadership_changed} sayar (inceleme L-1: uygulama gövdesiyle yarışan LOST).
+     */
+    private final java.util.concurrent.atomic.AtomicLong evalLeadershipSeq = new java.util.concurrent.atomic.AtomicLong();
+
     /** Değerlendirme kapısı — saat = {@link #nowMs} (testler ilerletir); zaman aşımı raporu {@link #reportEnded}. */
-    private final EvalLoadGate evalGate = new EvalLoadGate(() -> nowMs.getAsLong(), this::reportEnded);
+    private final EvalLoadGate evalGate = new EvalLoadGate(() -> nowMs.getAsLong(), this::reportEnded,
+            () -> evalLeadershipSeq.get());
 
     /** Okuma ayarı ({@link EvalStateReadSwitch}); null = KAPALI (elle kurulan servis / ayar servisi yok). */
     private volatile java.util.function.BooleanSupplier evalReadEnabled;
@@ -504,24 +516,34 @@ public class MonitoringOutageService implements EvalStateSource {
     }
 
     /**
+     * Her liderlik olayının başında, sıfırlamadan ({@link #resetVolatileState}) ÖNCE: kapı sökülür (LOADING'deki belirteç
+     * {@code leadership_changed}; HANDOVER biter). Süren bir uygulama gövdesini bekler (kapı izleyicisi) — ardından gelen
+     * sıfırlama gövdenin yazdığını siler (inceleme L-1). Yalnız bellek, asla fırlatmaz.
+     */
+    private void disarmEvalLoad() {
+        try {
+            reportEnded(evalGate.disarm());
+        } catch (RuntimeException e) {
+            log.debug("Devir kapısı sökülemedi: {}", e.toString());
+        }
+    }
+
+    /**
      * GAINED: yeni belirteç; kurulum engeli yoksa kapı LOADING (20 sn son tarih), varsa kapı açık kalır ve
-     * {@code none/<engel>} raporu yazılır. LOST / RELEASED: kapı sökülür (LOADING'deki belirteç {@code leadership_changed}).
+     * {@code none/<engel>} raporu yazılır. LOST / RELEASED: hiçbir şey (kapı {@link #disarmEvalLoad} ile zaten söküldü).
      * Sıfırlamadan ({@link #resetVolatileState}) SONRA çağrılır — bellek boş. Asla fırlatmaz.
      */
     private void onEvalLoadLeadership(com.sitemonitor.service.schedule.SweepLeadershipChangedEvent ev) {
+        if (!com.sitemonitor.service.schedule.SweepLeadershipChangedEvent.GAINED.equals(ev.reason())) return;
         try {
-            if (com.sitemonitor.service.schedule.SweepLeadershipChangedEvent.GAINED.equals(ev.reason())) {
-                long token = evalEpoch.incrementAndGet();
-                long now = nowMs.getAsLong();
-                String blocker = evalLoadArmBlocker();
-                if (blocker == null) {
-                    reportEnded(evalGate.arm(token, now + EvalLoadGate.LOAD_TIMEOUT_MS));
-                } else {
-                    reportEnded(evalGate.disarm());
-                    reportEvalLoad(token, EvalLoadReport.none(now, evalPod(), blocker));
-                }
+            long token = evalEpoch.incrementAndGet();
+            long now = nowMs.getAsLong();
+            String blocker = evalLoadArmBlocker();
+            if (blocker == null) {
+                reportEnded(evalGate.arm(token, now + EvalLoadGate.LOAD_TIMEOUT_MS));
             } else {
                 reportEnded(evalGate.disarm());
+                reportEvalLoad(token, EvalLoadReport.none(now, evalPod(), blocker));
             }
         } catch (RuntimeException e) {
             // Beklenmez (yalnız bellek); kapı açık kalsın — değerlendirme asla takılmaz.
@@ -591,7 +613,8 @@ public class MonitoringOutageService implements EvalStateSource {
     @Override
     public boolean applyEvalLoad(EvalLoad load) {
         if (load == null) return false;
-        EvalLoadGate.ApplyOutcome out = evalGate.apply(load.token(), this::evalReadEnabledNow, () -> putEvalLoad(load));
+        int[] put = new int[PUT_COUNTS];
+        EvalLoadGate.ApplyOutcome out = evalGate.apply(load.token(), this::evalReadEnabledNow, () -> putEvalLoad(load, put));
         if (out.stale()) {
             log.debug("Kalıcı değerlendirme yükü geç geldi ({}) — belirteç {} artık güncel değil, uygulanmadı", out.reason(),
                     load.token());
@@ -599,18 +622,32 @@ public class MonitoringOutageService implements EvalStateSource {
         }
         long now = nowMs.getAsLong();
         EvalLoadReport r = out.applied()
-                ? EvalLoadReport.applied(now, evalPod(), load)
+                ? withPutCounts(EvalLoadReport.applied(now, evalPod(), load), put)
                 : EvalLoadReport.discarded(now, evalPod(), out.reason(), load);
         reportEvalLoad(load.token(), r.withWaits(out.maxWaitMs(), out.waiters()));
         return out.applied();
     }
 
+    /** {@link #putEvalLoad} sayaçları: kurtarma, kardeş, bastırma, tur, pencere türü, pencere alan adı. */
+    private static final int PUT_COUNTS = 6;
+
+    /**
+     * Uygulanan raporun sayıları belleğe GERÇEKTEN konanlar (inceleme 2026-10-28, C-1: MOS saatinde TTL'i aşmış kardeşler,
+     * 0 sayaçlar konmaz; rapor ve günlük satırı fazla saymaz).
+     */
+    private static EvalLoadReport withPutCounts(EvalLoadReport r, int[] put) {
+        return new EvalLoadReport(r.atMs(), r.pod(), r.outcome(), r.reason(), r.attemptedTier(), r.fromGeneration(),
+                r.fromPod(), r.handoverAgeMs(), r.durableAgeMs(), put[0], put[1], put[2], put[3], put[4], put[5], r.readMs(),
+                r.maxWaitMs(), r.waiters());
+    }
+
     /**
      * Kapı izleyicisi altında, uçuşta değerlendirme yokken: bellek boş değilse atma nedeni; boşsa önce TÜM değerleri yerel
      * yapılara kurar, sonra yalnız harita yazar (yarım yük kalmaz; kanca / veritabanı yok). Katman kuralı (J-4): sayaçlar,
-     * bastırma ve tur (D-6) YALNIZ FULL'da; kardeşler, pencere ve tur aralığı her iki katmanda.
+     * bastırma ve tur (D-6) YALNIZ FULL'da; kardeşler, pencere ve tur aralığı her iki katmanda. Konan sayılar {@code put}'a
+     * yazılır ({@link #PUT_COUNTS}).
      */
-    private String putEvalLoad(EvalLoad load) {
+    private String putEvalLoad(EvalLoad load, int[] put) {
         if (!evalMemoryEmpty()) return EvalLoadReport.REASON_EVALUATED_BEFORE_LOAD;
         boolean full = load.full();
         long now = nowMs.getAsLong();
@@ -621,7 +658,9 @@ public class MonitoringOutageService implements EvalStateSource {
                 EvalLoad.Recovery r = e.getValue();
                 if (r.upCount() <= 0) continue;
                 up.put(e.getKey(), r.upCount());
-                if (r.lastCountedMs() != null) lastCounted.put(e.getKey(), r.lastCountedMs());
+                // L-4 (inceleme 2026-10-28): son sayım önceki sahibin saatinde — bizim "şimdi"mizden ileride olamaz (elle
+                // kurtarma aralığı {@code now − last < aralık} saat farkıyla gevşemesin).
+                if (r.lastCountedMs() != null) lastCounted.put(e.getKey(), Math.min(r.lastCountedMs(), now));
             }
         }
         Map<String, DownObservation> down = new HashMap<>();
@@ -648,6 +687,14 @@ public class MonitoringOutageService implements EvalStateSource {
         scheduledRoundSeen.addAll(seen);
         suppressionTick.putAll(ticks);
         suppressionWindow.putAll(window);
+        put[0] = up.size();
+        put[1] = down.size();
+        put[2] = supp.size();
+        put[3] = seen.size();
+        put[4] = window.size();
+        int domains = 0;
+        for (Map<String, OutcomeMark> m : window.values()) domains += m.size();
+        put[5] = domains;
         return null;
     }
 
@@ -1001,7 +1048,26 @@ public class MonitoringOutageService implements EvalStateSource {
                 interval = tick[1];
             }
         }
+        return windowLengthFor(interval);
+    }
+
+    /**
+     * Pencere uzunluğu formülü (tek kaynak): {@code min(SUPPRESSION_WINDOW_CAP_MS, max(taban, 3 × aralık))}; aralık ≤ 0
+     * (bilinmiyor) → taban.
+     */
+    private long windowLengthFor(long intervalMs) {
+        long interval = Math.min(Math.max(0L, intervalMs), SUPPRESSION_WINDOW_CAP_MS);   // 3 × aralık taşmasın
         return Math.min(SUPPRESSION_WINDOW_CAP_MS, Math.max(Math.max(0L, suppressionWindowFloorMs), 3L * interval));
+    }
+
+    /**
+     * Yükleyicinin pencere tohumu için türün pencere uzunluğu, kaydedilmiş tur aralığından (inceleme 2026-10-28, kaydedici
+     * M-2: tohum VERIFY gibi tür başına pencereyle) — MOS'un kendi formülü ve tabanı ({@code site.monitor.network
+     * .suppression-window-ms}); aynı aralıkla {@link #windowLengthMs} ile birebir aynı. Yalnız bellek.
+     */
+    @Override
+    public long windowLengthMsFor(String alertType, long roundIntervalMs) {
+        return windowLengthFor(roundIntervalMs);
     }
 
     /**
@@ -1239,7 +1305,7 @@ public class MonitoringOutageService implements EvalStateSource {
             if (tick[0] > 0 && now > tick[0]) tick[1] = now - tick[0];
             tick[0] = now;
             newInterval = tick[1];
-            window = Math.min(SUPPRESSION_WINDOW_CAP_MS, Math.max(Math.max(0L, suppressionWindowFloorMs), 3L * tick[1]));
+            window = windowLengthFor(tick[1]);
         }
         // 3-1 ikili yazım: tur aralığı (pencere uzunluğu girdisi) yalnız %10'dan fazla değişince kuyruğa alınır.
         if (intervalChanged(prevInterval, newInterval)) noteTypeState(alertType);
@@ -2420,11 +2486,19 @@ public class MonitoringOutageService implements EvalStateSource {
             noteChainFinishing(key, chainId, lockTry + 1);   // 3-1 ikili yazım — planlamadan ÖNCE (eşzamanlı yürütücüde sıra)
             try {
                 confirmExecutor.schedule(() -> {
-                    try {
-                        finishConfirmed(key, chainId, epoch, item, ctx, lockTry + 1);
-                    } catch (Exception e) {
-                        log.error("Değişiklik alarmı son adımı başarısız oldu: {} — {}", key, e.getMessage(), e);
-                        releaseChain(key, chainId);
+                    EvalLoadGate.Ticket step = evalGate.enterChainStep();   // 3-2: zincir adımı (M-1 yol 2)
+                    if (step == null) {
+                        log.debug("Değişiklik alarmı son adımı devir sırasında başladı — atlandı (satır PENDING kalır): {}",
+                                key);
+                        return;
+                    }
+                    try (step) {
+                        try {
+                            finishConfirmed(key, chainId, epoch, item, ctx, lockTry + 1);
+                        } catch (Exception e) {
+                            log.error("Değişiklik alarmı son adımı başarısız oldu: {} — {}", key, e.getMessage(), e);
+                            releaseChain(key, chainId);
+                        }
                     }
                 }, changeLockRetryMs, TimeUnit.MILLISECONDS);
                 return;
@@ -2465,6 +2539,21 @@ public class MonitoringOutageService implements EvalStateSource {
 
     void runConfirmAttempt(String key, long chainId, long epoch, SweepItem item, String firstFailureAt,
                            List<Map<String, Object>> attempts, int n) {
+        // 3-2 (inceleme 2026-10-28, M-1 yol 2): adım sayılır — devirde durulma beklemesi yeniden kontrolün ve ardından gelen
+        // bellek değişikliğinin bitmesini bekler; devir (HANDOVER) sürerken başlayan adım belleğe dokunmadan çıkar.
+        EvalLoadGate.Ticket step = evalGate.enterChainStep();
+        if (step == null) {
+            log.debug("Teyit adımı devir sırasında başladı — atlandı, yeni lider zinciri yeniden başlatır ({}. deneme): {}",
+                    n, key);
+            return;
+        }
+        try (step) {
+            runConfirmAttemptStep(key, chainId, epoch, item, firstFailureAt, attempts, n);
+        }
+    }
+
+    private void runConfirmAttemptStep(String key, long chainId, long epoch, SweepItem item, String firstFailureAt,
+                                       List<Map<String, Object>> attempts, int n) {
         try {
             // Liderlik değişimi (R1-B): sıfırlama kaydı temizledi; bu zincirin geç gelen adımı hiçbir şeye dokunmaz.
             if (!chainCurrent(key, chainId, epoch)) {
@@ -2574,6 +2663,22 @@ public class MonitoringOutageService implements EvalStateSource {
     void runRecoveryAttempt(String key, long gen, String alertType, String domain, List<SweepItem> items,
                             int required, long intervalMs, int n, boolean manual) {
         if (!isCurrentGeneration(key, gen)) return;   // arada DOWN / yeniden başlatma / liderlik değişimi → bu zincir iptal
+        // 3-2 (inceleme 2026-10-28, M-1 yol 2): adım sayılır — devirde durulma beklemesi saniyeler süren yeniden kontrolün ve
+        // ardından gelen sayaç değişikliğinin (yeniden DOWN → sıfırlama) bitmesini bekler; bitmezse işaret yazılmaz (ardılı
+        // sayaç taşımaz). Devir (HANDOVER) sürerken başlayan adım belleğe dokunmadan çıkar.
+        EvalLoadGate.Ticket step = evalGate.enterChainStep();
+        if (step == null) {
+            log.debug("Kurtarma adımı devir sırasında başladı — atlandı, yeni lider yeniden değerlendirir: {} [{}] ({}. deneme)",
+                    domain, alertType, n);
+            return;
+        }
+        try (step) {
+            runRecoveryAttemptStep(key, gen, alertType, domain, items, required, intervalMs, n, manual);
+        }
+    }
+
+    private void runRecoveryAttemptStep(String key, long gen, String alertType, String domain, List<SweepItem> items,
+                                        int required, long intervalMs, int n, boolean manual) {
         try {
             boolean allUp = true;
             boolean skipped = false;
