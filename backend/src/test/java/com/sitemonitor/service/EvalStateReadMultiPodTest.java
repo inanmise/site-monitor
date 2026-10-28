@@ -5,20 +5,25 @@ import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import com.sitemonitor.it.MultiPodTestSupport;
 import com.sitemonitor.model.AlertEvent;
+import com.sitemonitor.model.PortMonitor;
 import com.sitemonitor.repository.AlertEventRepository;
+import com.sitemonitor.repository.PortMonitorRepository;
 import com.sitemonitor.service.evalstate.ActiveConfirmationsService;
 import com.sitemonitor.service.evalstate.EvalLoadGate;
 import com.sitemonitor.service.evalstate.EvalLoadReport;
 import com.sitemonitor.service.evalstate.EvalSnapshot;
+import com.sitemonitor.service.evalstate.EvalStateReadSwitch;
 import com.sitemonitor.service.evalstate.EvalStateMode;
 import com.sitemonitor.service.evalstate.EvalStateRecorder;
 import com.sitemonitor.service.evalstate.EvalStateSchemaPatch;
+import com.sitemonitor.service.evalstate.EvalStateSink;
 import com.sitemonitor.service.evalstate.EvalStateSource;
 import com.sitemonitor.service.evalstate.EvalStateVerifier;
 import com.sitemonitor.service.evalstate.EvalVerifyReport;
 import com.sitemonitor.service.evalstate.HandoverResult;
 import com.sitemonitor.service.evalstate.SqlRecordingDataSource;
 import com.sitemonitor.service.health.ClusterHealthStore;
+import com.sitemonitor.service.monitoring.ManualEvalInbox;
 import com.sitemonitor.service.schedule.SweepLeadershipChangedEvent;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -37,15 +42,20 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import java.util.function.Function;
 import java.util.function.LongSupplier;
+import java.util.function.Supplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyCollection;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.when;
 
 /**
@@ -159,6 +169,9 @@ class EvalStateReadMultiPodTest {
         Cluster() {
             new EvalStateSchemaPatch(mp.jdbc()).apply();
             mp.jdbc().execute(ClusterHealthStore.OBS_DDL);
+            mp.jdbc().execute(ManualEvalInbox.DDL);   // elle kontrol gelen kutusu (takipçi iletir, yükleyici "bekleyen var mı" sorar)
+            // Zamanlayıcının okuma ayarı görüşü (forwardManualToLeader) = kümenin bayrağı (paylaşılan ayar sahtesi).
+            doAnswer(inv -> on.get()).when(mp.mock(AppSettingsService.class)).getBoolean(EvalStateReadSwitch.KEY, false);
             when(alertRepo.findOpenByDomainIn(anyCollection())).thenReturn(List.of(
                     alarm(41, PORT, DB, 1), alarm(42, PORT, WEB, 10), alarm(43, PING, PINGH, 20)));
         }
@@ -205,6 +218,9 @@ class EvalStateReadMultiPodTest {
                     ReflectionTestUtils.setField(m, "recoveryExecutor", recoveries);
                 }
                 mosCustomizer.accept(m);
+                ManualEvalInbox inbox = new ManualEvalInbox(mp.jdbc());
+                inbox.setClock(mp.clockSupplier());
+                ReflectionTestUtils.setField(p.scheduler(), "manualEvalInbox", inbox);
                 SqlRecordingDataSource ds = wrap ? new SqlRecordingDataSource(mp.dataSource()) : null;
                 EvalStateRecorder rec = null;
                 if (recorder) {
@@ -268,6 +284,12 @@ class EvalStateReadMultiPodTest {
 
             EvalLoadReport load() {
                 return mos().lastEvalLoad();
+            }
+
+            /** Temiz devir, saat İLERLETİLMEDEN (takipçilerin önbellekli kararı korunur): devir sonucu (null = kaydedici yok). */
+            HandoverResult cleanHandoverNoAdvance() {
+                scheduler().onContextClosed(null);
+                return rec == null ? null : rec.lastHandover();
             }
 
             int counter(String type, String host) {
@@ -338,6 +360,12 @@ class EvalStateReadMultiPodTest {
         Map<String, Object> star() {
             return mp.jdbc().queryForMap("SELECT gen, writer, updated_ms, state_gen, flushed_ms, handover_ms FROM "
                     + "monitor_eval_type_state WHERE alert_type = '*'");
+        }
+
+        /** {@code monitor_eval_inbox} satır sayısı (iletilmiş, henüz değerlendirilmemiş elle sonuçlar). */
+        int inboxRows() {
+            Integer n = mp.jdbc().queryForObject("SELECT count(*) FROM " + ManualEvalInbox.TABLE, Integer.class);
+            return n == null ? 0 : n;
         }
 
         /** {@code eval-state-load} küme gözlemi (yoksa null). */
@@ -1087,6 +1115,248 @@ class EvalStateReadMultiPodTest {
             EvalVerifyReport after = b.rec.verifyNow();
             assertThat(after.status()).as("kararlardan sonra da tutarlı").isEqualTo(EvalVerifyReport.STATUS_OK);
             assertThat(after.passFailMismatches()).isZero();
+            assertThat(c.transcript).containsExactlyElementsOf(concat(A_PHASE, FULL_B));
+        }
+    }
+
+    // ── 15–17: inceleme düzeltmelerinin koruma senaryoları (2026-10-28) ──────────────────────────────────────────────
+
+    /** K1'in açanı m1 — takipçinin "Şimdi kontrol et" yolu ({@code evaluatePortNow}) için izleme kaydı (pasif kurtarma). */
+    static PortMonitor portMonitor1() {
+        PortMonitor m = new PortMonitor();
+        m.setId(1L);
+        m.setName("db");
+        m.setHost(DB);
+        m.setPort(5432);
+        m.setProtocol("TCP");
+        m.setTeamId(TEAM);
+        m.setStandalone(true);
+        m.setActive(true);
+        m.setRecoveryChecks(3);
+        m.setRecoveryIntervalSeconds(null);   // pasif kurtarma: karar zamanlanmış turların sayacında
+        return m;
+    }
+
+    /** Port denetiminin ham sonucu ({@code SchedulerService.portOutcome} biçimi). */
+    static Map<String, Object> portRaw(boolean open) {
+        Map<String, Object> r = new LinkedHashMap<>();
+        r.put("open", open);
+        r.put("response_ms", 12L);
+        if (!open) r.put("error", "connect timed out");
+        return r;
+    }
+
+    /** Zamanlanmış sağlıklı PORT turu (m1, 3 ister) — {@code label} tutanağa yazılır. */
+    static void healthyRound(Cluster c, Cluster.Node n, String label) {
+        c.mp.advance(60_000);
+        n.mos().handleSweepResults(PORT, List.of(item(PORT, DB, 1, true, 3)));
+        c.step(label);
+    }
+
+    @Test
+    @DisplayName("15: temiz devir 2/3 → lidersiz aralıkta TAKİPÇİDE elle DOWN → gelen kutusuna iletilir; halef yükleme sürerken "
+            + "kutuyu boşaltmaz, yükleyici bekleyen satırı görür → GÖZLEMLER/pending_manual_results; ilk sağlıklı tur "
+            + "KAPATMAZ (kapalı denetim: takipçi yerel değerlendirir)")
+    void manualDownInHandoverGap_forwarded_observationsOnly() {
+        try (Cluster c = new Cluster()) {
+            when(c.mp.mock(PortMonitorRepository.class).findById(1L)).thenReturn(Optional.of(portMonitor1()));
+            Cluster.Node a = c.node(1);
+            Cluster.Node b = c.node(2);
+            Cluster.Node f = c.node(3);
+            c.leaderPhase(a);
+            assertThat(f.scheduler().isSweepLeaderNow()).as("F takipçi (karar ≤ 5 sn önbellekte)").isFalse();
+            assertThat(a.cleanHandoverNoAdvance()).isEqualTo(HandoverResult.WRITTEN);
+
+            f.scheduler().evaluatePortNow(portMonitor1(), portRaw(false));   // aralıkta elle DOWN — sayacı sıfırlamalıydı
+            c.step("aralık");
+            assertThat(c.inboxRows()).as("ayar açık: takipçi yerel değerlendirmedi, lidersiz aralıkta da iletti").isEqualTo(1);
+
+            c.mp.advance(6_000);
+            assertThat(b.scheduler().isSweepLeaderNow()).isTrue();             // GAINED → kapı LOADING (yazıcı turu henüz yok)
+            assertThat(b.mos().evalLoadGate().state()).isEqualTo(EvalLoadGate.State.LOADING);
+            b.scheduler().drainManualEvalInbox();                            // yükleme sürüyor → satır alınmaz
+            assertThat(c.inboxRows()).as("yükleme sürerken kutu boşaltılmadı").isEqualTo(1);
+            b.rec.flushNow();                                                // yazıcı turu: yükleme
+            EvalLoadReport r = b.load();
+            assertThat(r.outcome()).isEqualTo(EvalLoadReport.OUTCOME_OBSERVATIONS);
+            assertThat(r.reason()).isEqualTo(EvalLoadReport.REASON_PENDING_MANUAL_RESULTS);
+            assertThat(b.mos().verifySnapshot().recoveryUpCount()).as("sayaç taşınmadı").isEmpty();
+
+            healthyRound(c, b, "r1");                                        // boşaltmadan önce gelen tur: 1/3, kapatmaz
+            b.scheduler().drainManualEvalInbox();                            // iletilen DOWN şimdi değerlendirilir → sıfırlar
+            assertThat(c.inboxRows()).isZero();
+            c.step("boşaltma");
+            healthyRound(c, b, "r2");
+            healthyRound(c, b, "r3");
+            healthyRound(c, b, "r4");
+            assertThat(c.transcript).as("DOWN'dan sonra 3 sağlıklı tur gerekir — erken kapanış yok")
+                    .containsExactlyElementsOf(concat(A_PHASE, List.of(
+                            "r4: resolveMonitoringAlertsForDomain(db.example.com, PORT_DOWN)")));
+        }
+
+        // Denetim — ayar KAPALI (20.168.1): takipçi aralıkta YEREL değerlendirir, kutu boş, halef setting_off.
+        try (Cluster c = new Cluster()) {
+            c.on.set(false);
+            when(c.mp.mock(PortMonitorRepository.class).findById(1L)).thenReturn(Optional.of(portMonitor1()));
+            Cluster.Node a = c.node(1);
+            Cluster.Node b = c.node(2);
+            Cluster.Node f = c.node(3);
+            c.leaderPhase(a);
+            assertThat(f.scheduler().isSweepLeaderNow()).isFalse();
+            assertThat(a.cleanHandoverNoAdvance()).as("ayar kapalı: devir adımı yok").isNull();
+            f.scheduler().evaluatePortNow(portMonitor1(), portRaw(false));
+            assertThat(c.inboxRows()).as("ayar kapalı: bugünkü gibi yerel (boşaltıcı ilanı yok)").isZero();
+            c.mp.advance(6_000);
+            b.gain();
+            assertThat(b.load().reason()).isEqualTo(EvalLoadReport.REASON_SETTING_OFF);
+            healthyRound(c, b, "r1");
+            healthyRound(c, b, "r2");
+            healthyRound(c, b, "r3");
+            assertThat(c.transcript).containsExactlyElementsOf(concat(A_PHASE, List.of(
+                    "r3: resolveMonitoringAlertsForDomain(db.example.com, PORT_DOWN)")));
+        }
+    }
+
+    @Test
+    @DisplayName("16: devirde süren kurtarma yeniden kontrolü (bekletilmiş) → durulma YOK → NOT_QUIESCENT, işaret yok; kira "
+            + "bırakıldıktan sonra DOWN döner → halef GÖZLEMLER/no_handover, sayaç taşınmaz (3 sağlıklı gerekir)")
+    void recoveryRecheckInFlightAtHandover_notQuiescent() throws Exception {
+        try (Cluster c = new Cluster()) {
+            Cluster.Node a = c.spec().manualRecoveries().build(1);
+            Cluster.Node b = c.node(2);
+            CountDownLatch entered = new CountDownLatch(1);
+            CountDownLatch release = new CountDownLatch(1);
+            AtomicInteger rechecks = new AtomicInteger();
+            Supplier<Map<String, Object>> latched = () -> {
+                rechecks.incrementAndGet();
+                entered.countDown();
+                try {
+                    release.await(10, TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                return status("down");   // devirden SONRA yeniden DOWN (sıfırlama A'nın belleğinde kalır)
+            };
+            a.gain();
+            a.mos().handleSweepResults(PORT, List.of(item(PORT, DB, 1, true, 3, 60_000L, latched)));   // 1/3 + aktif zincir
+            c.mp.advance(60_000);
+            a.mos().handleSweepResults(PORT, List.of(item(PORT, DB, 1, true, 3, 60_000L, latched)));   // 2/3 (zincir sürüyor)
+            assertThat(a.counter(PORT, DB)).isEqualTo(2);
+            assertThat(a.recoveries.pending()).as("zincirin ilk adımı kuyrukta").isEqualTo(1);
+            assertThat(a.rec.flushNow()).isTrue();
+            assertThat(a.rec.flushNow()).isTrue();
+            assertThat(a.rec.handoverReady()).isTrue();
+
+            Worker step = start("kurtarma-adimi", () -> a.recoveries.runRound());
+            assertThat(entered.await(10, TimeUnit.SECONDS)).as("yeniden kontrol başladı").isTrue();
+            a.scheduler().onContextClosed(null);                             // durulma 300 ms içinde gelmez
+            assertThat(a.rec.lastHandover()).as("süren zincir adımı → işaret yok").isEqualTo(HandoverResult.NOT_QUIESCENT);
+            assertThat(c.star().get("handover_ms")).isNull();
+            release.countDown();                                             // RELEASED'den sonra DOWN
+            step.join();
+            assertThat(rechecks).hasValue(1);
+
+            c.mp.advance(6_000);
+            b.gain();
+            EvalLoadReport r = b.load();
+            assertThat(r.outcome()).isEqualTo(EvalLoadReport.OUTCOME_OBSERVATIONS);
+            assertThat(r.reason()).isEqualTo(EvalLoadReport.REASON_NO_HANDOVER);
+            assertThat(b.mos().verifySnapshot().recoveryUpCount()).as("bayat-yüksek sayaç taşınmadı").isEmpty();
+            c.step("devir");
+            healthyRound(c, b, "r1");
+            healthyRound(c, b, "r2");
+            healthyRound(c, b, "r3");
+            assertThat(c.transcript).as("erken kapanış yok").containsExactly(
+                    "r3: resolveMonitoringAlertsForDomain(db.example.com, PORT_DOWN)");
+        }
+    }
+
+    @Test
+    @DisplayName("16b: devir (HANDOVER) sürerken BAŞLAYAN kurtarma adımı yeniden kontrol yapmaz, belleğe dokunmaz — devir temiz "
+            + "(WRITTEN), halef TAM ve sayacı taşır")
+    void recoveryStepStartingDuringHandover_changesNothing() {
+        try (Cluster c = new Cluster()) {
+            Cluster.Node a = c.spec().manualRecoveries().build(1);
+            Cluster.Node b = c.node(2);
+            AtomicInteger rechecks = new AtomicInteger();
+            Supplier<Map<String, Object>> down = () -> {
+                rechecks.incrementAndGet();
+                return status("down");
+            };
+            a.gain();
+            a.mos().handleSweepResults(PORT, List.of(item(PORT, DB, 1, true, 3, 60_000L, down)));
+            c.mp.advance(60_000);
+            a.mos().handleSweepResults(PORT, List.of(item(PORT, DB, 1, true, 3, 60_000L, down)));
+            assertThat(a.counter(PORT, DB)).isEqualTo(2);
+            assertThat(a.recoveries.pending()).isEqualTo(1);
+            assertThat(a.rec.flushNow()).isTrue();
+            assertThat(a.rec.flushNow()).isTrue();
+            assertThat(a.rec.handoverReady()).isTrue();
+
+            // SchedulerService.onContextClosed'un devir adımları, aynı sırayla; kapı HANDOVER'dayken bekleyen zincir adımı koşar.
+            a.rec.openHandover();
+            a.mos().beginEvalHandover();
+            assertThat(a.mos().evalLoadGate().state()).isEqualTo(EvalLoadGate.State.HANDOVER);
+            assertThat(a.recoveries.runRound()).as("HANDOVER'da başlayan adım").isEqualTo(1);
+            assertThat(rechecks).as("yeniden kontrol yapılmadı").hasValue(0);
+            assertThat(a.counter(PORT, DB)).as("sayaç değişmedi").isEqualTo(2);
+            boolean quiet = a.mos().awaitEvalQuiescent(EvalStateSink.HANDOVER_QUIESCE_MS);
+            assertThat(quiet).isTrue();
+            assertThat(a.rec.flushForHandover(10_000, quiet)).isEqualTo(HandoverResult.WRITTEN);
+            a.scheduler().releaseSweepLeadership();
+            a.mos().endEvalHandover();
+
+            c.mp.advance(6_000);
+            b.gain();
+            assertThat(b.load().outcome()).isEqualTo(EvalLoadReport.OUTCOME_FULL);
+            assertThat(b.counter(PORT, DB)).isEqualTo(2);
+            healthyRound(c, b, "r1");
+            assertThat(c.transcript).containsExactly("r1: resolveMonitoringAlertsForDomain(db.example.com, PORT_DOWN)");
+        }
+    }
+
+    @Test
+    @DisplayName("17: devir boşaltması sürerken flushLock'ta bekleyen yazıcı turu, işaretten SONRA hiçbir şey yazmaz (işareti "
+            + "silmez) → halef TAM")
+    void writerWaitingOnFlushLock_doesNotWipeMarker() throws Exception {
+        try (Cluster c = new Cluster()) {
+            Cluster.Node a = c.spec().wrap().build(1);
+            Cluster.Node b = c.node(2);
+            c.leaderPhase(a);
+            assertThat(a.rec.handoverReady()).isTrue();
+            a.ds.clear();
+            String abandon = "UPDATE monitor_confirmations SET state = 'ABANDONED'";
+            a.ds.blockWhen = sql -> sql.startsWith(abandon);   // devir yardımcısı flushLock'u tutarken bekler
+            // SchedulerService.onContextClosed'un devir adımları (kira bırakılmadan önce), aynı sırayla; bütçe geniş (yarış
+            // bütçeyle değil kilitle sınanır).
+            a.rec.openHandover();
+            a.mos().beginEvalHandover();
+            boolean quiet = a.mos().awaitEvalQuiescent(EvalStateSink.HANDOVER_QUIESCE_MS);
+            AtomicReference<HandoverResult> result = new AtomicReference<>();
+            Worker handover = start("devir", () -> result.set(a.rec.flushForHandover(10_000, quiet)));
+            await(() -> a.ds.statements().stream().anyMatch(sql -> sql.startsWith(abandon)), "yardımcı kilidi tutarken bekletildi");
+            // İpucu denetimini işaretten ÖNCE geçmiş bir yazıcı turu: flushLock'ta bekler.
+            AtomicReference<Boolean> wrote = new AtomicReference<>();
+            Worker writer = start("yazici-turu", () -> wrote.set(a.rec.flushNow()));
+            java.util.concurrent.locks.ReentrantLock flushLock =
+                    (java.util.concurrent.locks.ReentrantLock) ReflectionTestUtils.getField(a.rec, "flushLock");
+            await(() -> flushLock.hasQueuedThread(writer.thread()), "yazıcı turu flushLock'ta bekliyor");
+            int before = a.ds.statements().size();
+            a.ds.release();
+            handover.join();
+            writer.join();
+            assertThat(result.get()).isEqualTo(HandoverResult.WRITTEN);
+            Map<String, Object> star = c.star();
+            assertThat(star.get("handover_ms")).as("işaret silinmedi").isNotNull().isEqualTo(star.get("updated_ms"));
+            assertThat(a.ds.statements().subList(before, a.ds.statements().size()))
+                    .as("işaretten sonra işareti silen nabız yok").noneMatch(sql -> sql.contains("handover_ms = NULL"));
+            assertThat(wrote.get()).as("işaretten sonra boşaltma yazmaz").isFalse();
+            a.scheduler().releaseSweepLeadership();
+            a.mos().endEvalHandover();
+            c.mp.advance(6_000);
+            b.gain();
+            assertThat(b.load().outcome()).isEqualTo(EvalLoadReport.OUTCOME_FULL);
+            c.successorPhase(b);
             assertThat(c.transcript).containsExactlyElementsOf(concat(A_PHASE, FULL_B));
         }
     }
