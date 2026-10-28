@@ -268,6 +268,77 @@ class LeadershipChangeResetTest {
         assertThat(a.mos().evalStateHookFailures()).isPositive();
     }
 
+    // ── Çok pod Sürüm 3-2: okuma ayarı KAPALIYKEN liderlik geri dönünce bellek boş, kapı kurulmaz (tasarım R3-2 J-1) ──
+
+    @Test
+    @DisplayName("3-2 J-1: okuma ayarı kapalı — gerçek kira geçişinde GAINED belleği BOŞ bırakır, kapı kurulmaz, kaydedici sorulmaz, yük reddedilir")
+    void readOff_gainedLeavesMemoryEmpty_noArm() {
+        MonitoringMultiPodKit.PodWithMos a = MonitoringMultiPodKit.podWithMos(mp, 1);
+        MonitoringMultiPodKit.PodWithMos b = MonitoringMultiPodKit.podWithMos(mp, 2);
+        AtomicInteger blockerCalls = new AtomicInteger();
+        com.sitemonitor.service.evalstate.RecordingSink rec = com.sitemonitor.service.evalstate.RecordingSink.recording();
+        a.mos().setEvalStateSink(new com.sitemonitor.service.evalstate.EvalStateSink() {
+            @Override public String loadBlocker() { blockerCalls.incrementAndGet(); return null; }   // hazır — ama sorulmamalı
+            @Override public void recovery(String k, String t, String d) { rec.recovery(k, t, d); }
+            @Override public void observation(String t, MonitoringOutageService.SweepItem i, boolean m, long at) {
+                rec.observation(t, i, m, at);
+            }
+            @Override public void typeState(String t) { rec.typeState(t); }
+            @Override public void chainStart(String k, long id, MonitoringOutageService.SweepItem i,
+                                             MonitoringOutageService.ConfirmState s, String f, long d) { rec.chainStart(k, id, i, s, f, d); }
+            @Override public void chainProgress(String k, long id, MonitoringOutageService.ConfirmState s,
+                                                List<Map<String, Object>> at) { rec.chainProgress(k, id, s, at); }
+            @Override public void chainFinishing(String k, long id, int t) { rec.chainFinishing(k, id, t); }
+            @Override public void chainEnd(String k, long id) { rec.chainEnd(k, id); }
+            @Override public void sweepEnd(String t) { rec.sweepEnd(t); }
+            @Override public void bindSource(com.sitemonitor.service.evalstate.EvalStateSource s) { rec.bindSource(s); }
+            @Override public Status status() { return null; }
+        });
+        a.mos().setEvalReadEnabled(() -> false);
+        a.mos().setEvalLoadPodId("pod-1");
+        openAlarm();
+        a.mos().handleSweepResults(TYPE, List.of(item(true, 3, () -> status("up"))));
+        mp.advance(60_000);
+        a.mos().handleSweepResults(TYPE, List.of(item(true, 3, () -> status("up"))));
+
+        flipAwayAndBack(a, b, () -> b.mos().handleSweepResults(TYPE, List.of(item(false, 3, () -> status("down")))));
+        assertThat(a.pod().events().ofType(SweepLeadershipChangedEvent.class))
+                .extracting(SweepLeadershipChangedEvent::reason).containsExactly("GAINED", "LOST", "GAINED");
+
+        com.sitemonitor.service.evalstate.EvalSnapshot snap = a.mos().verifySnapshot();
+        assertThat(snap.recoveryUpCount()).isEmpty();
+        assertThat(snap.recoveryLastCountedAt()).isEmpty();
+        assertThat(snap.downObserved()).isEmpty();
+        assertThat(snap.suppressionActive()).isEmpty();
+        assertThat(snap.scheduledRoundSeen()).isEmpty();
+        assertThat(snap.inFlight()).isEmpty();
+        assertThat(a.mos().evalLoadGate().state()).isEqualTo(com.sitemonitor.service.evalstate.EvalLoadGate.State.NONE);
+        assertThat(a.mos().evalLoadToken()).isZero();
+        assertThat(blockerCalls).as("ayar kapalıyken kaydedici sorulmaz").hasValue(0);
+        com.sitemonitor.service.evalstate.EvalLoadReport r = a.mos().lastEvalLoad();
+        assertThat(r.reason()).isEqualTo(com.sitemonitor.service.evalstate.EvalLoadReport.REASON_SETTING_OFF);
+        assertThat(r.pod()).isEqualTo("pod-1");
+
+        // Yazıcı (paket A) yine de bir yük verse: kapı kurulmadı → uygulanmaz, bellek boş kalır.
+        com.sitemonitor.service.evalstate.EvalLoad stray = new com.sitemonitor.service.evalstate.EvalLoad(
+                ((java.util.concurrent.atomic.AtomicLong) ReflectionTestUtils.getField(a.mos(), "evalEpoch")).get(),
+                com.sitemonitor.service.evalstate.EvalLoad.TIER_FULL, Map.of(TYPE + ":" + HOST,
+                new com.sitemonitor.service.evalstate.EvalLoad.Recovery(2, null)), Map.of(), java.util.Set.of(),
+                java.util.Set.of(TYPE), Map.of(), Map.of(), null);
+        assertThat(a.mos().applyEvalLoad(stray)).isFalse();
+        assertThat(a.mos().verifySnapshot().recoveryUpCount()).isEmpty();
+        assertThat(a.mos().lastEvalLoad()).as("rapor değişmez").isSameAs(r);
+
+        // Bugünkü anlam: geri dönen liderin ilk sağlıklı sonucu kapatmaz, üçüncüsü kapatır.
+        a.mos().handleSweepResults(TYPE, List.of(item(true, 3, () -> status("up"))));
+        verify(escalation, never()).resolveMonitoringAlertsForDomain(anyString(), anyString());
+        mp.advance(60_000);
+        a.mos().handleSweepResults(TYPE, List.of(item(true, 3, () -> status("up"))));
+        mp.advance(60_000);
+        a.mos().handleSweepResults(TYPE, List.of(item(true, 3, () -> status("up"))));
+        verify(escalation, times(1)).resolveMonitoringAlertsForDomain(HOST, TYPE);
+    }
+
     @Test
     @DisplayName("3-1: kaydedici bağlıyken sıfırlama — kanca ÇAĞIRMAZ (kaydedici aynı olayı dinler), kaynak boş, yeni zincir kayda girer")
     void reset_withRecorderAttached_noHooksSourceEmpty() {
