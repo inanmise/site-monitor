@@ -251,6 +251,10 @@ class MonitoringOutageDualWriteDecisionTest {
                 assertThat(env.mos.evalLoadGate().state()).as(v + ": kapı kurulmadı")
                         .isEqualTo(com.sitemonitor.service.evalstate.EvalLoadGate.State.NONE);
                 assertThat(env.mos.evalLoadToken()).isZero();
+                // 3-2 inceleme (M-1 yol 2): zincir adımları sayılır ama ayar kapalıyken kapı hiç HANDOVER olmaz — adımlar
+                // bugünkü gibi koşar (tutanak aynı) ve sayım sızmaz.
+                assertThat(env.mos.evalLoadGate().chainStepsInFlight()).as(v + ": zincir adımı sayımı sızmadı").isZero();
+                assertThat(env.mos.evalLoadGate().inFlight()).as(v + ": giriş sayımı sızmadı").isZero();
                 com.sitemonitor.service.evalstate.EvalLoadReport lr = env.mos.lastEvalLoad();
                 if (lr != null) {
                     assertThat(lr.loaded()).isFalse();

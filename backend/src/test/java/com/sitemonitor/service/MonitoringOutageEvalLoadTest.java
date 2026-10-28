@@ -383,7 +383,7 @@ class MonitoringOutageEvalLoadTest {
         EvalLoadReport r = mos.lastEvalLoad();
         assertThat(r.outcome()).isEqualTo(EvalLoadReport.OUTCOME_FULL);
         assertThat(r.reason()).isNull();
-        assertThat(r.recoveryCounters()).isEqualTo(2);
+        assertThat(r.recoveryCounters()).as("C-1: konan sayılır — 0 sayaç konmaz").isEqualTo(1);
         assertThat(r.siblings()).isEqualTo(1);
         assertThat(r.suppressions()).isEqualTo(1);
         assertThat(r.roundSeen()).isEqualTo(1);
@@ -424,7 +424,8 @@ class MonitoringOutageEvalLoadTest {
         assertThat(mos.applyEvalLoad(l)).isTrue();
         assertThat(mos.typeValues(PORT).suppressionActive()).isNull();
         assertThat(mos.downObservation(PORT, 9L).present()).isFalse();
-        assertThat(mos.lastEvalLoad().siblings()).as("rapor yükteki sayıyı söyler").isEqualTo(1);
+        assertThat(mos.lastEvalLoad().siblings()).as("C-1: rapor belleğe KONAN sayıyı söyler (TTL'i aşan konmaz)")
+                .isZero();
     }
 
     @Test
@@ -653,8 +654,8 @@ class MonitoringOutageEvalLoadTest {
     }
 
     @Test
-    @DisplayName("uçuştaki değerlendirme son tarihe dek bitmezse evaluation_busy (WARN); yük uygulanmaz")
-    void evaluationBusyDiscards() throws Exception {
+    @DisplayName("C-1: uçuştaki değerlendirme son tarihe dek bitmezse timeout (WARN; durulma sınırı değil, son tarih bitirdi); yük uygulanmaz")
+    void deadlineDuringQuiesceWaitIsTimeout() throws Exception {
         CountDownLatch inside = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);
         when(alertRepo.findOpenByDomainIn(anyCollection())).thenAnswer(i -> {
@@ -674,8 +675,10 @@ class MonitoringOutageEvalLoadTest {
         applier.join(5_000);
         release.countDown();
         assertThat(applied.get()).isFalse();
-        assertThat(mos.lastEvalLoad().reason()).isEqualTo(EvalLoadReport.REASON_EVALUATION_BUSY);
-        assertThat(messages(Level.WARN)).anyMatch(m -> m.contains("(evaluation_busy)"));
+        assertThat(mos.lastEvalLoad().reason()).isEqualTo(EvalLoadReport.REASON_TIMEOUT);
+        assertThat(mos.lastEvalLoad().attemptedTier()).isEqualTo(EvalLoad.TIER_FULL);
+        assertThat(messages(Level.WARN)).anyMatch(m -> m.contains("(timeout)"));
+        assertThat(mos.verifySnapshot().recoveryUpCount()).isEmpty();
     }
 
     @Test
@@ -718,5 +721,227 @@ class MonitoringOutageEvalLoadTest {
         assertThat(mos.evalLoadGate().state()).isEqualTo(EvalLoadGate.State.NONE);
         mos.endEvalHandover();
         assertThat(loadLines()).isEmpty();
+    }
+
+    // ── İnceleme düzeltmeleri (2026-10-28) ─────────────────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("L-1: LOST uygulama gövdesi sürerken gelirse sökme gövdeyi bekler, sıfırlama yükü siler, rapor TAM değil (leadership_changed)")
+    void lostDuringApplyBody_memoryWipedAndNotReportedFull() throws Exception {
+        CountDownLatch inBody = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        ReflectionTestUtils.setField(mos, "nowMs", (LongSupplier) () -> {
+            if ("eval-writer".equals(Thread.currentThread().getName()) && inBody.getCount() > 0
+                    && StackWalker.getInstance().walk(f -> f.anyMatch(fr -> fr.getMethodName().equals("putEvalLoad")))) {
+                inBody.countDown();   // gövde içinde: boş bellek denetimi geçti, değerler henüz konmadı
+                try {
+                    release.await(10, TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+            return clock.get();
+        });
+        long token = armed();
+        AtomicReference<Boolean> applied = new AtomicReference<>();
+        Thread writer = new Thread(() -> applied.set(mos.applyEvalLoad(load(token, EvalLoad.TIER_FULL))), "eval-writer");
+        writer.setDaemon(true);
+        threads.add(writer);
+        writer.start();
+        assertThat(inBody.await(5, TimeUnit.SECONDS)).isTrue();
+
+        Thread loser = start(this::lost);
+        awaitTrue(() -> loser.getState() == Thread.State.BLOCKED);   // LOST: sıra arttı, sökme gövdeyi (izleyiciyi) bekliyor
+        release.countDown();
+        writer.join(5_000);
+        loser.join(5_000);
+
+        assertThat(applied.get()).as("uygulama başarılı sayılmaz").isFalse();
+        assertThat(mos.evalLoadGate().state()).isEqualTo(EvalLoadGate.State.NONE);
+        EvalSnapshot snap = mos.verifySnapshot();
+        assertThat(snap.recoveryUpCount()).as("yüklenen sayaç LOST'tan sonra bellekte KALMAZ").isEmpty();
+        assertThat(snap.downObserved()).isEmpty();
+        assertThat(snap.suppressionActive()).isEmpty();
+        assertThat(snap.scheduledRoundSeen()).isEmpty();
+        assertThat(mos.peekWindowSample(PORT).total()).isZero();
+        EvalLoadReport r = mos.lastEvalLoad();
+        assertThat(r.outcome()).isNotEqualTo(EvalLoadReport.OUTCOME_FULL);
+        assertThat(r.reason()).isEqualTo(EvalLoadReport.REASON_LEADERSHIP_CHANGED);
+        assertThat(messages(Level.INFO)).noneMatch(m -> m.contains("devirde yüklendi"))
+                .anyMatch(m -> m.contains("devirde yüklenmedi (leadership_changed)"));
+    }
+
+    @Test
+    @DisplayName("L-1: sökme her olayda sıfırlamadan ÖNCE — GAINED'de LOADING'deki eski belirteç leadership_changed, yeni belirteç kurulur")
+    void disarmRunsBeforeResetOnEveryEvent() {
+        long first = armed();
+        long second = armed();   // LOST'suz ikinci GAINED (yalnız test): eski belirteç sökmeyle biter
+        assertThat(second).isGreaterThan(first);
+        assertThat(mos.lastEvalLoad().reason()).isEqualTo(EvalLoadReport.REASON_LEADERSHIP_CHANGED);
+        assertThat(mos.applyEvalLoad(load(first, EvalLoad.TIER_FULL))).isFalse();
+        assertThat(mos.applyEvalLoad(load(second, EvalLoad.TIER_FULL))).isTrue();
+        assertThat(mos.lastEvalLoad().outcome()).isEqualTo(EvalLoadReport.OUTCOME_FULL);
+        // Uygulandıktan SONRA gelen olağan LOST raporu ezmez (son yükleme tarihçesi) ama belleği sıfırlar.
+        lost();
+        assertThat(mos.lastEvalLoad().outcome()).isEqualTo(EvalLoadReport.OUTCOME_FULL);
+        assertThat(mos.verifySnapshot().recoveryUpCount()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("L-4: yüklenen son sayım bu pod'un 'şimdi'sinden ileride olamaz (önceki sahibin saati ileride)")
+    void loadedLastCountedClampedToNow() {
+        long token = armed();
+        EvalLoad l = new EvalLoad(token, EvalLoad.TIER_FULL,
+                Map.of(PORT + ":" + HOST, new EvalLoad.Recovery(2, T0 + 25_000),
+                        PORT + ":past.example.com", new EvalLoad.Recovery(1, T0 - 40_000)),
+                Map.of(), Set.of(), Set.of(PORT), Map.of(), Map.of(), null);
+        assertThat(mos.applyEvalLoad(l)).isTrue();
+        assertThat(mos.recoveryValues(PORT + ":" + HOST).lastCountedMs()).isEqualTo(T0);
+        assertThat(mos.recoveryValues(PORT + ":past.example.com").lastCountedMs()).as("geçmiş değer olduğu gibi")
+                .isEqualTo(T0 - 40_000);
+    }
+
+    @Test
+    @DisplayName("pencere uzunluğu (yükleyici): MOS'un kendi tabanı ve formülü — aynı aralıkla windowLengthMs ile birebir aynı")
+    void windowLengthMsForEqualsWindowLengthMs() {
+        ReflectionTestUtils.setField(mos, "suppressionWindowFloorMs", 120_000L);
+        Map<String, long[]> ticks = field("suppressionTick");
+        for (long iv : new long[]{-5L, 0L, 10_000L, 40_000L, 60_000L, 1_000_000L, 1_300_000L, 2_000_000L, 86_400_000L,
+                Long.MAX_VALUE}) {
+            ticks.put(PORT, new long[]{T0, iv});
+            assertThat(mos.windowLengthMsFor(PORT, iv)).as("aralık " + iv).isEqualTo(mos.windowLengthMs(PORT));
+        }
+        assertThat(mos.windowLengthMsFor(PORT, 0L)).as("bilinmeyen aralık → MOS tabanı (5 dk varsayılan değil)")
+                .isEqualTo(120_000L);
+        assertThat(mos.windowLengthMsFor(PORT, -1L)).isEqualTo(120_000L);
+        assertThat(mos.windowLengthMsFor(PORT, 60_000L)).isEqualTo(180_000L);
+        assertThat(mos.windowLengthMsFor(PORT, 86_400_000L)).isEqualTo(MonitoringOutageService.SUPPRESSION_WINDOW_CAP_MS);
+        assertThat(mos.windowLengthMsFor(PORT, Long.MAX_VALUE)).as("taşma yok")
+                .isEqualTo(MonitoringOutageService.SUPPRESSION_WINDOW_CAP_MS);
+    }
+
+    // ── M-1 yol 2: devirde sürmekte olan zincir adımları ─────────────────────────────────────────────────────────
+
+    static SweepItem activeRecoveryItem(long monitorId, Supplier<Map<String, Object>> recheck) {
+        Map<String, Object> ctx = new LinkedHashMap<>();
+        ctx.put("monitor_id", monitorId);
+        ctx.put("team_id", 7L);
+        ctx.put("standalone", true);
+        ctx.put("monitor_recovery_checks", 3);
+        ctx.put("monitor_recovery_interval_ms", 1_000L);
+        return new SweepItem(PORT, HOST, monitorId + "/TCP", true, null, ctx, recheck);
+    }
+
+    @Test
+    @DisplayName("M-1 yol 2: devirde kurtarma yeniden kontrolü sürüyorsa durulma false (işaret yok → ardılı sayaç almaz); bitince true")
+    void recoveryRecheckInFlightAtHandover_notQuiescent() throws Exception {
+        MonitoringMultiPodKit.Manual rex = new MonitoringMultiPodKit.Manual();
+        ReflectionTestUtils.setField(mos, "recoveryExecutor", rex);
+        openAlarm(7L);
+        CountDownLatch inRecheck = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        mos.handleSweepResults(PORT, List.of(activeRecoveryItem(7L, () -> {
+            inRecheck.countDown();
+            try {
+                release.await(10, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            return status("down");   // hedef yeniden DOWN — sayaç sıfırlanmalı (devirden SONRA)
+        })));
+        assertThat(mos.recoveryValues(PORT + ":" + HOST).upCount()).isEqualTo(1);
+        assertThat(rex.pending()).as("aktif kurtarma zinciri planlandı").isEqualTo(1);
+        Thread chain = start(rex::drain);
+        assertThat(inRecheck.await(5, TimeUnit.SECONDS)).isTrue();
+        assertThat(mos.evalLoadGate().inFlight()).as("zincir adımı kapı girişi değil").isZero();
+        assertThat(mos.evalLoadGate().chainStepsInFlight()).isEqualTo(1);
+
+        mos.beginEvalHandover();
+        assertThat(mos.awaitEvalQuiescent(300)).as("yeniden kontrol sürüyor — temiz devir işareti yazılmamalı").isFalse();
+        release.countDown();
+        chain.join(5_000);
+        assertThat(mos.recoveryValues(PORT + ":" + HOST).upCount()).as("adım bitti: yeniden DOWN sayacı sıfırladı").isZero();
+        assertThat(mos.awaitEvalQuiescent(1_000)).isTrue();
+        mos.endEvalHandover();
+        assertThat(mos.evalLoadGate().chainStepsInFlight()).isZero();
+    }
+
+    @Test
+    @DisplayName("M-1 yol 2: devirde teyit yeniden kontrolü sürüyorsa durulma false; bitince true")
+    void confirmRecheckInFlightAtHandover_notQuiescent() throws Exception {
+        MonitoringMultiPodKit.Manual cex = new MonitoringMultiPodKit.Manual();
+        ReflectionTestUtils.setField(mos, "confirmExecutor", cex);
+        CountDownLatch inRecheck = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        mos.handleSweepResults(PORT, List.of(item(false, 61L, 3, () -> {
+            inRecheck.countDown();
+            try {
+                release.await(10, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            return status("up");   // geçici — kardeş gözlemi silinmeli (devirden SONRA)
+        })));
+        assertThat(cex.pending()).isEqualTo(1);
+        Thread chain = start(cex::drain);
+        assertThat(inRecheck.await(5, TimeUnit.SECONDS)).isTrue();
+        mos.beginEvalHandover();
+        assertThat(mos.awaitEvalQuiescent(300)).isFalse();
+        release.countDown();
+        chain.join(5_000);
+        assertThat(mos.awaitEvalQuiescent(1_000)).isTrue();
+        assertThat(mos.downObservation(PORT, 61L).present()).as("adım bitti: geçici DOWN gözlemi silindi").isFalse();
+        mos.endEvalHandover();
+    }
+
+    @Test
+    @DisplayName("M-1 yol 2: devir sürerken BAŞLAYAN kurtarma adımı yeniden kontrol etmez, sayacı sıfırlamaz / artırmaz, alarmı kapatmaz")
+    void recoveryStepStartingDuringHandover_mutatesNothing() {
+        MonitoringMultiPodKit.Manual rex = new MonitoringMultiPodKit.Manual();
+        ReflectionTestUtils.setField(mos, "recoveryExecutor", rex);
+        openAlarm(7L);
+        AtomicInteger rechecks = new AtomicInteger();
+        mos.handleSweepResults(PORT, List.of(activeRecoveryItem(7L, () -> {
+            rechecks.incrementAndGet();
+            return status("down");
+        })));
+        EvalStateSource.RecoveryValues before = mos.recoveryValues(PORT + ":" + HOST);
+        assertThat(before.upCount()).isEqualTo(1);
+        assertThat(before.chainGen()).as("aktif zincir kayıtlı").isNotNull();
+
+        mos.beginEvalHandover();
+        rex.drain();
+        assertThat(rechecks).as("adım belleğe dokunmadan çıktı — yeniden kontrol yok").hasValue(0);
+        assertThat(mos.recoveryValues(PORT + ":" + HOST)).as("sayaç ve zincir olduğu gibi").isEqualTo(before);
+        assertThat(mos.evalLoadGate().chainStepsInFlight()).isZero();
+        mos.endEvalHandover();
+        verify(escalation, never()).resolveMonitoringAlertsForDomain(anyString(), anyString());
+        // Kapanan pod'da RELEASED belleği sıfırlar — yarım kalan zincir de gider (ardılı yeniden değerlendirir).
+        mos.onSweepLeadershipChanged(new SweepLeadershipChangedEvent(false, "pod-b", clock.get(),
+                SweepLeadershipChangedEvent.RELEASED));
+        assertThat(mos.recoveryValues(PORT + ":" + HOST)).isEqualTo(EvalStateSource.RecoveryValues.NONE);
+    }
+
+    @Test
+    @DisplayName("M-1 yol 2: devir sürerken BAŞLAYAN teyit adımı yeniden kontrol etmez, gözlemi / zinciri değiştirmez, alarm açmaz")
+    void confirmStepStartingDuringHandover_mutatesNothing() {
+        MonitoringMultiPodKit.Manual cex = new MonitoringMultiPodKit.Manual();
+        ReflectionTestUtils.setField(mos, "confirmExecutor", cex);
+        AtomicInteger rechecks = new AtomicInteger();
+        mos.handleSweepResults(PORT, List.of(item(false, 62L, 3, () -> {
+            rechecks.incrementAndGet();
+            return status("up");
+        })));
+        assertThat(mos.activeConfirmations(null)).hasSize(1);
+        assertThat(mos.downObservation(PORT, 62L).present()).isTrue();
+
+        mos.beginEvalHandover();
+        cex.drain();
+        assertThat(rechecks).hasValue(0);
+        assertThat(mos.activeConfirmations(null)).as("zincir olduğu gibi (yeni lider yeniden başlatır)").hasSize(1)
+                .first().satisfies(c -> assertThat(c.get("attempt")).isEqualTo(0));
+        assertThat(mos.downObservation(PORT, 62L).present()).as("DOWN gözlemi silinmedi").isTrue();
+        mos.endEvalHandover();
+        verify(escalation, never()).processConfirmedOutage(anyString(), anyString(), anyString(), org.mockito.ArgumentMatchers.any());
     }
 }

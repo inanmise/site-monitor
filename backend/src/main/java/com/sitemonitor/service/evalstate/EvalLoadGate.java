@@ -22,21 +22,31 @@ import java.util.function.Supplier;
  *       Her giriş yükleme bitene (uygulandı / atıldı / atlandı) ya da son tarihe ({@link #LOAD_TIMEOUT_MS}, MOS saati) dek
  *       bekler; son tarih geçince kapı NONE olur ve yükleme {@code timeout} sayılır (geç gelen uygulama reddedilir).</li>
  *   <li>{@link State#HANDOVER} — zarif kapanışta devir boşaltması: yeni girişler en çok {@link #HANDOVER_WAIT_MS} bekler
- *       (gerçek zaman), sonra geçer (pod kapanıyor; zamanlanmış sonuçlar zaten çitli).</li>
+ *       (gerçek zaman), sonra geçer (pod kapanıyor; zamanlanmış sonuçlar zaten çitli). Bu sürede BAŞLAYAN zincir adımı
+ *       ({@link #enterChainStep}) belleğe dokunmadan çıkar.</li>
  * </ul>
  *
  * <p><b>Uygulama (J-3).</b> {@link #apply} yükü yalnız kapı hâlâ bu belirteçle LOADING iken, uçuşta değerlendirme kalmayınca
  * (en çok {@link #APPLY_QUIESCE_MS}) ve kapının izleyicisi TUTULURKEN gövdeyi koşturur — LOADING'de yeni giriş izleyiciyi
  * beklediği için gövde ile hiçbir değerlendirme iç içe geçmez. Gövde yalnız harita yazar (MOS boş bellek denetimini de
- * orada yapar); birleştirme asla denenmez.
+ * orada yapar); birleştirme asla denenmez. Kurulumdan sonra (gövdeden önce ya da gövde sürerken) bir liderlik olayı
+ * BAŞLADIYSA (enjekte liderlik sırası değişti) yük {@code leadership_changed} sayılır: dinleyici kapıyı sıfırlamadan ÖNCE
+ * söker (izleyiciyi, yani gövdenin bitmesini bekler), gövdenin yazdığını sıfırlama siler (inceleme 2026-10-28, L-1).
  *
  * <p><b>Uçuştaki sayım.</b> Kapı NONE iken giren her üst düzey değerlendirme sayılır — kurulumdan HEMEN önce girip
- * kurulumdan sonra belleğe yazan değerlendirme de ("araya sızma"): uygulama onun bitmesini bekler, sonra MOS belleği boş
- * bulmaz ve yükü atar ({@code evaluated_before_load}). İç içe çağrı ({@code handleDnsSweep → handleSweepResults}) iş
- * parçacığı yerel derinlikle tanınır ve yeniden sayılmaz / beklemez.
+ * kurulumdan sonra belleğe yazan değerlendirme de ("araya sızma"): kurulum anında uçuşta değerlendirme varsa bu
+ * hatırlanır ve uygulama onun bitmesini bekleyip yükü atar ({@code evaluated_before_load}) — değerlendirme belleğe yalnız
+ * SİLME yazmış olsa bile (inceleme L-3). İç içe çağrı ({@code handleDnsSweep → handleSweepResults}) iş parçacığı yerel
+ * derinlikle tanınır ve yeniden sayılmaz / beklemez.
+ *
+ * <p><b>Zincir adımları (inceleme 2026-10-28, M-1 yol 2).</b> Teyit / kurtarma zincirinin adımı (yeniden kontrol ve
+ * ardından gelen bellek değişikliği) kapıdan geçmez, beklemez; ama {@link #enterChainStep} ile sayılır: devirde
+ * {@link #awaitQuiescent} hem girişlerin hem zincir adımlarının bitmesini bekler — saniyeler süren bir yeniden kontrol
+ * sürerken işaret yazılmaz (ardılı yalnız gözlemleri alır). HANDOVER'da başlayan adım çıkar (ardılı zincirleri yeniden
+ * başlatır, karar D-2).
  *
  * <p><b>Her bekleme sınırlıdır.</b> Bekleme dilimleri {@link #WAIT_SLICE_MS}; enjekte saat takılsa / geri sarılsa da
- * gerçek zamanlı üst sınır ({@code son tarih − kurulum + HANDOVER_WAIT_MS}) yüklemeyi sona erdirir. Kesme (interrupt)
+ * gerçek zamanlı üst sınır ({@code son tarih − kurulum + HARD_CAP_SLACK_MS}) yüklemeyi sona erdirir. Kesme (interrupt)
  * beklemeyi bitirir, bayrak geri konur.
  *
  * <p><b>Bitiş tek kez.</b> Bir belirtecin LOADING'i tam bir kez biter ({@link Ended}: uygulandı / atıldı / atlandı /
@@ -54,8 +64,15 @@ public final class EvalLoadGate {
     public static final long LOAD_TIMEOUT_MS = 20_000L;
     /** Uygulama, uçuştaki değerlendirmelerin bitmesini en çok bu kadar bekler (ms). */
     public static final long APPLY_QUIESCE_MS = 5_000L;
-    /** HANDOVER'da bir giriş en çok bu kadar bekler (ms, gerçek zaman; {@code beginHandover}'dan itibaren). */
-    public static final long HANDOVER_WAIT_MS = 1_000L;
+    /**
+     * HANDOVER'da bir giriş en çok bu kadar bekler (ms, gerçek zaman; {@code beginHandover}'dan itibaren) = devir bütçesi
+     * ({@link EvalStateSink#HANDOVER_BUDGET_MS}: durulma + boşaltma) + 1 sn pay: bekleyen giriş işaretle kiranın
+     * bırakılması (RELEASED) ARASINDA koşamaz (inceleme 2026-10-28, kaydedici L-1). RELEASED'in sökmesi kapıyı daha erken
+     * açar; yalnız kapanan pod'un istekleri bekler (kapanış iş parçacığı değil — kapanış bütçesi etkilenmez).
+     */
+    public static final long HANDOVER_WAIT_MS = EvalStateSink.HANDOVER_BUDGET_MS + 1_000L;
+    /** LOADING'in gerçek zamanlı üst sınırı = son tarih + bu pay (enjekte saat takılsa da yükleme biter). */
+    static final long HARD_CAP_SLACK_MS = 1_000L;
     /** Bekleme dilimi (ms) — enjekte saatin ilerlemesi ve kaçırılan uyarı en geç bu sürede görülür. */
     static final long WAIT_SLICE_MS = 50L;
     /** Bu kadar uzun bekleyen giriş DEBUG satırı bırakır (ms). */
@@ -91,6 +108,8 @@ public final class EvalLoadGate {
 
     private final LongSupplier clock;
     private final Consumer<Ended> onExpired;
+    private final LongSupplier leadershipSeq;
+    private final long applyQuiesceMs;
 
     private volatile State state = State.NONE;
     private volatile long token;
@@ -98,6 +117,8 @@ public final class EvalLoadGate {
     private volatile long hardDeadlineNanos;
     private volatile long handoverDeadlineNanos;
     private final AtomicInteger inFlight = new AtomicInteger();
+    /** Sayılan zincir adımları (teyit / kurtarma yeniden kontrolü + ardından gelen bellek değişikliği). */
+    private final AtomicInteger chainSteps = new AtomicInteger();
     private final ThreadLocal<int[]> depth = ThreadLocal.withInitial(() -> new int[1]);
 
     // izleyici altında:
@@ -105,8 +126,13 @@ public final class EvalLoadGate {
     private long firstWaitAtMs = -1L;
     private long endedToken;
     private String endedReason;
+    /** Kurulum anında uçuşta değerlendirme vardı ("araya sızma") — uygulama yükü atar (inceleme L-3). */
+    private boolean slipIn;
+    /** Kurulum anındaki liderlik sırası — uygulama gövdeden önce ve sonra karşılaştırır (inceleme L-1). */
+    private long armSeq;
 
     private final Ticket ticket = this::exit;
+    private final Ticket chainTicket = this::exitChainStep;
 
     /**
      * @param clock     MOS saati (ms) — son tarih ve bekleme ölçüsü bununla
@@ -114,8 +140,23 @@ public final class EvalLoadGate {
      *                  kez çağrılır (null = çağrılmaz); istisnası yutulur
      */
     public EvalLoadGate(LongSupplier clock, Consumer<Ended> onExpired) {
+        this(clock, onExpired, null);
+    }
+
+    /**
+     * @param leadershipSeq liderlik olaylarının sırası (MOS dinleyicisi her olayın BAŞINDA artırır; null = hiç değişmez) —
+     *                      kurulumdan sonra değiştiyse uygulama {@code leadership_changed} olur
+     */
+    public EvalLoadGate(LongSupplier clock, Consumer<Ended> onExpired, LongSupplier leadershipSeq) {
+        this(clock, onExpired, leadershipSeq, APPLY_QUIESCE_MS);
+    }
+
+    /** Testler: uygulamanın durulma beklemesi üst sınırı ayarlanabilir. */
+    EvalLoadGate(LongSupplier clock, Consumer<Ended> onExpired, LongSupplier leadershipSeq, long applyQuiesceMs) {
         this.clock = clock == null ? System::currentTimeMillis : clock;
         this.onExpired = onExpired;
+        this.leadershipSeq = leadershipSeq == null ? () -> 0L : leadershipSeq;
+        this.applyQuiesceMs = Math.max(0L, applyQuiesceMs);
     }
 
     // ── Kurulum / sökme (liderlik dinleyicisi; yalnız bellek) ──────────────────────────────────────────────────────
@@ -133,10 +174,13 @@ public final class EvalLoadGate {
         this.token = token;
         this.deadlineMs = deadlineMs;
         this.hardDeadlineNanos = System.nanoTime()
-                + TimeUnit.MILLISECONDS.toNanos(Math.max(0L, deadlineMs - now) + HANDOVER_WAIT_MS);
+                + TimeUnit.MILLISECONDS.toNanos(Math.max(0L, deadlineMs - now) + HARD_CAP_SLACK_MS);
         this.waiters = 0;
         this.firstWaitAtMs = -1L;
+        this.armSeq = readSeq();
         this.state = State.LOADING;
+        // L-3: durum yazıldıktan SONRA okunur — NONE görüp geçen her giriş burada görünür (sayım okumadan önce artar).
+        this.slipIn = inFlight.get() > 0;
         notifyAll();
         return prev;
     }
@@ -158,7 +202,9 @@ public final class EvalLoadGate {
 
     /**
      * Değerlendirme girişi. NONE: sayar ve hemen döner. LOADING / HANDOVER: kapı açılana ya da son tarihe dek bekler,
-     * sonra sayar. İç içe çağrı (bu iş parçacığı zaten içeride) beklemez, yeniden sayılmaz. Asla fırlatmaz.
+     * sonra sayar. İç içe çağrı (bu iş parçacığı zaten içeride) beklemez, yeniden sayılmaz. İstisna fırlatmaz; yalnız
+     * zaman aşımı bildiriminden bir {@link Error} geçebilir — o zaman sayım ve derinlik geri alınır (inceleme L-2: aksi
+     * hâlde sayaç kalıcı ≥ 1 kalır, iş parçacığı sonsuza dek "iç içe" sayılırdı).
      */
     public Ticket enter() {
         int[] d = depth.get();
@@ -172,15 +218,22 @@ public final class EvalLoadGate {
             return ticket;
         }
         leave();
-        Ended expired = slowEnter();
+        long startNanos = System.nanoTime();
+        Ended expired = slowEnter();   // sayımı izleyici altında SON adım olarak yapar — ardından fırlatabilecek bir şey yok
         d[0] = 1;
-        fireExpired(expired);
+        try {
+            logSlowWait(startNanos);
+            fireExpired(expired);
+        } catch (Throwable t) {
+            d[0] = 0;
+            leave();
+            throw t;
+        }
         return ticket;
     }
 
     private Ended slowEnter() {
         long startMs = clock.getAsLong();
-        long startNanos = System.nanoTime();
         Ended expired = null;
         boolean interrupted = false;
         boolean counted = false;
@@ -209,11 +262,14 @@ public final class EvalLoadGate {
             inFlight.incrementAndGet();
         }
         if (interrupted) Thread.currentThread().interrupt();
+        return expired;
+    }
+
+    private void logSlowWait(long startNanos) {
         long waitedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNanos);
         if (waitedMs >= SLOW_WAIT_LOG_MS && log.isDebugEnabled()) {
             log.debug("Değerlendirme devir kapısında {} ms bekledi (durum {})", waitedMs, state);
         }
-        return expired;
     }
 
     private void exit() {
@@ -228,6 +284,34 @@ public final class EvalLoadGate {
 
     private void leave() {
         if (inFlight.decrementAndGet() <= 0 && state != State.NONE) {
+            synchronized (this) {
+                notifyAll();
+            }
+        }
+    }
+
+    // ── Zincir adımları (inceleme 2026-10-28, M-1 yol 2) ─────────────────────────────────────────────────────────────
+
+    /**
+     * Teyit / kurtarma zinciri adımının girişi — beklemez, kapıdan geçmez; yalnız sayılır, böylece devirde
+     * {@link #awaitQuiescent} yeniden kontrolün ve ardından gelen bellek değişikliğinin bitmesini de bekler. Kapı
+     * HANDOVER'daysa adım SAYILMAZ ve null döner: adım belleğe dokunmadan çıkmalıdır (pod kapanıyor; yeni lider zincirleri
+     * yeniden başlatır, karar D-2). Ayar kapalıyken kapı hiç HANDOVER olmaz → her zaman bilet (bir sayaç artırma + bir
+     * volatile okuma). Asla fırlatmaz.
+     *
+     * @return bilet ({@code try (bilet) { … }}) ya da null = HANDOVER, adım çıkmalı
+     */
+    public Ticket enterChainStep() {
+        chainSteps.incrementAndGet();
+        if (state == State.HANDOVER) {   // sayım okumadan önce artar — devrin durulma beklemesi bu adımı görür ya da adım devri
+            exitChainStep();
+            return null;
+        }
+        return chainTicket;
+    }
+
+    private void exitChainStep() {
+        if (chainSteps.decrementAndGet() <= 0 && state != State.NONE) {
             synchronized (this) {
                 notifyAll();
             }
@@ -274,21 +358,26 @@ public final class EvalLoadGate {
 
     /**
      * Yükü uygular (tasarım §3.3 adım 1–4 ve 7; adım 5–6 = {@code body}): belirteç hâlâ LOADING değilse eski;
-     * son tarih geçtiyse {@code timeout}; ayar kapandıysa {@code setting_turned_off}; uçuştaki değerlendirmeler
-     * {@link #APPLY_QUIESCE_MS} (ve son tarih) içinde bitmezse {@code evaluation_busy}. Sonra izleyici TUTULURKEN
-     * {@code body} koşar: null = uygulandı, aksi hâlde atma nedeni. İstisna = {@code read_failed} (gövde yarım yazmamalı).
-     * Kesme = {@code recorder_closing}. Asla fırlatmaz.
+     * son tarih geçtiyse {@code timeout} (bekleme sırasında da: MOS saati son tarihi ya da gerçek zamanlı üst sınır —
+     * inceleme C-1); ayar kapandıysa {@code setting_turned_off}; uçuştaki değerlendirmeler {@link #APPLY_QUIESCE_MS}
+     * içinde bitmezse {@code evaluation_busy}; kurulum anında uçuşta değerlendirme vardıysa {@code evaluated_before_load}
+     * (inceleme L-3); kurulumdan sonra bir liderlik olayı başladıysa {@code leadership_changed} (inceleme L-1). Sonra izleyici
+     * TUTULURKEN {@code body} koşar: null = uygulandı, aksi hâlde atma nedeni. Gövde sürerken bir liderlik olayı başladıysa
+     * yine {@code leadership_changed} — olayın dinleyicisi sökmede bu izleyiciyi bekler ve ardından belleği sıfırlar (gövdenin
+     * yazdığı silinir). İstisna = {@code read_failed} (gövde yarım yazmamalı). Kesme = {@code recorder_closing}. Asla
+     * fırlatmaz.
      */
     public ApplyOutcome apply(long token, BooleanSupplier enabled, Supplier<String> body) {
         synchronized (this) {
             if (state != State.LOADING || this.token != token || token <= 0) return staleLocked(token);
             if (pastDeadlineLocked()) return endedOutcome(EvalLoadReport.REASON_TIMEOUT);
             if (!enabledSafe(enabled)) return endedOutcome(EvalLoadReport.REASON_SETTING_TURNED_OFF);
-            long quiesceEnd = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(APPLY_QUIESCE_MS);
+            long quiesceEnd = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(applyQuiesceMs);
             while (inFlight.get() > 0) {
+                if (pastDeadlineLocked()) return endedOutcome(EvalLoadReport.REASON_TIMEOUT);
                 long leftNanos = quiesceEnd - System.nanoTime();
-                long leftClock = deadlineMs - clock.getAsLong();
-                if (leftNanos <= 0 || leftClock <= 0) return endedOutcome(EvalLoadReport.REASON_EVALUATION_BUSY);
+                if (leftNanos <= 0) return endedOutcome(EvalLoadReport.REASON_EVALUATION_BUSY);
+                long leftClock = Math.max(1L, deadlineMs - clock.getAsLong());
                 if (waitSlice(Math.min(WAIT_SLICE_MS, Math.min(ceilMs(leftNanos), leftClock)))) {
                     Thread.currentThread().interrupt();
                     if (state != State.LOADING || this.token != token) return staleLocked(token);
@@ -297,14 +386,33 @@ public final class EvalLoadGate {
                 if (state != State.LOADING || this.token != token) return staleLocked(token);
             }
             if (!enabledSafe(enabled)) return endedOutcome(EvalLoadReport.REASON_SETTING_TURNED_OFF);
+            if (slipIn) return endedOutcome(EvalLoadReport.REASON_EVALUATED_BEFORE_LOAD);
+            if (leadershipChangedLocked()) return endedOutcome(EvalLoadReport.REASON_LEADERSHIP_CHANGED);
             String why;
             try {
                 why = body == null ? null : body.get();
             } catch (RuntimeException e) {
                 why = EvalLoadReport.REASON_READ_FAILED;
             }
+            if (why == null && leadershipChangedLocked()) why = EvalLoadReport.REASON_LEADERSHIP_CHANGED;
             Ended e = endLoadingLocked(why);
             return new ApplyOutcome(why == null, false, why, e == null ? 0L : e.maxWaitMs(), e == null ? 0 : e.waiters());
+        }
+    }
+
+    /** Kurulumdan sonra bir liderlik olayı başladı mı (sıra okunamadıysa: evet — güvenli taraf). */
+    private boolean leadershipChangedLocked() {
+        long cur = readSeq();
+        return cur == SEQ_UNREADABLE || armSeq == SEQ_UNREADABLE || cur != armSeq;
+    }
+
+    private static final long SEQ_UNREADABLE = Long.MIN_VALUE;
+
+    private long readSeq() {
+        try {
+            return leadershipSeq.getAsLong();
+        } catch (RuntimeException e) {
+            return SEQ_UNREADABLE;
         }
     }
 
@@ -363,23 +471,28 @@ public final class EvalLoadGate {
     }
 
     /**
-     * Uçuştaki değerlendirmelerin bitmesini en çok {@code maxMs} (gerçek zaman) bekler.
+     * Uçuştaki değerlendirmelerin VE zincir adımlarının ({@link #enterChainStep}) bitmesini en çok {@code maxMs} (gerçek
+     * zaman, ikisi için tek bütçe) bekler. Ayar kapalıyken çağrılmaz (devir adımı koşmaz).
      *
-     * @return uçuşta değerlendirme kalmadıysa true
+     * @return uçuşta değerlendirme ve zincir adımı kalmadıysa true (false = devir işaretsiz boşaltılır)
      */
     public boolean awaitQuiescent(long maxMs) {
         long end = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(Math.max(0L, maxMs));
         synchronized (this) {
-            while (inFlight.get() > 0) {
+            while (!quiescent()) {
                 long left = end - System.nanoTime();
                 if (left <= 0) return false;
                 if (waitSlice(Math.min(WAIT_SLICE_MS, ceilMs(left)))) {
                     Thread.currentThread().interrupt();
-                    return inFlight.get() <= 0;
+                    return quiescent();
                 }
             }
             return true;
         }
+    }
+
+    private boolean quiescent() {
+        return inFlight.get() <= 0 && chainSteps.get() <= 0;
     }
 
     /** HANDOVER → NONE (tekrar çağrılabilir). */
@@ -399,6 +512,11 @@ public final class EvalLoadGate {
     /** Uçuştaki üst düzey değerlendirme sayısı. */
     public int inFlight() {
         return inFlight.get();
+    }
+
+    /** Sayılan (sürmekte olan) zincir adımı sayısı. */
+    public int chainStepsInFlight() {
+        return chainSteps.get();
     }
 
     /** Güncel / son yüklemenin belirteci (durumdan bağımsız; tanı / test). */
