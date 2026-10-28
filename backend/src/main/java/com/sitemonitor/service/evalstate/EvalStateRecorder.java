@@ -263,6 +263,11 @@ public class EvalStateRecorder implements EvalStateSink, ApplicationContextAware
     private long nextColumnsCheckNs;
     /** Devir açık: kuyruğa alma kapısı lider ipucu yerine "ipucu ∨ devir" der (RELEASED kapatır). */
     private volatile boolean handoverOpen;
+    /**
+     * GAINED geldi: yazıcı turu (ayar açıksa) önceki bir hatanın geri çekilmesini bekletmez — MOS yükleme kapısı 20 sn'de
+     * kapanır; 30 sn'lik geri çekilme yükü her seferinde zaman aşımına düşürürdü. Ayar kapalıyken 3-1 zamanlaması (J-1).
+     */
+    private volatile boolean backoffResetRequested;
     /** Devir yardımcısının bütçesi doldu — yardımcı işaret ifadesine başlamadıysa yazmaz. */
     private volatile boolean handoverAborted;
     private volatile HandoverResult lastHandover;
@@ -978,6 +983,7 @@ public class EvalStateRecorder implements EvalStateSink, ApplicationContextAware
                 fencedOut = false;
                 inheritPending = true;
                 inherited = null;
+                backoffResetRequested = true;   // yalnız bayrak; yazıcı turu ayar açıksa uygular
             }
         } finally {
             rw.writeLock().unlock();
@@ -1091,6 +1097,13 @@ public class EvalStateRecorder implements EvalStateSink, ApplicationContextAware
             }
             tableMissing = false;
             log.info("Kalıcı değerlendirme durumu tabloları hazır — yazım başlıyor");
+        }
+        if (backoffResetRequested) {
+            backoffResetRequested = false;
+            if (readEnabled()) {
+                backoffUntilNs = nowNs;
+                backoffMs = 0L;
+            }
         }
         if (nowNs - backoffUntilNs < 0) return;
         maybeReplay();

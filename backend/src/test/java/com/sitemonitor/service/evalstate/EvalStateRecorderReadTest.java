@@ -295,6 +295,33 @@ class EvalStateRecorderReadTest {
         assertThat(countIn(1)).isEqualTo(2);
     }
 
+    @Test
+    @DisplayName("GAINED: ayar açıkken yazıcı turu eski bir geri çekilmeyi beklemez (yük 20 sn kapısına yetişsin); kapalıyken 3-1 zamanlaması")
+    void gainedClearsBackoffOnlyWhenOn() {
+        for (boolean read : new boolean[] {true, false}) {
+            on.set(read);
+            String owner = read ? "pod-on-00000001" : "pod-off-00000002";
+            mp.jdbc().update("DELETE FROM monitor_check_schedule");
+            EvalStateRecorder r = EvalStateRecorder.builder(mp.jdbc()).writer(owner).leaderHint(() -> true).mode(mode::get)
+                    .clock(mp.clockSupplier()).readEnabled(on::get).leaseOwner(owner).flushMs(50).build();
+            r.bindSource(new LoadFakeSource());
+            built.add(r);
+            r.tick();   // kira yok → kuşak alınamadı → geri çekilme (1 sn)
+            assertThat(r.generation()).isZero();
+            mp.jdbc().update("INSERT INTO monitor_check_schedule(monitor_key, next_due_at, claimed_by, claimed_at) "
+                    + "VALUES (?,?,?,?)", EvalStateSql.LEASE_KEY, mp.now() + 180_000, owner, mp.now());
+            r.tick();
+            assertThat(r.generation()).as("geri çekilme sürüyor").isZero();
+            r.onSweepLeadershipChanged(new SweepLeadershipChangedEvent(true, owner, mp.now(), SweepLeadershipChangedEvent.GAINED));
+            r.tick();
+            if (read) {
+                assertThat(r.generation()).as("açık: GAINED geri çekilmeyi sildi").isPositive();
+            } else {
+                assertThat(r.generation()).as("kapalı: 3-1 gibi geri çekilme sürer").isZero();
+            }
+        }
+    }
+
     // ── Öncül satır + yükleme ────────────────────────────────────────────────────────────────────────────────────
 
     @Test
