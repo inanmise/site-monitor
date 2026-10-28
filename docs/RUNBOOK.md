@@ -750,8 +750,12 @@ Sürüm 3-1'den beri tarama lideri izlemeye ayrılır; uzun "her pod" işleri ba
 Her liderlik değişiminde yeni lider alarm kararlarının bellekteki durumunu sıfırdan kurar (doğrulama zincirleri, kurtarma
 sayaçları): açılmak / kapanmak üzere olan bir alarm doğrulamasını yeni liderde baştan yapar — birkaç dakika gecikme olur,
 çift bildirim olmaz. DNS / alan adı değişikliği (`DNS_CHANGED` / `DOMAINMON_CHANGED`) satırda PENDING olarak kalır; yeni
-lider 2 saate kadar yeniden kuyruğa alır, değişiklik bildirimi kaybolmaz. Sürüm 3-1'de de böyledir: durum tablolara
-yalnız AYNALANIR, devirde okunmaz ([Kalıcı değerlendirme durumu](#kalıcı-değerlendirme-durumu-çok-pod-sürüm-3-1)).
+lider 2 saate kadar yeniden kuyruğa alır, değişiklik bildirimi kaybolmaz. Sürüm 3-1'de durum tablolara
+yalnız AYNALANIR ([Kalıcı değerlendirme durumu](#kalıcı-değerlendirme-durumu-çok-pod-sürüm-3-1)); Sürüm 3-2'den
+beri "Devirde kalıcı değerlendirme durumunu yükle" ayarı AÇIKSA yeni lider temiz devirde kurtarma sayaçlarını, DOWN
+kardeşleri, bastırmayı ve tür turlarını, çökmeden sonra yalnız gözlemleri yükler; süren doğrulama zincirleri yine baştan
+başlar ([Devirde okuma](#kalıcı-değerlendirme-durumunu-devirde-okuma-çok-pod-sürüm-3-2)). Ayar kapalıyken (varsayılan)
+her şey yukarıdaki gibidir.
 
 ### Kalıcı değerlendirme durumu (çok pod Sürüm 3-1)
 
@@ -771,7 +775,8 @@ toplamak: devirde durumu tablodan yüklemek güvenli mi.
   SELECT gen AS kusak, writer AS yazan, to_timestamp(updated_ms / 1000.0) AS son_nabiz
     FROM monitor_eval_type_state WHERE alert_type = '*';      -- yazan = lider pod, son_nabiz en çok ~60 sn eski
   ```
-  Bir 20.167.0 lider yazmaz: o sırada `son_nabiz` eskir (3-2'nin "durum güncel mi" denetimi tam buna bakacak).
+  Bir 20.167.0 lider yazmaz: o sırada `son_nabiz` eskir (3-2'nin süreklilik denetimi tam buna bakar — aşağıdaki
+  [Devirde okuma](#kalıcı-değerlendirme-durumunu-devirde-okuma-çok-pod-sürüm-3-2) bölümünün teşhis sorgusu).
 - **Küme kartı** (Sistem Sağlığı → Zamanlayıcı ve yürütücüler → Küme kartı):
   - **"Kalıcı değerlendirme durumu" — "Küme" etiketli:** kümenin SON doğrulaması (lider 5 dakikada bir belleği tablolarla
     karşılaştırır; sonuç `cluster_observations` satırı `eval-state-verify` — hangi pod yanıtlarsa aynı). Yalnız TAZE
@@ -818,7 +823,8 @@ toplamak: devirde durumu tablodan yüklemek güvenli mi.
   günde 0,5 GB WAL'in çok altında, 3 kat ölçekte (≈ 12 bin kalem) ≈ 100 upsert / sn ve checkpoint sayfa görüntüleriyle
   günde 3–5 GB WAL. Sık güncellenen üç tabloda güncellemeler HOT kalır (fillfactor 70). İfadelerin 15 sn sorgu zaman aşımı
   vardır — kilitli bir satır yazıcıyı en çok 15 sn bekletir.
-- **3-2'ye geçiş ölçütü (öneri):** prod'da 2 pod'la en az 7 gün `verify` kipinde:
+- **3-2'ye geçiş ölçütü = devirde okuma ayarını AÇMA ölçütü** ([Devirde okuma](#kalıcı-değerlendirme-durumunu-devirde-okuma-çok-pod-sürüm-3-2)):
+  prod'da 2 pod'la en az 7 gün `verify` kipinde:
   1. Her BİLİNEN doğrulama turunda kurtarma, kardeş, bastırma, ilk tur ve teyit zinciri uyuşmazlıkları 0 ("0 uyuşmazlık" =
      bu beş türün toplamı; bilinmeyen turlar — "eşitleniyor", "yazıcı yetişemedi" … — sayılmaz, ama 7 gün boyunca
      bilinen tur olmalı).
@@ -835,6 +841,120 @@ toplamak: devirde durumu tablodan yüklemek güvenli mi.
   türü); kaydedici kendi budar (son durum 7 gün — duraklatılan / silinen izlemenin DOWN satırı bellek onu budadığı anda;
   kurtarma satırı 7 gün: sıfır olanlar ve önceki kuşaklarınkiler; önceki kuşağın tür satırları 7 gün; zincir 1 saat).
 
+### Kalıcı değerlendirme durumunu devirde okuma (çok pod Sürüm 3-2)
+
+Ayar: Ayarlar → Genel → İzleme Alarmları → **"Devirde kalıcı değerlendirme durumunu yükle (çok pod)"**
+(`site.monitor.eval-state.read-enabled`) — yalnız GLOBAL admin, canlı (~10 sn içinde tüm pod'lar), varsayılan **kapalı**,
+kalıcı varsayılan env ile `EVAL_STATE_READ_ENABLED`. **Kapalıyken her şey 20.168.1 ile birebir aynıdır** (alarm kararları,
+bildirimler, kaydedicinin veritabanı ifadeleri, kapanış sırası ve süresi, teyit listesi, günlük satırları); Sistem Sağlığı
+yalnız "Kapalı" der.
+
+- **Ne yapar:** tarama liderliği başka pod'a geçince yeni lider, öncekinin Sürüm 3-1'den beri tablolara aynaladığı alarm
+  değerlendirme durumunu yükler:
+  - **Tam (temiz devir — zarif kapanış: rollout, `kubectl delete pod`, drain):** kurtarma sayaçları (ardışık sağlıklı
+    sonuç sayısı), DOWN kardeş izlemeler, toplu kesinti bastırması, tür turları (yeniden başlatmadan sonraki elle kapanış
+    korumasının rahatlaması) ve bastırma penceresi (her tür kendi pencere süresiyle — doğrulamanın "bastırma penceresi
+    tohumu" kuralının aynısı). Eski lider kirayı bırakmadan hemen önce (en çok 1 sn: süren değerlendirmeler ve teyit /
+    kurtarma zincirlerinin yeniden kontrolleri ≤ 300 ms durulur, sonra ≤ 700 ms boşaltma) bekleyen her yazımı yapar ve bir
+    **devir işareti** bırakır. İşaret yazıldıktan sonra o pod kira bırakılana dek tabloya hiçbir şey yazmaz (işareti
+    silemez).
+  - **Yalnız gözlemler (çökme, `OOMKilled`, SIGKILL, node kaybı, kira süresi doldu):** yalnız DOWN kardeşler ve bastırma
+    penceresi — sayaçlar ve bastırma çökmeden önceki son saniyelerde bayatlamış olabilir (erken kapanış riski), taşınmaz.
+  - **Yüklenmedi:** diğer her durumda bugünkü gibi sıfırdan (yeniden başlatma semantiği).
+
+  Süren teyit zincirleri her durumda yeniden başlar. Takipçi pod'lar Sayfa izlemesi ayrıntısındaki "Teyit denemesi X/N"
+  listesini tablodan gösterir (`monitor_confirmations`; ayar kapalıyken takipçide boş — bugünkü gibi). Kazanç: dağıtımda
+  alarm sayaçları kaybolmaz (3 ardışık sağlıklı sonuç isteyen bir alarmın 2'si eski liderde sayıldıysa yeni liderin ilk
+  sağlıklı sonucu kapatır), paylaşılan alarm DOWN kardeşi varken erken kapanmaz, toplu kesinti bastırması devirde gidip
+  gelmez.
+- **Açma ölçütü:** yukarıdaki "3-2'ye geçiş ölçütü" — iki prod pod'unda ≥ 7 gün: Küme kartı doğrulamasında kurtarma,
+  kardeş, bastırma, ilk tur ve teyit zinciri uyuşmazlığı 0 (bilinmeyen turlar hariç), yazma hatası < %0,1, "sürdürülemeyecek
+  zincir" 0 (silinmiş izlemeler hariç), "bastırma penceresi tohumu" karar farkı < %1, en az bir gerçek liderlik değişiminde
+  devralınan sayılar > 0. Kip `verify` kalmalı (kip `off` iken ayar etkisizdir — kart "Kayıt kipi kapalı" der).
+- **Açmak:** önce staging, sonra prod; ilk prod dağıtımında aynı kontroller. Sürüm yükseltmesiyle AYNI adımda açmayın.
+  **Ayarı ancak TÜM pod'lar 3-2 (ya da üstü) sürümünü çalıştırırken açın** (R-6): 20.168.x bir takipçi, devir aralığında
+  gelen bir "Şimdi kontrol et" sonucunu kendi boş belleğinde değerlendirir — DOWN sonucunun sayaç sıfırlaması yeni lidere
+  ulaşmaz, yükleyici bunu göremez. `kubectl get pods -n "$NS" -l app.kubernetes.io/instance="$REL" -o
+  jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.containers[0].image}{"\n"}{end}'` hepsinde aynı imajı göstermeli.
+  1. Ayarı açın. Lider pod yanıtlarken (Küme kartı "Lider mi: Evet"; sayfayı yenileyin) "Yanıtlayan pod" bölümünde
+     **"Devir hazırlığı: Hazır — tam devir mümkün"** (birkaç saniye "Hazır değil: eşitleniyor" olabilir; takipçide
+     "Hazır değil: bu pod tarama lideri değil — devri yalnız lider yapar" normaldir). Diğer "Hazır değil" nedenleri: pod
+     kapanıyor; durum tabloları henüz yok; devir işareti sütunları yok (ilk açılış ya da şema yaması başarısız — sonraki
+     açılışta yeniden denenir; `SchemaPatch` günlüğüne bakın); yazma kuşağı başka pod'da (çit); kuşak yok.
+  2. `kubectl rollout restart deploy/<ad>` (ya da lider pod'u silin). Yeni lider yanıtlarken Küme kartı →
+     **"Devirde yüklenen durum: Tam (temiz devir)"**, "Önceki lider: <eski lider> · … önce yazılmıştı" (yüklenen durumun
+     yaşı), sayılar ("N kurtarma sayacı · N DOWN kardeş · …") "Değerlendirme kaydı" → devralınan satırlarıyla uyumlu;
+     sonraki doğrulama turu "eşitleniyor", ondan sonraki "bellek ve tablolar uyuşuyor". Kart **"Güncel değil"** (gri)
+     derse kümenin son yükleme raporu şimdiki liderden başka bir pod'un raporudur: yeni lider bir yükleme yayımlamadı
+     (liderliği aldığı anda ayar ya da kayıt kipi kapalıydı, ya da eski sürüm lider) — kendi başına hata değildir; lider pod
+     yanıtlarken "Bu pod" etiketli satıra bakın.
+  3. Günlük (tüm pod'lar):
+     ```bash
+     kubectl logs $L | grep -E "devirde yüklen|devirde okunamadı|Devir öncesi kalıcı durum"
+     ```
+     Eski liderde `Devir öncesi kalıcı durum boşaltıldı ve işaretlendi (kuşak N, … işlem, … ms)`, yeni liderde
+     `Kalıcı değerlendirme durumu devirde yüklendi (tam) — kuşak N (<pod>), … sn önce yazıldı: …`.
+  4. Duman testi (Docker, yerel / CI): `SMOKE_EVAL_READ=1 SMOKE_IMAGE=<imaj> bash scripts/multipod-smoke.sh` — SIGTERM
+     devirlerinde "full", ardından SIGKILL'de "observations" ister.
+- **İzlenecekler:** her dağıtımdan sonra kart "Tam". "Yalnız gözlemler" (neden "Temiz devir yok (çökme ya da kira süresi
+  doldu)", "Arada kaydetmeyen bir lider vardı") bir çökmeden / zorla öldürmeden sonra normaldir; "Yükleme anında
+  değerlendirilmemiş elle kontrol sonucu vardı" = devir aralığında biri "Şimdi kontrol et"e bastı (ya da eski lider gelen
+  kutusunu boşaltamadı) — sayaçlar bilerek taşınmadı (R-8), hata değil. Eski bir temiz devir pratikte "Yalnız gözlemler /
+  devir 5 dakikadan eski" değil, "Yüklenmedi: önceki liderin son tam yazımı 5 dakikadan eski" görünür (devir işareti son
+  tam yazımla aynı anı taşır).
+  Gri (beklenen) "Yüklenmedi" nedenleri: okuma ayarı kapalı, kayıt kipi kapalı, bu pod'da kaydedici yok, pod kapanıyor,
+  durum tabloları / devir işareti sütunları henüz yok (ilk açılış), önceki kuşak yok (ilk lider), son kayıtlı kuşak bu
+  pod'undu, önceki lider tam durum işareti yazmadı (eski sürüm ya da ayar kapalıydı), yükleme sırasında liderlik değişti.
+  **Turuncu** (kartı uyarıya çeker, incelenmeli): durum okunamadı (veritabanı ya da satır eşleme hatası — yükleme anında
+  biter, değerlendirmeler 20 sn beklemez; günlükte yalnız istisna sınıfları), yükleme sınırını aşıyor, yükleme 20 saniyede bitmedi,
+  süren değerlendirme bitmedi, yükleme bitmeden değerlendirme yapıldı, önceki liderin kaydı eksikti, önceki liderin son tam
+  yazımı 5 dakikadan eski, pod saatleri arasındaki fark 30 saniyeden büyük, ayar yükleme sırasında kapatıldı — günlükte WARN
+  `Kalıcı değerlendirme durumu devirde yüklenmedi (<neden>) — yeniden başlatma semantiği (bugünkü davranış)`. Hepsinde
+  karar güvenli tarafta kalır (bugünkü davranış). Doğrulama uyuşmazlığı > 0 → ayarı kapatın, sonra inceleyin.
+- **Devir işaretlenemedi:** eski liderde INFO `Devir öncesi kalıcı durum işaretlenemedi (<sonuç>) — halef yalnız gözlemleri
+  ya da hiçbir durumu yüklemez` (Küme kartında "son devir boşaltması: …", yalnız ölen pod yanıt verirken görünür):
+  `budget_exceeded` (veritabanı 1 sn'de yetişemedi), `not_quiescent` (süren değerlendirme ya da bir teyit / kurtarma
+  zincirinin yeniden kontrolü 300 ms'de bitmedi — zincir sürerken devir bilerek gözlemlere düşer; devir başladıktan sonra
+  başlayan zincir adımı belleğe dokunmadan çıkar, yeni lider zinciri yeniden başlatır), `incomplete` (kuşak henüz
+  eşitlenmemişti — pod birkaç saniyeden kısa lider kaldı ya da bekleyen işlem sınırı aşıldı; süren zincir kayıtları
+  sayılmaz),
+  `fenced` / `no_generation` (yazma kuşağı başka pod'daydı), `flush_failed`. Kira yine en çok 1 sn gecikmeyle bırakılır.
+- **Elle kontrol ve devir aralığı:** ayar AÇIKKEN lider olmayan her pod (takipçi ve kapanmakta olan lider) "Şimdi kontrol
+  et" sonucunu HER ZAMAN gelen kutusuna (`monitor_eval_inbox`) yazar — boşaltıcı ilanı aranmaz, lidersiz devir aralığında
+  da sonuç boş takipçi belleğinde değerlendirilmez. Yeni lider, yükleme sürerken kutuyu boşaltmaz (ilanı yine yazar):
+  yükleyici kutuda satır görürse sayaç taşımaz (yalnız gözlemler, `pending_manual_results`), satırlar yüklemeden hemen
+  sonraki boşaltma turunda değerlendirilir. Ayar kapalıyken 20.168.1 ile aynı (ilan yoksa yerel değerlendirme). **Hiç lider
+  yoksa 10 dakikadan uzun** (R-7) iletilen sonuçlar değerlendirilmeden silinir — elle kontrol yalnız alarm kapatabildiğinden
+  en kötü ihtimalle o "Şimdi kontrol et" alarmı kapatmaz, yeni liderin bir sonraki zamanlanmış turu kapatır.
+- **Kalan riskler (kabul edildi):** R-1 işaretle kira bırakılması arasındaki milisaniyelerde olan değişiklik taşınmaz;
+  R-2 gözlemler son kaydedilmemiş saniyedeki DOWN'u kaçırabilir (= bugün); R-3 sessiz ara lider (temiz devirle halefin
+  liderliği arasında hiç kuşak kaydetmeden lider olan pod — yazıcı geri çekilmiş, CAS düşmüş, 20.168.x, kip kapalı): hiç
+  vade anahtarı sahiplenmediyse, yalnız halefin ilk taramalarının hemen yeniden sahiplendiği anahtarları sahiplendiyse ya da
+  sahiplenmeleri veritabanı kesintisinde düştüyse iz bırakmaz → halef TAM yükler (bileşik arıza); R-4 tek pod'un yeniden
+  başlaması durumu ancak yeni yazıcı ilk kiradan sonra 20 sn içinde koşarsa taşır; R-5 pencere tohumu şişmesi (elle `M`
+  satırları, yeniden kontrol UP satırları, ≤ 120 sn yenileme gecikmesi); R-6 ayarı yalnız tüm pod'lar 3-2'deyken açın
+  (yukarıda); R-7 10 dakikadan uzun lidersizlikte iletilen sonuçlar yaşlanıp silinir; R-8 devir aralığındaki bir "Şimdi
+  kontrol et" o devri gözlemlere düşürür; R-9 takipçinin teyit listesi aynı liderde kuşak değişince (kayıt kipi kapalı →
+  açık, harita taşması, çit iyileşmesi) süren bir zinciri bitene dek (≈ 1–2 dk) göstermez — liderin kendi listesi tamdır;
+  20 dakikadır yazılmamış zincir satırı hayalettir, listelenmez.
+- **Kapatmak:** ayarı kapatın (≤ 10 sn, anında güvenli): sonraki devir bugünkü gibi sıfırdan başlar; o an yüklenmiş durum
+  sıradan bellektir, sıfırlanmaz; takipçinin teyit listesi belleğe döner (boş); nabızlar 3-1 ifadelerine döner. Acil
+  veritabanı yükü: kip `off` (ayar o zaman etkisizdir). Geri alma (20.168.x): ayar anahtarı yok sayılır, üç sütun ve
+  `eval-state-load` gözlem satırı kalır, kullanılmaz; kapanış 1 sn kısalır.
+- **Teşhis SQL:**
+  ```sql
+  SELECT gen AS kusak, writer AS yazan, to_timestamp(updated_ms / 1000.0) AS son_nabiz, state_gen AS isaret_kusagi,
+         to_timestamp(flushed_ms / 1000.0) AS kalici_an, to_timestamp(handover_ms / 1000.0) AS devir,
+         handover_ms = updated_ms AS temiz_devir
+    FROM monitor_eval_type_state WHERE alert_type = '*';
+  SELECT instance_id, to_timestamp(observed_ms / 1000.0), payload FROM cluster_observations WHERE name = 'eval-state-load';
+  ```
+  `isaret_kusagi = kusak` ve taze `kalici_an` = lider tam kayıt yapıyor (ayar açık); `temiz_devir` true = son lider temiz
+  devretti (halef tam katmanı yükleyebilir); `kalici_an` birkaç saniyeden uzun boş = kuşak eksik (düşen işlem / kanca
+  hatası — Küme kartında bekleyen / düşen / kanca hatası satırları). `eval-state-load` = kümenin son yükleme raporu (`outcome`
+  full | observations | none, `reason`, `from_generation`, sayılar) — `GET /api/admin/system` → `data.eval_state.load` ve
+  `data.eval_state.this_pod.last_load` / `handover_ready` / `last_handover`.
+
 ### Kapanış ve süre bütçesi
 
 `terminationGracePeriodSeconds` kubelet preStop'u başlattığı an sayılır; aşılırsa SIGKILL gelir ve kira dolana dek
@@ -843,15 +963,15 @@ toplamak: devirde durumu tablodan yüklemek güvenli mi.
 | Adım | Süre | Ayar |
 |---|---|---|
 | preStop `sleep` (pod Service / ingress uç noktalarından düşer) | 10 sn | Helm `preStopSleepSeconds` (0 = kanca yok) |
-| SIGTERM → liderlik kirası bırakılır, yeni kilit / tur / liderlik alınmaz (`ContextClosedEvent`, ilk dinleyici) | anında | — |
+| SIGTERM → (Sürüm 3-2: devirde okuma ayarı açık ve kaydedici hazırsa önce süren değerlendirmeler durulur, kalıcı durum boşaltılır ve devir işareti yazılır) liderlik kirası bırakılır, yeni kilit / tur / liderlik alınmaz (`ContextClosedEvent`, ilk dinleyici) | anında (devirle ≤ 1 sn) | `EvalStateSink.HANDOVER_BUDGET_MS` |
 | Push işçisi durdurulur (yeni tur / batch yok, kalan batch'lerin kirası bırakılır) ve süren push biter; bildirim havuzları boşaltılır (çözüm postaları, yeniden gönderimler, giriş sorunu postaları) — hepsi AYNI süre içinde | ≤ 20 sn | `WebConfig.NOTIFY_AWAIT_SECONDS` |
 | Web zarif aşaması (süren istekler biter) | ≤ 20 sn | `SHUTDOWN_PHASE_TIMEOUT` (`spring.lifecycle.timeout-per-shutdown-phase`) |
 | Yürütücü aşaması (süren kontroller / bildirimler biter) | ≤ 20 sn | aynı |
 | Zamanlanmış işler havuzu (süren işler biter, kesilmez) | ≤ 20 sn | `SCHEDULING_AWAIT_TERMINATION` |
 | Geri kalan bütün yok etme beklemeleri (e-posta 421 kuyruğu, push, kod girişi, olay bildirimi, elle kontrol havuzu, bildirim havuzlarının kendisi, önbellek yolunun son yayını; Sürüm 3-1'den beri yan iş koşucusu — süren uzun iş ≤ 5 sn, kesmeden sonra ≤ 1 sn — ve kalıcı değerlendirme yazıcısı ≤ 1 sn) | birlikte ≤ 10 sn | `config/ShutdownDeadline.DESTROY_BUDGET_MS` |
-| **Toplam** | **≈ 100 sn < 120 sn** | Helm `terminationGracePeriodSeconds` (120) |
+| **Toplam** | **≈ 101 sn < 120 sn** (uygulama payı 91 sn = `SPRING_BUDGET_S`) | Helm `terminationGracePeriodSeconds` (120) |
 
-Birini büyütürseniz grace'i de büyütün: `preStop + boşaltma + 2 × aşama + zamanlanmış bekleme + 10 < grace` (yeni bir
+Birini büyütürseniz grace'i de büyütün: `preStop + boşaltma + 2 × aşama + zamanlanmış bekleme + 10 + 1 (devir) < grace` (yeni bir
 havuzun `awaitTermination`'ı `ShutdownDeadline.waitMs` kullanmak zorundadır — `ShutdownBudgetGateTest`). İş kilitleri
 `@PreDestroy`'da (zamanlayıcı durduktan sonra) bırakılır — Sürüm 3-1'den beri yan iş koşucusu durdurulduktan SONRA (süren
 uzun işin kilidi o iş bitmeden / kesilmeden bırakılmaz). `helm template`
@@ -1064,6 +1184,7 @@ kubectl logs $L | grep -cE "Denetim izinde BOŞLUK|AUDIT fallback"            # 
 kubectl logs $L | grep "Tarama liderliği" | tail -20                         # liderlik geçişleri / bırakma (pod adıyla)
 kubectl logs $L | grep -c "Kalıcı değerlendirme doğrulaması"                 # 0 olmalı (Sürüm 3-1: bellek ↔ tablo uyuşmazlığı, karar etkilenmez)
 kubectl logs $L | grep "Yan iş .* başarısız" | tail -5                       # boş olmalı (Sürüm 3-1: yan iş koşucusundaki hata)
+kubectl logs $L | grep -E "devirde yüklen|Devir öncesi kalıcı durum" | tail -10  # Sürüm 3-2, ayar açıkken: her devirde "yüklendi (tam)" + eski liderde "boşaltıldı ve işaretlendi"
 kubectl get pod -n "$NS" -l app.kubernetes.io/instance="$REL" \
   -o custom-columns=POD:.metadata.name,NODE:.spec.nodeName,RESTART:.status.containerStatuses[0].restartCount,SEBEP:.status.containerStatuses[0].lastState.terminated.reason
 ```
@@ -1185,6 +1306,21 @@ bilmez. Son eski pod gidene kadar şunlar görülebilir (sonra kendiliğinden bi
   eski kod yok sayar (eski pod'un budaması `round:` satırlarına dokunmaz); `cluster_observations` satırları
   `eval-state-verify` / `metrics-org` okunmaz; iki ayar anahtarı kalır, yok sayılır. Eski sürümde TLS profili yine yalnız
   liderde koşar.
+
+**Çok pod Sürüm 3-2'ye geçişte (20.168.x pod'u + yeni pod):**
+
+- **Varsayılan kapalı:** ayar açılmadıkça hiçbir şey yüklenmez; ilk yeni pod'un şema yaması `monitor_eval_type_state`'e üç
+  boş sütun ekler (o ana dek yeni pod 3-1 ifadeleriyle yazar, devirde yükleme `columns_missing`). Ayarı geçiş bitmeden
+  AÇMAYIN.
+- **Ayar açıksa bile karışık sürüm güvenli:** eski (20.168.x) lider devir işareti yazmaz → yeni halef hiçbir şey yüklemez
+  ("Önceki lider tam durum işareti yazmadı"); eski halef hiç yüklemez, kuşak CAS'ı işareti geçersiz kılar. Her birleşim
+  bugünkü yeniden başlatma semantiği ya da daha iyisidir — tek istisna eski TAKİPÇİ: devir aralığında gelen "Şimdi kontrol
+  et" sonucunu yerel değerlendirir (yeni pod'lar ayar açıkken gelen kutusuna iletir), DOWN'un sayaç sıfırlaması yeni lidere
+  ulaşmaz (R-6) — bu yüzden ayarı geçiş bitmeden açmayın. Ayar açıkken yeni takipçi, eski liderin teyit zincirlerini (aynı
+  tablo biçimi) listeler; eski takipçi boş liste verir.
+- **Kapanış:** yeni pod ayar açık ve hazırken kirayı en çok 1 sn geç bırakır (bütçe 101 < 120 sn); eski pod'da devir adımı
+  yoktur.
+- **Geri alma:** ayar anahtarı, üç sütun ve `eval-state-load` satırı kalır, eski kod yok sayar.
 
 ### Yuvarlanan dağıtımda sayfa dosyaları (çok pod Sürüm 2b)
 

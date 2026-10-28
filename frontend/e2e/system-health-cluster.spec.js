@@ -4,6 +4,7 @@
 // kartının gözlemleyen pod'u; Uygulama bölümünde JVM grafiklerinin pod'u + Metrikler bağlantısı. Gerçek uzunlukta pod adları
 // SARAR (kırpılmaz), yatay taşma yok, dokunma hedefleri ≥ 40 px. API mock'lu. Çok pod Sürüm 3-1 (paket B): Küme kartında kalıcı
 // değerlendirme durumunun küme doğrulaması (gözlemleyen pod, tür başına sayılar) + bu pod'un kaydedicisi ve yan işleri; bilinmeyen gri.
+// Çok pod Sürüm 3-2 (paket C): devirde yüklenen durum (her ton) + bu pod'un devir hazırlığı.
 import { test, expect } from '@playwright/test'
 import { mockApi } from './support/monitorMocks.js'
 
@@ -226,6 +227,83 @@ for (const vp of VIEWPORTS) {
       expect(await page.evaluate(overflowIn, '[data-section="sched"]'), 'yatay taşma').toEqual([])
       expect(await page.evaluate(clippedIn, '[data-card="cluster"]'), 'kırpılan metin').toEqual([])
       if (vp.touch) expect(await page.evaluate(smallTargets, '[data-card="cluster"]'), 'dokunma hedefi < 40 px').toEqual([])
+    })
+
+    // Çok pod Sürüm 3-2 (paket C): "Devirde yüklenen durum" (küme gözlemi, yoksa bu pod'un son yüklemesi) + "Bu pod" bölümünde
+    // "Devir hazırlığı". Tonlar: yalnız Tam yeşil; gözlemler bilgi; beklenen neden / kapalı / bilinmiyor gri; işletim nedeni uyarı
+    // (kartı uyarıya çeker). Gerçek uzunlukta pod adları sarar, taşma yok, dokunma hedefleri ≥ 40 px.
+    test('Küme kartı R3-2: devirde yüklenen durum her tonda; devir hazırlığı; adlar sarar, taşma yok', async ({ page }) => {
+      test.setTimeout(150_000)
+      const VERIFY_OK = { ...HEALTH.eval_state.verify, status: 'ok', pass_fail_mismatches: 0, first_mismatches: [],
+        kinds: { recovery: { compared: 412, mismatches: 0, skipped: 3, max_delta: null, measured: false } } }
+      const LOAD = { at_ms: NOW - 600_000, at: fmt(NOW - 600_000), pod: B, pod_name: POD_B, outcome: 'full', reason: null,
+        attempted_tier: 'full', from_generation: 11, from_pod: A, from_pod_name: POD_A, handover_age_ms: 9_000, durable_age_ms: 9_000,
+        recovery_counters: 31, siblings: 12, suppressions: 1, round_seen: 9, window_types: 9, window_domains: 412, read_ms: 85,
+        max_wait_ms: 140, waiters: 2, observed_by: B, observed_by_pod: POD_B, observed_at: fmt(NOW - 600_000), age_seconds: 600 }
+      const none = (reason) => ({ ...LOAD, outcome: 'none', reason, attempted_tier: null, recovery_counters: 0, siblings: 0,
+        suppressions: 0, round_seen: 0, window_types: 0, window_domains: 0, waiters: 0, max_wait_ms: 0 })
+      const pod = { ...HEALTH.eval_state.this_pod, handover_ready: false, last_load: null, last_handover: 'written' }
+      // atlanan tur yok, sunucu saati önbellek yolu yoklamasıyla aynı an → kartın uyarısı yalnız yükleme satırından gelebilir
+      const withEs = (es, podExtra = {}) => ({ ...HEALTH, timestamp: fmt(NOW), scheduler: { ...HEALTH.scheduler, skipped_rounds: [] }, eval_state: { this_pod: { ...pod, ...podExtra }, verify: VERIFY_OK,
+        read_enabled: true, load: LOAD, ...es } })
+      const CASES = [
+        { name: 'full', health: withEs({}), level: 'full', tone: 'success', scope: 'cluster', cardWarn: false },
+        { name: 'observations', health: withEs({ load: { ...LOAD, outcome: 'observations', reason: 'intermediate_leader' } }),
+          level: 'observations', tone: 'info', scope: 'cluster', cardWarn: false, reason: /recorded nothing|kaydetmeyen/ },
+        { name: 'expected', health: withEs({ load: none('previous_unmarked') }), level: 'none', tone: 'muted', scope: 'cluster',
+          cardWarn: false, reason: /complete-state marker|tam durum işareti/ },
+        { name: 'operational', health: withEs({ load: none('evaluated_before_load') }), level: 'warn', tone: 'warning',
+          scope: 'cluster', cardWarn: true, reason: /before the load finished|Yükleme bitmeden/ },
+        { name: 'off', health: withEs({ read_enabled: false, load: null }), level: 'off', tone: 'muted', scope: 'cluster', cardWarn: false },
+        { name: 'unreadable', health: withEs({ load: null, load_error: 'CannotGetJdbcConnectionException' }), level: 'unknown',
+          tone: 'muted', scope: 'cluster', cardWarn: false },
+        { name: 'podFallback', health: withEs({ load: null }, { last_load: none('no_previous_generation') }), level: 'none',
+          tone: 'muted', scope: 'pod', cardWarn: false, reason: /first leader|ilk lider/ },
+        // inceleme 2026-10-28 L-1: gözlem önceki dönemin lideri A'nın (şimdiki lider B yayımlamadı) → güncel değil, gri
+        { name: 'stale', health: withEs({ load: { ...LOAD, pod: A, pod_name: POD_A, observed_by: A, observed_by_pod: POD_A } }),
+          level: 'stale', tone: 'muted', scope: 'cluster', cardWarn: false, hint: /earlier term|önceki bir devre/ },
+        // L-3: bu pod kapanıyor → "Pod kapanıyor" (lider değil yerine)
+        { name: 'closing', health: withEs({}, { closing: true, marker_columns_missing: false }), level: 'full', tone: 'success',
+          scope: 'cluster', cardWarn: false, hoReason: 'recorder_closing' },
+      ]
+      let current = CASES[0].health
+      await mock(page)
+      await page.route((u) => new URL(u).pathname === '/api/admin/system',
+        (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data: current }) }))
+      for (const c of CASES) {
+        current = c.health
+        await page.goto('/?tab=health&sec=sched')
+        const card = page.locator('[data-card="cluster"]')
+        await expect(card, c.name).toBeVisible({ timeout: 30_000 })
+        const sec = card.locator('[data-slot="cluster-eval-load"]')
+        await expect(sec, c.name).toHaveAttribute('data-level', c.level)
+        await expect(sec, c.name).toHaveAttribute('data-scope', c.scope)
+        await expect(sec.locator('[data-slot="pod-chip"]'), c.name).toHaveAttribute('data-scope', c.scope)
+        await expect(sec.locator('[data-slot="es-load-outcome"] [data-tone]'), c.name).toHaveAttribute('data-tone', c.tone)
+        if (c.reason) await expect(sec.locator('[data-slot="es-load-reason"]'), c.name).toContainText(c.reason)
+        if (c.hint) {
+          await expect(sec.locator('[data-slot="es-load-hint"]'), c.name).toContainText(c.hint)
+          await expect(sec.locator('[data-slot="es-load-hint"]'), c.name).toContainText(POD_A)
+        }
+        if (c.scope === 'pod') await expect(sec.locator('[data-slot="pod-chip"]'), c.name).toContainText(POD_A)
+        if (c.name === 'full') {
+          await expect(sec.locator('[data-slot="es-load-from"]')).toContainText(POD_A)
+          await expect(sec.locator('[data-slot="es-load-from"]')).toContainText(/written 9 sec before|9 sn önce yazılmıştı/)
+          await expect(sec.locator('[data-slot="es-load-by"]')).toContainText(POD_B)
+          await expect(sec.locator('[data-slot="es-load-counts"]')).toContainText('412')
+          await expect(sec.locator('[data-slot="es-load-waited"]')).toContainText('140')
+        }
+        // A bu pod (takipçi) → devir hazırlığı "lider değil"; ayar kapalıyken "okuma ayarı kapalı"; son devir boşaltması çevrili
+        const ho = card.locator('[data-slot="cluster-this-pod"] [data-slot="cluster-handover"]')
+        await expect(ho, c.name).toHaveAttribute('data-ready', 'false')
+        await expect(ho, c.name).toHaveAttribute('data-reason', c.hoReason ?? (c.name === 'off' ? 'setting_off' : 'not_leader'))
+        await expect(ho.locator('[data-slot="handover-last"]'), c.name).toHaveAttribute('data-result', 'written')
+        await expect(card.locator('[data-kind="leader"]'), c.name).toHaveAttribute('data-tone', c.cardWarn ? 'warning' : 'success')
+        await page.waitForTimeout(250)
+        expect(await page.evaluate(overflowIn, '[data-section="sched"]'), `${c.name}: yatay taşma`).toEqual([])
+        expect(await page.evaluate(clippedIn, '[data-card="cluster"]'), `${c.name}: kırpılan metin`).toEqual([])
+        if (vp.touch) expect(await page.evaluate(smallTargets, '[data-card="cluster"]'), `${c.name}: dokunma hedefi < 40 px`).toEqual([])
+      }
     })
 
     test('Heartbeat: Pod’lar kartı sessiz süreci gösterir; geçmiş penceresinde pod başına satırlar', async ({ page }) => {

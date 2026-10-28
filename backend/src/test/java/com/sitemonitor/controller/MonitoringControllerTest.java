@@ -5651,6 +5651,34 @@ class MonitoringControllerTest {
         verify(alertKeyOwnership, never()).viewerTeams(any());
     }
 
+    @Test
+    @DisplayName("3-2 /confirmations: takipçi listesi (ActiveConfirmationsService) varsa satırlar ondan gelir — aynı kapsam süzgeci, "
+            + "alan adı süzgeci kırpılmış iletilir; servis yoksa (bugün) MOS belleği")
+    void confirmations_followerListFromService() throws Exception {
+        MonitoringController controller = org.springframework.test.util.AopTestUtils.getTargetObject(
+                applicationContext.getBean(MonitoringController.class));
+        com.sitemonitor.service.evalstate.ActiveConfirmationsService svc =
+                org.mockito.Mockito.mock(com.sitemonitor.service.evalstate.ActiveConfirmationsService.class);
+        when(svc.list(org.mockito.ArgumentMatchers.<String>any())).thenReturn(List.of(
+                confirmRow("https://a.example.com/"), confirmRow("https://b.example.com/")));
+        when(alertKeyOwnership.viewerTeams(any())).thenReturn(java.util.Map.of(
+                "https://a.example.com/", java.util.Set.of(5L), "https://b.example.com/", java.util.Set.of(9L)));
+        org.springframework.test.util.ReflectionTestUtils.setField(controller, "activeConfirmations", svc);
+        try {
+            mvc.perform(get("/api/monitoring/confirmations").param("domain", "  https://a.example.com/ ").session(sessionScoped(5L)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.length()").value(1))
+                    .andExpect(jsonPath("$.data[0].domain").value("https://a.example.com/"));
+            verify(svc).list("https://a.example.com/");
+            verify(monitoringOutageService, never()).activeConfirmations(any());
+            mvc.perform(get("/api/monitoring/confirmations").session(session("ADMIN")))
+                    .andExpect(jsonPath("$.data.length()").value(2));
+            verify(svc).list(null);
+        } finally {
+            org.springframework.test.util.ReflectionTestUtils.setField(controller, "activeConfirmations", null);
+        }
+    }
+
     // ══ Elle kontrol kapsamı (2026-09-29 prod olayı): liste satırının can_check bayrağı ═══════════════════════
 
     private static com.sitemonitor.model.HttpMonitor httpMon(long id, long teamId) {

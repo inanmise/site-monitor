@@ -72,7 +72,7 @@ class RetentionCoverageTest {
                     + "değerlendirilmeden silinir; birikmez."),
             Map.entry("login_anomaly_state", "Tarama imleci — tek satır."),
             Map.entry("scan_runs", "Sertifika taramasının küme durumu (2026-10-23, çok pod R2b, MP-34) — tarama türü başına TEK satır (hourly / full / stale), güncellenir, birikmez."),
-            Map.entry("cluster_observations", "Pod belleğindeki kaynakların kümedeki son gözlemi (2026-10-23, çok pod R2b, N4) — gözlem adı başına TEK satır (rdap-source; R3-1 ile eval-state-verify ve metrics-org), güncellenir, birikmez."),
+            Map.entry("cluster_observations", "Pod belleğindeki kaynakların kümedeki son gözlemi (2026-10-23, çok pod R2b, N4) — gözlem adı başına TEK satır (rdap-source; R3-1 ile eval-state-verify ve metrics-org; R3-2 ile eval-state-load), güncellenir, birikmez."),
             Map.entry("cache_bus", "Pod'lar arası önbellek boşaltma kuşakları (2026-10-22, çok pod R2-A) — önbellek adı başına TEK satır (~25), güncellenir, birikmez."),
             Map.entry("schema_patch_markers", "Tek seferlik veri yamalarının nişanı — yama başına TEK satır, SİLİNMEZ "
                     + "(silinirse yama yeniden koşar; ör. sonradan duraklatılan DNS/Port izlemelerini silinmiş işaretlerdi)."),

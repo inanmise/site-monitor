@@ -2,6 +2,9 @@ import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { evalStateModel, sideJobsModel, otherPodState, EVAL_KINDS, EVAL_VERIFY_TONE, EVAL_UNKNOWN_REASONS } from '../components/admin/health/clusterRuntimeModel.js'
+import { evalLoadModel, handoverModel, loadLevel, EVAL_LOAD_REASONS, EVAL_LOAD_EXPECTED_REASONS, EVAL_LOAD_OPERATIONAL_REASONS,
+  EVAL_LOAD_OUTCOMES, EVAL_LOAD_TONE, HANDOVER_RESULTS, HANDOVER_NOT_READY, EVAL_LOAD_OBSERVATIONS_REASONS,
+  HANDOVER_NOT_READY_FROM_REASON } from '../components/admin/health/clusterRuntimeModel.js'
 import { TR } from '../i18n/index.jsx'
 import { EN } from '../i18n/en.js'
 import { clusterModel } from '../components/admin/health/healthModel.js'
@@ -216,5 +219,211 @@ describe('doğrulama nedenleri sunucu sabitleriyle eşleşir', () => {
       expect(TR[`hmp.esReason.${r}`], r).toBeTruthy()
       expect(EN[`hmp.esReason.${r}`], r).toBeTruthy()
     }
+  })
+})
+
+// ── Çok pod Sürüm 3-2 (2026-10-28, paket C; tasarım R3-2 §8.3): devirde yüklenen durum + devir hazırlığı ─────────────
+
+const LOAD_FULL = { at_ms: 1, at: '2026-10-28T08:59:30', pod: 'sm-b-0000000b', pod_name: 'sm-b', outcome: 'full', reason: null,
+  attempted_tier: 'full', from_generation: 11, from_pod: 'sm-a-0000000a', from_pod_name: 'sm-a', handover_age_ms: 9000,
+  durable_age_ms: 9000, recovery_counters: 3, siblings: 2, suppressions: 1, round_seen: 4, window_types: 2, window_domains: 40,
+  read_ms: 85, max_wait_ms: 140, waiters: 2, observed_by: 'sm-b-0000000b', observed_by_pod: 'sm-b', observed_at: '2026-10-28T08:59:31' }
+const loadNone = (reason) => ({ ...LOAD_FULL, outcome: 'none', reason, attempted_tier: null, recovery_counters: 0, siblings: 0,
+  suppressions: 0, round_seen: 0, window_types: 0, window_domains: 0 })
+const ES = (extra = {}) => ({ timestamp: NOW, eval_state: { this_pod: { ...REC, handover_ready: false, last_load: null, last_handover: null },
+  verify: VERIFY, read_enabled: true, load: null, ...extra } })
+
+describe('devir yükleme nedenleri sunucu sabitleriyle eşleşir (3-2)', () => {
+  const evalDir = resolve(__dirname, '../../../backend/src/main/java/com/sitemonitor/service/evalstate')
+  const src = readFileSync(resolve(evalDir, 'EvalLoadReport.java'), 'utf8')
+  const consts = Object.fromEntries([...src.matchAll(/public static final String (REASON_[A-Z_]+|OUTCOME_[A-Z_]+) = "([a-z_]+)"/g)]
+    .map((m) => [m[1], m[2]]))
+  const listOf = (name) => {
+    const m = src.match(new RegExp(`public static final List<String> ${name} = List\\.of\\(([^;]+)\\);`))
+    expect(m, name).toBeTruthy()
+    return [...m[1].matchAll(/(?:REASON|OUTCOME)_[A-Z_]+/g)].map((x) => consts[x[0]])
+  }
+  const reasons = Object.entries(consts).filter(([k]) => k.startsWith('REASON_')).map(([, v]) => v)
+
+  it('model listesi Java REASONS ile iki yönde, AYNI sırada eşit; her kodun TR + EN metni var', () => {
+    expect(reasons.length).toBeGreaterThanOrEqual(22)
+    expect(new Set(EVAL_LOAD_REASONS)).toEqual(new Set(reasons))
+    expect(EVAL_LOAD_REASONS).toEqual(listOf('REASONS'))
+    for (const r of EVAL_LOAD_REASONS) {
+      expect(TR[`hmp.esLoad.reason.${r}`], r).toBeTruthy()
+      expect(EN[`hmp.esLoad.reason.${r}`], r).toBeTruthy()
+    }
+  })
+
+  it('beklenen / işletim nedenleri ve sonuçlar sunucu listeleriyle aynı', () => {
+    expect(EVAL_LOAD_EXPECTED_REASONS).toEqual(listOf('EXPECTED_REASONS'))
+    expect(EVAL_LOAD_OPERATIONAL_REASONS).toEqual(listOf('OPERATIONAL_REASONS'))
+    expect(EVAL_LOAD_OBSERVATIONS_REASONS).toEqual(listOf('OBSERVATIONS_REASONS'))
+    expect(EVAL_LOAD_OUTCOMES).toEqual(listOf('OUTCOMES'))
+    // inceleme 2026-10-28: bekleyen elle sonuç → yalnız gözlemler (bilgi), metin çevrili
+    // L-6: "nasıl açılır" ipucu ayar grubunun GERÇEK adını söyler (Ayarlar → Genel → <grup>)
+    expect(TR['hmp.esLoad.offHint']).toContain(TR['general.grp.monitoring'])
+    expect(EN['hmp.esLoad.offHint']).toContain(EN['general.grp.monitoring'])
+    expect(EVAL_LOAD_OBSERVATIONS_REASONS).toContain('pending_manual_results')
+    expect(TR['hmp.esLoad.reason.pending_manual_results']).toMatch(/elle kontrol/)
+    expect(EN['hmp.esLoad.reason.pending_manual_results']).toMatch(/manual check/)
+  })
+
+  it('devir boşaltması sonuçları Java HandoverResult ile iki yönde eşit; her sonuç ve hazır-değil nedeni TR + EN', () => {
+    const hr = readFileSync(resolve(evalDir, 'HandoverResult.java'), 'utf8')
+    const start = hr.indexOf('public enum HandoverResult {')
+    const body = hr.slice(start, hr.indexOf('public String key()', start))
+    const names = [...body.matchAll(/^\s{4}([A-Z_]+)[,;]\s*$/gm)].map((m) => m[1].toLowerCase())
+    expect(names.length).toBe(8)
+    expect(HANDOVER_RESULTS).toEqual(names)
+    for (const k of HANDOVER_RESULTS) {
+      expect(TR[`hmp.esLoad.handover.${k}`], k).toBeTruthy()
+      expect(EN[`hmp.esLoad.handover.${k}`], k).toBeTruthy()
+    }
+    for (const r of HANDOVER_NOT_READY) {
+      const key = HANDOVER_NOT_READY_FROM_REASON.includes(r) ? `hmp.esLoad.reason.${r}` : `hmp.esLoad.ready.${r}`
+      expect(TR[key], r).toBeTruthy()
+      expect(EN[key], r).toBeTruthy()
+    }
+  })
+})
+
+describe('evalLoadModel — devirde yüklenen durum (3-2)', () => {
+  it('eski sunucu (alan yok) → null; kayıt hatası → null (doğrulama satırı zaten bilinmiyor)', () => {
+    expect(evalLoadModel(H({ this_pod: REC, verify: VERIFY }))).toBeNull()
+    expect(evalLoadModel(H({ error: 'X' }))).toBeNull()
+    expect(evalLoadModel({})).toBeNull()
+    expect(evalStateModel(H({ this_pod: REC, verify: VERIFY })).load).toBeNull()
+  })
+
+  it('tonlar: yalnız TAM yeşil; gözlemler bilgi; beklenen neden gri; işletim nedeni uyarı; kapalı / bilinmiyor / henüz yok gri', () => {
+    expect(evalLoadModel(ES({ load: LOAD_FULL }))).toMatchObject({ level: 'full', tone: 'success', scope: 'cluster' })
+    expect(evalLoadModel(ES({ load: { ...LOAD_FULL, outcome: 'observations', reason: 'no_handover' } })))
+      .toMatchObject({ level: 'observations', tone: 'info', reason: 'no_handover', reasonKnown: true })
+    // clock_skew: gözlemlerde bilgi, yüklenmedi'de uyarı (önce sonuç)
+    expect(evalLoadModel(ES({ load: { ...LOAD_FULL, outcome: 'observations', reason: 'clock_skew' } })).tone).toBe('info')
+    expect(evalLoadModel(ES({ load: { ...LOAD_FULL, outcome: 'observations', reason: 'pending_manual_results' } })))
+      .toMatchObject({ level: 'observations', tone: 'info', reasonKnown: true })
+    for (const r of EVAL_LOAD_EXPECTED_REASONS.filter((x) => x !== 'setting_off')) {
+      expect(evalLoadModel(ES({ load: loadNone(r) })), r).toMatchObject({ level: 'none', tone: 'muted' })
+    }
+    for (const r of EVAL_LOAD_OPERATIONAL_REASONS) {
+      expect(evalLoadModel(ES({ load: loadNone(r) })), r).toMatchObject({ level: 'warn', tone: 'warning' })
+    }
+    for (const r of ['no_handover', 'handover_too_old', 'intermediate_leader']) {
+      expect(evalLoadModel(ES({ load: loadNone(r) })).tone, r).toBe('muted')
+    }
+    expect(evalLoadModel(ES({ load: { ...LOAD_FULL, outcome: 'brand_new' } }))).toMatchObject({ level: 'unknown', tone: 'muted' })
+    expect(evalLoadModel(ES({ load: { ...LOAD_FULL, outcome: 'none', reason: 'future_reason' } })))
+      .toMatchObject({ level: 'none', tone: 'muted', reasonKnown: false })
+    expect(evalLoadModel(ES({ read_enabled: false, load: LOAD_FULL }))).toMatchObject({ level: 'off', tone: 'muted', reason: 'setting_off' })
+    expect(evalLoadModel(ES({ load: null, load_error: 'BadSqlGrammarException' })))
+      .toMatchObject({ level: 'unknown', error: true, tone: 'muted' })
+    expect(evalLoadModel(ES())).toMatchObject({ level: 'empty', tone: 'muted' })
+    for (const lvl of ['observations', 'none', 'warn', 'off', 'unknown', 'empty']) expect(EVAL_LOAD_TONE[lvl], lvl).not.toBe('success')
+  })
+
+  it('küme gözlemi yoksa bu pod\'un son yüklemesi ("Bu pod"); gözlem okunamadıysa bilinmiyor (son yükleme kullanılmaz)', () => {
+    const podLoad = ES({ this_pod: { ...REC, handover_ready: false, last_load: loadNone('no_previous_generation'), last_handover: null } })
+    podLoad.served_by_pod = 'sm-a'
+    expect(evalLoadModel(podLoad)).toMatchObject({ level: 'none', scope: 'pod', podName: 'sm-a', reason: 'no_previous_generation' })
+    const both = ES({ load: LOAD_FULL, this_pod: { ...REC, handover_ready: false, last_load: loadNone('timeout') } })
+    expect(evalLoadModel(both)).toMatchObject({ level: 'full', scope: 'cluster' })
+    const err = ES({ load: null, load_error: 'X', this_pod: { ...REC, handover_ready: false, last_load: LOAD_FULL } })
+    expect(evalLoadModel(err)).toMatchObject({ level: 'unknown', error: true })
+  })
+
+  it('ayar şimdi açık ama son rapor "ayar kapalıydı" → yüklenmedi (gri), "Kapalı" değil; ayar alanı bilinmiyorsa rapordan', () => {
+    expect(loadLevel({ outcome: 'none', reason: 'setting_off' }, true)).toBe('none')
+    expect(loadLevel({ outcome: 'none', reason: 'setting_off' }, null)).toBe('off')
+    expect(loadLevel(null, true)).toBe('unknown')
+  })
+
+  it('işletim nedenli yüklenmedi kalıcı durum ve kart seviyesini uyarıya çeker; bilinmeyen / beklenen çekmez', () => {
+    expect(evalStateModel(ES({ load: loadNone('read_failed') })).level).toBe('warn')
+    expect(evalStateModel(ES({ load: loadNone('writer_is_self') })).level).toBe('ok')
+    expect(evalStateModel(ES({ load: null, load_error: 'X' })).level).toBe('ok')
+    expect(evalStateModel(ES({ load: LOAD_FULL })).level).toBe('ok')
+    const SL = { scheduler: { instance_id: 'sm-a-0000000a', sweep_leader: { owner: 'sm-b-0000000b', owner_pod: 'sm-b', until: NOW,
+      expired: false, held_by_me: false } } }
+    expect(clusterModel({ ...SL, ...ES({ load: loadNone('timeout') }) }).level).toBe('warn')
+    expect(clusterModel({ ...SL, ...ES({ load: loadNone('previous_unmarked') }) }).level).toBe('ok')
+  })
+})
+
+describe('evalLoadModel — eski devrin raporu (inceleme 2026-10-28, L-1)', () => {
+  const SCHED = (owner, held, extra = {}) => ({ scheduler: { instance_id: 'sm-a-0000000a', sweep_leader: { owner, owner_pod: owner,
+    until: NOW, expired: false, held_by_me: held, ...extra } } })
+  const B_FULL = { ...LOAD_FULL, at_ms: 1_000, pod: 'sm-b-0000000b', pod_name: 'sm-b' }
+
+  it('küme gözlemi şimdiki liderin değil → gri "güncel değil", yeşil değil; kart uyarıya çıkmaz', () => {
+    const h = { ...SCHED('sm-c-0000000c', false), served_by: 'sm-a-0000000a', ...ES({ load: B_FULL }) }
+    expect(evalLoadModel(h)).toMatchObject({ level: 'stale', tone: 'muted', scope: 'cluster', stale: true, reason: null })
+    expect(evalLoadModel(h).report.podName).toBe('sm-b')
+    expect(EVAL_LOAD_TONE.stale).not.toBe('success')
+    expect(evalStateModel(h).level).not.toBe('warn')
+  })
+
+  it('küme gözlemi şimdiki liderin → olduğu gibi (TAM yeşil); lider bilinmiyor / boş / süresi dolmuş → olduğu gibi', () => {
+    expect(evalLoadModel({ ...SCHED('sm-b-0000000b', false), ...ES({ load: B_FULL }) }).level).toBe('full')
+    expect(evalLoadModel({ ...ES({ load: B_FULL }) }).level).toBe('full')
+    expect(evalLoadModel({ ...SCHED(null, false), ...ES({ load: B_FULL }) }).level).toBe('full')
+    expect(evalLoadModel({ ...SCHED('sm-c-0000000c', false, { expired: true }), ...ES({ load: B_FULL }) }).level).toBe('full')
+    expect(evalLoadModel({ scheduler: { sweep_leader: { error: 'DataAccess' } }, ...ES({ load: B_FULL }) }).level).toBe('full')
+    // raporda pod yoksa karşılaştırılamaz → olduğu gibi
+    expect(evalLoadModel({ ...SCHED('sm-c-0000000c', false), ...ES({ load: { ...B_FULL, pod: null } }) }).level).toBe('full')
+  })
+
+  it('yanıtlayan pod şimdiki lider ve kendi son yüklemesi gözlemden YENİ → "Bu pod" ile kendi yüklemesi', () => {
+    const own = { ...LOAD_FULL, at_ms: 5_000, pod: 'sm-c-0000000c', pod_name: 'sm-c', outcome: 'none', reason: 'mode_off' }
+    const h = { ...SCHED('sm-c-0000000c', true), served_by: 'sm-c-0000000c', served_by_pod: 'sm-c',
+      ...ES({ load: B_FULL, this_pod: { ...REC, handover_ready: false, last_load: own, last_handover: null } }) }
+    expect(evalLoadModel(h)).toMatchObject({ level: 'none', scope: 'pod', reason: 'mode_off', stale: false })
+    // aynı lider yeniden aldı (gözlem onun eski TAM'ı) ama kendi yeni yüklemesi yayımlanmadı → kendi yüklemesi
+    const again = { ...SCHED('sm-b-0000000b', true), served_by: 'sm-b-0000000b',
+      ...ES({ load: B_FULL, this_pod: { ...REC, handover_ready: false, last_load: { ...own, pod: 'sm-b-0000000b' }, last_handover: null } }) }
+    expect(evalLoadModel(again)).toMatchObject({ level: 'none', scope: 'pod', reason: 'mode_off' })
+    // kendi yüklemesi daha ESKİ → küme gözlemi (şimdiki liderin değilse güncel değil)
+    const older = { ...SCHED('sm-c-0000000c', true), served_by: 'sm-c-0000000c',
+      ...ES({ load: { ...B_FULL, at_ms: 9_000 }, this_pod: { ...REC, handover_ready: false, last_load: own, last_handover: null } }) }
+    expect(evalLoadModel(older)).toMatchObject({ level: 'stale', scope: 'cluster' })
+  })
+})
+
+describe('handoverModel — bu pod\'un devir hazırlığı (3-2)', () => {
+  const H2 = (pod, extra = {}, scheduler) => ({ timestamp: NOW, ...(scheduler ? { scheduler } : {}),
+    eval_state: { this_pod: { ...REC, handover_ready: false, last_load: null, last_handover: null, ...pod }, verify: VERIFY,
+      read_enabled: true, ...extra } })
+  const leaderSched = { sweep_leader: { owner: 'sm-a', held_by_me: true } }
+
+  it('eski sunucu / kaydedici yok → null; hazır → yeşil', () => {
+    expect(handoverModel(H({ this_pod: REC, verify: VERIFY }))).toBeNull()
+    expect(handoverModel(H({ this_pod: null, verify: VERIFY, read_enabled: true }))).toBeNull()
+    expect(handoverModel(H2({ handover_ready: true }, {}, leaderSched))).toMatchObject({ ready: true, reason: null, tone: 'success' })
+  })
+
+  it('hazır değil nedenleri sırayla: ayar → kip → lider değil → tablo → çit → kuşak → eşitleniyor', () => {
+    expect(handoverModel(H2({}, { read_enabled: false }, leaderSched)).reason).toBe('setting_off')
+    expect(handoverModel(H2({ mode: 'off' }, {}, leaderSched)).reason).toBe('mode_off')
+    // L-3: kapanan pod "lider değil" değil, "pod kapanıyor" der (kapanırken lider ipucu düşer)
+    expect(handoverModel(H2({ closing: true }, {}, { sweep_leader: { held_by_me: false } })).reason).toBe('recorder_closing')
+    expect(handoverModel(H2({}, {}, { sweep_leader: { held_by_me: false } })).reason).toBe('not_leader')
+    expect(handoverModel(H2({ table_missing: true }, {}, leaderSched)).reason).toBe('tables_missing')
+    // L-3: işaret sütunları yok (ilk açılış ya da şema yaması düştü) — "eşitleniyor" DEĞİL
+    expect(handoverModel(H2({ marker_columns_missing: true, generation: 7 }, {}, leaderSched)).reason).toBe('columns_missing')
+    // bilinmiyor (kaydedici değil / eski sunucu) → o adım atlanır
+    expect(handoverModel(H2({ marker_columns_missing: null, closing: null, generation: 7 }, {}, leaderSched)).reason)
+      .toBe('incomplete')
+    expect(handoverModel(H2({ fenced: true }, {}, leaderSched)).reason).toBe('fenced')
+    expect(handoverModel(H2({ generation: null }, {}, leaderSched)).reason).toBe('no_generation')
+    expect(handoverModel(H2({ generation: 7 }, {}, leaderSched))).toMatchObject({ reason: 'incomplete', tone: 'muted' })
+    // tek pod dalı (kira yok): yazan kaydedici = lider; yazmıyorsa lider bilinmiyor → "lider değil" denmez
+    expect(handoverModel(H2({ active: true, generation: 3 })).reason).toBe('incomplete')
+    expect(handoverModel(H2({ active: false, generation: null })).reason).toBe('no_generation')
+  })
+
+  it('son devir boşaltması: bilinen sonuç çevrilir, bilinmeyen işaretlenir', () => {
+    expect(handoverModel(H2({ last_handover: 'written' }, {}, leaderSched))).toMatchObject({ lastHandover: 'written', lastHandoverKnown: true })
+    expect(handoverModel(H2({ last_handover: 'future_code' }, {}, leaderSched))).toMatchObject({ lastHandoverKnown: false })
   })
 })

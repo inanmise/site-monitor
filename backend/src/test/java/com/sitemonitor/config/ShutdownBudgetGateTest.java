@@ -45,6 +45,14 @@ class ShutdownBudgetGateTest {
      */
     private static final long PRE_DESTROY_SLACK_S = ShutdownDeadline.DESTROY_BUDGET_MS / 1000;
 
+    /**
+     * Çok pod Sürüm 3-2 (2026-10-28, paket C): {@code SchedulerService.onContextClosed} okuma ayarı açıkken kirayı bırakmadan
+     * önce devir boşaltmasını bekler ({@code EvalStateSink.HANDOVER_BUDGET_MS} = 300 ms durulma + 700 ms boşaltma) — saniyeye
+     * yukarı yuvarlanıp bütçeye eklenir (ayar kapalıyken bekleme yok; bütçe yine de en kötü durumu sayar).
+     */
+    private static final long HANDOVER_S =
+            (com.sitemonitor.service.evalstate.EvalStateSink.HANDOVER_BUDGET_MS + 999) / 1000;
+
     private static final Pattern PLACEHOLDER_DEFAULT = Pattern.compile("^\\$\\{[A-Z0-9_]+:([^}]+)}$");
 
     private static Properties props() throws IOException {
@@ -108,12 +116,14 @@ class ShutdownBudgetGateTest {
         long preStop = topLevelInt(values, "preStopSleepSeconds");
 
         long spring = WebConfig.NOTIFY_AWAIT_SECONDS /* ContextClosedEvent: bildirim havuzu boşaltma */
-                + phase /* web zarif aşaması */ + phase /* yürütücü yaşam döngüsü aşaması */ + await + PRE_DESTROY_SLACK_S;
+                + phase /* web zarif aşaması */ + phase /* yürütücü yaşam döngüsü aşaması */ + await + PRE_DESTROY_SLACK_S
+                + HANDOVER_S /* çok pod 3-2: kira bırakılmadan önce devir boşaltması (yalnız okuma ayarı açıkken) */;
         assertThat(preStop).as("preStop kancası açık (rollout'ta 502 olmasın)").isPositive();
         assertThat(preStop + spring)
                 .as("preStop %d + Spring %d sn, grace %d sn'nin altında kalmalı", preStop, spring, grace)
                 .isLessThan(grace);
-        assertThat(grace).as("varsayılan: 10 + 20 + 20 + 20 + 20 + 10 = 100 < 120").isEqualTo(120);
+        assertThat(grace).as("varsayılan: 10 + 20 + 20 + 20 + 20 + 10 + 1 = 101 < 120").isEqualTo(120);
+        assertThat(spring).as("Spring kapanış bütçesi (3-2: + 1 sn devir)").isEqualTo(91);
         assertThat(preStop).as("plan varsayılanı").isEqualTo(10);
 
         // helm-template-check.sh render çıktısında aynı bütçeyi (grace − preStop ≥ SPRING_BUDGET_S) arar.
@@ -192,6 +202,63 @@ class ShutdownBudgetGateTest {
         String closedBody = runner.substring(closed, runner.indexOf("\n    }", closed));
         assertThat(closedBody).as("ContextClosedEvent dinleyicisi beklemez (yalnız kabul kapanır)")
                 .doesNotContain("await").doesNotContain("stopAndWait").doesNotContain("shutdown");
+    }
+
+    /**
+     * Çok pod Sürüm 3-2 (2026-10-28, paket C; tasarım R3-2 §5.1): devir boşaltması kiradan ÖNCE. {@code onContextClosed} sırası:
+     * hazır sorusu → devri aç → {@code shutdownStarted = true} → durulma → boşaltma ({@code flushForHandover}) → kirayı bırak →
+     * (finally) devri kapat. Kira boşaltmadan önce bırakılırsa halef işaretsiz (eksik) durumu okur — tam devir hiç olmaz.
+     */
+    @Test
+    @DisplayName("3-2: onContextClosed — hazır → devri aç → shutdownStarted → durulma → boşaltma → kirayı bırak → devri kapat (finally)")
+    void handoverFlushRunsBeforeTheLeaseRelease() throws IOException {
+        String src = Files.readString(Path.of("src/main/java/com/sitemonitor/service/SchedulerService.java"), StandardCharsets.UTF_8);
+        int start = src.indexOf("public void onContextClosed(");
+        assertThat(start).isPositive();
+        String body = src.substring(start, src.indexOf("\n    }", start));
+        int ready = body.indexOf("askHandoverReady(");
+        int open = body.indexOf("openEvalHandover(");
+        int started = body.indexOf("shutdownStarted = true");
+        int quiet = body.indexOf("awaitEvalQuiet()");
+        int flush = body.indexOf("flushForHandover(");
+        int release = body.indexOf("releaseSweepLeadership()");
+        int fin = body.indexOf("finally");
+        int end = body.indexOf("endEvalHandover()");
+        assertThat(java.util.List.of(ready, open, started, quiet, flush, release, fin, end)).as("hepsi gövdede").allMatch(i -> i > 0);
+        assertThat(ready).as("hazır sorusu kapanış kapısından önce").isLessThan(open);
+        assertThat(open).as("devir shutdownStarted'dan ÖNCE açılır (kapanış sonrası biten işlemler de kaydedilir)").isLessThan(started);
+        assertThat(started).as("yeni iş kapısı boşaltmadan önce").isLessThan(quiet);
+        assertThat(quiet).isLessThan(flush);
+        assertThat(flush).as("boşaltma kiradan ÖNCE").isLessThan(release);
+        assertThat(release).as("devir kira bırakıldıktan SONRA ve finally içinde kapanır").isLessThan(fin);
+        assertThat(fin).isLessThan(end);
+        assertThat(body.indexOf("releaseSweepLeadership()", release + 1)).as("kira tek yerde bırakılır").isNegative();
+        assertThat(body).as("boşaltma ve durulma P0 sabitleriyle sınırlı")
+                .contains("EvalStateSink.HANDOVER_FLUSH_MS").doesNotContain("Thread.sleep");
+        assertThat(src).contains("awaitEvalQuiescent(com.sitemonitor.service.evalstate.EvalStateSink.HANDOVER_QUIESCE_MS)");
+    }
+
+    /**
+     * Devir adımı kirayı en çok {@code HANDOVER_BUDGET_MS} (1 sn) geciktirebilir: durulma + boşaltma ≤ bütçe; kaydedici boşaltmayı
+     * yardımcı iş parçacığında koşturup en çok bütçe kadar BEKLER (asılan bir veritabanı kapanışı uzatmaz).
+     */
+    @Test
+    @DisplayName("3-2: devir bütçesi sınırlı — 300 + 700 ≤ 1000 ms; kaydedici boşaltmayı bekleme sınırlı yardımcı iş parçacığında koşturur")
+    void handoverBudgetIsBounded() throws IOException {
+        long quiesce = com.sitemonitor.service.evalstate.EvalStateSink.HANDOVER_QUIESCE_MS;
+        long flush = com.sitemonitor.service.evalstate.EvalStateSink.HANDOVER_FLUSH_MS;
+        long budget = com.sitemonitor.service.evalstate.EvalStateSink.HANDOVER_BUDGET_MS;
+        assertThat(quiesce + flush).as("durulma + boşaltma ≤ devir bütçesi").isLessThanOrEqualTo(budget);
+        assertThat(budget).as("devir kirayı en çok 1 sn geciktirir").isLessThanOrEqualTo(1_000L);
+        assertThat(quiesce).isPositive();
+        assertThat(flush).isPositive();
+        // Kaydedici devir boşaltmasını uyguluyorsa (paket A) yardımcı iş parçacığını sınırlı bekler — sonsuz join yok.
+        String rec = Files.readString(Path.of("src/main/java/com/sitemonitor/service/evalstate/EvalStateRecorder.java"),
+                StandardCharsets.UTF_8);
+        if (rec.contains("HandoverResult flushForHandover(")) {
+            assertThat(rec).as("kaydedicinin beklemeleri sınırlı (join(ms)) — sınırsız join() yok").doesNotContain(".join()")
+                    .containsPattern("\\.join\\([^)]");
+        }
     }
 
     private static int count(String s, String needle) {

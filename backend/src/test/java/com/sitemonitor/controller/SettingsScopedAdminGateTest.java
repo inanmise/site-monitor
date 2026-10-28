@@ -207,6 +207,24 @@ class SettingsScopedAdminGateTest {
     }
 
     @Test
+    @DisplayName("2026-10-28 (çok pod R3-2): devirde okuma anahtarı katalogda, BOOL, grup monitoring, kip anahtarının yanında ve GLOBAL_ONLY")
+    void multiPodR32Key_globalOnly() {
+        String read = com.sitemonitor.service.evalstate.EvalStateReadSwitch.KEY;
+        assertThat(read).isEqualTo("site.monitor.eval-state.read-enabled");
+        assertThat(AppSettingsCatalog.GLOBAL_ONLY).contains(read);
+        assertThat(AppSettingsCatalog.isGlobalOnly(read)).isTrue();
+
+        AppSettingsCatalog.Setting r = AppSettingsCatalog.byKey(read);
+        assertThat(r).as("katalogda: " + read).isNotNull();
+        assertThat(r.group()).isEqualTo("monitoring");
+        assertThat(r.type()).isEqualTo(AppSettingsCatalog.Type.BOOL);
+
+        // Ayarlar → Genel → İzleme Alarmları'nda kip ayarının hemen ardından gösterilsin (katalog sırası = ekran sırası)
+        List<String> keys = AppSettingsCatalog.ALL.stream().map(AppSettingsCatalog.Setting::key).toList();
+        assertThat(keys.indexOf(read)).isEqualTo(keys.indexOf(com.sitemonitor.service.evalstate.EvalStateMode.SETTING_KEY) + 1);
+    }
+
+    @Test
     @DisplayName("2026-09-28: sistem geneli yüzeyler (Veri Saklama yazma uçları, Sorun Bildirimleri yönetimi) requireNotScopedAdmin TAŞIR")
     void systemWideSurfaces_keepGate() throws IOException {
         for (String c : List.of("RetentionAdminController", "LoginIssueController")) {

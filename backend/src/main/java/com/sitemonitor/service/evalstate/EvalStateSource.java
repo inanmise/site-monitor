@@ -57,6 +57,85 @@ public interface EvalStateSource {
         return 0L;
     }
 
+    // ── Devirde okuma (2026-10-28, çok pod Sürüm 3-2 P0; tasarım R3-2 §3.5) — varsayılanlar = bugünkü davranış ────────
+
+    /**
+     * Bekleyen yüklemenin belirteci — MOS GAINED dinleyicisinde ({@code evalEpoch}) yükleme kapısını arıyorsa {@code > 0};
+     * 0 = bekleyen yükleme yok (ayar kapalı, kaydedici hazır değil, yükleme bitti / atıldı). Kaydedici CAS'tan sonra bunu
+     * sorar; 0 ise hiçbir okuma yapmaz. Okumalar arasında değer değişirse okumayı keser. Yalnız bellek; asla fırlatmaz.
+     * Varsayılan 0 (yükleme yok).
+     */
+    default long evalLoadToken() {
+        return 0L;
+    }
+
+    /**
+     * Okunan yükü belleğe uygular (yazıcı iş parçacığında çağrılır) — yalnız kapı hâlâ bu belirteçle LOADING iken, uçuşta
+     * değerlendirme yokken ve bellek BOŞken; aksi hâlde yükü atar (asla birleştirmez, J-3) ve raporunu
+     * {@link #lastEvalLoad()}'a yazar. Veritabanı yok; asla fırlatmaz.
+     *
+     * @return true = uygulandı; false = atıldı (neden {@link #lastEvalLoad()}'da). Varsayılan false (uygulanmaz).
+     */
+    default boolean applyEvalLoad(EvalLoad load) {
+        return false;
+    }
+
+    /**
+     * Kaydedici / yükleyici hiçbir şey yüklemeyecek (süreklilik reddetti, okuma düştü, sınır aşıldı …) — kapıyı belirteç
+     * eşleşirse açar ve raporu {@link #lastEvalLoad()}'a yazar. Belirteç eskiyse yok sayılır. Varsayılan: hiçbir şey.
+     */
+    default void evalLoadSkipped(long token, EvalLoadReport report) {
+    }
+
+    /** Bu pod'un son yükleme raporu (son GAINED'den beri; null = açılıştan beri hiç liderlik kazanılmadı). Varsayılan null. */
+    default EvalLoadReport lastEvalLoad() {
+        return null;
+    }
+
+    /**
+     * Bellekteki tüm durumu kaydediciye YENİDEN kuyruğa alır (MOS {@code replayEvalState()}) — kuşağın EKSİKSİZ sayılması
+     * için (tasarım §2.2: yeni kuşak ancak bir tam oynatma boşaltıldıktan sonra işaret taşır). Zincirler oynatılmaz.
+     *
+     * @return kuyruğa alınan işlem sayısı; varsayılan 0 (oynatma yok)
+     */
+    default int replay() {
+        return 0;
+    }
+
+    /**
+     * Temiz devir başlıyor ({@code SchedulerService.onContextClosed}, yalnız {@code EvalStateSink.handoverReady()} iken):
+     * yeni değerlendirme girişleri en çok {@code HANDOVER_WAIT_MS} bekler (MOS kapısı HANDOVER). Yalnız bellek, veritabanı
+     * yok, asla fırlatmaz. Varsayılan: hiçbir şey (paket B MOS'ta uygular; tasarım §5.1).
+     */
+    default void beginEvalHandover() {
+    }
+
+    /**
+     * Uçuştaki değerlendirmelerin bitmesini en çok {@code maxMs} bekler (yeni girişler HANDOVER'da bekliyor).
+     *
+     * @return true = uçuşta değerlendirme kalmadı. Varsayılan true (bekleyecek bir şey yok).
+     */
+    default boolean awaitEvalQuiescent(long maxMs) {
+        return true;
+    }
+
+    /** Devir bitti (lider bırakıldı ya da bırakma denendi): kapı HANDOVER'dan çıkar; tekrar çağrılabilir. Varsayılan: hiçbir şey. */
+    default void endEvalHandover() {
+    }
+
+    /**
+     * Bir türün bastırma penceresi uzunluğu, kaydedilmiş tur aralığından (yükleyicinin pencere tohumu için; inceleme
+     * 2026-10-28, kaydedici M-2: tohum VERIFY'ın ölçtüğü gibi TÜR BAŞINA pencereyle kurulur). MOS kendi formülüyle geçersiz
+     * kılar ({@code max(3 × aralık, taban)}, en çok 60 dk). Varsayılan: aynı formül, taban 5 dk.
+     *
+     * @param roundIntervalMs kaydedilmiş tur aralığı (ms; ≤ 0 = bilinmiyor → taban)
+     */
+    default long windowLengthMsFor(String alertType, long roundIntervalMs) {
+        long floor = 300_000L;
+        long cap = 60L * 60_000L;
+        return Math.min(cap, Math.max(floor, 3L * Math.max(0L, roundIntervalMs)));
+    }
+
     /**
      * Bellekteki DOWN gözleminin dar kopyası — ham hata metni YOK, yalnız sınıfı.
      *

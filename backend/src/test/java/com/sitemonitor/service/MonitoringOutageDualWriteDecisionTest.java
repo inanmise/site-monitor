@@ -62,7 +62,13 @@ import static org.mockito.Mockito.when;
  */
 class MonitoringOutageDualWriteDecisionTest {
 
-    enum Variant { NONE, RECORDING, MIRROR_H2, THROWING, REAL_RECORDER, REAL_RECORDER_FAILING_JDBC }
+    /**
+     * Çok pod Sürüm 3-2 (tasarım R3-2 §9.1, J-1): {@code READ_OFF_REAL_RECORDER} = gerçek kaydedici + okuma ayarı AÇIKÇA
+     * kapalı; {@code READ_ON_NO_LEADERSHIP_CHANGE} = okuma ayarı AÇIK, kaydedicinin kurulum engeli var / GAINED yok — kapı
+     * hiç kurulmaz, geçiş saydamdır. İkisinin de tutanağı kaydedicisizle birebir aynı olmalı.
+     */
+    enum Variant { NONE, RECORDING, MIRROR_H2, THROWING, REAL_RECORDER, REAL_RECORDER_FAILING_JDBC, READ_OFF_REAL_RECORDER,
+        READ_ON_NO_LEADERSHIP_CHANGE }
 
     static final String PORT = EscalationService.TYPE_PORT_DOWN;
     static final String ACC = EscalationService.TYPE_ACCESSIBILITY;
@@ -106,19 +112,23 @@ class MonitoringOutageDualWriteDecisionTest {
             when(alertRepo.findOpenByDomainIn(anyCollection())).thenReturn(List.of());
             EvalStateSink sink = switch (v) {
                 case NONE -> null;
-                case RECORDING -> RecordingSink.recording();
+                case RECORDING, READ_ON_NO_LEADERSHIP_CHANGE -> RecordingSink.recording();
                 case THROWING -> RecordingSink.throwing();
                 case MIRROR_H2 -> {
                     h2 = MultiPodTestSupport.create();
                     yield new MirrorRecorder(h2.jdbc(), "pod-a", 1L, clock::get);
                 }
-                case REAL_RECORDER -> {
+                case REAL_RECORDER, READ_OFF_REAL_RECORDER -> {
                     h2 = MultiPodTestSupport.create();
                     new com.sitemonitor.service.evalstate.EvalStateSchemaPatch(h2.jdbc()).apply();
-                    real = com.sitemonitor.service.evalstate.EvalStateRecorder.builder(h2.jdbc()).writer("pod-a-00000001")
+                    com.sitemonitor.service.evalstate.EvalStateRecorder.Builder rb =
+                            com.sitemonitor.service.evalstate.EvalStateRecorder.builder(h2.jdbc()).writer("pod-a-00000001")
                             .leaderHint(() -> true)
                             .mode(() -> com.sitemonitor.service.evalstate.EvalStateMode.VERIFY)
-                            .clock(clock::get).flushMs(50).build();
+                            .clock(clock::get).flushMs(50);
+                    // 3-2 (J-1): READ_OFF varyantında okuma ayarı kaydedicide de AÇIKÇA kapalı (3-1 ifade kümesi).
+                    if (v == Variant.READ_OFF_REAL_RECORDER) rb.readEnabled(() -> false);
+                    real = rb.build();
                     yield real;
                 }
                 case REAL_RECORDER_FAILING_JDBC -> {
@@ -134,6 +144,9 @@ class MonitoringOutageDualWriteDecisionTest {
             };
             recording = sink instanceof RecordingSink r ? r : null;
             if (sink != null) mos.setEvalStateSink(sink);
+            // 3-2: okuma ayarı (elle kurulan serviste tedarikçi yok = kapalı; bu iki varyant açıkça verir).
+            if (v == Variant.READ_OFF_REAL_RECORDER) mos.setEvalReadEnabled(() -> false);
+            if (v == Variant.READ_ON_NO_LEADERSHIP_CHANGE) mos.setEvalReadEnabled(() -> true);
         }
 
         /** Senaryo başlangıcı — kurulum sırasındaki saplama çağrıları tutanağa girmesin. */
@@ -237,6 +250,21 @@ class MonitoringOutageDualWriteDecisionTest {
                 }
                 if (v == Variant.THROWING) {
                     assertThat(env.mos.evalStateHookFailures()).as("bozuk kaydedici çağrıldı ve yutuldu").isPositive();
+                }
+                // 3-2 (J-1): kapı hiçbir varyantta kurulmadı; ayar kapalıyken rapor (varsa) yalnız none/setting_off.
+                assertThat(env.mos.evalLoadGate().state()).as(v + ": kapı kurulmadı")
+                        .isEqualTo(com.sitemonitor.service.evalstate.EvalLoadGate.State.NONE);
+                assertThat(env.mos.evalLoadToken()).isZero();
+                // 3-2 inceleme (M-1 yol 2): zincir adımları sayılır ama ayar kapalıyken kapı hiç HANDOVER olmaz — adımlar
+                // bugünkü gibi koşar (tutanak aynı) ve sayım sızmaz.
+                assertThat(env.mos.evalLoadGate().chainStepsInFlight()).as(v + ": zincir adımı sayımı sızmadı").isZero();
+                assertThat(env.mos.evalLoadGate().inFlight()).as(v + ": giriş sayımı sızmadı").isZero();
+                com.sitemonitor.service.evalstate.EvalLoadReport lr = env.mos.lastEvalLoad();
+                if (lr != null) {
+                    assertThat(lr.loaded()).isFalse();
+                    assertThat(lr.reason()).isEqualTo(v == Variant.READ_ON_NO_LEADERSHIP_CHANGE
+                            ? com.sitemonitor.service.evalstate.EvalLoadReport.REASON_NO_RECORDER
+                            : com.sitemonitor.service.evalstate.EvalLoadReport.REASON_SETTING_OFF);
                 }
             }
         }
@@ -392,6 +420,20 @@ class MonitoringOutageDualWriteDecisionTest {
             if (env.recording != null) {
                 assertThat(env.recording.ops("observationPruned")).as("iki budama yolu da çalıştı")
                         .extracting(RecordingSink.Op::key).containsExactly(PORT + "|m:2", PORT + "|m:3");
+            }
+        }),
+        // 3-2 (J-1): liderlik GERİ ALINDI (GAINED) — ayar kapalıyken ya da kaydedicinin engeli varken kapı kurulmaz; ardışık
+        // sağlıklı turlar bugünkü gibi sıfırdan sayılır (3 tur sonra tek kapanış).
+        LEADERSHIP_GAINED_THEN_ROUNDS(env -> {
+            env.openAlarm(PORT, "g.example.com");
+            env.mos.handleSweepResults(PORT, List.of(item(PORT, "g.example.com", "443/TCP", true, 81L,
+                    Map.of("monitor_recovery_checks", 3), () -> status("up", null))));
+            env.mos.onSweepLeadershipChanged(new SweepLeadershipChangedEvent(false, "p", 0L, SweepLeadershipChangedEvent.LOST));
+            env.mos.onSweepLeadershipChanged(new SweepLeadershipChangedEvent(true, "p", 0L, SweepLeadershipChangedEvent.GAINED));
+            for (int i = 0; i < 3; i++) {
+                env.advance(60_000);
+                env.mos.handleSweepResults(PORT, List.of(item(PORT, "g.example.com", "443/TCP", true, 81L,
+                        Map.of("monitor_recovery_checks", 3), () -> status("up", null))));
             }
         }),
         IMMEDIATE_MODE_AND_CONFIG_ERROR_CLOSE(env -> {

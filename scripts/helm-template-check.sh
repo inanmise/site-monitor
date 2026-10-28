@@ -9,7 +9,7 @@
 # Denetimler (biri bile tutmazsa çıkış kodu 1, her biri ::error:: satırı):
 #   1. Üç ortam (master / develop / release) + yalın values.yaml render olur.
 #   2. Her render'da terminationGracePeriodSeconds ve preStop "sleep N" var; grace − preStop ≥ SPRING_BUDGET_S
-#      (bildirim havuzu boşaltma 20 + web 20 + yürütücü 20 + @Scheduled bekleme 20 + ortak yok etme bütçesi 10 (ShutdownDeadline) = 90 sn —
+#      (bildirim havuzu boşaltma 20 + web 20 + yürütücü 20 + @Scheduled bekleme 20 + ortak yok etme bütçesi 10 (ShutdownDeadline) + çok pod 3-2 devir boşaltması 1 = 91 sn —
 #      backend application.properties + WebConfig.NOTIFY_AWAIT_SECONDS; Java tarafını ShutdownBudgetGateTest denetler).
 #   3. Birden çok pod koşabilen her render'da (replicas > 1 ya da HPA) oturum deposu jdbc.
 #   4. Koruma: replicaCount=2 + sessionStoreType=memory ve autoscaling + none → render BAŞARISIZ olur;
@@ -35,7 +35,7 @@ HELM="${HELM:-helm}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CHART="$ROOT/helm/site-monitor"
 VALUES="$CHART/values.yaml"
-SPRING_BUDGET_S=90
+SPRING_BUDGET_S=91
 fail=0
 err() { echo "::error::$*"; fail=1; }
 ok()  { echo "  ok: $*"; }

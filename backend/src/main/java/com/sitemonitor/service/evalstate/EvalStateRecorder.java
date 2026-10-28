@@ -14,6 +14,7 @@ import com.sitemonitor.service.evalstate.EvalStateSql.TypeRow;
 import com.sitemonitor.service.evalstate.EvalStateSource.DownValues;
 import com.sitemonitor.service.evalstate.EvalStateSource.RecoveryValues;
 import com.sitemonitor.service.evalstate.EvalStateSource.TypeValues;
+import com.sitemonitor.service.health.ClusterHealthStore;
 import com.sitemonitor.service.monitoring.ManualEvalInbox;
 import com.sitemonitor.service.schedule.ClusterScheduleService;
 import com.sitemonitor.service.schedule.SweepLeadershipChangedEvent;
@@ -93,6 +94,23 @@ import java.util.function.Supplier;
  * <p><b>Kapanış:</b> {@code ContextClosedEvent} yalnız bayrak + uyarı (bekleme / DB yok, kapanış bütçesi değişmez);
  * {@code @PreDestroy} iş parçacığını keser ve {@link ShutdownDeadline#waitMs} (tavan {@value #SHUTDOWN_JOIN_CAP_MS} ms) kadar
  * bekler. 3-1'de son saniyenin ayna yazımının kaybı zararsızdır (okuma yok).
+ *
+ * <p><b>Devirde okuma (2026-10-28, çok pod Sürüm 3-2; tasarım R3-2 §2 / §3 / §5) — YALNIZ
+ * {@code site.monitor.eval-state.read-enabled} ({@link EvalStateReadSwitch}) AÇIKKEN; kapalıyken kaydedici 3-1'in ifade
+ * kümesini BİREBİR koşar (J-1, {@code EvalStateReadOffSqlTranscriptTest}):</b>
+ * <ul>
+ *   <li>Kuşak CAS'ı {@link EvalStateSql#acquireGenerationWithPrior} ile yerine geçilen {@code '*'} satırını yakalar; GAINED'den
+ *       sonra MOS yükleme kapısını kurduysa ({@link EvalStateSource#evalLoadToken()} &gt; 0) yazıcı iş parçacığında süreklilik
+ *       ({@link EvalLoadContinuity}) → okuma ({@link EvalStateLoader}) → {@link EvalStateSource#applyEvalLoad} (ya da
+ *       {@link EvalStateSource#evalLoadSkipped}); ardından bellek yeni kuşağa YENİDEN oynatılır.</li>
+ *   <li>Kuşak, bir tam oynatma boşaltılınca EKSİKSİZ sayılır; işaretli nabız ({@code state_gen}, {@code flushed_ms})
+ *       yalnız eksiksiz kuşakta "kalıcı an" yazar. Düşüş / kanca hatası / kirli taşma kuşağı eksik yapar (yeniden oynatma).</li>
+ *   <li>Zarif kapanışta {@link #flushForHandover} kira bırakılmadan önce yardımcı iş parçacığında boşaltır, kendi zincirlerini
+ *       bırakır ve devir işaretini SON ifade olarak yazar ({@link #openHandover} kapanıştan sonra biten değerlendirmelerin
+ *       işlemlerini de kabul ettirir).</li>
+ *   <li>Son yükleme raporu ({@link EvalStateSource#lastEvalLoad()}) küme gözlemi {@link EvalLoadReport#OBSERVATION} olarak
+ *       yazıcı iş parçacığından yayımlanır (daha yeniyse; {@code setting_off} asla).</li>
+ * </ul>
  */
 @Slf4j
 @Component
@@ -138,6 +156,12 @@ public class EvalStateRecorder implements EvalStateSink, ApplicationContextAware
     public static final long SHUTDOWN_JOIN_CAP_MS = 1_000L;
     /** Doğrulayıcı istisna fırlatırsa / null dönerse bilinmeyen raporun nedeni. */
     public static final String REASON_VERIFIER_ERROR = "verifier_error";
+    /** Devir boşaltması yardımcı iş parçacığının adı (3-2). */
+    public static final String HANDOVER_THREAD_NAME = "eval-state-handover";
+    /** Başarısız yükleme raporu yayınının yeniden deneme aralığı. */
+    static final long PUBLISH_RETRY_MS = 60_000L;
+    /** Kanca hatası / kirli taşma kaynaklı yeniden oynatmalar (ve taşmada istenen boşluk) arasında en az bu süre (3-2, L-5). */
+    static final long REREPLAY_MIN_INTERVAL_MS = 60_000L;
 
     private static final ObjectMapper JSON = JsonMapper.builder().build();
 
@@ -155,6 +179,12 @@ public class EvalStateRecorder implements EvalStateSink, ApplicationContextAware
     private final long verifyMs;
     private final long refreshMs;
     private final int maxPending;
+    /** Devirde okuma ayarı (3-2; canlı). Okuma hatası = kapalı. */
+    private final BooleanSupplier readEnabled;
+    /** Yükleyici okuma başına satır üst sınırı ({@link EvalStateLoader#MAX_LOAD_ROWS}; testler küçültür). */
+    private final int maxLoadRows;
+    /** {@code eval-state-load} gözleminin deposu (kaydedicinin zaman aşımlı şablonu üzerinde); null = yayın yok. */
+    private volatile ClusterHealthStore observationStore;
 
     // ── Kuyruk durumu ───────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -220,6 +250,46 @@ public class EvalStateRecorder implements EvalStateSink, ApplicationContextAware
     private volatile long nextHealCheckMs;
     private final AtomicLong lastWarnNs = new AtomicLong(Long.MIN_VALUE);
 
+    // ── Devirde okuma durumu (3-2) ──────────────────────────────────────────────────────────────────────────────────
+
+    /** Tutulan kuşak EKSİKSİZ mi (bir tam oynatma boşaltıldı, o andan beri düşüş / kanca hatası / kirli taşma yok). */
+    private volatile boolean complete;
+    /** Son oynatmadan sonraki seq (0 = oynatılmadı / yeniden kuruldu — yazıcı turu yeniden oynatır). */
+    private volatile long replaySeq;
+    private volatile long dropsAtReplay;
+    private volatile long hooksAtReplay;
+    /** Kaydedici saatiyle: bu andan önce kuyruğa alınan her işlem bu kuşakta kalıcı (0 = bilinmiyor). */
+    private volatile long durableAsOfMs;
+    /** İşaret sütunları okunamadı (ilk açılış / yama düştü) — 3-1 ifadeleri; {@link #TABLE_RECHECK_MS}'de bir yeniden bakılır. */
+    private volatile boolean markerColumnsMissing;
+    private long nextColumnsCheckNs;
+    /** Devir açık: kuyruğa alma kapısı lider ipucu yerine "ipucu ∨ devir" der (RELEASED kapatır). */
+    private volatile boolean handoverOpen;
+    /**
+     * GAINED geldi: yazıcı turu (ayar açıksa) önceki bir hatanın geri çekilmesini bekletmez — MOS yükleme kapısı 20 sn'de
+     * kapanır; 30 sn'lik geri çekilme yükü her seferinde zaman aşımına düşürürdü. Ayar kapalıyken 3-1 zamanlaması (J-1).
+     */
+    private volatile boolean backoffResetRequested;
+    /** Devir yardımcısının bütçesi doldu — yardımcı işaret ifadesine başlamadıysa yazmaz. */
+    private volatile boolean handoverAborted;
+    /**
+     * Devir işareti YAZILDI (inceleme 2026-10-28, L-3): bundan sonra hiçbir kaydedici ifadesi {@code '*'} satırına dokunmaz —
+     * {@link #flushLock}'u bekleyen bir boşaltma (lider ipucu denetimini işaretten önce geçmiş yazıcı turu / doğrulama)
+     * işaretli nabızla {@code handover_ms = NULL} yazıp temiz devri sessizce geçersiz kılardı. Her liderlik olayı temizler.
+     */
+    private volatile boolean handoverMarked;
+    /**
+     * Kanca hatası / kirli taşma kaynaklı YENİDEN oynatmalar seyreltilir (inceleme L-5): sürekli istisna veren bir kanca her
+     * yazıcı turunda belleğin tamamını yeniden kuyruğa alırdı. Kaydedici saatiyle son başarılı oynatmanın anı.
+     */
+    private volatile long lastReplayAtMs = Long.MIN_VALUE;
+    /** Kuşak bir kanca hatası yüzünden eksik düştü — sonraki oynatma {@link #REREPLAY_MIN_INTERVAL_MS}'i bekler. */
+    private volatile boolean replayRateLimited;
+    private volatile HandoverResult lastHandover;
+    /** Yayımlanan son yükleme raporunun anı (yalnız yazıcı iş parçacığında / {@link #flushNow()}). */
+    private long lastPublishedLoadAtMs = Long.MIN_VALUE;
+    private long nextPublishTryNs;
+
     // ── Kurulum ─────────────────────────────────────────────────────────────────────────────────────────────────────
 
     /** Spring: ayarlar ve zamanlayıcı TEMBEL çözülür (MOS → kaydedici → zamanlayıcı → MOS döngüsü kurulmaz). */
@@ -238,6 +308,7 @@ public class EvalStateRecorder implements EvalStateSink, ApplicationContextAware
                 .mode(lazyMode(settings))
                 .verifier(lazy(verifiers))
                 .leaseOwner(lazyLeaseOwner(clusterSchedule))
+                .readEnabled(EvalStateReadSwitch.supplier(settings))
                 .queryTimeoutSeconds(EvalStateSql.QUERY_TIMEOUT_SECONDS)
                 .flushMs(flushMs)
                 .verifyMs(verifyMs)
@@ -257,6 +328,9 @@ public class EvalStateRecorder implements EvalStateSink, ApplicationContextAware
         this.verifyMs = Math.max(1_000L, b.verifyMs);
         this.refreshMs = Math.max(0L, b.lastStatusRefreshMs);
         this.maxPending = Math.max(1, b.maxPending);
+        this.readEnabled = b.readEnabled;
+        this.maxLoadRows = Math.max(1, b.maxLoadRows);
+        this.observationStore = b.observationStore;
         this.coverageStartMs = safeClock();
         // nanoTime negatif olabilir: zamanlar "şimdi"den başlar (0'dan değil)
         long n = System.nanoTime();
@@ -265,6 +339,18 @@ public class EvalStateRecorder implements EvalStateSink, ApplicationContextAware
         this.nextTableCheckNs = n;
         this.nextVerifyNs = n + TimeUnit.MILLISECONDS.toNanos(this.verifyMs);
         this.nextPruneNs = n + TimeUnit.MILLISECONDS.toNanos(PRUNE_FIRST_DELAY_MS);
+        this.nextColumnsCheckNs = n;
+        this.nextPublishTryNs = n;
+    }
+
+    /**
+     * Spring: küme gözlem deposu varsa {@code eval-state-load} raporu yayımlanır (3-2) — kaydedicinin KENDİ 15 sn zaman aşımlı
+     * şablonu üzerinde ayrı bir {@link ClusterHealthStore} (paylaşılan şablona dokunulmaz; "her kaydedici ifadesi kendi
+     * şablonunda" kuralı). Depo yoksa yayın yok.
+     */
+    @Autowired(required = false)
+    public void setClusterHealthStore(ClusterHealthStore store) {
+        this.observationStore = store == null ? null : new ClusterHealthStore(sql.jdbc());
     }
 
     /**
@@ -291,6 +377,9 @@ public class EvalStateRecorder implements EvalStateSink, ApplicationContextAware
         private long verifyMs = 300_000L;
         private long lastStatusRefreshMs = 120_000L;
         private int maxPending = MAX_PENDING;
+        private BooleanSupplier readEnabled = () -> EvalStateReadSwitch.DEFAULT;
+        private int maxLoadRows = EvalStateLoader.MAX_LOAD_ROWS;
+        private ClusterHealthStore observationStore;
 
         private Builder(JdbcTemplate jdbc) {
             this.jdbc = Objects.requireNonNull(jdbc, "jdbc");
@@ -310,6 +399,15 @@ public class EvalStateRecorder implements EvalStateSink, ApplicationContextAware
         public Builder verifyMs(long ms) { this.verifyMs = ms; return this; }
         public Builder lastStatusRefreshMs(long ms) { this.lastStatusRefreshMs = ms; return this; }
         public Builder maxPending(int n) { this.maxPending = n; return this; }
+        /**
+         * Devirde okuma ayarı (3-2; varsayılan KAPALI = 3-1 ifade kümesi). Üretim: {@link EvalStateReadSwitch#supplier}.
+         * Çok pod testleri: {@code .readEnabled(() -> on)}.
+         */
+        public Builder readEnabled(BooleanSupplier on) { this.readEnabled = Objects.requireNonNull(on); return this; }
+        /** Yükleyici okuma başına satır üst sınırı (varsayılan {@link EvalStateLoader#MAX_LOAD_ROWS}). */
+        public Builder maxLoadRows(int n) { this.maxLoadRows = n; return this; }
+        /** {@code eval-state-load} gözleminin deposu (olduğu gibi kullanılır; null = yayın yok — varsayılan). */
+        public Builder observationStore(ClusterHealthStore store) { this.observationStore = store; return this; }
 
         public EvalStateRecorder build() {
             return new EvalStateRecorder(this);
@@ -697,7 +795,9 @@ public class EvalStateRecorder implements EvalStateSink, ApplicationContextAware
             if (!gapRequested && (hasAnyState() || myGen > 0)) gapRequested = true;
             return false;
         }
-        return leaderHint();
+        // 3-2: devir açıkken (kapanış başladı, lider ipucu false) biten değerlendirmelerin işlemleri de alınır — yalnız
+        // ayar açıkken openHandover() çağrılır (J-1: kapalıyken her zaman lider ipucu).
+        return leaderHint() || handoverOpen;
     }
 
     private boolean recordable(String alertType, String domain) {
@@ -716,6 +816,7 @@ public class EvalStateRecorder implements EvalStateSink, ApplicationContextAware
         Op op = new Op(seq, payload);
         if (!lane.pending.containsKey(key) && pendingSize() >= maxPending) {
             dropped.incrementAndGet();
+            noteIncomplete();   // 3-2: düşen işlem → kuşak eksik (yeniden oynatılana dek işaret yazılmaz)
             markDirty(lane, key);
             return false;
         }
@@ -734,9 +835,23 @@ public class EvalStateRecorder implements EvalStateSink, ApplicationContextAware
         if (dirtyOverflow) return;
         if (dirtySize() >= MAX_DIRTY) {
             dirtyOverflow = true;
+            noteIncomplete();
             return;
         }
         lane.dirty.add(key);
+    }
+
+    /** Kuşak eksik: işaretli nabız {@code flushed_ms = NULL} yazar; yazıcı turu yeniden oynatır ({@link #maybeReplay}). */
+    private void noteIncomplete() {
+        complete = false;
+        replaySeq = 0L;
+    }
+
+    /** Yeni kuşak / liderlik olayı / toplu düşüş / çit: eksiksizlik baştan. */
+    private void resetCompleteness() {
+        complete = false;
+        replaySeq = 0L;
+        durableAsOfMs = 0L;
     }
 
     private void trimSeen(Lane lane) {
@@ -746,6 +861,15 @@ public class EvalStateRecorder implements EvalStateSink, ApplicationContextAware
     private long pendingSize() {
         long n = 0;
         for (Lane l : lanes) n += l.pending.mappingCount();
+        return n;
+    }
+
+    /** Zincir kuyruğu hariç bekleyenler (devir işaretinin "bekleyen yok" koşulu — zincirler yüklenmez; 3-2, L-6). */
+    private long pendingSizeExceptChains() {
+        long n = 0;
+        for (Lane l : lanes) {
+            if (l != chainLane) n += l.pending.mappingCount();
+        }
         return n;
     }
 
@@ -876,11 +1000,15 @@ public class EvalStateRecorder implements EvalStateSink, ApplicationContextAware
             gapRequested = false;
             dirtyOverflow = false;
             myGen = 0L;
+            resetCompleteness();
+            handoverOpen = false;   // 3-2: RELEASED (ve her olay) devri kapatır
+            handoverMarked = false;
             coverageStartMs = safeClock();
             if (SweepLeadershipChangedEvent.GAINED.equals(event.reason())) {
                 fencedOut = false;
                 inheritPending = true;
                 inherited = null;
+                backoffResetRequested = true;   // yalnız bayrak; yazıcı turu ayar açıksa uygular
             }
         } finally {
             rw.writeLock().unlock();
@@ -914,6 +1042,7 @@ public class EvalStateRecorder implements EvalStateSink, ApplicationContextAware
             through = seqGen.get();
             gapSeq = through;
             myGen = 0L;
+            resetCompleteness();
         } finally {
             rw.writeLock().unlock();
         }
@@ -969,8 +1098,16 @@ public class EvalStateRecorder implements EvalStateSink, ApplicationContextAware
         }
     }
 
-    /** Yazıcı turunun tamamı (yazıcı iş parçacığında). */
+    /** Yazıcı turunun tamamı (yazıcı iş parçacığında). Sonunda (ayar açıksa) son yükleme raporu yayımlanır (3-2). */
     void tick() {
+        try {
+            tickBody();
+        } finally {
+            publishLoadReport();
+        }
+    }
+
+    private void tickBody() {
         EvalStateMode m = mode();
         if (gapRequested || (!m.writes() && (hasAnyState() || myGen > 0))) applyGap();
         if (!m.writes() || closing) return;
@@ -986,7 +1123,15 @@ public class EvalStateRecorder implements EvalStateSink, ApplicationContextAware
             tableMissing = false;
             log.info("Kalıcı değerlendirme durumu tabloları hazır — yazım başlıyor");
         }
+        if (backoffResetRequested) {
+            backoffResetRequested = false;
+            if (readEnabled()) {
+                backoffUntilNs = nowNs;
+                backoffMs = 0L;
+            }
+        }
         if (nowNs - backoffUntilNs < 0) return;
+        maybeReplay();
         boolean due = pendingSize() > 0 || myGen == 0 || nowNs - nextHeartbeatNs >= 0;
         if (due) flushOnce();
         if (myGen > 0 && m.verifies() && System.nanoTime() - nextVerifyNs >= 0) runVerify();
@@ -995,16 +1140,22 @@ public class EvalStateRecorder implements EvalStateSink, ApplicationContextAware
 
     /**
      * Elle boşaltma (testler / elle kurulum) — çağıranın iş parçacığında tek boşaltma; yazıcı iş parçacığıyla aynı anda
-     * koşmaz. Kip / lider / tablo kapıları geçerlidir. @return yazım (ve çit nabzı) başarılı olduysa true.
+     * koşmaz. Kip / lider / tablo kapıları geçerlidir. Ayar açıkken yazıcı turu gibi gerekirse önce yeniden oynatır ve sonra
+     * son yükleme raporunu yayımlar (3-2). @return yazım (ve çit nabzı) başarılı olduysa true.
      */
     public boolean flushNow() {
-        EvalStateMode m = mode();
-        if (gapRequested || (!m.writes() && (hasAnyState() || myGen > 0))) applyGap();
-        if (!m.writes() || closing || !leaderHint()) return false;
-        if (fencedOut && !healIfHolderSilent()) return false;
-        if (tableMissing && !tablesPresent()) return false;
-        tableMissing = false;
-        return flushOnce();
+        try {
+            EvalStateMode m = mode();
+            if (gapRequested || (!m.writes() && (hasAnyState() || myGen > 0))) applyGap();
+            if (!m.writes() || closing || !leaderHint()) return false;
+            if (fencedOut && !healIfHolderSilent()) return false;
+            if (tableMissing && !tablesPresent()) return false;
+            tableMissing = false;
+            maybeReplay();
+            return flushOnce();
+        } finally {
+            publishLoadReport();
+        }
     }
 
     private boolean tablesPresent() {
@@ -1026,45 +1177,20 @@ public class EvalStateRecorder implements EvalStateSink, ApplicationContextAware
     }
 
     private boolean flushLocked() {
+        // 3-2 (L-3): devir işareti yazıldıysa hiçbir şey yazılmaz — kilidi bekleyen boşaltma işareti silmesin.
+        if (handoverMarked) return false;
         long epoch = leadershipEpoch.get();
         long now = safeClock();
         try {
             if (myGen == 0 && !acquire(now, epoch)) return false;
             long gen = myGen;
             if (gen == 0) return false;
-            if (!sql.heartbeat(gen, writer, now)) {
+            if (!heartbeat(gen, now)) {
                 fenced(gen);
                 return false;
             }
             nextHeartbeatNs = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(HEARTBEAT_MS);
-            long safe;
-            rw.writeLock().lock();
-            try {
-                if (epoch != leadershipEpoch.get()) return false;
-                safe = seqGen.get();
-            } finally {
-                rw.writeLock().unlock();
-            }
-            List<Map.Entry<String, Op>> rec = snapshot(recoveryLane);
-            List<Map.Entry<String, Op>> last = snapshot(lastStatusLane);
-            List<Map.Entry<String, Op>> types = snapshot(typeLane);
-            List<Map.Entry<String, Op>> chains = snapshot(chainLane);
-            sql.writeRecovery(payloads(rec, RecoveryRow.class), writer, gen, now);
-            sql.writeLastStatus(payloads(last, LastStatusRow.class), writer, gen, now);
-            sql.deleteLastStatus(payloads(last, LastStatusDelete.class), gen);
-            sql.writeTypeState(payloads(types, TypeRow.class), writer, gen, now);
-            sql.writeChains(payloads(chains, ChainRow.class), writer, gen, now);
-            sql.deleteChains(payloads(chains, ChainDelete.class), writer, gen);
-            if (epoch != leadershipEpoch.get()) return false;   // olay araya girdi: temizlenmiş kuyruğa dokunma
-            removeWritten(recoveryLane, rec);
-            removeWritten(lastStatusLane, last);
-            removeWritten(typeLane, types);
-            removeWritten(chainLane, chains);
-            markFlushed(safe);
-            flushes.incrementAndGet();
-            lastFlushMs = now;
-            backoffMs = 0L;
-            return true;
+            return writeLanes(gen, epoch, now) >= 0;
         } catch (BadSqlGrammarException e) {
             if (!tablesPresent()) {
                 if (!tableMissing) log.debug("Kalıcı değerlendirme durumu tabloları henüz yok — 60 sn'de bir yeniden denenecek");
@@ -1080,11 +1206,233 @@ public class EvalStateRecorder implements EvalStateSink, ApplicationContextAware
         }
     }
 
+    /**
+     * Bekleyen işlemleri bu kuşağa yazar (dört tablo) — {@link #flushLocked} ve devir yardımcısı ({@link #handoverFlush})
+     * ortak gövdesi. Çağıran {@link #flushLock}'u tutar; çit nabzı önceden atılmıştır. 3-2: başarılı boşaltma sonunda
+     * {@link #durableAsOfMs} = "güvenli seq" okunduğu an ve eksiksizlik güncellenir (yalnız bellek).
+     *
+     * @return yazılan işlem sayısı; araya liderlik olayı girdiyse -1 (temizlenmiş kuyruğa dokunulmaz)
+     */
+    private int writeLanes(long gen, long epoch, long now) {
+        long safe;
+        long safeAt;
+        rw.writeLock().lock();
+        try {
+            if (epoch != leadershipEpoch.get()) return -1;
+            safe = seqGen.get();
+            safeAt = safeClock();
+        } finally {
+            rw.writeLock().unlock();
+        }
+        List<Map.Entry<String, Op>> rec = snapshot(recoveryLane);
+        List<Map.Entry<String, Op>> last = snapshot(lastStatusLane);
+        List<Map.Entry<String, Op>> types = snapshot(typeLane);
+        List<Map.Entry<String, Op>> chains = snapshot(chainLane);
+        sql.writeRecovery(payloads(rec, RecoveryRow.class), writer, gen, now);
+        sql.writeLastStatus(payloads(last, LastStatusRow.class), writer, gen, now);
+        sql.deleteLastStatus(payloads(last, LastStatusDelete.class), gen);
+        sql.writeTypeState(payloads(types, TypeRow.class), writer, gen, now);
+        sql.writeChains(payloads(chains, ChainRow.class), writer, gen, now);
+        sql.deleteChains(payloads(chains, ChainDelete.class), writer, gen);
+        if (epoch != leadershipEpoch.get()) return -1;   // olay araya girdi: temizlenmiş kuyruğa dokunma
+        removeWritten(recoveryLane, rec);
+        removeWritten(lastStatusLane, last);
+        removeWritten(typeLane, types);
+        removeWritten(chainLane, chains);
+        markFlushed(safe);
+        flushes.incrementAndGet();
+        lastFlushMs = now;
+        backoffMs = 0L;
+        durableAsOfMs = safeAt;
+        updateCompleteness();
+        return rec.size() + last.size() + types.size() + chains.size();
+    }
+
+    /**
+     * Çit nabzı. Ayar açık ve işaret sütunları var → işaretli nabız ({@code state_gen}, {@code flushed_ms}; 3-2); aksi hâlde
+     * 3-1 nabzı (J-1). İşaretli nabız sütun yokluğuyla düşerse 3-1 nabzına düşülür. @return satır hâlâ bu kuşak + bu yazanın mı.
+     */
+    private boolean heartbeat(long gen, long now) {
+        if (readEnabled() && !columnsKnownMissing()) {
+            try {
+                return sql.heartbeatMarked(gen, writer, now, markerFlushedMs(now));
+            } catch (BadSqlGrammarException e) {
+                if (!detectColumnsMissing()) throw e;
+            }
+        }
+        return sql.heartbeat(gen, writer, now);
+    }
+
+    /**
+     * İşaretli nabzın {@code flushed_ms}'i: kuşak eksikse null; bekleyen işlem yoksa (yazma kilidi altında — kuyruğa alan
+     * yarıda değil) "şimdi"; aksi hâlde son başarılı boşaltmanın güvenli anı.
+     */
+    private Long markerFlushedMs(long now) {
+        if (!complete) return null;
+        rw.writeLock().lock();
+        try {
+            if (pendingSize() == 0) return now;
+        } finally {
+            rw.writeLock().unlock();
+        }
+        long d = durableAsOfMs;
+        return d > 0 ? d : null;
+    }
+
+    /**
+     * Boşaltma sonunda: son oynatma ({@link #replaySeq}) yazıldıysa ve o andan beri düşüş / kanca hatası / kirli taşma yoksa
+     * kuşak eksiksiz; aksi hâlde yeniden kurulur (yazıcı turu yeniden oynatır).
+     */
+    private void updateCompleteness() {
+        long rs = replaySeq;
+        if (rs <= 0) return;
+        boolean drop = dropped.get() != dropsAtReplay;
+        boolean hooks = hookFailures() != hooksAtReplay;
+        if (drop || hooks || dirtyOverflow) {
+            // L-5: kanca hatası yüzünden eksikse sonraki oynatma seyreltilir (sürekli düşen kanca her turda yeniden oynatma
+            // yaptırmasın); yalnız düşüş kaynaklı oynatma kuyruk boşalınca hemen (3-2 davranışı).
+            if (hooks) replayRateLimited = true;
+            noteIncomplete();
+            return;
+        }
+        if (flushedThrough < rs) return;
+        complete = true;
+        // Kuyruğa alan bu arada düşürdüyse (önce sayaç, sonra complete = false) — yarış sonu yine eksik kalır.
+        if (dropped.get() != dropsAtReplay || dirtyOverflow) noteIncomplete();
+    }
+
+    /**
+     * Bellek bu kuşağa YENİDEN kuyruğa alınır (3-2, yalnız ayar açıkken): {@link EvalStateSource#replay()} + bu kuşakta
+     * yazılmış kurtarma / tür anahtarlarının güncel değeri (bellekten çıkmış bir anahtarın "sıfırlama" işlemi düştüyse ya da
+     * kancası istisna verdiyse tablo bayat-yüksek kalırdı; oynatma yalnız bellekteki anahtarları gezer). Yazıcı iş
+     * parçacığında; asla fırlatmaz — hata = oynatılmadı ({@link #replaySeq} 0, sonraki turda yeniden).
+     */
+    private void replayNow() {
+        EvalStateSource src = source;
+        if (src == null) return;
+        long d = dropped.get();
+        long h = hookFailures();
+        try {
+            src.replay();
+            for (String k : new ArrayList<>(recoveryLane.seen.keySet())) {
+                int c = k.indexOf(':');
+                if (c > 0) recovery(k, k.substring(0, c), k.substring(c + 1));
+            }
+            for (String t : new ArrayList<>(typeLane.seen.keySet())) typeState(t);
+        } catch (RuntimeException e) {
+            log.debug("Kalıcı değerlendirme durumu: bellek yeniden oynatılamadı (sonraki turda yeniden): {}", shortText(e));
+            return;
+        }
+        dropsAtReplay = d;
+        hooksAtReplay = h;
+        replaySeq = Math.max(1L, seqGen.get());
+        lastReplayAtMs = safeClock();
+        replayRateLimited = false;
+    }
+
+    /**
+     * Yazıcı turu: ayar açık, kuşak tutuluyor, eksik ve oynatılmamış (ayar kuşak ortasında açıldı / düşüş yeniden kurdu) →
+     * bir kez oynat. Kuyruk yarıdan doluyken beklenir (oynatma yeni düşüş üretmesin).
+     */
+    private void maybeReplay() {
+        if (myGen <= 0 || complete || replaySeq != 0 || !readEnabled()) return;
+        if (dirtyOverflow) {
+            // L-5: kirli taşma yalnız kuşak değişiminde temizlenir — aynı kuşakta oynatma asla eksiksiz yapmaz. Boşluk istenir
+            // (yeni kuşak + tam oynatma); seyreltilmiş: taşma yinelenirse her turda kuşak değişmesin.
+            if (!gapRequested && !recentReplay()) gapRequested = true;
+            return;
+        }
+        if (replayRateLimited && recentReplay()) return;
+        if (pendingSize() >= Math.max(1, maxPending / 2)) return;
+        replayNow();
+    }
+
+    /** Son başarılı oynatma {@link #REREPLAY_MIN_INTERVAL_MS}'ten yakın mı (kaydedici saati; saat geri gittiyse hayır). */
+    private boolean recentReplay() {
+        long last = lastReplayAtMs;
+        if (last == Long.MIN_VALUE) return false;
+        long now = safeClock();
+        return now >= last && now - last < REREPLAY_MIN_INTERVAL_MS;
+    }
+
+    /** İşaret sütunları bilinen eksik mi — eksikse {@link #TABLE_RECHECK_MS}'de bir yeniden bakar (yalnız ayar açıkken çağrılır). */
+    private boolean columnsKnownMissing() {
+        if (!markerColumnsMissing) return false;
+        long n = System.nanoTime();
+        if (n - nextColumnsCheckNs < 0) return true;
+        nextColumnsCheckNs = n + TimeUnit.MILLISECONDS.toNanos(TABLE_RECHECK_MS);
+        try {
+            if (sql.markerColumnsReadable()) {
+                markerColumnsMissing = false;
+                log.info("Kalıcı değerlendirme durumu: devir işareti sütunları hazır — işaretli nabız başlıyor");
+                return false;
+            }
+        } catch (RuntimeException e) {
+            log.debug("Kalıcı değerlendirme durumu: işaret sütunları denetlenemedi: {}", shortText(e));
+        }
+        return true;
+    }
+
+    /**
+     * Bir 3-2 ifadesi {@code BadSqlGrammarException} verdi: tablolar var ama işaret sütunları okunamıyorsa sütunlar eksik
+     * (ilk açılışın ilk saniyeleri / yama düştü) → true (çağıran 3-1 ifadesine düşer). Tablolar yoksa / sütunlar
+     * okunabiliyorsa false (çağıran özgün istisnayı fırlatır — 3-1 yolu karar verir).
+     */
+    private boolean detectColumnsMissing() {
+        if (!tablesPresent()) return false;
+        boolean readable;
+        try {
+            readable = sql.markerColumnsReadable();
+        } catch (RuntimeException e) {
+            return false;
+        }
+        if (readable) return false;
+        if (!markerColumnsMissing) {
+            log.info("Kalıcı değerlendirme durumu: devir işareti sütunları henüz yok — 3-1 ifadeleri kullanılıyor, devirde "
+                    + "yükleme 'columns_missing'; 60 sn'de bir yeniden denenecek");
+        }
+        markerColumnsMissing = true;
+        nextColumnsCheckNs = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(TABLE_RECHECK_MS);
+        return true;
+    }
+
+    private boolean readEnabled() {
+        try {
+            return readEnabled.getAsBoolean();
+        } catch (RuntimeException e) {
+            return false;   // okuma hatası = kapalı (güvenli taraf)
+        }
+    }
+
     private boolean acquire(long now, long epoch) {
         // Her CAS denemesinden ÖNCE: lider ipucu, liderlik dönemi, kip, kapanış (bulgu #1) — kiraya bağlı CAS ayrıca aynı
         // ifadede kiranın bu pod'da olduğunu ister.
-        long g = sql.acquireGeneration(writer, now, leaseOwnerOrNull(),
-                () -> epoch == leadershipEpoch.get() && !closing && !fencedOut && leaderHint() && mode().writes());
+        BooleanSupplier wanted =
+                () -> epoch == leadershipEpoch.get() && !closing && !fencedOut && leaderHint() && mode().writes();
+        String lease = leaseOwnerOrNull();
+        boolean read = readEnabled();
+        boolean columnsMissing = false;
+        EvalStateSql.PriorGeneration prior = null;
+        long g;
+        if (read && !columnsKnownMissing()) {
+            // 3-2: CAS'ın yerini aldığı satır yakalanır (süreklilik denetimi); sütunlar yoksa 3-1 CAS'ına düşülür.
+            EvalStateSql.Acquired a = null;
+            try {
+                a = sql.acquireGenerationWithPrior(writer, now, lease, wanted);
+            } catch (BadSqlGrammarException e) {
+                if (!detectColumnsMissing()) throw e;
+            }
+            if (a != null) {
+                g = a.gen();
+                prior = a.prior();
+            } else {
+                columnsMissing = true;
+                g = sql.acquireGeneration(writer, now, lease, wanted);
+            }
+        } else {
+            columnsMissing = read;
+            g = sql.acquireGeneration(writer, now, lease, wanted);
+        }
         if (g <= 0) {
             backoff();
             return false;
@@ -1092,6 +1440,7 @@ public class EvalStateRecorder implements EvalStateSink, ApplicationContextAware
         if (epoch != leadershipEpoch.get()) return false;   // olay araya girdi: bu kuşak kullanılmaz (zararsız boşluk)
         myGen = g;
         genAcquiredMs = now;
+        resetCompleteness();
         long nowNs = System.nanoTime();
         nextHeartbeatNs = nowNs;
         nextVerifyNs = nowNs + TimeUnit.MILLISECONDS.toNanos(verifyMs);
@@ -1107,7 +1456,98 @@ public class EvalStateRecorder implements EvalStateSink, ApplicationContextAware
             }
             log.info("Kalıcı değerlendirme durumu: kuşak {} alındı (yazan {})", g, writer);
         }
+        // 3-2: MOS yükleme kapısını kurduysa (belirteç > 0) — CAS'tan sonra, önceki sahip çitlenmişken — oku ve uygula.
+        // Ayar kapalıyken belirteç 0'dır (MOS kurmaz): yalnız bellek okuması, SQL yok (J-1).
+        loadAfterAcquire(epoch, prior, columnsMissing, now);
+        if (readEnabled()) replayNow();   // yeni kuşak, bir tam oynatma boşaltılınca eksiksiz (aynı boşaltmada yazılır)
         return true;
+    }
+
+    /**
+     * Devir yükü (tasarım R3-2 §3.1): belirteç &gt; 0 iken süreklilik → okuma → uygulama ya da "yüklenmedi" raporu. Yazıcı iş
+     * parçacığında, {@link #flushLock} altında; asla fırlatmaz. Uygulama / atma kararını MOS kapısı verir (J-3).
+     */
+    private void loadAfterAcquire(long epoch, EvalStateSql.PriorGeneration prior, boolean columnsMissing, long now) {
+        EvalStateSource src = source;
+        if (src == null) return;
+        long token = tokenOf(src);
+        if (token <= 0) return;
+        try {
+            if (!readEnabled()) {
+                // Kapı kurulduktan sonra ayar kapandı — 20 sn beklemeden kapıyı aç (bellek çağrısı, SQL yok).
+                src.evalLoadSkipped(token, EvalLoadReport.none(now, writer, EvalLoadReport.REASON_SETTING_TURNED_OFF));
+                return;
+            }
+            if (epoch != leadershipEpoch.get()) return;   // olay araya girdi: MOS belirteci zaten eskidi
+            EvalLoadContinuity.Decision c = EvalLoadContinuity.decide(prior, writer, now, columnsMissing);
+            if (c.tier() == EvalLoadContinuity.Tier.NONE) {
+                src.evalLoadSkipped(token, c.noneReport(now, writer));
+                return;
+            }
+            EvalStateLoader.Outcome o = EvalStateLoader.read(sql, c, token, () -> tokenOf(src), writer, now, maxLoadRows,
+                    src::windowLengthMsFor);
+            if (o.aborted()) return;   // belirteç eskidi (zaman aşımı / liderlik) — MOS raporunu yazdı
+            if (o.load() == null) {
+                if (o.failure() != null) {
+                    log.warn("Kalıcı değerlendirme durumu devirde okunamadı (kuşak {}) — yüklenmiyor, yeniden başlatma "
+                            + "semantiği: {}", c.fromGeneration(), o.failure());
+                }
+                src.evalLoadSkipped(token, o.skipped());
+                return;
+            }
+            src.applyEvalLoad(o.load());
+        } catch (RuntimeException e) {
+            // L-4: beklenmeyen hata (yük kaydı / uygulama istisnası) kapıyı 20 sn LOADING bırakmasın — hemen "okunamadı"
+            // (kapı yükü zaten bitirdiyse belirteç eskidir, MOS yok sayar). Yeniden başlatma semantiği.
+            // Yalnız istisna sınıfları (ileti değer / alan adı taşıyabilir).
+            log.warn("Kalıcı değerlendirme durumu devirde yüklenemedi — yüklenmiyor, yeniden başlatma semantiği: {}",
+                    EvalStateLoader.shortText(e));
+            try {
+                src.evalLoadSkipped(token, EvalLoadReport.none(now, writer, EvalLoadReport.REASON_READ_FAILED));
+            } catch (RuntimeException e2) {
+                log.debug("Kalıcı değerlendirme durumu: yükleme kapısı kapatılamadı: {}", shortText(e2));
+            }
+        }
+    }
+
+    private static long tokenOf(EvalStateSource src) {
+        try {
+            return src.evalLoadToken();
+        } catch (RuntimeException e) {
+            return 0L;
+        }
+    }
+
+    /**
+     * Son yükleme raporunu küme gözlemi {@link EvalLoadReport#OBSERVATION} olarak yayımlar (3-2, tasarım §8.2) — yalnız ayar
+     * açık, kip yazıyor, kapanış yok, depo var; rapor bu pod'un son yayımladığından YENİ ve {@code none/setting_off} değil
+     * (J-1: kapalıyken hiçbir yazım yok). Başarısız yayın {@link #PUBLISH_RETRY_MS}'de bir yeniden denenir. Asla fırlatmaz.
+     */
+    private void publishLoadReport() {
+        try {
+            ClusterHealthStore store = observationStore;
+            EvalStateSource src = source;
+            if (store == null || src == null || closing || stopped) return;
+            if (!readEnabled() || !mode().writes()) return;
+            EvalLoadReport r = src.lastEvalLoad();
+            if (r == null || r.atMs() <= lastPublishedLoadAtMs) return;
+            if (EvalLoadReport.OUTCOME_NONE.equals(r.outcome()) && EvalLoadReport.REASON_SETTING_OFF.equals(r.reason())) {
+                lastPublishedLoadAtMs = r.atMs();
+                return;
+            }
+            long nowNs = System.nanoTime();
+            if (nowNs - nextPublishTryNs < 0) return;
+            String pod = r.pod() != null ? r.pod() : writer;
+            ClusterHealthStore.Publish p = store.publish(EvalLoadReport.OBSERVATION, pod, r.atMs(), r.payload(),
+                    EvalStateSql.iso(r.atMs()));
+            if (p == ClusterHealthStore.Publish.FAILED) {
+                nextPublishTryNs = nowNs + TimeUnit.MILLISECONDS.toNanos(PUBLISH_RETRY_MS);
+                return;
+            }
+            lastPublishedLoadAtMs = r.atMs();
+        } catch (RuntimeException e) {
+            log.debug("Kalıcı değerlendirme durumu: yükleme raporu yayımlanamadı: {}", shortText(e));
+        }
     }
 
     private String leaseOwnerOrNull() {
@@ -1139,6 +1579,7 @@ public class EvalStateRecorder implements EvalStateSink, ApplicationContextAware
             if (!fencedOut) return true;
             fencedOut = false;
             myGen = 0L;
+            resetCompleteness();
         } finally {
             rw.writeLock().unlock();
         }
@@ -1177,6 +1618,7 @@ public class EvalStateRecorder implements EvalStateSink, ApplicationContextAware
         try {
             if (myGen != gen) return;
             myGen = 0L;
+            resetCompleteness();
             fencedOut = true;
             nextHealCheckMs = safeClock() + HEARTBEAT_MS;
             clearLanes();
@@ -1409,10 +1851,184 @@ public class EvalStateRecorder implements EvalStateSink, ApplicationContextAware
             boolean active = m.writes() && !closing && !fencedOut && !tableMissing && gen > 0 && leaderHint();
             return new Status(m.key(), active, writer, gen > 0 ? gen : null, pendingSize(), dropped.get(), flushes.get(),
                     writeFailures.get(), lastFlushMs, lastFailureMs, lastFailure, tableMissing, inherited, lastVerify,
-                    fencedOut, hookFailures());
+                    fencedOut, hookFailures(), readEnabled(), handoverReady(), lastLoadOrNull(), lastHandover);
         } catch (RuntimeException e) {
             return null;
         }
+    }
+
+    private EvalLoadReport lastLoadOrNull() {
+        EvalStateSource src = source;
+        if (src == null) return null;
+        try {
+            return src.lastEvalLoad();
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    // ── Devirde okuma: GAINED / kapanış yüzü (3-2, tasarım §3.1 / §5.1) — hepsi yalnız bellek, asla fırlatmaz ─────────
+
+    /**
+     * {@inheritDoc} Kaydedici kapanıyor / durduruldu → {@code recorder_closing}; kip {@code off} → {@code mode_off}; tablolar
+     * bilinen eksik → {@code tables_missing}; aksi hâlde null (hazır). Ayarı MOS kendisi sorar.
+     */
+    @Override
+    public String loadBlocker() {
+        try {
+            if (closing || stopped) return EvalLoadReport.REASON_RECORDER_CLOSING;
+            if (!mode().writes()) return EvalLoadReport.REASON_MODE_OFF;
+            if (tableMissing) return EvalLoadReport.REASON_TABLES_MISSING;
+            return null;
+        } catch (RuntimeException e) {
+            return EvalLoadReport.REASON_RECORDER_CLOSING;
+        }
+    }
+
+    /**
+     * {@inheritDoc} Ayar açık ∧ kip yazıyor ∧ kapanmıyor ∧ çit dışı değil ∧ tablo / işaret sütunları var ∧ kuşak tutuluyor ∧
+     * kuşak EKSİKSİZ ∧ lider ipucu (çağıran {@code shutdownStarted}'dan ÖNCE sorar).
+     */
+    @Override
+    public boolean handoverReady() {
+        try {
+            return readEnabled() && mode().writes() && !closing && !stopped && !fencedOut && !tableMissing
+                    && !markerColumnsMissing && myGen > 0 && complete && leaderHint();
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
+    /** {@inheritDoc} Kuyruğa alma kapısı "ipucu ∨ devir" der; RELEASED (her liderlik olayı) kapatır. */
+    @Override
+    public void openHandover() {
+        handoverOpen = true;
+        handoverAborted = false;
+    }
+
+    /**
+     * {@inheritDoc} Daemon yardımcı iş parçacığı {@value #HANDOVER_THREAD_NAME}, en çok {@code budgetMs} birleştirilir
+     * (kapanan iş parçacığı veritabanına dokunmaz). Bütçe dolarsa {@link HandoverResult#BUDGET_EXCEEDED} ve yardımcı işaret
+     * ifadesine başlamadıysa yazmaz (geç gelen işaret tutarlıdır — son ifade, verilerden sonra; halefin CAS'ından sonra
+     * {@code WHERE gen = benim} 0 satır). Sonuç {@link Status#lastHandover()}'da ve bir INFO satırında.
+     */
+    @Override
+    public HandoverResult flushForHandover(long budgetMs, boolean quiet) {
+        HandoverResult result;
+        long t0 = System.nanoTime();
+        long gen = myGen;
+        AtomicReference<HandoverResult> out = new AtomicReference<>();
+        AtomicLong written = new AtomicLong();
+        try {
+            if (!readEnabled()) return HandoverResult.SKIPPED;   // J-1: ayar kapalıyken devir adımı yok
+            handoverAborted = false;
+            long budget = Math.max(0L, budgetMs);
+            long deadlineNs = t0 + TimeUnit.MILLISECONDS.toNanos(budget);
+            Thread t = new Thread(() -> out.set(handoverFlush(deadlineNs, quiet, written)), HANDOVER_THREAD_NAME);
+            t.setDaemon(true);
+            t.start();
+            try {
+                t.join(Math.max(1L, budget));
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            if (t.isAlive()) {
+                handoverAborted = true;   // yardımcı işaret ifadesine başlamadıysa yazmaz
+                result = HandoverResult.BUDGET_EXCEEDED;
+            } else {
+                result = out.get() != null ? out.get() : HandoverResult.FLUSH_FAILED;
+            }
+        } catch (RuntimeException | Error e) {
+            result = HandoverResult.FLUSH_FAILED;
+        }
+        lastHandover = result;
+        try {
+            long ms = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t0);
+            if (result == HandoverResult.WRITTEN) {
+                log.info("Devir öncesi kalıcı durum boşaltıldı ve işaretlendi (kuşak {}, {} işlem, {} ms)", gen, written.get(),
+                        ms);
+            } else {
+                log.info("Devir öncesi kalıcı durum işaretlenemedi ({}) — halef yalnız gözlemleri ya da hiçbir durumu "
+                        + "yüklemez", result.key());
+            }
+        } catch (RuntimeException e) {
+            // günlük yazılamadı — sonuç yine döner (asla fırlatmaz)
+        }
+        return result;
+    }
+
+    /**
+     * Devir boşaltması (yardımcı iş parçacığında): kilit → kuşak → işaretli nabız (çit) → dört tablo (lider ipucu
+     * denetlenmez; dönem denetlenir) → kendi zincirlerini bırak → (durgun ∧ eksiksiz ∧ bekleyen yok ∧ düşüş yok ∧ bütçe
+     * dolmadı) ise devir işareti SON ifade.
+     */
+    HandoverResult handoverFlush(long deadlineNs, boolean quiet, AtomicLong written) {
+        long remaining = deadlineNs - System.nanoTime();
+        boolean locked;
+        try {
+            locked = flushLock.tryLock(Math.max(0L, remaining), TimeUnit.NANOSECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return HandoverResult.BUDGET_EXCEEDED;
+        }
+        if (!locked) return HandoverResult.BUDGET_EXCEEDED;
+        try {
+            long gen = myGen;
+            if (gen <= 0) return HandoverResult.NO_GENERATION;
+            long epoch = leadershipEpoch.get();
+            long now = safeClock();
+            long droppedAtStart = dropped.get();
+            if (!heartbeat(gen, now)) {
+                fenced(gen);
+                return HandoverResult.FENCED;
+            }
+            int n = writeLanes(gen, epoch, now);
+            if (n < 0 || myGen != gen) return HandoverResult.NO_GENERATION;
+            written.set(n);
+            sql.abandonOwn(writer, gen, now);
+            if (!quiet) return HandoverResult.NOT_QUIESCENT;
+            // Zincir kuyruğu sayılmaz (L-6): zincirler yüklenmez (D-2), takipçi listesi için kendi zincirleri zaten bırakıldı.
+            if (!complete || pendingSizeExceptChains() > 0 || dropped.get() != droppedAtStart) {
+                return HandoverResult.INCOMPLETE;
+            }
+            if (handoverAborted || System.nanoTime() - deadlineNs > 0) return HandoverResult.BUDGET_EXCEEDED;
+            if (!sql.handoverMark(gen, writer, safeClock())) return HandoverResult.FENCED;
+            handoverMarked = true;   // L-3: bundan sonra flushLocked hiçbir şey yazmaz (sonraki liderlik olayına dek)
+            return HandoverResult.WRITTEN;
+        } catch (RuntimeException e) {
+            failure(e, safeClock());
+            return HandoverResult.FLUSH_FAILED;
+        } finally {
+            flushLock.unlock();
+        }
+    }
+
+    /** Tutulan kuşak eksiksiz mi (3-2; testler / çok pod düzenekleri). */
+    public boolean generationComplete() {
+        return complete;
+    }
+
+    /** Kaydedici saatiyle son "kalıcı" an (0 = bilinmiyor; 3-2). */
+    public long durableAsOfMs() {
+        return durableAsOfMs;
+    }
+
+    /** İşaret sütunları bilinen eksik mi (3-2). */
+    public boolean markerColumnsMissing() {
+        return markerColumnsMissing;
+    }
+
+    /**
+     * Devir işareti sütunları okunamıyor mu (ilk açılışın ilk saniyeleri ya da şema yaması düştü) — Sistem Sağlığı "Devir
+     * hazırlığı" nedenini doğru söylesin (inceleme 2026-10-28, ekran L-3). Yalnız bellek.
+     */
+    public boolean markerColumnsMissingNow() {
+        return markerColumnsMissing;
+    }
+
+    /** Son devir boşaltması sonucu (null = hiç; 3-2). */
+    public HandoverResult lastHandover() {
+        return lastHandover;
     }
 
     /** Kanca + kuyruğa alma istisnaları: MOS kancalarının sayacı (kaynak) + bu kaydedicinin yakaladıkları. */

@@ -166,6 +166,10 @@ public final class AppSettingsCatalog {
         // verify (yazım + 5 dk'da bir bellek ↔ tablo doğrulaması, varsayılan). Hiçbir kip alarm kararını değiştirmez; off = DB
         // yükü için acil kapatma. CANLI (EvalStateRecorder); kurum geneli → GLOBAL_ONLY (aşağıda). Anahtar: EvalStateMode.SETTING_KEY.
         new Setting("site.monitor.eval-state.mode",              "monitoring", Type.ENUM, List.of("off", "write", "verify")),
+        // Çok pod Sürüm 3-2 (2026-10-28, plan 3b, kullanıcı kararı D-1): devirde yeni tarama lideri önceki liderin kaydettiği
+        // değerlendirme durumunu yükler (temiz devirde tam, çökmede yalnız gözlemler). VARSAYILAN KAPALI; kapalı = 20.168.1.
+        // CANLI (EvalStateReadSwitch); kurum geneli → GLOBAL_ONLY (aşağıda). Anahtar: EvalStateReadSwitch.KEY.
+        new Setting("site.monitor.eval-state.read-enabled",      "monitoring", Type.BOOL),
         new Setting("site.monitor.http.rdap-base-url",           "monitoring", Type.STRING),
         // Sayfa Bütünlüğü (9. tür) — alarm aç/kapa + kaynak-doğrulama eşzamanlılığı (nezaket + tek-pod yük).
         new Setting("site.monitor.page.alert-enabled",           "monitoring", Type.BOOL),
@@ -711,7 +715,9 @@ public final class AppSettingsCatalog {
         // 2026-10-23 (çok pod Sürüm 3-1): kalıcı değerlendirme durumu kipi (DB yazım yükü + doğrulama) ve lider erteleme /
         // tur bırakma kuralı — ikisi de TÜM pod'ların yükünü ve iş yerleşimini belirler; kurum geneli karar.
         "site.monitor.eval-state.mode",
-        "site.monitor.scheduler.leader-yield.enabled"
+        "site.monitor.scheduler.leader-yield.enabled",
+        // 2026-10-28 (çok pod Sürüm 3-2): devirde okuma — her pod'un devir davranışını belirler; kurum geneli karar.
+        "site.monitor.eval-state.read-enabled"
     ));
 
     /**

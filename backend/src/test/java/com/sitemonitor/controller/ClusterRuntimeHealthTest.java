@@ -168,6 +168,163 @@ class ClusterRuntimeHealthTest {
         assertThat(ok).containsEntry("fenced", false).containsEntry("hook_failures", 0L);
     }
 
+    // ── Çok pod Sürüm 3-2 (2026-10-28, paket C; tasarım R3-2 §8.3): devirde yükleme alanları — hepsi EKLENTİ ────────────
+
+    /** 3-1'in {@code this_pod} alan adları (sırasıyla) — 3-2 yalnız SONA ekler. */
+    static final List<String> THIS_POD_31 = List.of("mode", "active", "writer", "writer_pod", "generation", "pending", "dropped",
+            "flushes", "write_failures", "last_flush_at", "last_failure_at", "last_failure", "table_missing", "fenced",
+            "hook_failures", "failing", "inherited", "last_verify");
+
+    static com.sitemonitor.service.evalstate.EvalLoadReport fullLoad() {
+        com.sitemonitor.service.evalstate.EvalLoad load = new com.sitemonitor.service.evalstate.EvalLoad(7L,
+                com.sitemonitor.service.evalstate.EvalLoad.TIER_FULL,
+                Map.of("PORT_DOWN:a.example.com", new com.sitemonitor.service.evalstate.EvalLoad.Recovery(2, NOW - 10_000)),
+                Map.of(), java.util.Set.of("PORT_DOWN"), java.util.Set.of("PORT_DOWN", "HTTP_DOWN"),
+                Map.of("PORT_DOWN", Map.of("a.example.com", new com.sitemonitor.service.evalstate.EvalLoad.SeedMark(false, NOW - 5_000))),
+                Map.of("PORT_DOWN", 60_000L),
+                new com.sitemonitor.service.evalstate.EvalLoad.Meta(11L, POD_B + "-0000000b", 12_000L, 3_000L, null, 85L));
+        return com.sitemonitor.service.evalstate.EvalLoadReport.applied(NOW - 30_000, "sitemonitor-a-0000000a", load)
+                .withWaits(140L, 2);
+    }
+
+    static ClusterHealthStore storeWithLoad(String verifyPayload, String loadPayload) {
+        ClusterHealthStore store = mock(ClusterHealthStore.class);
+        when(store.read(ClusterHealthStore.OBS_EVAL_STATE_VERIFY)).thenReturn(verifyPayload == null ? Optional.empty()
+                : Optional.of(new ClusterHealthStore.Observation(POD_B + "-0000000b", NOW - 60_000, verifyPayload, "x")));
+        when(store.read(com.sitemonitor.service.evalstate.EvalLoadReport.OBSERVATION)).thenReturn(loadPayload == null ? Optional.empty()
+                : Optional.of(new ClusterHealthStore.Observation("sitemonitor-a-0000000a", NOW - 30_000, loadPayload, "x")));
+        return store;
+    }
+
+    @Test
+    @DisplayName("3-2 J-1: ayar kapalı → yalnız EKLENTİ alanlar (read_enabled=false, load, this_pod.handover_ready=false / last_load / "
+            + "last_handover); 3-1 alanları ve sırası aynı; küme deposuna yalnız iki PK okuması, yazma yok")
+    @SuppressWarnings("unchecked")
+    void readOff_additiveFieldsOnly() {
+        EvalStateSink sink = mock(EvalStateSink.class);
+        when(sink.status()).thenReturn(new EvalStateSink.Status("verify", true, "sitemonitor-a-0000000a", 5L, 4, 1, 300, 2,
+                NOW - 1_000, NOW - 5_000, "X", false, null, null, false, 0L));
+        ClusterHealthStore store = storeWithLoad(snakePayload("ok", 0), null);
+        Map<String, Object> es = ClusterRuntimeHealth.evalState(sink, store, NOW, 300_000, true, false);
+        assertThat(es.keySet()).containsExactly("this_pod", "verify", "read_enabled", "load");
+        assertThat(es).containsEntry("read_enabled", false).containsEntry("load", null).doesNotContainKey("load_error");
+        Map<String, Object> p = (Map<String, Object>) es.get("this_pod");
+        List<String> expected = new java.util.ArrayList<>(THIS_POD_31);
+        expected.addAll(List.of("handover_ready", "last_load", "last_handover", "marker_columns_missing", "closing"));
+        assertThat(new java.util.ArrayList<>(p.keySet())).isEqualTo(expected);
+        assertThat(p).containsEntry("handover_ready", false).containsEntry("last_load", null).containsEntry("last_handover", null)
+                .containsEntry("marker_columns_missing", null).containsEntry("closing", false);
+        // 3-1 alanları 3-1 çağrı biçimiyle aynı değerler
+        Map<String, Object> old = ClusterRuntimeHealth.evalState(sink, store, NOW, 300_000, true);
+        for (String k : THIS_POD_31) assertThat(((Map<String, Object>) old.get("this_pod")).get(k)).as(k).isEqualTo(p.get(k));
+        assertThat(old.get("verify")).isEqualTo(es.get("verify"));
+        // okunacak değer yoksa kaydedici durumundan (16 bileşen = false)
+        assertThat(old).containsEntry("read_enabled", false);
+        org.mockito.Mockito.verify(store, org.mockito.Mockito.times(2)).read(ClusterHealthStore.OBS_EVAL_STATE_VERIFY);
+        org.mockito.Mockito.verify(store, org.mockito.Mockito.times(2)).read(com.sitemonitor.service.evalstate.EvalLoadReport.OBSERVATION);
+        org.mockito.Mockito.verifyNoMoreInteractions(store);
+    }
+
+    @Test
+    @DisplayName("3-2: küme yükleme gözlemi — sonuç, sayılar, beklemeler, gözlemleyen pod, kaynak pod adı; bu pod'un last_load aynı alan adları")
+    @SuppressWarnings("unchecked")
+    void loadObservation() {
+        com.sitemonitor.service.evalstate.EvalLoadReport r = fullLoad();
+        EvalStateSink sink = mock(EvalStateSink.class);
+        when(sink.status()).thenReturn(new EvalStateSink.Status("verify", true, "sitemonitor-a-0000000a", 12L, 0, 0, 3, 0,
+                NOW - 1_000, null, null, false, null, null, false, 0L, true, true, r,
+                com.sitemonitor.service.evalstate.HandoverResult.NOT_QUIESCENT));
+        Map<String, Object> es = ClusterRuntimeHealth.evalState(sink, storeWithLoad(null, r.payload()), NOW, 300_000, true, true);
+        assertThat(es).containsEntry("read_enabled", true).doesNotContainKey("load_error");
+        Map<String, Object> l = (Map<String, Object>) es.get("load");
+        assertThat(l).containsEntry("outcome", "full").containsEntry("reason", null).containsEntry("attempted_tier", "full")
+                .containsEntry("from_generation", 11L).containsEntry("from_pod", POD_B + "-0000000b")
+                .containsEntry("from_pod_name", POD_B).containsEntry("pod_name", "sitemonitor-a")
+                .containsEntry("recovery_counters", 1).containsEntry("suppressions", 1).containsEntry("round_seen", 2)
+                .containsEntry("window_types", 1).containsEntry("window_domains", 1).containsEntry("max_wait_ms", 140L)
+                .containsEntry("waiters", 2).containsEntry("handover_age_ms", 12_000L)
+                .containsEntry("observed_by", "sitemonitor-a-0000000a").containsEntry("observed_by_pod", "sitemonitor-a")
+                .containsEntry("age_seconds", 30L);
+        assertThat((String) l.get("observed_at")).matches("\\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\d");
+        assertThat(l.get("at")).isEqualTo(ClusterRuntimeHealth.iso(NOW - 30_000));
+        Map<String, Object> p = (Map<String, Object>) es.get("this_pod");
+        assertThat(p).containsEntry("handover_ready", true).containsEntry("last_handover", "not_quiescent");
+        Map<String, Object> last = (Map<String, Object>) p.get("last_load");
+        assertThat(last.keySet()).as("bu pod'un son yüklemesi = küme gözlemiyle aynı alan adları (gözlem alanları hariç)")
+                .containsExactlyElementsOf(l.keySet().stream()
+                        .filter(k -> !List.of("observed_by", "observed_by_pod", "observed_at", "age_seconds").contains(k)).toList());
+        assertThat(last.keySet()).containsAll(com.sitemonitor.service.evalstate.EvalLoadReport.FIELDS);
+        assertThat(last).containsEntry("outcome", "full");
+        // camelCase / ek alanlı yük de okunur; bilinmeyen alanlar yok sayılır
+        String extra = r.payload().replace("{\"at_ms\"", "{\"future_field\":1,\"at_ms\"");
+        assertThat((Map<String, Object>) ClusterRuntimeHealth.evalState(null, storeWithLoad(null, extra), NOW, 300_000, null, true)
+                .get("load")).containsEntry("outcome", "full");
+    }
+
+    @Test
+    @DisplayName("3-2: yükleme gözlemi okunamadı / bozuk / sonuçsuz / depo yok → load_error (bilinmiyor, asla 'yüklenmedi'); "
+            + "doğrulama okuması düşse de yükleme okunur")
+    void loadError() {
+        ClusterHealthStore broken = mock(ClusterHealthStore.class);
+        when(broken.read(ClusterHealthStore.OBS_EVAL_STATE_VERIFY)).thenReturn(Optional.empty());
+        when(broken.read(com.sitemonitor.service.evalstate.EvalLoadReport.OBSERVATION)).thenThrow(
+                new org.springframework.jdbc.BadSqlGrammarException("x", "y", new java.sql.SQLException("no table")));
+        assertThat(ClusterRuntimeHealth.evalState(null, broken, NOW, 300_000, null, true)).containsEntry("load", null)
+                .containsEntry("load_error", "BadSqlGrammarException").containsEntry("verify", null);
+
+        assertThat(ClusterRuntimeHealth.evalState(null, storeWithLoad(null, "{\"outcome\":"), NOW, 300_000, null, true))
+                .containsEntry("load", null).containsEntry("load_error", "unreadable_payload");
+        assertThat(ClusterRuntimeHealth.evalState(null, storeWithLoad(null, "{\"at_ms\":1}"), NOW, 300_000, null, true))
+                .as("sonuç alanı yok").containsEntry("load_error", "unreadable_payload");
+        assertThat(ClusterRuntimeHealth.evalState(null, storeWithLoad(null, "[1]"), NOW, 300_000, null, true))
+                .containsEntry("load_error", "unreadable_payload");
+        assertThat(ClusterRuntimeHealth.evalState(null, null, NOW, 300_000, null, false))
+                .containsEntry("load", null).containsEntry("load_error", "unavailable").containsEntry("read_enabled", false);
+        // gözlem yok → hata değil
+        assertThat(ClusterRuntimeHealth.evalState(null, storeWithLoad(null, null), NOW, 300_000, null, true))
+                .containsEntry("load", null).doesNotContainKey("load_error");
+        // doğrulama okuması fırlasa da yükleme okunur
+        ClusterHealthStore verifyBroken = storeWithLoad(null, fullLoad().payload());
+        when(verifyBroken.read(ClusterHealthStore.OBS_EVAL_STATE_VERIFY)).thenThrow(new IllegalStateException("db"));
+        Map<String, Object> es = ClusterRuntimeHealth.evalState(null, verifyBroken, NOW, 300_000, null, true);
+        assertThat(es).containsEntry("verify_error", "IllegalStateException");
+        assertThat(es.get("load")).isNotNull();
+    }
+
+    @Test
+    @DisplayName("3-2 inceleme L-3: devir hazırlığının gerçek nedeni — işaret sütunları eksik (kaydedici), kaydedici kapanıyor; "
+            + "kaydedici değilse sütun bilgisi bilinmiyor (null); okunamazsa null")
+    @SuppressWarnings("unchecked")
+    void readinessDetail_columnsMissingAndClosing() {
+        EvalStateSink.Status st = new EvalStateSink.Status("verify", true, "sitemonitor-a-0000000a", 5L, 0, 0, 3, 0,
+                NOW - 1_000, null, null, false, null, null, false, 0L, true, false, null, null);
+        com.sitemonitor.service.evalstate.EvalStateRecorder rec = mock(com.sitemonitor.service.evalstate.EvalStateRecorder.class);
+        when(rec.status()).thenReturn(st);
+        when(rec.markerColumnsMissingNow()).thenReturn(true);
+        when(rec.loadBlocker()).thenReturn(null);
+        Map<String, Object> p = (Map<String, Object>) ClusterRuntimeHealth.evalState(rec, null, NOW, 300_000, true, true)
+                .get("this_pod");
+        assertThat(p).containsEntry("handover_ready", false).containsEntry("marker_columns_missing", true)
+                .containsEntry("closing", false);
+
+        when(rec.markerColumnsMissingNow()).thenReturn(false);
+        when(rec.loadBlocker()).thenReturn(com.sitemonitor.service.evalstate.EvalLoadReport.REASON_RECORDER_CLOSING);
+        p = (Map<String, Object>) ClusterRuntimeHealth.evalState(rec, null, NOW, 300_000, true, true).get("this_pod");
+        assertThat(p).containsEntry("marker_columns_missing", false).containsEntry("closing", true);
+
+        when(rec.loadBlocker()).thenReturn(com.sitemonitor.service.evalstate.EvalLoadReport.REASON_MODE_OFF);
+        when(rec.markerColumnsMissingNow()).thenThrow(new IllegalStateException("x"));
+        p = (Map<String, Object>) ClusterRuntimeHealth.evalState(rec, null, NOW, 300_000, true, true).get("this_pod");
+        assertThat(p).containsEntry("marker_columns_missing", null).containsEntry("closing", false);
+
+        EvalStateSink other = mock(EvalStateSink.class);
+        when(other.status()).thenReturn(st);
+        when(other.loadBlocker()).thenThrow(new IllegalStateException("y"));
+        p = (Map<String, Object>) ClusterRuntimeHealth.evalState(other, null, NOW, 300_000, true, true).get("this_pod");
+        assertThat(p).as("kaydedici değil → sütun bilgisi yok; kapanma okunamadı → null")
+                .containsEntry("marker_columns_missing", null).containsEntry("closing", null);
+    }
+
     @Test
     @DisplayName("R3-1 inceleme L4: koşucunun 'başka canlı pod' gözlemi yalnız lider kararından sonra ~1 dk dolu; son dolu değer ve zamanı "
             + "bellekte tutulur (other_live_pod_seen) — ekran sürekli 'bilinmiyor' demez; hiç görülmediyse alan yok")

@@ -17,6 +17,12 @@
 #        denenir; "mismatch" hemen hata), devirden sonra this_pod.inherited önceki kuşağı sayıyor. Doğrulama aralığı
 #        kısaltılır (SMOKE_EVAL_VERIFY_MS → SITE_MONITOR_EVAL_STATE_VERIFY_MS). Ardından (SMOKE_FLIP_BACK=1) eski lider
 #        yeniden açılır ve şimdiki lidere SIGTERM → kira geri döner, aynı denetim yeni kuşakta tekrarlanır;
+#     5b. (çok pod Sürüm 3-2, yalnız SMOKE_EVAL_READ=1) devirde okuma: ilk doğrulamadan sonra
+#        site.monitor.eval-state.read-enabled Genel Ayarlar uç noktasıyla açılır; iki pod ayarı görene ve lider
+#        "devir hazırlığı"nı (this_pod.handover_ready) bildirene dek beklenir. Her SIGTERM devrinde eski liderin günlüğünde
+#        "Devir öncesi kalıcı durum boşaltıldı ve işaretlendi", yeni liderde data.eval_state.load.outcome = "full"
+#        (önceki kuşaktan) ve eşitlemeden sonra doğrulama ok; sonra (SMOKE_EVAL_KILL=1) lidere SIGKILL → kira süresi
+#        dolunca devralan pod "observations" yükler (devir işareti yok), doğrulaması yine ok; öldürülen pod yeniden açılır;
 #     6. scripts/multipod-dup-check.sql → DUP_TOTAL = 0 ve STUCK_TOTAL = 0 (çift kontrol / bildirim / push / açık
 #        alarm / ONGOING kesinti yok, sonuçsuz QUEUED_RETRY yok).
 #   Kapsayıcılar ve ağ sonunda silinir (SMOKE_KEEP=1 bırakır); günlükler SMOKE_WORKDIR'e yazılır.
@@ -37,7 +43,9 @@
 #   SMOKE_MEMORY (1g), SMOKE_CPUS (2), SMOKE_WORKDIR, SMOKE_KEEP (0), SMOKE_STRICT_LOGS (0: günlükteki ERROR satırları
 #   uyarıdır; 1: hata), SMOKE_EVAL_STATE (auto: data.eval_state yoksa — R3-1 öncesi imaj — uyarı + adımlar atlanır;
 #   1: yoksa hata; 0: atla), SMOKE_EVAL_VERIFY_MS (60000; pod'lara doğrulama aralığı), SMOKE_EVAL_WAIT_S (4 × aralık + 60),
-#   SMOKE_FLIP_BACK (1: geri devir de denenir; 0: tek devir).
+#   SMOKE_FLIP_BACK (1: geri devir de denenir; 0: tek devir), SMOKE_EVAL_READ (0; 1: çok pod Sürüm 3-2 devirde okuma
+#   denetimleri — 3-2 imajı ister), SMOKE_EVAL_KILL (1: SMOKE_EVAL_READ=1 iken SIGKILL adımı da koşar; 0: atla),
+#   SMOKE_KILL_TAKEOVER_MAX_S (300: SIGKILL'den sonra kiranın el değiştirmesi için en uzun bekleme — kira 180 sn + yenileyici).
 # Gerekenler: docker, curl, bash. Yerel makinede koşulabilir (Git Bash dahil); prod/staging kümesine dokunmaz. JSON
 # alanları tek kullanımlık PostgreSQL kapsayıcısının json işleçleriyle okunur (jq gerekmez).
 # `set -e` bilerek YOK: denetimler hataları `err` ile toplayıp sonda tek karar verir (bir denetimin düşmesi ötekileri durdurmaz).
@@ -100,11 +108,20 @@ STRICT_LOGS="${SMOKE_STRICT_LOGS:-0}"
 EVAL_CHECK="${SMOKE_EVAL_STATE:-auto}"
 EVAL_VERIFY_MS="${SMOKE_EVAL_VERIFY_MS:-60000}"
 FLIP_BACK="${SMOKE_FLIP_BACK:-1}"
+EVAL_READ="${SMOKE_EVAL_READ:-0}"
+EVAL_KILL="${SMOKE_EVAL_KILL:-1}"
+KILL_TAKEOVER_MAX_S="${SMOKE_KILL_TAKEOVER_MAX_S:-300}"
+case "$EVAL_READ" in 0|1) ;; *) echo "::error::SMOKE_EVAL_READ 0 | 1 olmalı"; exit 2 ;; esac
+case "$EVAL_KILL" in 0|1) ;; *) echo "::error::SMOKE_EVAL_KILL 0 | 1 olmalı"; exit 2 ;; esac
+case "$KILL_TAKEOVER_MAX_S" in ''|*[!0-9]*) echo "::error::SMOKE_KILL_TAKEOVER_MAX_S sayı olmalı (sn)"; exit 2 ;; esac
 case "$EVAL_VERIFY_MS" in ''|*[!0-9]*) echo "::error::SMOKE_EVAL_VERIFY_MS sayı olmalı (ms)"; exit 2 ;; esac
 EVAL_WAIT_S="${SMOKE_EVAL_WAIT_S:-$(( EVAL_VERIFY_MS / 1000 * 4 + 60 ))}"
 case "$EVAL_WAIT_S" in ''|*[!0-9]*) echo "::error::SMOKE_EVAL_WAIT_S sayı olmalı (sn)"; exit 2 ;; esac
 case "$EVAL_CHECK" in auto|0|1) ;; *) echo "::error::SMOKE_EVAL_STATE auto | 0 | 1 olmalı"; exit 2 ;; esac
 EVAL_SKIP=0; [ "$EVAL_CHECK" = "0" ] && EVAL_SKIP=1
+if [ "$EVAL_READ" = "1" ] && [ "$EVAL_CHECK" = "0" ]; then
+  echo "::error::SMOKE_EVAL_READ=1 kalıcı durum denetimlerini ister — SMOKE_EVAL_STATE=0 ile birlikte kullanılamaz"; exit 2
+fi
 WORK="${SMOKE_WORKDIR:-$(mktemp -d 2>/dev/null || echo "./multipod-smoke-$$")}"
 mkdir -p "$WORK"
 
@@ -309,6 +326,94 @@ await_eval_verify() {
   return 0
 }
 
+# ── Devirde okuma (çok pod Sürüm 3-2, yalnız SMOKE_EVAL_READ=1) ──────────────────────────────
+# el_read <host> → EL_* değişkenleri: data.eval_state.read_enabled, this_pod.handover_ready / last_handover ve kümenin
+# son yükleme gözlemi data.eval_state.load (outcome, reason, from_generation, pod_name, sayılar). Dönüş 1 = okunamadı.
+EL_SQL="SELECT j #>> '{data,eval_state,read_enabled}', j #>> '{data,eval_state,this_pod,handover_ready}',
+  j #>> '{data,eval_state,this_pod,last_handover}', j #>> '{data,eval_state,load,outcome}',
+  j #>> '{data,eval_state,load,reason}', j #>> '{data,eval_state,load,from_generation}',
+  j #>> '{data,eval_state,load,pod_name}', j #>> '{data,eval_state,load,recovery_counters}',
+  j #>> '{data,eval_state,load,siblings}', j #>> '{data,eval_state,load_error}'"
+el_read() {
+  local f="$WORK/.el-body" tag row
+  EL_READ=""; EL_READY=""; EL_LAST=""; EL_OUT=""; EL_REASON=""; EL_FROM=""; EL_POD=""; EL_REC=""; EL_SIB=""; EL_ERR=""
+  api "$1" GET /api/admin/system > "$f"
+  if [ "$API_STATUS" != "200" ] || [ ! -s "$f" ]; then rm -f "$f"; return 1; fi
+  tag="smk$(rand_hex 4)"
+  row="$({ printf '%s FROM (SELECT $%s$' "$EL_SQL" "$tag"; cat "$f"; printf '$%s$::json AS j) s;\n' "$tag"; } \
+          | psql_pg 2>/dev/null | head -1)"
+  rm -f "$f"
+  [ -n "$row" ] || return 1
+  IFS='|' read -r EL_READ EL_READY EL_LAST EL_OUT EL_REASON EL_FROM EL_POD EL_REC EL_SIB EL_ERR <<< "$row"
+  return 0
+}
+
+# enable_eval_read — ayarı Genel Ayarlar uç noktasıyla açar; iki pod ayarı görene (≤ 10 sn ayar yenilemesi) ve lider
+# this_pod.handover_ready = true diyene (kuşak eksiksiz) dek en çok EVAL_WAIT_S bekler.
+enable_eval_read() {
+  local body t0 el last="Sistem Sağlığı henüz okunmadı" a_on="" b_on=""
+  body="$(api "$FOLLOWER" PUT /api/admin/general/settings '{"values":{"site.monitor.eval-state.read-enabled":"true"}}')"
+  if [ "$(api_status)" = "200" ] && printf '%s' "$body" | grep -q '"success":true'; then
+    ok "site.monitor.eval-state.read-enabled = true kaydedildi ($FOLLOWER üzerinden)"
+  else
+    err "devirde okuma ayarı kaydedilemedi (HTTP $(api_status)): $(printf '%s' "$body" | head -c 300)"; return 1
+  fi
+  t0="$(date +%s)"
+  while :; do
+    el=$(( $(date +%s) - t0 ))
+    a_on=""; b_on=""
+    if el_read "$FOLLOWER"; then
+      if [ -z "$EL_READ" ]; then err "Sistem Sağlığı yanıtında data.eval_state.read_enabled yok — imaj çok pod Sürüm 3-2 öncesi"; return 1; fi
+      b_on="$EL_READ"
+    fi
+    if el_read "$LEADER"; then
+      a_on="$EL_READ"
+      if [ "$a_on" = "true" ] && [ "$b_on" = "true" ] && [ "$EL_READY" = "true" ]; then
+        ok "iki pod ayarı görüyor; lider $LEADER devre hazır (this_pod.handover_ready, ~${el} sn)"; return 0
+      fi
+      last="lider read_enabled=${a_on:-?}, handover_ready=${EL_READY:-?}; takipçi read_enabled=${b_on:-?}"
+    else
+      last="lider Sistem Sağlığı okunamadı (HTTP ${API_STATUS:-?})"
+    fi
+    if [ "$el" -ge "$EVAL_WAIT_S" ]; then err "devirde okuma ${EVAL_WAIT_S} sn içinde hazır olmadı — son durum: $last"; return 1; fi
+    sleep 5
+  done
+}
+
+# await_eval_load <host> <beklenen sonuç> <önceki kuşak | ""> <etiket> — kümenin yükleme gözlemi BU pod'un (pod_name) ve
+# verilen önceki kuşaktan (from_generation) olana dek bekler; sonuç beklenenden farklıysa hata.
+await_eval_load() {
+  local host="$1" want="$2" from="$3" label="$4" t0 el last="gözlem henüz yok"
+  t0="$(date +%s)"
+  while :; do
+    el=$(( $(date +%s) - t0 ))
+    if el_read "$host"; then
+      if [ "$EL_POD" = "$host" ] && [ -n "$EL_OUT" ] && { [ -z "$from" ] || [ "$EL_FROM" = "$from" ]; }; then
+        if [ "$EL_OUT" = "$want" ]; then
+          ok "$label: devirde yüklenen durum '$EL_OUT'${EL_REASON:+ ($EL_REASON)} — kuşak ${EL_FROM:-?}'den, ${EL_REC:-0} kurtarma sayacı, ${EL_SIB:-0} DOWN kardeş"
+          return 0
+        fi
+        err "$label: devirde yüklenen durum '$EL_OUT'${EL_REASON:+ / $EL_REASON} (beklenen '$want') — RUNBOOK 'Kalıcı değerlendirme durumunu devirde okuma' → İzlenecekler"
+        return 1
+      fi
+      last="gözlem pod=${EL_POD:-—}, kuşak=${EL_FROM:-—}, sonuç=${EL_OUT:-—}${EL_ERR:+, hata $EL_ERR}"
+    else
+      last="Sistem Sağlığı okunamadı (HTTP ${API_STATUS:-?})"
+    fi
+    if [ "$el" -ge "$EVAL_WAIT_S" ]; then err "$label: ${EVAL_WAIT_S} sn içinde $host'un yükleme gözlemi görülmedi — son: $last"; return 1; fi
+    sleep 5
+  done
+}
+
+# handover_marked <eski lider> — eski liderin (kapanmış kapsayıcı) günlüğünde devir işareti satırı var mı.
+handover_marked() {
+  if docker logs "$(cname "$1")" 2>&1 | grep -q "Devir öncesi kalıcı durum boşaltıldı ve işaretlendi"; then
+    ok "$1 kirayı bırakmadan önce devir işaretini yazdı (günlükte 'Devir öncesi kalıcı durum boşaltıldı ve işaretlendi')"
+  else
+    err "$1 devir işaretini yazmadı — günlükte 'Devir öncesi kalıcı durum …' satırı: $(docker logs "$(cname "$1")" 2>&1 | grep 'Devir öncesi kalıcı durum' | tail -1)"
+  fi
+}
+
 # term_and_handover <lider> <takipçi> — lidere SIGTERM; HANDOVER_S (devir sn) / STOPPED_S (kapanış sn), olmadıysa boş.
 term_and_handover() {
   local from="$1" to="$2" t0 el i
@@ -431,11 +536,19 @@ if [ "$EVAL_SKIP" != "1" ]; then
   await_eval_verify "$LEADER" 1 "" "ilk lider $LEADER" && [ "$EVAL_SKIP" != "1" ] && GEN1="$ES_GEN"
 fi
 
+# ── 6c. Devirde okuma ayarı (çok pod Sürüm 3-2, SMOKE_EVAL_READ=1) ───────────────────────────
+LOAD_OUTS=""
+if [ "$EVAL_READ" = "1" ]; then
+  step "6c. Devirde okuma ayarı açılır (site.monitor.eval-state.read-enabled = true) — iki pod görür, lider devre hazır"
+  if [ "$EVAL_SKIP" = "1" ]; then err "SMOKE_EVAL_READ=1: data.eval_state yok — imaj çok pod Sürüm 3-2 öncesi"; else enable_eval_read; fi
+fi
+
 # ── 7. Lidere SIGTERM → devir ─────────────────────────────────────────────────────────────────
 step "7. Lidere ($LEADER) SIGTERM — devir ≤ ${HANDOVER_MAX_S} sn, kapanış ≤ ${SHUTDOWN_MAX_S} sn"
 t0_iso="$(iso_utc)"
 term_and_handover "$LEADER" "$FOLLOWER"
 handover="$HANDOVER_S"; stopped="$STOPPED_S"
+[ "$EVAL_READ" = "1" ] && [ "$EVAL_SKIP" != "1" ] && handover_marked "$LEADER"
 
 # ── 8. Yeni lider taramaya devam eder ─────────────────────────────────────────────────────────
 step "8. Yeni lider ($FOLLOWER) ${POST_HANDOVER_S} sn tarar"
@@ -448,6 +561,9 @@ after="$(psql_pg -c "SELECT (SELECT COUNT(*) FROM port_checks WHERE checked_at >
 if [ "$EVAL_SKIP" != "1" ]; then
   step "8b. Kalıcı değerlendirme durumu — yeni lider ($FOLLOWER): yeni kuşak, doğrulama 0 uyuşmazlık, devralınan satırlar"
   await_eval_verify "$FOLLOWER" $(( ${GEN1:-0} + 1 )) "$GEN1" "devirden sonra $FOLLOWER" && [ "$EVAL_SKIP" != "1" ] && GEN2="$ES_GEN"
+  if [ "$EVAL_READ" = "1" ] && [ "$EVAL_SKIP" != "1" ]; then
+    await_eval_load "$FOLLOWER" full "$GEN1" "devirden sonra $FOLLOWER" && LOAD_OUTS="full"
+  fi
 fi
 
 # ── 8c. Geri devir: eski lider yeniden açılır, şimdiki lidere SIGTERM ─────────────────────────
@@ -466,9 +582,46 @@ if [ "$FLIP_BACK" = "1" ]; then
     fi
     if [ "$EVAL_SKIP" != "1" ]; then
       await_eval_verify "$LEADER" $(( ${GEN2:-0} + 1 )) "$GEN2" "geri devirden sonra $LEADER" && [ "$EVAL_SKIP" != "1" ] && GEN3="$ES_GEN"
+      if [ "$EVAL_READ" = "1" ] && [ "$EVAL_SKIP" != "1" ]; then
+        handover_marked "$FOLLOWER"
+        await_eval_load "$LEADER" full "$GEN2" "geri devirden sonra $LEADER" && LOAD_OUTS="${LOAD_OUTS:+$LOAD_OUTS → }full"
+      fi
     fi
   else
     err "$LEADER yeniden açılamadı — geri devir denenmedi"
+  fi
+fi
+
+# ── 8d. Çökme: lidere SIGKILL → yalnız gözlemler (çok pod Sürüm 3-2, SMOKE_EVAL_READ=1 + SMOKE_EVAL_KILL=1) ──
+if [ "$EVAL_READ" = "1" ] && [ "$EVAL_KILL" = "1" ] && [ "$EVAL_SKIP" != "1" ]; then
+  CUR="$(lease_holder)"; OTHER=""
+  case "$CUR" in pod-a) OTHER=pod-b ;; pod-b) OTHER=pod-a ;; esac
+  if [ -z "$OTHER" ]; then
+    err "8d: geçerli kira sahibi yok ('${CUR:-—}') — SIGKILL adımı koşmadı"
+  else
+    step "8d. Çökme — lidere ($CUR) SIGKILL: devir işareti yok; kira süresi dolunca $OTHER devralır, YALNIZ GÖZLEMLERİ yükler (≤ ${KILL_TAKEOVER_MAX_S} sn)"
+    if [ "$(docker inspect -f '{{.State.Running}}' "$(cname "$OTHER")" 2>/dev/null)" != "true" ]; then
+      { docker start "$(cname "$OTHER")" >/dev/null 2>&1 && wait_ready "$OTHER"; } || err "$OTHER açılamadı"
+    fi
+    KGEN=""
+    es_read "$CUR" && KGEN="$ES_GEN"
+    [ -n "$KGEN" ] || warn "8d: $CUR'un kuşağı okunamadı — yükleme gözlemi kuşak denetimsiz beklenecek"
+    t0="$(date +%s)"; took=""
+    docker kill --signal KILL "$(cname "$CUR")" >/dev/null 2>&1 || err "$CUR öldürülemedi"
+    while :; do
+      el=$(( $(date +%s) - t0 ))
+      if [ "$(lease_holder)" = "$OTHER" ]; then took=$el; break; fi
+      [ "$el" -ge "$KILL_TAKEOVER_MAX_S" ] && break
+      sleep 5
+    done
+    if [ -z "$took" ]; then
+      err "SIGKILL'den sonra $OTHER ${KILL_TAKEOVER_MAX_S} sn içinde kirayı almadı"
+    else
+      ok "SIGKILL'den sonra $OTHER ${took} sn sonra kirayı aldı (kira süresi doldu)"
+      await_eval_load "$OTHER" observations "$KGEN" "SIGKILL sonrası $OTHER" && LOAD_OUTS="${LOAD_OUTS:+$LOAD_OUTS → }observations"
+      await_eval_verify "$OTHER" $(( ${KGEN:-0} + 1 )) "$KGEN" "SIGKILL sonrası $OTHER" || true
+    fi
+    { docker start "$(cname "$CUR")" >/dev/null 2>&1 && wait_ready "$CUR"; } || warn "$CUR SIGKILL'den sonra yeniden açılamadı (dedektör yine koşar)"
   fi
 fi
 
@@ -493,4 +646,4 @@ done
 
 echo
 if [ "$fail" -ne 0 ]; then echo "Çok pod duman testi BAŞARISIZ."; exit 1; fi
-echo "Çok pod duman testi: tamam (lider $LEADER → $FOLLOWER, devir ${handover} sn, kapanış ${stopped} sn${flip_back:+; geri devir $FOLLOWER → $LEADER ${flip_back} sn}${GEN1:+; kalıcı durum kuşakları $GEN1${GEN2:+ → $GEN2}${GEN3:+ → $GEN3}, doğrulama 0 uyuşmazlık})."
+echo "Çok pod duman testi: tamam (lider $LEADER → $FOLLOWER, devir ${handover} sn, kapanış ${stopped} sn${flip_back:+; geri devir $FOLLOWER → $LEADER ${flip_back} sn}${GEN1:+; kalıcı durum kuşakları $GEN1${GEN2:+ → $GEN2}${GEN3:+ → $GEN3}, doğrulama 0 uyuşmazlık}${LOAD_OUTS:+; devirde yüklenen: $LOAD_OUTS})."

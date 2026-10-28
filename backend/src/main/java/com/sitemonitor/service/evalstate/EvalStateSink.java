@@ -92,6 +92,57 @@ public interface EvalStateSink {
      */
     default void observationPruned(String alertType, SweepItem item) {}
 
+    // ── Devirde okuma ve bırakmadan önce boşaltma (2026-10-28, çok pod Sürüm 3-2 P0; tasarım R3-2 §3.5 / §5) ─────────
+    // Varsayılanlar = bugünkü davranış (NOOP ve eski uygulayıcılar değişmeden derlenir).
+
+    /** Devirde değerlendirmelerin durulmasını bekleme üst sınırı (ms; {@code MOS.awaitEvalQuiescent}). */
+    long HANDOVER_QUIESCE_MS = 300L;
+    /** Devir boşaltmasının üst sınırı (ms; {@link #flushForHandover} yardımcı iş parçacığı birleştirmesi). */
+    long HANDOVER_FLUSH_MS = 700L;
+    /**
+     * Devir adımının lider kirasının bırakılmasını EN ÇOK geciktirebileceği süre (ms) = {@link #HANDOVER_QUIESCE_MS} +
+     * {@link #HANDOVER_FLUSH_MS}. Kapanış bütçesi kapısı ({@code ShutdownBudgetGateTest}) bunu saniyeye yuvarlayıp ekler.
+     */
+    long HANDOVER_BUDGET_MS = 1_000L;
+
+    /**
+     * Bu pod'da yükleme yapılabilir mi — GAINED anında MOS sorar (yalnız bellek, veritabanı YOK). null = hazır (kip yazıyor,
+     * kapanmıyor, tablolar bilinen eksik değil); aksi hâlde {@link EvalLoadReport} neden kodu
+     * ({@link EvalLoadReport#REASON_MODE_OFF}, {@link EvalLoadReport#REASON_RECORDER_CLOSING},
+     * {@link EvalLoadReport#REASON_TABLES_MISSING} …). Varsayılan {@link EvalLoadReport#REASON_NO_RECORDER} (kaydedici yok).
+     */
+    default String loadBlocker() {
+        return EvalLoadReport.REASON_NO_RECORDER;
+    }
+
+    /**
+     * Zarif kapanışta tam devir yapılabilir mi — ayar AÇIK ∧ kuşak tutuluyor ∧ kuşak EKSİKSİZ ∧ çit dışı değil ∧ işaret
+     * sütunları var. Yalnız bellek; asla fırlatmaz. Varsayılan false (devir adımı koşmaz — bugünkü kapanış).
+     */
+    default boolean handoverReady() {
+        return false;
+    }
+
+    /**
+     * Devri aç: kapanış başladıktan sonra biten değerlendirmelerin işlemleri de kuyruğa alınsın (kuyruğa alma kapısı lider
+     * ipucu yerine "ipucu ∨ devir açık" der); RELEASED olayı kapatır. Yalnız bellek. Varsayılan: hiçbir şey.
+     */
+    default void openHandover() {
+    }
+
+    /**
+     * Bırakmadan önce boşalt: bekleyen her işlemi yazar, kendi zincir satırlarını bırakır ve — {@code quiet} ∧ kuşak eksiksiz
+     * ∧ bekleyen yok ∧ düşüş yok ise — devir işaretini SON deyim olarak yazar. Yardımcı bir iş parçacığında, en çok
+     * {@code budgetMs} beklenerek; asla fırlatmaz.
+     *
+     * @param budgetMs bekleme üst sınırı (çağıran {@link #HANDOVER_FLUSH_MS} geçer)
+     * @param quiet    değerlendirmeler durulduysa true ({@code MOS.awaitEvalQuiescent})
+     * @return sonuç; varsayılan {@link HandoverResult#SKIPPED}
+     */
+    default HandoverResult flushForHandover(long budgetMs, boolean quiet) {
+        return HandoverResult.SKIPPED;
+    }
+
     // ── Bağlama ve durum ────────────────────────────────────────────────────────────────────────────────────────────
 
     /**
@@ -129,11 +180,30 @@ public interface EvalStateSink {
      *                      lider ipucu true iken uzun süre true kalması = bu pod yazmıyor (R3-1 FX-STATE, SONA eklendi)
      * @param hookFailures  kanca / kuyruğa alma istisnaları (birikimli; MOS kancaları + kaydedicinin kendi yakaladıkları) —
      *                      karar etkilenmez ama ayna eksik kalabilir (R3-1 FX-STATE, SONA eklendi)
+     * @param readEnabled   bu pod devirde okuma ayarını AÇIK görüyor mu ({@link EvalStateReadSwitch}; çok pod Sürüm 3-2,
+     *                      SONA eklendi)
+     * @param handoverReady {@link #handoverReady()} — şu an zarif kapanışta tam devir mümkün mü (3-2)
+     * @param lastLoad      bu pod'un son yükleme raporu ({@link EvalStateSource#lastEvalLoad()}; null = açılıştan beri hiç
+     *                      liderlik kazanılmadı) (3-2)
+     * @param lastHandover  bu pod'un son devir boşaltması sonucu (null = hiç; yalnız kapanan pod yanıt verirken görünür) (3-2)
      */
     record Status(String mode, boolean active, String writer, Long generation,
                   long pending, long dropped, long flushes, long writeFailures,
                   Long lastFlushMs, Long lastFailureMs, String lastFailure, boolean tableMissing,
-                  Inherited inherited, EvalVerifyReport lastVerify, boolean fenced, long hookFailures) {
+                  Inherited inherited, EvalVerifyReport lastVerify, boolean fenced, long hookFailures,
+                  boolean readEnabled, boolean handoverReady, EvalLoadReport lastLoad, HandoverResult lastHandover) {
+
+        /**
+         * 3-1 (16 bileşenli) biçim — mevcut çağıranlar derlensin; {@code readEnabled = false}, {@code handoverReady = false},
+         * {@code lastLoad = null}, {@code lastHandover = null}.
+         */
+        public Status(String mode, boolean active, String writer, Long generation,
+                      long pending, long dropped, long flushes, long writeFailures,
+                      Long lastFlushMs, Long lastFailureMs, String lastFailure, boolean tableMissing,
+                      Inherited inherited, EvalVerifyReport lastVerify, boolean fenced, long hookFailures) {
+            this(mode, active, writer, generation, pending, dropped, flushes, writeFailures, lastFlushMs, lastFailureMs,
+                    lastFailure, tableMissing, inherited, lastVerify, fenced, hookFailures, false, false, null, null);
+        }
 
         /** Eski (14 bileşenli) biçim — mevcut çağıranlar derlensin; {@code fenced = false}, {@code hookFailures = 0}. */
         public Status(String mode, boolean active, String writer, Long generation,

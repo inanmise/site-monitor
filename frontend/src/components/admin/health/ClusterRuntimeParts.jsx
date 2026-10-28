@@ -1,7 +1,8 @@
 import { formatDate } from '../../../api/client'
 import ToneBadge from '../ToneBadge.jsx'
-import { relTime } from './healthModel.js'
-import { EVAL_VERIFY_TONE, EVAL_UNKNOWN_REASONS, SIDE_JOB_STATE_TONE, otherPodState } from './clusterRuntimeModel.js'
+import { relTime, formatDurationShort } from './healthModel.js'
+import { EVAL_VERIFY_TONE, EVAL_UNKNOWN_REASONS, SIDE_JOB_STATE_TONE, otherPodState, EVAL_LOAD_REASONS, HANDOVER_RESULTS,
+  HANDOVER_NOT_READY_FROM_REASON } from './clusterRuntimeModel.js'
 import { KvList, PodChip, SubTitle, WARN_T } from './HealthParts.jsx'
 
 /**
@@ -52,61 +53,64 @@ export function EvalVerifySection({ t, es }) {
         : v.level === 'stale' ? t('hmp.esStaleHint', relTime(v.observedAt, t) || formatDate(v.observedAt)) : null
   const measured = v.kinds.some((k) => k.measured)
   return (
-    <section data-slot="cluster-eval-verify" data-level={v.level} aria-labelledby="hmp-es-title" className="flex flex-col gap-1.5 border-t pt-2.5">
-      <SubTitle className="mt-0 text-[12px]"><span id="hmp-es-title">{t('hmp.esTitle')}</span><PodChip t={t} scope="cluster" /></SubTitle>
-      <KvList>
-        <dt>{t('hmp.esVerify')}</dt>
-        <dd data-slot="es-verify-status" data-level={v.level} className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 [overflow-wrap:anywhere]">
-          <ToneBadge tone={tone} className="h-auto max-w-full overflow-visible rounded-md font-semibold whitespace-normal [overflow-wrap:anywhere]">{t(VERIFY_LABEL[v.level] || 'hmp.esVerifyUnknown')}</ToneBadge>
-          {v.mismatches != null && (v.level === 'ok' || v.level === 'mismatch') && (
-            <span className={`min-w-0 [overflow-wrap:anywhere] ${v.level === 'mismatch' ? WARN_T : 'text-muted-foreground'}`} data-slot="es-verify-mismatches">
-              {t('hmp.esKindCount', v.mismatches, v.kinds.filter((k) => !k.measured).reduce((n, k) => n + (k.compared || 0), 0))}
-            </span>
+    <>
+      <section data-slot="cluster-eval-verify" data-level={v.level} aria-labelledby="hmp-es-title" className="flex flex-col gap-1.5 border-t pt-2.5">
+        <SubTitle className="mt-0 text-[12px]"><span id="hmp-es-title">{t('hmp.esTitle')}</span><PodChip t={t} scope="cluster" /></SubTitle>
+        <KvList>
+          <dt>{t('hmp.esVerify')}</dt>
+          <dd data-slot="es-verify-status" data-level={v.level} className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 [overflow-wrap:anywhere]">
+            <ToneBadge tone={tone} className="h-auto max-w-full overflow-visible rounded-md font-semibold whitespace-normal [overflow-wrap:anywhere]">{t(VERIFY_LABEL[v.level] || 'hmp.esVerifyUnknown')}</ToneBadge>
+            {v.mismatches != null && (v.level === 'ok' || v.level === 'mismatch') && (
+              <span className={`min-w-0 [overflow-wrap:anywhere] ${v.level === 'mismatch' ? WARN_T : 'text-muted-foreground'}`} data-slot="es-verify-mismatches">
+                {t('hmp.esKindCount', v.mismatches, v.kinds.filter((k) => !k.measured).reduce((n, k) => n + (k.compared || 0), 0))}
+              </span>
+            )}
+            {reason && <span className="min-w-0 text-muted-foreground [overflow-wrap:anywhere]">· {reason}</span>}
+          </dd>
+          {v.observedAt && (
+            <>
+              <dt>{t('hmp.esVerifiedBy')}</dt>
+              <dd data-slot="es-verified-by">{v.observedBy ? <PodName>{v.observedBy}</PodName> : '—'}
+                <span className="text-muted-foreground"> · {when(v.observedAt, t)}</span></dd>
+            </>
           )}
-          {reason && <span className="min-w-0 text-muted-foreground [overflow-wrap:anywhere]">· {reason}</span>}
-        </dd>
-        {v.observedAt && (
-          <>
-            <dt>{t('hmp.esVerifiedBy')}</dt>
-            <dd data-slot="es-verified-by">{v.observedBy ? <PodName>{v.observedBy}</PodName> : '—'}
-              <span className="text-muted-foreground"> · {when(v.observedAt, t)}</span></dd>
-          </>
-        )}
-        {v.generation != null && v.generation > 0 && (<><dt>{t('hmp.esGeneration')}</dt><dd data-slot="es-generation">{v.generation}</dd></>)}
-        {v.kinds.length > 0 && (
-          <>
-            <dt>{t('hmp.esKinds')}</dt>
-            <dd className="min-w-0 [overflow-wrap:anywhere]">
-              <ul data-slot="es-kinds" className="flex list-none flex-col gap-0.5">
-                {v.kinds.map((k) => {
-                  const warn = !k.measured && v.level === 'mismatch' && (k.mismatches || 0) > 0
-                  return (
-                    <li key={k.kind} data-slot="es-kind" data-kind={k.kind} data-warn={warn ? 'true' : undefined}
-                      className={`[overflow-wrap:anywhere] ${warn ? WARN_T : ''}`}>
-                      <span className="font-medium">{k.known && KIND_LABEL[k.kind] ? t(KIND_LABEL[k.kind]) : <PodName>{k.kind}</PodName>}</span>
-                      <span className={warn ? undefined : 'text-muted-foreground'}>
-                        {' · '}{t('hmp.esKindCount', k.mismatches ?? '—', k.compared ?? '—')}
-                        {Number(k.skipped) > 0 ? ` · ${t('hmp.esKindSkipped', k.skipped)}` : ''}
-                        {k.maxDelta != null ? ` · ${t('hmp.esMaxDelta', (k.maxDelta * 100).toFixed(1))}` : ''}
-                      </span>
-                    </li>
-                  )
-                })}
-              </ul>
-              {measured && <p className="mt-0.5 text-xs text-muted-foreground">{t('hmp.esMeasuredNote')}</p>}
-            </dd>
-          </>
-        )}
-        {v.firstMismatches.length > 0 && (
-          <>
-            <dt>{t('hmp.esFirstKeys')}</dt>
-            <dd data-slot="es-first-keys" className="font-mono text-xs [overflow-wrap:anywhere]">{v.firstMismatches.join(', ')}</dd>
-          </>
-        )}
-      </KvList>
-      {hint && <p className="text-[0.9em] text-muted-foreground" data-slot="es-verify-hint">{hint}</p>}
-      <p className="text-xs text-muted-foreground" data-slot="es-decision-note">{t('hmp.esDecisionNote')}</p>
-    </section>
+          {v.generation != null && v.generation > 0 && (<><dt>{t('hmp.esGeneration')}</dt><dd data-slot="es-generation">{v.generation}</dd></>)}
+          {v.kinds.length > 0 && (
+            <>
+              <dt>{t('hmp.esKinds')}</dt>
+              <dd className="min-w-0 [overflow-wrap:anywhere]">
+                <ul data-slot="es-kinds" className="flex list-none flex-col gap-0.5">
+                  {v.kinds.map((k) => {
+                    const warn = !k.measured && v.level === 'mismatch' && (k.mismatches || 0) > 0
+                    return (
+                      <li key={k.kind} data-slot="es-kind" data-kind={k.kind} data-warn={warn ? 'true' : undefined}
+                        className={`[overflow-wrap:anywhere] ${warn ? WARN_T : ''}`}>
+                        <span className="font-medium">{k.known && KIND_LABEL[k.kind] ? t(KIND_LABEL[k.kind]) : <PodName>{k.kind}</PodName>}</span>
+                        <span className={warn ? undefined : 'text-muted-foreground'}>
+                          {' · '}{t('hmp.esKindCount', k.mismatches ?? '—', k.compared ?? '—')}
+                          {Number(k.skipped) > 0 ? ` · ${t('hmp.esKindSkipped', k.skipped)}` : ''}
+                          {k.maxDelta != null ? ` · ${t('hmp.esMaxDelta', (k.maxDelta * 100).toFixed(1))}` : ''}
+                        </span>
+                      </li>
+                    )
+                  })}
+                </ul>
+                {measured && <p className="mt-0.5 text-xs text-muted-foreground">{t('hmp.esMeasuredNote')}</p>}
+              </dd>
+            </>
+          )}
+          {v.firstMismatches.length > 0 && (
+            <>
+              <dt>{t('hmp.esFirstKeys')}</dt>
+              <dd data-slot="es-first-keys" className="font-mono text-xs [overflow-wrap:anywhere]">{v.firstMismatches.join(', ')}</dd>
+            </>
+          )}
+        </KvList>
+        {hint && <p className="text-[0.9em] text-muted-foreground" data-slot="es-verify-hint">{hint}</p>}
+        <p className="text-xs text-muted-foreground" data-slot="es-decision-note">{t('hmp.esDecisionNote')}</p>
+      </section>
+      <EvalLoadSection t={t} load={es.load} />
+    </>
   )
 }
 
@@ -149,6 +153,7 @@ export function EvalRecorderRows({ t, es }) {
           </span>
         )}
       </dd>
+      <HandoverRows t={t} handover={es.handover} />
     </>
   )
 }
@@ -214,6 +219,135 @@ export function SideJobsRows({ t, sj }) {
             )}
           </span>
         )}
+      </dd>
+    </>
+  )
+}
+
+// ── Çok pod Sürüm 3-2 (2026-10-28, paket C; tasarım R3-2 §8.3) ──────────────────────────────────────────────────────
+
+/** Yükleme seviyesi → rozet metni. */
+const LOAD_BADGE = {
+  full: 'hmp.esLoad.outcome.full', observations: 'hmp.esLoad.outcome.observations', none: 'hmp.esLoad.outcome.none',
+  warn: 'hmp.esLoad.outcome.none', off: 'hmp.esLoad.outcome.off', empty: 'hmp.esLoad.outcome.empty',
+  unknown: 'hmp.esLoad.outcome.unknown', stale: 'hmp.esLoad.outcome.stale',
+}
+
+/**
+ * Yüklenen durumun YAŞI ("9 sn önce yazılmıştı") — devir işaretinin ya da son kalıcı yazımın yükleme anına uzaklığı
+ * (inceleme 2026-10-28, L-4: yükleme anı "Yükleyen pod" satırında zaten var). Bilinmiyorsa "—".
+ */
+function writtenBeforeText(t, r) {
+  const ms = r.handoverAgeMs ?? r.durableAgeMs
+  if (ms == null || ms < 0) return '—'
+  return t('hmp.esLoad.writtenBefore', formatDurationShort(Math.round(ms / 1000), t))
+}
+
+/** Neden kodu → cümle (bilinen kodlar sözlükten; yeni sürümün kodu "neden: x" — ham anahtar asla). */
+function loadReasonText(t, reason) {
+  if (!reason) return null
+  return EVAL_LOAD_REASONS.includes(reason) ? t(`hmp.esLoad.reason.${reason}`) : t('hmp.esReasonOther', reason)
+}
+
+/**
+ * "Devirde yüklenen durum" — KÜMENİN son devir yüklemesi (yeni tarama lideri yayımlar; "Küme"), gözlem yoksa bu pod'un son
+ * yüklemesi ("Bu pod: <ad>"). Yalnız "Tam" yeşil; "Yalnız gözlemler" bilgi; beklenen nedenle yüklenmedi / kapalı / henüz yok /
+ * bilinmiyor gri; işletim nedeniyle yüklenmedi uyarı. Eski sunucu (alan yok) → gizli.
+ */
+export function EvalLoadSection({ t, load }) {
+  if (!load) return null
+  const r = load.report
+  const reason = loadReasonText(t, load.reason)
+  const loaded = load.level === 'full' || load.level === 'observations'
+  const warn = load.level === 'warn'
+  const hint = load.error ? t('hmp.esLoad.unreadable')
+    : load.level === 'off' ? t('hmp.esLoad.offHint')
+      : load.level === 'empty' ? t('hmp.esLoad.emptyHint')
+        : load.level === 'stale' && r ? t('hmp.esLoad.staleHint', r.podName || '—', r.at ? when(r.at, t) : '—') : null
+  return (
+    <section data-slot="cluster-eval-load" data-level={load.level} data-scope={load.scope}
+      aria-labelledby="hmp-esload-title" className="flex flex-col gap-1.5 border-t pt-2.5">
+      <SubTitle className="mt-0 text-[12px]">
+        <span id="hmp-esload-title">{t('hmp.esLoad.title')}</span>
+        <PodChip t={t} scope={load.scope} pod={load.scope === 'pod' ? load.podName : undefined} />
+      </SubTitle>
+      <KvList>
+        <dt>{t('hmp.esLoad.outcomeLabel')}</dt>
+        <dd data-slot="es-load-outcome" data-level={load.level}
+          className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 [overflow-wrap:anywhere]">
+          <ToneBadge tone={load.tone} className="h-auto max-w-full overflow-visible rounded-md font-semibold whitespace-normal [overflow-wrap:anywhere]">
+            {t(LOAD_BADGE[load.level] || 'hmp.esLoad.outcome.unknown')}
+          </ToneBadge>
+          {reason && (
+            <span data-slot="es-load-reason" data-reason={load.reason}
+              className={`min-w-0 [overflow-wrap:anywhere] ${warn ? WARN_T : 'text-muted-foreground'}`}>{reason}</span>
+          )}
+        </dd>
+        {r && r.fromGeneration != null && (
+          <>
+            <dt>{t('hmp.esLoad.source')}</dt>
+            <dd data-slot="es-load-from" className="min-w-0 [overflow-wrap:anywhere]">
+              {t('hmp.esLoad.from', r.fromGeneration, r.fromPodName || '—', writtenBeforeText(t, r))}
+            </dd>
+          </>
+        )}
+        {r && (r.observedBy || r.podName) && (
+          <>
+            <dt>{t('hmp.esLoad.by')}</dt>
+            <dd data-slot="es-load-by" className="min-w-0 [overflow-wrap:anywhere]">
+              <PodName>{r.observedBy || r.podName}</PodName>
+              {r.at && <span className="text-muted-foreground"> · {when(r.at, t)}</span>}
+            </dd>
+          </>
+        )}
+        {r && loaded && (
+          <>
+            <dt>{t('hmp.esLoad.loadedLabel')}</dt>
+            <dd data-slot="es-load-counts" className="min-w-0 text-muted-foreground [overflow-wrap:anywhere]">
+              {t('hmp.esLoad.counts', r.recoveryCounters, r.siblings, r.suppressions, r.roundSeen, r.windowDomains)}
+            </dd>
+          </>
+        )}
+        {r && r.waiters > 0 && (
+          <>
+            <dt>{t('hmp.esLoad.waitedLabel')}</dt>
+            <dd data-slot="es-load-waited" className="min-w-0 text-muted-foreground [overflow-wrap:anywhere]">
+              {t('hmp.esLoad.waited', r.waiters, r.maxWaitMs)}
+            </dd>
+          </>
+        )}
+      </KvList>
+      {hint && <p className="text-[0.9em] text-muted-foreground" data-slot="es-load-hint">{hint}</p>}
+      <p className="text-xs text-muted-foreground" data-slot="es-load-note">{t('hmp.esLoad.note')}</p>
+    </section>
+  )
+}
+
+/** Bu pod'un devir hazırlığı — "Bu pod" `<KvList>` satırı (eski sunucu → gizli). */
+export function HandoverRows({ t, handover }) {
+  if (!handover) return null
+  const reason = handover.reason
+  const reasonText = !reason ? null
+    : HANDOVER_NOT_READY_FROM_REASON.includes(reason) ? t(`hmp.esLoad.reason.${reason}`)
+      : t(`hmp.esLoad.ready.${reason}`)
+  return (
+    <>
+      <dt>{t('hmp.esLoad.readyTitle')}</dt>
+      <dd data-slot="cluster-handover" data-ready={handover.ready ? 'true' : 'false'} data-reason={reason || undefined}
+        className="min-w-0 [overflow-wrap:anywhere]">
+        <span className="flex flex-col gap-0.5">
+          <span className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5">
+            {handover.ready
+              ? <ToneBadge tone="success" className="h-auto max-w-full overflow-visible rounded-md font-semibold whitespace-normal [overflow-wrap:anywhere]">{t('hmp.esLoad.ready')}</ToneBadge>
+              : <span className="text-muted-foreground [overflow-wrap:anywhere]" data-slot="handover-not-ready">{t('hmp.esLoad.notReady', reasonText)}</span>}
+          </span>
+          {handover.lastHandover && (
+            <span className="text-muted-foreground [overflow-wrap:anywhere]" data-slot="handover-last" data-result={handover.lastHandover}>
+              {t('hmp.esLoad.lastHandover', handover.lastHandoverKnown
+                ? t(`hmp.esLoad.handover.${handover.lastHandover}`) : t('hmp.esReasonOther', handover.lastHandover))}
+            </span>
+          )}
+        </span>
       </dd>
     </>
   )
