@@ -121,10 +121,14 @@ class MonitoringOutageDualWriteDecisionTest {
                 case REAL_RECORDER, READ_OFF_REAL_RECORDER -> {
                     h2 = MultiPodTestSupport.create();
                     new com.sitemonitor.service.evalstate.EvalStateSchemaPatch(h2.jdbc()).apply();
-                    real = com.sitemonitor.service.evalstate.EvalStateRecorder.builder(h2.jdbc()).writer("pod-a-00000001")
+                    com.sitemonitor.service.evalstate.EvalStateRecorder.Builder rb =
+                            com.sitemonitor.service.evalstate.EvalStateRecorder.builder(h2.jdbc()).writer("pod-a-00000001")
                             .leaderHint(() -> true)
                             .mode(() -> com.sitemonitor.service.evalstate.EvalStateMode.VERIFY)
-                            .clock(clock::get).flushMs(50).build();
+                            .clock(clock::get).flushMs(50);
+                    // 3-2 (J-1): READ_OFF varyantında okuma ayarı kaydedicide de AÇIKÇA kapalı (3-1 ifade kümesi).
+                    if (v == Variant.READ_OFF_REAL_RECORDER) rb.readEnabled(() -> false);
+                    real = rb.build();
                     yield real;
                 }
                 case REAL_RECORDER_FAILING_JDBC -> {
