@@ -1,5 +1,6 @@
 package com.sitemonitor.controller;
 
+import com.sitemonitor.service.evalstate.EvalLoadReport;
 import com.sitemonitor.service.evalstate.EvalStateSink;
 import com.sitemonitor.service.evalstate.EvalVerifyReport;
 import com.sitemonitor.service.health.ClusterHealthStore;
@@ -64,22 +65,50 @@ final class ClusterRuntimeHealth {
      */
     static Map<String, Object> evalState(EvalStateSink sink, ClusterHealthStore store, long nowMs, long verifyMs,
                                          Boolean leaderHint) {
+        return evalState(sink, store, nowMs, verifyMs, leaderHint, null);
+    }
+
+    /**
+     * {@link #evalState(EvalStateSink, ClusterHealthStore, long, long, Boolean)} + çok pod Sürüm 3-2 alanları (2026-10-28, paket C;
+     * tasarım R3-2 §8.3) — hepsi EKLENTİ (3-1 alanları birebir aynı):
+     * <ul>
+     *   <li>{@code read_enabled}: bu pod devirde okuma ayarını açık görüyor mu ({@code readEnabled}; null → kaydedici durumundan,
+     *       kaydedici yoksa false);</li>
+     *   <li>{@code this_pod.handover_ready | last_load | last_handover} ({@link #recorder(EvalStateSink.Status, Boolean)});</li>
+     *   <li>{@code load}: KÜMENİN son {@code eval-state-load} gözlemi (yeni lider yayımlar; {@code observed_by} / {@code observed_at}
+     *       ile) — satır yok → {@code null}; okunamadı / bozuk / küme deposu yok → {@code load_error} (ekran "bilinmiyor", asla
+     *       "yüklenmedi" değil).</li>
+     * </ul>
+     */
+    static Map<String, Object> evalState(EvalStateSink sink, ClusterHealthStore store, long nowMs, long verifyMs,
+                                         Boolean leaderHint, Boolean readEnabled) {
         Map<String, Object> out = new LinkedHashMap<>();
+        EvalStateSink.Status status = null;
         if (sink == null) {
             out.put("this_pod", null);
         } else {
             try {
-                EvalStateSink.Status s = sink.status();
-                out.put("this_pod", s == null ? null : recorder(s, leaderHint));
+                status = sink.status();
+                out.put("this_pod", status == null ? null : recorder(status, leaderHint));
             } catch (RuntimeException e) {
+                status = null;
                 out.put("this_pod", null);
                 out.put("this_pod_error", e.getClass().getSimpleName());
             }
         }
+        putVerify(out, store, nowMs, verifyMs);
+        // ── çok pod Sürüm 3-2 (eklenti) ──
+        out.put("read_enabled", readEnabled != null ? readEnabled : status != null && status.readEnabled());
+        putLoad(out, store, nowMs);
+        return out;
+    }
+
+    /** Kümenin son doğrulama gözlemi ({@code verify} / {@code verify_error}) — 3-1 biçimi. */
+    private static void putVerify(Map<String, Object> out, ClusterHealthStore store, long nowMs, long verifyMs) {
         if (store == null) {
             out.put("verify", null);
             out.put("verify_error", "unavailable");
-            return out;
+            return;
         }
         Optional<ClusterHealthStore.Observation> row;
         try {
@@ -87,11 +116,11 @@ final class ClusterRuntimeHealth {
         } catch (RuntimeException e) {
             out.put("verify", null);
             out.put("verify_error", e.getClass().getSimpleName());
-            return out;
+            return;
         }
         if (row == null || row.isEmpty()) {
             out.put("verify", null);
-            return out;
+            return;
         }
         Map<String, Object> v = verify(row.get(), nowMs, verifyMs);
         if (v == null) {
@@ -100,7 +129,64 @@ final class ClusterRuntimeHealth {
         } else {
             out.put("verify", v);
         }
-        return out;
+    }
+
+    /**
+     * Kümenin son devir yüklemesi gözlemi ({@code load} / {@code load_error}; çok pod Sürüm 3-2). Tek PK okuması, yazma yok.
+     */
+    private static void putLoad(Map<String, Object> out, ClusterHealthStore store, long nowMs) {
+        if (store == null) {
+            out.put("load", null);
+            out.put("load_error", "unavailable");
+            return;
+        }
+        Optional<ClusterHealthStore.Observation> row;
+        try {
+            row = store.read(EvalLoadReport.OBSERVATION);
+        } catch (RuntimeException e) {
+            out.put("load", null);
+            out.put("load_error", e.getClass().getSimpleName());
+            return;
+        }
+        if (row == null || row.isEmpty()) {
+            out.put("load", null);
+            return;
+        }
+        Map<String, Object> l = loadObservation(row.get(), nowMs);
+        if (l == null) {
+            out.put("load", null);
+            out.put("load_error", "unreadable_payload");
+        } else {
+            out.put("load", l);
+        }
+    }
+
+    /**
+     * Devir yüklemesi gözlemi → yanıt haritası; yük okunamazsa {@code null}. Alanlar = {@link #loadReport(EvalLoadReport)}
+     * (bu pod'un {@code last_load} ile AYNI adlar) + {@code observed_by} / {@code observed_by_pod} / {@code observed_at} /
+     * {@code age_seconds}.
+     */
+    static Map<String, Object> loadObservation(ClusterHealthStore.Observation row, long nowMs) {
+        EvalLoadReport r = EvalLoadReport.fromJson(row.payload());
+        if (r == null || r.outcome() == null) return null;
+        Map<String, Object> m = loadReport(r);
+        m.put("observed_by", row.instanceId());
+        m.put("observed_by_pod", ClusterHealthStore.podOf(row.instanceId()));
+        m.put("observed_at", iso(row.observedMs()));
+        m.put("age_seconds", Math.max(0L, nowMs - row.observedMs()) / 1000L);
+        return m;
+    }
+
+    /**
+     * Yükleme raporu → yanıt haritası: {@link EvalLoadReport#asMap()} (SNAKE_CASE, kalıcı adlar) + ekran için türetilmiş
+     * {@code at} (UTC ISO), {@code pod_name} / {@code from_pod_name} (örnek kimliğinden pod adı). Kişi verisi yok.
+     */
+    static Map<String, Object> loadReport(EvalLoadReport r) {
+        Map<String, Object> m = new LinkedHashMap<>(r.asMap());
+        m.put("at", iso(r.atMs()));
+        m.put("pod_name", r.pod() == null ? null : ClusterHealthStore.podOf(r.pod()));
+        m.put("from_pod_name", r.fromPod() == null ? null : ClusterHealthStore.podOf(r.fromPod()));
+        return m;
     }
 
     /** Bu pod'un kaydedici durumu → yanıt haritası. */
@@ -157,6 +243,10 @@ final class ClusterRuntimeHealth {
             lv.put("pass_fail_mismatches", v.unknown() ? null : v.passFailMismatches());
             m.put("last_verify", lv);
         }
+        // ── çok pod Sürüm 3-2 (eklenti): devir hazırlığı, son yükleme, son devir boşaltması ──
+        m.put("handover_ready", s.handoverReady());
+        m.put("last_load", s.lastLoad() == null ? null : loadReport(s.lastLoad()));
+        m.put("last_handover", s.lastHandover() == null ? null : s.lastHandover().key());
         return m;
     }
 

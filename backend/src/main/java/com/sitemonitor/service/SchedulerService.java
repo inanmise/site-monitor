@@ -5226,13 +5226,118 @@ public class SchedulerService {
     @org.springframework.core.annotation.Order(org.springframework.core.Ordered.HIGHEST_PRECEDENCE)   // İLK dinleyici: NotifyExecutorDrain (≤ 20 sn) kirayı geciktirmesin
     public void onContextClosed(org.springframework.context.event.ContextClosedEvent event) {
         if (applicationContext != null && event != null && event.getApplicationContext() != applicationContext) return;
+        // ── R3-2 handover (çok pod Sürüm 3-2, paket C; tasarım R3-2 §5.1) ──
+        // Devir yalnız ayar AÇIK ve kaydedici "hazır" derken (kuşak tutuluyor, eksiksiz, çit içinde): kaydedici kapanıştan
+        // sonra biten değerlendirmelerin işlemlerini de kuyruğa alır, MOS yeni girişleri ≤ 1 sn bekletir. Aksi hâlde bu
+        // yöntem 20.168.1 ile birebir aynıdır (J-1) — tek fark hazır sorusunun bellek okuması.
+        com.sitemonitor.service.evalstate.EvalStateSink handoverSink = evalStateSinkForHandover();
+        boolean handover = handoverSink != null && askHandoverReady(handoverSink);
+        if (handover) openEvalHandover(handoverSink);
+        // ── /R3-2 handover ──
         // Önce yeni iş kapısı: kapanışta tetiklenmeye devam eden @Scheduled tıkları yeni kilit / tur / liderlik almasın.
         shutdownStarted = true;
         if (lockService != null) lockService.stopAcquiring();
         stopStartupCheck();
         stopSweepLeaderRenewer();
-        releaseSweepLeadership();
+        // ── R3-2 handover: değerlendirmeler durulur (≤ 300 ms), bekleyen her işlem yazılır ve devir işareti SON deyim
+        // olarak yazılır (≤ 700 ms, yardımcı iş parçacığı) — kira ANCAK bundan sonra bırakılır (halef tam katmanı yükler) ──
+        if (handover) {
+            boolean quiet = awaitEvalQuiet();
+            try {
+                handoverSink.flushForHandover(com.sitemonitor.service.evalstate.EvalStateSink.HANDOVER_FLUSH_MS, quiet);
+            } catch (RuntimeException e) {
+                log.warn("Devir boşaltması beklenmedik hata verdi — kira yine bırakılıyor, halef en çok gözlemleri yükler: {}",
+                        e.toString());
+            }
+        }
+        try {
+            releaseSweepLeadership();
+        } finally {
+            if (handover) endEvalHandover();
+        }
+        // ── /R3-2 handover ──
     }
+
+    // ── R3-2 handover (çok pod Sürüm 3-2, paket C) — yardımcılar ────────────────────────────────────────────────────
+
+    /** Kalıcı değerlendirme durumu kaydedicisi — TEMBEL (kaydedici zamanlayıcıya bağlı; döngü kurulmaz). null = yok. */
+    private volatile org.springframework.beans.factory.ObjectProvider<com.sitemonitor.service.evalstate.EvalStateSink> evalStateSinkProvider;
+    /** Elle bağlanan / çözülmüş kaydedici (testler; üretimde sağlayıcıdan ilk kapanışta çözülür). */
+    private volatile com.sitemonitor.service.evalstate.EvalStateSink evalStateSinkForHandover;
+
+    /** Spring: kaydedici sağlayıcısı (isteğe bağlı; bean yoksa devir adımı hiç koşmaz = 20.168.1). */
+    @Autowired(required = false)
+    void setEvalStateSinkProvider(
+            org.springframework.beans.factory.ObjectProvider<com.sitemonitor.service.evalstate.EvalStateSink> provider) {
+        this.evalStateSinkProvider = provider;
+    }
+
+    /** Elle kurulum / testler: kaydediciyi doğrudan bağlar (null = yok). */
+    void setEvalStateSinkForHandover(com.sitemonitor.service.evalstate.EvalStateSink sink) {
+        this.evalStateSinkForHandover = sink;
+    }
+
+    /** Bağlı kaydedici; çözülemezse null (kapanış asla düşmez, devir adımı koşmaz). */
+    private com.sitemonitor.service.evalstate.EvalStateSink evalStateSinkForHandover() {
+        com.sitemonitor.service.evalstate.EvalStateSink s = evalStateSinkForHandover;
+        if (s != null) return s;
+        org.springframework.beans.factory.ObjectProvider<com.sitemonitor.service.evalstate.EvalStateSink> p = evalStateSinkProvider;
+        if (p == null) return null;
+        try {
+            s = p.getIfUnique();
+        } catch (RuntimeException e) {
+            return null;
+        }
+        if (s != null) evalStateSinkForHandover = s;
+        return s;
+    }
+
+    /** Kaydedicinin bellek okuması; istisna = hazır değil (kapanış bugünkü gibi sürer). */
+    private boolean askHandoverReady(com.sitemonitor.service.evalstate.EvalStateSink sink) {
+        try {
+            return sink.handoverReady();
+        } catch (RuntimeException e) {
+            log.warn("Devir hazırlığı okunamadı — devir adımı atlanıyor (kapanış bugünkü gibi): {}", e.toString());
+            return false;
+        }
+    }
+
+    /** Devri açar: kaydedici kapanıştan sonra gelen işlemleri kabul eder, MOS yeni girişleri bekletir. Hata kapanışı durdurmaz. */
+    private void openEvalHandover(com.sitemonitor.service.evalstate.EvalStateSink sink) {
+        try {
+            sink.openHandover();
+        } catch (RuntimeException e) {
+            log.warn("Devir açılamadı (kaydedici): {}", e.toString());
+        }
+        if (monitoringOutageService == null) return;
+        try {
+            monitoringOutageService.beginEvalHandover();
+        } catch (RuntimeException e) {
+            log.warn("Devir açılamadı (değerlendirme kapısı): {}", e.toString());
+        }
+    }
+
+    /** Uçuştaki değerlendirmelerin bitmesini bekler (≤ {@code HANDOVER_QUIESCE_MS}); hata / zaman aşımı = durulmadı. */
+    private boolean awaitEvalQuiet() {
+        if (monitoringOutageService == null) return true;
+        try {
+            return monitoringOutageService.awaitEvalQuiescent(com.sitemonitor.service.evalstate.EvalStateSink.HANDOVER_QUIESCE_MS);
+        } catch (RuntimeException e) {
+            log.warn("Devirde değerlendirmelerin durulması beklenemedi — işaretsiz boşaltılır: {}", e.toString());
+            return false;
+        }
+    }
+
+    /** Devri kapatır (MOS kapısı serbest; idempotent). Kira bırakıldıktan SONRA. */
+    private void endEvalHandover() {
+        if (monitoringOutageService == null) return;
+        try {
+            monitoringOutageService.endEvalHandover();
+        } catch (RuntimeException e) {
+            log.warn("Devir kapatılamadı (değerlendirme kapısı): {}", e.toString());
+        }
+    }
+    // ── /R3-2 handover ──────────────────────────────────────────────────────────────────────────────────────────────
 
     /**
      * Kira yenileyicisinin bir turu (2026-10-09): tarama iş parçacıkları meşgul olsa da lider kirasını süresi dolmadan

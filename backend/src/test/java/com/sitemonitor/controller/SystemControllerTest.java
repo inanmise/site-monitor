@@ -792,6 +792,53 @@ class SystemControllerTest {
         }
     }
 
+    @Test
+    @DisplayName("R3-2: sağlık yanıtı devirde okuma alanlarını taşır — read_enabled (bu pod'un ayarı), this_pod.handover_ready / "
+            + "last_load / last_handover, kümenin son eval-state-load gözlemi (load); ayar kapalıyken read_enabled false, load yok")
+    void healthCarriesEvalLoadR32() throws Exception {
+        com.sitemonitor.service.evalstate.EvalLoad load = new com.sitemonitor.service.evalstate.EvalLoad(3L,
+                com.sitemonitor.service.evalstate.EvalLoad.TIER_OBSERVATIONS, Map.of(), Map.of(), java.util.Set.of(), java.util.Set.of(),
+                Map.of(), Map.of(), new com.sitemonitor.service.evalstate.EvalLoad.Meta(9L, "sitemonitor-b-0000000b", null, 40_000L,
+                com.sitemonitor.service.evalstate.EvalLoadReport.REASON_NO_HANDOVER, 12L));
+        com.sitemonitor.service.evalstate.EvalLoadReport report = com.sitemonitor.service.evalstate.EvalLoadReport.applied(
+                System.currentTimeMillis() - 5_000, "sitemonitor-a-0000000a", load);
+        com.sitemonitor.service.evalstate.EvalStateSink sink = org.mockito.Mockito.mock(com.sitemonitor.service.evalstate.EvalStateSink.class);
+        when(sink.status()).thenReturn(new com.sitemonitor.service.evalstate.EvalStateSink.Status("verify", true, "sitemonitor-a-0000000a",
+                10L, 0, 0, 1, 0, System.currentTimeMillis(), null, null, false, null, null, false, 0L, true, false, report, null));
+        com.sitemonitor.service.health.ClusterHealthStore store = org.mockito.Mockito.mock(com.sitemonitor.service.health.ClusterHealthStore.class);
+        when(store.read(com.sitemonitor.service.evalstate.EvalLoadReport.OBSERVATION)).thenReturn(java.util.Optional.of(
+                new com.sitemonitor.service.health.ClusterHealthStore.Observation("sitemonitor-a-0000000a", System.currentTimeMillis() - 5_000,
+                        report.payload(), "x")));
+        org.springframework.test.util.ReflectionTestUtils.setField(controller, "evalStateSink", sink);
+        org.springframework.test.util.ReflectionTestUtils.setField(controller, "clusterHealthStore", store);
+        try {
+            // ayar kapalı (sahte ayar servisi false döner) → read_enabled false; diğer alanlar okunur
+            mvc.perform(get("/api/admin/system").session(userSession()))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.eval_state.read_enabled").value(false))
+                    .andExpect(jsonPath("$.data.eval_state.this_pod.handover_ready").value(false))
+                    .andExpect(jsonPath("$.data.eval_state.this_pod.last_handover").value(org.hamcrest.Matchers.nullValue()))
+                    .andExpect(jsonPath("$.data.eval_state.this_pod.last_load.outcome").value("observations"))
+                    .andExpect(jsonPath("$.data.eval_state.this_pod.last_load.reason").value("no_handover"))
+                    .andExpect(jsonPath("$.data.eval_state.load.outcome").value("observations"))
+                    .andExpect(jsonPath("$.data.eval_state.load.observed_by_pod").value("sitemonitor-a"))
+                    .andExpect(jsonPath("$.data.eval_state.load.from_pod_name").value("sitemonitor-b"))
+                    .andExpect(jsonPath("$.data.eval_state.load.from_generation").value(9))
+                    .andExpect(jsonPath("$.data.eval_state.load_error").doesNotExist());
+            when(appSettingsService.getBoolean(com.sitemonitor.service.evalstate.EvalStateReadSwitch.KEY, false)).thenReturn(true);
+            mvc.perform(get("/api/admin/system").session(userSession()))
+                    .andExpect(jsonPath("$.data.eval_state.read_enabled").value(true));
+            when(store.read(com.sitemonitor.service.evalstate.EvalLoadReport.OBSERVATION)).thenThrow(new IllegalStateException("db"));
+            mvc.perform(get("/api/admin/system").session(userSession()))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.eval_state.load_error").value("IllegalStateException"))
+                    .andExpect(jsonPath("$.data.eval_state.this_pod.mode").value("verify"));
+        } finally {
+            org.springframework.test.util.ReflectionTestUtils.setField(controller, "evalStateSink", null);
+            org.springframework.test.util.ReflectionTestUtils.setField(controller, "clusterHealthStore", null);
+        }
+    }
+
     // Regresyon: Sistem Sagligi sekmesi TUM rollere acik (Nav `show: true`) ve
     // `system_health.read` USER varsayilanlarinda VAR — kapi eklendi diye siradan
     // kullanicinin ekrani kirilmamali. Dordu de izin varken 200 donmeli.
