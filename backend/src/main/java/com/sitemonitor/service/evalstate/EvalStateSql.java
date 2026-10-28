@@ -1,5 +1,6 @@
 package com.sitemonitor.service.evalstate;
 
+import com.sitemonitor.service.monitoring.ManualEvalInbox;
 import com.sitemonitor.service.schedule.ClusterScheduleService;
 import com.sitemonitor.service.schema.DeferredIndexBuilder;
 import org.springframework.dao.DuplicateKeyException;
@@ -299,6 +300,12 @@ public final class EvalStateSql {
     static final String SQL_INTERMEDIATE = "SELECT COUNT(*) FROM monitor_check_schedule WHERE claimed_at >= ? "
             + "AND claimed_by IS NOT NULL AND claimed_by <> ? AND claimed_by <> ? AND monitor_key <> ? "
             + "AND monitor_key NOT LIKE ?";
+    /**
+     * Gelen kutusunda bekleyen elle sonuç var mı (inceleme 2026-10-28, MOS M-1) — devir aralığında takipçiden lidere
+     * gönderilen ya da eski liderin boşaltamadığı satır bir DOWN sıfırlaması taşıyabilir; varsa FULL olmaz. Sona
+     * {@code LIMIT 1} eklenir (tek satır yeter).
+     */
+    static final String SQL_INBOX_PENDING = "SELECT 1 FROM " + ManualEvalInbox.TABLE;
     /** İşaret sütunları okunabiliyor mu (şema yaması bitmeden ilk saniyeler). */
     static final String SQL_MARKER_PROBE = "SELECT state_gen, flushed_ms, handover_ms FROM " + TYPE_STATE + " WHERE 1 = 0";
 
@@ -570,6 +577,18 @@ public final class EvalStateSql {
         Integer n = jdbc.queryForObject(SQL_INTERMEDIATE, Integer.class, sinceMs, s(clip(priorWriter, WRITER_MAX)),
                 s(clip(me, WRITER_MAX)), LEASE_KEY, ClusterScheduleService.ROUND_PREFIX + "%");
         return n == null ? 0 : n;
+    }
+
+    /**
+     * {@link #SQL_INBOX_PENDING}: {@code monitor_eval_inbox}'ta en az bir satır var mı. Tablo yok
+     * ({@code BadSqlGrammarException}) = satır yok; başka bir veritabanı hatası fırlar (yükleyici {@code read_failed} der).
+     */
+    public boolean inboxHasPendingRows() {
+        try {
+            return !jdbc.queryForList(SQL_INBOX_PENDING + " LIMIT 1").isEmpty();
+        } catch (BadSqlGrammarException missing) {
+            return false;
+        }
     }
 
     /** İşaret sütunları okunabiliyor mu ({@code BadSqlGrammarException} = yok; başka hata fırlar). */

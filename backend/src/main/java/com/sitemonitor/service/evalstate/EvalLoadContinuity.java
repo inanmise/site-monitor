@@ -24,6 +24,9 @@ import java.util.Objects;
  *       (değilse {@code clock_skew}) — OBSERVATIONS</li>
  *   <li>(yükleyici) ara lider yok — {@link EvalStateSql#SQL_INTERMEDIATE} sayısı 0, değilse OBSERVATIONS /
  *       {@code intermediate_leader} ({@link #afterIntermediate})</li>
+ *   <li>(yükleyici) gelen kutusu boş — {@link EvalStateSql#SQL_INBOX_PENDING} satır yok, değilse OBSERVATIONS /
+ *       {@code pending_manual_results} ({@link #afterPendingManual}; inceleme 2026-10-28, MOS M-1: devir aralığında
+ *       takipçiden gelen ya da eski liderin boşaltamadığı elle sonuç bir DOWN sıfırlaması taşıyabilir — sayaç taşınmaz)</li>
  * </ol>
  * Sınırlar kapsayıcıdır ({@code ≤}). Saatler pod saatleridir (önceki sahip ↔ halef); yaşlar halefin saatiyle ölçülür.
  */
@@ -92,7 +95,7 @@ public final class EvalLoadContinuity {
     }
 
     /**
-     * Süreklilik kararı (denetim 1–9; 10 = {@link #afterIntermediate}).
+     * Süreklilik kararı (denetim 1–9; 10 = {@link #afterIntermediate}, 11 = {@link #afterPendingManual}).
      *
      * @param prior          yerine geçilen satır (null = okunamadı / yok)
      * @param me             bu pod'un yazan kimliği ({@code SchedulerService.instanceId()})
@@ -132,6 +135,17 @@ public final class EvalLoadContinuity {
     public static Decision afterIntermediate(Decision d, long intermediateCount) {
         if (d == null || d.tier() != Tier.FULL || intermediateCount <= 0) return d;
         return new Decision(Tier.OBSERVATIONS, EvalLoadReport.REASON_INTERMEDIATE_LEADER, d.prior(), d.durableAgeMs(),
+                d.handoverAgeMs());
+    }
+
+    /**
+     * Denetim 11: FULL aday + gelen kutusunda değerlendirilmemiş elle sonuç → OBSERVATIONS / {@code pending_manual_results};
+     * aksi hâlde aynı karar. Bu satırlar halefin yükten SONRAKİ boşaltmasında yüklenen belleğe değerlendirilir; bir DOWN
+     * sonucu sayacı sıfırlamalıydı — FULL taşısaydı ilk sağlıklı tur alarmı erken kapatabilirdi.
+     */
+    public static Decision afterPendingManual(Decision d, boolean inboxHasRows) {
+        if (d == null || d.tier() != Tier.FULL || !inboxHasRows) return d;
+        return new Decision(Tier.OBSERVATIONS, EvalLoadReport.REASON_PENDING_MANUAL_RESULTS, d.prior(), d.durableAgeMs(),
                 d.handoverAgeMs());
     }
 

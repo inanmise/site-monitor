@@ -136,7 +136,8 @@ class EvalStateReadOffSqlTranscriptTest {
 
     static List<String> forbidden32() {
         return List.of(EvalStateSql.SQL_GEN_PRIOR, EvalStateSql.SQL_HEARTBEAT_MARK, EvalStateSql.SQL_HANDOVER_MARK,
-                EvalStateSql.SQL_ABANDON_OWN, EvalStateSql.SQL_INTERMEDIATE, EvalStateSql.SQL_MARKER_PROBE,
+                EvalStateSql.SQL_ABANDON_OWN, EvalStateSql.SQL_INTERMEDIATE, EvalStateSql.SQL_INBOX_PENDING,
+                EvalStateSql.SQL_MARKER_PROBE,
                 EvalStateSql.SQL_LOAD_RECOVERY, EvalStateSql.SQL_LOAD_SIBLINGS, EvalStateSql.SQL_LOAD_TYPES,
                 EvalStateSql.SQL_LOAD_WINDOW);
     }
@@ -321,6 +322,8 @@ class EvalStateReadOffSqlTranscriptTest {
         assertThat(executed).as("ayar kapalıyken her ifade bir yazıcı / test iş parçacığında, devir yardımcısı yok")
                 .isNotEmpty();
         assertThat(recording.executed).noneMatch(e -> e.thread().equals(EvalStateRecorder.HANDOVER_THREAD_NAME));
+        assertThat(executed).as("gelen kutusu okuması (inceleme M-1) ayar kapalıyken hiç")
+                .noneMatch(q -> q.contains("monitor_eval_inbox"));
     }
 
     @Test

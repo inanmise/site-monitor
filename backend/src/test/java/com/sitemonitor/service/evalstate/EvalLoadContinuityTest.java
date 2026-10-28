@@ -142,6 +142,28 @@ class EvalLoadContinuityTest {
     }
 
     @Test
+    @DisplayName("Denetim 11 (inceleme M-1): tam aday + gelen kutusunda bekleyen elle sonuç → gözlemler (pending_manual_results); "
+            + "boş kutu → aynı karar; yalnız tam aday iner")
+    void pendingManualResultsDowngrade() {
+        Decision full = EvalLoadContinuity.decide(clean(), ME, NOW, false);
+        assertThat(EvalLoadContinuity.afterPendingManual(full, false)).isSameAs(full);
+        Decision down = EvalLoadContinuity.afterPendingManual(full, true);
+        assertThat(down.tier()).isEqualTo(Tier.OBSERVATIONS);
+        assertThat(down.reason()).isEqualTo(EvalLoadReport.REASON_PENDING_MANUAL_RESULTS);
+        assertThat(down.prior()).isSameAs(full.prior());
+        assertThat(down.handoverAgeMs()).isEqualTo(full.handoverAgeMs());
+        assertThat(down.durableAgeMs()).isEqualTo(full.durableAgeMs());
+        Decision obs = EvalLoadContinuity.decide(with(7, OLD, NOW - 1, 7L, NOW - 1, null), ME, NOW, false);
+        assertThat(EvalLoadContinuity.afterPendingManual(obs, true)).as("yalnız tam aday iner").isSameAs(obs);
+        Decision inter = EvalLoadContinuity.afterIntermediate(full, 1);
+        assertThat(EvalLoadContinuity.afterPendingManual(inter, true).reason()).as("ilk düşen denetim kalır")
+                .isEqualTo(EvalLoadReport.REASON_INTERMEDIATE_LEADER);
+        assertThat(EvalLoadContinuity.afterPendingManual(null, true)).isNull();
+        assertThat(EvalLoadReport.REASONS).contains(EvalLoadReport.REASON_PENDING_MANUAL_RESULTS);
+        assertThat(EvalLoadReport.OBSERVATIONS_REASONS).contains(EvalLoadReport.REASON_PENDING_MANUAL_RESULTS);
+    }
+
+    @Test
     @DisplayName("Her neden kodu EvalLoadReport.REASONS'ta; gözlem nedenleri OBSERVATIONS_REASONS'ta")
     void reasonsArePermanentCodes() {
         for (Arguments a : table().toList()) {
