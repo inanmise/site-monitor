@@ -1,9 +1,198 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-23T22:21:04Z",
+  "generatedAt": "2026-10-28T20:34:15Z",
   "repo": "inanmise/site-monitor",
-  "count": 788,
+  "count": 789,
   "releases": [
+    {
+      "version": "20.169.0",
+      "tag": "v20.169.0",
+      "releasedAt": "2026-10-28T20:34:06Z",
+      "commit": "15e7a17dca7f5e9596dd3157dd76aec771c59f5e",
+      "prevVersion": "20.168.1",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 8,
+        "fix": 11,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 2,
+        "other": 3
+      },
+      "changes": [
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "559df989",
+          "subject": "çok pod 3-2 inceleme düzeltmeleri — tür başına pencere tohumu, gelen kutusu kuralı, devirde elle sonuç iletme, zincir adımı durulması, kalan riskler R-6..R-9"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "b2dd15ef",
+          "subject": "çok pod 3-2 — devir aralığında elle sonuç, devirde süren kurtarma adımı ve işaret silen yazıcı turu senaryoları"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "5ab41912",
+          "subject": "çok pod 3-2 C — Küme kartı eski devir raporunu güncel göstermez, hazırlık nedeni ve yüklenen durumun yaşı doğru"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "7ee5aeab",
+          "subject": "çok pod 3-2 C — devir aralığında elle sonuç iletilir, yükleme sürerken gelen kutusu boşaltılmaz; kapanış Throwable yakalar"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "4f5994f2",
+          "subject": "çok pod 3-2 B — inceleme düzeltmeleri (devirde zincir adımları, LOST ile yarışan uygulama, kapı sızıntısı)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "c00374f6",
+          "subject": "çok pod 3-2 A — kaydedicide yanlış yere düşen @Override derlemeyi bozuyordu"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "a349bea3",
+          "subject": "çok pod 3-2 A — kaydedicide yanlış yere düşen @Override derlemeyi bozuyordu"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "1e9c7ca7",
+          "subject": "çok pod 3-2 A — kaydedicide yanlış yere düşen @Override derlemeyi bozuyordu"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "a9716b94",
+          "subject": "çok pod 3-2 A — kaydedici: işaretten sonra yazım yok, yük hatası kapıyı hemen kapatır, seyreltilmiş yeniden oynatma, zincir kuyruğu devri engellemez"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "a2b9eb35",
+          "subject": "çok pod 3-2 A — devir yükleyicisi: pencere tohumu tür başına, bekleyen elle sonuç varsa TAM yok, her istisna read_failed"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "d03abe06",
+          "subject": "çok pod 3-2 A — kaydedicide yanlış yere düşen @Override derlemeyi bozuyordu"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "d383f04b",
+          "subject": "çok pod 3-2 — devirde kalıcı durumu okuma (CLAUDE.md, RUNBOOK, dağıtım listesi) ve duman testi SMOKE_EVAL_READ"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "9622fd00",
+          "subject": "çok pod 3-2 uçtan uca testine genişletme kancaları (elle kurtarma yürütücüsü, MOS kurulum kancası, aktif kurtarma kalemi)"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "26916ae2",
+          "subject": "kaydedici işaret sütunu eksik bilgisi için okuma yöntemi (çok pod 3-2)"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "4944d45e",
+          "subject": "inceleme sonrası ortak ekler — bekleyen elle sonuç nedeni, tür başına pencere uzunluğu (çok pod 3-2)"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "5b7008e2",
+          "subject": "çok pod 3-2 uçtan uca — devirde kalıcı durumu okuma (14 senaryo, gerçek kaydedici + gerçek kira)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "45a41e33",
+          "subject": "çok pod 3-2 A — GAINED'de (ayar açıkken) yazıcı eski geri çekilmeyi beklemez"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "857ff986",
+          "subject": "çok pod 3-2 A — küçük kuyruk sınırında yeniden oynatma, devir günlüğü asla fırlatmaz; PostgreSQL entegrasyon testi"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "bcf43c2d",
+          "subject": "Küme kartında devirde yüklenen durum ve bu pod'un devir hazırlığı (çok pod 3-2)"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "caa79e83",
+          "subject": "çok pod 3-2 A — devir işaretleri, öncül satır, yükleyici, devir boşaltması (ayar kapalıyken 3-1 ifadeleri)"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "3c3352d6",
+          "subject": "devirde yükleme kapısı ve MOS'ta yüklenen durumu uygulama (çok pod 3-2 B)"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "6727955a",
+          "subject": "çok pod 3-2 devir bağlantısı — kira bırakılmadan önce devir boşaltması, takipçide teyit listesi tablodan, Sistem Sağlığı yükleme alanları"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "2408dd16",
+          "subject": "devir kancaları EvalStateSource varsayılanı (çok pod 3-2 P0 ek)"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "6fc6cbef",
+          "subject": "çok pod 3-2 sözleşmeleri ve devirde okuma ayarı (varsayılan kapalı)"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.168.1",
       "tag": "v20.168.1",
