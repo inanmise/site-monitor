@@ -4143,6 +4143,10 @@ public class MonitoringController {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.sitemonitor.service.AlertKeyOwnershipService alertKeyOwnership;
 
+    /** Takipçi pod'un teyit listesi (çok pod Sürüm 3-2, D-2) — isteğe bağlı; null = MOS belleği (bugünkü davranış). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.evalstate.ActiveConfirmationsService activeConfirmations;
+
     /** Canlı teyit zincirleri — "Teyit denemesi X/N" (tüm izleme türleri; domain= ile filtrelenebilir).
      *  Detay modalları 30sn'de bir poll eder; yazma yok, in-memory durumun anlık görüntüsü.
      *  KAPSAM (2026-09-28, A4): zincirler bellekte takımsız tutulur ve uç onları süzmeden döndürüyordu —
@@ -4154,8 +4158,11 @@ public class MonitoringController {
     public ResponseEntity<Map<String, Object>> confirmations(
             @RequestParam(required = false) String domain, HttpSession session) {
         permissionService.require(session, "monitoring.read", "view");
-        List<Map<String, Object>> rows = monitoringOutageService.activeConfirmations(
-                domain != null && !domain.isBlank() ? domain.trim() : null);
+        String domainFilter = domain != null && !domain.isBlank() ? domain.trim() : null;
+        // Çok pod Sürüm 3-2 (D-2): takipçide okuma ayarı açıkken liste monitor_confirmations'tan (her pod aynı); lider / ayar
+        // kapalı / hata → bellek (20.168.1 ile birebir). Bean yoksa (dilim testleri) bellek.
+        List<Map<String, Object>> rows = activeConfirmations != null ? activeConfirmations.list(domainFilter)
+                : monitoringOutageService.activeConfirmations(domainFilter);
         if (rows == null || rows.isEmpty() || SessionScope.seesAllMonitoring(session)) return ok(rows == null ? List.of() : rows);
         Map<String, Set<Long>> viewers;
         try {
