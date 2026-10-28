@@ -57,6 +57,51 @@ public interface EvalStateSource {
         return 0L;
     }
 
+    // ── Devirde okuma (2026-10-28, çok pod Sürüm 3-2 P0; tasarım R3-2 §3.5) — varsayılanlar = bugünkü davranış ────────
+
+    /**
+     * Bekleyen yüklemenin belirteci — MOS GAINED dinleyicisinde ({@code evalEpoch}) yükleme kapısını arıyorsa {@code > 0};
+     * 0 = bekleyen yükleme yok (ayar kapalı, kaydedici hazır değil, yükleme bitti / atıldı). Kaydedici CAS'tan sonra bunu
+     * sorar; 0 ise hiçbir okuma yapmaz. Okumalar arasında değer değişirse okumayı keser. Yalnız bellek; asla fırlatmaz.
+     * Varsayılan 0 (yükleme yok).
+     */
+    default long evalLoadToken() {
+        return 0L;
+    }
+
+    /**
+     * Okunan yükü belleğe uygular (yazıcı iş parçacığında çağrılır) — yalnız kapı hâlâ bu belirteçle LOADING iken, uçuşta
+     * değerlendirme yokken ve bellek BOŞken; aksi hâlde yükü atar (asla birleştirmez, J-3) ve raporunu
+     * {@link #lastEvalLoad()}'a yazar. Veritabanı yok; asla fırlatmaz.
+     *
+     * @return true = uygulandı; false = atıldı (neden {@link #lastEvalLoad()}'da). Varsayılan false (uygulanmaz).
+     */
+    default boolean applyEvalLoad(EvalLoad load) {
+        return false;
+    }
+
+    /**
+     * Kaydedici / yükleyici hiçbir şey yüklemeyecek (süreklilik reddetti, okuma düştü, sınır aşıldı …) — kapıyı belirteç
+     * eşleşirse açar ve raporu {@link #lastEvalLoad()}'a yazar. Belirteç eskiyse yok sayılır. Varsayılan: hiçbir şey.
+     */
+    default void evalLoadSkipped(long token, EvalLoadReport report) {
+    }
+
+    /** Bu pod'un son yükleme raporu (son GAINED'den beri; null = açılıştan beri hiç liderlik kazanılmadı). Varsayılan null. */
+    default EvalLoadReport lastEvalLoad() {
+        return null;
+    }
+
+    /**
+     * Bellekteki tüm durumu kaydediciye YENİDEN kuyruğa alır (MOS {@code replayEvalState()}) — kuşağın EKSİKSİZ sayılması
+     * için (tasarım §2.2: yeni kuşak ancak bir tam oynatma boşaltıldıktan sonra işaret taşır). Zincirler oynatılmaz.
+     *
+     * @return kuyruğa alınan işlem sayısı; varsayılan 0 (oynatma yok)
+     */
+    default int replay() {
+        return 0;
+    }
+
     /**
      * Bellekteki DOWN gözleminin dar kopyası — ham hata metni YOK, yalnız sınıfı.
      *

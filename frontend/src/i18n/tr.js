@@ -2494,6 +2494,11 @@ export const TR = {
   'help.set.site.monitor.scheduler.leader-yield.enabled':
     "Ne işe yarar: Başka canlı pod varken tarama lideri cron yan işlerini (raporlar, hatırlatmalar, gece temizliği, sertifika taramaları) 20 sn erteler ve tur tabanlı ağır işleri diğer pod'a bırakır.\nFaydası: Lider izleme taramalarına odaklanır, kontrol gecikmesi azalır; iş diğer pod'da yapılmazsa lider kısa bir gecikmeyle kendisi yapar, iş kaybolmaz.\nÖnerilen değer: true (varsayılan). false = önceki sürümün yerleşimi; tek pod'da fark yoktur.",
   // ── /multi-pod R3-1 · P0 ──
+  // ── multi-pod R3-2 · P0 ──
+  'general.lbl.site.monitor.eval-state.read-enabled': 'Devirde kalıcı değerlendirme durumunu yükle (çok pod)',
+  'help.set.site.monitor.eval-state.read-enabled':
+    "Ne işe yarar: Tarama liderliği başka pod'a geçince yeni lider, öncekinin veritabanına kaydettiği alarm değerlendirme durumunu yükler: temiz devirde (zarif kapanış) kurtarma sayaçları, DOWN kardeş izlemeler, bastırma, tür turları ve bastırma penceresi; çökme / kira süresi dolmasında yalnız gözlemler (DOWN kardeşler ve pencere). Süren teyit zincirleri her durumda yeniden başlar. Kapalıyken her devir bugünkü gibi sıfırdan başlar.\nFaydası: Dağıtım ve yeniden başlatmalarda alarmlar ardışık sağlıklı sayaçlarını kaybetmez; paylaşılan alarm, DOWN kardeşi varken erken kapanmaz.\nÖnerilen değer: false (varsayılan). Yalnız iki prod pod'unda en az 7 gün temiz doğrulamadan sonra true; kapatmak anında güvenlidir (sonraki devir bugünkü gibi). Kayıt kipi off iken etkisizdir.",
+  // ── /multi-pod R3-2 · P0 ──
   'general.lbl.site.monitor.uptime.alert-enabled':         'Uptime Alarmı',
   'general.lbl.site.monitor.port.alert-enabled':           'Port Alarmı',
   'general.lbl.site.monitor.dns.alert-enabled':            'DNS Alarmı',

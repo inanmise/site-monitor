@@ -2492,6 +2492,11 @@ export const EN = {
   'help.set.site.monitor.scheduler.leader-yield.enabled':
     "What it does: While another live pod exists, the sweep leader defers cron side jobs (reports, reminders, nightly cleanup, certificate sweeps) by 20 s and leaves round-based heavy jobs to the other pod.\nBenefit: The leader concentrates on the monitoring sweeps, so check delay drops; if the other pod does not do the job, the leader does it itself after a short delay and nothing is lost.\nRecommended: true (the default). false = the previous release's placement; a single pod sees no difference.",
   // ── /multi-pod R3-1 · P0 ──
+  // ── multi-pod R3-2 · P0 ──
+  'general.lbl.site.monitor.eval-state.read-enabled': 'Load durable evaluation state at handover (multi-pod)',
+  'help.set.site.monitor.eval-state.read-enabled':
+    "What it does: When sweep leadership moves to another pod, the new leader loads the alarm evaluation state its predecessor recorded in the database: after a clean handover (graceful shutdown) recovery counters, DOWN sibling monitors, suppression, type rounds and the suppression window; after a crash or lease expiry only observations (DOWN siblings and the window). Running confirmation chains always restart. When off, every handover starts from scratch as today.\nBenefit: Alarms keep their consecutive-healthy counters across deploys and restarts, and a shared alarm is not closed early while a sibling monitor is still DOWN.\nRecommended: false (default). Turn on only after at least 7 days of clean VERIFY on two production pods; turning it off is instantly safe (the next handover behaves as today). No effect while the recording mode is off.",
+  // ── /multi-pod R3-2 · P0 ──
   'general.lbl.site.monitor.uptime.alert-enabled':         'Uptime Alerts',
   'general.lbl.site.monitor.port.alert-enabled':           'Port Alerts',
   'general.lbl.site.monitor.dns.alert-enabled':            'DNS Alerts',
