@@ -8,6 +8,7 @@ import com.sitemonitor.it.MultiPodTestSupport;
 import com.sitemonitor.service.evalstate.EvalStateSource.RecoveryValues;
 import com.sitemonitor.service.evalstate.EvalStateSource.TypeValues;
 import com.sitemonitor.service.health.ClusterHealthStore;
+import com.sitemonitor.service.monitoring.ManualEvalInbox;
 import com.sitemonitor.service.schedule.SweepLeadershipChangedEvent;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -15,6 +16,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowMapper;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.Duration;
@@ -23,6 +25,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Predicate;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
@@ -270,8 +273,14 @@ class EvalStateRecorderReadTest {
         a.rec.recovery(RK, PORT, "db.example");
         a.rec.flushNow();
         assertThat(a.rec.generationComplete()).as("kanca sayacı oynatmadan beri değişti").isFalse();
+        int before = a.src.replays.get();
+        a.rec.tick();
+        assertThat(a.src.replays.get()).as("kanca kaynaklı yeniden oynatma seyreltilir (L-5)").isEqualTo(before);
+        assertThat(a.rec.generationComplete()).isFalse();
+        mp.advance(EvalStateRecorder.REREPLAY_MIN_INTERVAL_MS);
         a.rec.tick();
         a.rec.flushNow();
+        assertThat(a.src.replays.get()).isEqualTo(before + 1);
         assertThat(a.rec.generationComplete()).isTrue();
     }
 
@@ -757,5 +766,309 @@ class EvalStateRecorderReadTest {
         assertThat(ds.executed).isEmpty();
         a.rec.flushNow();
         assertThat(ds.executed).isNotEmpty();
+    }
+
+    // ── İnceleme düzeltmeleri (2026-10-28) ──────────────────────────────────────────────────────────────────────────
+
+    /** Bir ifade (devir yardımcısında) görülene dek bekler. */
+    static void awaitStatement(SqlRecordingDataSource ds, Predicate<String> q) throws InterruptedException {
+        long until = System.currentTimeMillis() + 10_000;
+        while (ds.executed.stream().noneMatch(e -> q.test(e.sql())) && System.currentTimeMillis() < until) Thread.sleep(5);
+        assertThat(ds.executed).as("beklenen ifade koştu").anyMatch(e -> q.test(e.sql()));
+    }
+
+    static void awaitParked(Thread t) throws InterruptedException {
+        long until = System.currentTimeMillis() + 10_000;
+        while (t.getState() != Thread.State.WAITING && System.currentTimeMillis() < until) Thread.sleep(5);
+        assertThat(t.getState()).as("iş parçacığı kilidi bekliyor").isEqualTo(Thread.State.WAITING);
+    }
+
+    @Test
+    @DisplayName("L-3: lider ipucunu işaretten önce geçmiş bir boşaltma kilidi beklerken devir işareti yazılır → kilit "
+            + "bırakılınca o boşaltma hiçbir şey yazmaz; handover_ms = updated_ms kalır; liderlik olayı temizler")
+    void markerSurvivesAFlushWaitingOnTheLock() throws Exception {
+        SqlRecordingDataSource ds = new SqlRecordingDataSource(mp.dataSource());
+        Pod a = new Pod(A, new JdbcTemplate(ds), EvalStateRecorder.MAX_PENDING, null);
+        a.memory(2);
+        a.rec.flushNow();
+        mp.advance(1_000);
+        ds.clear();
+        ds.blockWhen = q -> q.equals(EvalStateSql.SQL_ABANDON_OWN);   // yardımcı kilidi tutarken yavaş veritabanı
+        a.rec.openHandover();
+        a.leader.set(false);
+        AtomicReference<HandoverResult> res = new AtomicReference<>();
+        Thread closing = new Thread(() -> res.set(a.rec.flushForHandover(10_000, true)), "test-closing");
+        closing.start();
+        awaitStatement(ds, q -> q.equals(EvalStateSql.SQL_ABANDON_OWN));
+        Thread writer = new Thread(a.rec::flushOnce, "test-writer-tick");   // ipucu denetimini önceden geçmiş yazıcı turu
+        writer.start();
+        awaitParked(writer);
+        ds.release();
+        closing.join(10_000);
+        writer.join(10_000);
+        assertThat(res.get()).isEqualTo(HandoverResult.WRITTEN);
+        Map<String, Object> s = star();
+        assertThat(s.get("handover_ms")).as("işaret silinmedi").isNotNull().isEqualTo(s.get("updated_ms"));
+        assertThat(ds.executed).as("bekleyen boşaltma hiçbir ifade koşmadı")
+                .noneMatch(e -> e.thread().equals("test-writer-tick"));
+        mp.advance(1_000);
+        assertThat(a.rec.flushOnce()).isFalse();
+        assertThat(star().get("handover_ms")).isEqualTo(star().get("updated_ms"));
+        // Her liderlik olayı temizler (yeniden lider olursa yazım sürer)
+        a.leader.set(true);
+        a.gained();
+        assertThat(a.rec.flushNow()).isTrue();
+        assertThat(a.rec.generation()).isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("L-6: devir yazımı sürerken gelen zincir işlemi (zincirler yüklenmez) temiz devri INCOMPLETE yapmaz")
+    void chainOpDuringHandoverStillWritten() throws Exception {
+        SqlRecordingDataSource ds = new SqlRecordingDataSource(mp.dataSource());
+        Pod a = new Pod(A, new JdbcTemplate(ds), EvalStateRecorder.MAX_PENDING, null);
+        a.memory(2);
+        a.rec.flushNow();
+        mp.advance(1_000);
+        a.rec.openHandover();
+        a.leader.set(false);
+        a.src.recovery.put(RK, new RecoveryValues(3, mp.now(), null, null));
+        a.rec.recovery(RK, PORT, "db.example");   // yardımcının yazacağı işlem
+        Predicate<String> recoveryWrite = q -> q.startsWith("UPDATE monitor_eval_state")
+                || q.startsWith("INSERT INTO monitor_eval_state");
+        ds.clear();   // önceki boşaltmanın ifadeleri beklemeyi kandırmasın
+        ds.blockWhen = recoveryWrite;
+        AtomicReference<HandoverResult> res = new AtomicReference<>();
+        Thread closing = new Thread(() -> res.set(a.rec.flushForHandover(10_000, true)), "test-closing");
+        closing.start();
+        awaitStatement(ds, recoveryWrite);
+        a.rec.chainEnd("c-live", 5L);   // ölmekte olan liderde bir zincir adımı (devir açık → kuyruğa girer)
+        ds.release();
+        closing.join(10_000);
+        assertThat(res.get()).isEqualTo(HandoverResult.WRITTEN);
+        Map<String, Object> s = star();
+        assertThat(s.get("handover_ms")).isEqualTo(s.get("updated_ms"));
+        assertThat(countIn(1)).isEqualTo(3);
+        assertThat(a.rec.status().pending()).as("yalnız zincir işlemi kaldı").isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("L-6 karşıtı: devir yazımı sürerken gelen KURTARMA işlemi işareti engeller (INCOMPLETE)")
+    void recoveryOpDuringHandoverStillIncomplete() throws Exception {
+        SqlRecordingDataSource ds = new SqlRecordingDataSource(mp.dataSource());
+        Pod a = new Pod(A, new JdbcTemplate(ds), EvalStateRecorder.MAX_PENDING, null);
+        a.memory(2);
+        a.rec.flushNow();
+        mp.advance(1_000);
+        a.rec.openHandover();
+        a.leader.set(false);
+        a.src.recovery.put(RK, new RecoveryValues(3, mp.now(), null, null));
+        a.rec.recovery(RK, PORT, "db.example");
+        Predicate<String> recoveryWrite = q -> q.startsWith("UPDATE monitor_eval_state")
+                || q.startsWith("INSERT INTO monitor_eval_state");
+        ds.clear();
+        ds.blockWhen = recoveryWrite;
+        AtomicReference<HandoverResult> res = new AtomicReference<>();
+        Thread closing = new Thread(() -> res.set(a.rec.flushForHandover(10_000, true)), "test-closing");
+        closing.start();
+        awaitStatement(ds, recoveryWrite);
+        a.src.recovery.put(RK, new RecoveryValues(0, mp.now(), null, null));
+        a.rec.recovery(RK, PORT, "db.example");   // yazımdan sonra gelen sıfırlama — yazılmadı
+        ds.release();
+        closing.join(10_000);
+        assertThat(res.get()).isEqualTo(HandoverResult.INCOMPLETE);
+        assertThat(star().get("handover_ms")).isNull();
+    }
+
+    @Test
+    @DisplayName("L-5: sürekli istisna veren kanca → kuşak eksik kalır, ama yeniden oynatma dakikada en çok bir (her turda değil)")
+    void persistentHookFailureReplaysAtMostOncePerMinute() {
+        Pod a = pod(A);
+        a.memory(2);
+        a.rec.flushNow();
+        assertThat(a.src.replays).hasValue(1);
+        assertThat(a.rec.generationComplete()).isTrue();
+        for (int i = 0; i < 120; i++) {   // 120 sn, saniyede bir yazıcı turu, her turda yeni kanca hatası
+            a.src.hookFailures++;
+            a.src.recovery.put(RK, new RecoveryValues(1 + (i % 2), mp.now(), null, null));
+            a.rec.recovery(RK, PORT, "db.example");
+            a.rec.tick();
+            mp.advance(1_000);
+        }
+        assertThat(a.src.replays.get()).as("ilk oynatma + 60 sn'de bir").isEqualTo(2);
+        assertThat(a.rec.generationComplete()).isFalse();
+        assertThat(a.rec.handoverReady()).isFalse();
+        // Kanca düzelirse bir sonraki seyreltilmiş oynatma kuşağı yeniden eksiksiz yapar
+        mp.advance(EvalStateRecorder.REREPLAY_MIN_INTERVAL_MS);
+        a.rec.tick();
+        a.rec.flushNow();
+        assertThat(a.rec.generationComplete()).isTrue();
+    }
+
+    @Test
+    @DisplayName("L-5: düşüş kaynaklı yeniden oynatma seyreltilmez (kuyruk boşalınca hemen)")
+    void dropReplayIsNotRateLimited() {
+        Pod a = new Pod(A, mp.jdbc(), 3, null);
+        a.memory(2);
+        a.rec.flushNow();
+        for (String d : List.of("x", "y", "z", "w")) {
+            a.src.recovery.put(PORT + ":" + d + ".example", new RecoveryValues(1, 1L, null, null));
+            a.rec.recovery(PORT + ":" + d + ".example", PORT, d + ".example");
+        }
+        a.rec.flushNow();
+        int before = a.src.replays.get();
+        a.rec.tick();
+        assertThat(a.src.replays.get()).as("60 sn beklenmez").isGreaterThan(before);
+    }
+
+    @Test
+    @DisplayName("L-5: kirli taşma (ayar açık) → seyreltilmiş boşluk: yeni kuşak + tam oynatma → yeniden eksiksiz; ayar kapalıyken kuşak değişmez")
+    void dirtyOverflowRequestsAGap() {
+        Pod a = pod(A);
+        a.memory(2);
+        a.rec.flushNow();
+        assertThat(a.rec.generation()).isEqualTo(1);
+        ReflectionTestUtils.setField(a.rec, "dirtyOverflow", true);
+        a.src.recovery.put(RK, new RecoveryValues(3, mp.now(), null, null));
+        a.rec.recovery(RK, PORT, "db.example");
+        for (int i = 0; i < 5; i++) {
+            a.rec.tick();
+            mp.advance(1_000);
+        }
+        assertThat(a.rec.generation()).as("son oynatmadan bu yana 60 sn geçmedi — boşluk beklenir").isEqualTo(1);
+        assertThat(a.rec.generationComplete()).isFalse();
+        mp.advance(EvalStateRecorder.REREPLAY_MIN_INTERVAL_MS);
+        for (int i = 0; i < 3; i++) {
+            a.rec.tick();
+            mp.advance(1_000);
+        }
+        assertThat(a.rec.generation()).as("boşluk → yeni kuşak").isEqualTo(2);
+        assertThat(a.rec.generationComplete()).isTrue();
+        assertThat(countIn(2)).as("yeni kuşağa tam oynatma").isEqualTo(3);
+
+        on.set(false);
+        Pod b = pod(B);
+        b.memory(2);
+        b.rec.flushNow();
+        long g = b.rec.generation();
+        ReflectionTestUtils.setField(b.rec, "dirtyOverflow", true);
+        mp.advance(2 * EvalStateRecorder.REREPLAY_MIN_INTERVAL_MS);
+        for (int i = 0; i < 3; i++) b.rec.tick();
+        assertThat(b.rec.generation()).as("ayar kapalı: 3-1 davranışı, boşluk yok").isEqualTo(g);
+        assertThat(b.src.replays).hasValue(0);
+    }
+
+    @Test
+    @DisplayName("L-4: uygulama istisnası (MOS'ta beklenmeyen hata) → kapı HEMEN kapanır: read_failed raporu, belirteç 0, WARN")
+    void applyThrowsEndsGateImmediately() {
+        Pod a = pod(A);
+        a.memory(2);
+        a.rec.flushNow();
+        mp.advance(1_000);
+        a.handover(true);
+        mp.advance(1_000);
+        Pod b = pod(B);
+        b.gained();
+        b.src.arm(21);
+        b.src.onApply = () -> {
+            throw new IllegalStateException("uygulama hatası db.example");
+        };
+        assertThat(b.rec.flushNow()).isTrue();
+        assertThat(b.src.applied).isEmpty();
+        assertThat(b.src.skipped).extracting(EvalLoadReport::reason).containsExactly(EvalLoadReport.REASON_READ_FAILED);
+        assertThat(b.src.evalLoadToken()).as("kapı açıldı — 20 sn beklenmez").isZero();
+        assertThat(logs.list).anyMatch(e -> e.getLevel() == Level.WARN
+                && e.getFormattedMessage().contains("devirde yüklenemedi")
+                && e.getFormattedMessage().contains("IllegalStateException")
+                && !e.getFormattedMessage().contains("db.example"));
+    }
+
+    @Test
+    @DisplayName("L-4: eşleme hatası (DataAccessException değil) → kapı HEMEN kapanır, read_failed")
+    void mapperThrowsEndsGateImmediately() {
+        Pod a = pod(A);
+        a.memory(2);
+        a.rec.flushNow();
+        mp.advance(1_000);
+        a.handover(true);
+        mp.advance(1_000);
+        JdbcTemplate throwing = new JdbcTemplate(mp.dataSource()) {
+            @Override
+            public <T> List<T> query(String q, RowMapper<T> rm, Object... args) {
+                if (q.contains("FROM monitor_last_status WHERE gen = ?")) {
+                    RowMapper<T> bad = (rs, n) -> {
+                        throw new IllegalStateException("eşleme hatası");
+                    };
+                    return super.query(q, bad, args);
+                }
+                return super.query(q, rm, args);
+            }
+        };
+        Pod b = new Pod(B, throwing, EvalStateRecorder.MAX_PENDING, null);
+        b.gained();
+        b.src.arm(22);
+        b.rec.flushNow();
+        assertThat(b.src.applied).isEmpty();
+        assertThat(b.src.skipped).extracting(EvalLoadReport::reason).containsExactly(EvalLoadReport.REASON_READ_FAILED);
+        assertThat(b.src.evalLoadToken()).isZero();
+    }
+
+    @Test
+    @DisplayName("M-1: temiz devir ama gelen kutusunda değerlendirilmemiş elle sonuç → halef yalnız gözlemleri yükler "
+            + "(pending_manual_results) — sayaç taşınmaz")
+    void pendingInboxRowsGiveObservations() {
+        mp.jdbc().execute(ManualEvalInbox.DDL);
+        Pod a = pod(A);
+        a.memory(2);
+        a.rec.flushNow();
+        mp.advance(1_000);
+        assertThat(a.handover(true)).isEqualTo(HandoverResult.WRITTEN);
+        mp.jdbc().update("INSERT INTO monitor_eval_inbox(monitor_type, monitor_id, manual, result_json, checked_ms, "
+                + "source_pod, created_ms) VALUES (?,?,?,?,?,?,?)", ManualEvalInbox.TYPE_PORT, 7L, true, "{}", mp.now(),
+                "pod-c-00000003", mp.now());
+        mp.advance(2_000);
+        Pod b = pod(B);
+        b.gained();
+        b.src.arm(31);
+        b.rec.flushNow();
+        EvalLoad l = b.src.applied.get(0);
+        assertThat(l.tier()).isEqualTo(EvalLoad.TIER_OBSERVATIONS);
+        assertThat(l.meta().partialReason()).isEqualTo(EvalLoadReport.REASON_PENDING_MANUAL_RESULTS);
+        assertThat(l.recovery()).isEmpty();
+        assertThat(l.siblings()).containsKey(EvalLoad.siblingKey(PORT, 7));
+    }
+
+    @Test
+    @DisplayName("M-2: kaydedici yükleyiciye kaynağın pencere uzunluğu kuralını verir — tohum türün penceresiyle kesilir")
+    void loaderUsesTheSourceWindowLength() {
+        Pod a = pod(A);
+        a.memory(2);
+        a.rec.flushNow();
+        mp.advance(1_000);
+        a.handover(true);
+        EvalStateSql w = new EvalStateSql(mp.jdbc());
+        long now = mp.now();
+        w.writeLastStatus(List.of(
+                new EvalStateSql.LastStatusRow(PORT, "m:30", "slow.example", "443", 30L, 3L, true, false, true, "NETWORK",
+                        "S", now - 40 * 60_000L, now - 40 * 60_000L, 100),
+                new EvalStateSql.LastStatusRow(PORT, "m:31", "slow.example", "443", 31L, 3L, true, true, false, null, "S",
+                        now - 60_000L, now - 60_000L, 101)), A, 1, now);
+        mp.advance(1_000);
+        Pod b = pod(B);
+        b.gained();
+        b.src.arm(41);
+        b.rec.flushNow();
+        assertThat(b.src.applied.get(0).window().get(PORT).get("slow.example").networkDown())
+                .as("PORT penceresi 5 dk (tur 30 sn): 40 dk önceki ağ DOWN sayılmaz").isFalse();
+
+        mp.advance(1_000);
+        assertThat(b.handover(true)).isEqualTo(HandoverResult.WRITTEN);
+        mp.advance(1_000);
+        Pod c = pod("pod-c-00000003");
+        c.src.windowLength = (type, interval) -> EvalWindowSeed.WINDOW_CAP_MS;   // kaynak 60 dk derse
+        c.gained();
+        c.src.arm(42);
+        c.rec.flushNow();
+        assertThat(c.src.applied.get(0).window().get(PORT).get("slow.example").networkDown())
+                .as("kaynağın kuralı kullanıldı").isTrue();
     }
 }
