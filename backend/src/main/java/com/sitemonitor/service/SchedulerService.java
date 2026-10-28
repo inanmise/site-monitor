@@ -5245,7 +5245,7 @@ public class SchedulerService {
             boolean quiet = awaitEvalQuiet();
             try {
                 handoverSink.flushForHandover(com.sitemonitor.service.evalstate.EvalStateSink.HANDOVER_FLUSH_MS, quiet);
-            } catch (RuntimeException e) {
+            } catch (Throwable e) {
                 log.warn("Devir boşaltması beklenmedik hata verdi — kira yine bırakılıyor, halef en çok gözlemleri yükler: {}",
                         e.toString());
             }
@@ -5259,6 +5259,9 @@ public class SchedulerService {
     }
 
     // ── R3-2 handover (çok pod Sürüm 3-2, paket C) — yardımcılar ────────────────────────────────────────────────────
+    // Her yardımcı Throwable DAHİL yakalar (inceleme 2026-10-28, L-5): bu ilk ContextClosedEvent dinleyicisidir; buradan
+    // kaçan bir Error (ör. OutOfMemoryError) shutdownStarted'ı, durdurmaları ve kiranın bırakılmasını — Spring'in çok
+    // yayıncısında hata işleyicisi olmadığından sonraki dinleyicileri de (NotifyExecutorDrain, …) — atlatırdı.
 
     /** Kalıcı değerlendirme durumu kaydedicisi — TEMBEL (kaydedici zamanlayıcıya bağlı; döngü kurulmaz). null = yok. */
     private volatile org.springframework.beans.factory.ObjectProvider<com.sitemonitor.service.evalstate.EvalStateSink> evalStateSinkProvider;
@@ -5285,7 +5288,7 @@ public class SchedulerService {
         if (p == null) return null;
         try {
             s = p.getIfUnique();
-        } catch (RuntimeException e) {
+        } catch (Throwable e) {
             return null;
         }
         if (s != null) evalStateSinkForHandover = s;
@@ -5296,7 +5299,7 @@ public class SchedulerService {
     private boolean askHandoverReady(com.sitemonitor.service.evalstate.EvalStateSink sink) {
         try {
             return sink.handoverReady();
-        } catch (RuntimeException e) {
+        } catch (Throwable e) {
             log.warn("Devir hazırlığı okunamadı — devir adımı atlanıyor (kapanış bugünkü gibi): {}", e.toString());
             return false;
         }
@@ -5306,13 +5309,13 @@ public class SchedulerService {
     private void openEvalHandover(com.sitemonitor.service.evalstate.EvalStateSink sink) {
         try {
             sink.openHandover();
-        } catch (RuntimeException e) {
+        } catch (Throwable e) {
             log.warn("Devir açılamadı (kaydedici): {}", e.toString());
         }
         if (monitoringOutageService == null) return;
         try {
             monitoringOutageService.beginEvalHandover();
-        } catch (RuntimeException e) {
+        } catch (Throwable e) {
             log.warn("Devir açılamadı (değerlendirme kapısı): {}", e.toString());
         }
     }
@@ -5322,7 +5325,7 @@ public class SchedulerService {
         if (monitoringOutageService == null) return true;
         try {
             return monitoringOutageService.awaitEvalQuiescent(com.sitemonitor.service.evalstate.EvalStateSink.HANDOVER_QUIESCE_MS);
-        } catch (RuntimeException e) {
+        } catch (Throwable e) {
             log.warn("Devirde değerlendirmelerin durulması beklenemedi — işaretsiz boşaltılır: {}", e.toString());
             return false;
         }
@@ -5333,7 +5336,7 @@ public class SchedulerService {
         if (monitoringOutageService == null) return;
         try {
             monitoringOutageService.endEvalHandover();
-        } catch (RuntimeException e) {
+        } catch (Throwable e) {
             log.warn("Devir kapatılamadı (değerlendirme kapısı): {}", e.toString());
         }
     }
@@ -6591,11 +6594,19 @@ public class SchedulerService {
     boolean forwardManualToLeader(String type, Long monitorId, Map<String, Object> raw) {
         if (manualEvalInbox == null || clusterSchedule == null) return false;
         if (isSweepLeader()) return false;
+        // ── R3-2 (inceleme 2026-10-28, MOS M-1 yol 1): devirde okuma ayarı AÇIKKEN takipçi HER ZAMAN iletir ──
+        // Liderlik el değiştirirken (eski liderin RELEASED'i ile yeni liderin ilk boşaltma turu arasında) boşaltıcı ilanı
+        // kira sahibine eşit değildir; aşağıdaki kural sonucu takipçinin BOŞ belleğinde değerlendirirdi — bir DOWN'un
+        // sayaç sıfırlaması kaybolur, yeni lider (TAM katman) taşınan sayaçla alarmı bir sağlıklı tur ERKEN kapatırdı. Ayar
+        // açıkken sonuç gelen kutusuna yazılır (ilan yok / kira boş / yeni lider henüz boşaltmadı olsa da): yeni lider onu
+        // yüklemeden SONRA boşaltır ({@link #drainManualEvalInbox} yükleme sürerken satır almaz; yükleyici kutuyu dolu
+        // görürse sayaç taşımaz — yalnız gözlemler). Ayar kapalı → 20.168.1 ile birebir (aynı ifadeler, aynı günlük).
+        boolean readOn = com.sitemonitor.service.evalstate.EvalStateReadSwitch.enabled(appSettings);
         // Yuvarlanan dağıtım (inceleme 2026-10-22, CORE-3 / F9 / R-4 + B1): lider ESKİ sürümse (20.164.0) gelen kutusunu
         // hiç boşaltmaz — iletilen sonuç 10 dk sonra silinir, "Şimdi kontrol et" alarmı kapatamaz. Karar YETENEĞE dayanır,
         // zamana değil: boşaltıcı ilanının sahibi tarama liderliği kirasının sahibiyse iletilir; değilse 20.164.0'daki gibi
         // YEREL değerlendirilir (elle kural: yalnız kapanış).
-        if (!evalInboxDrainerAlive()) {
+        if (!readOn && !evalInboxDrainerAlive()) {
             log.debug("Gelen kutusunu boşaltan lider yok (eski sürüm lider / boşaltma durdu) — elle kontrol yerel: tür={} "
                     + "izleme={}", type, monitorId);
             return false;
@@ -6622,11 +6633,20 @@ public class SchedulerService {
             return;
         }
         advertiseEvalInboxDrainer();
+        // ── R3-2 (inceleme 2026-10-28, MOS M-1 yol 1): devirde yükleme sürerken satır ALINMAZ ── yükleyici gelen kutusunu
+        // sayarken devir aralığında iletilmiş sonuçlar orada olsun (dolu kutu → TAM yerine yalnız gözlemler); satırlar
+        // yükleme bittikten sonraki ilk turda değerlendirilir. İlan yine yazılır (takipçiler iletmeye devam eder). Yalnız
+        // bellek; ayar kapalıyken kapı hiç kurulmaz (belirteç 0) → 20.168.1 ile birebir.
+        if (evalLoadPending()) {
+            log.debug("Devirde kalıcı durum yükleniyor — elle kontrol gelen kutusu bu turda boşaltılmıyor (yükleme sonrası)");
+            return;
+        }
         String owner = clusterSchedule.owner();
         long started = System.currentTimeMillis();
         int evaluated = 0;
         int batches = 0;
         while (batches++ < 40 && System.currentTimeMillis() - started < MANUAL_EVAL_DRAIN_BUDGET_MS) {
+            if (batches > 1 && evalLoadPending()) return;   // boşaltma sırasında liderlik yeniden alındıysa (R3-2)
             List<com.sitemonitor.service.monitoring.ManualEvalInbox.Row> rows =
                     manualEvalInbox.claim(owner, com.sitemonitor.service.monitoring.ManualEvalInbox.CLAIM_BATCH);
             if (rows.isEmpty()) break;
@@ -6653,6 +6673,19 @@ public class SchedulerService {
             advertiseEvalInboxDrainer();   // uzun boşaltmada da ilan tazelensin (B1)
         }
         if (evaluated > 0) log.debug("Elle kontrol gelen kutusu: {} sonuç değerlendirildi", evaluated);
+    }
+
+    /**
+     * Bu pod'un değerlendirme kapısı devirde yükleme bekliyor mu (çok pod Sürüm 3-2; {@code MonitoringOutageService.evalLoadToken()}
+     * — yalnız bellek). Ayar kapalıyken kapı hiç kurulmaz → false. MOS yok / okuma hatası → false (bugünkü davranış).
+     */
+    boolean evalLoadPending() {
+        if (monitoringOutageService == null) return false;
+        try {
+            return monitoringOutageService.evalLoadToken() > 0;
+        } catch (RuntimeException e) {
+            return false;
+        }
     }
 
     /**

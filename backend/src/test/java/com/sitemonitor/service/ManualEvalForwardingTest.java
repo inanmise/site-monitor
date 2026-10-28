@@ -5,6 +5,8 @@ import com.sitemonitor.model.AlertEvent;
 import com.sitemonitor.model.HttpMonitor;
 import com.sitemonitor.repository.AlertEventRepository;
 import com.sitemonitor.repository.HttpMonitorRepository;
+import com.sitemonitor.service.evalstate.EvalStateReadSwitch;
+import com.sitemonitor.service.evalstate.EvalStateSink;
 import com.sitemonitor.service.monitoring.ManualEvalInbox;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -338,6 +340,98 @@ class ManualEvalForwardingTest {
         a.scheduler().evaluateHttpNow(x, raw(true));                     // A takipçi → B'ye iletir
         assertThat(inboxRows()).isEqualTo(1);
         b.scheduler().drainManualEvalInbox();
+        verify(escalation, times(1)).resolveMonitoringAlertsForDomain(URL, TYPE);
+    }
+
+    // ── Çok pod Sürüm 3-2 inceleme (2026-10-28, MOS M-1 yol 1): okuma ayarı AÇIKKEN takipçi devir aralığında da iletir ──────
+
+    /** Devirde okuma ayarını kümede açar (ortak ayar sahtesi — her pod aynı değeri görür). */
+    void readSettingOn() {
+        org.mockito.Mockito.doReturn(true).when(mp.mock(AppSettingsService.class)).getBoolean(EvalStateReadSwitch.KEY, false);
+    }
+
+    @Test
+    @DisplayName("J-1 (ayar kapalı): lider kirayı bıraktı, yeni lider henüz yok — takipçinin 'Şimdi kontrol et' sonucu bugünkü gibi YEREL")
+    void readOff_leaderlessGap_followerEvaluatesLocally() {
+        openAlarmByX();
+        a.scheduler().releaseSweepLeadership();                          // RELEASED: kira boş, ilan hâlâ A'nın
+        assertThat(mp.leaseOwner("sweep-leader")).isNull();
+        b.scheduler().evaluateHttpNow(x, raw(true));                     // B'nin "takipçi" kararı önbellekte (≤ 5 sn)
+        assertThat(inboxRows()).isZero();
+        verify(escalation, times(1)).resolveMonitoringAlertsForDomain(URL, TYPE);
+    }
+
+    @Test
+    @DisplayName("M-1 yol 1 (ayar açık): kira boşken takipçi de, kapanan eski lider de sonucu gelen kutusuna yazar (yerel DEĞİL); "
+            + "yeni lider devralıp boşaltınca TAM BİR kez değerlendirir")
+    void readOn_leaderlessGap_followerAndDyingLeaderForward() {
+        readSettingOn();
+        openAlarmByX();
+        a.scheduler().releaseSweepLeadership();
+        assertThat(mp.leaseOwner("sweep-leader")).isNull();
+
+        b.scheduler().evaluateHttpNow(x, raw(false));                    // devir aralığında DOWN — kaybolmamalı
+        a.scheduler().evaluateHttpNow(x, raw(true));                     // bırakan pod (artık lider değil) da iletir
+        assertThat(inboxRows()).as("iki sonuç da gelen kutusunda").isEqualTo(2);
+        verify(escalation, never()).resolveMonitoringAlertsForDomain(anyString(), anyString());
+
+        mp.advance(SchedulerService.SWEEP_FOLLOWER_RECHECK_MS + 1);
+        assertThat(b.scheduler().isSweepLeaderNow()).as("B devraldı").isTrue();
+        b.scheduler().drainManualEvalInbox();
+        assertThat(inboxRows()).isZero();
+        b.scheduler().drainManualEvalInbox();
+        assertThat(inboxRows()).isZero();
+    }
+
+    @Test
+    @DisplayName("M-1 yol 1 (ayar açık): yeni lider ilk boşaltma turunu koşmadan (ilan ölü liderin) takipçi YİNE iletir")
+    void readOn_newLeaderBeforeFirstTick_followerForwards() {
+        readSettingOn();
+        MonitoringMultiPodKit.PodWithMos c = MonitoringMultiPodKit.podWithMos(mp, 3);
+        ReflectionTestUtils.setField(c.scheduler(), "manualEvalInbox", inbox());
+        openAlarmByX();
+        mp.advance(MonitoringMultiPodKit.TTL + 1_000);                    // A öldü (ilanını bırakmadı)
+        assertThat(b.scheduler().isSweepLeaderNow()).isTrue();
+        assertThat(c.scheduler().isSweepLeaderNow()).isFalse();
+        assertThat(mp.lease(SchedulerService.EVAL_INBOX_DRAINER).owner()).isEqualTo(MultiPodTestSupport.owner(1));
+
+        c.scheduler().evaluateHttpNow(x, raw(true));
+        assertThat(inboxRows()).as("ilan eski liderin ama ayar açık → iletildi").isEqualTo(1);
+        verify(escalation, never()).resolveMonitoringAlertsForDomain(anyString(), anyString());
+
+        b.scheduler().drainManualEvalInbox();
+        assertThat(inboxRows()).isZero();
+        verify(escalation, times(1)).resolveMonitoringAlertsForDomain(URL, TYPE);
+    }
+
+    @Test
+    @DisplayName("M-1 yol 1: devirde yükleme sürerken (değerlendirme kapısı LOADING) lider gelen kutusundan satır ALMAZ, ilanı yine "
+            + "yazar; yükleme bitince ilk turda satır değerlendirilir")
+    void drainSkipsWhileEvalLoadPending() {
+        readSettingOn();
+        b.mos().setEvalReadEnabled(() -> true);
+        b.mos().setEvalStateSink(org.mockito.Mockito.mock(EvalStateSink.class));   // engel yok → GAINED kapıyı kurar
+        openAlarmByX();
+        mp.advance(MonitoringMultiPodKit.TTL + 1_000);                    // A öldü
+        assertThat(b.scheduler().isSweepLeaderNow()).as("B devraldı (GAINED)").isTrue();
+        long token = b.mos().evalLoadToken();
+        assertThat(token).as("yükleme bekleniyor").isPositive();
+        assertThat(b.scheduler().evalLoadPending()).isTrue();
+
+        assertThat(a.scheduler().isSweepLeaderNow()).isFalse();
+        a.scheduler().evaluateHttpNow(x, raw(true));                     // A artık takipçi → iletir
+        assertThat(inboxRows()).isEqualTo(1);
+
+        b.scheduler().drainManualEvalInbox();                            // yükleme sürüyor → satır alınmaz
+        assertThat(inboxRows()).as("yükleyici kutuyu dolu görsün").isEqualTo(1);
+        assertThat(mp.lease(SchedulerService.EVAL_INBOX_DRAINER).owner()).as("ilan yine yazıldı")
+                .isEqualTo(MultiPodTestSupport.owner(2));
+        verify(escalation, never()).resolveMonitoringAlertsForDomain(anyString(), anyString());
+
+        b.mos().evalLoadSkipped(token, null);                            // yükleme bitti (yüklenmedi)
+        assertThat(b.mos().evalLoadToken()).isZero();
+        b.scheduler().drainManualEvalInbox();
+        assertThat(inboxRows()).isZero();
         verify(escalation, times(1)).resolveMonitoringAlertsForDomain(URL, TYPE);
     }
 }

@@ -41,7 +41,10 @@ import java.util.function.LongSupplier;
  *   <li><b>Her hata</b> (tablo yok, zaman aşımı, bayat / yok {@code '*'}) → bellek (takipçide boş = bugünkü davranış).</li>
  * </ul>
  * Önceki kuşakların satırları okunmaz ({@code gen = '*'.gen AND writer = '*'.writer}); zarif devirde eski lider kendi
- * satırlarını ABANDONED yapar, çökmede halefin ilk CAS'ı işaretler (3-1). Sıra: oluşturulma anı (bellekte karma sırasıydı;
+ * satırlarını ABANDONED yapar, çökmede halefin ilk CAS'ı işaretler (3-1). {@value #CHAIN_ROW_MAX_AGE_MS} ms'den uzun süredir
+ * güncellenmeyen satır hayalettir, gösterilmez. Kalan boşluk: aynı liderin kuşağı liderlik değişmeden yenilenirse (kip
+ * kapalı → açık, üst sınır taşması, çit onarımı) süren zincirin satırı yeni kuşakta yoktur — o zincir bitene dek (~1–2 dk)
+ * takipçi listesinde görünmez (liderin belleğinde görünür). Sıra: oluşturulma anı (bellekte karma sırasıydı;
  * ekran türe göre süzer). Yetki ve takım süzgeci denetleyicide aynen kalır (aynı {@code domain} anahtarları).
  */
 @Component
@@ -57,6 +60,13 @@ public class ActiveConfirmationsService {
     static final long LIVE_MS = 2 * EvalStateRecorder.HEARTBEAT_MS + 10_000L;
     /** Okunan en çok zincir satırı. */
     static final int MAX_ROWS = 2_000;
+    /**
+     * Bu kadar süredir güncellenmeyen zincir satırı "hayalet" sayılır, listelenmez (inceleme 2026-10-28, L-2): bekleyen
+     * sınırına takılıp yazılamayan bir zincir-sonu silmesi RUNNING satırı günlük budamaya dek (1 sa+) bırakıyordu. Canlı
+     * zincirin iki yazımı arasındaki en uzun süre = deneme aralığı (en çok 600 sn, {@code clampInterval}) + bir yeniden
+     * kontrol (k6 en çok 180 + 30 sn) ≈ 13,5 dk; 20 dk pay bırakır.
+     */
+    static final long CHAIN_ROW_MAX_AGE_MS = 20 * 60_000L;
     /** İfade zaman aşımı (sn) — istek iş parçacığı yavaş veritabanında en çok bu kadar bekler. */
     static final int QUERY_TIMEOUT_SECONDS = 3;
     /** Hata uyarısı en çok bu aralıkla (ms). */
@@ -66,7 +76,7 @@ public class ActiveConfirmationsService {
             + " WHERE alert_type = ?";
     static final String SQL_CHAINS = "SELECT alert_type, domain, detail, attempt, total_attempts, first_failure_at, "
             + "next_attempt_ms FROM " + EvalStateSql.CONFIRMATIONS + " WHERE gen = ? AND writer = ? AND state <> '"
-            + EvalStateSql.STATE_ABANDONED + "' ORDER BY created_ms, key_hash LIMIT " + MAX_ROWS;
+            + EvalStateSql.STATE_ABANDONED + "' AND updated_ms >= ? ORDER BY created_ms, key_hash LIMIT " + MAX_ROWS;
 
     /** MOS'un ISO biçimi ({@code yyyy-MM-ddTHH:mm:ss}, UTC). */
     private static final DateTimeFormatter ISO = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -196,7 +206,7 @@ public class ActiveConfirmationsService {
                 long next = rs.getLong("next_attempt_ms");
                 m.put("next_attempt_at", rs.wasNull() ? null : ISO.format(Instant.ofEpochMilli(next)));
                 return Collections.unmodifiableMap(m);
-            }, g, writer);
+            }, g, writer, now - CHAIN_ROW_MAX_AGE_MS);
             return List.copyOf(rows);
         } catch (BadSqlGrammarException e) {
             log.debug("Teyit zinciri tablosu henüz yok — liste bellekten: {}", e.toString());

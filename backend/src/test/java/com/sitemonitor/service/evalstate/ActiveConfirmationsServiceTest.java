@@ -80,13 +80,19 @@ class ActiveConfirmationsServiceTest {
 
     private void chain(String domain, String alertType, String detail, int attempt, int total, String firstFailure,
                        Long nextMs, String state, long gen, String writer, long createdMs) {
+        chain(domain, alertType, detail, attempt, total, firstFailure, nextMs, state, gen, writer, createdMs, clock.get() - 1_000);
+    }
+
+    /** Açık {@code updated_ms} ile (varsayılan: şimdiden 1 sn önce — canlı zincir). */
+    private void chain(String domain, String alertType, String detail, int attempt, int total, String firstFailure,
+                       Long nextMs, String state, long gen, String writer, long createdMs, long updatedMs) {
         String hash = String.format("%064d", ++seq);
         mp.jdbc().update("INSERT INTO monitor_confirmations (key_hash, confirm_key, chain_id, alert_type, domain, detail, "
                         + "monitor_type, monitor_id, attempt, total_attempts, delay_ms, first_failure_at, next_attempt_ms, "
                         + "attempts_json, ctx_json, ctx_truncated, state, created_ms, writer, gen, seq, updated_ms, updated_at) "
                         + "VALUES (?, ?, 1, ?, ?, ?, 'http', 7, ?, ?, 30000, ?, ?, NULL, NULL, FALSE, ?, ?, ?, ?, 1, ?, 'x')",
                 hash, alertType + ":" + domain + ":" + detail, alertType, domain, detail, attempt, total, firstFailure,
-                nextMs, state, createdMs, writer, gen, createdMs);
+                nextMs, state, createdMs, writer, gen, updatedMs);
     }
 
     private void running(String domain, long createdMs) {
@@ -253,6 +259,22 @@ class ActiveConfirmationsServiceTest {
     }
 
     @Test
+    @DisplayName("L-2: 20 dk'dır güncellenmeyen RUNNING satırı (kaybolmuş zincir-sonu silmesi) hayalettir — gösterilmez; sınırda gösterilir")
+    void staleRunningRowIgnored() {
+        assertThat(ActiveConfirmationsService.CHAIN_ROW_MAX_AGE_MS).isEqualTo(20 * 60_000L);
+        star(4, WRITER, clock.get() - 5_000);   // kuşak canlı (kalp atışı taze)
+        long now = clock.get();
+        chain("phantom.example.com", "HTTP_DOWN", null, 2, 3, "x", null, "RUNNING", 4, WRITER, 1,
+                now - ActiveConfirmationsService.CHAIN_ROW_MAX_AGE_MS - 1);
+        chain("edge.example.com", "HTTP_DOWN", null, 1, 3, "x", null, "RUNNING", 4, WRITER, 2,
+                now - ActiveConfirmationsService.CHAIN_ROW_MAX_AGE_MS);
+        chain("live.example.com", "HTTP_DOWN", null, 1, 3, "x", null, "FINISHING", 4, WRITER, 3, now - 30_000);
+        assertThat(service().list(null)).extracting(r -> r.get("domain"))
+                .containsExactly("edge.example.com", "live.example.com");
+        assertThat(memoryCalls).as("tablo okundu, bellek kullanılmadı").hasValue(0);
+    }
+
+    @Test
     @DisplayName("en çok 2000 satır")
     void limit() {
         star(4, WRITER, clock.get());
@@ -263,7 +285,8 @@ class ActiveConfirmationsServiceTest {
         mp.jdbc().batchUpdate("INSERT INTO monitor_confirmations (key_hash, confirm_key, chain_id, alert_type, domain, detail, "
                 + "monitor_type, monitor_id, attempt, total_attempts, delay_ms, first_failure_at, next_attempt_ms, attempts_json, "
                 + "ctx_json, ctx_truncated, state, created_ms, writer, gen, seq, updated_ms, updated_at) VALUES (?, ?, 1, 'HTTP_DOWN', ?, "
-                + "NULL, NULL, NULL, 1, 3, 30000, 'x', NULL, NULL, NULL, FALSE, 'RUNNING', ?, '" + WRITER + "', 4, 1, 1, 'x')", batch);
+                + "NULL, NULL, NULL, 1, 3, 30000, 'x', NULL, NULL, NULL, FALSE, 'RUNNING', ?, '" + WRITER + "', 4, 1, "
+                + clock.get() + ", 'x')", batch);
         List<Map<String, Object>> rows = service().list(null);
         assertThat(rows).hasSize(ActiveConfirmationsService.MAX_ROWS);
         assertThat(rows.get(0)).containsEntry("domain", "d0.example.com");
