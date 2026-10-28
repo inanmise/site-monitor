@@ -19,6 +19,9 @@ import org.springframework.stereotype.Component;
  * <ul>
  *   <li>Dört ham tablo ({@link EvalStateSql#TABLES}; entity yok) — {@code CREATE TABLE IF NOT EXISTS}. İki pod aynı anda
  *       açılırsa kaybedilen {@code CREATE} yarışı tablo yeniden denetlenerek yutulur (öteki pod kurmuştur).</li>
+ *   <li>Çok pod Sürüm 3-2 (2026-10-28): {@code monitor_eval_type_state}'e üç null'lanabilir devir işareti sütunu
+ *       ({@code state_gen}, {@code flushed_ms}, {@code handover_ms}) — sütun okunamazsa {@code ADD COLUMN IF NOT EXISTS};
+ *       kaybedilen yarış yeniden okunarak yutulur ({@link #addMarkerColumns}).</li>
  *   <li>{@code idx_mls_type_domain} — tablo ile birlikte, küçük / boşken; her açılışta {@link SchemaDdlGuard} ile zaten
  *       varsa kilitsiz atlanır.</li>
  *   <li>Yalnız PostgreSQL: üç sık güncellenen tabloda {@code fillfactor = 70} (HOT güncellemeler). Tür okunamazsa atlanır
@@ -57,6 +60,7 @@ public class EvalStateSchemaPatch {
             changed += createTable(EvalStateSql.TABLES.get(i), EvalStateSql.TABLE_DDL.get(i)) ? 1 : 0;
         }
         SchemaDdlGuard guard = new SchemaDdlGuard(jdbc);
+        changed += addMarkerColumns(guard);
         try {
             if (tableReadable(EvalStateSql.LAST_STATUS) && !guard.alreadyInPlace(EvalStateSql.DDL_LAST_STATUS_INDEX)) {
                 guard.executeBounded(EvalStateSql.DDL_LAST_STATUS_INDEX, false);
@@ -83,6 +87,44 @@ public class EvalStateSchemaPatch {
         }
         if (changed > 0) log.info("Kalıcı değerlendirme durumu şeması: {} değişiklik uygulandı", changed);
         return changed;
+    }
+
+    /**
+     * 3-2 devir işareti sütunları ({@link EvalStateSql#MARKER_COLUMNS}) — 3-1 biçimli {@code monitor_eval_type_state}'e
+     * (yeni kurulumda DDL zaten taşır): sütun okunamazsa {@code ADD COLUMN IF NOT EXISTS … BIGINT} (PostgreSQL'de 20 sn
+     * kilit bekleme sınırıyla; küçük tablo, katalogda null'lanabilir ekleme). Kaybedilen yarış (öteki pod aynı anda ekledi)
+     * sütun yeniden okunarak yutulur. 20.168.x ifadeleri açık sütun listesi kullanır — etkilenmez. @return eklenen sütun sayısı.
+     */
+    int addMarkerColumns(SchemaDdlGuard guard) {
+        if (!tableReadable(EvalStateSql.TYPE_STATE)) return 0;
+        int added = 0;
+        for (String column : EvalStateSql.MARKER_COLUMNS) {
+            if (columnReadable(column)) continue;
+            String ddl = EvalStateSql.addMarkerColumnDdl(column);
+            try {
+                guard.executeBounded(ddl, false);
+                added++;
+            } catch (Exception e) {
+                if (columnReadable(column)) {
+                    log.debug("{}.{} sütunu öteki pod tarafından aynı anda eklendi: {}", EvalStateSql.TYPE_STATE, column,
+                            e.getMessage());
+                } else {
+                    log.warn("Kalıcı değerlendirme durumu: {}.{} sütunu eklenemedi (devirde okuma bu açılışta 'columns_missing'; "
+                            + "sonraki açılışta yeniden denenecek) — {}", EvalStateSql.TYPE_STATE, column, e.getMessage());
+                }
+            }
+        }
+        return added;
+    }
+
+    /** {@code monitor_eval_type_state.<column>} okunabiliyor mu (veri yolunun şema çözümüyle). */
+    boolean columnReadable(String column) {
+        try {
+            jdbc.queryForList("SELECT " + column + " FROM " + EvalStateSql.TYPE_STATE + " WHERE 1 = 0");
+            return true;
+        } catch (BadSqlGrammarException missing) {
+            return false;
+        }
     }
 
     private boolean createTable(String table, String ddl) {

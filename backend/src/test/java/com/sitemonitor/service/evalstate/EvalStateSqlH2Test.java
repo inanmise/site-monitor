@@ -345,6 +345,102 @@ class EvalStateSqlH2Test {
         assertThat(EvalStateSql.SPEC_TYPE_STATE.insert).endsWith("ON CONFLICT DO NOTHING");
     }
 
+    // ── Çok pod Sürüm 3-2: devir işaretleri ve öncül satır ─────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("3-2: acquireGenerationWithPrior KAZANAN CAS'ın okuduğu satırı döner (yerine geçilen kuşak + işaretler); ilk satır tohum")
+    void acquireWithPrior_returnsReplacedRow() {
+        EvalStateSql.Acquired first = sql.acquireGenerationWithPrior("pod1", 1_000L, null, () -> true);
+        assertThat(first.gen()).isEqualTo(1L);
+        assertThat(first.prior()).as("tohum satırı (boş veritabanı → kuşak 0, yazan = ben)")
+                .isEqualTo(new EvalStateSql.PriorGeneration(0L, "pod1", 1_000L, null, null, null));
+        assertThat(sql.heartbeatMarked(1, "pod1", 2_000L, 1_500L)).isTrue();
+        EvalStateSql.Acquired second = sql.acquireGenerationWithPrior("pod2", 3_000L, null, () -> true);
+        assertThat(second.gen()).isEqualTo(2L);
+        assertThat(second.prior()).isEqualTo(new EvalStateSql.PriorGeneration(1L, "pod1", 2_000L, 1L, 1_500L, null));
+        // Önceki sahip artık çitli: hem 3-1 hem işaretli nabız 0 satır
+        assertThat(sql.heartbeat(1, "pod1", 4_000L)).isFalse();
+        assertThat(sql.heartbeatMarked(1, "pod1", 4_000L, 4_000L)).isFalse();
+        assertThat(sql.acquireGenerationWithPrior("pod3", 5_000L, null, () -> false)).isEqualTo(EvalStateSql.Acquired.NONE);
+    }
+
+    @Test
+    @DisplayName("3-2: kiraya bağlı öncül CAS — kira sahibi değilse NONE (değer değişmedi → yeniden denenmez), sahibiyse alır")
+    void acquireWithPrior_leaseBound() {
+        sql.acquireGeneration("seed", 1L);
+        mp.jdbc().update("INSERT INTO monitor_check_schedule(monitor_key, next_due_at, claimed_by, claimed_at) VALUES (?,?,?,?)",
+                EvalStateSql.LEASE_KEY, 99L, "pod-holder", 1L);
+        assertThat(sql.acquireGenerationWithPrior("pod-stale", 2L, "pod-stale", () -> true)).isEqualTo(EvalStateSql.Acquired.NONE);
+        EvalStateSql.Acquired a = sql.acquireGenerationWithPrior("pod-holder", 3L, "pod-holder", () -> true);
+        assertThat(a.gen()).isEqualTo(2L);
+        assertThat(a.prior().writer()).isEqualTo("seed");
+    }
+
+    @Test
+    @DisplayName("3-2: devir işareti üç zamanı eşitler; sonraki 3-1 nabzı updated_ms'i kaydırır (geçersiz kılar); işaretli nabız handover'ı siler")
+    void handoverMarkAndInvalidation() {
+        long g = sql.acquireGeneration("pod1", 1_000L);
+        assertThat(sql.handoverMark(g, "pod1", 5_000L)).isTrue();
+        EvalStateSql.Acquired peek = peekPrior();
+        assertThat(peek.prior()).isEqualTo(new EvalStateSql.PriorGeneration(g, "pod1", 5_000L, g, 5_000L, 5_000L));
+        assertThat(sql.heartbeat(g, "pod1", 6_000L)).as("3-1 nabzı").isTrue();
+        EvalStateSql.PriorGeneration after = peekPrior().prior();
+        assertThat(after.handoverMs()).isEqualTo(5_000L);
+        assertThat(after.updatedMs()).as("handover_ms ≠ updated_ms → temiz devir değil").isEqualTo(6_000L);
+        assertThat(sql.heartbeatMarked(g, "pod1", 7_000L, null)).isTrue();
+        EvalStateSql.PriorGeneration marked = peekPrior().prior();
+        assertThat(marked.handoverMs()).isNull();
+        assertThat(marked.flushedMs()).as("eksik kuşak → null").isNull();
+        assertThat(marked.stateGen()).isEqualTo(g);
+        assertThat(sql.handoverMark(g, "başkası", 8_000L)).as("başka yazan").isFalse();
+        assertThat(sql.handoverMark(g + 1, "pod1", 8_000L)).as("başka kuşak").isFalse();
+    }
+
+    /** {@code '*'} satırının işaret sütunlarıyla düz okuması (CAS yok). */
+    private EvalStateSql.Acquired peekPrior() {
+        Map<String, Object> r = mp.jdbc().queryForMap("SELECT gen, writer, updated_ms, state_gen, flushed_ms, handover_ms "
+                + "FROM monitor_eval_type_state WHERE alert_type = '*'");
+        EvalStateSql.PriorGeneration p = new EvalStateSql.PriorGeneration(((Number) r.get("gen")).longValue(),
+                (String) r.get("writer"), ((Number) r.get("updated_ms")).longValue(), longOrNull(r.get("state_gen")),
+                longOrNull(r.get("flushed_ms")), longOrNull(r.get("handover_ms")));
+        return new EvalStateSql.Acquired(p.gen(), p);
+    }
+
+    private static Long longOrNull(Object o) {
+        return o == null ? null : ((Number) o).longValue();
+    }
+
+    @Test
+    @DisplayName("3-2: SQL_ABANDON_OWN yalnız bu yazanın bu kuşaktaki süren zincirlerini ABANDONED yapar")
+    void abandonOwnOnlyMine() {
+        EvalStateSql.ChainRow c = new EvalStateSql.ChainRow(EvalStateKeys.keyHash("k1"), "k1", 1, "PORT_DOWN", "x", null,
+                "port", null, 0, 3, 0L, "2026-10-28T00:00:00", null, null, null, false, "RUNNING", 1L, 1);
+        sql.writeChains(List.of(c), "pod1", 3, 1L);
+        EvalStateSql.ChainRow other = new EvalStateSql.ChainRow(EvalStateKeys.keyHash("k2"), "k2", 2, "PORT_DOWN", "y", null,
+                "port", null, 0, 3, 0L, "2026-10-28T00:00:00", null, null, null, false, "RUNNING", 1L, 1);
+        sql.writeChains(List.of(other), "pod2", 2, 1L);
+        assertThat(sql.abandonOwn("pod1", 3, 9L)).isEqualTo(1);
+        assertThat(sql.abandonOwn("pod1", 3, 9L)).as("idempotent").isZero();
+        assertThat(mp.jdbc().queryForObject("SELECT state FROM monitor_confirmations WHERE confirm_key = 'k2'", String.class))
+                .isEqualTo("RUNNING");
+    }
+
+    @Test
+    @DisplayName("3-2: işaret sütunları okunabiliyor; sütun yoksa false (BadSqlGrammar), işaretli ifadeler BadSqlGrammar fırlatır")
+    void markerColumnsProbe() {
+        assertThat(sql.markerColumnsReadable()).isTrue();
+        for (String c : EvalStateSql.MARKER_COLUMNS) {
+            mp.jdbc().execute("ALTER TABLE monitor_eval_type_state DROP COLUMN " + c);
+        }
+        assertThat(sql.markerColumnsReadable()).isFalse();
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> sql.acquireGenerationWithPrior("pod1", 1L, null, () -> true))
+                .isInstanceOf(org.springframework.jdbc.BadSqlGrammarException.class);
+        long g = sql.acquireGeneration("pod1", 1L);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> sql.heartbeatMarked(g, "pod1", 2L, 2L))
+                .isInstanceOf(org.springframework.jdbc.BadSqlGrammarException.class);
+        assertThat(sql.heartbeat(g, "pod1", 2L)).as("3-1 nabzı sütunsuz çalışır").isTrue();
+    }
+
     @Test
     @DisplayName("Metin kırpma sütun sınırına; null kalır")
     void clip() {

@@ -452,23 +452,25 @@ public class EvalStateVerifier implements EvalStateVerification {
     /**
      * {@code window_seed} (yalnız ölçülür): 3-2'nin GAINED'de tablodan kuracağı pencere örneği (türün pencere içindeki her
      * kaleminin SON sonucu; alan adı, kalemlerinden biri ağ-sınıfı DOWN ise DOWN) ile bellekteki pencere (son turun alan
-     * adı işaretleri). Uyuşmazlık = bastırma kararı farklı çıkan tür; {@code maxDelta} = en büyük {@code |Δoran|}.
+     * adı işaretleri). Uyuşmazlık = bastırma kararı farklı çıkan tür; {@code maxDelta} = en büyük {@code |Δoran|}. Tohum
+     * kuralı {@link EvalWindowSeed} (3-2 yükleyicisiyle TEK kaynak; çıktı 3-1 ile birebir — {@code EvalWindowSeedTest} eski
+     * döngüyü kâhin olarak tutar): türün kendi kesimiyle işaretler, sonra örnek.
      */
     private EvalVerifyReport.KindResult measureWindowSeed(EvalSnapshot snap, Map<String, LastStatusRow> all,
                                                          List<String> first) {
         int compared = 0, mismatches = 0;
         double maxDelta = 0;
+        List<EvalWindowSeed.Row> rows = new ArrayList<>(all.size());
+        for (LastStatusRow r : all.values()) {
+            rows.add(new EvalWindowSeed.Row(r.alertType(), r.domain(), r.up(), r.networkDown(), r.observedMs()));
+        }
         for (Map.Entry<String, EvalSnapshot.Window> e : snap.windows().entrySet()) {
             String type = e.getKey();
             EvalSnapshot.Window w = e.getValue();
             long cutoff = snap.atMs() - w.windowMs();
-            Map<String, Boolean> byDomain = new HashMap<>();
-            for (LastStatusRow r : all.values()) {
-                if (!type.equals(r.alertType()) || r.domain() == null || r.observedMs() < cutoff) continue;
-                byDomain.merge(r.domain(), !r.up() && r.networkDown(), Boolean::logicalOr);
-            }
-            int seedDown = (int) byDomain.values().stream().filter(Boolean::booleanValue).count();
-            int seedTotal = byDomain.size();
+            EvalWindowSeed.Sample seed = EvalWindowSeed.sample(EvalWindowSeed.marksOfType(rows, type, cutoff), cutoff);
+            int seedDown = seed.networkDown();
+            int seedTotal = seed.total();
             compared++;
             double seedRate = seedTotal == 0 ? 0 : (double) seedDown / seedTotal;
             maxDelta = Math.max(maxDelta, Math.abs(w.rate() - seedRate));
