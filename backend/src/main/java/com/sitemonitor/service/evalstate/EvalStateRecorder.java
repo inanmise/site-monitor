@@ -1831,14 +1831,6 @@ public class EvalStateRecorder implements EvalStateSink, ApplicationContextAware
      * kuşak EKSİKSİZ ∧ lider ipucu (çağıran {@code shutdownStarted}'dan ÖNCE sorar).
      */
     @Override
-    /**
-     * Devir işareti sütunları okunamıyor mu (ilk açılışın ilk saniyeleri ya da şema yaması düştü) — Sistem Sağlığı "Devir
-     * hazırlığı" nedenini doğru söylesin (inceleme 2026-10-28, ekran L-3). Yalnız bellek.
-     */
-    public boolean markerColumnsMissingNow() {
-        return markerColumnsMissing;
-    }
-
     public boolean handoverReady() {
         try {
             return readEnabled() && mode().writes() && !closing && !stopped && !fencedOut && !tableMissing
@@ -1959,6 +1951,14 @@ public class EvalStateRecorder implements EvalStateSink, ApplicationContextAware
 
     /** İşaret sütunları bilinen eksik mi (3-2). */
     public boolean markerColumnsMissing() {
+        return markerColumnsMissing;
+    }
+
+    /**
+     * Devir işareti sütunları okunamıyor mu (ilk açılışın ilk saniyeleri ya da şema yaması düştü) — Sistem Sağlığı "Devir
+     * hazırlığı" nedenini doğru söylesin (inceleme 2026-10-28, ekran L-3). Yalnız bellek.
+     */
+    public boolean markerColumnsMissingNow() {
         return markerColumnsMissing;
     }
 
