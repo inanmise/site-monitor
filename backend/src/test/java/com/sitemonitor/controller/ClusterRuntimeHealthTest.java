@@ -210,9 +210,10 @@ class ClusterRuntimeHealthTest {
         assertThat(es).containsEntry("read_enabled", false).containsEntry("load", null).doesNotContainKey("load_error");
         Map<String, Object> p = (Map<String, Object>) es.get("this_pod");
         List<String> expected = new java.util.ArrayList<>(THIS_POD_31);
-        expected.addAll(List.of("handover_ready", "last_load", "last_handover"));
+        expected.addAll(List.of("handover_ready", "last_load", "last_handover", "marker_columns_missing", "closing"));
         assertThat(new java.util.ArrayList<>(p.keySet())).isEqualTo(expected);
-        assertThat(p).containsEntry("handover_ready", false).containsEntry("last_load", null).containsEntry("last_handover", null);
+        assertThat(p).containsEntry("handover_ready", false).containsEntry("last_load", null).containsEntry("last_handover", null)
+                .containsEntry("marker_columns_missing", null).containsEntry("closing", false);
         // 3-1 alanları 3-1 çağrı biçimiyle aynı değerler
         Map<String, Object> old = ClusterRuntimeHealth.evalState(sink, store, NOW, 300_000, true);
         for (String k : THIS_POD_31) assertThat(((Map<String, Object>) old.get("this_pod")).get(k)).as(k).isEqualTo(p.get(k));
@@ -288,6 +289,40 @@ class ClusterRuntimeHealthTest {
         Map<String, Object> es = ClusterRuntimeHealth.evalState(null, verifyBroken, NOW, 300_000, null, true);
         assertThat(es).containsEntry("verify_error", "IllegalStateException");
         assertThat(es.get("load")).isNotNull();
+    }
+
+    @Test
+    @DisplayName("3-2 inceleme L-3: devir hazırlığının gerçek nedeni — işaret sütunları eksik (kaydedici), kaydedici kapanıyor; "
+            + "kaydedici değilse sütun bilgisi bilinmiyor (null); okunamazsa null")
+    @SuppressWarnings("unchecked")
+    void readinessDetail_columnsMissingAndClosing() {
+        EvalStateSink.Status st = new EvalStateSink.Status("verify", true, "sitemonitor-a-0000000a", 5L, 0, 0, 3, 0,
+                NOW - 1_000, null, null, false, null, null, false, 0L, true, false, null, null);
+        com.sitemonitor.service.evalstate.EvalStateRecorder rec = mock(com.sitemonitor.service.evalstate.EvalStateRecorder.class);
+        when(rec.status()).thenReturn(st);
+        when(rec.markerColumnsMissingNow()).thenReturn(true);
+        when(rec.loadBlocker()).thenReturn(null);
+        Map<String, Object> p = (Map<String, Object>) ClusterRuntimeHealth.evalState(rec, null, NOW, 300_000, true, true)
+                .get("this_pod");
+        assertThat(p).containsEntry("handover_ready", false).containsEntry("marker_columns_missing", true)
+                .containsEntry("closing", false);
+
+        when(rec.markerColumnsMissingNow()).thenReturn(false);
+        when(rec.loadBlocker()).thenReturn(com.sitemonitor.service.evalstate.EvalLoadReport.REASON_RECORDER_CLOSING);
+        p = (Map<String, Object>) ClusterRuntimeHealth.evalState(rec, null, NOW, 300_000, true, true).get("this_pod");
+        assertThat(p).containsEntry("marker_columns_missing", false).containsEntry("closing", true);
+
+        when(rec.loadBlocker()).thenReturn(com.sitemonitor.service.evalstate.EvalLoadReport.REASON_MODE_OFF);
+        when(rec.markerColumnsMissingNow()).thenThrow(new IllegalStateException("x"));
+        p = (Map<String, Object>) ClusterRuntimeHealth.evalState(rec, null, NOW, 300_000, true, true).get("this_pod");
+        assertThat(p).containsEntry("marker_columns_missing", null).containsEntry("closing", false);
+
+        EvalStateSink other = mock(EvalStateSink.class);
+        when(other.status()).thenReturn(st);
+        when(other.loadBlocker()).thenThrow(new IllegalStateException("y"));
+        p = (Map<String, Object>) ClusterRuntimeHealth.evalState(other, null, NOW, 300_000, true, true).get("this_pod");
+        assertThat(p).as("kaydedici değil → sütun bilgisi yok; kapanma okunamadı → null")
+                .containsEntry("marker_columns_missing", null).containsEntry("closing", null);
     }
 
     @Test

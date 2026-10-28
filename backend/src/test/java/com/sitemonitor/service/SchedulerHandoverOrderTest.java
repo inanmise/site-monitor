@@ -74,6 +74,8 @@ class SchedulerHandoverOrderTest {
         final Supplier<Boolean> ready;
         Pod pod;
         RuntimeException flushThrows;
+        Error flushError;
+        Error openError;
 
         RecordingSink(Supplier<Boolean> ready) {
             this.ready = ready;
@@ -86,12 +88,14 @@ class SchedulerHandoverOrderTest {
 
         @Override public void openHandover() {
             events.add("open:shutdownStarted=" + shutdownStarted(pod));
+            if (openError != null) throw openError;
         }
 
         @Override public HandoverResult flushForHandover(long budgetMs, boolean quiet) {
             events.add("flush:" + budgetMs + ":" + quiet + ":shutdownStarted=" + shutdownStarted(pod)
                     + ":leaseHeld=" + MultiPodTestSupport.owner(1).equals(mp.leaseOwner("sweep-leader")));
             if (flushThrows != null) throw flushThrows;
+            if (flushError != null) throw flushError;
             return HandoverResult.WRITTEN;
         }
 
@@ -173,6 +177,57 @@ class SchedulerHandoverOrderTest {
         a.scheduler().onContextClosed(null);
         assertThat(mp.lease("sweep-leader")).isNull();
         assertThat(events).doesNotContain("begin").noneMatch(e -> e.startsWith("open") || e.startsWith("flush"));
+        verifyNoHandoverOnMos();
+    }
+
+    @Test
+    @DisplayName("L-5: hazır sorusu Error (AssertionError) fırlatsa da onContextClosed fırlatmaz — devir atlanır, shutdownStarted, kira "
+            + "bırakılır, GAINED + RELEASED (bugünkü gibi)")
+    void readyThrowsError_closesAsToday() {
+        Pod a = leader();
+        RecordingSink sink = new RecordingSink(() -> { throw new AssertionError("x"); });
+        sink.pod = a;
+        a.scheduler().setEvalStateSinkForHandover(sink);
+        a.scheduler().onContextClosed(null);
+        assertThat(shutdownStarted(a)).isTrue();
+        assertThat(mp.lease("sweep-leader")).isNull();
+        assertThat(events).containsExactly("event:" + SweepLeadershipChangedEvent.GAINED, "ready",
+                "event:" + SweepLeadershipChangedEvent.RELEASED);
+        verifyNoHandoverOnMos();
+    }
+
+    @Test
+    @DisplayName("L-5: açma / MOS kapısı / durulma / boşaltma / kapatma Error fırlatsa da kapanış sürer — kira boşaltmadan sonra bırakılır")
+    void handoverStepsThrowError_releaseStillHappens() {
+        Pod a = leader();
+        doAnswer(inv -> { throw new AssertionError("b"); }).when(mos).beginEvalHandover();
+        when(mos.awaitEvalQuiescent(anyLong())).thenThrow(new AssertionError("q"));
+        doAnswer(inv -> { throw new AssertionError("e"); }).when(mos).endEvalHandover();
+        RecordingSink sink = new RecordingSink(() -> true);
+        sink.pod = a;
+        sink.openError = new AssertionError("o");
+        sink.flushError = new AssertionError("f");
+        a.scheduler().setEvalStateSinkForHandover(sink);
+        a.scheduler().onContextClosed(null);
+        assertThat(shutdownStarted(a)).isTrue();
+        assertThat(events).containsExactly("event:" + SweepLeadershipChangedEvent.GAINED, "ready", "open:shutdownStarted=false",
+                "flush:" + EvalStateSink.HANDOVER_FLUSH_MS + ":false:shutdownStarted=true:leaseHeld=true",
+                "event:" + SweepLeadershipChangedEvent.RELEASED);
+        assertThat(mp.lease("sweep-leader")).isNull();
+        verify(mos).endEvalHandover();
+    }
+
+    @Test
+    @DisplayName("L-5: kaydedici sağlayıcısı Error fırlatsa da (getIfUnique) kapanış bugünkü gibi")
+    @SuppressWarnings("unchecked")
+    void providerThrowsError_closesAsToday() {
+        Pod a = leader();
+        ObjectProvider<EvalStateSink> broken = mock(ObjectProvider.class);
+        when(broken.getIfUnique()).thenThrow(new AssertionError("x"));
+        a.scheduler().setEvalStateSinkProvider(broken);
+        a.scheduler().onContextClosed(null);
+        assertThat(shutdownStarted(a)).isTrue();
+        assertThat(mp.lease("sweep-leader")).isNull();
         verifyNoHandoverOnMos();
     }
 

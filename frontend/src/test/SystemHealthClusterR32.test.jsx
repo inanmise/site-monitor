@@ -2,7 +2,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, waitFor } from './test-utils.jsx'
 import SystemHealth from '../components/admin/SystemHealth.jsx'
 import { EvalLoadSection } from '../components/admin/health/ClusterRuntimeParts.jsx'
-import { evalLoadModel, EVAL_LOAD_REASONS, EVAL_LOAD_OPERATIONAL_REASONS } from '../components/admin/health/clusterRuntimeModel.js'
+import { evalLoadModel, EVAL_LOAD_REASONS, EVAL_LOAD_OPERATIONAL_REASONS, EVAL_LOAD_OBSERVATIONS_REASONS }
+  from '../components/admin/health/clusterRuntimeModel.js'
 import { useT } from '../i18n/index.jsx'
 
 /**
@@ -108,6 +109,8 @@ describe('SystemHealth — Küme kartı, çok pod R3-2 (devirde yüklenen durum 
     expect(sec.querySelector('[data-slot="es-load-outcome"]').textContent).toMatch(/Full \(clean handover\)|Tam \(temiz devir\)/)
     expect(sec.querySelector('[data-slot="es-load-from"]').textContent).toMatch(/11/)
     expect(sec.querySelector('[data-slot="es-load-from"]').textContent).toContain('sitemonitor-6b7c9d-bbbbb')
+    // L-4: önceki liderin satırı yüklenen durumun YAŞINI söyler (devir 9 sn önce), yükleme anını tekrarlamaz
+    expect(sec.querySelector('[data-slot="es-load-from"]').textContent).toMatch(/written 9 sec before|9 sn önce yazılmıştı/)
     expect(sec.querySelector('[data-slot="es-load-by"]').textContent).toContain('sitemonitor-6b7c9d-aaaaa')
     expect(sec.querySelector('[data-slot="es-load-counts"]').textContent).toMatch(/3 recovery counters|3 kurtarma sayacı/)
     expect(sec.querySelector('[data-slot="es-load-counts"]').textContent).toMatch(/40 window domains|40 pencere alan adı/)
@@ -205,6 +208,35 @@ describe('SystemHealth — Küme kartı, çok pod R3-2 (devirde yüklenen durum 
     expect(ho.textContent).not.toContain('budget_exceeded')
   })
 
+  it('L-1: küme gözlemi şimdiki liderin DEĞİL (raporlanmamış devir) → "Güncel değil" gri + hangi devre ait olduğu; asla yeşil', async () => {
+    const follower = { ...BASE.scheduler, sweep_leader: { ...BASE.scheduler.sweep_leader, owner: B, owner_pod: 'sitemonitor-6b7c9d-bbbbb', held_by_me: false } }
+    // gözlem A'nın (önceki dönem) TAM'ı; lider şimdi B (B yüklemesini yayımlamadı: ayar / kip kapalıydı ya da eski sürüm)
+    await open({ ...BASE, scheduler: follower, eval_state: es({}, { handover_ready: false, active: false, generation: null }) })
+    const sec = loadSec()
+    expect(sec).toHaveAttribute('data-level', 'stale')
+    expect(sec.querySelector('[data-slot="es-load-outcome"] [data-tone]')).toHaveAttribute('data-tone', 'muted')
+    expect(sec.querySelector('[data-slot="es-load-outcome"]').textContent).toMatch(/Not current|Güncel değil/)
+    const hint = sec.querySelector('[data-slot="es-load-hint"]').textContent
+    expect(hint).toMatch(/earlier term|önceki bir devre/)
+    expect(hint).toContain('sitemonitor-6b7c9d-aaaaa')
+    expect(sec.querySelector('[data-slot="es-load-counts"]')).toBeNull()
+    expect(card().querySelector('[data-kind="leader"]')).toHaveAttribute('data-tone', 'success')
+  })
+
+  it('L-3: devir hazırlığı gerçek nedeni söyler — işaret sütunları yok (şema yaması), pod kapanıyor; "eşitleniyor" değil', async () => {
+    const first = await open({ ...BASE, eval_state: es({}, { handover_ready: false, marker_columns_missing: true, closing: false }) })
+    let ho = card().querySelector('[data-slot="cluster-handover"]')
+    expect(ho).toHaveAttribute('data-reason', 'columns_missing')
+    expect(ho.textContent).toMatch(/schema patch failed|şema yaması başarısız/)
+    expect(ho.textContent).not.toMatch(/resyncing|eşitleniyor/)
+    first.unmount()
+
+    await open({ ...BASE, eval_state: es({}, { handover_ready: false, marker_columns_missing: false, closing: true }) })
+    ho = card().querySelector('[data-slot="cluster-handover"]')
+    expect(ho).toHaveAttribute('data-reason', 'recorder_closing')
+    expect(ho.textContent).toMatch(/shutting down|kapanıyor/)
+  })
+
   it('eski sunucu (3-2 alanları yok) → yükleme bölümü ve hazırlık satırı gizli, R3-1 satırları yine görünür', async () => {
     const { handover_ready, last_load, last_handover, ...old } = REC
     expect([handover_ready, last_load, last_handover]).toEqual([true, null, null])
@@ -223,9 +255,10 @@ function Probe({ health }) {
 }
 
 describe('EvalLoadSection — her neden çevrilir, ton kuralı', () => {
-  it('22 nedenin her biri: metin sözlükten (ham kod yok); işletim nedenleri uyarı, diğerleri yeşil değil', () => {
+  it('her neden (23): metin sözlükten (ham kod yok); işletim nedenleri uyarı, diğerleri yeşil değil', () => {
+    expect(EVAL_LOAD_REASONS.length).toBeGreaterThanOrEqual(23)
     for (const reason of EVAL_LOAD_REASONS) {
-      const outcome = ['no_handover', 'handover_too_old', 'intermediate_leader'].includes(reason) ? 'observations' : 'none'
+      const outcome = EVAL_LOAD_OBSERVATIONS_REASONS.includes(reason) && reason !== 'clock_skew' ? 'observations' : 'none'
       const health = { eval_state: { this_pod: null, read_enabled: true, load: { ...LOAD, outcome, reason } } }
       const { container, unmount } = render(<Probe health={health} />)
       const reasonEl = container.querySelector('[data-slot="es-load-reason"]')

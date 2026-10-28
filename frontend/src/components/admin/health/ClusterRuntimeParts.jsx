@@ -1,8 +1,8 @@
 import { formatDate } from '../../../api/client'
 import ToneBadge from '../ToneBadge.jsx'
-import { relTime } from './healthModel.js'
-import { EVAL_VERIFY_TONE, EVAL_UNKNOWN_REASONS, SIDE_JOB_STATE_TONE, otherPodState, EVAL_LOAD_REASONS, HANDOVER_RESULTS }
-  from './clusterRuntimeModel.js'
+import { relTime, formatDurationShort } from './healthModel.js'
+import { EVAL_VERIFY_TONE, EVAL_UNKNOWN_REASONS, SIDE_JOB_STATE_TONE, otherPodState, EVAL_LOAD_REASONS, HANDOVER_RESULTS,
+  HANDOVER_NOT_READY_FROM_REASON } from './clusterRuntimeModel.js'
 import { KvList, PodChip, SubTitle, WARN_T } from './HealthParts.jsx'
 
 /**
@@ -230,7 +230,17 @@ export function SideJobsRows({ t, sj }) {
 const LOAD_BADGE = {
   full: 'hmp.esLoad.outcome.full', observations: 'hmp.esLoad.outcome.observations', none: 'hmp.esLoad.outcome.none',
   warn: 'hmp.esLoad.outcome.none', off: 'hmp.esLoad.outcome.off', empty: 'hmp.esLoad.outcome.empty',
-  unknown: 'hmp.esLoad.outcome.unknown',
+  unknown: 'hmp.esLoad.outcome.unknown', stale: 'hmp.esLoad.outcome.stale',
+}
+
+/**
+ * Yüklenen durumun YAŞI ("9 sn önce yazılmıştı") — devir işaretinin ya da son kalıcı yazımın yükleme anına uzaklığı
+ * (inceleme 2026-10-28, L-4: yükleme anı "Yükleyen pod" satırında zaten var). Bilinmiyorsa "—".
+ */
+function writtenBeforeText(t, r) {
+  const ms = r.handoverAgeMs ?? r.durableAgeMs
+  if (ms == null || ms < 0) return '—'
+  return t('hmp.esLoad.writtenBefore', formatDurationShort(Math.round(ms / 1000), t))
 }
 
 /** Neden kodu → cümle (bilinen kodlar sözlükten; yeni sürümün kodu "neden: x" — ham anahtar asla). */
@@ -252,7 +262,8 @@ export function EvalLoadSection({ t, load }) {
   const warn = load.level === 'warn'
   const hint = load.error ? t('hmp.esLoad.unreadable')
     : load.level === 'off' ? t('hmp.esLoad.offHint')
-      : load.level === 'empty' ? t('hmp.esLoad.emptyHint') : null
+      : load.level === 'empty' ? t('hmp.esLoad.emptyHint')
+        : load.level === 'stale' && r ? t('hmp.esLoad.staleHint', r.podName || '—', r.at ? when(r.at, t) : '—') : null
   return (
     <section data-slot="cluster-eval-load" data-level={load.level} data-scope={load.scope}
       aria-labelledby="hmp-esload-title" className="flex flex-col gap-1.5 border-t pt-2.5">
@@ -276,7 +287,7 @@ export function EvalLoadSection({ t, load }) {
           <>
             <dt>{t('hmp.esLoad.source')}</dt>
             <dd data-slot="es-load-from" className="min-w-0 [overflow-wrap:anywhere]">
-              {t('hmp.esLoad.from', r.fromGeneration, r.fromPodName || '—', r.at ? (relTime(r.at, t) || formatDate(r.at)) : '—')}
+              {t('hmp.esLoad.from', r.fromGeneration, r.fromPodName || '—', writtenBeforeText(t, r))}
             </dd>
           </>
         )}
@@ -317,7 +328,7 @@ export function HandoverRows({ t, handover }) {
   if (!handover) return null
   const reason = handover.reason
   const reasonText = !reason ? null
-    : ['setting_off', 'mode_off', 'tables_missing'].includes(reason) ? t(`hmp.esLoad.reason.${reason}`)
+    : HANDOVER_NOT_READY_FROM_REASON.includes(reason) ? t(`hmp.esLoad.reason.${reason}`)
       : t(`hmp.esLoad.ready.${reason}`)
   return (
     <>

@@ -74,7 +74,8 @@ final class ClusterRuntimeHealth {
      * <ul>
      *   <li>{@code read_enabled}: bu pod devirde okuma ayarını açık görüyor mu ({@code readEnabled}; null → kaydedici durumundan,
      *       kaydedici yoksa false);</li>
-     *   <li>{@code this_pod.handover_ready | last_load | last_handover} ({@link #recorder(EvalStateSink.Status, Boolean)});</li>
+     *   <li>{@code this_pod.handover_ready | last_load | last_handover} ({@link #recorder(EvalStateSink.Status, Boolean)}) ve
+     *       {@code this_pod.marker_columns_missing | closing} ({@link #readinessDetail});</li>
      *   <li>{@code load}: KÜMENİN son {@code eval-state-load} gözlemi (yeni lider yayımlar; {@code observed_by} / {@code observed_at}
      *       ile) — satır yok → {@code null}; okunamadı / bozuk / küme deposu yok → {@code load_error} (ekran "bilinmiyor", asla
      *       "yüklenmedi" değil).</li>
@@ -89,7 +90,7 @@ final class ClusterRuntimeHealth {
         } else {
             try {
                 status = sink.status();
-                out.put("this_pod", status == null ? null : recorder(status, leaderHint));
+                out.put("this_pod", status == null ? null : readinessDetail(recorder(status, leaderHint), sink));
             } catch (RuntimeException e) {
                 status = null;
                 out.put("this_pod", null);
@@ -101,6 +102,33 @@ final class ClusterRuntimeHealth {
         out.put("read_enabled", readEnabled != null ? readEnabled : status != null && status.readEnabled());
         putLoad(out, store, nowMs);
         return out;
+    }
+
+    /**
+     * Devir hazırlığının GERÇEK nedeni için iki bellek bayrağı (çok pod Sürüm 3-2, inceleme 2026-10-28 L-3; ekleme, 3-1 ve
+     * önceki 3-2 alanlarından SONRA): {@code marker_columns_missing} = kaydedici devir işareti sütunlarını okuyamıyor (ilk
+     * açılış ya da şema yaması başarısız — sonraki açılışta yeniden denenir; kaydedici değilse {@code null} = bilinmiyor) ve
+     * {@code closing} = kaydedici kapanıyor ({@code loadBlocker() == recorder_closing}; okunamazsa {@code null}). Ekran
+     * "eşitleniyor" yerine bunları söyler. Veritabanı yok.
+     */
+    static Map<String, Object> readinessDetail(Map<String, Object> pod, EvalStateSink sink) {
+        Boolean columnsMissing = null;
+        if (sink instanceof com.sitemonitor.service.evalstate.EvalStateRecorder rec) {
+            try {
+                columnsMissing = rec.markerColumnsMissingNow();
+            } catch (RuntimeException e) {
+                columnsMissing = null;
+            }
+        }
+        pod.put("marker_columns_missing", columnsMissing);
+        Boolean closing;
+        try {
+            closing = EvalLoadReport.REASON_RECORDER_CLOSING.equals(sink.loadBlocker());
+        } catch (RuntimeException e) {
+            closing = null;
+        }
+        pod.put("closing", closing);
+        return pod;
     }
 
     /** Kümenin son doğrulama gözlemi ({@code verify} / {@code verify_error}) — 3-1 biçimi. */
