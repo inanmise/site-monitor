@@ -286,6 +286,50 @@ satırları, `cluster_observations` satırları
 yeniden yükseltmede kaldığı yerden yazılır); eski sürümde TLS profili yine yalnız liderde koşar ve her pod kurum ölçülerini
 yayar.
 
+### Çok pod Sürüm 3-2 — bir kerelik
+Bu bölüm prod çok pod Sürüm 3-2'yi (yeni tarama lideri devirde kalıcı değerlendirme durumunu YÜKLER — yeni bir ayarın
+arkasında, varsayılan KAPALI) İLK kez aldığında geçerlidir; sonraki dağıtımlarda yalnız "Açıldıktan sonra" maddesi kalır.
+Ayrıntı: [`RUNBOOK.md` → Kalıcı değerlendirme durumunu devirde okuma](RUNBOOK.md#kalıcı-değerlendirme-durumunu-devirde-okuma-çok-pod-sürüm-3-2).
+
+**Öncesi**
+- [ ] **Dağıtım ayar KAPALIYKEN yapılır** (varsayılan: `site.monitor.eval-state.read-enabled` = false, env
+      `EVAL_STATE_READ_ENABLED` verilmez). Sürüm değişikliği ile ayarı açmak aynı adımda YAPILMAZ — kapalıyken davranış
+      20.168.1 ile birebir aynıdır (kararlar, bildirimler, kaydedicinin SQL ifadeleri, kapanış, teyit listesi, günlük).
+- [ ] **Şema:** `monitor_eval_type_state`'e üç boş, NULL olabilir `BIGINT` sütun eklenir (`state_gen`, `flushed_ms`,
+      `handover_ms`; `ADD COLUMN IF NOT EXISTS`, 20 sn kilit beklemesi, küçük tablo) — ön kontrol / yedek gerekmez. Eski
+      (20.168.x) pod'ların ifadeleri sütun listesi verdiğinden etkilenmez.
+- [ ] **Kapanış bütçesi:** Helm `terminationGracePeriodSeconds` 120 değişmedi (bütçe 101 sn = preStop 10 + uygulama 91;
+      devir boşaltması yalnız ayar açıkken ve en çok 1 sn).
+
+**Sonrası** (açılıştan ~15 dk sonra; günlükler TÜM pod'lardan — aşağıdaki "İlk 15 dakika" `L`)
+- [ ] Sütunlar eklendi: `SELECT column_name FROM information_schema.columns WHERE table_name = 'monitor_eval_type_state'
+      AND column_name IN ('state_gen', 'flushed_ms', 'handover_ms');` → üç satır.
+- [ ] Ayar kapalıyken iz yok: `kubectl logs $L | grep -cE "devirde yüklen|Devir öncesi kalıcı durum"` → 0; `'*'` satırında
+      `state_gen` boş kalır (`SELECT gen, writer, state_gen, flushed_ms, handover_ms FROM monitor_eval_type_state WHERE
+      alert_type = '*';`); doğrulama "bellek ve tablolar uyuşuyor" sürer; Küme kartı "Devirde yüklenen durum: Kapalı".
+- [ ] Takipçi pod yanıtlarken bir Sayfa izlemesinin "Teyit denemesi X/N" listesi ayar kapalıyken boş kalır (bugünkü davranış)
+      — beklenen.
+
+**Açma — ayrı bir adım** (RUNBOOK → Devirde okuma → "Açma ölçütü" + "Açmak")
+- [ ] Ölçüt karşılandı: iki prod pod'unda ≥ 7 gün doğrulama 0 uyuşmazlık (bilinmeyen turlar hariç), yazma hatası < %0,1,
+      "sürdürülemeyecek zincir" 0, "bastırma penceresi tohumu" karar farkı < %1, en az bir gerçek liderlik değişiminde
+      devralınan sayılar > 0; kip `verify`.
+- [ ] Önce staging: ayar açılır (Ayarlar → Genel → İzleme Alarmları → "Devirde kalıcı değerlendirme durumunu yükle (çok
+      pod)", yalnız GLOBAL admin), lider pod yanıtlarken "Devir hazırlığı: Hazır — tam devir mümkün"; zorlanmış devir
+      (`kubectl rollout restart deploy/<ad>` ya da lider pod'u silmek) → yeni lider yanıtlarken "Devirde yüklenen durum: Tam
+      (temiz devir)", sonraki doğrulama turları "eşitleniyor" → "uyuşuyor"; günlükte eski liderde `Devir öncesi kalıcı durum
+      boşaltıldı ve işaretlendi`, yeni liderde `Kalıcı değerlendirme durumu devirde yüklendi (tam)`.
+- [ ] Sonra prod, aynı kontrollerle. Geri dönüş: ayarı kapatmak anında güvenlidir (sonraki devir bugünkü gibi).
+
+**Açıldıktan sonra — her prod dağıtımında**
+- [ ] Yeni lider yanıtlarken Küme kartı "Devirde yüklenen durum: Tam (temiz devir)". "Yalnız gözlemler" bir çökme / zorla
+      öldürmeden sonra normaldir; başka bir sonuç (turuncu neden ya da "Yüklenmedi") görülürse nedenini kaydedin ve RUNBOOK →
+      Devirde okuma → "İzlenecekler"e bakın. `kubectl logs $L | grep -c "devirde yüklenmedi"` → 0 beklenir.
+- [ ] Doğrulama devirden sonra yine "uyuşuyor"; uyuşmazlık > 0 → ayarı kapatın, sonra inceleyin.
+
+**Geri alma:** `helm rollback` yeterli; ayar anahtarı, üç sütun ve `cluster_observations` satırı `eval-state-load` kalır,
+eski kod yok sayar (silmeyin); kapanış 1 sn kısalır.
+
 ### Denetim zinciri düzeltmesi öncesi — bir kerelik
 - [ ] **Prod etkileniyor mu (salt okunur):**
       `SELECT count(*) FILTER (WHERE seq IS NULL) AS seqsiz_eski, count(*) FILTER (WHERE seq = 1) AS seq_bir,
