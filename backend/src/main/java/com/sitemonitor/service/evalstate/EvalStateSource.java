@@ -103,6 +103,27 @@ public interface EvalStateSource {
     }
 
     /**
+     * Temiz devir başlıyor ({@code SchedulerService.onContextClosed}, yalnız {@code EvalStateSink.handoverReady()} iken):
+     * yeni değerlendirme girişleri en çok {@code HANDOVER_WAIT_MS} bekler (MOS kapısı HANDOVER). Yalnız bellek, veritabanı
+     * yok, asla fırlatmaz. Varsayılan: hiçbir şey (paket B MOS'ta uygular; tasarım §5.1).
+     */
+    default void beginEvalHandover() {
+    }
+
+    /**
+     * Uçuştaki değerlendirmelerin bitmesini en çok {@code maxMs} bekler (yeni girişler HANDOVER'da bekliyor).
+     *
+     * @return true = uçuşta değerlendirme kalmadı. Varsayılan true (bekleyecek bir şey yok).
+     */
+    default boolean awaitEvalQuiescent(long maxMs) {
+        return true;
+    }
+
+    /** Devir bitti (lider bırakıldı ya da bırakma denendi): kapı HANDOVER'dan çıkar; tekrar çağrılabilir. Varsayılan: hiçbir şey. */
+    default void endEvalHandover() {
+    }
+
+    /**
      * Bellekteki DOWN gözleminin dar kopyası — ham hata metni YOK, yalnız sınıfı.
      *
      * @param present    bellekte DOWN kaydı var mı ({@link #ABSENT} = yok)
