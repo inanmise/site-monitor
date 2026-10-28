@@ -117,13 +117,29 @@ public final class EvalStateSql {
     public static final String DDL_LAST_STATUS_INDEX =
             "CREATE INDEX IF NOT EXISTS idx_mls_type_domain ON " + LAST_STATUS + "(alert_type, domain)";
 
+    /**
+     * {@code '*'} satırının devir işareti sütunları (2026-10-28, çok pod Sürüm 3-2; tasarım R3-2 §2.1 — adlar KALICI):
+     * {@code state_gen} (iki zaman sütununun ait olduğu kuşak), {@code flushed_ms} (kuşak EKSİKSİZ iken "bu ana dek kuyruğa
+     * alınan her işlem kalıcı"; null = eksik), {@code handover_ms} (yalnız devir boşaltması yazar; {@code = updated_ms} iken
+     * geçerli). Yalnız {@code alert_type = '*'} satırında anlamlı; 20.168.x hiçbirini yazmaz (açık sütun listeleri).
+     */
+    public static final List<String> MARKER_COLUMNS = List.of("state_gen", "flushed_ms", "handover_ms");
+
     public static final String DDL_TYPE_STATE = "CREATE TABLE IF NOT EXISTS " + TYPE_STATE + " ("
             + "alert_type VARCHAR(40) NOT NULL PRIMARY KEY, "
             + "suppression_active BOOLEAN, "
             + "suppression_since_ms BIGINT, "
             + "last_scheduled_round_ms BIGINT, "
             + "round_interval_ms BIGINT, "
+            + "state_gen BIGINT, "
+            + "flushed_ms BIGINT, "
+            + "handover_ms BIGINT, "
             + COMMON_DDL + ")";
+
+    /** Var olan (3-1 biçimli) tabloya işaret sütununu ekler — {@link EvalStateSchemaPatch} sütun okunamazsa çalıştırır. */
+    public static String addMarkerColumnDdl(String column) {
+        return "ALTER TABLE " + TYPE_STATE + " ADD COLUMN IF NOT EXISTS " + column + " BIGINT";
+    }
 
     public static final String DDL_CONFIRMATIONS = "CREATE TABLE IF NOT EXISTS " + CONFIRMATIONS + " ("
             + "key_hash VARCHAR(64) NOT NULL PRIMARY KEY, "
@@ -261,6 +277,42 @@ public final class EvalStateSql {
     static final String SQL_INHERITED_SUPPRESSIONS = "SELECT COUNT(*) FROM " + TYPE_STATE
             + " WHERE gen = ? AND alert_type <> ? AND suppression_active = TRUE";
 
+    // ── Devirde okuma SQL'i (2026-10-28, çok pod Sürüm 3-2; tasarım R3-2 §2.1 / §3.4) — YALNIZ ayar AÇIKKEN koşar ──────
+    // Ayar kapalıyken kaydedici yalnız yukarıdaki 3-1 ifadelerini koşar (J-1; EvalStateReadOffSqlTranscriptTest).
+
+    /** CAS döngüsünde {@link #SQL_GEN_READ}'in yerine: CAS'ın yerini alacağı satırın tamamı (önceki kuşak sahibi + işaretler). */
+    static final String SQL_GEN_PRIOR = "SELECT gen, writer, updated_ms, state_gen, flushed_ms, handover_ms FROM "
+            + TYPE_STATE + " WHERE alert_type = ?";
+    /** İşaretli nabız ({@link #SQL_HEARTBEAT}'in yerine): kuşak + "eksiksiz ve kalıcı" anı; devir işaretini siler. */
+    static final String SQL_HEARTBEAT_MARK = "UPDATE " + TYPE_STATE + " SET updated_ms = ?, updated_at = ?, state_gen = ?, "
+            + "flushed_ms = ?, handover_ms = NULL WHERE alert_type = ? AND gen = ? AND writer = ?";
+    /** Devir işareti — devir boşaltmasının SON ifadesi; üç zaman = T ({@code handover_ms = updated_ms} geçerlilik koşulu). */
+    static final String SQL_HANDOVER_MARK = "UPDATE " + TYPE_STATE + " SET updated_ms = ?, updated_at = ?, state_gen = ?, "
+            + "flushed_ms = ?, handover_ms = ? WHERE alert_type = ? AND gen = ? AND writer = ?";
+    /** Devirde kendi süren zincirlerini bırak (takipçi listeleri hemen düşürsün). */
+    static final String SQL_ABANDON_OWN = "UPDATE " + CONFIRMATIONS + " SET state = '" + STATE_ABANDONED
+            + "', updated_ms = ?, updated_at = ? WHERE writer = ? AND gen = ? AND state <> '" + STATE_ABANDONED + "'";
+    /**
+     * Ara lider: devirden (− 30 sn) sonra önceki sahip ve bu pod DIŞINDA bir pod'un sahiplendiği izleme vade anahtarı /
+     * gelen kutusu boşaltıcı satırı. {@code round:} anahtarlarını her pod sahiplenir, tarama kirası bizimdir — ikisi hariç.
+     */
+    static final String SQL_INTERMEDIATE = "SELECT COUNT(*) FROM monitor_check_schedule WHERE claimed_at >= ? "
+            + "AND claimed_by IS NOT NULL AND claimed_by <> ? AND claimed_by <> ? AND monitor_key <> ? "
+            + "AND monitor_key NOT LIKE ?";
+    /** İşaret sütunları okunabiliyor mu (şema yaması bitmeden ilk saniyeler). */
+    static final String SQL_MARKER_PROBE = "SELECT state_gen, flushed_ms, handover_ms FROM " + TYPE_STATE + " WHERE 1 = 0";
+
+    /** Yükleyici okumaları (yalnız {@code gen = prior.gen}, pencere satırları her kuşaktan) — sona {@code LIMIT n} eklenir. */
+    static final String SQL_LOAD_RECOVERY = "SELECT alert_type, domain, recovery_up_count, recovery_last_counted_ms FROM "
+            + EVAL_STATE + " WHERE gen = ? AND recovery_up_count > 0";
+    static final String SQL_LOAD_SIBLINGS = "SELECT alert_type, item_key, domain, detail, monitor_id, team_id, standalone, "
+            + "error_class, observed_ms FROM " + LAST_STATUS + " WHERE gen = ? AND up = FALSE AND monitor_id IS NOT NULL "
+            + "AND observed_ms >= ?";
+    static final String SQL_LOAD_TYPES = "SELECT alert_type, suppression_active, last_scheduled_round_ms, round_interval_ms "
+            + "FROM " + TYPE_STATE + " WHERE gen = ? AND alert_type <> ?";
+    static final String SQL_LOAD_WINDOW = "SELECT alert_type, domain, up, network_down, observed_ms FROM " + LAST_STATUS
+            + " WHERE observed_ms >= ?";
+
     /** JDBC toplu yazım parça boyu. */
     static final int CHUNK = 200;
     /** Kuşak CAS deneme sayısı. */
@@ -317,6 +369,27 @@ public final class EvalStateSql {
 
     /** {@code '*'} kuşak / nabız satırı. */
     public record GenerationRow(long gen, String writer, long updatedMs) {}
+
+    /**
+     * Kuşak CAS'ının yerini aldığı {@code '*'} satırı — KAZANAN CAS denemesinde okunan satır (3-2 süreklilik denetiminin
+     * girdisi, {@link EvalLoadContinuity}). Tohumlanan ilk satırda {@code gen == 0}. İşaret sütunları null = yazılmamış.
+     */
+    public record PriorGeneration(long gen, String writer, long updatedMs, Long stateGen, Long flushedMs, Long handoverMs) {}
+
+    /** {@link #acquireGenerationWithPrior} sonucu: alınan kuşak (0 = alınamadı; o zaman {@code prior} null). */
+    public record Acquired(long gen, PriorGeneration prior) {
+        public static final Acquired NONE = new Acquired(0L, null);
+    }
+
+    /** Yükleyicinin kurtarma satırı ({@code recovery_up_count > 0}). */
+    public record LoadRecoveryRow(String alertType, String domain, int upCount, Long lastCountedMs) {}
+
+    /** Yükleyicinin DOWN kardeş satırı (kimlikli, TTL içinde). */
+    public record LoadSiblingRow(String alertType, String itemKey, String domain, String detail, long monitorId,
+                                 Long teamId, Boolean standalone, String errorClass, long observedMs) {}
+
+    /** Yükleyicinin tür satırı. */
+    public record LoadTypeRow(String alertType, Boolean suppressionActive, Long lastScheduledRoundMs, Long roundIntervalMs) {}
 
     // ── Örnek ───────────────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -422,6 +495,118 @@ public final class EvalStateSql {
             }
         }
         return 0L;
+    }
+
+    /**
+     * {@link #acquireGeneration(String, long, String, BooleanSupplier)} ile AYNI CAS döngüsü (tohum, kiraya bağlı CAS, "değer
+     * değişmediyse kira başkasında" kuralı) ama okuma {@link #SQL_GEN_PRIOR}: dönen {@code prior}, CAS'ı KAZANAN denemede
+     * okunan satırdır — tam olarak yerine geçilen kuşak (tasarım R3-2 §2.3; yalnız bir CAS {@code v}'den başarılı olabilir).
+     * YALNIZ okuma ayarı açıkken kullanılır. İşaret sütunları yoksa {@code BadSqlGrammarException} fırlatır (çağıran 3-1
+     * ifadelerine düşer).
+     *
+     * @return {@link Acquired#NONE} (kira yok / istenmiyor / her CAS kaybedildi) ya da kuşak + önceki satır
+     */
+    public Acquired acquireGenerationWithPrior(String writer, long nowMs, String leaseOwner, BooleanSupplier stillWanted) {
+        String w = clip(writer, WRITER_MAX);
+        for (int i = 0; i < GEN_CAS_TRIES; i++) {
+            if (stillWanted != null && !stillWanted.getAsBoolean()) return Acquired.NONE;
+            PriorGeneration prior = priorRow();
+            if (prior == null) {
+                try {
+                    jdbc.update(SQL_GEN_SEED, EvalStateKeys.GENERATION_ROW, w, maxExistingGeneration(), nowMs, iso(nowMs));
+                } catch (DuplicateKeyException race) {
+                    // öteki pod aynı anda tohumladı — yeniden oku
+                }
+                continue;
+            }
+            long v = prior.gen();
+            if (stillWanted != null && !stillWanted.getAsBoolean()) return Acquired.NONE;
+            int n = leaseOwner == null
+                    ? jdbc.update(SQL_GEN_CAS, v + 1, w, nowMs, iso(nowMs), EvalStateKeys.GENERATION_ROW, v)
+                    : jdbc.update(SQL_GEN_CAS_LEASE, v + 1, w, nowMs, iso(nowMs), EvalStateKeys.GENERATION_ROW, v,
+                            LEASE_KEY, clip(leaseOwner, WRITER_MAX));
+            if (n == 1) return new Acquired(v + 1, prior);
+            if (leaseOwner != null) {
+                PriorGeneration again = priorRow();
+                if (again != null && again.gen() == v) return Acquired.NONE;   // kira başkasında / yok
+            }
+        }
+        return Acquired.NONE;
+    }
+
+    /** {@link #SQL_GEN_PRIOR} — {@code '*'} satırı (yoksa ya da {@code gen} null ise null). */
+    private PriorGeneration priorRow() {
+        List<PriorGeneration> rows = jdbc.query(SQL_GEN_PRIOR, (rs, n) -> {
+            long gen = rs.getLong(1);
+            if (rs.wasNull()) return null;
+            return new PriorGeneration(gen, rs.getString(2), rs.getLong(3), longOrNull(rs, 4), longOrNull(rs, 5),
+                    longOrNull(rs, 6));
+        }, EvalStateKeys.GENERATION_ROW);
+        return rows.isEmpty() ? null : rows.get(0);
+    }
+
+    /**
+     * İşaretli nabız (okuma ayarı açıkken {@link #heartbeat} yerine): {@code state_gen = gen}, {@code flushed_ms} (null =
+     * kuşak eksik), {@code handover_ms = NULL}. @return satır hâlâ bu kuşak + bu yazanın mı (0 satır = çit).
+     */
+    public boolean heartbeatMarked(long gen, String writer, long nowMs, Long flushedMs) {
+        return jdbc.update(SQL_HEARTBEAT_MARK, nowMs, iso(nowMs), gen, l(flushedMs), EvalStateKeys.GENERATION_ROW, gen,
+                clip(writer, WRITER_MAX)) == 1;
+    }
+
+    /** Devir işareti (son ifade): {@code updated_ms = flushed_ms = handover_ms = atMs}. @return 1 satır yazıldı mı. */
+    public boolean handoverMark(long gen, String writer, long atMs) {
+        return jdbc.update(SQL_HANDOVER_MARK, atMs, iso(atMs), gen, atMs, atMs, EvalStateKeys.GENERATION_ROW, gen,
+                clip(writer, WRITER_MAX)) == 1;
+    }
+
+    /** Bu yazanın bu kuşaktaki süren zincirlerini ABANDONED işaretler. @return işaretlenen satır sayısı. */
+    public int abandonOwn(String writer, long gen, long nowMs) {
+        return jdbc.update(SQL_ABANDON_OWN, nowMs, iso(nowMs), clip(writer, WRITER_MAX), gen);
+    }
+
+    /** {@link #SQL_INTERMEDIATE}: {@code sinceMs}'ten beri öteki pod'ların sahiplendiği izleme / boşaltıcı satırları. */
+    public int countIntermediate(long sinceMs, String priorWriter, String me) {
+        Integer n = jdbc.queryForObject(SQL_INTERMEDIATE, Integer.class, sinceMs, s(clip(priorWriter, WRITER_MAX)),
+                s(clip(me, WRITER_MAX)), LEASE_KEY, ClusterScheduleService.ROUND_PREFIX + "%");
+        return n == null ? 0 : n;
+    }
+
+    /** İşaret sütunları okunabiliyor mu ({@code BadSqlGrammarException} = yok; başka hata fırlar). */
+    public boolean markerColumnsReadable() {
+        try {
+            jdbc.queryForList(SQL_MARKER_PROBE);
+            return true;
+        } catch (BadSqlGrammarException missing) {
+            return false;
+        }
+    }
+
+    // ── Yükleyici okumaları (en çok {@code limit} satır; çağıran {@code limit − 1}'i aşanı "çok büyük" sayar) ────────────
+
+    public List<LoadRecoveryRow> loadRecovery(long gen, int limit) {
+        return jdbc.query(SQL_LOAD_RECOVERY + " LIMIT " + Math.max(1, limit),
+                (rs, n) -> new LoadRecoveryRow(rs.getString(1), rs.getString(2), rs.getInt(3), longOrNull(rs, 4)), gen);
+    }
+
+    public List<LoadSiblingRow> loadSiblings(long gen, long observedSinceMs, int limit) {
+        return jdbc.query(SQL_LOAD_SIBLINGS + " LIMIT " + Math.max(1, limit),
+                (rs, n) -> new LoadSiblingRow(rs.getString(1), rs.getString(2), rs.getString(3), rs.getString(4),
+                        rs.getLong(5), longOrNull(rs, 6), boolOrNull(rs, 7), rs.getString(8), rs.getLong(9)),
+                gen, observedSinceMs);
+    }
+
+    public List<LoadTypeRow> loadTypes(long gen, int limit) {
+        return jdbc.query(SQL_LOAD_TYPES + " LIMIT " + Math.max(1, limit),
+                (rs, n) -> new LoadTypeRow(rs.getString(1), boolOrNull(rs, 2), longOrNull(rs, 3), longOrNull(rs, 4)),
+                gen, EvalStateKeys.GENERATION_ROW);
+    }
+
+    /** Pencere tohumu satırları — HER kuşaktan ({@link EvalWindowSeed}; kalem başına tek satır, en yeni (gen, seq)). */
+    public List<EvalWindowSeed.Row> loadWindow(long observedSinceMs, int limit) {
+        return jdbc.query(SQL_LOAD_WINDOW + " LIMIT " + Math.max(1, limit),
+                (rs, n) -> new EvalWindowSeed.Row(rs.getString(1), rs.getString(2), rs.getBoolean(3), rs.getBoolean(4),
+                        rs.getLong(5)), observedSinceMs);
     }
 
     /** Dört tablodaki en büyük kuşak ({@code '*'} hariç; hiç satır yoksa 0) — {@code '*'} yeniden tohumlanırken taban. */

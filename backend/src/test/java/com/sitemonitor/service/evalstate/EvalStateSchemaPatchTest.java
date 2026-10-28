@@ -125,6 +125,80 @@ class EvalStateSchemaPatchTest {
         }
     }
 
+    /** 3-1 (20.168.x) biçimli tür tablosu — devir işareti sütunları YOK. */
+    static final String DDL_TYPE_STATE_R31 = "CREATE TABLE IF NOT EXISTS monitor_eval_type_state ("
+            + "alert_type VARCHAR(40) NOT NULL PRIMARY KEY, suppression_active BOOLEAN, suppression_since_ms BIGINT, "
+            + "last_scheduled_round_ms BIGINT, round_interval_ms BIGINT, writer VARCHAR(200) NOT NULL, gen BIGINT NOT NULL, "
+            + "seq BIGINT NOT NULL, updated_ms BIGINT NOT NULL, updated_at VARCHAR(19) NOT NULL)";
+
+    @Test
+    @DisplayName("3-2: 3-1 biçimli tür tablosuna üç işaret sütunu eklenir (veri korunur), ikinci koşu dokunmaz; yeni kurulum ekleme saymaz")
+    void markerColumnsAddedToR31Table() {
+        mp.jdbc().execute(DDL_TYPE_STATE_R31);
+        mp.jdbc().update("INSERT INTO monitor_eval_type_state (alert_type, writer, gen, seq, updated_ms, updated_at) "
+                + "VALUES ('*', 'pod-31', 4, 0, 10, 'x')");
+        EvalStateSchemaPatch p = new EvalStateSchemaPatch(mp.jdbc());
+        for (String c : EvalStateSql.MARKER_COLUMNS) assertThat(p.columnReadable(c)).as(c).isFalse();
+        assertThat(p.apply()).as("3 tablo + 3 sütun").isEqualTo(6);
+        for (String c : EvalStateSql.MARKER_COLUMNS) assertThat(p.columnReadable(c)).as(c).isTrue();
+        assertThat(p.apply()).as("ikinci koşu").isZero();
+        java.util.Map<String, Object> row = mp.jdbc().queryForMap("SELECT gen, writer, state_gen, flushed_ms, handover_ms "
+                + "FROM monitor_eval_type_state WHERE alert_type = '*'");
+        assertThat(row).containsEntry("gen", 4L).containsEntry("writer", "pod-31");
+        assertThat(row.get("state_gen")).as("null'lanabilir, 3-1 satırı işaretsiz").isNull();
+        assertThat(new EvalStateSql(mp.jdbc()).markerColumnsReadable()).isTrue();
+        // 3-1 ifadeleri (açık sütun listeleri) sütunlu tabloda aynen çalışır
+        EvalStateSql sql = new EvalStateSql(mp.jdbc());
+        long g = sql.acquireGeneration("pod-31", 20L);
+        assertThat(g).isEqualTo(5L);
+        assertThat(sql.heartbeat(g, "pod-31", 30L)).isTrue();
+    }
+
+    @Test
+    @DisplayName("3-2: iki pod aynı anda yamalar — ADD COLUMN yarışı kaybedilse de sütun varsa WARN yok; gerçekten eklenemezse WARN")
+    void markerColumnRaceLost_isTolerated() {
+        ch.qos.logback.classic.Logger logger =
+                (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(EvalStateSchemaPatch.class);
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> logs =
+                new ch.qos.logback.core.read.ListAppender<>();
+        logs.start();
+        logger.addAppender(logs);
+        try {
+            mp.jdbc().execute(DDL_TYPE_STATE_R31);
+            AtomicInteger lost = new AtomicInteger();
+            JdbcTemplate racing = new JdbcTemplate(mp.dataSource()) {
+                @Override
+                public void execute(String sql) {
+                    super.execute(sql);   // öteki pod ekledi …
+                    if (sql.contains("ADD COLUMN")) {
+                        lost.incrementAndGet();
+                        throw new DuplicateKeyException("column already exists");   // … bu pod yarışı kaybetti
+                    }
+                }
+            };
+            EvalStateSchemaPatch p = new EvalStateSchemaPatch(racing);
+            assertThatCode(p::apply).doesNotThrowAnyException();
+            assertThat(lost).hasValue(3);
+            for (String c : EvalStateSql.MARKER_COLUMNS) assertThat(p.columnReadable(c)).isTrue();
+            assertThat(logs.list).noneMatch(e -> e.getLevel() == ch.qos.logback.classic.Level.WARN);
+
+            mp.jdbc().execute("ALTER TABLE monitor_eval_type_state DROP COLUMN handover_ms");
+            JdbcTemplate failing = new JdbcTemplate(mp.dataSource()) {
+                @Override
+                public void execute(String sql) {
+                    if (sql.contains("ADD COLUMN")) throw new org.springframework.dao.QueryTimeoutException("kilit");
+                    super.execute(sql);
+                }
+            };
+            assertThat(new EvalStateSchemaPatch(failing).addMarkerColumns(
+                    new com.sitemonitor.service.schema.SchemaDdlGuard(failing))).isZero();
+            assertThat(logs.list).anyMatch(e -> e.getLevel() == ch.qos.logback.classic.Level.WARN
+                    && e.getFormattedMessage().contains("handover_ms"));
+        } finally {
+            logger.detachAppender(logs);
+        }
+    }
+
     @Test
     @DisplayName("Veritabanı hatası açılışı durdurmaz (WARN)")
     void failureIsSwallowed() {

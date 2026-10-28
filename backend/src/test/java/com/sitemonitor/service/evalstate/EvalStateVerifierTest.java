@@ -366,6 +366,58 @@ class EvalStateVerifierTest {
         assertThat(r.firstMismatches()).contains("window_seed:" + EvalStateKeys.shortHash(KW));
     }
 
+    @Test
+    @DisplayName("3-2: window_seed ölçümü EvalWindowSeed'e taşındı — çıktı 3-1 döngüsüyle (kâhin) birebir: sayılar, karar farkı, en büyük |Δoran|")
+    void windowSeedUnchanged() {
+        realisticRounds();
+        settledRound();
+        // Karışık satırlar: başka kuşaklar, elle kaynak, ağ / ağ dışı DOWN, pencere dışı, aynı alan adında iki kalem
+        long now = mp.now();
+        String ins = "INSERT INTO monitor_last_status (alert_type, item_key, domain, up, network_down, source, observed_ms, "
+                + "changed_ms, writer, gen, seq, updated_ms, updated_at) VALUES (?,?,?,?,?,'M',?,?,'old-pod',0,1,0,'x')";
+        h2.update(ins, KW, "m:801", "k1.example.com", false, true, now, now);
+        h2.update(ins, KW, "m:802", "k1.example.com", true, false, now, now);
+        h2.update(ins, KW, "m:803", "kx.example.com", false, false, now, now);
+        h2.update(ins, KW, "m:804", "ko.example.com", false, true, now - 10L * 60 * 60 * 1000, now);
+        h2.update(ins, PORT, "m:805", "p1.example.com", false, true, now, now);
+        EvalVerifyReport r = verifier.verify(rec);
+        EvalVerifyReport.KindResult w = kind(r, EvalVerifyReport.KIND_WINDOW_SEED);
+
+        // Kâhin: 3-1 measureWindowSeed (doğrulayıcının okuduğu satırlar üzerinde — bu kuşak ∪ pencere içi her kuşak)
+        EvalSnapshot snap = mos.verifySnapshot();
+        long maxWindow = 0;
+        for (EvalSnapshot.Window x : snap.windows().values()) maxWindow = Math.max(maxWindow, x.windowMs());
+        List<Map<String, Object>> rows = h2.queryForList("SELECT alert_type, domain, up, network_down, observed_ms FROM "
+                + "monitor_last_status WHERE (gen = ? AND writer = ?) OR observed_ms >= ?", rec.generation(), rec.writer(),
+                snap.atMs() - maxWindow);
+        int compared = 0, mismatches = 0;
+        double maxDelta = 0;
+        for (Map.Entry<String, EvalSnapshot.Window> e : snap.windows().entrySet()) {
+            String type = e.getKey();
+            long cutoff = snap.atMs() - e.getValue().windowMs();
+            Map<String, Boolean> byDomain = new HashMap<>();
+            for (Map<String, Object> row : rows) {
+                String d = (String) row.get("domain");
+                if (!type.equals(row.get("alert_type")) || d == null || ((Number) row.get("observed_ms")).longValue() < cutoff) {
+                    continue;
+                }
+                byDomain.merge(d, !(Boolean) row.get("up") && (Boolean) row.get("network_down"), Boolean::logicalOr);
+            }
+            int seedDown = (int) byDomain.values().stream().filter(Boolean::booleanValue).count();
+            int seedTotal = byDomain.size();
+            compared++;
+            double seedRate = seedTotal == 0 ? 0 : (double) seedDown / seedTotal;
+            maxDelta = Math.max(maxDelta, Math.abs(e.getValue().rate() - seedRate));
+            if (mos.wouldSuppress(type, e.getValue().networkDown(), e.getValue().total())
+                    != mos.wouldSuppress(type, seedDown, seedTotal)) {
+                mismatches++;
+            }
+        }
+        assertThat(w.compared()).isEqualTo(compared).isPositive();
+        assertThat(w.mismatches()).isEqualTo(mismatches);
+        assertThat(w.maxDelta()).isCloseTo(maxDelta, org.assertj.core.data.Offset.offset(1e-12));
+    }
+
     // ── Atlananlar ve bilinmeyenler ─────────────────────────────────────────────────────────────────────────────────
 
     @Test
