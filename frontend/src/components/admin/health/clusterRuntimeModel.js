@@ -77,11 +77,15 @@ export function evalStateModel(health) {
   }
 
   const verify = verifyModel(es, mode, health?.timestamp)
-  const level = verify.level === 'mismatch' || recorderLevel === 'warn' ? 'warn'
+  // Çok pod Sürüm 3-2: devirde yükleme (küme gözlemi, yoksa bu pod'un son yüklemesi) + bu pod'un devir hazırlığı. Yalnız İŞLETİM
+  // nedenli "yüklenmedi" kartı uyarıya çeker; bilinmeyen / beklenen nedenler çekmez (yeşil de yapmaz).
+  const load = evalLoadModel(health)
+  const handover = handoverModel(health)
+  const level = verify.level === 'mismatch' || recorderLevel === 'warn' || load?.level === 'warn' ? 'warn'
     : verify.level === 'ok' ? 'ok' : verify.level === 'off' && mode === 'off' ? 'off' : 'unknown'
   return {
     mode, recorder: rec, recorderKnown: !!rec, recorderLevel, verify,
-    inherited: isObj(rec?.inherited) ? rec.inherited : null, level,
+    inherited: isObj(rec?.inherited) ? rec.inherited : null, level, load, handover,
   }
 }
 
@@ -178,4 +182,123 @@ export function otherPodState(sj) {
   if (sj.leaderHint === false) return 'leaderOnly'
   if (sj.otherLivePodSeen) return sj.otherLivePodSeen.value ? 'seenYes' : 'seenNo'
   return sj.leaderHint === true ? 'notChecked' : 'unknown'
+}
+
+// ── Çok pod Sürüm 3-2 (2026-10-28, paket C; tasarım R3-2 §8.3): devirde yüklenen durum + devir hazırlığı ─────────────
+
+/**
+ * Devir yükleme neden kodları — sunucu `EvalLoadReport.REASONS` ile İKİ YÖNDE eşit (kapı `clusterRuntimeModel.test.js` Java
+ * kaynağını okur). Ekran her kodu `hmp.esLoad.reason.<kod>` ile çevirir; ham kod basılmaz.
+ */
+export const EVAL_LOAD_REASONS = ['setting_off', 'mode_off', 'no_recorder', 'recorder_closing', 'tables_missing',
+  'columns_missing', 'no_previous_generation', 'writer_is_self', 'previous_unmarked', 'previous_incomplete', 'clock_skew',
+  'previous_stale', 'no_handover', 'handover_too_old', 'intermediate_leader', 'read_failed', 'too_large', 'timeout',
+  'evaluation_busy', 'evaluated_before_load', 'leadership_changed', 'setting_turned_off']
+/** "Yüklenmedi"nin BEKLENEN nedenleri (soluk) — sunucu `EvalLoadReport.EXPECTED_REASONS`. */
+export const EVAL_LOAD_EXPECTED_REASONS = ['setting_off', 'mode_off', 'no_recorder', 'recorder_closing', 'tables_missing',
+  'columns_missing', 'no_previous_generation', 'writer_is_self', 'previous_unmarked', 'leadership_changed']
+/** "Yüklenmedi"nin İŞLETİM nedenleri (uyarı; kartı uyarıya çeker) — sunucu `EvalLoadReport.OPERATIONAL_REASONS`. */
+export const EVAL_LOAD_OPERATIONAL_REASONS = ['read_failed', 'too_large', 'timeout', 'evaluation_busy', 'evaluated_before_load',
+  'previous_incomplete', 'previous_stale', 'clock_skew', 'setting_turned_off']
+/** Sonuçlar — sunucu `EvalLoadReport.OUTCOMES`. */
+export const EVAL_LOAD_OUTCOMES = ['full', 'observations', 'none']
+/** Devir boşaltması sonuçları — sunucu `HandoverResult` (küçük harf `key()`), iki yönde eşit. */
+export const HANDOVER_RESULTS = ['written', 'not_quiescent', 'incomplete', 'no_generation', 'fenced', 'flush_failed',
+  'budget_exceeded', 'skipped']
+/** Bu pod'un devir hazırlığı "hazır değil" nedenleri (ekran metni; `hmp.esLoad.reason.*` ya da `hmp.esLoad.ready.*`). */
+export const HANDOVER_NOT_READY = ['setting_off', 'mode_off', 'not_leader', 'tables_missing', 'fenced', 'no_generation', 'incomplete']
+
+/**
+ * Yükleme seviyesi → rozet tonu. YALNIZ "tam" yeşil; "yalnız gözlemler" bilgi; beklenen nedenle yüklenmedi / kapalı / henüz yok /
+ * bilinmiyor gri; işletim nedeniyle yüklenmedi uyarı.
+ */
+export const EVAL_LOAD_TONE = { full: 'success', observations: 'info', none: 'muted', off: 'muted', empty: 'muted',
+  unknown: 'muted', warn: 'warning' }
+
+const str = (v) => (typeof v === 'string' && v ? v : null)
+
+function normReport(r) {
+  if (!isObj(r)) return null
+  return {
+    outcome: str(r.outcome), reason: str(r.reason), attemptedTier: str(r.attempted_tier),
+    at: str(r.at), pod: str(r.pod), podName: str(r.pod_name) || str(r.pod),
+    fromGeneration: num(r.from_generation), fromPod: str(r.from_pod), fromPodName: str(r.from_pod_name) || str(r.from_pod),
+    handoverAgeMs: num(r.handover_age_ms), durableAgeMs: num(r.durable_age_ms),
+    recoveryCounters: num(r.recovery_counters) ?? 0, siblings: num(r.siblings) ?? 0, suppressions: num(r.suppressions) ?? 0,
+    roundSeen: num(r.round_seen) ?? 0, windowTypes: num(r.window_types) ?? 0, windowDomains: num(r.window_domains) ?? 0,
+    readMs: num(r.read_ms), maxWaitMs: num(r.max_wait_ms) ?? 0, waiters: num(r.waiters) ?? 0,
+    observedBy: str(r.observed_by_pod) || str(r.observed_by), observedAt: str(r.observed_at),
+  }
+}
+
+/** Rapor + okuma ayarı → seviye (`full | observations | none | warn | off | unknown`). */
+export function loadLevel(report, readEnabled) {
+  if (!report) return 'unknown'
+  if (report.outcome === 'full') return 'full'
+  if (report.outcome === 'observations') return 'observations'
+  if (report.outcome !== 'none') return 'unknown'
+  if (report.reason === 'setting_off') return readEnabled === true ? 'none' : 'off'
+  if (EVAL_LOAD_OPERATIONAL_REASONS.includes(report.reason)) return 'warn'
+  return 'none'
+}
+
+/**
+ * Devirde yüklenen durum modeli. `null` = sunucu alanları göndermiyor (3-2 öncesi) → satır gizli.
+ * Kaynak: KÜMENİN son `eval-state-load` gözlemi (`load`, "Küme"); gözlem yoksa bu pod'un son yüklemesi (`this_pod.last_load`,
+ * "Bu pod"). Okuma ayarı bu pod'da kapalıysa → "Kapalı" (gri). Gözlem okunamadı → "bilinmiyor" (gri, asla yeşil / "yüklenmedi").
+ * @returns {null | {level: string, tone: string, scope: 'cluster'|'pod', report: object|null, reason: string|null,
+ *   reasonKnown: boolean, error: boolean, readEnabled: boolean|null, podName: string|null}}
+ */
+export function evalLoadModel(health) {
+  const es = health?.eval_state
+  if (!isObj(es) || es.error) return null
+  const has = 'read_enabled' in es || 'load' in es || 'load_error' in es
+  if (!has) return null
+  const readEnabled = typeof es.read_enabled === 'boolean' ? es.read_enabled : null
+  const podName = health?.served_by_pod ?? health?.served_by ?? null
+  const base = { scope: 'cluster', report: null, reason: null, reasonKnown: false, error: false, readEnabled, podName }
+  const done = (m) => ({ ...m, tone: EVAL_LOAD_TONE[m.level] || 'muted' })
+  if (readEnabled === false) {
+    return done({ ...base, level: 'off', reason: 'setting_off', reasonKnown: true })
+  }
+  let report = normReport(es.load)
+  let scope = 'cluster'
+  if (!report) {
+    if (es.load_error) return done({ ...base, level: 'unknown', error: true })
+    report = normReport(es.this_pod?.last_load)
+    scope = 'pod'
+  }
+  if (!report) return done({ ...base, level: 'empty' })
+  const level = loadLevel(report, readEnabled)
+  const reason = report.reason
+  return done({ ...base, level, scope, report, reason, reasonKnown: !!reason && EVAL_LOAD_REASONS.includes(reason) })
+}
+
+/**
+ * Bu pod'un devir hazırlığı. `null` = sunucu alanı göndermiyor (eski sunucu / kaydedici yok) → satır gizli. Hazır değilse
+ * neden (bellekteki alanlardan): ayar kapalı → kip kapalı → bu pod lider değil → tablolar yok → çit dışı → kuşak yok →
+ * eşitleniyor (kuşak tutuluyor ama henüz eksiksiz değil).
+ * @returns {null | {ready: boolean, reason: string|null, tone: string, lastHandover: string|null, lastHandoverKnown: boolean}}
+ */
+export function handoverModel(health) {
+  const es = health?.eval_state
+  if (!isObj(es) || es.error) return null
+  const rec = isObj(es.this_pod) ? es.this_pod : null
+  if (!rec || typeof rec.handover_ready !== 'boolean') return null
+  const ready = rec.handover_ready
+  const held = health?.scheduler?.sweep_leader?.held_by_me
+  const isLeader = typeof held === 'boolean' ? held : rec.active === true ? true : null
+  let reason = null
+  if (!ready) {
+    if (es.read_enabled === false) reason = 'setting_off'
+    else if (rec.mode === 'off') reason = 'mode_off'
+    else if (isLeader === false) reason = 'not_leader'
+    else if (rec.table_missing === true) reason = 'tables_missing'
+    else if (rec.fenced === true) reason = 'fenced'
+    else if (rec.generation == null) reason = 'no_generation'
+    else reason = 'incomplete'
+  }
+  const lastHandover = str(rec.last_handover)
+  return { ready, reason, tone: ready ? 'success' : 'muted', lastHandover,
+    lastHandoverKnown: !!lastHandover && HANDOVER_RESULTS.includes(lastHandover) }
 }
