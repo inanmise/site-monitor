@@ -314,16 +314,22 @@ Ayrıntı: [`RUNBOOK.md` → Kalıcı değerlendirme durumunu devirde okuma](RUN
 - [ ] Ölçüt karşılandı: iki prod pod'unda ≥ 7 gün doğrulama 0 uyuşmazlık (bilinmeyen turlar hariç), yazma hatası < %0,1,
       "sürdürülemeyecek zincir" 0, "bastırma penceresi tohumu" karar farkı < %1, en az bir gerçek liderlik değişiminde
       devralınan sayılar > 0; kip `verify`.
+- [ ] **TÜM pod'lar 3-2 (ya da üstü) sürümünde** — rollout bitti, eski ReplicaSet'in pod'u kalmadı (`kubectl get pods -n
+      "$NS" -l app.kubernetes.io/instance="$REL"` hepsi aynı imaj). 20.168.x bir takipçi devir aralığındaki "Şimdi kontrol
+      et" sonucunu yerel değerlendirir; sayaç sıfırlaması yeni lidere ulaşmaz (RUNBOOK → Devirde okuma → R-6).
 - [ ] Önce staging: ayar açılır (Ayarlar → Genel → İzleme Alarmları → "Devirde kalıcı değerlendirme durumunu yükle (çok
       pod)", yalnız GLOBAL admin), lider pod yanıtlarken "Devir hazırlığı: Hazır — tam devir mümkün"; zorlanmış devir
       (`kubectl rollout restart deploy/<ad>` ya da lider pod'u silmek) → yeni lider yanıtlarken "Devirde yüklenen durum: Tam
       (temiz devir)", sonraki doğrulama turları "eşitleniyor" → "uyuşuyor"; günlükte eski liderde `Devir öncesi kalıcı durum
-      boşaltıldı ve işaretlendi`, yeni liderde `Kalıcı değerlendirme durumu devirde yüklendi (tam)`.
+      boşaltıldı ve işaretlendi`, yeni liderde `Kalıcı değerlendirme durumu devirde yüklendi (tam)`. Kart "Güncel değil"
+      (gri) derse rapor şimdiki liderden başka pod'undur (yeni lider yükleme yayımlamadı — ayar / kip kapalıydı ya da eski
+      sürüm lider); lider yanıtlarken "Bu pod" satırına bakın.
 - [ ] Sonra prod, aynı kontrollerle. Geri dönüş: ayarı kapatmak anında güvenlidir (sonraki devir bugünkü gibi).
 
 **Açıldıktan sonra — her prod dağıtımında**
 - [ ] Yeni lider yanıtlarken Küme kartı "Devirde yüklenen durum: Tam (temiz devir)". "Yalnız gözlemler" bir çökme / zorla
-      öldürmeden sonra normaldir; başka bir sonuç (turuncu neden ya da "Yüklenmedi") görülürse nedenini kaydedin ve RUNBOOK →
+      öldürmeden sonra normaldir — devir sırasında biri "Şimdi kontrol et"e bastıysa da ("Yükleme anında değerlendirilmemiş
+      elle kontrol sonucu vardı"); başka bir sonuç (turuncu neden ya da "Yüklenmedi") görülürse nedenini kaydedin ve RUNBOOK →
       Devirde okuma → "İzlenecekler"e bakın. `kubectl logs $L | grep -c "devirde yüklenmedi"` → 0 beklenir.
 - [ ] Doğrulama devirden sonra yine "uyuşuyor"; uyuşmazlık > 0 → ayarı kapatın, sonra inceleyin.
 

@@ -853,8 +853,11 @@ yalnız "Kapalı" der.
   değerlendirme durumunu yükler:
   - **Tam (temiz devir — zarif kapanış: rollout, `kubectl delete pod`, drain):** kurtarma sayaçları (ardışık sağlıklı
     sonuç sayısı), DOWN kardeş izlemeler, toplu kesinti bastırması, tür turları (yeniden başlatmadan sonraki elle kapanış
-    korumasının rahatlaması) ve bastırma penceresi. Eski lider kirayı bırakmadan hemen önce (en çok 1 sn: süren
-    değerlendirmeler ≤ 300 ms durulur, sonra ≤ 700 ms boşaltma) bekleyen her yazımı yapar ve bir **devir işareti** bırakır.
+    korumasının rahatlaması) ve bastırma penceresi (her tür kendi pencere süresiyle — doğrulamanın "bastırma penceresi
+    tohumu" kuralının aynısı). Eski lider kirayı bırakmadan hemen önce (en çok 1 sn: süren değerlendirmeler ve teyit /
+    kurtarma zincirlerinin yeniden kontrolleri ≤ 300 ms durulur, sonra ≤ 700 ms boşaltma) bekleyen her yazımı yapar ve bir
+    **devir işareti** bırakır. İşaret yazıldıktan sonra o pod kira bırakılana dek tabloya hiçbir şey yazmaz (işareti
+    silemez).
   - **Yalnız gözlemler (çökme, `OOMKilled`, SIGKILL, node kaybı, kira süresi doldu):** yalnız DOWN kardeşler ve bastırma
     penceresi — sayaçlar ve bastırma çökmeden önceki son saniyelerde bayatlamış olabilir (erken kapanış riski), taşınmaz.
   - **Yüklenmedi:** diğer her durumda bugünkü gibi sıfırdan (yeniden başlatma semantiği).
@@ -869,13 +872,22 @@ yalnız "Kapalı" der.
   zincir" 0 (silinmiş izlemeler hariç), "bastırma penceresi tohumu" karar farkı < %1, en az bir gerçek liderlik değişiminde
   devralınan sayılar > 0. Kip `verify` kalmalı (kip `off` iken ayar etkisizdir — kart "Kayıt kipi kapalı" der).
 - **Açmak:** önce staging, sonra prod; ilk prod dağıtımında aynı kontroller. Sürüm yükseltmesiyle AYNI adımda açmayın.
+  **Ayarı ancak TÜM pod'lar 3-2 (ya da üstü) sürümünü çalıştırırken açın** (R-6): 20.168.x bir takipçi, devir aralığında
+  gelen bir "Şimdi kontrol et" sonucunu kendi boş belleğinde değerlendirir — DOWN sonucunun sayaç sıfırlaması yeni lidere
+  ulaşmaz, yükleyici bunu göremez. `kubectl get pods -n "$NS" -l app.kubernetes.io/instance="$REL" -o
+  jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.containers[0].image}{"\n"}{end}'` hepsinde aynı imajı göstermeli.
   1. Ayarı açın. Lider pod yanıtlarken (Küme kartı "Lider mi: Evet"; sayfayı yenileyin) "Yanıtlayan pod" bölümünde
      **"Devir hazırlığı: Hazır — tam devir mümkün"** (birkaç saniye "Hazır değil: eşitleniyor" olabilir; takipçide
-     "Hazır değil: bu pod tarama lideri değil — devri yalnız lider yapar" normaldir).
+     "Hazır değil: bu pod tarama lideri değil — devri yalnız lider yapar" normaldir). Diğer "Hazır değil" nedenleri: pod
+     kapanıyor; durum tabloları henüz yok; devir işareti sütunları yok (ilk açılış ya da şema yaması başarısız — sonraki
+     açılışta yeniden denenir; `SchemaPatch` günlüğüne bakın); yazma kuşağı başka pod'da (çit); kuşak yok.
   2. `kubectl rollout restart deploy/<ad>` (ya da lider pod'u silin). Yeni lider yanıtlarken Küme kartı →
-     **"Devirde yüklenen durum: Tam (temiz devir)"**, "Kuşak N · <eski lider> · … önce", sayılar ("N kurtarma sayacı · N DOWN
-     kardeş · …") "Değerlendirme kaydı" → devralınan satırlarıyla uyumlu; sonraki doğrulama turu "eşitleniyor", ondan
-     sonraki "bellek ve tablolar uyuşuyor".
+     **"Devirde yüklenen durum: Tam (temiz devir)"**, "Önceki lider: <eski lider> · … önce yazılmıştı" (yüklenen durumun
+     yaşı), sayılar ("N kurtarma sayacı · N DOWN kardeş · …") "Değerlendirme kaydı" → devralınan satırlarıyla uyumlu;
+     sonraki doğrulama turu "eşitleniyor", ondan sonraki "bellek ve tablolar uyuşuyor". Kart **"Güncel değil"** (gri)
+     derse kümenin son yükleme raporu şimdiki liderden başka bir pod'un raporudur: yeni lider bir yükleme yayımlamadı
+     (liderliği aldığı anda ayar ya da kayıt kipi kapalıydı, ya da eski sürüm lider) — kendi başına hata değildir; lider pod
+     yanıtlarken "Bu pod" etiketli satıra bakın.
   3. Günlük (tüm pod'lar):
      ```bash
      kubectl logs $L | grep -E "devirde yüklen|devirde okunamadı|Devir öncesi kalıcı durum"
@@ -885,20 +897,46 @@ yalnız "Kapalı" der.
   4. Duman testi (Docker, yerel / CI): `SMOKE_EVAL_READ=1 SMOKE_IMAGE=<imaj> bash scripts/multipod-smoke.sh` — SIGTERM
      devirlerinde "full", ardından SIGKILL'de "observations" ister.
 - **İzlenecekler:** her dağıtımdan sonra kart "Tam". "Yalnız gözlemler" (neden "Temiz devir yok (çökme ya da kira süresi
-  doldu)", "Devir 5 dakikadan eski", "Arada kaydetmeyen bir lider vardı") bir çökmeden / zorla öldürmeden sonra normaldir.
+  doldu)", "Arada kaydetmeyen bir lider vardı") bir çökmeden / zorla öldürmeden sonra normaldir; "Yükleme anında
+  değerlendirilmemiş elle kontrol sonucu vardı" = devir aralığında biri "Şimdi kontrol et"e bastı (ya da eski lider gelen
+  kutusunu boşaltamadı) — sayaçlar bilerek taşınmadı (R-8), hata değil. Eski bir temiz devir pratikte "Yalnız gözlemler /
+  devir 5 dakikadan eski" değil, "Yüklenmedi: önceki liderin son tam yazımı 5 dakikadan eski" görünür (devir işareti son
+  tam yazımla aynı anı taşır).
   Gri (beklenen) "Yüklenmedi" nedenleri: okuma ayarı kapalı, kayıt kipi kapalı, bu pod'da kaydedici yok, pod kapanıyor,
   durum tabloları / devir işareti sütunları henüz yok (ilk açılış), önceki kuşak yok (ilk lider), son kayıtlı kuşak bu
   pod'undu, önceki lider tam durum işareti yazmadı (eski sürüm ya da ayar kapalıydı), yükleme sırasında liderlik değişti.
-  **Turuncu** (kartı uyarıya çeker, incelenmeli): durum okunamadı, yükleme sınırını aşıyor, yükleme 20 saniyede bitmedi,
+  **Turuncu** (kartı uyarıya çeker, incelenmeli): durum okunamadı (veritabanı ya da satır eşleme hatası — yükleme anında
+  biter, değerlendirmeler 20 sn beklemez; günlükte yalnız istisna sınıfları), yükleme sınırını aşıyor, yükleme 20 saniyede bitmedi,
   süren değerlendirme bitmedi, yükleme bitmeden değerlendirme yapıldı, önceki liderin kaydı eksikti, önceki liderin son tam
   yazımı 5 dakikadan eski, pod saatleri arasındaki fark 30 saniyeden büyük, ayar yükleme sırasında kapatıldı — günlükte WARN
   `Kalıcı değerlendirme durumu devirde yüklenmedi (<neden>) — yeniden başlatma semantiği (bugünkü davranış)`. Hepsinde
   karar güvenli tarafta kalır (bugünkü davranış). Doğrulama uyuşmazlığı > 0 → ayarı kapatın, sonra inceleyin.
 - **Devir işaretlenemedi:** eski liderde INFO `Devir öncesi kalıcı durum işaretlenemedi (<sonuç>) — halef yalnız gözlemleri
   ya da hiçbir durumu yüklemez` (Küme kartında "son devir boşaltması: …", yalnız ölen pod yanıt verirken görünür):
-  `budget_exceeded` (veritabanı 1 sn'de yetişemedi), `not_quiescent` (süren değerlendirme 300 ms'de bitmedi),
-  `incomplete` (kuşak henüz eşitlenmemişti — pod birkaç saniyeden kısa lider kaldı ya da bekleyen işlem sınırı aşıldı),
+  `budget_exceeded` (veritabanı 1 sn'de yetişemedi), `not_quiescent` (süren değerlendirme ya da bir teyit / kurtarma
+  zincirinin yeniden kontrolü 300 ms'de bitmedi — zincir sürerken devir bilerek gözlemlere düşer; devir başladıktan sonra
+  başlayan zincir adımı belleğe dokunmadan çıkar, yeni lider zinciri yeniden başlatır), `incomplete` (kuşak henüz
+  eşitlenmemişti — pod birkaç saniyeden kısa lider kaldı ya da bekleyen işlem sınırı aşıldı; süren zincir kayıtları
+  sayılmaz),
   `fenced` / `no_generation` (yazma kuşağı başka pod'daydı), `flush_failed`. Kira yine en çok 1 sn gecikmeyle bırakılır.
+- **Elle kontrol ve devir aralığı:** ayar AÇIKKEN lider olmayan her pod (takipçi ve kapanmakta olan lider) "Şimdi kontrol
+  et" sonucunu HER ZAMAN gelen kutusuna (`monitor_eval_inbox`) yazar — boşaltıcı ilanı aranmaz, lidersiz devir aralığında
+  da sonuç boş takipçi belleğinde değerlendirilmez. Yeni lider, yükleme sürerken kutuyu boşaltmaz (ilanı yine yazar):
+  yükleyici kutuda satır görürse sayaç taşımaz (yalnız gözlemler, `pending_manual_results`), satırlar yüklemeden hemen
+  sonraki boşaltma turunda değerlendirilir. Ayar kapalıyken 20.168.1 ile aynı (ilan yoksa yerel değerlendirme). **Hiç lider
+  yoksa 10 dakikadan uzun** (R-7) iletilen sonuçlar değerlendirilmeden silinir — elle kontrol yalnız alarm kapatabildiğinden
+  en kötü ihtimalle o "Şimdi kontrol et" alarmı kapatmaz, yeni liderin bir sonraki zamanlanmış turu kapatır.
+- **Kalan riskler (kabul edildi):** R-1 işaretle kira bırakılması arasındaki milisaniyelerde olan değişiklik taşınmaz;
+  R-2 gözlemler son kaydedilmemiş saniyedeki DOWN'u kaçırabilir (= bugün); R-3 sessiz ara lider (temiz devirle halefin
+  liderliği arasında hiç kuşak kaydetmeden lider olan pod — yazıcı geri çekilmiş, CAS düşmüş, 20.168.x, kip kapalı): hiç
+  vade anahtarı sahiplenmediyse, yalnız halefin ilk taramalarının hemen yeniden sahiplendiği anahtarları sahiplendiyse ya da
+  sahiplenmeleri veritabanı kesintisinde düştüyse iz bırakmaz → halef TAM yükler (bileşik arıza); R-4 tek pod'un yeniden
+  başlaması durumu ancak yeni yazıcı ilk kiradan sonra 20 sn içinde koşarsa taşır; R-5 pencere tohumu şişmesi (elle `M`
+  satırları, yeniden kontrol UP satırları, ≤ 120 sn yenileme gecikmesi); R-6 ayarı yalnız tüm pod'lar 3-2'deyken açın
+  (yukarıda); R-7 10 dakikadan uzun lidersizlikte iletilen sonuçlar yaşlanıp silinir; R-8 devir aralığındaki bir "Şimdi
+  kontrol et" o devri gözlemlere düşürür; R-9 takipçinin teyit listesi aynı liderde kuşak değişince (kayıt kipi kapalı →
+  açık, harita taşması, çit iyileşmesi) süren bir zinciri bitene dek (≈ 1–2 dk) göstermez — liderin kendi listesi tamdır;
+  20 dakikadır yazılmamış zincir satırı hayalettir, listelenmez.
 - **Kapatmak:** ayarı kapatın (≤ 10 sn, anında güvenli): sonraki devir bugünkü gibi sıfırdan başlar; o an yüklenmiş durum
   sıradan bellektir, sıfırlanmaz; takipçinin teyit listesi belleğe döner (boş); nabızlar 3-1 ifadelerine döner. Acil
   veritabanı yükü: kip `off` (ayar o zaman etkisizdir). Geri alma (20.168.x): ayar anahtarı yok sayılır, üç sütun ve
@@ -1276,8 +1314,10 @@ bilmez. Son eski pod gidene kadar şunlar görülebilir (sonra kendiliğinden bi
   AÇMAYIN.
 - **Ayar açıksa bile karışık sürüm güvenli:** eski (20.168.x) lider devir işareti yazmaz → yeni halef hiçbir şey yüklemez
   ("Önceki lider tam durum işareti yazmadı"); eski halef hiç yüklemez, kuşak CAS'ı işareti geçersiz kılar. Her birleşim
-  bugünkü yeniden başlatma semantiği ya da daha iyisidir. Ayar açıkken yeni takipçi, eski liderin teyit zincirlerini
-  (aynı tablo biçimi) listeler; eski takipçi boş liste verir.
+  bugünkü yeniden başlatma semantiği ya da daha iyisidir — tek istisna eski TAKİPÇİ: devir aralığında gelen "Şimdi kontrol
+  et" sonucunu yerel değerlendirir (yeni pod'lar ayar açıkken gelen kutusuna iletir), DOWN'un sayaç sıfırlaması yeni lidere
+  ulaşmaz (R-6) — bu yüzden ayarı geçiş bitmeden açmayın. Ayar açıkken yeni takipçi, eski liderin teyit zincirlerini (aynı
+  tablo biçimi) listeler; eski takipçi boş liste verir.
 - **Kapanış:** yeni pod ayar açık ve hazırken kirayı en çok 1 sn geç bırakır (bütçe 101 < 120 sn); eski pod'da devir adımı
   yoktur.
 - **Geri alma:** ayar anahtarı, üç sütun ve `eval-state-load` satırı kalır, eski kod yok sayar.
