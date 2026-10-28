@@ -124,6 +124,19 @@ public interface EvalStateSource {
     }
 
     /**
+     * Bir türün bastırma penceresi uzunluğu, kaydedilmiş tur aralığından (yükleyicinin pencere tohumu için; inceleme
+     * 2026-10-28, kaydedici M-2: tohum VERIFY'ın ölçtüğü gibi TÜR BAŞINA pencereyle kurulur). MOS kendi formülüyle geçersiz
+     * kılar ({@code max(3 × aralık, taban)}, en çok 60 dk). Varsayılan: aynı formül, taban 5 dk.
+     *
+     * @param roundIntervalMs kaydedilmiş tur aralığı (ms; ≤ 0 = bilinmiyor → taban)
+     */
+    default long windowLengthMsFor(String alertType, long roundIntervalMs) {
+        long floor = 300_000L;
+        long cap = 60L * 60_000L;
+        return Math.min(cap, Math.max(floor, 3L * Math.max(0L, roundIntervalMs)));
+    }
+
+    /**
      * Bellekteki DOWN gözleminin dar kopyası — ham hata metni YOK, yalnız sınıfı.
      *
      * @param present    bellekte DOWN kaydı var mı ({@link #ABSENT} = yok)

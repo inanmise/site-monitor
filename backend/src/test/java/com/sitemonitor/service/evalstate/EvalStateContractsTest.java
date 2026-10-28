@@ -289,7 +289,7 @@ class EvalStateContractsTest {
     }
 
     @Test
-    @DisplayName("3-2 rapor sabitleri: gözlem adı kalıcı ve ≤ 60; sonuçlar; 22 neden tasarım sırasıyla, tekil, küçük harf kod; "
+    @DisplayName("3-2 rapor sabitleri: gözlem adı kalıcı ve ≤ 60; sonuçlar; 23 neden tasarım sırasıyla, tekil, küçük harf kod; "
             + "beklenen / işletim / yalnız-gözlem kümeleri ayrık ve birleşimi tam liste")
     void r32ReportConstants() {
         assertThat(EvalLoadReport.OBSERVATION).isEqualTo("eval-state-load").hasSizeLessThanOrEqualTo(60)
@@ -302,7 +302,7 @@ class EvalStateContractsTest {
                 "tables_missing", "columns_missing", "no_previous_generation", "writer_is_self", "previous_unmarked",
                 "previous_incomplete", "clock_skew", "previous_stale", "no_handover", "handover_too_old",
                 "intermediate_leader", "read_failed", "too_large", "timeout", "evaluation_busy", "evaluated_before_load",
-                "leadership_changed", "setting_turned_off");
+                "leadership_changed", "setting_turned_off", "pending_manual_results");
         assertThat(EvalLoadReport.REASONS).doesNotHaveDuplicates()
                 .allSatisfy(r -> assertThat(r).matches("[a-z_]+").hasSizeLessThanOrEqualTo(EvalLoadReport.REASON_MAX));
 
@@ -324,7 +324,7 @@ class EvalStateContractsTest {
         union.addAll(EvalLoadReport.EXPECTED_REASONS);
         union.addAll(EvalLoadReport.OPERATIONAL_REASONS);
         union.addAll(List.of(EvalLoadReport.REASON_NO_HANDOVER, EvalLoadReport.REASON_HANDOVER_TOO_OLD,
-                EvalLoadReport.REASON_INTERMEDIATE_LEADER));
+                EvalLoadReport.REASON_INTERMEDIATE_LEADER, EvalLoadReport.REASON_PENDING_MANUAL_RESULTS));
         assertThat(union).containsExactlyInAnyOrderElementsOf(EvalLoadReport.REASONS);
         assertThat(EvalLoadReport.EXPECTED_REASONS).doesNotContainAnyElementsOf(EvalLoadReport.OPERATIONAL_REASONS)
                 .doesNotContain(EvalLoadReport.REASON_NO_HANDOVER, EvalLoadReport.REASON_HANDOVER_TOO_OLD,
@@ -332,7 +332,7 @@ class EvalStateContractsTest {
         assertThat(EvalLoadReport.OPERATIONAL_REASONS).doesNotContain(EvalLoadReport.REASON_NO_HANDOVER,
                 EvalLoadReport.REASON_HANDOVER_TOO_OLD, EvalLoadReport.REASON_INTERMEDIATE_LEADER);
         assertThat(EvalLoadReport.OBSERVATIONS_REASONS).containsExactly("no_handover", "handover_too_old",
-                "intermediate_leader", "clock_skew");
+                "intermediate_leader", "clock_skew", "pending_manual_results");
         assertThat(EvalLoadReport.REASONS).containsAll(EvalLoadReport.OBSERVATIONS_REASONS);
 
         assertThat(EvalLoadReport.operational(EvalLoadReport.REASON_READ_FAILED)).isTrue();

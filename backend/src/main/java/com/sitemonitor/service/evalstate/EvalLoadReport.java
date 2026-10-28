@@ -102,6 +102,12 @@ public record EvalLoadReport(long atMs, String pod, String outcome, String reaso
     public static final String REASON_HANDOVER_TOO_OLD = "handover_too_old";
     /** Devirden sonra kaydetmeyen bir lider vardı ({@code monitor_check_schedule}) — yalnız gözlemler. */
     public static final String REASON_INTERMEDIATE_LEADER = "intermediate_leader";
+    /**
+     * Yükleme anında {@code monitor_eval_inbox}'ta değerlendirilmemiş elle kontrol sonucu vardı (devir aralığında takipçiye
+     * gelen "Şimdi kontrol et" ya da eski liderin boşaltamadığı satır) — bu sonuçlar bir DOWN sıfırlaması taşıyabilir, sayaç
+     * taşınmaz: yalnız gözlemler (inceleme 2026-10-28, MOS M-1).
+     */
+    public static final String REASON_PENDING_MANUAL_RESULTS = "pending_manual_results";
     // Okuma (EvalStateLoader, paket A)
     /** Okuma başarısız ({@code DataAccessException}). */
     public static final String REASON_READ_FAILED = "read_failed";
@@ -125,7 +131,8 @@ public record EvalLoadReport(long atMs, String pod, String outcome, String reaso
             REASON_COLUMNS_MISSING, REASON_NO_PREVIOUS_GENERATION, REASON_WRITER_IS_SELF, REASON_PREVIOUS_UNMARKED,
             REASON_PREVIOUS_INCOMPLETE, REASON_CLOCK_SKEW, REASON_PREVIOUS_STALE, REASON_NO_HANDOVER,
             REASON_HANDOVER_TOO_OLD, REASON_INTERMEDIATE_LEADER, REASON_READ_FAILED, REASON_TOO_LARGE, REASON_TIMEOUT,
-            REASON_EVALUATION_BUSY, REASON_EVALUATED_BEFORE_LOAD, REASON_LEADERSHIP_CHANGED, REASON_SETTING_TURNED_OFF);
+            REASON_EVALUATION_BUSY, REASON_EVALUATED_BEFORE_LOAD, REASON_LEADERSHIP_CHANGED, REASON_SETTING_TURNED_OFF,
+            REASON_PENDING_MANUAL_RESULTS);
 
     /**
      * NONE'un BEKLENEN nedenleri (tasarım §8.3: soluk ton, günlükte INFO) — kurulum / sürüm / ilk açılış / sıradan liderlik
@@ -149,7 +156,8 @@ public record EvalLoadReport(long atMs, String pod, String outcome, String reaso
      * anındaki saat farkı FULL'u düşürür; kalıcılık anındaki saat farkı NONE'a götürür).
      */
     public static final List<String> OBSERVATIONS_REASONS = List.of(
-            REASON_NO_HANDOVER, REASON_HANDOVER_TOO_OLD, REASON_INTERMEDIATE_LEADER, REASON_CLOCK_SKEW);
+            REASON_NO_HANDOVER, REASON_HANDOVER_TOO_OLD, REASON_INTERMEDIATE_LEADER, REASON_CLOCK_SKEW,
+            REASON_PENDING_MANUAL_RESULTS);
 
     /** {@link #asMap()} / {@link #toJson()} alan adları (sırayla) — kalıcı yanıt / gözlem alan adları. */
     public static final Set<String> FIELDS = Collections.unmodifiableSet(new LinkedHashSet<>(List.of(
