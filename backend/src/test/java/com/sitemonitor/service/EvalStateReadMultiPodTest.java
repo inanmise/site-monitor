@@ -125,13 +125,24 @@ class EvalStateReadMultiPodTest {
     }
 
     static MonitoringOutageService.SweepItem item(String type, String host, long monitorId, boolean up, int recoveryChecks) {
+        return item(type, host, monitorId, up, recoveryChecks, null, () -> status(up ? "up" : "down"));
+    }
+
+    /**
+     * Genişletilmiş kalem: {@code recoveryIntervalMs} verilirse AKTİF kurtarma zinciri (izleme başına yeniden kontrol
+     * aralığı), {@code recheck} zincir / teyit adımının yeniden kontrolü (ör. bekletilen bir tedarikçi).
+     */
+    static MonitoringOutageService.SweepItem item(String type, String host, long monitorId, boolean up, int recoveryChecks,
+                                                  Long recoveryIntervalMs,
+                                                  java.util.function.Supplier<Map<String, Object>> recheck) {
         Map<String, Object> ctx = new LinkedHashMap<>();
         ctx.put("monitor_recovery_checks", recoveryChecks);
+        if (recoveryIntervalMs != null) ctx.put("monitor_recovery_interval_ms", recoveryIntervalMs);
         ctx.put("monitor_id", monitorId);
         ctx.put("team_id", TEAM);
         ctx.put("standalone", true);
         return new MonitoringOutageService.SweepItem(type, host, monitorId + "/TCP", up, up ? null : "connect timed out", ctx,
-                () -> status(up ? "up" : "down"));
+                recheck);
     }
 
     /** Bir küme: ortak H2 + saat + paylaşılan sahteler; pod başına kendi MOS'u ve kaydedicisi. */
@@ -161,6 +172,8 @@ class EvalStateReadMultiPodTest {
             boolean wrap;
             int maxPending = EvalStateRecorder.MAX_PENDING;
             boolean manualConfirms;
+            boolean manualRecoveries;
+            java.util.function.Consumer<MonitoringOutageService> mosCustomizer = m -> { };
 
             Spec on(AtomicBoolean v) { this.on = v; return this; }
             Spec noRecorder() { this.recorder = false; return this; }
@@ -169,6 +182,10 @@ class EvalStateReadMultiPodTest {
             Spec wrap() { this.wrap = true; return this; }
             Spec maxPending(int v) { this.maxPending = v; return this; }
             Spec manualConfirms() { this.manualConfirms = true; return this; }
+            /** Kurtarma zinciri adımları elle koşar ({@link Node#recoveries}; ör. devirde süren yeniden kontrol senaryosu). */
+            Spec manualRecoveries() { this.manualRecoveries = true; return this; }
+            /** Pod'un MOS'una ek kurulum (genişletme kancası: alanlar, kapılar, tedarikçiler) — kayıt kurulmadan ÖNCE uygulanır. */
+            Spec mos(java.util.function.Consumer<MonitoringOutageService> c) { this.mosCustomizer = c; return this; }
 
             Node build(int n) {
                 MonitoringMultiPodKit.PodWithMos p = MonitoringMultiPodKit.podWithMos(mp, n);
@@ -182,6 +199,12 @@ class EvalStateReadMultiPodTest {
                     manual = new MonitoringMultiPodKit.Manual();
                     ReflectionTestUtils.setField(m, "confirmExecutor", manual);
                 }
+                MonitoringMultiPodKit.Manual recoveries = null;
+                if (manualRecoveries) {
+                    recoveries = new MonitoringMultiPodKit.Manual();
+                    ReflectionTestUtils.setField(m, "recoveryExecutor", recoveries);
+                }
+                mosCustomizer.accept(m);
                 SqlRecordingDataSource ds = wrap ? new SqlRecordingDataSource(mp.dataSource()) : null;
                 EvalStateRecorder rec = null;
                 if (recorder) {
@@ -203,7 +226,7 @@ class EvalStateReadMultiPodTest {
                     p.scheduler().setEvalStateSinkForHandover(rec);
                     recorders.add(rec);
                 }
-                return new Node(p, rec, ds, manual);
+                return new Node(p, rec, ds, manual, recoveries);
             }
         }
 
@@ -215,19 +238,21 @@ class EvalStateReadMultiPodTest {
             return spec().build(n);
         }
 
-        /** Bir pod: kendi MOS'u, kaydedicisi (null olabilir), isteğe bağlı kayıtlı veri kaynağı ve elle teyit yürütücüsü. */
+        /** Bir pod: kendi MOS'u, kaydedicisi (null olabilir), isteğe bağlı kayıtlı veri kaynağı ve elle teyit / kurtarma yürütücüleri. */
         final class Node {
             final MonitoringMultiPodKit.PodWithMos p;
             final EvalStateRecorder rec;
             final SqlRecordingDataSource ds;
             final MonitoringMultiPodKit.Manual confirms;
+            final MonitoringMultiPodKit.Manual recoveries;
 
             Node(MonitoringMultiPodKit.PodWithMos p, EvalStateRecorder rec, SqlRecordingDataSource ds,
-                 MonitoringMultiPodKit.Manual confirms) {
+                 MonitoringMultiPodKit.Manual confirms, MonitoringMultiPodKit.Manual recoveries) {
                 this.p = p;
                 this.rec = rec;
                 this.ds = ds;
                 this.confirms = confirms;
+                this.recoveries = recoveries;
             }
 
             String owner() { return p.pod().owner(); }
