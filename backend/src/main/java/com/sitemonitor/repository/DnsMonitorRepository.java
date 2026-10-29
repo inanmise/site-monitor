@@ -11,6 +11,11 @@ import java.util.Optional;
 
 public interface DnsMonitorRepository extends JpaRepository<DnsMonitor, Long> {
     List<DnsMonitor> findByActiveTrue();
+
+    /** Çok pod Sürüm 3-3 (paket B): dağıtık kontrol gönderiminin HAFİF okuması — aktif izlemelerin [id, aralık (sn), bağımsız, alan adı] (betik /
+     *  başlık / gizli sütunları okunmaz). Yalnız ana anahtar açıkken, tarama liderinin gönderim tıkında çağrılır. */
+    @Query("SELECT m.id, m.intervalSeconds, m.standalone, m.domain FROM DnsMonitor m WHERE m.active = true")
+    List<Object[]> findCheckDispatchRows();
     List<DnsMonitor> findAllByOrderByNameAsc();
     /** Rehber & Notlar hedef yetkisi (MonitorTargetTeams): alan adının TÜM DNS satırları (kayıt tipleri, envanter-türevi + standalone). */
     List<DnsMonitor> findByDomain(String domain);

@@ -11,6 +11,11 @@ import java.util.Optional;
 
 public interface ScriptedMonitorRepository extends JpaRepository<ScriptedMonitor, Long> {
     List<ScriptedMonitor> findByActiveTrue();
+
+    /** Çok pod Sürüm 3-3 (paket B): dağıtık kontrol gönderiminin HAFİF okuması — aktif izlemelerin [id, aralık (sn)] (betik /
+     *  başlık / gizli sütunları okunmaz). Yalnız ana anahtar açıkken, tarama liderinin gönderim tıkında çağrılır. */
+    @Query("SELECT m.id, m.intervalSeconds FROM ScriptedMonitor m WHERE m.active = true")
+    List<Object[]> findCheckDispatchRows();
     long countByActiveTrue();
     /** Takım kapsamlı fırtına eşiği paydası (StormService, 2026-09-29) — yalnız o takımın aktif kayıtları. */
     long countByTeamIdAndActiveTrue(Long teamId);
