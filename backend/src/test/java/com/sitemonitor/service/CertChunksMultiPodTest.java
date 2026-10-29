@@ -9,7 +9,6 @@ import com.sitemonitor.service.certsweep.CertSweepStatus;
 import com.sitemonitor.service.certsweep.CertSweepStore;
 import com.sitemonitor.service.health.ClusterHealthStore;
 import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -141,27 +140,9 @@ class CertChunksMultiPodTest {
         assertThat(a.calls).isEmpty();
     }
 
-    /**
-     * "Kural gereği klasik" tur sayacı (tek pod, {@code min-domains} altı …). FX-COORD (OB-L6) sayacı ikiye böler:
-     * {@code classicByRule} (kural) / {@code classicFallback} (yalnız gerçek düşüş: oluşturma hatası, iç hata). Düzeltme öncesi
-     * tek sayaç ({@code classicFallback}) ikisini birlikte sayar. Yansımayla okunur ki senaryo düzeltmeden önce de sonra da
-     * derlenip DÜZELTİLMİŞ anlamı denetlesin: alan varsa by-rule = beklenen VE fallback = 0.
-     */
+    /** "Kural gereği klasik" tur sayacı (tek pod, {@code min-domains} altı …) — FX-COORD (OB-L6) gerçek düşüşten ayrı sayar. */
     static void assertClassicByRule(CertSweepStatus.Coordinator st, long expected) {
-        java.lang.reflect.Method byRule;
-        try {
-            byRule = st.getClass().getMethod("classicByRule");
-        } catch (NoSuchMethodException e) {
-            assertThat(st.classicFallback()).as("FX-COORD öncesi tek sayaç (kural + düşüş)").isEqualTo(expected);
-            return;
-        }
-        long v;
-        try {
-            v = ((Number) byRule.invoke(st)).longValue();
-        } catch (ReflectiveOperationException e) {
-            throw new AssertionError(e);
-        }
-        assertThat(v).as("kural gereği klasik (FX-COORD OB-L6)").isEqualTo(expected);
+        assertThat(st.classicByRule()).as("kural gereği klasik (FX-COORD OB-L6)").isEqualTo(expected);
         assertThat(st.classicFallback()).as("gerçek klasiğe düşüş yok (FX-COORD OB-L6)").isZero();
     }
 
@@ -572,7 +553,6 @@ class CertChunksMultiPodTest {
     }
 
     @Test
-    @Disabled("needs fix/r3-4-worker (SW-L2): anahtar kapandıktan sonra işçi 2 × kira boyunca boşta aralığıyla sahiplenmeyi sürdürür")
     @DisplayName("s7b: anahtar turun ortasında kapatılır, işçiler boş sahiplenmeyle boşta kalmışken bir pod SIGTERM ile parçalarını "
             + "bırakır → boştaki işçiler bırakılanları bir boşta yoklamada alır (devralma / 900 sn ilerlemesiz tavan yok); pencere "
             + "(2 × kira) dolunca sorgusuz")
@@ -660,7 +640,6 @@ class CertChunksMultiPodTest {
     }
 
     @Test
-    @Disabled("needs fix/r3-4-worker (SW-M1 / CR-L1): lider KENDİ koordine ettiği turun parçalarını hemen ve tam bütçeyle alır")
     @DisplayName("s8c: 3-4 koordinatör TARAMA LİDERİ + yalnız 20.170.0 diğerleri → kendi turunun parçalarını HEMEN ve tam bütçeyle "
             + "alır (steal-after / yarı bütçe yalnız BAŞKA pod'un turunda) — yavaşlamaz, doğru")
     void s8c_newCoordinatorIsLeader_onlyLegacyOthers_ownRunAtOnceFullBudget() {

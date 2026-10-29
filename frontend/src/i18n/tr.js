@@ -2510,7 +2510,7 @@ export const TR = {
   // ── multi-pod R3-4 · P0 ──
   'general.lbl.site.monitor.checks.cert-chunks.enabled': 'Parçalı sertifika taraması (çok pod)',
   'help.set.site.monitor.checks.cert-chunks.enabled':
-    "Ne işe yarar: Saatlik, bayat ve tam sertifika taramasında cert-check kilidini kazanan pod turun koordinatörü olur; alan adlarını 20'lik parçalara bölüp bir iş tablosuna yazar, her pod (tarama lideri yalnız 10 saniyedir bekleyen parçaları, yarı güçle) parçaları alıp yalnız ölçer. Kayıt, toplu ağ kesintisi kuralı ve alarm kararları yine tur bitince tek pod'da, tüm sonuçlar üzerinden bugünkü kodla verilir. Başka canlı pod yokken ya da turda 40'tan az alan adı varken tur bugünkü gibi tek pod'da koşar.\nFaydası: Sertifika kontrollerinin ağ beklemesi ve işlemci yükü pod'lara yayılır; büyük envanterde tur kısalır ve bir pod'un düşmesi turu kaybettirmez (onun parçası başka pod'da yeniden ölçülür).\nÖnerilen değer: false (varsayılan). Yalnız tüm pod'lar bu sürümdeyken ve her pod sertifika hedeflerine aynı ağ çıkışıyla (vekil sunucu dahil) erişirken açın. Kapatmak anında güvenlidir (sonraki tur bugünkü klasik taramayla koşar).",
+    "Ne işe yarar: Saatlik, bayat ve tam sertifika taramasında cert-check kilidini kazanan pod turun koordinatörü olur; alan adlarını 20'lik parçalara bölüp bir iş tablosuna yazar, her pod parçaları alıp yalnız ölçer (tarama lideri, başka bir pod'un koordine ettiği turda yalnız 10 saniyedir bekleyen parçaları sınırlı güçle alır; kendi turunun parçalarını hemen alır). Kayıt, toplu ağ kesintisi kuralı ve alarm kararları yine tur bitince tek pod'da, tüm sonuçlar üzerinden bugünkü kodla verilir. Başka canlı pod yokken ya da turda 40'tan az alan adı varken tur bugünkü gibi tek pod'da koşar.\nFaydası: Sertifika kontrollerinin ağ beklemesi ve işlemci yükü pod'lara yayılır; büyük envanterde tur kısalır ve bir pod'un düşmesi turu kaybettirmez (onun parçası başka pod'da yeniden ölçülür).\nÖnerilen değer: false (varsayılan). Yalnız tüm pod'lar bu sürümdeyken ve her pod sertifika hedeflerine aynı ağ çıkışıyla (vekil sunucu dahil) erişirken açın. Kapatmak anında güvenlidir (sonraki tur bugünkü klasik taramayla koşar).",
   // ── /multi-pod R3-4 · P0 ──
   'general.lbl.site.monitor.uptime.alert-enabled':         'Uptime Alarmı',
   'general.lbl.site.monitor.port.alert-enabled':           'Port Alarmı',
@@ -9248,7 +9248,7 @@ export const TR = {
   'hmp.cc.pod.workerOff': 'Bu pod parça almıyor (CERT_CHUNK_WORKER_ENABLED=false); kilidi kazanırsa yine koordinatör olur.',
   'hmp.cc.pod.inflight': '{0} parça · {1} alan adı ölçülüyor · bütçe {2}',
   'hmp.cc.pod.notStarted': 'işçi henüz başlamadı',
-  'hmp.cc.pod.leaderYielding': 'tarama lideri: yalnız bekleyen parçaları yarı güçle alır',
+  'hmp.cc.pod.leaderYielding': 'tarama lideri: başka pod koordine ederken yalnız bekleyen parçaları sınırlı güçle alır',
   'hmp.cc.pod.counts': '{0} tamamlandı · {1} geç · {2} bırakıldı · {3} atıldı',
   'hmp.cc.pod.lastClaim': 'son alma {0}',
   'hmp.cc.pod.coordinator': 'Koordinatör: {0} parçalı tur · {1} klasiğe dönen · {2} devralınan parça · {3} yeniden ölçülen · {4} ikinci görüş · {5} bırakılan tur',

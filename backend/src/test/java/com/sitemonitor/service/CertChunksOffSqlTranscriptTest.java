@@ -85,6 +85,11 @@ class CertChunksOffSqlTranscriptTest {
     static final Pattern RUN_ID = Pattern.compile("\\b[0-9a-f]{12}\\b");
     static final Pattern MOCK_HASH = Pattern.compile("hashCode: -?\\d+");
     static final Pattern IDENTITY = Pattern.compile("@[0-9a-f]{4,}");
+    /**
+     * Bayat süpürmesinin kesim zamanı duvar saatinden gelir ({@code Instant.now() − stale-minutes}, 20.170.0 ile aynı); iki koşu
+     * saniye sınırına denk gelirse değer bir saniye farklı olur — yalnız bu bağımsız değişken eşitlenir.
+     */
+    static final Pattern STALE_CUTOFF = Pattern.compile("findByCheckedAtGreaterThanEqual\\(\"[^\"]*\"\\)");
 
     record Out(List<String> sql, List<String> mocks, List<String> settingsReads, List<String> logs) {}
 
@@ -255,7 +260,8 @@ class CertChunksOffSqlTranscriptTest {
         for (Invocation inv : all) {
             List<String> args = new ArrayList<>();
             for (Object a : inv.getArguments()) args.add(norm(R34CertRig.canon(a, Set.of())));
-            out.add(owner.get(inv) + "." + inv.getMethod().getName() + "(" + String.join(", ", args) + ")");
+            String call = owner.get(inv) + "." + inv.getMethod().getName() + "(" + String.join(", ", args) + ")";
+            out.add(STALE_CUTOFF.matcher(call).replaceAll("findByCheckedAtGreaterThanEqual(\"<cutoff>\")"));
         }
         return out;
     }

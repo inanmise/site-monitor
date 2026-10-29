@@ -50,10 +50,11 @@ import java.util.function.Supplier;
  * da kirası dolan parçaları alınır (FX-WORKER SW-L2); sonra yalnız bellek okuyarak boşta bekler ({@link #poke()} süreyi
  * yeniden başlatır).
  *
- * <p><b>Bütçe (§3.4):</b> aynı anda en çok {@code max-chunks} parça ve {@code max-inflight-domains} (0 = 2 × görev havuzunun
- * GÜNCEL çekirdeği → 40) alan adı; uçuşta parça yoksa bir parça her zaman alınabilir (bütçeden büyük parça da ölçülür). Tarama
+ * <p><b>Bütçe (§3.4):</b> aynı anda en çok {@code max-chunks} (8) parça ve {@code max-inflight-domains} (0 = 6 × görev havuzunun
+ * GÜNCEL çekirdeği → 120; C2 B-1) alan adı; uçuşta parça yoksa bir parça her zaman alınabilir (bütçeden büyük parça da ölçülür). Tarama
  * lideri BAŞKA canlı pod varken ({@code PodLiveness}, bilinmiyor = yok) başka pod'un koordine ettiği koşunun ilk görüş
- * parçalarını yalnız {@code steal-after-ms}'ten (10 sn) eskiyse ve yarı bütçeyle ({@code leader-share-pct}) alır — izleme
+ * parçalarını yalnız {@code steal-after-ms}'ten (10 sn) eskiyse ve bütçenin {@code leader-share-pct} payıyla (varsayılanda en çok
+ * max(parça, çekirdek) = 20) alır — izleme
  * taramaları ve erişilebilirlik turu için havuzunu korur; KENDİ koşusunun ve ikinci görüş parçalarını beklemeden tam bütçeyle
  * alır, son aldığı parça ≥ 30 sn beklemişse (işi kimse almıyor) tam bütçeye geçer ({@link #claimRound}, FX-WORKER SW-M1 /
  * CR-L1 / CR-H-1 b).

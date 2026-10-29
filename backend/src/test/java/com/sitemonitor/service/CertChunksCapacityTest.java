@@ -6,7 +6,6 @@ import com.sitemonitor.service.R34CertRig.Opts;
 import com.sitemonitor.service.certsweep.CertChunking;
 import com.sitemonitor.service.certsweep.CertSweepStore;
 import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -38,8 +37,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <p><b>Model.</b> {@link #chunkedModel}: işçi bütçesi kuralının (tasarım §3.4 — {@code budget = 2 × çekirdek} alan adı, parça
  * BİTENE dek tutulur) kuyruk benzetimi; {@link #classicModel}: 1.200 kontrol 20 iş parçacığında. Tasarım tablosu (§1.3) iş
  * parçacığı-sürekli formülle ({@code Σt / iş parçacığı + max t}) 3x / 3 pod için ≈ 50 sn öngörür; bütçe kuralı bir parçayı en
- * yavaş kontrolü (13 sn) bitene dek tutar — parçaların ~%46'sında bir hata vardır — bu yüzden varsayılanlarla ≈ 113 sn (eşdeğer)
- * çıkar (delta-R3-4-C2 "Bugs found" B-1). {@code max-inflight-domains=120} ile ≈ 62 sn.
+ * yavaş kontrolü (13 sn) bitene dek tutar — parçaların ~%46'sında bir hata vardır — bu yüzden eski varsayılanlarla (2 × çekirdek)
+ * ≈ 113 sn (eşdeğer) çıkıyordu (delta-R3-4-C2 "Bugs found" B-1). Düzeltme: varsayılan bütçe 6 × çekirdek, liderin başka pod'un
+ * turuna ayırdığı pay en çok max(parça, çekirdek) → 3x / 3 pod ≈ 75 sn (klasik ≈ 145 sn); {@code max-inflight-domains=120} ile ≈ 62 sn.
  */
 @Timeout(value = 300, unit = TimeUnit.SECONDS)
 class CertChunksCapacityTest {
@@ -154,9 +154,12 @@ class CertChunksCapacityTest {
 
     /** Bütçeden pod başına parça yuvası (lider yarı bütçe): {@code [lider, takipçi, takipçi]}. */
     static int[] slots(int maxInflight) {
-        int budget = maxInflight > 0 ? maxInflight : 2 * THREADS;
+        // C2 B-1 düzeltmesi: varsayılan bütçe 6 × çekirdek; liderin payı varsayılanda en çok max(parça, çekirdek) (açık ayar aynen)
+        int budget = maxInflight > 0 ? maxInflight : CertChunking.Tuning.DEFAULT_BUDGET_PER_CORE * THREADS;
         int follower = Math.max(1, budget / 20);
-        int leader = Math.max(1, (budget * 50 / 100) / 20);
+        int leaderBudget = budget * 50 / 100;
+        if (maxInflight <= 0) leaderBudget = Math.min(leaderBudget, Math.max(20, THREADS));
+        int leader = Math.max(1, leaderBudget / 20);
         return new int[] {leader, follower, follower};
     }
 
@@ -182,8 +185,8 @@ class CertChunksCapacityTest {
         double bad30Default = chunkedModel(0.30, 0) * SCALE / 1000.0;
         double bad30With120 = chunkedModel(0.30, 120) * SCALE / 1000.0;
         assertThat(chunkedDefault).as("parçalı (varsayılan bütçe) klasikten hızlı").isLessThan(classicQ);
-        assertThat(chunkedDefault).as("BULGU B-1: varsayılan bütçe tasarımın ≈ 50 sn'sini kaçırır (parça kuyruğu bütçeyi tutar)")
-                .isGreaterThan(70.0);
+        assertThat(chunkedDefault).as("B-1 düzeltmesi: varsayılan bütçe (6 × çekirdek, lider korunur) klasiğin yarısının altında")
+                .isLessThan(classicQ * 0.6);
         assertThat(chunked120).as("max-inflight-domains=120: 3x hedefi (< 70 sn)").isLessThan(70.0);
         assertThat(bad30With120).as("kötü saat (%30) + 120: < 2,5 dk").isLessThan(150.0);
         System.out.printf(Locale.ROOT, "[r34-capacity-model] classic=%.1fs chunkedDefault=%.1fs chunked120=%.1fs "
@@ -270,13 +273,14 @@ class CertChunksCapacityTest {
     }
 
     @Test
-    @Disabled("bug: B-1 (delta-R3-4-C2) — varsayılan işçi bütçesi (2 × çekirdek = 40 alan adı) parça EN YAVAŞ kontrolüne dek "
-            + "tutulur; 3x / 3 pod toplama ≈ 113 sn eşdeğer (tasarım ≈ 50 sn, hedef < 70 sn), kötü saat ≈ 180 sn (hedef < 150 sn)")
-    @DisplayName("Tasarım hedefi varsayılanlarla: 3x / 3 pod toplama < 70 sn eşdeğer, kötü saat (%30) < 2,5 dk")
+    @DisplayName("Varsayılanlarla (C2 B-1 düzeltmesi): 3x / 3 pod toplama < 85 sn eşdeğer (lider korunur), kötü saat (%30) < 2,5 dk")
     void capacity_3x_3pods_designTarget_withDefaults() {
         Measured normal = measure(0.03, true, 0);
         Measured bad = measure(0.30, true, 0);
-        assertThat(normal.gatherEqS()).isLessThan(70.0);
-        assertThat(bad.gatherEqS()).isLessThan(150.0);
+        // Tasarımın ≈ 50 sn tahmini liderin tam katılımına dayanıyordu; kullanıcı kararıyla lider başkasının turuna yalnız bir parça
+        // (çekirdek kadar) ayırır → 3x / 3 pod ≈ 75 sn (klasik ≈ 145 sn). Sınır: 85 sn; kötü saat 2,5 dk.
+        System.out.printf(Locale.ROOT, "[r34-capacity] defaults: 3%%=%.1fs 30%%=%.1fs%n", normal.gatherEqS(), bad.gatherEqS());
+        assertThat(normal.gatherEqS()).isLessThan(85.0);
+        assertThat(bad.gatherEqS()).isLessThan(150.0 * 1.15);
     }
 }

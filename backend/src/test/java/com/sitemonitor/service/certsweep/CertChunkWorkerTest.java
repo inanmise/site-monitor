@@ -48,7 +48,11 @@ class CertChunkWorkerTest {
 
     static final long T0 = CertSweepSqlH2Test.T0;
     static final long LEASE = 60_000L;
-    static final CertChunking.Tuning DEFAULT = CertChunking.Tuning.DEFAULTS;
+    /**
+     * Kural testlerinin ayarı: 40 alan adı bütçesi (eski varsayılan 2 × çekirdek), en çok 4 parça — açık bütçe ayarında lider payı
+     * sınırsız (40 × %50 = 20). Yeni varsayılan (6 × çekirdek, lider ≤ çekirdek; C2 B-1) {@code defaultBudgetSixTimesCore} ile.
+     */
+    static final CertChunking.Tuning DEFAULT = new CertChunking.Tuning(true, 20, 40, 4, 40, 60_000L, 10_000L, 50, 250L, 5_000L);
 
     final MultiPodTestSupport mp = MultiPodTestSupport.create();
     final CertSweepTestClock clock = new CertSweepTestClock(T0);
@@ -261,19 +265,21 @@ class CertChunkWorkerTest {
     }
 
     @Test
-    @DisplayName("Bütçe: 2 × çekirdek (40) → aynı anda 2 parça; parça sınırı (3) bütçeden önce; uçuşta parça yoksa bütçeden büyük tek parça alınır")
+    @DisplayName("Bütçe: 6 × çekirdek (çekirdek 7 → 42) → aynı anda 2 parça; çekirdek canlı büyür; parça sınırı (3) bütçeden önce; uçuşta parça yoksa bütçeden büyük tek parça alınır")
     void budgetAndMaxChunks() throws Exception {
         store.createRun(CertSweepSqlH2Test.spec("run-b", 200, 20));
         FakeRunner r = runner();
+        r.core = 7;    // varsayılan bütçe kuralı 6 × çekirdek = 42 alan adı
         r.block();
-        CertChunkWorker w = worker(DEFAULT, r);
+        CertChunkWorker w = worker(tuning(4, 0, 50, true), r);
         w.startForTest(null);
         assertThat(w.claimRound()).isEqualTo(2);
+        assertThat(w.status().budget()).isEqualTo(42);
         assertThat(w.status().inflightDomains()).isEqualTo(40);
         assertThat(w.claimRound()).as("bütçe dolu — denenmez").isEqualTo(-1);
-        r.core = 40;   // görev havuzu canlı büyütüldü → bütçe 80
+        r.core = 14;   // görev havuzu canlı büyütüldü → bütçe 84
         assertThat(w.claimRound()).isEqualTo(2);
-        assertThat(w.status().budget()).isEqualTo(80);
+        assertThat(w.status().budget()).isEqualTo(84);
         assertThat(w.claimRound()).as("parça sınırı (4)").isEqualTo(-1);
         assertThat(w.heldCount()).isEqualTo(4);
         r.open();
@@ -556,6 +562,22 @@ class CertChunkWorkerTest {
                         .getBeanProvider(CertRunCoordinator.class));
         off.start();
         org.mockito.Mockito.verifyNoInteractions(other);
+    }
+
+    @Test
+    @DisplayName("C2 B-1: varsayılan bütçe 6 × çekirdek (120) — takipçi aynı anda 6 parça; lider + başka canlı pod varken en çok çekirdek (20)")
+    void defaultBudgetSixTimesCore() throws Exception {
+        store.createRun(CertSweepSqlH2Test.spec("run-dflt", 400, 20));
+        FakeRunner r = runner();
+        r.block();
+        CertChunkWorker w = worker(CertChunking.Tuning.DEFAULTS, r);
+        w.startForTest(null);
+        assertThat(w.claimRound()).isEqualTo(6);
+        assertThat(w.status().budget()).isEqualTo(120);
+        assertThat(w.status().inflightDomains()).isEqualTo(120);
+        assertThat(CertChunking.Tuning.DEFAULTS.leaderBudget(20)).isEqualTo(20);
+        r.open();
+        await(() -> w.heldCount() == 0, 5_000);
     }
 
     @Test

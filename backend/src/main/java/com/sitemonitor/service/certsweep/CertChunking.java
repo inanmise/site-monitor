@@ -132,7 +132,7 @@ public class CertChunking {
         public static final long MAX_LEASE_MS = 600_000L;
 
         /** application.properties varsayılanları. */
-        public static final Tuning DEFAULTS = new Tuning(true, 20, 40, 4, 0, 60_000L, 10_000L, 50, 250L, 5_000L);
+        public static final Tuning DEFAULTS = new Tuning(true, 20, 40, 8, 0, 60_000L, 10_000L, 50, 250L, 5_000L);
 
         public Tuning {
             chunkSize = clamp(chunkSize, MIN_CHUNK_SIZE, MAX_CHUNK_SIZE);
@@ -152,22 +152,32 @@ public class CertChunking {
         }
 
         /**
-         * Bu pod'un uçuştaki alan adı bütçesi: {@link #maxInflightDomains} doluysa o, değilse 2 × görev havuzunun GÜNCEL
-         * çekirdek sayısı ({@code certCheckExecutor}, canlı ayar — 20 → 40); en az 1.
+         * Bu pod'un uçuştaki alan adı bütçesi: {@link #maxInflightDomains} doluysa o, değilse 6 × görev havuzunun GÜNCEL
+         * çekirdek sayısı ({@code certCheckExecutor}, canlı ayar — 20 → 120); en az 1. Bir parça bütçesini EN YAVAŞ kontrolü
+         * (ağ zaman aşımı ≈ 13 sn) bitene dek tutar; 2 × çekirdek (40) 3x envanterde turu ≈ 118 sn'ye uzatıyordu (C2 B-1,
+         * hedef < 70 sn). Fazlası havuz kuyruğunda bekler — klasik tur ise TÜM alan adlarını bir kerede kuyruğa koyar.
          *
          * @param executorCoreSize havuzun şu anki çekirdek sayısı ({@code CertChunkRunner.executorCoreSize()}); ≤ 0 → 1 sayılır
          */
         public int budget(int executorCoreSize) {
             if (maxInflightDomains > 0) return maxInflightDomains;
-            return Math.max(1, 2 * Math.max(1, executorCoreSize));
+            return Math.max(1, DEFAULT_BUDGET_PER_CORE * Math.max(1, executorCoreSize));
         }
 
+        /** Varsayılan bütçe çarpanı (çekirdek başına alan adı; C2 B-1). */
+        public static final int DEFAULT_BUDGET_PER_CORE = 6;
+
         /**
-         * Tarama lideri + başka canlı pod varken bütçe = {@code budget × leaderSharePct / 100} (aşağı yuvarlanır; 40 × 50 % =
-         * 20; 0 % → 0 = lider hiç almaz). Lider ayrıca yalnız {@link #stealAfterMs} kadar bekleyen parçaları alır (§3.4).
+         * Tarama lideri + başka canlı pod varken bütçe = {@code budget × leaderSharePct / 100} (aşağı yuvarlanır), varsayılan
+         * bütçede en çok max(parça boyu, çekirdek) (120 × 50 % = 60 → 20; 0 % → 0 = lider hiç almaz). Lider ayrıca yalnız
+         * {@link #stealAfterMs} kadar bekleyen parçaları alır (§3.4).
          */
         public int leaderBudget(int executorCoreSize) {
-            return (int) ((long) budget(executorCoreSize) * leaderSharePct / 100L);
+            int share = (int) ((long) budget(executorCoreSize) * leaderSharePct / 100L);
+            // C2 B-1: büyütülen varsayılan bütçe liderin payını büyütmez — lider başkasının turuna en çok çekirdek kadar (bir
+            // parça, alt gruplarla yarım çekirdek eşzamanlı) ayırır; izleme taramaları havuzda beklemez. Açık bütçe ayarı aynen.
+            if (maxInflightDomains > 0 || share <= 0) return share;
+            return Math.min(share, Math.max(chunkSize, Math.max(1, executorCoreSize)));
         }
 
         /**

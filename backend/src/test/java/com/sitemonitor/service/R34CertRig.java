@@ -138,7 +138,11 @@ final class R34CertRig implements AutoCloseable {
     final AppSettingsService settings;
     final EmailNotificationService email;
     final CertificateInventoryRepository inventoryRepo;
-    volatile CertChunking.Tuning tuning = CertChunking.Tuning.DEFAULTS;
+    /**
+     * Senaryoların ayarı: 40 alan adı bütçesi (eski varsayılan 2 × çekirdek), en çok 4 parça — senaryolar adım başına parça sayısıyla
+     * yazıldı; yeni varsayılan (6 × çekirdek, lider ≤ çekirdek; C2 B-1) {@code CertChunksCapacityTest} ve işçi testlerinde.
+     */
+    volatile CertChunking.Tuning tuning = new CertChunking.Tuning(true, 20, 40, 4, 40, 60_000L, 10_000L, 50, 250L, 5_000L);
 
     final List<Map<String, Object>> rows = new CopyOnWriteArrayList<>();
     final Map<String, Integer> indexOf = new ConcurrentHashMap<>();

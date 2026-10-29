@@ -99,7 +99,7 @@ class CertChunkingTest {
         assertThat(d.workerEnabled()).isTrue();
         assertThat(d.chunkSize()).isEqualTo(20);
         assertThat(d.minDomains()).isEqualTo(40);
-        assertThat(d.maxChunks()).isEqualTo(4);
+        assertThat(d.maxChunks()).isEqualTo(8);
         assertThat(d.maxInflightDomains()).isZero();
         assertThat(d.leaseMs()).isEqualTo(60_000L);
         assertThat(d.stealAfterMs()).isEqualTo(10_000L);
@@ -124,7 +124,7 @@ class CertChunkingTest {
         assertThat(t.workerEnabled()).isFalse();
         assertThat(t.chunkSize()).isEqualTo(CertChunking.Tuning.MIN_CHUNK_SIZE);
         assertThat(t.minDomains()).as("int taşması eksiye dönmez, sınıra doyar").isEqualTo(CertChunking.Tuning.MAX_MIN_DOMAINS);
-        assertThat(t.maxChunks()).as("çevrilemedi → varsayılan").isEqualTo(4);
+        assertThat(t.maxChunks()).as("çevrilemedi → varsayılan").isEqualTo(8);
         assertThat(t.maxInflightDomains()).isZero();
         assertThat(t.leaseMs()).isEqualTo(CertChunking.Tuning.MAX_LEASE_MS);
         assertThat(t.stealAfterMs()).isZero();
@@ -145,11 +145,14 @@ class CertChunkingTest {
     @DisplayName("bütçe: 0 = 2 × havuz çekirdeği (20 → 40), dolu değer olduğu gibi; lider payı 40 × 50 % = 20, 0 % → 0; çekirdek okunamazsa ≥ 1")
     void budgets() {
         CertChunking.Tuning d = CertChunking.Tuning.DEFAULTS;
-        assertThat(d.budget(20)).isEqualTo(40);
-        assertThat(d.leaderBudget(20)).isEqualTo(20);
-        assertThat(d.budget(60)).as("canlı havuz ayarı").isEqualTo(120);
-        assertThat(d.budget(0)).isEqualTo(2);
-        assertThat(d.budget(-5)).isEqualTo(2);
+        // C2 B-1: varsayılan bütçe 6 × çekirdek; liderin payı varsayılanda en çok max(parça boyu, çekirdek)
+        assertThat(d.budget(20)).isEqualTo(120);
+        assertThat(d.leaderBudget(20)).as("120 × %50 = 60 → çekirdek 20 ile sınırlı").isEqualTo(20);
+        assertThat(d.budget(60)).as("canlı havuz ayarı").isEqualTo(360);
+        assertThat(d.leaderBudget(60)).isEqualTo(60);
+        assertThat(d.leaderBudget(10)).as("en az bir parça (20)").isEqualTo(20);
+        assertThat(d.budget(0)).isEqualTo(6);
+        assertThat(d.budget(-5)).isEqualTo(6);
         CertChunking.Tuning fixed = new CertChunking.Tuning(true, 20, 40, 4, 30, 60_000, 10_000, 50, 250, 5_000);
         assertThat(fixed.budget(20)).isEqualTo(30);
         assertThat(fixed.leaderBudget(20)).isEqualTo(15);
@@ -213,7 +216,7 @@ class CertChunkingTest {
                 .contains("\nsite.monitor.checks.cert-chunks.worker.enabled=${CERT_CHUNK_WORKER_ENABLED:true}\n")
                 .contains("\nsite.monitor.checks.cert-chunks.chunk-size=${CERT_CHUNK_SIZE:20}\n")
                 .contains("\nsite.monitor.checks.cert-chunks.min-domains=${CERT_CHUNK_MIN_DOMAINS:40}\n")
-                .contains("\nsite.monitor.checks.cert-chunks.max-chunks=${CERT_CHUNK_MAX_CHUNKS:4}\n")
+                .contains("\nsite.monitor.checks.cert-chunks.max-chunks=${CERT_CHUNK_MAX_CHUNKS:8}\n")
                 .contains("\nsite.monitor.checks.cert-chunks.max-inflight-domains=${CERT_CHUNK_MAX_INFLIGHT_DOMAINS:0}\n")
                 .contains("\nsite.monitor.checks.cert-chunks.lease-ms=${CERT_CHUNK_LEASE_MS:60000}\n")
                 .contains("\nsite.monitor.checks.cert-chunks.steal-after-ms=${CERT_CHUNK_STEAL_AFTER_MS:10000}\n")

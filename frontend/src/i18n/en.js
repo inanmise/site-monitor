@@ -2508,7 +2508,7 @@ export const EN = {
   // ── multi-pod R3-4 · P0 ──
   'general.lbl.site.monitor.checks.cert-chunks.enabled': 'Chunked certificate sweep (multi-pod)',
   'help.set.site.monitor.checks.cert-chunks.enabled':
-    "What it does: In the hourly, stale and full certificate sweeps the pod that wins the cert-check lock becomes the run's coordinator; it splits the domains into chunks of 20 and writes them to a work table, and every pod (the sweep leader only takes chunks that have waited 10 seconds, with half of its capacity) claims chunks and only measures them. Saving, the bulk network outage rule and the alarm decisions are still made once the run is complete, on one pod, over all results, by today's code. While no other live pod exists, or when a run has fewer than 40 domains, the run stays on one pod as today.\nBenefit: The network waits and the CPU load of the certificate checks are spread over the pods; with a large inventory the run gets shorter, and losing a pod does not lose the run (its chunk is measured again on another pod).\nRecommended: false (the default). Turn it on only when every pod runs this release and every pod reaches the certificate hosts through the same network egress (proxy included). Turning it off is instantly safe (the next run uses today's classic sweep).",
+    "What it does: In the hourly, stale and full certificate sweeps the pod that wins the cert-check lock becomes the run's coordinator; it splits the domains into chunks of 20 and writes them to a work table, and every pod claims chunks and only measures them (on a run coordinated by another pod, the sweep leader only takes chunks that have waited 10 seconds, with limited capacity; it takes the chunks of its own run at once). Saving, the bulk network outage rule and the alarm decisions are still made once the run is complete, on one pod, over all results, by today's code. While no other live pod exists, or when a run has fewer than 40 domains, the run stays on one pod as today.\nBenefit: The network waits and the CPU load of the certificate checks are spread over the pods; with a large inventory the run gets shorter, and losing a pod does not lose the run (its chunk is measured again on another pod).\nRecommended: false (the default). Turn it on only when every pod runs this release and every pod reaches the certificate hosts through the same network egress (proxy included). Turning it off is instantly safe (the next run uses today's classic sweep).",
   // ── /multi-pod R3-4 · P0 ──
   'general.lbl.site.monitor.uptime.alert-enabled':         'Uptime Alerts',
   'general.lbl.site.monitor.port.alert-enabled':           'Port Alerts',
@@ -9233,7 +9233,7 @@ export const EN = {
   'hmp.cc.pod.workerOff': 'This pod claims no chunks (CERT_CHUNK_WORKER_ENABLED=false); it still coordinates when it wins the lock.',
   'hmp.cc.pod.inflight': '{0} chunks · {1} domains being measured · budget {2}',
   'hmp.cc.pod.notStarted': 'worker not started yet',
-  'hmp.cc.pod.leaderYielding': 'sweep leader: claims only waiting chunks at half capacity',
+  'hmp.cc.pod.leaderYielding': 'sweep leader: on runs coordinated elsewhere, claims only waiting chunks with limited capacity',
   'hmp.cc.pod.counts': '{0} completed · {1} late · {2} released · {3} discarded',
   'hmp.cc.pod.lastClaim': 'last claim {0}',
   'hmp.cc.pod.coordinator': 'Coordinator: {0} chunked runs · {1} fell back to classic · {2} chunks taken over · {3} re-measured · {4} second opinions · {5} runs given up',
