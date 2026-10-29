@@ -1174,9 +1174,12 @@ saklama yönetimi listesinde iki satır ile `/metrics`'te `db.table.rows|bytes{t
   - Kaybolan parçayı (işçisi iki kez öldü, kirası dolup kimse almadı, sonucu okunamadı) ve kullanılamayan sonucu koordinatör
     kendisi ölçer — koordinatör yaşadıkça ve kilidi tuttukça her alan adı tur başına tam bir kez kaydedilir.
   - Tarama lideri, başka canlı pod varken başka pod'un koordine ettiği turun parçalarını ancak 10 sn bekledikten sonra ve
-    bütçesinin yarısıyla alır (izleme taramaları ve erişilebilirlik turu için görev havuzunu korur); KENDİ koordine ettiği
-    turun ve ikinci görüş parçalarını hemen, tam bütçeyle alır; son aldığı parça 30 sn'den uzun beklemişse (başka işçi
-    almıyor) tam bütçeye geçer. Liderde bir parça, görev havuzu çekirdeğinin yarısı kadar alan adlık alt gruplarla ölçülür.
+    sınırlı güçle (varsayılanda bir parça) alır — izleme taramaları ve erişilebilirlik turu için görev havuzunu korur; KENDİ
+    koordine ettiği turun ve ikinci görüş parçalarını hemen, tam bütçeyle alır. Son aldığı parça 30 sn'den uzun beklemiş VE o
+    turda başka hiçbir işçi 30 sn'dir parça almamış / tutmuyorsa (işi kimse yapmıyor) bir "rahatlama" bütçesine geçer; bu
+    durumda bile görev havuzunda çekirdek sayısından fazla sertifika kontrolü biriktirmez. Liderde başka pod'un turunun bir
+    parçası, görev havuzu çekirdeğinin yarısı kadar alan adlık alt gruplarla ölçülür; liderin kendi turunun parçaları
+    bölünmeden ölçülür.
   - Tek pod'da, başka canlı pod yokken ya da turda 40'tan az alan adı varken tur bugünkü gibi klasik koşar (anahtar açık
     olsa da).
   - Değişmeyenler: elle yüklenen sertifikalar adımı, envantere ekleme kontrolü, "Şimdi kontrol et" ve envanter erişilebilirlik
@@ -1288,9 +1291,18 @@ saklama yönetimi listesinde iki satır ile `/metrics`'te `db.table.rows|bytes{t
       farklı: o node'da P1'i `multipod-egress-check.sh` ile denetleyin; düzelene dek o pod'a `CERT_CHUNK_WORKER_ENABLED=false`.
     - INFO `… hatalar başka pod'dan da görülüyor (gerçek kesinti olası), sonuçlar geçerli` = o hedefler gerçekten
       erişilemiyor; pod'da yapılacak bir şey yok.
-    - INFO `İkinci görüş tamamlanamadı …` = aykırı pod koordinatörün kendisiydi ve başka pod 30 sn içinde yeniden ölçmeye
-      başlamadı ya da yeniden ölçüm yarıda kaldı — özgün sonuçların HEPSİ kullanıldı (o pod'daki klasik bir turla aynı
-      karar; kısmi değişim turu toplu kesinti eşiğinin altına çekemez).
+    - INFO `İkinci görüş kısmen uygulandı …` = aykırı pod koordinatörün kendisiydi, yeniden ölçüm yarıda kaldı ama toplu
+      kesinti kararı kısmi sonuçla da aynı çıktı — yapılan düzeltmeler kullanıldı (gereksiz "erişilemiyor" alarmı yok).
+    - INFO `İkinci görüş eksik kaldı … kararını değiştirirdi (evet → hayır)` ya da `İkinci görüş tamamlanamadı …` = kısmi sonuç
+      toplu kesinti kararını değiştirecekti ya da hiçbir alan adı yeniden ölçülemedi — özgün sonuçların HEPSİ kullanıldı (o
+      pod'daki klasik bir turla aynı karar; kısmi değişim turu eşiğin iki yönünde de karşıya geçiremez). Tek yardımcı pod
+      kapanırken parçasını bırakırsa ve yarım dakikadır hiçbir ikinci görüş parçası ilerlemiyorsa koordinatör beklemeyi bırakır
+      (eskiden 15 dk kilit tutuyordu).
+    - Başka bir pod aykırıyken o pod'dan gelen kullanılamayan sonuç (hata, kesik sonuç, yanlış alan adı) koordinatörde yeniden
+      ölçülür; bozuk özgün sonuç kullanılmaz.
+    Sonuç turla birlikte saklanır (`cert_sweep_runs.second_opinion_ok|second_opinion_failed`): Küme kartı P1 (çıkış eşliği)
+    uyarısını yalnız yeniden ölçümlerin çoğu başka pod'da başarılı olduysa verir; hatalar başka pod'dan da görüldüyse sessiz
+    bir bilgi satırı gösterir (kart uyarıya çıkmaz); hiçbir alan adı yeniden ölçülemediyse ayrı bir uyarı gösterir.
     İkinci görüş yalnız hataların yerine yeni ölçüm koyar; sahte kesinti üretemez.
   - **Terk edilmiş / sahipsiz tur:** Küme kartında "Terk edilmiş tur" ya da tarama kartında "terk edilmiş tur — koordinatör X
     tarama kilidini artık tutmuyor": o turun koordinatör pod'u öldü (SIGKILL, OOM, düğüm kaybı); o turdan hiçbir sonuç
