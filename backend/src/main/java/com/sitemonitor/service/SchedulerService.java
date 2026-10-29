@@ -10082,11 +10082,15 @@ public class SchedulerService {
             checkDispatchTask = ts.scheduleWithFixedDelay(this::dispatchCheckJobsSafely,
                     Instant.now().plusMillis(delay), java.time.Duration.ofMillis(delay));
         } else {
-            java.util.concurrent.ScheduledExecutorService ex = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+            // Yalnız zamanlayıcı bean'i olmayan (elle kurulan) düzende: görev iptal edilince iş parçacığı 1 sn içinde söner
+            java.util.concurrent.ScheduledThreadPoolExecutor ex = new java.util.concurrent.ScheduledThreadPoolExecutor(1, r -> {
                 Thread t = new Thread(r, CHECK_DISPATCH_LOCK);
                 t.setDaemon(true);
                 return t;
             });
+            ex.setRemoveOnCancelPolicy(true);
+            ex.setKeepAliveTime(1, java.util.concurrent.TimeUnit.SECONDS);
+            ex.allowCoreThreadTimeOut(true);
             checkDispatchTask = ex.scheduleWithFixedDelay(this::dispatchCheckJobsSafely, delay, delay,
                     java.util.concurrent.TimeUnit.MILLISECONDS);
         }

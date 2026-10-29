@@ -449,5 +449,16 @@ class CheckDispatchTest {
         Object task = ReflectionTestUtils.getField(h.scheduler, "checkDispatchTask");
         assertThat(task).isNotNull();
         ((java.util.concurrent.ScheduledFuture<?>) task).cancel(true);
+        // iptal edilen yedek tıkın iş parçacığı söner — sonraki test sınıflarına sızmaz (DistributedChecksOffThreadsTest)
+        long deadline = System.currentTimeMillis() + 5_000;
+        while (dispatchThreadAlive() && System.currentTimeMillis() < deadline) Thread.sleep(20);
+        assertThat(dispatchThreadAlive()).as("check-dispatch iş parçacığı söndü").isFalse();
+    }
+
+    private static boolean dispatchThreadAlive() {
+        for (Thread t : Thread.getAllStackTraces().keySet()) {
+            if (t.isAlive() && SchedulerService.CHECK_DISPATCH_LOCK.equals(t.getName())) return true;
+        }
+        return false;
     }
 }
