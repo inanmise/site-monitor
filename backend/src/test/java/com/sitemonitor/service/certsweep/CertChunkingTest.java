@@ -160,6 +160,20 @@ class CertChunkingTest {
     }
 
     @Test
+    @DisplayName("FX-WORKER: liderin tam bütçe eşiği 3 × steal-after (taban 10 sn → 30 sn; 0 sn ayarında da 30 sn); kapanış sonrası sahiplenme süresi 2 × kira")
+    void leaderReliefAndOffGrace() {
+        CertChunking.Tuning d = CertChunking.Tuning.DEFAULTS;
+        assertThat(d.leaderFullBudgetAgeMs()).isEqualTo(30_000L);
+        assertThat(d.offGraceMs()).isEqualTo(120_000L);
+        CertChunking.Tuning immediate = new CertChunking.Tuning(true, 20, 40, 4, 0, 60_000, 0, 50, 250, 5_000);
+        assertThat(immediate.leaderFullBudgetAgeMs()).as("steal-after 0 → yarı bütçe hemen düşmesin").isEqualTo(30_000L);
+        CertChunking.Tuning slow = new CertChunking.Tuning(true, 20, 40, 4, 0, 15_000, 20_000, 50, 250, 5_000);
+        assertThat(slow.leaderFullBudgetAgeMs()).isEqualTo(60_000L);
+        assertThat(slow.offGraceMs()).isEqualTo(30_000L);
+        assertThat(d.leaderFullBudgetAgeMs()).as("bekletmeden uzun").isGreaterThan(d.stealAfterMs());
+    }
+
+    @Test
     @DisplayName("parça boyutu: tur en çok 500 parça — 1 200 alan adı 60 × 20; 20 000 alan adı 500 × 40; 10 001 → 21'lik 477 parça")
     void effectiveChunkSize() {
         CertChunking.Tuning d = CertChunking.Tuning.DEFAULTS;

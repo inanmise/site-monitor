@@ -138,6 +138,8 @@ class CertSweepPostgresTest {
         ClaimedChunk a = s.claim(PREFIX + "w1", LEASE, Long.MAX_VALUE).orElseThrow();
         assertThat(a.attempts()).isEqualTo(1);
         assertThat(a.leaseUntilMs()).isEqualTo(clock.nowMs() + LEASE);
+        assertThat(a.coordinator()).as("RETURNING koşunun koordinatörünü verir").isEqualTo("coord-00000001");
+        assertThat(a.pendingMsAtClaim()).as("bekleme = sahiplenme − oluşturma").isEqualTo(60_001);
         clock.advance(LEASE + 1);
         s.heartbeat(run);
         ClaimedChunk b = s.claim(PREFIX + "w2", LEASE, Long.MAX_VALUE).orElseThrow();
@@ -154,6 +156,37 @@ class CertSweepPostgresTest {
         assertThat(s.claim(PREFIX + "bad", LEASE, Long.MAX_VALUE)).as("ikinci görüş parçası kaçınılan işçiye verilmez").isEmpty();
         assertThat(s.claim(PREFIX + "good", LEASE, Long.MAX_VALUE).orElseThrow().chunkNo()).isEqualTo(1);
         assertThat(s.markDeciding(run2, "{}", 0, 0, 0)).isTrue();
+    }
+
+    @Test
+    @DisplayName("PostgreSQL (FX-WORKER SW-M1 / CR-L1 / CR-H-1 b): bekletme eşiği yalnız başka koordinatörün ilk görüş parçalarına; kendi koşusu "
+            + "ve ikinci görüş muaf; MIN = yalnız muaflar; RETURNING koordinatör / oluşturma / kaçınılan işçi döner — iki yolda aynı")
+    void claimGateLeaderExemptionsOnPostgres() {
+        for (Boolean dialect : new Boolean[] {null, Boolean.FALSE}) {   // tek ifade (CTE … RETURNING) ve taşınabilir CAS
+            JdbcCertSweepStore s = dialect == null ? store() : new JdbcCertSweepStore(jdbc(), clock, dialect);
+            s.markTablesReady(true);
+            String tag = dialect == null ? "pg" : "portable";
+            String coord = PREFIX + "coord-" + tag;
+            String run = id("lead-" + tag);
+            CertRunSpec base = CertSweepSqlH2Test.spec(run, 20, 20);
+            s.createRun(new CertRunSpec(base.runId(), base.kind(), coord, base.evictCaches(), base.domainsTotal(), base.chunkSize(),
+                    base.chunks()));
+            long now = clock.nowMs();
+            assertThat(s.claim(PREFIX + "w-" + tag, LEASE, now)).as(tag + ": başka koordinatörün 0 sn'lik parçası").isEmpty();
+            assertThat(s.claim(PREFIX + "w-" + tag, LEASE, Long.MIN_VALUE)).as(tag + ": MIN = yalnız muaflar").isEmpty();
+            ClaimedChunk own = s.claim(coord, LEASE, Long.MIN_VALUE).orElseThrow();
+            assertThat(own.runId()).as(tag + ": kendi koşusu muaf").isEqualTo(run);
+            assertThat(own.coordinator()).isEqualTo(coord);
+            assertThat(own.createdMs()).isEqualTo(now);
+            assertThat(own.avoidWorker()).isNull();
+
+            s.addChunks(run, List.of(new CertChunkSpec(1, List.of(CertSweepSqlH2Test.entry(0)), PREFIX + "bad-" + tag)));
+            ClaimedChunk so = s.claim(PREFIX + "w-" + tag, LEASE, Long.MIN_VALUE).orElseThrow();
+            assertThat(so.chunkNo()).as(tag + ": ikinci görüş muaf").isEqualTo(1);
+            assertThat(so.avoidWorker()).isEqualTo(PREFIX + "bad-" + tag);
+            assertThat(so.coordinator()).isEqualTo(coord);
+            assertThat(s.markDeciding(run, "{}", 0, 0, 0)).isTrue();
+        }
     }
 
     @Test

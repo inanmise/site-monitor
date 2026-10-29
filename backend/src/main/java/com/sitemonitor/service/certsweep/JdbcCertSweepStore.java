@@ -314,6 +314,15 @@ public class JdbcCertSweepStore implements CertSweepStore {
     // İşçi
     // ═════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p><b>Bekletme kapısının kapsamı (FX-WORKER, 2026-10-29; SW-M1 / CR-L1 / CR-H-1 b):</b> {@code createdBeforeMs} YALNIZ
+     * başka bir pod'un koordine ettiği koşunun ilk görüş parçalarını süzer; sahibin KENDİ koşusunun parçaları ({@code
+     * coordinator = owner}) ve ikinci görüş parçaları ({@code avoid_worker} dolu) her eşikte adaydır. {@link Long#MIN_VALUE} =
+     * yalnız bu muaf parçalar (yarı bütçesi dolu tarama lideri tam bütçeyle yalnız onları dener). Dönen parça
+     * {@link ClaimedChunk#coordinator()}, {@link ClaimedChunk#createdMs()}, {@link ClaimedChunk#avoidWorker()} taşır.
+     */
     @Override
     public Optional<ClaimedChunk> claim(String owner, long leaseMs, long createdBeforeMs) {
         if (owner == null || owner.isBlank()) return Optional.empty();
@@ -339,7 +348,7 @@ public class JdbcCertSweepStore implements CertSweepStore {
     private Optional<ClaimedChunk> claimPg(String who, String token, long now, long leaseUntil, long createdBefore,
                                            long aliveSince) {
         List<ClaimedChunk> rows = jdbc.query(CertSweepSql.SQL_CLAIM_PG, this::claimedRow,
-                now, CertChunking.MAX_ATTEMPTS, createdBefore, who, aliveSince, who, token, now, leaseUntil);
+                now, CertChunking.MAX_ATTEMPTS, who, aliveSince, createdBefore, who, who, token, now, leaseUntil);
         return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
     }
 
@@ -347,7 +356,7 @@ public class JdbcCertSweepStore implements CertSweepStore {
                                                  long aliveSince) {
         List<long[]> candidates = jdbc.query(CertSweepSql.SQL_CLAIM_CANDIDATES,
                 (rs, i) -> new long[] {rs.getLong("id"), rs.getInt("attempts")},
-                now, CertChunking.MAX_ATTEMPTS, createdBefore, who, aliveSince, CertSweepSql.CLAIM_CANDIDATES);
+                now, CertChunking.MAX_ATTEMPTS, who, aliveSince, createdBefore, who, CertSweepSql.CLAIM_CANDIDATES);
         for (long[] c : candidates) {
             int won = jdbc.update(CertSweepSql.SQL_CLAIM_CAS, who, token, now, leaseUntil, c[0], (int) c[1], now, aliveSince);
             if (won <= 0 && won != Statement.SUCCESS_NO_INFO) continue;   // başka pod aldı — sıradaki aday
@@ -575,9 +584,12 @@ public class JdbcCertSweepStore implements CertSweepStore {
     // ── Satır eşleyiciler ───────────────────────────────────────────────────────────────────────────────────────────
 
     private ClaimedChunk claimedRow(ResultSet rs, int i) throws SQLException {
+        long claimedMs = rs.getLong("claimed_ms");
+        long createdMs = rs.getLong("created_ms");
+        if (rs.wasNull()) createdMs = claimedMs;
         return new ClaimedChunk(rs.getLong("id"), rs.getString("run_id"), rs.getInt("chunk_no"),
                 decodeDomains(rs.getString("domains_json")), rs.getInt("attempts"), rs.getString("claim_token"),
-                rs.getLong("claimed_ms"), rs.getLong("lease_until_ms"));
+                claimedMs, rs.getLong("lease_until_ms"), rs.getString("coordinator"), createdMs, rs.getString("avoid_worker"));
     }
 
     private static Long longOrNull(ResultSet rs, String col) throws SQLException {
