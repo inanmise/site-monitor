@@ -283,10 +283,17 @@ public class JdbcCertSweepStore implements CertSweepStore {
 
     @Override
     public boolean markDeciding(String runId, String workersJson, int takeovers, int reclaims, int secondOpinions) {
+        return markDeciding(runId, workersJson, takeovers, reclaims, secondOpinions, null, null);
+    }
+
+    @Override
+    public boolean markDeciding(String runId, String workersJson, int takeovers, int reclaims, int secondOpinions,
+                                Integer secondOpinionOk, Integer secondOpinionFailed) {
         String w = workersJson;
         if (w != null && w.length() > CertSweepStatus.MAX_WORKERS_JSON_CHARS) w = null;   // sütun sınırı — bilgi, karar değil
         return jdbc.update(CertSweepSql.SQL_MARK_DECIDING, new SqlParameterValue(Types.VARCHAR, w), takeovers, reclaims,
-                secondOpinions, runId) > 0;
+                secondOpinions, new SqlParameterValue(Types.INTEGER, secondOpinionOk),
+                new SqlParameterValue(Types.INTEGER, secondOpinionFailed), runId) > 0;
     }
 
     @Override
@@ -609,7 +616,8 @@ public class JdbcCertSweepStore implements CertSweepStore {
             rs.getString("kind"), rs.getString("coordinator"), rs.getString("state"), rs.getBoolean("evict_caches"),
             rs.getInt("domains_total"), rs.getInt("chunks_total"), rs.getInt("chunk_size"), rs.getLong("created_ms"),
             rs.getLong("heartbeat_ms"), longOrNull(rs, "finished_ms"), rs.getString("outcome"), intOrNull(rs, "takeovers"),
-            intOrNull(rs, "reclaims"), intOrNull(rs, "second_opinions"), rs.getString("workers_json"));
+            intOrNull(rs, "reclaims"), intOrNull(rs, "second_opinions"), rs.getString("workers_json"),
+            intOrNull(rs, "second_opinion_ok"), intOrNull(rs, "second_opinion_failed"));
 
     static final RowMapper<ChunkState> CHUNK_STATE_ROW = (rs, i) -> new ChunkState(rs.getLong("id"), rs.getInt("chunk_no"),
             rs.getString("state"), rs.getInt("attempts"), rs.getInt("domain_count"), rs.getLong("created_ms"),

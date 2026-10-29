@@ -9258,6 +9258,14 @@ export const TR = {
   'hmp.cc.scanChunkedText': '{0} / {1} parça · {2} / {3} alan adı ölçüldü',
   'hmp.cc.scanChunkedOrphan': 'terk edilmiş tur — koordinatör {0} tarama kilidini artık tutmuyor; sonraki tur kapatır',
   // ── /multi-pod R3-4 · C1 ──
+  // ── multi-pod R3-4 · FX2-COORD ──
+  'hmp.cc.warn.secondOpinionEgress': 'İkinci görüşe gönderilen {0} alan adından {1} tanesi başka pod’da yeniden ölçüldü: {2} başarılı, {3} yine hatalı — bir pod’un ağ çıkışı diğerlerinden farklı; pod’ların çıkış eşliğini (P1) doğrulayın.',
+  'hmp.cc.warn.secondOpinionLastEgress': 'Son parçalı turda ikinci görüşe gönderilen {0} alan adından {1} tanesi başka pod’da yeniden ölçüldü: {2} başarılı, {3} yine hatalı — bir pod’un ağ çıkışı diğerlerinden farklı; pod’ların çıkış eşliğini (P1) doğrulayın. Uyarı daha yeni bir tarama turu bitince kalkar.',
+  'hmp.cc.warn.secondOpinionUnverified': 'Bu turda {0} alan adı için ikinci görüş istendi ama hiçbiri başka pod’da yeniden ölçülemedi — özgün sonuçlar geçerli; bir pod’un ağ çıkışı diğerlerinden farklı olabilir, pod’ların çıkış eşliğini (P1) doğrulayın.',
+  'hmp.cc.warn.secondOpinionLastUnverified': 'Son parçalı turda {0} alan adı için ikinci görüş istendi ama hiçbiri başka pod’da yeniden ölçülemedi — özgün sonuçlar geçerli; bir pod’un ağ çıkışı diğerlerinden farklı olabilir, pod’ların çıkış eşliğini (P1) doğrulayın. Uyarı daha yeni bir tarama turu bitince kalkar.',
+  'hmp.cc.info.secondOpinionConfirmed': 'İkinci görüşe gönderilen {0} alan adından {1} tanesi başka pod’da yeniden ölçüldü: {2} başarılı, {3} yine hatalı — hatalar başka pod’da da görüldü (gerçek kesinti olası); çıkış eşliği sorunu görünmüyor.',
+  'hmp.cc.info.secondOpinionLastConfirmed': 'Son parçalı turda ikinci görüşe gönderilen {0} alan adından {1} tanesi başka pod’da yeniden ölçüldü: {2} başarılı, {3} yine hatalı — hatalar başka pod’da da görüldü (gerçek kesinti olası); çıkış eşliği sorunu görünmüyor.',
+  // ── /multi-pod R3-4 · FX2-COORD ──
   'health.httpOpenExplorer': 'İstek gezginini aç',
   'health.reasonUnavailable': 'Veri alınamadı: {0}',
 

@@ -108,10 +108,22 @@ public record CertSweepStatus(long nowMs, boolean dbClockStale, List<Run> lastRu
      * @param reclaims       yeniden sahiplenilen parça sayısı (DECIDING'de; önce null)
      * @param secondOpinions ikinci görüşle yeniden ölçülen alan adı sayısı (DECIDING'de; önce null)
      * @param workersJson    {@link CertSweepStatus#encodeWorkers} biçimi (DECIDING'de; önce null)
+     * @param secondOpinionOk     ikinci görüşte yeniden ölçümü kullanılan alan adlarından başka pod'da BAŞARILI olanlar
+     *                            (inceleme L-4; DECIDING'de; önce / eski satırda null)
+     * @param secondOpinionFailed ikinci görüşte yeniden ölçümü kullanılan alan adlarından YİNE HATALI olanlar (L-4; null aynı)
      */
     public record Run(String runId, String kind, String coordinator, String state, boolean evictCaches, int domainsTotal,
                       int chunksTotal, int chunkSize, long createdMs, long heartbeatMs, Long finishedMs, String outcome,
-                      Integer takeovers, Integer reclaims, Integer secondOpinions, String workersJson) {
+                      Integer takeovers, Integer reclaims, Integer secondOpinions, String workersJson,
+                      Integer secondOpinionOk, Integer secondOpinionFailed) {
+
+        /** İkinci görüş sonucu bilinmeyen satır (eski kurucu; sonuç sütunları null). */
+        public Run(String runId, String kind, String coordinator, String state, boolean evictCaches, int domainsTotal,
+                   int chunksTotal, int chunkSize, long createdMs, long heartbeatMs, Long finishedMs, String outcome,
+                   Integer takeovers, Integer reclaims, Integer secondOpinions, String workersJson) {
+            this(runId, kind, coordinator, state, evictCaches, domainsTotal, chunksTotal, chunkSize, createdMs, heartbeatMs,
+                    finishedMs, outcome, takeovers, reclaims, secondOpinions, workersJson, null, null);
+        }
 
         /** RUNNING ya da DECIDING. */
         public boolean open() {

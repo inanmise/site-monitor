@@ -71,11 +71,18 @@ import java.util.function.Supplier;
  * <p><b>Aykırı pod — ikinci görüş (§2.6).</b> Bir pod'un ağ hatası (+ çözülemeyen ad, CR-M-1) oranı eşiğin üstünde, diğerleri
  * temizken o pod'un bu hataları BAŞKA bir pod'dan (kaçınılan işçi = o pod) bir kez yeniden ölçülür; yeni ölçüm eskisinin yerine
  * geçer (L-3'ün tek bilinçli istisnası). Aykırı pod koordinatörün KENDİSİYSE (inceleme H-1): 30 sn içinde hiçbir ikinci görüş
- * parçası sahiplenilmediyse özgün sonuçlar kalır; sahiplenildiyse (tavan: ilerlemesiz {@code sweep-max-wait-seconds}) hepsi
- * bitene ya da biri kaybolana dek beklenir, canlı sahiplenilmiş parça iptal edilmez; ve HEPSİ-YA-DA-HİÇBİRİ: yeniden dağıtılan
- * her alan adı kullanılabilir biçimde yeniden ölçülmediyse özgün sonuçların HEPSİ kalır — kısmi bir değişim turu toplu kesinti
- * eşiğinin altına çekemez. Aykırı pod uyarısı ikinci görüşten SONRA, sonucuyla yazılır; çıkış eşliği (P1) önerisi yalnız yeniden
- * ölçümlerin çoğu başka pod'dan başarılıysa (CR-L5).
+ * parçası sahiplenilmediyse özgün sonuçlar kalır; sahiplenildiyse hepsi bitene, biri kaybolana ya da bekleyen parça varken
+ * {@value CertChunking#SECOND_OPINION_WAIT_MS} ms (uzun kirada 2 × yenileme aralığı) hiçbir kendi ikinci görüş parçasının durumu
+ * değişmeyene dek beklenir (inceleme L-1 — tek yardımcı kapanırken parçasını bırakıp gittiyse 900 sn beklenmez; işlenen kuyruk
+ * her sahiplenme / kira yenileme / tamamlamada değişir), canlı sahiplenilmiş parça iptal edilmez. Eksik kalırsa kısmi değişim
+ * YALNIZ toplu kesinti ("şüpheli") kararını DEĞİŞTİRMİYORSA uygulanır (inceleme M-1: karar {@code SchedulerService} kuralıyla
+ * — {@code networkErrorCount ≥ min-errors ∧ oran ≥ eşik} — tüm özgün sonuçlar için ve tamamlanan yeniden ölçümler uygulanmış
+ * liste için hesaplanır; ikisi aynıysa yeni ölçümler geçerli, değilse özgün sonuçların HEPSİ kalır — kısmi değişim turu eşiğin
+ * altına ya da üstüne taşıyamaz). Kaçınılan işçisi BAŞKA pod olan ikinci görüş parçasının kullanılamayan sonucu (fırlatan
+ * ölçücü / kırpılmış / yanlış alan adı) aykırı pod'un bozuk özgününde KALMAZ, sağlıklı koordinatörde yeniden ölçülür (inceleme
+ * L-5). Aykırı pod uyarısı ikinci görüşten SONRA, sonucuyla yazılır; çıkış eşliği (P1) önerisi yalnız yeniden ölçümlerin çoğu
+ * başka pod'dan başarılıysa (CR-L5); sonuç (başarılı / yine hatalı sayısı) koşu satırına da yazılır (inceleme L-4 — Küme kartı
+ * hataları doğrulanmış ikinci görüş için P1 önermez).
  *
  * <p><b>Ölçüm koordinatörün iş parçacığında</b> (tasarım §4.5 adım 3): {@link CertChunkRunner#checkDomains} = klasik toplama, aynı
  * istisna anlamıyla — bir kontrolün istisnası turu klasikteki gibi düşürür (koşu FAILED, istisna AYNEN fırlar). Koordinatörün
@@ -607,6 +614,8 @@ public class CertRunCoordinator {
         boolean selfSoClaimSeen;
         boolean selfSoAbandoned;
         boolean selfSoApplied;
+        /** Eksik kendi ikinci görüşü kısmen uygulandı (M-1: karar değişmiyordu). */
+        boolean selfSoPartial;
         // ──
         int takeoverChunks;
         int secondOpinionDomains;
@@ -667,9 +676,10 @@ public class CertRunCoordinator {
             int reclaims = 0;
             for (int a : maxAttempts.values()) reclaims += Math.max(0, a - 1);
             if (!storeFailed) {
+                int[] so = secondOpinionTotals();                    // L-4: sonuç koşu satırına (okunamazsa null)
                 try {
                     if (!store.markDeciding(runId, CertSweepStatus.encodeWorkers(tallies), takeoverChunks, reclaims,
-                            secondOpinionDomains)) {
+                            secondOpinionDomains, so == null ? null : so[0], so == null ? null : so[1])) {
                         return aborted(CertSweepStore.OUTCOME_LOCK_LOST);
                     }
                 } catch (RuntimeException e) {
@@ -743,7 +753,7 @@ public class CertRunCoordinator {
                             + "hepsini ölçüyor (runId={})", NO_WORKER_MS / 1000L, runId);
                     for (int no : nos) takeover(no, lastState.get(no), true, "no_worker");
                 } else if (secondOpinion && now - phaseStart >= CertChunking.SECOND_OPINION_WAIT_MS) {
-                    secondOpinionDeadline(nos);
+                    secondOpinionDeadline(nos, now);
                 }
                 if (!storeFailed && !switchOn()) takeOverStalled(nos, now);
                 if (!localEntries.isEmpty()) {
@@ -799,9 +809,12 @@ public class CertRunCoordinator {
         /**
          * İkinci görüşün 30 sn noktası. Kaçınılan işçisi başka pod olan parçalardan HİÇ alınmamışlar koordinatöre geçer (kendisi
          * ölçer). Kaçınılan işçisi bu pod olanlar (koordinatör aykırı, H-1): o ana dek HİÇBİRİ sahiplenilmediyse özgün sonuçlar
-         * kalır; biri sahiplenildiyse beklenir (canlı sahiplenilmiş parça asla iptal edilmez).
+         * kalır; biri sahiplenildiyse beklenir (canlı sahiplenilmiş parça asla iptal edilmez) — ama bekleyen parça varken hiçbir
+         * kendi ikinci görüş parçasının durumu {@link #selfSoStallMs()} boyunca değişmediyse (yardımcı parçasını bırakıp gitti,
+         * kimse almıyor) bırakılır (inceleme L-1; sonuç M-1 kuralıyla).
          */
-        private void secondOpinionDeadline(Set<Integer> nos) {
+        private void secondOpinionDeadline(Set<Integer> nos, long now) {
+            if (!selfSoAbandoned && selfSoClaimSeen && selfSoStalled(now)) abandonSelfSecondOpinion("stalled");
             for (int no : nos) {
                 ChunkState c = lastState.get(no);
                 if (selfSo.contains(no)) {
@@ -810,6 +823,35 @@ public class CertRunCoordinator {
                     takeover(no, c, c != null, "second_opinion");
                 }
             }
+        }
+
+        /**
+         * Kendi ikinci görüşü durdu mu (inceleme L-1): yerleşmemiş bir kendi ikinci görüş parçası BEKLEMEDE (PENDING) ve kendi
+         * ikinci görüş parçalarının HİÇBİRİNİN durumu (durum / deneme / sahiplenme / kira — {@link #fp} parmak izi) son
+         * {@link #selfSoStallMs()} boyunca değişmedi. İşlenen kuyrukta her sahiplenme, kira yenilemesi ({@code lease / 4}) ve
+         * tamamlama parmak izini değiştirir — çalışılan kuyruk asla bırakılmaz; yalnız depo okunabiliyorken karar verilir (okunamayan
+         * durum "değişmedi" sayılmaz).
+         */
+        private boolean selfSoStalled(long now) {
+            if (storeFailingSince >= 0) return false;
+            boolean pending = false;
+            long lastChange = Long.MIN_VALUE;
+            for (int no : selfSo) {
+                Long ch = changedAt.get(no);
+                if (ch != null && ch > lastChange) lastChange = ch;
+                if (settled.contains(no) || queued.contains(no)) continue;
+                ChunkState c = lastState.get(no);
+                if (c != null && c.pending()) pending = true;
+            }
+            return pending && lastChange != Long.MIN_VALUE && now - lastChange >= selfSoStallMs();
+        }
+
+        /**
+         * Kendi ikinci görüşünün durma eşiği (ms) = max({@value CertChunking#SECOND_OPINION_WAIT_MS}, 2 × kira yenileme aralığı) —
+         * varsayılan 60 sn kirada 30 sn; uzun kirada canlı işçinin yenilemesi arasında bırakılmasın.
+         */
+        private long selfSoStallMs() {
+            return Math.max(CertChunking.SECOND_OPINION_WAIT_MS, 2L * chunking.tuning().renewEveryMs());
         }
 
         private void observe(List<ChunkState> states, Set<Integer> nos, long now) {
@@ -898,10 +940,10 @@ public class CertRunCoordinator {
         }
 
         /**
-         * Koordinatörün kendisi aykırıyken ikinci görüşü BIRAKIR (H-1): hiçbir kendi-ikinci-görüş sonucu kullanılmaz, özgün
-         * sonuçların HEPSİ kalır (kısmi değişim yok). Henüz yerleşmemiş parçalar yerleşmiş sayılır; yalnız beklemede ya da
-         * kirası dolmuş olanlar iptal edilir — canlı sahiplenilmiş parça iptal edilmez (tamamlaması koşu DECIDING'e geçince geç
-         * kalır, sonucu kullanılmaz).
+         * Koordinatörün kendisi aykırıyken ikinci görüşü BIRAKIR (H-1): o ana dek toplanan kendi-ikinci-görüş sonuçları YALNIZ
+         * toplu kesinti kararını değiştirmiyorlarsa kullanılır ({@link #applySelfSecondOpinion}, M-1), aksi hâlde özgün sonuçların
+         * HEPSİ kalır. Henüz yerleşmemiş parçalar yerleşmiş sayılır; yalnız beklemede ya da kirası dolmuş olanlar iptal edilir —
+         * canlı sahiplenilmiş parça iptal edilmez (tamamlaması koşu DECIDING'e geçince geç kalır, sonucu kullanılmaz).
          */
         private void abandonSelfSecondOpinion(String reason) {
             if (!selfSoAbandoned) {
@@ -977,7 +1019,6 @@ public class CertRunCoordinator {
             CertChunkSpec spec = specs.get(no);
             ChunkState state = lastState.get(no);
             String worker = state == null || state.worker() == null || state.worker().isBlank() ? "?" : state.worker();
-            boolean secondOpinion = spec.avoidWorker() != null;
             boolean self = selfSo.contains(no);
             Map<Integer, ChunkCompletion.Result> byIndex = new HashMap<>();
             for (ChunkCompletion.Result r : ChunkCompletion.decodeResults(json)) byIndex.putIfAbsent(r.index(), r);
@@ -996,10 +1037,12 @@ public class CertRunCoordinator {
                 } else if (ok) {
                     put(e.index(), r.result(), worker);
                     used++;
-                } else if (!secondOpinion) {
-                    localEntries.add(e);                             // kullanılamaz sonuç → koordinatör yeniden ölçer (L-4)
+                } else {
+                    // Kullanılamaz sonuç → koordinatör yeniden ölçer (L-4). Kaçınılan işçisi BAŞKA pod olan ikinci görüş parçası
+                    // da (inceleme L-5): koordinatör o grup için aykırı değil (sağlıklı) — aykırı pod'un bozuk özgünü kalmaz
+                    localEntries.add(e);
                     remeasured.incrementAndGet();
-                }                                                    // ikinci görüşte kullanılamazsa eski sonuç kalır
+                }
             }
             settled.add(no);
             if (self) {
@@ -1154,30 +1197,100 @@ public class CertRunCoordinator {
         }
 
         /**
-         * Koordinatör aykırıyken toplanan ikinci görüş sonuçları — HEPSİ-YA-DA-HİÇBİRİ (H-1): yeniden dağıtılan HER alan adının
-         * kullanılabilir yeni sonucu varsa hepsi yerine konur, aksi hâlde özgün sonuçların hepsi kalır (kısmi değişim turu toplu
-         * kesinti eşiğinin altına çekebilirdi).
+         * Koordinatör aykırıyken toplanan ikinci görüş sonuçları (H-1): yeniden dağıtılan HER alan adının kullanılabilir yeni
+         * sonucu varsa hepsi yerine konur. Eksikse (yardımcı öldü / kullanılamayan sonuç / bırakıldı) kısmi değişim YALNIZ toplu
+         * kesinti kararını değiştirmiyorsa uygulanır (inceleme M-1): {@code onRun}'un kuralı ({@link #suspectedWith}) tüm özgün
+         * sonuçlar ve tamamlanan yeniden ölçümler uygulanmış liste için hesaplanır; ikisi aynıysa yeni ölçümler geçerli (gereksiz
+         * sahte alarm yok), değilse ya da karar hesaplanamazsa özgün sonuçların HEPSİ kalır (kısmi değişim turu eşiğin altına ya da
+         * — yeniden dağıtılan çözülemeyen adlar ağ hatasına dönerse — üstüne taşıyamaz).
          */
         private void applySelfSecondOpinion() {
             if (selfSo.isEmpty()) return;
+            int total = 0;
             boolean complete = !selfSoAbandoned;
-            if (complete) {
-                for (int no : selfSo) {
-                    for (CertChunkSpec.Entry e : specs.get(no).entries()) {
-                        if (!selfStash.containsKey(e.index())) {
-                            complete = false;
-                            break;
-                        }
-                    }
-                    if (!complete) break;
+            for (int no : selfSo) {
+                for (CertChunkSpec.Entry e : specs.get(no).entries()) {
+                    total++;
+                    if (!selfStash.containsKey(e.index())) complete = false;
                 }
             }
-            if (!complete) return;                                   // özgün sonuçlar kalır
+            if (complete) {
+                applySelfStash();
+                return;
+            }
+            if (selfStash.isEmpty()) return;                         // hiçbiri yeniden ölçülmedi → özgün sonuçlar kalır
+            Boolean before = suspectedWith(Map.of());
+            Boolean after = suspectedWith(selfStash);
+            if (before == null || after == null || !before.equals(after)) {
+                log.info("İkinci görüş eksik kaldı ({} alan adından {} tanesi başka pod'dan yeniden ölçüldü) — kısmi değişim toplu "
+                        + "kesinti kararını {} ({} → {}); özgün sonuçların hepsi geçerli (runId={})", total, selfStash.size(),
+                        before == null || after == null ? "hesaplanamadı" : "değiştirirdi", flag(before), flag(after), runId);
+                return;
+            }
+            applySelfStash();
+            selfSoPartial = true;
+            log.info("İkinci görüş kısmen uygulandı: {} alan adından {} tanesi başka pod'dan yeniden ölçüldü — toplu kesinti kararı "
+                    + "değişmiyor (şüpheli: {}), yeni ölçümler geçerli, kalanların özgün sonucu kalıyor (runId={})", total,
+                    selfStash.size(), flag(after), runId);
+        }
+
+        private void applySelfStash() {
             for (Map.Entry<Integer, Map<String, Object>> en : selfStash.entrySet()) {
                 put(en.getKey(), en.getValue(), selfStashWorker.getOrDefault(en.getKey(), "?"));
             }
             for (String w : selfChunkWorker.values()) chunkTally.merge(w, 1, Integer::sum);
             selfSoApplied = true;
+        }
+
+        /**
+         * Toplu kesinti "şüpheli" kararı — {@code SchedulerService.runCheckForDomains}'in kuralı: {@code networkErrorCount ≥
+         * min-errors ∧ networkErrorCount / sonuç sayısı ≥ eşik} (değerler {@code onRun}'un okuduğu ayarlardan, bu anda). Liste =
+         * toplanan sonuçlar + {@code overlay} (sıra numarası → sonuç).
+         *
+         * @return null = hesaplanamadı (ayar ya da sayım fırlattı) — çağıran özgün sonuçları korur
+         */
+        private Boolean suspectedWith(Map<Integer, Map<String, Object>> overlay) {
+            try {
+                int minErrors = req.minErrors().getAsInt();
+                double threshold = req.rateThreshold().getAsDouble();
+                List<Map<String, Object>> list = new ArrayList<>(results);
+                for (Map.Entry<Integer, Map<String, Object>> en : overlay.entrySet()) list.set(en.getKey(), en.getValue());
+                long ne = runner.networkErrorCount(list);
+                double rate = list.isEmpty() ? 0.0 : (double) ne / list.size();
+                return ne >= minErrors && rate >= threshold;
+            } catch (RuntimeException e) {
+                log.debug("İkinci görüş kararı hesaplanamadı (runId={}): {}", runId, e.getClass().getSimpleName());
+                return null;
+            }
+        }
+
+        private static String flag(Boolean b) {
+            return b == null ? "?" : b ? "evet" : "hayır";
+        }
+
+        /**
+         * İkinci görüşün koşu satırına yazılan sonucu (inceleme L-4): tüm aykırı gruplarda yeniden ölçümü kullanılan (özgünün yerine
+         * geçen) alan adlarından başarılı / yine hatalı ({@link #outlierFailure}) olanların sayısı. İkinci görüş yoksa {0, 0}.
+         *
+         * @return {başarılı, yine hatalı}; null = sayılamadı (ölçücü fırlattı) — satıra NULL yazılır (eski satır gibi)
+         */
+        private int[] secondOpinionTotals() {
+            try {
+                int ok = 0;
+                int failed = 0;
+                for (SoGroup g : soGroups) {
+                    for (int i : g.indices()) {
+                        Map<String, Object> cur = results.get(i);
+                        if (cur == soOriginal.get(i)) continue;      // özgünü kaldı — yeniden ölçülmedi
+                        if (outlierFailure(cur)) failed++;
+                        else ok++;
+                    }
+                }
+                return new int[] {ok, failed};
+            } catch (RuntimeException e) {
+                log.debug("İkinci görüş sonucu sayılamadı (runId={}): {}", runId, e.getClass().getSimpleName());
+                return null;
+            }
         }
 
         /**

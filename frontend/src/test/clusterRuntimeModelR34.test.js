@@ -2,7 +2,8 @@ import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import {
-  certChunksModel, scanChunkModel, certRunTone, certRunFellBack, newerScanAfter, CERT_CHUNK_STATES, CERT_RUN_STATES, CERT_RUN_OUTCOMES,
+  certChunksModel, scanChunkModel, certRunTone, certRunFellBack, newerScanAfter, secondOpinionOutcome, CERT_CHUNK_STATES, CERT_RUN_STATES,
+  CERT_RUN_OUTCOMES,
   CERT_SWEEP_MODES, CERT_CHUNKS_TONE, CERT_MODE_TONE, CERT_CHUNK_OLDEST_WARN_MS, CERT_COORDINATOR_ALIVE_MS, CERT_NEWER_RUN_SLACK_MS,
 } from '../components/admin/health/clusterRuntimeModel.js'
 import { clusterModel } from '../components/admin/health/healthModel.js'
@@ -155,6 +156,68 @@ describe('certChunksModel — parçalı sertifika taraması (R3-4)', () => {
     expect(certChunksModel({ cert_chunks: CC({ run: null, last_runs: [LAST({ second_opinions: 0 })] }) }).warnings).toEqual([])
     const m = certChunksModel({ cert_chunks: CC({ run: null, last_runs: lastSo }) })
     expect(m.status).toBe('warn')
+  })
+
+  it('ikinci görüşün sonucu (FX2-COORD L-4): çoğu / hiçbiri / yarısı — doğruluk tablosu; sonuç alanı yok → null (bugünkü metin)', () => {
+    expect(secondOpinionOutcome(20, 20, 0)).toBe('egress')
+    expect(secondOpinionOutcome(20, 14, 6)).toBe('egress')
+    expect(secondOpinionOutcome(35, 20, 0)).toBe('egress')               // kısmi uygulama (M-1): 20 / 35 yeniden ölçüldü
+    expect(secondOpinionOutcome(12, 0, 12)).toBe('confirmed')
+    expect(secondOpinionOutcome(10, 5, 5)).toBe('confirmed')             // tam yarı: çoğu değil
+    expect(secondOpinionOutcome(60, 0, 0)).toBe('unverified')
+    expect(secondOpinionOutcome(12, null, null)).toBeNull()
+    expect(secondOpinionOutcome(12, 3, null)).toBeNull()
+    expect(secondOpinionOutcome(0, 0, 0)).toBeNull()
+    expect(secondOpinionOutcome(null, 1, 0)).toBeNull()
+  })
+
+  it('ikinci görüş hataları doğruladı → P1 uyarısı yok (bilgi satırı, kart uyarıya çekilmez); açık ve son koşu', () => {
+    const open = certChunksModel({ cert_chunks: CC({ run: RUN({ state: 'DECIDING', second_opinions: 12, second_opinion_ok: 0,
+      second_opinion_failed: 12 }) }) })
+    expect(open.warnings).toEqual([])
+    expect(open.infos).toEqual(['secondOpinionConfirmed'])
+    expect(open.status).toBe('running')
+    expect(open.run.secondOpinionOutcome).toBe('confirmed')
+    expect(clusterModel({ ok: true, pods: [], cert_chunks: CC({ run: RUN({ state: 'DECIDING', second_opinions: 12,
+      second_opinion_ok: 0, second_opinion_failed: 12 }) }) }).level).not.toBe('warn')
+    const last = certChunksModel({ cert_chunks: CC({ run: null, last_runs: [LAST({ second_opinions: 12, second_opinion_ok: 2,
+      second_opinion_failed: 10 })] }) })
+    expect(last.warnings).toEqual([])
+    expect(last.infos).toEqual(['secondOpinionLastConfirmed'])
+    expect(last.status).toBe('idle')
+    expect(last.lastRuns[0].secondOpinionOutcome).toBe('confirmed')
+  })
+
+  it("çoğu başka pod'da başarılı → P1 önerili uyarı; hiçbiri ölçülemedi → doğrulanamadı uyarısı; eski yanıt → bugünkü uyarı", () => {
+    const egress = certChunksModel({ cert_chunks: CC({ run: RUN({ state: 'DECIDING', second_opinions: 20, second_opinion_ok: 20,
+      second_opinion_failed: 0 }) }) })
+    expect(egress.warnings).toEqual(['secondOpinionEgress'])
+    expect(egress.infos).toEqual([])
+    expect(egress.status).toBe('warn')
+    expect(certChunksModel({ cert_chunks: CC({ run: null, last_runs: [LAST({ second_opinions: 20, second_opinion_ok: 14,
+      second_opinion_failed: 6 })] }) }).warnings).toEqual(['secondOpinionLastEgress'])
+    expect(certChunksModel({ cert_chunks: CC({ run: RUN({ state: 'DECIDING', second_opinions: 60, second_opinion_ok: 0,
+      second_opinion_failed: 0 }) }) }).warnings).toEqual(['secondOpinionUnverified'])
+    expect(certChunksModel({ cert_chunks: CC({ run: null, last_runs: [LAST({ second_opinions: 60, second_opinion_ok: 0,
+      second_opinion_failed: 0 })] }) }).warnings).toEqual(['secondOpinionLastUnverified'])
+    // eski sunucu / eski satır: sonuç alanı yok → bugünkü kodlar
+    expect(certChunksModel({ cert_chunks: CC({ run: RUN({ second_opinions: 12 }) }) }).warnings).toEqual(['secondOpinion'])
+    expect(certChunksModel({ cert_chunks: CC({ run: null, last_runs: [LAST({ second_opinions: 14 })] }) }).warnings)
+      .toEqual(['secondOpinionLast'])
+    // doğrulanmış sonuç da daha yeni tur gelince kalkar
+    expect(certChunksModel({ scan: { source: 'cluster', last_run: '2026-10-29T09:00:00' }, cert_chunks: CC({ run: null,
+      last_runs: [LAST({ second_opinions: 12, second_opinion_ok: 0, second_opinion_failed: 12 })] }) }).infos).toEqual([])
+  })
+
+  it('ikinci görüş metinleri TR + EN, P1 önerisi yalnız uyarılarda (doğrulanmış sonuç P1 demez)', () => {
+    for (const k of ['secondOpinionEgress', 'secondOpinionLastEgress', 'secondOpinionUnverified', 'secondOpinionLastUnverified']) {
+      expect(TR[`hmp.cc.warn.${k}`], k).toMatch(/P1/)
+      expect(EN[`hmp.cc.warn.${k}`], k).toMatch(/P1/)
+    }
+    for (const k of ['secondOpinionConfirmed', 'secondOpinionLastConfirmed']) {
+      expect(TR[`hmp.cc.info.${k}`], k).not.toMatch(/P1/)
+      expect(EN[`hmp.cc.info.${k}`], k).not.toMatch(/P1/)
+    }
   })
 
   it('koordinatör sayacı bölünmüş (OB-L6): classic_by_rule varsa ayrı; eski yanıtta null (bugünkü tek satır)', () => {

@@ -274,4 +274,32 @@ class CertChunksHealthTest {
         Map<String, Object> old = (Map<String, Object>) CertChunksHealth.thisPod(chunking).get("coordinator");
         assertThat(old).containsEntry("classic_by_rule", 0L).containsEntry("classic_fallback", 3L);
     }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    @DisplayName("FX2-COORD L-4: ikinci görüşün sonucu (second_opinion_ok / second_opinion_failed) açık ve kapanmış koşuda EK alan; "
+            + "eski satır (sonuç yok) → null, second_opinions değişmedi")
+    void secondOpinionOutcomeFields() {
+        switchOn(true);
+        CertSweepStatus.Run deciding = new CertSweepStatus.Run("open-run", "hourly", B, "DECIDING", true, 400, 20, 20,
+                NOW - 45_000, NOW - 2_000, null, null, 0, 0, 20, null, 14, 6);
+        CertSweepStatus.Run confirmed = new CertSweepStatus.Run("conf-run", "hourly", B, "DONE", true, 400, 20, 20,
+                NOW - 1_800_000, NOW - 1_750_000, NOW - 1_750_000, "DECIDED", 0, 0, 12, null, 0, 12);
+        CertSweepStatus.Run legacy = run("old-run", "DONE", NOW - 3_600_000, NOW - 3_500_000, "DECIDED", null);
+        when(store.status(5)).thenReturn(new CertSweepStatus(NOW, false, List.of(deciding, confirmed, legacy), deciding,
+                List.of()));
+        when(store.tablesReady()).thenReturn(true);
+        Map<String, Object> d = data();
+        CertChunksHealth.apply(d, new CertChunksHealth.Sources(chunking, store, scheduler));
+        Map<String, Object> cc = (Map<String, Object>) d.get("cert_chunks");
+        Map<String, Object> r = (Map<String, Object>) cc.get("run");
+        assertThat(r).containsEntry("second_opinions", 20).containsEntry("second_opinion_ok", 14)
+                .containsEntry("second_opinion_failed", 6);
+        List<Map<String, Object>> last = (List<Map<String, Object>>) cc.get("last_runs");
+        assertThat(last).extracting(m -> m.get("run_id")).containsExactly("conf-run", "old-run");
+        assertThat(last.get(0)).containsEntry("second_opinions", 12).containsEntry("second_opinion_ok", 0)
+                .containsEntry("second_opinion_failed", 12);
+        assertThat(last.get(1)).containsEntry("second_opinions", 0).containsEntry("second_opinion_ok", null)
+                .containsEntry("second_opinion_failed", null);
+    }
 }
