@@ -11,6 +11,11 @@ import java.util.Optional;
 
 public interface PortMonitorRepository extends JpaRepository<PortMonitor, Long> {
     List<PortMonitor> findByActiveTrue();
+
+    /** Çok pod Sürüm 3-3 (paket B): dağıtık kontrol gönderiminin HAFİF okuması — aktif izlemelerin [id, aralık (sn), bağımsız, host] (betik /
+     *  başlık / gizli sütunları okunmaz). Yalnız ana anahtar açıkken, tarama liderinin gönderim tıkında çağrılır. */
+    @Query("SELECT m.id, m.intervalSeconds, m.standalone, m.host FROM PortMonitor m WHERE m.active = true")
+    List<Object[]> findCheckDispatchRows();
     /**
      * Liste ucu (2026-09-27): SİLİNMEMİŞ standalone satırlar — duraklatılmışlar ({@code active=false}) DÂHİL.
      * Yerini aldığı {@code findByStandaloneTrueAndActiveTrue} duraklatılanı da gizliyordu (silme ile aynı durum).

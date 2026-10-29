@@ -5679,26 +5679,15 @@ public class SchedulerService {
 
     /** Tüm-tur kilit içinde çalışan gerçek port sweep gövdesi (bkz. runPortChecks). */
     private void runPortChecksLocked() {
+        if (distributedMode(com.sitemonitor.service.checks.CheckJobTypes.PORT)) { runPortDuties(); return; }   // R3-3 B: dağıtık kip → yalnız lider görevleri
         List<PortMonitor> monitors = portMonitorRepo.findByActiveTrue();
         boolean cleanupDue = orphanCleanupDue("port");
         // Öksüz port alarmı temizliği: host rename/silme sonrası recovery'nin kapatamadığı açık PORT_DOWN alarmı (ping ile paritede).
-        if (cleanupDue) try {
-            // SİLİNMİŞ standalone satır (deleted_at, 2026-09-27) host'u "hâlâ izleniyor" saymaz — silinen
-            // izlemenin açık alarmı öksüz sayılıp kapanabilsin (kalıcı silinen kardeş türlerle aynı sonuç).
-            java.util.Set<String> existingHosts = portMonitorRepo.findAll().stream()
-                    .filter(m -> m.getDeletedAt() == null)
-                    .map(PortMonitor::getHost).filter(java.util.Objects::nonNull)
-                    .collect(java.util.stream.Collectors.toSet());
-            escalationService.resolveOrphanedPortAlerts(existingHosts);
-        } catch (Exception e) {
-            log.warn("Öksüz port alarmı temizliği başarısız: {}", e.getMessage());
-        }
+        if (cleanupDue) cleanupOrphanPortAlerts();   // R3-3 B: ayrıştırıldı (dağıtık kipin lider görevleriyle ortak)
         if (monitors.isEmpty()) return;
         // Skip monitors whose host is no longer in active inventory (soft-deleted / inactive)
         // Elle yüklenen sertifika kaydı (2026-10-06) bir ağ hedefi değildir → envanter türevi port izlemesine kapı açmaz.
-        Set<String> activeDomains = inventoryRepo.findByActiveTrueOrderByDomainAsc().stream()
-                .filter(inv -> !inv.isManual())
-                .map(CertificateInventory::getDomain).collect(Collectors.toSet());
+        Set<String> activeDomains = activeNetworkInventoryDomains();   // R3-3 B: ayrıştırıldı
         int checked = 0, skipped = 0;
         // Envanteri pasifleşen monitör hiç kontrol edilmiyor → recovery de gelmiyor. Açık alarmı sessizce
         // kapatılmazsa SONSUZA KADAR açık kalır (öksüz temizliği monitör satırı durduğu için dokunmaz).
@@ -5709,7 +5698,7 @@ public class SchedulerService {
         // Faz 1: gating sweep thread'inde; ağ kontrolü certCheckExecutor'da paralel başlar (F1).
         List<Map.Entry<PortMonitor, java.util.function.Supplier<Map<String, Object>>>> started = new ArrayList<>();
         for (PortMonitor m : monitors) {
-            if (!Boolean.TRUE.equals(m.getStandalone()) && !activeDomains.contains(m.getHost())) {   // standalone → envanter-skip baypas
+            if (inventoryGated(m.getStandalone(), m.getHost(), activeDomains)) {   // standalone → envanter-skip baypas (R3-3 B: ortak kapı)
                 skipped++;
                 if (m.getHost() != null) skippedHosts.add(m.getHost());
                 continue;
@@ -5719,14 +5708,7 @@ public class SchedulerService {
             started.add(Map.entry(m, startNetworkCheck(() -> recheckPort(m))));
         }
         skippedHosts.removeAll(checkableHosts);   // aynı host'u izleyen aktif monitör varsa alarmı bırak
-        if (cleanupDue && !skippedHosts.isEmpty()) {
-            log.info("Port izlemesi envanterde aktif olmadığı için atlandı ({}): {}", skippedHosts.size(), skippedHosts);
-            for (String host : skippedHosts) {
-                escalationService.resolveOpenAlertsSilently(host,
-                        Set.of(EscalationService.TYPE_PORT_DOWN, EscalationService.TYPE_PORT_SLOW),
-                        "Sistem (envanterde aktif değil — izleme durdu)");
-            }
-        }
+        if (cleanupDue && !skippedHosts.isEmpty()) closeInventoryInactivePortAlerts(skippedHosts);   // R3-3 B: ayrıştırıldı
         // Faz 2: sonuçlar sweep thread'inde SIRALI işlenir — item/alarm semantiği birebir korunur.
         for (var entry : started) {
             PortMonitor m = entry.getKey();
@@ -5735,38 +5717,81 @@ public class SchedulerService {
                 // ctxExtra: port/protocol + per-monitor teyit/recovery override'ları (ping/keyword ile aynı → tunable + aktif recovery)
                 // Hata fırlatan monitör item üretmez — yanlış all-up resolve olmaz
                 sweep.add(portSweepItem(m, r));
-                // PORT_SLOW: yanıt süresi eşiği (opsiyonel; özellik KAPALI → sentetik up = asılı alarmı kapat;
-                // ölçülemedi / erişim hatası → kalem YOK — D-7, aşağıda)
-                Map<String, Object> slowCtx = new LinkedHashMap<>();
-                slowCtx.put("port", m.getPort());
-                slowCtx.put("protocol", m.getProtocol() != null ? m.getProtocol() : "TCP");
-                slowCtx.put("monitor_id", m.getId());
-                slowCtx.put("monitor_confirm_attempts", m.getConfirmAttempts());
-                slowCtx.put("monitor_confirm_interval_ms", m.getConfirmIntervalSeconds() != null ? m.getConfirmIntervalSeconds() * 1000L : null);
-                slowCtx.put("monitor_recovery_checks", m.getRecoveryChecks());
-                slowCtx.put("monitor_recovery_interval_ms", m.getRecoveryIntervalSeconds() != null ? m.getRecoveryIntervalSeconds() * 1000L : null);
-                if (alarmTeamOf(m.getStandalone(), m.getTeamId()) != null) slowCtx.put("team_id", m.getTeamId()); if (Boolean.TRUE.equals(m.getStandalone())) slowCtx.put("standalone", true);
-                if (m.getNotificationGroupId() != null) slowCtx.put("notification_group_id", m.getNotificationGroupId());
-                int slowTh = m.getSlowThresholdMs() != null ? m.getSlowThresholdMs() : 3000;
-                slowCtx.put("threshold_ms", slowTh);
-                Long respMs = r.get("response_ms") instanceof Number rn ? rn.longValue() : null;
-                if (respMs != null) slowCtx.put("response_ms", respMs);
-                boolean slowEnabled = Boolean.TRUE.equals(m.getSlowResponseEnabled());
-                // D-7 (2026-09-29): port kapalı / erişim hatası / süre yok = ÖLÇÜLEMEDİ, "sağlıklı" DEĞİL → kalem üretilmez
-                // (açık yavaşlık alarmı port düşükken "ÇÖZÜLDÜ" diye kapanmaz). Özellik kapalıysa sentetik "up" sürer.
-                boolean measured = "up".equals(r.get("status")) && r.get("error") == null && respMs != null;
-                boolean slowDown = slowEnabled && measured && respMs > slowTh;
-                if (!slowEnabled || measured) slowSweep.add(new MonitoringOutageService.SweepItem(
-                        EscalationService.TYPE_PORT_SLOW, m.getHost(),
-                        respMs != null ? respMs + " ms" : "slow",
-                        !slowDown, null,
-                        chanCtx(slowCtx, m), () -> evalPortSlow(m)));
+                MonitoringOutageService.SweepItem slow = portSlowSweepItem(m, r);   // R3-3 B: ayrıştırıldı (D-7: null = kalem yok)
+                if (slow != null) slowSweep.add(slow);
                 checked++;
             } catch (Exception e) {
                 log.warn("Port check failed for {}:{}: {}", m.getHost(), m.getPort(), e.getMessage());
             }
         }
-        // Port kesinti alarm pipeline'ı — hatası sweep'i asla kırmasın
+        feedPortSweep(sweep, slowSweep);   // R3-3 B: ayrıştırıldı (dağıtık değerlendiriciyle ortak)
+        log.debug("Port checks complete: {} monitors ({} skipped — not in active inventory)", checked, skipped);
+    }
+
+    // ── R3-3 B port (çok pod Sürüm 3-3, paket B; tasarım R3-3 §4.2) — klasik gövdeden SAF ayrıştırma ─────────────────
+    // Klasik tarama ve dağıtık değerlendirici AYNI kurucuları / kapıları çağırır (K-3). Davranış 20.169.0'ın aynısı
+    // (ClassicSweepGoldenTest).
+
+    /** Öksüz port alarmı temizliği (klasik gövdeden ayrıştırıldı; dağıtık kipte lider görevi). */
+    private void cleanupOrphanPortAlerts() {
+        try {
+            // SİLİNMİŞ standalone satır (deleted_at, 2026-09-27) host'u "hâlâ izleniyor" saymaz — silinen
+            // izlemenin açık alarmı öksüz sayılıp kapanabilsin (kalıcı silinen kardeş türlerle aynı sonuç).
+            java.util.Set<String> existingHosts = portMonitorRepo.findAll().stream()
+                    .filter(m -> m.getDeletedAt() == null)
+                    .map(PortMonitor::getHost).filter(java.util.Objects::nonNull)
+                    .collect(java.util.stream.Collectors.toSet());
+            escalationService.resolveOrphanedPortAlerts(existingHosts);
+        } catch (Exception e) {
+            log.warn("Öksüz port alarmı temizliği başarısız: {}", e.getMessage());
+        }
+    }
+
+    /** Envanterde aktif olmadığı için atlanan türev port izlemelerinin açık alarmları sessizce kapanır. */
+    private void closeInventoryInactivePortAlerts(Set<String> skippedHosts) {
+        log.info("Port izlemesi envanterde aktif olmadığı için atlandı ({}): {}", skippedHosts.size(), skippedHosts);
+        for (String host : skippedHosts) {
+            escalationService.resolveOpenAlertsSilently(host,
+                    Set.of(EscalationService.TYPE_PORT_DOWN, EscalationService.TYPE_PORT_SLOW),
+                    "Sistem (envanterde aktif değil — izleme durdu)");
+        }
+    }
+
+    /**
+     * PORT_SLOW kalemi (klasik 2. aşamadan ayrıştırıldı): yanıt süresi eşiği (opsiyonel; özellik KAPALI → sentetik up = asılı
+     * alarmı kapat; ölçülemedi / erişim hatası → {@code null}, kalem YOK — D-7).
+     */
+    MonitoringOutageService.SweepItem portSlowSweepItem(PortMonitor m, Map<String, Object> r) {
+        Map<String, Object> slowCtx = new LinkedHashMap<>();
+        slowCtx.put("port", m.getPort());
+        slowCtx.put("protocol", m.getProtocol() != null ? m.getProtocol() : "TCP");
+        slowCtx.put("monitor_id", m.getId());
+        slowCtx.put("monitor_confirm_attempts", m.getConfirmAttempts());
+        slowCtx.put("monitor_confirm_interval_ms", m.getConfirmIntervalSeconds() != null ? m.getConfirmIntervalSeconds() * 1000L : null);
+        slowCtx.put("monitor_recovery_checks", m.getRecoveryChecks());
+        slowCtx.put("monitor_recovery_interval_ms", m.getRecoveryIntervalSeconds() != null ? m.getRecoveryIntervalSeconds() * 1000L : null);
+        if (alarmTeamOf(m.getStandalone(), m.getTeamId()) != null) slowCtx.put("team_id", m.getTeamId()); if (Boolean.TRUE.equals(m.getStandalone())) slowCtx.put("standalone", true);
+        if (m.getNotificationGroupId() != null) slowCtx.put("notification_group_id", m.getNotificationGroupId());
+        int slowTh = m.getSlowThresholdMs() != null ? m.getSlowThresholdMs() : 3000;
+        slowCtx.put("threshold_ms", slowTh);
+        Long respMs = r.get("response_ms") instanceof Number rn ? rn.longValue() : null;
+        if (respMs != null) slowCtx.put("response_ms", respMs);
+        boolean slowEnabled = Boolean.TRUE.equals(m.getSlowResponseEnabled());
+        // D-7 (2026-09-29): port kapalı / erişim hatası / süre yok = ÖLÇÜLEMEDİ, "sağlıklı" DEĞİL → kalem üretilmez
+        // (açık yavaşlık alarmı port düşükken "ÇÖZÜLDÜ" diye kapanmaz). Özellik kapalıysa sentetik "up" sürer.
+        boolean measured = "up".equals(r.get("status")) && r.get("error") == null && respMs != null;
+        boolean slowDown = slowEnabled && measured && respMs > slowTh;
+        if (slowEnabled && !measured) return null;
+        return new MonitoringOutageService.SweepItem(
+                EscalationService.TYPE_PORT_SLOW, m.getHost(),
+                respMs != null ? respMs + " ms" : "slow",
+                !slowDown, null,
+                chanCtx(slowCtx, m), () -> evalPortSlow(m));
+    }
+
+    /** Port kesinti alarm pipeline'ı — hatası sweep'i asla kırmasın (DOWN önce, SLOW sonra; klasik sıra). */
+    private void feedPortSweep(List<MonitoringOutageService.SweepItem> sweep,
+                               List<MonitoringOutageService.SweepItem> slowSweep) {
         try {
             monitoringOutageService.handleSweepResults(EscalationService.TYPE_PORT_DOWN, sweep);
         } catch (Exception e) {
@@ -5777,8 +5802,28 @@ public class SchedulerService {
         } catch (Exception e) {
             log.warn("Port slow outage processing failed: {}", e.getMessage());
         }
-        log.debug("Port checks complete: {} monitors ({} skipped — not in active inventory)", checked, skipped);
     }
+
+    /** Dağıtık kipte port taramasının LİDER görevleri: öksüz temizliği + envanter dışı türev izlemelerin sessiz kapanışı. */
+    private void runPortDuties() {
+        List<PortMonitor> monitors = portMonitorRepo.findByActiveTrue();
+        boolean cleanupDue = orphanCleanupDue("port");
+        if (cleanupDue) cleanupOrphanPortAlerts();
+        if (monitors.isEmpty() || !cleanupDue) return;
+        Set<String> activeDomains = activeNetworkInventoryDomains();
+        Set<String> skippedHosts = new LinkedHashSet<>();
+        Set<String> checkableHosts = new HashSet<>();
+        for (PortMonitor m : monitors) {
+            if (inventoryGated(m.getStandalone(), m.getHost(), activeDomains)) {
+                if (m.getHost() != null) skippedHosts.add(m.getHost());
+            } else if (m.getHost() != null) {
+                checkableHosts.add(m.getHost());
+            }
+        }
+        skippedHosts.removeAll(checkableHosts);
+        if (!skippedHosts.isEmpty()) closeInventoryInactivePortAlerts(skippedHosts);
+    }
+    // ── /R3-3 B port ─────────────────────────────────────────────────────────────────────────────────────────────────
 
     /** Port check + port_checks persist'i — sweep ve teyit re-check'leri bu
      *  yoldan geçer (teyit izi port geçmişinde görünür). {"status","error"} döner. */
@@ -5842,16 +5887,10 @@ public class SchedulerService {
 
     /** Tüm-tur kilit içinde çalışan gerçek keyword sweep gövdesi (bkz. runKeywordChecks). */
     private void runKeywordChecksLocked() {
+        if (distributedMode(com.sitemonitor.service.checks.CheckJobTypes.KEYWORD)) { runKeywordDuties(); return; }   // R3-3 B: dağıtık kip → yalnız lider görevleri
         List<KeywordMonitor> monitors = keywordMonitorRepo.findByActiveTrue();
         // Öksüz keyword alarmı temizliği: url rename/silme sonrası recovery'nin kapatamadığı açık KEYWORD alarmı (ping ile paritede).
-        if (orphanCleanupDue("keyword")) try {
-            java.util.Set<String> existingUrls = keywordMonitorRepo.findAll().stream()
-                    .map(KeywordMonitor::getUrl).filter(java.util.Objects::nonNull)
-                    .collect(java.util.stream.Collectors.toSet());
-            escalationService.resolveOrphanedKeywordAlerts(existingUrls);
-        } catch (Exception e) {
-            log.warn("Öksüz keyword alarmı temizliği başarısız: {}", e.getMessage());
-        }
+        if (orphanCleanupDue("keyword")) cleanupOrphanKeywordAlerts();   // R3-3 B: ayrıştırıldı
         if (monitors.isEmpty()) return;
         int checked = 0;
         List<MonitoringOutageService.SweepItem> sweep = new ArrayList<>();
@@ -5868,36 +5907,65 @@ public class SchedulerService {
             try {
                 Map<String, Object> r = entry.getValue().get();
                 sweep.add(keywordSweepItem(m, r));
-                // KEYWORD_SLOW: yanıt süresi eşiği (opsiyonel; özellik KAPALI → sentetik up = asılı alarmı kapat;
-                // ölçülemedi / HTTP hatası → kalem YOK — D-7, aşağıda)
-                Map<String, Object> slowCtx = new LinkedHashMap<>();
-                slowCtx.put("url", m.getUrl());
-                slowCtx.put("monitor_id", m.getId());
-                slowCtx.put("monitor_confirm_attempts", m.getConfirmAttempts());
-                slowCtx.put("monitor_confirm_interval_ms", m.getConfirmIntervalSeconds() != null ? m.getConfirmIntervalSeconds() * 1000L : null);
-                slowCtx.put("monitor_recovery_checks", m.getRecoveryChecks());
-                slowCtx.put("monitor_recovery_interval_ms", m.getRecoveryIntervalSeconds() != null ? m.getRecoveryIntervalSeconds() * 1000L : null);
-                if (m.getTeamId() != null) slowCtx.put("team_id", m.getTeamId());
-                if (m.getNotificationGroupId() != null) slowCtx.put("notification_group_id", m.getNotificationGroupId());
-                int slowTh = m.getSlowThresholdMs() != null ? m.getSlowThresholdMs() : 3000;
-                slowCtx.put("threshold_ms", slowTh);
-                Long respMs = r.get("response_ms") instanceof Number rn ? rn.longValue() : null;
-                if (respMs != null) slowCtx.put("response_ms", respMs);
-                boolean slowEnabled = Boolean.TRUE.equals(m.getSlowResponseEnabled());
-                // D-7 (2026-09-29): HTTP hatası / süre yok = ÖLÇÜLEMEDİ → kalem yok (eskiden "up" sayılıp açık yavaşlık
-                // alarmını hedef düşükken kapatıyordu). Özellik kapalıysa sentetik "up" asılı alarmı kapatmaya devam eder.
-                boolean measured = r.get("error") == null && respMs != null;
-                boolean slowDown = slowEnabled && measured && respMs > slowTh;
-                if (!slowEnabled || measured) slowSweep.add(new MonitoringOutageService.SweepItem(
-                        EscalationService.TYPE_KEYWORD_SLOW, m.getUrl(),
-                        respMs != null ? respMs + " ms" : "slow",
-                        !slowDown, null,
-                        chanCtx(slowCtx, m), () -> evalKeywordSlow(m)));
+                MonitoringOutageService.SweepItem slow = keywordSlowSweepItem(m, r);   // R3-3 B: ayrıştırıldı (D-7: null = kalem yok)
+                if (slow != null) slowSweep.add(slow);
                 checked++;
             } catch (Exception e) {
                 log.warn("Keyword check failed for {}: {}", m.getUrl(), e.getMessage());
             }
         }
+        feedKeywordSweep(sweep, slowSweep);   // R3-3 B: ayrıştırıldı (dağıtık değerlendiriciyle ortak)
+        log.debug("Keyword checks complete: {} monitors", checked);
+    }
+
+    // ── R3-3 B keyword (çok pod Sürüm 3-3, paket B) — klasik gövdeden SAF ayrıştırma ───────────────────────────────────
+
+    /** Öksüz keyword alarmı temizliği (klasik gövdeden ayrıştırıldı; dağıtık kipte lider görevi). */
+    private void cleanupOrphanKeywordAlerts() {
+        try {
+            java.util.Set<String> existingUrls = keywordMonitorRepo.findAll().stream()
+                    .map(KeywordMonitor::getUrl).filter(java.util.Objects::nonNull)
+                    .collect(java.util.stream.Collectors.toSet());
+            escalationService.resolveOrphanedKeywordAlerts(existingUrls);
+        } catch (Exception e) {
+            log.warn("Öksüz keyword alarmı temizliği başarısız: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * KEYWORD_SLOW kalemi (klasik 2. aşamadan ayrıştırıldı): yanıt süresi eşiği (opsiyonel; özellik KAPALI → sentetik up =
+     * asılı alarmı kapat; ölçülemedi / HTTP hatası → {@code null}, kalem YOK — D-7).
+     */
+    MonitoringOutageService.SweepItem keywordSlowSweepItem(KeywordMonitor m, Map<String, Object> r) {
+        Map<String, Object> slowCtx = new LinkedHashMap<>();
+        slowCtx.put("url", m.getUrl());
+        slowCtx.put("monitor_id", m.getId());
+        slowCtx.put("monitor_confirm_attempts", m.getConfirmAttempts());
+        slowCtx.put("monitor_confirm_interval_ms", m.getConfirmIntervalSeconds() != null ? m.getConfirmIntervalSeconds() * 1000L : null);
+        slowCtx.put("monitor_recovery_checks", m.getRecoveryChecks());
+        slowCtx.put("monitor_recovery_interval_ms", m.getRecoveryIntervalSeconds() != null ? m.getRecoveryIntervalSeconds() * 1000L : null);
+        if (m.getTeamId() != null) slowCtx.put("team_id", m.getTeamId());
+        if (m.getNotificationGroupId() != null) slowCtx.put("notification_group_id", m.getNotificationGroupId());
+        int slowTh = m.getSlowThresholdMs() != null ? m.getSlowThresholdMs() : 3000;
+        slowCtx.put("threshold_ms", slowTh);
+        Long respMs = r.get("response_ms") instanceof Number rn ? rn.longValue() : null;
+        if (respMs != null) slowCtx.put("response_ms", respMs);
+        boolean slowEnabled = Boolean.TRUE.equals(m.getSlowResponseEnabled());
+        // D-7 (2026-09-29): HTTP hatası / süre yok = ÖLÇÜLEMEDİ → kalem yok (eskiden "up" sayılıp açık yavaşlık
+        // alarmını hedef düşükken kapatıyordu). Özellik kapalıysa sentetik "up" asılı alarmı kapatmaya devam eder.
+        boolean measured = r.get("error") == null && respMs != null;
+        boolean slowDown = slowEnabled && measured && respMs > slowTh;
+        if (slowEnabled && !measured) return null;
+        return new MonitoringOutageService.SweepItem(
+                EscalationService.TYPE_KEYWORD_SLOW, m.getUrl(),
+                respMs != null ? respMs + " ms" : "slow",
+                !slowDown, null,
+                chanCtx(slowCtx, m), () -> evalKeywordSlow(m));
+    }
+
+    /** Keyword alarm pipeline'ı (KEYWORD önce, KEYWORD_SLOW sonra; klasik sıra) — hatası taramayı kırmasın. */
+    private void feedKeywordSweep(List<MonitoringOutageService.SweepItem> sweep,
+                                  List<MonitoringOutageService.SweepItem> slowSweep) {
         try {
             monitoringOutageService.handleSweepResults(EscalationService.TYPE_KEYWORD, sweep);
         } catch (Exception e) {
@@ -5908,8 +5976,13 @@ public class SchedulerService {
         } catch (Exception e) {
             log.warn("Keyword slow outage processing failed: {}", e.getMessage());
         }
-        log.debug("Keyword checks complete: {} monitors", checked);
     }
+
+    /** Dağıtık kipte keyword taramasının LİDER görevi: öksüz alarm temizliği (5 dk'da bir). */
+    private void runKeywordDuties() {
+        if (orphanCleanupDue("keyword")) cleanupOrphanKeywordAlerts();
+    }
+    // ── /R3-3 B keyword ──────────────────────────────────────────────────────────────────────────────────────────────
 
     /** Keyword check + keyword_results persist'i. Koşul (içerir/içermez) burada uygulanır;
      *  HTTP hatası → ok=false (down). {"status","error"} döner. */
@@ -5957,16 +6030,10 @@ public class SchedulerService {
 
     /** Tüm-tur kilit içinde çalışan gerçek HTTP uptime sweep gövdesi (bkz. runHttpChecks). */
     private void runHttpChecksLocked() {
+        if (distributedMode(com.sitemonitor.service.checks.CheckJobTypes.HTTP)) { runHttpDuties(); return; }   // R3-3 B: dağıtık kip → yalnız lider görevleri
         List<HttpMonitor> monitors = httpMonitorRepo.findByActiveTrue();
         // Öksüz HTTP alarmı temizliği: url rename/silme sonrası recovery'nin kapatamadığı açık alarm (keyword/ping ile paritede).
-        if (orphanCleanupDue("http")) try {
-            java.util.Set<String> existingUrls = httpMonitorRepo.findAll().stream()
-                    .map(HttpMonitor::getUrl).filter(java.util.Objects::nonNull)
-                    .collect(java.util.stream.Collectors.toSet());
-            escalationService.resolveOrphanedHttpAlerts(existingUrls);
-        } catch (Exception e) {
-            log.warn("Öksüz HTTP alarmı temizliği başarısız: {}", e.getMessage());
-        }
+        if (orphanCleanupDue("http")) cleanupOrphanHttpAlerts();   // R3-3 B: ayrıştırıldı
         if (monitors.isEmpty()) return;
         int checked = 0;
         List<MonitoringOutageService.SweepItem> sweep = new ArrayList<>();
@@ -5992,6 +6059,27 @@ public class SchedulerService {
                 log.warn("HTTP check failed for {}: {}", m.getUrl(), e.getMessage());
             }
         }
+        feedHttpSweep(sweep, slowSweep);   // R3-3 B: ayrıştırıldı (dağıtık değerlendiriciyle ortak)
+        log.debug("HTTP checks complete: {} monitors", checked);
+    }
+
+    // ── R3-3 B http (çok pod Sürüm 3-3, paket B) — klasik gövdeden SAF ayrıştırma ──────────────────────────────────────
+
+    /** Öksüz HTTP alarmı temizliği (klasik gövdeden ayrıştırıldı; dağıtık kipte lider görevi). */
+    private void cleanupOrphanHttpAlerts() {
+        try {
+            java.util.Set<String> existingUrls = httpMonitorRepo.findAll().stream()
+                    .map(HttpMonitor::getUrl).filter(java.util.Objects::nonNull)
+                    .collect(java.util.stream.Collectors.toSet());
+            escalationService.resolveOrphanedHttpAlerts(existingUrls);
+        } catch (Exception e) {
+            log.warn("Öksüz HTTP alarmı temizliği başarısız: {}", e.getMessage());
+        }
+    }
+
+    /** HTTP alarm pipeline'ı (HTTP_DOWN; HTTP_SLOW yalnız kalem varsa — klasik kural) — hatası taramayı kırmasın. */
+    private void feedHttpSweep(List<MonitoringOutageService.SweepItem> sweep,
+                               List<MonitoringOutageService.SweepItem> slowSweep) {
         try {
             monitoringOutageService.handleSweepResults(EscalationService.TYPE_HTTP_DOWN, sweep);
         } catch (Exception e) {
@@ -6004,8 +6092,13 @@ public class SchedulerService {
                 log.warn("HTTP slow outage processing failed: {}", e.getMessage());
             }
         }
-        log.debug("HTTP checks complete: {} monitors", checked);
     }
+
+    /** Dağıtık kipte HTTP taramasının LİDER görevi: öksüz alarm temizliği (5 dk'da bir). */
+    private void runHttpDuties() {
+        if (orphanCleanupDue("http")) cleanupOrphanHttpAlerts();
+    }
+    // ── /R3-3 B http ─────────────────────────────────────────────────────────────────────────────────────────────────
 
     /** Tek DNS monitörü için BİRİNCİL (çözümleme hatası) değerlendirme öğesi — sweep VE manuel
      *  çalıştırma bunu PAYLAŞIR. */
@@ -6852,15 +6945,9 @@ public class SchedulerService {
     }
 
     private void runPageChecksLocked() {
+        if (distributedMode(com.sitemonitor.service.checks.CheckJobTypes.PAGE)) { runPageDuties(); return; }   // R3-3 B: dağıtık kip → yalnız lider görevleri
         List<com.sitemonitor.model.PageMonitor> monitors = pageMonitorRepo.findByActiveTrue();
-        if (orphanCleanupDue("page")) try {
-            java.util.Set<String> existingUrls = pageMonitorRepo.findAll().stream()
-                    .map(com.sitemonitor.model.PageMonitor::getUrl).filter(java.util.Objects::nonNull)
-                    .collect(java.util.stream.Collectors.toSet());
-            escalationService.resolveOrphanedPageAlerts(existingUrls);
-        } catch (Exception e) {
-            log.warn("Öksüz sayfa alarmı temizliği başarısız: {}", e.getMessage());
-        }
+        if (orphanCleanupDue("page")) cleanupOrphanPageAlerts();   // R3-3 B: ayrıştırıldı
         if (monitors.isEmpty()) return;
         int checked = 0;
         // İki bağımsız alarm tipi: DOWN (ana sayfa alınamıyor) + INTEGRITY (kaynak/mixed sorunu).
@@ -6882,12 +6969,38 @@ public class SchedulerService {
                 log.warn("Page check failed for {}: {}", m.getUrl(), e.getMessage());
             }
         }
+        feedPageSweep(downSweep, integritySweep);   // R3-3 B: ayrıştırıldı (dağıtık değerlendiriciyle ortak)
+        log.debug("Page checks complete: {} monitors", checked);
+    }
+
+    // ── R3-3 B page (çok pod Sürüm 3-3, paket B) — klasik gövdeden SAF ayrıştırma ──────────────────────────────────────
+
+    /** Öksüz sayfa alarmı temizliği (klasik gövdeden ayrıştırıldı; dağıtık kipte lider görevi). */
+    private void cleanupOrphanPageAlerts() {
+        try {
+            java.util.Set<String> existingUrls = pageMonitorRepo.findAll().stream()
+                    .map(com.sitemonitor.model.PageMonitor::getUrl).filter(java.util.Objects::nonNull)
+                    .collect(java.util.stream.Collectors.toSet());
+            escalationService.resolveOrphanedPageAlerts(existingUrls);
+        } catch (Exception e) {
+            log.warn("Öksüz sayfa alarmı temizliği başarısız: {}", e.getMessage());
+        }
+    }
+
+    /** Sık sayfa taramasının alarm pipeline'ı (DOWN önce, INTEGRITY sonra; klasik sıra). */
+    private void feedPageSweep(List<MonitoringOutageService.SweepItem> downSweep,
+                               List<MonitoringOutageService.SweepItem> integritySweep) {
         try { monitoringOutageService.handleSweepResults(EscalationService.TYPE_PAGE_DOWN, downSweep); }
         catch (Exception e) { log.warn("Page DOWN outage processing failed: {}", e.getMessage(), e); }
         try { monitoringOutageService.handleSweepResults(EscalationService.TYPE_PAGE_INTEGRITY, integritySweep); }
         catch (Exception e) { log.warn("Page INTEGRITY outage processing failed: {}", e.getMessage(), e); }
-        log.debug("Page checks complete: {} monitors", checked);
     }
+
+    /** Dağıtık kipte sık sayfa taramasının LİDER görevi: öksüz alarm temizliği (derin crawl turu liderde kalır). */
+    private void runPageDuties() {
+        if (orphanCleanupDue("page")) cleanupOrphanPageAlerts();
+    }
+    // ── /R3-3 B page ─────────────────────────────────────────────────────────────────────────────────────────────────
 
     // ── Sayfa Bütünlüğü — DERİN CRAWL: seyrek (günlük), tek site anda, düşük öncelik ──────────────────
     /** Derin crawl turu aralığı (ms) — küme tur kaydı ({@code round:page-crawl}) bununla ilerler. */
@@ -7352,15 +7465,9 @@ public class SchedulerService {
     }
 
     private void runPageSpeedChecksLocked() {
+        if (distributedMode(com.sitemonitor.service.checks.CheckJobTypes.PAGESPEED)) { runPageSpeedDuties(); return; }   // R3-3 B: dağıtık kip → yalnız lider görevleri
         List<com.sitemonitor.model.PageSpeedMonitor> monitors = pageSpeedMonitorRepo.findByActiveTrue();
-        if (orphanCleanupDue("pagespeed")) try {
-            java.util.Set<String> existingUrls = pageSpeedMonitorRepo.findAll().stream()
-                    .map(com.sitemonitor.model.PageSpeedMonitor::getUrl).filter(java.util.Objects::nonNull)
-                    .collect(java.util.stream.Collectors.toSet());
-            escalationService.resolveOrphanedPageSpeedAlerts(existingUrls);
-        } catch (Exception e) {
-            log.warn("Öksüz sayfa hızı alarmı temizliği başarısız: {}", e.getMessage());
-        }
+        if (orphanCleanupDue("pagespeed")) cleanupOrphanPageSpeedAlerts();   // R3-3 B: ayrıştırıldı
         if (monitors.isEmpty()) return;
         int checked = 0;
         // İKİ BAĞIMSIZ alarm tipi: DOWN (sayfa hiç alınamadı — kesinti) + SLOW (eşik aşıldı — kesinti DEĞİL).
@@ -7369,8 +7476,7 @@ public class SchedulerService {
         List<MonitoringOutageService.SweepItem> slowSweep = new ArrayList<>();
         List<Map.Entry<com.sitemonitor.model.PageSpeedMonitor, java.util.function.Supplier<Map<String, Object>>>> started = new ArrayList<>();
         for (com.sitemonitor.model.PageSpeedMonitor m : monitors) {
-            if (!checkDue("pagespeed", m.getId(),
-                    com.sitemonitor.service.page.PageSpeedRules.clampInterval(m.getIntervalSeconds()))) continue;
+            if (!checkDue("pagespeed", m.getId(), pageSpeedDueInterval(m.getIntervalSeconds()))) continue;   // R3-3 B: ortak kural
             started.add(Map.entry(m, startNetworkCheck(() -> recheckPageSpeed(m, false))));
         }
         for (var entry : started) {
@@ -7382,12 +7488,43 @@ public class SchedulerService {
                 log.warn("Sayfa hızı ölçümü başarısız {}: {}", m.getUrl(), e.getMessage());
             }
         }
+        feedPageSpeedSweep(downSweep, slowSweep);   // R3-3 B: ayrıştırıldı (dağıtık değerlendiriciyle ortak)
+        log.debug("Sayfa hızı ölçümleri tamam: {} izleme", checked);
+    }
+
+    // ── R3-3 B pagespeed (çok pod Sürüm 3-3, paket B) — klasik gövdeden SAF ayrıştırma ─────────────────────────────────
+
+    /** Öksüz sayfa hızı alarmı temizliği (klasik gövdeden ayrıştırıldı; dağıtık kipte lider görevi). */
+    private void cleanupOrphanPageSpeedAlerts() {
+        try {
+            java.util.Set<String> existingUrls = pageSpeedMonitorRepo.findAll().stream()
+                    .map(com.sitemonitor.model.PageSpeedMonitor::getUrl).filter(java.util.Objects::nonNull)
+                    .collect(java.util.stream.Collectors.toSet());
+            escalationService.resolveOrphanedPageSpeedAlerts(existingUrls);
+        } catch (Exception e) {
+            log.warn("Öksüz sayfa hızı alarmı temizliği başarısız: {}", e.getMessage());
+        }
+    }
+
+    /** Sayfa hızının vade aralığı (sn): ayarlı aralık türün alt / üst sınırına kırpılır (klasik ve gönderici ortak). */
+    static int pageSpeedDueInterval(Integer intervalSeconds) {
+        return com.sitemonitor.service.page.PageSpeedRules.clampInterval(intervalSeconds);
+    }
+
+    /** Sayfa hızı alarm pipeline'ı (DOWN önce, SLOW sonra; klasik sıra). */
+    private void feedPageSpeedSweep(List<MonitoringOutageService.SweepItem> downSweep,
+                                    List<MonitoringOutageService.SweepItem> slowSweep) {
         try { monitoringOutageService.handleSweepResults(EscalationService.TYPE_PAGESPEED_DOWN, downSweep); }
         catch (Exception e) { log.warn("Sayfa hızı DOWN işlenemedi: {}", e.getMessage(), e); }
         try { monitoringOutageService.handleSweepResults(EscalationService.TYPE_PAGESPEED_SLOW, slowSweep); }
         catch (Exception e) { log.warn("Sayfa hızı SLOW işlenemedi: {}", e.getMessage(), e); }
-        log.debug("Sayfa hızı ölçümleri tamam: {} izleme", checked);
     }
+
+    /** Dağıtık kipte sayfa hızı taramasının LİDER görevi: öksüz alarm temizliği (5 dk'da bir). */
+    private void runPageSpeedDuties() {
+        if (orphanCleanupDue("pagespeed")) cleanupOrphanPageSpeedAlerts();
+    }
+    // ── /R3-3 B pagespeed ────────────────────────────────────────────────────────────────────────────────────────────
 
     private void addPageSpeedSweepItems(com.sitemonitor.model.PageSpeedMonitor m, Map<String, Object> r,
                                         List<MonitoringOutageService.SweepItem> downSweep,
@@ -7660,15 +7797,9 @@ public class SchedulerService {
     }
 
     private void runScriptedChecksLocked() {
+        if (distributedMode(com.sitemonitor.service.checks.CheckJobTypes.SCRIPTED)) { runScriptedDuties(); return; }   // R3-3 B: dağıtık kip → yalnız lider görevleri
         List<com.sitemonitor.model.ScriptedMonitor> monitors = scriptedMonitorRepo.findByActiveTrue();
-        if (orphanCleanupDue("scripted")) try {
-            java.util.Set<String> names = scriptedMonitorRepo.findAll().stream()
-                    .map(com.sitemonitor.model.ScriptedMonitor::getName).filter(java.util.Objects::nonNull)
-                    .collect(java.util.stream.Collectors.toSet());
-            escalationService.resolveOrphanedScriptedAlerts(names);
-        } catch (Exception e) {
-            log.warn("Öksüz senaryo alarmı temizliği başarısız: {}", e.getMessage());
-        }
+        if (orphanCleanupDue("scripted")) cleanupOrphanScriptedAlerts();   // R3-3 B: ayrıştırıldı
         if (monitors.isEmpty()) return;
         // k6 süreçleri checker'ın SINIRLI havuzunda koşar; submit() ayrı executor'a atar → scheduler bloklanmaz.
         List<Map.Entry<com.sitemonitor.model.ScriptedMonitor, java.util.concurrent.Future<ScriptedCheckerService.ScriptedResult>>> started = new ArrayList<>();
@@ -7708,13 +7839,39 @@ public class SchedulerService {
         if (skipped > 0)
             log.warn("Senaryo sweep: {} kontrol YÜRÜTÜLEMEDİ (k6 havuzu dolu / k6 yok). Kapasite ≈ "
                     + "pool-size × aralık ÷ koşum süresi; scripted.k6.skipped sayacına bakın.", skipped);
+        feedScriptedSweep(sweep, slowSweep);   // R3-3 B: ayrıştırıldı (dağıtık değerlendiriciyle ortak)
+        log.debug("Scripted checks complete: {} monitors", checked);
+    }
+
+    // ── R3-3 B scripted (çok pod Sürüm 3-3, paket B) — klasik gövdeden SAF ayrıştırma ──────────────────────────────────
+
+    /** Öksüz senaryo alarmı temizliği (klasik gövdeden ayrıştırıldı; dağıtık kipte lider görevi). */
+    private void cleanupOrphanScriptedAlerts() {
+        try {
+            java.util.Set<String> names = scriptedMonitorRepo.findAll().stream()
+                    .map(com.sitemonitor.model.ScriptedMonitor::getName).filter(java.util.Objects::nonNull)
+                    .collect(java.util.stream.Collectors.toSet());
+            escalationService.resolveOrphanedScriptedAlerts(names);
+        } catch (Exception e) {
+            log.warn("Öksüz senaryo alarmı temizliği başarısız: {}", e.getMessage());
+        }
+    }
+
+    /** Senaryo alarm pipeline'ı (FAIL önce, SLOW sonra; klasik sıra). */
+    private void feedScriptedSweep(List<MonitoringOutageService.SweepItem> sweep,
+                                   List<MonitoringOutageService.SweepItem> slowSweep) {
         try { monitoringOutageService.handleSweepResults(EscalationService.TYPE_SCRIPTED_FAIL, sweep); }
         catch (Exception e) { log.warn("Scripted outage processing failed: {}", e.getMessage(), e); }
         // Yavas kosum alarmi AYRI pipeline: kesinti alarmindan bagimsiz acilir/kapanir (PORT_SLOW deseni).
         try { monitoringOutageService.handleSweepResults(EscalationService.TYPE_SCRIPTED_SLOW, slowSweep); }
         catch (Exception e) { log.warn("Scripted slow outage processing failed: {}", e.getMessage()); }
-        log.debug("Scripted checks complete: {} monitors", checked);
     }
+
+    /** Dağıtık kipte senaryo taramasının LİDER görevi: öksüz alarm temizliği (5 dk'da bir). */
+    private void runScriptedDuties() {
+        if (orphanCleanupDue("scripted")) cleanupOrphanScriptedAlerts();
+    }
+    // ── /R3-3 B scripted ─────────────────────────────────────────────────────────────────────────────────────────────
 
     /** Bir senaryo kontrol sonucundan SweepItem üretir: SCRIPTED_FAIL (up=PASS) ve opsiyonel SCRIPTED_SLOW. */
     private void addScriptedSweepItems(com.sitemonitor.model.ScriptedMonitor m, Map<String, Object> r,
@@ -8798,17 +8955,11 @@ public class SchedulerService {
 
     /** Tüm-tur kilit içinde çalışan gerçek ping sweep gövdesi (bkz. runPingChecks). */
     private void runPingChecksLocked() {
+        if (distributedMode(com.sitemonitor.service.checks.CheckJobTypes.PING)) { runPingDuties(); return; }   // R3-3 B: dağıtık kip → yalnız lider görevleri
         List<PingMonitor> monitors = pingMonitorRepo.findByActiveTrue();
         // Öksüz ping alarmı temizliği: host rename/silme sonrası recovery'nin asla kapatamadığı açık
         // PING_DOWN alarmlarını kapat (aktif+pasif TÜM mevcut host'lara göre). Aktif izleme yoksa da çalışır.
-        if (orphanCleanupDue("ping")) try {
-            java.util.Set<String> existingHosts = pingMonitorRepo.findAll().stream()
-                    .map(PingMonitor::getHost).filter(java.util.Objects::nonNull)
-                    .collect(java.util.stream.Collectors.toSet());
-            escalationService.resolveOrphanedPingAlerts(existingHosts);
-        } catch (Exception e) {
-            log.warn("Öksüz ping alarmı temizliği başarısız: {}", e.getMessage());
-        }
+        if (orphanCleanupDue("ping")) cleanupOrphanPingAlerts();   // R3-3 B: ayrıştırıldı
         if (monitors.isEmpty()) return;
         int checked = 0;
         List<MonitoringOutageService.SweepItem> sweep = new ArrayList<>();
@@ -8835,6 +8986,27 @@ public class SchedulerService {
                 log.warn("Ping check failed for {}: {}", m.getHost(), e.getMessage());
             }
         }
+        feedPingSweep(sweep, slowSweep);   // R3-3 B: ayrıştırıldı (dağıtık değerlendiriciyle ortak)
+        log.debug("Ping checks complete: {} monitors", checked);
+    }
+
+    // ── R3-3 B ping (çok pod Sürüm 3-3, paket B) — klasik gövdeden SAF ayrıştırma ──────────────────────────────────────
+
+    /** Öksüz ping alarmı temizliği (klasik gövdeden ayrıştırıldı; dağıtık kipte lider görevi). */
+    private void cleanupOrphanPingAlerts() {
+        try {
+            java.util.Set<String> existingHosts = pingMonitorRepo.findAll().stream()
+                    .map(PingMonitor::getHost).filter(java.util.Objects::nonNull)
+                    .collect(java.util.stream.Collectors.toSet());
+            escalationService.resolveOrphanedPingAlerts(existingHosts);
+        } catch (Exception e) {
+            log.warn("Öksüz ping alarmı temizliği başarısız: {}", e.getMessage());
+        }
+    }
+
+    /** Ping alarm pipeline'ı (DOWN önce, SLOW sonra; klasik sıra). */
+    private void feedPingSweep(List<MonitoringOutageService.SweepItem> sweep,
+                               List<MonitoringOutageService.SweepItem> slowSweep) {
         try {
             monitoringOutageService.handleSweepResults(EscalationService.TYPE_PING_DOWN, sweep);
         } catch (Exception e) {
@@ -8845,8 +9017,13 @@ public class SchedulerService {
         } catch (Exception e) {
             log.warn("Ping slow outage processing failed: {}", e.getMessage());
         }
-        log.debug("Ping checks complete: {} monitors", checked);
     }
+
+    /** Dağıtık kipte ping taramasının LİDER görevi: öksüz alarm temizliği (5 dk'da bir). */
+    private void runPingDuties() {
+        if (orphanCleanupDue("ping")) cleanupOrphanPingAlerts();
+    }
+    // ── /R3-3 B ping ─────────────────────────────────────────────────────────────────────────────────────────────────
 
     /** Ping check + ping_checks persist'i. N/A (ortam ICMP'ye izin vermiyor) → DOWN sayılmaz
      *  (yanlış alarm önlemek için status=up); kayıt up=false + error ile tutulur. */
@@ -8902,14 +9079,13 @@ public class SchedulerService {
 
     /** Tüm-tur kilit içinde çalışan gerçek DNS sweep gövdesi (bkz. runDnsChecks). */
     private void runDnsChecksLocked() {
+        if (distributedMode(com.sitemonitor.service.checks.CheckJobTypes.DNS)) { runDnsDuties(); return; }   // R3-3 B: dağıtık kip → yalnız lider görevleri
         requeuePendingDnsChanges();
         List<DnsMonitor> monitors = dnsMonitorRepo.findByActiveTrue();
         if (monitors.isEmpty()) return;
         // Skip monitors whose domain is no longer in active inventory (soft-deleted / inactive)
         // Elle yüklenen sertifika kaydı (2026-10-06) bir ağ hedefi değildir → envanter türevi DNS izlemesine kapı açmaz.
-        Set<String> activeDomains = inventoryRepo.findByActiveTrueOrderByDomainAsc().stream()
-                .filter(inv -> !inv.isManual())
-                .map(CertificateInventory::getDomain).collect(Collectors.toSet());
+        Set<String> activeDomains = activeNetworkInventoryDomains();   // R3-3 B: ayrıştırıldı
         String now = ISO.format(Instant.now());
         int checked = 0, skipped = 0;
         boolean cleanupDue = orphanCleanupDue("dns");
@@ -8922,13 +9098,8 @@ public class SchedulerService {
         List<MonitoringOutageService.SweepItem> unexpectedSweep = new ArrayList<>();
         List<MonitoringOutageService.SweepItem> inconsistentSweep = new ArrayList<>();
         List<MonitoringOutageService.DnsChange> changes = new ArrayList<>();
-        int slowThresholdMs       = appSettings.getInt("site.monitor.dns.slow-threshold-ms", 1500);
-        int slowConfirmAttempts   = appSettings.getInt("site.monitor.dns.slow-confirm-attempts", 3);
-        int slowConfirmIntervalMs = appSettings.getInt("site.monitor.dns.slow-confirm-interval-ms", 60000);
-        // Çoklu-resolver tutarlılık (propagation) için public resolver listesi (opt-in monitörlerde kullanılır).
-        List<String> dnsResolvers = java.util.Arrays.stream(
-                        appSettings.getString("site.monitor.dns.resolvers", "8.8.8.8,1.1.1.1,9.9.9.9").split(","))
-                .map(String::trim).filter(s -> !s.isEmpty()).toList();
+        DnsSweepSettings settings = dnsSweepSettings();   // R3-3 B: ayrıştırıldı (aynı ayar okumaları, aynı sıra)
+        List<String> dnsResolvers = settings.resolvers();
         // Faz 1: gating sweep thread'inde; ana DNS sorgusu + (opt-in) propagation sorgusu monitör başına
         // iki bağımsız task olarak certCheckExecutor'da paralel başlar (F1).
         record DnsStarted(DnsMonitor m,
@@ -8937,7 +9108,7 @@ public class SchedulerService {
         List<DnsStarted> started = new ArrayList<>();
         for (DnsMonitor m : monitors) {
             // Standalone monitör (DNS sayfasından eklenen, sertifikadan bağımsız) envanter-skip'i baypas eder.
-            if (!Boolean.TRUE.equals(m.getStandalone()) && !activeDomains.contains(m.getDomain())) {
+            if (inventoryGated(m.getStandalone(), m.getDomain(), activeDomains)) {   // R3-3 B: ortak kapı
                 skipped++;
                 if (m.getDomain() != null) skippedDomains.add(m.getDomain());
                 continue;
@@ -8945,135 +9116,21 @@ public class SchedulerService {
             if (m.getDomain() != null) checkableDomains.add(m.getDomain());   // checkDue ile atlanan da KONTROL EDİLEBİLİR
             if (!checkDue("dns", m.getId(), m.getIntervalSeconds())) continue;   // aralığı dolmadı → bu sweep'te atla (port/ping/keyword ile paritede)
             var main = startNetworkCheck(() -> dnsCheckerService.check(m.getDomain(), m.getRecordType()));
-            var prop = (Boolean.TRUE.equals(m.getPropagationCheck()) && dnsResolvers.size() >= 2)
+            var prop = dnsPropagationWanted(m, dnsResolvers)   // R3-3 B: ortak kural
                     ? startNetworkCheck(() -> dnsCheckerService.checkPropagation(m.getDomain(), m.getRecordType(), dnsResolvers))
                     : null;
             started.add(new DnsStarted(m, main, prop));
         }
         skippedDomains.removeAll(checkableDomains);   // aynı domain'i izleyen aktif monitör varsa alarmı bırak
-        if (cleanupDue && !skippedDomains.isEmpty()) {
-            log.info("DNS izlemesi envanterde aktif olmadığı için atlandı ({}): {}", skippedDomains.size(), skippedDomains);
-            for (String domain : skippedDomains) {
-                escalationService.resolveOpenAlertsSilently(domain, DNS_SKIP_ALERT_TYPES,
-                        "Sistem (envanterde aktif değil — izleme durdu)");
-            }
-        }
+        if (cleanupDue && !skippedDomains.isEmpty()) closeInventoryInactiveDnsAlerts(skippedDomains);   // R3-3 B: ayrıştırıldı
         // Faz 2: sonuçlar sweep thread'inde SIRALI işlenir — prevOk okuma/DnsRecord save/değişiklik
         // tespiti/item kurulumu birebir korunur; iki ayrı try/catch aynen (ana warn, propagation debug).
         for (DnsStarted st : started) {
             DnsMonitor m = st.m();
             try {
                 Map<String, Object> r = st.main().get();
-                boolean success = Boolean.TRUE.equals(r.get("success"));
-                @SuppressWarnings("unchecked")
-                List<String> values = (List<String>) r.getOrDefault("values", List.of());
-                String valueStr = String.join("\n", values);
-
-                // Değişiklik tespiti SADECE başarılı sorguda ve son BAŞARILI
-                // kayda karşı yapılır — aksi halde dolu→boş(hata) geçişi sahte
-                // CHANGED üretir (DNS_FAILURE her seferinde DNS_CHANGED'i tetiklerdi).
-                // Taban YALNIZ ZAMANLANMIŞ kayıtlardan (2026-09-29): elle kontrol yeni değeri kaydediyordu ve sweep
-                // onu taban alınca değişikliği "yok" sayıyordu — tek bir "Şimdi kontrol et" DNS_CHANGED alarmını
-                // KALICI olarak yutuyordu. Elle kontrol alarm açmaz; değişikliği sweep kendi kurallarıyla alarmlar.
-                DnsRecord prevOk = success
-                        ? dnsRecordRepo.findLatestScheduledSuccessful(m.getId()).orElse(null)
-                        : null;
-                String prevValue = prevOk != null ? prevOk.getValue() : null;
-                DnsCheckerService.ChangeKind kind = success
-                        ? DnsCheckerService.detectChange(prevValue, valueStr)
-                        : DnsCheckerService.ChangeKind.NONE;
-                boolean changed = kind == DnsCheckerService.ChangeKind.CHANGED;
-                boolean rotated = kind == DnsCheckerService.ChangeKind.ROTATED;
-
-                DnsRecord record = new DnsRecord();
-                record.setMonitorId(m.getId());
-                record.setRecordType(m.getRecordType());
-                record.setValue(valueStr);
-                record.setChanged(changed);
-                record.setRotated(rotated);
-                record.setPreviousValue(prevValue);
-                record.setCheckedAt(now);
-                record.setTtl(r.get("ttl") instanceof Number tn ? tn.longValue() : null);
-                record.setResponseMs(r.get("response_ms") instanceof Number rn ? rn.longValue() : null);
-                // Hata teşhisi (2026-10-05): başarısız sorgunun hata metni + nedeni ilk kez saklanır. YALNIZ !success'te
-                // yazılır; value ('' = başarısız), changed/rotated ve değişiklik tabanı yukarıdaki gibi DEĞİŞMEDİ.
-                if (!success) DnsCheckerService.applyFailure(record, r);
-                // Çok pod R1-B (MP-13): bu satır sonraki turun TABANI olur — değişiklik bir daha algılanmaz. Karar verilene
-                // dek satır PENDING bekler; teyit zinciri yarıda kalırsa (liderlik devri, kapı, kapanış) tarama lideri
-                // sonraki turda yeniden kuyruğa alır (requeuePendingDnsChanges). Alarmlanmayacak değişiklik (izlemede
-                // kapalı, beklenen-değer içinde, tür bildirimleri kapalı) baştan SUPPRESSED.
-                if (changed) record.setChangeState(dnsChangeWillAlarm(m, values)
-                        ? com.sitemonitor.service.monitoring.ChangeStates.PENDING
-                        : com.sitemonitor.service.monitoring.ChangeStates.SUPPRESSED);
-                dnsRecordRepo.save(record);
-                activityLog.recordCheck(ActivityLogService.DNS, m.getId(), m.getName(),
-                        m.getDomain() + " " + m.getRecordType(), m.getTeamId(), false, "scheduler", r);
-
-                sweep.add(dnsFailureSweepItem(m, r, success));
-
-                // YAVAŞ/TIMEOUT'lu çözümleme: çözüm BAŞARILI ama response_ms eşiği aşıyor (primary DNS timeout
-                // → fallback). Ayrı DNS_SLOW alarmı; 1 dk arayla 3 yeniden ölçümde de yavaşsa doğrulanır (ctxExtra).
-                if (success) {
-                    long responseMs = r.get("response_ms") instanceof Number rn2 ? rn2.longValue() : 0L;
-                    int effSlow = m.getSlowThresholdMs() != null ? m.getSlowThresholdMs() : slowThresholdMs;  // per-monitor eşik ?? global
-                    boolean slow = responseMs > effSlow;
-                    Map<String, Object> slowCtx = new LinkedHashMap<>();
-                    slowCtx.put("record_type", m.getRecordType());
-                    slowCtx.put("monitor_id", m.getId());   // D-b2: sahiplik (Y-1) + kardeş gözlemi + e-posta derin linki
-                    slowCtx.put("response_ms", responseMs);
-                    slowCtx.put("slow_threshold_ms", effSlow);
-                    slowCtx.put("monitor_confirm_attempts", slowConfirmAttempts);
-                    slowCtx.put("monitor_confirm_interval_ms", (long) slowConfirmIntervalMs);
-                    if (alarmTeamOf(m.getStandalone(), m.getTeamId()) != null) slowCtx.put("team_id", m.getTeamId()); if (Boolean.TRUE.equals(m.getStandalone())) slowCtx.put("standalone", true);   // yalnız bağımsız → alarm takıma
-                    if (m.getNotificationGroupId() != null) slowCtx.put("notification_group_id", m.getNotificationGroupId());
-                    slowSweep.add(new MonitoringOutageService.SweepItem(
-                            EscalationService.TYPE_DNS_SLOW, m.getDomain(), m.getRecordType(),
-                            !slow, slow ? responseMs + " ms" : null,
-                            chanCtx(slowCtx, m), () -> recheckDnsSlow(m, effSlow)));
-                }
-
-                // BEKLENEN-DEĞER KİLİDİ: sabitlenen "beklenen değer"de OLMAYAN bir değer çözümlenirse
-                // DNS_UNEXPECTED (esnek/hijack-odaklı). State alarmı: değer beklenene dönünce oto-kapanır.
-                if (success && m.getExpectedValue() != null && !m.getExpectedValue().isBlank()) {
-                    List<String> unexpected = DnsCheckerService.unexpectedValues(m.getExpectedValue(), values);
-                    Map<String, Object> unexpCtx = new LinkedHashMap<>();
-                    unexpCtx.put("record_type", m.getRecordType());
-                    unexpCtx.put("monitor_id", m.getId());   // D-b2
-                    unexpCtx.put("unexpected_values", unexpected);
-                    unexpCtx.put("expected_values", DnsCheckerService.splitLines(m.getExpectedValue()));
-                    if (alarmTeamOf(m.getStandalone(), m.getTeamId()) != null) unexpCtx.put("team_id", m.getTeamId()); if (Boolean.TRUE.equals(m.getStandalone())) unexpCtx.put("standalone", true);   // yalnız bağımsız → alarm takıma
-                    if (m.getNotificationGroupId() != null) unexpCtx.put("notification_group_id", m.getNotificationGroupId());
-                    unexpectedSweep.add(new MonitoringOutageService.SweepItem(
-                            EscalationService.TYPE_DNS_UNEXPECTED, m.getDomain(), m.getRecordType(),
-                            unexpected.isEmpty(), unexpected.isEmpty() ? null : String.join(", ", unexpected),
-                            chanCtx(confirmCtx(unexpCtx, m.getConfirmAttempts(), m.getConfirmIntervalSeconds(), m.getRecoveryChecks(), m.getRecoveryIntervalSeconds()), m), () -> recheckDnsUnexpected(m)));
-                }
-
-                if (changed) {
-                    // Bastırma (kayıt yine changed=true saklanır; yalnız alarm hattı atlanır):
-                    //  1) monitör bazlı aç/kapa (null=açık), 2) beklenen-set flip'i — canlı değerlerin TAMAMI
-                    //  kullanıcının sabitlediği beklenen listedeyse (iç/dış IP split-horizon gidip-gelmesi).
-                    boolean changeAlertOn = !Boolean.FALSE.equals(m.getDnsChangeAlertEnabled());
-                    boolean expectedFlip  = DnsCheckerService.withinExpected(m.getExpectedValue(), values);
-                    if (changeAlertOn && !expectedFlip) {
-                        log.warn("DNS change detected for {} {}: was='{}' now='{}'",
-                                m.getRecordType(), m.getDomain(), prevValue, valueStr);
-                        // DNS_CHANGED artık 3× teyitli: değişiklik ardışık kontrollerde kalıcıysa alarmlanır
-                        // (geçici/rotasyon baseline'a dönerse iptal). Baseline = değişiklik öncesi bilinen-iyi değer.
-                        changes.add(new MonitoringOutageService.DnsChange(
-                                m.getDomain(), m.getRecordType(), prevValue, valueStr, now, alarmTeamOf(m.getStandalone(), m.getTeamId()),
-                                m.getNotificationGroupId(),
-                                () -> recheckDnsChanged(m, prevValue),
-                                m.getNotifyEmail(), m.getNotifyWebhook(),   // kanal bayrakları diğer 8 kalemle parite
-                                Boolean.TRUE.equals(m.getStandalone()) ? Boolean.TRUE : null,   // O1: bağımsız işareti
-                                m.getId(),   // D-b2: olayı açan izleme (sahiplik + günlük yeniden uyarı kaydı)
-                                m.getAlertLevel()));   // Y-A3-2: izlemenin seçili seviyesi (changeCtx → alert_level)
-                    } else {
-                        log.info("DNS change suppressed for {} {} ({}): was='{}' now='{}'",
-                                m.getRecordType(), m.getDomain(),
-                                changeAlertOn ? "expected-flip" : "alert-disabled", prevValue, valueStr);
-                    }
-                }
+                DnsPersisted p = persistDnsRecord(m, r, now);   // R3-3 B: ayrıştırıldı (taban + dns_records + etkinlik)
+                addDnsMainItems(m, r, p, settings, sweep, slowSweep, unexpectedSweep, changes);   // R3-3 B: ayrıştırıldı
                 checked++;
             } catch (Exception e) {
                 log.warn("DNS check failed for {} {}: {}", m.getRecordType(), m.getDomain(), e.getMessage());
@@ -9082,35 +9139,250 @@ public class SchedulerService {
             // Domain'i her public resolver'a AYRI sorar; cevaplar farklıysa DNS_INCONSISTENT (teyitli; oto-kapanır).
             if (st.prop() != null) {
                 try {
-                    Map<String, Object> prop = st.prop().get();
-                    boolean inconsistent = Boolean.TRUE.equals(prop.get("inconsistent"));
-                    @SuppressWarnings("unchecked")
-                    Map<String, String> perResolver = (Map<String, String>) prop.getOrDefault("per_resolver", Map.of());
-                    String detail = perResolver.entrySet().stream()
-                            .map(en -> en.getKey() + "→" + en.getValue()).collect(Collectors.joining(" | "));
-                    Map<String, Object> incCtx = new LinkedHashMap<>();
-                    incCtx.put("record_type", m.getRecordType());
-                    incCtx.put("monitor_id", m.getId());   // D-b2
-                    incCtx.put("resolver_detail", detail);
-                    if (alarmTeamOf(m.getStandalone(), m.getTeamId()) != null) incCtx.put("team_id", m.getTeamId()); if (Boolean.TRUE.equals(m.getStandalone())) incCtx.put("standalone", true);   // yalnız bağımsız → alarm takıma
-                    if (m.getNotificationGroupId() != null) incCtx.put("notification_group_id", m.getNotificationGroupId());
-                    inconsistentSweep.add(new MonitoringOutageService.SweepItem(
-                            EscalationService.TYPE_DNS_INCONSISTENT, m.getDomain(), m.getRecordType(),
-                            !inconsistent, inconsistent ? detail : null,
-                            chanCtx(confirmCtx(incCtx, m.getConfirmAttempts(), m.getConfirmIntervalSeconds(), m.getRecoveryChecks(), m.getRecoveryIntervalSeconds()), m), () -> recheckDnsPropagation(m, dnsResolvers)));
+                    inconsistentSweep.add(dnsInconsistentSweepItem(m, st.prop().get(), dnsResolvers));   // R3-3 B: ayrıştırıldı
                 } catch (Exception ex) {
                     log.debug("DNS propagation check failed for {}: {}", m.getDomain(), ex.getMessage());
                 }
             }
         }
-        // DNS alarm pipeline'ı (hata + değişiklik + beklenmeyen + tutarsızlık) — sweep'i kırmasın
+        feedDnsSweep(sweep, slowSweep, changes, unexpectedSweep, inconsistentSweep);   // R3-3 B: ayrıştırıldı
+        log.debug("DNS checks complete: {} monitors ({} skipped — not in active inventory)", checked, skipped);
+    }
+
+    // ── R3-3 B dns (çok pod Sürüm 3-3, paket B; tasarım R3-3 §4.1 / §4.2) — klasik gövdeden SAF ayrıştırma ────────────
+    // Klasik 2. aşama = persistDnsRecord (taban + dns_records + etkinlik) + addDnsMainItems (kalemler + DnsChange) +
+    // dnsInconsistentSweepItem; dağıtık iş gövdesi (runDnsJob) aynı persistDnsRecord'u, değerlendirici (addDnsResultItems)
+    // aynı kurucuları çağırır. Bir sonucun TÜM kalemleri aynı handleDnsSweep çağrısında kalır (MOS günlük yeniden uyarı kuralı).
+
+    /** DNS taramasının tur başına okunan ayarları (klasik sırayla okunur). */
+    record DnsSweepSettings(int slowThresholdMs, int slowConfirmAttempts, int slowConfirmIntervalMs, List<String> resolvers) {}
+
+    /** DNS taramasının ayarları — klasik gövdedeki okumaların AYNISI (eşik, teyit sayısı / aralığı, çözümleyici listesi). */
+    DnsSweepSettings dnsSweepSettings() {
+        int slowThresholdMs       = appSettings.getInt("site.monitor.dns.slow-threshold-ms", 1500);
+        int slowConfirmAttempts   = appSettings.getInt("site.monitor.dns.slow-confirm-attempts", 3);
+        int slowConfirmIntervalMs = appSettings.getInt("site.monitor.dns.slow-confirm-interval-ms", 60000);
+        // Çoklu-resolver tutarlılık (propagation) için public resolver listesi (opt-in monitörlerde kullanılır).
+        List<String> dnsResolvers = java.util.Arrays.stream(
+                        appSettings.getString("site.monitor.dns.resolvers", "8.8.8.8,1.1.1.1,9.9.9.9").split(","))
+                .map(String::trim).filter(s -> !s.isEmpty()).toList();
+        return new DnsSweepSettings(slowThresholdMs, slowConfirmAttempts, slowConfirmIntervalMs, dnsResolvers);
+    }
+
+    /** Yayılım (çoklu çözümleyici) sorgusu yapılır mı — izlemede açık VE en az iki çözümleyici var. */
+    static boolean dnsPropagationWanted(DnsMonitor m, List<String> dnsResolvers) {
+        return Boolean.TRUE.equals(m.getPropagationCheck()) && dnsResolvers != null && dnsResolvers.size() >= 2;
+    }
+
+    /** Envanterde aktif olmadığı için atlanan türev DNS izlemelerinin açık alarmları sessizce kapanır. */
+    private void closeInventoryInactiveDnsAlerts(Set<String> skippedDomains) {
+        log.info("DNS izlemesi envanterde aktif olmadığı için atlandı ({}): {}", skippedDomains.size(), skippedDomains);
+        for (String domain : skippedDomains) {
+            escalationService.resolveOpenAlertsSilently(domain, DNS_SKIP_ALERT_TYPES,
+                    "Sistem (envanterde aktif değil — izleme durdu)");
+        }
+    }
+
+    /**
+     * Bir DNS sorgusunun kalıcılaştırılmış hâli: başarı, değerler, değişiklik tabanı (son ZAMANLANMIŞ başarılı kayıt) ve
+     * kaydın zaman damgası ({@code checkedAt} — DNS_CHANGED kararı (izleme, damga) ile anahtarlanır).
+     */
+    record DnsPersisted(boolean success, List<String> values, String valueStr, String prevValue, boolean changed,
+                        boolean rotated, String checkedAt) {}
+
+    /**
+     * Taban okuma + {@code dns_records} kaydı ({@code change_state} dahil) + etkinlik — klasik 2. aşamanın kalıcılaştırma
+     * bölümü (ayrıştırıldı; dağıtık işte işçi pod'da koşar). Kayıt hatası FIRLATIR (klasik: o izleme kalem üretmez).
+     */
+    DnsPersisted persistDnsRecord(DnsMonitor m, Map<String, Object> r, String now) {
+        boolean success = Boolean.TRUE.equals(r.get("success"));
+        @SuppressWarnings("unchecked")
+        List<String> values = (List<String>) r.getOrDefault("values", List.of());
+        String valueStr = String.join("\n", values);
+
+        // Değişiklik tespiti SADECE başarılı sorguda ve son BAŞARILI
+        // kayda karşı yapılır — aksi halde dolu→boş(hata) geçişi sahte
+        // CHANGED üretir (DNS_FAILURE her seferinde DNS_CHANGED'i tetiklerdi).
+        // Taban YALNIZ ZAMANLANMIŞ kayıtlardan (2026-09-29): elle kontrol yeni değeri kaydediyordu ve sweep
+        // onu taban alınca değişikliği "yok" sayıyordu — tek bir "Şimdi kontrol et" DNS_CHANGED alarmını
+        // KALICI olarak yutuyordu. Elle kontrol alarm açmaz; değişikliği sweep kendi kurallarıyla alarmlar.
+        DnsRecord prevOk = success
+                ? dnsRecordRepo.findLatestScheduledSuccessful(m.getId()).orElse(null)
+                : null;
+        String prevValue = prevOk != null ? prevOk.getValue() : null;
+        DnsCheckerService.ChangeKind kind = success
+                ? DnsCheckerService.detectChange(prevValue, valueStr)
+                : DnsCheckerService.ChangeKind.NONE;
+        boolean changed = kind == DnsCheckerService.ChangeKind.CHANGED;
+        boolean rotated = kind == DnsCheckerService.ChangeKind.ROTATED;
+
+        DnsRecord record = new DnsRecord();
+        record.setMonitorId(m.getId());
+        record.setRecordType(m.getRecordType());
+        record.setValue(valueStr);
+        record.setChanged(changed);
+        record.setRotated(rotated);
+        record.setPreviousValue(prevValue);
+        record.setCheckedAt(now);
+        record.setTtl(r.get("ttl") instanceof Number tn ? tn.longValue() : null);
+        record.setResponseMs(r.get("response_ms") instanceof Number rn ? rn.longValue() : null);
+        // Hata teşhisi (2026-10-05): başarısız sorgunun hata metni + nedeni ilk kez saklanır. YALNIZ !success'te
+        // yazılır; value ('' = başarısız), changed/rotated ve değişiklik tabanı yukarıdaki gibi DEĞİŞMEDİ.
+        if (!success) DnsCheckerService.applyFailure(record, r);
+        // Çok pod R1-B (MP-13): bu satır sonraki turun TABANI olur — değişiklik bir daha algılanmaz. Karar verilene
+        // dek satır PENDING bekler; teyit zinciri yarıda kalırsa (liderlik devri, kapı, kapanış) tarama lideri
+        // sonraki turda yeniden kuyruğa alır (requeuePendingDnsChanges). Alarmlanmayacak değişiklik (izlemede
+        // kapalı, beklenen-değer içinde, tür bildirimleri kapalı) baştan SUPPRESSED.
+        if (changed) record.setChangeState(dnsChangeWillAlarm(m, values)
+                ? com.sitemonitor.service.monitoring.ChangeStates.PENDING
+                : com.sitemonitor.service.monitoring.ChangeStates.SUPPRESSED);
+        dnsRecordRepo.save(record);
+        activityLog.recordCheck(ActivityLogService.DNS, m.getId(), m.getName(),
+                m.getDomain() + " " + m.getRecordType(), m.getTeamId(), false, "scheduler", r);
+        return new DnsPersisted(success, values, valueStr, prevValue, changed, rotated, now);
+    }
+
+    /**
+     * Bir DNS sorgusundan DNS_FAILURE + (başarılıysa) DNS_SLOW + (beklenen değer kilidi varsa) DNS_UNEXPECTED kalemleri ve
+     * (değiştiyse, alarmlanacaksa) {@code DnsChange} — klasik 2. aşamanın kalem bölümü (ayrıştırıldı).
+     */
+    void addDnsMainItems(DnsMonitor m, Map<String, Object> r, DnsPersisted p, DnsSweepSettings settings,
+                         List<MonitoringOutageService.SweepItem> sweep,
+                         List<MonitoringOutageService.SweepItem> slowSweep,
+                         List<MonitoringOutageService.SweepItem> unexpectedSweep,
+                         List<MonitoringOutageService.DnsChange> changes) {
+        boolean success = p.success();
+        List<String> values = p.values();
+        String valueStr = p.valueStr();
+        String prevValue = p.prevValue();
+        String now = p.checkedAt();
+        int slowThresholdMs = settings.slowThresholdMs();
+        int slowConfirmAttempts = settings.slowConfirmAttempts();
+        int slowConfirmIntervalMs = settings.slowConfirmIntervalMs();
+
+        sweep.add(dnsFailureSweepItem(m, r, success));
+
+        // YAVAŞ/TIMEOUT'lu çözümleme: çözüm BAŞARILI ama response_ms eşiği aşıyor (primary DNS timeout
+        // → fallback). Ayrı DNS_SLOW alarmı; 1 dk arayla 3 yeniden ölçümde de yavaşsa doğrulanır (ctxExtra).
+        if (success) {
+            long responseMs = r.get("response_ms") instanceof Number rn2 ? rn2.longValue() : 0L;
+            int effSlow = m.getSlowThresholdMs() != null ? m.getSlowThresholdMs() : slowThresholdMs;  // per-monitor eşik ?? global
+            boolean slow = responseMs > effSlow;
+            Map<String, Object> slowCtx = new LinkedHashMap<>();
+            slowCtx.put("record_type", m.getRecordType());
+            slowCtx.put("monitor_id", m.getId());   // D-b2: sahiplik (Y-1) + kardeş gözlemi + e-posta derin linki
+            slowCtx.put("response_ms", responseMs);
+            slowCtx.put("slow_threshold_ms", effSlow);
+            slowCtx.put("monitor_confirm_attempts", slowConfirmAttempts);
+            slowCtx.put("monitor_confirm_interval_ms", (long) slowConfirmIntervalMs);
+            if (alarmTeamOf(m.getStandalone(), m.getTeamId()) != null) slowCtx.put("team_id", m.getTeamId()); if (Boolean.TRUE.equals(m.getStandalone())) slowCtx.put("standalone", true);   // yalnız bağımsız → alarm takıma
+            if (m.getNotificationGroupId() != null) slowCtx.put("notification_group_id", m.getNotificationGroupId());
+            slowSweep.add(new MonitoringOutageService.SweepItem(
+                    EscalationService.TYPE_DNS_SLOW, m.getDomain(), m.getRecordType(),
+                    !slow, slow ? responseMs + " ms" : null,
+                    chanCtx(slowCtx, m), () -> recheckDnsSlow(m, effSlow)));
+        }
+
+        // BEKLENEN-DEĞER KİLİDİ: sabitlenen "beklenen değer"de OLMAYAN bir değer çözümlenirse
+        // DNS_UNEXPECTED (esnek/hijack-odaklı). State alarmı: değer beklenene dönünce oto-kapanır.
+        if (success && m.getExpectedValue() != null && !m.getExpectedValue().isBlank()) {
+            List<String> unexpected = DnsCheckerService.unexpectedValues(m.getExpectedValue(), values);
+            Map<String, Object> unexpCtx = new LinkedHashMap<>();
+            unexpCtx.put("record_type", m.getRecordType());
+            unexpCtx.put("monitor_id", m.getId());   // D-b2
+            unexpCtx.put("unexpected_values", unexpected);
+            unexpCtx.put("expected_values", DnsCheckerService.splitLines(m.getExpectedValue()));
+            if (alarmTeamOf(m.getStandalone(), m.getTeamId()) != null) unexpCtx.put("team_id", m.getTeamId()); if (Boolean.TRUE.equals(m.getStandalone())) unexpCtx.put("standalone", true);   // yalnız bağımsız → alarm takıma
+            if (m.getNotificationGroupId() != null) unexpCtx.put("notification_group_id", m.getNotificationGroupId());
+            unexpectedSweep.add(new MonitoringOutageService.SweepItem(
+                    EscalationService.TYPE_DNS_UNEXPECTED, m.getDomain(), m.getRecordType(),
+                    unexpected.isEmpty(), unexpected.isEmpty() ? null : String.join(", ", unexpected),
+                    chanCtx(confirmCtx(unexpCtx, m.getConfirmAttempts(), m.getConfirmIntervalSeconds(), m.getRecoveryChecks(), m.getRecoveryIntervalSeconds()), m), () -> recheckDnsUnexpected(m)));
+        }
+
+        if (p.changed()) {
+            // Bastırma (kayıt yine changed=true saklanır; yalnız alarm hattı atlanır):
+            //  1) monitör bazlı aç/kapa (null=açık), 2) beklenen-set flip'i — canlı değerlerin TAMAMI
+            //  kullanıcının sabitlediği beklenen listedeyse (iç/dış IP split-horizon gidip-gelmesi).
+            boolean changeAlertOn = !Boolean.FALSE.equals(m.getDnsChangeAlertEnabled());
+            boolean expectedFlip  = DnsCheckerService.withinExpected(m.getExpectedValue(), values);
+            if (changeAlertOn && !expectedFlip) {
+                log.warn("DNS change detected for {} {}: was='{}' now='{}'",
+                        m.getRecordType(), m.getDomain(), prevValue, valueStr);
+                // DNS_CHANGED artık 3× teyitli: değişiklik ardışık kontrollerde kalıcıysa alarmlanır
+                // (geçici/rotasyon baseline'a dönerse iptal). Baseline = değişiklik öncesi bilinen-iyi değer.
+                changes.add(new MonitoringOutageService.DnsChange(
+                        m.getDomain(), m.getRecordType(), prevValue, valueStr, now, alarmTeamOf(m.getStandalone(), m.getTeamId()),
+                        m.getNotificationGroupId(),
+                        () -> recheckDnsChanged(m, prevValue),
+                        m.getNotifyEmail(), m.getNotifyWebhook(),   // kanal bayrakları diğer 8 kalemle parite
+                        Boolean.TRUE.equals(m.getStandalone()) ? Boolean.TRUE : null,   // O1: bağımsız işareti
+                        m.getId(),   // D-b2: olayı açan izleme (sahiplik + günlük yeniden uyarı kaydı)
+                        m.getAlertLevel()));   // Y-A3-2: izlemenin seçili seviyesi (changeCtx → alert_level)
+            } else {
+                log.info("DNS change suppressed for {} {} ({}): was='{}' now='{}'",
+                        m.getRecordType(), m.getDomain(),
+                        changeAlertOn ? "expected-flip" : "alert-disabled", prevValue, valueStr);
+            }
+        }
+    }
+
+    /** Çoklu-çözümleyici yayılım sonucundan DNS_INCONSISTENT kalemi (klasik 2. aşamadan ayrıştırıldı). */
+    MonitoringOutageService.SweepItem dnsInconsistentSweepItem(DnsMonitor m, Map<String, Object> prop,
+                                                               List<String> dnsResolvers) {
+        boolean inconsistent = Boolean.TRUE.equals(prop.get("inconsistent"));
+        @SuppressWarnings("unchecked")
+        Map<String, String> perResolver = (Map<String, String>) prop.getOrDefault("per_resolver", Map.of());
+        String detail = perResolver.entrySet().stream()
+                .map(en -> en.getKey() + "→" + en.getValue()).collect(Collectors.joining(" | "));
+        Map<String, Object> incCtx = new LinkedHashMap<>();
+        incCtx.put("record_type", m.getRecordType());
+        incCtx.put("monitor_id", m.getId());   // D-b2
+        incCtx.put("resolver_detail", detail);
+        if (alarmTeamOf(m.getStandalone(), m.getTeamId()) != null) incCtx.put("team_id", m.getTeamId()); if (Boolean.TRUE.equals(m.getStandalone())) incCtx.put("standalone", true);   // yalnız bağımsız → alarm takıma
+        if (m.getNotificationGroupId() != null) incCtx.put("notification_group_id", m.getNotificationGroupId());
+        return new MonitoringOutageService.SweepItem(
+                EscalationService.TYPE_DNS_INCONSISTENT, m.getDomain(), m.getRecordType(),
+                !inconsistent, inconsistent ? detail : null,
+                chanCtx(confirmCtx(incCtx, m.getConfirmAttempts(), m.getConfirmIntervalSeconds(), m.getRecoveryChecks(), m.getRecoveryIntervalSeconds()), m), () -> recheckDnsPropagation(m, dnsResolvers));
+    }
+
+    /** DNS alarm pipeline'ı (hata + değişiklik + beklenmeyen + tutarsızlık) — TEK çağrı; hatası taramayı kırmasın. */
+    private void feedDnsSweep(List<MonitoringOutageService.SweepItem> sweep,
+                              List<MonitoringOutageService.SweepItem> slowSweep,
+                              List<MonitoringOutageService.DnsChange> changes,
+                              List<MonitoringOutageService.SweepItem> unexpectedSweep,
+                              List<MonitoringOutageService.SweepItem> inconsistentSweep) {
         try {
             monitoringOutageService.handleDnsSweep(sweep, slowSweep, changes, unexpectedSweep, inconsistentSweep);
         } catch (Exception e) {
             log.warn("DNS outage processing failed: {}", e.getMessage(), e);
         }
-        log.debug("DNS checks complete: {} monitors ({} skipped — not in active inventory)", checked, skipped);
     }
+
+    /**
+     * Dağıtık kipte DNS taramasının LİDER görevleri: bekleyen değişikliklerin yeniden kuyruğu + süre dolumu geçişi
+     * ({@link #requeuePendingDnsChanges}) ve envanter dışı türev izlemelerin sessiz kapanışı.
+     */
+    private void runDnsDuties() {
+        requeuePendingDnsChanges();
+        List<DnsMonitor> monitors = dnsMonitorRepo.findByActiveTrue();
+        if (monitors.isEmpty()) return;
+        if (!orphanCleanupDue("dns")) return;
+        Set<String> activeDomains = activeNetworkInventoryDomains();
+        Set<String> skippedDomains = new LinkedHashSet<>();
+        Set<String> checkableDomains = new HashSet<>();
+        for (DnsMonitor m : monitors) {
+            if (inventoryGated(m.getStandalone(), m.getDomain(), activeDomains)) {
+                if (m.getDomain() != null) skippedDomains.add(m.getDomain());
+            } else if (m.getDomain() != null) {
+                checkableDomains.add(m.getDomain());
+            }
+        }
+        skippedDomains.removeAll(checkableDomains);
+        if (!skippedDomains.isEmpty()) closeInventoryInactiveDnsAlerts(skippedDomains);
+    }
+    // ── /R3-3 B dns ──────────────────────────────────────────────────────────────────────────────────────────────────
 
     /** DNS teyit re-check'i — BİLEREK DnsRecord persist ETMEZ: dns_records
      *  değişiklik-tespiti state'idir, 30 sn'lik teyit satırları kirletir. */
@@ -9485,4 +9757,801 @@ public class SchedulerService {
             log.warn("Failed to read outage state from DB: {}", e.getMessage());
         }
     }
+
+    // ══ R3-3 B — dağıtık izleme kontrolleri (çok pod Sürüm 3-3, paket B; tasarım R3-3 §3.5 / §3.6 / §4.1 / §4.2 / §5.3) ══
+    // Ana anahtar KAPALIYKEN (varsayılan) bu bölgelerin hiçbiri veritabanına gitmez, iş parçacığı / görev başlatmaz, günlük
+    // satırı yazmaz (K-1): sekiz klasik tarama girişinin tek satırlık kapısı {@link #distributedMode} bir bellek okumasıyla
+    // false döner; gönderim tıkı ancak anahtar ilk kez açık görüldüğünde kaydedilir ({@code DistributedChecks.whenActivated}).
+
+    // ── R3-3 B shared — klasik gövdeyle gönderici / değerlendiricinin ORTAK kapıları ─────────────────────────────────────
+
+    /**
+     * Envanter türevi Port / DNS izlemesi bu turda ATLANIR mı: bağımsız ({@code standalone}) değil VE hedefi (host / alan adı)
+     * aktif AĞ envanterinde yok. Klasik tarama, gönderici ve değerlendirici AYNI kuralı kullanır.
+     */
+    static boolean inventoryGated(Boolean standalone, String target, Set<String> activeDomains) {
+        return !Boolean.TRUE.equals(standalone) && !activeDomains.contains(target);
+    }
+
+    /** Aktif AĞ envanteri (elle yüklenen sertifika kaydı ağ hedefi değildir) — klasik Port / DNS taramasının okuması. */
+    Set<String> activeNetworkInventoryDomains() {
+        return inventoryRepo.findByActiveTrueOrderByDomainAsc().stream()
+                .filter(inv -> !inv.isManual())
+                .map(CertificateInventory::getDomain).collect(Collectors.toSet());
+    }
+
+    /** Gönderici / değerlendiricinin envanter önbelleği süresi (ms) — tasarım §3.5 "30 sn önbellekli küme". */
+    static final long ACTIVE_NETWORK_CACHE_MS = 30_000L;
+
+    private record CachedDomains(long atMs, Set<String> domains) {}
+
+    private volatile CachedDomains activeNetworkDomainsCache;
+
+    /** {@link #activeNetworkInventoryDomains} — en çok {@link #ACTIVE_NETWORK_CACHE_MS} eski (yalnız dağıtık kipte okunur). */
+    Set<String> cachedActiveNetworkDomains() {
+        long now = scheduleClock.getAsLong();
+        CachedDomains c = activeNetworkDomainsCache;
+        if (c != null && now >= c.atMs() && now - c.atMs() < ACTIVE_NETWORK_CACHE_MS) return c.domains();
+        Set<String> d = activeNetworkInventoryDomains();
+        activeNetworkDomainsCache = new CachedDomains(now, d);
+        return d;
+    }
+
+    /** Türün izleme anahtarı (kapalı → kontrol yok, alarm yok): {@code site.monitor.<tür>.alert-enabled}, k6 için {@code scripted.enabled}. */
+    static String checkTypeToggleKey(String type) {
+        return com.sitemonitor.service.checks.CheckJobTypes.SCRIPTED.equals(type)
+                ? "site.monitor.scripted.enabled" : "site.monitor." + type + ".alert-enabled";
+    }
+
+    private boolean checkTypeEnabled(String type) {
+        return appSettings.getBoolean(checkTypeToggleKey(type), true);
+    }
+    // ── /R3-3 B shared ───────────────────────────────────────────────────────────────────────────────────────────────
+
+    // ── R3-3 dispatch (paket B; tasarım §3.6 / §5.3) ─────────────────────────────────────────────────────────────────
+
+    /** Gönderim tıkının küme kilidi (her pod aynı adı kullanır; ad kalıcı). */
+    static final String CHECK_DISPATCH_LOCK = "check-dispatch";
+    /** Son canlı işçi sighting'inden sonra dağıtık kipte kalınan süre (ms; tasarım §5.3 histerezis). */
+    static final long DISTRIBUTED_MODE_HOLD_MS = 60_000L;
+    /** Biçme turunun en çok sildiği iş. */
+    static final int CHECK_REAP_LIMIT = 200;
+    /** Gönderim / biçme WARN'larının en sık aralığı (ms). */
+    static final long CHECK_WARN_INTERVAL_MS = 60_000L;
+
+    /** Ana anahtar + tür listesi (bellek okumaları) — alan enjeksiyonu (kurucu değişmez); null = klasik (bugün). */
+    private volatile com.sitemonitor.service.checks.DistributedChecks distributedChecks;
+    /** İş kuyruğu (paket A) — tembel çözülür (bağımlılık döngüsü kurmaz); yoksa gönderim yok. */
+    @Autowired(required = false)
+    private org.springframework.beans.factory.ObjectProvider<com.sitemonitor.service.checks.CheckJobStore> checkJobStoreProvider;
+    /** Canlı işçi kaydı (paket A) — tembel çözülür; yoksa (ya da okunamazsa) her tür KLASİK. */
+    @Autowired(required = false)
+    private org.springframework.beans.factory.ObjectProvider<com.sitemonitor.service.checks.CheckWorkerRegistry> checkWorkerRegistryProvider;
+    /** {@code @Scheduled} havuzunun zamanlayıcısı — gönderim tıkı ona kaydedilir (yoksa kendi cin iş parçacığı). */
+    @Autowired(required = false)
+    private org.springframework.beans.factory.ObjectProvider<org.springframework.scheduling.TaskScheduler> taskSchedulerProvider;
+
+    private volatile java.util.concurrent.ScheduledFuture<?> checkDispatchTask;
+
+    /** Tür başına kip durumu (histerezis); tür hiç dağıtık olmadıysa kayıt YOK (anahtar kapalı = boş harita). */
+    private final java.util.concurrent.ConcurrentHashMap<String, CheckModeState> checkModes = new java.util.concurrent.ConcurrentHashMap<>();
+
+    private static final class CheckModeState {
+        boolean distributed;
+        long lastSightingMs;
+    }
+
+    private final AtomicLong checkJobsDispatched = new AtomicLong();
+    private final AtomicLong checkDispatchFailures = new AtomicLong();
+    private final AtomicLong checkJobsLost = new AtomicLong();
+    private final AtomicLong checkDispatchWarnAt = new AtomicLong();
+    private final AtomicLong checkReapWarnAt = new AtomicLong();
+
+    /**
+     * Ana anahtarı bağlar ve gönderim tıkının TEMBEL başlatıcısını kaydeder (yalnız bellek): tık ancak anahtar açılıştan sonra
+     * ilk kez açık görüldüğünde kurulur — anahtar kapalıyken hiç görev yok (K-1).
+     */
+    @Autowired(required = false)
+    public void setDistributedChecks(com.sitemonitor.service.checks.DistributedChecks checks) {
+        this.distributedChecks = checks;
+        if (checks != null) checks.whenActivated(CHECK_DISPATCH_LOCK, this::startCheckDispatchTick);
+    }
+
+    /** Testler / elle kurulum: kuyruk ve işçi kaydı (null = yok). */
+    void setCheckJobInfrastructure(com.sitemonitor.service.checks.CheckJobStore store,
+                                   com.sitemonitor.service.checks.CheckWorkerRegistry registry) {
+        this.checkJobStoreProvider = fixedProvider(store);
+        this.checkWorkerRegistryProvider = fixedProvider(registry);
+    }
+
+    private static <T> org.springframework.beans.factory.ObjectProvider<T> fixedProvider(T value) {
+        return new org.springframework.beans.factory.ObjectProvider<>() {
+            @Override
+            public T getObject() {
+                if (value == null) throw new org.springframework.beans.factory.NoSuchBeanDefinitionException("r33");
+                return value;
+            }
+
+            @Override
+            public T getObject(Object... args) {
+                return getObject();
+            }
+
+            @Override
+            public T getIfAvailable() {
+                return value;
+            }
+
+            @Override
+            public T getIfUnique() {
+                return value;
+            }
+        };
+    }
+
+    private com.sitemonitor.service.checks.CheckJobStore checkJobStore() {
+        var p = checkJobStoreProvider;
+        try {
+            return p == null ? null : p.getIfAvailable();
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    private com.sitemonitor.service.checks.CheckWorkerRegistry checkWorkerRegistry() {
+        var p = checkWorkerRegistryProvider;
+        try {
+            return p == null ? null : p.getIfAvailable();
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    /** Gönderim tıkını bir kez kurar ({@code DistributedChecks} başlatıcısı; olay iş parçacığında, beklemesiz). */
+    synchronized void startCheckDispatchTick() {
+        if (checkDispatchTask != null || shutdownStarted) return;
+        com.sitemonitor.service.checks.DistributedChecks dc = distributedChecks;
+        if (dc == null) return;
+        long delay = dc.tuning().dispatchMs();
+        org.springframework.scheduling.TaskScheduler ts = null;
+        try {
+            ts = taskSchedulerProvider == null ? null : taskSchedulerProvider.getIfUnique();
+        } catch (RuntimeException e) {
+            ts = null;
+        }
+        if (ts != null) {
+            checkDispatchTask = ts.scheduleWithFixedDelay(this::dispatchCheckJobsSafely,
+                    Instant.now().plusMillis(delay), java.time.Duration.ofMillis(delay));
+        } else {
+            java.util.concurrent.ScheduledExecutorService ex = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, CHECK_DISPATCH_LOCK);
+                t.setDaemon(true);
+                return t;
+            });
+            checkDispatchTask = ex.scheduleWithFixedDelay(this::dispatchCheckJobsSafely, delay, delay,
+                    java.util.concurrent.TimeUnit.MILLISECONDS);
+        }
+        log.info("Dağıtık kontrol gönderimi kuruldu (her {} ms; yalnız tarama lideri gönderir)", delay);
+    }
+
+    private void dispatchCheckJobsSafely() {
+        try {
+            dispatchCheckJobs();
+        } catch (Throwable t) {
+            log.warn("Dağıtık kontrol gönderim turu başarısız: {}", t.getClass().getSimpleName());
+        }
+    }
+
+    /**
+     * Gönderim tıkı (tasarım §3.6): anahtar kapalı / kapanış → hemen döner (bellek); yalnız tarama lideri, {@code check-dispatch}
+     * kilidi altında, DAĞITIK kipteki her tür için klasik kapılar + {@code checkDue} (küme vade CAS'ı) → tek {@code dispatch}.
+     * Sonra biçme (iki kez sahiplenilip tamamlanmamış işler düşer).
+     */
+    public void dispatchCheckJobs() {
+        com.sitemonitor.service.checks.DistributedChecks dc = distributedChecks;
+        if (dc == null || !dc.anyDistributed() || stopping()) return;
+        com.sitemonitor.service.checks.CheckJobStore store = checkJobStore();
+        if (store == null) return;
+        if (!sweepLeaderHint() || !isSweepLeader()) return;   // ipucu (bellek) önce — kapanan / kirayı bırakan pod göndermez
+        if (!tryAcquireSchedulerLock(CHECK_DISPATCH_LOCK, sweepLockTtlMinutes)) {
+            logSkip("Kontrol gönderimi — kilit başka instance'da, atlanıyor");
+            return;
+        }
+        try {
+            for (String type : com.sitemonitor.service.checks.CheckJobTypes.ALL) {
+                if (stopping()) break;
+                if (!distributedMode(type)) continue;
+                try {
+                    dispatchCheckJobsOf(type, store);
+                } catch (RuntimeException e) {
+                    checkDispatchFailures.incrementAndGet();
+                    if (rateLimited(checkDispatchWarnAt)) {
+                        log.warn("Kontrol işleri gönderilemedi ({}) — bu dönem kaybolur, sonraki dönem yeniden gönderilir: {}",
+                                type, e.getClass().getSimpleName());
+                    }
+                }
+            }
+            if (!stopping()) reapCheckJobs(store);
+        } finally {
+            releaseSchedulerLock(CHECK_DISPATCH_LOCK);
+        }
+    }
+
+    private static boolean rateLimited(AtomicLong lastAt) {
+        long now = System.currentTimeMillis();
+        long last = lastAt.get();
+        return now - last >= CHECK_WARN_INTERVAL_MS && lastAt.compareAndSet(last, now);
+    }
+
+    /**
+     * Bir türün vadesi gelen izlemelerini gönderir (klasik kapılarla AYNI: tür anahtarı, k6 yoklaması, envanter türevi
+     * Port / DNS kapısı, sayfa hızı aralık kırpması; vade = klasik taramanın {@code checkDue} anahtarı ve CAS'ı).
+     *
+     * @return eklenen iş sayısı
+     */
+    int dispatchCheckJobsOf(String type, com.sitemonitor.service.checks.CheckJobStore store) {
+        if (!checkTypeEnabled(type)) return 0;   // izleme duraklatıldı (klasik giriş de döner)
+        if (com.sitemonitor.service.checks.CheckJobTypes.SCRIPTED.equals(type)
+                && (scriptedCheckerService == null || !scriptedCheckerService.ensureProbed())) return 0;   // klasik: k6 yoksa koşum yok
+        List<Long> due = dueCheckJobIds(type);
+        if (due.isEmpty()) return 0;
+        int n = store.dispatch(type, due, com.sitemonitor.service.checks.CheckJobTypes.leaseMs(type), INSTANCE_ID);
+        checkJobsDispatched.addAndGet(Math.max(0, n));
+        return n;
+    }
+
+    /** Hafif okuma (izdüşüm) + klasik kapılar + {@code checkDue}: bu tıkta gönderilecek izleme kimlikleri. */
+    List<Long> dueCheckJobIds(String type) {
+        List<Long> ids = new ArrayList<>();
+        switch (type) {
+            case com.sitemonitor.service.checks.CheckJobTypes.PORT -> {
+                Set<String> active = null;
+                for (Object[] row : portMonitorRepo.findCheckDispatchRows()) {
+                    Long id = rowLong(row, 0);
+                    if (id == null) continue;
+                    Boolean standalone = row.length > 2 && row[2] instanceof Boolean b ? b : null;
+                    String host = row.length > 3 && row[3] != null ? String.valueOf(row[3]) : null;
+                    if (!Boolean.TRUE.equals(standalone)) {
+                        if (active == null) active = cachedActiveNetworkDomains();
+                        if (inventoryGated(standalone, host, active)) continue;
+                    }
+                    if (checkDue("port", id, rowInt(row, 1))) ids.add(id);
+                }
+            }
+            case com.sitemonitor.service.checks.CheckJobTypes.DNS -> {
+                Set<String> active = null;
+                for (Object[] row : dnsMonitorRepo.findCheckDispatchRows()) {
+                    Long id = rowLong(row, 0);
+                    if (id == null) continue;
+                    Boolean standalone = row.length > 2 && row[2] instanceof Boolean b ? b : null;
+                    String domain = row.length > 3 && row[3] != null ? String.valueOf(row[3]) : null;
+                    if (!Boolean.TRUE.equals(standalone)) {
+                        if (active == null) active = cachedActiveNetworkDomains();
+                        if (inventoryGated(standalone, domain, active)) continue;
+                    }
+                    if (checkDue("dns", id, rowInt(row, 1))) ids.add(id);
+                }
+            }
+            case com.sitemonitor.service.checks.CheckJobTypes.PAGESPEED -> {
+                for (Object[] row : pageSpeedMonitorRepo.findCheckDispatchRows()) {
+                    Long id = rowLong(row, 0);
+                    if (id != null && checkDue("pagespeed", id, pageSpeedDueInterval(rowInt(row, 1)))) ids.add(id);
+                }
+            }
+            default -> {
+                for (Object[] row : simpleDispatchRows(type)) {
+                    Long id = rowLong(row, 0);
+                    if (id != null && checkDue(type, id, rowInt(row, 1))) ids.add(id);
+                }
+            }
+        }
+        return ids;
+    }
+
+    private List<Object[]> simpleDispatchRows(String type) {
+        return switch (type) {
+            case com.sitemonitor.service.checks.CheckJobTypes.PING -> pingMonitorRepo.findCheckDispatchRows();
+            case com.sitemonitor.service.checks.CheckJobTypes.HTTP -> httpMonitorRepo.findCheckDispatchRows();
+            case com.sitemonitor.service.checks.CheckJobTypes.KEYWORD -> keywordMonitorRepo.findCheckDispatchRows();
+            case com.sitemonitor.service.checks.CheckJobTypes.PAGE -> pageMonitorRepo.findCheckDispatchRows();
+            case com.sitemonitor.service.checks.CheckJobTypes.SCRIPTED -> scriptedMonitorRepo.findCheckDispatchRows();
+            default -> List.of();
+        };
+    }
+
+    private static Long rowLong(Object[] row, int i) {
+        return row != null && row.length > i && row[i] instanceof Number n ? n.longValue() : null;
+    }
+
+    private static Integer rowInt(Object[] row, int i) {
+        return row != null && row.length > i && row[i] instanceof Number n ? n.intValue() : null;
+    }
+
+    /** Biçme: kirası dolmuş ve iki kez sahiplenilmiş işler silinir; dakikada en çok bir WARN (tasarım §3.2 "Reaper"). */
+    private void reapCheckJobs(com.sitemonitor.service.checks.CheckJobStore store) {
+        List<com.sitemonitor.service.checks.CheckJobRow> reaped;
+        try {
+            reaped = store.reap(CHECK_REAP_LIMIT);
+        } catch (RuntimeException e) {
+            log.debug("Kontrol işi biçmesi başarısız (sonraki tıkta yeniden): {}", e.toString());
+            return;
+        }
+        if (reaped == null || reaped.isEmpty()) return;
+        checkJobsLost.addAndGet(reaped.size());
+        if (rateLimited(checkReapWarnAt)) {
+            com.sitemonitor.service.checks.CheckJobRow f = reaped.get(0);
+            log.warn("Kontrol işi {} kez sahiplenildi, tamamlanmadı — düşürüldü ({}, {}){}", f.attempts(), f.type(),
+                    f.monitorId(), reaped.size() > 1 ? " — bu turda toplam " + reaped.size() + " iş" : "");
+        }
+    }
+
+    /**
+     * Türün bu pod'daki kipi (tasarım §5.3): ayar açık ∧ tür listede ∧ bu pod tarama lideri ∧ BAŞKA en az bir canlı işçi bu
+     * türü sahiplenebiliyor. Histerezis: ilk sighting'de dağıtığa geçer, {@link #DISTRIBUTED_MODE_HOLD_MS} boyunca sighting
+     * olmazsa klasiğe döner; işçi kaydı okunamazsa ({@code UNKNOWN}) HEMEN klasik. Geçişler bir kez INFO yazılır.
+     *
+     * <p><b>K-1:</b> ayar kapalıyken (ya da bean yokken) yalnız bellek okur ve — tür hiç dağıtık olmadıysa — durum kaydı
+     * bile oluşturmaz; liderlik ve işçi kaydı hiç sorulmaz. Bu pod gönderemiyorsa (kuyruk yok / gönderim tıkı kurulmadı) da
+     * klasik — klasik giriş kontrolü ancak birisi gönderecekse bırakır.
+     */
+    boolean distributedMode(String type) {
+        com.sitemonitor.service.checks.DistributedChecks dc = distributedChecks;
+        if (dc == null || !dc.distributedType(type)) return toClassicMode(type);
+        // İpucu (bellek) ÖNCE: kapanış başladı / kira bırakıldı → asla dağıtık (gönderim yok); sonra doğrulanmış liderlik.
+        if (!sweepLeaderHint() || !isSweepLeader()) return toClassicMode(type);
+        // Bu pod GÖNDEREMİYORSA (kuyruk bean'i yok, gönderim tıkı kurulamadı) asla dağıtık: aksi hâlde klasik giriş kontrolü
+        // bırakır ve kimse göndermez — izleme sessizce dururdu.
+        if (checkDispatchTask == null || checkJobStore() == null) return toClassicMode(type);
+        com.sitemonitor.service.checks.CheckWorkerRegistry registry = checkWorkerRegistry();
+        int live;
+        try {
+            live = registry == null ? com.sitemonitor.service.checks.CheckWorkerRegistry.UNKNOWN : registry.liveOtherWorkers(type);
+        } catch (RuntimeException e) {
+            live = com.sitemonitor.service.checks.CheckWorkerRegistry.UNKNOWN;
+        }
+        long now = scheduleClock.getAsLong();
+        if (live < 1 && checkModes.get(type) == null) return false;   // hiç dağıtık olmadı, işçi de yok: durum kaydı açma
+        CheckModeState s = checkModes.computeIfAbsent(type, k -> new CheckModeState());
+        synchronized (s) {
+            if (live >= 1) {
+                s.lastSightingMs = now;
+                if (!s.distributed) {
+                    s.distributed = true;
+                    log.info("Dağıtık kontroller: {} artık dağıtık (canlı işçi: {})", type, live);
+                }
+                return true;
+            }
+            if (s.distributed && live != com.sitemonitor.service.checks.CheckWorkerRegistry.UNKNOWN
+                    && now >= s.lastSightingMs && now - s.lastSightingMs < DISTRIBUTED_MODE_HOLD_MS) {
+                return true;   // histerezis: kısa süreli işçi yokluğu kipi oynatmaz
+            }
+            if (s.distributed) {
+                s.distributed = false;
+                log.info("Dağıtık kontroller: {} artık klasik (canlı işçi: {})", type,
+                        live == com.sitemonitor.service.checks.CheckWorkerRegistry.UNKNOWN ? "bilinmiyor" : String.valueOf(live));
+            }
+            return false;
+        }
+    }
+
+    /** Klasik kip kararı: tür daha önce dağıtıksa geçişi bir kez yazar; hiç dağıtık olmadıysa yalnız bir harita okuması. */
+    private boolean toClassicMode(String type) {
+        CheckModeState s = checkModes.get(type);
+        if (s == null) return false;
+        synchronized (s) {
+            if (s.distributed) {
+                s.distributed = false;
+                log.info("Dağıtık kontroller: {} artık klasik (ayar kapalı ya da bu pod lider değil)", type);
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Dağıtık kontrollerin bu pod'daki görünümü (Sistem Sağlığı, paket D; yalnız bellek): tür → {@code distributed} /
+     * {@code classic} (son karar; histerezis dahil) ve sayaçlar (açılıştan beri).
+     */
+    public Map<String, Object> distributedCheckStatus() {
+        Map<String, Object> out = new LinkedHashMap<>();
+        Map<String, String> modes = new LinkedHashMap<>();
+        for (String type : com.sitemonitor.service.checks.CheckJobTypes.ALL) {
+            CheckModeState s = checkModes.get(type);
+            boolean d;
+            if (s == null) d = false;
+            else synchronized (s) { d = s.distributed; }
+            modes.put(type, d ? "distributed" : "classic");
+        }
+        out.put("mode", modes);
+        out.put("dispatch_active", checkDispatchTask != null);
+        out.put("dispatched", checkJobsDispatched.get());
+        out.put("dispatch_failures", checkDispatchFailures.get());
+        out.put("lost", checkJobsLost.get());
+        out.put("applied", checkResultsApplied.get());
+        out.put("dropped_inactive", checkResultsDroppedInactive.get());
+        out.put("dropped_target", checkResultsDroppedTarget.get());
+        out.put("dropped_toggle", checkResultsDroppedToggle.get());
+        out.put("dropped_inventory", checkResultsDroppedInventory.get());
+        out.put("no_result", checkResultsNoResult.get());
+        return out;
+    }
+    // ── /R3-3 dispatch ───────────────────────────────────────────────────────────────────────────────────────────────
+
+    // ── R3-3 jobs (paket B; tasarım §4.1 / §3.5) — işçi pod'da koşan iş gövdeleri ─────────────────────────────────────
+
+    /**
+     * Bir kontrol işinin gövdesi ({@code CheckJobRunner} — işçi bir {@code ObjectProvider} üzerinden çağırır): izlemeyi YENİDEN
+     * okur (yalnız aktif) ve klasik taramanın tedarikçi gövdesini AYNEN koşar — kontrol + geçmiş satırı + etkinlik, ŞEKİLLİ
+     * çıktı + hedef parmak izi. Tür anahtarı kapalı / izleme yok / pasif → {@code inactive} (kontrol YAPILMAZ). İstisna →
+     * {@code failed} (yalnız sınıf adı). {@code MonitoringOutageService}'i ÇAĞIRMAZ (K-2).
+     */
+    public Map<String, Object> runCheckJob(String type, long monitorId) {
+        try {
+            if (!com.sitemonitor.service.checks.CheckJobTypes.isKnown(type)) {
+                return com.sitemonitor.service.checks.CheckJobRunner.failed(new IllegalArgumentException());
+            }
+            if (!checkTypeEnabled(type)) return com.sitemonitor.service.checks.CheckJobRunner.inactive();
+            Map<String, Object> out = switch (type) {
+                case com.sitemonitor.service.checks.CheckJobTypes.PORT -> portMonitorRepo.findById(monitorId)
+                        .filter(m -> Boolean.TRUE.equals(m.getActive()))
+                        .map(m -> withCheckTarget(recheckPort(m), portCheckTarget(m))).orElse(null);
+                case com.sitemonitor.service.checks.CheckJobTypes.PING -> pingMonitorRepo.findById(monitorId)
+                        .filter(m -> Boolean.TRUE.equals(m.getActive()))
+                        .map(m -> withCheckTarget(recheckPing(m), pingCheckTarget(m))).orElse(null);
+                case com.sitemonitor.service.checks.CheckJobTypes.HTTP -> httpMonitorRepo.findById(monitorId)
+                        .filter(m -> Boolean.TRUE.equals(m.getActive()))
+                        .map(m -> withCheckTarget(recheckHttp(m), httpCheckTarget(m))).orElse(null);
+                case com.sitemonitor.service.checks.CheckJobTypes.KEYWORD -> keywordMonitorRepo.findById(monitorId)
+                        .filter(m -> Boolean.TRUE.equals(m.getActive()))
+                        .map(m -> withCheckTarget(recheckKeyword(m), keywordCheckTarget(m))).orElse(null);
+                case com.sitemonitor.service.checks.CheckJobTypes.PAGE -> pageMonitorRepo.findById(monitorId)
+                        .filter(m -> Boolean.TRUE.equals(m.getActive()))
+                        .map(m -> withCheckTarget(recheckPage(m, false, "SINGLE_PAGE"), pageCheckTarget(m))).orElse(null);
+                case com.sitemonitor.service.checks.CheckJobTypes.PAGESPEED -> pageSpeedMonitorRepo.findById(monitorId)
+                        .filter(m -> Boolean.TRUE.equals(m.getActive()))
+                        .map(m -> withCheckTarget(recheckPageSpeed(m, false), pageSpeedCheckTarget(m))).orElse(null);
+                case com.sitemonitor.service.checks.CheckJobTypes.DNS -> dnsMonitorRepo.findById(monitorId)
+                        .filter(m -> Boolean.TRUE.equals(m.getActive()))
+                        .map(m -> withCheckTarget(runDnsJob(m, dnsSweepSettings().resolvers()), dnsCheckTarget(m))).orElse(null);
+                case com.sitemonitor.service.checks.CheckJobTypes.SCRIPTED -> scriptedMonitorRepo.findById(monitorId)
+                        .filter(m -> Boolean.TRUE.equals(m.getActive()))
+                        .map(m -> withCheckTarget(persistScripted(m, scriptedCheckerService.run(m), false),
+                                scriptedCheckTarget(m))).orElse(null);
+                default -> null;
+            };
+            return out != null ? out : com.sitemonitor.service.checks.CheckJobRunner.inactive();
+        } catch (Exception e) {
+            log.warn("Dağıtık kontrol işi koşamadı ({} #{}): {}", type, monitorId, e.getClass().getSimpleName());
+            return com.sitemonitor.service.checks.CheckJobRunner.failed(e);
+        }
+    }
+
+    private static Map<String, Object> withCheckTarget(Map<String, Object> result, String target) {
+        Map<String, Object> out = result == null ? new LinkedHashMap<>() : new LinkedHashMap<>(result);
+        out.put(com.sitemonitor.service.checks.CheckJobRunner.KEY_TARGET, target);
+        return out;
+    }
+
+    // Hedef parmak izleri (tasarım §3.5) — değerlendirici güncel varlığınkiyle karşılaştırır; uyuşmazsa sonuç düşer.
+    static String portCheckTarget(PortMonitor m) { return m.getHost() + "|" + m.getPort() + "|" + m.getProtocol(); }
+    static String httpCheckTarget(HttpMonitor m) { return m.getUrl() + "|" + m.getMethod(); }
+    static String keywordCheckTarget(KeywordMonitor m) { return m.getUrl() + "|" + m.getKeyword(); }
+    static String pingCheckTarget(PingMonitor m) { return m.getHost() + "|" + m.getIpVersion(); }
+    static String dnsCheckTarget(DnsMonitor m) { return m.getDomain() + "|" + m.getRecordType(); }
+    static String pageCheckTarget(com.sitemonitor.model.PageMonitor m) { return String.valueOf(m.getUrl()); }
+    static String pageSpeedCheckTarget(com.sitemonitor.model.PageSpeedMonitor m) { return String.valueOf(m.getUrl()); }
+    static String scriptedCheckTarget(com.sitemonitor.model.ScriptedMonitor m) { return m.getName() + "|" + m.getScriptVersion(); }
+
+    /** DNS iş sonucunun anahtarları (değerlendirici {@link #addDnsResultItems} okur). */
+    static final String DNS_JOB_MAIN = "main";
+    static final String DNS_JOB_MAIN_FAILED = "main_failed";
+    static final String DNS_JOB_PROP = "prop";
+    static final String DNS_JOB_PROP_FAILED = "prop_failed";
+
+    /**
+     * DNS işi (klasik 1. aşama sorguları + 2. aşamanın kalıcılaştırma bölümü, ayrıştırılmış {@link #persistDnsRecord}):
+     * {@code {main: <ham sorgu>, prev_value, value, changed, rotated, checked_at, prop?: <yayılım>}}. Ana sorgu ya da kayıt
+     * düşerse {@code main_failed} (sınıf adı; klasik: o izleme ana kalem üretmez), yayılım düşerse {@code prop_failed}.
+     */
+    Map<String, Object> runDnsJob(DnsMonitor m, List<String> dnsResolvers) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        String now = ISO.format(Instant.now());
+        try {
+            Map<String, Object> r = dnsCheckerService.check(m.getDomain(), m.getRecordType());
+            DnsPersisted p = persistDnsRecord(m, r, now);
+            out.put(DNS_JOB_MAIN, r);
+            out.put("prev_value", p.prevValue());
+            out.put("value", p.valueStr());
+            out.put("changed", p.changed());
+            out.put("rotated", p.rotated());
+            out.put("checked_at", p.checkedAt());
+        } catch (Exception e) {
+            log.warn("DNS check failed for {} {}: {}", m.getRecordType(), m.getDomain(), e.getMessage());
+            out.put(DNS_JOB_MAIN_FAILED, e.getClass().getSimpleName());
+        }
+        if (dnsPropagationWanted(m, dnsResolvers)) {
+            try {
+                out.put(DNS_JOB_PROP, dnsCheckerService.checkPropagation(m.getDomain(), m.getRecordType(), dnsResolvers));
+            } catch (Exception ex) {
+                log.debug("DNS propagation check failed for {}: {}", m.getDomain(), ex.getMessage());
+                out.put(DNS_JOB_PROP_FAILED, ex.getClass().getSimpleName());
+            }
+        }
+        return out;
+    }
+    // ── /R3-3 jobs ───────────────────────────────────────────────────────────────────────────────────────────────────
+
+    // ── R3-3 apply (paket B; tasarım §4.2, K-3) — liderde: sonuç → klasik kurucular → MonitoringOutageService ──────────
+
+    private final AtomicLong checkResultsApplied = new AtomicLong();
+    private final AtomicLong checkResultsDroppedInactive = new AtomicLong();
+    private final AtomicLong checkResultsDroppedTarget = new AtomicLong();
+    private final AtomicLong checkResultsDroppedToggle = new AtomicLong();
+    private final AtomicLong checkResultsDroppedInventory = new AtomicLong();
+    private final AtomicLong checkResultsNoResult = new AtomicLong();
+
+    /**
+     * Bir DALGAYI değerlendirir ({@code CheckResultApplier}; çağıran paket C: lider, MOS bileti içinde, id sırası, (tür,
+     * izleme) başına ≤ 1 sonuç). Tür başına: tür anahtarı kapalıysa hepsi düşer; varlıklar toplu okunur ({@code findAllById});
+     * izleme yok / pasif, hedef parmak izi uyuşmuyor, envanter türevi Port / DNS hedefi aktif ağ envanterinde değil → düşer;
+     * kalanlar klasik 2. aşamanın AYNI kurucularıyla kaleme döner ve klasik sırada (DOWN önce SLOW) zamanlanmış
+     * {@code handleSweepResults} / DNS için dalga başına TEK {@code handleDnsSweep}. Kalemlerin yeniden kontrol kapanışları
+     * burada okunan varlık üzerine kurulur (yeniden kontroller liderde). Tür başına yakalar; fırlatmaz.
+     */
+    public void applyCheckResults(List<com.sitemonitor.service.checks.CheckResultRow> wave) {
+        if (wave == null || wave.isEmpty()) return;
+        Map<String, List<com.sitemonitor.service.checks.CheckResultRow>> byType = new HashMap<>();
+        for (com.sitemonitor.service.checks.CheckResultRow row : wave) {
+            if (row == null || !com.sitemonitor.service.checks.CheckJobTypes.isKnown(row.type())) continue;
+            byType.computeIfAbsent(row.type(), k -> new ArrayList<>()).add(row);
+        }
+        for (String type : com.sitemonitor.service.checks.CheckJobTypes.ALL) {
+            List<com.sitemonitor.service.checks.CheckResultRow> rows = byType.get(type);
+            if (rows == null || rows.isEmpty()) continue;
+            try {
+                applyCheckResultsOf(type, rows);
+            } catch (RuntimeException e) {
+                log.warn("Dağıtık kontrol sonuçları değerlendirilemedi ({}, {} sonuç): {}", type, rows.size(),
+                        e.getClass().getSimpleName());
+            }
+        }
+    }
+
+    private void applyCheckResultsOf(String type, List<com.sitemonitor.service.checks.CheckResultRow> rows) {
+        if (!checkTypeEnabled(type)) {
+            checkResultsDroppedToggle.addAndGet(rows.size());
+            return;
+        }
+        switch (type) {
+            case com.sitemonitor.service.checks.CheckJobTypes.PORT -> {
+                var entries = resolveCheckResults(rows, portMonitorRepo::findAllById, PortMonitor::getId,
+                        PortMonitor::getActive, SchedulerService::portCheckTarget,
+                        m -> Boolean.TRUE.equals(m.getStandalone()) || cachedActiveNetworkDomains().contains(m.getHost()));
+                if (entries.isEmpty()) return;
+                List<MonitoringOutageService.SweepItem> sweep = new ArrayList<>(), slowSweep = new ArrayList<>();
+                for (var e : entries) {
+                    PortMonitor m = e.getKey();
+                    try {
+                        sweep.add(portSweepItem(m, e.getValue()));
+                        MonitoringOutageService.SweepItem slow = portSlowSweepItem(m, e.getValue());
+                        if (slow != null) slowSweep.add(slow);
+                        checkResultsApplied.incrementAndGet();
+                    } catch (Exception ex) {
+                        log.warn("Port check failed for {}:{}: {}", m.getHost(), m.getPort(), ex.getMessage());
+                    }
+                }
+                feedPortSweep(sweep, slowSweep);
+            }
+            case com.sitemonitor.service.checks.CheckJobTypes.PING -> {
+                var entries = resolveCheckResults(rows, pingMonitorRepo::findAllById, PingMonitor::getId,
+                        PingMonitor::getActive, SchedulerService::pingCheckTarget, null);
+                if (entries.isEmpty()) return;
+                List<MonitoringOutageService.SweepItem> sweep = new ArrayList<>(), slowSweep = new ArrayList<>();
+                for (var e : entries) {
+                    PingMonitor m = e.getKey();
+                    try {
+                        MonitoringOutageService.SweepItem downItem = pingSweepItem(m, e.getValue());
+                        if (downItem != null) sweep.add(downItem);
+                        MonitoringOutageService.SweepItem slowItem = pingSlowSweepItem(m, e.getValue());
+                        if (slowItem != null) slowSweep.add(slowItem);
+                        checkResultsApplied.incrementAndGet();
+                    } catch (Exception ex) {
+                        log.warn("Ping check failed for {}: {}", m.getHost(), ex.getMessage());
+                    }
+                }
+                feedPingSweep(sweep, slowSweep);
+            }
+            case com.sitemonitor.service.checks.CheckJobTypes.HTTP -> {
+                var entries = resolveCheckResults(rows, httpMonitorRepo::findAllById, HttpMonitor::getId,
+                        HttpMonitor::getActive, SchedulerService::httpCheckTarget, null);
+                if (entries.isEmpty()) return;
+                List<MonitoringOutageService.SweepItem> sweep = new ArrayList<>(), slowSweep = new ArrayList<>();
+                for (var e : entries) {
+                    HttpMonitor m = e.getKey();
+                    try {
+                        sweep.add(httpSweepItem(m, e.getValue()));
+                        MonitoringOutageService.SweepItem slow = httpSlowSweepItem(m, e.getValue());
+                        if (slow != null) slowSweep.add(slow);
+                        checkResultsApplied.incrementAndGet();
+                    } catch (Exception ex) {
+                        log.warn("HTTP check failed for {}: {}", m.getUrl(), ex.getMessage());
+                    }
+                }
+                feedHttpSweep(sweep, slowSweep);
+            }
+            case com.sitemonitor.service.checks.CheckJobTypes.KEYWORD -> {
+                var entries = resolveCheckResults(rows, keywordMonitorRepo::findAllById, KeywordMonitor::getId,
+                        KeywordMonitor::getActive, SchedulerService::keywordCheckTarget, null);
+                if (entries.isEmpty()) return;
+                List<MonitoringOutageService.SweepItem> sweep = new ArrayList<>(), slowSweep = new ArrayList<>();
+                for (var e : entries) {
+                    KeywordMonitor m = e.getKey();
+                    try {
+                        sweep.add(keywordSweepItem(m, e.getValue()));
+                        MonitoringOutageService.SweepItem slow = keywordSlowSweepItem(m, e.getValue());
+                        if (slow != null) slowSweep.add(slow);
+                        checkResultsApplied.incrementAndGet();
+                    } catch (Exception ex) {
+                        log.warn("Keyword check failed for {}: {}", m.getUrl(), ex.getMessage());
+                    }
+                }
+                feedKeywordSweep(sweep, slowSweep);
+            }
+            case com.sitemonitor.service.checks.CheckJobTypes.PAGE -> {
+                var entries = resolveCheckResults(rows, pageMonitorRepo::findAllById, com.sitemonitor.model.PageMonitor::getId,
+                        com.sitemonitor.model.PageMonitor::getActive, SchedulerService::pageCheckTarget, null);
+                if (entries.isEmpty()) return;
+                List<MonitoringOutageService.SweepItem> downSweep = new ArrayList<>(), integritySweep = new ArrayList<>();
+                for (var e : entries) {
+                    com.sitemonitor.model.PageMonitor m = e.getKey();
+                    try {
+                        addPageSweepItems(m, e.getValue(), downSweep, integritySweep);
+                        checkResultsApplied.incrementAndGet();
+                    } catch (Exception ex) {
+                        log.warn("Page check failed for {}: {}", m.getUrl(), ex.getMessage());
+                    }
+                }
+                feedPageSweep(downSweep, integritySweep);
+            }
+            case com.sitemonitor.service.checks.CheckJobTypes.PAGESPEED -> {
+                var entries = resolveCheckResults(rows, pageSpeedMonitorRepo::findAllById,
+                        com.sitemonitor.model.PageSpeedMonitor::getId, com.sitemonitor.model.PageSpeedMonitor::getActive,
+                        SchedulerService::pageSpeedCheckTarget, null);
+                if (entries.isEmpty()) return;
+                List<MonitoringOutageService.SweepItem> downSweep = new ArrayList<>(), slowSweep = new ArrayList<>();
+                for (var e : entries) {
+                    com.sitemonitor.model.PageSpeedMonitor m = e.getKey();
+                    try {
+                        addPageSpeedSweepItems(m, e.getValue(), downSweep, slowSweep);
+                        checkResultsApplied.incrementAndGet();
+                    } catch (Exception ex) {
+                        log.warn("Sayfa hızı ölçümü başarısız {}: {}", m.getUrl(), ex.getMessage());
+                    }
+                }
+                feedPageSpeedSweep(downSweep, slowSweep);
+            }
+            case com.sitemonitor.service.checks.CheckJobTypes.SCRIPTED -> {
+                var entries = resolveCheckResults(rows, scriptedMonitorRepo::findAllById,
+                        com.sitemonitor.model.ScriptedMonitor::getId, com.sitemonitor.model.ScriptedMonitor::getActive,
+                        SchedulerService::scriptedCheckTarget, null);
+                if (entries.isEmpty()) return;
+                List<MonitoringOutageService.SweepItem> sweep = new ArrayList<>(), slowSweep = new ArrayList<>();
+                for (var e : entries) {
+                    com.sitemonitor.model.ScriptedMonitor m = e.getKey();
+                    // Altyapı atlaması (k6 havuzu dolu / k6 yok) hedefin arızası DEĞİL: klasik gibi kalem üretilmez.
+                    if (Boolean.TRUE.equals(e.getValue().get("skipped"))) continue;
+                    try {
+                        addScriptedSweepItems(m, e.getValue(), sweep, slowSweep);
+                        checkResultsApplied.incrementAndGet();
+                    } catch (Exception ex) {
+                        log.warn("Scripted check failed for {}: {}", m.getName(), ex.getMessage());
+                    }
+                }
+                feedScriptedSweep(sweep, slowSweep);
+            }
+            case com.sitemonitor.service.checks.CheckJobTypes.DNS -> {
+                var entries = resolveCheckResults(rows, dnsMonitorRepo::findAllById, DnsMonitor::getId,
+                        DnsMonitor::getActive, SchedulerService::dnsCheckTarget,
+                        m -> Boolean.TRUE.equals(m.getStandalone()) || cachedActiveNetworkDomains().contains(m.getDomain()));
+                if (entries.isEmpty()) return;
+                DnsSweepSettings settings = dnsSweepSettings();
+                List<MonitoringOutageService.SweepItem> sweep = new ArrayList<>(), slowSweep = new ArrayList<>(),
+                        unexpectedSweep = new ArrayList<>(), inconsistentSweep = new ArrayList<>();
+                List<MonitoringOutageService.DnsChange> changes = new ArrayList<>();
+                for (var e : entries) {
+                    addDnsResultItems(e.getKey(), e.getValue(), settings, sweep, slowSweep, unexpectedSweep,
+                            inconsistentSweep, changes);
+                    checkResultsApplied.incrementAndGet();
+                }
+                feedDnsSweep(sweep, slowSweep, changes, unexpectedSweep, inconsistentSweep);   // dalga başına TEK çağrı
+            }
+            default -> { /* bilinmeyen tür: applyCheckResults süzdü */ }
+        }
+    }
+
+    /**
+     * Bir türün sonuçlarını çözer ve doğrular: sonuç taşımayan ({@code failed} / {@code worker_timeout} / {@code inactive})
+     * atlanır; varlıklar TEK toplu okumayla gelir; yok / pasif, hedef parmak izi farklı, ağ kapısı (envanter türevi Port / DNS)
+     * kapalı → düşer (sayaçlı). Satır sırası korunur.
+     */
+    private <M> List<Map.Entry<M, Map<String, Object>>> resolveCheckResults(
+            List<com.sitemonitor.service.checks.CheckResultRow> rows,
+            java.util.function.Function<List<Long>, List<M>> loader,
+            java.util.function.Function<M, Long> idOf,
+            java.util.function.Function<M, Boolean> activeOf,
+            java.util.function.Function<M, String> targetOf,
+            java.util.function.Predicate<M> networkGate) {
+        List<Map.Entry<com.sitemonitor.service.checks.CheckResultRow, Map<String, Object>>> carried = new ArrayList<>();
+        List<Long> ids = new ArrayList<>();
+        for (com.sitemonitor.service.checks.CheckResultRow row : rows) {
+            Map<String, Object> res = row.result();
+            if (!com.sitemonitor.service.checks.CheckJobRunner.carriesResult(res)) {
+                checkResultsNoResult.incrementAndGet();
+                continue;
+            }
+            carried.add(Map.entry(row, res));
+            ids.add(row.monitorId());
+        }
+        if (carried.isEmpty()) return List.of();
+        Map<Long, M> byId = new HashMap<>();
+        List<M> loaded = loader.apply(ids);
+        if (loaded != null) for (M m : loaded) if (m != null && idOf.apply(m) != null) byId.put(idOf.apply(m), m);
+        List<Map.Entry<M, Map<String, Object>>> out = new ArrayList<>();
+        for (var c : carried) {
+            M m = byId.get(c.getKey().monitorId());
+            if (m == null || !Boolean.TRUE.equals(activeOf.apply(m))) {
+                checkResultsDroppedInactive.incrementAndGet();
+                continue;
+            }
+            Object target = c.getValue().get(com.sitemonitor.service.checks.CheckJobRunner.KEY_TARGET);
+            if (target == null || !String.valueOf(target).equals(targetOf.apply(m))) {
+                checkResultsDroppedTarget.incrementAndGet();
+                log.debug("Dağıtık kontrol sonucu düştü: hedef değişti ({})", c.getKey().monitorKey());
+                continue;
+            }
+            if (networkGate != null && !networkGate.test(m)) {
+                checkResultsDroppedInventory.incrementAndGet();
+                continue;
+            }
+            out.add(new java.util.AbstractMap.SimpleImmutableEntry<>(m, c.getValue()));
+        }
+        return out;
+    }
+
+    /**
+     * Bir DNS iş sonucundan kalemler (tasarım §4.2): {@code main} → kalıcılaştırılmış hâl yeniden kurulur ve klasik
+     * {@link #addDnsMainItems}; {@code prop} → {@link #dnsInconsistentSweepItem}. İki ayrı yakalama klasikteki gibi.
+     */
+    @SuppressWarnings("unchecked")
+    void addDnsResultItems(DnsMonitor m, Map<String, Object> res, DnsSweepSettings settings,
+                           List<MonitoringOutageService.SweepItem> sweep,
+                           List<MonitoringOutageService.SweepItem> slowSweep,
+                           List<MonitoringOutageService.SweepItem> unexpectedSweep,
+                           List<MonitoringOutageService.SweepItem> inconsistentSweep,
+                           List<MonitoringOutageService.DnsChange> changes) {
+        if (res.get(DNS_JOB_MAIN) instanceof Map<?, ?> mainRaw) {
+            try {
+                Map<String, Object> r = (Map<String, Object>) mainRaw;
+                Object vals = r.getOrDefault("values", List.of());
+                List<String> values = vals instanceof List<?> l
+                        ? l.stream().map(v -> v == null ? null : String.valueOf(v)).toList() : List.of();
+                Object value = res.get("value");
+                DnsPersisted p = new DnsPersisted(Boolean.TRUE.equals(r.get("success")), values,
+                        value == null ? String.join("\n", values) : String.valueOf(value),
+                        res.get("prev_value") == null ? null : String.valueOf(res.get("prev_value")),
+                        Boolean.TRUE.equals(res.get("changed")), Boolean.TRUE.equals(res.get("rotated")),
+                        res.get("checked_at") == null ? null : String.valueOf(res.get("checked_at")));
+                addDnsMainItems(m, r, p, settings, sweep, slowSweep, unexpectedSweep, changes);
+            } catch (Exception e) {
+                log.warn("DNS check failed for {} {}: {}", m.getRecordType(), m.getDomain(), e.getMessage());
+            }
+        }
+        if (res.get(DNS_JOB_PROP) instanceof Map<?, ?> propRaw) {
+            try {
+                inconsistentSweep.add(dnsInconsistentSweepItem(m, (Map<String, Object>) propRaw, settings.resolvers()));
+            } catch (Exception ex) {
+                log.debug("DNS propagation check failed for {}: {}", m.getDomain(), ex.getMessage());
+            }
+        }
+    }
+    // ── /R3-3 apply ──────────────────────────────────────────────────────────────────────────────────────────────────
 }
