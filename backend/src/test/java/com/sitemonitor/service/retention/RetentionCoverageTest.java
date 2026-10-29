@@ -33,7 +33,9 @@ class RetentionCoverageTest {
             "scheduler_lock", "login_anomaly_state", "monitor_check_daily", "app_user_teams", "page_usage_daily", "login_anomaly_ack",
             "schema_patch_markers", "monitor_check_schedule", "cache_bus", "scan_runs", "cluster_observations",
             // Kalıcı değerlendirme durumu (2026-10-23, çok pod Sürüm 3-1, A1) — EvalStateSchemaPatch, ham DDL
-            "monitor_eval_state", "monitor_last_status", "monitor_eval_type_state", "monitor_confirmations");
+            "monitor_eval_state", "monitor_last_status", "monitor_eval_type_state", "monitor_confirmations",
+            // Dağıtık kontroller (2026-10-29, çok pod Sürüm 3-3, paket A) — CheckJobSchemaPatch, ham DDL (katalogda info satırı)
+            "monitor_check_jobs", "monitor_check_workers");
 
     /** Muafiyetler — HER BİRİ gerekçeli. Gerekçesiz muafiyet eklenemez (değer boş olamaz). */
     private static final Map<String, String> EXEMPT = Map.ofEntries(

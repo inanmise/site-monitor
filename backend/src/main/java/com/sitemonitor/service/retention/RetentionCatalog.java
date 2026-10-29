@@ -515,7 +515,18 @@ public final class RetentionCatalog {
                 "Süren teyit zincirleri (tarama liderinin belleğinin aynası; deneme sayısı, bağlam JSON'u ≤ 16 KB). Zincir "
                 + "bitince satır silinir; önceki kuşakların zincirleri her yeni kuşakta ABANDONED işaretlenir. "
                 + "EvalStateRecorder günde bir siler: ABANDONED ya da 1 saattir güncellenmeyen satırlar. İzleme sayısıyla "
-                + "sınırlı, kişisel veri yok.")
+                + "sınırlı, kişisel veri yok."),
+        // ── Dağıtık kontroller (2026-10-29, çok pod Sürüm 3-3, paket A) ─────────────────────────────────────────────
+        info("monitor-check-jobs", "monitor_check_jobs", Mode.EXTERNAL, DataClass.OPERATIONAL,
+                "Dağıtık izleme kontrolü kuyruğu (ana anahtar site.monitor.checks.distributed.enabled açıkken): kontrol işi "
+                + "başına satır — tür, izleme kimliği, durum (bekliyor / sahiplenildi / bitti), kira, sonuç JSON'u. İzleme "
+                + "başına en çok bir açık iş; tarama lideri biten sonucu değerlendirirken satırı SİLER, 10 dakikadan eski "
+                + "biten sonuç değerlendirilmeden silinir, iki kez sahiplenilip bitmeyen iş biçilir. Kuyruk izleme sayısı + "
+                + "birkaç saniyelik birikimle sınırlı, birikmez. Ana anahtar kapalıyken boş. Kişisel veri yok."),
+        info("monitor-check-workers", "monitor_check_workers", Mode.EXTERNAL, DataClass.OPERATIONAL,
+                "Dağıtık kontrol işçileri: pod örneği başına TEK satır (yetenekler, yuva, sayaçlar, son nabız), anahtar "
+                + "açıkken 10 sn'de bir güncellenir. Tarama lideri saatte bir, nabzı 1 günden eski satırları siler (biten "
+                + "pod'lar). Pod sayısıyla sınırlı, kişisel veri yok.")
     );
 
     /** Yalnız gerçekten satır silen kurallar (çalıştırma sırasında). */
