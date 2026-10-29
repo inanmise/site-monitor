@@ -151,6 +151,15 @@ class CheckPipelineReviewFixTest {
     @Test
     @DisplayName("Son inceleme F3: dağıtıkta gönderilen DNS (60 sn aralık, 300 sn tık) klasiğe dönünce hemen yeniden kontrol edilmez — gönderimin vadesine uyulur")
     void dnsClassicAfterDistributed_respectsDispatchDue() {
+        // GERÇEK küme vade tablosu (H2): "aralık kısaltıldı" denetimi (ClusterScheduleService.isDue) yalnız bu yolda var
+        try (com.sitemonitor.it.MultiPodTestSupport mp = com.sitemonitor.it.MultiPodTestSupport.create()) {
+            ReflectionTestUtils.setField(h.scheduler, "clusterSchedule", mp.schedule("pod1-00000001"));
+            assertThat(h.scheduler.isSweepLeader()).as("gerçek kira alındı").isTrue();
+            dnsClassicAfterDistributedBody();
+        }
+    }
+
+    private void dnsClassicAfterDistributedBody() {
         h.bindDistributed(true, CheckJobTypes.DNS);
         List<DnsMonitor> all = h.dnsFixture();
         List<Object[]> rows = new ArrayList<>();
