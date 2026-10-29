@@ -273,6 +273,27 @@ class CheckPipelineReviewFixTest {
     }
 
     @Test
+    @DisplayName("DA-L3 + FX-QUEUE: kesme bayrağı gövdede temizlense de işçi işi bıraktıysa DNS / k6 geçmiş satırı yazılmaz")
+    void abandonedJobWithClearedFlagWritesNothing() {
+        h.dnsFixture();
+        Map<String, Object> dns = com.sitemonitor.service.checks.CheckWorkerTestHooks.runAsAbandonedJob(
+                () -> h.scheduler.runCheckJob(CheckJobTypes.DNS, 1L));
+        assertThat(Thread.currentThread().isInterrupted()).isFalse();
+        assertThat(dns).containsKey("main_failed").doesNotContainKey("main");
+        verify(h.dnsRecordRepo, never()).save(any());
+
+        h.scriptedFixture();
+        Map<String, Object> k6 = com.sitemonitor.service.checks.CheckWorkerTestHooks.runAsAbandonedJob(
+                () -> h.scheduler.runCheckJob(CheckJobTypes.SCRIPTED, 1L));
+        assertThat(CheckJobRunner.carriesResult(k6)).isFalse();
+        verify(h.scriptedCheckRepo, never()).save(any());
+
+        // işçi dışında (bırakılmamış) bugünkü gibi yazar
+        assertThat(CheckJobRunner.carriesResult(h.scheduler.runCheckJob(CheckJobTypes.DNS, 1L))).isTrue();
+        verify(h.dnsRecordRepo, times(1)).save(any());
+    }
+
+    @Test
     @DisplayName("DA-L4: dağıtık kipte port görevleri izlemeleri yalnız 5 dk'lık temizlik vadesinde okur")
     void portDutiesReadMonitorsOnlyWhenCleanupIsDue() {
         h.bindDistributed(true, CheckJobTypes.PORT);

@@ -42,7 +42,8 @@ class CheckJobTypesTest {
         String ss = Files.readString(Path.of("src/main/java/com/sitemonitor/service/SchedulerService.java"),
                 StandardCharsets.UTF_8);
         for (String t : CheckJobTypes.ALL) {
-            assertThat(ss).as("klasik tarama vade anahtarı: " + t).contains("checkDue(\"" + t + "\"");
+            // R3-3 FX: klasik gövdeler vade kapısını classicCheckDue ile geçer (checkDue + bekletilen dönem + klasik damga)
+            assertThat(ss).as("klasik tarama vade anahtarı: " + t).contains("classicCheckDue(\"" + t + "\"");
         }
     }
 

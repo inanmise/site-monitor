@@ -10590,7 +10590,7 @@ public class SchedulerService {
                             ScriptedCheckerService.ScriptedResult run = scriptedCheckerService.run(m);
                             // R3-3 FX (DA-L3): işçi zaman aşımında kesti → geç koşum scripted_checks'e / anormallik
                             // korumasının sayacına yazılmaz (satır zaten worker_timeout ile tamamlandı)
-                            if (Thread.currentThread().isInterrupted()) {
+                            if (checkJobAbandoned()) {
                                 return com.sitemonitor.service.checks.CheckJobRunner.failed(new InterruptedException());
                             }
                             return withCheckTarget(persistScripted(m, run, false), scriptedCheckTarget(m));
@@ -10602,6 +10602,15 @@ public class SchedulerService {
             log.warn("Dağıtık kontrol işi koşamadı ({} #{}): {}", type, monitorId, e.getClass().getSimpleName());
             return com.sitemonitor.service.checks.CheckJobRunner.failed(e);
         }
+    }
+
+    /**
+     * R3-3 FX (DA-L3 + FX-QUEUE sözleşmesi): işçi bu işi bıraktı mı — zaman aşımında gövde KESİLİR; kesme bayrağı gövdedeki bir
+     * {@code catch} tarafından temizlenmiş olsa da {@link com.sitemonitor.service.checks.CheckWorker#currentJobAbandoned()}
+     * doğru yanıtlar. İşçi dışında (klasik tarama, elle kontrol) her zaman false — yalnız iş yolu çağırır.
+     */
+    static boolean checkJobAbandoned() {
+        return Thread.currentThread().isInterrupted() || com.sitemonitor.service.checks.CheckWorker.currentJobAbandoned();
     }
 
     private static Map<String, Object> withCheckTarget(Map<String, Object> result, String target) {
@@ -10638,7 +10647,7 @@ public class SchedulerService {
             Map<String, Object> r = dnsCheckerService.check(m.getDomain(), m.getRecordType());
             // R3-3 FX (DA-L3): işçi zaman aşımında gövdeyi KESER (satır worker_timeout ile tamamlandı, sonraki dönem işi başka
             // işçide koşabilir) — geç dönen sorgu dns_records'a (PENDING değişiklik dahil) yazmaz; kesme bayrağı korunur.
-            if (Thread.currentThread().isInterrupted()) {
+            if (checkJobAbandoned()) {
                 out.put(DNS_JOB_MAIN_FAILED, InterruptedException.class.getSimpleName());
                 return out;
             }
@@ -10653,7 +10662,7 @@ public class SchedulerService {
             log.warn("DNS check failed for {} {}: {}", m.getRecordType(), m.getDomain(), e.getMessage());
             out.put(DNS_JOB_MAIN_FAILED, e.getClass().getSimpleName());
         }
-        if (dnsPropagationWanted(m, dnsResolvers) && !Thread.currentThread().isInterrupted()) {
+        if (dnsPropagationWanted(m, dnsResolvers) && !checkJobAbandoned()) {
             try {
                 out.put(DNS_JOB_PROP, dnsCheckerService.checkPropagation(m.getDomain(), m.getRecordType(), dnsResolvers));
             } catch (Exception ex) {
