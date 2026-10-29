@@ -294,4 +294,37 @@ class ShutdownBudgetGateTest {
         assertThat(release.getOrder()).as("kira, ≤ 20 sn süren boşaltmadan ÖNCE bırakılır (devir ≤ ~35 sn)")
                 .isLessThan(drain.getOrder());
     }
+
+    /**
+     * Çok pod Sürüm 3-3 paket C (2026-10-29; tasarım R3-3 §5.6): dağıtık kontrol sonuç boşaltıcısı ({@code check-result-drain})
+     * kapanışta yalnız bayrak kaldırır — {@code ContextClosedEvent} dinleyicisi beklemez, almaz, kilit tutmaz; {@code @PreDestroy}
+     * iş parçacığını ortak yok etme süresinden ({@link ShutdownDeadline#waitMs}) en çok 500 ms birleştirir ({@code join(0)} asla);
+     * iş parçacığı hiç kurulmadıysa (anahtar açılıştan beri kapalı, K-1) ortak süreye HİÇ dokunmaz. Spring / Helm bütçesine yeni
+     * bekleme eklenmez (Spring 91 / toplam 101 &lt; 120 değişmez — {@link #springShutdownFitsInsideTheGracePeriod}).
+     */
+    @Test
+    @DisplayName("3-3: sonuç boşaltıcısı — kapanış dinleyicisi yalnız bayrak, @PreDestroy ≤ 500 ms ortak süreden, kurulmadıysa süreye dokunmaz")
+    void checkResultDrainerStopsWithinTheSharedDeadline() throws IOException {
+        String src = Files.readString(Path.of("src/main/java/com/sitemonitor/service/checks/CheckResultDrainer.java"),
+                StandardCharsets.UTF_8);
+        assertThat(src).contains("ShutdownDeadline.waitMs(SHUTDOWN_JOIN_CAP_MS)").contains("t.join(budget)")
+                .contains("if (budget <= 0) return;");
+        assertThat(com.sitemonitor.service.checks.CheckResultDrainer.SHUTDOWN_JOIN_CAP_MS)
+                .as("tavan 500 ms, ortak yok etme süresinin altında").isEqualTo(500L)
+                .isLessThan(ShutdownDeadline.DESTROY_BUDGET_MS);
+        int closed = src.indexOf("public void onContextClosed(");
+        assertThat(closed).isPositive();
+        String closedBody = src.substring(closed, src.indexOf("\n    }", closed));
+        assertThat(closedBody).as("ContextClosedEvent dinleyicisi beklemez / almaz").doesNotContain("join")
+                .doesNotContain("await").doesNotContain("sleep").doesNotContain("park").doesNotContain("waitMs")
+                .doesNotContain("take(").doesNotContain("synchronized");
+        int destroy = src.indexOf("public void destroy()");
+        assertThat(destroy).isPositive();
+        String destroyBody = src.substring(destroy, src.indexOf("\n    }", destroy));
+        int notStarted = destroyBody.indexOf("t == null || !t.isAlive()");
+        int wait = destroyBody.indexOf("ShutdownDeadline.waitMs(");
+        assertThat(notStarted).as("kurulmamış iş parçacığı → ortak süreye dokunulmaz (K-1)").isPositive().isLessThan(wait);
+        assertThat(src).as("tek beklemesi ortak süre içinde").doesNotContain(".awaitTermination(")
+                .doesNotContain("Thread.sleep(");
+    }
 }
