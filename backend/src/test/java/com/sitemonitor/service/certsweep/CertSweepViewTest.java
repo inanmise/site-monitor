@@ -51,6 +51,15 @@ class CertSweepViewTest {
     }
 
     @Test
+    @DisplayName("modeOf: scan_runs satırı yazıldığında koşu hâlâ DECIDING (SchedulerService finally kancası DONE'u recordScanRun'dan "
+            + "SONRA yazar, paket B notu) → yine parçalı; hata / bilinmiyor değil")
+    void modeOfDecidingRunIsChunked() {
+        CertSweepStatus.Run deciding = run("r-dec", "DECIDING", NOW - 70_000);
+        CertSweepStatus st = status(List.of(deciding), deciding, List.of());
+        assertThat(CertSweepView.modeOf("r-dec", "2026-10-29T08:00:00", 70_000L, st, 5)).isEqualTo(CertSweepView.MODE_CHUNKED);
+    }
+
+    @Test
     @DisplayName("doneTallies: yalnız DONE gruplar — CLAIMED (uçuştaki) alan adları oranı seyreltmez; pod'a göre toplanır")
     void doneTallies() {
         CertSweepStatus st = status(List.of(), run("o", "RUNNING", NOW - 30_000), List.of(

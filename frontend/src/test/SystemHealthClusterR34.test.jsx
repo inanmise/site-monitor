@@ -186,6 +186,15 @@ describe('SystemHealth — Küme kartı, çok pod R3-4 (parçalı sertifika tara
     expect(card().querySelector('[data-kind="leader"]')).toHaveAttribute('data-tone', 'warning')
   })
 
+  it('karar aşaması (DECIDING, eski nabız) → uyarı yok, "karar veriliyor" notu; kart uyarı değil', async () => {
+    await open({ ...BASE, cert_chunks: CC({ run: RUN({ state: 'DECIDING', heartbeat_age_s: 240, chunks: { pending: 0, claimed: 0, done: 20, cancelled: 0 },
+      oldest_pending_age_ms: null, oldest_pending_age_s: null }) }) })
+    expect(sec()).toHaveAttribute('data-status', 'running')
+    expect(sec().querySelector('[data-slot="cc-run-deciding"]')).not.toBeNull()
+    expect(sec().querySelector('[data-slot="cc-warnings"]')).toBeNull()
+    expect(card().querySelector('[data-kind="leader"]')).toHaveAttribute('data-tone', 'success')
+  })
+
   it('en eski bekleyen 30 sn üstü → kutucuk uyarı + afiş; kart uyarı', async () => {
     await open({ ...BASE, cert_chunks: CC({ run: RUN({ oldest_pending_age_ms: 45_000, oldest_pending_age_s: 45 }) }) })
     expect(sec().querySelector('[data-slot="cc-t-oldest"]')).toHaveAttribute('data-warn', 'true')

@@ -9185,6 +9185,7 @@ export const EN = {
   'hmp.cc.mode.unknown': 'mode unknown',
   'hmp.cc.run': 'Open run',
   'hmp.cc.runLine': '{0} · coordinator {1} · started {2} ago',
+  'hmp.cc.deciding': 'measuring done, the coordinator is saving the results and deciding',
   'hmp.cc.progress': 'Measured chunks',
   'hmp.cc.progressText': '{0} / {1} chunks · {2} / {3} domains measured',
   'hmp.cc.t.pending': 'Pending chunks',

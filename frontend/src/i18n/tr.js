@@ -9200,6 +9200,7 @@ export const TR = {
   'hmp.cc.mode.unknown': 'kip bilinmiyor',
   'hmp.cc.run': 'Açık tur',
   'hmp.cc.runLine': '{0} · koordinatör {1} · {2} önce başladı',
+  'hmp.cc.deciding': 'ölçüm bitti, koordinatör sonuçları kaydedip karar veriyor',
   'hmp.cc.progress': 'Ölçülen parçalar',
   'hmp.cc.progressText': '{0} / {1} parça · {2} / {3} alan adı ölçüldü',
   'hmp.cc.t.pending': 'Bekleyen parça',

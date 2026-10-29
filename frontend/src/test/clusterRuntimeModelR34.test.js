@@ -87,6 +87,16 @@ describe('certChunksModel — parçalı sertifika taraması (R3-4)', () => {
     expect(certChunksModel({ cert_chunks: CC({ run: RUN({ oldest_pending_age_ms: undefined, oldest_pending_age_s: 31 }) }) }).run.pendingWarn).toBe(true)
   })
 
+  it('karar aşaması (DECIDING): koordinatör nabız yazmaz → eski nabız uyarı DEĞİL; "karar veriliyor" bayrağı (paket B notu)', () => {
+    const m = certChunksModel({ cert_chunks: CC({ run: RUN({ state: 'DECIDING', heartbeat_age_s: 300,
+      chunks: { pending: 0, claimed: 0, done: 19, cancelled: 1 }, oldest_pending_age_ms: null, oldest_pending_age_s: null }) }) })
+    expect(m.run.deciding).toBe(true)
+    expect(m.run.coordinatorSilent).toBe(false)
+    expect(m.warnings).toEqual([])
+    expect(m.status).toBe('running')
+    expect(m.run.measuredChunks).toBe(20)
+  })
+
   it('durum okunamadı → bilinmiyor (gri), koşu ve son turlar YOK (asla "tur yok" ya da yeşil); açık tur yok → "idle"', () => {
     const bad = certChunksModel({ cert_chunks: { enabled: true, status_error: 'QueryTimeoutException', run: null, last_runs: null, last_mode: 'unknown', this_pod: { pod: 'a', worker: null, coordinator: null } } })
     expect(bad).toMatchObject({ status: 'unknown', level: 'unknown', statusError: 'QueryTimeoutException', run: null, lastRuns: [], lastMode: 'unknown' })

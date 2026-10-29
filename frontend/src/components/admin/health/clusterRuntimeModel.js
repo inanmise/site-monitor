@@ -537,7 +537,10 @@ export function certChunksModel(health) {
       chunks, measuredChunks: chunks.done + chunks.cancelled, domainsMeasured: num(r.domains_measured), oldestPendingMs,
       pods, takeovers: num(r.takeovers), reclaims: num(r.reclaims), secondOpinions,
       pendingWarn: oldestPendingMs != null && oldestPendingMs > CERT_CHUNK_OLDEST_WARN_MS,
-      coordinatorSilent: heartbeatAgeS != null && heartbeatAgeS * 1000 > CERT_COORDINATOR_ALIVE_MS,
+      // Karar aşamasında (DECIDING) koordinatör nabız YAZMAZ (nabız yalnız RUNNING satırını günceller; kayıt + alarm işleme
+      // dakikalar sürebilir) — eski nabız orada olağandır, uyarı değil (paket B notu)
+      deciding: r.state === 'DECIDING',
+      coordinatorSilent: r.state === 'RUNNING' && heartbeatAgeS != null && heartbeatAgeS * 1000 > CERT_COORDINATOR_ALIVE_MS,
     }
     if (run.pendingWarn) warnings.push('pending')
     if (pods.some((p) => p.outlier)) warnings.push('outlier')

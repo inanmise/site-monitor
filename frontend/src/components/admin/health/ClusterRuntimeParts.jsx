@@ -821,6 +821,7 @@ export function CertChunksSection({ t, cc }) {
             <dd data-slot="cc-run" className="min-w-0 [overflow-wrap:anywhere]">
               {t('hmp.cc.runLine', kindName(t, run.kind), run.coordinatorPod || '—',
                 run.ageS != null ? formatDurationShort(run.ageS, t) : '—')}
+              {run.deciding && <span className="text-muted-foreground" data-slot="cc-run-deciding"> · {t('hmp.cc.deciding')}</span>}
             </dd>
           </>
         )}
