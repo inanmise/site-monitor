@@ -547,6 +547,12 @@ describe('checkJobsModel — dağıtık kontroller (3-3)', () => {
     expect(none).toMatchObject({ workersKnown: true, workers: [] })
   })
 
+  it('düşen sayısı boşaltıcının FX-EVAL düşürmelerini de sayar (eski sunucuda alan yok → 0)', () => {
+    const tp = CJ().this_pod
+    const m = checkJobsModel(HC(CJ({ this_pod: { ...tp, drainer: { ...tp.drainer, dropped_obsolete: 3, dropped_superseded: 2, dropped_handover: 1 } } })))
+    expect(m.thisPod.dispatch.dropped).toBe(4 + 6)
+  })
+
   it('düşen sayısı: bir parça okunamadıysa bilinmiyor (sahte 0 yok)', () => {
     const tp = CJ().this_pod
     const m = checkJobsModel(HC(CJ({ this_pod: { ...tp, dispatch: { ...tp.dispatch, dropped_target: undefined } } })))

@@ -748,6 +748,13 @@ final class ClusterRuntimeHealth {
         d.put("manual_holds", st.manualHolds());
         d.put("last_take_at", st.lastTakeAtMs() > 0 ? iso(st.lastTakeAtMs()) : null);
         d.put("last_failure", st.lastFailure());
+        // FX-EVAL düşürmeleri (eklemeli): yeniden açma öncesi / klasik sonrası / devirde değerlendirilmeyen
+        d.put("dropped_obsolete", st.droppedObsolete());
+        d.put("dropped_superseded", st.droppedSuperseded());
+        d.put("dropped_handover", st.droppedHandover());
+        d.put("classic_holds", st.classicHolds());
+        d.put("can_drain", st.canDrain());
+        d.put("lost_in_handover", st.lostInHandover());
         return d;
     }
 

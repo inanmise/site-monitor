@@ -803,7 +803,7 @@ class MonitoringMetricsExporterTest {
                 1, 3, 0, 0, 0, 0, 410L, 1000));
         cjDrainer = mock(com.sitemonitor.service.checks.CheckResultDrainer.class);
         when(cjDrainer.status()).thenReturn(new com.sitemonitor.service.checks.CheckResultDrainer.Status(true, true, true, false, 380, 120,
-                378, 2, 1, 0, 0, 0, 0, NOW.toEpochMilli(), 0L, null));
+                378, 2, 1, 0, 0, 0, 0, NOW.toEpochMilli(), 0L, null, 3L, 2L, 1L, 4L, true, false));
         exporter.setCheckJobStore(cjStore);
         exporter.setCheckWorker(cjWorker);
         exporter.setCheckResultDrainer(cjDrainer);
@@ -863,7 +863,8 @@ class MonitoringMetricsExporterTest {
         assertThat(gauge(MonitoringMetricNames.CHECK_WORKER_JOBS, "outcome", "completed")).isEqualTo(390);
         assertThat(gauge(MonitoringMetricNames.CHECK_WORKER_JOBS, "outcome", "late")).isEqualTo(2);
         assertThat(gauge(MonitoringMetricNames.CHECK_WORKER_JOBS, "outcome", "lost")).isEqualTo(4);
-        assertThat(gauge(MonitoringMetricNames.CHECK_WORKER_JOBS, "outcome", "dropped")).as("1 + 1 + 0 + 2 + bayat 2 + sıra dışı 1").isEqualTo(7);
+        assertThat(gauge(MonitoringMetricNames.CHECK_WORKER_JOBS, "outcome", "dropped"))
+                .as("1 + 1 + 0 + 2 + bayat 2 + sıra dışı 1 + yeniden açma öncesi 3 + klasikten eski 2 + devirde 1").isEqualTo(13);
         assertThat(gauge(MonitoringMetricNames.CHECK_CLAIM_LAG)).isEqualTo(0.41);
         assertThat(gauge(MonitoringMetricNames.EXPORTER_SOURCE, "source", "check_jobs")).isEqualTo(1);
         verify(cjStore).stats();
@@ -922,7 +923,7 @@ class MonitoringMetricsExporterTest {
         verify(cjStore, never()).stats();
         assertThat(gauge(MonitoringMetricNames.CHECK_WORKER_SLOTS, "kind", "busy")).isEqualTo(5);
         assertThat(gauge(MonitoringMetricNames.CHECK_WORKER_JOBS, "outcome", "completed")).isEqualTo(390);
-        assertThat(gauge(MonitoringMetricNames.CHECK_WORKER_JOBS, "outcome", "dropped")).isEqualTo(3);
+        assertThat(gauge(MonitoringMetricNames.CHECK_WORKER_JOBS, "outcome", "dropped")).isEqualTo(9);
         assertThat(gauge(MonitoringMetricNames.CHECK_CLAIM_LAG)).isEqualTo(0.41);
     }
 }

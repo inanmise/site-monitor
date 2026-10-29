@@ -63,7 +63,8 @@ class ClusterRuntimeHealthCheckJobsTest {
     }
 
     static CheckResultDrainer.Status drainerStatus() {
-        return new CheckResultDrainer.Status(true, true, true, false, 380, 120, 378, 1, 0, 0, 0, 2, 0, NOW - 1_000, 55L, null);
+        return new CheckResultDrainer.Status(true, true, true, false, 380, 120, 378, 1, 0, 0, 0, 2, 0, NOW - 1_000, 55L, null,
+                4L, 3L, 2L, 5L, true, true);
     }
 
     @Test
@@ -142,7 +143,9 @@ class ClusterRuntimeHealthCheckJobsTest {
                 .containsEntry("timeouts", 3L).containsEntry("claim_lag_p95_ms", 410L);
         assertThat((Map<String, Object>) pod.get("dispatch")).containsEntry("dispatched", 900L).containsEntry("lost", 1L).doesNotContainKey("mode");
         assertThat((Map<String, Object>) pod.get("drainer")).containsEntry("taken", 380L).containsEntry("dropped_stale", 1L)
-                .containsEntry("draining", true);
+                .containsEntry("draining", true).containsEntry("dropped_obsolete", 4L).containsEntry("dropped_superseded", 3L)
+                .containsEntry("dropped_handover", 2L).containsEntry("classic_holds", 5L).containsEntry("can_drain", true)
+                .containsEntry("lost_in_handover", true);
         assertThat(((Map<String, Object>) pod.get("drainer")).get("last_take_at")).isNotNull();
         verify(store).stats();
     }

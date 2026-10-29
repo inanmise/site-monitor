@@ -901,7 +901,8 @@ public class MonitoringMetricsExporter {
             try {
                 com.sitemonitor.service.checks.CheckResultDrainer.Status ds = checkResultDrainer.status();
                 if (ds == null) return;
-                dropped += ds.droppedStale() + ds.outOfOrder();
+                dropped += ds.droppedStale() + ds.outOfOrder() + ds.droppedObsolete() + ds.droppedSuperseded()
+                        + ds.droppedHandover();
             } catch (RuntimeException e) {
                 return;
             }

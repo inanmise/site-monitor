@@ -441,7 +441,9 @@ export function checkJobsModel(health) {
     const droppedKeys = ['dropped_inactive', 'dropped_target', 'dropped_toggle', 'dropped_inventory']
     const dr = isObj(tp.drainer) && !tp.drainer.error ? tp.drainer : null
     let dropped = d && droppedKeys.every((k) => num(d[k]) != null) ? droppedKeys.reduce((n, k) => n + num(d[k]), 0) : null
-    if (dropped != null && dr) dropped += (num(dr.dropped_stale) ?? 0) + (num(dr.out_of_order) ?? 0)
+    if (dropped != null && dr) {
+      for (const k of ['dropped_stale', 'out_of_order', 'dropped_obsolete', 'dropped_superseded', 'dropped_handover']) dropped += num(dr[k]) ?? 0
+    }
     thisPod = {
       pod: str(tp.pod), leader: boolOrNull(tp.leader),
       worker: w ? {
