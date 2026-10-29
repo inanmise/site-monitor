@@ -476,6 +476,8 @@ final class R33ClusterRig {
                 },
                 () -> "r33-test", nano);
         n.registry = registry;
+        // FX-QUEUE QW-L1: ping ilk ICMP sondası dönmeden ilan edilmez — üretimdeki sonda iş parçacığının ilk turunun yerine
+        registry.probeIcmpNow();
         ss.setCheckJobInfrastructure(seen, registry);
         SchedulerCheckJobs adapter = new SchedulerCheckJobs(provider(SchedulerService.class, ss));
         CheckJobRunner runner = (type, monitorId) -> {

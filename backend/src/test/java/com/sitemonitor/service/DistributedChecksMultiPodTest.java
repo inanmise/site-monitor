@@ -8,7 +8,6 @@ import com.sitemonitor.service.checks.CheckJobTypes;
 import com.sitemonitor.service.checks.R33WorkerAccess;
 import com.sitemonitor.service.evalstate.EvalLoadReport;
 import com.sitemonitor.service.evalstate.HandoverResult;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -280,8 +279,10 @@ class DistributedChecksMultiPodTest {
             c.dead = true;
             c.held.drop();
             while (mp.now() <= second + lease) rig.step();
-            rig.steps(2);
-            assertThat(jobIds(rig)).as("iki ölümden sonra özgün işler biçildi").doesNotContainAnyElementsOf(original);
+            // FX-QUEUE QW-L7: başka canlı işçi kalmadı → hiçbir tür dağıtık değil → biçme en az 60 sn'de bir (her tıkta değil)
+            long reapBy = mp.now() + 60_000L + 2 * R33ClusterRig.STEP_MS;
+            while (mp.now() <= reapBy && jobIds(rig).stream().anyMatch(original::contains)) rig.step();
+            assertThat(jobIds(rig)).as("iki ölümden sonra özgün işler ≤ 60 sn içinde biçildi").doesNotContainAnyElementsOf(original);
             assertThat(((Number) a.ss().distributedCheckStatus().get("lost")).longValue()).isEqualTo(3);
             assertThat(rig.evals.stream().filter(e -> original.contains(e.jobId()))).as("biçilen iş değerlendirilmez").isEmpty();
             long next = rig.period() + 1;
@@ -396,9 +397,6 @@ class DistributedChecksMultiPodTest {
     }
 
     @Test
-    @Disabled("needs fix/r3-3-eval DH-M1 (c): GAINED sonrası boşaltıcı birikimi boşaltana dek 8 klasik kilitli gövde checkDue'dan "
-            + "ÖNCE dönmeli. Bu tabanda klasik kipteki halefin ilk taraması, devirden ÖNCE ölçülmüş DONE DOWN'dan önce değerlendirilir; "
-            + "TAM yüklenen 2/3 sayaç 3/3 olur ve alarm bir sağlıklı tur ERKEN kapanır. Birleştirmeden sonra etkinleştirilecek.")
     @DisplayName("3b (DH-M1 c): klasik kipte halef + TAM yük + kuyrukta devirden önceki DOWN → klasik sağlıklı tur alarmı KAPATMAZ")
     void s3b_successorInClassicMode_pendingDownBeforeClassicUp_noEarlyClose() {
         Handover h = handoverCluster(3, p -> p != 2);
@@ -689,9 +687,6 @@ class DistributedChecksMultiPodTest {
     }
 
     @Test
-    @Disabled("needs fix/r3-3-eval DH-M1 (a): anahtar KAPALI → AÇIK geçişinden ÖNCE biten DONE satırları düşürülmeli (dropped_obsolete). "
-            + "Bu tabanda boşaltıcı onları klasik turların daha yeni sonuçlarından SONRA uygular — bayat UP açık alarmı bir sağlıklı "
-            + "tur ERKEN kapatır (dönem 3). Birleştirmeden sonra etkinleştirilecek.")
     @DisplayName("6b (DH-M1 a): kapalıyken kuyrukta kalan bayat UP yeniden açılışta değerlendirilmez — alarm doğru turda (dönem 4) kapanır")
     void s6b_staleQueuedResultAfterReEnable_isDropped_noEarlyClose() {
         try (MultiPodTestSupport mp = MultiPodTestSupport.create()) {
