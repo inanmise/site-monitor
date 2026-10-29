@@ -1,7 +1,8 @@
 // Sistem Sağlığı → Kendi kendini izleme (2026-10-11, kullanıcı isteği). Gerçek tarayıcıda 390 (dokunmatik) / 768
 // (dokunmatik) / 1280: bölüm en üstte; açılınca kontrol satırları, kanal özeti ve dış izleyici adresi sığar, yatay taşma
 // yok, dokunma hedefleri ≥ 40 px; onaylı kritik sorun genel bandı kritiğe çeker. API mock'lu. 2026-10-29 (çok pod R3-3): 8. kontrol
-// "Dağıtık kontrol kuyruğu" (ana anahtar kapalıyken uygulanmaz).
+// "Dağıtık kontrol kuyruğu" (ana anahtar kapalıyken uygulanmaz). 2026-10-29 (çok pod R3-4, paket C1): sertifika taraması kontrolü
+// parçalı tarama açıkken ek olgular ve uzun bir ayrıntı cümlesi taşır (karar aynı) — sarar, kırpılmaz.
 import { test, expect } from '@playwright/test'
 import { mockApi } from './support/monitorMocks.js'
 
@@ -16,7 +17,9 @@ const WATCHDOG = {
       detail: 'Liderlik kirası 8 dk önce doldu ve hiçbir pod devralmadı.', notified_at: iso(11 * 60_000), notified_kind: 'ALERT' }),
     C('monitor_sweep', 'İzleme taramaları', { last_result: 'PROBLEM',
       detail: 'Zamanında kontrol edilmeyen izlemeler (gecikmiş/etkin): http 12/20, keyword 9/11, pagespeed 4/6, scripted 7/9' }),
-    C('cert_sweep', 'Sertifika taraması'),
+    C('cert_sweep', 'Sertifika taraması', {
+      detail: "Son sertifika sonucu 1 sa önce (sınır 4 sa). Parçalı tarama açık: açık tur 95 sn'dir sürüyor, en eski bekleyen parça 42 sn; son 24 saatte terk edilen tur: 1.",
+      facts: { hours_since: 1, limit_hours: 4, chunked: true, chunked_run_age_s: 95, oldest_pending_chunk_s: 42, abandoned_runs_24h: 1 } }),
     C('notifications', 'Bildirim gönderimi'),
     C('push_outbox', 'Push kuyruğu', { detail: "0 push 10 dk'dan uzun süredir gecikmede. Bilgi: bu turu değerlendiren pod'da devre kesici açık.",
       facts: { stuck: 0, circuit_open: true, evaluated_by: 'sitemonitor-prod-7d9f8c6b5d-x2k4p' } }),
@@ -88,6 +91,8 @@ for (const vp of VIEWPORTS) {
       await expect(sec.locator('[data-slot="watchdog-check"]')).toHaveCount(8)
       await expect(sec.locator('[data-key="sweep_leader"]')).toHaveAttribute('data-state', 'problem')
       await expect(sec.locator('[data-key="check_queue"]')).toHaveAttribute('data-state', 'na')
+      await expect(sec.locator('[data-key="cert_sweep"]')).toHaveAttribute('data-state', 'ok')
+      await expect(sec.locator('[data-key="cert_sweep"]')).toContainText('Parçalı tarama açık')
       await sec.scrollIntoViewIfNeeded()
       expect(await page.evaluate(overflowIn, '[data-slot="watchdog-section"]'), 'yatay taşma').toEqual([])
       if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="watchdog-section"]'), 'küçük hedef').toEqual([])

@@ -7,6 +7,8 @@
 // Çok pod Sürüm 3-2 (paket C): devirde yüklenen durum (her ton) + bu pod'un devir hazırlığı.
 // Çok pod Sürüm 3-3 (paket D1): "Dağıtık kontroller" bölümü (kapalı / açık / kuyruk uyarısı / okunamadı / yetenek uyuşmazlığı),
 // işçiler kap ≥ 760 px tabloda, altında kartta; bilinmeyen gri, açık anahtar yeşil değil.
+// Çok pod Sürüm 3-4 (paket C1): "Parçalı sertifika taraması" bölümü (kapalı / açık tur / aykırı pod / okunamadı / tur yok), pod
+// payı kap ≥ 760 px tabloda, altında kartta; tarama kartında tur kipi + açık parçalı tur; bilinmeyen gri, açık anahtar yeşil değil.
 import { test, expect } from '@playwright/test'
 import { mockApi } from './support/monitorMocks.js'
 
@@ -385,6 +387,98 @@ for (const vp of VIEWPORTS) {
         if (vp.touch) expect(await page.evaluate(smallTargets, '[data-card="cluster"]'), `${c.name}: dokunma hedefi < 40 px`).toEqual([])
       }
       await page.locator('[data-slot="cluster-check-jobs"]').screenshot({ path: `test-results/cluster-check-jobs-${vp.name}.png` })
+    })
+
+    test('Küme kartı R3-4: parçalı sertifika taraması her durumda; pod payı tablo / kart; tarama kartı kipi; adlar sarar, taşma yok', async ({ page }) => {
+      test.setTimeout(150_000)
+      const POD_C = `${POD_B}-ucuncu-pod-uzun-bir-ad-kirpilmamali`
+      const RUN = (over = {}) => ({ run_id: 'r-open', kind: 'hourly', state: 'RUNNING', coordinator: B, coordinator_pod: POD_B,
+        created_at: fmt(NOW - 45_000), age_s: 45, heartbeat_age_s: 3, domains_total: 1200, chunks_total: 60, chunk_size: 20, evict_caches: true,
+        chunks: { pending: 18, claimed: 12, done: 28, cancelled: 2 }, domains_measured: 560, oldest_pending_age_s: 6, oldest_pending_age_ms: 6_000,
+        per_pod: [
+          { instance_id: B, pod: POD_B, self: false, chunks: 18, domains: 360, done_domains: 240, network_errors: 3, network_error_rate: 0.0125, outlier: false },
+          { instance_id: A, pod: POD_A, self: true, chunks: 14, domains: 280, done_domains: 200, network_errors: 2, network_error_rate: 0.01, outlier: false },
+          { instance_id: `${POD_C}-0000000c`, pod: POD_C, self: false, chunks: 8, domains: 160, done_domains: 120, network_errors: 1, network_error_rate: 0.0083, outlier: false },
+        ], outlier_pods: 0, takeovers: null, reclaims: null, second_opinions: null, ...over })
+      const LAST = (over = {}) => ({ run_id: 'r-1', kind: 'hourly', state: 'DONE', outcome: 'DECIDED', coordinator_pod: POD_B,
+        created_at: fmt(NOW - 3_600_000), finished_at: fmt(NOW - 3_550_000), duration_ms: 50_000, domains_total: 1200, chunks_total: 60,
+        pods: 3, workers: [], takeovers: 1, reclaims: 0, second_opinions: 0, ...over })
+      const CC = (over = {}) => ({ enabled: true, tables_ready: true, at: fmt(NOW), db_clock_stale: false, run: RUN(),
+        last_runs: [LAST(), LAST({ run_id: 'r-0', kind: 'stale', state: 'ABANDONED', outcome: 'ORPHANED', duration_ms: null, pods: null, coordinator_pod: POD_C }),
+          LAST({ run_id: 'r-m', state: 'DONE', outcome: 'STORE_FAILED', second_opinions: 4 })],
+        min_errors: 3, error_rate_threshold: 0.5, last_mode: 'chunked',
+        this_pod: { pod: POD_A, worker: { enabled: true, started: true, inflight_chunks: 2, inflight_domains: 40, budget: 40, leader_yielding: false,
+          claimed: 90, completed: 85, late: 1, released: 2, discarded: 0, domains_measured: 1700, last_claim_at: fmt(NOW - 3_000), db_clock_stale: false },
+        coordinator: { chunked_runs: 12, classic_fallback: 3, takeovers: 2, remeasured: 5, second_opinions: 0, abandoned: 1 } }, ...over })
+      const SCAN = { ...HEALTH.scan, last_mode: 'chunked', runs: { ...HEALTH.scan.runs, hourly: { ...HEALTH.scan.runs.hourly, mode: 'chunked' } },
+        chunked: { run_id: 'r-open', kind: 'hourly', state: 'RUNNING', coordinator_pod: POD_B, age_s: 45, chunks_done: 28, chunks_total: 60,
+          domains_measured: 560, domains_total: 1200, oldest_pending_age_s: 6,
+          per_pod: [{ pod: POD_B, chunks: 18, domains: 360 }, { pod: POD_A, chunks: 14, domains: 280 }, { pod: POD_C, chunks: 8, domains: 160 }] } }
+      const base = { ...HEALTH, timestamp: fmt(NOW), scheduler: { ...HEALTH.scheduler, skipped_rounds: [] },
+        eval_state: { ...HEALTH.eval_state, verify: { ...HEALTH.eval_state.verify, status: 'ok', pass_fail_mismatches: 0, first_mismatches: [],
+          kinds: { recovery: { compared: 412, mismatches: 0, skipped: 0, max_delta: null, measured: false } } } } }
+      const CASES = [
+        { name: 'off', cc: { enabled: false }, scan: HEALTH.scan, status: 'off', tone: 'muted', cardWarn: false },
+        { name: 'running', cc: CC(), scan: SCAN, status: 'running', tone: 'info', cardWarn: false, pods: 3 },
+        { name: 'outlier', cc: CC({ run: RUN({ second_opinions: 24, per_pod: [RUN().per_pod[0], RUN().per_pod[1],
+          { ...RUN().per_pod[2], network_errors: 70, network_error_rate: 0.5833, outlier: true }] }) }), scan: SCAN, status: 'warn', tone: 'warning', cardWarn: true, pods: 3 },
+        { name: 'unreadable', cc: { enabled: true, status_error: 'CannotGetJdbcConnectionException', run: null, last_runs: null, last_mode: 'unknown',
+          min_errors: 3, error_rate_threshold: 0.5, this_pod: { pod: POD_A, worker: null, coordinator: null } },
+          scan: { ...HEALTH.scan, last_mode: 'unknown', chunked: null, chunked_error: 'CannotGetJdbcConnectionException' }, status: 'unknown', tone: 'muted', cardWarn: false },
+        { name: 'idle', cc: CC({ run: null }), scan: { ...HEALTH.scan, last_mode: 'classic', chunked: null }, status: 'idle', tone: 'info', cardWarn: false },
+      ]
+      let current = { ...base, cert_chunks: CASES[0].cc }
+      await mock(page)
+      await page.route((u) => new URL(u).pathname === '/api/admin/system',
+        (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data: current }) }))
+      for (const c of CASES) {
+        current = { ...base, scan: c.scan, cert_chunks: c.cc }
+        await page.goto('/?tab=health&sec=sched')
+        const card = page.locator('[data-card="cluster"]')
+        await expect(card, c.name).toBeVisible({ timeout: 30_000 })
+        const sec = card.locator('[data-slot="cluster-cert-chunks"]')
+        await expect(sec, c.name).toHaveAttribute('data-status', c.status)
+        await expect(sec.locator('[data-slot="pod-chip"]'), c.name).toHaveAttribute('data-scope', 'cluster')
+        await expect(sec.locator('[data-slot="cc-switch"] [data-tone]'), c.name).toHaveAttribute('data-tone', c.tone)
+        await expect(card.locator('[data-kind="leader"]'), c.name).toHaveAttribute('data-tone', c.cardWarn ? 'warning' : 'success')
+        const scanCard = page.locator('[data-card="scan"]')
+        if (c.name === 'off') {
+          await expect(sec.locator('[data-slot="cc-hint"]')).toBeVisible()
+          await expect(sec.locator('[data-slot="cc-progress"]')).toHaveCount(0)
+          await expect(card.locator('[data-slot="cluster-cert-chunk-worker"]')).toHaveCount(0)
+          await expect(scanCard.locator('[data-slot="scan-mode"]')).toHaveCount(0)
+        }
+        if (c.pods) {
+          const pods = sec.locator('[data-slot="cc-pods"]')
+          await expect(pods.locator('[data-slot="cc-pod"]'), c.name).toHaveCount(c.pods)
+          await expect(pods, c.name).toHaveAttribute('data-layout', vp.width >= 1280 ? 'table' : 'cards')
+          await expect(pods, c.name).toContainText(POD_C)
+          await expect(sec.locator('[data-slot="cc-last-run"]'), c.name).toHaveCount(3)
+          await expect(scanCard.locator('[data-slot="scan-mode"]'), c.name).toHaveAttribute('data-mode', 'chunked')
+          await expect(scanCard.locator('[data-slot="scan-chunked"]'), c.name).toContainText(POD_C)
+          await expect(card.locator('[data-slot="cluster-this-pod"] [data-slot="cc-pod-inflight"]'), c.name).toContainText('40')
+        }
+        if (c.name === 'outlier') {
+          await expect(sec.locator('[data-slot="cc-pod"][data-outlier="true"]')).toHaveCount(1)
+          await expect(sec.locator('[data-slot="cc-warnings"] [data-warn="outlier"]')).toContainText(POD_C)
+          await expect(sec.locator('[data-slot="cc-t-second"]')).toHaveAttribute('data-warn', 'true')
+        }
+        if (c.name === 'unreadable') {
+          await expect(sec.locator('[data-slot="cc-hint"]')).toContainText('CannotGetJdbcConnectionException')
+          await expect(sec.locator('[data-slot="cc-last-runs"]')).toHaveCount(0)
+          await expect(scanCard.locator('[data-slot="scan-mode"]')).toHaveAttribute('data-tone', 'muted')
+        }
+        if (c.name === 'idle') {
+          await expect(sec.locator('[data-slot="cc-progress"]')).toHaveCount(0)
+          await expect(scanCard.locator('[data-slot="scan-mode"]')).toHaveAttribute('data-mode', 'classic')
+        }
+        await page.waitForTimeout(250)
+        expect(await page.evaluate(overflowIn, '[data-section="sched"]'), `${c.name}: yatay taşma`).toEqual([])
+        expect(await page.evaluate(clippedIn, '[data-card="cluster"]'), `${c.name}: kırpılan metin`).toEqual([])
+        expect(await page.evaluate(clippedIn, '[data-card="scan"]'), `${c.name}: kırpılan metin (tarama kartı)`).toEqual([])
+        if (vp.touch) expect(await page.evaluate(smallTargets, '[data-card="cluster"]'), `${c.name}: dokunma hedefi < 40 px`).toEqual([])
+      }
+      await page.locator('[data-slot="cluster-cert-chunks"]').screenshot({ path: `test-results/cluster-cert-chunks-${vp.name}.png` })
     })
 
     test('Heartbeat: Pod’lar kartı sessiz süreci gösterir; geçmiş penceresinde pod başına satırlar', async ({ page }) => {
