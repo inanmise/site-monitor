@@ -250,6 +250,10 @@ public class WatchdogProbes {
      * null), {@code abandoned_runs_24h} (+ {@code abandoned_runs_24h_lower_bound} — okunan koşular pencereyi kapsamıyorsa).
      * Okunamadı → {@code chunked_status: unreadable}. Takılan ya da ölen parçalı tur hiçbir şey KAYDETMEZ — {@code latest_checks}
      * tazeliği (bu kontrolün kararı) ve 2 sa tarama alarmı onu klasik tur gibi yakalar.
+     *
+     * <p>Sahipsiz açık koşu (inceleme OB-L1): açık koşu varken tek {@code cert-check} kilit okuması (PK); koordinatör kilidi artık
+     * tutmuyorsa koşu "açık tur" sayılmaz — {@code chunked_run_age_s} / {@code oldest_pending_chunk_s} null,
+     * {@code chunked_orphan_run: true} (sonraki tur kapatır). Kilit okunamadı → bugünkü gibi.
      */
     void certChunkFacts(Map<String, Object> f) {
         if (certChunking == null || certSweepStore == null) return;
@@ -273,9 +277,17 @@ public class WatchdogProbes {
             return;
         }
         com.sitemonitor.service.certsweep.CertSweepStatus.Run open = st.openRun();
-        f.put("chunked_run_age_s", open == null ? null : open.ageMs(st.nowMs()) / 1000L);
-        Long oldest = st.oldestPendingAgeMs();
+        boolean orphan = false;
+        if (open != null) {
+            com.sitemonitor.service.certsweep.CertSweepView.CertLock lock =
+                    com.sitemonitor.service.certsweep.CertSweepView.readCertLock(jdbc, System.currentTimeMillis());
+            orphan = com.sitemonitor.service.certsweep.CertSweepView.orphanSuspected(open, st.nowMs(),
+                    com.sitemonitor.service.certsweep.CertSweepView.coordinatorLive(open, lock, null));
+        }
+        f.put("chunked_run_age_s", open == null || orphan ? null : open.ageMs(st.nowMs()) / 1000L);
+        Long oldest = orphan ? null : st.oldestPendingAgeMs();
         f.put("oldest_pending_chunk_s", oldest == null ? null : oldest / 1000L);
+        if (orphan) f.put("chunked_orphan_run", true);
         long[] ab = com.sitemonitor.service.certsweep.CertSweepView.abandonedSince(st, st.nowMs() - CERT_CHUNK_ABANDON_WINDOW_MS,
                 CERT_CHUNK_STATUS_RUNS);
         f.put("abandoned_runs_24h", ab[0]);

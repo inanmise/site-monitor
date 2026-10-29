@@ -540,4 +540,30 @@ class GrafanaDashboardGeneratorTest {
         assertThat(exprOf(en, "Second opinions (24 h)")).contains("second_opinion");
         assertThat(GrafanaDashboardGenerator.DASHBOARD_REVISION).isGreaterThanOrEqualTo(8);
     }
+
+    /** Başlığa göre panelin açıklaması. */
+    static String descOf(JsonNode d, String title) {
+        for (JsonNode p : contentPanels(d)) {
+            if (title.equals(p.get("title").asString())) return p.path("description").asString();
+        }
+        throw new AssertionError("panel yok: " + title);
+    }
+
+    @Test
+    @DisplayName("R3-4 inceleme OB-L7: parçalı tarama açıklamaları doğru — parça boyutu bir ayar (sabit 20 değil), süre kayıt ve "
+            + "kararı içerir ve eşiklerle aynı (2 / 5 dk), süre panelinde klasik karşılaştırma yok → tarama kartına yönlendirir; rev 9")
+    void multiPodR34PanelTexts() {
+        JsonNode d = tree(defaults());
+        assertThat(descOf(d, "Bekleyen sertifika parçası")).doesNotContain("parça başına 20 alan adı").contains("varsayılan 20")
+                .contains("terk edilmiş");
+        assertThat(descOf(d, "Son saatlik sertifika taraması")).doesNotContain("1 dk altı beklenir").contains("alarm kararı dahil")
+                .contains("2 dk").contains("5 dk");
+        assertThat(descOf(d, "Sertifika taraması süresi (tür, kip)")).doesNotContain("karşılaştırarak verin")
+                .contains("Sertifika taraması kartında").contains("scan_runs");
+        JsonNode en = tree(opts("en", GrafanaDashboardGenerator.SECTIONS, true, "", ""));
+        assertThat(descOf(en, "Pending certificate chunks")).doesNotContain("(20 domains each)").contains("20 domains by default");
+        assertThat(descOf(en, "Last hourly certificate sweep")).doesNotContain("Expected below 1 minute").contains("decision included");
+        assertThat(descOf(en, "Certificate sweep duration (kind, mode)")).doesNotContain("Compare chunked and classic").contains("scan_runs");
+        assertThat(GrafanaDashboardGenerator.DASHBOARD_REVISION).isGreaterThanOrEqualTo(9);
+    }
 }

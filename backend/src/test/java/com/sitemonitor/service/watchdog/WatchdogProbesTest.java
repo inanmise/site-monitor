@@ -133,6 +133,8 @@ class WatchdogProbesTest {
         when(store.status(WatchdogProbes.CERT_CHUNK_STATUS_RUNS)).thenReturn(new com.sitemonitor.service.certsweep.CertSweepStatus(now, false,
                 List.of(open, ab), open, List.of(new com.sitemonitor.service.certsweep.CertSweepStatus.ChunkGroup("PENDING", null, 3, 60, 0,
                         now - 42_000))));
+        // koordinatör (pod-a) cert-check kilidini tutuyor — canlı açık tur (inceleme OB-L1: kilidi tutmayan koordinatörün turu sahipsizdir)
+        stubCertLock("pod-a-0000000a");
         WatchdogProbes.Probe on = probes.certSweep(NOW);
         assertThat(on.result()).as("karar değişmez").isEqualTo(before.result());
         assertThat(on.facts()).containsEntry("chunked", true).containsEntry("chunked_run_age_s", 95L)
@@ -145,9 +147,27 @@ class WatchdogProbesTest {
         assertThat(WatchdogMessages.detail(WatchdogCheck.CERT_SWEEP, on.facts(), true))
                 .endsWith(" Chunked sweep is on: open run 95 s old, oldest waiting chunk 42 s; abandoned runs in 24 h: 1.");
 
+        // OB-L1: kilidi başka pod tutuyor → koordinatör öldü; açık tur yaşı / en eski bekleyen YOK, sahipsiz tur olgusu + cümlesi
+        stubCertLock("pod-b-0000000b");
+        WatchdogProbes.Probe orphan = probes.certSweep(NOW);
+        assertThat(orphan.result()).as("karar değişmez").isEqualTo(before.result());
+        assertThat(orphan.facts()).containsEntry("chunked_run_age_s", null).containsEntry("oldest_pending_chunk_s", null)
+                .containsEntry("chunked_orphan_run", true).containsEntry("abandoned_runs_24h", 1L);
+        assertThat(WatchdogMessages.detail(WatchdogCheck.CERT_SWEEP, orphan.facts(), false))
+                .contains("açık tur yok (tarama kilidini artık tutmayan bir koordinatörün terk edilmiş turu kayıtlı; sonraki tur kapatır)");
+        assertThat(WatchdogMessages.detail(WatchdogCheck.CERT_SWEEP, orphan.facts(), true)).contains("no open run (an abandoned run");
+        // kilit okunamadı → bugünkü gibi açık tur
+        when(jdbc.query(eq(com.sitemonitor.service.certsweep.CertSweepView.SQL_CERT_LOCK), any(org.springframework.jdbc.core.RowMapper.class),
+                eq("cert-check"))).thenThrow(new org.springframework.dao.QueryTimeoutException("x"));
+        assertThat(probes.certSweep(NOW).facts()).containsEntry("chunked_run_age_s", 95L).doesNotContainKey("chunked_orphan_run");
+
+        org.mockito.Mockito.clearInvocations(jdbc);
         when(store.status(WatchdogProbes.CERT_CHUNK_STATUS_RUNS)).thenReturn(new com.sitemonitor.service.certsweep.CertSweepStatus(now, false,
                 List.of(), null, List.of()));
         WatchdogProbes.Probe idle = probes.certSweep(NOW);
+        // açık koşu yok → kilit okunmaz
+        org.mockito.Mockito.verify(jdbc, org.mockito.Mockito.never()).query(eq(com.sitemonitor.service.certsweep.CertSweepView.SQL_CERT_LOCK),
+                any(org.springframework.jdbc.core.RowMapper.class), eq("cert-check"));
         assertThat(idle.facts()).containsEntry("chunked_run_age_s", null).containsEntry("oldest_pending_chunk_s", null)
                 .containsEntry("abandoned_runs_24h", 0L);
         assertThat(WatchdogMessages.detail(WatchdogCheck.CERT_SWEEP, idle.facts(), false)).contains("açık tur yok");
@@ -157,6 +177,13 @@ class WatchdogProbesTest {
         assertThat(bad.result()).isEqualTo(before.result());
         assertThat(bad.facts()).containsEntry("chunked", true).containsEntry("chunked_status", "unreadable");
         assertThat(WatchdogMessages.detail(WatchdogCheck.CERT_SWEEP, bad.facts(), false)).endsWith("Parçalı tarama açık; tur durumu okunamadı.");
+    }
+
+    /** {@code cert-check} kilit satırı: verilen sahip, süresi uzak gelecekte. */
+    @SuppressWarnings("unchecked")
+    void stubCertLock(String holder) {
+        when(jdbc.query(eq(com.sitemonitor.service.certsweep.CertSweepView.SQL_CERT_LOCK), any(org.springframework.jdbc.core.RowMapper.class),
+                eq("cert-check"))).thenReturn(List.<Object>of((Object) new String[]{holder, "2099-01-01T00:00:00"}));
     }
 
     @Test

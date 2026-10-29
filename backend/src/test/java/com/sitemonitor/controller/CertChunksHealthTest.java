@@ -30,7 +30,8 @@ import static org.mockito.Mockito.when;
  */
 class CertChunksHealthTest {
 
-    static final long NOW = 1_800_000_000_000L;
+    /** 2026-10-29T09:00:00Z — {@link #data()} tarama koşuları bu güne ait (klasik kip yalnız saklama penceresi içinde, OB-L2 b). */
+    static final long NOW = 1_793_264_400_000L;
     static final String A = "pod-a-0000000a";
     static final String B = "site-monitor-production-deployment-7f9c8d6b5a-q8m2zr-0000000b";
 
@@ -186,5 +187,98 @@ class CertChunksHealthTest {
         CertChunksHealth.apply(d4, new CertChunksHealth.Sources(chunking, idle, scheduler));
         assertThat(d4).containsOnlyKeys("cert_chunks");
         assertThat((Map<String, Object>) d4.get("cert_chunks")).containsEntry("last_mode", CertSweepView.MODE_UNKNOWN);
+    }
+
+    /** Açık koşu + verilen kilit / zamanlayıcı haritasıyla sağlık yanıtı. */
+    @SuppressWarnings("unchecked")
+    Map<String, Object> withLock(CertSweepStatus.Run open, Map<String, Object> lock, Map<String, Object> scheduler) {
+        when(store.status(5)).thenReturn(new CertSweepStatus(NOW, false, List.of(open), open, List.of(
+                new CertSweepStatus.ChunkGroup("PENDING", null, 8, 160, 0, open.createdMs()))));
+        Map<String, Object> d = data();
+        if (lock != null) d.put("lock", lock);
+        if (scheduler != null) d.put("scheduler", scheduler);
+        CertChunksHealth.apply(d, new CertChunksHealth.Sources(chunking, store, scheduler()));
+        return d;
+    }
+
+    SchedulerService scheduler() {
+        return scheduler;
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    @DisplayName("OB-L1: açık koşunun koordinatörü cert-check kilidini artık tutmuyor (başka pod tutuyor / canlı kilit yok) ve koşu "
+            + "≥ 60 sn → orphan_suspected (DECIDING dahil), coordinator_live false, tarama kartı chunked.orphan_suspected; kilit "
+            + "koordinatörde → canlı; bu pod yürütüyor → canlı; kilit okunamadı / genç koşu → sahipsiz değil (EK SQL YOK)")
+    void orphanRunNotShownAsOpen() {
+        switchOn(true);
+        CertSweepStatus.Run old = run("open-run", "RUNNING", NOW - 300_000, null, null, null);
+        Map<String, Object> d = withLock(old, Map.of("held", true, "locked_by", A), null);
+        Map<String, Object> r = (Map<String, Object>) ((Map<String, Object>) d.get("cert_chunks")).get("run");
+        assertThat(r).containsEntry("coordinator_live", false).containsEntry("orphan_suspected", true);
+        assertThat((Map<String, Object>) ((Map<String, Object>) d.get("scan")).get("chunked")).containsEntry("orphan_suspected", true);
+
+        // canlı kilit yok (satır yok ya da süresi dolmuş: held=false)
+        d = withLock(old, Map.of("held", false), null);
+        r = (Map<String, Object>) ((Map<String, Object>) d.get("cert_chunks")).get("run");
+        assertThat(r).containsEntry("coordinator_live", false).containsEntry("orphan_suspected", true);
+
+        // ölü DECIDING (nabız yazmaz) de tanınır
+        CertSweepStatus.Run deadDeciding = run("dec-run", "DECIDING", NOW - 900_000, null, null, null);
+        d = withLock(deadDeciding, Map.of("held", false, "expired", true, "locked_by", B), null);
+        r = (Map<String, Object>) ((Map<String, Object>) d.get("cert_chunks")).get("run");
+        assertThat(r).containsEntry("state", "DECIDING").containsEntry("orphan_suspected", true);
+
+        // kilit koordinatörde (B) → canlı, sahipsiz değil
+        d = withLock(old, Map.of("held", true, "locked_by", B), null);
+        r = (Map<String, Object>) ((Map<String, Object>) d.get("cert_chunks")).get("run");
+        assertThat(r).containsEntry("coordinator_live", true).containsEntry("orphan_suspected", false);
+        assertThat((Map<String, Object>) ((Map<String, Object>) d.get("scan")).get("chunked")).containsEntry("orphan_suspected", false);
+
+        // bu pod koşuyu şu an yürütüyor (kilit okunamasa bile)
+        d = withLock(old, Map.of("held", false, "error", "x"), Map.of("running_here", true, "current_run_id", "open-run"));
+        r = (Map<String, Object>) ((Map<String, Object>) d.get("cert_chunks")).get("run");
+        assertThat(r).containsEntry("coordinator_live", true).containsEntry("orphan_suspected", false);
+
+        // kilit okunamadı → bilinmiyor, sahipsiz denmez
+        d = withLock(old, Map.of("held", false, "error", "x"), null);
+        r = (Map<String, Object>) ((Map<String, Object>) d.get("cert_chunks")).get("run");
+        assertThat(r).containsEntry("coordinator_live", null).containsEntry("orphan_suspected", false);
+        // tutuluyor ama sahibi yok → bilinmiyor
+        d = withLock(old, Map.of("held", true), null);
+        r = (Map<String, Object>) ((Map<String, Object>) d.get("cert_chunks")).get("run");
+        assertThat(r).containsEntry("coordinator_live", null).containsEntry("orphan_suspected", false);
+
+        // genç koşu (kilit / koşu okuma yarışı) → sahipsiz değil
+        CertSweepStatus.Run young = run("young-run", "RUNNING", NOW - 20_000, null, null, null);
+        d = withLock(young, Map.of("held", true, "locked_by", A), null);
+        r = (Map<String, Object>) ((Map<String, Object>) d.get("cert_chunks")).get("run");
+        assertThat(r).containsEntry("coordinator_live", false).containsEntry("orphan_suspected", false);
+        // tek durum okuması, başka SQL yok
+        org.mockito.Mockito.verify(store, org.mockito.Mockito.atLeastOnce()).status(5);
+        org.mockito.Mockito.verify(store, org.mockito.Mockito.never()).chunkStates(org.mockito.ArgumentMatchers.anyString());
+    }
+
+    /** {@code CertSweepStatus.Coordinator}'a eklenen bölünmüş sayaçların biçimi (paralel paket FX-COORD). */
+    record SplitCoordinator(long chunkedRuns, long classicByRule, long classicFallback) {}
+
+    @Test
+    @DisplayName("OB-L6: koordinatör kaydında classicByRule varsa classic_by_rule yazılır; yoksa (eski kayıt) alan YOK — ekran bugünkü "
+            + "satırı gösterir; bileşen sayı değil / kayıt null → null")
+    void classicByRuleSplit() {
+        assertThat(CertChunksHealth.recordLong(new SplitCoordinator(5, 280, 2), "classicByRule")).isEqualTo(280L);
+        assertThat(CertChunksHealth.recordLong(new SplitCoordinator(5, 280, 2), "classicFallback")).isEqualTo(2L);
+        assertThat(CertChunksHealth.recordLong(new SplitCoordinator(5, 280, 2), "nope")).isNull();
+        assertThat(CertChunksHealth.recordLong(null, "classicByRule")).isNull();
+        record Named(String classicByRule) {}
+        assertThat(CertChunksHealth.recordLong(new Named("x"), "classicByRule")).isNull();
+
+        chunking.registerCoordinatorStatus(() -> new CertSweepStatus.Coordinator(12, 3, 2, 5, 0, 1));
+        @SuppressWarnings("unchecked")
+        Map<String, Object> cm = (Map<String, Object>) CertChunksHealth.thisPod(chunking).get("coordinator");
+        boolean split = java.util.Arrays.stream(CertSweepStatus.Coordinator.class.getRecordComponents())
+                .anyMatch(rc -> rc.getName().equals("classicByRule"));
+        if (split) assertThat(cm).containsKey("classic_by_rule");
+        else assertThat(cm).doesNotContainKey("classic_by_rule").containsEntry("classic_fallback", 3L);
     }
 }

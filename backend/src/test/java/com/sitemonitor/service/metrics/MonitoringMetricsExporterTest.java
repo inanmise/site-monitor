@@ -1051,6 +1051,53 @@ class MonitoringMetricsExporterTest {
         assertThat(exists(MonitoringMetricNames.CERT_SWEEP_WORKER_CHUNKS)).isFalse();
     }
 
+    /** {@code cert-check} kilit satırını taklit eder ({@code CertSweepView.SQL_CERT_LOCK}). */
+    @SuppressWarnings("unchecked")
+    void stubCertLock(String holder, String until) {
+        when(jdbc.query(eq(com.sitemonitor.service.certsweep.CertSweepView.SQL_CERT_LOCK), any(RowMapper.class), eq("cert-check")))
+                .thenReturn(holder == null ? List.of() : List.<Object>of((Object) new String[]{holder, until}));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    @DisplayName("R3-4 OB-L1: açık koşunun koordinatörü cert-check kilidini artık tutmuyor (başka pod / canlı kilit yok) ve koşu ≥ 60 sn → "
+            + "parça serisi YAZILMAZ (sahipsiz tur saatlerce 'bekleyen parça' görünmez), son tur ailesi ve cert_sweep kaynağı sürer; kilit "
+            + "koordinatörde ya da okunamadı → bugünkü gibi yazılır; kilit yalnız açık koşu varken okunur")
+    void certSweepMeters_orphanRunNoChunkSeries() {
+        attachCertSweep(true);
+        long now = NOW.toEpochMilli();
+        com.sitemonitor.service.certsweep.CertSweepStatus.Run open = csRun("r-dead", "RUNNING", now - 3_600_000, null);
+        when(csStore.status(MonitoringMetricsExporter.CERT_SWEEP_STATUS_RUNS)).thenReturn(new com.sitemonitor.service.certsweep.CertSweepStatus(now,
+                false, List.of(open, csRun("r-hourly", "DONE", now - 7_200_000, now - 7_150_000)), open, List.of(
+                new com.sitemonitor.service.certsweep.CertSweepStatus.ChunkGroup("PENDING", null, 9, 180, 0, now - 3_600_000))));
+        String until = "2099-01-01T00:00:00";
+        stubCertLock("pod-b-0000000b", until);
+        exporter.refresh();
+        assertThat(exists(MonitoringMetricNames.CERT_SWEEP_CHUNKS)).as("sahipsiz koşunun parçaları yazılmaz").isFalse();
+        assertThat(gauge(MonitoringMetricNames.EXPORTER_SOURCE, "source", "cert_sweep")).isEqualTo(1);
+        assertThat(gauge(MonitoringMetricNames.CERT_SWEEP_LAST_RUN, "kind", "hourly", "mode", "chunked")).isEqualTo(50.0);
+
+        stubCertLock(null, null);   // canlı kilit yok
+        exporter.refresh();
+        assertThat(exists(MonitoringMetricNames.CERT_SWEEP_CHUNKS)).isFalse();
+
+        stubCertLock("pod-a-0000000a", until);   // koordinatör kilitte → canlı
+        exporter.refresh();
+        assertThat(gauge(MonitoringMetricNames.CERT_SWEEP_CHUNKS, "state", "pending")).isEqualTo(9);
+
+        when(jdbc.query(eq(com.sitemonitor.service.certsweep.CertSweepView.SQL_CERT_LOCK), any(RowMapper.class), eq("cert-check")))
+                .thenThrow(new org.springframework.dao.QueryTimeoutException("x"));
+        exporter.refresh();
+        assertThat(gauge(MonitoringMetricNames.CERT_SWEEP_CHUNKS, "state", "pending")).as("kilit okunamadı → bugünkü gibi").isEqualTo(9);
+
+        // açık koşu yok → kilit HİÇ okunmaz
+        org.mockito.Mockito.reset(jdbc);
+        when(csStore.status(MonitoringMetricsExporter.CERT_SWEEP_STATUS_RUNS)).thenReturn(new com.sitemonitor.service.certsweep.CertSweepStatus(now,
+                false, List.of(), null, List.of()));
+        exporter.refresh();
+        verify(jdbc, never()).query(eq(com.sitemonitor.service.certsweep.CertSweepView.SQL_CERT_LOCK), any(RowMapper.class), eq("cert-check"));
+    }
+
     @Test
     @DisplayName("R3-4: POD-only lider (başka pod kurum ailelerini yayıyor) → parça / son tur KÜME aileleri yok, depo okunmaz; pod sayaçları "
             + "bellekten yayılır")

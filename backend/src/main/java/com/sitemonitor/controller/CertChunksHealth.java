@@ -30,6 +30,10 @@ import java.util.Set;
  *       {@code scan} haritasına DOKUNULMAZ.</li>
  * </ul>
  * Kişi verisi yok (pod adları, sayılar); {@code results_json} hiçbir zaman okunmaz. Zamanlar UTC {@code yyyy-MM-ddTHH:mm:ss}.
+ *
+ * <p>İnceleme düzeltmeleri (2026-10-29, FX-OBS): açık koşuya {@code coordinator_live} / {@code orphan_suspected} (zamanlayıcının
+ * zaten okuduğu {@code cert-check} kilidinden — EK SQL YOK; {@link #liveness}), tarama kartının {@code chunked}'ına
+ * {@code orphan_suspected}; bu pod'un koordinatör sayaçlarına {@code classic_by_rule} (kayıtta alan varsa).
  */
 final class CertChunksHealth {
 
@@ -95,7 +99,7 @@ final class CertChunksHealth {
         } else {
             m.put("at", ClusterRuntimeHealth.iso(st.nowMs()));
             m.put("db_clock_stale", st.dbClockStale());
-            m.put("run", st.openRun() == null ? null : openRun(st, minErrors, threshold));
+            m.put("run", st.openRun() == null ? null : openRun(st, minErrors, threshold, liveness(data, st.openRun())));
             List<Map<String, Object>> last = new ArrayList<>();
             for (CertSweepStatus.Run r : st.lastRuns()) {
                 if (r == null || r.open()) continue;
@@ -111,8 +115,19 @@ final class CertChunksHealth {
         data.put("cert_chunks", m);
     }
 
-    /** Açık (RUNNING / DECIDING) koşu → yanıt haritası. */
+    /** Açık (RUNNING / DECIDING) koşu → yanıt haritası (koordinatörün kilit durumu bilinmiyor). */
     static Map<String, Object> openRun(CertSweepStatus st, int minErrors, double threshold) {
+        return openRun(st, minErrors, threshold, null);
+    }
+
+    /**
+     * Açık (RUNNING / DECIDING) koşu → yanıt haritası. {@code coordinatorLive} ({@link #liveness}) eklenti iki alan verir:
+     * {@code coordinator_live} (koordinatör {@code cert-check} kilidini tutuyor mu; null = bilinmiyor — ekran "sessiz koordinatör"
+     * uyarısını kilidi tutan koordinatör için göstermez, inceleme OB-L5) ve {@code orphan_suspected} (koordinatör kilidi artık
+     * tutmuyor ve koşu ≥ {@value CertSweepView#ORPHAN_MIN_AGE_MS} ms yaşında — terk edilmiş tur; sonraki tur ORPHANED kapatır;
+     * ekran ilerleme / kutucuk / bekleyen uyarısı göstermez, inceleme OB-L1).
+     */
+    static Map<String, Object> openRun(CertSweepStatus st, int minErrors, double threshold, Boolean coordinatorLive) {
         CertSweepStatus.Run r = st.openRun();
         long now = st.nowMs();
         Map<String, Object> m = new LinkedHashMap<>();
@@ -164,7 +179,33 @@ final class CertChunksHealth {
         m.put("takeovers", r.takeovers());
         m.put("reclaims", r.reclaims());
         m.put("second_opinions", r.secondOpinions());
+        m.put("coordinator_live", coordinatorLive);
+        m.put("orphan_suspected", CertSweepView.orphanSuspected(r, now, coordinatorLive));
         return m;
+    }
+
+    /**
+     * Açık koşunun koordinatörü kilidi tutuyor mu — {@code data} içindeki zamanlayıcı yanıtından (SQL YOK): {@code scheduler}
+     * bu pod bu koşuyu şu an yürütüyor ({@code running_here} + {@code current_run_id}) → TRUE; aksi halde {@code lock}
+     * ({@code cert-check} satırı: {@code held} + {@code locked_by}; {@code error} → bilinmiyor). Okunamayan / eksik → null.
+     */
+    @SuppressWarnings("unchecked")
+    static Boolean liveness(Map<String, Object> data, CertSweepStatus.Run run) {
+        if (data == null || run == null) return null;
+        String selfRunId = null;
+        if (data.get("scheduler") instanceof Map<?, ?> sch && Boolean.TRUE.equals(sch.get("running_here"))) {
+            selfRunId = str(sch.get("current_run_id"));
+        }
+        CertSweepView.CertLock lock = CertSweepView.CertLock.UNKNOWN;
+        if (data.get("lock") instanceof Map<?, ?> raw) {
+            Map<String, Object> l = (Map<String, Object>) raw;
+            if (!l.containsKey("error") && l.get("held") instanceof Boolean held) {
+                lock = new CertSweepView.CertLock(true, held ? str(l.get("locked_by")) : null);
+                // tutuluyor ama sahibi okunmadı → bilinmiyor (yanlış "sahipsiz" yok)
+                if (held && lock.holder() == null) lock = CertSweepView.CertLock.UNKNOWN;
+            }
+        }
+        return CertSweepView.coordinatorLive(run, lock, selfRunId);
     }
 
     /** Kapanmış koşu → yanıt haritası ({@code workers_json} pod adlarıyla). */
@@ -230,6 +271,11 @@ final class CertChunksHealth {
         } else {
             Map<String, Object> cm = new LinkedHashMap<>();
             cm.put("chunked_runs", c.chunkedRuns());
+            // İnceleme OB-L6: koordinatör sayacı ikiye bölündü (FX-COORD — `classicByRule` = kural gereği klasik: tek pod, az alan
+            // adı, depo yok …; `classicFallback` = gerçek düşüş: oluşturma hatası, iç hata). Alan kayıtta varsa yazılır; yoksa
+            // (eski kayıt) yazılmaz ve ekran bugünkü tek satırı gösterir.
+            Long byRule = recordLong(c, "classicByRule");
+            if (byRule != null) cm.put("classic_by_rule", byRule);
             cm.put("classic_fallback", c.classicFallback());
             cm.put("takeovers", c.takeovers());
             cm.put("remeasured", c.remeasured());
@@ -268,6 +314,7 @@ final class CertChunksHealth {
             ch.put("domains_measured", run.get("domains_measured"));
             ch.put("domains_total", run.get("domains_total"));
             ch.put("oldest_pending_age_s", run.get("oldest_pending_age_s"));
+            ch.put("orphan_suspected", run.get("orphan_suspected"));
             List<Map<String, Object>> pods = new ArrayList<>();
             for (Map<String, Object> p : (List<Map<String, Object>>) run.get("per_pod")) {
                 Map<String, Object> pp = new LinkedHashMap<>();
@@ -305,6 +352,24 @@ final class CertChunksHealth {
 
     private static String str(Object o) {
         return o == null ? null : String.valueOf(o);
+    }
+
+    /**
+     * Kaydın sayısal bileşeni (ad ile) — bileşen yoksa / sayı değilse null. {@code CertSweepStatus.Coordinator}'a eklenen alanlar
+     * (paralel paket) derleme bağımlılığı olmadan okunur; bileşen geldiğinde hiçbir değişiklik gerekmez. Asla fırlatmaz.
+     */
+    static Long recordLong(Record rec, String component) {
+        if (rec == null || component == null) return null;
+        try {
+            for (java.lang.reflect.RecordComponent rc : rec.getClass().getRecordComponents()) {
+                if (!rc.getName().equals(component)) continue;
+                Object v = rc.getAccessor().invoke(rec);
+                return v instanceof Number n ? Long.valueOf(n.longValue()) : null;
+            }
+        } catch (ReflectiveOperationException | RuntimeException e) {
+            return null;
+        }
+        return null;
     }
 
     private static Long num(Object o) {

@@ -111,7 +111,7 @@
       }
     } ]
   },
-  "description" : "SiteMonitor izleme durumu, alarmlar, sertifikalar ve sistemin kendi sağlığı — takım ve tür süzgeçli. Pano revizyonu 8 · SiteMonitor 0.0.0-gate.",
+  "description" : "SiteMonitor izleme durumu, alarmlar, sertifikalar ve sistemin kendi sağlığı — takım ve tür süzgeçli. Pano revizyonu 9 · SiteMonitor 0.0.0-gate.",
   "editable" : true,
   "fiscalYearStartMonth" : 0,
   "graphTooltip" : 1,
@@ -11101,7 +11101,7 @@
     }, {
       "type" : "stat",
       "title" : "Bekleyen sertifika parçası",
-      "description" : "Açık parçalı sertifika turunda henüz bir pod'un almadığı parçalar (parça başına 20 alan adı). Açık tur yokken 0. Veri yoksa parçalı sertifika taraması kapalıdır (Ayarlar → Genel → Zamanlayıcı) ya da tur durumu okunamadı — 0 sayılmaz.",
+      "description" : "Açık parçalı sertifika turunda henüz bir pod'un almadığı parçalar (parça boyutu açılışta ayarlanır, varsayılan 20 alan adı; çok büyük envanterde büyür). Açık tur yokken — koordinatörü kilidi bırakmış terk edilmiş tur dahil — 0. Kuyruk işlenirken bekleyen parça olağandır. Veri yoksa parçalı sertifika taraması kapalıdır (Ayarlar → Genel → Zamanlayıcı) ya da tur durumu okunamadı — 0 sayılmaz.",
       "datasource" : {
         "type" : "prometheus",
         "uid" : "${datasource}"
@@ -11226,7 +11226,7 @@
     }, {
       "type" : "stat",
       "title" : "Son saatlik sertifika taraması",
-      "description" : "En yeni saatlik sertifika taramasının süresi (parçalı ya da klasik). 1 dk altı beklenir; 5 dk üstü kötü bir saati ya da yetişemeyen pod'ları gösterir. Veri yoksa parçalı sertifika taraması kapalıdır (Ayarlar → Genel → Zamanlayıcı) ya da tur durumu okunamadı — 0 sayılmaz.",
+      "description" : "En yeni saatlik sertifika taramasının toplam süresi (parçalı ya da klasik; ölçüm, sonuçların kaydı ve alarm kararı dahil). 2 dk altı yeşil, 2–5 dk sarı; 5 dk üstü kötü bir saati ya da yetişemeyen pod'ları gösterir. Veri yoksa parçalı sertifika taraması kapalıdır (Ayarlar → Genel → Zamanlayıcı) ya da tur durumu okunamadı — 0 sayılmaz.",
       "datasource" : {
         "type" : "prometheus",
         "uid" : "${datasource}"
@@ -11556,7 +11556,7 @@
     }, {
       "type" : "timeseries",
       "title" : "Sertifika taraması süresi (tür, kip)",
-      "description" : "Tür başına en yeni sertifika taramasının süresi ve kipi (chunked = parçalı, classic = tek pod). Açma kararını parçalı ile klasik süreleri karşılaştırarak verin.",
+      "description" : "Tür başına en yeni sertifika taramasının süresi (kayıt ve karar dahil) ve kipi (chunked = parçalı, classic = tek pod). Seriler yalnız anahtar açıkken yazılır; iki pod varken her uygun tur parçalı koşar, bu yüzden klasik karşılaştırma bu panelde yoktur — anahtarı açmadan önceki süreleri Sistem Sağlığı → Sertifika taraması kartında (scan_runs) okuyun.",
       "datasource" : {
         "type" : "prometheus",
         "uid" : "${datasource}"
@@ -13280,6 +13280,6 @@
   "timezone" : "browser",
   "title" : "SiteMonitor — Uçtan uca izleme",
   "uid" : "sitemonitor-overview",
-  "version" : 8,
+  "version" : 9,
   "weekStart" : "monday"
 }
