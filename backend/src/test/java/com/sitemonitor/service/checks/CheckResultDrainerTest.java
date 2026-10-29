@@ -959,6 +959,43 @@ class CheckResultDrainerTest {
     }
 
     @Test
+    @DisplayName("DH-L1 (incelemenin yoklaması, tek dalga): kapanış SON dalganın uygulaması sırasında başlarsa da devir temiz yazılmaz")
+    void handoverDuringTheOnlyWave_markerNotClean() throws Exception {
+        Rig a = leader();
+        ReflectionTestUtils.setField(a.pod().scheduler(), "checkResultDrainer", a.drainer());
+        AtomicReference<Boolean> quiet = handoverSink(a);
+        AtomicReference<Integer> remainingAtApply = new AtomicReference<>();
+        Thread[] closer = new Thread[1];
+        a.applier().hook = w -> {
+            if (closer[0] != null) return;
+            remainingAtApply.set(store.remaining());
+            closer[0] = new Thread(() -> a.pod().scheduler().onContextClosed(null), "fx-closer-1");
+            closer[0].start();
+            await().atMost(Duration.ofSeconds(2)).until(() -> a.pod().scheduler().sideJobsStopping());
+        };
+        store.add(row(1, "port", 1), row(2, "ping", 2), row(3, "http", 3));   // tek dalga
+        a.drainer().drainOnce();
+        closer[0].join(5_000L);
+        assertThat(remainingAtApply.get()).as("uygulama anında satırlar kuyrukta yok").isZero();
+        assertThat(a.drainer().status().droppedHandover()).isZero();
+        assertThat(a.drainer().lostInHandover()).isTrue();
+        assertThat(quiet.get()).as("çit bu dalganın MOS çağrılarını düşürdü → işaret temiz değil").isFalse();
+    }
+
+    @Test
+    @DisplayName("DH-L1: kapanıştan önce biten parti devri kirletmez (boşta → işaret temiz)")
+    void handoverAfterACompletedBatch_markerClean() {
+        Rig a = leader();
+        ReflectionTestUtils.setField(a.pod().scheduler(), "checkResultDrainer", a.drainer());
+        AtomicReference<Boolean> quiet = handoverSink(a);
+        store.add(row(1, "port", 1));
+        a.drainer().drainOnce();
+        a.pod().scheduler().onContextClosed(null);
+        assertThat(a.drainer().lostInHandover()).isFalse();
+        assertThat(quiet.get()).isTrue();
+    }
+
+    @Test
     @DisplayName("DH-L2: bekletme tavanı yükleme kapısı açıldıktan sonraki ilk adımdan ölçülür (yavaş TAM yükleme sonrası elle kutu beklemeye devam eder)")
     void slowLoad_holdStartsWhenTheGateOpens() {
         Rig a = leader();
