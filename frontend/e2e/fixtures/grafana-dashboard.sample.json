@@ -111,7 +111,7 @@
       }
     } ]
   },
-  "description" : "SiteMonitor izleme durumu, alarmlar, sertifikalar ve sistemin kendi sağlığı — takım ve tür süzgeçli. Pano revizyonu 6 · SiteMonitor 0.0.0-gate.",
+  "description" : "SiteMonitor izleme durumu, alarmlar, sertifikalar ve sistemin kendi sağlığı — takım ve tür süzgeçli. Pano revizyonu 7 · SiteMonitor 0.0.0-gate.",
   "editable" : true,
   "fiscalYearStartMonth" : 0,
   "graphTooltip" : 1,
@@ -8663,7 +8663,7 @@
     }, {
       "type" : "state-timeline",
       "title" : "Kendi kendini izleme kontrolleri",
-      "description" : "Tarama liderliği, izleme ve sertifika taramaları, bildirim, push kuyruğu, veritabanı ve saat uyumu kontrollerinin durumu, zamanla.",
+      "description" : "Tarama liderliği, izleme ve sertifika taramaları, bildirim, push kuyruğu, veritabanı, saat uyumu ve dağıtık kontrol kuyruğu kontrollerinin durumu, zamanla.",
       "datasource" : {
         "type" : "prometheus",
         "uid" : "${datasource}"
@@ -10474,6 +10474,630 @@
         "y" : 283
       },
       "id" : 110
+    }, {
+      "type" : "stat",
+      "title" : "Bekleyen kontrol işi",
+      "description" : "Gönderilmiş ama henüz bir pod'un sahiplenmediği kontrol işleri (tür süzgecine göre). Veri yoksa dağıtık kontroller kapalıdır (Ayarlar → Genel → Zamanlayıcı) ya da kuyruk okunamadı — 0 sayılmaz.",
+      "datasource" : {
+        "type" : "prometheus",
+        "uid" : "${datasource}"
+      },
+      "fieldConfig" : {
+        "defaults" : {
+          "unit" : "short",
+          "thresholds" : {
+            "mode" : "absolute",
+            "steps" : [ {
+              "color" : "blue",
+              "value" : null
+            } ]
+          },
+          "color" : {
+            "mode" : "thresholds"
+          },
+          "noValue" : "Veri yok"
+        },
+        "overrides" : [ ]
+      },
+      "targets" : [ {
+        "datasource" : {
+          "type" : "prometheus",
+          "uid" : "${datasource}"
+        },
+        "editorMode" : "code",
+        "expr" : "(sum(max by (state, type) (sitemonitor_check_jobs{namespace=\"site-monitor-prod\", type=~\"$type\", state=\"pending\"}))) or (vector(0) and on() (max(sitemonitor_exporter_source_up{namespace=\"site-monitor-prod\", source=\"check_jobs\"}) == 1))",
+        "instant" : false,
+        "legendFormat" : "__auto",
+        "range" : true,
+        "refId" : "A"
+      } ],
+      "transformations" : [ ],
+      "options" : {
+        "colorMode" : "value",
+        "graphMode" : "area",
+        "justifyMode" : "auto",
+        "orientation" : "auto",
+        "percentChangeColorMode" : "standard",
+        "reduceOptions" : {
+          "calcs" : [ "lastNotNull" ],
+          "fields" : "",
+          "values" : false
+        },
+        "showPercentChange" : false,
+        "textMode" : "auto",
+        "wideLayout" : true
+      },
+      "links" : [ {
+        "title" : "SiteMonitor'da aç",
+        "url" : "https://sitemonitor.example.org/?tab=health&sec=sched",
+        "targetBlank" : true
+      } ],
+      "gridPos" : {
+        "h" : 4,
+        "w" : 4,
+        "x" : 12,
+        "y" : 283
+      },
+      "id" : 111
+    }, {
+      "type" : "stat",
+      "title" : "En eski bekleyen iş",
+      "description" : "Sahiplenilmeyi en uzun bekleyen işin yaşı. 30 sn üstü işçiler yetişemiyor; 2 dk üstünü kendi kendini izleme sorun sayar. Veri yoksa dağıtık kontroller kapalıdır (Ayarlar → Genel → Zamanlayıcı) ya da kuyruk okunamadı — 0 sayılmaz.",
+      "datasource" : {
+        "type" : "prometheus",
+        "uid" : "${datasource}"
+      },
+      "fieldConfig" : {
+        "defaults" : {
+          "unit" : "s",
+          "thresholds" : {
+            "mode" : "absolute",
+            "steps" : [ {
+              "color" : "green",
+              "value" : null
+            }, {
+              "color" : "orange",
+              "value" : 30
+            }, {
+              "color" : "red",
+              "value" : 120
+            } ]
+          },
+          "color" : {
+            "mode" : "thresholds"
+          },
+          "noValue" : "Veri yok"
+        },
+        "overrides" : [ ]
+      },
+      "targets" : [ {
+        "datasource" : {
+          "type" : "prometheus",
+          "uid" : "${datasource}"
+        },
+        "editorMode" : "code",
+        "expr" : "max(sitemonitor_check_jobs_oldest_seconds{namespace=\"site-monitor-prod\", state=\"pending\"})",
+        "instant" : false,
+        "legendFormat" : "__auto",
+        "range" : true,
+        "refId" : "A"
+      } ],
+      "transformations" : [ ],
+      "options" : {
+        "colorMode" : "background",
+        "graphMode" : "area",
+        "justifyMode" : "auto",
+        "orientation" : "auto",
+        "percentChangeColorMode" : "standard",
+        "reduceOptions" : {
+          "calcs" : [ "lastNotNull" ],
+          "fields" : "",
+          "values" : false
+        },
+        "showPercentChange" : false,
+        "textMode" : "auto",
+        "wideLayout" : true
+      },
+      "gridPos" : {
+        "h" : 4,
+        "w" : 4,
+        "x" : 16,
+        "y" : 283
+      },
+      "id" : 112
+    }, {
+      "type" : "stat",
+      "title" : "En eski değerlendirilmeyen sonuç",
+      "description" : "Tamamlanıp tarama liderinin değerlendirmesini en uzun bekleyen sonucun yaşı. Büyüyorsa lider sonuçları boşaltmıyor. Veri yoksa dağıtık kontroller kapalıdır (Ayarlar → Genel → Zamanlayıcı) ya da kuyruk okunamadı — 0 sayılmaz.",
+      "datasource" : {
+        "type" : "prometheus",
+        "uid" : "${datasource}"
+      },
+      "fieldConfig" : {
+        "defaults" : {
+          "unit" : "s",
+          "thresholds" : {
+            "mode" : "absolute",
+            "steps" : [ {
+              "color" : "green",
+              "value" : null
+            }, {
+              "color" : "orange",
+              "value" : 30
+            }, {
+              "color" : "red",
+              "value" : 120
+            } ]
+          },
+          "color" : {
+            "mode" : "thresholds"
+          },
+          "noValue" : "Veri yok"
+        },
+        "overrides" : [ ]
+      },
+      "targets" : [ {
+        "datasource" : {
+          "type" : "prometheus",
+          "uid" : "${datasource}"
+        },
+        "editorMode" : "code",
+        "expr" : "max(sitemonitor_check_jobs_oldest_seconds{namespace=\"site-monitor-prod\", state=\"done\"})",
+        "instant" : false,
+        "legendFormat" : "__auto",
+        "range" : true,
+        "refId" : "A"
+      } ],
+      "transformations" : [ ],
+      "options" : {
+        "colorMode" : "background",
+        "graphMode" : "area",
+        "justifyMode" : "auto",
+        "orientation" : "auto",
+        "percentChangeColorMode" : "standard",
+        "reduceOptions" : {
+          "calcs" : [ "lastNotNull" ],
+          "fields" : "",
+          "values" : false
+        },
+        "showPercentChange" : false,
+        "textMode" : "auto",
+        "wideLayout" : true
+      },
+      "gridPos" : {
+        "h" : 4,
+        "w" : 4,
+        "x" : 20,
+        "y" : 283
+      },
+      "id" : 113
+    }, {
+      "type" : "stat",
+      "title" : "Kontrol yuvası doluluğu",
+      "description" : "Bütün pod'larda koşan kontroller / yapılandırılmış yuvalar. Sürekli dolu ise işler bekler; pod ya da yuva ekleyin. Veri yoksa dağıtık kontroller kapalıdır (Ayarlar → Genel → Zamanlayıcı) ya da kuyruk okunamadı — 0 sayılmaz.",
+      "datasource" : {
+        "type" : "prometheus",
+        "uid" : "${datasource}"
+      },
+      "fieldConfig" : {
+        "defaults" : {
+          "unit" : "percentunit",
+          "thresholds" : {
+            "mode" : "absolute",
+            "steps" : [ {
+              "color" : "green",
+              "value" : null
+            }, {
+              "color" : "orange",
+              "value" : 0.8
+            }, {
+              "color" : "red",
+              "value" : 0.95
+            } ]
+          },
+          "color" : {
+            "mode" : "thresholds"
+          },
+          "noValue" : "Veri yok"
+        },
+        "overrides" : [ ]
+      },
+      "targets" : [ {
+        "datasource" : {
+          "type" : "prometheus",
+          "uid" : "${datasource}"
+        },
+        "editorMode" : "code",
+        "expr" : "sum(max by (instance) (sitemonitor_check_worker_slots{namespace=\"site-monitor-prod\", job=~\"$job\", instance=~\"$instance\", kind=\"busy\"})) / (sum(max by (instance) (sitemonitor_check_worker_slots{namespace=\"site-monitor-prod\", job=~\"$job\", instance=~\"$instance\", kind=\"total\"})) > 0)",
+        "instant" : false,
+        "legendFormat" : "__auto",
+        "range" : true,
+        "refId" : "A"
+      } ],
+      "transformations" : [ ],
+      "options" : {
+        "colorMode" : "background",
+        "graphMode" : "area",
+        "justifyMode" : "auto",
+        "orientation" : "auto",
+        "percentChangeColorMode" : "standard",
+        "reduceOptions" : {
+          "calcs" : [ "lastNotNull" ],
+          "fields" : "",
+          "values" : false
+        },
+        "showPercentChange" : false,
+        "textMode" : "auto",
+        "wideLayout" : true
+      },
+      "gridPos" : {
+        "h" : 4,
+        "w" : 4,
+        "x" : 0,
+        "y" : 291
+      },
+      "id" : 114
+    }, {
+      "type" : "stat",
+      "title" : "Sahiplenme gecikmesi p95",
+      "description" : "Gönderimden sahiplenmeye geçen sürenin p95'i — en kötü pod. 10 sn altı beklenir. Veri yoksa dağıtık kontroller kapalıdır (Ayarlar → Genel → Zamanlayıcı) ya da kuyruk okunamadı — 0 sayılmaz.",
+      "datasource" : {
+        "type" : "prometheus",
+        "uid" : "${datasource}"
+      },
+      "fieldConfig" : {
+        "defaults" : {
+          "unit" : "s",
+          "thresholds" : {
+            "mode" : "absolute",
+            "steps" : [ {
+              "color" : "green",
+              "value" : null
+            }, {
+              "color" : "orange",
+              "value" : 10
+            }, {
+              "color" : "red",
+              "value" : 30
+            } ]
+          },
+          "color" : {
+            "mode" : "thresholds"
+          },
+          "noValue" : "Veri yok"
+        },
+        "overrides" : [ ]
+      },
+      "targets" : [ {
+        "datasource" : {
+          "type" : "prometheus",
+          "uid" : "${datasource}"
+        },
+        "editorMode" : "code",
+        "expr" : "max(sitemonitor_check_claim_lag_p95_seconds{namespace=\"site-monitor-prod\", job=~\"$job\", instance=~\"$instance\"})",
+        "instant" : false,
+        "legendFormat" : "__auto",
+        "range" : true,
+        "refId" : "A"
+      } ],
+      "transformations" : [ ],
+      "options" : {
+        "colorMode" : "background",
+        "graphMode" : "area",
+        "justifyMode" : "auto",
+        "orientation" : "auto",
+        "percentChangeColorMode" : "standard",
+        "reduceOptions" : {
+          "calcs" : [ "lastNotNull" ],
+          "fields" : "",
+          "values" : false
+        },
+        "showPercentChange" : false,
+        "textMode" : "auto",
+        "wideLayout" : true
+      },
+      "gridPos" : {
+        "h" : 4,
+        "w" : 4,
+        "x" : 4,
+        "y" : 291
+      },
+      "id" : 115
+    }, {
+      "type" : "stat",
+      "title" : "Kayıp kontrol işi (24 sa)",
+      "description" : "Son 24 saatte iki kez sahiplenilip tamamlanmadığı için düşürülen işler (her biri bir izlemenin bir dönemini kaçırdı). 0 olmalı. Veri yoksa dağıtık kontroller kapalıdır (Ayarlar → Genel → Zamanlayıcı) ya da kuyruk okunamadı — 0 sayılmaz.",
+      "datasource" : {
+        "type" : "prometheus",
+        "uid" : "${datasource}"
+      },
+      "fieldConfig" : {
+        "defaults" : {
+          "unit" : "short",
+          "thresholds" : {
+            "mode" : "absolute",
+            "steps" : [ {
+              "color" : "green",
+              "value" : null
+            }, {
+              "color" : "orange",
+              "value" : 1
+            }, {
+              "color" : "red",
+              "value" : 10
+            } ]
+          },
+          "color" : {
+            "mode" : "thresholds"
+          },
+          "noValue" : "Veri yok"
+        },
+        "overrides" : [ ]
+      },
+      "targets" : [ {
+        "datasource" : {
+          "type" : "prometheus",
+          "uid" : "${datasource}"
+        },
+        "editorMode" : "code",
+        "expr" : "sum(increase(sitemonitor_check_worker_jobs{namespace=\"site-monitor-prod\", job=~\"$job\", instance=~\"$instance\", outcome=\"lost\"}[24h]))",
+        "instant" : false,
+        "legendFormat" : "__auto",
+        "range" : true,
+        "refId" : "A"
+      } ],
+      "transformations" : [ ],
+      "options" : {
+        "colorMode" : "background",
+        "graphMode" : "area",
+        "justifyMode" : "auto",
+        "orientation" : "auto",
+        "percentChangeColorMode" : "standard",
+        "reduceOptions" : {
+          "calcs" : [ "lastNotNull" ],
+          "fields" : "",
+          "values" : false
+        },
+        "showPercentChange" : false,
+        "textMode" : "auto",
+        "wideLayout" : true
+      },
+      "gridPos" : {
+        "h" : 4,
+        "w" : 4,
+        "x" : 8,
+        "y" : 291
+      },
+      "id" : 116
+    }, {
+      "type" : "timeseries",
+      "title" : "Kontrol kuyruğu (tür ve durum)",
+      "description" : "Kontrol işleri türe ve duruma göre: bekleyen (pending), koşan (claimed), değerlendirmeyi bekleyen (done). Türleri tek tek açarken her adımı buradan izleyin.",
+      "datasource" : {
+        "type" : "prometheus",
+        "uid" : "${datasource}"
+      },
+      "fieldConfig" : {
+        "defaults" : {
+          "unit" : "short",
+          "color" : {
+            "mode" : "palette-classic"
+          },
+          "custom" : {
+            "axisPlacement" : "auto",
+            "barAlignment" : 0,
+            "drawStyle" : "line",
+            "fillOpacity" : 12,
+            "gradientMode" : "opacity",
+            "lineInterpolation" : "smooth",
+            "lineWidth" : 2,
+            "pointSize" : 4,
+            "showPoints" : "never",
+            "spanNulls" : false,
+            "stacking" : {
+              "group" : "A",
+              "mode" : "none"
+            },
+            "thresholdsStyle" : {
+              "mode" : "off"
+            }
+          }
+        },
+        "overrides" : [ ]
+      },
+      "targets" : [ {
+        "datasource" : {
+          "type" : "prometheus",
+          "uid" : "${datasource}"
+        },
+        "editorMode" : "code",
+        "expr" : "sum by (type, state) (max by (state, type) (sitemonitor_check_jobs{namespace=\"site-monitor-prod\", type=~\"$type\"}))",
+        "instant" : false,
+        "legendFormat" : "{{type}} {{state}}",
+        "range" : true,
+        "refId" : "A"
+      } ],
+      "transformations" : [ ],
+      "options" : {
+        "legend" : {
+          "calcs" : [ "lastNotNull", "max" ],
+          "displayMode" : "table",
+          "placement" : "bottom",
+          "showLegend" : true
+        },
+        "tooltip" : {
+          "hideZeros" : false,
+          "mode" : "multi",
+          "sort" : "desc"
+        }
+      },
+      "gridPos" : {
+        "h" : 8,
+        "w" : 8,
+        "x" : 12,
+        "y" : 291
+      },
+      "id" : 117
+    }, {
+      "type" : "timeseries",
+      "title" : "Kontrol gecikmesi",
+      "description" : "En eski bekleyen iş, en eski değerlendirilmeyen sonuç ve pod başına sahiplenme gecikmesi p95.",
+      "datasource" : {
+        "type" : "prometheus",
+        "uid" : "${datasource}"
+      },
+      "fieldConfig" : {
+        "defaults" : {
+          "unit" : "s",
+          "color" : {
+            "mode" : "palette-classic"
+          },
+          "custom" : {
+            "axisPlacement" : "auto",
+            "barAlignment" : 0,
+            "drawStyle" : "line",
+            "fillOpacity" : 12,
+            "gradientMode" : "opacity",
+            "lineInterpolation" : "smooth",
+            "lineWidth" : 2,
+            "pointSize" : 4,
+            "showPoints" : "never",
+            "spanNulls" : false,
+            "stacking" : {
+              "group" : "A",
+              "mode" : "none"
+            },
+            "thresholdsStyle" : {
+              "mode" : "off"
+            }
+          }
+        },
+        "overrides" : [ ]
+      },
+      "targets" : [ {
+        "datasource" : {
+          "type" : "prometheus",
+          "uid" : "${datasource}"
+        },
+        "editorMode" : "code",
+        "expr" : "max by (state) (sitemonitor_check_jobs_oldest_seconds{namespace=\"site-monitor-prod\"})",
+        "instant" : false,
+        "legendFormat" : "en eski {{state}}",
+        "range" : true,
+        "refId" : "A"
+      }, {
+        "datasource" : {
+          "type" : "prometheus",
+          "uid" : "${datasource}"
+        },
+        "editorMode" : "code",
+        "expr" : "max by (instance) (sitemonitor_check_claim_lag_p95_seconds{namespace=\"site-monitor-prod\", job=~\"$job\", instance=~\"$instance\"})",
+        "instant" : false,
+        "legendFormat" : "{{instance}} sahiplenme p95",
+        "range" : true,
+        "refId" : "B"
+      } ],
+      "transformations" : [ ],
+      "options" : {
+        "legend" : {
+          "calcs" : [ "lastNotNull", "max" ],
+          "displayMode" : "table",
+          "placement" : "bottom",
+          "showLegend" : true
+        },
+        "tooltip" : {
+          "hideZeros" : false,
+          "mode" : "multi",
+          "sort" : "desc"
+        }
+      },
+      "gridPos" : {
+        "h" : 8,
+        "w" : 8,
+        "x" : 0,
+        "y" : 299
+      },
+      "id" : 118
+    }, {
+      "type" : "timeseries",
+      "title" : "Kontrol işçileri (pod başına, 5 dk)",
+      "description" : "Pod başına son 5 dakikada tamamlanan, geç kalan (kira kaybı), kayıp ve değerlendirilmeden düşen işler ile meşgul yuvalar. Yük pod'lara yayılıyorsa tamamlanan çizgiler birbirine yakındır.",
+      "datasource" : {
+        "type" : "prometheus",
+        "uid" : "${datasource}"
+      },
+      "fieldConfig" : {
+        "defaults" : {
+          "unit" : "short",
+          "color" : {
+            "mode" : "palette-classic"
+          },
+          "custom" : {
+            "axisPlacement" : "auto",
+            "barAlignment" : 0,
+            "drawStyle" : "line",
+            "fillOpacity" : 12,
+            "gradientMode" : "opacity",
+            "lineInterpolation" : "smooth",
+            "lineWidth" : 2,
+            "pointSize" : 4,
+            "showPoints" : "never",
+            "spanNulls" : false,
+            "stacking" : {
+              "group" : "A",
+              "mode" : "none"
+            },
+            "thresholdsStyle" : {
+              "mode" : "off"
+            }
+          }
+        },
+        "overrides" : [ ]
+      },
+      "targets" : [ {
+        "datasource" : {
+          "type" : "prometheus",
+          "uid" : "${datasource}"
+        },
+        "editorMode" : "code",
+        "expr" : "sum by (instance, outcome) (increase(sitemonitor_check_worker_jobs{namespace=\"site-monitor-prod\", job=~\"$job\", instance=~\"$instance\"}[5m]))",
+        "instant" : false,
+        "legendFormat" : "{{instance}} {{outcome}}",
+        "range" : true,
+        "refId" : "A"
+      }, {
+        "datasource" : {
+          "type" : "prometheus",
+          "uid" : "${datasource}"
+        },
+        "editorMode" : "code",
+        "expr" : "max by (instance) (sitemonitor_check_worker_slots{namespace=\"site-monitor-prod\", job=~\"$job\", instance=~\"$instance\", kind=\"busy\"})",
+        "instant" : false,
+        "legendFormat" : "{{instance}} meşgul yuva",
+        "range" : true,
+        "refId" : "B"
+      } ],
+      "transformations" : [ ],
+      "options" : {
+        "legend" : {
+          "calcs" : [ "lastNotNull", "max" ],
+          "displayMode" : "table",
+          "placement" : "bottom",
+          "showLegend" : true
+        },
+        "tooltip" : {
+          "hideZeros" : false,
+          "mode" : "multi",
+          "sort" : "desc"
+        }
+      },
+      "gridPos" : {
+        "h" : 8,
+        "w" : 8,
+        "x" : 8,
+        "y" : 299
+      },
+      "id" : 119
     } ]
   }, {
     "type" : "row",
@@ -10483,9 +11107,9 @@
       "h" : 1,
       "w" : 24,
       "x" : 0,
-      "y" : 291
+      "y" : 307
     },
-    "id" : 111,
+    "id" : 120,
     "panels" : [ {
       "type" : "timeseries",
       "title" : "HTTP istek hızı",
@@ -10552,9 +11176,9 @@
         "h" : 8,
         "w" : 8,
         "x" : 0,
-        "y" : 292
+        "y" : 308
       },
-      "id" : 112
+      "id" : 121
     }, {
       "type" : "timeseries",
       "title" : "API gecikmesi (p50 / p95 / p99)",
@@ -10643,9 +11267,9 @@
         "h" : 8,
         "w" : 8,
         "x" : 8,
-        "y" : 292
+        "y" : 308
       },
-      "id" : 113
+      "id" : 122
     }, {
       "type" : "stat",
       "title" : "5xx oranı (5 dk)",
@@ -10710,9 +11334,9 @@
         "h" : 8,
         "w" : 4,
         "x" : 16,
-        "y" : 292
+        "y" : 308
       },
-      "id" : 114
+      "id" : 123
     }, {
       "type" : "stat",
       "title" : "≤ 500 ms API isteği",
@@ -10777,9 +11401,9 @@
         "h" : 8,
         "w" : 4,
         "x" : 20,
-        "y" : 292
+        "y" : 308
       },
-      "id" : 115
+      "id" : 124
     }, {
       "type" : "timeseries",
       "title" : "En yoğun uçlar",
@@ -10846,9 +11470,9 @@
         "h" : 8,
         "w" : 12,
         "x" : 0,
-        "y" : 300
+        "y" : 316
       },
-      "id" : 116
+      "id" : 125
     }, {
       "type" : "timeseries",
       "title" : "En yavaş uçlar (ortalama)",
@@ -10915,9 +11539,9 @@
         "h" : 8,
         "w" : 12,
         "x" : 12,
-        "y" : 300
+        "y" : 316
       },
-      "id" : 117
+      "id" : 126
     }, {
       "type" : "timeseries",
       "title" : "JVM bellek (heap)",
@@ -10995,9 +11619,9 @@
         "h" : 8,
         "w" : 8,
         "x" : 0,
-        "y" : 308
+        "y" : 324
       },
-      "id" : 118
+      "id" : 127
     }, {
       "type" : "timeseries",
       "title" : "JVM bellek (non-heap)",
@@ -11064,9 +11688,9 @@
         "h" : 8,
         "w" : 8,
         "x" : 8,
-        "y" : 308
+        "y" : 324
       },
-      "id" : 119
+      "id" : 128
     }, {
       "type" : "timeseries",
       "title" : "GC duraklaması",
@@ -11133,9 +11757,9 @@
         "h" : 8,
         "w" : 8,
         "x" : 16,
-        "y" : 308
+        "y" : 324
       },
-      "id" : 120
+      "id" : 129
     }, {
       "type" : "timeseries",
       "title" : "CPU",
@@ -11213,9 +11837,9 @@
         "h" : 8,
         "w" : 8,
         "x" : 0,
-        "y" : 316
+        "y" : 332
       },
-      "id" : 121
+      "id" : 130
     }, {
       "type" : "timeseries",
       "title" : "İş parçacıkları",
@@ -11282,9 +11906,9 @@
         "h" : 8,
         "w" : 8,
         "x" : 8,
-        "y" : 316
+        "y" : 332
       },
-      "id" : 122
+      "id" : 131
     }, {
       "type" : "timeseries",
       "title" : "Günlük uyarı / hata hızı",
@@ -11351,9 +11975,9 @@
         "h" : 8,
         "w" : 8,
         "x" : 16,
-        "y" : 316
+        "y" : 332
       },
-      "id" : 123
+      "id" : 132
     }, {
       "type" : "timeseries",
       "title" : "Veritabanı bağlantı havuzu",
@@ -11453,9 +12077,9 @@
         "h" : 8,
         "w" : 12,
         "x" : 0,
-        "y" : 324
+        "y" : 340
       },
-      "id" : 124
+      "id" : 133
     }, {
       "type" : "timeseries",
       "title" : "Bağlantı alma süresi",
@@ -11533,9 +12157,9 @@
         "h" : 8,
         "w" : 12,
         "x" : 12,
-        "y" : 324
+        "y" : 340
       },
-      "id" : 125
+      "id" : 134
     }, {
       "type" : "timeseries",
       "title" : "Kontrol iş havuzu",
@@ -11624,9 +12248,9 @@
         "h" : 8,
         "w" : 12,
         "x" : 0,
-        "y" : 332
+        "y" : 348
       },
-      "id" : 126
+      "id" : 135
     }, {
       "type" : "timeseries",
       "title" : "Sentetik (k6) koşucu",
@@ -11726,9 +12350,9 @@
         "h" : 8,
         "w" : 12,
         "x" : 12,
-        "y" : 332
+        "y" : 348
       },
-      "id" : 127
+      "id" : 136
     }, {
       "type" : "timeseries",
       "title" : "Önbellek isabet oranı",
@@ -11795,9 +12419,9 @@
         "h" : 8,
         "w" : 12,
         "x" : 0,
-        "y" : 340
+        "y" : 356
       },
-      "id" : 128
+      "id" : 137
     } ]
   } ],
   "refresh" : "1m",
@@ -12063,6 +12687,6 @@
   "timezone" : "browser",
   "title" : "SiteMonitor — Uçtan uca izleme",
   "uid" : "sitemonitor-overview",
-  "version" : 6,
+  "version" : 7,
   "weekStart" : "monday"
 }

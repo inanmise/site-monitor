@@ -88,6 +88,8 @@ public class WatchdogProbes {
     static final int PUSH_OUTCOME_WINDOW_MIN = 30;
     static final int PUSH_OUTCOME_MIN = 3;
     static final int PUSH_FAIL_PERCENT = 50;
+    /** Dağıtık kontrol kuyruğu (R3-3): en eski bekleyen / değerlendirilmeyen bu kadar ms'den eskiyse sorun (tasarım §7.5). */
+    static final long CHECK_QUEUE_LIMIT_MS = 120_000L;
 
     /** Tek yoklama sonucu. */
     public record Probe(WatchdogCheck check, Result result, String severity, Map<String, Object> facts) {
@@ -117,6 +119,10 @@ public class WatchdogProbes {
     private NotificationLogRepository notificationLogs;
     private UserPushService push;
     private DatabaseHealthService database;
+    /** Çok pod R3-3 (paket D1): dağıtık kontroller — anahtar (bellek), kuyruk (yalnız açıkken SQL), işçi kaydı (bellek). */
+    private com.sitemonitor.service.checks.DistributedChecks distributedChecks;
+    private com.sitemonitor.service.checks.CheckJobStore checkJobStore;
+    private com.sitemonitor.service.checks.CheckWorkerRegistry checkWorkerRegistry;
 
     @Value("${site.monitor.scheduler.sweep-leader-ttl-ms:180000}")
     private long leaseTtlMs = 180_000;
@@ -135,6 +141,9 @@ public class WatchdogProbes {
     @Autowired(required = false) public void setNotificationLogs(NotificationLogRepository v) { this.notificationLogs = v; }
     @Autowired(required = false) @Lazy public void setPush(UserPushService v) { this.push = v; }
     @Autowired(required = false) @Lazy public void setDatabase(DatabaseHealthService v) { this.database = v; }
+    @Autowired(required = false) public void setDistributedChecks(com.sitemonitor.service.checks.DistributedChecks v) { this.distributedChecks = v; }
+    @Autowired(required = false) public void setCheckJobStore(com.sitemonitor.service.checks.CheckJobStore v) { this.checkJobStore = v; }
+    @Autowired(required = false) public void setCheckWorkerRegistry(com.sitemonitor.service.checks.CheckWorkerRegistry v) { this.checkWorkerRegistry = v; }
 
     /** Tüm kontroller katalog sırasıyla. */
     public List<Probe> runAll(Instant now) {
@@ -153,6 +162,7 @@ public class WatchdogProbes {
                 case PUSH_OUTBOX -> pushOutbox(now);
                 case DATABASE -> database(now);
                 case CLOCK_SKEW -> clockSkew(now);
+                case CHECK_QUEUE -> checkQueue();
             };
         } catch (Exception e) {
             log.warn("Kendi kendini izleme: {} ölçülemedi: {}", c.key(), e.toString());
@@ -401,6 +411,53 @@ public class WatchdogProbes {
         if (spread > SKEW_PROBLEM_MS) return new Probe(WatchdogCheck.CLOCK_SKEW, Result.PROBLEM, WatchdogCheck.Severity.HIGH.name(), f);
         if (spread > SKEW_WARN_MS) return new Probe(WatchdogCheck.CLOCK_SKEW, Result.PROBLEM, WatchdogCheck.Severity.MEDIUM.name(), f);
         return new Probe(WatchdogCheck.CLOCK_SKEW, Result.OK, null, f);
+    }
+
+    /**
+     * Dağıtık kontrol kuyruğu (2026-10-29, çok pod Sürüm 3-3, paket D1; tasarım §7.5). Ana anahtar KAPALI ya da hiç tür seçili
+     * değil → NA, SORGU YOK (bellek okuması — K-1; {@code CheckJobStore} sözleşmesi: anahtar kapalıyken çağrılmaz). Açık: tek
+     * gruplu kuyruk deyimi ({@code CheckJobStore.stats()} — veritabanı geneli, değerlendiren pod'dan bağımsız): en eski bekleyen
+     * iş ya da en eski değerlendirilmeyen sonuç {@value #CHECK_QUEUE_LIMIT_MS} ms'den eski, ya da kirası dolmuş sahiplenme varsa
+     * PROBLEM (orta önem); onay {@code confirm-checks} turla (geçişin genel kuralı). Olgular: sayılar, en eski yaşlar (sn),
+     * canlı işçi sayısı (kayıt önbelleği; bilinmiyorsa yok), değerlendiren pod.
+     */
+    Probe checkQueue() {
+        com.sitemonitor.service.checks.DistributedChecks dc = distributedChecks;
+        if (dc == null || !dc.anyDistributed()) return Probe.na(WatchdogCheck.CHECK_QUEUE, "distributed_off");
+        if (checkJobStore == null) return Probe.na(WatchdogCheck.CHECK_QUEUE, "no_check_store");
+        com.sitemonitor.service.checks.CheckJobStore.QueueStats st = checkJobStore.stats();
+        if (st == null) return new Probe(WatchdogCheck.CHECK_QUEUE, Result.UNKNOWN, null, Map.of("reason", "probe_failed"));
+        Map<String, Object> f = new LinkedHashMap<>();
+        f.put("pending", st.count(com.sitemonitor.service.checks.CheckJobStore.STATE_PENDING));
+        f.put("claimed", st.count(com.sitemonitor.service.checks.CheckJobStore.STATE_CLAIMED));
+        f.put("done", st.count(com.sitemonitor.service.checks.CheckJobStore.STATE_DONE));
+        Long pendingMs = st.oldestPendingAgeMs();
+        Long doneMs = st.oldestDoneAgeMs();
+        if (pendingMs != null) f.put("oldest_pending_seconds", Math.max(0L, pendingMs) / 1000);
+        if (doneMs != null) f.put("oldest_done_seconds", Math.max(0L, doneMs) / 1000);
+        f.put("expired_claims", st.expiredClaims());
+        f.put("limit_seconds", CHECK_QUEUE_LIMIT_MS / 1000);
+        Integer live = liveWorkers();
+        if (live != null) f.put("live_workers", live);
+        f.put("evaluated_by", SystemMetricSampler.currentPodName());
+        boolean problem = (pendingMs != null && pendingMs > CHECK_QUEUE_LIMIT_MS) || (doneMs != null && doneMs > CHECK_QUEUE_LIMIT_MS)
+                || st.expiredClaims() > 0;
+        return new Probe(WatchdogCheck.CHECK_QUEUE, problem ? Result.PROBLEM : Result.OK, WatchdogCheck.CHECK_QUEUE.severity().name(), f);
+    }
+
+    /** Canlı (durmayan) işçi sayısı — kayıt önbelleğinden (bellek); önbellek bilinmiyorsa null. */
+    private Integer liveWorkers() {
+        com.sitemonitor.service.checks.CheckWorkerRegistry r = checkWorkerRegistry;
+        if (r == null) return null;
+        try {
+            if (r.liveOtherWorkers(com.sitemonitor.service.checks.CheckJobTypes.PORT)
+                    == com.sitemonitor.service.checks.CheckWorkerRegistry.UNKNOWN) return null;
+            int n = 0;
+            for (var w : r.workers()) if (w != null && w.live() && !w.stopping()) n++;
+            return n;
+        } catch (RuntimeException e) {
+            return null;
+        }
     }
 
     /**

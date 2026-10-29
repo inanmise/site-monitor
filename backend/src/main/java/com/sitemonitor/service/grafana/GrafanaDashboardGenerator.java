@@ -50,7 +50,7 @@ public final class GrafanaDashboardGenerator {
      * Pano içerik revizyonu — içerik (panel, sorgu, değişken) değişen HER sürümde artır ve
      * {@code src/test/resources/grafana/dashboard-content.sha256} dosyasını güncelle (kapı mesajı yeni satırı yazar).
      */
-    public static final int DASHBOARD_REVISION = 6;
+    public static final int DASHBOARD_REVISION = 7;
     /** "Kritik / yüksek alarm açıldı" anotasyonunun penceresi (sn) — açılış zamanı bu kadar yeni olan alarmlar. */
     static final int ALERT_OPENED_WINDOW_S = 900;
     /** Aktarıcı tazelik eşiği (sn) — sunucunun {@code max(180, 3 × refresh-seconds)} kuralının varsayılan değeri. */
@@ -1693,8 +1693,8 @@ public final class GrafanaDashboardGenerator {
             add(maint);
 
             Panel checks = new Panel("state-timeline", t("Kendi kendini izleme kontrolleri", "Self-monitoring checks"),
-                    t("Tarama liderliği, izleme ve sertifika taramaları, bildirim, push kuyruğu, veritabanı ve saat uyumu kontrollerinin durumu, zamanla.",
-                            "State of the sweep leadership, monitor and certificate sweeps, notification, push queue, database and clock alignment checks over time."));
+                    t("Tarama liderliği, izleme ve sertifika taramaları, bildirim, push kuyruğu, veritabanı, saat uyumu ve dağıtık kontrol kuyruğu kontrollerinin durumu, zamanla.",
+                            "State of the sweep leadership, monitor and certificate sweeps, notification, push queue, database, clock alignment and distributed check queue checks over time."));
             checks.w = 16; checks.h = 8;
             checks.target("max by (check) (" + metric(MonitoringMetricNames.WATCHDOG_CHECK) + ")", "{{check}}", false);
             Map<String, Object> to = new LinkedHashMap<>();
@@ -1868,6 +1868,70 @@ public final class GrafanaDashboardGenerator {
                     t("{{instance}} bekleyen yazım", "{{instance}} pending writes"), false);
             placement.timeseries("short", false, "line");
             add(placement);
+
+            distributedChecks();
+        }
+
+        /**
+         * Çok pod Sürüm 3-3 (2026-10-29, paket D1; tasarım R3-3 §7.4): dağıtık izleme kontrolleri. Kuyruk ölçümleri KÜME kapsamlı
+         * (kurum ailelerini yayan pod'lar aynı değeri yazar → {@code max by (state, type)} ile tekilleşir), işçi ölçümleri POD
+         * kapsamlı ({@code instance} başına). Ana anahtar KAPALIYKEN hiçbir seri yoktur — paneller "veri yok" der, asla 0.
+         * Kuyruk boş ama okunmuşsa {@code guard()} 0 yazar (kaynak {@code check_jobs}).
+         */
+        void distributedChecks() {
+            String jobs = MonitoringMetricNames.CHECK_JOBS;
+            String oldest = MonitoringMetricNames.CHECK_JOBS_OLDEST;
+            String slots = MonitoringMetricNames.CHECK_WORKER_SLOTS;
+            String outcomes = MonitoringMetricNames.CHECK_WORKER_JOBS;
+            String lag = MonitoringMetricNames.CHECK_CLAIM_LAG;
+            String off = t(" Veri yoksa dağıtık kontroller kapalıdır (Ayarlar → Genel → Zamanlayıcı) ya da kuyruk okunamadı — 0 sayılmaz.",
+                    " No data means distributed checks are off (Settings → General → Scheduler) or the queue could not be read — not 0.");
+            add(stat(t("Bekleyen kontrol işi", "Pending check jobs"), t("Gönderilmiş ama henüz bir pod'un sahiplenmediği kontrol işleri (tür süzgecine göre)."
+                            + off, "Check jobs that were dispatched but not claimed by a pod yet (filtered by type)." + off),
+                    guard("sum(max by (state, type) (" + metric(jobs, TYPE, "state=\"pending\"") + "))", "check_jobs"), "short",
+                    thresholds(BLUE, null), "value", links() ? url("tab=health&sec=sched") : null).size(4, 4));
+            add(stat(t("En eski bekleyen iş", "Oldest pending job"), t("Sahiplenilmeyi en uzun bekleyen işin yaşı. 30 sn üstü işçiler yetişemiyor; 2 dk üstünü kendi kendini izleme sorun sayar."
+                            + off, "Age of the job that has waited longest to be claimed. Above 30 s the workers fall behind; self-monitoring treats more than 2 minutes as a problem." + off),
+                    "max(" + metric(oldest, "state=\"pending\"") + ")", "s", thresholds(GREEN, null, AMBER, 30, RED, 120), "background", null).size(4, 4));
+            add(stat(t("En eski değerlendirilmeyen sonuç", "Oldest unevaluated result"), t("Tamamlanıp tarama liderinin değerlendirmesini en uzun bekleyen sonucun yaşı. Büyüyorsa lider sonuçları boşaltmıyor."
+                            + off, "Age of the completed result that has waited longest for the sweep leader's evaluation. A growing value means the leader is not draining results." + off),
+                    "max(" + metric(oldest, "state=\"done\"") + ")", "s", thresholds(GREEN, null, AMBER, 30, RED, 120), "background", null).size(4, 4));
+            add(stat(t("Kontrol yuvası doluluğu", "Check slot usage"), t("Bütün pod'larda koşan kontroller / yapılandırılmış yuvalar. Sürekli dolu ise işler bekler; pod ya da yuva ekleyin."
+                            + off, "Running checks / configured slots across all pods. Constantly full means jobs wait; add pods or slots." + off),
+                    "sum(max by (instance) (" + metric(slots, RT, "kind=\"busy\"") + ")) / (sum(max by (instance) (" + metric(slots, RT, "kind=\"total\"")
+                            + ")) > 0)", "percentunit", thresholds(GREEN, null, AMBER, 0.8, RED, 0.95), "background", null).size(4, 4));
+            add(stat(t("Sahiplenme gecikmesi p95", "Claim lag p95"), t("Gönderimden sahiplenmeye geçen sürenin p95'i — en kötü pod. 10 sn altı beklenir."
+                            + off, "p95 of the time from dispatch to claim — worst pod. Expected below 10 s." + off),
+                    "max(" + metric(lag, RT) + ")", "s", thresholds(GREEN, null, AMBER, 10, RED, 30), "background", null).size(4, 4));
+            add(stat(t("Kayıp kontrol işi (24 sa)", "Lost check jobs (24 h)"), t("Son 24 saatte iki kez sahiplenilip tamamlanmadığı için düşürülen işler (her biri bir izlemenin bir dönemini kaçırdı). 0 olmalı."
+                            + off, "Jobs dropped in the last 24 hours because they were claimed twice without completing (each one missed one period of a monitor). Should be 0." + off),
+                    "sum(increase(" + metric(outcomes, RT, "outcome=\"lost\"") + "[24h]))", "short", thresholds(GREEN, null, AMBER, 1, RED, 10), "background", null).size(4, 4));
+
+            Panel queue = new Panel("timeseries", t("Kontrol kuyruğu (tür ve durum)", "Check queue (type and state)"),
+                    t("Kontrol işleri türe ve duruma göre: bekleyen (pending), koşan (claimed), değerlendirmeyi bekleyen (done). Türleri tek tek açarken her adımı buradan izleyin.",
+                            "Check jobs by type and state: pending, claimed (running) and done (waiting for evaluation). Follow each step of the type-by-type rollout here."));
+            queue.w = 8; queue.h = 8;
+            queue.target("sum by (type, state) (max by (state, type) (" + metric(jobs, TYPE) + "))", "{{type}} {{state}}", false);
+            queue.timeseries("short", false, "line");
+            add(queue);
+
+            Panel delay = new Panel("timeseries", t("Kontrol gecikmesi", "Check delay"),
+                    t("En eski bekleyen iş, en eski değerlendirilmeyen sonuç ve pod başına sahiplenme gecikmesi p95.",
+                            "Oldest pending job, oldest unevaluated result and claim lag p95 per pod."));
+            delay.w = 8; delay.h = 8;
+            delay.target("max by (state) (" + metric(oldest) + ")", t("en eski {{state}}", "oldest {{state}}"), false);
+            delay.target("max by (instance) (" + metric(lag, RT) + ")", t("{{instance}} sahiplenme p95", "{{instance}} claim p95"), false);
+            delay.timeseries("s", false, "line");
+            add(delay);
+
+            Panel workers = new Panel("timeseries", t("Kontrol işçileri (pod başına, 5 dk)", "Check workers (per pod, 5 min)"),
+                    t("Pod başına son 5 dakikada tamamlanan, geç kalan (kira kaybı), kayıp ve değerlendirilmeden düşen işler ile meşgul yuvalar. Yük pod'lara yayılıyorsa tamamlanan çizgiler birbirine yakındır.",
+                            "Per pod: jobs completed, late (lease lost), lost and dropped without evaluation in the last 5 minutes, and busy slots. When the load is spread, the completed lines stay close together."));
+            workers.w = 8; workers.h = 8;
+            workers.target("sum by (instance, outcome) (increase(" + metric(outcomes, RT) + "[5m]))", "{{instance}} {{outcome}}", false);
+            workers.target("max by (instance) (" + metric(slots, RT, "kind=\"busy\"") + ")", t("{{instance}} meşgul yuva", "{{instance}} busy slots"), false);
+            workers.timeseries("short", false, "line");
+            add(workers);
         }
 
         // ── Çalışma zamanı ───────────────────────────────────────────────────────────────────────────────

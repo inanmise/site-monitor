@@ -51,7 +51,18 @@ public enum WatchdogCheck {
             "Pod'ların saatleri birbirinden kaymış; liderlik kirası ve iş kilitleri yanlış zamanda düşebilir (çift tarama riski). "
                     + "Düğümlerin NTP / chrony eşitlemesini denetleyin.",
             "The pods' clocks have drifted apart; the leader lease and job locks may expire at the wrong time (risk of double sweeps). "
-                    + "Check NTP / chrony synchronisation on the nodes.");
+                    + "Check NTP / chrony synchronisation on the nodes."),
+    /**
+     * Dağıtık kontrol kuyruğu takıldı (2026-10-29, çok pod Sürüm 3-3, paket D1; tasarım §7.5): en eski bekleyen iş ya da en eski
+     * değerlendirilmeyen sonuç 2 dk'dan eski, ya da kirası dolmuş sahiplenme var. Ana anahtar kapalıyken uygulanmaz (NA,
+     * sorgu yok). Karar veritabanı genelindeki kuyruk sayımından (tek gruplu deyim) — değerlendiren pod'un belleğinden değil.
+     */
+    CHECK_QUEUE("check_queue", Severity.MEDIUM,
+            "Dağıtık kontrol kuyruğu", "Distributed check queue",
+            "Dağıtık kontrol işleri sahiplenilmiyor ya da sonuçları değerlendirilmiyor; izlemeler zamanında kontrol edilmiyor olabilir. "
+                    + "Küme kartında işçileri ve tarama liderini denetleyin; gerekirse ana anahtarı kapatın (türler klasik taramaya döner).",
+            "Distributed check jobs are not being claimed or their results are not being evaluated; monitors may not be checked on time. "
+                    + "Check the workers and the sweep leader on the Cluster card; if needed, turn the master switch off (types return to the classic sweep).");
 
     public enum Severity { CRITICAL, HIGH, MEDIUM }
 
