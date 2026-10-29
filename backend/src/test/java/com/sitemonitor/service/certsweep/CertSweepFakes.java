@@ -314,7 +314,8 @@ public final class CertSweepFakes {
                 c.claimedMs = now;
                 c.leaseUntil = now + leaseMs;
                 c.attempts++;
-                return Optional.of(new ClaimedChunk(c.id, c.runId, c.no, c.entries, c.attempts, c.token, now, c.leaseUntil));
+                return Optional.of(new ClaimedChunk(c.id, c.runId, c.no, c.entries, c.attempts, c.token, now, c.leaseUntil,
+                        r.coordinator, c.createdMs, c.avoid));
             }
             return Optional.empty();
         }

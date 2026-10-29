@@ -259,26 +259,19 @@ class CertChunksHealthTest {
         org.mockito.Mockito.verify(store, org.mockito.Mockito.never()).chunkStates(org.mockito.ArgumentMatchers.anyString());
     }
 
-    /** {@code CertSweepStatus.Coordinator}'a eklenen bölünmüş sayaçların biçimi (paralel paket FX-COORD). */
-    record SplitCoordinator(long chunkedRuns, long classicByRule, long classicFallback) {}
-
     @Test
-    @DisplayName("OB-L6: koordinatör kaydında classicByRule varsa classic_by_rule yazılır; yoksa (eski kayıt) alan YOK — ekran bugünkü "
-            + "satırı gösterir; bileşen sayı değil / kayıt null → null")
+    @DisplayName("OB-L6: koordinatörün bölünmüş sayaçları ayrı yazılır — classic_by_rule (kural gereği klasik) ve classic_fallback "
+            + "(gerçek düşüş); eski 6 bileşenli kurucu classic_by_rule = 0")
     void classicByRuleSplit() {
-        assertThat(CertChunksHealth.recordLong(new SplitCoordinator(5, 280, 2), "classicByRule")).isEqualTo(280L);
-        assertThat(CertChunksHealth.recordLong(new SplitCoordinator(5, 280, 2), "classicFallback")).isEqualTo(2L);
-        assertThat(CertChunksHealth.recordLong(new SplitCoordinator(5, 280, 2), "nope")).isNull();
-        assertThat(CertChunksHealth.recordLong(null, "classicByRule")).isNull();
-        record Named(String classicByRule) {}
-        assertThat(CertChunksHealth.recordLong(new Named("x"), "classicByRule")).isNull();
+        chunking.registerCoordinatorStatus(() -> new CertSweepStatus.Coordinator(12, 3, 2, 5, 0, 1, 280));
+        @SuppressWarnings("unchecked")
+        Map<String, Object> cm = (Map<String, Object>) CertChunksHealth.thisPod(chunking).get("coordinator");
+        assertThat(cm).containsEntry("classic_by_rule", 280L).containsEntry("classic_fallback", 3L)
+                .containsEntry("chunked_runs", 12L);
 
         chunking.registerCoordinatorStatus(() -> new CertSweepStatus.Coordinator(12, 3, 2, 5, 0, 1));
         @SuppressWarnings("unchecked")
-        Map<String, Object> cm = (Map<String, Object>) CertChunksHealth.thisPod(chunking).get("coordinator");
-        boolean split = java.util.Arrays.stream(CertSweepStatus.Coordinator.class.getRecordComponents())
-                .anyMatch(rc -> rc.getName().equals("classicByRule"));
-        if (split) assertThat(cm).containsKey("classic_by_rule");
-        else assertThat(cm).doesNotContainKey("classic_by_rule").containsEntry("classic_fallback", 3L);
+        Map<String, Object> old = (Map<String, Object>) CertChunksHealth.thisPod(chunking).get("coordinator");
+        assertThat(old).containsEntry("classic_by_rule", 0L).containsEntry("classic_fallback", 3L);
     }
 }

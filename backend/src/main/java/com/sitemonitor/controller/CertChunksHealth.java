@@ -33,7 +33,7 @@ import java.util.Set;
  *
  * <p>İnceleme düzeltmeleri (2026-10-29, FX-OBS): açık koşuya {@code coordinator_live} / {@code orphan_suspected} (zamanlayıcının
  * zaten okuduğu {@code cert-check} kilidinden — EK SQL YOK; {@link #liveness}), tarama kartının {@code chunked}'ına
- * {@code orphan_suspected}; bu pod'un koordinatör sayaçlarına {@code classic_by_rule} (kayıtta alan varsa).
+ * {@code orphan_suspected}; bu pod'un koordinatör sayaçlarına {@code classic_by_rule}.
  */
 final class CertChunksHealth {
 
@@ -272,10 +272,9 @@ final class CertChunksHealth {
             Map<String, Object> cm = new LinkedHashMap<>();
             cm.put("chunked_runs", c.chunkedRuns());
             // İnceleme OB-L6: koordinatör sayacı ikiye bölündü (FX-COORD — `classicByRule` = kural gereği klasik: tek pod, az alan
-            // adı, depo yok …; `classicFallback` = gerçek düşüş: oluşturma hatası, iç hata). Alan kayıtta varsa yazılır; yoksa
-            // (eski kayıt) yazılmaz ve ekran bugünkü tek satırı gösterir.
-            Long byRule = recordLong(c, "classicByRule");
-            if (byRule != null) cm.put("classic_by_rule", byRule);
+            // adı, depo yok …; `classicFallback` = gerçek düşüş: oluşturma hatası, iç hata). Eski sunucunun yanıtında
+            // `classic_by_rule` yoktur — ekran o zaman bugünkü tek satırı gösterir.
+            cm.put("classic_by_rule", c.classicByRule());
             cm.put("classic_fallback", c.classicFallback());
             cm.put("takeovers", c.takeovers());
             cm.put("remeasured", c.remeasured());
@@ -352,24 +351,6 @@ final class CertChunksHealth {
 
     private static String str(Object o) {
         return o == null ? null : String.valueOf(o);
-    }
-
-    /**
-     * Kaydın sayısal bileşeni (ad ile) — bileşen yoksa / sayı değilse null. {@code CertSweepStatus.Coordinator}'a eklenen alanlar
-     * (paralel paket) derleme bağımlılığı olmadan okunur; bileşen geldiğinde hiçbir değişiklik gerekmez. Asla fırlatmaz.
-     */
-    static Long recordLong(Record rec, String component) {
-        if (rec == null || component == null) return null;
-        try {
-            for (java.lang.reflect.RecordComponent rc : rec.getClass().getRecordComponents()) {
-                if (!rc.getName().equals(component)) continue;
-                Object v = rc.getAccessor().invoke(rec);
-                return v instanceof Number n ? Long.valueOf(n.longValue()) : null;
-            }
-        } catch (ReflectiveOperationException | RuntimeException e) {
-            return null;
-        }
-        return null;
     }
 
     private static Long num(Object o) {
