@@ -10078,13 +10078,17 @@ public class SchedulerService {
      * olmazsa klasiğe döner; işçi kaydı okunamazsa ({@code UNKNOWN}) HEMEN klasik. Geçişler bir kez INFO yazılır.
      *
      * <p><b>K-1:</b> ayar kapalıyken (ya da bean yokken) yalnız bellek okur ve — tür hiç dağıtık olmadıysa — durum kaydı
-     * bile oluşturmaz; liderlik ve işçi kaydı hiç sorulmaz.
+     * bile oluşturmaz; liderlik ve işçi kaydı hiç sorulmaz. Bu pod gönderemiyorsa (kuyruk yok / gönderim tıkı kurulmadı) da
+     * klasik — klasik giriş kontrolü ancak birisi gönderecekse bırakır.
      */
     boolean distributedMode(String type) {
         com.sitemonitor.service.checks.DistributedChecks dc = distributedChecks;
         if (dc == null || !dc.distributedType(type)) return toClassicMode(type);
         // İpucu (bellek) ÖNCE: kapanış başladı / kira bırakıldı → asla dağıtık (gönderim yok); sonra doğrulanmış liderlik.
         if (!sweepLeaderHint() || !isSweepLeader()) return toClassicMode(type);
+        // Bu pod GÖNDEREMİYORSA (kuyruk bean'i yok, gönderim tıkı kurulamadı) asla dağıtık: aksi hâlde klasik giriş kontrolü
+        // bırakır ve kimse göndermez — izleme sessizce dururdu.
+        if (checkDispatchTask == null || checkJobStore() == null) return toClassicMode(type);
         com.sitemonitor.service.checks.CheckWorkerRegistry registry = checkWorkerRegistry();
         int live;
         try {

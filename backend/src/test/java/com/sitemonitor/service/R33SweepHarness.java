@@ -188,8 +188,20 @@ final class R33SweepHarness {
     DistributedChecks bindDistributed(boolean enabled, String types) {
         settings.put(DistributedChecks.KEY_ENABLED, enabled);
         if (types != null) settings.put(DistributedChecks.KEY_TYPES, types);
+        if (ReflectionTestUtils.getField(scheduler, "taskSchedulerProvider") == null) {
+            // Varsayılan: sahte zamanlayıcı (görev koşmaz) — gönderim tıkı "kurulu" sayılır, testler tıkı elle çağırır.
+            org.springframework.scheduling.TaskScheduler ts = mock(org.springframework.scheduling.TaskScheduler.class);
+            Mockito.doReturn(mock(java.util.concurrent.ScheduledFuture.class)).when(ts)
+                    .scheduleWithFixedDelay(any(Runnable.class), any(java.time.Instant.class), any(java.time.Duration.class));
+            org.springframework.beans.factory.support.StaticListableBeanFactory bf =
+                    new org.springframework.beans.factory.support.StaticListableBeanFactory();
+            bf.addBean("taskScheduler", ts);
+            ReflectionTestUtils.setField(scheduler, "taskSchedulerProvider",
+                    bf.getBeanProvider(org.springframework.scheduling.TaskScheduler.class));
+        }
         DistributedChecks dc = new DistributedChecks(appSettings, DistributedChecks.Tuning.DEFAULTS);
         scheduler.setDistributedChecks(dc);
+        dc.onReady(null);   // açılış hazır: anahtar açıksa tembel başlatıcı (gönderim tıkı) burada kurulur
         return dc;
     }
 

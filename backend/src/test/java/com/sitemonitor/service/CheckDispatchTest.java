@@ -103,6 +103,29 @@ class CheckDispatchTest {
         assertThat((boolean) ReflectionTestUtils.invokeMethod(bare.scheduler, "distributedMode", CheckJobTypes.PORT)).isFalse();
     }
 
+    @Test
+    @DisplayName("gönderim tıkı kurulamadıysa (ya da kuyruk bean'i yoksa) tür dağıtık OLMAZ — klasik giriş kontrolü bırakmaz")
+    void noDispatchTickNoDistributedMode() throws Exception {
+        TaskScheduler failing = mock(TaskScheduler.class);
+        Mockito.doThrow(new IllegalStateException("zamanlayıcı kapalı")).when(failing)
+                .scheduleWithFixedDelay(any(Runnable.class), any(Instant.class), any(Duration.class));
+        StaticListableBeanFactory bf = new StaticListableBeanFactory();
+        bf.addBean("taskScheduler", failing);
+        ReflectionTestUtils.setField(h.scheduler, "taskSchedulerProvider", bf.getBeanProvider(TaskScheduler.class));
+        h.bindDistributed(true, CheckJobTypes.PORT);   // başlatıcı fırlatır → DistributedChecks bir WARN yazar
+        h.portFixture();
+        assertThat(h.scheduler.distributedCheckStatus().get("dispatch_active")).isEqualTo(false);
+        ReflectionTestUtils.invokeMethod(h.scheduler, "runPortChecksLocked");
+        verify(h.portChecker, times(6)).check(any(PortMonitor.class));   // klasik koştu
+
+        R33SweepHarness noStore = new R33SweepHarness();
+        noStore.bindDistributed(true, CheckJobTypes.PORT);
+        R33SweepHarness.FakeRegistry live = new R33SweepHarness.FakeRegistry();
+        live.live.put(CheckJobTypes.PORT, 1);
+        noStore.scheduler.setCheckJobInfrastructure(null, live);
+        assertThat((boolean) ReflectionTestUtils.invokeMethod(noStore.scheduler, "distributedMode", CheckJobTypes.PORT)).isFalse();
+    }
+
     // ── liderlik ─────────────────────────────────────────────────────────────────────────────────────────────────────
 
     @Test
@@ -417,6 +440,8 @@ class CheckDispatchTest {
     @Test
     @DisplayName("zamanlayıcı yoksa gönderim tıkı kendi cin iş parçacığında (\"check-dispatch\") kurulur")
     void fallbackDispatchThread() throws Exception {
+        ReflectionTestUtils.setField(h.scheduler, "taskSchedulerProvider",
+                new StaticListableBeanFactory().getBeanProvider(TaskScheduler.class));   // zamanlayıcı bean'i YOK
         DistributedChecks dc = h.bindDistributed(true, CheckJobTypes.HTTP);
         h.httpFixture();
         dc.onReady(null);
