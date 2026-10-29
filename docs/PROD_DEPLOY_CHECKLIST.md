@@ -336,6 +336,63 @@ Ayrıntı: [`RUNBOOK.md` → Kalıcı değerlendirme durumunu devirde okuma](RUN
 **Geri alma:** `helm rollback` yeterli; ayar anahtarı, üç sütun ve `cluster_observations` satırı `eval-state-load` kalır,
 eski kod yok sayar (silmeyin); kapanış 1 sn kısalır.
 
+### Çok pod Sürüm 3-3 — bir kerelik
+Bu bölüm prod çok pod Sürüm 3-3'ü (dağıtık kontroller — tarama lideri port, ping, HTTP, içerik, sayfa, sayfa hızı, DNS ve
+senaryo izlemelerinin zamanlanmış kontrollerini pod'lara dağıtır, sonucu yine kendisi değerlendirir; yeni bir ana anahtarın
+arkasında, varsayılan KAPALI) İLK kez aldığında geçerlidir; anahtarı açmak AYRI bir karardır.
+Ayrıntı: [`RUNBOOK.md` → Dağıtık kontroller](RUNBOOK.md#dağıtık-kontroller-çok-pod-sürüm-3-3).
+
+**Öncesi**
+- [ ] **Dağıtım ana anahtar KAPALIYKEN yapılır** (varsayılan: `site.monitor.checks.distributed.enabled` = false, env
+      `DISTRIBUTED_CHECKS_ENABLED` verilmez; `DISTRIBUTED_CHECKS_TYPES`, `CHECK_WORKER_*`, `CHECK_DISPATCH_MS`,
+      `CHECK_DRAIN_MS`, `CHECK_RESULT_STALE_MS` de verilmez — varsayılanlar `application.properties`'te, Helm değeri
+      gerekmez). Kapalıyken davranış 20.169.0 ile birebir aynıdır (alarm kararları, bildirimler, SQL ifadeleri, iş
+      parçacıkları, günlük satırları, kapanış). Sürüm değişikliği ile anahtarı açmak aynı adımda YAPILMAZ.
+- [ ] **Şema: iki yeni, boş tablo açılışta kurulur** — ön kontrol / yedek gerekmez, mevcut tablolara dokunulmaz. İlk yeni pod
+      Ready olunca `CheckJobSchemaPatch`: `monitor_check_jobs` + `idx_mcj_state`, `monitor_check_workers`; PostgreSQL'de
+      ayrıca kısmi tekil `ux_mcj_open` ve kuyruk tablosunun otomatik süpürme ayarı (tabloyla birlikte, boşken). Uygulama
+      kullanıcısının `CREATE TABLE` hakkı olmalı (öteki şema yamaları gibi).
+- [ ] **Kapanış bütçesi:** Helm `terminationGracePeriodSeconds` 120 değişmedi (bütçe 101 sn = preStop 10 + uygulama 91;
+      işçi ve sonuç boşaltıcısı beklemeleri yalnız anahtar açıkken ve ortak 10 sn'lik yok etme süresinin içinde).
+- [ ] **Grafana panosu:** revizyon 7 (sağlık bölümünün sonunda dağıtık kontrol panelleri; anahtar kapalıyken "veri yok") —
+      dağıtımdan sonra Ayarlar → Grafana panosu → JSON indir ve aynı UID ile içe aktarın.
+- [ ] **Kendi kendini izleme:** yeni kontrol "Dağıtık kontrol kuyruğu" (orta önem) — anahtar kapalıyken "Uygulanmaz", posta
+      üretmez.
+
+**Sonrası** (açılıştan ~15 dk sonra; günlükler TÜM pod'lardan — aşağıdaki "İlk 15 dakika" `L`)
+- [ ] Tablolar kuruldu — ikisi dolu dönmeli (PostgreSQL'de üçü):
+      `SELECT to_regclass('monitor_check_jobs'), to_regclass('monitor_check_workers'), to_regclass('ux_mcj_open');`
+      İlk yeni pod'da `Dağıtık kontrol kuyruğu şeması: N değişiklik uygulandı`; `Dağıtık kontrol kuyruğu şeması
+      uygulanamadı` / `… kurulamadı` satırı olmamalı (`kubectl logs $L | grep "Dağıtık kontrol kuyruğu"`).
+- [ ] Anahtar kapalıyken iz yok: `kubectl logs $L | grep -cE "Dağıtık kontroller (açık görüldü|:)"` → 0; kuyruk ve işçi
+      tablosu boş (`SELECT COUNT(*) FROM monitor_check_jobs;` → 0, `SELECT COUNT(*) FROM monitor_check_workers;` → 0);
+      Sistem Sağlığı → Küme kartı → "Dağıtık kontroller: Kapalı"; Kendi kendini izleme → "Dağıtık kontrol kuyruğu:
+      Uygulanmaz"; `bash scripts/multipod-smoke.sh dup-check` bölüm 9'u gösterir, sayısı 0.
+- [ ] İzleme taramaları bugünkü gibi liderde (Küme kartı → son tarama tıkı ilerliyor; İzleme Panosu'nda gecikmiş izleme yok).
+
+**Açma — ayrı bir adım** (RUNBOOK → Dağıtık kontroller → "Açmadan önce" + "Tür tür açın")
+- [ ] **TÜM pod'lar 3-3 (ya da üstü) sürümünde** — rollout bitti, eski ReplicaSet'in pod'u kalmadı (`kubectl get pods -n
+      "$NS" -l app.kubernetes.io/instance="$REL"` hepsi aynı imaj). Eski bir pod işçi olmaz, eski bir lider hiç iş
+      göndermez (güvenli ama işler dağılmaz).
+- [ ] **P1 çıkış eşitliği her node'da** dağıtılacak türlerin hedefleriyle (`scripts/multipod-egress-check.sh`; `TARGETS` /
+      `TLS_TARGETS`'a port ve HTTP / içerik / sayfa izlemelerinden doğrudan hedefler), ping için her pod'da ICMP
+      (`kubectl exec -n "$NS" <pod> -- ping -c 1 -W 2 127.0.0.1`), senaryo için k6 (imajda). 3-1 doğrulaması iki pod'da
+      "uyuşuyor".
+- [ ] Önce staging: `SMOKE_IMAGE=<imaj> SMOKE_DISTRIBUTED=1 bash scripts/multipod-smoke.sh` yeşil; sonra tür listesi
+      `port,ping` yazılır ve kaydedilir, SONRA ana anahtar açılır (Ayarlar → Genel → Zamanlayıcı, yalnız GLOBAL admin — liste
+      boşsa sekiz türün hepsi dağıtılır). Lider pod yanıtlarken Küme kartı "Dağıtık kontroller: Açık", `port` / `ping`
+      "dağıtık".
+- [ ] Her adımın geçme ölçütü (en az 3 gün): dedektör bölüm 9 (a)(b) boş, (c) STUCK = 0; sahiplenme p95 < 10 sn; en eski
+      değerlendirilmemiş sonuç < 10 sn; kayıp iş < %0,1; "Dağıtık kontrol kuyruğu" Sağlıklı; alarm gürültüsünde yeni bir
+      alarm sınıfı farkı yok. Sonraki adımlar: `+http,keyword` → `+page,pagespeed` → `+dns` → `+scripted`; sonra prod, aynı
+      sırayla.
+- [ ] Geri dönüş anında güvenlidir: ana anahtarı kapatmak (ya da türü listeden çıkarmak) o türü bir sonraki klasik tıkta
+      lidere döndürür.
+
+**Geri alma:** önce ana anahtarı kapatın (açıksa), sonra `helm rollback`. İki tablo, iki ayar anahtarı ve kendi kendini
+izlemenin `check_queue` satırı kalır, eski kod yok sayar (silmeyin); anahtar açıkken geri alınırsa kuyruktaki sonuçlar
+değerlendirilmez (izleme başına en çok bir değerlendirme kaybı, çift kontrol yok).
+
 ### Denetim zinciri düzeltmesi öncesi — bir kerelik
 - [ ] **Prod etkileniyor mu (salt okunur):**
       `SELECT count(*) FILTER (WHERE seq IS NULL) AS seqsiz_eski, count(*) FILTER (WHERE seq = 1) AS seq_bir,
@@ -563,6 +620,8 @@ helm upgrade --install "$REL" ./helm/site-monitor --namespace "$NS" \
       `curl -sI https://<host>/boot-guard.js | grep -i cache-control` → `no-store`.
 - [ ] **Çok pod Sürüm 3-1** (ilk kez alındıysa): yukarıdaki ["Çok pod Sürüm 3-1 öncesi / sonrası kontroller"](#çok-pod-sürüm-3-1-öncesi--sonrası-kontroller--bir-kerelik)
       → **Sonrası** maddeleri (tablolar, kuşak satırı, Küme kartı doğrulaması, kanaryalar).
+- [ ] **Çok pod Sürüm 3-3** (ilk kez alındıysa): yukarıdaki ["Çok pod Sürüm 3-3 — bir kerelik"](#çok-pod-sürüm-3-3--bir-kerelik)
+      → **Sonrası** maddeleri (iki tablo kuruldu, ana anahtar kapalıyken iz yok, taramalar liderde).
 - [ ] **Çok pod Sürüm 2b:** Sistem Sağlığı → Kendi kendini izleme → "Saat uyumu" Sağlıklı (pod saatleri arası fark < 5 sn); Zamanlayıcı ve
       yürütücüler → Küme kartında tarama lideri dolu; Heartbeat → "Pod'lar" kartında "sessiz" pod yok.
 - [ ] **Çok pod Sürüm 2a** (açılıştan ~5 dk sonra): her pod'un günlüğünde bir kez `Önbellek yolu çalışıyor`
@@ -723,7 +782,9 @@ kubectl rollout status "$DEPLOY" -n "$NS"
   Çok pod sürüm 1'in iki tekil indeksi (`ux_push_eventless_key_user`, `ux_noe_one_ongoing`) geri almada kalır ve silinmez:
   eski sürümün yazımları önce "var mı?" diye bakar ve tekil ihlalini yakalar (ayrıntı: [`RUNBOOK.md` → Geri alma](RUNBOOK.md#geri-alma-rollback)).
   Çok pod Sürüm 3-1'in dört tablosu (`monitor_eval_state`, `monitor_last_status`, `monitor_eval_type_state`,
-  `monitor_confirmations`) ve `round:tls-profile` satırı da kalır; eski sürüm onları hiç okumaz.
+  `monitor_confirmations`) ve `round:tls-profile` satırı da kalır; eski sürüm onları hiç okumaz. Çok pod Sürüm 3-3'ün iki
+  tablosu (`monitor_check_jobs`, `monitor_check_workers`), iki ayar anahtarı ve `check_queue` kendi kendini izleme satırı da
+  kalır — dağıtık kontrol anahtarı açıksa geri almadan ÖNCE kapatın.
 - **Secret key bu dağıtımda değiştiyse** rollback kurtarmaz: yeni anahtarla şifrelenen girişler eski anahtarla
   çözülemez. Bu yüzden anahtar değişimi hiçbir yayınla birlikte yapılmaz.
 - Son çare: DB yedeğinden geri yükleme (veri kaybı: yedekten sonraki kayıtlar) — platform ekibiyle.

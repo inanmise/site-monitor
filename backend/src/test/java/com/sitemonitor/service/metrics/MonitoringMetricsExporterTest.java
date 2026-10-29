@@ -779,4 +779,151 @@ class MonitoringMetricsExporterTest {
         assertThat(exists(MonitoringMetricNames.EVAL_STATE_PENDING)).isFalse();
         assertThat(MonitoringMetricsExporter.evalModeCode(null)).isNull();
     }
+
+    // ── R3-3 D1: dağıtık kontrol ölçümleri (tasarım §7.4) ────────────────────────────────────────────────────────
+
+    com.sitemonitor.service.checks.CheckJobStore cjStore;
+    com.sitemonitor.service.checks.CheckWorker cjWorker;
+    com.sitemonitor.service.checks.CheckResultDrainer cjDrainer;
+
+    /** Dağıtık kontrol kaynaklarını bağlar; {@code on} = ana anahtar, {@code types} = tür ayarı. */
+    void attachCheckJobs(boolean on, String types) {
+        when(settings.getBoolean(eq(com.sitemonitor.service.checks.DistributedChecks.KEY_ENABLED), anyBoolean())).thenReturn(on);
+        when(settings.getString(eq(com.sitemonitor.service.checks.DistributedChecks.KEY_TYPES), anyString())).thenReturn(types);
+        exporter.setDistributedChecks(new com.sitemonitor.service.checks.DistributedChecks(settings,
+                com.sitemonitor.service.checks.DistributedChecks.Tuning.DEFAULTS));
+        cjStore = mock(com.sitemonitor.service.checks.CheckJobStore.class);
+        when(cjStore.stats()).thenReturn(new com.sitemonitor.service.checks.CheckJobStore.QueueStats(NOW.toEpochMilli(), List.of(
+                new com.sitemonitor.service.checks.CheckJobStore.QueueStat("PENDING", "port", 7, NOW.toEpochMilli() - 4_000, null),
+                new com.sitemonitor.service.checks.CheckJobStore.QueueStat("CLAIMED", "port", 3, NOW.toEpochMilli() - 2_000, null),
+                new com.sitemonitor.service.checks.CheckJobStore.QueueStat("DONE", "ping", 2, NOW.toEpochMilli() - 3_000, NOW.toEpochMilli() - 900)),
+                4_000L, 900L, 0L));
+        cjWorker = mock(com.sitemonitor.service.checks.CheckWorker.class);
+        when(cjWorker.status()).thenReturn(new com.sitemonitor.service.checks.CheckWorker.Status(true, true, false, 16, 5, 400, 390, 2,
+                1, 3, 0, 0, 0, 0, 410L, 1000));
+        cjDrainer = mock(com.sitemonitor.service.checks.CheckResultDrainer.class);
+        when(cjDrainer.status()).thenReturn(new com.sitemonitor.service.checks.CheckResultDrainer.Status(true, true, true, false, 380, 120,
+                378, 2, 1, 0, 0, 0, 0, NOW.toEpochMilli(), 0L, null, 3L, 2L, 1L, 4L, true, false));
+        exporter.setCheckJobStore(cjStore);
+        exporter.setCheckWorker(cjWorker);
+        exporter.setCheckResultDrainer(cjDrainer);
+    }
+
+    com.sitemonitor.service.SchedulerService schedulerWithDispatch(boolean leader) {
+        com.sitemonitor.service.SchedulerService scheduler = mock(com.sitemonitor.service.SchedulerService.class);
+        when(scheduler.sweepLeaderHint()).thenReturn(leader);
+        Map<String, Object> d = new LinkedHashMap<>();
+        d.put("lost", 4L);
+        d.put("dropped_inactive", 1L);
+        d.put("dropped_target", 1L);
+        d.put("dropped_toggle", 0L);
+        d.put("dropped_inventory", 2L);
+        when(scheduler.distributedCheckStatus()).thenReturn(d);
+        exporter.setScheduler(scheduler);
+        return scheduler;
+    }
+
+    boolean anyCheckSeries() {
+        for (MonitoringMetricNames.Def d : MonitoringMetricNames.ALL) {
+            if (d.name().startsWith("sitemonitor.check.") && exists(d.name())) return true;
+        }
+        return false;
+    }
+
+    @Test
+    @DisplayName("R3-3: ana anahtar KAPALI → hiçbir sitemonitor_check_* serisi ve check_jobs kaynak satırı yok; kuyruk, işçi, boşaltıcı ve "
+            + "gönderme sayaçları HİÇ okunmaz (K-1; yok ≠ 0)")
+    void checkJobMeters_offNoSeriesNoReads() {
+        attachCheckJobs(false, com.sitemonitor.service.checks.CheckJobTypes.DEFAULT_CSV);
+        com.sitemonitor.service.SchedulerService scheduler = schedulerWithDispatch(false);
+        exporter.refresh();
+        assertThat(anyCheckSeries()).isFalse();
+        assertThat(exists(MonitoringMetricNames.EXPORTER_SOURCE, "source", "check_jobs")).isFalse();
+        verifyNoInteractions(cjStore, cjWorker, cjDrainer);
+        verify(scheduler, never()).distributedCheckStatus();
+        // diğer aileler etkilenmez
+        assertThat(gauge(MonitoringMetricNames.MONITORS, "type", "http", "state", "up")).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("R3-3: anahtar açık → kuyruk (durum × tür, sıfırlar dahil; en eski bekleyen / sonuç sn), yuvalar, birikimli iş sonuçları "
+            + "(tamamlanan, geç, kayıp, düşen = zamanlayıcı + boşaltıcı), sahiplenme p95; check_jobs kaynağı 1; adlar _total vb. ile bitmez")
+    void checkJobMeters_on() {
+        attachCheckJobs(true, "port,ping");
+        schedulerWithDispatch(false);
+        exporter.refresh();
+        assertThat(gauge(MonitoringMetricNames.CHECK_JOBS, "state", "pending", "type", "port")).isEqualTo(7);
+        assertThat(gauge(MonitoringMetricNames.CHECK_JOBS, "state", "claimed", "type", "port")).isEqualTo(3);
+        assertThat(gauge(MonitoringMetricNames.CHECK_JOBS, "state", "done", "type", "ping")).isEqualTo(2);
+        assertThat(gauge(MonitoringMetricNames.CHECK_JOBS, "state", "pending", "type", "scripted")).as("okunmuş kuyrukta 0 gerçektir").isEqualTo(0);
+        assertThat(gauge(MonitoringMetricNames.CHECK_JOBS_OLDEST, "state", "pending")).isEqualTo(4.0);
+        assertThat(gauge(MonitoringMetricNames.CHECK_JOBS_OLDEST, "state", "done")).isEqualTo(0.9);
+        assertThat(gauge(MonitoringMetricNames.CHECK_WORKER_SLOTS, "kind", "busy")).isEqualTo(5);
+        assertThat(gauge(MonitoringMetricNames.CHECK_WORKER_SLOTS, "kind", "total")).isEqualTo(16);
+        assertThat(gauge(MonitoringMetricNames.CHECK_WORKER_JOBS, "outcome", "completed")).isEqualTo(390);
+        assertThat(gauge(MonitoringMetricNames.CHECK_WORKER_JOBS, "outcome", "late")).isEqualTo(2);
+        assertThat(gauge(MonitoringMetricNames.CHECK_WORKER_JOBS, "outcome", "lost")).isEqualTo(4);
+        assertThat(gauge(MonitoringMetricNames.CHECK_WORKER_JOBS, "outcome", "dropped"))
+                .as("1 + 1 + 0 + 2 + bayat 2 + sıra dışı 1 + yeniden açma öncesi 3 + klasikten eski 2 + devirde 1").isEqualTo(13);
+        assertThat(gauge(MonitoringMetricNames.CHECK_CLAIM_LAG)).isEqualTo(0.41);
+        assertThat(gauge(MonitoringMetricNames.EXPORTER_SOURCE, "source", "check_jobs")).isEqualTo(1);
+        verify(cjStore).stats();
+        for (MonitoringMetricNames.Def d : MonitoringMetricNames.ALL) {
+            if (!d.name().startsWith("sitemonitor.check.")) continue;
+            assertThat(d.prom()).doesNotEndWith("_total").doesNotEndWith("_count").doesNotEndWith("_sum").doesNotEndWith("_bucket")
+                    .doesNotEndWith("_info").doesNotEndWith("_created");
+        }
+    }
+
+    @Test
+    @DisplayName("R3-3: kuyruk okunamadı → kuyruk aileleri düşer (sahte 0 yok), check_jobs kaynağı 0; POD aileleri sürer. Tür seçili değil → "
+            + "kuyruk HİÇ okunmaz; işçi durumu okunamadı → yuva / iş sonucu yok, gönderme sayaçları yine")
+    void checkJobMeters_partialFailures() {
+        attachCheckJobs(true, "port");
+        schedulerWithDispatch(false);
+        when(cjStore.stats()).thenThrow(new org.springframework.dao.QueryTimeoutException("x"));
+        exporter.refresh();
+        assertThat(exists(MonitoringMetricNames.CHECK_JOBS)).isFalse();
+        assertThat(exists(MonitoringMetricNames.CHECK_JOBS_OLDEST)).isFalse();
+        assertThat(gauge(MonitoringMetricNames.EXPORTER_SOURCE, "source", "check_jobs")).isEqualTo(0);
+        assertThat(gauge(MonitoringMetricNames.CHECK_WORKER_SLOTS, "kind", "total")).isEqualTo(16);
+
+        attachCheckJobs(true, "unknown_type_only");
+        schedulerWithDispatch(false);
+        when(cjWorker.status()).thenThrow(new IllegalStateException("y"));
+        exporter.refresh();
+        verify(cjStore, never()).stats();
+        assertThat(exists(MonitoringMetricNames.CHECK_JOBS)).isFalse();
+        assertThat(exists(MonitoringMetricNames.EXPORTER_SOURCE, "source", "check_jobs")).isFalse();
+        assertThat(exists(MonitoringMetricNames.CHECK_WORKER_SLOTS)).isFalse();
+        assertThat(exists(MonitoringMetricNames.CHECK_WORKER_JOBS, "outcome", "completed")).isFalse();
+        assertThat(gauge(MonitoringMetricNames.CHECK_WORKER_JOBS, "outcome", "lost")).isEqualTo(4);
+    }
+
+    @Test
+    @DisplayName("R3-3: POD-only lider (başka pod kurum ailelerini yayıyor) → kuyruk KÜME aileleri yok ve kuyruk okunmaz; POD aileleri (yuvalar, "
+            + "iş sonuçları, sahiplenme p95) bellekten yayılır")
+    void checkJobMeters_podOnlyLeader() {
+        attachCheckJobs(true, "port,ping");
+        placement(true, observation("sitemonitor-other-0000000b", NOW.toEpochMilli() - 30_000));
+        Map<String, Object> d = new LinkedHashMap<>();
+        d.put("lost", 0L);
+        d.put("dropped_inactive", 0L);
+        d.put("dropped_target", 0L);
+        d.put("dropped_toggle", 0L);
+        d.put("dropped_inventory", 0L);
+        com.sitemonitor.service.SchedulerService scheduler = mock(com.sitemonitor.service.SchedulerService.class);
+        when(scheduler.sweepLeaderHint()).thenReturn(true);
+        when(scheduler.distributedCheckStatus()).thenReturn(d);
+        exporter.setScheduler(scheduler);
+        MonitoringMetricsExporter.Status s = exporter.refresh();
+        assertThat(s.orgFamilies()).isFalse();
+        assertThat(exists(MonitoringMetricNames.CHECK_JOBS)).isFalse();
+        assertThat(exists(MonitoringMetricNames.CHECK_JOBS_OLDEST)).isFalse();
+        verify(cjStore, never()).stats();
+        assertThat(gauge(MonitoringMetricNames.CHECK_WORKER_SLOTS, "kind", "busy")).isEqualTo(5);
+        assertThat(gauge(MonitoringMetricNames.CHECK_WORKER_JOBS, "outcome", "completed")).isEqualTo(390);
+        assertThat(gauge(MonitoringMetricNames.CHECK_WORKER_JOBS, "outcome", "dropped")).isEqualTo(9);
+        assertThat(gauge(MonitoringMetricNames.CHECK_CLAIM_LAG)).isEqualTo(0.41);
+    }
 }

@@ -1,0 +1,610 @@
+{
+  "type": "keyword",
+  "decisions": [
+    {
+      "on": "EscalationService",
+      "method": "resolveOrphanedKeywordAlerts",
+      "args": [
+        [
+          "c-yok",
+          "https://a.example.com/",
+          "https://b.example.com/",
+          "https://boom.example.com/",
+          "https://c.example.com/",
+          "https://e.example.com/"
+        ]
+      ]
+    },
+    {
+      "on": "MonitoringOutageService",
+      "method": "handleSweepResults",
+      "args": [
+        "KEYWORD",
+        [
+          {
+            "alertType": "KEYWORD",
+            "domain": "https://a.example.com/",
+            "detail": "Hoş geldiniz",
+            "up": true,
+            "error": null,
+            "ctx": {
+              "monitor_name": "Keyword 1",
+              "url": "https://a.example.com/",
+              "keyword": "Hoş geldiniz",
+              "condition": "NOT_CONTAINS",
+              "operator": "GTE",
+              "match_count": 1,
+              "monitor_id": 1,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "team_id": 9,
+              "http_status": 200,
+              "response_ms": 100,
+              "snippet": "… Hoş geldiniz …",
+              "occurrences": 3,
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          },
+          {
+            "alertType": "KEYWORD",
+            "domain": "https://b.example.com/",
+            "detail": "Ödeme",
+            "up": false,
+            "error": null,
+            "ctx": {
+              "monitor_name": "Keyword 2",
+              "url": "https://b.example.com/",
+              "keyword": "Ödeme",
+              "condition": "NOT_CONTAINS",
+              "operator": "GTE",
+              "match_count": 1,
+              "monitor_id": 2,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "team_id": 9,
+              "http_status": 200,
+              "response_ms": 900,
+              "occurrences": 0,
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          },
+          {
+            "alertType": "KEYWORD",
+            "domain": "https://c.example.com/",
+            "detail": "x",
+            "up": false,
+            "error": "HTTP 503",
+            "ctx": {
+              "monitor_name": "Keyword 3",
+              "url": "https://c.example.com/",
+              "keyword": "x",
+              "condition": "NOT_CONTAINS",
+              "operator": "GTE",
+              "match_count": 1,
+              "monitor_id": 3,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "team_id": 9,
+              "http_status": 503,
+              "response_ms": 30,
+              "occurrences": 0,
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          },
+          {
+            "alertType": "KEYWORD",
+            "domain": "c-yok",
+            "detail": "y",
+            "up": true,
+            "error": null,
+            "ctx": {
+              "monitor_name": "Keyword 4",
+              "url": "c-yok",
+              "keyword": "y",
+              "condition": "NOT_CONTAINS",
+              "operator": "GTE",
+              "match_count": 1,
+              "monitor_id": 4,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "team_id": 9,
+              "occurrences": 0,
+              "config_error": true,
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          },
+          {
+            "alertType": "KEYWORD",
+            "domain": "https://e.example.com/",
+            "detail": "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
+            "up": false,
+            "error": null,
+            "ctx": {
+              "monitor_name": "Keyword 5",
+              "url": "https://e.example.com/",
+              "keyword": "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
+              "condition": "NOT_CONTAINS",
+              "operator": "LTE",
+              "match_count": 1,
+              "monitor_id": 5,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "team_id": 9,
+              "notification_group_id": 12,
+              "http_status": 200,
+              "response_ms": 50,
+              "occurrences": 2,
+              "push_disabled": true,
+              "alert_level": "HIGH"
+            },
+            "recheck": true
+          }
+        ]
+      ]
+    },
+    {
+      "on": "MonitoringOutageService",
+      "method": "handleSweepResults",
+      "args": [
+        "KEYWORD_SLOW",
+        [
+          {
+            "alertType": "KEYWORD_SLOW",
+            "domain": "https://a.example.com/",
+            "detail": "100 ms",
+            "up": true,
+            "error": null,
+            "ctx": {
+              "url": "https://a.example.com/",
+              "monitor_id": 1,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "team_id": 9,
+              "threshold_ms": 500,
+              "response_ms": 100,
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          },
+          {
+            "alertType": "KEYWORD_SLOW",
+            "domain": "https://b.example.com/",
+            "detail": "900 ms",
+            "up": false,
+            "error": null,
+            "ctx": {
+              "url": "https://b.example.com/",
+              "monitor_id": 2,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "team_id": 9,
+              "threshold_ms": 500,
+              "response_ms": 900,
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          },
+          {
+            "alertType": "KEYWORD_SLOW",
+            "domain": "c-yok",
+            "detail": "slow",
+            "up": true,
+            "error": null,
+            "ctx": {
+              "url": "c-yok",
+              "monitor_id": 4,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "team_id": 9,
+              "threshold_ms": 3000,
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          },
+          {
+            "alertType": "KEYWORD_SLOW",
+            "domain": "https://e.example.com/",
+            "detail": "50 ms",
+            "up": true,
+            "error": null,
+            "ctx": {
+              "url": "https://e.example.com/",
+              "monitor_id": 5,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "team_id": 9,
+              "notification_group_id": 12,
+              "threshold_ms": 3000,
+              "response_ms": 50,
+              "push_disabled": true,
+              "alert_level": "HIGH"
+            },
+            "recheck": true
+          }
+        ]
+      ]
+    }
+  ],
+  "writes": [
+    {
+      "on": "KeywordResultRepository",
+      "method": "save",
+      "args": [
+        {
+          "entity": "KeywordResult",
+          "fields": {
+            "bodyBytes": null,
+            "bodyTruncated": null,
+            "charset": null,
+            "checkedAt": "<time>",
+            "contentType": null,
+            "error": null,
+            "excerpt": null,
+            "failureDetail": null,
+            "failureReason": null,
+            "finalUrl": null,
+            "found": true,
+            "hintsJson": null,
+            "httpStatus": 200,
+            "id": null,
+            "monitorId": 1,
+            "occurrences": 3,
+            "ok": true,
+            "redirectCount": null,
+            "responseMs": 100,
+            "snippet": "… Hoş geldiniz …",
+            "via": null
+          }
+        }
+      ]
+    },
+    {
+      "on": "ActivityLogService",
+      "method": "recordCheck",
+      "args": [
+        "KEYWORD",
+        1,
+        "Keyword 1",
+        "https://a.example.com/",
+        9,
+        false,
+        "scheduler",
+        {
+          "found": true,
+          "count": 3,
+          "http_status": 200,
+          "response_ms": 100,
+          "snippet": "… Hoş geldiniz …",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "on": "KeywordResultRepository",
+      "method": "save",
+      "args": [
+        {
+          "entity": "KeywordResult",
+          "fields": {
+            "bodyBytes": null,
+            "bodyTruncated": null,
+            "charset": null,
+            "checkedAt": "<time>",
+            "contentType": null,
+            "error": null,
+            "excerpt": null,
+            "failureDetail": "Sayfa yüklendi (HTTP 200, 1 B) ama « Ödeme » hiç bulunamadı. Koşul: en az 1 kez.",
+            "failureReason": "KEYWORD_NOT_FOUND",
+            "finalUrl": null,
+            "found": false,
+            "hintsJson": null,
+            "httpStatus": 200,
+            "id": null,
+            "monitorId": 2,
+            "occurrences": 0,
+            "ok": false,
+            "redirectCount": null,
+            "responseMs": 900,
+            "snippet": null,
+            "via": null
+          }
+        }
+      ]
+    },
+    {
+      "on": "ActivityLogService",
+      "method": "recordCheck",
+      "args": [
+        "KEYWORD",
+        2,
+        "Keyword 2",
+        "https://b.example.com/",
+        9,
+        false,
+        "scheduler",
+        {
+          "found": false,
+          "count": 0,
+          "http_status": 200,
+          "response_ms": 900,
+          "ok": false
+        }
+      ]
+    },
+    {
+      "on": "KeywordResultRepository",
+      "method": "save",
+      "args": [
+        {
+          "entity": "KeywordResult",
+          "fields": {
+            "bodyBytes": null,
+            "bodyTruncated": null,
+            "charset": null,
+            "checkedAt": "<time>",
+            "contentType": null,
+            "error": "HTTP 503",
+            "excerpt": null,
+            "failureDetail": "İstek tamamlanamadı: HTTP 503",
+            "failureReason": "UNKNOWN",
+            "finalUrl": null,
+            "found": false,
+            "hintsJson": null,
+            "httpStatus": 503,
+            "id": null,
+            "monitorId": 3,
+            "occurrences": 0,
+            "ok": false,
+            "redirectCount": null,
+            "responseMs": 30,
+            "snippet": null,
+            "via": null
+          }
+        }
+      ]
+    },
+    {
+      "on": "ActivityLogService",
+      "method": "recordCheck",
+      "args": [
+        "KEYWORD",
+        3,
+        "Keyword 3",
+        "https://c.example.com/",
+        9,
+        false,
+        "scheduler",
+        {
+          "found": false,
+          "http_status": 503,
+          "response_ms": 30,
+          "error": "HTTP 503",
+          "ok": false
+        }
+      ]
+    },
+    {
+      "on": "KeywordResultRepository",
+      "method": "save",
+      "args": [
+        {
+          "entity": "KeywordResult",
+          "fields": {
+            "bodyBytes": null,
+            "bodyTruncated": null,
+            "charset": null,
+            "checkedAt": "<time>",
+            "contentType": null,
+            "error": "URL'de host yok",
+            "excerpt": null,
+            "failureDetail": "İstek tamamlanamadı: URL'de host yok",
+            "failureReason": "UNKNOWN",
+            "finalUrl": null,
+            "found": false,
+            "hintsJson": null,
+            "httpStatus": null,
+            "id": null,
+            "monitorId": 4,
+            "occurrences": 0,
+            "ok": false,
+            "redirectCount": null,
+            "responseMs": null,
+            "snippet": null,
+            "via": null
+          }
+        }
+      ]
+    },
+    {
+      "on": "ActivityLogService",
+      "method": "recordCheck",
+      "args": [
+        "KEYWORD",
+        4,
+        "Keyword 4",
+        "c-yok",
+        9,
+        false,
+        "scheduler",
+        {
+          "found": false,
+          "error": "URL'de host yok",
+          "config_error": true,
+          "ok": false
+        }
+      ]
+    },
+    {
+      "on": "KeywordResultRepository",
+      "method": "save",
+      "args": [
+        {
+          "entity": "KeywordResult",
+          "fields": {
+            "bodyBytes": null,
+            "bodyTruncated": null,
+            "charset": null,
+            "checkedAt": "<time>",
+            "contentType": null,
+            "error": null,
+            "excerpt": null,
+            "failureDetail": "« zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz » sayfada 2 kez bulundu; koşul en fazla 1 kez (HTTP 200).",
+            "failureReason": "KEYWORD_COUNT_MISMATCH",
+            "finalUrl": null,
+            "found": true,
+            "hintsJson": null,
+            "httpStatus": 200,
+            "id": null,
+            "monitorId": 5,
+            "occurrences": 2,
+            "ok": false,
+            "redirectCount": null,
+            "responseMs": 50,
+            "snippet": null,
+            "via": null
+          }
+        }
+      ]
+    },
+    {
+      "on": "ActivityLogService",
+      "method": "recordCheck",
+      "args": [
+        "KEYWORD",
+        5,
+        "Keyword 5",
+        "https://e.example.com/",
+        9,
+        false,
+        "scheduler",
+        {
+          "found": true,
+          "count": 2,
+          "http_status": 200,
+          "response_ms": 50,
+          "ok": false
+        }
+      ]
+    }
+  ],
+  "checks": [
+    {
+      "on": "KeywordCheckerService",
+      "method": "check",
+      "args": [
+        "c-yok",
+        "y",
+        10000,
+        null,
+        false,
+        false,
+        {
+          "operator": "GTE",
+          "threshold": 1
+        }
+      ]
+    },
+    {
+      "on": "KeywordCheckerService",
+      "method": "check",
+      "args": [
+        "https://a.example.com/",
+        "Hoş geldiniz",
+        10000,
+        null,
+        false,
+        false,
+        {
+          "operator": "GTE",
+          "threshold": 1
+        }
+      ]
+    },
+    {
+      "on": "KeywordCheckerService",
+      "method": "check",
+      "args": [
+        "https://b.example.com/",
+        "Ödeme",
+        10000,
+        null,
+        false,
+        false,
+        {
+          "operator": "GTE",
+          "threshold": 1
+        }
+      ]
+    },
+    {
+      "on": "KeywordCheckerService",
+      "method": "check",
+      "args": [
+        "https://boom.example.com/",
+        "q",
+        10000,
+        null,
+        false,
+        false,
+        {
+          "operator": "GTE",
+          "threshold": 1
+        }
+      ]
+    },
+    {
+      "on": "KeywordCheckerService",
+      "method": "check",
+      "args": [
+        "https://c.example.com/",
+        "x",
+        10000,
+        null,
+        false,
+        false,
+        {
+          "operator": "GTE",
+          "threshold": 1
+        }
+      ]
+    },
+    {
+      "on": "KeywordCheckerService",
+      "method": "check",
+      "args": [
+        "https://e.example.com/",
+        "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
+        10000,
+        null,
+        false,
+        false,
+        {
+          "operator": "LTE",
+          "threshold": 1
+        }
+      ]
+    }
+  ]
+}

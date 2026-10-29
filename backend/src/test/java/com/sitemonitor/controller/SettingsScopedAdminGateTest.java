@@ -225,6 +225,33 @@ class SettingsScopedAdminGateTest {
     }
 
     @Test
+    @DisplayName("2026-10-29 (çok pod R3-3): dağıtık kontrol ana anahtarı (BOOL) + tür listesi (CSV) katalogda, grup scheduler, lider erteleme anahtarının ardından ve GLOBAL_ONLY")
+    void multiPodR33Keys_globalOnly() {
+        String enabled = com.sitemonitor.service.checks.DistributedChecks.KEY_ENABLED;
+        String types = com.sitemonitor.service.checks.DistributedChecks.KEY_TYPES;
+        assertThat(enabled).isEqualTo("site.monitor.checks.distributed.enabled");
+        assertThat(types).isEqualTo("site.monitor.checks.distributed.types");
+        assertThat(AppSettingsCatalog.GLOBAL_ONLY).contains(enabled, types);
+        assertThat(AppSettingsCatalog.isGlobalOnly(enabled)).isTrue();
+        assertThat(AppSettingsCatalog.isGlobalOnly(types)).isTrue();
+
+        AppSettingsCatalog.Setting e = AppSettingsCatalog.byKey(enabled);
+        assertThat(e).as("katalogda: " + enabled).isNotNull();
+        assertThat(e.group()).isEqualTo("scheduler");
+        assertThat(e.type()).isEqualTo(AppSettingsCatalog.Type.BOOL);
+        AppSettingsCatalog.Setting t = AppSettingsCatalog.byKey(types);
+        assertThat(t).as("katalogda: " + types).isNotNull();
+        assertThat(t.group()).isEqualTo("scheduler");
+        assertThat(t.type()).isEqualTo(AppSettingsCatalog.Type.CSV);
+
+        // Ayarlar → Genel → Zamanlayıcı'da lider erteleme ayarının hemen ardından: ana anahtar, sonra tür listesi.
+        List<String> keys = AppSettingsCatalog.ALL.stream().map(AppSettingsCatalog.Setting::key).toList();
+        int yield = keys.indexOf(com.sitemonitor.service.schedule.SideJob.LEADER_YIELD_KEY);
+        assertThat(keys.indexOf(enabled)).isEqualTo(yield + 1);
+        assertThat(keys.indexOf(types)).isEqualTo(yield + 2);
+    }
+
+    @Test
     @DisplayName("2026-09-28: sistem geneli yüzeyler (Veri Saklama yazma uçları, Sorun Bildirimleri yönetimi) requireNotScopedAdmin TAŞIR")
     void systemWideSurfaces_keepGate() throws IOException {
         for (String c : List.of("RetentionAdminController", "LoginIssueController")) {

@@ -561,6 +561,18 @@ public class ScriptedCheckerService {
     public int activeProcesses() { return active.get(); }
     public int queuedChecks() { return queued.get(); }
 
+    /**
+     * İzleme havuzunda ŞU AN boş izin sayısı (çok pod Sürüm 3-3 P0, tasarım R3-3 §2.5) — dağıtık kontrol işçisi senaryo
+     * işlerini en çok bu kadar sahiplenir, böylece {@link #run} yuvada izin BEKLEMEZ. Tutucu: sırada bekleyen koşumlar
+     * ({@code queued}) düşülür (az sahiplenmek güvenli, beklemek değil). k6 yoksa / henüz kurulmadıysa 0. Çağıran ayrıca
+     * {@link #ensureProbed()} ile k6'yı denetler. Yalnız bellek okuması; asla fırlatmaz.
+     */
+    public int freePermits() {
+        Semaphore p = permits;
+        if (p == null || !k6Available) return 0;
+        return Math.max(0, p.availablePermits() - queued.get());
+    }
+
     private String k6Bin() { return appSettings.getString("site.monitor.scripted.k6-bin", "k6"); }
 
     /**

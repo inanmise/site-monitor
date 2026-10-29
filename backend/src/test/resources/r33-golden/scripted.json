@@ -1,0 +1,575 @@
+{
+  "type": "scripted",
+  "decisions": [
+    {
+      "on": "EscalationService",
+      "method": "resolveOrphanedScriptedAlerts",
+      "args": [
+        [
+          "Atlanan akış",
+          "Boş akış",
+          "Düşen gelecek",
+          "Düşen kapalı",
+          "Giriş akışı",
+          "Sepet akışı",
+          "Ödeme akışı"
+        ]
+      ]
+    },
+    {
+      "on": "MonitoringOutageService",
+      "method": "handleSweepResults",
+      "args": [
+        "SCRIPTED_FAIL",
+        [
+          {
+            "alertType": "SCRIPTED_FAIL",
+            "domain": "Giriş akışı",
+            "detail": "PASS — 3✓/0✗",
+            "up": true,
+            "error": null,
+            "ctx": {
+              "name": "Giriş akışı",
+              "monitor_id": 1,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "team_id": 2,
+              "scripted_status": "PASS",
+              "checks_failed": 0,
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          },
+          {
+            "alertType": "SCRIPTED_FAIL",
+            "domain": "Sepet akışı",
+            "detail": "PASS — 3✓/0✗",
+            "up": true,
+            "error": null,
+            "ctx": {
+              "name": "Sepet akışı",
+              "monitor_id": 2,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "team_id": 2,
+              "scripted_status": "PASS",
+              "checks_failed": 0,
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          },
+          {
+            "alertType": "SCRIPTED_FAIL",
+            "domain": "Ödeme akışı",
+            "detail": "FAIL — 1✓/1✗ — request timeout",
+            "up": false,
+            "error": "FAIL — 1✓/1✗ — request timeout",
+            "ctx": {
+              "name": "Ödeme akışı",
+              "monitor_id": 3,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "team_id": 2,
+              "scripted_status": "FAIL",
+              "checks_failed": 1,
+              "output_tail": "level=error msg=\"request timeout\"",
+              "failed_checks": "gövde ok",
+              "error": "request timeout",
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          },
+          {
+            "alertType": "SCRIPTED_FAIL",
+            "domain": "Boş akış",
+            "detail": "NO_CHECKS — 0✓/0✗",
+            "up": true,
+            "error": null,
+            "ctx": {
+              "name": "Boş akış",
+              "monitor_id": 5,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "team_id": 2,
+              "scripted_status": "NO_CHECKS",
+              "checks_failed": 0,
+              "mail_disabled": true,
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          },
+          {
+            "alertType": "SCRIPTED_FAIL",
+            "domain": "Düşen kapalı",
+            "detail": "FAIL — 0✓/2✗ — HTTP 500",
+            "up": false,
+            "error": "FAIL — 0✓/2✗ — HTTP 500",
+            "ctx": {
+              "name": "Düşen kapalı",
+              "monitor_id": 7,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "team_id": 2,
+              "scripted_status": "FAIL",
+              "checks_failed": 2,
+              "failed_checks": "gövde ok",
+              "error": "HTTP 500",
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          }
+        ]
+      ]
+    },
+    {
+      "on": "MonitoringOutageService",
+      "method": "handleSweepResults",
+      "args": [
+        "SCRIPTED_SLOW",
+        [
+          {
+            "alertType": "SCRIPTED_SLOW",
+            "domain": "Giriş akışı",
+            "detail": "500 ms",
+            "up": true,
+            "error": null,
+            "ctx": {
+              "name": "Giriş akışı",
+              "monitor_id": 1,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "team_id": 2,
+              "scripted_status": "PASS",
+              "checks_failed": 0,
+              "threshold_ms": 1000,
+              "duration_ms": 500,
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          },
+          {
+            "alertType": "SCRIPTED_SLOW",
+            "domain": "Sepet akışı",
+            "detail": "3000 ms",
+            "up": false,
+            "error": null,
+            "ctx": {
+              "name": "Sepet akışı",
+              "monitor_id": 2,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "team_id": 2,
+              "scripted_status": "PASS",
+              "checks_failed": 0,
+              "threshold_ms": 1000,
+              "duration_ms": 3000,
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          },
+          {
+            "alertType": "SCRIPTED_SLOW",
+            "domain": "Boş akış",
+            "detail": "300 ms",
+            "up": true,
+            "error": null,
+            "ctx": {
+              "name": "Boş akış",
+              "monitor_id": 5,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "team_id": 2,
+              "scripted_status": "NO_CHECKS",
+              "checks_failed": 0,
+              "threshold_ms": 15000,
+              "duration_ms": 300,
+              "mail_disabled": true,
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          },
+          {
+            "alertType": "SCRIPTED_SLOW",
+            "domain": "Düşen kapalı",
+            "detail": "900 ms",
+            "up": true,
+            "error": null,
+            "ctx": {
+              "name": "Düşen kapalı",
+              "monitor_id": 7,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "team_id": 2,
+              "scripted_status": "FAIL",
+              "checks_failed": 2,
+              "failed_checks": "gövde ok",
+              "error": "HTTP 500",
+              "threshold_ms": 15000,
+              "duration_ms": 900,
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          }
+        ]
+      ]
+    }
+  ],
+  "writes": [
+    {
+      "on": "ScriptedCheckRepository",
+      "method": "save",
+      "args": [
+        {
+          "entity": "ScriptedCheck",
+          "fields": {
+            "checkedAt": "<time>",
+            "checksFailed": 0,
+            "checksJson": "[]",
+            "checksPassed": 3,
+            "dataReceived": null,
+            "dataSent": null,
+            "durationMs": 500,
+            "error": null,
+            "exitCode": 0,
+            "httpReqAvgMs": 80,
+            "httpReqP95Ms": 120,
+            "id": null,
+            "iterationMs": 500,
+            "manual": false,
+            "monitorId": 1,
+            "ok": true,
+            "outputTail": null,
+            "reqBlockedMs": null,
+            "reqConnectingMs": null,
+            "reqReceivingMs": null,
+            "reqSendingMs": null,
+            "reqTlsMs": null,
+            "reqWaitingMs": null,
+            "scriptVersion": "v1",
+            "status": "PASS",
+            "viaProxy": false
+          }
+        }
+      ]
+    },
+    {
+      "on": "ActivityLogService",
+      "method": "recordCheck",
+      "args": [
+        "SCRIPTED",
+        1,
+        "Giriş akışı",
+        "Giriş akışı",
+        2,
+        false,
+        "scheduler",
+        {
+          "status": "PASS",
+          "ok": true,
+          "checks_passed": 3,
+          "checks_failed": 0,
+          "response_ms": 500
+        }
+      ]
+    },
+    {
+      "on": "ScriptedCheckRepository",
+      "method": "save",
+      "args": [
+        {
+          "entity": "ScriptedCheck",
+          "fields": {
+            "checkedAt": "<time>",
+            "checksFailed": 0,
+            "checksJson": "[]",
+            "checksPassed": 3,
+            "dataReceived": null,
+            "dataSent": null,
+            "durationMs": 3000,
+            "error": null,
+            "exitCode": 0,
+            "httpReqAvgMs": 80,
+            "httpReqP95Ms": 120,
+            "id": null,
+            "iterationMs": 3000,
+            "manual": false,
+            "monitorId": 2,
+            "ok": true,
+            "outputTail": null,
+            "reqBlockedMs": null,
+            "reqConnectingMs": null,
+            "reqReceivingMs": null,
+            "reqSendingMs": null,
+            "reqTlsMs": null,
+            "reqWaitingMs": null,
+            "scriptVersion": "v2",
+            "status": "PASS",
+            "viaProxy": false
+          }
+        }
+      ]
+    },
+    {
+      "on": "ActivityLogService",
+      "method": "recordCheck",
+      "args": [
+        "SCRIPTED",
+        2,
+        "Sepet akışı",
+        "Sepet akışı",
+        2,
+        false,
+        "scheduler",
+        {
+          "status": "PASS",
+          "ok": true,
+          "checks_passed": 3,
+          "checks_failed": 0,
+          "response_ms": 3000
+        }
+      ]
+    },
+    {
+      "on": "ScriptedCheckRepository",
+      "method": "save",
+      "args": [
+        {
+          "entity": "ScriptedCheck",
+          "fields": {
+            "checkedAt": "<time>",
+            "checksFailed": 1,
+            "checksJson": "[{\"name\":\"durum 200\",\"passed\":true},{\"name\":\"gövde ok\",\"passed\":false}]",
+            "checksPassed": 1,
+            "dataReceived": null,
+            "dataSent": null,
+            "durationMs": 800,
+            "error": "request timeout",
+            "exitCode": 0,
+            "httpReqAvgMs": 80,
+            "httpReqP95Ms": 120,
+            "id": null,
+            "iterationMs": 800,
+            "manual": false,
+            "monitorId": 3,
+            "ok": false,
+            "outputTail": "level=error msg=\"request timeout\"",
+            "reqBlockedMs": null,
+            "reqConnectingMs": null,
+            "reqReceivingMs": null,
+            "reqSendingMs": null,
+            "reqTlsMs": null,
+            "reqWaitingMs": null,
+            "scriptVersion": "v3",
+            "status": "FAIL",
+            "viaProxy": false
+          }
+        }
+      ]
+    },
+    {
+      "on": "ActivityLogService",
+      "method": "recordCheck",
+      "args": [
+        "SCRIPTED",
+        3,
+        "Ödeme akışı",
+        "Ödeme akışı",
+        2,
+        false,
+        "scheduler",
+        {
+          "status": "FAIL",
+          "ok": false,
+          "checks_passed": 1,
+          "checks_failed": 1,
+          "response_ms": 800,
+          "error": "request timeout"
+        }
+      ]
+    },
+    {
+      "on": "ScriptedCheckRepository",
+      "method": "save",
+      "args": [
+        {
+          "entity": "ScriptedCheck",
+          "fields": {
+            "checkedAt": "<time>",
+            "checksFailed": 0,
+            "checksJson": "[]",
+            "checksPassed": 0,
+            "dataReceived": null,
+            "dataSent": null,
+            "durationMs": 300,
+            "error": null,
+            "exitCode": 0,
+            "httpReqAvgMs": 80,
+            "httpReqP95Ms": 120,
+            "id": null,
+            "iterationMs": 300,
+            "manual": false,
+            "monitorId": 5,
+            "ok": false,
+            "outputTail": null,
+            "reqBlockedMs": null,
+            "reqConnectingMs": null,
+            "reqReceivingMs": null,
+            "reqSendingMs": null,
+            "reqTlsMs": null,
+            "reqWaitingMs": null,
+            "scriptVersion": "v5",
+            "status": "NO_CHECKS",
+            "viaProxy": false
+          }
+        }
+      ]
+    },
+    {
+      "on": "ActivityLogService",
+      "method": "recordCheck",
+      "args": [
+        "SCRIPTED",
+        5,
+        "Boş akış",
+        "Boş akış",
+        2,
+        false,
+        "scheduler",
+        {
+          "status": "NO_CHECKS",
+          "ok": false,
+          "checks_passed": 0,
+          "checks_failed": 0,
+          "response_ms": 300
+        }
+      ]
+    },
+    {
+      "on": "ScriptedCheckRepository",
+      "method": "save",
+      "args": [
+        {
+          "entity": "ScriptedCheck",
+          "fields": {
+            "checkedAt": "<time>",
+            "checksFailed": 2,
+            "checksJson": "[{\"name\":\"durum 200\",\"passed\":true},{\"name\":\"gövde ok\",\"passed\":false}]",
+            "checksPassed": 0,
+            "dataReceived": null,
+            "dataSent": null,
+            "durationMs": 900,
+            "error": "HTTP 500",
+            "exitCode": 0,
+            "httpReqAvgMs": 80,
+            "httpReqP95Ms": 120,
+            "id": null,
+            "iterationMs": 900,
+            "manual": false,
+            "monitorId": 7,
+            "ok": false,
+            "outputTail": null,
+            "reqBlockedMs": null,
+            "reqConnectingMs": null,
+            "reqReceivingMs": null,
+            "reqSendingMs": null,
+            "reqTlsMs": null,
+            "reqWaitingMs": null,
+            "scriptVersion": "v7",
+            "status": "FAIL",
+            "viaProxy": false
+          }
+        }
+      ]
+    },
+    {
+      "on": "ActivityLogService",
+      "method": "recordCheck",
+      "args": [
+        "SCRIPTED",
+        7,
+        "Düşen kapalı",
+        "Düşen kapalı",
+        2,
+        false,
+        "scheduler",
+        {
+          "status": "FAIL",
+          "ok": false,
+          "checks_passed": 0,
+          "checks_failed": 2,
+          "response_ms": 900,
+          "error": "HTTP 500"
+        }
+      ]
+    }
+  ],
+  "checks": [
+    {
+      "on": "ScriptedCheckerService",
+      "method": "submit",
+      "args": [
+        "ScriptedMonitor#1"
+      ]
+    },
+    {
+      "on": "ScriptedCheckerService",
+      "method": "submit",
+      "args": [
+        "ScriptedMonitor#2"
+      ]
+    },
+    {
+      "on": "ScriptedCheckerService",
+      "method": "submit",
+      "args": [
+        "ScriptedMonitor#3"
+      ]
+    },
+    {
+      "on": "ScriptedCheckerService",
+      "method": "submit",
+      "args": [
+        "ScriptedMonitor#4"
+      ]
+    },
+    {
+      "on": "ScriptedCheckerService",
+      "method": "submit",
+      "args": [
+        "ScriptedMonitor#5"
+      ]
+    },
+    {
+      "on": "ScriptedCheckerService",
+      "method": "submit",
+      "args": [
+        "ScriptedMonitor#6"
+      ]
+    },
+    {
+      "on": "ScriptedCheckerService",
+      "method": "submit",
+      "args": [
+        "ScriptedMonitor#7"
+      ]
+    }
+  ]
+}

@@ -90,6 +90,58 @@ public class PingCheckerService {
         return a;
     }
 
+    // ── R3-3 P0 (çok pod Sürüm 3-3): ICMP yeteneği — dağıtık kontrol işçisi yalnız ICMP'si olan pod'da ping işi alır ──────
+    //
+    // Kural (tasarım R3-3 §6): ICMP "var" sayılır, YALNIZ son {@value #ICMP_NA_HOLD_MS} ms içinde bir ping sonucu "na" (binary
+    // yok / CAP_NET_RAW yok — yukarıdaki dal) olduysa "yok". Damga yalnız bellektir (veritabanı, günlük, iş parçacığı yok);
+    // kontrol sonucu ve davranışı DEĞİŞMEZ. Açılış sondası + 5 dk'da bir yeniden sonda ({@link #probeIcmp()}) dağıtık kontrol
+    // işçisinin (paket A) işidir ve yalnız ana anahtar açıkken çağrılır (K-1: kapalıyken hiç ping koşmaz).
+
+    /** Bir "na" sonucundan sonra ICMP bu kadar süre "yok" sayılır (ms). */
+    public static final long ICMP_NA_HOLD_MS = 300_000L;
+    /** Yetenek sondasının hedefi — geri döngü (dış ağa çıkmaz; yalnız binary + yetki sınanır). */
+    public static final String ICMP_PROBE_HOST = "127.0.0.1";
+
+    /** Son "na" sonucunun anı (monoton saat, ns) — {@link #icmpNaSeen} true iken anlamlı. */
+    private volatile long icmpNaAtNanos;
+    private volatile boolean icmpNaSeen;
+    /** Monoton saat (ns) — testler ilerletir. */
+    java.util.function.LongSupplier icmpClock = System::nanoTime;
+
+    /** "na" sonucunu damgalar (yalnız bellek) — {@link #check}'in "ICMP kullanılamıyor" dalı ve {@link #probeIcmp()} çağırır. */
+    void noteIcmpUnavailable() {
+        icmpNaAtNanos = icmpClock.getAsLong();
+        icmpNaSeen = true;
+    }
+
+    /**
+     * Bu pod ping kontrolü yapabiliyor mu: son {@link #ICMP_NA_HOLD_MS} içinde "na" (ICMP kullanılamıyor) sonucu YOKSA true.
+     * Yalnız bellek okuması; asla fırlatmaz. Hiç ping koşmamış pod için true (sonda yapılmadan "var" varsayılır — ilk
+     * "na" sonucunda 5 dk "yok" olur).
+     */
+    public boolean icmpAvailable() {
+        if (!icmpNaSeen) return true;
+        return icmpClock.getAsLong() - icmpNaAtNanos >= java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(ICMP_NA_HOLD_MS);
+    }
+
+    /**
+     * ICMP yetenek sondası: {@value #ICMP_PROBE_HOST}'a 1 paketlik ping ({@link #check}, 1 sn) — "na" ise damga
+     * {@link #icmpAvailable()}'ı 5 dk false yapar. ÇAĞIRAN: yalnız dağıtık kontrol işçisi, ana anahtar açıkken (açılışta +
+     * 5 dk'da bir). Bloklayıcıdır (alt süreç, en çok ~4 sn); karar / istek iş parçacığında çağırmayın.
+     *
+     * @return sonda sonrası {@link #icmpAvailable()}
+     */
+    public boolean probeIcmp() {
+        try {
+            Map<String, Object> r = check(ICMP_PROBE_HOST, null, 1, 1_000);
+            if (r != null && Boolean.TRUE.equals(r.get("na"))) noteIcmpUnavailable();
+        } catch (RuntimeException e) {
+            log.debug("ICMP yetenek sondası çalıştırılamadı: {}", e.getClass().getSimpleName());
+        }
+        return icmpAvailable();
+    }
+    // ── /R3-3 P0 ─────────────────────────────────────────────────────────────────────────────────────────────────────
+
     @Async("certCheckExecutor")
     public CompletableFuture<Map<String, Object>> checkAsync(String host, String ipVersion, int count, int timeoutMs) {
         return CompletableFuture.completedFuture(check(host, ipVersion, count, timeoutMs));
@@ -126,6 +178,7 @@ public class PingCheckerService {
                 || low.contains("operation not permitted")
                 || low.contains("permission denied")
                 || low.contains("socket operation")) {
+            noteIcmpUnavailable();   // çok pod R3-3 P0: yalnız bellek damgası (icmpAvailable) — sonuç değişmez
             result.put("up", false);
             result.put("na", true);
             result.put("error", "ICMP bu ortamda kullanılamıyor (yetki/binary)");

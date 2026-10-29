@@ -1,6 +1,7 @@
 // Sistem Sağlığı → Kendi kendini izleme (2026-10-11, kullanıcı isteği). Gerçek tarayıcıda 390 (dokunmatik) / 768
 // (dokunmatik) / 1280: bölüm en üstte; açılınca kontrol satırları, kanal özeti ve dış izleyici adresi sığar, yatay taşma
-// yok, dokunma hedefleri ≥ 40 px; onaylı kritik sorun genel bandı kritiğe çeker. API mock'lu.
+// yok, dokunma hedefleri ≥ 40 px; onaylı kritik sorun genel bandı kritiğe çeker. API mock'lu. 2026-10-29 (çok pod R3-3): 8. kontrol
+// "Dağıtık kontrol kuyruğu" (ana anahtar kapalıyken uygulanmaz).
 import { test, expect } from '@playwright/test'
 import { mockApi } from './support/monitorMocks.js'
 
@@ -26,6 +27,9 @@ const WATCHDOG = {
       facts: { pods: [{ pod: 'sitemonitor-prod-7d9f8c6b5d-x2k4p', skew_ms: 45000 },
         { pod: 'sitemonitor-prod-7d9f8c6b5d-uzun-bir-pod-adi-kirpilmamali-q9w8e', skew_ms: -6200 },
         { pod: 'sitemonitor-prod-7d9f8c6b5d-m3n5b', skew_ms: 300 }], max_abs_ms: 45000 } }),
+    // Dağıtık kontrol kuyruğu (2026-10-29, çok pod R3-3, paket D1): ana anahtar kapalıyken "uygulanmaz" (sorgu yok)
+    C('check_queue', 'Dağıtık kontrol kuyruğu', { last_result: 'NA', detail: 'Uygulanmaz: dağıtık kontroller kapalı (bütün türler tarama liderinde koşar).',
+      facts: { reason: 'distributed_off' } }),
   ],
   channels: { email_recipients: 3, push_users: 2, webhook: true, reminder_hours: 6, confirm_checks: 2 },
 }
@@ -81,8 +85,9 @@ for (const vp of VIEWPORTS) {
       await expect(page.locator('[data-slot="health-overall"]')).toHaveAttribute('data-level', 'down')
       const sections = await page.locator('[data-section]').evaluateAll((els) => els.map((e) => e.getAttribute('data-section')))
       expect(sections[0]).toBe('watchdog')
-      await expect(sec.locator('[data-slot="watchdog-check"]')).toHaveCount(7)
+      await expect(sec.locator('[data-slot="watchdog-check"]')).toHaveCount(8)
       await expect(sec.locator('[data-key="sweep_leader"]')).toHaveAttribute('data-state', 'problem')
+      await expect(sec.locator('[data-key="check_queue"]')).toHaveAttribute('data-state', 'na')
       await sec.scrollIntoViewIfNeeded()
       expect(await page.evaluate(overflowIn, '[data-slot="watchdog-section"]'), 'yatay taşma').toEqual([])
       if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="watchdog-section"]'), 'küçük hedef').toEqual([])

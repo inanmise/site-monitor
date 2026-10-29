@@ -1,8 +1,11 @@
 import { formatDate } from '../../../api/client'
+import { useElementWidth } from '../../../hooks/useElementWidth.js'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
+import AlertBanner from '../../ui/AlertBanner.jsx'
 import ToneBadge from '../ToneBadge.jsx'
 import { relTime, formatDurationShort } from './healthModel.js'
 import { EVAL_VERIFY_TONE, EVAL_UNKNOWN_REASONS, SIDE_JOB_STATE_TONE, otherPodState, EVAL_LOAD_REASONS, HANDOVER_RESULTS,
-  HANDOVER_NOT_READY_FROM_REASON } from './clusterRuntimeModel.js'
+  HANDOVER_NOT_READY_FROM_REASON, CHECK_JOBS_TONE } from './clusterRuntimeModel.js'
 import { KvList, PodChip, SubTitle, WARN_T } from './HealthParts.jsx'
 
 /**
@@ -110,6 +113,7 @@ export function EvalVerifySection({ t, es }) {
         <p className="text-xs text-muted-foreground" data-slot="es-decision-note">{t('hmp.esDecisionNote')}</p>
       </section>
       <EvalLoadSection t={t} load={es.load} />
+      <CheckJobsSection t={t} cj={es.checkJobs} />
     </>
   )
 }
@@ -154,6 +158,7 @@ export function EvalRecorderRows({ t, es }) {
         )}
       </dd>
       <HandoverRows t={t} handover={es.handover} />
+      <CheckJobsPodRows t={t} cj={es.checkJobs} />
     </>
   )
 }
@@ -345,6 +350,305 @@ export function HandoverRows({ t, handover }) {
             <span className="text-muted-foreground [overflow-wrap:anywhere]" data-slot="handover-last" data-result={handover.lastHandover}>
               {t('hmp.esLoad.lastHandover', handover.lastHandoverKnown
                 ? t(`hmp.esLoad.handover.${handover.lastHandover}`) : t('hmp.esReasonOther', handover.lastHandover))}
+            </span>
+          )}
+        </span>
+      </dd>
+    </>
+  )
+}
+
+// ── Çok pod Sürüm 3-3 (2026-10-29, paket D1; tasarım R3-3 §7.2): dağıtık kontroller ─────────────────────────────────
+
+/** İşçi tablosuna geçiş genişliği (px, KAP genişliği — görünüm alanı değil); altında kartlar. jsdom 0 = tablo. */
+export const CHECK_WORKERS_TABLE_MIN_PX = 760
+
+const CJ_STATUS_LABEL = {
+  on: 'hmp.cj.status.on', warn: 'hmp.cj.status.warn', idle: 'hmp.cj.status.idle', off: 'hmp.cj.status.off',
+  unknown: 'hmp.cj.status.unknown',
+}
+const CJ_MODE_LABEL = {
+  distributed: 'hmp.cj.mode.distributed', classic: 'hmp.cj.mode.classic', off: 'hmp.cj.mode.off', unknown: 'hmp.cj.mode.unknown',
+}
+const CJ_WORKER_STATE_LABEL = { live: 'hmp.cj.w.state.live', silent: 'hmp.cj.w.state.silent', stopping: 'hmp.cj.w.state.stopping' }
+const CJ_WORKERS_REASON = { not_read_yet: 'hmp.cj.w.notReadYet', table_missing: 'hmp.cj.w.tableMissing' }
+
+/** Tür kodu → okunur ad (izleme türü sözlüğü); bilinmeyen tür (yeni sürüm) adıyla. */
+function typeName(t, type) {
+  const label = t(`mw.type.${type}`)
+  return label && label !== `mw.type.${type}` ? label : type
+}
+
+/** Süre (ms) → "850 ms" / "4 sn" / "2 dk 5 sn"; bilinmiyorsa "—". */
+function durationText(t, ms) {
+  if (ms == null || !Number.isFinite(ms) || ms < 0) return '—'
+  if (ms < 1000) return t('hmp.cj.ms', Math.round(ms))
+  return formatDurationShort(Math.round(ms / 1000), t)
+}
+
+/** Kuyruk kutucuğu (etiket + değer); uyarı tonunda amber. */
+function QueueTile({ label, value, warn, slot }) {
+  return (
+    <div data-slot={slot} data-warn={warn ? 'true' : undefined}
+      className={`flex min-w-0 flex-col gap-0.5 rounded-md border p-2 ${warn ? 'border-amber-500/40 bg-amber-500/5' : 'bg-card'}`}>
+      <span className="text-xs text-muted-foreground [overflow-wrap:anywhere]">{label}</span>
+      <span className={`text-base font-semibold tabular-nums [overflow-wrap:anywhere] ${warn ? WARN_T : ''}`}>{value}</span>
+    </div>
+  )
+}
+
+function CapChips({ t, caps, missing }) {
+  if (caps.length === 0 && missing.length === 0) return <span className="text-muted-foreground">{t('hmp.cj.w.noCaps')}</span>
+  return (
+    <span className="flex min-w-0 flex-wrap gap-1">
+      {caps.map((c) => (
+        <ToneBadge key={c} tone="muted" data-slot="cj-cap" data-cap={c}
+          className="h-auto max-w-full overflow-visible rounded-md whitespace-normal [overflow-wrap:anywhere]">{typeName(t, c)}</ToneBadge>
+      ))}
+      {missing.map((c) => (
+        <ToneBadge key={`m-${c}`} tone="warning" data-slot="cj-cap-missing" data-cap={c}
+          className="h-auto max-w-full overflow-visible rounded-md whitespace-normal [overflow-wrap:anywhere]">{t('hmp.cj.w.missingCap', typeName(t, c))}</ToneBadge>
+      ))}
+    </span>
+  )
+}
+
+function WorkerState({ t, w }) {
+  return (
+    <ToneBadge tone={w.tone || 'muted'} data-slot="cj-worker-state" data-state={w.state}
+      className="h-auto overflow-visible rounded-md whitespace-normal">{t(CJ_WORKER_STATE_LABEL[w.state] || 'health.stUnknown')}</ToneBadge>
+  )
+}
+
+function WorkerPod({ t, w }) {
+  return (
+    <span className="flex min-w-0 flex-col gap-0.5">
+      <span className="flex min-w-0 flex-wrap items-center gap-1.5">
+        <PodName>{w.pod}</PodName>
+        {w.self && <ToneBadge tone="info" data-slot="cj-worker-self" className="h-auto overflow-visible rounded-md whitespace-normal">{t('hmp.cj.w.self')}</ToneBadge>}
+      </span>
+      {w.version && <span className="text-xs text-muted-foreground [overflow-wrap:anywhere]">{t('hmp.cj.w.version', w.version)}</span>}
+    </span>
+  )
+}
+
+/** İşçiler: kap ≥ {@link CHECK_WORKERS_TABLE_MIN_PX} tablo, değilse kartlar. Adlar SARAR. */
+function CheckWorkers({ t, cj }) {
+  const [ref, width] = useElementWidth()
+  const table = width === 0 || width >= CHECK_WORKERS_TABLE_MIN_PX
+  const workers = cj.workers
+  const hb = (w) => (w.heartbeatAgeMs != null ? t('health.ago', durationText(t, w.heartbeatAgeMs)) : '—')
+  return (
+    <div ref={ref} data-slot="cj-workers" data-layout={table ? 'table' : 'cards'} className="min-w-0">
+      {table ? (
+        <Table className="table-fixed text-[0.86em]">
+          <TableHeader className="bg-muted/50">
+            <TableRow>
+              <TableHead className="w-[30%] whitespace-normal">{t('hmp.cj.w.col.pod')}</TableHead>
+              <TableHead className="w-[26%] whitespace-normal">{t('hmp.cj.w.col.caps')}</TableHead>
+              <TableHead className="w-[11%] whitespace-normal">{t('hmp.cj.w.col.slots')}</TableHead>
+              <TableHead className="w-[13%] whitespace-normal">{t('hmp.cj.w.col.jobs')}</TableHead>
+              <TableHead className="w-[9%] whitespace-normal">{t('hmp.cj.w.col.lag')}</TableHead>
+              <TableHead className="w-[11%] whitespace-normal">{t('hmp.cj.w.col.heartbeat')}</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {workers.map((w) => (
+              <TableRow key={w.instanceId || w.pod} data-slot="cj-worker" data-state={w.state} data-self={w.self ? 'true' : undefined}
+                data-mismatch={w.mismatch ? 'true' : undefined}>
+                <TableCell className="align-top whitespace-normal"><WorkerPod t={t} w={w} /></TableCell>
+                <TableCell className="align-top whitespace-normal"><CapChips t={t} caps={w.caps} missing={w.missing} /></TableCell>
+                <TableCell className="align-top whitespace-normal tabular-nums">{t('hmp.cj.w.slots', w.busy ?? '—', w.slots ?? '—')}</TableCell>
+                <TableCell className="align-top whitespace-normal tabular-nums">{t('hmp.cj.w.jobs', w.completed ?? '—', w.late ?? '—')}</TableCell>
+                <TableCell className="align-top whitespace-normal tabular-nums">{durationText(t, w.lagMs)}</TableCell>
+                <TableCell className="align-top whitespace-normal">
+                  <span className="flex min-w-0 flex-col items-start gap-0.5"><WorkerState t={t} w={w} /><span className="text-xs text-muted-foreground">{hb(w)}</span></span>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      ) : (
+        <ul className="m-0 flex list-none flex-col gap-2 p-0">
+          {workers.map((w) => (
+            <li key={w.instanceId || w.pod} data-slot="cj-worker" data-state={w.state} data-self={w.self ? 'true' : undefined}
+              data-mismatch={w.mismatch ? 'true' : undefined} className="flex min-w-0 flex-col gap-1.5 rounded-md border bg-card p-2.5">
+              <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
+                <WorkerPod t={t} w={w} />
+                <WorkerState t={t} w={w} />
+              </div>
+              <CapChips t={t} caps={w.caps} missing={w.missing} />
+              <span className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
+                {t('hmp.cj.w.slots', w.busy ?? '—', w.slots ?? '—')} · {t('hmp.cj.w.jobs', w.completed ?? '—', w.late ?? '—')}
+                {' · '}{t('hmp.cj.w.lag', durationText(t, w.lagMs))} · {t('hmp.cj.w.heartbeat', hb(w))}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {cj.workersTotal > workers.length && (
+        <p className="mt-1 text-xs text-muted-foreground" data-slot="cj-workers-more">{t('hmp.cj.w.more', cj.workersTotal - workers.length)}</p>
+      )}
+    </div>
+  )
+}
+
+/**
+ * "Dağıtık kontroller" — Küme kartının çok pod Sürüm 3-3 bölümü ("Küme" etiketli; kuyruk ve işçi kaydı veritabanından): ana
+ * anahtar, tür kipleri (YANITLAYAN pod'un görüşü — yalnız liderde anlamlı), kuyruk kutucukları (en eski bekleyen /
+ * değerlendirilmeyen 30 sn'den eski → uyarı), işçiler (kap ≥ 760 px tablo, değilse kart), yetenek uyuşmazlığı uyarısı. Açık
+ * anahtar yeşil DEĞİL; okunamayan kuyruk / kayıt "bilinmiyor" (gri). Eski sunucu (alan yok) → gizli.
+ */
+export function CheckJobsSection({ t, cj }) {
+  if (!cj) return null
+  const tone = CHECK_JOBS_TONE[cj.status] || 'muted'
+  const q = cj.queue
+  const hint = cj.status === 'off' ? t('hmp.cj.offHint')
+    : cj.status === 'idle' ? t('hmp.cj.idleHint')
+      : cj.error ? t('hmp.cj.unreadable') : null
+  return (
+    <section data-slot="cluster-check-jobs" data-level={cj.level} data-status={cj.status} aria-labelledby="hmp-cj-title"
+      className="flex flex-col gap-2 border-t pt-2.5">
+      <SubTitle className="mt-0 text-[12px]"><span id="hmp-cj-title">{t('hmp.cj.title')}</span><PodChip t={t} scope="cluster" /></SubTitle>
+      <KvList>
+        <dt>{t('hmp.cj.switch')}</dt>
+        <dd data-slot="cj-switch" data-status={cj.status} className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5">
+          <ToneBadge tone={tone} className="h-auto max-w-full overflow-visible rounded-md font-semibold whitespace-normal [overflow-wrap:anywhere]">
+            {t(CJ_STATUS_LABEL[cj.status] || 'hmp.cj.status.unknown')}
+          </ToneBadge>
+        </dd>
+        {cj.enabled && (
+          <>
+            <dt>{t('hmp.cj.modes')}</dt>
+            <dd className="min-w-0">
+              <ul data-slot="cj-modes" className="m-0 flex list-none flex-wrap gap-1.5 p-0">
+                {cj.modes.map((m) => (
+                  <li key={m.type} data-slot="cj-mode" data-type={m.type} data-mode={m.mode} className="min-w-0 max-w-full">
+                    <ToneBadge tone={m.tone || 'muted'} className="h-auto max-w-full overflow-visible rounded-md text-left whitespace-normal [overflow-wrap:anywhere]">
+                      {t('hmp.cj.modeValue', typeName(t, m.type), t(CJ_MODE_LABEL[m.mode] || 'hmp.cj.mode.unknown'))}
+                    </ToneBadge>
+                  </li>
+                ))}
+              </ul>
+              {cj.types.length > 0 && cj.leaderView !== true && (
+                <p className="mt-1 text-xs text-muted-foreground [overflow-wrap:anywhere]" data-slot="cj-mode-follower">
+                  {t('hmp.cj.modeFollowerNote', cj.modeByPod || '—')}
+                </p>
+              )}
+              {cj.types.length > 0 && cj.leaderView === true && (
+                <p className="mt-1 text-xs text-muted-foreground" data-slot="cj-mode-leader">{t('hmp.cj.modeLeaderNote')}</p>
+              )}
+            </dd>
+          </>
+        )}
+      </KvList>
+      {cj.enabled && cj.types.length > 0 && (
+        q ? (
+          <div className="flex flex-col gap-1.5" data-slot="cj-queue" data-level={cj.queueLevel}>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              <QueueTile slot="cj-q-pending" label={t('hmp.cj.q.pending')} value={q.pending ?? '—'} />
+              <QueueTile slot="cj-q-oldest-pending" label={t('hmp.cj.q.oldestPending')} warn={q.pendingWarn}
+                value={q.oldestPendingMs == null ? t('hmp.cj.q.none') : durationText(t, q.oldestPendingMs)} />
+              <QueueTile slot="cj-q-done" label={t('hmp.cj.q.done')} value={q.done ?? '—'} />
+              <QueueTile slot="cj-q-oldest-done" label={t('hmp.cj.q.oldestDone')} warn={q.doneWarn}
+                value={q.oldestDoneMs == null ? t('hmp.cj.q.none') : durationText(t, q.oldestDoneMs)} />
+            </div>
+            <p className="m-0 text-xs text-muted-foreground [overflow-wrap:anywhere]" data-slot="cj-q-claimed">
+              {t('hmp.cj.q.claimed', q.claimed ?? '—')}
+              {q.expired > 0 ? <span className={WARN_T} data-slot="cj-q-expired"> · {t('hmp.cj.q.expired', q.expired)}</span> : null}
+            </p>
+            {q.byType.some((b) => b.pending + b.claimed + b.done > 0) && (
+              <ul data-slot="cj-q-by-type" className="m-0 flex list-none flex-wrap gap-x-3 gap-y-0.5 p-0 text-xs text-muted-foreground">
+                {q.byType.filter((b) => b.pending + b.claimed + b.done > 0).map((b) => (
+                  <li key={b.type} data-type={b.type} className="[overflow-wrap:anywhere]">
+                    {t('hmp.cj.q.typeCounts', typeName(t, b.type), b.pending, b.claimed, b.done)}
+                  </li>
+                ))}
+              </ul>
+            )}
+            {cj.queueLevel === 'warn' && <p className={`m-0 text-xs ${WARN_T}`} data-slot="cj-q-warn">{t('hmp.cj.q.warnHint')}</p>}
+          </div>
+        ) : (
+          <p className="m-0 text-[0.9em] text-muted-foreground [overflow-wrap:anywhere]" data-slot="cj-queue" data-level="unknown">
+            {t('hmp.cj.q.unreadable', cj.queueReason || '—')}
+          </p>
+        )
+      )}
+      {cj.enabled && (
+        <div className="flex min-w-0 flex-col gap-1.5">
+          <span className="text-xs font-semibold text-muted-foreground">{t('hmp.cj.workers')}</span>
+          {!cj.workersKnown && cj.workers.length === 0 ? (
+            <p className="m-0 text-[0.9em] text-muted-foreground" data-slot="cj-workers-unknown">
+              {t(CJ_WORKERS_REASON[cj.workersReason] || 'hmp.cj.w.unknown')}
+            </p>
+          ) : cj.workers.length === 0 ? (
+            <p className="m-0 text-[0.9em] text-muted-foreground" data-slot="cj-workers-none">{t('hmp.cj.w.none')}</p>
+          ) : (
+            <>
+              {!cj.workersKnown && <p className="m-0 text-xs text-muted-foreground" data-slot="cj-workers-stale">{t('hmp.cj.w.stale')}</p>}
+              <CheckWorkers t={t} cj={cj} />
+            </>
+          )}
+        </div>
+      )}
+      {cj.mismatch.length > 0 && (
+        <AlertBanner tone="warning" title={t('hmp.cj.mismatchTitle')} className="mb-0">
+          <span data-slot="cj-cap-mismatch" className="[overflow-wrap:anywhere]">
+            {t('hmp.cj.mismatchBody', cj.mismatch.map((w) => `${w.pod} (${w.missing.map((c) => typeName(t, c)).join(', ')})`).join('; '))}
+          </span>
+        </AlertBanner>
+      )}
+      {hint && <p className="m-0 text-[0.9em] text-muted-foreground" data-slot="cj-hint">{hint}</p>}
+      {cj.enabled && <p className="m-0 text-xs text-muted-foreground" data-slot="cj-note">{t('hmp.cj.note')}</p>}
+    </section>
+  )
+}
+
+/** Bu pod'un dağıtık kontrol işçisi — "Bu pod" `<KvList>` satırı (anahtar kapalı / eski sunucu → gizli). */
+export function CheckJobsPodRows({ t, cj }) {
+  if (!cj || !cj.enabled || !cj.thisPod) return null
+  const p = cj.thisPod
+  const w = p.worker
+  return (
+    <>
+      <dt>{t('hmp.cj.podRow')}</dt>
+      <dd data-slot="cluster-check-worker" data-known={p.workerKnown ? 'true' : 'false'} className="min-w-0 [overflow-wrap:anywhere]">
+        <span className="flex flex-col gap-0.5">
+          {!w ? <span>{t('health.stUnknown')}</span>
+            : !w.enabled ? <span data-slot="cj-pod-off">{t('hmp.cj.pod.workerOff')}</span>
+              : (
+                <>
+                  <span data-slot="cj-pod-slots">
+                    {t('hmp.cj.pod.slots', w.slots ?? '—', w.busy ?? '—')}
+                    {!w.started ? ` · ${t('hmp.cj.pod.notStarted')}` : ''}
+                    {w.closing ? ` · ${t('hmp.cj.pod.closing')}` : ''}
+                  </span>
+                  <span className="text-muted-foreground" data-slot="cj-pod-jobs">
+                    {t('hmp.cj.pod.jobs', w.completed, w.late, w.timeouts, w.failed)} · {t('hmp.cj.w.lag', durationText(t, w.lagMs))}
+                  </span>
+                  {(w.claimErrors > 0 || w.completeErrors > 0) && (
+                    <span className="text-muted-foreground" data-slot="cj-pod-errors">{t('hmp.cj.pod.issues', w.claimErrors, w.completeErrors)}</span>
+                  )}
+                </>
+              )}
+          {p.localCaps && (
+            <span className="text-muted-foreground" data-slot="cj-pod-caps">
+              {t('hmp.cj.pod.caps', p.localCaps.length ? p.localCaps.map((c) => typeName(t, c)).join(', ') : t('hmp.cj.w.noCaps'))}
+            </span>
+          )}
+          {p.dbClockStale === true && <span className={WARN_T} data-slot="cj-pod-clock-stale">{t('hmp.cj.pod.clockStale')}</span>}
+          {p.leader === true && p.dispatch && (
+            <span className="text-muted-foreground" data-slot="cj-pod-leader">
+              {t('hmp.cj.pod.leader', p.dispatch.dispatched, p.dispatch.applied, p.dispatch.lost, p.dispatch.dropped ?? '—')}
+              {p.dispatch.failures > 0 ? ` · ${t('hmp.cj.pod.dispatchFailures', p.dispatch.failures)}` : ''}
+            </span>
+          )}
+          {p.leader === true && p.drainer && p.drainer.started && (
+            <span className="text-muted-foreground" data-slot="cj-pod-drainer">
+              {t('hmp.cj.pod.drainer', p.drainer.taken, p.drainer.waves,
+                p.drainer.lastTakeAt ? (relTime(p.drainer.lastTakeAt, t) || formatDate(p.drainer.lastTakeAt)) : '—')}
+              {p.drainer.applyFailures + p.drainer.takeFailures > 0
+                ? ` · ${t('hmp.cj.pod.drainerFailures', p.drainer.takeFailures, p.drainer.applyFailures)}` : ''}
             </span>
           )}
         </span>

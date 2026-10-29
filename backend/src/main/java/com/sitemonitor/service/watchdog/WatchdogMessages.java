@@ -64,7 +64,38 @@ public final class WatchdogMessages {
             }
             case DATABASE -> database(f, en);
             case CLOCK_SKEW -> clockSkew(f, en);
+            case CHECK_QUEUE -> checkQueue(f, en);
         };
+    }
+
+    /** Dağıtık kontrol kuyruğu (R3-3): sayılar, en eski yaşlar, kirası dolmuş sahiplenme, canlı işçi. */
+    private static String checkQueue(Map<String, Object> f, boolean en) {
+        long pending = num(f.get("pending")), claimed = num(f.get("claimed")), done = num(f.get("done"));
+        long expired = num(f.get("expired_claims"));
+        Object limit = f.get("limit_seconds");
+        StringBuilder sb = new StringBuilder(en
+                ? "Queue: " + pending + " pending, " + claimed + " running, " + done + " waiting for evaluation."
+                : "Kuyruk: " + pending + " bekleyen, " + claimed + " koşan, " + done + " değerlendirme bekleyen.");
+        if (f.get("oldest_pending_seconds") instanceof Number n) {
+            sb.append(en ? " Oldest pending job: " + n.longValue() + " s" : " En eski bekleyen iş: " + n.longValue() + " sn");
+            sb.append(en ? " (limit " + limit + " s)." : " (sınır " + limit + " sn).");
+        }
+        if (f.get("oldest_done_seconds") instanceof Number n) {
+            sb.append(en ? " Oldest unevaluated result: " + n.longValue() + " s (limit " + limit + " s)."
+                    : " En eski değerlendirilmeyen sonuç: " + n.longValue() + " sn (sınır " + limit + " sn).");
+        }
+        if (expired > 0) {
+            sb.append(en ? " " + expired + " claim(s) past their lease (a worker stopped mid-check)."
+                    : " Kirası dolmuş " + expired + " sahiplenme var (bir işçi kontrolün ortasında durdu).");
+        }
+        if (f.get("live_workers") instanceof Number n) {
+            sb.append(en ? " Live workers: " + n.intValue() + "." : " Canlı işçi: " + n.intValue() + ".");
+        }
+        return sb.toString();
+    }
+
+    private static long num(Object o) {
+        return o instanceof Number n ? n.longValue() : 0L;
     }
 
     private static String database(Map<String, Object> f, boolean en) {
@@ -154,6 +185,10 @@ public final class WatchdogMessages {
                     : "Ölçülemedi: son dakikalarda örnek yazan canlı pod yok.";
             case "skew_unknown" -> en ? "Could not be measured: the live pods have not reported their clock difference yet (older version or first minute)."
                     : "Ölçülemedi: canlı pod'lar saat farkını henüz bildirmedi (eski sürüm ya da ilk dakika).";
+            case "distributed_off" -> en ? "Not applicable: distributed checks are off (every type runs on the sweep leader)."
+                    : "Uygulanmaz: dağıtık kontroller kapalı (bütün türler tarama liderinde koşar).";
+            case "no_check_store" -> en ? "Not applicable: the check job queue is not available on this pod."
+                    : "Uygulanmaz: kontrol işi kuyruğu bu pod'da yok.";
             case "overview_unavailable", "probe_failed" -> en ? "Could not be measured this round." : "Bu turda ölçülemedi.";
             default -> en ? "Not applicable." : "Uygulanmaz.";
         };

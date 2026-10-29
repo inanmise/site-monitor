@@ -294,4 +294,117 @@ class ShutdownBudgetGateTest {
         assertThat(release.getOrder()).as("kira, ≤ 20 sn süren boşaltmadan ÖNCE bırakılır (devir ≤ ~35 sn)")
                 .isLessThan(drain.getOrder());
     }
+
+    /**
+     * Çok pod Sürüm 3-3 paket C (2026-10-29; tasarım R3-3 §5.6): dağıtık kontrol sonuç boşaltıcısı ({@code check-result-drain})
+     * kapanışta yalnız bayrak kaldırır — {@code ContextClosedEvent} dinleyicisi beklemez, almaz, kilit tutmaz; {@code @PreDestroy}
+     * iş parçacığını ortak yok etme süresinden ({@link ShutdownDeadline#waitMs}) en çok 500 ms birleştirir ({@code join(0)} asla);
+     * iş parçacığı hiç kurulmadıysa (anahtar açılıştan beri kapalı, K-1) ortak süreye HİÇ dokunmaz. Spring / Helm bütçesine yeni
+     * bekleme eklenmez (Spring 91 / toplam 101 &lt; 120 değişmez — {@link #springShutdownFitsInsideTheGracePeriod}).
+     */
+    @Test
+    @DisplayName("3-3: sonuç boşaltıcısı — kapanış dinleyicisi yalnız bayrak, @PreDestroy ≤ 500 ms ortak süreden, kurulmadıysa süreye dokunmaz")
+    void checkResultDrainerStopsWithinTheSharedDeadline() throws IOException {
+        String src = Files.readString(Path.of("src/main/java/com/sitemonitor/service/checks/CheckResultDrainer.java"),
+                StandardCharsets.UTF_8);
+        assertThat(src).contains("ShutdownDeadline.waitMs(SHUTDOWN_JOIN_CAP_MS)").contains("t.join(budget)")
+                .contains("if (budget <= 0) return;");
+        assertThat(com.sitemonitor.service.checks.CheckResultDrainer.SHUTDOWN_JOIN_CAP_MS)
+                .as("tavan 500 ms, ortak yok etme süresinin altında").isEqualTo(500L)
+                .isLessThan(ShutdownDeadline.DESTROY_BUDGET_MS);
+        int closed = src.indexOf("public void onContextClosed(");
+        assertThat(closed).isPositive();
+        String closedBody = src.substring(closed, src.indexOf("\n    }", closed));
+        assertThat(closedBody).as("ContextClosedEvent dinleyicisi beklemez / almaz").doesNotContain("join")
+                .doesNotContain("await").doesNotContain("sleep").doesNotContain("park").doesNotContain("waitMs")
+                .doesNotContain("take(").doesNotContain("synchronized");
+        int destroy = src.indexOf("public void destroy()");
+        assertThat(destroy).isPositive();
+        String destroyBody = src.substring(destroy, src.indexOf("\n    }", destroy));
+        int notStarted = destroyBody.indexOf("t == null || !t.isAlive()");
+        int wait = destroyBody.indexOf("ShutdownDeadline.waitMs(");
+        assertThat(notStarted).as("kurulmamış iş parçacığı → ortak süreye dokunulmaz (K-1)").isPositive().isLessThan(wait);
+        assertThat(src).as("tek beklemesi ortak süre içinde").doesNotContain(".awaitTermination(")
+                .doesNotContain("Thread.sleep(");
+    }
+
+    private static String methodBody(String src, String signature) {
+        int at = src.indexOf(signature);
+        assertThat(at).as("yöntem bulunamadı: " + signature).isPositive();
+        return src.substring(at, src.indexOf("\n    }", at));
+    }
+
+    private static int listenerOrder(Class<?> type, String bean) throws NoSuchMethodException {
+        return new org.springframework.context.event.ApplicationListenerMethodAdapter(bean, type,
+                type.getMethod("onContextClosed", org.springframework.context.event.ContextClosedEvent.class)).getOrder();
+    }
+
+    /**
+     * Çok pod Sürüm 3-3 paket A / D2 (2026-10-29; tasarım R3-3 §5.6): dağıtık kontrol İŞÇİSİ ve İŞÇİ KAYDI kapanışta kiradan
+     * (SchedulerService, en yüksek öncelik) ve ölçüm aktarıcısının mezar taşı bayrağından (+1) SONRA dinler
+     * ({@code HIGHEST_PRECEDENCE + 2}); dinleyici yalnız bayrak kaldırır, başlamamış işleri / "duruyor" satırını cin yardımcı iş
+     * parçacığına bırakır — beklemez, veritabanına gitmez. İşçinin {@code @PreDestroy}'u koşan kontrolleri
+     * {@code ShutdownDeadline.waitMs(3_000)}, son tamamlama yazımını {@code ShutdownDeadline.waitMs(1_000)} bekler (ortak süreden,
+     * {@code join(0)} asla); hiç başlamadıysa (anahtar açılıştan beri kapalı, K-1) ortak süreye dokunmaz. Sonuç boşaltıcısı da
+     * kiradan sonra. 3-3 Spring / Helm bütçesine YENİ bekleme eklemez: Spring 91 / toplam 101 &lt; 120 değişmez
+     * ({@link #springShutdownFitsInsideTheGracePeriod}).
+     */
+    @Test
+    @DisplayName("3-3: işçi + işçi kaydı — kapanış dinleyicisi kiradan ve aktarıcıdan sonra, yalnız bayrak; @PreDestroy beklemeleri "
+            + "ortak süreden; kurulmadıysa süreye dokunmaz; bütçe 91 / 101 değişmez")
+    void checkWorkerShutdownUsesTheSharedDeadline() throws Exception {
+        String worker = Files.readString(Path.of("src/main/java/com/sitemonitor/service/checks/CheckWorker.java"),
+                StandardCharsets.UTF_8);
+        String registry = Files.readString(Path.of("src/main/java/com/sitemonitor/service/checks/CheckWorkerRegistryImpl.java"),
+                StandardCharsets.UTF_8);
+        assertThat(worker).contains("ShutdownDeadline.waitMs(SHUTDOWN_WAIT_CAP_MS)")
+                .contains("ShutdownDeadline.waitMs(FINAL_FLUSH_CAP_MS)");
+        assertThat(com.sitemonitor.service.checks.CheckWorker.SHUTDOWN_WAIT_CAP_MS).isLessThan(ShutdownDeadline.DESTROY_BUDGET_MS);
+        assertThat(com.sitemonitor.service.checks.CheckWorker.FINAL_FLUSH_CAP_MS).isLessThan(ShutdownDeadline.DESTROY_BUDGET_MS);
+
+        for (String[] f : new String[][]{{"CheckWorker", worker}, {"CheckWorkerRegistryImpl", registry}}) {
+            String closed = methodBody(f[1], "public void onContextClosed(");
+            assertThat(closed).as(f[0] + ".onContextClosed: bekleme / veritabanı yok").doesNotContain(".join(")
+                    .doesNotContain("awaitTermination(").doesNotContain("waitMs(").doesNotContain("sleep(")
+                    .doesNotContain("parkNanos(").doesNotContain("store.").doesNotContain("jdbc.");
+            assertThat(closed).as(f[0] + ".onContextClosed: iş cin yardımcıda").contains("setDaemon(true)");
+        }
+        assertThat(registry).as("işçi kaydının @PreDestroy beklemesi yok").doesNotContain("@PreDestroy")
+                .doesNotContain("awaitTermination(").doesNotContain("Thread.sleep(");
+
+        String destroy = methodBody(worker, "public void destroy()");
+        int notStarted = destroy.indexOf("if (!started || ex == null) return;");
+        int firstWait = destroy.indexOf("ShutdownDeadline.waitMs(");
+        assertThat(notStarted).as("başlamamış işçi → ortak süreye dokunulmaz (K-1)").isPositive().isLessThan(firstWait);
+        assertThat(destroy).as("son yazım beklemesi: bütçe 0 ise join yok (join(0) = sonsuz)")
+                .contains("if (join <= 0) return;").contains("poll.join(join)");
+        assertThat(worker).doesNotContain("Thread.sleep(");
+
+        int lease = listenerOrder(com.sitemonitor.service.SchedulerService.class, "schedulerService");
+        int exporter = listenerOrder(com.sitemonitor.service.metrics.MonitoringMetricsExporter.class, "monitoringMetricsExporter");
+        int w = listenerOrder(com.sitemonitor.service.checks.CheckWorker.class, "checkWorker");
+        int r = listenerOrder(com.sitemonitor.service.checks.CheckWorkerRegistryImpl.class, "checkWorkerRegistryImpl");
+        int d = listenerOrder(com.sitemonitor.service.checks.CheckResultDrainer.class, "checkResultDrainer");
+        assertThat(w).as("işçi: HIGHEST_PRECEDENCE + 2").isEqualTo(org.springframework.core.Ordered.HIGHEST_PRECEDENCE + 2);
+        assertThat(r).as("işçi kaydı: HIGHEST_PRECEDENCE + 2").isEqualTo(org.springframework.core.Ordered.HIGHEST_PRECEDENCE + 2);
+        assertThat(w).as("işçi kiradan ve aktarıcının bayrağından SONRA").isGreaterThan(lease).isGreaterThan(exporter);
+        assertThat(r).isGreaterThan(lease).isGreaterThan(exporter);
+        assertThat(d).as("boşaltıcı kiradan sonra").isGreaterThan(lease);
+        int drain = new org.springframework.context.event.ApplicationListenerMethodAdapter("notifyExecutorDrain",
+                NotifyExecutorDrain.class, NotifyExecutorDrain.class.getMethod("onContextClosed")).getOrder();
+        assertThat(w).as("işçi bildirim boşaltmasını beklemez (önce koşar)").isLessThan(drain);
+
+        long threeThreeDestroyMs = com.sitemonitor.service.checks.CheckWorker.SHUTDOWN_WAIT_CAP_MS
+                + com.sitemonitor.service.checks.CheckWorker.FINAL_FLUSH_CAP_MS
+                + com.sitemonitor.service.checks.CheckResultDrainer.SHUTDOWN_JOIN_CAP_MS;
+        assertThat(threeThreeDestroyMs).as("3-3 yok etme beklemeleri toplamı ortak 10 sn bütçenin içinde (yeni bütçe kalemi değil)")
+                .isLessThanOrEqualTo(ShutdownDeadline.DESTROY_BUDGET_MS);
+        Properties p = props();
+        long phase = seconds(p.getProperty("spring.lifecycle.timeout-per-shutdown-phase"));
+        long await = seconds(p.getProperty("spring.task.scheduling.shutdown.await-termination-period"));
+        long spring = WebConfig.NOTIFY_AWAIT_SECONDS + phase + phase + await + PRE_DESTROY_SLACK_S + HANDOVER_S;
+        long preStop = topLevelInt(Files.readString(VALUES, StandardCharsets.UTF_8), "preStopSleepSeconds");
+        assertThat(spring).as("Spring bütçesi 3-3 ile değişmedi").isEqualTo(91);
+        assertThat(preStop + spring).as("toplam 101 < 120").isEqualTo(101);
+    }
 }

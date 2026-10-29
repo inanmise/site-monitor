@@ -1,9 +1,226 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-28T20:34:15Z",
+  "generatedAt": "2026-10-29T08:00:29Z",
   "repo": "inanmise/site-monitor",
-  "count": 789,
+  "count": 790,
   "releases": [
+    {
+      "version": "20.170.0",
+      "tag": "v20.170.0",
+      "releasedAt": "2026-10-29T08:00:18Z",
+      "commit": "879a57f6563d401777b1e5d1be28f9168daeea4a",
+      "prevVersion": "20.169.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 5,
+        "fix": 10,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 3,
+        "other": 10
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "879a57f6",
+          "subject": "çok pod 3-3 — bırakılan iş koruması klasikle ortak gövdelerde yalnız işçi yuvasında"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "b2fa54e3",
+          "subject": "çok pod 3-3 — DNS vade testi gerçek küme vade servisiyle; son inceleme düzeltmeleri belgelendi"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "579e3dac",
+          "subject": "çok pod 3-3 — son inceleme düzeltmeleri (yarım gönderim, yeniden açmada bekleyen iş, DNS vadesi, bırakılan iş)"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "90244d28",
+          "subject": "çok pod 3-3 — işçinin sahiplenme hızı düzeltmesi ve boşaltıcı sayaçları belgelendi"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "08335abe",
+          "subject": "çok pod 3-3 — yedek gönderim tıkının iş parçacığı iptalden sonra söner (test yalıtımı)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "5193cc79",
+          "subject": "çok pod 3-3 — boşaltıcının düşürdüğü sonuçlar System Health ve düşen ölçüsünde görünür"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "95adaff0",
+          "subject": "çok pod 3-3 — dağıtık kontroller (CLAUDE.md, işletim kılavuzu, prod dağıtım listesi)"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "640851e7",
+          "subject": "çok pod 3-3 — devir ve yeniden açma senaryoları etkin (s3b, s6b), düzenekte ICMP sondası, biçme sınırı 60 sn"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "9eac1b3a",
+          "subject": "çok pod 3-3 — işçi dolu turdan sonra yuva boşalınca beklemeden iş alır (inceleme D2-2)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "879659d2",
+          "subject": "çok pod 3-3 — iş yolunda bırakılan işin geçmiş satırı yazılmaz (CheckWorker.currentJobAbandoned)"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "cff63b92",
+          "subject": "çok pod 3-3 — duman testine SMOKE_DISTRIBUTED, çift-iş dedektörüne dağıtık kontrol bölümü"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "83a58a03",
+          "subject": "çok pod 3-3 — uçtan uca dağıtık kontrol senaryoları, KAPALI kanıtları, kapasite ve kapanış kapısı"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "d59be644",
+          "subject": "çok pod 3-3 FX-EVAL — devirde tek dalgalı parti (incelemenin yoklaması) ve kapanıştan önce biten parti"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "f3a07070",
+          "subject": "çok pod 3-3 inceleme düzeltmeleri (FX-EVAL) — boru hattı sağlığı, klasikle sıra, devirde kayıp"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "bed59596",
+          "subject": "çok pod 3-3 — CheckJobStore javadoc'u FX-QUEUE sözleşmesine uydu (gönderme eksik tabloda fırlatır, biçme eski DONE satırlarını da siler)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "ef9d0237",
+          "subject": "çok pod 3-3 FX-QUEUE — kuyruk, işçi ve DB saati inceleme düzeltmeleri"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "83849440",
+          "subject": "çok pod 3-3 D1 — check_jobs sağlık alanı, ölçümler, Grafana panelleri, check_queue ve Küme kartı bölümü"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "32ebe96e",
+          "subject": "çok pod 3-3 D1 — Küme kartı \"Dağıtık kontroller\", 5 ölçüm + Grafana revizyon 7, kendi kendini izleme check_queue"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "0f83320c",
+          "subject": "çok pod 3-3 B — dağıtık kipte pencere ve tur aralığı klasikle aynı (klasik tur kadansı ipucu)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "255fc522",
+          "subject": "çok pod 3-3 B — tür yalnız bu pod gönderebiliyorsa dağıtık (gönderim tıkı kurulu + kuyruk var)"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "7b982817",
+          "subject": "çok pod 3-3 B — gidiş-dönüş (K-3), gönderim kapıları ve tür kipi testleri; kip liderlik ipucunu da ister"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "52fa911a",
+          "subject": "çok pod 3-3 A — PostgreSQL'de tekil dizin doğrulanmadan önceki gönderme de ON CONFLICT DO NOTHING ile yarışa dayanıklı"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "721421b9",
+          "subject": "çok pod 3-3 A — kontrol işi kuyruğu, işçi, işçi kaydı ve veritabanı-çapalı saat (ana anahtar kapalıyken etkisiz)"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "2340ea03",
+          "subject": "çok pod 3-3 C — boşaltıcı dalgaları, bilet kapsamı, holdManual, kira-bağlı alma, devir durulması, kapanış bütçesi"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "dfc1ca93",
+          "subject": "çok pod 3-3 C — dağıtık kontrol sonuç boşaltıcısı + elle gelen kutusu sıra kapısı"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "1933e162",
+          "subject": "çok pod 3-3 B — dağıtık kontrol gönderimi, iş gövdeleri ve sonuç değerlendirmesi (anahtar kapalı ≡ 20.169.0)"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "65342729",
+          "subject": "çok pod 3-3 P0 — klasik tarama altın kayıtları (sekiz tür, 20.169.0 kodundan)"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "7c5f3407",
+          "subject": "çok pod 3-3 P0 — dağıtık kontrol sözleşmeleri, ana anahtar + tür listesi (varsayılan kapalı)"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.169.0",
       "tag": "v20.169.0",
