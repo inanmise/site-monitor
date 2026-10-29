@@ -839,6 +839,66 @@ class SystemControllerTest {
         }
     }
 
+    @Test
+    @DisplayName("R3-3: sağlık yanıtı check_jobs taşır — anahtar kapalı → YALNIZ {enabled: false} (kuyruk / kayıt hiç okunmaz); açık → "
+            + "türler, kipler, kuyruk, işçiler, bu pod; kuyruk okunamadı → queue_error (yanıt düşmez); bean yok → alan yok")
+    void healthCarriesCheckJobsR33() throws Exception {
+        com.sitemonitor.service.AppSettingsService settings = org.mockito.Mockito.mock(com.sitemonitor.service.AppSettingsService.class);
+        when(settings.getBoolean(eq(com.sitemonitor.service.checks.DistributedChecks.KEY_ENABLED), org.mockito.ArgumentMatchers.anyBoolean()))
+                .thenReturn(false);
+        when(settings.getString(eq(com.sitemonitor.service.checks.DistributedChecks.KEY_TYPES), org.mockito.ArgumentMatchers.anyString()))
+                .thenReturn("port,ping");
+        com.sitemonitor.service.checks.DistributedChecks dc = new com.sitemonitor.service.checks.DistributedChecks(settings,
+                com.sitemonitor.service.checks.DistributedChecks.Tuning.DEFAULTS);
+        com.sitemonitor.service.checks.CheckJobStore store = org.mockito.Mockito.mock(com.sitemonitor.service.checks.CheckJobStore.class);
+        com.sitemonitor.service.checks.CheckWorkerRegistry registry =
+                org.mockito.Mockito.mock(com.sitemonitor.service.checks.CheckWorkerRegistry.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(controller, "distributedChecks", dc);
+        org.springframework.test.util.ReflectionTestUtils.setField(controller, "checkJobStore", store);
+        org.springframework.test.util.ReflectionTestUtils.setField(controller, "checkWorkerRegistry", registry);
+        try {
+            mvc.perform(get("/api/admin/system").session(userSession()))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.check_jobs.enabled").value(false))
+                    .andExpect(jsonPath("$.data.check_jobs.types").doesNotExist())
+                    .andExpect(jsonPath("$.data.check_jobs.queue").doesNotExist());
+            org.mockito.Mockito.verifyNoInteractions(store, registry);
+
+            when(settings.getBoolean(eq(com.sitemonitor.service.checks.DistributedChecks.KEY_ENABLED), org.mockito.ArgumentMatchers.anyBoolean()))
+                    .thenReturn(true);
+            when(store.stats()).thenReturn(new com.sitemonitor.service.checks.CheckJobStore.QueueStats(System.currentTimeMillis(), List.of(
+                    new com.sitemonitor.service.checks.CheckJobStore.QueueStat("PENDING", "port", 4, System.currentTimeMillis() - 3_000, null)),
+                    3_000L, null, 0L));
+            when(registry.liveOtherWorkers("port")).thenReturn(0);
+            when(registry.workers()).thenReturn(List.of());
+            mvc.perform(get("/api/admin/system").session(userSession()))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.check_jobs.enabled").value(true))
+                    .andExpect(jsonPath("$.data.check_jobs.types[0]").value("port"))
+                    .andExpect(jsonPath("$.data.check_jobs.types[1]").value("ping"))
+                    .andExpect(jsonPath("$.data.check_jobs.queue.pending").value(4))
+                    .andExpect(jsonPath("$.data.check_jobs.queue.oldest_pending_age_ms").value(3000))
+                    .andExpect(jsonPath("$.data.check_jobs.workers_known").value(true))
+                    .andExpect(jsonPath("$.data.check_jobs.workers").isArray())
+                    .andExpect(jsonPath("$.data.check_jobs.this_pod.pod").exists());
+
+            when(store.stats()).thenThrow(new org.springframework.dao.DataAccessResourceFailureException("db"));
+            mvc.perform(get("/api/admin/system").session(userSession()))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.check_jobs.queue").value(org.hamcrest.Matchers.nullValue()))
+                    .andExpect(jsonPath("$.data.check_jobs.queue_error").value("DataAccessResourceFailureException"))
+                    .andExpect(jsonPath("$.data.scheduler").value("OK"));
+
+            org.springframework.test.util.ReflectionTestUtils.setField(controller, "distributedChecks", null);
+            mvc.perform(get("/api/admin/system").session(userSession()))
+                    .andExpect(jsonPath("$.data.check_jobs").doesNotExist());
+        } finally {
+            org.springframework.test.util.ReflectionTestUtils.setField(controller, "distributedChecks", null);
+            org.springframework.test.util.ReflectionTestUtils.setField(controller, "checkJobStore", null);
+            org.springframework.test.util.ReflectionTestUtils.setField(controller, "checkWorkerRegistry", null);
+        }
+    }
+
     // Regresyon: Sistem Sagligi sekmesi TUM rollere acik (Nav `show: true`) ve
     // `system_health.read` USER varsayilanlarinda VAR — kapi eklendi diye siradan
     // kullanicinin ekrani kirilmamali. Dordu de izin varken 200 donmeli.

@@ -475,4 +475,36 @@ class GrafanaDashboardGeneratorTest {
         assertThat(exprOf(en, "Data freshness")).contains("and on(job, instance)").contains("unless on(job, instance)");
         assertThat(GrafanaDashboardGenerator.DASHBOARD_REVISION).isGreaterThanOrEqualTo(6);
     }
+
+    @Test
+    @DisplayName("R3-3 (paket D1): dağıtık kontrol panelleri sağlık bölümünün SONUNDA (R3-1 panellerinden sonra, çalışma zamanından önce); "
+            + "kuyruk KÜME (max by state, type + guard check_jobs + tür süzgeci), işçiler POD (instance); beş ölçüm de panoda; revizyon ≥ 7")
+    void multiPodR33Panels() {
+        JsonNode d = tree(defaults());
+        assertThat(exprOf(d, "Bekleyen kontrol işi")).startsWith("(sum(max by (state, type) (sitemonitor_check_jobs{")
+                .contains("type=~\"$type\"").contains("state=\"pending\"").contains("source=\"check_jobs\"");
+        assertThat(exprOf(d, "En eski bekleyen iş")).startsWith("max(sitemonitor_check_jobs_oldest_seconds{").contains("state=\"pending\"");
+        assertThat(exprOf(d, "En eski değerlendirilmeyen sonuç")).contains("sitemonitor_check_jobs_oldest_seconds{").contains("state=\"done\"");
+        assertThat(exprOf(d, "Kontrol yuvası doluluğu")).contains("sitemonitor_check_worker_slots{").contains("kind=\"busy\"")
+                .contains("kind=\"total\"").contains("instance=~\"$instance\"");
+        assertThat(exprOf(d, "Sahiplenme gecikmesi p95")).startsWith("max(sitemonitor_check_claim_lag_p95_seconds{");
+        assertThat(exprOf(d, "Kayıp kontrol işi (24 sa)")).contains("increase(sitemonitor_check_worker_jobs{").contains("outcome=\"lost\"")
+                .contains("[24h]");
+        List<String> titles = contentPanels(d).stream().map(p -> p.get("title").asString()).toList();
+        assertThat(titles.indexOf("Bekleyen kontrol işi")).isGreaterThan(titles.indexOf("Kurum ölçüleri ve durum kaydı (pod başına)"));
+        assertThat(titles.indexOf("Kontrol işçileri (pod başına, 5 dk)")).isLessThan(titles.indexOf("HTTP istek hızı"));
+        java.util.Set<String> used = new java.util.HashSet<>();
+        for (JsonNode p : contentPanels(d)) {
+            if (p.get("targets") == null) continue;
+            for (JsonNode t : p.get("targets")) if (t.get("expr") != null) used.addAll(GrafanaDashboardGenerator.metricsIn(t.get("expr").asString()));
+        }
+        for (String m : List.of(MonitoringMetricNames.CHECK_JOBS, MonitoringMetricNames.CHECK_JOBS_OLDEST, MonitoringMetricNames.CHECK_WORKER_SLOTS,
+                MonitoringMetricNames.CHECK_WORKER_JOBS, MonitoringMetricNames.CHECK_CLAIM_LAG)) {
+            assertThat(used).as("panoda yok: " + m).contains(MonitoringMetricNames.prom(m));
+        }
+        JsonNode en = tree(opts("en", GrafanaDashboardGenerator.SECTIONS, true, "", ""));
+        assertThat(exprOf(en, "Pending check jobs")).contains("sitemonitor_check_jobs");
+        assertThat(exprOf(en, "Oldest unevaluated result")).contains("state=\"done\"");
+        assertThat(GrafanaDashboardGenerator.DASHBOARD_REVISION).isGreaterThanOrEqualTo(7);
+    }
 }
