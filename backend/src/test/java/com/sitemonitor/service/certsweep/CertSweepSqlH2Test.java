@@ -269,19 +269,34 @@ class CertSweepSqlH2Test {
     }
 
     @Test
-    @DisplayName("Sahiplenme kapıları: koşu RUNNING değil / koordinatör nabzı 60 sn'den eski → yok; oluşturma eşiği; kaçınılan işçi")
-    void claimGates() {
+    @DisplayName("Sahiplenme kapısı: koordinatör nabzı 60 sn'den eski → ölü koşunun parçası alınmaz (tam 60 sn sınırda alınır); oluşturma eşiği")
+    void claimGateHeartbeat() {
         store.createRun(spec("run-g", 20, 20));
         assertThat(store.claim("w1", LEASE, T0)).as("oluşturma eşiği: yalnız ÖNCE yazılanlar").isEmpty();
-        clock.advance(60_001);
+        clock.advance(CertChunking.COORDINATOR_ALIVE_MS + 1);
         assertThat(store.claim("w1", LEASE, Long.MAX_VALUE)).as("koordinatör nabzı eski — ölü koşunun parçası alınmaz").isEmpty();
-        assertThat(store.heartbeat("run-g")).isTrue();
+        clock.advance(-1);
+        assertThat(store.claim("w1", LEASE, Long.MAX_VALUE)).as("nabız tam 60 sn önce — canlı sayılır").isPresent();
+        store.createRun(spec("run-g1", 20, 20));
+        assertThat(store.claim("w1", LEASE, clock.nowMs() - 10_000)).as("10 sn'den yeni parça (lider çalması değil)").isEmpty();
+        clock.advance(10_001);
         assertThat(store.claim("w1", LEASE, clock.nowMs() - 10_000)).as("10 sn'den eski parça (lider çalması)").isPresent();
+    }
 
+    @Test
+    @DisplayName("Sahiplenme kapısı: koşu RUNNING değilse (DECIDING / kapalı) parçası alınmaz")
+    void claimGateRunState() {
         store.createRun(spec("run-g2", 20, 20));
         assertThat(store.markDeciding("run-g2", "{}", 0, 0, 0)).isTrue();
         assertThat(store.claim("w1", LEASE, Long.MAX_VALUE)).as("DECIDING koşunun parçası alınmaz").isEmpty();
+        store.createRun(spec("run-g4", 20, 20));
+        assertThat(store.finish("run-g4", CertSweepStore.RUN_ABANDONED, CertSweepStore.OUTCOME_SHUTDOWN, true)).isTrue();
+        assertThat(store.claim("w1", LEASE, Long.MAX_VALUE)).as("kapalı koşunun (parçaları kalmış) parçası alınmaz").isEmpty();
+    }
 
+    @Test
+    @DisplayName("Sahiplenme kapısı: ikinci görüş parçası kaçınılan işçiye (aykırı pod) verilmez, diğerine verilir")
+    void claimGateAvoidWorker() {
         store.createRun(spec("run-g3", 5, 5));
         CertChunkSpec opinion = new CertChunkSpec(1, List.of(entry(0)), "w-bad");
         assertThat(store.addChunks("run-g3", List.of(opinion))).isEqualTo(1);

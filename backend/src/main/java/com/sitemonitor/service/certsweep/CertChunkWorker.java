@@ -258,7 +258,7 @@ public class CertChunkWorker {
         maybeRenew(now);
         long renewCap = held.isEmpty() ? Long.MAX_VALUE : tuning.renewEveryMs();
         // Anahtar kapalı ve elde parça yok, son sahiplenme boştu: yalnız bellek okuması (sorgu yok).
-        if (!certChunking.enabled() && held.isEmpty() && lastClaimEmpty) {
+        if (!(certChunking != null && certChunking.enabled()) && held.isEmpty() && lastClaimEmpty) {
             nextClaimNano = Long.MIN_VALUE;
             return tuning.idlePollMs();
         }
