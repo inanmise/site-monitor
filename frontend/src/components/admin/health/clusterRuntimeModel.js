@@ -528,6 +528,30 @@ export function newerScanAfter(finishedAt, scan) {
 
 
 /**
+ * İkinci görüşün SONUCU (inceleme L-4; sunucu `second_opinion_ok` / `second_opinion_failed` — yeniden ölçümü kullanılan alan
+ * adlarından başka pod'da başarılı / yine hatalı olanlar):
+ * - `'egress'` — yeniden ölçümlerin ÇOĞU başka pod'da başarılı: bir pod'un çıkışı farklı → uyarı + çıkış eşliği (P1) önerisi;
+ * - `'confirmed'` — yeniden ölçülenlerin en az yarısı başka pod'da da hatalı: hatalar doğrulandı (gerçek kesinti olası) → BİLGİ,
+ *   P1 önerisi yok, kart uyarıya çekilmez;
+ * - `'unverified'` — hiçbiri başka pod'da yeniden ölçülemedi (özgün sonuçlar kaldı) → uyarı (doğrulanamadı);
+ * - `null` — ikinci görüş yok, ya da sonuç alanları yok (eski sunucu / eski satır) → bugünkü metin.
+ */
+export function secondOpinionOutcome(count, ok, failed) {
+  if (!(count > 0)) return null
+  if (ok == null || failed == null || ok < 0 || failed < 0) return null
+  const remeasured = ok + failed
+  if (remeasured <= 0) return 'unverified'
+  return ok * 2 > remeasured ? 'egress' : 'confirmed'
+}
+
+/** İkinci görüş sonucu → uyarı kodu (açık koşu / son kapanmış koşu); `'confirmed'` uyarı DEĞİL (bilgi satırı). */
+function secondOpinionWarning(outcome, last) {
+  if (outcome === 'egress') return last ? 'secondOpinionLastEgress' : 'secondOpinionEgress'
+  if (outcome === 'unverified') return last ? 'secondOpinionLastUnverified' : 'secondOpinionUnverified'
+  return last ? 'secondOpinionLast' : 'secondOpinion'
+}
+
+/**
  * Parçalı sertifika taraması modeli (`health.cert_chunks`). `null` = alan yok (eski sunucu) → bölüm gizli.
  *
  * - `{enabled: false}` → `status: 'off'` (gri "Kapalı"); `{error}` ya da `status_error` → `unknown` (asla "tur yok" ya da yeşil).
@@ -539,18 +563,22 @@ export function newerScanAfter(finishedAt, scan) {
  * - Açık koşu yok → `idle` (bilgi); en yeni kapanmış koşu FAILED ve ardından daha yeni bir tur bitmedi → `warn`; en yeni kapanmış
  *   koşuda ikinci görüş > 0 → daha yeni tur gelene kadar uyarı (OB-L4). ABANDONED tek başına uyarı DEĞİL (dağıtımda olağan; satırı
  *   uyarı tonunda; klasiğe dönen ABANDONED + FAILED bilgi tonunda).
+ * - İkinci görüşün sonucu ({@link secondOpinionOutcome}, inceleme L-4): hatalar başka pod'da da görüldüyse uyarı / P1 önerisi YOK —
+ *   `infos` bilgi satırı (`secondOpinionConfirmed` / `secondOpinionLastConfirmed`); çoğu başarılıysa P1 önerili uyarı; sonuç alanı
+ *   yoksa (eski sunucu) bugünkü uyarı.
  */
 export function certChunksModel(health) {
   const cc = health?.cert_chunks
   if (!isObj(cc)) return null
   const base = { enabled: null, run: null, lastRuns: [], lastMode: null, thisPod: null, statusError: null, tablesReady: null,
-    warnings: [] }
+    warnings: [], infos: [] }
   if (cc.error) return { ...base, status: 'unknown', level: 'unknown', error: str(cc.error) || 'error' }
   if (cc.enabled !== true) return { ...base, enabled: false, status: 'off', level: 'off', error: null }
 
   const statusError = cc.status_error ? str(cc.status_error) || 'unavailable' : null
   let run = null
   const warnings = []
+  const infos = []
   if (!statusError && isObj(cc.run)) {
     const r = cc.run
     const ch = isObj(r.chunks) ? r.chunks : {}
@@ -565,6 +593,8 @@ export function certChunksModel(health) {
       networkErrors: num(p.network_errors), rate: num(p.network_error_rate), outlier: p.outlier === true,
     }))
     const secondOpinions = num(r.second_opinions)
+    const secondOpinionOk = num(r.second_opinion_ok)
+    const secondOpinionFailed = num(r.second_opinion_failed)
     // Koordinatör cert-check kilidini tutuyor mu: sunucu `coordinator_live` (null = bilinmiyor); eski yanıt → zamanlayıcının canlı
     // kilit sahibi (`scheduler.running_on`) koordinatörse canlı (inceleme OB-L5)
     const runningOn = isObj(health?.scheduler) ? str(health.scheduler.running_on) : null
@@ -576,6 +606,8 @@ export function certChunksModel(health) {
       ageS: num(r.age_s), heartbeatAgeS, domainsTotal: num(r.domains_total), chunksTotal: num(r.chunks_total),
       chunks, measuredChunks: chunks.done + chunks.cancelled, domainsMeasured: num(r.domains_measured), oldestPendingMs,
       pods, takeovers: num(r.takeovers), reclaims: num(r.reclaims), secondOpinions, coordinatorLive, orphan,
+      secondOpinionOk, secondOpinionFailed,
+      secondOpinionOutcome: secondOpinionOutcome(secondOpinions, secondOpinionOk, secondOpinionFailed),
       // Kuyruk DURUYOR mu (inceleme OB-M-1): bekleyen var ve hiçbir pod parça ölçmüyor. İşlenen kuyrukta (claimed > 0) kuyruk sonu
       // parçalarının 30 sn'den uzun beklemesi olağandır (FIFO, bütçe sınırlı) — uyarı değil.
       pendingWarn: !orphan && oldestPendingMs != null && oldestPendingMs > CERT_CHUNK_OLDEST_WARN_MS && chunks.pending > 0
@@ -590,7 +622,11 @@ export function certChunksModel(health) {
     if (!orphan) {
       if (run.pendingWarn) warnings.push('pending')
       if (pods.some((p) => p.outlier)) warnings.push('outlier')
-      if ((secondOpinions ?? 0) > 0) warnings.push('secondOpinion')
+      // İnceleme L-4: hataları doğrulanmış ikinci görüş uyarı DEĞİL (P1 önerilmez) — bilgi satırı
+      if ((secondOpinions ?? 0) > 0) {
+        if (run.secondOpinionOutcome === 'confirmed') infos.push('secondOpinionConfirmed')
+        else warnings.push(secondOpinionWarning(run.secondOpinionOutcome, false))
+      }
       if (run.coordinatorSilent) warnings.push('coordinatorSilent')
     }
   }
@@ -599,6 +635,8 @@ export function certChunksModel(health) {
     outcomeKnown: !!str(r.outcome) && CERT_RUN_OUTCOMES.includes(r.outcome), coordinatorPod: str(r.coordinator_pod),
     createdAt: str(r.created_at), finishedAt: str(r.finished_at), durationMs: num(r.duration_ms), pods: num(r.pods),
     chunksTotal: num(r.chunks_total), domainsTotal: num(r.domains_total), secondOpinions: num(r.second_opinions),
+    secondOpinionOk: num(r.second_opinion_ok), secondOpinionFailed: num(r.second_opinion_failed),
+    secondOpinionOutcome: secondOpinionOutcome(num(r.second_opinions), num(r.second_opinion_ok), num(r.second_opinion_failed)),
     takeovers: num(r.takeovers), tone: certRunTone(str(r.state), str(r.outcome)),
     fellBack: certRunFellBack(str(r.state), str(r.outcome)),
   }))
@@ -608,7 +646,10 @@ export function certChunksModel(health) {
   // İkinci görüş (inceleme OB-L4): açık (sahipsiz olmayan) koşunun sayısı biliniyorsa o karar verir; bilinmiyorsa (RUNNING — sayı
   // DECIDING'de yazılır) ya da açık koşu yoksa en yeni kapanmış koşudaki ikinci görüş, daha yeni bir tur bitene kadar uyarıdır
   const openKnown = run && !run.orphan && run.secondOpinions != null
-  if (!openKnown && (newest?.secondOpinions ?? 0) > 0 && !newerScanAfter(newest.finishedAt, health?.scan)) warnings.push('secondOpinionLast')
+  if (!openKnown && (newest?.secondOpinions ?? 0) > 0 && !newerScanAfter(newest.finishedAt, health?.scan)) {
+    if (newest.secondOpinionOutcome === 'confirmed') infos.push('secondOpinionLastConfirmed')
+    else warnings.push(secondOpinionWarning(newest.secondOpinionOutcome, true))
+  }
 
   const tp = isObj(cc.this_pod) ? cc.this_pod : null
   let thisPod = null
@@ -636,7 +677,7 @@ export function certChunksModel(health) {
   const lastMode = CERT_SWEEP_MODES.includes(cc.last_mode) ? cc.last_mode : 'unknown'
   const status = statusError ? 'unknown' : warnings.length > 0 ? 'warn' : run && !run.orphan ? 'running' : 'idle'
   return {
-    ...base, enabled: true, run, lastRuns, lastMode, thisPod, statusError, warnings,
+    ...base, enabled: true, run, lastRuns, lastMode, thisPod, statusError, warnings, infos,
     tablesReady: typeof cc.tables_ready === 'boolean' ? cc.tables_ready : null,
     status, level: status === 'warn' ? 'warn' : status === 'unknown' ? 'unknown' : 'on', error: null,
   }

@@ -149,12 +149,23 @@ public interface CertSweepStore {
 
     /**
      * Karar aşamasına geçiş: {@code UPDATE … SET state = 'DECIDING', workers_json, takeovers, reclaims, second_opinions WHERE
-     * run_id = ? AND state = 'RUNNING'}.
+     * run_id = ? AND state = 'RUNNING'} (ikinci görüş sonucu sütunları NULL).
      *
      * @param workersJson {@link CertSweepStatus#encodeWorkers} çıktısı (≤ {@value CertSweepStatus#MAX_WORKERS_JSON_CHARS})
      * @return false = 0 satır → koordinatör "kilit kaybı" gibi bırakır (sonuçları işlemez)
      */
     boolean markDeciding(String runId, String workersJson, int takeovers, int reclaims, int secondOpinions);
+
+    /**
+     * {@link #markDeciding(String, String, int, int, int)} + ikinci görüşün SONUCU (inceleme L-4): yeniden ölçümü kullanılan alan
+     * adlarından başka pod'da başarılı ({@code second_opinion_ok}) / yine hatalı ({@code second_opinion_failed}) olanlar — Küme
+     * kartı çıkış eşliği (P1) önerisini yalnız çoğu başarılıysa yapar. null = bilinmiyor (sütuna NULL). Varsayılan: sonuç yazılmaz
+     * (sarmalayan test depoları için; {@link JdbcCertSweepStore} ikisini de yazar).
+     */
+    default boolean markDeciding(String runId, String workersJson, int takeovers, int reclaims, int secondOpinions,
+                                 Integer secondOpinionOk, Integer secondOpinionFailed) {
+        return markDeciding(runId, workersJson, takeovers, reclaims, secondOpinions);
+    }
 
     /**
      * Koşuyu kapatır: {@code UPDATE … SET state = ?, outcome = ?, finished_ms = şimdi WHERE run_id = ? AND state IN

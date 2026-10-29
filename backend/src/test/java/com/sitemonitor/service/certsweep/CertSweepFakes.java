@@ -97,10 +97,13 @@ public final class CertSweepFakes {
             public long createdMs, heartbeatMs;
             public Long finishedMs;
             public Integer takeovers, reclaims, secondOpinions;
+            /** İkinci görüşün sonucu (inceleme L-4): başka pod'da başarılı / yine hatalı. */
+            public Integer secondOpinionOk, secondOpinionFailed;
 
             CertSweepStatus.Run view() {
                 return new CertSweepStatus.Run(runId, kind, coordinator, state, evict, domainsTotal, chunksTotal, chunkSize,
-                        createdMs, heartbeatMs, finishedMs, outcome, takeovers, reclaims, secondOpinions, workersJson);
+                        createdMs, heartbeatMs, finishedMs, outcome, takeovers, reclaims, secondOpinions, workersJson,
+                        secondOpinionOk, secondOpinionFailed);
             }
         }
 
@@ -264,6 +267,12 @@ public final class CertSweepFakes {
         @Override
         public synchronized boolean markDeciding(String runId, String workersJson, int takeovers, int reclaims,
                                                  int secondOpinions) {
+            return markDeciding(runId, workersJson, takeovers, reclaims, secondOpinions, null, null);
+        }
+
+        @Override
+        public synchronized boolean markDeciding(String runId, String workersJson, int takeovers, int reclaims,
+                                                 int secondOpinions, Integer secondOpinionOk, Integer secondOpinionFailed) {
             touch("markDeciding");
             Run r = runs.get(runId);
             if (r == null || !RUN_RUNNING.equals(r.state)) return false;
@@ -272,6 +281,8 @@ public final class CertSweepFakes {
             r.takeovers = takeovers;
             r.reclaims = reclaims;
             r.secondOpinions = secondOpinions;
+            r.secondOpinionOk = secondOpinionOk;
+            r.secondOpinionFailed = secondOpinionFailed;
             return true;
         }
 

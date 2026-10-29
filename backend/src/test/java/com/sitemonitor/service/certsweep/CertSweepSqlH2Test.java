@@ -547,6 +547,41 @@ class CertSweepSqlH2Test {
     }
 
     @Test
+    @DisplayName("İkinci görüş sonucu (FX2-COORD L-4): karar aşamasında başarılı / yine hatalı yazılır ve açık + son koşu okumasında "
+            + "döner; eski 5 parametreli yazım ve sütunları boş eski satır → null")
+    void secondOpinionOutcomeColumns() {
+        String workers = CertSweepStatus.encodeWorkers(List.of(new CertSweepStatus.WorkerTally("w1", 1, 20, 0)));
+        store.createRun(spec("run-so-out", 40, 20));
+        assertThat(store.markDeciding("run-so-out", workers, 0, 0, 20, 14, 6)).isTrue();
+        assertThat(run("run-so-out")).containsEntry("second_opinions", 20).containsEntry("second_opinion_ok", 14)
+                .containsEntry("second_opinion_failed", 6);
+        CertSweepStatus.Run open = store.status(5).openRun();
+        assertThat(open.runId()).isEqualTo("run-so-out");
+        assertThat(open.secondOpinionOk()).isEqualTo(14);
+        assertThat(open.secondOpinionFailed()).isEqualTo(6);
+        store.finish("run-so-out", CertSweepStore.RUN_DONE, CertSweepStore.OUTCOME_DECIDED, false);
+
+        clock.advance(1_000);
+        store.createRun(spec("run-so-old", 20, 20));
+        assertThat(store.markDeciding("run-so-old", workers, 0, 0, 0)).as("eski çağrı: sonuç sütunları NULL").isTrue();
+        assertThat(run("run-so-old").get("second_opinion_ok")).isNull();
+        assertThat(run("run-so-old").get("second_opinion_failed")).isNull();
+        store.finish("run-so-old", CertSweepStore.RUN_DONE, CertSweepStore.OUTCOME_DECIDED, false);
+
+        clock.advance(1_000);
+        // sonuç sütunlarını hiç yazmayan (bu düzeltmeden önceki kod yolu) kapanmış satır
+        mp.jdbc().update("INSERT INTO cert_sweep_runs (run_id, kind, coordinator, state, evict_caches, domains_total, chunks_total, "
+                + "chunk_size, created_ms, heartbeat_ms, finished_ms, outcome, takeovers, reclaims, second_opinions) "
+                + "VALUES ('run-so-legacy', 'hourly', 'pod-a-1', 'DONE', TRUE, 20, 1, 20, ?, ?, ?, 'DECIDED', 0, 0, 5)",
+                T0 + 2_000, T0 + 2_000, T0 + 2_500);
+        List<CertSweepStatus.Run> last = store.status(5).lastRuns();
+        assertThat(last).extracting(CertSweepStatus.Run::runId).containsExactly("run-so-legacy", "run-so-old", "run-so-out");
+        assertThat(last).extracting(CertSweepStatus.Run::secondOpinionOk).containsExactly(null, null, 14);
+        assertThat(last).extracting(CertSweepStatus.Run::secondOpinionFailed).containsExactly(null, null, 6);
+        assertThat(last.get(0).secondOpinions()).isEqualTo(5);
+    }
+
+    @Test
     @DisplayName("Kapanış asla fırlatmaz (veritabanı kapalı) — false döner")
     void finishNeverThrows() {
         store.createRun(spec("run-n", 20, 20));

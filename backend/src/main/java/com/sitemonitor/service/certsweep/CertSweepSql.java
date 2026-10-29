@@ -68,7 +68,9 @@ public final class CertSweepSql {
             + "takeovers INT, "
             + "reclaims INT, "
             + "second_opinions INT, "
-            + "workers_json VARCHAR(4000))";
+            + "workers_json VARCHAR(4000), "
+            + "second_opinion_ok INT, "
+            + "second_opinion_failed INT)";
 
     /** Koşu durumu + yaş dizini (öksüz okuması, budama). */
     public static final String DDL_RUNS_STATE_INDEX = "CREATE INDEX IF NOT EXISTS idx_csr_state ON " + RUNS + "(state, created_ms)";
@@ -113,7 +115,8 @@ public final class CertSweepSql {
 
     /** Koşu sütunları (okuma; {@code CertSweepStatus.Run} sırası). */
     public static final String RUN_COLS = "run_id, kind, coordinator, state, evict_caches, domains_total, chunks_total, "
-            + "chunk_size, created_ms, heartbeat_ms, finished_ms, outcome, takeovers, reclaims, second_opinions, workers_json";
+            + "chunk_size, created_ms, heartbeat_ms, finished_ms, outcome, takeovers, reclaims, second_opinions, workers_json, "
+            + "second_opinion_ok, second_opinion_failed";
 
     /** Açık koşular (öksüz kapatma öncesi okuması). Parametre: tavan. */
     public static final String SQL_OPEN_RUNS = "SELECT " + RUN_COLS + " FROM " + RUNS
@@ -183,9 +186,13 @@ public final class CertSweepSql {
     public static final String SQL_CANCEL = "UPDATE " + CHUNKS + " SET state = 'CANCELLED', lease_until_ms = NULL "
             + "WHERE id = ? AND run_id = ? AND state IN ('PENDING','CLAIMED')";
 
-    /** Karar aşaması. Parametreler: işçiler JSON'u, devralma, yeniden sahiplenme, ikinci görüş, koşu. */
+    /**
+     * Karar aşaması. Parametreler: işçiler JSON'u, devralma, yeniden sahiplenme, ikinci görüş, ikinci görüşte başka pod'da başarılı,
+     * yine hatalı (inceleme L-4; null olabilir), koşu.
+     */
     public static final String SQL_MARK_DECIDING = "UPDATE " + RUNS + " SET state = 'DECIDING', workers_json = ?, takeovers = ?, "
-            + "reclaims = ?, second_opinions = ? WHERE run_id = ? AND state = 'RUNNING'";
+            + "reclaims = ?, second_opinions = ?, second_opinion_ok = ?, second_opinion_failed = ? WHERE run_id = ? "
+            + "AND state = 'RUNNING'";
 
     /** Kapanış. Parametreler: durum, sonuç, bitiş, koşu. */
     public static final String SQL_FINISH = "UPDATE " + RUNS + " SET state = ?, outcome = ?, finished_ms = ? "

@@ -156,7 +156,8 @@ describe('SystemHealth — Küme kartı, çok pod R3-4 (parçalı sertifika tara
     // Bu pod satırı
     const pod = card().querySelector('[data-slot="cluster-this-pod"] [data-slot="cluster-cert-chunk-worker"]')
     expect(pod.querySelector('[data-slot="cc-pod-inflight"]').textContent).toMatch(/40/)
-    expect(pod.querySelector('[data-slot="cc-pod-inflight"]').textContent).toMatch(/half|yarı/)
+    // db08a982 (C2 B-1) metni değiştirdi: lider artık "yarı" değil "sınırlı güçle" alır
+    expect(pod.querySelector('[data-slot="cc-pod-inflight"]').textContent).toMatch(/limited capacity|sınırlı güçle/)
     expect(pod.querySelector('[data-slot="cc-pod-counts"]').textContent).toMatch(/7/)
     expect(pod.querySelector('[data-slot="cc-pod-coordinator"]').textContent).toMatch(/3/)
     // sıra: parçalı tarama bölümü "Bu pod"dan önce
@@ -185,6 +186,42 @@ describe('SystemHealth — Küme kartı, çok pod R3-4 (parçalı sertifika tara
     expect(warns.querySelector('[data-warn="secondOpinion"]')).not.toBeNull()
     expect(card().querySelector('[data-kind="leader"]')).toHaveAttribute('data-tone', 'warning')
   })
+
+  it('ikinci görüş hataları doğruladı (FX2-COORD L-4) → P1 uyarısı yok: bilgi satırı sayılarla, kutucuk ve son koşu uyarı tonunda '
+    + 'değil, kart uyarıya çekilmez', async () => {
+    await open({ ...BASE, cert_chunks: CC({
+      run: RUN({ state: 'DECIDING', chunks: { pending: 0, claimed: 0, done: 20, cancelled: 0 }, oldest_pending_age_ms: null,
+        oldest_pending_age_s: null, second_opinions: 12, second_opinion_ok: 0, second_opinion_failed: 12 }),
+      last_runs: [LAST({ second_opinions: 9, second_opinion_ok: 1, second_opinion_failed: 8 })] }) })
+    expect(sec()).toHaveAttribute('data-status', 'running')
+    expect(sec().querySelector('[data-slot="cc-warnings"]')).toBeNull()
+    const info = sec().querySelector('[data-slot="cc-infos"] [data-info="secondOpinionConfirmed"]')
+    expect(info.textContent).toContain('12')
+    expect(info.textContent).not.toMatch(/P1/)
+    expect(info.textContent).not.toMatch(/hmp\./)
+    expect(sec().querySelector('[data-slot="cc-t-second"]')).not.toHaveAttribute('data-warn')
+    expect(sec().querySelector('[data-slot="cc-last-second"]')).toHaveAttribute('data-outcome', 'confirmed')
+    expect(card().querySelector('[data-kind="leader"]')).toHaveAttribute('data-tone', 'success')
+  })
+
+  it('ikinci görüşte çoğu başka pod\'da başarılı (FX2-COORD L-4) → P1 önerili uyarı sayılarla; hiçbiri ölçülemedi → doğrulanamadı uyarısı',
+    async () => {
+      const r = await open({ ...BASE, cert_chunks: CC({ run: null,
+        last_runs: [LAST({ second_opinions: 20, second_opinion_ok: 14, second_opinion_failed: 6 })] }) })
+      let w = sec().querySelector('[data-slot="cc-warnings"] [data-warn="secondOpinionLastEgress"]')
+      expect(w.textContent).toMatch(/20/)
+      expect(w.textContent).toMatch(/14/)
+      expect(w.textContent).toMatch(/P1/)
+      expect(sec().querySelector('[data-slot="cc-infos"]')).toBeNull()
+      expect(card().querySelector('[data-kind="leader"]')).toHaveAttribute('data-tone', 'warning')
+      r.unmount()
+      await open({ ...BASE, cert_chunks: CC({ run: RUN({ state: 'DECIDING', second_opinions: 60, second_opinion_ok: 0,
+        second_opinion_failed: 0 }) }) })
+      w = sec().querySelector('[data-slot="cc-warnings"] [data-warn="secondOpinionUnverified"]')
+      expect(w.textContent).toContain('60')
+      expect(w.textContent).toMatch(/P1/)
+      expect(sec().querySelector('[data-slot="cc-t-second"]')).toHaveAttribute('data-warn', 'true')
+    })
 
   it('karar aşaması (DECIDING, eski nabız) → uyarı yok, "karar veriliyor" notu; kart uyarı değil', async () => {
     await open({ ...BASE, cert_chunks: CC({ run: RUN({ state: 'DECIDING', heartbeat_age_s: 240, chunks: { pending: 0, claimed: 0, done: 20, cancelled: 0 },

@@ -9243,6 +9243,14 @@ export const EN = {
   'hmp.cc.scanChunkedText': '{0} / {1} chunks · {2} / {3} domains measured',
   'hmp.cc.scanChunkedOrphan': 'abandoned run — coordinator {0} no longer holds the sweep lock; the next run closes it',
   // ── /multi-pod R3-4 · C1 ──
+  // ── multi-pod R3-4 · FX2-COORD ──
+  'hmp.cc.warn.secondOpinionEgress': 'Of the {0} domains sent for a second opinion, {1} were re-measured on another pod: {2} succeeded, {3} failed again — one pod’s network egress differs from the others; check the egress parity (P1) of the pods.',
+  'hmp.cc.warn.secondOpinionLastEgress': 'In the last chunked run, of the {0} domains sent for a second opinion, {1} were re-measured on another pod: {2} succeeded, {3} failed again — one pod’s network egress differs from the others; check the egress parity (P1) of the pods. The warning clears once a newer sweep run finishes.',
+  'hmp.cc.warn.secondOpinionUnverified': 'A second opinion was requested for {0} domains in this run, but none could be re-measured on another pod — the original results stand; one pod’s network egress may differ from the others, check the egress parity (P1) of the pods.',
+  'hmp.cc.warn.secondOpinionLastUnverified': 'In the last chunked run a second opinion was requested for {0} domains, but none could be re-measured on another pod — the original results stand; one pod’s network egress may differ from the others, check the egress parity (P1) of the pods. The warning clears once a newer sweep run finishes.',
+  'hmp.cc.info.secondOpinionConfirmed': 'Of the {0} domains sent for a second opinion, {1} were re-measured on another pod: {2} succeeded, {3} failed again — the failures were confirmed on another pod (a genuine outage is likely); no egress problem is indicated.',
+  'hmp.cc.info.secondOpinionLastConfirmed': 'In the last chunked run, of the {0} domains sent for a second opinion, {1} were re-measured on another pod: {2} succeeded, {3} failed again — the failures were confirmed on another pod (a genuine outage is likely); no egress problem is indicated.',
+  // ── /multi-pod R3-4 · FX2-COORD ──
   'health.httpOpenExplorer': 'Open request explorer',
   'health.reasonUnavailable': 'Data unavailable: {0}',
 

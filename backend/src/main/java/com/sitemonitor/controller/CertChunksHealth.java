@@ -33,7 +33,9 @@ import java.util.Set;
  *
  * <p>İnceleme düzeltmeleri (2026-10-29, FX-OBS): açık koşuya {@code coordinator_live} / {@code orphan_suspected} (zamanlayıcının
  * zaten okuduğu {@code cert-check} kilidinden — EK SQL YOK; {@link #liveness}), tarama kartının {@code chunked}'ına
- * {@code orphan_suspected}; bu pod'un koordinatör sayaçlarına {@code classic_by_rule}.
+ * {@code orphan_suspected}; bu pod'un koordinatör sayaçlarına {@code classic_by_rule}. İkinci düzeltme turu (FX2-COORD L-4):
+ * açık ve kapanmış koşulara {@code second_opinion_ok} / {@code second_opinion_failed} (ikinci görüşün başka pod'daki sonucu,
+ * koşu satırından; null = bilinmiyor) — Küme kartı P1 önerisini yalnız çoğu başarılıysa yapar.
  */
 final class CertChunksHealth {
 
@@ -179,6 +181,9 @@ final class CertChunksHealth {
         m.put("takeovers", r.takeovers());
         m.put("reclaims", r.reclaims());
         m.put("second_opinions", r.secondOpinions());
+        // İnceleme L-4 (ek alanlar): ikinci görüşün sonucu — başka pod'da başarılı / yine hatalı (null = bilinmiyor, eski satır)
+        m.put("second_opinion_ok", r.secondOpinionOk());
+        m.put("second_opinion_failed", r.secondOpinionFailed());
         m.put("coordinator_live", coordinatorLive);
         m.put("orphan_suspected", CertSweepView.orphanSuspected(r, now, coordinatorLive));
         return m;
@@ -237,6 +242,8 @@ final class CertChunksHealth {
         m.put("takeovers", r.takeovers());
         m.put("reclaims", r.reclaims());
         m.put("second_opinions", r.secondOpinions());
+        m.put("second_opinion_ok", r.secondOpinionOk());
+        m.put("second_opinion_failed", r.secondOpinionFailed());
         return m;
     }
 

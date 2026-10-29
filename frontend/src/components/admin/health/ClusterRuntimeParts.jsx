@@ -673,6 +673,33 @@ const CC_WARN_LABEL = {
   pending: 'hmp.cc.warn.pending', outlier: 'hmp.cc.warn.outlier', secondOpinion: 'hmp.cc.warn.secondOpinion',
   secondOpinionLast: 'hmp.cc.warn.secondOpinionLast', coordinatorSilent: 'hmp.cc.warn.coordinatorSilent',
   lastFailed: 'hmp.cc.warn.lastRunBad',
+  // İnceleme L-4: ikinci görüşün sonucuna göre (çoğu başka pod'da başarılı → P1; hiçbiri ölçülemedi → doğrulanamadı)
+  secondOpinionEgress: 'hmp.cc.warn.secondOpinionEgress', secondOpinionLastEgress: 'hmp.cc.warn.secondOpinionLastEgress',
+  secondOpinionUnverified: 'hmp.cc.warn.secondOpinionUnverified',
+  secondOpinionLastUnverified: 'hmp.cc.warn.secondOpinionLastUnverified',
+}
+/** Bilgi satırları (uyarı DEĞİL — kartı uyarıya çekmez): ikinci görüş hataları başka pod'da da doğruladı (L-4). */
+const CC_INFO_LABEL = {
+  secondOpinionConfirmed: 'hmp.cc.info.secondOpinionConfirmed',
+  secondOpinionLastConfirmed: 'hmp.cc.info.secondOpinionLastConfirmed',
+}
+
+/** İkinci görüş uyarı / bilgi metninin parametreleri: gönderilen, yeniden ölçülen, başarılı, yine hatalı. */
+function secondOpinionParams(r) {
+  const ok = r?.secondOpinionOk
+  const failed = r?.secondOpinionFailed
+  return [r?.secondOpinions ?? '—', ok != null && failed != null ? ok + failed : '—', ok ?? '—', failed ?? '—']
+}
+
+/** Uyarı kodu → metin (açık koşu ya da en yeni kapanmış koşu parametreleriyle; ham kod basılmaz). */
+function ccWarnText(t, w, cc, run) {
+  const last = cc.lastRuns[0]
+  if (w === 'outlier') return t(CC_WARN_LABEL.outlier, run?.pods.filter((p) => p.outlier).map((p) => p.pod).join(', ') || '—')
+  if (w === 'lastFailed') return t(CC_WARN_LABEL.lastFailed, last?.coordinatorPod || '—')
+  if (w === 'secondOpinionLast') return t(CC_WARN_LABEL.secondOpinionLast, last?.secondOpinions ?? '—')
+  if (w === 'secondOpinionEgress' || w === 'secondOpinionUnverified') return t(CC_WARN_LABEL[w], ...secondOpinionParams(run))
+  if (w === 'secondOpinionLastEgress' || w === 'secondOpinionLastUnverified') return t(CC_WARN_LABEL[w], ...secondOpinionParams(last))
+  return t(CC_WARN_LABEL[w])
 }
 const CC_KIND_LABEL = { hourly: 'hmp.kind.hourly', stale: 'hmp.kind.stale', full: 'hmp.kind.full' }
 
@@ -784,7 +811,12 @@ function CertLastRuns({ t, runs }) {
           {r.pods != null && <span className="text-muted-foreground">· {t('hmp.cc.lastPods', r.pods)}</span>}
           {r.domainsTotal != null && <span className="text-muted-foreground">· {t('hmp.cc.lastDomains', r.domainsTotal)}</span>}
           {(r.takeovers ?? 0) > 0 && <span className="text-muted-foreground">· {t('hmp.cc.lastTakeovers', r.takeovers)}</span>}
-          {(r.secondOpinions ?? 0) > 0 && <span className={WARN_T}>· {t('hmp.cc.lastSecondOpinions', r.secondOpinions)}</span>}
+          {(r.secondOpinions ?? 0) > 0 && (
+            <span className={r.secondOpinionOutcome === 'confirmed' ? 'text-muted-foreground' : WARN_T}
+              data-slot="cc-last-second" data-outcome={r.secondOpinionOutcome || undefined}>
+              · {t('hmp.cc.lastSecondOpinions', r.secondOpinions)}
+            </span>
+          )}
           {r.coordinatorPod && <span className="text-muted-foreground">· <PodName>{r.coordinatorPod}</PodName></span>}
         </li>
       ))}
@@ -853,7 +885,8 @@ export function CertChunksSection({ t, cc }) {
             <QueueTile slot="cc-t-oldest" label={t('hmp.cc.t.oldest')} warn={run.pendingWarn}
               value={run.oldestPendingMs == null ? t('hmp.cj.q.none') : durationText(t, run.oldestPendingMs)} />
             <QueueTile slot="cc-t-takeovers" label={t('hmp.cc.t.takeovers')} value={run.takeovers ?? run.chunks.cancelled} />
-            <QueueTile slot="cc-t-second" label={t('hmp.cc.t.second')} warn={(run.secondOpinions ?? 0) > 0} value={run.secondOpinions ?? '—'} />
+            <QueueTile slot="cc-t-second" label={t('hmp.cc.t.second')}
+              warn={(run.secondOpinions ?? 0) > 0 && run.secondOpinionOutcome !== 'confirmed'} value={run.secondOpinions ?? '—'} />
           </div>
           {run.pods.length > 0 ? <CertChunkPods t={t} run={run} />
             : <p className="m-0 text-[0.9em] text-muted-foreground" data-slot="cc-pods-none">{t('hmp.cc.podsNone')}</p>}
@@ -863,16 +896,19 @@ export function CertChunksSection({ t, cc }) {
         <AlertBanner tone="warning" title={t('hmp.cc.warnTitle')} className="mb-0">
           <ul data-slot="cc-warnings" className="m-0 flex list-none flex-col gap-0.5 p-0">
             {cc.warnings.map((w) => (
-              <li key={w} data-warn={w} className="[overflow-wrap:anywhere]">
-                {w === 'outlier'
-                  ? t(CC_WARN_LABEL.outlier, run?.pods.filter((p) => p.outlier).map((p) => p.pod).join(', ') || '—')
-                  : w === 'lastFailed' ? t(CC_WARN_LABEL.lastFailed, cc.lastRuns[0]?.coordinatorPod || '—')
-                    : w === 'secondOpinionLast' ? t(CC_WARN_LABEL.secondOpinionLast, cc.lastRuns[0]?.secondOpinions ?? '—')
-                      : t(CC_WARN_LABEL[w])}
-              </li>
+              <li key={w} data-warn={w} className="[overflow-wrap:anywhere]">{ccWarnText(t, w, cc, run)}</li>
             ))}
           </ul>
         </AlertBanner>
+      )}
+      {(cc.infos?.length ?? 0) > 0 && (
+        <ul data-slot="cc-infos" className="m-0 flex list-none flex-col gap-0.5 p-0 text-[0.9em] text-muted-foreground">
+          {cc.infos.map((i) => (
+            <li key={i} data-info={i} className="[overflow-wrap:anywhere]">
+              {t(CC_INFO_LABEL[i], ...secondOpinionParams(i === 'secondOpinionConfirmed' ? run : cc.lastRuns[0]))}
+            </li>
+          ))}
+        </ul>
       )}
       {cc.enabled && !cc.statusError && (
         <div className="flex min-w-0 flex-col gap-1.5">
