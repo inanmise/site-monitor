@@ -5,10 +5,13 @@ import com.sitemonitor.service.schema.DeferredIndexBuilder;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataAccessException;
+import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.jdbc.BadSqlGrammarException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.security.SecureRandom;
 import java.sql.ResultSet;
@@ -21,6 +24,7 @@ import java.util.HexFormat;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongSupplier;
 
 /**
@@ -34,19 +38,39 @@ import java.util.function.LongSupplier;
  * PostgreSQL'de çok satırlı gönderme yalnız tekil açık iş dizini ({@code ux_mcj_open}) GERÇEKTEN varken seçilir; dizin yoksa
  * (kurulamadıysa) taşınabilir "açık işi yoksa ekle" toplu deyimi koşar, dizin 60 sn'de bir yeniden denetlenir.
  *
- * <p><b>Tablo yok</b> (ilk açılışın ilk saniyeleri, yama düştü): {@link BadSqlGrammarException} + tablo okunamıyor → boş / 0,
- * fırlatmaz. Tablo VARKEN bir sözdizimi hatası ya da başka veritabanı hatası {@link DataAccessException} olarak fırlar (çağıran
- * yakalar, sonraki tıkta yeniden dener). {@code result_json} hiçbir günlük satırına yazılmaz.
+ * <p><b>Tablo yok</b> (ilk açılışın ilk saniyeleri, yama düştü): {@link BadSqlGrammarException} + tablo okunamıyor → sahiplenme /
+ * alma / tamamlama / bırakma / biçme / özet boş / 0 döner, fırlatmaz. <b>Gönderme fırlatır</b> (inceleme QW-L9 / DA-M1):
+ * {@link DataAccessResourceFailureException} (Türkçe ileti, SQL metni yok) — çağıranın {@code checkDue}'su dönemi zaten
+ * ilerletmiştir; sessiz 0 "gönderildi" sanılıp tür dağıtık kipte hiç denetlenmeden kalırdı, şimdi gönderen başarısızlık sayar.
+ * Tablo VARKEN bir sözdizimi hatası ya da başka veritabanı hatası {@link DataAccessException} olarak fırlar (çağıran yakalar,
+ * sonraki tıkta yeniden dener). {@code result_json} hiçbir günlük satırına yazılmaz.
+ *
+ * <p><b>Çağıranın işlemine katılmaz</b> (inceleme QW-L3): sınıf düzeyinde {@code @Transactional(propagation = NOT_SUPPORTED)}
+ * — Spring bean'i vekil (CGLIB) üzerinden çağrılır; çağıran bir işlem içindeyse (ör. salt okunur System Health) o askıya alınır,
+ * her deyim kendi bağlantısında otomatik commit koşar. Bir PostgreSQL hatası çağıranın işlemini bozamaz (25P02), salt okunur
+ * işlem bir göndermeyi reddettirmez.
+ *
+ * <p><b>Eski DONE satırları</b> (inceleme DH-M2 c): {@link #reap} kirası dolmuş iki kez sahiplenilmiş işlere ek olarak bitişi
+ * {@code 2 × result-stale-ms}'ten (varsayılan 20 dk) eski DONE satırlarını da siler (çağrı başına ≤
+ * {@value #STALE_DONE_REAP_LIMIT}; dönen listeye girmez — {@link #staleDoneReaped()} sayar, dakikada en çok bir WARN) — kimse
+ * boşaltmasa da tablo sınırsız büyümez. Değerlendirici bu satırları zaten bayat diye atardı (≥ 1 × result-stale-ms).
  *
  * <p><b>Kapı:</b> hiçbir yöntem ana anahtar kapalıyken çağrılmaz (K-1) — çağıranlar önce
  * {@link DistributedChecks#anyDistributed()} okur; bu sınıf açılışta hiçbir sorgu çalıştırmaz.
  */
 @Slf4j
 @Component
+@Transactional(propagation = Propagation.NOT_SUPPORTED)
 public class JdbcCheckJobStore implements CheckJobStore {
 
     /** Tekil dizin yokluğunun yeniden denetim aralığı. */
     static final long OPEN_INDEX_RECHECK_MS = 60_000L;
+    /** Bir biçme çağrısında en çok silinen eski DONE satırı. */
+    public static final int STALE_DONE_REAP_LIMIT = 200;
+    /** Eski DONE eşiği = bu kat × {@code result-stale-ms}. */
+    public static final int STALE_DONE_FACTOR = 2;
+    /** Gönderme tablo okunamıyorken fırlatılan istisnanın iletisi (SQL metni yok). */
+    static final String DISPATCH_TABLE_MISSING = "Dağıtık kontrol iş tablosu okunamıyor — işler gönderilemedi";
 
     private static final SecureRandom RANDOM = new SecureRandom();
 
@@ -61,10 +85,21 @@ public class JdbcCheckJobStore implements CheckJobStore {
     /** PostgreSQL tekil açık iş dizini: TRUE varsa ezberlenir; aksi hâlde {@link #OPEN_INDEX_RECHECK_MS}'de bir yeniden bakılır. */
     private volatile boolean openIndexPresent;
     private volatile long openIndexCheckedNano = Long.MIN_VALUE;
+    /** {@code result-stale-ms} (açılışta okunan pod ayarı; bean yoksa varsayılan). */
+    private volatile long resultStaleMs = DistributedChecks.Tuning.DEFAULTS.resultStaleMs();
+    private final AtomicLong staleDoneReaped = new AtomicLong();
+    private final AtomicLong staleDoneReapFailures = new AtomicLong();
+    private final AtomicLong staleDoneWarnAt = new AtomicLong(Long.MIN_VALUE);
 
     @Autowired
     public JdbcCheckJobStore(JdbcTemplate jdbc, DbClock clock) {
         this(EvalStateSql.withQueryTimeout(jdbc, CheckJobSql.QUERY_TIMEOUT_SECONDS), clock, null, System::nanoTime);
+    }
+
+    /** Pod ayarları ({@code result-stale-ms}) — isteğe bağlı; yoksa {@link DistributedChecks.Tuning#DEFAULTS}. Sorgu yok. */
+    @Autowired(required = false)
+    public void setDistributedChecks(DistributedChecks distributedChecks) {
+        if (distributedChecks != null) this.resultStaleMs = distributedChecks.tuning().resultStaleMs();
     }
 
     /** Test: şablon olduğu gibi, saat ve isteğe bağlı zorla tür. */
@@ -98,7 +133,8 @@ public class JdbcCheckJobStore implements CheckJobStore {
             }
             return inserted;
         } catch (BadSqlGrammarException e) {
-            if (!tableReadable()) return 0;
+            // Tablo yok / okunamıyor: sessiz 0 YOK — gönderen (dönemi checkDue ile zaten ilerletti) başarısızlık saysın.
+            if (!tableReadable()) throw new DataAccessResourceFailureException(DISPATCH_TABLE_MISSING);
             throw e;
         }
     }
@@ -129,6 +165,12 @@ public class JdbcCheckJobStore implements CheckJobStore {
 
     // ── Sahiplenme ──────────────────────────────────────────────────────────────────────────────────────────────────
 
+    /** Arayüzün varsayılan yöntemi burada da bildirilir — sınıf düzeyi {@code NOT_SUPPORTED} vekil üzerinden ona da uygulansın. */
+    @Override
+    public List<CheckJobRow> claim(Collection<String> types, int limit, String owner) {
+        return claim(types, limit, owner, ANY_AGE);
+    }
+
     @Override
     public List<CheckJobRow> claim(Collection<String> types, int limit, String owner, long createdBeforeMs) {
         if (types == null || types.isEmpty() || limit <= 0) return List.of();
@@ -153,14 +195,16 @@ public class JdbcCheckJobStore implements CheckJobStore {
 
     private List<CheckJobRow> claimPg(List<String> types, int n, String who, String token, long now, boolean createdFilter,
                                       long createdBefore) {
+        // CTE biçimi: önce aday koşulu + limit (CTE), sonra SET değerleri — parametre sırası CheckJobSql.claimPg ile aynı.
         List<Object> args = new ArrayList<>();
+        addCandidateArgs(args, types, now, createdFilter, createdBefore);
+        args.add(n);
         args.add(who);
         args.add(token);
         args.add(now);
         args.add(now);
-        addCandidateArgs(args, types, now, createdFilter, createdBefore);
-        args.add(n);
-        return new ArrayList<>(jdbc.query(CheckJobSql.claimPg(types.size(), createdFilter), CLAIMED_ROW, args.toArray()));
+        List<CheckJobRow> rows = jdbc.query(CheckJobSql.claimPg(types.size(), createdFilter), CLAIMED_ROW, args.toArray());
+        return new ArrayList<>(rows);
     }
 
     private List<CheckJobRow> claimPortable(List<String> types, int n, String who, String token, long now, boolean createdFilter,
@@ -272,29 +316,77 @@ public class JdbcCheckJobStore implements CheckJobStore {
 
     // ── Biçme / özet ────────────────────────────────────────────────────────────────────────────────────────────────
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Ayrıca (inceleme DH-M2 c) bitişi {@code STALE_DONE_FACTOR × result-stale-ms}'ten eski DONE satırları silinir (≤
+     * {@value #STALE_DONE_REAP_LIMIT}); bunlar dönen listeye GİRMEZ (çağıranın "N kez sahiplenildi" uyarısı yalnız kirası dolmuş
+     * işler içindir) — {@link #staleDoneReaped()} sayar, dakikada en çok bir WARN. Bu ikinci adımın hatası ilk adımın sonucunu
+     * düşürmez (yutulur, {@link #staleDoneReapFailures()}).
+     */
     @Override
     public List<CheckJobRow> reap(int limit) {
         if (limit <= 0) return List.of();
         int n = Math.min(limit, CheckJobSql.MAX_BATCH);
         long now = clock.nowMs();
+        List<CheckJobRow> out = new ArrayList<>();
         try {
             List<Candidate> candidates = jdbc.query(CheckJobSql.SQL_REAP_CANDIDATES, CANDIDATE, now, CheckJobTypes.MAX_ATTEMPTS, n);
-            if (candidates.isEmpty()) return List.of();
-            List<Object[]> batch = new ArrayList<>(candidates.size());
-            for (Candidate c : candidates) batch.add(new Object[] {c.id(), now, CheckJobTypes.MAX_ATTEMPTS});
-            int[] counts = jdbc.batchUpdate(CheckJobSql.SQL_REAP_ONE, batch);
-            List<CheckJobRow> out = new ArrayList<>();
-            for (int i = 0; i < candidates.size(); i++) {
-                int c = i < counts.length ? counts[i] : 0;
-                if (c <= 0 && c != Statement.SUCCESS_NO_INFO) continue;
-                Candidate k = candidates.get(i);
-                out.add(new CheckJobRow(k.id(), k.type(), k.monitorId(), k.createdMs(), k.attempts(), k.leaseMs(), null, 0L, 0L));
+            if (!candidates.isEmpty()) {
+                List<Object[]> batch = new ArrayList<>(candidates.size());
+                for (Candidate c : candidates) batch.add(new Object[] {c.id(), now, CheckJobTypes.MAX_ATTEMPTS});
+                int[] counts = jdbc.batchUpdate(CheckJobSql.SQL_REAP_ONE, batch);
+                for (int i = 0; i < candidates.size(); i++) {
+                    int c = i < counts.length ? counts[i] : 0;
+                    if (c <= 0 && c != Statement.SUCCESS_NO_INFO) continue;
+                    Candidate k = candidates.get(i);
+                    out.add(new CheckJobRow(k.id(), k.type(), k.monitorId(), k.createdMs(), k.attempts(), k.leaseMs(), null, 0L,
+                            0L));
+                }
             }
-            return out;
         } catch (BadSqlGrammarException e) {
             if (!tableReadable()) return List.of();
             throw e;
         }
+        reapStaleDone(now);
+        return out;
+    }
+
+    /** Eski DONE satırları (bitişi {@code STALE_DONE_FACTOR × result-stale-ms}'ten eski) — fırlatmaz. */
+    private void reapStaleDone(long now) {
+        long cutoff = now - (long) STALE_DONE_FACTOR * resultStaleMs;
+        try {
+            List<Long> ids = jdbc.queryForList(CheckJobSql.SQL_REAP_DONE_CANDIDATES, Long.class, cutoff, STALE_DONE_REAP_LIMIT);
+            if (ids.isEmpty()) return;
+            List<Object[]> batch = new ArrayList<>(ids.size());
+            for (Long id : ids) batch.add(new Object[] {id, cutoff});
+            int deleted = 0;
+            for (int c : jdbc.batchUpdate(CheckJobSql.SQL_REAP_DONE_ONE, batch)) {
+                if (c > 0) deleted += c;
+                else if (c == Statement.SUCCESS_NO_INFO) deleted++;
+            }
+            if (deleted <= 0) return;
+            staleDoneReaped.addAndGet(deleted);
+            long t = System.currentTimeMillis();
+            long last = staleDoneWarnAt.get();
+            if ((last == Long.MIN_VALUE || t - last >= 60_000L) && staleDoneWarnAt.compareAndSet(last, t)) {
+                log.warn("Dağıtık kontrol sonuçları değerlendirilmeden silindi: {} sonuç {} dakikadan uzun süredir bekliyordu "
+                        + "(sonuç boşaltıcısı çalışmıyor olabilir)", deleted, TimeUnit.MILLISECONDS.toMinutes(now - cutoff));
+            }
+        } catch (DataAccessException e) {
+            staleDoneReapFailures.incrementAndGet();
+            log.debug("Dağıtık kontrol eski sonuç biçmesi başarısız (sonraki tıkta yeniden): {}", e.getClass().getSimpleName());
+        }
+    }
+
+    /** Açılıştan beri değerlendirilmeden silinen eski DONE satırı (bellek; System Health / ölçümler — paket D). */
+    public long staleDoneReaped() {
+        return staleDoneReaped.get();
+    }
+
+    /** Açılıştan beri eski DONE biçmesinin başarısız denemesi (bellek). */
+    public long staleDoneReapFailures() {
+        return staleDoneReapFailures.get();
     }
 
     @Override

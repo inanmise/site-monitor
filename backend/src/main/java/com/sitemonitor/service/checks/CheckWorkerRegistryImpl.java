@@ -48,7 +48,17 @@ import java.util.function.Supplier;
  * UPDATE), (2) tüm satırları okuyup belleğe alır ({@link #liveOtherWorkers}, {@link #workers} bu önbellekten okur — çağıran iş
  * parçacığında sorgu YOK), (3) tarama lideriyse saatte bir 1 günden eski nabızlı satırları siler. Yerel yetenek yoklaması
  * ayrı iş parçacığında ({@value #PROBE_THREAD}): ICMP sondası ({@code PingCheckerService.probeIcmp()}, bloklayıcı) başlangıçta +
- * 5 dk'da bir, k6 yoklaması ({@code ScriptedCheckerService.ensureProbed()}) 30 sn'de bir.
+ * {@link #ICMP_PROBE_EVERY_MS}'de bir (ICMP "yok" tutma süresinden 60 sn kısa), k6 yoklaması
+ * ({@code ScriptedCheckerService.ensureProbed()}) 30 sn'de bir.
+ *
+ * <p><b>ping yeteneği</b> (inceleme QW-L1): yalnız SON ICMP SONDASI başarılıysa VE {@code icmpAvailable()} (son 5 dk'da bir ping
+ * sonucu "na" değil) ise ilan edilir. İlk sonda dönmeden ping YOKTUR (açılıştaki iyimserlik kalktı); sondanın bulduğu "yok"
+ * KALICIDIR — "na" tutma süresi dolsa da bir sonraki BAŞARILI sondaya dek ping ilan edilmez / sahiplenilmez (ICMP'siz pod 5 dk'da
+ * bir birkaç saniye ping almaz, lider o pencerede türü dağıtığa çevirmez).
+ *
+ * <p><b>Okuma hatası</b> (inceleme QW-L6): tek başarısız okuma önceki İYİ anlık görüntüyü korur — o görüntü {@link #LIVE_MS}'den
+ * gençken ({@code liveOtherWorkers} onu en çok {@link #CACHE_STALE_MS} kullanır); ancak sonra {@link #UNKNOWN}. Böylece tek bir
+ * veritabanı hıçkırığı her dağıtık türü klasiğe çevirip geri getirmez.
  *
  * <p><b>K-1:</b> iş parçacıkları {@link DistributedChecks#whenActivated} ile TEMBEL başlar — anahtar açılıştan beri kapalıysa
  * hiçbiri yoktur, hiçbir satır yazılmaz / okunmaz. Sonradan kapatılınca döngüler bellek okumasıyla boşta döner (yazma yok;
@@ -70,8 +80,8 @@ public class CheckWorkerRegistryImpl implements CheckWorkerRegistry {
     public static final String STOP_THREAD = "check-worker-stop";
     /** Budama sıklığı (yalnız lider). */
     public static final long PRUNE_EVERY_MS = 3_600_000L;
-    /** ICMP yeniden sonda aralığı. */
-    public static final long ICMP_PROBE_EVERY_MS = 300_000L;
+    /** ICMP yeniden sonda aralığı = "na" tutma süresi − 60 sn (her tutma penceresinde en az bir sonda). */
+    public static final long ICMP_PROBE_EVERY_MS = PingCheckerService.ICMP_NA_HOLD_MS - 60_000L;
     /** k6 yoklama aralığı ({@code ensureProbed} k6 yokken kendisi 5 dk'da bir yeniden dener). */
     public static final long K6_PROBE_EVERY_MS = 30_000L;
     /** Önbellek bundan eskiyse (kayıt iş parçacığı takıldı) sonuç {@link #UNKNOWN}. */
@@ -120,6 +130,10 @@ public class CheckWorkerRegistryImpl implements CheckWorkerRegistry {
     private volatile Thread probeThread;
     private volatile String cachedVersion;
     private volatile boolean tableMissing;
+    /** Son ICMP sondasının sonucu: null = henüz sonda yok (ping ilan edilmez), TRUE / FALSE = son sonda. */
+    private volatile Boolean icmpProbeOk;
+    private final AtomicLong icmpProbes = new AtomicLong();
+    private final AtomicLong keptAfterReadFailure = new AtomicLong();
     private final Object writeLock = new Object();
     private final AtomicLong heartbeats = new AtomicLong();
     private final AtomicLong heartbeatFailures = new AtomicLong();
@@ -213,7 +227,7 @@ public class CheckWorkerRegistryImpl implements CheckWorkerRegistry {
         if (distributedChecks == null || !distributedChecks.tuning().workerEnabled()) return Set.of();
         if (!safe(runnerPresent)) return Set.of();
         Set<String> caps = new LinkedHashSet<>(CheckJobTypes.ALL);
-        if (!safe(icmp)) caps.remove(CheckJobTypes.PING);
+        if (!Boolean.TRUE.equals(icmpProbeOk) || !safe(icmp)) caps.remove(CheckJobTypes.PING);
         if (!safe(k6)) caps.remove(CheckJobTypes.SCRIPTED);
         return CheckJobTypes.canonical(caps);
     }
@@ -283,7 +297,7 @@ public class CheckWorkerRegistryImpl implements CheckWorkerRegistry {
                 if (distributedChecks != null && distributedChecks.anyDistributed()) {
                     long now = nanoClock.getAsLong();
                     if (nextIcmp == Long.MIN_VALUE || now - nextIcmp >= 0) {
-                        safe(icmpProbe);
+                        probeIcmpNow();
                         nextIcmp = nanoClock.getAsLong() + TimeUnit.MILLISECONDS.toNanos(ICMP_PROBE_EVERY_MS);
                     }
                     if (nextK6 == Long.MIN_VALUE || now - nextK6 >= 0) {
@@ -297,6 +311,29 @@ public class CheckWorkerRegistryImpl implements CheckWorkerRegistry {
             if (closing) break;
             LockSupport.parkNanos(TimeUnit.SECONDS.toNanos(5));
         }
+    }
+
+    /**
+     * Bir ICMP sondası (bloklayıcı; yoklama iş parçacığı — testler doğrudan çağırır): sonucu "son sonda" olarak saklar. Sondanın
+     * "yok" sonucu bir sonraki başarılı sondaya dek kalır.
+     *
+     * @return sondanın sonucu
+     */
+    public boolean probeIcmpNow() {
+        boolean ok = safe(icmpProbe);
+        icmpProbeOk = ok;
+        icmpProbes.incrementAndGet();
+        return ok;
+    }
+
+    /** Son ICMP sondasının sonucu (null = henüz sonda yok). */
+    public Boolean icmpProbeOk() {
+        return icmpProbeOk;
+    }
+
+    /** Okuma hatasında önceki iyi görüntünün korunduğu tur sayısı (bellek). */
+    public long keptAfterReadFailure() {
+        return keptAfterReadFailure.get();
     }
 
     /** Bir kayıt turu (anahtar açıkken): kendi nabzı → okuma → (lider) budama. Testler doğrudan çağırır. */
@@ -355,7 +392,10 @@ public class CheckWorkerRegistryImpl implements CheckWorkerRegistry {
         }
     }
 
-    /** Tüm satırları okuyup önbelleğe alır; hata → önbellek "okunamadı" ({@link #UNKNOWN}). */
+    /**
+     * Tüm satırları okuyup önbelleğe alır; hata → önceki İYİ görüntü {@link #LIVE_MS}'den gençse KORUNUR (okuma anı değişmez,
+     * yaşlanmaya devam eder), değilse önbellek "okunamadı" ({@link #UNKNOWN}).
+     */
     void refresh() {
         long nano = nanoClock.getAsLong();
         long nowDb = clock.nowMs();
@@ -366,9 +406,19 @@ public class CheckWorkerRegistryImpl implements CheckWorkerRegistry {
             tableMissing = false;
         } catch (DataAccessException e) {
             readFailures.incrementAndGet();
-            cache = new Snapshot(false, List.of(), nowDb, nano);
+            Snapshot prev = cache;
+            long prevAge = prev == null ? Long.MAX_VALUE : TimeUnit.NANOSECONDS.toMillis(nano - prev.readNano());
+            boolean kept = prev != null && prev.ok() && prevAge >= 0 && prevAge <= LIVE_MS;
+            if (kept) {
+                keptAfterReadFailure.incrementAndGet();
+            } else {
+                cache = new Snapshot(false, List.of(), nowDb, nano);
+            }
             if (e instanceof BadSqlGrammarException && !tableReadable()) {
                 tableMissing = true;
+            } else if (kept) {
+                warn("Dağıtık kontrol işçileri okunamadı — önceki okuma (en çok {} sn) kullanılıyor: {}",
+                        TimeUnit.MILLISECONDS.toSeconds(LIVE_MS), e.getClass().getSimpleName());
             } else {
                 warn("Dağıtık kontrol işçileri okunamadı — kontroller klasik kipte kalır: {}", e.getClass().getSimpleName());
             }

@@ -147,15 +147,23 @@ public final class CheckJobSql {
                 + (createdFilter ? " AND created_ms < ?" : "");
     }
 
+    /** {@link #CLAIM_COLS}, {@code j} takma adıyla (PostgreSQL CTE biçiminin RETURNING'i — etiketler aynı kalır). */
+    static final String CLAIM_COLS_J = qualified(CLAIM_COLS, "j");
+
     /**
-     * PostgreSQL tek ifadeli sahiplenme ({@code FOR UPDATE SKIP LOCKED} — iki işçi aynı satırı alamaz). Parametreler: sahip,
-     * belirteç, şimdi, şimdi (kira tabanı), [aday koşulu], limit.
+     * PostgreSQL tek ifadeli sahiplenme, CTE biçimi (inceleme QW-L8): adaylar {@code WITH c AS (SELECT … ORDER BY id LIMIT ?
+     * FOR UPDATE SKIP LOCKED)} içinde BİR KEZ seçilip kilitlenir, dış {@code UPDATE … FROM c} yalnız onları günceller — bir
+     * çağrı ASLA {@code limit}'ten fazla iş sahiplenmez (eski {@code WHERE id IN (SELECT … SKIP LOCKED)} biçiminde planlayıcı
+     * alt sorguyu yeniden tararsa birleşim sınırı aşabilirdi); iki işçi aynı satırı alamaz. {@code FOR UPDATE} taşıyan CTE
+     * satır içine katlanmaz. Parametreler: [aday koşulu] (türler…, şimdi, deneme tavanı [, oluşturma eşiği]), limit, sahip,
+     * belirteç, şimdi, şimdi (kira tabanı).
      */
     public static String claimPg(int types, boolean createdFilter) {
-        return "UPDATE " + JOBS + " SET state = 'CLAIMED', claimed_by = ?, claim_token = ?, claimed_ms = ?, "
-                + "lease_until_ms = CAST(? AS BIGINT) + lease_ms, attempts = attempts + 1 "
-                + "WHERE id IN (SELECT id FROM " + JOBS + " WHERE " + candidateWhere(types, createdFilter)
-                + " ORDER BY id LIMIT ? FOR UPDATE SKIP LOCKED) RETURNING " + CLAIM_COLS;
+        return "WITH c AS (SELECT id FROM " + JOBS + " WHERE " + candidateWhere(types, createdFilter)
+                + " ORDER BY id LIMIT ? FOR UPDATE SKIP LOCKED) "
+                + "UPDATE " + JOBS + " j SET state = 'CLAIMED', claimed_by = ?, claim_token = ?, claimed_ms = ?, "
+                + "lease_until_ms = CAST(? AS BIGINT) + j.lease_ms, attempts = j.attempts + 1 "
+                + "FROM c WHERE j.id = c.id RETURNING " + CLAIM_COLS_J;
     }
 
     /** Taşınabilir sahiplenme 1. adım: adaylar (kilitsiz). Parametreler: [aday koşulu], limit. */
@@ -193,13 +201,17 @@ public final class CheckJobSql {
     private static final String LEASE_EXISTS = "EXISTS (SELECT 1 FROM " + ClusterScheduleService.TABLE
             + " WHERE monitor_key = '" + LEASE_KEY + "' AND claimed_by = ?)";
 
+    /** {@link #TAKE_COLS}, {@code j} takma adıyla. */
+    static final String TAKE_COLS_J = qualified(TAKE_COLS, "j");
+
     /**
-     * PostgreSQL kira-bağlı alma: DONE satırları id sırasında, kilitli olanı atla; kirayı kaybetmiş pod hiçbir şey almaz.
+     * PostgreSQL kira-bağlı alma, CTE biçimi (inceleme QW-L8): DONE satırları id sırasında, kilitli olanı atla, en çok
+     * {@code limit} — CTE bir kez değerlendirilir, çağrı sınırı aşamaz; kirayı kaybetmiş pod hiçbir şey almaz.
      * Parametreler: limit, kira sahibi.
      */
-    public static final String SQL_TAKE_PG = "DELETE FROM " + JOBS + " WHERE id IN (SELECT id FROM " + JOBS
-            + " WHERE state = 'DONE' ORDER BY id LIMIT ? FOR UPDATE SKIP LOCKED) AND " + LEASE_EXISTS
-            + " RETURNING " + TAKE_COLS;
+    public static final String SQL_TAKE_PG = "WITH c AS (SELECT id FROM " + JOBS
+            + " WHERE state = 'DONE' ORDER BY id LIMIT ? FOR UPDATE SKIP LOCKED) DELETE FROM " + JOBS
+            + " j USING c WHERE j.id = c.id AND " + LEASE_EXISTS + " RETURNING " + TAKE_COLS_J;
 
     /** Taşınabilir alma 1. adım: DONE satırlar (kilitsiz). Parametre: limit. */
     public static final String SQL_TAKE_CANDIDATES = "SELECT " + TAKE_COLS + " FROM " + JOBS
@@ -215,6 +227,17 @@ public final class CheckJobSql {
     /** Biçme: satır başına koşullu silme (aday hâlâ aynı durumda). Parametreler: id, şimdi, tavan. */
     public static final String SQL_REAP_ONE = "DELETE FROM " + JOBS
             + " WHERE id = ? AND state = 'CLAIMED' AND lease_until_ms < ? AND attempts >= ?";
+
+    /**
+     * Eski DONE biçme adayları (inceleme DH-M2 c): bitişi bu eşikten eski sonuçlar — kimse boşaltmasa da tablo sınırsız
+     * büyümesin. Parametreler: eşik, limit.
+     */
+    public static final String SQL_REAP_DONE_CANDIDATES = "SELECT id FROM " + JOBS
+            + " WHERE state = 'DONE' AND finished_ms < ? ORDER BY id LIMIT ?";
+
+    /** Eski DONE biçme: satır başına koşullu silme (değerlendirici o arada almadıysa). Parametreler: id, eşik. */
+    public static final String SQL_REAP_DONE_ONE = "DELETE FROM " + JOBS
+            + " WHERE id = ? AND state = 'DONE' AND finished_ms < ?";
 
     /** Kuyruk özeti: durum × tür başına sayı + en eski oluşturma / bitiş + kirası dolmuş sahiplenme. Parametre: şimdi. */
     public static final String SQL_STATS = "SELECT state, job_type, COUNT(*) AS n, MIN(created_ms) AS min_created, "
@@ -259,5 +282,15 @@ public final class CheckJobSql {
     /** {@code n} adet "?" virgülle. */
     static String placeholders(int n) {
         return String.join(", ", Collections.nCopies(Math.max(1, n), "?"));
+    }
+
+    /** Virgüllü sütun listesinin her öğesine {@code alias.} öneki. */
+    static String qualified(String cols, String alias) {
+        StringBuilder sb = new StringBuilder();
+        for (String c : cols.split(",")) {
+            if (sb.length() > 0) sb.append(", ");
+            sb.append(alias).append('.').append(c.trim());
+        }
+        return sb.toString();
     }
 }

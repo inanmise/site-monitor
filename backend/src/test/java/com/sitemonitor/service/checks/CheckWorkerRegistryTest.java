@@ -2,10 +2,14 @@ package com.sitemonitor.service.checks;
 
 import com.sitemonitor.it.MultiPodTestSupport;
 import com.sitemonitor.service.AppSettingsService;
+import com.sitemonitor.service.PingCheckerService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowMapper;
 
 import java.util.List;
 import java.util.Map;
@@ -56,8 +60,15 @@ class CheckWorkerRegistryTest {
     }
 
     private CheckWorkerRegistryImpl registry(String self, DistributedChecks dc, int busy) {
-        return new CheckWorkerRegistryImpl(mp.jdbc(), clock, dc, self, leader::get, icmp::get, icmp::get, k6::get, k6::get,
-                runner::get, () -> new CheckWorkerRegistryImpl.LocalStats(16, busy, 7L, 1L, 420L), () -> "20.170.0", nano::get);
+        return registry(mp.jdbc(), self, dc, busy);
+    }
+
+    private CheckWorkerRegistryImpl registry(JdbcTemplate jdbc, String self, DistributedChecks dc, int busy) {
+        CheckWorkerRegistryImpl r = new CheckWorkerRegistryImpl(jdbc, clock, dc, self, leader::get, icmp::get, icmp::get, k6::get,
+                k6::get, runner::get, () -> new CheckWorkerRegistryImpl.LocalStats(16, busy, 7L, 1L, 420L), () -> "20.170.0",
+                nano::get);
+        r.probeIcmpNow();   // yoklama iş parçacığının ilk sondası (QW-L1: sonda dönmeden ping ilan edilmez)
+        return r;
     }
 
     private void advance(long ms) {
@@ -187,6 +198,81 @@ class CheckWorkerRegistryTest {
         assertThat(disabled.localCapabilities()).isEmpty();
         disabled.tick();
         assertThat(rowCount()).as("işçi kapalı pod nabız yazmaz").isZero();
+    }
+
+    @Test
+    @DisplayName("ICMP (inceleme QW-L1): ilk sonda dönmeden ping yok; sondanın 'yok'u 'na' tutma süresi dolsa da sonraki başarılı sondaya dek kalır")
+    void icmpCapabilityNeverReturnsBeforeAProbe() {
+        // PingCheckerService'in kuralı: son ICMP_NA_HOLD_MS içinde "na" yoksa icmpAvailable() true; sonda "na" damgalar.
+        AtomicLong naAt = new AtomicLong(Long.MIN_VALUE);
+        AtomicBoolean podHasIcmp = new AtomicBoolean(false);
+        java.util.function.BooleanSupplier available = () -> naAt.get() == Long.MIN_VALUE
+                || nano.get() - naAt.get() >= TimeUnit.MILLISECONDS.toNanos(PingCheckerService.ICMP_NA_HOLD_MS);
+        java.util.function.BooleanSupplier probe = () -> {
+            if (!podHasIcmp.get()) naAt.set(nano.get());
+            return available.getAsBoolean();
+        };
+        CheckWorkerRegistryImpl a = new CheckWorkerRegistryImpl(mp.jdbc(), clock, on, "pod1-00000001", leader::get, available,
+                probe, k6::get, k6::get, runner::get, () -> CheckWorkerRegistryImpl.LocalStats.IDLE, () -> "v", nano::get);
+        assertThat(a.icmpProbeOk()).isNull();
+        assertThat(a.localCapabilities()).as("ilk sonda dönmeden ping ilan edilmez").doesNotContain(CheckJobTypes.PING)
+                .contains(CheckJobTypes.PORT);
+
+        assertThat(a.probeIcmpNow()).isFalse();   // ICMP'siz pod
+        assertThat(a.localCapabilities()).doesNotContain(CheckJobTypes.PING);
+        advance(PingCheckerService.ICMP_NA_HOLD_MS);   // "na" tutma süresi doldu, yeni sonda henüz yok
+        assertThat(available.getAsBoolean()).as("icmpAvailable() yeniden true").isTrue();
+        assertThat(a.localCapabilities()).as("sondanın 'yok'u kalıcı — pencere yok").doesNotContain(CheckJobTypes.PING);
+        a.tick();
+        assertThat(mp.jdbc().queryForObject("SELECT caps FROM monitor_check_workers", String.class))
+                .as("nabız da ping ilan etmez").doesNotContain(CheckJobTypes.PING);
+
+        podHasIcmp.set(true);   // ör. düğüm yetkisi düzeldi
+        assertThat(a.probeIcmpNow()).isTrue();
+        assertThat(a.localCapabilities()).contains(CheckJobTypes.PING);
+        naAt.set(nano.get());   // gerçek bir ping sonucu "na" (tek izleme EPERM) → 5 dk yok
+        assertThat(a.localCapabilities()).doesNotContain(CheckJobTypes.PING);
+        assertThat(CheckWorkerRegistryImpl.ICMP_PROBE_EVERY_MS)
+                .as("her 'na' tutma penceresinde en az bir sonda").isEqualTo(PingCheckerService.ICMP_NA_HOLD_MS - 60_000L);
+    }
+
+    @Test
+    @DisplayName("Okuma hatası (inceleme QW-L6): tek başarısız okuma önceki iyi görüntüyü korur (≤ 30 sn); ancak sonra UNKNOWN")
+    void singleReadFailureKeepsPreviousSnapshot() {
+        AtomicBoolean failReads = new AtomicBoolean();
+        JdbcTemplate flaky = new JdbcTemplate(mp.dataSource()) {
+            @Override
+            public <T> List<T> query(String sql, RowMapper<T> rowMapper, Object... args) {
+                if (failReads.get() && sql.equals(CheckJobSql.SQL_WORKERS)) throw new DataAccessResourceFailureException("db");
+                return super.query(sql, rowMapper, args);
+            }
+        };
+        registry("pod2-00000002", on, 0).tick();
+        CheckWorkerRegistryImpl a = registry(flaky, "pod1-00000001", on, 0);
+        a.tick();
+        assertThat(a.liveOtherWorkers(CheckJobTypes.PORT)).isEqualTo(1);
+
+        failReads.set(true);
+        advance(10_000);
+        a.tick();
+        assertThat(a.status().readFailures()).isEqualTo(1);
+        assertThat(a.keptAfterReadFailure()).isEqualTo(1);
+        assertThat(a.liveOtherWorkers(CheckJobTypes.PORT)).as("tek hata türü klasiğe çevirmez").isEqualTo(1);
+        assertThat(a.workers()).isNotEmpty();
+        advance(10_000);
+        a.tick();
+        assertThat(a.liveOtherWorkers(CheckJobTypes.PORT)).as("20 sn — hâlâ önceki iyi okuma").isEqualTo(0 + 1);
+
+        advance(10_001);
+        assertThat(a.liveOtherWorkers(CheckJobTypes.PORT)).as("önceki okuma 30 sn'yi aştı").isEqualTo(CheckWorkerRegistry.UNKNOWN);
+        a.tick();
+        assertThat(a.liveOtherWorkers(CheckJobTypes.PORT)).isEqualTo(CheckWorkerRegistry.UNKNOWN);
+        assertThat(a.workers()).as("artık okunamadı").isEmpty();
+
+        failReads.set(false);
+        registry("pod2-00000002", on, 0).tick();
+        a.tick();
+        assertThat(a.liveOtherWorkers(CheckJobTypes.PORT)).isEqualTo(1);
     }
 
     @Test

@@ -54,9 +54,17 @@ import java.util.function.Supplier;
  * aralığı uyarlanır: iş bulunca {@code poll-ms}, boşta ikiye katlanarak en çok {@link DistributedChecks.Tuning#MAX_IDLE_POLL_MS}.
  *
  * <p><b>Zaman aşımı:</b> her iş {@link CheckJobRow#workerTimeoutMs()} (kira − 10 sn) içinde bitmezse yoklama adımı onu
- * {@link CheckJobRunner#workerTimeout()} ile tamamlar ({@code orTimeout} eşdeğeri, ek JDK iş parçacığı yok); takılan gövde
- * döndüğünde sonucu atılır, yuvası gövde dönene dek dolu sayılır. Tamamlamalar {@value #FLUSH_MS} ms'de bir toplu yazılır;
- * belirteç uyuşmazsa (kira başka işçiye geçti) sonuç düşer ({@code late}).
+ * {@link CheckJobRunner#workerTimeout()} ile tamamlar ({@code orTimeout} eşdeğeri, ek JDK iş parçacığı yok) ve ARDINDAN gövdenin
+ * iş parçacığını KESER ({@code Thread.interrupt}, inceleme QW-L5 / DA-L3) — gövde (paket B) kesilmişse geçmiş satırını yazmaz
+ * ({@link #currentJobAbandoned()} de aynı soruyu kesme bayrağından bağımsız yanıtlar); takılan gövde döndüğünde sonucu atılır,
+ * yuvası gövde dönene dek dolu sayılır (kesmeyi yok sayan gövde yuvayı tutmayı sürdürür). Bir işe gönderilen kesme o işin
+ * sonunda temizlenir — aynı havuz iş parçacığındaki sonraki işe sızmaz. Tamamlamalar {@value #FLUSH_MS} ms'de bir toplu
+ * yazılır; belirteç uyuşmazsa (kira başka işçiye geçti) sonuç düşer ({@code late}).
+ *
+ * <p><b>Birikim tavanı</b> (inceleme QW-L10): yazılmayı bekleyen tamamlamalar {@value #MAX_PENDING_COMPLETIONS} sonuca ya da
+ * {@value #MAX_PENDING_CHARS} karaktere ulaşınca veritabanına yazılabilene dek YENİ iş SAHİPLENİLMEZ (hız sınırlı WARN) — hiçbir
+ * tamamlama sessizce düşmez. Koşan yuvalar tavanın üstüne en çok {@link DistributedChecks.Tuning#MAX_SLOTS} sonuç ekleyebilir;
+ * yine de sert tavan aşılırsa en eski düşer, WARN + sayaçla ({@link #backlogDropped()}).
  *
  * <p><b>Kapanış (§5.6):</b> {@code ContextClosedEvent} ({@code HIGHEST_PRECEDENCE + 2}) yalnız bayrak (yeni sahiplenme yok) +
  * sahiplenilmiş ama BAŞLAMAMIŞ işler varsa onları daemon yardımcı iş parçacığında PENDING'e bırakır — BEKLEME YOK.
@@ -78,8 +86,10 @@ public class CheckWorker {
     public static final long SHUTDOWN_WAIT_CAP_MS = 3_000L;
     /** Yok etmede son tamamlama yazımının en çok beklenmesi (ms; ortak süreden düşer). */
     public static final long FINAL_FLUSH_CAP_MS = 1_000L;
-    /** Yazılmayı bekleyen tamamlama tavanı (veritabanı uzun süre yazılamazsa en eskiler düşer — zaten kirası dolar). */
+    /** Yazılmayı bekleyen tamamlama yumuşak tavanı: ulaşılınca yeni sahiplenme durur (birikim yazılana dek). */
     static final int MAX_PENDING_COMPLETIONS = 2_000;
+    /** Yazılmayı bekleyen tamamlamaların toplam karakter yumuşak tavanı (≈ 32–64 MB): ulaşılınca yeni sahiplenme durur. */
+    static final long MAX_PENDING_CHARS = 32_000_000L;
     /** Tek toplu tamamlamada en çok satır. */
     static final int FLUSH_BATCH = 500;
     /** Sahiplenme gecikmesi p95 penceresi. */
@@ -88,6 +98,10 @@ public class CheckWorker {
     private static final int QUEUED = 0;
     private static final int RUNNING = 1;
     private static final int RELEASED = 2;
+    private static final int FINISHED = 3;
+
+    /** Bu iş parçacığında koşan iş (yalnız gövde süresince; {@link #currentJobAbandoned()}). */
+    private static final ThreadLocal<JobTask> CURRENT = new ThreadLocal<>();
 
     /** Bir sahiplenilmiş iş (bellek). */
     static final class JobTask {
@@ -95,11 +109,25 @@ public class CheckWorker {
         final long deadlineNano;
         final AtomicInteger state = new AtomicInteger(QUEUED);
         final AtomicBoolean done = new AtomicBoolean();
+        /** Gövdeyi koşturan iş parçacığı (yalnız RUNNING iken; {@code this} kilidi altında yazılır / kesilir). */
+        Thread thread;
+        /** İş bırakıldı: zaman aşımıyla tamamlandı ya da yok etmede kesildi — gövde sonucu / geçmiş satırı yazmamalı. */
+        volatile boolean abandoned;
 
         JobTask(CheckJobRow row, long deadlineNano) {
             this.row = row;
             this.deadlineNano = deadlineNano;
         }
+    }
+
+    /**
+     * Bu iş parçacığında koşan kontrol işi bırakıldı mı (zaman aşımı ya da yok etmede kesme) — gövde (paket B) geçmiş satırını
+     * yazmadan önce sorabilir; kesme bayrağı gövdedeki bir {@code catch} tarafından temizlense de doğru yanıtlar. İşçi dışında
+     * (ör. klasik tarama iş parçacığı) her zaman false.
+     */
+    public static boolean currentJobAbandoned() {
+        JobTask t = CURRENT.get();
+        return t != null && t.abandoned;
     }
 
     /** İşçi durumu (System Health / ölçümler — paket D okur; bellek). */
@@ -135,6 +163,13 @@ public class CheckWorker {
     private final AtomicLong claimErrors = new AtomicLong();
     private final AtomicLong completeErrors = new AtomicLong();
     private final AtomicLong droppedAtShutdown = new AtomicLong();
+    private final AtomicLong interrupts = new AtomicLong();
+    private final AtomicLong backlogPauses = new AtomicLong();
+    private final AtomicLong backlogDropped = new AtomicLong();
+    /** Kuyruktaki tamamlamaların toplam {@code resultJson} karakteri (yazılınca / düşünce düşülür). */
+    private final AtomicLong pendingChars = new AtomicLong();
+    private volatile int maxPendingCompletions = MAX_PENDING_COMPLETIONS;
+    private volatile long maxPendingChars = MAX_PENDING_CHARS;
     private final AtomicLong warnAt = new AtomicLong(Long.MIN_VALUE);
     private final long[] lags = new long[LAG_WINDOW];
     private int lagCount;
@@ -306,6 +341,13 @@ public class CheckWorker {
     int claimRound() {
         int free = tuning.slots() - running.get();
         if (free <= 0) return -1;
+        if (backlogFull()) {
+            // Sonuçlar yazılamıyor (veritabanı): birikim yazılana dek yeni iş yok — hiçbir tamamlama sessizce düşmesin.
+            backlogPauses.incrementAndGet();
+            warn("Dağıtık kontrol sonuçları yazılamıyor — birikim dolu ({} sonuç, {} karakter); yazılana dek yeni iş alınmıyor",
+                    pending.size(), pendingChars.get());
+            return -1;
+        }
         Set<String> caps = registry == null ? Set.of() : registry.localCapabilities();
         if (caps.isEmpty()) return 0;
         try {
@@ -374,15 +416,27 @@ public class CheckWorker {
 
     /** Yuva gövdesi: işi koşturur, sonucu (zaman aşımı ya da kesilme yoksa) tamamlama kuyruğuna koyar. */
     void runTask(JobTask t) {
-        if (!t.state.compareAndSet(QUEUED, RUNNING)) return;   // kapanışta bırakıldı (sayaçları bırakan düştü)
+        synchronized (t) {
+            if (!t.state.compareAndSet(QUEUED, RUNNING)) return;   // kapanışta bırakıldı (sayaçları bırakan düştü)
+            t.thread = Thread.currentThread();
+        }
         if (CheckJobTypes.SCRIPTED.equals(t.row.type())) scriptedNotStarted.decrementAndGet();
         Map<String, Object> result;
+        CURRENT.set(t);
         try {
             CheckJobRunner r = runner.get();
             result = r == null ? CheckJobRunner.failed(new IllegalStateException()) : r.runCheckJob(t.row.type(), t.row.monitorId());
         } catch (Throwable e) {
             result = CheckJobRunner.failed(e);
         } finally {
+            CURRENT.remove();
+            synchronized (t) {
+                // Kesme yalnız bu kilit altında ve RUNNING iken gönderilir: FINISHED'dan sonra gelemez → temizlik güvenli,
+                // bu işe gönderilen kesme aynı havuz iş parçacığındaki SONRAKİ işe sızmaz.
+                t.thread = null;
+                t.state.set(FINISHED);
+                Thread.interrupted();
+            }
             running.decrementAndGet();
             tasks.remove(t.row.id(), t);
         }
@@ -395,23 +449,63 @@ public class CheckWorker {
         enqueue(t.row, result);
     }
 
-    /** Süresi dolan işleri {@code worker_timeout} ile tamamlar (gövde koşmaya devam eder, yuvası dolu kalır). */
+    /**
+     * Süresi dolan işleri {@code worker_timeout} ile tamamlar, SONRA gövdenin iş parçacığını keser (yuva gövde dönünce
+     * boşalır; kesmeyi yok sayan gövde yuvayı tutar).
+     */
     void sweepTimeouts(long nowNano) {
         if (tasks.isEmpty()) return;
         for (JobTask t : tasks.values()) {
             if (t.state.get() != RUNNING || nowNano - t.deadlineNano < 0) continue;
             if (!t.done.compareAndSet(false, true)) continue;
             timeouts.incrementAndGet();
+            t.abandoned = true;
             if (!cut) enqueue(t.row, CheckJobRunner.workerTimeout());
+            interruptBody(t);
         }
+    }
+
+    /** Hâlâ koşan gövdenin iş parçacığını keser (yalnız RUNNING iken, iş kilidi altında — başka işe gitmez). */
+    private void interruptBody(JobTask t) {
+        synchronized (t) {
+            Thread th = t.thread;
+            if (t.state.get() != RUNNING || th == null) return;
+            th.interrupt();
+        }
+        interrupts.incrementAndGet();
+    }
+
+    /** Birikim yumuşak tavanında mı (sayı ya da karakter). */
+    boolean backlogFull() {
+        return pending.size() >= maxPendingCompletions || pendingChars.get() >= maxPendingChars;
     }
 
     private void enqueue(CheckJobRow row, Map<String, Object> result) {
         CheckResultCodec.Encoded e = CheckResultCodec.encode(result);
-        pending.addLast(new CheckJobStore.Completion(row.id(), row.claimToken(), e.json(), e.truncated(), owner));
-        while (pending.size() > MAX_PENDING_COMPLETIONS) {
-            if (pending.pollFirst() != null) late.incrementAndGet();
+        CheckJobStore.Completion c = new CheckJobStore.Completion(row.id(), row.claimToken(), e.json(), e.truncated(), owner);
+        pending.addLast(c);
+        pendingChars.addAndGet(chars(c));
+        // Sert tavan: sahiplenme yumuşak tavanda durduğundan koşan yuvalar en çok MAX_SLOTS sonuç ekleyebilir — buraya varmak
+        // beklenmez; varılırsa en eski düşer, SESSİZ DEĞİL (WARN + sayaç; işin kirası dolunca başka pod yeniden koşar).
+        long extraChars = (long) DistributedChecks.Tuning.MAX_SLOTS * CheckResultCodec.MAX_RESULT_CHARS;
+        long softChars = maxPendingChars;
+        long hardChars = softChars > Long.MAX_VALUE - extraChars ? Long.MAX_VALUE : softChars + extraChars;
+        int softCount = maxPendingCompletions;
+        int hardCount = softCount > Integer.MAX_VALUE - DistributedChecks.Tuning.MAX_SLOTS ? Integer.MAX_VALUE
+                : softCount + DistributedChecks.Tuning.MAX_SLOTS;
+        while (pending.size() > hardCount || pendingChars.get() > hardChars) {
+            CheckJobStore.Completion old = pending.pollFirst();
+            if (old == null) break;
+            pendingChars.addAndGet(-chars(old));
+            late.incrementAndGet();
+            backlogDropped.incrementAndGet();
+            warn("Dağıtık kontrol sonuç birikimi sert tavanı aştı — en eski sonuç düşürüldü (iş {}; kirası dolunca yeniden koşar)",
+                    old.id());
         }
+    }
+
+    private static long chars(CheckJobStore.Completion c) {
+        return c.resultJson() == null ? 0L : c.resultJson().length();
     }
 
     /** Bekleyen tamamlamaları toplu yazar; veritabanı hatasında satırlar sıraya geri konur (sonraki adım). */
@@ -427,10 +521,11 @@ public class CheckWorker {
                 ok = store.complete(batch);
             } catch (RuntimeException e) {
                 completeErrors.incrementAndGet();
-                for (int i = batch.size() - 1; i >= 0; i--) pending.addFirst(batch.get(i));
+                for (int i = batch.size() - 1; i >= 0; i--) pending.addFirst(batch.get(i));   // karakter sayacı değişmez
                 warn("Dağıtık kontrol sonuçları yazılamadı (sonraki adımda yeniden denenecek): {}", e.getClass().getSimpleName());
                 return;
             }
+            for (CheckJobStore.Completion done : batch) pendingChars.addAndGet(-chars(done));
             for (int i = 0; i < batch.size(); i++) {
                 if (ok != null && i < ok.length && ok[i]) {
                     completed.incrementAndGet();
@@ -512,6 +607,7 @@ public class CheckWorker {
             Thread.currentThread().interrupt();
         }
         cut = true;
+        for (JobTask t : tasks.values()) t.abandoned = true;   // kesilen gövde geçmiş satırını yazmasın
         ex.shutdownNow();
         terminated = true;
         Thread poll = pollThread;
@@ -554,6 +650,32 @@ public class CheckWorker {
         lags[lagNext] = Math.max(0L, lag);
         lagNext = (lagNext + 1) % LAG_WINDOW;
         if (lagCount < LAG_WINDOW) lagCount++;
+    }
+
+    /** Açılıştan beri zaman aşımında kesilen gövde sayısı (bellek; System Health / ölçümler — paket D). */
+    public long interrupts() {
+        return interrupts.get();
+    }
+
+    /** Birikim tavanı yüzünden atlanan sahiplenme turu (bellek). */
+    public long backlogPauses() {
+        return backlogPauses.get();
+    }
+
+    /** Sert tavanda düşen tamamlama (bellek; 0 beklenir). */
+    public long backlogDropped() {
+        return backlogDropped.get();
+    }
+
+    /** Yazılmayı bekleyen tamamlamaların toplam karakteri (bellek). */
+    public long pendingChars() {
+        return pendingChars.get();
+    }
+
+    /** Test: birikim yumuşak tavanları. */
+    void backlogLimits(int maxCompletions, long maxChars) {
+        this.maxPendingCompletions = Math.max(1, maxCompletions);
+        this.maxPendingChars = Math.max(1L, maxChars);
     }
 
     /** Test: bekleyen tamamlama sayısı. */
