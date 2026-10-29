@@ -33,6 +33,10 @@
 --     yalnız SAĞLIKLI izlemeleri sayar; "Şimdi kontrol et", YAVAŞ yanıt alarmı doğrulaması (HTTP_SLOW / KEYWORD_SLOW /
 --     PING_SLOW) ve işçisi ölen işin kira dolunca (≤ 150 sn) yeniden koşması yanlış pozitif verebilir — ayrıntı bölümde.
 --
+--   * Bölüm 10 (çok pod Sürüm 3-4, parçalı sertifika taraması — cert_sweep_runs tablosu yoksa atlanır): (a) / (b) için
+--     yanlış pozitif beklenmez ("Şimdi kontrol et" run_id 'manual', envanter ekleme 'inventory-add' — parçalı koşu
+--     değil); (c) yalnız pencere başından ≥ 10 dk sonra oluşturulan DONE koşuları; (d) yalnız anahtar açıkken sayılır.
+--
 -- Bölüm 9 değişkenleri: dist_minutes (60: dönem çiftleri penceresi, dk), period_frac (0.5: aralığın bu katından yakın iki
 -- zamanlanmış satır = çift), done_stale_s (300: bu kadar eski DONE satırı, anahtar AÇIKKEN = STUCK), period_strict (auto:
 -- dönem çiftleri yalnız anahtar açıkken DUP sayılır; 1: her zaman; 0: hiç — yalnız gösterilir).
@@ -589,9 +593,124 @@ ORDER BY finished_ms LIMIT :detail_limit;
 \endif
 \endif
 
+-- ── 10. Çok pod Sürüm 3-4: parçalı sertifika taraması (cert_sweep_runs yoksa — 3-4 öncesi şema — bölüm atlanır) ───────
+-- Parçalı turda kayıt, önbellek, toplu kesinti kararı ve alarmlar YALNIZ koordinatörde (cert-check sahibi), tur başına bir kez
+-- (L-2); işçiler yalnız ÖLÇER (yeniden sahiplenme / devralma / ikinci görüş satır yazmaz). Koşu kimliği = klasik tur kimliği
+-- = certificate_checks.run_id.
+-- (a) bir parçalı koşuda aynı alan adının birden çok kayıtlı sonucu → DUP (her alan adı tur başına bir kez, L-4).
+-- (b) birden çok AÇIK (RUNNING / DECIDING) koşu → DUP: cert-check kilidi kümede tek tur bırakır, yeni koordinatör açılışta
+--     öksüzleri kapatır. Tek açık koşunun nabzı 2 dk'dan eskiyse koordinatörü ölmüştür (bilgi — sonraki parçalı tur ORPHANED
+--     kapatır; anahtar kapalıysa kapatan olmaz, R-12).
+-- (c) DONE koşunun kayıtlı alan adı sayısı ≠ domains_total → STUCK (kaybolan alan adı). Yalnız pencere başından en az 10 dk
+--     sonra oluşturulan koşular (pod saati ↔ veritabanı saati, pencere sınırı).
+-- (d) açık olmayan (ya da satırı olmayan) koşunun 1 saatten eski parça satırı → STUCK (çöp), YALNIZ anahtar
+--     (site.monitor.checks.cert-chunks.enabled) açıkken: kapanışta bırakılan koşunun parçalarını sonraki PARÇALI tur siler —
+--     anahtar kapalıyken kalırlar (bilgi, sayılmaz).
+-- (e) penceredeki ABANDONED koşular (bilgi — dağıtımda / pod öldürmede beklenir; başka zamanda koordinatör sorunu).
+\set c_csdup 0
+\set c_csopen 0
+\set c_cslost 0
+\set c_csgarbage 0
+SELECT to_regclass('cert_sweep_runs') IS NOT NULL AND to_regclass('cert_sweep_chunks') IS NOT NULL AS has_cert_sweep \gset
+\if :has_cert_sweep
+\echo
+\echo '── 10. Parçalı sertifika taraması (çok pod Sürüm 3-4)'
+SELECT COALESCE((SELECT LOWER(TRIM(setting_value)) FROM app_settings
+                  WHERE setting_key = 'site.monitor.checks.cert-chunks.enabled' LIMIT 1), 'false') = 'true' AS cs_on,
+       (EXTRACT(EPOCH FROM now()) * 1000)::bigint - (:hours)::bigint * 3600000 AS cs_since_ms,
+       (EXTRACT(EPOCH FROM now()) * 1000)::bigint AS cs_now_ms \gset
+SELECT CASE WHEN :'cs_on' = 't' THEN 'AÇIK' ELSE 'kapalı (app_settings satırı yok ya da false)' END AS parcali_tarama;
+\echo '   koşular (bilgi): durum × sonuç × tür'
+SELECT state AS durum, COALESCE(outcome, '—') AS sonuc, kind AS tur, COUNT(*) AS adet, SUM(domains_total) AS alan_adi,
+       SUM(COALESCE(takeovers, 0)) AS devralinan, SUM(COALESCE(reclaims, 0)) AS yeniden_sahiplenilen,
+       SUM(COALESCE(second_opinions, 0)) AS ikinci_gorus,
+       ROUND(AVG(finished_ms - created_ms) / 1000.0) AS ort_sure_sn
+FROM cert_sweep_runs WHERE created_ms >= :cs_since_ms
+GROUP BY state, outcome, kind ORDER BY state, sonuc, tur;
+
+\echo '   (a) bir parçalı koşuda aynı alan adının birden çok kaydı'
+SELECT COUNT(*) AS c_csdup FROM (
+  SELECT c.run_id, c.domain FROM certificate_checks c
+  WHERE c.checked_at >= :'since' AND c.run_id IN (SELECT run_id FROM cert_sweep_runs WHERE created_ms >= :cs_since_ms)
+  GROUP BY c.run_id, c.domain HAVING COUNT(*) > 1
+) d
+\gset
+\echo '   çift kayıt (koşu × alan adı):' :c_csdup
+SELECT (:c_csdup > 0) AS show_csdup \gset
+\if :show_csdup
+SELECT c.run_id AS kosu, c.domain AS alan_adi, COUNT(*) AS kayit, MIN(c.checked_at) AS ilk_utc, MAX(c.checked_at) AS son_utc
+FROM certificate_checks c
+WHERE c.checked_at >= :'since' AND c.run_id IN (SELECT run_id FROM cert_sweep_runs WHERE created_ms >= :cs_since_ms)
+GROUP BY c.run_id, c.domain HAVING COUNT(*) > 1
+ORDER BY kayit DESC, son_utc DESC LIMIT :detail_limit;
+\endif
+
+\echo '   (b) açık koşular (RUNNING / DECIDING; birden çoğu = çift tur)'
+SELECT GREATEST(COUNT(*) - 1, 0) AS c_csopen FROM cert_sweep_runs WHERE state IN ('RUNNING', 'DECIDING') \gset
+\echo '   fazla açık koşu:' :c_csopen
+SELECT run_id AS kosu, kind AS tur, state AS durum, coordinator AS koordinator, domains_total AS alan_adi,
+       chunks_total AS parca, ROUND((:cs_now_ms - created_ms) / 1000.0) AS yas_sn,
+       ROUND((:cs_now_ms - heartbeat_ms) / 1000.0) AS nabiz_yasi_sn,
+       CASE WHEN state = 'RUNNING' AND :cs_now_ms - heartbeat_ms > 120000 THEN 'koordinatör sessiz (öksüz)' ELSE '' END AS not_
+FROM cert_sweep_runs WHERE state IN ('RUNNING', 'DECIDING') ORDER BY created_ms LIMIT :detail_limit;
+
+\echo '   (c) DONE koşu: kayıtlı alan adı sayısı ≠ alan adı toplamı (kaybolan alan adı)'
+WITH r AS (
+  SELECT run_id, domains_total FROM cert_sweep_runs WHERE state = 'DONE' AND created_ms >= :cs_since_ms + 600000
+), s AS (
+  SELECT run_id, COUNT(DISTINCT domain) AS kayitli FROM certificate_checks
+  WHERE checked_at >= :'since' AND run_id IN (SELECT run_id FROM r) GROUP BY run_id
+)
+SELECT COUNT(*) AS c_cslost FROM r LEFT JOIN s USING (run_id) WHERE COALESCE(s.kayitli, 0) <> r.domains_total
+\gset
+\echo '   eksik kayıtlı DONE koşu:' :c_cslost
+SELECT (:c_cslost > 0) AS show_cslost \gset
+\if :show_cslost
+WITH r AS (
+  SELECT run_id, kind, coordinator, domains_total, created_ms FROM cert_sweep_runs
+  WHERE state = 'DONE' AND created_ms >= :cs_since_ms + 600000
+), s AS (
+  SELECT run_id, COUNT(DISTINCT domain) AS kayitli FROM certificate_checks
+  WHERE checked_at >= :'since' AND run_id IN (SELECT run_id FROM r) GROUP BY run_id
+)
+SELECT r.run_id AS kosu, r.kind AS tur, r.coordinator AS koordinator, r.domains_total AS alan_adi,
+       COALESCE(s.kayitli, 0) AS kayitli
+FROM r LEFT JOIN s USING (run_id) WHERE COALESCE(s.kayitli, 0) <> r.domains_total
+ORDER BY r.created_ms DESC LIMIT :detail_limit;
+\endif
+
+\echo '   (d) açık olmayan koşunun 1 saatten eski parça satırları (çöp)'
+SELECT COUNT(*) AS c_csgarbage_all FROM cert_sweep_chunks k
+WHERE k.created_ms < :cs_now_ms - 3600000
+  AND NOT EXISTS (SELECT 1 FROM cert_sweep_runs r WHERE r.run_id = k.run_id AND r.state IN ('RUNNING', 'DECIDING'))
+\gset
+\if :cs_on
+\set c_csgarbage :c_csgarbage_all
+\echo '   çöp parça (anahtar açık — STUCK):' :c_csgarbage
+\else
+\echo '   anahtar kapalı: kalan eski parça' :c_csgarbage_all '(bilgi, sayılmaz — sonraki parçalı tur siler)'
+\endif
+SELECT (:c_csgarbage_all > 0) AS show_csgarbage \gset
+\if :show_csgarbage
+SELECT k.run_id AS kosu, COALESCE(r.state, 'satır yok') AS kosu_durumu, COALESCE(r.outcome, '—') AS sonuc, COUNT(*) AS parca,
+       ROUND((:cs_now_ms - MIN(k.created_ms)) / 1000.0) AS en_eski_sn
+FROM cert_sweep_chunks k LEFT JOIN cert_sweep_runs r ON r.run_id = k.run_id
+WHERE k.created_ms < :cs_now_ms - 3600000
+  AND NOT EXISTS (SELECT 1 FROM cert_sweep_runs r2 WHERE r2.run_id = k.run_id AND r2.state IN ('RUNNING', 'DECIDING'))
+GROUP BY k.run_id, r.state, r.outcome ORDER BY en_eski_sn DESC LIMIT :detail_limit;
+\endif
+
+\echo '   (e) penceredeki ABANDONED koşular (bilgi — dağıtım / pod öldürme dışında koordinatör sorunu)'
+SELECT run_id AS kosu, kind AS tur, COALESCE(outcome, '—') AS sonuc, coordinator AS koordinator, domains_total AS alan_adi,
+       to_char(to_timestamp(created_ms / 1000.0) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS') AS basla_utc
+FROM cert_sweep_runs WHERE state = 'ABANDONED' AND created_ms >= :cs_since_ms
+ORDER BY created_ms DESC LIMIT :detail_limit;
+\endif
+
 -- ── Özet (makinece okunur) ───────────────────────────────────────────────────────────────────
 \echo
-SELECT :c_checks + :c_cert + :c_notify + :c_push + :c_outage + :c_alert + :c_storm + :c_cjopen + :c_cjperiod AS dup_total,
-       :c_stuck + :c_cjdone AS stuck_total \gset
+SELECT :c_checks + :c_cert + :c_notify + :c_push + :c_outage + :c_alert + :c_storm + :c_cjopen + :c_cjperiod
+         + :c_csdup + :c_csopen AS dup_total,
+       :c_stuck + :c_cjdone + :c_cslost + :c_csgarbage AS stuck_total \gset
 \echo 'DUP_TOTAL=':dup_total
 \echo 'STUCK_TOTAL=':stuck_total

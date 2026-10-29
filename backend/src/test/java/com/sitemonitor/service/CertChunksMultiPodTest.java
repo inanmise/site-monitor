@@ -9,6 +9,7 @@ import com.sitemonitor.service.certsweep.CertSweepStatus;
 import com.sitemonitor.service.certsweep.CertSweepStore;
 import com.sitemonitor.service.health.ClusterHealthStore;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -138,6 +139,30 @@ class CertChunksMultiPodTest {
 
         assertSameDecisions(R34CertRig.classicDecisions(r -> r.inventory(1_200), FULL), rig.decisions(b));
         assertThat(a.calls).isEmpty();
+    }
+
+    /**
+     * "Kural gereği klasik" tur sayacı (tek pod, {@code min-domains} altı …). FX-COORD (OB-L6) sayacı ikiye böler:
+     * {@code classicByRule} (kural) / {@code classicFallback} (yalnız gerçek düşüş: oluşturma hatası, iç hata). Düzeltme öncesi
+     * tek sayaç ({@code classicFallback}) ikisini birlikte sayar. Yansımayla okunur ki senaryo düzeltmeden önce de sonra da
+     * derlenip DÜZELTİLMİŞ anlamı denetlesin: alan varsa by-rule = beklenen VE fallback = 0.
+     */
+    static void assertClassicByRule(CertSweepStatus.Coordinator st, long expected) {
+        java.lang.reflect.Method byRule;
+        try {
+            byRule = st.getClass().getMethod("classicByRule");
+        } catch (NoSuchMethodException e) {
+            assertThat(st.classicFallback()).as("FX-COORD öncesi tek sayaç (kural + düşüş)").isEqualTo(expected);
+            return;
+        }
+        long v;
+        try {
+            v = ((Number) byRule.invoke(st)).longValue();
+        } catch (ReflectiveOperationException e) {
+            throw new AssertionError(e);
+        }
+        assertThat(v).as("kural gereği klasik (FX-COORD OB-L6)").isEqualTo(expected);
+        assertThat(st.classicFallback()).as("gerçek klasiğe düşüş yok (FX-COORD OB-L6)").isZero();
     }
 
     static long intOfLong(Object o) {
@@ -501,7 +526,7 @@ class CertChunksMultiPodTest {
         assertThat(rig.runRows()).isEmpty();
         assertThat(rig.claims).isEmpty();
         assertThat(rig.checksByPod()).containsOnlyKeys(2);
-        assertThat(b.coordinator.status().classicFallback()).isEqualTo(1);
+        assertClassicByRule(b.coordinator.status(), 1);
         assertEachSavedOnce(rig, 10);
         assertSameDecisions(R34CertRig.classicDecisions(r -> r.inventory(10), R34CertRig::runStale), rig.decisions(b));
     }
@@ -511,8 +536,8 @@ class CertChunksMultiPodTest {
     // ═════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
     @Test
-    @DisplayName("s7: anahtar turun ortasında KAPATILIR → açık koşu devralmasız biter (işçiler boş sahiplenmeye dek sürer), sonra "
-            + "sorgusuz bekler; sonraki tur klasik")
+    @DisplayName("s7: anahtar turun ortasında KAPATILIR → açık koşu devralmasız biter (işçiler parça almayı sürdürür), sonra "
+            + "işçiler sorgusuz bekler (FX-WORKER sonrası: 2 × kira penceresi dolunca); sonraki tur klasik")
     void s7_switchTurnedOffMidRun_runCompletes_nextRunClassic() {
         rig = new R34CertRig().inventory(200);   // 10 parça
         Node a = rig.node(1);
@@ -532,7 +557,9 @@ class CertChunksMultiPodTest {
         assertEachSavedOnce(rig, 200);
         assertSameDecisions(R34CertRig.classicDecisions(r -> r.inventory(200), FULL), rig.decisions(b));
 
-        rig.steps(10_000L);   // son boş sahiplenme
+        // son boş sahiplenme; FX-WORKER (SW-L2) sonrası işçi anahtar kapandıktan sonra 2 × kira boyunca boşta aralığıyla
+        // sahiplenmeyi sürdürür — pencere dolunca (öncesinde de sonrasında da) sorgu yok
+        rig.steps(2 * rig.tuning.leaseMs() + 10_000L);
         int claimsBefore = rig.nodes.stream().filter(n -> n.store != null).mapToInt(n -> n.store.claimCalls.get()).sum();
         rig.steps(60_000L);
         assertThat(rig.nodes.stream().filter(n -> n.store != null).mapToInt(n -> n.store.claimCalls.get()).sum())
@@ -542,6 +569,54 @@ class CertChunksMultiPodTest {
         assertThat(rig.runRows()).as("sonraki tur klasik — yeni koşu satırı yok").hasSize(1);
         assertThat(a.saves()).isEqualTo(200);
         assertThat(a.coordinator.status().chunkedRuns()).isZero();
+    }
+
+    @Test
+    @Disabled("needs fix/r3-4-worker (SW-L2): anahtar kapandıktan sonra işçi 2 × kira boyunca boşta aralığıyla sahiplenmeyi sürdürür")
+    @DisplayName("s7b: anahtar turun ortasında kapatılır, işçiler boş sahiplenmeyle boşta kalmışken bir pod SIGTERM ile parçalarını "
+            + "bırakır → boştaki işçiler bırakılanları bir boşta yoklamada alır (devralma / 900 sn ilerlemesiz tavan yok); pencere "
+            + "(2 × kira) dolunca sorgusuz")
+    void s7b_switchOffMidRun_releasedChunksPickedUpWithinGrace() {
+        rig = new R34CertRig().inventory(200);   // 10 parça
+        rig.node(1);
+        Node b = rig.node(2);
+        Node c = rig.node(3);
+        c.holdRuns = true;   // pod 3'ün iki parçası ölçümde asılı kalır
+        AtomicLong releasedAt = new AtomicLong(-1);
+        List<Long> released = new ArrayList<>();
+        rig.stepHooks.add(now -> {
+            if (rig.steps.get() == 1) rig.switchOn.set(false);
+            // 2. adımda a ile b kalan dört parçayı alıp bitirir, 3. adımda boş sahiplenir (boşta); 8. adımda (4 sn) pod 3 kapanır
+            if (rig.steps.get() == 8 && releasedAt.get() < 0) {
+                released.addAll(rig.claims.stream().filter(k -> k.pod() == 3).map(Claim::chunkId).toList());
+                c.worker.onContextClosed(null);
+                c.chunking.onContextClosed(null);
+                awaitState(released, "PENDING");
+                c.kill();
+                releasedAt.set(now);
+            }
+        });
+        rig.runFull(b);
+
+        assertThat(releasedAt.get()).as("pod 3 turun ortasında kapandı").isPositive();
+        assertThat(released).hasSize(2);
+        Map<String, Object> run = rig.onlyRun();
+        assertThat(run.get("state")).isEqualTo(CertSweepStore.RUN_DONE);
+        assertThat(intOf(run.get("takeovers"))).as("bırakılanları işçiler aldı — koordinatör devralmadı").isZero();
+        assertThat(intOfLong(run.get("finished_ms")) - releasedAt.get())
+                .as("anahtar kapalıyken boştaki işçi bir boşta yoklama içinde aldı (900 sn tavanı beklenmedi)")
+                .isLessThanOrEqualTo(rig.tuning.idlePollMs() + 4 * R34CertRig.STEP_MS);
+        assertThat(rig.claims.stream().filter(k -> released.contains(k.chunkId()) && k.pod() != 3).map(Claim::chunkId).toList())
+                .as("bırakılan her parça başka pod'da bir kez sahiplenildi").containsExactlyInAnyOrderElementsOf(released);
+        assertEachSavedOnce(rig, 200);
+        assertOnlyCoordinatorDecides(rig, b);
+        assertSameDecisions(R34CertRig.classicDecisions(r -> r.inventory(200), FULL), rig.decisions(b));
+
+        rig.steps(2 * rig.tuning.leaseMs() + 10_000L);   // pencere: son ON görülüşü / son dolu sahiplenme + 2 × kira
+        int before = rig.nodes.stream().filter(n -> n.store != null && !n.dead).mapToInt(n -> n.store.claimCalls.get()).sum();
+        rig.steps(60_000L);
+        assertThat(rig.nodes.stream().filter(n -> n.store != null && !n.dead).mapToInt(n -> n.store.claimCalls.get()).sum())
+                .as("pencere doldu: anahtar kapalı, elde parça yok — sahiplenme sorgusu yok").isEqualTo(before);
     }
 
     // ═════════════════════════════════════════════════════════════════════════════════════════════════════════════
@@ -585,9 +660,10 @@ class CertChunksMultiPodTest {
     }
 
     @Test
-    @DisplayName("s8c: 3-4 koordinatör TARAMA LİDERİ + yalnız 20.170.0 diğerleri → kendi işçisi steal-after (10 sn) bekler, yarı "
-            + "bütçeyle (tek parça) alır — yalnız ≤ 10 sn + ek yük kadar yavaş, doğru")
-    void s8c_newCoordinatorIsLeader_onlyLegacyOthers_slowerByStealAfterOnly() {
+    @Disabled("needs fix/r3-4-worker (SW-M1 / CR-L1): lider KENDİ koordine ettiği turun parçalarını hemen ve tam bütçeyle alır")
+    @DisplayName("s8c: 3-4 koordinatör TARAMA LİDERİ + yalnız 20.170.0 diğerleri → kendi turunun parçalarını HEMEN ve tam bütçeyle "
+            + "alır (steal-after / yarı bütçe yalnız BAŞKA pod'un turunda) — yavaşlamaz, doğru")
+    void s8c_newCoordinatorIsLeader_onlyLegacyOthers_ownRunAtOnceFullBudget() {
         rig = new R34CertRig().inventory(100);
         Node a = rig.node(1, new Opts().leader());
         rig.node(2, new Opts().legacy());
@@ -599,12 +675,14 @@ class CertChunksMultiPodTest {
         Map<String, Object> run = rig.onlyRun();
         assertThat(run.get("state")).isEqualTo(CertSweepStore.RUN_DONE);
         long created = intOfLong(run.get("created_ms"));
-        assertThat(rig.claims).isNotEmpty().allMatch(k -> k.pod() == 1)
-                .allMatch(k -> k.atMs() >= created + 10_000L);
+        assertThat(rig.claims).isNotEmpty().allMatch(k -> k.pod() == 1);
+        assertThat(rig.claims.stream().mapToLong(Claim::atMs).min().orElseThrow())
+                .as("kendi turu: steal-after (10 sn) beklenmez").isLessThan(created + rig.tuning.stealAfterMs());
         Map<Long, Integer> perStep = new TreeMap<>();
         for (Claim k : rig.claims) perStep.merge(k.atMs(), 1, Integer::sum);
-        assertThat(perStep.values()).as("lider yarı bütçeyle tek parça alır").allMatch(n -> n == 1);
-        assertThat(took).isBetween(10_000L, 20_000L);
+        assertThat(perStep.values()).as("kendi turu: tam bütçe — adım başına iki parça").contains(2);
+        assertThat(intOf(run.get("takeovers"))).isZero();
+        assertThat(took).as("lider kendi turunda steal-after kadar yavaşlamaz").isLessThan(rig.tuning.stealAfterMs());
         assertEachSavedOnce(rig, 100);
         assertSameDecisions(R34CertRig.classicDecisions(r -> r.inventory(100), FULL), rig.decisions(a));
     }
@@ -827,7 +905,7 @@ class CertChunksMultiPodTest {
 
         assertThat(rig.runRows()).isEmpty();
         assertThat(rig.claims).isEmpty();
-        assertThat(a.coordinator.status().classicFallback()).isEqualTo(1);
+        assertClassicByRule(a.coordinator.status(), 1);
         assertThat(a.coordinator.status().chunkedRuns()).isZero();
         assertSameDecisions(R34CertRig.classicDecisions(r -> r.inventory(100), FULL), rig.decisions(a));
         verify(rig.email, never()).sendSystemAdminNetworkAlert(anyString(), any(), anyInt(), anyInt(), anyDouble(), anyDouble());
