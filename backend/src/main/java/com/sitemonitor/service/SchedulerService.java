@@ -5839,7 +5839,7 @@ public class SchedulerService {
      *  yoldan geçer (teyit izi port geçmişinde görünür). {"status","error"} döner. */
     private Map<String, Object> recheckPort(PortMonitor m) {
         Map<String, Object> r = portCheckerService.check(m);
-        if (checkJobAbandoned()) return abandonedCheckJob();   // R3-3 son inceleme F4: işçi bıraktı → geçmiş satırı yok
+        if (workerJobAbandoned()) return abandonedCheckJob();   // R3-3 son inceleme F4: işçi bıraktı → geçmiş satırı yok
         boolean open = Boolean.TRUE.equals(r.getOrDefault("open", false));
         try {
             PortCheck check = new PortCheck();
@@ -6004,7 +6004,7 @@ public class SchedulerService {
         Map<String, Object> r = keywordCheckerService.check(m.getUrl(), m.getKeyword(), timeout, keywordHeaderSecrets.effectiveHeaders(m),
                 Boolean.TRUE.equals(m.getCaseSensitive()), viaProxyFor(m.getUrl(), m.getUseProxy()),
                 KeywordCheckerService.Expectation.of(m));
-        if (checkJobAbandoned()) return abandonedCheckJob();   // R3-3 son inceleme F4: işçi bıraktı → geçmiş satırı yok
+        if (workerJobAbandoned()) return abandonedCheckJob();   // R3-3 son inceleme F4: işçi bıraktı → geçmiş satırı yok
         boolean found = Boolean.TRUE.equals(r.getOrDefault("found", false));
         int count = r.get("count") instanceof Number cn ? cn.intValue() : (found ? 1 : 0);
         int threshold = m.getMatchCount() != null ? m.getMatchCount() : 1;
@@ -6938,7 +6938,7 @@ public class SchedulerService {
     /** HTTP uptime check + http_checks persist'i. {"status","error","http_status","response_ms"} döner. */
     private Map<String, Object> recheckHttp(HttpMonitor m) {
         Map<String, Object> r = runHttpCheck(m, httpRequestOptions(m));
-        if (checkJobAbandoned()) return abandonedCheckJob();   // R3-3 son inceleme F4: işçi bıraktı → geçmiş satırı yok
+        if (workerJobAbandoned()) return abandonedCheckJob();   // R3-3 son inceleme F4: işçi bıraktı → geçmiş satırı yok
         boolean ok = Boolean.TRUE.equals(r.get("ok"));
         try {
             HttpCheck res = new HttpCheck();
@@ -7290,7 +7290,7 @@ public class SchedulerService {
                 m.getCrawlDepth() != null ? m.getCrawlDepth() : 2,
                 m.getCrawlMaxPages() != null ? m.getCrawlMaxPages() : 50,
                 maxCheckSec, pageViaProxy);
-        if (checkJobAbandoned()) return abandonedCheckJob();   // R3-3 son inceleme F4: işçi bıraktı → geçmiş satırı yok
+        if (workerJobAbandoned()) return abandonedCheckJob();   // R3-3 son inceleme F4: işçi bıraktı → geçmiş satırı yok
 
         // Alarm-uygunluk YALNIZ e-posta geçidi (tabloda her sorun görünür). countsForAlarm: BLOCKED/SLOW hiç,
         // LINK yalnız 404/410 (dış link 5xx/timeout alarm üretmez — Q1), yüklenen alt-kaynak broken/timeout.
@@ -7648,7 +7648,7 @@ public class SchedulerService {
                 .map(prev -> prev.getBreachedMetrics() != null && !prev.getBreachedMetrics().isBlank())
                 .orElse(false);
         PageSpeedCheckerService.Result res = pageSpeedCheckerService.check(m);
-        if (checkJobAbandoned()) return abandonedCheckJob();   // R3-3 son inceleme F4: işçi bıraktı → geçmiş satırı yok
+        if (workerJobAbandoned()) return abandonedCheckJob();   // R3-3 son inceleme F4: işçi bıraktı → geçmiş satırı yok
         boolean cfgError = "CONFIG_ERROR".equals(res.status());
         boolean reachable = res.reachable();
         String ts = ISO.format(Instant.now());
@@ -9066,7 +9066,7 @@ public class SchedulerService {
         Map<String, Object> r = pingCheckerService.check(m.getHost(), m.getIpVersion(),
                 m.getPacketCount() != null ? m.getPacketCount() : 4,
                 m.getTimeoutMs() != null ? m.getTimeoutMs() : 5000);
-        if (checkJobAbandoned()) return abandonedCheckJob();   // R3-3 son inceleme F4: işçi bıraktı → geçmiş satırı yok
+        if (workerJobAbandoned()) return abandonedCheckJob();   // R3-3 son inceleme F4: işçi bıraktı → geçmiş satırı yok
         boolean up = Boolean.TRUE.equals(r.getOrDefault("up", false));
         boolean na = Boolean.TRUE.equals(r.get("na"));
         try {
@@ -10642,6 +10642,15 @@ public class SchedulerService {
      */
     static boolean checkJobAbandoned() {
         return Thread.currentThread().isInterrupted() || com.sitemonitor.service.checks.CheckWorker.currentJobAbandoned();
+    }
+
+    /**
+     * Klasikle ORTAK kontrol gövdeleri ({@code recheckPort|Keyword|Http|Ping|Page|PageSpeed}) için bırakılma: yalnız işçi yuvasında
+     * koşan bir işte ({@link com.sitemonitor.service.checks.CheckWorker#inCheckJob()}) — klasik tarama, teyit / kurtarma zinciri
+     * ve elle kontrol iş parçacıklarında (kesme bayrağı kapanışta kalmış olsa da) davranış 20.169.0 ile aynı.
+     */
+    static boolean workerJobAbandoned() {
+        return com.sitemonitor.service.checks.CheckWorker.inCheckJob() && checkJobAbandoned();
     }
 
     /**

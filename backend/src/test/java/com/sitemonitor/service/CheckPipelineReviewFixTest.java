@@ -385,6 +385,16 @@ class CheckPipelineReviewFixTest {
         verify(h.httpCheckRepo, times(1)).save(any());
         assertThat(CheckJobRunner.carriesResult(h.scheduler.runCheckJob(CheckJobTypes.PORT, 1L))).isTrue();
         verify(h.portCheckRepo, times(1)).save(any());
+
+        // işçi DIŞINDA (klasik tarama / teyit zinciri / elle kontrol iş parçacığı) kesme bayrağı kalmış olsa da ortak gövde
+        // bugünkü gibi yazar — koruma yalnız işçi yuvasında (20.169.0 ile aynı)
+        Thread.currentThread().interrupt();
+        try {
+            assertThat(CheckJobRunner.carriesResult(h.scheduler.runCheckJob(CheckJobTypes.HTTP, 1L))).isTrue();
+        } finally {
+            Thread.interrupted();
+        }
+        verify(h.httpCheckRepo, times(2)).save(any());
     }
 
     @Test

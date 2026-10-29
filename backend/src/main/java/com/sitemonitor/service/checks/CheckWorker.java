@@ -136,6 +136,14 @@ public class CheckWorker {
         return t != null && t.abandoned;
     }
 
+    /**
+     * Bu iş parçacığı şu an bir kontrol işi gövdesi koşuyor mu (yalnız işçi yuvası; klasik tarama, teyit / kurtarma zinciri ve
+     * elle kontrol iş parçacıklarında false) — klasikle ortak gövdeler bırakılma korumasını yalnız işte uygular.
+     */
+    public static boolean inCheckJob() {
+        return CURRENT.get() != null;
+    }
+
     /** İşçi durumu (System Health / ölçümler — paket D okur; bellek). */
     public record Status(boolean started, boolean workerEnabled, boolean closing, int slots, int busy, long claimed,
                          long completed, long late, long timeouts, long failed, long released, long claimErrors,
