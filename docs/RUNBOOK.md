@@ -486,6 +486,10 @@ iş panelleri boş kalır: takipçinin `sitemonitor_exporter_*` ölçümlerine v
 uyuşmazlık serisi yazılmaz — 0 değil, "veri yok"), `sitemonitor_exporter_org_families`. Pano revizyonu 6 ("Veri tazeliği"
 şeridi yalnız kurum ölçülerini yayan pod'ların son turunu sayar — iş panelleri boşken "Güncel" demez; sağlık bölümünün
 sonunda kalıcı değerlendirme durumu ve kurum ölçüsü yerleşimi panelleri) — yeni JSON'u indirip aynı UID ile içe aktarın.
+Çok pod Sürüm 3-4 (pano revizyonu 9): parçalı sertifika taraması ölçümleri `sitemonitor_cert_sweep_chunks{state}`,
+`sitemonitor_cert_sweep_last_run_seconds{kind,mode}`, `sitemonitor_cert_sweep_worker_chunks{outcome}` (anahtar kapalıyken
+seri yok — "veri yok", 0 değil) ve sağlık bölümünün sonundaki paneller:
+[Parçalı sertifika taraması](#parçalı-sertifika-taraması-çok-pod-sürüm-3-4).
 
 Örnek Prometheus alarm kuralları:
 
@@ -651,6 +655,12 @@ satırı yalnız bilgidir. Sistem metrikleri örneklemesi kapalıysa (`site.moni
 > bildirimler tek pod'da kalır); ek pod'lar o zaman izleme kapasitesi de getirir. Kapalıyken her şey 20.169.0 ile
 > aynıdır. Türler tek tek açılır: [Dağıtık kontroller](#dağıtık-kontroller-çok-pod-sürüm-3-3).
 >
+> Çok pod Sürüm 3-4 (2026-10-29): **parçalı sertifika taraması** — kendi anahtarının arkasında, varsayılan KAPALI, 3-3'ün
+> anahtarından bağımsız. Açıkken sertifika taramasını koşan pod (`cert-check` kilidini kazanan) turun koordinatörü olur,
+> alan adlarını 20'lik parçalara böler, her pod parçaları ölçer; kayıt, toplu ağ kesintisi kuralı ve alarm kararları yine
+> tur bitince koordinatörde, bütün sonuçlar üzerinden tek kez verilir. Kapalıyken her şey 20.170.0 ile aynıdır:
+> [Parçalı sertifika taraması](#parçalı-sertifika-taraması-çok-pod-sürüm-3-4).
+>
 > Chart HPA şablonu 2026-10-23'te düzeltildi (HPA açıkken Deployment `replicas` taşımaz, bellek metriği varsayılan yok,
 > `behavior` var) ama HPA her ortamda KAPALI kalır — izleme işi lider pod'da, ek pod izleme kapasitesi eklemez. Açılırsa
 > ilk `helm upgrade` Deployment'tan `replicas`'ı kaldırır ve Kubernetes HPA'nın ilk eşitlemesine kadar (~15 sn) 1
@@ -662,6 +672,7 @@ satırı yalnız bilgidir. Sistem metrikleri örneklemesi kapalıysa (`site.moni
 |---|---|---|
 | Dokuz izleme türünün taramaları, envanter erişilebilirlik (HTTP) taraması, doğrulama / kurtarma yeniden kontrolleri, DNS ve alan adı değişiklik tespiti | **Lider** pod | Tarama liderliği kirası (`monitor_check_schedule`, anahtar `lease:sweep-leader`, 180 sn; ayrı iş parçacığında 60 sn'de bir yenilenir) + izleme başına küme vadesi + kirasını kaybetmiş pod'un zamanlanmış sonuçları alarm üretmez |
 | Sürüm 3-3, dağıtık kontrol anahtarı açıkken: port, ping, HTTP, içerik, sayfa, sayfa hızı, DNS ve senaryo izlemelerinin zamanlanmış kontrolü (kontrol + geçmiş satırı) | İşi sahiplenen **herhangi** bir pod'un işçisi (lider, başka canlı işçi varken yuvalarının yarısıyla); işi lider gönderir, sonucu lider değerlendirir — teyit / kurtarma yeniden kontrolleri liderde ([Dağıtık kontroller](#dağıtık-kontroller-çok-pod-sürüm-3-3)) | Klasik taramayla aynı izleme başına küme vadesi + izleme başına tek açık iş (`ux_mcj_open`) + iş kirası (`FOR UPDATE SKIP LOCKED` sahiplenme, belirteçli tamamlama; kirası dolan iş bir kez yeniden koşar) + sonucu yalnız kira sahibi lider alır |
+| Sürüm 3-4, parçalı sertifika taraması anahtarı açıkken: saatlik / bayat / tam sertifika taramasının ÖLÇÜMÜ (20 alan adlık parçalar) | Parçayı sahiplenen **herhangi** bir pod'un parça işçisi (tarama lideri, başka canlı pod varken başka pod'un turuna 10 sn sonra ve bütçesinin yarısıyla katılır); turu kilidi kazanan pod (koordinatör) kurar, sonuçları yalnız o kaydeder, kararı yalnız o verir ([Parçalı sertifika taraması](#parçalı-sertifika-taraması-çok-pod-sürüm-3-4)) | Bugünkü `cert-check` kilidi + tur satırları (kümede tek tur) + parça sahiplenmesi (`FOR UPDATE SKIP LOCKED`, belirteçli tamamlama; kirası dolan parça bir kez yeniden alınır, sonra koordinatör kendisi ölçer) + işçiler hiçbir satır yazmaz |
 | Takipçide basılan "Şimdi kontrol et" sonucunun alarm değerlendirmesi (`monitor_eval_inbox` üzerinden lidere iletilir, ≤ 5 sn); veritabanı çökükken kendi-kendini-izleme uyarısı | Lider | Kira |
 | Sertifika taramaları (saatlik, bayat, tam), zamanlanmış raporlar / hatırlatmalar / özetler, gece temizliği, push kuyruğu, fırtına yaşam döngüsü, eskalasyon adımları, kendi-kendini-izleme turu, yetim QUEUED_RETRY / çözüm bildirimi süpürücüleri (kanal teknik hata raporu kuyruklarını da sonuçlandırır); Sürüm 2a'dan beri kapatılan türlerin alarm uzlaştırması (`disabled-types-reconcile`), elle saklama temizliği (gece temizliğinin `nightly-cleanup` kilidiyle) ve tek seferlik izleme grubu takım doldurması; Sürüm 3-1'den beri TLS profili işi (kilit `tls-profile` + tur `round:tls-profile`, 10 dk) | Kilidi ya da turu ilk alan **herhangi** bir pod — Sürüm 3-1'den beri başka canlı pod varken tarama lideri uzun / cron yan işlerini ona bırakır ([Yan işler](#yan-işler-ve-lider-ertelemesi-çok-pod-sürüm-3-1)) | `scheduler_lock` satırı (uzun iş sürdükçe yenilenir) + küme turu (`round:<ad>`, bir dönemde bir kez) + satır başına koşullu sahiplenme (aynı push / posta iki kez gitmez) |
 | Kullanıcı istekleri, "Şimdi kontrol et", tanılama, dışa aktarım | İsteği alan pod | Oturumlar PostgreSQL'de (`spring_session`) — her pod her oturumu tanır |
@@ -1140,6 +1151,226 @@ anahtarı, Küme kartında "Dağıtık kontroller: Kapalı" ve kendi kendini izl
   kaybı); eski lider bir sonraki dönemi kontrol eder. **Geri alma (20.169.0'a): önce ana anahtarı kapatın**, sonra imajı geri
   alın; iki tablo, ayar anahtarları ve kendi kendini izlemenin `check_queue` satırı kalır, eski kod okumaz (silmeyin).
 
+### Parçalı sertifika taraması (çok pod Sürüm 3-4)
+
+Ayar: Ayarlar → Genel → Zamanlayıcı → **"Parçalı sertifika taraması (çok pod)"** (`site.monitor.checks.cert-chunks.enabled`)
+— yalnız GLOBAL admin, canlı (~10 sn içinde tüm pod'lar), varsayılan **kapalı** (kalıcı varsayılan env ile
+`CERT_CHUNKS_ENABLED`). Dağıtık kontrollerin (3-3) anahtarından ve 3-2'nin devirde okuma ayarından bağımsızdır. **Kapalıyken
+her şey 20.170.0 ile birebir aynıdır** (sertifika taraması, alarm ve kesinti kararları, bildirimler, SQL ifadeleri, iş
+parçacıkları, günlük satırları, kapanış); fark yalnız açılışta şema yamasıyla kurulan iki boş tablo (`cert_sweep_runs`,
+`cert_sweep_chunks`), bir ayar anahtarı, Küme kartında "Parçalı sertifika taraması: Kapalı" ve — 3-3 tabloları gibi —
+saklama yönetimi listesinde iki satır ile `/metrics`'te `db.table.rows|bytes{table=cert_sweep_*}` göstergeleri.
+
+- **Ne yapar:** bugün saatlik, bayat ve tam sertifika taramasını `cert-check` kilidini kazanan TEK pod koşar: bütün alan
+  adlarını kendi görev havuzunda ölçer, sonuçları kaydeder, toplu ağ kesintisi kuralını uygular ve alarmları işler. Anahtar
+  açıkken:
+  - Kilidi kazanan pod (tetik, kilit ve tur satırları bugünküyle aynı) turun **koordinatörü** olur: alan adlarını sertifika
+    yayıncısına göre sıralayıp **20'lik parçalara** böler, bir koşu satırı ve parça satırları yazar.
+  - Her 3-4 pod'un **parça işçisi** (koordinatörün kendi pod'u dahil) parçaları alır ve yalnız **ölçer** — bugünkü kontrolle,
+    kendi görev havuzunda; hiçbir satır yazmaz, alarm vermez.
+  - Koordinatör bütün sonuçlar gelince onları bugünkü sırayla dizer ve **bugünkü kodu tek kez** koşar: kayıt, önbellek
+    boşaltma, toplu ağ kesintisi kuralı (bütün tur üzerinden), alarm işleme, tarama durumu (`scan_runs`). Alarm, kesinti ve
+    bildirim kararları tek pod'da, tur bitince verilir.
+  - Kaybolan parçayı (işçisi iki kez öldü, kirası dolup kimse almadı, sonucu okunamadı) ve kullanılamayan sonucu koordinatör
+    kendisi ölçer — koordinatör yaşadıkça ve kilidi tuttukça her alan adı tur başına tam bir kez kaydedilir.
+  - Tarama lideri, başka canlı pod varken başka pod'un koordine ettiği turun parçalarını ancak 10 sn bekledikten sonra ve
+    sınırlı güçle (varsayılanda bir parça) alır — izleme taramaları ve erişilebilirlik turu için görev havuzunu korur; KENDİ
+    koordine ettiği turun ve ikinci görüş parçalarını hemen, tam bütçeyle alır. Son aldığı parça 30 sn'den uzun beklemiş VE o
+    turda başka hiçbir işçi 30 sn'dir parça almamış / tutmuyorsa (işi kimse yapmıyor) bir "rahatlama" bütçesine geçer; bu
+    durumda bile görev havuzunda çekirdek sayısından fazla sertifika kontrolü biriktirmez. Liderde başka pod'un turunun bir
+    parçası, görev havuzu çekirdeğinin yarısı kadar alan adlık alt gruplarla ölçülür; liderin kendi turunun parçaları
+    bölünmeden ölçülür.
+  - Tek pod'da, başka canlı pod yokken ya da turda 40'tan az alan adı varken tur bugünkü gibi klasik koşar (anahtar açık
+    olsa da).
+  - Değişmeyenler: elle yüklenen sertifikalar adımı, envantere ekleme kontrolü, "Şimdi kontrol et" ve envanter erişilebilirlik
+    (HTTP) turu (liderde kalır).
+- **Ne kazandırır (dürüstçe):** sertifika kontrollerinin ağ beklemesi ve TLS işlemci yükü pod'lara yayılır, büyük envanterde
+  tur kısalır, bir İŞÇİ pod'un düşmesi turu kaybettirmez (parçası başka pod'da yeniden ölçülür), pod başına görev kuyruğu küçük
+  kalır. **Koordinatörün** ölmesi turu yine kaybettirir (bugünkü gibi hiçbir sonuç kaydedilmez; bayat tarama ≈ 10 dk içinde
+  telafi eder). Sonuçların kaydı koordinatörde sırayla yapılır (bugünkü gibi).
+- **Açmadan önce (ön koşullar):**
+  1. **Her pod 3-4 sürümünde** — rollout bitti, eski ReplicaSet'in pod'u kalmadı: `kubectl get pods -n "$NS" -l
+     app.kubernetes.io/instance="$REL" -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.containers[0].image}{"\n"}{end}'`
+     hepsinde aynı imaj. Güvenlik için şart değil (eski pod parça almaz, eski bir koordinatör tablolara hiç dokunmaz, iki tur
+     hiçbir zaman aynı anda koşmaz), hız için şart: yalnız eski pod'larla çevrili bir 3-4 koordinatörü parçaların hepsini
+     kendisi ölçer. Anahtarı sürüm yükseltmesiyle AYNI adımda açmayın.
+  2. **P1 çıkış eşitliği her node'da** ([Ön koşullar](#ön-koşullar--1--n-geçişinden-önce)): anahtar açıkken HER sertifika turu
+     HER pod'dan çıkar. `scripts/multipod-egress-check.sh`'in `TLS_TARGETS`'ına envanterden temsilî alan adları (`host:443`;
+     vekil üzerinden kontrol edilen — `use_proxy` — kayıtlardan da) ekleyin: her TLS hedefi her node'da `TLS OK` ve AYNI
+     `veren`. Çıkışı bozuk bir pod'un parçaları ağ hatasıyla döner; koordinatör o pod'un hatalarını başka pod'dan bir kez
+     yeniden ölçtürür (aşağıda "Aykırı pod / ikinci görüş") — bu bir emniyettir, ön koşulun yerini tutmaz.
+  3. **Önce staging, duman testiyle:** `SMOKE_IMAGE=<imaj> SMOKE_CERT_CHUNKS=1 bash scripts/multipod-smoke.sh` (Docker, iki pod,
+     yerelde `openssl` gerekir): kendinden imzalı bir TLS hedefi `SMOKE_CC_DOMAINS` (60, 40–99) ağ adıyla açılır ve o kadar
+     envanter satırı eklenir, anahtar açılır; 8f-1 tarama liderinde "Şimdi çalıştır" → koşu DONE / DECIDED, `workers_json`
+     iki pod'u da adlar, her alan adı bir kez kaydedilir; 8f-2 öbür pod parça tutarken SIGKILL → koşu yine DONE (yeniden
+     sahiplenme / devralma, ≤ `SMOKE_CC_RUN_WAIT_S` 180 sn), çift ve kayıp yok; 8f-3 koordinatöre SIGTERM → koşu ABANDONED /
+     SHUTDOWN, o koşu kimliğiyle hiç kayıt yok, sonraki tur bırakılan koşunun parçalarını siler; 8f-4 anahtar kapatılınca
+     sonraki tur klasik (`cert_sweep_runs`'a satır eklenmez). Dedektörün bölüm 10'u bu koşuda sayılır.
+  4. 3-3 (dağıtık kontroller) şart değildir; iki anahtar birbirinden bağımsızdır, hangisi önce hazırsa o açılır. İkisini aynı
+     anda açmayın — bir sorunda kaynağı ayırmak zorlaşır.
+- **Açmak:** Ayarlar → Genel → Zamanlayıcı → "Parçalı sertifika taraması (çok pod)" → aç, kaydet. ~10 sn içinde her pod'un
+  günlüğünde bir kez `Parçalı sertifika taraması açık görüldü — 1 başlatıcı çalıştırılıyor` ve `Parçalı sertifika taraması
+  işçisi başladı (en çok 8 parça, kira 60 sn, yoklama 250 / 5000 ms)`. İlk parçalı tur, en az 40 alan adı kontrol eden bir
+  sonraki sertifika turudur (çoğunlukla saat başındaki saatlik tur; bayat tarama çoğu zaman 40'tan az alan adı içerir ve
+  klasik kalır) ya da Sistem Sağlığı → "Şimdi çalıştır" (tam tur; isteği alan pod koordinatördür). Koordinatörün günlüğü: `Sertifika taraması parçalı — runId=…, N alan
+  adı, K parça (boyut 20)` ve tur sonunda `Parçalı tarama toplandı — runId=…, pod başına {…}, devralınan 0, ikinci görüş 0,
+  S sn`; bugünkü `Certificate check started — runId=…` ve `Check complete — runId=…` satırları da koordinatörde yazılır.
+- **İzleyin:**
+  - **Küme kartı → Parçalı sertifika taraması** (Sistem Sağlığı → Zamanlayıcı ve yürütücüler; "Küme" etiketli): anahtar, son
+    turun kipi (parçalı / klasik), açık tur (tür · koordinatör · yaş; karar aşamasında "ölçüm bitti, koordinatör sonuçları
+    kaydedip karar veriyor"), ölçülen parçalar, kutucuklar (bekleyen parça, en eski bekleyen, devralınan parça, ikinci görüş),
+    pod payı (parça, ölçülen / alınan alan adı, ağ hatası oranı; "aykırı" rozeti) ve son 5 parçalı tur (sonucuyla).
+    "Yanıtlayan pod" → **Sertifika parça işçisi**: uçuştaki parça / alan adı, bütçe, tarama lideriyse "başka pod koordine
+    ederken yalnız bekleyen parçaları sınırlı güçle alır", tamamlanan / geç / bırakılan / atılan, son alma; koordinatör sayaçları (parçalı tur, kural
+    gereği klasik, klasiğe düştü, devralınan parça, yeniden ölçülen, ikinci görüş, bırakılan tur). Bölümün durum rozeti hiç
+    yeşil olmaz (açık = bilgi); yeşil yalnız "karar verildi" ile biten tur satırıdır.
+  - **Tarama kartı** ("Sertifika taraması"): "Tur kipi" (parçalı / klasik (tek pod) / kip bilinmiyor) ve tur sürerken "Parçalı
+    tur" (`n / N parça · m / M alan adı ölçüldü`). Kartın son tur, süre ve 2 saatlik tarama alarmı bugünkü gibi bütün tur
+    üzerinden.
+  - **Grafana (pano revizyonu 9)** → "SiteMonitor sağlığı" bölümünün sonu (dağıtık kontrol panellerinden sonra): Bekleyen
+    sertifika parçası, Parçalı tur ilerlemesi, **Son saatlik sertifika taraması** (kayıt ve karar dahil toplam süre; 2 dk
+    altı yeşil, 2–5 dk sarı, üstü kırmızı), Devralınan parça (24 sa), İkinci görüş (24 sa), Geç tamamlanan parça (24 sa) ve
+    "Parçalı tur parçaları (durum)", "Sertifika taraması süresi (tür, kip)", "Parça işçileri (pod başına, 1 sa)" grafikleri.
+    Anahtar kapalıyken hepsi "veri yok" der (0 değil). Yük yayılıyorsa "Parça işçileri"nde her pod'un tamamlanan parçası artar.
+    Ölçüler (yalnız `/metrics/sitemonitor`): `sitemonitor_cert_sweep_chunks{state}`,
+    `sitemonitor_cert_sweep_last_run_seconds{kind,mode}`, `sitemonitor_cert_sweep_worker_chunks{outcome}`.
+  - **Kendi kendini izleme → Sertifika taraması:** yeni kontrol YOK. Anahtar açıkken mevcut kontrolün ayrıntısına "Parçalı
+    tarama açık: açık tur N sn'dir sürüyor, en eski bekleyen parça M sn; son 24 saatte terk edilen tur: K." eklenir. Takılan
+    ya da ölen bir parçalı tur hiçbir şey kaydetmez; sertifika verisinin tazeliği (4 sa) ve tarama kartının 2 saatlik alarmı
+    bugünkü gibi uyarır.
+  - **Günlükler — TÜM pod'lar:**
+    ```bash
+    L="-n $NS -l app.kubernetes.io/instance=$REL --prefix --tail=-1"
+    kubectl logs $L | grep -E "Sertifika taraması parçalı|Parçalı tarama toplandı" | tail -20   # tur başı / sonu (koordinatör), pod başına alan adı
+    kubectl logs $L | grep -cE "Parçalı tarama (başlatılamadı|iç hatası|deposu [0-9]+ sn okunamadı|[0-9]+ sn ilerlemesiz)|hiçbir parça sahiplenilmedi"   # 0 olmalı
+    kubectl logs $L | grep -E "İkinci görüş|pod'unun parçalarında ağ hatası oranı" | tail -20   # aykırı pod (çıkış eşliği)
+    kubectl logs $L | grep -E "Parça [0-9]+ (kayboldu|kirası doldu|sonucu|iptal edilemedi)|Sahipsiz parçalı tarama" | tail -20   # devralınan parça / sahipsiz tur
+    ```
+  - **Çift iş dedektörü** (günde bir): `PGHOST=… PGDATABASE=… PGUSER=… PGPASSWORD=… bash scripts/multipod-smoke.sh dup-check`
+    → **bölüm 10** (`cert_sweep_runs` yoksa atlanır): (a) bir parçalı koşuda aynı alan adının birden çok kaydı ve (b) birden
+    çok açık (RUNNING / DECIDING) koşu → `DUP_TOTAL`; (c) DONE bir koşuda kayıtlı alan adı sayısı ≠ koşunun alan adı sayısı
+    (kaybolan alan adı; yalnız pencere başından ≥ 10 dk sonra başlayan koşular) ve (d) açık olmayan koşunun 1 saatten eski
+    parça satırları (yalnız anahtar AÇIKKEN sayılır) → `STUCK_TOTAL`; (e) penceredeki ABANDONED koşular (bilgi — dağıtımda /
+    pod öldürmede beklenir). Bölüm ayrıca koşuları durum × sonuç × tür olarak listeler (ortalama süre, devralınan, ikinci
+    görüş).
+- **Geçme ölçütü (öneri, en az 3 gün; önce staging iki pod, sonra prod — 1 → 2 replika adımından sonra):** dedektör bölüm 10
+  (a)–(d) boş; her saatlik parçalı tur DONE (ABANDONED yalnız dağıtım / pod öldürme anlarında); "Son saatlik sertifika
+  taraması" klasik turdan uzun değil (anahtar açılmadan önceki günlerin tarama kartı / `scan_runs` süreleriyle karşılaştırın);
+  devralınan parça ve ikinci görüş pod öldürmeleri dışında ≈ 0; alarm gürültüsü görünümünde yeni bir alarm sınıfı farkı yok
+  (özellikle "erişilemiyor" sertifika uyarıları). Biri tutmazsa anahtarı kapatın, sonra inceleyin.
+- **Kapatmak (anında güvenli):** anahtarı kapatın (≤ 10 sn tüm pod'larda) — bir sonraki tur klasik koşar. Sürmekte olan parçalı
+  tur normal biter: işçiler 2 × kira (120 sn) boyunca boşta aralığıyla parça almayı sürdürür, koordinatör durumu 30 sn
+  değişmeyen parçaları kendisi ölçer. Kapatıldığı an Küme kartı, ölçüler ve izleyici ayrıntısı "kapalı" gösterir — sürmekte
+  olan turu (en çok bir tur) göstermez. Anahtar kapalı kalırsa yarım kalmış bir koşunun satırı bir sonraki AÇIK tura dek durur
+  (zararsız).
+- **Pod ayarları** (açılışta okunur, Helm `config.extraEnv`, pod yeniden başlatılır; değerler sessizce sınırlanır):
+  - **Bir pod parça almasın:** `CERT_CHUNK_WORKER_ENABLED=false` — pod parça almaz (Küme kartı "Bu pod parça almıyor"); kilidi
+    kazanırsa turu yine koordine eder. Çıkışı bozuk bir node'daki pod için geçici çare.
+  - **Parça boyutu:** `CERT_CHUNK_SIZE` (20, 5–200; bir tur en çok 500 parçadır — çok büyük envanterde boyut kendiliğinden
+    büyür). Küçük parça yükü daha dengeli dağıtır ama veritabanı işi artar; büyük parça, pod düşünce daha çok yeniden ölçüm
+    demektir.
+  - **Bütçe:** `CERT_CHUNK_MAX_INFLIGHT_DOMAINS` (0 = 6 × görev havuzu çekirdeği → 120 alan adı) ve aynı anda en çok parça
+    `CERT_CHUNK_MAX_CHUNKS` (8, 1–16 — ikisi birlikte sınırlar: 8 × 20 = 160 alan adının üstü için parça sayısını da artırın).
+    Varsayılan bütçede tarama lideri başka pod'un turuna en çok bir parça (çekirdek kadar alan adı) ayırır; açık bir bütçe
+    girilirse liderin payı onun `CERT_CHUNK_LEADER_SHARE_PCT` kadarıdır. Ölçüm (3 kat envanter, 3 pod): varsayılanlarla tur
+    ≈ 76 sn, klasik ≈ 145 sn.
+    Bir parça en yavaş kontrolü (ör. zaman aşımına düşen bir ağ hatası) bitene dek bütçeyi tutar; tur uzun sürüyor ve
+    pod'ların işlemcisi boştaysa bütçeyi ve parça sayısını artırmak ya da görev havuzu çekirdeğini (Ayarlar → Genel → Görev
+    Havuzu, canlı — bütçe onunla büyür) büyütmek turu kısaltır.
+  - **Diğer:** `CERT_CHUNK_MIN_DOMAINS` (40 — bundan az alan adlı tur klasik), `CERT_CHUNK_LEASE_MS` (60 000; kira dörtte birinde
+    yenilenir), `CERT_CHUNK_STEAL_AFTER_MS` (10 000) ve `CERT_CHUNK_LEADER_SHARE_PCT` (50 — tarama liderinin payı; 0 = lider,
+    başka pod varken hiç parça almaz), `CERT_CHUNK_POLL_MS` (250), `CERT_CHUNK_IDLE_POLL_MS` (5 000).
+- **Sorun giderme:**
+  - **Aykırı pod / ikinci görüş:** Küme kartında "aykırı" rozeti, "İkinci görüş" kutucuğu > 0 ya da günlükte `İkinci görüş:
+    <pod> pod'unun parçalarında ağ hatası oranı %x (diğerleri %y) — n alan adı başka pod'dan yeniden ölçülüyor`. Kural: bir
+    pod'un ağ hatası (+ çözülemeyen ad) sayısı en az `min-errors` (3), oranı toplu kesinti eşiğinin (0,50) üstünde, öteki
+    pod'ların birleşik oranı eşiğin yarısının altında ve onların en az 2 × `min-errors` sonucu var → o pod'un hatalı alan
+    adları başka pod'dan bir kez yeniden ölçülür, yeni sonuç eskisinin yerine geçer. Sonuç satırı ne olduğunu söyler:
+    - WARN `Sertifika taraması: <pod> pod'unun parçalarında ağ hatası oranı %x (diğerleri %y) — n alan adı başka pod'dan
+      yeniden ölçüldü: N başarılı, M yine hatalı; çıkış eşliğini (P1) doğrulayın` (pod başına saatte bir) = o pod'un çıkışı
+      farklı: o node'da P1'i `multipod-egress-check.sh` ile denetleyin; düzelene dek o pod'a `CERT_CHUNK_WORKER_ENABLED=false`.
+    - INFO `… hatalar başka pod'dan da görülüyor (gerçek kesinti olası), sonuçlar geçerli` = o hedefler gerçekten
+      erişilemiyor; pod'da yapılacak bir şey yok.
+    - INFO `İkinci görüş kısmen uygulandı …` = aykırı pod koordinatörün kendisiydi, yeniden ölçüm yarıda kaldı ama toplu
+      kesinti kararı kısmi sonuçla da aynı çıktı — yapılan düzeltmeler kullanıldı (gereksiz "erişilemiyor" alarmı yok).
+    - INFO `İkinci görüş eksik kaldı … kararını değiştirirdi (evet → hayır)` ya da `İkinci görüş tamamlanamadı …` = kısmi sonuç
+      toplu kesinti kararını değiştirecekti ya da hiçbir alan adı yeniden ölçülemedi — özgün sonuçların HEPSİ kullanıldı (o
+      pod'daki klasik bir turla aynı karar; kısmi değişim turu eşiğin iki yönünde de karşıya geçiremez). Tek yardımcı pod
+      kapanırken parçasını bırakırsa ve yarım dakikadır hiçbir ikinci görüş parçası ilerlemiyorsa koordinatör beklemeyi bırakır
+      (eskiden 15 dk kilit tutuyordu).
+    - Başka bir pod aykırıyken o pod'dan gelen kullanılamayan sonuç (hata, kesik sonuç, yanlış alan adı) koordinatörde yeniden
+      ölçülür; bozuk özgün sonuç kullanılmaz.
+    Sonuç turla birlikte saklanır (`cert_sweep_runs.second_opinion_ok|second_opinion_failed`): Küme kartı P1 (çıkış eşliği)
+    uyarısını yalnız yeniden ölçümlerin çoğu başka pod'da başarılı olduysa verir; hatalar başka pod'dan da görüldüyse sessiz
+    bir bilgi satırı gösterir (kart uyarıya çıkmaz); hiçbir alan adı yeniden ölçülemediyse ayrı bir uyarı gösterir.
+    İkinci görüş yalnız hataların yerine yeni ölçüm koyar; sahte kesinti üretemez.
+  - **Terk edilmiş / sahipsiz tur:** Küme kartında "Terk edilmiş tur" ya da tarama kartında "terk edilmiş tur — koordinatör X
+    tarama kilidini artık tutmuyor": o turun koordinatör pod'u öldü (SIGKILL, OOM, düğüm kaybı); o turdan hiçbir sonuç
+    kaydedilmedi. Anahtar açıkken bir sonraki sertifika turu (bayat tarama ≤ 5 dk — klasik koşsa da) onu ORPHANED kapatır
+    (WARN `Sahipsiz parçalı tarama kapatıldı (runId=…, koordinatör=<pod>) — sonuçları kaydedilmemişti, bayat tarama telafi
+    eder`) ve bayat tarama alan adlarını yeniden kontrol eder. ~10 dk'dan uzun sürüyorsa önce sertifika turlarının koştuğuna
+    bakın (tarama kartı, `cert-check` kilidi). Elle kapatma (yalnız `cert-check` kilidi boştayken):
+    ```sql
+    UPDATE cert_sweep_runs SET state = 'ABANDONED', outcome = 'ORPHANED',
+           finished_ms = (extract(epoch from clock_timestamp()) * 1000)::bigint
+     WHERE state IN ('RUNNING', 'DECIDING');
+    DELETE FROM cert_sweep_chunks
+     WHERE run_id NOT IN (SELECT run_id FROM cert_sweep_runs WHERE state IN ('RUNNING', 'DECIDING'));
+    ```
+  - **Kuyruk duruyor:** "Bekleyen parçalar 30 saniyeden uzun süredir duruyor ve hiçbir pod parça ölçmüyor" = hiçbir işçi parça
+    almıyor: her pod'da `CERT_CHUNK_WORKER_ENABLED=false`, öteki pod'lar eski sürüm (20.170.0) ya da işçiler başlamadı
+    ("Yanıtlayan pod" → "işçi henüz başlamadı"). 60 sn içinde hiçbir parça alınmazsa koordinatör hepsini kendisi ölçer (WARN
+    `Parçalı taramada 60 sn içinde hiçbir parça sahiplenilmedi (çalışan işçi yok) …`) — tur o kadar geç ama yine biter. Pod'lar
+    parça ölçerken bekleyen parçaların uzun kuyruğu olağandır, uyarı vermez.
+  - **Koordinatörün nabzı 60 saniyeden eski:** koordinatör pod'u takıldı ya da öldü; işçiler o turun parçalarını almaz. Pod
+    öldüyse sonraki tur koşuyu sahipsiz kapatır. Kilidi hâlâ tutan koordinatör için bu uyarı çıkmaz (yerel ölçüm sırasında
+    ayrı bir `cert-run-heartbeat` iş parçacığı nabzı taze tutar).
+  - **Tur yavaş** (Grafana "Son saatlik sertifika taraması" 5 dk üstü): "Parça işçileri"nde yük her pod'a yayılıyor mu? Yalnız
+    koordinatör çalışıyorsa öteki pod'ların işçisi kapalı ya da eski sürüm. Devralınan / geç tamamlanan parça çoksa işçiler
+    ölüyor ya da kira kaybediyor. Kötü bir saatte (çok sayıda ağ hatası, her biri zaman aşımına dek bekler) tur uzar —
+    klasikte de öyle. Kalıcıysa yukarıdaki bütçe ayarları ya da görev havuzu çekirdeği.
+  - **Diğer günlük satırları (tur her durumda koordinatörde biter):** `Parça N kayboldu (n deneme)` (işçisi iki kez öldü ya da
+    kira kaybetti), `Parça N kirası doldu, kimse yeniden almadı`, `Parça N sonucu 3 kez okunamadı`, `Parça N iptal edilemedi
+    (3 deneme)`, `Parçalı tarama N sn ilerlemesiz` (`sweep-max-wait-seconds`, 900 sn), `Parçalı tarama deposu 60 sn okunamadı`
+    (veritabanı sorunu — koşu DONE / STORE_FAILED biter), `Parçalı tarama anahtarı tur sürerken kapatıldı`, `Parçalı tarama
+    başlatılamadı — tur klasik koşuyor` (koşu yazılamadı; tablolar: `SELECT to_regclass('cert_sweep_runs'),
+    to_regclass('cert_sweep_chunks');` — boşsa açılış günlüğünde `Parçalı sertifika taraması şeması uygulanamadı` /
+    `Parçalı tarama: … kurulamadı`, sonraki açılışta yeniden denenir), `Parçalı tarama iç hatası — tur klasik toplamaya
+    dönüyor` (Küme kartında "klasik toplamaya döndü": sonuçlar yine kaydedildi ve karar verildi; tekrarlıyorsa o pod'un
+    günlüğüyle bildirin). İş parçacıkları (thread dump): `cert-chunk-poll`, `cert-chunk-N`, `cert-chunk-release`,
+    `cert-run-heartbeat` (yalnız koordinatör yerelde ölçerken).
+  - **Teşhis SQL:**
+    ```sql
+    SELECT run_id, kind, state, outcome, coordinator, domains_total, chunks_total,
+           to_timestamp(created_ms / 1000.0) AS basladi, (finished_ms - created_ms) / 1000 AS sure_sn,
+           takeovers AS devralinan, reclaims AS yeniden_alinan, second_opinions AS ikinci_gorus, workers_json
+      FROM cert_sweep_runs ORDER BY created_ms DESC LIMIT 10;
+    SELECT run_id, state, COALESCE(worker, claimed_by) AS pod, COUNT(*) AS parca, SUM(domain_count) AS alan_adi,
+           MAX(attempts) AS en_cok_deneme
+      FROM cert_sweep_chunks GROUP BY 1, 2, 3 ORDER BY 1, 2, 3;
+    ```
+    `state`: RUNNING = ölçülüyor, DECIDING = ölçüm bitti, koordinatör kaydedip karar veriyor; parçalarda PENDING = alınmadı,
+    CLAIMED = bir işçide, DONE = sonuç koordinatörü bekliyor, CANCELLED = koordinatör devraldı. `results_json` sütununu seçmeyin
+    (büyük JSON). Ham değer: `GET /api/admin/system` → `data.cert_chunks` (`run`, `last_runs`, `this_pod`, `last_mode`).
+- **Bilinen sınırlar (kabul edildi):** koordinatör ölürse tur kaybolur (hiçbir sonuç kaydedilmez — bugünkü gibi; bayat tarama
+  telafi eder); kayıt adımı koordinatörde sıralı kalır; yeniden sahiplenme, devralma ve ikinci görüş aynı alan adını ikinci kez
+  ölçer (yalnız ağ isteği, satır yok); askıda kalan bir kontrol klasikte bütün turda, parçalıda kendi parçasında son
+  tamamlanmadan 900 sn sonra bırakılır (aynı zaman aşımı sonucu, belki daha erken); CRL indirmeleri pod sayısıyla çoğalabilir
+  (pod başına 1 sa önbellek; parçalar yayıncıya göre gruplanır); boş bir sahiplenmeden sonra işçi bir sonrakini 5 sn sonra
+  dener (bırakılan / kirası dolan parçalar ≤ 5 sn geç alınır); ayar yenilemesi pod'lar arasında ≤ 10 sn kayabilir (CA paketi,
+  SSRF — bugün de var); anahtar tur sürerken kapatılırsa Küme kartı, ölçüler ve izleyici açık turu hemen göstermez (en çok bir
+  tur); anahtar açık ama tablolar yoksa takipçinin ölçü turu `cert_sweep` kaynağını okuyamaz ve kurum ölçülerini lider yaymaya
+  devam eder; tarama lideri görev havuzunu klasik izleme taramaları (3-3 kapalıyken) ve erişilebilirlik turuyla paylaşır (yarı
+  bütçe, yarım çekirdeklik alt gruplar).
+- **Sürüm geçişi / geri alma:** iki sürüm de aynı `cert-check` kilidini ve aynı `round:cert-hourly` / `round:cert-stale` /
+  `round:cert-startup` satırlarını kullanır — sürümler karışıkken de iki tur aynı anda koşmaz, çift kayıt ya da çift alarm
+  olmaz. 20.170.0 koordinatör: klasik tur, tablolara dokunmaz (anahtar açıkken 3-4 işçileri boş tabloyu 5 sn'de bir yoklar).
+  3-4 koordinatör + yalnız 20.170.0 öteki pod'lar (anahtar açık): tur yine parçalıdır, parçaları koordinatörün kendi işçisi
+  hemen alır (işçisi kapalıysa 60 sn sonra koordinatör hepsini ölçer) — yavaş ama doğru. 3-4 koordinatör tur ortasında ölür ve
+  sonraki turu 20.170.0 bir pod alırsa: tur klasik; sahipsiz koşu satırı bir 3-4 pod'un sonraki AÇIK turuna dek durur (zararsız,
+  o tur için hiçbir şey kaydedilmemişti). **Geri alma (20.170.0'a): önce anahtarı kapatın**, sonra imajı geri alın; iki tablo
+  ve ayar satırı kalır, eski kod okumaz (silmeyin); eski sürümün ayar sayfası anahtarı listelemez.
+
 ### Kapanış ve süre bütçesi
 
 `terminationGracePeriodSeconds` kubelet preStop'u başlattığı an sayılır; aşılırsa SIGKILL gelir ve kira dolana dek
@@ -1148,12 +1379,12 @@ anahtarı, Küme kartında "Dağıtık kontroller: Kapalı" ve kendi kendini izl
 | Adım | Süre | Ayar |
 |---|---|---|
 | preStop `sleep` (pod Service / ingress uç noktalarından düşer) | 10 sn | Helm `preStopSleepSeconds` (0 = kanca yok) |
-| SIGTERM → (Sürüm 3-2: devirde okuma ayarı açık ve kaydedici hazırsa önce süren değerlendirmeler durulur, kalıcı durum boşaltılır ve devir işareti yazılır) liderlik kirası bırakılır, yeni kilit / tur / liderlik alınmaz (`ContextClosedEvent`, ilk dinleyici); Sürüm 3-3: dağıtık kontrol işçisi yeni iş almaz, başlamamış işlerini beklemeden kuyruğa geri bırakır | anında (devirle ≤ 1 sn) | `EvalStateSink.HANDOVER_BUDGET_MS` |
+| SIGTERM → (Sürüm 3-2: devirde okuma ayarı açık ve kaydedici hazırsa önce süren değerlendirmeler durulur, kalıcı durum boşaltılır ve devir işareti yazılır) liderlik kirası bırakılır, yeni kilit / tur / liderlik alınmaz (`ContextClosedEvent`, ilk dinleyici); Sürüm 3-3: dağıtık kontrol işçisi yeni iş almaz, başlamamış işlerini beklemeden kuyruğa geri bırakır; Sürüm 3-4: sertifika parça işçisi yeni parça almaz, tuttuğu parçaları beklemeden geri bırakır (başka pod hemen alır), parçalı turun koordinatörü ≤ 0,5 sn içinde turu bırakır (hiçbir sonuç kaydetmez) | anında (devirle ≤ 1 sn) | `EvalStateSink.HANDOVER_BUDGET_MS` |
 | Push işçisi durdurulur (yeni tur / batch yok, kalan batch'lerin kirası bırakılır) ve süren push biter; bildirim havuzları boşaltılır (çözüm postaları, yeniden gönderimler, giriş sorunu postaları) — hepsi AYNI süre içinde | ≤ 20 sn | `WebConfig.NOTIFY_AWAIT_SECONDS` |
 | Web zarif aşaması (süren istekler biter) | ≤ 20 sn | `SHUTDOWN_PHASE_TIMEOUT` (`spring.lifecycle.timeout-per-shutdown-phase`) |
 | Yürütücü aşaması (süren kontroller / bildirimler biter) | ≤ 20 sn | aynı |
 | Zamanlanmış işler havuzu (süren işler biter, kesilmez) | ≤ 20 sn | `SCHEDULING_AWAIT_TERMINATION` |
-| Geri kalan bütün yok etme beklemeleri (e-posta 421 kuyruğu, push, kod girişi, olay bildirimi, elle kontrol havuzu, bildirim havuzlarının kendisi, önbellek yolunun son yayını; Sürüm 3-1'den beri yan iş koşucusu — süren uzun iş ≤ 5 sn, kesmeden sonra ≤ 1 sn — ve kalıcı değerlendirme yazıcısı ≤ 1 sn; Sürüm 3-3'ten beri dağıtık kontrol işçisi — koşan kontroller ≤ 3 sn + son tamamlama yazımı ≤ 1 sn — ve sonuç boşaltıcısı ≤ 0,5 sn, hiç başlamadılarsa süreye dokunmadan) | birlikte ≤ 10 sn | `config/ShutdownDeadline.DESTROY_BUDGET_MS` |
+| Geri kalan bütün yok etme beklemeleri (e-posta 421 kuyruğu, push, kod girişi, olay bildirimi, elle kontrol havuzu, bildirim havuzlarının kendisi, önbellek yolunun son yayını; Sürüm 3-1'den beri yan iş koşucusu — süren uzun iş ≤ 5 sn, kesmeden sonra ≤ 1 sn — ve kalıcı değerlendirme yazıcısı ≤ 1 sn; Sürüm 3-3'ten beri dağıtık kontrol işçisi — koşan kontroller ≤ 3 sn + son tamamlama yazımı ≤ 1 sn — ve sonuç boşaltıcısı ≤ 0,5 sn, hiç başlamadılarsa süreye dokunmadan; Sürüm 3-4'ten beri parça işçisinin yoklama iş parçacığı ≤ 0,5 sn, işçi hiç başlamadıysa süreye dokunmadan) | birlikte ≤ 10 sn | `config/ShutdownDeadline.DESTROY_BUDGET_MS` |
 | **Toplam** | **≈ 101 sn < 120 sn** (uygulama payı 91 sn = `SPRING_BUDGET_S`) | Helm `terminationGracePeriodSeconds` (120) |
 
 Birini büyütürseniz grace'i de büyütün: `preStop + boşaltma + 2 × aşama + zamanlanmış bekleme + 10 + 1 (devir) < grace` (yeni bir
@@ -1321,7 +1552,8 @@ Ayrıntılı komutlar ve onay kutuları: [`PROD_DEPLOY_CHECKLIST.md` → Çok po
    kural düzeltilir ya da pod'lar sağlam node'lara sabitlenir (Helm `nodeSelector` / `affinity`). Node havuzu her
    değiştiğinde (yeni node, yükseltme) yeniden koşun. Sürüm 3-1'den beri TLS profili yoklaması da (sertifika taramaları
    gibi) herhangi bir pod'dan — iki pod'da çoğunlukla takipçiden — çıkar: `TLS_TARGETS`'a envanterden birkaç doğrudan
-   kontrol edilen alan adı (`host:443`) ekleyin. TCP açık ama `TLS FAIL` ya da node'a göre farklı `veren` = o node'da
+   kontrol edilen alan adı (`host:443`) ekleyin. Sürüm 3-4'ün parçalı sertifika taraması açıkken her sertifika turu HER
+   pod'dan çıkar — vekil üzerinden kontrol edilen (`use_proxy`) kayıtlardan da hedef ekleyin. TCP açık ama `TLS FAIL` ya da node'a göre farklı `veren` = o node'da
    TLS'i kesen / değiştiren bir ara kutu (TLS sonlandıran vekil, SSL denetimi) var: o node'dan sertifika taramaları ağ
    hatası, TLS profili "başarısız" ya da farklı sürüm desteği görür (A'ya sınırlı not, sahte düşüş bildirimi). Turları
    normal tamamlayan ama farklı sonuç gören bir node'u liderin "bırakma" kuralı yakalamaz (ağ hatası bir sonuçtur) — bunu
@@ -1372,6 +1604,8 @@ kubectl logs $L | grep "Yan iş .* başarısız" | tail -5                      
 kubectl logs $L | grep -E "devirde yüklen|Devir öncesi kalıcı durum" | tail -10  # Sürüm 3-2, ayar açıkken: her devirde "yüklendi (tam)" + eski liderde "boşaltıldı ve işaretlendi"
 kubectl logs $L | grep "Dağıtık kontroller:" | tail -10                        # Sürüm 3-3, anahtar açıkken: tür kipi geçişleri (lider, nedeniyle)
 kubectl logs $L | grep -cE "Kontrol işleri (art arda [0-9]+ kez )?gönderilemedi|Kontrol işi [0-9]+ kez sahiplenildi"  # 0 olmalı (Sürüm 3-3)
+kubectl logs $L | grep -E "Sertifika taraması parçalı|Parçalı tarama toplandı" | tail -5   # Sürüm 3-4, anahtar açıkken: parçalı turlar (koordinatör), pod başına alan adı
+kubectl logs $L | grep -cE "Parçalı tarama (başlatılamadı|iç hatası)|pod'unun parçalarında ağ hatası oranı"  # 0 olmalı (Sürüm 3-4: tur klasiğe düştü / aykırı pod)
 kubectl get pod -n "$NS" -l app.kubernetes.io/instance="$REL" \
   -o custom-columns=POD:.metadata.name,NODE:.spec.nodeName,RESTART:.status.containerStatuses[0].restartCount,SEBEP:.status.containerStatuses[0].lastState.terminated.reason
 ```
@@ -1405,7 +1639,10 @@ yaşı). "TLS turu dönem başına bir kez" sayılamaz — tur satırı yalnız 
 (CAS) + kilitle sağlanır. Bölüm 9 (Sürüm 3-3, dağıtık kontroller; `monitor_check_jobs` yoksa atlanır) izleme başına
 birden çok açık işi, ana anahtar açıkken sağlıklı bir izlemenin aralığının yarısından yakın iki zamanlanmış satırını ve
 5 dk'dan eski değerlendirilmemiş sonucu (STUCK) sayar — [Dağıtık kontroller](#dağıtık-kontroller-çok-pod-sürüm-3-3);
-duman testinde `SMOKE_DISTRIBUTED=1`.
+duman testinde `SMOKE_DISTRIBUTED=1`. Bölüm 10 (Sürüm 3-4, parçalı sertifika taraması; `cert_sweep_runs` yoksa atlanır) bir
+parçalı koşuda aynı alan adının birden çok kaydını ve birden çok açık koşuyu (DUP), kaydı eksik DONE koşuyu ve anahtar açıkken
+açık olmayan koşunun 1 saatten eski parçalarını (STUCK) sayar — [Parçalı sertifika taraması](#parçalı-sertifika-taraması-çok-pod-sürüm-3-4);
+duman testinde `SMOKE_CERT_CHUNKS=1`.
 
 ### Sürüm geçişi sırasında (eski + yeni pod birlikte)
 

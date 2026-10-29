@@ -507,4 +507,63 @@ class GrafanaDashboardGeneratorTest {
         assertThat(exprOf(en, "Oldest unevaluated result")).contains("state=\"done\"");
         assertThat(GrafanaDashboardGenerator.DASHBOARD_REVISION).isGreaterThanOrEqualTo(7);
     }
+
+    @Test
+    @DisplayName("R3-4 (paket C1): parçalı sertifika taraması panelleri sağlık bölümünün SONUNDA (R3-3 panellerinden sonra, çalışma "
+            + "zamanından önce); parça / son tur KÜME (max by), işçi sayaçları POD (instance, increase); üç ölçüm de panoda; revizyon ≥ 8")
+    void multiPodR34Panels() {
+        JsonNode d = tree(defaults());
+        assertThat(exprOf(d, "Bekleyen sertifika parçası")).startsWith("(sum(max by (state) (sitemonitor_cert_sweep_chunks{")
+                .contains("state=\"pending\"").contains("source=\"cert_sweep\"");
+        assertThat(exprOf(d, "Parçalı tur ilerlemesi")).contains("state=~\"done|cancelled\"").contains("> 0)");
+        assertThat(exprOf(d, "Son saatlik sertifika taraması")).startsWith("max(sitemonitor_cert_sweep_last_run_seconds{")
+                .contains("kind=\"hourly\"");
+        assertThat(exprOf(d, "Devralınan parça (24 sa)")).contains("increase(sitemonitor_cert_sweep_worker_chunks{")
+                .contains("outcome=\"takeover\"").contains("instance=~\"$instance\"").contains("[24h]");
+        assertThat(exprOf(d, "İkinci görüş (24 sa)")).contains("outcome=\"second_opinion\"");
+        assertThat(exprOf(d, "Sertifika taraması süresi (tür, kip)")).startsWith("max by (kind, mode) (sitemonitor_cert_sweep_last_run_seconds{");
+        assertThat(exprOf(d, "Parça işçileri (pod başına, 1 sa)")).startsWith("sum by (instance, outcome) (increase(sitemonitor_cert_sweep_worker_chunks{");
+        List<String> titles = contentPanels(d).stream().map(p -> p.get("title").asString()).toList();
+        assertThat(titles.indexOf("Bekleyen sertifika parçası")).isGreaterThan(titles.indexOf("Kontrol işçileri (pod başına, 5 dk)"));
+        assertThat(titles.indexOf("Parça işçileri (pod başına, 1 sa)")).isLessThan(titles.indexOf("HTTP istek hızı"));
+        java.util.Set<String> used = new java.util.HashSet<>();
+        for (JsonNode p : contentPanels(d)) {
+            if (p.get("targets") == null) continue;
+            for (JsonNode t : p.get("targets")) if (t.get("expr") != null) used.addAll(GrafanaDashboardGenerator.metricsIn(t.get("expr").asString()));
+        }
+        for (String m : List.of(MonitoringMetricNames.CERT_SWEEP_CHUNKS, MonitoringMetricNames.CERT_SWEEP_LAST_RUN,
+                MonitoringMetricNames.CERT_SWEEP_WORKER_CHUNKS)) {
+            assertThat(used).as("panoda yok: " + m).contains(MonitoringMetricNames.prom(m));
+        }
+        JsonNode en = tree(opts("en", GrafanaDashboardGenerator.SECTIONS, true, "", ""));
+        assertThat(exprOf(en, "Pending certificate chunks")).contains("sitemonitor_cert_sweep_chunks");
+        assertThat(exprOf(en, "Second opinions (24 h)")).contains("second_opinion");
+        assertThat(GrafanaDashboardGenerator.DASHBOARD_REVISION).isGreaterThanOrEqualTo(8);
+    }
+
+    /** Başlığa göre panelin açıklaması. */
+    static String descOf(JsonNode d, String title) {
+        for (JsonNode p : contentPanels(d)) {
+            if (title.equals(p.get("title").asString())) return p.path("description").asString();
+        }
+        throw new AssertionError("panel yok: " + title);
+    }
+
+    @Test
+    @DisplayName("R3-4 inceleme OB-L7: parçalı tarama açıklamaları doğru — parça boyutu bir ayar (sabit 20 değil), süre kayıt ve "
+            + "kararı içerir ve eşiklerle aynı (2 / 5 dk), süre panelinde klasik karşılaştırma yok → tarama kartına yönlendirir; rev 9")
+    void multiPodR34PanelTexts() {
+        JsonNode d = tree(defaults());
+        assertThat(descOf(d, "Bekleyen sertifika parçası")).doesNotContain("parça başına 20 alan adı").contains("varsayılan 20")
+                .contains("terk edilmiş");
+        assertThat(descOf(d, "Son saatlik sertifika taraması")).doesNotContain("1 dk altı beklenir").contains("alarm kararı dahil")
+                .contains("2 dk").contains("5 dk");
+        assertThat(descOf(d, "Sertifika taraması süresi (tür, kip)")).doesNotContain("karşılaştırarak verin")
+                .contains("Sertifika taraması kartında").contains("scan_runs");
+        JsonNode en = tree(opts("en", GrafanaDashboardGenerator.SECTIONS, true, "", ""));
+        assertThat(descOf(en, "Pending certificate chunks")).doesNotContain("(20 domains each)").contains("20 domains by default");
+        assertThat(descOf(en, "Last hourly certificate sweep")).doesNotContain("Expected below 1 minute").contains("decision included");
+        assertThat(descOf(en, "Certificate sweep duration (kind, mode)")).doesNotContain("Compare chunked and classic").contains("scan_runs");
+        assertThat(GrafanaDashboardGenerator.DASHBOARD_REVISION).isGreaterThanOrEqualTo(9);
+    }
 }

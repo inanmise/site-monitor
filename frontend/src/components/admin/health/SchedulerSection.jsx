@@ -8,7 +8,8 @@ import { ProgressBar, Spinner } from '../../ui/Progress.jsx'
 import ToneBadge from '../ToneBadge.jsx'
 import { executorStats, poolStats, clusterModel, relTime, SCAN_KINDS, HEALTH_THRESHOLDS, BADGE_TONE, LOCK_STATE_TONE } from './healthModel.js'
 import { CARD_GRID, ERR_T, OK_T, WARN_T, KvList, PodChip, RefreshButton, SectionToolbar, SubTitle, SysCard } from './HealthParts.jsx'
-import { EvalRecorderRows, EvalVerifySection, SideJobsRows } from './ClusterRuntimeParts.jsx'
+import { EvalRecorderRows, EvalVerifySection, SideJobsRows, CertChunksSection, CertChunksPodRows, CertModeBadge } from './ClusterRuntimeParts.jsx'
+import { scanChunkModel } from './clusterRuntimeModel.js'
 
 // Birimler sözlükten (QA 2026-09-12, ISSUE-010): "3.1 sn" / "1 dk" İngilizce arayüze sızıyordu.
 function fmsDuration(ms, t) {
@@ -49,12 +50,14 @@ function ClusterCard({ t, health }) {
         <div className="flex flex-col gap-3">
           <p className="text-[0.9em] text-muted-foreground" data-slot="cluster-single">{t('hmp.singleHint')}</p>
           <EvalVerifySection t={t} es={c.evalState} />
-          {(c.evalState || c.sideJobs) && (
+          <CertChunksSection t={t} cc={c.certChunks} />
+          {(c.evalState || c.sideJobs || c.certChunks?.thisPod) && (
             <section data-slot="cluster-this-pod" aria-labelledby="hmp-pod-title-single" className="flex flex-col gap-1.5 border-t pt-2.5">
               <SubTitle className="mt-0 text-[12px]"><span id="hmp-pod-title-single">{t('hmp.podSection')}</span><PodChip t={t} pod={c.pod.name} /></SubTitle>
               <KvList>
                 <EvalRecorderRows t={t} es={c.evalState} />
                 <SideJobsRows t={t} sj={c.sideJobs} />
+                <CertChunksPodRows t={t} cc={c.certChunks} />
               </KvList>
             </section>
           )}
@@ -78,6 +81,7 @@ function ClusterCard({ t, health }) {
           </section>
 
           <EvalVerifySection t={t} es={c.evalState} />
+          <CertChunksSection t={t} cc={c.certChunks} />
 
           <section data-slot="cluster-this-pod" aria-labelledby="hmp-pod-title" className="flex flex-col gap-1.5 border-t pt-2.5">
             <SubTitle className="mt-0 text-[12px]"><span id="hmp-pod-title">{t('hmp.podSection')}</span><PodChip t={t} pod={c.pod.name} /></SubTitle>
@@ -146,6 +150,7 @@ function ClusterCard({ t, health }) {
               )}
               <EvalRecorderRows t={t} es={c.evalState} />
               <SideJobsRows t={t} sj={c.sideJobs} />
+              <CertChunksPodRows t={t} cc={c.certChunks} />
             </KvList>
             <p className="text-xs text-muted-foreground" data-slot="cluster-per-pod-note">{t('hmp.perPodNote')}</p>
           </section>
@@ -177,6 +182,7 @@ export default function SchedulerSection({
   const monoSm = 'font-mono text-xs'
   const scanLocal = scan?.source === 'local'
   const runs = scan?.runs || {}
+  const scanChunks = scanChunkModel(scan)
   const updated = poolLastRefreshed
     ? t('sys.poolUpdatedAt').replace('{t}', poolLastRefreshed.toLocaleTimeString(dateLocale(), { hour: '2-digit', minute: '2-digit', second: '2-digit' }))
     : null
@@ -336,6 +342,25 @@ export default function SchedulerSection({
             <dt>{t('health.scanErr')}</dt><dd className={scan?.errors > 0 ? ERR_T : undefined}>{scan?.errors ?? 0}</dd>
             {scan?.last_failure && (<><dt>{t('health.statusFailed')}</dt><dd className={`${ERR_T} break-words`}>{scan.last_failure}
               {scan.last_failure_by_pod && <span className="text-muted-foreground"> · <PodName>{scan.last_failure_by_pod}</PodName></span>}</dd></>)}
+            {/* Çok pod Sürüm 3-4 (paket C1): parçalı tarama açıkken son turun kipi ve açık parçalı turun ilerlemesi (eski sunucu / kapalı → yok) */}
+            {scanChunks && (<><dt>{t('hmp.cc.scanMode')}</dt><dd className="min-w-0"><CertModeBadge t={t} mode={scanChunks.mode} slot="scan-mode" /></dd></>)}
+            {scanChunks?.chunked && (
+              <>
+                <dt>{t('hmp.cc.scanChunked')}</dt>
+                <dd data-slot="scan-chunked" data-orphan={scanChunks.chunked.orphan ? 'true' : undefined} className="min-w-0 [overflow-wrap:anywhere]">
+                  {/* İnceleme OB-L1: koordinatörü kilidi artık tutmayan (ölmüş) tur ilerleme olarak gösterilmez */}
+                  {scanChunks.chunked.orphan
+                    ? <span className="text-muted-foreground">{t('hmp.cc.scanChunkedOrphan', scanChunks.chunked.coordinatorPod || '—')}</span>
+                    : t('hmp.cc.scanChunkedText', scanChunks.chunked.chunksDone ?? '—', scanChunks.chunked.chunksTotal ?? '—',
+                      scanChunks.chunked.domainsMeasured ?? '—', scanChunks.chunked.domainsTotal ?? '—')}
+                  {!scanChunks.chunked.orphan && scanChunks.chunked.pods.length > 0 && (
+                    <span className="text-muted-foreground"> · {scanChunks.chunked.pods.map((p, i) => (
+                      <span key={`${p.pod}-${i}`}>{i > 0 ? ', ' : ''}<PodName>{p.pod}</PodName> {p.domains}</span>
+                    ))}</span>
+                  )}
+                </dd>
+              </>
+            )}
           </KvList>
           {SCAN_KINDS.some((k) => runs[k]) && (
             <div className="border-t pt-2" data-slot="scan-runs">
@@ -349,6 +374,7 @@ export default function SchedulerSection({
                       <span>{r.last_run ? formatDate(r.last_run) : t('sys.never')}</span>
                       {r.total != null && <span className="text-muted-foreground">· {t('hmp.runTotal', r.total)}</span>}
                       {r.by_pod && <span className="text-muted-foreground">· <PodName>{r.by_pod}</PodName></span>}
+                      {r.mode === 'chunked' && <CertModeBadge t={t} mode="chunked" slot="scan-run-mode" />}
                       {r.failure && r.failure_at === r.finished_at && <span className={ERR_T}>· {t('hmp.runEndedWithIssue')}</span>}
                     </li>
                   )

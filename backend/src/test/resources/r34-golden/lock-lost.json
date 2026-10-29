@@ -1,0 +1,67 @@
+{
+  "scenario": {
+    "name": "lock-lost",
+    "kind": "hourly",
+    "evict_caches": true,
+    "pre_held": true,
+    "domains": 4
+  },
+  "checks": [
+    {
+      "domain": "l1.example.com",
+      "port": 443,
+      "use_proxy": false,
+      "tls_mode": null,
+      "timeout_seconds": null
+    },
+    {
+      "domain": "l2.example.com",
+      "port": 443,
+      "use_proxy": false,
+      "tls_mode": null,
+      "timeout_seconds": null
+    },
+    {
+      "domain": "l3.example.com",
+      "port": 443,
+      "use_proxy": false,
+      "tls_mode": null,
+      "timeout_seconds": null
+    },
+    {
+      "domain": "l4.example.com",
+      "port": 443,
+      "use_proxy": false,
+      "tls_mode": null,
+      "timeout_seconds": null
+    }
+  ],
+  "check_order": [
+    "l1.example.com",
+    "l2.example.com",
+    "l3.example.com",
+    "l4.example.com"
+  ],
+  "calls": [
+    {
+      "call": "lock.release"
+    }
+  ],
+  "state": {
+    "running": false,
+    "current_run_id": "",
+    "last_run_id": "<run>",
+    "last_run": null,
+    "last_run_duration_ms": 0,
+    "last_run_total": 0,
+    "last_run_warnings": 0,
+    "last_run_errors": 0,
+    "last_run_failure": null,
+    "startup_check_stopped": false,
+    "lock_held_at_end": false
+  },
+  "logs": [
+    "INFO Certificate check started — runId=<run>, 4 domain(s) [instance=<instance>]",
+    "WARN cert-check kilidi kaybedildi — sonuçlar işlenmedi (runId=<run>, 4 sonuç) [instance=<instance>]"
+  ]
+}

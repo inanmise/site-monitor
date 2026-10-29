@@ -1,0 +1,1357 @@
+{
+  "scenario": {
+    "name": "full",
+    "kind": "full",
+    "evict_caches": true,
+    "pre_held": false,
+    "domains": 12
+  },
+  "checks": [
+    {
+      "domain": "full1.example.org",
+      "port": 443,
+      "use_proxy": false,
+      "tls_mode": null,
+      "timeout_seconds": null
+    },
+    {
+      "domain": "full10.example.org",
+      "port": 443,
+      "use_proxy": false,
+      "tls_mode": null,
+      "timeout_seconds": null
+    },
+    {
+      "domain": "full11.example.org",
+      "port": 443,
+      "use_proxy": false,
+      "tls_mode": null,
+      "timeout_seconds": 20
+    },
+    {
+      "domain": "full12.example.org",
+      "port": 443,
+      "use_proxy": false,
+      "tls_mode": null,
+      "timeout_seconds": null
+    },
+    {
+      "domain": "full2.example.org",
+      "port": 443,
+      "use_proxy": false,
+      "tls_mode": null,
+      "timeout_seconds": null
+    },
+    {
+      "domain": "full3.example.org",
+      "port": 443,
+      "use_proxy": false,
+      "tls_mode": null,
+      "timeout_seconds": null
+    },
+    {
+      "domain": "full4.example.org",
+      "port": 443,
+      "use_proxy": true,
+      "tls_mode": null,
+      "timeout_seconds": null
+    },
+    {
+      "domain": "full5.example.org",
+      "port": 443,
+      "use_proxy": false,
+      "tls_mode": null,
+      "timeout_seconds": null
+    },
+    {
+      "domain": "full6.example.org",
+      "port": 443,
+      "use_proxy": false,
+      "tls_mode": "browser",
+      "timeout_seconds": null
+    },
+    {
+      "domain": "full7.example.org",
+      "port": 443,
+      "use_proxy": false,
+      "tls_mode": null,
+      "timeout_seconds": null
+    },
+    {
+      "domain": "full8.example.org",
+      "port": 443,
+      "use_proxy": false,
+      "tls_mode": null,
+      "timeout_seconds": null
+    },
+    {
+      "domain": "full9.example.org",
+      "port": 8443,
+      "use_proxy": false,
+      "tls_mode": null,
+      "timeout_seconds": null
+    }
+  ],
+  "check_order": [
+    "full1.example.org",
+    "full2.example.org",
+    "full3.example.org",
+    "full4.example.org",
+    "full5.example.org",
+    "full6.example.org",
+    "full7.example.org",
+    "full8.example.org",
+    "full9.example.org",
+    "full10.example.org",
+    "full11.example.org",
+    "full12.example.org"
+  ],
+  "calls": [
+    {
+      "call": "lock.acquire",
+      "name": "cert-check",
+      "ttl": "PT3M"
+    },
+    {
+      "call": "saveResult",
+      "result": {
+        "domain": "full1.example.org",
+        "subject": "full1.example.org",
+        "issuer": "Corp",
+        "issuer_cn": "Corp Issuing CA 01",
+        "not_before": "2019-01-01T00:00:00",
+        "not_after": "2019-12-31T00:00:00",
+        "days_remaining": 37,
+        "warning": false,
+        "status": "valid",
+        "san": [
+          "full1.example.org",
+          "www.full1.example.org"
+        ],
+        "checked_at": "2019-06-01T08:00:01",
+        "serial_number": "0A1B43751412",
+        "signature_algorithm": "SHA256withRSA",
+        "public_key_algorithm": "RSA",
+        "public_key_size": 2048,
+        "subject_dn": "CN=full1.example.org",
+        "issuer_dn": "CN=Corp Issuing CA 01,O=Corp",
+        "key_usage": [
+          "digitalSignature",
+          "keyEncipherment"
+        ],
+        "ext_key_usage": [
+          "serverAuth"
+        ],
+        "is_ca": false,
+        "ocsp_url": "http://ocsp.corp.example/",
+        "crl_url": null,
+        "cert_type": "DV",
+        "chain_status": "INCOMPLETE",
+        "trust_status": "TRUSTED",
+        "trust_error": null,
+        "revocation_status": "GOOD",
+        "revocation_reason": "OCSP",
+        "revocation_detail": "[{\"m\":\"OCSP\",\"r\":\"GOOD\"}]",
+        "deployment_status": "UNKNOWN",
+        "fingerprint": "AB:CD:29B97F4",
+        "intermediate_expiry": null,
+        "intermediate_days_remaining": null,
+        "chain": [],
+        "tls_version": "TLSv1.3",
+        "cipher_suite": "TLS_AES_256_GCM_SHA384",
+        "alpn": "h2",
+        "hsts": null,
+        "http_status": 200,
+        "resolved_ip": "10.20.30.13",
+        "resolved_ips": [
+          "10.20.30.13"
+        ],
+        "via": "direct",
+        "tls_mode_used": "browser",
+        "elapsed_ms": 101,
+        "attempts_total": 1,
+        "run_id": "<run>"
+      },
+      "threw": false
+    },
+    {
+      "call": "saveResult",
+      "result": {
+        "domain": "full2.example.org",
+        "subject": "full2.example.org",
+        "issuer": "Corp",
+        "issuer_cn": "Corp Issuing CA 01",
+        "not_before": "2019-01-01T00:00:00",
+        "not_after": "2019-12-31T00:00:00",
+        "days_remaining": 44,
+        "warning": false,
+        "status": "valid",
+        "san": [
+          "full2.example.org",
+          "www.full2.example.org"
+        ],
+        "checked_at": "2019-06-01T08:00:01",
+        "serial_number": "0A1B249651595",
+        "signature_algorithm": "SHA256withRSA",
+        "public_key_algorithm": "RSA",
+        "public_key_size": 2048,
+        "subject_dn": "CN=full2.example.org",
+        "issuer_dn": "CN=Corp Issuing CA 01,O=Corp",
+        "key_usage": [
+          "digitalSignature",
+          "keyEncipherment"
+        ],
+        "ext_key_usage": [
+          "serverAuth"
+        ],
+        "is_ca": false,
+        "ocsp_url": "http://ocsp.corp.example/",
+        "crl_url": null,
+        "cert_type": "DV",
+        "chain_status": "VALID",
+        "trust_status": "TRUSTED",
+        "trust_error": null,
+        "revocation_status": "GOOD",
+        "revocation_reason": "OCSP",
+        "revocation_detail": "[{\"m\":\"OCSP\",\"r\":\"GOOD\"}]",
+        "deployment_status": "UNKNOWN",
+        "fingerprint": "AB:CD:F11E9E75",
+        "intermediate_expiry": "2019-11-30T00:00:00",
+        "intermediate_days_remaining": 300,
+        "chain": [
+          {
+            "subject": "CN=full2.example.org",
+            "issuer": "CN=Corp Issuing CA 01",
+            "not_after": "2019-09-30T00:00:00",
+            "days_remaining": 90,
+            "self_signed": false
+          },
+          {
+            "subject": "CN=Corp Issuing CA 01",
+            "issuer": "CN=Corp Root CA",
+            "not_after": "2019-11-30T00:00:00",
+            "days_remaining": 300,
+            "self_signed": false
+          }
+        ],
+        "tls_version": "TLSv1.3",
+        "cipher_suite": "TLS_AES_256_GCM_SHA384",
+        "alpn": "h2",
+        "hsts": null,
+        "http_status": 200,
+        "resolved_ip": "10.20.30.196",
+        "resolved_ips": [
+          "10.20.30.196"
+        ],
+        "via": "direct",
+        "tls_mode_used": "browser",
+        "elapsed_ms": 102,
+        "attempts_total": 1,
+        "run_id": "<run>"
+      },
+      "threw": false
+    },
+    {
+      "call": "saveResult",
+      "result": {
+        "domain": "full3.example.org",
+        "status": "error",
+        "error": "Connection timeout after 6s",
+        "warning": true,
+        "checked_at": "2019-06-01T08:00:02",
+        "san": [],
+        "chain_status": "UNKNOWN",
+        "revocation_status": "UNKNOWN",
+        "deployment_status": "UNKNOWN",
+        "fingerprint": null,
+        "chain": [],
+        "subject_dn": null,
+        "issuer_dn": null,
+        "tls_version": null,
+        "hsts": null,
+        "error_class": "NETWORK",
+        "error_stage": "connect",
+        "resolved_ips": [
+          "10.9.8.7"
+        ],
+        "attempts_total": 2,
+        "attempts_elapsed_ms": 13004,
+        "retry_attempted": true,
+        "retry_recovered": false,
+        "via": "direct",
+        "run_id": "<run>"
+      },
+      "threw": false
+    },
+    {
+      "call": "saveResult",
+      "result": {
+        "domain": "full4.example.org",
+        "subject": "full4.example.org",
+        "issuer": "Corp",
+        "issuer_cn": "Corp Issuing CA 01",
+        "not_before": "2019-01-01T00:00:00",
+        "not_after": "2019-12-31T00:00:00",
+        "days_remaining": 58,
+        "warning": false,
+        "status": "valid",
+        "san": [
+          "full4.example.org",
+          "www.full4.example.org"
+        ],
+        "checked_at": "2019-06-01T08:00:01",
+        "serial_number": "0A1B836457609",
+        "signature_algorithm": "SHA256withRSA",
+        "public_key_algorithm": "RSA",
+        "public_key_size": 2048,
+        "subject_dn": "CN=full4.example.org",
+        "issuer_dn": "CN=Corp Issuing CA 01,O=Corp",
+        "key_usage": [
+          "digitalSignature",
+          "keyEncipherment"
+        ],
+        "ext_key_usage": [
+          "serverAuth"
+        ],
+        "is_ca": false,
+        "ocsp_url": "http://ocsp.corp.example/",
+        "crl_url": null,
+        "cert_type": "DV",
+        "chain_status": "VALID",
+        "trust_status": "TRUSTED",
+        "trust_error": null,
+        "revocation_status": "GOOD",
+        "revocation_reason": "OCSP",
+        "revocation_detail": "[{\"m\":\"OCSP\",\"r\":\"GOOD\"}]",
+        "deployment_status": "UNKNOWN",
+        "fingerprint": "AB:CD:CE24AB77",
+        "intermediate_expiry": "2019-11-30T00:00:00",
+        "intermediate_days_remaining": 300,
+        "chain": [
+          {
+            "subject": "CN=full4.example.org",
+            "issuer": "CN=Corp Issuing CA 01",
+            "not_after": "2019-09-30T00:00:00",
+            "days_remaining": 90,
+            "self_signed": false
+          },
+          {
+            "subject": "CN=Corp Issuing CA 01",
+            "issuer": "CN=Corp Root CA",
+            "not_after": "2019-11-30T00:00:00",
+            "days_remaining": 300,
+            "self_signed": false
+          }
+        ],
+        "tls_version": "TLSv1.3",
+        "cipher_suite": "TLS_AES_256_GCM_SHA384",
+        "alpn": "h2",
+        "hsts": null,
+        "http_status": 200,
+        "resolved_ip": "10.20.30.10",
+        "resolved_ips": [
+          "10.20.30.10"
+        ],
+        "via": "direct",
+        "tls_mode_used": "browser",
+        "elapsed_ms": 104,
+        "attempts_total": 1,
+        "run_id": "<run>"
+      },
+      "threw": false
+    },
+    {
+      "call": "saveResult",
+      "result": {
+        "domain": "full5.example.org",
+        "subject": "full5.example.org",
+        "issuer": "Corp",
+        "issuer_cn": "Corp Issuing CA 01",
+        "not_before": "2019-01-01T00:00:00",
+        "not_after": "2019-12-31T00:00:00",
+        "days_remaining": 25,
+        "warning": true,
+        "status": "warning",
+        "san": [
+          "full5.example.org",
+          "www.full5.example.org"
+        ],
+        "checked_at": "2019-06-01T08:00:01",
+        "serial_number": "0A1B1129860616",
+        "signature_algorithm": "SHA256withRSA",
+        "public_key_algorithm": "RSA",
+        "public_key_size": 2048,
+        "subject_dn": "CN=full5.example.org",
+        "issuer_dn": "CN=Corp Issuing CA 01,O=Corp",
+        "key_usage": [
+          "digitalSignature",
+          "keyEncipherment"
+        ],
+        "ext_key_usage": [
+          "serverAuth"
+        ],
+        "is_ca": false,
+        "ocsp_url": "http://ocsp.corp.example/",
+        "crl_url": null,
+        "cert_type": "DV",
+        "chain_status": "INCOMPLETE",
+        "trust_status": "TRUSTED",
+        "trust_error": null,
+        "revocation_status": "GOOD",
+        "revocation_reason": "OCSP",
+        "revocation_detail": "[{\"m\":\"OCSP\",\"r\":\"GOOD\"}]",
+        "deployment_status": "UNKNOWN",
+        "fingerprint": "AB:CD:BCA7B1F8",
+        "intermediate_expiry": null,
+        "intermediate_days_remaining": null,
+        "chain": [],
+        "tls_version": "TLSv1.3",
+        "cipher_suite": "TLS_AES_256_GCM_SHA384",
+        "alpn": "h2",
+        "hsts": null,
+        "http_status": 200,
+        "resolved_ip": "10.20.30.17",
+        "resolved_ips": [
+          "10.20.30.17"
+        ],
+        "via": "direct",
+        "tls_mode_used": "browser",
+        "elapsed_ms": 777,
+        "attempts_total": 1,
+        "run_id": "<run>"
+      },
+      "threw": false
+    },
+    {
+      "call": "saveResult",
+      "result": {
+        "domain": "full6.example.org",
+        "subject": "full6.example.org",
+        "issuer": "Corp",
+        "issuer_cn": "Corp Issuing CA 01",
+        "not_before": "2019-01-01T00:00:00",
+        "not_after": "2019-12-31T00:00:00",
+        "days_remaining": 72,
+        "warning": false,
+        "status": "valid",
+        "san": [
+          "full6.example.org",
+          "www.full6.example.org"
+        ],
+        "checked_at": "2019-06-01T08:00:01",
+        "serial_number": "0A1B1423263623",
+        "signature_algorithm": "SHA256withRSA",
+        "public_key_algorithm": "RSA",
+        "public_key_size": 2048,
+        "subject_dn": "CN=full6.example.org",
+        "issuer_dn": "CN=Corp Issuing CA 01,O=Corp",
+        "key_usage": [
+          "digitalSignature",
+          "keyEncipherment"
+        ],
+        "ext_key_usage": [
+          "serverAuth"
+        ],
+        "is_ca": false,
+        "ocsp_url": "http://ocsp.corp.example/",
+        "crl_url": null,
+        "cert_type": "DV",
+        "chain_status": "VALID",
+        "trust_status": "TRUSTED",
+        "trust_error": null,
+        "revocation_status": "GOOD",
+        "revocation_reason": "OCSP",
+        "revocation_detail": "[{\"m\":\"OCSP\",\"r\":\"GOOD\"}]",
+        "deployment_status": "UNKNOWN",
+        "fingerprint": "AB:CD:AB2AB879",
+        "intermediate_expiry": "2019-11-30T00:00:00",
+        "intermediate_days_remaining": 300,
+        "chain": [
+          {
+            "subject": "CN=full6.example.org",
+            "issuer": "CN=Corp Issuing CA 01",
+            "not_after": "2019-09-30T00:00:00",
+            "days_remaining": 90,
+            "self_signed": false
+          },
+          {
+            "subject": "CN=Corp Issuing CA 01",
+            "issuer": "CN=Corp Root CA",
+            "not_after": "2019-11-30T00:00:00",
+            "days_remaining": 300,
+            "self_signed": false
+          }
+        ],
+        "tls_version": "TLSv1.3",
+        "cipher_suite": "TLS_AES_256_GCM_SHA384",
+        "alpn": "h2",
+        "hsts": null,
+        "http_status": 200,
+        "resolved_ip": "10.20.30.24",
+        "resolved_ips": [
+          "10.20.30.24"
+        ],
+        "via": "direct",
+        "tls_mode_used": "browser",
+        "elapsed_ms": 106,
+        "attempts_total": 1,
+        "run_id": "<run>"
+      },
+      "threw": false
+    },
+    {
+      "call": "saveResult",
+      "result": {
+        "domain": "full7.example.org",
+        "status": "error",
+        "error": "I/O error: Broken pipe",
+        "warning": true,
+        "checked_at": "2019-06-01T08:00:02",
+        "san": [],
+        "chain_status": "UNKNOWN",
+        "revocation_status": "UNKNOWN",
+        "deployment_status": "UNKNOWN",
+        "fingerprint": null,
+        "chain": [],
+        "subject_dn": null,
+        "issuer_dn": null,
+        "tls_version": null,
+        "hsts": null,
+        "error_class": "NETWORK",
+        "error_stage": "connect",
+        "resolved_ips": [
+          "10.9.8.7"
+        ],
+        "attempts_total": 2,
+        "attempts_elapsed_ms": 13004,
+        "retry_attempted": true,
+        "retry_recovered": false,
+        "via": "direct",
+        "run_id": "<run>"
+      },
+      "threw": false
+    },
+    {
+      "call": "saveResult",
+      "result": {
+        "domain": "full8.example.org",
+        "status": "error",
+        "error": "SSL handshake: Received fatal alert: handshake_failure",
+        "warning": true,
+        "checked_at": "2019-06-01T08:00:02",
+        "san": [],
+        "chain_status": "UNKNOWN",
+        "revocation_status": "UNKNOWN",
+        "deployment_status": "UNKNOWN",
+        "fingerprint": null,
+        "chain": [],
+        "subject_dn": null,
+        "issuer_dn": null,
+        "tls_version": null,
+        "hsts": null,
+        "error_class": "SSL",
+        "error_stage": "tls",
+        "resolved_ips": [
+          "10.1.1.1",
+          "10.1.1.2"
+        ],
+        "run_id": "<run>"
+      },
+      "threw": false
+    },
+    {
+      "call": "saveResult",
+      "result": {
+        "domain": "full9.example.org",
+        "subject": "full9.example.org",
+        "issuer": "Corp",
+        "issuer_cn": "Corp Issuing CA 01",
+        "not_before": "2019-01-01T00:00:00",
+        "not_after": "2019-12-31T00:00:00",
+        "days_remaining": 93,
+        "warning": false,
+        "status": "valid",
+        "san": [
+          "full9.example.org",
+          "www.full9.example.org"
+        ],
+        "checked_at": "2019-06-01T08:00:01",
+        "serial_number": "0A1B1991494652",
+        "signature_algorithm": "SHA256withRSA",
+        "public_key_algorithm": "RSA",
+        "public_key_size": 2048,
+        "subject_dn": "CN=full9.example.org",
+        "issuer_dn": "CN=Corp Issuing CA 01,O=Corp",
+        "key_usage": [
+          "digitalSignature",
+          "keyEncipherment"
+        ],
+        "ext_key_usage": [
+          "serverAuth"
+        ],
+        "is_ca": false,
+        "ocsp_url": "http://ocsp.corp.example/",
+        "crl_url": null,
+        "cert_type": "DV",
+        "chain_status": "INCOMPLETE",
+        "trust_status": "TRUSTED",
+        "trust_error": null,
+        "revocation_status": "GOOD",
+        "revocation_reason": "OCSP",
+        "revocation_detail": "[{\"m\":\"OCSP\",\"r\":\"GOOD\"}]",
+        "deployment_status": "UNKNOWN",
+        "fingerprint": "AB:CD:76B3CBFC",
+        "intermediate_expiry": null,
+        "intermediate_days_remaining": null,
+        "chain": [],
+        "tls_version": "TLSv1.3",
+        "cipher_suite": "TLS_AES_256_GCM_SHA384",
+        "alpn": "h2",
+        "hsts": null,
+        "http_status": 200,
+        "resolved_ip": "10.20.30.53",
+        "resolved_ips": [
+          "10.20.30.53"
+        ],
+        "via": "direct",
+        "tls_mode_used": "browser",
+        "elapsed_ms": 109,
+        "attempts_total": 1,
+        "run_id": "<run>"
+      },
+      "threw": false
+    },
+    {
+      "call": "saveResult",
+      "result": {
+        "domain": "full10.example.org",
+        "status": "error",
+        "error": "Domain resolution failed",
+        "warning": true,
+        "checked_at": "2019-06-01T08:00:02",
+        "san": [],
+        "chain_status": "UNKNOWN",
+        "revocation_status": "UNKNOWN",
+        "deployment_status": "UNKNOWN",
+        "fingerprint": null,
+        "chain": [],
+        "subject_dn": null,
+        "issuer_dn": null,
+        "tls_version": null,
+        "hsts": null,
+        "error_class": "DNS",
+        "error_stage": "dns",
+        "run_id": "<run>"
+      },
+      "threw": false
+    },
+    {
+      "call": "saveResult",
+      "result": {
+        "domain": "full11.example.org",
+        "subject": "full11.example.org",
+        "issuer": "Corp",
+        "issuer_cn": "Corp Issuing CA 01",
+        "not_before": "2019-01-01T00:00:00",
+        "not_after": "2019-12-31T00:00:00",
+        "days_remaining": 107,
+        "warning": false,
+        "status": "valid",
+        "san": [
+          "full11.example.org",
+          "www.full11.example.org"
+        ],
+        "checked_at": "2019-06-01T08:00:01",
+        "serial_number": "0A1B309423585",
+        "signature_algorithm": "SHA256withRSA",
+        "public_key_algorithm": "RSA",
+        "public_key_size": 2048,
+        "subject_dn": "CN=full11.example.org",
+        "issuer_dn": "CN=Corp Issuing CA 01,O=Corp",
+        "key_usage": [
+          "digitalSignature",
+          "keyEncipherment"
+        ],
+        "ext_key_usage": [
+          "serverAuth"
+        ],
+        "is_ca": false,
+        "ocsp_url": "http://ocsp.corp.example/",
+        "crl_url": null,
+        "cert_type": "DV",
+        "chain_status": "INCOMPLETE",
+        "trust_status": "TRUSTED",
+        "trust_error": null,
+        "revocation_status": "GOOD",
+        "revocation_reason": "OCSP",
+        "revocation_detail": "[{\"m\":\"OCSP\",\"r\":\"GOOD\"}]",
+        "deployment_status": "UNKNOWN",
+        "fingerprint": "AB:CD:12716DE1",
+        "intermediate_expiry": null,
+        "intermediate_days_remaining": null,
+        "chain": [],
+        "tls_version": "TLSv1.3",
+        "cipher_suite": "TLS_AES_256_GCM_SHA384",
+        "alpn": "h2",
+        "hsts": "max-age=31536000; includeSubDomains",
+        "http_status": 200,
+        "resolved_ip": "10.20.30.186",
+        "resolved_ips": [
+          "10.20.30.186"
+        ],
+        "via": "direct",
+        "tls_mode_used": "browser",
+        "elapsed_ms": 111,
+        "attempts_total": 1,
+        "run_id": "<run>"
+      },
+      "threw": false
+    },
+    {
+      "call": "saveResult",
+      "result": {
+        "domain": "full12.example.org",
+        "status": "error",
+        "error": "Domain resolution failed",
+        "warning": true,
+        "checked_at": "2019-06-01T08:00:02",
+        "san": [],
+        "chain_status": "UNKNOWN",
+        "revocation_status": "UNKNOWN",
+        "deployment_status": "UNKNOWN",
+        "fingerprint": null,
+        "chain": [],
+        "subject_dn": null,
+        "issuer_dn": null,
+        "tls_version": null,
+        "hsts": null,
+        "error_class": "DNS",
+        "error_stage": "dns",
+        "unresolvable_host": true,
+        "run_id": "<run>"
+      },
+      "threw": false
+    },
+    {
+      "call": "evictAllCaches"
+    },
+    {
+      "call": "onRun",
+      "networkErrors": 3,
+      "total": 12,
+      "rate": 0.25,
+      "suspected": false,
+      "minErrors": 3,
+      "threshold": 0.5
+    },
+    {
+      "call": "processResults",
+      "results": [
+        {
+          "domain": "full1.example.org",
+          "subject": "full1.example.org",
+          "issuer": "Corp",
+          "issuer_cn": "Corp Issuing CA 01",
+          "not_before": "2019-01-01T00:00:00",
+          "not_after": "2019-12-31T00:00:00",
+          "days_remaining": 37,
+          "warning": false,
+          "status": "valid",
+          "san": [
+            "full1.example.org",
+            "www.full1.example.org"
+          ],
+          "checked_at": "2019-06-01T08:00:01",
+          "serial_number": "0A1B43751412",
+          "signature_algorithm": "SHA256withRSA",
+          "public_key_algorithm": "RSA",
+          "public_key_size": 2048,
+          "subject_dn": "CN=full1.example.org",
+          "issuer_dn": "CN=Corp Issuing CA 01,O=Corp",
+          "key_usage": [
+            "digitalSignature",
+            "keyEncipherment"
+          ],
+          "ext_key_usage": [
+            "serverAuth"
+          ],
+          "is_ca": false,
+          "ocsp_url": "http://ocsp.corp.example/",
+          "crl_url": null,
+          "cert_type": "DV",
+          "chain_status": "INCOMPLETE",
+          "trust_status": "TRUSTED",
+          "trust_error": null,
+          "revocation_status": "GOOD",
+          "revocation_reason": "OCSP",
+          "revocation_detail": "[{\"m\":\"OCSP\",\"r\":\"GOOD\"}]",
+          "deployment_status": "SIM-OK",
+          "fingerprint": "AB:CD:29B97F4",
+          "intermediate_expiry": null,
+          "intermediate_days_remaining": null,
+          "chain": [],
+          "tls_version": "TLSv1.3",
+          "cipher_suite": "TLS_AES_256_GCM_SHA384",
+          "alpn": "h2",
+          "hsts": null,
+          "http_status": 200,
+          "resolved_ip": "10.20.30.13",
+          "resolved_ips": [
+            "10.20.30.13"
+          ],
+          "via": "direct",
+          "tls_mode_used": "browser",
+          "elapsed_ms": 101,
+          "attempts_total": 1,
+          "run_id": "<run>"
+        },
+        {
+          "domain": "full2.example.org",
+          "subject": "full2.example.org",
+          "issuer": "Corp",
+          "issuer_cn": "Corp Issuing CA 01",
+          "not_before": "2019-01-01T00:00:00",
+          "not_after": "2019-12-31T00:00:00",
+          "days_remaining": 44,
+          "warning": false,
+          "status": "valid",
+          "san": [
+            "full2.example.org",
+            "www.full2.example.org"
+          ],
+          "checked_at": "2019-06-01T08:00:01",
+          "serial_number": "0A1B249651595",
+          "signature_algorithm": "SHA256withRSA",
+          "public_key_algorithm": "RSA",
+          "public_key_size": 2048,
+          "subject_dn": "CN=full2.example.org",
+          "issuer_dn": "CN=Corp Issuing CA 01,O=Corp",
+          "key_usage": [
+            "digitalSignature",
+            "keyEncipherment"
+          ],
+          "ext_key_usage": [
+            "serverAuth"
+          ],
+          "is_ca": false,
+          "ocsp_url": "http://ocsp.corp.example/",
+          "crl_url": null,
+          "cert_type": "DV",
+          "chain_status": "VALID",
+          "trust_status": "TRUSTED",
+          "trust_error": null,
+          "revocation_status": "GOOD",
+          "revocation_reason": "OCSP",
+          "revocation_detail": "[{\"m\":\"OCSP\",\"r\":\"GOOD\"}]",
+          "deployment_status": "SIM-OK",
+          "fingerprint": "AB:CD:F11E9E75",
+          "intermediate_expiry": "2019-11-30T00:00:00",
+          "intermediate_days_remaining": 300,
+          "chain": [
+            {
+              "subject": "CN=full2.example.org",
+              "issuer": "CN=Corp Issuing CA 01",
+              "not_after": "2019-09-30T00:00:00",
+              "days_remaining": 90,
+              "self_signed": false
+            },
+            {
+              "subject": "CN=Corp Issuing CA 01",
+              "issuer": "CN=Corp Root CA",
+              "not_after": "2019-11-30T00:00:00",
+              "days_remaining": 300,
+              "self_signed": false
+            }
+          ],
+          "tls_version": "TLSv1.3",
+          "cipher_suite": "TLS_AES_256_GCM_SHA384",
+          "alpn": "h2",
+          "hsts": null,
+          "http_status": 200,
+          "resolved_ip": "10.20.30.196",
+          "resolved_ips": [
+            "10.20.30.196"
+          ],
+          "via": "direct",
+          "tls_mode_used": "browser",
+          "elapsed_ms": 102,
+          "attempts_total": 1,
+          "run_id": "<run>"
+        },
+        {
+          "domain": "full3.example.org",
+          "status": "error",
+          "error": "Connection timeout after 6s",
+          "warning": true,
+          "checked_at": "2019-06-01T08:00:02",
+          "san": [],
+          "chain_status": "UNKNOWN",
+          "revocation_status": "UNKNOWN",
+          "deployment_status": "SIM-error",
+          "fingerprint": null,
+          "chain": [],
+          "subject_dn": null,
+          "issuer_dn": null,
+          "tls_version": null,
+          "hsts": null,
+          "error_class": "NETWORK",
+          "error_stage": "connect",
+          "resolved_ips": [
+            "10.9.8.7"
+          ],
+          "attempts_total": 2,
+          "attempts_elapsed_ms": 13004,
+          "retry_attempted": true,
+          "retry_recovered": false,
+          "via": "direct",
+          "run_id": "<run>"
+        },
+        {
+          "domain": "full4.example.org",
+          "subject": "full4.example.org",
+          "issuer": "Corp",
+          "issuer_cn": "Corp Issuing CA 01",
+          "not_before": "2019-01-01T00:00:00",
+          "not_after": "2019-12-31T00:00:00",
+          "days_remaining": 58,
+          "warning": false,
+          "status": "valid",
+          "san": [
+            "full4.example.org",
+            "www.full4.example.org"
+          ],
+          "checked_at": "2019-06-01T08:00:01",
+          "serial_number": "0A1B836457609",
+          "signature_algorithm": "SHA256withRSA",
+          "public_key_algorithm": "RSA",
+          "public_key_size": 2048,
+          "subject_dn": "CN=full4.example.org",
+          "issuer_dn": "CN=Corp Issuing CA 01,O=Corp",
+          "key_usage": [
+            "digitalSignature",
+            "keyEncipherment"
+          ],
+          "ext_key_usage": [
+            "serverAuth"
+          ],
+          "is_ca": false,
+          "ocsp_url": "http://ocsp.corp.example/",
+          "crl_url": null,
+          "cert_type": "DV",
+          "chain_status": "VALID",
+          "trust_status": "TRUSTED",
+          "trust_error": null,
+          "revocation_status": "GOOD",
+          "revocation_reason": "OCSP",
+          "revocation_detail": "[{\"m\":\"OCSP\",\"r\":\"GOOD\"}]",
+          "deployment_status": "SIM-OK",
+          "fingerprint": "AB:CD:CE24AB77",
+          "intermediate_expiry": "2019-11-30T00:00:00",
+          "intermediate_days_remaining": 300,
+          "chain": [
+            {
+              "subject": "CN=full4.example.org",
+              "issuer": "CN=Corp Issuing CA 01",
+              "not_after": "2019-09-30T00:00:00",
+              "days_remaining": 90,
+              "self_signed": false
+            },
+            {
+              "subject": "CN=Corp Issuing CA 01",
+              "issuer": "CN=Corp Root CA",
+              "not_after": "2019-11-30T00:00:00",
+              "days_remaining": 300,
+              "self_signed": false
+            }
+          ],
+          "tls_version": "TLSv1.3",
+          "cipher_suite": "TLS_AES_256_GCM_SHA384",
+          "alpn": "h2",
+          "hsts": null,
+          "http_status": 200,
+          "resolved_ip": "10.20.30.10",
+          "resolved_ips": [
+            "10.20.30.10"
+          ],
+          "via": "direct",
+          "tls_mode_used": "browser",
+          "elapsed_ms": 104,
+          "attempts_total": 1,
+          "run_id": "<run>"
+        },
+        {
+          "domain": "full5.example.org",
+          "subject": "full5.example.org",
+          "issuer": "Corp",
+          "issuer_cn": "Corp Issuing CA 01",
+          "not_before": "2019-01-01T00:00:00",
+          "not_after": "2019-12-31T00:00:00",
+          "days_remaining": 25,
+          "warning": true,
+          "status": "warning",
+          "san": [
+            "full5.example.org",
+            "www.full5.example.org"
+          ],
+          "checked_at": "2019-06-01T08:00:01",
+          "serial_number": "0A1B1129860616",
+          "signature_algorithm": "SHA256withRSA",
+          "public_key_algorithm": "RSA",
+          "public_key_size": 2048,
+          "subject_dn": "CN=full5.example.org",
+          "issuer_dn": "CN=Corp Issuing CA 01,O=Corp",
+          "key_usage": [
+            "digitalSignature",
+            "keyEncipherment"
+          ],
+          "ext_key_usage": [
+            "serverAuth"
+          ],
+          "is_ca": false,
+          "ocsp_url": "http://ocsp.corp.example/",
+          "crl_url": null,
+          "cert_type": "DV",
+          "chain_status": "INCOMPLETE",
+          "trust_status": "TRUSTED",
+          "trust_error": null,
+          "revocation_status": "GOOD",
+          "revocation_reason": "OCSP",
+          "revocation_detail": "[{\"m\":\"OCSP\",\"r\":\"GOOD\"}]",
+          "deployment_status": "SIM-warning",
+          "fingerprint": "AB:CD:BCA7B1F8",
+          "intermediate_expiry": null,
+          "intermediate_days_remaining": null,
+          "chain": [],
+          "tls_version": "TLSv1.3",
+          "cipher_suite": "TLS_AES_256_GCM_SHA384",
+          "alpn": "h2",
+          "hsts": null,
+          "http_status": 200,
+          "resolved_ip": "10.20.30.17",
+          "resolved_ips": [
+            "10.20.30.17"
+          ],
+          "via": "direct",
+          "tls_mode_used": "browser",
+          "elapsed_ms": 777,
+          "attempts_total": 1,
+          "run_id": "<run>"
+        },
+        {
+          "domain": "full6.example.org",
+          "subject": "full6.example.org",
+          "issuer": "Corp",
+          "issuer_cn": "Corp Issuing CA 01",
+          "not_before": "2019-01-01T00:00:00",
+          "not_after": "2019-12-31T00:00:00",
+          "days_remaining": 72,
+          "warning": false,
+          "status": "valid",
+          "san": [
+            "full6.example.org",
+            "www.full6.example.org"
+          ],
+          "checked_at": "2019-06-01T08:00:01",
+          "serial_number": "0A1B1423263623",
+          "signature_algorithm": "SHA256withRSA",
+          "public_key_algorithm": "RSA",
+          "public_key_size": 2048,
+          "subject_dn": "CN=full6.example.org",
+          "issuer_dn": "CN=Corp Issuing CA 01,O=Corp",
+          "key_usage": [
+            "digitalSignature",
+            "keyEncipherment"
+          ],
+          "ext_key_usage": [
+            "serverAuth"
+          ],
+          "is_ca": false,
+          "ocsp_url": "http://ocsp.corp.example/",
+          "crl_url": null,
+          "cert_type": "DV",
+          "chain_status": "VALID",
+          "trust_status": "TRUSTED",
+          "trust_error": null,
+          "revocation_status": "GOOD",
+          "revocation_reason": "OCSP",
+          "revocation_detail": "[{\"m\":\"OCSP\",\"r\":\"GOOD\"}]",
+          "deployment_status": "SIM-OK",
+          "fingerprint": "AB:CD:AB2AB879",
+          "intermediate_expiry": "2019-11-30T00:00:00",
+          "intermediate_days_remaining": 300,
+          "chain": [
+            {
+              "subject": "CN=full6.example.org",
+              "issuer": "CN=Corp Issuing CA 01",
+              "not_after": "2019-09-30T00:00:00",
+              "days_remaining": 90,
+              "self_signed": false
+            },
+            {
+              "subject": "CN=Corp Issuing CA 01",
+              "issuer": "CN=Corp Root CA",
+              "not_after": "2019-11-30T00:00:00",
+              "days_remaining": 300,
+              "self_signed": false
+            }
+          ],
+          "tls_version": "TLSv1.3",
+          "cipher_suite": "TLS_AES_256_GCM_SHA384",
+          "alpn": "h2",
+          "hsts": null,
+          "http_status": 200,
+          "resolved_ip": "10.20.30.24",
+          "resolved_ips": [
+            "10.20.30.24"
+          ],
+          "via": "direct",
+          "tls_mode_used": "browser",
+          "elapsed_ms": 106,
+          "attempts_total": 1,
+          "run_id": "<run>"
+        },
+        {
+          "domain": "full7.example.org",
+          "status": "error",
+          "error": "I/O error: Broken pipe",
+          "warning": true,
+          "checked_at": "2019-06-01T08:00:02",
+          "san": [],
+          "chain_status": "UNKNOWN",
+          "revocation_status": "UNKNOWN",
+          "deployment_status": "SIM-error",
+          "fingerprint": null,
+          "chain": [],
+          "subject_dn": null,
+          "issuer_dn": null,
+          "tls_version": null,
+          "hsts": null,
+          "error_class": "NETWORK",
+          "error_stage": "connect",
+          "resolved_ips": [
+            "10.9.8.7"
+          ],
+          "attempts_total": 2,
+          "attempts_elapsed_ms": 13004,
+          "retry_attempted": true,
+          "retry_recovered": false,
+          "via": "direct",
+          "run_id": "<run>"
+        },
+        {
+          "domain": "full8.example.org",
+          "status": "error",
+          "error": "SSL handshake: Received fatal alert: handshake_failure",
+          "warning": true,
+          "checked_at": "2019-06-01T08:00:02",
+          "san": [],
+          "chain_status": "UNKNOWN",
+          "revocation_status": "UNKNOWN",
+          "deployment_status": "SIM-error",
+          "fingerprint": null,
+          "chain": [],
+          "subject_dn": null,
+          "issuer_dn": null,
+          "tls_version": null,
+          "hsts": null,
+          "error_class": "SSL",
+          "error_stage": "tls",
+          "resolved_ips": [
+            "10.1.1.1",
+            "10.1.1.2"
+          ],
+          "run_id": "<run>"
+        },
+        {
+          "domain": "full9.example.org",
+          "subject": "full9.example.org",
+          "issuer": "Corp",
+          "issuer_cn": "Corp Issuing CA 01",
+          "not_before": "2019-01-01T00:00:00",
+          "not_after": "2019-12-31T00:00:00",
+          "days_remaining": 93,
+          "warning": false,
+          "status": "valid",
+          "san": [
+            "full9.example.org",
+            "www.full9.example.org"
+          ],
+          "checked_at": "2019-06-01T08:00:01",
+          "serial_number": "0A1B1991494652",
+          "signature_algorithm": "SHA256withRSA",
+          "public_key_algorithm": "RSA",
+          "public_key_size": 2048,
+          "subject_dn": "CN=full9.example.org",
+          "issuer_dn": "CN=Corp Issuing CA 01,O=Corp",
+          "key_usage": [
+            "digitalSignature",
+            "keyEncipherment"
+          ],
+          "ext_key_usage": [
+            "serverAuth"
+          ],
+          "is_ca": false,
+          "ocsp_url": "http://ocsp.corp.example/",
+          "crl_url": null,
+          "cert_type": "DV",
+          "chain_status": "INCOMPLETE",
+          "trust_status": "TRUSTED",
+          "trust_error": null,
+          "revocation_status": "GOOD",
+          "revocation_reason": "OCSP",
+          "revocation_detail": "[{\"m\":\"OCSP\",\"r\":\"GOOD\"}]",
+          "deployment_status": "SIM-OK",
+          "fingerprint": "AB:CD:76B3CBFC",
+          "intermediate_expiry": null,
+          "intermediate_days_remaining": null,
+          "chain": [],
+          "tls_version": "TLSv1.3",
+          "cipher_suite": "TLS_AES_256_GCM_SHA384",
+          "alpn": "h2",
+          "hsts": null,
+          "http_status": 200,
+          "resolved_ip": "10.20.30.53",
+          "resolved_ips": [
+            "10.20.30.53"
+          ],
+          "via": "direct",
+          "tls_mode_used": "browser",
+          "elapsed_ms": 109,
+          "attempts_total": 1,
+          "run_id": "<run>"
+        },
+        {
+          "domain": "full10.example.org",
+          "status": "error",
+          "error": "Domain resolution failed",
+          "warning": true,
+          "checked_at": "2019-06-01T08:00:02",
+          "san": [],
+          "chain_status": "UNKNOWN",
+          "revocation_status": "UNKNOWN",
+          "deployment_status": "SIM-error",
+          "fingerprint": null,
+          "chain": [],
+          "subject_dn": null,
+          "issuer_dn": null,
+          "tls_version": null,
+          "hsts": null,
+          "error_class": "DNS",
+          "error_stage": "dns",
+          "run_id": "<run>"
+        },
+        {
+          "domain": "full11.example.org",
+          "subject": "full11.example.org",
+          "issuer": "Corp",
+          "issuer_cn": "Corp Issuing CA 01",
+          "not_before": "2019-01-01T00:00:00",
+          "not_after": "2019-12-31T00:00:00",
+          "days_remaining": 107,
+          "warning": false,
+          "status": "valid",
+          "san": [
+            "full11.example.org",
+            "www.full11.example.org"
+          ],
+          "checked_at": "2019-06-01T08:00:01",
+          "serial_number": "0A1B309423585",
+          "signature_algorithm": "SHA256withRSA",
+          "public_key_algorithm": "RSA",
+          "public_key_size": 2048,
+          "subject_dn": "CN=full11.example.org",
+          "issuer_dn": "CN=Corp Issuing CA 01,O=Corp",
+          "key_usage": [
+            "digitalSignature",
+            "keyEncipherment"
+          ],
+          "ext_key_usage": [
+            "serverAuth"
+          ],
+          "is_ca": false,
+          "ocsp_url": "http://ocsp.corp.example/",
+          "crl_url": null,
+          "cert_type": "DV",
+          "chain_status": "INCOMPLETE",
+          "trust_status": "TRUSTED",
+          "trust_error": null,
+          "revocation_status": "GOOD",
+          "revocation_reason": "OCSP",
+          "revocation_detail": "[{\"m\":\"OCSP\",\"r\":\"GOOD\"}]",
+          "deployment_status": "SIM-OK",
+          "fingerprint": "AB:CD:12716DE1",
+          "intermediate_expiry": null,
+          "intermediate_days_remaining": null,
+          "chain": [],
+          "tls_version": "TLSv1.3",
+          "cipher_suite": "TLS_AES_256_GCM_SHA384",
+          "alpn": "h2",
+          "hsts": "max-age=31536000; includeSubDomains",
+          "http_status": 200,
+          "resolved_ip": "10.20.30.186",
+          "resolved_ips": [
+            "10.20.30.186"
+          ],
+          "via": "direct",
+          "tls_mode_used": "browser",
+          "elapsed_ms": 111,
+          "attempts_total": 1,
+          "run_id": "<run>"
+        },
+        {
+          "domain": "full12.example.org",
+          "status": "error",
+          "error": "Domain resolution failed",
+          "warning": true,
+          "checked_at": "2019-06-01T08:00:02",
+          "san": [],
+          "chain_status": "UNKNOWN",
+          "revocation_status": "UNKNOWN",
+          "deployment_status": "SIM-error",
+          "fingerprint": null,
+          "chain": [],
+          "subject_dn": null,
+          "issuer_dn": null,
+          "tls_version": null,
+          "hsts": null,
+          "error_class": "DNS",
+          "error_stage": "dns",
+          "unresolvable_host": true,
+          "run_id": "<run>"
+        }
+      ]
+    },
+    {
+      "call": "recordScanRun",
+      "kind": "full",
+      "runId": "<run>",
+      "instanceId": "pod-a",
+      "at": "<time>",
+      "durationMs": "<duration>",
+      "total": 12,
+      "warnings": 6,
+      "errors": 5,
+      "failure": null
+    },
+    {
+      "call": "lock.release"
+    }
+  ],
+  "state": {
+    "running": false,
+    "current_run_id": "",
+    "last_run_id": "<run>",
+    "last_run": "<set>",
+    "last_run_duration_ms": "<duration>",
+    "last_run_total": 12,
+    "last_run_warnings": 6,
+    "last_run_errors": 5,
+    "last_run_failure": null,
+    "startup_check_stopped": false,
+    "lock_held_at_end": true
+  },
+  "logs": [
+    "INFO Certificate check started — runId=<run>, 12 domain(s) [instance=<instance>]",
+    "INFO Check complete — runId=<run>, Total=12, Warning=6, Error=5, NetworkErrors=3 (rate=0.25) [instance=<instance>]"
+  ]
+}

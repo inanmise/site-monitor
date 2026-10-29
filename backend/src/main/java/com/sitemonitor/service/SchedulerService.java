@@ -3265,6 +3265,125 @@ public class SchedulerService {
         });
     }
 
+    // ── R3-4 cert run (wiring + helpers) — çok pod Sürüm 3-4 paket B (tasarım R3-4 §4.6) ──────────────────────────────
+    /**
+     * Parçalı sertifika taramasının koordinatörü (çok pod Sürüm 3-4) — alan enjeksiyonu, kurucu değişmez; null (elle kurulum /
+     * test) = bugünkü klasik tur. Anahtar ({@code site.monitor.checks.cert-chunks.enabled}) kapalıyken {@code gather} ilk
+     * deyiminde bir bellek okuması yapıp {@code null} döner → {@link #gatherCertResults} (20.170.0'ın toplaması, birebir).
+     */
+    @Autowired(required = false)
+    private com.sitemonitor.service.certsweep.CertRunCoordinator certRunCoordinator;
+
+    /**
+     * Sertifika turunun TOPLAMA adımı — {@code runCheckForDomains}'ten SAF ayrıştırma (20.170.0'ın satırları birebir; P0 altın
+     * kayıtları kanıtlar). Her satır için {@code checkAsync} bu pod'un {@code certCheckExecutor}'ına verilir, sonuçlar
+     * İLERLEMEYE bağlı tavanla ({@link #awaitCertCheck}) sırayla beklenir, her harita kopyalanıp {@code run_id} eklenir. Kapanışta
+     * ({@code startupCheckStopped}) kalan sonuçlar beklenmez — liste KISA döner. Bir kontrolün istisnası fırlar.
+     *
+     * <p>Parçalı turda aynı yöntem parça ölçücüsüdür ({@code SchedulerCertChunks}): işçi kendi parçasını, koordinatör
+     * devraldığı / yeniden ölçtüğü alan adlarını bununla ölçer — tek ölçme yolu (L-3). Hiçbir satır yazmaz (L-2).
+     *
+     * <p>{@code public}: {@code SchedulerCertChunks} bu yöntemi Spring bean'i üzerinden çağırır ve {@code SchedulerService} bir
+     * CGLIB sınıf vekilidir ({@code @Transactional} / {@code @Async}); paket içi yöntem yalnız vekil ile hedef aynı sınıf
+     * yükleyicideyken hedefe yönlenir — {@code public} her zaman yönlenir (inceleme sağlamlaştırması, 2026-10-29). Aynı neden
+     * {@link #certRunClosing()}, {@link #certCheckCoreSize()} ve {@link #isCoordinatingCertRun()} için geçerli.
+     */
+    public List<Map<String, Object>> gatherCertResults(List<Map<String, Object>> domains, String runId) {
+        List<CompletableFuture<Map<String, Object>>> futures = domains.stream()
+                .map(d -> checkerService.checkAsync(
+                        (String) d.get("domain"),
+                        (int) d.get("port"),
+                        Boolean.TRUE.equals(d.get("use_proxy")),
+                        blankToNull((String) d.get("tls_mode")),
+                        (Integer) d.get("timeout_seconds")))
+                .toList();
+
+        // Süre tavanı (2026-10-08, "zaman aşımı olmayan servis çağrısı" denetimi): burada süresiz join vardı —
+        // askıda kalan TEK bir kontrol sweep iş parçacığını, in-process "running" bayrağını (sonraki turlar
+        // "already in progress" ile atlanıyordu) ve cert-check kilidini süresiz tutuyordu. Bekleme İLERLEMEYE
+        // bağlıdır (bkz. awaitCertCheck): kuyrukta sırası gelmemiş ya da yavaş ama süren kontrol KESİLMEZ.
+        java.util.concurrent.atomic.AtomicLong lastProgressNanos =
+                new java.util.concurrent.atomic.AtomicLong(System.nanoTime());
+        futures.forEach(f -> f.whenComplete((r, e) -> lastProgressNanos.set(System.nanoTime())));
+        long maxWaitMs = Math.max(1L, certCheckMaxWaitSeconds) * 1000L;
+        List<Map<String, Object>> results = new java.util.ArrayList<>(futures.size());
+        for (int i = 0; i < futures.size(); i++) {
+            if (startupCheckStopped) break;   // kapanış: kalan sonuçlar beklenmez
+            Map<String, Object> r = awaitCertCheck(futures.get(i), (String) domains.get(i).get("domain"),
+                    lastProgressNanos, maxWaitMs);
+            Map<String, Object> m = new LinkedHashMap<>(r);
+            m.put("run_id", runId);
+            results.add(m);
+        }
+        return results;
+    }
+
+    /**
+     * Parçalı tur ölçücüsü için: bu pod kapanıyor mu (bellek) — {@code startupCheckStopped || stopping()}. {@code public}: CGLIB
+     * vekili (bkz. {@link #gatherCertResults}).
+     */
+    public boolean certRunClosing() {
+        return startupCheckStopped || stopping();
+    }
+
+    /**
+     * Parçalı tur ölçücüsü için: {@code certCheckExecutor}'ın GÜNCEL çekirdek sayısı (canlı ayar); havuz yoksa 0. {@code public}:
+     * CGLIB vekili (bkz. {@link #gatherCertResults}).
+     */
+    public int certCheckCoreSize() {
+        org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor ex = certCheckExecutor;
+        return ex == null ? 0 : ex.getCorePoolSize();
+    }
+
+    /**
+     * Bu iş parçacığı şu an bir sertifika turunun parçalı toplamasını KOORDİNE ediyor mu ({@code certRunCoordinator.gather}
+     * çağrısı süresince) — bellek. {@code SchedulerCertChunks} lider pod'da parçaları alt gruplara böler (inceleme SW-L3) ama
+     * koordinatörün kendi devraldığı / yeniden ölçtüğü alan adlarını klasik turdaki gibi bütün çekirdekle ölçer. Örnek alanı
+     * (statik değil): aynı JVM'deki iki pod (testler) birbirini etkilemez.
+     */
+    public boolean isCoordinatingCertRun() {
+        return Boolean.TRUE.equals(certRunCoordinating.get());
+    }
+
+    /** {@link #isCoordinatingCertRun()} işareti — yalnız {@code certRunCoordinator.gather} çağrısı süresince dolu. */
+    private final ThreadLocal<Boolean> certRunCoordinating = new ThreadLocal<>();
+
+    /**
+     * Bu POD verilen kimlikteki sertifika turunu ŞU AN koşturuyor mu (bellek: tur sürüyor ∧ güncel tur kimliği bu) — FX2-WORKER
+     * L-3 (2026-10-29): parça işçisi (başka iş parçacığı) bu pod'un koordine ettiği koşunun parçasını ölçerken
+     * {@code SchedulerCertChunks} onu alt gruplara BÖLMEZ — koordinatör iş parçacığının muafiyetiyle aynı gerekçe (klasik tur da
+     * lider pod'da bütün havuzu kullanır; bölmek turu ve {@code cert-check} kilidini ~3 kat uzatırdı). Parçalı koşu kimliği klasik
+     * tur kimliğidir; işçi yalnız RUNNING koşuların parçalarını alır. {@code public}: CGLIB vekili (bkz.
+     * {@link #gatherCertResults}).
+     */
+    public boolean coordinatesCertRun(String runId) {
+        return runId != null && !runId.isEmpty() && running.get() && runId.equals(currentRunId.get());
+    }
+
+    /** Koordinatörün toplaması — iş parçacığını işaretleyip (SW-L3) çağırır; işaret her durumda kaldırılır. */
+    private com.sitemonitor.service.certsweep.CertRunCoordinator.Gathered gatherChunked(List<Map<String, Object>> domains,
+            String runId, String kind, boolean evictCaches, LockTicket certLock) {
+        certRunCoordinating.set(Boolean.TRUE);
+        try {
+            return certRunCoordinator.gather(domains, new com.sitemonitor.service.certsweep.CertRunCoordinator.Request(
+                    runId, kind, evictCaches, () -> lockStillHeld(certLock), this::certRunClosing,
+                    Math.max(1L, certCheckMaxWaitSeconds) * 1000L, this::getMinNetworkErrors,
+                    this::getErrorRateThreshold));
+        } finally {
+            certRunCoordinating.remove();
+        }
+    }
+
+    /** Parçalı koşunun son durumu — tur {@code finally}'sinden; hiçbir hata bayrağı ve kilidi bırakmayı atlatamaz. */
+    private void finishChunkedCertRun(String chunkedRunId, boolean finished, boolean failed) {
+        try {
+            certRunCoordinator.finish(chunkedRunId, finished, failed);
+        } catch (Throwable t) {
+            log.warn("Parçalı tarama kapanışı yazılamadı (runId={}): {}", chunkedRunId, t.getClass().getSimpleName());
+        }
+    }
+    // ── /R3-4 cert run ──
+
     private void runCheckForDomains(List<Map<String, Object>> domains, boolean evictCaches) {
         runCheckForDomains(domains, evictCaches, null, evictCaches
                 ? com.sitemonitor.service.health.ClusterHealthStore.KIND_FULL : com.sitemonitor.service.health.ClusterHealthStore.KIND_STALE);
@@ -3307,41 +3426,41 @@ public class SchedulerService {
         boolean finished = false;
         Integer runTotal = null, runWarnings = null, runErrors = null;
         String runFailure = null;
+        // ── R3-4 cert run (state) ──
+        String chunkedRunId = null;   // parçalı koşulduysa koşu kimliği (finally kancası); klasikte null
+        // ── /R3-4 cert run ──
 
         try {
-            List<CompletableFuture<Map<String, Object>>> futures = domains.stream()
-                    .map(d -> checkerService.checkAsync(
-                            (String) d.get("domain"),
-                            (int) d.get("port"),
-                            Boolean.TRUE.equals(d.get("use_proxy")),
-                            blankToNull((String) d.get("tls_mode")),
-                            (Integer) d.get("timeout_seconds")))
-                    .toList();
-
-            // Süre tavanı (2026-10-08, "zaman aşımı olmayan servis çağrısı" denetimi): burada süresiz join vardı —
-            // askıda kalan TEK bir kontrol sweep iş parçacığını, in-process "running" bayrağını (sonraki turlar
-            // "already in progress" ile atlanıyordu) ve cert-check kilidini süresiz tutuyordu. Bekleme İLERLEMEYE
-            // bağlıdır (bkz. awaitCertCheck): kuyrukta sırası gelmemiş ya da yavaş ama süren kontrol KESİLMEZ.
-            java.util.concurrent.atomic.AtomicLong lastProgressNanos =
-                    new java.util.concurrent.atomic.AtomicLong(System.nanoTime());
-            futures.forEach(f -> f.whenComplete((r, e) -> lastProgressNanos.set(System.nanoTime())));
-            long maxWaitMs = Math.max(1L, certCheckMaxWaitSeconds) * 1000L;
-            List<Map<String, Object>> results = new java.util.ArrayList<>(futures.size());
-            for (int i = 0; i < futures.size(); i++) {
-                if (startupCheckStopped) break;   // kapanış: kalan sonuçlar beklenmez
-                Map<String, Object> r = awaitCertCheck(futures.get(i), (String) domains.get(i).get("domain"),
-                        lastProgressNanos, maxWaitMs);
-                Map<String, Object> m = new LinkedHashMap<>(r);
-                m.put("run_id", runId);
-                results.add(m);
+            // ── R3-4 cert run (gather) — toplama: parçalı koordinatör (anahtar açık + başka canlı pod) ya da klasik ──
+            com.sitemonitor.service.certsweep.CertRunCoordinator.Gathered chunked = certRunCoordinator == null ? null
+                    : gatherChunked(domains, runId, kind, evictCaches, certLock);
+            List<Map<String, Object>> results;
+            if (chunked == null) {
+                results = gatherCertResults(domains, runId);
+            } else {
+                chunkedRunId = runId;
+                if (chunked.aborted()) {
+                    // Parçalı tur bırakıldı (kapanış / kilit kaybı / koşu başka koordinatörce kapatıldı): klasik erken
+                    // dönüşlerle aynı — hiçbir sonuç işlenmez, tarama durumu yazılmaz; koşu satırı finally'de ABANDONED olur.
+                    if (com.sitemonitor.service.certsweep.CertSweepStore.OUTCOME_SHUTDOWN.equals(chunked.abortOutcome())) {
+                        log.info("Kapanış başladı — sertifika taraması sonuçları işlenmeden bırakıldı (runId={}, {} / {} sonuç)",
+                                runId, chunked.measured(), domains.size());
+                    } else {
+                        log.warn("cert-check kilidi kaybedildi — sonuçlar işlenmedi (runId={}, {} sonuç) [instance={}]",
+                                runId, chunked.measured(), INSTANCE_ID);
+                    }
+                    return;
+                }
+                results = chunked.results();
             }
             // Kapanış başladıysa (2026-10-12) sonuçlar İŞLENMEZ: kaydetme, alarm ve e-posta kapanan bağlamda (bean'ler yok
             // ediliyor, tarama liderliği bırakılmış) koşmasın. Saatlik tarama yeni pod'da telafi eder.
             if (startupCheckStopped) {
                 log.info("Kapanış başladı — sertifika taraması sonuçları işlenmeden bırakıldı (runId={}, {} / {} sonuç)",
-                        runId, results.size(), futures.size());
+                        runId, results.size(), domains.size());
                 return;
             }
+            // ── /R3-4 cert run ──
             // Kilit kaybedildiyse (2026-10-21, çok pod R1-A, MP-02) sonuçlar İŞLENMEZ: yenileme 0 satır buldu (yönetici zorla
             // bıraktı ya da başka pod aldı) veya yenileme aksayıp süre doldu — o pod aynı alanları tarıyor olabilir; ikimiz
             // de kaydedip alarm işlersek çift alarm / çift e-posta. Sonraki tur telafi eder.
@@ -3427,6 +3546,9 @@ public class SchedulerService {
                     }
                 }
             } finally {
+                // ── R3-4 cert run (finish) ── parçalı koşunun son durumu (klasikte tek null denetimi)
+                if (chunkedRunId != null) finishChunkedCertRun(chunkedRunId, finished, runFailure != null);
+                // ── /R3-4 cert run ──
                 running.set(false);
                 lastRunId.set(currentRunId.get());
                 currentRunId.set("");

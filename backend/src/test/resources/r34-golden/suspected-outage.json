@@ -1,0 +1,577 @@
+{
+  "scenario": {
+    "name": "suspected-outage",
+    "kind": "hourly",
+    "evict_caches": true,
+    "pre_held": true,
+    "domains": 6
+  },
+  "checks": [
+    {
+      "domain": "k1.example.com",
+      "port": 443,
+      "use_proxy": false,
+      "tls_mode": null,
+      "timeout_seconds": null
+    },
+    {
+      "domain": "k2.example.com",
+      "port": 443,
+      "use_proxy": true,
+      "tls_mode": null,
+      "timeout_seconds": null
+    },
+    {
+      "domain": "k3.example.com",
+      "port": 443,
+      "use_proxy": false,
+      "tls_mode": null,
+      "timeout_seconds": null
+    },
+    {
+      "domain": "k4.example.com",
+      "port": 443,
+      "use_proxy": false,
+      "tls_mode": null,
+      "timeout_seconds": null
+    },
+    {
+      "domain": "k5.example.com",
+      "port": 443,
+      "use_proxy": false,
+      "tls_mode": null,
+      "timeout_seconds": null
+    },
+    {
+      "domain": "k6.example.com",
+      "port": 443,
+      "use_proxy": false,
+      "tls_mode": null,
+      "timeout_seconds": null
+    }
+  ],
+  "check_order": [
+    "k1.example.com",
+    "k2.example.com",
+    "k3.example.com",
+    "k4.example.com",
+    "k5.example.com",
+    "k6.example.com"
+  ],
+  "calls": [
+    {
+      "call": "saveResult",
+      "result": {
+        "domain": "k1.example.com",
+        "status": "error",
+        "error": "Connection refused/unreachable: Connection refused",
+        "warning": true,
+        "checked_at": "2019-06-01T08:00:02",
+        "san": [],
+        "chain_status": "UNKNOWN",
+        "revocation_status": "UNKNOWN",
+        "deployment_status": "UNKNOWN",
+        "fingerprint": null,
+        "chain": [],
+        "subject_dn": null,
+        "issuer_dn": null,
+        "tls_version": null,
+        "hsts": null,
+        "error_class": "NETWORK",
+        "error_stage": "connect",
+        "resolved_ips": [
+          "10.9.8.7"
+        ],
+        "attempts_total": 2,
+        "attempts_elapsed_ms": 13004,
+        "retry_attempted": true,
+        "retry_recovered": false,
+        "via": "direct",
+        "run_id": "<run>"
+      },
+      "threw": false
+    },
+    {
+      "call": "saveResult",
+      "result": {
+        "domain": "k2.example.com",
+        "subject": "k2.example.com",
+        "issuer": "Corp",
+        "issuer_cn": "Corp Issuing CA 01",
+        "not_before": "2019-01-01T00:00:00",
+        "not_after": "2019-12-31T00:00:00",
+        "days_remaining": 120,
+        "warning": false,
+        "status": "valid",
+        "san": [
+          "k2.example.com",
+          "www.k2.example.com"
+        ],
+        "checked_at": "2019-06-01T08:00:01",
+        "serial_number": "0A1B346621770",
+        "signature_algorithm": "SHA256withRSA",
+        "public_key_algorithm": "RSA",
+        "public_key_size": 2048,
+        "subject_dn": "CN=k2.example.com",
+        "issuer_dn": "CN=Corp Issuing CA 01,O=Corp",
+        "key_usage": [
+          "digitalSignature",
+          "keyEncipherment"
+        ],
+        "ext_key_usage": [
+          "serverAuth"
+        ],
+        "is_ca": false,
+        "ocsp_url": "http://ocsp.corp.example/",
+        "crl_url": null,
+        "cert_type": "DV",
+        "chain_status": "INCOMPLETE",
+        "trust_status": "TRUSTED",
+        "trust_error": null,
+        "revocation_status": "GOOD",
+        "revocation_reason": "OCSP",
+        "revocation_detail": "[{\"m\":\"OCSP\",\"r\":\"GOOD\"}]",
+        "deployment_status": "UNKNOWN",
+        "fingerprint": "AB:CD:EB56F8B6",
+        "intermediate_expiry": null,
+        "intermediate_days_remaining": null,
+        "chain": [],
+        "tls_version": "TLSv1.3",
+        "cipher_suite": "TLS_AES_256_GCM_SHA384",
+        "alpn": "h2",
+        "hsts": "max-age=31536000; includeSubDomains",
+        "http_status": 200,
+        "resolved_ip": "10.20.30.171",
+        "resolved_ips": [
+          "10.20.30.171"
+        ],
+        "via": "direct",
+        "tls_mode_used": "browser",
+        "elapsed_ms": 640,
+        "attempts_total": 1,
+        "run_id": "<run>"
+      },
+      "threw": false
+    },
+    {
+      "call": "saveResult",
+      "result": {
+        "domain": "k3.example.com",
+        "status": "error",
+        "error": "No route to host",
+        "warning": true,
+        "checked_at": "2019-06-01T08:00:02",
+        "san": [],
+        "chain_status": "UNKNOWN",
+        "revocation_status": "UNKNOWN",
+        "deployment_status": "UNKNOWN",
+        "fingerprint": null,
+        "chain": [],
+        "subject_dn": null,
+        "issuer_dn": null,
+        "tls_version": null,
+        "hsts": null,
+        "error_class": "NETWORK",
+        "error_stage": "connect",
+        "resolved_ips": [
+          "10.9.8.7"
+        ],
+        "attempts_total": 2,
+        "attempts_elapsed_ms": 13004,
+        "retry_attempted": true,
+        "retry_recovered": false,
+        "via": "direct",
+        "run_id": "<run>"
+      },
+      "threw": false
+    },
+    {
+      "call": "saveResult",
+      "result": {
+        "domain": "k4.example.com",
+        "status": "error",
+        "error": "Domain resolution failed",
+        "warning": true,
+        "checked_at": "2019-06-01T08:00:02",
+        "san": [],
+        "chain_status": "UNKNOWN",
+        "revocation_status": "UNKNOWN",
+        "deployment_status": "UNKNOWN",
+        "fingerprint": null,
+        "chain": [],
+        "subject_dn": null,
+        "issuer_dn": null,
+        "tls_version": null,
+        "hsts": null,
+        "error_class": "DNS",
+        "error_stage": "dns",
+        "run_id": "<run>"
+      },
+      "threw": false
+    },
+    {
+      "call": "saveResult",
+      "result": {
+        "domain": "k5.example.com",
+        "subject": "k5.example.com",
+        "issuer": "Corp",
+        "issuer_cn": "Corp Issuing CA 01",
+        "not_before": "2019-01-01T00:00:00",
+        "not_after": "2019-12-31T00:00:00",
+        "days_remaining": 8,
+        "warning": true,
+        "status": "warning",
+        "san": [
+          "k5.example.com",
+          "www.k5.example.com"
+        ],
+        "checked_at": "2019-06-01T08:00:01",
+        "serial_number": "0A1B1226830791",
+        "signature_algorithm": "SHA256withRSA",
+        "public_key_algorithm": "RSA",
+        "public_key_size": 2048,
+        "subject_dn": "CN=k5.example.com",
+        "issuer_dn": "CN=Corp Issuing CA 01,O=Corp",
+        "key_usage": [
+          "digitalSignature",
+          "keyEncipherment"
+        ],
+        "ext_key_usage": [
+          "serverAuth"
+        ],
+        "is_ca": false,
+        "ocsp_url": "http://ocsp.corp.example/",
+        "crl_url": null,
+        "cert_type": "DV",
+        "chain_status": "INCOMPLETE",
+        "trust_status": "TRUSTED",
+        "trust_error": null,
+        "revocation_status": "GOOD",
+        "revocation_reason": "OCSP",
+        "revocation_detail": "[{\"m\":\"OCSP\",\"r\":\"GOOD\"}]",
+        "deployment_status": "UNKNOWN",
+        "fingerprint": "AB:CD:B6E00C39",
+        "intermediate_expiry": null,
+        "intermediate_days_remaining": null,
+        "chain": [],
+        "tls_version": "TLSv1.3",
+        "cipher_suite": "TLS_AES_256_GCM_SHA384",
+        "alpn": "h2",
+        "hsts": null,
+        "http_status": 200,
+        "resolved_ip": "10.20.30.192",
+        "resolved_ips": [
+          "10.20.30.192"
+        ],
+        "via": "direct",
+        "tls_mode_used": "browser",
+        "elapsed_ms": 120,
+        "attempts_total": 1,
+        "run_id": "<run>"
+      },
+      "threw": false
+    },
+    {
+      "call": "saveResult",
+      "result": {
+        "domain": "k6.example.com",
+        "status": "error",
+        "error": "Connection timeout after 6s",
+        "warning": true,
+        "checked_at": "2019-06-01T08:00:02",
+        "san": [],
+        "chain_status": "UNKNOWN",
+        "revocation_status": "UNKNOWN",
+        "deployment_status": "UNKNOWN",
+        "fingerprint": null,
+        "chain": [],
+        "subject_dn": null,
+        "issuer_dn": null,
+        "tls_version": null,
+        "hsts": null,
+        "error_class": "NETWORK",
+        "error_stage": "connect",
+        "resolved_ips": [
+          "10.9.8.7"
+        ],
+        "attempts_total": 2,
+        "attempts_elapsed_ms": 13004,
+        "retry_attempted": true,
+        "retry_recovered": false,
+        "via": "direct",
+        "run_id": "<run>"
+      },
+      "threw": false
+    },
+    {
+      "call": "evictAllCaches"
+    },
+    {
+      "call": "onRun",
+      "networkErrors": 4,
+      "total": 6,
+      "rate": 0.6666666666666666,
+      "suspected": true,
+      "minErrors": 3,
+      "threshold": 0.5
+    },
+    {
+      "call": "resolveVerifiedStaleCertAlerts",
+      "results": [
+        {
+          "domain": "k1.example.com",
+          "status": "error",
+          "error": "Connection refused/unreachable: Connection refused",
+          "warning": true,
+          "checked_at": "2019-06-01T08:00:02",
+          "san": [],
+          "chain_status": "UNKNOWN",
+          "revocation_status": "UNKNOWN",
+          "deployment_status": "SIM-error",
+          "fingerprint": null,
+          "chain": [],
+          "subject_dn": null,
+          "issuer_dn": null,
+          "tls_version": null,
+          "hsts": null,
+          "error_class": "NETWORK",
+          "error_stage": "connect",
+          "resolved_ips": [
+            "10.9.8.7"
+          ],
+          "attempts_total": 2,
+          "attempts_elapsed_ms": 13004,
+          "retry_attempted": true,
+          "retry_recovered": false,
+          "via": "direct",
+          "run_id": "<run>"
+        },
+        {
+          "domain": "k2.example.com",
+          "subject": "k2.example.com",
+          "issuer": "Corp",
+          "issuer_cn": "Corp Issuing CA 01",
+          "not_before": "2019-01-01T00:00:00",
+          "not_after": "2019-12-31T00:00:00",
+          "days_remaining": 120,
+          "warning": false,
+          "status": "valid",
+          "san": [
+            "k2.example.com",
+            "www.k2.example.com"
+          ],
+          "checked_at": "2019-06-01T08:00:01",
+          "serial_number": "0A1B346621770",
+          "signature_algorithm": "SHA256withRSA",
+          "public_key_algorithm": "RSA",
+          "public_key_size": 2048,
+          "subject_dn": "CN=k2.example.com",
+          "issuer_dn": "CN=Corp Issuing CA 01,O=Corp",
+          "key_usage": [
+            "digitalSignature",
+            "keyEncipherment"
+          ],
+          "ext_key_usage": [
+            "serverAuth"
+          ],
+          "is_ca": false,
+          "ocsp_url": "http://ocsp.corp.example/",
+          "crl_url": null,
+          "cert_type": "DV",
+          "chain_status": "INCOMPLETE",
+          "trust_status": "TRUSTED",
+          "trust_error": null,
+          "revocation_status": "GOOD",
+          "revocation_reason": "OCSP",
+          "revocation_detail": "[{\"m\":\"OCSP\",\"r\":\"GOOD\"}]",
+          "deployment_status": "SIM-OK",
+          "fingerprint": "AB:CD:EB56F8B6",
+          "intermediate_expiry": null,
+          "intermediate_days_remaining": null,
+          "chain": [],
+          "tls_version": "TLSv1.3",
+          "cipher_suite": "TLS_AES_256_GCM_SHA384",
+          "alpn": "h2",
+          "hsts": "max-age=31536000; includeSubDomains",
+          "http_status": 200,
+          "resolved_ip": "10.20.30.171",
+          "resolved_ips": [
+            "10.20.30.171"
+          ],
+          "via": "direct",
+          "tls_mode_used": "browser",
+          "elapsed_ms": 640,
+          "attempts_total": 1,
+          "run_id": "<run>"
+        },
+        {
+          "domain": "k3.example.com",
+          "status": "error",
+          "error": "No route to host",
+          "warning": true,
+          "checked_at": "2019-06-01T08:00:02",
+          "san": [],
+          "chain_status": "UNKNOWN",
+          "revocation_status": "UNKNOWN",
+          "deployment_status": "SIM-error",
+          "fingerprint": null,
+          "chain": [],
+          "subject_dn": null,
+          "issuer_dn": null,
+          "tls_version": null,
+          "hsts": null,
+          "error_class": "NETWORK",
+          "error_stage": "connect",
+          "resolved_ips": [
+            "10.9.8.7"
+          ],
+          "attempts_total": 2,
+          "attempts_elapsed_ms": 13004,
+          "retry_attempted": true,
+          "retry_recovered": false,
+          "via": "direct",
+          "run_id": "<run>"
+        },
+        {
+          "domain": "k4.example.com",
+          "status": "error",
+          "error": "Domain resolution failed",
+          "warning": true,
+          "checked_at": "2019-06-01T08:00:02",
+          "san": [],
+          "chain_status": "UNKNOWN",
+          "revocation_status": "UNKNOWN",
+          "deployment_status": "SIM-error",
+          "fingerprint": null,
+          "chain": [],
+          "subject_dn": null,
+          "issuer_dn": null,
+          "tls_version": null,
+          "hsts": null,
+          "error_class": "DNS",
+          "error_stage": "dns",
+          "run_id": "<run>"
+        },
+        {
+          "domain": "k5.example.com",
+          "subject": "k5.example.com",
+          "issuer": "Corp",
+          "issuer_cn": "Corp Issuing CA 01",
+          "not_before": "2019-01-01T00:00:00",
+          "not_after": "2019-12-31T00:00:00",
+          "days_remaining": 8,
+          "warning": true,
+          "status": "warning",
+          "san": [
+            "k5.example.com",
+            "www.k5.example.com"
+          ],
+          "checked_at": "2019-06-01T08:00:01",
+          "serial_number": "0A1B1226830791",
+          "signature_algorithm": "SHA256withRSA",
+          "public_key_algorithm": "RSA",
+          "public_key_size": 2048,
+          "subject_dn": "CN=k5.example.com",
+          "issuer_dn": "CN=Corp Issuing CA 01,O=Corp",
+          "key_usage": [
+            "digitalSignature",
+            "keyEncipherment"
+          ],
+          "ext_key_usage": [
+            "serverAuth"
+          ],
+          "is_ca": false,
+          "ocsp_url": "http://ocsp.corp.example/",
+          "crl_url": null,
+          "cert_type": "DV",
+          "chain_status": "INCOMPLETE",
+          "trust_status": "TRUSTED",
+          "trust_error": null,
+          "revocation_status": "GOOD",
+          "revocation_reason": "OCSP",
+          "revocation_detail": "[{\"m\":\"OCSP\",\"r\":\"GOOD\"}]",
+          "deployment_status": "SIM-warning",
+          "fingerprint": "AB:CD:B6E00C39",
+          "intermediate_expiry": null,
+          "intermediate_days_remaining": null,
+          "chain": [],
+          "tls_version": "TLSv1.3",
+          "cipher_suite": "TLS_AES_256_GCM_SHA384",
+          "alpn": "h2",
+          "hsts": null,
+          "http_status": 200,
+          "resolved_ip": "10.20.30.192",
+          "resolved_ips": [
+            "10.20.30.192"
+          ],
+          "via": "direct",
+          "tls_mode_used": "browser",
+          "elapsed_ms": 120,
+          "attempts_total": 1,
+          "run_id": "<run>"
+        },
+        {
+          "domain": "k6.example.com",
+          "status": "error",
+          "error": "Connection timeout after 6s",
+          "warning": true,
+          "checked_at": "2019-06-01T08:00:02",
+          "san": [],
+          "chain_status": "UNKNOWN",
+          "revocation_status": "UNKNOWN",
+          "deployment_status": "SIM-error",
+          "fingerprint": null,
+          "chain": [],
+          "subject_dn": null,
+          "issuer_dn": null,
+          "tls_version": null,
+          "hsts": null,
+          "error_class": "NETWORK",
+          "error_stage": "connect",
+          "resolved_ips": [
+            "10.9.8.7"
+          ],
+          "attempts_total": 2,
+          "attempts_elapsed_ms": 13004,
+          "retry_attempted": true,
+          "retry_recovered": false,
+          "via": "direct",
+          "run_id": "<run>"
+        }
+      ]
+    },
+    {
+      "call": "recordScanRun",
+      "kind": "hourly",
+      "runId": "<run>",
+      "instanceId": "pod-a",
+      "at": "<time>",
+      "durationMs": "<duration>",
+      "total": 6,
+      "warnings": 5,
+      "errors": 4,
+      "failure": null
+    },
+    {
+      "call": "lock.release"
+    }
+  ],
+  "state": {
+    "running": false,
+    "current_run_id": "",
+    "last_run_id": "<run>",
+    "last_run": "<set>",
+    "last_run_duration_ms": "<duration>",
+    "last_run_total": 6,
+    "last_run_warnings": 5,
+    "last_run_errors": 4,
+    "last_run_failure": null,
+    "startup_check_stopped": false,
+    "lock_held_at_end": true
+  },
+  "logs": [
+    "INFO Certificate check started — runId=<run>, 6 domain(s) [instance=<instance>]",
+    "INFO Check complete — runId=<run>, Total=6, Warning=5, Error=4, NetworkErrors=4 (rate=0.67) [instance=<instance>]",
+    "INFO Sertifika kapanış uzlaştırması: 1 alan adında düzelen alarmlar kapatıldı (alarm işleme atlanmış turda)"
+  ]
+}

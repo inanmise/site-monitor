@@ -151,6 +151,21 @@ public final class MonitoringMetricNames {
     /** Bu pod'un son 256 sahiplenmesinin gecikmesi p95 (sn; gönderimden sahiplenmeye — yoksa yayılmaz). */
     public static final String CHECK_CLAIM_LAG = "sitemonitor.check.claim.lag.p95.seconds";
 
+    // ── Parçalı sertifika taraması (2026-10-29, çok pod R3-4, paket C1; tasarım §7.4) — anahtar KAPALIYKEN hiçbiri yayılmaz ─
+    /** Açık parçalı koşunun parçaları, duruma göre ({@code pending | claimed | done | cancelled}; KÜME — açık koşu yoksa YOK). */
+    public static final String CERT_SWEEP_CHUNKS = "sitemonitor.cert.sweep.chunks";
+    /**
+     * Tür başına en yeni bitmiş sertifika taramasının süresi (sn; KÜME — {@code scan_runs}), {@code kind} (hourly / stale / full) ve
+     * {@code mode} (chunked / classic / unknown — {@code cert_sweep_runs}'ta koşu satırı var mı) etiketiyle.
+     */
+    public static final String CERT_SWEEP_LAST_RUN = "sitemonitor.cert.sweep.last.run.seconds";
+    /**
+     * Bu pod'un parçalı tarama işi, açılıştan beri birikimli (gauge — {@code _total} son eki YOK): işçi {@code completed} /
+     * {@code late} / {@code released} (parça), koordinatör {@code takeover} (kendisi ölçtüğü parça) / {@code second_opinion}
+     * (başka pod'dan yeniden ölçtürdüğü alan adı).
+     */
+    public static final String CERT_SWEEP_WORKER_CHUNKS = "sitemonitor.cert.sweep.worker.chunks";
+
     // ── Aktarıcının kendisi ──────────────────────────────────────────────────────────────────────────────
     public static final String EXPORTER_ENABLED = "sitemonitor.exporter.enabled";
     public static final String EXPORTER_PER_MONITOR = "sitemonitor.exporter.per.monitor";
@@ -284,6 +299,13 @@ public final class MonitoringMetricNames {
                 "Distributed check jobs on this pod since it started: completed, late (lease lost, result dropped), lost (reaped while leader), dropped (results not evaluated while leader)"));
         l.add(new Def(CHECK_CLAIM_LAG, Scope.POD, List.of(),
                 "p95 of the dispatch-to-claim delay of this pod's last 256 claims, in seconds; absent before the first claim"));
+        // Parçalı sertifika taraması (R3-4)
+        l.add(new Def(CERT_SWEEP_CHUNKS, Scope.CLUSTER, List.of("state"),
+                "Chunks of the open chunked certificate sweep run by state (pending, claimed, done, cancelled); absent while no chunked run is open or the switch is off"));
+        l.add(new Def(CERT_SWEEP_LAST_RUN, Scope.CLUSTER, List.of("kind", "mode"),
+                "Duration of the newest finished certificate sweep per kind (hourly, stale, full) and mode (chunked, classic, unknown), in seconds; absent while the switch is off"));
+        l.add(new Def(CERT_SWEEP_WORKER_CHUNKS, Scope.POD, List.of("outcome"),
+                "Chunked certificate sweep work on this pod since it started: completed, late, released (chunks this pod measured), takeover (chunks the coordinator measured itself), second_opinion (domains re-measured on another pod); absent while the switch is off"));
         // Aktarıcı
         l.add(new Def(EXPORTER_ENABLED, Scope.POD, List.of(), "1 when the monitoring metrics exporter is enabled"));
         l.add(new Def(EXPORTER_PER_MONITOR, Scope.POD, List.of(), "1 when per-monitor / per-certificate series are exported"));

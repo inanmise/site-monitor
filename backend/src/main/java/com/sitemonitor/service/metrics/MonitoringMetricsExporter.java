@@ -177,6 +177,9 @@ public class MonitoringMetricsExporter {
     private com.sitemonitor.service.checks.CheckJobStore checkJobStore;
     private com.sitemonitor.service.checks.CheckWorker checkWorker;
     private com.sitemonitor.service.checks.CheckResultDrainer checkResultDrainer;
+    /** Çok pod R3-4 (paket C1): parçalı sertifika taraması anahtarı + pod sayaçları (bellek), koşu deposu (yalnız açıkken SQL). */
+    private com.sitemonitor.service.certsweep.CertChunking certChunking;
+    private com.sitemonitor.service.certsweep.CertSweepStore certSweepStore;
 
     private Supplier<Instant> clock = Instant::now;
     private volatile TeamDirectory lastTeams;
@@ -267,6 +270,9 @@ public class MonitoringMetricsExporter {
     @Autowired(required = false) public void setCheckJobStore(com.sitemonitor.service.checks.CheckJobStore v) { this.checkJobStore = v; }
     @Autowired(required = false) public void setCheckWorker(com.sitemonitor.service.checks.CheckWorker v) { this.checkWorker = v; }
     @Autowired(required = false) public void setCheckResultDrainer(com.sitemonitor.service.checks.CheckResultDrainer v) { this.checkResultDrainer = v; }
+    /** Çok pod R3-4 (paket C1): parçalı sertifika taraması — isteğe bağlı; anahtar kapalıyken hiçbiri okunmaz. */
+    @Autowired(required = false) public void setCertChunking(com.sitemonitor.service.certsweep.CertChunking v) { this.certChunking = v; }
+    @Autowired(required = false) public void setCertSweepStore(com.sitemonitor.service.certsweep.CertSweepStore v) { this.certSweepStore = v; }
 
     @Autowired(required = false) public void setContext(ApplicationContext v) { this.context = v; }
 
@@ -765,6 +771,9 @@ public class MonitoringMetricsExporter {
         // Dağıtık kontroller (R3-3): kuyruk KÜME ailesi (tek gruplu deyim, yalnız anahtar + tür açıkken), işçi POD ailesi (bellek)
         checkJobQueueMeters(f, sources);
         checkJobPodMeters(f);
+        // Parçalı sertifika taraması (R3-4): açık koşunun parçaları + tür başına son tur (KÜME, yalnız anahtar açıkken), pod sayaçları
+        certSweepClusterMeters(f, sources);
+        certSweepPodMeters(f);
 
         // Veritabanı sağlığı (bu pod, 5 sn önbellek) ve sistem bakımı
         mergeInto(f, read(sources, "database", () -> {
@@ -806,6 +815,7 @@ public class MonitoringMetricsExporter {
         podRuntime(f);
         evalStateMeters(f);
         checkJobPodMeters(f);
+        certSweepPodMeters(f);
         mergeInto(f, read(sources, "database", () -> {
             Families t = new Families();
             if (database == null) return null;
@@ -910,6 +920,86 @@ public class MonitoringMetricsExporter {
         f.add(MonitoringMetricNames.CHECK_WORKER_JOBS, dropped, "outcome", "dropped");
     }
     // ── /R3-3 D1 ──────────────────────────────────────────────────────────────────────────────────────────────────
+
+    // ── R3-4 C1: parçalı sertifika taraması ölçümleri (tasarım §7.4) ──────────────────────────────────────────────
+
+    /** Durum okumasının istediği en çok koşu (tür başına son turun kipine karar vermek için; depo sınırı 20). */
+    static final int CERT_SWEEP_STATUS_RUNS = 20;
+    /** Parça durumları (sunucu adı; etiket küçük harf). */
+    static final List<String> CERT_CHUNK_STATES = List.of(com.sitemonitor.service.certsweep.CertSweepStore.CHUNK_PENDING,
+            com.sitemonitor.service.certsweep.CertSweepStore.CHUNK_CLAIMED, com.sitemonitor.service.certsweep.CertSweepStore.CHUNK_DONE,
+            com.sitemonitor.service.certsweep.CertSweepStore.CHUNK_CANCELLED);
+
+    /** Parçalı tarama anahtarı açık mı — bellek; bean yok / hata → kapalı. */
+    private boolean certChunksOn() {
+        if (certChunking == null) return false;
+        try {
+            return certChunking.enabled();
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
+    /**
+     * Parçalı tarama KÜME aileleri — yalnız anahtar AÇIKKEN (kapalı: hiçbir seri, kaynak satırı ve SQL yok — L-1). Tek
+     * {@code CertSweepStore.status} okuması ({@code cert_sweep} kaynağı): açık koşu varsa durum başına parça sayısı (sıfırlar
+     * dahil; açık koşu yoksa seri YOK — yok ≠ 0); {@code scan_runs} okuması ({@code scan_runs} kaynağı) ile tür başına son turun
+     * süresi, kipiyle ({@link com.sitemonitor.service.certsweep.CertSweepView#modeOf}). Kaynaklardan biri okunamadıysa ilgili
+     * aile düşer. Yalnız kurum ailelerini yayan turda çağrılır.
+     *
+     * <p>Sahipsiz açık koşu (inceleme OB-L1): açık koşu varken tek {@code cert-check} kilit okuması (PK); koordinatör kilidi artık
+     * tutmuyorsa ({@link com.sitemonitor.service.certsweep.CertSweepView#orphanSuspected}) parça serisi YAZILMAZ — ölmüş bir
+     * koordinatörün koşusu "bekleyen parça" olarak saatlerce görünmez (sonraki tur onu kapatır). Kilit okunamadı → bugünkü gibi yazılır.
+     */
+    void certSweepClusterMeters(Families f, Map<String, Boolean> sources) {
+        if (certSweepStore == null || !certChunksOn()) return;
+        com.sitemonitor.service.certsweep.CertSweepStatus st = read(sources, "cert_sweep", () -> certSweepStore.status(CERT_SWEEP_STATUS_RUNS));
+        if (st != null && st.openRun() != null && !certSweepOrphan(st)) {
+            for (String state : CERT_CHUNK_STATES) {
+                f.add(MonitoringMetricNames.CERT_SWEEP_CHUNKS, st.chunks(state), "state", state.toLowerCase(java.util.Locale.ROOT));
+            }
+        }
+        if (st == null || clusterHealth == null) return;
+        Map<String, com.sitemonitor.service.health.ClusterHealthStore.ScanRun> runs = read(sources, "scan_runs", () -> clusterHealth.readScanRuns());
+        if (runs == null) return;
+        for (String kind : List.of(com.sitemonitor.service.health.ClusterHealthStore.KIND_HOURLY,
+                com.sitemonitor.service.health.ClusterHealthStore.KIND_STALE, com.sitemonitor.service.health.ClusterHealthStore.KIND_FULL)) {
+            com.sitemonitor.service.health.ClusterHealthStore.ScanRun r = runs.get(kind);
+            if (r == null || r.durationMs() == null || r.lastRunAt() == null) continue;
+            String mode = com.sitemonitor.service.certsweep.CertSweepView.modeOf(r.runId(), r.lastRunAt(), r.durationMs(), st, CERT_SWEEP_STATUS_RUNS);
+            f.add(MonitoringMetricNames.CERT_SWEEP_LAST_RUN, Math.max(0L, r.durationMs()) / 1000.0, "kind", kind, "mode", mode);
+        }
+    }
+
+    /** Açık koşu sahipsiz mi — tek {@code cert-check} kilit okuması (yalnız anahtar açık ve açık koşu varken). */
+    private boolean certSweepOrphan(com.sitemonitor.service.certsweep.CertSweepStatus st) {
+        com.sitemonitor.service.certsweep.CertSweepStatus.Run open = st.openRun();
+        com.sitemonitor.service.certsweep.CertSweepView.CertLock lock =
+                com.sitemonitor.service.certsweep.CertSweepView.readCertLock(jdbc, System.currentTimeMillis());
+        Boolean live = com.sitemonitor.service.certsweep.CertSweepView.coordinatorLive(open, lock, null);
+        return com.sitemonitor.service.certsweep.CertSweepView.orphanSuspected(open, st.nowMs(), live);
+    }
+
+    /**
+     * Bu pod'un parçalı tarama sayaçları (POD, bellek, birikimli): işçi tamamlanan / geç / bırakılan parça, koordinatör devraldığı
+     * parça / ikinci görüş alan adı. Yalnız anahtar AÇIKKEN; kayıt yok (işçi / koordinatör henüz kurulmadı) → o çıkışlar yazılmaz
+     * (sahte 0 yok). POD-only turda da yayılır.
+     */
+    void certSweepPodMeters(Families f) {
+        if (!certChunksOn()) return;
+        com.sitemonitor.service.certsweep.CertSweepStatus.Worker w = certChunking.workerStatus();
+        if (w != null) {
+            f.add(MonitoringMetricNames.CERT_SWEEP_WORKER_CHUNKS, w.completed(), "outcome", "completed");
+            f.add(MonitoringMetricNames.CERT_SWEEP_WORKER_CHUNKS, w.late(), "outcome", "late");
+            f.add(MonitoringMetricNames.CERT_SWEEP_WORKER_CHUNKS, w.released(), "outcome", "released");
+        }
+        com.sitemonitor.service.certsweep.CertSweepStatus.Coordinator c = certChunking.coordinatorStatus();
+        if (c != null) {
+            f.add(MonitoringMetricNames.CERT_SWEEP_WORKER_CHUNKS, c.takeovers(), "outcome", "takeover");
+            f.add(MonitoringMetricNames.CERT_SWEEP_WORKER_CHUNKS, c.secondOpinions(), "outcome", "second_opinion");
+        }
+    }
+    // ── /R3-4 C1 ──────────────────────────────────────────────────────────────────────────────────────────────────
 
     /**
      * Bu pod'un kalıcı değerlendirme durumu kaydedicisi (çok pod R3-1, plan 3a): kip, bekleyen, yazma hatası (her pod);

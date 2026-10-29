@@ -1,0 +1,278 @@
+{
+  "scenario": {
+    "name": "save-throws",
+    "kind": "full",
+    "evict_caches": true,
+    "pre_held": false,
+    "domains": 5
+  },
+  "checks": [
+    {
+      "domain": "w1.example.com",
+      "port": 443,
+      "use_proxy": false,
+      "tls_mode": null,
+      "timeout_seconds": null
+    },
+    {
+      "domain": "w2.example.com",
+      "port": 443,
+      "use_proxy": false,
+      "tls_mode": null,
+      "timeout_seconds": null
+    },
+    {
+      "domain": "w3.example.com",
+      "port": 443,
+      "use_proxy": false,
+      "tls_mode": null,
+      "timeout_seconds": null
+    },
+    {
+      "domain": "w4.example.com",
+      "port": 443,
+      "use_proxy": false,
+      "tls_mode": null,
+      "timeout_seconds": null
+    },
+    {
+      "domain": "w5.example.com",
+      "port": 443,
+      "use_proxy": false,
+      "tls_mode": null,
+      "timeout_seconds": null
+    }
+  ],
+  "check_order": [
+    "w1.example.com",
+    "w2.example.com",
+    "w3.example.com",
+    "w4.example.com",
+    "w5.example.com"
+  ],
+  "calls": [
+    {
+      "call": "lock.acquire",
+      "name": "cert-check",
+      "ttl": "PT3M"
+    },
+    {
+      "call": "saveResult",
+      "result": {
+        "domain": "w1.example.com",
+        "subject": "w1.example.com",
+        "issuer": "Corp",
+        "issuer_cn": "Corp Issuing CA 01",
+        "not_before": "2019-01-01T00:00:00",
+        "not_after": "2019-12-31T00:00:00",
+        "days_remaining": 33,
+        "warning": false,
+        "status": "valid",
+        "san": [
+          "w1.example.com",
+          "www.w1.example.com"
+        ],
+        "checked_at": "2019-06-01T08:00:01",
+        "serial_number": "0A1B1824954967",
+        "signature_algorithm": "SHA256withRSA",
+        "public_key_algorithm": "RSA",
+        "public_key_size": 2048,
+        "subject_dn": "CN=w1.example.com",
+        "issuer_dn": "CN=Corp Issuing CA 01,O=Corp",
+        "key_usage": [
+          "digitalSignature",
+          "keyEncipherment"
+        ],
+        "ext_key_usage": [
+          "serverAuth"
+        ],
+        "is_ca": false,
+        "ocsp_url": "http://ocsp.corp.example/",
+        "crl_url": null,
+        "cert_type": "DV",
+        "chain_status": "INCOMPLETE",
+        "trust_status": "TRUSTED",
+        "trust_error": null,
+        "revocation_status": "GOOD",
+        "revocation_reason": "OCSP",
+        "revocation_detail": "[{\"m\":\"OCSP\",\"r\":\"GOOD\"}]",
+        "deployment_status": "UNKNOWN",
+        "fingerprint": "AB:CD:933965A9",
+        "intermediate_expiry": null,
+        "intermediate_days_remaining": null,
+        "chain": [],
+        "tls_version": "TLSv1.3",
+        "cipher_suite": "TLS_AES_256_GCM_SHA384",
+        "alpn": "h2",
+        "hsts": null,
+        "http_status": 200,
+        "resolved_ip": "10.20.30.168",
+        "resolved_ips": [
+          "10.20.30.168"
+        ],
+        "via": "direct",
+        "tls_mode_used": "browser",
+        "elapsed_ms": 210,
+        "attempts_total": 1,
+        "run_id": "<run>"
+      },
+      "threw": false
+    },
+    {
+      "call": "saveResult",
+      "result": {
+        "domain": "w2.example.com",
+        "subject": "w2.example.com",
+        "issuer": "Corp",
+        "issuer_cn": "Corp Issuing CA 01",
+        "not_before": "2019-01-01T00:00:00",
+        "not_after": "2019-12-31T00:00:00",
+        "days_remaining": 9,
+        "warning": true,
+        "status": "warning",
+        "san": [
+          "w2.example.com",
+          "www.w2.example.com"
+        ],
+        "checked_at": "2019-06-01T08:00:01",
+        "serial_number": "0A1B2118357974",
+        "signature_algorithm": "SHA256withRSA",
+        "public_key_algorithm": "RSA",
+        "public_key_size": 2048,
+        "subject_dn": "CN=w2.example.com",
+        "issuer_dn": "CN=Corp Issuing CA 01,O=Corp",
+        "key_usage": [
+          "digitalSignature",
+          "keyEncipherment"
+        ],
+        "ext_key_usage": [
+          "serverAuth"
+        ],
+        "is_ca": false,
+        "ocsp_url": "http://ocsp.corp.example/",
+        "crl_url": null,
+        "cert_type": "DV",
+        "chain_status": "INCOMPLETE",
+        "trust_status": "TRUSTED",
+        "trust_error": null,
+        "revocation_status": "GOOD",
+        "revocation_reason": "OCSP",
+        "revocation_detail": "[{\"m\":\"OCSP\",\"r\":\"GOOD\"}]",
+        "deployment_status": "UNKNOWN",
+        "fingerprint": "AB:CD:81BC6C2A",
+        "intermediate_expiry": null,
+        "intermediate_days_remaining": null,
+        "chain": [],
+        "tls_version": "TLSv1.3",
+        "cipher_suite": "TLS_AES_256_GCM_SHA384",
+        "alpn": "h2",
+        "hsts": null,
+        "http_status": 200,
+        "resolved_ip": "10.20.30.175",
+        "resolved_ips": [
+          "10.20.30.175"
+        ],
+        "via": "direct",
+        "tls_mode_used": "browser",
+        "elapsed_ms": 777,
+        "attempts_total": 1,
+        "run_id": "<run>"
+      },
+      "threw": false
+    },
+    {
+      "call": "saveResult",
+      "result": {
+        "domain": "w3.example.com",
+        "subject": "w3.example.com",
+        "issuer": "Corp",
+        "issuer_cn": "Corp Issuing CA 01",
+        "not_before": "2019-01-01T00:00:00",
+        "not_after": "2019-12-31T00:00:00",
+        "days_remaining": 34,
+        "warning": false,
+        "status": "valid",
+        "san": [
+          "w3.example.com",
+          "www.w3.example.com"
+        ],
+        "checked_at": "2019-06-01T08:00:01",
+        "serial_number": "0A1B1883206315",
+        "signature_algorithm": "SHA256withRSA",
+        "public_key_algorithm": "RSA",
+        "public_key_size": 2048,
+        "subject_dn": "CN=w3.example.com",
+        "issuer_dn": "CN=Corp Issuing CA 01,O=Corp",
+        "key_usage": [
+          "digitalSignature",
+          "keyEncipherment"
+        ],
+        "ext_key_usage": [
+          "serverAuth"
+        ],
+        "is_ca": false,
+        "ocsp_url": "http://ocsp.corp.example/",
+        "crl_url": null,
+        "cert_type": "DV",
+        "chain_status": "INCOMPLETE",
+        "trust_status": "TRUSTED",
+        "trust_error": null,
+        "revocation_status": "GOOD",
+        "revocation_reason": "OCSP",
+        "revocation_detail": "[{\"m\":\"OCSP\",\"r\":\"GOOD\"}]",
+        "deployment_status": "UNKNOWN",
+        "fingerprint": "AB:CD:703F72AB",
+        "intermediate_expiry": null,
+        "intermediate_days_remaining": null,
+        "chain": [],
+        "tls_version": "TLSv1.3",
+        "cipher_suite": "TLS_AES_256_GCM_SHA384",
+        "alpn": "h2",
+        "hsts": null,
+        "http_status": 200,
+        "resolved_ip": "10.20.30.116",
+        "resolved_ips": [
+          "10.20.30.116"
+        ],
+        "via": "direct",
+        "tls_mode_used": "browser",
+        "elapsed_ms": 211,
+        "attempts_total": 1,
+        "run_id": "<run>"
+      },
+      "threw": true
+    },
+    {
+      "call": "recordScanRun",
+      "kind": "full",
+      "runId": "<run>",
+      "instanceId": "pod-a",
+      "at": "<time>",
+      "durationMs": null,
+      "total": null,
+      "warnings": null,
+      "errors": null,
+      "failure": "<time> — IllegalStateException: kayıt yazılamadı: w3.example.com"
+    },
+    {
+      "call": "lock.release"
+    }
+  ],
+  "state": {
+    "running": false,
+    "current_run_id": "",
+    "last_run_id": "<run>",
+    "last_run": null,
+    "last_run_duration_ms": 0,
+    "last_run_total": 0,
+    "last_run_warnings": 0,
+    "last_run_errors": 0,
+    "last_run_failure": "<time> — IllegalStateException: kayıt yazılamadı: w3.example.com",
+    "startup_check_stopped": false,
+    "lock_held_at_end": true
+  },
+  "logs": [
+    "INFO Certificate check started — runId=<run>, 5 domain(s) [instance=<instance>]",
+    "ERROR Sertifika sweep'i BAŞARISIZ (runId=<run>): sonuçlar kaydedilemedi/alarm işlenemedi — java.lang.IllegalStateException: kayıt yazılamadı: w3.example.com"
+  ]
+}

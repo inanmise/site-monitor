@@ -34,9 +34,10 @@ public final class WatchdogMessages {
                         : (en ? "Monitors not checked on time (late/active): " : "Zamanında kontrol edilmeyen izlemeler (gecikmiş/etkin): ")
                                 + String.join(", ", parts);
             }
-            case CERT_SWEEP -> en
+            case CERT_SWEEP -> (en
                     ? "Last certificate result " + f.get("hours_since") + " h ago (limit " + f.get("limit_hours") + " h)."
-                    : "Son sertifika sonucu " + f.get("hours_since") + " sa önce (sınır " + f.get("limit_hours") + " sa).";
+                    : "Son sertifika sonucu " + f.get("hours_since") + " sa önce (sınır " + f.get("limit_hours") + " sa).")
+                    + certChunks(f, en);
             case NOTIFICATIONS -> en
                     ? f.get("failed") + " of " + f.get("attempted") + " e-mails failed in the last " + f.get("window_minutes") + " min."
                     : "Son " + f.get("window_minutes") + " dk'da " + f.get("attempted") + " e-postanın " + f.get("failed") + "'i gönderilemedi.";
@@ -66,6 +67,35 @@ public final class WatchdogMessages {
             case CLOCK_SKEW -> clockSkew(f, en);
             case CHECK_QUEUE -> checkQueue(f, en);
         };
+    }
+
+    /**
+     * Parçalı sertifika taraması olguları (çok pod R3-4, yalnız anahtar açıkken eklenir — kapalıyken cümle 20.170.0 ile AYNI):
+     * açık tur yaşı, en eski bekleyen parça, son 24 saatte terk edilen tur; okunamadıysa bunu söyler. Bilgidir — karar
+     * {@code latest_checks} tazeliğidir.
+     */
+    private static String certChunks(Map<String, Object> f, boolean en) {
+        if (!Boolean.TRUE.equals(f.get("chunked"))) return "";
+        if ("unreadable".equals(f.get("chunked_status"))) {
+            return en ? " Chunked sweep is on; its run state could not be read." : " Parçalı tarama açık; tur durumu okunamadı.";
+        }
+        StringBuilder sb = new StringBuilder(en ? " Chunked sweep is on: " : " Parçalı tarama açık: ");
+        if (f.get("chunked_run_age_s") instanceof Number age) {
+            sb.append(en ? "open run " + age.longValue() + " s old" : "açık tur " + age.longValue() + " sn'dir sürüyor");
+            if (f.get("oldest_pending_chunk_s") instanceof Number p) {
+                sb.append(en ? ", oldest waiting chunk " + p.longValue() + " s" : ", en eski bekleyen parça " + p.longValue() + " sn");
+            }
+        } else if (Boolean.TRUE.equals(f.get("chunked_orphan_run"))) {
+            sb.append(en ? "no open run (an abandoned run of a coordinator that no longer holds the sweep lock is still recorded; the next run closes it)"
+                    : "açık tur yok (tarama kilidini artık tutmayan bir koordinatörün terk edilmiş turu kayıtlı; sonraki tur kapatır)");
+        } else {
+            sb.append(en ? "no open run" : "açık tur yok");
+        }
+        long ab = num(f.get("abandoned_runs_24h"));
+        boolean atLeast = Boolean.TRUE.equals(f.get("abandoned_runs_24h_lower_bound"));
+        sb.append(en ? "; abandoned runs in 24 h: " + (atLeast ? "at least " : "") + ab + "."
+                : "; son 24 saatte terk edilen tur: " + (atLeast ? "en az " : "") + ab + ".");
+        return sb.toString();
     }
 
     /** Dağıtık kontrol kuyruğu (R3-3): sayılar, en eski yaşlar, kirası dolmuş sahiplenme, canlı işçi. */

@@ -32,6 +32,18 @@
 #        DONE satırları yeni liderin ilk turlarında boşaltılır (≤ SMOKE_DIST_DRAIN_MAX_S). Sonda anahtar kapatılır →
 #        SMOKE_DIST_OFF_GRACE_S (12) sonra iş kimlik dizisi artmaz (yeni iş yok) ve klasik taramalar satır yazar; dedektörün
 #        dönem çifti denetimi (bölüm 9b) bu koşuda her durumda sayılır (period_strict=1);
+#     5d. (çok pod Sürüm 3-4, yalnız SMOKE_CERT_CHUNKS=1) parçalı sertifika taraması: ağda kendinden imzalı sertifikalı bir
+#        nginx (SMOKE_TLS_IMAGE) SMOKE_CC_DOMAINS (60) ağ adıyla (tls-NN.smoke.internal) açılır — HEAD istekleri limit_req ile
+#        bekletilir, denetleyicinin 4 sn HEAD zaman aşımı her kontrolü ≈ 4 sn yapar (işçiler parçaları gözlenebilir süre tutar);
+#        o kadar envanter satırı eklenir, site.monitor.checks.cert-chunks.enabled açılır (iki pod'un işçisi başlar). Pod'lara
+#        yalnız bu kipte CERT_CHUNK_STEAL_AFTER_MS=1000 + CERT_CHUNK_IDLE_POLL_MS=1000 verilir (lider de belirlenimci katılsın).
+#        8f-1 tarama liderinde "Şimdi çalıştır" → koşu DONE / DECIDED, workers_json iki pod'u adlar, her alan adı tur
+#        başına bir kez kaydedildi (çift 0, kayıp 0), scan_runs 'full' koordinatörce yazıldı; 8f-2 aynı, lider olmayan pod
+#        parça tutarken SIGKILL → kira (60 sn) dolunca yeniden sahiplenme / devralma, koşu yine DONE, çift / kayıp yok; 8f-3
+#        koordinatöre SIGTERM → koşu ABANDONED / SHUTDOWN, o koşu kimliğiyle sıfır certificate_checks satırı; sonraki
+#        "Şimdi çalıştır" bırakılan koşunun parçalarını siler ve DONE biter; 8f-4 anahtar kapatılır → sonraki "Şimdi çalıştır"
+#        klasik (scan_runs güncellenir, cert_sweep_runs'a satır eklenmez). Dedektörün bölüm 10'u (çift kayıt, iki açık koşu,
+#        kayıp alan adı, çöp parça) bu koşuda sayılır;
 #     6. scripts/multipod-dup-check.sql → DUP_TOTAL = 0 ve STUCK_TOTAL = 0 (çift kontrol / bildirim / push / açık
 #        alarm / ONGOING kesinti yok, sonuçsuz QUEUED_RETRY yok).
 #   Kapsayıcılar ve ağ sonunda silinir (SMOKE_KEEP=1 bırakır); günlükler SMOKE_WORKDIR'e yazılır.
@@ -58,7 +70,10 @@
 #   SMOKE_DISTRIBUTED (0; 1: çok pod Sürüm 3-3 dağıtık kontrol denetimleri — 3-3 imajı ister), SMOKE_DIST_WORKERS_WAIT_S (300),
 #   SMOKE_DIST_RERUN_MAX_S (180: SIGKILL'den sonra ölen işçinin işlerinin başka pod'a geçmesi), SMOKE_DIST_DRAIN_MAX_S (120:
 #   devirden sonra eski DONE satırlarının boşalması), SMOKE_DIST_OFF_GRACE_S (12: kapatmadan sonra yeni iş beklenmeyen an),
-#   SMOKE_DIST_OFF_WATCH_S (60: kapatmadan sonra iş dizisinin izlendiği süre).
+#   SMOKE_DIST_OFF_WATCH_S (60: kapatmadan sonra iş dizisinin izlendiği süre), SMOKE_CERT_CHUNKS (0; 1: çok pod Sürüm 3-4
+#   parçalı sertifika taraması denetimleri — 3-4 imajı ve yerelde openssl ister), SMOKE_CC_DOMAINS (60: TLS hedefi / envanter
+#   satırı), SMOKE_CC_RUN_WAIT_S (180: bir parçalı koşunun bitmesi için en uzun bekleme — SIGKILL'den sonra kira 60 sn),
+#   SMOKE_TLS_IMAGE (nginx:1.27-alpine).
 # Gerekenler: docker, curl, bash. Yerel makinede koşulabilir (Git Bash dahil); prod/staging kümesine dokunmaz. JSON
 # alanları tek kullanımlık PostgreSQL kapsayıcısının json işleçleriyle okunur (jq gerekmez).
 # `set -e` bilerek YOK: denetimler hataları `err` ile toplayıp sonda tek karar verir (bir denetimin düşmesi ötekileri durdurmaz).
@@ -134,6 +149,15 @@ DIST_DRAIN_MAX_S="${SMOKE_DIST_DRAIN_MAX_S:-120}"
 DIST_OFF_GRACE_S="${SMOKE_DIST_OFF_GRACE_S:-12}"
 DIST_OFF_WATCH_S="${SMOKE_DIST_OFF_WATCH_S:-60}"
 case "$DIST" in 0|1) ;; *) echo "::error::SMOKE_DISTRIBUTED 0 | 1 olmalı"; exit 2 ;; esac
+CERT_CHUNKS="${SMOKE_CERT_CHUNKS:-0}"
+CC_DOMAINS="${SMOKE_CC_DOMAINS:-60}"
+CC_RUN_WAIT_S="${SMOKE_CC_RUN_WAIT_S:-180}"
+CC_TLS_IMAGE="${SMOKE_TLS_IMAGE:-nginx:1.27-alpine}"
+case "$CERT_CHUNKS" in 0|1) ;; *) echo "::error::SMOKE_CERT_CHUNKS 0 | 1 olmalı"; exit 2 ;; esac
+case "$CC_DOMAINS" in ''|*[!0-9]*) echo "::error::SMOKE_CC_DOMAINS sayı olmalı"; exit 2 ;; esac
+case "$CC_RUN_WAIT_S" in ''|*[!0-9]*) echo "::error::SMOKE_CC_RUN_WAIT_S sayı olmalı (sn)"; exit 2 ;; esac
+[ "$CC_DOMAINS" -ge 40 ] && [ "$CC_DOMAINS" -le 99 ] \
+  || { echo "::error::SMOKE_CC_DOMAINS 40–99 olmalı (en az min-domains 40 — altında tur klasik koşar)"; exit 2; }
 for v in DIST_WORKERS_WAIT_S DIST_RERUN_MAX_S DIST_DRAIN_MAX_S DIST_OFF_GRACE_S DIST_OFF_WATCH_S; do
   case "${!v}" in ''|*[!0-9]*) echo "::error::SMOKE_$v sayı olmalı (sn)"; exit 2 ;; esac
 done
@@ -151,11 +175,15 @@ mkdir -p "$WORK"
 for tool in docker curl od; do
   command -v "$tool" >/dev/null 2>&1 || { echo "::error::$tool bulunamadı"; exit 2; }
 done
+if [ "$CERT_CHUNKS" = "1" ]; then
+  command -v openssl >/dev/null 2>&1 || { echo "::error::SMOKE_CERT_CHUNKS=1 openssl ister (TLS hedefinin sertifikası)"; exit 2; }
+fi
 
 rand_hex() { od -An -tx1 -N"$1" /dev/urandom | tr -d ' \n'; }
 PREFIX="sm-smoke-$(rand_hex 3)"
 NET="$PREFIX-net"
 PG="$PREFIX-pg"
+TLS="$PREFIX-tls"
 DB_NAME="sitemonitor"; DB_USER="smoke"; DB_PASS="$(rand_hex 16)"
 ADMIN_USER="smokeadmin"; ADMIN_PASS="Smoke-$(rand_hex 8)"
 SECRET_KEY="$(rand_hex 32)"
@@ -167,10 +195,11 @@ cname() { echo "$PREFIX-$1"; }
 cleanup() {
   for h in pod-a pod-b; do docker logs "$(cname "$h")" > "$WORK/$h.log" 2>&1 || true; done
   docker logs "$PG" > "$WORK/postgres.log" 2>&1 || true
+  [ "$CERT_CHUNKS" = "1" ] && { docker logs "$TLS" > "$WORK/tls.log" 2>&1 || true; }
   if [ "$KEEP" = "1" ]; then
-    echo "SMOKE_KEEP=1 → kapsayıcılar bırakıldı: $(cname pod-a) $(cname pod-b) $PG (ağ $NET)"
+    echo "SMOKE_KEEP=1 → kapsayıcılar bırakıldı: $(cname pod-a) $(cname pod-b) $PG$( [ "$CERT_CHUNKS" = "1" ] && printf " %s" "$TLS" ) (ağ $NET)"
   else
-    docker rm -f "$(cname pod-a)" "$(cname pod-b)" "$PG" >/dev/null 2>&1 || true
+    docker rm -f "$(cname pod-a)" "$(cname pod-b)" "$PG" "$TLS" >/dev/null 2>&1 || true
     docker network rm "$NET" >/dev/null 2>&1 || true
   fi
   echo "Günlükler: $WORK"
@@ -192,6 +221,10 @@ lease_holder() {
   case "$owner" in pod-a-*) echo pod-a ;; pod-b-*) echo pod-b ;; *) echo "?$owner" ;; esac
 }
 
+# Parçalı tarama kipinde pod'lara yalnız duman testi ayarı: lider 1 sn sonra katılır, boş yoklama 1 sn (iki pod belirlenimci ölçer).
+CC_ENV=()
+[ "$CERT_CHUNKS" = "1" ] && CC_ENV=(-e CERT_CHUNK_STEAL_AFTER_MS=1000 -e CERT_CHUNK_IDLE_POLL_MS=1000)
+
 start_pod() {
   local host="$1" port="$(port_of "$1")"
   docker run -d --name "$(cname "$host")" --hostname "$host" --network "$NET" --network-alias "$host" \
@@ -208,6 +241,7 @@ start_pod() {
     -e SITE_MONITOR_EVAL_STATE_VERIFY_MS="$EVAL_VERIFY_MS" \
     -e POD_NAME="$host" \
     -e JAVA_OPTS="-XX:MaxRAMPercentage=75.0 -XX:MinRAMPercentage=50.0 -Xss512k -XX:+ExitOnOutOfMemoryError" \
+    ${CC_ENV[@]+"${CC_ENV[@]}"} \
     "$IMAGE" >/dev/null
 }
 
@@ -591,6 +625,193 @@ dist_off() {
   echo "  kalan kuyruk (bilgi — kapalıyken boşaltılmaz, yeniden açılışta atılır): $(psql_pg -c "SELECT state || '=' || COUNT(*) FROM monitor_check_jobs GROUP BY state ORDER BY state" 2>/dev/null | tr '\n' ' ')"
 }
 
+# ── Parçalı sertifika taraması (çok pod Sürüm 3-4, yalnız SMOKE_CERT_CHUNKS=1) ─────────────────────────────────────
+CC_KEY="site.monitor.checks.cert-chunks.enabled"
+CC_SUMMARY=""
+CC_RUN=""
+cc_alias() { printf 'tls-%02d.smoke.internal' "$1"; }
+
+# cc_tls_start — ağda kendinden imzalı sertifikalı nginx, CC_DOMAINS ağ adıyla. HEAD / statik dosyadır ve limit_req (dakikada
+# 1, kuyruk) ile bekletilir: denetleyicinin HEAD okuma zaman aşımı (4 sn) her kontrolü ≈ 4 sn yapar — işçiler parçaları
+# gözlenebilir süre tutar (SIGKILL / SIGTERM anında elde parça olur). `return` kullanılmaz: rewrite aşamasında koşar ve
+# limit_req'i (preaccess) atlar.
+cc_tls_start() {
+  local i conf="$WORK/smoke-tls.conf"
+  local aliases=()
+  openssl req -x509 -newkey rsa:2048 -nodes -keyout "$WORK/smoke-tls-key.pem" -out "$WORK/smoke-tls-cert.pem" \
+    -days 2 -subj "/CN=smoke-tls" >/dev/null 2>&1 || { err "openssl ile kendinden imzalı sertifika üretilemedi"; return 1; }
+  {
+    echo 'limit_req_zone $binary_remote_addr zone=smoke_slow:1m rate=1r/m;'
+    echo 'server {'
+    echo '    listen 443 ssl;'
+    echo '    server_name _;'
+    echo '    ssl_certificate     /etc/nginx/smoke-tls-cert.pem;'
+    echo '    ssl_certificate_key /etc/nginx/smoke-tls-key.pem;'
+    echo '    location / {'
+    echo '        limit_req zone=smoke_slow burst=100000;'
+    echo '        root /usr/share/nginx/html;'
+    echo '    }'
+    echo '}'
+  } > "$conf"
+  for i in $(seq 1 "$CC_DOMAINS"); do aliases+=(--network-alias "$(cc_alias "$i")"); done
+  docker create --name "$TLS" --network "$NET" "${aliases[@]}" "$CC_TLS_IMAGE" >/dev/null \
+    || { err "TLS hedef kapsayıcısı kurulamadı ($CC_TLS_IMAGE)"; return 1; }
+  docker cp "$conf" "$TLS:/etc/nginx/conf.d/default.conf" >/dev/null \
+    && docker cp "$WORK/smoke-tls-cert.pem" "$TLS:/etc/nginx/smoke-tls-cert.pem" >/dev/null \
+    && docker cp "$WORK/smoke-tls-key.pem" "$TLS:/etc/nginx/smoke-tls-key.pem" >/dev/null \
+    || { err "TLS hedefinin yapılandırması kopyalanamadı"; return 1; }
+  docker start "$TLS" >/dev/null || { err "TLS hedef kapsayıcısı başlamadı"; docker logs "$TLS" 2>&1 | tail -20 | sed 's/^/    /'; return 1; }
+  sleep 2
+  if [ "$(docker inspect -f '{{.State.Running}}' "$TLS" 2>/dev/null)" != "true" ]; then
+    err "TLS hedefi çalışmıyor (nginx yapılandırması?)"; docker logs "$TLS" 2>&1 | tail -20 | sed 's/^/    /'; return 1
+  fi
+  ok "TLS hedefi: $CC_DOMAINS ağ adı ($(cc_alias 1) … $(cc_alias "$CC_DOMAINS")), kendinden imzalı sertifika, HEAD ≈ 4 sn bekletilir"
+}
+
+# cc_inventory <host> — CC_DOMAINS envanter satırı (takım General, grup / etiket smoke, tls-NN.smoke.internal:443); her satır
+# eklenince o pod hemen tek alan adı kontrolü koşar (run_id inventory-add — parçalı koşu değil).
+cc_inventory() {
+  local i body n=0
+  for i in $(seq 1 "$CC_DOMAINS"); do
+    body="$(api "$1" POST /api/admin/inventory "{\"domain\":\"$(cc_alias "$i")\",\"port\":443,\"team_id\":$TEAM_ID,\"group_name\":\"smoke\",\"tags\":\"smoke\",\"tier\":3}")"
+    if [ "$(api_status)" = "200" ] && printf '%s' "$body" | grep -q '"success":true'; then n=$((n + 1))
+    else err "envanter satırı eklenemedi ($(cc_alias "$i"), HTTP $(api_status)): $(printf '%s' "$body" | head -c 300)"; return 1; fi
+  done
+  ok "$n envanter satırı eklendi ($1 üzerinden)"
+  for i in $(seq 1 60); do
+    n="$(psql_pg -c "SELECT COUNT(*) FROM latest_checks WHERE domain LIKE 'tls-%.smoke.internal'" 2>/dev/null | head -1)"
+    [ "${n:-0}" -ge "$CC_DOMAINS" ] 2>/dev/null && { ok "ilk tek alan adı kontrolleri bitti ($n son kontrol satırı)"; return 0; }
+    sleep 2
+  done
+  warn "120 sn içinde $CC_DOMAINS son kontrol satırı görülmedi (${n:-?}) — bayat süpürme bir tur başlatabilir; koşu tetikleyici yeniden dener"
+}
+
+# cc_set <host> <true|false> — anahtarı Genel Ayarlar uç noktasıyla yazar (o pod hemen, öteki ≤ 10 sn ayar yenilemesiyle).
+cc_set() {
+  local body
+  body="$(api "$1" PUT /api/admin/general/settings "{\"values\":{\"$CC_KEY\":\"$2\"}}")"
+  if [ "$(api_status)" = "200" ] && printf '%s' "$body" | grep -q '"success":true'; then ok "$CC_KEY = $2 kaydedildi ($1 üzerinden)"; return 0; fi
+  err "parçalı tarama anahtarı yazılamadı (HTTP $(api_status)) — imaj çok pod Sürüm 3-4 öncesi mi?: $(printf '%s' "$body" | head -c 300)"
+  return 1
+}
+
+# cc_read <host> → "<enabled>|<işçi başladı>" (Sistem Sağlığı data.cert_chunks; JSON PostgreSQL işleçleriyle); boş = okunamadı.
+CC_SQL="SELECT j #>> '{data,cert_chunks,enabled}', j #>> '{data,cert_chunks,this_pod,worker,started}'"
+cc_read() {
+  local f="$WORK/.cc-body" tag
+  api "$1" GET /api/admin/system > "$f"
+  if [ "$API_STATUS" != "200" ] || [ ! -s "$f" ]; then rm -f "$f"; return 1; fi
+  tag="smk$(rand_hex 4)"
+  { printf '%s FROM (SELECT $%s$' "$CC_SQL" "$tag"; cat "$f"; printf '$%s$::json AS j) s;\n' "$tag"; } | psql_pg 2>/dev/null | head -1
+  rm -f "$f"
+}
+
+# cc_await_switch <true|false> — iki pod anahtarı görene dek (açıkken işçisi de başlamış olmalı) en çok 60 sn.
+cc_await_switch() {
+  local want="$1" i a b
+  for i in $(seq 1 30); do
+    a="$(cc_read pod-a)"; b="$(cc_read pod-b)"
+    if [ "$want" = "true" ]; then
+      [ "$a" = "true|true" ] && [ "$b" = "true|true" ] && { ok "iki pod anahtarı açık görüyor, işçileri başladı (~$((i * 2)) sn)"; return 0; }
+    else
+      [ "${a%%|*}" = "false" ] && [ "${b%%|*}" = "false" ] && { ok "iki pod anahtarı kapalı görüyor (~$((i * 2)) sn)"; return 0; }
+    fi
+    sleep 2
+  done
+  err "60 sn içinde iki pod anahtarı '$want' görmedi — pod-a '${a:-okunamadı}', pod-b '${b:-okunamadı}' (data.cert_chunks enabled|işçi)"
+  return 1
+}
+
+# cc_wait_idle <sn> — açık parçalı koşu ve cert-check kilidi kalmayana dek bekler (başka tarama sürüyorsa).
+cc_wait_idle() {
+  local i open lock
+  for i in $(seq 1 "$1"); do
+    open="$(psql_pg -c "SELECT COUNT(*) FROM cert_sweep_runs WHERE state IN ('RUNNING', 'DECIDING')" 2>/dev/null | head -1)"
+    lock="$(psql_pg -c "SELECT COUNT(*) FROM scheduler_lock WHERE name = 'cert-check'" 2>/dev/null | head -1)"
+    [ "${open:-1}" = "0" ] && [ "${lock:-1}" = "0" ] && return 0
+    sleep 1
+  done
+  return 1
+}
+
+# cc_run_now <host> <etiket> → CC_RUN: "Şimdi çalıştır" (tam tur; isteği alan pod koordinatördür); 30 sn içinde yeni 'full'
+# koşu satırı yoksa (cert-check başka taramada) boşta bekleyip en çok 3 kez yeniden dener.
+cc_run_now() {
+  local host="$1" label="$2" before try i row
+  CC_RUN=""
+  for try in 1 2 3; do
+    before="$(psql_pg -c "SELECT COALESCE(MAX(created_ms), 0) FROM cert_sweep_runs" 2>/dev/null | head -1)"
+    api "$host" POST /api/scheduler/run >/dev/null
+    [ "$API_STATUS" = "200" ] || { err "$label: Şimdi çalıştır HTTP $API_STATUS ($host)"; return 1; }
+    for i in $(seq 1 30); do
+      row="$(psql_pg -c "SELECT run_id FROM cert_sweep_runs WHERE created_ms > ${before:-0} AND kind = 'full' ORDER BY created_ms DESC LIMIT 1" 2>/dev/null | head -1)"
+      if [ -n "$row" ]; then CC_RUN="$row"; ok "$label: parçalı koşu başladı (runId=$row, koordinatör $host)"; return 0; fi
+      sleep 1
+    done
+    warn "$label: 30 sn içinde parçalı koşu satırı yok (cert-check başka taramada olabilir) — boşta bekleyip yeniden ($try/3)"
+    cc_wait_idle 180 || true
+  done
+  err "$label: parçalı koşu başlamadı"
+  return 1
+}
+
+# cc_await_run <koşu> <etiket> <en çok sn> → CC_STATE CC_OUTCOME CC_TOTAL CC_WORKERS CC_TAKE CC_RECL: koşu RUNNING / DECIDING
+# olmaktan çıkana dek bekler.
+cc_await_run() {
+  local run="$1" label="$2" max="$3" t0 el row
+  t0="$(date +%s)"
+  while :; do
+    el=$(( $(date +%s) - t0 ))
+    row="$(psql_pg -c "SELECT state, COALESCE(outcome, ''), domains_total, COALESCE(workers_json, ''), COALESCE(takeovers, 0),
+                              COALESCE(reclaims, 0) FROM cert_sweep_runs WHERE run_id = '$run'" 2>/dev/null | head -1)"
+    IFS='|' read -r CC_STATE CC_OUTCOME CC_TOTAL CC_WORKERS CC_TAKE CC_RECL <<< "$row"
+    case "$CC_STATE" in RUNNING|DECIDING|"") ;; *) ok "$label: koşu $run bitti — $CC_STATE / $CC_OUTCOME (~${el} sn)"; return 0 ;; esac
+    if [ "$el" -ge "$max" ]; then
+      err "$label: koşu $run ${max} sn içinde bitmedi (durum ${CC_STATE:-?}): $(psql_pg -c "SELECT chunk_no, state, attempts, COALESCE(claimed_by, worker, '—') FROM cert_sweep_chunks WHERE run_id = '$run' ORDER BY chunk_no" 2>/dev/null | tr '\n' ' ')"
+      return 1
+    fi
+    sleep 2
+  done
+}
+
+# cc_verify_saved <koşu> <etiket> — her alan adı bu koşuda TAM bir kez kaydedildi (çift 0, kayıtlı = domains_total).
+cc_verify_saved() {
+  local run="$1" label="$2" dup saved
+  dup="$(psql_pg -c "SELECT COUNT(*) FROM (SELECT domain FROM certificate_checks WHERE run_id = '$run' GROUP BY domain HAVING COUNT(*) > 1) d" 2>/dev/null | head -1)"
+  saved="$(psql_pg -c "SELECT COUNT(DISTINCT domain) FROM certificate_checks WHERE run_id = '$run'" 2>/dev/null | head -1)"
+  [ "${dup:-x}" = "0" ] && ok "$label: her alan adı tur başına bir kez kaydedildi (çift 0)" || err "$label: ${dup:-?} alan adı bu koşuda iki kez kaydedildi"
+  [ -n "$saved" ] && [ "$saved" = "$CC_TOTAL" ] && ok "$label: kayıtlı alan adı $saved = $CC_TOTAL (kayıp yok)" \
+    || err "$label: kayıtlı alan adı ${saved:-?} ≠ koşunun alan adı sayısı ${CC_TOTAL:-?} (kayıp)"
+}
+
+# cc_ensure_up — iki pod da çalışıyor ve hazır (önceki adımlar birini durdurmuş olabilir).
+cc_ensure_up() {
+  local h
+  for h in pod-a pod-b; do
+    if [ "$(docker inspect -f '{{.State.Running}}' "$(cname "$h")" 2>/dev/null)" != "true" ]; then
+      { docker start "$(cname "$h")" >/dev/null 2>&1 && wait_ready "$h"; } || { err "8f: $h açılamadı"; return 1; }
+    fi
+  done
+}
+
+# cc_await_claim <koşu> <pod> <en çok sn> → CC_CLAIMED: o pod'un bu koşuda tuttuğu (CLAIMED) parça sayısı > 0 olana dek.
+cc_await_claim() {
+  local run="$1" who="$2" max="$3" i
+  CC_CLAIMED=0
+  for i in $(seq 1 $((max * 2))); do
+    CC_CLAIMED="$(psql_pg -c "SELECT COUNT(*) FROM cert_sweep_chunks WHERE run_id = '$run' AND state = 'CLAIMED' AND claimed_by LIKE '$who-%'" 2>/dev/null | head -1)"
+    [ "${CC_CLAIMED:-0}" -gt 0 ] 2>/dev/null && return 0
+    sleep 0.5
+  done
+  return 1
+}
+
+# cc_chunks <koşu> — koşunun parça satırı sayısı.
+cc_chunks() { psql_pg -c "SELECT COUNT(*) FROM cert_sweep_chunks WHERE run_id = '$1'" 2>/dev/null | head -1; }
+
+# cc_scan_full → "<run_id>|<instance_id>" (scan_runs 'full').
+cc_scan_full() { psql_pg -c "SELECT run_id, instance_id FROM scan_runs WHERE kind = 'full'" 2>/dev/null | head -1; }
+
 echo "Çok pod duman testi — imaj $IMAGE, iş dizini $WORK"
 
 # ── 1. Ağ + PostgreSQL ────────────────────────────────────────────────────────────────────────
@@ -821,6 +1042,97 @@ if [ "$DIST" = "1" ]; then
   dist_off && DIST_SUMMARY="${DIST_SUMMARY:+$DIST_SUMMARY, }kapatma → klasik"
 fi
 
+# ── 8f. Parçalı sertifika taraması (çok pod Sürüm 3-4, SMOKE_CERT_CHUNKS=1) ──────────────────────────────────────────
+if [ "$CERT_CHUNKS" = "1" ]; then
+  step "8f. Parçalı sertifika taraması — $CC_DOMAINS TLS hedefi, $CC_KEY = true"
+  if cc_ensure_up && cc_tls_start && cc_inventory pod-a && cc_set pod-a true && cc_await_switch true; then
+    # Koordinatör = tarama LİDERİ: 8f-2 lider OLMAYAN işçiyi öldürür (liderlik devri olmaz, kira 180 sn beklenmez); 8f-3 lideri
+    # SIGTERM ile kapatır (temiz devir — duman testinin önceki adımları gibi).
+    CC_COORD="$(lease_holder)"
+    case "$CC_COORD" in pod-a) CC_OTHER=pod-b ;; pod-b) CC_OTHER=pod-a ;; *) CC_COORD=pod-a; CC_OTHER=pod-b ;; esac
+    ok "koordinatör = tarama lideri ($CC_COORD; kendi işçisi en çok steal-after (1 sn) sonra katılır), öbür işçi $CC_OTHER hemen alır"
+
+    step "8f-1. Olağan parçalı tur ($CC_COORD'de Şimdi çalıştır): DONE, iki pod ölçer, her alan adı bir kez kaydedilir"
+    both=""
+    for attempt in 1 2; do
+      cc_run_now "$CC_COORD" "8f-1" && cc_await_run "$CC_RUN" "8f-1" "$CC_RUN_WAIT_S" || break
+      [ "$CC_STATE|$CC_OUTCOME" = "DONE|DECIDED" ] && ok "8f-1: DONE / DECIDED" || err "8f-1: koşu $CC_STATE / $CC_OUTCOME (DONE / DECIDED bekleniyordu)"
+      cc_verify_saved "$CC_RUN" "8f-1"
+      scan="$(cc_scan_full)"
+      case "$scan" in "$CC_RUN|$CC_COORD-"*) ok "8f-1: scan_runs 'full' koordinatörce yazıldı ($scan)" ;;
+        *) err "8f-1: scan_runs 'full' bu koşuyu / koordinatörü göstermiyor: '${scan:-—}'" ;; esac
+      [ "$(cc_chunks "$CC_RUN")" = "0" ] && ok "8f-1: koşunun parça satırları silindi" || err "8f-1: bitmiş koşunun parça satırları kaldı"
+      if printf '%s' "$CC_WORKERS" | grep -q '"pod-a-' && printf '%s' "$CC_WORKERS" | grep -q '"pod-b-'; then
+        ok "8f-1: workers_json iki pod'u adlar: $CC_WORKERS"; both=1; break
+      fi
+      warn "8f-1: workers_json yalnız bir pod'u adlıyor ($CC_WORKERS) — bir tur daha ($attempt/2)"
+    done
+    [ -n "$both" ] || err "8f-1: iki turda da yalnız bir pod ölçtü — lider katılmadı mı? (CERT_CHUNK_STEAL_AFTER_MS / IDLE_POLL_MS)"
+
+    step "8f-2. $CC_OTHER parça tutarken SIGKILL — kira (60 sn) dolunca yeniden sahiplenme / devralma, koşu DONE, çift / kayıp yok"
+    if cc_run_now "$CC_COORD" "8f-2"; then
+      if cc_await_claim "$CC_RUN" "$CC_OTHER" 60; then
+        docker kill --signal KILL "$(cname "$CC_OTHER")" >/dev/null 2>&1 && ok "8f-2: $CC_OTHER SIGKILL ($CC_CLAIMED parça elindeydi)" \
+          || err "8f-2: $CC_OTHER öldürülemedi"
+      else
+        warn "8f-2: $CC_OTHER 60 sn içinde parça sahiplenmedi — yine de öldürülüyor (yeniden sahiplenme ölçülemez)"
+        docker kill --signal KILL "$(cname "$CC_OTHER")" >/dev/null 2>&1 || true
+      fi
+      if cc_await_run "$CC_RUN" "8f-2" "$CC_RUN_WAIT_S"; then
+        [ "$CC_STATE" = "DONE" ] && ok "8f-2: ölen işçiye rağmen koşu DONE ($CC_OUTCOME)" || err "8f-2: koşu $CC_STATE / $CC_OUTCOME"
+        [ $(( ${CC_RECL:-0} + ${CC_TAKE:-0} )) -ge 1 ] && ok "8f-2: yeniden sahiplenilen ${CC_RECL:-0}, devralınan ${CC_TAKE:-0} parça" \
+          || warn "8f-2: yeniden sahiplenme / devralma sayılmadı (ölen pod'un parçası ölmeden bitmiş olabilir)"
+        cc_verify_saved "$CC_RUN" "8f-2"
+      fi
+    fi
+    { docker start "$(cname "$CC_OTHER")" >/dev/null 2>&1 && wait_ready "$CC_OTHER"; } || err "8f-2: $CC_OTHER yeniden açılamadı"
+    cc_await_switch true || true
+
+    step "8f-3. Koordinatöre ($CC_COORD) SIGTERM turun ortasında — koşu ABANDONED, o koşuda sıfır kayıt; sonraki tur temizler"
+    if cc_run_now "$CC_COORD" "8f-3"; then
+      cc_await_claim "$CC_RUN" "$CC_COORD" 30 || cc_await_claim "$CC_RUN" "$CC_OTHER" 30 || true
+      dead_run="$CC_RUN"
+      t0="$(date +%s)"
+      docker kill --signal TERM "$(cname "$CC_COORD")" >/dev/null 2>&1 || err "8f-3: $CC_COORD'ye SIGTERM gönderilemedi"
+      for i in $(seq 1 "$GRACE_STOP_S"); do
+        [ "$(docker inspect -f '{{.State.Running}}' "$(cname "$CC_COORD")" 2>/dev/null)" != "true" ] && break
+        sleep 1
+      done
+      ok "8f-3: $CC_COORD $(( $(date +%s) - t0 )) sn içinde kapandı"
+      if cc_await_run "$dead_run" "8f-3" 30; then
+        [ "$CC_STATE" = "ABANDONED" ] && ok "8f-3: koşu ABANDONED / $CC_OUTCOME" || err "8f-3: koşu $CC_STATE / $CC_OUTCOME (ABANDONED bekleniyordu)"
+        [ "$CC_OUTCOME" = "SHUTDOWN" ] || warn "8f-3: sonuç $CC_OUTCOME (SHUTDOWN bekleniyordu)"
+      fi
+      n="$(psql_pg -c "SELECT COUNT(*) FROM certificate_checks WHERE run_id = '$dead_run'" 2>/dev/null | head -1)"
+      [ "${n:-x}" = "0" ] && ok "8f-3: bırakılan koşu hiçbir sonuç kaydetmedi" || err "8f-3: bırakılan koşunun ${n:-?} kaydı var"
+      { docker start "$(cname "$CC_COORD")" >/dev/null 2>&1 && wait_ready "$CC_COORD"; } || err "8f-3: $CC_COORD yeniden açılamadı"
+      cc_await_switch true || true
+      if cc_run_now "$CC_OTHER" "8f-3 sonrası" && cc_await_run "$CC_RUN" "8f-3 sonrası" "$CC_RUN_WAIT_S"; then
+        [ "$CC_STATE" = "DONE" ] && ok "8f-3 sonrası: yeni koşu DONE" || err "8f-3 sonrası: koşu $CC_STATE / $CC_OUTCOME"
+        cc_verify_saved "$CC_RUN" "8f-3 sonrası"
+        [ "$(cc_chunks "$dead_run")" = "0" ] && ok "8f-3 sonrası: bırakılan koşunun parçaları silindi" \
+          || err "8f-3 sonrası: bırakılan koşunun $(cc_chunks "$dead_run") parça satırı kaldı"
+      fi
+    fi
+
+    step "8f-4. Anahtar kapatılır — sonraki Şimdi çalıştır klasik (scan_runs güncellenir, koşu satırı eklenmez)"
+    if cc_set pod-a false && cc_await_switch false; then
+      runs0="$(psql_pg -c "SELECT COUNT(*) FROM cert_sweep_runs" 2>/dev/null | head -1)"
+      scan0="$(cc_scan_full)"
+      cc_wait_idle 120 || true
+      api pod-a POST /api/scheduler/run >/dev/null
+      [ "$API_STATUS" = "200" ] || err "8f-4: Şimdi çalıştır HTTP $API_STATUS"
+      scan1="$scan0"
+      for i in $(seq 1 120); do scan1="$(cc_scan_full)"; [ "$scan1" != "$scan0" ] && break; sleep 1; done
+      runs1="$(psql_pg -c "SELECT COUNT(*) FROM cert_sweep_runs" 2>/dev/null | head -1)"
+      [ "$scan1" != "$scan0" ] && ok "8f-4: klasik tur bitti (scan_runs $scan1)" || err "8f-4: 120 sn içinde tam tur bitmedi"
+      [ -n "$runs0" ] && [ "$runs0" = "$runs1" ] && ok "8f-4: anahtar kapalı — cert_sweep_runs'a satır eklenmedi ($runs1)" \
+        || err "8f-4: anahtar kapalıyken parçalı koşu satırı eklendi (${runs0:-?} → ${runs1:-?})"
+    fi
+    CC_SUMMARY="olağan / SIGKILL / SIGTERM / kapalı turları denetlendi"
+  fi
+fi
+
 # ── 9. Çift-iş dedektörü ──────────────────────────────────────────────────────────────────────
 step "9. Çift-iş dedektörü (scripts/multipod-dup-check.sql)"
 dup_out="$WORK/multipod-dup-check.txt"
@@ -845,4 +1157,4 @@ done
 
 echo
 if [ "$fail" -ne 0 ]; then echo "Çok pod duman testi BAŞARISIZ."; exit 1; fi
-echo "Çok pod duman testi: tamam (lider $LEADER → $FOLLOWER, devir ${handover} sn, kapanış ${stopped} sn${flip_back:+; geri devir $FOLLOWER → $LEADER ${flip_back} sn}${GEN1:+; kalıcı durum kuşakları $GEN1${GEN2:+ → $GEN2}${GEN3:+ → $GEN3}, doğrulama 0 uyuşmazlık}${LOAD_OUTS:+; devirde yüklenen: $LOAD_OUTS}${DIST_SUMMARY:+; dağıtık kontroller: $DIST_SUMMARY})."
+echo "Çok pod duman testi: tamam (lider $LEADER → $FOLLOWER, devir ${handover} sn, kapanış ${stopped} sn${flip_back:+; geri devir $FOLLOWER → $LEADER ${flip_back} sn}${GEN1:+; kalıcı durum kuşakları $GEN1${GEN2:+ → $GEN2}${GEN3:+ → $GEN3}, doğrulama 0 uyuşmazlık}${LOAD_OUTS:+; devirde yüklenen: $LOAD_OUTS}${DIST_SUMMARY:+; dağıtık kontroller: $DIST_SUMMARY}${CC_SUMMARY:+; parçalı sertifika taraması: $CC_SUMMARY})."

@@ -469,3 +469,237 @@ export function checkJobsModel(health) {
     thisPod, status, level: status === 'warn' ? 'warn' : status === 'unknown' ? 'unknown' : status === 'idle' ? 'idle' : 'on', error: null,
   }
 }
+
+// ── Çok pod Sürüm 3-4 (2026-10-29, paket C1; tasarım R3-4 §7.2): parçalı sertifika taraması ─────────────────────────
+
+/** Parça durumları — sunucu `CertSweepStore.CHUNK_*` ile AYNI (küçük harf; kapı Java kaynağını okur). */
+export const CERT_CHUNK_STATES = ['pending', 'claimed', 'done', 'cancelled']
+/** Koşu durumları — sunucu `CertSweepStore.RUN_*` (iki yönde eşit). */
+export const CERT_RUN_STATES = ['RUNNING', 'DECIDING', 'DONE', 'FAILED', 'ABANDONED']
+/** Koşu sonuçları — sunucu `CertSweepStore.OUTCOME_*` (iki yönde eşit); ekran her birini çevirir, ham kod basılmaz. */
+export const CERT_RUN_OUTCOMES = ['DECIDED', 'FAILED', 'SHUTDOWN', 'LOCK_LOST', 'ORPHANED', 'STORE_FAILED']
+/** Tur kipleri — sunucu `CertSweepView.MODE_*`. */
+export const CERT_SWEEP_MODES = ['chunked', 'classic', 'unknown']
+/**
+ * En eski bekleyen parça bu kadar ms'den eskiyse VE kuyruk duruyorsa (bekleyen var, hiçbir pod parça ölçmüyor — inceleme OB-M-1)
+ * uyarı. İşlenen kuyrukta kuyruk sonu parçalarının 30 sn'den uzun beklemesi olağandır (FIFO, bütçe sınırlı), uyarı değildir.
+ */
+export const CERT_CHUNK_OLDEST_WARN_MS = 30_000
+/** Kapanmış koşunun ardından bu kadar ms'den sonra biten bir tarama turu "daha yeni tur" sayılır (saat / yazma sırası payı). */
+export const CERT_NEWER_RUN_SLACK_MS = 60_000
+/** Koordinatörün nabzı bu kadar ms'den eskiyse işçiler parça almaz (sunucu `CertChunking.COORDINATOR_ALIVE_MS`) → uyarı. */
+export const CERT_COORDINATOR_ALIVE_MS = 60_000
+/** Bölüm durumu → rozet tonu. Açık anahtar bilgi; hiçbir durum yeşil DEĞİL (bilinmeyen gri). */
+export const CERT_CHUNKS_TONE = { running: 'info', idle: 'info', warn: 'warning', off: 'muted', unknown: 'muted' }
+/** Tur kipi → rozet tonu: parçalı bilgi, klasik / bilinmiyor gri. */
+export const CERT_MODE_TONE = { chunked: 'info', classic: 'muted', unknown: 'muted' }
+
+/**
+ * Kapanmış koşu klasik toplamaya mı döndü: ABANDONED + FAILED — koordinatörün iç hatası, tur klasik tamamlandı (sonuçlar kaydedildi,
+ * karar verildi; sunucu `CertSweepView.fellBackToClassic`). Hata değildir (inceleme OB-L3).
+ */
+export function certRunFellBack(state, outcome) {
+  return state === 'ABANDONED' && outcome === 'FAILED'
+}
+
+/**
+ * Kapanmış koşunun tonu: DONE + DECIDED yeşil (bilinen iyi son), DONE + STORE_FAILED bilgi, klasiğe dönen (ABANDONED + FAILED) bilgi,
+ * FAILED / diğer ABANDONED uyarı, diğeri gri.
+ */
+export function certRunTone(state, outcome) {
+  if (state === 'DONE') return outcome === 'STORE_FAILED' ? 'info' : outcome === 'DECIDED' ? 'success' : 'muted'
+  if (certRunFellBack(state, outcome)) return 'info'
+  if (state === 'FAILED' || state === 'ABANDONED') return 'warning'
+  return 'muted'
+}
+
+/**
+ * Kapanmış bir parçalı koşunun ARDINDAN daha yeni bir tarama turu (parçalı ya da klasik) bitti mi — `scan.last_run` (küme `scan_runs`,
+ * yalnız başarıyla biten turlar) koşunun bitişinden {@link CERT_NEWER_RUN_SLACK_MS} sonra mı. Bilinmiyor (yerel kaynak, eksik / bozuk
+ * zaman) → false: uyarı sürer (bilinmeyen "temiz" sayılmaz).
+ */
+export function newerScanAfter(finishedAt, scan) {
+  if (!isObj(scan) || scan.source === 'local' || !finishedAt || !scan.last_run) return false
+  const fin = Date.parse(toUtc(String(finishedAt)))
+  const last = Date.parse(toUtc(String(scan.last_run)))
+  if (!Number.isFinite(fin) || !Number.isFinite(last)) return false
+  return last > fin + CERT_NEWER_RUN_SLACK_MS
+}
+
+
+/**
+ * İkinci görüşün SONUCU (inceleme L-4; sunucu `second_opinion_ok` / `second_opinion_failed` — yeniden ölçümü kullanılan alan
+ * adlarından başka pod'da başarılı / yine hatalı olanlar):
+ * - `'egress'` — yeniden ölçümlerin ÇOĞU başka pod'da başarılı: bir pod'un çıkışı farklı → uyarı + çıkış eşliği (P1) önerisi;
+ * - `'confirmed'` — yeniden ölçülenlerin en az yarısı başka pod'da da hatalı: hatalar doğrulandı (gerçek kesinti olası) → BİLGİ,
+ *   P1 önerisi yok, kart uyarıya çekilmez;
+ * - `'unverified'` — hiçbiri başka pod'da yeniden ölçülemedi (özgün sonuçlar kaldı) → uyarı (doğrulanamadı);
+ * - `null` — ikinci görüş yok, ya da sonuç alanları yok (eski sunucu / eski satır) → bugünkü metin.
+ */
+export function secondOpinionOutcome(count, ok, failed) {
+  if (!(count > 0)) return null
+  if (ok == null || failed == null || ok < 0 || failed < 0) return null
+  const remeasured = ok + failed
+  if (remeasured <= 0) return 'unverified'
+  return ok * 2 > remeasured ? 'egress' : 'confirmed'
+}
+
+/** İkinci görüş sonucu → uyarı kodu (açık koşu / son kapanmış koşu); `'confirmed'` uyarı DEĞİL (bilgi satırı). */
+function secondOpinionWarning(outcome, last) {
+  if (outcome === 'egress') return last ? 'secondOpinionLastEgress' : 'secondOpinionEgress'
+  if (outcome === 'unverified') return last ? 'secondOpinionLastUnverified' : 'secondOpinionUnverified'
+  return last ? 'secondOpinionLast' : 'secondOpinion'
+}
+
+/**
+ * Parçalı sertifika taraması modeli (`health.cert_chunks`). `null` = alan yok (eski sunucu) → bölüm gizli.
+ *
+ * - `{enabled: false}` → `status: 'off'` (gri "Kapalı"); `{error}` ya da `status_error` → `unknown` (asla "tur yok" ya da yeşil).
+ * - Açık koşu → `running`; kuyruk duruyor (bekleyen var, hiçbir pod ölçmüyor) ve en eski bekleyen parça >
+ *   {@link CERT_CHUNK_OLDEST_WARN_MS}, aykırı pod, ikinci görüş > 0 ya da koordinatör nabzı > {@link CERT_COORDINATOR_ALIVE_MS}
+ *   (koordinatör `cert-check` kilidini tutmuyorsa) → `warn` (kartı uyarıya çeker).
+ * - Sahipsiz açık koşu (sunucu `orphan_suspected`: koordinatör kilidi artık tutmuyor — öldü) → açık tur DEĞİL: `idle`, ilerleme /
+ *   kutucuk / bekleyen uyarısı yok, "terk edilmiş tur (sonraki tur kapatır)" satırı (inceleme OB-L1).
+ * - Açık koşu yok → `idle` (bilgi); en yeni kapanmış koşu FAILED ve ardından daha yeni bir tur bitmedi → `warn`; en yeni kapanmış
+ *   koşuda ikinci görüş > 0 → daha yeni tur gelene kadar uyarı (OB-L4). ABANDONED tek başına uyarı DEĞİL (dağıtımda olağan; satırı
+ *   uyarı tonunda; klasiğe dönen ABANDONED + FAILED bilgi tonunda).
+ * - İkinci görüşün sonucu ({@link secondOpinionOutcome}, inceleme L-4): hatalar başka pod'da da görüldüyse uyarı / P1 önerisi YOK —
+ *   `infos` bilgi satırı (`secondOpinionConfirmed` / `secondOpinionLastConfirmed`); çoğu başarılıysa P1 önerili uyarı; sonuç alanı
+ *   yoksa (eski sunucu) bugünkü uyarı.
+ */
+export function certChunksModel(health) {
+  const cc = health?.cert_chunks
+  if (!isObj(cc)) return null
+  const base = { enabled: null, run: null, lastRuns: [], lastMode: null, thisPod: null, statusError: null, tablesReady: null,
+    warnings: [], infos: [] }
+  if (cc.error) return { ...base, status: 'unknown', level: 'unknown', error: str(cc.error) || 'error' }
+  if (cc.enabled !== true) return { ...base, enabled: false, status: 'off', level: 'off', error: null }
+
+  const statusError = cc.status_error ? str(cc.status_error) || 'unavailable' : null
+  let run = null
+  const warnings = []
+  const infos = []
+  if (!statusError && isObj(cc.run)) {
+    const r = cc.run
+    const ch = isObj(r.chunks) ? r.chunks : {}
+    const chunks = { pending: num(ch.pending) ?? 0, claimed: num(ch.claimed) ?? 0, done: num(ch.done) ?? 0,
+      cancelled: num(ch.cancelled) ?? 0 }
+    const oldestPendingMs = num(r.oldest_pending_age_ms)
+      ?? (num(r.oldest_pending_age_s) != null ? r.oldest_pending_age_s * 1000 : null)
+    const heartbeatAgeS = num(r.heartbeat_age_s)
+    const pods = (Array.isArray(r.per_pod) ? r.per_pod : []).filter(isObj).map((p) => ({
+      instanceId: str(p.instance_id), pod: str(p.pod) || str(p.instance_id) || '—', self: p.self === true,
+      chunks: num(p.chunks), domains: num(p.domains), doneDomains: num(p.done_domains),
+      networkErrors: num(p.network_errors), rate: num(p.network_error_rate), outlier: p.outlier === true,
+    }))
+    const secondOpinions = num(r.second_opinions)
+    const secondOpinionOk = num(r.second_opinion_ok)
+    const secondOpinionFailed = num(r.second_opinion_failed)
+    // Koordinatör cert-check kilidini tutuyor mu: sunucu `coordinator_live` (null = bilinmiyor); eski yanıt → zamanlayıcının canlı
+    // kilit sahibi (`scheduler.running_on`) koordinatörse canlı (inceleme OB-L5)
+    const runningOn = isObj(health?.scheduler) ? str(health.scheduler.running_on) : null
+    const coordinatorLive = typeof r.coordinator_live === 'boolean' ? r.coordinator_live
+      : runningOn && str(r.coordinator) && runningOn === str(r.coordinator) ? true : null
+    const orphan = r.orphan_suspected === true
+    run = {
+      runId: str(r.run_id), kind: str(r.kind), state: str(r.state), coordinatorPod: str(r.coordinator_pod) || str(r.coordinator),
+      ageS: num(r.age_s), heartbeatAgeS, domainsTotal: num(r.domains_total), chunksTotal: num(r.chunks_total),
+      chunks, measuredChunks: chunks.done + chunks.cancelled, domainsMeasured: num(r.domains_measured), oldestPendingMs,
+      pods, takeovers: num(r.takeovers), reclaims: num(r.reclaims), secondOpinions, coordinatorLive, orphan,
+      secondOpinionOk, secondOpinionFailed,
+      secondOpinionOutcome: secondOpinionOutcome(secondOpinions, secondOpinionOk, secondOpinionFailed),
+      // Kuyruk DURUYOR mu (inceleme OB-M-1): bekleyen var ve hiçbir pod parça ölçmüyor. İşlenen kuyrukta (claimed > 0) kuyruk sonu
+      // parçalarının 30 sn'den uzun beklemesi olağandır (FIFO, bütçe sınırlı) — uyarı değil.
+      pendingWarn: !orphan && oldestPendingMs != null && oldestPendingMs > CERT_CHUNK_OLDEST_WARN_MS && chunks.pending > 0
+        && chunks.claimed === 0,
+      // Karar aşamasında (DECIDING) koordinatör nabız YAZMAZ (nabız yalnız RUNNING satırını günceller; kayıt + alarm işleme
+      // dakikalar sürebilir) — eski nabız orada olağandır, uyarı değil (paket B notu)
+      deciding: !orphan && r.state === 'DECIDING',
+      // Kilidi tutan koordinatör yerel ölçüm yaparken nabız yazmayabilir — kilit canlıysa "sessiz" değildir (OB-L5)
+      coordinatorSilent: !orphan && r.state === 'RUNNING' && heartbeatAgeS != null && heartbeatAgeS * 1000 > CERT_COORDINATOR_ALIVE_MS
+        && coordinatorLive !== true,
+    }
+    if (!orphan) {
+      if (run.pendingWarn) warnings.push('pending')
+      if (pods.some((p) => p.outlier)) warnings.push('outlier')
+      // İnceleme L-4: hataları doğrulanmış ikinci görüş uyarı DEĞİL (P1 önerilmez) — bilgi satırı
+      if ((secondOpinions ?? 0) > 0) {
+        if (run.secondOpinionOutcome === 'confirmed') infos.push('secondOpinionConfirmed')
+        else warnings.push(secondOpinionWarning(run.secondOpinionOutcome, false))
+      }
+      if (run.coordinatorSilent) warnings.push('coordinatorSilent')
+    }
+  }
+  const lastRuns = statusError ? [] : (Array.isArray(cc.last_runs) ? cc.last_runs : []).filter(isObj).slice(0, 5).map((r) => ({
+    runId: str(r.run_id), kind: str(r.kind), state: str(r.state), outcome: str(r.outcome),
+    outcomeKnown: !!str(r.outcome) && CERT_RUN_OUTCOMES.includes(r.outcome), coordinatorPod: str(r.coordinator_pod),
+    createdAt: str(r.created_at), finishedAt: str(r.finished_at), durationMs: num(r.duration_ms), pods: num(r.pods),
+    chunksTotal: num(r.chunks_total), domainsTotal: num(r.domains_total), secondOpinions: num(r.second_opinions),
+    secondOpinionOk: num(r.second_opinion_ok), secondOpinionFailed: num(r.second_opinion_failed),
+    secondOpinionOutcome: secondOpinionOutcome(num(r.second_opinions), num(r.second_opinion_ok), num(r.second_opinion_failed)),
+    takeovers: num(r.takeovers), tone: certRunTone(str(r.state), str(r.outcome)),
+    fellBack: certRunFellBack(str(r.state), str(r.outcome)),
+  }))
+  // En yeni kapanmış koşu FAILED → uyarı, ARDINDAN daha yeni bir tarama turu (parçalı ya da klasik) bitene kadar (inceleme OB-L1)
+  const newest = lastRuns[0]
+  if (newest?.state === 'FAILED' && !newerScanAfter(newest.finishedAt, health?.scan)) warnings.push('lastFailed')
+  // İkinci görüş (inceleme OB-L4): açık (sahipsiz olmayan) koşunun sayısı biliniyorsa o karar verir; bilinmiyorsa (RUNNING — sayı
+  // DECIDING'de yazılır) ya da açık koşu yoksa en yeni kapanmış koşudaki ikinci görüş, daha yeni bir tur bitene kadar uyarıdır
+  const openKnown = run && !run.orphan && run.secondOpinions != null
+  if (!openKnown && (newest?.secondOpinions ?? 0) > 0 && !newerScanAfter(newest.finishedAt, health?.scan)) {
+    if (newest.secondOpinionOutcome === 'confirmed') infos.push('secondOpinionLastConfirmed')
+    else warnings.push(secondOpinionWarning(newest.secondOpinionOutcome, true))
+  }
+
+  const tp = isObj(cc.this_pod) ? cc.this_pod : null
+  let thisPod = null
+  if (tp) {
+    const w = isObj(tp.worker) ? tp.worker : null
+    const c = isObj(tp.coordinator) ? tp.coordinator : null
+    thisPod = {
+      pod: str(tp.pod),
+      worker: w ? {
+        enabled: w.enabled !== false, started: w.started === true, inflightChunks: num(w.inflight_chunks) ?? 0,
+        inflightDomains: num(w.inflight_domains) ?? 0, budget: num(w.budget), leaderYielding: w.leader_yielding === true,
+        claimed: num(w.claimed) ?? 0, completed: num(w.completed) ?? 0, late: num(w.late) ?? 0,
+        released: num(w.released) ?? 0, discarded: num(w.discarded) ?? 0, domainsMeasured: num(w.domains_measured) ?? 0,
+        lastClaimAt: str(w.last_claim_at), dbClockStale: w.db_clock_stale === true,
+      } : null,
+      coordinator: c ? {
+        chunkedRuns: num(c.chunked_runs) ?? 0, classicFallback: num(c.classic_fallback) ?? 0,
+        // İnceleme OB-L6: kural gereği klasik (tek pod, az alan adı …) ayrı sayılır; eski yanıtta alan yok → null (bugünkü tek satır)
+        classicByRule: num(c.classic_by_rule),
+        takeovers: num(c.takeovers) ?? 0, remeasured: num(c.remeasured) ?? 0, secondOpinions: num(c.second_opinions) ?? 0,
+        abandoned: num(c.abandoned) ?? 0,
+      } : null,
+    }
+  }
+  const lastMode = CERT_SWEEP_MODES.includes(cc.last_mode) ? cc.last_mode : 'unknown'
+  const status = statusError ? 'unknown' : warnings.length > 0 ? 'warn' : run && !run.orphan ? 'running' : 'idle'
+  return {
+    ...base, enabled: true, run, lastRuns, lastMode, thisPod, statusError, warnings, infos,
+    tablesReady: typeof cc.tables_ready === 'boolean' ? cc.tables_ready : null,
+    status, level: status === 'warn' ? 'warn' : status === 'unknown' ? 'unknown' : 'on', error: null,
+  }
+}
+
+/**
+ * Tarama kartının parçalı tarama eklentisi (`scan.last_mode`, `scan.chunked`). `null` = sunucu alanı göndermiyor (eski sunucu ya
+ * da anahtar kapalı) → kart bugünkü gibi.
+ */
+export function scanChunkModel(scan) {
+  if (!isObj(scan) || !('last_mode' in scan)) return null
+  const mode = CERT_SWEEP_MODES.includes(scan.last_mode) ? scan.last_mode : 'unknown'
+  const c = isObj(scan.chunked) ? scan.chunked : null
+  return {
+    mode,
+    error: !!scan.chunked_error,
+    chunked: c ? {
+      chunksDone: num(c.chunks_done), chunksTotal: num(c.chunks_total), domainsMeasured: num(c.domains_measured),
+      domainsTotal: num(c.domains_total), coordinatorPod: str(c.coordinator_pod),
+      // Sahipsiz (koordinatörü kilidi artık tutmayan) tur — ilerleme yerine "terk edilmiş tur" (inceleme OB-L1)
+      orphan: c.orphan_suspected === true,
+      pods: (Array.isArray(c.per_pod) ? c.per_pod : []).filter(isObj).map((p) => ({ pod: str(p.pod) || '—', domains: num(p.domains) ?? 0 })),
+    } : null,
+  }
+}
