@@ -3282,8 +3282,13 @@ public class SchedulerService {
      *
      * <p>Parçalı turda aynı yöntem parça ölçücüsüdür ({@code SchedulerCertChunks}): işçi kendi parçasını, koordinatör
      * devraldığı / yeniden ölçtüğü alan adlarını bununla ölçer — tek ölçme yolu (L-3). Hiçbir satır yazmaz (L-2).
+     *
+     * <p>{@code public}: {@code SchedulerCertChunks} bu yöntemi Spring bean'i üzerinden çağırır ve {@code SchedulerService} bir
+     * CGLIB sınıf vekilidir ({@code @Transactional} / {@code @Async}); paket içi yöntem yalnız vekil ile hedef aynı sınıf
+     * yükleyicideyken hedefe yönlenir — {@code public} her zaman yönlenir (inceleme sağlamlaştırması, 2026-10-29). Aynı neden
+     * {@link #certRunClosing()}, {@link #certCheckCoreSize()} ve {@link #isCoordinatingCertRun()} için geçerli.
      */
-    List<Map<String, Object>> gatherCertResults(List<Map<String, Object>> domains, String runId) {
+    public List<Map<String, Object>> gatherCertResults(List<Map<String, Object>> domains, String runId) {
         List<CompletableFuture<Map<String, Object>>> futures = domains.stream()
                 .map(d -> checkerService.checkAsync(
                         (String) d.get("domain"),
@@ -3313,15 +3318,48 @@ public class SchedulerService {
         return results;
     }
 
-    /** Parçalı tur ölçücüsü için: bu pod kapanıyor mu (bellek) — {@code startupCheckStopped || stopping()}. */
-    boolean certRunClosing() {
+    /**
+     * Parçalı tur ölçücüsü için: bu pod kapanıyor mu (bellek) — {@code startupCheckStopped || stopping()}. {@code public}: CGLIB
+     * vekili (bkz. {@link #gatherCertResults}).
+     */
+    public boolean certRunClosing() {
         return startupCheckStopped || stopping();
     }
 
-    /** Parçalı tur ölçücüsü için: {@code certCheckExecutor}'ın GÜNCEL çekirdek sayısı (canlı ayar); havuz yoksa 0. */
-    int certCheckCoreSize() {
+    /**
+     * Parçalı tur ölçücüsü için: {@code certCheckExecutor}'ın GÜNCEL çekirdek sayısı (canlı ayar); havuz yoksa 0. {@code public}:
+     * CGLIB vekili (bkz. {@link #gatherCertResults}).
+     */
+    public int certCheckCoreSize() {
         org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor ex = certCheckExecutor;
         return ex == null ? 0 : ex.getCorePoolSize();
+    }
+
+    /**
+     * Bu iş parçacığı şu an bir sertifika turunun parçalı toplamasını KOORDİNE ediyor mu ({@code certRunCoordinator.gather}
+     * çağrısı süresince) — bellek. {@code SchedulerCertChunks} lider pod'da parçaları alt gruplara böler (inceleme SW-L3) ama
+     * koordinatörün kendi devraldığı / yeniden ölçtüğü alan adlarını klasik turdaki gibi bütün çekirdekle ölçer. Örnek alanı
+     * (statik değil): aynı JVM'deki iki pod (testler) birbirini etkilemez.
+     */
+    public boolean isCoordinatingCertRun() {
+        return Boolean.TRUE.equals(certRunCoordinating.get());
+    }
+
+    /** {@link #isCoordinatingCertRun()} işareti — yalnız {@code certRunCoordinator.gather} çağrısı süresince dolu. */
+    private final ThreadLocal<Boolean> certRunCoordinating = new ThreadLocal<>();
+
+    /** Koordinatörün toplaması — iş parçacığını işaretleyip (SW-L3) çağırır; işaret her durumda kaldırılır. */
+    private com.sitemonitor.service.certsweep.CertRunCoordinator.Gathered gatherChunked(List<Map<String, Object>> domains,
+            String runId, String kind, boolean evictCaches, LockTicket certLock) {
+        certRunCoordinating.set(Boolean.TRUE);
+        try {
+            return certRunCoordinator.gather(domains, new com.sitemonitor.service.certsweep.CertRunCoordinator.Request(
+                    runId, kind, evictCaches, () -> lockStillHeld(certLock), this::certRunClosing,
+                    Math.max(1L, certCheckMaxWaitSeconds) * 1000L, this::getMinNetworkErrors,
+                    this::getErrorRateThreshold));
+        } finally {
+            certRunCoordinating.remove();
+        }
     }
 
     /** Parçalı koşunun son durumu — tur {@code finally}'sinden; hiçbir hata bayrağı ve kilidi bırakmayı atlatamaz. */
@@ -3383,10 +3421,7 @@ public class SchedulerService {
         try {
             // ── R3-4 cert run (gather) — toplama: parçalı koordinatör (anahtar açık + başka canlı pod) ya da klasik ──
             com.sitemonitor.service.certsweep.CertRunCoordinator.Gathered chunked = certRunCoordinator == null ? null
-                    : certRunCoordinator.gather(domains, new com.sitemonitor.service.certsweep.CertRunCoordinator.Request(
-                            runId, kind, evictCaches, () -> lockStillHeld(certLock), this::certRunClosing,
-                            Math.max(1L, certCheckMaxWaitSeconds) * 1000L, this::getMinNetworkErrors,
-                            this::getErrorRateThreshold));
+                    : gatherChunked(domains, runId, kind, evictCaches, certLock);
             List<Map<String, Object>> results;
             if (chunked == null) {
                 results = gatherCertResults(domains, runId);

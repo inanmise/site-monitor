@@ -19,6 +19,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Function;
@@ -158,8 +159,10 @@ class CertRunCoordinatorTest {
         assertThat(liveReads).as("canlılık yalnız diğer koşullar tutunca okunur").hasValue(0);
         assertThat(c.gather(rows(20, "a"), req("m6"))).as("başka canlı pod yok (ya da bilinmiyor)").isNull();
         assertThat(liveReads).hasValue(1);
-        assertThat(c.status().classicFallback()).isEqualTo(4);
-        assertThat(store.calls).as("klasik kararında depo yazılmaz").isEmpty();
+        assertThat(c.status().classicByRule()).isEqualTo(4);
+        assertThat(c.status().classicFallback()).as("kural gereği klasik — arıza değil (inceleme OB-L6)").isZero();
+        assertThat(store.calls).as("klasik kararında yalnız öksüz kapatma (tablolar hazır, kapanmıyor — OB-L1); koşu yazılmaz")
+                .containsExactly("settleOrphans", "settleOrphans", "settleOrphans");
         assertThat(r.checked).isEmpty();
     }
 
@@ -345,6 +348,7 @@ class CertRunCoordinatorTest {
         assertThat(store.run("run-internal").state).isEqualTo(CertSweepStore.RUN_ABANDONED);
         assertThat(store.run("run-internal").outcome).isEqualTo(CertSweepStore.OUTCOME_FAILED);
         assertThat(c.status().classicFallback()).isEqualTo(1);
+        assertThat(c.status().classicByRule()).isZero();
         assertThat(warns()).anyMatch(w -> w.startsWith("Parçalı tarama iç hatası — tur klasik toplamaya dönüyor (runId=run-internal)"));
     }
 
@@ -474,6 +478,7 @@ class CertRunCoordinatorTest {
         assertThat(c.gather(rows(10, "c"), req("run-c3"))).isNull();
         assertThat(warns()).hasSize(2);
         assertThat(c.status().classicFallback()).isEqualTo(3);
+        assertThat(c.status().classicByRule()).isZero();
         assertThat(local.checked).isEmpty();
     }
 
@@ -568,5 +573,366 @@ class CertRunCoordinatorTest {
         c.gather(rows(10, "t"), req("run-st"));
         assertThat(cc.coordinatorStatus()).isNotNull();
         assertThat(cc.coordinatorStatus().chunkedRuns()).isEqualTo(1);
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════════════════════════════════════════
+    // İnceleme düzeltmeleri (FX-COORD, 2026-10-29)
+    // ═════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+    /** Koordinatör takılırsa testi sonsuz döngüde bırakmaz: sahte saat {@code limitMs}'i geçince durur. */
+    void guard(long startMs, long limitMs) {
+        Runnable prev = onTick;
+        onTick = () -> {
+            if (clock.get() - startMs > limitMs) throw new AssertionError("koordinatör takıldı (sahte saat " + limitMs + " ms aştı)");
+            prev.run();
+        };
+    }
+
+    /** Ölçücü sarmalayıcısı (sahte ölçücü {@code final}). */
+    static CertChunkRunner wrap(Runner delegate, Runnable during) {
+        return new CertChunkRunner() {
+            @Override
+            public List<Map<String, Object>> checkDomains(List<Map<String, Object>> rows, String runId) {
+                during.run();
+                return delegate.checkDomains(rows, runId);
+            }
+
+            @Override
+            public boolean closing() {
+                return delegate.closing();
+            }
+
+            @Override
+            public long networkErrorCount(List<Map<String, Object>> results) {
+                return delegate.networkErrorCount(results);
+            }
+
+            @Override
+            public int executorCoreSize() {
+                return delegate.executorCoreSize();
+            }
+        };
+    }
+
+    @Test
+    @DisplayName("OB-L1: anahtar açık + tur KLASİK (tek pod / az alan adı) → açık eski koşular (RUNNING ve DECIDING, başka koordinatörün) yine öksüz kapatılır")
+    void classicRunStillSettlesOrphans() {
+        CertRunCoordinator dead = coordinator(true, healthy(ME), true, null);
+        store.createRun(dead.buildSpec(rows(10, "o"), req("run-old"), "pod-x-0000000f", CertSweepFakes.tuning()));
+        store.createRun(dead.buildSpec(rows(10, "p"), req("run-deciding"), "pod-y-0000000e", CertSweepFakes.tuning()));
+        store.run("run-deciding").state = CertSweepStore.RUN_DECIDING;
+        store.calls.clear();
+
+        Runner local = healthy(ME);
+        CertRunCoordinator single = coordinator(true, local, false, null);            // başka canlı pod yok → klasik
+        assertThat(single.gather(rows(10, "n"), req("run-classic"))).isNull();
+        assertThat(store.run("run-old").state + ":" + store.run("run-old").outcome).isEqualTo("ABANDONED:ORPHANED");
+        assertThat(store.run("run-deciding").state + ":" + store.run("run-deciding").outcome).isEqualTo("ABANDONED:ORPHANED");
+        assertThat(store.chunksOf("run-old")).isEmpty();
+        assertThat(store.calls).as("yalnız öksüz kapatma — koşu yazılmaz, budanmaz").containsExactly("settleOrphans");
+        assertThat(warns()).contains(
+                "Sahipsiz parçalı tarama kapatıldı (runId=run-old, koordinatör=pod-x) — sonuçları kaydedilmemişti, bayat tarama telafi eder",
+                "Sahipsiz parçalı tarama kapatıldı (runId=run-deciding, koordinatör=pod-y) — sonuçları kaydedilmemişti, bayat tarama telafi eder");
+        assertThat(single.status().classicByRule()).isEqualTo(1);
+        assertThat(single.status().classicFallback()).isZero();
+        assertThat(local.checked).isEmpty();
+
+        // az alan adı (min-domains altı) da kapatır; tablolar hazır değilken ya da kapanışta depoya dokunulmaz
+        CertChunking cc = CertSweepFakes.chunking(true, new CertChunking.Tuning(true, 5, 50, 4, 0, 60_000L, 10_000L, 50, 250L, 5_000L));
+        CertRunCoordinator few = new CertRunCoordinator(cc, store, local, () -> true, null, () -> ME, clock::get, ms -> { });
+        store.createRun(dead.buildSpec(rows(10, "q"), req("run-old2"), "pod-x-0000000f", CertSweepFakes.tuning()));
+        store.calls.clear();
+        assertThat(few.gather(rows(10, "m"), req("run-few"))).isNull();
+        assertThat(store.run("run-old2").state).isEqualTo(CertSweepStore.RUN_ABANDONED);
+        store.calls.clear();
+        store.tablesReady = false;
+        assertThat(few.gather(rows(10, "m"), req("run-noready"))).isNull();
+        store.tablesReady = true;
+        stop = true;
+        assertThat(few.gather(rows(10, "m"), req("run-stop"))).isNull();
+        stop = false;
+        assertThat(store.calls).as("tablolar hazır değil / kapanış → depo yok").isEmpty();
+
+        // klasik turda öksüz kapatma hatası turu etkilemez (kural gereği klasik, WARN yok); parçalı olacak turda klasiğe düşer
+        store.failSettle = Store.dbDown();
+        int before = warns().size();
+        assertThat(single.gather(rows(10, "n"), req("run-classic2"))).isNull();
+        assertThat(single.status().classicByRule()).isEqualTo(2);
+        assertThat(warns()).hasSize(before);
+        CertRunCoordinator multi = coordinator(true, local, true, null);
+        assertThat(multi.gather(rows(10, "n"), req("run-multi"))).isNull();
+        assertThat(multi.status().classicFallback()).isEqualTo(1);
+        assertThat(store.run("run-multi")).as("öksüzler kapatılamadan koşu yazılmaz").isNull();
+        assertThat(warns()).contains("Parçalı tarama başlatılamadı — tur klasik koşuyor: DataAccessResourceFailureException");
+    }
+
+    @Test
+    @DisplayName("CR-L2: biten parçaların sonuçları ≤ 20 parçalık okumalarla toplanır; sonucu 3 kez okunamayan parça (diğer okumalar başarılı) koordinatörde ölçülür")
+    void doneChunkUnreadableIsTakenOver() {
+        Runner local = healthy(ME);
+        Worker wb = new Worker(store, healthy(B), B);
+        AtomicInteger step = new AtomicInteger();
+        onTick = () -> {
+            if (step.incrementAndGet() == 1) {
+                wb.drain();                                                        // 30 parçanın hepsi biter
+                store.failReadFor.add(store.chunks.stream().filter(k -> k.no == 3).findFirst().orElseThrow().id);
+            }
+        };
+        long start = clock.get();
+        guard(start, 600_000L);
+        List<Map<String, Object>> due = rows(150, "r");
+        CertRunCoordinator c = coordinator(true, local, true, null);
+        CertRunCoordinator.Gathered g = c.gather(due, req("run-read"));
+
+        assertThat(g.aborted()).isFalse();
+        assertThat(domainsOf(g.results())).isEqualTo(domainsOfRows(due));
+        List<String> chunk3 = store.lastSpec.chunks().get(3).entries().stream().map(CertChunkSpec.Entry::domain).toList();
+        assertThat(local.checked).as("yalnız okunamayan parçanın alan adları").containsExactlyInAnyOrderElementsOf(chunk3);
+        assertThat(store.readBatches).as("okuma başına ≤ 20 parça").allMatch(k -> k <= CertRunCoordinator.RESULT_READ_BATCH)
+                .contains(20);
+        assertThat(clock.get() - start).as("depo-hatası ağı (60 sn) beklenmez").isLessThan(10_000L);
+        assertThat(c.status().takeovers()).isEqualTo(1);
+        assertThat(logs.list.stream().map(ILoggingEvent::getFormattedMessage))
+                .anyMatch(l -> l.equals("Parça 3 sonucu 3 kez okunamadı — koordinatör kendisi ölçüyor (runId=run-read)"));
+    }
+
+    @Test
+    @DisplayName("CR-L2: kayıp parçanın iptali 3 kez yazılamaz (depo başka işlerde sağlam) → koordinatör yine de kendisi ölçer")
+    void cancelFailingThreeTimesTakesOver() {
+        Runner local = healthy(ME);
+        Worker live = new Worker(store, healthy(B), B);
+        AtomicInteger step = new AtomicInteger();
+        onTick = () -> {
+            int s = step.incrementAndGet();
+            if (s == 1) {
+                store.claim("dead-1", 60_000L, Long.MAX_VALUE);
+                live.drain();
+                store.failCancelFor.add(store.chunks.stream().filter(k -> k.no == 0).findFirst().orElseThrow().id);
+            }
+            if (s == 2) clock.addAndGet(61_000L);
+            if (s == 3) store.claim("dead-2", 60_000L, Long.MAX_VALUE);
+            if (s == 4) clock.addAndGet(61_000L);
+        };
+        guard(clock.get(), 1_200_000L);
+        List<Map<String, Object>> due = rows(12, "x");
+        CertRunCoordinator c = coordinator(true, local, true, null);
+        CertRunCoordinator.Gathered g = c.gather(due, req("run-cancel"));
+
+        assertThat(g.aborted()).isFalse();
+        assertThat(domainsOf(g.results())).isEqualTo(domainsOfRows(due));
+        List<String> chunk0 = store.lastSpec.chunks().get(0).entries().stream().map(CertChunkSpec.Entry::domain).toList();
+        assertThat(local.checked).containsExactlyInAnyOrderElementsOf(chunk0);
+        assertThat(logs.list.stream().map(ILoggingEvent::getFormattedMessage))
+                .anyMatch(l -> l.equals("Parça 0 iptal edilemedi (3 deneme) — koordinatör kendisi ölçüyor (runId=run-cancel)"));
+    }
+
+    @Test
+    @DisplayName("CR-L3: tek denemeli parçanın kirası doldu, kimse yeniden almadı → lease-ms sonra koordinatör ölçer (900 sn beklemez)")
+    void expiredSingleAttemptNotReclaimedIsTakenOver() {
+        Runner local = healthy(ME);
+        Worker live = new Worker(store, healthy(B), B);
+        AtomicInteger step = new AtomicInteger();
+        onTick = () -> {
+            if (step.incrementAndGet() == 1) {
+                store.claim("dead-1", 60_000L, Long.MAX_VALUE);                   // parça 0'ı alıp ölür (deneme 1)
+                live.drain();                                                      // diğerleri biter; B bir daha almaz
+            }
+        };
+        long start = clock.get();
+        List<Map<String, Object>> due = rows(12, "e");
+        CertRunCoordinator c = coordinator(true, local, true, null);
+        CertRunCoordinator.Gathered g = c.gather(due, req("run-exp"));
+
+        assertThat(g.aborted()).isFalse();
+        assertThat(domainsOf(g.results())).isEqualTo(domainsOfRows(due));
+        List<String> chunk0 = store.lastSpec.chunks().get(0).entries().stream().map(CertChunkSpec.Entry::domain).toList();
+        assertThat(local.checked).containsExactlyInAnyOrderElementsOf(chunk0);
+        assertThat(clock.get() - start).as("kira (60 sn) + lease-ms (60 sn) sonra, ilerleme ağından (900 sn) çok önce")
+                .isBetween(120_000L, 125_000L);
+        assertThat(logs.list.stream().map(ILoggingEvent::getFormattedMessage))
+                .anyMatch(l -> l.equals("Parça 0 kirası doldu, kimse yeniden almadı (1 deneme) — koordinatör kendisi ölçüyor (runId=run-exp)"));
+    }
+
+    @Test
+    @DisplayName("CR-L4: yerel ölçüm 70 sn sürer → nabız ölçüm SIRASINDA atılır, başka pod bekleyen parçayı yine sahiplenir")
+    void heartbeatKeptFreshDuringLocalMeasurement() {
+        List<Runnable> beats = new ArrayList<>();
+        AtomicInteger stops = new AtomicInteger();
+        AtomicInteger beatsDuring = new AtomicInteger();
+        Worker wb = new Worker(store, healthy(B), B);
+        int[] claimedDuring = {0};
+        Runner localRunner = healthy(ME);
+        CertChunkRunner slow = wrap(localRunner, () -> {
+            int hbBefore = (int) store.calls.stream().filter("heartbeat"::equals).count();
+            for (int k = 0; k < 7; k++) {                                          // 70 sn süren yerel ölçüm
+                clock.addAndGet(10_000L);
+                new ArrayList<>(beats).forEach(Runnable::run);
+            }
+            beatsDuring.set((int) store.calls.stream().filter("heartbeat"::equals).count() - hbBefore);
+            if (wb.tick()) claimedDuring[0]++;                                     // başka pod bu sırada parça 1'i alabiliyor mu?
+        });
+        AtomicInteger step = new AtomicInteger();
+        onTick = () -> {
+            int s = step.incrementAndGet();
+            if (s == 1) store.claim("dead-1", 60_000L, Long.MAX_VALUE);
+            if (s == 2) clock.addAndGet(61_000L);
+            if (s == 3) store.claim("dead-2", 60_000L, Long.MAX_VALUE);
+            if (s == 4) clock.addAndGet(61_000L);                                  // parça 0 KAYIP → yerel ölçüm (70 sn)
+        };
+        CertRunCoordinator c = new CertRunCoordinator(CertSweepFakes.chunking(true, CertSweepFakes.tuning()), store, slow,
+                () -> true, null, () -> ME, clock::get, ms -> {
+                    clock.addAndGet(ms);
+                    onTick.run();
+                });
+        c.setBeatTimer((period, beat) -> {
+            assertThat(period).isEqualTo(CertChunking.COORDINATOR_HEARTBEAT_MS);
+            beats.add(beat);
+            return () -> {
+                beats.remove(beat);
+                stops.incrementAndGet();
+                return false;
+            };
+        });
+        List<Map<String, Object>> due = rows(10, "y");
+        CertRunCoordinator.Gathered g = c.gather(due, req("run-beat"));
+
+        assertThat(g.aborted()).isFalse();
+        assertThat(domainsOf(g.results())).isEqualTo(domainsOfRows(due));
+        assertThat(beatsDuring).as("ölçüm sırasında 7 nabız").hasValue(7);
+        assertThat(claimedDuring[0]).as("koşu sessiz görünmedi — işçi sahiplenmeyi sürdürdü").isEqualTo(1);
+        assertThat(wb.completed).isEqualTo(1);
+        assertThat(stops).as("nabız ölçüm bitince durdu").hasValue(1);
+        assertThat(beats).isEmpty();
+        List<String> chunk0 = store.lastSpec.chunks().get(0).entries().stream().map(CertChunkSpec.Entry::domain).toList();
+        assertThat(localRunner.checked).containsExactlyInAnyOrderElementsOf(chunk0);
+    }
+
+    @Test
+    @DisplayName("CR-L4: nabız ölçüm sırasında 0 satır bulursa (koşu başkasınca kapatıldı) → ölçüm bitince LOCK_LOST, sonuç dönmez")
+    void heartbeatLostDuringLocalMeasurementAborts() {
+        List<Runnable> beats = new ArrayList<>();
+        CertChunkRunner slow = wrap(healthy(ME), () -> {
+            clock.addAndGet(10_000L);
+            store.run("run-beat-lost").state = CertSweepStore.RUN_ABANDONED;     // başka koordinatör öksüz saydı
+            new ArrayList<>(beats).forEach(Runnable::run);
+        });
+        CertRunCoordinator c = new CertRunCoordinator(CertSweepFakes.chunking(true, CertSweepFakes.tuning()), store, slow,
+                () -> true, null, () -> ME, clock::get, ms -> clock.addAndGet(ms));
+        c.setBeatTimer((period, beat) -> {
+            beats.add(beat);
+            return () -> {
+                beats.remove(beat);
+                return false;
+            };
+        });
+        CertRunCoordinator.Gathered g = c.gather(rows(10, "z"), req("run-beat-lost"));    // işçi yok → 60 sn sonra yerel
+        assertThat(g.aborted()).isTrue();
+        assertThat(g.abortOutcome()).isEqualTo(CertSweepStore.OUTCOME_LOCK_LOST);
+        assertThat(g.results()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("CR-L4: üretim nabzı ayrı daemon iş parçacığında periyotla atar, durdurulunca iş parçacığı kalmaz")
+    void productionBeatThreadStartsAndStops() throws Exception {
+        AtomicInteger n = new AtomicInteger();
+        CertRunCoordinator.Beat beat = CertRunCoordinator.THREAD_BEAT.start(20L, n::incrementAndGet);
+        long deadline = System.currentTimeMillis() + 5_000L;
+        while (n.get() < 2 && System.currentTimeMillis() < deadline) Thread.sleep(10L);
+        assertThat(n.get()).isGreaterThanOrEqualTo(2);
+        assertThat(Thread.getAllStackTraces().keySet()).extracting(Thread::getName).contains(CertRunCoordinator.HEARTBEAT_THREAD);
+        assertThat(beat.stop()).isFalse();
+        assertThat(Thread.getAllStackTraces().keySet()).noneMatch(t -> t.isAlive()
+                && CertRunCoordinator.HEARTBEAT_THREAD.equals(t.getName()));
+        CertRunCoordinator.Beat throwing = CertRunCoordinator.THREAD_BEAT.start(5L, () -> {
+            throw new IllegalStateException("nabız hatası");
+        });
+        Thread.sleep(40L);
+        assertThat(throwing.stop()).as("nabzın hatası iş parçacığını öldürmez, durdurma temiz").isFalse();
+    }
+
+    @Test
+    @DisplayName("SW-L2: anahtar tur sürerken KAPATILDI, bırakılan parçayı kimse almıyor → 30 sn sonra koordinatör ölçer; kirası yenilenen canlı parça alınmaz")
+    void switchOffMidRunTakesOverStalledChunks() {
+        AtomicBoolean on = new AtomicBoolean(true);
+        Runner local = healthy(ME);
+        Worker wb = new Worker(store, healthy(B), B);
+        Worker wc = new Worker(store, healthy(C), C);
+        AtomicInteger step = new AtomicInteger();
+        ClaimedChunk[] held = new ClaimedChunk[1];
+        onTick = () -> {
+            int s = step.incrementAndGet();
+            if (s == 1) {
+                wb.tick();                                                         // parça 0 biter
+                held[0] = store.claim(C, 60_000L, Long.MAX_VALUE).orElseThrow();   // parça 1: C uzun süre ölçer
+                ClaimedChunk k = store.claim(B, 60_000L, Long.MAX_VALUE).orElseThrow();   // parça 2: B alır …
+                store.release(B, List.of(k.id()));                                 // … ve kapanışta bırakır (deneme 0)
+                on.set(false);                                                     // yönetici anahtarı kapatır
+            } else if (s < 100) {
+                store.renew(C, List.of(held[0].id()), 60_000L);                    // C canlı: kira yenilenir
+            } else if (s == 100) {
+                wc.run(held[0]);                                                   // C 50 sn sonra tamamlar
+            }
+        };
+        long start = clock.get();
+        guard(start, 900_000L);
+        List<Map<String, Object>> due = rows(15, "w");
+        CertRunCoordinator c = new CertRunCoordinator(CertSweepFakes.chunking(on::get, CertSweepFakes.tuning()), store, local,
+                () -> true, null, () -> ME, clock::get, ms -> {
+                    clock.addAndGet(ms);
+                    onTick.run();
+                });
+        CertRunCoordinator.Gathered g = c.gather(due, req("run-off"));
+
+        assertThat(g.aborted()).isFalse();
+        assertThat(domainsOf(g.results())).isEqualTo(domainsOfRows(due));
+        List<String> chunk2 = store.lastSpec.chunks().get(2).entries().stream().map(CertChunkSpec.Entry::domain).toList();
+        assertThat(local.checked).as("yalnız bırakılmış parça; C'nin canlı parçası alınmadı").containsExactlyInAnyOrderElementsOf(chunk2);
+        assertThat(clock.get() - start).as("900 sn ilerleme ağı beklenmedi").isLessThan(60_000L);
+        assertThat(CertSweepStatus.decodeWorkers(store.run("run-off").workersJson))
+                .extracting(CertSweepStatus.WorkerTally::worker).contains(B, C, ME);
+        assertThat(logs.list.stream().map(ILoggingEvent::getFormattedMessage))
+                .anyMatch(l -> l.startsWith("Parçalı tarama anahtarı tur sürerken kapatıldı"));
+    }
+
+    @Test
+    @DisplayName("sağlamlık: sonucun alan adı girdininkinden farklıysa kullanılmaz, koordinatör o alan adını yeniden ölçer")
+    void resultForAnotherDomainIsRemeasured() {
+        Runner local = healthy(ME);
+        Runner rb = healthy(B);
+        onTick = () -> {
+            var claimed = store.claim(B, 60_000L, Long.MAX_VALUE);
+            while (claimed.isPresent()) {
+                ClaimedChunk k = claimed.get();
+                List<Map<String, Object>> measured = rb.checkDomains(k.rows(), k.runId());
+                List<ChunkCompletion.Result> res = new ArrayList<>();
+                for (int i = 0; i < measured.size(); i++) {
+                    int idx = k.entries().get(i).index();
+                    Map<String, Object> m = measured.get(i);
+                    if (idx == 1) m.put("domain", "baska.example.com");             // yanlış alan adına ait sonuç
+                    res.add(new ChunkCompletion.Result(idx, m, false));
+                }
+                store.complete(new ChunkCompletion(k.id(), k.claimToken(), B, ChunkCompletion.encodeResults(res),
+                        k.domainCount(), 0, 0, 0));
+                claimed = store.claim(B, 60_000L, Long.MAX_VALUE);
+            }
+        };
+        List<Map<String, Object>> due = rows(10, "v");
+        CertRunCoordinator c = coordinator(true, local, true, null);
+        CertRunCoordinator.Gathered g = c.gather(due, req("run-dom"));
+        assertThat(g.aborted()).isFalse();
+        assertThat(domainsOf(g.results())).isEqualTo(domainsOfRows(due));
+        assertThat(local.checked).containsExactly("v001.example.com");
+        assertThat(c.status().remeasured()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("OB-L6: koordinatör sayaçları — alan adları classicByRule / classicFallback; eski 6'lı kurucu classicByRule = 0")
+    void coordinatorStatusFields() {
+        assertThat(java.util.Arrays.stream(CertSweepStatus.Coordinator.class.getRecordComponents())
+                .map(java.lang.reflect.RecordComponent::getName)).contains("classicByRule", "classicFallback");
+        CertSweepStatus.Coordinator old = new CertSweepStatus.Coordinator(1, 2, 3, 4, 5, 6);
+        assertThat(old.classicFallback()).isEqualTo(2);
+        assertThat(old.classicByRule()).isZero();
+        assertThat(new CertSweepStatus.Coordinator(1, 2, 3, 4, 5, 6, 7).classicByRule()).isEqualTo(7);
     }
 }

@@ -46,21 +46,36 @@ import java.util.function.Supplier;
  * {@code null} döner — depo, işçi, {@code PodLiveness}, veritabanı, günlük, iş parçacığı yok. {@link #finish} yalnız parçalı
  * koşulan turda çağrılır.
  *
+ * <p><b>Öksüz kapatma her açık turda (inceleme OB-L1).</b> Anahtar açıkken HER turun başında (tur klasik kalsa da — tek pod,
+ * az alan adı) depo hazırsa açık (RUNNING / DECIDING) koşular öksüz kapatılır: çağıran {@code cert-check}'i tuttuğu için
+ * başka açık koşu olamaz. Böylece ölmüş bir koordinatörün koşusu sonraki tur klasik de olsa "açık" görünmez.
+ *
  * <p><b>Kip (§4.5 adım 1).</b> Anahtar açık ∧ depo bean'i var ve tabloları hazır ∧ ölçücü ({@link CertChunkRunner}) var ∧ alan
  * adı sayısı ≥ {@link CertChunking.Tuning#minDomains()} ∧ kapanmıyor ∧ BAŞKA canlı pod var ({@code PodLiveness.anotherLivePod()};
- * bilinmiyor = yok). Biri tutmazsa klasik (sayaç {@code classic_fallback}). Tek pod'da anahtar açık olsa da tur klasiktir.
+ * bilinmiyor = yok). Biri tutmazsa klasik (sayaç {@code classic_by_rule}); koşu yazılamadıysa ya da koordinatörün kendi hatasıyla
+ * klasiğe düşüldüyse sayaç {@code classic_fallback} (inceleme OB-L6). Tek pod'da anahtar açık olsa da tur klasiktir.
  *
  * <p><b>Bekleme döngüsü (§2.4 / §2.5).</b> {@value CertChunking#COORDINATOR_WAIT_POLL_MS} ms'de bir: kapanış → SHUTDOWN, kilit
  * kaybı → LOCK_LOST (sonuç işlenmez — klasik SS:3340 / SS:3348 ile aynı), {@value CertChunking#COORDINATOR_HEARTBEAT_MS} ms'de
- * bir nabız (0 satır → LOCK_LOST), parça durumları, yeni DONE parçaların sonuçları. Kullanılamayan sonuç ({@code failed} /
- * kırpılmış) ve KAYIP parça ({@link ChunkState#lost}) koordinatörün KENDİ klasik toplamasıyla ölçülür (L-4). İlerleme
- * ({@code sweep-max-wait-seconds}, 900 sn) yoksa, {@value #NO_WORKER_MS} ms içinde hiçbir parça sahiplenilmediyse (hiçbir pod'da
- * işçi yok) ya da depo {@value CertChunking#STORE_FAILURE_LOCAL_MS} ms boyunca okunamadıysa kalan parçalar yerelde ölçülür — tur
- * koordinatör yaşadıkça ve kilidi tuttukça HER alan adı için tek sonuçla biter.
+ * bir nabız (0 satır → LOCK_LOST), parça durumları, yeni DONE parçaların sonuçları en çok {@value #RESULT_READ_BATCH} parçalık
+ * gruplar hâlinde (CR-L2). Kullanılamayan sonuç ({@code failed} / kırpılmış / başka alan adının sonucu) ve KAYIP parça
+ * ({@link ChunkState#lost}; ya da kirası {@code lease-ms}'ten uzun süredir dolmuş ve kimsenin yeniden almadığı parça, CR-L3)
+ * koordinatörün KENDİ klasik toplamasıyla ölçülür (L-4). Sonucu ya da iptali art arda {@value #STORE_STRIKES_TAKEOVER} kez
+ * okunamayan / yazılamayan parça da yerelde ölçülür (CR-L2). İlerleme ({@code sweep-max-wait-seconds}, 900 sn) yoksa,
+ * {@value #NO_WORKER_MS} ms içinde hiçbir parça sahiplenilmediyse (hiçbir pod'da işçi yok), depo
+ * {@value CertChunking#STORE_FAILURE_LOCAL_MS} ms boyunca okunamadıysa ya da anahtar tur sürerken KAPATILDIYSA ve parçanın
+ * durumu {@value #SWITCH_OFF_STALL_MS} ms değişmediyse (SW-L2) kalan parçalar yerelde ölçülür — tur koordinatör yaşadıkça ve
+ * kilidi tuttukça HER alan adı için tek sonuçla biter. Yerel ölçüm sürerken koşunun nabzı ayrı bir iş parçacığından
+ * ({@value #HEARTBEAT_THREAD}) taze tutulur — işçiler sahiplenmeyi sürdürür, koşu sessiz görünmez (CR-L4).
  *
- * <p><b>Aykırı pod — ikinci görüş (§2.6).</b> Bir pod'un ağ hatası oranı eşiğin üstünde, diğerleri temizken o pod'un ağ sınıfı
- * hataları BAŞKA bir pod'dan (kaçınılan işçi = o pod) bir kez yeniden ölçülür; yeni ölçüm eskisinin yerine geçer (L-3'ün tek
- * bilinçli istisnası).
+ * <p><b>Aykırı pod — ikinci görüş (§2.6).</b> Bir pod'un ağ hatası (+ çözülemeyen ad, CR-M-1) oranı eşiğin üstünde, diğerleri
+ * temizken o pod'un bu hataları BAŞKA bir pod'dan (kaçınılan işçi = o pod) bir kez yeniden ölçülür; yeni ölçüm eskisinin yerine
+ * geçer (L-3'ün tek bilinçli istisnası). Aykırı pod koordinatörün KENDİSİYSE (inceleme H-1): 30 sn içinde hiçbir ikinci görüş
+ * parçası sahiplenilmediyse özgün sonuçlar kalır; sahiplenildiyse (tavan: ilerlemesiz {@code sweep-max-wait-seconds}) hepsi
+ * bitene ya da biri kaybolana dek beklenir, canlı sahiplenilmiş parça iptal edilmez; ve HEPSİ-YA-DA-HİÇBİRİ: yeniden dağıtılan
+ * her alan adı kullanılabilir biçimde yeniden ölçülmediyse özgün sonuçların HEPSİ kalır — kısmi bir değişim turu toplu kesinti
+ * eşiğinin altına çekemez. Aykırı pod uyarısı ikinci görüşten SONRA, sonucuyla yazılır; çıkış eşliği (P1) önerisi yalnız yeniden
+ * ölçümlerin çoğu başka pod'dan başarılıysa (CR-L5).
  *
  * <p><b>Ölçüm koordinatörün iş parçacığında</b> (tasarım §4.5 adım 3): {@link CertChunkRunner#checkDomains} = klasik toplama, aynı
  * istisna anlamıyla — bir kontrolün istisnası turu klasikteki gibi düşürür (koşu FAILED, istisna AYNEN fırlar). Koordinatörün
@@ -78,6 +93,16 @@ public class CertRunCoordinator {
     static final long CREATE_WARN_EVERY_MS = 60_000L;
     /** Aykırı pod uyarısının aralığı (ms) — pod başına saatte bir. */
     static final long OUTLIER_WARN_EVERY_MS = 3_600_000L;
+    /** Biten parçaların sonuçları en çok bu kadar parçalık okumalarla toplanır (inceleme CR-L2 — dev tek okuma yok). */
+    static final int RESULT_READ_BATCH = 20;
+    /** Sonucu okunamayan / iptali yazılamayan parça art arda bu kadar başarısızlıktan sonra yerelde ölçülür (CR-L2). */
+    static final int STORE_STRIKES_TAKEOVER = 3;
+    /** Anahtar tur sürerken kapatıldıysa durumu bu kadar (ms) değişmeyen açık parça devralınır (SW-L2). */
+    static final long SWITCH_OFF_STALL_MS = 30_000L;
+    /** Yerel ölçüm sürerken koşu nabzını atan iş parçacığının adı (kalıcı). */
+    public static final String HEARTBEAT_THREAD = "cert-run-heartbeat";
+    /** Nabız iş parçacığının durdurulurken en çok beklenmesi (ms). */
+    static final long HEARTBEAT_STOP_JOIN_MS = 1_000L;
 
     /**
      * Turun bağlamı (çağıran {@code SchedulerService} kurar — değerler TEMBEL okunur, anahtar kapalıyken hiçbiri çağrılmaz).
@@ -114,6 +139,64 @@ public class CertRunCoordinator {
         void sleep(long ms) throws InterruptedException;
     }
 
+    /**
+     * Yerel ölçüm sürerken koşu nabzını atan zamanlayıcı (inceleme CR-L4) — üretimde {@link #THREAD_BEAT}, testler değiştirir.
+     * {@code beat} kendi hatasını yutar.
+     */
+    interface BeatTimer {
+        /** {@code beat}'i {@code periodMs}'de bir çalıştırmaya başlar. */
+        Beat start(long periodMs, Runnable beat);
+    }
+
+    /** Çalışan nabız. */
+    interface Beat {
+        /**
+         * Durdurur (en çok {@value CertRunCoordinator#HEARTBEAT_STOP_JOIN_MS} ms bekler, fırlatmaz).
+         *
+         * @return beklerken çağıran iş parçacığı kesildi mi (çağıran bayrağı sonunda geri koyar)
+         */
+        boolean stop();
+    }
+
+    /**
+     * Üretim nabzı: bir daemon iş parçacığı ({@value #HEARTBEAT_THREAD}) {@code periodMs} uyuyup {@code beat}'i çağırır; durdurma
+     * kesme + en çok {@value #HEARTBEAT_STOP_JOIN_MS} ms birleştirme (deyim sürüyorsa iş parçacığı kendi süresiyle biter).
+     * Yalnız anahtar açıkken, parçalı koşunun yerel ölçümü sürerken var olur (L-1: kapalıyken hiç doğmaz).
+     */
+    static final BeatTimer THREAD_BEAT = (periodMs, beat) -> {
+        Thread t = new Thread(() -> {
+            while (!Thread.currentThread().isInterrupted()) {
+                try {
+                    Thread.sleep(periodMs);
+                } catch (InterruptedException e) {
+                    return;
+                }
+                try {
+                    beat.run();
+                } catch (RuntimeException e) {
+                    log.debug("Parçalı koşu nabzı atılamadı: {}", e.getClass().getSimpleName());
+                }
+            }
+        }, HEARTBEAT_THREAD);
+        t.setDaemon(true);
+        t.start();
+        return () -> {
+            t.interrupt();
+            boolean interrupted = false;
+            long deadline = System.nanoTime() + HEARTBEAT_STOP_JOIN_MS * 1_000_000L;
+            while (t.isAlive()) {
+                long left = (deadline - System.nanoTime()) / 1_000_000L;
+                if (left <= 0) break;
+                try {
+                    t.join(left);
+                } catch (InterruptedException e) {
+                    interrupted = true;
+                }
+            }
+            return interrupted;
+        };
+    };
+
     private final CertChunking chunking;
     private final Supplier<CertSweepStore> storeSource;
     private final Supplier<CertChunkRunner> runnerSource;
@@ -122,11 +205,13 @@ public class CertRunCoordinator {
     private final Supplier<String> instanceId;
     private final LongSupplier monoMs;
     private final Pause pause;
+    private volatile BeatTimer beatTimer = THREAD_BEAT;
 
     private volatile Runnable localWorkerPoke;
     private final Map<String, Session> open = new ConcurrentHashMap<>();
 
     private final AtomicLong chunkedRuns = new AtomicLong();
+    private final AtomicLong classicByRule = new AtomicLong();
     private final AtomicLong classicFallback = new AtomicLong();
     private final AtomicLong takeovers = new AtomicLong();
     private final AtomicLong remeasured = new AtomicLong();
@@ -179,15 +264,23 @@ public class CertRunCoordinator {
         this.localWorkerPoke = poke;
     }
 
+    /** Testler: yerel ölçüm nabzı (null → üretim iş parçacığı). */
+    void setBeatTimer(BeatTimer timer) {
+        this.beatTimer = timer == null ? THREAD_BEAT : timer;
+    }
+
     /** Bu pod'un koordinatör sayaçları (bellek; Sistem Sağlığı / ölçümler). */
     public CertSweepStatus.Coordinator status() {
         return new CertSweepStatus.Coordinator(chunkedRuns.get(), classicFallback.get(), takeovers.get(), remeasured.get(),
-                secondOpinions.get(), abandoned.get());
+                secondOpinions.get(), abandoned.get(), classicByRule.get());
     }
 
     // ═════════════════════════════════════════════════════════════════════════════════════════════════════════════
     // Toplama
     // ═════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+    /** Tur başı öksüz kapatmanın sonucu. */
+    private enum Settle { DONE, SKIPPED, FAILED }
 
     /**
      * Turun toplama adımı — {@code null} = klasik toplamayı koş.
@@ -202,17 +295,23 @@ public class CertRunCoordinator {
         if (cc == null || !cc.enabled()) return null;                // İLK deyim: bellek (L-1)
         CertSweepStore store = storeSource.get();
         CertChunkRunner runner = runnerSource.get();
+        RuntimeException settleFailure = null;
+        Settle settle;
+        try {
+            settle = settleAtRunStart(store, req);                   // anahtar açıkken HER tur (OB-L1)
+        } catch (RuntimeException e) {
+            settle = Settle.FAILED;
+            settleFailure = e;
+            log.debug("Sahipsiz parçalı koşular kapatılamadı: {}", e.getClass().getSimpleName());
+        }
         if (!chunkedRunWanted(cc, store, runner, domains, req)) {
-            classicFallback.incrementAndGet();
+            classicByRule.incrementAndGet();
             return null;
         }
         String me = instanceId.get();
         CertRunSpec spec;
         try {
-            for (CertSweepStatus.Run orphan : store.settleOrphans()) {
-                log.warn("Sahipsiz parçalı tarama kapatıldı (runId={}, koordinatör={}) — sonuçları kaydedilmemişti, "
-                        + "bayat tarama telafi eder", orphan.runId(), ClusterHealthStore.podOf(orphan.coordinator()));
-            }
+            if (settle == Settle.FAILED) throw settleFailure;        // öksüzler kapatılamadı → bu tur parçalı olamaz
             pruneQuietly(store);
             spec = buildSpec(domains, req, me, cc.tuning());
             store.createRun(spec);
@@ -232,7 +331,7 @@ public class CertRunCoordinator {
                 log.debug("Yerel parça işçisi dürtülemedi: {}", e.getClass().getSimpleName());
             }
         }
-        Session s = new Session(spec, req, me, store, runner);
+        Session s = new Session(spec, req, me, store, runner, cc);
         open.put(spec.runId(), s);
         try {
             return s.run();
@@ -257,6 +356,27 @@ public class CertRunCoordinator {
         } finally {
             if (s.interrupted) Thread.currentThread().interrupt();
         }
+    }
+
+    /**
+     * Tur başı öksüz kapatma (inceleme OB-L1): anahtar açık, depo var ve tabloları hazır, kapanmıyorken HER turun başında —
+     * tur klasik kalsa da. Çağıran {@code cert-check}'i tuttuğu için açık (RUNNING / DECIDING) her koşu öksüzdür (koordinatörü
+     * kim olursa olsun). Her kapatılan koşu için bir WARN.
+     *
+     * @throws RuntimeException depo hatası (çağıran: klasik tur sürer; parçalı olacaktıysa klasiğe düşer)
+     */
+    private Settle settleAtRunStart(CertSweepStore store, Request req) {
+        if (store == null || req == null) return Settle.SKIPPED;
+        if (!store.tablesReady()) return Settle.SKIPPED;
+        if (req.stopping() != null && req.stopping().getAsBoolean()) return Settle.SKIPPED;
+        List<CertSweepStatus.Run> orphans = store.settleOrphans();
+        if (orphans != null) {
+            for (CertSweepStatus.Run orphan : orphans) {
+                log.warn("Sahipsiz parçalı tarama kapatıldı (runId={}, koordinatör={}) — sonuçları kaydedilmemişti, "
+                        + "bayat tarama telafi eder", orphan.runId(), ClusterHealthStore.podOf(orphan.coordinator()));
+            }
+        }
+        return Settle.DONE;
     }
 
     /**
@@ -435,14 +555,28 @@ public class CertRunCoordinator {
         }
     }
 
+    /**
+     * Bir aykırı pod'un ikinci görüş grubu (§2.6).
+     *
+     * @param worker  aykırı pod'un örnek kimliği (kaçınılan işçi)
+     * @param nw      pod'un sonuç sayısı
+     * @param nev     pod'un hatalı sonuç sayısı (ağ + çözülemeyen ad)
+     * @param otherN  diğerlerinin sonuç sayısı
+     * @param otherNe diğerlerinin hatalı sonuç sayısı
+     * @param indices yeniden dağıtılan klasik sıra numaraları
+     */
+    private record SoGroup(String worker, int nw, int nev, int otherN, int otherNe, List<Integer> indices) {}
+
     private final class Session {
         final CertRunSpec spec;
         final Request req;
         final String me;
         final CertSweepStore store;
         final CertChunkRunner runner;
+        final CertChunking chunking;
         final String runId;
         final int n;
+        final long leaseMs;
         final List<Map<String, Object>> results;
         final String[] by;
         final CertChunkSpec.Entry[] entries;
@@ -451,33 +585,55 @@ public class CertRunCoordinator {
         final Map<Long, Integer> noById = new HashMap<>();
         final Map<Integer, ChunkState> lastState = new HashMap<>();
         final Map<Integer, String> fingerprint = new HashMap<>();
+        /** Parçanın durum parmak izinin son değiştiği an (tekdüze saat) — anahtar kapatılınca devralma kuralı (SW-L2). */
+        final Map<Integer, Long> changedAt = new HashMap<>();
         final Map<Integer, Integer> maxAttempts = new HashMap<>();
+        /** Art arda sonuç okuma / iptal başarısızlığı (CR-L2). */
+        final Map<Integer, Integer> readStrikes = new HashMap<>();
+        final Map<Integer, Integer> cancelStrikes = new HashMap<>();
         final Set<Integer> settled = new HashSet<>();
         final Set<Integer> queued = new HashSet<>();
         final List<CertChunkSpec.Entry> localEntries = new ArrayList<>();
         final Set<Integer> localChunks = new HashSet<>();
         final Map<String, Integer> chunkTally = new HashMap<>();
+        // ── ikinci görüş ──
+        final List<SoGroup> soGroups = new ArrayList<>();
+        final Map<Integer, Map<String, Object>> soOriginal = new HashMap<>();
+        /** Kaçınılan işçisi BU pod olan (koordinatör aykırı) ikinci görüş parçaları — hepsi-ya-da-hiçbiri (H-1). */
+        final Set<Integer> selfSo = new LinkedHashSet<>();
+        final Map<Integer, Map<String, Object>> selfStash = new HashMap<>();
+        final Map<Integer, String> selfStashWorker = new HashMap<>();
+        final Map<Integer, String> selfChunkWorker = new HashMap<>();
+        boolean selfSoClaimSeen;
+        boolean selfSoAbandoned;
+        boolean selfSoApplied;
+        // ──
         int takeoverChunks;
         int secondOpinionDomains;
         boolean storeFailed;
         long storeFailingSince = -1L;
+        long lastStoreNow = Long.MIN_VALUE;
         boolean anyClaimSeen;
         boolean noWorkerFired;
+        boolean switchOffSeen;
         long createdMono;
         long lastProgress;
         long lastHeartbeat;
         int nextChunkNo;
         volatile String abortOutcome;
+        volatile boolean beatLost;
         boolean interrupted;
 
-        Session(CertRunSpec spec, Request req, String me, CertSweepStore store, CertChunkRunner runner) {
+        Session(CertRunSpec spec, Request req, String me, CertSweepStore store, CertChunkRunner runner, CertChunking chunking) {
             this.spec = spec;
             this.req = req;
             this.me = me;
             this.store = store;
             this.runner = runner;
+            this.chunking = chunking;
             this.runId = spec.runId();
             this.n = spec.domainsTotal();
+            this.leaseMs = chunking.tuning().leaseMs();
             this.results = new ArrayList<>(Collections.nCopies(n, null));
             this.by = new String[n];
             this.entries = new CertChunkSpec.Entry[n];
@@ -491,6 +647,8 @@ public class CertRunCoordinator {
         private void register(CertChunkSpec c) {
             specs.put(c.chunkNo(), c);
             fingerprint.put(c.chunkNo(), fp(CertSweepStore.CHUNK_PENDING, 0, null, null));
+            changedAt.put(c.chunkNo(), monoMs.getAsLong());
+            if (c.avoidWorker() != null && c.avoidWorker().equals(me)) selfSo.add(c.chunkNo());
         }
 
         Gathered run() {
@@ -548,6 +706,7 @@ public class CertRunCoordinator {
             while (true) {
                 if (closing()) return CertSweepStore.OUTCOME_SHUTDOWN;
                 if (!req.lockHeld().getAsBoolean()) return CertSweepStore.OUTCOME_LOCK_LOST;
+                if (beatLost) return CertSweepStore.OUTCOME_LOCK_LOST;      // yerel ölçüm sırasındaki nabız 0 satır buldu
                 if (localEntries.isEmpty() && settled.containsAll(nos)) return null;
                 long now = monoMs.getAsLong();
                 if (!storeFailed && now - lastHeartbeat >= CertChunking.COORDINATOR_HEARTBEAT_MS) {
@@ -564,7 +723,7 @@ public class CertRunCoordinator {
                     try {
                         List<ChunkState> states = store.chunkStates(runId);
                         storeOk();
-                        observe(states, nos, secondOpinion, phaseStart, now);
+                        observe(states, nos, now);
                     } catch (RunnerFailure rf) {
                         throw rf;
                     } catch (RuntimeException e) {
@@ -584,11 +743,9 @@ public class CertRunCoordinator {
                             + "hepsini ölçüyor (runId={})", NO_WORKER_MS / 1000L, runId);
                     for (int no : nos) takeover(no, lastState.get(no), true, "no_worker");
                 } else if (secondOpinion && now - phaseStart >= CertChunking.SECOND_OPINION_WAIT_MS) {
-                    for (int no : nos) {
-                        ChunkState c = lastState.get(no);
-                        if (c == null || (c.pending() && c.attempts() == 0)) takeover(no, c, c != null, "second_opinion");
-                    }
+                    secondOpinionDeadline(nos);
                 }
+                if (!storeFailed && !switchOn()) takeOverStalled(nos, now);
                 if (!localEntries.isEmpty()) {
                     String abort = measureLocal();
                     if (abort != null) return abort;
@@ -609,9 +766,56 @@ public class CertRunCoordinator {
             }
         }
 
-        private void observe(List<ChunkState> states, Set<Integer> nos, boolean secondOpinion, long phaseStart, long now) {
+        /** Anahtar hâlâ açık mı (bellek; okunamazsa açık sayılır — devralma yalnız kesin "kapalı"da). */
+        private boolean switchOn() {
+            try {
+                return chunking.enabled();
+            } catch (RuntimeException e) {
+                return true;
+            }
+        }
+
+        /**
+         * Anahtar tur sürerken KAPATILDI (SW-L2): işçiler artık boşta kalabilir — durumu {@value #SWITCH_OFF_STALL_MS} ms
+         * değişmeyen her açık parça (bırakılmış / kirası dolmuş / hiç alınmamış) koordinatöre alınır. Kirası yenilenen canlı
+         * parça değişir, alınmaz.
+         */
+        private void takeOverStalled(Set<Integer> nos, long now) {
+            if (!switchOffSeen) {
+                switchOffSeen = true;
+                log.info("Parçalı tarama anahtarı tur sürerken kapatıldı — {} sn durumu değişmeyen parçaları koordinatör ölçecek "
+                        + "(runId={})", SWITCH_OFF_STALL_MS / 1000L, runId);
+            }
+            for (int no : nos) {
+                if (settled.contains(no) || queued.contains(no)) continue;
+                Long changed = changedAt.get(no);
+                if (changed != null && now - changed >= SWITCH_OFF_STALL_MS) {
+                    ChunkState c = lastState.get(no);
+                    takeover(no, c, c != null, "switch_off");
+                }
+            }
+        }
+
+        /**
+         * İkinci görüşün 30 sn noktası. Kaçınılan işçisi başka pod olan parçalardan HİÇ alınmamışlar koordinatöre geçer (kendisi
+         * ölçer). Kaçınılan işçisi bu pod olanlar (koordinatör aykırı, H-1): o ana dek HİÇBİRİ sahiplenilmediyse özgün sonuçlar
+         * kalır; biri sahiplenildiyse beklenir (canlı sahiplenilmiş parça asla iptal edilmez).
+         */
+        private void secondOpinionDeadline(Set<Integer> nos) {
+            for (int no : nos) {
+                ChunkState c = lastState.get(no);
+                if (selfSo.contains(no)) {
+                    if (!selfSoClaimSeen) abandonSelfSecondOpinion("unclaimed");
+                } else if (c == null || (c.pending() && c.attempts() == 0)) {
+                    takeover(no, c, c != null, "second_opinion");
+                }
+            }
+        }
+
+        private void observe(List<ChunkState> states, Set<Integer> nos, long now) {
             if (states == null) return;
             long storeNow = store.nowMs();
+            lastStoreNow = storeNow;
             List<Long> toRead = new ArrayList<>();
             for (ChunkState c : states) {
                 if (c == null || !specs.containsKey(c.chunkNo())) continue;
@@ -620,46 +824,70 @@ public class CertRunCoordinator {
                 noById.put(c.id(), no);
                 lastState.put(no, c);
                 String f = fp(c.state(), c.attempts(), c.claimedMs(), c.leaseUntilMs());
-                if (!f.equals(fingerprint.put(no, f))) lastProgress = now;
+                if (!f.equals(fingerprint.put(no, f))) {
+                    lastProgress = now;
+                    changedAt.put(no, now);
+                }
                 if (c.attempts() > 0 || !c.pending()) anyClaimSeen = true;
+                if (selfSo.contains(no) && (c.attempts() > 0 || c.claimed() || c.done())) selfSoClaimSeen = true;
                 maxAttempts.merge(no, c.attempts(), Math::max);
                 if (!nos.contains(no) || settled.contains(no) || queued.contains(no)) continue;
                 if (c.done()) toRead.add(c.id());
                 else if (c.cancelled()) takeover(no, c, false, "cancelled");
                 else if (c.lost(storeNow)) takeover(no, c, true, "lost");
+                else if (leaseLongExpired(c, storeNow)) takeover(no, c, true, "expired");
             }
             if (!toRead.isEmpty()) collect(toRead);
         }
 
         /**
-         * Parçayı koordinatöre alır: gerekirse iptal eder (0 satır = bu arada DONE oldu → sonraki turda toplanır), girdilerini
-         * yerel ölçüm kuyruğuna koyar. İkinci görüş parçasında kaçınılan işçi bu pod ise yeni ölçüm yapılmaz — eski sonuç kalır.
+         * Kirası {@code lease-ms}'ten uzun süredir dolmuş ve kimsenin yeniden sahiplenmediği parça (CR-L3) — deneme sayısı ne
+         * olursa olsun kayıp sayılır (tek denemeli parçayı yeniden alacak işçi yoksa 900 sn beklenmez).
+         */
+        private boolean leaseLongExpired(ChunkState c, long storeNow) {
+            return c.claimed() && c.leaseUntilMs() != null && storeNow - c.leaseUntilMs() > leaseMs;
+        }
+
+        /**
+         * Parçayı koordinatöre alır: gerekirse iptal eder (0 satır = bu arada DONE oldu → sonraki turda toplanır; iptal art arda
+         * {@value #STORE_STRIKES_TAKEOVER} kez yazılamazsa yine de alır), girdilerini yerel ölçüm kuyruğuna koyar. Kaçınılan işçisi
+         * bu pod olan ikinci görüş parçası yerelde ÖLÇÜLMEZ (koordinatör aykırı) — ikinci görüşün tamamı bırakılır, özgün
+         * sonuçlar kalır (H-1).
          */
         private void takeover(int no, ChunkState c, boolean cancel, String reason) {
             if (settled.contains(no) || queued.contains(no)) return;
             CertChunkSpec spec = specs.get(no);
             if (spec == null) return;
             if (c != null && c.done()) return;                       // sonucu toplanacak
+            if (selfSo.contains(no)) {
+                abandonSelfSecondOpinion(reason);
+                return;
+            }
             if (cancel) {
                 Long id = c != null ? Long.valueOf(c.id()) : idByNo.get(no);
                 if (id != null) {
                     try {
                         boolean ok = store.cancel(runId, id);
                         storeOk();
+                        cancelStrikes.remove(no);
                         if (!ok) return;                             // DONE oldu (ya da zaten iptal) → toplanır
                     } catch (RuntimeException e) {
                         storeError(e, monoMs.getAsLong());
-                        if (!storeFailed) return;                    // sonraki turda yeniden denenir
+                        if (!storeFailed) {
+                            int k = cancelStrikes.merge(no, 1, Integer::sum);
+                            if (k < STORE_STRIKES_TAKEOVER) return;  // sonraki turda yeniden denenir
+                            log.info("Parça {} iptal edilemedi ({} deneme) — koordinatör kendisi ölçüyor (runId={})", no, k,
+                                    runId);
+                        }
                     }
                 }
             }
             queued.add(no);
-            if (spec.avoidWorker() != null && spec.avoidWorker().equals(me)) {
-                settled.add(no);                                     // aykırı pod koordinatörün kendisi: eski sonuç kalır
-                return;
-            }
             if ("lost".equals(reason)) {
                 log.info("Parça {} kayboldu ({} deneme) — koordinatör kendisi ölçüyor (runId={})", no,
+                        c == null ? 0 : c.attempts(), runId);
+            } else if ("expired".equals(reason)) {
+                log.info("Parça {} kirası doldu, kimse yeniden almadı ({} deneme) — koordinatör kendisi ölçüyor (runId={})", no,
                         c == null ? 0 : c.attempts(), runId);
             }
             takeoverChunks++;
@@ -669,40 +897,122 @@ public class CertRunCoordinator {
             chunkTally.merge(me, 1, Integer::sum);
         }
 
+        /**
+         * Koordinatörün kendisi aykırıyken ikinci görüşü BIRAKIR (H-1): hiçbir kendi-ikinci-görüş sonucu kullanılmaz, özgün
+         * sonuçların HEPSİ kalır (kısmi değişim yok). Henüz yerleşmemiş parçalar yerleşmiş sayılır; yalnız beklemede ya da
+         * kirası dolmuş olanlar iptal edilir — canlı sahiplenilmiş parça iptal edilmez (tamamlaması koşu DECIDING'e geçince geç
+         * kalır, sonucu kullanılmaz).
+         */
+        private void abandonSelfSecondOpinion(String reason) {
+            if (!selfSoAbandoned) {
+                selfSoAbandoned = true;
+                log.debug("İkinci görüş (kaçınılan işçi bu pod) bırakıldı: {} (runId={})", reason, runId);
+            }
+            for (int no : selfSo) {
+                if (settled.contains(no)) continue;
+                ChunkState c = lastState.get(no);
+                boolean idle = c != null && (c.pending() || (lastStoreNow != Long.MIN_VALUE && c.leaseExpired(lastStoreNow)));
+                if (idle && !storeFailed) {
+                    try {
+                        store.cancel(runId, c.id());
+                    } catch (RuntimeException e) {
+                        log.debug("İkinci görüş parçası iptal edilemedi (runId={}): {}", runId, e.getClass().getSimpleName());
+                    }
+                }
+                queued.add(no);
+                settled.add(no);
+            }
+        }
+
+        /** Yeni DONE parçaların sonuçları — en çok {@value #RESULT_READ_BATCH} parçalık okumalar; önceden okunamayan tek tek. */
         private void collect(List<Long> ids) {
+            List<Long> healthy = new ArrayList<>();
+            List<Long> suspect = new ArrayList<>();
+            for (Long id : ids) {
+                Integer no = noById.get(id);
+                (no != null && readStrikes.containsKey(no) ? suspect : healthy).add(id);
+            }
+            for (int from = 0; from < healthy.size(); from += RESULT_READ_BATCH) {
+                readBatch(healthy.subList(from, Math.min(healthy.size(), from + RESULT_READ_BATCH)));
+            }
+            for (Long id : suspect) readBatch(List.of(id));
+        }
+
+        private void readBatch(List<Long> ids) {
             Map<Long, String> json;
             try {
                 json = store.readResults(runId, ids);
                 storeOk();
             } catch (RuntimeException e) {
                 storeError(e, monoMs.getAsLong());
+                for (Long id : ids) strike(id);
                 return;
             }
-            if (json == null) return;
+            if (json == null) json = Map.of();
             for (Long id : ids) {
-                String j = json.get(id);
                 Integer no = noById.get(id);
-                if (j == null || no == null || settled.contains(no) || queued.contains(no)) continue;
-                CertChunkSpec spec = specs.get(no);
-                ChunkState state = lastState.get(no);
-                String worker = state == null || state.worker() == null || state.worker().isBlank() ? null : state.worker();
-                boolean secondOpinion = spec.avoidWorker() != null;
-                Map<Integer, ChunkCompletion.Result> byIndex = new HashMap<>();
-                for (ChunkCompletion.Result r : ChunkCompletion.decodeResults(j)) byIndex.putIfAbsent(r.index(), r);
-                int used = 0;
-                for (CertChunkSpec.Entry e : spec.entries()) {
-                    ChunkCompletion.Result r = byIndex.get(e.index());
-                    if (r != null && r.usable()) {
-                        put(e.index(), r.result(), worker == null ? "?" : worker);
-                        used++;
-                    } else if (!secondOpinion) {
-                        localEntries.add(e);                         // kullanılamaz sonuç → koordinatör yeniden ölçer (L-4)
-                        remeasured.incrementAndGet();
-                    }                                                // ikinci görüşte kullanılamazsa eski sonuç kalır
+                if (no == null || settled.contains(no) || queued.contains(no)) continue;
+                String j = json.get(id);
+                if (j == null) {                                     // DONE göründü ama sonucu gelmedi — yeniden denenir
+                    strike(id);
+                    continue;
                 }
-                if (used > 0) chunkTally.merge(worker == null ? "?" : worker, 1, Integer::sum);
-                settled.add(no);
+                readStrikes.remove(no);
+                accept(no, j);
             }
+        }
+
+        /** Sonuç okuma başarısızlığı; art arda {@value #STORE_STRIKES_TAKEOVER} kez → parça yerelde ölçülür (CR-L2). */
+        private void strike(Long id) {
+            Integer no = noById.get(id);
+            if (no == null || settled.contains(no) || queued.contains(no)) return;
+            int k = readStrikes.merge(no, 1, Integer::sum);
+            if (k >= STORE_STRIKES_TAKEOVER) {
+                log.info("Parça {} sonucu {} kez okunamadı — koordinatör kendisi ölçüyor (runId={})", no, k, runId);
+                takeover(no, null, false, "unreadable");
+            }
+        }
+
+        private void accept(int no, String json) {
+            CertChunkSpec spec = specs.get(no);
+            ChunkState state = lastState.get(no);
+            String worker = state == null || state.worker() == null || state.worker().isBlank() ? "?" : state.worker();
+            boolean secondOpinion = spec.avoidWorker() != null;
+            boolean self = selfSo.contains(no);
+            Map<Integer, ChunkCompletion.Result> byIndex = new HashMap<>();
+            for (ChunkCompletion.Result r : ChunkCompletion.decodeResults(json)) byIndex.putIfAbsent(r.index(), r);
+            int used = 0;
+            boolean complete = true;
+            for (CertChunkSpec.Entry e : spec.entries()) {
+                ChunkCompletion.Result r = byIndex.get(e.index());
+                boolean ok = r != null && r.usable() && sameDomain(e, r.result());
+                if (self) {
+                    if (ok) {
+                        selfStash.put(e.index(), r.result());
+                        selfStashWorker.put(e.index(), worker);
+                    } else {
+                        complete = false;
+                    }
+                } else if (ok) {
+                    put(e.index(), r.result(), worker);
+                    used++;
+                } else if (!secondOpinion) {
+                    localEntries.add(e);                             // kullanılamaz sonuç → koordinatör yeniden ölçer (L-4)
+                    remeasured.incrementAndGet();
+                }                                                    // ikinci görüşte kullanılamazsa eski sonuç kalır
+            }
+            settled.add(no);
+            if (self) {
+                selfChunkWorker.put(no, worker);
+                if (!complete) abandonSelfSecondOpinion("unusable");
+                return;
+            }
+            if (used > 0) chunkTally.merge(worker, 1, Integer::sum);
+        }
+
+        /** Sonuç bu girdinin alan adına mı ait (sağlamlık: biçim / işçi hatası sonucu yanlış alan adına yazdırmasın). */
+        private boolean sameDomain(CertChunkSpec.Entry e, Map<String, Object> result) {
+            return result != null && e.domain() != null && e.domain().equals(result.get("domain"));
         }
 
         private void put(int index, Map<String, Object> result, String worker) {
@@ -711,23 +1021,55 @@ public class CertRunCoordinator {
             by[index] = worker;
         }
 
-        /** Yerel ölçüm kuyruğunu koordinatörün iş parçacığında, klasik toplamayla ölçer. */
+        /**
+         * Yerel ölçüm kuyruğunu koordinatörün iş parçacığında, klasik toplamayla ölçer. Ölçüm sürerken koşunun nabzı ayrı bir
+         * iş parçacığından atılır (CR-L4) — işçilerin sahiplenme kapısı ({@code heartbeat_ms ≥ şimdi − 60 sn}) açık kalır.
+         */
         private String measureLocal() {
             Map<Integer, CertChunkSpec.Entry> unique = new TreeMap<>();
             for (CertChunkSpec.Entry e : localEntries) unique.putIfAbsent(e.index(), e);
             localEntries.clear();
             List<CertChunkSpec.Entry> batch = new ArrayList<>(unique.values());
             List<Map<String, Object>> out;
+            Beat beat = startBeat();
             try {
                 out = runner.checkDomains(CertChunkSpec.rowsOf(batch), runId);
             } catch (RuntimeException | Error e) {
                 throw new RunnerFailure(e);
+            } finally {
+                stopBeat(beat);
             }
             if (out == null || out.size() < batch.size()) return CertSweepStore.OUTCOME_SHUTDOWN;   // kapanışta erken durdu
             for (int k = 0; k < batch.size(); k++) put(batch.get(k).index(), out.get(k), me);
             settled.addAll(localChunks);
             localChunks.clear();
             return null;
+        }
+
+        private Beat startBeat() {
+            if (storeFailed) return null;                            // depo düşükken nabız denenmez
+            try {
+                return beatTimer.start(CertChunking.COORDINATOR_HEARTBEAT_MS, () -> {
+                    if (closing()) return;
+                    try {
+                        if (!store.heartbeat(runId)) beatLost = true;
+                    } catch (RuntimeException e) {
+                        log.debug("Parçalı koşu nabzı atılamadı (runId={}): {}", runId, e.getClass().getSimpleName());
+                    }
+                });
+            } catch (RuntimeException e) {
+                log.debug("Yerel ölçüm nabzı başlatılamadı (runId={}): {}", runId, e.getClass().getSimpleName());
+                return null;
+            }
+        }
+
+        private void stopBeat(Beat beat) {
+            if (beat == null) return;
+            try {
+                if (beat.stop()) interrupted = true;
+            } catch (RuntimeException e) {
+                log.debug("Yerel ölçüm nabzı durdurulamadı (runId={}): {}", runId, e.getClass().getSimpleName());
+            }
         }
 
         // ── Aykırı pod (§2.6) ───────────────────────────────────────────────────────────────────────────────────────
@@ -748,29 +1090,35 @@ public class CertRunCoordinator {
             int totalNe = 0;
             for (Map.Entry<String, List<Integer>> e : byWorker.entrySet()) {
                 int c = 0;
-                for (int i : e.getValue()) if (networkError(results.get(i))) c++;
+                for (int i : e.getValue()) if (outlierFailure(results.get(i))) c++;
                 ne.put(e.getKey(), c);
                 totalNe += c;
             }
             List<CertChunkSpec> chunks = new ArrayList<>();
+            List<SoGroup> groups = new ArrayList<>();
             int size = spec.chunkSize();
+            int no = nextChunkNo;
             for (Map.Entry<String, List<Integer>> e : byWorker.entrySet()) {
                 String w = e.getKey();
                 if (w == null || "?".equals(w)) continue;
                 int nw = e.getValue().size();
-                int new_ = ne.get(w);
+                int nev = ne.get(w);
                 int otherN = n - nw;
-                int otherNe = totalNe - new_;
-                if (!outlier(nw, new_, otherN, otherNe, minErrors, threshold)) continue;
+                int otherNe = totalNe - nev;
+                if (!outlier(nw, nev, otherN, otherNe, minErrors, threshold)) continue;
                 if (w.isBlank() || w.length() > CertChunkSpec.MAX_WORKER_CHARS) continue;
                 List<CertChunkSpec.Entry> again = new ArrayList<>();
-                for (int i : e.getValue()) if (networkError(results.get(i))) again.add(entryOf(i));
-                for (int from = 0; from < again.size(); from += size) {
-                    chunks.add(new CertChunkSpec(nextChunkNo++, again.subList(from, Math.min(again.size(), from + size)), w));
+                List<Integer> idx = new ArrayList<>();
+                for (int i : e.getValue()) {
+                    if (outlierFailure(results.get(i))) {
+                        again.add(entryOf(i));
+                        idx.add(i);
+                    }
                 }
-                warnOutlier(w, nw, new_, otherN, otherNe, again.size());
-                secondOpinionDomains += again.size();
-                secondOpinions.addAndGet(again.size());
+                for (int from = 0; from < again.size(); from += size) {
+                    chunks.add(new CertChunkSpec(no++, again.subList(from, Math.min(again.size(), from + size)), w));
+                }
+                groups.add(new SoGroup(w, nw, nev, otherN, otherNe, idx));
             }
             if (chunks.isEmpty()) return null;
             try {
@@ -781,6 +1129,16 @@ public class CertRunCoordinator {
                         e.getClass().getSimpleName());
                 return null;
             }
+            nextChunkNo = no;
+            for (SoGroup g : groups) {
+                soGroups.add(g);
+                for (int i : g.indices()) soOriginal.put(i, results.get(i));
+                secondOpinionDomains += g.indices().size();
+                secondOpinions.addAndGet(g.indices().size());
+                log.info("İkinci görüş: {} pod'unun parçalarında ağ hatası oranı %{} (diğerleri %{}) — {} alan adı başka pod'dan "
+                        + "yeniden ölçülüyor (runId={})", podOf(g.worker()), pct(g.nev(), g.nw()), pct(g.otherNe(), g.otherN()),
+                        g.indices().size(), runId);
+            }
             Set<Integer> nos = new LinkedHashSet<>();
             for (CertChunkSpec c : chunks) {
                 register(c);
@@ -788,7 +1146,87 @@ public class CertRunCoordinator {
             }
             long start = monoMs.getAsLong();
             lastProgress = start;
-            return waitFor(nos, true, start);
+            String abort = waitFor(nos, true, start);
+            if (abort != null) return abort;
+            applySelfSecondOpinion();
+            logSecondOpinionOutcome();
+            return null;
+        }
+
+        /**
+         * Koordinatör aykırıyken toplanan ikinci görüş sonuçları — HEPSİ-YA-DA-HİÇBİRİ (H-1): yeniden dağıtılan HER alan adının
+         * kullanılabilir yeni sonucu varsa hepsi yerine konur, aksi hâlde özgün sonuçların hepsi kalır (kısmi değişim turu toplu
+         * kesinti eşiğinin altına çekebilirdi).
+         */
+        private void applySelfSecondOpinion() {
+            if (selfSo.isEmpty()) return;
+            boolean complete = !selfSoAbandoned;
+            if (complete) {
+                for (int no : selfSo) {
+                    for (CertChunkSpec.Entry e : specs.get(no).entries()) {
+                        if (!selfStash.containsKey(e.index())) {
+                            complete = false;
+                            break;
+                        }
+                    }
+                    if (!complete) break;
+                }
+            }
+            if (!complete) return;                                   // özgün sonuçlar kalır
+            for (Map.Entry<Integer, Map<String, Object>> en : selfStash.entrySet()) {
+                put(en.getKey(), en.getValue(), selfStashWorker.getOrDefault(en.getKey(), "?"));
+            }
+            for (String w : selfChunkWorker.values()) chunkTally.merge(w, 1, Integer::sum);
+            selfSoApplied = true;
+        }
+
+        /**
+         * İkinci görüşün SONUCU (CR-L5): aykırı pod başına yeniden ölçülen / başarılı / yine hatalı. Çıkış eşliği (P1) uyarısı
+         * (WARN, pod başına saatte bir) yalnız yeniden ölçümlerin ÇOĞU başka pod'dan başarılıysa; hatalar başka pod'dan da
+         * görülüyorsa (gerçek kesinti) ya da ikinci görüş tamamlanamadıysa INFO.
+         */
+        private void logSecondOpinionOutcome() {
+            for (SoGroup g : soGroups) {
+                int total = g.indices().size();
+                int replaced = 0;
+                int ok = 0;
+                for (int i : g.indices()) {
+                    Map<String, Object> cur = results.get(i);
+                    if (cur != soOriginal.get(i)) {
+                        replaced++;
+                        if (!outlierFailure(cur)) ok++;
+                    }
+                }
+                int failedAgain = replaced - ok;
+                String pod = podOf(g.worker());
+                String x = pct(g.nev(), g.nw());
+                String y = pct(g.otherNe(), g.otherN());
+                if (replaced == 0) {
+                    int measuredElsewhere = me.equals(g.worker()) ? selfStash.size() : 0;
+                    log.info("İkinci görüş tamamlanamadı: {} pod'unun {} alan adından yeniden ölçülen {} — özgün sonuçların "
+                            + "hepsi geçerli (runId={})", pod, total, measuredElsewhere, runId);
+                } else if (ok * 2 > replaced) {
+                    if (outlierWarnDue()) {
+                        log.warn("Sertifika taraması: {} pod'unun parçalarında ağ hatası oranı %{} (diğerleri %{}) — {} alan adı "
+                                + "başka pod'dan yeniden ölçüldü: {} başarılı, {} yine hatalı; çıkış eşliğini (P1) doğrulayın",
+                                pod, x, y, replaced, ok, failedAgain);
+                    } else {
+                        log.info("İkinci görüş: {} pod'unun {} alan adı başka pod'dan yeniden ölçüldü: {} başarılı, {} yine "
+                                + "hatalı — çıkış eşliği şüpheli (runId={})", pod, replaced, ok, failedAgain, runId);
+                    }
+                } else {
+                    log.info("İkinci görüş: {} pod'unun {} alan adı başka pod'dan yeniden ölçüldü: {} başarılı, {} yine hatalı "
+                            + "— hatalar başka pod'dan da görülüyor (gerçek kesinti olası), sonuçlar geçerli (runId={})",
+                            pod, replaced, ok, failedAgain, runId);
+                }
+            }
+        }
+
+        private boolean outlierWarnDue() {
+            long now = monoMs.getAsLong();
+            long last = outlierWarnAt.get();
+            if (last != Long.MIN_VALUE && now - last < OUTLIER_WARN_EVERY_MS) return false;
+            return outlierWarnAt.compareAndSet(last, now);
         }
 
         private CertChunkSpec.Entry entryOf(int index) {
@@ -797,24 +1235,20 @@ public class CertRunCoordinator {
             return e;
         }
 
-        private boolean networkError(Map<String, Object> r) {
-            return r != null && runner.networkErrorCount(List.of(r)) > 0;
+        /**
+         * Aykırı pod kuralının saydığı hata (CR-M-1): toplu kesinti oranına giren ağ hatası ({@code runner.networkErrorCount} —
+         * karar oranı DEĞİŞMEZ) YA DA çözülemeyen ad ({@code status=error ∧ error_class=DNS ∧ unresolvable_host}) — bozuk çözücülü
+         * bir pod'un payı da başka pod'dan yeniden ölçülsün.
+         */
+        private boolean outlierFailure(Map<String, Object> r) {
+            if (r == null) return false;
+            if (runner.networkErrorCount(List.of(r)) > 0) return true;
+            return "error".equals(r.get("status")) && "DNS".equals(r.get("error_class"))
+                    && Boolean.TRUE.equals(r.get(UNRESOLVABLE_HOST));
         }
 
-        private void warnOutlier(String w, int nw, int nev, int otherN, int otherNe, int count) {
-            long now = monoMs.getAsLong();
-            long last = outlierWarnAt.get();
-            String x = String.format(Locale.ROOT, "%.0f", 100.0 * nev / Math.max(1, nw));
-            String y = String.format(Locale.ROOT, "%.0f", 100.0 * otherNe / Math.max(1, otherN));
-            if (last == Long.MIN_VALUE || now - last >= OUTLIER_WARN_EVERY_MS) {
-                if (outlierWarnAt.compareAndSet(last, now)) {
-                    log.warn("Sertifika taraması: {} pod'unun parçalarında ağ hatası oranı %{} (diğerleri %{}) — {} alan adı "
-                            + "başka pod'dan yeniden ölçüldü; çıkış eşliğini (P1) doğrulayın", podOf(w), x, y, count);
-                    return;
-                }
-            }
-            log.info("İkinci görüş: {} pod'u ağ hatası %{} (diğerleri %{}) — {} alan adı yeniden ölçülüyor (runId={})",
-                    podOf(w), x, y, count, runId);
+        private boolean networkError(Map<String, Object> r) {
+            return r != null && runner.networkErrorCount(List.of(r)) > 0;
         }
 
         // ── Yardımcılar ─────────────────────────────────────────────────────────────────────────────────────────────
@@ -859,6 +1293,9 @@ public class CertRunCoordinator {
         }
     }
 
+    /** {@code CertificateCheckerService.UNRESOLVABLE_HOST} (aynı anahtar; bağımlılık kurmadan). */
+    static final String UNRESOLVABLE_HOST = "unresolvable_host";
+
     /**
      * Aykırı pod kuralı (§2.6): pod'un ağ hatası ≥ {@code minErrors} ∧ oranı ≥ eşik ∧ diğerlerinin birleşik oranı ≤ eşik / 2 ∧
      * diğerlerinin ≥ 2 × {@code minErrors} sonucu var.
@@ -868,6 +1305,10 @@ public class CertRunCoordinator {
         if ((double) nev / nw < threshold) return false;
         if (otherN <= 0 || otherN < 2L * Math.max(0, minErrors)) return false;
         return (double) otherNe / otherN <= threshold / 2.0;
+    }
+
+    private static String pct(int part, int whole) {
+        return String.format(Locale.ROOT, "%.0f", 100.0 * part / Math.max(1, whole));
     }
 
     private static String fp(String state, int attempts, Long claimedMs, Long leaseUntilMs) {

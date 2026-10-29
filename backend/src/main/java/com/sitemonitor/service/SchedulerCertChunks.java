@@ -5,6 +5,7 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
@@ -15,6 +16,13 @@ import java.util.function.Supplier;
  * ({@code gatherCertResults}) — parça işçisi (paket A) ve koordinatör ({@code CertRunCoordinator}) aynı kodu koşsun (L-3); bu
  * bileşen yalnız sözleşmeyi uygular ve çağrıyı bir {@link ObjectProvider} üzerinden iletir (bağımlılık döngüsü kurmaz,
  * {@code SchedulerService}'in kurucusu değişmez).
+ *
+ * <p><b>Lider payı alt gruplar hâlinde (inceleme SW-L3, 2026-10-29).</b> Bu pod tarama lideriyken bir PARÇANIN satırları en çok
+ * {@code max(1, çekirdek / 2)}'lik alt gruplar hâlinde ölçülür (her alt grup aynı klasik toplama, sıra korunur) — liderin bir
+ * parçası {@code certCheckExecutor}'ın bütün çekirdeğini tutmaz, klasik izleme taramaları ve erişilebilirlik turu en çok yarım
+ * çekirdek kadar sertifika kontrolünün arkasında bekler. İki istisna: turun KOORDİNATÖRÜ kendi devraldığı / yeniden ölçtüğü alan
+ * adlarını ölçerken (aynı iş parçacığı, {@link SchedulerService#isCoordinatingCertRun()}) bütün çekirdeği kullanır — klasik
+ * turun lider pod'daki davranışı; çekirdek sayısı okunamazsa ({@code ≤ 0}) bölünmez. Takipçi pod'lar değişmedi.
  *
  * <p>Kapalı ≡ v20.170.0 (L-1): açılışta hiçbir iş yapmaz; yöntemlerini ancak anahtar açıkken işçi ve koordinatör çağırır.
  */
@@ -41,10 +49,34 @@ public class SchedulerCertChunks implements CertChunkRunner {
 
     @Override
     public List<Map<String, Object>> checkDomains(List<Map<String, Object>> rows, String runId) {
-        if (rows == null || rows.isEmpty()) return new java.util.ArrayList<>();
+        if (rows == null || rows.isEmpty()) return new ArrayList<>();
         SchedulerService s = scheduler.get();
         if (s == null) throw new IllegalStateException("SchedulerService yok — parça ölçülemedi");
-        return s.gatherCertResults(rows, runId);
+        int batch = leaderSubBatch(s);
+        if (batch <= 0 || rows.size() <= batch) return s.gatherCertResults(rows, runId);
+        List<Map<String, Object>> out = new ArrayList<>(rows.size());
+        for (int from = 0; from < rows.size(); from += batch) {
+            if (from > 0 && s.certRunClosing()) break;               // kapanış: kalan alt gruplar gönderilmez, liste kısa
+            List<Map<String, Object>> part = new ArrayList<>(rows.subList(from, Math.min(rows.size(), from + batch)));
+            List<Map<String, Object>> got = s.gatherCertResults(part, runId);
+            if (got != null) out.addAll(got);
+            if (got == null || got.size() < part.size()) break;      // kapanışta klasik toplama kısa döndü
+        }
+        return out;
+    }
+
+    /**
+     * Lider pod'da bir parçanın alt grup boyutu (SW-L3): {@code max(1, çekirdek / 2)}; 0 = bölme (takipçi, turun koordinatörü
+     * kendi iş parçacığında, çekirdek okunamadı ya da okuma hatası).
+     */
+    static int leaderSubBatch(SchedulerService s) {
+        try {
+            if (!s.sweepLeaderHint() || s.isCoordinatingCertRun()) return 0;
+            int core = s.certCheckCoreSize();
+            return core <= 0 ? 0 : Math.max(1, core / 2);
+        } catch (RuntimeException e) {
+            return 0;
+        }
     }
 
     @Override
