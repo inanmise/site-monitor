@@ -626,7 +626,8 @@ satırı yalnız bilgidir. Sistem metrikleri örneklemesi kapalıysa (`site.moni
 
 > Çok pod sürüm 1 (2026-10-21). Aynı imaj N replikada koşar; kullanıcı istekleri bütün pod'lara dağılır, **izleme işi
 > tek pod'da (lider) koşar**. İkinci pod yüksek erişilebilirlik ve arayüz / API kapasitesi getirir, izleme kapasitesi
-> getirmez — izleme yükü büyürse önce dikey ölçekleyin (CPU / bellek / `dbPoolMax`). HPA kapalı kalır.
+> getirmez (Sürüm 3-3'ten beri dağıtık kontroller açıkken getirir — aşağıda) — izleme yükü büyürse önce dikey
+> ölçekleyin (CPU / bellek / `dbPoolMax`). HPA kapalı kalır.
 >
 > Çok pod Sürüm 2a (2026-10-23): pod'lar arası önbellek yolu (bir pod'daki yazma öteki pod'ların önbelleğini ~2 sn
 > içinde boşaltır), küme geneli güvenlik sınırları (giriş IP sınırı, k6 gizli değer gösterimi, oturumsuz giriş yardımı /
@@ -642,7 +643,13 @@ satırı yalnız bilgidir. Sistem metrikleri örneklemesi kapalıysa (`site.moni
 > ağır işleri takipçiye bırakır; uzun işler her pod'da ayrı bir yan iş koşucusunda koşar; kurum geneli Grafana ölçülerini
 > takipçi yayar. Lider alarm değerlendirmesinin bellekteki durumunu dört tabloya AYNALAR ve 5 dakikada bir bellekle
 > karşılaştırır — 3-1'de hiçbir karar bu tablolardan okunmaz; bu, Sürüm 3-2'nin (devirde durumu taşımak) kanıtıdır.
-> İzleme kontrolleri Sürüm 3-3'e kadar yine liderde koşar.
+> İzleme kontrolleri, Sürüm 3-3'ün dağıtık kontrol anahtarı açılmadıkça yine liderde koşar.
+>
+> Çok pod Sürüm 3-3 (2026-10-29): **dağıtık kontroller** — yeni bir ana anahtarın arkasında, varsayılan KAPALI. Açıkken
+> tarama lideri port, ping, HTTP, içerik, sayfa, sayfa hızı, DNS ve senaryo izlemelerinin zamanlanmış kontrollerini bir
+> kuyruğa yazar, her pod'un işçisi bunları koşar, sonucu yine lider değerlendirir (alarm kararları, yeniden kontroller ve
+> bildirimler tek pod'da kalır); ek pod'lar o zaman izleme kapasitesi de getirir. Kapalıyken her şey 20.169.0 ile
+> aynıdır. Türler tek tek açılır: [Dağıtık kontroller](#dağıtık-kontroller-çok-pod-sürüm-3-3).
 >
 > Chart HPA şablonu 2026-10-23'te düzeltildi (HPA açıkken Deployment `replicas` taşımaz, bellek metriği varsayılan yok,
 > `behavior` var) ama HPA her ortamda KAPALI kalır — izleme işi lider pod'da, ek pod izleme kapasitesi eklemez. Açılırsa
@@ -654,6 +661,7 @@ satırı yalnız bilgidir. Sistem metrikleri örneklemesi kapalıysa (`site.moni
 | İş | Nerede | Çift koşmayı ne önler |
 |---|---|---|
 | Dokuz izleme türünün taramaları, envanter erişilebilirlik (HTTP) taraması, doğrulama / kurtarma yeniden kontrolleri, DNS ve alan adı değişiklik tespiti | **Lider** pod | Tarama liderliği kirası (`monitor_check_schedule`, anahtar `lease:sweep-leader`, 180 sn; ayrı iş parçacığında 60 sn'de bir yenilenir) + izleme başına küme vadesi + kirasını kaybetmiş pod'un zamanlanmış sonuçları alarm üretmez |
+| Sürüm 3-3, dağıtık kontrol anahtarı açıkken: port, ping, HTTP, içerik, sayfa, sayfa hızı, DNS ve senaryo izlemelerinin zamanlanmış kontrolü (kontrol + geçmiş satırı) | İşi sahiplenen **herhangi** bir pod'un işçisi (lider, başka canlı işçi varken yuvalarının yarısıyla); işi lider gönderir, sonucu lider değerlendirir — teyit / kurtarma yeniden kontrolleri liderde ([Dağıtık kontroller](#dağıtık-kontroller-çok-pod-sürüm-3-3)) | Klasik taramayla aynı izleme başına küme vadesi + izleme başına tek açık iş (`ux_mcj_open`) + iş kirası (`FOR UPDATE SKIP LOCKED` sahiplenme, belirteçli tamamlama; kirası dolan iş bir kez yeniden koşar) + sonucu yalnız kira sahibi lider alır |
 | Takipçide basılan "Şimdi kontrol et" sonucunun alarm değerlendirmesi (`monitor_eval_inbox` üzerinden lidere iletilir, ≤ 5 sn); veritabanı çökükken kendi-kendini-izleme uyarısı | Lider | Kira |
 | Sertifika taramaları (saatlik, bayat, tam), zamanlanmış raporlar / hatırlatmalar / özetler, gece temizliği, push kuyruğu, fırtına yaşam döngüsü, eskalasyon adımları, kendi-kendini-izleme turu, yetim QUEUED_RETRY / çözüm bildirimi süpürücüleri (kanal teknik hata raporu kuyruklarını da sonuçlandırır); Sürüm 2a'dan beri kapatılan türlerin alarm uzlaştırması (`disabled-types-reconcile`), elle saklama temizliği (gece temizliğinin `nightly-cleanup` kilidiyle) ve tek seferlik izleme grubu takım doldurması; Sürüm 3-1'den beri TLS profili işi (kilit `tls-profile` + tur `round:tls-profile`, 10 dk) | Kilidi ya da turu ilk alan **herhangi** bir pod — Sürüm 3-1'den beri başka canlı pod varken tarama lideri uzun / cron yan işlerini ona bırakır ([Yan işler](#yan-işler-ve-lider-ertelemesi-çok-pod-sürüm-3-1)) | `scheduler_lock` satırı (uzun iş sürdükçe yenilenir) + küme turu (`round:<ad>`, bir dönemde bir kez) + satır başına koşullu sahiplenme (aynı push / posta iki kez gitmez) |
 | Kullanıcı istekleri, "Şimdi kontrol et", tanılama, dışa aktarım | İsteği alan pod | Oturumlar PostgreSQL'de (`spring_session`) — her pod her oturumu tanır |
@@ -955,6 +963,183 @@ yalnız "Kapalı" der.
   full | observations | none, `reason`, `from_generation`, sayılar) — `GET /api/admin/system` → `data.eval_state.load` ve
   `data.eval_state.this_pod.last_load` / `handover_ready` / `last_handover`.
 
+### Dağıtık kontroller (çok pod Sürüm 3-3)
+
+Ayarlar: Ayarlar → Genel → Zamanlayıcı → **"Dağıtık izleme kontrolleri (çok pod)"** (`site.monitor.checks.distributed.enabled`,
+ana anahtar) ve **"Dağıtık kontrol türleri (virgülle)"** (`site.monitor.checks.distributed.types`) — ikisi de yalnız GLOBAL
+admin, canlı (~10 sn içinde tüm pod'lar). Ana anahtar varsayılan **kapalı** (kalıcı varsayılan env ile
+`DISTRIBUTED_CHECKS_ENABLED`; tür listesinin varsayılanı sekiz türün hepsi, env `DISTRIBUTED_CHECKS_TYPES`). **Kapalıyken her
+şey 20.169.0 ile birebir aynıdır** (alarm kararları, bildirimler, SQL ifadeleri, iş parçacıkları, günlük satırları, kapanış);
+fark yalnız açılışta şema yamasıyla kurulan iki boş tablo (`monitor_check_jobs`, `monitor_check_workers`), iki ayar
+anahtarı, Küme kartında "Dağıtık kontroller: Kapalı" ve kendi kendini izlemede "Dağıtık kontrol kuyruğu: Uygulanmaz".
+
+- **Ne yapar:** bugün dokuz izleme türünün bütün kontrollerini tarama lideri koşar; ek pod izleme kapasitesi getirmez. Anahtar
+  açıkken sekiz türün — port, ping, HTTP, içerik (keyword), sayfa (tek sayfa), sayfa hızı, DNS, senaryo (k6) —
+  **zamanlanmış** kontrolleri pod'lara dağıtılır:
+  - Lider "neyin vadesi geldi"yi bugünkü gibi belirler (aynı küme vadesi `monitor_check_schedule`, aynı kapılar) ve kontrolü
+    kendisi koşturmak yerine `monitor_check_jobs` kuyruğuna bir **kontrol işi** yazar (5 sn'de bir).
+  - Her pod'un **işçisi** (varsayılan 16 yuva; lider, başka canlı işçi varken yuvalarının yarısıyla — 5 sn'den uzun bekleyen
+    işi tam güçle alır) işi alır, bugünkü kontrolü koşar ve geçmiş satırını yazar, sonucu kuyruğa koyar.
+  - Sonucu **yine lider değerlendirir** (2 sn'de bir, bugünkü kurallarla): alarm kararları, teyit ve kurtarma yeniden
+    kontrolleri, toplu kesinti bastırması ve bildirimler tek pod'da kalır. Bir işçinin gördüğü DOWN'u lider kendi ağ
+    konumundan teyit eder.
+  - Liderde kalanlar: envanter erişilebilirlik turu (saatlik), derin sayfa taraması (günlük), HTTP / içerik SSL ve alan adı
+    bitiş turları, alan adı kayıt izlemesi ve 16:00 kritik alan adı kontrolü, "Şimdi kontrol et" sonuçlarının
+    değerlendirmesi, yetim alarm temizliği, DNS değişikliklerinin yeniden kuyruğa alınması.
+  - Kontrol sıklığı DEĞİŞMEZ: bir izleme türünün klasik tıkından sık kontrol edilmez (60 sn aralıklı bir DNS izlemesi yine
+    300 sn'de bir). Bir tür ancak başka en az bir canlı işçi o türü alabiliyorken ve gönderim ile sonuç boşaltma sağlıklıyken
+    dağıtılır; değilse kendiliğinden bugünkü klasik taramaya döner (tek pod, eski sürüm takipçiler, işçiler kapalı, kuyruk
+    yazılamıyor, lider sonuçları alamıyor). İki kip aynı vade anahtarını kullanır: geçişte bir dönem iki kez kontrol edilmez.
+  - "Şimdi kontrol et" değişmez (isteği alan pod kontrol eder, değerlendirme lidere iletilir).
+- **Açmadan önce (ön koşullar):**
+  1. **Her pod 3-3 sürümünde** — rollout bitti, eski ReplicaSet'in pod'u kalmadı: `kubectl get pods -n "$NS" -l
+     app.kubernetes.io/instance="$REL" -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.containers[0].image}{"\n"}{end}'`
+     hepsinde aynı imaj. Güvenlik için şart değil (eski bir pod işçi olmaz, eski bir lider hiç iş göndermez — kontroller
+     bugünkü gibi liderde kalır), kapasite için şart. Anahtarı sürüm yükseltmesiyle AYNI adımda açmayın.
+  2. **P1 çıkış eşitliği her node'da** ([Ön koşullar](#ön-koşullar--1--n-geçişinden-önce)): bir kontrolü artık herhangi bir
+     pod koşar, teyidini lider yapar — node'a bağlı bir izin listesi "işçi DOWN, lider UP" (alarm hiç teyit edilmez) ya da
+     toplu "kesinti" üretir. `scripts/multipod-egress-check.sh`'i dağıtacağınız türlerin hedefleriyle koşun: `TARGETS` /
+     `TLS_TARGETS`'a port izlemelerinin `host:port`'larından ve HTTP / içerik / sayfa izlemelerinin `host:443`'lerinden
+     birkaç doğrudan (vekilsiz) hedef ekleyin. Betik ICMP'yi ve k6'yı denetlemez — onları pod'lar kendisi denetler (3, 4).
+  3. **ICMP (ping için):** ping izlemesi non-root ICMP ister (Helm `podSecurityContext.sysctls` → `net.ipv4.ping_group_range`).
+     İşçi ping'i ancak 127.0.0.1'e başarılı bir ICMP yoklamasından sonra ilan eder (işçi başlarken + 4 dk'da bir); ICMP'si
+     olmayan pod ping işi ALMAZ (Küme kartı → İşçiler → "Yetenekler"de ping yok). Denetim her pod'da: `kubectl exec -n "$NS"
+     <pod> -- ping -c 1 -W 2 127.0.0.1`; firewall'un ICMP'ye izin vermesi gereken bir hedef varsa aynı komutu o hedefe her
+     node'daki bir pod'dan koşun.
+  4. **k6 (senaryo için):** imajda (`/usr/bin/k6`). İşçi senaryo işini yalnız k6 kullanılabilirken ve boş k6 izni varken alır.
+     Liderde k6 yoksa senaryo izlemeleri hiç koşmaz (bugünkü gibi — yeniden kontroller liderde).
+  5. **3-1 doğrulaması iki pod'da temiz** (Küme kartı → "Kalıcı değerlendirme durumu: bellek ve tablolar uyuşuyor"). 3-2'nin
+     "devirde okuma" ayarı şart değildir; iki ayar birbirinden bağımsızdır, hangisi önce hazırsa o açılır.
+  6. **Önce staging, duman testiyle:** `SMOKE_IMAGE=<imaj> SMOKE_DISTRIBUTED=1 bash scripts/multipod-smoke.sh` (Docker, iki
+     pod, tüm türler açık): iki pod'un işçisi canlı ve takipçi iş tamamlıyor; takipçiye SIGKILL → sahiplendiği işler ≤ 180 sn
+     (`SMOKE_DIST_RERUN_MAX_S`) içinde başka pod'a geçer; her SIGTERM devrinden önce biten sonuçlar yeni liderin ilk
+     turlarında boşaltılır (≤ `SMOKE_DIST_DRAIN_MAX_S` 120 sn); sonda anahtar kapatılır → 12 sn sonra yeni iş yok, klasik
+     satırlar sürer; dedektörün bölüm 9'u bu koşuda her durumda sayılır.
+- **Tür tür açın** (her adım ayrı, geçme ölçütü birkaç gün — en az 3 gün — tutunca bir sonraki):
+
+  | Adım | Tür listesi (`site.monitor.checks.distributed.types`) |
+  |---|---|
+  | 1 | `port,ping` |
+  | 2 | `port,ping,http,keyword` |
+  | 3 | `port,ping,http,keyword,page,pagespeed` |
+  | 4 | `port,ping,http,keyword,page,pagespeed,dns` |
+  | 5 | `port,ping,http,keyword,page,pagespeed,dns,scripted` (= varsayılan) |
+
+  1. **Önce tür listesini** yazın ve kaydedin, **sonra** ana anahtarı açın (ilk adımda; ikisi aynı kayıtta da olur). Dikkat:
+     liste **boş bırakılırsa varsayılana — sekiz türün hepsine — döner**; "hiçbir tür" için ana anahtarı kapatın. Bilinmeyen
+     bir ad kaydı reddeder (alanın altında hata).
+  2. Yaklaşık bir dakika içinde (ayar yenilemesi ≤ 10 sn, işçilerin ilk nabzı ve işçi kaydının okunması) Küme kartında — lider
+     pod yanıtlarken ("Lider mi: Evet"; takipçi yanıt verirse türler "bilinmiyor" görünür, sayfayı yenileyin) —
+     **Dağıtık kontroller: Açık** ve listedeki türler **dağıtık**. Günlükte (tüm pod'lar) `Dağıtık kontroller açık görüldü —
+     N başlatıcı çalıştırılıyor`, liderde her tür için `Dağıtık kontroller: <tür> artık dağıtık (canlı işçi: N)`.
+  3. Sonraki adımda yalnız listeyi genişletin (ana anahtar açık kalır).
+- **Her adımdan sonra izleyin:**
+  - **Küme kartı → Dağıtık kontroller** (Sistem Sağlığı → Zamanlayıcı ve yürütücüler; "Küme" etiketli): ana anahtar, tür
+    kipleri, kuyruk kutucukları (bekleyen iş, en eski bekleyen, değerlendirmeyi bekleyen, en eski sonuç — 30 sn üstü
+    turuncu ve kartı uyarıya çeker), şu an koşan iş ve "kirası doldu" satırları, işçiler (pod, yetenekler, yuva, tamamlanan /
+    geç, sahiplenme p95, son nabız) ve **yetenek uyuşmazlığı** uyarısı. "Yanıtlayan pod" → **Dağıtık kontrol işçisi**: yuva /
+    meşgul, tamamlanan / geç / zaman aşımı / başarısız, sahiplenme p95, veritabanına yazılamayan denemeler, "veritabanı saati
+    okunamıyor" uyarısı; liderde gönderim / değerlendirme sayaçları ve sonuç boşaltıcısı. Bölümün durum rozeti hiç yeşil
+    olmaz (açık = bilgi, kapalı / bilinmeyen = gri); yeşil yalnız canlı bir işçinin nabız rozetidir.
+  - **Grafana (pano revizyonu 7)** → "SiteMonitor sağlığı" bölümünün sonu: Bekleyen kontrol işi, En eski bekleyen iş, En eski
+    değerlendirilmeyen sonuç (30 sn turuncu / 120 sn kırmızı), Kontrol yuvası doluluğu, Sahiplenme gecikmesi p95, Kayıp
+    kontrol işi (24 sa) ve "Kontrol kuyruğu (tür ve durum)", "Kontrol gecikmesi", "Kontrol işçileri (pod başına, 5 dk)"
+    grafikleri. Anahtar kapalıyken hepsi "veri yok" der (0 değil). Yük yayılıyorsa "Kontrol işçileri"nde her pod'un tamamlanan
+    işi artar.
+  - **Kendi kendini izleme → Dağıtık kontrol kuyruğu:** en eski bekleyen iş ya da değerlendirilmeyen sonuç 2 dk'yı aşarsa ya
+    da kirası dolmuş sahiplenme varsa (art arda `confirm-checks` turunda) uyarı; anahtar kapalıyken "Uygulanmaz". Hep
+    "Sağlıklı" kalmalı.
+  - **Günlükler — TÜM pod'lar:**
+    ```bash
+    L="-n $NS -l app.kubernetes.io/instance=$REL --prefix --tail=-1"
+    kubectl logs $L | grep "Dağıtık kontroller:" | tail -20     # tür kipi geçişleri (lider; nedeniyle)
+    kubectl logs $L | grep -cE "Kontrol işleri (art arda [0-9]+ kez )?gönderilemedi|Kontrol işi [0-9]+ kez sahiplenildi"   # 0 olmalı
+    kubectl logs $L | grep -E "Dağıtık kontrol (sonuç|işçi|işleri|işi|saati|kuyruğu)" | tail -20   # işçi / boşaltıcı / saat / şema uyarıları
+    ```
+  - **Çift iş dedektörü** (günde bir): `PGHOST=… PGDATABASE=… PGUSER=… PGPASSWORD=… bash scripts/multipod-smoke.sh dup-check`
+    → **bölüm 9** (`monitor_check_jobs` yoksa atlanır): (a) izleme başına birden çok açık iş; (b) sağlıklı bir izlemenin, son
+    60 dk'da (`dist_minutes`) izleme aralığının yarısından (`period_frac` 0.5) yakın iki zamanlanmış satırı — yalnız ana
+    anahtar AÇIKKEN sayılır (`period_strict=auto`; "Şimdi kontrol et", yavaş yanıt teyitleri ve ölen işçinin işinin yeniden
+    koşması tek tük yanlış pozitif verebilir — oran önemli, satırları tek tek inceleyin); (c) anahtar açıkken 5 dk'dan
+    (`done_stale_s` 300) eski değerlendirilmemiş sonuç (STUCK).
+- **Geçme ölçütü (her adım, en az 3 gün):** bölüm 9 (a) ve (b) boş, (c) STUCK = 0; sahiplenme gecikmesi p95 < 10 sn; en eski
+  değerlendirilmemiş sonuç < 10 sn; kayıp iş (`lost`) işlerin %0,1'inden az; "Dağıtık kontrol kuyruğu" hep Sağlıklı; alarm
+  gürültüsü görünümünde yeni bir alarm sınıfı farkı yok. Biri tutmazsa son eklenen türü listeden çıkarın, sonra inceleyin.
+- **Kapatmak (anında güvenli):** ana anahtarı kapatın (≤ 10 sn tüm pod'larda) ya da bir türü listeden çıkarın — o tür bir
+  sonraki klasik tıkta (≤ 30 sn; sayfa / sayfa hızı / senaryo ≤ 60 sn; DNS ≤ 300 sn) lidere döner, yeni iş gönderilmez,
+  işçiler koşmakta olan işleri bitirir. Listeden çıkarılan türün kuyruktaki işleri biter ve değerlendirilir. Ana anahtar
+  kapalıyken kuyruktaki değerlendirilmemiş sonuçlar bırakılır: anahtar yeniden açılınca **açılıştan ÖNCE gönderilmiş işlerin
+  sonuçları uygulanmadan atılır** (eski bir sonuç yeni bir klasik sonucun önüne geçmez); 10 dk'dan eski sonuçlar zaten
+  değerlendirilmeden düşer, 20 dk'dan eskileri biçme siler. Anahtar açıkken pod'ları yeniden başlatmak (rollout) kuyruğu korur.
+- **Bir pod'da kontrol koşmasın:** o pod'a env `CHECK_WORKER_ENABLED=false` (Helm `config.extraEnv`, açılışta okunur) — pod iş
+  almaz, nabız yazmaz (Küme kartının işçi listesinde görünmez, "Yanıtlayan pod" satırı "bu pod kontrol koşmuyor" der); lider
+  olursa yine gönderir ve değerlendirir. Yuva sayısı `CHECK_WORKER_SLOTS` (16, 1–64, açılışta okunur).
+- **Sorun giderme:**
+  - **Kuyruk büyüyor / en eski bekleyen iş 30 sn'yi aşıyor:** işçiler yetişemiyor. Küme kartında işçiler canlı mı, yuvalar
+    dolu mu (Grafana "Kontrol yuvası doluluğu"), sahiplenme p95 ne? Bir pod `poll-ms` (1 sn) başına en çok yuva sayısı kadar iş
+    alır (varsayılanlarla pod başına 16 / sn, liderde yarısı) — aynı ana denk gelen dönemlerde (yeniden başlatma, devir sonrası)
+    birkaç saniyelik kuyruk olağandır. Kalıcıysa: pod ekleyin, `CHECK_WORKER_SLOTS`'u artırın (yeniden başlatma) ya da son
+    eklenen türü listeden çıkarın. Doymuş kümede bir izlemenin dönemleri tek açık işe birleşir (izleme daha seyrek kontrol
+    edilir), kuyruk sınırsız büyümez. İşçide `Dağıtık kontrol sonuçları yazılamıyor — birikim dolu` = tamamlamalar veritabanına
+    yazılamıyor (bağlantı havuzu / DB); yazılana dek o pod yeni iş almaz.
+  - **Sonuçlar değerlendirilmeyi bekliyor (en eski sonuç büyüyor):** lider boşaltmıyor. Lider pod yanıtlarken "Yanıtlayan pod"
+    → sonuç boşaltıcısı: "son alma" ilerliyor mu, alma / uygulama hatası var mı? Günlükte `Dağıtık kontrol sonuç boşaltıcısı
+    çalışamıyor — eksik bileşen: …`. Devirden hemen sonra (3-2 yüklemesi sürerken, ≤ 20 sn) beklemek normaldir. Boşaltıcı
+    30 sn'den uzun alamazsa türler kendiliğinden klasiğe döner (`… artık klasik (sonuçlar boşaltılamıyor)`); 10 dk'dan eski
+    sonuçlar değerlendirilmeden atılır, 20 dk'dan eskileri biçmede silinir (WARN `Dağıtık kontrol sonuçları
+    değerlendirilmeden silindi …`).
+  - **Bir tür klasiğe dönüp duruyor:** liderde `Dağıtık kontroller: <tür> artık klasik (<neden>)`: `canlı işçi: 0` — o türü
+    alabilen başka canlı işçi yok (yetenek eksik, işçi kapalı, nabız 30 sn'den eski; son görülmeden 60 sn sonra döner);
+    `canlı işçi: bilinmiyor` — işçi tablosu okunamadı (hemen döner); `ayar kapalı ya da bu pod lider değil`; `gönderim düşüyor`
+    ve `sonuç boşaltıcısı yok` / `sonuçlar boşaltılamıyor` (aşağıda / yukarıda). Kısa süreli dönüş zararsızdır — aynı vade
+    anahtarı, dönem iki kez kontrol edilmez.
+  - **Gönderim düşüyor:** liderde `Kontrol işleri gönderilemedi (<tür>) — vadesi gelen izlemeler sonraki tıkta yeniden
+    sunulur` (vadesi harcanan izlemeler ≤ 10 dk bekletilip yeniden sunulur, dönem kaybolmaz); art arda 2 kez → `Kontrol işleri
+    art arda 2 kez gönderilemedi (<tür>) — tür 60 sn klasik taramaya döner …` (Küme kartı "Yanıtlayan pod" → gönderim
+    bekletmesi). Neden çoğunlukla veritabanı ya da tablo: `SELECT to_regclass('monitor_check_jobs'),
+    to_regclass('monitor_check_workers'), to_regclass('ux_mcj_open');` — boşsa açılış günlüğünde `Dağıtık kontrol kuyruğu
+    şeması uygulanamadı` / `… kurulamadı` (sonraki açılışta yeniden denenir). `ux_mcj_open` yoksa (PostgreSQL) gönderim yine
+    çalışır, tekliği ifadenin kendisi korur.
+  - **Ping ilan edilmiyor ("ping yok" çipi):** pod ICMP yoklamasından geçemedi (`kubectl exec … -- ping -c 1 -W 2 127.0.0.1`)
+    ya da son 5 dk'da bir ping kontrolü "uygulanamaz" (ICMP yok) döndü; yoklamanın "yok"u bir sonraki başarılı yoklamaya (4 dk)
+    dek sürer — tek bir "uygulanamaz" sonucu ping'i en çok ~9 dk gizleyebilir. O pod ping almaz, işi öteki pod'lar (ya da
+    klasik taramada lider) koşar. **Yetenek uyuşmazlığı** uyarısı: o pod lider olursa ping (ya da k6 yoksa senaryo) yeniden
+    kontrolleri ölçülemez — pod'u düzeltin ya da türü listeden çıkarın.
+  - **Senaryo (k6):** işçi senaryo işini yalnız boş k6 izniyle alır; aynı pod'daki bir yeniden kontrol ya da "Şimdi kontrol
+    et" izni araya girip alırsa iş klasikteki gibi bekler; bekleme + koşum işçi zaman aşımını (kira − 10 sn) aşarsa iş
+    `worker_timeout` ile biter, geçmiş satırı yazılmaz.
+  - **Bir işçi pod'u öldü / takıldı:** sahiplendiği işler kiraları dolunca (port, ping, HTTP, içerik, DNS 150 sn; senaryo
+    210 sn; sayfa / sayfa hızı `max-check-seconds` + 30 sn, en az 150, en çok 600 sn) başka pod'da BİR kez yeniden koşar;
+    ikinci kez yarıda kalan iş düşer (liderde WARN `Kontrol işi 2 kez sahiplenildi, tamamlanmadı — düşürüldü …`, `lost`) ve o
+    izleme bir dönem kontrolsüz kalır. Kira süresini kaçıran bir işçinin geç sonucu atılır ("geç"); işçi zaman aşımında
+    (kira − 10 sn) kesilen kontrolün sonucu klasikteki "kontrol düştü" gibi alarm kalemi üretmez.
+  - **Teşhis SQL:**
+    ```sql
+    SELECT state, job_type, COUNT(*) AS adet, to_timestamp(MIN(created_ms) / 1000.0) AS en_eski
+      FROM monitor_check_jobs GROUP BY 1, 2 ORDER BY 1, 2;
+    SELECT pod, caps AS yetenekler, slots AS yuva, busy AS mesgul, completed AS tamamlanan, late AS gec,
+           to_timestamp(heartbeat_ms / 1000.0) AS son_nabiz, stopping AS duruyor, version AS surum
+      FROM monitor_check_workers ORDER BY heartbeat_ms DESC;
+    ```
+    `state`: PENDING = gönderildi, sahiplenilmedi; CLAIMED = bir işçide koşuyor; DONE = sonuç liderin değerlendirmesini
+    bekliyor. Ham değer: `GET /api/admin/system` → `data.check_jobs` (`mode`, `queue`, `workers`, `this_pod`).
+- **Bilinen sınırlar (kabul edildi):** işçisi ölen iş kira dolunca en az bir kez daha koşar (ölen pod sonucu yazmadıysa),
+  ikinci ölümde düşer; donan (kendi zaman aşımını bile işletemeyen) bir işçinin işi başka pod'da yeniden koşarsa o dönem iki
+  geçmiş satırı olur, geç sonuç atılır; bütün teyit ve kurtarma yeniden kontrolleri liderin 4 + 2 iş parçacığında koşar (ağ
+  dışı toplu arızada zincir adımları sıra bekler); bir pod'un sahiplenme kadansı `poll-ms` başına en çok yuva sayısı kadardır
+  (üç pod'da varsayılanlarla ≈ 40 kontrol / sn, tasarım hedefi 35 / sn); devirden sonra boşaltıcı birikimi bitirene dek klasik
+  bir tıkı bir kez atlayabilir (DNS'te 300 sn'ye dek gecikme); bekletilen dönemler, gönderim sağlığı ve klasik damgalar lider
+  belleğindedir — liderlik değişince izleme başına en çok bir dönem kaybolur ya da sonuç güvenli tarafta atılır (asla çift
+  değil); aynı alarm anahtarını paylaşan iki izleme her dönem birer kez sayıldığından paylaşılan alarm klasikten erken
+  kapanabilir; anahtar açılıp kapanırken bekleyen bir iş klasik kontrolle birkaç saniye arayla iki kontrol yapılmasına yol
+  açabilir.
+- **Sürüm geçişi / geri alma:** yalnız 3-3 lider iş gönderir ve gönderim klasik taramayla AYNI vade anahtarını harcar — sürümler
+  karışıkken de bir dönem iki kez kontrol edilmez. 20.169.0 lider + 3-3 takipçiler (anahtar açık): iş gönderilmez, takipçiler
+  yalnız nabız yazar ve boş kuyruğu yoklar; 3-3 lider + yalnız eski takipçiler: başka canlı işçi yok → klasik (= kapalı).
+  3-3 lider ölür ya da eski bir pod kirayı alırsa kuyruktaki sonuçlar değerlendirilmez (izleme başına en çok bir değerlendirme
+  kaybı); eski lider bir sonraki dönemi kontrol eder. **Geri alma (20.169.0'a): önce ana anahtarı kapatın**, sonra imajı geri
+  alın; iki tablo, ayar anahtarları ve kendi kendini izlemenin `check_queue` satırı kalır, eski kod okumaz (silmeyin).
+
 ### Kapanış ve süre bütçesi
 
 `terminationGracePeriodSeconds` kubelet preStop'u başlattığı an sayılır; aşılırsa SIGKILL gelir ve kira dolana dek
@@ -963,12 +1148,12 @@ yalnız "Kapalı" der.
 | Adım | Süre | Ayar |
 |---|---|---|
 | preStop `sleep` (pod Service / ingress uç noktalarından düşer) | 10 sn | Helm `preStopSleepSeconds` (0 = kanca yok) |
-| SIGTERM → (Sürüm 3-2: devirde okuma ayarı açık ve kaydedici hazırsa önce süren değerlendirmeler durulur, kalıcı durum boşaltılır ve devir işareti yazılır) liderlik kirası bırakılır, yeni kilit / tur / liderlik alınmaz (`ContextClosedEvent`, ilk dinleyici) | anında (devirle ≤ 1 sn) | `EvalStateSink.HANDOVER_BUDGET_MS` |
+| SIGTERM → (Sürüm 3-2: devirde okuma ayarı açık ve kaydedici hazırsa önce süren değerlendirmeler durulur, kalıcı durum boşaltılır ve devir işareti yazılır) liderlik kirası bırakılır, yeni kilit / tur / liderlik alınmaz (`ContextClosedEvent`, ilk dinleyici); Sürüm 3-3: dağıtık kontrol işçisi yeni iş almaz, başlamamış işlerini beklemeden kuyruğa geri bırakır | anında (devirle ≤ 1 sn) | `EvalStateSink.HANDOVER_BUDGET_MS` |
 | Push işçisi durdurulur (yeni tur / batch yok, kalan batch'lerin kirası bırakılır) ve süren push biter; bildirim havuzları boşaltılır (çözüm postaları, yeniden gönderimler, giriş sorunu postaları) — hepsi AYNI süre içinde | ≤ 20 sn | `WebConfig.NOTIFY_AWAIT_SECONDS` |
 | Web zarif aşaması (süren istekler biter) | ≤ 20 sn | `SHUTDOWN_PHASE_TIMEOUT` (`spring.lifecycle.timeout-per-shutdown-phase`) |
 | Yürütücü aşaması (süren kontroller / bildirimler biter) | ≤ 20 sn | aynı |
 | Zamanlanmış işler havuzu (süren işler biter, kesilmez) | ≤ 20 sn | `SCHEDULING_AWAIT_TERMINATION` |
-| Geri kalan bütün yok etme beklemeleri (e-posta 421 kuyruğu, push, kod girişi, olay bildirimi, elle kontrol havuzu, bildirim havuzlarının kendisi, önbellek yolunun son yayını; Sürüm 3-1'den beri yan iş koşucusu — süren uzun iş ≤ 5 sn, kesmeden sonra ≤ 1 sn — ve kalıcı değerlendirme yazıcısı ≤ 1 sn) | birlikte ≤ 10 sn | `config/ShutdownDeadline.DESTROY_BUDGET_MS` |
+| Geri kalan bütün yok etme beklemeleri (e-posta 421 kuyruğu, push, kod girişi, olay bildirimi, elle kontrol havuzu, bildirim havuzlarının kendisi, önbellek yolunun son yayını; Sürüm 3-1'den beri yan iş koşucusu — süren uzun iş ≤ 5 sn, kesmeden sonra ≤ 1 sn — ve kalıcı değerlendirme yazıcısı ≤ 1 sn; Sürüm 3-3'ten beri dağıtık kontrol işçisi — koşan kontroller ≤ 3 sn + son tamamlama yazımı ≤ 1 sn — ve sonuç boşaltıcısı ≤ 0,5 sn, hiç başlamadılarsa süreye dokunmadan) | birlikte ≤ 10 sn | `config/ShutdownDeadline.DESTROY_BUDGET_MS` |
 | **Toplam** | **≈ 101 sn < 120 sn** (uygulama payı 91 sn = `SPRING_BUDGET_S`) | Helm `terminationGracePeriodSeconds` (120) |
 
 Birini büyütürseniz grace'i de büyütün: `preStop + boşaltma + 2 × aşama + zamanlanmış bekleme + 10 + 1 (devir) < grace` (yeni bir
@@ -1185,6 +1370,8 @@ kubectl logs $L | grep "Tarama liderliği" | tail -20                         # 
 kubectl logs $L | grep -c "Kalıcı değerlendirme doğrulaması"                 # 0 olmalı (Sürüm 3-1: bellek ↔ tablo uyuşmazlığı, karar etkilenmez)
 kubectl logs $L | grep "Yan iş .* başarısız" | tail -5                       # boş olmalı (Sürüm 3-1: yan iş koşucusundaki hata)
 kubectl logs $L | grep -E "devirde yüklen|Devir öncesi kalıcı durum" | tail -10  # Sürüm 3-2, ayar açıkken: her devirde "yüklendi (tam)" + eski liderde "boşaltıldı ve işaretlendi"
+kubectl logs $L | grep "Dağıtık kontroller:" | tail -10                        # Sürüm 3-3, anahtar açıkken: tür kipi geçişleri (lider, nedeniyle)
+kubectl logs $L | grep -cE "Kontrol işleri (art arda [0-9]+ kez )?gönderilemedi|Kontrol işi [0-9]+ kez sahiplenildi"  # 0 olmalı (Sürüm 3-3)
 kubectl get pod -n "$NS" -l app.kubernetes.io/instance="$REL" \
   -o custom-columns=POD:.metadata.name,NODE:.spec.nodeName,RESTART:.status.containerStatuses[0].restartCount,SEBEP:.status.containerStatuses[0].lastState.terminated.reason
 ```
@@ -1215,7 +1402,10 @@ durumunu da denetler: kayıt yazıyor, kümenin doğrulaması yeni kuşakta "uyu
 "eşitleniyor" turları beklenir) ve "devralınan" satırlar önceki kuşağı sayıyor. Dedektörün 0b / 0c bölümleri bilgi verir
 (sayılmaz): turların son sahiplenen pod'u (yan işler takipçide mi) ve kalıcı durumun kuşak satırı (yazan = lider mi, nabız
 yaşı). "TLS turu dönem başına bir kez" sayılamaz — tur satırı yalnız son sahiplenmeyi tutar; teklik tur kaydının kendisi
-(CAS) + kilitle sağlanır.
+(CAS) + kilitle sağlanır. Bölüm 9 (Sürüm 3-3, dağıtık kontroller; `monitor_check_jobs` yoksa atlanır) izleme başına
+birden çok açık işi, ana anahtar açıkken sağlıklı bir izlemenin aralığının yarısından yakın iki zamanlanmış satırını ve
+5 dk'dan eski değerlendirilmemiş sonucu (STUCK) sayar — [Dağıtık kontroller](#dağıtık-kontroller-çok-pod-sürüm-3-3);
+duman testinde `SMOKE_DISTRIBUTED=1`.
 
 ### Sürüm geçişi sırasında (eski + yeni pod birlikte)
 
@@ -1321,6 +1511,20 @@ bilmez. Son eski pod gidene kadar şunlar görülebilir (sonra kendiliğinden bi
 - **Kapanış:** yeni pod ayar açık ve hazırken kirayı en çok 1 sn geç bırakır (bütçe 101 < 120 sn); eski pod'da devir adımı
   yoktur.
 - **Geri alma:** ayar anahtarı, üç sütun ve `eval-state-load` satırı kalır, eski kod yok sayar.
+
+**Çok pod Sürüm 3-3'e geçişte (20.169.0 pod'u + yeni pod):**
+
+- **Varsayılan kapalı:** ana anahtar açılmadıkça hiçbir şey değişmez; ilk yeni pod'un şema yaması iki boş tablo kurar
+  (`monitor_check_jobs`, `monitor_check_workers`). Anahtarı geçiş bitmeden AÇMAYIN (açık olsa da güvenlidir — aşağıda —
+  ama işler dağılmaz).
+- **Anahtar açıksa bile çift kontrol yok:** yalnız 3-3 lider iş gönderir ve gönderim klasik taramayla aynı vade anahtarını
+  harcar. Eski lider + yeni takipçiler: hiç iş yok, takipçiler nabız yazar ve boş kuyruğu yoklar (en çok 5 sn'de bir
+  sahiplenme + 10 sn'de bir nabız). Yeni lider + yalnız eski takipçiler: başka canlı işçi yok → klasik (= kapalı). Liderlik
+  eski bir pod'a geçerse kuyruktaki sonuçlar değerlendirilmez (izleme başına en çok bir değerlendirme kaybı), eski lider bir
+  sonraki dönemi kontrol eder. Eski pod "Dağıtık kontrol kuyruğu" kendi kendini izleme kontrolünü değerlendirmez (satırı son
+  3-3 değerlendirmesini tutar).
+- **Geri alma:** önce ana anahtarı kapatın; iki tablo, iki ayar anahtarı ve `watchdog_state` satırı `check_queue` kalır,
+  eski kod yok sayar (eski ayar sayfası anahtarları göstermez).
 
 ### Yuvarlanan dağıtımda sayfa dosyaları (çok pod Sürüm 2b)
 
