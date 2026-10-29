@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import {
-  certChunksModel, scanChunkModel, certRunTone, CERT_CHUNK_STATES, CERT_RUN_STATES, CERT_RUN_OUTCOMES, CERT_SWEEP_MODES,
-  CERT_CHUNKS_TONE, CERT_MODE_TONE, CERT_CHUNK_OLDEST_WARN_MS, CERT_COORDINATOR_ALIVE_MS,
+  certChunksModel, scanChunkModel, certRunTone, certRunFellBack, newerScanAfter, CERT_CHUNK_STATES, CERT_RUN_STATES, CERT_RUN_OUTCOMES,
+  CERT_SWEEP_MODES, CERT_CHUNKS_TONE, CERT_MODE_TONE, CERT_CHUNK_OLDEST_WARN_MS, CERT_COORDINATOR_ALIVE_MS, CERT_NEWER_RUN_SLACK_MS,
 } from '../components/admin/health/clusterRuntimeModel.js'
 import { clusterModel } from '../components/admin/health/healthModel.js'
 import { TR } from '../i18n/index.jsx'
@@ -65,12 +65,25 @@ describe('certChunksModel — parçalı sertifika taraması (R3-4)', () => {
     expect(m.warnings).toEqual([])
   })
 
-  it('uyarılar: en eski bekleyen > 30 sn, aykırı pod, ikinci görüş > 0, koordinatör nabzı > 60 sn, son tur FAILED → warn', () => {
-    expect(certChunksModel({ cert_chunks: CC({ run: RUN({ oldest_pending_age_ms: CERT_CHUNK_OLDEST_WARN_MS }) }) }).status).toBe('running')
-    const pend = certChunksModel({ cert_chunks: CC({ run: RUN({ oldest_pending_age_ms: CERT_CHUNK_OLDEST_WARN_MS + 1 }) }) })
+  it('kuyruk işleniyor — uyarı yok (OB-M-1): bekleyen 18, ölçülen 5, en eski 45 sn → bekleyen uyarısı ve kutucuk tonu YOK', () => {
+    const m = certChunksModel({ cert_chunks: CC({ run: RUN({ chunks: { pending: 18, claimed: 5, done: 10, cancelled: 0 },
+      oldest_pending_age_ms: 45_000, oldest_pending_age_s: 45 }) }) })
+    expect(m.run.pendingWarn).toBe(false)
+    expect(m.warnings).toEqual([])
+    expect(m.status).toBe('running')
+  })
+
+  it('kimse almıyor (OB-M-1): bekleyen 5, ölçülen 0, en eski 45 sn → uyarı; tam 30 sn ya da bekleyen 0 → uyarı yok', () => {
+    const idleQueue = { pending: 5, claimed: 0, done: 10, cancelled: 0 }
+    const pend = certChunksModel({ cert_chunks: CC({ run: RUN({ chunks: idleQueue, oldest_pending_age_ms: 45_000, oldest_pending_age_s: 45 }) }) })
     expect(pend.status).toBe('warn')
     expect(pend.warnings).toEqual(['pending'])
     expect(pend.run.pendingWarn).toBe(true)
+    expect(certChunksModel({ cert_chunks: CC({ run: RUN({ chunks: idleQueue, oldest_pending_age_ms: CERT_CHUNK_OLDEST_WARN_MS }) }) }).status).toBe('running')
+    expect(certChunksModel({ cert_chunks: CC({ run: RUN({ chunks: { ...idleQueue, pending: 0 }, oldest_pending_age_ms: 45_000 }) }) }).run.pendingWarn).toBe(false)
+  })
+
+  it('uyarılar: aykırı pod, ikinci görüş > 0, koordinatör nabzı > 60 sn, son tur FAILED → warn', () => {
     const outl = certChunksModel({ cert_chunks: CC({ run: RUN({ per_pod: [{ ...RUN().per_pod[0], outlier: true }] }) }) })
     expect(outl.warnings).toEqual(['outlier'])
     expect(certChunksModel({ cert_chunks: CC({ run: RUN({ second_opinions: 12 }) }) }).warnings).toEqual(['secondOpinion'])
@@ -84,7 +97,72 @@ describe('certChunksModel — parçalı sertifika taraması (R3-4)', () => {
     expect(ab.status).toBe('idle')
     expect(ab.lastRuns[0].tone).toBe('warning')
     // oldest_pending_age_ms yoksa saniyeden
-    expect(certChunksModel({ cert_chunks: CC({ run: RUN({ oldest_pending_age_ms: undefined, oldest_pending_age_s: 31 }) }) }).run.pendingWarn).toBe(true)
+    expect(certChunksModel({ cert_chunks: CC({ run: RUN({ chunks: { pending: 3, claimed: 0, done: 0, cancelled: 0 },
+      oldest_pending_age_ms: undefined, oldest_pending_age_s: 31 }) }) }).run.pendingWarn).toBe(true)
+  })
+
+  it('sahipsiz tur (DECIDING dahil) uyarı değil, açık tur değil (OB-L1): ilerleme / bekleyen / sessiz koordinatör uyarısı yok, durum idle', () => {
+    const stalled = RUN({ orphan_suspected: true, coordinator_live: false, heartbeat_age_s: 3_600, age_s: 3_660,
+      chunks: { pending: 9, claimed: 0, done: 11, cancelled: 0 }, oldest_pending_age_ms: 3_600_000, second_opinions: null,
+      per_pod: [{ ...RUN().per_pod[0], outlier: true }] })
+    const m = certChunksModel({ cert_chunks: CC({ run: stalled }) })
+    expect(m.run.orphan).toBe(true)
+    expect(m.run.pendingWarn).toBe(false)
+    expect(m.run.coordinatorSilent).toBe(false)
+    expect(m.warnings).toEqual([])
+    expect(m.status).toBe('idle')
+    expect(m.level).toBe('on')
+    const deadDeciding = certChunksModel({ cert_chunks: CC({ run: RUN({ state: 'DECIDING', orphan_suspected: true, coordinator_live: false,
+      heartbeat_age_s: 7_200, chunks: { pending: 0, claimed: 0, done: 20, cancelled: 0 } }) }) })
+    expect(deadDeciding.run.orphan).toBe(true)
+    expect(deadDeciding.run.deciding).toBe(false)
+    expect(deadDeciding.status).toBe('idle')
+    // tarama kartı
+    expect(scanChunkModel({ last_mode: 'classic', chunked: { chunks_done: 3, chunks_total: 20, orphan_suspected: true, coordinator_pod: 'pod-b' } }).chunked.orphan).toBe(true)
+    expect(scanChunkModel({ last_mode: 'classic', chunked: { chunks_done: 3, chunks_total: 20 } }).chunked.orphan).toBe(false)
+  })
+
+  it('kilidi tutan koordinatör sessiz sayılmaz (OB-L5): coordinator_live true → nabız eski olsa da uyarı yok; alan yoksa scheduler.running_on', () => {
+    const old = { heartbeat_age_s: 300 }
+    expect(certChunksModel({ cert_chunks: CC({ run: RUN({ ...old, coordinator_live: true }) }) }).warnings).toEqual([])
+    expect(certChunksModel({ cert_chunks: CC({ run: RUN({ ...old, coordinator_live: null }) }) }).warnings).toEqual(['coordinatorSilent'])
+    // eski yanıt (alan yok): zamanlayıcının canlı kilit sahibi koordinatörse canlı
+    expect(certChunksModel({ scheduler: { running_on: 'pod-b-0000000b' }, cert_chunks: CC({ run: RUN(old) }) }).warnings).toEqual([])
+    expect(certChunksModel({ scheduler: { running_on: 'pod-c-0000000c' }, cert_chunks: CC({ run: RUN(old) }) }).warnings).toEqual(['coordinatorSilent'])
+  })
+
+  it('son tur FAILED uyarısı yalnız ARDINDAN daha yeni bir tarama turu bitmediyse (OB-L1); yerel / bozuk zaman → uyarı sürer', () => {
+    const failed = (scan) => certChunksModel({ scan, cert_chunks: CC({ run: null, last_runs: [LAST({ state: 'FAILED', outcome: 'FAILED',
+      finished_at: '2026-10-29T08:01:10' })] }) })
+    expect(failed(undefined).warnings).toEqual(['lastFailed'])
+    expect(failed({ source: 'cluster', last_run: '2026-10-29T08:01:30' }).warnings).toEqual(['lastFailed'])
+    expect(failed({ source: 'cluster', last_run: '2026-10-29T08:30:00' }).warnings).toEqual([])
+    expect(failed({ source: 'cluster', last_run: '2026-10-29T08:30:00' }).status).toBe('idle')
+    expect(failed({ source: 'local', last_run: '2026-10-29T08:30:00' }).warnings).toEqual(['lastFailed'])
+    expect(failed({ source: 'cluster', last_run: 'bozuk' }).warnings).toEqual(['lastFailed'])
+    expect(newerScanAfter('2026-10-29T08:00:00', { last_run: '2026-10-29T08:01:01' })).toBe(true)
+    expect(newerScanAfter('2026-10-29T08:00:00', { last_run: '2026-10-29T08:01:00' })).toBe(false)
+    expect(CERT_NEWER_RUN_SLACK_MS).toBe(60_000)
+  })
+
+  it('ikinci görüş uyarısı daha yeni tur gelene kadar sürer (OB-L4): kapanmış son tur > 0 → uyarı (açık RUNNING turda sayı yokken de); '
+    + 'açık turun sayısı biliniyorsa o karar verir; daha yeni tur → kalkar', () => {
+    const lastSo = [LAST({ second_opinions: 14, finished_at: '2026-10-29T08:01:10' })]
+    expect(certChunksModel({ cert_chunks: CC({ run: null, last_runs: lastSo }) }).warnings).toEqual(['secondOpinionLast'])
+    expect(certChunksModel({ cert_chunks: CC({ run: RUN({ second_opinions: null }), last_runs: lastSo }) }).warnings).toEqual(['secondOpinionLast'])
+    expect(certChunksModel({ cert_chunks: CC({ run: RUN({ state: 'DECIDING', second_opinions: 0 }), last_runs: lastSo }) }).warnings).toEqual([])
+    expect(certChunksModel({ scan: { source: 'cluster', last_run: '2026-10-29T09:00:00' }, cert_chunks: CC({ run: null, last_runs: lastSo }) }).warnings).toEqual([])
+    expect(certChunksModel({ cert_chunks: CC({ run: null, last_runs: [LAST({ second_opinions: 0 })] }) }).warnings).toEqual([])
+    const m = certChunksModel({ cert_chunks: CC({ run: null, last_runs: lastSo }) })
+    expect(m.status).toBe('warn')
+  })
+
+  it('koordinatör sayacı bölünmüş (OB-L6): classic_by_rule varsa ayrı; eski yanıtta null (bugünkü tek satır)', () => {
+    const split = certChunksModel({ cert_chunks: CC({ this_pod: { ...CC().this_pod, coordinator: { ...CC().this_pod.coordinator,
+      classic_by_rule: 280, classic_fallback: 2 } } }) })
+    expect(split.thisPod.coordinator.classicByRule).toBe(280)
+    expect(split.thisPod.coordinator.classicFallback).toBe(2)
+    expect(certChunksModel({ cert_chunks: CC() }).thisPod.coordinator.classicByRule).toBeNull()
   })
 
   it('karar aşaması (DECIDING): koordinatör nabız yazmaz → eski nabız uyarı DEĞİL; "karar veriliyor" bayrağı (paket B notu)', () => {
@@ -113,6 +191,13 @@ describe('certChunksModel — parçalı sertifika taraması (R3-4)', () => {
     expect(certRunTone('DONE', null)).toBe('muted')
     expect(certRunTone('FAILED', 'FAILED')).toBe('warning')
     expect(certRunTone('ABANDONED', 'ORPHANED')).toBe('warning')
+    // OB-L3: iç hata → klasik toplamaya dönen tur bilgi tonu (sonuçlar kaydedildi, karar verildi)
+    expect(certRunTone('ABANDONED', 'FAILED')).toBe('info')
+    expect(certRunFellBack('ABANDONED', 'FAILED')).toBe(true)
+    expect(certRunFellBack('FAILED', 'FAILED')).toBe(false)
+    expect(certChunksModel({ cert_chunks: CC({ run: null, last_runs: [LAST({ state: 'ABANDONED', outcome: 'FAILED' })] }) }).lastRuns[0])
+      .toMatchObject({ fellBack: true, tone: 'info' })
+    expect(certChunksModel({ cert_chunks: CC({ run: null, last_runs: [LAST({ state: 'ABANDONED', outcome: 'FAILED' })] }) }).warnings).toEqual([])
     expect(certRunTone('???', null)).toBe('muted')
     expect(CERT_MODE_TONE).toEqual({ chunked: 'info', classic: 'muted', unknown: 'muted' })
   })
@@ -154,5 +239,12 @@ describe('certChunksModel — parçalı sertifika taraması (R3-4)', () => {
       expect(EN[`hmp.cc.state.${s}`], s).toBeTruthy()
     }
     for (const m of CERT_SWEEP_MODES) expect(EN[`hmp.cc.mode.${m}`], m).toBeTruthy()
+    // OB-L3: FAILED hangi adımda koptuğunu iddia etmez; klasiğe dönen kendi metniyle
+    expect(TR['hmp.cc.outcome.FAILED']).not.toMatch(/karar/)
+    expect(EN['hmp.cc.outcome.FAILED']).not.toMatch(/decid/)
+    expect(TR['hmp.cc.warn.lastRunBad']).not.toMatch(/karar aşaması/)
+    expect(EN['hmp.cc.warn.lastRunBad']).not.toMatch(/decision step/)
+    expect(TR['hmp.cc.outcome.fellBack']).toMatch(/klasik/)
+    expect(EN['hmp.cc.outcome.fellBack']).toMatch(/classic/)
   })
 })

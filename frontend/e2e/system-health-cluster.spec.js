@@ -390,7 +390,7 @@ for (const vp of VIEWPORTS) {
     })
 
     test('Küme kartı R3-4: parçalı sertifika taraması her durumda; pod payı tablo / kart; tarama kartı kipi; adlar sarar, taşma yok', async ({ page }) => {
-      test.setTimeout(150_000)
+      test.setTimeout(210_000)
       const POD_C = `${POD_B}-ucuncu-pod-uzun-bir-ad-kirpilmamali`
       const RUN = (over = {}) => ({ run_id: 'r-open', kind: 'hourly', state: 'RUNNING', coordinator: B, coordinator_pod: POD_B,
         created_at: fmt(NOW - 45_000), age_s: 45, heartbeat_age_s: 3, domains_total: 1200, chunks_total: 60, chunk_size: 20, evict_caches: true,
@@ -426,6 +426,13 @@ for (const vp of VIEWPORTS) {
           min_errors: 3, error_rate_threshold: 0.5, this_pod: { pod: POD_A, worker: null, coordinator: null } },
           scan: { ...HEALTH.scan, last_mode: 'unknown', chunked: null, chunked_error: 'CannotGetJdbcConnectionException' }, status: 'unknown', tone: 'muted', cardWarn: false },
         { name: 'idle', cc: CC({ run: null }), scan: { ...HEALTH.scan, last_mode: 'classic', chunked: null }, status: 'idle', tone: 'info', cardWarn: false },
+        // İnceleme düzeltmeleri (FX-OBS): işlenen kuyrukta eski bekleyen parça uyarı değil (OB-M-1); sahipsiz tur açık tur değil (OB-L1)
+        { name: 'queueWorked', cc: CC({ run: RUN({ oldest_pending_age_ms: 95_000, oldest_pending_age_s: 95 }) }), scan: SCAN, status: 'running',
+          tone: 'info', cardWarn: false, pods: 3 },
+        { name: 'orphan', cc: CC({ run: RUN({ state: 'DECIDING', orphan_suspected: true, coordinator_live: false, age_s: 5_400, heartbeat_age_s: 5_000,
+          chunks: { pending: 18, claimed: 0, done: 40, cancelled: 2 }, oldest_pending_age_ms: 5_400_000, oldest_pending_age_s: 5_400 }),
+          last_runs: [LAST({ second_opinions: 0 }), LAST({ run_id: 'r-fb', state: 'ABANDONED', outcome: 'FAILED', duration_ms: null, pods: null })] }),
+          scan: { ...SCAN, chunked: { ...SCAN.chunked, orphan_suspected: true } }, status: 'idle', tone: 'info', cardWarn: false },
       ]
       let current = { ...base, cert_chunks: CASES[0].cc }
       await mock(page)
@@ -471,6 +478,17 @@ for (const vp of VIEWPORTS) {
         if (c.name === 'idle') {
           await expect(sec.locator('[data-slot="cc-progress"]')).toHaveCount(0)
           await expect(scanCard.locator('[data-slot="scan-mode"]')).toHaveAttribute('data-mode', 'classic')
+        }
+        if (c.name === 'queueWorked') {
+          await expect(sec.locator('[data-slot="cc-t-oldest"]')).not.toHaveAttribute('data-warn', 'true')
+          await expect(sec.locator('[data-slot="cc-warnings"]')).toHaveCount(0)
+        }
+        if (c.name === 'orphan') {
+          await expect(sec.locator('[data-slot="cc-run-orphan"]')).toContainText(POD_B)
+          await expect(sec.locator('[data-slot="cc-progress"]')).toHaveCount(0)
+          await expect(sec.locator('[data-slot="cc-warnings"]')).toHaveCount(0)
+          await expect(sec.locator('[data-slot="cc-last-run"][data-tone="info"]')).toHaveCount(1)
+          await expect(scanCard.locator('[data-slot="scan-chunked"]')).toHaveAttribute('data-orphan', 'true')
         }
         await page.waitForTimeout(250)
         expect(await page.evaluate(overflowIn, '[data-section="sched"]'), `${c.name}: yatay taşma`).toEqual([])

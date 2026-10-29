@@ -195,11 +195,59 @@ describe('SystemHealth — Küme kartı, çok pod R3-4 (parçalı sertifika tara
     expect(card().querySelector('[data-kind="leader"]')).toHaveAttribute('data-tone', 'success')
   })
 
-  it('en eski bekleyen 30 sn üstü → kutucuk uyarı + afiş; kart uyarı', async () => {
-    await open({ ...BASE, cert_chunks: CC({ run: RUN({ oldest_pending_age_ms: 45_000, oldest_pending_age_s: 45 }) }) })
+  it('kuyruk duruyor (bekleyen var, hiçbir pod ölçmüyor) ve en eski bekleyen 30 sn üstü → kutucuk uyarı + afiş; kart uyarı (OB-M-1)', async () => {
+    await open({ ...BASE, cert_chunks: CC({ run: RUN({ chunks: { pending: 6, claimed: 0, done: 9, cancelled: 1 },
+      oldest_pending_age_ms: 45_000, oldest_pending_age_s: 45 }) }) })
     expect(sec().querySelector('[data-slot="cc-t-oldest"]')).toHaveAttribute('data-warn', 'true')
     expect(sec().querySelector('[data-slot="cc-warnings"] [data-warn="pending"]')).not.toBeNull()
     expect(card().querySelector('[data-kind="leader"]')).toHaveAttribute('data-tone', 'warning')
+  })
+
+  it('kuyruk işleniyor (pod’lar parça ölçüyor) → en eski bekleyen 45 sn olsa da uyarı YOK; kart uyarı değil (OB-M-1)', async () => {
+    await open({ ...BASE, cert_chunks: CC({ run: RUN({ chunks: { pending: 18, claimed: 5, done: 9, cancelled: 1 },
+      oldest_pending_age_ms: 45_000, oldest_pending_age_s: 45 }) }) })
+    expect(sec()).toHaveAttribute('data-status', 'running')
+    expect(sec().querySelector('[data-slot="cc-t-oldest"]')).not.toHaveAttribute('data-warn')
+    expect(sec().querySelector('[data-slot="cc-warnings"]')).toBeNull()
+    expect(card().querySelector('[data-kind="leader"]')).toHaveAttribute('data-tone', 'success')
+  })
+
+  it('sahipsiz tur (koordinatör kilidi artık tutmuyor) → "terk edilmiş tur" satırı; ilerleme / kutucuk / afiş YOK, kart uyarı değil; '
+    + 'tarama kartı ilerleme yerine terk edilmiş tur (OB-L1)', async () => {
+    const orphan = RUN({ orphan_suspected: true, coordinator_live: false, state: 'DECIDING', age_s: 5_400, heartbeat_age_s: 5_000,
+      chunks: { pending: 6, claimed: 0, done: 9, cancelled: 1 }, oldest_pending_age_ms: 5_400_000 })
+    await open({ ...BASE, scan: SCAN_ON({ chunked: { ...SCAN_ON().chunked, orphan_suspected: true } }), cert_chunks: CC({ run: orphan }) })
+    expect(sec()).toHaveAttribute('data-status', 'idle')
+    expect(sec().querySelector('[data-slot="cc-run-orphan"]').textContent).toContain(POD_A)
+    expect(sec().querySelector('[data-slot="cc-run"]')).toBeNull()
+    expect(sec().querySelector('[data-slot="cc-progress"]')).toBeNull()
+    expect(sec().querySelector('[data-slot="cc-warnings"]')).toBeNull()
+    expect(card().querySelector('[data-kind="leader"]')).toHaveAttribute('data-tone', 'success')
+    const sc = scanCard().querySelector('[data-slot="scan-chunked"]')
+    expect(sc).toHaveAttribute('data-orphan', 'true')
+    expect(sc.textContent).not.toMatch(/9 \/ 20/)
+    expect(card().textContent).not.toMatch(/hmp\.cc\./)
+  })
+
+  it('küçük ağ hatası oranı iki anlamlı basamakla (asla "%0", OB-L8); klasiğe dönen tur bilgi tonu + klasik kip (OB-L3); bölünmüş '
+    + 'koordinatör sayacı (OB-L6); son turda ikinci görüş → uyarı sürer (OB-L4)', async () => {
+    const run = RUN({ per_pod: [{ ...RUN().per_pod[0], done_domains: 2500, network_errors: 1, network_error_rate: 0.0004 }, RUN().per_pod[1]] })
+    await open({ ...BASE, cert_chunks: CC({ run,
+      last_runs: [LAST({ second_opinions: 12 }), LAST({ run_id: 'r-fb', state: 'ABANDONED', outcome: 'FAILED', duration_ms: null, pods: null })],
+      this_pod: { ...CC().this_pod, coordinator: { ...CC().this_pod.coordinator, classic_by_rule: 280, classic_fallback: 2 } } }) })
+    const self = sec().querySelector('[data-slot="cc-pod"][data-self="true"]')
+    expect(self.textContent).toMatch(/0[.,]04/)
+    expect(self.textContent).not.toMatch(/%0(?![.,])|(?<![\d.,])0%/)
+    const rows = [...sec().querySelectorAll('[data-slot="cc-last-run"]')]
+    expect(rows[1]).toHaveAttribute('data-tone', 'info')
+    expect(rows[1].querySelector('[data-mode]')).toHaveAttribute('data-mode', 'classic')
+    expect(rows[1].textContent).toMatch(/classic gather|klasik toplamaya/)
+    expect(sec().querySelector('[data-slot="cc-warnings"] [data-warn="secondOpinionLast"]').textContent).toContain('12')
+    expect(card().querySelector('[data-kind="leader"]')).toHaveAttribute('data-tone', 'warning')
+    const coord = card().querySelector('[data-slot="cc-pod-coordinator"]')
+    expect(coord).toHaveAttribute('data-split', 'true')
+    expect(coord.textContent).toContain('280')
+    expect(coord.textContent).toMatch(/by rule|kural gereği/)
   })
 
   it('durum okunamadı → bilinmiyor (gri) + neden; ilerleme / son koşular yok; kart uyarı DEĞİL ve asla yeşil "Açık" değil', async () => {

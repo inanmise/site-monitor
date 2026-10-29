@@ -671,7 +671,8 @@ const CC_STATUS_LABEL = {
 const CC_MODE_LABEL = { chunked: 'hmp.cc.mode.chunked', classic: 'hmp.cc.mode.classic', unknown: 'hmp.cc.mode.unknown' }
 const CC_WARN_LABEL = {
   pending: 'hmp.cc.warn.pending', outlier: 'hmp.cc.warn.outlier', secondOpinion: 'hmp.cc.warn.secondOpinion',
-  coordinatorSilent: 'hmp.cc.warn.coordinatorSilent', lastFailed: 'hmp.cc.warn.lastRunBad',
+  secondOpinionLast: 'hmp.cc.warn.secondOpinionLast', coordinatorSilent: 'hmp.cc.warn.coordinatorSilent',
+  lastFailed: 'hmp.cc.warn.lastRunBad',
 }
 const CC_KIND_LABEL = { hourly: 'hmp.kind.hourly', stale: 'hmp.kind.stale', full: 'hmp.kind.full' }
 
@@ -680,17 +681,23 @@ function kindName(t, kind) {
   return CC_KIND_LABEL[kind] ? t(CC_KIND_LABEL[kind]) : (kind || '—')
 }
 
-/** Koşu sonucu → okunur ad; bilinmeyen sonuç "sonuç: x" (ham kod tek başına basılmaz). */
+/** Koşu sonucu → okunur ad; bilinmeyen sonuç "sonuç: x" (ham kod tek başına basılmaz). Klasiğe dönen koşu kendi metniyle. */
 function outcomeText(t, r) {
+  if (r.fellBack) return t('hmp.cc.outcome.fellBack')
   if (r.outcome && r.outcomeKnown) return t(`hmp.cc.outcome.${r.outcome}`)
   if (r.outcome) return t('hmp.esReasonOther', r.outcome)
   return t(`hmp.cc.state.${r.state === 'DONE' || r.state === 'FAILED' || r.state === 'ABANDONED' ? r.state : 'other'}`)
 }
 
-/** Ağ hatası oranı (0–1) → arayüz yerelinde yüzde ("%12,5" / "12.5%"); bilinmiyorsa "—". */
-function rateText(rate) {
+/**
+ * Ağ hatası oranı (0–1) → arayüz yerelinde yüzde ("%12,5" / "12.5%"); bilinmiyorsa "—". %0,1'in altındaki sıfır olmayan oran İKİ
+ * ANLAMLI basamakla ("%0,04") — hata varken asla "%0" yazılmaz (inceleme OB-L8; `TechErrorFormat.percent` küçük değer kuralı).
+ */
+export function rateText(rate) {
   if (rate == null || !Number.isFinite(rate)) return '—'
-  return formatPercent((rate * 100).toLocaleString(dateLocale(), { maximumFractionDigits: 1 }))
+  const pct = rate * 100
+  const small = pct > 0 && pct < 0.1
+  return formatPercent(pct.toLocaleString(dateLocale(), small ? { maximumSignificantDigits: 2 } : { maximumFractionDigits: 1 }))
 }
 
 /** Pod hücresi: ad SARAR, "bu pod" ve "aykırı" rozetleri. */
@@ -768,7 +775,7 @@ function CertLastRuns({ t, runs }) {
         <li key={r.runId || `${r.createdAt}-${r.kind}`} data-slot="cc-last-run" data-state={r.state} data-tone={r.tone}
           className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[0.9em] [overflow-wrap:anywhere]">
           <span className="font-semibold">{kindName(t, r.kind)}</span>
-          <CertModeBadge t={t} mode="chunked" />
+          <CertModeBadge t={t} mode={r.fellBack ? 'classic' : 'chunked'} />
           <ToneBadge tone={r.tone} data-slot="cc-last-outcome" className="h-auto max-w-full overflow-visible rounded-md whitespace-normal [overflow-wrap:anywhere]">
             {outcomeText(t, r)}
           </ToneBadge>
@@ -815,7 +822,7 @@ export function CertChunksSection({ t, cc }) {
             <dd className="min-w-0"><CertModeBadge t={t} mode={cc.lastMode} slot="cc-last-mode" /></dd>
           </>
         )}
-        {run && (
+        {run && !run.orphan && (
           <>
             <dt>{t('hmp.cc.run')}</dt>
             <dd data-slot="cc-run" className="min-w-0 [overflow-wrap:anywhere]">
@@ -825,8 +832,17 @@ export function CertChunksSection({ t, cc }) {
             </dd>
           </>
         )}
+        {run?.orphan && (
+          <>
+            <dt>{t('hmp.cc.orphanRun')}</dt>
+            <dd data-slot="cc-run-orphan" data-state={run.state} className="min-w-0 [overflow-wrap:anywhere] text-muted-foreground">
+              {t('hmp.cc.orphanLine', kindName(t, run.kind), run.coordinatorPod || '—',
+                run.ageS != null ? formatDurationShort(run.ageS, t) : '—')}
+            </dd>
+          </>
+        )}
       </KvList>
-      {run && (
+      {run && !run.orphan && (
         <div className="flex min-w-0 flex-col gap-2" data-slot="cc-progress">
           <ProgressBar value={run.measuredChunks} max={run.chunksTotal || 0} size="sm" showValue label={t('hmp.cc.progress')} />
           <p className="m-0 text-xs text-muted-foreground [overflow-wrap:anywhere]" data-slot="cc-progress-text">
@@ -850,7 +866,9 @@ export function CertChunksSection({ t, cc }) {
               <li key={w} data-warn={w} className="[overflow-wrap:anywhere]">
                 {w === 'outlier'
                   ? t(CC_WARN_LABEL.outlier, run?.pods.filter((p) => p.outlier).map((p) => p.pod).join(', ') || '—')
-                  : t(CC_WARN_LABEL[w])}
+                  : w === 'lastFailed' ? t(CC_WARN_LABEL.lastFailed, cc.lastRuns[0]?.coordinatorPod || '—')
+                    : w === 'secondOpinionLast' ? t(CC_WARN_LABEL.secondOpinionLast, cc.lastRuns[0]?.secondOpinions ?? '—')
+                      : t(CC_WARN_LABEL[w])}
               </li>
             ))}
           </ul>
@@ -895,8 +913,11 @@ export function CertChunksPodRows({ t, cc }) {
                 </>
               )}
           {c && (
-            <span className="text-muted-foreground" data-slot="cc-pod-coordinator">
-              {t('hmp.cc.pod.coordinator', c.chunkedRuns, c.classicFallback, c.takeovers, c.remeasured, c.secondOpinions, c.abandoned)}
+            <span className="text-muted-foreground" data-slot="cc-pod-coordinator" data-split={c.classicByRule != null ? 'true' : undefined}>
+              {c.classicByRule != null
+                ? t('hmp.cc.pod.coordinatorSplit', c.chunkedRuns, c.classicByRule, c.classicFallback, c.takeovers, c.remeasured,
+                  c.secondOpinions, c.abandoned)
+                : t('hmp.cc.pod.coordinator', c.chunkedRuns, c.classicFallback, c.takeovers, c.remeasured, c.secondOpinions, c.abandoned)}
             </span>
           )}
         </span>
