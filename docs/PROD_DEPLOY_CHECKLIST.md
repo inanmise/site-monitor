@@ -393,6 +393,61 @@ Ayrıntı: [`RUNBOOK.md` → Dağıtık kontroller](RUNBOOK.md#dağıtık-kontro
 izlemenin `check_queue` satırı kalır, eski kod yok sayar (silmeyin); anahtar açıkken geri alınırsa kuyruktaki sonuçlar
 değerlendirilmez (izleme başına en çok bir değerlendirme kaybı, çift kontrol yok).
 
+### Çok pod Sürüm 3-4 — bir kerelik
+Bu bölüm prod çok pod Sürüm 3-4'ü (parçalı sertifika taraması — `cert-check` kilidini kazanan pod sertifika turunun
+koordinatörü olur, alan adlarını 20'lik parçalara böler, her pod parçaları ölçer; kayıt, toplu ağ kesintisi kuralı ve alarm
+kararları yine tur bitince koordinatörde tek kez verilir; kendi anahtarının arkasında, varsayılan KAPALI, 3-3'ün anahtarından
+bağımsız) İLK kez aldığında geçerlidir; anahtarı açmak AYRI bir karardır.
+Ayrıntı: [`RUNBOOK.md` → Parçalı sertifika taraması](RUNBOOK.md#parçalı-sertifika-taraması-çok-pod-sürüm-3-4).
+
+**Öncesi**
+- [ ] **Dağıtım anahtar KAPALIYKEN yapılır** (varsayılan: `site.monitor.checks.cert-chunks.enabled` = false, env
+      `CERT_CHUNKS_ENABLED` verilmez; `CERT_CHUNK_*` pod ayarları da verilmez — varsayılanlar `application.properties`'te, Helm
+      değeri gerekmez). Kapalıyken davranış 20.170.0 ile birebir aynıdır (sertifika taraması, alarm ve kesinti kararları,
+      bildirimler, SQL ifadeleri, iş parçacıkları, günlük satırları, kapanış). Sürüm değişikliği ile anahtarı açmak aynı adımda
+      YAPILMAZ.
+- [ ] **Şema: iki yeni, boş tablo açılışta kurulur** — ön kontrol / yedek gerekmez, mevcut tablolara dokunulmaz. İlk yeni pod
+      Ready olunca `CertSweepSchemaPatch`: `cert_sweep_runs` + `idx_csr_state`, `cert_sweep_chunks` + tekil `ux_csc_run_chunk` +
+      `idx_csc_state`; PostgreSQL'de ayrıca parça tablosunun otomatik süpürme ayarı (tablolarla birlikte, boşken). Uygulama
+      kullanıcısının `CREATE TABLE` hakkı olmalı (öteki şema yamaları gibi). Saklama yönetimi listesinde iki yeni satır görünür.
+- [ ] **Kapanış bütçesi:** Helm `terminationGracePeriodSeconds` 120 değişmedi (bütçe 101 sn = preStop 10 + uygulama 91;
+      parça işçisinin ≤ 0,5 sn'lik beklemesi yalnız anahtar açıkken ve ortak 10 sn'lik yok etme süresinin içinde).
+- [ ] **Grafana panosu:** revizyon 9 (sağlık bölümünün sonunda, dağıtık kontrol panellerinden sonra parçalı sertifika taraması
+      panelleri; anahtar kapalıyken "veri yok") — dağıtımdan sonra Ayarlar → Grafana panosu → JSON indir ve aynı UID ile içe
+      aktarın.
+- [ ] **Kendi kendini izleme:** yeni kontrol YOK; "Sertifika taraması" kontrolü anahtar açıkken parçalı tur ayrıntısı taşır
+      (karar değişmez).
+
+**Sonrası** (açılıştan ~15 dk sonra; günlükler TÜM pod'lardan — aşağıdaki "İlk 15 dakika" `L`)
+- [ ] Tablolar kuruldu — ikisi dolu dönmeli: `SELECT to_regclass('cert_sweep_runs'), to_regclass('cert_sweep_chunks');`
+      İlk yeni pod'da `Parçalı sertifika taraması şeması: N değişiklik uygulandı`; `Parçalı sertifika taraması şeması
+      uygulanamadı` / `Parçalı tarama: … kurulamadı` satırı olmamalı
+      (`kubectl logs $L | grep -E "Parçalı sertifika taraması şeması|Parçalı tarama: "`).
+- [ ] Anahtar kapalıyken iz yok: `kubectl logs $L | grep -cE "Parçalı sertifika taraması (açık görüldü|işçisi)|Sertifika taraması parçalı"`
+      → 0; tablolar boş (`SELECT COUNT(*) FROM cert_sweep_runs;` → 0, `SELECT COUNT(*) FROM cert_sweep_chunks;` → 0); Sistem
+      Sağlığı → Küme kartı → "Parçalı sertifika taraması: Kapalı", tarama kartında "Tur kipi" satırı yok;
+      `bash scripts/multipod-smoke.sh dup-check` bölüm 10'u gösterir, sayısı 0.
+- [ ] Sertifika taramaları bugünkü gibi (tarama kartında son tur ilerliyor; günlükte `Certificate check started` /
+      `Check complete` satırları; kendi kendini izleme → "Sertifika taraması" Sağlıklı).
+
+**Açma — ayrı bir adım** (RUNBOOK → Parçalı sertifika taraması → "Açmadan önce" + "Açmak")
+- [ ] **TÜM pod'lar 3-4 (ya da üstü) sürümünde** — rollout bitti, eski ReplicaSet'in pod'u kalmadı (`kubectl get pods -n
+      "$NS" -l app.kubernetes.io/instance="$REL"` hepsi aynı imaj). Eski bir pod parça almaz (güvenli ama iş dağılmaz).
+- [ ] **P1 çıkış eşitliği her node'da** sertifika hedefleriyle (`scripts/multipod-egress-check.sh`; `TLS_TARGETS`'a envanterden
+      temsilî `host:443`'ler — vekil üzerinden kontrol edilen kayıtlardan da): her node'da `TLS OK` ve aynı `veren`.
+- [ ] Önce staging: `SMOKE_IMAGE=<imaj> SMOKE_CERT_CHUNKS=1 bash scripts/multipod-smoke.sh` yeşil; sonra anahtar açılır
+      (Ayarlar → Genel → Zamanlayıcı → "Parçalı sertifika taraması (çok pod)", yalnız GLOBAL admin). Her pod'un günlüğünde bir
+      kez `Parçalı sertifika taraması işçisi başladı …`; ilk büyük turdan sonra Küme kartında son tur "parçalı".
+- [ ] Geçme ölçütü (en az 3 gün; prod'da 1 → 2 replika adımından sonra): dedektör bölüm 10 (a)–(d) boş; her saatlik parçalı
+      tur DONE (ABANDONED yalnız dağıtım / pod öldürmede); "Son saatlik sertifika taraması" klasik turdan uzun değil; devralınan
+      parça ve ikinci görüş ≈ 0; alarm gürültüsünde yeni bir alarm sınıfı farkı yok.
+- [ ] Geri dönüş anında güvenlidir: anahtarı kapatmak sonraki turu klasiğe döndürür; sürmekte olan parçalı tur normal biter.
+
+**Geri alma:** önce anahtarı kapatın (açıksa), sonra `helm rollback`. İki tablo ve ayar satırı kalır, eski kod yok sayar
+(silmeyin); eski sürümün ayar sayfası anahtarı listelemez. Geri alma anında açık kalmış bir parçalı koşu (koordinatörü yarıda
+kapandı) hiçbir sonuç kaydetmemiştir: eski pod'lar onu okumaz — satır etkisiz kalır, sertifikalar eski pod'un klasik turlarıyla
+kontrol edilir; yeniden 3-4'e geçilip anahtar açıkken ilk sertifika turu onu sahipsiz (ORPHANED) kapatır.
+
 ### Denetim zinciri düzeltmesi öncesi — bir kerelik
 - [ ] **Prod etkileniyor mu (salt okunur):**
       `SELECT count(*) FILTER (WHERE seq IS NULL) AS seqsiz_eski, count(*) FILTER (WHERE seq = 1) AS seq_bir,
@@ -622,6 +677,8 @@ helm upgrade --install "$REL" ./helm/site-monitor --namespace "$NS" \
       → **Sonrası** maddeleri (tablolar, kuşak satırı, Küme kartı doğrulaması, kanaryalar).
 - [ ] **Çok pod Sürüm 3-3** (ilk kez alındıysa): yukarıdaki ["Çok pod Sürüm 3-3 — bir kerelik"](#çok-pod-sürüm-3-3--bir-kerelik)
       → **Sonrası** maddeleri (iki tablo kuruldu, ana anahtar kapalıyken iz yok, taramalar liderde).
+- [ ] **Çok pod Sürüm 3-4** (ilk kez alındıysa): yukarıdaki ["Çok pod Sürüm 3-4 — bir kerelik"](#çok-pod-sürüm-3-4--bir-kerelik)
+      → **Sonrası** maddeleri (iki tablo kuruldu, anahtar kapalıyken iz yok, sertifika taramaları bugünkü gibi).
 - [ ] **Çok pod Sürüm 2b:** Sistem Sağlığı → Kendi kendini izleme → "Saat uyumu" Sağlıklı (pod saatleri arası fark < 5 sn); Zamanlayıcı ve
       yürütücüler → Küme kartında tarama lideri dolu; Heartbeat → "Pod'lar" kartında "sessiz" pod yok.
 - [ ] **Çok pod Sürüm 2a** (açılıştan ~5 dk sonra): her pod'un günlüğünde bir kez `Önbellek yolu çalışıyor`
@@ -784,7 +841,9 @@ kubectl rollout status "$DEPLOY" -n "$NS"
   Çok pod Sürüm 3-1'in dört tablosu (`monitor_eval_state`, `monitor_last_status`, `monitor_eval_type_state`,
   `monitor_confirmations`) ve `round:tls-profile` satırı da kalır; eski sürüm onları hiç okumaz. Çok pod Sürüm 3-3'ün iki
   tablosu (`monitor_check_jobs`, `monitor_check_workers`), iki ayar anahtarı ve `check_queue` kendi kendini izleme satırı da
-  kalır — dağıtık kontrol anahtarı açıksa geri almadan ÖNCE kapatın.
+  kalır — dağıtık kontrol anahtarı açıksa geri almadan ÖNCE kapatın. Çok pod Sürüm 3-4'ün iki tablosu (`cert_sweep_runs`,
+  `cert_sweep_chunks`) ve ayar anahtarı da kalır, eski kod okumaz — parçalı sertifika taraması anahtarı açıksa geri almadan
+  ÖNCE kapatın (açık kalmış bir koşu satırı etkisizdir; 3-4'e dönülünce sahipsiz kapatılır).
 - **Secret key bu dağıtımda değiştiyse** rollback kurtarmaz: yeni anahtarla şifrelenen girişler eski anahtarla
   çözülemez. Bu yüzden anahtar değişimi hiçbir yayınla birlikte yapılmaz.
 - Son çare: DB yedeğinden geri yükleme (veri kaybı: yedekten sonraki kayıtlar) — platform ekibiyle.
