@@ -74,6 +74,26 @@ public final class CheckJobTypes {
         return SCRIPTED.equals(type) ? LEASE_MS_SCRIPTED : LEASE_MS_DEFAULT;
     }
 
+    /** Sayfa / sayfa hızı kirasının üst sınırı (ms) — canlı {@code max-check-seconds} ayarı sınırsız olabilir (FX-EVAL QW-M2). */
+    public static final long LEASE_MS_MAX = 600_000L;
+    /** Sayfa / sayfa hızı kirasında kontrolün duvar saati tavanına eklenen pay (ms). */
+    public static final long LEASE_CHECK_PAD_MS = 30_000L;
+
+    /**
+     * Gönderim anındaki kira (ms; FX-EVAL QW-M2): {@link #PAGE} / {@link #PAGESPEED} için canlı
+     * {@code site.monitor.page|pagespeed.max-check-seconds} değerinden {@code max(LEASE_MS_DEFAULT, sn × 1000 + 30 sn)},
+     * en çok {@link #LEASE_MS_MAX} — klasik taramanın sonucunu alacağı yavaş bir sayfa, dağıtık kipte işçinin zaman aşımına
+     * ({@code kira − 10 sn}) takılıp HİÇ değerlendirilmeden kalmasın. Diğer türler {@link #leaseMs(String)}. Varsayılan 120 sn
+     * ile değer değişmez (150 sn).
+     */
+    public static long leaseMs(String type, int maxCheckSeconds) {
+        if (PAGE.equals(type) || PAGESPEED.equals(type)) {
+            long sec = Math.max(0, maxCheckSeconds);
+            return Math.min(LEASE_MS_MAX, Math.max(LEASE_MS_DEFAULT, sec * 1000L + LEASE_CHECK_PAD_MS));
+        }
+        return leaseMs(type);
+    }
+
     /** İşçinin kontrolü kestiği süre (ms) = kira − {@link #WORKER_TIMEOUT_MARGIN_MS}. */
     public static long workerTimeoutMs(String type) {
         return leaseMs(type) - WORKER_TIMEOUT_MARGIN_MS;

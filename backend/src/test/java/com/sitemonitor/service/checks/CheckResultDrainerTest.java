@@ -116,6 +116,8 @@ class CheckResultDrainerTest {
         final List<String> takeOwners = new CopyOnWriteArrayList<>();
         volatile Runnable onTake = () -> { };
         volatile RuntimeException failNext;
+        /** FX-EVAL: her alma fırlatır (null = hayır). */
+        volatile RuntimeException failAlways;
         final AtomicInteger failOnCall = new AtomicInteger(-1);
 
         FakeStore(MultiPodTestSupport mp) {
@@ -139,6 +141,7 @@ class CheckResultDrainerTest {
             takeOwners.add(leaseOwner);
             onTake.run();
             if (failOnCall.get() == takeOwners.size()) throw new DataAccessResourceFailureException("db gone");
+            if (failAlways != null) throw failAlways;
             RuntimeException f = failNext;
             if (f != null) {
                 failNext = null;
@@ -727,6 +730,312 @@ class CheckResultDrainerTest {
         store.add(row(2, "port", 2));
         sleepQuietly(600);
         assertThat(store.takes()).as("shutdownStarted sonrası alma yok").isEqualTo(takes);
+    }
+
+    // ── FX-EVAL (inceleme 2026-10-29) ──────────────────────────────────────────────────────────────────────────────
+
+    /** Şimdiden SONRA gönderilmiş / sahiplenilmiş / bitmiş satır (taban ve klasik damga sınamaları). */
+    CheckResultRow fresh(long id, String type, long monitorId) {
+        long now = mp.now();
+        return new CheckResultRow(id, type, monitorId, now + 1, now + 2, now + 3, "pod-x", "{\"open\":true}", false);
+    }
+
+    @Test
+    @DisplayName("DH-M2: canDrain = kuruldu ∧ GAINED görüldü ∧ işbirlikçiler ∧ son başarılı alma (yoksa GAINED) 30 sn içinde")
+    void canDrainFollowsTakeHealth() {
+        Rig a = leader();
+        CheckResultDrainer d = a.drainer();
+        assertThat(d.canDrain()).as("iş parçacığı kurulmadı").isFalse();
+        markStarted(d);
+        assertThat(d.canDrain()).as("GAINED anından pencere").isTrue();
+        mp.advance(CheckResultDrainer.TAKE_HEALTH_MIN_MS);
+        assertThat(d.canDrain()).as("30 sn hiç alma yok").isFalse();
+        d.drainOnce();   // boş alma = sağlıklı
+        assertThat(d.canDrain()).isTrue();
+        store.failAlways = new DataAccessResourceFailureException("db gone");
+        mp.advance(CheckResultDrainer.TAKE_HEALTH_MIN_MS - 1);
+        d.drainOnce();
+        assertThat(d.canDrain()).as("son başarılı alma pencere içinde").isTrue();
+        mp.advance(1);
+        d.drainOnce();
+        assertThat(d.canDrain()).as("alma 30 sn'dir düşüyor").isFalse();
+        assertThat(d.status().canDrain()).isFalse();
+        store.failAlways = null;
+        d.drainOnce();
+        assertThat(d.canDrain()).isTrue();
+        d.onSweepLeadershipChanged(event(SweepLeadershipChangedEvent.LOST, mp.now()));
+        assertThat(d.canDrain()).as("lider değil (GAINED yok)").isFalse();
+        d.onSweepLeadershipChanged(event(SweepLeadershipChangedEvent.GAINED, mp.now()));
+        assertThat(d.canDrain()).isTrue();
+        d.onContextClosed(null);
+        assertThat(d.canDrain()).as("kapanış").isFalse();
+    }
+
+    @Test
+    @DisplayName("DH-M2 b: işbirlikçi eksik → boşaltamaz (canDrain / holdClassic false) ve bir kez WARN (eskiden sessizdi)")
+    void missingCollaboratorWarnsOnceAndCannotDrain() {
+        MonitoringOutageService m = newMos();
+        mp.use(MonitoringOutageService.class, m);
+        Pod p = mp.pod(1);
+        CheckResultDrainer d = new CheckResultDrainer(dc, p::scheduler, () -> m, () -> store, () -> null, p::schedule,
+                () -> dbClock);
+        d.setLeaderClock(mp.clockSupplier());
+        drainers.add(d);
+        p.events().listen(SweepLeadershipChangedEvent.class, m::onSweepLeadershipChanged);
+        p.events().listen(SweepLeadershipChangedEvent.class, d::onSweepLeadershipChanged);
+        assertThat(p.scheduler().isSweepLeaderNow()).isTrue();
+        markStarted(d);
+        ch.qos.logback.classic.Logger lg =
+                (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(CheckResultDrainer.class);
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> app =
+                new ch.qos.logback.core.read.ListAppender<>();
+        app.start();
+        lg.addAppender(app);
+        try {
+            store.add(row(1, "port", 1));
+            d.drainOnce();
+            d.drainOnce();
+            assertThat(store.takes()).isZero();
+            assertThat(d.canDrain()).isFalse();
+            assertThat(d.holdClassic()).as("boşaltamayan klasiği bekletmez").isFalse();
+            assertThat(app.list.stream().filter(e -> e.getLevel() == ch.qos.logback.classic.Level.WARN)
+                    .map(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage)
+                    .filter(s -> s.startsWith("Dağıtık kontrol sonuç boşaltıcısı çalışamıyor")))
+                    .containsExactly("Dağıtık kontrol sonuç boşaltıcısı çalışamıyor — eksik bileşen: CheckResultApplier "
+                            + "(türler klasik taramada kalır)");
+        } finally {
+            lg.detachAppender(app);
+        }
+    }
+
+    @Test
+    @DisplayName("DH-M1 a: anahtar KAPALI → AÇIK: kapalıyken (ya da öncesinde) gönderilmiş işlerin sonuçları atılır, yeniden açıldıktan sonrakiler uygulanır")
+    void switchOffThenOn_dropsResultsCreatedBeforeReEnable() {
+        Rig a = leader();
+        CheckResultDrainer d = a.drainer();
+        store.add(row(1, "port", 1));
+        d.drainOnce();
+        assertThat(a.applier().appliedIds()).containsExactly(1L);
+
+        settings.enabled = false;   // boşaltıcı adımı kapalı görür
+        d.drainOnce();
+        mp.advance(60_000L);
+        store.add(row(2, "port", 1), row(3, "ping", 2));   // kapalıyken biten (kapanmadan önce gönderilmiş) işler
+        settings.enabled = true;
+        d.drainOnce();
+        assertThat(a.applier().appliedIds()).as("klasik daha yeni gözlem yaptı").containsExactly(1L);
+        assertThat(d.status().droppedObsolete()).isEqualTo(2);
+        store.add(fresh(4, "port", 1));
+        d.drainOnce();
+        assertThat(a.applier().appliedIds()).containsExactly(1L, 4L);
+
+        // kısa kapalı dönemi yalnız ayar olayı gördü (boşaltma adımı arada koşmadı)
+        settings.enabled = false;
+        d.onSettingsChanged(new AppSettingsChangedEvent(Set.of(DistributedChecks.KEY_ENABLED), "refresh"));
+        settings.enabled = true;
+        mp.advance(1_000L);
+        store.add(new CheckResultRow(5, "port", 3, mp.now() - 500L, mp.now() - 400L, mp.now() - 100L, "pod-x",
+                "{\"open\":true}", false));
+        d.drainOnce();
+        assertThat(a.applier().appliedIds()).containsExactly(1L, 4L);
+        assertThat(d.status().droppedObsolete()).isEqualTo(3);
+    }
+
+    @Test
+    @DisplayName("DH-M1 a: açılışta KAPALI, sonradan etkinleşen pod eski sonuçları atar; açılışta AÇIK pod (olağan devir) atmaz")
+    void lateActivationFloorsOldResults() {
+        settings.enabled = false;
+        Rig a = leader();
+        CheckResultDrainer d = a.drainer();
+        d.onReady(null);   // açılış hazır: anahtar kapalı
+        settings.enabled = true;
+        store.add(row(1, "port", 1), fresh(2, "port", 2));
+        d.start();
+        await().atMost(Duration.ofSeconds(5)).until(() -> a.applier().appliedIds().contains(2L));
+        assertThat(a.applier().appliedIds()).containsExactly(2L);
+        assertThat(d.status().droppedObsolete()).isEqualTo(1);
+
+        // açılışta AÇIK: devralınan kuyruk (önceki liderin bitmiş işleri) değerlendirilir
+        Rig b = rig(2, true);
+        CheckResultDrainer e = b.drainer();
+        e.onReady(null);
+        mp.advance(181_000L);
+        assertThat(b.pod().scheduler().isSweepLeaderNow()).isTrue();
+        store.add(row(3, "port", 3));
+        markStarted(e);
+        e.drainOnce();
+        assertThat(b.applier().appliedIds()).containsExactly(3L);
+        assertThat(e.status().droppedObsolete()).isZero();
+    }
+
+    @Test
+    @DisplayName("DH-M1 b: aynı izlemenin klasik zamanlanmış kontrolü işten SONRA başladıysa iş sonucu atılır; sonra sahiplenilen uygulanır; liderlik olayı damgaları siler")
+    void classicCheckSupersedesOlderClaim() {
+        Rig a = leader();
+        CheckResultDrainer d = a.drainer();
+        d.noteClassicCheck("port", 1L);   // kurulmadı → yazılmaz (K-1)
+        markStarted(d);
+        d.noteClassicCheck("port", 1L);   // klasik kontrol şimdi başladı
+        store.add(row(1, "port", 1), row(2, "port", 2), fresh(3, "port", 1));
+        d.drainOnce();
+        assertThat(a.applier().appliedIds()).as("eski iş düştü, başka izleme ve sonraki iş uygulandı")
+                .containsExactly(2L, 3L);
+        assertThat(d.status().droppedSuperseded()).isEqualTo(1);
+
+        d.onSweepLeadershipChanged(event(SweepLeadershipChangedEvent.LOST, mp.now()));
+        d.onSweepLeadershipChanged(event(SweepLeadershipChangedEvent.GAINED, mp.now()));
+        store.add(row(4, "port", 1));
+        d.drainOnce();
+        assertThat(a.applier().appliedIds()).endsWith(4L);
+
+        settings.enabled = false;   // anahtar kapalı → damga yazılmaz
+        d.noteClassicCheck("ping", 9L);
+        settings.enabled = true;
+        store.add(row(5, "ping", 9));
+        d.drainOnce();
+        assertThat(a.applier().appliedIds()).endsWith(5L);
+        assertThat(d.status().droppedSuperseded()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("DH-M1 c: holdClassic = GAINED sonrası birikim boşalana dek (tavan içinde); yetişince / kurulmadıysa / anahtar kapalıyken false")
+    void holdClassicSemantics() {
+        Rig a = leader();
+        CheckResultDrainer d = a.drainer();
+        assertThat(d.holdClassic()).as("kurulmadı (K-1)").isFalse();
+        markStarted(d);
+        assertThat(d.holdClassic()).isTrue();
+        settings.enabled = false;
+        assertThat(d.holdClassic()).isFalse();
+        settings.enabled = true;
+        d.drainOnce();   // boş kuyruk → yetişti
+        assertThat(d.holdClassic()).isFalse();
+        d.onSweepLeadershipChanged(event(SweepLeadershipChangedEvent.GAINED, mp.now()));
+        assertThat(d.holdClassic()).isTrue();
+        mp.advance(CheckResultDrainer.HOLD_MANUAL_MAX_MS);
+        assertThat(d.holdClassic()).as("tavan").isFalse();
+    }
+
+    @Test
+    @DisplayName("DH-M1 c: yetişme penceresinde döngü 200 ms'de bir yoklar — yükleme biter bitmez alır (drain-ms 5 sn beklenmez)")
+    void catchUpPollsRightAfterTheLoad() {
+        dc = new DistributedChecks(settings.svc, new DistributedChecks.Tuning(true, 16, 1_000L, 5_000L, 5_000L, 50, 5_000L,
+                600_000L));
+        Rig a = leader();
+        store.add(row(1, "port", 1));
+        a.gate().arm(7L, mp.now() + EvalLoadGate.LOAD_TIMEOUT_MS);
+        a.drainer().start();
+        await().atMost(Duration.ofSeconds(3)).until(() -> a.drainer().status().loadWaits() >= 1);
+        a.mos().evalLoadSkipped(7L, null);
+        long t0 = System.nanoTime();
+        await().atMost(Duration.ofMillis(1_500)).until(() -> a.applier().appliedIds().contains(1L));
+        assertThat(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t0)).isLessThan(1_500L);
+    }
+
+    @Test
+    @DisplayName("DH-L1: satırlar alındıktan sonra kapanış başlarsa (çit kapalı) devir TEMİZ yazılmaz; sonraki dalga sayılır")
+    void handoverDuringApply_rowsNotLostOrNotClean() throws Exception {
+        Rig a = leader();
+        ReflectionTestUtils.setField(a.pod().scheduler(), "checkResultDrainer", a.drainer());
+        AtomicReference<Boolean> quiet = handoverSink(a);
+        AtomicReference<Boolean> fenceAtApply = new AtomicReference<>();
+        Thread[] closer = new Thread[1];
+        a.applier().hook = w -> {
+            if (closer[0] != null) return;
+            closer[0] = new Thread(() -> a.pod().scheduler().onContextClosed(null), "fx-closer");
+            closer[0].start();
+            await().atMost(Duration.ofSeconds(2)).until(() -> a.pod().scheduler().sideJobsStopping());
+            fenceAtApply.set(a.pod().scheduler().isSweepLeaderNow());
+        };
+        store.add(row(1, "port", 1), row(2, "ping", 2), row(3, "port", 1));   // dalgalar [1, 2], [3]
+        a.drainer().drainOnce();
+        closer[0].join(5_000L);
+        assertThat(store.remaining()).as("satırlar kuyruktan silindi").isZero();
+        assertThat(fenceAtApply.get()).as("çit kapalı").isFalse();
+        assertThat(a.drainer().lostInHandover()).isTrue();
+        assertThat(a.drainer().status().droppedHandover()).as("ikinci dalga değerlendirilmedi").isEqualTo(1);
+        assertThat(a.applier().appliedIds()).containsExactly(1L, 2L);
+        assertThat(quiet.get()).as("işaret temiz yazılmaz → halef yalnız gözlemler").isFalse();
+    }
+
+    @Test
+    @DisplayName("DH-L1 (incelemenin yoklaması, tek dalga): kapanış SON dalganın uygulaması sırasında başlarsa da devir temiz yazılmaz")
+    void handoverDuringTheOnlyWave_markerNotClean() throws Exception {
+        Rig a = leader();
+        ReflectionTestUtils.setField(a.pod().scheduler(), "checkResultDrainer", a.drainer());
+        AtomicReference<Boolean> quiet = handoverSink(a);
+        AtomicReference<Integer> remainingAtApply = new AtomicReference<>();
+        Thread[] closer = new Thread[1];
+        a.applier().hook = w -> {
+            if (closer[0] != null) return;
+            remainingAtApply.set(store.remaining());
+            closer[0] = new Thread(() -> a.pod().scheduler().onContextClosed(null), "fx-closer-1");
+            closer[0].start();
+            await().atMost(Duration.ofSeconds(2)).until(() -> a.pod().scheduler().sideJobsStopping());
+        };
+        store.add(row(1, "port", 1), row(2, "ping", 2), row(3, "http", 3));   // tek dalga
+        a.drainer().drainOnce();
+        closer[0].join(5_000L);
+        assertThat(remainingAtApply.get()).as("uygulama anında satırlar kuyrukta yok").isZero();
+        assertThat(a.drainer().status().droppedHandover()).isZero();
+        assertThat(a.drainer().lostInHandover()).isTrue();
+        assertThat(quiet.get()).as("çit bu dalganın MOS çağrılarını düşürdü → işaret temiz değil").isFalse();
+    }
+
+    @Test
+    @DisplayName("DH-L1: kapanıştan önce biten parti devri kirletmez (boşta → işaret temiz)")
+    void handoverAfterACompletedBatch_markerClean() {
+        Rig a = leader();
+        ReflectionTestUtils.setField(a.pod().scheduler(), "checkResultDrainer", a.drainer());
+        AtomicReference<Boolean> quiet = handoverSink(a);
+        store.add(row(1, "port", 1));
+        a.drainer().drainOnce();
+        a.pod().scheduler().onContextClosed(null);
+        assertThat(a.drainer().lostInHandover()).isFalse();
+        assertThat(quiet.get()).isTrue();
+    }
+
+    @Test
+    @DisplayName("DH-L2: bekletme tavanı yükleme kapısı açıldıktan sonraki ilk adımdan ölçülür (yavaş TAM yükleme sonrası elle kutu beklemeye devam eder)")
+    void slowLoad_holdStartsWhenTheGateOpens() {
+        Rig a = leader();
+        CheckResultDrainer d = a.drainer();
+        markStarted(d);
+        store.add(row(1, "port", 1));
+        a.gate().arm(7L, mp.now() + EvalLoadGate.LOAD_TIMEOUT_MS);
+        mp.advance(19_000L);
+        d.drainOnce();   // yükleme sürüyor
+        assertThat(d.status().loadWaits()).isEqualTo(1);
+        assertThat(d.holdManual()).isTrue();
+        mp.advance(2_000L);   // 21 sn: yükleme zaman aşımıyla bitti, adım henüz koşmadı
+        assertThat(d.holdManual()).as("yükleme görüldü — tavan yükleme süresi kadar uzar").isTrue();
+        store.failOnCall.set(store.takes() + 1);   // kapıyı geçen ilk adımın alması düşer → henüz yetişmedi
+        d.drainOnce();
+        assertThat(d.status().caughtUp()).isFalse();
+        mp.advance(CheckResultDrainer.HOLD_MANUAL_MAX_MS - 1);
+        assertThat(d.holdManual()).as("kapıdan 20 sn dolmadı").isTrue();
+        mp.advance(1);
+        assertThat(d.holdManual()).as("kapıdan 20 sn").isFalse();
+    }
+
+    @Test
+    @DisplayName("DH-L3: bir adımın iki partisi arasında liderlik olayı olursa adım durur (yeni dönem sessizce benimsenmez)")
+    void leadershipEventBetweenBatchesStopsTheIteration() {
+        Rig a = leader();
+        CheckResultDrainer d = a.drainer();
+        for (long id = 1; id <= 250; id++) store.add(row(id, "port", id));
+        AtomicBoolean flipped = new AtomicBoolean();
+        a.applier().hook = w -> {
+            if (flipped.compareAndSet(false, true)) {
+                d.onSweepLeadershipChanged(event(SweepLeadershipChangedEvent.LOST, mp.now()));
+                d.onSweepLeadershipChanged(event(SweepLeadershipChangedEvent.GAINED, mp.now()));
+            }
+        };
+        assertThat(d.drainOnce()).isFalse();
+        assertThat(store.takes()).as("ikinci parti alınmadı").isEqualTo(1);
+        assertThat(a.applier().appliedIds()).hasSize(100);
+        d.drainOnce();   // sonraki adım baştan sorar ve kalanları alır
+        assertThat(a.applier().appliedIds()).hasSize(250);
     }
 
     private static void sleepQuietly(long ms) {
