@@ -112,6 +112,10 @@ public class CertChunkWorker {
     @Autowired(required = false)
     private ApplicationContext applicationContext;
 
+    /** Entegrasyon (B isteği 1): koordinatör yeni koşu yazınca bu pod'un işçisini hemen dürter (bellek; yoksa ≤ 5 sn sonra). */
+    @Autowired(required = false)
+    private ObjectProvider<CertRunCoordinator> coordinator;
+
     private final Map<Long, Held> held = new ConcurrentHashMap<>();
     private final AtomicInteger inflightDomains = new AtomicInteger();
     private final AtomicLong claimed = new AtomicLong();
@@ -197,6 +201,13 @@ public class CertChunkWorker {
         t.setDaemon(true);
         pollThread = t;
         t.start();
+        CertRunCoordinator c = null;
+        try {
+            c = coordinator == null ? null : coordinator.getIfAvailable();
+        } catch (RuntimeException e) {
+            c = null;
+        }
+        if (c != null) c.setLocalWorkerPoke(this::poke);
         log.info("Parçalı sertifika taraması işçisi başladı (en çok {} parça, kira {} sn, yoklama {} / {} ms)", tuning.maxChunks(),
                 tuning.leaseMs() / 1000, tuning.pollMs(), tuning.idlePollMs());
     }

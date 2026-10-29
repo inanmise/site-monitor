@@ -528,6 +528,30 @@ class CertChunkWorkerTest {
     }
 
     @Test
+    @DisplayName("Entegrasyon: işçi gerçekten başlayınca koordinatöre kendi dürtmesini verir (yeni koşu 5 sn beklemeden alınır)")
+    void startHandsPokeToCoordinator() {
+        CertRunCoordinator coordinator = mock(CertRunCoordinator.class);
+        CertChunkWorker w = worker(DEFAULT, runner());
+        org.springframework.test.util.ReflectionTestUtils.setField(w, "coordinator",
+                new org.springframework.beans.factory.support.StaticListableBeanFactory(Map.of("c", coordinator))
+                        .getBeanProvider(CertRunCoordinator.class));
+        org.mockito.Mockito.verifyNoInteractions(coordinator);
+        w.start();
+        org.mockito.ArgumentCaptor<Runnable> poke = org.mockito.ArgumentCaptor.forClass(Runnable.class);
+        org.mockito.Mockito.verify(coordinator).setLocalWorkerPoke(poke.capture());
+        poke.getValue().run();   // dürtme çağrılabilir (bellek; iş parçacığını uyandırır)
+
+        // pod'da işçi kapalı → başlamaz, dürtme de verilmez
+        CertRunCoordinator other = mock(CertRunCoordinator.class);
+        CertChunkWorker off = worker(tuning(4, 0, 50, false), runner());
+        org.springframework.test.util.ReflectionTestUtils.setField(off, "coordinator",
+                new org.springframework.beans.factory.support.StaticListableBeanFactory(Map.of("c", other))
+                        .getBeanProvider(CertRunCoordinator.class));
+        off.start();
+        org.mockito.Mockito.verifyNoInteractions(other);
+    }
+
+    @Test
     @DisplayName("Durum yalnız bellek (sorgu yok); başlamamış işçi saat bayatlığı bildirmez")
     void statusIsMemoryOnly() {
         CertChunkWorker w = worker(DEFAULT, runner());
