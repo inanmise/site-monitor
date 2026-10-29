@@ -347,10 +347,13 @@ export default function SchedulerSection({
             {scanChunks?.chunked && (
               <>
                 <dt>{t('hmp.cc.scanChunked')}</dt>
-                <dd data-slot="scan-chunked" className="min-w-0 [overflow-wrap:anywhere]">
-                  {t('hmp.cc.scanChunkedText', scanChunks.chunked.chunksDone ?? '—', scanChunks.chunked.chunksTotal ?? '—',
-                    scanChunks.chunked.domainsMeasured ?? '—', scanChunks.chunked.domainsTotal ?? '—')}
-                  {scanChunks.chunked.pods.length > 0 && (
+                <dd data-slot="scan-chunked" data-orphan={scanChunks.chunked.orphan ? 'true' : undefined} className="min-w-0 [overflow-wrap:anywhere]">
+                  {/* İnceleme OB-L1: koordinatörü kilidi artık tutmayan (ölmüş) tur ilerleme olarak gösterilmez */}
+                  {scanChunks.chunked.orphan
+                    ? <span className="text-muted-foreground">{t('hmp.cc.scanChunkedOrphan', scanChunks.chunked.coordinatorPod || '—')}</span>
+                    : t('hmp.cc.scanChunkedText', scanChunks.chunked.chunksDone ?? '—', scanChunks.chunked.chunksTotal ?? '—',
+                      scanChunks.chunked.domainsMeasured ?? '—', scanChunks.chunked.domainsTotal ?? '—')}
+                  {!scanChunks.chunked.orphan && scanChunks.chunked.pods.length > 0 && (
                     <span className="text-muted-foreground"> · {scanChunks.chunked.pods.map((p, i) => (
                       <span key={`${p.pod}-${i}`}>{i > 0 ? ', ' : ''}<PodName>{p.pod}</PodName> {p.domains}</span>
                     ))}</span>

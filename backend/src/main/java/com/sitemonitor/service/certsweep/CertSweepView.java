@@ -15,8 +15,11 @@ import java.util.Map;
  *
  * <ul>
  *   <li>{@link #modeOf} — bir {@code scan_runs} satırının (tür başına son tur) parçalı mı klasik mi koştuğu: koşu kimliği
- *       {@code cert_sweep_runs}'ta varsa {@link #MODE_CHUNKED}; yoksa ve okunan koşu satırları o turu kapsıyorsa
- *       {@link #MODE_CLASSIC}; kapsamıyorsa (okuma sınırı) ya da okunamadıysa {@link #MODE_UNKNOWN} — asla tahmin yok.</li>
+ *       {@code cert_sweep_runs}'ta varsa {@link #MODE_CHUNKED} (ABANDONED + FAILED = klasiğe dönmüş → {@link #MODE_CLASSIC});
+ *       yoksa ve okunan koşu satırları o turu kapsıyorsa (saklama penceresi içinde) {@link #MODE_CLASSIC}; kapsamıyorsa (okuma
+ *       sınırı / budanmış eski tur) ya da okunamadıysa {@link #MODE_UNKNOWN} — asla tahmin yok.</li>
+ *   <li>{@link #coordinatorLive} / {@link #orphanSuspected} — açık koşunun koordinatörü {@code cert-check} kilidini hâlâ tutuyor
+ *       mu; tutmuyorsa koşu sahipsizdir (sonraki tur kapatır) — ilerleme / bekleyen uyarısı / parça serisi gösterilmez.</li>
  *   <li>{@link #doneTallies} / {@link #outliers} — açık koşunun pod başına ÖLÇÜLMÜŞ (DONE) payı ve tasarım §2.6'daki aykırı pod
  *       kuralının GÖSTERİM kopyası (ağ hatası oranı ≥ eşik, diğerleri ≤ eşik / 2 ve yeterince örnek): Küme kartının uyarısı.</li>
  *   <li>{@link #abandonedSince} — son koşulardan pencere içindeki terk edilmiş (ABANDONED) koşu sayısı (kendi kendini izleme
@@ -61,17 +64,105 @@ public final class CertSweepView {
         if (runId == null || runId.isBlank() || status == null) return MODE_UNKNOWN;
         List<CertSweepStatus.Run> runs = status.lastRuns();
         for (CertSweepStatus.Run r : runs) {
-            if (r != null && runId.equals(r.runId())) return MODE_CHUNKED;
+            if (r != null && runId.equals(r.runId())) {
+                // İnceleme OB-L2 (a): koordinatörün iç hatası koşuyu ABANDONED + FAILED kapatır ve tur KLASİK toplamayla sürer
+                // (aynı tur kimliğiyle scan_runs yazılır) → klasik. Diğer her eşleşme (DECIDING / DONE / FAILED, ve sahipsiz
+                // kapatılan ama karar veren yavaş koordinatör) parçalı ölçüldü.
+                return fellBackToClassic(r) ? MODE_CLASSIC : MODE_CHUNKED;
+            }
         }
-        // Okunan satırlar tüm koşular (sınıra ulaşılmadı) → bu tur parçalı olsaydı listede olurdu
-        if (runs.size() < Math.max(1, requested)) return MODE_CLASSIC;
+        Long end = parseIso(lastRunAt);
+        long start = end == null ? Long.MIN_VALUE : end - Math.max(0L, durationMs == null ? 0L : durationMs);
+        // Okunan satırlar tüm koşular (sınıra ulaşılmadı) → bu tur parçalı olsaydı listede olurdu — ANCAK yalnız koşu satırlarının
+        // saklama penceresi içinde başlamışsa (inceleme OB-L2 (b): 7 günden eski kapanmış satırlar budanır; budanmış parçalı bir
+        // "full" turu klasik sanılmasın — eski tur bilinmiyor)
+        if (runs.size() < Math.max(1, requested)) {
+            if (end == null) return MODE_UNKNOWN;
+            return start >= status.nowMs() - CertChunking.RUN_RETENTION_MS + CLOCK_SLACK_MS ? MODE_CLASSIC : MODE_UNKNOWN;
+        }
         long oldest = Long.MAX_VALUE;
         for (CertSweepStatus.Run r : runs) if (r != null) oldest = Math.min(oldest, r.createdMs());
-        Long end = parseIso(lastRunAt);
         if (end == null || oldest == Long.MAX_VALUE) return MODE_UNKNOWN;
-        long start = end - Math.max(0L, durationMs == null ? 0L : durationMs);
         // Tur, okunan en eski koşu satırından AÇIKÇA sonra başladıysa parçalı olsaydı listede olurdu → klasik
         return start >= oldest + CLOCK_SLACK_MS ? MODE_CLASSIC : MODE_UNKNOWN;
+    }
+
+    /**
+     * Koşu satırı "parçalı başladı ama klasiğe döndü" mü: ABANDONED + {@code OUTCOME_FAILED} — koordinatörün iç hatası, tur
+     * klasik toplamayla tamamlandı (inceleme OB-L2 / OB-L3). Bu koşu bir hata DEĞİLDİR (sonuçlar kaydedildi, karar verildi).
+     */
+    public static boolean fellBackToClassic(CertSweepStatus.Run r) {
+        return r != null && CertSweepStore.RUN_ABANDONED.equals(r.state()) && CertSweepStore.OUTCOME_FAILED.equals(r.outcome());
+    }
+
+    // ── İnceleme OB-L1: sahipsiz açık koşu (koordinatörü artık cert-check kilidini tutmuyor) ─────────────────────────────
+
+    /** Sahipsiz sayılmak için açık koşunun en az yaşı (ms) — kilit okuması ile koşu okuması arasındaki yarışı örter. */
+    public static final long ORPHAN_MIN_AGE_MS = 60_000L;
+    /** {@code cert-check} kilit satırı (PK okuması; yalnız anahtar AÇIK ve açık koşu varken). */
+    public static final String SQL_CERT_LOCK = "SELECT locked_by, locked_until FROM scheduler_lock WHERE name = ?";
+    /** Sertifika taramasının kilit adı (kalıcı). */
+    public static final String CERT_LOCK_NAME = "cert-check";
+
+    /**
+     * Okuyanın gördüğü {@code cert-check} kilidi.
+     *
+     * @param known  kilit satırı okundu (var ya da yok) — false = okunamadı (bilinmiyor)
+     * @param holder canlı (süresi geçmemiş) satırın sahibi; canlı satır yoksa null
+     */
+    public record CertLock(boolean known, String holder) {
+        /** Okunamadı. */
+        public static final CertLock UNKNOWN = new CertLock(false, null);
+    }
+
+    /**
+     * {@code scheduler_lock} satırından kilit: süresi geçmemiş (ya da biçimi okunamayan — {@code SchedulerService.lockRowLive}
+     * kuralı: bilinmeyen serbest sayılmaz) satır canlıdır.
+     */
+    public static CertLock lockOf(boolean rowExists, String lockedBy, String lockedUntil, long nowMs) {
+        if (!rowExists) return new CertLock(true, null);
+        Long until = parseIso(lockedUntil);
+        boolean live = until == null || until >= nowMs;
+        return new CertLock(true, live ? lockedBy : null);
+    }
+
+    /**
+     * {@code cert-check} kilit satırını okur (tek PK okuması). Asla fırlatmaz — okunamadı → {@link CertLock#UNKNOWN}.
+     * Çağıran YALNIZ anahtar açıkken ve açık koşu varken çağırır (L-1).
+     */
+    public static CertLock readCertLock(org.springframework.jdbc.core.JdbcTemplate jdbc, long nowMs) {
+        if (jdbc == null) return CertLock.UNKNOWN;
+        try {
+            List<String[]> rows = jdbc.query(SQL_CERT_LOCK, (rs, i) -> new String[]{rs.getString(1), rs.getString(2)}, CERT_LOCK_NAME);
+            if (rows == null) return CertLock.UNKNOWN;
+            if (rows.isEmpty()) return lockOf(false, null, null, nowMs);
+            String[] r = rows.get(0);
+            return lockOf(true, r[0], r[1], nowMs);
+        } catch (RuntimeException e) {
+            return CertLock.UNKNOWN;
+        }
+    }
+
+    /**
+     * Açık koşunun koordinatörü canlı mı (kilide göre): TRUE = {@code cert-check}'in canlı sahibi koordinatör (ya da bu pod koşuyu
+     * ŞU AN yürütüyor — {@code selfRunId}); FALSE = kilidi başka pod tutuyor ya da canlı kilit yok (koordinatör her turda kilidi
+     * tur boyunca tutar, bıraktığında koşuyu kapatmıştır); null = kilit okunamadı / koşu yok (karar verilmez).
+     */
+    public static Boolean coordinatorLive(CertSweepStatus.Run run, CertLock lock, String selfRunId) {
+        if (run == null) return null;
+        if (selfRunId != null && selfRunId.equals(run.runId())) return Boolean.TRUE;
+        if (lock == null || !lock.known()) return null;
+        if (lock.holder() == null) return Boolean.FALSE;
+        return lock.holder().equals(run.coordinator());
+    }
+
+    /**
+     * Açık koşu sahipsiz mi (gösterim): koordinatör kilidi tutmuyor ({@link #coordinatorLive} FALSE) VE koşu en az
+     * {@link #ORPHAN_MIN_AGE_MS} yaşında. Sahipsiz koşu ilerleme / bekleyen uyarısı / parça serisi olarak gösterilmez; sonraki
+     * tur (anahtar açıkken her tur başında) onu ORPHANED kapatır. Bilinmeyen kilit → false (bugünkü gösterim).
+     */
+    public static boolean orphanSuspected(CertSweepStatus.Run run, long nowMs, Boolean coordinatorLive) {
+        return run != null && run.open() && Boolean.FALSE.equals(coordinatorLive) && run.ageMs(nowMs) >= ORPHAN_MIN_AGE_MS;
     }
 
     /**

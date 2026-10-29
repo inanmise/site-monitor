@@ -50,7 +50,7 @@ public final class GrafanaDashboardGenerator {
      * Pano içerik revizyonu — içerik (panel, sorgu, değişken) değişen HER sürümde artır ve
      * {@code src/test/resources/grafana/dashboard-content.sha256} dosyasını güncelle (kapı mesajı yeni satırı yazar).
      */
-    public static final int DASHBOARD_REVISION = 8;
+    public static final int DASHBOARD_REVISION = 9;
     /** "Kritik / yüksek alarm açıldı" anotasyonunun penceresi (sn) — açılış zamanı bu kadar yeni olan alarmlar. */
     static final int ALERT_OPENED_WINDOW_S = 900;
     /** Aktarıcı tazelik eşiği (sn) — sunucunun {@code max(180, 3 × refresh-seconds)} kuralının varsayılan değeri. */
@@ -1949,16 +1949,16 @@ public final class GrafanaDashboardGenerator {
             String work = MonitoringMetricNames.CERT_SWEEP_WORKER_CHUNKS;
             String off = t(" Veri yoksa parçalı sertifika taraması kapalıdır (Ayarlar → Genel → Zamanlayıcı) ya da tur durumu okunamadı — 0 sayılmaz.",
                     " No data means the chunked certificate sweep is off (Settings → General → Scheduler) or its run state could not be read — not 0.");
-            add(stat(t("Bekleyen sertifika parçası", "Pending certificate chunks"), t("Açık parçalı sertifika turunda henüz bir pod'un almadığı parçalar (parça başına 20 alan adı). Açık tur yokken 0."
-                            + off, "Chunks of the open chunked certificate run that no pod has claimed yet (20 domains each). 0 while no run is open." + off),
+            add(stat(t("Bekleyen sertifika parçası", "Pending certificate chunks"), t("Açık parçalı sertifika turunda henüz bir pod'un almadığı parçalar (parça boyutu açılışta ayarlanır, varsayılan 20 alan adı; çok büyük envanterde büyür). Açık tur yokken — koordinatörü kilidi bırakmış terk edilmiş tur dahil — 0. Kuyruk işlenirken bekleyen parça olağandır."
+                            + off, "Chunks of the open chunked certificate run that no pod has claimed yet (the chunk size is set at start-up, 20 domains by default, and grows for very large inventories). 0 while no run is open, including an abandoned run whose coordinator no longer holds the lock. Pending chunks are normal while the queue is being worked." + off),
                     guard("sum(max by (state) (" + metric(chunks, "state=\"pending\"") + "))", "cert_sweep"), "short",
                     thresholds(BLUE, null), "value", links() ? url("tab=health&sec=sched") : null).size(4, 4));
             add(stat(t("Parçalı tur ilerlemesi", "Chunked run progress"), t("Açık parçalı turda ölçülmüş (tamamlanan ya da koordinatörün devraldığı) parçaların payı. Veri yoksa açık tur yok."
                             + off, "Share of chunks of the open chunked run that were measured (completed or taken over by the coordinator). No data means no open run." + off),
                     "sum(max by (state) (" + metric(chunks, "state=~\"done|cancelled\"") + ")) / (sum(max by (state) (" + metric(chunks) + ")) > 0)",
                     "percentunit", thresholds(BLUE, null), "value", null).size(4, 4));
-            add(stat(t("Son saatlik sertifika taraması", "Last hourly certificate sweep"), t("En yeni saatlik sertifika taramasının süresi (parçalı ya da klasik). 1 dk altı beklenir; 5 dk üstü kötü bir saati ya da yetişemeyen pod'ları gösterir."
-                            + off, "Duration of the newest hourly certificate sweep (chunked or classic). Expected below 1 minute; above 5 minutes means a bad hour or pods that fall behind." + off),
+            add(stat(t("Son saatlik sertifika taraması", "Last hourly certificate sweep"), t("En yeni saatlik sertifika taramasının toplam süresi (parçalı ya da klasik; ölçüm, sonuçların kaydı ve alarm kararı dahil). 2 dk altı yeşil, 2–5 dk sarı; 5 dk üstü kötü bir saati ya da yetişemeyen pod'ları gösterir."
+                            + off, "Total duration of the newest hourly certificate sweep (chunked or classic; measuring, saving the results and the alarm decision included). Green below 2 minutes, amber at 2–5 minutes; above 5 minutes means a bad hour or pods that fall behind." + off),
                     "max(" + metric(last, "kind=\"hourly\"") + ")", "s", thresholds(GREEN, null, AMBER, 120, RED, 300), "background", null).size(4, 4));
             add(stat(t("Devralınan parça (24 sa)", "Chunks taken over (24 h)"), t("Son 24 saatte koordinatörün kendisi ölçtüğü parçalar (iki kez kaybedilen ya da ilerlemesiz bekleyen). Pod kapanışları dışında 0'a yakın olmalı."
                             + off, "Chunks the coordinator measured itself in the last 24 hours (lost twice or waiting without progress). Should stay near 0 outside pod restarts." + off),
@@ -1979,8 +1979,8 @@ public final class GrafanaDashboardGenerator {
             add(state);
 
             Panel duration = new Panel("timeseries", t("Sertifika taraması süresi (tür, kip)", "Certificate sweep duration (kind, mode)"),
-                    t("Tür başına en yeni sertifika taramasının süresi ve kipi (chunked = parçalı, classic = tek pod). Açma kararını parçalı ile klasik süreleri karşılaştırarak verin.",
-                            "Duration and mode of the newest certificate sweep per kind (chunked, or classic = one pod). Compare chunked and classic durations to judge the switch."));
+                    t("Tür başına en yeni sertifika taramasının süresi (kayıt ve karar dahil) ve kipi (chunked = parçalı, classic = tek pod). Seriler yalnız anahtar açıkken yazılır; iki pod varken her uygun tur parçalı koşar, bu yüzden klasik karşılaştırma bu panelde yoktur — anahtarı açmadan önceki süreleri Sistem Sağlığı → Sertifika taraması kartında (scan_runs) okuyun.",
+                            "Duration (saving and the decision included) and mode of the newest certificate sweep per kind (chunked, or classic = one pod). The series exist only while the switch is on; with two pods every eligible run is chunked, so this panel has no classic baseline — read the durations from before the switch on System Health → Certificate sweep card (scan_runs)."));
             duration.w = 8; duration.h = 8;
             duration.target("max by (kind, mode) (" + metric(last) + ")", "{{kind}} {{mode}}", false);
             duration.timeseries("s", false, "line");

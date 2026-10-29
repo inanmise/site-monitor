@@ -85,6 +85,9 @@ public final class WatchdogMessages {
             if (f.get("oldest_pending_chunk_s") instanceof Number p) {
                 sb.append(en ? ", oldest waiting chunk " + p.longValue() + " s" : ", en eski bekleyen parça " + p.longValue() + " sn");
             }
+        } else if (Boolean.TRUE.equals(f.get("chunked_orphan_run"))) {
+            sb.append(en ? "no open run (an abandoned run of a coordinator that no longer holds the sweep lock is still recorded; the next run closes it)"
+                    : "açık tur yok (tarama kilidini artık tutmayan bir koordinatörün terk edilmiş turu kayıtlı; sonraki tur kapatır)");
         } else {
             sb.append(en ? "no open run" : "açık tur yok");
         }

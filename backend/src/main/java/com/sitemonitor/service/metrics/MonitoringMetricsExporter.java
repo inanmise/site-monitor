@@ -946,11 +946,15 @@ public class MonitoringMetricsExporter {
      * dahil; açık koşu yoksa seri YOK — yok ≠ 0); {@code scan_runs} okuması ({@code scan_runs} kaynağı) ile tür başına son turun
      * süresi, kipiyle ({@link com.sitemonitor.service.certsweep.CertSweepView#modeOf}). Kaynaklardan biri okunamadıysa ilgili
      * aile düşer. Yalnız kurum ailelerini yayan turda çağrılır.
+     *
+     * <p>Sahipsiz açık koşu (inceleme OB-L1): açık koşu varken tek {@code cert-check} kilit okuması (PK); koordinatör kilidi artık
+     * tutmuyorsa ({@link com.sitemonitor.service.certsweep.CertSweepView#orphanSuspected}) parça serisi YAZILMAZ — ölmüş bir
+     * koordinatörün koşusu "bekleyen parça" olarak saatlerce görünmez (sonraki tur onu kapatır). Kilit okunamadı → bugünkü gibi yazılır.
      */
     void certSweepClusterMeters(Families f, Map<String, Boolean> sources) {
         if (certSweepStore == null || !certChunksOn()) return;
         com.sitemonitor.service.certsweep.CertSweepStatus st = read(sources, "cert_sweep", () -> certSweepStore.status(CERT_SWEEP_STATUS_RUNS));
-        if (st != null && st.openRun() != null) {
+        if (st != null && st.openRun() != null && !certSweepOrphan(st)) {
             for (String state : CERT_CHUNK_STATES) {
                 f.add(MonitoringMetricNames.CERT_SWEEP_CHUNKS, st.chunks(state), "state", state.toLowerCase(java.util.Locale.ROOT));
             }
@@ -965,6 +969,15 @@ public class MonitoringMetricsExporter {
             String mode = com.sitemonitor.service.certsweep.CertSweepView.modeOf(r.runId(), r.lastRunAt(), r.durationMs(), st, CERT_SWEEP_STATUS_RUNS);
             f.add(MonitoringMetricNames.CERT_SWEEP_LAST_RUN, Math.max(0L, r.durationMs()) / 1000.0, "kind", kind, "mode", mode);
         }
+    }
+
+    /** Açık koşu sahipsiz mi — tek {@code cert-check} kilit okuması (yalnız anahtar açık ve açık koşu varken). */
+    private boolean certSweepOrphan(com.sitemonitor.service.certsweep.CertSweepStatus st) {
+        com.sitemonitor.service.certsweep.CertSweepStatus.Run open = st.openRun();
+        com.sitemonitor.service.certsweep.CertSweepView.CertLock lock =
+                com.sitemonitor.service.certsweep.CertSweepView.readCertLock(jdbc, System.currentTimeMillis());
+        Boolean live = com.sitemonitor.service.certsweep.CertSweepView.coordinatorLive(open, lock, null);
+        return com.sitemonitor.service.certsweep.CertSweepView.orphanSuspected(open, st.nowMs(), live);
     }
 
     /**

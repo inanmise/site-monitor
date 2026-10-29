@@ -32,7 +32,8 @@ class CertSweepViewTest {
     void modeOf() {
         CertSweepStatus few = status(List.of(run("r1", "DONE", NOW - 3_600_000)), null, List.of());
         assertThat(CertSweepView.modeOf("r1", "2026-10-29T08:00:00", 40_000L, few, 5)).isEqualTo(CertSweepView.MODE_CHUNKED);
-        assertThat(CertSweepView.modeOf("r9", "2026-10-29T08:00:00", 40_000L, few, 5)).isEqualTo(CertSweepView.MODE_CLASSIC);
+        // NOW = 2027-01-15T08:00:00Z — saklama penceresinin (7 gün) içindeki tur, listede yok → klasik
+        assertThat(CertSweepView.modeOf("r9", "2027-01-15T07:00:00", 40_000L, few, 5)).isEqualTo(CertSweepView.MODE_CLASSIC);
         assertThat(CertSweepView.modeOf(null, "2026-10-29T08:00:00", 40_000L, few, 5)).isEqualTo(CertSweepView.MODE_UNKNOWN);
         assertThat(CertSweepView.modeOf("r1", "2026-10-29T08:00:00", 40_000L, null, 5)).isEqualTo(CertSweepView.MODE_UNKNOWN);
 
@@ -48,6 +49,90 @@ class CertSweepViewTest {
         assertThat(CertSweepView.modeOf("x", "2026-10-29T06:00:30", 0L, capped, 5)).isEqualTo(CertSweepView.MODE_UNKNOWN);
         assertThat(CertSweepView.modeOf("x", "bozuk", 0L, capped, 5)).isEqualTo(CertSweepView.MODE_UNKNOWN);
         assertThat(CertSweepView.parseIso("2026-10-29T06:00:00.123")).isEqualTo(oldest);
+    }
+
+    @Test
+    @DisplayName("OB-L2 (a): iç hata yüzünden ABANDONED + FAILED kapanan koşu tur KLASİK toplandı → klasik; FAILED (kontrol hatası) ve "
+            + "ORPHANED (karar veren yavaş koordinatör) parçalı kalır")
+    void abandonedFallbackIsClassic() {
+        CertSweepStatus.Run fell = new CertSweepStatus.Run("r-fb", "hourly", "pod-a-0000000a", "ABANDONED", true, 400, 20, 20,
+                NOW - 70_000, NOW - 70_000, NOW - 1_000, "FAILED", null, null, null, null);
+        CertSweepStatus.Run failed = new CertSweepStatus.Run("r-f", "hourly", "pod-a-0000000a", "FAILED", true, 400, 20, 20,
+                NOW - 7_200_000, NOW - 7_200_000, NOW - 7_100_000, "FAILED", null, null, null, null);
+        CertSweepStatus.Run orphaned = new CertSweepStatus.Run("r-o", "hourly", "pod-a-0000000a", "ABANDONED", true, 400, 20, 20,
+                NOW - 9_000_000, NOW - 9_000_000, NOW - 8_000_000, "ORPHANED", null, null, null, null);
+        CertSweepStatus st = status(List.of(fell, failed, orphaned), null, List.of());
+        assertThat(CertSweepView.modeOf("r-fb", "2027-01-15T07:59:59", 69_000L, st, 5)).isEqualTo(CertSweepView.MODE_CLASSIC);
+        assertThat(CertSweepView.fellBackToClassic(fell)).isTrue();
+        assertThat(CertSweepView.modeOf("r-f", "2027-01-15T06:01:40", 100_000L, st, 5)).isEqualTo(CertSweepView.MODE_CHUNKED);
+        assertThat(CertSweepView.fellBackToClassic(failed)).isFalse();
+        assertThat(CertSweepView.modeOf("r-o", "2027-01-15T05:46:40", 1_000_000L, st, 5)).isEqualTo(CertSweepView.MODE_CHUNKED);
+        assertThat(CertSweepView.fellBackToClassic(null)).isFalse();
+    }
+
+    @Test
+    @DisplayName("OB-L2 (b): okunan satırlar sınırın altında ama tur koşu satırlarının saklama penceresinden (7 gün) ESKİ → bilinmiyor "
+            + "(budanmış parçalı bir full tur klasik sanılmaz); pencere içi → klasik; bitiş okunamadı → bilinmiyor")
+    void prunedOldRunIsUnknown() {
+        CertSweepStatus few = status(List.of(run("r1", "DONE", NOW - 3_600_000)), null, List.of());
+        // 78 gün önce koşmuş "full" tur, listede yok
+        assertThat(CertSweepView.modeOf("old-full", "2026-10-29T08:00:00", 600_000L, few, 5)).isEqualTo(CertSweepView.MODE_UNKNOWN);
+        // pencerenin içi (6 gün 23 saat önce başladı) → klasik
+        assertThat(CertSweepView.modeOf("x", "2027-01-08T09:00:00", 60_000L, few, 5)).isEqualTo(CertSweepView.MODE_CLASSIC);
+        // sınır + kayma payının içi → bilinmiyor
+        assertThat(CertSweepView.modeOf("x", "2027-01-08T08:00:30", 0L, few, 5)).isEqualTo(CertSweepView.MODE_UNKNOWN);
+        assertThat(CertSweepView.modeOf("x", "bozuk", 0L, few, 5)).isEqualTo(CertSweepView.MODE_UNKNOWN);
+        assertThat(CertSweepView.modeOf("x", null, 0L, few, 5)).isEqualTo(CertSweepView.MODE_UNKNOWN);
+    }
+
+    @Test
+    @DisplayName("OB-L1: sahipsiz açık koşu — kilidi başka pod tutuyor / canlı kilit yok (süresi dolmuş) → koordinatör canlı DEĞİL; "
+            + "koşu ≥ 60 sn → sahipsiz; kilit koordinatörde / bu pod koşuyu yürütüyor → canlı; kilit okunamadı → bilinmiyor (sahipsiz değil)")
+    void orphanRule() {
+        CertSweepStatus.Run open = run("o", "RUNNING", NOW - 120_000);
+        CertSweepStatus.Run young = run("y", "RUNNING", NOW - 30_000);
+        CertSweepStatus.Run deciding = run("d", "DECIDING", NOW - 600_000);
+        CertSweepView.CertLock mine = CertSweepView.lockOf(true, "pod-a-0000000a", "2027-01-15T08:02:00", NOW);
+        CertSweepView.CertLock other = CertSweepView.lockOf(true, "pod-b-0000000b", "2027-01-15T08:02:00", NOW);
+        CertSweepView.CertLock expired = CertSweepView.lockOf(true, "pod-a-0000000a", "2027-01-15T07:55:00", NOW);
+        CertSweepView.CertLock none = CertSweepView.lockOf(false, null, null, NOW);
+        CertSweepView.CertLock oddUntil = CertSweepView.lockOf(true, "pod-a-0000000a", "bozuk", NOW);
+        assertThat(mine).isEqualTo(new CertSweepView.CertLock(true, "pod-a-0000000a"));
+        assertThat(expired.holder()).isNull();
+        assertThat(none).isEqualTo(new CertSweepView.CertLock(true, null));
+        assertThat(oddUntil.holder()).as("biçimi okunamayan süre tutuluyor sayılır").isEqualTo("pod-a-0000000a");
+
+        assertThat(CertSweepView.coordinatorLive(open, mine, null)).isTrue();
+        assertThat(CertSweepView.coordinatorLive(open, other, null)).isFalse();
+        assertThat(CertSweepView.coordinatorLive(open, expired, null)).isFalse();
+        assertThat(CertSweepView.coordinatorLive(open, none, null)).isFalse();
+        assertThat(CertSweepView.coordinatorLive(open, CertSweepView.CertLock.UNKNOWN, null)).isNull();
+        assertThat(CertSweepView.coordinatorLive(open, other, "o")).as("bu pod koşuyu yürütüyor").isTrue();
+        assertThat(CertSweepView.coordinatorLive(null, mine, null)).isNull();
+
+        assertThat(CertSweepView.orphanSuspected(open, NOW, false)).isTrue();
+        assertThat(CertSweepView.orphanSuspected(deciding, NOW, false)).as("ölü DECIDING de tanınır").isTrue();
+        assertThat(CertSweepView.orphanSuspected(young, NOW, false)).as("kilit / koşu okuma yarışı").isFalse();
+        assertThat(CertSweepView.orphanSuspected(open, NOW, null)).isFalse();
+        assertThat(CertSweepView.orphanSuspected(open, NOW, true)).isFalse();
+        assertThat(CertSweepView.orphanSuspected(run("c", "DONE", NOW - 600_000), NOW, false)).isFalse();
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    @DisplayName("readCertLock: satır yok → bilinen + sahipsiz; satır var → canlılık süreden; okunamadı / şablon yok → bilinmiyor")
+    void readCertLock() {
+        org.springframework.jdbc.core.JdbcTemplate jdbc = org.mockito.Mockito.mock(org.springframework.jdbc.core.JdbcTemplate.class);
+        assertThat(CertSweepView.readCertLock(jdbc, NOW)).isEqualTo(new CertSweepView.CertLock(true, null));
+        org.mockito.Mockito.when(jdbc.query(org.mockito.ArgumentMatchers.eq(CertSweepView.SQL_CERT_LOCK),
+                org.mockito.ArgumentMatchers.any(org.springframework.jdbc.core.RowMapper.class), org.mockito.ArgumentMatchers.eq("cert-check")))
+                .thenReturn(List.<Object>of((Object) new String[]{"pod-b-0000000b", "2027-01-15T08:01:00"}));
+        assertThat(CertSweepView.readCertLock(jdbc, NOW)).isEqualTo(new CertSweepView.CertLock(true, "pod-b-0000000b"));
+        org.mockito.Mockito.when(jdbc.query(org.mockito.ArgumentMatchers.eq(CertSweepView.SQL_CERT_LOCK),
+                org.mockito.ArgumentMatchers.any(org.springframework.jdbc.core.RowMapper.class), org.mockito.ArgumentMatchers.eq("cert-check")))
+                .thenThrow(new org.springframework.dao.QueryTimeoutException("x"));
+        assertThat(CertSweepView.readCertLock(jdbc, NOW)).isEqualTo(CertSweepView.CertLock.UNKNOWN);
+        assertThat(CertSweepView.readCertLock(null, NOW)).isEqualTo(CertSweepView.CertLock.UNKNOWN);
     }
 
     @Test
