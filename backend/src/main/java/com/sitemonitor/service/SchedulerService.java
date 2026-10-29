@@ -5243,6 +5243,12 @@ public class SchedulerService {
         // olarak yazılır (≤ 700 ms, yardımcı iş parçacığı) — kira ANCAK bundan sonra bırakılır (halef tam katmanı yükler) ──
         if (handover) {
             boolean quiet = awaitEvalQuiet();
+            // ── R3-3 FX handover (inceleme 2026-10-29, DH-L1): dağıtık sonuç boşaltıcısı kapanış başladıktan sonra kuyruktan
+            // ALINMIŞ (silinmiş) satırları çit kapalıyken değerlendiremediyse devir TEMİZ değildir — işaret yazılmaz (halef yalnız
+            // gözlemleri yükler). Boşaltıcı bayrağı bileti kapatmadan önce koyar; anahtar açılıştan beri kapalıyken bayrak hep
+            // false (tek bellek okuması, K-1).
+            if (quiet && drainerLostResultsInHandover()) quiet = false;
+            // ── /R3-3 FX handover ──
             try {
                 handoverSink.flushForHandover(com.sitemonitor.service.evalstate.EvalStateSink.HANDOVER_FLUSH_MS, quiet);
             } catch (Throwable e) {
@@ -5680,6 +5686,7 @@ public class SchedulerService {
     /** Tüm-tur kilit içinde çalışan gerçek port sweep gövdesi (bkz. runPortChecks). */
     private void runPortChecksLocked() {
         if (distributedMode(com.sitemonitor.service.checks.CheckJobTypes.PORT)) { runPortDuties(); return; }   // R3-3 B: dağıtık kip → yalnız lider görevleri
+        if (classicHeldForDrain(com.sitemonitor.service.checks.CheckJobTypes.PORT)) return;   // R3-3 FX (DH-M1 c): devir birikimi önce, dönem harcanmaz
         List<PortMonitor> monitors = portMonitorRepo.findByActiveTrue();
         boolean cleanupDue = orphanCleanupDue("port");
         // Öksüz port alarmı temizliği: host rename/silme sonrası recovery'nin kapatamadığı açık PORT_DOWN alarmı (ping ile paritede).
@@ -5704,7 +5711,7 @@ public class SchedulerService {
                 continue;
             }
             if (m.getHost() != null) checkableHosts.add(m.getHost());   // checkDue ile atlanan da KONTROL EDİLEBİLİR sayılır
-            if (!checkDue("port", m.getId(), m.getIntervalSeconds())) continue;   // aralığı dolmadı → bu sweep'te atla
+            if (!classicCheckDue("port", m.getId(), m.getIntervalSeconds())) continue;   // aralığı dolmadı → bu sweep'te atla (R3-3 FX: + bekletilen dönem / klasik damga)
             started.add(Map.entry(m, startNetworkCheck(() -> recheckPort(m))));
         }
         skippedHosts.removeAll(checkableHosts);   // aynı host'u izleyen aktif monitör varsa alarmı bırak
@@ -5806,10 +5813,11 @@ public class SchedulerService {
 
     /** Dağıtık kipte port taramasının LİDER görevleri: öksüz temizliği + envanter dışı türev izlemelerin sessiz kapanışı. */
     private void runPortDuties() {
+        // R3-3 FX (DA-L4): görevler 5 dk'da bir — izlemeler yalnız temizlik vadesindeyse okunur (her 30 sn değil; sonuç aynı)
+        if (!orphanCleanupDue("port")) return;
+        cleanupOrphanPortAlerts();
         List<PortMonitor> monitors = portMonitorRepo.findByActiveTrue();
-        boolean cleanupDue = orphanCleanupDue("port");
-        if (cleanupDue) cleanupOrphanPortAlerts();
-        if (monitors.isEmpty() || !cleanupDue) return;
+        if (monitors.isEmpty()) return;
         Set<String> activeDomains = activeNetworkInventoryDomains();
         Set<String> skippedHosts = new LinkedHashSet<>();
         Set<String> checkableHosts = new HashSet<>();
@@ -5888,6 +5896,7 @@ public class SchedulerService {
     /** Tüm-tur kilit içinde çalışan gerçek keyword sweep gövdesi (bkz. runKeywordChecks). */
     private void runKeywordChecksLocked() {
         if (distributedMode(com.sitemonitor.service.checks.CheckJobTypes.KEYWORD)) { runKeywordDuties(); return; }   // R3-3 B: dağıtık kip → yalnız lider görevleri
+        if (classicHeldForDrain(com.sitemonitor.service.checks.CheckJobTypes.KEYWORD)) return;   // R3-3 FX (DH-M1 c): devir birikimi önce, dönem harcanmaz
         List<KeywordMonitor> monitors = keywordMonitorRepo.findByActiveTrue();
         // Öksüz keyword alarmı temizliği: url rename/silme sonrası recovery'nin kapatamadığı açık KEYWORD alarmı (ping ile paritede).
         if (orphanCleanupDue("keyword")) cleanupOrphanKeywordAlerts();   // R3-3 B: ayrıştırıldı
@@ -5898,7 +5907,7 @@ public class SchedulerService {
         // Faz 1: gating sweep thread'inde; ağ kontrolü certCheckExecutor'da paralel başlar (F1).
         List<Map.Entry<KeywordMonitor, java.util.function.Supplier<Map<String, Object>>>> started = new ArrayList<>();
         for (KeywordMonitor m : monitors) {
-            if (!checkDue("keyword", m.getId(), m.getIntervalSeconds())) continue;   // aralığı dolmadı → bu sweep'te atla
+            if (!classicCheckDue("keyword", m.getId(), m.getIntervalSeconds())) continue;   // aralığı dolmadı → bu sweep'te atla (R3-3 FX)
             started.add(Map.entry(m, startNetworkCheck(() -> recheckKeyword(m))));
         }
         // Faz 2: sonuçlar sweep thread'inde SIRALI işlenir.
@@ -6031,6 +6040,7 @@ public class SchedulerService {
     /** Tüm-tur kilit içinde çalışan gerçek HTTP uptime sweep gövdesi (bkz. runHttpChecks). */
     private void runHttpChecksLocked() {
         if (distributedMode(com.sitemonitor.service.checks.CheckJobTypes.HTTP)) { runHttpDuties(); return; }   // R3-3 B: dağıtık kip → yalnız lider görevleri
+        if (classicHeldForDrain(com.sitemonitor.service.checks.CheckJobTypes.HTTP)) return;   // R3-3 FX (DH-M1 c): devir birikimi önce, dönem harcanmaz
         List<HttpMonitor> monitors = httpMonitorRepo.findByActiveTrue();
         // Öksüz HTTP alarmı temizliği: url rename/silme sonrası recovery'nin kapatamadığı açık alarm (keyword/ping ile paritede).
         if (orphanCleanupDue("http")) cleanupOrphanHttpAlerts();   // R3-3 B: ayrıştırıldı
@@ -6043,7 +6053,7 @@ public class SchedulerService {
         // Faz 1: gating sweep thread'inde; ağ kontrolü certCheckExecutor'da paralel başlar (F1).
         List<Map.Entry<HttpMonitor, java.util.function.Supplier<Map<String, Object>>>> started = new ArrayList<>();
         for (HttpMonitor m : monitors) {
-            if (!checkDue("http", m.getId(), m.getIntervalSeconds())) continue;   // aralığı dolmadı → bu sweep'te atla
+            if (!classicCheckDue("http", m.getId(), m.getIntervalSeconds())) continue;   // aralığı dolmadı → bu sweep'te atla (R3-3 FX)
             started.add(Map.entry(m, startNetworkCheck(() -> recheckHttp(m))));
         }
         // Faz 2: sonuçlar sweep thread'inde SIRALI işlenir.
@@ -6779,6 +6789,19 @@ public class SchedulerService {
      */
     @Autowired(required = false)
     private com.sitemonitor.service.checks.CheckResultDrainer checkResultDrainer;
+
+    /**
+     * R3-3 FX (DH-L1): boşaltıcı devirde alınmış sonuç kaybetti mi — bellek okuması. Okuma beklenmedik biçimde düşerse güvenli
+     * taraf (kayıp say → işaret yazılmaz, halef en çok gözlemleri yükler).
+     */
+    private boolean drainerLostResultsInHandover() {
+        try {
+            com.sitemonitor.service.checks.CheckResultDrainer d = checkResultDrainer;
+            return d != null && d.lostInHandover();
+        } catch (Throwable e) {
+            return true;
+        }
+    }
     // ── /R3-3 C ──────────────────────────────────────────────────────────────────────────────────────────────────────
 
     /**
@@ -6946,6 +6969,7 @@ public class SchedulerService {
 
     private void runPageChecksLocked() {
         if (distributedMode(com.sitemonitor.service.checks.CheckJobTypes.PAGE)) { runPageDuties(); return; }   // R3-3 B: dağıtık kip → yalnız lider görevleri
+        if (classicHeldForDrain(com.sitemonitor.service.checks.CheckJobTypes.PAGE)) return;   // R3-3 FX (DH-M1 c): devir birikimi önce, dönem harcanmaz
         List<com.sitemonitor.model.PageMonitor> monitors = pageMonitorRepo.findByActiveTrue();
         if (orphanCleanupDue("page")) cleanupOrphanPageAlerts();   // R3-3 B: ayrıştırıldı
         if (monitors.isEmpty()) return;
@@ -6955,7 +6979,7 @@ public class SchedulerService {
         List<MonitoringOutageService.SweepItem> integritySweep = new ArrayList<>();
         List<Map.Entry<com.sitemonitor.model.PageMonitor, java.util.function.Supplier<Map<String, Object>>>> started = new ArrayList<>();
         for (com.sitemonitor.model.PageMonitor m : monitors) {
-            if (!checkDue("page", m.getId(), m.getIntervalSeconds())) continue;
+            if (!classicCheckDue("page", m.getId(), m.getIntervalSeconds())) continue;   // R3-3 FX: + bekletilen dönem / klasik damga
             // Sık sweep her zaman ANA sayfayı (SINGLE_PAGE) kontrol eder; derin crawl ayrı günlük akışta.
             started.add(Map.entry(m, startNetworkCheck(() -> recheckPage(m, false, "SINGLE_PAGE"))));
         }
@@ -7466,6 +7490,7 @@ public class SchedulerService {
 
     private void runPageSpeedChecksLocked() {
         if (distributedMode(com.sitemonitor.service.checks.CheckJobTypes.PAGESPEED)) { runPageSpeedDuties(); return; }   // R3-3 B: dağıtık kip → yalnız lider görevleri
+        if (classicHeldForDrain(com.sitemonitor.service.checks.CheckJobTypes.PAGESPEED)) return;   // R3-3 FX (DH-M1 c): devir birikimi önce, dönem harcanmaz
         List<com.sitemonitor.model.PageSpeedMonitor> monitors = pageSpeedMonitorRepo.findByActiveTrue();
         if (orphanCleanupDue("pagespeed")) cleanupOrphanPageSpeedAlerts();   // R3-3 B: ayrıştırıldı
         if (monitors.isEmpty()) return;
@@ -7476,7 +7501,7 @@ public class SchedulerService {
         List<MonitoringOutageService.SweepItem> slowSweep = new ArrayList<>();
         List<Map.Entry<com.sitemonitor.model.PageSpeedMonitor, java.util.function.Supplier<Map<String, Object>>>> started = new ArrayList<>();
         for (com.sitemonitor.model.PageSpeedMonitor m : monitors) {
-            if (!checkDue("pagespeed", m.getId(), pageSpeedDueInterval(m.getIntervalSeconds()))) continue;   // R3-3 B: ortak kural
+            if (!classicCheckDue("pagespeed", m.getId(), pageSpeedDueInterval(m.getIntervalSeconds()))) continue;   // R3-3 B: ortak kural (R3-3 FX)
             started.add(Map.entry(m, startNetworkCheck(() -> recheckPageSpeed(m, false))));
         }
         for (var entry : started) {
@@ -7798,13 +7823,14 @@ public class SchedulerService {
 
     private void runScriptedChecksLocked() {
         if (distributedMode(com.sitemonitor.service.checks.CheckJobTypes.SCRIPTED)) { runScriptedDuties(); return; }   // R3-3 B: dağıtık kip → yalnız lider görevleri
+        if (classicHeldForDrain(com.sitemonitor.service.checks.CheckJobTypes.SCRIPTED)) return;   // R3-3 FX (DH-M1 c): devir birikimi önce, dönem harcanmaz
         List<com.sitemonitor.model.ScriptedMonitor> monitors = scriptedMonitorRepo.findByActiveTrue();
         if (orphanCleanupDue("scripted")) cleanupOrphanScriptedAlerts();   // R3-3 B: ayrıştırıldı
         if (monitors.isEmpty()) return;
         // k6 süreçleri checker'ın SINIRLI havuzunda koşar; submit() ayrı executor'a atar → scheduler bloklanmaz.
         List<Map.Entry<com.sitemonitor.model.ScriptedMonitor, java.util.concurrent.Future<ScriptedCheckerService.ScriptedResult>>> started = new ArrayList<>();
         for (com.sitemonitor.model.ScriptedMonitor m : monitors) {
-            if (!checkDue("scripted", m.getId(), m.getIntervalSeconds())) continue;
+            if (!classicCheckDue("scripted", m.getId(), m.getIntervalSeconds())) continue;   // R3-3 FX: + bekletilen dönem / klasik damga
             started.add(Map.entry(m, scriptedCheckerService.submit(m)));
         }
         int checked = 0, skipped = 0;
@@ -8956,6 +8982,7 @@ public class SchedulerService {
     /** Tüm-tur kilit içinde çalışan gerçek ping sweep gövdesi (bkz. runPingChecks). */
     private void runPingChecksLocked() {
         if (distributedMode(com.sitemonitor.service.checks.CheckJobTypes.PING)) { runPingDuties(); return; }   // R3-3 B: dağıtık kip → yalnız lider görevleri
+        if (classicHeldForDrain(com.sitemonitor.service.checks.CheckJobTypes.PING)) return;   // R3-3 FX (DH-M1 c): devir birikimi önce, dönem harcanmaz
         List<PingMonitor> monitors = pingMonitorRepo.findByActiveTrue();
         // Öksüz ping alarmı temizliği: host rename/silme sonrası recovery'nin asla kapatamadığı açık
         // PING_DOWN alarmlarını kapat (aktif+pasif TÜM mevcut host'lara göre). Aktif izleme yoksa da çalışır.
@@ -8969,7 +8996,7 @@ public class SchedulerService {
         // Faz 1: gating sweep thread'inde; ağ kontrolü certCheckExecutor'da paralel başlar (F1).
         List<Map.Entry<PingMonitor, java.util.function.Supplier<Map<String, Object>>>> started = new ArrayList<>();
         for (PingMonitor m : monitors) {
-            if (!checkDue("ping", m.getId(), m.getIntervalSeconds())) continue;   // aralığı dolmadı → bu sweep'te atla
+            if (!classicCheckDue("ping", m.getId(), m.getIntervalSeconds())) continue;   // aralığı dolmadı → bu sweep'te atla (R3-3 FX)
             started.add(Map.entry(m, startNetworkCheck(() -> recheckPing(m))));
         }
         // Faz 2: sonuçlar sweep thread'inde SIRALI işlenir.
@@ -9080,6 +9107,7 @@ public class SchedulerService {
     /** Tüm-tur kilit içinde çalışan gerçek DNS sweep gövdesi (bkz. runDnsChecks). */
     private void runDnsChecksLocked() {
         if (distributedMode(com.sitemonitor.service.checks.CheckJobTypes.DNS)) { runDnsDuties(); return; }   // R3-3 B: dağıtık kip → yalnız lider görevleri
+        if (classicHeldForDrain(com.sitemonitor.service.checks.CheckJobTypes.DNS)) return;   // R3-3 FX (DH-M1 c): devir birikimi önce, dönem harcanmaz
         requeuePendingDnsChanges();
         List<DnsMonitor> monitors = dnsMonitorRepo.findByActiveTrue();
         if (monitors.isEmpty()) return;
@@ -9114,7 +9142,7 @@ public class SchedulerService {
                 continue;
             }
             if (m.getDomain() != null) checkableDomains.add(m.getDomain());   // checkDue ile atlanan da KONTROL EDİLEBİLİR
-            if (!checkDue("dns", m.getId(), m.getIntervalSeconds())) continue;   // aralığı dolmadı → bu sweep'te atla (port/ping/keyword ile paritede)
+            if (!classicCheckDue("dns", m.getId(), m.getIntervalSeconds())) continue;   // aralığı dolmadı → bu sweep'te atla (port/ping/keyword ile paritede; R3-3 FX)
             var main = startNetworkCheck(() -> dnsCheckerService.check(m.getDomain(), m.getRecordType()));
             var prop = dnsPropagationWanted(m, dnsResolvers)   // R3-3 B: ortak kural
                     ? startNetworkCheck(() -> dnsCheckerService.checkPropagation(m.getDomain(), m.getRecordType(), dnsResolvers))
@@ -9946,6 +9974,38 @@ public class SchedulerService {
     private final AtomicLong checkDispatchWarnAt = new AtomicLong();
     private final AtomicLong checkReapWarnAt = new AtomicLong();
 
+    // ── R3-3 FX dispatch-health (inceleme 2026-10-29, FX-EVAL DA-M1 / DH-M2 / QW-L7) ──
+    /** Bir türün ART ARDA bu kadar gönderim turu düşerse tür {@link #DISTRIBUTED_MODE_HOLD_MS} boyunca klasik. */
+    static final int CHECK_DISPATCH_FAILURES_TO_HOLD = 2;
+    /** Hiçbir tür dağıtık değilken ve son biçme boş döndüyse biçme en az bu aralıkla (ms) koşar (QW-L7). */
+    static final long CHECK_REAP_MIN_EVERY_MS = 60_000L;
+    /** Gönderilemeyen (vadesi {@code checkDue} ile harcanmış) izlemelerin en uzun bekletilmesi (ms) — sonra düşer. */
+    static final long CHECK_RETAIN_MAX_MS = 600_000L;
+    /** Tür başına bekletilen izleme sayısının üst sınırı. */
+    static final int CHECK_RETAIN_MAX_IDS = 50_000;
+
+    /** Tür başına gönderim sağlığı — tür hiç düşmediyse kayıt YOK (anahtar kapalı = boş harita). */
+    private final java.util.concurrent.ConcurrentHashMap<String, DispatchHealth> dispatchHealth = new java.util.concurrent.ConcurrentHashMap<>();
+
+    private static final class DispatchHealth {
+        int consecutiveFailures;
+        long holdUntilMs = Long.MIN_VALUE;
+    }
+
+    /**
+     * Gönderilemeyen dönemler (DA-M1): {@code checkDue} vadeyi ilerletti ama {@code dispatch} düştü → kimlik (tür → izleme →
+     * bekletme anı) burada kalır; sonraki gönderim (ya da tür klasiğe döndüyse klasik gövde, {@link #classicCheckDue}) dönemi
+     * yeniden sunar — dönem kaybolmaz ({@code ON CONFLICT DO NOTHING} tekrar sunmayı güvenli kılar). Anahtar kapalıyken boş.
+     */
+    private final java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.ConcurrentHashMap<Long, Long>> retainedDue =
+            new java.util.concurrent.ConcurrentHashMap<>();
+    private final AtomicLong checkDispatchHolds = new AtomicLong();
+    /** Son biçmenin anı (zamanlayıcı saati; {@code Long.MIN_VALUE} = hiç) ve boş dönüp dönmediği (QW-L7). */
+    private volatile long lastCheckReapAtMs = Long.MIN_VALUE;
+    private volatile boolean lastCheckReapEmpty;
+    private final AtomicBoolean noDrainerWarned = new AtomicBoolean();
+    // ── /R3-3 FX dispatch-health ──
+
     /**
      * Ana anahtarı bağlar ve gönderim tıkının TEMBEL başlatıcısını kaydeder (yalnız bellek): tık ancak anahtar açılıştan sonra
      * ilk kez açık görüldüğünde kurulur — anahtar kapalıyken hiç görev yok (K-1).
@@ -10048,24 +10108,46 @@ public class SchedulerService {
      */
     public void dispatchCheckJobs() {
         com.sitemonitor.service.checks.DistributedChecks dc = distributedChecks;
-        if (dc == null || !dc.anyDistributed() || stopping()) return;
+        if (dc == null || stopping()) return;
+        if (!dc.anyDistributed()) {
+            // R3-3 FX (DH-M1 a): tık yalnız anahtar bir kez açık görüldükten sonra kurulur — kapalı görüş belleğe yazılır,
+            // yeniden açılınca önceki dönemin bekleyen sonuçlarına taban konur. Anahtar açılıştan beri kapalıyken bu tık yok (K-1).
+            com.sitemonitor.service.checks.CheckResultDrainer d = checkResultDrainer;
+            if (d != null) d.noteSwitch(false);
+            return;
+        }
         com.sitemonitor.service.checks.CheckJobStore store = checkJobStore();
         if (store == null) return;
         if (!sweepLeaderHint() || !isSweepLeader()) return;   // ipucu (bellek) önce — kapanan / kirayı bırakan pod göndermez
+        // R3-3 FX (DH-M1 a): taban HER göndermeden önce — yeni her işin oluşturma anı tabanın üstünde.
+        com.sitemonitor.service.checks.CheckResultDrainer drainer = checkResultDrainer;
+        if (drainer != null) drainer.applyFloorIfPending();
+        // R3-3 FX (QW-L7): kip kilitten ÖNCE — hiçbir tür dağıtık değil ve son biçme boşsa kilit + biçme her 5 sn'de
+        // koşmasın; anahtar açıkken biçme yine en az CHECK_REAP_MIN_EVERY_MS'de bir.
+        List<String> modes = new ArrayList<>();
+        for (String type : com.sitemonitor.service.checks.CheckJobTypes.ALL) {
+            if (stopping()) return;
+            if (distributedMode(type)) modes.add(type);
+        }
+        long nowMs = scheduleClock.getAsLong();
+        boolean reapDue = !lastCheckReapEmpty || lastCheckReapAtMs == Long.MIN_VALUE || nowMs < lastCheckReapAtMs
+                || nowMs - lastCheckReapAtMs >= CHECK_REAP_MIN_EVERY_MS;
+        if (modes.isEmpty() && !reapDue) return;
         if (!tryAcquireSchedulerLock(CHECK_DISPATCH_LOCK, sweepLockTtlMinutes)) {
             logSkip("Kontrol gönderimi — kilit başka instance'da, atlanıyor");
             return;
         }
         try {
-            for (String type : com.sitemonitor.service.checks.CheckJobTypes.ALL) {
+            for (String type : modes) {
                 if (stopping()) break;
-                if (!distributedMode(type)) continue;
                 try {
                     dispatchCheckJobsOf(type, store);
+                    noteDispatchOk(type);
                 } catch (RuntimeException e) {
                     checkDispatchFailures.incrementAndGet();
-                    if (rateLimited(checkDispatchWarnAt)) {
-                        log.warn("Kontrol işleri gönderilemedi ({}) — bu dönem kaybolur, sonraki dönem yeniden gönderilir: {}",
+                    boolean held = noteDispatchFailure(type, e);
+                    if (!held && rateLimited(checkDispatchWarnAt)) {
+                        log.warn("Kontrol işleri gönderilemedi ({}) — vadesi gelen izlemeler sonraki tıkta yeniden sunulur: {}",
                                 type, e.getClass().getSimpleName());
                     }
                 }
@@ -10074,6 +10156,117 @@ public class SchedulerService {
         } finally {
             releaseSchedulerLock(CHECK_DISPATCH_LOCK);
         }
+    }
+
+    /** Başarılı gönderim turu: tür ardışık hata sayacı sıfırlanır (kayıt yoksa dokunulmaz — bellek). */
+    private void noteDispatchOk(String type) {
+        DispatchHealth h = dispatchHealth.get(type);
+        if (h == null) return;
+        synchronized (h) {
+            h.consecutiveFailures = 0;
+        }
+    }
+
+    /**
+     * Düşen gönderim turu (DA-M1): {@value #CHECK_DISPATCH_FAILURES_TO_HOLD} ardışık hata → tür {@link #DISTRIBUTED_MODE_HOLD_MS}
+     * boyunca klasik (bir WARN); bekletilen dönemleri klasik gövde sunar. Tablo yok / okunamıyor da artık fırlar (paket A) —
+     * sessiz 0 sayılmaz.
+     *
+     * @return tür şimdi bekletmeye geçti (WARN yazıldı)
+     */
+    private boolean noteDispatchFailure(String type, RuntimeException e) {
+        DispatchHealth h = dispatchHealth.computeIfAbsent(type, k -> new DispatchHealth());
+        synchronized (h) {
+            h.consecutiveFailures++;
+            if (h.consecutiveFailures < CHECK_DISPATCH_FAILURES_TO_HOLD) return false;
+            h.consecutiveFailures = 0;
+            h.holdUntilMs = scheduleClock.getAsLong() + DISTRIBUTED_MODE_HOLD_MS;
+        }
+        checkDispatchHolds.incrementAndGet();
+        log.warn("Kontrol işleri art arda {} kez gönderilemedi ({}) — tür {} sn klasik taramaya döner, gönderilemeyen "
+                        + "dönemleri klasik tarama koşar: {}", CHECK_DISPATCH_FAILURES_TO_HOLD, type,
+                DISTRIBUTED_MODE_HOLD_MS / 1000, e.getClass().getSimpleName());
+        return true;
+    }
+
+    /** Tür gönderim hatası yüzünden bekletmede mi (bellek; kayıt yoksa false). */
+    private boolean dispatchHeld(String type, long nowMs) {
+        if (dispatchHealth.isEmpty()) return false;
+        DispatchHealth h = dispatchHealth.get(type);
+        if (h == null) return false;
+        synchronized (h) {
+            return h.holdUntilMs != Long.MIN_VALUE && nowMs < h.holdUntilMs && nowMs >= h.holdUntilMs - DISTRIBUTED_MODE_HOLD_MS;
+        }
+    }
+
+    /** Gönderilemeyen izlemeleri bekletir (vadeleri harcandı) — tür başına sınırlı. */
+    private void retainDue(String type, List<Long> ids) {
+        if (ids == null || ids.isEmpty()) return;
+        long now = scheduleClock.getAsLong();
+        java.util.concurrent.ConcurrentHashMap<Long, Long> m = retainedDue.computeIfAbsent(type,
+                k -> new java.util.concurrent.ConcurrentHashMap<>());
+        m.values().removeIf(at -> at == null || now < at || now - at > CHECK_RETAIN_MAX_MS);   // süresi dolanlar düşer
+        for (Long id : ids) {
+            if (id == null) continue;
+            if (m.size() >= CHECK_RETAIN_MAX_IDS && !m.containsKey(id)) break;
+            m.putIfAbsent(id, now);
+        }
+    }
+
+    /** Bekletilen izleme var ve süresi dolmadıysa tüketir (true). Harita boşsa tek okuma (K-1: anahtar kapalıyken hep boş). */
+    private boolean consumeRetainedDue(String type, Long id) {
+        if (retainedDue.isEmpty() || id == null) return false;
+        java.util.concurrent.ConcurrentHashMap<Long, Long> m = retainedDue.get(type);
+        if (m == null) return false;
+        Long at = m.remove(id);
+        if (at == null) return false;
+        long now = scheduleClock.getAsLong();
+        return now >= at && now - at <= CHECK_RETAIN_MAX_MS;
+    }
+
+    /**
+     * Klasik gövdenin vade kapısı (R3-3 FX): bugünkü {@code checkDue} + (yalnız dağıtıktan dönüşte) gönderilemeyen dönem +
+     * boşaltıcıya "klasik kontrol başladı" damgası (DH-M1 b). Anahtar kapalıyken {@code checkDue} ile birebir: harita boş,
+     * boşaltıcı kurulmadı → iki bellek okuması.
+     */
+    private boolean classicCheckDue(String type, Long id, Integer intervalSeconds) {
+        boolean due = checkDue(type, id, intervalSeconds);
+        if (!retainedDue.isEmpty() && consumeRetainedDue(type, id)) due = true;
+        if (due) {
+            com.sitemonitor.service.checks.CheckResultDrainer d = checkResultDrainer;
+            if (d != null) d.noteClassicCheck(type, id);
+        }
+        return due;
+    }
+
+    /** Klasik bekletmenin (DH-M1 c) en uzun beklemesi (ms) — boşaltıcı birikimi yetişirse gövde aynı tıkta sürer. */
+    static final long CLASSIC_CATCHUP_WAIT_MS = 2_000L;
+    /** Test dikişi: bekleme süresi (ms). */
+    long classicCatchUpWaitMs = CLASSIC_CATCHUP_WAIT_MS;
+
+    /**
+     * GAINED sonrası dağıtık sonuç birikimi henüz boşaltılmadıysa klasik gövde DÖNEM HARCAMADAN döner (DH-M1 c): önce en çok
+     * {@link #CLASSIC_CATCHUP_WAIT_MS} beklenir (boşaltıcı yükleme biter bitmez {@code CATCHUP_POLL_MS}'de bir alır — çoğu
+     * zaman birikim bu sürede biter, DNS'in 300 sn'lik tıkı kaçmaz), hâlâ bekletiyorsa gövde döner; sonraki tık kontrol eder.
+     * Anahtar açılıştan beri kapalıyken boşaltıcı kurulmadı → tek volatile okuma, false (K-1).
+     */
+    private boolean classicHeldForDrain(String type) {
+        com.sitemonitor.service.checks.CheckResultDrainer d = checkResultDrainer;
+        if (d == null || !d.holdClassic()) return false;
+        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(Math.max(0L, classicCatchUpWaitMs));
+        while (System.nanoTime() < deadline && !stopping()) {
+            try {
+                Thread.sleep(50L);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+            if (!d.holdClassic()) return false;
+        }
+        d.noteClassicHeld();
+        log.debug("Klasik {} taraması bu tıkta atlandı — devirden önceki dağıtık sonuçlar önce değerlendiriliyor (dönem harcanmadı)",
+                type);
+        return true;
     }
 
     private static boolean rateLimited(AtomicLong lastAt) {
@@ -10092,59 +10285,108 @@ public class SchedulerService {
         if (!checkTypeEnabled(type)) return 0;   // izleme duraklatıldı (klasik giriş de döner)
         if (com.sitemonitor.service.checks.CheckJobTypes.SCRIPTED.equals(type)
                 && (scriptedCheckerService == null || !scriptedCheckerService.ensureProbed())) return 0;   // klasik: k6 yoksa koşum yok
-        List<Long> due = dueCheckJobIds(type);
-        if (due.isEmpty()) return 0;
-        int n = store.dispatch(type, due, com.sitemonitor.service.checks.CheckJobTypes.leaseMs(type), INSTANCE_ID);
-        checkJobsDispatched.addAndGet(Math.max(0, n));
-        return n;
+        // R3-3 FX (DA-M1): vadesi harcanmış ama gönderilemeyen kimlikler (bu tur ya da önceki düşen tur) — istisnada bekletilir,
+        // sonraki tık / klasik gövde dönemi yeniden sunar (dönem kaybolmaz).
+        List<Long> due = new ArrayList<>();
+        try {
+            collectDueCheckJobIds(type, due);
+            if (due.isEmpty()) return 0;
+            int n = store.dispatch(type, due, checkJobLeaseMs(type), INSTANCE_ID);
+            checkJobsDispatched.addAndGet(Math.max(0, n));
+            java.util.concurrent.ConcurrentHashMap<Long, Long> kept = retainedDue.get(type);
+            if (kept != null) {
+                for (Long id : due) kept.remove(id);
+                if (kept.isEmpty()) retainedDue.remove(type, kept);
+            }
+            return n;
+        } catch (RuntimeException e) {
+            retainDue(type, due);
+            throw e;
+        }
+    }
+
+    /**
+     * Gönderim kirası (ms; R3-3 FX QW-M2): sayfa / sayfa hızı için CANLI {@code max-check-seconds} ayarından
+     * ({@link com.sitemonitor.service.checks.CheckJobTypes#leaseMs(String, int)}; sayfa hızı gövdesi gibi en az 10 sn), diğerleri
+     * sabit kira. İşçinin zaman aşımı (kira − 10 sn) satırdaki kirayı izler.
+     */
+    long checkJobLeaseMs(String type) {
+        if (com.sitemonitor.service.checks.CheckJobTypes.PAGE.equals(type)) {
+            return com.sitemonitor.service.checks.CheckJobTypes.leaseMs(type,
+                    appSettings.getInt("site.monitor.page.max-check-seconds", 120));
+        }
+        if (com.sitemonitor.service.checks.CheckJobTypes.PAGESPEED.equals(type)) {
+            return com.sitemonitor.service.checks.CheckJobTypes.leaseMs(type,
+                    Math.max(10, appSettings.getInt("site.monitor.pagespeed.max-check-seconds", 120)));
+        }
+        return com.sitemonitor.service.checks.CheckJobTypes.leaseMs(type);
+    }
+
+    /**
+     * Dağıtık kipin vade aralığı (sn; R3-3 FX DA-M2): {@code max(izlemenin aralığı, türün klasik tıkı)} — klasik tarama bir
+     * izlemeyi tık başına en çok bir kez kontrol eder (ör. 60 sn'lik DNS izlemesi 300 sn'lik tıkta 300 sn'de bir); dağıtık kip
+     * kontrol sıklığını DEĞİŞTİRMEZ. Tık {@code @Scheduled} ifadesinin aynısından çözülür ({@link #classicSweepTickMs}).
+     */
+    int dispatchIntervalSeconds(String type, Integer intervalSeconds) {
+        int sec = intervalSeconds != null && intervalSeconds > 0 ? intervalSeconds : 60;   // checkDue'nun varsayılanı
+        long tickMs = classicSweepTickMs(type);
+        long tickSec = tickMs <= 0 ? 0L : (tickMs + 999L) / 1000L;
+        return (int) Math.min(Integer.MAX_VALUE, Math.max(sec, tickSec));
     }
 
     /** Hafif okuma (izdüşüm) + klasik kapılar + {@code checkDue}: bu tıkta gönderilecek izleme kimlikleri. */
     List<Long> dueCheckJobIds(String type) {
         List<Long> ids = new ArrayList<>();
+        collectDueCheckJobIds(type, ids);
+        return ids;
+    }
+
+    /**
+     * {@link #dueCheckJobIds} gövdesi — kimlikleri {@code ids}'e EKLER (istisnada o ana dek vadesi harcananlar çağıranda kalır).
+     * Envanter türevi satır varsa aktif ağ envanteri HERHANGİ bir {@code checkDue}'dan ÖNCE okunur (DA-L2: okuma düşerse hiçbir
+     * vade harcanmamış olur). Bekletilen kimlik ({@link #retainDue}) kapılardan geçerse yeniden sunulur.
+     */
+    private void collectDueCheckJobIds(String type, List<Long> ids) {
         switch (type) {
-            case com.sitemonitor.service.checks.CheckJobTypes.PORT -> {
+            case com.sitemonitor.service.checks.CheckJobTypes.PORT, com.sitemonitor.service.checks.CheckJobTypes.DNS -> {
+                boolean port = com.sitemonitor.service.checks.CheckJobTypes.PORT.equals(type);
+                List<Object[]> rows = port ? portMonitorRepo.findCheckDispatchRows() : dnsMonitorRepo.findCheckDispatchRows();
                 Set<String> active = null;
-                for (Object[] row : portMonitorRepo.findCheckDispatchRows()) {
-                    Long id = rowLong(row, 0);
-                    if (id == null) continue;
-                    Boolean standalone = row.length > 2 && row[2] instanceof Boolean b ? b : null;
-                    String host = row.length > 3 && row[3] != null ? String.valueOf(row[3]) : null;
-                    if (!Boolean.TRUE.equals(standalone)) {
-                        if (active == null) active = cachedActiveNetworkDomains();
-                        if (inventoryGated(standalone, host, active)) continue;
+                for (Object[] row : rows) {   // DA-L2: önce oku, sonra sahiplen
+                    if (rowLong(row, 0) != null && !(row.length > 2 && Boolean.TRUE.equals(row[2]))) {
+                        active = cachedActiveNetworkDomains();
+                        break;
                     }
-                    if (checkDue("port", id, rowInt(row, 1))) ids.add(id);
                 }
-            }
-            case com.sitemonitor.service.checks.CheckJobTypes.DNS -> {
-                Set<String> active = null;
-                for (Object[] row : dnsMonitorRepo.findCheckDispatchRows()) {
+                for (Object[] row : rows) {
                     Long id = rowLong(row, 0);
                     if (id == null) continue;
                     Boolean standalone = row.length > 2 && row[2] instanceof Boolean b ? b : null;
-                    String domain = row.length > 3 && row[3] != null ? String.valueOf(row[3]) : null;
-                    if (!Boolean.TRUE.equals(standalone)) {
-                        if (active == null) active = cachedActiveNetworkDomains();
-                        if (inventoryGated(standalone, domain, active)) continue;
-                    }
-                    if (checkDue("dns", id, rowInt(row, 1))) ids.add(id);
+                    String target = row.length > 3 && row[3] != null ? String.valueOf(row[3]) : null;
+                    if (!Boolean.TRUE.equals(standalone) && inventoryGated(standalone, target, active)) continue;
+                    addIfDue(type, id, dispatchIntervalSeconds(type, rowInt(row, 1)), ids);
                 }
             }
             case com.sitemonitor.service.checks.CheckJobTypes.PAGESPEED -> {
                 for (Object[] row : pageSpeedMonitorRepo.findCheckDispatchRows()) {
                     Long id = rowLong(row, 0);
-                    if (id != null && checkDue("pagespeed", id, pageSpeedDueInterval(rowInt(row, 1)))) ids.add(id);
+                    if (id != null) addIfDue(type, id, dispatchIntervalSeconds(type, pageSpeedDueInterval(rowInt(row, 1))), ids);
                 }
             }
             default -> {
                 for (Object[] row : simpleDispatchRows(type)) {
                     Long id = rowLong(row, 0);
-                    if (id != null && checkDue(type, id, rowInt(row, 1))) ids.add(id);
+                    if (id != null) addIfDue(type, id, dispatchIntervalSeconds(type, rowInt(row, 1)), ids);
                 }
             }
         }
-        return ids;
+    }
+
+    /** {@code checkDue} (vade bu dönem harcanır) ya da bekletilen dönem → kimlik eklenir (tek kez). */
+    private void addIfDue(String type, Long id, int intervalSeconds, List<Long> ids) {
+        boolean due = checkDue(type, id, intervalSeconds);
+        if (!retainedDue.isEmpty() && consumeRetainedDue(type, id)) due = true;
+        if (due) ids.add(id);
     }
 
     private List<Object[]> simpleDispatchRows(String type) {
@@ -10172,9 +10414,12 @@ public class SchedulerService {
         try {
             reaped = store.reap(CHECK_REAP_LIMIT);
         } catch (RuntimeException e) {
+            lastCheckReapEmpty = false;   // R3-3 FX (QW-L7): başarısız biçme "boş" sayılmaz — sonraki tıkta yeniden
             log.debug("Kontrol işi biçmesi başarısız (sonraki tıkta yeniden): {}", e.toString());
             return;
         }
+        lastCheckReapAtMs = scheduleClock.getAsLong();
+        lastCheckReapEmpty = reaped == null || reaped.isEmpty();
         if (reaped == null || reaped.isEmpty()) return;
         checkJobsLost.addAndGet(reaped.size());
         if (rateLimited(checkReapWarnAt)) {
@@ -10201,6 +10446,20 @@ public class SchedulerService {
         // Bu pod GÖNDEREMİYORSA (kuyruk bean'i yok, gönderim tıkı kurulamadı) asla dağıtık: aksi hâlde klasik giriş kontrolü
         // bırakır ve kimse göndermez — izleme sessizce dururdu.
         if (checkDispatchTask == null || checkJobStore() == null) return toClassicMode(type);
+        // ── R3-3 FX pipeline (inceleme 2026-10-29, DA-M1 / DH-M2): boru hattının İKİ ucu da sağlıklı olmalı ──
+        // (1) gönderim: art arda düşen turlar → tür DISTRIBUTED_MODE_HOLD_MS klasik (tablo yok / okunamıyor dahil);
+        // (2) boşaltma: bu pod sonuçları alıp değerlendirebiliyor (kuruldu, GAINED görüldü, işbirlikçiler var, alma sağlıklı).
+        // Aksi hâlde tür sessizce hiç kontrol edilmez / değerlendirilmezdi ve DONE satırları yığılırdı.
+        if (dispatchHeld(type, scheduleClock.getAsLong())) return toClassicMode(type, "gönderim düşüyor");
+        com.sitemonitor.service.checks.CheckResultDrainer drainer = checkResultDrainer;
+        if (drainer == null) {
+            if (noDrainerWarned.compareAndSet(false, true)) {
+                log.warn("Dağıtık kontroller açık ama bu pod'da sonuç boşaltıcısı yok — türler klasik taramada kalır");
+            }
+            return toClassicMode(type, "sonuç boşaltıcısı yok");
+        }
+        if (!drainer.canDrain()) return toClassicMode(type, "sonuçlar boşaltılamıyor");
+        // ── /R3-3 FX pipeline ──
         com.sitemonitor.service.checks.CheckWorkerRegistry registry = checkWorkerRegistry();
         int live;
         try {
@@ -10235,12 +10494,17 @@ public class SchedulerService {
 
     /** Klasik kip kararı: tür daha önce dağıtıksa geçişi bir kez yazar; hiç dağıtık olmadıysa yalnız bir harita okuması. */
     private boolean toClassicMode(String type) {
+        return toClassicMode(type, "ayar kapalı ya da bu pod lider değil");
+    }
+
+    /** {@link #toClassicMode(String)} — geçiş satırı verilen nedeni yazar (R3-3 FX: boru hattı nedenleri). */
+    private boolean toClassicMode(String type, String reason) {
         CheckModeState s = checkModes.get(type);
         if (s == null) return false;
         synchronized (s) {
             if (s.distributed) {
                 s.distributed = false;
-                log.info("Dağıtık kontroller: {} artık klasik (ayar kapalı ya da bu pod lider değil)", type);
+                log.info("Dağıtık kontroller: {} artık klasik ({})", type, reason);
             }
         }
         return false;
@@ -10271,6 +10535,15 @@ public class SchedulerService {
         out.put("dropped_toggle", checkResultsDroppedToggle.get());
         out.put("dropped_inventory", checkResultsDroppedInventory.get());
         out.put("no_result", checkResultsNoResult.get());
+        // R3-3 FX (inceleme 2026-10-29) — eklemeli alanlar
+        long now = scheduleClock.getAsLong();
+        List<String> held = new ArrayList<>();
+        for (String type : com.sitemonitor.service.checks.CheckJobTypes.ALL) if (dispatchHeld(type, now)) held.add(type);
+        out.put("dispatch_held", held);
+        out.put("dispatch_holds", checkDispatchHolds.get());
+        long retained = 0;
+        for (var m : retainedDue.values()) retained += m.size();
+        out.put("retained", retained);
         return out;
     }
     // ── /R3-3 dispatch ───────────────────────────────────────────────────────────────────────────────────────────────
@@ -10313,8 +10586,15 @@ public class SchedulerService {
                         .map(m -> withCheckTarget(runDnsJob(m, dnsSweepSettings().resolvers()), dnsCheckTarget(m))).orElse(null);
                 case com.sitemonitor.service.checks.CheckJobTypes.SCRIPTED -> scriptedMonitorRepo.findById(monitorId)
                         .filter(m -> Boolean.TRUE.equals(m.getActive()))
-                        .map(m -> withCheckTarget(persistScripted(m, scriptedCheckerService.run(m), false),
-                                scriptedCheckTarget(m))).orElse(null);
+                        .map(m -> {
+                            ScriptedCheckerService.ScriptedResult run = scriptedCheckerService.run(m);
+                            // R3-3 FX (DA-L3): işçi zaman aşımında kesti → geç koşum scripted_checks'e / anormallik
+                            // korumasının sayacına yazılmaz (satır zaten worker_timeout ile tamamlandı)
+                            if (Thread.currentThread().isInterrupted()) {
+                                return com.sitemonitor.service.checks.CheckJobRunner.failed(new InterruptedException());
+                            }
+                            return withCheckTarget(persistScripted(m, run, false), scriptedCheckTarget(m));
+                        }).orElse(null);
                 default -> null;
             };
             return out != null ? out : com.sitemonitor.service.checks.CheckJobRunner.inactive();
@@ -10356,6 +10636,12 @@ public class SchedulerService {
         String now = ISO.format(Instant.now());
         try {
             Map<String, Object> r = dnsCheckerService.check(m.getDomain(), m.getRecordType());
+            // R3-3 FX (DA-L3): işçi zaman aşımında gövdeyi KESER (satır worker_timeout ile tamamlandı, sonraki dönem işi başka
+            // işçide koşabilir) — geç dönen sorgu dns_records'a (PENDING değişiklik dahil) yazmaz; kesme bayrağı korunur.
+            if (Thread.currentThread().isInterrupted()) {
+                out.put(DNS_JOB_MAIN_FAILED, InterruptedException.class.getSimpleName());
+                return out;
+            }
             DnsPersisted p = persistDnsRecord(m, r, now);
             out.put(DNS_JOB_MAIN, r);
             out.put("prev_value", p.prevValue());
@@ -10367,7 +10653,7 @@ public class SchedulerService {
             log.warn("DNS check failed for {} {}: {}", m.getRecordType(), m.getDomain(), e.getMessage());
             out.put(DNS_JOB_MAIN_FAILED, e.getClass().getSimpleName());
         }
-        if (dnsPropagationWanted(m, dnsResolvers)) {
+        if (dnsPropagationWanted(m, dnsResolvers) && !Thread.currentThread().isInterrupted()) {
             try {
                 out.put(DNS_JOB_PROP, dnsCheckerService.checkPropagation(m.getDomain(), m.getRecordType(), dnsResolvers));
             } catch (Exception ex) {
@@ -10652,7 +10938,9 @@ public class SchedulerService {
                 log.warn("DNS check failed for {} {}: {}", m.getRecordType(), m.getDomain(), e.getMessage());
             }
         }
-        if (res.get(DNS_JOB_PROP) instanceof Map<?, ?> propRaw) {
+        // R3-3 FX (DA-L1): yayılım kalemi yalnız GÜNCEL izleme hâlâ yayılım denetimi istiyorsa — kuyruktaki bir sonuç, kullanıcının
+        // az önce kapattığı denetimi (alarmı sessizce kapandı) yeniden açmasın (klasik yarış tek kontrol süresiyle sınırlıydı).
+        if (res.get(DNS_JOB_PROP) instanceof Map<?, ?> propRaw && dnsPropagationWanted(m, settings.resolvers())) {
             try {
                 inconsistentSweep.add(dnsInconsistentSweepItem(m, (Map<String, Object>) propRaw, settings.resolvers()));
             } catch (Exception ex) {

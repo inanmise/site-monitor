@@ -234,8 +234,57 @@ final class R33SweepHarness {
         }
         DistributedChecks dc = new DistributedChecks(appSettings, DistributedChecks.Tuning.DEFAULTS);
         scheduler.setDistributedChecks(dc);
+        if (ReflectionTestUtils.getField(scheduler, "checkResultDrainer") == null) {
+            // FX-EVAL (DH-M2): distributedMode boşaltıcının sağlığını da ister — varsayılan: boşaltabilen sahte boşaltıcı
+            drainer = new StubDrainer(dc);
+            ReflectionTestUtils.setField(scheduler, "checkResultDrainer", drainer);
+        }
         dc.onReady(null);   // açılış hazır: anahtar açıksa tembel başlatıcı (gönderim tıkı) burada kurulur
         return dc;
+    }
+
+    /** {@link #bindDistributed} kurduğu sahte boşaltıcı (yoksa null). */
+    StubDrainer drainer;
+
+    /**
+     * Boşaltma sağlığı test eden sahte boşaltıcı: {@link #canDrain()} = {@link #healthy}; klasik bekletme yok; gerçek
+     * {@code noteClassicCheck} / taban mantığı iş parçacığı kurulmadığı için ({@code started} false) hiç yazmaz.
+     */
+    static final class StubDrainer extends com.sitemonitor.service.checks.CheckResultDrainer {
+        volatile boolean healthy = true;
+        volatile boolean holdClassic;
+        final List<String> classicNotes = new java.util.concurrent.CopyOnWriteArrayList<>();
+        final AtomicLong floorCalls = new AtomicLong();
+        final List<Boolean> switchNotes = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+        StubDrainer(DistributedChecks dc) {
+            super(dc, () -> null, () -> null, () -> null, () -> null, () -> null, () -> null);
+        }
+
+        @Override
+        public boolean canDrain() {
+            return healthy;
+        }
+
+        @Override
+        public boolean holdClassic() {
+            return holdClassic;
+        }
+
+        @Override
+        public void noteClassicCheck(String type, Long monitorId) {
+            classicNotes.add(type + ":" + monitorId);
+        }
+
+        @Override
+        public void applyFloorIfPending() {
+            floorCalls.incrementAndGet();
+        }
+
+        @Override
+        public void noteSwitch(boolean on) {
+            switchNotes.add(on);
+        }
     }
 
     /** Sahte işçi kaydı: tür → başka canlı işçi sayısı (yoksa 0; {@link CheckWorkerRegistry#UNKNOWN} verilebilir). */
