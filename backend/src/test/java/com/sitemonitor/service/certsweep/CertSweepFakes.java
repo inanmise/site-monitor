@@ -303,6 +303,26 @@ public final class CertSweepFakes {
             return updated;
         }
 
+        /**
+         * {@code CertSweepSql.claimedCols} {@code others_active_ms} sütununun aynısı (FX2-WORKER L-2): koşunun BAŞKA sahibe ait
+         * diğer parçaları içinde canlı kirası olanın kira sonu, yoksa sahiplenme anı — en büyüğü; iz yoksa
+         * {@link ClaimedChunk#NO_OTHER_ACTIVITY}.
+         */
+        private long othersActive(Chunk claimed, String owner, long claimedMs) {
+            long best = ClaimedChunk.NO_OTHER_ACTIVITY;
+            boolean any = false;
+            for (Chunk o : chunks) {
+                if (!o.runId.equals(claimed.runId) || o.id == claimed.id) continue;
+                if (o.claimedBy == null || o.claimedBy.equals(owner)) continue;
+                Long v = CHUNK_CLAIMED.equals(o.state) && o.leaseUntil != null && o.leaseUntil >= claimedMs
+                        ? o.leaseUntil : o.claimedMs;
+                if (v == null) continue;
+                best = any ? Math.max(best, v) : v;
+                any = true;
+            }
+            return best;
+        }
+
         @Override
         public synchronized Optional<ClaimedChunk> claim(String owner, long leaseMs, long createdBeforeMs) {
             touch("claim");
@@ -326,7 +346,7 @@ public final class CertSweepFakes {
                 c.leaseUntil = now + leaseMs;
                 c.attempts++;
                 return Optional.of(new ClaimedChunk(c.id, c.runId, c.no, c.entries, c.attempts, c.token, now, c.leaseUntil,
-                        r.coordinator, c.createdMs, c.avoid));
+                        r.coordinator, c.createdMs, c.avoid, othersActive(c, owner, now)));
             }
             return Optional.empty();
         }
