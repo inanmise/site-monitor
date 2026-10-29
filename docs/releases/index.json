@@ -1,9 +1,212 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-29T08:00:29Z",
+  "generatedAt": "2026-10-29T14:52:41Z",
   "repo": "inanmise/site-monitor",
-  "count": 790,
+  "count": 791,
   "releases": [
+    {
+      "version": "20.171.0",
+      "tag": "v20.171.0",
+      "releasedAt": "2026-10-29T14:52:33Z",
+      "commit": "9c0e23dfe6625fb8cc58d31d3398e524fff96461",
+      "prevVersion": "20.170.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 6,
+        "fix": 8,
+        "perf": 0,
+        "refactor": 1,
+        "docs": 4,
+        "other": 7
+      },
+      "changes": [
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "9c0e23df",
+          "subject": "çok pod 3-4 — ikinci görüşün kısmi sonucu ve sonucu, liderin rahatlama kuralı (FX2)"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "623deb02",
+          "subject": "çok pod 3-4 — sahte depo da başka işçilerin hareketini (others_active_ms) döndürür"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "13103de5",
+          "subject": "çok pod 3-4 — ikinci görüşün kısmi sonucu, durgunluk, başka pod'un kullanılamayan sonucu ve sonucun kalıcılığı (FX2-COORD)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "6bd93cff",
+          "subject": "çok pod 3-4 — liderin rahatlaması başka işçilerin hareketsizliğine dayanır, kendi turunun parçası bölünmez (FX2 L-2 / L-3)"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "2cefb720",
+          "subject": "çok pod 3-4 — yeni işçi bütçesi varsayılanları (6 × çekirdek, 8 parça, lider en çok bir parça)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "db08a982",
+          "subject": "çok pod 3-4 — varsayılan işçi bütçesi 6 × çekirdek, lider payı çekirdekle sınırlı (C2 B-1)"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "e7b0d1b0",
+          "subject": "çok pod 3-4 — parçalı sertifika taraması (CLAUDE.md, işletim kılavuzu, prod dağıtım listesi)"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "2edfe8e3",
+          "subject": "çok pod 3-4 C2 — duman testi parçalı tarama adımı, çift-iş dedektörü bölüm 10, senaryolar düzeltme paketlerine hizalandı"
+        },
+        {
+          "type": "refactor",
+          "scope": null,
+          "breaking": false,
+          "sha": "ac9aec24",
+          "subject": "çok pod 3-4 — koordinatör sayacı doğrudan okunur, sahte depo yeni sahiplenme alanlarını döndürür (entegrasyon)"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "01f4ad57",
+          "subject": "çok pod 3-4 — sahte depo sahiplenmesi FX-WORKER yaş kapısı kuralını izler"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "e1476fd0",
+          "subject": "çok pod 3-4 — koordinatör inceleme düzeltmeleri (ikinci görüş hepsi-ya-da-hiçbiri, okuma grupları, nabız, öksüz kapatma)"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "8a364eaa",
+          "subject": "çok pod 3-4 — sahiplenme eşiği açıklaması işçi düzeltmesine göre (kendi koşusu ve ikinci görüş muaf)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "92311299",
+          "subject": "çok pod 3-4 — parça işçisi inceleme düzeltmeleri (lider payı, ikinci görüş, kendi parçasını yeniden alma, kapanış sonrası süre, uyarı sınırı)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "a59f8a1d",
+          "subject": "çok pod 3-4 Küme kartı — durmuş kuyruk uyarısı, sahipsiz tur, klasiğe dönen tur ve küçük oranlar (inceleme FX-OBS)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "42f3ed73",
+          "subject": "çok pod 3-4 gözlem — sahipsiz açık tur, tur kipi ve Grafana açıklamaları (inceleme FX-OBS)"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "85756edb",
+          "subject": "çok pod 3-4 C2 — parçalı sertifika taraması çok pod düzeneği, senaryolar, kapasite ve kapalı-anahtar kanıtları"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "75b6ccbc",
+          "subject": "çok pod 3-4 — işçi başlayınca koordinatöre kendi dürtmesini verir (entegrasyon)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "ad50ab13",
+          "subject": "çok pod 3-4 C1 — karar aşamasındaki (DECIDING) parçalı tur sessiz koordinatör sayılmaz"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "d0d7d799",
+          "subject": "çok pod 3-4 A — sahiplenme kapıları ayrı testlerde (nabız / koşu durumu / kaçınılan işçi), işçide anahtar null koruması"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "de7753cf",
+          "subject": "çok pod 3-4 C1 — Küme kartı \"Parçalı sertifika taraması\" bölümü ve tarama kartının tur kipi"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "560ab924",
+          "subject": "çok pod 3-4 A — parçalı sertifika taraması deposu ve parça işçisi (anahtar kapalıyken etkisiz)"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "8bbd4be9",
+          "subject": "çok pod 3-4 B — parçalı tur = klasik tur gidiş-dönüşü, koordinatör ve ikinci görüş testleri"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "f504b267",
+          "subject": "çok pod 3-4 B — parçalı sertifika taraması koordinatörü ve klasik toplamanın saf ayrıştırması"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "d0d26113",
+          "subject": "çok pod 3-4 C1 — parçalı sertifika taraması gözlemi (Sistem Sağlığı, 3 ölçüm, Grafana revizyon 8, izleyici olguları)"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "f10213a0",
+          "subject": "çok pod 3-4 P0 — klasik sertifika taraması altın kayıtları (değişmemiş 20.170.0 kodundan)"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "ec617f39",
+          "subject": "çok pod 3-4 P0 — parçalı sertifika taraması sözleşmeleri ve ayar anahtarı (varsayılan kapalı)"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.170.0",
       "tag": "v20.170.0",
