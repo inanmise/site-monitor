@@ -526,7 +526,18 @@ public final class RetentionCatalog {
         info("monitor-check-workers", "monitor_check_workers", Mode.EXTERNAL, DataClass.OPERATIONAL,
                 "Dağıtık kontrol işçileri: pod örneği başına TEK satır (yetenekler, yuva, sayaçlar, son nabız), anahtar "
                 + "açıkken 10 sn'de bir güncellenir. Tarama lideri saatte bir, nabzı 1 günden eski satırları siler (biten "
-                + "pod'lar). Pod sayısıyla sınırlı, kişisel veri yok.")
+                + "pod'lar). Pod sayısıyla sınırlı, kişisel veri yok."),
+        // ── Parçalı sertifika taraması (2026-10-29, çok pod Sürüm 3-4, paket A) ───────────────────────────────────────
+        info("cert-sweep-runs", "cert_sweep_runs", Mode.EXTERNAL, DataClass.OPERATIONAL,
+                "Parçalı sertifika taraması koşuları (site.monitor.checks.cert-chunks.enabled açıkken): parçalı tur başına "
+                + "TEK satır — tür, koordinatör pod, durum (sürüyor / karar / bitti / düştü / bırakıldı), alan adı ve parça "
+                + "sayısı, pod başına parça payı. Her parçalı tur başında 7 günden eski kapalı koşular silinir (en çok 1000). "
+                + "Saatlik turla günde ≈ 24–300 satır, birikmez. Anahtar kapalıyken boş. Kişisel veri yok."),
+        info("cert-sweep-chunks", "cert_sweep_chunks", Mode.EXTERNAL, DataClass.OPERATIONAL,
+                "Parçalı sertifika taramasının parçaları: koşu başına ≤ 500 satır (20 alan adı), sahiplenen pod, kira ve "
+                + "ölçüm sonucu JSON'u (koordinatör okuyup kaydeder; API'den dönmez, günlüğe yazılmaz). Koşu kapanınca "
+                + "koordinatör parçalarını SİLER; ölen koordinatörün parçalarını bir sonraki parçalı tur siler. Tablo en "
+                + "çok bir koşunun parçalarını tutar, birikmez. Anahtar kapalıyken boş. Kişisel veri yok.")
     );
 
     /** Yalnız gerçekten satır silen kurallar (çalıştırma sırasında). */

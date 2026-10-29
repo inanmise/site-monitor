@@ -35,7 +35,9 @@ class RetentionCoverageTest {
             // Kalıcı değerlendirme durumu (2026-10-23, çok pod Sürüm 3-1, A1) — EvalStateSchemaPatch, ham DDL
             "monitor_eval_state", "monitor_last_status", "monitor_eval_type_state", "monitor_confirmations",
             // Dağıtık kontroller (2026-10-29, çok pod Sürüm 3-3, paket A) — CheckJobSchemaPatch, ham DDL (katalogda info satırı)
-            "monitor_check_jobs", "monitor_check_workers");
+            "monitor_check_jobs", "monitor_check_workers",
+            // Parçalı sertifika taraması (2026-10-29, çok pod Sürüm 3-4, paket A) — CertSweepSchemaPatch, ham DDL (katalogda info satırı)
+            "cert_sweep_runs", "cert_sweep_chunks");
 
     /** Muafiyetler — HER BİRİ gerekçeli. Gerekçesiz muafiyet eklenemez (değer boş olamaz). */
     private static final Map<String, String> EXEMPT = Map.ofEntries(
