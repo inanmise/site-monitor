@@ -767,6 +767,34 @@ public class MonitoringOutageService implements EvalStateSource {
     }
     // ── /R3-3 P0 ─────────────────────────────────────────────────────────────────────────────────────────────────────
 
+    // ── R3-3 B-MOS (çok pod Sürüm 3-3, paket B; tasarım R3-3 §1.3 / risk R-8) — klasik tur kadansı ipucu ─────────────────
+    // Dağıtık kipte zamanlanmış sonuçlar boşaltıcı dalgalarıyla (~2 sn arayla) gelir; ölçülen tur aralığı klasik
+    // {@code @Scheduled} tıkının çok altına düşer, pencere tabana iner (DNS: 900 sn → 300 sn) ve kaydedilen tur aralığı oynar.
+    // Değerlendirici her zamanlanmış çağrıdan önce türün KLASİK tıkını bildirir; ölçülen aralık max(ölçülen, ipucu) olur —
+    // pencere ve kaydedilen aralık klasiktekiyle aynı kalır. İpucu YOKSA (anahtar kapalı — kimse bildirmez) davranış birebir
+    // 20.169.0. İpucu ölçülmüş bir boşluğu ASLA kısaltmaz; ilk çağrıda (ölçüm yok) uygulanmaz (klasikte de pencere tabandır).
+    // Liderlik değişiminde (resetVolatileState) SİLİNMEZ: gözlem değil yapılandırmadır (bu pod'un tık ayarı); değerlendirici
+    // zaten her çağrıdan önce yeniden bildirir, klasik kipe dönen pod'da da zararsızdır (klasik boşluk ≥ tık).
+
+    /** Alarm türü → klasik zamanlanmış taramanın tık aralığı (ms). Anahtar kapalıyken BOŞ. */
+    private final Map<String, Long> roundCadenceHints = new ConcurrentHashMap<>();
+
+    /**
+     * Türün klasik tarama tıkını bildirir (paket B değerlendiricisi, dağıtık kipte her zamanlanmış çağrıdan önce). Geçersiz
+     * değer (tür yok, tık ≤ 0) yok sayılır. Yalnız bellek.
+     */
+    public void noteRoundCadence(String alertType, long classicTickMs) {
+        if (alertType == null || classicTickMs <= 0) return;
+        roundCadenceHints.put(alertType, classicTickMs);
+    }
+
+    /** Ölçülen tur boşluğu, varsa klasik tık ipucuyla alttan sınırlanmış: {@code max(boşluk, ipucu)}; ipucu yoksa boşluğun kendisi. */
+    private long cadenceFloored(String alertType, long measuredGapMs) {
+        Long hint = alertType == null ? null : roundCadenceHints.get(alertType);
+        return hint == null ? measuredGapMs : Math.max(measuredGapMs, hint);
+    }
+    // ── /R3-3 B-MOS ──────────────────────────────────────────────────────────────────────────────────────────────────
+
     // ── Kalıcı değerlendirme durumu: ikili yazım kancaları (2026-10-23, çok pod Sürüm 3-1 A2, tasarım R3-1 §2.5) ───────
     //
     // Sıfırlama (resetVolatileState) kanca ÇAĞIRMAZ: kaydedici aynı liderlik olayını dinler (LOST / RELEASED → bekleyenleri
@@ -1326,7 +1354,7 @@ public class MonitoringOutageService implements EvalStateSource {
         long newInterval;
         synchronized (tick) {
             prevInterval = tick[1];
-            if (tick[0] > 0 && now > tick[0]) tick[1] = now - tick[0];
+            if (tick[0] > 0 && now > tick[0]) tick[1] = cadenceFloored(alertType, now - tick[0]);   // R3-3 B-MOS: ipucu yoksa = boşluk
             tick[0] = now;
             newInterval = tick[1];
             window = windowLengthFor(tick[1]);

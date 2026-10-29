@@ -5660,7 +5660,7 @@ public class SchedulerService {
         return r;
     }
 
-    @Scheduled(fixedDelayString = "${site.monitor.port.interval-ms:30000}", initialDelayString = "45000")
+    @Scheduled(fixedDelayString = PORT_SWEEP_TICK, initialDelayString = "45000")
     public void runPortChecks() {
         noteSweepTick();   // tıkanma ölçüsü (MP-24): liderlik / duraklatma kapısından ÖNCE
         if (!appSettings.getBoolean("site.monitor.port.alert-enabled", true)) return;   // izleme duraklatıldı → kontrol+alarm yok
@@ -5868,7 +5868,7 @@ public class SchedulerService {
     }
 
     // ── Keyword monitor sweep (serbest-form; envanter filtresi YOK) ──────────────
-    @Scheduled(fixedDelayString = "${site.monitor.keyword.interval-ms:30000}", initialDelayString = "55000")
+    @Scheduled(fixedDelayString = KEYWORD_SWEEP_TICK, initialDelayString = "55000")
     public void runKeywordChecks() {
         noteSweepTick();   // tıkanma ölçüsü (MP-24): liderlik / duraklatma kapısından ÖNCE
         if (!appSettings.getBoolean("site.monitor.keyword.alert-enabled", true)) return;   // izleme duraklatıldı → kontrol+alarm yok
@@ -6012,7 +6012,7 @@ public class SchedulerService {
     }
 
     // ── HTTP / Website monitor sweep (serbest-form; envanter filtresi YOK) ────────
-    @Scheduled(fixedDelayString = "${site.monitor.http.interval-ms:30000}", initialDelayString = "75000")
+    @Scheduled(fixedDelayString = HTTP_SWEEP_TICK, initialDelayString = "75000")
     public void runHttpChecks() {
         noteSweepTick();   // tıkanma ölçüsü (MP-24): liderlik / duraklatma kapısından ÖNCE
         if (!appSettings.getBoolean("site.monitor.http.alert-enabled", true)) return;   // izleme duraklatıldı → kontrol+alarm yok
@@ -6918,7 +6918,7 @@ public class SchedulerService {
     }
 
     // ── Sayfa Bütünlüğü (9. tür) sweep — sık: her monitörün ANA sayfası (SINGLE_PAGE) ────────────────
-    @Scheduled(fixedDelayString = "${site.monitor.page.interval-ms:60000}", initialDelayString = "90000")
+    @Scheduled(fixedDelayString = PAGE_SWEEP_TICK, initialDelayString = "90000")
     public void runPageChecks() {
         noteSweepTick();   // tıkanma ölçüsü (MP-24): liderlik / duraklatma kapısından ÖNCE
         if (!appSettings.getBoolean("site.monitor.page.alert-enabled", true)) return;
@@ -7438,7 +7438,7 @@ public class SchedulerService {
 
     // ── Sayfa Hızı sweep ────────────────────────────────────────────────────────────────────
     // Aralık tabanı 5 dk olduğu için sweep dakikada bir uyanıp yalnız vakti gelenleri ölçer (checkDue).
-    @Scheduled(fixedDelayString = "${site.monitor.pagespeed.interval-ms:60000}", initialDelayString = "120000")
+    @Scheduled(fixedDelayString = PAGESPEED_SWEEP_TICK, initialDelayString = "120000")
     public void runPageSpeedChecks() {
         noteSweepTick();   // tıkanma ölçüsü (MP-24): liderlik / duraklatma kapısından ÖNCE
         if (!appSettings.getBoolean("site.monitor.pagespeed.alert-enabled", true)) return;
@@ -7761,7 +7761,7 @@ public class SchedulerService {
     }
 
     // ── Senaryo İzleme (10. tür) — k6 alt süreç sweep'i (bounded executor, scheduler'ı bloklamaz) ──────
-    @Scheduled(fixedDelayString = "${site.monitor.scripted.interval-ms:60000}", initialDelayString = "95000")
+    @Scheduled(fixedDelayString = SCRIPTED_SWEEP_TICK, initialDelayString = "95000")
     public void runScriptedChecks() {
         noteSweepTick();   // tıkanma ölçüsü (MP-24): liderlik / duraklatma kapısından ÖNCE
         if (!appSettings.getBoolean("site.monitor.scripted.enabled", true)) return;
@@ -8923,7 +8923,7 @@ public class SchedulerService {
     }
 
     // ── Ping monitor sweep (serbest-form; envanter filtresi YOK) ─────────────────
-    @Scheduled(fixedDelayString = "${site.monitor.ping.interval-ms:30000}", initialDelayString = "65000")
+    @Scheduled(fixedDelayString = PING_SWEEP_TICK, initialDelayString = "65000")
     public void runPingChecks() {
         noteSweepTick();   // tıkanma ölçüsü (MP-24): liderlik / duraklatma kapısından ÖNCE
         if (!appSettings.getBoolean("site.monitor.ping.alert-enabled", true)) return;   // izleme duraklatıldı → kontrol+alarm yok
@@ -9047,7 +9047,7 @@ public class SchedulerService {
         return out;
     }
 
-    @Scheduled(fixedDelayString = "${site.monitor.dns.interval-ms:300000}", initialDelayString = "60000")
+    @Scheduled(fixedDelayString = DNS_SWEEP_TICK, initialDelayString = "60000")
     public void runDnsChecks() {
         noteSweepTick();   // tıkanma ölçüsü (MP-24): liderlik / duraklatma kapısından ÖNCE
         if (!appSettings.getBoolean("site.monitor.dns.alert-enabled", true)) return;   // izleme duraklatıldı → kontrol+alarm yok
@@ -9793,6 +9793,105 @@ public class SchedulerService {
     private boolean checkTypeEnabled(String type) {
         return appSettings.getBoolean(checkTypeToggleKey(type), true);
     }
+
+    // Klasik tarama tıklarının @Scheduled ifadeleri — TEK kaynak: sekiz giriş bu sabitleri kullanır, dağıtık değerlendirici
+    // aynı ifadeyi çözüp MOS'a klasik tur kadansını bildirir (R3-3 B-MOS; pencere / kaydedilen tur aralığı klasikle aynı).
+    static final String PORT_SWEEP_TICK = "${site.monitor.port.interval-ms:30000}";
+    static final String KEYWORD_SWEEP_TICK = "${site.monitor.keyword.interval-ms:30000}";
+    static final String HTTP_SWEEP_TICK = "${site.monitor.http.interval-ms:30000}";
+    static final String PAGE_SWEEP_TICK = "${site.monitor.page.interval-ms:60000}";
+    static final String PAGESPEED_SWEEP_TICK = "${site.monitor.pagespeed.interval-ms:60000}";
+    static final String SCRIPTED_SWEEP_TICK = "${site.monitor.scripted.interval-ms:60000}";
+    static final String PING_SWEEP_TICK = "${site.monitor.ping.interval-ms:30000}";
+    static final String DNS_SWEEP_TICK = "${site.monitor.dns.interval-ms:300000}";
+
+    /** Türün klasik {@code @Scheduled} tık ifadesi (bilinmeyen tür → null). */
+    static String classicSweepTickExpression(String type) {
+        if (type == null) return null;
+        return switch (type) {
+            case com.sitemonitor.service.checks.CheckJobTypes.PORT -> PORT_SWEEP_TICK;
+            case com.sitemonitor.service.checks.CheckJobTypes.PING -> PING_SWEEP_TICK;
+            case com.sitemonitor.service.checks.CheckJobTypes.HTTP -> HTTP_SWEEP_TICK;
+            case com.sitemonitor.service.checks.CheckJobTypes.KEYWORD -> KEYWORD_SWEEP_TICK;
+            case com.sitemonitor.service.checks.CheckJobTypes.PAGE -> PAGE_SWEEP_TICK;
+            case com.sitemonitor.service.checks.CheckJobTypes.PAGESPEED -> PAGESPEED_SWEEP_TICK;
+            case com.sitemonitor.service.checks.CheckJobTypes.DNS -> DNS_SWEEP_TICK;
+            case com.sitemonitor.service.checks.CheckJobTypes.SCRIPTED -> SCRIPTED_SWEEP_TICK;
+            default -> null;
+        };
+    }
+
+    /** Türün klasik taramasının beslediği alarm türleri (değerlendiricinin çağrı sırasıyla). */
+    static List<String> classicSweepAlertTypes(String type) {
+        if (type == null) return List.of();
+        return switch (type) {
+            case com.sitemonitor.service.checks.CheckJobTypes.PORT ->
+                    List.of(EscalationService.TYPE_PORT_DOWN, EscalationService.TYPE_PORT_SLOW);
+            case com.sitemonitor.service.checks.CheckJobTypes.PING ->
+                    List.of(EscalationService.TYPE_PING_DOWN, EscalationService.TYPE_PING_SLOW);
+            case com.sitemonitor.service.checks.CheckJobTypes.HTTP ->
+                    List.of(EscalationService.TYPE_HTTP_DOWN, EscalationService.TYPE_HTTP_SLOW);
+            case com.sitemonitor.service.checks.CheckJobTypes.KEYWORD ->
+                    List.of(EscalationService.TYPE_KEYWORD, EscalationService.TYPE_KEYWORD_SLOW);
+            case com.sitemonitor.service.checks.CheckJobTypes.PAGE ->
+                    List.of(EscalationService.TYPE_PAGE_DOWN, EscalationService.TYPE_PAGE_INTEGRITY);
+            case com.sitemonitor.service.checks.CheckJobTypes.PAGESPEED ->
+                    List.of(EscalationService.TYPE_PAGESPEED_DOWN, EscalationService.TYPE_PAGESPEED_SLOW);
+            case com.sitemonitor.service.checks.CheckJobTypes.DNS ->
+                    List.of(EscalationService.TYPE_DNS_FAILURE, EscalationService.TYPE_DNS_SLOW,
+                            EscalationService.TYPE_DNS_UNEXPECTED, EscalationService.TYPE_DNS_INCONSISTENT);
+            case com.sitemonitor.service.checks.CheckJobTypes.SCRIPTED ->
+                    List.of(EscalationService.TYPE_SCRIPTED_FAIL, EscalationService.TYPE_SCRIPTED_SLOW);
+            default -> List.of();
+        };
+    }
+
+    private final java.util.concurrent.ConcurrentHashMap<String, Long> classicTickMemo = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * Türün klasik tıkı (ms) — {@code @Scheduled} ile AYNI ifade, AYNI çözüm: ortam yer tutucuyu çözer (yoksa ifadenin
+     * varsayılanı), değer Spring'in fixedDelayString ayrıştırıcısıyla (milisaniye birimi) okunur. Çözülemezse 0 (ipucu
+     * yok). Açılışta okunan değer gibi pod başına bir kez hesaplanır.
+     */
+    long classicSweepTickMs(String type) {
+        String expr = classicSweepTickExpression(type);
+        if (expr == null) return 0L;
+        return classicTickMemo.computeIfAbsent(type, t -> resolveTickMs(expr));
+    }
+
+    long resolveTickMs(String expression) {
+        String raw;
+        try {
+            raw = environment != null ? environment.resolvePlaceholders(expression) : null;
+        } catch (RuntimeException e) {
+            raw = null;
+        }
+        if (raw == null || raw.contains("${")) raw = placeholderDefault(expression);
+        if (raw == null || raw.isBlank()) return 0L;
+        try {
+            java.time.Duration d = org.springframework.format.datetime.standard.DurationFormatterUtils.detectAndParse(
+                    raw.trim(), org.springframework.format.annotation.DurationFormat.Unit.MILLIS);
+            return d == null ? 0L : Math.max(0L, d.toMillis());
+        } catch (RuntimeException e) {
+            return 0L;
+        }
+    }
+
+    /** Yer tutucunun varsayılanı: anahtar:varsayılan biçiminde iki nokta ile kapanış arası (yoksa null). */
+    static String placeholderDefault(String expression) {
+        if (expression == null) return null;
+        int start = expression.indexOf("${");
+        int colon = start < 0 ? -1 : expression.indexOf(':', start);
+        int end = expression.lastIndexOf('}');
+        return start >= 0 && colon > start && end > colon ? expression.substring(colon + 1, end) : null;
+    }
+
+    /** Dağıtık değerlendirmede türün her alarm türü için MOS'a klasik tur kadansını bildirir (çağrıdan hemen önce). */
+    private void noteClassicCadence(String type) {
+        long tick = classicSweepTickMs(type);
+        if (tick <= 0) return;
+        for (String alertType : classicSweepAlertTypes(type)) monitoringOutageService.noteRoundCadence(alertType, tick);
+    }
     // ── /R3-3 B shared ───────────────────────────────────────────────────────────────────────────────────────────────
 
     // ── R3-3 dispatch (paket B; tasarım §3.6 / §5.3) ─────────────────────────────────────────────────────────────────
@@ -10326,6 +10425,7 @@ public class SchedulerService {
                         log.warn("Port check failed for {}:{}: {}", m.getHost(), m.getPort(), ex.getMessage());
                     }
                 }
+                noteClassicCadence(com.sitemonitor.service.checks.CheckJobTypes.PORT);   // R3-3 B-MOS: pencere = klasik
                 feedPortSweep(sweep, slowSweep);
             }
             case com.sitemonitor.service.checks.CheckJobTypes.PING -> {
@@ -10345,6 +10445,7 @@ public class SchedulerService {
                         log.warn("Ping check failed for {}: {}", m.getHost(), ex.getMessage());
                     }
                 }
+                noteClassicCadence(com.sitemonitor.service.checks.CheckJobTypes.PING);   // R3-3 B-MOS: pencere = klasik
                 feedPingSweep(sweep, slowSweep);
             }
             case com.sitemonitor.service.checks.CheckJobTypes.HTTP -> {
@@ -10363,6 +10464,7 @@ public class SchedulerService {
                         log.warn("HTTP check failed for {}: {}", m.getUrl(), ex.getMessage());
                     }
                 }
+                noteClassicCadence(com.sitemonitor.service.checks.CheckJobTypes.HTTP);   // R3-3 B-MOS: pencere = klasik
                 feedHttpSweep(sweep, slowSweep);
             }
             case com.sitemonitor.service.checks.CheckJobTypes.KEYWORD -> {
@@ -10381,6 +10483,7 @@ public class SchedulerService {
                         log.warn("Keyword check failed for {}: {}", m.getUrl(), ex.getMessage());
                     }
                 }
+                noteClassicCadence(com.sitemonitor.service.checks.CheckJobTypes.KEYWORD);   // R3-3 B-MOS: pencere = klasik
                 feedKeywordSweep(sweep, slowSweep);
             }
             case com.sitemonitor.service.checks.CheckJobTypes.PAGE -> {
@@ -10397,6 +10500,7 @@ public class SchedulerService {
                         log.warn("Page check failed for {}: {}", m.getUrl(), ex.getMessage());
                     }
                 }
+                noteClassicCadence(com.sitemonitor.service.checks.CheckJobTypes.PAGE);   // R3-3 B-MOS: pencere = klasik
                 feedPageSweep(downSweep, integritySweep);
             }
             case com.sitemonitor.service.checks.CheckJobTypes.PAGESPEED -> {
@@ -10414,6 +10518,7 @@ public class SchedulerService {
                         log.warn("Sayfa hızı ölçümü başarısız {}: {}", m.getUrl(), ex.getMessage());
                     }
                 }
+                noteClassicCadence(com.sitemonitor.service.checks.CheckJobTypes.PAGESPEED);   // R3-3 B-MOS: pencere = klasik
                 feedPageSpeedSweep(downSweep, slowSweep);
             }
             case com.sitemonitor.service.checks.CheckJobTypes.SCRIPTED -> {
@@ -10433,6 +10538,7 @@ public class SchedulerService {
                         log.warn("Scripted check failed for {}: {}", m.getName(), ex.getMessage());
                     }
                 }
+                noteClassicCadence(com.sitemonitor.service.checks.CheckJobTypes.SCRIPTED);   // R3-3 B-MOS: pencere = klasik
                 feedScriptedSweep(sweep, slowSweep);
             }
             case com.sitemonitor.service.checks.CheckJobTypes.DNS -> {
@@ -10449,6 +10555,7 @@ public class SchedulerService {
                             inconsistentSweep, changes);
                     checkResultsApplied.incrementAndGet();
                 }
+                noteClassicCadence(com.sitemonitor.service.checks.CheckJobTypes.DNS);   // R3-3 B-MOS: pencere = klasik
                 feedDnsSweep(sweep, slowSweep, changes, unexpectedSweep, inconsistentSweep);   // dalga başına TEK çağrı
             }
             default -> { /* bilinmeyen tür: applyCheckResults süzdü */ }
