@@ -695,6 +695,84 @@ class CertChunkWorkerTest {
         r.open();
     }
 
+    // ── FX2-WORKER (2026-10-29): L-2 — rahatlama başka işçilerin hareketsizliğine dayanır, çekirdeği aşmaz ──────────
+
+    /** Varsayılan bütçe KURALI (6 × çekirdek = 120, lider payı 20, rahatlama 40), en çok 4 parça, en az 1 alan adı. */
+    static final CertChunking.Tuning DEFAULT_RULE = new CertChunking.Tuning(true, 20, 1, 4, 0, 60_000L, 10_000L, 50, 250L, 5_000L);
+
+    @Test
+    @DisplayName("L-2 (inceleme sondası): başka işçi kuyruğu işlerken (canlı kirayla iki parça tutuyor) 35 sn'lik turda çekilen lider "
+            + "yarı payda kalır — bir parça / 20; o işçi ölünce (kiraları doldu) rahatlama = 40, iki parça (tam bütçe 120 değil)")
+    void leaderKeepsShareWhileAnotherWorkerWorks() throws Exception {
+        store.createRun(CertSweepSqlH2Test.spec("run-w", 120, 20));   // 6 parça, koordinatör "coord-00000001"
+        String follower = "pod-c-0000000c";
+        assertThat(store.claim(follower, LEASE, Long.MAX_VALUE)).isPresent();
+        assertThat(store.claim(follower, LEASE, Long.MAX_VALUE)).isPresent();
+        clock.advance(35_000);   // tur 35 sn'lik — tüm parçalar birlikte yazıldı, çalınan parça da 35 sn'lik
+        store.heartbeat("run-w");
+        FakeRunner r = runner();
+        r.block();
+        CertChunkWorker leader = worker(DEFAULT_RULE, store, r, () -> true, () -> true, "pod-l-00000001");
+        leader.startForTest(null);
+        assertThat(leader.claimRound()).as("takipçi çalışıyor — yarı pay (20) = bir parça").isEqualTo(1);
+        assertThat(leader.status().budget()).isEqualTo(20);
+        assertThat(leader.status().leaderYielding()).isTrue();
+        r.open();
+        await(() -> leader.heldCount() == 0, 5_000);
+
+        clock.advance(30_000);   // 65 sn: takipçinin kiraları doldu (pod öldü, yenilemiyor) — işi kimse almıyor
+        store.heartbeat("run-w");
+        r.block();
+        assertThat(leader.claimRound()).as("rahatlama 40 = iki parça (alt gruplu 20 görev = çekirdek); tam bütçe 120 dört parça "
+                + "alırdı").isEqualTo(2);
+        assertThat(leader.status().budget()).isEqualTo(40);
+        assertThat(leader.status().leaderYielding()).as("bekletme sürer").isTrue();
+        assertThat(count("run_id = 'run-w' AND claimed_by = 'pod-l-00000001' AND state = 'CLAIMED' AND attempts = 2"))
+                .as("ölen takipçinin kirası dolan iki parçası").isEqualTo(2);
+        r.open();
+    }
+
+    @Test
+    @DisplayName("L-2: takipçi 30 sn'dir parça almıyor → rahatlama (40 = iki parça); son sahiplenmesi 20 sn önceyse 35 sn'lik "
+            + "parçada bile yarı pay")
+    void leaderReliefOnlyAfterOthersSilentFor30s() throws Exception {
+        store.createRun(CertSweepSqlH2Test.spec("run-q", 160, 20));   // 8 parça
+        String follower = "pod-c-0000000c";
+        ClaimedChunk a = store.claim(follower, LEASE, Long.MAX_VALUE).orElseThrow();
+        clock.advance(5_000);
+        store.heartbeat("run-q");
+        assertThat(store.complete(CertSweepSqlH2Test.completion(a, follower))).isTrue();
+        clock.advance(10_000);   // 15 sn: takipçi son parçasını alıp bitirir, sonra susar (işçisi durdu)
+        store.heartbeat("run-q");
+        ClaimedChunk b = store.claim(follower, LEASE, Long.MAX_VALUE).orElseThrow();
+        clock.advance(5_000);
+        store.heartbeat("run-q");
+        assertThat(store.complete(CertSweepSqlH2Test.completion(b, follower))).isTrue();
+
+        clock.advance(15_000);   // 35 sn: parça 35 sn bekledi ama takipçi yalnız 20 sn'dir sessiz
+        store.heartbeat("run-q");
+        FakeRunner r = runner();
+        r.block();
+        CertChunkWorker leader = worker(DEFAULT_RULE, store, r, () -> true, () -> true, "pod-l-00000001");
+        leader.startForTest(null);
+        assertThat(leader.claimRound()).as("takipçi 20 sn önce parça aldı — yarı pay").isEqualTo(1);
+        assertThat(leader.status().budget()).isEqualTo(20);
+        r.open();
+        await(() -> leader.heldCount() == 0, 5_000);
+
+        clock.advance(15_000);   // 50 sn: takipçi 35 sn'dir sessiz
+        store.heartbeat("run-q");
+        r.block();
+        assertThat(leader.claimRound()).as("işi kimse almıyor — rahatlama 40 = iki parça").isEqualTo(2);
+        assertThat(leader.status().budget()).isEqualTo(40);
+        r.open();
+        await(() -> leader.heldCount() == 0, 5_000);
+        r.block();
+        assertThat(leader.claimRound()).as("lider tek başına: rahatlama sürer (kendi parçaları sayılmaz)").isEqualTo(2);
+        assertThat(leader.status().budget()).isEqualTo(40);
+        r.open();
+    }
+
     @Test
     @DisplayName("CR-H-1 b: ikinci görüş parçalarını çekilen lider beklemeden ve TAM bütçeyle alır; aynı turun 0 sn'lik ilk görüş parçası beklemede kalır")
     void leaderClaimsSecondOpinionsAtOnceWithFullBudget() {

@@ -218,13 +218,24 @@ public final class CertSweepSql {
      * Sahiplenme sonucu sütunları (iki yol aynı etiketlerle okur), {@code alias} takma adlı parça satırından. FX-WORKER
      * (2026-10-29): parçanın {@code created_ms}'i, {@code avoid_worker}'ı ve koşusunun {@code coordinator}'ı da döner — işçi
      * kendi koşusunu / ikinci görüşü / bekleme yaşını bilir (alt sorgu kilit almaz).
+     *
+     * <p><b>{@code others_active_ms} (FX2-WORKER L-2, 2026-10-29):</b> aynı koşuda BAŞKA sahiplerin son etkinliği — başka sahip
+     * canlı kirayla parça tutuyorsa ({@code CLAIMED} ve kira bitişi ≥ bu sahiplenmenin anı) o kiranın bitişi, yoksa başka sahibin
+     * son sahiplenme anı ({@code DONE} / {@code CANCELLED} satırlar {@code claimed_ms}'i korur; bırakılan satır sıfırlanır); hiç
+     * yoksa NULL. Sahiplenilen satırın kendisi ({@code id}) ve sahibin kendi satırları ({@code claimed_by}) sayılmaz; iki yolda
+     * da {@code alias} satırının YENİ değerleri okunur (PostgreSQL {@code RETURNING} güncellenmiş satırı, taşınabilir yol
+     * CAS'tan sonraki okumayı görür) — parametre yok, bağlama sırası değişmez. Koşu başına ≤ 500 + ikinci görüş satır,
+     * {@code ux_csc_run_chunk} önekiyle okunur; kilit almaz.
      */
     static String claimedCols(String alias) {
         String a = alias + ".";
         return a + "id AS id, " + a + "run_id AS run_id, " + a + "chunk_no AS chunk_no, " + a + "domains_json AS domains_json, "
                 + a + "attempts AS attempts, " + a + "claim_token AS claim_token, " + a + "claimed_ms AS claimed_ms, "
                 + a + "lease_until_ms AS lease_until_ms, " + a + "created_ms AS created_ms, " + a + "avoid_worker AS avoid_worker, "
-                + "(SELECT r.coordinator FROM " + RUNS + " r WHERE r.run_id = " + a + "run_id) AS coordinator";
+                + "(SELECT r.coordinator FROM " + RUNS + " r WHERE r.run_id = " + a + "run_id) AS coordinator, "
+                + "(SELECT MAX(CASE WHEN o.state = 'CLAIMED' AND o.lease_until_ms >= " + a + "claimed_ms THEN o.lease_until_ms "
+                + "ELSE o.claimed_ms END) FROM " + CHUNKS + " o WHERE o.run_id = " + a + "run_id AND o.id <> " + a + "id "
+                + "AND o.claimed_by IS NOT NULL AND o.claimed_by <> " + a + "claimed_by) AS others_active_ms";
     }
 
     /** Sahiplenme sonucu sütunları ({@code k} takma adıyla; taşınabilir yolun 3. adımı). */

@@ -180,7 +180,8 @@ public interface CertSweepStore {
      * {@value CertChunking#MAX_ATTEMPTS}, {@code created_ms < createdBeforeMs}, {@code avoid_worker} bu sahip değil, koşusu
      * RUNNING ve nabzı ≥ şimdi − {@value CertChunking#COORDINATOR_ALIVE_MS} ms; en küçük {@code id}. Rastgele belirteç
      * deponun işi; {@code attempts + 1}; {@code lease_until_ms = şimdi + leaseMs}. Dönen parça koşunun koordinatörünü,
-     * parçanın oluşturma anını ve kaçınılan işçiyi taşır.
+     * parçanın oluşturma anını, kaçınılan işçiyi ve aynı koşuda başka sahiplerin son etkinliğini
+     * ({@link ClaimedChunk#othersActiveMs()}, FX2-WORKER L-2) taşır.
      *
      * @param owner           bu pod'un örnek kimliği ({@code SchedulerService.instanceId()})
      * @param leaseMs         kira ({@link CertChunking.Tuning#leaseMs()})

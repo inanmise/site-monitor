@@ -13,6 +13,8 @@ import java.util.Map;
  * {@link #avoidWorker} — işçi aldığı parçanın kendi koşusuna mı ait olduğunu, ikinci görüş mü olduğunu ve sahiplenildiği anda
  * ne kadar beklediğini bilir (tarama liderinin bütçe kuralı). Eski 8 bileşenli kurucu korunur: koordinatör / kaçınılan işçi
  * bilinmez ({@code null}), {@code createdMs = claimedMs} (bekleme 0 — liderin "kimse almıyor" rahatlaması tetiklenmez).
+ * FX2-WORKER (L-2): {@link #othersActiveMs} — koşuda BAŞKA işçilerin son etkinliği; eski kurucular
+ * {@link #NO_OTHER_ACTIVITY} verir.
  *
  * @param id           parça satırı kimliği
  * @param runId        koşu kimliği (= klasik tur kimliği; işçi sonuç haritalarına {@code run_id} olarak koyar)
@@ -25,10 +27,20 @@ import java.util.Map;
  * @param coordinator  koşunun koordinatörü ({@code cert_sweep_runs.coordinator}; bilinmiyorsa null)
  * @param createdMs    parçanın yazıldığı an (deponun saati, ms); bekleme = {@code claimedMs − createdMs}
  * @param avoidWorker  ikinci görüş parçasının kaçındığı işçi (ilk görüş parçasında null)
+ * @param othersActiveMs aynı koşuda BAŞKA sahiplerin son etkinlik anı (deponun saati, ms; FX2-WORKER L-2, 2026-10-29): başka
+ *                     sahibin canlı kirasıyla tuttuğu parça varsa o kiranın bitişi (≥ sahiplenme anı), yoksa başka sahibin son
+ *                     sahiplenme anı; hiç yoksa {@link #NO_OTHER_ACTIVITY}. Tarama liderinin "işi kimse almıyor" rahatlaması
+ *                     bununla karar verir ({@link #othersQuietMsAtClaim()})
  */
 public record ClaimedChunk(long id, String runId, int chunkNo, List<CertChunkSpec.Entry> entries, int attempts,
                            String claimToken, long claimedMs, long leaseUntilMs, String coordinator, long createdMs,
-                           String avoidWorker) {
+                           String avoidWorker, long othersActiveMs) {
+
+    /**
+     * {@link #othersActiveMs}: koşuda başka sahibin parça aldığına / tuttuğuna dair iz yok. Eski kurucular da bunu verir (yalnız
+     * test sahteleri) — o zaman rahatlama yalnız bekleme yaşına bakar (FX-WORKER SW-M1 kuralı).
+     */
+    public static final long NO_OTHER_ACTIVITY = Long.MIN_VALUE;
 
     public ClaimedChunk {
         entries = entries == null ? List.of() : List.copyOf(entries);
@@ -38,6 +50,14 @@ public record ClaimedChunk(long id, String runId, int chunkNo, List<CertChunkSpe
     public ClaimedChunk(long id, String runId, int chunkNo, List<CertChunkSpec.Entry> entries, int attempts,
                         String claimToken, long claimedMs, long leaseUntilMs) {
         this(id, runId, chunkNo, entries, attempts, claimToken, claimedMs, leaseUntilMs, null, claimedMs, null);
+    }
+
+    /** FX-WORKER kurucusu (11 bileşen): başka sahiplerin etkinliği bilinmez ({@link #NO_OTHER_ACTIVITY}). */
+    public ClaimedChunk(long id, String runId, int chunkNo, List<CertChunkSpec.Entry> entries, int attempts,
+                        String claimToken, long claimedMs, long leaseUntilMs, String coordinator, long createdMs,
+                        String avoidWorker) {
+        this(id, runId, chunkNo, entries, attempts, claimToken, claimedMs, leaseUntilMs, coordinator, createdMs, avoidWorker,
+                NO_OTHER_ACTIVITY);
     }
 
     /** Parçadaki alan adı sayısı. */
@@ -58,6 +78,15 @@ public record ClaimedChunk(long id, String runId, int chunkNo, List<CertChunkSpe
     /** Sahiplenme anında ne kadar beklemişti (ms, ≥ 0). */
     public long pendingMsAtClaim() {
         return Math.max(0L, claimedMs - createdMs);
+    }
+
+    /**
+     * Sahiplenme anında koşuda başka işçilerin ne kadar süredir sessiz olduğu (ms; FX2-WORKER L-2): başka sahip canlı kirayla
+     * parça tutuyorsa ≤ 0 (çalışıyor), aksi hâlde son sahiplenmesinden beri geçen süre; hiç iz yoksa {@link Long#MAX_VALUE}.
+     */
+    public long othersQuietMsAtClaim() {
+        if (othersActiveMs == NO_OTHER_ACTIVITY) return Long.MAX_VALUE;
+        return claimedMs - othersActiveMs;
     }
 
     /** Belirteç ve alan adları yazılmaz (günlük satırları kısa kalsın). */

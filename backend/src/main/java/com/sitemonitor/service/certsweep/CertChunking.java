@@ -62,7 +62,7 @@ public class CertChunking {
     public static final String KEY_MIN_DOMAINS = "site.monitor.checks.cert-chunks.min-domains";
     /** Aynı anda en çok kaç parça (= parça koşucu iş parçacığı) (env {@code CERT_CHUNK_MAX_CHUNKS}). */
     public static final String KEY_MAX_CHUNKS = "site.monitor.checks.cert-chunks.max-chunks";
-    /** Uçuştaki alan adı bütçesi (env {@code CERT_CHUNK_MAX_INFLIGHT_DOMAINS}); 0 = 2 × görev havuzunun GÜNCEL çekirdek sayısı. */
+    /** Uçuştaki alan adı bütçesi (env {@code CERT_CHUNK_MAX_INFLIGHT_DOMAINS}); 0 = 6 × görev havuzunun GÜNCEL çekirdek sayısı. */
     public static final String KEY_MAX_INFLIGHT_DOMAINS = "site.monitor.checks.cert-chunks.max-inflight-domains";
     /** Parça kirası (ms, env {@code CERT_CHUNK_LEASE_MS}); {@link Tuning#renewEveryMs()}'de bir yenilenir. */
     public static final String KEY_LEASE_MS = "site.monitor.checks.cert-chunks.lease-ms";
@@ -106,6 +106,15 @@ public class CertChunking {
     static final long DEFAULTS_STEAL_AFTER_MS = 10_000L;
 
     /**
+     * Tarama liderinin BAŞKA pod'un koordine ettiği turun parçasını ölçerken kullandığı alt grup boyu (inceleme SW-L3;
+     * {@code SchedulerCertChunks}) = {@code max(1, çekirdek / 2)}; çekirdek okunamadıysa ({@code ≤ 0}) 0 = bölme. TEK kaynak:
+     * rahatlama bütçesi ({@link Tuning#leaderReliefBudget}) de bununla hesaplanır (FX2-WORKER L-2 / L-3).
+     */
+    public static int leaderSubBatch(int executorCoreSize) {
+        return executorCoreSize <= 0 ? 0 : Math.max(1, executorCoreSize / 2);
+    }
+
+    /**
      * Açılışta okunan pod ayarları — sınırlanmış (geçersiz / aralık dışı değer sessizce varsayılana ya da sınıra çekilir,
      * günlük yazılmaz: L-1, varsayılan yapılandırmada fark yok).
      *
@@ -113,7 +122,7 @@ public class CertChunking {
      * @param chunkSize          parça başına alan adı (5–200; koordinatörün ayarı)
      * @param minDomains         bundan az alan adlı tur klasik koşar (1–100 000)
      * @param maxChunks          aynı anda en çok uçuştaki parça (1–16)
-     * @param maxInflightDomains uçuştaki alan adı bütçesi (0 = 2 × görev havuzu çekirdeği; aksi 1–2 000)
+     * @param maxInflightDomains uçuştaki alan adı bütçesi (0 = 6 × görev havuzu çekirdeği; aksi 1–2 000)
      * @param leaseMs            parça kirası (15 000–600 000 ms)
      * @param stealAfterMs       lider bu kadar bekleyen parçayı alır (0–600 000 ms; 0 = hemen)
      * @param leaderSharePct     başka canlı pod varken liderin bütçe payı (0–100 %)
@@ -181,13 +190,41 @@ public class CertChunking {
         }
 
         /**
-         * FX-WORKER (2026-10-29, SW-M1): yarı bütçeyle çekilen tarama liderinin son aldığı (başka koordinatörün ilk görüş)
-         * parçası sahiplenildiğinde en az bu kadar (ms) beklemişse "işi kimse almıyor" sayılır ve lider TAM bütçeye geçer =
-         * {@value CertChunking#LEADER_FULL_BUDGET_FACTOR} × max({@link #stealAfterMs}, varsayılan 10 sn) → 30 sn. Bekletme
-         * (yalnız ≥ {@link #stealAfterMs} eski parçalar) sürer; pay %0 ise hiç alınmaz (açık vazgeçme).
+         * FX-WORKER (2026-10-29, SW-M1) + FX2-WORKER (L-2): yarı bütçeyle çekilen tarama liderinin son aldığı (başka
+         * koordinatörün ilk görüş) parçası sahiplenildiğinde en az bu kadar (ms) beklemişse VE o koşuda başka hiçbir işçi bu
+         * kadar süredir parça almamışsa / canlı kirayla parça tutmuyorsa "işi kimse almıyor" sayılır ve lider
+         * {@link #leaderReliefBudget}'e geçer = {@value CertChunking#LEADER_FULL_BUDGET_FACTOR} × max({@link #stealAfterMs},
+         * varsayılan 10 sn) → 30 sn. Yalnız parça yaşı yetmez: bir turun bütün parçaları birlikte yazılır, sahiplenme sırayla
+         * olur — "parça 30 sn beklemiş" çoğu turda yalnız "tur 30 sn'den eski" demektir. Bekletme (yalnız ≥
+         * {@link #stealAfterMs} eski parçalar) sürer; pay %0 ise hiç alınmaz (açık vazgeçme).
          */
         public long leaderFullBudgetAgeMs() {
             return LEADER_FULL_BUDGET_FACTOR * Math.max(stealAfterMs, DEFAULTS_STEAL_AFTER_MS);
+        }
+
+        /**
+         * FX2-WORKER (2026-10-29, L-2): "işi kimse almıyor" rahatlamasının bütçesi (alan adı) — çekilen lider bu duruma
+         * ({@link #leaderFullBudgetAgeMs()}) geçince başka koordinatörün ilk görüş parçalarını bu bütçeyle alır. Kullanıcı kararı
+         * "lider kendi havuzunu izleme taramaları için korur": rahatlama parçaları da ALT GRUPLARLA ölçülür
+         * ({@link CertChunking#leaderSubBatch}) ve rahatlama, alt gruplanmış eşzamanlı kontroller {@code certCheckExecutor}'ın
+         * ÇEKİRDEĞİNİ aşmayacak kadar parça alır: parça başına eşzamanlı kontrol = min(parça boyu, alt grup), parça sayısı =
+         * max(1, çekirdek / bu), bütçe = parça sayısı × parça boyu; en az {@link #leaderBudget}, en çok {@link #budget}.
+         * Çekirdek 20, parça 20 → alt grup 10 → 2 parça = 40 alan adı = en çok 20 eşzamanlı kontrol (havuz kuyruğuna sertifika
+         * kontrolü birikmez); tam varsayılan bütçe (120 = 6 parça × 10 = 60 görev) 40 kontrolü havuz kuyruğunda bekletirdi.
+         * Ölü / kapalı bir takipçinin işi böylece yarı payın iki katı hızla yine biter. Varsayım: parça boyu her pod'da aynı
+         * (tek Helm değeri); koordinatörün parçası daha büyükse daha az, daha küçükse en çok {@link #maxChunks} parça alınır.
+         * Pay %0 ise kullanılmaz (lider hiç almaz).
+         *
+         * @param executorCoreSize havuzun şu anki çekirdek sayısı; ≤ 0 → 1 sayılır
+         */
+        public int leaderReliefBudget(int executorCoreSize) {
+            int full = budget(executorCoreSize);
+            int share = leaderBudget(executorCoreSize);
+            int core = Math.max(1, executorCoreSize);
+            int perChunk = Math.max(1, Math.min(chunkSize, leaderSubBatch(core)));
+            long chunks = Math.max(1, core / perChunk);
+            long cap = chunks * chunkSize;
+            return (int) Math.min(full, Math.max(share, cap));
         }
 
         /**

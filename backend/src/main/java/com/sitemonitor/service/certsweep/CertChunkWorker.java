@@ -56,8 +56,9 @@ import java.util.function.Supplier;
  * parçalarını yalnız {@code steal-after-ms}'ten (10 sn) eskiyse ve bütçenin {@code leader-share-pct} payıyla (varsayılanda en çok
  * max(parça, çekirdek) = 20) alır — izleme
  * taramaları ve erişilebilirlik turu için havuzunu korur; KENDİ koşusunun ve ikinci görüş parçalarını beklemeden tam bütçeyle
- * alır, son aldığı parça ≥ 30 sn beklemişse (işi kimse almıyor) tam bütçeye geçer ({@link #claimRound}, FX-WORKER SW-M1 /
- * CR-L1 / CR-H-1 b).
+ * alır; son aldığı parça ≥ 30 sn beklemiş VE o koşuda başka işçi 30 sn'dir parça almamış / tutmuyorsa (işi kimse almıyor)
+ * rahatlama bütçesine geçer — alt gruplanmış görevleri çekirdeği aşmaz, varsayılanda 40 ({@link #claimRound}, FX-WORKER SW-M1 /
+ * CR-L1 / CR-H-1 b, FX2-WORKER L-2).
  *
  * <p><b>Yoklama:</b> son sahiplenme satır döndürdüyse {@code poll-ms} (250 ms), boş döndüyse {@code idle-poll-ms} (5 sn) sonra
  * yeniden; bir parça bitince ya da koordinatör kendi pod'unun işçisini dürtünce ({@link #poke()}) beklemeden. Kiralar
@@ -163,9 +164,16 @@ public class CertChunkWorker {
     private volatile Long lastClaimAtMs;
     /**
      * Tarama liderinin son aldığı BAŞKA koordinatörün ilk görüş parçasının sahiplenme anındaki bekleme süresi (ms; -1 = yok /
-     * sıfırlandı). {@link CertChunking.Tuning#leaderFullBudgetAgeMs()}'ten uzunsa işi kimse almıyor → lider tam bütçe (SW-M1).
+     * sıfırlandı). {@link CertChunking.Tuning#leaderFullBudgetAgeMs()}'ten uzunsa VE {@link #lastOthersQuietMs} de öyleyse işi
+     * kimse almıyor → lider rahatlama bütçesi (SW-M1, FX2-WORKER L-2).
      */
     private volatile long lastOtherPendingMs = -1L;
+    /**
+     * Aynı parçanın sahiplenildiği anda o koşuda BAŞKA işçilerin sessizlik süresi (ms; {@link ClaimedChunk#othersQuietMsAtClaim()};
+     * ≤ 0 = başkası canlı kirayla parça tutuyor; -1 = yok / sıfırlandı) — FX2-WORKER L-2: rahatlama parça YAŞINA değil başka
+     * işçilerin hareketsizliğine dayanır.
+     */
+    private volatile long lastOthersQuietMs = -1L;
     /**
      * Anahtar kapandıktan sonraki sahiplenme süresinin çapası (ns): anahtarın son AÇIK görüldüğü, son DOLU sahiplenmenin ve son
      * dürtmenin en yenisi ({@code Long.MIN_VALUE} = yok). {@link CertChunking.Tuning#offGraceMs()} dolana dek kapalıyken de
@@ -341,8 +349,10 @@ public class CertChunkWorker {
      * BAŞKA koordinatörün ilk görüş parçalarını yalnız {@code steal-after-ms}'ten eskiyse ve yarı bütçeyle alır; KENDİ koşusunun
      * parçalarını ve ikinci görüş parçalarını beklemeden, TAM bütçeyle alır (depo kapısı onları muaf tutar; yarı bütçe doluyken
      * {@link Long#MIN_VALUE} eşiğiyle yalnız onlar denenir). Son aldığı başka-koordinatör parçası sahiplenildiğinde
-     * {@link CertChunking.Tuning#leaderFullBudgetAgeMs()} (30 sn) beklemişse işi kimse almıyor demektir — lider o parçalar için
-     * de tam bütçeye geçer (bekletme sürer); bekletmeli sahiplenme boş dönünce bu sıfırlanır. Pay %0 = lider hiç almaz.
+     * {@link CertChunking.Tuning#leaderFullBudgetAgeMs()} (30 sn) beklemişse VE o koşuda başka hiçbir işçi o kadar süredir parça
+     * almamış / canlı kirayla tutmuyorsa (FX2-WORKER L-2 — yaş tek başına "tur 30 sn'den eski" demekti) işi kimse almıyor demektir
+     * — lider o parçalar için {@link CertChunking.Tuning#leaderReliefBudget rahatlama bütçesine} geçer (alt gruplanmış görevleri
+     * çekirdeği aşmaz; bekletme sürer); bekletmeli sahiplenme boş dönünce bu sıfırlanır. Pay %0 = lider hiç almaz.
      *
      * @return sahiplenilen parça sayısı; {@code -1} = denenmedi (bütçe / parça sınırı dolu ya da lider payı 0)
      */
@@ -353,12 +363,13 @@ public class CertChunkWorker {
         boolean yielding = leaderYielding();
         int full = tuning.budget(core);
         int share = yielding ? tuning.leaderBudget(core) : full;
+        int relief = yielding ? tuning.leaderReliefBudget(core) : full;
         lastLeaderYielding = yielding;
         if (full <= 0 || share <= 0) {
             lastBudget = Math.max(0, share);
             return -1;
         }
-        int otherBudget = otherBudget(yielding, full, share);
+        int otherBudget = otherBudget(yielding, full, share, relief);
         lastBudget = reportedBudget(yielding, full, otherBudget);
         if (!canTakeMore(full)) return -1;
         int got = 0;
@@ -380,29 +391,47 @@ public class CertChunkWorker {
             if (c.isEmpty()) {
                 lastClaimEmpty = true;
                 // bekletmeli deneme boş: bekleyen başka-koordinatör parçası kalmadı → "kimse almıyor" kanıtı sıfırlanır
-                if (yielding && othersAllowed) lastOtherPendingMs = -1L;
+                if (yielding && othersAllowed) {
+                    lastOtherPendingMs = -1L;
+                    lastOthersQuietMs = -1L;
+                }
                 return got;
             }
             ClaimedChunk chunk = c.get();
             lastClaimEmpty = false;
             offGraceAnchorNano = nanoClock.getAsLong();
-            if (yielding && isOtherFirstOpinion(chunk)) lastOtherPendingMs = chunk.pendingMsAtClaim();
+            if (yielding && isOtherFirstOpinion(chunk)) {
+                lastOtherPendingMs = chunk.pendingMsAtClaim();
+                lastOthersQuietMs = chunk.othersQuietMsAtClaim();
+            }
             got++;
             submit(chunk);
-            otherBudget = otherBudget(yielding, full, share);
+            otherBudget = otherBudget(yielding, full, share, relief);
             lastBudget = reportedBudget(yielding, full, otherBudget);
         }
         return got;
     }
 
     /**
-     * Başka koordinatörün ilk görüş parçaları için bütçe: lider değilse (ya da tek pod) tam; çekilen lider yarı payla, son
-     * aldığı böyle parça {@link CertChunking.Tuning#leaderFullBudgetAgeMs()} beklemişse tam.
+     * Başka koordinatörün ilk görüş parçaları için bütçe: lider değilse (ya da tek pod) tam; çekilen lider yarı payla, işi kimse
+     * almıyorsa ({@link #nobodyElseWorks()}) rahatlama bütçesiyle (FX2-WORKER L-2: çekirdeği aşmayan alt gruplanmış görev).
      */
-    private int otherBudget(boolean yielding, int full, int share) {
+    private int otherBudget(boolean yielding, int full, int share, int relief) {
         if (!yielding) return full;
+        return nobodyElseWorks() ? relief : share;
+    }
+
+    /**
+     * "İşi kimse almıyor" kanıtı (bellek; FX2-WORKER L-2): son alınan başka-koordinatör parçası sahiplenildiğinde en az
+     * {@link CertChunking.Tuning#leaderFullBudgetAgeMs()} beklemişti VE o koşuda başka işçiler en az o kadar süredir sessizdi
+     * (parça almadı, canlı kirayla parça tutmuyor). Yalnız yaş yetmez: bir turun parçaları birlikte yazılır — takipçiler kuyruğu
+     * işlerken de her çalınan parça tur yaşını taşır.
+     */
+    private boolean nobodyElseWorks() {
+        long age = tuning.leaderFullBudgetAgeMs();
         long pending = lastOtherPendingMs;
-        return pending >= 0 && pending >= tuning.leaderFullBudgetAgeMs() ? full : share;
+        long quiet = lastOthersQuietMs;
+        return pending >= 0 && pending >= age && quiet >= age;
     }
 
     /**

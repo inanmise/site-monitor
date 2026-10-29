@@ -3348,6 +3348,18 @@ public class SchedulerService {
     /** {@link #isCoordinatingCertRun()} işareti — yalnız {@code certRunCoordinator.gather} çağrısı süresince dolu. */
     private final ThreadLocal<Boolean> certRunCoordinating = new ThreadLocal<>();
 
+    /**
+     * Bu POD verilen kimlikteki sertifika turunu ŞU AN koşturuyor mu (bellek: tur sürüyor ∧ güncel tur kimliği bu) — FX2-WORKER
+     * L-3 (2026-10-29): parça işçisi (başka iş parçacığı) bu pod'un koordine ettiği koşunun parçasını ölçerken
+     * {@code SchedulerCertChunks} onu alt gruplara BÖLMEZ — koordinatör iş parçacığının muafiyetiyle aynı gerekçe (klasik tur da
+     * lider pod'da bütün havuzu kullanır; bölmek turu ve {@code cert-check} kilidini ~3 kat uzatırdı). Parçalı koşu kimliği klasik
+     * tur kimliğidir; işçi yalnız RUNNING koşuların parçalarını alır. {@code public}: CGLIB vekili (bkz.
+     * {@link #gatherCertResults}).
+     */
+    public boolean coordinatesCertRun(String runId) {
+        return runId != null && !runId.isEmpty() && running.get() && runId.equals(currentRunId.get());
+    }
+
     /** Koordinatörün toplaması — iş parçacığını işaretleyip (SW-L3) çağırır; işaret her durumda kaldırılır. */
     private com.sitemonitor.service.certsweep.CertRunCoordinator.Gathered gatherChunked(List<Map<String, Object>> domains,
             String runId, String kind, boolean evictCaches, LockTicket certLock) {

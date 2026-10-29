@@ -587,9 +587,12 @@ public class JdbcCertSweepStore implements CertSweepStore {
         long claimedMs = rs.getLong("claimed_ms");
         long createdMs = rs.getLong("created_ms");
         if (rs.wasNull()) createdMs = claimedMs;
+        long othersActive = rs.getLong("others_active_ms");   // FX2-WORKER L-2: başka sahiplerin son etkinliği
+        if (rs.wasNull()) othersActive = ClaimedChunk.NO_OTHER_ACTIVITY;
         return new ClaimedChunk(rs.getLong("id"), rs.getString("run_id"), rs.getInt("chunk_no"),
                 decodeDomains(rs.getString("domains_json")), rs.getInt("attempts"), rs.getString("claim_token"),
-                claimedMs, rs.getLong("lease_until_ms"), rs.getString("coordinator"), createdMs, rs.getString("avoid_worker"));
+                claimedMs, rs.getLong("lease_until_ms"), rs.getString("coordinator"), createdMs, rs.getString("avoid_worker"),
+                othersActive);
     }
 
     private static Long longOrNull(ResultSet rs, String col) throws SQLException {

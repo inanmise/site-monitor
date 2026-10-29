@@ -190,6 +190,21 @@ class CertSweepPostgresTest {
     }
 
     @Test
+    @DisplayName("PostgreSQL (FX2-WORKER L-2): sahiplenme başka sahiplerin son etkinliğini döner — RETURNING'deki alt sorgu "
+            + "güncellenmiş satırı görür; tek ifade (CTE … RETURNING) ve taşınabilir CAS yolunda H2 ile aynı beklenti")
+    void claimReturnsOthersActivityOnPostgres() {
+        for (Boolean dialect : new Boolean[] {null, Boolean.FALSE}) {
+            JdbcCertSweepStore s = dialect == null ? store() : new JdbcCertSweepStore(jdbc(), clock, dialect);
+            s.markTablesReady(true);
+            String tag = dialect == null ? "pg" : "portable";
+            String run = id("others-" + tag);
+            CertSweepSqlH2Test.claimOthersActivity(s, clock, run, PREFIX + tag + "-");
+            // kalan parçalar sonraki yolun adayı olmasın (sahiplenme bütün koşulara bakar)
+            assertThat(s.finish(run, CertSweepStore.RUN_ABANDONED, CertSweepStore.OUTCOME_SHUTDOWN, true)).isTrue();
+        }
+    }
+
+    @Test
     @DisplayName("PostgreSQL: tamamlama CAS'ı + EXISTS (koşu RUNNING), bırakma, iptal, karar / kapanış, öksüz kapatma, budama, durum")
     void lifecycleOnPostgres() {
         JdbcCertSweepStore s = store();

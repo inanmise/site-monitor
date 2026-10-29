@@ -348,6 +348,55 @@ class CertSweepSqlH2Test {
     }
 
     @Test
+    @DisplayName("FX2-WORKER L-2: sahiplenme aynı koşuda BAŞKA sahiplerin son etkinliğini döner — canlı kira en geç bitişiyle, bitmiş "
+            + "parça son sahiplenme anıyla; sahibin kendi satırları, bırakılan satır ve kirası dolmuş tutma canlı sayılmaz; iz yoksa yok")
+    void claimReturnsOthersActivity() {
+        claimOthersActivity(store, clock, "run-o", "");
+    }
+
+    /**
+     * Ortak senaryo (H2 ve PostgreSQL'in iki yolu aynı beklentiyle — {@code CertSweepPostgresTest}): 6 parça. {@code c} deponun
+     * saatidir (başlangıç anı ondan okunur); sahip adları {@code prefix} önekli.
+     */
+    static void claimOthersActivity(JdbcCertSweepStore s, CertSweepTestClock c, String run, String prefix) {
+        String w1 = prefix + "w1";
+        String w2 = prefix + "w2";
+        String w3 = prefix + "w3";
+        long t0 = c.nowMs();
+        s.createRun(spec(run, 120, 20));
+        ClaimedChunk c0 = s.claim(w1, LEASE, Long.MAX_VALUE).orElseThrow();
+        assertThat(c0.othersActiveMs()).as("başka sahip yok").isEqualTo(ClaimedChunk.NO_OTHER_ACTIVITY);
+        assertThat(c0.othersQuietMsAtClaim()).isEqualTo(Long.MAX_VALUE);
+        c.advance(5_000);
+        s.heartbeat(run);
+        ClaimedChunk c1 = s.claim(w1, LEASE, Long.MAX_VALUE).orElseThrow();
+        assertThat(c1.othersActiveMs()).as("sahibin kendi parçaları sayılmaz").isEqualTo(ClaimedChunk.NO_OTHER_ACTIVITY);
+        ClaimedChunk c2 = s.claim(w2, LEASE, Long.MAX_VALUE).orElseThrow();
+        assertThat(c2.othersActiveMs()).as("w1 canlı kirayla tutuyor: en geç biten kira").isEqualTo(t0 + 5_000 + LEASE);
+        assertThat(c2.othersQuietMsAtClaim()).as("başkası çalışıyor").isEqualTo(-LEASE);
+        assertThat(s.complete(completion(c0, w1))).isTrue();
+        assertThat(s.complete(completion(c1, w1))).isTrue();
+        c.advance(10_000);
+        s.heartbeat(run);
+        ClaimedChunk c3 = s.claim(w2, LEASE, Long.MAX_VALUE).orElseThrow();
+        assertThat(c3.othersActiveMs()).as("w1 bitirdi: son sahiplenme anı (DONE satır claimed_ms'i korur)").isEqualTo(t0 + 5_000);
+        assertThat(c3.othersQuietMsAtClaim()).isEqualTo(10_000);
+        assertThat(s.release(w2, List.of(c2.id(), c3.id()))).isEqualTo(2);
+        ClaimedChunk again = s.claim(w1, LEASE, Long.MAX_VALUE).orElseThrow();
+        assertThat(again.id()).isEqualTo(c2.id());
+        assertThat(again.othersActiveMs()).as("bırakılan satır (claimed_by NULL) sayılmaz").isEqualTo(ClaimedChunk.NO_OTHER_ACTIVITY);
+        ClaimedChunk held = s.claim(w1, LEASE, Long.MAX_VALUE).orElseThrow();   // w1 iki parça tutar (t0 + 15 sn)
+        assertThat(held.id()).isEqualTo(c3.id());
+        c.advance(LEASE + 1_000);   // w1 öldü: kiraları doldu
+        s.heartbeat(run);
+        ClaimedChunk taken = s.claim(w3, LEASE, Long.MAX_VALUE).orElseThrow();
+        assertThat(taken.id()).as("en küçük aday: w1'in kirası dolan parçası").isEqualTo(again.id());
+        assertThat(taken.othersActiveMs()).as("w1'in öbür tutması da doldu: canlı değil — son sahiplenme anı")
+                .isEqualTo(t0 + 15_000);
+        assertThat(taken.othersQuietMsAtClaim()).isEqualTo(LEASE + 1_000);
+    }
+
+    @Test
     @DisplayName("Sahiplenme: kira dolunca başka işçi yeniden alır (deneme 2); ikinci kayıptan sonra parça KAYIP — işçilere verilmez")
     void leaseExpiryReclaimThenLost() {
         store.createRun(spec("run-l", 20, 20));

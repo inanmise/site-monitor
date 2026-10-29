@@ -177,6 +177,45 @@ class CertChunkingTest {
     }
 
     @Test
+    @DisplayName("FX2-WORKER L-2: rahatlama bütçesi — çekirdek 20 → 40 (iki parça, alt grup 10 → 20 eşzamanlı kontrol); tam bütçe "
+            + "120 değil; en az lider payı, en çok bütçe; alt grup kuralı tek kaynak")
+    void leaderReliefBudget() {
+        CertChunking.Tuning d = CertChunking.Tuning.DEFAULTS;
+        assertThat(CertChunking.leaderSubBatch(20)).isEqualTo(10);
+        assertThat(CertChunking.leaderSubBatch(7)).isEqualTo(3);
+        assertThat(CertChunking.leaderSubBatch(1)).isEqualTo(1);
+        assertThat(CertChunking.leaderSubBatch(0)).as("çekirdek okunamadı → bölme yok").isZero();
+        assertThat(CertChunking.leaderSubBatch(-3)).isZero();
+        assertThat(d.leaderReliefBudget(20)).as("2 parça × 10'luk alt grup = 20 görev = çekirdek").isEqualTo(40);
+        assertThat(d.leaderReliefBudget(20)).isLessThan(d.budget(20));
+        assertThat(d.leaderReliefBudget(50)).as("parça (20) < alt grup (25): 50 / 20 = 2 parça (40) < lider payı 50 → pay")
+                .isEqualTo(50).isEqualTo(d.leaderBudget(50));
+        assertThat(d.leaderReliefBudget(100)).as("100 / 20 = 5 parça").isEqualTo(100);
+        assertThat(d.leaderReliefBudget(0)).as("çekirdek okunamadı: en çok bütçe (6)").isEqualTo(6);
+        CertChunking.Tuning explicit40 = new CertChunking.Tuning(true, 20, 40, 4, 40, 60_000, 10_000, 50, 250, 5_000);
+        assertThat(explicit40.leaderReliefBudget(20)).as("açık 40: eski kural testlerindeki tam bütçe ile aynı").isEqualTo(40);
+        CertChunking.Tuning explicitBig = new CertChunking.Tuning(true, 20, 40, 8, 2_000, 60_000, 10_000, 50, 250, 5_000);
+        assertThat(explicitBig.leaderReliefBudget(20)).as("açık büyük bütçe: payın altına düşmez, tam bütçeye çıkmaz")
+                .isEqualTo(explicitBig.leaderBudget(20)).isLessThan(explicitBig.budget(20));
+    }
+
+    @Test
+    @DisplayName("FX2-WORKER L-2: varsayılan ayarda rahatlamayla tutulan parçaların alt gruplanmış eşzamanlı kontrolleri hiçbir "
+            + "çekirdek boyunda (1–256) havuzun çekirdeğini aşmaz; rahatlama lider payından küçük değildir")
+    void leaderReliefNeverQueuesBeyondCore() {
+        CertChunking.Tuning d = CertChunking.Tuning.DEFAULTS;
+        for (int core = 1; core <= 256; core++) {
+            int relief = d.leaderReliefBudget(core);
+            assertThat(relief).as("çekirdek %d", core).isGreaterThanOrEqualTo(d.leaderBudget(core)).isLessThanOrEqualTo(d.budget(core));
+            // işçinin kuralı (canTakeMore): uçuşta parça yokken bir parça; sonra uçuştaki + parça ≤ bütçe, en çok max-chunks
+            int held = 1;
+            while (held < d.maxChunks() && (held + 1) * d.chunkSize() <= relief) held++;
+            int tasks = held * Math.min(d.chunkSize(), CertChunking.leaderSubBatch(core));
+            assertThat(tasks).as("çekirdek %d: %d parça × alt grup → eşzamanlı kontrol", core, held).isLessThanOrEqualTo(core);
+        }
+    }
+
+    @Test
     @DisplayName("parça boyutu: tur en çok 500 parça — 1 200 alan adı 60 × 20; 20 000 alan adı 500 × 40; 10 001 → 21'lik 477 parça")
     void effectiveChunkSize() {
         CertChunking.Tuning d = CertChunking.Tuning.DEFAULTS;

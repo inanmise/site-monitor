@@ -107,6 +107,78 @@ class SchedulerCertChunksTest {
     }
 
     @Test
+    @DisplayName("FX2-WORKER L-3: lider, işçi iş parçacığı, BU pod'un koşan turunun parçası → tek klasik toplama (alt grup yok); "
+            + "başka pod'un turunun parçası (rahatlamayla alınan dahil) yine 10 + 10")
+    void ownRunningRunChunkIsOneGather() {
+        SchedulerService s = scheduler(true, false, 20);
+        when(s.coordinatesCertRun("run-own")).thenReturn(true);
+        SchedulerCertChunks r = new SchedulerCertChunks(s);
+        List<Map<String, Object>> in = rows(20);
+        List<Map<String, Object>> out = r.checkDomains(in, "run-own");
+        assertThat(batches).as("kendi turu: klasik turun lider pod'daki davranışı — bütün çekirdek").containsExactly(20);
+        assertThat(domains(out)).isEqualTo(domains(in));
+        batches.clear();
+        r.checkDomains(rows(20), "run-other");
+        assertThat(batches).as("başka pod'un turu bölünür").containsExactly(10, 10);
+        assertThat(SchedulerCertChunks.leaderSubBatch(s, "run-own")).isZero();
+        assertThat(SchedulerCertChunks.leaderSubBatch(s, "run-other")).isEqualTo(10);
+        assertThat(SchedulerCertChunks.leaderSubBatch(s, null)).as("kimliksiz: eski kural").isEqualTo(10);
+    }
+
+    @Test
+    @DisplayName("FX2-WORKER L-3 (gerçek zamanlayıcı belleği): lider pod turu koordine ederken BAŞKA iş parçacığındaki işçisi kendi "
+            + "turunun parçalarını parça başına TEK toplamayla ölçer (çekirdek 4 → alt grup 2 olurdu); başka turun kimliği ve tur "
+            + "bittikten sonra aynı kimlik bölünür")
+    void ownRunMemoryOnRealScheduler() throws Exception {
+        CertSweepGoldenHarness h = new CertSweepGoldenHarness(CertSweepGoldenHarness.scenario("full"));   // 12 alan adı
+        org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor core4 =
+                new org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor();   // yalnız çekirdek sayısı okunur
+        core4.setCorePoolSize(4);
+        org.springframework.test.util.ReflectionTestUtils.setField(h.scheduler(), "certCheckExecutor", core4);
+        // Sığ kopya: running / currentRunId / denetleyici aynı nesneler — casus, gerçek zamanlayıcının belleğini okur
+        SchedulerService spy = org.mockito.Mockito.spy(h.scheduler());
+        doAnswer(i -> {
+            batches.add(((List<?>) i.getArgument(0)).size());
+            return i.callRealMethod();
+        }).when(spy).gatherCertResults(anyList(), anyString());
+        java.util.concurrent.atomic.AtomicLong clock = new java.util.concurrent.atomic.AtomicLong(3_000_000L);
+        com.sitemonitor.service.certsweep.CertSweepFakes.Store store = new com.sitemonitor.service.certsweep.CertSweepFakes.Store(clock::get);
+        com.sitemonitor.service.certsweep.CertSweepFakes.Worker worker =
+                new com.sitemonitor.service.certsweep.CertSweepFakes.Worker(store, new SchedulerCertChunks(spy), "pod-a-worker");
+        List<Integer> elsewhere = Collections.synchronizedList(new ArrayList<>());
+        java.util.concurrent.ExecutorService workerThread = java.util.concurrent.Executors.newSingleThreadExecutor();
+        try {
+            com.sitemonitor.service.certsweep.CertRunCoordinator c = com.sitemonitor.service.certsweep.CertSweepFakes.coordinator(
+                    com.sitemonitor.service.certsweep.CertSweepFakes.chunking(true,
+                            com.sitemonitor.service.certsweep.CertSweepFakes.tuning()),   // parça 5
+                    store, new SchedulerCertChunks(h.scheduler()), () -> true, d -> Map.of(), "pod-a-coord", clock::get, ms -> {
+                        clock.addAndGet(ms);
+                        try {
+                            workerThread.submit(() -> {   // işçi: koordinatörden AYRI iş parçacığı (işaretsiz)
+                                elsewhere.add(SchedulerCertChunks.leaderSubBatch(spy, "run-elsewhere"));
+                                worker.drain();
+                            }).get(30, java.util.concurrent.TimeUnit.SECONDS);
+                        } catch (Exception e) {
+                            throw new IllegalStateException(e);
+                        }
+                    });
+            org.springframework.test.util.ReflectionTestUtils.setField(h.scheduler(), "certRunCoordinator", c);
+            h.run();
+        } finally {
+            workerThread.shutdownNow();
+        }
+        String runId = String.valueOf(((java.util.concurrent.atomic.AtomicReference<?>) org.springframework.test.util
+                .ReflectionTestUtils.getField(h.scheduler(), "lastRunId")).get());
+        assertThat(store.run(runId)).as("parçalı koşuldu").isNotNull();
+        assertThat(worker.completed).as("işçi parçaları ölçtü").isPositive();
+        assertThat(batches).as("her parça TEK toplama: 5 / 5 / 2 — bölünseydi 2 + 2 + 1 …").hasSize(worker.completed)
+                .allMatch(n -> n <= 5).anyMatch(n -> n > 2);
+        assertThat(elsewhere).as("aynı anda başka turun parçası bölünürdü (lider, çekirdek 4)").isNotEmpty().allMatch(n -> n == 2);
+        assertThat(SchedulerCertChunks.leaderSubBatch(spy, runId)).as("tur bitti — kendi turu sayılmaz").isEqualTo(2);
+        assertThat(spy.coordinatesCertRun(runId)).isFalse();
+    }
+
+    @Test
     @DisplayName("kapanış: alt grup kısa dönerse ya da alt gruplar arasında kapanış başlarsa kalanlar gönderilmez, liste KISA döner")
     void closingStopsBetweenSubBatches() {
         SchedulerService s = scheduler(true, false, 20);
