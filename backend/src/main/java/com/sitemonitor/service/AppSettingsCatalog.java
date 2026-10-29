@@ -158,6 +158,11 @@ public final class AppSettingsCatalog {
         // Anahtarlar: DistributedChecks.KEY_ENABLED / KEY_TYPES; tür listesi save'de doğrulanır (CheckJobTypes.validateSetting).
         new Setting("site.monitor.checks.distributed.enabled",   "scheduler",  Type.BOOL),
         new Setting("site.monitor.checks.distributed.types",     "scheduler",  Type.CSV),
+        // Çok pod Sürüm 3-4 (2026-10-29, kullanıcı kararı V-2): parçalı sertifika taraması — cert-check kilidini kazanan pod
+        // turun koordinatörü olur, alan adlarını 20'lik parçalara böler, her pod parça ölçer, koordinatör tek seferde karar verir.
+        // VARSAYILAN KAPALI; kapalı = 20.170.0. 3-3 anahtarından bağımsız. CANLI (CertChunking); kurum geneli → GLOBAL_ONLY.
+        // Anahtar: CertChunking.KEY_ENABLED.
+        new Setting("site.monitor.checks.cert-chunks.enabled",   "scheduler",  Type.BOOL),
         new Setting("site.monitor.uptime.alert-enabled",         "monitoring", Type.BOOL),
         new Setting("site.monitor.port.alert-enabled",           "monitoring", Type.BOOL),
         // SSRF koruması — giden izleme/tanılama hedefleri (SsrfGuard). Metadata/loopback/link-local her zaman blok.
@@ -726,7 +731,9 @@ public final class AppSettingsCatalog {
         "site.monitor.eval-state.read-enabled",
         // 2026-10-29 (çok pod Sürüm 3-3): dağıtık kontroller — TÜM pod'ların kontrol yükünü ve iş yerleşimini belirler.
         "site.monitor.checks.distributed.enabled",
-        "site.monitor.checks.distributed.types"
+        "site.monitor.checks.distributed.types",
+        // 2026-10-29 (çok pod Sürüm 3-4): parçalı sertifika taraması — TÜM pod'ların sertifika ölçüm yükünü belirler.
+        "site.monitor.checks.cert-chunks.enabled"
     ));
 
     /**

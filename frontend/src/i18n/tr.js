@@ -2507,6 +2507,11 @@ export const TR = {
   'help.set.site.monitor.checks.distributed.types':
     "Ne işe yarar: Ana anahtar açıkken hangi izleme türlerinin dağıtık kontrol edileceğini belirler. İzinli adlar (virgülle): port, ping, http, keyword, page, pagespeed, dns, scripted. Listede olmayan tür liderde bugünkü gibi kontrol edilir.\nFaydası: Türleri sırayla açmak (önce port ve ping, sonra http ve keyword, sonra page ve pagespeed, sonra dns, en son scripted) bir sorunun yalnız bir türü etkilemesini sağlar.\nÖnerilen değer: İlk adımda port,ping; her adımdan sonra birkaç gün çift kontrol ve gecikme ölçümlerine bakıp sonraki türleri ekleyin. Boş bırakmak sekiz türün hepsi demektir.",
   // ── /multi-pod R3-3 · P0 ──
+  // ── multi-pod R3-4 · P0 ──
+  'general.lbl.site.monitor.checks.cert-chunks.enabled': 'Parçalı sertifika taraması (çok pod)',
+  'help.set.site.monitor.checks.cert-chunks.enabled':
+    "Ne işe yarar: Saatlik, bayat ve tam sertifika taramasında cert-check kilidini kazanan pod turun koordinatörü olur; alan adlarını 20'lik parçalara bölüp bir iş tablosuna yazar, her pod (tarama lideri yalnız 10 saniyedir bekleyen parçaları, yarı güçle) parçaları alıp yalnız ölçer. Kayıt, toplu ağ kesintisi kuralı ve alarm kararları yine tur bitince tek pod'da, tüm sonuçlar üzerinden bugünkü kodla verilir. Başka canlı pod yokken ya da turda 40'tan az alan adı varken tur bugünkü gibi tek pod'da koşar.\nFaydası: Sertifika kontrollerinin ağ beklemesi ve işlemci yükü pod'lara yayılır; büyük envanterde tur kısalır ve bir pod'un düşmesi turu kaybettirmez (onun parçası başka pod'da yeniden ölçülür).\nÖnerilen değer: false (varsayılan). Yalnız tüm pod'lar bu sürümdeyken ve her pod sertifika hedeflerine aynı ağ çıkışıyla (vekil sunucu dahil) erişirken açın. Kapatmak anında güvenlidir (sonraki tur bugünkü klasik taramayla koşar).",
+  // ── /multi-pod R3-4 · P0 ──
   'general.lbl.site.monitor.uptime.alert-enabled':         'Uptime Alarmı',
   'general.lbl.site.monitor.port.alert-enabled':           'Port Alarmı',
   'general.lbl.site.monitor.dns.alert-enabled':            'DNS Alarmı',

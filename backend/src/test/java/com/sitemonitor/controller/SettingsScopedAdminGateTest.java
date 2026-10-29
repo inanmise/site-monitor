@@ -252,6 +252,27 @@ class SettingsScopedAdminGateTest {
     }
 
     @Test
+    @DisplayName("2026-10-29 (çok pod R3-4): parçalı sertifika taraması anahtarı (BOOL) katalogda, grup scheduler, 3-3 tür listesinin ardından ve GLOBAL_ONLY")
+    void multiPodR34Key_globalOnly() {
+        String key = com.sitemonitor.service.certsweep.CertChunking.KEY_ENABLED;
+        assertThat(key).isEqualTo("site.monitor.checks.cert-chunks.enabled");
+        assertThat(AppSettingsCatalog.GLOBAL_ONLY).contains(key);
+        assertThat(AppSettingsCatalog.isGlobalOnly(key)).isTrue();
+
+        AppSettingsCatalog.Setting s = AppSettingsCatalog.byKey(key);
+        assertThat(s).as("katalogda: " + key).isNotNull();
+        assertThat(s.group()).isEqualTo("scheduler");
+        assertThat(s.type()).isEqualTo(AppSettingsCatalog.Type.BOOL);
+
+        // Ayarlar → Genel → Zamanlayıcı'da 3-3'ün iki anahtarının hemen ardından (katalog sırası = ekran sırası)
+        List<String> keys = AppSettingsCatalog.ALL.stream().map(AppSettingsCatalog.Setting::key).toList();
+        assertThat(keys.indexOf(key))
+                .isEqualTo(keys.indexOf(com.sitemonitor.service.checks.DistributedChecks.KEY_TYPES) + 1);
+        // Pod başına açılış ayarları katalogda DEĞİL (3-3 işçi ayarları gibi; Helm config.extraEnv taşır)
+        assertThat(keys).noneMatch(k -> k.startsWith("site.monitor.checks.cert-chunks.") && !k.equals(key));
+    }
+
+    @Test
     @DisplayName("2026-09-28: sistem geneli yüzeyler (Veri Saklama yazma uçları, Sorun Bildirimleri yönetimi) requireNotScopedAdmin TAŞIR")
     void systemWideSurfaces_keepGate() throws IOException {
         for (String c : List.of("RetentionAdminController", "LoginIssueController")) {
