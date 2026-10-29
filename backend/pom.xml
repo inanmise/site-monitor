@@ -31,7 +31,9 @@
              Yalnız `-Ppostgres-it` profili onları (ve yalnız onları) koşar; bağlantı IT_DB_URL / IT_DB_USER /
              IT_DB_PASSWORD'dan gelir, tanımlı değilse testler atlanır. -->
         <surefire.groups></surefire.groups>
-        <surefire.excludedGroups>postgres</surefire.excludedGroups>
+        <!-- k6-real (2026-10-29, k6 0.49 -> 2.3 gecisi): GERCEK k6 ikilileriyle sozlesme testleri — yalniz -Pk6-real
+             (CI "backend-k6-contract" isi K6_BIN_LEGACY / K6_BIN_NEXT ile). -->
+        <surefire.excludedGroups>postgres,k6-real</surefire.excludedGroups>
     </properties>
 
     <dependencies>
@@ -473,6 +475,18 @@
              Kullanım: IT_DB_URL=jdbc:postgresql://localhost:5432/<boş-db> IT_DB_USER=… IT_DB_PASSWORD=… mvn -B -Ppostgres-it test
              JaCoCo bu koşumda kapalı: kapsam kapıları tam birim suitine göre ayarlı, bu alt küme onları anlamsız yere düşürür.
              CI: ci.yml "backend-postgres-it" işi (postgres:16 servis konteyneri). -->
+        <!-- k6 sözleşme testleri (2026-10-29): GERÇEK k6 ikilileri (eski + aday) yerel bir HTTP sunucusuna karşı koşulur;
+             bayraklar, özet dosyası, çıkış kodları, hata biçimleri, tek iterasyon kuralı, eklenti engeli, API portu.
+             Kullanım: K6_BIN_LEGACY=/yol/k6-0.49 K6_BIN_NEXT=/yol/k6-2.3 mvn -B -Pk6-real test
+             CI: ci.yml backend-k6-contract işi. İkililer tanımlı değilse testler atlanır (K6_REAL_REQUIRED=true → düşer). -->
+        <profile>
+            <id>k6-real</id>
+            <properties>
+                <surefire.groups>k6-real</surefire.groups>
+                <surefire.excludedGroups></surefire.excludedGroups>
+                <jacoco.skip>true</jacoco.skip>
+            </properties>
+        </profile>
         <profile>
             <id>postgres-it</id>
             <properties>

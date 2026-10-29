@@ -82,6 +82,10 @@ class AuditCoverageTest {
                 "Grafana panosu ÖN İZLEMESİ (2026-10-18): kaydedilmemiş form değerleriyle pano özetini (panel / değişken / ölçüm "
               + "sayısı) hesaplar — hiçbir ayarı yazmaz, dosya üretmez. POST yalnız form gövdesini taşıdığı için; kayıt "
               + "(GRAFANA_SETTINGS_SAVE) ve indirme (GRAFANA_DASHBOARD_EXPORT) denetlenir.");
+        EXEMPT.put("K6EngineController#reprobe",
+                "k6 ikililerini YENİDEN YOKLAR (2026-10-29): yalnız bu pod'un bellekteki sürüm bilgisini tazeler, hiçbir "
+              + "ayar / kayıt değiştirmez. Değişiklik yapan uçlar (K6_ENGINE_SETTINGS_SAVE / SWITCH / ROLLBACK, "
+              + "K6_COMPAT_SCAN_START / CANCEL) denetlenir.");
         EXEMPT.put("UserBulkDeactivationController#preview",
                 "Toplu pasife alma ÖNİZLEMESİ (2026-10-02): yalnız hedef listesini hesaplar, hiçbir kaydı değiştirmez. "
               + "POST yalnız ölçüt gövdesi taşıdığı için; uygulama (USER_BULK_DEACTIVATE) ve geri alma denetlenir.");

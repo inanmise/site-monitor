@@ -32,7 +32,7 @@ const read = (p) => fs.readFileSync(p, 'utf8')
  */
 // appearance (2026-10-05): Ayarlar → Görünüm → Temalar kendi sayfasında.
 // executive-summary (2026-10-10): Raporlar → Yönetici Özeti sayfasının ayar penceresinde.
-const SKIP_GROUPS = ['branding', 'retention', 'userpush', 'storm', 'login-anomaly', 'login-methods', 'appearance', 'executive-summary', 'tech-error-report', 'grafana']
+const SKIP_GROUPS = ['branding', 'retention', 'userpush', 'storm', 'login-anomaly', 'login-methods', 'appearance', 'executive-summary', 'tech-error-report', 'grafana', 'k6-engine']
 
 /** new Setting("key", "group", Type.X) → [{key, group}] */
 function catalogSettings() {

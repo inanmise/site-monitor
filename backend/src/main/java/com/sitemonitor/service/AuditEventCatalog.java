@@ -154,6 +154,11 @@ public final class AuditEventCatalog {
             "ISSUE_REPORT",
             "ISSUE_REPORT_COMMENT",
             "ISSUE_REPORT_REOPEN",
+            "K6_COMPAT_SCAN_CANCEL",      // k6 uyumluluk taraması (gölge koşu) iptal edildi (2026-10-29)
+            "K6_COMPAT_SCAN_START",       // k6 uyumluluk taraması başlatıldı — aday ikili tüm izlemeleri alarmsız koşar
+            "K6_ENGINE_ROLLBACK",         // k6 motoru yedek ikiliye döndürüldü
+            "K6_ENGINE_SETTINGS_SAVE",    // k6 motoru ayarları (yedek / aday yolu, GODEBUG, User-Agent, tarama dışı) kaydedildi
+            "K6_ENGINE_SWITCH",           // aday k6 ikilisi etkin yapıldı (senaryo kontrolleri yeni sürümle koşar)
             "KEYWORD_DIAGNOSTICS_RUN",    // Keyword izlemesinde uçtan uca tanılama çalıştırıldı (2026-10-04)
             "LDAP_QUERY_USER",
             "LDAP_ROLE_MAPPING_PREVIEW",  // Ayarlar → LDAP: grup → rol eşlemesi "kim ne olacak" önizlemesi (2026-10-11)
@@ -448,6 +453,8 @@ public final class AuditEventCatalog {
         if (t.startsWith("AUDIT_") || t.equals("SQL_EXECUTE") || t.endsWith("_EXPORT")
                 || t.startsWith("RETENTION_")) return DATA;
 
+        // k6 motoru (2026-10-29): bütün senaryo izlemelerinin motorunu değiştiren platform işlemi — SETTINGS sonekinden ÖNCE
+        if (t.startsWith("K6_")) return SYSTEM;
         if (t.startsWith("SYSTEM_") || t.startsWith("SCHEDULER_") || t.startsWith("WATCHDOG_") || t.equals("SCHEMA_PATCH")
                 || t.equals("CLIENT_ERROR_REPORT") || t.startsWith("ISSUE_REPORT")) return SYSTEM;
 

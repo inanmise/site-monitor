@@ -8,8 +8,8 @@
  * Saf fonksiyon: `t` dışarıdan gelir, bileşene bağımlı değil, test edilebilir.
  */
 
-/** k6 v0.49.0'da tanımlı sıfır-dışı çıkış kodları. */
-export const K6_EXIT_CODES = [97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109]
+/** k6 v0.49.0'da tanımlı sıfır-dışı çıkış kodları + v1.x/2.x'in 110'u (exec.test.fail, 2026-10-29). */
+export const K6_EXIT_CODES = [97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110]
 
 /** Operatörün BİR ŞEY YAPMASI gereken kodlar — bunlara ek bir çare satırı gösterilir. */
 export const K6_EXIT_WITH_HINT = [104, 105, 106, 109]

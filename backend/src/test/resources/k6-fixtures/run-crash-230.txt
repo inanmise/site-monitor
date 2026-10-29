@@ -1,0 +1,21 @@
+time="2026-10-29T23:51:31+03:00" level=error msg="ReferenceError: undefinedThing is not defined\n\tat default (file:///tmp/k6-script-4815162342.js:2:85(12))\n" executor=shared-iterations hint="script exception" scenario=default source=stacktrace
+
+
+  █ TOTAL RESULTS 
+
+    HTTP
+    http_req_duration..............: avg=3.16ms min=3.16ms med=3.16ms max=3.16ms p(90)=3.16ms p(95)=3.16ms
+      { expected_response:true }...: avg=3.16ms min=3.16ms med=3.16ms max=3.16ms p(90)=3.16ms p(95)=3.16ms
+    http_req_failed................: 0.00% 0 out of 1
+    http_reqs......................: 1     163.977437/s
+
+    EXECUTION
+    iteration_duration.............: avg=4.46ms min=4.46ms med=4.46ms max=4.46ms p(90)=4.46ms p(95)=4.46ms
+    iterations.....................: 1     163.977437/s
+
+    NETWORK
+    data_received..................: 219 B 36 kB/s
+    data_sent......................: 81 B  13 kB/s
+
+
+

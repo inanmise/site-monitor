@@ -973,6 +973,8 @@ public class SchedulerService {
         // Koşumun HANGİ script sürümüyle yapıldığı — sürüm↔arıza korelasyonu bu alan olmadan
         // kurulamıyordu (Sürümler sekmesi ile Kontrol Geçmişi ayrı ayrı bakılıyordu).
         patch("ALTER TABLE scripted_checks ADD COLUMN script_version VARCHAR(20)");
+        // k6 sürüm geçişi (2026-10-29): koşumu yapan ikilinin sürümü — geçiş öncesi / sonrası karşılaştırma için.
+        patch("ALTER TABLE scripted_checks ADD COLUMN k6_version VARCHAR(20)");
         // Elle kontrol işareti (2026-09-29, elle kontrol alarm/fırtına/anomali tetiklemez): NULL = zamanlanmış (eski
         // satırlar). DNS tarafında değişiklik tabanı, sentetikte anomali serisi YALNIZ zamanlanmış kayıtlardan okunur.
         patch("ALTER TABLE scripted_checks ADD COLUMN manual BOOLEAN");
@@ -8173,6 +8175,7 @@ public class SchedulerService {
             c.setManual(manual);   // 2026-09-29: anomali serisi yalnız zamanlanmış koşumları sayar
             c.setViaProxy(res.viaProxy());
             c.setScriptVersion(m.getScriptVersion());
+            c.setK6Version(fitK6Version(res.k6Version()));
             var ph = res.phases();
             if (ph != null) {
                 c.setReqBlockedMs(ph.blockedMs());
@@ -8228,6 +8231,13 @@ public class SchedulerService {
             log.warn("Anomali guard'ı çalıştırılamadı ({}): {}", m.getName(), e.toString());
         }
         return out;
+    }
+
+    /** k6 sürüm metni kolona (VARCHAR(20)) sığsın — bilinmeyen biçimde uzun bir çıktı kaydı düşürmesin. */
+    static String fitK6Version(String v) {
+        if (v == null || v.isBlank()) return null;
+        String s = v.strip();
+        return s.length() <= 20 ? s : s.substring(0, 20);
     }
 
     /**

@@ -626,6 +626,67 @@ ciddi — düğümün NTP / chrony durumunu düzeltin (P2). Veritabanı saatinin
 satırı yalnız bilgidir. Sistem metrikleri örneklemesi kapalıysa (`site.monitor.metrics.system.enabled=false`) saat uyumu
 "uygulanmaz" görünür.
 
+## k6 sürüm geçişi (0.49 → 2.3)
+
+2026-10-29'dan beri imajda İKİ k6 ikilisi var: `/usr/bin/k6` = **v0.49.0** (asıl — her senaryo kontrolü bununla koşar) ve
+`/opt/k6-next/k6` = **v2.3.0** (aday — yalnız uyumluluk taraması ve "Adayı etkin yap" ile). Geçiş ve geri dönüş bir AYARDIR
+(`site.monitor.scripted.k6-bin`), yeniden dağıtım gerekmez. Ekran: **Ayarlar → Platform → k6 motoru** (yalnız genel yönetici).
+İnceleme raporu: https://claude.ai/artifact/DUqdNtGqQ55Px4uxgqjqdi
+
+**Adımlar (her biri ayrı onayla):**
+
+1. **Gölge tarama.** k6 motoru → Uyumluluk taraması → yan etkili betikleri (test siparişi açan, gerçek işlem yapan)
+   "Tarama dışı" listesine ekleyin → **Taramayı başlat**. Her etkin izleme aday 2.3 ile BİR kez derlenir + koşulur ve son
+   gerçek kontrolüyle karşılaştırılır. Geçmişe satır, alarm, bildirim YOK; trafik izleme başına bir "Şimdi kontrol et" kadar.
+   Aynı anda tek betik koşar, izleme havuzunu kullanmaz. Kümede tek tarama (`scheduler_lock` `k6-compat-scan`).
+2. **Fark listesini kapatın.** "Gerileme" (gerçekte geçiyor, adayla geçmiyor) satırları geçişi durdurur:
+   - **TLS** (el sıkışma / sertifika): hedef eski TLS kullanıyor (RSA anahtar değişimi, 3DES, TLS 1.2'de SHA-1, kısa RSA
+     anahtarı, negatif seri numarası) ya da vekildeki SSL inceleme cihazı büyük ClientHello'yu bozuyor. Asıl çözüm hedefi
+     düzeltmektir; geçici çare k6 motoru → TLS kaçışları (GODEBUG; yalnız gereken anahtar). Vekilli izlemelerin hepsi TLS
+     ile düşüyorsa önce `tlsmlkem` (ML-KEM anahtar paylaşımını kapatır).
+   - **CHECK / 403** yalnız aday ile: WAF yeni User-Agent'a (`Grafana k6/2.3.0`) farklı davranıyor olabilir → WAF ekibine
+     bildirin ya da k6 motoru → User-Agent'a kurumun bilinen değerini yazın (betik `options.userAgent` tanımlıyorsa betiğinki
+     korunur).
+   - **MODULE / SYNTAX**: betik kaldırılmış bir modül ya da 2.x'in kabul etmediği bir kalıp kullanıyor → sahibine bildirin.
+   - **Geçici (FLAKY)**: ilk denemede geçmedi, otomatik yeniden denemede geçti — genelde ağ dalgalanması; satırdaki
+     "Yeniden tara" ile doğrulayın.
+   Düzeltilen izlemeyi "Yeniden tara" ile tek başına tarayın; tüm liste temizlenene (ya da bilerek kabul edilene) kadar
+   3. adıma geçmeyin.
+3. **Adayı etkin yap.** Önce dağıtımın bittiğinden emin olun: başka sürüm koşan canlı pod varken (sürüm geçmişindeki açık
+   açılış satırları) düğme kapalıdır ve sunucu reddeder (`K6_MIXED_VERSIONS`; pod sürümleri okunamazsa
+   `K6_POD_VERSIONS_UNKNOWN`) — ayar her pod'a gider, eski kodlu pod'da aday ikili yoktur.
+   k6 motoru → **Adayı etkin yap** (onay penceresi son taramanın özetini gösterir). Etkin ikili
+   `/opt/k6-next/k6` olur, eski etkin (`k6`) **yedek** olur. Diğer pod'lar 10 sn içinde geçer. Bu sırada sözdizimi kuralları
+   YEDEĞE (0.49) göre kalır: `?.`, `??`, `{...nesne}` hâlâ kabul edilmez ve kayıt doğrulaması iki motorla da derler —
+   böylece geri dönüş hiçbir betiği bozmaz.
+4. **İzleyin (birkaç gün).** Senaryo kartlarında / kontrol geçmişinde `k6 v2.3.0` görünmeli (her kontrol satırı
+   `scripted_checks.k6_version` taşır). Alarm sayısı, ortalama süre, "Senaryo yavaş" alarmları geçiş öncesiyle aynı olmalı.
+5. **Kalıcı geçiş** ayrı bir yayındır (Yayın B: 2.3 `/usr/bin/k6`'ya taşınır, 0.49 bir sürüm daha yedek kalır).
+
+**Geri dönüş:** k6 motoru → **Yedeğe geri dön** (etkin ikili yedek olur, yedek ayarı boşalır) ya da acil durumda
+Ayarlar'da `site.monitor.scripted.k6-bin` = `k6`. Yeniden dağıtım gerekmez; diğer pod'lar 10 sn içinde döner.
+
+**İmajı Yayın A'dan eski bir sürüme geri alırken:** ÖNCE **Yedeğe geri dön**, SONRA `helm rollback`. Ayar veritabanında
+kalır; eski imajda `/opt/k6-next/k6` yoktur ve etkin ikili o yolu gösterirse bütün senaryo kontrolleri "k6 bulunamadı" ile
+atlanır. Yayın B (2.3 `/usr/bin/k6`'ya taşınırken) `/opt/k6-next/k6` yolunu da korumalı ya da ayarı `k6`'ya taşımalıdır.
+
+**Bilinmesi gerekenler:**
+- Her k6 çağrısına sistem `K6_AUTO_EXTENSION_RESOLUTION=false`, `K6_NO_USAGE_REPORT=true`,
+  `K6_NEW_MACHINE_READABLE_SUMMARY=false` verir; kullanıcı `K6_*` adlarını veremez. Açık bırakılsaydı 2.x, `k6/x/…` ya da
+  `"use k6 …"` gören betik için vekil üzerinden `ingest.k6.io`'ya bağlanıp eklentili bir ikili indirip çalıştırırdı. Kayıt
+  da bu içe aktarımları reddeder.
+- 2.x'te `exec.test.fail()` çıkış kodu 110 = FAIL (betik bilerek başarısız işaretledi).
+- 2.x REST API'yi açmaz; `--address` yalnız 2.0'dan eski ikiliye verilir.
+- İkili sürümleri ve sağlama toplamları Dockerfile'da (`K6_VERSION` + `K6_DIGEST`, `K6_NEXT_VERSION` + `K6_NEXT_SHA256_*`);
+  imaj derlemesi iki ikilinin `k6 version` çıktısını denetler, imaj açılış testi ikisinin yoklandığını günlükten doğrular.
+  CI `backend-k6-contract` işi iki gerçek ikiliyle sözleşme testlerini koşar.
+- Aday ikili bir pod'da çalışmıyorsa (Bulunamadı) tarama ve geçiş düğmesi o pod'da kapalıdır; "Yeniden yokla" ile deneyin.
+- Ekranda boşaltılan yedek / aday yolu, GODEBUG ve User-Agent `none` olarak yazılır (boş değer ayarı silip ortam
+  varsayılanını — aday için `/opt/k6-next/k6` — geri getirirdi).
+- Tarama sayıları: gerileme dışında "koşulamadı", "yeni hata" (gerçek kontrolü yok, adayla düşüyor) ve "değişti" de onay
+  penceresinde uyarıdır — "temiz" denmez. Tarama 2 sa 50 dk'yı aşarsa kendisi durur (kilit tavanı 3 sa); kalanları seçerek
+  yeniden tarayın.
+
 ## Çok pod
 
 > Çok pod sürüm 1 (2026-10-21). Aynı imaj N replikada koşar; kullanıcı istekleri bütün pod'lara dağılır, **izleme işi

@@ -1,0 +1,27 @@
+time="2026-10-29T23:51:31+03:00" level=info msg="ua=Grafana k6/2.3.0" source=console
+
+
+  █ TOTAL RESULTS 
+
+    checks_total.......: 1       163.778702/s
+    checks_succeeded...: 100.00% 1 out of 1
+    checks_failed......: 0.00%   0 out of 1
+
+    ✓ status 200
+
+    HTTP
+    http_req_duration..............: avg=3.32ms min=3.32ms med=3.32ms max=3.32ms p(90)=3.32ms p(95)=3.32ms
+      { expected_response:true }...: avg=3.32ms min=3.32ms med=3.32ms max=3.32ms p(90)=3.32ms p(95)=3.32ms
+    http_req_failed................: 0.00% 0 out of 1
+    http_reqs......................: 1     163.778702/s
+
+    EXECUTION
+    iteration_duration.............: avg=6.1ms  min=6.1ms  med=6.1ms  max=6.1ms  p(90)=6.1ms  p(95)=6.1ms 
+    iterations.....................: 1     163.778702/s
+
+    NETWORK
+    data_received..................: 219 B 36 kB/s
+    data_sent......................: 81 B  13 kB/s
+
+
+

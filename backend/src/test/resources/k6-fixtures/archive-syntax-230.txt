@@ -1,0 +1,1 @@
+time="2026-10-29T23:51:30+03:00" level=error msg="could not initialize 'k6-script-4815162342.js': could not load JS test 'file:///tmp/k6-script-4815162342.js': file:///tmp/k6-script-4815162342.js: Line 4:1 Unexpected token ; (and 1 more errors)"

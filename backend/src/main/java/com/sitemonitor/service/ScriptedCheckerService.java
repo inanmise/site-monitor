@@ -77,6 +77,16 @@ public class ScriptedCheckerService {
     private final AtomicInteger queued = new AtomicInteger();
     private volatile boolean k6Available = false;
     private volatile String k6Version = null;
+    /**
+     * İkili profilleri (2026-10-29, k6 0.49 → 2.3 geçişi): ETKİN ({@code k6-bin} — her koşum bununla), YEDEK
+     * ({@code k6-bin-rollback} — geri dönüş hedefi; sözdizimi düzeyi ve kayıt doğrulaması onu da hesaba katar) ve ADAY
+     * ({@code k6-bin-candidate} — yalnız uyumluluk taraması koşar). Boş ayar ⇒ null. {@link #k6Available} /
+     * {@link #k6Version} etkin profilden türer (eski okuyucular için).
+     */
+    private volatile K6Profile activeProfile = null;
+    private volatile K6Profile rollbackProfile = null;
+    private volatile K6Profile candidateProfile = null;
+    private final Object probeLock = new Object();
     /** Permit alamadığı / k6 bulunamadığı için YÜRÜTÜLEMEYEN kontrol sayısı — kapasite darlığının
      *  tek erken uyarısı. Bu sayaç olmadan "havuz dolu" ile "hedef çöktü" aynı ERROR satırıydı. */
     private io.micrometer.core.instrument.Counter skipped;
@@ -85,10 +95,25 @@ public class ScriptedCheckerService {
     public record EnvVar(String name, String value, boolean secret) {}
     // durationMs Long (nullable): k6 hiç KOŞAMADIYSA (binary yok / havuz dolu / interrupt) süre yoktur —
     // null yazılır ki UI "0 ms" gibi yanıltıcı gerçek-süre göstermesin ("—" gösterir). 2026-08 hizalaması.
+    /**
+     * @param k6Version koşumu yapan ikilinin sürümü ({@code v0.49.0} / {@code v2.3.0}; 2026-10-29) — k6 hiç koşmadıysa
+     *                  ya da sürüm okunamadıysa null. Kontrol geçmişine yazılır: sürüm geçişinde "bu sonuç hangi motorla
+     *                  ölçüldü" sorusunun tek cevabı.
+     */
     public record ScriptedResult(String status, boolean ok, Long durationMs, Integer exitCode,
                                  Integer checksPassed, Integer checksFailed, Long iterationMs,
                                  Long httpReqAvgMs, Long httpReqP95Ms, String checksJson,
-                                 String outputTail, String error, boolean viaProxy, Phases phases) {}
+                                 String outputTail, String error, boolean viaProxy, Phases phases,
+                                 String k6Version) {
+        /** Sürümsüz kurucu (2026-10-29 öncesi çağıranlar ve testler) — {@code k6Version = null}. */
+        public ScriptedResult(String status, boolean ok, Long durationMs, Integer exitCode,
+                              Integer checksPassed, Integer checksFailed, Long iterationMs,
+                              Long httpReqAvgMs, Long httpReqP95Ms, String checksJson,
+                              String outputTail, String error, boolean viaProxy, Phases phases) {
+            this(status, ok, durationMs, exitCode, checksPassed, checksFailed, iterationMs, httpReqAvgMs, httpReqP95Ms,
+                    checksJson, outputTail, error, viaProxy, phases, null);
+        }
+    }
 
     /**
      * İsteğin faz kırılımı (ms) + taşınan byte. Ayrı record: {@code ScriptedResult} zaten 13 bileşenli,
@@ -172,8 +197,16 @@ public class ScriptedCheckerService {
         public boolean blocked() { return blocking != null; }
     }
 
-    /** Satır/sütun taşıyan k6 derleme hatası — "kesin hata" kararının kanıtı. */
-    private static final Pattern K6_LINE_COL = Pattern.compile("\\((\\d+):(\\d+)\\)|script:(\\d+):(\\d+)");
+    /**
+     * Satır/sütun taşıyan k6 derleme hatası — "kesin hata" kararının kanıtı. Üç biçim (frontend {@code utils/k6Errors.js}
+     * ile AYNI desen):
+     * <ul>
+     *   <li>k6 &lt; 0.53 (Babel): {@code Unexpected token (46:29)}</li>
+     *   <li>yığın izi: {@code at script:34:12(24)}</li>
+     *   <li>k6 2.x (sobek, 2026-10-29 ölçüldü): {@code script: Line 4:1 Unexpected token ; (and 1 more errors)}</li>
+     * </ul>
+     */
+    static final Pattern K6_LINE_COL = Pattern.compile("\\((\\d+):(\\d+)\\)|script:(\\d+):(\\d+)|\\bLine (\\d+):(\\d+)");
 
     /**
      * Script'i {@code k6 archive} ile derleyerek doğrular ve {@code __ENV} referanslarını denetler.
@@ -226,23 +259,87 @@ public class ScriptedCheckerService {
             return new ScriptDiagnostics(null, warnings);
         }
         boolean acquired = false;
-        Path scriptFile = null, archiveFile = null, caFile = null;
         try {
             acquired = validatePermits.tryAcquire(2, TimeUnit.SECONDS);
             if (!acquired) {
                 warnings.add("Sözdizimi doğrulaması atlandı (doğrulayıcı meşgul).");
                 return new ScriptDiagnostics(null, warnings);
             }
+            // Etkin ikili + (varsa) YEDEK ikili (2026-10-29): geçişten sonra etkin 2.3, yedek 0.49 iken yalnız 2.3 ile
+            // derlemek modern sözdizimli bir betiği kaydettirir ve yedeğe geri dönüş o betiği bozardı. İki motordan biri
+            // kesin hata verirse betik o motorda çalışmaz demektir.
+            K6Profile active = currentProfile();
+            List<K6Profile> engines = new ArrayList<>();
+            engines.add(active);
+            K6Profile rb = rollbackProfile;
+            if (rb != null && rb.available() && !rb.bin().equals(active.bin())) engines.add(rb);
+
+            String blocking = null;
+            for (K6Profile engine : engines) {
+                ArchiveCheck c = archiveCheck(engine, script);
+                String who = engines.size() > 1 ? engineLabel(engine, engine == active) : null;
+                switch (c.kind()) {
+                    case OK -> { }
+                    case TIMED_OUT -> warnings.add(prefix(who) + "Sözdizimi doğrulaması zaman aşımına uğradı (uzak import yavaş olabilir) — kaydedildi.");
+                    case INCONCLUSIVE -> warnings.add(prefix(who) + "Sözdizimi doğrulaması sonuçsuz kaldı (ağ/uzak import olabilir) — kaydedildi.");
+                    case DEFINITE -> {
+                        String msg = prefix(who) + "Script derlenemedi: " + c.detail();
+                        if (!"WARN".equalsIgnoreCase(policy) && blocking == null) blocking = msg;
+                        else warnings.add(msg);
+                    }
+                    case NOT_RUN -> { }
+                }
+            }
+            return new ScriptDiagnostics(blocking, warnings);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return new ScriptDiagnostics(null, warnings);
+        } catch (Exception e) {
+            log.warn("Script doğrulaması çalıştırılamadı: {}", e.toString());
+            return new ScriptDiagnostics(null, warnings);
+        } finally {
+            if (acquired) validatePermits.release();
+        }
+    }
+
+    private static String prefix(String who) {
+        return who == null ? "" : who + ": ";
+    }
+
+    /** "Etkin k6 (v2.3.0)" / "Yedek k6 (v0.49.0)" — iki motorlu doğrulamada hangi motorun ne dediği. */
+    private static String engineLabel(K6Profile p, boolean active) {
+        return (active ? "Etkin k6" : "Yedek k6") + " (" + (p.version() == null ? p.bin() : p.version()) + ")";
+    }
+
+    /** {@code k6 archive} sonucu: derlendi / zaman aşımı / kesin hata (satır:sütun var) / sonuçsuz / koşmadı. */
+    public enum ArchiveKind { OK, TIMED_OUT, DEFINITE, INCONCLUSIVE, NOT_RUN }
+
+    record ArchiveCheck(ArchiveKind kind, String detail) {}
+
+    /**
+     * Betiği verilen ikiliyle {@code k6 archive} ile derler — kayıt doğrulaması ve uyumluluk taraması aynı yolu kullanır.
+     * Çağıran {@link #validatePermits} (ya da kendi semaforunu) tutar. Hiçbir koşulda istisna fırlatmaz.
+     *
+     * <p><b>Bu KISITLI KOD YÜRÜTMEDİR</b> (bkz. {@link #validateScript}): koşumdaki SSRF koruması aynen uygulanır, env
+     * değişkenleri verilmez.
+     */
+    ArchiveCheck archiveCheck(K6Profile engine, String script) {
+        if (engine == null || !engine.available() || script == null || script.isBlank()) {
+            return new ArchiveCheck(ArchiveKind.NOT_RUN, null);
+        }
+        Path scriptFile = null, archiveFile = null, caFile = null;
+        try {
             scriptFile = Files.createTempFile("k6-script-", ".js");
             archiveFile = Files.createTempFile("k6-archive-", ".tar");
             Files.writeString(scriptFile, script);
 
             // DİKKAT: `--no-usage-report` YALNIZ `k6 run`'da var; `archive`'a verilirse komut
             // "unknown flag" ile düşer ve doğrulama sessizce sonuçsuz kalır (2026-08'de oldu).
+            // Kullanım raporu ortam değişkeniyle kapatılır (systemK6Env, 2026-10-29).
             List<String> args = new ArrayList<>(List.of(
-                    k6Bin(), "archive", "--quiet",
+                    engine.bin(), "archive", "--quiet",
                     "-O", archiveFile.toAbsolutePath().toString()));
-            addApiAddress(args);
+            addApiAddress(args, engine);
             for (String cidr : ssrfGuard.blacklistCidrs()) { args.add("--blacklist-ip"); args.add(cidr); }
             args.add(scriptFile.toAbsolutePath().toString());
 
@@ -259,31 +356,16 @@ public class ScriptedCheckerService {
             Map<String, String> env = buildProcessEnv(null, proxyUseFor(null), caFile, secretValues);
             ProcessProbe.Result r = ProcessProbe.run(args, env, scriptFile.getParent().toFile(), timeout, true,
                     VALIDATE_OUTPUT_BYTES, true);
-            if (r.exitCode() == 0 && !r.timedOut()) return new ScriptDiagnostics(null, warnings);
-
+            if (r.exitCode() == 0 && !r.timedOut()) return new ArchiveCheck(ArchiveKind.OK, null);
+            if (r.timedOut()) return new ArchiveCheck(ArchiveKind.TIMED_OUT, null);
             String detail = validationDetail(r.output(), secretValues);
-            if (r.timedOut()) {
-                warnings.add("Sözdizimi doğrulaması zaman aşımına uğradı (uzak import yavaş olabilir) — kaydedildi.");
-                return new ScriptDiagnostics(null, warnings);
-            }
             // Kesin hata KANITI: satır/sütun çıkarılabiliyor mu?
-            if (K6_LINE_COL.matcher(detail).find() && !"WARN".equalsIgnoreCase(policy)) {
-                return new ScriptDiagnostics("Script derlenemedi: " + detail, warnings);
-            }
-            if (K6_LINE_COL.matcher(detail).find()) {
-                warnings.add("Script derlenemedi: " + detail);
-            } else {
-                warnings.add("Sözdizimi doğrulaması sonuçsuz kaldı (ağ/uzak import olabilir) — kaydedildi.");
-            }
-            return new ScriptDiagnostics(null, warnings);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return new ScriptDiagnostics(null, warnings);
+            return new ArchiveCheck(K6_LINE_COL.matcher(detail).find() ? ArchiveKind.DEFINITE : ArchiveKind.INCONCLUSIVE,
+                    detail);
         } catch (Exception e) {
-            log.warn("Script doğrulaması çalıştırılamadı: {}", e.toString());
-            return new ScriptDiagnostics(null, warnings);
+            log.warn("Script doğrulaması çalıştırılamadı ({}): {}", engine.bin(), e.toString());
+            return new ArchiveCheck(ArchiveKind.NOT_RUN, null);
         } finally {
-            if (acquired) validatePermits.release();
             deleteQuiet(scriptFile);
             deleteQuiet(archiveFile);
             deleteQuiet(caFile);
@@ -498,22 +580,70 @@ public class ScriptedCheckerService {
     /** Ters yönde öneri için asgari pay (istek timeout'u bütçenin bu kadar altına çekilmeli). */
     private static final int TIMEOUT_HEADROOM_MIN_SEC = 3;
 
-    /** Açılışta (ve yeniden) k6 varlığını + sürümünü doğrular. */
+    /** Etkin ikili ayarı. */
+    public static final String K6_BIN_KEY = "site.monitor.scripted.k6-bin";
+    /** Yedek (geri dönüş) ikili ayarı — boş = yok (2026-10-29). */
+    public static final String K6_BIN_ROLLBACK_KEY = "site.monitor.scripted.k6-bin-rollback";
+    /** Aday ikili ayarı — uyumluluk taraması bunu koşar; boş = yok (2026-10-29). */
+    public static final String K6_BIN_CANDIDATE_KEY = "site.monitor.scripted.k6-bin-candidate";
+
+    /**
+     * Açılışta (ve yeniden) etkin, yedek ve aday ikililerin varlığını + sürümünü doğrular.
+     *
+     * <p>Yoklama da İZOLE ortamla ve sistemin güvenlik değişkenleriyle yapılır (2026-10-29): eskiden {@code k6 version}
+     * pod'un tüm ortamını (DB parolası dahil) miras alıyordu; ileride {@code version} bir eklenti ya da ağ adımı tetiklerse
+     * bunu taşımamalı.
+     */
     public final void probeK6() {
-        try {
-            ProcessProbe.Result r = ProcessProbe.run(List.of(k6Bin(), "version"), null, 5);
-            if (!r.timedOut() && r.exitCode() == 0 && r.output() != null && r.output().toLowerCase(Locale.ROOT).contains("k6")) {
-                k6Available = true;
-                java.util.regex.Matcher m = Pattern.compile("v?\\d+\\.\\d+\\.\\d+").matcher(r.output());
-                k6Version = m.find() ? m.group() : r.output().strip();
-                log.info("[K6] ✅ k6 bulundu — sürüm {} ({})", k6Version, k6Bin());
+        synchronized (probeLock) {
+            K6Profile a = probeBinary(k6Bin());
+            setActive(a);
+            if (a.available()) {
+                log.info("[K6] ✅ k6 bulundu — sürüm {} ({})", a.version(), a.bin());
             } else {
-                k6Available = false; k6Version = null;
-                log.warn("[K6] ⚠ k6 bulunamadı ({}). Sentetik İzleme türü devre dışı — kontrol yürütülmez.", k6Bin());
+                log.warn("[K6] ⚠ k6 bulunamadı ({}). Sentetik İzleme türü devre dışı — kontrol yürütülmez.", a.bin());
             }
+            rollbackProfile = probeOptional(K6_BIN_ROLLBACK_KEY, "yedek");
+            candidateProfile = probeOptional(K6_BIN_CANDIDATE_KEY, "aday");
+        }
+    }
+
+    /** Ayar boşsa null; değilse yoklanmış profil + bir günlük satırı. */
+    private K6Profile probeOptional(String key, String role) {
+        String bin = optionalBin(key);
+        if (bin == null) return null;
+        K6Profile p = probeBinary(bin);
+        if (p.available()) log.info("[K6] {} k6 — sürüm {} ({})", role, p.version(), p.bin());
+        else log.info("[K6] {} k6 bulunamadı ({}) — {} ikili kullanılmayacak", role, p.bin(), role);
+        return p;
+    }
+
+    private void setActive(K6Profile p) {
+        activeProfile = p;
+        k6Available = p.available();
+        k6Version = p.available() ? p.version() : null;
+    }
+
+    /** Test kancası: profilleri gerçek yoklama olmadan kurar (paket-özel). */
+    void setProfilesForTest(K6Profile active, K6Profile rollback, K6Profile candidate) {
+        setActive(active);
+        rollbackProfile = rollback;
+        candidateProfile = candidate;
+    }
+
+    /** Tek bir ikiliyi yoklar — hiçbir koşulda istisna fırlatmaz. */
+    K6Profile probeBinary(String bin) {
+        long now = System.currentTimeMillis();
+        try {
+            ProcessProbe.Result r = ProcessProbe.run(List.of(bin, "version"), systemK6Env(), null, 5, false, 4096, true);
+            if (!r.timedOut() && r.exitCode() == 0 && r.output() != null
+                    && r.output().toLowerCase(Locale.ROOT).contains("k6")) {
+                return K6Profile.fromVersionOutput(bin, r.output(), now);
+            }
+            return K6Profile.unavailable(bin, now);
         } catch (Exception e) {
-            k6Available = false; k6Version = null;
-            log.warn("[K6] ⚠ k6 sürüm kontrolü başarısız: {}", e.toString());
+            log.warn("[K6] ⚠ k6 sürüm kontrolü başarısız ({}): {}", bin, e.toString());
+            return K6Profile.unavailable(bin, now);
         }
     }
 
@@ -530,15 +660,73 @@ public class ScriptedCheckerService {
      * kayıt yazılmıyor. Tek sinyal sentetik sayfasındaki banner'dı; oraya kimse bakmazsa sentetik
      * izleme haftalarca ölü kalabilirdi.
      *
+     * <p>2026-10-29: etkin ikili AYARI değiştiyse (k6 sürüm geçişi — "adayı etkin yap" / "geri dön") profil HEMEN
+     * yeniden yoklanır; sürüm farkı komutu değiştirdiği için eski profille koşmak doğru değildir.
+     *
      * @return k6 şu an kullanılabilir mi
      */
     public boolean ensureProbed() {
-        if (k6Available) return true;
+        if (!binChanged() && k6Available) return true;
+        if (probeIfChanged()) return k6Available;
         long now = System.currentTimeMillis();
         if (now - lastProbeAtMs < REPROBE_INTERVAL_MS) return false;
         lastProbeAtMs = now;
         probeK6();
         return k6Available;
+    }
+
+    /** Ayardaki etkin / yedek / aday yol, son yoklananla aynı değil mi (yalnız ayar okuması). */
+    private boolean binChanged() {
+        K6Profile a = activeProfile;
+        if (a == null || !a.bin().equals(k6Bin())) return true;
+        return !java.util.Objects.equals(binOf(rollbackProfile), optionalBin(K6_BIN_ROLLBACK_KEY))
+                || !java.util.Objects.equals(binOf(candidateProfile), optionalBin(K6_BIN_CANDIDATE_KEY));
+    }
+
+    private static String binOf(K6Profile p) {
+        return p == null ? null : p.bin();
+    }
+
+    /**
+     * KOŞACAK ikilinin profili — ayar yoklanandan farklıysa önce yeniden yoklar (en çok 5 sn, tek seferde bir yoklama).
+     * Komut ({@code --address}) ve kayda yazılan sürüm bu profilden gelir.
+     */
+    K6Profile currentProfile() {
+        K6Profile a = activeProfile;
+        if (a != null && a.bin().equals(k6Bin())) return a;
+        probeIfChanged();
+        return activeProfile;
+    }
+
+    /**
+     * Ayar yoklanan yoldan farklıysa yoklar — kilidin İÇİNDE yeniden bakar (inceleme L9): geçişten sonra eşzamanlı
+     * kontrol iş parçacıkları üç ikiliyi sırayla yeniden yoklamaz, ilki yoklar, öbürleri sonucu kullanır.
+     *
+     * @return yoklama yapıldıysa true
+     */
+    private boolean probeIfChanged() {
+        if (!binChanged()) return false;
+        synchronized (probeLock) {
+            if (!binChanged()) return true;   // beklerken başka iş parçacığı yokladı
+            probeK6();
+            return true;
+        }
+    }
+
+    /** Ayarlar değişince (bu pod ya da 10 sn'lik yenilemede başka pod'un kaydı) ikilileri arka planda yeniden yokla. */
+    @org.springframework.context.event.EventListener
+    public void onSettingsChanged(AppSettingsChangedEvent event) {
+        if (event == null) return;
+        if (!event.touches(K6_BIN_KEY) && !event.touches(K6_BIN_ROLLBACK_KEY) && !event.touches(K6_BIN_CANDIDATE_KEY)) {
+            return;
+        }
+        Thread.ofVirtual().name("k6-reprobe").start(() -> {
+            try {
+                probeK6();
+            } catch (Exception e) {
+                log.warn("[K6] ayar değişiminden sonra yeniden yoklama başarısız: {}", e.toString());
+            }
+        });
     }
 
     /**
@@ -558,6 +746,38 @@ public class ScriptedCheckerService {
 
     public boolean isAvailable() { return k6Available; }
     public String version() { return k6Version; }
+
+    /**
+     * Sözdizimi kararlarının dayandığı sürüm (2026-10-29): etkin ve YEDEK ikiliden ESKİSİ. Geçiş süresince etkin ikili
+     * 2.3, yedek 0.49 iken modern sözdizimi (?. ?? {...}) hâlâ yasak kalır; böylece yedeğe geri dönüş hiçbir betiği
+     * bozmaz. Yedek yok / okunamıyor ⇒ etkin sürüm (bugünkü davranış).
+     */
+    public String syntaxVersion() {
+        K6Profile a = activeProfile;
+        K6Profile r = rollbackProfile;
+        if (a == null || !a.versionKnown()) return k6Version;
+        if (r == null || !r.versionKnown()) return a.version();
+        return K6Profile.compareVersions(r, a) < 0 ? r.version() : a.version();
+    }
+
+    /** Etkin / yedek / aday profillerin anlık görüntüsü (yönetici ekranı) — yalnız bellek okuması. */
+    public record Profiles(K6Profile active, K6Profile rollback, K6Profile candidate, String syntaxVersion) {}
+
+    public Profiles profiles() {
+        return new Profiles(activeProfile, rollbackProfile, candidateProfile, syntaxVersion());
+    }
+
+    /** Aday ikilinin profili (yoklanmadıysa / ayar boşsa null) — uyumluluk taraması kullanır. */
+    public K6Profile candidate() {
+        if (binChanged()) probeK6();
+        return candidateProfile;
+    }
+
+    /** Yedek ikilinin profili (yoklanmadıysa / ayar boşsa null). */
+    public K6Profile rollback() {
+        if (binChanged()) probeK6();
+        return rollbackProfile;
+    }
     public int activeProcesses() { return active.get(); }
     public int queuedChecks() { return queued.get(); }
 
@@ -573,7 +793,20 @@ public class ScriptedCheckerService {
         return Math.max(0, p.availablePermits() - queued.get());
     }
 
-    private String k6Bin() { return appSettings.getString("site.monitor.scripted.k6-bin", "k6"); }
+    private String k6Bin() {
+        String v = appSettings.getString(K6_BIN_KEY, "k6");
+        return v == null || v.isBlank() ? "k6" : v.trim();
+    }
+
+    /** İsteğe bağlı ikili ayarı; boş / okunamıyor ⇒ null. */
+    private String optionalBin(String key) {
+        try {
+            String v = appSettings.getString(key, "");
+            return K6EngineSettings.isOff(v) ? null : v.trim();
+        } catch (Exception e) {
+            return null;
+        }
+    }
 
     /**
      * k6'nın REST API sunucusu için EFEMER port ({@code :0} → işletim sistemi boş bir port seçer).
@@ -600,7 +833,10 @@ public class ScriptedCheckerService {
      * HEM {@code archive} yolunda. Beklenmedik bir k6 sürümünde sorun çıkarsa ops tek ayarla
      * geri alabilmeli — yeniden derleme/dağıtım beklemeden.
      */
-    private void addApiAddress(List<String> args) {
+    private void addApiAddress(List<String> args, K6Profile profile) {
+        // 2026-10-29: k6 2.0+ REST API'yi zaten AÇMAZ; --address vermek onu AÇARDI (gereksiz dinleyen port) — yalnız
+        // 2.0'dan eski (ya da sürümü okunamayan) ikiliye verilir. Ölçüldü: 0.49 bayraksız 6565'i dinliyor, 2.3 dinlemiyor.
+        if (profile != null && !profile.needsApiAddress()) return;
         String addr = k6ApiAddress();
         if (!addr.isBlank()) { args.add("--address"); args.add(addr); }
     }
@@ -713,6 +949,58 @@ public class ScriptedCheckerService {
         ProxyUse viaProxy = proxyUseFor(m.getUseProxy());
         return execPool.submit(() -> runGuardedAfterQueue(m.getScript(), monitorEnv(m),
                 clampTimeout(m.getTimeoutSeconds()), viaProxy));
+    }
+
+    // ── Uyumluluk taraması (2026-10-29, k6 0.49 → 2.3 geçişi — gölge koşu) ─────────────────────────────
+
+    /** Uyumluluk taraması için AYRI semafor (1): izleme havuzunu ({@link #permits}) tüketmez, gerçek kontroller beklemez. */
+    private final Semaphore compatPermits = new Semaphore(1);
+
+    /**
+     * Gölge koşu sonucu.
+     *
+     * @param archive        aday ikiliyle {@code k6 archive} sonucu
+     * @param archiveDetail  derleme hata metni (maskeli, yolu temizlenmiş) — yalnız kesin / sonuçsuz hatada
+     * @param result         aday ikiliyle koşum sonucu; derleme KESİN hata verdiyse null (koşulmadı)
+     */
+    public record CompatRun(ArchiveKind archive, String archiveDetail, ScriptedResult result) {}
+
+    /**
+     * Bir izlemeyi VERİLEN ikiliyle bir kez derler + koşar — yalnız k6 uyumluluk taraması. Ortam, vekil, kurumsal CA,
+     * kara liste, istek/sn ve kaynak tavanları GERÇEK koşumla aynıdır; sonuç hiçbir yere yazılmaz, alarm değerlendirmesine
+     * girmez, anomali koruması ve sayaçları çalışmaz (çağıran karşılaştırır). Dosya okuma engeli (BLOCK) burada da
+     * uygulanır. Kesin derleme hatasında koşulmaz.
+     */
+    public CompatRun compatRun(ScriptedMonitor m, K6Profile engine) throws InterruptedException {
+        if (engine == null || !engine.available()) {
+            return new CompatRun(ArchiveKind.NOT_RUN, null, compatSkipped("aday k6 ikilisi bulunamadı"));
+        }
+        // Dosya okuma engeli DERLEMEDEN ÖNCE (inceleme 2026-10-30, M1): `k6 archive` başlangıç kodunu çalıştırır ve
+        // open()'la okunan dosyaları paketler — engellenen bir script (ör. /proc/1/environ) derleme hatasının metninde
+        // pod ortamını tarama sonucuna yazabilirdi. Kaydet ve koş yollarındaki sıra da budur.
+        if (fileReadBlocking()) {
+            List<String> hits = scanFileReads(m.getScript());
+            if (!hits.isEmpty()) {
+                return new CompatRun(ArchiveKind.NOT_RUN, null,
+                        compatSkipped(FILE_READ_BLOCKED_MSG + " (" + String.join(", ", hits) + ")"));
+            }
+        }
+        compatPermits.acquire();
+        try {
+            ArchiveCheck a = archiveCheck(engine, m.getScript());
+            if (a.kind() == ArchiveKind.DEFINITE) return new CompatRun(a.kind(), a.detail(), null);
+            ScriptedResult r = execute(m.getScript(), monitorEnv(m), clampTimeout(m.getTimeoutSeconds()),
+                    proxyUseFor(m.getUseProxy()), true, engine);
+            return new CompatRun(a.kind(), a.detail(), r);
+        } finally {
+            compatPermits.release();
+        }
+    }
+
+    /** Taramada yürütülemeyen koşum — {@link #err} gibi ama "atlandı" sayacına YAZMAZ (gerçek kontrol değil). */
+    private static ScriptedResult compatSkipped(String message) {
+        return new ScriptedResult(STATUS_SKIPPED, false, null, -1,
+                null, null, null, null, null, null, null, message, false, Phases.EMPTY);
     }
 
     /**
@@ -938,8 +1226,52 @@ public class ScriptedCheckerService {
         if (!maxProcs.isBlank() && !"0".equals(maxProcs.trim())) env.put("GOMAXPROCS", maxProcs.trim());
         String memLimit = appSettings.getString("site.monitor.scripted.mem-limit", "256MiB");
         if (!memLimit.isBlank() && !"0".equals(memLimit.trim())) env.put("GOMEMLIMIT", memLimit.trim());
+        // Güvenlik ortamı (2026-10-29, k6 2.x): sistem değerleri HER çağrıda, kullanıcı env'inden SONRA (put) — kullanıcı
+        // K6_* adlarını zaten veremez (ScriptedEnvPolicy), bu ikinci kemerdir. 0.49 bu adları tanımaz ve yok sayar.
+        env.putAll(systemK6Env());
+        // Eski TLS uçları için Go kaçışları (yönetici ayarı, izinli anahtarlar; boş = yok).
+        String godebug = K6EngineSettings.effectiveGodebug(appSettings.getString(K6EngineSettings.KEY_GODEBUG, ""));
+        if (!godebug.isEmpty()) env.put("GODEBUG", godebug);
         return env;
     }
+
+    /**
+     * Her k6 çağrısına (koşum, archive, version, teşhis sondası, uyumluluk taraması) verilen sistem değişkenleri
+     * (2026-10-29, k6 0.49 → 2.3 geçişi). Ölçüldü (k6 v2.3.0):
+     * <ul>
+     *   <li>{@code K6_AUTO_EXTENSION_RESOLUTION=false} — açıkken k6, betikte {@code k6/x/…} içe aktarımı ya da
+     *       {@code "use k6 …"} yönergesi görünce vekil üzerinden {@code ingest.k6.io}'ya bağlanıp eklentili bir ikili
+     *       DERLETİP İNDİRİYOR ve çalıştırıyor. Kapalıyken ağa çıkmadan "unknown modules" ile düşüyor (çıkış 107).</li>
+     *   <li>{@code K6_NO_USAGE_REPORT=true} — {@code archive} {@code --no-usage-report} bayrağını tanımaz; değişken tanır.</li>
+     *   <li>{@code K6_NEW_MACHINE_READABLE_SUMMARY=false} — {@code true} iken {@code --summary-export} dosyasının biçimi
+     *       değişiyor (ve betiğin KAYNAĞI dosyaya yazılıyor); ayrıştırıcı eski biçimi okur.</li>
+     * </ul>
+     */
+    static Map<String, String> systemK6Env() {
+        Map<String, String> env = new LinkedHashMap<>();
+        env.put("K6_AUTO_EXTENSION_RESOLUTION", "false");
+        env.put("K6_NO_USAGE_REPORT", "true");
+        env.put("K6_NEW_MACHINE_READABLE_SUMMARY", "false");
+        return env;
+    }
+
+    /**
+     * Betik User-Agent'ını KENDİSİ belirliyor mu ({@code options.userAgent})? Yönetici User-Agent ayarı ortam
+     * değişkeniyle ({@code K6_USER_AGENT}) verilir ve k6'da ortam değişkeni betik seçeneğini EZER (2026-10-29 ölçüldü) —
+     * betik kendi değerini tanımlamışsa ayar verilmez. Yorumlar atlanır; isteğe başlık olarak verilen User-Agent zaten
+     * ayarın üstündedir.
+     */
+    static boolean scriptDefinesUserAgent(String script) {
+        if (script == null || script.isBlank()) return false;
+        return USER_AGENT_OPTION.matcher(stripJsComments(script, false)).find();
+    }
+
+    /**
+     * {@code userAgent: …}, {@code "userAgent": …} (JSON biçimli seçenekler) ve {@code options.userAgent = …} (atama) —
+     * inceleme 2026-10-30, L7. Yorumlar ayıklanmış metinde; doğrusal (tek nicelik, örtüşmeyen sınıflar).
+     */
+    private static final Pattern USER_AGENT_OPTION =
+            Pattern.compile("(?:\\buserAgent\\b|[\"']userAgent[\"'])\\s*+(?::|=(?!=))");
 
     /** İstek/sn tavanı (k6 {@code --rps}); ≤0 ⇒ tavan yok. */
     int maxRps() {
@@ -1136,7 +1468,17 @@ public class ScriptedCheckerService {
     /** @param withCa false ⇒ kurumsal CA paketi VERİLMEZ; teşhis sondası "CA mı sebep?" sorusunu böyle ayırır. */
     private ScriptedResult execute(String script, List<EnvVar> envVars, int timeoutSec, ProxyUse viaProxy,
                                    boolean withCa) {
+        return execute(script, envVars, timeoutSec, viaProxy, withCa, currentProfile());
+    }
+
+    /**
+     * @param engine koşacak ikilinin profili (2026-10-29): gerçek kontroller ETKİN ikiliyle, uyumluluk taraması ADAY ikiliyle
+     *               koşar. Komut ({@code --address}) ve sonuca yazılan sürüm bu profilden gelir.
+     */
+    private ScriptedResult execute(String script, List<EnvVar> envVars, int timeoutSec, ProxyUse viaProxy,
+                                   boolean withCa, K6Profile engine) {
         Path scriptFile = null, summaryFile = null, caFile = null;
+        String engineVersion = engine != null && engine.available() ? engine.version() : null;
         // Bağlam DEĞİŞKENLERİ try dışında: catch bloğu bunlara erişebilsin.
         List<String> secretValues = new ArrayList<>();
         ProcessProbe.Result r = null;   // null ⇒ süreç hiç başlamadı
@@ -1149,12 +1491,17 @@ public class ScriptedCheckerService {
 
             caFile = withCa ? writeCaBundle() : null;
             Map<String, String> env = buildProcessEnv(envVars, viaProxy, caFile, secretValues);
+            // Yönetici User-Agent'ı (2026-10-29; boş = k6'nın kendi varsayılanı). Betik options.userAgent tanımlamışsa
+            // VERİLMEZ: ortam değişkeni betik seçeneğini ezerdi.
+            String ua = K6EngineSettings.effectiveUserAgent(appSettings.getString(K6EngineSettings.KEY_USER_AGENT, ""));
+            if (!ua.isEmpty() && !scriptDefinesUserAgent(script)) env.put("K6_USER_AGENT", ua);
 
+            String bin = engine != null ? engine.bin() : k6Bin();
             List<String> args = new ArrayList<>(List.of(
-                    k6Bin(), "run", "--quiet", "--no-usage-report",
+                    bin, "run", "--quiet", "--no-usage-report",
                     "--summary-export=" + summaryFile.toAbsolutePath(),
                     "--vus", "1", "--iterations", "1"));
-            addApiAddress(args);
+            addApiAddress(args, engine);
             // ── L2 sert tavan: istek/sn ────────────────────────────────────────────────────
             // Statik analiz `for (i=0;i<n;i++)` gibi değişken sınırlı bir döngüde kaç istek
             // atılacağını KANITLAYAMAZ. Bu bayrak kanıt gerektirmez: script 10.000 istek yazsa
@@ -1182,6 +1529,13 @@ public class ScriptedCheckerService {
             String status;
             String error;
             try {
+                if (s.unrecognizedSchema && !r.timedOut()) {
+                    // Özet dosyası YENİ makine-okunur biçimde (2026-10-29): sessizce "metrik yok" deyip NO_CHECKS / PASS
+                    // üretmek yerine açık ERROR — karar verilecek veri okunamadı. Sistem K6_NEW_MACHINE_READABLE_SUMMARY=false
+                    // verdiği için olmamalı; olursa k6 sürümü bu değişkeni artık tanımıyordur.
+                    return buildResult("ERROR", durationMs, r, s, output, SUMMARY_SCHEMA_UNRECOGNIZED + "\n"
+                            + runContextNote(script, timeoutSec, viaProxy, caFile != null), viaProxy.on(), engineVersion);
+                }
                 // Hata satırı ayıklaması iki işe yarıyor: mesajı zenginleştirmek VE "script patladı mı"
                 // sinyalini üretmek (k6 iterasyon istisnasında yine 0 ile çıkıyor).
                 // DAR sinyal (hasScriptCrash), extractErrorLines DEĞİL: ikincisi başarısız bir
@@ -1220,11 +1574,12 @@ public class ScriptedCheckerService {
                 String ctx = runContextNote(script, timeoutSec, viaProxy, caFile != null);
                 error = (error == null ? "" : error + "\n") + ctx;
             }
-            return buildResult(status, durationMs, r, s, output, error, viaProxy.on());
+            return buildResult(status, durationMs, r, s, output, error, viaProxy.on(), engineVersion);
         } catch (Exception e) {
             // ── Katman 1: dış guard — r/output/durationMs artık KAPSAMDA ──
             log.error("Senaryo koşumu beklenmeyen istisnayla bitti", e);
-            return errWithContext(safeMsg(e, secretValues), r, output, durationMs, secretValues, viaProxy.on());
+            return errWithContext(safeMsg(e, secretValues), r, output, durationMs, secretValues, viaProxy.on(),
+                    r == null ? null : engineVersion);
         } finally {
             deleteQuiet(scriptFile);
             deleteQuiet(summaryFile);
@@ -1391,21 +1746,33 @@ public class ScriptedCheckerService {
      */
     private ScriptedResult errWithContext(String message, ProcessProbe.Result r,
                                           String maskedOutput, Long durationMs, List<String> secretValues,
-                                          boolean viaProxy) {
+                                          boolean viaProxy, String k6Version) {
         String status = (r != null && r.timedOut()) ? "TIMEOUT" : "ERROR";
         Integer exitCode = r != null ? r.exitCode() : -1;
         String out = SecretMask.maskValues(maskedOutput, secretValues);
         return new ScriptedResult(status, false, durationMs, exitCode,
-                null, null, null, null, null, null, out, message, viaProxy, Phases.EMPTY);
+                null, null, null, null, null, null, out, message, viaProxy, Phases.EMPTY, k6Version);
     }
 
     /** Sonuç montajı — saf ve statik, böylece Spring'siz/k6'sız birim-test edilebilir. */
     static ScriptedResult buildResult(String status, Long durationMs, ProcessProbe.Result r,
                                       Summary s, String maskedOutput, String error, boolean viaProxy) {
+        return buildResult(status, durationMs, r, s, maskedOutput, error, viaProxy, null);
+    }
+
+    static ScriptedResult buildResult(String status, Long durationMs, ProcessProbe.Result r,
+                                      Summary s, String maskedOutput, String error, boolean viaProxy,
+                                      String k6Version) {
         return new ScriptedResult(status, "PASS".equals(status), durationMs, r.exitCode(),
                 s.checksPassed, s.checksFailed, s.iterationMs, s.httpReqAvgMs, s.httpReqP95Ms,
-                s.checksJson, maskedOutput, error, viaProxy, Phases.of(s));
+                s.checksJson, maskedOutput, error, viaProxy, Phases.of(s), k6Version);
     }
+
+    /** Özet dosyası tanınmayan (yeni makine-okunur) biçimde — açık ERROR metni (2026-10-29). */
+    static final String SUMMARY_SCHEMA_UNRECOGNIZED =
+            "k6 özet biçimi tanınmadı (yeni makine-okunur özet biçimi) — sonuç değerlendirilemedi. "
+            + "k6 sürecine K6_NEW_MACHINE_READABLE_SUMMARY=false verilmesine rağmen yeni biçim geldiyse bu k6 sürümü "
+            + "değişkeni artık tanımıyordur; yöneticiye bildirin.";
 
     /**
      * {@code no-checks-policy}: NO_CHECKS filoda kaç monitörü etkileyeceği önceden bilinemez,
@@ -1459,8 +1826,10 @@ public class ScriptedCheckerService {
             // Çıkış 0'da kod ETİKETİ YAZILMAZ: exitCodeLabel(0) "başarılı" der ve ortaya
             // "k6 check/threshold başarısız — başarılı (çıkış 0)" gibi kendini yalanlayan bir
             // cümle çıkardı. Check'i düşen bir koşumun 0 ile çıkması zaten NORMALDİR; bilgi katmaz.
-            case "FAIL"  -> "k6 check/threshold başarısız"
-                            + (r.exitCode() == 0 && !r.timedOut() ? "" : " — " + exitCodeLabel(r.exitCode(), r.timedOut()))
+            case "FAIL"  -> (r.exitCode() == EXIT_TEST_FAILED && !r.timedOut()
+                                ? "Betik testi başarısız işaretledi (exec.test.fail, çıkış 110)"
+                                : "k6 check/threshold başarısız"
+                                  + (r.exitCode() == 0 && !r.timedOut() ? "" : " — " + exitCodeLabel(r.exitCode(), r.timedOut())))
                             + (lines != null ? ":\n" + lines : "");
             case "ERROR" -> label + (lines != null ? ":\n" + lines : sanitizeScriptPath(tailSuffix(output)));
             default      -> null;
@@ -1497,6 +1866,10 @@ public class ScriptedCheckerService {
     static String sanitizeScriptPath(String text) {
         if (text == null) return null;
         String out = text.replaceAll("(?:file:/{2,})?[^\\s\"']*k6-script-[0-9A-Za-z_-]+\\.js", "script");
+        // k6 2.x yükleme hatası sarmalı (2026-10-29 ölçüldü): "could not initialize 'script': could not load JS test
+        // 'script': script: Line 4:1 …" — yol "script"e çevrildikten sonra üç kez aynı şeyi söyleyen önek kalıyordu.
+        out = out.replace("could not initialize 'script': ", "")
+                 .replace("could not load JS test 'script': ", "");
         // Kurumsal CA geçici dosyası da aynı gerekçeyle gizlenir: kullanıcı için anlamsız ve
         // sunucunun dosya yolunu (dolayısıyla dizin yapısını) alarm e-postasına taşıyor.
         // TLS hatalarında k6 bu yolu SSL_CERT_FILE bağlamında basabiliyor.
@@ -1515,10 +1888,13 @@ public class ScriptedCheckerService {
     /** Karar tablosu: timeout→TIMEOUT; non-zero&non-99→ERROR; 99 veya failed-check→FAIL; else PASS. */
     static String decideStatus(int exitCode, boolean timedOut, int checksFailed) {
         if (timedOut) return "TIMEOUT";
-        if (exitCode != 0 && exitCode != 99) return "ERROR";
-        if (exitCode == 99 || checksFailed > 0) return "FAIL";
+        if (exitCode != 0 && exitCode != 99 && exitCode != EXIT_TEST_FAILED) return "ERROR";
+        if (exitCode == 99 || exitCode == EXIT_TEST_FAILED || checksFailed > 0) return "FAIL";
         return "PASS";
     }
+
+    /** k6 1.x+ çıkış kodu: betik {@code exec.test.fail()} ile testi başarısız işaretledi (errext/exitcodes). */
+    static final int EXIT_TEST_FAILED = 110;
 
     /**
      * Null-toleranslı sarmalayıcı — karar tablosu DEĞİŞMEZ, yalnız NPE kapanır.
@@ -1579,8 +1955,10 @@ public class ScriptedCheckerService {
     static String decideStatus(int exitCode, boolean timedOut, Integer checksPassed, Integer checksFailed,
                                boolean hasThresholds, boolean scriptCrashed, boolean anyTraffic) {
         if (timedOut) return "TIMEOUT";
-        if (exitCode != 0 && exitCode != 99) return "ERROR";
-        if (exitCode == 99) return "FAIL";
+        // 110 (k6 1.x+, exec.test.fail(), 2026-10-29 kullanıcı kararı): betik testi BİLEREK başarısız işaretledi — eşik
+        // ihlali (99) gibi bir doğrulama başarısızlığı, betik hatası değil. 0.49'da bu çağrı yoktu (TypeError → çökme).
+        if (exitCode != 0 && exitCode != 99 && exitCode != EXIT_TEST_FAILED) return "ERROR";
+        if (exitCode == 99 || exitCode == EXIT_TEST_FAILED) return "FAIL";
         // GERÇEK düşen check her şeyin ÖNÜNDE: hedef çöktüğünde k6 çıktıya hata satırı da basar
         // (level=warning + error=). Sıra ters olsaydı her gerçek arıza FAIL yerine ERROR görünür,
         // "hedef mi bozuk, script mi bozuk" ayrımı — teşhisin tamamı — kaybolurdu.
@@ -1647,7 +2025,7 @@ public class ScriptedCheckerService {
 
     /**
      * k6 çıkış kodunu insan-okur etikete çevirir.
-     * Kaynak: k6 {@code errext/exitcodes/codes.go}, v0.49.0 etiketi (imajdaki sürüm).
+     * Kaynak: k6 {@code errext/exitcodes/codes.go} — v0.49.0 etiketi, 2026-10-29'da v2.3.0'ın 110 kodu eklendi.
      */
     static String exitCodeLabel(int exitCode, boolean timedOut) {
         String name = switch (exitCode) {
@@ -1667,6 +2045,7 @@ public class ScriptedCheckerService {
             case 107 -> "script çalışma-zamanı hatası";
             case 108 -> "script test.abort() ile durduruldu";
             case 109 -> "k6 iç hatası (panic)";
+            case 110 -> "betik testi başarısız işaretledi (exec.test.fail)";
             case -1  -> timedOut ? "süreç sonlandırıldı" : "süreç başlatılamadı";
             default  -> null;
         };
@@ -1880,6 +2259,12 @@ public class ScriptedCheckerService {
         boolean parsed;
         /** Script {@code options.thresholds} tanımlamış mı — check'siz ama MEŞRU script'i ayırır. */
         boolean hasThresholds;
+        /**
+         * Özet dosyası YENİ makine-okunur biçimde mi ({@code version} + {@code results}, {@code metrics} nesnesi yok;
+         * k6 2.x {@code K6_NEW_MACHINE_READABLE_SUMMARY=true}, 2026-10-29 ölçüldü). Bu biçimde metrikler okunamaz;
+         * sessizce "metrik yok" demek yerine koşum açık ERROR olur.
+         */
+        boolean unrecognizedSchema;
     }
 
     /**
@@ -1932,6 +2317,7 @@ public class ScriptedCheckerService {
             JsonNode root = mapper.readTree(json);
             JsonNode metrics = root.path("metrics");
             s.parsed = metrics.isObject();
+            if (!s.parsed && root.has("version") && root.path("results").isObject()) s.unrecognizedSchema = true;
             // Threshold VARLIĞI (gerçek 0.49 çıktısı: metrics.<ad>.thresholds = {"p(95)<10000": false}).
             // Yalnız varlığa bakılır — boolean'ın anlamı yanıltıcı (yukarıdaki örnekte eşik GEÇTİ).
             if (metrics.isObject()) {

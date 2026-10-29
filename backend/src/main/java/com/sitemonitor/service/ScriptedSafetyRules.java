@@ -85,6 +85,14 @@ public final class ScriptedSafetyRules {
         if (script == null || script.isBlank()) return new SafetyDiagnostics(null, warnings);
         if (script.length() > MAX_SCRIPT_CHARS) return block(tooLargeMessage(script.length()), warnings);
 
+        // ── BLOCK E: k6 eklentisi (2026-10-29, k6 0.49 → 2.3 geçişi) ─────────────────────────────────────────
+        // k6 1.2+ betikte `k6/x/…` içe aktarımı ya da `"use k6 …"` yönergesi görünce Grafana'dan eklentili bir ikili
+        // derletip indiriyor ve ÇALIŞTIRIYOR (otomatik eklenti çözümleme). Sistem bunu ortam değişkeniyle kapatıyor
+        // (K6_AUTO_EXTENSION_RESOLUTION=false); bu kural ikinci kemerdir: böyle bir betik zaten koşamaz, kaydı da olmasın.
+        // Yanlış-pozitif yok: tarama yorumları atlar, metin içeriğine yalnız modül adresi / yönerge biçiminde bakar.
+        String ext = extensionUse(script);
+        if (ext != null) return block(ext, warnings);
+
         // Yorumlar önce silinir: yorum içindeki örnek kod ("// while(true) YAPMAYIN") kaydı
         // engellemesin. Aynı temizlik ScriptedCheckerService'in timeout denetimlerinde de yapılıyor.
         String src = ScriptedCheckerService.stripComments(script);
@@ -177,6 +185,29 @@ public final class ScriptedSafetyRules {
         }
 
         return new SafetyDiagnostics(null, warnings);
+    }
+
+    /** {@code from 'k6/x/…'}, {@code import 'k6/x/…'}, {@code import('k6/x/…')}, {@code require('k6/x/…')}. */
+    // İyelikli \s*+ (ReDoS): "import" + k boşlukta iki ardışık \s* boşluğu k+1 biçimde bölüp O(k²) geri izlerdi.
+    private static final Pattern EXTENSION_IMPORT = Pattern.compile(
+            "(?:\\bfrom|\\bimport(?:\\s*+\\()?|\\brequire\\s*+\\()\\s*+['\"`]k6/x/([A-Za-z0-9_./-]{0,80})");
+    /** Satır başında {@code "use k6 …"} / {@code 'use k6 …'} yönergesi (k6 1.2+ sürüm / eklenti bildirimi). */
+    private static final Pattern USE_K6_DIRECTIVE = Pattern.compile("(?m)^[ \\t]*['\"]use k6\\b");
+
+    /** Eklenti kullanımı varsa engelleme iletisi, yoksa null (2026-10-29). */
+    static String extensionUse(String script) {
+        String code = ScriptedCheckerService.stripJsComments(script, false);
+        Matcher m = EXTENSION_IMPORT.matcher(code);
+        if (m.find()) {
+            return "Betik bir k6 eklentisi içe aktarıyor (`k6/x/" + m.group(1) + "`). Sentetik izleme yalnız k6'nın "
+                    + "yerleşik modülleriyle koşar: eklentiler güvenlik gereği indirilmez ve çalıştırılmaz. Betiği "
+                    + "eklentisiz (k6/http, k6/crypto, k6/encoding …) yazın.";
+        }
+        if (USE_K6_DIRECTIVE.matcher(code).find()) {
+            return "Betikte `\"use k6 …\"` yönergesi var. Bu yönerge k6'ya başka bir sürüm ya da eklentili bir ikili "
+                    + "indirtmeye çalışır; sentetik izlemede kullanılamaz — satırı silin.";
+        }
+        return null;
     }
 
     /** Döngü gövdesinde istek var mı? Gövde çıkarılamıyorsa VAR SAYILMAZ (engelleme tahmine dayanmaz). */

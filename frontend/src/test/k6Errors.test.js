@@ -34,6 +34,27 @@ describe('parseK6Markers', () => {
     expect(m[0].column).toBe(29)
   })
 
+  it('k6 2.x (sobek) biçimi: `script: Line 4:1 Unexpected token` (2026-10-29, gerçek 2.3 çıktısı)', () => {
+    // backend K6UpgradeEngineTest.syntaxErrorBothVersions bu metni gerçek k6 v2.3.0 çıktısından üretiyor
+    const m = parseK6Markers('script: Line 4:1 Unexpected token ; (and 1 more errors)')
+    expect(m).toHaveLength(1)
+    expect(m[0]).toMatchObject({ line: 4, column: 1, type: 'error' })
+  })
+
+  it('desen backend K6_LINE_COL ile birebir aynı (kaynaktan okunur)', async () => {
+    const fs = await import('node:fs')
+    const path = await import('node:path')
+    const java = fs.readFileSync(path.resolve(__dirname,
+      '../../../backend/src/main/java/com/sitemonitor/service/ScriptedCheckerService.java'), 'utf8')
+    const m = /K6_LINE_COL = Pattern\.compile\("((?:[^"\\]|\\.)*)"\)/.exec(java)
+    expect(m).toBeTruthy()
+    const javaRegex = m[1].replace(/\\\\/g, '\\')
+    const js = fs.readFileSync(path.resolve(__dirname, '../utils/k6Errors.js'), 'utf8')
+    const jsRegex = /return \/(.*)\/g/.exec(js)[1]
+    expect(jsRegex).toBe(javaRegex)
+    expect(javaRegex).toBe(String.raw`\((\d+):(\d+)\)|script:(\d+):(\d+)|\bLine (\d+):(\d+)`)
+  })
+
   it('birden çok FARKLI satır sırayla döner', () => {
     const m = parseK6Markers('ilk (12:1) sonra script:34:5')
     expect(m.map(x => x.line)).toEqual([12, 34])

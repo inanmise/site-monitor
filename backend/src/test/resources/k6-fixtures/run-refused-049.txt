@@ -1,0 +1,20 @@
+time="2026-10-29T23:51:30+03:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:1/x\": dial tcp 127.0.0.1:1: connectex: No connection could be made because the target machine actively refused it."
+
+     ✗ ok
+      ↳  0% — ✓ 0 / ✗ 1
+
+     checks.....................: 0.00%   ✓ 0          ✗ 1
+     data_received..............: 0 B     0 B/s
+     data_sent..................: 0 B     0 B/s
+     http_req_blocked...........: avg=0s  min=0s  med=0s  max=0s  p(90)=0s  p(95)=0s 
+     http_req_connecting........: avg=0s  min=0s  med=0s  max=0s  p(90)=0s  p(95)=0s 
+     http_req_duration..........: avg=0s  min=0s  med=0s  max=0s  p(90)=0s  p(95)=0s 
+     http_req_failed............: 100.00% ✓ 1          ✗ 0
+     http_req_receiving.........: avg=0s  min=0s  med=0s  max=0s  p(90)=0s  p(95)=0s 
+     http_req_sending...........: avg=0s  min=0s  med=0s  max=0s  p(90)=0s  p(95)=0s 
+     http_req_tls_handshaking...: avg=0s  min=0s  med=0s  max=0s  p(90)=0s  p(95)=0s 
+     http_req_waiting...........: avg=0s  min=0s  med=0s  max=0s  p(90)=0s  p(95)=0s 
+     http_reqs..................: 1       333.222259/s
+     iteration_duration.........: avg=2ms min=2ms med=2ms max=2ms p(90)=2ms p(95)=2ms
+     iterations.................: 1       333.222259/s
+

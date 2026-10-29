@@ -11,21 +11,16 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * HER k6 çağrısı kendi EFEMER API portunu almalı.
+ * k6 REST API adresi kuralı.
  *
- * <p>k6 her koşumda {@code localhost:6565} üzerinde bir REST API açar. Senaryo kontrolleri
- * EŞZAMANLI koştuğu için ilk süreç portu alıyor, sonrakiler alamayıp
- * {@code level=warning msg="Error from API server" ... bind: address already in use} yazıyordu.
- * Koşum etkilenmiyordu (checks %100) ama uyarı, kullanıcıya gösterilen "Teknik detay" çıktısının
- * İLK satırında duruyor ve SAĞLIKLI bir koşumu bozuk gösteriyordu — kullanıcı bunu sordu.
+ * <p>k6 2.0'dan ESKİ sürümler her koşumda {@code localhost:6565} üzerinde bir REST API açar. Senaryo kontrolleri
+ * EŞZAMANLI koştuğu için ilk süreç portu alıyor, sonrakiler {@code bind: address already in use} uyarısını "Teknik
+ * detay"ın ilk satırına basıyordu → {@code --address 127.0.0.1:0} (efemer port) verilir.
  *
- * <p>Bu API'yi projede hiçbir yer kullanmıyor; uyarı kullanmadığımız bir özelliğin
- * açılamamasından geliyordu.
- *
- * <p><b>Neden KAYNAK taraması:</b> {@code ProcessProbe.run} statik ve komut satırı süreç
- * başlatılmadan görünmüyor; onu yakalamak için servisi yeniden yapılandırmak gerekirdi.
- * Kapının işi küçük ve net: bayrak bir k6 çağrısından düşerse fark edilsin. ({@code
- * IdentityLeakGuardTest} de aynı desende kaynak tarıyor.)
+ * <p><b>2026-10-29 (k6 0.49 → 2.3 geçişi):</b> 2.0+ REST API'yi varsayılanda AÇMAZ ve {@code --address} vermek onu
+ * AÇAR (gereksiz bir dinleyen port — ölçüldü: 0.49 bayraksız 6565'i dinliyor, 2.3 dinlemiyor). Kural artık "koşacak
+ * ikilinin profiline göre": {@link K6Profile#needsApiAddress()}. Bu kapı her k6 komut kurulumunun profili
+ * {@code addApiAddress(args, <profil>)} ile verdiğini, sabit {@code --address} eklemediğini denetler.
  */
 class K6ApiAddressTest {
 
@@ -33,74 +28,43 @@ class K6ApiAddressTest {
             Path.of("src/main/java/com/sitemonitor/service/ScriptedCheckerService.java");
 
     @Test
-    @DisplayName("k6 'run' ve 'archive' çağrılarının İKİSİ de --address taşır")
-    void everyK6InvocationPassesAddress() throws Exception {
+    @DisplayName("k6 'run' ve 'archive' komut kurulumlarının HER biri addApiAddress(args, <profil>) çağırır")
+    void everyK6InvocationPassesProfile() throws Exception {
         String src = Files.readString(SERVICE);
-
-        // Her k6Bin() çağrısı bir komut kurulumunun başlangıcıdır; o bloğun sonuna (script
-        // dosyasının eklendiği satıra) kadar --address geçmeli.
         List<String> missing = new ArrayList<>();
-        int from = 0;
         int found = 0;
-        while (true) {
-            int i = src.indexOf("k6Bin()", from);
-            if (i < 0) break;
-            // Tanımın kendisi (private String k6Bin()) sayılmaz.
-            int lineStart = src.lastIndexOf('\n', i) + 1;
-            String line = src.substring(lineStart, src.indexOf('\n', i));
-            if (line.contains("private String k6Bin()")) { from = i + 7; continue; }
-
-            found++;
-            int blockEnd = src.indexOf("args.add(scriptFile", i);
-            String block = blockEnd > i ? src.substring(i, blockEnd) : src.substring(i);
-            if (!block.contains("addApiAddress(args)")) {
-                missing.add(line.trim());
+        for (String marker : new String[] { "\"run\", \"--quiet\"", "\"archive\", \"--quiet\"" }) {
+            int from = 0;
+            while (true) {
+                int i = src.indexOf(marker, from);
+                if (i < 0) break;
+                found++;
+                int blockEnd = src.indexOf("args.add(scriptFile", i);
+                String block = blockEnd > i ? src.substring(i, blockEnd) : src.substring(i);
+                if (!block.matches("(?s).*addApiAddress\\(args, \\w+\\);.*")) missing.add(marker);
+                from = i + marker.length();
             }
-            from = blockEnd > i ? blockEnd : i + 7;
         }
-
-        assertThat(found).as("k6 komut kurulumu bulunamadı — tarama bozulmuş olabilir")
-                .isGreaterThanOrEqualTo(2);
-        assertThat(missing).as("addApiAddress(args) çağırmayan k6 komutu: eşzamanlı koşumda 6565 çakışır")
-                .isEmpty();
+        assertThat(found).as("k6 komut kurulumu bulunamadı — tarama bozulmuş olabilir").isGreaterThanOrEqualTo(2);
+        assertThat(missing).as("addApiAddress(args, profil) çağırmayan k6 komutu").isEmpty();
+        assertThat(src).as("sabit --address ekleyen bir yol olmamalı (profil kararını atlar)")
+                .doesNotContain("args.add(\"--address\"); args.add(K6_API_ADDRESS)");
     }
 
-    /**
-     * {@code :0} ŞART: işletim sistemi boş bir port seçer, yani çakışma imkânsız olur.
-     *
-     * <p>Sabit bir port yazmak sorunu geri getirirdi. Ölçüldü (k6 v0.49.0): bağlanamayacak bir
-     * adres verilince k6 {@code exit 106} ile ÖLÜMCÜL hata veriyor — yani bu değer yanlışsa
-     * senaryo kontrollerinin tamamı düşer, sessizce bozulmaz.
-     */
     @Test
-    @DisplayName("Adres EFEMER porttur (:0) — sabit port çakışmayı geri getirirdi")
+    @DisplayName("Adres EFEMER porttur (:0) — sabit port 2.0 öncesi sürümlerde çakışmayı geri getirirdi")
     void addressUsesEphemeralPort() throws Exception {
-        String src = Files.readString(SERVICE);
-
-        assertThat(src).contains("K6_API_ADDRESS = \"127.0.0.1:0\"");
+        assertThat(Files.readString(SERVICE)).contains("K6_API_ADDRESS = \"127.0.0.1:0\"");
     }
 
-    /**
-     * Ayar BOŞ verilince bayrak HİÇ eklenmemeli — ortamda 16 senaryo izlemesi var ve bu bayrak
-     * hem {@code run} hem {@code archive} yolunda. Beklenmedik bir k6 sürümünde ops tek ayarla
-     * eski davranışa dönebilmeli; kapı o çıkışın kapanmasını engeller.
-     */
     @Test
-    @DisplayName("Boş ayar = bayrak eklenmez (yeniden dağıtımsız geri dönüş)")
-    void blankSettingSkipsFlagEntirely() throws Exception {
+    @DisplayName("Boş ayar = bayrak eklenmez; 2.0+ profilde de eklenmez")
+    void blankSettingOrModernProfileSkipsFlag() throws Exception {
         String src = Files.readString(SERVICE);
-
         int i = src.indexOf("private void addApiAddress(");
         assertThat(i).as("addApiAddress yardımcısı bulunamadı").isGreaterThan(0);
         int end = src.indexOf("private String k6ApiAddress", i);
-        assertThat(end).as("k6ApiAddress() okuyucusu bulunamadı").isGreaterThan(i);
         String body = src.substring(i, end);
-
-        assertThat(body)
-                .as("boş ayar kontrolü yok: geri dönüş kapısı kapanmış olur")
-                .contains("isBlank()");
-        assertThat(body)
-                .as("ayar okunmadan sabit adres kullanılıyor")
-                .contains("k6ApiAddress()");
+        assertThat(body).contains("isBlank()").contains("k6ApiAddress()").contains("needsApiAddress()");
     }
 }

@@ -1486,6 +1486,17 @@ export const api = {
     // Grafana panosu (2026-10-18): ayarlar + aktarıcı durumu, yalnız değişen alanların kaydı, ön izleme ve JSON indirme
     grafanaSettings: () => request('/admin/grafana/settings', { withStatus: true }),
     saveGrafanaSettings: (body) => request('/admin/grafana/settings', { method: 'PUT', body: JSON.stringify(body), withStatus: true }),
+    // k6 motoru (2026-10-29, k6 0.49 → 2.3 geçişi): etkin / yedek / aday ikili, ayarlar, geçiş / geri dönüş, uyumluluk taraması
+    // — YALNIZ global yönetici (sunucu her uçta 403). Hata gövdesi `withStatus` ile HTTP durumunu da taşır.
+    k6Engine: () => request('/admin/k6-engine', { withStatus: true }),
+    k6EngineReprobe: () => request('/admin/k6-engine/reprobe', { method: 'POST', body: '{}', withStatus: true }),
+    saveK6EngineSettings: (body) => request('/admin/k6-engine/settings', { method: 'PUT', body: JSON.stringify(body || {}), withStatus: true }),
+    k6EngineSwitch: () => request('/admin/k6-engine/switch', { method: 'POST', body: JSON.stringify({ confirm: true }), withStatus: true }),
+    k6EngineRollback: () => request('/admin/k6-engine/rollback', { method: 'POST', body: JSON.stringify({ confirm: true }), withStatus: true }),
+    k6ScanStart: (body) => request('/admin/k6-engine/scans', { method: 'POST', body: JSON.stringify(body || {}), withStatus: true }),
+    k6Scans: () => request('/admin/k6-engine/scans', { withStatus: true }),
+    k6Scan: (id) => request(`/admin/k6-engine/scans/${encodeURIComponent(id)}`, { withStatus: true }),
+    k6ScanCancel: (id) => request(`/admin/k6-engine/scans/${encodeURIComponent(id)}/cancel`, { method: 'POST', body: '{}', withStatus: true }),
     grafanaPreview: (body, { signal } = {}) => request('/admin/grafana/dashboard/preview',
       { method: 'POST', body: JSON.stringify(body || {}), withStatus: true, ...(signal ? { signal } : {}) }),
     /** Kayıtlı ayarlarla pano JSON'u (Blob + sunucunun dosya adı). HTTP hatası JSON gövdesinin `error` / `code`'unu taşır. */

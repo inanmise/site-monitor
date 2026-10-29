@@ -1,0 +1,136 @@
+{
+    "config": {
+        "duration": 0.0063195,
+        "execution": "local",
+        "script": "import http from 'k6/http';\nimport { check } from 'k6';\nexport default function () {\n  const r = http.get(__ENV.U + '/index.html', { timeout: '10s' });\n  check(r, { 'status 200': (x) => x.status === 200 });\n  console.log('ua=' + (r.request.headers['User-Agent'] || []).join('|'));\n}\n"
+    },
+    "metadata": {
+        "generated_at": "2026-10-29T23:51:31.6855888+03:00",
+        "k6_version": "2.3.0"
+    },
+    "results": {
+        "checks": {
+            "metrics": [
+                {
+                    "contains": "default",
+                    "name": "checks_total",
+                    "type": "counter",
+                    "values": {
+                        "count": 1
+                    }
+                },
+                {
+                    "contains": "default",
+                    "name": "checks_failed",
+                    "type": "rate",
+                    "values": {
+                        "matches": 0,
+                        "rate": 0,
+                        "total": 1
+                    }
+                },
+                {
+                    "contains": "default",
+                    "name": "checks_succeeded",
+                    "type": "rate",
+                    "values": {
+                        "matches": 1,
+                        "rate": 1,
+                        "total": 1
+                    }
+                }
+            ],
+            "results": [
+                {
+                    "fails": 0,
+                    "name": "status 200",
+                    "passes": 1
+                }
+            ]
+        },
+        "metrics": [
+            {
+                "contains": "default",
+                "name": "http_req_failed",
+                "type": "rate",
+                "values": {
+                    "matches": 0,
+                    "rate": 0,
+                    "total": 1
+                }
+            },
+            {
+                "contains": "time",
+                "name": "http_req_duration{expected_response:true}",
+                "type": "trend",
+                "values": {
+                    "avg": 3.4537,
+                    "max": 3.4537,
+                    "med": 3.4537,
+                    "min": 3.4537,
+                    "p90": 3.4537,
+                    "p95": 3.4537
+                }
+            },
+            {
+                "contains": "default",
+                "name": "http_reqs",
+                "type": "counter",
+                "values": {
+                    "count": 1
+                }
+            },
+            {
+                "contains": "time",
+                "name": "http_req_duration",
+                "type": "trend",
+                "values": {
+                    "avg": 3.4537,
+                    "max": 3.4537,
+                    "med": 3.4537,
+                    "min": 3.4537,
+                    "p90": 3.4537,
+                    "p95": 3.4537
+                }
+            },
+            {
+                "contains": "time",
+                "name": "iteration_duration",
+                "type": "trend",
+                "values": {
+                    "avg": 5.7395,
+                    "max": 5.7395,
+                    "med": 5.7395,
+                    "min": 5.7395,
+                    "p90": 5.7395,
+                    "p95": 5.7395
+                }
+            },
+            {
+                "contains": "default",
+                "name": "iterations",
+                "type": "counter",
+                "values": {
+                    "count": 1
+                }
+            },
+            {
+                "contains": "data",
+                "name": "data_received",
+                "type": "counter",
+                "values": {
+                    "count": 219
+                }
+            },
+            {
+                "contains": "data",
+                "name": "data_sent",
+                "type": "counter",
+                "values": {
+                    "count": 81
+                }
+            }
+        ]
+    },
+    "version": "1.0.0"
+}

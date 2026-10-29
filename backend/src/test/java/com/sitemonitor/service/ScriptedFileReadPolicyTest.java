@@ -88,6 +88,23 @@ class ScriptedFileReadPolicyTest {
     }
 
     @Test
+    @DisplayName("BLOCK + uyumluluk taraması: dosya okuyan betik DERLENMEZ de (k6 archive başlangıç kodunu çalıştırır — inceleme M1)")
+    void block_compatRunNeverArchives() throws Exception {
+        var svc = org.mockito.Mockito.spy(service("BLOCK"));
+        ScriptedMonitor m = new ScriptedMonitor();
+        m.setId(1L);
+        m.setName("okuyan");
+        m.setScript("throw new Error(open('/proc/1/environ'));");
+        K6Profile cand = K6Profile.fromVersionOutput("/opt/k6-next/k6", "k6 v2.3.0", 1L);
+        var run = svc.compatRun(m, cand);
+        assertThat(run.archive()).isEqualTo(ScriptedCheckerService.ArchiveKind.NOT_RUN);
+        assertThat(run.result().status()).isEqualTo(ScriptedCheckerService.STATUS_SKIPPED);
+        assertThat(run.result().error()).contains("dosya okuyor");
+        org.mockito.Mockito.verify(svc, org.mockito.Mockito.never())
+                .archiveCheck(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
     @DisplayName("REPORT (varsayılan): dosya okuyan betik de eskisi gibi koşum yoluna girer — davranış değişmez")
     void report_doesNotChangeExecution() {
         var svc = service("REPORT");
