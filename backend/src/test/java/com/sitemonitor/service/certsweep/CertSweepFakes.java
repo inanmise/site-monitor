@@ -45,6 +45,14 @@ public final class CertSweepFakes {
         return new CertChunking(s, tuning);
     }
 
+    /** Ayarlar sahte: anahtar her okumada {@code enabled}'dan (tur sürerken kapatma — SW-L2). */
+    public static CertChunking chunking(java.util.function.BooleanSupplier enabled, CertChunking.Tuning tuning) {
+        com.sitemonitor.service.AppSettingsService s = org.mockito.Mockito.mock(com.sitemonitor.service.AppSettingsService.class);
+        org.mockito.Mockito.lenient().when(s.getBoolean(org.mockito.ArgumentMatchers.eq(CertChunking.KEY_ENABLED),
+                org.mockito.ArgumentMatchers.anyBoolean())).thenAnswer(i -> enabled.getAsBoolean());
+        return new CertChunking(s, tuning);
+    }
+
     /** Testlerin pod ayarları: parça 5, en az 1 alan adı (tur hep parçalı olabilsin). */
     public static CertChunking.Tuning tuning() {
         return new CertChunking.Tuning(true, 5, 1, 4, 0, 60_000L, 10_000L, 50, 250L, 5_000L);
@@ -62,6 +70,14 @@ public final class CertSweepFakes {
         public volatile RuntimeException failAll;
         /** {@code createRun} fırlatsın mı. */
         public volatile RuntimeException failCreate;
+        /** {@code settleOrphans} fırlatsın mı. */
+        public volatile RuntimeException failSettle;
+        /** Bu parça kimliklerinden birini içeren {@code readResults} çağrısı fırlatır (CR-L2). */
+        public final java.util.Set<Long> failReadFor = java.util.concurrent.ConcurrentHashMap.newKeySet();
+        /** Bu parça kimliğinin {@code cancel}'ı fırlatır (CR-L2). */
+        public final java.util.Set<Long> failCancelFor = java.util.concurrent.ConcurrentHashMap.newKeySet();
+        /** Her {@code readResults} çağrısının kimlik sayısı. */
+        public final List<Integer> readBatches = Collections.synchronizedList(new ArrayList<>());
         public final List<String> calls = Collections.synchronizedList(new ArrayList<>());
         public final Map<String, Run> runs = new LinkedHashMap<>();
         public final List<Chunk> chunks = new ArrayList<>();
@@ -130,6 +146,7 @@ public final class CertSweepFakes {
         @Override
         public synchronized List<CertSweepStatus.Run> settleOrphans() {
             touch("settleOrphans");
+            if (failSettle != null) throw failSettle;
             List<CertSweepStatus.Run> out = new ArrayList<>();
             for (Run r : runs.values()) {
                 if (RUN_RUNNING.equals(r.state) || RUN_DECIDING.equals(r.state)) {
@@ -223,6 +240,8 @@ public final class CertSweepFakes {
         @Override
         public synchronized Map<Long, String> readResults(String runId, Collection<Long> chunkIds) {
             touch("readResults");
+            readBatches.add(chunkIds.size());
+            for (Long id : chunkIds) if (failReadFor.contains(id)) throw dbDown();
             Map<Long, String> out = new LinkedHashMap<>();
             for (Chunk c : chunks) {
                 if (c.runId.equals(runId) && CHUNK_DONE.equals(c.state) && chunkIds.contains(c.id)) out.put(c.id, c.resultsJson);
@@ -233,6 +252,7 @@ public final class CertSweepFakes {
         @Override
         public synchronized boolean cancel(String runId, long chunkId) {
             touch("cancel");
+            if (failCancelFor.contains(chunkId)) throw dbDown();
             Chunk c = byId(chunkId);
             if (c == null || !c.runId.equals(runId)) return false;
             if (!(CHUNK_PENDING.equals(c.state) || CHUNK_CLAIMED.equals(c.state))) return false;
@@ -495,6 +515,17 @@ public final class CertSweepFakes {
         m.put("status", "error");
         m.put("error", "Connection timeout after 6s");
         m.put("error_class", "NETWORK");
+        return m;
+    }
+
+    /** Çözülemeyen ad (CR-M-1): {@code status=error ∧ error_class=DNS ∧ unresolvable_host} — karar oranına girmez. */
+    public static Map<String, Object> unresolvable(String domain) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("domain", domain);
+        m.put("status", "error");
+        m.put("error", "Domain resolution failed");
+        m.put("error_class", "DNS");
+        m.put("unresolvable_host", true);
         return m;
     }
 

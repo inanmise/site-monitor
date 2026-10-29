@@ -110,8 +110,11 @@ class CertChunkRoundTripTest {
         ReflectionTestUtils.setField(h.scheduler(), "certRunCoordinator", c);
         h.run();
         assertThat(h.transcript()).isEqualTo(golden(name));
-        assertThat(store.calls).isEmpty();
-        assertThat(c.status().classicFallback()).isEqualTo(1);
+        // OB-L1: anahtar açıkken her tur başında öksüzler kapatılır (klasik turda da) — koşu yazılmaz, karar dökümü aynı
+        assertThat(store.calls).containsExactly("settleOrphans");
+        assertThat(store.runs).isEmpty();
+        assertThat(c.status().classicByRule()).isEqualTo(1);
+        assertThat(c.status().classicFallback()).isZero();
     }
 
     // ═════════════════════════════════════════════════════════════════════════════════════════════════════════════
@@ -245,5 +248,129 @@ class CertChunkRoundTripTest {
         assertThat(k.worker.completed).isEqualTo(k.store.lastSpec.chunksTotal());
         assertThat(k.coordinator.status().takeovers()).isZero();
         assertThat(k.coordinator.status().chunkedRuns()).isEqualTo(1);
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════════════════════════════════════════
+    // İnceleme düzeltmeleri (FX-COORD, 2026-10-29)
+    // ═════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Koordinatör aykırı düzeneği (H-1): 40 alan adı (8 parça), denetleyici gerçeği SAĞLIKLI. Koordinatör A'nın çıkışı bozuk —
+     * kendi işçisi 8 parçanın 6'sını alır (30 ağ hatası); B (gerçek ölçücü → harness denetleyicisi) kalan 2'yi. A aykırı → 30 alan
+     * adı kaçınılan işçi = A ile 6 ikinci görüş parçasına dağıtılır; B {@code soLimit} tanesini ölçer, sonrakini tutarken ölür.
+     */
+    static final class Outlier {
+        final CertSweepGoldenHarness h;
+        final AtomicLong clock = new AtomicLong(3_000_000L);
+        final CertSweepFakes.Store store = new CertSweepFakes.Store(clock::get);
+        final CertRunCoordinator coordinator;
+        int aClaims;
+        int soDone;
+        boolean bDead;
+
+        Outlier(int soLimit) throws Exception {
+            List<Map<String, Object>> rows = new ArrayList<>();
+            Map<String, CertSweepGoldenHarness.Outcome> outcomes = new java.util.LinkedHashMap<>();
+            for (int i = 0; i < 40; i++) {
+                String d = String.format("o%03d.example.com", i);
+                rows.add(CertSweepGoldenHarness.row(d, 443, false, "", null, null));
+                outcomes.put(d, CertSweepGoldenHarness.Outcome.ok(CertSweepGoldenHarness.valid(d, 90, false, 100L + i)));
+            }
+            h = new CertSweepGoldenHarness(new CertSweepGoldenHarness.Scenario("outlier", "hourly", true, true, rows, outcomes,
+                    false, true, null));
+            CertSweepFakes.Runner brokenA = new CertSweepFakes.Runner(COORDINATOR, CertSweepFakes::netErr);
+            CertSweepFakes.Worker wa = new CertSweepFakes.Worker(store, brokenA, COORDINATOR);
+            CertSweepFakes.Worker wb = new CertSweepFakes.Worker(store, new SchedulerCertChunks(h.scheduler()), WORKER);
+            coordinator = CertSweepFakes.coordinator(CertSweepFakes.chunking(true, CertSweepFakes.tuning()), store, brokenA,
+                    () -> true, d -> Map.of(), COORDINATOR, clock::get, ms -> {
+                        clock.addAndGet(ms);
+                        if (aClaims < 6) {
+                            if (wa.tick()) aClaims++;
+                            return;
+                        }
+                        if (bDead) return;
+                        var k = store.claim(WORKER, 60_000L, Long.MAX_VALUE);
+                        if (k.isEmpty()) return;
+                        boolean so = store.chunksOf(k.get().runId()).stream()
+                                .anyMatch(ch -> ch.id == k.get().id() && ch.avoid != null);
+                        if (so && soDone >= soLimit) {
+                            bDead = true;                                    // ikinci görüş parçasını tutarken ölür
+                            return;
+                        }
+                        wb.run(k.get());
+                        if (so) soDone++;
+                    });
+            ReflectionTestUtils.setField(h.scheduler(), "certRunCoordinator", coordinator);
+        }
+
+        String onRun() {
+            String calls = h.transcript("calls");
+            int at = calls.indexOf("\"call\": \"onRun\"");
+            assertThat(at).as("onRun çağrıldı").isNotNegative();
+            return calls.substring(at, calls.indexOf('}', at));
+        }
+    }
+
+    @Test
+    @DisplayName("H-1: koordinatör aykırı + ikinci görüş KISMİ (yardımcı 3 / 6 parçadan sonra öldü) → özgün sonuçların HEPSİ, onRun 'şüpheli' = özgün karar (30 / 40)")
+    void coordinatorOutlierPartialSecondOpinion_onRunAsOriginal() throws Exception {
+        Outlier o = new Outlier(3);
+        o.h.run();
+        assertThat(o.bDead).isTrue();
+        assertThat(o.soDone).isEqualTo(3);
+        // kısmi değişim 15 / 40 (%37,5) → şüphesiz → sahte alarmlar olurdu; hepsi-ya-da-hiçbiri: 30 / 40 şüpheli
+        assertThat(o.onRun()).contains("\"networkErrors\": 30").contains("\"total\": 40").contains("\"suspected\": true");
+        assertThat(o.h.transcript("calls")).as("şüpheli turda yeni alarm yok — yalnız kapanış uzlaştırması")
+                .doesNotContain("\"call\": \"processResults\"").contains("\"call\": \"resolveVerifiedStaleCertAlerts\"");
+    }
+
+    @Test
+    @DisplayName("H-1: koordinatör aykırı + ikinci görüş TAM → bütün yeniden ölçümler kullanılır, onRun düzeltilmiş oranı görür (0 / 40)")
+    void coordinatorOutlierFullSecondOpinion_onRunCorrected() throws Exception {
+        Outlier o = new Outlier(Integer.MAX_VALUE);
+        o.h.run();
+        assertThat(o.soDone).isEqualTo(6);
+        assertThat(o.onRun()).contains("\"networkErrors\": 0").contains("\"suspected\": false");
+    }
+
+    @Test
+    @DisplayName("SW-L3: koordinatörün yerel ölçümü KENDİ iş parçacığında işaretli (lider alt grup kuralı ona uygulanmaz); tur bitince işaret kalkar")
+    void coordinatorThreadIsMarkedDuringGather() throws Exception {
+        CertSweepGoldenHarness h = new CertSweepGoldenHarness(CertSweepGoldenHarness.scenario("full"));
+        SchedulerCertChunks real = new SchedulerCertChunks(h.scheduler());
+        List<Boolean> marks = new ArrayList<>();
+        CertChunkRunner recording = new CertChunkRunner() {
+            @Override
+            public List<Map<String, Object>> checkDomains(List<Map<String, Object>> rows, String runId) {
+                marks.add(h.scheduler().isCoordinatingCertRun());
+                return real.checkDomains(rows, runId);
+            }
+
+            @Override
+            public boolean closing() {
+                return real.closing();
+            }
+
+            @Override
+            public long networkErrorCount(List<Map<String, Object>> results) {
+                return real.networkErrorCount(results);
+            }
+
+            @Override
+            public int executorCoreSize() {
+                return real.executorCoreSize();
+            }
+        };
+        AtomicLong clock = new AtomicLong(4_000_000L);
+        CertSweepFakes.Store store = new CertSweepFakes.Store(clock::get);
+        // işçi yok → 60 sn sonra koordinatör hepsini kendisi ölçer
+        CertRunCoordinator c = CertSweepFakes.coordinator(CertSweepFakes.chunking(true, CertSweepFakes.tuning()), store,
+                recording, () -> true, d -> Map.of(), COORDINATOR, clock::get, ms -> clock.addAndGet(ms));
+        ReflectionTestUtils.setField(h.scheduler(), "certRunCoordinator", c);
+        assertThat(h.scheduler().isCoordinatingCertRun()).isFalse();
+        h.run();
+        assertThat(marks).isNotEmpty().allMatch(Boolean.TRUE::equals);
+        assertThat(h.scheduler().isCoordinatingCertRun()).as("işaret tur bitince kaldırıldı").isFalse();
+        assertThat(h.transcript("calls")).contains("\"call\": \"onRun\"");
     }
 }

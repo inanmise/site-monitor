@@ -193,16 +193,28 @@ public record CertSweepStatus(long nowMs, boolean dbClockStale, List<Run> lastRu
     /**
      * Bu pod'un koordinatör sayaçları (bellek; koordinatör {@link CertChunking#registerCoordinatorStatus} ile sağlar). Toplamlar
      * pod açıldığından beri birikir; ölçüm {@code sitemonitor_cert_sweep_worker_chunks{outcome="takeover|second_opinion"}}.
+     * Sağlık yükünde {@code classic_by_rule} / {@code classic_fallback} (inceleme OB-L6, 2026-10-29: önceden tek sayaçtı ve
+     * sağlıklı kümede her küçük bayat turu "klasiğe dönen" diye sayıyordu).
      *
      * @param chunkedRuns     parçalı koşulan tur
-     * @param classicFallback anahtar açıkken klasiğe düşen tur (tek pod, az alan adı, depo hatası …)
+     * @param classicFallback anahtar açıkken parçalı OLACAKKEN klasiğe DÜŞEN tur (koşu yazılamadı / öksüzler kapatılamadı,
+     *                        koordinatörün iç hatası) — gerçek bir arıza
      * @param takeovers       koordinatörün kendisi ölçtüğü parça (kayıp parça / ilerlemesiz bekleme / depo hatası)
      * @param remeasured      kullanılamaz sonuç yüzünden kendisi yeniden ölçtüğü alan adı
      * @param secondOpinions  ikinci görüşle yeniden ölçülen alan adı
      * @param abandoned       ABANDONED biten koşu (kapanış / kilit kaybı)
+     * @param classicByRule   anahtar açıkken KURAL GEREĞİ klasik koşan tur (başka canlı pod yok, alan adı {@code min-domains}
+     *                        altında, depo / tablolar / ölçücü yok, kapanış) — arıza değil
      */
     public record Coordinator(long chunkedRuns, long classicFallback, long takeovers, long remeasured, long secondOpinions,
-                              long abandoned) {}
+                              long abandoned, long classicByRule) {
+
+        /** Eski biçim (OB-L6 öncesi): kural gereği klasik turlar ayrı sayılmıyordu → {@code classicByRule = 0}. */
+        public Coordinator(long chunkedRuns, long classicFallback, long takeovers, long remeasured, long secondOpinions,
+                           long abandoned) {
+            this(chunkedRuns, classicFallback, takeovers, remeasured, secondOpinions, abandoned, 0L);
+        }
+    }
 
     // ── workers_json kodlaması (B yazar, C okur) ────────────────────────────────────────────────────────────────────
 

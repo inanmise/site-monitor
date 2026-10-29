@@ -13,8 +13,10 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
 
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -123,9 +125,10 @@ class CertChunkSecondOpinionTest {
         assertThat(so).hasSize(4).allMatch(k -> B.equals(k.avoid) && C.equals(k.worker));
         assertThat(c.status().secondOpinions()).isEqualTo(20);
         assertThat(store.run("run-so").secondOpinions).isEqualTo(20);
+        // CR-L5: uyarı ikinci görüşten SONRA, sonucuyla — yeniden ölçümlerin çoğu başka pod'dan başarılı → P1 önerisi
         assertThat(logs.list).filteredOn(e -> e.getLevel() == Level.WARN).extracting(ILoggingEvent::getFormattedMessage)
                 .containsExactly("Sertifika taraması: pod-b pod'unun parçalarında ağ hatası oranı %100 (diğerleri %0) — 20 "
-                        + "alan adı başka pod'dan yeniden ölçüldü; çıkış eşliğini (P1) doğrulayın");
+                        + "alan adı başka pod'dan yeniden ölçüldü: 20 başarılı, 0 yine hatalı; çıkış eşliğini (P1) doğrulayın");
         // L-3: karar listesi klasik sırada
         for (int i = 0; i < 40; i++) assertThat(g.results().get(i).get("domain")).isEqualTo(String.format("o%03d.example.com", i));
     }
@@ -183,6 +186,10 @@ class CertChunkSecondOpinionTest {
         assertThat(g.results()).filteredOn(m -> "error".equals(m.get("status")))
                 .extracting(m -> (String) m.get("domain")).containsExactlyInAnyOrderElementsOf(down);
         assertThat(store.calls.stream().filter("addChunks"::equals)).as("tek tur ikinci görüş").hasSize(1);
+        // B'nin çıkışı gerçekten bozuk: yeniden ölçümlerin çoğu (14 / 20) başka pod'dan başarılı → P1 önerili WARN
+        assertThat(logs.list).filteredOn(e -> e.getLevel() == Level.WARN).extracting(ILoggingEvent::getFormattedMessage)
+                .containsExactly("Sertifika taraması: pod-b pod'unun parçalarında ağ hatası oranı %100 (diğerleri %0) — 20 "
+                        + "alan adı başka pod'dan yeniden ölçüldü: 14 başarılı, 6 yine hatalı; çıkış eşliğini (P1) doğrulayın");
     }
 
     @Test
@@ -200,5 +207,144 @@ class CertChunkSecondOpinionTest {
         assertThat(networkErrors(g.results())).isEqualTo(4);
         assertThat(c.status().secondOpinions()).isZero();
         assertThat(store.run("run-none").secondOpinions).isZero();
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════════════════════════════════════════
+    // İnceleme düzeltmeleri (FX-COORD, 2026-10-29): H-1, M-1, L-5
+    // ═════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+    static final String A = ME;          // koordinatör (aşağıdaki senaryolarda bozuk çıkışlı)
+
+    /** Toplu kesinti kuralının "şüpheli" kararı (SchedulerService ile aynı: ≥ min-errors ∧ oran ≥ eşik). */
+    static boolean suspected(List<Map<String, Object>> results) {
+        long ne = networkErrors(results);
+        return ne >= 3 && (double) ne / results.size() >= 0.5;
+    }
+
+    /**
+     * İnceleme sondası H-1 (kalıcı): koordinatör A aykırı (bozuk çıkış; kendi işçisi 20 parçanın 12'sini aldı → 60 / 100 ağ
+     * hatası, şüpheli kesinti — klasik A'da da öyle karar verirdi). Tek yardımcı tarama lideri B: yalnız ≥ 10 sn bekleyen
+     * parçaları, 4 sn'de bir TEK parça alır. Eskiden 30 sn'de yardımcı hâlâ çalışırken ikinci görüş kesiliyordu (5 parça ölçülmüş,
+     * 7'si iptal → 35 / 100, şüphesiz → 35 sahte alarm).
+     */
+    final class LeaderLikeHelper {
+        final Worker wa = new Worker(store, broken(A), A);
+        final Runner rb = healthy(B, Set.of());
+        final Worker wb = new Worker(store, rb, B);
+        int aClaims;
+        long lastB = Long.MIN_VALUE;
+        int bSecondOpinion;
+        int dieAfterSecondOpinion = Integer.MAX_VALUE;
+        boolean bDead;
+        final Set<Long> claimedSo = new HashSet<>();
+
+        void install() {
+            onTick = () -> {
+                long now = clock.get();
+                if (aClaims < 12 && wa.tick()) aClaims++;
+                if (bDead) return;
+                if (lastB == Long.MIN_VALUE || now - lastB >= 4_000L) {
+                    Optional<ClaimedChunk> k = store.claim(B, 60_000L, now - 10_000L);
+                    if (k.isPresent()) {
+                        boolean so = store.chunksOf(k.get().runId()).stream()
+                                .anyMatch(ch -> ch.id == k.get().id() && ch.avoid != null);
+                        if (so && bSecondOpinion >= dieAfterSecondOpinion) {
+                            bDead = true;                                    // B bu ikinci görüş parçasını tutarken ölür
+                            return;
+                        }
+                        if (so) {
+                            bSecondOpinion++;
+                            claimedSo.add(k.get().id());
+                        }
+                        wb.run(k.get());
+                        lastB = now;
+                    }
+                }
+            };
+        }
+    }
+
+    @Test
+    @DisplayName("H-1: koordinatör aykırı, yardımcı lider gibi yavaş → 30 sn'de sahiplenilmiş ikinci görüş KESİLMEZ, hepsi ölçülür; oran TAMAMEN düzelir")
+    void coordinatorOutlier_leaderLikeHelper_fullyCorrected() {
+        Runner localA = broken(A);
+        LeaderLikeHelper h = new LeaderLikeHelper();
+        h.install();
+        CertRunCoordinator c = coordinator(A, localA);
+        CertRunCoordinator.Gathered g = c.gather(rows(100, "x"), req("run-x"));
+
+        assertThat(g.aborted()).isFalse();
+        List<Store.Chunk> so = store.chunksOf("run-x").stream().filter(k -> k.avoid != null).toList();
+        assertThat(so).hasSize(12).allMatch(k -> CertSweepStore.CHUNK_DONE.equals(k.state) && B.equals(k.worker));
+        assertThat(so).noneMatch(k -> CertSweepStore.CHUNK_CANCELLED.equals(k.state));
+        assertThat(h.bSecondOpinion).isEqualTo(12);
+        assertThat(networkErrors(g.results())).as("ikinci görüşün hepsi kullanıldı").isZero();
+        assertThat(suspected(g.results())).isFalse();
+        assertThat(localA.checked).as("koordinatör aykırı: kendisi yeniden ölçmez").isEmpty();
+        assertThat(c.status().secondOpinions()).isEqualTo(60);
+    }
+
+    @Test
+    @DisplayName("H-1 hepsi-ya-da-hiçbiri: koordinatör aykırı, yardımcı 2 ikinci görüş parçası ölçüp 3.'yü tutarken ölür → özgün sonuçların HEPSİ kalır; 'şüpheli' kararı özgünle aynı")
+    void coordinatorOutlier_helperDiesMidway_keepsAllOriginals() {
+        Runner localA = broken(A);
+        LeaderLikeHelper h = new LeaderLikeHelper();
+        h.dieAfterSecondOpinion = 2;
+        h.install();
+        CertRunCoordinator c = coordinator(A, localA);
+        long start = clock.get();
+        CertRunCoordinator.Gathered g = c.gather(rows(100, "y"), req("run-y"));
+
+        assertThat(g.aborted()).isFalse();
+        assertThat(h.bDead).isTrue();
+        assertThat(h.bSecondOpinion).isEqualTo(2);
+        // kısmi değişim (10 düzeltme → 50 / 100) olsaydı karar değişebilirdi; hepsi kalır → 60 / 100, şüpheli (özgün karar)
+        assertThat(networkErrors(g.results())).isEqualTo(60);
+        assertThat(suspected(g.results())).as("onRun 'şüpheli' kararı özgünle aynı").isTrue();
+        assertThat(localA.checked).isEmpty();
+        assertThat(clock.get() - start).as("ilerleme ağına (900 sn) kalmadan: kira + lease-ms sonra bırakıldı").isLessThan(300_000L);
+        assertThat(logs.list).filteredOn(e -> e.getLevel() == Level.WARN).as("doğrulanmamış şüphe için P1 uyarısı yok").isEmpty();
+        assertThat(logs.list.stream().map(ILoggingEvent::getFormattedMessage))
+                .anyMatch(l -> l.startsWith("İkinci görüş tamamlanamadı: pod-a pod'unun 60 alan adından yeniden ölçülen 10"));
+    }
+
+    @Test
+    @DisplayName("M-1: bir pod'un çözücüsü bozuk (çözülemeyen ad, karar oranına girmez) → o pod aykırı sayılır, alan adları başka pod'dan yeniden ölçülür")
+    void unresolvableOnOnePodIsRemeasured() {
+        Runner local = healthy(ME, Set.of());
+        Worker wb = new Worker(store, new Runner(B, CertSweepFakes::unresolvable), B);
+        Worker wc = new Worker(store, healthy(C, Set.of()), C);
+        tickBoth(wb, wc);
+        CertRunCoordinator c = coordinator(ME, local);
+        CertRunCoordinator.Gathered g = c.gather(rows(40, "u"), req("run-dns"));
+
+        assertThat(g.aborted()).isFalse();
+        assertThat(g.results()).as("sahte 'Domain resolution failed' yok").noneMatch(m -> "error".equals(m.get("status")));
+        assertThat(store.chunksOf("run-dns").stream().filter(k -> k.avoid != null).toList())
+                .hasSize(4).allMatch(k -> B.equals(k.avoid) && C.equals(k.worker));
+        assertThat(c.status().secondOpinions()).isEqualTo(20);
+        assertThat(local.checked).isEmpty();
+    }
+
+    @Test
+    @DisplayName("L-5: gerçek kısmi kesinti (bir yayın kuruluşu kesimi tek pod'un parçalarında) → yeniden ölçüm de düşer, P1 uyarısı YOK (INFO sonucu)")
+    void genuineSegmentOutageNoEgressAdvice() {
+        // B'nin parçaları 0, 2, 4, 6 (sıra: B, C); her B parçasının ilk 3 alan adı her yerden düşük
+        Set<String> down = new HashSet<>();
+        for (int chunk : new int[]{0, 2, 4, 6}) for (int k = 0; k < 3; k++) down.add(String.format("s%03d.example.com", chunk * 5 + k));
+        Runner local = healthy(ME, down);
+        Worker wb = new Worker(store, healthy(B, down), B);
+        Worker wc = new Worker(store, healthy(C, down), C);
+        tickBoth(wb, wc);
+        CertRunCoordinator c = coordinator(ME, local);
+        CertRunCoordinator.Gathered g = c.gather(rows(40, "s"), req("run-seg"));
+
+        assertThat(g.aborted()).isFalse();
+        assertThat(c.status().secondOpinions()).as("B aykırı (12 / 20 ≥ %50, C %0)").isEqualTo(12);
+        assertThat(networkErrors(g.results())).as("gerçek hatalar korunur").isEqualTo(12);
+        assertThat(logs.list).filteredOn(e -> e.getLevel() == Level.WARN).isEmpty();
+        assertThat(logs.list.stream().map(ILoggingEvent::getFormattedMessage)).contains(
+                "İkinci görüş: pod-b pod'unun 12 alan adı başka pod'dan yeniden ölçüldü: 0 başarılı, 12 yine hatalı — hatalar "
+                        + "başka pod'dan da görülüyor (gerçek kesinti olası), sonuçlar geçerli (runId=run-seg)");
     }
 }
