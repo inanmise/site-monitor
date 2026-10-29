@@ -71,6 +71,7 @@ public class JdbcCheckJobStore implements CheckJobStore {
     public static final int STALE_DONE_FACTOR = 2;
     /** Gönderme tablo okunamıyorken fırlatılan istisnanın iletisi (SQL metni yok). */
     static final String DISPATCH_TABLE_MISSING = "Dağıtık kontrol iş tablosu okunamıyor — işler gönderilemedi";
+    static final String DISPATCH_PARTIAL = "Dağıtık kontrol işleri kısmen gönderildi — kalan parçalar yazılamadı";
 
     private static final SecureRandom RANDOM = new SecureRandom();
 
@@ -127,9 +128,15 @@ public class JdbcCheckJobStore implements CheckJobStore {
             boolean multiRow = pg && openIndexPresent();
             for (int from = 0; from < ids.size(); from += CheckJobSql.DISPATCH_CHUNK) {
                 List<Long> chunk = ids.subList(from, Math.min(ids.size(), from + CheckJobSql.DISPATCH_CHUNK));
-                inserted += multiRow ? dispatchMultiRow(type, chunk, lease, now, who)
-                        : dispatchPortable(pg ? CheckJobSql.SQL_DISPATCH_ONE_PG : CheckJobSql.SQL_DISPATCH_ONE, type, chunk, lease,
-                                now, who);
+                try {
+                    inserted += multiRow ? dispatchMultiRow(type, chunk, lease, now, who)
+                            : dispatchPortable(pg ? CheckJobSql.SQL_DISPATCH_ONE_PG : CheckJobSql.SQL_DISPATCH_ONE, type, chunk,
+                                    lease, now, who);
+                } catch (RuntimeException e) {
+                    if (from == 0) throw e;
+                    // F1: önceki parçalar yazıldı — gönderen yalnız yazılmayanları yeniden sunsun
+                    throw new PartialDispatchException(DISPATCH_PARTIAL, e, ids.subList(0, from));
+                }
             }
             return inserted;
         } catch (BadSqlGrammarException e) {

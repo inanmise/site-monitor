@@ -8,6 +8,7 @@ import com.sitemonitor.model.CertificateInventory;
 import com.sitemonitor.model.DnsMonitor;
 import com.sitemonitor.model.PortMonitor;
 import com.sitemonitor.service.checks.CheckJobRunner;
+import com.sitemonitor.service.checks.CheckJobStore;
 import com.sitemonitor.service.checks.CheckJobTypes;
 import com.sitemonitor.service.checks.CheckResultRow;
 import org.junit.jupiter.api.AfterEach;
@@ -129,6 +130,61 @@ class CheckPipelineReviewFixTest {
         h.clock.addAndGet(5_000L);
         h.scheduler.dispatchCheckJobs();
         assertThat(store.dispatched).as("yeniden sunulan dönem bir kez").isEmpty();
+    }
+
+    @Test
+    @DisplayName("Son inceleme F1: gönderim yarıda düşerse YAZILMIŞ parçalar yeniden sunulmaz (aynı dönemde ikinci kontrol yok); yalnız yazılmayanlar sunulur")
+    void partialDispatch_onlyUnwrittenIdsReoffered() {
+        h.bindDistributed(true, CheckJobTypes.PORT);
+        h.portFixture();
+        store.dispatchFailure = new CheckJobStore.PartialDispatchException("kısmen", new DataAccessResourceFailureException("koptu"),
+                List.of(1L, 2L, 3L));
+        h.scheduler.dispatchCheckJobs();
+        assertThat(h.scheduler.distributedCheckStatus().get("retained")).isEqualTo(3L);
+        store.dispatchFailure = null;
+        h.clock.addAndGet(5_000L);
+        h.scheduler.dispatchCheckJobs();
+        assertThat(dispatchedIds(CheckJobTypes.PORT)).as("yalnız yazılmayan parça").containsExactly(4L, 6L, 7L);
+        assertThat(h.scheduler.distributedCheckStatus().get("retained")).isEqualTo(0L);
+    }
+
+    @Test
+    @DisplayName("Son inceleme F3: dağıtıkta gönderilen DNS (60 sn aralık, 300 sn tık) klasiğe dönünce hemen yeniden kontrol edilmez — gönderimin vadesine uyulur")
+    void dnsClassicAfterDistributed_respectsDispatchDue() {
+        h.bindDistributed(true, CheckJobTypes.DNS);
+        List<DnsMonitor> all = h.dnsFixture();
+        List<Object[]> rows = new ArrayList<>();
+        for (DnsMonitor m : all) {
+            m.setIntervalSeconds(60);
+            rows.add(new Object[] {m.getId(), m.getIntervalSeconds(), m.getStandalone(), m.getDomain()});
+        }
+        Mockito.doReturn(rows).when(h.dnsRepo).findCheckDispatchRows();
+        assertThat(mode(CheckJobTypes.DNS)).isTrue();
+        h.scheduler.dispatchCheckJobs();
+        assertThat(dispatchedIds(CheckJobTypes.DNS)).isNotEmpty();
+        // kayıt okunamadı (UNKNOWN) → tür histerezissiz hemen klasik (gönderim bekletmesi / boşaltamama da aynı)
+        registry.live.put(CheckJobTypes.DNS, com.sitemonitor.service.checks.CheckWorkerRegistry.UNKNOWN);
+        assertThat(mode(CheckJobTypes.DNS)).isFalse();
+        h.clock.addAndGet(30_000L);
+        ReflectionTestUtils.invokeMethod(h.scheduler, "runDnsChecksLocked");
+        verify(h.dnsChecker, never()).check(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString());
+        h.clock.addAndGet(270_000L);   // gönderimin yazdığı vade (dispatch + 300 sn)
+        ReflectionTestUtils.invokeMethod(h.scheduler, "runDnsChecksLocked");
+        verify(h.dnsChecker, Mockito.atLeastOnce()).check(org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyString());
+    }
+
+    @Test
+    @DisplayName("Son inceleme F1: bekletilen dönemler liderlik olayında silinir (yeniden lider olan pod ara liderin işlediklerini sunmaz)")
+    void retainedDueClearedOnLeadershipEvent() {
+        h.bindDistributed(true, CheckJobTypes.PORT);
+        h.portFixture();
+        store.dispatchFailure = new DataAccessResourceFailureException("koptu");
+        h.scheduler.dispatchCheckJobs();
+        assertThat(h.scheduler.distributedCheckStatus().get("retained")).isEqualTo(6L);
+        ReflectionTestUtils.invokeMethod(h.scheduler, "publishSweepLeadership", false, h.clock.get(),
+                com.sitemonitor.service.schedule.SweepLeadershipChangedEvent.LOST);
+        assertThat(h.scheduler.distributedCheckStatus().get("retained")).isEqualTo(0L);
     }
 
     @Test
@@ -291,6 +347,35 @@ class CheckPipelineReviewFixTest {
         // işçi dışında (bırakılmamış) bugünkü gibi yazar
         assertThat(CheckJobRunner.carriesResult(h.scheduler.runCheckJob(CheckJobTypes.DNS, 1L))).isTrue();
         verify(h.dnsRecordRepo, times(1)).save(any());
+    }
+
+    @Test
+    @DisplayName("Son inceleme F4: işçinin bıraktığı port / keyword / http / ping / sayfa / sayfa hızı işi kesmenin ürettiği sahte başarısızlığı geçmişe yazmaz")
+    void abandonedJobsOfEveryTypeWriteNoHistory() {
+        h.portFixture();
+        h.keywordFixture();
+        h.httpFixture();
+        h.pingFixture();
+        h.pageFixture();
+        h.pageSpeedFixture();
+        for (String type : List.of(CheckJobTypes.PORT, CheckJobTypes.KEYWORD, CheckJobTypes.HTTP, CheckJobTypes.PING,
+                CheckJobTypes.PAGE, CheckJobTypes.PAGESPEED)) {
+            Map<String, Object> out = com.sitemonitor.service.checks.CheckWorkerTestHooks.runAsAbandonedJob(
+                    () -> h.scheduler.runCheckJob(type, 1L));
+            assertThat(CheckJobRunner.carriesResult(out)).as(type).isFalse();
+        }
+        verify(h.portCheckRepo, never()).save(any());
+        verify(h.keywordResultRepo, never()).save(any());
+        verify(h.httpCheckRepo, never()).save(any());
+        verify(h.pingCheckRepo, never()).save(any());
+        verify(h.pageCheckRepo, never()).save(any());
+        verify(h.pageSpeedCheckRepo, never()).save(any());
+
+        // bırakılmamış iş bugünkü gibi yazar
+        assertThat(CheckJobRunner.carriesResult(h.scheduler.runCheckJob(CheckJobTypes.HTTP, 1L))).isTrue();
+        verify(h.httpCheckRepo, times(1)).save(any());
+        assertThat(CheckJobRunner.carriesResult(h.scheduler.runCheckJob(CheckJobTypes.PORT, 1L))).isTrue();
+        verify(h.portCheckRepo, times(1)).save(any());
     }
 
     @Test

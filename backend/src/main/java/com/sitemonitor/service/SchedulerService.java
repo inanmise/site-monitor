@@ -5160,6 +5160,8 @@ public class SchedulerService {
      * olayları sırayla dağıtılır. Dinleyici hatası yutulur (WARN): liderlik kararı ve tarama hiçbir koşulda bozulmaz.
      */
     private void publishSweepLeadership(boolean leader, long atMs, String reason) {
+        // R3-3 son inceleme F1: bekletilen dönemler bu liderliğe aittir — ara liderin işlediği izlemeler yeniden sunulmasın
+        retainedDue.clear();
         if (eventPublisher == null || clusterSchedule == null) return;
         // Liderlik bitti (2026-10-23, çok pod R2b, MP-37d): izleme vade önbelleği yalnız lider dolduruyor; takipçide işe
         // yaramaz ve gece budaması yalnız 'nightly-cleanup'ı kazanan pod'da koştuğu için silinmiş izlemelerin anahtarları
@@ -5837,6 +5839,7 @@ public class SchedulerService {
      *  yoldan geçer (teyit izi port geçmişinde görünür). {"status","error"} döner. */
     private Map<String, Object> recheckPort(PortMonitor m) {
         Map<String, Object> r = portCheckerService.check(m);
+        if (checkJobAbandoned()) return abandonedCheckJob();   // R3-3 son inceleme F4: işçi bıraktı → geçmiş satırı yok
         boolean open = Boolean.TRUE.equals(r.getOrDefault("open", false));
         try {
             PortCheck check = new PortCheck();
@@ -6001,6 +6004,7 @@ public class SchedulerService {
         Map<String, Object> r = keywordCheckerService.check(m.getUrl(), m.getKeyword(), timeout, keywordHeaderSecrets.effectiveHeaders(m),
                 Boolean.TRUE.equals(m.getCaseSensitive()), viaProxyFor(m.getUrl(), m.getUseProxy()),
                 KeywordCheckerService.Expectation.of(m));
+        if (checkJobAbandoned()) return abandonedCheckJob();   // R3-3 son inceleme F4: işçi bıraktı → geçmiş satırı yok
         boolean found = Boolean.TRUE.equals(r.getOrDefault("found", false));
         int count = r.get("count") instanceof Number cn ? cn.intValue() : (found ? 1 : 0);
         int threshold = m.getMatchCount() != null ? m.getMatchCount() : 1;
@@ -6934,6 +6938,7 @@ public class SchedulerService {
     /** HTTP uptime check + http_checks persist'i. {"status","error","http_status","response_ms"} döner. */
     private Map<String, Object> recheckHttp(HttpMonitor m) {
         Map<String, Object> r = runHttpCheck(m, httpRequestOptions(m));
+        if (checkJobAbandoned()) return abandonedCheckJob();   // R3-3 son inceleme F4: işçi bıraktı → geçmiş satırı yok
         boolean ok = Boolean.TRUE.equals(r.get("ok"));
         try {
             HttpCheck res = new HttpCheck();
@@ -7285,6 +7290,7 @@ public class SchedulerService {
                 m.getCrawlDepth() != null ? m.getCrawlDepth() : 2,
                 m.getCrawlMaxPages() != null ? m.getCrawlMaxPages() : 50,
                 maxCheckSec, pageViaProxy);
+        if (checkJobAbandoned()) return abandonedCheckJob();   // R3-3 son inceleme F4: işçi bıraktı → geçmiş satırı yok
 
         // Alarm-uygunluk YALNIZ e-posta geçidi (tabloda her sorun görünür). countsForAlarm: BLOCKED/SLOW hiç,
         // LINK yalnız 404/410 (dış link 5xx/timeout alarm üretmez — Q1), yüklenen alt-kaynak broken/timeout.
@@ -7642,6 +7648,7 @@ public class SchedulerService {
                 .map(prev -> prev.getBreachedMetrics() != null && !prev.getBreachedMetrics().isBlank())
                 .orElse(false);
         PageSpeedCheckerService.Result res = pageSpeedCheckerService.check(m);
+        if (checkJobAbandoned()) return abandonedCheckJob();   // R3-3 son inceleme F4: işçi bıraktı → geçmiş satırı yok
         boolean cfgError = "CONFIG_ERROR".equals(res.status());
         boolean reachable = res.reachable();
         String ts = ISO.format(Instant.now());
@@ -9059,6 +9066,7 @@ public class SchedulerService {
         Map<String, Object> r = pingCheckerService.check(m.getHost(), m.getIpVersion(),
                 m.getPacketCount() != null ? m.getPacketCount() : 4,
                 m.getTimeoutMs() != null ? m.getTimeoutMs() : 5000);
+        if (checkJobAbandoned()) return abandonedCheckJob();   // R3-3 son inceleme F4: işçi bıraktı → geçmiş satırı yok
         boolean up = Boolean.TRUE.equals(r.getOrDefault("up", false));
         boolean na = Boolean.TRUE.equals(r.get("na"));
         try {
@@ -10234,7 +10242,14 @@ public class SchedulerService {
      * boşaltıcı kurulmadı → iki bellek okuması.
      */
     private boolean classicCheckDue(String type, Long id, Integer intervalSeconds) {
-        boolean due = checkDue(type, id, intervalSeconds);
+        // R3-3 son inceleme F3: gönderim vadeyi max(aralık, klasik tık) ile yazar (DA-M2) — anahtar AÇIKKEN klasik gövde de
+        // "aralık kısaltıldı" denetimini aynı nominalle yapar; yoksa tür klasiğe dönünce (ör. DNS 60 sn aralık, 300 sn tık)
+        // gönderimin yazdığı vade "kısaltılmış" sayılır ve izleme hemen yeniden kontrol edilir. Gönderim hiç kurulmadıysa (anahtar
+        // açılıştan beri kapalı) tek bellek okuması, bugünkü çağrı (K-1).
+        com.sitemonitor.service.checks.DistributedChecks dcs = checkDispatchTask == null ? null : distributedChecks;
+        boolean due = dcs != null && dcs.anyDistributed()
+                ? checkDue(type, id, intervalSeconds, dispatchIntervalSeconds(type, intervalSeconds))
+                : checkDue(type, id, intervalSeconds);
         if (!retainedDue.isEmpty() && consumeRetainedDue(type, id)) due = true;
         if (due) {
             com.sitemonitor.service.checks.CheckResultDrainer d = checkResultDrainer;
@@ -10304,7 +10319,19 @@ public class SchedulerService {
             }
             return n;
         } catch (RuntimeException e) {
-            retainDue(type, due);
+            List<Long> unsent = due;
+            if (e instanceof com.sitemonitor.service.checks.CheckJobStore.PartialDispatchException p && !p.committed().isEmpty()) {
+                // son inceleme F1: yazılmış parçalar yeniden SUNULMAZ (bitip alınmış işler aynı dönemde ikinci kez koşardı)
+                java.util.Set<Long> written = new java.util.HashSet<>(p.committed());
+                unsent = new ArrayList<>(due.size());
+                for (Long id : due) if (!written.contains(id)) unsent.add(id);
+                java.util.concurrent.ConcurrentHashMap<Long, Long> kept = retainedDue.get(type);
+                if (kept != null) {
+                    for (Long id : written) kept.remove(id);
+                    if (kept.isEmpty()) retainedDue.remove(type, kept);
+                }
+            }
+            retainDue(type, unsent);
             throw e;
         }
     }
@@ -10615,6 +10642,14 @@ public class SchedulerService {
      */
     static boolean checkJobAbandoned() {
         return Thread.currentThread().isInterrupted() || com.sitemonitor.service.checks.CheckWorker.currentJobAbandoned();
+    }
+
+    /**
+     * Bırakılmış işin dönüşü (R3-3 son inceleme F4): işçi zaman aşımında satırı {@code worker_timeout} ile tamamladı ve gövdeyi
+     * kesti — kesmenin ürettiği "başarısız" ölçüm geçmişe (kart SLA'sı, mini grafik) yazılmaz; dönüş zaten atılır.
+     */
+    private static Map<String, Object> abandonedCheckJob() {
+        return com.sitemonitor.service.checks.CheckJobRunner.failed(new InterruptedException());
     }
 
     private static Map<String, Object> withCheckTarget(Map<String, Object> result, String target) {

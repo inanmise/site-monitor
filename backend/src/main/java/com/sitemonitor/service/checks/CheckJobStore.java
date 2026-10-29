@@ -44,6 +44,26 @@ public interface CheckJobStore {
     int dispatch(String type, Collection<Long> monitorIds, long leaseMs, String dispatcher);
 
     /**
+     * Gönderme yarıda düştü (R3-3 son inceleme F1): parçalar ayrı ayrı yazılır (200'lük, kendiliğinden işlem) — önceki
+     * parçalar YAZILDI ({@link #committed()}), düşen ve sonraki parçalar yazılmadı. Gönderen yalnız yazılmayanları bekletir; yazılan
+     * kimlikleri yeniden sunmak, o işler bitip alınmışsa (açık iş kalmadığı için çakışma yok) aynı dönemde ikinci kontrol
+     * olurdu. Sonucu bilinmeyen tek parça (yazıldı ama istemci hata gördü) kabul edilen kalıntıdır.
+     */
+    final class PartialDispatchException extends org.springframework.dao.DataAccessResourceFailureException {
+        private final transient List<Long> committed;
+
+        public PartialDispatchException(String msg, Throwable cause, List<Long> committed) {
+            super(msg, cause);
+            this.committed = committed == null ? List.of() : List.copyOf(committed);
+        }
+
+        /** Yazılmış (işlemi tamamlanmış) parçaların izleme kimlikleri. */
+        public List<Long> committed() {
+            return committed;
+        }
+    }
+
+    /**
      * Sahiplenme (her pod; PostgreSQL {@code UPDATE … WHERE id IN (SELECT … ORDER BY id LIMIT ? FOR UPDATE SKIP LOCKED)
      * RETURNING}, H2 aday SELECT + satır başına CAS). Adaylar: türü {@code types} içinde, PENDING ya da kirası dolmuş CLAIMED,
      * {@code attempts < MAX_ATTEMPTS}, {@code created_ms < createdBeforeMs}; en eski {@code id} önce, en çok {@code limit}.

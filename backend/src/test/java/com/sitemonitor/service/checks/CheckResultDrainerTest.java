@@ -842,6 +842,30 @@ class CheckResultDrainerTest {
     }
 
     @Test
+    @DisplayName("F2: anahtar kapanırken BEKLEYEN (PENDING) iş yeniden açıldıktan sonra sahiplenilip koşarsa sonucu UYGULANIR (o dönem kaybolmaz)")
+    void pendingAtOffClaimedAfterReEnable_isApplied() {
+        Rig a = leader();
+        CheckResultDrainer d = a.drainer();
+        d.drainOnce();
+        long createdBeforeOff = mp.now() - 1_000L;
+        settings.enabled = false;
+        d.drainOnce();
+        mp.advance(60_000L);
+        settings.enabled = true;
+        d.drainOnce();   // taban burada: şimdi
+        mp.advance(2_000L);
+        long now = mp.now();
+        // kapanmadan önce gönderilmiş (PENDING), açıldıktan sonra sahiplenilip biten iş
+        store.add(new CheckResultRow(7, "port", 1, createdBeforeOff, now - 1_500L, now - 500L, "pod-x", "{\"open\":true}", false));
+        // kapanmadan önce sahiplenilmiş (koşmaya başlamış) iş — atılır
+        store.add(new CheckResultRow(8, "port", 2, createdBeforeOff, createdBeforeOff + 100L, now - 400L, "pod-x",
+                "{\"open\":true}", false));
+        d.drainOnce();
+        assertThat(a.applier().appliedIds()).containsExactly(7L);
+        assertThat(d.status().droppedObsolete()).isEqualTo(1);
+    }
+
+    @Test
     @DisplayName("DH-M1 a: açılışta KAPALI, sonradan etkinleşen pod eski sonuçları atar; açılışta AÇIK pod (olağan devir) atmaz")
     void lateActivationFloorsOldResults() {
         settings.enabled = false;

@@ -427,6 +427,34 @@ class CheckJobSqlH2Test {
     }
 
     @Test
+    @DisplayName("Son inceleme F1: ikinci parça düşerse PartialDispatchException yazılmış ilk 200 kimliği taşır; satırlar yalnız onlar")
+    void partialDispatchReportsCommittedPrefix() {
+        java.util.concurrent.atomic.AtomicInteger batches = new java.util.concurrent.atomic.AtomicInteger();
+        JdbcTemplate failSecond = new JdbcTemplate(mp.dataSource()) {
+            @Override
+            public int[] batchUpdate(String sql, List<Object[]> batchArgs) {
+                if (sql.equals(CheckJobSql.SQL_DISPATCH_ONE) && batches.incrementAndGet() == 2) {
+                    throw new DataAccessResourceFailureException("db");
+                }
+                return super.batchUpdate(sql, batchArgs);
+            }
+        };
+        JdbcCheckJobStore s = new JdbcCheckJobStore(failSecond, clock, null, System::nanoTime);
+        List<Long> ids = new java.util.ArrayList<>();
+        for (long i = 1; i <= 450; i++) ids.add(i);
+        CheckJobStore.PartialDispatchException e = org.assertj.core.api.Assertions.catchThrowableOfType(
+                CheckJobStore.PartialDispatchException.class, () -> s.dispatch(CheckJobTypes.PORT, ids, 150_000, "l"));
+        assertThat(e).isNotNull();
+        assertThat(e.committed()).hasSize(CheckJobSql.DISPATCH_CHUNK).containsExactlyElementsOf(ids.subList(0, CheckJobSql.DISPATCH_CHUNK));
+        assertThat(count("job_type = 'port'")).isEqualTo(CheckJobSql.DISPATCH_CHUNK);
+
+        // ilk parça düşerse sade istisna (yazılan yok — gönderen hepsini bekletir)
+        batches.set(1);
+        assertThat(org.assertj.core.api.Assertions.catchThrowable(() -> s.dispatch(CheckJobTypes.PING, ids.subList(0, 5), 150_000, "l")))
+                .isInstanceOf(DataAccessResourceFailureException.class).isNotInstanceOf(CheckJobStore.PartialDispatchException.class);
+    }
+
+    @Test
     @DisplayName("Kodlanmış sonuç gidiş-dönüşü: kırpılmış sonuç işareti saklanır ve okunur")
     void truncatedFlagRoundTrip() {
         store.dispatch(CheckJobTypes.PAGE, List.of(9L), 150_000, "l");

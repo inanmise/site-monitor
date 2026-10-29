@@ -77,8 +77,10 @@ import java.util.function.Supplier;
  *       işbirlikçiler çözüldü ∧ son BAŞARILI alma (yoksa GAINED anı) {@code max(30 sn, 10 × drain-ms)} içinde. Zamanlayıcının
  *       {@code distributedMode(T)} kuralı bunu ister — boşaltamayan liderde tür klasikte kalır (sonuçlar yığılmaz).</li>
  *   <li><b>Taban (DH-M1 a):</b> anahtar KAPALI görüldükten sonra (ya da etkinleşme açılıştan sonra geldiyse) ilk açık görüşte
- *       {@code floorMs = DbClock.nowMs()}; bundan ÖNCE OLUŞTURULMUŞ işlerin sonuçları atılır ({@code droppedObsolete}) —
- *       kapalı dönemde klasik tarama daha yeni gözlemleri değerlendirdi.</li>
+ *       {@code floorMs = DbClock.nowMs()}; kontrolü bundan ÖNCE SAHİPLENİLMİŞ (başlamış) işlerin sonuçları atılır
+ *       ({@code droppedObsolete}) — kapalı dönemde klasik tarama daha yeni gözlemleri değerlendirdi. Kapanırken BEKLEYEN (PENDING)
+ *       ve yeniden açıldıktan sonra sahiplenilen iş taze bir ölçümdür ve uygulanır (son inceleme F2: oluşturma anıyla
+ *       karşılaştırma o izlemenin yeni dönemini kaybettiriyordu — açık iş yeni gönderimi engellediği için).</li>
  *   <li><b>Klasik sonra (DH-M1 b):</b> anahtar açıkken klasik gövdenin başlattığı her zamanlanmış kontrolün anı izleme başına
  *       tutulur ({@link #noteClassicCheck}); o andan ÖNCE sahiplenilmiş iş sonucu atılır ({@code droppedSuperseded}).</li>
  *   <li><b>Klasik bekletme (DH-M1 c):</b> {@link #holdClassic()} — GAINED sonrası birikim boşalana dek klasik gövde dönemi
@@ -684,15 +686,16 @@ public class CheckResultDrainer {
                 log.debug("Dağıtık kontrol sonucu bayat ({} sn), değerlendirilmeden atıldı: {}", age / 1000, r);
                 continue;
             }
-            // DH-M1 a: anahtar yeniden açılmadan ÖNCE gönderilmiş iş — kapalı dönemde klasik tarama daha yeni gözlem yaptı.
-            if (floor != Long.MIN_VALUE && r.createdMs() < floor) {
+            long claimed = r.claimedMs() != null ? r.claimedMs() : r.createdMs();
+            // DH-M1 a: kontrolü anahtar yeniden açılmadan ÖNCE başlamış iş — kapalı dönemde klasik tarama daha yeni gözlem yaptı.
+            // Kapanırken bekleyen, açıldıktan sonra sahiplenilen iş taze ölçümdür (F2) — uygulanır.
+            if (floor != Long.MIN_VALUE && claimed < floor) {
                 droppedObsolete.incrementAndGet();
-                log.debug("Dağıtık kontrol sonucu anahtar yeniden açılmadan önce gönderilmişti, atıldı: {}", r);
+                log.debug("Dağıtık kontrol sonucu anahtar yeniden açılmadan önce başlamıştı, atıldı: {}", r);
                 continue;
             }
             // DH-M1 b: aynı izlemenin klasik zamanlanmış kontrolü bu işten SONRA başladı — eski gözlem yenisinin üstüne yazılmaz.
             Long classicAt = classicStarts.get(r.monitorKey());
-            long claimed = r.claimedMs() != null ? r.claimedMs() : r.createdMs();
             if (classicAt != null && claimed < classicAt) {
                 droppedSuperseded.incrementAndGet();
                 log.debug("Dağıtık kontrol sonucu aynı izlemenin daha yeni klasik kontrolünden önce sahiplenilmişti, atıldı: {}", r);
