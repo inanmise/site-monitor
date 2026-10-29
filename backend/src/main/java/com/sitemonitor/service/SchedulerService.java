@@ -6641,6 +6641,10 @@ public class SchedulerService {
             log.debug("Devirde kalıcı durum yükleniyor — elle kontrol gelen kutusu bu turda boşaltılmıyor (yükleme sonrası)");
             return;
         }
+        // ── R3-3 C (çok pod Sürüm 3-3 paket C, tasarım R3-3 §4.4): GAINED sonrası önce zamanlanmış sonuç birikimi ──
+        // Dağıtık kontroller açılıştan beri kapalıyken tek volatile okuma, false (K-1); bean yoksa null (bugünkü davranış).
+        if (checkResultDrainer != null && checkResultDrainer.holdManual()) return;
+        // ── /R3-3 C ──
         String owner = clusterSchedule.owner();
         long started = System.currentTimeMillis();
         int evaluated = 0;
@@ -6674,6 +6678,15 @@ public class SchedulerService {
         }
         if (evaluated > 0) log.debug("Elle kontrol gelen kutusu: {} sonuç değerlendirildi", evaluated);
     }
+
+    // ── R3-3 C (çok pod Sürüm 3-3 paket C) — dağıtık kontrol sonuç boşaltıcısı ─────────────────────────────────────────
+    /**
+     * Dağıtık kontrol sonuçlarının boşaltıcısı (tasarım R3-3 §4.3 / §4.4) — yalnız elle gelen kutusunun sıra kapısı için
+     * okunur ({@link #drainManualEvalInbox}); alan enjeksiyonu (kurucu değişmez), null = bugünkü davranış.
+     */
+    @Autowired(required = false)
+    private com.sitemonitor.service.checks.CheckResultDrainer checkResultDrainer;
+    // ── /R3-3 C ──────────────────────────────────────────────────────────────────────────────────────────────────────
 
     /**
      * Bu pod'un değerlendirme kapısı devirde yükleme bekliyor mu (çok pod Sürüm 3-2; {@code MonitoringOutageService.evalLoadToken()}
