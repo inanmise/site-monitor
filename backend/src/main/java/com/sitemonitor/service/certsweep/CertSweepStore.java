@@ -179,12 +179,16 @@ public interface CertSweepStore {
      * aday SELECT + {@code attempts}'e bağlı CAS). Adaylar: PENDING ya da kirası dolmuş CLAIMED, {@code attempts <}
      * {@value CertChunking#MAX_ATTEMPTS}, {@code created_ms < createdBeforeMs}, {@code avoid_worker} bu sahip değil, koşusu
      * RUNNING ve nabzı ≥ şimdi − {@value CertChunking#COORDINATOR_ALIVE_MS} ms; en küçük {@code id}. Rastgele belirteç
-     * deponun işi; {@code attempts + 1}; {@code lease_until_ms = şimdi + leaseMs}.
+     * deponun işi; {@code attempts + 1}; {@code lease_until_ms = şimdi + leaseMs}. Dönen parça koşunun koordinatörünü,
+     * parçanın oluşturma anını ve kaçınılan işçiyi taşır.
      *
      * @param owner           bu pod'un örnek kimliği ({@code SchedulerService.instanceId()})
      * @param leaseMs         kira ({@link CertChunking.Tuning#leaseMs()})
-     * @param createdBeforeMs yalnız bundan ÖNCE yazılanlar ({@link Long#MAX_VALUE} = hepsi; başka canlı pod varken tarama
-     *                        lideri {@code şimdi − steal-after-ms})
+     * @param createdBeforeMs yalnız BAŞKA bir pod'un koordine ettiği koşunun ilk görüş parçaları için: bundan ÖNCE yazılanlar
+     *                        ({@link Long#MAX_VALUE} = hepsi; başka canlı pod varken tarama lideri {@code şimdi − steal-after-ms};
+     *                        {@link Long#MIN_VALUE} = yalnız muaf parçalar). Sahibin KENDİ koşusunun parçaları
+     *                        ({@code coordinator = owner}) ve ikinci görüş parçaları ({@code avoid_worker} dolu) her eşikte
+     *                        adaydır (FX-WORKER SW-M1 / CR-L1 / CR-H-1 b).
      * @return sahiplenilen parça; aday yoksa / tablolar yoksa boş
      */
     Optional<ClaimedChunk> claim(String owner, long leaseMs, long createdBeforeMs);
