@@ -45,12 +45,18 @@ import java.util.function.Supplier;
  * <p><b>Tembel (L-1):</b> yoklama iş parçacığı ({@value #POLL_THREAD}) ve parça koşucuları ({@value #RUNNER_PREFIX}N, ilk
  * parçada doğar, 60 sn boşta kalınca ölür) yalnız {@link CertChunking#whenActivated} başlatıcısıyla — anahtar açılıştan beri
  * kapalıysa hiçbiri yoktur, hiçbir sorgu atılmaz, kapanış / yok etme ortak süreye dokunmaz. Anahtar sonradan kapatılırsa açık
- * koşuyu bitirir (sahiplenme boş dönene dek), sonra yalnız bellek okuyarak boşta bekler.
+ * koşuyu bitirir (sahiplenme boş dönene dek) ve anahtarın son açık görüldüğü / son dolu sahiplenme / son dürtme anından
+ * {@link CertChunking.Tuning#offGraceMs()} (2 × kira) boyunca boşta aralığıyla sahiplenmeyi sürdürür — açık koşunun bırakılan ya
+ * da kirası dolan parçaları alınır (FX-WORKER SW-L2); sonra yalnız bellek okuyarak boşta bekler ({@link #poke()} süreyi
+ * yeniden başlatır).
  *
  * <p><b>Bütçe (§3.4):</b> aynı anda en çok {@code max-chunks} parça ve {@code max-inflight-domains} (0 = 2 × görev havuzunun
  * GÜNCEL çekirdeği → 40) alan adı; uçuşta parça yoksa bir parça her zaman alınabilir (bütçeden büyük parça da ölçülür). Tarama
- * lideri BAŞKA canlı pod varken ({@code PodLiveness}, bilinmiyor = yok) yalnız {@code steal-after-ms}'ten (10 sn) eski
- * parçaları ve yarı bütçeyle ({@code leader-share-pct}) alır — izleme taramaları ve erişilebilirlik turu için havuzunu korur.
+ * lideri BAŞKA canlı pod varken ({@code PodLiveness}, bilinmiyor = yok) başka pod'un koordine ettiği koşunun ilk görüş
+ * parçalarını yalnız {@code steal-after-ms}'ten (10 sn) eskiyse ve yarı bütçeyle ({@code leader-share-pct}) alır — izleme
+ * taramaları ve erişilebilirlik turu için havuzunu korur; KENDİ koşusunun ve ikinci görüş parçalarını beklemeden tam bütçeyle
+ * alır, son aldığı parça ≥ 30 sn beklemişse (işi kimse almıyor) tam bütçeye geçer ({@link #claimRound}, FX-WORKER SW-M1 /
+ * CR-L1 / CR-H-1 b).
  *
  * <p><b>Yoklama:</b> son sahiplenme satır döndürdüyse {@code poll-ms} (250 ms), boş döndüyse {@code idle-poll-ms} (5 sn) sonra
  * yeniden; bir parça bitince ya da koordinatör kendi pod'unun işçisini dürtünce ({@link #poke()}) beklemeden. Kiralar
@@ -83,8 +89,14 @@ public class CertChunkWorker {
     static final int COMPLETE_ATTEMPTS = 3;
     /** Tamamlama yeniden denemesinin taban beklemesi (ms; deneme sayısıyla çarpılır). */
     static final long COMPLETE_RETRY_MS = 500L;
-    /** Uyarı günlüğü hız sınırı (ms). */
+    /** Uyarı günlüğü hız sınırı (ms) — ileti TÜRÜ başına ({@link WarnKind}). */
     static final long WARN_EVERY_MS = 60_000L;
+
+    /**
+     * Uyarı türleri (FX-WORKER SW-L5): her biri KENDİ hız sınırını tutar — sürekli bir sahiplenme hatası, aynı dakikadaki
+     * "sonuç yazılamadı" uyarısını DEBUG'a düşürmez.
+     */
+    enum WarnKind { CLAIM, RENEW, COMPLETE, LOOP }
 
     /** Tutulan (sahiplenilmiş, ölçülen) bir parça (bellek). */
     static final class Held {
@@ -129,7 +141,8 @@ public class CertChunkWorker {
     private final AtomicLong renewErrors = new AtomicLong();
     private final AtomicLong completeErrors = new AtomicLong();
     private final AtomicLong leasesLost = new AtomicLong();
-    private final AtomicLong warnAt = new AtomicLong(Long.MIN_VALUE);
+    /** {@link WarnKind} başına son WARN anı (ms). */
+    private final AtomicLong[] warnAt = newWarnClocks();
 
     private volatile boolean started;
     private volatile boolean closing;
@@ -147,6 +160,17 @@ public class CertChunkWorker {
     private volatile boolean lastLeaderYielding;
     private volatile int lastChunkSize;
     private volatile Long lastClaimAtMs;
+    /**
+     * Tarama liderinin son aldığı BAŞKA koordinatörün ilk görüş parçasının sahiplenme anındaki bekleme süresi (ms; -1 = yok /
+     * sıfırlandı). {@link CertChunking.Tuning#leaderFullBudgetAgeMs()}'ten uzunsa işi kimse almıyor → lider tam bütçe (SW-M1).
+     */
+    private volatile long lastOtherPendingMs = -1L;
+    /**
+     * Anahtar kapandıktan sonraki sahiplenme süresinin çapası (ns): anahtarın son AÇIK görüldüğü, son DOLU sahiplenmenin ve son
+     * dürtmenin en yenisi ({@code Long.MIN_VALUE} = yok). {@link CertChunking.Tuning#offGraceMs()} dolana dek kapalıyken de
+     * boşta aralığıyla sahiplenilir (SW-L2).
+     */
+    private volatile long offGraceAnchorNano = Long.MIN_VALUE;
 
     /** Spring kurucusu — işbirlikçiler tembel (sağlayıcı) çözülür; kurucu sorgu / iş parçacığı / günlük üretmez (L-1). */
     @Autowired
@@ -233,10 +257,12 @@ public class CertChunkWorker {
 
     /**
      * Koordinatör kendi pod'unun işçisini dürter (koşu yazıldıktan hemen sonra; bellek) — yoklama iş parçacığı beklemeden
-     * sahiplenmeyi dener. Başlamamış işçide etkisiz.
+     * sahiplenmeyi dener; anahtar kapalıyken de kapanış sonrası sahiplenme süresini yeniden başlatır (SW-L2). Başlamamış işçide
+     * etkisiz (L-1).
      */
     public void poke() {
         if (!started) return;
+        offGraceAnchorNano = nanoClock.getAsLong();
         poked.set(true);
         Thread p = pollThread;
         if (p != null) LockSupport.unpark(p);
@@ -248,7 +274,8 @@ public class CertChunkWorker {
             try {
                 sleepMs = tick();
             } catch (Throwable e) {
-                warn("Parçalı tarama işçisi yoklama adımı düştü (sonraki adımda yeniden denenecek): {}", e.getClass().getSimpleName());
+                warn(WarnKind.LOOP, "Parçalı tarama işçisi yoklama adımı düştü (sonraki adımda yeniden denenecek): {}",
+                        e.getClass().getSimpleName());
                 sleepMs = 1_000L;
             }
             if (terminated || closing) break;
@@ -268,8 +295,11 @@ public class CertChunkWorker {
         long now = nanoClock.getAsLong();
         maybeRenew(now);
         long renewCap = held.isEmpty() ? Long.MAX_VALUE : tuning.renewEveryMs();
-        // Anahtar kapalı ve elde parça yok, son sahiplenme boştu: yalnız bellek okuması (sorgu yok).
-        if (!(certChunking != null && certChunking.enabled()) && held.isEmpty() && lastClaimEmpty) {
+        boolean on = certChunking != null && certChunking.enabled();
+        if (on) offGraceAnchorNano = now;
+        // Anahtar kapalı ve elde parça yok, son sahiplenme boştu ve kapanış sonrası süre (SW-L2: açık koşunun bırakılan / kirası
+        // dolan parçaları için 2 × kira; dürtme süreyi yeniden başlatır) doldu: yalnız bellek okuması (sorgu yok).
+        if (!on && held.isEmpty() && lastClaimEmpty && !withinOffGrace(now)) {
             nextClaimNano = Long.MIN_VALUE;
             return tuning.idlePollMs();
         }
@@ -306,6 +336,13 @@ public class CertChunkWorker {
     /**
      * Bir sahiplenme turu: bütçe ve parça sınırı izin verdikçe birer parça.
      *
+     * <p><b>Tarama liderinin payı (§3.4, FX-WORKER 2026-10-29 SW-M1 / CR-L1 / CR-H-1 b):</b> başka canlı pod varken lider
+     * BAŞKA koordinatörün ilk görüş parçalarını yalnız {@code steal-after-ms}'ten eskiyse ve yarı bütçeyle alır; KENDİ koşusunun
+     * parçalarını ve ikinci görüş parçalarını beklemeden, TAM bütçeyle alır (depo kapısı onları muaf tutar; yarı bütçe doluyken
+     * {@link Long#MIN_VALUE} eşiğiyle yalnız onlar denenir). Son aldığı başka-koordinatör parçası sahiplenildiğinde
+     * {@link CertChunking.Tuning#leaderFullBudgetAgeMs()} (30 sn) beklemişse işi kimse almıyor demektir — lider o parçalar için
+     * de tam bütçeye geçer (bekletme sürer); bekletmeli sahiplenme boş dönünce bu sıfırlanır. Pay %0 = lider hiç almaz.
+     *
      * @return sahiplenilen parça sayısı; {@code -1} = denenmedi (bütçe / parça sınırı dolu ya da lider payı 0)
      */
     int claimRound() {
@@ -313,32 +350,79 @@ public class CertChunkWorker {
         if (r == null) return -1;
         int core = safeCore(r);
         boolean yielding = leaderYielding();
-        int budget = yielding ? tuning.leaderBudget(core) : tuning.budget(core);
-        lastBudget = budget;
+        int full = tuning.budget(core);
+        int share = yielding ? tuning.leaderBudget(core) : full;
         lastLeaderYielding = yielding;
-        if (budget <= 0 || !canTakeMore(budget)) return -1;
-        long createdBefore = yielding ? store.nowMs() - tuning.stealAfterMs() : Long.MAX_VALUE;
+        if (full <= 0 || share <= 0) {
+            lastBudget = Math.max(0, share);
+            return -1;
+        }
+        int otherBudget = otherBudget(yielding, full, share);
+        lastBudget = reportedBudget(yielding, full, otherBudget);
+        if (!canTakeMore(full)) return -1;
         int got = 0;
         // her parça öncesi yeniden: ölçüm gövdesi bu arada kapanmaya başlamış olabilir (kısa liste → atılır, yenisi alınmaz)
-        while (claimAllowed() && canTakeMore(budget)) {
+        while (claimAllowed() && canTakeMore(full)) {
+            boolean othersAllowed = canTakeMore(otherBudget);
+            long createdBefore = !yielding ? Long.MAX_VALUE
+                    : othersAllowed ? store.nowMs() - tuning.stealAfterMs() : Long.MIN_VALUE;
             Optional<ClaimedChunk> c;
             try {
                 c = store.claim(owner, tuning.leaseMs(), createdBefore);
             } catch (RuntimeException e) {
                 claimErrors.incrementAndGet();
-                warn("Parçalı tarama parçası sahiplenilemedi (sonraki yoklamada yeniden denenecek): {}", e.getClass().getSimpleName());
+                warn(WarnKind.CLAIM, "Parçalı tarama parçası sahiplenilemedi (sonraki yoklamada yeniden denenecek): {}",
+                        e.getClass().getSimpleName());
                 lastClaimEmpty = true;
                 return got;
             }
             if (c.isEmpty()) {
                 lastClaimEmpty = true;
+                // bekletmeli deneme boş: bekleyen başka-koordinatör parçası kalmadı → "kimse almıyor" kanıtı sıfırlanır
+                if (yielding && othersAllowed) lastOtherPendingMs = -1L;
                 return got;
             }
+            ClaimedChunk chunk = c.get();
             lastClaimEmpty = false;
+            offGraceAnchorNano = nanoClock.getAsLong();
+            if (yielding && isOtherFirstOpinion(chunk)) lastOtherPendingMs = chunk.pendingMsAtClaim();
             got++;
-            submit(c.get());
+            submit(chunk);
+            otherBudget = otherBudget(yielding, full, share);
+            lastBudget = reportedBudget(yielding, full, otherBudget);
         }
         return got;
+    }
+
+    /**
+     * Başka koordinatörün ilk görüş parçaları için bütçe: lider değilse (ya da tek pod) tam; çekilen lider yarı payla, son
+     * aldığı böyle parça {@link CertChunking.Tuning#leaderFullBudgetAgeMs()} beklemişse tam.
+     */
+    private int otherBudget(boolean yielding, int full, int share) {
+        if (!yielding) return full;
+        long pending = lastOtherPendingMs;
+        return pending >= 0 && pending >= tuning.leaderFullBudgetAgeMs() ? full : share;
+    }
+
+    /**
+     * Durumda gösterilen bütçe: çekilen lider elde kendi koşusunun / ikinci görüşün parçasını tutuyorsa tam (o parçalar tam
+     * bütçeyle alınır), değilse başka-koordinatör parçalarının bütçesi.
+     */
+    private int reportedBudget(boolean yielding, int full, int otherBudget) {
+        if (!yielding || otherBudget >= full) return otherBudget;
+        for (Held h : held.values()) if (!h.released && !isOtherFirstOpinion(h.chunk)) return full;
+        return otherBudget;
+    }
+
+    /** Başka bir pod'un koordine ettiği koşunun ilk görüş parçası mı (koordinatör bilinmiyorsa başkası sayılır). */
+    private boolean isOtherFirstOpinion(ClaimedChunk c) {
+        return !c.secondOpinion() && !owner.equals(c.coordinator());
+    }
+
+    /** Anahtar kapandıktan sonraki sahiplenme süresi sürüyor mu (SW-L2; bellek). */
+    private boolean withinOffGrace(long nowNano) {
+        long anchor = offGraceAnchorNano;
+        return anchor != Long.MIN_VALUE && nowNano - anchor < TimeUnit.MILLISECONDS.toNanos(tuning.offGraceMs());
     }
 
     /** Bir parça daha alınabilir mi (bellek): kapanmıyor, parça sınırı altında; uçuşta parça yoksa her zaman, varsa bütçe. */
@@ -358,7 +442,14 @@ public class CertChunkWorker {
 
     private void submit(ClaimedChunk chunk) {
         Held h = new Held(chunk);
-        held.put(chunk.id(), h);
+        Held prev = held.put(chunk.id(), h);
+        if (prev != null) {
+            // Kendi kirası dolmuş parçasını YENİDEN aldı (yenileme takıldı, başka pod almadı — SW-L1): eski koşucu artık
+            // eskimiş bir belirteçle ölçüyor; sonucu yazılmaz (atılır) ve bütçeden bir kez düşülür — uçuştaki alan adı sızmaz,
+            // iki koşucu sayılmaz. Yeni belirteçli koşucu tamamlar.
+            prev.released = true;
+            inflightDomains.addAndGet(-prev.chunk.domainCount());
+        }
         inflightDomains.addAndGet(chunk.domainCount());
         claimed.incrementAndGet();
         lastClaimAtMs = chunk.claimedMs();
@@ -460,8 +551,9 @@ public class CertChunkWorker {
             } catch (RuntimeException e) {
                 completeErrors.incrementAndGet();
                 if (attempt >= COMPLETE_ATTEMPTS) {
-                    warn("Parçalı tarama parçasının sonucu yazılamadı ({} deneme) — kira dolunca yeniden ölçülür: {}", attempt,
-                            e.getClass().getSimpleName());
+                    warn(WarnKind.COMPLETE,
+                            "Parçalı tarama parçasının sonucu yazılamadı ({} deneme) — kira dolunca yeniden ölçülür: {}",
+                            attempt, e.getClass().getSimpleName());
                     return Outcome.FAILED;
                 }
                 LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(COMPLETE_RETRY_MS * attempt));
@@ -487,7 +579,8 @@ public class CertChunkWorker {
             }
         } catch (RuntimeException e) {
             renewErrors.incrementAndGet();
-            warn("Parçalı tarama parça kiraları yenilenemedi (sonraki adımda yeniden denenecek): {}", e.getClass().getSimpleName());
+            warn(WarnKind.RENEW, "Parçalı tarama parça kiraları yenilenemedi (sonraki adımda yeniden denenecek): {}",
+                    e.getClass().getSimpleName());
         }
     }
 
@@ -649,10 +742,17 @@ public class CertChunkWorker {
         return applicationContext == null || source == null || source == applicationContext;
     }
 
-    private void warn(String fmt, Object... args) {
+    private void warn(WarnKind kind, String fmt, Object... args) {
+        AtomicLong at = warnAt[kind.ordinal()];
         long now = System.currentTimeMillis();
-        long last = warnAt.get();
-        if ((last == Long.MIN_VALUE || now - last >= WARN_EVERY_MS) && warnAt.compareAndSet(last, now)) log.warn(fmt, args);
+        long last = at.get();
+        if ((last == Long.MIN_VALUE || now - last >= WARN_EVERY_MS) && at.compareAndSet(last, now)) log.warn(fmt, args);
         else log.debug(fmt, args);
+    }
+
+    private static AtomicLong[] newWarnClocks() {
+        AtomicLong[] out = new AtomicLong[WarnKind.values().length];
+        for (int i = 0; i < out.length; i++) out[i] = new AtomicLong(Long.MIN_VALUE);
+        return out;
     }
 }

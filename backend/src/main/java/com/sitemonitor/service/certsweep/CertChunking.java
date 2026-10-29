@@ -97,6 +97,13 @@ public class CertChunking {
     public static final long RUN_RETENTION_MS = 7L * 24 * 60 * 60 * 1000;
     /** Tur başı budamasının tek seferde sildiği en çok koşu satırı. */
     public static final int RUN_PRUNE_LIMIT = 1_000;
+    /**
+     * Tarama liderinin tam bütçeye geçme eşiği çarpanı (FX-WORKER SW-M1): son aldığı parça {@code 3 × steal-after}'dan uzun
+     * beklemişse işi başka işçi almıyor demektir ({@link Tuning#leaderFullBudgetAgeMs()}).
+     */
+    public static final long LEADER_FULL_BUDGET_FACTOR = 3L;
+    /** {@link Tuning#leaderFullBudgetAgeMs()}'in tabanı (= varsayılan {@code steal-after-ms}; 0 ayarlansa da 30 sn). */
+    static final long DEFAULTS_STEAL_AFTER_MS = 10_000L;
 
     /**
      * Açılışta okunan pod ayarları — sınırlanmış (geçersiz / aralık dışı değer sessizce varsayılana ya da sınıra çekilir,
@@ -161,6 +168,26 @@ public class CertChunking {
          */
         public int leaderBudget(int executorCoreSize) {
             return (int) ((long) budget(executorCoreSize) * leaderSharePct / 100L);
+        }
+
+        /**
+         * FX-WORKER (2026-10-29, SW-M1): yarı bütçeyle çekilen tarama liderinin son aldığı (başka koordinatörün ilk görüş)
+         * parçası sahiplenildiğinde en az bu kadar (ms) beklemişse "işi kimse almıyor" sayılır ve lider TAM bütçeye geçer =
+         * {@value CertChunking#LEADER_FULL_BUDGET_FACTOR} × max({@link #stealAfterMs}, varsayılan 10 sn) → 30 sn. Bekletme
+         * (yalnız ≥ {@link #stealAfterMs} eski parçalar) sürer; pay %0 ise hiç alınmaz (açık vazgeçme).
+         */
+        public long leaderFullBudgetAgeMs() {
+            return LEADER_FULL_BUDGET_FACTOR * Math.max(stealAfterMs, DEFAULTS_STEAL_AFTER_MS);
+        }
+
+        /**
+         * FX-WORKER (2026-10-29, SW-L2): anahtar AÇIKKEN başlamış işçi kapatıldıktan sonra bu kadar (ms) — anahtarın son açık
+         * görüldüğü, son dolu sahiplenmenin ya da son dürtmenin üstüne — boşta yoklama aralığıyla sahiplenmeyi sürdürür (açık
+         * koşunun bırakılan / kirası dolan parçaları alınsın) = 2 × {@link #leaseMs}; sonra yalnız bellek okur. Anahtar
+         * açılıştan beri kapalıysa işçi hiç başlamaz (L-1).
+         */
+        public long offGraceMs() {
+            return 2L * leaseMs;
         }
 
         /**

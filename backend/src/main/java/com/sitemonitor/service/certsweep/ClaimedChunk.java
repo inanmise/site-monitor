@@ -9,6 +9,11 @@ import java.util.Map;
  * {@link CertSweepStore#release} {@link #id} + {@link #claimToken} (ve sahip) ile koşullu yazar. Süreler deponun saatiyle
  * ({@link CertSweepStore#nowMs()}, veritabanı-çapalı) ms'dir.
  *
+ * <p><b>Ek alanlar (FX-WORKER, 2026-10-29; SW-M1 / CR-L1 / CR-H-1 b):</b> {@link #coordinator}, {@link #createdMs},
+ * {@link #avoidWorker} — işçi aldığı parçanın kendi koşusuna mı ait olduğunu, ikinci görüş mü olduğunu ve sahiplenildiği anda
+ * ne kadar beklediğini bilir (tarama liderinin bütçe kuralı). Eski 8 bileşenli kurucu korunur: koordinatör / kaçınılan işçi
+ * bilinmez ({@code null}), {@code createdMs = claimedMs} (bekleme 0 — liderin "kimse almıyor" rahatlaması tetiklenmez).
+ *
  * @param id           parça satırı kimliği
  * @param runId        koşu kimliği (= klasik tur kimliği; işçi sonuç haritalarına {@code run_id} olarak koyar)
  * @param chunkNo      tur içindeki parça numarası
@@ -17,12 +22,22 @@ import java.util.Map;
  * @param claimToken   bu sahiplenmenin rastgele belirteci (tamamlama CAS'ı; ≤ 40 karakter)
  * @param claimedMs    sahiplenme anı (deponun saati, ms)
  * @param leaseUntilMs kira bitişi (deponun saati, ms) — işçi {@link CertChunking.Tuning#renewEveryMs()}'de bir yeniler
+ * @param coordinator  koşunun koordinatörü ({@code cert_sweep_runs.coordinator}; bilinmiyorsa null)
+ * @param createdMs    parçanın yazıldığı an (deponun saati, ms); bekleme = {@code claimedMs − createdMs}
+ * @param avoidWorker  ikinci görüş parçasının kaçındığı işçi (ilk görüş parçasında null)
  */
 public record ClaimedChunk(long id, String runId, int chunkNo, List<CertChunkSpec.Entry> entries, int attempts,
-                           String claimToken, long claimedMs, long leaseUntilMs) {
+                           String claimToken, long claimedMs, long leaseUntilMs, String coordinator, long createdMs,
+                           String avoidWorker) {
 
     public ClaimedChunk {
         entries = entries == null ? List.of() : List.copyOf(entries);
+    }
+
+    /** Eski kurucu (P0 sözleşmesi): koordinatör / kaçınılan işçi bilinmez, bekleme 0 ({@code createdMs = claimedMs}). */
+    public ClaimedChunk(long id, String runId, int chunkNo, List<CertChunkSpec.Entry> entries, int attempts,
+                        String claimToken, long claimedMs, long leaseUntilMs) {
+        this(id, runId, chunkNo, entries, attempts, claimToken, claimedMs, leaseUntilMs, null, claimedMs, null);
     }
 
     /** Parçadaki alan adı sayısı. */
@@ -33,6 +48,16 @@ public record ClaimedChunk(long id, String runId, int chunkNo, List<CertChunkSpe
     /** Klasik satırlar — {@link CertChunkRunner#checkDomains}'e AYNEN verilir. */
     public List<Map<String, Object>> rows() {
         return CertChunkSpec.rowsOf(entries);
+    }
+
+    /** İkinci görüş parçası mı ({@code avoid_worker} dolu). */
+    public boolean secondOpinion() {
+        return avoidWorker != null;
+    }
+
+    /** Sahiplenme anında ne kadar beklemişti (ms, ≥ 0). */
+    public long pendingMsAtClaim() {
+        return Math.max(0L, claimedMs - createdMs);
     }
 
     /** Belirteç ve alan adları yazılmaz (günlük satırları kısa kalsın). */

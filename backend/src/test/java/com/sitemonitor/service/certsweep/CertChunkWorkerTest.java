@@ -39,7 +39,10 @@ import static org.mockito.Mockito.when;
  * atar; kapanan ölçüm gövdesi → atılır; geç tamamlama sayılır; ölçüm istisnası → her alan adı {@code failed}; gövde yokken
  * sahiplenme yok; pod'da işçi kapalı → başlamaz; anahtar sonradan kapanınca açık koşuyu bitirir sonra sorgusuz boşta bekler;
  * tamamlama veritabanı hatasında yeniden denenir; dürtme beklemeden sahiplendirir; durum yalnız bellek; iki pod gerçek
- * iş parçacıklarıyla her parçayı tam bir kez ölçer.
+ * iş parçacıklarıyla her parçayı tam bir kez ölçer. İnceleme düzeltmeleri (FX-WORKER, 2026-10-29): lider kendi koşusunu ve
+ * ikinci görüşü beklemeden tam bütçeyle alır, işi kimse almıyorsa (≥ 30 sn bekleyen parça) tam bütçeye geçer; kendi parçasını
+ * yeniden alan işçi bütçe sızdırmaz; anahtar açık tur sırasında kapanınca 2 × kira boyunca bırakılan parçaları alır; uyarı
+ * hız sınırı ileti türü başına.
  */
 class CertChunkWorkerTest {
 
@@ -309,7 +312,9 @@ class CertChunkWorkerTest {
         clock.advance(6_000);
         store.heartbeat("run-l");
         assertThat(leader.claimRound()).as("10 sn'den eski — yarı bütçe (20) = bir parça").isEqualTo(1);
-        assertThat(leader.claimRound()).isEqualTo(-1);
+        assertThat(leader.claimRound()).as("yarı bütçe dolu: yalnız muaf (kendi koşusu / ikinci görüş) parçalar denenir — yok")
+                .isZero();
+        assertThat(leader.heldCount()).isEqualTo(1);
         other.set(false);
         assertThat(leader.claimRound()).as("başka canlı pod yok — tam bütçe").isEqualTo(1);
         assertThat(leader.status().leaderYielding()).isFalse();
@@ -472,7 +477,9 @@ class CertChunkWorkerTest {
         enabled.set(false);
         w.tick();
         assertThat(count("run_id = 'run-off' AND state = 'DONE'")).as("açık koşu bitirildi").isEqualTo(3);
-        w.tick();   // boş sahiplenme → artık boşta
+        w.tick();   // boş sahiplenme
+        nanos.addAndGet(DEFAULT.offGraceMs() * 1_000_000L + 1_000_000_000L);   // kapanış sonrası süre (2 × kira) doldu
+        w.tick();   // artık boşta
         store.createRun(CertSweepSqlH2Test.spec("run-off2", 20, 20));
         connections.set(0);
         for (int i = 0; i < 5; i++) {
@@ -601,6 +608,231 @@ class CertChunkWorkerTest {
         a.destroy();
         b.destroy();
         await(() -> !anyCertChunkThread(), 7_000);
+    }
+
+    // ── FX-WORKER (2026-10-29): inceleme bulguları SW-M1 / CR-L1 / CR-H-1 b / SW-L1 / SW-L2 / SW-L5 ─────────────────
+
+    @Test
+    @DisplayName("CR-L1: tarama lideri KENDİ koordine ettiği koşunun parçalarını beklemeden ve TAM bütçeyle alır; başka işçi için bekletme sürer")
+    void leaderClaimsOwnRunAtOnceWithFullBudget() {
+        store.createRun(CertSweepSqlH2Test.spec("run-own", 200, 20));   // koordinatör "coord-00000001"
+        FakeRunner r = runner();
+        r.block();
+        CertChunkWorker leader = worker(DEFAULT, store, r, () -> true, () -> true, "coord-00000001");
+        leader.startForTest(null);
+        assertThat(leader.claimRound()).as("0 sn'lik parçalar ama KENDİ koşusu — tam bütçe (40) = iki parça").isEqualTo(2);
+        assertThat(leader.status().leaderYielding()).isTrue();
+        assertThat(leader.status().budget()).as("kendi koşusunun parçaları tam bütçeyle").isEqualTo(40);
+        assertThat(leader.status().inflightDomains()).isEqualTo(40);
+
+        FakeRunner r2 = runner();
+        r2.block();
+        CertChunkWorker otherLeader = worker(DEFAULT, store, r2, () -> true, () -> true, "pod-l-00000002");
+        otherLeader.startForTest(null);
+        assertThat(otherLeader.claimRound()).as("başka pod'un koşusu: lider bekletmesi (10 sn) sürer").isZero();
+        r.open();
+        r2.open();
+    }
+
+    @Test
+    @DisplayName("SW-M1: işi kimse almıyorsa (son aldığı parça ≥ 30 sn beklemiş) çekilen lider tam bütçeye geçer; 12 sn'lik parçada yarı bütçe kalır; kanıt her alınan parçayla güncellenir")
+    void leaderAloneStopsYielding() throws Exception {
+        store.createRun(CertSweepSqlH2Test.spec("run-y", 120, 20));   // 6 parça, başka koordinatör
+        FakeRunner r = runner();
+        r.block();
+        CertChunkWorker leader = worker(DEFAULT, store, r, () -> true, () -> true, "pod-l-00000001");
+        leader.startForTest(null);
+        clock.advance(12_000);
+        store.heartbeat("run-y");
+        assertThat(leader.claimRound()).as("12 sn beklemiş parça — yarı bütçe (20) = bir parça").isEqualTo(1);
+        assertThat(leader.status().budget()).isEqualTo(20);
+        r.open();
+        await(() -> leader.heldCount() == 0, 5_000);
+
+        clock.advance(28_000);   // kalan parçalar 40 sn'dir bekliyor — kimse almıyor
+        store.heartbeat("run-y");
+        r.block();
+        assertThat(leader.claimRound()).as("40 sn beklemiş parça → tam bütçe (40) = iki parça").isEqualTo(2);
+        assertThat(leader.status().budget()).isEqualTo(40);
+        assertThat(leader.status().leaderYielding()).as("bekletme sürer").isTrue();
+        r.open();
+        await(() -> leader.heldCount() == 0, 5_000);
+        for (int i = 0; i < 5 && count("run_id = 'run-y' AND state = 'PENDING'") > 0; i++) {
+            leader.claimRound();
+            await(() -> leader.heldCount() == 0, 5_000);
+        }
+        assertThat(count("run_id = 'run-y' AND state = 'DONE'")).isEqualTo(6);
+        assertThat(leader.claimRound()).as("bekletmeli sahiplenme boş").isZero();
+
+        store.createRun(CertSweepSqlH2Test.spec("run-y2", 120, 20));
+        clock.advance(12_000);
+        store.heartbeat("run-y2");
+        r.block();
+        assertThat(leader.claimRound()).as("yeni turun 12 sn'lik parçası — kanıt güncellendi, yarı bütçe").isEqualTo(1);
+        assertThat(leader.status().budget()).isEqualTo(20);
+        r.open();
+    }
+
+    @Test
+    @DisplayName("CR-H-1 b: ikinci görüş parçalarını çekilen lider beklemeden ve TAM bütçeyle alır; aynı turun 0 sn'lik ilk görüş parçası beklemede kalır")
+    void leaderClaimsSecondOpinionsAtOnceWithFullBudget() {
+        store.createRun(CertSweepSqlH2Test.spec("run-so", 20, 20));   // tek ilk görüş parçası (başka koordinatör)
+        List<CertChunkSpec> opinions = new ArrayList<>();
+        for (int k = 0; k < 3; k++) {
+            List<CertChunkSpec.Entry> e = new ArrayList<>();
+            for (int i = 0; i < 10; i++) e.add(CertSweepSqlH2Test.entry(k * 10 + i));
+            opinions.add(new CertChunkSpec(1 + k, e, "pod-bad-0000000b"));
+        }
+        assertThat(store.addChunks("run-so", opinions)).isEqualTo(3);
+        FakeRunner r = runner();
+        r.block();
+        CertChunkWorker leader = worker(DEFAULT, store, r, () -> true, () -> true, "pod-l-00000001");
+        leader.startForTest(null);
+        assertThat(leader.claimRound()).as("üç ikinci görüş parçası (30 alan adı) beklemeden, tam bütçeyle").isEqualTo(3);
+        assertThat(count("run_id = 'run-so' AND avoid_worker IS NOT NULL AND state = 'CLAIMED' AND claimed_by = 'pod-l-00000001'"))
+                .isEqualTo(3);
+        assertThat(count("run_id = 'run-so' AND avoid_worker IS NULL AND state = 'PENDING'"))
+                .as("0 sn'lik ilk görüş parçası liderin bekletmesine takılır").isEqualTo(1);
+        assertThat(leader.status().budget()).isEqualTo(40);
+        r.open();
+    }
+
+    @Test
+    @DisplayName("SW-L1: kendi kirası dolan parçasını yeniden alan işçi: eski koşucu atılır, uçuştaki alan adı sızmaz, tek tamamlama")
+    void sameOwnerReclaimDoesNotLeakBudget() throws Exception {
+        AtomicBoolean renewFails = new AtomicBoolean(false);
+        CertSweepStore flaky = new Delegating(store) {
+            @Override
+            public int renew(String owner, Collection<Long> ids, long leaseMs) {
+                if (renewFails.get()) throw new org.springframework.dao.QueryTimeoutException("yenileme takıldı");
+                return super.renew(owner, ids, leaseMs);
+            }
+        };
+        store.createRun(CertSweepSqlH2Test.spec("run-sl", 20, 20));   // TEK parça
+        FakeRunner r = runner();
+        r.block();
+        CertChunkWorker w = worker(DEFAULT, flaky, r, () -> false, () -> false, "pod-a-00000001");
+        w.startForTest(null);
+        assertThat(w.claimRound()).isEqualTo(1);
+        assertThat(w.status().inflightDomains()).isEqualTo(20);
+
+        renewFails.set(true);
+        clock.advance(LEASE + 1_000);
+        nanos.addAndGet((LEASE + 1_000) * 1_000_000L);
+        store.heartbeat("run-sl");   // koordinatör yaşıyor
+        w.tick();                    // yenileme düşer, sahiplenme turu aynı (kirası dolmuş) parçayı yeniden alır
+        assertThat(mp.jdbc().queryForObject("SELECT attempts FROM cert_sweep_chunks WHERE run_id = 'run-sl'", Integer.class))
+                .isEqualTo(2);
+        assertThat(w.heldCount()).isEqualTo(1);
+        assertThat(w.status().inflightDomains()).as("aynı parça iki kez sayılmaz").isEqualTo(20);
+
+        r.open();
+        await(() -> w.heldCount() == 0, 5_000);
+        await(() -> w.status().completed() + w.status().discarded() == 2, 5_000);
+        assertThat(w.status().inflightDomains()).as("hiçbir şey tutulmuyorken uçuşta alan adı 0").isZero();
+        assertThat(w.status().completed()).as("yeni belirteçli koşucu tamamlar").isEqualTo(1);
+        assertThat(w.status().discarded()).as("eski koşucunun sonucu atılır").isEqualTo(1);
+        assertThat(w.status().late()).isZero();
+        assertThat(count("run_id = 'run-sl' AND state = 'DONE'")).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("SW-L2: anahtar açık koşu sırasında kapatıldı, başka pod parçalarını bıraktı → boştaki işçi 2 × kira boyunca alır; sonra sorgusuz; dürtme bir kez dener")
+    void switchedOffKeepsClaimingWithinGrace() throws Exception {
+        store.createRun(CertSweepSqlH2Test.spec("run-g", 40, 20));   // iki parça
+        FakeRunner rb = runner();
+        rb.block();
+        JdbcCertSweepStore sb = new JdbcCertSweepStore(mp.jdbc(), clock, null);
+        sb.markTablesReady(true);
+        AtomicLong nb = new AtomicLong(5_000_000_000L);
+        CertChunkWorker b = new CertChunkWorker(sb, chunking(DEFAULT), () -> rb, () -> false, () -> false, "pod-b-00000002",
+                nb::get);
+        workers.add(b);
+        b.startForTest(null);
+        assertThat(b.claimRound()).isEqualTo(2);
+
+        FakeRunner ra = runner();
+        CertChunkWorker a = worker(DEFAULT, ra);
+        a.startForTest(new Direct());
+        a.tick();   // sahiplenecek bir şey yok → son sahiplenme boş
+        assertThat(a.heldCount()).isZero();
+
+        enabled.set(false);         // yönetici anahtarı açık koşu sırasında kapattı
+        b.onContextClosed(null);    // pod b kapanıyor → iki parçayı bırakır (deneme 0)
+        await(() -> count("run_id = 'run-g' AND state = 'PENDING'") == 2, 5_000);
+        for (int i = 0; i < 5 && count("run_id = 'run-g' AND state = 'DONE'") < 2; i++) {
+            nanos.addAndGet(6_000_000_000L);
+            clock.advance(6_000);
+            store.heartbeat("run-g");
+            a.tick();
+        }
+        assertThat(count("run_id = 'run-g' AND state = 'DONE' AND worker = 'pod-a-00000001'"))
+                .as("bırakılan parçalar kapanış sonrası süre içinde alındı").isEqualTo(2);
+        assertThat(ra.measured).hasSize(40);
+
+        // süre doldu: yalnız bellek okuması — yeni bir koşunun parçası alınmaz
+        nanos.addAndGet(DEFAULT.offGraceMs() * 1_000_000L + 1_000_000_000L);
+        store.createRun(CertSweepSqlH2Test.spec("run-g2", 20, 20));
+        connections.set(0);
+        for (int i = 0; i < 3; i++) {
+            nanos.addAndGet(6_000_000_000L);
+            assertThat(a.tick()).isEqualTo(DEFAULT.idlePollMs());
+        }
+        assertThat(connections).as("kapalı + süre doldu + boşta: sorgu yok").hasValue(0);
+        assertThat(count("run_id = 'run-g2' AND state = 'PENDING'")).isEqualTo(1);
+
+        a.poke();   // dürtme: bir kez dener
+        a.tick();
+        assertThat(count("run_id = 'run-g2' AND state = 'DONE'")).as("dürtme sahiplenmeyi beklemeden dener").isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("SW-L5: uyarı hız sınırı ileti türü başına — sahiplenme uyarısının hemen ardından 'sonuç yazılamadı' yine WARN")
+    void warnRateLimitIsPerKind() {
+        ch.qos.logback.classic.Logger logger =
+                (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(CertChunkWorker.class);
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> logs =
+                new ch.qos.logback.core.read.ListAppender<>();
+        logs.start();
+        logger.addAppender(logs);
+        ch.qos.logback.classic.Level before = logger.getLevel();
+        logger.setLevel(ch.qos.logback.classic.Level.DEBUG);
+        try {
+            AtomicBoolean claimFails = new AtomicBoolean(true);
+            AtomicBoolean completeFails = new AtomicBoolean(false);
+            CertSweepStore flaky = new Delegating(store) {
+                @Override
+                public Optional<ClaimedChunk> claim(String owner, long leaseMs, long createdBeforeMs) {
+                    if (claimFails.get()) throw new org.springframework.dao.QueryTimeoutException("sahiplenme düştü");
+                    return super.claim(owner, leaseMs, createdBeforeMs);
+                }
+
+                @Override
+                public boolean complete(ChunkCompletion c) {
+                    if (completeFails.get()) throw new org.springframework.dao.TransientDataAccessResourceException("blip");
+                    return super.complete(c);
+                }
+            };
+            store.createRun(CertSweepSqlH2Test.spec("run-w", 20, 20));
+            CertChunkWorker w = worker(tuning(1, 0, 50, true), flaky, runner(), () -> false, () -> false, "pod-w-00000001");
+            w.startForTest(new Direct());
+            assertThat(w.claimRound()).isZero();
+            claimFails.set(false);
+            completeFails.set(true);
+            assertThat(w.claimRound()).isEqualTo(1);
+            claimFails.set(true);
+            assertThat(w.claimRound()).isZero();   // aynı türün ikinci uyarısı aynı dakikada → DEBUG
+            List<String> warns = logs.list.stream().filter(e -> e.getLevel() == ch.qos.logback.classic.Level.WARN)
+                    .map(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage).toList();
+            assertThat(warns).hasSize(2);
+            assertThat(warns.get(0)).contains("sahiplenilemedi");
+            assertThat(warns.get(1)).as("tamamlama uyarısı sahiplenme uyarısının gölgesinde kalmaz").contains("sonucu yazılamadı");
+            assertThat(logs.list.stream().filter(e -> e.getLevel() == ch.qos.logback.classic.Level.DEBUG
+                    && e.getFormattedMessage().contains("sahiplenilemedi")).count()).isEqualTo(1);
+        } finally {
+            logger.detachAppender(logs);
+            logger.setLevel(before);
+        }
     }
 
     /** Depoyu sarar (hata enjeksiyonu için). */

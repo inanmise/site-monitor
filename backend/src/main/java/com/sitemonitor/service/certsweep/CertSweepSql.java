@@ -193,20 +193,42 @@ public final class CertSweepSql {
 
     // ── İşçi ────────────────────────────────────────────────────────────────────────────────────────────────────────
 
-    /** Koordinatörü YAŞAYAN, RUNNING koşunun parçası mı ({@code k} takma adıyla). Parametre: nabız eşiği. */
+    /**
+     * Koordinatörü YAŞAYAN, RUNNING koşunun parçası mı ({@code k} takma adıyla) + liderin bekletme kapısı. Bekletme kapısı
+     * ({@code k.created_ms < ?}, FX-WORKER 2026-10-29: SW-M1 / CR-L1 / CR-H-1 b) YALNIZ BAŞKA bir pod'un koordine ettiği
+     * koşunun İLK GÖRÜŞ parçalarına uygulanır: sahiplenen pod'un KENDİ koşusunun parçaları ({@code r.coordinator = sahip}) ve
+     * ikinci görüş parçaları ({@code k.avoid_worker IS NOT NULL}) eşikten muaftır (lider onları beklemeden alır). Eşik
+     * {@link Long#MAX_VALUE} = herkes, {@link Long#MIN_VALUE} = YALNIZ muaf parçalar. Parametreler: nabız eşiği, oluşturma
+     * eşiği, sahip.
+     */
     private static final String RUN_ALIVE_K = "EXISTS (SELECT 1 FROM " + RUNS + " r WHERE r.run_id = k.run_id "
-            + "AND r.state = 'RUNNING' AND r.heartbeat_ms >= ?)";
+            + "AND r.state = 'RUNNING' AND r.heartbeat_ms >= ? "
+            + "AND (k.created_ms < ? OR k.avoid_worker IS NOT NULL OR r.coordinator = ?))";
 
     /**
-     * Sahiplenme aday koşulu ({@code k} takma adı): PENDING ya da kirası dolmuş CLAIMED, deneme tavanı altı, oluşturma eşiği
-     * öncesi, kaçınılan işçi bu değil, koşusu RUNNING ve koordinatörün nabzı taze. Parametreler: şimdi, tavan, oluşturma eşiği,
-     * sahip, nabız eşiği.
+     * Sahiplenme aday koşulu ({@code k} takma adı): PENDING ya da kirası dolmuş CLAIMED, deneme tavanı altı, kaçınılan işçi bu
+     * değil, koşusu RUNNING ve koordinatörün nabzı taze, oluşturma eşiği öncesi (yalnız başka koordinatörün ilk görüş
+     * parçaları için — {@link #RUN_ALIVE_K}). Parametreler: şimdi, tavan, sahip (kaçınılan), nabız eşiği, oluşturma eşiği,
+     * sahip (koordinatör).
      */
     static final String CANDIDATE_WHERE = "(k.state = 'PENDING' OR (k.state = 'CLAIMED' AND k.lease_until_ms < ?)) "
-            + "AND k.attempts < ? AND k.created_ms < ? AND (k.avoid_worker IS NULL OR k.avoid_worker <> ?) AND " + RUN_ALIVE_K;
+            + "AND k.attempts < ? AND (k.avoid_worker IS NULL OR k.avoid_worker <> ?) AND " + RUN_ALIVE_K;
 
-    /** Sahiplenme sonucu sütunları (iki yol aynı etiketlerle okur). */
-    public static final String CLAIMED_COLS = "id, run_id, chunk_no, domains_json, attempts, claim_token, claimed_ms, lease_until_ms";
+    /**
+     * Sahiplenme sonucu sütunları (iki yol aynı etiketlerle okur), {@code alias} takma adlı parça satırından. FX-WORKER
+     * (2026-10-29): parçanın {@code created_ms}'i, {@code avoid_worker}'ı ve koşusunun {@code coordinator}'ı da döner — işçi
+     * kendi koşusunu / ikinci görüşü / bekleme yaşını bilir (alt sorgu kilit almaz).
+     */
+    static String claimedCols(String alias) {
+        String a = alias + ".";
+        return a + "id AS id, " + a + "run_id AS run_id, " + a + "chunk_no AS chunk_no, " + a + "domains_json AS domains_json, "
+                + a + "attempts AS attempts, " + a + "claim_token AS claim_token, " + a + "claimed_ms AS claimed_ms, "
+                + a + "lease_until_ms AS lease_until_ms, " + a + "created_ms AS created_ms, " + a + "avoid_worker AS avoid_worker, "
+                + "(SELECT r.coordinator FROM " + RUNS + " r WHERE r.run_id = " + a + "run_id) AS coordinator";
+    }
+
+    /** Sahiplenme sonucu sütunları ({@code k} takma adıyla; taşınabilir yolun 3. adımı). */
+    public static final String CLAIMED_COLS = claimedCols("k");
 
     /**
      * PostgreSQL tek ifadeli sahiplenme (3-3 QW-L8 CTE biçimi): aday CTE'de BİR KEZ seçilip kilitlenir ({@code FOR UPDATE OF k
@@ -216,11 +238,13 @@ public final class CertSweepSql {
     public static final String SQL_CLAIM_PG = "WITH c AS (SELECT k.id FROM " + CHUNKS + " k WHERE " + CANDIDATE_WHERE
             + " ORDER BY k.id LIMIT 1 FOR UPDATE OF k SKIP LOCKED) "
             + "UPDATE " + CHUNKS + " j SET state = 'CLAIMED', claimed_by = ?, claim_token = ?, claimed_ms = ?, "
-            + "lease_until_ms = ?, attempts = j.attempts + 1 FROM c WHERE j.id = c.id RETURNING j.id AS id, j.run_id AS run_id, "
-            + "j.chunk_no AS chunk_no, j.domains_json AS domains_json, j.attempts AS attempts, j.claim_token AS claim_token, "
-            + "j.claimed_ms AS claimed_ms, j.lease_until_ms AS lease_until_ms";
+            + "lease_until_ms = ?, attempts = j.attempts + 1 FROM c WHERE j.id = c.id RETURNING " + claimedCols("j");
 
-    /** Taşınabilir sahiplenme 1. adım: adaylar (kilitsiz). Parametreler: [aday koşulu], tavan. */
+    /**
+     * Taşınabilir sahiplenme 1. adım: adaylar (kilitsiz). Parametreler: [aday koşulu], tavan. (Bekletme kapısının girdileri —
+     * {@code created_ms}, {@code avoid_worker}, koşunun {@code coordinator}'ı — yazımdan sonra değişmez; CAS onları yeniden
+     * denetlemez.)
+     */
     public static final String SQL_CLAIM_CANDIDATES = "SELECT k.id, k.attempts FROM " + CHUNKS + " k WHERE " + CANDIDATE_WHERE
             + " ORDER BY k.id LIMIT ?";
 
@@ -234,7 +258,7 @@ public final class CertSweepSql {
             + " r WHERE r.run_id = " + CHUNKS + ".run_id AND r.state = 'RUNNING' AND r.heartbeat_ms >= ?)";
 
     /** Taşınabilir sahiplenme 3. adım: kazanılan satır. Parametreler: id, belirteç. */
-    public static final String SQL_CLAIMED_ROW = "SELECT " + CLAIMED_COLS + " FROM " + CHUNKS + " WHERE id = ? AND claim_token = ?";
+    public static final String SQL_CLAIMED_ROW = "SELECT " + CLAIMED_COLS + " FROM " + CHUNKS + " k WHERE k.id = ? AND k.claim_token = ?";
 
     /** Kira yenileme (bu pod'un tuttukları, tek deyim). Parametreler: kira bitişi, sahip, kimlikler… */
     public static String renew(int ids) {

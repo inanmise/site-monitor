@@ -260,6 +260,10 @@ class CertSweepSqlH2Test {
         assertThat(a.claimToken()).hasSize(32).isNotEqualTo(b.claimToken());
         assertThat(a.claimedMs()).isEqualTo(T0);
         assertThat(a.leaseUntilMs()).isEqualTo(T0 + LEASE);
+        assertThat(a.coordinator()).as("koşunun koordinatörü döner (FX-WORKER)").isEqualTo("coord-00000001");
+        assertThat(a.createdMs()).isEqualTo(T0);
+        assertThat(a.avoidWorker()).isNull();
+        assertThat(a.secondOpinion()).isFalse();
         Map<String, Object> row = chunk(a.id());
         assertThat(row).containsEntry("state", "CLAIMED").containsEntry("claimed_by", "w1")
                 .containsEntry("claim_token", a.claimToken()).containsEntry("attempts", 1).containsEntry("lease_until_ms", T0 + LEASE);
@@ -305,6 +309,42 @@ class CertSweepSqlH2Test {
         ClaimedChunk o = claim("w-good");
         assertThat(o.chunkNo()).isEqualTo(1);
         assertThat(chunk(o.id())).containsEntry("avoid_worker", "w-bad");
+    }
+
+    @Test
+    @DisplayName("Sahiplenme kapısı (FX-WORKER SW-M1 / CR-L1 / CR-H-1 b): oluşturma eşiği yalnız BAŞKA koordinatörün ilk görüş parçalarına; "
+            + "kendi koşusu ve ikinci görüş muaf; MIN eşik = yalnız muaflar; dönen satır koordinatör / bekleme / kaçınılan işçi taşır")
+    void claimGateLeaderExemptions() {
+        store.createRun(spec("run-x", 20, 20));   // koordinatör "coord-00000001", parçalar T0'da
+        assertThat(store.claim("w1", LEASE, T0)).as("başka koordinatörün 0 sn'lik ilk görüş parçası — eşik").isEmpty();
+        assertThat(store.claim("w1", LEASE, Long.MIN_VALUE)).as("MIN eşik: yalnız muaf parçalar — yok").isEmpty();
+        ClaimedChunk own = store.claim("coord-00000001", LEASE, Long.MIN_VALUE).orElseThrow();
+        assertThat(own.runId()).as("kendi koşusu eşikten muaf").isEqualTo("run-x");
+        assertThat(own.coordinator()).isEqualTo("coord-00000001");
+        assertThat(own.createdMs()).isEqualTo(T0);
+        assertThat(own.pendingMsAtClaim()).isZero();
+
+        store.createRun(spec("run-y", 5, 5));
+        CertChunkSpec opinion = new CertChunkSpec(1, List.of(entry(0)), "w-bad");
+        assertThat(store.addChunks("run-y", List.of(opinion))).isEqualTo(1);
+        clock.advance(3_000);
+        store.heartbeat("run-y");
+        ClaimedChunk so = store.claim("w1", LEASE, Long.MIN_VALUE).orElseThrow();
+        assertThat(so.chunkNo()).as("ikinci görüş eşikten muaf (ilk görüş parçası 0 değil)").isEqualTo(1);
+        assertThat(so.avoidWorker()).isEqualTo("w-bad");
+        assertThat(so.secondOpinion()).isTrue();
+        assertThat(so.createdMs()).isEqualTo(T0);
+        assertThat(so.pendingMsAtClaim()).isEqualTo(3_000);
+        assertThat(store.claim("w-bad", LEASE, Long.MAX_VALUE).orElseThrow().chunkNo())
+                .as("kaçınılan işçi yine ilk görüş parçasını alabilir").isZero();
+
+        store.createRun(spec("run-z", 20, 20));
+        clock.advance(15_000);
+        store.heartbeat("run-z");
+        ClaimedChunk aged = store.claim("w2", LEASE, clock.nowMs() - 10_000).orElseThrow();
+        assertThat(aged.runId()).isEqualTo("run-z");
+        assertThat(aged.pendingMsAtClaim()).as("bekleme = sahiplenme − oluşturma").isEqualTo(15_000);
+        assertThat(aged.coordinator()).isEqualTo("coord-00000001");
     }
 
     @Test
