@@ -77,7 +77,7 @@ import static org.mockito.Mockito.mock;
  */
 final class R33SweepHarness {
 
-    final MonitoringOutageService outage = mock(MonitoringOutageService.class);
+    final MonitoringOutageService outage;
     final EscalationService escalation = mock(EscalationService.class);
     final ActivityLogService activity = mock(ActivityLogService.class);
     final AppSettingsService appSettings = mock(AppSettingsService.class);
@@ -129,6 +129,15 @@ final class R33SweepHarness {
     }
 
     R33SweepHarness() throws Exception {
+        this(false);
+    }
+
+    /**
+     * {@code realMos} → GERÇEK {@code MonitoringOutageService} (zamanlanmış sonuç çiti yok, teyit yürütücüsü görevleri
+     * BEKLETİR / koşmaz, bastırma saati = {@link #clock}); pencere / tur aralığı testleri için. Aksi hâlde sahte.
+     */
+    R33SweepHarness(boolean realMos) throws Exception {
+        outage = realMos ? realMos() : mock(MonitoringOutageService.class);
         lenient().when(appSettings.getBoolean(anyString(), anyBoolean()))
                 .thenAnswer(i -> settings.getOrDefault(i.getArgument(0), i.getArgument(1)));
         lenient().when(appSettings.getInt(anyString(), anyInt()))
@@ -180,6 +189,30 @@ final class R33SweepHarness {
         inv.setDomain("inv-host.example.com");
         inv.setActive(true);
         lenient().when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(inv));
+    }
+
+    private MonitoringOutageService realMos() {
+        com.sitemonitor.repository.AlertEventRepository alerts = mock(com.sitemonitor.repository.AlertEventRepository.class);
+        lenient().when(alerts.findOpenByDomainIn(org.mockito.ArgumentMatchers.anyCollection())).thenReturn(List.of());
+        MonitoringOutageService mos = new MonitoringOutageService(alerts, escalation, jdbc, dnsRecordRepo, dnsRepo,
+                appSettings, mock(com.sitemonitor.repository.NetworkOutageEventRepository.class));
+        ReflectionTestUtils.setField(mos, "portAlertEnabled", true);
+        ReflectionTestUtils.setField(mos, "dnsAlertEnabled", true);
+        ReflectionTestUtils.setField(mos, "pingAlertEnabled", true);
+        ReflectionTestUtils.setField(mos, "keywordAlertEnabled", true);
+        ReflectionTestUtils.setField(mos, "bulkRateThreshold", 0.50);
+        ReflectionTestUtils.setField(mos, "bulkMinErrors", 3);
+        ReflectionTestUtils.setField(mos, "confirmAttempts", 3);
+        ReflectionTestUtils.setField(mos, "confirmDelayMs", 1L);
+        ReflectionTestUtils.setField(mos, "confirmExecutor", new java.util.concurrent.ScheduledThreadPoolExecutor(1) {
+            @Override
+            public java.util.concurrent.ScheduledFuture<?> schedule(Runnable command, long delay,
+                                                                   java.util.concurrent.TimeUnit unit) {
+                return null;   // teyit zinciri adımları bu testlerde koşmaz
+            }
+        });
+        ReflectionTestUtils.setField(mos, "suppressionClock", (java.util.function.LongSupplier) clock::get);
+        return mos;
     }
 
     // ── dağıtık altyapı ──────────────────────────────────────────────────────────────────────────────────────────────
