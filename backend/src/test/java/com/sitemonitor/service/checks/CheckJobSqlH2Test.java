@@ -6,6 +6,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
@@ -20,6 +21,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Dağıtık kontrol kuyruğu H2'de (2026-10-29, çok pod Sürüm 3-3 paket A, tasarım §9.2 A) — taşınabilir yol: şema yaması (iki
@@ -323,12 +325,12 @@ class CheckJobSqlH2Test {
     }
 
     @Test
-    @DisplayName("Tablo yok (yama koşmadı): her yöntem boş / 0 döner, fırlatmaz")
+    @DisplayName("Tablo yok (yama koşmadı): gönderme DIŞINDAKİ her yöntem boş / 0 döner, fırlatmaz")
     void tablesMissing_emptyResults() {
         MultiPodTestSupport bare = MultiPodTestSupport.create();
         try {
             JdbcCheckJobStore s = new JdbcCheckJobStore(bare.jdbc(), clock, null, System::nanoTime);
-            assertThat(s.dispatch(CheckJobTypes.PORT, List.of(1L), 150_000, "l")).isZero();
+            // Yeniden taban (inceleme QW-L9 / DA-M1): gönderme artık sessiz 0 dönmez, fırlatır — ayrı testte.
             assertThat(s.claim(Set.of(CheckJobTypes.PORT), 3, "w")).isEmpty();
             assertThat(s.complete(List.of(new CheckJobStore.Completion(1, "t", "{}", false, "w")))).containsExactly(false);
             assertThat(s.release("w", List.of(1L))).isZero();
@@ -340,6 +342,88 @@ class CheckJobSqlH2Test {
         } finally {
             bare.close();
         }
+    }
+
+    @Test
+    @DisplayName("Gönderme, iş tablosu yokken: sessiz 0 değil — DataAccessResourceFailureException (Türkçe, SQL metni yok)")
+    void dispatchOnMissingTableSignalsFailure() {
+        MultiPodTestSupport bare = MultiPodTestSupport.create();
+        try {
+            for (Boolean dialect : new Boolean[] {null, Boolean.TRUE, Boolean.FALSE}) {
+                JdbcCheckJobStore s = new JdbcCheckJobStore(bare.jdbc(), clock, dialect, System::nanoTime);
+                assertThatThrownBy(() -> s.dispatch(CheckJobTypes.PORT, List.of(1L, 2L), 150_000, "l"))
+                        .as("tür: %s", dialect)
+                        .isInstanceOf(DataAccessResourceFailureException.class)
+                        .hasMessage(JdbcCheckJobStore.DISPATCH_TABLE_MISSING)
+                        .hasNoCause();
+            }
+            JdbcCheckJobStore s = new JdbcCheckJobStore(bare.jdbc(), clock, null, System::nanoTime);
+            assertThat(s.dispatch(CheckJobTypes.PORT, List.of(), 150_000, "l")).as("boş liste: deyim yok, fırlatmaz").isZero();
+            assertThat(JdbcCheckJobStore.DISPATCH_TABLE_MISSING).doesNotContainIgnoringCase("select")
+                    .doesNotContainIgnoringCase("insert").doesNotContain(CheckJobSql.JOBS);
+        } finally {
+            bare.close();
+        }
+    }
+
+    @Test
+    @DisplayName("Biçme: bitişi 2 × result-stale-ms'ten eski DONE satırları da silinir (dönen listeye girmez, ayrı sayılır, ≤ 200); gençler kalır")
+    void reapDropsDoneOlderThanStaleCap() {
+        long staleMs = 120_000L;   // ayar: 2 dk → eşik 4 dk
+        store.setDistributedChecks(new DistributedChecks(null,
+                new DistributedChecks.Tuning(true, 16, 1_000, 5_000, 2_000, 50, 5_000, staleMs)));
+        store.dispatch(CheckJobTypes.PORT, List.of(1L, 2L, 3L), 150_000, "l");
+        List<CheckJobRow> got = store.claim(Set.of(CheckJobTypes.PORT), 3, "w1");
+        store.complete(List.of(done(got.get(0), "{\"up\":true}", "w1"), done(got.get(1), "{\"up\":true}", "w1")));
+        clock.advance(2 * staleMs - 1_000);
+        store.complete(List.of(done(got.get(2), "{\"up\":false}", "w1")));   // genç DONE (bitiş şimdi)
+        assertThat(store.reap(10)).as("eşik henüz aşılmadı").isEmpty();
+        assertThat(count("state = 'DONE'")).isEqualTo(3);
+        assertThat(store.staleDoneReaped()).isZero();
+
+        clock.advance(1_001);
+        List<CheckJobRow> reaped = store.reap(10);
+        assertThat(reaped).as("dönen liste yalnız kirası dolmuş işler — 'N kez sahiplenildi' uyarısı DONE için yazılmaz").isEmpty();
+        assertThat(store.staleDoneReaped()).isEqualTo(2);
+        assertThat(count("state = 'DONE'")).as("genç DONE kalır").isEqualTo(1);
+        assertThat(mp.jdbc().queryForObject("SELECT monitor_id FROM monitor_check_jobs", Long.class)).isEqualTo(3L);
+
+        // Çağrı başına en çok 200.
+        List<Long> many = new ArrayList<>();
+        for (long i = 0; i < 250; i++) many.add(1_000 + i);
+        store.dispatch(CheckJobTypes.HTTP, many, 150_000, "l");
+        List<CheckJobStore.Completion> all = new ArrayList<>();
+        for (CheckJobRow r : store.claim(Set.of(CheckJobTypes.HTTP), 500, "w1")) all.add(done(r, "{}", "w1"));
+        store.complete(all);
+        clock.advance(2 * staleMs + 1);
+        store.reap(10);
+        assertThat(store.staleDoneReaped()).isEqualTo(2 + JdbcCheckJobStore.STALE_DONE_REAP_LIMIT);
+        store.reap(10);
+        assertThat(store.staleDoneReaped()).isEqualTo(2 + 250 + 1);   // + az önceki genç satır (artık o da eski)
+        assertThat(count("1 = 1")).isZero();
+        assertThat(store.staleDoneReapFailures()).isZero();
+    }
+
+    @Test
+    @DisplayName("Biçme: eski DONE adımının hatası kirası dolmuş işlerin sonucunu düşürmez")
+    void reapStaleDoneFailureKeepsExpiredClaimsResult() {
+        store.dispatch(CheckJobTypes.PORT, List.of(1L), 150_000, "l");
+        store.claim(Set.of(CheckJobTypes.PORT), 1, "w1");
+        clock.advance(150_001);
+        store.claim(Set.of(CheckJobTypes.PORT), 1, "w2");
+        clock.advance(150_001);
+        JdbcTemplate failingDone = new JdbcTemplate(mp.dataSource()) {
+            @Override
+            public <T> List<T> queryForList(String sql, Class<T> elementType, Object... args) {
+                if (sql.equals(CheckJobSql.SQL_REAP_DONE_CANDIDATES)) {
+                    throw new DataAccessResourceFailureException("db");
+                }
+                return super.queryForList(sql, elementType, args);
+            }
+        };
+        JdbcCheckJobStore s = new JdbcCheckJobStore(failingDone, clock, null, System::nanoTime);
+        assertThat(s.reap(10)).hasSize(1);
+        assertThat(s.staleDoneReapFailures()).isEqualTo(1);
     }
 
     @Test

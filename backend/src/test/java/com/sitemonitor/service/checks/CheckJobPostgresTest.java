@@ -10,6 +10,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.ConnectionCallback;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.sql.ResultSet;
 import java.sql.Statement;
@@ -24,6 +26,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -216,6 +219,126 @@ class CheckJobPostgresTest {
             }
         });
         assertThat(plan).as(plan).contains("Index").doesNotContain("Seq Scan on monitor_check_jobs");
+    }
+
+    @Test
+    @DisplayName("PostgreSQL (QW-L8, CTE biçimi): eşzamanlı sahiplenme ve alma çağrısı ASLA limitinden fazla satır dönmez; her iş tam bir kez")
+    void claimNeverExceedsLimitUnderContention() throws Exception {
+        List<Long> ids = new ArrayList<>();
+        for (long i = 0; i < 1_200; i++) ids.add(BASE + 50_000 + i);
+        assertThat(store.dispatch(CheckJobTypes.PORT, ids, 150_000, "itr33-l")).isEqualTo(1_200);
+        int[] limits = {1, 3, 7, 13};
+        AtomicInteger overLimit = new AtomicInteger();
+        List<Callable<List<CheckJobRow>>> claimers = new ArrayList<>();
+        for (int w = 0; w < limits.length; w++) {
+            JdbcCheckJobStore s = new JdbcCheckJobStore(jdbc(), clock);
+            String owner = "itr33-c" + w;
+            int limit = limits[w];
+            claimers.add(() -> {
+                List<CheckJobRow> got = new ArrayList<>();
+                for (int round = 0; round < 2_000; round++) {
+                    List<CheckJobRow> rows = s.claim(Set.of(CheckJobTypes.PORT), limit, owner);
+                    if (rows.size() > limit) overLimit.incrementAndGet();
+                    if (rows.isEmpty()) break;
+                    got.addAll(rows);
+                }
+                return got;
+            });
+        }
+        List<List<CheckJobRow>> claimed = runTogether(claimers);
+        assertThat(overLimit).as("hiçbir sahiplenme limitini aşmadı").hasValue(0);
+        Set<Long> unique = new HashSet<>();
+        List<CheckJobStore.Completion> completions = new ArrayList<>();
+        for (List<CheckJobRow> list : claimed) {
+            for (CheckJobRow r : list) {
+                assertThat(unique.add(r.id())).as("iş iki kez sahiplenildi: %s", r.id()).isTrue();
+                assertThat(r.attempts()).isEqualTo(1);
+                assertThat(r.claimToken()).isNotBlank();
+                assertThat(r.leaseUntilMs()).isEqualTo(r.claimedMs() + 150_000L);
+                completions.add(new CheckJobStore.Completion(r.id(), r.claimToken(), "{}", false, "itr33-c"));
+            }
+        }
+        assertThat(unique).hasSize(1_200);
+        boolean[] ok = store.complete(completions);
+        for (boolean b : ok) assertThat(b).isTrue();
+
+        String holder = jdbc().query("SELECT claimed_by FROM " + ClusterScheduleService.TABLE + " WHERE monitor_key = ?",
+                (ResultSet rs) -> rs.next() ? rs.getString(1) : null, CheckJobSql.LEASE_KEY);
+        boolean inserted = false;
+        if (holder == null) {
+            holder = "itr33-leader";
+            jdbc().update("INSERT INTO " + ClusterScheduleService.TABLE + " (monitor_key, next_due_at, claimed_by) VALUES (?, ?, ?)",
+                    CheckJobSql.LEASE_KEY, System.currentTimeMillis() + 60_000, holder);
+            inserted = true;
+        }
+        try {
+            String leaseHolder = holder;
+            List<Callable<List<Long>>> takers = new ArrayList<>();
+            for (int w = 0; w < limits.length; w++) {
+                JdbcCheckJobStore s = new JdbcCheckJobStore(jdbc(), clock);
+                int limit = limits[w];
+                takers.add(() -> {
+                    List<Long> got = new ArrayList<>();
+                    for (int round = 0; round < 2_000; round++) {
+                        List<CheckResultRow> rows = s.take(limit, leaseHolder);
+                        if (rows.size() > limit) overLimit.incrementAndGet();
+                        if (rows.isEmpty()) break;
+                        for (CheckResultRow r : rows) got.add(r.id());
+                    }
+                    return got;
+                });
+            }
+            List<List<Long>> taken = runTogether(takers);
+            assertThat(overLimit).as("hiçbir alma limitini aşmadı").hasValue(0);
+            Set<Long> takenIds = new HashSet<>();
+            for (List<Long> list : taken) for (Long id : list) assertThat(takenIds.add(id)).as("tam bir kez").isTrue();
+            assertThat(takenIds).containsExactlyInAnyOrderElementsOf(unique);
+        } finally {
+            if (inserted) {
+                jdbc().update("DELETE FROM " + ClusterScheduleService.TABLE + " WHERE monitor_key = ? AND claimed_by = ?",
+                        CheckJobSql.LEASE_KEY, holder);
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("PostgreSQL (QW-L3): salt okunur işlem içinden kuyruk çağrıları işlemi bozmaz — gönderme kendi bağlantısında yazar, sonraki deyim koşar")
+    void statsInsideReadOnlyTransactionDoesNotPoisonIt() {
+        CheckJobStore bean = PostgresIt.app().bean(CheckJobStore.class);
+        PlatformTransactionManager txm = PostgresIt.app().bean(PlatformTransactionManager.class);
+        TransactionTemplate tt = new TransactionTemplate(txm);
+        tt.setReadOnly(true);
+        long m = BASE + 60_001;
+        Integer after = tt.execute(status -> {
+            assertThat(bean.stats()).isNotNull();
+            // Katılsaydı: salt okunur işlemde INSERT reddedilir (25006) ve işlem bozulurdu (25P02).
+            assertThat(bean.dispatch(CheckJobTypes.HTTP, List.of(m), 150_000, "itr33-l")).isEqualTo(1);
+            assertThat(bean.stats().count(CheckJobStore.STATE_PENDING, CheckJobTypes.HTTP)).isPositive();
+            return jdbc().queryForObject("SELECT 1", Integer.class);
+        });
+        assertThat(after).as("dış işlem sağlam").isEqualTo(1);
+        assertThat(jdbc().queryForObject("SELECT COUNT(*) FROM monitor_check_jobs WHERE monitor_id = ?", Integer.class, m))
+                .isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("PostgreSQL (QW-L3 / L4): DB saati clock_timestamp() ile kendi bağlantısında çapalanır; işlem içinden de gerçek an")
+    void dbClockAnchorsOnPostgres() throws Exception {
+        AnchoredDbClock c = new AnchoredDbClock(jdbc());
+        PlatformTransactionManager txm = PostgresIt.app().bean(PlatformTransactionManager.class);
+        TransactionTemplate tt = new TransactionTemplate(txm);
+        Long inTx = tt.execute(status -> {
+            jdbc().queryForObject("SELECT 1", Integer.class);   // işlem başladı
+            try {
+                Thread.sleep(1_500);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            return c.nowMs();
+        });
+        assertThat(c.stale()).isFalse();
+        assertThat(inTx).isNotNull();
+        assertThat(Math.abs(inTx - System.currentTimeMillis())).as("işlem başlangıcı değil gerçek an").isLessThan(1_000L);
     }
 
     private static <T> List<T> runTogether(List<Callable<T>> tasks) throws Exception {

@@ -273,15 +273,20 @@ class CheckWorkerTest {
     }
 
     @Test
-    @DisplayName("İşçi zaman aşımı: kira − 10 sn'de worker_timeout yazılır, yuva gövde dönene dek dolu, geç gövde sonucu atılır")
+    @DisplayName("İşçi zaman aşımı: kira − 10 sn'de worker_timeout yazılır ve gövde kesilir; kesmeyi yok sayan gövde yuvayı tutar, geç sonucu atılır")
     void workerTimeout() throws Exception {
+        // Yeniden taban (inceleme QW-L5): zaman aşımında gövde artık KESİLİR — bu test kesmeyi YOK SAYAN gövdeyi sınar (yuva
+        // gövde dönene dek dolu kalır); kesmeye uyan gövdenin yuvası boşalır: hungBodyIsInterruptedAndSlotReturned.
         store.add(CheckJobTypes.HTTP, 1);
-        CountDownLatch gate = new CountDownLatch(1);
+        AtomicBoolean release = new AtomicBoolean();
+        AtomicInteger interruptsSeen = new AtomicInteger();
         body = (t, id) -> {
-            try {
-                gate.await();
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
+            while (!release.get()) {
+                try {
+                    Thread.sleep(5);
+                } catch (InterruptedException ignored) {
+                    interruptsSeen.incrementAndGet();   // kesmeyi yok sayan (kötü davranan) gövde
+                }
             }
             return ok(id);
         };
@@ -291,19 +296,134 @@ class CheckWorkerTest {
         advance(CheckJobTypes.workerTimeoutMs(CheckJobTypes.HTTP) - 1);
         w.tick();
         assertThat(w.status().timeouts()).isZero();
+        assertThat(w.interrupts()).isZero();
         advance(2);
         w.tick();
         advance(CheckWorker.FLUSH_MS);
         w.tick();
         assertThat(store.completed).singleElement().satisfies(c -> assertThat(c.resultJson()).isEqualTo("{\"worker_timeout\":true}"));
         assertThat(w.status().timeouts()).isEqualTo(1);
-        assertThat(w.running()).as("takılan gövde yuvayı tutar").isEqualTo(1);
-        gate.countDown();
+        assertThat(w.interrupts()).as("zaman aşımı gövdeyi keser").isEqualTo(1);
+        await(() -> interruptsSeen.get() == 1);
+        assertThat(w.running()).as("kesmeyi yok sayan gövde yuvayı tutar").isEqualTo(1);
+        release.set(true);
         await(() -> w.running() == 0);
         advance(CheckWorker.FLUSH_MS);
         w.tick();
         assertThat(store.completed).as("geç gövdenin sonucu yazılmaz").hasSize(1);
         assertThat(w.pendingCompletions()).isZero();
+    }
+
+    @Test
+    @DisplayName("Takılan gövde zaman aşımında KESİLİR, yuva gövde dönünce boşalır; gövde kendini 'bırakıldı' görür; kesme sonraki işe sızmaz")
+    void hungBodyIsInterruptedAndSlotReturned() throws Exception {
+        store.add(CheckJobTypes.HTTP, 2);
+        CountDownLatch never = new CountDownLatch(1);
+        AtomicBoolean firstSawAbandoned = new AtomicBoolean();
+        AtomicBoolean secondInterruptedOrAbandoned = new AtomicBoolean(true);
+        AtomicBoolean outsideAbandoned = new AtomicBoolean(true);
+        AtomicInteger calls = new AtomicInteger();
+        body = (t, id) -> {
+            if (calls.incrementAndGet() == 1) {
+                try {
+                    never.await();
+                } catch (InterruptedException e) {
+                    firstSawAbandoned.set(CheckWorker.currentJobAbandoned());
+                    Thread.currentThread().interrupt();   // gövde bayrağı geri koyar — sonraki işe sızmamalı
+                }
+                return ok(id);
+            }
+            secondInterruptedOrAbandoned.set(Thread.currentThread().isInterrupted() || CheckWorker.currentJobAbandoned());
+            return ok(id);
+        };
+        ExecutorService one = Executors.newFixedThreadPool(1, r -> {
+            Thread th = new Thread(r, CheckWorker.POOL_PREFIX + "test");
+            th.setDaemon(true);
+            return th;
+        });
+        executors.add(one);
+        CheckWorker w = worker(slots(1));
+        w.startForTest(one);
+        w.tick();
+        await(() -> w.running() == 1);
+        long firstId = store.firstId();
+
+        advance(CheckJobTypes.workerTimeoutMs(CheckJobTypes.HTTP) + 1);
+        w.tick();
+        await(() -> w.running() == 0);
+        assertThat(w.interrupts()).isEqualTo(1);
+        assertThat(firstSawAbandoned).as("gövde kendini bırakılmış görür (geçmiş satırını yazmaz)").isTrue();
+
+        advance(1_000);
+        w.tick();   // boşalan yuvayla ikinci iş (zaman aşımı turunda henüz alınmadıysa)
+        await(() -> calls.get() == 2 && w.running() == 0);
+        advance(CheckWorker.FLUSH_MS);
+        w.tick();
+        assertThat(secondInterruptedOrAbandoned).as("kesme / bırakılma aynı iş parçacığındaki sonraki işe sızmaz").isFalse();
+        assertThat(store.completed).filteredOn(c -> c.id() == firstId).singleElement()
+                .satisfies(c -> assertThat(c.resultJson()).isEqualTo("{\"worker_timeout\":true}"));
+        assertThat(store.completed).filteredOn(c -> c.id() == firstId + 1).singleElement()
+                .satisfies(c -> assertThat(c.resultJson()).contains("\"ok\":true"));
+        Thread probe = new Thread(() -> outsideAbandoned.set(CheckWorker.currentJobAbandoned()));
+        probe.start();
+        probe.join(5_000);
+        assertThat(outsideAbandoned).as("işçi dışındaki iş parçacığında her zaman false").isFalse();
+    }
+
+    @Test
+    @DisplayName("Birikim tavanı (inceleme QW-L10): sonuçlar yazılamazken tavanda yeni iş SAHİPLENİLMEZ; yazılınca sürer — hiçbir tamamlama düşmez")
+    void backlogStopsClaimingUntilDrained() throws Exception {
+        store.add(CheckJobTypes.PORT, 12);
+        CheckWorker w = started(slots(4));
+        w.backlogLimits(3, Long.MAX_VALUE);
+        store.failComplete = true;
+        w.tick();
+        assertThat(store.claims).hasSize(1);
+        await(() -> w.running() == 0 && w.pendingCompletions() == 4);
+        assertThat(w.backlogFull()).isTrue();
+        for (int i = 0; i < 5; i++) {
+            advance(5_000);
+            w.tick();
+        }
+        assertThat(store.claims).as("birikim dolu — sahiplenme yok").hasSize(1);
+        assertThat(w.backlogPauses()).isPositive();
+        assertThat(w.status().completeErrors()).isPositive();
+        assertThat(w.pendingCompletions()).as("hiçbir tamamlama düşmedi").isEqualTo(4);
+        assertThat(w.status().late()).isZero();
+        assertThat(w.pendingChars()).isPositive();
+
+        store.failComplete = false;
+        advance(5_000);
+        w.tick();
+        assertThat(store.completed).hasSize(4);
+        assertThat(w.pendingChars()).isZero();
+        assertThat(store.claims).as("birikim yazıldı — sahiplenme sürer").hasSize(2);
+        assertThat(w.backlogDropped()).isZero();
+    }
+
+    @Test
+    @DisplayName("Birikim tavanı karakterle de: büyük sonuçlar karakter tavanına ulaşınca sahiplenme durur")
+    void backlogCharCapStopsClaiming() throws Exception {
+        store.add(CheckJobTypes.PAGE, 6);
+        body = (t, id) -> {
+            Map<String, Object> m = ok(id);
+            m.put("x", "a".repeat(2_000));
+            return m;
+        };
+        CheckWorker w = started(slots(2));
+        w.backlogLimits(1_000, 3_000);
+        store.failComplete = true;
+        w.tick();
+        await(() -> w.running() == 0 && w.pendingCompletions() == 2);
+        assertThat(w.pendingChars()).isGreaterThanOrEqualTo(4_000);
+        advance(5_000);
+        w.tick();
+        assertThat(store.claims).as("karakter tavanı").hasSize(1);
+        store.failComplete = false;
+        advance(5_000);
+        w.tick();
+        assertThat(store.claims).hasSize(2);
+        assertThat(store.completed).hasSize(2);
     }
 
     @Test
@@ -479,6 +599,7 @@ class CheckWorkerTest {
         final List<Long> released = new CopyOnWriteArrayList<>();
         final Set<Long> lostIds = ConcurrentHashMap.newKeySet();
         final AtomicBoolean failNextComplete = new AtomicBoolean();
+        volatile boolean failComplete;
         final AtomicLong seq = new AtomicLong(100);
         volatile long lagStep;
 
@@ -518,7 +639,9 @@ class CheckWorkerTest {
 
         @Override
         public boolean[] complete(List<Completion> list) {
-            if (failNextComplete.getAndSet(false)) throw new org.springframework.dao.DataAccessResourceFailureException("db");
+            if (failNextComplete.getAndSet(false) || failComplete) {
+                throw new org.springframework.dao.DataAccessResourceFailureException("db");
+            }
             boolean[] out = new boolean[list.size()];
             for (int i = 0; i < list.size(); i++) {
                 out[i] = !lostIds.contains(list.get(i).id());
