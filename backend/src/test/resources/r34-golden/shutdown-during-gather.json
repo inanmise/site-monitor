@@ -1,0 +1,80 @@
+{
+  "scenario": {
+    "name": "shutdown-during-gather",
+    "kind": "stale",
+    "evict_caches": false,
+    "pre_held": false,
+    "domains": 5
+  },
+  "checks": [
+    {
+      "domain": "z1.example.com",
+      "port": 443,
+      "use_proxy": false,
+      "tls_mode": null,
+      "timeout_seconds": null
+    },
+    {
+      "domain": "z2.example.com",
+      "port": 443,
+      "use_proxy": false,
+      "tls_mode": null,
+      "timeout_seconds": null
+    },
+    {
+      "domain": "z3.example.com",
+      "port": 443,
+      "use_proxy": false,
+      "tls_mode": null,
+      "timeout_seconds": null
+    },
+    {
+      "domain": "z4.example.com",
+      "port": 443,
+      "use_proxy": false,
+      "tls_mode": null,
+      "timeout_seconds": null
+    },
+    {
+      "domain": "z5.example.com",
+      "port": 443,
+      "use_proxy": false,
+      "tls_mode": null,
+      "timeout_seconds": null
+    }
+  ],
+  "check_order": [
+    "z1.example.com",
+    "z2.example.com",
+    "z3.example.com",
+    "z4.example.com",
+    "z5.example.com"
+  ],
+  "calls": [
+    {
+      "call": "lock.acquire",
+      "name": "cert-check",
+      "ttl": "PT3M"
+    },
+    {
+      "call": "lock.release"
+    }
+  ],
+  "state": {
+    "running": false,
+    "current_run_id": "",
+    "last_run_id": "<run>",
+    "last_run": null,
+    "last_run_duration_ms": 0,
+    "last_run_total": 0,
+    "last_run_warnings": 0,
+    "last_run_errors": 0,
+    "last_run_failure": null,
+    "startup_check_stopped": true,
+    "lock_held_at_end": true
+  },
+  "logs": [
+    "INFO Certificate check started — runId=<run>, 5 domain(s) [instance=<instance>]",
+    "INFO Kapanış başladı — sertifika taraması sonuçları işlenmeden bırakıldı (runId=<run>, 2 / 5 sonuç)"
+  ]
+}
