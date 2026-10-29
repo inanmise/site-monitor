@@ -161,6 +161,28 @@ class CheckJobPostgresTest {
     }
 
     @Test
+    @DisplayName("PostgreSQL: taşınabilir yol da (dizin doğrulanmadan önce / tür okunamadı) doğru — açık işi yoksa ekle + ON CONFLICT, CAS sahiplenme")
+    void portablePathIsValidOnPostgres() {
+        long m = BASE + 40_001;
+        int[] first = jdbc().batchUpdate(CheckJobSql.SQL_DISPATCH_ONE_PG,
+                List.<Object[]>of(new Object[] {"keyword", m, 150_000L, clock.nowMs(), "itr33-l", "keyword", m}));
+        int[] again = jdbc().batchUpdate(CheckJobSql.SQL_DISPATCH_ONE_PG,
+                List.<Object[]>of(new Object[] {"keyword", m, 150_000L, clock.nowMs(), "itr33-l", "keyword", m}));
+        assertThat(first).containsExactly(1);
+        assertThat(again).as("açık iş var — eklenmez, hata yok").containsExactly(0);
+        JdbcCheckJobStore portable = new JdbcCheckJobStore(jdbc(), clock, Boolean.FALSE, System::nanoTime);
+        assertThat(portable.dispatch(CheckJobTypes.KEYWORD, List.of(m, m + 1), 150_000, "itr33-l")).isEqualTo(1);
+        List<CheckJobRow> got = portable.claim(Set.of(CheckJobTypes.KEYWORD), 5, "itr33-w", clock.nowMs() + 1);
+        assertThat(got).extracting(CheckJobRow::monitorId).containsExactly(m, m + 1);
+        assertThat(portable.complete(List.of(new CheckJobStore.Completion(got.get(0).id(), got.get(0).claimToken(), "{}", false,
+                "itr33-w")))).containsExactly(true);
+        assertThat(portable.release("itr33-w", List.of(got.get(1).id()))).isEqualTo(1);
+        CheckJobStore.QueueStats st = portable.stats();
+        assertThat(st.count(CheckJobStore.STATE_DONE, CheckJobTypes.KEYWORD)).isGreaterThanOrEqualTo(1);
+        assertThat(portable.reap(5)).isEmpty();
+    }
+
+    @Test
     @DisplayName("PostgreSQL: kalp atışı upsert'i (ON CONFLICT DO UPDATE) ve sahiplenme aday sorgusu dizinle koşar")
     void heartbeatUpsertAndIndexedClaim() {
         DistributedChecks on = CheckWorkerRegistryTest.distributed(true, DistributedChecks.Tuning.DEFAULTS);

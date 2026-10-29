@@ -88,10 +88,13 @@ public class JdbcCheckJobStore implements CheckJobStore {
         long now = clock.nowMs();
         try {
             int inserted = 0;
-            boolean multiRow = Boolean.TRUE.equals(postgres()) && openIndexPresent();
+            boolean pg = Boolean.TRUE.equals(postgres());
+            boolean multiRow = pg && openIndexPresent();
             for (int from = 0; from < ids.size(); from += CheckJobSql.DISPATCH_CHUNK) {
                 List<Long> chunk = ids.subList(from, Math.min(ids.size(), from + CheckJobSql.DISPATCH_CHUNK));
-                inserted += multiRow ? dispatchMultiRow(type, chunk, lease, now, who) : dispatchPortable(type, chunk, lease, now, who);
+                inserted += multiRow ? dispatchMultiRow(type, chunk, lease, now, who)
+                        : dispatchPortable(pg ? CheckJobSql.SQL_DISPATCH_ONE_PG : CheckJobSql.SQL_DISPATCH_ONE, type, chunk, lease,
+                                now, who);
             }
             return inserted;
         } catch (BadSqlGrammarException e) {
@@ -113,11 +116,11 @@ public class JdbcCheckJobStore implements CheckJobStore {
         return jdbc.update(CheckJobSql.dispatchMultiRowPg(chunk.size()), args);
     }
 
-    private int dispatchPortable(String type, List<Long> chunk, long lease, long now, String who) {
+    private int dispatchPortable(String sql, String type, List<Long> chunk, long lease, long now, String who) {
         List<Object[]> batch = new ArrayList<>(chunk.size());
         for (Long id : chunk) batch.add(new Object[] {type, id, lease, now, who, type, id});
         int n = 0;
-        for (int c : jdbc.batchUpdate(CheckJobSql.SQL_DISPATCH_ONE, batch)) {
+        for (int c : jdbc.batchUpdate(sql, batch)) {
             if (c > 0) n += c;
             else if (c == Statement.SUCCESS_NO_INFO) n++;
         }

@@ -116,6 +116,12 @@ public final class CheckJobSql {
             + "CAST(? AS VARCHAR(200)), 0 WHERE NOT EXISTS (SELECT 1 FROM " + JOBS
             + " WHERE job_type = ? AND monitor_id = ? AND state IN ('PENDING','CLAIMED'))";
 
+    /**
+     * PostgreSQL'de taşınabilir gönderme (tekil dizin henüz doğrulanmadıyken): {@link #SQL_DISPATCH_ONE} + {@code ON CONFLICT DO
+     * NOTHING} — dizin varsa iki gönderenin yarışı tekil ihlalle toplu deyimi düşürmez.
+     */
+    public static final String SQL_DISPATCH_ONE_PG = SQL_DISPATCH_ONE + " ON CONFLICT DO NOTHING";
+
     /** PostgreSQL çok satırlı gönderme ({@code rows} satırlık VALUES; satır başına 5 parametre) — tekil dizinle çakışan atlanır. */
     public static String dispatchMultiRowPg(int rows) {
         StringBuilder sb = new StringBuilder(INSERT_COLS).append("VALUES ");
