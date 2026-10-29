@@ -20,7 +20,8 @@ import java.util.function.Supplier;
 /**
  * Çok pod Sürüm 3-4 paket B — koordinatör testlerinin sahteleri: bellek içi {@link CertSweepStore} (paket A'nın SQL
  * sözleşmesinin AYNI kuralları: sahiplenme = PENDING ya da kirası dolmuş CLAIMED ∧ deneme &lt; 2 ∧ kaçınılan işçi değil ∧
- * koşu RUNNING ve nabzı taze; tamamlama = belirteç CAS'ı ∧ koşu RUNNING), işçiyi taklit eden {@link Worker} (paket A'nın
+ * koşu RUNNING ve nabzı taze ∧ yaş kapısı yalnız başka pod'un koşusunun ilk görüş parçalarına (FX-WORKER, 2026-10-29);
+ * tamamlama = belirteç CAS'ı ∧ koşu RUNNING), işçiyi taklit eden {@link Worker} (paket A'nın
  * davranışı: kapanışta sonucu atar, ölçücü fırlatırsa her öğeyi {@code failed} işaretiyle tamamlar) ve test kurucusu.
  */
 public final class CertSweepFakes {
@@ -298,10 +299,15 @@ public final class CertSweepFakes {
             for (Chunk c : chunks.stream().sorted(Comparator.comparingLong(k -> k.id)).toList()) {
                 boolean free = CHUNK_PENDING.equals(c.state)
                         || (CHUNK_CLAIMED.equals(c.state) && c.leaseUntil != null && c.leaseUntil < now);
-                if (!free || c.attempts >= CertChunking.MAX_ATTEMPTS || c.createdMs >= createdBeforeMs) continue;
+                if (!free || c.attempts >= CertChunking.MAX_ATTEMPTS) continue;
                 if (c.avoid != null && c.avoid.equals(owner)) continue;
                 Run r = runs.get(c.runId);
                 if (r == null || !RUN_RUNNING.equals(r.state) || r.heartbeatMs < now - CertChunking.COORDINATOR_ALIVE_MS) continue;
+                // FX-WORKER deposu ile aynı kapı: yaş kapısı (liderin çalma gecikmesi) YALNIZ başka pod'un koordine ettiği
+                // koşunun ilk görüş parçalarına uygulanır; sahibin kendi koşusu ve ikinci görüş parçaları muaf;
+                // createdBeforeMs = Long.MIN_VALUE → yalnız muaf parçalar
+                boolean exempt = c.avoid != null || owner.equals(r.coordinator);
+                if (!exempt && c.createdMs >= createdBeforeMs) continue;
                 c.state = CHUNK_CLAIMED;
                 c.claimedBy = owner;
                 c.token = UUID.randomUUID().toString().substring(0, 12);
