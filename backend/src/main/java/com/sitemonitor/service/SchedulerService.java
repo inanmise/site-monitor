@@ -9939,7 +9939,7 @@ public class SchedulerService {
         if (dc == null || !dc.anyDistributed() || stopping()) return;
         com.sitemonitor.service.checks.CheckJobStore store = checkJobStore();
         if (store == null) return;
-        if (!isSweepLeader()) return;
+        if (!sweepLeaderHint() || !isSweepLeader()) return;   // ipucu (bellek) önce — kapanan / kirayı bırakan pod göndermez
         if (!tryAcquireSchedulerLock(CHECK_DISPATCH_LOCK, sweepLockTtlMinutes)) {
             logSkip("Kontrol gönderimi — kilit başka instance'da, atlanıyor");
             return;
@@ -10083,7 +10083,8 @@ public class SchedulerService {
     boolean distributedMode(String type) {
         com.sitemonitor.service.checks.DistributedChecks dc = distributedChecks;
         if (dc == null || !dc.distributedType(type)) return toClassicMode(type);
-        if (!isSweepLeader()) return toClassicMode(type);
+        // İpucu (bellek) ÖNCE: kapanış başladı / kira bırakıldı → asla dağıtık (gönderim yok); sonra doğrulanmış liderlik.
+        if (!sweepLeaderHint() || !isSweepLeader()) return toClassicMode(type);
         com.sitemonitor.service.checks.CheckWorkerRegistry registry = checkWorkerRegistry();
         int live;
         try {
