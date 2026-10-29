@@ -1,0 +1,471 @@
+{
+  "type": "port",
+  "decisions": [
+    {
+      "on": "EscalationService",
+      "method": "resolveOrphanedPortAlerts",
+      "args": [
+        [
+          "a.example.com",
+          "b.example.com",
+          "boom.example.com",
+          "c.example.com",
+          "f.example.com",
+          "gone-host.example.com",
+          "inv-host.example.com"
+        ]
+      ]
+    },
+    {
+      "on": "EscalationService",
+      "method": "resolveOpenAlertsSilently",
+      "args": [
+        "gone-host.example.com",
+        [
+          "PORT_DOWN",
+          "PORT_SLOW"
+        ],
+        "Sistem (envanterde aktif değil — izleme durdu)"
+      ]
+    },
+    {
+      "on": "MonitoringOutageService",
+      "method": "handleSweepResults",
+      "args": [
+        "PORT_DOWN",
+        [
+          {
+            "alertType": "PORT_DOWN",
+            "domain": "a.example.com",
+            "detail": "443/TCP",
+            "up": true,
+            "error": null,
+            "ctx": {
+              "monitor_name": "Port 1",
+              "port": 443,
+              "protocol": "TCP",
+              "monitor_id": 1,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "team_id": 7,
+              "standalone": true,
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          },
+          {
+            "alertType": "PORT_DOWN",
+            "domain": "b.example.com",
+            "detail": "8443/UDP",
+            "up": true,
+            "error": null,
+            "ctx": {
+              "monitor_name": "Port 2",
+              "port": 8443,
+              "protocol": "UDP",
+              "monitor_id": 2,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "team_id": 7,
+              "standalone": true,
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          },
+          {
+            "alertType": "PORT_DOWN",
+            "domain": "c.example.com",
+            "detail": "22/TCP",
+            "up": false,
+            "error": "Connection refused",
+            "ctx": {
+              "monitor_name": "Port 3",
+              "port": 22,
+              "protocol": "TCP",
+              "monitor_id": 3,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "team_id": 7,
+              "standalone": true,
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          },
+          {
+            "alertType": "PORT_DOWN",
+            "domain": "inv-host.example.com",
+            "detail": "443/TCP",
+            "up": false,
+            "error": "Connect timed out",
+            "ctx": {
+              "monitor_name": "Port 4",
+              "port": 443,
+              "protocol": "TCP",
+              "monitor_id": 4,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          },
+          {
+            "alertType": "PORT_DOWN",
+            "domain": "f.example.com",
+            "detail": "25/null",
+            "up": true,
+            "error": null,
+            "ctx": {
+              "monitor_name": "Port 6",
+              "port": 25,
+              "protocol": "TCP",
+              "monitor_id": 6,
+              "monitor_confirm_attempts": 5,
+              "monitor_confirm_interval_ms": 10000,
+              "monitor_recovery_checks": 2,
+              "monitor_recovery_interval_ms": 20000,
+              "team_id": 7,
+              "standalone": true,
+              "notification_group_id": 33,
+              "push_disabled": true,
+              "mail_disabled": true,
+              "alert_level": "CRITICAL"
+            },
+            "recheck": true
+          }
+        ]
+      ]
+    },
+    {
+      "on": "MonitoringOutageService",
+      "method": "handleSweepResults",
+      "args": [
+        "PORT_SLOW",
+        [
+          {
+            "alertType": "PORT_SLOW",
+            "domain": "a.example.com",
+            "detail": "120 ms",
+            "up": true,
+            "error": null,
+            "ctx": {
+              "port": 443,
+              "protocol": "TCP",
+              "monitor_id": 1,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "team_id": 7,
+              "standalone": true,
+              "threshold_ms": 500,
+              "response_ms": 120,
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          },
+          {
+            "alertType": "PORT_SLOW",
+            "domain": "b.example.com",
+            "detail": "900 ms",
+            "up": false,
+            "error": null,
+            "ctx": {
+              "port": 8443,
+              "protocol": "UDP",
+              "monitor_id": 2,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "team_id": 7,
+              "standalone": true,
+              "threshold_ms": 500,
+              "response_ms": 900,
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          },
+          {
+            "alertType": "PORT_SLOW",
+            "domain": "inv-host.example.com",
+            "detail": "slow",
+            "up": true,
+            "error": null,
+            "ctx": {
+              "port": 443,
+              "protocol": "TCP",
+              "monitor_id": 4,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "threshold_ms": 3000,
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          },
+          {
+            "alertType": "PORT_SLOW",
+            "domain": "f.example.com",
+            "detail": "40 ms",
+            "up": true,
+            "error": null,
+            "ctx": {
+              "port": 25,
+              "protocol": "TCP",
+              "monitor_id": 6,
+              "monitor_confirm_attempts": 5,
+              "monitor_confirm_interval_ms": 10000,
+              "monitor_recovery_checks": 2,
+              "monitor_recovery_interval_ms": 20000,
+              "team_id": 7,
+              "standalone": true,
+              "notification_group_id": 33,
+              "threshold_ms": 3000,
+              "response_ms": 40,
+              "push_disabled": true,
+              "mail_disabled": true,
+              "alert_level": "CRITICAL"
+            },
+            "recheck": true
+          }
+        ]
+      ]
+    }
+  ],
+  "writes": [
+    {
+      "on": "PortCheckRepository",
+      "method": "save",
+      "args": [
+        {
+          "entity": "PortCheck",
+          "fields": {
+            "checkedAt": "<time>",
+            "error": null,
+            "failureDetail": null,
+            "failureReason": null,
+            "id": null,
+            "monitorId": 1,
+            "open": true,
+            "responseMs": 120
+          }
+        }
+      ]
+    },
+    {
+      "on": "ActivityLogService",
+      "method": "recordCheck",
+      "args": [
+        "PORT",
+        1,
+        "Port 1",
+        "a.example.com:443",
+        7,
+        false,
+        "scheduler",
+        {
+          "open": true,
+          "response_ms": 120
+        }
+      ]
+    },
+    {
+      "on": "PortCheckRepository",
+      "method": "save",
+      "args": [
+        {
+          "entity": "PortCheck",
+          "fields": {
+            "checkedAt": "<time>",
+            "error": null,
+            "failureDetail": null,
+            "failureReason": null,
+            "id": null,
+            "monitorId": 2,
+            "open": true,
+            "responseMs": 900
+          }
+        }
+      ]
+    },
+    {
+      "on": "ActivityLogService",
+      "method": "recordCheck",
+      "args": [
+        "PORT",
+        2,
+        "Port 2",
+        "b.example.com:8443",
+        7,
+        false,
+        "scheduler",
+        {
+          "open": true,
+          "response_ms": 900
+        }
+      ]
+    },
+    {
+      "on": "PortCheckRepository",
+      "method": "save",
+      "args": [
+        {
+          "entity": "PortCheck",
+          "fields": {
+            "checkedAt": "<time>",
+            "error": "Connection refused",
+            "failureDetail": null,
+            "failureReason": null,
+            "id": null,
+            "monitorId": 3,
+            "open": false,
+            "responseMs": 15
+          }
+        }
+      ]
+    },
+    {
+      "on": "ActivityLogService",
+      "method": "recordCheck",
+      "args": [
+        "PORT",
+        3,
+        "Port 3",
+        "c.example.com:22",
+        7,
+        false,
+        "scheduler",
+        {
+          "open": false,
+          "error": "Connection refused",
+          "response_ms": 15
+        }
+      ]
+    },
+    {
+      "on": "PortCheckRepository",
+      "method": "save",
+      "args": [
+        {
+          "entity": "PortCheck",
+          "fields": {
+            "checkedAt": "<time>",
+            "error": "Connect timed out",
+            "failureDetail": null,
+            "failureReason": null,
+            "id": null,
+            "monitorId": 4,
+            "open": false,
+            "responseMs": null
+          }
+        }
+      ]
+    },
+    {
+      "on": "ActivityLogService",
+      "method": "recordCheck",
+      "args": [
+        "PORT",
+        4,
+        "Port 4",
+        "inv-host.example.com:443",
+        null,
+        false,
+        "scheduler",
+        {
+          "open": false,
+          "error": "Connect timed out"
+        }
+      ]
+    },
+    {
+      "on": "PortCheckRepository",
+      "method": "save",
+      "args": [
+        {
+          "entity": "PortCheck",
+          "fields": {
+            "checkedAt": "<time>",
+            "error": null,
+            "failureDetail": null,
+            "failureReason": null,
+            "id": null,
+            "monitorId": 6,
+            "open": true,
+            "responseMs": 40
+          }
+        }
+      ]
+    },
+    {
+      "on": "ActivityLogService",
+      "method": "recordCheck",
+      "args": [
+        "PORT",
+        6,
+        "Port 6",
+        "f.example.com:25",
+        7,
+        false,
+        "scheduler",
+        {
+          "open": true,
+          "response_ms": 40
+        }
+      ]
+    }
+  ],
+  "checks": [
+    {
+      "on": "PortCheckerService",
+      "method": "check",
+      "args": [
+        "PortMonitor#1"
+      ]
+    },
+    {
+      "on": "PortCheckerService",
+      "method": "check",
+      "args": [
+        "PortMonitor#2"
+      ]
+    },
+    {
+      "on": "PortCheckerService",
+      "method": "check",
+      "args": [
+        "PortMonitor#3"
+      ]
+    },
+    {
+      "on": "PortCheckerService",
+      "method": "check",
+      "args": [
+        "PortMonitor#4"
+      ]
+    },
+    {
+      "on": "PortCheckerService",
+      "method": "check",
+      "args": [
+        "PortMonitor#6"
+      ]
+    },
+    {
+      "on": "PortCheckerService",
+      "method": "check",
+      "args": [
+        "PortMonitor#7"
+      ]
+    }
+  ]
+}

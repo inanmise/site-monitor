@@ -1,0 +1,699 @@
+{
+  "type": "dns",
+  "decisions": [
+    {
+      "on": "EscalationService",
+      "method": "resolveOpenAlertsSilently",
+      "args": [
+        "gone.example.com",
+        [
+          "DNS_CHANGED",
+          "DNS_FAILURE",
+          "DNS_INCONSISTENT",
+          "DNS_SLOW",
+          "DNS_UNEXPECTED"
+        ],
+        "Sistem (envanterde aktif değil — izleme durdu)"
+      ]
+    },
+    {
+      "on": "MonitoringOutageService",
+      "method": "handleDnsSweep",
+      "args": [
+        [
+          {
+            "alertType": "DNS_FAILURE",
+            "domain": "a.example.com",
+            "detail": "A",
+            "up": true,
+            "error": null,
+            "ctx": {
+              "record_type": "A",
+              "monitor_id": 1,
+              "team_id": 5,
+              "standalone": true,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          },
+          {
+            "alertType": "DNS_FAILURE",
+            "domain": "b.example.com",
+            "detail": "A",
+            "up": true,
+            "error": null,
+            "ctx": {
+              "record_type": "A",
+              "monitor_id": 2,
+              "team_id": 5,
+              "standalone": true,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          },
+          {
+            "alertType": "DNS_FAILURE",
+            "domain": "inv-host.example.com",
+            "detail": "MX",
+            "up": false,
+            "error": "NXDOMAIN",
+            "ctx": {
+              "record_type": "MX",
+              "monitor_id": 3,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          },
+          {
+            "alertType": "DNS_FAILURE",
+            "domain": "e.example.com",
+            "detail": "A",
+            "up": true,
+            "error": null,
+            "ctx": {
+              "record_type": "A",
+              "monitor_id": 5,
+              "team_id": 5,
+              "standalone": true,
+              "notification_group_id": 44,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "push_disabled": true,
+              "alert_level": "CRITICAL"
+            },
+            "recheck": true
+          },
+          {
+            "alertType": "DNS_FAILURE",
+            "domain": "f.example.com",
+            "detail": "A",
+            "up": true,
+            "error": null,
+            "ctx": {
+              "record_type": "A",
+              "monitor_id": 6,
+              "team_id": 5,
+              "standalone": true,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          },
+          {
+            "alertType": "DNS_FAILURE",
+            "domain": "g.example.com",
+            "detail": "A",
+            "up": true,
+            "error": null,
+            "ctx": {
+              "record_type": "A",
+              "monitor_id": 7,
+              "team_id": 5,
+              "standalone": true,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          }
+        ],
+        [
+          {
+            "alertType": "DNS_SLOW",
+            "domain": "a.example.com",
+            "detail": "A",
+            "up": true,
+            "error": null,
+            "ctx": {
+              "record_type": "A",
+              "monitor_id": 1,
+              "response_ms": 30,
+              "slow_threshold_ms": 1500,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 60000,
+              "team_id": 5,
+              "standalone": true,
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          },
+          {
+            "alertType": "DNS_SLOW",
+            "domain": "b.example.com",
+            "detail": "A",
+            "up": false,
+            "error": "2000 ms",
+            "ctx": {
+              "record_type": "A",
+              "monitor_id": 2,
+              "response_ms": 2000,
+              "slow_threshold_ms": 1500,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 60000,
+              "team_id": 5,
+              "standalone": true,
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          },
+          {
+            "alertType": "DNS_SLOW",
+            "domain": "e.example.com",
+            "detail": "A",
+            "up": true,
+            "error": null,
+            "ctx": {
+              "record_type": "A",
+              "monitor_id": 5,
+              "response_ms": 40,
+              "slow_threshold_ms": 1500,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 60000,
+              "team_id": 5,
+              "standalone": true,
+              "notification_group_id": 44,
+              "push_disabled": true,
+              "alert_level": "CRITICAL"
+            },
+            "recheck": true
+          },
+          {
+            "alertType": "DNS_SLOW",
+            "domain": "f.example.com",
+            "detail": "A",
+            "up": true,
+            "error": null,
+            "ctx": {
+              "record_type": "A",
+              "monitor_id": 6,
+              "response_ms": 20,
+              "slow_threshold_ms": 1500,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 60000,
+              "team_id": 5,
+              "standalone": true,
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          },
+          {
+            "alertType": "DNS_SLOW",
+            "domain": "g.example.com",
+            "detail": "A",
+            "up": true,
+            "error": null,
+            "ctx": {
+              "record_type": "A",
+              "monitor_id": 7,
+              "response_ms": 25,
+              "slow_threshold_ms": 5000,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 60000,
+              "team_id": 5,
+              "standalone": true,
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          }
+        ],
+        [
+          {
+            "domain": "b.example.com",
+            "recordType": "A",
+            "previousValue": "1.2.3.4",
+            "newValue": "5.6.7.8",
+            "detectedAt": "<time>",
+            "teamId": 5,
+            "notificationGroupId": null,
+            "recheck": true,
+            "notifyEmail": true,
+            "notifyWebhook": true,
+            "standalone": true,
+            "monitorId": 2,
+            "alertLevel": null
+          }
+        ],
+        [
+          {
+            "alertType": "DNS_UNEXPECTED",
+            "domain": "a.example.com",
+            "detail": "A",
+            "up": true,
+            "error": null,
+            "ctx": {
+              "record_type": "A",
+              "monitor_id": 1,
+              "unexpected_values": [],
+              "expected_values": [
+                "1.2.3.4"
+              ],
+              "team_id": 5,
+              "standalone": true,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          },
+          {
+            "alertType": "DNS_UNEXPECTED",
+            "domain": "e.example.com",
+            "detail": "A",
+            "up": false,
+            "error": "7.7.7.7",
+            "ctx": {
+              "record_type": "A",
+              "monitor_id": 5,
+              "unexpected_values": [
+                "7.7.7.7"
+              ],
+              "expected_values": [
+                "9.9.9.9",
+                "8.8.8.8"
+              ],
+              "team_id": 5,
+              "standalone": true,
+              "notification_group_id": 44,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "push_disabled": true,
+              "alert_level": "CRITICAL"
+            },
+            "recheck": true
+          }
+        ],
+        [
+          {
+            "alertType": "DNS_INCONSISTENT",
+            "domain": "e.example.com",
+            "detail": "A",
+            "up": false,
+            "error": "8.8.8.8→9.9.9.9 | 1.1.1.1→7.7.7.7",
+            "ctx": {
+              "record_type": "A",
+              "monitor_id": 5,
+              "resolver_detail": "8.8.8.8→9.9.9.9 | 1.1.1.1→7.7.7.7",
+              "team_id": 5,
+              "standalone": true,
+              "notification_group_id": 44,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "push_disabled": true,
+              "alert_level": "CRITICAL"
+            },
+            "recheck": true
+          }
+        ]
+      ]
+    }
+  ],
+  "writes": [
+    {
+      "on": "DnsRecordRepository",
+      "method": "save",
+      "args": [
+        {
+          "entity": "DnsRecord",
+          "fields": {
+            "authoritativeServers": null,
+            "changeState": null,
+            "changed": false,
+            "checkedAt": "<time>",
+            "error": null,
+            "failureDetail": null,
+            "failureReason": null,
+            "id": null,
+            "manual": null,
+            "monitorId": 1,
+            "previousValue": null,
+            "recordType": "A",
+            "responseMs": 30,
+            "rotated": false,
+            "soaInfo": null,
+            "ttl": 300,
+            "value": "1.2.3.4"
+          }
+        }
+      ]
+    },
+    {
+      "on": "ActivityLogService",
+      "method": "recordCheck",
+      "args": [
+        "DNS",
+        1,
+        "DNS 1",
+        "a.example.com A",
+        5,
+        false,
+        "scheduler",
+        {
+          "success": true,
+          "values": [
+            "1.2.3.4"
+          ],
+          "ttl": 300,
+          "response_ms": 30
+        }
+      ]
+    },
+    {
+      "on": "DnsRecordRepository",
+      "method": "save",
+      "args": [
+        {
+          "entity": "DnsRecord",
+          "fields": {
+            "authoritativeServers": null,
+            "changeState": "PENDING",
+            "changed": true,
+            "checkedAt": "<time>",
+            "error": null,
+            "failureDetail": null,
+            "failureReason": null,
+            "id": null,
+            "manual": null,
+            "monitorId": 2,
+            "previousValue": "1.2.3.4",
+            "recordType": "A",
+            "responseMs": 2000,
+            "rotated": false,
+            "soaInfo": null,
+            "ttl": 60,
+            "value": "5.6.7.8"
+          }
+        }
+      ]
+    },
+    {
+      "on": "ActivityLogService",
+      "method": "recordCheck",
+      "args": [
+        "DNS",
+        2,
+        "DNS 2",
+        "b.example.com A",
+        5,
+        false,
+        "scheduler",
+        {
+          "success": true,
+          "values": [
+            "5.6.7.8"
+          ],
+          "ttl": 60,
+          "response_ms": 2000
+        }
+      ]
+    },
+    {
+      "on": "DnsRecordRepository",
+      "method": "save",
+      "args": [
+        {
+          "entity": "DnsRecord",
+          "fields": {
+            "authoritativeServers": null,
+            "changeState": null,
+            "changed": false,
+            "checkedAt": "<time>",
+            "error": "NXDOMAIN",
+            "failureDetail": null,
+            "failureReason": null,
+            "id": null,
+            "manual": null,
+            "monitorId": 3,
+            "previousValue": null,
+            "recordType": "MX",
+            "responseMs": 12,
+            "rotated": false,
+            "soaInfo": null,
+            "ttl": null,
+            "value": ""
+          }
+        }
+      ]
+    },
+    {
+      "on": "ActivityLogService",
+      "method": "recordCheck",
+      "args": [
+        "DNS",
+        3,
+        "DNS 3",
+        "inv-host.example.com MX",
+        null,
+        false,
+        "scheduler",
+        {
+          "success": false,
+          "values": [],
+          "error": "NXDOMAIN",
+          "response_ms": 12
+        }
+      ]
+    },
+    {
+      "on": "DnsRecordRepository",
+      "method": "save",
+      "args": [
+        {
+          "entity": "DnsRecord",
+          "fields": {
+            "authoritativeServers": null,
+            "changeState": null,
+            "changed": false,
+            "checkedAt": "<time>",
+            "error": null,
+            "failureDetail": null,
+            "failureReason": null,
+            "id": null,
+            "manual": null,
+            "monitorId": 5,
+            "previousValue": null,
+            "recordType": "A",
+            "responseMs": 40,
+            "rotated": false,
+            "soaInfo": null,
+            "ttl": null,
+            "value": "9.9.9.9\n7.7.7.7"
+          }
+        }
+      ]
+    },
+    {
+      "on": "ActivityLogService",
+      "method": "recordCheck",
+      "args": [
+        "DNS",
+        5,
+        "DNS 5",
+        "e.example.com A",
+        5,
+        false,
+        "scheduler",
+        {
+          "success": true,
+          "values": [
+            "9.9.9.9",
+            "7.7.7.7"
+          ],
+          "response_ms": 40
+        }
+      ]
+    },
+    {
+      "on": "DnsRecordRepository",
+      "method": "save",
+      "args": [
+        {
+          "entity": "DnsRecord",
+          "fields": {
+            "authoritativeServers": null,
+            "changeState": "SUPPRESSED",
+            "changed": true,
+            "checkedAt": "<time>",
+            "error": null,
+            "failureDetail": null,
+            "failureReason": null,
+            "id": null,
+            "manual": null,
+            "monitorId": 6,
+            "previousValue": "4.4.4.4",
+            "recordType": "A",
+            "responseMs": 20,
+            "rotated": false,
+            "soaInfo": null,
+            "ttl": null,
+            "value": "3.3.3.3"
+          }
+        }
+      ]
+    },
+    {
+      "on": "ActivityLogService",
+      "method": "recordCheck",
+      "args": [
+        "DNS",
+        6,
+        "DNS 6",
+        "f.example.com A",
+        5,
+        false,
+        "scheduler",
+        {
+          "success": true,
+          "values": [
+            "3.3.3.3"
+          ],
+          "response_ms": 20
+        }
+      ]
+    },
+    {
+      "on": "DnsRecordRepository",
+      "method": "save",
+      "args": [
+        {
+          "entity": "DnsRecord",
+          "fields": {
+            "authoritativeServers": null,
+            "changeState": null,
+            "changed": false,
+            "checkedAt": "<time>",
+            "error": null,
+            "failureDetail": null,
+            "failureReason": null,
+            "id": null,
+            "manual": null,
+            "monitorId": 7,
+            "previousValue": "1.1.1.1\n2.2.2.2",
+            "recordType": "A",
+            "responseMs": 25,
+            "rotated": true,
+            "soaInfo": null,
+            "ttl": null,
+            "value": "2.2.2.2\n3.3.3.3"
+          }
+        }
+      ]
+    },
+    {
+      "on": "ActivityLogService",
+      "method": "recordCheck",
+      "args": [
+        "DNS",
+        7,
+        "DNS 7",
+        "g.example.com A",
+        5,
+        false,
+        "scheduler",
+        {
+          "success": true,
+          "values": [
+            "2.2.2.2",
+            "3.3.3.3"
+          ],
+          "response_ms": 25
+        }
+      ]
+    }
+  ],
+  "checks": [
+    {
+      "on": "DnsCheckerService",
+      "method": "check",
+      "args": [
+        "a.example.com",
+        "A"
+      ]
+    },
+    {
+      "on": "DnsCheckerService",
+      "method": "check",
+      "args": [
+        "b.example.com",
+        "A"
+      ]
+    },
+    {
+      "on": "DnsCheckerService",
+      "method": "check",
+      "args": [
+        "boom.example.com",
+        "TXT"
+      ]
+    },
+    {
+      "on": "DnsCheckerService",
+      "method": "check",
+      "args": [
+        "e.example.com",
+        "A"
+      ]
+    },
+    {
+      "on": "DnsCheckerService",
+      "method": "check",
+      "args": [
+        "f.example.com",
+        "A"
+      ]
+    },
+    {
+      "on": "DnsCheckerService",
+      "method": "check",
+      "args": [
+        "g.example.com",
+        "A"
+      ]
+    },
+    {
+      "on": "DnsCheckerService",
+      "method": "check",
+      "args": [
+        "inv-host.example.com",
+        "MX"
+      ]
+    },
+    {
+      "on": "DnsCheckerService",
+      "method": "checkPropagation",
+      "args": [
+        "e.example.com",
+        "A",
+        [
+          "8.8.8.8",
+          "1.1.1.1",
+          "9.9.9.9"
+        ]
+      ]
+    }
+  ]
+}

@@ -1,0 +1,945 @@
+{
+  "type": "page",
+  "decisions": [
+    {
+      "on": "EscalationService",
+      "method": "resolveOrphanedPageAlerts",
+      "args": [
+        [
+          "c-yok-page",
+          "https://a.example.com/",
+          "https://b.example.com/",
+          "https://boom.example.com/",
+          "https://c.example.com/",
+          "https://crawl-home.example.com/",
+          "https://crawl-none.example.com/",
+          "https://g.example.com/"
+        ]
+      ]
+    },
+    {
+      "on": "EscalationService",
+      "method": "openAlertContext",
+      "args": [
+        "https://crawl-home.example.com/",
+        "PAGE_INTEGRITY"
+      ]
+    },
+    {
+      "on": "EscalationService",
+      "method": "openAlertContext",
+      "args": [
+        "https://crawl-none.example.com/",
+        "PAGE_INTEGRITY"
+      ]
+    },
+    {
+      "on": "MonitoringOutageService",
+      "method": "handleSweepResults",
+      "args": [
+        "PAGE_DOWN",
+        [
+          {
+            "alertType": "PAGE_DOWN",
+            "domain": "https://a.example.com/",
+            "detail": "sayfa",
+            "up": true,
+            "error": null,
+            "ctx": {
+              "monitor_name": "Sayfa 1",
+              "url": "https://a.example.com/",
+              "monitor_id": 1,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "team_id": 6,
+              "page_status": "OK",
+              "page_mode": "SINGLE_PAGE",
+              "alert_third_party": false,
+              "alert_mixed_content": true,
+              "alert_timeout": true,
+              "broken_resources": 0,
+              "timeout_count": 0,
+              "mixed_content_count": 0,
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          },
+          {
+            "alertType": "PAGE_DOWN",
+            "domain": "https://b.example.com/",
+            "detail": "sayfa",
+            "up": true,
+            "error": null,
+            "ctx": {
+              "monitor_name": "Sayfa 2",
+              "url": "https://b.example.com/",
+              "monitor_id": 2,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "team_id": 6,
+              "page_status": "DEGRADED",
+              "page_mode": "SINGLE_PAGE",
+              "alert_third_party": false,
+              "alert_mixed_content": true,
+              "alert_timeout": true,
+              "broken_resources": 1,
+              "timeout_count": 0,
+              "mixed_content_count": 0,
+              "problem_resources": "BROKEN · https://b.example.com/app.js (HTTP 404)",
+              "problem_rows": "BROKEN\thttps://b.example.com/app.js\t404",
+              "problem_total": 1,
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          },
+          {
+            "alertType": "PAGE_DOWN",
+            "domain": "https://c.example.com/",
+            "detail": "sayfa",
+            "up": false,
+            "error": "HTTP 502",
+            "ctx": {
+              "monitor_name": "Sayfa 3",
+              "url": "https://c.example.com/",
+              "monitor_id": 3,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "team_id": 6,
+              "page_status": "DOWN",
+              "page_mode": "SINGLE_PAGE",
+              "alert_third_party": false,
+              "alert_mixed_content": true,
+              "alert_timeout": true,
+              "broken_resources": 0,
+              "timeout_count": 0,
+              "mixed_content_count": 0,
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          },
+          {
+            "alertType": "PAGE_DOWN",
+            "domain": "c-yok-page",
+            "detail": "sayfa",
+            "up": true,
+            "error": null,
+            "ctx": {
+              "monitor_name": "Sayfa 4",
+              "url": "c-yok-page",
+              "monitor_id": 4,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "team_id": 6,
+              "page_status": "CONFIG_ERROR",
+              "page_mode": "SINGLE_PAGE",
+              "alert_third_party": false,
+              "alert_mixed_content": true,
+              "alert_timeout": true,
+              "broken_resources": 0,
+              "timeout_count": 0,
+              "mixed_content_count": 0,
+              "config_error": true,
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          },
+          {
+            "alertType": "PAGE_DOWN",
+            "domain": "https://crawl-home.example.com/",
+            "detail": "sayfa",
+            "up": true,
+            "error": null,
+            "ctx": {
+              "monitor_name": "Sayfa 5",
+              "url": "https://crawl-home.example.com/",
+              "monitor_id": 5,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "team_id": 6,
+              "page_status": "OK",
+              "page_mode": "SITE_CRAWL",
+              "alert_third_party": false,
+              "alert_mixed_content": true,
+              "alert_timeout": true,
+              "broken_resources": 0,
+              "timeout_count": 0,
+              "mixed_content_count": 0,
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          },
+          {
+            "alertType": "PAGE_DOWN",
+            "domain": "https://crawl-none.example.com/",
+            "detail": "sayfa",
+            "up": true,
+            "error": null,
+            "ctx": {
+              "monitor_name": "Sayfa 6",
+              "url": "https://crawl-none.example.com/",
+              "monitor_id": 6,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "team_id": 6,
+              "page_status": "OK",
+              "page_mode": "SITE_CRAWL",
+              "alert_third_party": false,
+              "alert_mixed_content": true,
+              "alert_timeout": true,
+              "broken_resources": 0,
+              "timeout_count": 0,
+              "mixed_content_count": 0,
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          },
+          {
+            "alertType": "PAGE_DOWN",
+            "domain": "https://g.example.com/",
+            "detail": "sayfa",
+            "up": true,
+            "error": null,
+            "ctx": {
+              "monitor_name": "Sayfa 7",
+              "url": "https://g.example.com/",
+              "monitor_id": 7,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "team_id": 6,
+              "page_status": "OK",
+              "page_mode": "SINGLE_PAGE",
+              "alert_third_party": false,
+              "alert_mixed_content": true,
+              "alert_timeout": false,
+              "broken_resources": 0,
+              "timeout_count": 1,
+              "mixed_content_count": 0,
+              "mail_disabled": true,
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          }
+        ]
+      ]
+    },
+    {
+      "on": "MonitoringOutageService",
+      "method": "handleSweepResults",
+      "args": [
+        "PAGE_INTEGRITY",
+        [
+          {
+            "alertType": "PAGE_INTEGRITY",
+            "domain": "https://a.example.com/",
+            "detail": "0 kırık, 0 zaman aşımı, 0 mixed content",
+            "up": true,
+            "error": null,
+            "ctx": {
+              "monitor_name": "Sayfa 1",
+              "url": "https://a.example.com/",
+              "monitor_id": 1,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "team_id": 6,
+              "page_status": "OK",
+              "page_mode": "SINGLE_PAGE",
+              "alert_third_party": false,
+              "alert_mixed_content": true,
+              "alert_timeout": true,
+              "broken_resources": 0,
+              "timeout_count": 0,
+              "mixed_content_count": 0,
+              "detail": "0 kırık, 0 zaman aşımı, 0 mixed content",
+              "integrity_scope": "HOME",
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          },
+          {
+            "alertType": "PAGE_INTEGRITY",
+            "domain": "https://b.example.com/",
+            "detail": "1 kırık, 0 zaman aşımı, 0 mixed content",
+            "up": false,
+            "error": "1 kırık, 0 zaman aşımı, 0 mixed content",
+            "ctx": {
+              "monitor_name": "Sayfa 2",
+              "url": "https://b.example.com/",
+              "monitor_id": 2,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "team_id": 6,
+              "page_status": "DEGRADED",
+              "page_mode": "SINGLE_PAGE",
+              "alert_third_party": false,
+              "alert_mixed_content": true,
+              "alert_timeout": true,
+              "broken_resources": 1,
+              "timeout_count": 0,
+              "mixed_content_count": 0,
+              "problem_resources": "BROKEN · https://b.example.com/app.js (HTTP 404)",
+              "problem_rows": "BROKEN\thttps://b.example.com/app.js\t404",
+              "problem_total": 1,
+              "detail": "1 kırık, 0 zaman aşımı, 0 mixed content",
+              "integrity_scope": "HOME",
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          },
+          {
+            "alertType": "PAGE_INTEGRITY",
+            "domain": "c-yok-page",
+            "detail": "0 kırık, 0 zaman aşımı, 0 mixed content",
+            "up": true,
+            "error": null,
+            "ctx": {
+              "monitor_name": "Sayfa 4",
+              "url": "c-yok-page",
+              "monitor_id": 4,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "team_id": 6,
+              "page_status": "CONFIG_ERROR",
+              "page_mode": "SINGLE_PAGE",
+              "alert_third_party": false,
+              "alert_mixed_content": true,
+              "alert_timeout": true,
+              "broken_resources": 0,
+              "timeout_count": 0,
+              "mixed_content_count": 0,
+              "config_error": true,
+              "detail": "0 kırık, 0 zaman aşımı, 0 mixed content",
+              "integrity_scope": "HOME",
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          },
+          {
+            "alertType": "PAGE_INTEGRITY",
+            "domain": "https://crawl-home.example.com/",
+            "detail": "0 kırık, 0 zaman aşımı, 0 mixed content",
+            "up": true,
+            "error": null,
+            "ctx": {
+              "monitor_name": "Sayfa 5",
+              "url": "https://crawl-home.example.com/",
+              "monitor_id": 5,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "team_id": 6,
+              "page_status": "OK",
+              "page_mode": "SITE_CRAWL",
+              "alert_third_party": false,
+              "alert_mixed_content": true,
+              "alert_timeout": true,
+              "broken_resources": 0,
+              "timeout_count": 0,
+              "mixed_content_count": 0,
+              "detail": "0 kırık, 0 zaman aşımı, 0 mixed content",
+              "integrity_scope": "HOME",
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          },
+          {
+            "alertType": "PAGE_INTEGRITY",
+            "domain": "https://g.example.com/",
+            "detail": "0 kırık, 1 zaman aşımı, 0 mixed content",
+            "up": true,
+            "error": null,
+            "ctx": {
+              "monitor_name": "Sayfa 7",
+              "url": "https://g.example.com/",
+              "monitor_id": 7,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "team_id": 6,
+              "page_status": "OK",
+              "page_mode": "SINGLE_PAGE",
+              "alert_third_party": false,
+              "alert_mixed_content": true,
+              "alert_timeout": false,
+              "broken_resources": 0,
+              "timeout_count": 1,
+              "mixed_content_count": 0,
+              "detail": "0 kırık, 1 zaman aşımı, 0 mixed content",
+              "integrity_scope": "HOME",
+              "mail_disabled": true,
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          }
+        ]
+      ]
+    }
+  ],
+  "writes": [
+    {
+      "on": "PageCheckRepository",
+      "method": "save",
+      "args": [
+        {
+          "entity": "PageCheck",
+          "fields": {
+            "bodyBytes": 4096,
+            "brokenResources": 0,
+            "checkedAt": "<time>",
+            "contentHash": "hash-OK",
+            "error": null,
+            "failureDetail": null,
+            "failureReason": null,
+            "httpStatus": 200,
+            "id": null,
+            "mixedContentCount": 0,
+            "monitorId": 1,
+            "ok": true,
+            "pagesCrawled": 1,
+            "responseMs": 350,
+            "status": "OK",
+            "timeoutCount": 0,
+            "totalResources": 12
+          }
+        }
+      ]
+    },
+    {
+      "on": "ActivityLogService",
+      "method": "recordCheck",
+      "args": [
+        "PAGE",
+        1,
+        "Sayfa 1",
+        "https://a.example.com/",
+        6,
+        false,
+        "scheduler",
+        {
+          "status": "OK",
+          "ok": true,
+          "http_status": 200,
+          "response_ms": 350,
+          "total_resources": 12,
+          "broken_resources": 0,
+          "timeout_count": 0,
+          "mixed_content_count": 0,
+          "pages_crawled": 1
+        }
+      ]
+    },
+    {
+      "on": "PageCheckRepository",
+      "method": "save",
+      "args": [
+        {
+          "entity": "PageCheck",
+          "fields": {
+            "bodyBytes": 4096,
+            "brokenResources": 1,
+            "checkedAt": "<time>",
+            "contentHash": "hash-DEGRADED",
+            "error": null,
+            "failureDetail": "{\"phase\":\"CONTENT\",\"broken\":1,\"timeouts\":0,\"mixed\":0,\"total_resources\":12}",
+            "failureReason": "RESOURCES_BROKEN",
+            "httpStatus": 200,
+            "id": null,
+            "mixedContentCount": 0,
+            "monitorId": 2,
+            "ok": false,
+            "pagesCrawled": 1,
+            "responseMs": 350,
+            "status": "DEGRADED",
+            "timeoutCount": 0,
+            "totalResources": 12
+          }
+        }
+      ]
+    },
+    {
+      "on": "PageResourceIssueRepository",
+      "method": "saveAll",
+      "args": [
+        [
+          {
+            "entity": "PageResourceIssue",
+            "fields": {
+              "checkId": null,
+              "checkedAt": "<time>",
+              "durationMs": 120,
+              "firstParty": true,
+              "httpStatus": 404,
+              "id": null,
+              "issueType": "BROKEN",
+              "monitorId": 2,
+              "resourceType": "SCRIPT",
+              "resourceUrl": "https://b.example.com/app.js",
+              "sourcePage": "https://b.example.com/urunler"
+            }
+          }
+        ]
+      ]
+    },
+    {
+      "on": "ActivityLogService",
+      "method": "recordCheck",
+      "args": [
+        "PAGE",
+        2,
+        "Sayfa 2",
+        "https://b.example.com/",
+        6,
+        false,
+        "scheduler",
+        {
+          "status": "DEGRADED",
+          "ok": false,
+          "http_status": 200,
+          "response_ms": 350,
+          "total_resources": 12,
+          "broken_resources": 1,
+          "timeout_count": 0,
+          "mixed_content_count": 0,
+          "pages_crawled": 1
+        }
+      ]
+    },
+    {
+      "on": "PageCheckRepository",
+      "method": "save",
+      "args": [
+        {
+          "entity": "PageCheck",
+          "fields": {
+            "bodyBytes": 4096,
+            "brokenResources": 0,
+            "checkedAt": "<time>",
+            "contentHash": "hash-DOWN",
+            "error": "HTTP 502",
+            "failureDetail": "{\"phase\":\"RESPONSE\",\"http_status\":502,\"target\":\"c.example.com\",\"via\":\"direct\",\"timeout_ms\":4000}",
+            "failureReason": "HTTP_STATUS",
+            "httpStatus": 502,
+            "id": null,
+            "mixedContentCount": 0,
+            "monitorId": 3,
+            "ok": false,
+            "pagesCrawled": 1,
+            "responseMs": 350,
+            "status": "DOWN",
+            "timeoutCount": 0,
+            "totalResources": 12
+          }
+        }
+      ]
+    },
+    {
+      "on": "ActivityLogService",
+      "method": "recordCheck",
+      "args": [
+        "PAGE",
+        3,
+        "Sayfa 3",
+        "https://c.example.com/",
+        6,
+        false,
+        "scheduler",
+        {
+          "status": "DOWN",
+          "ok": false,
+          "http_status": 502,
+          "response_ms": 350,
+          "total_resources": 12,
+          "broken_resources": 0,
+          "timeout_count": 0,
+          "mixed_content_count": 0,
+          "pages_crawled": 1,
+          "error": "HTTP 502"
+        }
+      ]
+    },
+    {
+      "on": "PageCheckRepository",
+      "method": "save",
+      "args": [
+        {
+          "entity": "PageCheck",
+          "fields": {
+            "bodyBytes": 4096,
+            "brokenResources": 0,
+            "checkedAt": "<time>",
+            "contentHash": "hash-CONFIG_ERROR",
+            "error": "URL'de host yok",
+            "failureDetail": "{\"phase\":\"POLICY\"}",
+            "failureReason": "CONFIG_ERROR",
+            "httpStatus": null,
+            "id": null,
+            "mixedContentCount": 0,
+            "monitorId": 4,
+            "ok": false,
+            "pagesCrawled": 1,
+            "responseMs": 350,
+            "status": "CONFIG_ERROR",
+            "timeoutCount": 0,
+            "totalResources": 12
+          }
+        }
+      ]
+    },
+    {
+      "on": "ActivityLogService",
+      "method": "recordCheck",
+      "args": [
+        "PAGE",
+        4,
+        "Sayfa 4",
+        "c-yok-page",
+        6,
+        false,
+        "scheduler",
+        {
+          "status": "CONFIG_ERROR",
+          "ok": false,
+          "http_status": null,
+          "response_ms": 350,
+          "total_resources": 12,
+          "broken_resources": 0,
+          "timeout_count": 0,
+          "mixed_content_count": 0,
+          "pages_crawled": 1,
+          "error": "URL'de host yok"
+        }
+      ]
+    },
+    {
+      "on": "PageCheckRepository",
+      "method": "save",
+      "args": [
+        {
+          "entity": "PageCheck",
+          "fields": {
+            "bodyBytes": 4096,
+            "brokenResources": 0,
+            "checkedAt": "<time>",
+            "contentHash": "hash-OK",
+            "error": null,
+            "failureDetail": null,
+            "failureReason": null,
+            "httpStatus": 200,
+            "id": null,
+            "mixedContentCount": 0,
+            "monitorId": 5,
+            "ok": true,
+            "pagesCrawled": 1,
+            "responseMs": 350,
+            "status": "OK",
+            "timeoutCount": 0,
+            "totalResources": 12
+          }
+        }
+      ]
+    },
+    {
+      "on": "ActivityLogService",
+      "method": "recordCheck",
+      "args": [
+        "PAGE",
+        5,
+        "Sayfa 5",
+        "https://crawl-home.example.com/",
+        6,
+        false,
+        "scheduler",
+        {
+          "status": "OK",
+          "ok": true,
+          "http_status": 200,
+          "response_ms": 350,
+          "total_resources": 12,
+          "broken_resources": 0,
+          "timeout_count": 0,
+          "mixed_content_count": 0,
+          "pages_crawled": 1
+        }
+      ]
+    },
+    {
+      "on": "PageCheckRepository",
+      "method": "save",
+      "args": [
+        {
+          "entity": "PageCheck",
+          "fields": {
+            "bodyBytes": 4096,
+            "brokenResources": 0,
+            "checkedAt": "<time>",
+            "contentHash": "hash-OK",
+            "error": null,
+            "failureDetail": null,
+            "failureReason": null,
+            "httpStatus": 200,
+            "id": null,
+            "mixedContentCount": 0,
+            "monitorId": 6,
+            "ok": true,
+            "pagesCrawled": 1,
+            "responseMs": 350,
+            "status": "OK",
+            "timeoutCount": 0,
+            "totalResources": 12
+          }
+        }
+      ]
+    },
+    {
+      "on": "ActivityLogService",
+      "method": "recordCheck",
+      "args": [
+        "PAGE",
+        6,
+        "Sayfa 6",
+        "https://crawl-none.example.com/",
+        6,
+        false,
+        "scheduler",
+        {
+          "status": "OK",
+          "ok": true,
+          "http_status": 200,
+          "response_ms": 350,
+          "total_resources": 12,
+          "broken_resources": 0,
+          "timeout_count": 0,
+          "mixed_content_count": 0,
+          "pages_crawled": 1
+        }
+      ]
+    },
+    {
+      "on": "PageCheckRepository",
+      "method": "save",
+      "args": [
+        {
+          "entity": "PageCheck",
+          "fields": {
+            "bodyBytes": 4096,
+            "brokenResources": 0,
+            "checkedAt": "<time>",
+            "contentHash": "hash-DEGRADED",
+            "error": null,
+            "failureDetail": null,
+            "failureReason": null,
+            "httpStatus": 200,
+            "id": null,
+            "mixedContentCount": 0,
+            "monitorId": 7,
+            "ok": true,
+            "pagesCrawled": 1,
+            "responseMs": 350,
+            "status": "OK",
+            "timeoutCount": 1,
+            "totalResources": 12
+          }
+        }
+      ]
+    },
+    {
+      "on": "PageResourceIssueRepository",
+      "method": "saveAll",
+      "args": [
+        [
+          {
+            "entity": "PageResourceIssue",
+            "fields": {
+              "checkId": null,
+              "checkedAt": "<time>",
+              "durationMs": 4000,
+              "firstParty": false,
+              "httpStatus": null,
+              "id": null,
+              "issueType": "TIMEOUT",
+              "monitorId": 7,
+              "resourceType": "STYLESHEET",
+              "resourceUrl": "https://cdn.example.net/x.css",
+              "sourcePage": "https://g.example.com/"
+            }
+          }
+        ]
+      ]
+    },
+    {
+      "on": "ActivityLogService",
+      "method": "recordCheck",
+      "args": [
+        "PAGE",
+        7,
+        "Sayfa 7",
+        "https://g.example.com/",
+        6,
+        false,
+        "scheduler",
+        {
+          "status": "OK",
+          "ok": true,
+          "http_status": 200,
+          "response_ms": 350,
+          "total_resources": 12,
+          "broken_resources": 0,
+          "timeout_count": 1,
+          "mixed_content_count": 0,
+          "pages_crawled": 1
+        }
+      ]
+    }
+  ],
+  "checks": [
+    {
+      "on": "PageCheckerService",
+      "method": "check",
+      "args": [
+        "c-yok-page",
+        "SINGLE_PAGE",
+        4000,
+        2000,
+        5,
+        null,
+        2,
+        50,
+        120,
+        false
+      ]
+    },
+    {
+      "on": "PageCheckerService",
+      "method": "check",
+      "args": [
+        "https://a.example.com/",
+        "SINGLE_PAGE",
+        4000,
+        2000,
+        5,
+        null,
+        2,
+        50,
+        120,
+        false
+      ]
+    },
+    {
+      "on": "PageCheckerService",
+      "method": "check",
+      "args": [
+        "https://b.example.com/",
+        "SINGLE_PAGE",
+        4000,
+        2000,
+        5,
+        null,
+        2,
+        50,
+        120,
+        false
+      ]
+    },
+    {
+      "on": "PageCheckerService",
+      "method": "check",
+      "args": [
+        "https://boom.example.com/",
+        "SINGLE_PAGE",
+        4000,
+        2000,
+        5,
+        null,
+        2,
+        50,
+        120,
+        false
+      ]
+    },
+    {
+      "on": "PageCheckerService",
+      "method": "check",
+      "args": [
+        "https://c.example.com/",
+        "SINGLE_PAGE",
+        4000,
+        2000,
+        5,
+        null,
+        2,
+        50,
+        120,
+        false
+      ]
+    },
+    {
+      "on": "PageCheckerService",
+      "method": "check",
+      "args": [
+        "https://crawl-home.example.com/",
+        "SINGLE_PAGE",
+        4000,
+        2000,
+        5,
+        null,
+        2,
+        50,
+        120,
+        false
+      ]
+    },
+    {
+      "on": "PageCheckerService",
+      "method": "check",
+      "args": [
+        "https://crawl-none.example.com/",
+        "SINGLE_PAGE",
+        4000,
+        2000,
+        5,
+        null,
+        2,
+        50,
+        120,
+        false
+      ]
+    },
+    {
+      "on": "PageCheckerService",
+      "method": "check",
+      "args": [
+        "https://g.example.com/",
+        "SINGLE_PAGE",
+        4000,
+        2000,
+        5,
+        null,
+        2,
+        50,
+        120,
+        false
+      ]
+    }
+  ]
+}

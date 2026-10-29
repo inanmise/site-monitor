@@ -1,0 +1,580 @@
+{
+  "type": "pagespeed",
+  "decisions": [
+    {
+      "on": "EscalationService",
+      "method": "resolveOrphanedPageSpeedAlerts",
+      "args": [
+        [
+          "c-yok-speed",
+          "https://a.example.com/",
+          "https://b.example.com/",
+          "https://boom.example.com/",
+          "https://c.example.com/"
+        ]
+      ]
+    },
+    {
+      "on": "MonitoringOutageService",
+      "method": "handleSweepResults",
+      "args": [
+        "PAGESPEED_DOWN",
+        [
+          {
+            "alertType": "PAGESPEED_DOWN",
+            "domain": "https://a.example.com/",
+            "detail": "sayfa hızı",
+            "up": true,
+            "error": null,
+            "ctx": {
+              "monitor_name": "Hız 1",
+              "url": "https://a.example.com/",
+              "monitor_id": 1,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "team_id": 8,
+              "pagespeed_status": "OK",
+              "response_ms": 1200,
+              "ttfb_ms": 180,
+              "total_bytes": 200000,
+              "request_count": 14,
+              "http_status": 200,
+              "bytes_truncated": false,
+              "breached_metrics": [],
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          },
+          {
+            "alertType": "PAGESPEED_DOWN",
+            "domain": "https://b.example.com/",
+            "detail": "sayfa hızı",
+            "up": true,
+            "error": null,
+            "ctx": {
+              "monitor_name": "Hız 2",
+              "url": "https://b.example.com/",
+              "monitor_id": 2,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "team_id": 8,
+              "pagespeed_status": "SLOW",
+              "response_ms": 5200,
+              "ttfb_ms": 180,
+              "total_bytes": 1020000,
+              "request_count": 14,
+              "http_status": 200,
+              "bytes_truncated": true,
+              "breached_metrics": [
+                "LOAD",
+                "SIZE"
+              ],
+              "heavy_rows": "OTHER\thttps://b.example.com/hero.jpg\t878\nOTHER\thttps://cdn.example.net/app.js\t117",
+              "heavy_total": 2,
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          },
+          {
+            "alertType": "PAGESPEED_DOWN",
+            "domain": "https://c.example.com/",
+            "detail": "sayfa hızı",
+            "up": false,
+            "error": "HTTP 503",
+            "ctx": {
+              "monitor_name": "Hız 3",
+              "url": "https://c.example.com/",
+              "monitor_id": 3,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "team_id": 8,
+              "pagespeed_status": "DOWN",
+              "response_ms": 90,
+              "ttfb_ms": 180,
+              "total_bytes": 0,
+              "request_count": 14,
+              "http_status": 503,
+              "bytes_truncated": false,
+              "breached_metrics": [],
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          },
+          {
+            "alertType": "PAGESPEED_DOWN",
+            "domain": "c-yok-speed",
+            "detail": "sayfa hızı",
+            "up": true,
+            "error": null,
+            "ctx": {
+              "monitor_name": "Hız 4",
+              "url": "c-yok-speed",
+              "monitor_id": 4,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "team_id": 8,
+              "pagespeed_status": "CONFIG_ERROR",
+              "response_ms": 0,
+              "ttfb_ms": 180,
+              "total_bytes": 0,
+              "request_count": 14,
+              "bytes_truncated": false,
+              "breached_metrics": [],
+              "config_error": true,
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          }
+        ]
+      ]
+    },
+    {
+      "on": "MonitoringOutageService",
+      "method": "handleSweepResults",
+      "args": [
+        "PAGESPEED_SLOW",
+        [
+          {
+            "alertType": "PAGESPEED_SLOW",
+            "domain": "https://a.example.com/",
+            "detail": "eşikler içinde",
+            "up": true,
+            "error": null,
+            "ctx": {
+              "monitor_name": "Hız 1",
+              "url": "https://a.example.com/",
+              "monitor_id": 1,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "team_id": 8,
+              "pagespeed_status": "OK",
+              "response_ms": 1200,
+              "ttfb_ms": 180,
+              "total_bytes": 200000,
+              "request_count": 14,
+              "http_status": 200,
+              "bytes_truncated": false,
+              "breached_metrics": [],
+              "detail": "eşikler içinde",
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          },
+          {
+            "alertType": "PAGESPEED_SLOW",
+            "domain": "https://b.example.com/",
+            "detail": "yükleme 5200 ms · boyut ≥ 996 KB eşiği aştı",
+            "up": false,
+            "error": "yükleme 5200 ms · boyut ≥ 996 KB eşiği aştı",
+            "ctx": {
+              "monitor_name": "Hız 2",
+              "url": "https://b.example.com/",
+              "monitor_id": 2,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "team_id": 8,
+              "pagespeed_status": "SLOW",
+              "response_ms": 5200,
+              "ttfb_ms": 180,
+              "total_bytes": 1020000,
+              "request_count": 14,
+              "http_status": 200,
+              "bytes_truncated": true,
+              "breached_metrics": [
+                "LOAD",
+                "SIZE"
+              ],
+              "heavy_rows": "OTHER\thttps://b.example.com/hero.jpg\t878\nOTHER\thttps://cdn.example.net/app.js\t117",
+              "heavy_total": 2,
+              "detail": "yükleme 5200 ms · boyut ≥ 996 KB eşiği aştı",
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          },
+          {
+            "alertType": "PAGESPEED_SLOW",
+            "domain": "c-yok-speed",
+            "detail": "eşikler içinde",
+            "up": true,
+            "error": null,
+            "ctx": {
+              "monitor_name": "Hız 4",
+              "url": "c-yok-speed",
+              "monitor_id": 4,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "team_id": 8,
+              "pagespeed_status": "CONFIG_ERROR",
+              "response_ms": 0,
+              "ttfb_ms": 180,
+              "total_bytes": 0,
+              "request_count": 14,
+              "bytes_truncated": false,
+              "breached_metrics": [],
+              "config_error": true,
+              "detail": "eşikler içinde",
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          }
+        ]
+      ]
+    }
+  ],
+  "writes": [
+    {
+      "on": "PageSpeedCheckRepository",
+      "method": "save",
+      "args": [
+        {
+          "entity": "PageSpeedCheck",
+          "fields": {
+            "breachDetail": null,
+            "breachedMetrics": null,
+            "bytesTruncated": false,
+            "capped": false,
+            "checkedAt": "<time>",
+            "connectMs": 10,
+            "dnsMs": 5,
+            "errorMessage": null,
+            "failedCount": 0,
+            "failureDetail": null,
+            "failureReason": null,
+            "htmlMs": 400,
+            "id": null,
+            "monitorId": 1,
+            "ok": true,
+            "requestCount": 14,
+            "responseMs": 1200,
+            "serverMs": 145,
+            "skippedLazy": 0,
+            "statusCode": 200,
+            "tlsMs": 20,
+            "totalBytes": 200000,
+            "ttfbMs": 180
+          }
+        }
+      ]
+    },
+    {
+      "on": "ActivityLogService",
+      "method": "recordCheck",
+      "args": [
+        "PAGESPEED",
+        1,
+        "Hız 1",
+        "https://a.example.com/",
+        8,
+        false,
+        "scheduler",
+        {
+          "status": "OK",
+          "ok": true,
+          "http_status": 200,
+          "response_ms": 1200,
+          "ttfb_ms": 180,
+          "total_bytes": 200000,
+          "request_count": 14
+        }
+      ]
+    },
+    {
+      "on": "PageSpeedCheckRepository",
+      "method": "save",
+      "args": [
+        {
+          "entity": "PageSpeedCheck",
+          "fields": {
+            "breachDetail": "LOAD:3000>5200,SIZE:500>996",
+            "breachedMetrics": "LOAD,SIZE",
+            "bytesTruncated": true,
+            "capped": false,
+            "checkedAt": "<time>",
+            "connectMs": 10,
+            "dnsMs": 5,
+            "errorMessage": null,
+            "failedCount": 0,
+            "failureDetail": null,
+            "failureReason": null,
+            "htmlMs": 400,
+            "id": null,
+            "monitorId": 2,
+            "ok": true,
+            "requestCount": 14,
+            "responseMs": 5200,
+            "serverMs": 145,
+            "skippedLazy": 0,
+            "statusCode": 200,
+            "tlsMs": 20,
+            "totalBytes": 1020000,
+            "ttfbMs": 180
+          }
+        }
+      ]
+    },
+    {
+      "on": "PageSpeedResourceRepository",
+      "method": "replaceLatest",
+      "args": [
+        2,
+        [
+          {
+            "entity": "PageSpeedResource",
+            "fields": {
+              "bytes": 900000,
+              "checkId": null,
+              "checkedAt": "<time>",
+              "durationMs": 300,
+              "id": null,
+              "keepReason": "LATEST",
+              "monitorId": 2,
+              "statusCode": 200,
+              "thirdParty": false,
+              "truncated": false,
+              "type": "OTHER",
+              "url": "https://b.example.com/hero.jpg"
+            }
+          },
+          {
+            "entity": "PageSpeedResource",
+            "fields": {
+              "bytes": 900000,
+              "checkId": null,
+              "checkedAt": "<time>",
+              "durationMs": 300,
+              "id": null,
+              "keepReason": "BREACH",
+              "monitorId": 2,
+              "statusCode": 200,
+              "thirdParty": false,
+              "truncated": false,
+              "type": "OTHER",
+              "url": "https://b.example.com/hero.jpg"
+            }
+          },
+          {
+            "entity": "PageSpeedResource",
+            "fields": {
+              "bytes": 120000,
+              "checkId": null,
+              "checkedAt": "<time>",
+              "durationMs": 90,
+              "id": null,
+              "keepReason": "LATEST",
+              "monitorId": 2,
+              "statusCode": 200,
+              "thirdParty": true,
+              "truncated": true,
+              "type": "OTHER",
+              "url": "https://cdn.example.net/app.js"
+            }
+          },
+          {
+            "entity": "PageSpeedResource",
+            "fields": {
+              "bytes": 120000,
+              "checkId": null,
+              "checkedAt": "<time>",
+              "durationMs": 90,
+              "id": null,
+              "keepReason": "BREACH",
+              "monitorId": 2,
+              "statusCode": 200,
+              "thirdParty": true,
+              "truncated": true,
+              "type": "OTHER",
+              "url": "https://cdn.example.net/app.js"
+            }
+          }
+        ]
+      ]
+    },
+    {
+      "on": "ActivityLogService",
+      "method": "recordCheck",
+      "args": [
+        "PAGESPEED",
+        2,
+        "Hız 2",
+        "https://b.example.com/",
+        8,
+        false,
+        "scheduler",
+        {
+          "status": "SLOW",
+          "ok": true,
+          "http_status": 200,
+          "response_ms": 5200,
+          "ttfb_ms": 180,
+          "total_bytes": 1020000,
+          "request_count": 14
+        }
+      ]
+    },
+    {
+      "on": "PageSpeedCheckRepository",
+      "method": "save",
+      "args": [
+        {
+          "entity": "PageSpeedCheck",
+          "fields": {
+            "breachDetail": null,
+            "breachedMetrics": null,
+            "bytesTruncated": false,
+            "capped": false,
+            "checkedAt": "<time>",
+            "connectMs": 10,
+            "dnsMs": 5,
+            "errorMessage": "HTTP 503",
+            "failedCount": 0,
+            "failureDetail": "{\"phase\":\"RESPONSE\",\"http_status\":503,\"target\":\"c.example.com\",\"via\":\"direct\",\"timeout_ms\":10000}",
+            "failureReason": "HTTP_STATUS",
+            "htmlMs": 400,
+            "id": null,
+            "monitorId": 3,
+            "ok": false,
+            "requestCount": 14,
+            "responseMs": 90,
+            "serverMs": 145,
+            "skippedLazy": 0,
+            "statusCode": 503,
+            "tlsMs": 20,
+            "totalBytes": 0,
+            "ttfbMs": 180
+          }
+        }
+      ]
+    },
+    {
+      "on": "ActivityLogService",
+      "method": "recordCheck",
+      "args": [
+        "PAGESPEED",
+        3,
+        "Hız 3",
+        "https://c.example.com/",
+        8,
+        false,
+        "scheduler",
+        {
+          "status": "DOWN",
+          "ok": false,
+          "http_status": 503,
+          "response_ms": 90,
+          "ttfb_ms": 180,
+          "total_bytes": 0,
+          "request_count": 14,
+          "error": "HTTP 503"
+        }
+      ]
+    },
+    {
+      "on": "PageSpeedCheckRepository",
+      "method": "save",
+      "args": [
+        {
+          "entity": "PageSpeedCheck",
+          "fields": {
+            "breachDetail": null,
+            "breachedMetrics": null,
+            "bytesTruncated": false,
+            "capped": false,
+            "checkedAt": "<time>",
+            "connectMs": 10,
+            "dnsMs": 5,
+            "errorMessage": "URL'de host yok",
+            "failedCount": 0,
+            "failureDetail": "{\"phase\":\"POLICY\"}",
+            "failureReason": "CONFIG_ERROR",
+            "htmlMs": 400,
+            "id": null,
+            "monitorId": 4,
+            "ok": false,
+            "requestCount": 14,
+            "responseMs": 0,
+            "serverMs": 145,
+            "skippedLazy": 0,
+            "statusCode": null,
+            "tlsMs": 20,
+            "totalBytes": 0,
+            "ttfbMs": 180
+          }
+        }
+      ]
+    },
+    {
+      "on": "ActivityLogService",
+      "method": "recordCheck",
+      "args": [
+        "PAGESPEED",
+        4,
+        "Hız 4",
+        "c-yok-speed",
+        8,
+        false,
+        "scheduler",
+        {
+          "status": "CONFIG_ERROR",
+          "ok": false,
+          "http_status": null,
+          "response_ms": 0,
+          "ttfb_ms": 180,
+          "total_bytes": 0,
+          "request_count": 14,
+          "error": "URL'de host yok"
+        }
+      ]
+    }
+  ],
+  "checks": [
+    {
+      "on": "PageSpeedCheckerService",
+      "method": "check",
+      "args": [
+        "PageSpeedMonitor#1"
+      ]
+    },
+    {
+      "on": "PageSpeedCheckerService",
+      "method": "check",
+      "args": [
+        "PageSpeedMonitor#2"
+      ]
+    },
+    {
+      "on": "PageSpeedCheckerService",
+      "method": "check",
+      "args": [
+        "PageSpeedMonitor#3"
+      ]
+    },
+    {
+      "on": "PageSpeedCheckerService",
+      "method": "check",
+      "args": [
+        "PageSpeedMonitor#4"
+      ]
+    },
+    {
+      "on": "PageSpeedCheckerService",
+      "method": "check",
+      "args": [
+        "PageSpeedMonitor#5"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,456 @@
+{
+  "type": "http",
+  "decisions": [
+    {
+      "on": "EscalationService",
+      "method": "resolveOrphanedHttpAlerts",
+      "args": [
+        [
+          "c-yok-http",
+          "https://a.example.com/health",
+          "https://b.example.com/health",
+          "https://boom.example.com/",
+          "https://c.example.com/health",
+          "https://e.example.com/api"
+        ]
+      ]
+    },
+    {
+      "on": "MonitoringOutageService",
+      "method": "handleSweepResults",
+      "args": [
+        "HTTP_DOWN",
+        [
+          {
+            "alertType": "HTTP_DOWN",
+            "domain": "https://a.example.com/health",
+            "detail": "GET",
+            "up": true,
+            "error": null,
+            "ctx": {
+              "monitor_name": "HTTP 1",
+              "url": "https://a.example.com/health",
+              "monitor_id": 1,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "team_id": 4,
+              "http_status": 200,
+              "response_ms": 200,
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          },
+          {
+            "alertType": "HTTP_DOWN",
+            "domain": "https://b.example.com/health",
+            "detail": "HEAD",
+            "up": true,
+            "error": null,
+            "ctx": {
+              "monitor_name": "HTTP 2",
+              "url": "https://b.example.com/health",
+              "monitor_id": 2,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "team_id": 4,
+              "http_status": 200,
+              "response_ms": 4000,
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          },
+          {
+            "alertType": "HTTP_DOWN",
+            "domain": "https://c.example.com/health",
+            "detail": "GET",
+            "up": false,
+            "error": "HTTP 503 Service Unavailable",
+            "ctx": {
+              "monitor_name": "HTTP 3",
+              "url": "https://c.example.com/health",
+              "monitor_id": 3,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "team_id": 4,
+              "http_status": 503,
+              "response_ms": 80,
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          },
+          {
+            "alertType": "HTTP_DOWN",
+            "domain": "c-yok-http",
+            "detail": "GET",
+            "up": true,
+            "error": null,
+            "ctx": {
+              "monitor_name": "HTTP 4",
+              "url": "c-yok-http",
+              "monitor_id": 4,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "team_id": 4,
+              "config_error": true,
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          },
+          {
+            "alertType": "HTTP_DOWN",
+            "domain": "https://e.example.com/api",
+            "detail": "GET",
+            "up": false,
+            "error": "JSON doğrulaması başarısız: $.status",
+            "ctx": {
+              "monitor_name": "HTTP 5",
+              "url": "https://e.example.com/api",
+              "monitor_id": 5,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "team_id": 4,
+              "notification_group_id": 21,
+              "http_status": 200,
+              "response_ms": 60,
+              "json_assertion_failed": true,
+              "mail_disabled": true,
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          }
+        ]
+      ]
+    },
+    {
+      "on": "MonitoringOutageService",
+      "method": "handleSweepResults",
+      "args": [
+        "HTTP_SLOW",
+        [
+          {
+            "alertType": "HTTP_SLOW",
+            "domain": "https://a.example.com/health",
+            "detail": "> 1000 ms",
+            "up": true,
+            "error": null,
+            "ctx": {
+              "monitor_name": "HTTP 1",
+              "url": "https://a.example.com/health",
+              "monitor_id": 1,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "team_id": 4,
+              "threshold_ms": 1000,
+              "response_ms": 200,
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          },
+          {
+            "alertType": "HTTP_SLOW",
+            "domain": "https://b.example.com/health",
+            "detail": "> 1000 ms",
+            "up": false,
+            "error": null,
+            "ctx": {
+              "monitor_name": "HTTP 2",
+              "url": "https://b.example.com/health",
+              "monitor_id": 2,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "team_id": 4,
+              "threshold_ms": 1000,
+              "response_ms": 4000,
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          }
+        ]
+      ]
+    }
+  ],
+  "writes": [
+    {
+      "on": "HttpCheckRepository",
+      "method": "save",
+      "args": [
+        {
+          "entity": "HttpCheck",
+          "fields": {
+            "checkedAt": "<time>",
+            "error": null,
+            "errorDetail": null,
+            "httpStatus": 200,
+            "id": null,
+            "monitorId": 1,
+            "ok": true,
+            "responseMs": 200
+          }
+        }
+      ]
+    },
+    {
+      "on": "ActivityLogService",
+      "method": "recordCheck",
+      "args": [
+        "HTTP",
+        1,
+        "HTTP 1",
+        "https://a.example.com/health",
+        4,
+        false,
+        "scheduler",
+        {
+          "ok": true,
+          "http_status": 200,
+          "response_ms": 200
+        }
+      ]
+    },
+    {
+      "on": "HttpCheckRepository",
+      "method": "save",
+      "args": [
+        {
+          "entity": "HttpCheck",
+          "fields": {
+            "checkedAt": "<time>",
+            "error": null,
+            "errorDetail": null,
+            "httpStatus": 200,
+            "id": null,
+            "monitorId": 2,
+            "ok": true,
+            "responseMs": 4000
+          }
+        }
+      ]
+    },
+    {
+      "on": "ActivityLogService",
+      "method": "recordCheck",
+      "args": [
+        "HTTP",
+        2,
+        "HTTP 2",
+        "https://b.example.com/health",
+        4,
+        false,
+        "scheduler",
+        {
+          "ok": true,
+          "http_status": 200,
+          "response_ms": 4000
+        }
+      ]
+    },
+    {
+      "on": "HttpCheckRepository",
+      "method": "save",
+      "args": [
+        {
+          "entity": "HttpCheck",
+          "fields": {
+            "checkedAt": "<time>",
+            "error": "HTTP 503 Service Unavailable",
+            "errorDetail": null,
+            "httpStatus": 503,
+            "id": null,
+            "monitorId": 3,
+            "ok": false,
+            "responseMs": 80
+          }
+        }
+      ]
+    },
+    {
+      "on": "ActivityLogService",
+      "method": "recordCheck",
+      "args": [
+        "HTTP",
+        3,
+        "HTTP 3",
+        "https://c.example.com/health",
+        4,
+        false,
+        "scheduler",
+        {
+          "ok": false,
+          "http_status": 503,
+          "response_ms": 80,
+          "error": "HTTP 503 Service Unavailable"
+        }
+      ]
+    },
+    {
+      "on": "HttpCheckRepository",
+      "method": "save",
+      "args": [
+        {
+          "entity": "HttpCheck",
+          "fields": {
+            "checkedAt": "<time>",
+            "error": "URL'de host yok",
+            "errorDetail": null,
+            "httpStatus": null,
+            "id": null,
+            "monitorId": 4,
+            "ok": false,
+            "responseMs": null
+          }
+        }
+      ]
+    },
+    {
+      "on": "ActivityLogService",
+      "method": "recordCheck",
+      "args": [
+        "HTTP",
+        4,
+        "HTTP 4",
+        "c-yok-http",
+        4,
+        false,
+        "scheduler",
+        {
+          "ok": false,
+          "error": "URL'de host yok",
+          "config_error": true
+        }
+      ]
+    },
+    {
+      "on": "HttpCheckRepository",
+      "method": "save",
+      "args": [
+        {
+          "entity": "HttpCheck",
+          "fields": {
+            "checkedAt": "<time>",
+            "error": "JSON doğrulaması başarısız: $.status",
+            "errorDetail": null,
+            "httpStatus": 200,
+            "id": null,
+            "monitorId": 5,
+            "ok": false,
+            "responseMs": 60
+          }
+        }
+      ]
+    },
+    {
+      "on": "ActivityLogService",
+      "method": "recordCheck",
+      "args": [
+        "HTTP",
+        5,
+        "HTTP 5",
+        "https://e.example.com/api",
+        4,
+        false,
+        "scheduler",
+        {
+          "ok": false,
+          "http_status": 200,
+          "response_ms": 60,
+          "error": "JSON doğrulaması başarısız: $.status",
+          "json_assertion_failed": true
+        }
+      ]
+    }
+  ],
+  "checks": [
+    {
+      "on": "HttpCheckerService",
+      "method": "check",
+      "args": [
+        "c-yok-http",
+        "GET",
+        "200-399",
+        10000,
+        false,
+        true,
+        false
+      ]
+    },
+    {
+      "on": "HttpCheckerService",
+      "method": "check",
+      "args": [
+        "https://a.example.com/health",
+        "GET",
+        "200-399",
+        10000,
+        false,
+        true,
+        false
+      ]
+    },
+    {
+      "on": "HttpCheckerService",
+      "method": "check",
+      "args": [
+        "https://b.example.com/health",
+        "HEAD",
+        "200-399",
+        10000,
+        false,
+        true,
+        false
+      ]
+    },
+    {
+      "on": "HttpCheckerService",
+      "method": "check",
+      "args": [
+        "https://boom.example.com/",
+        "GET",
+        "200-399",
+        10000,
+        false,
+        true,
+        false
+      ]
+    },
+    {
+      "on": "HttpCheckerService",
+      "method": "check",
+      "args": [
+        "https://c.example.com/health",
+        "GET",
+        "200-399",
+        10000,
+        false,
+        true,
+        false
+      ]
+    },
+    {
+      "on": "HttpCheckerService",
+      "method": "check",
+      "args": [
+        "https://e.example.com/api",
+        "GET",
+        "200-399",
+        10000,
+        false,
+        true,
+        false
+      ]
+    }
+  ]
+}

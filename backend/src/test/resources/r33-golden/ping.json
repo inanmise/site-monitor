@@ -1,0 +1,453 @@
+{
+  "type": "ping",
+  "decisions": [
+    {
+      "on": "EscalationService",
+      "method": "resolveOrphanedPingAlerts",
+      "args": [
+        [
+          "10.0.0.1",
+          "10.0.0.2",
+          "10.0.0.3",
+          "10.0.0.4",
+          "10.0.0.5",
+          "10.0.0.6"
+        ]
+      ]
+    },
+    {
+      "on": "MonitoringOutageService",
+      "method": "handleSweepResults",
+      "args": [
+        "PING_DOWN",
+        [
+          {
+            "alertType": "PING_DOWN",
+            "domain": "10.0.0.1",
+            "detail": "ICMP",
+            "up": true,
+            "error": null,
+            "ctx": {
+              "monitor_name": "Ping 1",
+              "host": "10.0.0.1",
+              "ip_version": "auto",
+              "monitor_id": 1,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "team_id": 3,
+              "rtt_ms": 20,
+              "packet_loss": 0,
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          },
+          {
+            "alertType": "PING_DOWN",
+            "domain": "10.0.0.2",
+            "detail": "ICMP",
+            "up": true,
+            "error": null,
+            "ctx": {
+              "monitor_name": "Ping 2",
+              "host": "10.0.0.2",
+              "ip_version": "auto",
+              "monitor_id": 2,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "team_id": 3,
+              "rtt_ms": 11,
+              "packet_loss": 0,
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          },
+          {
+            "alertType": "PING_DOWN",
+            "domain": "10.0.0.3",
+            "detail": "ICMP",
+            "up": false,
+            "error": "Yanıt yok (%100 paket kaybı)",
+            "ctx": {
+              "monitor_name": "Ping 3",
+              "host": "10.0.0.3",
+              "ip_version": "auto",
+              "monitor_id": 3,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "team_id": 3,
+              "packet_loss": 100,
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          },
+          {
+            "alertType": "PING_DOWN",
+            "domain": "10.0.0.5",
+            "detail": "ICMP",
+            "up": true,
+            "error": null,
+            "ctx": {
+              "monitor_name": "Ping 5",
+              "host": "10.0.0.5",
+              "ip_version": "v6",
+              "monitor_id": 5,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "team_id": 3,
+              "rtt_ms": 30,
+              "packet_loss": 25,
+              "mail_disabled": true,
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          }
+        ]
+      ]
+    },
+    {
+      "on": "MonitoringOutageService",
+      "method": "handleSweepResults",
+      "args": [
+        "PING_SLOW",
+        [
+          {
+            "alertType": "PING_SLOW",
+            "domain": "10.0.0.1",
+            "detail": "20 ms",
+            "up": false,
+            "error": null,
+            "ctx": {
+              "monitor_name": "Ping 1",
+              "host": "10.0.0.1",
+              "ip_version": "auto",
+              "monitor_id": 1,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "team_id": 3,
+              "threshold_percent": 20,
+              "baseline_window_minutes": 10,
+              "rtt_ms": 20,
+              "baseline_samples": 5,
+              "baseline_ms": 10,
+              "limit_ms": 12,
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          },
+          {
+            "alertType": "PING_SLOW",
+            "domain": "10.0.0.2",
+            "detail": "11 ms",
+            "up": true,
+            "error": null,
+            "ctx": {
+              "monitor_name": "Ping 2",
+              "host": "10.0.0.2",
+              "ip_version": "auto",
+              "monitor_id": 2,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "team_id": 3,
+              "threshold_percent": 20,
+              "baseline_window_minutes": 10,
+              "rtt_ms": 11,
+              "baseline_samples": 5,
+              "baseline_ms": 10,
+              "limit_ms": 12,
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          },
+          {
+            "alertType": "PING_SLOW",
+            "domain": "10.0.0.4",
+            "detail": "slow",
+            "up": true,
+            "error": null,
+            "ctx": {
+              "monitor_name": "Ping 4",
+              "host": "10.0.0.4",
+              "ip_version": "auto",
+              "monitor_id": 4,
+              "monitor_confirm_attempts": 3,
+              "monitor_confirm_interval_ms": 30000,
+              "monitor_recovery_checks": 3,
+              "monitor_recovery_interval_ms": 30000,
+              "team_id": 3,
+              "threshold_percent": 20,
+              "baseline_window_minutes": 10,
+              "alert_level": "WARNING"
+            },
+            "recheck": true
+          }
+        ]
+      ]
+    }
+  ],
+  "writes": [
+    {
+      "on": "PingCheckRepository",
+      "method": "save",
+      "args": [
+        {
+          "entity": "PingCheck",
+          "fields": {
+            "checkedAt": "<time>",
+            "error": null,
+            "failureDetail": null,
+            "failureReason": null,
+            "id": null,
+            "monitorId": 1,
+            "packetLoss": 0,
+            "rttMs": 20,
+            "up": true
+          }
+        }
+      ]
+    },
+    {
+      "on": "ActivityLogService",
+      "method": "recordCheck",
+      "args": [
+        "PING",
+        1,
+        "Ping 1",
+        "10.0.0.1",
+        3,
+        false,
+        "scheduler",
+        {
+          "up": true,
+          "rtt_ms": 20,
+          "packet_loss": 0
+        }
+      ]
+    },
+    {
+      "on": "PingCheckRepository",
+      "method": "save",
+      "args": [
+        {
+          "entity": "PingCheck",
+          "fields": {
+            "checkedAt": "<time>",
+            "error": null,
+            "failureDetail": null,
+            "failureReason": null,
+            "id": null,
+            "monitorId": 2,
+            "packetLoss": 0,
+            "rttMs": 11,
+            "up": true
+          }
+        }
+      ]
+    },
+    {
+      "on": "ActivityLogService",
+      "method": "recordCheck",
+      "args": [
+        "PING",
+        2,
+        "Ping 2",
+        "10.0.0.2",
+        3,
+        false,
+        "scheduler",
+        {
+          "up": true,
+          "rtt_ms": 11,
+          "packet_loss": 0
+        }
+      ]
+    },
+    {
+      "on": "PingCheckRepository",
+      "method": "save",
+      "args": [
+        {
+          "entity": "PingCheck",
+          "fields": {
+            "checkedAt": "<time>",
+            "error": "Yanıt yok (%100 paket kaybı)",
+            "failureDetail": null,
+            "failureReason": null,
+            "id": null,
+            "monitorId": 3,
+            "packetLoss": 100,
+            "rttMs": null,
+            "up": false
+          }
+        }
+      ]
+    },
+    {
+      "on": "ActivityLogService",
+      "method": "recordCheck",
+      "args": [
+        "PING",
+        3,
+        "Ping 3",
+        "10.0.0.3",
+        3,
+        false,
+        "scheduler",
+        {
+          "up": false,
+          "packet_loss": 100,
+          "error": "Yanıt yok (%100 paket kaybı)"
+        }
+      ]
+    },
+    {
+      "on": "PingCheckRepository",
+      "method": "save",
+      "args": [
+        {
+          "entity": "PingCheck",
+          "fields": {
+            "checkedAt": "<time>",
+            "error": "ICMP bu ortamda kullanılamıyor (yetki/binary)",
+            "failureDetail": null,
+            "failureReason": null,
+            "id": null,
+            "monitorId": 4,
+            "packetLoss": null,
+            "rttMs": null,
+            "up": false
+          }
+        }
+      ]
+    },
+    {
+      "on": "ActivityLogService",
+      "method": "recordCheck",
+      "args": [
+        "PING",
+        4,
+        "Ping 4",
+        "10.0.0.4",
+        3,
+        false,
+        "scheduler",
+        {
+          "up": false,
+          "na": true,
+          "error": "ICMP bu ortamda kullanılamıyor (yetki/binary)"
+        }
+      ]
+    },
+    {
+      "on": "PingCheckRepository",
+      "method": "save",
+      "args": [
+        {
+          "entity": "PingCheck",
+          "fields": {
+            "checkedAt": "<time>",
+            "error": null,
+            "failureDetail": null,
+            "failureReason": null,
+            "id": null,
+            "monitorId": 5,
+            "packetLoss": 25,
+            "rttMs": 30,
+            "up": true
+          }
+        }
+      ]
+    },
+    {
+      "on": "ActivityLogService",
+      "method": "recordCheck",
+      "args": [
+        "PING",
+        5,
+        "Ping 5",
+        "10.0.0.5",
+        3,
+        false,
+        "scheduler",
+        {
+          "up": true,
+          "rtt_ms": 30,
+          "packet_loss": 25
+        }
+      ]
+    }
+  ],
+  "checks": [
+    {
+      "on": "PingCheckerService",
+      "method": "check",
+      "args": [
+        "10.0.0.1",
+        "auto",
+        4,
+        5000
+      ]
+    },
+    {
+      "on": "PingCheckerService",
+      "method": "check",
+      "args": [
+        "10.0.0.2",
+        "auto",
+        4,
+        5000
+      ]
+    },
+    {
+      "on": "PingCheckerService",
+      "method": "check",
+      "args": [
+        "10.0.0.3",
+        "auto",
+        4,
+        5000
+      ]
+    },
+    {
+      "on": "PingCheckerService",
+      "method": "check",
+      "args": [
+        "10.0.0.4",
+        "auto",
+        4,
+        5000
+      ]
+    },
+    {
+      "on": "PingCheckerService",
+      "method": "check",
+      "args": [
+        "10.0.0.5",
+        "v6",
+        4,
+        5000
+      ]
+    },
+    {
+      "on": "PingCheckerService",
+      "method": "check",
+      "args": [
+        "10.0.0.6",
+        "auto",
+        4,
+        5000
+      ]
+    }
+  ]
+}
