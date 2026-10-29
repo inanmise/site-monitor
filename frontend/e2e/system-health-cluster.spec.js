@@ -5,6 +5,8 @@
 // SARAR (kırpılmaz), yatay taşma yok, dokunma hedefleri ≥ 40 px. API mock'lu. Çok pod Sürüm 3-1 (paket B): Küme kartında kalıcı
 // değerlendirme durumunun küme doğrulaması (gözlemleyen pod, tür başına sayılar) + bu pod'un kaydedicisi ve yan işleri; bilinmeyen gri.
 // Çok pod Sürüm 3-2 (paket C): devirde yüklenen durum (her ton) + bu pod'un devir hazırlığı.
+// Çok pod Sürüm 3-3 (paket D1): "Dağıtık kontroller" bölümü (kapalı / açık / kuyruk uyarısı / okunamadı / yetenek uyuşmazlığı),
+// işçiler kap ≥ 760 px tabloda, altında kartta; bilinmeyen gri, açık anahtar yeşil değil.
 import { test, expect } from '@playwright/test'
 import { mockApi } from './support/monitorMocks.js'
 
@@ -304,6 +306,85 @@ for (const vp of VIEWPORTS) {
         expect(await page.evaluate(clippedIn, '[data-card="cluster"]'), `${c.name}: kırpılan metin`).toEqual([])
         if (vp.touch) expect(await page.evaluate(smallTargets, '[data-card="cluster"]'), `${c.name}: dokunma hedefi < 40 px`).toEqual([])
       }
+    })
+
+    // Çok pod Sürüm 3-3 (paket D1): "Dağıtık kontroller" — her durumda adlar sarar, taşma yok, dokunma hedefleri ≥ 40 px
+    test('Küme kartı R3-3: dağıtık kontroller her durumda; işçiler tablo / kart; adlar sarar, taşma yok', async ({ page }) => {
+      test.setTimeout(150_000)
+      const W = (over = {}) => ({ instance_id: B, pod: POD_B, self: false,
+        caps: ['port', 'ping', 'http', 'keyword', 'page', 'pagespeed', 'dns', 'scripted'], missing_caps: [], slots: 16, busy: 4,
+        completed: 18240, late: 3, claim_lag_p95_ms: 820, heartbeat_at: fmt(NOW - 5_000), heartbeat_age_ms: 5_000, version: '20.170.0',
+        stopping: false, live: true, ...over })
+      const CJ = (over = {}) => ({ enabled: true, types: ['port', 'ping', 'http', 'keyword'],
+        mode: { port: 'distributed', ping: 'distributed', http: 'classic', keyword: 'distributed', page: 'classic', pagespeed: 'classic',
+          dns: 'classic', scripted: 'classic' },
+        mode_by: B, mode_by_pod: POD_B, mode_by_leader: false,
+        queue: { at: fmt(NOW), pending: 41, claimed: 12, done: 3, oldest_pending_age_ms: 4_200, oldest_done_age_ms: 900, expired_claims: 0,
+          by_type: { port: { pending: 20, claimed: 6, done: 1 }, ping: { pending: 11, claimed: 4, done: 2 }, http: { pending: 0, claimed: 0, done: 0 },
+            keyword: { pending: 10, claimed: 2, done: 0 } } },
+        workers_known: true, workers_total: 3,
+        workers: [W(), W({ instance_id: A, pod: POD_A, self: true, busy: 9, completed: 9120, late: 0, claim_lag_p95_ms: 410 }),
+          W({ instance_id: `${POD_B}-cafebabe`, pod: `${POD_B}-onceki-surec-uzun-ad`, live: false, heartbeat_age_ms: 120_000, completed: 40 })],
+        this_pod: { pod: POD_A, leader: false, worker: { started: true, enabled: true, closing: false, slots: 16, busy: 9, claimed: 9200,
+          completed: 9120, late: 0, timeouts: 1, failed: 2, released: 0, claim_errors: 0, complete_errors: 0, dropped_at_shutdown: 0,
+          claim_lag_p95_ms: 410, poll_delay_ms: 1000 }, local_caps: ['port', 'ping', 'http', 'keyword', 'page', 'pagespeed', 'dns', 'scripted'],
+        db_clock_stale: false, dispatch: null, drainer: null },
+        ...over })
+      const base = { ...HEALTH, timestamp: fmt(NOW), scheduler: { ...HEALTH.scheduler, skipped_rounds: [] },
+        eval_state: { ...HEALTH.eval_state, verify: { ...HEALTH.eval_state.verify, status: 'ok', pass_fail_mismatches: 0, first_mismatches: [],
+          kinds: { recovery: { compared: 412, mismatches: 0, skipped: 0, max_delta: null, measured: false } } } } }
+      const CASES = [
+        { name: 'off', cj: { enabled: false }, status: 'off', tone: 'muted', cardWarn: false },
+        { name: 'on', cj: CJ(), status: 'on', tone: 'info', cardWarn: false, workers: 3 },
+        { name: 'pendingOld', cj: CJ({ queue: { ...CJ().queue, oldest_pending_age_ms: 95_000 } }), status: 'warn', tone: 'warning', cardWarn: true, workers: 3 },
+        { name: 'unreadable', cj: CJ({ queue: null, queue_error: 'CannotGetJdbcConnectionException' }), status: 'unknown', tone: 'muted', cardWarn: false, workers: 3 },
+        { name: 'mismatch', cj: CJ({ workers: [W({ caps: ['port', 'http', 'keyword'], missing_caps: ['ping'] })], workers_total: 1 }),
+          status: 'warn', tone: 'warning', cardWarn: true, workers: 1 },
+      ]
+      let current = { ...base, check_jobs: CASES[0].cj }
+      await mock(page)
+      await page.route((u) => new URL(u).pathname === '/api/admin/system',
+        (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data: current }) }))
+      for (const c of CASES) {
+        current = { ...base, check_jobs: c.cj }
+        await page.goto('/?tab=health&sec=sched')
+        const card = page.locator('[data-card="cluster"]')
+        await expect(card, c.name).toBeVisible({ timeout: 30_000 })
+        const sec = card.locator('[data-slot="cluster-check-jobs"]')
+        await expect(sec, c.name).toHaveAttribute('data-status', c.status)
+        await expect(sec.locator('[data-slot="pod-chip"]'), c.name).toHaveAttribute('data-scope', 'cluster')
+        await expect(sec.locator('[data-slot="cj-switch"] [data-tone]'), c.name).toHaveAttribute('data-tone', c.tone)
+        await expect(card.locator('[data-kind="leader"]'), c.name).toHaveAttribute('data-tone', c.cardWarn ? 'warning' : 'success')
+        if (c.name === 'off') {
+          await expect(sec.locator('[data-slot="cj-hint"]')).toBeVisible()
+          await expect(sec.locator('[data-slot="cj-queue"]')).toHaveCount(0)
+          await expect(card.locator('[data-slot="cluster-check-worker"]')).toHaveCount(0)
+        } else {
+          await expect(sec.locator('[data-slot="cj-mode"]'), c.name).toHaveCount(8)
+          // A takipçi (lider B) → seçili türlerin kipi bilinmiyor + liderin yanıtına yönlendiren not
+          await expect(sec.locator('[data-slot="cj-mode"][data-type="port"]'), c.name).toHaveAttribute('data-mode', 'unknown')
+          await expect(sec.locator('[data-slot="cj-mode-follower"]'), c.name).toContainText(POD_B)
+          const workers = sec.locator('[data-slot="cj-workers"]')
+          await expect(workers.locator('[data-slot="cj-worker"]'), c.name).toHaveCount(c.workers)
+          await expect(workers, c.name).toHaveAttribute('data-layout', vp.width >= 1280 ? 'table' : 'cards')
+          await expect(workers, c.name).toContainText(POD_B)
+          await expect(card.locator('[data-slot="cluster-this-pod"] [data-slot="cluster-check-worker"] [data-slot="cj-pod-slots"]'), c.name).toContainText('16')
+        }
+        if (c.name === 'pendingOld') await expect(sec.locator('[data-slot="cj-q-oldest-pending"]')).toHaveAttribute('data-warn', 'true')
+        if (c.name === 'unreadable') {
+          await expect(sec.locator('[data-slot="cj-queue"]')).toHaveAttribute('data-level', 'unknown')
+          await expect(sec.locator('[data-slot="cj-q-pending"]')).toHaveCount(0)
+        }
+        if (c.name === 'mismatch') {
+          await expect(sec.locator('[data-slot="cj-cap-mismatch"]')).toContainText(POD_B)
+          await expect(sec.locator('[data-slot="cj-cap-missing"][data-cap="ping"]')).toBeVisible()
+        }
+        await page.waitForTimeout(250)
+        expect(await page.evaluate(overflowIn, '[data-section="sched"]'), `${c.name}: yatay taşma`).toEqual([])
+        expect(await page.evaluate(clippedIn, '[data-card="cluster"]'), `${c.name}: kırpılan metin`).toEqual([])
+        if (vp.touch) expect(await page.evaluate(smallTargets, '[data-card="cluster"]'), `${c.name}: dokunma hedefi < 40 px`).toEqual([])
+      }
+      await page.locator('[data-slot="cluster-check-jobs"]').screenshot({ path: `test-results/cluster-check-jobs-${vp.name}.png` })
     })
 
     test('Heartbeat: Pod’lar kartı sessiz süreci gösterir; geçmiş penceresinde pod başına satırlar', async ({ page }) => {

@@ -8,6 +8,8 @@ import { evalLoadModel, handoverModel, loadLevel, EVAL_LOAD_REASONS, EVAL_LOAD_E
 import { TR } from '../i18n/index.jsx'
 import { EN } from '../i18n/en.js'
 import { clusterModel } from '../components/admin/health/healthModel.js'
+import { checkJobsModel, CHECK_JOB_TYPES, CHECK_QUEUE_WARN_MS, CHECK_JOBS_TONE, CHECK_MODE_TONE, CHECK_WORKER_TONE }
+  from '../components/admin/health/clusterRuntimeModel.js'
 
 // Çok pod Sürüm 3-1 (2026-10-23, paket B): Küme kartının kalıcı değerlendirme durumu + yan iş modeli. Bilinmeyen ASLA yeşil değil.
 const NOW = '2026-10-23T09:00:00'
@@ -425,5 +427,141 @@ describe('handoverModel — bu pod\'un devir hazırlığı (3-2)', () => {
   it('son devir boşaltması: bilinen sonuç çevrilir, bilinmeyen işaretlenir', () => {
     expect(handoverModel(H2({ last_handover: 'written' }, {}, leaderSched))).toMatchObject({ lastHandover: 'written', lastHandoverKnown: true })
     expect(handoverModel(H2({ last_handover: 'future_code' }, {}, leaderSched))).toMatchObject({ lastHandoverKnown: false })
+  })
+})
+
+// ── Çok pod Sürüm 3-3 (2026-10-29, paket D1; tasarım R3-3 §7.2): dağıtık kontroller ─────────────────────────────────
+const CJ_SL = { scheduler: { instance_id: 'sm-a-0000000a', sweep_leader: { owner: 'sm-a-0000000a', owner_pod: 'sm-a', until: NOW,
+  expired: false, held_by_me: true } } }
+const CJ_WORKER = (over = {}) => ({ instance_id: 'sm-b-0000000b', pod: 'sm-b', self: false,
+  caps: ['port', 'ping', 'http', 'keyword', 'page', 'pagespeed', 'dns', 'scripted'], missing_caps: [], slots: 16, busy: 3,
+  completed: 1204, late: 2, claim_lag_p95_ms: 820, heartbeat_at: '2026-10-23T08:59:55', heartbeat_age_ms: 5000, version: '20.170.0',
+  stopping: false, live: true, ...over })
+const CJ = (over = {}) => ({
+  enabled: true, types: ['port', 'ping'],
+  mode: { port: 'distributed', ping: 'classic', http: 'classic', keyword: 'classic', page: 'classic', pagespeed: 'classic', dns: 'classic', scripted: 'classic' },
+  mode_by: 'sm-a-0000000a', mode_by_pod: 'sm-a', mode_by_leader: true,
+  queue: { at: NOW, pending: 4, claimed: 2, done: 1, oldest_pending_age_ms: 3000, oldest_done_age_ms: 900, expired_claims: 0,
+    by_type: { port: { pending: 4, claimed: 2, done: 1 }, ping: { pending: 0, claimed: 0, done: 0 } } },
+  workers_known: true, workers: [CJ_WORKER()], workers_total: 1,
+  this_pod: { pod: 'sm-a', leader: true, worker: { started: true, enabled: true, closing: false, slots: 16, busy: 1, claimed: 40,
+    completed: 38, late: 0, timeouts: 0, failed: 1, released: 0, claim_errors: 0, complete_errors: 0, dropped_at_shutdown: 0,
+    claim_lag_p95_ms: 400, poll_delay_ms: 1000 }, local_caps: ['port', 'ping'], db_clock_stale: false,
+    dispatch: { dispatch_active: true, dispatched: 900, dispatch_failures: 0, lost: 1, applied: 880, dropped_inactive: 2,
+      dropped_target: 1, dropped_toggle: 0, dropped_inventory: 0, no_result: 3 },
+    drainer: { started: true, draining: true, taken: 880, waves: 400, dropped_stale: 1, out_of_order: 0, apply_failures: 0,
+      take_failures: 0, last_take_at: '2026-10-23T08:59:59' } },
+  ...over,
+})
+const HC = (cj, extra = {}) => ({ ...CJ_SL, ...H({ this_pod: REC, verify: VERIFY }), check_jobs: cj, ...extra })
+
+describe('checkJobsModel — dağıtık kontroller (3-3)', () => {
+  it('eski sunucu alanı göndermez → null (bölüm gizli); kart seviyesi değişmez', () => {
+    expect(checkJobsModel({})).toBeNull()
+    expect(checkJobsModel({ check_jobs: 'x' })).toBeNull()
+    expect(clusterModel({ ...CJ_SL, ...H({ this_pod: REC, verify: VERIFY }) }).level).toBe('ok')
+  })
+
+  it('anahtar kapalı ({enabled: false}) → "Kapalı" (gri), kart uyarıya çekilmez, satırlar yok', () => {
+    const m = checkJobsModel({ check_jobs: { enabled: false } })
+    expect(m).toMatchObject({ enabled: false, status: 'off', level: 'off', thisPod: null })
+    expect(CHECK_JOBS_TONE[m.status]).toBe('muted')
+    expect(clusterModel(HC({ enabled: false })).level).toBe('ok')
+    expect(evalStateModel(HC({ enabled: false })).checkJobs.status).toBe('off')
+  })
+
+  it('denetleyici hatası ({error}) → bilinmiyor (gri), asla açık / yeşil değil', () => {
+    const m = checkJobsModel({ check_jobs: { error: 'IllegalStateException' } })
+    expect(m).toMatchObject({ status: 'unknown', level: 'unknown', error: 'IllegalStateException' })
+    expect(CHECK_JOBS_TONE[m.status]).toBe('muted')
+  })
+
+  it('açık + lider görüşü: kipler (dağıtık bilgi, klasik / listede yok gri), kuyruk okundu ve eşik altında → "Açık" (bilgi, yeşil DEĞİL)', () => {
+    const m = checkJobsModel(HC(CJ()))
+    expect(m.status).toBe('on')
+    expect(CHECK_JOBS_TONE[m.status]).toBe('info')
+    expect(m.modes.map((x) => [x.type, x.mode])).toEqual([['port', 'distributed'], ['ping', 'classic'], ['http', 'off'],
+      ['keyword', 'off'], ['page', 'off'], ['pagespeed', 'off'], ['dns', 'off'], ['scripted', 'off']])
+    expect(m.modes.find((x) => x.type === 'port').tone).toBe('info')
+    expect(m.modes.find((x) => x.type === 'ping').tone).toBe('muted')
+    expect(m.queue).toMatchObject({ pending: 4, claimed: 2, done: 1, oldestPendingMs: 3000, pendingWarn: false, doneWarn: false })
+    expect(m.queueLevel).toBe('ok')
+    expect(m.workers[0]).toMatchObject({ pod: 'sm-b', state: 'live', tone: 'success', mismatch: false, lagMs: 820 })
+    expect(m.thisPod.dispatch).toMatchObject({ dispatched: 900, lost: 1, dropped: 4 })
+    expect(m.thisPod.drainer).toMatchObject({ taken: 880, waves: 400 })
+    expect(clusterModel(HC(CJ())).level).toBe('ok')
+  })
+
+  it('hiçbir durum ya da kip tonu yeşil değil; yalnız canlı işçi nabzı (gözlem) yeşil', () => {
+    expect(Object.values(CHECK_JOBS_TONE)).not.toContain('success')
+    expect(Object.values(CHECK_MODE_TONE)).not.toContain('success')
+    expect(CHECK_WORKER_TONE).toEqual({ live: 'success', silent: 'muted', stopping: 'muted' })
+  })
+
+  it('kuyruk okunamadı → bilinmiyor (asla "0 bekleyen" / açık değil); tür seçilmedi → "tür seçilmedi" (gri)', () => {
+    const u = checkJobsModel(HC(CJ({ queue: null, queue_error: 'CannotGetJdbcConnectionException' })))
+    expect(u).toMatchObject({ status: 'unknown', queueLevel: 'unknown', queueReason: 'CannotGetJdbcConnectionException', queue: null })
+    expect(clusterModel(HC(CJ({ queue: null, queue_error: 'x' }))).level).toBe('ok')
+    const idle = checkJobsModel(HC(CJ({ types: [], queue: null, queue_skipped: 'no_types' })))
+    expect(idle).toMatchObject({ status: 'idle', queueLevel: 'off' })
+    expect(idle.modes.every((x) => x.mode === 'off')).toBe(true)
+  })
+
+  it('en eski bekleyen ya da değerlendirilmeyen 30 sn üstü → uyarı, kart uyarıya çekilir; tam 30 sn uyarı değil', () => {
+    expect(CHECK_QUEUE_WARN_MS).toBe(30_000)
+    const p = checkJobsModel(HC(CJ({ queue: { ...CJ().queue, oldest_pending_age_ms: 30_001 } })))
+    expect(p).toMatchObject({ status: 'warn', level: 'warn', queueLevel: 'warn' })
+    expect(p.queue.pendingWarn).toBe(true)
+    expect(clusterModel(HC(CJ({ queue: { ...CJ().queue, oldest_pending_age_ms: 30_001 } }))).level).toBe('warn')
+    const d = checkJobsModel(HC(CJ({ queue: { ...CJ().queue, oldest_done_age_ms: 45_000 } })))
+    expect(d.queue.doneWarn).toBe(true)
+    expect(d.status).toBe('warn')
+    expect(checkJobsModel(HC(CJ({ queue: { ...CJ().queue, oldest_pending_age_ms: 30_000, oldest_done_age_ms: 30_000 } }))).status).toBe('on')
+    expect(checkJobsModel(HC(CJ({ queue: { ...CJ().queue, oldest_pending_age_ms: null, oldest_done_age_ms: null } }))).status).toBe('on')
+  })
+
+  it('takipçi yanıtı: seçili türlerin kipi bilinmiyor (gri) — liderin görüşü değil', () => {
+    const m = checkJobsModel(HC(CJ({ mode_by_leader: false, mode_by_pod: 'sm-b' })))
+    expect(m.leaderView).toBe(false)
+    expect(m.modes.find((x) => x.type === 'port').mode).toBe('unknown')
+    expect(m.modes.find((x) => x.type === 'http').mode).toBe('off')
+    expect(m.modeByPod).toBe('sm-b')
+  })
+
+  it('yetenek uyuşmazlığı: canlı işçi SEÇİLİ türü koşamıyorsa uyarı; seçili olmayan tür, duran ya da sessiz işçi uyarmaz', () => {
+    const miss = checkJobsModel(HC(CJ({ workers: [CJ_WORKER({ caps: ['port'], missing_caps: ['ping'] })] })))
+    expect(miss.mismatch.map((w) => w.pod)).toEqual(['sm-b'])
+    expect(miss.status).toBe('warn')
+    expect(clusterModel(HC(CJ({ workers: [CJ_WORKER({ caps: ['port'], missing_caps: ['ping'] })] }))).level).toBe('warn')
+    const notSelected = checkJobsModel(HC(CJ({ workers: [CJ_WORKER({ missing_caps: ['scripted'] })] })))
+    expect(notSelected.mismatch).toEqual([])
+    expect(notSelected.workers[0].missing).toEqual([])
+    expect(checkJobsModel(HC(CJ({ workers: [CJ_WORKER({ missing_caps: ['ping'], stopping: true })] }))).mismatch).toEqual([])
+    expect(checkJobsModel(HC(CJ({ workers: [CJ_WORKER({ missing_caps: ['ping'], live: false })] }))).mismatch).toEqual([])
+  })
+
+  it('işçi kaydı okunamadı → bilinmiyor; "kayıtlı işçi yok" ile karışmaz', () => {
+    const u = checkJobsModel(HC(CJ({ workers: [], workers_known: false, workers_error: 'not_read_yet' })))
+    expect(u).toMatchObject({ workersKnown: false, workersReason: 'not_read_yet' })
+    const none = checkJobsModel(HC(CJ({ workers: [], workers_known: true })))
+    expect(none).toMatchObject({ workersKnown: true, workers: [] })
+  })
+
+  it('düşen sayısı: bir parça okunamadıysa bilinmiyor (sahte 0 yok)', () => {
+    const tp = CJ().this_pod
+    const m = checkJobsModel(HC(CJ({ this_pod: { ...tp, dispatch: { ...tp.dispatch, dropped_target: undefined } } })))
+    expect(m.thisPod.dispatch.dropped).toBeNull()
+  })
+
+  it('tür listesi sunucu CheckJobTypes.ALL ile aynı sırada; her tür, durum ve kip metni iki dilde var', () => {
+    const src = readFileSync(resolve(__dirname, '../../../backend/src/main/java/com/sitemonitor/service/checks/CheckJobTypes.java'), 'utf8')
+    const all = /List<String> ALL = List\.of\(([^)]*)\)/.exec(src)
+    expect(all).not.toBeNull()
+    expect(all[1].split(',').map((x) => x.trim().toLowerCase())).toEqual(CHECK_JOB_TYPES)
+    for (const k of [...Object.keys(CHECK_JOBS_TONE).map((x) => `hmp.cj.status.${x}`), ...Object.keys(CHECK_MODE_TONE).map((x) => `hmp.cj.mode.${x}`),
+      ...Object.keys(CHECK_WORKER_TONE).map((x) => `hmp.cj.w.state.${x}`), ...CHECK_JOB_TYPES.map((x) => `mw.type.${x}`)]) {
+      expect(TR[k], k).toBeTruthy()
+      expect(EN[k], k).toBeTruthy()
+    }
   })
 })

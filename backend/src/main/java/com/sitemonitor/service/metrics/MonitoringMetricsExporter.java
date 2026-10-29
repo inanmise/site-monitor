@@ -172,6 +172,11 @@ public class MonitoringMetricsExporter {
     private SchedulerService scheduler;
     private com.sitemonitor.service.health.ClusterHealthStore clusterHealth;
     private ObjectProvider<EvalStateSink> evalState;
+    /** Çok pod R3-3: ana anahtar + tür ayarı (bellek), iş kuyruğu (yalnız açıkken SQL), bu pod'un işçisi ve sonuç boşaltıcısı. */
+    private com.sitemonitor.service.checks.DistributedChecks distributedChecks;
+    private com.sitemonitor.service.checks.CheckJobStore checkJobStore;
+    private com.sitemonitor.service.checks.CheckWorker checkWorker;
+    private com.sitemonitor.service.checks.CheckResultDrainer checkResultDrainer;
 
     private Supplier<Instant> clock = Instant::now;
     private volatile TeamDirectory lastTeams;
@@ -257,6 +262,11 @@ public class MonitoringMetricsExporter {
     @Autowired(required = false) public void setClusterHealth(com.sitemonitor.service.health.ClusterHealthStore v) { this.clusterHealth = v; }
     /** Kaydedici (paket A1) isteğe bağlı ve döngüsüz: tur anında çözülür; yoksa değerlendirme durumu ölçümleri yazılmaz. */
     @Autowired(required = false) public void setEvalState(ObjectProvider<EvalStateSink> v) { this.evalState = v; }
+    /** Çok pod R3-3 (paket D1): dağıtık kontroller — hepsi isteğe bağlı; anahtar kapalıyken hiçbiri okunmaz. */
+    @Autowired(required = false) public void setDistributedChecks(com.sitemonitor.service.checks.DistributedChecks v) { this.distributedChecks = v; }
+    @Autowired(required = false) public void setCheckJobStore(com.sitemonitor.service.checks.CheckJobStore v) { this.checkJobStore = v; }
+    @Autowired(required = false) public void setCheckWorker(com.sitemonitor.service.checks.CheckWorker v) { this.checkWorker = v; }
+    @Autowired(required = false) public void setCheckResultDrainer(com.sitemonitor.service.checks.CheckResultDrainer v) { this.checkResultDrainer = v; }
 
     @Autowired(required = false) public void setContext(ApplicationContext v) { this.context = v; }
 
@@ -752,6 +762,9 @@ public class MonitoringMetricsExporter {
         evalStateMeters(f);
         Long depth = read(sources, "eval_inbox", () -> inbox == null ? null : Long.valueOf(inbox.depth()));
         if (depth != null) f.add(MonitoringMetricNames.EVAL_INBOX_DEPTH, depth);
+        // Dağıtık kontroller (R3-3): kuyruk KÜME ailesi (tek gruplu deyim, yalnız anahtar + tür açıkken), işçi POD ailesi (bellek)
+        checkJobQueueMeters(f, sources);
+        checkJobPodMeters(f);
 
         // Veritabanı sağlığı (bu pod, 5 sn önbellek) ve sistem bakımı
         mergeInto(f, read(sources, "database", () -> {
@@ -792,6 +805,7 @@ public class MonitoringMetricsExporter {
         }));
         podRuntime(f);
         evalStateMeters(f);
+        checkJobPodMeters(f);
         mergeInto(f, read(sources, "database", () -> {
             Families t = new Families();
             if (database == null) return null;
@@ -800,6 +814,101 @@ public class MonitoringMetricsExporter {
             return t;
         }));
     }
+
+    // ── R3-3 D1: dağıtık kontrol ölçümleri (tasarım §7.4) ─────────────────────────────────────────────────────────
+
+    /** Kuyruk ölçümlerinin durumları (sunucu durum adı; etiket küçük harf). */
+    static final List<String> CHECK_JOB_STATES = List.of(com.sitemonitor.service.checks.CheckJobStore.STATE_PENDING,
+            com.sitemonitor.service.checks.CheckJobStore.STATE_CLAIMED, com.sitemonitor.service.checks.CheckJobStore.STATE_DONE);
+
+    /**
+     * Kontrol işi kuyruğu (KÜME): yalnız ana anahtar AÇIK ve en az bir tür seçiliyken ({@code anyDistributed()}, bellek) — tek
+     * gruplu deyim ({@code CheckJobStore.stats()}); her durum × tür satırı sıfır dahil (okunmuş kuyrukta 0 gerçektir), en eski
+     * bekleyen / değerlendirilmeyen yaşı (yoksa 0 = bekleyen yok). Okunamadı → aile düşer, {@code source_up{check_jobs}=0}.
+     * Anahtar kapalıyken hiçbir seri ve kaynak satırı yazılmaz (yok ≠ 0; K-1: sorgu da yok). Yalnız kurum ailelerini yayan
+     * turda çağrılır (POD-only lider okumaz).
+     */
+    void checkJobQueueMeters(Families f, Map<String, Boolean> sources) {
+        if (distributedChecks == null || checkJobStore == null) return;
+        boolean on;
+        try {
+            on = distributedChecks.anyDistributed();
+        } catch (RuntimeException e) {
+            on = false;
+        }
+        if (!on) return;
+        com.sitemonitor.service.checks.CheckJobStore.QueueStats st = read(sources, "check_jobs", () -> checkJobStore.stats());
+        if (st == null) return;
+        List<String> types = new ArrayList<>(com.sitemonitor.service.checks.CheckJobTypes.ALL);
+        for (String t : st.types()) if (!types.contains(t)) types.add(t);
+        for (String state : CHECK_JOB_STATES) {
+            String label = state.toLowerCase(java.util.Locale.ROOT);
+            for (String type : types) f.add(MonitoringMetricNames.CHECK_JOBS, st.count(state, type), "state", label, "type", type);
+        }
+        Long pending = st.oldestPendingAgeMs();
+        Long done = st.oldestDoneAgeMs();
+        f.add(MonitoringMetricNames.CHECK_JOBS_OLDEST, pending == null ? 0 : Math.max(0L, pending) / 1000.0, "state", "pending");
+        f.add(MonitoringMetricNames.CHECK_JOBS_OLDEST, done == null ? 0 : Math.max(0L, done) / 1000.0, "state", "done");
+    }
+
+    /**
+     * Bu pod'un dağıtık kontrol işçisi (POD, bellek): yuvalar (meşgul / toplam), birikimli iş sonuçları (tamamlanan, geç; liderken
+     * biçilen = kayıp, değerlendirilmeden düşen = düşen), sahiplenme gecikmesi p95. Yalnız ana anahtar AÇIKKEN; okunamayan parça
+     * yazılmaz (sahte 0 yok). POD-only turda da yayılır.
+     */
+    void checkJobPodMeters(Families f) {
+        if (distributedChecks == null) return;
+        boolean on;
+        try {
+            on = distributedChecks.enabled();
+        } catch (RuntimeException e) {
+            on = false;
+        }
+        if (!on) return;
+        if (checkWorker != null) {
+            try {
+                com.sitemonitor.service.checks.CheckWorker.Status ws = checkWorker.status();
+                if (ws != null) {
+                    f.add(MonitoringMetricNames.CHECK_WORKER_SLOTS, Math.max(0, ws.busy()), "kind", "busy");
+                    f.add(MonitoringMetricNames.CHECK_WORKER_SLOTS, ws.workerEnabled() ? ws.slots() : 0, "kind", "total");
+                    f.add(MonitoringMetricNames.CHECK_WORKER_JOBS, ws.completed(), "outcome", "completed");
+                    f.add(MonitoringMetricNames.CHECK_WORKER_JOBS, ws.late(), "outcome", "late");
+                    if (ws.claimLagP95Ms() != null) {
+                        f.add(MonitoringMetricNames.CHECK_CLAIM_LAG, Math.max(0L, ws.claimLagP95Ms()) / 1000.0);
+                    }
+                }
+            } catch (RuntimeException e) {
+                log.debug("Dağıtık kontrol işçisi durumu okunamadı: {}", e.toString());
+            }
+        }
+        // Liderin sayaçları: biçilen (kayıp) ve değerlendirilmeden düşen sonuçlar — bir parçası okunamazsa o sonuç yazılmaz
+        Map<String, Object> d = null;
+        if (scheduler != null) {
+            try {
+                d = scheduler.distributedCheckStatus();
+            } catch (RuntimeException e) {
+                d = null;
+            }
+        }
+        if (d == null) return;
+        if (d.get("lost") instanceof Number lost) f.add(MonitoringMetricNames.CHECK_WORKER_JOBS, lost.longValue(), "outcome", "lost");
+        long dropped = 0;
+        for (String k : List.of("dropped_inactive", "dropped_target", "dropped_toggle", "dropped_inventory")) {
+            if (!(d.get(k) instanceof Number n)) return;
+            dropped += n.longValue();
+        }
+        if (checkResultDrainer != null) {
+            try {
+                com.sitemonitor.service.checks.CheckResultDrainer.Status ds = checkResultDrainer.status();
+                if (ds == null) return;
+                dropped += ds.droppedStale() + ds.outOfOrder();
+            } catch (RuntimeException e) {
+                return;
+            }
+        }
+        f.add(MonitoringMetricNames.CHECK_WORKER_JOBS, dropped, "outcome", "dropped");
+    }
+    // ── /R3-3 D1 ──────────────────────────────────────────────────────────────────────────────────────────────────
 
     /**
      * Bu pod'un kalıcı değerlendirme durumu kaydedicisi (çok pod R3-1, plan 3a): kip, bekleyen, yazma hatası (her pod);

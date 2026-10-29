@@ -134,6 +134,23 @@ public final class MonitoringMetricNames {
     /** Son doğrulama turunun anı (sn) — yalnız bu pod yazan liderken (bilinmeyen tur da tur sayılır). */
     public static final String EVAL_STATE_VERIFY_AT = "sitemonitor.eval.state.verify.timestamp.seconds";
 
+    // ── Dağıtık kontroller (2026-10-29, çok pod R3-3, paket D1; tasarım §7.4) — anahtar KAPALIYKEN hiçbiri yayılmaz ─────
+    /** Kontrol işi kuyruğu, durum ({@code pending | claimed | done}) × tür (KÜME; yalnız kurum ailelerini yayan pod okur). */
+    public static final String CHECK_JOBS = "sitemonitor.check.jobs";
+    /** En eski bekleyen ({@code pending}, oluşturmadan) / değerlendirilmeyi bekleyen ({@code done}, bitişten) işin yaşı (sn; KÜME). */
+    public static final String CHECK_JOBS_OLDEST = "sitemonitor.check.jobs.oldest.seconds";
+    /** Bu pod'un kontrol yuvaları: {@code busy} (koşan) / {@code total} (yapılandırılan; işçi kapalıysa 0). */
+    public static final String CHECK_WORKER_SLOTS = "sitemonitor.check.worker.slots";
+    /**
+     * Bu pod'un kontrol işi sonuçları, açılıştan beri birikimli (gauge — {@code _total} son eki YOK): {@code completed} (sonucu
+     * yazdı), {@code late} (kirası kaybedildi, sonuç düştü), {@code lost} (liderken biçilen — iki kez sahiplenilip
+     * tamamlanmayan iş), {@code dropped} (liderken değerlendirilmeden düşen sonuç: bayat, sıra dışı, pasif, hedef değişti,
+     * tür kapalı, envanter dışı).
+     */
+    public static final String CHECK_WORKER_JOBS = "sitemonitor.check.worker.jobs";
+    /** Bu pod'un son 256 sahiplenmesinin gecikmesi p95 (sn; gönderimden sahiplenmeye — yoksa yayılmaz). */
+    public static final String CHECK_CLAIM_LAG = "sitemonitor.check.claim.lag.p95.seconds";
+
     // ── Aktarıcının kendisi ──────────────────────────────────────────────────────────────────────────────
     public static final String EXPORTER_ENABLED = "sitemonitor.exporter.enabled";
     public static final String EXPORTER_PER_MONITOR = "sitemonitor.exporter.per.monitor";
@@ -256,6 +273,17 @@ public final class MonitoringMetricNames {
                 "Mismatches of the last memory vs table verify round by kind, while this pod is the writing leader; absent when the round was unknown"));
         l.add(new Def(EVAL_STATE_VERIFY_AT, Scope.POD, List.of(),
                 "Time of the last verify round (any result) while this pod is the writing leader, seconds since epoch"));
+        // Dağıtık kontroller (R3-3)
+        l.add(new Def(CHECK_JOBS, Scope.CLUSTER, List.of("state", "type"),
+                "Distributed check jobs by state (pending, claimed, done) and monitor type; absent while distributed checks are off"));
+        l.add(new Def(CHECK_JOBS_OLDEST, Scope.CLUSTER, List.of("state"),
+                "Age of the oldest pending job (since dispatch) and of the oldest result waiting for evaluation (since completion), in seconds; 0 = none waiting"));
+        l.add(new Def(CHECK_WORKER_SLOTS, Scope.POD, List.of("kind"),
+                "This pod's distributed check slots: busy (running) and total (configured; 0 when the worker is off on this pod)"));
+        l.add(new Def(CHECK_WORKER_JOBS, Scope.POD, List.of("outcome"),
+                "Distributed check jobs on this pod since it started: completed, late (lease lost, result dropped), lost (reaped while leader), dropped (results not evaluated while leader)"));
+        l.add(new Def(CHECK_CLAIM_LAG, Scope.POD, List.of(),
+                "p95 of the dispatch-to-claim delay of this pod's last 256 claims, in seconds; absent before the first claim"));
         // Aktarıcı
         l.add(new Def(EXPORTER_ENABLED, Scope.POD, List.of(), "1 when the monitoring metrics exporter is enabled"));
         l.add(new Def(EXPORTER_PER_MONITOR, Scope.POD, List.of(), "1 when per-monitor / per-certificate series are exported"));

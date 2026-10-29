@@ -55,10 +55,14 @@ function ageMs(iso, serverNow) {
 export function evalStateModel(health) {
   const es = health?.eval_state
   if (!isObj(es)) return null
+  // Çok pod Sürüm 3-3 (paket D1): dağıtık kontroller Küme kartında bu modelin yanında çizilir (ekran ve kart seviyesi) —
+  // `checkJobs` ayrı alan; kart seviyesine yalnız uyarısı katılır
+  const checkJobs = checkJobsModel(health)
   if (es.error) {
-    return { mode: null, recorder: null, recorderKnown: false, recorderLevel: 'unknown', inherited: null, level: 'unknown',
+    return { mode: null, recorder: null, recorderKnown: false, recorderLevel: 'unknown', inherited: null,
+      level: checkJobs?.level === 'warn' ? 'warn' : 'unknown',
       verify: { level: 'unknown', status: null, reason: 'unreadable', stale: false, observedBy: null, observedAt: null,
-        generation: null, kinds: [], firstMismatches: [], mismatches: null } }
+        generation: null, kinds: [], firstMismatches: [], mismatches: null }, checkJobs }
   }
   const rec = isObj(es.this_pod) ? es.this_pod : null
   const mode = rec && EVAL_MODES.includes(rec.mode) ? rec.mode : null
@@ -81,11 +85,11 @@ export function evalStateModel(health) {
   // nedenli "yüklenmedi" kartı uyarıya çeker; bilinmeyen / beklenen nedenler çekmez (yeşil de yapmaz).
   const load = evalLoadModel(health)
   const handover = handoverModel(health)
-  const level = verify.level === 'mismatch' || recorderLevel === 'warn' || load?.level === 'warn' ? 'warn'
+  const level = verify.level === 'mismatch' || recorderLevel === 'warn' || load?.level === 'warn' || checkJobs?.level === 'warn' ? 'warn'
     : verify.level === 'ok' ? 'ok' : verify.level === 'off' && mode === 'off' ? 'off' : 'unknown'
   return {
     mode, recorder: rec, recorderKnown: !!rec, recorderLevel, verify,
-    inherited: isObj(rec?.inherited) ? rec.inherited : null, level, load, handover,
+    inherited: isObj(rec?.inherited) ? rec.inherited : null, level, load, handover, checkJobs,
   }
 }
 
@@ -340,4 +344,126 @@ export function handoverModel(health) {
   const lastHandover = str(rec.last_handover)
   return { ready, reason, tone: ready ? 'success' : 'muted', lastHandover,
     lastHandoverKnown: !!lastHandover && HANDOVER_RESULTS.includes(lastHandover) }
+}
+
+// ── Çok pod Sürüm 3-3 (2026-10-29, paket D1; tasarım R3-3 §7.2): dağıtık kontroller ─────────────────────────────────
+
+/** Dağıtık kontrol türleri — sunucu `CheckJobTypes.ALL` ile AYNI sırada (kapı `clusterRuntimeModel.test.js` Java kaynağını okur). */
+export const CHECK_JOB_TYPES = ['port', 'ping', 'http', 'keyword', 'page', 'pagespeed', 'dns', 'scripted']
+/** Kuyruk uyarı eşiği (ms): en eski bekleyen iş ya da en eski değerlendirilmeyen sonuç bundan eskiyse uyarı (tasarım §7.2). */
+export const CHECK_QUEUE_WARN_MS = 30_000
+/** Tür kipi → rozet tonu: dağıtık bilgi; klasik / listede yok / bilinmiyor gri — asla yeşil. */
+export const CHECK_MODE_TONE = { distributed: 'info', classic: 'muted', off: 'muted', unknown: 'muted' }
+/** Bölüm durumu → rozet tonu. Açık anahtar bir başarı değil, bilgidir: hiçbir durum yeşil DEĞİL. */
+export const CHECK_JOBS_TONE = { on: 'info', warn: 'warning', idle: 'muted', off: 'muted', unknown: 'muted' }
+/** İşçi satırı durumu → rozet tonu (canlı nabız bir gözlem; sessiz / duruyor gri — dağıtımda olağan). */
+export const CHECK_WORKER_TONE = { live: 'success', silent: 'muted', stopping: 'muted' }
+
+const strList = (v) => (Array.isArray(v) ? v.filter((x) => typeof x === 'string' && x) : [])
+const boolOrNull = (v) => (v === true ? true : v === false ? false : null)
+
+/**
+ * Dağıtık kontroller modeli (`health.check_jobs`). `null` = alan yok (eski sunucu) → bölüm gizli.
+ *
+ * - Anahtar kapalı (`{enabled: false}`) → `level: 'off'` (gri "Kapalı"); okunamadı (`{error}`) → `unknown`.
+ * - Tür kipleri YANITLAYAN pod'un görüşüdür; yalnız tarama liderinde anlamlı (`mode_by_leader`) — takipçinin yanıtında seçili
+ *   türler "bilinmiyor" (gri) olur, ekran liderin kartına yönlendirir.
+ * - Kuyruk okunamadı → `queueLevel: 'unknown'` (asla "0 bekleyen" ya da yeşil değil); en eski bekleyen ya da değerlendirilmeyen
+ *   {@link CHECK_QUEUE_WARN_MS}'den eski → uyarı.
+ * - Canlı (durmayan) bir işçi seçili türlerden birini koşamıyorsa → yetenek uyuşmazlığı uyarısı (o pod lider olursa yeniden
+ *   kontroller ölçülemez).
+ * Kart seviyesine yalnız `warn` katılır (bkz. {@link evalStateModel}).
+ */
+export function checkJobsModel(health) {
+  const cj = health?.check_jobs
+  if (!isObj(cj)) return null
+  const base = { enabled: null, types: [], modes: [], leaderView: null, modeByPod: null, queue: null, queueLevel: 'unknown',
+    queueReason: null, workers: [], workersKnown: false, workersReason: null, workersTotal: 0, mismatch: [], thisPod: null }
+  if (cj.error) return { ...base, level: 'unknown', status: 'unknown', error: str(cj.error) || 'error' }
+  if (cj.enabled !== true) return { ...base, enabled: false, level: 'off', status: 'off', error: null }
+  const types = strList(cj.types)
+  const leaderView = boolOrNull(cj.mode_by_leader)
+  const modeMap = isObj(cj.mode) ? cj.mode : {}
+  const order = [...CHECK_JOB_TYPES, ...types.filter((t) => !CHECK_JOB_TYPES.includes(t))]
+  const modes = order.map((type) => {
+    const selected = types.includes(type)
+    const raw = modeMap[type]
+    let mode = 'unknown'
+    if (!selected) mode = 'off'
+    else if (leaderView === true) mode = raw === 'distributed' ? 'distributed' : raw === 'classic' ? 'classic' : 'unknown'
+    return { type, selected, mode, known: CHECK_JOB_TYPES.includes(type), tone: CHECK_MODE_TONE[mode] }
+  })
+
+  let queue = null
+  let queueLevel = 'unknown'
+  let queueReason = null
+  if (isObj(cj.queue)) {
+    const q = cj.queue
+    const byType = isObj(q.by_type) ? Object.entries(q.by_type).filter(([, v]) => isObj(v))
+      .map(([type, v]) => ({ type, known: CHECK_JOB_TYPES.includes(type), pending: num(v.pending) ?? 0, claimed: num(v.claimed) ?? 0,
+        done: num(v.done) ?? 0 })) : []
+    const oldestPendingMs = num(q.oldest_pending_age_ms)
+    const oldestDoneMs = num(q.oldest_done_age_ms)
+    queue = {
+      at: str(q.at), pending: num(q.pending), claimed: num(q.claimed), done: num(q.done), oldestPendingMs, oldestDoneMs,
+      expired: num(q.expired_claims) ?? 0, byType,
+      pendingWarn: oldestPendingMs != null && oldestPendingMs > CHECK_QUEUE_WARN_MS,
+      doneWarn: oldestDoneMs != null && oldestDoneMs > CHECK_QUEUE_WARN_MS,
+    }
+    queueLevel = queue.pendingWarn || queue.doneWarn ? 'warn' : 'ok'
+  } else if (cj.queue_skipped === 'no_types') {
+    queueLevel = 'off'
+    queueReason = 'no_types'
+  } else {
+    queueReason = str(cj.queue_error) || 'unavailable'
+  }
+
+  const workersKnown = Array.isArray(cj.workers) && cj.workers_known !== false
+  const workers = (Array.isArray(cj.workers) ? cj.workers : []).filter(isObj).map((w) => {
+    const stopping = w.stopping === true
+    const live = w.live === true
+    const missing = strList(w.missing_caps).filter((t) => types.includes(t))
+    const state = stopping ? 'stopping' : live ? 'live' : 'silent'
+    return {
+      instanceId: str(w.instance_id), pod: str(w.pod) || str(w.instance_id) || '—', self: w.self === true, caps: strList(w.caps),
+      missing, slots: num(w.slots), busy: num(w.busy), completed: num(w.completed), late: num(w.late), lagMs: num(w.claim_lag_p95_ms),
+      heartbeatAt: str(w.heartbeat_at), heartbeatAgeMs: num(w.heartbeat_age_ms), version: str(w.version), stopping, live, state,
+      tone: CHECK_WORKER_TONE[state], mismatch: live && !stopping && missing.length > 0,
+    }
+  })
+  const mismatch = workers.filter((w) => w.mismatch)
+
+  const tp = isObj(cj.this_pod) ? cj.this_pod : null
+  let thisPod = null
+  if (tp) {
+    const w = isObj(tp.worker) && !tp.worker.error ? tp.worker : null
+    const d = isObj(tp.dispatch) ? tp.dispatch : null
+    const droppedKeys = ['dropped_inactive', 'dropped_target', 'dropped_toggle', 'dropped_inventory']
+    const dr = isObj(tp.drainer) && !tp.drainer.error ? tp.drainer : null
+    let dropped = d && droppedKeys.every((k) => num(d[k]) != null) ? droppedKeys.reduce((n, k) => n + num(d[k]), 0) : null
+    if (dropped != null && dr) dropped += (num(dr.dropped_stale) ?? 0) + (num(dr.out_of_order) ?? 0)
+    thisPod = {
+      pod: str(tp.pod), leader: boolOrNull(tp.leader),
+      worker: w ? {
+        started: w.started === true, enabled: w.enabled !== false, closing: w.closing === true, slots: num(w.slots), busy: num(w.busy),
+        completed: num(w.completed) ?? 0, late: num(w.late) ?? 0, timeouts: num(w.timeouts) ?? 0, failed: num(w.failed) ?? 0,
+        claimErrors: num(w.claim_errors) ?? 0, completeErrors: num(w.complete_errors) ?? 0, lagMs: num(w.claim_lag_p95_ms),
+      } : null,
+      workerKnown: !!w,
+      localCaps: Array.isArray(tp.local_caps) ? strList(tp.local_caps) : null,
+      dbClockStale: boolOrNull(tp.db_clock_stale),
+      dispatch: d ? { active: d.dispatch_active === true, dispatched: num(d.dispatched) ?? 0, failures: num(d.dispatch_failures) ?? 0,
+        lost: num(d.lost) ?? 0, applied: num(d.applied) ?? 0, dropped } : null,
+      drainer: dr ? { started: dr.started === true, draining: dr.draining === true, taken: num(dr.taken) ?? 0, waves: num(dr.waves) ?? 0,
+        applyFailures: num(dr.apply_failures) ?? 0, takeFailures: num(dr.take_failures) ?? 0, lastTakeAt: str(dr.last_take_at) } : null,
+    }
+  }
+
+  const status = types.length === 0 ? 'idle'
+    : queueLevel === 'warn' || mismatch.length > 0 ? 'warn' : queueLevel === 'ok' ? 'on' : 'unknown'
+  return {
+    ...base, enabled: true, types, modes, leaderView, modeByPod: str(cj.mode_by_pod) || str(cj.mode_by), queue, queueLevel, queueReason,
+    workers, workersKnown, workersReason: str(cj.workers_error), workersTotal: num(cj.workers_total) ?? workers.length, mismatch,
+    thisPod, status, level: status === 'warn' ? 'warn' : status === 'unknown' ? 'unknown' : status === 'idle' ? 'idle' : 'on', error: null,
+  }
 }

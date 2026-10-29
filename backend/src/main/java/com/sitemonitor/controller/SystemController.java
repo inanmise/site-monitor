@@ -60,6 +60,23 @@ public class SystemController {
     private com.sitemonitor.service.schedule.SideJobRunner sideJobRunner;
     /** Yan işlerin "başka canlı pod" gözleminin bu pod'da son görülen hâli (R3-1 inceleme L4; yalnız bellek). */
     private final ClusterRuntimeHealth.OtherPodSeen sideJobOtherPodSeen = new ClusterRuntimeHealth.OtherPodSeen();
+    /**
+     * Çok pod Sürüm 3-3 (2026-10-29, paket D1) — Küme kartı "Dağıtık kontroller": ana anahtar, tür kipleri, iş kuyruğu,
+     * işçiler ve bu pod'un işçisi / sonuç boşaltıcısı. Hepsi isteğe bağlı; anahtar kapalıyken yalnız {@code {enabled: false}}
+     * (bellek, sorgu yok — K-1).
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.checks.DistributedChecks distributedChecks;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.checks.CheckJobStore checkJobStore;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.checks.CheckWorkerRegistry checkWorkerRegistry;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.checks.CheckWorker checkWorker;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.checks.CheckResultDrainer checkResultDrainer;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.checks.DbClock checkDbClock;
     /** Doğrulama aralığı (kaydedicinin açılış ayarı) — gözlemin "eski" eşiği bunun 3 katı. */
     @org.springframework.beans.factory.annotation.Value("${site.monitor.eval-state.verify-ms:300000}")
     private long evalVerifyMs = 300_000L;
@@ -96,6 +113,12 @@ public class SystemController {
         if (sideJobRunner != null) {
             try { data.put("side_jobs", ClusterRuntimeHealth.sideJobs(sideJobRunner, sideJobOtherPodSeen, System.currentTimeMillis())); }
             catch (RuntimeException e) { data.put("side_jobs", Map.of("error", e.getClass().getSimpleName())); }
+        }
+        // Çok pod R3-3 (eklenti): dağıtık kontroller — anahtar kapalıyken {enabled: false} (bellek, sorgu yok)
+        if (distributedChecks != null) {
+            try { data.put("check_jobs", ClusterRuntimeHealth.checkJobs(new ClusterRuntimeHealth.CheckJobsSources(distributedChecks,
+                    checkJobStore, checkWorkerRegistry, checkWorker, checkResultDrainer, checkDbClock, schedulerService), System.currentTimeMillis())); }
+            catch (RuntimeException e) { data.put("check_jobs", Map.of("error", e.getClass().getSimpleName())); }
         }
         return ok(Map.of("data", data));
     }
