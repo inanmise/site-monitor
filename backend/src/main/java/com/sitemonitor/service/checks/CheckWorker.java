@@ -92,6 +92,12 @@ public class CheckWorker {
     static final long MAX_PENDING_CHARS = 32_000_000L;
     /** Tek toplu tamamlamada en çok satır. */
     static final int FLUSH_BATCH = 500;
+    /**
+     * İki sahiplenme arası en kısa süre (ms) — istediği kadar alan bir turdan sonra yuva boşalınca {@code poll-ms} beklenmeden
+     * yeniden sahiplenilir (inceleme D2-2: pod saniyede en çok {@code slots} iş alabiliyordu); her kontrol bitişine bir deyim
+     * olmasın.
+     */
+    static final long MIN_CLAIM_GAP_MS = 50L;
     /** Sahiplenme gecikmesi p95 penceresi. */
     static final int LAG_WINDOW = 256;
 
@@ -184,6 +190,13 @@ public class CheckWorker {
     private volatile long nextClaimNano = Long.MIN_VALUE;
     private volatile long pollDelayMs;
     private volatile long lastFlushNano = Long.MIN_VALUE;
+    /** Son tur istediği kadar aldı (kuyrukta daha çok iş olabilir) — yuva boşalınca beklemeden sahiplen (D2-2). */
+    private volatile boolean claimHungry;
+    /** Son sahiplenme turundan sonra bir yuva boşaldı. */
+    private volatile boolean slotFreed;
+    private volatile long lastClaimNano = Long.MIN_VALUE;
+    /** Bu turda bir sahiplenme istediği sınır kadar döndü (yalnız yoklama iş parçacığı). */
+    private boolean roundFilled;
 
     /** Spring kurucusu — işbirlikçiler tembel (sağlayıcı) çözülür. */
     @Autowired
@@ -307,8 +320,15 @@ public class CheckWorker {
             return tasks.isEmpty() && pending.isEmpty() ? Math.max(FLUSH_MS, tuning.pollMs()) : FLUSH_MS;
         }
         if (nextClaimNano != Long.MIN_VALUE && now - nextClaimNano < 0) {
-            return Math.max(1L, Math.min(FLUSH_MS, TimeUnit.NANOSECONDS.toMillis(nextClaimNano - now)));
+            if (!(claimHungry && slotFreed)) {
+                return Math.max(1L, Math.min(FLUSH_MS, TimeUnit.NANOSECONDS.toMillis(nextClaimNano - now)));
+            }
+            // D2-2: dolu turdan sonra yuva boşaldı — poll-ms beklenmez, yalnız en kısa aralık
+            long gap = lastClaimNano == Long.MIN_VALUE ? 0L : ms(MIN_CLAIM_GAP_MS) - (now - lastClaimNano);
+            if (gap > 0) return Math.max(1L, Math.min(FLUSH_MS, TimeUnit.NANOSECONDS.toMillis(gap)));
         }
+        slotFreed = false;   // turdan ÖNCE: tur sırasında boşalan yuva kaybolmasın
+        lastClaimNano = now;
         int got = claimRound();
         long base = tuning.pollMs();
         if (got > 0) {
@@ -318,7 +338,8 @@ public class CheckWorker {
             pollDelayMs = Math.min(cap, Math.max(base, pollDelayMs) * 2);
         }
         nextClaimNano = nanoClock.getAsLong() + ms(got > 0 || got < 0 ? base : pollDelayMs);
-        return FLUSH_MS;
+        // D2-2: dolu turun yuvası tur dönmeden boşaldıysa en kısa aralıkla yeniden dene
+        return claimHungry && slotFreed ? MIN_CLAIM_GAP_MS : FLUSH_MS;
     }
 
     /** Sahiplenme izni (bellek): kapanmıyor, anahtar açık, bu pod işçi, gövde (paket B) var. */
@@ -340,8 +361,17 @@ public class CheckWorker {
      */
     int claimRound() {
         int free = tuning.slots() - running.get();
-        if (free <= 0) return -1;
+        if (free <= 0) return -1;   // yuvalar dolu: claimHungry korunur (boşalınca beklemeden sahiplen)
+        roundFilled = false;
+        int got = claimRoundInner(free);
+        // got < 0: meşgul (birikim dolu ya da liderin payı dolu) — iç tur claimHungry'yi kendisi belirler
+        if (got >= 0) claimHungry = got > 0 && roundFilled;
+        return got;
+    }
+
+    private int claimRoundInner(int free) {
         if (backlogFull()) {
+            claimHungry = false;   // birikim yazılana dek normal yoklama
             // Sonuçlar yazılamıyor (veritabanı): birikim yazılana dek yeni iş yok — hiçbir tamamlama sessizce düşmesin.
             backlogPauses.incrementAndGet();
             warn("Dağıtık kontrol sonuçları yazılamıyor — birikim dolu ({} sonuç, {} karakter); yazılana dek yeni iş alınmıyor",
@@ -365,6 +395,8 @@ public class CheckWorker {
                 if (normal > 0) got += claimInto(shared, normal, CheckJobStore.ANY_AGE);
                 int rest = tuning.slots() - running.get();
                 if (rest > 0) got += claimInto(shared, rest, clock.nowMs() - tuning.stealAfterMs());
+                // D2-2: payı dolu lider boşta değil, meşgul — yoklama uzamaz, son dolu turun "aç" bilgisi korunur
+                if (got == 0 && normal <= 0) return -1;
             }
             return got;
         } catch (RuntimeException e) {
@@ -386,6 +418,7 @@ public class CheckWorker {
             int lim = Math.min(limit - got, permits);
             if (lim > 0) got += submitAll(store.claim(Set.of(CheckJobTypes.SCRIPTED), lim, owner, createdBefore));
         }
+        if (got >= limit) roundFilled = true;   // istenen kadar geldi: kuyrukta daha çok iş olabilir (D2-2)
         return got;
     }
 
@@ -439,6 +472,13 @@ public class CheckWorker {
             }
             running.decrementAndGet();
             tasks.remove(t.row.id(), t);
+            // D2-2: tur başladıktan sonra yuva boşaldı (tur dönmeden biten hızlı kontrol de sayılır — uyandırma kaybolmasın);
+            // dolu turdan sonraysa yoklama iş parçacığı poll-ms beklemeden sahiplensin
+            slotFreed = true;
+            if (claimHungry) {
+                Thread p = pollThread;
+                if (p != null) LockSupport.unpark(p);
+            }
         }
         if (!t.done.compareAndSet(false, true)) return;   // zaman aşımıyla zaten tamamlandı — geç gövde sonucu atılır
         if (cut) {

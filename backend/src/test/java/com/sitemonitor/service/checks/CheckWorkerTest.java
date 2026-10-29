@@ -149,6 +149,66 @@ class CheckWorkerTest {
     }
 
     @Test
+    @DisplayName("D2-2: istediği kadar alan turdan sonra yuva boşalınca poll-ms beklenmez (en kısa aralıkla yeniden sahiplenir); az gelen tur yoklamaya döner")
+    void filledRoundReclaimsAsSoonAsASlotFrees() throws Exception {
+        store.add(CheckJobTypes.PORT, 10);
+        CheckWorker w = started(slots(4));
+        w.tick();
+        assertThat(store.claims).hasSize(1);
+        await(() -> w.running() == 0);
+        w.tick();
+        assertThat(store.claims).as("en kısa aralık dolmadı").hasSize(1);
+        advance(CheckWorker.MIN_CLAIM_GAP_MS);
+        w.tick();
+        assertThat(store.claims).as("yuva boşaldı — poll-ms (1 sn) beklenmedi").hasSize(2);
+        assertThat(store.claims.get(1).limit()).isEqualTo(4);
+        await(() -> w.running() == 0);
+        advance(CheckWorker.MIN_CLAIM_GAP_MS);
+        w.tick();
+        assertThat(store.claims).hasSize(3);
+        await(() -> w.running() == 0);
+        advance(CheckWorker.MIN_CLAIM_GAP_MS);
+        w.tick();
+        assertThat(store.claims).as("istenen 4, gelen 2: kuyruk boşaldı — poll-ms'e dönülür").hasSize(3);
+        advance(1_000);
+        w.tick();
+        assertThat(store.claims).hasSize(4);
+        assertThat(w.status().claimed()).isEqualTo(10);
+    }
+
+    @Test
+    @DisplayName("D2-2: payı dolu lider boşta sayılmaz — yoklama aralığı uzamaz, eski iş çalma her poll-ms'de denenir")
+    void leaderWithFullShareIsBusyNotIdle() throws Exception {
+        leader.set(true);
+        registry.caps = Set.of(CheckJobTypes.PORT);
+        registry.live.put(CheckJobTypes.PORT, 1);
+        store.add(CheckJobTypes.PORT, 8);
+        CountDownLatch gate = new CountDownLatch(1);
+        body = (t, id) -> {
+            try {
+                gate.await();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            return ok(id);
+        };
+        CheckWorker w = started(DistributedChecks.Tuning.DEFAULTS);
+        w.tick();
+        await(() -> w.running() == 8);
+        int before = store.claims.size();
+        for (int i = 0; i < 3; i++) {
+            advance(1_000);
+            w.tick();
+            assertThat(w.pollDelayMs()).as("pay dolu → meşgul, boşta geri çekilme yok").isEqualTo(1_000);
+        }
+        assertThat(store.claims.size() - before).as("her saniye yalnız çalma denemesi").isEqualTo(3);
+        assertThat(store.claims.subList(before, store.claims.size()))
+                .allSatisfy(c -> assertThat(c.createdBefore()).isNotEqualTo(CheckJobStore.ANY_AGE));
+        gate.countDown();
+        await(() -> w.running() == 0);
+    }
+
+    @Test
     @DisplayName("Lider (U-2): başka canlı işçi varken payı kadar (16 × %50 = 8), sonra kalan yuvalarla 5 sn'den eski işleri çalar")
     void leaderShareThenSteal() {
         leader.set(true);
@@ -280,7 +340,9 @@ class CheckWorkerTest {
         store.add(CheckJobTypes.HTTP, 1);
         AtomicBoolean release = new AtomicBoolean();
         AtomicInteger interruptsSeen = new AtomicInteger();
+        AtomicBoolean bodyStarted = new AtomicBoolean();
         body = (t, id) -> {
+            bodyStarted.set(true);
             while (!release.get()) {
                 try {
                     Thread.sleep(5);
@@ -292,7 +354,7 @@ class CheckWorkerTest {
         };
         CheckWorker w = started(DistributedChecks.Tuning.DEFAULTS);
         w.tick();
-        await(() -> w.running() == 1);
+        await(() -> w.running() == 1 && bodyStarted.get());   // gövde başladı (kuyruktaki iş zaman aşımına girmez)
         advance(CheckJobTypes.workerTimeoutMs(CheckJobTypes.HTTP) - 1);
         w.tick();
         assertThat(w.status().timeouts()).isZero();
@@ -345,7 +407,8 @@ class CheckWorkerTest {
         CheckWorker w = worker(slots(1));
         w.startForTest(one);
         w.tick();
-        await(() -> w.running() == 1);
+        // gövde GERÇEKTEN başladı (yalnız sahiplenildiyse zaman aşımı taraması henüz kuyruktaki işi atlar — test yarışı)
+        await(() -> w.running() == 1 && calls.get() == 1);
         long firstId = store.firstId();
 
         advance(CheckJobTypes.workerTimeoutMs(CheckJobTypes.HTTP) + 1);
