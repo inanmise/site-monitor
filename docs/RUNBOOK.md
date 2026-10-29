@@ -1207,7 +1207,7 @@ saklama yönetimi listesinde iki satır ile `/metrics`'te `db.table.rows|bytes{t
      anda açmayın — bir sorunda kaynağı ayırmak zorlaşır.
 - **Açmak:** Ayarlar → Genel → Zamanlayıcı → "Parçalı sertifika taraması (çok pod)" → aç, kaydet. ~10 sn içinde her pod'un
   günlüğünde bir kez `Parçalı sertifika taraması açık görüldü — 1 başlatıcı çalıştırılıyor` ve `Parçalı sertifika taraması
-  işçisi başladı (en çok 4 parça, kira 60 sn, yoklama 250 / 5000 ms)`. İlk parçalı tur, en az 40 alan adı kontrol eden bir
+  işçisi başladı (en çok 8 parça, kira 60 sn, yoklama 250 / 5000 ms)`. İlk parçalı tur, en az 40 alan adı kontrol eden bir
   sonraki sertifika turudur (çoğunlukla saat başındaki saatlik tur; bayat tarama çoğu zaman 40'tan az alan adı içerir ve
   klasik kalır) ya da Sistem Sağlığı → "Şimdi çalıştır" (tam tur; isteği alan pod koordinatördür). Koordinatörün günlüğü: `Sertifika taraması parçalı — runId=…, N alan
   adı, K parça (boyut 20)` ve tur sonunda `Parçalı tarama toplandı — runId=…, pod başına {…}, devralınan 0, ikinci görüş 0,
@@ -1217,8 +1217,8 @@ saklama yönetimi listesinde iki satır ile `/metrics`'te `db.table.rows|bytes{t
     turun kipi (parçalı / klasik), açık tur (tür · koordinatör · yaş; karar aşamasında "ölçüm bitti, koordinatör sonuçları
     kaydedip karar veriyor"), ölçülen parçalar, kutucuklar (bekleyen parça, en eski bekleyen, devralınan parça, ikinci görüş),
     pod payı (parça, ölçülen / alınan alan adı, ağ hatası oranı; "aykırı" rozeti) ve son 5 parçalı tur (sonucuyla).
-    "Yanıtlayan pod" → **Sertifika parça işçisi**: uçuştaki parça / alan adı, bütçe, tarama lideriyse "yalnız bekleyen
-    parçaları yarı güçle alır", tamamlanan / geç / bırakılan / atılan, son alma; koordinatör sayaçları (parçalı tur, kural
+    "Yanıtlayan pod" → **Sertifika parça işçisi**: uçuştaki parça / alan adı, bütçe, tarama lideriyse "başka pod koordine
+    ederken yalnız bekleyen parçaları sınırlı güçle alır", tamamlanan / geç / bırakılan / atılan, son alma; koordinatör sayaçları (parçalı tur, kural
     gereği klasik, klasiğe düştü, devralınan parça, yeniden ölçülen, ikinci görüş, bırakılan tur). Bölümün durum rozeti hiç
     yeşil olmaz (açık = bilgi); yeşil yalnız "karar verildi" ile biten tur satırıdır.
   - **Tarama kartı** ("Sertifika taraması"): "Tur kipi" (parçalı / klasik (tek pod) / kip bilinmiyor) ve tur sürerken "Parçalı
@@ -1266,8 +1266,11 @@ saklama yönetimi listesinde iki satır ile `/metrics`'te `db.table.rows|bytes{t
   - **Parça boyutu:** `CERT_CHUNK_SIZE` (20, 5–200; bir tur en çok 500 parçadır — çok büyük envanterde boyut kendiliğinden
     büyür). Küçük parça yükü daha dengeli dağıtır ama veritabanı işi artar; büyük parça, pod düşünce daha çok yeniden ölçüm
     demektir.
-  - **Bütçe:** `CERT_CHUNK_MAX_INFLIGHT_DOMAINS` (0 = 2 × görev havuzu çekirdeği → 40 alan adı) ve aynı anda en çok parça
-    `CERT_CHUNK_MAX_CHUNKS` (4, 1–16 — ikisi birlikte sınırlar: 4 × 20 = 80 alan adının üstü için parça sayısını da artırın).
+  - **Bütçe:** `CERT_CHUNK_MAX_INFLIGHT_DOMAINS` (0 = 6 × görev havuzu çekirdeği → 120 alan adı) ve aynı anda en çok parça
+    `CERT_CHUNK_MAX_CHUNKS` (8, 1–16 — ikisi birlikte sınırlar: 8 × 20 = 160 alan adının üstü için parça sayısını da artırın).
+    Varsayılan bütçede tarama lideri başka pod'un turuna en çok bir parça (çekirdek kadar alan adı) ayırır; açık bir bütçe
+    girilirse liderin payı onun `CERT_CHUNK_LEADER_SHARE_PCT` kadarıdır. Ölçüm (3 kat envanter, 3 pod): varsayılanlarla tur
+    ≈ 76 sn, klasik ≈ 145 sn.
     Bir parça en yavaş kontrolü (ör. zaman aşımına düşen bir ağ hatası) bitene dek bütçeyi tutar; tur uzun sürüyor ve
     pod'ların işlemcisi boştaysa bütçeyi ve parça sayısını artırmak ya da görev havuzu çekirdeğini (Ayarlar → Genel → Görev
     Havuzu, canlı — bütçe onunla büyür) büyütmek turu kısaltır.
