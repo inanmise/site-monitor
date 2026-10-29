@@ -13,9 +13,11 @@ import java.util.Set;
  * <p><b>Zaman.</b> Tüm ms değerleri {@link DbClock} ile (veritabanı-çapalı) — çağıranlar zaman vermez.
  *
  * <p><b>Hatalar.</b> Veritabanı hatası {@code org.springframework.dao.DataAccessException} (RuntimeException) olarak fırlar;
- * çağıran yakalar (gönderme: WARN + sayaç, o dönem kaybolur — bugünkü düşen tarama gibi; sahiplenme / tamamlama / alma:
- * sonraki tıkta yeniden — satırlar yerinde kalır). Tablo henüz yoksa (ilk açılışın ilk saniyeleri) yöntemler boş / 0 döner,
- * fırlatmaz. Hiçbir yöntem {@code result_json}'u günlüğe yazmaz.
+ * çağıran yakalar (gönderme: başarısızlık sayılır — gönderen sayar ve türü klasiğe döndürebilir; sahiplenme / tamamlama /
+ * alma: sonraki tıkta yeniden — satırlar yerinde kalır). Tablo henüz yoksa (ilk açılışın ilk saniyeleri) sahiplenme / alma /
+ * tamamlama / bırakma / biçme / özet boş / 0 döner; <b>gönderme fırlatır</b>
+ * ({@code DataAccessResourceFailureException}) — gönderen başarısızlık saysın. Hiçbir yöntem {@code result_json}'u günlüğe
+ * yazmaz.
  *
  * <p><b>Kapı.</b> Bu arayüzün HİÇBİR yöntemi ana anahtar kapalıyken çağrılmaz (K-1): çağıranlar önce
  * {@link DistributedChecks#anyDistributed()} (bellek) okur.
@@ -110,7 +112,9 @@ public interface CheckJobStore {
     /**
      * Biçme (lider, her gönderme tıkında): kirası dolmuş VE {@code attempts >= MAX_ATTEMPTS} CLAIMED satırları siler
      * (en çok {@code limit}) — iki kez sahiplenilip tamamlanmamış iş düşer ({@code lost}; çağıran hız sınırlı WARN yazar:
-     * {@code Kontrol işi {n} kez sahiplenildi, tamamlanmadı — düşürüldü (tür, izleme)}).
+     * {@code Kontrol işi {n} kez sahiplenildi, tamamlanmadı — düşürüldü (tür, izleme)}). Ayrıca bitişi 2 ×
+     * {@code result-stale-ms}'ten eski DONE satırları siler (en çok {@code limit}; dönen listede DEĞİL — boş liste "hiçbir şey
+     * biçilmedi" demek değildir).
      *
      * @return silinen işler (yalnız {@code id}, {@code type}, {@code monitorId}, {@code attempts}, {@code createdMs} dolu)
      */
