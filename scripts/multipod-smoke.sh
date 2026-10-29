@@ -23,6 +23,15 @@
 #        "Devir öncesi kalıcı durum boşaltıldı ve işaretlendi", yeni liderde data.eval_state.load.outcome = "full"
 #        (önceki kuşaktan) ve eşitlemeden sonra doğrulama ok; sonra (SMOKE_EVAL_KILL=1) lidere SIGKILL → kira süresi
 #        dolunca devralan pod "observations" yükler (devir işareti yok), doğrulaması yine ok; öldürülen pod yeniden açılır;
+#     5c. (çok pod Sürüm 3-3, yalnız SMOKE_DISTRIBUTED=1) dağıtık kontroller: taslak izlemelere ~30 sn süren on yavaş port
+#        izlemesi eklenir (PostgreSQL'in ek ağ adlarına BANNER, teyitsiz), ana anahtar site.monitor.checks.distributed.enabled
+#        açılır (tüm türler). ≤ SMOKE_DIST_WORKERS_WAIT_S (300) içinde iki pod'un işçisi canlı ve takipçi iş tamamlamış
+#        (monitor_check_workers.completed > 0; liderinki 0 ise uyarı — lider payı küçük kuyrukta 0 kalabilir); takipçiye
+#        SIGKILL → sahiplendiği işler kira dolunca (≤ SMOKE_DIST_RERUN_MAX_S, kira 150 sn) başka pod'a geçer, ölen pod
+#        ölümünden sonra iş bitirmez; takipçi yeniden açılır ve yine iş tamamlar. Her SIGTERM devrinde devirden önce biten
+#        DONE satırları yeni liderin ilk turlarında boşaltılır (≤ SMOKE_DIST_DRAIN_MAX_S). Sonda anahtar kapatılır →
+#        SMOKE_DIST_OFF_GRACE_S (12) sonra iş kimlik dizisi artmaz (yeni iş yok) ve klasik taramalar satır yazar; dedektörün
+#        dönem çifti denetimi (bölüm 9b) bu koşuda her durumda sayılır (period_strict=1);
 #     6. scripts/multipod-dup-check.sql → DUP_TOTAL = 0 ve STUCK_TOTAL = 0 (çift kontrol / bildirim / push / açık
 #        alarm / ONGOING kesinti yok, sonuçsuz QUEUED_RETRY yok).
 #   Kapsayıcılar ve ağ sonunda silinir (SMOKE_KEEP=1 bırakır); günlükler SMOKE_WORKDIR'e yazılır.
@@ -45,7 +54,11 @@
 #   1: yoksa hata; 0: atla), SMOKE_EVAL_VERIFY_MS (60000; pod'lara doğrulama aralığı), SMOKE_EVAL_WAIT_S (4 × aralık + 60),
 #   SMOKE_FLIP_BACK (1: geri devir de denenir; 0: tek devir), SMOKE_EVAL_READ (0; 1: çok pod Sürüm 3-2 devirde okuma
 #   denetimleri — 3-2 imajı ister), SMOKE_EVAL_KILL (1: SMOKE_EVAL_READ=1 iken SIGKILL adımı da koşar; 0: atla),
-#   SMOKE_KILL_TAKEOVER_MAX_S (300: SIGKILL'den sonra kiranın el değiştirmesi için en uzun bekleme — kira 180 sn + yenileyici).
+#   SMOKE_KILL_TAKEOVER_MAX_S (300: SIGKILL'den sonra kiranın el değiştirmesi için en uzun bekleme — kira 180 sn + yenileyici),
+#   SMOKE_DISTRIBUTED (0; 1: çok pod Sürüm 3-3 dağıtık kontrol denetimleri — 3-3 imajı ister), SMOKE_DIST_WORKERS_WAIT_S (300),
+#   SMOKE_DIST_RERUN_MAX_S (180: SIGKILL'den sonra ölen işçinin işlerinin başka pod'a geçmesi), SMOKE_DIST_DRAIN_MAX_S (120:
+#   devirden sonra eski DONE satırlarının boşalması), SMOKE_DIST_OFF_GRACE_S (12: kapatmadan sonra yeni iş beklenmeyen an),
+#   SMOKE_DIST_OFF_WATCH_S (60: kapatmadan sonra iş dizisinin izlendiği süre).
 # Gerekenler: docker, curl, bash. Yerel makinede koşulabilir (Git Bash dahil); prod/staging kümesine dokunmaz. JSON
 # alanları tek kullanımlık PostgreSQL kapsayıcısının json işleçleriyle okunur (jq gerekmez).
 # `set -e` bilerek YOK: denetimler hataları `err` ile toplayıp sonda tek karar verir (bir denetimin düşmesi ötekileri durdurmaz).
@@ -114,6 +127,16 @@ KILL_TAKEOVER_MAX_S="${SMOKE_KILL_TAKEOVER_MAX_S:-300}"
 case "$EVAL_READ" in 0|1) ;; *) echo "::error::SMOKE_EVAL_READ 0 | 1 olmalı"; exit 2 ;; esac
 case "$EVAL_KILL" in 0|1) ;; *) echo "::error::SMOKE_EVAL_KILL 0 | 1 olmalı"; exit 2 ;; esac
 case "$KILL_TAKEOVER_MAX_S" in ''|*[!0-9]*) echo "::error::SMOKE_KILL_TAKEOVER_MAX_S sayı olmalı (sn)"; exit 2 ;; esac
+DIST="${SMOKE_DISTRIBUTED:-0}"
+DIST_WORKERS_WAIT_S="${SMOKE_DIST_WORKERS_WAIT_S:-300}"
+DIST_RERUN_MAX_S="${SMOKE_DIST_RERUN_MAX_S:-180}"
+DIST_DRAIN_MAX_S="${SMOKE_DIST_DRAIN_MAX_S:-120}"
+DIST_OFF_GRACE_S="${SMOKE_DIST_OFF_GRACE_S:-12}"
+DIST_OFF_WATCH_S="${SMOKE_DIST_OFF_WATCH_S:-60}"
+case "$DIST" in 0|1) ;; *) echo "::error::SMOKE_DISTRIBUTED 0 | 1 olmalı"; exit 2 ;; esac
+for v in DIST_WORKERS_WAIT_S DIST_RERUN_MAX_S DIST_DRAIN_MAX_S DIST_OFF_GRACE_S DIST_OFF_WATCH_S; do
+  case "${!v}" in ''|*[!0-9]*) echo "::error::SMOKE_$v sayı olmalı (sn)"; exit 2 ;; esac
+done
 case "$EVAL_VERIFY_MS" in ''|*[!0-9]*) echo "::error::SMOKE_EVAL_VERIFY_MS sayı olmalı (ms)"; exit 2 ;; esac
 EVAL_WAIT_S="${SMOKE_EVAL_WAIT_S:-$(( EVAL_VERIFY_MS / 1000 * 4 + 60 ))}"
 case "$EVAL_WAIT_S" in ''|*[!0-9]*) echo "::error::SMOKE_EVAL_WAIT_S sayı olmalı (sn)"; exit 2 ;; esac
@@ -443,12 +466,140 @@ term_and_handover() {
   else err "kapanış ${STOPPED_S:-?} sn > ${SHUTDOWN_MAX_S} sn"; fi
 }
 
+# ── Dağıtık kontroller (çok pod Sürüm 3-3, yalnız SMOKE_DISTRIBUTED=1) ─────────────────────────
+DIST_KEY="site.monitor.checks.distributed.enabled"
+DIST_SUMMARY=""
+# db_now_ms → veritabanı saati (ms); monitor_check_jobs / monitor_check_workers zamanları bu saatle yazılır.
+db_now_ms() { psql_pg -c "SELECT (EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::bigint" 2>/dev/null | head -1; }
+# jobs_seq → monitor_check_jobs kimlik dizisinin son değeri: boşaltılıp silinen satırlarla da yalnız artar (hiç iş yoksa 0).
+jobs_seq() {
+  psql_pg -c "SELECT COALESCE(pg_sequence_last_value(pg_get_serial_sequence('monitor_check_jobs', 'id')::regclass), 0)" \
+    2>/dev/null | head -1
+}
+# dist_set <host> <true|false> — ana anahtarı Genel Ayarlar uç noktasıyla yazar (o pod hemen, öteki ≤ 10 sn ayar yenilemesiyle).
+dist_set() {
+  local body
+  body="$(api "$1" PUT /api/admin/general/settings "{\"values\":{\"$DIST_KEY\":\"$2\"}}")"
+  if [ "$(api_status)" = "200" ] && printf '%s' "$body" | grep -q '"success":true'; then
+    ok "$DIST_KEY = $2 kaydedildi ($1 üzerinden)"; return 0
+  fi
+  err "dağıtık kontrol anahtarı yazılamadı (HTTP $(api_status)) — imaj çok pod Sürüm 3-3 öncesi mi?: $(printf '%s' "$body" | head -c 300)"
+  return 1
+}
+# worker_live <host> → "<canlı süreç sayısı>|<en büyük completed>": nabzı ≤ 30 sn, durmayan, instance_id <host>-… işçi satırları.
+worker_live() {
+  psql_pg -c "SELECT COUNT(*), COALESCE(MAX(completed), 0) FROM monitor_check_workers
+              WHERE instance_id LIKE '$1-%' AND COALESCE(stopping, false) = false
+                AND heartbeat_ms >= (EXTRACT(EPOCH FROM clock_timestamp()) * 1000) - 30000" 2>/dev/null | head -1
+}
+# await_dist_workers <lider> <takipçi> <başlangıç (date +%s)> <etiket> — iki pod'un işçisi canlı ve takipçi iş tamamlamış olana
+# dek en çok DIST_WORKERS_WAIT_S bekler (başlangıçtan sayılır). Liderin tamamlaması 0 ise uyarı: lider kendi payıyla
+# (leader-share-pct, 16 yuvada 1) ancak takipçiyle yarışarak iş alır; küçük kuyrukta 0 kalabilir.
+await_dist_workers() {
+  local lead="$1" fol="$2" t0="$3" label="$4" el wl wf
+  while :; do
+    el=$(( $(date +%s) - t0 ))
+    wl="$(worker_live "$lead")"; wf="$(worker_live "$fol")"
+    if [ "${wl%%|*}" -ge 1 ] 2>/dev/null && [ "${wf%%|*}" -ge 1 ] 2>/dev/null && [ "${wf#*|}" -gt 0 ] 2>/dev/null; then
+      ok "$label: iki pod'un işçisi canlı — takipçi $fol ${wf#*|} iş, lider $lead ${wl#*|} iş tamamladı (~${el} sn)"
+      [ "${wl#*|}" -gt 0 ] 2>/dev/null \
+        || warn "$label: lider $lead henüz iş tamamlamadı (lider payı küçük kuyrukta 0 kalabilir; takipçi tamamladı)"
+      return 0
+    fi
+    if [ "$el" -ge "$DIST_WORKERS_WAIT_S" ]; then
+      err "$label: ${DIST_WORKERS_WAIT_S} sn içinde iki canlı işçi + takipçide tamamlanan iş görülmedi — lider ${wl:-?}, takipçi ${wf:-?} (canlı süreç|completed), iş dizisi $(jobs_seq)"
+      return 1
+    fi
+    sleep 10
+  done
+}
+# dist_kill_worker <kurban> <kalan> — kurban bir iş sahiplenene dek (≤ 240 sn) bekler, SIGKILL; o işler kira dolunca
+# (≤ DIST_RERUN_MAX_S) kurbandan çıkmalı (başka pod sahiplendi / bitirdi / biçildi) ve ölen pod ölümünden sonra iş bitirmez.
+DIST_RERUN_S=""
+dist_kill_worker() {
+  local victim="$1" survivor="$2" ids="" i t0 el left n kill_ms
+  DIST_RERUN_S=""
+  for i in $(seq 1 120); do
+    ids="$(psql_pg -c "SELECT STRING_AGG(id::text, ',' ORDER BY id) FROM monitor_check_jobs
+                       WHERE state = 'CLAIMED' AND claimed_by LIKE '$victim-%'" 2>/dev/null | head -1)"
+    [ -n "$ids" ] && break
+    sleep 2
+  done
+  [ -n "$ids" ] || warn "6e: $victim 240 sn içinde hiç iş sahiplenmedi — SIGKILL yine de denenir, yeniden koşma ölçülemez"
+  kill_ms="$(db_now_ms)"
+  t0="$(date +%s)"
+  docker kill --signal KILL "$(cname "$victim")" >/dev/null 2>&1 || { err "$victim öldürülemedi"; return 1; }
+  ok "$victim SIGKILL ile öldürüldü — sahiplendiği işler: ${ids:-—}"
+  [ -n "$ids" ] || return 0
+  while :; do
+    el=$(( $(date +%s) - t0 ))
+    left="$(psql_pg -c "SELECT COUNT(*) FROM monitor_check_jobs WHERE id IN ($ids) AND state = 'CLAIMED'
+                        AND claimed_by LIKE '$victim-%'" 2>/dev/null | head -1)"
+    if [ "${left:-x}" = "0" ]; then DIST_RERUN_S=$el; break; fi
+    [ "$el" -ge "$DIST_RERUN_MAX_S" ] && break
+    sleep 5
+  done
+  if [ -z "$DIST_RERUN_S" ]; then
+    err "6e: $victim'in işleri ${DIST_RERUN_MAX_S} sn içinde ondan çıkmadı (kira 150 sn): $(psql_pg -c "SELECT id, state, claimed_by, attempts FROM monitor_check_jobs WHERE id IN ($ids)" 2>/dev/null | tr '\n' ' ')"
+  else
+    ok "6e: $victim'in işleri ${DIST_RERUN_S} sn sonra ondan çıktı (kira dolunca $survivor sahiplendi / bitirdi / biçti):"
+    psql_pg -c "SELECT id, job_type, monitor_id, state, COALESCE(claimed_by, worker, '—'), attempts FROM monitor_check_jobs
+                WHERE id IN ($ids) ORDER BY id" 2>/dev/null | sed 's/^/    /'
+  fi
+  [ -n "$kill_ms" ] || { warn "6e: veritabanı saati okunamadı — geç tamamlama denetimi atlandı"; return 0; }
+  n="$(psql_pg -c "SELECT COUNT(*) FROM monitor_check_jobs WHERE worker LIKE '$victim-%' AND finished_ms > $kill_ms" 2>/dev/null | head -1)"
+  [ "${n:-x}" = "0" ] && ok "6e: ölen $victim ölümünden sonra iş bitirmedi (geç tamamlama yok)" \
+    || err "6e: ölen $victim'in ölümünden sonra bitmiş ${n:-?} işi var"
+}
+# dist_drained <önce (db ms)> <etiket> — bu andan ÖNCE biten DONE satırı kalmayana dek (yeni liderin boşaltıcısı) en çok
+# DIST_DRAIN_MAX_S bekler.
+dist_drained() {
+  local before="$1" label="$2" t0 el n
+  t0="$(date +%s)"
+  while :; do
+    el=$(( $(date +%s) - t0 ))
+    n="$(psql_pg -c "SELECT COUNT(*) FROM monitor_check_jobs WHERE state = 'DONE' AND finished_ms < $before" 2>/dev/null | head -1)"
+    if [ "${n:-x}" = "0" ]; then ok "$label: devirden önce biten sonuçlar boşaltıldı (kalan 0, ~${el} sn)"; return 0; fi
+    if [ "$el" -ge "$DIST_DRAIN_MAX_S" ]; then
+      err "$label: devirden önce biten ${n:-?} DONE satırı ${DIST_DRAIN_MAX_S} sn içinde boşaltılmadı — yeni liderin boşaltıcısı koşmuyor mu?"
+      return 1
+    fi
+    sleep 5
+  done
+}
+# dist_off — anahtarı kira sahibinde kapatır; DIST_OFF_GRACE_S sonra iş dizisi DIST_OFF_WATCH_S boyunca artmamalı (yeni iş yok)
+# ve klasik taramalar satır yazmalı. Kalan kuyruk satırları bilgi olarak yazılır (kapalıyken boşaltılmaz, yeniden açılışta atılır).
+dist_off() {
+  local lead off_ms since seq1 seq2 rows
+  lead="$(lease_holder)"
+  case "$lead" in pod-a|pod-b) ;; *) err "8e: geçerli kira sahibi yok ('${lead:-—}') — kapatma adımı koşmadı"; return 1 ;; esac
+  dist_set "$lead" false || return 1
+  off_ms="$(db_now_ms)"
+  sleep "$DIST_OFF_GRACE_S"
+  seq1="$(jobs_seq)"
+  since="$(psql_pg -c "SELECT to_char(to_timestamp(${off_ms:-0} / 1000.0 + $DIST_OFF_GRACE_S) AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS')" 2>/dev/null | head -1)"
+  sleep "$DIST_OFF_WATCH_S"
+  seq2="$(jobs_seq)"
+  rows="$(psql_pg -c "SELECT (SELECT COUNT(*) FROM port_checks WHERE checked_at > '$since') + (SELECT COUNT(*) FROM http_checks WHERE checked_at > '$since')" 2>/dev/null | head -1)"
+  if [ -n "$seq1" ] && [ "$seq1" = "$seq2" ]; then
+    ok "8e: kapatmadan ${DIST_OFF_GRACE_S} sn sonra ${DIST_OFF_WATCH_S} sn boyunca yeni iş gönderilmedi (iş dizisi $seq1)"
+  else
+    err "8e: anahtar kapandıktan sonra yeni iş gönderildi (iş dizisi ${seq1:-?} → ${seq2:-?})"
+  fi
+  [ "${rows:-0}" -gt 0 ] 2>/dev/null && ok "8e: klasik taramalar sürüyor ($since UTC sonrası $rows kontrol satırı)" \
+    || err "8e: kapatmadan sonra hiç kontrol satırı yok — klasik yol devralmadı"
+  echo "  kalan kuyruk (bilgi — kapalıyken boşaltılmaz, yeniden açılışta atılır): $(psql_pg -c "SELECT state || '=' || COUNT(*) FROM monitor_check_jobs GROUP BY state ORDER BY state" 2>/dev/null | tr '\n' ' ')"
+}
+
 echo "Çok pod duman testi — imaj $IMAGE, iş dizini $WORK"
 
 # ── 1. Ağ + PostgreSQL ────────────────────────────────────────────────────────────────────────
 step "1. Ağ ve tek kullanımlık PostgreSQL"
 docker network create "$NET" >/dev/null || { echo "::error::docker ağı kurulamadı"; exit 1; }
-docker run -d --name "$PG" --network "$NET" --network-alias pg \
+pg_aliases=(--network-alias pg)
+# Dağıtık kontrol koşusunun yavaş izlemeleri için ek adlar (aynı host:port ikinci kez izlenemez — ad farklı olmalı).
+if [ "$DIST" = "1" ]; then for i in $(seq 1 10); do pg_aliases+=(--network-alias "pg-slow$i"); done; fi
+docker run -d --name "$PG" --network "$NET" "${pg_aliases[@]}" \
   -e POSTGRES_DB="$DB_NAME" -e POSTGRES_USER="$DB_USER" -e POSTGRES_PASSWORD="$DB_PASS" "$PG_IMAGE" >/dev/null \
   || { echo "::error::PostgreSQL kapsayıcısı açılamadı"; exit 1; }
 for i in $(seq 1 60); do
@@ -512,6 +663,19 @@ create port "{\"name\":\"smoke-postgres\",\"host\":\"pg\",\"port\":5432,$common}
 create port "{\"name\":\"smoke-follower-port\",\"host\":\"$FOLLOWER\",\"port\":8080,$common}"
 create http "{\"name\":\"smoke-follower-health\",\"url\":\"http://$FOLLOWER:8080/health\",$common}"
 create http "{\"name\":\"smoke-follower-branding\",\"url\":\"http://$FOLLOWER:8080/api/branding\",$common}"
+DIST_T0=""
+if [ "$DIST" = "1" ]; then
+  # ~30 sn süren, hep düşen kontroller (PostgreSQL bağlantıyı açık tutar, banner göndermez → okuma zaman aşımı): SIGKILL
+  # anında takipçinin elinde sahiplenilmiş bir iş olsun. Aynı dönemde gönderilen on işin en çok sekizini lider kendi payıyla
+  # (16 yuvanın yarısı) alabilir — takipçiye her dönem iş kalır. Teyitsiz (0) — doğrulama yeniden kontrolleri dönem
+  # satırlarına karışmaz.
+  for i in $(seq 1 10); do
+    create port "{\"name\":\"smoke-slow-banner-$i\",\"host\":\"pg-slow$i\",\"port\":5432,\"protocol\":\"BANNER\",\"expect\":\"SMOKE-NEVER\",\"timeoutMs\":30000,\"confirmAttempts\":0,$common}"
+  done
+  step "5b. Dağıtık kontroller açılır ($DIST_KEY = true, tüm türler) — lider $LEADER üzerinden"
+  DIST_T0="$(date +%s)"
+  dist_set "$LEADER" true || DIST=0
+fi
 
 # ── 6. Taramalar ──────────────────────────────────────────────────────────────────────────────
 step "6. Taramalar ${SWEEP_S} sn (lider el değiştirmemeli)"
@@ -522,7 +686,7 @@ while [ "$t" -lt "$SWEEP_S" ]; do
   if [ "$cur" != "$LEADER" ]; then flaps=$((flaps + 1)); echo "  ! ${t}s: kira sahibi '$cur' (beklenen $LEADER)"; fi
   v=$(( $(held_by_me pod-a) + $(held_by_me pod-b) ))
   [ "$v" -gt 1 ] && { double=$((double + 1)); echo "  ! ${t}s: $v pod kendini lider sanıyor"; }
-  [ $((t % 120)) -eq 0 ] && echo "  ${t}s: lider $cur, kontrol satırı port=$(psql_pg -c 'SELECT COUNT(*) FROM port_checks') http=$(psql_pg -c 'SELECT COUNT(*) FROM http_checks')"
+  [ $((t % 120)) -eq 0 ] && echo "  ${t}s: lider $cur, kontrol satırı port=$(psql_pg -c 'SELECT COUNT(*) FROM port_checks') http=$(psql_pg -c 'SELECT COUNT(*) FROM http_checks')${DIST_T0:+, iş dizisi $(jobs_seq)}"
 done
 [ "$flaps" -eq 0 ] && ok "kira $SWEEP_S sn boyunca $LEADER'da kaldı" || err "kira sabit durumda $flaps kez el değiştirdi"
 [ "$double" -eq 0 ] && ok "hiçbir anda iki pod kendini lider saymadı" || err "$double ölçümde iki pod kendini lider saydı"
@@ -543,9 +707,27 @@ if [ "$EVAL_READ" = "1" ]; then
   if [ "$EVAL_SKIP" = "1" ]; then err "SMOKE_EVAL_READ=1: data.eval_state yok — imaj çok pod Sürüm 3-2 öncesi"; else enable_eval_read; fi
 fi
 
+# ── 6d / 6e. Dağıtık kontroller: işçiler, takipçiye SIGKILL (çok pod Sürüm 3-3, SMOKE_DISTRIBUTED=1) ────────────
+if [ "$DIST" = "1" ]; then
+  step "6d. Dağıtık kontroller — iki pod'un işçisi canlı, takipçi iş tamamladı (açılıştan ≤ ${DIST_WORKERS_WAIT_S} sn)"
+  s0="$(jobs_seq)"
+  [ "${s0:-0}" -gt 0 ] 2>/dev/null && ok "kuyruğa iş gönderildi (iş dizisi $s0)" \
+    || err "hiç iş gönderilmedi (iş dizisi ${s0:-?}) — dağıtık kip etkinleşmedi mi? (Sistem Sağlığı → Küme 'Dağıtık kontroller')"
+  await_dist_workers "$LEADER" "$FOLLOWER" "$DIST_T0" "6d"
+  step "6e. Takipçiye ($FOLLOWER) SIGKILL — sahiplendiği işler kira dolunca (≤ ${DIST_RERUN_MAX_S} sn) başka pod'a geçer"
+  dist_kill_worker "$FOLLOWER" "$LEADER"
+  if docker start "$(cname "$FOLLOWER")" >/dev/null 2>&1 && wait_ready "$FOLLOWER"; then
+    await_dist_workers "$LEADER" "$FOLLOWER" "$(date +%s)" "6e yeniden açılış"
+  else
+    err "$FOLLOWER SIGKILL'den sonra yeniden açılamadı"
+  fi
+  DIST_SUMMARY="işçiler tamam, SIGKILL sonrası işler ${DIST_RERUN_S:-?} sn'de geçti"
+fi
+
 # ── 7. Lidere SIGTERM → devir ─────────────────────────────────────────────────────────────────
 step "7. Lidere ($LEADER) SIGTERM — devir ≤ ${HANDOVER_MAX_S} sn, kapanış ≤ ${SHUTDOWN_MAX_S} sn"
 t0_iso="$(iso_utc)"
+dist_t7=""; [ "$DIST" = "1" ] && dist_t7="$(db_now_ms)"
 term_and_handover "$LEADER" "$FOLLOWER"
 handover="$HANDOVER_S"; stopped="$STOPPED_S"
 [ "$EVAL_READ" = "1" ] && [ "$EVAL_SKIP" != "1" ] && handover_marked "$LEADER"
@@ -556,6 +738,7 @@ sleep "$POST_HANDOVER_S"
 after="$(psql_pg -c "SELECT (SELECT COUNT(*) FROM port_checks WHERE checked_at > '$t0_iso') + (SELECT COUNT(*) FROM http_checks WHERE checked_at > '$t0_iso')")"
 [ "${after:-0}" -gt 0 ] && ok "devirden sonra $after kontrol satırı" || err "devirden sonra hiç kontrol satırı yok — yeni lider taramıyor"
 [ "$(lease_holder)" = "$FOLLOWER" ] && ok "kira hâlâ $FOLLOWER'da" || err "kira devirden sonra $FOLLOWER'da kalmadı: $(lease_info)"
+[ -n "$dist_t7" ] && dist_drained "$dist_t7" "devirden sonra $FOLLOWER"
 
 # ── 8b. Kalıcı değerlendirme durumu — devirden sonra yeni lider ───────────────────────────────
 if [ "$EVAL_SKIP" != "1" ]; then
@@ -571,8 +754,10 @@ flip_back=""
 if [ "$FLIP_BACK" = "1" ]; then
   step "8c. Geri devir — $LEADER yeniden açılır, $FOLLOWER'a SIGTERM, kira $LEADER'a döner; sonra $FOLLOWER da yeniden açılır"
   if docker start "$(cname "$LEADER")" >/dev/null 2>&1 && wait_ready "$LEADER"; then
+    dist_t8=""; [ "$DIST" = "1" ] && dist_t8="$(db_now_ms)"
     term_and_handover "$FOLLOWER" "$LEADER"
     flip_back="$HANDOVER_S"
+    [ -n "$dist_t8" ] && dist_drained "$dist_t8" "geri devirden sonra $LEADER"
     # Taslak izlemeler $FOLLOWER'ın uçlarını hedefler: pod geri gelsin, izlemeler düzelsin, küme yine iki pod'la bitsin.
     if docker start "$(cname "$FOLLOWER")" >/dev/null 2>&1 && wait_ready "$FOLLOWER"; then
       views=$(( $(held_by_me pod-a) + $(held_by_me pod-b) ))
@@ -625,10 +810,24 @@ if [ "$EVAL_READ" = "1" ] && [ "$EVAL_KILL" = "1" ] && [ "$EVAL_SKIP" != "1" ]; 
   fi
 fi
 
+# ── 8e. Dağıtık kontroller kapatılır → klasik (çok pod Sürüm 3-3, SMOKE_DISTRIBUTED=1) ──────────
+if [ "$DIST" = "1" ]; then
+  step "8e. Ana anahtar kapatılır — ${DIST_OFF_GRACE_S} sn sonra yeni iş yok, klasik taramalar sürer"
+  for h in pod-a pod-b; do
+    if [ "$(docker inspect -f '{{.State.Running}}' "$(cname "$h")" 2>/dev/null)" != "true" ]; then
+      { docker start "$(cname "$h")" >/dev/null 2>&1 && wait_ready "$h"; } || warn "8e: $h açılamadı"
+    fi
+  done
+  dist_off && DIST_SUMMARY="${DIST_SUMMARY:+$DIST_SUMMARY, }kapatma → klasik"
+fi
+
 # ── 9. Çift-iş dedektörü ──────────────────────────────────────────────────────────────────────
 step "9. Çift-iş dedektörü (scripts/multipod-dup-check.sql)"
 dup_out="$WORK/multipod-dup-check.txt"
-docker exec -i "$PG" psql -X -U "$DB_USER" -d "$DB_NAME" -v ON_ERROR_STOP=0 < "$DUP_SQL" > "$dup_out" 2>&1
+dup_vars=()
+# Dağıtık koşu: dönem çiftleri (bölüm 9b) anahtar kapatılmış olsa da sayılır — taslak izlemelerde "Şimdi kontrol et" yok.
+[ "$DIST" = "1" ] && dup_vars=(-v period_strict=1)
+docker exec -i "$PG" psql -X -U "$DB_USER" -d "$DB_NAME" -v ON_ERROR_STOP=0 ${dup_vars[@]+"${dup_vars[@]}"} < "$DUP_SQL" > "$dup_out" 2>&1
 judge_dup_output "$dup_out"
 
 # ── 10. Günlükler ─────────────────────────────────────────────────────────────────────────────
@@ -646,4 +845,4 @@ done
 
 echo
 if [ "$fail" -ne 0 ]; then echo "Çok pod duman testi BAŞARISIZ."; exit 1; fi
-echo "Çok pod duman testi: tamam (lider $LEADER → $FOLLOWER, devir ${handover} sn, kapanış ${stopped} sn${flip_back:+; geri devir $FOLLOWER → $LEADER ${flip_back} sn}${GEN1:+; kalıcı durum kuşakları $GEN1${GEN2:+ → $GEN2}${GEN3:+ → $GEN3}, doğrulama 0 uyuşmazlık}${LOAD_OUTS:+; devirde yüklenen: $LOAD_OUTS})."
+echo "Çok pod duman testi: tamam (lider $LEADER → $FOLLOWER, devir ${handover} sn, kapanış ${stopped} sn${flip_back:+; geri devir $FOLLOWER → $LEADER ${flip_back} sn}${GEN1:+; kalıcı durum kuşakları $GEN1${GEN2:+ → $GEN2}${GEN3:+ → $GEN3}, doğrulama 0 uyuşmazlık}${LOAD_OUTS:+; devirde yüklenen: $LOAD_OUTS}${DIST_SUMMARY:+; dağıtık kontroller: $DIST_SUMMARY})."
