@@ -1076,9 +1076,9 @@ anahtarı, Küme kartında "Dağıtık kontroller: Kapalı" ve kendi kendini izl
   olursa yine gönderir ve değerlendirir. Yuva sayısı `CHECK_WORKER_SLOTS` (16, 1–64, açılışta okunur).
 - **Sorun giderme:**
   - **Kuyruk büyüyor / en eski bekleyen iş 30 sn'yi aşıyor:** işçiler yetişemiyor. Küme kartında işçiler canlı mı, yuvalar
-    dolu mu (Grafana "Kontrol yuvası doluluğu"), sahiplenme p95 ne? Bir pod `poll-ms` (1 sn) başına en çok yuva sayısı kadar iş
-    alır (varsayılanlarla pod başına 16 / sn, liderde yarısı) — aynı ana denk gelen dönemlerde (yeniden başlatma, devir sonrası)
-    birkaç saniyelik kuyruk olağandır. Kalıcıysa: pod ekleyin, `CHECK_WORKER_SLOTS`'u artırın (yeniden başlatma) ya da son
+    dolu mu (Grafana "Kontrol yuvası doluluğu"), sahiplenme p95 ne? Bir pod istediği kadar iş bulduğu turdan sonra yuvası boşalır
+    boşalmaz (en çok 50 ms arayla) yeni iş alır; liderde yuvaların yarısı — aynı ana denk gelen dönemlerde (yeniden başlatma,
+    devir sonrası) birkaç saniyelik kuyruk olağandır. Kalıcıysa: pod ekleyin, `CHECK_WORKER_SLOTS`'u artırın (yeniden başlatma) ya da son
     eklenen türü listeden çıkarın. Doymuş kümede bir izlemenin dönemleri tek açık işe birleşir (izleme daha seyrek kontrol
     edilir), kuyruk sınırsız büyümez. İşçide `Dağıtık kontrol sonuçları yazılamıyor — birikim dolu` = tamamlamalar veritabanına
     yazılamıyor (bağlantı havuzu / DB); yazılana dek o pod yeni iş almaz.
@@ -1126,8 +1126,8 @@ anahtarı, Küme kartında "Dağıtık kontroller: Kapalı" ve kendi kendini izl
 - **Bilinen sınırlar (kabul edildi):** işçisi ölen iş kira dolunca en az bir kez daha koşar (ölen pod sonucu yazmadıysa),
   ikinci ölümde düşer; donan (kendi zaman aşımını bile işletemeyen) bir işçinin işi başka pod'da yeniden koşarsa o dönem iki
   geçmiş satırı olur, geç sonuç atılır; bütün teyit ve kurtarma yeniden kontrolleri liderin 4 + 2 iş parçacığında koşar (ağ
-  dışı toplu arızada zincir adımları sıra bekler); bir pod'un sahiplenme kadansı `poll-ms` başına en çok yuva sayısı kadardır
-  (üç pod'da varsayılanlarla ≈ 40 kontrol / sn, tasarım hedefi 35 / sn); devirden sonra boşaltıcı birikimi bitirene dek klasik
+  dışı toplu arızada zincir adımları sıra bekler); aynı ana denk gelen dönemlerde (yeniden başlatma, devir sonrası) birkaç
+  saniyelik kuyruk olur; devirden sonra boşaltıcı birikimi bitirene dek klasik
   bir tıkı bir kez atlayabilir (DNS'te 300 sn'ye dek gecikme); bekletilen dönemler, gönderim sağlığı ve klasik damgalar lider
   belleğindedir — liderlik değişince izleme başına en çok bir dönem kaybolur ya da sonuç güvenli tarafta atılır (asla çift
   değil); aynı alarm anahtarını paylaşan iki izleme her dönem birer kez sayıldığından paylaşılan alarm klasikten erken
