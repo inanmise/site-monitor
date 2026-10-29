@@ -351,6 +351,10 @@ public class AppSettingsService {
         if (com.sitemonitor.service.metrics.MetricsExportSettings.isKey(s.key())) {
             com.sitemonitor.service.metrics.MetricsExportSettings.validate(s.key(), val);
         }
+        // Dağıtık kontrol türleri (2026-10-29, çok pod Sürüm 3-3): yalnız bilinen sekiz ad — alan hatası distributed_types.
+        if (com.sitemonitor.service.checks.DistributedChecks.KEY_TYPES.equals(s.key())) {
+            com.sitemonitor.service.checks.CheckJobTypes.validateSetting(val);
+        }
         // Kendi kendini izleme (2026-10-11): aralıklar ve alıcı biçimleri — hangi uçtan yazılırsa yazılsın aynı kural.
         if (com.sitemonitor.service.watchdog.WatchdogSettings.isKey(s.key())) {
             com.sitemonitor.service.watchdog.WatchdogSettings.validate(s.key(), val);

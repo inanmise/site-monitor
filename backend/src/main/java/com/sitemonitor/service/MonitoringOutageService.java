@@ -743,6 +743,30 @@ public class MonitoringOutageService implements EvalStateSource {
         evalGate.endHandover();
     }
 
+    // ── R3-3 P0 (çok pod Sürüm 3-3, ortak sözleşme) ─────────────────────────────────────────────────────────────────
+
+    /**
+     * Toplu değerlendirme bileti (2026-10-29, çok pod Sürüm 3-3 P0, tasarım R3-3 §4.3) = değerlendirme kapısının GİRİŞİ
+     * ({@link EvalLoadGate#enter()}): dağıtık kontrol sonuçlarının boşaltıcısı (paket C) bir alma + uygulama turunu bu
+     * biletle sarar — {@code try (var t = mos.evalBatchTicket()) { take; apply; }}.
+     *
+     * <ul>
+     *   <li>Kapı NONE: sayar, hemen döner (bir sayaç artırma + bir volatile okuma).</li>
+     *   <li>Kapı LOADING (3-2 devir yüklemesi): yükleme bitene / son tarihe dek BEKLER — yükleme yarım belleğe karar
+     *       verdirilmez (J-3). HANDOVER: en çok {@link EvalLoadGate#HANDOVER_WAIT_MS} bekler.</li>
+     *   <li>Sayılır: devirde {@code awaitEvalQuiescent} bu biletin kapanmasını bekler (bilet açıkken durulma false); yükleme
+     *       uygulaması bilet açıkken boş olmayan belleğe uygulamaz.</li>
+     *   <li>YENİDEN GİRİLEBİLİR: bilet açıkken aynı iş parçacığındaki {@code handleSweepResults} / {@code handleDnsSweep}
+     *       yeniden beklemez, yeniden sayılmaz.</li>
+     * </ul>
+     * Bileti mutlaka kapatın (try-with-resources); {@code close()} asla fırlatmaz. Bilet karar VERMEZ — liderlik
+     * ({@code isSweepLeaderNow()}) ve zamanlanmış sonuç çiti ayrıca geçerlidir.
+     */
+    public EvalLoadGate.Ticket evalBatchTicket() {
+        return evalGate.enter();
+    }
+    // ── /R3-3 P0 ─────────────────────────────────────────────────────────────────────────────────────────────────────
+
     // ── Kalıcı değerlendirme durumu: ikili yazım kancaları (2026-10-23, çok pod Sürüm 3-1 A2, tasarım R3-1 §2.5) ───────
     //
     // Sıfırlama (resetVolatileState) kanca ÇAĞIRMAZ: kaydedici aynı liderlik olayını dinler (LOST / RELEASED → bekleyenleri

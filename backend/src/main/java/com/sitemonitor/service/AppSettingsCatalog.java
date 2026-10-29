@@ -152,6 +152,12 @@ public final class AppSettingsCatalog {
         // (bayat sertifika, TLS profili, yönetici özeti telafisi) başka canlı pod varken bırakır. false = 20.167.0 yerleşimi.
         // CANLI (SideJobPlacement); tüm pod'ların yük dağılımını belirler → GLOBAL_ONLY (aşağıda). Anahtar: SideJob.LEADER_YIELD_KEY.
         new Setting("site.monitor.scheduler.leader-yield.enabled", "scheduler", Type.BOOL),
+        // Çok pod Sürüm 3-3 (2026-10-29, kullanıcı kararı U-1): dağıtık izleme kontrolleri — tarama lideri işleri gönderir,
+        // her pod koşar, lider değerlendirir. VARSAYILAN KAPALI; kapalı = 20.169.0. Türler tek tek açılır (port, ping, http,
+        // keyword, page, pagespeed, dns, scripted). CANLI (DistributedChecks); kurum geneli → GLOBAL_ONLY (aşağıda).
+        // Anahtarlar: DistributedChecks.KEY_ENABLED / KEY_TYPES; tür listesi save'de doğrulanır (CheckJobTypes.validateSetting).
+        new Setting("site.monitor.checks.distributed.enabled",   "scheduler",  Type.BOOL),
+        new Setting("site.monitor.checks.distributed.types",     "scheduler",  Type.CSV),
         new Setting("site.monitor.uptime.alert-enabled",         "monitoring", Type.BOOL),
         new Setting("site.monitor.port.alert-enabled",           "monitoring", Type.BOOL),
         // SSRF koruması — giden izleme/tanılama hedefleri (SsrfGuard). Metadata/loopback/link-local her zaman blok.
@@ -717,7 +723,10 @@ public final class AppSettingsCatalog {
         "site.monitor.eval-state.mode",
         "site.monitor.scheduler.leader-yield.enabled",
         // 2026-10-28 (çok pod Sürüm 3-2): devirde okuma — her pod'un devir davranışını belirler; kurum geneli karar.
-        "site.monitor.eval-state.read-enabled"
+        "site.monitor.eval-state.read-enabled",
+        // 2026-10-29 (çok pod Sürüm 3-3): dağıtık kontroller — TÜM pod'ların kontrol yükünü ve iş yerleşimini belirler.
+        "site.monitor.checks.distributed.enabled",
+        "site.monitor.checks.distributed.types"
     ));
 
     /**

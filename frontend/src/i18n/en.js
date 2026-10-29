@@ -2497,6 +2497,14 @@ export const EN = {
   'help.set.site.monitor.eval-state.read-enabled':
     "What it does: When sweep leadership moves to another pod, the new leader loads the alarm evaluation state its predecessor recorded in the database: after a clean handover (graceful shutdown) recovery counters, DOWN sibling monitors, suppression, type rounds and the suppression window; after a crash or lease expiry only observations (DOWN siblings and the window). Running confirmation chains always restart. When off, every handover starts from scratch as today.\nBenefit: Alarms keep their consecutive-healthy counters across deploys and restarts, and a shared alarm is not closed early while a sibling monitor is still DOWN.\nRecommended: false (default). Turn on only after at least 7 days of clean VERIFY on two production pods; turning it off is instantly safe (the next handover behaves as today). No effect while the recording mode is off.",
   // ── /multi-pod R3-2 · P0 ──
+  // ── multi-pod R3-3 · P0 ──
+  'general.lbl.site.monitor.checks.distributed.enabled': 'Distributed monitoring checks (multi-pod)',
+  'general.lbl.site.monitor.checks.distributed.types': 'Distributed check types (comma separated)',
+  'help.set.site.monitor.checks.distributed.enabled':
+    "What it does: Instead of running due port, ping, HTTP, keyword, page, page speed, DNS and scripted checks itself, the sweep leader writes them to a job queue; every pod (the leader with half of its slots) takes and runs them, and alarm decisions are still taken by the leader alone. While no other live worker pod exists, a type runs on the leader as today.\nBenefit: The check load is spread over the pods, check delay drops when there are many monitors, and the leader concentrates on rechecks and decisions.\nRecommended: false (the default). Turn it on only when every pod runs this release and every pod has the same network egress; add the types one by one in the list below. Turning it off is instantly safe (the types return to today's classic sweep).",
+  'help.set.site.monitor.checks.distributed.types':
+    "What it does: Selects which monitor types are checked in a distributed way while the master switch is on. Allowed names (comma separated): port, ping, http, keyword, page, pagespeed, dns, scripted. A type that is not in the list is checked on the leader as today.\nBenefit: Turning the types on step by step (port and ping first, then http and keyword, then page and pagespeed, then dns, scripted last) means a problem affects one type only.\nRecommended: port,ping as the first step; after each step watch the duplicate-check and delay figures for a few days before adding the next types. Leaving it empty means all eight types.",
+  // ── /multi-pod R3-3 · P0 ──
   'general.lbl.site.monitor.uptime.alert-enabled':         'Uptime Alerts',
   'general.lbl.site.monitor.port.alert-enabled':           'Port Alerts',
   'general.lbl.site.monitor.dns.alert-enabled':            'DNS Alerts',

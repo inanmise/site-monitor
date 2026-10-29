@@ -2499,6 +2499,14 @@ export const TR = {
   'help.set.site.monitor.eval-state.read-enabled':
     "Ne işe yarar: Tarama liderliği başka pod'a geçince yeni lider, öncekinin veritabanına kaydettiği alarm değerlendirme durumunu yükler: temiz devirde (zarif kapanış) kurtarma sayaçları, DOWN kardeş izlemeler, bastırma, tür turları ve bastırma penceresi; çökme / kira süresi dolmasında yalnız gözlemler (DOWN kardeşler ve pencere). Süren teyit zincirleri her durumda yeniden başlar. Kapalıyken her devir bugünkü gibi sıfırdan başlar.\nFaydası: Dağıtım ve yeniden başlatmalarda alarmlar ardışık sağlıklı sayaçlarını kaybetmez; paylaşılan alarm, DOWN kardeşi varken erken kapanmaz.\nÖnerilen değer: false (varsayılan). Yalnız iki prod pod'unda en az 7 gün temiz doğrulamadan sonra true; kapatmak anında güvenlidir (sonraki devir bugünkü gibi). Kayıt kipi off iken etkisizdir.",
   // ── /multi-pod R3-2 · P0 ──
+  // ── multi-pod R3-3 · P0 ──
+  'general.lbl.site.monitor.checks.distributed.enabled': 'Dağıtık izleme kontrolleri (çok pod)',
+  'general.lbl.site.monitor.checks.distributed.types': 'Dağıtık kontrol türleri (virgülle)',
+  'help.set.site.monitor.checks.distributed.enabled':
+    "Ne işe yarar: Tarama lideri vadesi gelen port, ping, HTTP, içerik, sayfa, sayfa hızı, DNS ve senaryo kontrollerini kendisi yapmak yerine bir iş kuyruğuna yazar; her pod (lider kendi yuvalarının yarısıyla) işleri alıp koşar, alarm kararlarını yine yalnız lider verir. Başka canlı işçi pod yokken tür bugünkü gibi liderde koşar.\nFaydası: Kontrol yükü pod'lara yayılır; çok sayıda izlemede kontrol gecikmesi düşer, lider yeniden kontrollere ve kararlara odaklanır.\nÖnerilen değer: false (varsayılan). Yalnız tüm pod'lar bu sürümdeyken ve her pod aynı ağ çıkışına sahipken açın; türleri aşağıdaki listeden tek tek ekleyin. Kapatmak anında güvenlidir (türler bugünkü klasik taramaya döner).",
+  'help.set.site.monitor.checks.distributed.types':
+    "Ne işe yarar: Ana anahtar açıkken hangi izleme türlerinin dağıtık kontrol edileceğini belirler. İzinli adlar (virgülle): port, ping, http, keyword, page, pagespeed, dns, scripted. Listede olmayan tür liderde bugünkü gibi kontrol edilir.\nFaydası: Türleri sırayla açmak (önce port ve ping, sonra http ve keyword, sonra page ve pagespeed, sonra dns, en son scripted) bir sorunun yalnız bir türü etkilemesini sağlar.\nÖnerilen değer: İlk adımda port,ping; her adımdan sonra birkaç gün çift kontrol ve gecikme ölçümlerine bakıp sonraki türleri ekleyin. Boş bırakmak sekiz türün hepsi demektir.",
+  // ── /multi-pod R3-3 · P0 ──
   'general.lbl.site.monitor.uptime.alert-enabled':         'Uptime Alarmı',
   'general.lbl.site.monitor.port.alert-enabled':           'Port Alarmı',
   'general.lbl.site.monitor.dns.alert-enabled':            'DNS Alarmı',
