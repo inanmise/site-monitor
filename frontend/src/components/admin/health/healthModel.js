@@ -8,7 +8,7 @@ import { watchdogReasons } from './watchdogModel.js'
  * tamamen düşmesi, heap ≥ %85 (tek pod, OOM = kesinti), HTTP hata oranı > %5, push başarı oranı < %90.
  */
 import { toUtc } from '../../../utils/localDay.js'
-import { evalStateModel, sideJobsModel } from './clusterRuntimeModel.js'
+import { evalStateModel, sideJobsModel, certChunksModel } from './clusterRuntimeModel.js'
 
 export const SECTION_KEYS = ['watchdog', 'sys', 'sched', 'db', 'integrations', 'heartbeat', 'releases', 'users', 'http']
 
@@ -322,7 +322,9 @@ export function clusterModel(health) {
   // Çok pod R3-1 (paket B): kalıcı değerlendirme durumu (küme doğrulaması + bu pod'un kaydedicisi) ve bu pod'un yan işleri
   const evalState = evalStateModel(h)
   const sideJobs = sideJobsModel(h)
-  if (!sl) return { available: false, pod, leader: null, thisPod: null, cacheBus: h.cache_bus ?? null, evalState, sideJobs, level: 'unknown' }
+  // Çok pod Sürüm 3-4 (paket C1): parçalı sertifika taraması — Küme kartında ayrı bölüm; kart seviyesine yalnız uyarısı katılır
+  const certChunks = certChunksModel(h)
+  if (!sl) return { available: false, pod, leader: null, thisPod: null, cacheBus: h.cache_bus ?? null, evalState, sideJobs, certChunks, level: 'unknown' }
   const known = !sl.error
   const leaderless = known && (!sl.owner || !!sl.expired)
   const leader = { known, owner: sl.owner ?? null, ownerPod: sl.owner_pod ?? sl.owner ?? null, until: sl.until ?? null,
@@ -345,8 +347,8 @@ export function clusterModel(health) {
   const lostLocks = (thisPod.heldLocks || []).filter((l) => l?.state === 'LOST').length
   const level = !known ? 'unknown'
     : leaderless || thisPod.wedgeYieldedAt || cacheLevel === 'warn' || lostLocks > 0 || (thisPod.skippedRounds?.length || 0) > 0
-      || evalState?.level === 'warn' ? 'warn' : 'ok'
-  return { available: true, pod, leader, thisPod, cacheBus: cb, cacheLevel, cacheStale, lostLocks, evalState, sideJobs, level }
+      || evalState?.level === 'warn' || certChunks?.level === 'warn' ? 'warn' : 'ok'
+  return { available: true, pod, leader, thisPod, cacheBus: cb, cacheLevel, cacheStale, lostLocks, evalState, sideJobs, certChunks, level }
 }
 
 /** Önbellek yolu yoklamasının bayatlık sınırı (ms) — yoklama 2 sn'de bir; 15 yoklama başarısızsa uyarı. */

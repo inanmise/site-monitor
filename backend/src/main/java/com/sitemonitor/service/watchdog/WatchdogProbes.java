@@ -123,6 +123,9 @@ public class WatchdogProbes {
     private com.sitemonitor.service.checks.DistributedChecks distributedChecks;
     private com.sitemonitor.service.checks.CheckJobStore checkJobStore;
     private com.sitemonitor.service.checks.CheckWorkerRegistry checkWorkerRegistry;
+    /** Çok pod R3-4 (paket C1): parçalı sertifika taraması — anahtar (bellek), koşu deposu (yalnız açıkken SQL). */
+    private com.sitemonitor.service.certsweep.CertChunking certChunking;
+    private com.sitemonitor.service.certsweep.CertSweepStore certSweepStore;
 
     @Value("${site.monitor.scheduler.sweep-leader-ttl-ms:180000}")
     private long leaseTtlMs = 180_000;
@@ -144,6 +147,8 @@ public class WatchdogProbes {
     @Autowired(required = false) public void setDistributedChecks(com.sitemonitor.service.checks.DistributedChecks v) { this.distributedChecks = v; }
     @Autowired(required = false) public void setCheckJobStore(com.sitemonitor.service.checks.CheckJobStore v) { this.checkJobStore = v; }
     @Autowired(required = false) public void setCheckWorkerRegistry(com.sitemonitor.service.checks.CheckWorkerRegistry v) { this.checkWorkerRegistry = v; }
+    @Autowired(required = false) public void setCertChunking(com.sitemonitor.service.certsweep.CertChunking v) { this.certChunking = v; }
+    @Autowired(required = false) public void setCertSweepStore(com.sitemonitor.service.certsweep.CertSweepStore v) { this.certSweepStore = v; }
 
     /** Tüm kontroller katalog sırasıyla. */
     public List<Probe> runAll(Instant now) {
@@ -229,7 +234,52 @@ public class WatchdogProbes {
         f.put("limit_hours", limit);
         f.put("active_certificates", active);
         boolean problem = Duration.between(at, now).toMinutes() > limit * 60L;
+        certChunkFacts(f);
         return new Probe(WatchdogCheck.CERT_SWEEP, problem ? Result.PROBLEM : Result.OK, WatchdogCheck.CERT_SWEEP.severity().name(), f);
+    }
+
+    /** Parçalı tarama olgularının okuduğu en çok koşu (depo sınırı). */
+    static final int CERT_CHUNK_STATUS_RUNS = 20;
+    /** Terk edilmiş koşu penceresi (ms). */
+    static final long CERT_CHUNK_ABANDON_WINDOW_MS = 24L * 3_600_000L;
+
+    /**
+     * Parçalı sertifika taraması olguları (çok pod R3-4, tasarım §7.5 — YENİ KONTROL YOK, karar DEĞİŞMEZ): yalnız anahtar AÇIKKEN
+     * (kapalı: tek bellek okuması, sorgu ve olgu yok — L-1) tek {@code CertSweepStore.status} okuması → {@code chunked: true},
+     * {@code chunked_run_age_s} (açık koşunun yaşı; yoksa null), {@code oldest_pending_chunk_s} (en eski bekleyen parça; yoksa
+     * null), {@code abandoned_runs_24h} (+ {@code abandoned_runs_24h_lower_bound} — okunan koşular pencereyi kapsamıyorsa).
+     * Okunamadı → {@code chunked_status: unreadable}. Takılan ya da ölen parçalı tur hiçbir şey KAYDETMEZ — {@code latest_checks}
+     * tazeliği (bu kontrolün kararı) ve 2 sa tarama alarmı onu klasik tur gibi yakalar.
+     */
+    void certChunkFacts(Map<String, Object> f) {
+        if (certChunking == null || certSweepStore == null) return;
+        boolean on;
+        try {
+            on = certChunking.enabled();
+        } catch (RuntimeException e) {
+            on = false;
+        }
+        if (!on) return;
+        f.put("chunked", true);
+        com.sitemonitor.service.certsweep.CertSweepStatus st;
+        try {
+            st = certSweepStore.status(CERT_CHUNK_STATUS_RUNS);
+        } catch (RuntimeException e) {
+            f.put("chunked_status", "unreadable");
+            return;
+        }
+        if (st == null) {
+            f.put("chunked_status", "unreadable");
+            return;
+        }
+        com.sitemonitor.service.certsweep.CertSweepStatus.Run open = st.openRun();
+        f.put("chunked_run_age_s", open == null ? null : open.ageMs(st.nowMs()) / 1000L);
+        Long oldest = st.oldestPendingAgeMs();
+        f.put("oldest_pending_chunk_s", oldest == null ? null : oldest / 1000L);
+        long[] ab = com.sitemonitor.service.certsweep.CertSweepView.abandonedSince(st, st.nowMs() - CERT_CHUNK_ABANDON_WINDOW_MS,
+                CERT_CHUNK_STATUS_RUNS);
+        f.put("abandoned_runs_24h", ab[0]);
+        if (ab[1] == 0) f.put("abandoned_runs_24h_lower_bound", true);
     }
 
     Probe notifications(Instant now) {

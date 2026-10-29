@@ -111,7 +111,7 @@
       }
     } ]
   },
-  "description" : "SiteMonitor izleme durumu, alarmlar, sertifikalar ve sistemin kendi sağlığı — takım ve tür süzgeçli. Pano revizyonu 7 · SiteMonitor 0.0.0-gate.",
+  "description" : "SiteMonitor izleme durumu, alarmlar, sertifikalar ve sistemin kendi sağlığı — takım ve tür süzgeçli. Pano revizyonu 8 · SiteMonitor 0.0.0-gate.",
   "editable" : true,
   "fiscalYearStartMonth" : 0,
   "graphTooltip" : 1,
@@ -11098,6 +11098,599 @@
         "y" : 299
       },
       "id" : 119
+    }, {
+      "type" : "stat",
+      "title" : "Bekleyen sertifika parçası",
+      "description" : "Açık parçalı sertifika turunda henüz bir pod'un almadığı parçalar (parça başına 20 alan adı). Açık tur yokken 0. Veri yoksa parçalı sertifika taraması kapalıdır (Ayarlar → Genel → Zamanlayıcı) ya da tur durumu okunamadı — 0 sayılmaz.",
+      "datasource" : {
+        "type" : "prometheus",
+        "uid" : "${datasource}"
+      },
+      "fieldConfig" : {
+        "defaults" : {
+          "unit" : "short",
+          "thresholds" : {
+            "mode" : "absolute",
+            "steps" : [ {
+              "color" : "blue",
+              "value" : null
+            } ]
+          },
+          "color" : {
+            "mode" : "thresholds"
+          },
+          "noValue" : "Veri yok"
+        },
+        "overrides" : [ ]
+      },
+      "targets" : [ {
+        "datasource" : {
+          "type" : "prometheus",
+          "uid" : "${datasource}"
+        },
+        "editorMode" : "code",
+        "expr" : "(sum(max by (state) (sitemonitor_cert_sweep_chunks{namespace=\"site-monitor-prod\", state=\"pending\"}))) or (vector(0) and on() (max(sitemonitor_exporter_source_up{namespace=\"site-monitor-prod\", source=\"cert_sweep\"}) == 1))",
+        "instant" : false,
+        "legendFormat" : "__auto",
+        "range" : true,
+        "refId" : "A"
+      } ],
+      "transformations" : [ ],
+      "options" : {
+        "colorMode" : "value",
+        "graphMode" : "area",
+        "justifyMode" : "auto",
+        "orientation" : "auto",
+        "percentChangeColorMode" : "standard",
+        "reduceOptions" : {
+          "calcs" : [ "lastNotNull" ],
+          "fields" : "",
+          "values" : false
+        },
+        "showPercentChange" : false,
+        "textMode" : "auto",
+        "wideLayout" : true
+      },
+      "links" : [ {
+        "title" : "SiteMonitor'da aç",
+        "url" : "https://sitemonitor.example.org/?tab=health&sec=sched",
+        "targetBlank" : true
+      } ],
+      "gridPos" : {
+        "h" : 4,
+        "w" : 4,
+        "x" : 16,
+        "y" : 299
+      },
+      "id" : 120
+    }, {
+      "type" : "stat",
+      "title" : "Parçalı tur ilerlemesi",
+      "description" : "Açık parçalı turda ölçülmüş (tamamlanan ya da koordinatörün devraldığı) parçaların payı. Veri yoksa açık tur yok. Veri yoksa parçalı sertifika taraması kapalıdır (Ayarlar → Genel → Zamanlayıcı) ya da tur durumu okunamadı — 0 sayılmaz.",
+      "datasource" : {
+        "type" : "prometheus",
+        "uid" : "${datasource}"
+      },
+      "fieldConfig" : {
+        "defaults" : {
+          "unit" : "percentunit",
+          "thresholds" : {
+            "mode" : "absolute",
+            "steps" : [ {
+              "color" : "blue",
+              "value" : null
+            } ]
+          },
+          "color" : {
+            "mode" : "thresholds"
+          },
+          "noValue" : "Veri yok"
+        },
+        "overrides" : [ ]
+      },
+      "targets" : [ {
+        "datasource" : {
+          "type" : "prometheus",
+          "uid" : "${datasource}"
+        },
+        "editorMode" : "code",
+        "expr" : "sum(max by (state) (sitemonitor_cert_sweep_chunks{namespace=\"site-monitor-prod\", state=~\"done|cancelled\"})) / (sum(max by (state) (sitemonitor_cert_sweep_chunks{namespace=\"site-monitor-prod\"})) > 0)",
+        "instant" : false,
+        "legendFormat" : "__auto",
+        "range" : true,
+        "refId" : "A"
+      } ],
+      "transformations" : [ ],
+      "options" : {
+        "colorMode" : "value",
+        "graphMode" : "area",
+        "justifyMode" : "auto",
+        "orientation" : "auto",
+        "percentChangeColorMode" : "standard",
+        "reduceOptions" : {
+          "calcs" : [ "lastNotNull" ],
+          "fields" : "",
+          "values" : false
+        },
+        "showPercentChange" : false,
+        "textMode" : "auto",
+        "wideLayout" : true
+      },
+      "gridPos" : {
+        "h" : 4,
+        "w" : 4,
+        "x" : 20,
+        "y" : 299
+      },
+      "id" : 121
+    }, {
+      "type" : "stat",
+      "title" : "Son saatlik sertifika taraması",
+      "description" : "En yeni saatlik sertifika taramasının süresi (parçalı ya da klasik). 1 dk altı beklenir; 5 dk üstü kötü bir saati ya da yetişemeyen pod'ları gösterir. Veri yoksa parçalı sertifika taraması kapalıdır (Ayarlar → Genel → Zamanlayıcı) ya da tur durumu okunamadı — 0 sayılmaz.",
+      "datasource" : {
+        "type" : "prometheus",
+        "uid" : "${datasource}"
+      },
+      "fieldConfig" : {
+        "defaults" : {
+          "unit" : "s",
+          "thresholds" : {
+            "mode" : "absolute",
+            "steps" : [ {
+              "color" : "green",
+              "value" : null
+            }, {
+              "color" : "orange",
+              "value" : 120
+            }, {
+              "color" : "red",
+              "value" : 300
+            } ]
+          },
+          "color" : {
+            "mode" : "thresholds"
+          },
+          "noValue" : "Veri yok"
+        },
+        "overrides" : [ ]
+      },
+      "targets" : [ {
+        "datasource" : {
+          "type" : "prometheus",
+          "uid" : "${datasource}"
+        },
+        "editorMode" : "code",
+        "expr" : "max(sitemonitor_cert_sweep_last_run_seconds{namespace=\"site-monitor-prod\", kind=\"hourly\"})",
+        "instant" : false,
+        "legendFormat" : "__auto",
+        "range" : true,
+        "refId" : "A"
+      } ],
+      "transformations" : [ ],
+      "options" : {
+        "colorMode" : "background",
+        "graphMode" : "area",
+        "justifyMode" : "auto",
+        "orientation" : "auto",
+        "percentChangeColorMode" : "standard",
+        "reduceOptions" : {
+          "calcs" : [ "lastNotNull" ],
+          "fields" : "",
+          "values" : false
+        },
+        "showPercentChange" : false,
+        "textMode" : "auto",
+        "wideLayout" : true
+      },
+      "gridPos" : {
+        "h" : 4,
+        "w" : 4,
+        "x" : 0,
+        "y" : 307
+      },
+      "id" : 122
+    }, {
+      "type" : "stat",
+      "title" : "Devralınan parça (24 sa)",
+      "description" : "Son 24 saatte koordinatörün kendisi ölçtüğü parçalar (iki kez kaybedilen ya da ilerlemesiz bekleyen). Pod kapanışları dışında 0'a yakın olmalı. Veri yoksa parçalı sertifika taraması kapalıdır (Ayarlar → Genel → Zamanlayıcı) ya da tur durumu okunamadı — 0 sayılmaz.",
+      "datasource" : {
+        "type" : "prometheus",
+        "uid" : "${datasource}"
+      },
+      "fieldConfig" : {
+        "defaults" : {
+          "unit" : "short",
+          "thresholds" : {
+            "mode" : "absolute",
+            "steps" : [ {
+              "color" : "green",
+              "value" : null
+            }, {
+              "color" : "orange",
+              "value" : 1
+            }, {
+              "color" : "red",
+              "value" : 20
+            } ]
+          },
+          "color" : {
+            "mode" : "thresholds"
+          },
+          "noValue" : "Veri yok"
+        },
+        "overrides" : [ ]
+      },
+      "targets" : [ {
+        "datasource" : {
+          "type" : "prometheus",
+          "uid" : "${datasource}"
+        },
+        "editorMode" : "code",
+        "expr" : "sum(increase(sitemonitor_cert_sweep_worker_chunks{namespace=\"site-monitor-prod\", job=~\"$job\", instance=~\"$instance\", outcome=\"takeover\"}[24h]))",
+        "instant" : false,
+        "legendFormat" : "__auto",
+        "range" : true,
+        "refId" : "A"
+      } ],
+      "transformations" : [ ],
+      "options" : {
+        "colorMode" : "background",
+        "graphMode" : "area",
+        "justifyMode" : "auto",
+        "orientation" : "auto",
+        "percentChangeColorMode" : "standard",
+        "reduceOptions" : {
+          "calcs" : [ "lastNotNull" ],
+          "fields" : "",
+          "values" : false
+        },
+        "showPercentChange" : false,
+        "textMode" : "auto",
+        "wideLayout" : true
+      },
+      "gridPos" : {
+        "h" : 4,
+        "w" : 4,
+        "x" : 4,
+        "y" : 307
+      },
+      "id" : 123
+    }, {
+      "type" : "stat",
+      "title" : "İkinci görüş (24 sa)",
+      "description" : "Son 24 saatte bir pod'un ağ hatası oranı diğerlerinden çok yüksek olduğu için başka pod'dan yeniden ölçülen alan adları. 0 olmalı; artıyorsa pod'ların çıkış eşliğini (P1) doğrulayın. Veri yoksa parçalı sertifika taraması kapalıdır (Ayarlar → Genel → Zamanlayıcı) ya da tur durumu okunamadı — 0 sayılmaz.",
+      "datasource" : {
+        "type" : "prometheus",
+        "uid" : "${datasource}"
+      },
+      "fieldConfig" : {
+        "defaults" : {
+          "unit" : "short",
+          "thresholds" : {
+            "mode" : "absolute",
+            "steps" : [ {
+              "color" : "green",
+              "value" : null
+            }, {
+              "color" : "orange",
+              "value" : 1
+            } ]
+          },
+          "color" : {
+            "mode" : "thresholds"
+          },
+          "noValue" : "Veri yok"
+        },
+        "overrides" : [ ]
+      },
+      "targets" : [ {
+        "datasource" : {
+          "type" : "prometheus",
+          "uid" : "${datasource}"
+        },
+        "editorMode" : "code",
+        "expr" : "sum(increase(sitemonitor_cert_sweep_worker_chunks{namespace=\"site-monitor-prod\", job=~\"$job\", instance=~\"$instance\", outcome=\"second_opinion\"}[24h]))",
+        "instant" : false,
+        "legendFormat" : "__auto",
+        "range" : true,
+        "refId" : "A"
+      } ],
+      "transformations" : [ ],
+      "options" : {
+        "colorMode" : "background",
+        "graphMode" : "area",
+        "justifyMode" : "auto",
+        "orientation" : "auto",
+        "percentChangeColorMode" : "standard",
+        "reduceOptions" : {
+          "calcs" : [ "lastNotNull" ],
+          "fields" : "",
+          "values" : false
+        },
+        "showPercentChange" : false,
+        "textMode" : "auto",
+        "wideLayout" : true
+      },
+      "gridPos" : {
+        "h" : 4,
+        "w" : 4,
+        "x" : 8,
+        "y" : 307
+      },
+      "id" : 124
+    }, {
+      "type" : "stat",
+      "title" : "Geç tamamlanan parça (24 sa)",
+      "description" : "Son 24 saatte sonucu yazılamadan kirası düşen ya da turu kapanan parçalar (ölçüm boşa gitti; parça başka pod'da yeniden ölçülür). Veri yoksa parçalı sertifika taraması kapalıdır (Ayarlar → Genel → Zamanlayıcı) ya da tur durumu okunamadı — 0 sayılmaz.",
+      "datasource" : {
+        "type" : "prometheus",
+        "uid" : "${datasource}"
+      },
+      "fieldConfig" : {
+        "defaults" : {
+          "unit" : "short",
+          "thresholds" : {
+            "mode" : "absolute",
+            "steps" : [ {
+              "color" : "green",
+              "value" : null
+            }, {
+              "color" : "orange",
+              "value" : 1
+            }, {
+              "color" : "red",
+              "value" : 20
+            } ]
+          },
+          "color" : {
+            "mode" : "thresholds"
+          },
+          "noValue" : "Veri yok"
+        },
+        "overrides" : [ ]
+      },
+      "targets" : [ {
+        "datasource" : {
+          "type" : "prometheus",
+          "uid" : "${datasource}"
+        },
+        "editorMode" : "code",
+        "expr" : "sum(increase(sitemonitor_cert_sweep_worker_chunks{namespace=\"site-monitor-prod\", job=~\"$job\", instance=~\"$instance\", outcome=\"late\"}[24h]))",
+        "instant" : false,
+        "legendFormat" : "__auto",
+        "range" : true,
+        "refId" : "A"
+      } ],
+      "transformations" : [ ],
+      "options" : {
+        "colorMode" : "background",
+        "graphMode" : "area",
+        "justifyMode" : "auto",
+        "orientation" : "auto",
+        "percentChangeColorMode" : "standard",
+        "reduceOptions" : {
+          "calcs" : [ "lastNotNull" ],
+          "fields" : "",
+          "values" : false
+        },
+        "showPercentChange" : false,
+        "textMode" : "auto",
+        "wideLayout" : true
+      },
+      "gridPos" : {
+        "h" : 4,
+        "w" : 4,
+        "x" : 12,
+        "y" : 307
+      },
+      "id" : 125
+    }, {
+      "type" : "timeseries",
+      "title" : "Parçalı tur parçaları (durum)",
+      "description" : "Açık parçalı sertifika turunun parçaları duruma göre: bekleyen, alınmış, tamamlanan, devralınan. Tur bitince seriler kaybolur.",
+      "datasource" : {
+        "type" : "prometheus",
+        "uid" : "${datasource}"
+      },
+      "fieldConfig" : {
+        "defaults" : {
+          "unit" : "short",
+          "color" : {
+            "mode" : "palette-classic"
+          },
+          "custom" : {
+            "axisPlacement" : "auto",
+            "barAlignment" : 0,
+            "drawStyle" : "line",
+            "fillOpacity" : 12,
+            "gradientMode" : "opacity",
+            "lineInterpolation" : "smooth",
+            "lineWidth" : 2,
+            "pointSize" : 4,
+            "showPoints" : "never",
+            "spanNulls" : false,
+            "stacking" : {
+              "group" : "A",
+              "mode" : "none"
+            },
+            "thresholdsStyle" : {
+              "mode" : "off"
+            }
+          }
+        },
+        "overrides" : [ ]
+      },
+      "targets" : [ {
+        "datasource" : {
+          "type" : "prometheus",
+          "uid" : "${datasource}"
+        },
+        "editorMode" : "code",
+        "expr" : "max by (state) (sitemonitor_cert_sweep_chunks{namespace=\"site-monitor-prod\"})",
+        "instant" : false,
+        "legendFormat" : "{{state}}",
+        "range" : true,
+        "refId" : "A"
+      } ],
+      "transformations" : [ ],
+      "options" : {
+        "legend" : {
+          "calcs" : [ "lastNotNull", "max" ],
+          "displayMode" : "table",
+          "placement" : "bottom",
+          "showLegend" : true
+        },
+        "tooltip" : {
+          "hideZeros" : false,
+          "mode" : "multi",
+          "sort" : "desc"
+        }
+      },
+      "gridPos" : {
+        "h" : 8,
+        "w" : 8,
+        "x" : 16,
+        "y" : 307
+      },
+      "id" : 126
+    }, {
+      "type" : "timeseries",
+      "title" : "Sertifika taraması süresi (tür, kip)",
+      "description" : "Tür başına en yeni sertifika taramasının süresi ve kipi (chunked = parçalı, classic = tek pod). Açma kararını parçalı ile klasik süreleri karşılaştırarak verin.",
+      "datasource" : {
+        "type" : "prometheus",
+        "uid" : "${datasource}"
+      },
+      "fieldConfig" : {
+        "defaults" : {
+          "unit" : "s",
+          "color" : {
+            "mode" : "palette-classic"
+          },
+          "custom" : {
+            "axisPlacement" : "auto",
+            "barAlignment" : 0,
+            "drawStyle" : "line",
+            "fillOpacity" : 12,
+            "gradientMode" : "opacity",
+            "lineInterpolation" : "smooth",
+            "lineWidth" : 2,
+            "pointSize" : 4,
+            "showPoints" : "never",
+            "spanNulls" : false,
+            "stacking" : {
+              "group" : "A",
+              "mode" : "none"
+            },
+            "thresholdsStyle" : {
+              "mode" : "off"
+            }
+          }
+        },
+        "overrides" : [ ]
+      },
+      "targets" : [ {
+        "datasource" : {
+          "type" : "prometheus",
+          "uid" : "${datasource}"
+        },
+        "editorMode" : "code",
+        "expr" : "max by (kind, mode) (sitemonitor_cert_sweep_last_run_seconds{namespace=\"site-monitor-prod\"})",
+        "instant" : false,
+        "legendFormat" : "{{kind}} {{mode}}",
+        "range" : true,
+        "refId" : "A"
+      } ],
+      "transformations" : [ ],
+      "options" : {
+        "legend" : {
+          "calcs" : [ "lastNotNull", "max" ],
+          "displayMode" : "table",
+          "placement" : "bottom",
+          "showLegend" : true
+        },
+        "tooltip" : {
+          "hideZeros" : false,
+          "mode" : "multi",
+          "sort" : "desc"
+        }
+      },
+      "gridPos" : {
+        "h" : 8,
+        "w" : 8,
+        "x" : 0,
+        "y" : 315
+      },
+      "id" : 127
+    }, {
+      "type" : "timeseries",
+      "title" : "Parça işçileri (pod başına, 1 sa)",
+      "description" : "Pod başına son bir saatte tamamlanan, geç kalan ve bırakılan parçalar ile koordinatörün devraldığı parçalar ve ikinci görüş alan adları. Yük pod'lara yayılıyorsa tamamlanan çizgiler birbirine yakındır.",
+      "datasource" : {
+        "type" : "prometheus",
+        "uid" : "${datasource}"
+      },
+      "fieldConfig" : {
+        "defaults" : {
+          "unit" : "short",
+          "color" : {
+            "mode" : "palette-classic"
+          },
+          "custom" : {
+            "axisPlacement" : "auto",
+            "barAlignment" : 0,
+            "drawStyle" : "line",
+            "fillOpacity" : 12,
+            "gradientMode" : "opacity",
+            "lineInterpolation" : "smooth",
+            "lineWidth" : 2,
+            "pointSize" : 4,
+            "showPoints" : "never",
+            "spanNulls" : false,
+            "stacking" : {
+              "group" : "A",
+              "mode" : "none"
+            },
+            "thresholdsStyle" : {
+              "mode" : "off"
+            }
+          }
+        },
+        "overrides" : [ ]
+      },
+      "targets" : [ {
+        "datasource" : {
+          "type" : "prometheus",
+          "uid" : "${datasource}"
+        },
+        "editorMode" : "code",
+        "expr" : "sum by (instance, outcome) (increase(sitemonitor_cert_sweep_worker_chunks{namespace=\"site-monitor-prod\", job=~\"$job\", instance=~\"$instance\"}[1h]))",
+        "instant" : false,
+        "legendFormat" : "{{instance}} {{outcome}}",
+        "range" : true,
+        "refId" : "A"
+      } ],
+      "transformations" : [ ],
+      "options" : {
+        "legend" : {
+          "calcs" : [ "lastNotNull", "max" ],
+          "displayMode" : "table",
+          "placement" : "bottom",
+          "showLegend" : true
+        },
+        "tooltip" : {
+          "hideZeros" : false,
+          "mode" : "multi",
+          "sort" : "desc"
+        }
+      },
+      "gridPos" : {
+        "h" : 8,
+        "w" : 8,
+        "x" : 8,
+        "y" : 315
+      },
+      "id" : 128
     } ]
   }, {
     "type" : "row",
@@ -11107,9 +11700,9 @@
       "h" : 1,
       "w" : 24,
       "x" : 0,
-      "y" : 307
+      "y" : 323
     },
-    "id" : 120,
+    "id" : 129,
     "panels" : [ {
       "type" : "timeseries",
       "title" : "HTTP istek hızı",
@@ -11176,9 +11769,9 @@
         "h" : 8,
         "w" : 8,
         "x" : 0,
-        "y" : 308
+        "y" : 324
       },
-      "id" : 121
+      "id" : 130
     }, {
       "type" : "timeseries",
       "title" : "API gecikmesi (p50 / p95 / p99)",
@@ -11267,9 +11860,9 @@
         "h" : 8,
         "w" : 8,
         "x" : 8,
-        "y" : 308
+        "y" : 324
       },
-      "id" : 122
+      "id" : 131
     }, {
       "type" : "stat",
       "title" : "5xx oranı (5 dk)",
@@ -11334,9 +11927,9 @@
         "h" : 8,
         "w" : 4,
         "x" : 16,
-        "y" : 308
+        "y" : 324
       },
-      "id" : 123
+      "id" : 132
     }, {
       "type" : "stat",
       "title" : "≤ 500 ms API isteği",
@@ -11401,9 +11994,9 @@
         "h" : 8,
         "w" : 4,
         "x" : 20,
-        "y" : 308
+        "y" : 324
       },
-      "id" : 124
+      "id" : 133
     }, {
       "type" : "timeseries",
       "title" : "En yoğun uçlar",
@@ -11470,9 +12063,9 @@
         "h" : 8,
         "w" : 12,
         "x" : 0,
-        "y" : 316
+        "y" : 332
       },
-      "id" : 125
+      "id" : 134
     }, {
       "type" : "timeseries",
       "title" : "En yavaş uçlar (ortalama)",
@@ -11539,9 +12132,9 @@
         "h" : 8,
         "w" : 12,
         "x" : 12,
-        "y" : 316
+        "y" : 332
       },
-      "id" : 126
+      "id" : 135
     }, {
       "type" : "timeseries",
       "title" : "JVM bellek (heap)",
@@ -11619,9 +12212,9 @@
         "h" : 8,
         "w" : 8,
         "x" : 0,
-        "y" : 324
+        "y" : 340
       },
-      "id" : 127
+      "id" : 136
     }, {
       "type" : "timeseries",
       "title" : "JVM bellek (non-heap)",
@@ -11688,9 +12281,9 @@
         "h" : 8,
         "w" : 8,
         "x" : 8,
-        "y" : 324
+        "y" : 340
       },
-      "id" : 128
+      "id" : 137
     }, {
       "type" : "timeseries",
       "title" : "GC duraklaması",
@@ -11757,9 +12350,9 @@
         "h" : 8,
         "w" : 8,
         "x" : 16,
-        "y" : 324
+        "y" : 340
       },
-      "id" : 129
+      "id" : 138
     }, {
       "type" : "timeseries",
       "title" : "CPU",
@@ -11837,9 +12430,9 @@
         "h" : 8,
         "w" : 8,
         "x" : 0,
-        "y" : 332
+        "y" : 348
       },
-      "id" : 130
+      "id" : 139
     }, {
       "type" : "timeseries",
       "title" : "İş parçacıkları",
@@ -11906,9 +12499,9 @@
         "h" : 8,
         "w" : 8,
         "x" : 8,
-        "y" : 332
+        "y" : 348
       },
-      "id" : 131
+      "id" : 140
     }, {
       "type" : "timeseries",
       "title" : "Günlük uyarı / hata hızı",
@@ -11975,9 +12568,9 @@
         "h" : 8,
         "w" : 8,
         "x" : 16,
-        "y" : 332
+        "y" : 348
       },
-      "id" : 132
+      "id" : 141
     }, {
       "type" : "timeseries",
       "title" : "Veritabanı bağlantı havuzu",
@@ -12077,9 +12670,9 @@
         "h" : 8,
         "w" : 12,
         "x" : 0,
-        "y" : 340
+        "y" : 356
       },
-      "id" : 133
+      "id" : 142
     }, {
       "type" : "timeseries",
       "title" : "Bağlantı alma süresi",
@@ -12157,9 +12750,9 @@
         "h" : 8,
         "w" : 12,
         "x" : 12,
-        "y" : 340
+        "y" : 356
       },
-      "id" : 134
+      "id" : 143
     }, {
       "type" : "timeseries",
       "title" : "Kontrol iş havuzu",
@@ -12248,9 +12841,9 @@
         "h" : 8,
         "w" : 12,
         "x" : 0,
-        "y" : 348
+        "y" : 364
       },
-      "id" : 135
+      "id" : 144
     }, {
       "type" : "timeseries",
       "title" : "Sentetik (k6) koşucu",
@@ -12350,9 +12943,9 @@
         "h" : 8,
         "w" : 12,
         "x" : 12,
-        "y" : 348
+        "y" : 364
       },
-      "id" : 136
+      "id" : 145
     }, {
       "type" : "timeseries",
       "title" : "Önbellek isabet oranı",
@@ -12419,9 +13012,9 @@
         "h" : 8,
         "w" : 12,
         "x" : 0,
-        "y" : 356
+        "y" : 372
       },
-      "id" : 137
+      "id" : 146
     } ]
   } ],
   "refresh" : "1m",
@@ -12687,6 +13280,6 @@
   "timezone" : "browser",
   "title" : "SiteMonitor — Uçtan uca izleme",
   "uid" : "sitemonitor-overview",
-  "version" : 7,
+  "version" : 8,
   "weekStart" : "monday"
 }

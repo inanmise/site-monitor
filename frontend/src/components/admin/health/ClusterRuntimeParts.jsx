@@ -1,11 +1,13 @@
 import { formatDate } from '../../../api/client'
+import { dateLocale, formatPercent } from '../../../i18n/dateLocale.js'
 import { useElementWidth } from '../../../hooks/useElementWidth.js'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
 import AlertBanner from '../../ui/AlertBanner.jsx'
+import { ProgressBar } from '../../ui/Progress.jsx'
 import ToneBadge from '../ToneBadge.jsx'
 import { relTime, formatDurationShort } from './healthModel.js'
 import { EVAL_VERIFY_TONE, EVAL_UNKNOWN_REASONS, SIDE_JOB_STATE_TONE, otherPodState, EVAL_LOAD_REASONS, HANDOVER_RESULTS,
-  HANDOVER_NOT_READY_FROM_REASON, CHECK_JOBS_TONE } from './clusterRuntimeModel.js'
+  HANDOVER_NOT_READY_FROM_REASON, CHECK_JOBS_TONE, CERT_CHUNKS_TONE, CERT_MODE_TONE, CERT_SWEEP_MODES } from './clusterRuntimeModel.js'
 import { KvList, PodChip, SubTitle, WARN_T } from './HealthParts.jsx'
 
 /**
@@ -649,6 +651,252 @@ export function CheckJobsPodRows({ t, cj }) {
                 p.drainer.lastTakeAt ? (relTime(p.drainer.lastTakeAt, t) || formatDate(p.drainer.lastTakeAt)) : '—')}
               {p.drainer.applyFailures + p.drainer.takeFailures > 0
                 ? ` · ${t('hmp.cj.pod.drainerFailures', p.drainer.takeFailures, p.drainer.applyFailures)}` : ''}
+            </span>
+          )}
+        </span>
+      </dd>
+    </>
+  )
+}
+
+// ── Çok pod Sürüm 3-4 (2026-10-29, paket C1; tasarım R3-4 §7.2): parçalı sertifika taraması ─────────────────────────
+
+/** Pod tablosuna geçiş genişliği (px, KAP genişliği); altında kartlar. jsdom 0 = tablo. */
+export const CERT_PODS_TABLE_MIN_PX = 760
+
+const CC_STATUS_LABEL = {
+  running: 'hmp.cc.status.running', idle: 'hmp.cc.status.idle', warn: 'hmp.cc.status.warn', off: 'hmp.cc.status.off',
+  unknown: 'hmp.cc.status.unknown',
+}
+const CC_MODE_LABEL = { chunked: 'hmp.cc.mode.chunked', classic: 'hmp.cc.mode.classic', unknown: 'hmp.cc.mode.unknown' }
+const CC_WARN_LABEL = {
+  pending: 'hmp.cc.warn.pending', outlier: 'hmp.cc.warn.outlier', secondOpinion: 'hmp.cc.warn.secondOpinion',
+  coordinatorSilent: 'hmp.cc.warn.coordinatorSilent', lastFailed: 'hmp.cc.warn.lastRunBad',
+}
+const CC_KIND_LABEL = { hourly: 'hmp.kind.hourly', stale: 'hmp.kind.stale', full: 'hmp.kind.full' }
+
+/** Tür kodu → okunur ad; bilinmeyen tür (yeni sürüm) adıyla. */
+function kindName(t, kind) {
+  return CC_KIND_LABEL[kind] ? t(CC_KIND_LABEL[kind]) : (kind || '—')
+}
+
+/** Koşu sonucu → okunur ad; bilinmeyen sonuç "sonuç: x" (ham kod tek başına basılmaz). */
+function outcomeText(t, r) {
+  if (r.outcome && r.outcomeKnown) return t(`hmp.cc.outcome.${r.outcome}`)
+  if (r.outcome) return t('hmp.esReasonOther', r.outcome)
+  return t(`hmp.cc.state.${r.state === 'DONE' || r.state === 'FAILED' || r.state === 'ABANDONED' ? r.state : 'other'}`)
+}
+
+/** Ağ hatası oranı (0–1) → arayüz yerelinde yüzde ("%12,5" / "12.5%"); bilinmiyorsa "—". */
+function rateText(rate) {
+  if (rate == null || !Number.isFinite(rate)) return '—'
+  return formatPercent((rate * 100).toLocaleString(dateLocale(), { maximumFractionDigits: 1 }))
+}
+
+/** Pod hücresi: ad SARAR, "bu pod" ve "aykırı" rozetleri. */
+function CertPodCell({ t, p }) {
+  return (
+    <span className="flex min-w-0 flex-wrap items-center gap-1.5">
+      <PodName>{p.pod}</PodName>
+      {p.self && <ToneBadge tone="info" data-slot="cc-pod-self" className="h-auto overflow-visible rounded-md whitespace-normal">{t('hmp.cj.w.self')}</ToneBadge>}
+      {p.outlier && <ToneBadge tone="warning" data-slot="cc-pod-outlier" className="h-auto overflow-visible rounded-md whitespace-normal">{t('hmp.cc.outlierBadge')}</ToneBadge>}
+    </span>
+  )
+}
+
+/** Tur kipi rozeti (parçalı bilgi, klasik / bilinmiyor gri). */
+export function CertModeBadge({ t, mode, slot }) {
+  const m = CERT_SWEEP_MODES.includes(mode) ? mode : 'unknown'
+  return (
+    <ToneBadge tone={CERT_MODE_TONE[m] || 'muted'} {...(slot ? { 'data-slot': slot } : {})} data-mode={m}
+      className="h-auto max-w-full overflow-visible rounded-md whitespace-normal [overflow-wrap:anywhere]">{t(CC_MODE_LABEL[m])}</ToneBadge>
+  )
+}
+
+/** Açık koşunun pod başına payı: kap ≥ {@link CERT_PODS_TABLE_MIN_PX} tablo, değilse kartlar. Adlar SARAR. */
+function CertChunkPods({ t, run }) {
+  const [ref, width] = useElementWidth()
+  const table = width === 0 || width >= CERT_PODS_TABLE_MIN_PX
+  return (
+    <div ref={ref} data-slot="cc-pods" data-layout={table ? 'table' : 'cards'} className="min-w-0">
+      {table ? (
+        <Table className="table-fixed text-[0.86em]">
+          <TableHeader className="bg-muted/50">
+            <TableRow>
+              <TableHead className="w-[46%] whitespace-normal">{t('hmp.cc.col.pod')}</TableHead>
+              <TableHead className="w-[14%] whitespace-normal">{t('hmp.cc.col.chunks')}</TableHead>
+              <TableHead className="w-[20%] whitespace-normal">{t('hmp.cc.col.domains')}</TableHead>
+              <TableHead className="w-[20%] whitespace-normal">{t('hmp.cc.col.rate')}</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {run.pods.map((p) => (
+              <TableRow key={p.instanceId || p.pod} data-slot="cc-pod" data-outlier={p.outlier ? 'true' : undefined} data-self={p.self ? 'true' : undefined}>
+                <TableCell className="align-top whitespace-normal"><CertPodCell t={t} p={p} /></TableCell>
+                <TableCell className="align-top whitespace-normal tabular-nums">{p.chunks ?? '—'}</TableCell>
+                <TableCell className="align-top whitespace-normal tabular-nums">{t('hmp.cc.podDomains', p.doneDomains ?? '—', p.domains ?? '—')}</TableCell>
+                <TableCell className={`align-top whitespace-normal tabular-nums ${p.outlier ? WARN_T : ''}`}>
+                  {rateText(p.rate)}{p.networkErrors != null ? ` · ${t('hmp.cc.podNet', p.networkErrors)}` : ''}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      ) : (
+        <ul className="m-0 flex list-none flex-col gap-2 p-0">
+          {run.pods.map((p) => (
+            <li key={p.instanceId || p.pod} data-slot="cc-pod" data-outlier={p.outlier ? 'true' : undefined} data-self={p.self ? 'true' : undefined}
+              className="flex min-w-0 flex-col gap-1 rounded-md border bg-card p-2.5">
+              <CertPodCell t={t} p={p} />
+              <span className={`text-xs [overflow-wrap:anywhere] ${p.outlier ? WARN_T : 'text-muted-foreground'}`}>
+                {t('hmp.cc.podCard', p.chunks ?? '—', p.doneDomains ?? '—', p.domains ?? '—', rateText(p.rate))}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+/** Kapanmış son koşular (yalnız parçalı koşular tutulur — hepsi "parçalı" kipinde). */
+function CertLastRuns({ t, runs }) {
+  if (runs.length === 0) return <p className="m-0 text-[0.9em] text-muted-foreground" data-slot="cc-last-none">{t('hmp.cc.lastNone')}</p>
+  return (
+    <ul data-slot="cc-last-runs" className="m-0 flex list-none flex-col gap-1.5 p-0">
+      {runs.map((r) => (
+        <li key={r.runId || `${r.createdAt}-${r.kind}`} data-slot="cc-last-run" data-state={r.state} data-tone={r.tone}
+          className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[0.9em] [overflow-wrap:anywhere]">
+          <span className="font-semibold">{kindName(t, r.kind)}</span>
+          <CertModeBadge t={t} mode="chunked" />
+          <ToneBadge tone={r.tone} data-slot="cc-last-outcome" className="h-auto max-w-full overflow-visible rounded-md whitespace-normal [overflow-wrap:anywhere]">
+            {outcomeText(t, r)}
+          </ToneBadge>
+          <span className="text-muted-foreground">{r.finishedAt ? relTime(r.finishedAt, t) || formatDate(r.finishedAt) : '—'}</span>
+          {r.durationMs != null && <span className="text-muted-foreground">· {durationText(t, r.durationMs)}</span>}
+          {r.pods != null && <span className="text-muted-foreground">· {t('hmp.cc.lastPods', r.pods)}</span>}
+          {r.domainsTotal != null && <span className="text-muted-foreground">· {t('hmp.cc.lastDomains', r.domainsTotal)}</span>}
+          {(r.takeovers ?? 0) > 0 && <span className="text-muted-foreground">· {t('hmp.cc.lastTakeovers', r.takeovers)}</span>}
+          {(r.secondOpinions ?? 0) > 0 && <span className={WARN_T}>· {t('hmp.cc.lastSecondOpinions', r.secondOpinions)}</span>}
+          {r.coordinatorPod && <span className="text-muted-foreground">· <PodName>{r.coordinatorPod}</PodName></span>}
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+/**
+ * "Parçalı sertifika taraması" — Küme kartının çok pod Sürüm 3-4 bölümü ("Küme" etiketli; koşu ve parça satırları veritabanından):
+ * anahtar durumu, son turun kipi, açık turun ilerlemesi (parça / alan adı), kutucuklar (bekleyen, en eski bekleyen > 30 sn uyarı,
+ * devralınan bilgi, ikinci görüş > 0 uyarı), pod başına pay (kap ≥ 760 px tablo, değilse kart; aykırı pod uyarı), son 5 koşu.
+ * Açık anahtar yeşil DEĞİL; okunamayan durum "bilinmiyor" (gri). Eski sunucu (alan yok) → gizli.
+ */
+export function CertChunksSection({ t, cc }) {
+  if (!cc) return null
+  const tone = CERT_CHUNKS_TONE[cc.status] || 'muted'
+  const run = cc.run
+  const hint = cc.status === 'off' ? t('hmp.cc.offHint')
+    : cc.error || cc.statusError ? t('hmp.cc.unreadable', cc.statusError || cc.error || '—')
+      : cc.status === 'idle' && !run ? t('hmp.cc.idleHint') : null
+  return (
+    <section data-slot="cluster-cert-chunks" data-status={cc.status} data-level={cc.level} aria-labelledby="hmp-cc-title"
+      className="flex flex-col gap-2 border-t pt-2.5">
+      <SubTitle className="mt-0 text-[12px]"><span id="hmp-cc-title">{t('hmp.cc.title')}</span><PodChip t={t} scope="cluster" /></SubTitle>
+      <KvList>
+        <dt>{t('hmp.cc.switch')}</dt>
+        <dd data-slot="cc-switch" data-status={cc.status} className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5">
+          <ToneBadge tone={tone} className="h-auto max-w-full overflow-visible rounded-md font-semibold whitespace-normal [overflow-wrap:anywhere]">
+            {t(CC_STATUS_LABEL[cc.status] || 'hmp.cc.status.unknown')}
+          </ToneBadge>
+        </dd>
+        {cc.enabled && (
+          <>
+            <dt>{t('hmp.cc.lastMode')}</dt>
+            <dd className="min-w-0"><CertModeBadge t={t} mode={cc.lastMode} slot="cc-last-mode" /></dd>
+          </>
+        )}
+        {run && (
+          <>
+            <dt>{t('hmp.cc.run')}</dt>
+            <dd data-slot="cc-run" className="min-w-0 [overflow-wrap:anywhere]">
+              {t('hmp.cc.runLine', kindName(t, run.kind), run.coordinatorPod || '—',
+                run.ageS != null ? formatDurationShort(run.ageS, t) : '—')}
+              {run.deciding && <span className="text-muted-foreground" data-slot="cc-run-deciding"> · {t('hmp.cc.deciding')}</span>}
+            </dd>
+          </>
+        )}
+      </KvList>
+      {run && (
+        <div className="flex min-w-0 flex-col gap-2" data-slot="cc-progress">
+          <ProgressBar value={run.measuredChunks} max={run.chunksTotal || 0} size="sm" showValue label={t('hmp.cc.progress')} />
+          <p className="m-0 text-xs text-muted-foreground [overflow-wrap:anywhere]" data-slot="cc-progress-text">
+            {t('hmp.cc.progressText', run.measuredChunks, run.chunksTotal ?? '—', run.domainsMeasured ?? '—', run.domainsTotal ?? '—')}
+          </p>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <QueueTile slot="cc-t-pending" label={t('hmp.cc.t.pending')} value={run.chunks.pending} />
+            <QueueTile slot="cc-t-oldest" label={t('hmp.cc.t.oldest')} warn={run.pendingWarn}
+              value={run.oldestPendingMs == null ? t('hmp.cj.q.none') : durationText(t, run.oldestPendingMs)} />
+            <QueueTile slot="cc-t-takeovers" label={t('hmp.cc.t.takeovers')} value={run.takeovers ?? run.chunks.cancelled} />
+            <QueueTile slot="cc-t-second" label={t('hmp.cc.t.second')} warn={(run.secondOpinions ?? 0) > 0} value={run.secondOpinions ?? '—'} />
+          </div>
+          {run.pods.length > 0 ? <CertChunkPods t={t} run={run} />
+            : <p className="m-0 text-[0.9em] text-muted-foreground" data-slot="cc-pods-none">{t('hmp.cc.podsNone')}</p>}
+        </div>
+      )}
+      {cc.warnings.length > 0 && (
+        <AlertBanner tone="warning" title={t('hmp.cc.warnTitle')} className="mb-0">
+          <ul data-slot="cc-warnings" className="m-0 flex list-none flex-col gap-0.5 p-0">
+            {cc.warnings.map((w) => (
+              <li key={w} data-warn={w} className="[overflow-wrap:anywhere]">
+                {w === 'outlier'
+                  ? t(CC_WARN_LABEL.outlier, run?.pods.filter((p) => p.outlier).map((p) => p.pod).join(', ') || '—')
+                  : t(CC_WARN_LABEL[w])}
+              </li>
+            ))}
+          </ul>
+        </AlertBanner>
+      )}
+      {cc.enabled && !cc.statusError && (
+        <div className="flex min-w-0 flex-col gap-1.5">
+          <span className="text-xs font-semibold text-muted-foreground">{t('hmp.cc.lastRuns')}</span>
+          <CertLastRuns t={t} runs={cc.lastRuns} />
+        </div>
+      )}
+      {hint && <p className="m-0 text-[0.9em] text-muted-foreground [overflow-wrap:anywhere]" data-slot="cc-hint">{hint}</p>}
+      {cc.enabled && <p className="m-0 text-xs text-muted-foreground" data-slot="cc-note">{t('hmp.cc.note')}</p>}
+    </section>
+  )
+}
+
+/** Bu pod'un parça işçisi ve koordinatör sayaçları — "Bu pod" `<KvList>` satırı (anahtar kapalı / eski sunucu → gizli). */
+export function CertChunksPodRows({ t, cc }) {
+  if (!cc || !cc.enabled || !cc.thisPod) return null
+  const w = cc.thisPod.worker
+  const c = cc.thisPod.coordinator
+  return (
+    <>
+      <dt>{t('hmp.cc.podRow')}</dt>
+      <dd data-slot="cluster-cert-chunk-worker" data-known={w ? 'true' : 'false'} className="min-w-0 [overflow-wrap:anywhere]">
+        <span className="flex flex-col gap-0.5">
+          {!w ? <span data-slot="cc-pod-unknown">{t('hmp.cc.pod.noWorker')}</span>
+            : !w.enabled ? <span data-slot="cc-pod-off">{t('hmp.cc.pod.workerOff')}</span>
+              : (
+                <>
+                  <span data-slot="cc-pod-inflight">
+                    {t('hmp.cc.pod.inflight', w.inflightChunks, w.inflightDomains, w.budget ?? '—')}
+                    {!w.started ? ` · ${t('hmp.cc.pod.notStarted')}` : ''}
+                    {w.leaderYielding ? ` · ${t('hmp.cc.pod.leaderYielding')}` : ''}
+                  </span>
+                  <span className="text-muted-foreground" data-slot="cc-pod-counts">
+                    {t('hmp.cc.pod.counts', w.completed, w.late, w.released, w.discarded)}
+                    {w.lastClaimAt ? ` · ${t('hmp.cc.pod.lastClaim', relTime(w.lastClaimAt, t) || formatDate(w.lastClaimAt))}` : ''}
+                  </span>
+                  {w.dbClockStale && <span className={WARN_T} data-slot="cc-pod-clock-stale">{t('hmp.cj.pod.clockStale')}</span>}
+                </>
+              )}
+          {c && (
+            <span className="text-muted-foreground" data-slot="cc-pod-coordinator">
+              {t('hmp.cc.pod.coordinator', c.chunkedRuns, c.classicFallback, c.takeovers, c.remeasured, c.secondOpinions, c.abandoned)}
             </span>
           )}
         </span>
