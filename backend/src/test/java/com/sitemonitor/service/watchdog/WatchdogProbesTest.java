@@ -102,6 +102,64 @@ class WatchdogProbesTest {
     }
 
     @Test
+    @DisplayName("R3-4 (paket C1): sertifika taraması olguları — anahtar KAPALI → olgular ve cümle 20.170.0 ile AYNI, koşu deposu hiç "
+            + "okunmaz; AÇIK → chunked + açık tur yaşı + en eski bekleyen parça + 24 sa terk edilen tur, KARAR DEĞİŞMEZ; okunamadı → "
+            + "chunked_status unreadable")
+    void certSweepChunkFacts() {
+        when(jdbc.queryForObject(org.mockito.ArgumentMatchers.contains("certificate_inventory"), eq(Long.class))).thenReturn(40L);
+        when(jdbc.queryForObject(org.mockito.ArgumentMatchers.contains("latest_checks"), eq(String.class))).thenReturn("2026-10-11T10:30:00");
+        WatchdogProbes.Probe before = probes.certSweep(NOW);
+        when(settings.getBoolean(eq(com.sitemonitor.service.certsweep.CertChunking.KEY_ENABLED), org.mockito.ArgumentMatchers.anyBoolean()))
+                .thenReturn(false);
+        com.sitemonitor.service.certsweep.CertSweepStore store = mock(com.sitemonitor.service.certsweep.CertSweepStore.class);
+        probes.setCertChunking(new com.sitemonitor.service.certsweep.CertChunking(settings, null));
+        probes.setCertSweepStore(store);
+        WatchdogProbes.Probe off = probes.certSweep(NOW);
+        assertThat(off.facts()).isEqualTo(before.facts());
+        assertThat(off.result()).isEqualTo(before.result());
+        assertThat(WatchdogMessages.detail(WatchdogCheck.CERT_SWEEP, off.facts(), false))
+                .isEqualTo(WatchdogMessages.detail(WatchdogCheck.CERT_SWEEP, before.facts(), false))
+                .isEqualTo("Son sertifika sonucu 1 sa önce (sınır 4 sa).");
+        org.mockito.Mockito.verifyNoInteractions(store);
+
+        when(settings.getBoolean(eq(com.sitemonitor.service.certsweep.CertChunking.KEY_ENABLED), org.mockito.ArgumentMatchers.anyBoolean()))
+                .thenReturn(true);
+        long now = NOW.toEpochMilli();
+        com.sitemonitor.service.certsweep.CertSweepStatus.Run open = new com.sitemonitor.service.certsweep.CertSweepStatus.Run("o", "hourly",
+                "pod-a-0000000a", "RUNNING", true, 400, 20, 20, now - 95_000, now - 5_000, null, null, null, null, null, null);
+        com.sitemonitor.service.certsweep.CertSweepStatus.Run ab = new com.sitemonitor.service.certsweep.CertSweepStatus.Run("a", "hourly",
+                "pod-a-0000000a", "ABANDONED", true, 400, 20, 20, now - 3_600_000, now - 3_600_000, now - 3_500_000, "SHUTDOWN", null, null,
+                null, null);
+        when(store.status(WatchdogProbes.CERT_CHUNK_STATUS_RUNS)).thenReturn(new com.sitemonitor.service.certsweep.CertSweepStatus(now, false,
+                List.of(open, ab), open, List.of(new com.sitemonitor.service.certsweep.CertSweepStatus.ChunkGroup("PENDING", null, 3, 60, 0,
+                        now - 42_000))));
+        WatchdogProbes.Probe on = probes.certSweep(NOW);
+        assertThat(on.result()).as("karar değişmez").isEqualTo(before.result());
+        assertThat(on.facts()).containsEntry("chunked", true).containsEntry("chunked_run_age_s", 95L)
+                .containsEntry("oldest_pending_chunk_s", 42L).containsEntry("abandoned_runs_24h", 1L)
+                .doesNotContainKey("abandoned_runs_24h_lower_bound").doesNotContainKey("reason")
+                .containsEntry("hours_since", 1L);
+        assertThat(WatchdogMessages.detail(WatchdogCheck.CERT_SWEEP, on.facts(), false))
+                .isEqualTo("Son sertifika sonucu 1 sa önce (sınır 4 sa). Parçalı tarama açık: açık tur 95 sn'dir sürüyor, en eski bekleyen "
+                        + "parça 42 sn; son 24 saatte terk edilen tur: 1.");
+        assertThat(WatchdogMessages.detail(WatchdogCheck.CERT_SWEEP, on.facts(), true))
+                .endsWith(" Chunked sweep is on: open run 95 s old, oldest waiting chunk 42 s; abandoned runs in 24 h: 1.");
+
+        when(store.status(WatchdogProbes.CERT_CHUNK_STATUS_RUNS)).thenReturn(new com.sitemonitor.service.certsweep.CertSweepStatus(now, false,
+                List.of(), null, List.of()));
+        WatchdogProbes.Probe idle = probes.certSweep(NOW);
+        assertThat(idle.facts()).containsEntry("chunked_run_age_s", null).containsEntry("oldest_pending_chunk_s", null)
+                .containsEntry("abandoned_runs_24h", 0L);
+        assertThat(WatchdogMessages.detail(WatchdogCheck.CERT_SWEEP, idle.facts(), false)).contains("açık tur yok");
+
+        when(store.status(WatchdogProbes.CERT_CHUNK_STATUS_RUNS)).thenThrow(new org.springframework.dao.QueryTimeoutException("x"));
+        WatchdogProbes.Probe bad = probes.certSweep(NOW);
+        assertThat(bad.result()).isEqualTo(before.result());
+        assertThat(bad.facts()).containsEntry("chunked", true).containsEntry("chunked_status", "unreadable");
+        assertThat(WatchdogMessages.detail(WatchdogCheck.CERT_SWEEP, bad.facts(), false)).endsWith("Parçalı tarama açık; tur durumu okunamadı.");
+    }
+
+    @Test
     @DisplayName("bildirim: 3'ten az deneme → OK; %50 ve üstü başarısız → PROBLEM")
     void notifications() {
         when(logs.countAttemptedSince(anyString())).thenReturn(2L);

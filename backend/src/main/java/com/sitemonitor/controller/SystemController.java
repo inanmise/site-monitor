@@ -77,6 +77,15 @@ public class SystemController {
     private com.sitemonitor.service.checks.CheckResultDrainer checkResultDrainer;
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.sitemonitor.service.checks.DbClock checkDbClock;
+    /**
+     * Çok pod Sürüm 3-4 (2026-10-29, paket C1) — Küme kartı "Parçalı sertifika taraması" + tarama kartının
+     * {@code scan.chunked} / {@code scan.last_mode} alanları. Anahtar kapalıyken yalnız {@code cert_chunks = {enabled: false}}
+     * (bellek, sorgu yok — L-1); depo yoksa (bean yok) açıkken "okunamadı".
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.certsweep.CertChunking certChunking;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.certsweep.CertSweepStore certSweepStore;
     /** Doğrulama aralığı (kaydedicinin açılış ayarı) — gözlemin "eski" eşiği bunun 3 katı. */
     @org.springframework.beans.factory.annotation.Value("${site.monitor.eval-state.verify-ms:300000}")
     private long evalVerifyMs = 300_000L;
@@ -119,6 +128,11 @@ public class SystemController {
             try { data.put("check_jobs", ClusterRuntimeHealth.checkJobs(new ClusterRuntimeHealth.CheckJobsSources(distributedChecks,
                     checkJobStore, checkWorkerRegistry, checkWorker, checkResultDrainer, checkDbClock, schedulerService), System.currentTimeMillis())); }
             catch (RuntimeException e) { data.put("check_jobs", Map.of("error", e.getClass().getSimpleName())); }
+        }
+        // Çok pod R3-4 (eklenti): parçalı sertifika taraması — anahtar kapalıyken {enabled: false} (bellek, sorgu yok — L-1)
+        if (certChunking != null) {
+            try { CertChunksHealth.apply(data, new CertChunksHealth.Sources(certChunking, certSweepStore, schedulerService)); }
+            catch (RuntimeException e) { data.put("cert_chunks", Map.of("error", e.getClass().getSimpleName())); }
         }
         return ok(Map.of("data", data));
     }

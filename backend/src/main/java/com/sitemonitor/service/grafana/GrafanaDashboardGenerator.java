@@ -50,7 +50,7 @@ public final class GrafanaDashboardGenerator {
      * Pano içerik revizyonu — içerik (panel, sorgu, değişken) değişen HER sürümde artır ve
      * {@code src/test/resources/grafana/dashboard-content.sha256} dosyasını güncelle (kapı mesajı yeni satırı yazar).
      */
-    public static final int DASHBOARD_REVISION = 7;
+    public static final int DASHBOARD_REVISION = 8;
     /** "Kritik / yüksek alarm açıldı" anotasyonunun penceresi (sn) — açılış zamanı bu kadar yeni olan alarmlar. */
     static final int ALERT_OPENED_WINDOW_S = 900;
     /** Aktarıcı tazelik eşiği (sn) — sunucunun {@code max(180, 3 × refresh-seconds)} kuralının varsayılan değeri. */
@@ -1932,6 +1932,67 @@ public final class GrafanaDashboardGenerator {
             workers.target("max by (instance) (" + metric(slots, RT, "kind=\"busy\"") + ")", t("{{instance}} meşgul yuva", "{{instance}} busy slots"), false);
             workers.timeseries("short", false, "line");
             add(workers);
+
+            certSweepChunks();
+        }
+
+        /**
+         * Çok pod Sürüm 3-4 (2026-10-29, paket C1; tasarım R3-4 §7.4): parçalı sertifika taraması. Parça ve son tur ölçümleri KÜME
+         * kapsamlı (kurum ailelerini yayan pod'lar aynı değeri yazar → {@code max by} ile tekilleşir), işçi / koordinatör sayaçları
+         * POD kapsamlı ({@code instance} başına, birikimli → {@code increase()}). Anahtar KAPALIYKEN hiçbir seri yoktur — paneller
+         * "veri yok" der, asla 0. Açık tur yokken parça serisi de yoktur; okunmuş durumda bekleyen parça {@code guard()} ile 0 olur
+         * (kaynak {@code cert_sweep}).
+         */
+        void certSweepChunks() {
+            String chunks = MonitoringMetricNames.CERT_SWEEP_CHUNKS;
+            String last = MonitoringMetricNames.CERT_SWEEP_LAST_RUN;
+            String work = MonitoringMetricNames.CERT_SWEEP_WORKER_CHUNKS;
+            String off = t(" Veri yoksa parçalı sertifika taraması kapalıdır (Ayarlar → Genel → Zamanlayıcı) ya da tur durumu okunamadı — 0 sayılmaz.",
+                    " No data means the chunked certificate sweep is off (Settings → General → Scheduler) or its run state could not be read — not 0.");
+            add(stat(t("Bekleyen sertifika parçası", "Pending certificate chunks"), t("Açık parçalı sertifika turunda henüz bir pod'un almadığı parçalar (parça başına 20 alan adı). Açık tur yokken 0."
+                            + off, "Chunks of the open chunked certificate run that no pod has claimed yet (20 domains each). 0 while no run is open." + off),
+                    guard("sum(max by (state) (" + metric(chunks, "state=\"pending\"") + "))", "cert_sweep"), "short",
+                    thresholds(BLUE, null), "value", links() ? url("tab=health&sec=sched") : null).size(4, 4));
+            add(stat(t("Parçalı tur ilerlemesi", "Chunked run progress"), t("Açık parçalı turda ölçülmüş (tamamlanan ya da koordinatörün devraldığı) parçaların payı. Veri yoksa açık tur yok."
+                            + off, "Share of chunks of the open chunked run that were measured (completed or taken over by the coordinator). No data means no open run." + off),
+                    "sum(max by (state) (" + metric(chunks, "state=~\"done|cancelled\"") + ")) / (sum(max by (state) (" + metric(chunks) + ")) > 0)",
+                    "percentunit", thresholds(BLUE, null), "value", null).size(4, 4));
+            add(stat(t("Son saatlik sertifika taraması", "Last hourly certificate sweep"), t("En yeni saatlik sertifika taramasının süresi (parçalı ya da klasik). 1 dk altı beklenir; 5 dk üstü kötü bir saati ya da yetişemeyen pod'ları gösterir."
+                            + off, "Duration of the newest hourly certificate sweep (chunked or classic). Expected below 1 minute; above 5 minutes means a bad hour or pods that fall behind." + off),
+                    "max(" + metric(last, "kind=\"hourly\"") + ")", "s", thresholds(GREEN, null, AMBER, 120, RED, 300), "background", null).size(4, 4));
+            add(stat(t("Devralınan parça (24 sa)", "Chunks taken over (24 h)"), t("Son 24 saatte koordinatörün kendisi ölçtüğü parçalar (iki kez kaybedilen ya da ilerlemesiz bekleyen). Pod kapanışları dışında 0'a yakın olmalı."
+                            + off, "Chunks the coordinator measured itself in the last 24 hours (lost twice or waiting without progress). Should stay near 0 outside pod restarts." + off),
+                    "sum(increase(" + metric(work, RT, "outcome=\"takeover\"") + "[24h]))", "short", thresholds(GREEN, null, AMBER, 1, RED, 20), "background", null).size(4, 4));
+            add(stat(t("İkinci görüş (24 sa)", "Second opinions (24 h)"), t("Son 24 saatte bir pod'un ağ hatası oranı diğerlerinden çok yüksek olduğu için başka pod'dan yeniden ölçülen alan adları. 0 olmalı; artıyorsa pod'ların çıkış eşliğini (P1) doğrulayın."
+                            + off, "Domains re-measured on another pod in the last 24 hours because one pod's network error rate was far above the others. Should be 0; if it rises, check egress parity (P1) of the pods." + off),
+                    "sum(increase(" + metric(work, RT, "outcome=\"second_opinion\"") + "[24h]))", "short", thresholds(GREEN, null, AMBER, 1), "background", null).size(4, 4));
+            add(stat(t("Geç tamamlanan parça (24 sa)", "Late chunks (24 h)"), t("Son 24 saatte sonucu yazılamadan kirası düşen ya da turu kapanan parçalar (ölçüm boşa gitti; parça başka pod'da yeniden ölçülür)."
+                            + off, "Chunks whose lease was lost or whose run closed before the result was written in the last 24 hours (the measurement was wasted; the chunk is measured again elsewhere)." + off),
+                    "sum(increase(" + metric(work, RT, "outcome=\"late\"") + "[24h]))", "short", thresholds(GREEN, null, AMBER, 1, RED, 20), "background", null).size(4, 4));
+
+            Panel state = new Panel("timeseries", t("Parçalı tur parçaları (durum)", "Chunked run chunks (state)"),
+                    t("Açık parçalı sertifika turunun parçaları duruma göre: bekleyen, alınmış, tamamlanan, devralınan. Tur bitince seriler kaybolur.",
+                            "Chunks of the open chunked certificate run by state: pending, claimed, done, taken over (cancelled). The series disappear when the run ends."));
+            state.w = 8; state.h = 8;
+            state.target("max by (state) (" + metric(chunks) + ")", "{{state}}", false);
+            state.timeseries("short", false, "line");
+            add(state);
+
+            Panel duration = new Panel("timeseries", t("Sertifika taraması süresi (tür, kip)", "Certificate sweep duration (kind, mode)"),
+                    t("Tür başına en yeni sertifika taramasının süresi ve kipi (chunked = parçalı, classic = tek pod). Açma kararını parçalı ile klasik süreleri karşılaştırarak verin.",
+                            "Duration and mode of the newest certificate sweep per kind (chunked, or classic = one pod). Compare chunked and classic durations to judge the switch."));
+            duration.w = 8; duration.h = 8;
+            duration.target("max by (kind, mode) (" + metric(last) + ")", "{{kind}} {{mode}}", false);
+            duration.timeseries("s", false, "line");
+            add(duration);
+
+            Panel pods = new Panel("timeseries", t("Parça işçileri (pod başına, 1 sa)", "Chunk workers (per pod, 1 h)"),
+                    t("Pod başına son bir saatte tamamlanan, geç kalan ve bırakılan parçalar ile koordinatörün devraldığı parçalar ve ikinci görüş alan adları. Yük pod'lara yayılıyorsa tamamlanan çizgiler birbirine yakındır.",
+                            "Per pod: chunks completed, late and released in the last hour, plus chunks the coordinator took over and second-opinion domains. When the load is spread, the completed lines stay close together."));
+            pods.w = 8; pods.h = 8;
+            pods.target("sum by (instance, outcome) (increase(" + metric(work, RT) + "[1h]))", "{{instance}} {{outcome}}", false);
+            pods.timeseries("short", false, "line");
+            add(pods);
         }
 
         // ── Çalışma zamanı ───────────────────────────────────────────────────────────────────────────────

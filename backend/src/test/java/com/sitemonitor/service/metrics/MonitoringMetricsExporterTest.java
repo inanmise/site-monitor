@@ -926,4 +926,142 @@ class MonitoringMetricsExporterTest {
         assertThat(gauge(MonitoringMetricNames.CHECK_WORKER_JOBS, "outcome", "dropped")).isEqualTo(9);
         assertThat(gauge(MonitoringMetricNames.CHECK_CLAIM_LAG)).isEqualTo(0.41);
     }
+
+    // ── R3-4 C1: parçalı sertifika taraması ölçümleri (tasarım §7.4) ───────────────────────────────────────────────
+
+    com.sitemonitor.service.certsweep.CertSweepStore csStore;
+    com.sitemonitor.service.health.ClusterHealthStore csHealth;
+
+    static com.sitemonitor.service.certsweep.CertSweepStatus.Run csRun(String id, String state, long createdMs, Long finishedMs) {
+        return new com.sitemonitor.service.certsweep.CertSweepStatus.Run(id, "hourly", "pod-a-0000000a", state, true, 400, 20, 20,
+                createdMs, createdMs, finishedMs, finishedMs == null ? null : "DECIDED", null, null, null, null);
+    }
+
+    static com.sitemonitor.service.health.ClusterHealthStore.ScanRun scanRun(String kind, String runId, String at, long durationMs) {
+        return new com.sitemonitor.service.health.ClusterHealthStore.ScanRun(kind, runId, "pod-a-0000000a", at, durationMs, 400, 0, 0,
+                null, null, null, at);
+    }
+
+    /** Parçalı tarama kaynaklarını bağlar; {@code on} = anahtar; açık koşu + bir DONE parçalı saatlik tur; stale klasik. */
+    com.sitemonitor.service.certsweep.CertChunking attachCertSweep(boolean on) {
+        when(settings.getBoolean(eq(com.sitemonitor.service.certsweep.CertChunking.KEY_ENABLED), anyBoolean())).thenReturn(on);
+        com.sitemonitor.service.certsweep.CertChunking cc = new com.sitemonitor.service.certsweep.CertChunking(settings, null);
+        cc.registerWorkerStatus(() -> new com.sitemonitor.service.certsweep.CertSweepStatus.Worker(true, true, 1, 20, 40, false,
+                90, 85, 1, 2, 0, 1700, NOW.toEpochMilli(), false));
+        cc.registerCoordinatorStatus(() -> new com.sitemonitor.service.certsweep.CertSweepStatus.Coordinator(12, 3, 4, 5, 7, 1));
+        exporter.setCertChunking(cc);
+        long now = NOW.toEpochMilli();
+        csStore = mock(com.sitemonitor.service.certsweep.CertSweepStore.class);
+        com.sitemonitor.service.certsweep.CertSweepStatus.Run open = csRun("r-open", "RUNNING", now - 20_000, null);
+        when(csStore.status(MonitoringMetricsExporter.CERT_SWEEP_STATUS_RUNS)).thenReturn(new com.sitemonitor.service.certsweep.CertSweepStatus(now,
+                false, List.of(open, csRun("r-hourly", "DONE", now - 3_600_000, now - 3_550_000)), open, List.of(
+                new com.sitemonitor.service.certsweep.CertSweepStatus.ChunkGroup("PENDING", null, 5, 100, 0, now - 20_000),
+                new com.sitemonitor.service.certsweep.CertSweepStatus.ChunkGroup("CLAIMED", "pod-a-0000000a", 2, 40, 0, now - 20_000),
+                new com.sitemonitor.service.certsweep.CertSweepStatus.ChunkGroup("DONE", "pod-a-0000000a", 3, 60, 1, now - 20_000))));
+        exporter.setCertSweepStore(csStore);
+        csHealth = mock(com.sitemonitor.service.health.ClusterHealthStore.class);
+        when(csHealth.readScanRuns()).thenReturn(Map.of(
+                "hourly", scanRun("hourly", "r-hourly", "2026-10-18T07:00:50", 50_000L),
+                "stale", scanRun("stale", "r-stale", "2026-10-18T07:55:00", 2_000L)));
+        exporter.setClusterHealth(csHealth);
+        return cc;
+    }
+
+    boolean anyCertSweepSeries() {
+        for (MonitoringMetricNames.Def d : MonitoringMetricNames.ALL) {
+            if (d.name().startsWith("sitemonitor.cert.sweep.") && exists(d.name())) return true;
+        }
+        return false;
+    }
+
+    @Test
+    @DisplayName("R3-4: anahtar KAPALI → hiçbir sitemonitor_cert_sweep_* serisi ve cert_sweep / scan_runs kaynak satırı yok; koşu deposu ve "
+            + "scan_runs HİÇ okunmaz (L-1; yok ≠ 0); diğer aileler etkilenmez")
+    void certSweepMeters_offNoSeriesNoReads() {
+        attachCertSweep(false);
+        exporter.refresh();
+        assertThat(anyCertSweepSeries()).isFalse();
+        assertThat(exists(MonitoringMetricNames.EXPORTER_SOURCE, "source", "cert_sweep")).isFalse();
+        assertThat(exists(MonitoringMetricNames.EXPORTER_SOURCE, "source", "scan_runs")).isFalse();
+        verifyNoInteractions(csStore);
+        verify(csHealth, never()).readScanRuns();
+        assertThat(gauge(MonitoringMetricNames.MONITORS, "type", "http", "state", "up")).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("R3-4: anahtar açık → açık koşunun parçaları durum başına (sıfırlar dahil), tür başına son tur süresi + kipi "
+            + "(r-hourly parçalı, r-stale klasik), pod sayaçları (completed / late / released / takeover / second_opinion); kaynaklar 1; "
+            + "adlar _total vb. ile bitmez")
+    void certSweepMeters_on() {
+        attachCertSweep(true);
+        exporter.refresh();
+        assertThat(gauge(MonitoringMetricNames.CERT_SWEEP_CHUNKS, "state", "pending")).isEqualTo(5);
+        assertThat(gauge(MonitoringMetricNames.CERT_SWEEP_CHUNKS, "state", "claimed")).isEqualTo(2);
+        assertThat(gauge(MonitoringMetricNames.CERT_SWEEP_CHUNKS, "state", "done")).isEqualTo(3);
+        assertThat(gauge(MonitoringMetricNames.CERT_SWEEP_CHUNKS, "state", "cancelled")).as("okunmuş açık koşuda 0 gerçektir").isEqualTo(0);
+        assertThat(gauge(MonitoringMetricNames.CERT_SWEEP_LAST_RUN, "kind", "hourly", "mode", "chunked")).isEqualTo(50.0);
+        assertThat(gauge(MonitoringMetricNames.CERT_SWEEP_LAST_RUN, "kind", "stale", "mode", "classic")).isEqualTo(2.0);
+        assertThat(exists(MonitoringMetricNames.CERT_SWEEP_LAST_RUN, "kind", "full")).as("hiç koşmamış tür yazılmaz").isFalse();
+        assertThat(gauge(MonitoringMetricNames.CERT_SWEEP_WORKER_CHUNKS, "outcome", "completed")).isEqualTo(85);
+        assertThat(gauge(MonitoringMetricNames.CERT_SWEEP_WORKER_CHUNKS, "outcome", "late")).isEqualTo(1);
+        assertThat(gauge(MonitoringMetricNames.CERT_SWEEP_WORKER_CHUNKS, "outcome", "released")).isEqualTo(2);
+        assertThat(gauge(MonitoringMetricNames.CERT_SWEEP_WORKER_CHUNKS, "outcome", "takeover")).isEqualTo(4);
+        assertThat(gauge(MonitoringMetricNames.CERT_SWEEP_WORKER_CHUNKS, "outcome", "second_opinion")).isEqualTo(7);
+        assertThat(gauge(MonitoringMetricNames.EXPORTER_SOURCE, "source", "cert_sweep")).isEqualTo(1);
+        assertThat(gauge(MonitoringMetricNames.EXPORTER_SOURCE, "source", "scan_runs")).isEqualTo(1);
+        verify(csStore).status(MonitoringMetricsExporter.CERT_SWEEP_STATUS_RUNS);
+        for (MonitoringMetricNames.Def d : MonitoringMetricNames.ALL) {
+            if (!d.name().startsWith("sitemonitor.cert.sweep.")) continue;
+            assertThat(d.prom()).doesNotEndWith("_total").doesNotEndWith("_count").doesNotEndWith("_sum").doesNotEndWith("_bucket")
+                    .doesNotEndWith("_info").doesNotEndWith("_created");
+        }
+    }
+
+    @Test
+    @DisplayName("R3-4: açık koşu yok → parça serisi YOK (yok ≠ 0), son tur yine; depo okunamadı → parça + son tur aileleri düşer, "
+            + "cert_sweep kaynağı 0, scan_runs hiç okunmaz; scan_runs okunamadı → yalnız son tur düşer; işçi / koordinatör kaydı yok → "
+            + "o çıkışlar yazılmaz")
+    void certSweepMeters_partial() {
+        com.sitemonitor.service.certsweep.CertChunking cc = attachCertSweep(true);
+        long now = NOW.toEpochMilli();
+        when(csStore.status(MonitoringMetricsExporter.CERT_SWEEP_STATUS_RUNS)).thenReturn(new com.sitemonitor.service.certsweep.CertSweepStatus(now,
+                false, List.of(csRun("r-hourly", "DONE", now - 3_600_000, now - 3_550_000)), null, List.of()));
+        exporter.refresh();
+        assertThat(exists(MonitoringMetricNames.CERT_SWEEP_CHUNKS)).isFalse();
+        assertThat(gauge(MonitoringMetricNames.CERT_SWEEP_LAST_RUN, "kind", "hourly", "mode", "chunked")).isEqualTo(50.0);
+
+        when(csStore.status(MonitoringMetricsExporter.CERT_SWEEP_STATUS_RUNS)).thenThrow(new org.springframework.dao.QueryTimeoutException("x"));
+        org.mockito.Mockito.clearInvocations(csHealth);
+        exporter.refresh();
+        assertThat(exists(MonitoringMetricNames.CERT_SWEEP_CHUNKS)).isFalse();
+        assertThat(exists(MonitoringMetricNames.CERT_SWEEP_LAST_RUN)).isFalse();
+        assertThat(gauge(MonitoringMetricNames.EXPORTER_SOURCE, "source", "cert_sweep")).isEqualTo(0);
+        verify(csHealth, never()).readScanRuns();
+        assertThat(gauge(MonitoringMetricNames.CERT_SWEEP_WORKER_CHUNKS, "outcome", "completed")).as("POD sayaçları sürer").isEqualTo(85);
+
+        org.mockito.Mockito.reset(csStore);
+        when(csStore.status(MonitoringMetricsExporter.CERT_SWEEP_STATUS_RUNS)).thenReturn(new com.sitemonitor.service.certsweep.CertSweepStatus(now,
+                false, List.of(), null, List.of()));
+        when(csHealth.readScanRuns()).thenThrow(new IllegalStateException("tablo yok"));
+        cc.registerWorkerStatus(null);
+        cc.registerCoordinatorStatus(null);
+        exporter.refresh();
+        assertThat(exists(MonitoringMetricNames.CERT_SWEEP_LAST_RUN)).isFalse();
+        assertThat(gauge(MonitoringMetricNames.EXPORTER_SOURCE, "source", "scan_runs")).isEqualTo(0);
+        assertThat(exists(MonitoringMetricNames.CERT_SWEEP_WORKER_CHUNKS)).isFalse();
+    }
+
+    @Test
+    @DisplayName("R3-4: POD-only lider (başka pod kurum ailelerini yayıyor) → parça / son tur KÜME aileleri yok, depo okunmaz; pod sayaçları "
+            + "bellekten yayılır")
+    void certSweepMeters_podOnlyLeader() {
+        attachCertSweep(true);
+        placement(true, observation("sitemonitor-other-0000000b", NOW.toEpochMilli() - 30_000));
+        MonitoringMetricsExporter.Status s = exporter.refresh();
+        assertThat(s.orgFamilies()).isFalse();
+        assertThat(exists(MonitoringMetricNames.CERT_SWEEP_CHUNKS)).isFalse();
+        assertThat(exists(MonitoringMetricNames.CERT_SWEEP_LAST_RUN)).isFalse();
+        verifyNoInteractions(csStore);
+        assertThat(gauge(MonitoringMetricNames.CERT_SWEEP_WORKER_CHUNKS, "outcome", "takeover")).isEqualTo(4);
+    }
 }

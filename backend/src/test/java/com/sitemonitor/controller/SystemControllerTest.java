@@ -1050,6 +1050,66 @@ class SystemControllerTest {
         return s;
     }
     @Test
+    @DisplayName("R3-4 (paket C1): sağlık yanıtı cert_chunks taşır — anahtar kapalı → YALNIZ {enabled: false}, depo hiç okunmaz, scan "
+            + "değişmez (L-1); açık → koşu / son koşular / bu pod + scan.last_mode; depo okunamadı → status_error (yanıt düşmez); bean yok → "
+            + "alan yok")
+    void healthCarriesCertChunksR34() throws Exception {
+        com.sitemonitor.service.AppSettingsService settings = org.mockito.Mockito.mock(com.sitemonitor.service.AppSettingsService.class);
+        when(settings.getBoolean(eq(com.sitemonitor.service.certsweep.CertChunking.KEY_ENABLED), org.mockito.ArgumentMatchers.anyBoolean()))
+                .thenReturn(false);
+        com.sitemonitor.service.certsweep.CertChunking chunking = new com.sitemonitor.service.certsweep.CertChunking(settings, null);
+        com.sitemonitor.service.certsweep.CertSweepStore store = org.mockito.Mockito.mock(com.sitemonitor.service.certsweep.CertSweepStore.class);
+        Map<String, Object> scan = new java.util.LinkedHashMap<>();
+        scan.put("last_run", "2026-10-29T08:00:00");
+        scan.put("last_run_kind", "hourly");
+        scan.put("runs", Map.of("hourly", Map.of("run_id", "r-1", "last_run", "2026-10-29T08:00:00", "duration_ms", 40_000)));
+        when(schedulerService.getSystemHealth()).thenReturn(Map.of("scheduler", "OK", "scan", scan));
+        org.springframework.test.util.ReflectionTestUtils.setField(controller, "certChunking", chunking);
+        org.springframework.test.util.ReflectionTestUtils.setField(controller, "certSweepStore", store);
+        try {
+            mvc.perform(get("/api/admin/system").session(userSession()))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.cert_chunks.enabled").value(false))
+                    .andExpect(jsonPath("$.data.cert_chunks.run").doesNotExist())
+                    .andExpect(jsonPath("$.data.cert_chunks.this_pod").doesNotExist())
+                    .andExpect(jsonPath("$.data.scan.last_mode").doesNotExist())
+                    .andExpect(jsonPath("$.data.scan.chunked").doesNotExist());
+            org.mockito.Mockito.verifyNoInteractions(store);
+
+            when(settings.getBoolean(eq(com.sitemonitor.service.certsweep.CertChunking.KEY_ENABLED), org.mockito.ArgumentMatchers.anyBoolean()))
+                    .thenReturn(true);
+            long now = System.currentTimeMillis();
+            com.sitemonitor.service.certsweep.CertSweepStatus.Run done = new com.sitemonitor.service.certsweep.CertSweepStatus.Run(
+                    "r-1", "hourly", "pod-a-0000000a", "DONE", true, 400, 20, 20, now - 60_000, now - 20_000, now - 10_000, "DECIDED",
+                    0, 0, 0, null);
+            when(store.status(5)).thenReturn(new com.sitemonitor.service.certsweep.CertSweepStatus(now, false, List.of(done), null, List.of()));
+            mvc.perform(get("/api/admin/system").session(userSession()))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.cert_chunks.enabled").value(true))
+                    .andExpect(jsonPath("$.data.cert_chunks.run").value(org.hamcrest.Matchers.nullValue()))
+                    .andExpect(jsonPath("$.data.cert_chunks.last_runs[0].run_id").value("r-1"))
+                    .andExpect(jsonPath("$.data.cert_chunks.this_pod.pod").exists())
+                    .andExpect(jsonPath("$.data.scan.last_mode").value("chunked"))
+                    .andExpect(jsonPath("$.data.scan.runs.hourly.mode").value("chunked"))
+                    .andExpect(jsonPath("$.data.scan.last_run").value("2026-10-29T08:00:00"));
+
+            when(store.status(5)).thenThrow(new org.springframework.dao.DataAccessResourceFailureException("db"));
+            mvc.perform(get("/api/admin/system").session(userSession()))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.cert_chunks.status_error").value("DataAccessResourceFailureException"))
+                    .andExpect(jsonPath("$.data.scan.last_mode").value("unknown"))
+                    .andExpect(jsonPath("$.data.scheduler").value("OK"));
+
+            org.springframework.test.util.ReflectionTestUtils.setField(controller, "certChunking", null);
+            mvc.perform(get("/api/admin/system").session(userSession()))
+                    .andExpect(jsonPath("$.data.cert_chunks").doesNotExist());
+        } finally {
+            org.springframework.test.util.ReflectionTestUtils.setField(controller, "certChunking", null);
+            org.springframework.test.util.ReflectionTestUtils.setField(controller, "certSweepStore", null);
+        }
+    }
+
+    @Test
     @DisplayName("7/24 operatörü (2026-10-04) AUDIT DEĞİLDİR: denetçi/yönetici uçları (anomali onayı, zamanlayıcı kilidi, oturum sonlandırma) 403")
     void nocOperator_cannotUseAuditOrAdminSystemEndpoints() throws Exception {
         MockHttpSession op = userSession();
