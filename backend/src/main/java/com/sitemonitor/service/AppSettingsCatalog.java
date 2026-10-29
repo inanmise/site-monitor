@@ -214,6 +214,14 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.scripted.manual-cooldown-seconds", "scripted", Type.INT),
         new Setting("site.monitor.scripted.manual-wait-seconds", "scripted", Type.INT),
         new Setting("site.monitor.scripted.k6-bin",                  "scripted", Type.STRING),
+        // k6 motoru (2026-10-29, k6 0.49 → 2.3 geçişi, Yayın A) — Ayarlar → Platform → k6 motoru (kendi sayfası).
+        // Yedek ikili: geri dönüş hedefi; sözdizimi kuralları ve kayıt doğrulaması onu da hesaba katar. Aday ikili: yalnız
+        // uyumluluk taraması koşar. GODEBUG: eski TLS uçları için izinli Go kaçışları. User-Agent: boş = k6 varsayılanı.
+        new Setting("site.monitor.scripted.k6-bin-rollback",         "k6-engine", Type.STRING),
+        new Setting("site.monitor.scripted.k6-bin-candidate",        "k6-engine", Type.STRING),
+        new Setting("site.monitor.scripted.godebug",                 "k6-engine", Type.STRING),
+        new Setting("site.monitor.scripted.user-agent",              "k6-engine", Type.STRING),
+        new Setting("site.monitor.scripted.compat-scan.excluded-ids","k6-engine", Type.STRING),
         new Setting("site.monitor.scripted.hardcoded-secret-policy", "scripted", Type.ENUM, java.util.List.of("WARN", "BLOCK")),
         // Betikte dosya okuma (2026-10-01, öneri 1): REPORT = uyar + raporla (varsayılan, davranış aynı) · BLOCK = kayıt
         // reddedilir, koşum yürütülmez. Önce /api/admin/scripted/file-read-report ile mevcut betikler denetlenir.
@@ -562,6 +570,7 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.weekly-availability.retention-days", "retention", Type.INT),
         new Setting("site.monitor.cert-note-revision.retention-days", "retention", Type.INT),
         new Setting("site.monitor.scripted.draft-retention-days", "retention", Type.INT),
+        new Setting("site.monitor.scripted.compat-scan.retention-days", "retention", Type.INT),
         new Setting("site.monitor.retention.run-history-retention-days", "retention", Type.INT)
     );
 
@@ -632,6 +641,12 @@ public final class AppSettingsCatalog {
         "site.monitor.http.rdap-base-url",
         "site.monitor.scripted.k6-bin",
         "site.monitor.scripted.k6-api-address",
+        // k6 motoru (2026-10-29): bütün senaryo izlemelerinin motoru / TLS kaçışları / User-Agent'ı — kurum geneli.
+        "site.monitor.scripted.k6-bin-rollback",
+        "site.monitor.scripted.k6-bin-candidate",
+        "site.monitor.scripted.godebug",
+        "site.monitor.scripted.user-agent",
+        "site.monitor.scripted.compat-scan.excluded-ids",
         "site.monitor.scripted.hardcoded-secret-policy",
         "site.monitor.scripted.file-read-policy",
         "site.monitor.userpush.url",

@@ -108,6 +108,13 @@ public class ScriptedCheck {
     private String scriptVersion;
 
     /**
+     * Bu koşumu YAPAN k6 ikilisinin sürümü ({@code v0.49.0} / {@code v2.3.0}; 2026-10-29, k6 sürüm geçişi). Geçişte
+     * "bu sonuç hangi motorla ölçüldü" sorusunun tek cevabı; null = geçiş öncesi satır ya da sürüm okunamadı.
+     */
+    @Column(name = "k6_version", length = 20)
+    private String k6Version;
+
+    /**
      * ELLE koşum mu ("Şimdi kontrol et", 2026-09-29) — NULL/false = zamanlanmış. Kontrol geçmişi ve uptime serisi
      * iki türü de sayar (elle sonuç da kaydedilir); anomali guard'ının ardışık zaman aşımı serisi YALNIZ zamanlanmış
      * koşumları sayar ({@code ScriptedCheckRepository.findRecentScheduledByMonitorId}) — toplu elle kontrolde

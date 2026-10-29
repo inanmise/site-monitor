@@ -1,0 +1,1 @@
+time="2026-10-29T23:51:29+03:00" level=error msg="GoError: unknown module: k6/x/sql\n\tat go.k6.io/k6/js.(*requireImpl).require-fm (native)\n\tat file:///tmp/k6-script-4815162342.js:1:0(17)\n" hint="script exception"

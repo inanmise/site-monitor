@@ -142,8 +142,10 @@ function isWarnLike(s) { return s === 'NO_CHECKS' }
  *
  * Sürüm okunamıyorsa hiç render edilmez: yanlış sözdizimi tavsiyesi vermektense sessiz kal.
  */
-function K6VersionBadge({ t, version, withSyntaxNote = false }) {
-  const level = k6SyntaxLevel(version)
+function K6VersionBadge({ t, version, syntaxVersion = null, withSyntaxNote = false }) {
+  // Sözdizimi notu ETKİN ve YEDEK ikiliden ESKİSİNE göre (2026-10-29, k6 geçişi): geçiş süresince etkin 2.3, yedek 0.49
+  // iken modern sözdizimi hâlâ yasak — geri dönüş betiği bozmasın. Eski sunucu alanı göndermez → etkin sürüm.
+  const level = k6SyntaxLevel(syntaxVersion || version)
   if (!version) return null
   return (
     <span data-slot="k6-version" className="inline-flex flex-wrap items-center gap-2">
@@ -373,7 +375,8 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
       if (res?.success) {
         const d = res.data || {}
         setMonitors(d.monitors || [])
-        setK6({ available: d.k6_available !== false, version: d.k6_version, canManage: !!d.can_manage })
+        setK6({ available: d.k6_available !== false, version: d.k6_version,
+          syntaxVersion: d.k6_syntax_version || d.k6_version || null, canManage: !!d.can_manage })
         setProxy({ configured: !!d.proxy_configured, noProxy: d.no_proxy || '' })
         setLoadError(null)
         return d.monitors || []   // geri alma sonrası açık detayı tazelemek için (diğer çağıranlar dönüşü yok sayar)
@@ -1155,7 +1158,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
   // ── Ekle / Düzenle formu ── (örtü tıklaması ve Escape KAPATMAZ — veri kaybı önlenir; bkz. MonitorFormModal)
   // Detay penceresi açıkken form ONUN İÇİNDE çizilir (aşağıda `{formModal}`), aksi hâlde sayfa düzeyinde.
   const formModal = modal && (
-    <EditModal fe={fe} {...{ t, lang, k6Version: k6.version, proxy, form, setForm, modal, dupSource, saving, testing, testResult, saveWarnings, saveError, smoke, dismissSmoke: () => { setSmoke(null); closeEdit({ skipDraft: true }) }, save, del, closeEdit, runTest, isAdminish, canPickTeam, canDelete: modal?.id ? canDeleteRow(modal) : false, teamSelectOptions, teamPick, routingLock, teamName, groupSelectOptions, teamTags, setEnvRow, addEnvRow, delEnvRow, selectScriptSource, savedScripts, savedSource, templates: scriptTemplates, draftSavedAt, pendingDraft, applyDraft, discardDraft, bumpType, setBumpType, canOpenSettings: globalAdmin }} />
+    <EditModal fe={fe} {...{ t, lang, k6Version: k6.version, k6SyntaxVersion: k6.syntaxVersion, proxy, form, setForm, modal, dupSource, saving, testing, testResult, saveWarnings, saveError, smoke, dismissSmoke: () => { setSmoke(null); closeEdit({ skipDraft: true }) }, save, del, closeEdit, runTest, isAdminish, canPickTeam, canDelete: modal?.id ? canDeleteRow(modal) : false, teamSelectOptions, teamPick, routingLock, teamName, groupSelectOptions, teamTags, setEnvRow, addEnvRow, delEnvRow, selectScriptSource, savedScripts, savedSource, templates: scriptTemplates, draftSavedAt, pendingDraft, applyDraft, discardDraft, bumpType, setBumpType, canOpenSettings: globalAdmin }} />
   )
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -1736,7 +1739,7 @@ function CheckDetail({ t, check, k6Version }) {
 }
 
 // ── Create/Edit modal ────────────────────────────────────────────────────────
-function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, fe, dupSource, saving, testing, testResult, saveWarnings, saveError, smoke = null, dismissSmoke, save, del, closeEdit, runTest, isAdminish, canPickTeam = isAdminish, canDelete, teamSelectOptions, teamPick = null, routingLock = false, teamName, groupSelectOptions, teamTags = [], setEnvRow, addEnvRow, delEnvRow, selectScriptSource, savedScripts = [], savedSource = null, templates = [], draftSavedAt = null, pendingDraft = null, applyDraft, discardDraft, bumpType = 'patch', setBumpType, canOpenSettings = false }) {
+function EditModal({ t, lang, k6Version, k6SyntaxVersion = null, proxy = null, form, setForm, modal, fe, dupSource, saving, testing, testResult, saveWarnings, saveError, smoke = null, dismissSmoke, save, del, closeEdit, runTest, isAdminish, canPickTeam = isAdminish, canDelete, teamSelectOptions, teamPick = null, routingLock = false, teamName, groupSelectOptions, teamTags = [], setEnvRow, addEnvRow, delEnvRow, selectScriptSource, savedScripts = [], savedSource = null, templates = [], draftSavedAt = null, pendingDraft = null, applyDraft, discardDraft, bumpType = 'patch', setBumpType, canOpenSettings = false }) {
   // Pencere ortak MonitorFormModal (ui/ModalShell): sabit başlık + kaydırılan gövde + sabit alt çubuk
   // + "devamı için kaydırın" ipucu orada TEK kopya (kapı modalScroll.test.jsx).
   // Ortak bildirim blogunun "kime gidecek" satiri. Form AYRI bir bilesende oldugu icin
@@ -1946,7 +1949,7 @@ function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, fe,
         {/* Script editörü — sürüm rozeti başlığın YANINDA: kullanıcı sözdizimini seçerken görsün. */}
         <FormSection title={t('scripted.script')}
           action={<>
-            <K6VersionBadge t={t} version={k6Version} withSyntaxNote />
+            <K6VersionBadge t={t} version={k6Version} syntaxVersion={k6SyntaxVersion} withSyntaxNote />
             {/* Script'i panoya al — editörün içinden elle seçmek uzun script'te zahmetli
                 (kaydırma + seçimi kaçırma). Boşken düğme HİÇ çizilmez: copyText('') zaten
                 false döner ve onay ikonu hiç gelmez — ölü bir düğme bırakmayalım. */}

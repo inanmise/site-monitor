@@ -149,7 +149,8 @@ export default function GeneralSettings({ focusKey = null }) {
   // appearance (2026-10-05): Ayarlar → Görünüm → Temalar kendi sayfasında (tema kartları + canlı önizleme).
   // tech-error-report (2026-10-17): Ayarlar → Platform → Teknik hata raporu kendi sayfasında (takım seçici + kanal özeti).
   // grafana (2026-10-18): Ayarlar → Platform → Grafana panosu kendi sayfasında (pano ayarları + aktarıcı + JSON indirme).
-  const SKIP_GROUPS = new Set(['branding', 'retention', 'userpush', 'storm', 'login-anomaly', 'login-methods', 'appearance', 'executive-summary', 'tech-error-report', 'grafana'])
+  // k6-engine (2026-10-29): Ayarlar → Platform → k6 motoru kendi sayfasında (ikili profilleri + TLS kaçışları + tarama).
+  const SKIP_GROUPS = new Set(['branding', 'retention', 'userpush', 'storm', 'login-anomaly', 'login-methods', 'appearance', 'executive-summary', 'tech-error-report', 'grafana', 'k6-engine'])
   const order = []
   const byGroup = {}
   for (const it of items) {

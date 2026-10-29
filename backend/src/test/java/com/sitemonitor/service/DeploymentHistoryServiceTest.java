@@ -440,4 +440,29 @@ class DeploymentHistoryServiceTest {
         when(repo.findDistinctEnvironments()).thenReturn(List.of("prod", "staging"));
         assertThat(service.environments()).containsExactly("prod", "staging");
     }
+
+    @Test
+    @DisplayName("liveOtherVersions: yalnız canlı (kapanmamış, son 3 dk görülmüş) STARTUP satırlarından BAŞKA sürüm koşanlar; okunamazsa null")
+    void liveOtherVersions_listsOnlyLiveOtherVersionPods() {
+        String fresh = Instant.now().minusSeconds(30).toString();
+        String stale = Instant.now().minusSeconds(600).toString();
+        DeploymentHistory other = row(1, "2026-10-30T08:00:00Z", "1.0.0", DeploymentHistory.SOURCE_STARTUP);
+        other.setLastSeenAt(fresh);
+        other.setPodName("site-monitor-old-1");
+        DeploymentHistory same = row(2, "2026-10-30T08:01:00Z", "1.1.0", DeploymentHistory.SOURCE_STARTUP);
+        same.setLastSeenAt(fresh);
+        DeploymentHistory gone = row(3, "2026-10-30T07:00:00Z", "1.0.0", DeploymentHistory.SOURCE_STARTUP);
+        gone.setLastSeenAt(stale);
+        DeploymentHistory ended = row(4, "2026-10-30T07:30:00Z", "1.0.0", DeploymentHistory.SOURCE_STARTUP);
+        ended.setLastSeenAt(fresh);
+        ended.setEndedAt(fresh);
+        DeploymentHistory manual = row(5, "2026-10-30T07:40:00Z", "0.9.0", "MANUAL");
+        manual.setLastSeenAt(fresh);
+        when(repo.findByEnvironmentOrderByStartedAtAscIdAsc(anyString())).thenReturn(List.of(other, same, gone, ended, manual));
+        assertThat(service.liveOtherVersions())
+                .containsExactly(java.util.Map.of("pod", "site-monitor-old-1", "version", "1.0.0"));
+
+        when(repo.findByEnvironmentOrderByStartedAtAscIdAsc(anyString())).thenThrow(new RuntimeException("db down"));
+        assertThat(service.liveOtherVersions()).isNull();
+    }
 }

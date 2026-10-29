@@ -1,7 +1,7 @@
 import { useId, useState, useCallback, useEffect, useMemo } from 'react'
 import {
   Settings, Search, SlidersHorizontal, Palette, FolderTree, Layers, Mail, CalendarClock, CalendarDays, FileText, CloudLightning, BellRing, ShieldAlert, KeyRound, LockKeyhole, Stethoscope, Archive, Database, Headset, ServerCog, LogIn, SwatchBook, FileWarning,
-  ChartNoAxesCombined,
+  ChartNoAxesCombined, Cpu,
 } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import { useUrlQuerySync, readUrlParam } from '../../hooks/useUrlQuerySync.js'
@@ -35,6 +35,7 @@ import SystemMaintenanceSettings from './SystemMaintenanceSettings.jsx'   // Sis
 import LoginMethodsSettings from './LoginMethodsSettings.jsx'   // Giriş Yöntemleri — kodla giriş + LDAP girişi (2026-10-02)
 import ThemeSettings from './ThemeSettings.jsx'   // Görünüm → Temalar (2026-10-05)
 import GrafanaDashboardSettings from './grafana/GrafanaDashboardSettings.jsx'   // Grafana panosu + ölçüm aktarıcısı (2026-10-18)
+import K6EngineSettings from './k6engine/K6EngineSettings.jsx'   // k6 motoru — 0.49 → 2.3 geçişi, uyumluluk taraması (2026-10-29)
 import ToneBadge from './ToneBadge.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import PageHeader from '../ui/PageHeader.jsx'
@@ -62,6 +63,8 @@ const GROUPS = [
     { id: 'techerror', labelKey: 'settings.navChannelReports', icon: FileWarning },
     // Grafana panosu (2026-10-18): Prometheus ölçümleri + içe aktarılabilir pano JSON'u — kapsamlı müdür SALT OKUNUR görür
     { id: 'grafana', labelKey: 'settings.navGrafana', icon: ChartNoAxesCombined },
+    // k6 motoru (2026-10-29): etkin / yedek / aday ikili, TLS kaçışları, uyumluluk taraması — YALNIZ global yönetici
+    { id: 'k6engine', labelKey: 'settings.navK6Engine', icon: Cpu },
   ] },
   // Görünüm → Temalar (2026-10-05, kullanıcı isteği): açık temalar + varsayılan; kapsamlı müdür SALT OKUNUR görür
   // (anahtarlar GLOBAL_ONLY, sunucu read_only döner) — kilitli bölüm değil, önizleme herkese açık.
@@ -112,8 +115,9 @@ function initialSection() {
 // Giriş Yöntemleri (2026-10-02): kimin nasıl kimlik doğrulayacağı kurum geneli güvenlik politikası — sunucu her uçta 403.
 // Haftalık erişilebilirlik + Envanter raporu (20.165.1, UIA-C1): SystemController'daki her uç `requireAdmin` (global) —
 // kapsamlı müdüre açık bölüm iki 403 tostu + ACCESS_DENIED güvenlik olayı üretiyordu.
+// k6 motoru (2026-10-29): bütün senaryo izlemelerinin motoru kurum geneli — sunucu her uçta 403 (K6EngineController).
 const GLOBAL_ONLY_SECTIONS = new Set(['smtp', 'ldap', 'database', 'secrets', 'weeklyreports', 'sysmaint', 'loginmethods',
-  'weeklyavail', 'certinvreport'])
+  'weeklyavail', 'certinvreport', 'k6engine'])
 /** Kimlik bilgisi / sır taşıyan kilitli bölümler — notun metni bunlar için "sır", diğerleri için "kurum geneli ayar". */
 const SECRET_SECTIONS = new Set(['smtp', 'ldap', 'database', 'secrets'])
 
@@ -297,6 +301,7 @@ export default function AdminSettings({ globalAdmin = true }) {
           {active === 'sysmaint' && <SystemMaintenanceSettings />}
           {active === 'techerror' && <TechErrorReportSettings readOnly={!globalAdmin} />}
           {active === 'grafana' && <GrafanaDashboardSettings readOnly={!globalAdmin} />}
+          {active === 'k6engine' && <K6EngineSettings />}
           {active === 'themes' && <ThemeSettings />}
           {active === 'smtp' && <SmtpSettings />}
           {active === 'weeklyavail' && <WeeklyAvailabilitySettings />}

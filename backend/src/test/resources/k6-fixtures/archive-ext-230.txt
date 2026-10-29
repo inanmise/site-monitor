@@ -1,0 +1,1 @@
+time="2026-10-29T23:51:31+03:00" level=error msg="could not initialize 'k6-script-4815162342.js': could not load JS test 'file:///tmp/k6-script-4815162342.js': unknown modules [\"k6/x/sql\"] were tried to be loaded, but couldn't - this likely means automatic extension resolution is required or a custom k6 binary with the required extensions"

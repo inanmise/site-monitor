@@ -226,6 +226,12 @@ const SPECIAL = {
   THEME_SETTINGS_SAVE: 'audit.ev.THEME_SETTINGS_SAVE',
   // Ayarlar → Grafana panosu (2026-10-18): ayar kaydı + pano JSON'u indirme — "GRAFANA" nesne sözlüğünde yok
   GRAFANA_SETTINGS_SAVE: 'audit.ev.GRAFANA_SETTINGS_SAVE',
+  // Ayarlar → k6 motoru (2026-10-29): motor geçişi / geri dönüş / ayar kaydı / uyumluluk taraması — "K6" sözlükte yok
+  K6_ENGINE_SETTINGS_SAVE: 'audit.ev.K6_ENGINE_SETTINGS_SAVE',
+  K6_ENGINE_SWITCH: 'audit.ev.K6_ENGINE_SWITCH',
+  K6_ENGINE_ROLLBACK: 'audit.ev.K6_ENGINE_ROLLBACK',
+  K6_COMPAT_SCAN_START: 'audit.ev.K6_COMPAT_SCAN_START',
+  K6_COMPAT_SCAN_CANCEL: 'audit.ev.K6_COMPAT_SCAN_CANCEL',
   GRAFANA_DASHBOARD_EXPORT: 'audit.ev.GRAFANA_DASHBOARD_EXPORT',
   // İş ölçümleri ucu (/metrics/sitemonitor) belirteç reddi — güvenlik olayı, IP başına 10 dk'da bir
   METRICS_EXPORT_ACCESS_DENIED: 'audit.ev.METRICS_EXPORT_ACCESS_DENIED',

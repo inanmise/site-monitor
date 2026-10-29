@@ -1,0 +1,22 @@
+time="2026-10-29T23:51:31+03:00" level=error msg="test marked as failed: kasten"
+
+
+  █ TOTAL RESULTS 
+
+    checks_total.......: 1       999.40036/s
+    checks_succeeded...: 100.00% 1 out of 1
+    checks_failed......: 0.00%   0 out of 1
+
+    ✓ one
+
+    EXECUTION
+    iteration_duration...: avg=1ms min=1ms med=1ms max=1ms p(90)=1ms p(95)=1ms
+    iterations...........: 1   999.40036/s
+
+    NETWORK
+    data_received........: 0 B 0 B/s
+    data_sent............: 0 B 0 B/s
+
+
+
+time="2026-10-29T23:51:31+03:00" level=error msg="test run was marked as failed"

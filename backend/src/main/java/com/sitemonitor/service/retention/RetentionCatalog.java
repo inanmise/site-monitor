@@ -360,6 +360,14 @@ public final class RetentionCatalog {
                 DataClass.CONTENT,
                 "Monitörü silinmiş script sürümleri. Sürüm geçmişi monitör silinirken BİLİNÇLİ olarak "
                 + "silinmiyor (denetim değeri); öksüz kalan satırlar burada temizlenir."),
+        age("k6-compat-scans", "k6_compat_scans", "started_at", "site.monitor.scripted.compat-scan.retention-days",
+                180, 7, false, DataClass.PERSONAL,
+                "k6 uyumluluk taramaları (2026-10-29, k6 sürüm geçişi — gölge koşu): taramayı başlatan yöneticinin adı, "
+                + "aday / etkin ikili sürümü ve sayaçlar. Geçiş bittikten sonra değeri azalır; kişisel veri penceresinin içinde."),
+        orphan("k6-compat-results-orphan", "k6_compat_results",
+                "scan_id NOT IN (SELECT id FROM k6_compat_scans)", DataClass.CONTENT,
+                "Taraması silinmiş k6 uyumluluk sonuçları (izleme adı, durum, maskeli hata metni) — tarama kendi "
+                + "politikasıyla silinince yetim kalır ve burada temizlenir."),
 
         // ── Temizliğin kendi çalışma geçmişi (öz-referans) ─────────────────────────────────────
         age("retention-run-items", "retention_run_item", "created_at", "site.monitor.retention.run-history-retention-days",

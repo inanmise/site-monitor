@@ -812,6 +812,38 @@ kubectl get pod -n "$NS" -l app.kubernetes.io/instance="$REL" \
       node drain'i süresiz bloke eder), aynı komut — ya da `helm rollback "$REL" <2. adımdaki revizyon>`.
       Veri ve şema değişmez; oturumlar JDBC'de kalır.
 
+## k6 sürüm geçişi (0.49 → 2.3)
+
+Yayın A (imajda iki ikili) davranışı DEĞİŞTİRMEZ: dağıtımdan sonra senaryo kontrolleri hâlâ 0.49 ile koşar. Geçiş üç ayrı
+adımdır, her biri ayrı onayla ve ayrı günde. Ayrıntı: RUNBOOK → "k6 sürüm geçişi (0.49 → 2.3)".
+
+### 1. Yayın A dağıtımından hemen sonra
+- [ ] Günlükte iki satır (bütün pod'lar): `[K6] ✅ k6 bulundu — sürüm v0.49.0 (k6)` ve
+      `[K6] aday k6 — sürüm v2.3.0 (/opt/k6-next/k6)`:
+      `kubectl logs -n "$NS" -l app.kubernetes.io/instance="$REL" --prefix --tail=-1 | grep '\[K6\]'`
+- [ ] Ayarlar → Platform → k6 motoru: Etkin = v0.49.0 "Çalışıyor", Aday = v2.3.0 "Çalışıyor", Yedek "Tanımlı değil".
+- [ ] Senaryo kartları ve son kontroller önceki gibi; yeni kontrol satırlarında `k6 v0.49.0`.
+
+### 2. Gölge tarama (onay gerekir)
+- [ ] Yan etkili betikler "Tarama dışı" listesinde.
+- [ ] **Taramayı başlat** → bitti (DONE); sonuç CSV'si indirildi ve takımlara iletildi.
+- [ ] Gerileme = 0 (ya da her biri sahibiyle bilerek kabul edildi); TLS kaçışı açıldıysa hangi uç için açıldığı not edildi.
+
+### 3. Adayı etkin yap (onay gerekir)
+- [ ] Dağıtım BİTTİ: bütün pod'lar Yayın A (ya da sonrası) koşuyor. Başka sürüm koşan pod varken düğme kapalıdır ve sunucu
+      geçişi reddeder (`K6_MIXED_VERSIONS`) — eski kodlu pod'da aday ikili yoktur, her senaryo kontrolü hata verirdi.
+- [ ] **Adayı etkin yap** → Etkin = v2.3.0, Yedek = v0.49.0 (`k6`); diğer pod'lar 10 sn içinde (sayfayı yenileyin).
+- [ ] İlk saat: yeni kontrol satırlarında `k6 v2.3.0`; senaryo alarm sayısı ve "Senaryo yavaş" alarmları önceki günle aynı.
+- [ ] Sorun → **Yedeğe geri dön** (yeniden dağıtım yok).
+
+### 4. Birkaç gün sonra — Yayın B (ayrı yayın)
+- [ ] 2.3 `/usr/bin/k6`'ya taşınır, 0.49 bir sürüm daha yedek kalır; ekran metinleri güncellenir.
+
+### Geri alma (imajı Yayın A'dan ESKİ bir sürüme döndürmek)
+- [ ] ÖNCE k6 motoru → **Yedeğe geri dön** (ya da Ayarlar'da `site.monitor.scripted.k6-bin` = `k6`), SONRA `helm rollback`.
+      Ayar veritabanında kalır: eski imajda `/opt/k6-next/k6` yoktur, etkin ikili o yolu gösterirse bütün senaryo
+      kontrolleri "k6 bulunamadı" ile atlanır (sessizce izleme yok). Aday hiç etkin yapılmadıysa bir şey yapmak gerekmez.
+
 ## Geri alma
 
 **Karar ölçütü:** 15 dk içinde readiness yeşil değil **ya da** e-posta / LDAP / `decrypt failed` kanaryası

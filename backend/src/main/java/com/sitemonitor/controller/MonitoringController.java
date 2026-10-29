@@ -5079,6 +5079,8 @@ public class MonitoringController {
         out.put("monitors", withRevealFlag(session, withCheckFlag(session, result)));
         out.put("k6_available", scriptedChecker.isAvailable());
         out.put("k6_version", scriptedChecker.version());
+        // Sözdizimi rozeti için sürüm (2026-10-29, k6 geçişi): etkin ve yedek ikiliden ESKİSİ — geri dönüş betiği bozmasın.
+        out.put("k6_syntax_version", scriptedChecker.syntaxVersion());
         // Vekilin ETKİN durumu — "AUTO seçtim, demek ki vekilden geçiyor" varsayımı yanlış olabiliyor:
         // Go, NO_PROXY listesindeki her girdiyi SONEK olarak uygular (`akbank.com` ⇒ tüm alt alanlar),
         // yani eşleşen hedefler AUTO'da bile doğrudan çıkar. Bu iki alan, formda kararın gerçekte ne
@@ -5499,6 +5501,7 @@ public class MonitoringController {
                 // sürümüyle koşulduğunu göremiyordu (PAGE aynı sürümde alan başına kolon almıştı).
                 new CsvColumn<>("exit_code", com.sitemonitor.model.ScriptedCheck::getExitCode),
                 new CsvColumn<>("script_version", com.sitemonitor.model.ScriptedCheck::getScriptVersion),
+                new CsvColumn<>("k6_version", com.sitemonitor.model.ScriptedCheck::getK6Version),
                 new CsvColumn<>("via_proxy", com.sitemonitor.model.ScriptedCheck::getViaProxy),
                 new CsvColumn<>("req_blocked_ms", com.sitemonitor.model.ScriptedCheck::getReqBlockedMs),
                 new CsvColumn<>("req_connecting_ms", com.sitemonitor.model.ScriptedCheck::getReqConnectingMs),
@@ -6102,6 +6105,8 @@ public class MonitoringController {
             // Koşumun sürümü ile monitörün GÜNCEL sürümü ayrı alanlar: "bu arıza son değişiklikle
             // mi başladı?" sorusu ancak ikisi yan yana görülünce cevaplanır.
             item.put("run_script_version", latest.getScriptVersion());
+            // Koşumu yapan k6 sürümü (2026-10-29, k6 0.49 -> 2.3 geçişi) — geçiş öncesi / sonrası ayırt edilsin.
+            item.put("run_k6_version", latest.getK6Version());
             item.put("checked_at", latest.getCheckedAt());
         } else {
             // "Hiç koşmadı" dalı — anahtarlar EKSİK değil NULL olmalı (keyword enrich deseni):

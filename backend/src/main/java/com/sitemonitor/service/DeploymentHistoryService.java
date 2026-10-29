@@ -190,6 +190,45 @@ public class DeploymentHistoryService {
         }
     }
 
+    /** "Canlı pod" penceresi — {@link #touch} 60 sn'de bir son görülmeyi yazar. */
+    static final long LIVE_POD_MS = 3 * 60_000L;
+
+    /**
+     * Bu ortamda ŞU AN canlı olan ve bu pod'dan FARKLI sürüm koşan pod'lar (2026-10-30, k6 geçişi inceleme M2): k6 motor
+     * geçişi (ayar) eski sürüm pod'larına da gider; o pod'larda aday ikili yoktur ya da eski kod onu doğru koşamaz.
+     * Canlı = kapanmamış açılış (STARTUP) satırı ve son görülme {@link #LIVE_POD_MS} içinde. Geçmiş kapalıysa boş liste;
+     * okunamazsa null (bilinmiyor).
+     *
+     * @return {@code [{pod, version}]}
+     */
+    public List<Map<String, String>> liveOtherVersions() {
+        if (!enabled) return List.of();
+        try {
+            BuildInfo.Snapshot b = buildInfo.get();
+            String env = currentEnv != null ? currentEnv : b.environment();
+            String mine = blankToNull(b.version());
+            long cutoff = System.currentTimeMillis() - LIVE_POD_MS;
+            List<Map<String, String>> out = new ArrayList<>();
+            for (DeploymentHistory r : repo.findByEnvironmentOrderByStartedAtAscIdAsc(env)) {
+                if (!DeploymentHistory.SOURCE_STARTUP.equals(r.getSource())) continue;
+                if (Objects.equals(r.getId(), currentId)) continue;
+                if (r.getEndedAt() != null && !r.getEndedAt().isBlank()) continue;
+                Long seen = epochMs(r.getLastSeenAt());
+                if (seen == null || seen < cutoff) continue;
+                if (Objects.equals(blankToNull(r.getVersion()), mine)) continue;
+                Map<String, String> m = new LinkedHashMap<>();
+                m.put("pod", podKey(r));
+                m.put("version", r.getVersion());
+                out.add(m);
+                if (out.size() >= 20) break;
+            }
+            return out;
+        } catch (Exception e) {
+            log.warn("Live pod versions could not be read: {}", e.toString());
+            return null;
+        }
+    }
+
     public void markReady() {
         Long id = currentId;
         if (id == null) return;

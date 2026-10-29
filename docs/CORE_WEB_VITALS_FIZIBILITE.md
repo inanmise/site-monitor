@@ -145,7 +145,7 @@ Ama k6 sürümü `Dockerfile`'da `ARG K6_VERSION=0.49.0` ile sabitlenmiş — bu
 
 1. k6 browser **ayrı bir Chromium kurulumu ister** — Grafana dokümantasyonu açık: *"install a Chromium-based browser on your machine."* `grafana/k6:0.49.0` imajında tarayıcı yok; `Dockerfile`'ın `COPY --from=k6-bin /usr/bin/k6` satırı yalnız binary'yi taşıyor.
 2. **Sürüm pin'i eski.** 0.49'da modül `k6/experimental/browser`; v0.52'de `k6/browser` olarak taşındı, k6 bugün v2.x'te. Yükseltmek gerekir.
-3. **Yükseltme mevcut Sentetik İzleme'yi kırar.** Proje hâlâ `--summary-export` kullanıyor (`ScriptedCheckerService:864`, ayrıştırıcı `:1634`) ve bu bayrak sonraki k6 sürümlerinde kaldırıldı. k6'yı CWV için yükseltmek, çalışan 10. türün özet ayrıştırmasını **yeniden yazmak** demektir. (Not: geçmişteki `checksFailed` unboxing NPE'si düzeltilmiş — `decideStatus` artık `Integer` alıyor, `:1241`. Yani risk NPE değil, özet sözleşmesinin tamamen değişmesi.)
+3. **~~Yükseltme mevcut Sentetik İzleme'yi kırar.~~ (2026-10-29 düzeltmesi: bu iddia YANLIŞTI.)** `--summary-export` k6 v2.3.0'da hâlâ var ve dosyanın biçimi 0.49 ile birebir aynı (gerçek ikililerle ölçüldü; `K6UpgradeEngineTest.summaryParityAcrossVersions`, CI `backend-k6-contract`). Yalnız `K6_NEW_MACHINE_READABLE_SUMMARY=true` biçimi değiştirir; sistem bunu `false` verir. 0.49 → 2.3 geçişi ayrı yürütülüyor: RUNBOOK → "k6 sürüm geçişi (0.49 → 2.3)". Tarayıcı modülü (`k6/browser`) yine Chromium ister — o kısıt geçerli.
 4. k6 browser'ın CWV'si **koşum özeti** olarak gelir (`browser_web_vital_lcp/cls/inp`), tekil sayfa ölçümü olarak değil — Site Monitor'ün satır-başına-bir-kontrol modeline uyarlanması gerekir.
 
 Bu dört madde birlikte **B2'yi (ayrı runner servisi) B1'e tercih ettiriyor**: ayrı bir kap, ayrı bellek limiti, çöktüğünde ana uygulamayı etkilemez, k6'ya dokunmaz, Chromium'u ana imajın dışında tutar. Frontend'de `@playwright/test` zaten devDependency olarak mevcut (`frontend/package.json`), yani ekip Playwright'a yabancı değil.
@@ -225,7 +225,7 @@ Bu bölüm sentetik tarayıcı yolunu seçerseniz karşılaşacağınız somut e
 
 **İmaj boyutu.** Alpine üzerine Chromium ~250-400 MB. Mevcut runtime `eclipse-temurin:25-jre-alpine`. Deploy süresi, registry maliyeti ve Trivy tarama yüzeyi (`docker-build.yml`) büyür.
 
-**k6 yükseltme zinciri (yalnız B1 için).** 0.49 → 2.x: `k6/experimental/browser` → `k6/browser` import yolu, `--summary-export` kaldırılması, `ScriptedCheckerService`'in özet ayrıştırmasının yeniden yazımı, `ScriptedTemplate` şablonlarının doğrulanması. Bu, CWV işinden bağımsız bir migrasyon projesidir.
+**k6 yükseltme zinciri (yalnız B1 için).** 0.49 → 2.x: `k6/experimental/browser` → `k6/browser` import yolu ve `ScriptedTemplate` şablonlarının doğrulanması. (2026-10-29 düzeltmesi: `--summary-export` kaldırılmadı, özet ayrıştırması yeniden yazılmadı — 0.49 → 2.3 geçişi ayrıca yürütülüyor, RUNBOOK → "k6 sürüm geçişi".)
 
 ---
 
@@ -301,7 +301,7 @@ Uygulamaya geçmeden önce cevaplanması gerekenler:
 
 **Senaryolu tıklamadan üretilen sayıyı INP diye raporlamayın.** Tek bir butona tıklayıp ölçülen gecikme, sayfanın ömrü boyunca tüm etkileşimlerinin p75'i değildir. Google'ın kendi lab aracı bunu yapmıyor; sebebi var.
 
-**k6'yı yalnız CWV için yükseltmeyi bu işin içine sokmayın.** 0.49 → 2.x migrasyonu, çalışan Sentetik İzleme türünün özet sözleşmesini (`--summary-export`) kırar ve kendi başına bir migrasyon projesidir. Ayrı runner servisi bu bağımlılığı tamamen ortadan kaldırır — CWV işi k6'ya hiç dokunmadan biter.
+**k6'yı yalnız CWV için yükseltmeyi bu işin içine sokmayın.** 0.49 → 2.x geçişi kendi başına yürütülüyor (RUNBOOK → "k6 sürüm geçişi"; özet sözleşmesi `--summary-export` 2.3'te değişmedi — 2026-10-29 düzeltmesi). Ayrı runner servisi bu bağımlılığı tamamen ortadan kaldırır — CWV işi k6'ya hiç dokunmadan biter.
 
 **Chromium'u ana uygulama pod'una koymayın.** Güvenilmeyen JS'i sandbox'sız çalıştıran bir süreçle sertifika özel anahtarlarına, LDAP bind parolasına ve `SecretCipher` anahtarına erişen bir JVM'i aynı kapta tutmak, kazanılan kolaylığa değmez.
 
