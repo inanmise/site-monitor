@@ -17,8 +17,6 @@ import java.security.MessageDigest;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayDeque;
-import java.util.Deque;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -50,6 +48,12 @@ public class AlarmFeedRequestLog {
     static final long RATE_LOG_EVERY_MS = 60_000L;
     static final int THROTTLE_MAP_MAX = 2_000;
     static final int KNOWN_HASHES = 64;
+    /** Aynı gövdenin {@code last_used_at}'i pod başına en çok bu sıklıkla tazelenir. */
+    static final long BODY_TOUCH_EVERY_MS = 10 * 60_000L;
+    /** Pod başına dakikada en çok bu kadar REDDEDİLEN çağrı günlüğe yazılır (IP döndüren sel tabloları / denetimi doldurmasın). */
+    static final int REFUSED_LOG_PER_MINUTE = 60;
+    /** Pod başına dakikada en çok bu kadar ALARM_FEED_ACCESS_DENIED denetim olayı. */
+    static final int DENIED_AUDIT_PER_MINUTE = 10;
 
     public static final String OUTCOME_OK = "OK";
     public static final String OUTCOME_DISABLED = "DISABLED";
@@ -57,9 +61,9 @@ public class AlarmFeedRequestLog {
     public static final String OUTCOME_RATE_LIMITED = "RATE_LIMITED";
     public static final String OUTCOME_ERROR = "ERROR";
 
-    static final String SQL_RESPONSE_EXISTS = "SELECT COUNT(*) FROM alarm_feed_responses WHERE hash = ?";
     static final String SQL_RESPONSE_INSERT = "INSERT INTO alarm_feed_responses (hash, body, content_type, raw_bytes, "
-            + "row_count, created_at) VALUES (?, ?, ?, ?, ?, ?)";
+            + "row_count, created_at, last_used_at) VALUES (?, ?, ?, ?, ?, ?, ?)";
+    static final String SQL_RESPONSE_TOUCH = "UPDATE alarm_feed_responses SET last_used_at = ? WHERE hash = ?";
     static final String SQL_CALLER_UPDATE = "UPDATE alarm_feed_callers SET last_seen_at = ?, call_count = call_count + 1, "
             + "last_user_agent = ?, last_outcome = ? WHERE client_ip = ?";
     static final String SQL_CALLER_INSERT = "INSERT INTO alarm_feed_callers (client_ip, first_seen_at, last_seen_at, "
@@ -75,7 +79,14 @@ public class AlarmFeedRequestLog {
     private volatile long lastFailureWarnMs;
     private final Map<String, Long> deniedAudited = new ConcurrentHashMap<>();
     private final Map<String, Long> rateLogged = new ConcurrentHashMap<>();
-    private final Deque<String> knownHashes = new ArrayDeque<>();
+    /** Bu pod'un bildiği gövde özetleri → son tazeleme anı (erişim sırasıyla, en çok {@link #KNOWN_HASHES}). */
+    private final LinkedHashMap<String, Long> knownHashes = new LinkedHashMap<>(16, 0.75f, true);
+    private final AtomicLong suppressed = new AtomicLong();
+    private long refusedWindowStart;
+    private int refusedInWindow;
+    private long deniedWindowStart;
+    private int deniedInWindow;
+    private volatile long lastSuppressWarnMs;
 
     public AlarmFeedRequestLog(AlarmFeedRequestRepository requests, JdbcTemplate jdbc) {
         this.requests = requests;
@@ -100,6 +111,11 @@ public class AlarmFeedRequestLog {
         return writeFailures.get();
     }
 
+    /** Bu pod'da dakikalık üst sınır yüzünden günlüğe yazılmayan reddedilmiş çağrı sayısı (açılıştan beri). */
+    public long suppressedRefusals() {
+        return suppressed.get();
+    }
+
     /**
      * Çağrıyı yazar. Asla istisna atmaz.
      *
@@ -107,8 +123,21 @@ public class AlarmFeedRequestLog {
      */
     public void record(Call call, Result res, boolean storeBody, jakarta.servlet.http.HttpServletRequest request) {
         long now = clock.getAsLong();
-        if (OUTCOME_RATE_LIMITED.equals(res.outcome()) && !firstInWindow(rateLogged, call.clientIp(), now, RATE_LOG_EVERY_MS)) {
-            return;   // sel: IP başına dakikada bir satır
+        boolean ok = OUTCOME_OK.equals(res.outcome());
+        if (!ok) {
+            if (OUTCOME_RATE_LIMITED.equals(res.outcome())
+                    && !firstInWindow(rateLogged, call.clientIp(), now, RATE_LOG_EVERY_MS)) {
+                return;   // sel: IP başına dakikada bir satır
+            }
+            if (!refusedBudget(now)) {
+                suppressed.incrementAndGet();
+                if (now - lastSuppressWarnMs >= 60_000L) {
+                    lastSuppressWarnMs = now;
+                    log.warn("Alarm akışı: dakikada {}'dan fazla reddedilen çağrı — fazlası günlüğe yazılmadı (bu pod)",
+                            REFUSED_LOG_PER_MINUTE);
+                }
+                return;
+            }
         }
         try {
             AlarmFeedRequest r = new AlarmFeedRequest();
@@ -135,42 +164,64 @@ public class AlarmFeedRequestLog {
                 r.setResponseBytes((long) raw.length);
                 String hash = sha256(raw);
                 r.setResponseHash(hash);
-                if (storeBody) storeBody(hash, raw, res.contentType(), res.rowCount(), now);
+                // Yalnız kabul edilen çağrının gövdesi saklanır: ret gövdesi sabit metindir (durum + kod satırda var).
+                if (storeBody && ok) storeBody(hash, raw, res.contentType(), res.rowCount(), now);
             }
             requests.save(r);
         } catch (Exception e) {
             failed("çağrı satırı", e, now);
         }
-        touchCaller(call, res.outcome(), now);
+        touchCaller(call, res.outcome(), now, ok);
         if (!OUTCOME_OK.equals(res.outcome()) && !OUTCOME_ERROR.equals(res.outcome())) {
             auditDenied(call, res.outcome(), now, request);
         }
     }
 
     private void storeBody(String hash, byte[] raw, String contentType, Integer rows, long now) {
+        Long touched;
         synchronized (knownHashes) {
-            if (knownHashes.contains(hash)) return;
+            touched = knownHashes.get(hash);
         }
+        if (touched != null && now - touched < BODY_TOUCH_EVERY_MS) return;
+        String at = ISO.format(Instant.ofEpochMilli(now));
         try {
-            Long n = jdbc.queryForObject(SQL_RESPONSE_EXISTS, Long.class, hash);
-            if (n == null || n == 0) {
+            int n = jdbc.update(SQL_RESPONSE_TOUCH, at, hash);   // var olan gövde: son kullanım tazelenir
+            if (n == 0) {
                 try {
-                    jdbc.update(SQL_RESPONSE_INSERT, hash, gzip(raw), contentType, (long) raw.length, rows,
-                            ISO.format(Instant.ofEpochMilli(now)));
+                    jdbc.update(SQL_RESPONSE_INSERT, hash, gzip(raw), contentType, (long) raw.length, rows, at, at);
                 } catch (DataIntegrityViolationException dup) {
                     // başka bir pod aynı gövdeyi az önce yazdı — aynı içerik
                 }
             }
             synchronized (knownHashes) {
-                knownHashes.addLast(hash);
-                while (knownHashes.size() > KNOWN_HASHES) knownHashes.removeFirst();
+                knownHashes.put(hash, now);
+                while (knownHashes.size() > KNOWN_HASHES) {
+                    String eldest = knownHashes.keySet().iterator().next();
+                    knownHashes.remove(eldest);
+                }
             }
         } catch (Exception e) {
             failed("yanıt gövdesi", e, now);
         }
     }
 
-    private void touchCaller(Call call, String outcome, long now) {
+    private synchronized boolean refusedBudget(long now) {
+        if (now - refusedWindowStart >= 60_000L) {
+            refusedWindowStart = now;
+            refusedInWindow = 0;
+        }
+        return ++refusedInWindow <= REFUSED_LOG_PER_MINUTE;
+    }
+
+    private synchronized boolean deniedAuditBudget(long now) {
+        if (now - deniedWindowStart >= 60_000L) {
+            deniedWindowStart = now;
+            deniedInWindow = 0;
+        }
+        return ++deniedInWindow <= DENIED_AUDIT_PER_MINUTE;
+    }
+
+    private void touchCaller(Call call, String outcome, long now, boolean ok) {
         String ip = call.clientIp() == null || call.clientIp().isBlank() ? "?" : AlarmFeedRequest.fit(call.clientIp(), 64);
         String at = ISO.format(Instant.ofEpochMilli(now));
         String ua = AlarmFeedRequest.fit(call.userAgent(), 500);
@@ -185,7 +236,8 @@ public class AlarmFeedRequestLog {
                 jdbc.update(SQL_CALLER_UPDATE, at, ua, outcome, ip);
                 inserted = false;
             }
-            if (inserted && auditService != null) {
+            // Yeni IP denetimi yalnız KABUL edilen çağrıda (reddedilen yeni IP ALARM_FEED_ACCESS_DENIED ile görünür).
+            if (inserted && ok && auditService != null) {
                 auditService.recordAction("ALARM_FEED_NEW_CALLER", "alarm-feed-client", null, null, "EXTERNAL",
                         "ALARM_FEED", ip, AuditDetail.of("client_ip", ip, "outcome", outcome,
                                 "remote_addr", call.remoteAddr(), "forwarded_for", call.forwardedFor()),
@@ -200,6 +252,7 @@ public class AlarmFeedRequestLog {
         if (auditService == null) return;
         String key = call.clientIp() + "|" + outcome;
         if (!firstInWindow(deniedAudited, key, now, DENIED_AUDIT_EVERY_MS)) return;
+        if (!deniedAuditBudget(now)) return;
         try {
             if (request != null) {
                 // Güvenlik olayı: sonuç BLOCKED, IP / UA istekten (ClientIpResolver) — kategori "_DENIED" → Güvenlik.

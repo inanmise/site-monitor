@@ -47,6 +47,8 @@ public final class AlarmFeedSettings {
     public static final String KEY_STORE_BODY = PREFIX + "store-body";
     /** Çağrı günlüğü saklama süresi — RetentionCatalog'dan üretilir (Veri saklama sayfası). */
     public static final String KEY_LOG_RETENTION = PREFIX + "log-retention-days";
+    /** Yanıt gövdesi kopyalarının saklama süresi (son kullanımdan) — RetentionCatalog "alarm-feed-responses". */
+    public static final String KEY_BODY_RETENTION = PREFIX + "body-retention-days";
 
     public static final List<String> LEVELS = List.of("WARNING", "HIGH", "CRITICAL");
     public static final List<String> RESOLVED_MODES = List.of("status", "clear");
@@ -58,6 +60,8 @@ public final class AlarmFeedSettings {
     public static final int ROWS_MIN = 100, ROWS_MAX = 10_000;
     public static final int TEXT_MAX = 60;
     public static final int IPS_MAX = 100;
+    /** Açıkça boş izin listesi (= herkes) — kayıtlı değer; okumada boş listeye döner. */
+    public static final String EMPTY_LIST = "none";
 
     /** Arayüz alanı → ayar anahtarı (sıra = ekrandaki sıra). */
     public static final Map<String, String> FIELDS = new LinkedHashMap<>();
@@ -273,7 +277,9 @@ public final class AlarmFeedSettings {
                     }
                     out.add(norm);
                 }
-                return String.join(",", out);
+                // Boş liste AÇIKÇA "herkes" olarak yazılır: boş değer geçersiz kılmayı siler ve ortam değişkeni
+                // (ALARM_FEED_ALLOWED_IPS) geri gelirdi.
+                return out.isEmpty() ? EMPTY_LIST : String.join(",", out);
             }
             default -> throw invalid(field, "Bilinmeyen alan.", "Unknown field.");
         }
@@ -281,6 +287,7 @@ public final class AlarmFeedSettings {
 
     /** Saklanan metin değerini ekrandaki karşılaştırma biçimine çevirir (değişmeyen alan yazılmasın diye). */
     public static String stored(Config c, String field) {
+        if ("allowed_ips".equals(field) && c.allowedIps().isEmpty()) return EMPTY_LIST;
         Object v = view(c).get(field);
         if (v instanceof Collection<?> col) {
             List<String> s = new ArrayList<>();
@@ -395,9 +402,10 @@ public final class AlarmFeedSettings {
         return t;
     }
 
+    /** Kayıtlı takım süzgeci; DOLU ama okunamayan değer = hiçbir takım ({@code -1}) — kapsam "hepsi"ne genişlemez. */
     static Set<Long> ids(String csv) {
         Set<Long> out = new LinkedHashSet<>();
-        if (csv == null) return out;
+        if (csv == null || csv.isBlank()) return out;
         for (String p : csv.split("[,;\\s]+")) {
             try {
                 long id = Long.parseLong(p.trim());
@@ -406,16 +414,19 @@ public final class AlarmFeedSettings {
                 // geçersiz parça yok sayılır (kayıt katı doğrular)
             }
         }
+        if (out.isEmpty()) out.add(-1L);
         return out;
     }
 
+    /** Kayıtlı tür süzgeci; DOLU ama okunamayan değer = hiçbir tür ({@code !none}) — kapsam "hepsi"ne genişlemez. */
     static Set<String> types(String csv) {
         Set<String> out = new LinkedHashSet<>();
-        if (csv == null) return out;
+        if (csv == null || csv.isBlank()) return out;
         for (String p : csv.split("[,;\\s]+")) {
             String t = p.trim().toLowerCase(Locale.ROOT);
             if (MonitorTypeCatalog.ORDER.contains(t)) out.add(t);
         }
+        if (out.isEmpty()) out.add(IpAllowList.NONE);
         return out;
     }
 
@@ -425,7 +436,7 @@ public final class AlarmFeedSettings {
      */
     static List<String> ipsLenient(String csv) {
         List<String> out = new ArrayList<>();
-        if (csv == null || csv.isBlank()) return out;
+        if (csv == null || csv.isBlank() || EMPTY_LIST.equalsIgnoreCase(csv.trim())) return out;
         for (String p : csv.split("[,;\\s]+")) {
             if (p.isBlank()) continue;
             String n = IpAllowList.normalizeEntry(p);

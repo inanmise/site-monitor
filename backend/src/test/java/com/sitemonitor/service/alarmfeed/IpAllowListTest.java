@@ -65,5 +65,8 @@ class IpAllowListTest {
         assertThat(IpAllowList.allowed(l, "10.0.0.1")).isFalse();
         assertThat(AlarmFeedSettings.ipsLenient("")).isEmpty();
         assertThat(AlarmFeedSettings.ipsLenient("bad, 10.0.0.1")).containsExactly("10.0.0.1");
+        assertThat(AlarmFeedSettings.ipsLenient("none")).isEmpty();          // açıkça boş = herkes
+        assertThat(AlarmFeedSettings.ids("x,y")).containsExactly(-1L);       // okunamayan takım süzgeci = hiçbir takım
+        assertThat(AlarmFeedSettings.types("ftp")).containsExactly(IpAllowList.NONE);
     }
 }

@@ -154,6 +154,31 @@ class AlarmFeedAdminControllerTest {
     }
 
     @Test
+    @DisplayName("Seviye metinleri (Clear kipinde Clear metni de) birbirinden farklı olmalı")
+    void severityTextsMustDiffer() {
+        assertThatThrownBy(() -> controller.save(Map.of("severity_high", "critical"), ADMIN, new MockHttpServletRequest()))
+                .isInstanceOfSatisfying(FieldValidationException.class, e -> assertThat(e.getFields()).containsKey("severity_high"));
+        assertThatThrownBy(() -> controller.save(Map.of("resolved_mode", "clear", "clear_text", "Warning"), ADMIN,
+                new MockHttpServletRequest())).isInstanceOf(FieldValidationException.class);
+        verify(settings, never()).save(any(), anyString());
+        controller.save(Map.of("severity_high", "High"), ADMIN, new MockHttpServletRequest());
+        verify(settings).save(any(), eq("root"));
+    }
+
+    @Test
+    @DisplayName("Boş izin listesi AÇIKÇA kaydedilir ('none' = herkes) — ortam değişkeni geri gelmesin")
+    @SuppressWarnings("unchecked")
+    void emptyAllowListIsExplicit() {
+        when(feed.config()).thenReturn(new AlarmFeedSettings.Config(false, "WARNING", Set.of(), Set.of(), 15, "status",
+                "Clear", "Critical", "Major", "Warning", "target_type", "SiteMonitor", "", "semicolon",
+                List.of("10.0.0.0/8"), 30, 2000, true));
+        controller.save(Map.of("allowed_ips", List.of()), ADMIN, new MockHttpServletRequest());
+        ArgumentCaptor<Map<String, Object>> c = ArgumentCaptor.forClass(Map.class);
+        verify(settings).save(c.capture(), eq("root"));
+        assertThat((Map<String, Object>) c.getValue().get("values")).containsEntry(AlarmFeedSettings.KEY_ALLOWED_IPS, "none");
+    }
+
+    @Test
     @DisplayName("Önizleme: kolonlar + satırlar; veri okunamazsa 503")
     @SuppressWarnings("unchecked")
     void preview() {
@@ -210,8 +235,8 @@ class AlarmFeedAdminControllerTest {
     @Test
     @DisplayName("CSV dışa aktarma: BOM + başlık + satır; denetim ALARM_FEED_LOG_EXPORT")
     void export() {
-        when(requests.search(isNull(), isNull(), isNull(), isNull(), any()))
-                .thenReturn(new PageImpl<>(List.of(row(1), row(2)), PageRequest.of(0, 500), 2));
+        when(requests.exportPage(isNull(), isNull(), isNull(), isNull(), isNull(), any()))
+                .thenReturn(List.of(row(2), row(1)));
         ResponseEntity<byte[]> r = controller.export(null, null, null, null, ADMIN, new MockHttpServletRequest());
         String csv = new String(r.getBody(), StandardCharsets.UTF_8);
         assertThat(csv).startsWith("﻿requested_at_utc,client_ip");

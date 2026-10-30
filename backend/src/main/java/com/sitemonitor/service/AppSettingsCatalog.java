@@ -573,6 +573,7 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.heartbeat.retention-days",          "retention", Type.INT),
         // 2026-10-30: alarm akışı çağrı günlüğü (alarm_feed_requests / _callers) — RetentionCatalog "alarm-feed-requests".
         new Setting("site.monitor.alarm-feed.log-retention-days",     "retention", Type.INT),
+        new Setting("site.monitor.alarm-feed.body-retention-days",    "retention", Type.INT),
         new Setting("site.monitor.diagnostics.retention-days",        "retention", Type.INT),
         new Setting("site.monitor.alert.retention-days",              "retention", Type.INT),
         new Setting("site.monitor.login-issue.retention-days",        "retention", Type.INT),

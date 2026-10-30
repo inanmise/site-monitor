@@ -110,6 +110,7 @@ public class AlarmFeedAdminController {
         limits.put("allowed_ips_max", AlarmFeedSettings.IPS_MAX);
         out.put("limits", limits);
         out.put("log_retention_days", settings.getInt(AlarmFeedSettings.KEY_LOG_RETENTION, 90));
+        out.put("body_retention_days", settings.getInt(AlarmFeedSettings.KEY_BODY_RETENTION, 30));
         out.put("columns", AlarmFeedRows.COLUMNS);
         List<Map<String, Object>> teamRows = new ArrayList<>();
         try {
@@ -159,6 +160,7 @@ public class AlarmFeedAdminController {
         Map<String, Object> s = new LinkedHashMap<>();
         s.put("served_by", SchedulerService.hostname());
         s.put("log_write_failures", requestLog.writeFailures());
+        s.put("suppressed_refusals", requestLog.suppressedRefusals());
         try {
             AlarmFeedRequest last = requests.findTopByOrderByRequestedAtDescIdDesc();
             s.put("last_call_at", last == null ? null : trimMs(last.getRequestedAt()));
@@ -218,6 +220,7 @@ public class AlarmFeedAdminController {
             after.put(f.getKey(), next);
         }
         if (values.isEmpty()) return ok(view());
+        requireDistinctSeverityTexts(cur, after);
         settings.save(Map.of("values", values), actor(session));
         feed.invalidate();
         auditService.recordAction("ALARM_FEED_SETTINGS_SAVE", session, request, "SETTINGS", "alarm-feed",
@@ -228,6 +231,30 @@ public class AlarmFeedAdminController {
         out.put("message", Msg.t("Alarm akışı ayarları kaydedildi (yeniden başlatma gerekmez; diğer pod'lar 10 sn içinde alır).",
                 "Alarm feed settings saved (no restart needed; other pods pick them up within 10 s)."));
         return ResponseEntity.ok(out);
+    }
+
+    /**
+     * Seviye metinleri (ve Clear kipinde Clear metni) birbirinden FARKLI olmalı: merkezi sistem SEVERITY'yi olay anahtarına
+     * katar; iki seviye aynı metne eşlenirse seviye değişiminde aynı anahtar hem açık hem çözüldü görünürdü.
+     */
+    static void requireDistinctSeverityTexts(AlarmFeedSettings.Config cur, Map<String, Object> changed) {
+        List<String> fields = new ArrayList<>(List.of("severity_critical", "severity_high", "severity_warning"));
+        String mode = String.valueOf(changed.getOrDefault("resolved_mode", cur.resolvedMode()));
+        if ("clear".equals(mode)) fields.add("clear_text");
+        Map<String, String> seen = new LinkedHashMap<>();
+        for (String f : fields) {
+            String v = String.valueOf(changed.containsKey(f) ? changed.get(f) : AlarmFeedSettings.stored(cur, f))
+                    .trim().toLowerCase(Locale.ROOT);
+            String other = seen.putIfAbsent(v, f);
+            if (other != null) {
+                String blame = changed.containsKey(f) ? f : other;
+                throw new FieldValidationException(blame, Msg.t(
+                        "Seviye metinleri (ve Clear metni) birbirinden farklı olmalı — merkezi sistem SEVERITY'yi olay "
+                                + "anahtarına katar; aynı metin farklı olayları birleştirir.",
+                        "Severity texts (and the Clear text) must differ from each other — the central system uses SEVERITY "
+                                + "in its event key; the same text would merge different events."));
+            }
+        }
     }
 
     // ── Önizleme ────────────────────────────────────────────────────────────────────────────────
@@ -313,25 +340,27 @@ public class AlarmFeedAdminController {
                                          HttpSession session, HttpServletRequest request) {
         requireGlobal(session);
         Filter flt = filter(outcome, ip, from, to);
-        StringBuilder b = new StringBuilder("﻿");
+        StringBuilder b = new StringBuilder().append((char) 0xFEFF);   // Excel için UTF-8 BOM
         // Csv.row her satırı CRLF ile bitirir.
         b.append(Csv.row("requested_at_utc", "client_ip", "remote_addr", "forwarded_for", "user_agent", "method", "query",
                 "status", "outcome", "row_count", "open_count", "resolved_count", "truncated", "duration_ms",
                 "response_bytes", "response_hash", "format", "served_by", "request_id", "error"));
         int n = 0;
-        int pg = 0;
+        Long beforeId = null;
         while (n < EXPORT_MAX) {
-            // Sabit sayfa boyu: değişen boyla sayfa ofsetleri kayardı (satır tekrar / atlama).
-            Page<AlarmFeedRequest> p = requests.search(flt.outcome, flt.ipLike, flt.from, flt.to, PageRequest.of(pg++, 500));
-            for (AlarmFeedRequest r : p.getContent()) {
+            // Anahtar sayfalama (id < son görülen): dakikada bir eklenen satırlar ofseti kaydırmaz.
+            List<AlarmFeedRequest> page = requests.exportPage(flt.outcome, flt.ipLike, flt.from, flt.to, beforeId,
+                    PageRequest.of(0, 500));
+            for (AlarmFeedRequest r : page) {
                 if (n >= EXPORT_MAX) break;
                 b.append(Csv.row(r.getRequestedAt(), r.getClientIp(), r.getRemoteAddr(), r.getForwardedFor(),
                         r.getUserAgent(), r.getMethod(), r.getQuery(), r.getStatus(), r.getOutcome(), r.getRowCount(),
                         r.getOpenCount(), r.getResolvedCount(), r.getTruncated(), r.getDurationMs(), r.getResponseBytes(),
                         r.getResponseHash(), r.getFormat(), r.getServedBy(), r.getRequestId(), r.getError()));
                 n++;
+                beforeId = r.getId();
             }
-            if (!p.hasNext() || p.getContent().isEmpty()) break;
+            if (page.size() < 500) break;
         }
         auditService.recordAction("ALARM_FEED_LOG_EXPORT", session, request, "ALARM_FEED", "requests",
                 AuditDetail.of("rows", n, "outcome", flt.outcome, "ip", ip, "from", from, "to", to));

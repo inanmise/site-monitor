@@ -72,7 +72,7 @@ class AlarmFeedServiceTest {
 
     @AfterEach
     void clean() {
-        jdbc.update("DELETE FROM alarm_feed_severities");
+        jdbc.update("DELETE FROM alarm_feed_events");
         alerts.deleteAll();
         inventory.deleteAll();
         teams.deleteAll();
@@ -165,7 +165,7 @@ class AlarmFeedServiceTest {
         assertThat(r.get("MAILS")).isEqualTo("dijital@example.com; ops@example.com; mobil@example.com");
         // Süzgeç sonucunu durumdan bağımsız görmek için önizleme (durum yazmaz; önceki "bildirilmiş" satır yok sayılmaz —
         // aşağıda kapsam dışı kapanışı ayrıca sınanır)
-        jdbc.update("DELETE FROM alarm_feed_severities");
+        jdbc.update("DELETE FROM alarm_feed_events");
         assertThat(svc.preview(cfg("status", "WARNING", Set.of(teamB), Set.of(), 2000)).rows()).hasSize(1);
         assertThat(svc.preview(cfg("status", "WARNING", Set.of(999L), Set.of(), 2000)).rows()).isEmpty();
         assertThat(e.getId()).isNotNull();
@@ -248,12 +248,12 @@ class AlarmFeedServiceTest {
         assertThat(f.rows().get(0).get("TEXT")).asString().contains("Akış kapsamından çıktı");
         now += 60_000;
         assertThat(summary(svc.feed(DEF))).containsExactly(e.getId() + ":OPEN:Warning");
-        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM alarm_feed_severities WHERE closed_at IS NULL", Long.class))
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM alarm_feed_events WHERE closed_at IS NULL", Long.class))
                 .isEqualTo(1L);
     }
 
     @Test
-    @DisplayName("Akış kapalıyken çözülmüş, daha önce bildirilmiş alarm: geç fark edilse de bir pencere boyunca RESOLVED döner")
+    @DisplayName("Akış kapalıyken çözülmüş, bildirilmiş alarm: geç de olsa GERÇEK çözülme anıyla bir kez döner, sonra düşer")
     void lateResolution() {
         AlertEvent e = alarm("host-a", "PING_DOWN", "HIGH", teamA);
         svc.feed(DEF);
@@ -262,17 +262,88 @@ class AlarmFeedServiceTest {
         now += 3 * 3600_000L;   // pencerenin çok dışında, kimse çağırmadı
         AlarmFeedService.Feed f = svc.feed(DEF);
         assertThat(summary(f)).containsExactly(e.getId() + ":RESOLVED:Major");
+        assertThat(f.rows().get(0).get("RESOLVEDTIME")).isEqualTo("2026-10-30 13:01:00");   // gerçek çözülme anı
+        now += 60_000;
+        assertThat(svc.feed(DEF).rows()).isEmpty();   // teslim edildi + pencere dışında
     }
 
     @Test
-    @DisplayName("Silinmiş alarmın durumu kapanır, satır üretmez")
-    void deletedAlarm() {
+    @DisplayName("Önizleme teslim işareti koymaz: kapanış asıl çağrıda yine gider")
+    void previewDoesNotMarkDelivered() {
         AlertEvent e = alarm("host-a", "PING_DOWN", "HIGH", teamA);
         svc.feed(DEF);
+        now += 60_000;
+        resolve(e);
+        now += 3 * 3600_000L;
+        assertThat(summary(svc.preview(DEF))).containsExactly(e.getId() + ":RESOLVED:Major");
+        assertThat(summary(svc.feed(DEF))).containsExactly(e.getId() + ":RESOLVED:Major");
+    }
+
+    @Test
+    @DisplayName("Alan adı yeniden adlandırılınca: yeni RCI OPEN + ESKİ RCI'ya (gönderilmiş kopyadan) RESOLVED")
+    void renameClosesOldKey() {
+        AlertEvent e = alarm("old.example.com", "PING_DOWN", "HIGH", teamA);
+        Map<String, Object> first = svc.feed(DEF).rows().get(0);
+        now += 60_000;
+        e.setDomain("new.example.com");
+        alerts.save(e);
+        AlarmFeedService.Feed f = svc.feed(DEF);
+        assertThat(summary(f)).containsExactly(e.getId() + ":OPEN:Major", e.getId() + ":RESOLVED:Major");
+        assertThat(f.rows().get(0).get("RCI")).asString().startsWith("new.example.com");
+        assertThat(f.rows().get(1).get("RCI")).isEqualTo(first.get("RCI"));
+        assertThat(f.rows().get(1).get("TEXT")).asString().contains("Kayıt yeni anahtarla sürüyor");
+    }
+
+    @Test
+    @DisplayName("Seviye eşlemesi değişince: yeni metinle OPEN + ESKİ metinle RESOLVED")
+    void severityMappingChangeClosesOldKey() {
+        AlertEvent e = alarm("host-a", "PING_DOWN", "HIGH", teamA);
+        svc.feed(DEF);
+        now += 60_000;
+        AlarmFeedSettings.Config renamed = new AlarmFeedSettings.Config(true, "WARNING", Set.of(), Set.of(), 15, "status",
+                "Clear", "Critical", "High", "Warning", "target_type", "SiteMonitor", "", "semicolon", List.of(), 30, 2000, true);
+        assertThat(summary(svc.feed(renamed))).containsExactly(e.getId() + ":OPEN:High", e.getId() + ":RESOLVED:Major");
+    }
+
+    @Test
+    @DisplayName("Aynı anahtar aynı yanıtta hem AÇIK hem ÇÖZÜLDÜ olmaz (çözülen alarmın yerine aynı hedefte yenisi açıldı)")
+    void neverOpenAndResolvedWithSameKey() {
+        AlertEvent old = alarm("host-a", "PING_DOWN", "HIGH", teamA);
+        svc.feed(DEF);
+        now += 60_000;
+        resolve(old);
+        AlertEvent fresh = alarm("host-a", "PING_DOWN", "HIGH", teamA);
+        AlarmFeedService.Feed f = svc.feed(DEF);
+        assertThat(summary(f)).containsExactly(fresh.getId() + ":OPEN:Major");
+        java.util.Set<String> keys = new java.util.HashSet<>();
+        for (Map<String, Object> r : f.rows()) assertThat(keys.add(AlarmFeedRows.eventKey(r))).isTrue();
+    }
+
+    @Test
+    @DisplayName("Aynı hostta Ping ve Port yavaşlığı ayrı RCI alır; biri kapanınca öteki açık kalır")
+    void slowAlarmsOnSameHostStayDistinct() {
+        AlertEvent ping = alarm("host-a", "PING_SLOW", "WARNING", teamA);
+        AlertEvent port = alarm("host-a", "PORT_SLOW", "WARNING", teamA);
+        svc.feed(DEF);
+        now += 60_000;
+        resolve(ping);
+        AlarmFeedService.Feed f = svc.feed(DEF);
+        assertThat(summary(f)).containsExactlyInAnyOrder(port.getId() + ":OPEN:Warning", ping.getId() + ":RESOLVED:Warning");
+        assertThat(f.rows().get(0).get("RCI")).isNotEqualTo(f.rows().get(1).get("RCI"));
+    }
+
+    @Test
+    @DisplayName("Silinmiş açık alarm: gönderilmiş kopyadan bir kez 'kayıt silindi' RESOLVED döner")
+    void deletedAlarm() {
+        AlertEvent e = alarm("host-a", "PING_DOWN", "HIGH", teamA);
+        Map<String, Object> sent = svc.feed(DEF).rows().get(0);
         alerts.delete(e);
         now += 60_000;
-        assertThat(svc.feed(DEF).rows()).isEmpty();
-        assertThat(jdbc.queryForObject("SELECT closed_reason FROM alarm_feed_severities", String.class)).isEqualTo("GONE");
+        AlarmFeedService.Feed f = svc.feed(DEF);
+        assertThat(summary(f)).containsExactly(e.getId() + ":RESOLVED:Major");
+        assertThat(f.rows().get(0).get("RCI")).isEqualTo(sent.get("RCI"));
+        assertThat(f.rows().get(0).get("TEXT")).asString().contains("Alarm kaydı silindi");
+        assertThat(jdbc.queryForObject("SELECT closed_reason FROM alarm_feed_events", String.class)).isEqualTo("GONE");
     }
 
     @Test
@@ -281,7 +352,7 @@ class AlarmFeedServiceTest {
         alarm("host-a", "PING_DOWN", "HIGH", teamA);
         AlarmFeedService.Feed f = svc.preview(DEF);
         assertThat(f.rows()).hasSize(1);
-        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM alarm_feed_severities", Long.class)).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM alarm_feed_events", Long.class)).isZero();
     }
 
     @Test
@@ -319,14 +390,14 @@ class AlarmFeedServiceTest {
         ExecutorService ex = Executors.newFixedThreadPool(2);
         try {
             for (int round = 0; round < 10; round++) {
-                jdbc.update("DELETE FROM alarm_feed_severities");
+                jdbc.update("DELETE FROM alarm_feed_events");
                 CountDownLatch go = new CountDownLatch(1);
                 Future<AlarmFeedService.Feed> fa = ex.submit(() -> { go.await(); return a.feed(DEF); });
                 Future<AlarmFeedService.Feed> fb = ex.submit(() -> { go.await(); return b.feed(DEF); });
                 go.countDown();
                 assertThat(summary(fa.get(30, TimeUnit.SECONDS))).containsExactly(e.getId() + ":OPEN:Critical");
                 assertThat(summary(fb.get(30, TimeUnit.SECONDS))).containsExactly(e.getId() + ":OPEN:Critical");
-                assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM alarm_feed_severities", Long.class)).isEqualTo(1L);
+                assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM alarm_feed_events", Long.class)).isEqualTo(1L);
             }
         } finally {
             ex.shutdownNow();

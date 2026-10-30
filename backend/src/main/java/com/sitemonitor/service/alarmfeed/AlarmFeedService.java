@@ -10,6 +10,7 @@ import com.sitemonitor.repository.TeamRepository;
 import com.sitemonitor.service.AlertOwnership;
 import com.sitemonitor.service.AppSettingsService;
 import com.sitemonitor.service.MonitorTypeCatalog;
+import com.sitemonitor.service.NotificationGroupService;
 import com.sitemonitor.service.noc.NocMonitorDirectory;
 import com.sitemonitor.service.noc.NocType;
 import lombok.extern.slf4j.Slf4j;
@@ -39,18 +40,19 @@ import java.util.function.LongSupplier;
  * Merkezi izleme alarm akışının verisi (2026-10-30, kullanıcı isteği: izleme ekibi her dakika SiteMonitor'den açık alarmları ve
  * çözülenleri kendi kolon biçimlerinde çeker).
  *
- * <p><b>Ne döner.</b> Kapsamdaki (seviye / takım / izleme türü süzgeci) bütün AÇIK alarmlar STATUS=OPEN ve son N dakikada
- * kapanan "bildirilmiş" seviyeler STATUS=RESOLVED. Her çağrı o anki durumun TAMAMIDIR (bir dakika kaçsa da veri kaybolmaz;
- * tekrarları ekip EVENTKEY ile ayıklar).
+ * <p><b>Ne döner.</b> Kapsamdaki (seviye / takım / izleme türü süzgeci) bütün AÇIK alarmlar STATUS=OPEN + kapanışlar
+ * STATUS=RESOLVED. Her çağrı o anki durumun TAMAMIDIR (bir dakika kaçsa da veri kaybolmaz; tekrarları ekip EVENTKEY ile ayıklar).
  *
- * <p><b>Seviye değişimi.</b> Ekibin olay anahtarı seviyeyi içerir; alarm Warning → Critical olunca merkezi sistemde YENİ olay
- * doğar. {@code alarm_feed_severities} hangi (alarm, seviye) çiftinin açık bildirildiğini tutar: seviye değişince, alarm
- * çözülünce, alarm kapsamdan çıkınca ya da silinince eski çift kapatılır ve (silinme hariç) çözülme penceresi boyunca o eski
- * seviyeyle STATUS=RESOLVED döner — merkezi sistemde hiçbir olay sahipsiz açık kalmaz. "Clear" kipinde seviye değişiminin
- * kapanışı gönderilmez (ekip kapanışı RCI ile eşleştirir; Clear satırı o RCI'nın bütün olaylarını kapatırdı).
+ * <p><b>Olay anahtarı.</b> Ekip anahtarı satırdan kurar ({@code kaynak|||RCI|||SEVERITY}). {@code alarm_feed_events} her alarm
+ * için GÖNDERİLEN anahtarı ve satırın kopyasını tutar. Alarm açıkken anahtarı değişirse (seviye değişimi, yeniden adlandırma,
+ * seviye eşlemesi / kaynak metni değişimi) eski anahtar kapatılır ve KOPYADAN kurulan "çözüldü" satırıyla bildirilir; alarm
+ * çözülünce (gerçek çözülme anıyla), kapsamdan çıkınca ya da silinince de aynı. Bir kapanış en az bir yanıtta gönderilene
+ * kadar ({@code closure_sent_at}) ve çözülme penceresi boyunca akışta kalır — akış kapalıyken kapanan alarm da bildirilir.
+ * Aynı yanıtta aynı anahtarla AÇIK ve ÇÖZÜLDÜ satırı ASLA birlikte dönmez. "Clear" kipinde kapanış o RCI'da açık satır
+ * yoksa (alarm başına bir) Clear olarak gider.
  *
- * <p><b>Bilinmeyen ≠ boş.</b> Alarm, envanter ya da takım okunamazsa yanıt kurulmaz ({@link IllegalStateException} → 503):
- * boş liste merkezi sistemde "hiç alarm yok" sanılırdı. İzleme adları isteğe bağlıdır (okunamazsa satırda olmaz).
+ * <p><b>Bilinmeyen ≠ boş.</b> Alarm, envanter, takım ya da (takım süzgeci varken) izleme dizini okunamazsa yanıt kurulmaz
+ * (istisna → uç 503): boş liste merkezi sistemde "hiç alarm yok" sanılırdı.
  *
  * <p>Pod başına {@code cache-ms} (5 sn) önbellek: aynı dakika içindeki çağrılar aynı gövdeyi alır ve durum tablosu bir kez
  * yazılır. Önizleme ({@code dryRun}) durumu YAZMAZ.
@@ -64,18 +66,29 @@ public class AlarmFeedService {
     /** Bir yanıtta taranan en çok alarm (açık + penceredeki çözülenler). */
     static final int SCAN_MAX = 20_000;
     static final int CHUNK = 500;
-    /** Kapanmış durum satırları pencere + bu süre sonra silinir. */
+    /** Teslim edilmiş kapanışlar pencere + bu süre sonra silinir. */
     static final long PRUNE_AFTER_MS = 2L * 24 * 3600_000L;
+    /** Hiç teslim edilemeyen kapanış (akış uzun süre kapalı / kimse çağırmadı) bu süre sonra bırakılır. */
+    static final long UNDELIVERED_MAX_MS = 7L * 24 * 3600_000L;
     static final long PRUNE_EVERY_MS = 3600_000L;
 
-    static final String SQL_STATE_READ = "SELECT id, alert_event_id, level, sent_at, closed_at, closed_reason "
-            + "FROM alarm_feed_severities WHERE closed_at IS NULL OR closed_at >= ?";
-    static final String SQL_STATE_INSERT = "INSERT INTO alarm_feed_severities (alert_event_id, level, sent_at) VALUES (?, ?, ?)";
-    static final String SQL_STATE_CLOSE = "UPDATE alarm_feed_severities SET closed_at = ?, closed_reason = ? "
+    static final String SQL_STATE_READ = "SELECT id, alert_event_id, key_hash, level, sent_at, closed_at, closed_reason, "
+            + "closure_sent_at, snapshot FROM alarm_feed_events "
+            + "WHERE closed_at IS NULL OR closed_at >= ? OR closure_sent_at IS NULL";
+    static final String SQL_STATE_INSERT = "INSERT INTO alarm_feed_events (alert_event_id, key_hash, level, sent_at, snapshot) "
+            + "VALUES (?, ?, ?, ?, ?)";
+    static final String SQL_STATE_CLOSE = "UPDATE alarm_feed_events SET closed_at = ?, closed_reason = ? "
             + "WHERE id = ? AND closed_at IS NULL";
-    static final String SQL_STATE_REOPEN = "UPDATE alarm_feed_severities SET closed_at = NULL, closed_reason = NULL "
-            + "WHERE id = ? AND closed_at IS NOT NULL";
-    static final String SQL_STATE_PRUNE = "DELETE FROM alarm_feed_severities WHERE closed_at IS NOT NULL AND closed_at < ?";
+    static final String SQL_STATE_REOPEN = "UPDATE alarm_feed_events SET closed_at = NULL, closed_reason = NULL, "
+            + "closure_sent_at = NULL WHERE id = ? AND closed_at IS NOT NULL";
+    static final String SQL_STATE_REOPEN_BY_KEY = "UPDATE alarm_feed_events SET closed_at = NULL, closed_reason = NULL, "
+            + "closure_sent_at = NULL WHERE alert_event_id = ? AND key_hash = ? AND closed_at IS NOT NULL";
+    static final String SQL_STATE_DELIVERED = "UPDATE alarm_feed_events SET closure_sent_at = ? "
+            + "WHERE id = ? AND closed_at IS NOT NULL AND closure_sent_at IS NULL";
+    static final String SQL_STATE_PRUNE_SENT = "DELETE FROM alarm_feed_events WHERE closed_at IS NOT NULL "
+            + "AND closure_sent_at IS NOT NULL AND closed_at < ?";
+    static final String SQL_STATE_PRUNE_UNDELIVERED = "DELETE FROM alarm_feed_events WHERE closed_at IS NOT NULL "
+            + "AND closure_sent_at IS NULL AND closed_at < ?";
 
     private final AlertEventRepository alertRepo;
     private final CertificateInventoryRepository inventoryRepo;
@@ -84,6 +97,7 @@ public class AlarmFeedService {
     private final AppSettingsService settings;
 
     private NocMonitorDirectory directory;
+    private NotificationGroupService notificationGroups;
 
     @Value("${site.monitor.alarm-feed.cache-ms:5000}")
     long cacheMs = 5_000;
@@ -112,6 +126,11 @@ public class AlarmFeedService {
     @Autowired(required = false)
     void setDirectory(NocMonitorDirectory directory) {
         this.directory = directory;
+    }
+
+    @Autowired(required = false)
+    void setNotificationGroups(NotificationGroupService notificationGroups) {
+        this.notificationGroups = notificationGroups;
     }
 
     public AlarmFeedSettings.Config config() {
@@ -180,23 +199,33 @@ public class AlarmFeedService {
     static final class State {
         Long id;
         final long alertId;
+        final String keyHash;
         final String level;
         String sentAt;
         String closedAt;
         String reason;
+        String closureSentAt;
+        Map<String, Object> snapshot;
 
-        State(Long id, long alertId, String level, String sentAt, String closedAt, String reason) {
+        State(Long id, long alertId, String keyHash, String level, String sentAt, String closedAt, String reason,
+              String closureSentAt, Map<String, Object> snapshot) {
             this.id = id;
             this.alertId = alertId;
+            this.keyHash = keyHash;
             this.level = level;
             this.sentAt = sentAt;
             this.closedAt = closedAt;
             this.reason = reason;
+            this.closureSentAt = closureSentAt;
+            this.snapshot = snapshot;
         }
     }
 
     /** Bir alarmın kapsam değerlendirmesi için toplanmış hali. */
     record Item(AlertEvent event, AlarmFeedRows.Alarm alarm, String level, String family, Set<Long> owners) {}
+
+    /** Bir kapanış satırı adayı. */
+    record Closure(State state, Map<String, Object> row, String closedAt) {}
 
     Feed build(AlarmFeedSettings.Config c, boolean dryRun) {
         long nowMs = clock.getAsLong();
@@ -209,10 +238,10 @@ public class AlarmFeedService {
         boolean truncated = events.size() > SCAN_MAX;
         if (truncated) events = new ArrayList<>(events.subList(0, SCAN_MAX));
 
-        // 2) Durum: açık ya da pencerede kapanmış bildirim satırları.
+        // 2) Durum: açık, pencerede kapanmış ya da kapanışı henüz gönderilmemiş satırlar.
         Map<Long, List<State>> state = readState(since);
 
-        // 3) Durumda olup alarm listesinde olmayanlar (kapsam dışı / eski kapanış / silinmiş) — toplu okunur.
+        // 3) Durumda olup alarm listesinde olmayanlar (tarama tavanı / kapsam dışı / eski kapanış / silinmiş) — toplu okunur.
         Map<Long, AlertEvent> byId = new LinkedHashMap<>();
         for (AlertEvent e : events) if (e.getId() != null) byId.put(e.getId(), e);
         List<Long> extraIds = new ArrayList<>();
@@ -223,61 +252,79 @@ public class AlarmFeedService {
             }
         }
 
-        // 4) Takımlar (zorunlu) + envanter (zorunlu) + izleme adları (isteğe bağlı).
-        Map<Long, AlarmFeedRows.TeamInfo> teams = teams();
+        // 4) Takımlar (zorunlu) + envanter (zorunlu) + izleme adları (takım süzgeci varken zorunlu — damgasız bağımsız
+        //    alarmın takımı dizinden gelir; okunamazsa kapsam kararı verilemez, yanlış "kapsam dışı" kapanışı olurdu).
+        Map<Long, Team> teams = teams();
         Map<String, CertificateInventory> inv = inventory(byId.values());
         NocMonitorDirectory.Snapshot snap = null;
         if (directory != null) {
             try {
                 snap = directory.snapshot();
             } catch (Exception ex) {
+                if (!c.teamIds().isEmpty()) throw new IllegalStateException("izleme dizini okunamadı", ex);
                 log.debug("Alarm akışı: izleme dizini okunamadı: {}", ex.toString());
             }
         }
-
+        Map<String, List<String>> recipientMemo = new HashMap<>();
         Map<Long, Item> items = new LinkedHashMap<>();
-        for (AlertEvent e : byId.values()) items.put(e.getId(), item(e, inv, teams, snap));
+        for (AlertEvent e : byId.values()) items.put(e.getId(), item(e, inv, teams, snap, recipientMemo));
 
-        // 5) Kapsam.
+        // 5) Kapsam. Tarama tavanı dışında kalmış AÇIK alarm da (durumda bildirilmişse) kapsamda sayılır.
         List<Item> open = new ArrayList<>();
         List<Item> resolvedInWindow = new ArrayList<>();
-        Set<Long> inScopeIds = new LinkedHashSet<>();
-        for (AlertEvent e : events) {
-            Item it = items.get(e.getId());
-            if (it == null || !inScope(it, c)) continue;
-            if (Boolean.TRUE.equals(e.getResolved())) {
-                resolvedInWindow.add(it);
+        for (Item it : items.values()) {
+            if (!inScope(it, c)) continue;
+            if (Boolean.TRUE.equals(it.event().getResolved())) {
+                String at = it.event().getResolvedAt();
+                if (at != null && at.compareTo(since) >= 0) resolvedInWindow.add(it);
             } else {
                 open.add(it);
             }
-            inScopeIds.add(e.getId());
         }
 
-        // 6) Durum planı (bellekte) + veritabanı işlemleri.
+        // 6) Açık satırlar + durum planı.
         List<Runnable> ops = new ArrayList<>();
-        Set<String> openKeys = new LinkedHashSet<>();
+        Map<Long, String> openKeyOfAlert = new HashMap<>();
+        Set<String> openEventKeys = new LinkedHashSet<>();
+        Set<String> openRciKeys = new LinkedHashSet<>();
+        Map<Long, String> newSeverityOfAlert = new HashMap<>();
+        List<Map<String, Object>> openRows = new ArrayList<>();
+        open.sort(Comparator.comparingInt((Item it) -> -AlarmFeedSettings.rank(it.level()))
+                .thenComparing((Item it) -> nz(it.event().getCreatedAt()), Comparator.reverseOrder())
+                .thenComparing((Item it) -> it.event().getId(), Comparator.reverseOrder()));
         for (Item it : open) {
             long id = it.event().getId();
+            Map<String, Object> row = AlarmFeedRows.openRow(it.alarm(), c, base);
+            String key = AlarmFeedRows.eventKey(row);
+            String hash = AlarmFeedRows.keyHash(key);
+            openRows.add(row);
+            openEventKeys.add(key);
+            openRciKeys.add(AlarmFeedRows.rciKey(row));
+            openKeyOfAlert.put(id, hash);
+            newSeverityOfAlert.put(id, (String) row.get("SEVERITY"));
+
             List<State> rows = state.computeIfAbsent(id, k -> new ArrayList<>());
             State cur = null;
-            for (State s : rows) if (s.level.equals(it.level())) cur = s;
+            for (State s : rows) if (s.keyHash.equals(hash)) cur = s;
             if (cur == null) {
-                State s = new State(null, id, it.level(), now, null, null);
+                Map<String, Object> snapshot = AlarmFeedRows.withSnapshotFields(row, it.alarm());
+                State s = new State(null, id, hash, it.level(), now, null, null, null, snapshot);
                 rows.add(s);
-                ops.add(() -> insert(s));
+                String json = json(snapshot);
+                ops.add(() -> insert(s, json));
             } else if (cur.closedAt != null) {
                 State s = cur;
                 s.closedAt = null;
                 s.reason = null;
+                s.closureSentAt = null;
                 ops.add(() -> reopen(s));
             }
             for (State s : rows) {
-                if (!s.level.equals(it.level()) && s.closedAt == null) close(s, now, AlarmFeedRows.REASON_LEVEL_CHANGE, ops);
+                if (s.keyHash.equals(hash) || s.closedAt != null) continue;
+                close(s, now, s.level.equals(it.level()) ? AlarmFeedRows.REASON_KEY_CHANGE : AlarmFeedRows.REASON_LEVEL_CHANGE, ops);
             }
-            openKeys.add(id + "|" + it.level());
         }
-        Set<Long> openIds = new LinkedHashSet<>();
-        for (Item it : open) openIds.add(it.event().getId());
+        Set<Long> openIds = openKeyOfAlert.keySet();
         for (Map.Entry<Long, List<State>> en : state.entrySet()) {
             long id = en.getKey();
             if (openIds.contains(id)) continue;
@@ -287,9 +334,9 @@ public class AlarmFeedService {
                 if (e == null) {
                     close(s, now, AlarmFeedRows.REASON_GONE, ops);
                 } else if (Boolean.TRUE.equals(e.getResolved())) {
+                    // Gerçek çözülme anı (teslim edilene kadar akışta kalır — pencere dışı olsa da).
                     String at = e.getResolvedAt();
-                    close(s, at != null && at.compareTo(since) >= 0 && at.compareTo(now) <= 0 ? at : now,
-                            AlarmFeedRows.REASON_RESOLVED, ops);
+                    close(s, at != null && at.compareTo(now) <= 0 ? at : now, AlarmFeedRows.REASON_RESOLVED, ops);
                 } else {
                     close(s, now, AlarmFeedRows.REASON_SCOPE, ops);
                 }
@@ -297,85 +344,128 @@ public class AlarmFeedService {
         }
         if (!dryRun) runOps(ops);
 
-        // 7) Satırlar.
-        List<Map<String, Object>> openRows = new ArrayList<>();
-        open.sort(Comparator.comparingInt((Item it) -> -AlarmFeedSettings.rank(it.level()))
-                .thenComparing((Item it) -> nz(it.event().getCreatedAt()), Comparator.reverseOrder())
-                .thenComparing((Item it) -> it.event().getId(), Comparator.reverseOrder()));
-        for (Item it : open) {
-            openRows.add(AlarmFeedRows.row(it.alarm(), c, base, it.level(), true, null, null, null));
-        }
-
-        record Closed(Item item, String level, String closedAt, String reason) {}
-        List<Closed> closed = new ArrayList<>();
-        Set<String> closedKeys = new LinkedHashSet<>();
-        Set<Long> clearDone = new LinkedHashSet<>();
-        for (Map.Entry<Long, List<State>> en : state.entrySet()) {
-            Item it = items.get(en.getKey());
-            if (it == null) continue;
-            for (State s : en.getValue()) {
-                if (s.closedAt == null || s.closedAt.compareTo(since) < 0) continue;
-                if (AlarmFeedRows.REASON_GONE.equals(s.reason)) continue;
-                if (openKeys.contains(s.alertId + "|" + s.level)) continue;
-                if (c.clearMode()) {
-                    // Clear kipi: seviye değişiminin kapanışı gönderilmez; alarm başına TEK Clear satırı.
-                    if (AlarmFeedRows.REASON_LEVEL_CHANGE.equals(s.reason) || openIds.contains(s.alertId)) continue;
-                    if (!clearDone.add(s.alertId)) continue;
+        // 7) Kapanış satırları — GÖNDERİLMİŞ kopyalardan.
+        List<Closure> closures = new ArrayList<>();
+        Set<String> closureKeys = new LinkedHashSet<>();
+        Set<String> clearRciDone = new LinkedHashSet<>();
+        for (List<State> rows : state.values()) {
+            for (State s : rows) {
+                if (s.closedAt == null) continue;
+                boolean inWindow = s.closedAt.compareTo(since) >= 0;
+                if (!inWindow && s.closureSentAt != null) continue;
+                if (s.snapshot == null || AlarmFeedRows.REASON_GONE.equals(s.reason) && s.snapshot.isEmpty()) {
+                    markLater(s, closures, null);   // kopya okunamıyor: kurulamaz, sonsuza dek beklemesin
+                    continue;
                 }
-                if (closedKeys.add(s.alertId + "|" + s.level)) closed.add(new Closed(it, s.level, s.closedAt, s.reason));
+                Item it = items.get(s.alertId);
+                String newSev = AlarmFeedRows.REASON_LEVEL_CHANGE.equals(s.reason) ? newSeverityOfAlert.get(s.alertId) : null;
+                String closerText = it == null ? null : AlarmFeedRows.closer(it.alarm());
+                Map<String, Object> row = AlarmFeedRows.closure(s.snapshot, c, s.closedAt, s.reason, newSev,
+                        AlarmFeedRows.REASON_RESOLVED.equals(s.reason) ? closerText : null);
+                if (c.clearMode()) {
+                    // Clear: o RCI'da açık satır varken gönderilmez (o olayı da kapatırdı); RCI başına bir Clear.
+                    String rk = AlarmFeedRows.rciKey(row);
+                    if (openRciKeys.contains(rk) || !clearRciDone.add(rk)) {
+                        markLater(s, closures, null);
+                        continue;
+                    }
+                } else {
+                    String k = AlarmFeedRows.eventKey(row);
+                    // Aynı yanıtta aynı anahtar hem AÇIK hem ÇÖZÜLDÜ olamaz; aynı anahtar iki kez kapanmaz.
+                    if (openEventKeys.contains(k) || !closureKeys.add(k)) {
+                        markLater(s, closures, null);
+                        continue;
+                    }
+                }
+                closures.add(new Closure(s, row, s.closedAt));
             }
         }
-        // Hiç bildirilmemiş ama pencerede çözülmüş kapsamdaki alarmlar da (bilgi amaçlı) çözüldü olarak döner.
+        // Hiç açık bildirilmemiş ama pencerede çözülmüş kapsamdaki alarmlar (bilgi) — durum satırı olmayanlar.
+        List<Map<String, Object>> infoRows = new ArrayList<>();
         for (Item it : resolvedInWindow) {
-            long id = it.event().getId();
-            if (c.clearMode()) {
-                if (!clearDone.add(id)) continue;
-            } else if (state.getOrDefault(id, List.of()).stream().anyMatch(s -> s.closedAt != null)) {
-                continue;   // bildirilmiş seviyeleri yukarıda döndü
-            }
-            if (closedKeys.add(id + "|" + it.level())) {
-                closed.add(new Closed(it, it.level(), it.event().getResolvedAt(), AlarmFeedRows.REASON_RESOLVED));
-            }
-        }
-        closed.sort(Comparator.comparing((Closed x) -> nz(x.closedAt()), Comparator.reverseOrder())
-                .thenComparing((Closed x) -> x.item().event().getId(), Comparator.reverseOrder()));
-        List<Map<String, Object>> resolvedRows = new ArrayList<>();
-        for (Closed x : closed) {
-            String newLevel = AlarmFeedRows.REASON_LEVEL_CHANGE.equals(x.reason()) && openIds.contains(x.item().event().getId())
-                    ? x.item().level() : null;
-            resolvedRows.add(AlarmFeedRows.row(x.item().alarm(), c, base, x.level(), false, x.closedAt(), x.reason(), newLevel));
+            if (!state.getOrDefault(it.event().getId(), List.of()).isEmpty()) continue;
+            Map<String, Object> row = AlarmFeedRows.resolvedRow(it.alarm(), c, base);
+            String k = c.clearMode() ? AlarmFeedRows.rciKey(row) : AlarmFeedRows.eventKey(row);
+            if (c.clearMode() ? (openRciKeys.contains(k) || !clearRciDone.add(k))
+                    : (openEventKeys.contains(k) || !closureKeys.add(k))) continue;
+            infoRows.add(row);
         }
 
-        // 8) Tavan: kapanışlar önce korunur (kaybolan "çözüldü" merkezi sistemde olayı sonsuza dek açık bırakırdı).
+        // 8) Tavan: önce kapanışların (en eskisi — pencereden ilk düşecek olan — önce) yarısı, sonra açıklar (öncelik
+        //    sırasıyla), sonra kalan kapanışlar, en son bilgi satırları. Teslim edilmeyen kapanış sonraki çağrıda gider.
+        List<Closure> realClosures = new ArrayList<>();
+        for (Closure x : closures) if (x.row() != null) realClosures.add(x);
+        realClosures.sort(Comparator.comparing((Closure x) -> nz(x.closedAt()))
+                .thenComparing((Closure x) -> x.state().alertId));
         int cap = c.maxRows();
-        if (openRows.size() + resolvedRows.size() > cap) {
+        int total = realClosures.size() + openRows.size() + infoRows.size();
+        List<Closure> keptClosures = realClosures;
+        List<Map<String, Object>> keptOpen = openRows;
+        List<Map<String, Object>> keptInfo = infoRows;
+        if (total > cap) {
             truncated = true;
-            if (resolvedRows.size() > cap) resolvedRows = new ArrayList<>(resolvedRows.subList(0, cap));
-            int room = cap - resolvedRows.size();
-            if (openRows.size() > room) openRows = new ArrayList<>(openRows.subList(0, room));
-            log.warn("Alarm akışı satır tavanına ({}) ulaştı — en düşük öncelikli açık alarmlar yanıta girmedi", cap);
+            int firstShare = Math.min(realClosures.size(), cap / 2);
+            int openRoom = Math.min(openRows.size(), cap - firstShare);
+            int closureRoom = Math.min(realClosures.size(), cap - openRoom);
+            int infoRoom = Math.max(0, cap - openRoom - closureRoom);
+            keptClosures = new ArrayList<>(realClosures.subList(0, closureRoom));
+            keptOpen = new ArrayList<>(openRows.subList(0, openRoom));
+            keptInfo = new ArrayList<>(infoRows.subList(0, Math.min(infoRows.size(), infoRoom)));
+            log.warn("Alarm akışı satır tavanına ({}) ulaştı — {} satır bu yanıta girmedi (kapanışlar sonraki çağrıda gider)",
+                    cap, total - cap);
         }
-        List<Map<String, Object>> rows = new ArrayList<>(openRows.size() + resolvedRows.size());
-        rows.addAll(openRows);
+
+        // 9) Teslim işareti: bu yanıtta gönderilen kapanışlar (ve gönderilmeyecek kadar gereksizleşmiş olanlar).
+        if (!dryRun) {
+            List<Long> delivered = new ArrayList<>();
+            for (Closure x : keptClosures) if (x.state().closureSentAt == null && x.state().id != null) delivered.add(x.state().id);
+            for (Closure x : closures) {
+                if (x.row() == null && x.state().closureSentAt == null && x.state().id != null) delivered.add(x.state().id);
+            }
+            for (Long id : delivered) {
+                try {
+                    jdbc.update(SQL_STATE_DELIVERED, now, id);
+                } catch (Exception ex) {
+                    log.warn("Alarm akışı kapanış teslim işareti yazılamadı — bir sonraki çağrıda yeniden gönderilir: {}",
+                            ex.toString());
+                }
+            }
+        }
+
+        List<Map<String, Object>> resolvedRows = new ArrayList<>();
+        keptClosures.sort(Comparator.comparing((Closure x) -> nz(x.closedAt()), Comparator.reverseOrder())
+                .thenComparing((Closure x) -> x.state().alertId, Comparator.reverseOrder()));
+        for (Closure x : keptClosures) resolvedRows.add(x.row());
+        resolvedRows.addAll(keptInfo);
+
+        List<Map<String, Object>> rows = new ArrayList<>(keptOpen.size() + resolvedRows.size());
+        rows.addAll(keptOpen);
         rows.addAll(resolvedRows);
 
         if (!dryRun) pruneMaybe(nowMs, c);
-        return new Feed(List.copyOf(rows), openRows.size(), resolvedRows.size(), truncated, now);
+        return new Feed(List.copyOf(rows), keptOpen.size(), resolvedRows.size(), truncated, now);
+    }
+
+    /**
+     * Gönderilmeyecek (çakışan / Clear kipinde gereksiz) kapanış: satır yok, ama teslim edilmiş sayılır — aksi halde
+     * pencere dışında da sonsuza dek "teslim bekliyor" kalırdı.
+     */
+    private static void markLater(State s, List<Closure> closures, Map<String, Object> row) {
+        closures.add(new Closure(s, row, s.closedAt));
     }
 
     static boolean inScope(Item it, AlarmFeedSettings.Config c) {
         if (!c.levelIncluded(it.level())) return false;
         if (!c.types().isEmpty() && (it.family() == null || !c.types().contains(it.family()))) return false;
         if (!c.teamIds().isEmpty()) {
-            boolean any = false;
-            for (Long t : it.owners()) if (c.teamIds().contains(t)) { any = true; break; }
-            return any;
+            for (Long t : it.owners()) if (c.teamIds().contains(t)) return true;
+            return false;
         }
         return true;
     }
 
-    private Item item(AlertEvent e, Map<String, CertificateInventory> inv, Map<Long, AlarmFeedRows.TeamInfo> teams,
-                      NocMonitorDirectory.Snapshot snap) {
+    private Item item(AlertEvent e, Map<String, CertificateInventory> inv, Map<Long, Team> teams,
+                      NocMonitorDirectory.Snapshot snap, Map<String, List<String>> recipientMemo) {
         boolean inventoryRouted = AlertOwnership.routesLikeInventory(e);
         CertificateInventory row = inventoryRouted ? inv.get(lower(e.getDomain())) : null;
         String monitorName = null;
@@ -393,7 +483,7 @@ public class AlarmFeedService {
             }
         }
         // Sahibi takım: damga → (envanter gibi yönlenen alarmda) envanter SY → UG; bağımsız alarm envanteri ALMAZ
-        // (AlertOwnership, 7/24 konsoluyla aynı kural). Damgasız bağımsız alarmda izleme satırının takımı yalnız GÖSTERİM içindir.
+        // (AlertOwnership, 7/24 konsoluyla aynı kural). Damgasız bağımsız alarmda izleme satırının takımı.
         Long team = e.getTeamId();
         if (team == null && row != null) team = row.getTeamId() != null ? row.getTeamId() : row.getUgTeamId();
         Long ug = row != null ? row.getUgTeamId() : null;
@@ -407,29 +497,46 @@ public class AlarmFeedService {
         AlarmFeedRows.Alarm a = new AlarmFeedRows.Alarm(e.getId(), e.getAlertType(), level, e.getDomain(), e.getMessage(),
                 e.getDaysRemaining(), e.getCreatedAt(), Boolean.TRUE.equals(e.getResolved()), e.getResolvedAt(),
                 e.getResolvedBy(), Boolean.TRUE.equals(e.getAcknowledged()), e.getAcknowledgedAt(), e.getStormId(),
-                monitorName, teamInfo(shownTeam, teams), teamInfo(ug, teams));
+                monitorName, teamInfo(shownTeam, teams, shownTeam != null && shownTeam.equals(e.getTeamId())
+                        ? e.getNotificationGroupId() : null, recipientMemo),
+                teamInfo(ug, teams, null, recipientMemo));
         return new Item(e, a, level, MonitorTypeCatalog.typeOfAlert(e.getAlertType()), owners);
     }
 
-    private static AlarmFeedRows.TeamInfo teamInfo(Long id, Map<Long, AlarmFeedRows.TeamInfo> teams) {
+    /**
+     * Takımın alarm postalarının gittiği adresler — alarm yolunun zinciri: damgalı bildirim grubu → takımın varsayılan grubu
+     * → takım e-postası ({@code NotificationGroupService.overrideFor}); grup servisi yoksa / okunamazsa takım e-postası.
+     */
+    private AlarmFeedRows.TeamInfo teamInfo(Long id, Map<Long, Team> teams, Long stampedGroupId,
+                                            Map<String, List<String>> memo) {
         if (id == null) return null;
-        AlarmFeedRows.TeamInfo t = teams.get(id);
-        return t != null ? t : new AlarmFeedRows.TeamInfo(id, null, List.of());
+        Team t = teams.get(id);
+        List<String> mails = memo.computeIfAbsent(id + "|" + stampedGroupId, k -> recipients(id, t, stampedGroupId));
+        return new AlarmFeedRows.TeamInfo(id, t == null ? null : t.getName(), mails);
     }
 
-    private Map<Long, AlarmFeedRows.TeamInfo> teams() {
-        Map<Long, AlarmFeedRows.TeamInfo> out = new HashMap<>();
-        for (Team t : teamRepo.findAll()) {
-            if (t.getId() == null) continue;
-            out.put(t.getId(), new AlarmFeedRows.TeamInfo(t.getId(), t.getName(), emails(t.getEmail())));
+    private List<String> recipients(Long teamId, Team t, Long stampedGroupId) {
+        if (notificationGroups != null) {
+            try {
+                NotificationGroupService.Override ov = notificationGroups.overrideFor(teamId, stampedGroupId);
+                if (ov != null && ov.applies()) return emails(String.join(",", ov.emails()));
+            } catch (Exception ex) {
+                log.debug("Alarm akışı: bildirim grubu okunamadı (takım {}): {}", teamId, ex.toString());
+            }
         }
+        return t == null ? List.of() : emails(t.getEmail());
+    }
+
+    private Map<Long, Team> teams() {
+        Map<Long, Team> out = new HashMap<>();
+        for (Team t : teamRepo.findAll()) if (t.getId() != null) out.put(t.getId(), t);
         return out;
     }
 
-    /** Takım adres alanı (virgül / noktalı virgül / boşlukla ayrılmış) → geçerli görünen, tekil adresler. */
+    /** Adres alanı (virgül / noktalı virgül / boşlukla ayrılmış) → geçerli görünen, tekil adresler. */
     static List<String> emails(String raw) {
         List<String> out = new ArrayList<>();
-        if (raw == null || raw.isBlank() || raw.length() > 4000) return out;
+        if (raw == null || raw.isBlank() || raw.length() > 20_000) return out;
         Set<String> seen = new LinkedHashSet<>();
         for (String p : raw.split("[,;\\s]+")) {
             String e = p.trim();
@@ -462,16 +569,36 @@ public class AlarmFeedService {
         Map<Long, List<State>> out = new LinkedHashMap<>();
         jdbc.query(SQL_STATE_READ, rs -> {
             long alertId = rs.getLong("alert_event_id");
-            State s = new State(rs.getLong("id"), alertId, AlarmFeedSettings.canonicalLevel(rs.getString("level")),
-                    rs.getString("sent_at"), rs.getString("closed_at"), rs.getString("closed_reason"));
+            State s = new State(rs.getLong("id"), alertId, rs.getString("key_hash"),
+                    AlarmFeedSettings.canonicalLevel(rs.getString("level")), rs.getString("sent_at"),
+                    rs.getString("closed_at"), rs.getString("closed_reason"), rs.getString("closure_sent_at"),
+                    snapshot(rs.getString("snapshot")));
             out.computeIfAbsent(alertId, k -> new ArrayList<>()).add(s);
         }, since);
         return out;
     }
 
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> snapshot(String json) {
+        if (json == null || json.isBlank()) return null;
+        try {
+            return mapper.readValue(json, LinkedHashMap.class);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private String json(Map<String, Object> m) {
+        try {
+            return mapper.writeValueAsString(m);
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
     /**
      * Bellekte kapatır ve koşullu UPDATE'i plana ekler. Yalnız okunmuş (kimlikli) satır kapanır: yeni satır yalnız açık
-     * alarmın GÜNCEL seviyesi için eklenir ve aynı yanıtta kapanmaz.
+     * alarmın GÜNCEL anahtarı için eklenir ve aynı yanıtta kapanmaz.
      */
     private void close(State s, String at, String reason, List<Runnable> ops) {
         s.closedAt = at;
@@ -485,18 +612,17 @@ public class AlarmFeedService {
             try {
                 op.run();
             } catch (Exception ex) {
-                log.warn("Alarm akışı seviye durumu yazılamadı — bir sonraki çağrıda yeniden denenir: {}", ex.toString());
+                log.warn("Alarm akışı olay durumu yazılamadı — bir sonraki çağrıda yeniden denenir: {}", ex.toString());
             }
         }
     }
 
-    private void insert(State s) {
+    private void insert(State s, String snapshotJson) {
         try {
-            jdbc.update(SQL_STATE_INSERT, s.alertId, s.level, s.sentAt);
+            jdbc.update(SQL_STATE_INSERT, s.alertId, s.keyHash, s.level, s.sentAt, snapshotJson);
         } catch (DataIntegrityViolationException dup) {
-            // Başka bir pod aynı (alarm, seviye) çiftini az önce yazdı — aynı anlam, yeniden açmayı dene.
-            jdbc.update("UPDATE alarm_feed_severities SET closed_at = NULL, closed_reason = NULL "
-                    + "WHERE alert_event_id = ? AND level = ? AND closed_at IS NOT NULL", s.alertId, s.level);
+            // Başka bir pod aynı (alarm, anahtar) çiftini az önce yazdı — aynı anlam; kapalıysa yeniden aç.
+            jdbc.update(SQL_STATE_REOPEN_BY_KEY, s.alertId, s.keyHash);
         }
     }
 
@@ -509,10 +635,12 @@ public class AlarmFeedService {
         lastPruneMs = nowMs;
         try {
             long keepMs = c.resolvedMinutes() * 60_000L + PRUNE_AFTER_MS;
-            int n = jdbc.update(SQL_STATE_PRUNE, ISO.format(Instant.ofEpochMilli(nowMs - keepMs)));
-            if (n > 0) log.debug("Alarm akışı: {} eski seviye durumu silindi", n);
+            int a = jdbc.update(SQL_STATE_PRUNE_SENT, ISO.format(Instant.ofEpochMilli(nowMs - keepMs)));
+            int b = jdbc.update(SQL_STATE_PRUNE_UNDELIVERED, ISO.format(Instant.ofEpochMilli(nowMs - UNDELIVERED_MAX_MS)));
+            if (b > 0) log.warn("Alarm akışı: {} kapanış 7 gün içinde hiç teslim edilemedi ve bırakıldı", b);
+            if (a > 0) log.debug("Alarm akışı: {} eski olay durumu silindi", a);
         } catch (Exception ex) {
-            log.debug("Alarm akışı seviye durumu temizlenemedi: {}", ex.toString());
+            log.debug("Alarm akışı olay durumu temizlenemedi: {}", ex.toString());
         }
     }
 

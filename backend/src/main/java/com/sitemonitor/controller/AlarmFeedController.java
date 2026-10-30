@@ -137,7 +137,7 @@ public class AlarmFeedController {
                 .header("X-Feed-Open", Integer.toString(f.open()))
                 .header("X-Feed-Resolved", Integer.toString(f.resolved()))
                 .header("X-Feed-Truncated", Boolean.toString(f.truncated()))
-                .header("X-Feed-Generated-At", f.generatedAt())
+                .header("X-Feed-Generated-At", f.generatedAt() + "Z")   // UTC (satırlar Türkiye saati)
                 .body(payload);
     }
 

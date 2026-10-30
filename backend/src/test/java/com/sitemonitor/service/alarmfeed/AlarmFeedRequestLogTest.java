@@ -153,6 +153,38 @@ class AlarmFeedRequestLogTest {
     }
 
     @Test
+    @DisplayName("Reddedilen çağrının gövdesi saklanmaz; pod başına dakikada en çok 60 ret satırı; yeni IP denetimi yalnız kabulde")
+    void refusedCallsAreBounded() {
+        for (int i = 0; i < 80; i++) {
+            AlarmFeedRequestLog.Result denied = new AlarmFeedRequestLog.Result(404, AlarmFeedRequestLog.OUTCOME_DISABLED,
+                    "{\"success\":false,\"request_id\":\"r" + i + "\"}", "application/json", null, null, null, null, "json", null);
+            log.record(call("10.9." + (i / 250) + "." + (i % 250)), denied, true, null);
+        }
+        assertThat(requests.count()).isEqualTo(AlarmFeedRequestLog.REFUSED_LOG_PER_MINUTE);
+        assertThat(log.suppressedRefusals()).isEqualTo(80 - AlarmFeedRequestLog.REFUSED_LOG_PER_MINUTE);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM alarm_feed_responses", Long.class)).isZero();
+        verify(audit, never()).recordAction(eq("ALARM_FEED_NEW_CALLER"), anyString(), any(), any(), anyString(),
+                anyString(), anyString(), anyString(), anyString(), anyString(), any());
+        verify(audit, times(AlarmFeedRequestLog.DENIED_AUDIT_PER_MINUTE)).recordAction(eq("ALARM_FEED_ACCESS_DENIED"),
+                anyString(), any(), any(), anyString(), anyString(), anyString(), anyString(), anyString(), anyString(), any());
+        now += 61_000;
+        log.record(call("10.9.9.9"), ok("[]"), true, null);
+        assertThat(requests.count()).isEqualTo(AlarmFeedRequestLog.REFUSED_LOG_PER_MINUTE + 1L);
+    }
+
+    @Test
+    @DisplayName("Aynı gövde yeniden dönünce son kullanım tazelenir (saklama süresi buna göre)")
+    void bodyLastUsedIsRefreshed() {
+        log.record(call("172.16.5.5"), ok("[7]"), true, null);
+        String first = jdbc.queryForObject("SELECT last_used_at FROM alarm_feed_responses", String.class);
+        now += 11 * 60_000;
+        log.record(call("172.16.5.5"), ok("[7]"), true, null);
+        String second = jdbc.queryForObject("SELECT last_used_at FROM alarm_feed_responses", String.class);
+        assertThat(second).isGreaterThan(first);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM alarm_feed_responses", Long.class)).isEqualTo(1L);
+    }
+
+    @Test
     @DisplayName("Uzun başlıklar sütuna sığdırılır")
     void longValuesFit() {
         AlarmFeedRequestLog.Call c = new AlarmFeedRequestLog.Call(now, "1.2.3.4", "10.0.0.1", "x".repeat(900),

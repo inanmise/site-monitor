@@ -41,4 +41,8 @@ public class AlarmFeedResponse {
 
     @Column(name = "created_at", length = 30)
     private String createdAt;
+
+    /** Bu gövdenin en son döndüğü an (UTC ISO; pod başına en çok 10 dakikada bir tazelenir) — saklama süresi buna göre. */
+    @Column(name = "last_used_at", length = 30)
+    private String lastUsedAt;
 }

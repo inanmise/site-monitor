@@ -366,22 +366,31 @@ hedef), `RCITYPE` (izleme türü), `CATEGORY` (alarm türü), `FILTERSOURCE` (Si
 adresleri); ek kolonlar `STATUS` (OPEN / RESOLVED), `RESOLVEDTIME`, `ALERTID`, `TEAM`, `UGTEAM`, `LINK`. EVENTKEY
 gönderilmez (ekip `kaynak|||RCI|||SEVERITY` olarak kendisi kurar) — RCI bir alarmın ömrü boyunca değişmez.
 
-Her çağrı o anki durumun **tamamıdır**: kapsamdaki bütün açık alarmlar + son N dakikada (varsayılan 15) kapananlar. Çözülen
-alarm aynı SEVERITY ile `STATUS=RESOLVED` döner (ayarla "SEVERITY = Clear" kipine geçilir). Alarmın seviyesi değişince
-(Warning → Critical) merkezi sistemde yeni olay doğar; ESKİ seviye pencere boyunca `RESOLVED` döner (sahipsiz açık olay
-kalmaz). Kapsam daraltılırsa (takım / tür / seviye) daha önce bildirilmiş açık alarm "akış kapsamından çıktı" diye
-`RESOLVED` döner. Alarm verisi okunamazsa **503 `ALARM_FEED_UNAVAILABLE`** — asla boş liste.
+Her çağrı o anki durumun **tamamıdır**: kapsamdaki bütün açık alarmlar + kapanışlar. Çözülen alarm aynı SEVERITY ile
+`STATUS=RESOLVED` döner (ayarla "SEVERITY = Clear" kipine geçilir). SiteMonitor merkezi sisteme **gönderdiği** anahtarı
+(kaynak + RCI + SEVERITY) ve satırı saklar: alarmın seviyesi değişince (Warning → Critical), hedef yeniden adlandırılınca ya
+da seviye / kaynak ayarı değişince ESKİ anahtar, gönderilmiş haliyle `RESOLVED` döner (sahipsiz açık olay kalmaz). Kapsam
+daraltılırsa (takım / tür / seviye) bildirilmiş açık alarm "akış kapsamından çıktı", alarm kaydı silinirse "alarm kaydı
+silindi" diye `RESOLVED` döner. Bir kapanış çözülme penceresi (varsayılan 15 dk) boyunca ve **en az bir yanıtta
+gönderilene kadar** akışta kalır — akış kapalıyken ya da ekip çağırmazken kapanan alarm da bildirilir (RESOLVEDTIME gerçek
+kapanış anı). Aynı yanıtta aynı anahtarla AÇIK ve ÇÖZÜLDÜ satırı asla birlikte dönmez. Alarm verisi okunamazsa
+**503 `ALARM_FEED_UNAVAILABLE`** — asla boş liste.
 
 **Erişim.** Belirteç yok; önerilen: (1) ayar sayfasında **IP izin listesi** (tek adres ya da CIDR; boş = herkes),
-(2) kenarda / Ingress'te yolu yalnız kurum ağına açın. IP `ClientIpResolver` ile çözülür (`site.monitor.client-ip.*`,
-`X-Forwarded-For`). IP başına dakikalık sınır (varsayılan 30) kümede ortaktır → aşılınca 429 + `Retry-After`.
+(2) kenarda / Ingress'te yolu yalnız kurum ağına (izleme ekibinin sunucularına) açın. İstemci IP'si `ClientIpResolver` ile
+çözülür (`site.monitor.client-ip.*`, varsayılan `X-Forwarded-For`'un en soldaki girdisi): izin listesi ancak kenar katmanı
+`X-Forwarded-For`'u kendisi yazıyorsa güvenilirdir — pod'a / router'a kenarı atlayarak ulaşabilen biri izinli bir IP
+"söyleyebilir". Bu yüzden asıl koruma kenardaki yol kısıtıdır; çağrı günlüğünde her satırda `remote_addr` ve ham zincir
+görünür. IP başına dakikalık sınır (varsayılan 30) kümede ortaktır → aşılınca 429 + `Retry-After`.
 
 **Günlük ve denetim.** Her çağrı (reddedilenler dahil) Ayarlar → Alarm akışı → **Çağrı günlüğü**'nde: zaman, istemci IP'si,
 ham `X-Forwarded-For`, bağlantı adresi, user-agent, sonuç (OK / DISABLED / IP_DENIED / RATE_LIMITED / ERROR), satır
-sayıları, süre, yanıtlayan pod, istek kimliği ve yanıtın **birebir kopyası** (gzip, özetle tekil; "Yanıt gövdesini sakla"
-kapatılabilir). Oran sınırına takılan çağrı IP başına dakikada bir satır yazar. Ana Denetim Günlüğü: `ALARM_FEED_SETTINGS_SAVE`,
-`ALARM_FEED_NEW_CALLER` (IP'nin ilk çağrısı, kümede bir kez), `ALARM_FEED_ACCESS_DENIED` (IP + neden başına 10 dk'da bir),
-`ALARM_FEED_LOG_EXPORT`. Saklama: Veri saklama → `alarm-feed-requests` (varsayılan 90 gün).
+sayıları, süre, yanıtlayan pod, istek kimliği ve kabul edilen çağrıda yanıtın **birebir kopyası** (gzip, özetle tekil;
+"Yanıt gövdesini sakla" kapatılabilir; ret yanıtı sabit metindir, saklanmaz). Oran sınırına takılan çağrı IP başına dakikada
+bir satır yazar; pod başına dakikada en çok 60 reddedilen çağrı yazılır (fazlası sayılır). Ana Denetim Günlüğü:
+`ALARM_FEED_SETTINGS_SAVE`, `ALARM_FEED_NEW_CALLER` (kabul edilen ilk çağrı, kümede bir kez), `ALARM_FEED_ACCESS_DENIED`
+(IP + neden başına 10 dk'da bir, pod başına dakikada en çok 10), `ALARM_FEED_LOG_EXPORT`. Saklama: Veri saklama →
+`alarm-feed-requests` (varsayılan 90 gün) ve `alarm-feed-responses` (yanıt kopyası son dönüşünden 30 gün sonra).
 
 **Sorun giderme.**
 - Ekip "404 alarm akışı kapalı" alıyor → Ayarlar → Alarm akışı → açık mı.

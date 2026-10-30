@@ -23,6 +23,18 @@ public interface AlarmFeedRequestRepository extends JpaRepository<AlarmFeedReque
     Page<AlarmFeedRequest> search(@Param("outcome") String outcome, @Param("ip") String ipPrefixLike,
                                   @Param("from") String from, @Param("to") String to, Pageable pageable);
 
+    /**
+     * Dışa aktarma — kimliğe göre ANAHTAR sayfalama ({@code id < beforeId}): dakikada bir yeni satır eklenirken ofset
+     * sayfalaması satır tekrarlar / atlardı. Kimlik eklenme sırasıdır (çağrı zamanıyla aynı sıra).
+     */
+    @Query("SELECT r FROM AlarmFeedRequest r WHERE (:outcome IS NULL OR r.outcome = :outcome) "
+            + "AND (:ip IS NULL OR r.clientIp LIKE :ip) "
+            + "AND (:from IS NULL OR r.requestedAt >= :from) AND (:to IS NULL OR r.requestedAt < :to) "
+            + "AND (:beforeId IS NULL OR r.id < :beforeId) ORDER BY r.id DESC")
+    List<AlarmFeedRequest> exportPage(@Param("outcome") String outcome, @Param("ip") String ipPrefixLike,
+                                      @Param("from") String from, @Param("to") String to,
+                                      @Param("beforeId") Long beforeId, Pageable pageable);
+
     /** Son 24 saat özeti: [outcome, adet, ortalama süre ms]. */
     @Query("SELECT r.outcome, COUNT(r), AVG(r.durationMs) FROM AlarmFeedRequest r WHERE r.requestedAt >= :since GROUP BY r.outcome")
     List<Object[]> outcomeStatsSince(@Param("since") String since);

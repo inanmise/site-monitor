@@ -119,6 +119,7 @@ export function SettingsCard({ data, form, dirty, saving, fe, limits, lang, onCh
   const rciChanged = data?.settings?.rci_mode != null && form.rci_mode !== data.settings.rci_mode
   const ipError = ipEntryError || fe.errors.allowed_ips
   const retention = data?.log_retention_days
+  const bodyRetention = data?.body_retention_days
   const set = (k) => (v) => onChange(k, v)
 
   return (
@@ -266,6 +267,11 @@ export function SettingsCard({ data, form, dirty, saving, fe, limits, lang, onCh
           label={t('af.f.storeBody')} hint={t('af.f.storeBodyHint')} />
         <div className="mb-3.5 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-sm" data-slot="af-retention">
           <span>{retention == null || !Number.isFinite(Number(retention)) ? t('af.f.retentionUnknown') : Number(retention) === 1 ? t('af.f.retention.one') : t('af.f.retention', numText(retention, lang))}</span>
+          {bodyRetention != null && Number.isFinite(Number(bodyRetention)) && (
+            <span data-slot="af-body-retention">
+              {Number(bodyRetention) === 1 ? t('af.f.bodyRetention.one') : t('af.f.bodyRetention', numText(bodyRetention, lang))}
+            </span>
+          )}
           <Button type="button" variant="link" size="sm" onClick={onGoRetention} className={cn('h-auto px-0', TOUCH)} data-slot="af-go-retention">
             <Archive aria-hidden="true" /> {t('af.f.retentionLink')}
           </Button>

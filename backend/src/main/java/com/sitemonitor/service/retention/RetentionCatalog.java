@@ -384,10 +384,15 @@ public final class RetentionCatalog {
                 DataClass.CONTENT,
                 "Alarm akışının döndürdüğü yanıt gövdelerinin birebir kopyası (gzip, özetle tekil; alarm hedefleri, takım "
                 + "adları ve e-posta adresleri içerir). Hiçbir çağrı satırı göstermeyen gövde yetimdir ve silinir."),
-        info("alarm-feed-severities", "alarm_feed_severities", Mode.EXTERNAL, DataClass.OPERATIONAL,
-                "Alarm akışının merkezi sisteme açık bildirdiği (alarm, seviye) çiftleri — seviye değişince / çözülünce / "
-                + "kapsamdan çıkınca eski seviyeye 'çözüldü' göndermek için. AlarmFeedService saatte bir kendisi siler "
-                + "(kapanıştan çözülme penceresi + 2 gün sonra)."),
+        age("alarm-feed-responses", "alarm_feed_responses", "last_used_at", "site.monitor.alarm-feed.body-retention-days",
+                30, 3, false, DataClass.CONTENT,
+                "Alarm akışı yanıt gövdelerinin kopyası — son kullanılmasından (aynı gövde yeniden döndükçe tazelenir) bu "
+                + "süre sonra silinir; çağrı satırı (özetiyle) kendi süresince kalır, ekranda 'gövde artık saklanmıyor' görünür."),
+        info("alarm-feed-events", "alarm_feed_events", Mode.EXTERNAL, DataClass.OPERATIONAL,
+                "Alarm akışının merkezi sisteme AÇIK bildirdiği olaylar (gönderilen anahtar + satırın kopyası: hedef, takım "
+                + "adı / adresleri) — anahtar değişince, çözülünce, kapsamdan çıkınca ya da silinince eski olaya 'çözüldü' "
+                + "göndermek için. AlarmFeedService saatte bir kendisi siler (teslim edilen kapanış: pencere + 2 gün; hiç "
+                + "teslim edilemeyen: 7 gün)."),
 
         // ── Temizliğin kendi çalışma geçmişi (öz-referans) ─────────────────────────────────────
         age("retention-run-items", "retention_run_item", "created_at", "site.monitor.retention.run-history-retention-days",
