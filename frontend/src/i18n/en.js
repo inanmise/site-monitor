@@ -2580,6 +2580,7 @@ export const EN = {
   'general.lbl.site.monitor.page.default-slow-ms': 'Page slow threshold (ms)',
   'general.lbl.site.monitor.page.manual-cooldown-seconds': 'Page manual check cooldown (s)',
   'general.lbl.site.monitor.page.max-check-seconds': 'Page check time limit (s)',
+  'general.lbl.site.monitor.page.max-resources': 'Max resources per page',
   'general.lbl.site.monitor.page.resource-concurrency': 'Page resource concurrency',
   'general.lbl.site.monitor.page.user-agent': 'Page user agent',
   'general.lbl.site.monitor.pagespeed.alert-enabled': 'Page speed alerts enabled',
@@ -16172,6 +16173,8 @@ export const EN = {
     'What it does: The minimum wait between consecutive presses of the "check now" button.\nBenefit: Repeated clicking cannot exhaust request threads and slow the application down.\nRecommended: 20 seconds (the default), or 30-60 where many people use the screen.',
   'help.set.site.monitor.page.max-check-seconds':
     'What it does: The total wall-clock limit for a single page integrity check.\nBenefit: An unresponsive target cannot hold a scheduler thread indefinitely.\nRecommended: 120 seconds (the default), or 180 for heavy pages with many resources. The floor is 10 seconds.',
+  'help.set.site.monitor.page.max-resources':
+    'What it does: The maximum number of resources (links, images, scripts, styles) collected and verified from a single page during a page integrity or page speed check; once the limit is reached the rest are skipped and a warning is logged. A site crawl may check three times as many in total (at least 1500).\nBenefit: Large pages with many links, such as bank home pages, are checked in full; a very large value makes a single check take longer.\nRecommended: 2000 (the default; allowed range 100-10000). If a page with many resources runs into the time limit, raise "Page check time limit" or the concurrency as well.',
   'help.set.site.monitor.page.resource-concurrency':
     'What it does: How many page resources — links, images, scripts — are verified at the same time during one integrity check.\nBenefit: A higher number finishes faster; a lower one is gentler on the site being checked.\nRecommended: 5 (the default). Use 2-3 against a fragile target, and stay below 10 since this runs on a single pod.',
   'help.set.site.monitor.page.user-agent':

@@ -226,7 +226,8 @@ public class WatchdogService {
                 n.setCheckKey(k);
                 return n;
             });
-            Action a = WatchdogTransition.apply(st, p.result(), p.severity(), json(p.facts()), now, confirm, reminder, muted);
+            Action a = WatchdogTransition.apply(st, p.result(), p.severity(), json(p.facts()), now, confirm, reminder, muted,
+                    p.holdsState());
             if (a != Action.NONE) {
                 items.add(new WatchdogMail.Item(a.name(), p.check().labelTr(), st.getSeverity() == null ? p.check().severity().name() : st.getSeverity(),
                         WatchdogMessages.detail(p.check(), p.facts(), false), p.check().labelEn(), WatchdogMessages.detail(p.check(), p.facts(), true)));

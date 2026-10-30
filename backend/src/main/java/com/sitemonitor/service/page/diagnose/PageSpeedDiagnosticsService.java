@@ -147,7 +147,7 @@ public class PageSpeedDiagnosticsService extends PageDiagSupport {
             RawHttpProbe probe = await(rawFutures.get(i), collectDeadline);
             if (probe == null) probe = RawHttpProbe.abandoned(spec, masker, System.currentTimeMillis() - start, HttpDiagnosticsService.OVERALL_CAP_MS);
             ClientRun client = await(clientFutures.get(i), collectDeadline);
-            PathEval ev = evaluate(probe, spec, client, m, plan.isMonitor());
+            PathEval ev = evaluate(probe, spec, client, m, pageSpeedChecker.maxResourcesPerCheck(), plan.isMonitor());
             Map<String, Object> path = basePath(plan, probe, ev.outcome, ev.failedStep, clientMap(client));
             path.put("pagespeed", pathSummary(client));
             paths.add(path);
@@ -205,7 +205,8 @@ public class PageSpeedDiagnosticsService extends PageDiagSupport {
      * Ham ölçüm + gerçek ölçüm → yolun sonucu ({@code ok | slow | fail}) ve bulguları. İzlemenin kararını taklit eder:
      * sayfa alınamadıysa DOWN (fail); alındı ama eşik aşıldıysa SLOW (kesinti DEĞİL — "slow"); yoksa ok.
      */
-    static PathEval evaluate(RawHttpProbe probe, RawHttpProbe.Spec spec, ClientRun client, PageSpeedMonitor m, boolean analyze) {
+    static PathEval evaluate(RawHttpProbe probe, RawHttpProbe.Spec spec, ClientRun client, PageSpeedMonitor m, int resourceCap,
+                             boolean analyze) {
         PathEval ev = new PathEval();
         String key = spec.key();
         RawVerdict raw = rawVerdict(probe, spec, PageSpeedDiagFindings.PAGESPEED_HTTP_STATUS, PageSpeedDiagFindings.PAGESPEED_BODY_UNREAD);
@@ -243,7 +244,7 @@ public class PageSpeedDiagnosticsService extends PageDiagSupport {
                                 "over", mt.get("over"), "unit", mt.get("unit"))));
             }
             phaseFindings(ev, probe, m, key, spec.route());
-            resourceFindings(ev, res, key, client.elapsedMs());
+            resourceFindings(ev, res, key, client.elapsedMs(), resourceCap);
             if ("ok".equals(ev.outcome)) {
                 ev.findings.add(HttpDiagFindings.finding(PageSpeedDiagFindings.PAGESPEED_OK, HttpDiagFindings.INFO, key,
                         RawHttpProbe.params("total_ms", res.totalMs(), "kb", res.totalBytes() / 1024,
@@ -328,7 +329,7 @@ public class PageSpeedDiagnosticsService extends PageDiagSupport {
     }
 
     /** Gerçek ölçümün kaynak bulguları: süreyi/ağırlığı kim harcadı, ölçüm kısmi mi, inmeyen kaynak var mı. */
-    private static void resourceFindings(PathEval ev, PageSpeedCheckerService.Result res, String key, long clientMs) {
+    private static void resourceFindings(PathEval ev, PageSpeedCheckerService.Result res, String key, long clientMs, int resourceCap) {
         List<PageSpeedCheckerService.Measured> rows = res.resources() == null ? List.of() : res.resources();
         List<String> breached = res.breached() == null ? List.of() : res.breached();
         if (breached.contains(PageSpeedRules.BREACH_LOAD) && res.htmlMs() * 2 < res.totalMs() && !rows.isEmpty()) {
@@ -352,7 +353,7 @@ public class PageSpeedDiagnosticsService extends PageDiagSupport {
                 : clientMs >= CLIENT_CAP_SECONDS * 1000L - 1000L ? "time" : null;
         if (partial != null) {
             ev.findings.add(HttpDiagFindings.finding(PageSpeedDiagFindings.MEASUREMENT_PARTIAL, HttpDiagFindings.WARN, key,
-                    RawHttpProbe.params("reason", partial, "cap", PageFetchCore.MAX_RESOURCES_PER_CHECK,
+                    RawHttpProbe.params("reason", partial, "cap", resourceCap,
                             "seconds", CLIENT_CAP_SECONDS)));
         }
         if (res.failedCount() > 0) {

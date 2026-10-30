@@ -239,7 +239,8 @@ public final class RawHttpProbe {   // public (2026-10-04): keyword uçtan uca t
                 URI next = SafeRedirect.nextHop(current, hr.location);
                 Map<String, Object> redirect = new LinkedHashMap<>();
                 redirect.put("status", hr.status);
-                redirect.put("location", hr.location == null ? null : SecretMask.maskUrlQuery(hr.location));
+                // Okunur gösterim: ham UTF-8 Location tarayıcının gösterdiği gibi (2026-10-30, akyatirim.com.tr); gidilen adres next_url
+                redirect.put("location", hr.location == null ? null : SecretMask.maskUrlQuery(SafeRedirect.readableLocation(hr.location)));
                 redirect.put("next_url", next == null ? null : SecretMask.maskUrlQuery(next.toString()));
                 boolean crossHost = next != null && current.getHost() != null && !current.getHost().equalsIgnoreCase(next.getHost());
                 redirect.put("cross_host", crossHost);
