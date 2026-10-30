@@ -234,7 +234,7 @@ Kullanıcı tanımlı k6 scriptleri periyodik olarak **tek iterasyon** çalışt
 (PASS/FAIL/ERROR/TIMEOUT). k6 kütüphane olarak gömülmez; imaja eklenmiş sürümlü binary her kontrolde **kısa ömürlü,
 sıkı sandboxlu bir alt süreç** olarak koşar (Grafana Synthetic Monitoring deseni).
 
-- **k6 ikilileri:** Docker imajında iki sabit sürüm var — `/usr/bin/k6` = v0.49.0 (asıl, `grafana/k6` imaj özetiyle) ve `/opt/k6-next/k6` = v2.3.0 (aday, sağlama toplamlı sürüm tarball'ı; yalnız uyumluluk taraması ve "Adayı etkin yap" ile). Geçiş: Ayarlar → Platform → k6 motoru, `docs/RUNBOOK.md` → "k6 sürüm geçişi". Yerel geliştirmede k6 yoksa tür "devre dışı" görünür (`SCRIPTED_K6_BIN` ile yol verilebilir).
+- **k6 ikilisi:** Docker imajında tek sabit sürüm var — `/usr/bin/k6` = v2.3.0 (sağlama toplamlı GitHub sürüm tarball'ı; 2026-10-30'dan beri, 0.49 kaldırıldı). Desteklenen en eski k6 v2.0.0 — daha eski bir ikili "desteklenmiyor" olarak koşmaz. `/opt/k6-next/k6`, 20.172.x'te kaydedilmiş ayarlar çalışsın diye `/usr/bin/k6`'ya sembolik bağdır. Sonraki sürüm yükseltmesi ve uyumluluk taraması: Ayarlar → Platform → k6 motoru, `docs/RUNBOOK.md` → "k6 sürüm geçişi". Yerel geliştirmede k6 yoksa tür "devre dışı" görünür (`SCRIPTED_K6_BIN` ile yol verilebilir).
 - **Güvenlik:** her URL/hedef `--blacklist-ip` ile iç ağ (RFC1918), loopback, link-local ve cloud-metadata
   (169.254.169.254) adreslerine engellenir (kural seti `SsrfGuard` ile tek kaynak); timeout'ta SIGTERM→SIGKILL
   (zombie süreç yok); geçici script/özet dosyaları her durumda silinir; secret env değerleri çıktıda maskelenir.

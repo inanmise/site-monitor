@@ -114,24 +114,30 @@ class K6SettingsNormalizerTest {
     }
 
     @Test
-    @DisplayName("Prod'un Yayın A durumu (etkin = /opt/k6-next/k6, yedek = k6, aday = /opt/k6-next/k6) → üçü de varsayılana döner")
+    @DisplayName("Prod'un Yayın A durumu (etkin = /opt/k6-next/k6, yedek = k6, aday = /opt/k6-next/k6) → yedek ve aday "
+            + "varsayılana döner, ETKİN ikili /opt/k6-next/k6 KALIR (20.172.x'e geri dönüşte gerçek 2.3)")
     void releaseAStateIsNormalized() {
         store(ScriptedCheckerService.K6_BIN_KEY, "/opt/k6-next/k6");
         store(ScriptedCheckerService.K6_BIN_ROLLBACK_KEY, "k6");
         store(ScriptedCheckerService.K6_BIN_CANDIDATE_KEY, "/opt/k6-next/k6");
+        events.seen.clear();   // store() kendi yenileme olaylarını yayınlar
 
         job.run();
 
-        assertThat(settings.getOverride(ScriptedCheckerService.K6_BIN_KEY)).isNull();
+        // İnceleme 2026-10-30 (M1): etkin ayara dokunulmaz — varsayılana dönseydi helm rollback senaryoları 0.49'a düşürürdü.
+        assertThat(settings.getOverride(ScriptedCheckerService.K6_BIN_KEY)).isEqualTo("/opt/k6-next/k6");
+        assertThat(repo.findBySettingKey(ScriptedCheckerService.K6_BIN_KEY)).get()
+                .satisfies(r -> assertThat(r.getUpdatedBy()).isEqualTo("root"));
         assertThat(settings.getOverride(ScriptedCheckerService.K6_BIN_ROLLBACK_KEY)).isNull();
         assertThat(settings.getOverride(ScriptedCheckerService.K6_BIN_CANDIDATE_KEY)).isNull();
-        assertThat(repo.findBySettingKey(ScriptedCheckerService.K6_BIN_KEY)).get()
+        assertThat(repo.findBySettingKey(ScriptedCheckerService.K6_BIN_ROLLBACK_KEY)).get()
                 .satisfies(r -> {
                     assertThat(r.getValue()).isNull();
                     assertThat(r.getUpdatedBy()).isEqualTo("SiteMonitor");
                 });
         assertThat(marked()).isTrue();
         assertThat(events.seen).isNotEmpty();
+        assertThat(events.seen).noneMatch(e -> e.touches(ScriptedCheckerService.K6_BIN_KEY));
         verify(audit).recordSystemEvent(eq("K6_ENGINE_SETTINGS_NORMALIZE"), eq("SETTINGS"), eq("k6-engine"), anyString());
     }
 
@@ -154,20 +160,20 @@ class K6SettingsNormalizerTest {
     @Test
     @DisplayName("Başka sürüm koşan canlı pod varken ya da pod sürümleri okunamazken HİÇBİR ŞEY yapılmaz (eski pod'da k6 = 0.49)")
     void waitsWhileVersionsMixed() {
-        store(ScriptedCheckerService.K6_BIN_KEY, "/opt/k6-next/k6");
+        store(ScriptedCheckerService.K6_BIN_ROLLBACK_KEY, "k6");
         when(history.liveOtherVersions()).thenReturn(List.of(Map.of("pod", "old-1", "version", "20.172.1")));
         job.run();
-        assertThat(settings.getOverride(ScriptedCheckerService.K6_BIN_KEY)).isEqualTo("/opt/k6-next/k6");
+        assertThat(settings.getOverride(ScriptedCheckerService.K6_BIN_ROLLBACK_KEY)).isEqualTo("k6");
         assertThat(marked()).isFalse();
 
         when(history.liveOtherVersions()).thenReturn(null);
         job.run();
-        assertThat(settings.getOverride(ScriptedCheckerService.K6_BIN_KEY)).isEqualTo("/opt/k6-next/k6");
+        assertThat(settings.getOverride(ScriptedCheckerService.K6_BIN_ROLLBACK_KEY)).isEqualTo("k6");
         assertThat(marked()).isFalse();
 
         when(history.liveOtherVersions()).thenReturn(List.of());
         job.run();
-        assertThat(settings.getOverride(ScriptedCheckerService.K6_BIN_KEY)).isNull();
+        assertThat(settings.getOverride(ScriptedCheckerService.K6_BIN_ROLLBACK_KEY)).isNull();
         assertThat(marked()).isTrue();
     }
 
@@ -205,11 +211,11 @@ class K6SettingsNormalizerTest {
     @Test
     @DisplayName("Kilit başka pod'dayken iş bekler (nişan yok); kilit yoksa (zamanlayıcı yok) hiçbir şey yapılmaz")
     void lockElsewhere() {
-        store(ScriptedCheckerService.K6_BIN_KEY, "/opt/k6-next/k6");
+        store(ScriptedCheckerService.K6_BIN_ROLLBACK_KEY, "k6");
         when(scheduler.callWithSchedulerLock(eq(K6SettingsNormalizer.LOCK), any(java.util.function.Supplier.class)))
                 .thenReturn(Optional.empty());
         job.run();
-        assertThat(settings.getOverride(ScriptedCheckerService.K6_BIN_KEY)).isEqualTo("/opt/k6-next/k6");
+        assertThat(settings.getOverride(ScriptedCheckerService.K6_BIN_ROLLBACK_KEY)).isEqualTo("k6");
         assertThat(marked()).isFalse();
 
         K6SettingsNormalizer noScheduler = new K6SettingsNormalizer(settings, jdbc, provider(null), provider(history),
@@ -225,25 +231,25 @@ class K6SettingsNormalizerTest {
         assertThat(marked()).isTrue();
         // Nişan satırı elle silinse ve eski bir değer yazılsa bile bu pod iş bitti sayar (DB'ye gitmez).
         jdbc.update("DELETE FROM schema_patch_markers WHERE patch_key = ?", K6SettingsNormalizer.KEY);
-        store(ScriptedCheckerService.K6_BIN_KEY, "/opt/k6-next/k6");
+        store(ScriptedCheckerService.K6_BIN_ROLLBACK_KEY, "k6");
         org.mockito.Mockito.clearInvocations(history, scheduler);
         job.run();
         job.run();
         verify(history, never()).liveOtherVersions();
         verify(scheduler, never()).callWithSchedulerLock(anyString(), any(java.util.function.Supplier.class));
-        assertThat(settings.getOverride(ScriptedCheckerService.K6_BIN_KEY)).isEqualTo("/opt/k6-next/k6");
+        assertThat(settings.getOverride(ScriptedCheckerService.K6_BIN_ROLLBACK_KEY)).isEqualTo("k6");
         assertThat(marked()).isFalse();
         // Yeni bir pod (yeni süreç) nişanı yeniden okur.
         K6SettingsNormalizer fresh = new K6SettingsNormalizer(settings, jdbc, provider(scheduler), provider(history), provider(audit));
         fresh.run();
-        assertThat(settings.getOverride(ScriptedCheckerService.K6_BIN_KEY)).isNull();
+        assertThat(settings.getOverride(ScriptedCheckerService.K6_BIN_ROLLBACK_KEY)).isNull();
         assertThat(marked()).isTrue();
     }
 
     @Test
     @DisplayName("Hata sınırı: kilit altındaki iş 36 kez düşerse bu pod denemeyi bırakır (nişan yok); bekleme turları sayılmaz")
     void givesUpAfterMaxAttempts() {
-        store(ScriptedCheckerService.K6_BIN_KEY, "/opt/k6-next/k6");
+        store(ScriptedCheckerService.K6_BIN_ROLLBACK_KEY, "k6");
         org.mockito.Mockito.doThrow(new IllegalStateException("db down")).when(scheduler)
                 .callWithSchedulerLock(eq(K6SettingsNormalizer.LOCK), any(java.util.function.Supplier.class));
         // Karışık sürüm turları sayılmaz.
@@ -256,15 +262,17 @@ class K6SettingsNormalizerTest {
         verify(scheduler, org.mockito.Mockito.times(K6SettingsNormalizer.MAX_ATTEMPTS))
                 .callWithSchedulerLock(eq(K6SettingsNormalizer.LOCK), any(java.util.function.Supplier.class));
         assertThat(marked()).isFalse();
-        assertThat(settings.getOverride(ScriptedCheckerService.K6_BIN_KEY)).isEqualTo("/opt/k6-next/k6");
+        assertThat(settings.getOverride(ScriptedCheckerService.K6_BIN_ROLLBACK_KEY)).isEqualTo("k6");
     }
 
     @Test
-    @DisplayName("Sıfırlanan değer kümesi: yedek {k6, /usr/bin/k6, /opt/k6-next/k6}, aday ve etkin yalnız /opt/k6-next/k6")
+    @DisplayName("Sıfırlanan değer kümesi: yedek {k6, /usr/bin/k6, /opt/k6-next/k6}, aday yalnız /opt/k6-next/k6; etkin ikili YOK")
     void resetSets() {
+        assertThat(K6SettingsNormalizer.RESET.keySet())
+                .containsExactly(ScriptedCheckerService.K6_BIN_ROLLBACK_KEY, ScriptedCheckerService.K6_BIN_CANDIDATE_KEY);
         assertThat(K6SettingsNormalizer.RESET.get(ScriptedCheckerService.K6_BIN_ROLLBACK_KEY))
                 .containsExactlyInAnyOrder("k6", "/usr/bin/k6", "/opt/k6-next/k6");
         assertThat(K6SettingsNormalizer.RESET.get(ScriptedCheckerService.K6_BIN_CANDIDATE_KEY)).containsExactly("/opt/k6-next/k6");
-        assertThat(K6SettingsNormalizer.RESET.get(ScriptedCheckerService.K6_BIN_KEY)).containsExactly("/opt/k6-next/k6");
+        assertThat(K6SettingsNormalizer.RESET).doesNotContainKey(ScriptedCheckerService.K6_BIN_KEY);
     }
 }

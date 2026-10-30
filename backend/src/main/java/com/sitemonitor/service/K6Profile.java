@@ -21,7 +21,15 @@ import java.util.regex.Pattern;
 public record K6Profile(String bin, boolean available, String version, int major, int minor, int patch,
                         long probedAtMs) {
 
-    private static final Pattern VERSION = Pattern.compile("v?(\\d+)\\.(\\d+)\\.(\\d+)");
+    /**
+     * {@code k6 version} satırı: program adı (ilk sözcük — {@code k6}, {@code k6.exe} ya da yeniden adlandırılmış bir ikili)
+     * ve HEMEN ardından {@code v}'li sürüm: {@code k6 v2.3.0 (commit/…, go1.26.8, linux/amd64)}. Satır başına bağlıdır
+     * (inceleme 2026-10-30, L3): eski desen ({@code v?} + serbest arama) bir geliştirme derlemesinin
+     * {@code k6 (devel) (go1.26.8, …)} satırında Go sürümünü (1.26.8) k6 sürümü sanıyor → "desteklenmiyor" → bütün senaryo
+     * izlemesi kapanıyordu. Önce gelen günlük satırları ({@code time=… level=…}) eşleşmez.
+     */
+    private static final Pattern VERSION =
+            Pattern.compile("(?m)^[ \\t]*\\S+[ \\t]+v(\\d+)\\.(\\d+)\\.(\\d+)");
 
     /**
      * Desteklenen en eski büyük sürüm (k6 v2.0.0): REST API sunucusu varsayılan olarak KAPALI (efemer {@code --address}
@@ -36,7 +44,12 @@ public record K6Profile(String bin, boolean available, String version, int major
         return new K6Profile(bin, false, null, -1, -1, -1, now);
     }
 
-    /** {@code k6 version} çıktısından profil — sürüm okunamazsa {@code available} yine true, numaralar -1. */
+    /**
+     * {@code k6 version} çıktısından profil. Sürüm OKUNAMAZSA (geliştirme derlemesi, beklenmeyen biçim) ikili yine
+     * kullanılabilir sayılır ({@code available} true, numaralar -1, görünen sürüm çıktının ilk 40 karakteri) — Yayın A ile
+     * aynı kural: çalışan bir ikiliyi tanınmayan bir metin yüzünden "desteklenmiyor" sayıp bütün senaryo izlemesini
+     * durdurmak, eski bir sürümü kaçırmaktan daha pahalı. "Desteklenmiyor" yalnız OKUNMUŞ ve 2.0'dan eski bir sürümdür.
+     */
     public static K6Profile fromVersionOutput(String bin, String output, long now) {
         if (output == null) return unavailable(bin, now);
         Matcher m = VERSION.matcher(output);

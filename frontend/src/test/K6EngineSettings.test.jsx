@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, fireEvent, waitFor, within, act } from './test-utils.jsx'
+import { render, screen, fireEvent, waitFor, within, act, cleanup } from './test-utils.jsx'
 
 // Ayarlar → Platform → k6 motoru (2026-10-29): yükleme + motorlar (çalışıyor / bulunamadı / tanımlı değil), TLS kaçışları →
 // yalnız değişen alanın kaydı, sunucu alan hatası alanın altında, geçiş onayı + hazırlık (tarama yok / gerileme / sürüyor),
@@ -263,6 +263,25 @@ describe('K6EngineSettings — geçiş onayı ve hazırlık', () => {
     await mount()
     expect(slot('k6e-switch')).toBeDisabled()
     expect(document.querySelector('[data-slot="k6e-switch-why"][data-why="mixed"]')).toHaveTextContent('site-monitor-6b8f-old (20.171.0)')
+  })
+
+  it('Yedeğe geri dön de aynı kapıya tabi: başka sürüm koşan pod varken ya da sürümler okunamazken kapalı, nedeni yazılı (inceleme L1)', async () => {
+    const rb = { bin: '/opt/k6-rollback/k6', available: true, version: 'v2.2.0', probed_at: '2026-10-29T20:15:03' }
+    const engines = { active: { bin: 'k6', available: true, version: 'v2.3.0', probed_at: '2026-10-29T20:15:03' }, rollback: rb, candidate: null }
+    api.admin.k6Engine.mockResolvedValue(ok(data({ engines, can_switch: false, can_rollback: true,
+      other_version_pods: [{ pod: 'site-monitor-6b8f-old', version: '20.172.1' }] })))
+    await mount()
+    expect(slot('k6e-rollback')).toBeDisabled()
+    expect(document.querySelector('[data-slot="k6e-switch-why"][data-why="mixed"]')).toHaveTextContent('site-monitor-6b8f-old (20.172.1)')
+    cleanup()
+    api.admin.k6Engine.mockResolvedValue(ok(data({ engines, can_switch: false, can_rollback: true, other_version_pods: null })))
+    await mount()
+    expect(slot('k6e-rollback')).toBeDisabled()
+    expect(document.querySelector('[data-slot="k6e-switch-why"][data-why="podsUnknown"]')).not.toBeNull()
+    cleanup()
+    api.admin.k6Engine.mockResolvedValue(ok(data({ engines, can_switch: false, can_rollback: true, other_version_pods: [] })))
+    await mount()
+    expect(slot('k6e-rollback')).not.toBeDisabled()
   })
 
   it('pod sürümleri okunamadıysa (null) Adayı etkin yap kapalı ve nedeni yazılı', async () => {

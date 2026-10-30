@@ -677,8 +677,11 @@ satırı yalnız bilgidir. Sistem metrikleri örneklemesi kapalıysa (`site.moni
 
 **Durum (2026-10-30, Yayın B + C tek sürümde):** geçiş tamamlandı. İmajda TEK k6 ikilisi var: `/usr/bin/k6` = **v2.3.0**
 (GitHub sürüm tarball'ı, sabit SHA-256). 0.49 imajdan çıktı; uygulama yalnız **v2.0.0 ve üstünü** koşar — daha eski bir
-ikili tanımlanırsa bulunur ama koşmaz ("desteklenmiyor"). `/opt/k6-next/k6` yalnız bir **sembolik bağdır** (`/usr/bin/k6`'ya):
-20.172.x'te "Adayı etkin yap" etkin ikili ayarını bu yola yazıyordu; dağıtım sürerken eski ve yeni pod aynı ayarı okur.
+ikili tanımlanırsa bulunur ama koşmaz ("desteklenmiyor"). Sürüm yalnız `k6 v2.3.0 (…)` biçimindeki satırdan okunur;
+okunamayan bir sürüm (ör. geliştirme derlemesi `k6 (devel) …`) "desteklenmiyor" sayılmaz, ikili koşar. `/opt/k6-next/k6` yalnız
+bir **sembolik bağdır** (`/usr/bin/k6`'ya): 20.172.x'te "Adayı etkin yap" etkin ikili ayarını bu yola yazıyordu; o kayıtlı
+değer BİLEREK korunur (aşağıda). Sembolik bağ, kayıtlı bir `/opt/k6-next/k6` değerini ÖNCE taşıyan gelecekteki bir sürüme
+dek imajda kalır — kaldırma kararı normalleştirme nişanına değil, ayarın KAYITLI DEĞERİNE bakmalıdır.
 Ekran: **Ayarlar → Platform → k6 motoru** (yalnız genel yönetici). İnceleme raporu:
 https://claude.ai/artifact/DUqdNtGqQ55Px4uxgqjqdi
 
@@ -688,24 +691,29 @@ veritabanında kalan satır okunmaz), "sözdizimi sürümü" (etkin ve yedekten 
 ve "eski motor sözdizimi" ipucu.
 
 **Ayar normalleştirmesi (tek seferlik, kendiliğinden):** `K6SettingsNormalizer` açılıştan 3 dk sonra, sonra 10 dk'da bir
-bakar; **başka sürüm koşan canlı pod varken (ya da pod sürümleri okunamazken) bekler** — eski pod'da varsayılan `k6` hâlâ
-0.49'dur. Bütün pod'lar bu sürümdeyken kendi kilidi altında (`scheduler_lock` `k6-settings-normalize`) Yayın A'nın kayıtlı
-yollarını varsayılana döndürür ve nişanı yazar (`schema_patch_markers` `2026-10-30-k6-settings-normalize`):
-- etkin ikili `/opt/k6-next/k6` → varsayılan (`k6` = `/usr/bin/k6`);
+bakar; **başka sürüm koşan canlı pod varken (ya da pod sürümleri okunamazken) bekler** — eski pod'larda `k6` hâlâ 0.49'dur.
+Bütün pod'lar bu sürümdeyken kendi kilidi altında (`scheduler_lock` `k6-settings-normalize`) Yayın A'nın kayıtlı yedek ve
+aday yollarını varsayılana döndürür ve nişanı yazar (`schema_patch_markers` `2026-10-30-k6-settings-normalize`):
 - yedek ikili `k6` / `/usr/bin/k6` / `/opt/k6-next/k6` → yok (artık etkin ikilinin kendisi);
 - aday ikili `/opt/k6-next/k6` → yok.
 
+**Etkin ikili ayarına (`site.monitor.scripted.k6-bin`) DOKUNULMAZ:** `/opt/k6-next/k6` bu imajda 2.3'e sembolik bağ,
+`helm rollback` ile 20.172.x'e dönülürse orada GERÇEK 2.3'tür. Varsayılana (`k6`) çevirmek geri dönüşte bütün senaryo
+izlemelerini sessizce 0.49'a düşürürdü.
+
 Elle girilmiş başka yollar ve "kapalı" (`none`) değerleri olduğu gibi kalır; silme koşulludur (arada bir yönetici kaydettiyse
 dokunulmaz). Bir şey değiştiyse günlükte `[K6] Ayar normalleştirmesi tamamlandı — …` ve denetimde
-`K6_ENGINE_SETTINGS_NORMALIZE` görünür; değişecek bir şey yoksa `… değiştirilecek eski ikili yolu yok`. 36 başarısız denemeden
+`K6_ENGINE_SETTINGS_NORMALIZE` görünür; değişecek bir şey yoksa `… değiştirilecek eski yedek / aday yolu yok`. 36 başarısız denemeden
 sonra o pod bırakır (ERROR satırı; nişan yazılmaz — sonraki açılış yeniden dener). Sürüm geçmişi kapalıysa (pod sürümü sinyali
 yok) hemen koşar.
 
 **Dağıtım sonrası denetim:**
-1. Bütün pod'larda `[K6] ✅ k6 bulundu — sürüm v2.3.0 (k6)`; `desteklenmiyor` ya da `k6 bulunamadı` satırı YOK:
+1. Bütün pod'larda `[K6] ✅ k6 bulundu — sürüm v2.3.0 (k6)` — Yayın A'da "Adayı etkin yap" yapıldıysa yol
+   `(/opt/k6-next/k6)` olur (ayar korunur, sembolik bağ 2.3'tür); `desteklenmiyor` ya da `k6 bulunamadı` satırı YOK:
    `kubectl logs -n "$NS" -l app.kubernetes.io/instance="$REL" --prefix --tail=-1 | grep '\[K6\]'`
-2. Dağıtım bittikten en çok ~10 dk sonra normalleştirme satırı (yukarıda). k6 motoru: Etkin = v2.3.0 "Çalışıyor", Yedek ve
-   Aday "Tanımlı değil" (elle başka yol girilmediyse), altta "Desteklenen en eski k6 sürümü v2.0.0".
+2. Dağıtım bittikten en çok ~10 dk sonra normalleştirme satırı (yukarıda). k6 motoru: Etkin = v2.3.0 "Çalışıyor" (yol `k6`
+   ya da `/opt/k6-next/k6`), Yedek ve Aday "Tanımlı değil" (elle başka yol girilmediyse), altta "Desteklenen en eski k6
+   sürümü v2.0.0".
 3. Senaryo kartlarında / kontrol geçmişinde yeni satırlar `k6 v2.3.0` (`scripted_checks.k6_version`); alarm sayısı, ortalama
    süre ve "Senaryo yavaş" alarmları önceki günle aynı.
 
@@ -721,19 +729,21 @@ alarmlarını ve "Gerileme" türü hataları (TLS, 403/WAF, modül) yakından iz
 WAF için User-Agent ayarı aynen geçerlidir.
 
 **Geri alma:**
-- **`helm rollback` 20.172.x'e:** `/usr/bin/k6` yeniden 0.49 olur. Normalleştirme koştuysa etkin ayar varsayılan `k6`'dır →
-  senaryo kontrolleri 0.49 ile koşar ve bu sürümden sonra modern sözdizimiyle kaydedilen betikler sözdizimi hatası verir.
-  2.3'te kalmak için 20.172.x'te k6 motoru → **Adayı etkin yap** (oradaki varsayılan aday `/opt/k6-next/k6` gerçek 2.3).
-  Normalleştirme koşmadıysa ve ayar `/opt/k6-next/k6` ise eski imajda da 2.3 koşar.
+- **`helm rollback` 20.172.x'e:** `/usr/bin/k6` yeniden 0.49 olur. Etkin ayar `/opt/k6-next/k6` ise (Yayın A'da "Adayı etkin
+  yap" yapıldıysa — normalleştirme bu ayara dokunmaz) eski imajda da GERÇEK 2.3 koşmaya devam eder. Etkin ayar varsayılan
+  `k6` ise (Yayın A'da geçiş hiç yapılmadıysa) senaryo kontrolleri 0.49 ile koşar ve bu sürümden sonra modern sözdizimiyle
+  (`?.`, `??`, `{...nesne}`, en üst düzey `await`, `exec.test.fail()`) kaydedilen betikler hata verir; 2.3'te kalmak için
+  20.172.x'te k6 motoru → **Adayı etkin yap** (oradaki varsayılan aday `/opt/k6-next/k6` gerçek 2.3).
 - **Yayın A'dan eski bir sürüme:** imajda yalnız 0.49 vardır; etkin ayar `/opt/k6-next/k6` ise ÖNCE Ayarlar'da
   `site.monitor.scripted.k6-bin` = `k6` yapın (yoksa bütün senaryo kontrolleri "k6 bulunamadı" ile atlanır). Modern
   sözdizimli betikler o sürümde koşmaz.
 - Geri alıp yeniden bu sürüme gelindiğinde nişan zaten yazılıdır; iş bir daha koşmaz. Ayar o arada `/opt/k6-next/k6`
-  yapıldıysa sembolik bağ sayesinde 2.3 koşmaya devam eder (gerekirse k6 motoru'ndan elle `k6`'ya çekin).
+  yapıldıysa sembolik bağ sayesinde 2.3 koşmaya devam eder.
 
 **Sonraki k6 yükseltmesi (sayfa ve tarama bunun için duruyor):**
-1. Yeni ikiliyi imaja ya da bağlı bir yola KENDİ yoluyla koyun (ör. `/opt/k6-candidate/k6`; `/opt/k6-next/k6` bütün
-   ortamlarda normalleştirme koşana dek sembolik bağ kalmalı). Dockerfile'da sürüm + iki sağlama toplamı BİRLİKTE değişir.
+1. Yeni ikiliyi imaja ya da bağlı bir yola KENDİ yoluyla koyun (ör. `/opt/k6-candidate/k6`) — `/opt/k6-next/k6`'ya DEĞİL:
+   bir ortamda etkin ayar hâlâ o yolu gösteriyorsa aday taramasız etkin olurdu; sembolik bağ, kayıtlı bir `/opt/k6-next/k6`
+   değerini önce taşıyan bir sürüme dek kalır. Dockerfile'da sürüm + iki sağlama toplamı BİRLİKTE değişir.
 2. k6 motoru → "Aday ikili yolu" = o yol → kaydet → aday "Çalışıyor" olmalı (2.0'dan eskisi "Desteklenmiyor").
 3. Yan etkili betikleri "Tarama dışı" listesine ekleyin → **Taramayı başlat**. Her etkin izleme aday ile BİR kez derlenir +
    koşulur ve son gerçek (zamanlanmış) kontrolüyle karşılaştırılır. Geçmişe satır, alarm, bildirim YOK; aynı anda tek betik,
@@ -748,7 +758,8 @@ WAF için User-Agent ayarı aynen geçerlidir.
    - **Geçici (FLAKY)**: satırdaki "Yeniden tara" ile doğrulayın.
 5. **Adayı etkin yap** — dağıtım bitmiş olmalı (başka sürüm koşan pod varken düğme kapalı, sunucu `K6_MIXED_VERSIONS` /
    `K6_POD_VERSIONS_UNKNOWN` ile reddeder). Etkin ikili aday olur, eski etkin yedek olur; diğer pod'lar 10 sn içinde geçer.
-   Sorun → **Yedeğe geri dön** (yeniden dağıtım yok).
+   Sorun → **Yedeğe geri dön** (yeniden dağıtım yok). Geri dönüş de aynı kapıya tabidir (dağıtım sürerken kapalı) ve yedek
+   etkinle aynı sürümse sunulmaz (`K6_ALREADY_ACTIVE`).
 
 **Bilinmesi gerekenler:**
 - Her k6 çağrısına sistem `K6_AUTO_EXTENSION_RESOLUTION=false`, `K6_NO_USAGE_REPORT=true`,
@@ -760,8 +771,10 @@ WAF için User-Agent ayarı aynen geçerlidir.
 - İkili sürümü ve sağlama toplamları Dockerfile'da (`K6_VERSION`, `K6_SHA256_AMD64|ARM64`); imaj derlemesi iki yolun da
   (`/usr/bin/k6`, `/opt/k6-next/k6`) `k6 version` çıktısını denetler, imaj açılış testi yoklamanın günlükte göründüğünü ve
   "desteklenmiyor / bulunamadı" demediğini denetler. CI `backend-k6-contract` işi gerçek ikiliyle sözleşme testlerini koşar.
-- Etkin ikili 2.0'dan eskiyse senaryo sayfası "k6 sürümü (…) desteklenmiyor" afişi gösterir, kontroller koşmaz; k6 motoru
-  satırı "Desteklenmiyor" der. Çözüm: etkin ikiliyi `k6`'ya (imajdaki 2.3) çekin.
+- Etkin ikili 2.0'dan eskiyse senaryo sayfası "k6 sürümü (…) desteklenmiyor" afişi gösterir, kontroller koşmaz (koşum yolu
+  da o ikiliyi başlatmaz); k6 motoru satırı "Desteklenmiyor", günlük `[K6] Sentetik izleme YÜRÜTÜLMÜYOR — k6 sürümü …
+  desteklenmiyor` der. Çözüm: etkin ikiliyi `k6`'ya (imajdaki 2.3) çekin.
+- Dosya okuma taraması (`site.monitor.scripted.file-read-policy`) `open(…)` ile birlikte `open?.(…)` çağrısını da yakalar.
 - Ekranda boşaltılan yedek / aday yolu, GODEBUG ve User-Agent `none` olarak yazılır (boş değer ayarı silip ortam
   varsayılanını geri getirirdi).
 - Tarama sayıları: gerileme dışında "koşulamadı", "yeni hata" (gerçek kontrolü yok, adayla düşüyor) ve "değişti" de onay

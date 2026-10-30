@@ -36,6 +36,12 @@ class ScriptedFileReadPolicyTest {
                 .contains("open()", "sistem dosya yolu");
         assertThat(ScriptedCheckerService.scanFileReads("const d = open(\"./data.json\");")).containsExactly("open()");
         assertThat(ScriptedCheckerService.scanFileReads("globalThis['open']('x')")).containsExactly("open()");
+        // İsteğe bağlı çağrı (inceleme 2026-10-30, L4): open?.(…) da dosya okumadır; başka nesnenin metodu değildir.
+        assertThat(ScriptedCheckerService.scanFileReads("const e = open?.('/proc/1/environ');"))
+                .contains("open()", "sistem dosya yolu");
+        assertThat(ScriptedCheckerService.scanFileReads("const d = open ?. (\"./data.json\");")).containsExactly("open()");
+        assertThat(ScriptedCheckerService.scanFileReads("socket.open?.(url);")).isEmpty();
+        assertThat(ScriptedCheckerService.scanFileReads("const x = reopen?.(1);")).isEmpty();
         assertThat(ScriptedCheckerService.scanFileReads("import fs from 'k6/experimental/fs';")).containsExactly("k6/fs");
         assertThat(ScriptedCheckerService.scanFileReads("import x from '/etc/passwd';"))
                 .contains("yerel dosya importu", "sistem dosya yolu");

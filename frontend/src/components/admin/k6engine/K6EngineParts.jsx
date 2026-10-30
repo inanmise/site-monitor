@@ -120,7 +120,7 @@ export function EnginesCard({ data, lang, busy, scanRunning, onReprobe, onSwitch
           className={cn(TOUCH, 'whitespace-normal')} data-slot="k6e-switch">
           <Zap aria-hidden="true" /> {t('k6e.switch')}
         </Button>
-        <Button type="button" variant="outline" onClick={onRollback} disabled={locked || !data?.can_rollback}
+        <Button type="button" variant="outline" onClick={onRollback} disabled={locked || !data?.can_rollback || mixed || podsUnknown}
           className={cn(TOUCH, 'whitespace-normal')} data-slot="k6e-rollback">
           <Undo2 aria-hidden="true" /> {t('k6e.rollback')}
         </Button>
@@ -131,12 +131,13 @@ export function EnginesCard({ data, lang, busy, scanRunning, onReprobe, onSwitch
       {data?.can_switch && scanRunning && (
         <p className="m-0 text-xs text-muted-foreground" data-slot="k6e-switch-why">{t('k6e.switchWaitScan')}</p>
       )}
-      {data?.can_switch && !scanRunning && mixed && (
+      {/* Geri dönüş de aynı kapıya tabi (inceleme 2026-10-30, L1) — yalnız o açıkken de nedeni yaz. */}
+      {((data?.can_switch && !scanRunning) || data?.can_rollback) && mixed && (
         <p className="m-0 text-xs text-muted-foreground [overflow-wrap:anywhere]" data-slot="k6e-switch-why" data-why="mixed">
           {t('k6e.switchMixed', podList(others))}
         </p>
       )}
-      {data?.can_switch && !scanRunning && podsUnknown && (
+      {((data?.can_switch && !scanRunning) || data?.can_rollback) && podsUnknown && (
         <p className="m-0 text-xs text-muted-foreground" data-slot="k6e-switch-why" data-why="podsUnknown">{t('k6e.switchPodsUnknown')}</p>
       )}
     </SectionCard>

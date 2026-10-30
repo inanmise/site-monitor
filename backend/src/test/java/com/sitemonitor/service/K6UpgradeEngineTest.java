@@ -191,6 +191,7 @@ class K6UpgradeEngineTest {
         // Kontrol satırı / teşhis yanıtı "bulunamadı" demez: ikili var, sürümü eski (inceleme 2026-10-30).
         assertThat(svc.unavailableText()).contains("v0.49.0").contains("v2.0.0").doesNotContain("bulunamadı");
         assertThat(svc.unavailableMessage()).contains("v0.49.0").contains("v2.0.0").contains("k6 motoru");
+        assertThat(svc.unavailableReason()).isEqualTo("k6 sürümü v0.49.0 desteklenmiyor (en az v2.0.0 gerekir)");
 
         svc.setProfilesForTest(v230, null, null);
         assertThat(svc.isAvailable()).isTrue();
@@ -201,6 +202,34 @@ class K6UpgradeEngineTest {
         assertThat(svc.unsupportedVersion()).isNull();
         assertThat(svc.unavailableText()).isEqualTo("k6 bulunamadı — Sentetik İzleme devre dışı");
         assertThat(svc.unavailableMessage()).contains("k6 bulunamadı");
+        assertThat(svc.unavailableReason()).isEqualTo("k6 bulunamadı");
+    }
+
+    @Test
+    @DisplayName("Koşamayan motor koşturulmaz (inceleme L2): yok / desteklenmeyen etkin profil → SKIPPED + neden, süreç başlamaz")
+    void executeRefusesUnrunnableEngine() {
+        AppSettingsService s = mock(AppSettingsService.class);
+        when(s.getString(anyString(), anyString())).thenAnswer(i -> i.getArgument(1));
+        when(s.getInt(anyString(), org.mockito.ArgumentMatchers.anyInt())).thenAnswer(i -> i.getArgument(1));
+        var svc = new ScriptedCheckerService(null, null, s, new io.micrometer.core.instrument.simple.SimpleMeterRegistry(),
+                new ProxySettings());
+        svc.init();
+        String script = "export default function () {}";
+
+        // Etkin ayar "k6" ve yoklanan profil "k6" ama sürümü 0.49: giriş kapısını geçen bir çağrı bile koşturmaz.
+        svc.setProfilesForTest(K6Profile.fromVersionOutput("k6", "k6 v0.49.0 (commit/b5328aa782, go1.21.6, linux/amd64)", 1L),
+                null, null);
+        var r = svc.runProcess(script, List.of(), 10, ScriptedCheckerService.ProxyUse.DIRECT);
+        assertThat(r.status()).isEqualTo(ScriptedCheckerService.STATUS_SKIPPED);
+        assertThat(r.error()).contains("v0.49.0").contains("desteklenmiyor");
+        assertThat(r.durationMs()).isNull();
+        assertThat(r.k6Version()).isNull();
+
+        svc.setProfilesForTest(K6Profile.unavailable("k6", 1L), null, null);
+        var missing = svc.runProcess(script, List.of(), 10, ScriptedCheckerService.ProxyUse.DIRECT);
+        assertThat(missing.status()).isEqualTo(ScriptedCheckerService.STATUS_SKIPPED);
+        assertThat(missing.error()).isEqualTo("k6 bulunamadı — Sentetik İzleme devre dışı");
+        assertThat(ScriptedCheckerService.unavailableText(null)).isEqualTo("k6 bulunamadı — Sentetik İzleme devre dışı");
     }
 
     @Test

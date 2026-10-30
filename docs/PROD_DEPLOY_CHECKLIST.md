@@ -826,22 +826,28 @@ k6 "desteklenmiyor" olarak koşmaz. Senaryo kontrolleri dağıtımla birlikte 2.
       sözdizimi hatası verir).
 
 ### Dağıtımdan hemen sonra
-- [ ] Bütün pod'larda `[K6] ✅ k6 bulundu — sürüm v2.3.0 (k6)`; `desteklenmiyor` / `k6 bulunamadı` satırı YOK:
+- [ ] Bütün pod'larda `[K6] ✅ k6 bulundu — sürüm v2.3.0 (…)`; `desteklenmiyor` / `k6 bulunamadı` satırı YOK. Parantezdeki
+      yol: Yayın A'da "Adayı etkin yap" yapıldıysa prod'da **`(/opt/k6-next/k6)`** (etkin ayar BİLEREK korunur; bu imajda
+      `/usr/bin/k6`'ya sembolik bağ = 2.3), yapılmadıysa `(k6)`:
       `kubectl logs -n "$NS" -l app.kubernetes.io/instance="$REL" --prefix --tail=-1 | grep '\[K6\]'`
 - [ ] Dağıtım bittikten ≤ ~10 dk sonra tek pod'da `[K6] Ayar normalleştirmesi tamamlandı — …` ya da
-      `… değiştirilecek eski ikili yolu yok` (nişan `2026-10-30-k6-settings-normalize`):
+      `… değiştirilecek eski yedek / aday yolu yok` (nişan `2026-10-30-k6-settings-normalize`; yalnız yedek / aday yolunu
+      sıfırlar, etkin ayara dokunmaz):
       `kubectl logs -n "$NS" -l app.kubernetes.io/instance="$REL" --prefix --tail=-1 | grep 'Ayar normalleştirmesi'`
-- [ ] Ayarlar → Platform → k6 motoru: Etkin = v2.3.0 "Çalışıyor"; Yedek ve Aday "Tanımlı değil" (elle başka yol
-      girilmediyse); "Desteklenen en eski k6 sürümü v2.0.0".
+- [ ] Ayarlar → Platform → k6 motoru: Etkin = v2.3.0 "Çalışıyor" (yol `/opt/k6-next/k6` ya da `k6`); Yedek ve Aday
+      "Tanımlı değil" (elle başka yol girilmediyse); "Yedeğe geri dön" kapalı; "Desteklenen en eski k6 sürümü v2.0.0".
 - [ ] İlk saat: yeni kontrol satırlarında `k6 v2.3.0`; senaryo alarm sayısı ve "Senaryo yavaş" alarmları önceki günle aynı.
       Yeni TLS / 403 hataları → RUNBOOK'taki "Gerileme" maddeleri (TLS kaçışı, User-Agent) aynen uygulanır.
 
 ### Geri alma
-- [ ] **20.172.x'e** `helm rollback`: `/usr/bin/k6` yeniden 0.49 olur ve (normalleştirme koştuysa) senaryo kontrolleri 0.49
-      ile koşar — bu sürümden sonra modern sözdizimiyle kaydedilen betikler hata verir. 2.3'te kalmak için 20.172.x'te
+- [ ] **20.172.x'e** `helm rollback`: `/usr/bin/k6` yeniden 0.49 olur. Etkin ayar `/opt/k6-next/k6` ise (Yayın A'da geçiş
+      yapıldıysa) eski imajda GERÇEK 2.3 koşmaya devam eder — bir şey yapmak gerekmez. Etkin ayar `k6` ise senaryo kontrolleri
+      0.49 ile koşar ve bu sürümden sonra modern sözdizimiyle kaydedilen betikler hata verir; 2.3'te kalmak için 20.172.x'te
       k6 motoru → **Adayı etkin yap** (oradaki varsayılan aday gerçek 2.3).
 - [ ] **Yayın A'dan eski bir sürüme:** ÖNCE Ayarlar'da `site.monitor.scripted.k6-bin` = `k6` (ayar `/opt/k6-next/k6` ise —
       eski imajda o yol yoktur, bütün senaryo kontrolleri "k6 bulunamadı" ile atlanır), SONRA `helm rollback`.
+- [ ] Not: `/opt/k6-next/k6` sembolik bağı, kayıtlı bir `/opt/k6-next/k6` değerini ÖNCE taşıyan bir sürüme dek imajda kalır;
+      bağı kaldıran bir sürüm bu kayıtlı değere bakmalıdır (normalleştirme nişanına değil).
 
 ## Geri alma
 

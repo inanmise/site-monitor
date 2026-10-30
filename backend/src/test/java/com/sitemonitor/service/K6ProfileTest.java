@@ -57,4 +57,29 @@ class K6ProfileTest {
         assertThat(p.versionKnown()).isFalse();
         assertThat(p.version()).hasSizeLessThanOrEqualTo(40);
     }
+
+    @Test
+    @DisplayName("Sürüm k6 sözcüğünün HEMEN ardındaki v'li sürümdür: geliştirme derlemesinin Go sürümü (go1.26.8) k6 sürümü "
+            + "sanılmaz — bilinmeyen sürüm, ikili koşar (inceleme L3)")
+    void devBuildGoVersionIsNotK6Version() {
+        K6Profile dev = K6Profile.fromVersionOutput("k6", "k6 (devel) (go1.26.8, linux/amd64)\n", 1L);
+        assertThat(dev.available()).isTrue();
+        assertThat(dev.unsupported()).isFalse();
+        assertThat(dev.versionKnown()).isFalse();
+        assertThat(dev.version()).isEqualTo("k6 (devel) (go1.26.8, linux/amd64)");
+        // Sürüm yalnız parantez içinde ya da v'siz: okunmaz (eski desen "1.26.8" ya da "2.3.0" okurdu).
+        assertThat(K6Profile.fromVersionOutput("k6", "k6 2.3.0 (go1.26.8)", 1L).versionKnown()).isFalse();
+        assertThat(K6Profile.fromVersionOutput("k6", "k6 (commit/v0.49.0, go1.21.6)", 1L).unsupported()).isFalse();
+        // Gerçek biçimler: Linux k6, Windows k6.exe (gerçek 2.3.0 ve 0.49.0 çıktısı), yeniden adlandırılmış ikili, sürüm
+        // satırından önce gelen günlük satırı.
+        assertThat(K6Profile.fromVersionOutput("k6.exe",
+                "k6.exe v0.49.0 (commit/b5328aa782, go1.21.6, windows/amd64)\n", 1L).unsupported()).isTrue();
+        assertThat(K6Profile.fromVersionOutput("/opt/k6-candidate/k6-2.4",
+                "k6-2.4 v2.4.1 (commit/abc, go1.26.9, linux/amd64)", 1L).version()).isEqualTo("v2.4.1");
+        K6Profile afterLog = K6Profile.fromVersionOutput("k6",
+                "time=\"2026-10-30T10:00:00Z\" level=warning msg=\"x v9.9.9\"\nk6 v2.3.0 (commit/e088784614, go1.26.8, linux/amd64)", 1L);
+        assertThat(afterLog.version()).isEqualTo("v2.3.0");
+        assertThat(afterLog.available()).isTrue();
+        assertThat(K6Profile.fromVersionOutput("k6", "  k6 v2.3.0", 1L).version()).isEqualTo("v2.3.0");
+    }
 }

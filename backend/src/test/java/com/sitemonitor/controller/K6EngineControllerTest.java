@@ -237,6 +237,50 @@ class K6EngineControllerTest {
     }
 
     @Test
+    @DisplayName("Yedeğe dön de tek sürüm kapısına tabi: başka sürüm koşan pod varken / sürümler okunamazken reddedilir (inceleme L1)")
+    void rollbackRefusedWhileVersionsMixed() {
+        when(checker.profiles()).thenReturn(new ScriptedCheckerService.Profiles(v230, v220, null));
+        com.sitemonitor.service.DeploymentHistoryService history = mock(com.sitemonitor.service.DeploymentHistoryService.class);
+        ctl.setHistory(history);
+        when(history.liveOtherVersions()).thenReturn(List.of(Map.of("pod", "site-monitor-old-1", "version", "20.172.1")));
+        assertThatThrownBy(() -> ctl.rollback(Map.of("confirm", true), session(true), new MockHttpServletRequest()))
+                .isInstanceOfSatisfying(CodedConflictException.class, e -> {
+                    assertThat(e.getCode()).isEqualTo("K6_MIXED_VERSIONS");
+                    assertThat(e.getMessage()).contains("site-monitor-old-1").contains("geri dönüş yapılmadı");
+                });
+        when(history.liveOtherVersions()).thenReturn(null);
+        assertThatThrownBy(() -> ctl.rollback(Map.of("confirm", true), session(true), new MockHttpServletRequest()))
+                .isInstanceOfSatisfying(CodedConflictException.class, e -> assertThat(e.getCode()).isEqualTo("K6_POD_VERSIONS_UNKNOWN"));
+        verify(settings, never()).save(any(), anyString());
+        when(history.liveOtherVersions()).thenReturn(List.of());
+        ctl.rollback(Map.of("confirm", true), session(true), new MockHttpServletRequest());
+        verify(settings).save(any(), eq("root"));
+    }
+
+    @Test
+    @DisplayName("Yedek etkinle AYNI sürümse (ör. yedek `k6` ve etkin /opt/k6-next/k6, ikisi de 2.3) geri dönüş yok: düğme kapalı, uç 409")
+    void rollbackToSameVersionRefused() {
+        K6Profile rbSame = K6Profile.fromVersionOutput("k6", "k6 v2.3.0", 1L);
+        when(checker.profiles()).thenReturn(new ScriptedCheckerService.Profiles(v230, rbSame, null));
+        Map<String, Object> d = data(ctl.status(session(true)));
+        assertThat(d.get("can_rollback")).isEqualTo(false);
+        assertThatThrownBy(() -> ctl.rollback(Map.of("confirm", true), session(true), new MockHttpServletRequest()))
+                .isInstanceOfSatisfying(CodedConflictException.class, e -> {
+                    assertThat(e.getCode()).isEqualTo("K6_ALREADY_ACTIVE");
+                    assertThat(e.getMessage()).contains("v2.3.0");
+                });
+        verify(settings, never()).save(any(), anyString());
+        // Farklı sürüm: açık.
+        when(checker.profiles()).thenReturn(new ScriptedCheckerService.Profiles(v230, v220, null));
+        assertThat(data(ctl.status(session(true))).get("can_rollback")).isEqualTo(true);
+        // Sürümü okunamayan ikililer (dev derlemesi) yola göre karar verir — eski davranış.
+        K6Profile dev = K6Profile.fromVersionOutput("/opt/k6-dev/k6", "k6 (devel) (go1.26.8, linux/amd64)", 1L);
+        when(checker.profiles()).thenReturn(new ScriptedCheckerService.Profiles(v230, dev, null));
+        assertThat(data(ctl.status(session(true))).get("can_rollback")).isEqualTo(true);
+        assertThat(K6EngineController.sameVersion(v230, null)).isFalse();
+    }
+
+    @Test
     @DisplayName("2.0'dan eski ikili (ör. 0.49): durumda 'desteklenmiyor'; geçiş ve geri dönüş sürümü adlandırarak reddedilir")
     void unsupportedEnginesRefused() {
         when(checker.profiles()).thenReturn(new ScriptedCheckerService.Profiles(v230, v049, v049));

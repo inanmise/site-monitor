@@ -120,9 +120,10 @@ ARG GIT_COMMIT
 # binary'si, alpine/musl'da çalışır). Her kontrolde kısa ömürlü sandboxlu alt süreç olarak çalışır.
 COPY --from=k6-bin /k6 /usr/bin/k6
 # Uyumluluk (2026-10-30): 20.172.x'te "Adayı etkin yap" etkin ikili ayarını /opt/k6-next/k6'ya yazıyordu. Dağıtım sürerken
-# eski ve yeni pod aynı ayarı okur; yol yeni imajda da çalışsın diye /usr/bin/k6'ya sembolik bağ. Bütün pod'lar bu sürüme
-# geçince K6SettingsNormalizer kayıtlı eski yolları varsayılana döndürür. Bir sonraki k6 yükseltmesi adayını KENDİ yoluna
-# koyar (ör. /opt/k6-candidate/k6) — bu yola değil: bir ortamda etkin ayar hâlâ /opt/k6-next/k6 ise aday taramasız etkin olurdu.
+# eski ve yeni pod aynı ayarı okur; yol yeni imajda da çalışsın diye /usr/bin/k6'ya sembolik bağ. O kayıtlı etkin değer
+# BİLEREK korunur (K6SettingsNormalizer yalnız yedek / aday yolunu sıfırlar): 20.172.x'e helm rollback'te aynı ayar gerçek
+# 2.3'ü gösterir. Bu yüzden bağ, kayıtlı bir /opt/k6-next/k6 değerini ÖNCE taşıyan bir sürüme dek kalır — kaldırma kararı
+# KAYITLI DEĞERE bakmalı. Bir sonraki k6 yükseltmesi adayını KENDİ yoluna koyar (ör. /opt/k6-candidate/k6) — bu yola değil.
 RUN mkdir -p /opt/k6-next && ln -s /usr/bin/k6 /opt/k6-next/k6
 # İkili beklenen sürümü söylemeli (yanlış imaj / katman sessizce geçmesin); uyumluluk yolu da aynı ikiliye çıkmalı.
 ARG K6_VERSION

@@ -28,21 +28,27 @@ import java.util.concurrent.atomic.AtomicInteger;
  *
  * <p>Yayın A'da (20.172.x) 2.3 ikilisi {@code /opt/k6-next/k6}'daydı; "Adayı etkin yap" etkin ayarı o yola, yedeği
  * {@code k6}'ya (= 0.49) yazıyordu. Bu sürümde imajda tek ikili var: {@code /usr/bin/k6} = 2.3 ve {@code /opt/k6-next/k6}
- * yalnız bu kayıtlı değerler çalışmaya devam etsin diye {@code /usr/bin/k6}'ya sembolik bağdır. Bu iş eski değerleri
- * varsayılana döndürür:
+ * kayıtlı değerler çalışmaya devam etsin diye {@code /usr/bin/k6}'ya sembolik bağdır. Bu iş yalnız YEDEK ve ADAY yollarını
+ * varsayılana (yok) döndürür:
  * <ul>
- *   <li>etkin ikili {@code /opt/k6-next/k6} → varsayılan ({@code k6});</li>
- *   <li>yedek ikili {@code k6} / {@code /usr/bin/k6} / {@code /opt/k6-next/k6} → varsayılan (yok) — bu yollar artık etkin
- *       ikilinin AYNISI; "Yedeğe geri dön" aynı sürüme dönerdi;</li>
- *   <li>aday ikili {@code /opt/k6-next/k6} → varsayılan (yok).</li>
+ *   <li>yedek ikili {@code k6} / {@code /usr/bin/k6} / {@code /opt/k6-next/k6} → yok — bu yollar artık etkin ikilinin
+ *       AYNISI; "Yedeğe geri dön" aynı sürüme dönerdi;</li>
+ *   <li>aday ikili {@code /opt/k6-next/k6} → yok (aynı ikili; 20.172.x'e geri alınırsa oradaki varsayılan zaten bu yol).</li>
  * </ul>
- * Başka bir değer (elle girilmiş özel yol, kapalı işareti) olduğu gibi kalır; silme koşulludur (arada bir yönetici başka
+ * <b>Etkin ikiliye ({@code k6-bin}) DOKUNULMAZ</b> (inceleme 2026-10-30, M1): {@code /opt/k6-next/k6} bu imajda 2.3'e
+ * sembolik bağ, {@code helm rollback} ile 20.172.x'e dönülürse GERÇEK 2.3'tür. Varsayılana ({@code k6}) çevirmek geri
+ * dönüşte bütün senaryo izlemelerini sessizce 0.49'a düşürürdü (sonradan {@code ?.}, {@code ??}, {@code {...}}, en üst
+ * düzey {@code await}, {@code exec.test.fail()} ile kaydedilen betikler hata verirdi). Bu yüzden sembolik bağ, kayıtlı bir
+ * {@code /opt/k6-next/k6} değerini ÖNCE taşıyan gelecekteki bir sürüme dek imajda kalır — kaldırma kararı bu nişana değil,
+ * KAYITLI DEĞERE bakmalıdır.
+ *
+ * <p>Başka bir değer (elle girilmiş özel yol, kapalı işareti) olduğu gibi kalır; silme koşulludur (arada bir yönetici başka
  * değer kaydettiyse satıra dokunulmaz — {@link AppSettingsService#systemClearOverrideIf}).
  *
- * <p><b>Neden bütün pod'lar bu sürümdeyken:</b> dağıtım sürerken eski sürüm pod'unda varsayılan {@code k6} hâlâ 0.49'dur —
- * iş erken koşsa eski pod'lar dağıtım bitene kadar 0.49 ile koşardı. Bu yüzden başka sürüm koşan canlı pod varken (ya da pod
- * sürümleri okunamazken) tur atlanır ve sonraki turda yeniden bakılır. Açılış yolunda değil: açılıştan 3 dk sonra, 10 dk'da
- * bir, kendi kilidi altında; nişan kilit İÇİNDE yeniden okunur ve yalnız iş bitince yazılır.
+ * <p><b>Neden bütün pod'lar bu sürümdeyken:</b> dağıtım sürerken eski sürüm pod'unda {@code k6} hâlâ 0.49'dur; yedek / aday
+ * değerlerini o pod'lar da okur. Temkin için başka sürüm koşan canlı pod varken (ya da pod sürümleri okunamazken) tur atlanır
+ * ve sonraki turda yeniden bakılır. Açılış yolunda değil: açılıştan 3 dk sonra, 10 dk'da bir, kendi kilidi altında; nişan
+ * kilit İÇİNDE yeniden okunur ve yalnız iş bitince yazılır.
  */
 @Slf4j
 @Service
@@ -57,14 +63,16 @@ public class K6SettingsNormalizer {
     /** Yayın A'nın aday ikili yolu; bu sürümde {@code /usr/bin/k6}'ya sembolik bağ. */
     public static final String LEGACY_CANDIDATE_PATH = "/opt/k6-next/k6";
 
-    /** Anahtar → varsayılana döndürülecek kayıtlı değerler (sıralı: yedek, aday, etkin). */
+    /**
+     * Anahtar → varsayılana döndürülecek kayıtlı değerler (sıralı: yedek, aday). Etkin ikili ({@code k6-bin}) BİLEREK yok —
+     * sınıf açıklamasına bakın.
+     */
     static final Map<String, Set<String>> RESET = resetMap();
 
     private static Map<String, Set<String>> resetMap() {
         Map<String, Set<String>> m = new LinkedHashMap<>();
         m.put(ScriptedCheckerService.K6_BIN_ROLLBACK_KEY, Set.of("k6", "/usr/bin/k6", LEGACY_CANDIDATE_PATH));
         m.put(ScriptedCheckerService.K6_BIN_CANDIDATE_KEY, Set.of(LEGACY_CANDIDATE_PATH));
-        m.put(ScriptedCheckerService.K6_BIN_KEY, Set.of(LEGACY_CANDIDATE_PATH));
         return java.util.Collections.unmodifiableMap(m);
     }
 
@@ -157,9 +165,10 @@ public class K6SettingsNormalizer {
                 KEY, ISO.format(Instant.now()), changed.size());
         markerSeen = true;
         if (changed.isEmpty()) {
-            log.info("[K6] Ayar normalleştirmesi: değiştirilecek eski ikili yolu yok (etkin k6 = imajdaki {})", "/usr/bin/k6");
+            log.info("[K6] Ayar normalleştirmesi: değiştirilecek eski yedek / aday yolu yok (etkin ikili ayarına dokunulmaz)");
         } else {
-            log.info("[K6] Ayar normalleştirmesi tamamlandı — eski ikili yolları varsayılana döndü: {}", before);
+            log.info("[K6] Ayar normalleştirmesi tamamlandı — eski yedek / aday yolları varsayılana döndü (etkin ikili ayarına "
+                    + "dokunulmaz): {}", before);
             AuditService a = auditService.getIfAvailable();
             if (a != null) {
                 try {

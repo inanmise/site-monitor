@@ -762,12 +762,23 @@ public class ScriptedCheckerService {
      * "bulunamadı" demez — ikili VAR, sürümü eski; yöneticinin yapacağı iş farklı.
      */
     String unavailableText() {
-        String v = unsupportedVersion();
-        if (v != null) {
-            return "k6 sürümü " + v + " desteklenmiyor (en az " + K6Profile.MIN_SUPPORTED_VERSION
+        return unavailableText(activeProfile);
+    }
+
+    /** Verilen motor için aynı neden: desteklenmeyen sürüm sürümü adlandırır, yok / çalışmıyor "bulunamadı" der. */
+    static String unavailableText(K6Profile engine) {
+        if (engine != null && engine.unsupported()) {
+            return "k6 sürümü " + engine.version() + " desteklenmiyor (en az " + K6Profile.MIN_SUPPORTED_VERSION
                     + " gerekir) — Sentetik İzleme devre dışı";
         }
         return "k6 bulunamadı — Sentetik İzleme devre dışı";
+    }
+
+    /** Günlük için kısa neden ("k6 bulunamadı" / "k6 sürümü v0.49.0 desteklenmiyor (en az v2.0.0 gerekir)"). */
+    public String unavailableReason() {
+        String v = unsupportedVersion();
+        return v != null ? "k6 sürümü " + v + " desteklenmiyor (en az " + K6Profile.MIN_SUPPORTED_VERSION + " gerekir)"
+                : "k6 bulunamadı";
     }
 
     /**
@@ -1369,7 +1380,8 @@ public class ScriptedCheckerService {
     static final String FILE_READ_BLOCKED_MSG =
             "Betik dosya okuyor; güvenlik ayarı gereği çalıştırılmadı (Ayarlar → Sentetik → Betikte dosya okuma)";
 
-    private static final Pattern FR_OPEN = Pattern.compile("(?<![\\w$.])open\\s*\\(");
+    /** {@code open(…)} ve isteğe bağlı çağrı {@code open?.(…)} (inceleme 2026-10-30, L4); başka nesnenin {@code x.open} metodu değil. */
+    private static final Pattern FR_OPEN = Pattern.compile("(?<![\\w$.])open\\s*(?:\\?\\.\\s*)?\\(");
     private static final Pattern FR_OPEN_INDIRECT = Pattern.compile("\\[\\s*['\"`]open['\"`]\\s*\\]");
     private static final Pattern FR_FS_MODULE = Pattern.compile("['\"`]k6/(?:experimental/)?fs['\"`]");
     private static final Pattern FR_LOCAL_IMPORT =
@@ -1468,8 +1480,12 @@ public class ScriptedCheckerService {
      */
     private ScriptedResult execute(String script, List<EnvVar> envVars, int timeoutSec, ProxyUse viaProxy,
                                    boolean withCa, K6Profile engine) {
+        // Koşamayan motor (yok / çalışmıyor / desteklenmeyen sürüm) KOŞTURULMAZ (inceleme 2026-10-30, L2): giriş noktaları
+        // k6Available'a bakar ama currentProfile() ayar değişince yeniden yoklar — o anda gelen eski / eksik bir ikili
+        // komutla çalıştırılmamalı. archiveCheck'in kuralıyla aynı.
+        if (engine == null || !engine.available()) return err(unavailableText(engine));
         Path scriptFile = null, summaryFile = null, caFile = null;
-        String engineVersion = engine != null && engine.available() ? engine.version() : null;
+        String engineVersion = engine.version();
         // Bağlam DEĞİŞKENLERİ try dışında: catch bloğu bunlara erişebilsin.
         List<String> secretValues = new ArrayList<>();
         ProcessProbe.Result r = null;   // null ⇒ süreç hiç başlamadı
@@ -1487,7 +1503,7 @@ public class ScriptedCheckerService {
             String ua = K6EngineSettings.effectiveUserAgent(appSettings.getString(K6EngineSettings.KEY_USER_AGENT, ""));
             if (!ua.isEmpty() && !scriptDefinesUserAgent(script)) env.put("K6_USER_AGENT", ua);
 
-            String bin = engine != null ? engine.bin() : k6Bin();
+            String bin = engine.bin();
             List<String> args = new ArrayList<>(List.of(
                     bin, "run", "--quiet", "--no-usage-report",
                     "--summary-export=" + summaryFile.toAbsolutePath(),
