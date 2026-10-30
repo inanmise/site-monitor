@@ -371,10 +371,21 @@ Her çağrı o anki durumun **tamamıdır**: kapsamdaki bütün açık alarmlar 
 (kaynak + RCI + SEVERITY) ve satırı saklar: alarmın seviyesi değişince (Warning → Critical), hedef yeniden adlandırılınca ya
 da seviye / kaynak ayarı değişince ESKİ anahtar, gönderilmiş haliyle `RESOLVED` döner (sahipsiz açık olay kalmaz). Kapsam
 daraltılırsa (takım / tür / seviye) bildirilmiş açık alarm "akış kapsamından çıktı", alarm kaydı silinirse "alarm kaydı
-silindi" diye `RESOLVED` döner. Bir kapanış çözülme penceresi (varsayılan 15 dk) boyunca ve **en az bir yanıtta
-gönderilene kadar** akışta kalır — akış kapalıyken ya da ekip çağırmazken kapanan alarm da bildirilir (RESOLVEDTIME gerçek
-kapanış anı). Aynı yanıtta aynı anahtarla AÇIK ve ÇÖZÜLDÜ satırı asla birlikte dönmez. Alarm verisi okunamazsa
-**503 `ALARM_FEED_UNAVAILABLE`** — asla boş liste.
+silindi" diye `RESOLVED` döner. Bir kapanış çözülme penceresi (varsayılan 15 dk) boyunca, **en az bir yanıtta
+gönderilene kadar** ve ilk gönderiminden sonra bir pencere daha akışta kalır — akış kapalıyken ya da ekip çağırmazken kapanan
+alarm da bildirilir (RESOLVEDTIME gerçek kapanış anı), bir yanıt kaybolsa da sonraki çağrıda yine gelir. Aynı anahtarda
+birden çok kapanış varsa en güncel çözülme gönderilir. Aynı yanıtta aynı anahtarla AÇIK ve ÇÖZÜLDÜ satırı asla birlikte
+dönmez. Alarm verisi okunamazsa **503 `ALARM_FEED_UNAVAILABLE`** — asla boş liste.
+
+**Tek tüketici varsayımı.** Akış tek bir merkezi sisteme göre kurulmuştur: "teslim edildi" işareti uçtan kim çağırırsa
+çağırsın konur. Aynı ucu başka bir sistem de çekiyorsa kapanışlar ilk gönderimden sonra yalnız bir pencere boyunca tekrarlanır
+— ikinci tüketici o pencerede çağırmazsa bir kapanışı kaçırabilir; ikinci tüketici gerekiyorsa ayrı bir uç isteyin.
+
+**Kip değişikliği.** "SEVERITY = Clear" kipinden durum kipine (ya da tersine) geçmek anahtarların biçimini değiştirmez;
+ama geçiş anında pencerede bekleyen kapanışlar YENİ kipin satır biçimiyle döner. Geçişi kapanış yokken (gece) yapın ya da
+merkezi sistemde iki biçimi de kabul edin. Seviye metinleri, kaynak (`FILTERSOURCE`) ve RCI biçimi değişince bütün açık
+olaylar bir kez eski anahtarla kapanıp yenisiyle açılır. URL hedeflerinin kısa özeti sunucu gizli anahtarıyla (HMAC)
+üretilir: `SITE_MONITOR_SECRET_KEY` döndürülünce sorgulu URL hedefi olan açık olaylar da bir kez yeniden anahtarlanır.
 
 **Erişim.** Belirteç yok; önerilen: (1) ayar sayfasında **IP izin listesi** (tek adres ya da CIDR; boş = herkes),
 (2) kenarda / Ingress'te yolu yalnız kurum ağına (izleme ekibinin sunucularına) açın. İstemci IP'si `ClientIpResolver` ile
@@ -389,7 +400,8 @@ sayıları, süre, yanıtlayan pod, istek kimliği ve kabul edilen çağrıda ya
 "Yanıt gövdesini sakla" kapatılabilir; ret yanıtı sabit metindir, saklanmaz). Oran sınırına takılan çağrı IP başına dakikada
 bir satır yazar; pod başına dakikada en çok 60 reddedilen çağrı yazılır (fazlası sayılır). Ana Denetim Günlüğü:
 `ALARM_FEED_SETTINGS_SAVE`, `ALARM_FEED_NEW_CALLER` (kabul edilen ilk çağrı, kümede bir kez), `ALARM_FEED_ACCESS_DENIED`
-(IP + neden başına 10 dk'da bir, pod başına dakikada en çok 10), `ALARM_FEED_LOG_EXPORT`. Saklama: Veri saklama →
+(IP + neden başına 10 dk'da bir, pod başına dakikada en çok 10), `ALARM_FEED_LOG_EXPORT`. `ALARM_FEED_NEW_CALLER` bir IP'nin
+İLK KABUL edilen çağrısında yazılır — önce reddedilip sonra izin listesine eklenen IP de denetime düşer. Saklama: Veri saklama →
 `alarm-feed-requests` (varsayılan 90 gün) ve `alarm-feed-responses` (yanıt kopyası son dönüşünden 30 gün sonra).
 
 **Sorun giderme.**

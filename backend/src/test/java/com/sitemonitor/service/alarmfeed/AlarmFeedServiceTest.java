@@ -264,7 +264,62 @@ class AlarmFeedServiceTest {
         assertThat(summary(f)).containsExactly(e.getId() + ":RESOLVED:Major");
         assertThat(f.rows().get(0).get("RESOLVEDTIME")).isEqualTo("2026-10-30 13:01:00");   // gerçek çözülme anı
         now += 60_000;
-        assertThat(svc.feed(DEF).rows()).isEmpty();   // teslim edildi + pencere dışında
+        // İlk teslimden sonra bir pencere boyunca tekrar (yanıt kaybolsa / başka bir çağıran "tüketse" de alınır)
+        assertThat(summary(svc.feed(DEF))).containsExactly(e.getId() + ":RESOLVED:Major");
+        now += 15 * 60_000;
+        assertThat(svc.feed(DEF).rows()).isEmpty();   // teslim edildi + ilk teslimden bu yana pencere geçti
+    }
+
+    @Test
+    @DisplayName("Aynı anahtarda iki kapanış: EN GÜNCEL çözülme temsil eder (eski teslim edilmiş kapanış yerine)")
+    void newestClosureWinsForOneKey() {
+        AlertEvent e1 = alarm("host-a", "PING_DOWN", "HIGH", teamA);
+        svc.feed(DEF);
+        now += 60_000;
+        resolve(e1);
+        assertThat(summary(svc.feed(DEF))).containsExactly(e1.getId() + ":RESOLVED:Major");
+        now += 60_000;
+        AlertEvent e2 = alarm("host-a", "PING_DOWN", "HIGH", teamA);
+        assertThat(summary(svc.feed(DEF))).containsExactly(e2.getId() + ":OPEN:Major");   // aynı anahtar açıkken kapanış yok
+        now += 60_000;
+        resolve(e2);
+        AlarmFeedService.Feed f = svc.feed(DEF);
+        assertThat(summary(f)).containsExactly(e2.getId() + ":RESOLVED:Major");
+        assertThat(f.rows().get(0).get("RESOLVEDTIME")).isEqualTo("2026-10-30 13:03:00");
+    }
+
+    @Test
+    @DisplayName("Teslim edilemeyen kapanış: 7 gün, gerçek çözülme anından değil FARK ETTİĞİMİZ andan sayılır")
+    void undeliveredPruneCountsFromNotedTime() {
+        AlertEvent e = alarm("host-a", "PING_DOWN", "HIGH", teamA);
+        svc.feed(DEF);
+        now += 60_000;
+        resolve(e);                              // çözülme anı: T0 + 1 dk
+        now += 10L * 24 * 3600_000L;             // 10 gün kimse çağırmadı
+        svc.feed(DEF);                           // kapanış fark edildi (ve teslim edildi)
+        jdbc.update("UPDATE alarm_feed_events SET closure_sent_at = NULL");   // teslim işareti yazılamamış gibi
+        now += 24 * 3600_000L;
+        svc.prune(now, DEF);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM alarm_feed_events", Long.class)).isEqualTo(1L);
+        now += 7L * 24 * 3600_000L;
+        svc.prune(now, DEF);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM alarm_feed_events", Long.class)).isZero();
+    }
+
+    @Test
+    @DisplayName("Akış kapalıyken: 30 günden eski bütün durum satırları silinir, yenileri kalır")
+    void disabledFeedPrunesOldState() {
+        alarm("host-a", "PING_DOWN", "HIGH", teamA);
+        svc.feed(DEF);
+        AlarmFeedSettings.Config off = new AlarmFeedSettings.Config(false, "WARNING", Set.of(), Set.of(), 15, "status",
+                "Clear", "Critical", "Major", "Warning", "target_type", "SiteMonitor", "", "semicolon", List.of(), 30,
+                2000, true);
+        now += 10L * 24 * 3600_000L;
+        svc.prune(now, off);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM alarm_feed_events", Long.class)).isEqualTo(1L);
+        now += 21L * 24 * 3600_000L;
+        svc.prune(now, off);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM alarm_feed_events", Long.class)).isZero();
     }
 
     @Test

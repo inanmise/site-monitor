@@ -91,6 +91,40 @@ class AlarmFeedRowsTest {
     }
 
     @Test
+    @DisplayName("Hedef özeti sunucu sırrıyla anahtarlı: ham URL'nin düz SHA-256'sı yayınlanmaz, sır değişince özet değişir")
+    void targetSummaryIsKeyed() {
+        String raw = "https://x.example.com/api?token=s3cr3t";
+        AlarmFeedRows.Alarm a = alarm("HTTP_DOWN", "HIGH", raw, null);
+        String plain = AlarmFeedRows.keyHash(raw).substring(0, 6);
+        String one = AlarmFeedRows.target(a, AlarmFeedRows.saltOf("anahtar-1"));
+        String two = AlarmFeedRows.target(a, AlarmFeedRows.saltOf("anahtar-2"));
+        assertThat(one).startsWith("https://x.example.com/api #").doesNotContain(plain).doesNotContain("s3cr3t");
+        assertThat(one).isNotEqualTo(two);
+        assertThat(AlarmFeedRows.target(a, AlarmFeedRows.saltOf("anahtar-1"))).isEqualTo(one);
+        assertThat(one.substring(one.indexOf('#') + 1)).hasSize(8);
+    }
+
+    @Test
+    @DisplayName("Her şemadaki URL temizlenir; parolasında '/' olan kullanıcı bilgisi de atılır; izleme adı da temizlenir")
+    void everySchemeAndTrickyUserinfo() {
+        assertThat(AlarmFeedRows.stripUrl("https://u:a/b@host.example.com/p?q=1")).isEqualTo("https://host.example.com/p");
+        assertThat(AlarmFeedRows.stripUrl("https://user@host.example.com/p")).isEqualTo("https://host.example.com/p");
+        assertThat(AlarmFeedRows.stripUrl("https://medium.example.com/@kisi")).isEqualTo("https://medium.example.com/@kisi");
+        assertThat(AlarmFeedRows.stripUrl("https://host.example.com/p#frag")).isEqualTo("https://host.example.com/p");
+        String text = AlarmFeedRows.safeText("bağlantı ldap://cn=admin:Gizli1@ldap.example.com:636/ou=x hatası; "
+                + "jdbc:postgresql://db.example.com:5432/app?password=Pg2SECRET ve ftp://ftpuser:FtpPw@ftp.example.com/f "
+                + "ve https://u:a/b@h.example.com/z");
+        assertThat(text).doesNotContain("Gizli1").doesNotContain("Pg2SECRET").doesNotContain("FtpPw").doesNotContain("u:a/b")
+                .contains("ldap://ldap.example.com:636/ou=x").contains("jdbc:postgresql://db.example.com:5432/app")
+                .contains("ftp://ftp.example.com/f").contains("https://h.example.com/z");
+        AlarmFeedRows.Alarm a = new AlarmFeedRows.Alarm(11L, "HTTP_DOWN", "HIGH", "api.example.com", null, null,
+                "2026-10-30T10:00:00", false, null, null, false, null, null,
+                "Kontrol https://svc.example.com/h?apikey=MONSECRET", null, null);
+        assertThat((String) AlarmFeedRows.openRow(a, DEF, null).get("BODY")).doesNotContain("MONSECRET")
+                .contains("İzleme: Kontrol https://svc.example.com/h");
+    }
+
+    @Test
     @DisplayName("RCI ömür boyu sabit: gün sayısı değişse de aynı; kapanış satırı aynı RCI + SEVERITY")
     void rciIsStable() {
         Map<String, Object> d5 = AlarmFeedRows.openRow(alarm("EXPIRY", "HIGH", "api.example.com", 5), DEF, null);

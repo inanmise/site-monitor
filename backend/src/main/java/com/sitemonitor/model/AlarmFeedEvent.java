@@ -20,7 +20,8 @@ import lombok.NoArgsConstructor;
  * aksi halde olay sonsuza dek açık kalır. Bu tablo GÖNDERİLEN anahtarı ve satırın o anki kopyasını ({@code snapshot}) tutar;
  * anahtar değişince, alarm çözülünce, kapsamdan çıkınca ya da silinince kapanış GÖNDERİLMİŞ değerlerle kurulur.
  *
- * <p>Kapanış en az bir kez teslim edilene kadar ({@code closure_sent_at}) ve çözülme penceresi boyunca akışta kalır — akış
+ * <p>Kapanış, çözülme penceresi boyunca, en az bir kez teslim edilene kadar ({@code closure_sent_at}) ve ilk teslimden
+ * sonra bir pencere daha akışta kalır (yanıt kaybolsa da merkezi sistem alır) — akış
  * kapalıyken / kimse çağırmazken kapanan alarm da bildirilir (RESOLVEDTIME gerçek kapanış anıdır). Çok pod: (alarm, anahtar
  * özeti) tekil; kapanış ve teslim işaretleri koşullu.
  */
@@ -65,6 +66,13 @@ public class AlarmFeedEvent {
     /** Kapanışın en az bir yanıtta gönderildiği an (UTC ISO); null = henüz gönderilmedi. */
     @Column(name = "closure_sent_at", length = 30)
     private String closureSentAt;
+
+    /**
+     * Kapanışı fark ettiğimiz an (UTC; {@code closed_at} gerçek çözülme anıdır, eski olabilir). Hiç teslim edilemeyen
+     * kapanış bundan 7 gün sonra bırakılır — eski bir çözülme fark edilir edilmez silinmesin.
+     */
+    @Column(name = "closed_noted_at", length = 30)
+    private String closedNotedAt;
 
     /** Gönderilen AÇIK satırın kopyası (JSON; ek iç alanlar {@code _target}, {@code _problem}). */
     @Column(columnDefinition = "TEXT")

@@ -30,7 +30,7 @@ import java.util.Set;
  * <ul>
  *   <li>RCI bir alarm için kararlıdır (gün sayısı, ileti girmez) ve FARKLI alarm türleri asla aynı RCI'yı almaz: tür etiketi
  *       birden çok türde ortaksa ({@code Yavaş yanıt}) izleme türüyle ayrılır; hedef sorgu / parça / kullanıcı bilgisi atılıp
- *       kısaltıldıysa ham hedefin kısa özeti eklenir ({@code … #a1b2c3}) — iki ayrı URL tek olayda birleşmez;</li>
+ *       kısaltıldıysa ham hedefin anahtarlı kısa özeti eklenir ({@code … #a1b2c3d4}) — iki ayrı URL tek olayda birleşmez;</li>
  *   <li>metinler göreli süre taşımaz (aynı durum = aynı gövde);</li>
  *   <li>kapanış satırı GÖNDERİLMİŞ açık satırın kopyasından kurulur ({@link #closure}) — anahtar değişse de (yeniden
  *       adlandırma, ayar) merkezi sistemdeki eski olay kendi anahtarıyla kapanır.</li>
@@ -96,9 +96,31 @@ public final class AlarmFeedRows {
         return p + " (" + (family == null ? "Diğer" : MonitorTypeCatalog.label(family)) + ")";
     }
 
-    /** Açık satır. */
+    /** Sabit anahtar (sunucu gizli anahtarı yoksa — geliştirme / testler). */
+    static final byte[] DEFAULT_SALT = saltOf("");
+
+    /**
+     * Hedef özetinin HMAC anahtarı: sunucu gizli anahtarından türer. Herkese açık uçta ham URL'nin düz SHA-256'sı
+     * yayınlansaydı, sorgudaki bir sırrın tahmini çevrimdışı doğrulanabilirdi. Anahtar döndürülünce özet değişir
+     * (URL hedefli açık olaylar bir kez yeni anahtarla yeniden açılır).
+     */
+    public static byte[] saltOf(String secret) {
+        try {
+            return MessageDigest.getInstance("SHA-256").digest(("alarm-feed-rci|" + (secret == null ? "" : secret))
+                    .getBytes(StandardCharsets.UTF_8));
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    /** Açık satır (sabit anahtarla — testler). */
     public static Map<String, Object> openRow(Alarm a, AlarmFeedSettings.Config c, String baseUrl) {
-        String target = target(a);
+        return openRow(a, c, baseUrl, DEFAULT_SALT);
+    }
+
+    /** Açık satır. */
+    public static Map<String, Object> openRow(Alarm a, AlarmFeedSettings.Config c, String baseUrl, byte[] salt) {
+        String target = target(a, salt);
         String label = typeLabel(a.alertType());
         String problemNow = NocMailComposer.problemLabel(a.alertType(), a.daysRemaining());
         String severity = c.severityOf(a.level());
@@ -127,14 +149,23 @@ public final class AlarmFeedRows {
      * verisiyle, STATUS=RESOLVED.
      */
     public static Map<String, Object> resolvedRow(Alarm a, AlarmFeedSettings.Config c, String baseUrl) {
-        Map<String, Object> open = openRow(a, c, baseUrl);
-        return closure(withSnapshotFields(open, a), c, a.resolvedAt(), REASON_RESOLVED, null, closer(a));
+        return resolvedRow(a, c, baseUrl, DEFAULT_SALT);
+    }
+
+    public static Map<String, Object> resolvedRow(Alarm a, AlarmFeedSettings.Config c, String baseUrl, byte[] salt) {
+        Map<String, Object> open = openRow(a, c, baseUrl, salt);
+        return closure(withSnapshotFields(open, a, salt), c, a.resolvedAt(), REASON_RESOLVED, null, closer(a));
+    }
+
+    /** Durum tablosuna yazılacak kopya (sabit anahtarla — testler). */
+    public static Map<String, Object> withSnapshotFields(Map<String, Object> openRow, Alarm a) {
+        return withSnapshotFields(openRow, a, DEFAULT_SALT);
     }
 
     /** Durum tablosuna yazılacak kopya: açık satır + iç alanlar (hedef, sorun etiketi). */
-    public static Map<String, Object> withSnapshotFields(Map<String, Object> openRow, Alarm a) {
+    public static Map<String, Object> withSnapshotFields(Map<String, Object> openRow, Alarm a, byte[] salt) {
         Map<String, Object> m = new LinkedHashMap<>(openRow);
-        m.put(SNAP_TARGET, target(a));
+        m.put(SNAP_TARGET, target(a, salt));
         m.put(SNAP_PROBLEM, NocMailComposer.problemLabel(a.alertType(), null));
         return m;
     }
@@ -224,7 +255,8 @@ public final class AlarmFeedRows {
         lines.add("Kaynak: " + c.source() + " · " + rcitype(a, c) + " izleme");
         String mon = a.monitorName();
         lines.add("Hedef: " + target
-                + (mon != null && !mon.isBlank() && !mon.trim().equalsIgnoreCase(target) ? " · İzleme: " + oneLine(mon.trim()) : ""));
+                + (mon != null && !mon.isBlank() && !mon.trim().equalsIgnoreCase(target)
+                        ? " · İzleme: " + clip(oneLine(safeText(mon.trim())), RCI_MAX) : ""));
         String msg = oneLine(safeText(a.message()));
         String what = "Ne oldu: " + problemNow;
         if (msg != null && !msg.isBlank() && !msg.equalsIgnoreCase(problemNow)) what += " — " + clip(msg, MESSAGE_MAX);
@@ -277,16 +309,62 @@ public final class AlarmFeedRows {
         return out.isEmpty() ? null : String.join(c.separator(), out);
     }
 
+    static String target(Alarm a) {
+        return target(a, DEFAULT_SALT);
+    }
+
     /**
      * Gösterilen hedef: şema + host + port + yol (sorgu, parça, kullanıcı bilgisi yok; 160 karakter). Bu kırpma ham hedefi
-     * değiştirdiyse ham hedefin SHA-256 özetinin ilk 6 hanesi eklenir — sorgusu farklı iki URL tek RCI'da birleşmesin.
+     * değiştirdiyse ham hedefin ANAHTARLI özetinin (HMAC-SHA256, sunucu sırrı) ilk 8 hanesi eklenir — sorgusu farklı iki
+     * URL tek RCI'da birleşmesin, ama özet sorgudaki sırrı tahminle doğrulamaya yaramasın.
      */
-    static String target(Alarm a) {
+    static String target(Alarm a, byte[] salt) {
         String raw = a.target() == null ? "" : a.target().trim();
         // Yalnız URL'ler ayrıştırılır; host / alan adı / k6 izleme adı (içinde '@', '?', '#' olabilir) olduğu gibi kalır.
-        String t = raw.contains("://") ? MonitoringMetricsModel.safeTarget(raw) : MonitoringMetricsModel.label(raw);
+        String t = raw.contains("://") ? MonitoringMetricsModel.label(stripUrl(raw)) : MonitoringMetricsModel.label(raw);
         if (t == null || t.isBlank()) return "—";
-        if (!t.equals(raw)) t = t + " #" + keyHash(raw).substring(0, 6);
+        if (!t.equals(raw)) t = t + " #" + hmac(salt == null ? DEFAULT_SALT : salt, raw).substring(0, 8);
+        return t;
+    }
+
+    static String hmac(byte[] key, String value) {
+        try {
+            javax.crypto.Mac mac = javax.crypto.Mac.getInstance("HmacSHA256");
+            mac.init(new javax.crypto.spec.SecretKeySpec(key, "HmacSHA256"));
+            return HexFormat.of().formatHex(mac.doFinal(value.getBytes(StandardCharsets.UTF_8)));
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    /**
+     * Bir URL'den sorgu, parça ve kullanıcı bilgisi atılır (her şema). Kullanıcı bilgisi: yetki bölümündeki '@', ya da
+     * ilk '/'tan önce ':' taşıyan bir önek (parolada '/' olabilir: {@code https://u:a/b@host}) — bu durumda son '@'a
+     * kadar her şey atılır. Kuşkuda fazla atılır (görünüm bozulur, sır sızmaz).
+     */
+    static String stripUrl(String url) {
+        String t = url.length() > 2048 ? url.substring(0, 2048) : url;
+        int cut = -1;
+        for (int i = 0; i < t.length(); i++) {
+            char ch = t.charAt(i);
+            if (ch == '?' || ch == '#') {
+                cut = i;
+                break;
+            }
+        }
+        if (cut >= 0) t = t.substring(0, cut);
+        int sch = t.indexOf("://");
+        int hs = sch >= 0 ? sch + 3 : 0;
+        int at = t.lastIndexOf('@');
+        if (at >= hs) {
+            int slash = t.indexOf('/', hs);
+            if (slash < 0) slash = t.length();
+            String before = t.substring(hs, at);
+            int colon = before.indexOf(':');
+            int firstSlash = before.indexOf('/');
+            boolean userinfo = at < slash || colon >= 0 && (firstSlash < 0 || colon < firstSlash);
+            if (userinfo) t = t.substring(0, hs) + t.substring(at + 1);
+        }
         return t;
     }
 
@@ -309,8 +387,9 @@ public final class AlarmFeedRows {
     }
 
     /**
-     * Serbest metindeki her {@code http(s)://} adresinden kullanıcı bilgisi, sorgu ve parça atılır; kalan ad=değer
-     * sırları {@link SecretMask#maskUrlQuery} ile maskelenir. Doğrusal tarama (düzenli ifade yok); önce uzunluk sınırı.
+     * Serbest metindeki her {@code şema://} adresinden (http, https, ldap, jdbc:postgresql, ftp …) kullanıcı bilgisi,
+     * sorgu ve parça atılır; kalan ad=değer sırları {@link SecretMask#maskUrlQuery} ile maskelenir. Doğrusal tarama
+     * (düzenli ifade yok); önce uzunluk sınırı.
      */
     static String safeText(String s) {
         if (s == null) return null;
@@ -328,20 +407,32 @@ public final class AlarmFeedRows {
             int end = start;
             while (end < n && !urlEnd(in.charAt(end))) end++;
             String url = in.substring(start, end);
-            out.append(MonitoringMetricsModel.safeTarget(url));
+            out.append(clip(stripUrl(url), RCI_MAX));
             i = end;
         }
         return SecretMask.maskUrlQuery(out.toString());
     }
 
+    /** Sonraki {@code şema://} başlangıcı (şema: harfle başlar, harf / rakam / + - . :, en çok 32 karakter); yoksa -1. */
     private static int urlStart(String s, int from) {
-        for (int i = from; i + 7 <= s.length(); i++) {
-            char ch = s.charAt(i);
-            if (ch != 'h' && ch != 'H') continue;
-            if (s.regionMatches(true, i, "http://", 0, 7)) return i;
-            if (i + 8 <= s.length() && s.regionMatches(true, i, "https://", 0, 8)) return i;
+        int i = from;
+        while (true) {
+            int sep = s.indexOf("://", i);
+            if (sep < 0) return -1;
+            int st = sep;
+            while (st > from && sep - st < 32 && schemeChar(s.charAt(st - 1))) st--;
+            while (st < sep && !Character.isLetter(s.charAt(st))) st++;
+            if (st < sep && isAsciiLetter(s.charAt(st))) return st;
+            i = sep + 3;
         }
-        return -1;
+    }
+
+    private static boolean schemeChar(char c) {
+        return isAsciiLetter(c) || c >= '0' && c <= '9' || c == '+' || c == '-' || c == '.' || c == ':';
+    }
+
+    private static boolean isAsciiLetter(char c) {
+        return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z';
     }
 
     private static boolean urlEnd(char c) {

@@ -28,6 +28,10 @@ public class AlarmFeedCaller {
     @Column(name = "last_seen_at", length = 30)
     private String lastSeenAt;
 
+    /** İlk KABUL edilen çağrı anı (UTC; reddedilmiş çağrılar sayılmaz). Yalnız koşullu UPDATE yazar. */
+    @Column(name = "first_ok_at", length = 30)
+    private String firstOkAt;
+
     @Column(name = "call_count")
     private Long callCount;
 

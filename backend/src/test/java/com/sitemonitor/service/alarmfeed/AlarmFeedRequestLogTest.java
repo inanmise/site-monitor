@@ -111,6 +111,27 @@ class AlarmFeedRequestLogTest {
     }
 
     @Test
+    @DisplayName("Önce reddedilen, sonra izin listesine eklenen IP: İLK KABUL edilen çağrıda bir kez denetlenir (başka pod'da da)")
+    void firstAcceptedCallIsAuditedAfterRefusals() {
+        AlarmFeedRequestLog.Result denied = new AlarmFeedRequestLog.Result(403, AlarmFeedRequestLog.OUTCOME_IP_DENIED,
+                "{\"success\":false}", "application/json", null, null, null, null, "json", null);
+        log.record(call("172.20.1.1"), denied, true, null);
+        assertThat(callers.findById("172.20.1.1").orElseThrow().getFirstOkAt()).isNull();
+        now += 60_000;
+        log.record(call("172.20.1.1"), ok("[]"), true, null);
+        now += 60_000;
+        log.record(call("172.20.1.1"), ok("[]"), true, null);
+        AlarmFeedRequestLog other = new AlarmFeedRequestLog(requests, jdbc);   // ikinci pod
+        other.setAuditService(audit);
+        other.clock = () -> now;
+        other.record(call("172.20.1.1"), ok("[]"), true, null);
+        verify(audit, times(1)).recordAction(eq("ALARM_FEED_NEW_CALLER"), anyString(), isNull(), isNull(), eq("EXTERNAL"),
+                eq("ALARM_FEED"), eq("172.20.1.1"), anyString(), anyString(), anyString(), isNull());
+        assertThat(callers.findById("172.20.1.1").orElseThrow().getFirstOkAt()).isNotNull();
+        assertThat(callers.findById("172.20.1.1").orElseThrow().getCallCount()).isEqualTo(4L);
+    }
+
+    @Test
     @DisplayName("Reddedilen çağrı: her biri günlükte; denetim IP + neden başına 10 dk'da bir; oran sınırı satırı dakikada bir")
     void deniedThrottles() {
         AlarmFeedRequestLog.Result denied = new AlarmFeedRequestLog.Result(403, AlarmFeedRequestLog.OUTCOME_IP_DENIED,

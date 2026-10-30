@@ -19,6 +19,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
@@ -71,24 +72,30 @@ public class AlarmFeedService {
     /** Hiç teslim edilemeyen kapanış (akış uzun süre kapalı / kimse çağırmadı) bu süre sonra bırakılır. */
     static final long UNDELIVERED_MAX_MS = 7L * 24 * 3600_000L;
     static final long PRUNE_EVERY_MS = 3600_000L;
+    /** Akış kapalıyken durum satırları bu süre sonra silinir. */
+    static final long DISABLED_KEEP_MS = 30L * 24 * 3600_000L;
 
     static final String SQL_STATE_READ = "SELECT id, alert_event_id, key_hash, level, sent_at, closed_at, closed_reason, "
             + "closure_sent_at, snapshot FROM alarm_feed_events "
-            + "WHERE closed_at IS NULL OR closed_at >= ? OR closure_sent_at IS NULL";
+            + "WHERE closed_at IS NULL OR closed_at >= ? OR closure_sent_at IS NULL OR closure_sent_at >= ?";
     static final String SQL_STATE_INSERT = "INSERT INTO alarm_feed_events (alert_event_id, key_hash, level, sent_at, snapshot) "
             + "VALUES (?, ?, ?, ?, ?)";
-    static final String SQL_STATE_CLOSE = "UPDATE alarm_feed_events SET closed_at = ?, closed_reason = ? "
+    static final String SQL_STATE_CLOSE = "UPDATE alarm_feed_events SET closed_at = ?, closed_reason = ?, closed_noted_at = ? "
             + "WHERE id = ? AND closed_at IS NULL";
     static final String SQL_STATE_REOPEN = "UPDATE alarm_feed_events SET closed_at = NULL, closed_reason = NULL, "
-            + "closure_sent_at = NULL WHERE id = ? AND closed_at IS NOT NULL";
+            + "closure_sent_at = NULL, closed_noted_at = NULL WHERE id = ? AND closed_at IS NOT NULL";
     static final String SQL_STATE_REOPEN_BY_KEY = "UPDATE alarm_feed_events SET closed_at = NULL, closed_reason = NULL, "
-            + "closure_sent_at = NULL WHERE alert_event_id = ? AND key_hash = ? AND closed_at IS NOT NULL";
+            + "closure_sent_at = NULL, closed_noted_at = NULL WHERE alert_event_id = ? AND key_hash = ? AND closed_at IS NOT NULL";
     static final String SQL_STATE_DELIVERED = "UPDATE alarm_feed_events SET closure_sent_at = ? "
             + "WHERE id = ? AND closed_at IS NOT NULL AND closure_sent_at IS NULL";
+    /** Teslim edilmiş kapanış: hem kapanışı hem ilk gönderimi pencere + 2 günden eski. */
     static final String SQL_STATE_PRUNE_SENT = "DELETE FROM alarm_feed_events WHERE closed_at IS NOT NULL "
-            + "AND closure_sent_at IS NOT NULL AND closed_at < ?";
+            + "AND closure_sent_at IS NOT NULL AND closed_at < ? AND closure_sent_at < ?";
+    /** Hiç teslim edilemeyen kapanış: kapatıldığımız an (gerçek çözülme anı değil) 7 günden eski. */
     static final String SQL_STATE_PRUNE_UNDELIVERED = "DELETE FROM alarm_feed_events WHERE closed_at IS NOT NULL "
-            + "AND closure_sent_at IS NULL AND closed_at < ?";
+            + "AND closure_sent_at IS NULL AND COALESCE(closed_noted_at, closed_at) < ?";
+    /** Akış kapalıyken: 30 günden eski bütün satırlar (takım adı / adres kopyaları süresiz kalmasın). */
+    static final String SQL_STATE_PRUNE_DISABLED = "DELETE FROM alarm_feed_events WHERE sent_at < ?";
 
     private final AlertEventRepository alertRepo;
     private final CertificateInventoryRepository inventoryRepo;
@@ -102,12 +109,21 @@ public class AlarmFeedService {
     @Value("${site.monitor.alarm-feed.cache-ms:5000}")
     long cacheMs = 5_000;
 
+    /** RCI hedef özetinin anahtarı (HMAC) — sunucu gizli anahtarından türer; boşsa sabit (geliştirme). */
+    @Value("${site.monitor.secret-key:}")
+    void setSecretKey(String secretKey) {
+        this.rciSalt = AlarmFeedRows.saltOf(secretKey);
+    }
+
+    private volatile byte[] rciSalt = AlarmFeedRows.saltOf("");
+
     LongSupplier clock = System::currentTimeMillis;
 
     private final ObjectMapper mapper = new ObjectMapper();
     private final Object buildLock = new Object();
     private volatile Cached cached;
     private volatile long lastPruneMs;
+    private volatile long lastUnusableWarnMs;
 
     record Cached(String key, long atMs, Feed feed) {}
 
@@ -205,10 +221,12 @@ public class AlarmFeedService {
         String closedAt;
         String reason;
         String closureSentAt;
+        /** Ham kopya (yalnız kapanış kurulurken açılır — her yanıtta bütün açık satırların JSON'u ayrıştırılmasın). */
+        final String snapshotJson;
         Map<String, Object> snapshot;
 
         State(Long id, long alertId, String keyHash, String level, String sentAt, String closedAt, String reason,
-              String closureSentAt, Map<String, Object> snapshot) {
+              String closureSentAt, String snapshotJson) {
             this.id = id;
             this.alertId = alertId;
             this.keyHash = keyHash;
@@ -217,15 +235,12 @@ public class AlarmFeedService {
             this.closedAt = closedAt;
             this.reason = reason;
             this.closureSentAt = closureSentAt;
-            this.snapshot = snapshot;
+            this.snapshotJson = snapshotJson;
         }
     }
 
     /** Bir alarmın kapsam değerlendirmesi için toplanmış hali. */
     record Item(AlertEvent event, AlarmFeedRows.Alarm alarm, String level, String family, Set<Long> owners) {}
-
-    /** Bir kapanış satırı adayı. */
-    record Closure(State state, Map<String, Object> row, String closedAt) {}
 
     Feed build(AlarmFeedSettings.Config c, boolean dryRun) {
         long nowMs = clock.getAsLong();
@@ -233,13 +248,15 @@ public class AlarmFeedService {
         String since = ISO.format(Instant.ofEpochMilli(nowMs - c.resolvedMinutes() * 60_000L));
         String base = baseUrl();
 
-        // 1) Alarmlar: açıklar + penceredeki çözülenler (zorunlu — okunamazsa istisna yükselir).
+        // 1) Durum ÖNCE: açık, pencerede kapanmış, henüz gönderilmemiş ya da ilk gönderiminden bu yana pencere geçmemiş
+        //    kapanışlar. Alarmlardan önce okunur: başka pod'un daha yeni kararı burada görünmediyse bu pod'un koşullu
+        //    yazımları (kapat / yeniden aç) etkisiz kalır; alarmlar sonra okunduğu için güncel seviye kullanılır.
+        Map<Long, List<State>> state = readState(since);
+
+        // 2) Alarmlar: açıklar + penceredeki çözülenler (zorunlu — okunamazsa istisna yükselir).
         List<AlertEvent> events = alertRepo.findOpenOrResolvedSince(since, PageRequest.of(0, SCAN_MAX + 1));
         boolean truncated = events.size() > SCAN_MAX;
         if (truncated) events = new ArrayList<>(events.subList(0, SCAN_MAX));
-
-        // 2) Durum: açık, pencerede kapanmış ya da kapanışı henüz gönderilmemiş satırlar.
-        Map<Long, List<State>> state = readState(since);
 
         // 3) Durumda olup alarm listesinde olmayanlar (tarama tavanı / kapsam dışı / eski kapanış / silinmiş) — toplu okunur.
         Map<Long, AlertEvent> byId = new LinkedHashMap<>();
@@ -294,7 +311,7 @@ public class AlarmFeedService {
                 .thenComparing((Item it) -> it.event().getId(), Comparator.reverseOrder()));
         for (Item it : open) {
             long id = it.event().getId();
-            Map<String, Object> row = AlarmFeedRows.openRow(it.alarm(), c, base);
+            Map<String, Object> row = AlarmFeedRows.openRow(it.alarm(), c, base, rciSalt);
             String key = AlarmFeedRows.eventKey(row);
             String hash = AlarmFeedRows.keyHash(key);
             openRows.add(row);
@@ -307,8 +324,9 @@ public class AlarmFeedService {
             State cur = null;
             for (State s : rows) if (s.keyHash.equals(hash)) cur = s;
             if (cur == null) {
-                Map<String, Object> snapshot = AlarmFeedRows.withSnapshotFields(row, it.alarm());
-                State s = new State(null, id, hash, it.level(), now, null, null, null, snapshot);
+                Map<String, Object> snapshot = AlarmFeedRows.withSnapshotFields(row, it.alarm(), rciSalt);
+                State s = new State(null, id, hash, it.level(), now, null, null, null, null);
+                s.snapshot = snapshot;
                 rows.add(s);
                 String json = json(snapshot);
                 ops.add(() -> insert(s, json));
@@ -321,7 +339,7 @@ public class AlarmFeedService {
             }
             for (State s : rows) {
                 if (s.keyHash.equals(hash) || s.closedAt != null) continue;
-                close(s, now, s.level.equals(it.level()) ? AlarmFeedRows.REASON_KEY_CHANGE : AlarmFeedRows.REASON_LEVEL_CHANGE, ops);
+                close(s, now, s.level.equals(it.level()) ? AlarmFeedRows.REASON_KEY_CHANGE : AlarmFeedRows.REASON_LEVEL_CHANGE, now, ops);
             }
         }
         Set<Long> openIds = openKeyOfAlert.keySet();
@@ -332,110 +350,128 @@ public class AlarmFeedService {
             for (State s : en.getValue()) {
                 if (s.closedAt != null) continue;
                 if (e == null) {
-                    close(s, now, AlarmFeedRows.REASON_GONE, ops);
+                    close(s, now, AlarmFeedRows.REASON_GONE, now, ops);
                 } else if (Boolean.TRUE.equals(e.getResolved())) {
                     // Gerçek çözülme anı (teslim edilene kadar akışta kalır — pencere dışı olsa da).
                     String at = e.getResolvedAt();
-                    close(s, at != null && at.compareTo(now) <= 0 ? at : now, AlarmFeedRows.REASON_RESOLVED, ops);
+                    close(s, at != null && at.compareTo(now) <= 0 ? at : now, AlarmFeedRows.REASON_RESOLVED, now, ops);
                 } else {
-                    close(s, now, AlarmFeedRows.REASON_SCOPE, ops);
+                    close(s, now, AlarmFeedRows.REASON_SCOPE, now, ops);
                 }
             }
         }
         if (!dryRun) runOps(ops);
 
-        // 7) Kapanış satırları — GÖNDERİLMİŞ kopyalardan.
-        List<Closure> closures = new ArrayList<>();
-        Set<String> closureKeys = new LinkedHashSet<>();
-        Set<String> clearRciDone = new LinkedHashSet<>();
+        // 7) Kapanış adayları — GÖNDERİLMİŞ kopyalardan. Pencere içinde kapanan, hiç gönderilmemiş ya da İLK gönderiminden
+        //    bu yana bir pencere geçmemiş kapanış döner: bir yanıt kaybolsa ya da başka bir çağıran onu "tüketse" de merkezi
+        //    sistem sonraki çağrılarda yine alır.
+        record Cand(State s, Map<String, Object> row, String dedupeKey) {}
+        List<Cand> cands = new ArrayList<>();
+        List<State> unusable = new ArrayList<>();
         for (List<State> rows : state.values()) {
             for (State s : rows) {
                 if (s.closedAt == null) continue;
-                boolean inWindow = s.closedAt.compareTo(since) >= 0;
-                if (!inWindow && s.closureSentAt != null) continue;
-                if (s.snapshot == null || AlarmFeedRows.REASON_GONE.equals(s.reason) && s.snapshot.isEmpty()) {
-                    markLater(s, closures, null);   // kopya okunamıyor: kurulamaz, sonsuza dek beklemesin
+                boolean live = s.closedAt.compareTo(since) >= 0 || s.closureSentAt == null
+                        || s.closureSentAt.compareTo(since) >= 0;
+                if (!live) continue;
+                Map<String, Object> snap0 = snapshotOf(s);
+                if (snap0 == null || snap0.isEmpty()) {
+                    unusable.add(s);   // kopya okunamıyor: kurulamaz, sonsuza dek beklemesin (WARN aşağıda)
                     continue;
                 }
                 Item it = items.get(s.alertId);
                 String newSev = AlarmFeedRows.REASON_LEVEL_CHANGE.equals(s.reason) ? newSeverityOfAlert.get(s.alertId) : null;
                 String closerText = it == null ? null : AlarmFeedRows.closer(it.alarm());
-                Map<String, Object> row = AlarmFeedRows.closure(s.snapshot, c, s.closedAt, s.reason, newSev,
+                Map<String, Object> row = AlarmFeedRows.closure(snap0, c, s.closedAt, s.reason, newSev,
                         AlarmFeedRows.REASON_RESOLVED.equals(s.reason) ? closerText : null);
-                if (c.clearMode()) {
-                    // Clear: o RCI'da açık satır varken gönderilmez (o olayı da kapatırdı); RCI başına bir Clear.
-                    String rk = AlarmFeedRows.rciKey(row);
-                    if (openRciKeys.contains(rk) || !clearRciDone.add(rk)) {
-                        markLater(s, closures, null);
-                        continue;
-                    }
-                } else {
-                    String k = AlarmFeedRows.eventKey(row);
-                    // Aynı yanıtta aynı anahtar hem AÇIK hem ÇÖZÜLDÜ olamaz; aynı anahtar iki kez kapanmaz.
-                    if (openEventKeys.contains(k) || !closureKeys.add(k)) {
-                        markLater(s, closures, null);
-                        continue;
-                    }
-                }
-                closures.add(new Closure(s, row, s.closedAt));
+                // Clear kipinde eşleşme RCI ile (Clear o RCI'nın bütün olaylarını kapatır), durum kipinde tam anahtarla.
+                cands.add(new Cand(s, row, c.clearMode() ? AlarmFeedRows.rciKey(row) : AlarmFeedRows.eventKey(row)));
+            }
+        }
+        // Aynı anahtarda EN GÜNCEL kapanış temsil eder: hiç gönderilmemiş önce, sonra en geç kapanan, sonra gerçek çözülme.
+        cands.sort(Comparator.comparing((Cand x) -> x.s().closureSentAt == null ? 0 : 1)
+                .thenComparing((Cand x) -> nz(x.s().closedAt), Comparator.reverseOrder())
+                .thenComparing((Cand x) -> AlarmFeedRows.REASON_RESOLVED.equals(x.s().reason) ? 0 : 1)
+                .thenComparing((Cand x) -> x.s().alertId, Comparator.reverseOrder()));
+        Set<String> openKeys = c.clearMode() ? openRciKeys : openEventKeys;
+        Map<String, Cand> reps = new LinkedHashMap<>();
+        Map<String, List<State>> dupOf = new HashMap<>();
+        List<State> suppressedByOpen = new ArrayList<>();
+        for (Cand x : cands) {
+            if (openKeys.contains(x.dedupeKey())) {
+                suppressedByOpen.add(x.s());   // aynı anahtar şu an AÇIK gidiyor: kapanış göndermek açık olayı kapatırdı
+            } else if (reps.containsKey(x.dedupeKey())) {
+                dupOf.computeIfAbsent(x.dedupeKey(), k -> new ArrayList<>()).add(x.s());
+            } else {
+                reps.put(x.dedupeKey(), x);
             }
         }
         // Hiç açık bildirilmemiş ama pencerede çözülmüş kapsamdaki alarmlar (bilgi) — durum satırı olmayanlar.
         List<Map<String, Object>> infoRows = new ArrayList<>();
+        Set<String> infoKeys = new LinkedHashSet<>();
         for (Item it : resolvedInWindow) {
             if (!state.getOrDefault(it.event().getId(), List.of()).isEmpty()) continue;
-            Map<String, Object> row = AlarmFeedRows.resolvedRow(it.alarm(), c, base);
+            Map<String, Object> row = AlarmFeedRows.resolvedRow(it.alarm(), c, base, rciSalt);
             String k = c.clearMode() ? AlarmFeedRows.rciKey(row) : AlarmFeedRows.eventKey(row);
-            if (c.clearMode() ? (openRciKeys.contains(k) || !clearRciDone.add(k))
-                    : (openEventKeys.contains(k) || !closureKeys.add(k))) continue;
+            if (openKeys.contains(k) || reps.containsKey(k) || !infoKeys.add(k)) continue;
             infoRows.add(row);
         }
 
-        // 8) Tavan: önce kapanışların (en eskisi — pencereden ilk düşecek olan — önce) yarısı, sonra açıklar (öncelik
-        //    sırasıyla), sonra kalan kapanışlar, en son bilgi satırları. Teslim edilmeyen kapanış sonraki çağrıda gider.
-        List<Closure> realClosures = new ArrayList<>();
-        for (Closure x : closures) if (x.row() != null) realClosures.add(x);
-        realClosures.sort(Comparator.comparing((Closure x) -> nz(x.closedAt()))
-                .thenComparing((Closure x) -> x.state().alertId));
+        // 8) Tavan: önce kapanışların yarısı (hiç gönderilmemişler, en eskisi önce), sonra açıklar (öncelik sırasıyla),
+        //    sonra kalan kapanışlar, en son bilgi satırları. Teslim edilmeyen kapanış sonraki çağrıda gider.
+        List<Cand> repList = new ArrayList<>(reps.values());
+        repList.sort(Comparator.comparing((Cand x) -> x.s().closureSentAt == null ? 0 : 1)
+                .thenComparing((Cand x) -> nz(x.s().closedAt))
+                .thenComparing((Cand x) -> x.s().alertId));
         int cap = c.maxRows();
-        int total = realClosures.size() + openRows.size() + infoRows.size();
-        List<Closure> keptClosures = realClosures;
+        int total = repList.size() + openRows.size() + infoRows.size();
+        List<Cand> keptReps = repList;
         List<Map<String, Object>> keptOpen = openRows;
         List<Map<String, Object>> keptInfo = infoRows;
         if (total > cap) {
             truncated = true;
-            int firstShare = Math.min(realClosures.size(), cap / 2);
+            int firstShare = Math.min(repList.size(), cap / 2);
             int openRoom = Math.min(openRows.size(), cap - firstShare);
-            int closureRoom = Math.min(realClosures.size(), cap - openRoom);
+            int closureRoom = Math.min(repList.size(), cap - openRoom);
             int infoRoom = Math.max(0, cap - openRoom - closureRoom);
-            keptClosures = new ArrayList<>(realClosures.subList(0, closureRoom));
+            keptReps = new ArrayList<>(repList.subList(0, closureRoom));
             keptOpen = new ArrayList<>(openRows.subList(0, openRoom));
             keptInfo = new ArrayList<>(infoRows.subList(0, Math.min(infoRows.size(), infoRoom)));
             log.warn("Alarm akışı satır tavanına ({}) ulaştı — {} satır bu yanıta girmedi (kapanışlar sonraki çağrıda gider)",
                     cap, total - cap);
         }
 
-        // 9) Teslim işareti: bu yanıtta gönderilen kapanışlar (ve gönderilmeyecek kadar gereksizleşmiş olanlar).
+        // 9) Teslim işareti (ilk gönderim anı; yalnız boşsa yazılır): bu yanıtta GİDEN kapanışlar, temsilcisi giden
+        //    yinelenenler, açık anahtarla bastırılanlar ve kopyası okunamayanlar.
+        if (!unusable.isEmpty() && nowMs - lastUnusableWarnMs >= 3600_000L) {
+            lastUnusableWarnMs = nowMs;
+            log.warn("Alarm akışı: {} kapanışın gönderilmiş kopyası okunamadı — merkezi sisteme 'çözüldü' gönderilemedi",
+                    unusable.size());
+        }
         if (!dryRun) {
-            List<Long> delivered = new ArrayList<>();
-            for (Closure x : keptClosures) if (x.state().closureSentAt == null && x.state().id != null) delivered.add(x.state().id);
-            for (Closure x : closures) {
-                if (x.row() == null && x.state().closureSentAt == null && x.state().id != null) delivered.add(x.state().id);
+            List<State> delivered = new ArrayList<>(suppressedByOpen);
+            delivered.addAll(unusable);
+            for (Cand x : keptReps) {
+                delivered.add(x.s());
+                delivered.addAll(dupOf.getOrDefault(x.dedupeKey(), List.of()));
             }
-            for (Long id : delivered) {
+            for (State st : delivered) {
+                if (st.closureSentAt != null || st.id == null) continue;
                 try {
-                    jdbc.update(SQL_STATE_DELIVERED, now, id);
+                    jdbc.update(SQL_STATE_DELIVERED, now, st.id);
                 } catch (Exception ex) {
                     log.warn("Alarm akışı kapanış teslim işareti yazılamadı — bir sonraki çağrıda yeniden gönderilir: {}",
                             ex.toString());
                 }
             }
         }
+        List<Cand> keptClosures = keptReps;
 
         List<Map<String, Object>> resolvedRows = new ArrayList<>();
-        keptClosures.sort(Comparator.comparing((Closure x) -> nz(x.closedAt()), Comparator.reverseOrder())
-                .thenComparing((Closure x) -> x.state().alertId, Comparator.reverseOrder()));
-        for (Closure x : keptClosures) resolvedRows.add(x.row());
+        List<Cand> outClosures = new ArrayList<>(keptClosures);
+        outClosures.sort(Comparator.comparing((Cand x) -> nz(x.s().closedAt), Comparator.reverseOrder())
+                .thenComparing((Cand x) -> x.s().alertId, Comparator.reverseOrder()));
+        for (Cand x : outClosures) resolvedRows.add(x.row());
         resolvedRows.addAll(keptInfo);
 
         List<Map<String, Object>> rows = new ArrayList<>(keptOpen.size() + resolvedRows.size());
@@ -444,14 +480,6 @@ public class AlarmFeedService {
 
         if (!dryRun) pruneMaybe(nowMs, c);
         return new Feed(List.copyOf(rows), keptOpen.size(), resolvedRows.size(), truncated, now);
-    }
-
-    /**
-     * Gönderilmeyecek (çakışan / Clear kipinde gereksiz) kapanış: satır yok, ama teslim edilmiş sayılır — aksi halde
-     * pencere dışında da sonsuza dek "teslim bekliyor" kalırdı.
-     */
-    private static void markLater(State s, List<Closure> closures, Map<String, Object> row) {
-        closures.add(new Closure(s, row, s.closedAt));
     }
 
     static boolean inScope(Item it, AlarmFeedSettings.Config c) {
@@ -572,10 +600,16 @@ public class AlarmFeedService {
             State s = new State(rs.getLong("id"), alertId, rs.getString("key_hash"),
                     AlarmFeedSettings.canonicalLevel(rs.getString("level")), rs.getString("sent_at"),
                     rs.getString("closed_at"), rs.getString("closed_reason"), rs.getString("closure_sent_at"),
-                    snapshot(rs.getString("snapshot")));
+                    rs.getString("snapshot"));
             out.computeIfAbsent(alertId, k -> new ArrayList<>()).add(s);
-        }, since);
+        }, since, since);
         return out;
+    }
+
+    /** Durum satırının kopyası (ilk istekte açılır); okunamazsa null. */
+    private Map<String, Object> snapshotOf(State s) {
+        if (s.snapshot == null && s.snapshotJson != null) s.snapshot = snapshot(s.snapshotJson);
+        return s.snapshot;
     }
 
     @SuppressWarnings("unchecked")
@@ -600,11 +634,11 @@ public class AlarmFeedService {
      * Bellekte kapatır ve koşullu UPDATE'i plana ekler. Yalnız okunmuş (kimlikli) satır kapanır: yeni satır yalnız açık
      * alarmın GÜNCEL anahtarı için eklenir ve aynı yanıtta kapanmaz.
      */
-    private void close(State s, String at, String reason, List<Runnable> ops) {
+    private void close(State s, String at, String reason, String now, List<Runnable> ops) {
         s.closedAt = at;
         s.reason = reason;
         Long id = s.id;
-        if (id != null) ops.add(() -> jdbc.update(SQL_STATE_CLOSE, at, reason, id));
+        if (id != null) ops.add(() -> jdbc.update(SQL_STATE_CLOSE, at, reason, now, id));
     }
 
     private void runOps(List<Runnable> ops) {
@@ -633,9 +667,29 @@ public class AlarmFeedService {
     private void pruneMaybe(long nowMs, AlarmFeedSettings.Config c) {
         if (nowMs - lastPruneMs < PRUNE_EVERY_MS) return;
         lastPruneMs = nowMs;
+        prune(nowMs, c);
+    }
+
+    /**
+     * Saatlik temizlik (her pod; silmeler idempotent) — akış kapalıyken de koşar: o zaman 30 günden eski bütün durum
+     * satırları (takım adı / adres kopyaları) silinir. Açıkken yalnız bitmiş kapanışlar.
+     */
+    @Scheduled(fixedDelay = 3_600_000L, initialDelay = 900_000L)
+    public void scheduledPrune() {
+        long nowMs = clock.getAsLong();
+        lastPruneMs = nowMs;
+        prune(nowMs, config());
+    }
+
+    void prune(long nowMs, AlarmFeedSettings.Config c) {
         try {
-            long keepMs = c.resolvedMinutes() * 60_000L + PRUNE_AFTER_MS;
-            int a = jdbc.update(SQL_STATE_PRUNE_SENT, ISO.format(Instant.ofEpochMilli(nowMs - keepMs)));
+            if (!c.enabled()) {
+                int n = jdbc.update(SQL_STATE_PRUNE_DISABLED, ISO.format(Instant.ofEpochMilli(nowMs - DISABLED_KEEP_MS)));
+                if (n > 0) log.info("Alarm akışı kapalı: 30 günden eski {} olay durumu silindi", n);
+                return;
+            }
+            String keep = ISO.format(Instant.ofEpochMilli(nowMs - (c.resolvedMinutes() * 60_000L + PRUNE_AFTER_MS)));
+            int a = jdbc.update(SQL_STATE_PRUNE_SENT, keep, keep);
             int b = jdbc.update(SQL_STATE_PRUNE_UNDELIVERED, ISO.format(Instant.ofEpochMilli(nowMs - UNDELIVERED_MAX_MS)));
             if (b > 0) log.warn("Alarm akışı: {} kapanış 7 gün içinde hiç teslim edilemedi ve bırakıldı", b);
             if (a > 0) log.debug("Alarm akışı: {} eski olay durumu silindi", a);

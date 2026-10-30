@@ -142,6 +142,7 @@ public class AlarmFeedAdminController {
                 Map<String, Object> m = new LinkedHashMap<>();
                 m.put("ip", a.getClientIp());
                 m.put("first_seen_at", a.getFirstSeenAt());
+                m.put("first_ok_at", a.getFirstOkAt());
                 m.put("last_seen_at", a.getLastSeenAt());
                 m.put("call_count", a.getCallCount());
                 m.put("last_user_agent", a.getLastUserAgent());

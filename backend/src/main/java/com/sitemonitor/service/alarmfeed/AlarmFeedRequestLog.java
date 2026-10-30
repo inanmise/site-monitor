@@ -30,8 +30,8 @@ import java.util.zip.GZIPOutputStream;
  * Alarm akışının dış çağrı günlüğü (2026-10-30). Her çağrı {@code alarm_feed_requests}'e bir satır; yanıt gövdesi
  * (saklama açıksa) gzip'li ve SHA-256 özetiyle {@code alarm_feed_responses}'a BİR kez; çağıran IP {@code alarm_feed_callers}'a.
  *
- * <p><b>Denetim.</b> Bir IP'nin İLK çağrısı {@code ALARM_FEED_NEW_CALLER} (çağıranlar satırını ekleyen pod yazar — çok pod'da da
- * bir kez); reddedilen çağrılar {@code ALARM_FEED_ACCESS_DENIED} — IP + neden başına 10 dakikada bir (dakikalık bir istemci denetim
+ * <p><b>Denetim.</b> Bir IP'nin İLK KABUL edilen çağrısı {@code ALARM_FEED_NEW_CALLER} ({@code first_ok_at}'ı koşullu
+ * yazan pod yazar — çok pod'da da bir kez; önce reddedilip sonra izin listesine eklenen IP de denetime düşer); reddedilen çağrılar {@code ALARM_FEED_ACCESS_DENIED} — IP + neden başına 10 dakikada bir (dakikalık bir istemci denetim
  * günlüğünü boğmasın; ayrıntının tamamı çağrı günlüğündedir).
  *
  * <p><b>Akışı asla durdurmaz.</b> Günlük yazılamazsa istemci yanıtını yine alır; hata sayılır (Ayarlar sayfasında görünür) ve
@@ -68,6 +68,9 @@ public class AlarmFeedRequestLog {
             + "last_user_agent = ?, last_outcome = ? WHERE client_ip = ?";
     static final String SQL_CALLER_INSERT = "INSERT INTO alarm_feed_callers (client_ip, first_seen_at, last_seen_at, "
             + "call_count, last_user_agent, last_outcome) VALUES (?, ?, ?, 1, ?, ?)";
+    /** İlk kabul edilen çağrı anı — koşullu (yalnız boşsa); 1 satır = bu pod yeni çağıranı denetler. */
+    static final String SQL_CALLER_FIRST_OK = "UPDATE alarm_feed_callers SET first_ok_at = ? "
+            + "WHERE client_ip = ? AND first_ok_at IS NULL";
 
     private final AlarmFeedRequestRepository requests;
     private final JdbcTemplate jdbc;
@@ -79,6 +82,8 @@ public class AlarmFeedRequestLog {
     private volatile long lastFailureWarnMs;
     private final Map<String, Long> deniedAudited = new ConcurrentHashMap<>();
     private final Map<String, Long> rateLogged = new ConcurrentHashMap<>();
+    /** Bu pod'un ilk kabul anını yazdığı / gördüğü IP'ler (ek ifade olmasın; sınırlı). */
+    private final Map<String, Boolean> knownOk = new ConcurrentHashMap<>();
     /** Bu pod'un bildiği gövde özetleri → son tazeleme anı (erişim sırasıyla, en çok {@link #KNOWN_HASHES}). */
     private final LinkedHashMap<String, Long> knownHashes = new LinkedHashMap<>(16, 0.75f, true);
     private final AtomicLong suppressed = new AtomicLong();
@@ -227,17 +232,20 @@ public class AlarmFeedRequestLog {
         String ua = AlarmFeedRequest.fit(call.userAgent(), 500);
         try {
             int n = jdbc.update(SQL_CALLER_UPDATE, at, ua, outcome, ip);
-            if (n > 0) return;
-            boolean inserted;
-            try {
-                jdbc.update(SQL_CALLER_INSERT, ip, at, at, ua, outcome);
-                inserted = true;
-            } catch (DataIntegrityViolationException dup) {
-                jdbc.update(SQL_CALLER_UPDATE, at, ua, outcome, ip);
-                inserted = false;
+            if (n == 0) {
+                try {
+                    jdbc.update(SQL_CALLER_INSERT, ip, at, at, ua, outcome);
+                } catch (DataIntegrityViolationException dup) {
+                    jdbc.update(SQL_CALLER_UPDATE, at, ua, outcome, ip);
+                }
             }
-            // Yeni IP denetimi yalnız KABUL edilen çağrıda (reddedilen yeni IP ALARM_FEED_ACCESS_DENIED ile görünür).
-            if (inserted && ok && auditService != null) {
+            // Yeni IP denetimi İLK KABUL edilen çağrıda (reddedilen yeni IP ALARM_FEED_ACCESS_DENIED ile görünür). Bu pod'un
+            // zaten kabul ettiği IP için ek ifade yok.
+            if (!ok || knownOk.containsKey(ip)) return;
+            int first = jdbc.update(SQL_CALLER_FIRST_OK, at, ip);
+            if (knownOk.size() >= THROTTLE_MAP_MAX) knownOk.clear();
+            knownOk.put(ip, Boolean.TRUE);
+            if (first > 0 && auditService != null) {
                 auditService.recordAction("ALARM_FEED_NEW_CALLER", "alarm-feed-client", null, null, "EXTERNAL",
                         "ALARM_FEED", ip, AuditDetail.of("client_ip", ip, "outcome", outcome,
                                 "remote_addr", call.remoteAddr(), "forwarded_for", call.forwardedFor()),
