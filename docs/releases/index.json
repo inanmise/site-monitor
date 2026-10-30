@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-29T22:57:04Z",
+  "generatedAt": "2026-10-30T13:50:08Z",
   "repo": "inanmise/site-monitor",
-  "count": 792,
+  "count": 793,
   "releases": [
+    {
+      "version": "20.172.1",
+      "tag": "v20.172.1",
+      "releasedAt": "2026-10-30T13:50:00Z",
+      "commit": "d8f0ae6bc31b50ddbb3bb087b1d3fe0f1ec5cbaf",
+      "prevVersion": "20.172.0",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "d8f0ae6b",
+          "subject": "yönlendirme adresi tarayıcı gibi okunur, sayfa kaynak tavanı ayar, watchdog kanıtsız düzelmez, PDF mono font gömülü"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.172.0",
       "tag": "v20.172.0",
