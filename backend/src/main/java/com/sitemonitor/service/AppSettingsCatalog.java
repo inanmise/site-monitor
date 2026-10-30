@@ -225,6 +225,26 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.scripted.godebug",                 "k6-engine", Type.STRING),
         new Setting("site.monitor.scripted.user-agent",              "k6-engine", Type.STRING),
         new Setting("site.monitor.scripted.compat-scan.excluded-ids","k6-engine", Type.STRING),
+        // 2026-10-30: merkezi izleme alarm akışı (GET /api/public/alarm-feed, belirteçsiz) — kurum geneli alarmları DIŞARI
+        // açar; hepsi GLOBAL_ONLY (aşağıda), Ayarlar → Platform → Alarm akışı (kendi sayfası: GeneralSettingsController.OWN_PAGE_GROUPS).
+        new Setting("site.monitor.alarm-feed.enabled",           "alarm-feed", Type.BOOL),
+        new Setting("site.monitor.alarm-feed.min-level",         "alarm-feed", Type.ENUM, List.of("WARNING", "HIGH", "CRITICAL")),
+        new Setting("site.monitor.alarm-feed.team-ids",          "alarm-feed", Type.CSV),
+        new Setting("site.monitor.alarm-feed.types",             "alarm-feed", Type.CSV),
+        new Setting("site.monitor.alarm-feed.resolved-minutes",  "alarm-feed", Type.INT),
+        new Setting("site.monitor.alarm-feed.resolved-mode",     "alarm-feed", Type.ENUM, List.of("status", "clear")),
+        new Setting("site.monitor.alarm-feed.clear-text",        "alarm-feed", Type.STRING),
+        new Setting("site.monitor.alarm-feed.severity-critical", "alarm-feed", Type.STRING),
+        new Setting("site.monitor.alarm-feed.severity-high",     "alarm-feed", Type.STRING),
+        new Setting("site.monitor.alarm-feed.severity-warning",  "alarm-feed", Type.STRING),
+        new Setting("site.monitor.alarm-feed.rci-mode",          "alarm-feed", Type.ENUM, List.of("target_type", "target")),
+        new Setting("site.monitor.alarm-feed.source",            "alarm-feed", Type.STRING),
+        new Setting("site.monitor.alarm-feed.rcitype",           "alarm-feed", Type.STRING),
+        new Setting("site.monitor.alarm-feed.mail-separator",    "alarm-feed", Type.ENUM, List.of("semicolon", "comma")),
+        new Setting("site.monitor.alarm-feed.allowed-ips",       "alarm-feed", Type.CSV),
+        new Setting("site.monitor.alarm-feed.rate-per-minute",   "alarm-feed", Type.INT),
+        new Setting("site.monitor.alarm-feed.max-rows",          "alarm-feed", Type.INT),
+        new Setting("site.monitor.alarm-feed.store-body",        "alarm-feed", Type.BOOL),
         new Setting("site.monitor.scripted.hardcoded-secret-policy", "scripted", Type.ENUM, java.util.List.of("WARN", "BLOCK")),
         // Betikte dosya okuma (2026-10-01, öneri 1): REPORT = uyar + raporla (varsayılan, davranış aynı) · BLOCK = kayıt
         // reddedilir, koşum yürütülmez. Önce /api/admin/scripted/file-read-report ile mevcut betikler denetlenir.
@@ -552,6 +572,8 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.notification.retention-days",       "retention", Type.INT),
         new Setting("site.monitor.sql-history.retention-days",        "retention", Type.INT),
         new Setting("site.monitor.heartbeat.retention-days",          "retention", Type.INT),
+        // 2026-10-30: alarm akışı çağrı günlüğü (alarm_feed_requests / _callers) — RetentionCatalog "alarm-feed-requests".
+        new Setting("site.monitor.alarm-feed.log-retention-days",     "retention", Type.INT),
         new Setting("site.monitor.diagnostics.retention-days",        "retention", Type.INT),
         new Setting("site.monitor.alert.retention-days",              "retention", Type.INT),
         new Setting("site.monitor.login-issue.retention-days",        "retention", Type.INT),
@@ -751,7 +773,27 @@ public final class AppSettingsCatalog {
         "site.monitor.checks.distributed.enabled",
         "site.monitor.checks.distributed.types",
         // 2026-10-29 (çok pod Sürüm 3-4): parçalı sertifika taraması — TÜM pod'ların sertifika ölçüm yükünü belirler.
-        "site.monitor.checks.cert-chunks.enabled"
+        "site.monitor.checks.cert-chunks.enabled",
+        // 2026-10-30: merkezi izleme alarm akışı — kurum geneli alarmları belirteçsiz dışarı açar; erişim / kapsam / biçim
+        // kurum geneli karar (müdür sayfayı açamaz, uç ayrıca kapılı).
+        "site.monitor.alarm-feed.enabled",
+        "site.monitor.alarm-feed.min-level",
+        "site.monitor.alarm-feed.team-ids",
+        "site.monitor.alarm-feed.types",
+        "site.monitor.alarm-feed.resolved-minutes",
+        "site.monitor.alarm-feed.resolved-mode",
+        "site.monitor.alarm-feed.clear-text",
+        "site.monitor.alarm-feed.severity-critical",
+        "site.monitor.alarm-feed.severity-high",
+        "site.monitor.alarm-feed.severity-warning",
+        "site.monitor.alarm-feed.rci-mode",
+        "site.monitor.alarm-feed.source",
+        "site.monitor.alarm-feed.rcitype",
+        "site.monitor.alarm-feed.mail-separator",
+        "site.monitor.alarm-feed.allowed-ips",
+        "site.monitor.alarm-feed.rate-per-minute",
+        "site.monitor.alarm-feed.max-rows",
+        "site.monitor.alarm-feed.store-body"
     ));
 
     /**

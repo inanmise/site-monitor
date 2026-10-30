@@ -89,7 +89,7 @@ public class GeneralSettingsController {
      */
     static final java.util.Set<String> OWN_PAGE_GROUPS = java.util.Set.of(
             "branding", "retention", "userpush", "storm", "login-anomaly", "login-methods", "appearance",
-            "executive-summary", "tech-error-report", "grafana", "k6-engine");
+            "executive-summary", "tech-error-report", "grafana", "k6-engine", "alarm-feed");
 
     static void rejectOwnPageKeys(Map<String, Object> values) {
         for (String key : values.keySet()) {

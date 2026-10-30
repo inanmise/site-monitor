@@ -353,6 +353,44 @@ Kontrol: kurum ağından `curl -s -o /dev/null -w "%{http_code}\n" https://<host
 Prometheus"). Yine de `/metrics*` yollarını kenarda engelleyin: belirteçli uç kaba kuvvete karşı hız sınırlıdır ama kurum
 ağına açık olması gerekmez; Prometheus pod IP'sinden küme içinden kazımaya devam eder.
 
+## Merkezi izleme alarm akışı
+
+Kurum içi izleme ekibi alarmları tek merkezde toplar; SiteMonitor'den **her dakika** `GET /api/public/alarm-feed` ile çeker
+(2026-10-30, kullanıcı kararı: **belirteç yok**). Ayar: Ayarlar → Platform → **Alarm akışı** (yalnız global yönetici).
+Varsayılan **KAPALI** — kapalıyken uç 404 `ALARM_FEED_DISABLED` döner.
+
+**Ne döner.** JSON dizi (varsayılan; `?format=csv` → CSV). Her satır ekibin kolonları: `CREATEDTIME` (Türkiye saati,
+`yyyy-MM-dd HH:mm:ss`), `SEVERITY` (Critical / Major / Warning — eşleme ayarlanır), `RCI` (hedef · alarm türü; ayarla yalnız
+hedef), `RCITYPE` (izleme türü), `CATEGORY` (alarm türü), `FILTERSOURCE` (SiteMonitor), `TEXT` (kısa: `(hedef) ne oldu`),
+`BODY` (durum, kaynak, hedef, ne oldu, başlangıç, takım + e-posta, alarm no + bağlantı), `MAILS` (sahip takım(lar)ın
+adresleri); ek kolonlar `STATUS` (OPEN / RESOLVED), `RESOLVEDTIME`, `ALERTID`, `TEAM`, `UGTEAM`, `LINK`. EVENTKEY
+gönderilmez (ekip `kaynak|||RCI|||SEVERITY` olarak kendisi kurar) — RCI bir alarmın ömrü boyunca değişmez.
+
+Her çağrı o anki durumun **tamamıdır**: kapsamdaki bütün açık alarmlar + son N dakikada (varsayılan 15) kapananlar. Çözülen
+alarm aynı SEVERITY ile `STATUS=RESOLVED` döner (ayarla "SEVERITY = Clear" kipine geçilir). Alarmın seviyesi değişince
+(Warning → Critical) merkezi sistemde yeni olay doğar; ESKİ seviye pencere boyunca `RESOLVED` döner (sahipsiz açık olay
+kalmaz). Kapsam daraltılırsa (takım / tür / seviye) daha önce bildirilmiş açık alarm "akış kapsamından çıktı" diye
+`RESOLVED` döner. Alarm verisi okunamazsa **503 `ALARM_FEED_UNAVAILABLE`** — asla boş liste.
+
+**Erişim.** Belirteç yok; önerilen: (1) ayar sayfasında **IP izin listesi** (tek adres ya da CIDR; boş = herkes),
+(2) kenarda / Ingress'te yolu yalnız kurum ağına açın. IP `ClientIpResolver` ile çözülür (`site.monitor.client-ip.*`,
+`X-Forwarded-For`). IP başına dakikalık sınır (varsayılan 30) kümede ortaktır → aşılınca 429 + `Retry-After`.
+
+**Günlük ve denetim.** Her çağrı (reddedilenler dahil) Ayarlar → Alarm akışı → **Çağrı günlüğü**'nde: zaman, istemci IP'si,
+ham `X-Forwarded-For`, bağlantı adresi, user-agent, sonuç (OK / DISABLED / IP_DENIED / RATE_LIMITED / ERROR), satır
+sayıları, süre, yanıtlayan pod, istek kimliği ve yanıtın **birebir kopyası** (gzip, özetle tekil; "Yanıt gövdesini sakla"
+kapatılabilir). Oran sınırına takılan çağrı IP başına dakikada bir satır yazar. Ana Denetim Günlüğü: `ALARM_FEED_SETTINGS_SAVE`,
+`ALARM_FEED_NEW_CALLER` (IP'nin ilk çağrısı, kümede bir kez), `ALARM_FEED_ACCESS_DENIED` (IP + neden başına 10 dk'da bir),
+`ALARM_FEED_LOG_EXPORT`. Saklama: Veri saklama → `alarm-feed-requests` (varsayılan 90 gün).
+
+**Sorun giderme.**
+- Ekip "404 alarm akışı kapalı" alıyor → Ayarlar → Alarm akışı → açık mı.
+- "403 bu IP adresinin izni yok" → çağrı günlüğünde istemci IP'sine bakın (`forwarded_for` zinciri). Giriş katmanı
+  `X-Forwarded-For` yazmıyorsa istemci IP'si giriş katmanı olur — `site.monitor.client-ip.*` ayarlarını kontrol edin.
+- "Arayan sessiz" uyarısı → ekibin işi durmuş olabilir; son çağrı zamanı ve sonucu ayar sayfasındaki "Durum" kartında.
+- Örnek: `curl -s https://<host>/api/public/alarm-feed | head -c 600`; pandas:
+  `pd.DataFrame(requests.get(url, timeout=30).json(), columns=['CREATEDTIME','SEVERITY','RCI','RCITYPE','CATEGORY','FILTERSOURCE','TEXT','BODY','MAILS'])`.
+
 ## Grafana panosu ve Prometheus
 
 Ayarlar → Platform → **Grafana panosu**: ölçüm aktarıcısının canlı durumu (bu pod), pano ayarları ve **JSON indir**

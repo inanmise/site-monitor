@@ -369,6 +369,26 @@ public final class RetentionCatalog {
                 "Taraması silinmiş k6 uyumluluk sonuçları (izleme adı, durum, maskeli hata metni) — tarama kendi "
                 + "politikasıyla silinince yetim kalır ve burada temizlenir."),
 
+        // ── Merkezi izleme alarm akışı (2026-10-30): dış çağrı günlüğü ─────────────────────────────
+        age("alarm-feed-requests", "alarm_feed_requests", "requested_at", "site.monitor.alarm-feed.log-retention-days",
+                90, 7, true, DataClass.SECURITY_AUDIT,
+                "Alarm akışının (GET /api/public/alarm-feed, belirteçsiz) dış çağrı günlüğü: zaman, istemci IP'si, ham "
+                + "X-Forwarded-For, user-agent, sonuç, dönen satır sayısı, yanıt özeti. Dakikada bir çağıran istemci için "
+                + "günde ≈ 1.440 satır; erişim kanıtı olarak denetim penceresinde tutulur."),
+        age("alarm-feed-callers", "alarm_feed_callers", "last_seen_at", "site.monitor.alarm-feed.log-retention-days",
+                90, 7, false, DataClass.PERSONAL,
+                "Alarm akışını çağıran IP başına tek satır (ilk / son görülme, çağrı sayısı, son user-agent). Çağrı günlüğüyle "
+                + "aynı pencere: o süre boyunca hiç çağırmayan IP silinir."),
+        orphan("alarm-feed-responses-orphan", "alarm_feed_responses",
+                "NOT EXISTS (SELECT 1 FROM alarm_feed_requests r WHERE r.response_hash = alarm_feed_responses.hash)",
+                DataClass.CONTENT,
+                "Alarm akışının döndürdüğü yanıt gövdelerinin birebir kopyası (gzip, özetle tekil; alarm hedefleri, takım "
+                + "adları ve e-posta adresleri içerir). Hiçbir çağrı satırı göstermeyen gövde yetimdir ve silinir."),
+        info("alarm-feed-severities", "alarm_feed_severities", Mode.EXTERNAL, DataClass.OPERATIONAL,
+                "Alarm akışının merkezi sisteme açık bildirdiği (alarm, seviye) çiftleri — seviye değişince / çözülünce / "
+                + "kapsamdan çıkınca eski seviyeye 'çözüldü' göndermek için. AlarmFeedService saatte bir kendisi siler "
+                + "(kapanıştan çözülme penceresi + 2 gün sonra)."),
+
         // ── Temizliğin kendi çalışma geçmişi (öz-referans) ─────────────────────────────────────
         age("retention-run-items", "retention_run_item", "created_at", "site.monitor.retention.run-history-retention-days",
                 180, 30, false, DataClass.OPERATIONAL,

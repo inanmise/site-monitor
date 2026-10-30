@@ -38,6 +38,8 @@ vi.mock('../components/admin/LoginMethodsSettings.jsx', () => ({ default: () => 
 vi.mock('../components/admin/ThemeSettings.jsx', () => ({ default: () => <div data-testid="sec-themes" /> }))
 // k6 motoru (2026-10-29): yalnız global yönetici — kapsamlı müdürde "kurum geneli" notu, bileşen çizilmez
 vi.mock('../components/admin/k6engine/K6EngineSettings.jsx', () => ({ default: () => <div data-testid="sec-k6engine" /> }))
+// Alarm akışı (2026-10-30): yalnız global yönetici — kapsamlı müdürde "kurum geneli" notu, bileşen çizilmez
+vi.mock('../components/admin/alarmfeed/AlarmFeedSettings.jsx', () => ({ default: () => <div data-testid="sec-alarmfeed" /> }))
 // Emniyet kemeri: bir stub kaçarsa gerçek fetch yerine mock'a düşsün. Yapılandırma sağlığı ucu
 // ELLE: gezintideki durum noktaları ve başlık çipleri bu veriden türer.
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
@@ -65,14 +67,14 @@ function withTablet(on) {
 describe('AdminSettings — sekme semantiği, klavye ve derin bağlantı', () => {
   beforeEach(() => setUrl(''))
 
-  it('ARIA sekme deseni: 23 tab (2026-09-22: + Platformlar; 2026-09-27: + 7/24 İzleme Ekibi; 2026-10-02: + Sistem Bakımı, + Giriş Yöntemleri; 2026-10-05: + Temalar; 2026-10-17: + Teknik Hata Raporu; 2026-10-18: + Grafana panosu; 2026-10-29: + k6 motoru), tekil aria-selected, panele bağlı', () => {
+  it('ARIA sekme deseni: 24 tab (2026-09-22: + Platformlar; 2026-09-27: + 7/24 İzleme Ekibi; 2026-10-02: + Sistem Bakımı, + Giriş Yöntemleri; 2026-10-05: + Temalar; 2026-10-17: + Teknik Hata Raporu; 2026-10-18: + Grafana panosu; 2026-10-29: + k6 motoru; 2026-10-30: + Alarm akışı), tekil aria-selected, panele bağlı', () => {
     render(<AdminSettings />)
     // shadcn Tabs (Radix) — dikey liste
     const list = screen.getByRole('tablist', { name: /^settings$/i })
     expect(list).toHaveAttribute('data-slot', 'tabs-list')
     expect(list).toHaveAttribute('aria-orientation', 'vertical')
     const tabs = screen.getAllByRole('tab')
-    expect(tabs).toHaveLength(23)
+    expect(tabs).toHaveLength(24)
     expect(tabs.filter(t => t.getAttribute('aria-selected') === 'true')).toHaveLength(1)
 
     const panel = screen.getByRole('tabpanel')
@@ -195,13 +197,13 @@ describe('AdminSettings — sekme semantiği, klavye ve derin bağlantı', () =>
 describe('AdminSettings — tam sayfa kabuk: başlık, gruplu gezinti, arama, durum noktaları', () => {
   beforeEach(() => { setUrl(''); vi.clearAllMocks() })
 
-  it('PageHeader: h2 başlık + açıklama + "23 bölüm" çipi; içerik paneli tam genişlik (w-full, tavan yok)', () => {
+  it('PageHeader: h2 başlık + açıklama + "24 bölüm" çipi; içerik paneli tam genişlik (w-full, tavan yok)', () => {
     render(<AdminSettings />)
     const header = document.querySelector('[data-slot="page-header"]')
     expect(header).not.toBeNull()
     expect(within(header).getByRole('heading', { level: 2, name: /^(Settings|Ayarlar)$/ })).toBeInTheDocument()
     expect(header.querySelector('[data-slot="page-description"]')).not.toBeNull()
-    expect(within(header).getByText(/23 (sections|bölüm)/)).toBeInTheDocument()
+    expect(within(header).getByText(/24 (sections|bölüm)/)).toBeInTheDocument()
     const panel = screen.getByRole('tabpanel')
     expect(panel.className).toMatch(/\bw-full\b/)
     expect(panel.className).not.toMatch(/max-w-\[/)
@@ -236,7 +238,7 @@ describe('AdminSettings — tam sayfa kabuk: başlık, gruplu gezinti, arama, du
     expect(screen.getByText(/No matching sections|Eşleşen bölüm yok/)).toBeInTheDocument()
 
     fireEvent.change(search, { target: { value: '' } })
-    expect(screen.getAllByRole('tab')).toHaveLength(23)
+    expect(screen.getAllByRole('tab')).toHaveLength(24)
   })
 
   it('yapılandırma sağlığı verisi → ilgili sekmede durum noktası (en kötü durum) + başlıkta sayaç çipi; ek istek yok', async () => {
@@ -272,7 +274,7 @@ describe('AdminSettings — tam sayfa kabuk: başlık, gruplu gezinti, arama, du
     expect(api.admin.getConfigHealth).not.toHaveBeenCalled()
   })
 
-  it('tablet (768–1023 px): yatay `line` şerit — tek tablist, 23 sekme, kendi kaydırma kabında', () => {
+  it('tablet (768–1023 px): yatay `line` şerit — tek tablist, 24 sekme, kendi kaydırma kabında', () => {
     const restore = withTablet(true)
     try {
       render(<AdminSettings />)
@@ -280,7 +282,7 @@ describe('AdminSettings — tam sayfa kabuk: başlık, gruplu gezinti, arama, du
       expect(list).toHaveAttribute('aria-orientation', 'horizontal')
       expect(list).toHaveAttribute('data-variant', 'line')
       expect(list.closest('[data-slot="settings-rail"]')).not.toBeNull()
-      expect(screen.getAllByRole('tab')).toHaveLength(23)
+      expect(screen.getAllByRole('tab')).toHaveLength(24)
       expect(screen.queryByRole('searchbox')).toBeNull()   // arama kutusu yalnız masaüstü listesinde
       pressMenuTrigger(screen.getByRole('tab', { name: /LDAP/ }))
       expect(screen.getByTestId('sec-ldap')).toBeInTheDocument()
@@ -356,6 +358,22 @@ describe('AdminSettings — kapsamlı müdür kilitleri', () => {
     setUrl('')
   })
 
+  // Alarm akışı (2026-10-30): AlarmFeedController her uçta global yönetici ister — müdüre kurum geneli not, bileşen yok;
+  // global yönetici bileşeni görür ve ?sec=alarmfeed derin bağlantısı açılır
+  it('müdür: Alarm akışı KİLİTLİ (kurum geneli not); global yönetici bileşeni görür, ?sec=alarmfeed açılır', () => {
+    const r1 = render(<AdminSettings globalAdmin={false} />)
+    clickTab(/^(Alarm feed|Alarm akışı)$/i)
+    expect(screen.getByTestId('settings-global-only')).toBeInTheDocument()
+    expect(screen.getByTestId('settings-global-only').textContent).not.toMatch(/SMTP\/LDAP/)
+    expect(screen.queryByTestId('sec-alarmfeed')).toBeNull()
+    r1.unmount()
+    setUrl('tab=settings&sec=alarmfeed')
+    render(<AdminSettings />)
+    expect(screen.getByTestId('sec-alarmfeed')).toBeInTheDocument()
+    expect(screen.queryByTestId('settings-global-only')).toBeNull()
+    setUrl('')
+  })
+
   // 20.165.1 (UIA-C1): Haftalık erişilebilirlik + Envanter raporu uçlarının HEPSİ global-yalnız (SystemController.requireAdmin)
   it('müdür: Haftalık erişilebilirlik ve Envanter raporu KİLİTLİ (kurum geneli not), bileşen çizilmez', () => {
     render(<AdminSettings globalAdmin={false} />)
@@ -407,17 +425,17 @@ describe('AdminSettings — kapsamlı müdür kilitleri', () => {
   })
 })
 
-/** Telefon (< md, 2026-09-26 mweb): 23 bölümlük dikey menü yerine tek, GRUPLU NativeSelect. */
+/** Telefon (< md, 2026-09-26 mweb): 24 bölümlük dikey menü yerine tek, GRUPLU NativeSelect. */
 describe('AdminSettings — telefon bölüm seçicisi', () => {
   beforeEach(() => { setUrl(''); mobile.on = true })
   afterEach(() => { mobile.on = false })
 
-  it('sekme listesi yok; 23 seçenekli, 5 optgroup\'lu NativeSelect bölümü değiştirir, panel ona bağlı', () => {
+  it('sekme listesi yok; 24 seçenekli, 5 optgroup\'lu NativeSelect bölümü değiştirir, panel ona bağlı', () => {
     render(<AdminSettings />)
     expect(screen.queryByRole('tablist')).toBeNull()
     const select = screen.getByRole('combobox', { name: /^settings$/i })
     expect(select).toHaveAttribute('data-slot', 'native-select')
-    expect(select.options).toHaveLength(23)
+    expect(select.options).toHaveLength(24)
     expect(select.querySelectorAll('optgroup')).toHaveLength(5)
     expect([...select.querySelectorAll('optgroup')].map((g) => g.label)).toEqual(
       expect.arrayContaining([expect.stringMatching(/Platform/), expect.stringMatching(/Notifications|Bildirimler/)]))

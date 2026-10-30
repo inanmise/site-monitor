@@ -57,7 +57,11 @@ public class AuthInterceptor implements HandlerInterceptor {
             "/api/public/health/db",
             // Kendi kendini izleme (2026-10-11): dış izleyici oturumsuz okur — yalnız genel durum + kontrol anahtarları ve
             // anları (sayı, ad, adres, hata metni YOK); durum tablosundan okunur, istek başına yoklama koşmaz.
-            "/api/public/health/watchdog");
+            "/api/public/health/watchdog",
+            // Merkezi izleme alarm akışı (2026-10-30, kullanıcı kararı: belirteç YOK): kurum içi izleme ekibi her dakika
+            // oturumsuz çeker. Kapalıyken 404; IP izin listesi, kümede ortak oran sınırı ve her çağrının günlüğü
+            // AlarmFeedController'da (çağrı günlüğü + denetim).
+            "/api/public/alarm-feed");
 
     /** Endpoints a user with mustChangePassword=true is still allowed to call. */
     private static final Set<String> FORCED_CHANGE_WHITELIST = Set.of(

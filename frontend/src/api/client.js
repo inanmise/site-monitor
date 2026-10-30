@@ -71,6 +71,47 @@ async function fetchTechErrorPdf(id, signal = null) {
 }
 
 /**
+ * Alarm akışı çağrı günlüğünün CSV dışa aktarımı (2026-10-30): ham `fetch` + Blob + ortak indirme (`downloadBlob` — bağlantı
+ * DOM'da, adres 60 sn tutulur; Safari / iPad). Sonuç `request()` sözleşmesinde: `{ success: true, name }` ya da
+ * `{ success: false, status, code, error }`. 401 oturum yolunu çalıştırır; JSON olmayan hata (proxy sayfası) ve ağ hatası
+ * çevrilmiş metinle döner; tarayıcı indirmeyi başlatamadıysa `DOWNLOAD_FAILED` (başarı sayılmaz).
+ */
+async function downloadAlarmFeedExport(qs) {
+  let res
+  try {
+    res = await fetch(`${BASE}/admin/alarm-feed/requests/export${qs ? `?${qs}` : ''}`,
+      { credentials: 'include', headers: { 'X-Lang': uiLang() } })
+  } catch {
+    return networkFailurePayload()
+  }
+  if (!res.ok) {
+    recordFailure('/admin/alarm-feed/requests/export', res.status)
+    if (res.status === 401) pingSessionPath()
+    let body = null
+    try { body = await res.json() } catch { body = null }
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return nonJsonErrorPayload(res.status, res)
+    const normalized = normalizeErrorBody(body, {
+      status: res.status, requestId: headerOf(res, 'X-Request-Id'), retryAfter: headerOf(res, 'Retry-After'), lang: uiLang(), exposeStatus: false,
+    })
+    normalized.success = false   // künye (`errorInfo`) sayılamaz özellik: yayma (spread) onu düşürürdü — yerinde yaz
+    normalized.status = res.status
+    return normalized
+  }
+  let blob
+  try { blob = await res.blob() } catch { return networkFailurePayload() }
+  const disp = headerOf(res, 'Content-Disposition') || ''
+  const star = /filename\*=UTF-8''([^;]+)/i.exec(disp)
+  const plain = /filename="?([^";]+)"?/.exec(disp)
+  let name = null
+  try { name = star ? decodeURIComponent(star[1]) : (plain ? plain[1] : null) } catch { name = plain ? plain[1] : null }
+  const p = (n) => String(n).padStart(2, '0')
+  const d = new Date()
+  const fallback = `alarm-akisi-cagrilari-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}.csv`
+  if (!downloadBlob(name || fallback, blob)) return { success: false, status: 0, code: 'DOWNLOAD_FAILED', error: null }
+  return { success: true, name: name || fallback }
+}
+
+/**
  * Ham `fetch` ile inen dosya (PDF) 401 aldıysa oturum yolunu çalıştırır (2026-10-22, UIM-27): tek bir yoklama
  * `request()`'in 401 dalından geçer — oturum düştüyse kullanıcı `/?session=expired`'a gider, sessizce "indirilemedi" kalmaz.
  */
@@ -609,6 +650,36 @@ export const api = {
   cryptoInventory: {
     get: (fresh = false) => request(fresh === true ? '/crypto-inventory?fresh=1' : '/crypto-inventory'),
     auditExport: (body) => request('/crypto-inventory/export-audit', { method: 'POST', body: JSON.stringify(body) }),
+  },
+  /**
+   * Alarm akışı (2026-10-30): merkezi izleme ekibinin dakikada bir çektiği herkese açık `GET /api/public/alarm-feed`
+   * ucunun yönetimi — ayarlar, önizleme (kayıtlı ayarlarla, günlüğe yazılmaz), çağıranlar ve çağrı günlüğü. YALNIZ global
+   * yönetici (sunucu her uçta 403). Hata gövdesi `withStatus` ile HTTP durumunu da taşır (400 VALIDATION_FAILED + `field`).
+   * `requests(params)`: `{ page (0 tabanlı), size, outcome?, ip?, from?, to? }` (`from` / `to` = yyyy-MM-dd İstanbul günü).
+   * `exportRequests(params)`: aynı süzgeçlerle CSV indirir (≤ 10 000 satır) → `{ success, name }` ya da hata yükü.
+   */
+  alarmFeed: {
+    get: () => request('/admin/alarm-feed', { withStatus: true }),
+    save: (body) => request('/admin/alarm-feed/settings', { method: 'PUT', body: JSON.stringify(body || {}), withStatus: true }),
+    preview: () => request('/admin/alarm-feed/preview', { withStatus: true }),
+    requests: (params = {}) => {
+      const qs = new URLSearchParams()
+      for (const k of ['page', 'size', 'outcome', 'ip', 'from', 'to']) {
+        const v = params[k]
+        if (v !== undefined && v !== null && v !== '') qs.set(k, String(v))
+      }
+      const s = qs.toString()
+      return request(`/admin/alarm-feed/requests${s ? `?${s}` : ''}`, { withStatus: true })
+    },
+    request: (id) => request(`/admin/alarm-feed/requests/${encodeURIComponent(id)}`, { withStatus: true }),
+    exportRequests: (params = {}) => {
+      const qs = new URLSearchParams()
+      for (const k of ['outcome', 'ip', 'from', 'to']) {
+        const v = params[k]
+        if (v !== undefined && v !== null && v !== '') qs.set(k, String(v))
+      }
+      return downloadAlarmFeedExport(qs.toString())
+    },
   },
   /**
    * Aylık Yönetici Özeti (2026-10-10) — okuma: global yönetici + AUDIT (`executive_summary.view`); ayar/test/gönderim:
