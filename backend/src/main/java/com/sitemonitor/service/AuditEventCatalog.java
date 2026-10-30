@@ -66,6 +66,8 @@ public final class AuditEventCatalog {
             // Merkezi izleme alarm akışı (2026-10-30): reddedilen çağrı (kapalı / IP izni yok / oran sınırı — IP + neden başına
             // 10 dk'da bir), ilk kez görülen çağıran IP, çağrı günlüğü dışa aktarımı, ayar kaydı. Ayrıntı çağrı günlüğünde.
             "ALARM_FEED_ACCESS_DENIED",
+            "ALARM_FEED_IP_BLOCKED",    // aynı IP dakikalık eşiği aştı → süreli otomatik engel (2026-10-31)
+            "ALARM_FEED_IP_UNBLOCKED",  // yönetici engeli elle kaldırdı
             "ALARM_FEED_LOG_EXPORT",
             "ALARM_FEED_NEW_CALLER",
             "ALARM_FEED_SETTINGS_SAVE",
@@ -411,6 +413,8 @@ public final class AuditEventCatalog {
                 || t.startsWith("SESSION_") || t.startsWith("REMEMBER_TOKEN")
                 || t.equals("SELF_PASSWORD_CHANGE")) return AUTH;
 
+        // Alarm akışı IP engeli (2026-10-31) bir kendini koruma / güvenlik olayıdır — denetçi Güvenlik grubunda arar.
+        if (t.equals("ALARM_FEED_IP_BLOCKED") || t.equals("ALARM_FEED_IP_UNBLOCKED")) return SECURITY;
         // Alarm akışı (2026-10-30) bir dış ENTEGRASYONDUR — _DENIED (Güvenlik) kuralından SONRA, _EXPORT / SETTINGS'ten ÖNCE.
         if (t.startsWith("ALARM_FEED_")) return INTEGRATION;
 

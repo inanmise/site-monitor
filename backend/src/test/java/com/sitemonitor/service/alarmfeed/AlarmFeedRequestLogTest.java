@@ -132,6 +132,26 @@ class AlarmFeedRequestLogTest {
     }
 
     @Test
+    @DisplayName("Engelli IP: engelin yazıldığı çağrı her zaman satır, sonra IP başına dakikada bir; ayrıca ret denetimi yazılmaz")
+    void blockedCallsAreThrottled() {
+        AlarmFeedRequestLog.Result placed = new AlarmFeedRequestLog.Result(429, AlarmFeedRequestLog.OUTCOME_BLOCKED,
+                "{\"code\":\"ALARM_FEED_IP_BLOCKED\"}", "application/json", null, null, null, null, "json", null, true);
+        AlarmFeedRequestLog.Result blocked = new AlarmFeedRequestLog.Result(429, AlarmFeedRequestLog.OUTCOME_BLOCKED,
+                "{\"code\":\"ALARM_FEED_IP_BLOCKED\"}", "application/json", null, null, null, null, "json", null);
+        log.record(call("6.6.6.6"), blocked, true, null);   // dakikanın ilk BLOCKED satırı
+        log.record(call("6.6.6.6"), placed, true, null);    // engelin yazıldığı çağrı — yine yazılır
+        for (int i = 0; i < 50; i++) log.record(call("6.6.6.6"), blocked, true, null);
+        assertThat(requests.count()).isEqualTo(2);
+        assertThat(log.suppressedRefusals()).isEqualTo(50);
+        now += 61_000;
+        log.record(call("6.6.6.6"), blocked, true, null);
+        assertThat(requests.count()).isEqualTo(3);
+        verify(audit, never()).recordAction(eq("ALARM_FEED_ACCESS_DENIED"), anyString(), any(), any(), anyString(),
+                anyString(), anyString(), anyString(), anyString(), anyString(), any());
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM alarm_feed_responses", Long.class)).isZero();
+    }
+
+    @Test
     @DisplayName("Reddedilen çağrı: her biri günlükte; denetim IP + neden başına 10 dk'da bir; oran sınırı satırı dakikada bir")
     void deniedThrottles() {
         AlarmFeedRequestLog.Result denied = new AlarmFeedRequestLog.Result(403, AlarmFeedRequestLog.OUTCOME_IP_DENIED,

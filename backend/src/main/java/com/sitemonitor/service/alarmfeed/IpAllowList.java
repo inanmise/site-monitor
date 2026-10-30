@@ -59,6 +59,18 @@ public final class IpAllowList {
         return false;
     }
 
+    /** İstemci adresi listedeki bir girdiyle eşleşiyor mu? Boş liste / okunamayan liste ({@link #NONE}) → hiçbiri (false). */
+    public static boolean listed(List<String> entries, String clientIp) {
+        if (entries == null || entries.isEmpty()) return false;
+        InetAddress client = literal(clientIp);
+        if (client == null) return false;
+        for (String e : entries) {
+            if (e == null || NONE.equals(e)) continue;
+            if (matches(e, client)) return true;
+        }
+        return false;
+    }
+
     static boolean matches(String entry, InetAddress client) {
         String addr = entry;
         int prefix = -1;

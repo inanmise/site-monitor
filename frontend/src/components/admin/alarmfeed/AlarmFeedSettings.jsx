@@ -12,9 +12,10 @@ import { useVisibleInterval } from '../../../hooks/useVisibleInterval.js'
 import { useUnsavedWork } from '../../../utils/unsavedWork.js'
 import { navigateTo } from '../../../utils/navigate.js'
 import { SETTINGS_STACK, SettingsHeader } from '../SettingsControls.jsx'
-import { STATUS_REFRESH_MS, changedSettings, feedUrl, isDirty, limitsOf, toForm, validateChanges } from './alarmFeedModel.js'
+import { STATUS_REFRESH_MS, changedSettings, crossFieldErrors, feedUrl, isDirty, limitsOf, toForm, validateChanges } from './alarmFeedModel.js'
 import { TOUCH } from './AlarmFeedParts.jsx'
 import { CallersCard, StatusCard } from './AlarmFeedStatus.jsx'
+import { BlocksCard } from './AlarmFeedBlocks.jsx'
 import { SettingsCard } from './AlarmFeedForm.jsx'
 import { PreviewCard } from './AlarmFeedPreview.jsx'
 import { RequestsCard } from './AlarmFeedRequests.jsx'
@@ -122,6 +123,7 @@ export default function AlarmFeedSettings() {
     if (!Object.keys(body).length) return
     const map = {}
     for (const [k, err] of Object.entries(validateChanges(body, limits))) map[k] = t(err.key, ...err.params)
+    for (const [k, err] of Object.entries(crossFieldErrors(body, form))) if (!map[k]) map[k] = t(err.key, ...err.params)
     if (fe.check(map)) return
     // Akışı AÇMAK: uç parolasız erişilebilir olur — açık onay
     if (body.enabled === true) {
@@ -158,6 +160,17 @@ export default function AlarmFeedSettings() {
       if (alive.current) setSaving(false)
     }
   }
+
+  /** Engel listesi yanıtı (yenile / kaldır) — yalnız engel alanları güncellenir, form ve taslak dokunulmaz. */
+  const applyBlocks = useCallback((d) => {
+    if (!d || !alive.current) return
+    loadSeq.current++   // bu yanıttan ÖNCE başlamış bir yenileme eski listeyi geri getirmesin
+    setState((s) => (s.data ? {
+      ...s,
+      data: { ...s.data, blocks: d.blocks ?? null, active_blocks: d.active_blocks ?? null, blocks_error: d.blocks_error ?? null,
+        active_truncated: d.active_truncated === true },
+    } : s))
+  }, [])
 
   function discard() {
     setForm(saved)
@@ -236,6 +249,10 @@ export default function AlarmFeedSettings() {
         onChange={setField} onSave={save} onDiscard={discard} onGoRetention={() => goSection('retention')} />
 
       <PreviewCard preview={preview} onLoad={loadPreview} lang={lang} dirty={dirty} />
+
+      {Object.prototype.hasOwnProperty.call(data, 'blocks') && (
+        <BlocksCard data={data} lang={lang} onBlocks={applyBlocks} />
+      )}
 
       <CallersCard callers={Object.prototype.hasOwnProperty.call(data, 'callers') ? data.callers : null} lang={lang} />
 

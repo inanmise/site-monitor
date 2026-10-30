@@ -13,12 +13,18 @@ import com.sitemonitor.service.AuditDiff;
 import com.sitemonitor.service.AuditService;
 import com.sitemonitor.service.MonitorTypeCatalog;
 import com.sitemonitor.service.SchedulerService;
+import com.sitemonitor.service.alarmfeed.AlarmFeedBlocks;
 import com.sitemonitor.service.alarmfeed.AlarmFeedRequestLog;
 import com.sitemonitor.service.alarmfeed.AlarmFeedRows;
 import com.sitemonitor.service.alarmfeed.AlarmFeedService;
 import com.sitemonitor.service.alarmfeed.AlarmFeedSettings;
+import com.sitemonitor.service.alarmfeed.IpAllowList;
 import com.sitemonitor.util.Csv;
+import com.sitemonitor.service.lockout.RateLimitCounterService;
 import com.sitemonitor.util.Msg;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.bind.annotation.PostMapping;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
 import org.springframework.data.domain.Page;
@@ -66,7 +72,8 @@ public class AlarmFeedAdminController {
     static final ZoneId ISTANBUL = ZoneId.of("Europe/Istanbul");
     static final int EXPORT_MAX = 10_000;
     static final List<String> OUTCOMES = List.of(AlarmFeedRequestLog.OUTCOME_OK, AlarmFeedRequestLog.OUTCOME_DISABLED,
-            AlarmFeedRequestLog.OUTCOME_IP_DENIED, AlarmFeedRequestLog.OUTCOME_RATE_LIMITED, AlarmFeedRequestLog.OUTCOME_ERROR);
+            AlarmFeedRequestLog.OUTCOME_IP_DENIED, AlarmFeedRequestLog.OUTCOME_RATE_LIMITED, AlarmFeedRequestLog.OUTCOME_BLOCKED,
+            AlarmFeedRequestLog.OUTCOME_ERROR);
 
     private final AlarmFeedService feed;
     private final AlarmFeedRequestLog requestLog;
@@ -75,6 +82,8 @@ public class AlarmFeedAdminController {
     private final TeamRepository teams;
     private final AppSettingsService settings;
     private final AuditService auditService;
+    private AlarmFeedBlocks blocks;
+    private RateLimitCounterService limiter;
 
     public AlarmFeedAdminController(AlarmFeedService feed, AlarmFeedRequestLog requestLog, AlarmFeedRequestRepository requests,
                                     AlarmFeedCallerRepository callers, TeamRepository teams, AppSettingsService settings,
@@ -89,6 +98,16 @@ public class AlarmFeedAdminController {
     }
 
     // ── Görünüm ─────────────────────────────────────────────────────────────────────────────────
+
+    @Autowired(required = false)
+    void setBlocks(AlarmFeedBlocks blocks) {
+        this.blocks = blocks;
+    }
+
+    @Autowired(required = false)
+    void setLimiter(RateLimitCounterService limiter) {
+        this.limiter = limiter;
+    }
 
     @GetMapping
     public ResponseEntity<Map<String, Object>> view(HttpSession session) {
@@ -108,6 +127,8 @@ public class AlarmFeedAdminController {
         limits.put("max_rows", List.of(AlarmFeedSettings.ROWS_MIN, AlarmFeedSettings.ROWS_MAX));
         limits.put("text_max", AlarmFeedSettings.TEXT_MAX);
         limits.put("allowed_ips_max", AlarmFeedSettings.IPS_MAX);
+        limits.put("block_threshold", List.of(AlarmFeedSettings.BLOCK_THRESHOLD_MIN, AlarmFeedSettings.BLOCK_THRESHOLD_MAX));
+        limits.put("block_minutes", List.of(AlarmFeedSettings.BLOCK_MINUTES_MIN, AlarmFeedSettings.BLOCK_MINUTES_MAX));
         out.put("limits", limits);
         out.put("log_retention_days", settings.getInt(AlarmFeedSettings.KEY_LOG_RETENTION, 90));
         out.put("body_retention_days", settings.getInt(AlarmFeedSettings.KEY_BODY_RETENTION, 30));
@@ -153,7 +174,35 @@ public class AlarmFeedAdminController {
             callerRows = null;
         }
         out.put("callers", callerRows);
+        putBlocks(out);
         return out;
+    }
+
+    /** Engel listesi + etkin sayısı; okunamazsa {@code blocks: null} + {@code blocks_error} (asla "engel yok" değil). */
+    private void putBlocks(Map<String, Object> out) {
+        if (blocks == null) {
+            out.put("blocks", null);
+            out.put("active_blocks", null);
+            out.put("blocks_error", "unavailable");
+            return;
+        }
+        try {
+            AlarmFeedBlocks.Listing l = blocks.list(System.currentTimeMillis());
+            AlarmFeedSettings.Config c = feed.config();
+            for (Map<String, Object> r : l.rows()) {
+                String ip = String.valueOf(r.get("ip"));
+                // İzin listesindeki (ör. merkezi ekibin sunucusu) ya da sonradan muaf tutulan IP'nin engeli ekranda uyarılır
+                r.put("allow_listed", !c.allowedIps().isEmpty() && IpAllowList.listed(c.allowedIps(), ip));
+                r.put("exempt", IpAllowList.listed(c.blockExemptIps(), ip));
+            }
+            out.put("blocks", l.rows());
+            out.put("active_blocks", l.active());
+            out.put("active_truncated", l.activeTruncated());
+        } catch (Exception e) {
+            out.put("blocks", null);
+            out.put("active_blocks", null);
+            out.put("blocks_error", e.getClass().getSimpleName());
+        }
     }
 
     /** Son 24 saat özeti; okunamayan değer null (asla uydurma 0). */
@@ -222,6 +271,7 @@ public class AlarmFeedAdminController {
         }
         if (values.isEmpty()) return ok(view());
         requireDistinctSeverityTexts(cur, after);
+        requireBlockThresholdAboveRate(cur, after);
         settings.save(Map.of("values", values), actor(session));
         feed.invalidate();
         auditService.recordAction("ALARM_FEED_SETTINGS_SAVE", session, request, "SETTINGS", "alarm-feed",
@@ -256,6 +306,74 @@ public class AlarmFeedAdminController {
                                 + "in its event key; the same text would merge different events."));
             }
         }
+    }
+
+    /**
+     * Engel eşiği dakikalık sınırdan küçük olamaz: önce 429 (oran sınırı), çok daha yoğun çağrıda süreli engel. Değişen
+     * alan suçlanır; ikisi birden değiştiyse eşik.
+     */
+    static void requireBlockThresholdAboveRate(AlarmFeedSettings.Config cur, Map<String, Object> changed) {
+        // Değişmeyen değer yeniden doğrulanmaz: kayıtlı durum kuralı çiğniyorsa ilgisiz bir alanın kaydı engellenmesin
+        if (!changed.containsKey("block_threshold") && !changed.containsKey("rate_per_minute")) return;
+        int rate = Integer.parseInt(String.valueOf(changed.getOrDefault("rate_per_minute", cur.ratePerMinute())));
+        int threshold = Integer.parseInt(String.valueOf(changed.getOrDefault("block_threshold", cur.blockThreshold())));
+        if (threshold >= rate) return;
+        String blame = changed.containsKey("block_threshold") || !changed.containsKey("rate_per_minute")
+                ? "block_threshold" : "rate_per_minute";
+        throw new FieldValidationException(blame, Msg.t(
+                "Engel eşiği (" + threshold + " / dk) dakikalık çağrı sınırından (" + rate + " / dk) küçük olamaz — önce "
+                        + "sınır (429), daha yoğun çağrıda süreli engel uygulanır.",
+                "The block threshold (" + threshold + " / min) can't be lower than the per-minute call limit (" + rate
+                        + " / min) — the limit (429) applies first, a time-limited block for heavier call rates."));
+    }
+
+    // ── Otomatik IP engelleri ───────────────────────────────────────────────────────────────────
+
+    @GetMapping("/blocks")
+    public ResponseEntity<Map<String, Object>> blocks(HttpSession session) {
+        requireGlobal(session);
+        Map<String, Object> out = new LinkedHashMap<>();
+        putBlocks(out);
+        return ok(out);
+    }
+
+    /** Engeli elle kaldırır (kümede; diğer pod'lar en çok 5 sn içinde görür) ve o IP'nin dakika sayacını sıfırlar. */
+    @PostMapping("/blocks/unblock")
+    public ResponseEntity<Map<String, Object>> unblock(@RequestBody(required = false) Map<String, Object> body,
+                                                       HttpSession session, HttpServletRequest request) {
+        requireGlobal(session);
+        Object raw = body == null ? null : body.get("ip");
+        String ip = raw == null ? "" : raw.toString().trim();
+        if (ip.isEmpty() || ip.length() > 64) {
+            throw new FieldValidationException("ip", Msg.t("Engeli kaldırılacak IP adresi geçersiz.",
+                    "The IP address to unblock is invalid."));
+        }
+        if (blocks == null) {
+            throw new IllegalStateException(Msg.t("Engel servisi bu pod'da yok.",
+                    "The block service is not available on this pod."));
+        }
+        boolean removed = blocks.unblock(ip, actor(session), System.currentTimeMillis());
+        if (limiter != null) limiter.clear(RateLimitCounterService.key(AlarmFeedController.RATE_SCOPE, ip));
+        Map<String, Object> data = new LinkedHashMap<>();
+        if (!removed) {
+            putBlocks(data);
+            Map<String, Object> err = new LinkedHashMap<>();
+            err.put("success", false);
+            err.put("code", "ALARM_FEED_BLOCK_NOT_FOUND");
+            err.put("error", Msg.t("Bu IP için süren bir engel yok — süresi dolmuş ya da başka bir yönetici kaldırmış olabilir.",
+                    "There is no active block for this IP — it may have expired or another administrator lifted it."));
+            err.put("data", data);
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(err);
+        }
+        auditService.recordAction("ALARM_FEED_IP_UNBLOCKED", session, request, "ALARM_FEED", ip,
+                AuditDetail.of("client_ip", ip), null);
+        putBlocks(data);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("success", true);
+        out.put("data", data);
+        out.put("message", Msg.t("Engel kaldırıldı: " + ip + " (diğer pod'lar en çok 5 sn içinde uygular).",
+                "Block lifted: " + ip + " (other pods apply it within 5 s)."));
+        return ResponseEntity.ok(out);
     }
 
     // ── Önizleme ────────────────────────────────────────────────────────────────────────────────

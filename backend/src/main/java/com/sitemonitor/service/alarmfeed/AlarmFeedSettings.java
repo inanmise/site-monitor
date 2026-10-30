@@ -45,6 +45,13 @@ public final class AlarmFeedSettings {
     public static final String KEY_RATE = PREFIX + "rate-per-minute";
     public static final String KEY_MAX_ROWS = PREFIX + "max-rows";
     public static final String KEY_STORE_BODY = PREFIX + "store-body";
+    /** Otomatik IP engeli (2026-10-31): açık mı, dakikalık eşik, süre (dk), tekrarında katla. */
+    public static final String KEY_BLOCK_ENABLED = PREFIX + "block-enabled";
+    public static final String KEY_BLOCK_THRESHOLD = PREFIX + "block-threshold-per-minute";
+    public static final String KEY_BLOCK_MINUTES = PREFIX + "block-minutes";
+    public static final String KEY_BLOCK_ESCALATE = PREFIX + "block-escalate";
+    /** Engelden muaf IP / CIDR listesi — bu adresler hiç engellenmez, yalnız dakikalık sınır (429) uygulanır. */
+    public static final String KEY_BLOCK_EXEMPT = PREFIX + "block-exempt-ips";
     /** Çağrı günlüğü saklama süresi — RetentionCatalog'dan üretilir (Veri saklama sayfası). */
     public static final String KEY_LOG_RETENTION = PREFIX + "log-retention-days";
     /** Yanıt gövdesi kopyalarının saklama süresi (son kullanımdan) — RetentionCatalog "alarm-feed-responses". */
@@ -58,6 +65,8 @@ public final class AlarmFeedSettings {
     public static final int MINUTES_MIN = 1, MINUTES_MAX = 1440;
     public static final int RATE_MIN = 1, RATE_MAX = 600;
     public static final int ROWS_MIN = 100, ROWS_MAX = 10_000;
+    public static final int BLOCK_THRESHOLD_MIN = 10, BLOCK_THRESHOLD_MAX = 6000;
+    public static final int BLOCK_MINUTES_MIN = 1, BLOCK_MINUTES_MAX = 1440;
     public static final int TEXT_MAX = 60;
     public static final int IPS_MAX = 100;
     /** Açıkça boş izin listesi (= herkes) — kayıtlı değer; okumada boş listeye döner. */
@@ -84,13 +93,40 @@ public final class AlarmFeedSettings {
         FIELDS.put("rate_per_minute", KEY_RATE);
         FIELDS.put("max_rows", KEY_MAX_ROWS);
         FIELDS.put("store_body", KEY_STORE_BODY);
+        FIELDS.put("block_enabled", KEY_BLOCK_ENABLED);
+        FIELDS.put("block_threshold", KEY_BLOCK_THRESHOLD);
+        FIELDS.put("block_minutes", KEY_BLOCK_MINUTES);
+        FIELDS.put("block_escalate", KEY_BLOCK_ESCALATE);
+        FIELDS.put("block_exempt_ips", KEY_BLOCK_EXEMPT);
     }
 
     /** Akışın o anki ayarı (değişmez anlık görüntü). */
     public record Config(boolean enabled, String minLevel, Set<Long> teamIds, Set<String> types, int resolvedMinutes,
                          String resolvedMode, String clearText, String sevCritical, String sevHigh, String sevWarning,
                          String rciMode, String source, String rcitype, String mailSeparator, List<String> allowedIps,
-                         int ratePerMinute, int maxRows, boolean storeBody) {
+                         int ratePerMinute, int maxRows, boolean storeBody, boolean blockEnabled, int blockThreshold,
+                         int blockMinutes, boolean blockEscalate, List<String> blockExemptIps) {
+
+        /** Muaf liste olmadan (testler). */
+        public Config(boolean enabled, String minLevel, Set<Long> teamIds, Set<String> types, int resolvedMinutes,
+                      String resolvedMode, String clearText, String sevCritical, String sevHigh, String sevWarning,
+                      String rciMode, String source, String rcitype, String mailSeparator, List<String> allowedIps,
+                      int ratePerMinute, int maxRows, boolean storeBody, boolean blockEnabled, int blockThreshold,
+                      int blockMinutes, boolean blockEscalate) {
+            this(enabled, minLevel, teamIds, types, resolvedMinutes, resolvedMode, clearText, sevCritical, sevHigh,
+                    sevWarning, rciMode, source, rcitype, mailSeparator, allowedIps, ratePerMinute, maxRows, storeBody,
+                    blockEnabled, blockThreshold, blockMinutes, blockEscalate, List.of());
+        }
+
+        /** Engel ayarları olmadan (testler / eski çağıranlar) — engel varsayılanlarıyla. */
+        public Config(boolean enabled, String minLevel, Set<Long> teamIds, Set<String> types, int resolvedMinutes,
+                      String resolvedMode, String clearText, String sevCritical, String sevHigh, String sevWarning,
+                      String rciMode, String source, String rcitype, String mailSeparator, List<String> allowedIps,
+                      int ratePerMinute, int maxRows, boolean storeBody) {
+            this(enabled, minLevel, teamIds, types, resolvedMinutes, resolvedMode, clearText, sevCritical, sevHigh,
+                    sevWarning, rciMode, source, rcitype, mailSeparator, allowedIps, ratePerMinute, maxRows, storeBody,
+                    true, 120, 15, true, List.of());
+        }
 
         public boolean clearMode() { return "clear".equals(resolvedMode); }
 
@@ -142,6 +178,9 @@ public final class AlarmFeedSettings {
     public static Config read(AppSettingsService settings) {
         if (settings == null) return defaults();
         Config d = defaults();
+        int rate = clamp(settings.getInt(KEY_RATE, d.ratePerMinute()), RATE_MIN, RATE_MAX, d.ratePerMinute());
+        int threshold = clamp(settings.getInt(KEY_BLOCK_THRESHOLD, d.blockThreshold()), BLOCK_THRESHOLD_MIN,
+                BLOCK_THRESHOLD_MAX, d.blockThreshold());
         return new Config(
                 settings.getBoolean(KEY_ENABLED, d.enabled()),
                 oneOf(settings.getString(KEY_MIN_LEVEL, d.minLevel()), LEVELS, d.minLevel()),
@@ -158,14 +197,22 @@ public final class AlarmFeedSettings {
                 optionalText(settings.getString(KEY_RCITYPE, "")),
                 oneOf(settings.getString(KEY_MAIL_SEPARATOR, d.mailSeparator()), SEPARATORS, d.mailSeparator()),
                 ipsLenient(settings.getString(KEY_ALLOWED_IPS, "")),
-                clamp(settings.getInt(KEY_RATE, d.ratePerMinute()), RATE_MIN, RATE_MAX, d.ratePerMinute()),
+                rate,
                 clamp(settings.getInt(KEY_MAX_ROWS, d.maxRows()), ROWS_MIN, ROWS_MAX, d.maxRows()),
-                settings.getBoolean(KEY_STORE_BODY, d.storeBody()));
+                settings.getBoolean(KEY_STORE_BODY, d.storeBody()),
+                settings.getBoolean(KEY_BLOCK_ENABLED, d.blockEnabled()),
+                // Kayıtlı eşik sınırın altındaysa (eski / elle değer) etkin eşik sınırdır — önce 429, sonra engel kuralı korunur
+                Math.max(threshold, rate),
+                clamp(settings.getInt(KEY_BLOCK_MINUTES, d.blockMinutes()), BLOCK_MINUTES_MIN, BLOCK_MINUTES_MAX,
+                        d.blockMinutes()),
+                settings.getBoolean(KEY_BLOCK_ESCALATE, d.blockEscalate()),
+                // Okunamayan muaf liste kimseyi muaf tutmaz (NONE hiçbir adresle eşleşmez)
+                ipsLenient(settings.getString(KEY_BLOCK_EXEMPT, "")));
     }
 
     public static Config defaults() {
         return new Config(false, "WARNING", Set.of(), Set.of(), 15, "status", "Clear", "Critical", "Major", "Warning",
-                "target_type", "SiteMonitor", "", "semicolon", List.of(), 30, 2000, true);
+                "target_type", "SiteMonitor", "", "semicolon", List.of(), 30, 2000, true, true, 120, 15, true, List.of());
     }
 
     /** Ayar ekranına giden değerler (alan adları {@link #FIELDS} ile aynı). */
@@ -189,6 +236,13 @@ public final class AlarmFeedSettings {
         m.put("rate_per_minute", c.ratePerMinute());
         m.put("max_rows", c.maxRows());
         m.put("store_body", c.storeBody());
+        m.put("block_enabled", c.blockEnabled());
+        m.put("block_threshold", c.blockThreshold());
+        m.put("block_minutes", c.blockMinutes());
+        m.put("block_escalate", c.blockEscalate());
+        List<String> exempt = new ArrayList<>(c.blockExemptIps());
+        exempt.remove(IpAllowList.NONE);
+        m.put("block_exempt_ips", exempt);
         return m;
     }
 
@@ -201,7 +255,7 @@ public final class AlarmFeedSettings {
      */
     public static String normalize(String field, Object raw) {
         switch (field) {
-            case "enabled", "store_body" -> {
+            case "enabled", "store_body", "block_enabled", "block_escalate" -> {
                 if (raw instanceof Boolean b) return b.toString();
                 String s = raw == null ? "" : raw.toString().trim().toLowerCase(Locale.ROOT);
                 if (s.equals("true") || s.equals("false")) return s;
@@ -219,6 +273,12 @@ public final class AlarmFeedSettings {
             case "resolved_minutes" -> { return Integer.toString(intValue(field, raw, MINUTES_MIN, MINUTES_MAX)); }
             case "rate_per_minute" -> { return Integer.toString(intValue(field, raw, RATE_MIN, RATE_MAX)); }
             case "max_rows" -> { return Integer.toString(intValue(field, raw, ROWS_MIN, ROWS_MAX)); }
+            case "block_threshold" -> {
+                return Integer.toString(intValue(field, raw, BLOCK_THRESHOLD_MIN, BLOCK_THRESHOLD_MAX));
+            }
+            case "block_minutes" -> {
+                return Integer.toString(intValue(field, raw, BLOCK_MINUTES_MIN, BLOCK_MINUTES_MAX));
+            }
             case "clear_text", "severity_critical", "severity_high", "severity_warning", "source" -> {
                 String v = raw == null ? "" : raw.toString().strip();
                 if (v.isEmpty()) {
@@ -259,6 +319,24 @@ public final class AlarmFeedSettings {
                 List<String> ordered = new ArrayList<>();
                 for (String t : MonitorTypeCatalog.ORDER) if (out.contains(t)) ordered.add(t);
                 return String.join(",", ordered);
+            }
+            case "block_exempt_ips" -> {
+                List<String> parts = listOf(raw);
+                if (parts.size() > IPS_MAX) {
+                    throw invalid(field, "En çok " + IPS_MAX + " adres / aralık girilebilir.",
+                            "At most " + IPS_MAX + " addresses / ranges can be entered.");
+                }
+                Set<String> out = new LinkedHashSet<>();
+                for (String p : parts) {
+                    String norm = IpAllowList.normalizeEntry(p);
+                    if (norm == null) {
+                        throw invalid(field, "Geçersiz IP adresi ya da aralık: " + clip(p, 60)
+                                        + " — örnek: 10.20.30.40, 10.0.0.0/24, 2001:db8::1.",
+                                "Invalid IP address or range: " + clip(p, 60) + " — e.g. 10.20.30.40, 10.0.0.0/24, 2001:db8::1.");
+                    }
+                    out.add(norm);
+                }
+                return String.join(",", out);
             }
             case "allowed_ips" -> {
                 List<String> parts = listOf(raw);

@@ -1,6 +1,7 @@
 package com.sitemonitor.controller;
 
 import com.sitemonitor.service.ClientIpResolver;
+import com.sitemonitor.service.alarmfeed.AlarmFeedBlocks;
 import com.sitemonitor.service.alarmfeed.AlarmFeedRequestLog;
 import com.sitemonitor.service.alarmfeed.AlarmFeedService;
 import com.sitemonitor.service.alarmfeed.AlarmFeedSettings;
@@ -150,6 +151,68 @@ class AlarmFeedControllerTest {
         assertThat(Long.parseLong(r.getHeaders().getFirst("Retry-After"))).isBetween(1L, 60L);
         assertThat(r.getBody()).contains("RATE_LIMITED");
         verify(feed, times(2)).feed(any());
+    }
+
+    static AlarmFeedSettings.Config blockCfg(boolean blockOn, int rate, int threshold) {
+        return new AlarmFeedSettings.Config(true, "WARNING", Set.of(), Set.of(), 15, "status", "Clear", "Critical",
+                "Major", "Warning", "target_type", "SiteMonitor", "", "semicolon", List.of(), rate, 2000, true, blockOn,
+                threshold, 15, true);
+    }
+
+    @Test
+    @DisplayName("Dakikadaki çağrı engel eşiğini aşınca IP 15 dk engellenir (429 ALARM_FEED_IP_BLOCKED); sonraki çağrı sayaca bile gitmez")
+    void autoBlock() {
+        when(feed.config()).thenReturn(blockCfg(true, 2, 5));
+        RateLimitCounterService limiter = org.mockito.Mockito.spy(RateLimitCounterService.memoryOnly());
+        controller.setLimiter(limiter);
+        controller.setBlocks(new AlarmFeedBlocks(null));
+        List<Integer> codes = new java.util.ArrayList<>();
+        for (int i = 0; i < 5; i++) codes.add(controller.alarms(null, req()).getStatusCode().value());
+        assertThat(codes).containsExactly(200, 200, 429, 429, 429);   // sınır 2 → 3.–5. çağrı RATE_LIMITED
+        ResponseEntity<String> r = controller.alarms(null, req());   // 6. ihlal: eşik (5) aşıldı
+        assertThat(r.getStatusCode().value()).isEqualTo(429);
+        assertThat(r.getBody()).contains("\"code\":\"ALARM_FEED_IP_BLOCKED\"").contains("10.1.2.3").contains("blocked_until");
+        assertThat(Long.parseLong(r.getHeaders().getFirst("Retry-After"))).isBetween(14 * 60L, 15 * 60L);
+        org.mockito.Mockito.clearInvocations(limiter);
+        ResponseEntity<String> again = controller.alarms(null, req());
+        assertThat(again.getStatusCode().value()).isEqualTo(429);
+        assertThat(again.getBody()).contains("ALARM_FEED_IP_BLOCKED");
+        verify(limiter, never()).hit(any(), any());
+        verify(limiter, never()).clear(any());   // sayaç silinmez: engeli henüz öğrenmemiş pod'lar seli yeniden geçirmesin
+        verify(feed, times(2)).feed(any());
+        // Başka IP etkilenmez
+        when(resolver.resolve(any())).thenReturn("10.5.5.5");
+        assertThat(controller.alarms(null, req()).getStatusCode().value()).isEqualTo(200);
+        // Engel kaydı BLOCKED + engelin yazıldığı çağrı işaretli
+        ArgumentCaptor<AlarmFeedRequestLog.Result> c = ArgumentCaptor.forClass(AlarmFeedRequestLog.Result.class);
+        verify(requestLog, org.mockito.Mockito.atLeastOnce()).record(any(), c.capture(), anyBoolean(), any());
+        assertThat(c.getAllValues()).filteredOn(x -> "BLOCKED".equals(x.outcome())).hasSize(2);
+        assertThat(c.getAllValues()).filteredOn(AlarmFeedRequestLog.Result::blockPlaced).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("Muaf listedeki IP (CIDR) eşiği aşsa da engellenmez — yalnız 429 RATE_LIMITED")
+    void exemptIpIsNotBlocked() {
+        AlarmFeedSettings.Config base = blockCfg(true, 2, 5);
+        when(feed.config()).thenReturn(new AlarmFeedSettings.Config(true, "WARNING", Set.of(), Set.of(), 15, "status", "Clear",
+                "Critical", "Major", "Warning", "target_type", "SiteMonitor", "", "semicolon", List.of(), base.ratePerMinute(),
+                2000, true, true, base.blockThreshold(), 15, true, List.of("10.1.2.0/24")));
+        controller.setBlocks(new AlarmFeedBlocks(null));
+        for (int i = 0; i < 20; i++) controller.alarms(null, req());
+        ResponseEntity<String> r = controller.alarms(null, req());
+        assertThat(r.getStatusCode().value()).isEqualTo(429);
+        assertThat(r.getBody()).contains("RATE_LIMITED").doesNotContain("ALARM_FEED_IP_BLOCKED");
+    }
+
+    @Test
+    @DisplayName("Otomatik engel kapalıyken yoğun çağrı yalnız 429 RATE_LIMITED alır, IP engellenmez")
+    void autoBlockOff() {
+        when(feed.config()).thenReturn(blockCfg(false, 2, 5));
+        controller.setBlocks(new AlarmFeedBlocks(null));
+        for (int i = 0; i < 20; i++) controller.alarms(null, req());
+        ResponseEntity<String> r = controller.alarms(null, req());
+        assertThat(r.getStatusCode().value()).isEqualTo(429);
+        assertThat(r.getBody()).contains("RATE_LIMITED").doesNotContain("ALARM_FEED_IP_BLOCKED");
     }
 
     @Test

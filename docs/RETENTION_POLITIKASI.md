@@ -72,6 +72,7 @@ BDDK/iç denetim süreleri esas alınmalıdır.
 | `sql_query_history` | 365 gün | 7 g | `site.monitor.sql-history.retention-days` | `executed_at < ?` | Admin SQL çalışma alanı geçmişi (kullanıcı + serbest SQL metni). Denetim penceresiyle aynı 1 yıl (2026-08 kararı); hacmi düşüktür. |
 | `login_anomaly_incident` | 365 gün | 7 g | `site.monitor.failed-login.retention-days` | `resolved = true AND opened_at < ?` | Başarısız giriş anomali olayları. Yalnız ÇÖZÜLMÜŞ olanlar silinir; açık olaylar durur. Güvenlik penceresiyle aynı 1 yıl (2026-08 kararı). |
 | `alarm_feed_requests` | 90 gün | 7 g | `site.monitor.alarm-feed.log-retention-days` | `requested_at < ?` | Alarm akışının (GET /api/public/alarm-feed, belirteçsiz) dış çağrı günlüğü: zaman, istemci IP'si, ham X-Forwarded-For, user-agent, sonuç, dönen satır sayısı, yanıt özeti. Dakikada bir çağıran istemci için günde ≈ 1.440 satır; erişim kanıtı olarak denetim penceresinde tutulur. |
+| `alarm_feed_blocks` | 90 gün | 7 g | `site.monitor.alarm-feed.log-retention-days` | `updated_at < ?` | Alarm akışının otomatik IP engelleri (IP başına tek satır: son engelin başlangıç / bitişi, tetikleyen dakikalık çağrı sayısı, toplam engel sayısı, son user-agent, elle kaldıran). Bitmiş engel geçmiş ve tekrarında süreyi katlamak için kalır; çağrı günlüğüyle aynı süre sonra silinir. |
 
 ## Kullanıcı İçeriği
 

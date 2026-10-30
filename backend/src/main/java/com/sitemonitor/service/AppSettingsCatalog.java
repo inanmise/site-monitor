@@ -244,6 +244,12 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.alarm-feed.rate-per-minute",   "alarm-feed", Type.INT),
         new Setting("site.monitor.alarm-feed.max-rows",          "alarm-feed", Type.INT),
         new Setting("site.monitor.alarm-feed.store-body",        "alarm-feed", Type.BOOL),
+        // 2026-10-31: aynı IP dakikada eşikten fazla çağırırsa süreli engel (tekrarında süre katlanır, en çok 24 sa).
+        new Setting("site.monitor.alarm-feed.block-enabled",              "alarm-feed", Type.BOOL),
+        new Setting("site.monitor.alarm-feed.block-threshold-per-minute", "alarm-feed", Type.INT),
+        new Setting("site.monitor.alarm-feed.block-minutes",              "alarm-feed", Type.INT),
+        new Setting("site.monitor.alarm-feed.block-escalate",             "alarm-feed", Type.BOOL),
+        new Setting("site.monitor.alarm-feed.block-exempt-ips",           "alarm-feed", Type.CSV),
         new Setting("site.monitor.scripted.hardcoded-secret-policy", "scripted", Type.ENUM, java.util.List.of("WARN", "BLOCK")),
         // Betikte dosya okuma (2026-10-01, öneri 1): REPORT = uyar + raporla (varsayılan, davranış aynı) · BLOCK = kayıt
         // reddedilir, koşum yürütülmez. Önce /api/admin/scripted/file-read-report ile mevcut betikler denetlenir.
@@ -792,7 +798,12 @@ public final class AppSettingsCatalog {
         "site.monitor.alarm-feed.allowed-ips",
         "site.monitor.alarm-feed.rate-per-minute",
         "site.monitor.alarm-feed.max-rows",
-        "site.monitor.alarm-feed.store-body"
+        "site.monitor.alarm-feed.store-body",
+        "site.monitor.alarm-feed.block-enabled",
+        "site.monitor.alarm-feed.block-threshold-per-minute",
+        "site.monitor.alarm-feed.block-minutes",
+        "site.monitor.alarm-feed.block-escalate",
+        "site.monitor.alarm-feed.block-exempt-ips"
     ));
 
     /**

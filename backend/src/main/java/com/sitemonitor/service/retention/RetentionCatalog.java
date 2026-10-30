@@ -379,6 +379,11 @@ public final class RetentionCatalog {
                 90, 7, false, DataClass.PERSONAL,
                 "Alarm akışını çağıran IP başına tek satır (ilk / son görülme, çağrı sayısı, son user-agent). Çağrı günlüğüyle "
                 + "aynı pencere: o süre boyunca hiç çağırmayan IP silinir."),
+        age("alarm-feed-blocks", "alarm_feed_blocks", "updated_at", "site.monitor.alarm-feed.log-retention-days",
+                90, 7, false, DataClass.SECURITY_AUDIT,
+                "Alarm akışının otomatik IP engelleri (IP başına tek satır: son engelin başlangıç / bitişi, tetikleyen "
+                + "dakikalık çağrı sayısı, toplam engel sayısı, son user-agent, elle kaldıran). Bitmiş engel geçmiş ve "
+                + "tekrarında süreyi katlamak için kalır; çağrı günlüğüyle aynı süre sonra silinir."),
         orphan("alarm-feed-responses-orphan", "alarm_feed_responses",
                 "NOT EXISTS (SELECT 1 FROM alarm_feed_requests r WHERE r.response_hash = alarm_feed_responses.hash)",
                 DataClass.CONTENT,

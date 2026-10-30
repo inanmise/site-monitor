@@ -18,15 +18,18 @@ export const RCI_MODES = ['target_type', 'target']
 /** MAILS ayırıcısı. */
 export const MAIL_SEPARATORS = ['semicolon', 'comma']
 /** Çağrı sonuçları (günlük süzgeci + rozet). */
-export const OUTCOMES = ['OK', 'DISABLED', 'IP_DENIED', 'RATE_LIMITED', 'ERROR']
+export const OUTCOMES = ['OK', 'DISABLED', 'IP_DENIED', 'RATE_LIMITED', 'BLOCKED', 'ERROR']
 /** Sonuç → ToneBadge tonu. Yalnız gerçek OK yeşildir. */
-export const OUTCOME_TONE = { OK: 'success', DISABLED: 'muted', IP_DENIED: 'warning', RATE_LIMITED: 'warning', ERROR: 'danger' }
+export const OUTCOME_TONE = {
+  OK: 'success', DISABLED: 'muted', IP_DENIED: 'warning', RATE_LIMITED: 'warning', BLOCKED: 'danger', ERROR: 'danger',
+}
 /** Akışın döndüğü kolonlar — önizleme sunucunun `columns`'unu kullanır; yoksa bu sıra. */
 export const FEED_COLUMNS = ['CREATEDTIME', 'SEVERITY', 'RCI', 'RCITYPE', 'CATEGORY', 'FILTERSOURCE', 'TEXT', 'BODY', 'MAILS',
   'STATUS', 'RESOLVEDTIME', 'ALERTID', 'TEAM', 'UGTEAM', 'LINK']
 /** Sunucu `limits` göndermezse (eski pod) kullanılan sınırlar — sunucuyla aynı. */
 export const DEFAULT_LIMITS = Object.freeze({
   resolved_minutes: [1, 1440], rate_per_minute: [1, 600], max_rows: [100, 10000], text_max: 60, allowed_ips_max: 100,
+  block_threshold: [10, 6000], block_minutes: [1, 1440],
 })
 
 /** Etkin akışta son çağrı bundan eskiyse "arayan sessiz" uyarısı. */
@@ -37,6 +40,8 @@ export const STATUS_REFRESH_MS = 60_000
 export const PREVIEW_TABLE_MIN_PX = 900
 export const REQUESTS_TABLE_MIN_PX = 900
 export const CALLERS_TABLE_MIN_PX = 760
+/** Engellenen IP'ler tablosu — kap genişliği bundan darsa kartlar. */
+export const BLOCKS_TABLE_MIN_PX = 760
 /** Çağrı günlüğü sayfa boyutları — sunucu sayfayı 100 ile sınırlar (panel ön ayarından ≤ 100). */
 export const REQUEST_SIZE_OPTIONS = Object.freeze(PAGINATION_PRESETS.panel.sizeOptions.filter((n) => n <= 100))
 /** IP süzgeci gecikmesi (ms). */
@@ -46,9 +51,10 @@ export const IP_FILTER_DEBOUNCE_MS = 300
 export const FORM_FIELDS = [
   'enabled', 'min_level', 'team_ids', 'types', 'resolved_minutes', 'max_rows', 'resolved_mode', 'clear_text',
   'severity_critical', 'severity_high', 'severity_warning', 'rci_mode', 'source', 'rcitype', 'mail_separator',
-  'allowed_ips', 'rate_per_minute', 'store_body',
+  'allowed_ips', 'rate_per_minute', 'store_body', 'block_enabled', 'block_threshold', 'block_minutes', 'block_escalate',
+  'block_exempt_ips',
 ]
-const INT_FIELDS = ['resolved_minutes', 'rate_per_minute', 'max_rows']
+const INT_FIELDS = ['resolved_minutes', 'rate_per_minute', 'max_rows', 'block_threshold', 'block_minutes']
 /** 1..text_max karakter zorunlu metinler. */
 const TEXT_FIELDS = ['clear_text', 'severity_critical', 'severity_high', 'severity_warning', 'source']
 const ENUMS = { min_level: LEVELS, resolved_mode: RESOLVED_MODES, rci_mode: RCI_MODES, mail_separator: MAIL_SEPARATORS }
@@ -117,6 +123,12 @@ export function toForm(settings) {
     allowed_ips: normalizeIps(s.allowed_ips),
     rate_per_minute: numField(s.rate_per_minute),
     store_body: s.store_body === true,
+    // Eski sunucu alanı göndermezse açık say (sunucu varsayılanı) — gönderilmeyen alan değişmiş sayılmaz (bodyOf aynı kuralı uygular)
+    block_enabled: s.block_enabled !== false,
+    block_threshold: numField(s.block_threshold),
+    block_minutes: numField(s.block_minutes),
+    block_escalate: s.block_escalate !== false,
+    block_exempt_ips: normalizeIps(s.block_exempt_ips),
   }
 }
 
@@ -139,6 +151,9 @@ export function bodyOf(form) {
     mail_separator: text(f.mail_separator).trim(),
     allowed_ips: normalizeIps(f.allowed_ips),
     store_body: f.store_body === true,
+    block_enabled: f.block_enabled !== false,
+    block_escalate: f.block_escalate !== false,
+    block_exempt_ips: normalizeIps(f.block_exempt_ips),
   }
   for (const k of INT_FIELDS) out[k] = toInt(f[k])
   for (const k of [...TEXT_FIELDS, 'rcitype']) out[k] = text(f[k]).trim()
@@ -161,6 +176,8 @@ export function limitsOf(data) {
     resolved_minutes: pair('resolved_minutes'),
     rate_per_minute: pair('rate_per_minute'),
     max_rows: pair('max_rows'),
+    block_threshold: pair('block_threshold'),
+    block_minutes: pair('block_minutes'),
     text_max: Number.isInteger(l.text_max) && l.text_max > 0 ? l.text_max : DEFAULT_LIMITS.text_max,
     allowed_ips_max: Number.isInteger(l.allowed_ips_max) && l.allowed_ips_max > 0 ? l.allowed_ips_max : DEFAULT_LIMITS.allowed_ips_max,
   }
@@ -237,7 +254,7 @@ export function validateChanges(changes, limits = DEFAULT_LIMITS) {
       if (String(v ?? '').length > lim.text_max) out[k] = { key: 'af.v.tooLong', params: [lim.text_max] }
     } else if (ENUMS[k]) {
       if (!ENUMS[k].includes(v)) out[k] = { key: 'af.v.choice', params: [] }
-    } else if (k === 'allowed_ips') {
+    } else if (k === 'allowed_ips' || k === 'block_exempt_ips') {
       const list = Array.isArray(v) ? v : []
       const bad = list.find((x) => !isValidIpEntry(x))
       if (bad != null) out[k] = { key: 'af.v.ip', params: [bad] }
@@ -245,6 +262,63 @@ export function validateChanges(changes, limits = DEFAULT_LIMITS) {
     }
   }
   return out
+}
+
+/**
+ * Alanlar arası kural (sunucu `requireBlockThresholdAboveRate` ile aynı): engel eşiği dakikalık sınırdan küçük olamaz.
+ * Yalnız eşik ya da sınır DEĞİŞTİYSE denetlenir; değişen alan suçlanır (ikisi birden → eşik). Geçersiz sayı varsa (alan
+ * hatası zaten yazar) karar verilmez.
+ */
+export function crossFieldErrors(changes, form) {
+  const c = changes || {}
+  if (!('block_threshold' in c) && !('rate_per_minute' in c)) return {}
+  const b = bodyOf(form)
+  const rate = b.rate_per_minute
+  const threshold = b.block_threshold
+  if (!Number.isInteger(rate) || !Number.isInteger(threshold) || threshold >= rate) return {}
+  const field = 'block_threshold' in c || !('rate_per_minute' in c) ? 'block_threshold' : 'rate_per_minute'
+  return { [field]: { key: 'af.v.blockBelowRate', params: [threshold, rate] } }
+}
+
+// ── Otomatik IP engelleri ───────────────────────────────────────────────────────────────────────
+
+/** Engel satırının durumu: active | expired | unblocked (bilinmeyen → expired gibi nötr). */
+export const BLOCK_STATES = ['active', 'expired', 'unblocked']
+export const BLOCK_STATE_TONE = { active: 'danger', expired: 'muted', unblocked: 'info' }
+
+/**
+ * Engel listesi — etkin engeller önce, iki grup da sunucu sırasıyla (en yeni engel önce). Kalan süre
+ * sunucunun anlık değerinden değil `blocked_until` ile `now`'dan hesaplanır (liste yenilenmeden de doğru kalsın); süresi
+ * dolmuş "etkin" satır `expired` görünür.
+ */
+export function blockRows(blocks, now = Date.now()) {
+  if (!Array.isArray(blocks)) return null
+  const rows = blocks.filter((b) => b && b.ip).map((b) => {
+    const until = utcMs(b.blocked_until)
+    let state = BLOCK_STATES.includes(b.state) ? b.state : 'expired'
+    if (state === 'active' && Number.isFinite(until) && until <= now) state = 'expired'
+    const remainingMs = state === 'active' && Number.isFinite(until) ? Math.max(0, until - now) : 0
+    return { ...b, state, remainingMs }
+  })
+  const active = rows.filter((r) => r.state === 'active')
+  const rest = rows.filter((r) => r.state !== 'active')
+  return [...active, ...rest]
+}
+
+/** Kalan engel süresi → i18n anahtarı + parametre (en az 1 dk, ≥ 60 dk saat + dk); geçmiş / bilinmeyen → null. */
+export function remainingParts(ms) {
+  const n = Number(ms)
+  if (!Number.isFinite(n) || n <= 0) return null
+  const mins = Math.max(1, Math.ceil(n / 60_000))
+  return mins >= 60
+    ? { key: 'af.block.remainingHours', params: [Math.floor(mins / 60), mins % 60] }
+    : { key: 'af.block.remainingMinutes', params: [mins] }
+}
+
+/** Etkin engel sayısı (liste okunamadıysa null — asla 0). */
+export function activeBlockCount(blocks, now = Date.now()) {
+  const rows = blockRows(blocks, now)
+  return rows == null ? null : rows.filter((r) => r.state === 'active').length
 }
 
 // ── Zaman / sayı ────────────────────────────────────────────────────────────────────────────────

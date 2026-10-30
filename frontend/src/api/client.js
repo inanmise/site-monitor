@@ -672,6 +672,9 @@ export const api = {
       return request(`/admin/alarm-feed/requests${s ? `?${s}` : ''}`, { withStatus: true })
     },
     request: (id) => request(`/admin/alarm-feed/requests/${encodeURIComponent(id)}`, { withStatus: true }),
+    /** Otomatik IP engelleri (2026-10-31): liste (`{ blocks, active_blocks }`) ve elle kaldırma (404 = süren engel yok). */
+    blocks: () => request('/admin/alarm-feed/blocks', { withStatus: true }),
+    unblock: (ip) => request('/admin/alarm-feed/blocks/unblock', { method: 'POST', body: JSON.stringify({ ip }), withStatus: true }),
     exportRequests: (params = {}) => {
       const qs = new URLSearchParams()
       for (const k of ['outcome', 'ip', 'from', 'to']) {
