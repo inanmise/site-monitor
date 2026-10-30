@@ -192,7 +192,9 @@ class IdentityMaskGateTest {
     private static final Map<String, String> TRACE_ALLOWED = Map.of(
             "UserActivityService.java", "yük SystemController'da IdentityMask'ten geçer (/user-activity, /user-activity/user/{u})",
             "DeviceHistoryService.java", "tüketicileri AuditController (requireAuditAccess: global admin / AUDIT) ve "
-                    + "AuthController (kişinin KENDİ cihazları)");
+                    + "AuthController (kişinin KENDİ cihazları)",
+            "AlarmFeedAdminController.java", "alarm akışı çağrı günlüğü: IP / user-agent kişinin değil DIŞ sistemin (izleme "
+                    + "ekibi sunucusu); uç yalnız global yönetici (requireGlobal) — maskenin koruduğu görüntüleyici yok");
 
     @Test
     @DisplayName("kaynak kapısı: kimlik izini Map satırına koyan her denetleyici / servis IdentityMask'ten geçer (ya da gerekçeli istisna)")

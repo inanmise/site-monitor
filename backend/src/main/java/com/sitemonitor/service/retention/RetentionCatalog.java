@@ -391,8 +391,9 @@ public final class RetentionCatalog {
         info("alarm-feed-events", "alarm_feed_events", Mode.EXTERNAL, DataClass.OPERATIONAL,
                 "Alarm akışının merkezi sisteme AÇIK bildirdiği olaylar (gönderilen anahtar + satırın kopyası: hedef, takım "
                 + "adı / adresleri) — anahtar değişince, çözülünce, kapsamdan çıkınca ya da silinince eski olaya 'çözüldü' "
-                + "göndermek için. AlarmFeedService saatte bir kendisi siler (teslim edilen kapanış: pencere + 2 gün; hiç "
-                + "teslim edilemeyen: 7 gün)."),
+                + "göndermek için. AlarmFeedService saatte bir kendisi siler (teslim edilen kapanış: kapanışı ve ilk teslimi "
+                + "pencere + 2 günden eski; hiç teslim edilemeyen: fark edilmesinden 7 gün; akış kapalıyken 30 günden eski "
+                + "bütün satırlar)."),
 
         // ── Temizliğin kendi çalışma geçmişi (öz-referans) ─────────────────────────────────────
         age("retention-run-items", "retention_run_item", "created_at", "site.monitor.retention.run-history-retention-days",

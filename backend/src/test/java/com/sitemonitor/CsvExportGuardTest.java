@@ -36,7 +36,9 @@ class CsvExportGuardTest {
             "service/report/CertificateInventoryReportService.java",
             "CSV gövdesi InventoryExportService.csv() → Csv.cell; burası yalnız MIME türünü ekliyor",
             "controller/CertificateController.java",
-            "CSV gövdesi CertificateService.exportCsv() → Csv.row; controller yalnız MIME türü + denetim kaydı ekliyor");
+            "CSV gövdesi CertificateService.exportCsv() → Csv.row; controller yalnız MIME türü + denetim kaydı ekliyor",
+            "controller/AlarmFeedController.java",
+            "CSV gövdesi AlarmFeedService.toCsv() → Csv.row; uç yalnız MIME türünü ve başlıkları ekliyor");
 
     private static final String HAND_ROLLED_QUOTING = "replace(\"\\\"\", \"\\\"\\\"\")";
 
