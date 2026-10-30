@@ -214,7 +214,8 @@ index'leri birlikte kullanılıyor; az monitör (2) senaryosunda planner tek-kol
 gerçek çok-monitörlü kardinalitede composite seçilir. Sentetik veri sonrası temizlendi + VACUUM.
 
 **Yük sınırları (kod):** kontrol başına wall-clock deadline (`cert.monitor.page.max-check-seconds`, vars.
-120sn), tek sayfa ≤500 kaynak, crawl geneli ≤1500 kaynak (bellek + INSERT patlaması önleme), manuel tetik
+120sn), tek sayfa ≤ `site.monitor.page.max-resources` kaynak (canlı ayar, vars. 2000; 2026-10-30'a dek sabit 500), crawl
+geneli ≤ max(1500, 3 × sayfa tavanı) kaynak (bellek + INSERT patlaması önleme), manuel tetik
 per-monitör cooldown (`page.manual-cooldown-seconds`, vars. 20sn) + DAİMA SINGLE_PAGE (inline crawl yok).
 Kaynak doğrulama sanal-thread executor + Semaphore ile sınırlı → 400-kaynak × tekrarlı kontrolde platform
 thread stabil (E20 testi). `page_*` yazımları IDENTITY id kullanır → Hibernate JDBC batch kapalı; global

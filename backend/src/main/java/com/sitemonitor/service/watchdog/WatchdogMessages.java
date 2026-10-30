@@ -53,6 +53,16 @@ public final class WatchdogMessages {
                             ? " " + failed + " of " + (failed + sent) + " pushes failed in the last " + f.get("outcome_window_minutes") + " min."
                             : " Son " + f.get("outcome_window_minutes") + " dk'da " + (failed + sent) + " push'un " + failed + "'i gönderilemedi.");
                 }
+                if (Boolean.TRUE.equals(f.get("awaiting_success"))) {
+                    // Kanıtsız "düzeldi" yok (2026-10-30): son bilinen gönderimler başarısız, yerine başarılı gönderim gelmedi
+                    base.append(en
+                            ? " Not enough recent push results to decide: " + f.get("last_known_failed") + " of the last "
+                                    + f.get("last_known") + " known pushes failed, including the newest. Until a push is delivered "
+                                    + "again the check keeps its state: an open problem is not closed and no new problem is opened."
+                            : " Karar verecek kadar yeni push sonucu yok: son bilinen " + f.get("last_known") + " gönderimin "
+                                    + f.get("last_known_failed") + "'i başarısız (en yenisi dahil). Yeni bir push teslim edilene kadar "
+                                    + "kontrol durumunu korur: açık sorun kapanmaz, yeni sorun açılmaz.");
+                }
                 if (open) {
                     String pod = podOf(f);
                     base.append(en

@@ -56,10 +56,19 @@ public class PageFetchCore {
 
     /** Ana sayfa gövde okuma tavanı (OOM koruması + hash için yeterli). */
     public static final int MAX_BODY_BYTES = 2_000_000;
-    /** Tek SAYFANIN işlenecek azami (tekil) kaynağı — tek-pod yük koruması; aşılırsa WARN + kırpılır. */
-    public static final int MAX_RESOURCES_PER_CHECK = 500;
-    /** Bir CRAWL genelinde toplam azami kaynak — bellek + DB-insert patlamasını sınırlar. */
-    public static final int MAX_TOTAL_RESOURCES = 1500;
+    /**
+     * Tek SAYFANIN işlenecek azami (tekil) kaynağı — tek-pod yük koruması; aşılırsa WARN + kırpılır. CANLI ayar
+     * {@value #MAX_RESOURCES_KEY} ({@link #maxResourcesPerCheck(AppSettingsService)}). 2026-10-30: sabit 500'dü; izlenen büyük bir ana
+     * sayfası (~520 kaynak: 340 bağlantı, 150 görsel) her turda tavana takılıp kalan kaynakları hiç denetlemiyordu → varsayılan
+     * {@value #DEFAULT_MAX_RESOURCES_PER_CHECK}. Doğrulamanın asıl sınırı yine kontrolün duvar-saati süresidir
+     * ({@code site.monitor.page.max-check-seconds}, eşzamanlılık {@code site.monitor.page.resource-concurrency}).
+     */
+    public static final String MAX_RESOURCES_KEY = "site.monitor.page.max-resources";
+    public static final int DEFAULT_MAX_RESOURCES_PER_CHECK = 2000;
+    public static final int MIN_RESOURCES_PER_CHECK = 100;
+    public static final int MAX_RESOURCES_PER_CHECK_LIMIT = 10_000;
+    /** Bir CRAWL genelinde toplam azami kaynağın TABANI — gerçek tavan {@link #maxTotalResources(int)} (bellek + DB-insert). */
+    public static final int MIN_TOTAL_RESOURCES = 1500;
     /** Manuel redirect zinciri üst sınırı. (public: uçtan uca tanılamanın ham ölçümü aynı sınırı uygular, 2026-10-05) */
     public static final int MAX_REDIRECTS = 5;
 
@@ -90,6 +99,9 @@ public class PageFetchCore {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.sitemonitor.service.ProxySettings proxySettings;
     private HttpClient proxiedClient;
+    // Kaynak tavanı canlı okunur (2026-10-30); yapıcı testlerinde yok → varsayılan tavan.
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.AppSettingsService appSettings;
 
     private HttpClient httpClient;
     /** Kaynak fan-out'u için sanal-thread executor (I/O-bound; eşzamanlılık çağıran tarafta Semaphore ile sınırlanır). */
@@ -471,8 +483,8 @@ public class PageFetchCore {
      *
      * @param hyperlinks         {@code a[href]} bağlantıları da toplansın mı. Sayfa Bütünlüğü onları
      *                           kırık-link diye kontrol eder; Sayfa Hızı için ANLAMSIZDIR (tarayıcı
-     *                           indirmez) ve daha kötüsü {@link #MAX_RESOURCES_PER_CHECK} bütçesini
-     *                           yer: link ağırlıklı bir sayfada 500'lük tavan linklere harcanır ve
+     *                           indirmez) ve daha kötüsü {@link #maxResourcesPerCheck() kaynak tavanı} bütçesini
+     *                           yer: link ağırlıklı bir sayfada tavan linklere harcanır ve
      *                           GERÇEK kaynaklar hiç ölçülmez.
      * @param allImageCandidates {@code srcset}'teki TÜM adaylar toplansın mı. Tarayıcı bir görsel
      *                           için ekran/DPR'a göre YALNIZ BİRİNİ indirir; hepsini saymak sayfa
@@ -495,8 +507,43 @@ public class PageFetchCore {
         public static final InventoryOptions AS_BROWSER_LOADS = new InventoryOptions(false, false, true);
     }
 
-    /** Envanter + ölçüm dışı bırakılanların sayısı. */
-    public record Inventory(List<Resource> resources, int skippedLazy) {}
+    /**
+     * Sayfa başına kaynak tavanı (canlı ayar, sınırlı): boş / sıfır / negatif ya da okunamayan değer varsayılan
+     * {@value #DEFAULT_MAX_RESOURCES_PER_CHECK}; {@value #MIN_RESOURCES_PER_CHECK}–{@value #MAX_RESOURCES_PER_CHECK_LIMIT} arasına
+     * sıkıştırılır. TEK kaynak: envanter, crawl toplamı, sayfa hızı "kısmi ölçüm" bayrağı ve tanılama aynı değeri okur.
+     */
+    public static int maxResourcesPerCheck(com.sitemonitor.service.AppSettingsService settings) {
+        int v;
+        try {
+            v = settings == null ? DEFAULT_MAX_RESOURCES_PER_CHECK : settings.getInt(MAX_RESOURCES_KEY, DEFAULT_MAX_RESOURCES_PER_CHECK);
+        } catch (RuntimeException e) {
+            v = DEFAULT_MAX_RESOURCES_PER_CHECK;
+        }
+        if (v <= 0) v = DEFAULT_MAX_RESOURCES_PER_CHECK;
+        return Math.max(MIN_RESOURCES_PER_CHECK, Math.min(MAX_RESOURCES_PER_CHECK_LIMIT, v));
+    }
+
+    /** Bu servisin canlı sayfa başına kaynak tavanı. */
+    public int maxResourcesPerCheck() {
+        return maxResourcesPerCheck(appSettings);
+    }
+
+    /** Crawl genelinde toplam kaynak tavanı — en az {@value #MIN_TOTAL_RESOURCES}, sayfa tavanının 3 katı (tek dev sayfa crawl'u boşa düşürmesin). */
+    public static int maxTotalResources(int perPage) {
+        return Math.max(MIN_TOTAL_RESOURCES, perPage * 3);
+    }
+
+    /** Envanter + ölçüm dışı bırakılanların sayısı + uygulanan sayfa başına kaynak tavanı. */
+    public record Inventory(List<Resource> resources, int skippedLazy, int cap) {
+        public Inventory(List<Resource> resources, int skippedLazy) {
+            this(resources, skippedLazy, DEFAULT_MAX_RESOURCES_PER_CHECK);
+        }
+
+        /** Envanter tavana takıldı mı — kalan kaynaklar atlandı ("kısmi"). */
+        public boolean capped() {
+            return resources.size() >= cap;
+        }
+    }
 
     /** Geriye uyum: seçeneksiz çağrı Sayfa Bütünlüğü davranışını korur. */
     public List<Resource> inventory(byte[] bytes, String baseUrl, String sourcePage, Predicate<String> exclude) {
@@ -511,6 +558,11 @@ public class PageFetchCore {
      */
     public List<Resource> inventory(byte[] bytes, String baseUrl, String sourcePage, Predicate<String> exclude,
                                     InventoryOptions opts) {
+        return inventory(bytes, baseUrl, sourcePage, exclude, opts, maxResourcesPerCheck());
+    }
+
+    private List<Resource> inventory(byte[] bytes, String baseUrl, String sourcePage, Predicate<String> exclude,
+                                     InventoryOptions opts, int cap) {
         Document doc;
         try {
             // Bayt-stream + null charset → jsoup <meta charset>/BOM'dan charset'i otomatik tespit eder;
@@ -546,8 +598,9 @@ public class PageFetchCore {
             // Sayfanın kendisine çözülen link (a[href="#x"], href="") — gereksiz self-request
             if ("LINK".equals(r.type()) && stripFragment(r.url()).equalsIgnoreCase(sourcePage)) continue;
             list.add(r);
-            if (list.size() >= MAX_RESOURCES_PER_CHECK) {
-                log.warn("Sayfa {} — {} kaynak limitine ulaşıldı, kalanlar atlandı", sanitize(sourcePage), MAX_RESOURCES_PER_CHECK);
+            if (list.size() >= cap) {
+                log.warn("Sayfa {} — {} kaynak limitine ulaşıldı, kalanlar atlandı (tavan: {})", sanitize(sourcePage), cap,
+                        MAX_RESOURCES_KEY);
                 break;
             }
         }
@@ -558,8 +611,9 @@ public class PageFetchCore {
     /** Envanter + atlanan lazy sayısı — sayının çağırana ULAŞMASI için (ölçüm raporunda yazılır). */
     public Inventory inventoryDetailed(byte[] bytes, String baseUrl, String sourcePage,
                                        Predicate<String> exclude, InventoryOptions opts) {
-        List<Resource> list = inventory(bytes, baseUrl, sourcePage, exclude, opts);
-        return new Inventory(list, lastSkippedLazy.get());
+        int cap = maxResourcesPerCheck();
+        List<Resource> list = inventory(bytes, baseUrl, sourcePage, exclude, opts, cap);
+        return new Inventory(list, lastSkippedLazy.get(), cap);
     }
 
     /** {@link #inventoryDetailed} çağıran thread'in son sayısını taşır — paylaşılan alan DEĞİL

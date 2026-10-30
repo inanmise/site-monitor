@@ -124,7 +124,7 @@ export default function HeartbeatSection({ t, heartbeat, isAdmin, refreshing, on
 
       <PodsCard t={t} heartbeat={heartbeat} />
 
-      <SysCard icon={HeartPulse} cardKey="heartbeat-strip" iconClass="text-primary" title={t('health.hbStrip')} className="md:col-span-2"
+      <SysCard icon={HeartPulse} cardKey="heartbeat-strip" iconClass="text-primary" title={t('health.hbStrip')} className="col-span-full"
         right={timeline && (
           <span className="text-xs text-muted-foreground tabular-nums">
             {t('health.hbDetailReceived')} {received} / {expected}{missing > 0 && <span className={ERR_T}> · {missing} {t('health.hbLegMissing').toLowerCase()}</span>}

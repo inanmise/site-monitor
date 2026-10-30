@@ -2582,6 +2582,7 @@ export const TR = {
   'general.lbl.site.monitor.page.default-slow-ms': 'Sayfa yavaşlık eşiği (ms)',
   'general.lbl.site.monitor.page.manual-cooldown-seconds': 'Sayfa elle kontrol bekleme süresi (sn)',
   'general.lbl.site.monitor.page.max-check-seconds': 'Sayfa kontrolü azami süre (sn)',
+  'general.lbl.site.monitor.page.max-resources': 'Sayfa başına azami kaynak',
   'general.lbl.site.monitor.page.resource-concurrency': 'Sayfa kaynak eşzamanlılığı',
   'general.lbl.site.monitor.page.user-agent': 'Sayfa tarayıcı kimliği (User-Agent)',
   'general.lbl.site.monitor.pagespeed.alert-enabled': 'Sayfa hızı alarmları açık',
@@ -16202,6 +16203,8 @@ export const TR = {
     'Ne işe yarar: "Şimdi kontrol et" düğmesine ardışık basışlar arasındaki en az bekleme süresi.\nFaydası: Üst üste tıklama request thread\'lerini tüketip uygulamayı yavaşlatamaz.\nÖnerilen değer: 20 saniye (varsayılan). Çok kullanıcılı kurulumda 30-60.',
   'help.set.site.monitor.page.max-check-seconds':
     'Ne işe yarar: Tek bir sayfa bütünlüğü kontrolünün toplam duvar-saati süre tavanı.\nFaydası: Yanıt vermeyen bir hedef zamanlayıcı thread\'ini sonsuza kadar tutamaz.\nÖnerilen değer: 120 saniye (varsayılan). Çok kaynaklı ağır sayfalarda 180; taban 10 saniyedir.',
+  'help.set.site.monitor.page.max-resources':
+    'Ne işe yarar: Bir sayfa bütünlüğü ya da sayfa hızı kontrolünde tek sayfadan toplanıp denetlenecek en fazla kaynak (bağlantı, görsel, script, stil) sayısı; tavan dolunca kalanlar atlanır ve günlüğe uyarı düşer. Site taramasının toplam tavanı bunun 3 katıdır (en az 1500).\nFaydası: Bağlantısı çok olan büyük sayfalar (ör. banka ana sayfaları) eksik denetlenmez; çok büyük bir değer ise tek kontrolü uzatır.\nÖnerilen değer: 2000 (varsayılan; 100–10000 arası). Kaynağı çok olan bir sayfanın denetimi süre sınırına takılıyorsa "Sayfa kontrolü azami süre" ya da eşzamanlılık ayarını da artırın.',
   'help.set.site.monitor.page.resource-concurrency':
     'Ne işe yarar: Bir sayfa bütünlüğü kontrolünde aynı anda doğrulanacak kaynak (bağlantı, görsel, script) sayısı.\nFaydası: Yüksek değer kontrolü hızlandırır, düşük değer hedef siteye karşı nazik davranır.\nÖnerilen değer: 5 (varsayılan). Hedef sunucu hassassa 2-3; tek pod olduğu için 10\'un üstüne çıkmayın.',
   'help.set.site.monitor.page.user-agent':

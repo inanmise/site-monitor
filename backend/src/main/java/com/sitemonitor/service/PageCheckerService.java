@@ -42,8 +42,6 @@ import static com.sitemonitor.service.page.PageFetchCore.stripFragment;
 @RequiredArgsConstructor
 public class PageCheckerService {
 
-    /** Bir CRAWL genelinde toplam doğrulanacak azami kaynak — bellek + DB-insert patlamasını sınırlar (M2). */
-    private static final int MAX_TOTAL_RESOURCES = PageFetchCore.MAX_TOTAL_RESOURCES;
     /** Tarayıcı-uyumlu varsayılan UA (Mozilla-prefix → naif WAF/UA filtreleri 403/406 üretmez; kimlik + iletişim
      *  korunur). Admin {@code site.monitor.page.user-agent} ile override edebilir (F4). */
     private static final String DEFAULT_UA = "Mozilla/5.0 (compatible; SiteMonitor-PageCheck/1.0; +https://sitemonitor)";
@@ -231,6 +229,8 @@ public class PageCheckerService {
         long start = System.currentTimeMillis();
         String rootHost = hostOf(url);
         boolean pageHttps = url.toLowerCase(Locale.ROOT).startsWith("https://");
+        // Crawl toplam tavanı canlı sayfa tavanından türer (2026-10-30) — tur boyunca sabit
+        final int maxTotalResources = PageFetchCore.maxTotalResources(core.maxResourcesPerCheck());
         Set<String> disallow = fetchRobotsDisallow(url, timeoutMs);
 
         PageFetchCore.Fetch first = fetchFollowing(url, "GET", true, timeoutMs);
@@ -257,7 +257,7 @@ public class PageCheckerService {
 
         // Deadline (H1/M1) VE global kaynak capi (M2) — hangisi önce dolarsa crawl durur.
         while (!queue.isEmpty() && pagesCrawled < maxPages && System.currentTimeMillis() < deadline) {
-            if (totalResources >= MAX_TOTAL_RESOURCES) { capped = true; break; }
+            if (totalResources >= maxTotalResources) { capped = true; break; }
             String[] node = queue.poll();
             String pageUrl = node[0];
             int depth = Integer.parseInt(node[1]);
@@ -276,7 +276,7 @@ public class PageCheckerService {
             // Bu sayfadaki kaynakları (site genelinde tekil) doğrula — global cap'e kadar
             List<Resource> fresh = new ArrayList<>();
             for (Resource r : resources) {
-                if (totalResources + fresh.size() >= MAX_TOTAL_RESOURCES) { capped = true; break; }
+                if (totalResources + fresh.size() >= maxTotalResources) { capped = true; break; }
                 if (verified.add(r.url())) fresh.add(r);
             }
             totalResources += fresh.size();
@@ -295,7 +295,7 @@ public class PageCheckerService {
                 }
             }
         }
-        if (capped) log.warn("Crawl {} — {} toplam-kaynak capine ulaşıldı, kalan atlandı", sanitize(url), MAX_TOTAL_RESOURCES);
+        if (capped) log.warn("Crawl {} — {} toplam-kaynak capine ulaşıldı, kalan atlandı", sanitize(url), maxTotalResources);
         else if (System.currentTimeMillis() >= deadline) log.warn("Crawl {} — deadline'a ulaşıldı, kısmi sonuç", sanitize(url));
         else if (!queue.isEmpty()) log.debug("Crawl {} — {} sayfa limiti, {} kuyrukta bırakıldı", sanitize(url), maxPages, queue.size());
 

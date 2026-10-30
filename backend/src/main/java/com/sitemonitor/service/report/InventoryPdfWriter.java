@@ -61,7 +61,13 @@ class InventoryPdfWriter implements AutoCloseable {
     private final boolean embedded;
     private final PDFont regular;
     private final PDFont bold;
-    private final PDFont mono = new PDType1Font(Standard14Fonts.FontName.COURIER);
+    /**
+     * Sabit genişlikli metin (beklenen parmak izi / subject). 2026-10-30: gömülü DejaVu Sans Mono — standart 14 Courier
+     * sistemde bulunmayınca PDFBox her raporda "Using fallback font LiberationSans for base font Courier" WARN yazıyordu ve
+     * Türkçe karakterler ASCII'ye indirgeniyordu. Courier YALNIZ gömülü font yüklenemezse (o durumda {@link #monoEmbedded} false).
+     */
+    private final PDFont mono;
+    private final boolean monoEmbedded;
 
     private PDPage page;
     private PDPageContentStream cs;
@@ -75,7 +81,13 @@ class InventoryPdfWriter implements AutoCloseable {
         this.embedded = r != null && b != null;
         this.regular = embedded ? r : new PDType1Font(Standard14Fonts.FontName.HELVETICA);
         this.bold = embedded ? b : new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD);
+        PDType0Font m = loadFont("DejaVuSansMono.ttf");
+        this.monoEmbedded = m != null;
+        this.mono = monoEmbedded ? m : new PDType1Font(Standard14Fonts.FontName.COURIER);
     }
+
+    /** Sabit genişlikli font gömülü mü — kapı testi okur (Courier düşüşü = günlükte fallback WARN + ASCII'ye indirgeme). */
+    boolean monoEmbedded() { return monoEmbedded; }
 
     /** Gömülü font kullanılabiliyor mu — kapı testi bunu okur (raporun Türkçe taşıyıp
      *  taşıyamayacağının TEK belirleyicisi). */
@@ -576,13 +588,13 @@ class InventoryPdfWriter implements AutoCloseable {
             sectionHeader("Gelişmiş");
             if (notBlank(r.getExpectedFingerprint())) {
                 text(regular, 7.5f, MARGIN, y, "Beklenen Parmak İzi", LABEL);
-                text(mono, 7f, MARGIN + 120, y, clip(sanitize(r.getExpectedFingerprint()),
+                text(mono, 7f, MARGIN + 120, y, clip(r.getExpectedFingerprint(),
                         PAGE.getWidth() - MARGIN * 2 - 120, mono, 7f), INK);
                 y -= 12;
             }
             if (notBlank(r.getExpectedSubject())) {
                 text(regular, 7.5f, MARGIN, y, "Beklenen Subject", LABEL);
-                text(mono, 7f, MARGIN + 120, y, clip(sanitize(r.getExpectedSubject()),
+                text(mono, 7f, MARGIN + 120, y, clip(r.getExpectedSubject(),
                         PAGE.getWidth() - MARGIN * 2 - 120, mono, 7f), INK);
                 y -= 12;
             }
@@ -656,7 +668,8 @@ class InventoryPdfWriter implements AutoCloseable {
      * ve yüzlerce kayıtta tekrar etmesi pahalı olurdu.
      */
     private String encodable(PDFont font, String s) {
-        if (!embedded || font == mono) return sanitize(s);
+        // Gömülü olmayan font ASCII'ye indirgenir (Courier yalnız gömülü mono yüklenemezse)
+        if (font == mono ? !monoEmbedded : !embedded) return sanitize(s);
         StringBuilder out = new StringBuilder(s.length());
         for (int i = 0; i < s.length(); ) {
             int cp = s.codePointAt(i);

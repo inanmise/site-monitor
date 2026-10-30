@@ -226,7 +226,33 @@ class WatchdogProbesTest {
         assertThat(down.facts()).containsEntry("recent_failed", 4L).containsEntry("recent_sent", 1L);
         when(jdbc.query(eq(WatchdogProbes.SQL_PUSH_OUTCOMES), any(org.springframework.jdbc.core.RowMapper.class), anyString()))
                 .thenReturn(List.<Object[]>of(new Object[]{"FAILED", 2L}));
-        assertThat(probes.pushOutbox(NOW).result()).as("en az 3 sonuç gerekir").isEqualTo(Result.OK);
+        assertThat(probes.pushOutbox(NOW).result()).as("en az 3 sonuç gerekir; son bilinen sonuç yok → OK").isEqualTo(Result.OK);
+        // Kanıtsız "düzeldi" yok (2026-10-30): pencere kanıt için yetmez, son bilinen sonuçların çoğu başarısız → UNKNOWN
+        when(jdbc.query(eq(WatchdogProbes.SQL_PUSH_LAST_OUTCOMES), any(org.springframework.jdbc.core.RowMapper.class), anyString()))
+                .thenReturn(List.of("FAILED", "SENT", "FAILED"));
+        WatchdogProbes.Probe waiting = probes.pushOutbox(NOW);
+        assertThat(waiting.result()).isEqualTo(Result.UNKNOWN);
+        assertThat(waiting.severity()).isNull();
+        assertThat(waiting.facts()).containsEntry("awaiting_success", true).containsEntry("last_known", 3)
+                .containsEntry("last_known_failed", 2L);
+        assertThat(waiting.holdsState()).isTrue();
+        // En yeni sonuç başarılıysa ağ geçidi çalışıyor (kanıt) — eski başarısızlıklar sonucu "bilinmiyor"a çevirmez
+        when(jdbc.query(eq(WatchdogProbes.SQL_PUSH_LAST_OUTCOMES), any(org.springframework.jdbc.core.RowMapper.class), anyString()))
+                .thenReturn(List.of("SENT", "FAILED", "FAILED"));
+        assertThat(probes.pushOutbox(NOW).result()).isEqualTo(Result.OK);
+        when(jdbc.query(eq(WatchdogProbes.SQL_PUSH_LAST_OUTCOMES), any(org.springframework.jdbc.core.RowMapper.class), anyString()))
+                .thenReturn(List.of("FAILED", "SENT", "SENT"));
+        assertThat(probes.pushOutbox(NOW).result()).as("tek eski başarısızlık çoğunluk değil").isEqualTo(Result.OK);
+        when(jdbc.query(eq(WatchdogProbes.SQL_PUSH_LAST_OUTCOMES), any(org.springframework.jdbc.core.RowMapper.class), anyString()))
+                .thenReturn(List.of("SENT", "SENT", "FAILED"));
+        assertThat(probes.pushOutbox(NOW).result()).as("çoğunluk başarılı = düzelme kanıtı").isEqualTo(Result.OK);
+        // Takılı satır eşiği kanıt beklemez: sessiz dönemde de PROBLEM
+        when(jdbc.query(eq(WatchdogProbes.SQL_PUSH_LAST_OUTCOMES), any(org.springframework.jdbc.core.RowMapper.class), anyString()))
+                .thenReturn(List.of("FAILED"));
+        when(jdbc.queryForObject(anyString(), eq(Long.class), any(), any())).thenReturn(12L);
+        assertThat(probes.pushOutbox(NOW).result()).isEqualTo(Result.PROBLEM);
+        when(jdbc.queryForObject(anyString(), eq(Long.class), any(), any())).thenReturn(0L);
+        assertThat(probes.pushOutbox(NOW).result()).as("tek başarısız son sonuç da kanıt bekletir").isEqualTo(Result.UNKNOWN);
     }
 
     @Test

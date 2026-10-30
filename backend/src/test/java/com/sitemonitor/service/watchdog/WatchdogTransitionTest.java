@@ -40,6 +40,53 @@ class WatchdogTransitionTest {
         assertThat(s.getSeverity()).isEqualTo("HIGH");
     }
 
+    private static Action hold(WatchdogState s, int minute) {
+        return WatchdogTransition.apply(s, Result.UNKNOWN, null, "{}", T0.plus(Duration.ofMinutes(minute)), 2, 6, false, true);
+    }
+
+    @Test
+    @DisplayName("tutma (2026-10-30, kanıtsız düzelme yok): açık sorun kapanmaz ama hatırlatma ve teslim edilemeyen bildirimin "
+            + "yeniden denemesi sürer; düz UNKNOWN eskisi gibi hiçbir şey yapmaz")
+    void holdKeepsProblemAndItsFollowUps() {
+        WatchdogState s = fresh();
+        step(s, Result.PROBLEM, 0);
+        assertThat(step(s, Result.PROBLEM, 1)).isEqualTo(Action.ALERT);
+        WatchdogTransition.markNotified(s, Action.ALERT, false, T0.plus(Duration.ofMinutes(1)));   // ALERT_FAILED
+        assertThat(hold(s, 5)).as("15 dk dolmadan yeniden deneme yok").isEqualTo(Action.NONE);
+        assertThat(hold(s, 17)).as("teslim edilemeyen açılış tutmada da yeniden denenir").isEqualTo(Action.ALERT);
+        WatchdogTransition.markNotified(s, Action.ALERT, true, T0.plus(Duration.ofMinutes(17)));
+        assertThat(hold(s, 60)).isEqualTo(Action.NONE);
+        assertThat(hold(s, 17 + 60 * 6)).as("hatırlatma tutmada da gider").isEqualTo(Action.REMIND);
+        assertThat(s.getStatus()).isEqualTo("PROBLEM");
+        // Düz UNKNOWN (ölçülemedi) — hatırlatma dahil hiçbir şey
+        WatchdogState u = fresh();
+        step(u, Result.PROBLEM, 0);
+        step(u, Result.PROBLEM, 1);
+        WatchdogTransition.markNotified(u, Action.ALERT, true, T0.plus(Duration.ofMinutes(1)));
+        assertThat(step(u, Result.UNKNOWN, 60 * 7)).isEqualTo(Action.NONE);
+    }
+
+    @Test
+    @DisplayName("tutma onay sayacını böler: açık sorunda OK, tutma, OK düzelme sayılmaz; kapalı kontrolde PROBLEM, tutma, PROBLEM "
+            + "alarm sayılmaz (karma sürümde ardışık olmayan ölçümler onay olmaz)")
+    void holdBreaksConfirmationStreaks() {
+        WatchdogState s = fresh();
+        step(s, Result.PROBLEM, 0);
+        step(s, Result.PROBLEM, 1);
+        WatchdogTransition.markNotified(s, Action.ALERT, true, T0.plus(Duration.ofMinutes(1)));
+        assertThat(step(s, Result.OK, 2)).isEqualTo(Action.NONE);
+        assertThat(hold(s, 3)).isEqualTo(Action.NONE);
+        assertThat(step(s, Result.OK, 4)).as("tutma sağlıklı sayacı sıfırladı").isEqualTo(Action.NONE);
+        assertThat(step(s, Result.OK, 5)).isEqualTo(Action.RECOVER);
+
+        WatchdogState k = fresh();
+        assertThat(step(k, Result.PROBLEM, 0)).isEqualTo(Action.NONE);
+        assertThat(hold(k, 1)).isEqualTo(Action.NONE);
+        assertThat(step(k, Result.PROBLEM, 2)).as("tutma sorunlu sayacı sıfırladı").isEqualTo(Action.NONE);
+        assertThat(k.getStatus()).isEqualTo("OK");
+        assertThat(step(k, Result.PROBLEM, 3)).isEqualTo(Action.ALERT);
+    }
+
     @Test
     @DisplayName("bildirim teslim edildiyse susar; hatırlatma süresi dolunca REMIND; iki iyi ölçüm RECOVER")
     void remindAndRecover() {
