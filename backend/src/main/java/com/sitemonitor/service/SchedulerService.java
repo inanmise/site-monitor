@@ -7940,8 +7940,9 @@ public class SchedulerService {
         // sentetik izleme sessizce kalıcı ölüyordu (kontrol yok, alarm yok, kayıt yok, log yok).
         if (!scriptedCheckerService.ensureProbed()) {
             if (scriptedMonitorRepo.countByActiveTrue() > 0)
-                log.warn("[K6] Sentetik izleme YÜRÜTÜLMÜYOR — k6 bulunamadı. Aktif sentetik monitörler "
-                        + "kontrol edilmiyor; scripted.k6.available metriği 0.");
+                // Neden metni (inceleme 2026-10-30, L6): ikili VAR ama sürümü desteklenmiyorsa "bulunamadı" denmez.
+                log.warn("[K6] Sentetik izleme YÜRÜTÜLMÜYOR — {}. Aktif sentetik monitörler "
+                        + "kontrol edilmiyor; scripted.k6.available metriği 0.", k6UnavailableReason());
             return;
         }
         if (!tryAcquireSchedulerLock("scripted-sweep", sweepLockTtlMinutes)) {
@@ -7950,6 +7951,12 @@ public class SchedulerService {
         }
         try { runScriptedChecksLocked(); }
         finally { releaseSchedulerLock("scripted-sweep"); }
+    }
+
+    /** Taklit servislerde (birim testleri) metin yoksa eski sabit metin. */
+    private String k6UnavailableReason() {
+        String r = scriptedCheckerService.unavailableReason();
+        return r == null || r.isBlank() ? "k6 bulunamadı" : r;
     }
 
     private void runScriptedChecksLocked() {

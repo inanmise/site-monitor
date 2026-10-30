@@ -63,6 +63,12 @@ public final class AuditEventCatalog {
     public static final List<String> TYPES = List.of(
             "ACCESS_DENIED",
             "ACCOUNT_LOCKED",
+            // Merkezi izleme alarm akışı (2026-10-30): reddedilen çağrı (kapalı / IP izni yok / oran sınırı — IP + neden başına
+            // 10 dk'da bir), ilk kez görülen çağıran IP, çağrı günlüğü dışa aktarımı, ayar kaydı. Ayrıntı çağrı günlüğünde.
+            "ALARM_FEED_ACCESS_DENIED",
+            "ALARM_FEED_LOG_EXPORT",
+            "ALARM_FEED_NEW_CALLER",
+            "ALARM_FEED_SETTINGS_SAVE",
             "ALERT_ACKNOWLEDGE",
             "ALERT_BULK_ACKNOWLEDGE",
             "ALERT_BULK_RENOTIFY",
@@ -157,6 +163,7 @@ public final class AuditEventCatalog {
             "K6_COMPAT_SCAN_CANCEL",      // k6 uyumluluk taraması (gölge koşu) iptal edildi (2026-10-29)
             "K6_COMPAT_SCAN_START",       // k6 uyumluluk taraması başlatıldı — aday ikili tüm izlemeleri alarmsız koşar
             "K6_ENGINE_ROLLBACK",         // k6 motoru yedek ikiliye döndürüldü
+            "K6_ENGINE_SETTINGS_NORMALIZE", // eski k6 ikili yolları (Yayın A) tek seferlik varsayılana döndü (2026-10-30, sistem)
             "K6_ENGINE_SETTINGS_SAVE",    // k6 motoru ayarları (yedek / aday yolu, GODEBUG, User-Agent, tarama dışı) kaydedildi
             "K6_ENGINE_SWITCH",           // aday k6 ikilisi etkin yapıldı (senaryo kontrolleri yeni sürümle koşar)
             "KEYWORD_DIAGNOSTICS_RUN",    // Keyword izlemesinde uçtan uca tanılama çalıştırıldı (2026-10-04)
@@ -403,6 +410,9 @@ public final class AuditEventCatalog {
         if (t.startsWith("LOGIN") || t.equals("LOGOUT") || t.equals("ACCOUNT_LOCKED")
                 || t.startsWith("SESSION_") || t.startsWith("REMEMBER_TOKEN")
                 || t.equals("SELF_PASSWORD_CHANGE")) return AUTH;
+
+        // Alarm akışı (2026-10-30) bir dış ENTEGRASYONDUR — _DENIED (Güvenlik) kuralından SONRA, _EXPORT / SETTINGS'ten ÖNCE.
+        if (t.startsWith("ALARM_FEED_")) return INTEGRATION;
 
         if (t.startsWith("PERMISSION_")) return PERMISSION;
         if (t.startsWith("TOUR_")) return USER;                     // ürün turu: kişinin kendi tercihi

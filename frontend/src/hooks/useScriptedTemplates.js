@@ -41,8 +41,6 @@ export function useScriptedTemplates(scope) {
         can_view_trash: !!d.can_view_trash,
         writable_team_ids: d.writable_team_ids || [],
         k6_version: d.k6_version || null,
-        // Sözdizimi kararı için (2026-10-29): etkin ve yedek ikiliden eskisi; eski sunucu göndermez → etkin sürüm.
-        k6_syntax_version: d.k6_syntax_version || d.k6_version || null,
       })
       setError(null)
     } catch (e) {

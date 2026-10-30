@@ -21,20 +21,19 @@ import java.util.regex.Pattern;
  * Sebebi tek cümleyle: kullanıcıyı kendi kütüphanesinden kilitleyen bir yanlış-pozitif, kaçırılan
  * bir uyarıdan daha pahalıdır — ilki aracı terk ettirir, ikincisi düzeltilir.
  *
- * <p>Saf/statik: Spring bağımlılığı yok, k6 sürümü parametre olarak gelir → sıfır bağlamla test edilir.
+ * <p>Saf/statik: Spring bağımlılığı yok → sıfır bağlamla test edilir.
+ *
+ * <p>2026-10-30 (k6 Yayın C): "modern sözdizimi (?. ?? {...}) dağıtımdaki k6 ayrıştıramıyorsa ENGELLE" kuralı kaldırıldı —
+ * imajda yalnız k6 2.x var ve desteklenen her sürüm (en az {@code K6Profile.MIN_SUPPORTED_VERSION}) bu sözdizimini
+ * ayrıştırır. Bu yüzden kural artık k6 sürümü almaz.
  */
 public final class ScriptedTemplateRules {
 
     private ScriptedTemplateRules() {}
 
-    /** k6 bu sürümden İTİBAREN modern sözdizimini (?. ?? spread) ayrıştırabiliyor. */
-    private static final int[] MODERN_SYNTAX_SINCE = { 0, 53, 0 };
-
-    private static final Pattern VERSION   = Pattern.compile("(\\d+)\\.(\\d+)\\.(\\d+)");
     private static final Pattern SLUG      = Pattern.compile("^[a-z][a-z0-9._-]*$");
     private static final Pattern REQUEST   = Pattern.compile("http\\.(get|post|put|del|patch)\\(");
     private static final Pattern TIMEOUT   = Pattern.compile("timeout:\\s*'(\\d+)s'");
-    private static final Pattern OBJ_SPREAD = Pattern.compile("\\{\\s*\\.\\.\\.");
 
     /** Aynı sözleşme: {@code ScriptedCheckerService.ScriptDiagnostics}. */
     public record TemplateDiagnostics(String blocking, List<String> warnings) {
@@ -44,11 +43,10 @@ public final class ScriptedTemplateRules {
     /**
      * @param builtinKey seed edilen küratörlü şablonun anahtarı; kullanıcı şablonunda null
      * @param envDefs    env TANIMLARI — {@code value} anahtarı taşıyan girdi REDDEDİLİR
-     * @param k6Version  dağıtımdaki k6 sürümü ("v0.49.0"); okunamıyorsa null
      */
     public static TemplateDiagnostics check(String builtinKey, String name, String description,
                                             String whenToUse, String script,
-                                            List<Map<String, Object>> envDefs, String k6Version) {
+                                            List<Map<String, Object>> envDefs) {
         List<String> warnings = new ArrayList<>();
 
         // ── BLOCK: script'i çalışamaz kılan, yanlış-pozitifi olmayan kurallar ──────────────
@@ -86,17 +84,6 @@ public final class ScriptedTemplateRules {
         warnings.addAll(safety.warnings());
         if (safety.blocked()) return block(safety.blocking(), warnings);
 
-        // ── Sözdizimi: dağıtımdaki motor ayrıştıramıyorsa ENGELLE ─────────────────────────
-        String modern = modernSyntaxHit(script);
-        if (modern != null) {
-            String level = syntaxLevel(k6Version);
-            String msg = "Script `" + modern + "` içeriyor; dağıtımdaki k6 (" + (k6Version == null ? "sürüm okunamadı" : k6Version)
-                    + ") gömülü Babel 6 ile bunu AYRIŞTIRAMAZ. Klasik `||`/`&&` ve `Object.assign` kullanın.";
-            if ("legacy".equals(level)) return block(msg, warnings);
-            // Sürüm modern ya da okunamıyor → bilgisizlik üzerine BLOKLAMA yok.
-            warnings.add(msg);
-        }
-
         // ── WARN: bağlam bilmeyen, yanlış-pozitifi olan kurallar ─────────────────────────
         if (isBlank(description)) warnings.add("Açıklama boş — şablonu seçen kişi ne işe yaradığını göremez.");
         if (isBlank(whenToUse))   warnings.add("\"Ne zaman kullanılır\" boş — seçicide en çok bakılan alan budur.");
@@ -132,32 +119,6 @@ public final class ScriptedTemplateRules {
         }
 
         return new TemplateDiagnostics(null, warnings);
-    }
-
-    /** Script'te k6 0.49'un ayrıştıramadığı bir sözdizimi var mı? Bulunan ilk kalıbı döner. */
-    static String modernSyntaxHit(String script) {
-        if (script == null) return null;
-        if (script.contains("?.")) return "?.";
-        if (script.contains("??")) return "??";
-        if (OBJ_SPREAD.matcher(script).find()) return "{...}";
-        return null;
-    }
-
-    /**
-     * "v0.49.0" → {@code legacy} (modern sözdizimini ayrıştıramaz), "v0.53.0"+ → {@code modern}.
-     * Ayrıştırılamayan/eksik sürüm → {@code unknown}: bilgisizlik üzerine BLOKLAMA yapılmaz.
-     * Eşik frontend'deki {@code K6_MODERN_SYNTAX_SINCE} ile aynı olmalıdır.
-     */
-    static String syntaxLevel(String raw) {
-        if (raw == null || raw.isBlank()) return "unknown";
-        Matcher m = VERSION.matcher(raw);
-        if (!m.find()) return "unknown";
-        int[] v = { Integer.parseInt(m.group(1)), Integer.parseInt(m.group(2)), Integer.parseInt(m.group(3)) };
-        for (int i = 0; i < 3; i++) {
-            if (v[i] < MODERN_SYNTAX_SINCE[i]) return "legacy";
-            if (v[i] > MODERN_SYNTAX_SINCE[i]) return "modern";
-        }
-        return "modern";   // tam eşik sürümü modern sayılır
     }
 
     private static TemplateDiagnostics block(String msg, List<String> warnings) {

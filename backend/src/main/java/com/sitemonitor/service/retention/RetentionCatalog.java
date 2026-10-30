@@ -369,6 +369,32 @@ public final class RetentionCatalog {
                 "Taraması silinmiş k6 uyumluluk sonuçları (izleme adı, durum, maskeli hata metni) — tarama kendi "
                 + "politikasıyla silinince yetim kalır ve burada temizlenir."),
 
+        // ── Merkezi izleme alarm akışı (2026-10-30): dış çağrı günlüğü ─────────────────────────────
+        age("alarm-feed-requests", "alarm_feed_requests", "requested_at", "site.monitor.alarm-feed.log-retention-days",
+                90, 7, true, DataClass.SECURITY_AUDIT,
+                "Alarm akışının (GET /api/public/alarm-feed, belirteçsiz) dış çağrı günlüğü: zaman, istemci IP'si, ham "
+                + "X-Forwarded-For, user-agent, sonuç, dönen satır sayısı, yanıt özeti. Dakikada bir çağıran istemci için "
+                + "günde ≈ 1.440 satır; erişim kanıtı olarak denetim penceresinde tutulur."),
+        age("alarm-feed-callers", "alarm_feed_callers", "last_seen_at", "site.monitor.alarm-feed.log-retention-days",
+                90, 7, false, DataClass.PERSONAL,
+                "Alarm akışını çağıran IP başına tek satır (ilk / son görülme, çağrı sayısı, son user-agent). Çağrı günlüğüyle "
+                + "aynı pencere: o süre boyunca hiç çağırmayan IP silinir."),
+        orphan("alarm-feed-responses-orphan", "alarm_feed_responses",
+                "NOT EXISTS (SELECT 1 FROM alarm_feed_requests r WHERE r.response_hash = alarm_feed_responses.hash)",
+                DataClass.CONTENT,
+                "Alarm akışının döndürdüğü yanıt gövdelerinin birebir kopyası (gzip, özetle tekil; alarm hedefleri, takım "
+                + "adları ve e-posta adresleri içerir). Hiçbir çağrı satırı göstermeyen gövde yetimdir ve silinir."),
+        age("alarm-feed-responses", "alarm_feed_responses", "last_used_at", "site.monitor.alarm-feed.body-retention-days",
+                30, 3, false, DataClass.CONTENT,
+                "Alarm akışı yanıt gövdelerinin kopyası — son kullanılmasından (aynı gövde yeniden döndükçe tazelenir) bu "
+                + "süre sonra silinir; çağrı satırı (özetiyle) kendi süresince kalır, ekranda 'gövde artık saklanmıyor' görünür."),
+        info("alarm-feed-events", "alarm_feed_events", Mode.EXTERNAL, DataClass.OPERATIONAL,
+                "Alarm akışının merkezi sisteme AÇIK bildirdiği olaylar (gönderilen anahtar + satırın kopyası: hedef, takım "
+                + "adı / adresleri) — anahtar değişince, çözülünce, kapsamdan çıkınca ya da silinince eski olaya 'çözüldü' "
+                + "göndermek için. AlarmFeedService saatte bir kendisi siler (teslim edilen kapanış: kapanışı ve ilk teslimi "
+                + "pencere + 2 günden eski; hiç teslim edilemeyen: fark edilmesinden 7 gün; akış kapalıyken 30 günden eski "
+                + "bütün satırlar)."),
+
         // ── Temizliğin kendi çalışma geçmişi (öz-referans) ─────────────────────────────────────
         age("retention-run-items", "retention_run_item", "created_at", "site.monitor.retention.run-history-retention-days",
                 180, 30, false, DataClass.OPERATIONAL,

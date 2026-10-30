@@ -43,7 +43,8 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Ayarlar → Platform → k6 motoru (2026-10-29, k6 0.49 → 2.3 geçişi, Yayın A). YALNIZ genel yönetici (kullanıcı kararı:
+ * Ayarlar → Platform → k6 motoru (2026-10-29, k6 0.49 → 2.3 geçişi; 2026-10-30'dan beri genel sürüm yükseltme aracı —
+ * imajda tek ikili, yedek / aday yolları gelecekteki yükseltmeler için). YALNIZ genel yönetici (kullanıcı kararı:
  * tarama sonuçlarını yalnız genel yönetici görür; ikili / GODEBUG / User-Agent ayarları da GLOBAL_ONLY).
  *
  * <ul>
@@ -125,7 +126,8 @@ public class K6EngineController {
         engines.put("rollback", profileDto(p.rollback()));
         engines.put("candidate", profileDto(p.candidate()));
         out.put("engines", engines);
-        out.put("syntax_version", p.syntaxVersion());
+        // En eski desteklenen k6 (2026-10-30): daha eski bir ikili "desteklenmeyen sürüm" olarak görünür, koşmaz.
+        out.put("min_version", K6Profile.MIN_SUPPORTED_VERSION);
         Map<String, Object> s = new LinkedHashMap<>();
         s.put("rollback_bin", K6EngineSettings.shown(current(ScriptedCheckerService.K6_BIN_ROLLBACK_KEY)));
         s.put("candidate_bin", K6EngineSettings.shown(current(ScriptedCheckerService.K6_BIN_CANDIDATE_KEY)));
@@ -146,7 +148,9 @@ public class K6EngineController {
         K6Profile c = p.candidate();
         K6Profile r = p.rollback();
         out.put("can_switch", c != null && c.available() && (a == null || !c.bin().equals(a.bin())));
-        out.put("can_rollback", r != null && r.available() && (a == null || !r.bin().equals(a.bin())));
+        // Aynı sürüme "geri dönüş" yok (inceleme 2026-10-30, L1): ör. yedek `k6` ile etkin `/opt/k6-next/k6` bu imajda
+        // ikisi de 2.3 — düğme bir şey değiştirmiyormuş gibi görünürdü.
+        out.put("can_rollback", r != null && r.available() && (a == null || !r.bin().equals(a.bin())) && !sameVersion(r, a));
         out.put("other_version_pods", otherVersionPods());
         Map<Long, String> teamNames = teamNames();
         Set<Long> excluded = K6EngineSettings.effectiveExcludedIds(current(K6EngineSettings.KEY_SCAN_EXCLUDED));
@@ -174,8 +178,7 @@ public class K6EngineController {
         m.put("bin", p.bin());
         m.put("available", p.available());
         m.put("version", p.version());
-        m.put("modern_syntax", p.modernSyntax());
-        m.put("api_address", p.needsApiAddress());
+        m.put("unsupported", p.unsupported());
         m.put("probed_at", p.probedAtMs() <= 0 ? null : ISO.format(Instant.ofEpochMilli(p.probedAtMs())));
         return m;
     }
@@ -247,12 +250,19 @@ public class K6EngineController {
         requireGlobal(session);
         requireConfirm(body);
         requireNoOpenScan();
-        requireSingleVersion();
+        requireSingleVersion(false);
         checker.probeK6();
         ScriptedCheckerService.Profiles p = checker.profiles();
         K6Profile cand = p.candidate();
         K6Profile active = p.active();
         if (cand == null || !cand.available()) {
+            if (cand != null && cand.unsupported()) {
+                throw new CodedConflictException("K6_CANDIDATE_UNAVAILABLE", Msg.t(
+                        "Aday k6 sürümü (" + cand.version() + ") desteklenmiyor — en az " + K6Profile.MIN_SUPPORTED_VERSION
+                                + " gerekir; geçiş yapılmadı.",
+                        "The candidate k6 version (" + cand.version() + ") isn't supported — " + K6Profile.MIN_SUPPORTED_VERSION
+                                + " or later is required; nothing was switched."));
+            }
             throw new CodedConflictException("K6_CANDIDATE_UNAVAILABLE", Msg.t(
                     "Aday k6 ikilisi bu pod'da çalıştırılamıyor — geçiş yapılmadı.",
                     "The candidate k6 binary can't be run on this pod — nothing was switched."));
@@ -286,11 +296,21 @@ public class K6EngineController {
                                                         HttpSession session, HttpServletRequest request) {
         requireGlobal(session);
         requireConfirm(body);
+        // Geri dönüş de bir ikili değişimidir (inceleme 2026-10-30, L1): ayar her pod'a gider; dağıtım sürerken eski kodlu
+        // pod'da yedek yol başka bir ikiliyi gösterebilir (20.172.x'te `k6` = 0.49).
+        requireSingleVersion(true);
         checker.probeK6();
         ScriptedCheckerService.Profiles p = checker.profiles();
         K6Profile rb = p.rollback();
         K6Profile active = p.active();
         if (rb == null || !rb.available()) {
+            if (rb != null && rb.unsupported()) {
+                throw new CodedConflictException("K6_ROLLBACK_UNAVAILABLE", Msg.t(
+                        "Yedek k6 sürümü (" + rb.version() + ") desteklenmiyor — en az " + K6Profile.MIN_SUPPORTED_VERSION
+                                + " gerekir; geri dönüş yapılmadı.",
+                        "The rollback k6 version (" + rb.version() + ") isn't supported — " + K6Profile.MIN_SUPPORTED_VERSION
+                                + " or later is required; nothing was rolled back."));
+            }
             throw new CodedConflictException("K6_ROLLBACK_UNAVAILABLE", Msg.t(
                     "Yedek k6 ikilisi tanımlı değil ya da bu pod'da çalıştırılamıyor — geri dönüş yapılmadı.",
                     "No rollback k6 binary is set, or it can't be run on this pod — nothing was rolled back."));
@@ -298,6 +318,13 @@ public class K6EngineController {
         if (active != null && rb.bin().equals(active.bin())) {
             throw new CodedConflictException("K6_ALREADY_ACTIVE", Msg.t(
                     "Yedek ikili zaten etkin.", "The rollback binary is already active."));
+        }
+        if (sameVersion(rb, active)) {
+            throw new CodedConflictException("K6_ALREADY_ACTIVE", Msg.t(
+                    "Yedek ikili etkin ikiliyle aynı sürüm (" + rb.version() + ") — geri dönülecek başka bir sürüm yok; "
+                            + "geri dönüş yapılmadı.",
+                    "The rollback binary is the same version as the active one (" + rb.version() + ") — there is no other "
+                            + "version to roll back to; nothing was rolled back."));
         }
         Map<String, Object> values = new LinkedHashMap<>();
         values.put(ScriptedCheckerService.K6_BIN_KEY, rb.bin());
@@ -333,23 +360,30 @@ public class K6EngineController {
      * eski sürüm pod'larında aday ikili yoktur ya da eski kod onu doğru koşamaz (her senaryo kontrolü "komut çalıştırılamadı"
      * ile hata verir, alarmlar açılır). Pod sürümleri okunamazsa da geçiş yapılmaz.
      */
-    private void requireSingleVersion() {
+    private void requireSingleVersion(boolean rollback) {
         List<Map<String, String>> others = otherVersionPods();
+        String trNot = rollback ? "geri dönüş yapılmadı" : "geçiş yapılmadı";
+        String enNot = rollback ? "nothing was rolled back" : "nothing was switched";
         if (others == null) {
             throw new CodedConflictException("K6_POD_VERSIONS_UNKNOWN", Msg.t(
-                    "Pod sürümleri okunamadı — bütün pod'ların aynı sürümü koştuğu doğrulanamadı, geçiş yapılmadı. Biraz sonra yeniden deneyin.",
-                    "Pod versions could not be read — it can't be confirmed that every pod runs the same version, so nothing was switched. Try again shortly."));
+                    "Pod sürümleri okunamadı — bütün pod'ların aynı sürümü koştuğu doğrulanamadı, " + trNot + ". Biraz sonra yeniden deneyin.",
+                    "Pod versions could not be read — it can't be confirmed that every pod runs the same version, so " + enNot + ". Try again shortly."));
         }
         if (!others.isEmpty()) {
             List<String> parts = new ArrayList<>();
             for (Map<String, String> o : others) parts.add(o.get("pod") + " (" + o.get("version") + ")");
             throw new CodedConflictException("K6_MIXED_VERSIONS", Msg.t(
-                    "Başka sürüm koşan pod var: " + String.join(", ", parts)
+                    "Başka sürüm koşan pod var: " + String.join(", ", parts) + " — " + trNot
                             + ". Dağıtım bitip bütün pod'lar bu sürümü koşunca yeniden deneyin.",
-                    "Some pods run another version: " + String.join(", ", parts)
+                    "Some pods run another version: " + String.join(", ", parts) + " — " + enNot
                             + ". Try again once the rollout has finished and every pod runs this version."),
                     Map.of("other_version_pods", others));
         }
+    }
+
+    /** İki profil de okunmuş bir sürüm taşıyor ve aynı sürüm mü (bilinmeyen sürüm → false; yol farkı ayrıca denetlenir). */
+    static boolean sameVersion(K6Profile x, K6Profile y) {
+        return x != null && y != null && x.versionKnown() && y.versionKnown() && x.version().equals(y.version());
     }
 
     private static void requireConfirm(Map<String, Object> body) {

@@ -198,15 +198,15 @@ public class ScriptedCheckerService {
     }
 
     /**
-     * Satır/sütun taşıyan k6 derleme hatası — "kesin hata" kararının kanıtı. Üç biçim (frontend {@code utils/k6Errors.js}
+     * Satır/sütun taşıyan k6 derleme hatası — "kesin hata" kararının kanıtı. İki biçim (frontend {@code utils/k6Errors.js}
      * ile AYNI desen):
      * <ul>
-     *   <li>k6 &lt; 0.53 (Babel): {@code Unexpected token (46:29)}</li>
      *   <li>yığın izi: {@code at script:34:12(24)}</li>
      *   <li>k6 2.x (sobek, 2026-10-29 ölçüldü): {@code script: Line 4:1 Unexpected token ; (and 1 more errors)}</li>
      * </ul>
+     * 0.49'un Babel biçimi ({@code Unexpected token (46:29)}) 2026-10-30'da kaldırıldı — imajda yalnız 2.x var.
      */
-    static final Pattern K6_LINE_COL = Pattern.compile("\\((\\d+):(\\d+)\\)|script:(\\d+):(\\d+)|\\bLine (\\d+):(\\d+)");
+    static final Pattern K6_LINE_COL = Pattern.compile("script:(\\d+):(\\d+)|\\bLine (\\d+):(\\d+)");
 
     /**
      * Script'i {@code k6 archive} ile derleyerek doğrular ve {@code __ENV} referanslarını denetler.
@@ -265,9 +265,9 @@ public class ScriptedCheckerService {
                 warnings.add("Sözdizimi doğrulaması atlandı (doğrulayıcı meşgul).");
                 return new ScriptDiagnostics(null, warnings);
             }
-            // Etkin ikili + (varsa) YEDEK ikili (2026-10-29): geçişten sonra etkin 2.3, yedek 0.49 iken yalnız 2.3 ile
-            // derlemek modern sözdizimli bir betiği kaydettirir ve yedeğe geri dönüş o betiği bozardı. İki motordan biri
-            // kesin hata verirse betik o motorda çalışmaz demektir.
+            // Etkin ikili + (varsa) YEDEK ikili (2026-10-29): bir sürüm geçişinden sonra yalnız yeni ikiliyle derlemek, eski
+            // sürümün ayrıştıramadığı bir betiği kaydettirir ve yedeğe geri dönüş o betiği bozardı. İki motordan biri kesin
+            // hata verirse betik o motorda çalışmaz demektir.
             K6Profile active = currentProfile();
             List<K6Profile> engines = new ArrayList<>();
             engines.add(active);
@@ -339,7 +339,6 @@ public class ScriptedCheckerService {
             List<String> args = new ArrayList<>(List.of(
                     engine.bin(), "archive", "--quiet",
                     "-O", archiveFile.toAbsolutePath().toString()));
-            addApiAddress(args, engine);
             for (String cidr : ssrfGuard.blacklistCidrs()) { args.add("--blacklist-ip"); args.add(cidr); }
             args.add(scriptFile.toAbsolutePath().toString());
 
@@ -600,6 +599,9 @@ public class ScriptedCheckerService {
             setActive(a);
             if (a.available()) {
                 log.info("[K6] ✅ k6 bulundu — sürüm {} ({})", a.version(), a.bin());
+            } else if (a.unsupported()) {
+                log.warn("[K6] ⚠ k6 sürümü {} desteklenmiyor ({}) — en az {} gerekir. Sentetik İzleme türü devre dışı — "
+                        + "kontrol yürütülmez.", a.version(), a.bin(), K6Profile.MIN_SUPPORTED_VERSION);
             } else {
                 log.warn("[K6] ⚠ k6 bulunamadı ({}). Sentetik İzleme türü devre dışı — kontrol yürütülmez.", a.bin());
             }
@@ -614,6 +616,8 @@ public class ScriptedCheckerService {
         if (bin == null) return null;
         K6Profile p = probeBinary(bin);
         if (p.available()) log.info("[K6] {} k6 — sürüm {} ({})", role, p.version(), p.bin());
+        else if (p.unsupported()) log.warn("[K6] {} k6 sürümü {} desteklenmiyor ({}) — en az {} gerekir; {} ikili kullanılmayacak",
+                role, p.version(), p.bin(), K6Profile.MIN_SUPPORTED_VERSION, role);
         else log.info("[K6] {} k6 bulunamadı ({}) — {} ikili kullanılmayacak", role, p.bin(), role);
         return p;
     }
@@ -689,7 +693,7 @@ public class ScriptedCheckerService {
 
     /**
      * KOŞACAK ikilinin profili — ayar yoklanandan farklıysa önce yeniden yoklar (en çok 5 sn, tek seferde bir yoklama).
-     * Komut ({@code --address}) ve kayda yazılan sürüm bu profilden gelir.
+     * Komuttaki ikili ve kayda yazılan sürüm bu profilden gelir.
      */
     K6Profile currentProfile() {
         K6Profile a = activeProfile;
@@ -747,24 +751,60 @@ public class ScriptedCheckerService {
     public boolean isAvailable() { return k6Available; }
     public String version() { return k6Version; }
 
-    /**
-     * Sözdizimi kararlarının dayandığı sürüm (2026-10-29): etkin ve YEDEK ikiliden ESKİSİ. Geçiş süresince etkin ikili
-     * 2.3, yedek 0.49 iken modern sözdizimi (?. ?? {...}) hâlâ yasak kalır; böylece yedeğe geri dönüş hiçbir betiği
-     * bozmaz. Yedek yok / okunamıyor ⇒ etkin sürüm (bugünkü davranış).
-     */
-    public String syntaxVersion() {
+    /** Etkin ikili bulundu ama sürümü desteklenmiyorsa o sürüm ({@code v0.49.0}); değilse null (2026-10-30). */
+    public String unsupportedVersion() {
         K6Profile a = activeProfile;
-        K6Profile r = rollbackProfile;
-        if (a == null || !a.versionKnown()) return k6Version;
-        if (r == null || !r.versionKnown()) return a.version();
-        return K6Profile.compareVersions(r, a) < 0 ? r.version() : a.version();
+        return a != null && a.unsupported() ? a.version() : null;
     }
 
-    /** Etkin / yedek / aday profillerin anlık görüntüsü (yönetici ekranı) — yalnız bellek okuması. */
-    public record Profiles(K6Profile active, K6Profile rollback, K6Profile candidate, String syntaxVersion) {}
+    /**
+     * k6 koşamıyorken kontrol satırına / teşhis sonucuna yazılan neden (Türkçe, kayıt metni). Desteklenmeyen sürüm (2026-10-30)
+     * "bulunamadı" demez — ikili VAR, sürümü eski; yöneticinin yapacağı iş farklı.
+     */
+    String unavailableText() {
+        return unavailableText(activeProfile);
+    }
+
+    /** Verilen motor için aynı neden: desteklenmeyen sürüm sürümü adlandırır, yok / çalışmıyor "bulunamadı" der. */
+    static String unavailableText(K6Profile engine) {
+        if (engine != null && engine.unsupported()) {
+            return "k6 sürümü " + engine.version() + " desteklenmiyor (en az " + K6Profile.MIN_SUPPORTED_VERSION
+                    + " gerekir) — Sentetik İzleme devre dışı";
+        }
+        return "k6 bulunamadı — Sentetik İzleme devre dışı";
+    }
+
+    /** Günlük için kısa neden ("k6 bulunamadı" / "k6 sürümü v0.49.0 desteklenmiyor (en az v2.0.0 gerekir)"). */
+    public String unavailableReason() {
+        String v = unsupportedVersion();
+        return v != null ? "k6 sürümü " + v + " desteklenmiyor (en az " + K6Profile.MIN_SUPPORTED_VERSION + " gerekir)"
+                : "k6 bulunamadı";
+    }
+
+    /**
+     * Aynı neden, kullanıcının dilinde — "k6 yok" yanıtı veren uçlar (form "Test", teşhis) için ({@code Msg.t}).
+     */
+    public String unavailableMessage() {
+        String v = unsupportedVersion();
+        if (v != null) {
+            return com.sitemonitor.util.Msg.t("Sentetik İzleme devre dışı — bu ortamdaki k6 sürümü (" + v + ") desteklenmiyor; en az "
+                            + K6Profile.MIN_SUPPORTED_VERSION + " gerekir. Ayarlar → Platform → k6 motoru sayfasından etkin ikiliyi düzeltin.",
+                    "Synthetic Monitoring disabled — the k6 version in this environment (" + v + ") is not supported; "
+                            + K6Profile.MIN_SUPPORTED_VERSION + " or later is required. Fix the active binary under Settings → Platform → k6 engine.");
+        }
+        return com.sitemonitor.util.Msg.t("k6 bulunamadı — Sentetik İzleme devre dışı (bu ortamda k6 binary'si yok).",
+                "k6 not found — Synthetic Monitoring is disabled (there is no k6 binary in this environment).");
+    }
+
+    /**
+     * Etkin / yedek / aday profillerin anlık görüntüsü (yönetici ekranı) — yalnız bellek okuması. 2026-10-30'dan beri
+     * sözdizimi düzeyi yok: desteklenen her k6 (en az {@link K6Profile#MIN_SUPPORTED_VERSION}) modern JavaScript'i
+     * ayrıştırır.
+     */
+    public record Profiles(K6Profile active, K6Profile rollback, K6Profile candidate) {}
 
     public Profiles profiles() {
-        return new Profiles(activeProfile, rollbackProfile, candidateProfile, syntaxVersion());
+        return new Profiles(activeProfile, rollbackProfile, candidateProfile);
     }
 
     /** Aday ikilinin profili (yoklanmadıysa / ayar boşsa null) — uyumluluk taraması kullanır. */
@@ -806,44 +846,6 @@ public class ScriptedCheckerService {
         } catch (Exception e) {
             return null;
         }
-    }
-
-    /**
-     * k6'nın REST API sunucusu için EFEMER port ({@code :0} → işletim sistemi boş bir port seçer).
-     *
-     * <p>Neden gerekli: k6 her koşumda {@code localhost:6565} üzerinde bir REST API açar. Senaryo
-     * kontrolleri EŞZAMANLI koştuğu için ilk süreç portu alıyor, sonrakiler alamayıp
-     * {@code level=warning msg="Error from API server" ... bind: address already in use} yazıyordu.
-     * Koşum etkilenmiyordu (checks %100 geçiyor) ama uyarı kullanıcıya gösterilen "Teknik detay"
-     * çıktısının İLK satırında duruyor ve SAĞLIKLI bir koşumu bozuk gösteriyordu.
-     *
-     * <p>Bu API'yi projede HİÇBİR YER kullanmıyor (6565 için tek referans yok) — yani uyarı,
-     * kullanmadığımız bir özelliğin açılamamasından geliyordu.
-     *
-     * <p>Ölçüldü (k6 v0.49.0): bayrak gerçekten okunuyor — bağlanamayacak bir adres verilince
-     * k6 {@code exit 106} ile ÖLÜMCÜL hata veriyor. {@code 127.0.0.1:0} ise her zaman bağlanır,
-     * yani çakışma imkânsız hale gelir. {@code archive} alt komutu da bayrağı kabul ediyor.
-     */
-    private static final String K6_API_ADDRESS = "127.0.0.1:0";
-
-    /**
-     * Bayrağı komuta ekler — BOŞ ayar verilirse hiç eklenmez (eski davranışa dönüş).
-     *
-     * <p>Kaçış kapısı bilinçli: ortamda 16 senaryo izlemesi var ve bu bayrak HEM {@code run}
-     * HEM {@code archive} yolunda. Beklenmedik bir k6 sürümünde sorun çıkarsa ops tek ayarla
-     * geri alabilmeli — yeniden derleme/dağıtım beklemeden.
-     */
-    private void addApiAddress(List<String> args, K6Profile profile) {
-        // 2026-10-29: k6 2.0+ REST API'yi zaten AÇMAZ; --address vermek onu AÇARDI (gereksiz dinleyen port) — yalnız
-        // 2.0'dan eski (ya da sürümü okunamayan) ikiliye verilir. Ölçüldü: 0.49 bayraksız 6565'i dinliyor, 2.3 dinlemiyor.
-        if (profile != null && !profile.needsApiAddress()) return;
-        String addr = k6ApiAddress();
-        if (!addr.isBlank()) { args.add("--address"); args.add(addr); }
-    }
-
-    private String k6ApiAddress() {
-        String v = appSettings.getString("site.monitor.scripted.k6-api-address", K6_API_ADDRESS);
-        return v == null ? "" : v.trim();
     }
 
     // ── Giriş noktaları ──────────────────────────────────────────────────────
@@ -894,7 +896,7 @@ public class ScriptedCheckerService {
         int timeoutSec = clampTimeout(m.getTimeoutSeconds());
         List<EnvVar> env = monitorEnv(m);
         ProxyUse viaProxy = proxyUseFor(m.getUseProxy());
-        if (!k6Available) return err("k6 bulunamadı — Sentetik İzleme devre dışı");
+        if (!k6Available) return err(unavailableText());
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(queueWaitSec);
         boolean slot = false, acquired = false;
         queued.incrementAndGet();
@@ -1227,7 +1229,7 @@ public class ScriptedCheckerService {
         String memLimit = appSettings.getString("site.monitor.scripted.mem-limit", "256MiB");
         if (!memLimit.isBlank() && !"0".equals(memLimit.trim())) env.put("GOMEMLIMIT", memLimit.trim());
         // Güvenlik ortamı (2026-10-29, k6 2.x): sistem değerleri HER çağrıda, kullanıcı env'inden SONRA (put) — kullanıcı
-        // K6_* adlarını zaten veremez (ScriptedEnvPolicy), bu ikinci kemerdir. 0.49 bu adları tanımaz ve yok sayar.
+        // K6_* adlarını zaten veremez (ScriptedEnvPolicy), bu ikinci kemerdir.
         env.putAll(systemK6Env());
         // Eski TLS uçları için Go kaçışları (yönetici ayarı, izinli anahtarlar; boş = yok).
         String godebug = K6EngineSettings.effectiveGodebug(appSettings.getString(K6EngineSettings.KEY_GODEBUG, ""));
@@ -1315,7 +1317,7 @@ public class ScriptedCheckerService {
      * @param withCa    kurumsal CA paketi k6'ya verilsin mi (false ⇒ Go yalnız kendi köklerine bakar)
      */
     public ScriptedResult probe(String url, boolean viaProxy, boolean withCa) {
-        if (!k6Available) return err("k6 bulunamadı — Sentetik İzleme devre dışı");
+        if (!k6Available) return err(unavailableText());
         boolean acquired = false;
         try {
             acquired = diagPermits.tryAcquire(30, TimeUnit.SECONDS);
@@ -1336,7 +1338,7 @@ public class ScriptedCheckerService {
     }
 
     private ScriptedResult runGuardedAfterQueue(String script, List<EnvVar> env, int timeoutSec, ProxyUse viaProxy) {
-        if (!k6Available) { queued.decrementAndGet(); return err("k6 bulunamadı — Sentetik İzleme devre dışı"); }
+        if (!k6Available) { queued.decrementAndGet(); return err(unavailableText()); }
         boolean acquired = false;
         try {
             acquired = permits.tryAcquire(timeoutSec + PERMIT_WAIT_MARGIN_SEC, TimeUnit.SECONDS);
@@ -1378,7 +1380,8 @@ public class ScriptedCheckerService {
     static final String FILE_READ_BLOCKED_MSG =
             "Betik dosya okuyor; güvenlik ayarı gereği çalıştırılmadı (Ayarlar → Sentetik → Betikte dosya okuma)";
 
-    private static final Pattern FR_OPEN = Pattern.compile("(?<![\\w$.])open\\s*\\(");
+    /** {@code open(…)} ve isteğe bağlı çağrı {@code open?.(…)} (inceleme 2026-10-30, L4); başka nesnenin {@code x.open} metodu değil. */
+    private static final Pattern FR_OPEN = Pattern.compile("(?<![\\w$.])open\\s*(?:\\?\\.\\s*)?\\(");
     private static final Pattern FR_OPEN_INDIRECT = Pattern.compile("\\[\\s*['\"`]open['\"`]\\s*\\]");
     private static final Pattern FR_FS_MODULE = Pattern.compile("['\"`]k6/(?:experimental/)?fs['\"`]");
     private static final Pattern FR_LOCAL_IMPORT =
@@ -1473,12 +1476,16 @@ public class ScriptedCheckerService {
 
     /**
      * @param engine koşacak ikilinin profili (2026-10-29): gerçek kontroller ETKİN ikiliyle, uyumluluk taraması ADAY ikiliyle
-     *               koşar. Komut ({@code --address}) ve sonuca yazılan sürüm bu profilden gelir.
+     *               koşar. Komuttaki ikili yolu ve sonuca yazılan sürüm bu profilden gelir.
      */
     private ScriptedResult execute(String script, List<EnvVar> envVars, int timeoutSec, ProxyUse viaProxy,
                                    boolean withCa, K6Profile engine) {
+        // Koşamayan motor (yok / çalışmıyor / desteklenmeyen sürüm) KOŞTURULMAZ (inceleme 2026-10-30, L2): giriş noktaları
+        // k6Available'a bakar ama currentProfile() ayar değişince yeniden yoklar — o anda gelen eski / eksik bir ikili
+        // komutla çalıştırılmamalı. archiveCheck'in kuralıyla aynı.
+        if (engine == null || !engine.available()) return err(unavailableText(engine));
         Path scriptFile = null, summaryFile = null, caFile = null;
-        String engineVersion = engine != null && engine.available() ? engine.version() : null;
+        String engineVersion = engine.version();
         // Bağlam DEĞİŞKENLERİ try dışında: catch bloğu bunlara erişebilsin.
         List<String> secretValues = new ArrayList<>();
         ProcessProbe.Result r = null;   // null ⇒ süreç hiç başlamadı
@@ -1496,12 +1503,12 @@ public class ScriptedCheckerService {
             String ua = K6EngineSettings.effectiveUserAgent(appSettings.getString(K6EngineSettings.KEY_USER_AGENT, ""));
             if (!ua.isEmpty() && !scriptDefinesUserAgent(script)) env.put("K6_USER_AGENT", ua);
 
-            String bin = engine != null ? engine.bin() : k6Bin();
+            String bin = engine.bin();
             List<String> args = new ArrayList<>(List.of(
                     bin, "run", "--quiet", "--no-usage-report",
                     "--summary-export=" + summaryFile.toAbsolutePath(),
                     "--vus", "1", "--iterations", "1"));
-            addApiAddress(args, engine);
+            // --address VERİLMEZ (2026-10-30): k6 2.0+ REST API'yi zaten açmaz, bayrak onu AÇARDI.
             // ── L2 sert tavan: istek/sn ────────────────────────────────────────────────────
             // Statik analiz `for (i=0;i<n;i++)` gibi değişken sınırlı bir döngüde kaç istek
             // atılacağını KANITLAYAMAZ. Bu bayrak kanıt gerektirmez: script 10.000 istek yazsa

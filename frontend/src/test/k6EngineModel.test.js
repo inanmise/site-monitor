@@ -116,6 +116,9 @@ describe('motor durumu ve geçiş hazırlığı', () => {
     expect(engineState({ available: false })).toBe('missing')
     expect(engineState({})).toBe('missing')
     expect(engineState(null)).toBe('unset')
+    // 2026-10-30: bulundu ama sürümü desteklenmiyor (en az v2.0.0) — yeşil değil, "bulunamadı" da değil
+    expect(engineState({ available: false, unsupported: true, version: 'v0.49.0' })).toBe('unsupported')
+    expect(engineState({ available: true, unsupported: true })).toBe('running')
   })
 
   const done = (extra = {}) => ({ id: 5, state: 'DONE', scope: 'ALL', total: 40, regressions: 0, candidate_version: 'v2.3.0', ...extra })

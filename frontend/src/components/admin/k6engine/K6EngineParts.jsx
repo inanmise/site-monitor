@@ -47,10 +47,10 @@ export function SectionCard({ slot, icon: Icon, title, description, actions, chi
 // ── Motorlar ────────────────────────────────────────────────────────────────────────────────────
 
 const ROLES = ['active', 'rollback', 'candidate']
-const STATE_TONE = { running: 'success', missing: 'danger', unset: 'muted' }
+const STATE_TONE = { running: 'success', unsupported: 'danger', missing: 'danger', unset: 'muted' }
 
-/** Tek ikili satırı: rol, yol (tek aralıklı, sarar), sürüm, durum, yoklama zamanı, sözdizimi notu. */
-function EngineRow({ role, profile, lang }) {
+/** Tek ikili satırı: rol, yol (tek aralıklı, sarar), sürüm, durum, yoklama zamanı; desteklenmeyen sürümde neden. */
+function EngineRow({ role, profile, lang, minVersion }) {
   const t = useT()
   const state = engineState(profile)
   return (
@@ -76,9 +76,12 @@ function EngineRow({ role, profile, lang }) {
       {profile && (
         <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
           <span data-slot="k6e-engine-probed">{t('k6e.probedAt', fmtUtc(profile.probed_at, lang))}</span>
-          {profile.modern_syntax === true && <span data-slot="k6e-engine-syntax" data-syntax="modern">{t('k6e.syntax.modern')}</span>}
-          {profile.modern_syntax === false && <span data-slot="k6e-engine-syntax" data-syntax="legacy">{t('k6e.syntax.legacy')}</span>}
         </div>
+      )}
+      {state === 'unsupported' && (
+        <p className="m-0 text-xs text-destructive" data-slot="k6e-engine-unsupported">
+          {t('k6e.unsupportedHint', minVersion || 'v2.0.0')}
+        </p>
       )}
     </li>
   )
@@ -107,17 +110,17 @@ export function EnginesCard({ data, lang, busy, scanRunning, onReprobe, onSwitch
         </div>
       )}
       <ul className="m-0 grid list-none grid-cols-1 gap-3 p-0 @3xl:grid-cols-3">
-        {ROLES.map((r) => <EngineRow key={r} role={r} profile={engines[r] || null} lang={lang} />)}
+        {ROLES.map((r) => <EngineRow key={r} role={r} profile={engines[r] || null} lang={lang} minVersion={data?.min_version} />)}
       </ul>
-      <p className="m-0 text-sm text-muted-foreground" data-slot="k6e-syntax-version">
-        {data?.syntax_version ? t('k6e.syntaxVersion', data.syntax_version) : t('k6e.syntaxVersionUnknown')}
-      </p>
+      {data?.min_version && (
+        <p className="m-0 text-sm text-muted-foreground" data-slot="k6e-min-version">{t('k6e.minVersion', data.min_version)}</p>
+      )}
       <div className="flex flex-wrap items-center gap-2">
         <Button type="button" onClick={onSwitch} disabled={locked || !data?.can_switch || scanRunning || mixed || podsUnknown}
           className={cn(TOUCH, 'whitespace-normal')} data-slot="k6e-switch">
           <Zap aria-hidden="true" /> {t('k6e.switch')}
         </Button>
-        <Button type="button" variant="outline" onClick={onRollback} disabled={locked || !data?.can_rollback}
+        <Button type="button" variant="outline" onClick={onRollback} disabled={locked || !data?.can_rollback || mixed || podsUnknown}
           className={cn(TOUCH, 'whitespace-normal')} data-slot="k6e-rollback">
           <Undo2 aria-hidden="true" /> {t('k6e.rollback')}
         </Button>
@@ -128,12 +131,13 @@ export function EnginesCard({ data, lang, busy, scanRunning, onReprobe, onSwitch
       {data?.can_switch && scanRunning && (
         <p className="m-0 text-xs text-muted-foreground" data-slot="k6e-switch-why">{t('k6e.switchWaitScan')}</p>
       )}
-      {data?.can_switch && !scanRunning && mixed && (
+      {/* Geri dönüş de aynı kapıya tabi (inceleme 2026-10-30, L1) — yalnız o açıkken de nedeni yaz. */}
+      {((data?.can_switch && !scanRunning) || data?.can_rollback) && mixed && (
         <p className="m-0 text-xs text-muted-foreground [overflow-wrap:anywhere]" data-slot="k6e-switch-why" data-why="mixed">
           {t('k6e.switchMixed', podList(others))}
         </p>
       )}
-      {data?.can_switch && !scanRunning && podsUnknown && (
+      {((data?.can_switch && !scanRunning) || data?.can_rollback) && podsUnknown && (
         <p className="m-0 text-xs text-muted-foreground" data-slot="k6e-switch-why" data-why="podsUnknown">{t('k6e.switchPodsUnknown')}</p>
       )}
     </SectionCard>
@@ -160,14 +164,14 @@ export function SettingsCard({ data, form, dirty, saving, fe, onChange, onSave, 
         <Field label={t('k6e.f.rollbackBin')} hint={t('k6e.f.rollbackBinHint')} {...fe.fieldProps('rollback_bin')}>
           {({ id, describedBy, invalid }) => (
             <Input id={id} aria-describedby={describedBy} aria-invalid={invalid} value={form.rollback_bin} disabled={saving}
-              spellCheck={false} autoComplete="off" placeholder="/usr/local/bin/k6-0.49" onChange={(e) => onChange('rollback_bin', e.target.value)}
+              spellCheck={false} autoComplete="off" placeholder="/opt/k6-rollback/k6" onChange={(e) => onChange('rollback_bin', e.target.value)}
               data-slot="k6e-f-rollback" className="h-10 font-mono" />
           )}
         </Field>
         <Field label={t('k6e.f.candidateBin')} hint={t('k6e.f.candidateBinHint')} {...fe.fieldProps('candidate_bin')}>
           {({ id, describedBy, invalid }) => (
             <Input id={id} aria-describedby={describedBy} aria-invalid={invalid} value={form.candidate_bin} disabled={saving}
-              spellCheck={false} autoComplete="off" placeholder="/usr/local/bin/k6-2.3" onChange={(e) => onChange('candidate_bin', e.target.value)}
+              spellCheck={false} autoComplete="off" placeholder="/opt/k6-candidate/k6" onChange={(e) => onChange('candidate_bin', e.target.value)}
               data-slot="k6e-f-candidate" className="h-10 font-mono" />
           )}
         </Field>

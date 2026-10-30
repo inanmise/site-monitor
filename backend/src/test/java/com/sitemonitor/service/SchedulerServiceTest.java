@@ -1371,6 +1371,8 @@ class SchedulerServiceTest {
         // Kapi acilmadan monitor listesi cekilmemeli: cekilirse sweep gercekten baslamis demektir.
         verify(scriptedMonitorRepo, never()).findByActiveTrue();
         verify(scriptedCheckerService, never()).submit(any());
+        // Günlük nedeni servisten gelir (2026-10-30, L6): desteklenmeyen sürüm "bulunamadı" diye yazılmaz.
+        verify(scriptedCheckerService).unavailableReason();
     }
 
     @Test

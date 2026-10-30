@@ -1413,6 +1413,17 @@ public class MonitoringController {
         return ResponseEntity.status(404).body(Map.of("success", false, "error", msg));
     }
 
+    /**
+     * "k6 yok" yanıtının metni (2026-10-30): desteklenmeyen sürüm (ör. 0.49) "bulunamadı" demez. Elle kurulan / taklit
+     * servislerde metin yoksa eski sabit metin.
+     */
+    private String k6UnavailableMessage() {
+        String m = scriptedChecker.unavailableMessage();
+        return m != null && !m.isBlank() ? m
+                : com.sitemonitor.util.Msg.t("k6 bulunamadı — Sentetik İzleme devre dışı (bu ortamda k6 binary'si yok).",
+                        "k6 not found — Synthetic Monitoring is disabled (there is no k6 binary in this environment).");
+    }
+
     private ResponseEntity<Map<String, Object>> badRequest(String msg) {
         return ResponseEntity.badRequest().body(Map.of("success", false, "error", msg));
     }
@@ -5079,8 +5090,10 @@ public class MonitoringController {
         out.put("monitors", withRevealFlag(session, withCheckFlag(session, result)));
         out.put("k6_available", scriptedChecker.isAvailable());
         out.put("k6_version", scriptedChecker.version());
-        // Sözdizimi rozeti için sürüm (2026-10-29, k6 geçişi): etkin ve yedek ikiliden ESKİSİ — geri dönüş betiği bozmasın.
-        out.put("k6_syntax_version", scriptedChecker.syntaxVersion());
+        // Etkin ikili bulundu ama sürümü desteklenmiyorsa (en az v2.0.0; 2026-10-30) o sürüm — ekran "bulunamadı" yerine
+        // "desteklenmiyor" der. Yoksa alan hiç yazılmaz.
+        String unsupported = scriptedChecker.unsupportedVersion();
+        if (unsupported != null) out.put("k6_unsupported_version", unsupported);
         // Vekilin ETKİN durumu — "AUTO seçtim, demek ki vekilden geçiyor" varsayımı yanlış olabiliyor:
         // Go, NO_PROXY listesindeki her girdiyi SONEK olarak uygular (`akbank.com` ⇒ tüm alt alanlar),
         // yani eşleşen hedefler AUTO'da bile doğrudan çıkar. Bu iki alan, formda kararın gerçekte ne
@@ -5575,7 +5588,7 @@ public class MonitoringController {
     public ResponseEntity<Map<String, Object>> testScripted(@RequestBody Map<String, Object> body, HttpSession session) {
         permissionService.require(session, "monitoring.scripted", "execute");
         if (!scriptedChecker.isAvailable())
-            return badRequest("k6 bulunamadı — Sentetik İzleme devre dışı (bu ortamda k6 binary'si yok).");
+            return badRequest(k6UnavailableMessage());
         String script = body.get("script") != null ? body.get("script").toString() : "";
         if (script.isBlank()) return badRequest("script zorunlu");
         Integer timeout = body.get("timeoutSeconds") instanceof Number tn ? tn.intValue() : null;
@@ -5638,7 +5651,7 @@ public class MonitoringController {
         if (m == null) return notFound("Sentetik izleme bulunamadı");
         if (!canExecuteTeam(session, m.getTeamId())) return forbidden("Bu izleme üzerinde yetkiniz yok");
         if (!scriptedChecker.isAvailable())
-            return badRequest("k6 bulunamadı — Sentetik İzleme devre dışı (bu ortamda k6 binary'si yok).");
+            return badRequest(k6UnavailableMessage());
 
         List<String> candidates = scriptedChecker.targetUrls(m);
         // Gizli env DEĞERLERİ (çözülmüş) adres yoluna / ana makineye de yerleşebilir (`https://x/${__ENV.TOKEN}`):

@@ -468,6 +468,14 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
     List<AlertEvent> findOpenOrCreatedSince(@Param("since") String since, Pageable pageable);
 
     /**
+     * Merkezi izleme alarm akışı (2026-10-30): AÇIK alarmlar + {@code since} sonrasında ÇÖZÜLENLER (UTC ISO, sözlüksel
+     * karşılaştırma), en yeni açılış önce; tavan {@code pageable}. İndeks: {@code idx_ae_resolved} + {@code idx_ae_resolved_at}.
+     */
+    @Query("SELECT e FROM AlertEvent e WHERE e.resolved = false OR (e.resolvedAt IS NOT NULL AND e.resolvedAt >= :since) "
+            + "ORDER BY e.createdAt DESC, e.id DESC")
+    List<AlertEvent> findOpenOrResolvedSince(@Param("since") String since, Pageable pageable);
+
+    /**
      * Alarm Geçmişi listesi. {@code activeFrom} (2026-09-28, "aralıkta aktif olanlar" kipi): verilirse alarm, o andan
      * SONRA hâlâ açıksa ya da o anda/sonrasında çözüldüyse girer — {@code until} ile birlikte "pencereyle KESİŞEN"
      * (açılış ≤ bitiş VE (açık YA DA çözüm ≥ başlangıç)) koşulunu kurar; önceki haftadan devredenler de listelenir.

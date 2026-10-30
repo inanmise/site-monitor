@@ -16,8 +16,8 @@
 #      bu derlemenin bir varlığı ve önceki sürümden TAŞINAN bir varlık 200 + "immutable"; taşınan liste bu derlemeyle
 #      çakışmıyor ve sınırlı (≤ 5000); olmayan bir varlık düz metin 404 + no-store (SpaNotFoundAdvice); /boot-guard.js
 #      200 + no-store (sürüm bağımsız açılış koruması hiç önbelleğe alınmaz).
-#   8. (2026-10-29, k6 sürüm geçişi) günlük: ASIL k6 (/usr/bin/k6) ve ADAY k6 (/opt/k6-next/k6) yoklaması Dockerfile'daki
-#      K6_VERSION / K6_NEXT_VERSION sürümünü söylüyor — yanlış ikili ya da eksik katman açılışta görünsün.
+#   8. (2026-10-29, k6 sürüm geçişi; 2026-10-30'dan beri tek ikili) günlük: k6 (/usr/bin/k6) yoklaması Dockerfile'daki
+#      K6_VERSION sürümünü söylüyor, "desteklenmiyor" ya da "bulunamadı" demiyor — yanlış ikili ya da eksik katman görünsün.
 set -uo pipefail
 
 BASE="${1:?kullanım: image-boot-check.sh <base-url> <log-dosyası> [varlık-listeleri-dizini]}"
@@ -130,29 +130,23 @@ if [ -n "$LISTS" ]; then
   case "$h" in 200\|*javascript*\|*no-store*) ;; *) err "/boot-guard.js 200 + javascript + no-store değil (açılış koruması): $h" ;; esac
 fi
 
-# ── 8: k6 ikilileri (2026-10-29) ───────────────────────────────────────────────────────────
-# Beklenen sürümler depodaki Dockerfile'dan okunur (iş akışı depoyu çeker, betik kök dizinden koşar).
+# ── 8: k6 ikilisi (2026-10-29; 2026-10-30'dan beri tek ikili) ──────────────────────────────────
+# Beklenen sürüm depodaki Dockerfile'dan okunur (iş akışı depoyu çeker, betik kök dizinden koşar).
 k6_main="$(sed -n 's/^ARG K6_VERSION=//p' Dockerfile 2>/dev/null | head -1 | tr -d '[:space:]')"
-k6_next="$(sed -n 's/^ARG K6_NEXT_VERSION=//p' Dockerfile 2>/dev/null | head -1 | tr -d '[:space:]')"
 if [ -s "$LOG" ]; then
   k6log="$(sed -E 's/\x1B\[[0-9;]*[A-Za-z]//g' "$LOG" | grep -a '\[K6\]' || true)"
   if [ -n "$k6_main" ]; then
     re_main="$(printf '%s' "$k6_main" | sed 's/\./\\./g')"
     if printf '%s\n' "$k6log" | grep -aEq "\[K6\] .*v${re_main} \("; then
-      echo "asıl k6: v${k6_main} bulundu"
+      echo "k6: v${k6_main} bulundu"
     else
-      err "günlükte asıl k6 v${k6_main} yoklaması yok (beklenen: '[K6] ✅ k6 bulundu — sürüm v${k6_main}')"
+      err "günlükte k6 v${k6_main} yoklaması yok (beklenen: '[K6] ✅ k6 bulundu — sürüm v${k6_main}')"
       printf '%s\n' "$k6log" | head -5
     fi
   fi
-  if [ -n "$k6_next" ]; then
-    re_next="$(printf '%s' "$k6_next" | sed 's/\./\\./g')"
-    if printf '%s\n' "$k6log" | grep -aEq "\[K6\] aday k6 .*v${re_next} \(/opt/k6-next/k6\)"; then
-      echo "aday k6: v${k6_next} bulundu (/opt/k6-next/k6)"
-    else
-      err "günlükte aday k6 v${k6_next} yoklaması yok (beklenen: '[K6] aday k6 — sürüm v${k6_next} (/opt/k6-next/k6)')"
-      printf '%s\n' "$k6log" | head -5
-    fi
+  if printf '%s\n' "$k6log" | grep -aEq "desteklenmiyor|k6 bulunamadı"; then
+    err "günlükte k6 'desteklenmiyor' / 'bulunamadı' diyor — senaryo izleme devre dışı kalır"
+    printf '%s\n' "$k6log" | head -5
   fi
 fi
 

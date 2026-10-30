@@ -230,8 +230,14 @@ const SPECIAL = {
   K6_ENGINE_SETTINGS_SAVE: 'audit.ev.K6_ENGINE_SETTINGS_SAVE',
   K6_ENGINE_SWITCH: 'audit.ev.K6_ENGINE_SWITCH',
   K6_ENGINE_ROLLBACK: 'audit.ev.K6_ENGINE_ROLLBACK',
+  K6_ENGINE_SETTINGS_NORMALIZE: 'audit.ev.K6_ENGINE_SETTINGS_NORMALIZE',
   K6_COMPAT_SCAN_START: 'audit.ev.K6_COMPAT_SCAN_START',
   K6_COMPAT_SCAN_CANCEL: 'audit.ev.K6_COMPAT_SCAN_CANCEL',
+  // Ayarlar → Alarm akışı (2026-10-30): ayar kaydı, reddedilen çağrı, yeni çağıran IP, çağrı günlüğü dışa aktarımı
+  ALARM_FEED_SETTINGS_SAVE: 'audit.ev.ALARM_FEED_SETTINGS_SAVE',
+  ALARM_FEED_ACCESS_DENIED: 'audit.ev.ALARM_FEED_ACCESS_DENIED',
+  ALARM_FEED_NEW_CALLER: 'audit.ev.ALARM_FEED_NEW_CALLER',
+  ALARM_FEED_LOG_EXPORT: 'audit.ev.ALARM_FEED_LOG_EXPORT',
   GRAFANA_DASHBOARD_EXPORT: 'audit.ev.GRAFANA_DASHBOARD_EXPORT',
   // İş ölçümleri ucu (/metrics/sitemonitor) belirteç reddi — güvenlik olayı, IP başına 10 dk'da bir
   METRICS_EXPORT_ACCESS_DENIED: 'audit.ev.METRICS_EXPORT_ACCESS_DENIED',

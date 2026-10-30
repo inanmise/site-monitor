@@ -137,8 +137,16 @@ public class K6CompatScanService {
         K6Profile candidate = checker.candidate();
         if (candidate == null) {
             throw new CodedConflictException("K6_CANDIDATE_NOT_SET", Msg.t(
-                    "Aday k6 ikilisi tanımlı değil. Önce 'Aday ikili' yolunu kaydedin (imajda /opt/k6-next/k6).",
-                    "No candidate k6 binary is set. Save the 'Candidate binary' path first (/opt/k6-next/k6 in the image)."));
+                    "Aday k6 ikilisi tanımlı değil. Önce denenecek yeni sürümün yolunu 'Aday ikili' alanına kaydedin.",
+                    "No candidate k6 binary is set. Save the path of the new version to try in the 'Candidate binary' field first."));
+        }
+        if (!candidate.available() && candidate.unsupported()) {
+            // 2026-10-30: bulundu ama sürümü desteklenmiyor — "çalıştırılamadı / yolu denetleyin" yanlış yönlendirirdi.
+            throw new CodedConflictException("K6_CANDIDATE_UNAVAILABLE", Msg.t(
+                    "Aday k6 sürümü (" + candidate.version() + ") desteklenmiyor — en az " + K6Profile.MIN_SUPPORTED_VERSION
+                            + " gerekir; tarama başlatılmadı.",
+                    "The candidate k6 version (" + candidate.version() + ") isn't supported — "
+                            + K6Profile.MIN_SUPPORTED_VERSION + " or later is required; the scan was not started."));
         }
         if (!candidate.available()) {
             throw new CodedConflictException("K6_CANDIDATE_UNAVAILABLE", Msg.t(

@@ -1,9 +1,72 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-30T13:50:08Z",
+  "generatedAt": "2026-10-30T21:21:46Z",
   "repo": "inanmise/site-monitor",
-  "count": 793,
+  "count": 794,
   "releases": [
+    {
+      "version": "20.173.0",
+      "tag": "v20.173.0",
+      "releasedAt": "2026-10-30T21:21:37Z",
+      "commit": "19f76366ea161cfd958404cd0f62bbbcca32e472",
+      "prevVersion": "20.172.1",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 2,
+        "fix": 4,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "19f76366",
+          "subject": "alarm akışı kaynak kapıları — CSV ve kimlik izi gerekçeli istisna, çağrı günlüğü toplu silinen tablo"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "208d3d08",
+          "subject": "alarm akışı ikinci inceleme — kapanış ilk teslimden sonra bir pencere tekrarlanır, en güncel kapanış, saatlik temizlik"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "1a7db868",
+          "subject": "k6 tek motor inceleme düzeltmeleri — geri dönüşte 2.3 korunur, yedek dönüş sürüm kapısı, sürüm deseni, open?.()"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "aea51b5d",
+          "subject": "alarm akışı inceleme düzeltmeleri — gönderilen anahtar saklanır, kapanış teslim edilene kadar, sır temizliği"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "f04ca7ee",
+          "subject": "k6 2.3 tek motor (Yayın B+C) — 0.49 ve eski kod yolları kaldırıldı, ayar normalleştirme işi"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "6a513e20",
+          "subject": "merkezi izleme alarm akışı — belirteçsiz uç, kolon biçimi, çağrı günlüğü, ayar sayfası"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.172.1",
       "tag": "v20.172.1",

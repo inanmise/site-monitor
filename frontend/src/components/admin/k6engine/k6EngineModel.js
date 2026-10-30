@@ -1,7 +1,8 @@
 import { foldSearchText, matchesSearchText } from '../../../utils/monitorFilters.js'
 
 /**
- * Ayarlar → Platform → k6 motoru — saf model (2026-10-29, k6 0.49 → 2.3 geçişi, Yayın A).
+ * Ayarlar → Platform → k6 motoru — saf model (2026-10-29, k6 0.49 → 2.3 geçişi; 2026-10-30'dan beri genel sürüm
+ * yükseltme aracı — imajda tek ikili, yedek / aday yolları gelecekteki yükseltmeler için).
  *
  * Sunucu sözleşmesi `/api/admin/k6-engine` (K6EngineController, yalnız global yönetici). Buradaki listeler sunucuyla AYNI
  * sırada tutulur; `test/k6EngineModel.test.js` Java kaynağını okuyup karşılaştırır (GODEBUG anahtarları, fark türleri, hata
@@ -173,10 +174,14 @@ export function pickableMonitors(monitors, q) {
 
 // ── Motor durumu ────────────────────────────────────────────────────────────────────────────────
 
-/** Profil → `running` (çalışıyor) · `missing` (tanımlı ama çalıştırılamıyor) · `unset` (tanımlı değil). */
+/**
+ * Profil → `running` (çalışıyor) · `unsupported` (bulundu ama sürümü desteklenmiyor — en az v2.0.0; 2026-10-30) ·
+ * `missing` (tanımlı ama çalıştırılamıyor) · `unset` (tanımlı değil).
+ */
 export function engineState(p) {
   if (!p) return 'unset'
-  return p.available === true ? 'running' : 'missing'
+  if (p.available === true) return 'running'
+  return p.unsupported === true ? 'unsupported' : 'missing'
 }
 
 /**

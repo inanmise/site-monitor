@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, fireEvent, waitFor, within, act } from './test-utils.jsx'
+import { render, screen, fireEvent, waitFor, within, act, cleanup } from './test-utils.jsx'
 
 // Ayarlar → Platform → k6 motoru (2026-10-29): yükleme + motorlar (çalışıyor / bulunamadı / tanımlı değil), TLS kaçışları →
 // yalnız değişen alanın kaydı, sunucu alan hatası alanın altında, geçiş onayı + hazırlık (tarama yok / gerileme / sürüyor),
@@ -30,21 +30,21 @@ const GODEBUG_KEYS = [
   { key: 'tlsmlkem', description: 'ML-KEM anahtar paylaşımı (0 = kapat)' },
   { key: 'tlssecpmlkem', description: 'SecP256r1/SecP384r1 ML-KEM anahtar paylaşımı (0 = kapat)' },
 ]
-const ACTIVE = { bin: '/usr/local/bin/k6', available: true, version: 'v0.49.0', modern_syntax: false, api_address: true, probed_at: '2026-10-29T20:15:03' }
-const CANDIDATE = { bin: '/usr/local/bin/k6-2.3', available: true, version: 'v2.3.0', modern_syntax: true, api_address: false, probed_at: '2026-10-29T20:15:04' }
+const ACTIVE = { bin: '/usr/local/bin/k6', available: true, version: 'v2.2.0', probed_at: '2026-10-29T20:15:03' }
+const CANDIDATE = { bin: '/usr/local/bin/k6-2.3', available: true, version: 'v2.3.0', probed_at: '2026-10-29T20:15:04' }
 const summary = (extra = {}) => ({
   id: 7, state: 'DONE', started_at: '2026-10-29T18:00:00', finished_at: '2026-10-29T18:05:00', heartbeat_at: '2026-10-29T18:05:00',
-  started_by_name: 'Erdi İnanmış', owner_pod: 'site-monitor-7c9d', active_bin: ACTIVE.bin, active_version: 'v0.49.0',
+  started_by_name: 'Erdi İnanmış', owner_pod: 'site-monitor-7c9d', active_bin: ACTIVE.bin, active_version: 'v2.2.0',
   candidate_bin: CANDIDATE.bin, candidate_version: 'v2.3.0', scope: 'ALL', total: 3, done: 3, regressions: 1, improvements: 0,
   unchanged: 1, no_baseline: 0, failure: null, ...extra,
 })
 const RESULTS = [
   { monitor_id: 11, monitor_name: 'İnternet Şubesi Girişi', team_id: 1, team_name: LONG_TEAM, diff: 'SAME_PASS', status: 'PASS', exit_code: 0,
-    duration_ms: 1200, error_class: null, error: null, archive: 'OK', retried: false, baseline_status: 'PASS', baseline_k6_version: 'v0.49.0',
+    duration_ms: 1200, error_class: null, error: null, archive: 'OK', retried: false, baseline_status: 'PASS', baseline_k6_version: 'v2.2.0',
     baseline_checked_at: '2026-10-29T17:50:00', baseline_duration_ms: 1100, checked_at: '2026-10-29T18:01:00' },
   { monitor_id: 12, monitor_name: 'Ödeme API Senaryosu', team_id: 2, team_name: 'Ödeme Sistemleri', diff: 'REGRESSION', status: 'FAIL', exit_code: 99,
     duration_ms: 3400, error_class: 'TLS', error: 'tls: handshake failure\nremote error: tls: insufficient security level', archive: 'OK', retried: true,
-    baseline_status: 'PASS', baseline_k6_version: 'v0.49.0', baseline_checked_at: '2026-10-29T17:51:00', baseline_duration_ms: 900, checked_at: '2026-10-29T18:02:00' },
+    baseline_status: 'PASS', baseline_k6_version: 'v2.2.0', baseline_checked_at: '2026-10-29T17:51:00', baseline_duration_ms: 900, checked_at: '2026-10-29T18:02:00' },
   { monitor_id: 13, monitor_name: 'Kampanya Sayfası', team_id: null, team_name: null, diff: 'NO_BASELINE', status: 'PASS', exit_code: 0,
     duration_ms: 800, error_class: null, error: null, archive: 'OK', retried: false, baseline_status: null, checked_at: '2026-10-29T18:03:00' },
 ]
@@ -56,7 +56,7 @@ const detail = (extra = {}) => ({
 const data = (extra = {}) => ({
   pod: 'site-monitor-7c9d6f8b5-xk2lq',
   engines: { active: ACTIVE, rollback: null, candidate: CANDIDATE },
-  syntax_version: 'v0.49.0',
+  min_version: 'v2.0.0',
   settings: { rollback_bin: '', candidate_bin: CANDIDATE.bin, godebug: '', user_agent: '', excluded_ids: [] },
   godebug_keys: GODEBUG_KEYS,
   scripted_enabled: true, can_switch: true, can_rollback: false,
@@ -89,21 +89,21 @@ async function mount() {
 }
 
 describe('K6EngineSettings — motorlar', () => {
-  it('yükler: bu pod, üç rol (çalışıyor / tanımlı değil), sürümler, sözdizimi satırı; Adayı etkin yap açık, Yedeğe dön kapalı', async () => {
+  it('yükler: bu pod, üç rol (çalışıyor / tanımlı değil), sürümler, en eski desteklenen sürüm (sözdizimi satırı yok); Adayı etkin yap açık, Yedeğe dön kapalı', async () => {
     await mount()
     expect(slot('k6e-pod')).toHaveTextContent('Bu pod: site-monitor-7c9d6f8b5-xk2lq')
     const rows = slots('k6e-engine')
     expect(rows.map((r) => r.getAttribute('data-role'))).toEqual(['active', 'rollback', 'candidate'])
     expect(rows.map((r) => r.getAttribute('data-state'))).toEqual(['running', 'unset', 'running'])
     expect(within(rows[0]).getByText('Çalışıyor')).toBeInTheDocument()
-    expect(within(rows[0]).getByText('v0.49.0')).toBeInTheDocument()
+    expect(within(rows[0]).getByText('v2.2.0')).toBeInTheDocument()
     expect(within(rows[0]).getByText('/usr/local/bin/k6')).toBeInTheDocument()
     expect(within(rows[1]).getByText('Tanımlı değil')).toBeInTheDocument()
-    expect(rows[0].querySelector('[data-slot="k6e-engine-syntax"]')).toHaveAttribute('data-syntax', 'legacy')
-    expect(rows[2].querySelector('[data-slot="k6e-engine-syntax"]')).toHaveAttribute('data-syntax', 'modern')
+    expect(rows[0].querySelector('[data-slot="k6e-engine-syntax"]')).toBeNull()
     // UTC damga Türkiye saatiyle (20:15 UTC → 23:15)
     expect(within(rows[0]).getByText(/29\.10\.2026 23:15/)).toBeInTheDocument()
-    expect(slot('k6e-syntax-version')).toHaveTextContent('v0.49.0')
+    expect(slot('k6e-syntax-version')).toBeNull()
+    expect(slot('k6e-min-version')).toHaveTextContent('v2.0.0')
     expect(slot('k6e-switch')).not.toBeDisabled()
     expect(slot('k6e-rollback')).toBeDisabled()
   })
@@ -119,6 +119,21 @@ describe('K6EngineSettings — motorlar', () => {
     expect(within(cand).getByText('Sürüm bilinmiyor')).toBeInTheDocument()
     expect(slot('k6e-switch')).toBeDisabled()
     expect(slot('k6e-switch-why')).toHaveTextContent('çalışan ve etkin olandan farklı')
+  })
+
+  it('2.0\'dan eski ikili (ör. 0.49) "Desteklenmiyor" (yeşil değil) ve en eski sürümü söyler; geri dönüş kapalı', async () => {
+    api.admin.k6Engine.mockResolvedValue(ok(data({
+      engines: { active: ACTIVE, rollback: { bin: 'k6-old', available: false, unsupported: true, version: 'v0.49.0', probed_at: '2026-10-29T20:15:03' },
+        candidate: null },
+      can_switch: false, can_rollback: false,
+    })))
+    await mount()
+    const rb = slots('k6e-engine')[1]
+    expect(rb).toHaveAttribute('data-state', 'unsupported')
+    expect(within(rb).getByText('Desteklenmiyor').closest('[data-tone]')).toHaveAttribute('data-tone', 'danger')
+    expect(within(rb).getByText('v0.49.0')).toBeInTheDocument()
+    expect(rb.querySelector('[data-slot="k6e-engine-unsupported"]')).toHaveTextContent('en az v2.0.0')
+    expect(slot('k6e-rollback')).toBeDisabled()
   })
 
   it('Yeniden yokla POST eder ve yanıtı uygular', async () => {
@@ -198,7 +213,7 @@ describe('K6EngineSettings — geçiş onayı ve hazırlık', () => {
     await mount()
     const dlg = await openSwitch()
     expect(dlg).toHaveAttribute('data-level', 'danger')
-    expect(within(dlg).getByText('v0.49.0')).toBeInTheDocument()
+    expect(within(dlg).getByText('v2.2.0')).toBeInTheDocument()
     expect(within(dlg).getByText('v2.3.0')).toBeInTheDocument()
     const item = dlg.querySelector('[data-slot="k6e-ready-item"][data-key="regressions"]')
     expect(item).toHaveTextContent('1 izleme gerileme gösterdi')
@@ -248,6 +263,25 @@ describe('K6EngineSettings — geçiş onayı ve hazırlık', () => {
     await mount()
     expect(slot('k6e-switch')).toBeDisabled()
     expect(document.querySelector('[data-slot="k6e-switch-why"][data-why="mixed"]')).toHaveTextContent('site-monitor-6b8f-old (20.171.0)')
+  })
+
+  it('Yedeğe geri dön de aynı kapıya tabi: başka sürüm koşan pod varken ya da sürümler okunamazken kapalı, nedeni yazılı (inceleme L1)', async () => {
+    const rb = { bin: '/opt/k6-rollback/k6', available: true, version: 'v2.2.0', probed_at: '2026-10-29T20:15:03' }
+    const engines = { active: { bin: 'k6', available: true, version: 'v2.3.0', probed_at: '2026-10-29T20:15:03' }, rollback: rb, candidate: null }
+    api.admin.k6Engine.mockResolvedValue(ok(data({ engines, can_switch: false, can_rollback: true,
+      other_version_pods: [{ pod: 'site-monitor-6b8f-old', version: '20.172.1' }] })))
+    await mount()
+    expect(slot('k6e-rollback')).toBeDisabled()
+    expect(document.querySelector('[data-slot="k6e-switch-why"][data-why="mixed"]')).toHaveTextContent('site-monitor-6b8f-old (20.172.1)')
+    cleanup()
+    api.admin.k6Engine.mockResolvedValue(ok(data({ engines, can_switch: false, can_rollback: true, other_version_pods: null })))
+    await mount()
+    expect(slot('k6e-rollback')).toBeDisabled()
+    expect(document.querySelector('[data-slot="k6e-switch-why"][data-why="podsUnknown"]')).not.toBeNull()
+    cleanup()
+    api.admin.k6Engine.mockResolvedValue(ok(data({ engines, can_switch: false, can_rollback: true, other_version_pods: [] })))
+    await mount()
+    expect(slot('k6e-rollback')).not.toBeDisabled()
   })
 
   it('pod sürümleri okunamadıysa (null) Adayı etkin yap kapalı ve nedeni yazılı', async () => {

@@ -169,15 +169,8 @@ class ScriptedTemplateCatalogTest {
         }
     }
 
-    @Test
-    @DisplayName("Kural 8: k6 0.49 (Babel 6) ayrıştıramadığı sözdizimi YOK — ?. / ?? / {...}")
-    void rule8_noModernSyntax() {
-        for (JsonNode t : templates) {
-            assertThat(script(t)).as("%s: optional chaining", key(t)).doesNotContain("?.");
-            assertThat(script(t)).as("%s: nullish coalescing", key(t)).doesNotContain("??");
-            assertThat(script(t)).as("%s: object spread", key(t)).doesNotMatch("(?s).*\\{\\s*\\.\\.\\..*");
-        }
-    }
+    // Kural 8 (ES2017 — "?. / ?? / {...} YOK") 2026-10-30'da kaldırıldı (k6 Yayın C): imajda yalnız k6 2.x var ve
+    // desteklenen her sürüm modern JavaScript'i ayrıştırır. Şablonlar istenirse modern sözdizimine geçirilebilir.
 
     @Test
     @DisplayName("Kural 6+7: smoke-health kendi kendine yeter (env yok, __ENV yok) ve timeout 60 sn ALTINDA")

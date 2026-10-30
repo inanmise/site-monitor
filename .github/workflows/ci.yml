@@ -169,9 +169,9 @@ jobs:
           path: backend/target/surefire-reports/
           retention-days: 7
 
-  # k6 sözleşme testleri (2026-10-29, k6 0.49 → 2.3 geçişi): diğer bütün senaryo testleri k6'yı TAKLİT eder; bu iş
-  # imajdaki iki GERÇEK ikiliyi (asıl 0.49 = prod imajının katmanı, aday 2.3 = Dockerfile'ın k6-next aşaması — PR'da
-  # bu aşama yalnız burada derlenir) yerel bir HTTP sunucusuna karşı koşar. Kaynak: Dockerfile (scripts/fetch-k6-binaries.sh).
+  # k6 sözleşme testleri (2026-10-29, k6 0.49 → 2.3 geçişi; 2026-10-30'dan beri imajda tek ikili): diğer bütün senaryo
+  # testleri k6'yı TAKLİT eder; bu iş imajdaki GERÇEK ikiliyi (Dockerfile'ın k6-bin aşaması — PR'da bu aşama yalnız burada
+  # derlenir) yerel bir HTTP sunucusuna karşı koşar. Kaynak: Dockerfile (scripts/fetch-k6-binaries.sh).
   backend-k6-contract:
     name: Backend k6 contract (real k6 binaries)
     runs-on: ubuntu-latest
@@ -205,7 +205,7 @@ jobs:
           </settings>
           SETTINGS
 
-      - name: Fetch real k6 binaries (legacy = pinned image layer, next = the Dockerfile k6-next stage)
+      - name: Fetch the real k6 binary (the Dockerfile k6-bin stage)
         working-directory: .
         run: bash scripts/fetch-k6-binaries.sh "$RUNNER_TEMP/k6"
 
@@ -215,8 +215,7 @@ jobs:
             -Dmaven.wagon.http.retryHandler.count=3
             -Dmaven.wagon.http.connectionTimeout=60000
             -Dmaven.wagon.http.readTimeout=180000
-          K6_BIN_LEGACY: ${{ runner.temp }}/k6/k6-legacy
-          K6_BIN_NEXT: ${{ runner.temp }}/k6/k6-next
+          K6_BIN: ${{ runner.temp }}/k6/k6
           K6_REAL_REQUIRED: "true"
         run: mvn -B -Pk6-real test
 
