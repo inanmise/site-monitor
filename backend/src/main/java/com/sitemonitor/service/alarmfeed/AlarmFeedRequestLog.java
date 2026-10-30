@@ -59,6 +59,8 @@ public class AlarmFeedRequestLog {
     public static final String OUTCOME_DISABLED = "DISABLED";
     public static final String OUTCOME_IP_DENIED = "IP_DENIED";
     public static final String OUTCOME_RATE_LIMITED = "RATE_LIMITED";
+    /** Otomatik IP engeli sürüyor (2026-10-31) — oran sınırı gibi IP başına dakikada bir satır. */
+    public static final String OUTCOME_BLOCKED = "BLOCKED";
     public static final String OUTCOME_ERROR = "ERROR";
 
     static final String SQL_RESPONSE_INSERT = "INSERT INTO alarm_feed_responses (hash, body, content_type, raw_bytes, "
@@ -109,14 +111,24 @@ public class AlarmFeedRequestLog {
 
     /** Yanıt (gövde yoksa null). */
     public record Result(int status, String outcome, String body, String contentType, Integer rowCount, Integer openCount,
-                         Integer resolvedCount, Boolean truncated, String format, String error) {}
+                         Integer resolvedCount, Boolean truncated, String format, String error, boolean blockPlaced) {
+
+        /** Engel yazmayan çağrı. */
+        public Result(int status, String outcome, String body, String contentType, Integer rowCount, Integer openCount,
+                      Integer resolvedCount, Boolean truncated, String format, String error) {
+            this(status, outcome, body, contentType, rowCount, openCount, resolvedCount, truncated, format, error, false);
+        }
+    }
 
     /** Bu pod'da günlük yazımı kaç kez düştü (açılıştan beri). */
     public long writeFailures() {
         return writeFailures.get();
     }
 
-    /** Bu pod'da dakikalık üst sınır yüzünden günlüğe yazılmayan reddedilmiş çağrı sayısı (açılıştan beri). */
+    /**
+     * Bu pod'da günlüğe yazılmayan reddedilmiş çağrı sayısı (açılıştan beri): dakikalık üst sınır ve oran sınırı / IP engeli
+     * selinde IP başına dakikada bir satır kuralı yüzünden.
+     */
     public long suppressedRefusals() {
         return suppressed.get();
     }
@@ -130,9 +142,15 @@ public class AlarmFeedRequestLog {
         long now = clock.getAsLong();
         boolean ok = OUTCOME_OK.equals(res.outcome());
         if (!ok) {
-            if (OUTCOME_RATE_LIMITED.equals(res.outcome())
-                    && !firstInWindow(rateLogged, call.clientIp(), now, RATE_LOG_EVERY_MS)) {
-                return;   // sel: IP başına dakikada bir satır
+            boolean flood = OUTCOME_RATE_LIMITED.equals(res.outcome()) || OUTCOME_BLOCKED.equals(res.outcome());
+            // Engelin YAZILDIĞI çağrı her zaman satır yazar; sonra IP + sonuç başına dakikada bir.
+            boolean placedNow = OUTCOME_BLOCKED.equals(res.outcome()) && res.blockPlaced();
+            if (flood) {
+                boolean first = firstInWindow(rateLogged, call.clientIp() + "|" + res.outcome(), now, RATE_LOG_EVERY_MS);
+                if (!first && !placedNow) {
+                    suppressed.incrementAndGet();
+                    return;   // sel: IP + sonuç başına dakikada bir satır
+                }
             }
             if (!refusedBudget(now)) {
                 suppressed.incrementAndGet();
@@ -177,7 +195,9 @@ public class AlarmFeedRequestLog {
             failed("çağrı satırı", e, now);
         }
         touchCaller(call, res.outcome(), now, ok);
-        if (!OUTCOME_OK.equals(res.outcome()) && !OUTCOME_ERROR.equals(res.outcome())) {
+        // BLOCKED: engelin kendisi ALARM_FEED_IP_BLOCKED ile denetlenir (AlarmFeedBlocks) — ayrıca ret denetimi yazılmaz.
+        if (!OUTCOME_OK.equals(res.outcome()) && !OUTCOME_ERROR.equals(res.outcome())
+                && !OUTCOME_BLOCKED.equals(res.outcome())) {
             auditDenied(call, res.outcome(), now, request);
         }
     }

@@ -87,6 +87,10 @@ class AuditEventCatalogTest {
         assertThat(AuditEventCatalog.categoryOf("ACCESS_DENIED")).isEqualTo(AuditEventCatalog.SECURITY);
         assertThat(AuditEventCatalog.categoryOf("CHANGE_LOG_DENIED")).isEqualTo(AuditEventCatalog.SECURITY);
         assertThat(AuditEventCatalog.categoryOf("CERT_HEALTH_DENIED")).isEqualTo(AuditEventCatalog.SECURITY);
+        // Alarm akışı IP engeli / kaldırma: güvenlik; diğer alarm akışı olayları entegrasyon
+        assertThat(AuditEventCatalog.categoryOf("ALARM_FEED_IP_BLOCKED")).isEqualTo(AuditEventCatalog.SECURITY);
+        assertThat(AuditEventCatalog.categoryOf("ALARM_FEED_IP_UNBLOCKED")).isEqualTo(AuditEventCatalog.SECURITY);
+        assertThat(AuditEventCatalog.categoryOf("ALARM_FEED_NEW_CALLER")).isEqualTo(AuditEventCatalog.INTEGRATION);
     }
 
     @Test

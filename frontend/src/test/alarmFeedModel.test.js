@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest'
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import {
+  OUTCOMES, OUTCOME_TONE, activeBlockCount, blockRows, crossFieldErrors, remainingParts,
   DEFAULT_LIMITS, FEED_COLUMNS, REQUEST_SIZE_OPTIONS, SILENT_AFTER_MS, bodyFileName, bodyOf, changedSettings, curlSample, feedUrl,
   fmtUtc, forwardedChain, isDirty, isValidIpEntry, isValidIpv4, isValidIpv6, limitsOf, normalizeIds, normalizeIps, numText,
   prettyBody, pyQuote, pythonSample, requestParams, shellQuote, statusModel, toForm, typeLabel, utcMs, validateChanges,
@@ -208,5 +212,82 @@ describe('alarmFeedModel — zaman, sayı, gövde, istek', () => {
     expect(typeLabel('cert', 'Cert', t)).toBe('Sertifika')
     expect(typeLabel('yeni', 'Yeni tür', t)).toBe('Yeni tür')
     expect(typeLabel('yeni', null, t)).toBe('yeni')
+  })
+})
+
+// ── Otomatik IP engeli (2026-10-31) ─────────────────────────────────────────────────────────────
+
+describe('alarmFeedModel — otomatik IP engeli', () => {
+  const S = { ...SETTINGS, block_enabled: true, block_threshold: 120, block_minutes: 15, block_escalate: true }
+
+  it('BLOCKED bir sonuç ve tehlike tonunda', () => {
+    expect(OUTCOMES).toContain('BLOCKED')
+    expect(OUTCOME_TONE.BLOCKED).toBe('danger')
+  })
+
+  it('sonuç süzgeci sunucunun kabul ettiği listeyle AYNI (Java OUTCOMES ↔ JS OUTCOMES)', () => {
+    const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..')
+    const log = fs.readFileSync(path.join(root, 'backend/src/main/java/com/sitemonitor/service/alarmfeed/AlarmFeedRequestLog.java'), 'utf8')
+    const ctrl = fs.readFileSync(path.join(root, 'backend/src/main/java/com/sitemonitor/controller/AlarmFeedAdminController.java'), 'utf8')
+    const consts = Object.fromEntries([...log.matchAll(/static final String (OUTCOME_[A-Z_]+) = "([A-Z_]+)"/g)].map((m) => [m[1], m[2]]))
+    const list = ctrl.slice(ctrl.indexOf('static final List<String> OUTCOMES'))
+    const body = list.slice(0, list.indexOf(';'))
+    const java = [...body.matchAll(/AlarmFeedRequestLog\.(OUTCOME_[A-Z_]+)/g)].map((m) => consts[m[1]])
+    expect(java.length).toBeGreaterThan(4)
+    expect([...java].sort()).toEqual([...OUTCOMES].sort())
+    expect(Object.keys(OUTCOME_TONE).sort()).toEqual([...OUTCOMES].sort())
+  })
+
+  it('form ↔ gövde: engel alanları tipli; eski sunucu alan göndermezse değişiklik sayılmaz', () => {
+    expect(validateChanges({ block_exempt_ips: ['10.0.0.1', 'bozuk'] })).toEqual({ block_exempt_ips: { key: 'af.v.ip', params: ['bozuk'] } })
+    expect(changedSettings(toForm({ ...S, block_exempt_ips: [] }), { ...toForm(S), block_exempt_ips: ['10.1.1.0/24'] }))
+      .toEqual({ block_exempt_ips: ['10.1.1.0/24'] })
+    const f = toForm(S)
+    expect(f.block_threshold).toBe('120')
+    expect(bodyOf(f)).toMatchObject({ block_enabled: true, block_threshold: 120, block_minutes: 15, block_escalate: true })
+    expect(changedSettings(f, { ...f, block_minutes: '30', block_escalate: false })).toEqual({ block_minutes: 30, block_escalate: false })
+    const legacy = toForm(SETTINGS)
+    expect(isDirty(legacy, legacy)).toBe(false)
+    expect(limitsOf({}).block_threshold).toEqual(DEFAULT_LIMITS.block_threshold)
+    expect(limitsOf({ limits: { block_minutes: [2, 600] } }).block_minutes).toEqual([2, 600])
+    expect(validateChanges({ block_threshold: 5 })).toEqual({ block_threshold: { key: 'af.v.int', params: [10, 6000] } })
+  })
+
+  it('eşik < sınır: değişen alan suçlanır (ikisi de değiştiyse eşik); eşitlik serbest; geçersiz sayıda karar yok', () => {
+    const f = toForm(S)
+    expect(crossFieldErrors({}, f)).toEqual({})
+    expect(crossFieldErrors({ block_threshold: 20 }, { ...f, block_threshold: '20' }))
+      .toEqual({ block_threshold: { key: 'af.v.blockBelowRate', params: [20, 30] } })
+    expect(crossFieldErrors({ rate_per_minute: 200 }, { ...f, rate_per_minute: '200' }))
+      .toEqual({ rate_per_minute: { key: 'af.v.blockBelowRate', params: [120, 200] } })
+    expect(crossFieldErrors({ rate_per_minute: 200, block_threshold: 150 }, { ...f, rate_per_minute: '200', block_threshold: '150' }))
+      .toHaveProperty('block_threshold')
+    expect(crossFieldErrors({ rate_per_minute: 120 }, { ...f, rate_per_minute: '120' })).toEqual({})
+    expect(crossFieldErrors({ block_threshold: 'x' }, { ...f, block_threshold: 'x' })).toEqual({})
+  })
+
+  it('engel listesi: etkin önce (sunucu sırası korunur), süresi geçmiş "etkin" satır expired; okunamayan liste null', () => {
+    const now = Date.parse('2026-10-31T10:00:00Z')
+    const rows = blockRows([
+      { ip: 'a', state: 'expired', blocked_until: '2026-10-31T09:00:00' },
+      { ip: 'b', state: 'active', blocked_until: '2026-10-31T10:13:00' },
+      { ip: 'c', state: 'active', blocked_until: '2026-10-31T09:59:00' },
+      { ip: 'd', state: 'unblocked', blocked_until: '2026-10-31T09:30:00' },
+      { ip: 'e', state: 'weird', blocked_until: null },
+      null,
+    ], now)
+    expect(rows.map((r) => `${r.ip}:${r.state}`)).toEqual(['b:active', 'a:expired', 'c:expired', 'd:unblocked', 'e:expired'])
+    expect(rows[0].remainingMs).toBe(13 * 60_000)
+    expect(blockRows(null)).toBeNull()
+    expect(activeBlockCount(null)).toBeNull()
+    expect(activeBlockCount([{ ip: 'b', state: 'active', blocked_until: '2026-10-31T10:13:00' }], now)).toBe(1)
+  })
+
+  it('kalan süre: en az 1 dk, 60 dk ve üstü saat + dk; geçmiş / bilinmeyen null', () => {
+    expect(remainingParts(30_000)).toEqual({ key: 'af.block.remainingMinutes', params: [1] })
+    expect(remainingParts(13 * 60_000)).toEqual({ key: 'af.block.remainingMinutes', params: [13] })
+    expect(remainingParts(65 * 60_000)).toEqual({ key: 'af.block.remainingHours', params: [1, 5] })
+    expect(remainingParts(0)).toBeNull()
+    expect(remainingParts(null)).toBeNull()
   })
 })

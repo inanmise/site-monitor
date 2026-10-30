@@ -154,6 +154,71 @@ class AlarmFeedAdminControllerTest {
     }
 
     @Test
+    @DisplayName("Engel eşiği dakikalık sınırdan küçük olamaz — değişen alan suçlanır")
+    void blockThresholdNotBelowRate() {
+        AlarmFeedSettings.Config cur = AlarmFeedSettings.defaults();   // sınır 30, eşik 120
+        assertThatThrownBy(() -> AlarmFeedAdminController.requireBlockThresholdAboveRate(cur, Map.of("block_threshold", "20")))
+                .isInstanceOf(FieldValidationException.class)
+                .satisfies(e -> assertThat(((FieldValidationException) e).getFields()).containsKey("block_threshold"));
+        assertThatThrownBy(() -> AlarmFeedAdminController.requireBlockThresholdAboveRate(cur, Map.of("rate_per_minute", "200")))
+                .isInstanceOf(FieldValidationException.class)
+                .satisfies(e -> assertThat(((FieldValidationException) e).getFields()).containsKey("rate_per_minute"));
+        AlarmFeedAdminController.requireBlockThresholdAboveRate(cur, Map.of("rate_per_minute", "120"));
+        // Ne eşik ne sınır değişti → kayıtlı durum kuralı çiğnese de ilgisiz alanın kaydı engellenmez
+        AlarmFeedSettings.Config broken = new AlarmFeedSettings.Config(false, "WARNING", java.util.Set.of(), java.util.Set.of(), 15,
+                "status", "Clear", "Critical", "Major", "Warning", "target_type", "SiteMonitor", "", "semicolon", List.of(), 600,
+                2000, true, true, 120, 15, true);
+        AlarmFeedAdminController.requireBlockThresholdAboveRate(broken, Map.of("clear_text", "Temiz"));
+        // Okumada etkin eşik sınırın altına inmez
+        AppSettingsService s2 = mock(AppSettingsService.class);
+        when(s2.getInt(anyString(), org.mockito.ArgumentMatchers.anyInt())).thenAnswer(inv -> {
+            String k = inv.getArgument(0);
+            return k.equals(AlarmFeedSettings.KEY_RATE) ? 300 : k.equals(AlarmFeedSettings.KEY_BLOCK_THRESHOLD) ? 50 : inv.getArgument(1);
+        });
+        when(s2.getString(anyString(), any())).thenAnswer(inv -> inv.getArgument(1));
+        when(s2.getBoolean(anyString(), org.mockito.ArgumentMatchers.anyBoolean())).thenAnswer(inv -> inv.getArgument(1));
+        assertThat(AlarmFeedSettings.read(s2).blockThreshold()).isEqualTo(300);
+        // Muaf liste: katı doğrulama, boş = kimse; okunamayan kayıt kimseyi muaf tutmaz
+        assertThat(AlarmFeedSettings.normalize("block_exempt_ips", List.of("10.1.2.3", "10.0.0.0/24"))).isEqualTo("10.1.2.3,10.0.0.0/24");
+        assertThat(AlarmFeedSettings.normalize("block_exempt_ips", List.of())).isEqualTo("");
+        assertThatThrownBy(() -> AlarmFeedSettings.normalize("block_exempt_ips", List.of("bozuk")))
+                .isInstanceOf(FieldValidationException.class);
+        AlarmFeedAdminController.requireBlockThresholdAboveRate(cur, Map.of("rate_per_minute", "200", "block_threshold", "300"));
+    }
+
+    @Test
+    @DisplayName("Engel kaldırma: yalnız global yönetici; kaldırınca denetim + sayaç sıfırlanır; süren engel yoksa 404")
+    @SuppressWarnings("unchecked")
+    void unblockEndpoint() {
+        com.sitemonitor.service.alarmfeed.AlarmFeedBlocks blocks = mock(com.sitemonitor.service.alarmfeed.AlarmFeedBlocks.class);
+        com.sitemonitor.service.lockout.RateLimitCounterService limiter = mock(com.sitemonitor.service.lockout.RateLimitCounterService.class);
+        controller.setBlocks(blocks);
+        controller.setLimiter(limiter);
+        when(blocks.list(org.mockito.ArgumentMatchers.anyLong())).thenReturn(new com.sitemonitor.service.alarmfeed.AlarmFeedBlocks.Listing(
+                new ArrayList<>(List.of(new java.util.HashMap<>(Map.of("ip", "10.1.2.3", "state", "active")))), 1, false));
+        assertThatThrownBy(() -> controller.unblock(Map.of("ip", "10.1.2.3"), session("ADMIN", true), new MockHttpServletRequest()))
+                .isInstanceOf(SecurityException.class);
+        when(blocks.unblock(eq("10.1.2.3"), eq("root"), org.mockito.ArgumentMatchers.anyLong())).thenReturn(true);
+        ResponseEntity<Map<String, Object>> r = controller.unblock(Map.of("ip", " 10.1.2.3 "), ADMIN, new MockHttpServletRequest());
+        assertThat(r.getStatusCode().value()).isEqualTo(200);
+        assertThat(((Map<String, Object>) r.getBody().get("data")).get("active_blocks")).isEqualTo(1);
+        verify(audit).recordAction(eq("ALARM_FEED_IP_UNBLOCKED"), any(jakarta.servlet.http.HttpSession.class),
+                any(jakarta.servlet.http.HttpServletRequest.class), eq("ALARM_FEED"), eq("10.1.2.3"), anyString(), isNull());
+        verify(limiter).clear("alarm-feed-ip:10.1.2.3");
+        when(blocks.unblock(eq("10.9.9.9"), anyString(), org.mockito.ArgumentMatchers.anyLong())).thenReturn(false);
+        ResponseEntity<Map<String, Object>> nf = controller.unblock(Map.of("ip", "10.9.9.9"), ADMIN, new MockHttpServletRequest());
+        assertThat(nf.getStatusCode().value()).isEqualTo(404);
+        assertThat(nf.getBody()).containsEntry("code", "ALARM_FEED_BLOCK_NOT_FOUND");
+        assertThatThrownBy(() -> controller.unblock(Map.of("ip", ""), ADMIN, new MockHttpServletRequest()))
+                .isInstanceOf(FieldValidationException.class);
+        // Liste okunamazsa null + hata (asla "engel yok")
+        when(blocks.list(org.mockito.ArgumentMatchers.anyLong())).thenThrow(new org.springframework.dao.DataAccessResourceFailureException("db"));
+        Map<String, Object> d = (Map<String, Object>) controller.blocks(ADMIN).getBody().get("data");
+        assertThat(d.get("blocks")).isNull();
+        assertThat(d.get("blocks_error")).isEqualTo("DataAccessResourceFailureException");
+    }
+
+    @Test
     @DisplayName("Seviye metinleri (Clear kipinde Clear metni de) birbirinden farklı olmalı")
     void severityTextsMustDiffer() {
         assertThatThrownBy(() -> controller.save(Map.of("severity_high", "critical"), ADMIN, new MockHttpServletRequest()))
@@ -215,6 +280,8 @@ class AlarmFeedAdminControllerTest {
         assertThat(d.get("total")).isEqualTo(1L);
         Map<String, Object> item = ((List<Map<String, Object>>) d.get("items")).get(0);
         assertThat(item.get("requested_at")).isEqualTo("2026-10-30T10:00:00");
+        when(requests.search(eq("BLOCKED"), any(), any(), any(), any())).thenReturn(org.springframework.data.domain.Page.empty());
+        assertThat(controller.requests(0, 25, "blocked", null, null, null, ADMIN).getStatusCode().value()).isEqualTo(200);
         assertThatThrownBy(() -> controller.requests(0, 25, "BOGUS", null, null, null, ADMIN))
                 .isInstanceOf(FieldValidationException.class);
         assertThatThrownBy(() -> controller.requests(0, 25, null, "1.2.3.4' OR 1=1", null, null, ADMIN))

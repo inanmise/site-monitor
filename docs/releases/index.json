@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-30T21:21:46Z",
+  "generatedAt": "2026-10-30T23:35:22Z",
   "repo": "inanmise/site-monitor",
-  "count": 794,
+  "count": 795,
   "releases": [
+    {
+      "version": "20.174.0",
+      "tag": "v20.174.0",
+      "releasedAt": "2026-10-30T23:35:16Z",
+      "commit": "7bf6fec1ea03df3d00d0a1f66f0b5808575dc19c",
+      "prevVersion": "20.173.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "7bf6fec1",
+          "subject": "alarm akışı otomatik IP engeli — yoğun çağıran IP süreli engellenir, ayarlar ve engel listesi sayfada"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.173.0",
       "tag": "v20.173.0",

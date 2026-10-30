@@ -394,8 +394,23 @@ olaylar bir kez eski anahtarla kapanıp yenisiyle açılır. URL hedeflerinin k�
 "söyleyebilir". Bu yüzden asıl koruma kenardaki yol kısıtıdır; çağrı günlüğünde her satırda `remote_addr` ve ham zincir
 görünür. IP başına dakikalık sınır (varsayılan 30) kümede ortaktır → aşılınca 429 + `Retry-After`.
 
+**Otomatik IP engeli (2026-10-31).** Aynı IP bir dakikada **engel eşiğinden** (varsayılan 120 çağrı) fazla çağırırsa o IP
+**engel süresi** boyunca (varsayılan 15 dk) her istekte doğrudan `429 ALARM_FEED_IP_BLOCKED` + `Retry-After` alır — engel sürerken
+istek veritabanına dokunmaz, akış hesaplanmaz (sel altında uygulama korunur). "Tekrarında süreyi katla" açıkken son engeli 24 saat
+içinde biten IP'nin yeni engeli öncekinin iki katıdır (en çok 24 saat); elle kaldırılan engel katlamayı sıfırlar. Ayar: Ayarlar →
+Alarm akışı → **Otomatik engelleme** (eşik dakikalık sınırdan küçük olamaz). Engeller kümede ortaktır (diğer pod'lar en çok 5 sn
+içinde uygular); veritabanına yazılamazsa engel o pod'un belleğinde yine uygulanır. Engellenen IP'ler aynı sayfadaki
+**Engellenen IP'ler** kartında (kalan süre, tetikleyen çağrı sayısı, engel sayısı, son user-agent); **Engeli kaldır** engeli hemen
+kaldırır ve dakika sayacını sıfırlar. Denetim: `ALARM_FEED_IP_BLOCKED` (engel yazılınca, kümede bir kez) ve
+`ALARM_FEED_IP_UNBLOCKED` (elle kaldırma) — ikisi de Güvenlik kategorisinde. İzleme ekibinin kendi sunucusu engellenirse: önce
+çağrı günlüğünde sonuç `BLOCKED` satırlarına ve user-agent'a bakın (döngüye giren bir istemci), ekip düzeltince engeli kaldırın;
+gerekirse eşiği yükseltin ya da sunucunun adresini **Engelden muaf IP'ler** listesine ekleyin (muaf IP hiç engellenmez,
+yalnız dakikalık sınır uygulanır; izin listesindeki bir IP engellenirse kartta uyarı çıkar). Engeli tamamen kapatmak için "Çok sık çağıran IP'yi otomatik engelle" anahtarını kapatın (süren
+engeller de uygulanmaz). Not: istemci IP'si `X-Forwarded-For`'dan çözülür — kenar katmanı başlığı yeniden yazmıyorsa sahte IP'ler
+her biri ayrı sayılır; asıl koruma yine kenardaki yol kısıtıdır.
+
 **Günlük ve denetim.** Her çağrı (reddedilenler dahil) Ayarlar → Alarm akışı → **Çağrı günlüğü**'nde: zaman, istemci IP'si,
-ham `X-Forwarded-For`, bağlantı adresi, user-agent, sonuç (OK / DISABLED / IP_DENIED / RATE_LIMITED / ERROR), satır
+ham `X-Forwarded-For`, bağlantı adresi, user-agent, sonuç (OK / DISABLED / IP_DENIED / RATE_LIMITED / BLOCKED / ERROR), satır
 sayıları, süre, yanıtlayan pod, istek kimliği ve kabul edilen çağrıda yanıtın **birebir kopyası** (gzip, özetle tekil;
 "Yanıt gövdesini sakla" kapatılabilir; ret yanıtı sabit metindir, saklanmaz). Oran sınırına takılan çağrı IP başına dakikada
 bir satır yazar; pod başına dakikada en çok 60 reddedilen çağrı yazılır (fazlası sayılır). Ana Denetim Günlüğü:

@@ -5,7 +5,8 @@ import { mockApi } from './support/monitorMocks.js'
 // ve geniş ekranda (1920): sayfa yatay kaymaz, öğe ekran dışına taşmaz, metin (uzun AD takım adı, IPv6, user agent, BODY)
 // kırpılmaz, dokunmatikte hedefler ≥ 40 px; önizleme / çağrı günlüğü dar kapta kart, geniş ekranda tablo; çağrı ayrıntı
 // paneli ekrana sığar ve girintili gövdeyi gösterir; akışı AÇMAK onay ister (pencere ekrana sığar) ve yalnız değişen alan
-// kaydedilir.
+// kaydedilir. 2026-10-31: otomatik IP engeli — ayar grubu, "Engellenen IP'ler" (dar kap kart, geniş ekran tablo; uzun IPv6 +
+// user agent tam), "Engeli kaldır" onay penceresi sığar, eşik < sınır hatası alanın altında.
 const VIEWPORTS = [
   { name: 'phone', width: 390, height: 844, touch: true },
   { name: 'tablet', width: 768, height: 1024, touch: true },
@@ -22,8 +23,17 @@ const SETTINGS = {
   enabled: false, min_level: 'WARNING', team_ids: [3], types: ['http'], resolved_minutes: 15, resolved_mode: 'status', clear_text: 'Clear',
   severity_critical: 'Critical', severity_high: 'Major', severity_warning: 'Warning', rci_mode: 'target_type', source: 'SiteMonitor',
   rcitype: '', mail_separator: 'semicolon', allowed_ips: ['10.0.0.0/8', IPV6, '192.168.100.200/32'], rate_per_minute: 30, max_rows: 2000,
-  store_body: true,
+  store_body: true, block_enabled: true, block_threshold: 120, block_minutes: 15, block_escalate: true,
 }
+const at = (msFromNow) => new Date(Date.now() + msFromNow).toISOString().slice(0, 19)
+const BLOCKS = [
+  { ip: IPV6, blocked_at: at(-2 * 60_000), blocked_until: at(28 * 60_000), state: 'active', remaining_seconds: 1680, minutes: 30, hits: 1873,
+    threshold: 120, block_count: 2, last_user_agent: UA, blocked_by_pod: 'site-monitor-7c9d6f8b5-xk2lq', unblocked_at: null, unblocked_by: null,
+    local_only: false },
+  { ip: '203.0.113.77', blocked_at: at(-5 * 3600_000), blocked_until: at(-4 * 3600_000 - 45 * 60_000), state: 'unblocked', remaining_seconds: 0,
+    minutes: 15, hits: 140, threshold: 120, block_count: 1, last_user_agent: 'curl/8.4.0', blocked_by_pod: 'site-monitor-7c9d6f8b5-p8m2d',
+    unblocked_at: at(-4 * 3600_000 - 50 * 60_000), unblocked_by: 'Ayşe Yılmaz Kurumsal Güvenlik ve Uzun Adlı Operasyon Ekibi Yöneticisi', local_only: false },
+]
 const ROWS = [
   { CREATEDTIME: '2026-10-30 11:02:00', SEVERITY: 'Critical', RCI: 'bireysel-internet-subesi-mobil-giris.dijitalkanallar.example.com.tr · SSL sertifika süresi',
     RCITYPE: 'SSL', CATEGORY: 'Sertifika', FILTERSOURCE: 'SiteMonitor', TEXT: 'Sertifika 3 gün içinde bitiyor (kurumsal ara sertifika zinciri eksik)',
@@ -51,8 +61,9 @@ const ITEMS = [
 function feedData(settings) {
   return {
     endpoint: '/api/public/alarm-feed', base_url: 'https://sitemonitor.dijitalkanallar.example.com.tr', settings,
-    limits: { resolved_minutes: [1, 1440], rate_per_minute: [1, 600], max_rows: [100, 10000], text_max: 60, allowed_ips_max: 100 },
-    log_retention_days: 90,
+    limits: { resolved_minutes: [1, 1440], rate_per_minute: [1, 600], max_rows: [100, 10000], text_max: 60, allowed_ips_max: 100,
+      block_threshold: [10, 6000], block_minutes: [1, 1440] },
+    log_retention_days: 90, blocks: BLOCKS, active_blocks: 1,
     teams: [{ id: 3, name: LONG_TEAM }, { id: 7, name: 'Ödeme Sistemleri' }],
     types: ['cert', 'domain', 'http', 'ping', 'port', 'dns', 'keyword', 'page', 'pagespeed', 'scripted'].map((key) => ({ key, label: key })),
     status: { last_call_at: iso(40_000), last_call_ip: IPV6, last_outcome: 'OK', calls_24h: 1440, ok_24h: 1421, refused_24h: 17, errors_24h: 2,
@@ -70,7 +81,7 @@ const json = (body, status = 200) => (route) => route.fulfill({ status, contentT
 async function routes(page) {
   await page.addInitScript(() => { try { localStorage.setItem('site-monitor-lang', 'tr') } catch { /* yok */ } })
   await mockApi(page, { role: 'ADMIN', globalAdmin: true })
-  const calls = { puts: [] }
+  const calls = { puts: [], unblocks: [] }
   let settings = { ...SETTINGS }
   await page.route((u) => new URL(u).pathname === '/api/admin/alarm-feed', json({ success: true, data: feedData(settings) }))
   await page.route((u) => new URL(u).pathname === '/api/admin/alarm-feed/settings', (route) => {
@@ -78,6 +89,12 @@ async function routes(page) {
     calls.puts.push(body)
     settings = { ...settings, ...body }
     return json({ success: true, message: 'Alarm akışı ayarları kaydedildi.', data: feedData(settings) })(route)
+  })
+  await page.route((u) => new URL(u).pathname === '/api/admin/alarm-feed/blocks/unblock', (route) => {
+    const body = JSON.parse(route.request().postData() || '{}')
+    calls.unblocks.push(body)
+    const blocks = BLOCKS.map((b) => (b.ip === body.ip ? { ...b, state: 'unblocked', unblocked_by: 'root', unblocked_at: at(0) } : b))
+    return json({ success: true, message: `Engel kaldırıldı: ${body.ip}`, data: { blocks, active_blocks: 0 } })(route)
   })
   await page.route((u) => new URL(u).pathname === '/api/admin/alarm-feed/preview', json({ success: true, data: {
     columns: Object.keys(ROWS[0]), rows: ROWS, count: 2, open: 1, resolved: 1, truncated: false, generated_at: iso(0) } }))
@@ -162,6 +179,9 @@ for (const vp of VIEWPORTS) {
       await expect(root.locator('[data-slot="af-url"]')).toHaveText('https://sitemonitor.dijitalkanallar.example.com.tr/api/public/alarm-feed')
       await expect(root.locator('[data-slot="af-req-row"]')).toHaveCount(3)
       await expect(root.locator('[data-slot="af-caller"]')).toHaveCount(2)
+      await expect(root.locator('[data-slot="af-grp-block"]')).toBeVisible()
+      await expect(root.locator('[data-slot="af-block"]')).toHaveCount(2)
+      await expect(root.locator('[data-slot="af-block"]').first()).toContainText(UA)
       await expect(root.locator('[data-slot="token-chip"]')).toHaveCount(3)
       await root.locator('[data-slot="af-preview-run"]').click()
       await expect(root.locator('[data-slot="af-pv-row"]')).toHaveCount(2)
@@ -172,6 +192,9 @@ for (const vp of VIEWPORTS) {
       const pvList = root.locator('[data-slot="af-pv-list"]')
       const reqList = root.locator('[data-slot="af-req-list"]')
       const callers = root.locator('[data-slot="af-callers-list"]')
+      const blocks = root.locator('[data-slot="af-blocks-list"]')
+      if (vp.width >= 1920) await expect(blocks).toHaveAttribute('data-layout', 'table')
+      if (vp.width <= 768) await expect(blocks).toHaveAttribute('data-layout', 'cards')
       if (vp.width >= 1920) {
         await expect(pvList).toHaveAttribute('data-layout', 'table')
         await expect(reqList).toHaveAttribute('data-layout', 'table')
@@ -249,6 +272,55 @@ for (const vp of VIEWPORTS) {
       await expect(bar).not.toHaveAttribute('data-dirty', 'true')
       await expect(root.locator('[data-slot="af-enabled"]')).toHaveAttribute('data-state', 'on')
       expect(await page.evaluate(overflowX), `@${vp.name}: yatay taşma (kayıt sonrası)`).toBeLessThanOrEqual(1)
+    })
+  })
+
+  test.describe(`Ayarlar → Alarm akışı — IP engeli ${vp.name} ${vp.width}`, () => {
+    test.use({ viewport: { width: vp.width, height: vp.height }, hasTouch: vp.touch, isMobile: vp.touch })
+
+    test('Engeli kaldır: onay penceresi sığar, istek gider, satır "elle kaldırıldı" olur; eşik < sınır hatası alanın altında', async ({ page }) => {
+      test.setTimeout(120_000)
+      const calls = await routes(page)
+      await page.goto('/?tab=settings&sec=alarmfeed')
+      const root = page.locator(ROOT)
+      await expect(root).toHaveAttribute('data-state', 'ok', { timeout: 20_000 })
+      const first = root.locator('[data-slot="af-block"]').first()
+      await expect(first).toHaveAttribute('data-state', 'active')
+      await expect(first).toContainText('kaldı')
+      const btn = first.getByRole('button', { name: `Engeli kaldır: ${IPV6}` })
+      await btn.scrollIntoViewIfNeeded()
+      await btn.click()
+      const dlg = page.getByRole('dialog')
+      await expect(dlg).toBeVisible()
+      await expect(dlg).toContainText(IPV6)
+      await page.waitForTimeout(400)
+      const box = await dlg.boundingBox()
+      expect(box.x, `@${vp.name}: pencere solda taşıyor`).toBeGreaterThanOrEqual(0)
+      expect(box.x + box.width, `@${vp.name}: pencere sağda taşıyor`).toBeLessThanOrEqual(vp.width + 1)
+      expect(box.y + box.height, `@${vp.name}: pencere altta taşıyor`).toBeLessThanOrEqual(vp.height + 1)
+      await dlg.getByRole('button', { name: 'Engeli kaldır' }).click()
+      await expect.poll(() => calls.unblocks.length).toBe(1)
+      expect(calls.unblocks[0]).toEqual({ ip: IPV6 })
+      await expect(root.locator('[data-slot="af-block"]').first()).toHaveAttribute('data-state', 'unblocked')
+      await expect(root.locator('[data-slot="af-block-active"]')).toContainText('0 IP şu an engelli')
+
+      // Eşik dakikalık sınırdan küçük → alanın altında hata, istek yok
+      const thr = root.locator('[data-slot="af-f-block_threshold"]')
+      await thr.scrollIntoViewIfNeeded()
+      await thr.fill('20')
+      await root.locator('[data-slot="af-settings"] [data-slot="settings-save-bar"]').getByRole('button', { name: /^Kaydet$/ }).click()
+      await expect(root.locator('[data-field="block_threshold"]')).toContainText('küçük olamaz')
+      expect(calls.puts).toEqual([])
+      await page.waitForTimeout(200)
+      expect(await page.evaluate(overflowX), `@${vp.name}: yatay taşma`).toBeLessThanOrEqual(1)
+      expect(await page.evaluate(offenders, '[data-slot="af-blocks"]'), `@${vp.name}: engel kartında taşan öğe`).toEqual([])
+      expect(await page.evaluate(clipped, '[data-slot="af-blocks"]'), `@${vp.name}: engel kartında kırpılan metin`).toEqual([])
+      expect(await page.evaluate(clipped, '[data-slot="af-grp-block"]'), `@${vp.name}: engel ayarlarında kırpılan metin`).toEqual([])
+      if (vp.touch) {
+        expect(await page.evaluate(smallTargets, '[data-slot="af-blocks"]'), `@${vp.name}: engel kartında küçük hedef`).toEqual([])
+        expect(await page.evaluate(smallTargets, '[data-slot="af-grp-block"]'), `@${vp.name}: engel ayarlarında küçük hedef`).toEqual([])
+      }
+      await root.locator('[data-slot="af-blocks"]').screenshot({ path: `test-results/settings-alarmfeed-${vp.name}-blocks.png` })
     })
   })
 }

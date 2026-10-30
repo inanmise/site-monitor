@@ -3,6 +3,7 @@ package com.sitemonitor.controller;
 import com.sitemonitor.config.CorrelationIdFilter;
 import com.sitemonitor.service.ClientIpResolver;
 import com.sitemonitor.service.SchedulerService;
+import com.sitemonitor.service.alarmfeed.AlarmFeedBlocks;
 import com.sitemonitor.service.alarmfeed.AlarmFeedRequestLog;
 import com.sitemonitor.service.alarmfeed.AlarmFeedService;
 import com.sitemonitor.service.alarmfeed.AlarmFeedSettings;
@@ -28,7 +29,8 @@ import java.util.Map;
  * Merkezi izleme alarm akışı — HERKESE AÇIK uç (2026-10-30, kullanıcı kararı: belirteç yok). Kurum içi izleme ekibi her dakika
  * çağırır ve SiteMonitor alarmlarını kendi kolon biçiminde alır ({@link com.sitemonitor.service.alarmfeed.AlarmFeedRows}).
  *
- * <p>Sıra: oran sınırı (IP başına, kümede ortak) → akış açık mı (kapalı: 404 {@code ALARM_FEED_DISABLED}) → IP izin listesi
+ * <p>Sıra: otomatik IP engeli (sürüyorsa veritabanına dokunmadan 429 {@code ALARM_FEED_IP_BLOCKED}) → oran sınırı (IP başına,
+ * kümede ortak; dakikadaki çağrı engel eşiğini aşarsa süreli engel yazılır, {@link AlarmFeedBlocks}) → akış açık mı (kapalı: 404 {@code ALARM_FEED_DISABLED}) → IP izin listesi
  * (403 {@code ALARM_FEED_IP_DENIED}) → yanıt. Veri okunamazsa 503 {@code ALARM_FEED_UNAVAILABLE} — asla boş liste (merkezi
  * sistem "alarm yok" sanırdı). Her çağrı (reddedilenler dahil) çağrı günlüğüne yazılır ({@link AlarmFeedRequestLog}).
  *
@@ -47,6 +49,7 @@ public class AlarmFeedController {
     private final AlarmFeedRequestLog requestLog;
     private final ClientIpResolver ipResolver;
     private RateLimitCounterService limiter;
+    private AlarmFeedBlocks blocks;
 
     public AlarmFeedController(AlarmFeedService feed, AlarmFeedRequestLog requestLog, ClientIpResolver ipResolver) {
         this.feed = feed;
@@ -57,6 +60,11 @@ public class AlarmFeedController {
     @Autowired(required = false)
     void setLimiter(RateLimitCounterService limiter) {
         this.limiter = limiter;
+    }
+
+    @Autowired(required = false)
+    void setBlocks(AlarmFeedBlocks blocks) {
+        this.blocks = blocks;
     }
 
     @GetMapping(PATH)
@@ -71,11 +79,25 @@ public class AlarmFeedController {
         String fmt = csv ? "csv" : "json";
 
         AlarmFeedSettings.Config c = feed.config();
+        boolean blocking = c.blockEnabled() && blocks != null;
+
+        // 0) Süren otomatik engel: pod belleğinden karar — sayaç, akış, veritabanı yok (sel altında kendimizi koruruz).
+        if (blocking) {
+            long until = blocks.blockedUntil(ip, started);
+            if (until > started) return blocked(call, ip, until, null, c, fmt, request);
+        }
 
         // 1) Oran sınırı (kümede ortak sayaç; sayaç yazılamazsa bu pod'un belleği — RateLimitCounterService).
         if (limiter != null) {
             RateLimitCounterService.State st = limiter.hit(RateLimitCounterService.key(RATE_SCOPE, ip),
                     new RateLimitCounterService.Limit(60_000L, c.ratePerMinute(), 60_000L));
+            // 1a) Dakikadaki çağrı engel eşiğini aştı → süreli engel (kümede bir kez yazılır, denetlenir). Sayaç SİLİNMEZ:
+            //     silinseydi engeli henüz öğrenmemiş pod'lar sayımı sıfırdan başlatıp seli yeniden geçirirdi; pencere
+            //     (60 sn) zaten kendiliğinden sıfırlanır. Muaf listedeki IP engellenmez (yalnız 429).
+            if (blocking && st.attempts() > c.blockThreshold() && !IpAllowList.listed(c.blockExemptIps(), ip)) {
+                AlarmFeedBlocks.Placed p = blocks.place(ip, st.attempts(), call.userAgent(), c, started, request);
+                return blocked(call, ip, p.until(), p, c, fmt, request);
+            }
             if (st.attempts() > c.ratePerMinute()) {
                 long wait = Math.max(1L, (st.blockedUntil() - System.currentTimeMillis() + 999) / 1000);
                 String body = error("RATE_LIMITED", Msg.t(
@@ -141,6 +163,32 @@ public class AlarmFeedController {
                 .body(payload);
     }
 
+    /** 429 {@code ALARM_FEED_IP_BLOCKED} + {@code Retry-After}; günlükte BLOCKED (IP başına dakikada bir satır). */
+    private ResponseEntity<String> blocked(AlarmFeedRequestLog.Call call, String ip, long until, AlarmFeedBlocks.Placed placed,
+                                           AlarmFeedSettings.Config c, String fmt, HttpServletRequest request) {
+        long wait = Math.max(1L, (until - System.currentTimeMillis() + 999) / 1000);
+        String untilUtc = AlarmFeedBlocks.isoUtc(until);
+        long mins = (wait + 59) / 60;
+        Map<String, Object> extra = new LinkedHashMap<>();
+        extra.put("retry_after_seconds", wait);
+        extra.put("blocked_until", untilUtc + "Z");
+        String body = error("ALARM_FEED_IP_BLOCKED", Msg.t(
+                "Bu IP adresi (" + ip + ") alarm akışını çok sık çağırdığı için geçici olarak engellendi (eşik dakikada "
+                        + c.blockThreshold() + " çağrı) — yaklaşık " + mins + " dk sonra yeniden deneyin. Çağrı sıklığını "
+                        + "dakikada bire indirin; engelin hemen kalkması gerekiyorsa SiteMonitor yöneticisine başvurun.",
+                "This IP address (" + ip + ") is temporarily blocked from the alarm feed for calling too often (threshold "
+                        + c.blockThreshold() + " calls per minute) — retry in about " + mins + " min. Reduce the call rate to "
+                        + "once a minute; ask a SiteMonitor administrator if the block must be lifted now."),
+                request, extra);
+        String contentType = "application/json";
+        requestLog.record(call, new AlarmFeedRequestLog.Result(HttpStatus.TOO_MANY_REQUESTS.value(),
+                AlarmFeedRequestLog.OUTCOME_BLOCKED, body, contentType, null, null, null, null, fmt, null,
+                placed != null && placed.newBlock()), c.storeBody(), request);
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .header(HttpHeaders.RETRY_AFTER, Long.toString(wait))
+                .contentType(MediaType.APPLICATION_JSON).body(body);
+    }
+
     private void log(AlarmFeedRequestLog.Call call, HttpStatus status, String outcome, String body, AlarmFeedService.Feed f,
                      String fmt, String error, AlarmFeedSettings.Config c, HttpServletRequest request) {
         String contentType = f == null ? "application/json" : ("csv".equals(fmt) ? "text/csv" : "application/json");
@@ -158,6 +206,8 @@ public class AlarmFeedController {
         }
     }
 
+    private static final com.fasterxml.jackson.databind.ObjectMapper JSON = new com.fasterxml.jackson.databind.ObjectMapper();
+
     /** Projenin hata gövdesi sözleşmesi: {@code {success:false, code, error, request_id}} (+ ek alanlar). */
     private static String error(String code, String message, HttpServletRequest request, Map<String, Object> extra) {
         Map<String, Object> m = new LinkedHashMap<>();
@@ -167,7 +217,7 @@ public class AlarmFeedController {
         m.put("request_id", CorrelationIdFilter.get(request));
         m.putAll(extra);
         try {
-            return new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(m);
+            return JSON.writeValueAsString(m);
         } catch (Exception e) {
             return "{\"success\":false,\"code\":\"" + code + "\"}";
         }

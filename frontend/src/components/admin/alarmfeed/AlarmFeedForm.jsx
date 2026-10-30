@@ -1,5 +1,5 @@
 import { useId, useState } from 'react'
-import { Archive, Braces, KeyRound, ListFilter, ScrollText, SlidersHorizontal, TriangleAlert } from 'lucide-react'
+import { Archive, Braces, KeyRound, ListFilter, ScrollText, ShieldBan, SlidersHorizontal, TriangleAlert } from 'lucide-react'
 import { useT } from '../../../i18n/index.jsx'
 import Field from '../../ui/Field.jsx'
 import AlertBanner from '../../ui/AlertBanner.jsx'
@@ -117,9 +117,13 @@ export function SettingsCard({ data, form, dirty, saving, fe, limits, lang, onCh
   const levelOptions = LEVELS.includes(form.min_level) || !form.min_level ? LEVELS : [...LEVELS, form.min_level]
   const sepOptions = MAIL_SEPARATORS.includes(form.mail_separator) || !form.mail_separator ? MAIL_SEPARATORS : [...MAIL_SEPARATORS, form.mail_separator]
   const rciChanged = data?.settings?.rci_mode != null && form.rci_mode !== data.settings.rci_mode
+  const [exemptEntryError, setExemptEntryError] = useState(null)
   const ipError = ipEntryError || fe.errors.allowed_ips
+  const exemptError = exemptEntryError || fe.errors.block_exempt_ips
   const retention = data?.log_retention_days
   const bodyRetention = data?.body_retention_days
+  // Eski sunucu engel alanlarını göndermez → grup çizilmez (boş sayı alanları "değişti" sayılmasın)
+  const blockSupported = !!data?.settings && Object.prototype.hasOwnProperty.call(data.settings, 'block_threshold')
   const set = (k) => (v) => onChange(k, v)
 
   return (
@@ -261,6 +265,40 @@ export function SettingsCard({ data, form, dirty, saving, fe, limits, lang, onCh
             name="rate_per_minute" fe={fe} value={form.rate_per_minute} onChange={onChange} disabled={saving} numeric />
         </div>
       </Group>
+
+      {blockSupported && (
+        <Group icon={ShieldBan} title={t('af.grp.block')} slot="af-grp-block">
+          <SwitchRow checked={form.block_enabled} onChange={set('block_enabled')} disabled={saving} slot="af-f-block_enabled"
+            label={t('af.f.blockEnabled')} hint={t('af.f.blockEnabledHint')} />
+          <div className="grid min-w-0 grid-cols-1 gap-x-4 @2xl:grid-cols-2">
+            <TextField label={t('af.f.blockThreshold')} name="block_threshold" fe={fe} value={form.block_threshold} onChange={onChange}
+              disabled={saving} numeric
+              hint={t('af.f.blockThresholdHint', form.rate_per_minute || '—', limits.block_threshold[0], limits.block_threshold[1])} />
+            <TextField label={t('af.f.blockMinutes')} name="block_minutes" fe={fe} value={form.block_minutes} onChange={onChange}
+              disabled={saving} numeric hint={t('af.f.blockMinutesHint', limits.block_minutes[0], limits.block_minutes[1])} />
+          </div>
+          <SwitchRow checked={form.block_escalate} onChange={set('block_escalate')} disabled={saving} slot="af-f-block_escalate"
+            label={t('af.f.blockEscalate')} hint={t('af.f.blockEscalateHint')} />
+          <Field label={t('af.f.blockExempt')} hint={t('af.f.blockExemptHint', limits.allowed_ips_max)} name="block_exempt_ips"
+            error={exemptError || undefined}>
+            {({ id, describedBy, invalid }) => (
+              <TokenChipsInput id={id} values={form.block_exempt_ips || []} slot="af-f-block_exempt_ips" describedBy={describedBy}
+                invalid={invalid} disabled={saving} max={limits.allowed_ips_max} placeholder={t('af.f.allowedIpsPlaceholder')}
+                inputMode="text" validate={(v) => (isValidIpEntry(v) ? null : { entry: v })} normalize={normalizeIp}
+                removeLabel={(v) => t('af.f.removeIp', v)}
+                onEntryError={(bad) => setExemptEntryError(bad == null ? null
+                  : bad.key === TOO_MANY ? t('af.v.ipMax', bad.params[0]) : t('af.v.ip', bad.entry))}
+                onChange={(list) => { onChange('block_exempt_ips', list); setExemptEntryError(null) }} />
+            )}
+          </Field>
+          <p className="m-0 mb-3 text-xs text-muted-foreground [overflow-wrap:anywhere]" data-slot="af-block-summary"
+            data-on={form.block_enabled ? 'true' : 'false'}>
+            {form.block_enabled
+              ? t('af.f.blockSummary', form.rate_per_minute || '—', form.block_threshold || '—', form.block_minutes || '—')
+              : t('af.f.blockSummaryOff', form.rate_per_minute || '—')}
+          </p>
+        </Group>
+      )}
 
       <Group icon={ScrollText} title={t('af.grp.log')} slot="af-grp-log">
         <SwitchRow checked={form.store_body} onChange={set('store_body')} disabled={saving} slot="af-f-store_body"
