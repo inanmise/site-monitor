@@ -212,7 +212,7 @@ public class PageSpeedCheckerService {
 
         String rootHost = PageFetchCore.hostOf(url);
         // AS_BROWSER_LOADS: a[href] hiç toplanmaz ve srcset'te görsel başına tek aday alınır.
-        // Bu bir "iyileştirme" değil DOĞRULUK meselesi — envanter tavanı (500) eskiden link'lere
+        // Bu bir "iyileştirme" değil DOĞRULUK meselesi — envanter tavanı eskiden link'lere
         // harcanıyordu (link ağırlıklı bir sayfada gerçek kaynaklar hiç ölçülmüyordu) ve responsive
         // görsellerin her varyantı ayrı sayıldığı için sayfa ağırlığı katbekat şişiyordu.
         PageFetchCore.Inventory inv =
@@ -220,7 +220,7 @@ public class PageSpeedCheckerService {
         List<PageFetchCore.Resource> loadable = inv.resources();
         // Tavan artık YALNIZ indirilen kaynaklara bakıyor, yani "ölçüm kısmi" uyarısı gerçekten
         // kısmi olduğunda çıkıyor.
-        boolean capped = loadable.size() >= PageFetchCore.MAX_RESOURCES_PER_CHECK;
+        boolean capped = inv.capped();
 
         Weighed weighed = weighAll(loadable, rootHost, timeoutMs, concurrency, userAgent, headers, deadline, viaProxy);
         List<Measured> measured = weighed.rows();
@@ -372,6 +372,11 @@ public class PageSpeedCheckerService {
 
     private int maxCheckSeconds() {
         return Math.max(10, appSettings.getInt("site.monitor.pagespeed.max-check-seconds", 120));
+    }
+
+    /** Sayfa başına kaynak tavanı — envanterle aynı canlı ayar (tanılamanın "kısmi ölçüm" bulgusu bunu yazar). */
+    public int maxResourcesPerCheck() {
+        return PageFetchCore.maxResourcesPerCheck(appSettings);
     }
 
     /** Kaynak türünü kırılım tablosunun beklediği kümeye indirger. */

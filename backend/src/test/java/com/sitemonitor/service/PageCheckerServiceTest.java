@@ -236,7 +236,7 @@ class PageCheckerServiceTest {
         for (int i = 0; i < 20; i++) {
             var r = checker.check(base + "/heavy", "SINGLE_PAGE", 3000, 2000, 5, null, 2, 50, 60);
             assertThat(r.status()).isEqualTo("OK");
-            assertThat(r.totalResources()).isLessThanOrEqualTo(500);   // MAX_RESOURCES_PER_CHECK cap
+            assertThat(r.totalResources()).isLessThanOrEqualTo(PageFetchCore.DEFAULT_MAX_RESOURCES_PER_CHECK);   // sayfa başına kaynak tavanı
             assertThat(r.totalResources()).isGreaterThanOrEqualTo(300);
         }
         int after = tb.getThreadCount();

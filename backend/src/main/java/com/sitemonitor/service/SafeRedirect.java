@@ -1,6 +1,11 @@
 package com.sitemonitor.service;
 
 import java.net.URI;
+import java.nio.ByteBuffer;
+import java.nio.CharBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CodingErrorAction;
+import java.nio.charset.StandardCharsets;
 import java.util.Locale;
 
 /**
@@ -47,12 +52,15 @@ public final class SafeRedirect {
      *   <li>host'suz hedef ({@code file:///etc/passwd} gibi) — doğrulanacak bir host yoksa
      *       {@link SsrfGuard} devreye giremez, yani sessizce korumasız kalırdık</li>
      * </ul>
+     *
+     * <p>{@code Location} önce {@link #browserLocation} ile tarayıcının okuduğu biçime getirilir (ham UTF-8
+     * baytları, yüzde kodlaması); dönen URI her zaman yalnız ASCII karakter taşır.
      */
     public static URI nextHop(URI current, String location) {
         if (location == null || location.isBlank()) return null;
         URI next;
         try {
-            next = current.resolve(location.trim());
+            next = current.resolve(browserLocation(location));
         } catch (Exception e) {
             return null;   // bozuk Location — takip etme
         }
@@ -64,6 +72,97 @@ public final class SafeRedirect {
         if (host == null || host.isBlank()) return null;
         return next;
     }
+
+    /**
+     * {@code Location} başlığını TARAYICININ okuduğu biçime getirir (2026-10-30, akyatirim.com.tr yanlış alarmı).
+     *
+     * <p><b>Neden:</b> standart {@code Location}'da yalnız ASCII (yüzde kodlanmış) karakter bekler, ama bazı sunucular
+     * Türkçe harfleri ham UTF-8 baytlarıyla yazar ({@code yurt-ıci} → {@code C4 B1}). Java'nın HTTP istemcileri
+     * ({@code HttpClient}, {@code HttpURLConnection}) ve {@code RawHttpProbe} başlık baytlarını ISO-8859-1 okur: "ı"
+     * {@code "Ä±"} olur, istek {@code yurt-%C3%84%C2%B1ci} adresine gider ve 404 döner — tarayıcı (UTF-8 okur) aynı
+     * bağlantıyı sorunsuz açarken sayfa bütünlüğü "kırık bağlantı" alarmı açıyordu.
+     *
+     * <p><b>Kural:</b> ASCII olmayan karakter yoksa değer olduğu gibi (yalnız kırpılmış) döner — bugünkü davranış.
+     * Varsa: bütün karakterler 0xFF'in altındaysa (yani başlık baytları birebir karaktere çevrilmişse) baytlar KATI
+     * UTF-8 olarak yeniden çözülür; geçerli bir UTF-8 dizisiyse çözülmüş metin kullanılır (tarayıcı davranışı), değilse
+     * (gerçekten ISO-8859-1 yazan sunucu, ör. tek {@code E9} = "é") metin olduğu gibi kalır. Sonra ASCII olmayan her
+     * karakter UTF-8 baytlarıyla yüzde kodlanır ({@code %C4%B1}) — istek satırı her istemcide aynı ve geçerli olur.
+     *
+     * <p>Güvenlik değişmez: host yine Java'nın ayrıştırdığı haliyle {@link SsrfGuard}'dan geçer; ASCII olmayan bir host
+     * (yüzde kodlanınca ayrıştırılamaz) bugünkü gibi takip EDİLMEZ. Doğrusal tek geçiş — girdi boyuyla sınırlı.
+     */
+    static String browserLocation(String location) {
+        String s = location.trim();
+        if (isAscii(s)) return s;
+        return percentEncodeNonAscii(repairUtf8(s));
+    }
+
+    /**
+     * {@code Location} başlığının İNSAN için okunur hâli — uçtan uca tanının yönlendirme satırı (2026-10-30). Ham UTF-8
+     * baytları Java'nın Latin-1 okumasından geri çevrilir ({@code "yurt-Ä±ci"} → {@code "yurt-ıci"}, tarayıcının gösterdiği);
+     * yüzde kodlama YAPILMAZ. Gidilen adres her zaman {@link #nextHop} ({@code next_url}); bu yalnız gösterimdir.
+     */
+    public static String readableLocation(String location) {
+        if (location == null) return null;
+        String s = location.trim();
+        return isAscii(s) ? s : repairUtf8(s);
+    }
+
+    private static boolean isAscii(String s) {
+        for (int i = 0; i < s.length(); i++) {
+            if (s.charAt(i) >= 0x80) return false;
+        }
+        return true;
+    }
+
+    /** Baytları ISO-8859-1 okunmuş bir UTF-8 metnini geri çevirir; geçerli UTF-8 değilse metni değiştirmez. */
+    private static String repairUtf8(String s) {
+        for (int i = 0; i < s.length(); i++) {
+            if (s.charAt(i) > 0xFF) return s;   // zaten Unicode metin — bayt değil
+        }
+        try {
+            return StandardCharsets.UTF_8.newDecoder()
+                    .onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT)
+                    .decode(ByteBuffer.wrap(s.getBytes(StandardCharsets.ISO_8859_1)))
+                    .toString();
+        } catch (CharacterCodingException e) {
+            return s;   // gerçekten ISO-8859-1 (ya da bozuk) — Latin-1 okuması kalır
+        }
+    }
+
+    /** ASCII olmayan her karakteri UTF-8 baytlarıyla {@code %XX} kodlar; ASCII karakterlere dokunmaz. */
+    private static String percentEncodeNonAscii(String s) {
+        StringBuilder out = new StringBuilder(s.length() + 16);
+        int i = 0;
+        while (i < s.length()) {
+            char c = s.charAt(i);
+            if (c < 0x80) {
+                out.append(c);
+                i++;
+                continue;
+            }
+            int len = Character.isHighSurrogate(c) && i + 1 < s.length()
+                    && Character.isLowSurrogate(s.charAt(i + 1)) ? 2 : 1;
+            ByteBuffer bytes;
+            try {
+                bytes = StandardCharsets.UTF_8.newEncoder()
+                        .onMalformedInput(CodingErrorAction.REPLACE)
+                        .onUnmappableCharacter(CodingErrorAction.REPLACE)
+                        .encode(CharBuffer.wrap(s, i, i + len));
+            } catch (CharacterCodingException e) {
+                bytes = ByteBuffer.wrap("?".getBytes(StandardCharsets.US_ASCII));   // REPLACE ile olmaz; güvenlik ağı
+            }
+            while (bytes.hasRemaining()) {
+                int b = bytes.get() & 0xFF;
+                out.append('%').append(HEX[b >> 4]).append(HEX[b & 0x0F]);
+            }
+            i += len;
+        }
+        return out.toString();
+    }
+
+    private static final char[] HEX = "0123456789ABCDEF".toCharArray();
 
     /** Dize taşıyan çağıranlar için ({@code PageFetchCore} URL'leri String tutar). */
     public static String nextHop(String current, String location) {

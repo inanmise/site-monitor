@@ -460,20 +460,39 @@ class PageDiagnosticsServiceTest {
     }
 
     @Test
-    @DisplayName("sınırlar: kaynak tavanı (500) → CRAWL_LIMIT uyarısı; SITE_CRAWL izleme → yalnız başlangıç sayfası bilgisi")
+    @DisplayName("sınırlar: kaynak tavanı (canlı ayar, varsayılan 2000) → CRAWL_LIMIT uyarısı; SITE_CRAWL izleme → yalnız başlangıç sayfası bilgisi")
     void limits() {
         PageMonitor mon = monitor(base + "/page");
         mon.setMode("SITE_CRAWL");
         mon.setCrawlMaxPages(40);
-        PageCheckResult r = ok(PageFetchCore.MAX_RESOURCES_PER_CHECK, List.of());
+        PageCheckResult r = ok(PageFetchCore.DEFAULT_MAX_RESOURCES_PER_CHECK, List.of());
         Map<String, Object> data = service(fakeChecker(r, r), null).diagnose(mon, true);
         List<Map<String, Object>> limits = list(data.get("findings")).stream().filter(f -> "CRAWL_LIMIT".equals(f.get("code"))).toList();
         assertThat(limits).hasSize(2);
-        assertThat(m(limits.get(0).get("params"))).containsEntry("reason", "resources").containsEntry("cap", 500);
+        assertThat(m(limits.get(0).get("params"))).containsEntry("reason", "resources").containsEntry("cap", 2000);
         assertThat(limits.get(0)).containsEntry("severity", "warn");
         assertThat(m(limits.get(1).get("params"))).containsEntry("reason", "single_page").containsEntry("pages", 40);
         assertThat(m(data.get("page"))).containsEntry("monitor_mode", "SITE_CRAWL");
         assertThat(m(m(data.get("page")).get("limits"))).containsEntry("resource_cap_hit", true);
+    }
+
+    @Test
+    @DisplayName("kaynak tavanı canlı ayarı (2026-10-30): tanılama izlemenin KENDİ tavanını yazar — 600'de 600 kaynak uyarır, 599 uyarmaz")
+    void limits_followLiveResourceCap() {
+        when(settings.getInt(eq(PageFetchCore.MAX_RESOURCES_KEY), anyInt())).thenReturn(600);
+        PageMonitor mon = monitor(base + "/page");
+        PageCheckResult hit = ok(600, List.of());
+        Map<String, Object> data = service(fakeChecker(hit, hit), null).diagnose(mon, true);
+        List<Map<String, Object>> limits = list(data.get("findings")).stream()
+                .filter(f -> "CRAWL_LIMIT".equals(f.get("code"))).toList();
+        assertThat(limits).hasSize(1);
+        assertThat(m(limits.get(0).get("params"))).containsEntry("reason", "resources").containsEntry("cap", 600);
+        assertThat(m(m(data.get("page")).get("limits"))).containsEntry("resource_cap", 600).containsEntry("resource_cap_hit", true);
+
+        PageCheckResult under = ok(599, List.of());
+        Map<String, Object> quiet = service(fakeChecker(under, under), null).diagnose(mon, true);
+        assertThat(list(quiet.get("findings")).stream().filter(f -> "CRAWL_LIMIT".equals(f.get("code")))).isEmpty();
+        assertThat(m(m(quiet.get("page")).get("limits"))).containsEntry("resource_cap", 600).containsEntry("resource_cap_hit", false);
     }
 
     @Test

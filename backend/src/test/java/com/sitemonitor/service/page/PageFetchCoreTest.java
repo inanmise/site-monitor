@@ -99,6 +99,63 @@ class PageFetchCoreTest {
         return "http://127.0.0.1:" + s.getAddress().getPort() + "/";
     }
 
+    /** {@code n} benzersiz bağlantılı sayfa — izlenen büyük bir ana sayfa ~520 kaynak taşıyordu (2026-10-30). */
+    private static byte[] pageWithLinks(int n) {
+        StringBuilder sb = new StringBuilder("<html><body>");
+        for (int i = 0; i < n; i++) sb.append("<a href=\"/p/").append(i).append("\">x</a>");
+        return sb.append("</body></html>").toString().getBytes(StandardCharsets.UTF_8);
+    }
+
+    private static PageFetchCore coreWithCap(Integer configured) {
+        PageFetchCore core = newCore();
+        AppSettingsService s = mock(AppSettingsService.class);
+        when(s.getInt(org.mockito.ArgumentMatchers.eq(PageFetchCore.MAX_RESOURCES_KEY), org.mockito.ArgumentMatchers.anyInt()))
+                .thenAnswer(i -> configured == null ? i.getArgument(1) : configured);
+        org.springframework.test.util.ReflectionTestUtils.setField(core, "appSettings", s);
+        return core;
+    }
+
+    @Test
+    @DisplayName("kaynak tavanı (2026-10-30): varsayılan 2000 — 520 kaynaklı büyük ana sayfa artık TAM envanterlenir; canlı ayar "
+            + "uygulanır ve tavana gelince kırpılır")
+    void resourceCap_defaultAndLiveSetting() {
+        String base = "https://example.com/";
+        PageFetchCore.Inventory full = coreWithCap(null).inventoryDetailed(pageWithLinks(520), base, base, null,
+                PageFetchCore.InventoryOptions.FULL);
+        assertThat(full.resources()).hasSize(520);
+        assertThat(full.cap()).isEqualTo(2000);
+        assertThat(full.capped()).isFalse();
+
+        PageFetchCore.Inventory capped = coreWithCap(150).inventoryDetailed(pageWithLinks(520), base, base, null,
+                PageFetchCore.InventoryOptions.FULL);
+        assertThat(capped.resources()).hasSize(150);
+        assertThat(capped.cap()).isEqualTo(150);
+        assertThat(capped.capped()).isTrue();
+        assertThat(coreWithCap(150).inventory(pageWithLinks(520), base, base, null)).hasSize(150);
+        // Yapıcıyla kurulan (ayarsız) çekirdek de varsayılanı uygular
+        assertThat(newCore().inventory(pageWithLinks(520), base, base, null)).hasSize(520);
+    }
+
+    @Test
+    @DisplayName("kaynak tavanı sınırları: boş / 0 / negatif → 2000; 100'ün altı 100'e, 10000'in üstü 10000'e sıkışır; okuma hatası "
+            + "varsayılan; crawl toplamı en az 1500 ve sayfa tavanının 3 katı")
+    void resourceCap_clampAndCrawlTotal() {
+        assertThat(PageFetchCore.maxResourcesPerCheck(null)).isEqualTo(2000);
+        assertThat(coreWithCap(0).maxResourcesPerCheck()).isEqualTo(2000);
+        assertThat(coreWithCap(-5).maxResourcesPerCheck()).isEqualTo(2000);
+        assertThat(coreWithCap(20).maxResourcesPerCheck()).isEqualTo(100);
+        assertThat(coreWithCap(750).maxResourcesPerCheck()).isEqualTo(750);
+        assertThat(coreWithCap(50_000).maxResourcesPerCheck()).isEqualTo(10_000);
+        AppSettingsService broken = mock(AppSettingsService.class);
+        when(broken.getInt(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyInt()))
+                .thenThrow(new IllegalStateException("ayar okunamadı"));
+        assertThat(PageFetchCore.maxResourcesPerCheck(broken)).isEqualTo(2000);
+
+        assertThat(PageFetchCore.maxTotalResources(2000)).isEqualTo(6000);
+        assertThat(PageFetchCore.maxTotalResources(100)).isEqualTo(1500);
+        assertThat(PageFetchCore.maxTotalResources(500)).isEqualTo(1500);
+    }
+
     @Test
     @DisplayName("gzip: normal boyutlu gövde TAM açılır (regresyon kapısı)")
     void gzipBody_decodedFully() throws IOException {
@@ -161,6 +218,42 @@ class PageFetchCoreTest {
             assertThat(f.error()).contains("cloud-metadata");
         } finally {
             entry.stop(0);
+        }
+    }
+
+    @Test
+    @DisplayName("Ham UTF-8 Location ('yurt-ıci') tarayıcı gibi izlenir — 200, yanlış 404 'kırık bağlantı' yok "
+            + "(2026-10-30, akyatirim.com.tr)")
+    void rawUtf8Location_followedLikeABrowser() throws IOException {
+        java.util.List<String> seen = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+        HttpServer site = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        site.createContext("/", ex -> {
+            String path = ex.getRequestURI().getRawPath();
+            seen.add(path);
+            if ("/tr/tradeall/yurt-%C4%B1ci/".equals(path)) {
+                // JDK sunucusu başlık karakterlerini birer bayt yazar → telde ham C4 B1 (prod sunucusunun yaptığı gibi)
+                String raw = new String("/tr/tradeall/yurt-ıci".getBytes(StandardCharsets.UTF_8),
+                        StandardCharsets.ISO_8859_1);
+                ex.getResponseHeaders().add("Location", raw);
+                ex.sendResponseHeaders(301, -1);
+            } else if ("/tr/tradeall/yurt-%C4%B1ci".equals(path)) {
+                byte[] b = "<html>ok</html>".getBytes(StandardCharsets.UTF_8);
+                ex.sendResponseHeaders(200, b.length);
+                try (var os = ex.getResponseBody()) { os.write(b); }
+            } else {
+                ex.sendResponseHeaders(404, -1);
+            }
+            ex.close();
+        });
+        site.start();
+        try {
+            String start = "http://127.0.0.1:" + site.getAddress().getPort() + "/tr/tradeall/yurt-%C4%B1ci/";
+            PageFetchCore.Fetch f = newCore().fetch(start, "GET", PageFetchCore.FetchOptions.body(3000, "t"));
+            assertThat(seen).containsExactly("/tr/tradeall/yurt-%C4%B1ci/", "/tr/tradeall/yurt-%C4%B1ci");
+            assertThat(f.status()).isEqualTo(200);
+            assertThat(f.error()).isNull();
+        } finally {
+            site.stop(0);
         }
     }
 

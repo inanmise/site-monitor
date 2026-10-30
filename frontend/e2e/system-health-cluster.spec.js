@@ -511,6 +511,15 @@ for (const vp of VIEWPORTS) {
       expect(await page.evaluate(overflowIn, '[data-section="heartbeat"]')).toEqual([])
       expect(await page.evaluate(clippedIn, '[data-section="heartbeat"]')).toEqual([])
       if (vp.touch) expect(await page.evaluate(smallTargets, '[data-section="heartbeat"] [data-card="heartbeat"]')).toEqual([])
+      // 2026-10-30: ızgara auto-fit iken şerit kartındaki md:col-span-2 örtük ikinci sütun yaratıyordu — 768'de tek sütun
+      // sığarken Pod'lar kartı 98 px'lik o sütuna düşüyor, bölüm 20 px taşıyordu (CI Linux'ta rakam genişliğine göre kırpma)
+      const hb = await page.evaluate(() => {
+        const s = document.querySelector('[data-section="heartbeat"]')
+        const c = document.querySelector('[data-card="heartbeat-pods"]')
+        return { overflow: s.scrollWidth - s.clientWidth, pods: c.getBoundingClientRect().width }
+      })
+      expect(hb.overflow, 'Heartbeat bölümü yatay taşmaz').toBeLessThanOrEqual(1)
+      expect(hb.pods, 'Pod listesi kartı dar bir örtük sütuna düşmez').toBeGreaterThan(280)
 
       await page.locator('[data-card="heartbeat"]').getByRole('button').last().click()
       const rows = page.locator('[data-slot="hb-pod-row"]')

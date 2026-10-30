@@ -119,6 +119,16 @@ class HttpDiagnosticsServiceTest {
         http.createContext("/r1", ex -> { ex.getResponseHeaders().add("Location", "/r2"); ex.sendResponseHeaders(302, -1); ex.close(); });
         http.createContext("/r2", ex -> { ex.getResponseHeaders().add("Location", "/ok"); ex.sendResponseHeaders(301, -1); ex.close(); });
         http.createContext("/loop", ex -> { ex.getResponseHeaders().add("Location", "/loop"); ex.sendResponseHeaders(302, -1); ex.close(); });
+        // akyatirim.com.tr (2026-10-30): Türkçe harf Location'da ham UTF-8 baytlarıyla (JDK sunucusu karakterleri birer bayt yazar)
+        http.createContext("/utf8", ex -> {
+            ex.getResponseHeaders().add("Location", new String("/yurt-ıci".getBytes(StandardCharsets.UTF_8), StandardCharsets.ISO_8859_1));
+            ex.sendResponseHeaders(301, -1);
+            ex.close();
+        });
+        http.createContext("/yurt", ex -> {
+            ex.sendResponseHeaders("/yurt-%C4%B1ci".equals(ex.getRequestURI().getRawPath()) ? 200 : 404, -1);
+            ex.close();
+        });
         http.createContext("/big", ex -> {
             byte[] b = "x".repeat(40_000).getBytes(StandardCharsets.US_ASCII);
             ex.getResponseHeaders().add("Content-Type", "text/plain");
@@ -400,6 +410,18 @@ class HttpDiagnosticsServiceTest {
         assertThat(m(hops.get(1).get("redirect"))).containsEntry("status", 301);
         assertThat(hops.get(2).get("redirect")).isNull();
         assertThat(hops.get(2)).containsEntry("index", 2);
+    }
+
+    @Test
+    @DisplayName("ham UTF-8 Location (akyatirim.com.tr, 2026-10-30): yönlendirme satırı okunur 'yurt-ıci' gösterir, istek "
+            + "%C4%B1 ile gider ve 200 döner")
+    void rawUtf8LocationShownReadable() {
+        Map<String, Object> data = service(null).diagnose(monitor(base + "/utf8", 1500), true);
+        Map<String, Object> p = path(data, 0);
+        assertThat(p).containsEntry("http_status", 200);
+        Map<String, Object> r0 = m(hops(p).get(0).get("redirect"));
+        assertThat(r0).containsEntry("status", 301).containsEntry("location", "/yurt-ıci");
+        assertThat((String) r0.get("next_url")).endsWith("/yurt-%C4%B1ci");
     }
 
     @Test

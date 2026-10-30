@@ -127,7 +127,7 @@ public class PageDiagnosticsService extends PageDiagSupport {
             RawHttpProbe probe = await(rawFutures.get(i), collectDeadline);
             if (probe == null) probe = RawHttpProbe.abandoned(spec, masker, System.currentTimeMillis() - start, HttpDiagnosticsService.OVERALL_CAP_MS);
             ClientRun client = await(clientFutures.get(i), collectDeadline);
-            PathEval ev = evaluate(probe, spec, client, m, url, capSeconds, plan.isMonitor());
+            PathEval ev = evaluate(probe, spec, client, m, url, capSeconds, PageFetchCore.maxResourcesPerCheck(appSettings), plan.isMonitor());
             Map<String, Object> path = basePath(plan, probe, ev.outcome, ev.failedStep, clientMap(client, m));
             path.put("page", pathSummary(ev));
             paths.add(path);
@@ -196,6 +196,12 @@ public class PageDiagnosticsService extends PageDiagSupport {
      */
     static PathEval evaluate(RawHttpProbe probe, RawHttpProbe.Spec spec, ClientRun client, PageMonitor m, String url,
                              int capSeconds, boolean analyze) {
+        return evaluate(probe, spec, client, m, url, capSeconds, PageFetchCore.DEFAULT_MAX_RESOURCES_PER_CHECK, analyze);
+    }
+
+    /** {@code resourceCap}: izlemenin canlı sayfa başına kaynak tavanı ({@link PageFetchCore#maxResourcesPerCheck}, 2026-10-30). */
+    static PathEval evaluate(RawHttpProbe probe, RawHttpProbe.Spec spec, ClientRun client, PageMonitor m, String url,
+                             int capSeconds, int resourceCap, boolean analyze) {
         PathEval ev = new PathEval();
         String key = spec.key();
         RawVerdict raw = rawVerdict(probe, spec, PageDiagFindings.PAGE_HTTP_STATUS, PageDiagFindings.PAGE_BODY_UNREAD);
@@ -235,7 +241,7 @@ public class PageDiagnosticsService extends PageDiagSupport {
                 ev.outcome = c.alarm > 0 ? "fail" : "ok";
                 if (c.alarm > 0) ev.failedStep = "resources";
             }
-            if (analyze) resourceFindings(ev, c, res, m, key, client.elapsedMs(), capSeconds);
+            if (analyze) resourceFindings(ev, c, res, m, key, client.elapsedMs(), capSeconds, resourceCap);
             if (raw == null && "ok".equals(ev.outcome)) {
                 ev.findings.add(HttpDiagFindings.finding(PageDiagFindings.PAGE_OK, HttpDiagFindings.INFO, key,
                         RawHttpProbe.params("status", res.httpStatus(), "resources", res.totalResources(),
@@ -244,7 +250,7 @@ public class PageDiagnosticsService extends PageDiagSupport {
         } else if (res != null) {
             ev.recordedStatus = res.status();
         }
-        if (analyze) ev.block = block(ev, res, m, url, spec.route(), capSeconds, client);
+        if (analyze) ev.block = block(ev, res, m, url, spec.route(), capSeconds, resourceCap, client);
         return ev;
     }
 
@@ -288,7 +294,7 @@ public class PageDiagnosticsService extends PageDiagSupport {
 
     /** İzlemenin yolunun kaynak bulguları — önem sırasıyla. */
     private static void resourceFindings(PathEval ev, Counts c, PageCheckResult res, PageMonitor m, String key,
-                                         long clientMs, int capSeconds) {
+                                         long clientMs, int capSeconds, int resourceCap) {
         boolean alertMixed = !Boolean.FALSE.equals(m.getAlertMixedContent());
         if (c.broken > 0) {
             ev.findings.add(HttpDiagFindings.finding(PageDiagFindings.RESOURCES_BROKEN,
@@ -329,9 +335,9 @@ public class PageDiagnosticsService extends PageDiagSupport {
                     RawHttpProbe.params("count", c.slow, "ms", m.getSlowResourceMs() != null ? m.getSlowResourceMs() : 2000,
                             "slowest_ms", c.slowestMs, "sample", displayUrl(c.slowestUrl))));
         }
-        if (c.total >= PageFetchCore.MAX_RESOURCES_PER_CHECK) {
+        if (c.total >= resourceCap) {
             ev.findings.add(HttpDiagFindings.finding(PageDiagFindings.CRAWL_LIMIT, HttpDiagFindings.WARN, key,
-                    RawHttpProbe.params("reason", "resources", "cap", PageFetchCore.MAX_RESOURCES_PER_CHECK, "total", c.total)));
+                    RawHttpProbe.params("reason", "resources", "cap", resourceCap, "total", c.total)));
         } else if (clientMs >= capSeconds * 1000L - 1000L) {
             ev.findings.add(HttpDiagFindings.finding(PageDiagFindings.CRAWL_LIMIT, HttpDiagFindings.WARN, key,
                     RawHttpProbe.params("reason", "time", "seconds", capSeconds, "total", c.total)));
@@ -346,6 +352,11 @@ public class PageDiagnosticsService extends PageDiagSupport {
     /** İzlemenin yolunun kaynak çözümlemesi ({@code data.page}). */
     static Map<String, Object> block(PathEval ev, PageCheckResult res, PageMonitor m, String url, String route,
                                      int capSeconds, ClientRun client) {
+        return block(ev, res, m, url, route, capSeconds, PageFetchCore.DEFAULT_MAX_RESOURCES_PER_CHECK, client);
+    }
+
+    static Map<String, Object> block(PathEval ev, PageCheckResult res, PageMonitor m, String url, String route,
+                                     int capSeconds, int resourceCap, ClientRun client) {
         Map<String, Object> b = new LinkedHashMap<>();
         b.put("path", "monitor");
         b.put("analyzed", res != null && res.mainReachable());
@@ -401,8 +412,8 @@ public class PageDiagnosticsService extends PageDiagSupport {
         b.put("issues", rows);
         b.put("issues_total", issuesTotal);
         Map<String, Object> limits = new LinkedHashMap<>();
-        limits.put("resource_cap", PageFetchCore.MAX_RESOURCES_PER_CHECK);
-        limits.put("resource_cap_hit", c != null && c.total >= PageFetchCore.MAX_RESOURCES_PER_CHECK);
+        limits.put("resource_cap", resourceCap);
+        limits.put("resource_cap_hit", c != null && c.total >= resourceCap);
         limits.put("time_budget_s", capSeconds);
         limits.put("time_budget_hit", client != null && client.elapsedMs() >= capSeconds * 1000L - 1000L);
         b.put("limits", limits);

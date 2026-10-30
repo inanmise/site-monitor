@@ -365,6 +365,37 @@ class HttpCheckerServiceTest {
     }
 
     @Test
+    @DisplayName("Ham UTF-8 Location tarayici gibi izlenir - 'yurt-ıci' yaninda 200, yanlis 404 yok (2026-10-30)")
+    void followRedirects_rawUtf8Location_likeABrowser() throws Exception {
+        java.util.List<String> seen = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+        com.sun.net.httpserver.HttpServer target = com.sun.net.httpserver.HttpServer.create(
+                new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        target.createContext("/", ex -> {
+            String path = ex.getRequestURI().getRawPath();
+            seen.add(path);
+            ex.sendResponseHeaders("/yurt-%C4%B1ci".equals(path) ? 200 : 404, -1);
+            ex.close();
+        });
+        target.start();
+        // JDK sunucusu baslik karakterlerini birer bayt yazar: telde ham UTF-8 (C4 B1), prod sunucusu gibi
+        String raw = new String(("http://127.0.0.1:" + target.getAddress().getPort() + "/yurt-ıci")
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8), java.nio.charset.StandardCharsets.ISO_8859_1);
+        com.sun.net.httpserver.HttpServer entry = plainRedirect(raw);
+        try {
+            Fixture f = fixture("", false);
+            Map<String, Object> r = f.service().check(
+                    "http://127.0.0.1:" + entry.getAddress().getPort() + "/",
+                    "GET", "200-200", 3000, false, true);
+            assertThat(seen).containsExactly("/yurt-%C4%B1ci");
+            assertThat(r.get("http_status")).isEqualTo(200);
+            assertThat(r.get("ok")).isEqualTo(true);
+        } finally {
+            entry.stop(0);
+            target.stop(0);
+        }
+    }
+
+    @Test
     @DisplayName("SSRF: cloud-metadata ucuna YONLENDIRME engellenir (Redirect.NORMAL bunu kacirirdi)")
     void followRedirects_toMetadata_blocked() throws Exception {
         com.sun.net.httpserver.HttpServer entry = plainRedirect("http://169.254.169.254/latest/meta-data/");

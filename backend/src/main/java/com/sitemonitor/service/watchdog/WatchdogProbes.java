@@ -88,11 +88,29 @@ public class WatchdogProbes {
     static final int PUSH_OUTCOME_WINDOW_MIN = 30;
     static final int PUSH_OUTCOME_MIN = 3;
     static final int PUSH_FAIL_PERCENT = 50;
+    /**
+     * Pencerede yeterli sonuç yokken (2026-10-30, "düzeldi" yanlış bildirimi) son bilinen sonuçlar — en yeni
+     * {@value #PUSH_OUTCOME_MIN} SENT / FAILED satır, son {@value #PUSH_EVIDENCE_LOOKBACK_DAYS} günden (test gönderimi hariç).
+     * {@code idx_push_created} üstünde geri tarama: zaman sınırı, hiç sonuç olmayan bir tabloda taramayı bir haftayla sınırlar.
+     */
+    static final String SQL_PUSH_LAST_OUTCOMES = "SELECT status FROM user_push_deliveries WHERE created_at >= ? "
+            + "AND status IN ('SENT', 'FAILED') AND push_trigger <> 'TEST' ORDER BY created_at DESC FETCH FIRST " + PUSH_OUTCOME_MIN + " ROWS ONLY";
+    static final int PUSH_EVIDENCE_LOOKBACK_DAYS = 7;
+    /** UNKNOWN yoklamanın "durumu tut" olgusu ({@link Probe#holdsState()}). */
+    public static final String HOLD_FACT = "awaiting_success";
     /** Dağıtık kontrol kuyruğu (R3-3): en eski bekleyen / değerlendirilmeyen bu kadar ms'den eskiyse sorun (tasarım §7.5). */
     static final long CHECK_QUEUE_LIMIT_MS = 120_000L;
 
     /** Tek yoklama sonucu. */
     public record Probe(WatchdogCheck check, Result result, String severity, Map<String, Object> facts) {
+        /**
+         * UNKNOWN ama "ölçülemedi" değil: son bilinen kanıt önceki durumu destekliyor, değiştirecek yeni kanıt yok
+         * ({@link #HOLD_FACT}). Geçiş bunu {@code hold} olarak işler — açık sorunun hatırlatması ve yeniden denemesi sürer.
+         */
+        public boolean holdsState() {
+            return result == Result.UNKNOWN && facts != null && Boolean.TRUE.equals(facts.get(HOLD_FACT));
+        }
+
         static Probe na(WatchdogCheck c, String reason) {
             Map<String, Object> f = new LinkedHashMap<>();
             f.put("reason", reason);
@@ -316,6 +334,13 @@ public class WatchdogProbes {
      * olgu olarak değerlendiren pod'un adıyla saklanır, durumu değiştirmez (MP-36: A'da açık / B'de kapalı devre turdan tura
      * onay sayacını döndürüyordu). Ölü ağ geçidi (inceleme W-2): satırlar devre kesici bekleme süresi + geri çekilme içinde
      * FAILED olur — takılı sayı yükselmez, sonuç oranı yükselir.
+     *
+     * <p><b>Kanıtsız "düzeldi" yok (2026-10-30):</b> pencerede {@value #PUSH_OUTCOME_MIN} sonuçtan az varsa (sessiz dönem —
+     * başarısız push'lar pencereden çıktı ama yerine başarılı gönderim gelmedi) karar son bilinen sonuçlara bakar
+     * ({@link #SQL_PUSH_LAST_OUTCOMES}): onların da en az %{@value #PUSH_FAIL_PERCENT}'i başarısızsa sonuç UNKNOWN —
+     * açık sorun "düzeldi" diye kapanmaz, kapalı kontrol de eski veriden sorun açmaz ({@link WatchdogTransition}: UNKNOWN
+     * sayaçları değiştirmez). Düzelme ancak gerçek başarılı gönderimler son sonuçların çoğunluğu olunca gelir. Son
+     * {@value #PUSH_EVIDENCE_LOOKBACK_DAYS} günde hiç sonuç yoksa bugünkü gibi OK (kanıt iki yönde de yok).
      */
     Probe pushOutbox(Instant now) {
         if (push == null || !push.enabled()) return Probe.na(WatchdogCheck.PUSH_OUTBOX, "push_disabled");
@@ -347,6 +372,20 @@ public class WatchdogProbes {
         long outcomes = sent + failed;
         boolean failing = outcomes >= PUSH_OUTCOME_MIN && failed * 100 >= (long) PUSH_FAIL_PERCENT * outcomes;
         boolean problem = failing || (stuck != null && stuck >= PUSH_STUCK_THRESHOLD);
+        if (!problem && outcomes < PUSH_OUTCOME_MIN) {
+            // Sessiz dönem: penceredeki sonuç düzelmeyi kanıtlamaya yetmez — son bilinen sonuçlar başarısızsa "bilinmiyor"
+            String lookback = WatchdogTransition.ISO.format(now.minus(Duration.ofDays(PUSH_EVIDENCE_LOOKBACK_DAYS)));
+            List<String> last = jdbc.query(SQL_PUSH_LAST_OUTCOMES, (rs, i) -> rs.getString(1), lookback);
+            long lastFailed = last.stream().filter("FAILED"::equals).count();
+            // En yeni sonuç başarısız VE son bilinenlerin en az yarısı başarısız → tut. En yeni sonuç başarılıysa ağ geçidi
+            // çalışıyor demektir (kanıt) → OK; tek tük eski bir başarısızlık sağlıklı kontrolü "bilinmiyor"a çevirmez.
+            if (!last.isEmpty() && "FAILED".equals(last.get(0)) && lastFailed * 100 >= (long) PUSH_FAIL_PERCENT * last.size()) {
+                f.put(HOLD_FACT, true);
+                f.put("last_known", last.size());
+                f.put("last_known_failed", lastFailed);
+                return new Probe(WatchdogCheck.PUSH_OUTBOX, Result.UNKNOWN, null, f);
+            }
+        }
         return new Probe(WatchdogCheck.PUSH_OUTBOX, problem ? Result.PROBLEM : Result.OK, WatchdogCheck.PUSH_OUTBOX.severity().name(), f);
     }
 

@@ -187,6 +187,9 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.page.resource-concurrency",    "monitoring", Type.INT),
         new Setting("site.monitor.page.user-agent",              "monitoring", Type.STRING),
         new Setting("site.monitor.page.max-check-seconds",       "monitoring", Type.INT),
+        // Sayfa başına kaynak tavanı (2026-10-30; sabit 500'dü) — sayfa bütünlüğü + sayfa hızı envanteri, crawl toplamı ×3.
+        // Anahtar: PageFetchCore.MAX_RESOURCES_KEY; okuma PageFetchCore.maxResourcesPerCheck (sınırlı 100–10000).
+        new Setting("site.monitor.page.max-resources",           "monitoring", Type.INT),
         new Setting("site.monitor.page.manual-cooldown-seconds", "monitoring", Type.INT),
         new Setting("site.monitor.pagespeed.alert-enabled",           "monitoring", Type.BOOL),
         new Setting("site.monitor.pagespeed.resource-concurrency",    "monitoring", Type.INT),

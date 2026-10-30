@@ -48,6 +48,19 @@ public final class WatchdogTransition {
      */
     public static Action apply(WatchdogState state, Result result, String severity, String factsJson,
                                Instant now, int confirm, int reminderHours, boolean muted) {
+        return apply(state, result, severity, factsJson, now, confirm, reminderHours, muted, false);
+    }
+
+    /**
+     * {@code hold} (2026-10-30, push kuyruğunun kanıtsız "düzeldi"si): ölçüm UNKNOWN ama "ölçülemedi" değil — son bilinen
+     * kanıt önceki durumu destekliyor, yalnız onu değiştirecek yeni kanıt yok ({@link WatchdogProbes.Probe#holdsState()}).
+     * Durum değişmez, ama açık sorunun hatırlatması / teslim edilemeyen bildirimin yeniden denemesi / susturma sonrası tek
+     * gönderim PROBLEM'deki gibi işler (sessiz açık sorun olmaz) ve karşı yöndeki onay sayacı sıfırlanır (ardışık olmayan
+     * ölçümler "onay" sayılmaz): açık sorunda sağlıklı sayaç, kapalı kontrolde sorunlu sayaç. Düz UNKNOWN eskisi gibi
+     * hiçbir şeye dokunmaz.
+     */
+    public static Action apply(WatchdogState state, Result result, String severity, String factsJson,
+                               Instant now, int confirm, int reminderHours, boolean muted, boolean hold) {
         int need = Math.max(1, confirm);
         String nowIso = ISO.format(now);
         state.setLastResult(result.name());
@@ -71,20 +84,7 @@ public final class WatchdogTransition {
                     }
                     return Action.NONE;
                 }
-                String kind = state.getNotifiedKind();
-                Instant notified = state.getNotifiedAt() == null ? null : parse(state.getNotifiedAt());
-                // Bu sorun dönemi için hiç bildirim denenmedi (örn. bildirim kapalıyken açıldı, sonra açıldı)
-                if (notified == null || kind == null || notified.isBefore(parse(state.getSince()))) return Action.ALERT;
-                if (kind.endsWith("_FAILED")) {
-                    if (Duration.between(notified, now).toMinutes() < RETRY_MINUTES) return Action.NONE;
-                    return kind.startsWith("REMIND") ? Action.REMIND : Action.ALERT;
-                }
-                if (kind.endsWith(MUTED)) {
-                    if (muted) return Action.NONE;
-                    return kind.startsWith("REMIND") ? Action.REMIND : Action.ALERT;
-                }
-                if (reminderHours > 0 && Duration.between(notified, now).toHours() >= reminderHours) return Action.REMIND;
-                return Action.NONE;
+                return followUp(state, now, reminderHours, muted);
             }
             case OK -> {
                 os++;
@@ -112,9 +112,33 @@ public final class WatchdogTransition {
                 return Action.NONE;
             }
             default -> {
-                return Action.NONE;   // UNKNOWN: ölçülemedi — sayaçlar değişmez
+                if (!hold) return Action.NONE;   // UNKNOWN: ölçülemedi — sayaçlar değişmez
+                if ("PROBLEM".equals(state.getStatus())) {
+                    state.setOkStreak(0);
+                    return followUp(state, now, reminderHours, muted);
+                }
+                state.setProblemStreak(0);
+                return Action.NONE;
             }
         }
+    }
+
+    /** Süren (onaylı) sorunun bildirim takibi: hiç denenmemiş açılış, teslim edilemeyen / susturulan bildirim, hatırlatma. */
+    private static Action followUp(WatchdogState state, Instant now, int reminderHours, boolean muted) {
+        String kind = state.getNotifiedKind();
+        Instant notified = state.getNotifiedAt() == null ? null : parse(state.getNotifiedAt());
+        // Bu sorun dönemi için hiç bildirim denenmedi (örn. bildirim kapalıyken açıldı, sonra açıldı)
+        if (notified == null || kind == null || notified.isBefore(parse(state.getSince()))) return Action.ALERT;
+        if (kind.endsWith("_FAILED")) {
+            if (Duration.between(notified, now).toMinutes() < RETRY_MINUTES) return Action.NONE;
+            return kind.startsWith("REMIND") ? Action.REMIND : Action.ALERT;
+        }
+        if (kind.endsWith(MUTED)) {
+            if (muted) return Action.NONE;
+            return kind.startsWith("REMIND") ? Action.REMIND : Action.ALERT;
+        }
+        if (reminderHours > 0 && Duration.between(notified, now).toHours() >= reminderHours) return Action.REMIND;
+        return Action.NONE;
     }
 
     /** Bildirim türü ekleri: teslim edilemedi (yeniden denenir) / bakım susturdu (susturma bitince) / kanal yok. */

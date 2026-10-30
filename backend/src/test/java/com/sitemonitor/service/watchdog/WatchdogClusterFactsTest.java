@@ -305,6 +305,93 @@ class WatchdogClusterFactsTest {
         assertThat(p.pushOutbox(NOW).result()).as("4 / 9 < %50").isEqualTo(Result.OK);
     }
 
+    @Test
+    @DisplayName("kanıtsız 'düzeldi' yok (2026-10-30): başarısız push'lar 30 dk penceresinden çıkınca açık sorun KAPANMAZ — "
+            + "son bilinen sonuçlar başarısızsa UNKNOWN; gerçek başarılı gönderimler gelince düzelir")
+    void pushProblemStaysOpenUntilSuccessfulPushes() {
+        UserPushService push = mock(UserPushService.class);
+        when(push.enabled()).thenReturn(true);
+        when(push.healthSnapshot()).thenReturn(Map.of("circuit_open", false));
+        WatchdogProbes p = probes();
+        p.setPush(push);
+        // OCPTEST4 2026-10-30: 6 alıcılık push 3 denemede düştü, sonra başka push olmadı
+        for (int i = 0; i < 6; i++) push("FAILED", "OPEN", 5);
+        WatchdogState st = new WatchdogState();
+        st.setCheckKey("push_outbox");
+        WatchdogProbes.Probe open = p.pushOutbox(NOW);
+        assertThat(open.result()).isEqualTo(Result.PROBLEM);
+        WatchdogTransition.apply(st, open.result(), open.severity(), null, NOW, 2, 6);
+        assertThat(WatchdogTransition.apply(st, open.result(), open.severity(), null, NOW.plusSeconds(60), 2, 6))
+                .isEqualTo(WatchdogTransition.Action.ALERT);
+        WatchdogTransition.markNotified(st, WatchdogTransition.Action.ALERT, true, NOW.plusSeconds(60));
+        assertThat(st.getStatus()).isEqualTo("PROBLEM");
+
+        // 32 dk sonra: başarısızlar pencereden çıktı, yerine HİÇBİR şey gelmedi (eski kural burada "düzeldi" diyordu)
+        Instant later = NOW.plus(Duration.ofMinutes(32));
+        for (int i = 0; i < 3; i++) push("FAILED", "TEST", 1);      // test gönderimi — kanıt sayılmaz
+        WatchdogProbes.Probe quiet = p.pushOutbox(later);
+        assertThat(quiet.result()).isEqualTo(Result.UNKNOWN);
+        assertThat(quiet.facts()).containsEntry("awaiting_success", true)
+                .containsEntry("last_known", 3).containsEntry("last_known_failed", 3L);
+        assertThat(quiet.holdsState()).isTrue();
+        assertThat(WatchdogMessages.detail(WatchdogCheck.PUSH_OUTBOX, quiet.facts(), false))
+                .contains("Karar verecek kadar yeni push sonucu yok", "son bilinen 3 gönderimin 3'i başarısız",
+                        "açık sorun kapanmaz, yeni sorun açılmaz");
+        assertThat(WatchdogMessages.detail(WatchdogCheck.PUSH_OUTBOX, quiet.facts(), true))
+                .contains("3 of the last 3 known pushes failed", "an open problem is not closed");
+        for (int i = 0; i < 3; i++) {
+            assertThat(WatchdogTransition.apply(st, quiet.result(), quiet.severity(), null, later.plusSeconds(60L * i), 2, 6,
+                    false, quiet.holdsState())).as("tutma düzelme bildirmez").isEqualTo(WatchdogTransition.Action.NONE);
+        }
+        assertThat(st.getStatus()).as("kanıt yokken sorun açık kalır").isEqualTo("PROBLEM");
+        assertThat(WatchdogTransition.apply(st, quiet.result(), quiet.severity(), null, NOW.plus(Duration.ofHours(7)), 2, 6,
+                false, quiet.holdsState())).as("sessiz açık sorun olmaz: hatırlatma gider").isEqualTo(WatchdogTransition.Action.REMIND);
+        WatchdogTransition.markNotified(st, WatchdogTransition.Action.REMIND, true, NOW.plus(Duration.ofHours(7)));
+
+        // Gerçek başarılı gönderim (en yeni sonuç SENT) = ağ geçidi çalışıyor kanıtı — iki onaylı turda düzeldi
+        push("SENT", "OPEN", -31);
+        WatchdogProbes.Probe healthy = p.pushOutbox(later);
+        assertThat(healthy.result()).isEqualTo(Result.OK);
+        assertThat(healthy.facts()).doesNotContainKey("awaiting_success");
+        WatchdogTransition.apply(st, healthy.result(), healthy.severity(), null, later.plusSeconds(300), 2, 6);
+        assertThat(WatchdogTransition.apply(st, healthy.result(), healthy.severity(), null, later.plusSeconds(360), 2, 6))
+                .isEqualTo(WatchdogTransition.Action.RECOVER);
+    }
+
+    @Test
+    @DisplayName("sessiz dönem: son bilinen sonuçlar başarılıysa ya da son 7 günde hiç sonuç yoksa OK (bugünkü davranış) — "
+            + "kapalı kontrol eski başarısızlıklardan sorun AÇMAZ")
+    void quietPushWithoutFailureEvidenceIsOk() {
+        UserPushService push = mock(UserPushService.class);
+        when(push.enabled()).thenReturn(true);
+        when(push.healthSnapshot()).thenReturn(Map.of("circuit_open", false));
+        WatchdogProbes p = probes();
+        p.setPush(push);
+        assertThat(p.pushOutbox(NOW).result()).as("hiç satır yok").isEqualTo(Result.OK);
+        for (int i = 0; i < 3; i++) push("FAILED", "OPEN", 8L * 24 * 60);   // 8 gün önce — bakış penceresi dışında
+        assertThat(p.pushOutbox(NOW).result()).as("7 günden eski sonuç kanıt değil").isEqualTo(Result.OK);
+        for (int i = 0; i < 3; i++) push("SENT", "OPEN", 90);
+        assertThat(p.pushOutbox(NOW).result()).as("son bilinenler başarılı").isEqualTo(Result.OK);
+
+        // Kapalı kontrol + sessiz dönemde başarısız son sonuçlar → UNKNOWN: sorun açılmaz, durum OK kalır
+        for (int i = 0; i < 3; i++) push("FAILED", "OPEN", 60);
+        WatchdogProbes.Probe q = p.pushOutbox(NOW);
+        assertThat(q.result()).isEqualTo(Result.UNKNOWN);
+        WatchdogState st = new WatchdogState();
+        st.setCheckKey("push_outbox");
+        for (int i = 0; i < 3; i++) {
+            WatchdogTransition.apply(st, q.result(), q.severity(), null, NOW.plusSeconds(60L * i), 2, 6, false, q.holdsState());
+        }
+        assertThat(st.getStatus()).isEqualTo("OK");
+
+        // En yeni sonuç başarılı → OK; en yeni başarısız ama son 3'ün çoğunluğu başarılı → OK
+        push("SENT", "OPEN", 40);
+        assertThat(p.pushOutbox(NOW).result()).isEqualTo(Result.OK);
+        push("SENT", "OPEN", 38);
+        push("FAILED", "OPEN", 35);
+        assertThat(p.pushOutbox(NOW).result()).as("F(yeni), S, S").isEqualTo(Result.OK);
+    }
+
     // ── Şema yaması ve örnekleyici kapalı (inceleme W-3) ───────────────────────────────────────
 
     @Test
