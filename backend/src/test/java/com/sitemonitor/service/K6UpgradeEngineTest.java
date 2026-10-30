@@ -55,17 +55,19 @@ class K6UpgradeEngineTest {
         assertThat(msg).contains("test marked as failed: kasten");
     }
 
-    // ── Sözdizimi hata deseni: iki sürümün de satır:sütunu tanınır ─────────────────────────────────
+    // ── Sözdizimi hata deseni: 2.x'in satır:sütunu tanınır (0.49 Babel biçimi 2026-10-30'da kaldırıldı) ─────────
 
     @Test
-    @DisplayName("Sözdizimi hatası: 0.49 (Babel) ve 2.3 (Line a:b) çıktıları KESİN hata sayılır, yol temizlenir")
-    void syntaxErrorBothVersions() throws IOException {
-        String d049 = ScriptedCheckerService.validationDetail(fixture("archive-syntax-049.txt"), List.of());
+    @DisplayName("Sözdizimi hatası: 2.3 (Line a:b) ve yığın izi (script:a:b) KESİN hata; 0.49 Babel biçimi artık tanınmaz")
+    void syntaxErrorPattern() throws IOException {
         String d230 = ScriptedCheckerService.validationDetail(fixture("archive-syntax-230.txt"), List.of());
-        assertThat(ScriptedCheckerService.K6_LINE_COL.matcher(d049).find()).isTrue();
         assertThat(ScriptedCheckerService.K6_LINE_COL.matcher(d230).find()).as(d230).isTrue();
         assertThat(d230).isEqualTo("script: Line 4:1 Unexpected token ; (and 1 more errors)");
-        assertThat(d049).doesNotContain("k6-script-").doesNotContain("/tmp");
+        String crash = ScriptedCheckerService.validationDetail(fixture("run-crash-230.txt"), List.of());
+        assertThat(ScriptedCheckerService.K6_LINE_COL.matcher(crash).find()).as(crash).isTrue();
+        // İmajda yalnız 2.x var: Babel'in "(3:13)" biçimi kesin hata sayılmaz (deseni 2026-10-30'da kalktı).
+        String d049 = ScriptedCheckerService.validationDetail(fixture("archive-syntax-049.txt"), List.of());
+        assertThat(ScriptedCheckerService.K6_LINE_COL.matcher(d049).find()).isFalse();
     }
 
     @Test
@@ -171,40 +173,45 @@ class K6UpgradeEngineTest {
                 "if (options.userAgent === 'X') {}")).isFalse();
     }
 
-    // ── Sözdizimi düzeyi = etkin ve yedekten ESKİSİ ───────────────────────────────────────────────────
+    // ── Desteklenen en eski sürüm (2026-10-30, Yayın C) ───────────────────────────────────────────────
 
     @Test
-    @DisplayName("syntaxVersion: etkin 2.3 + yedek 0.49 → 0.49 (geri dönüş betiği bozmasın); yedek yoksa etkin")
-    void syntaxVersionIsTheOlder() {
+    @DisplayName("Desteklenmeyen etkin ikili (0.49): k6 kullanılamaz, sürüm 'desteklenmiyor' için korunur; 2.3 kullanılabilir")
+    void unsupportedActiveDisablesK6() {
         AppSettingsService s = mock(AppSettingsService.class);
         when(s.getString(anyString(), anyString())).thenAnswer(i -> i.getArgument(1));
         var svc = new ScriptedCheckerService(null, null, s, null, new ProxySettings());
         K6Profile v049 = K6Profile.fromVersionOutput("k6", "k6 v0.49.0", 1L);
-        K6Profile v230 = K6Profile.fromVersionOutput("/opt/k6-next/k6", "k6 v2.3.0", 1L);
+        K6Profile v230 = K6Profile.fromVersionOutput("k6", "k6 v2.3.0", 1L);
 
-        svc.setProfilesForTest(v230, v049, null);
-        assertThat(svc.syntaxVersion()).isEqualTo("v0.49.0");
-        assertThat(ScriptedTemplateRules.syntaxLevel(svc.syntaxVersion())).isEqualTo("legacy");
-
-        svc.setProfilesForTest(v049, null, v230);
-        assertThat(svc.syntaxVersion()).isEqualTo("v0.49.0");
+        svc.setProfilesForTest(v049, null, null);
+        assertThat(svc.isAvailable()).isFalse();
+        assertThat(svc.version()).isNull();
+        assertThat(svc.unsupportedVersion()).isEqualTo("v0.49.0");
+        // Kontrol satırı / teşhis yanıtı "bulunamadı" demez: ikili var, sürümü eski (inceleme 2026-10-30).
+        assertThat(svc.unavailableText()).contains("v0.49.0").contains("v2.0.0").doesNotContain("bulunamadı");
+        assertThat(svc.unavailableMessage()).contains("v0.49.0").contains("v2.0.0").contains("k6 motoru");
 
         svc.setProfilesForTest(v230, null, null);
-        assertThat(svc.syntaxVersion()).isEqualTo("v2.3.0");
-        assertThat(ScriptedTemplateRules.syntaxLevel(svc.syntaxVersion())).isEqualTo("modern");
+        assertThat(svc.isAvailable()).isTrue();
+        assertThat(svc.version()).isEqualTo("v2.3.0");
+        assertThat(svc.unsupportedVersion()).isNull();
 
-        svc.setProfilesForTest(v230, K6Profile.unavailable("k6", 1L), null);
-        assertThat(svc.syntaxVersion()).isEqualTo("v2.3.0");
+        svc.setProfilesForTest(K6Profile.unavailable("k6", 1L), null, null);
+        assertThat(svc.unsupportedVersion()).isNull();
+        assertThat(svc.unavailableText()).isEqualTo("k6 bulunamadı — Sentetik İzleme devre dışı");
+        assertThat(svc.unavailableMessage()).contains("k6 bulunamadı");
     }
 
     @Test
-    @DisplayName("Şablon kuralları ve arayüz sözdizimi sürümünü syntaxVersion()'dan alır (kaynak kapısı)")
-    void templatesUseSyntaxVersion() throws IOException {
+    @DisplayName("Sözdizimi sürümü kalktı: şablon kuralları sürüm almaz, liste uçları k6_syntax_version yazmaz (kaynak kapısı)")
+    void noSyntaxVersionAnywhere() throws IOException {
         String ctl = Files.readString(Path.of("src/main/java/com/sitemonitor/controller/ScriptedTemplateController.java"));
-        assertThat(ctl).doesNotContain("envDefs, scriptedChecker.version())");
-        assertThat(ctl.split("scriptedChecker.syntaxVersion\\(\\)", -1).length - 1).isGreaterThanOrEqualTo(3);
+        assertThat(ctl).doesNotContain("syntaxVersion").doesNotContain("k6_syntax_version");
         String mon = Files.readString(Path.of("src/main/java/com/sitemonitor/controller/MonitoringController.java"));
-        assertThat(mon).contains("out.put(\"k6_syntax_version\", scriptedChecker.syntaxVersion());");
+        assertThat(mon).doesNotContain("k6_syntax_version").contains("\"k6_unsupported_version\"");
+        String rules = Files.readString(Path.of("src/main/java/com/sitemonitor/service/ScriptedTemplateRules.java"));
+        assertThat(rules).doesNotContain("Babel 6").doesNotContain("syntaxLevel");
     }
 
     @Test

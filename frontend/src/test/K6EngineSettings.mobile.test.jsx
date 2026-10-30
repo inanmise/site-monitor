@@ -14,15 +14,15 @@ import { LANG_STORAGE_KEY } from '../i18n/dateLocale.js'
 import K6EngineSettings from '../components/admin/k6engine/K6EngineSettings.jsx'
 
 const LONG = 'Bireysel İnternet Şubesi ve Mobil Bankacılık Ortak Giriş Senaryosu (Dijital Kanallar / Bireysel Bankacılık)'
-const ENGINE = { bin: '/opt/sitemonitor/k6/releases/v2.3.0/linux-amd64/k6', available: true, version: 'v2.3.0', modern_syntax: true, probed_at: '2026-10-29T20:15:03' }
-const scan = { id: 3, state: 'DONE', scope: 'ALL', total: 1, done: 1, regressions: 1, candidate_version: 'v2.3.0', active_version: 'v0.49.0', started_at: '2026-10-29T18:00:00' }
+const ENGINE = { bin: '/opt/sitemonitor/k6/releases/v2.3.0/linux-amd64/k6', available: true, version: 'v2.3.0', probed_at: '2026-10-29T20:15:03' }
+const scan = { id: 3, state: 'DONE', scope: 'ALL', total: 1, done: 1, regressions: 1, candidate_version: 'v2.3.0', active_version: 'v2.2.0', started_at: '2026-10-29T18:00:00' }
 
 beforeEach(() => {
   vi.clearAllMocks()
   try { localStorage.clear(); localStorage.setItem(LANG_STORAGE_KEY, 'tr') } catch { /* yok */ }
   api.admin.k6Engine.mockResolvedValue({ success: true, data: {
-    pod: 'site-monitor-7c9d', engines: { active: { ...ENGINE, version: 'v0.49.0', bin: '/usr/local/bin/k6' }, rollback: null, candidate: ENGINE },
-    syntax_version: 'v0.49.0', settings: { rollback_bin: '', candidate_bin: ENGINE.bin, godebug: '', user_agent: '', excluded_ids: [] },
+    pod: 'site-monitor-7c9d', engines: { active: { ...ENGINE, version: 'v2.2.0', bin: '/usr/local/bin/k6' }, rollback: null, candidate: ENGINE },
+    min_version: 'v2.0.0', settings: { rollback_bin: '', candidate_bin: ENGINE.bin, godebug: '', user_agent: '', excluded_ids: [] },
     godebug_keys: [], scripted_enabled: true, can_switch: true, can_rollback: false,
     monitors: [{ id: 21, name: LONG, team_id: 1, team_name: 'Dijital Kanallar', active: true }], scan,
   } })
@@ -30,7 +30,7 @@ beforeEach(() => {
   api.admin.k6Scan.mockResolvedValue({ success: true, data: { ...scan, counts: { REGRESSION: 1 }, results: [
     { monitor_id: 21, monitor_name: LONG, team_id: 1, team_name: 'Dijital Kanallar', diff: 'REGRESSION', status: 'ERROR', exit_code: 107,
       duration_ms: 65_000, error_class: 'SYNTAX', error: 'SyntaxError: Unexpected token ?. at file:///script.js:12:4', archive: 'DEFINITE',
-      baseline_status: 'PASS', baseline_k6_version: 'v0.49.0', baseline_checked_at: '2026-10-29T17:00:00', baseline_duration_ms: 900 },
+      baseline_status: 'PASS', baseline_k6_version: 'v2.2.0', baseline_checked_at: '2026-10-29T17:00:00', baseline_duration_ms: 900 },
   ] } })
 })
 

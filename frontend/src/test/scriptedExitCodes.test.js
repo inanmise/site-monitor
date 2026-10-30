@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { exitLabel, exitHint, diagnosisHint, k6SyntaxLevel, K6_EXIT_CODES, K6_EXIT_WITH_HINT,
+import { exitLabel, exitHint, diagnosisHint, K6_EXIT_CODES, K6_EXIT_WITH_HINT,
   readPhases, formatBytes, checksSummary, stuckLabel } from '../components/scriptedExitCodes.js'
 
 /**
@@ -11,7 +11,6 @@ const KNOWN = new Set([
   ...K6_EXIT_CODES.map(c => `scripted.exit_${c}`),
   'scripted.exit_neg1',
   ...K6_EXIT_WITH_HINT.map(c => `scripted.exitHelp_${c}`),
-  'scripted.hintOldEngine',
   'scripted.hintTimeoutNoDetail',
   'scripted.hintRequestTimeout',
   'scripted.hintTimeoutRunDiagnostics',
@@ -44,73 +43,36 @@ describe('exitLabel', () => {
   })
 })
 
-describe('k6SyntaxLevel — sürüm rozeti', () => {
-  it('0.53 ÖNCESİ legacy (gömülü Babel 6), sonrası modern', () => {
-    expect(k6SyntaxLevel('v0.49.0')).toBe('legacy')
-    expect(k6SyntaxLevel('0.52.9')).toBe('legacy')
-    expect(k6SyntaxLevel('v0.53.0')).toBe('modern')   // eşiğin KENDİSİ modern
-    expect(k6SyntaxLevel('v1.0.0')).toBe('modern')
-  })
-
-  it('sürüm okunamıyorsa null — yanlış sözdizimi tavsiyesi vermektense sus', () => {
-    expect(k6SyntaxLevel(null)).toBeNull()
-    expect(k6SyntaxLevel(undefined)).toBeNull()
-    expect(k6SyntaxLevel('bilinmiyor')).toBeNull()
-  })
-
-  it('diagnosisHint ile AYNI eşiği kullanır (tek kaynak — biri değişip diğeri kalmasın)', () => {
-    const syntaxErr = { error: 'SyntaxError: Unexpected token (1:5)' }
-    // legacy → eski-motor ipucu var; modern → yok
-    expect(k6SyntaxLevel('v0.49.0')).toBe('legacy')
-    expect(diagnosisHint(t, syntaxErr, 'v0.49.0')).not.toBeNull()
-    expect(k6SyntaxLevel('v0.53.0')).toBe('modern')
-    expect(diagnosisHint(t, syntaxErr, 'v0.53.0')).toBeNull()
-  })
-})
-
-describe('diagnosisHint — k6 sözdizimi duvarı', () => {
-  // Gerçek k6 v0.49.0 çıktısının çekirdeği (optional chaining içeren script).
+describe('diagnosisHint — metne bakan ipuçları', () => {
+  // 2026-10-30 (k6 Yayın C): "eski motor sözdizimi duvarı" ipucu (k6 0.49 / Babel 6) kaldırıldı — imajda yalnız k6 2.x.
+  // Eski 0.49 sürümüyle yazılmış bir kontrol satırı (geçmiş) da artık o ipucunu göstermez.
   const syntaxErr = {
     error: 'script çalışma-zamanı hatası (çıkış 107):\nSyntaxError: script: Unexpected token (46:29)',
     output_tail: 'level=error msg="SyntaxError: ... babel.min.js"',
   }
 
-  it('eski k6 + SyntaxError → ipucu gösterilir', () => {
-    expect(diagnosisHint(t, syntaxErr, 'v0.49.0')).toBe('«scripted.hintOldEngine»(v0.49.0)')
-    expect(diagnosisHint(t, syntaxErr, '0.52.9')).toBe('«scripted.hintOldEngine»(0.52.9)')
-  })
-
-  it('k6 ≥0.53 → ipucu SUSAR (yükseltmeden sonra yanlış tavsiye vermemeli)', () => {
-    expect(diagnosisHint(t, syntaxErr, 'v0.53.0')).toBeNull()
-    expect(diagnosisHint(t, syntaxErr, 'v1.0.0')).toBeNull()
-    expect(diagnosisHint(t, syntaxErr, 'v0.57.2')).toBeNull()
-  })
-
-  it('sürüm bilinmiyorsa ipucu gösterilmez — yanlış yönlendirmektense sessiz kal', () => {
-    expect(diagnosisHint(t, syntaxErr, null)).toBeNull()
-    expect(diagnosisHint(t, syntaxErr, undefined)).toBeNull()
-    expect(diagnosisHint(t, syntaxErr, 'bilinmiyor')).toBeNull()
+  it('eski motor sözdizimi ipucu yok: SyntaxError + Babel imzası bile ipucu üretmez', () => {
+    expect(diagnosisHint(t, syntaxErr)).toBeNull()
+    expect(diagnosisHint(t, { outputTail: 'SyntaxError: Unexpected token (1:5)' })).toBeNull()
   })
 
   it('SyntaxError olmayan hatalarda tetiklenmez', () => {
-    expect(diagnosisHint(t, { error: 'Süre aşımı — süreç sonlandırıldı' }, 'v0.49.0')).toBeNull()
-    expect(diagnosisHint(t, { error: 'GoError: connection refused' }, 'v0.49.0')).toBeNull()
-    // "SyntaxError" var ama token/babel imzası yok → karar veremiyoruz, sus
-    expect(diagnosisHint(t, { error: 'SyntaxError: bilinmeyen bir şey' }, 'v0.49.0')).toBeNull()
-    expect(diagnosisHint(t, null, 'v0.49.0')).toBeNull()
+    expect(diagnosisHint(t, { error: 'Süre aşımı — süreç sonlandırıldı' })).toBeNull()
+    expect(diagnosisHint(t, { error: 'GoError: connection refused' })).toBeNull()
+    expect(diagnosisHint(t, null)).toBeNull()
   })
 
-  it('TIMEOUT: sebep yazılamadığında yönlendirme çıkar (sürüm eşiğinden BAĞIMSIZ)', () => {
+  it('TIMEOUT: sebep yazılamadığında yönlendirme çıkar', () => {
     // DEĞİŞTİ (2026-08): eskiden burada koşulsuz "script'e açık istek timeout'u ekleyin" iddia
     // ediliyordu. Sahada 289 koşumluk bir monitörde bu tavsiye YANLIŞTI — script'te açık timeout
     // zaten vardı, sebep süreç bütçesinin ondan küçük olmasıydı. Artık doğru metni backend'in
     // yazdığı bağlam satırı belirliyor; hangi dalın hangi metni seçtiği aşağıdaki
     // "zaman aşımı dalları" grubunda tek tek pinli. Burada kalan sözleşme: TIMEOUT sebepsizse
-    // kullanıcı ASLA yönlendirmesiz bırakılmaz ve karar k6 sürümüne bağlı değildir.
-    for (const version of ['v0.49.0', 'v1.0.0', null]) {
-      expect(diagnosisHint(t, { status: 'TIMEOUT', error: 'Süre aşımı — süreç sonlandırıldı' }, version))
+    // kullanıcı ASLA yönlendirmesiz bırakılmaz.
+    for (let i = 0; i < 1; i++) {
+      expect(diagnosisHint(t, { status: 'TIMEOUT', error: 'Süre aşımı — süreç sonlandırıldı' }))
         .toBe('«scripted.hintTimeoutRunDiagnostics»')
-      expect(diagnosisHint(t, { status: 'TIMEOUT' }, version)).toBe('«scripted.hintTimeoutRunDiagnostics»')
+      expect(diagnosisHint(t, { status: 'TIMEOUT' })).toBe('«scripted.hintTimeoutRunDiagnostics»')
     }
   })
 
@@ -121,9 +83,8 @@ describe('diagnosisHint — k6 sözdizimi duvarı', () => {
       error: 'Süre aşımı — süreç sonlandırıldı:\n'
            + 'Request Failed — Post "http://192.0.2.1/v1/chat/completions": request timeout',
     }
-    expect(diagnosisHint(t, withReason, 'v0.49.0')).toBeNull()
-    // Sebep varken bile ESKİ MOTOR kuralına düşmez: TIMEOUT dalı kararı verip biter.
-    expect(diagnosisHint(t, withReason, 'v1.0.0')).toBeNull()
+    expect(diagnosisHint(t, withReason)).toBeNull()
+    expect(diagnosisHint(t, withReason)).toBeNull()
   })
 
   it('FAIL + "request timeout": ipucu çıkar (288 koşum boyunca hiçbir yönlendirme yoktu)', () => {
@@ -131,9 +92,8 @@ describe('diagnosisHint — k6 sözdizimi duvarı', () => {
       status: 'FAIL',
       error: 'k6 check/threshold başarısız:\nRequest Failed — Get "https://www.example.com": request timeout',
     }
-    expect(diagnosisHint(t, failWithTimeout, 'v0.49.0')).toBe('«scripted.hintRequestTimeout»')
-    // Sürümden BAĞIMSIZ: yeni k6'da da aynı tuzak var
-    expect(diagnosisHint(t, failWithTimeout, 'v1.0.0')).toBe('«scripted.hintRequestTimeout»')
+    expect(diagnosisHint(t, failWithTimeout)).toBe('«scripted.hintRequestTimeout»')
+    expect(diagnosisHint(t, failWithTimeout)).toBe('«scripted.hintRequestTimeout»')
   })
 
   it('sebep yalnız output_tail\'de olsa bile ipucu çıkar (eski kayıtlar geriye dönük aydınlanır)', () => {
@@ -142,21 +102,21 @@ describe('diagnosisHint — k6 sözdizimi duvarı', () => {
       error: 'k6 check/threshold başarısız — başarılı (çıkış 0)',   // düzeltme ÖNCESİ biçim
       output_tail: 'level=warning msg="Request Failed" error="Post \\"https://x\\": request timeout"',
     }
-    expect(diagnosisHint(t, oldRow, 'v0.49.0')).toBe('«scripted.hintRequestTimeout»')
+    expect(diagnosisHint(t, oldRow)).toBe('«scripted.hintRequestTimeout»')
   })
 
   it('PASS koşumunda ipucu çıkmaz (çıktıda geçse bile)', () => {
-    expect(diagnosisHint(t, { status: 'PASS', output_tail: 'request timeout' }, 'v0.49.0')).toBeNull()
+    expect(diagnosisHint(t, { status: 'PASS', output_tail: 'request timeout' })).toBeNull()
   })
 
   it('TIMEOUT ipucu yalnız TIMEOUT durumunda — FAIL/ERROR bunu göstermez', () => {
-    expect(diagnosisHint(t, { status: 'FAIL', error: 'k6 check başarısız' }, 'v0.49.0')).toBeNull()
-    expect(diagnosisHint(t, { status: 'ERROR', error: 'GoError: reddedildi' }, 'v0.49.0')).toBeNull()
+    expect(diagnosisHint(t, { status: 'FAIL', error: 'k6 check başarısız' })).toBeNull()
+    expect(diagnosisHint(t, { status: 'ERROR', error: 'GoError: reddedildi' })).toBeNull()
   })
 
   it('outputTail (camelCase) de okunur — API iki biçimde de gelebiliyor', () => {
-    expect(diagnosisHint(t, { outputTail: 'SyntaxError: Unexpected token (1:5)' }, 'v0.49.0'))
-      .toBe('«scripted.hintOldEngine»(v0.49.0)')
+    expect(diagnosisHint(t, { status: 'FAIL', outputTail: 'Request Failed error="Get x": request timeout' }))
+      .toBe('«scripted.hintRequestTimeout»')
   })
 })
 
@@ -318,27 +278,27 @@ describe('diagnosisHint — zaman aşımı dalları', () => {
     const check = { status: 'TIMEOUT',
       error: `Süre aşımı — süreç sonlandırıldı\n${INVERSE}\nsüreç bütçesi=10s · script istek timeout'u=20s · çıkış=doğrudan · kurumsal CA=verildi` }
 
-    expect(diagnosisHint(t, check, 'v0.49.0')).toBeNull()
+    expect(diagnosisHint(t, check)).toBeNull()
   })
 
   it('script\'te açık timeout YOKSA eski ipucu doğrudur ve gösterilir', () => {
     const check = { status: 'TIMEOUT',
       error: "Süre aşımı — süreç sonlandırıldı\nsüreç bütçesi=60s · script istek timeout'u=verilmemiş (k6 varsayılanı 60s) · çıkış=doğrudan · kurumsal CA=verildi" }
 
-    expect(diagnosisHint(t, check, 'v0.49.0')).toBe('«scripted.hintTimeoutNoDetail»')
+    expect(diagnosisHint(t, check)).toBe('«scripted.hintTimeoutNoDetail»')
   })
 
   it('bütçe sırası doğru ama sebep yoksa Bağlantı Teşhisi\'ne yönlendirir (script suçlanmaz)', () => {
     const check = { status: 'TIMEOUT', error: `Süre aşımı — süreç sonlandırıldı\n${CTX}` }
 
-    expect(diagnosisHint(t, check, 'v0.49.0')).toBe('«scripted.hintTimeoutRunDiagnostics»')
+    expect(diagnosisHint(t, check)).toBe('«scripted.hintTimeoutRunDiagnostics»')
   })
 
   it('k6 GERÇEK sebebi yazdıysa ipucu susar — bağlam satırı "sebep" sanılmaz', () => {
     const check = { status: 'TIMEOUT',
       error: `Süre aşımı — süreç sonlandırıldı:\nRequest Failed error="dial tcp: i/o timeout"\n${CTX}` }
 
-    expect(diagnosisHint(t, check, 'v0.49.0')).toBeNull()
+    expect(diagnosisHint(t, check)).toBeNull()
   })
 
   it('REGRESYON: bağlam satırının kendisi "sebep var" saydırmaz', () => {
@@ -346,12 +306,12 @@ describe('diagnosisHint — zaman aşımı dalları', () => {
     // gerçekten sebepsiz kalan koşumlarda hiçbir yönlendirme çıkmazdı — düzeltme teşhisi körleştirirdi.
     const onlyContext = { status: 'TIMEOUT', error: `Süre aşımı — süreç sonlandırıldı\n${CTX}` }
 
-    expect(diagnosisHint(t, onlyContext, 'v0.49.0')).not.toBeNull()
+    expect(diagnosisHint(t, onlyContext)).not.toBeNull()
   })
 
   it('bağlam satırı olmayan ESKİ kayıtlar da yönlendirme alır (sessiz kalmaz)', () => {
     const legacy = { status: 'TIMEOUT', error: 'Süre aşımı — süreç sonlandırıldı' }
 
-    expect(diagnosisHint(t, legacy, 'v0.49.0')).toBe('«scripted.hintTimeoutRunDiagnostics»')
+    expect(diagnosisHint(t, legacy)).toBe('«scripted.hintTimeoutRunDiagnostics»')
   })
 })

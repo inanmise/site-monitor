@@ -22,7 +22,8 @@ import { Button } from '@/components/shadcn/button'
 import { cn } from '@/lib/utils'
 
 /**
- * Ayarlar → Platform → k6 motoru (2026-10-29, k6 v0.49 → v2.3 geçişi, "iki ikili + gölge tarama" planı).
+ * Ayarlar → Platform → k6 motoru (2026-10-29, k6 v0.49 → v2.3 geçişi, "iki ikili + gölge tarama" planı; 2026-10-30'da
+ * tamamlandı — imajda tek ikili, sayfa gelecekteki sürüm yükseltmelerinin aracı).
  *
  * Bu sayfa geçişi YÖNETİR: aday ikiliyle bütün etkin senaryo izlemeleri önce bir kez koşulur (uyumluluk taraması — geçmiş
  * satırı / alarm / bildirim yok), sonuçlar son gerçek kontrolle karşılaştırılır; temizse "Adayı etkin yap" tek ayardır

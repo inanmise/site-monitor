@@ -68,8 +68,8 @@ Kapsam argümanı: `$ARGUMENTS`
 
 Önce mevcut durumu kanıtla (varsayma): `scriptedTemplates.js` yapısı (id, TR/EN `name/desc/when`,
 `env[]`, `script`; yazım kuralları dosya başındaki yorumda ve `scriptedTemplates.test.js`'te
-pinli — k6 0.49/Babel 6: `?.`, `??`, spread YOK; her isteğe açık `timeout`; `vus/iterations/stages`
-tanımlanmaz), `ScriptedMonitorPage.jsx` seçici sözleşmesi (`form.template` değerleri: `''` |
+pinli — 2026-10-30'dan beri k6 2.x: `?.`, `??`, spread serbest (eski 0.49/Babel 6 kuralı kalktı); her isteğe
+açık `timeout`; `vus/iterations/stages` tanımlanmaz), `ScriptedMonitorPage.jsx` seçici sözleşmesi (`form.template` değerleri: `''` |
 `tpl:<id>` | `saved:<monitorId>`; `TemplateInfo` paneli `when` + env listesini gösterir; `savedScripts`
 zaten ayrı grup), `/scripted*` endpoint envanteri (MonitoringController ~2400–2850), çok-takım
 üyeliği (`AppUser.teamIds` + birincil `teamId`), `monitoring.scripted` izninin USER'a AÇIK OLMADIĞI.

@@ -247,7 +247,7 @@ class K6CompatScanServiceTest {
         when(scans.findTop20ByOrderByIdDesc()).thenReturn(List.of());
         when(scans.findFirstByStateInOrderByIdDesc(any())).thenReturn(Optional.empty());
         when(monitors.findByActiveTrue()).thenReturn(List.of(monitor(1, "A")));
-        when(checker.profiles()).thenReturn(new ScriptedCheckerService.Profiles(null, null, candidate, null));
+        when(checker.profiles()).thenReturn(new ScriptedCheckerService.Profiles(null, null, candidate));
         when(scans.save(any())).thenAnswer(i -> {
             K6CompatScan s = i.getArgument(0);
             s.setId(9L);
@@ -269,6 +269,13 @@ class K6CompatScanServiceTest {
         when(checker.candidate()).thenReturn(unavailable());
         assertThatThrownBy(() -> svc.start(null, "admin", "Admin"))
                 .isInstanceOfSatisfying(CodedConflictException.class, e -> assertThat(e.getCode()).isEqualTo("K6_CANDIDATE_UNAVAILABLE"));
+        // 2026-10-30: 2.0'dan eski aday "desteklenmiyor" der ve sürümü adlandırır — "yolu denetleyin" değil.
+        when(checker.candidate()).thenReturn(K6Profile.fromVersionOutput("/opt/k6-old/k6", "k6 v0.49.0", 1L));
+        assertThatThrownBy(() -> svc.start(null, "admin", "Admin"))
+                .isInstanceOfSatisfying(CodedConflictException.class, e -> {
+                    assertThat(e.getCode()).isEqualTo("K6_CANDIDATE_UNAVAILABLE");
+                    assertThat(e.getMessage()).contains("v0.49.0").contains("v2.0.0");
+                });
         when(checker.candidate()).thenReturn(candidate);
         K6CompatScan open = new K6CompatScan();
         open.setId(3L);

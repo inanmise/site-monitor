@@ -59,7 +59,7 @@ class ScriptedExtensionRuleTest {
     @DisplayName("Şablon kuralları da aynı engeli uygular (şablon N izlemeye kopyalanır)")
     void templatesBlocked() {
         var d = ScriptedTemplateRules.check(null, "Ad", "a", "b",
-                "import sql from 'k6/x/sql';\nexport default function () {}", null, "v0.49.0");
+                "import sql from 'k6/x/sql';\nexport default function () {}", null);
         assertThat(d.blocked()).isTrue();
         assertThat(d.blocking()).contains("k6/x/sql");
     }

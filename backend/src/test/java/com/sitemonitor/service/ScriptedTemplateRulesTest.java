@@ -30,7 +30,7 @@ class ScriptedTemplateRulesTest {
             List.of(Map.of("name", "BASE_URL", "secret", false));
 
     private static ScriptedTemplateRules.TemplateDiagnostics check(String script) {
-        return ScriptedTemplateRules.check(null, "Ad", "Açıklama", "Ne zaman", script, ENV_BASE_URL, "v0.49.0");
+        return ScriptedTemplateRules.check(null, "Ad", "Açıklama", "Ne zaman", script, ENV_BASE_URL);
     }
 
     @Test
@@ -46,8 +46,8 @@ class ScriptedTemplateRulesTest {
     @Test
     @DisplayName("BLOCK: ad veya script boş")
     void blocksBlankNameOrScript() {
-        assertThat(ScriptedTemplateRules.check(null, "  ", "d", "w", OK_SCRIPT, ENV_BASE_URL, "v0.49.0").blocked()).isTrue();
-        assertThat(ScriptedTemplateRules.check(null, "Ad", "d", "w", "   ", ENV_BASE_URL, "v0.49.0").blocked()).isTrue();
+        assertThat(ScriptedTemplateRules.check(null, "  ", "d", "w", OK_SCRIPT, ENV_BASE_URL).blocked()).isTrue();
+        assertThat(ScriptedTemplateRules.check(null, "Ad", "d", "w", "   ", ENV_BASE_URL).blocked()).isTrue();
     }
 
     @Test
@@ -66,61 +66,33 @@ class ScriptedTemplateRulesTest {
     @Test
     @DisplayName("BLOCK: builtinKey slug olmalı — tamamen rakam olan anahtar tpl: çözümünü çakıştırır")
     void blocksNonSlugBuiltinKey() {
-        assertThat(ScriptedTemplateRules.check("12345", "Ad", "d", "w", OK_SCRIPT, ENV_BASE_URL, "v0.49.0").blocked()).isTrue();
-        assertThat(ScriptedTemplateRules.check("Smoke-Health", "Ad", "d", "w", OK_SCRIPT, ENV_BASE_URL, "v0.49.0").blocked()).isTrue();
-        assertThat(ScriptedTemplateRules.check("smoke-health", "Ad", "d", "w", OK_SCRIPT, ENV_BASE_URL, "v0.49.0").blocked()).isFalse();
+        assertThat(ScriptedTemplateRules.check("12345", "Ad", "d", "w", OK_SCRIPT, ENV_BASE_URL).blocked()).isTrue();
+        assertThat(ScriptedTemplateRules.check("Smoke-Health", "Ad", "d", "w", OK_SCRIPT, ENV_BASE_URL).blocked()).isTrue();
+        assertThat(ScriptedTemplateRules.check("smoke-health", "Ad", "d", "w", OK_SCRIPT, ENV_BASE_URL).blocked()).isFalse();
     }
 
     @Test
     @DisplayName("BLOCK: env tanımı DEĞER taşıyorsa reddedilir (sessizce ayıklanmaz)")
     void blocksEnvCarryingValue() {
         var withValue = List.<Map<String, Object>>of(Map.of("name", "API_KEY", "secret", true, "value", "gizli"));
-        var d = ScriptedTemplateRules.check(null, "Ad", "d", "w", OK_SCRIPT, withValue, "v0.49.0");
+        var d = ScriptedTemplateRules.check(null, "Ad", "d", "w", OK_SCRIPT, withValue);
         assertThat(d.blocked()).isTrue();
         assertThat(d.blocking()).contains("gizli değer taşıyamaz");
     }
 
-    // ── Sözdizimi: dağıtımdaki motora BAĞLI karar ──────────────────────────────────────
+    // ── Sözdizimi: modern JavaScript serbest (2026-10-30, k6 Yayın C) ────────────────────────────
 
     @Test
-    @DisplayName("BLOCK: k6 0.49 (legacy) modern sözdizimini ayrıştıramaz — ?. / ?? / {...}")
-    void blocksModernSyntaxOnLegacyK6() {
-        for (String bad : List.of(
+    @DisplayName("Modern sözdizimi (?. / ?? / {...}) ne engellenir ne uyarılır — imajda yalnız k6 2.x var")
+    void modernSyntaxIsFree() {
+        for (String modern : List.of(
                 "export default function () { const x = a?.b; }",
                 "export default function () { const x = a ?? b; }",
                 "export default function () { const o = { ...base }; }")) {
-            var d = ScriptedTemplateRules.check(null, "Ad", "d", "w", bad, List.of(), "v0.49.0");
-            assertThat(d.blocked()).as("legacy k6'da engellenmeli: %s", bad).isTrue();
+            var d = ScriptedTemplateRules.check(null, "Ad", "d", "w", modern, List.of());
+            assertThat(d.blocked()).as(modern).isFalse();
+            assertThat(d.warnings()).as(modern).noneMatch(w -> w.contains("Babel") || w.contains("AYRIŞTIRAMAZ"));
         }
-    }
-
-    @Test
-    @DisplayName("k6 0.53+ (modern): aynı sözdizimi UYARI olur, engel DEĞİL")
-    void modernK6_warnsInsteadOfBlocking() {
-        var d = ScriptedTemplateRules.check(null, "Ad", "d", "w",
-                "export default function () { const x = a?.b; }", List.of(), "v0.53.0");
-        assertThat(d.blocked()).isFalse();
-        assertThat(d.warnings()).anyMatch(w -> w.contains("?."));
-    }
-
-    @Test
-    @DisplayName("k6 sürümü okunamıyorsa BLOKLAMA yok — bilgisizlik üzerine kilitleme yapılmaz")
-    void unknownK6Version_doesNotBlock() {
-        var d = ScriptedTemplateRules.check(null, "Ad", "d", "w",
-                "export default function () { const x = a?.b; }", List.of(), null);
-        assertThat(d.blocked()).isFalse();
-        assertThat(d.warnings()).isNotEmpty();
-    }
-
-    @Test
-    @DisplayName("syntaxLevel: eşik sürümü (0.53.0) modern sayılır, altı legacy")
-    void syntaxLevel_threshold() {
-        assertThat(ScriptedTemplateRules.syntaxLevel("v0.49.0")).isEqualTo("legacy");
-        assertThat(ScriptedTemplateRules.syntaxLevel("v0.52.9")).isEqualTo("legacy");
-        assertThat(ScriptedTemplateRules.syntaxLevel("v0.53.0")).isEqualTo("modern");
-        assertThat(ScriptedTemplateRules.syntaxLevel("v1.0.0")).isEqualTo("modern");
-        assertThat(ScriptedTemplateRules.syntaxLevel("bozuk")).isEqualTo("unknown");
-        assertThat(ScriptedTemplateRules.syntaxLevel(null)).isEqualTo("unknown");
     }
 
     // ── WARN dalı: bağlam bilmeyen, yanlış-pozitifi olan kurallar ──────────────────────
@@ -152,7 +124,7 @@ class ScriptedTemplateRulesTest {
     @DisplayName("WARN: tanımsız __ENV — ScriptedCheckerService'in belgeli kararı yeniden yazılmaz, ÇAĞRILIR")
     void warnsOnUndefinedEnv_viaSharedAudit() {
         var d = ScriptedTemplateRules.check(null, "Ad", "d", "w",
-                "export default function () { http.get(__ENV.TANIMSIZ, { timeout: '5s' }); }", List.of(), "v0.49.0");
+                "export default function () { http.get(__ENV.TANIMSIZ, { timeout: '5s' }); }", List.of());
         assertThat(d.blocked()).isFalse();
         assertThat(d.warnings()).anyMatch(w -> w.contains("TANIMSIZ"));
     }
@@ -160,7 +132,7 @@ class ScriptedTemplateRulesTest {
     @Test
     @DisplayName("WARN: açıklama/kullanım metni boş — şablon seçilebilir olmaktan çıkar ama engellenmez")
     void warnsOnMissingProse() {
-        var d = ScriptedTemplateRules.check(null, "Ad", "", "  ", OK_SCRIPT, ENV_BASE_URL, "v0.49.0");
+        var d = ScriptedTemplateRules.check(null, "Ad", "", "  ", OK_SCRIPT, ENV_BASE_URL);
         assertThat(d.blocked()).isFalse();
         assertThat(d.warnings()).hasSizeGreaterThanOrEqualTo(2);
     }
@@ -168,7 +140,7 @@ class ScriptedTemplateRulesTest {
     @Test
     @DisplayName("null env listesi ve null metinlerde istisna YOK")
     void nullInputsAreSafe() {
-        var d = ScriptedTemplateRules.check(null, "Ad", null, null, OK_SCRIPT, null, "v0.49.0");
+        var d = ScriptedTemplateRules.check(null, "Ad", null, null, OK_SCRIPT, null);
         assertThat(d.blocked()).isFalse();
     }
 }

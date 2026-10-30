@@ -814,35 +814,34 @@ kubectl get pod -n "$NS" -l app.kubernetes.io/instance="$REL" \
 
 ## k6 sürüm geçişi (0.49 → 2.3)
 
-Yayın A (imajda iki ikili) davranışı DEĞİŞTİRMEZ: dağıtımdan sonra senaryo kontrolleri hâlâ 0.49 ile koşar. Geçiş üç ayrı
-adımdır, her biri ayrı onayla ve ayrı günde. Ayrıntı: RUNBOOK → "k6 sürüm geçişi (0.49 → 2.3)".
+Bu sürümden (Yayın B + C, 2026-10-30) beri imajda tek k6 var: `/usr/bin/k6` = v2.3.0; 0.49 imajdan çıktı ve 2.0'dan eski bir
+k6 "desteklenmiyor" olarak koşmaz. Senaryo kontrolleri dağıtımla birlikte 2.3'e geçer. Ayrıntı: RUNBOOK → "k6 sürüm geçişi
+(0.49 → 2.3)".
 
-### 1. Yayın A dağıtımından hemen sonra
-- [ ] Günlükte iki satır (bütün pod'lar): `[K6] ✅ k6 bulundu — sürüm v0.49.0 (k6)` ve
-      `[K6] aday k6 — sürüm v2.3.0 (/opt/k6-next/k6)`:
+### Öncesi
+- [ ] Gölge tarama yapıldı mı? 20.172.x (Yayın A) prod'da koşup uyumluluk taraması orada bitirildiyse sorun yok. Yapılmadıysa
+      bu sürüm 2.3'e TARAMASIZ geçirir (0.49 olmadığı için tarama artık 0.49 ↔ 2.3 karşılaştıramaz) — önerilen: önce
+      20.172.x'i dağıtıp taramayı orada koşmak; değilse bu riski bilerek kabul edin ve ilk saati yakından izleyin.
+- [ ] Dağıtım bitene kadar senaryo betiği düzenlenmeyecek (yeni pod'da kaydedilen `?.` / `??` / `{...}` eski 0.49 pod'unda
+      sözdizimi hatası verir).
+
+### Dağıtımdan hemen sonra
+- [ ] Bütün pod'larda `[K6] ✅ k6 bulundu — sürüm v2.3.0 (k6)`; `desteklenmiyor` / `k6 bulunamadı` satırı YOK:
       `kubectl logs -n "$NS" -l app.kubernetes.io/instance="$REL" --prefix --tail=-1 | grep '\[K6\]'`
-- [ ] Ayarlar → Platform → k6 motoru: Etkin = v0.49.0 "Çalışıyor", Aday = v2.3.0 "Çalışıyor", Yedek "Tanımlı değil".
-- [ ] Senaryo kartları ve son kontroller önceki gibi; yeni kontrol satırlarında `k6 v0.49.0`.
-
-### 2. Gölge tarama (onay gerekir)
-- [ ] Yan etkili betikler "Tarama dışı" listesinde.
-- [ ] **Taramayı başlat** → bitti (DONE); sonuç CSV'si indirildi ve takımlara iletildi.
-- [ ] Gerileme = 0 (ya da her biri sahibiyle bilerek kabul edildi); TLS kaçışı açıldıysa hangi uç için açıldığı not edildi.
-
-### 3. Adayı etkin yap (onay gerekir)
-- [ ] Dağıtım BİTTİ: bütün pod'lar Yayın A (ya da sonrası) koşuyor. Başka sürüm koşan pod varken düğme kapalıdır ve sunucu
-      geçişi reddeder (`K6_MIXED_VERSIONS`) — eski kodlu pod'da aday ikili yoktur, her senaryo kontrolü hata verirdi.
-- [ ] **Adayı etkin yap** → Etkin = v2.3.0, Yedek = v0.49.0 (`k6`); diğer pod'lar 10 sn içinde (sayfayı yenileyin).
+- [ ] Dağıtım bittikten ≤ ~10 dk sonra tek pod'da `[K6] Ayar normalleştirmesi tamamlandı — …` ya da
+      `… değiştirilecek eski ikili yolu yok` (nişan `2026-10-30-k6-settings-normalize`):
+      `kubectl logs -n "$NS" -l app.kubernetes.io/instance="$REL" --prefix --tail=-1 | grep 'Ayar normalleştirmesi'`
+- [ ] Ayarlar → Platform → k6 motoru: Etkin = v2.3.0 "Çalışıyor"; Yedek ve Aday "Tanımlı değil" (elle başka yol
+      girilmediyse); "Desteklenen en eski k6 sürümü v2.0.0".
 - [ ] İlk saat: yeni kontrol satırlarında `k6 v2.3.0`; senaryo alarm sayısı ve "Senaryo yavaş" alarmları önceki günle aynı.
-- [ ] Sorun → **Yedeğe geri dön** (yeniden dağıtım yok).
+      Yeni TLS / 403 hataları → RUNBOOK'taki "Gerileme" maddeleri (TLS kaçışı, User-Agent) aynen uygulanır.
 
-### 4. Birkaç gün sonra — Yayın B (ayrı yayın)
-- [ ] 2.3 `/usr/bin/k6`'ya taşınır, 0.49 bir sürüm daha yedek kalır; ekran metinleri güncellenir.
-
-### Geri alma (imajı Yayın A'dan ESKİ bir sürüme döndürmek)
-- [ ] ÖNCE k6 motoru → **Yedeğe geri dön** (ya da Ayarlar'da `site.monitor.scripted.k6-bin` = `k6`), SONRA `helm rollback`.
-      Ayar veritabanında kalır: eski imajda `/opt/k6-next/k6` yoktur, etkin ikili o yolu gösterirse bütün senaryo
-      kontrolleri "k6 bulunamadı" ile atlanır (sessizce izleme yok). Aday hiç etkin yapılmadıysa bir şey yapmak gerekmez.
+### Geri alma
+- [ ] **20.172.x'e** `helm rollback`: `/usr/bin/k6` yeniden 0.49 olur ve (normalleştirme koştuysa) senaryo kontrolleri 0.49
+      ile koşar — bu sürümden sonra modern sözdizimiyle kaydedilen betikler hata verir. 2.3'te kalmak için 20.172.x'te
+      k6 motoru → **Adayı etkin yap** (oradaki varsayılan aday gerçek 2.3).
+- [ ] **Yayın A'dan eski bir sürüme:** ÖNCE Ayarlar'da `site.monitor.scripted.k6-bin` = `k6` (ayar `/opt/k6-next/k6` ise —
+      eski imajda o yol yoktur, bütün senaryo kontrolleri "k6 bulunamadı" ile atlanır), SONRA `helm rollback`.
 
 ## Geri alma
 

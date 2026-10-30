@@ -1223,7 +1223,19 @@ class MonitoringControllerTest {
         mvc.perform(post("/api/monitoring/scripted/33/diagnose")
                         .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content("{}")
                         .session(session("ADMIN")))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("k6 bulunamadı")));
+
+        // 2026-10-30: etkin ikili VAR ama sürümü desteklenmiyor (ör. 0.49) — "bulunamadı" denmez, sürüm adlandırılır.
+        when(scriptedChecker.unavailableMessage()).thenReturn(
+                "Sentetik İzleme devre dışı — bu ortamdaki k6 sürümü (v0.49.0) desteklenmiyor; en az v2.0.0 gerekir.");
+        mvc.perform(post("/api/monitoring/scripted/33/diagnose")
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content("{}")
+                        .session(session("ADMIN")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("v0.49.0")))
+                .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.not(
+                        org.hamcrest.Matchers.containsString("bulunamadı"))));
     }
 
     // ── A10: bozuk env_json SESSIZCE sir silmemeli ─────────────────────────────

@@ -443,24 +443,20 @@ Sağ üstteki **+ Yeni Monitör** ile formu açın.
 - **Vekil (proxy)** — Kurumsal çıkış vekilinin kullanımı. **Otomatik**: vekil tanımlıysa kullanılır, ama NO_PROXY listesine **sonek** olarak uyan hedefler (ör. \`example.com\` ⇒ tüm alt alanlar) doğrudan çıkar. **Her zaman vekil üzerinden**: NO_PROXY yok sayılır, hedef ne olursa olsun vekile uğrar. **Doğrudan**: vekil hiç kullanılmaz — iç ağ hedefleri için bunu seçin.
 - **E-posta bildirimi gönder**, **Aktif** — standart.
 
-### Desteklenen JavaScript (bunu atlamayın)
-Bu ortamdaki k6, script'i eski bir transpiler ile derliyor: **sözdizimi ES2017'de donmuş**, buna karşılık
-kütüphane fonksiyonları güncel. Aşağıdakiler **derlenmez** ve monitör her koşumda ERROR verir —
-script başka bir makinede/yeni k6 sürümünde çalışsa bile:
-- \`?.\` (isteğe bağlı zincirleme) ve \`??\` → yerine \`&&\` / \`||\` kullanın
-- \`{ ...nesne }\` nesne spread ve \`{ a, ...rest }\` → yerine \`Object.assign({}, nesne)\`
-- bağlamsız \`catch {}\` → \`catch (e) {}\` yazın
-- \`for await…of\`, \`1_000\` sayı ayırıcı, \`#ozelAlan\`
+### Desteklenen JavaScript
+Bu ortamdaki k6 (2.x) script'i **doğrudan modern JavaScript olarak** derler — eski transpiler (Babel) ve
+ES2017 sınırı yok (2026-10-30'dan beri). Örneğin şunlar çalışır: \`?.\` (isteğe bağlı zincirleme), \`??\`,
+nesne spread \`{ ...nesne }\` ve en üst düzey \`await\`; ayrıca \`let\`/\`const\`, arrow, \`class\`, template
+literal, destructuring, \`async\`/\`await\`, \`for…of\`, \`import\`/\`export\` ve \`Object.entries\`, \`Array.flat\`,
+\`padStart\`, \`Promise.allSettled\` gibi modern kütüphane fonksiyonları.
 
-Sorunsuz çalışanlar: \`let\`/\`const\`, arrow, \`class\`, template literal, **dizi** spread \`[...dizi]\`,
-destructuring, \`async\`/\`await\`, \`for…of\`, \`**\`, \`import\`/\`export\`; ayrıca \`Object.entries\`,
-\`Array.flat\`, \`padStart\`, \`Promise.allSettled\` gibi modern kütüphane fonksiyonları.
+Modüller **ESM** ile yazılır (\`import\` / \`export\`). k6 eklentileri (\`k6/x/…\`) ve \`"use k6"\` yönergesi
+kabul edilmez: bu ortamda eklenti indirilmez.
 
-Örnek — iç içe alan okuma (\`?.\` yerine):
+Örnek — iç içe alan okuma:
 \`\`\`
 const body = JSON.parse(r.body);
-const choice = (body && body.choices && body.choices[0]) || null;
-const content = (choice && choice.message && choice.message.content) || '';
+const content = body?.choices?.[0]?.message?.content ?? '';
 \`\`\`
 Kaydetme sırasında script derlenmeye çalışılır; sözdizimi hatası varsa satır ve sütun numarasıyla
 birlikte engellenir — hatalı script'i saatlerce koşturmazsınız.
@@ -505,24 +501,20 @@ Open the form with **+ New Monitor** (top right).
 - **Proxy** — Whether to use the corporate egress proxy. **Automatic**: used when a proxy is configured, but targets matching NO_PROXY as a **suffix** (e.g. \`example.com\` ⇒ all subdomains) still go direct. **Always via proxy**: NO_PROXY is ignored, every target goes through the proxy. **Direct**: never use the proxy — choose this for internal targets.
 - **Send email notification**, **Active** — standard.
 
-### Supported JavaScript (don't skip this)
-The k6 in this environment compiles scripts with an old transpiler: **the syntax is frozen at ES2017**,
-while library functions are modern. The following will **not compile** and the monitor will report ERROR
-on every run — even if the script runs fine on another machine or a newer k6:
-- \`?.\` (optional chaining) and \`??\` → use \`&&\` / \`||\` instead
-- \`{ ...object }\` object spread and \`{ a, ...rest }\` → use \`Object.assign({}, object)\`
-- bare \`catch {}\` → write \`catch (e) {}\`
-- \`for await…of\`, \`1_000\` numeric separators, \`#privateField\`
+### Supported JavaScript
+The k6 in this environment (2.x) compiles scripts **directly as modern JavaScript** — there is no old transpiler
+(Babel) and no ES2017 limit any more (since 2026-10-30). For example these work: \`?.\` (optional chaining), \`??\`,
+object spread \`{ ...object }\` and top-level \`await\`; plus \`let\`/\`const\`, arrows, \`class\`, template literals,
+destructuring, \`async\`/\`await\`, \`for…of\`, \`import\`/\`export\` and modern library functions such as
+\`Object.entries\`, \`Array.flat\`, \`padStart\`, \`Promise.allSettled\`.
 
-Working fine: \`let\`/\`const\`, arrows, \`class\`, template literals, **array** spread \`[...array]\`,
-destructuring, \`async\`/\`await\`, \`for…of\`, \`**\`, \`import\`/\`export\`; plus modern library functions
-such as \`Object.entries\`, \`Array.flat\`, \`padStart\`, \`Promise.allSettled\`.
+Modules are written as **ESM** (\`import\` / \`export\`). k6 extensions (\`k6/x/…\`) and the \`"use k6"\` directive are
+not accepted: extensions are never downloaded in this environment.
 
-Example — reading a nested field (instead of \`?.\`):
+Example — reading a nested field:
 \`\`\`
 const body = JSON.parse(r.body);
-const choice = (body && body.choices && body.choices[0]) || null;
-const content = (choice && choice.message && choice.message.content) || '';
+const content = body?.choices?.[0]?.message?.content ?? '';
 \`\`\`
 The script is compiled at save time; a syntax error is rejected with its line and column — so you never
 leave a broken script running for hours.

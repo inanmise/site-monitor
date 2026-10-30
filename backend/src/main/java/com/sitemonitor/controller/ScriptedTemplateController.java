@@ -175,8 +175,6 @@ public class ScriptedTemplateController {
         out.put("can_view_trash", SessionScope.isGlobalAdmin(session));
         out.put("writable_team_ids", writableTeamIds(session));
         out.put("k6_version", scriptedChecker.version());
-        // Sözdizimi rozeti / kuralları için sürüm (2026-10-29): etkin ve yedek ikiliden ESKİSİ.
-        out.put("k6_syntax_version", scriptedChecker.syntaxVersion());
         return ok(out);
     }
 
@@ -228,7 +226,7 @@ public class ScriptedTemplateController {
 
         List<Map<String, Object>> envDefs = envDefsOf(body.get("env"));
         var diag = ScriptedTemplateRules.check(null, str(body.get("name")), str(body.get("description")),
-                str(body.get("whenToUse")), str(body.get("script")), envDefs, scriptedChecker.syntaxVersion());
+                str(body.get("whenToUse")), str(body.get("script")), envDefs);
         if (diag.blocked()) return badRequest(diag.blocking());
 
         String scanErr = secretScanError(str(body.get("script")));
@@ -296,7 +294,7 @@ public class ScriptedTemplateController {
         var diag = ScriptedTemplateRules.check(t.getBuiltinKey(), name,
                 body.containsKey("description") ? str(body.get("description")) : t.getDescription(),
                 body.containsKey("whenToUse") ? str(body.get("whenToUse")) : t.getWhenToUse(),
-                script, envDefs, scriptedChecker.syntaxVersion());
+                script, envDefs);
         if (diag.blocked()) return badRequest(diag.blocking());
         String scanErr = secretScanError(script);
         if (scanErr != null) return badRequest(scanErr);

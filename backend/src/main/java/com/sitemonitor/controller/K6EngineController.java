@@ -43,7 +43,8 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Ayarlar → Platform → k6 motoru (2026-10-29, k6 0.49 → 2.3 geçişi, Yayın A). YALNIZ genel yönetici (kullanıcı kararı:
+ * Ayarlar → Platform → k6 motoru (2026-10-29, k6 0.49 → 2.3 geçişi; 2026-10-30'dan beri genel sürüm yükseltme aracı —
+ * imajda tek ikili, yedek / aday yolları gelecekteki yükseltmeler için). YALNIZ genel yönetici (kullanıcı kararı:
  * tarama sonuçlarını yalnız genel yönetici görür; ikili / GODEBUG / User-Agent ayarları da GLOBAL_ONLY).
  *
  * <ul>
@@ -125,7 +126,8 @@ public class K6EngineController {
         engines.put("rollback", profileDto(p.rollback()));
         engines.put("candidate", profileDto(p.candidate()));
         out.put("engines", engines);
-        out.put("syntax_version", p.syntaxVersion());
+        // En eski desteklenen k6 (2026-10-30): daha eski bir ikili "desteklenmeyen sürüm" olarak görünür, koşmaz.
+        out.put("min_version", K6Profile.MIN_SUPPORTED_VERSION);
         Map<String, Object> s = new LinkedHashMap<>();
         s.put("rollback_bin", K6EngineSettings.shown(current(ScriptedCheckerService.K6_BIN_ROLLBACK_KEY)));
         s.put("candidate_bin", K6EngineSettings.shown(current(ScriptedCheckerService.K6_BIN_CANDIDATE_KEY)));
@@ -174,8 +176,7 @@ public class K6EngineController {
         m.put("bin", p.bin());
         m.put("available", p.available());
         m.put("version", p.version());
-        m.put("modern_syntax", p.modernSyntax());
-        m.put("api_address", p.needsApiAddress());
+        m.put("unsupported", p.unsupported());
         m.put("probed_at", p.probedAtMs() <= 0 ? null : ISO.format(Instant.ofEpochMilli(p.probedAtMs())));
         return m;
     }
@@ -253,6 +254,13 @@ public class K6EngineController {
         K6Profile cand = p.candidate();
         K6Profile active = p.active();
         if (cand == null || !cand.available()) {
+            if (cand != null && cand.unsupported()) {
+                throw new CodedConflictException("K6_CANDIDATE_UNAVAILABLE", Msg.t(
+                        "Aday k6 sürümü (" + cand.version() + ") desteklenmiyor — en az " + K6Profile.MIN_SUPPORTED_VERSION
+                                + " gerekir; geçiş yapılmadı.",
+                        "The candidate k6 version (" + cand.version() + ") isn't supported — " + K6Profile.MIN_SUPPORTED_VERSION
+                                + " or later is required; nothing was switched."));
+            }
             throw new CodedConflictException("K6_CANDIDATE_UNAVAILABLE", Msg.t(
                     "Aday k6 ikilisi bu pod'da çalıştırılamıyor — geçiş yapılmadı.",
                     "The candidate k6 binary can't be run on this pod — nothing was switched."));
@@ -291,6 +299,13 @@ public class K6EngineController {
         K6Profile rb = p.rollback();
         K6Profile active = p.active();
         if (rb == null || !rb.available()) {
+            if (rb != null && rb.unsupported()) {
+                throw new CodedConflictException("K6_ROLLBACK_UNAVAILABLE", Msg.t(
+                        "Yedek k6 sürümü (" + rb.version() + ") desteklenmiyor — en az " + K6Profile.MIN_SUPPORTED_VERSION
+                                + " gerekir; geri dönüş yapılmadı.",
+                        "The rollback k6 version (" + rb.version() + ") isn't supported — " + K6Profile.MIN_SUPPORTED_VERSION
+                                + " or later is required; nothing was rolled back."));
+            }
             throw new CodedConflictException("K6_ROLLBACK_UNAVAILABLE", Msg.t(
                     "Yedek k6 ikilisi tanımlı değil ya da bu pod'da çalıştırılamıyor — geri dönüş yapılmadı.",
                     "No rollback k6 binary is set, or it can't be run on this pod — nothing was rolled back."));

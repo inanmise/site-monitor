@@ -71,9 +71,8 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.incidents.visible-to-all",     "general",    Type.BOOL),
         // Hareketsizlik oturum kapatma. Eskiden YALNIZ derleme zamani (VITE_INACTIVITY_MS)
         // ayarlanabiliyordu: degistirmek icin yeniden derleyip dagitmak gerekiyordu.
-        // k6 REST API adresi. Varsayilan 127.0.0.1:0 = efemer port (cakisma imkansiz).
-        // BOS birakilirsa bayrak hic eklenmez — beklenmedik bir k6 surumunde ani geri donus.
-        new Setting("site.monitor.scripted.k6-api-address",      "monitoring", Type.STRING),
+        // (site.monitor.scripted.k6-api-address 2026-10-30'da kaldırıldı: k6 2.0+ REST API'yi zaten açmaz; DB'de kalan
+        // satır okunmaz.)
 
         // ── Kişi-bazlı webhook (push) bildirim kanalı ─────────────────────────────
         // Mail hattından TAMAMEN bağımsız ikinci kanal. Global anahtar vars. KAPALI:
@@ -665,7 +664,6 @@ public final class AppSettingsCatalog {
         "site.monitor.trust.auto-pin.enabled",
         "site.monitor.http.rdap-base-url",
         "site.monitor.scripted.k6-bin",
-        "site.monitor.scripted.k6-api-address",
         // k6 motoru (2026-10-29): bütün senaryo izlemelerinin motoru / TLS kaçışları / User-Agent'ı — kurum geneli.
         "site.monitor.scripted.k6-bin-rollback",
         "site.monitor.scripted.k6-bin-candidate",

@@ -14,35 +14,35 @@ const VIEWPORTS = [
 const LONG_TEAM = 'Dijital Kanallar Mobil Bankacılık ve Uzun Adlı Uygulama Geliştirme Ekibi (Teknoloji / Kanal Yönetimi)'
 const LONG_MONITOR = 'Bireysel İnternet Şubesi ve Mobil Bankacılık Ortak Giriş Senaryosu (Dijital Kanallar / Bireysel Bankacılık)'
 const LONG_BIN = '/opt/sitemonitor/k6/releases/v2.3.0/linux-amd64/k6-with-a-very-long-directory-name-for-wrapping'
-const ACTIVE = { bin: '/usr/local/bin/k6', available: true, version: 'v0.49.0', modern_syntax: false, api_address: true, probed_at: '2026-10-29T20:15:03' }
-const CANDIDATE = { bin: LONG_BIN, available: true, version: 'v2.3.0', modern_syntax: true, api_address: false, probed_at: '2026-10-29T20:15:04' }
+const ACTIVE = { bin: '/usr/local/bin/k6', available: true, version: 'v2.2.0', probed_at: '2026-10-29T20:15:03' }
+const CANDIDATE = { bin: LONG_BIN, available: true, version: 'v2.3.0', probed_at: '2026-10-29T20:15:04' }
 const GODEBUG_KEYS = ['tlsrsakex', 'tls3des', 'tlssha1', 'x509negativeserial', 'rsa1024min', 'tlsmlkem', 'tlssecpmlkem']
   .map((key) => ({ key, description: `${key} açıklaması` }))
 
 const summary = (extra = {}) => ({
   id: 7, state: 'DONE', started_at: '2026-10-29T18:00:00', finished_at: '2026-10-29T18:05:00', heartbeat_at: '2026-10-29T18:05:00',
   started_by_name: 'Erdi İnanmış (Teknoloji / Kanal Yönetimi Direktörlüğü)', owner_pod: 'site-monitor-7c9d6f8b5-xk2lq',
-  active_bin: ACTIVE.bin, active_version: 'v0.49.0', candidate_bin: LONG_BIN, candidate_version: 'v2.3.0', scope: 'ALL',
+  active_bin: ACTIVE.bin, active_version: 'v2.2.0', candidate_bin: LONG_BIN, candidate_version: 'v2.3.0', scope: 'ALL',
   total: 4, done: 4, regressions: 1, improvements: 1, unchanged: 1, no_baseline: 1, failure: null, ...extra,
 })
 const RESULTS = [
   { monitor_id: 11, monitor_name: LONG_MONITOR, team_id: 1, team_name: LONG_TEAM, diff: 'REGRESSION', status: 'FAIL', exit_code: 99,
     duration_ms: 3400, error_class: 'TLS', archive: 'OK', retried: true, via_proxy: true,
     error: 'tls: handshake failure — remote error: tls: insufficient security level; the server offered only TLS_RSA_WITH_AES_128_CBC_SHA which Go 1.26 no longer enables by default',
-    baseline_status: 'PASS', baseline_k6_version: 'v0.49.0', baseline_checked_at: '2026-10-29T17:50:00', baseline_duration_ms: 900 },
+    baseline_status: 'PASS', baseline_k6_version: 'v2.2.0', baseline_checked_at: '2026-10-29T17:50:00', baseline_duration_ms: 900 },
   { monitor_id: 12, monitor_name: 'Ödeme API Senaryosu', team_id: 2, team_name: 'Ödeme Sistemleri', diff: 'IMPROVED', status: 'PASS', exit_code: 0,
-    duration_ms: 1200, error_class: null, archive: 'OK', retried: false, baseline_status: 'FAIL', baseline_k6_version: 'v0.49.0',
+    duration_ms: 1200, error_class: null, archive: 'OK', retried: false, baseline_status: 'FAIL', baseline_k6_version: 'v2.2.0',
     baseline_checked_at: '2026-10-29T17:51:00', baseline_duration_ms: 1500 },
   { monitor_id: 13, monitor_name: 'Kampanya Sayfası', team_id: null, team_name: null, diff: 'NO_BASELINE', status: 'PASS', exit_code: 0,
     duration_ms: 800, archive: 'OK', baseline_status: null },
   { monitor_id: 14, monitor_name: 'Eski Sözdizimli Betik', team_id: 2, team_name: 'Ödeme Sistemleri', diff: 'SAME_PASS', status: 'PASS', exit_code: 0,
-    duration_ms: 65_000, archive: 'OK', baseline_status: 'PASS', baseline_k6_version: 'v0.49.0', baseline_checked_at: '2026-10-29T17:52:00', baseline_duration_ms: 64_000 },
+    duration_ms: 65_000, archive: 'OK', baseline_status: 'PASS', baseline_k6_version: 'v2.2.0', baseline_checked_at: '2026-10-29T17:52:00', baseline_duration_ms: 64_000 },
 ]
 const COUNTS = { REGRESSION: 1, FLAKY: 0, CHANGED: 0, SLOWER: 0, IMPROVED: 1, SAME_FAIL: 0, SAME_PASS: 1, NO_BASELINE: 1, NOT_RUN: 0 }
 
 function engineData(settings) {
   return {
-    pod: 'site-monitor-7c9d6f8b5-xk2lq', engines: { active: ACTIVE, rollback: null, candidate: CANDIDATE }, syntax_version: 'v0.49.0',
+    pod: 'site-monitor-7c9d6f8b5-xk2lq', engines: { active: ACTIVE, rollback: null, candidate: CANDIDATE }, min_version: 'v2.0.0',
     settings, godebug_keys: GODEBUG_KEYS, scripted_enabled: true, can_switch: true, can_rollback: false,
     monitors: [
       { id: 11, name: LONG_MONITOR, team_id: 1, team_name: LONG_TEAM, active: true, excluded: false },

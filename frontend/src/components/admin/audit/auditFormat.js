@@ -230,6 +230,7 @@ const SPECIAL = {
   K6_ENGINE_SETTINGS_SAVE: 'audit.ev.K6_ENGINE_SETTINGS_SAVE',
   K6_ENGINE_SWITCH: 'audit.ev.K6_ENGINE_SWITCH',
   K6_ENGINE_ROLLBACK: 'audit.ev.K6_ENGINE_ROLLBACK',
+  K6_ENGINE_SETTINGS_NORMALIZE: 'audit.ev.K6_ENGINE_SETTINGS_NORMALIZE',
   K6_COMPAT_SCAN_START: 'audit.ev.K6_COMPAT_SCAN_START',
   K6_COMPAT_SCAN_CANCEL: 'audit.ev.K6_COMPAT_SCAN_CANCEL',
   // Ayarlar → Alarm akışı (2026-10-30): ayar kaydı, reddedilen çağrı, yeni çağıran IP, çağrı günlüğü dışa aktarımı

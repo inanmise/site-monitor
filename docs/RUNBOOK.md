@@ -666,64 +666,98 @@ satırı yalnız bilgidir. Sistem metrikleri örneklemesi kapalıysa (`site.moni
 
 ## k6 sürüm geçişi (0.49 → 2.3)
 
-2026-10-29'dan beri imajda İKİ k6 ikilisi var: `/usr/bin/k6` = **v0.49.0** (asıl — her senaryo kontrolü bununla koşar) ve
-`/opt/k6-next/k6` = **v2.3.0** (aday — yalnız uyumluluk taraması ve "Adayı etkin yap" ile). Geçiş ve geri dönüş bir AYARDIR
-(`site.monitor.scripted.k6-bin`), yeniden dağıtım gerekmez. Ekran: **Ayarlar → Platform → k6 motoru** (yalnız genel yönetici).
-İnceleme raporu: https://claude.ai/artifact/DUqdNtGqQ55Px4uxgqjqdi
+**Durum (2026-10-30, Yayın B + C tek sürümde):** geçiş tamamlandı. İmajda TEK k6 ikilisi var: `/usr/bin/k6` = **v2.3.0**
+(GitHub sürüm tarball'ı, sabit SHA-256). 0.49 imajdan çıktı; uygulama yalnız **v2.0.0 ve üstünü** koşar — daha eski bir
+ikili tanımlanırsa bulunur ama koşmaz ("desteklenmiyor"). `/opt/k6-next/k6` yalnız bir **sembolik bağdır** (`/usr/bin/k6`'ya):
+20.172.x'te "Adayı etkin yap" etkin ikili ayarını bu yola yazıyordu; dağıtım sürerken eski ve yeni pod aynı ayarı okur.
+Ekran: **Ayarlar → Platform → k6 motoru** (yalnız genel yönetici). İnceleme raporu:
+https://claude.ai/artifact/DUqdNtGqQ55Px4uxgqjqdi
 
-**Adımlar (her biri ayrı onayla):**
+**Bu sürümle kalkanlar:** `--address` bayrağı ve `site.monitor.scripted.k6-api-address` ayarı (2.x REST API'yi zaten açmaz;
+veritabanında kalan satır okunmaz), "sözdizimi sürümü" (etkin ve yedekten eskisi) ve ona bağlı ES2017 kuralı — `?.`, `??`,
+`{...nesne}` ve en üst düzey `await` artık betikte de şablonda da serbest —, 0.49'un Babel hata biçimi `Unexpected token (46:29)`
+ve "eski motor sözdizimi" ipucu.
 
-1. **Gölge tarama.** k6 motoru → Uyumluluk taraması → yan etkili betikleri (test siparişi açan, gerçek işlem yapan)
-   "Tarama dışı" listesine ekleyin → **Taramayı başlat**. Her etkin izleme aday 2.3 ile BİR kez derlenir + koşulur ve son
-   gerçek kontrolüyle karşılaştırılır. Geçmişe satır, alarm, bildirim YOK; trafik izleme başına bir "Şimdi kontrol et" kadar.
-   Aynı anda tek betik koşar, izleme havuzunu kullanmaz. Kümede tek tarama (`scheduler_lock` `k6-compat-scan`).
-2. **Fark listesini kapatın.** "Gerileme" (gerçekte geçiyor, adayla geçmiyor) satırları geçişi durdurur:
-   - **TLS** (el sıkışma / sertifika): hedef eski TLS kullanıyor (RSA anahtar değişimi, 3DES, TLS 1.2'de SHA-1, kısa RSA
-     anahtarı, negatif seri numarası) ya da vekildeki SSL inceleme cihazı büyük ClientHello'yu bozuyor. Asıl çözüm hedefi
-     düzeltmektir; geçici çare k6 motoru → TLS kaçışları (GODEBUG; yalnız gereken anahtar). Vekilli izlemelerin hepsi TLS
-     ile düşüyorsa önce `tlsmlkem` (ML-KEM anahtar paylaşımını kapatır).
-   - **CHECK / 403** yalnız aday ile: WAF yeni User-Agent'a (`Grafana k6/2.3.0`) farklı davranıyor olabilir → WAF ekibine
-     bildirin ya da k6 motoru → User-Agent'a kurumun bilinen değerini yazın (betik `options.userAgent` tanımlıyorsa betiğinki
-     korunur).
-   - **MODULE / SYNTAX**: betik kaldırılmış bir modül ya da 2.x'in kabul etmediği bir kalıp kullanıyor → sahibine bildirin.
-   - **Geçici (FLAKY)**: ilk denemede geçmedi, otomatik yeniden denemede geçti — genelde ağ dalgalanması; satırdaki
-     "Yeniden tara" ile doğrulayın.
-   Düzeltilen izlemeyi "Yeniden tara" ile tek başına tarayın; tüm liste temizlenene (ya da bilerek kabul edilene) kadar
-   3. adıma geçmeyin.
-3. **Adayı etkin yap.** Önce dağıtımın bittiğinden emin olun: başka sürüm koşan canlı pod varken (sürüm geçmişindeki açık
-   açılış satırları) düğme kapalıdır ve sunucu reddeder (`K6_MIXED_VERSIONS`; pod sürümleri okunamazsa
-   `K6_POD_VERSIONS_UNKNOWN`) — ayar her pod'a gider, eski kodlu pod'da aday ikili yoktur.
-   k6 motoru → **Adayı etkin yap** (onay penceresi son taramanın özetini gösterir). Etkin ikili
-   `/opt/k6-next/k6` olur, eski etkin (`k6`) **yedek** olur. Diğer pod'lar 10 sn içinde geçer. Bu sırada sözdizimi kuralları
-   YEDEĞE (0.49) göre kalır: `?.`, `??`, `{...nesne}` hâlâ kabul edilmez ve kayıt doğrulaması iki motorla da derler —
-   böylece geri dönüş hiçbir betiği bozmaz.
-4. **İzleyin (birkaç gün).** Senaryo kartlarında / kontrol geçmişinde `k6 v2.3.0` görünmeli (her kontrol satırı
-   `scripted_checks.k6_version` taşır). Alarm sayısı, ortalama süre, "Senaryo yavaş" alarmları geçiş öncesiyle aynı olmalı.
-5. **Kalıcı geçiş** ayrı bir yayındır (Yayın B: 2.3 `/usr/bin/k6`'ya taşınır, 0.49 bir sürüm daha yedek kalır).
+**Ayar normalleştirmesi (tek seferlik, kendiliğinden):** `K6SettingsNormalizer` açılıştan 3 dk sonra, sonra 10 dk'da bir
+bakar; **başka sürüm koşan canlı pod varken (ya da pod sürümleri okunamazken) bekler** — eski pod'da varsayılan `k6` hâlâ
+0.49'dur. Bütün pod'lar bu sürümdeyken kendi kilidi altında (`scheduler_lock` `k6-settings-normalize`) Yayın A'nın kayıtlı
+yollarını varsayılana döndürür ve nişanı yazar (`schema_patch_markers` `2026-10-30-k6-settings-normalize`):
+- etkin ikili `/opt/k6-next/k6` → varsayılan (`k6` = `/usr/bin/k6`);
+- yedek ikili `k6` / `/usr/bin/k6` / `/opt/k6-next/k6` → yok (artık etkin ikilinin kendisi);
+- aday ikili `/opt/k6-next/k6` → yok.
 
-**Geri dönüş:** k6 motoru → **Yedeğe geri dön** (etkin ikili yedek olur, yedek ayarı boşalır) ya da acil durumda
-Ayarlar'da `site.monitor.scripted.k6-bin` = `k6`. Yeniden dağıtım gerekmez; diğer pod'lar 10 sn içinde döner.
+Elle girilmiş başka yollar ve "kapalı" (`none`) değerleri olduğu gibi kalır; silme koşulludur (arada bir yönetici kaydettiyse
+dokunulmaz). Bir şey değiştiyse günlükte `[K6] Ayar normalleştirmesi tamamlandı — …` ve denetimde
+`K6_ENGINE_SETTINGS_NORMALIZE` görünür; değişecek bir şey yoksa `… değiştirilecek eski ikili yolu yok`. 36 başarısız denemeden
+sonra o pod bırakır (ERROR satırı; nişan yazılmaz — sonraki açılış yeniden dener). Sürüm geçmişi kapalıysa (pod sürümü sinyali
+yok) hemen koşar.
 
-**İmajı Yayın A'dan eski bir sürüme geri alırken:** ÖNCE **Yedeğe geri dön**, SONRA `helm rollback`. Ayar veritabanında
-kalır; eski imajda `/opt/k6-next/k6` yoktur ve etkin ikili o yolu gösterirse bütün senaryo kontrolleri "k6 bulunamadı" ile
-atlanır. Yayın B (2.3 `/usr/bin/k6`'ya taşınırken) `/opt/k6-next/k6` yolunu da korumalı ya da ayarı `k6`'ya taşımalıdır.
+**Dağıtım sonrası denetim:**
+1. Bütün pod'larda `[K6] ✅ k6 bulundu — sürüm v2.3.0 (k6)`; `desteklenmiyor` ya da `k6 bulunamadı` satırı YOK:
+   `kubectl logs -n "$NS" -l app.kubernetes.io/instance="$REL" --prefix --tail=-1 | grep '\[K6\]'`
+2. Dağıtım bittikten en çok ~10 dk sonra normalleştirme satırı (yukarıda). k6 motoru: Etkin = v2.3.0 "Çalışıyor", Yedek ve
+   Aday "Tanımlı değil" (elle başka yol girilmediyse), altta "Desteklenen en eski k6 sürümü v2.0.0".
+3. Senaryo kartlarında / kontrol geçmişinde yeni satırlar `k6 v2.3.0` (`scripted_checks.k6_version`); alarm sayısı, ortalama
+   süre ve "Senaryo yavaş" alarmları önceki günle aynı.
+
+**Dağıtım sürerken (20.172.x + bu sürüm):** eski pod'lar KENDİ motorlarıyla koşar (varsayılan `k6` = 0.49, ya da Yayın A'da
+aday etkin yapıldıysa `/opt/k6-next/k6` = gerçek 2.3); yeni pod'lar ayar ne derse desin 2.3 koşar. Bu arada yeni pod'da
+kaydedilen modern sözdizimli (`?.`, `??`, `{...nesne}`) bir betik eski 0.49 pod'unda sözdizimi hatası verir — dağıtım bitene
+kadar senaryo betiği düzenlemeyin.
+
+**Gölge tarama yapılmadan 2.3'e geçiliyorsa:** 20.172.x'te (Yayın A) uyumluluk taraması koşulmadıysa bu sürüm 2.3'e taramasız
+geçirir; bu sürümde 0.49 olmadığı için tarama artık 0.49 ↔ 2.3 karşılaştırmaz. Önerilen sıra: önce 20.172.x'i dağıtıp
+taramayı orada koşun (RUNBOOK'un önceki sürümü / 20.172.x etiketi), sonra bu sürüm. Taramasız geçilirse ilk saat senaryo
+alarmlarını ve "Gerileme" türü hataları (TLS, 403/WAF, modül) yakından izleyin; TLS için k6 motoru → TLS kaçışları (GODEBUG),
+WAF için User-Agent ayarı aynen geçerlidir.
+
+**Geri alma:**
+- **`helm rollback` 20.172.x'e:** `/usr/bin/k6` yeniden 0.49 olur. Normalleştirme koştuysa etkin ayar varsayılan `k6`'dır →
+  senaryo kontrolleri 0.49 ile koşar ve bu sürümden sonra modern sözdizimiyle kaydedilen betikler sözdizimi hatası verir.
+  2.3'te kalmak için 20.172.x'te k6 motoru → **Adayı etkin yap** (oradaki varsayılan aday `/opt/k6-next/k6` gerçek 2.3).
+  Normalleştirme koşmadıysa ve ayar `/opt/k6-next/k6` ise eski imajda da 2.3 koşar.
+- **Yayın A'dan eski bir sürüme:** imajda yalnız 0.49 vardır; etkin ayar `/opt/k6-next/k6` ise ÖNCE Ayarlar'da
+  `site.monitor.scripted.k6-bin` = `k6` yapın (yoksa bütün senaryo kontrolleri "k6 bulunamadı" ile atlanır). Modern
+  sözdizimli betikler o sürümde koşmaz.
+- Geri alıp yeniden bu sürüme gelindiğinde nişan zaten yazılıdır; iş bir daha koşmaz. Ayar o arada `/opt/k6-next/k6`
+  yapıldıysa sembolik bağ sayesinde 2.3 koşmaya devam eder (gerekirse k6 motoru'ndan elle `k6`'ya çekin).
+
+**Sonraki k6 yükseltmesi (sayfa ve tarama bunun için duruyor):**
+1. Yeni ikiliyi imaja ya da bağlı bir yola KENDİ yoluyla koyun (ör. `/opt/k6-candidate/k6`; `/opt/k6-next/k6` bütün
+   ortamlarda normalleştirme koşana dek sembolik bağ kalmalı). Dockerfile'da sürüm + iki sağlama toplamı BİRLİKTE değişir.
+2. k6 motoru → "Aday ikili yolu" = o yol → kaydet → aday "Çalışıyor" olmalı (2.0'dan eskisi "Desteklenmiyor").
+3. Yan etkili betikleri "Tarama dışı" listesine ekleyin → **Taramayı başlat**. Her etkin izleme aday ile BİR kez derlenir +
+   koşulur ve son gerçek (zamanlanmış) kontrolüyle karşılaştırılır. Geçmişe satır, alarm, bildirim YOK; aynı anda tek betik,
+   izleme havuzunu kullanmaz, kümede tek tarama (`scheduler_lock` `k6-compat-scan`).
+4. Fark listesini kapatın — "Gerileme" satırları geçişi durdurur:
+   - **TLS** (el sıkışma / sertifika): hedef eski TLS kullanıyor ya da vekildeki SSL inceleme cihazı büyük ClientHello'yu
+     bozuyor. Asıl çözüm hedefi düzeltmek; geçici çare k6 motoru → TLS kaçışları (GODEBUG; yalnız gereken anahtar).
+     Vekilli izlemelerin hepsi TLS ile düşüyorsa önce `tlsmlkem`.
+   - **CHECK / 403** yalnız aday ile: WAF yeni User-Agent'a farklı davranıyor olabilir → WAF ekibine bildirin ya da
+     k6 motoru → User-Agent'a kurumun bilinen değerini yazın (betik `options.userAgent` tanımlıyorsa betiğinki korunur).
+   - **MODULE / SYNTAX**: betik kaldırılmış bir modül ya da yeni sürümün kabul etmediği bir kalıp kullanıyor → sahibine bildirin.
+   - **Geçici (FLAKY)**: satırdaki "Yeniden tara" ile doğrulayın.
+5. **Adayı etkin yap** — dağıtım bitmiş olmalı (başka sürüm koşan pod varken düğme kapalı, sunucu `K6_MIXED_VERSIONS` /
+   `K6_POD_VERSIONS_UNKNOWN` ile reddeder). Etkin ikili aday olur, eski etkin yedek olur; diğer pod'lar 10 sn içinde geçer.
+   Sorun → **Yedeğe geri dön** (yeniden dağıtım yok).
 
 **Bilinmesi gerekenler:**
 - Her k6 çağrısına sistem `K6_AUTO_EXTENSION_RESOLUTION=false`, `K6_NO_USAGE_REPORT=true`,
   `K6_NEW_MACHINE_READABLE_SUMMARY=false` verir; kullanıcı `K6_*` adlarını veremez. Açık bırakılsaydı 2.x, `k6/x/…` ya da
   `"use k6 …"` gören betik için vekil üzerinden `ingest.k6.io`'ya bağlanıp eklentili bir ikili indirip çalıştırırdı. Kayıt
   da bu içe aktarımları reddeder.
-- 2.x'te `exec.test.fail()` çıkış kodu 110 = FAIL (betik bilerek başarısız işaretledi).
-- 2.x REST API'yi açmaz; `--address` yalnız 2.0'dan eski ikiliye verilir.
-- İkili sürümleri ve sağlama toplamları Dockerfile'da (`K6_VERSION` + `K6_DIGEST`, `K6_NEXT_VERSION` + `K6_NEXT_SHA256_*`);
-  imaj derlemesi iki ikilinin `k6 version` çıktısını denetler, imaj açılış testi ikisinin yoklandığını günlükten doğrular.
-  CI `backend-k6-contract` işi iki gerçek ikiliyle sözleşme testlerini koşar.
-- Aday ikili bir pod'da çalışmıyorsa (Bulunamadı) tarama ve geçiş düğmesi o pod'da kapalıdır; "Yeniden yokla" ile deneyin.
+- `exec.test.fail()` çıkış kodu 110 = FAIL (betik bilerek başarısız işaretledi).
+- 2.x REST API'yi açmaz; hiçbir k6 komutuna `--address` verilmez.
+- İkili sürümü ve sağlama toplamları Dockerfile'da (`K6_VERSION`, `K6_SHA256_AMD64|ARM64`); imaj derlemesi iki yolun da
+  (`/usr/bin/k6`, `/opt/k6-next/k6`) `k6 version` çıktısını denetler, imaj açılış testi yoklamanın günlükte göründüğünü ve
+  "desteklenmiyor / bulunamadı" demediğini denetler. CI `backend-k6-contract` işi gerçek ikiliyle sözleşme testlerini koşar.
+- Etkin ikili 2.0'dan eskiyse senaryo sayfası "k6 sürümü (…) desteklenmiyor" afişi gösterir, kontroller koşmaz; k6 motoru
+  satırı "Desteklenmiyor" der. Çözüm: etkin ikiliyi `k6`'ya (imajdaki 2.3) çekin.
 - Ekranda boşaltılan yedek / aday yolu, GODEBUG ve User-Agent `none` olarak yazılır (boş değer ayarı silip ortam
-  varsayılanını — aday için `/opt/k6-next/k6` — geri getirirdi).
+  varsayılanını geri getirirdi).
 - Tarama sayıları: gerileme dışında "koşulamadı", "yeni hata" (gerçek kontrolü yok, adayla düşüyor) ve "değişti" de onay
   penceresinde uyarıdır — "temiz" denmez. Tarama 2 sa 50 dk'yı aşarsa kendisi durur (kilit tavanı 3 sa); kalanları seçerek
-  yeniden tarayın.
+  yeniden tarayın. Aday tanımlı değilse (bu sürümün varsayılanı) tarama başlamaz (`K6_CANDIDATE_NOT_SET`).
 
 ## Çok pod
 

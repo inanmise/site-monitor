@@ -44,7 +44,9 @@ class K6EngineControllerTest {
     private AuditService audit;
     private K6EngineController ctl;
     private final Map<String, String> stored = new HashMap<>();
-    private final K6Profile v049 = K6Profile.fromVersionOutput("k6", "k6 v0.49.0", 1L);
+    /** Desteklenen eski bir 2.x (geri dönüş senaryoları için); 0.49 2026-10-30'dan beri "desteklenmeyen sürüm". */
+    private final K6Profile v220 = K6Profile.fromVersionOutput("k6", "k6 v2.2.0", 1L);
+    private final K6Profile v049 = K6Profile.fromVersionOutput("/usr/local/bin/k6-0.49", "k6 v0.49.0", 1L);
     private final K6Profile v230 = K6Profile.fromVersionOutput("/opt/k6-next/k6", "k6 v2.3.0", 1L);
 
     @BeforeEach
@@ -60,7 +62,7 @@ class K6EngineControllerTest {
         when(monitors.findAllByOrderByNameAsc()).thenReturn(List.of());
         when(teams.findAll()).thenReturn(List.of());
         when(scans.recent()).thenReturn(List.of());
-        when(checker.profiles()).thenReturn(new ScriptedCheckerService.Profiles(v049, null, v230, "v0.49.0"));
+        when(checker.profiles()).thenReturn(new ScriptedCheckerService.Profiles(v220, null, v230));
         ctl = new K6EngineController(checker, scans, settings, audit, monitors, teams);
     }
 
@@ -92,16 +94,18 @@ class K6EngineControllerTest {
     }
 
     @Test
-    @DisplayName("Durum: motorlar, sözdizimi sürümü, izinli GODEBUG anahtarları, geçiş düğmesi")
+    @DisplayName("Durum: motorlar, desteklenen en eski sürüm, izinli GODEBUG anahtarları, geçiş düğmesi")
     void statusView() {
         Map<String, Object> d = data(ctl.status(session(true)));
         assertThat(d).containsKeys("pod", "engines", "settings", "godebug_keys", "monitors", "scan");
         @SuppressWarnings("unchecked") Map<String, Object> eng = (Map<String, Object>) d.get("engines");
         assertThat(eng.get("rollback")).isNull();
         assertThat(((Map<?, ?>) eng.get("candidate")).get("version")).isEqualTo("v2.3.0");
-        assertThat(((Map<?, ?>) eng.get("candidate")).get("api_address")).isEqualTo(false);
-        assertThat(((Map<?, ?>) eng.get("active")).get("api_address")).isEqualTo(true);
-        assertThat(d.get("syntax_version")).isEqualTo("v0.49.0");
+        assertThat(((Map<?, ?>) eng.get("candidate")).get("unsupported")).isEqualTo(false);
+        assertThat(((Map<?, ?>) eng.get("candidate")).containsKey("api_address")).isFalse();
+        assertThat(((Map<?, ?>) eng.get("candidate")).containsKey("modern_syntax")).isFalse();
+        assertThat(d).doesNotContainKey("syntax_version");
+        assertThat(d.get("min_version")).isEqualTo("v2.0.0");
         assertThat(d.get("can_switch")).isEqualTo(true);
         assertThat(d.get("can_rollback")).isEqualTo(false);
         assertThat((List<?>) d.get("godebug_keys")).hasSize(K6EngineSettings.godebugKeys().size());
@@ -201,11 +205,11 @@ class K6EngineControllerTest {
     @Test
     @DisplayName("Adayı etkin yap: aday çalışmıyor / zaten etkin / tarama sürüyor → 409, yazma yok")
     void switchConflicts() {
-        when(checker.profiles()).thenReturn(new ScriptedCheckerService.Profiles(v049, null,
-                K6Profile.unavailable("/opt/k6-next/k6", 1L), "v0.49.0"));
+        when(checker.profiles()).thenReturn(new ScriptedCheckerService.Profiles(v220, null,
+                K6Profile.unavailable("/opt/k6-next/k6", 1L)));
         assertThatThrownBy(() -> ctl.switchToCandidate(Map.of("confirm", true), session(true), new MockHttpServletRequest()))
                 .isInstanceOfSatisfying(CodedConflictException.class, e -> assertThat(e.getCode()).isEqualTo("K6_CANDIDATE_UNAVAILABLE"));
-        when(checker.profiles()).thenReturn(new ScriptedCheckerService.Profiles(v230, v049, v230, "v0.49.0"));
+        when(checker.profiles()).thenReturn(new ScriptedCheckerService.Profiles(v230, v220, v230));
         assertThatThrownBy(() -> ctl.switchToCandidate(Map.of("confirm", true), session(true), new MockHttpServletRequest()))
                 .isInstanceOfSatisfying(CodedConflictException.class, e -> assertThat(e.getCode()).isEqualTo("K6_ALREADY_ACTIVE"));
         K6CompatScan open = new K6CompatScan();
@@ -222,7 +226,7 @@ class K6EngineControllerTest {
     void rollback() {
         assertThatThrownBy(() -> ctl.rollback(Map.of("confirm", true), session(true), new MockHttpServletRequest()))
                 .isInstanceOfSatisfying(CodedConflictException.class, e -> assertThat(e.getCode()).isEqualTo("K6_ROLLBACK_UNAVAILABLE"));
-        when(checker.profiles()).thenReturn(new ScriptedCheckerService.Profiles(v230, v049, v230, "v0.49.0"));
+        when(checker.profiles()).thenReturn(new ScriptedCheckerService.Profiles(v230, v220, v230));
         ctl.rollback(Map.of("confirm", true), session(true), new MockHttpServletRequest());
         ArgumentCaptor<Map<String, Object>> cap = ArgumentCaptor.forClass(Map.class);
         verify(settings).save(cap.capture(), eq("root"));
@@ -230,6 +234,30 @@ class K6EngineControllerTest {
         assertThat(values).containsEntry(ScriptedCheckerService.K6_BIN_KEY, "k6")
                 .containsEntry(ScriptedCheckerService.K6_BIN_ROLLBACK_KEY, K6EngineSettings.OFF);
         verify(audit).recordAction(eq("K6_ENGINE_ROLLBACK"), any(HttpSession.class), any(HttpServletRequest.class), anyString(), anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("2.0'dan eski ikili (ör. 0.49): durumda 'desteklenmiyor'; geçiş ve geri dönüş sürümü adlandırarak reddedilir")
+    void unsupportedEnginesRefused() {
+        when(checker.profiles()).thenReturn(new ScriptedCheckerService.Profiles(v230, v049, v049));
+        Map<String, Object> d = data(ctl.status(session(true)));
+        @SuppressWarnings("unchecked") Map<String, Object> eng = (Map<String, Object>) d.get("engines");
+        assertThat(((Map<?, ?>) eng.get("rollback")).get("unsupported")).isEqualTo(true);
+        assertThat(((Map<?, ?>) eng.get("rollback")).get("available")).isEqualTo(false);
+        assertThat(((Map<?, ?>) eng.get("rollback")).get("version")).isEqualTo("v0.49.0");
+        assertThat(d.get("can_switch")).isEqualTo(false);
+        assertThat(d.get("can_rollback")).isEqualTo(false);
+        assertThatThrownBy(() -> ctl.switchToCandidate(Map.of("confirm", true), session(true), new MockHttpServletRequest()))
+                .isInstanceOfSatisfying(CodedConflictException.class, e -> {
+                    assertThat(e.getCode()).isEqualTo("K6_CANDIDATE_UNAVAILABLE");
+                    assertThat(e.getMessage()).contains("v0.49.0").contains("v2.0.0");
+                });
+        assertThatThrownBy(() -> ctl.rollback(Map.of("confirm", true), session(true), new MockHttpServletRequest()))
+                .isInstanceOfSatisfying(CodedConflictException.class, e -> {
+                    assertThat(e.getCode()).isEqualTo("K6_ROLLBACK_UNAVAILABLE");
+                    assertThat(e.getMessage()).contains("v0.49.0").contains("v2.0.0");
+                });
+        verify(settings, never()).save(any(), anyString());
     }
 
     @Test

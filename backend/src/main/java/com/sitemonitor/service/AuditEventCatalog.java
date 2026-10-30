@@ -163,6 +163,7 @@ public final class AuditEventCatalog {
             "K6_COMPAT_SCAN_CANCEL",      // k6 uyumluluk taraması (gölge koşu) iptal edildi (2026-10-29)
             "K6_COMPAT_SCAN_START",       // k6 uyumluluk taraması başlatıldı — aday ikili tüm izlemeleri alarmsız koşar
             "K6_ENGINE_ROLLBACK",         // k6 motoru yedek ikiliye döndürüldü
+            "K6_ENGINE_SETTINGS_NORMALIZE", // eski k6 ikili yolları (Yayın A) tek seferlik varsayılana döndü (2026-10-30, sistem)
             "K6_ENGINE_SETTINGS_SAVE",    // k6 motoru ayarları (yedek / aday yolu, GODEBUG, User-Agent, tarama dışı) kaydedildi
             "K6_ENGINE_SWITCH",           // aday k6 ikilisi etkin yapıldı (senaryo kontrolleri yeni sürümle koşar)
             "KEYWORD_DIAGNOSTICS_RUN",    // Keyword izlemesinde uçtan uca tanılama çalıştırıldı (2026-10-04)

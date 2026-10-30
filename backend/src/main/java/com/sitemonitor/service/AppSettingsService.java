@@ -253,6 +253,29 @@ public class AppSettingsService {
     }
 
     /**
+     * Sistem işi için DAR yazım yolu (2026-10-30, k6 ayar normalleştirmesi — {@code K6SettingsNormalizer}): anahtarın
+     * KAYITLI değeri {@code expected} kümesindeyse geçersiz kılmayı siler (varsayılana döner). Koşulludur: arada bir
+     * yönetici başka bir değer kaydettiyse satıra dokunmaz. Oturum / GLOBAL_ONLY kapısı YOKTUR — çağıran sabit bir anahtar
+     * ve sabit bir değer kümesiyle gelir; kullanıcı girdisi buraya ulaşmaz. Önbellek anında tazelenir, değişiklik olayı
+     * yayınlanır (öbür pod'lar 10 sn'lik yenilemede görür).
+     *
+     * @return geçersiz kılma silindi mi
+     */
+    @Transactional
+    public boolean systemClearOverrideIf(String key, java.util.Set<String> expected, String actor) {
+        if (key == null || expected == null || expected.isEmpty()) return false;
+        AppSetting row = repo.findBySettingKey(key).orElse(null);
+        if (row == null || row.getValue() == null || !expected.contains(row.getValue().trim())) return false;
+        String seenAt = row.getUpdatedAt() == null ? "" : row.getUpdatedAt();
+        if (repo.clearIfUnchanged(key, seenAt, now(), actor) != 1) return false;
+        Map<String, String> next = new HashMap<>(overrides);
+        next.remove(key);
+        this.overrides = Map.copyOf(next);
+        publish(java.util.Set.of(key), "system");
+        return true;
+    }
+
+    /**
      * Tek anahtar tipi doğru olsa da BİRLİKTE geçersiz olabilen ayarlar (executor core &gt; max).
      * Efektif değer = yeni override haritası, yoksa Environment varsayılanı.
      */

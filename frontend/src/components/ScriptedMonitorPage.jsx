@@ -46,7 +46,7 @@ import StatusBlock from './ui/StatusBlock.jsx'
 import SimpleTooltip from './ui/SimpleTooltip.jsx'
 import HintPopover from './ui/HintPopover.jsx'
 import CopyButton from './ui/CopyButton.jsx'
-import { exitLabel, exitHint, diagnosisHint, k6SyntaxLevel, readPhases, formatBytes,
+import { exitLabel, exitHint, diagnosisHint, readPhases, formatBytes,
   checksSummary, stuckLabel } from './scriptedExitCodes.js'
 import MonitorStatsSection from './MonitorStatsSection.jsx'
 import { matchesTeamAndGroup, monitorUrlState, matchesTag, tagNamesOf, matchesGroupOrTagText, matchesSearchText } from '../utils/monitorFilters.js'
@@ -135,17 +135,13 @@ function isWarnLike(s) { return s === 'NO_CHECKS' }
 /**
  * Ortamdaki k6 sürümü — kullanıcı script'i HANGİ motora yazdığını bilmeli.
  *
- * Sürüm bilgisi API'den (`k6_version`) uzun süredir geliyordu ama yalnız hata sonrası tanı
- * ipucunda kullanılıyordu; kullanıcı script'i yazarken göremiyordu. Eski motorda (k6 < 0.53,
- * gömülü Babel 6) `?.`, `??` ve `{...nesne}` "Unexpected token" verir — bunu yazmadan önce
- * söylemek, patladıktan sonra söylemekten kıyasla çok daha ucuz.
+ * Sürüm bilgisi API'den (`k6_version`) gelir; kullanıcı script'i yazarken görür. 2026-10-30'dan (k6 Yayın C) beri
+ * imajda yalnız k6 2.x var ve modern sözdizimi (`?.`, `??`, `{...nesne}`) her zaman çalışır — not bunu söyler
+ * (eski 0.49 / Babel 6 uyarısı kaldırıldı).
  *
- * Sürüm okunamıyorsa hiç render edilmez: yanlış sözdizimi tavsiyesi vermektense sessiz kal.
+ * Sürüm okunamıyorsa hiç render edilmez.
  */
-function K6VersionBadge({ t, version, syntaxVersion = null, withSyntaxNote = false }) {
-  // Sözdizimi notu ETKİN ve YEDEK ikiliden ESKİSİNE göre (2026-10-29, k6 geçişi): geçiş süresince etkin 2.3, yedek 0.49
-  // iken modern sözdizimi hâlâ yasak — geri dönüş betiği bozmasın. Eski sunucu alanı göndermez → etkin sürüm.
-  const level = k6SyntaxLevel(syntaxVersion || version)
+function K6VersionBadge({ t, version, withSyntaxNote = false }) {
   if (!version) return null
   return (
     <span data-slot="k6-version" className="inline-flex flex-wrap items-center gap-2">
@@ -155,10 +151,9 @@ function K6VersionBadge({ t, version, syntaxVersion = null, withSyntaxNote = fal
           <Terminal aria-hidden="true" />k6 {version}
         </Badge>
       </HintPopover>
-      {withSyntaxNote && level && (
-        <span data-slot="k6-syntax-note" data-level={level}
-          className={cn('text-[11px] font-normal', level === 'legacy' ? 'text-warning' : 'text-muted-foreground')}>
-          {level === 'legacy' ? t('scripted.k6LegacySyntax') : t('scripted.k6ModernSyntax')}
+      {withSyntaxNote && (
+        <span data-slot="k6-syntax-note" data-level="modern" className="text-[11px] font-normal text-muted-foreground">
+          {t('scripted.k6ModernSyntax')}
         </span>
       )}
     </span>
@@ -376,7 +371,8 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
         const d = res.data || {}
         setMonitors(d.monitors || [])
         setK6({ available: d.k6_available !== false, version: d.k6_version,
-          syntaxVersion: d.k6_syntax_version || d.k6_version || null, canManage: !!d.can_manage })
+          // Etkin ikili bulundu ama sürümü desteklenmiyor (en az v2.0.0; 2026-10-30) — afiş "bulunamadı" demesin.
+          unsupportedVersion: d.k6_unsupported_version || null, canManage: !!d.can_manage })
         setProxy({ configured: !!d.proxy_configured, noProxy: d.no_proxy || '' })
         setLoadError(null)
         return d.monitors || []   // geri alma sonrası açık detayı tazelemek için (diğer çağıranlar dönüşü yok sayar)
@@ -1158,7 +1154,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
   // ── Ekle / Düzenle formu ── (örtü tıklaması ve Escape KAPATMAZ — veri kaybı önlenir; bkz. MonitorFormModal)
   // Detay penceresi açıkken form ONUN İÇİNDE çizilir (aşağıda `{formModal}`), aksi hâlde sayfa düzeyinde.
   const formModal = modal && (
-    <EditModal fe={fe} {...{ t, lang, k6Version: k6.version, k6SyntaxVersion: k6.syntaxVersion, proxy, form, setForm, modal, dupSource, saving, testing, testResult, saveWarnings, saveError, smoke, dismissSmoke: () => { setSmoke(null); closeEdit({ skipDraft: true }) }, save, del, closeEdit, runTest, isAdminish, canPickTeam, canDelete: modal?.id ? canDeleteRow(modal) : false, teamSelectOptions, teamPick, routingLock, teamName, groupSelectOptions, teamTags, setEnvRow, addEnvRow, delEnvRow, selectScriptSource, savedScripts, savedSource, templates: scriptTemplates, draftSavedAt, pendingDraft, applyDraft, discardDraft, bumpType, setBumpType, canOpenSettings: globalAdmin }} />
+    <EditModal fe={fe} {...{ t, lang, k6Version: k6.version, proxy, form, setForm, modal, dupSource, saving, testing, testResult, saveWarnings, saveError, smoke, dismissSmoke: () => { setSmoke(null); closeEdit({ skipDraft: true }) }, save, del, closeEdit, runTest, isAdminish, canPickTeam, canDelete: modal?.id ? canDeleteRow(modal) : false, teamSelectOptions, teamPick, routingLock, teamName, groupSelectOptions, teamTags, setEnvRow, addEnvRow, delEnvRow, selectScriptSource, savedScripts, savedSource, templates: scriptTemplates, draftSavedAt, pendingDraft, applyDraft, discardDraft, bumpType, setBumpType, canOpenSettings: globalAdmin }} />
   )
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -1204,7 +1200,11 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
       <MonitorHowBox bullets={[t('scripted.how1'), t('scripted.how2'), t('scripted.how3'), t('scripted.how4'), t('scripted.how5')]} />
 
       {/* .alert-msg YEŞİL "başarı" kutusuydu ve emoji taşıyordu (proje kuralı: yalnız lucide). */}
-      {!k6.available && <AlertBanner tone="warning">{t('scripted.k6Disabled')}</AlertBanner>}
+      {!k6.available && (
+        <AlertBanner tone="warning">
+          {k6.unsupportedVersion ? t('scripted.k6Unsupported', k6.unsupportedVersion) : t('scripted.k6Disabled')}
+        </AlertBanner>
+      )}
 
       {/* Hiç kaydedilmemiş taslak — kullanıcı script yazarken sayfadan ayrılırsa yazdıkları
           burada bekler. Monitör listesine yarım kayıt olarak DÜŞMEZ. */}
@@ -1432,7 +1432,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
                         : <span className="upt-rt-ms">—</span>}
                   </>)
                 }} />
-              {selCheck && <CheckDetail t={t} check={selCheck} k6Version={k6.version} />}
+              {selCheck && <CheckDetail t={t} check={selCheck} />}
             </TabsContent>
 
             <TabsContent value="alerts"><AlertHistory domain={selected.name} types={alertTypesFor('scripted')} /></TabsContent>
@@ -1666,7 +1666,7 @@ function ChecksSummary({ t, check }) {
   )
 }
 
-function CheckDetail({ t, check, k6Version }) {
+function CheckDetail({ t, check }) {
   const [openTech, setOpenTech] = useState(false)
   const [showAll, setShowAll] = useState(false)
   let checks = []
@@ -1678,7 +1678,7 @@ function CheckDetail({ t, check, k6Version }) {
 
   const label = exitLabel(t, exitCode)
   const hint = exitHint(t, exitCode)
-  const engineHint = diagnosisHint(t, check, k6Version)
+  const engineHint = diagnosisHint(t, check)
   const tone = isPass(check.status) ? 'success' : isWarnLike(check.status) ? 'warning' : 'danger'
   const lines = outputTail ? outputTail.split('\n') : []
   const CLAMP = 12
@@ -1739,7 +1739,7 @@ function CheckDetail({ t, check, k6Version }) {
 }
 
 // ── Create/Edit modal ────────────────────────────────────────────────────────
-function EditModal({ t, lang, k6Version, k6SyntaxVersion = null, proxy = null, form, setForm, modal, fe, dupSource, saving, testing, testResult, saveWarnings, saveError, smoke = null, dismissSmoke, save, del, closeEdit, runTest, isAdminish, canPickTeam = isAdminish, canDelete, teamSelectOptions, teamPick = null, routingLock = false, teamName, groupSelectOptions, teamTags = [], setEnvRow, addEnvRow, delEnvRow, selectScriptSource, savedScripts = [], savedSource = null, templates = [], draftSavedAt = null, pendingDraft = null, applyDraft, discardDraft, bumpType = 'patch', setBumpType, canOpenSettings = false }) {
+function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, fe, dupSource, saving, testing, testResult, saveWarnings, saveError, smoke = null, dismissSmoke, save, del, closeEdit, runTest, isAdminish, canPickTeam = isAdminish, canDelete, teamSelectOptions, teamPick = null, routingLock = false, teamName, groupSelectOptions, teamTags = [], setEnvRow, addEnvRow, delEnvRow, selectScriptSource, savedScripts = [], savedSource = null, templates = [], draftSavedAt = null, pendingDraft = null, applyDraft, discardDraft, bumpType = 'patch', setBumpType, canOpenSettings = false }) {
   // Pencere ortak MonitorFormModal (ui/ModalShell): sabit başlık + kaydırılan gövde + sabit alt çubuk
   // + "devamı için kaydırın" ipucu orada TEK kopya (kapı modalScroll.test.jsx).
   // Ortak bildirim blogunun "kime gidecek" satiri. Form AYRI bir bilesende oldugu icin
@@ -1949,7 +1949,7 @@ function EditModal({ t, lang, k6Version, k6SyntaxVersion = null, proxy = null, f
         {/* Script editörü — sürüm rozeti başlığın YANINDA: kullanıcı sözdizimini seçerken görsün. */}
         <FormSection title={t('scripted.script')}
           action={<>
-            <K6VersionBadge t={t} version={k6Version} syntaxVersion={k6SyntaxVersion} withSyntaxNote />
+            <K6VersionBadge t={t} version={k6Version} withSyntaxNote />
             {/* Script'i panoya al — editörün içinden elle seçmek uzun script'te zahmetli
                 (kaydırma + seçimi kaçırma). Boşken düğme HİÇ çizilmez: copyText('') zaten
                 false döner ve onay ikonu hiç gelmez — ölü bir düğme bırakmayalım. */}
@@ -1992,8 +1992,8 @@ function EditModal({ t, lang, k6Version, k6SyntaxVersion = null, proxy = null, f
                 <ErrorText text={testResult.error} />
                 {exitHint(t, testResult.exit_code) && <ErrHint>{exitHint(t, testResult.exit_code)}</ErrHint>}
                 {/* Kaydetmeden ÖNCE görülmeli: sözdizimi duvarına çarpan kullanıcı burada anlasın. */}
-                {diagnosisHint(t, testResult, k6Version) &&
-                  <ErrHint>{diagnosisHint(t, testResult, k6Version)}</ErrHint>}
+                {diagnosisHint(t, testResult) &&
+                  <ErrHint>{diagnosisHint(t, testResult)}</ErrHint>}
               </AlertBanner>}
             <RequestPhases t={t} check={testResult} viaProxy={testResult.via_proxy ?? null} />
             {testResult.output_tail && <pre className={cn(OUTPUT_PRE, 'max-h-[260px]')}>{testResult.output_tail}</pre>}

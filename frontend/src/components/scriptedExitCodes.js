@@ -2,13 +2,13 @@
  * k6 çıkış kodu → kullanıcının DİLİNDE etiket.
  *
  * Backend `error` alanına zaten insan-okur bir açıklama koyuyor ama repo standardı gereği
- * o metin Türkçe; bu katman aynı bilgiyi arayüz diline çevirir. Kaynak: k6 `errext/exitcodes/codes.go`,
- * v0.49.0 etiketi (imajdaki sürüm) — tahmin değil.
+ * o metin Türkçe; bu katman aynı bilgiyi arayüz diline çevirir. Kaynak: k6 `errext/exitcodes/codes.go`
+ * (v0.49.0'da 97–109; v1.x/2.x 110'u ekledi — imajdaki sürüm 2.3.0) — tahmin değil.
  *
  * Saf fonksiyon: `t` dışarıdan gelir, bileşene bağımlı değil, test edilebilir.
  */
 
-/** k6 v0.49.0'da tanımlı sıfır-dışı çıkış kodları + v1.x/2.x'in 110'u (exec.test.fail, 2026-10-29). */
+/** k6'nın tanımlı sıfır-dışı çıkış kodları: 97–109 + v1.x/2.x'in 110'u (exec.test.fail, 2026-10-29). */
 export const K6_EXIT_CODES = [97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110]
 
 /** Operatörün BİR ŞEY YAPMASI gereken kodlar — bunlara ek bir çare satırı gösterilir. */
@@ -32,43 +32,6 @@ export function exitLabel(t, code) {
 export function exitHint(t, code) {
   const n = Number(code)
   return K6_EXIT_WITH_HINT.includes(n) ? t(`scripted.exitHelp_${n}`) : null
-}
-
-/**
- * Babel'in k6'dan çıkarıldığı ve modern sözdiziminin doğrudan çalışmaya başladığı k6 sürümü.
- * (k6 v0.53.0'dan itibaren `base` ve `extended` modlar `global` aliası dışında aynı — yani
- * transpile katmanı yok.)
- */
-const K6_MODERN_SYNTAX_SINCE = [0, 53, 0]
-
-/** "v0.49.0" → [0,49,0]; ayrıştırılamazsa null. */
-function parseK6Version(raw) {
-  const m = /(\d+)\.(\d+)\.(\d+)/.exec(String(raw ?? ''))
-  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null
-}
-
-function lessThan(a, b) {
-  for (let i = 0; i < 3; i++) {
-    if (a[i] !== b[i]) return a[i] < b[i]
-  }
-  return false
-}
-
-/**
- * Script yazarken hangi motorla karşı karşıya olunduğu — sürüm rozeti için.
- *
- * Kullanıcı "kendi laptopunda çalışan" script'i buraya yapıştırıyor ve ortamdaki k6 daha eskiyse
- * `?.` / `??` / `{...nesne}` "Unexpected token" ile patlıyor. Bu bilgiyi HATA sonrası ipucu olarak
- * vermek geç kalıyor; rozet yazmadan ÖNCE söyler. {@link K6_MODERN_SYNTAX_SINCE} eşiği tek kaynak,
- * `diagnosisHint` ile aynı sabit kullanılır.
- *
- * @param {string|null|undefined} raw  örn. "v0.49.0"
- * @returns {'legacy'|'modern'|null} sürüm okunamazsa null (rozet gösterilmez — yanlış bilgi vermektense sus)
- */
-export function k6SyntaxLevel(raw) {
-  const ver = parseK6Version(raw)
-  if (!ver) return null
-  return lessThan(ver, K6_MODERN_SYNTAX_SINCE) ? 'legacy' : 'modern'
 }
 
 /**
@@ -248,22 +211,16 @@ function isPass(status) {
 }
 
 /**
- * Çıkış kodu tek başına yetmediğinde metne bakan tanı ipucu.
+ * Çıkış kodu tek başına yetmediğinde metne bakan tanı ipucu (süreç ve istek zaman aşımı).
  *
- * Şu an tek kural var ve en sık kırılmayı kapatıyor: k6 0.49 içindeki gömülü **Babel 6**
- * ES2020 sözdizimini (`?.`, `??`) ve hatta ES2018 nesne spread'ini (`{...o}`) ayrıştıramıyor.
- * Kullanıcı ekranda "Unexpected token" görüyor ve bunu kendi yazım hatası sanıyor — oysa script
- * modern k6'da (ve laptopunda) sorunsuz çalışıyor. Bu ipucu olmadan teşhis pratikte imkânsız.
- *
- * SÜRÜM EŞİĞİ ŞART: k6 yükseltildiğinde ipucu kendiliğinden susmalı, yoksa yanlış tavsiye verir.
- * Sürüm bilinmiyorsa (null/ayrıştırılamaz) ipucu GÖSTERİLMEZ — yanlış yönlendirmektense sessiz kal.
+ * 2026-10-30 (k6 Yayın C): "eski motor sözdizimi duvarı" kuralı (k6 0.49'un gömülü Babel 6'sı `?.` / `??` /
+ * `{...o}` ayrıştıramıyordu) kaldırıldı — imajda yalnız k6 2.x var.
  *
  * @param {(k: string, ...a: unknown[]) => string} t
  * @param {{error?: string, output_tail?: string, outputTail?: string}} check
- * @param {string|null|undefined} k6Version  örn. "v0.49.0"
  * @returns {string|null}
  */
-export function diagnosisHint(t, check, k6Version) {
+export function diagnosisHint(t, check) {
   if (!check) return null
   const text = `${check.error ?? ''}\n${check.output_tail ?? check.outputTail ?? ''}`
 
@@ -303,11 +260,5 @@ export function diagnosisHint(t, check, k6Version) {
   // `text` hem `error` hem `output_tail` içerdiğinden ipucu ESKİ kayıtlarda da görünür.
   if (!isPass(check.status) && text.includes('request timeout')) return t('scripted.hintRequestTimeout')
 
-  // Kural 3 — eski motor sözdizimi duvarı (k6 < 0.53, gömülü Babel 6).
-  const ver = parseK6Version(k6Version)
-  if (!ver || !lessThan(ver, K6_MODERN_SYNTAX_SINCE)) return null
-  if (!text.includes('SyntaxError')) return null
-  if (!text.includes('Unexpected token') && !text.includes('babel.min.js')) return null
-
-  return t('scripted.hintOldEngine', k6Version)
+  return null
 }

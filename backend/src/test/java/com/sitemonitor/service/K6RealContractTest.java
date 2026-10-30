@@ -34,12 +34,13 @@ import static org.mockito.Mockito.when;
 
 /**
  * GERÇEK k6 SÖZLEŞME TESTLERİ (2026-10-29, k6 0.49 → 2.3 geçişi, A13). Diğer bütün senaryo testleri k6'yı taklit eder;
- * bu sınıf iki gerçek ikiliyi (eski = {@code K6_BIN_LEGACY}, aday = {@code K6_BIN_NEXT}) yerel bir HTTP sunucusuna karşı
+ * bu sınıf imajdaki gerçek ikiliyi ({@code K6_BIN}; 2026-10-30'dan beri tek ikili, 2.3) yerel bir HTTP sunucusuna karşı
  * koşturur ve motorun dayandığı sözleşmeyi doğrular: bayraklar, {@code --summary-export} biçimi, çıkış kodları, çökme ve
  * "Request Failed" satırları, sözdizimi hatasının satır:sütunu, tek iterasyon kuralı, eklenti engeli, API portu, User-Agent.
  *
  * <p>Yalnız {@code -Pk6-real} ile koşar (CI işi "backend-k6-contract"); ikili tanımlı değilse atlanır,
- * {@code K6_REAL_REQUIRED=true} iken eksik ikili TESTİ DÜŞÜRÜR.
+ * {@code K6_REAL_REQUIRED=true} iken eksik ikili TESTİ DÜŞÜRÜR. İsteğe bağlı {@code K6_BIN_LEGACY} (ör. eski 0.49
+ * ikilisi) verilirse "desteklenmeyen sürüm" kuralı da gerçek ikiliyle denetlenir (CI'da yok, atlanır).
  */
 @Tag("k6-real")
 class K6RealContractTest {
@@ -55,14 +56,12 @@ class K6RealContractTest {
 
     static Stream<Engine> engines() {
         List<Engine> out = new ArrayList<>();
-        String legacy = System.getenv("K6_BIN_LEGACY");
-        String next = System.getenv("K6_BIN_NEXT");
-        if (legacy != null && !legacy.isBlank()) out.add(new Engine("legacy", legacy.trim()));
-        if (next != null && !next.isBlank()) out.add(new Engine("next", next.trim()));
+        String bin = System.getenv("K6_BIN");
+        if (bin != null && !bin.isBlank()) out.add(new Engine("k6", bin.trim()));
         if ("true".equalsIgnoreCase(System.getenv("K6_REAL_REQUIRED"))) {
-            assertThat(out).as("K6_REAL_REQUIRED=true ama K6_BIN_LEGACY / K6_BIN_NEXT tanımlı değil").hasSize(2);
+            assertThat(out).as("K6_REAL_REQUIRED=true ama K6_BIN tanımlı değil").hasSize(1);
         }
-        Assumptions.assumeFalse(out.isEmpty(), "gerçek k6 ikilisi tanımlı değil (K6_BIN_LEGACY / K6_BIN_NEXT)");
+        Assumptions.assumeFalse(out.isEmpty(), "gerçek k6 ikilisi tanımlı değil (K6_BIN)");
         return out.stream();
     }
 
@@ -202,7 +201,7 @@ class K6RealContractTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("engines")
-    @DisplayName("exec.test.fail(): aday 110 → FAIL; eski sürümde bu API yok → çökme → ERROR")
+    @DisplayName("exec.test.fail(): çıkış 110 → FAIL")
     void testFail(Engine e) {
         ScriptedCheckerService svc = service(e);
         var r = run(svc, """
@@ -210,13 +209,9 @@ class K6RealContractTest {
                 import { check } from 'k6';
                 export default function () { check(1, { bir: () => true }); exec.test.fail('kasten'); }
                 """);
-        if ("next".equals(e.role())) {
-            assertThat(r.exitCode()).isEqualTo(110);
-            assertThat(r.status()).isEqualTo("FAIL");
-            assertThat(r.error()).startsWith("Betik testi başarısız işaretledi");
-        } else {
-            assertThat(r.status()).isEqualTo("ERROR");
-        }
+        assertThat(r.exitCode()).isEqualTo(110);
+        assertThat(r.status()).isEqualTo("FAIL");
+        assertThat(r.error()).startsWith("Betik testi başarısız işaretledi");
     }
 
     @ParameterizedTest(name = "{0}")
@@ -263,7 +258,7 @@ class K6RealContractTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("engines")
-    @DisplayName("REST API portu: koşum sırasında 6565 dinlenmez (eski: efemer --address, aday: bayraksız kapalı)")
+    @DisplayName("REST API portu: koşum sırasında 6565 dinlenmez (2.x bayraksız kapalı; --address verilmez)")
     void noApiPortListening(Engine e) throws Exception {
         ScriptedCheckerService svc = service(e);
         var future = java.util.concurrent.CompletableFuture.supplyAsync(() -> run(svc, """
@@ -315,5 +310,22 @@ class K6RealContractTest {
         long after;
         try (var s = Files.list(tmp)) { after = s.filter(p -> p.getFileName().toString().startsWith("k6-")).count(); }
         assertThat(after).isLessThanOrEqualTo(before);
+    }
+
+    @org.junit.jupiter.api.Test
+    @DisplayName("İsteğe bağlı: 2.0'dan eski gerçek ikili (K6_BIN_LEGACY) bulunur ama 'desteklenmeyen sürüm' — koşmaz")
+    void legacyBinaryIsUnsupported() {
+        String legacy = System.getenv("K6_BIN_LEGACY");
+        Assumptions.assumeTrue(legacy != null && !legacy.isBlank(), "K6_BIN_LEGACY tanımlı değil");
+        AppSettingsService s = mock(AppSettingsService.class);
+        when(s.getString(anyString(), anyString())).thenAnswer(i ->
+                ScriptedCheckerService.K6_BIN_KEY.equals(i.getArgument(0)) ? legacy.trim() : i.getArgument(1));
+        when(s.getInt(anyString(), anyInt())).thenAnswer(i -> i.getArgument(1));
+        when(s.getBoolean(anyString(), anyBoolean())).thenAnswer(i -> i.getArgument(1));
+        ScriptedCheckerService svc = new ScriptedCheckerService(mock(SsrfGuard.class), null, s, new SimpleMeterRegistry(),
+                new ProxySettings());
+        svc.init();
+        assertThat(svc.isAvailable()).isFalse();
+        assertThat(svc.unsupportedVersion()).startsWith("v0.");
     }
 }

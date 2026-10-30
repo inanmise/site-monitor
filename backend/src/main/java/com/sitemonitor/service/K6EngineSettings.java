@@ -56,7 +56,7 @@ public final class K6EngineSettings {
     /**
      * "Kapalı" işareti (2026-10-30, inceleme L1): ayar ekranında boşaltılan yedek / aday yolu, GODEBUG ve User-Agent bu
      * değerle YAZILIR. Boş değer kaydedilince geçersiz kılma silinir ve {@code application.properties} varsayılanı (aday
-     * için {@code /opt/k6-next/k6}, öbürleri için ortam değişkeni) geri gelirdi — "boşalttım" diyen yönetici değeri geri
+     * ya da ortam değişkeni) geri gelirdi — "boşalttım" diyen yönetici değeri geri
      * görürdü. Okuyan her yer {@link #isOff} ile boş sayar; ekrana boş gider ({@link #shown}).
      */
     public static final String OFF = "none";
@@ -249,8 +249,8 @@ public final class K6EngineSettings {
         }
         if (!ok) {
             throw new FieldValidationException(field, Msg.t(
-                    "İkili yolu geçersiz: boşluk, tırnak ya da kabuk karakteri içermeyen tek bir yol yazın (ör. /opt/k6-next/k6).",
-                    "Invalid binary path: enter a single path without spaces, quotes or shell characters (e.g. /opt/k6-next/k6)."));
+                    "İkili yolu geçersiz: boşluk, tırnak ya da kabuk karakteri içermeyen tek bir yol yazın (ör. /opt/k6-candidate/k6).",
+                    "Invalid binary path: enter a single path without spaces, quotes or shell characters (e.g. /opt/k6-candidate/k6)."));
         }
     }
 
