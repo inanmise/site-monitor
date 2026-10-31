@@ -155,16 +155,19 @@ export default function TagInput({ label, value, onChange, disabled, placeholder
           {tags.map(tag => {
             const h = hues[tag] ?? tagHue(tag)
             return (
-              // overflow-visible: kaldır düğmesinin dokunmatik alanı (::after, 40 px) rozetin dışına taşabilsin (2026-10-31)
-              <Badge key={tag} variant="outline" className="gap-1 overflow-visible px-2.5 font-semibold"
+              // Uzun etiket SARILIR (kesilmez, kutudan taşmaz): köşe hap değil, satır kırılır. Dokunmatikte kaldır düğmesi
+              // rozetin İÇİNDE 40 px'lik gerçek bir hedeftir (rozet o yüksekliğe uzar) — rozet dışına taşan görünmez alan
+              // (::after) sarılan satırlarda komşu rozetin üstüne biniyor, dokunuş yanlış etiketi kaldırıyordu (inceleme 2026-10-31).
+              <Badge key={tag} variant="outline" data-tag-chip=""
+                className="h-auto max-w-full gap-1 overflow-visible rounded-md px-2.5 font-semibold whitespace-normal pointer-coarse:min-h-10 pointer-coarse:py-0 pointer-coarse:pr-0"
                 style={{ background: `hsl(${h},70%,93%)`, color: `hsl(${h},65%,30%)`, borderColor: `hsl(${h},70%,78%)` }}>
-                {tag}
+                <span className="min-w-0 [overflow-wrap:anywhere]">{tag}</span>
                 {/* Ad hem çevrilir hem ETİKETİ taşır: sabit "remove" 8 etiketli bir kayıtta
                     8 özdeş düğme demekti (hangisinin kaldırılacağı duyulmuyordu) ve TR
                     arayüzde İngilizce okunuyordu. */}
                 {!disabled && (
                   <Button type="button" variant="ghost" size="icon-xs" aria-label={t('tag.removeTag', tag)}
-                    className="relative -mr-1 size-4 rounded-full text-inherit hover:bg-transparent hover:opacity-65 dark:hover:bg-transparent pointer-coarse:after:absolute pointer-coarse:after:-inset-3"
+                    className="-mr-1 size-4 shrink-0 rounded-full text-inherit hover:bg-transparent hover:opacity-65 dark:hover:bg-transparent pointer-coarse:mr-0 pointer-coarse:size-10"
                     style={{ color: `hsl(${h},60%,38%)` }} onClick={() => remove(tag)}>
                     <X aria-hidden="true" />
                   </Button>
@@ -173,13 +176,16 @@ export default function TagInput({ label, value, onChange, disabled, placeholder
             )
           })}
           {pendingIsNew && (
-            <Badge variant="outline" data-pending="" className="gap-1 border-dashed bg-muted px-2.5 font-semibold text-muted-foreground">
-              {pending}
+            // Gerçek chip'le AYNI ölçü sınıfları (dokunmatikte 40 px yükseklik + 40 px düğme dahil): önizlemenin ayırdığı yer
+            // işleme alınca değişmesin
+            <Badge variant="outline" data-pending=""
+              className="h-auto max-w-full gap-1 overflow-visible rounded-md border-dashed bg-muted px-2.5 font-semibold whitespace-normal text-muted-foreground pointer-coarse:min-h-10 pointer-coarse:py-0 pointer-coarse:pr-0">
+              <span className="min-w-0 [overflow-wrap:anywhere]">{pending}</span>
               {/* Gerçek chip ile AYNI öğe türü: farklı bir etiket kullanmak (span) düğme
                   yazı tipi kalıtımı yüzünden birkaç piksellik genişlik farkı üretir ve
                   önizlemenin ayırdığı yer tam oturmaz. */}
               <Button type="button" variant="ghost" size="icon-xs" tabIndex={-1} aria-label={t('tag.discardPending')}
-                className="-mr-1 size-4 rounded-full text-inherit hover:bg-transparent hover:opacity-65 dark:hover:bg-transparent"
+                className="-mr-1 size-4 shrink-0 rounded-full text-inherit hover:bg-transparent hover:opacity-65 dark:hover:bg-transparent pointer-coarse:mr-0 pointer-coarse:size-10"
                 // mousedown'da blur ENGELLENİR: aksi halde metin önce chip'e dönüşür, bu
                 // düğme kaybolur ve tıklama boşa düşerdi.
                 onMouseDown={e => e.preventDefault()}

@@ -288,14 +288,19 @@ describe('ScriptedMonitorPage — Test Çalıştır (B1 + test paneli)', () => {
     } })
     await renderPage()
     await openEdit()
-    fireEvent.click(within(dialog()).getByRole('button', { name: /^test run$/i }))
+    // Gerçek tıklama odağı düğmeye taşır (fireEvent.click taşımaz; açılışta Radix odağı pencerenin ilk öğesindedir)
+    const testBtn = within(dialog()).getByRole('button', { name: /^test run$/i })
+    testBtn.focus()
+    fireEvent.click(testBtn)
     const panel = await waitFor(() => {
       const el = inDialog('[data-slot="test-run"]')
       expect(el.textContent).toMatch(/Unexpected token/)
       return el
     })
     await waitFor(() => expect(document.activeElement).toBe(panel))
-    expect(inDialog('[data-slot="test-live"]').textContent).toMatch(/Test finished: Error/)
+    expect(panel).toHaveAttribute('role', 'group')
+    expect(panel.getAttribute('aria-label')).toMatch(/Test finished: Error/)
+    expect(inDialog('[data-slot="test-live"]').textContent).toBe('')
     const props = JSON.parse(screen.getByTestId('step-list').getAttribute('data-props'))
     expect(props).toEqual({ steps: expect.any(Array), truncated: false, checksJson: '[{"name":"a","passed":true}]', status: 'ERROR' })
     expect(props.steps).toHaveLength(2)
@@ -349,6 +354,124 @@ describe('ScriptedMonitorPage — Test Çalıştır (B1 + test paneli)', () => {
     const btn = await within(dialog()).findByRole('button', { name: /^go to line 12$/i })
     fireEvent.click(btn)
     expect(screen.getByTestId('code-editor').getAttribute('data-goto')).toBe('12:1')
+  })
+})
+
+describe('ScriptedMonitorPage — inceleme düzeltmeleri (2026-10-31)', () => {
+  it('1: eski pod satırı (zamanlama alanı yok) dokunulmadan kaydedilince zamanlama anahtarları GİTMEZ; alan taşıyan satırda gider', async () => {
+    api.monitoring.updateScriptedMonitor.mockResolvedValue({ success: true, data: { id: MON.id } })
+    await renderPage()
+    await openEdit()
+    fireEvent.click(within(dialog()).getByRole('button', { name: /^save$/i }))
+    await waitFor(() => expect(api.monitoring.updateScriptedMonitor).toHaveBeenCalled())
+    const body = api.monitoring.updateScriptedMonitor.mock.calls[0][1]
+    for (const k of ['schedule_mode', 'cron_expression', 'windows', 'blackouts', 'skip_holidays', 'skip_dates']) expect(body).not.toHaveProperty(k)
+    expect(body.intervalSeconds).toBe(300)
+  })
+
+  it('1: yeni sunucunun satırı (null alanlar = düz aralık) zamanlama anahtarlarını taşır', async () => {
+    api.monitoring.updateScriptedMonitor.mockResolvedValue({ success: true, data: { id: MON.id } })
+    await renderPage([{ ...MON, schedule_mode: null, cron_expression: null, windows: null, blackouts: null, skip_holidays: null, skip_dates: null }, OTHER])
+    await openEdit()
+    fireEvent.click(within(dialog()).getByRole('button', { name: /^save$/i }))
+    await waitFor(() => expect(api.monitoring.updateScriptedMonitor).toHaveBeenCalled())
+    expect(api.monitoring.updateScriptedMonitor.mock.calls[0][1]).toMatchObject({ schedule_mode: 'INTERVAL', cron_expression: '', windows: [], skip_holidays: false })
+  })
+
+  it('1: yeni kayıt zamanlama anahtarlarını gönderir', async () => {
+    api.monitoring.createScriptedMonitor.mockResolvedValue({ success: true, data: { id: 99 } })
+    listWith([MON, OTHER])
+    // Tek takımlı kullanıcı: takım kendiliğinden seçili (form testindeki kalıp)
+    render(<ScriptedMonitorPage systemRole="USER" teamId={null} teamName={null} myTeams={[{ id: 5, name: 'SY-A' }]} />)
+    fireEvent.click(await screen.findByRole('button', { name: /new monitor/i }))
+    const dlg = screen.getByRole('dialog')
+    fireEvent.change(within(dlg).getByRole('textbox', { name: /^(Ad|Name)\b/ }), { target: { value: 'Yeni' } })
+    fireEvent.change(screen.getByTestId('code-editor'), { target: { value: 'export default function(){}' } })
+    await fillGroupAndTags({ root: dlg })
+    fireEvent.click(within(dlg).getByRole('button', { name: /^save$/i }))
+    await waitFor(() => expect(api.monitoring.createScriptedMonitor).toHaveBeenCalled())
+    expect(api.monitoring.createScriptedMonitor.mock.calls[0][0]).toMatchObject({ schedule_mode: 'INTERVAL', skip_dates: [] })
+  })
+
+  it('2: kullanıcı başka alana yazarken sonuç gelirse odak ÇALINMAZ; sonuç canlı bölgeden duyurulur', async () => {
+    let resolve
+    api.monitoring.testScripted.mockReturnValue(new Promise((r) => { resolve = r }))
+    await renderPage()
+    await openEdit()
+    fireEvent.click(within(dialog()).getByRole('button', { name: /^test run$/i }))
+    const nameInput = within(dialog()).getByRole('textbox', { name: /^(Ad|Name)\b/ })
+    nameInput.focus()
+    expect(document.activeElement).toBe(nameInput)
+    await act(async () => { resolve({ success: true, data: { status: 'FAIL', checks_passed: 0, checks_failed: 1, duration_ms: 400 } }) })
+    const panel = await waitFor(() => { const el = inDialog('[data-slot="test-run"]'); expect(el.textContent).toMatch(/400 ms/); return el })
+    expect(document.activeElement).toBe(nameInput)
+    expect(panel).not.toHaveAttribute('aria-label')
+    expect(inDialog('[data-slot="test-live"]').textContent).toMatch(/Test finished: Fail/i)
+  })
+
+  it('2: odak "Test Çalıştır" düğmesindeyse panel odak alır', async () => {
+    api.monitoring.testScripted.mockResolvedValue({ success: true, data: { status: 'PASS', checks_passed: 1, checks_failed: 0, duration_ms: 300 } })
+    await renderPage()
+    await openEdit()
+    const btn = within(dialog()).getByRole('button', { name: /^test run$/i })
+    btn.focus()
+    fireEvent.click(btn)
+    const panel = await waitFor(() => { const el = inDialog('[data-slot="test-run"]'); expect(el.textContent).toMatch(/300 ms/); return el })
+    await waitFor(() => expect(document.activeElement).toBe(panel))
+    expect(inDialog('[data-slot="test-live"]').textContent).toBe('')
+  })
+
+  it('3: adı değiştirilen kayıtlı gizli satır "kayıtlı değerle" sayılmaz — rozet yok, keep yok, boş değer uyarısı', async () => {
+    api.monitoring.testScripted.mockResolvedValue({ success: true, data: { status: 'PASS', checks_passed: 1, checks_failed: 0, duration_ms: 300, kept_secrets: [] } })
+    await renderPage()
+    await openEdit()
+    expect(inDialog('[data-slot="env-saved-value"]')).not.toBeNull()
+    const names = within(dialog()).getAllByRole('textbox', { name: /^NAME$/ })
+    fireEvent.change(names[1], { target: { value: 'PASSWORD_NEW' } })
+    expect(inDialog('[data-slot="env-saved-value"]')).toBeNull()
+    expect(within(dialog()).getAllByLabelText(/^value$/)[1].getAttribute('placeholder')).not.toMatch(/configured/i)
+    fireEvent.click(within(dialog()).getByRole('button', { name: /^test run$/i }))
+    await waitFor(() => expect(api.monitoring.testScripted).toHaveBeenCalled())
+    const body = api.monitoring.testScripted.mock.calls[0][0]
+    expect(body.env).toContainEqual({ name: 'PASSWORD_NEW', value: '', secret: true })
+    expect(body.env.some((e) => e.keep)).toBe(false)
+    expect(await within(dialog()).findByText(/PASSWORD_NEW — the script reads these variables as empty/i)).toBeInTheDocument()
+    // Eski ada geri dönülünce kayıtlı değer yine geçerli
+    fireEvent.change(within(dialog()).getAllByRole('textbox', { name: /^NAME$/ })[1], { target: { value: 'PASSWORD' } })
+    expect(inDialog('[data-slot="env-saved-value"]')).not.toBeNull()
+  })
+
+  it('4: alan hatası dalında önceki kaydın sözdizimi bandı ve "satıra git" kalmaz', async () => {
+    api.monitoring.updateScriptedMonitor
+      .mockResolvedValueOnce({ success: false, field: 'script', error: 'script:12:3 SyntaxError: Unexpected token' })
+      .mockResolvedValueOnce({ success: false, code: 'VALIDATION_FAILED', field: 'name', error: 'Bu ad zaten kullanılıyor' })
+    await renderPage()
+    await openEdit()
+    fireEvent.click(within(dialog()).getByRole('button', { name: /^save$/i }))
+    expect(await within(dialog()).findByRole('button', { name: /^go to line 12$/i })).toBeInTheDocument()
+    fireEvent.click(within(dialog()).getByRole('button', { name: /^save$/i }))
+    expect(await within(dialog()).findByText(/Bu ad zaten kullanılıyor/)).toBeInTheDocument()
+    expect(within(dialog()).queryByRole('button', { name: /^go to line 12$/i })).toBeNull()
+  })
+
+  it('5: test panelinde bağlam satırı ve ters bütçe cümlesi düşer (çipler söyler); bağlam yoksa metin aynen', async () => {
+    api.monitoring.testScripted.mockResolvedValueOnce({ success: true, data: {
+      status: 'TIMEOUT', duration_ms: 60000, exit_code: null,
+      error: "k6 zaman aşımı\nsüreç bütçesi=30s · script istek timeout'u=60s · çıkış=doğrudan · kurumsal CA=verildi\nİstek timeout'u (60 sn) süreç bütçesinden (30 sn) uzun",
+      run_context: { process_budget_s: 30, request_timeout_s: 60, egress: 'direct', corporate_ca: true, inverted_budget: true },
+    } })
+    await renderPage()
+    await openEdit()
+    fireEvent.click(within(dialog()).getByRole('button', { name: /^test run$/i }))
+    const panel = await waitFor(() => { const el = inDialog('[data-slot="test-run"]'); expect(el.textContent).toMatch(/zaman aşımı/); return el })
+    const err = panel.querySelector('[data-slot="error-text"]').textContent
+    expect(err).not.toMatch(/süreç bütçesi=/)
+    expect(err).not.toMatch(/İstek timeout'u \(/)
+
+    api.monitoring.testScripted.mockResolvedValueOnce({ success: true, data: { status: 'ERROR', duration_ms: 10,
+      error: "k6 hata\nsüreç bütçesi=30s · çıkış=doğrudan" } })
+    fireEvent.click(within(dialog()).getByRole('button', { name: /^test run$/i }))
+    await waitFor(() => expect(inDialog('[data-slot="test-run"] [data-slot="error-text"]').textContent).toMatch(/süreç bütçesi=30s/))
   })
 })
 
