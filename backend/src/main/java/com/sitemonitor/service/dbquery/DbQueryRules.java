@@ -85,8 +85,30 @@ public final class DbQueryRules {
         }
     }
 
+    /**
+     * @param timezone yalnız tazelik kuralında: saat dilimi OLMAYAN zaman damgalarının yorumlandığı IANA dilimi (ör.
+     *                 {@code Europe/Istanbul}); null = ayar {@code site.monitor.dbquery.local-timezone} (r177 ikinci tur, O-1)
+     */
     public record Rule(String id, String label, String kind, String column, String aggregate, String operator,
-                       String scope, Threshold warning, Threshold critical, Change change) {}
+                       String scope, Threshold warning, Threshold critical, Change change, String timezone) {
+        /** Eski on alanlı biçim (dilim yok). */
+        public Rule(String id, String label, String kind, String column, String aggregate, String operator,
+                    String scope, Threshold warning, Threshold critical, Change change) {
+            this(id, label, kind, column, aggregate, operator, scope, warning, critical, change, null);
+        }
+    }
+
+    /** Dilim adının üst sınırı (IANA adları ≤ 32). */
+    static final int MAX_TIMEZONE = 64;
+
+    /**
+     * Geçerli IANA dilim adı mı (ör. {@code Europe/Istanbul}, {@code UTC}); sabit fark ({@code +03:00}) ve tanınmayan ad
+     * kabul edilmez. Doğrusal, düzenli ifade yok.
+     */
+    public static boolean validTimezone(String s) {
+        if (s == null || s.isBlank() || s.length() > MAX_TIMEZONE) return false;
+        return java.time.ZoneId.getAvailableZoneIds().contains(s.trim());
+    }
 
     /** Alan hatası: {@code field} = "rules[2].warning" gibi; {@code message} istek dilinde. */
     public record FieldError(String field, String code, String message) {}
@@ -180,6 +202,7 @@ public final class DbQueryRules {
             put(m, "scope", r.scope());
             put(m, "warning", thresholdToApi(r.warning()));
             put(m, "critical", thresholdToApi(r.critical()));
+            put(m, "timezone", r.timezone());
             if (r.change() != null) {
                 Map<String, Object> c = new LinkedHashMap<>();
                 put(c, "of", r.change().of());
@@ -351,8 +374,26 @@ public final class DbQueryRules {
                     "Rule " + (i + 1) + " needs a threshold · At least one of the warning or critical thresholds is "
                             + "required · Enter a threshold value.")));
         }
+        // Tazelik kuralının saat dilimi (r177 ikinci tur, O-1): yalnız tazelikte; boş = ayardaki yerel dilim
+        String timezone = null;
+        if (freshness) {
+            String tz = str(m.get("timezone"));
+            if (tz != null) {
+                if (!validTimezone(tz)) {
+                    errors.add(err(base + ".timezone", "DBQUERY_RULE_TIMEZONE", Msg.t(
+                            "Kural " + (i + 1) + " için saat dilimi tanınmadı · Saat dilimi olmayan zaman damgaları bu "
+                                    + "dilimde yorumlanır · Europe/Istanbul ya da UTC gibi bir IANA dilim adı yazın; boş "
+                                    + "bırakırsanız sistem ayarı kullanılır.",
+                            "Rule " + (i + 1) + " has an unknown time zone · Timestamps without a time zone are read in "
+                                    + "this zone · Enter an IANA zone name such as Europe/Istanbul or UTC, or leave it "
+                                    + "empty to use the system setting.")));
+                } else {
+                    timezone = tz.trim();
+                }
+            }
+        }
         if (errors.size() > before) return null;
-        return new Rule(id, label, kind, column, aggregate, operator, scope, warning, critical, change);
+        return new Rule(id, label, kind, column, aggregate, operator, scope, warning, critical, change, timezone);
     }
 
     private static Change parseChange(Object raw, String base, int i, List<FieldError> errors) {
@@ -460,7 +501,9 @@ public final class DbQueryRules {
         String agg = r.aggregate() == null ? "" : r.aggregate();
         String basis = switch (r.kind()) {
             case KIND_ROW_COUNT -> KIND_ROW_COUNT;
-            case KIND_COLUMN_VALUE, KIND_FRESHNESS -> r.kind() + "|" + col + "|" + agg;
+            case KIND_COLUMN_VALUE -> r.kind() + "|" + col + "|" + agg;
+            // Tazelikte dilim ölçümü (yaşı) değiştirir; dilimsiz kural bugünkü özetini korur
+            case KIND_FRESHNESS -> r.kind() + "|" + col + "|" + agg + (r.timezone() == null ? "" : "|" + r.timezone());
             case KIND_TEXT_MATCH -> {
                 Threshold t = r.critical() != null ? r.critical() : r.warning();
                 String needle = t == null || t.text() == null ? "" : DbQueryEvaluator.TextMatcher.fold(t.text());

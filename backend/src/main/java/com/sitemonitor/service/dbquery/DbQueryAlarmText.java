@@ -148,6 +148,7 @@ public final class DbQueryAlarmText {
             case DbQueryEvaluator.NOTE_NOT_NUMERIC -> "değer sayı değil";
             case DbQueryEvaluator.NOTE_NOT_TIMESTAMP -> "değer zaman damgası değil";
             case DbQueryEvaluator.NOTE_DB_CLOCK_UNAVAILABLE -> "veritabanı saati okunamadı";
+            case DbQueryEvaluator.NOTE_FUTURE_TIMESTAMP -> "zaman damgası gelecekte (saat dilimini denetleyin)";
             case DbQueryEvaluator.NOTE_PREVIOUS_UNREADABLE -> "önceki çalıştırma okunamadı";
             case DbQueryEvaluator.NOTE_NO_ROWS -> "sorgu satır döndürmedi";
             case DbQueryEvaluator.NOTE_NULL_VALUE -> "değer boş";
@@ -253,7 +254,9 @@ public final class DbQueryAlarmText {
     /**
      * Eşik kaleminin kararı (2026-10-31 inceleme D3). {@code status} motorun (BREACH = değerlendirilen kurallar ihlal
      * koşulunu sağladı); BREACH değilse "geçti" ancak KANIT varsa: değerlendirilemeyen kural kanıt eksikliği notu taşıyorsa
-     * ({@link DbQueryEvaluator#INCONCLUSIVE_NOTES} — kolon yok, sayı değil, ilk çalıştırma, önceki çalıştırma okunamadı)
+     * ({@link DbQueryEvaluator#INCONCLUSIVE_NOTES} — kolon yok, sayı değil, önceki çalıştırma okunamadı, zaman damgası
+     * okunamadı / gelecekte, veritabanı saati yok; "taban kuruluyor" notları — ilk çalıştırma, taban yeniden kuruluyor,
+     * mevsimsel taban yok — kanıt eksikliği DEĞİL, kural geçti sayılır, r177 ikinci tur O-6)
      * <ul>
      *   <li>ANY: o kural ihlal ediyor olabilir → UNKNOWN;</li>
      *   <li>ALL: ihlal için TÜM kurallar ihlalde olmalı — en az bir kural sağlandıysa (değerlendirilip geçti ya da değer

@@ -995,7 +995,9 @@ public final class DbQuerySqlGuard {
                 if (name != null && !name.isBlank() && cols.size() < MAX_TABLES) cols.add(name);
             }
         }
-        boolean grouped = ps.getGroupBy() != null;
+        // GROUP BY satır başına sonuç verir; HAVING'li toplama 0 ya da 1 satır döner — iki durumda da satır sayısı anlamlı
+        // (r177 ikinci tur D-7)
+        boolean grouped = ps.getGroupBy() != null || ps.getHaving() != null;
         return new Shape(true, star, anyAggregate && !grouped && !star, List.copyOf(cols));
     }
 

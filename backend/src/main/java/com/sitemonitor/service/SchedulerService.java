@@ -8561,8 +8561,10 @@ public class SchedulerService {
                         boolean ok = !com.sitemonitor.service.dbquery.DbQueryCheckerService.STATUS_FAIL.equals(p.get("status"));
                         if (!ok) return Map.of("status", "down", "error", com.sitemonitor.service.dbquery.DbQueryAlarmText.itemError(
                                 str(p.get("failure_reason")), str(p.get("error"))));
-                        // Yeniden ölçüm de değerlendirilemiyorsa (ayar açıkken) iyileşme KANITI değildir — kalem düşük kalır
-                        List<String> again = unknownLimit > 0 ? dbQueryUnevaluableNotes(p) : List.of();
+                        // Yeniden ölçüm de değerlendirilemiyorsa iyileşme KANITI değildir — ama yalnız ardışık değerlendirilemeyen
+                        // çalıştırma eşiği DOLMUŞSA düşük kalır (r177 ikinci tur D-1): eşik dolmadan teyit DB_RULE_UNEVALUABLE
+                        // alarmı açmasın (geçici sorgu hatasının teyidi, sorgu düzelip kural değerlendirilemezse)
+                        List<String> again = unknownLimit > 0 && unknownRuns >= unknownLimit ? dbQueryUnevaluableNotes(p) : List.of();
                         return again.isEmpty() ? Map.of("status", "up")
                                 : Map.of("status", "down", "error",
                                         com.sitemonitor.service.dbquery.DbQueryAlarmText.unevaluableError(again, 1)); }));

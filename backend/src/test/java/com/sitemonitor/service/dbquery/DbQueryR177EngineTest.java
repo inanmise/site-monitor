@@ -140,11 +140,78 @@ class DbQueryR177EngineTest {
         Outcome o = DbQueryEvaluator.evaluate(List.of(oldest), "ANY", result(List.of("son"), CLOCK,
                 new Object[] {"2026-10-31T11:59:00Z"}, new Object[] {"2026-10-31T11:00:00+00:00"}), Baselines.NONE, "tr");
         assertThat(o.results().get(0).measure()).isEqualTo(3600.0);
-        // gelecekteki değer: ihlal yok, okunur metin
-        Outcome f = DbQueryEvaluator.evaluate(List.of(r), "ANY", result(List.of("son"), CLOCK,
+        // 5 dk'ya kadar ileride: saat farkı → yaş 0 (ihlal yok)
+        Outcome near = DbQueryEvaluator.evaluate(List.of(r), "ANY", result(List.of("son"), CLOCK,
                 new Object[] {"2026-10-31T12:05:00Z"}), Baselines.NONE, "tr");
-        assertThat(f.status()).isEqualTo("OK");
-        assertThat(f.results().get(0).actual()).startsWith("gelecekte");
+        assertThat(near.status()).isEqualTo("OK");
+        assertThat(near.results().get(0).measure()).isEqualTo(0.0);
+        // daha ilerisi: değerlendirilemez (future_timestamp) — asla "geçti"; satır UNKNOWN, alarm besler
+        Outcome f = DbQueryEvaluator.evaluate(List.of(r), "ANY", result(List.of("son"), CLOCK,
+                new Object[] {"2026-10-31T12:05:01Z"}), Baselines.NONE, "tr");
+        RuleResult fr = f.results().get(0);
+        assertThat(fr.evaluated()).isFalse();
+        assertThat(fr.note()).isEqualTo(DbQueryEvaluator.NOTE_FUTURE_TIMESTAMP);
+        assertThat(fr.actual()).startsWith("gelecekte");
+        assertThat(f.inconclusive()).isTrue();
+        assertThat(f.configUnevaluable()).isTrue();
+        assertThat(DbQueryAlarmText.thresholdVerdict(f.status(), DbQueryAlarmText.toApi(f.results()), "ANY"))
+                .isEqualTo(DbQueryAlarmText.VERDICT_UNKNOWN);
+    }
+
+    @Test
+    void freshnessLocalValuesUseTheRuleOrSettingZone() {
+        // Pod UTC olsa da: İstanbul saatiyle yazılmış dilimsiz değer (ayar Europe/Istanbul) → doğru yaş
+        DbQueryRunner.DbClock utcClock = new DbQueryRunner.DbClock(NOW, ZoneOffset.UTC);
+        Rule r = one("id", "f", "kind", "FRESHNESS", "column", "son", "operator", "GT", "warning", 3600);
+        DbQueryRunner.QueryResult istanbulRow = result(List.of("son"), utcClock, new Object[] {"2026-10-31T14:50:00"});
+        assertThat(DbQueryEvaluator.evaluate(List.of(r), "ANY", istanbulRow, Baselines.NONE, "tr",
+                java.time.ZoneId.of("Europe/Istanbul")).results().get(0).measure()).isEqualTo(600.0);
+        // aynı değer UTC sayılırsa 2 sa 50 dk ileride → future_timestamp (sessizce "taze" değil)
+        assertThat(DbQueryEvaluator.evaluate(List.of(r), "ANY", istanbulRow, Baselines.NONE, "tr", ZoneOffset.UTC)
+                .results().get(0).note()).isEqualTo(DbQueryEvaluator.NOTE_FUTURE_TIMESTAMP);
+        // kuralın kendi dilimi ayarı ezer
+        Rule utcRule = one("id", "u", "kind", "FRESHNESS", "column", "son", "operator", "GT", "warning", 3600,
+                "timezone", "UTC");
+        assertThat(utcRule.timezone()).isEqualTo("UTC");
+        assertThat(DbQueryEvaluator.evaluate(List.of(utcRule), "ANY", result(List.of("son"), utcClock,
+                new Object[] {"2026-10-31T11:50:00"}), Baselines.NONE, "tr", java.time.ZoneId.of("Europe/Istanbul"))
+                .results().get(0).measure()).isEqualTo(600.0);
+        // saat dilimli değer (an kanalı) dilimden bağımsız: metin ne olursa olsun an kullanılır
+        DbQueryRunner.QueryResult zoned = new DbQueryRunner.QueryResult(true, 5, 1, false,
+                List.of(new DbQueryRunner.Column("son", "datetimeoffset")),
+                List.of(Arrays.asList((Object) "2026-10-31 14:50:00.0000000 +03:00")), false, null, null, "MS", utcClock,
+                DbAccountPrivileges.Result.NOT_CHECKED,
+                Map.of(0, List.of(java.time.Instant.parse("2026-10-31T11:50:00Z").toEpochMilli())));
+        assertThat(DbQueryEvaluator.evaluate(List.of(r), "ANY", zoned, Baselines.NONE, "tr", ZoneOffset.UTC)
+                .results().get(0).measure()).isEqualTo(600.0);
+        // an okunamadıysa (null) zaman damgası değil
+        DbQueryRunner.QueryResult unread = new DbQueryRunner.QueryResult(true, 5, 1, false,
+                List.of(new DbQueryRunner.Column("son", "datetimeoffset")), List.of(Arrays.asList((Object) "x")), false,
+                null, null, "MS", utcClock, DbAccountPrivileges.Result.NOT_CHECKED,
+                Map.of(0, Arrays.asList((Long) null)));
+        assertThat(DbQueryEvaluator.evaluate(List.of(r), "ANY", unread, Baselines.NONE, "tr").results().get(0).note())
+                .isEqualTo(DbQueryEvaluator.NOTE_NOT_TIMESTAMP);
+    }
+
+    @Test
+    void timezoneParsingAndFingerprint() {
+        assertThat(errorFields("kind", "FRESHNESS", "column", "t", "operator", "GT", "warning", 1, "timezone", "Mars/Olympus"))
+                .containsExactly("rules[0].timezone");
+        assertThat(errorFields("kind", "FRESHNESS", "column", "t", "operator", "GT", "warning", 1, "timezone", "+03:00"))
+                .containsExactly("rules[0].timezone");
+        assertThat(errorFields("kind", "FRESHNESS", "column", "t", "operator", "GT", "warning", 1, "timezone", "x".repeat(200)))
+                .containsExactly("rules[0].timezone");
+        // boş = ayar; başka türde yok sayılır
+        assertThat(one("kind", "FRESHNESS", "column", "t", "operator", "GT", "warning", 1, "timezone", " ").timezone()).isNull();
+        assertThat(one("kind", "COLUMN_VALUE", "column", "t", "operator", "GT", "warning", 1, "timezone", "UTC").timezone()).isNull();
+        Rule tz = one("id", "f", "kind", "FRESHNESS", "column", "t", "operator", "GT", "warning", 1, "timezone", "Europe/London");
+        Rule noTz = one("id", "f", "kind", "FRESHNESS", "column", "t", "operator", "GT", "warning", 1);
+        assertThat(DbQueryRules.fingerprint(tz)).isNotEqualTo(DbQueryRules.fingerprint(noTz));
+        assertThat(DbQueryRules.toApi(List.of(tz)).get(0)).containsEntry("timezone", "Europe/London");
+        assertThat(DbQueryRules.toApi(List.of(noTz)).get(0)).doesNotContainKey("timezone");
+        assertThat(DbQueryRules.fromJson(DbQueryRules.toJson(List.of(tz))).get(0).timezone()).isEqualTo("Europe/London");
+        assertThat(DbQueryRules.validTimezone("UTC")).isTrue();
+        assertThat(DbQueryRules.validTimezone(null)).isFalse();
     }
 
     @Test
@@ -183,6 +250,11 @@ class DbQueryR177EngineTest {
         assertThat(DbQueryEvaluator.timestampOf("2026-10-31T10:15:30-05", ZoneOffset.UTC))
                 .isEqualTo(Instant.parse("2026-10-31T15:15:30Z"));
         assertThat(DbQueryEvaluator.timestampOf("2026-10-31", plus3)).isEqualTo(Instant.parse("2026-10-30T21:00:00Z"));
+        // ikinci tur D-5: saniyesi sıfır + negatif dilim (OffsetDateTime.toString biçimi)
+        assertThat(DbQueryEvaluator.timestampOf("2026-10-31T10:15-05:00", plus3)).isEqualTo(Instant.parse("2026-10-31T15:15:00Z"));
+        assertThat(DbQueryEvaluator.timestampOf("2026-10-31T10:15+03:00", ZoneOffset.UTC)).isEqualTo(Instant.parse("2026-10-31T07:15:00Z"));
+        assertThat(DbQueryEvaluator.timestampOf("2026-10-31 10:15:00 -0530", ZoneOffset.UTC)).isEqualTo(Instant.parse("2026-10-31T15:45:00Z"));
+        assertThat(DbQueryEvaluator.timestampOf("2026-10-31T10:15", plus3)).isEqualTo(Instant.parse("2026-10-31T07:15:00Z"));
         // tahmin yok: sayı, mantıksal, bozuk metin, aşırı uzun
         assertThat(DbQueryEvaluator.timestampOf(1730000000L, plus3)).isNull();
         assertThat(DbQueryEvaluator.timestampOf(Boolean.TRUE, plus3)).isNull();
@@ -215,8 +287,13 @@ class DbQueryR177EngineTest {
         assertThat(rr.note()).isEqualTo(DbQueryEvaluator.NOTE_BASELINE_RESET);
         assertThat(rr.measure()).isEqualTo(3.0);   // bu çalıştırma yeni taban
         assertThat(reset.status()).isEqualTo("OK");
-        assertThat(reset.inconclusive()).isTrue();
-        assertThat(reset.configUnevaluable()).isFalse();   // taban kuruluyor — alarm beslemez
+        // ikinci tur O-6: taban kuruluyor = ihlal değil, kanıt eksikliği de değil (satır UNKNOWN olmaz, eşik kararı OK)
+        assertThat(reset.inconclusive()).isFalse();
+        assertThat(reset.configUnevaluable()).isFalse();
+        assertThat(DbQueryAlarmText.thresholdVerdict(reset.status(), DbQueryAlarmText.toApi(reset.results()), "ANY"))
+                .isEqualTo(DbQueryAlarmText.VERDICT_OK);
+        for (String w : DbQueryEvaluator.WAITING_NOTES)
+            assertThat(DbQueryEvaluator.isInconclusive(DbQueryRules.KIND_CHANGE, w)).as(w).isFalse();
         assertThat(DbQueryEvaluator.isConfigUnevaluable(DbQueryRules.KIND_CHANGE, DbQueryEvaluator.NOTE_NO_SEASONAL_BASELINE)).isFalse();
         assertThat(DbQueryEvaluator.isConfigUnevaluable(DbQueryRules.KIND_CHANGE, DbQueryEvaluator.NOTE_FIRST_RUN)).isFalse();
         assertThat(DbQueryEvaluator.isConfigUnevaluable(DbQueryRules.KIND_COLUMN_VALUE, DbQueryEvaluator.NOTE_COLUMN_MISSING)).isTrue();
@@ -325,10 +402,11 @@ class DbQueryR177EngineTest {
         DbQueryBacktest s = new DbQueryBacktest(List.of(weekly), "ANY", "h", NOW.minusSeconds(3600), 300);
         Instant lastWeek = NOW.minusSeconds(7L * 86_400 + 60);   // tolerans içinde (± 2,5 dk)
         s.accept(row(1, lastWeek, "h", measured(weekly, 100)));
-        s.accept(row(2, NOW.minusSeconds(1800), "h", measured(weekly, 1)));   // geçen hafta karşılığı yok → değerlendirilemez
+        s.accept(row(2, NOW.minusSeconds(1800), "h", measured(weekly, 1)));   // geçen hafta karşılığı yok → taban kuruluyor
         s.accept(row(3, NOW, "h", measured(weekly, 300)));                    // %200 artış → ihlal
         Map<String, Object> sr = s.report(false);
-        assertThat(sr.get("evaluated")).isEqualTo(1);
+        // ikinci tur O-6: tabansız çalıştırma ihlal değil ve karar verilmiş sayılır (açık alarm kapanabilir)
+        assertThat(sr.get("evaluated")).isEqualTo(2);
         assertThat(sr.get("would_breach")).isEqualTo(Map.of("warning", 1, "critical", 0));
     }
 

@@ -28,17 +28,27 @@ import java.util.Map;
  *       CREATE / ALTER / DROP / GRANT …), alınan nesne yetkileri (INSERT / UPDATE / DELETE / EXECUTE —
  *       {@code USER_TAB_PRIVS_RECD} + rol yetkileri), hesabın kendi tablosu / kodu.</li>
  * </ul>
- * Bulgu kodları KALICIDIR (ön yüz {@code dbq.priv.<KOD>}).
+ * Bulgu kodları KALICIDIR (ön yüz {@code dbq.priv.<KOD>}). {@link #INFO_CODES} (r177 ikinci tur, O-5) yalnız BİLGİdir:
+ * hesabı "yazabilir" yapmaz ({@code read_only} true kalır), BLOCK kipinde engellemez.
  */
 public final class DbAccountPrivileges {
 
     public static final String SUPERUSER = "SUPERUSER", CAN_WRITE_TABLES = "CAN_WRITE_TABLES", CAN_CREATE = "CAN_CREATE",
             DB_OWNER = "DB_OWNER", DATA_WRITER = "DATA_WRITER", DDL_ADMIN = "DDL_ADMIN", CAN_EXECUTE = "CAN_EXECUTE",
-            DBA_ROLE = "DBA_ROLE", ANY_PRIVILEGE = "ANY_PRIVILEGE", CHECK_FAILED = "CHECK_FAILED";
+            DBA_ROLE = "DBA_ROLE", ANY_PRIVILEGE = "ANY_PRIVILEGE", CHECK_FAILED = "CHECK_FAILED",
+            /**
+             * PostgreSQL {@code public} şemasında CREATE yalnız PUBLIC rolünden geliyor (PG ≤ 14 varsayılanı, PG 15+'a
+             * {@code pg_upgrade} ile taşınan veritabanları) — hesaba özel bir yetki değil, bilgi (r177 ikinci tur, O-5).
+             * DBA {@code REVOKE CREATE ON SCHEMA public FROM PUBLIC} ile kapatabilir.
+             */
+            PUBLIC_SCHEMA_CREATE = "PUBLIC_SCHEMA_CREATE";
 
-    /** Tüm bulgu kodları (sıra kalıcı). */
+    /** Tüm bulgu kodları (sıra kalıcı; yenisi sona). */
     public static final List<String> CODES = List.of(SUPERUSER, CAN_WRITE_TABLES, CAN_CREATE, DB_OWNER, DATA_WRITER,
-            DDL_ADMIN, CAN_EXECUTE, DBA_ROLE, ANY_PRIVILEGE, CHECK_FAILED);
+            DDL_ADMIN, CAN_EXECUTE, DBA_ROLE, ANY_PRIVILEGE, CHECK_FAILED, PUBLIC_SCHEMA_CREATE);
+
+    /** Yalnız bilgi bulguları — hesabı yazabilir saymaz. */
+    public static final java.util.Set<String> INFO_CODES = java.util.Set.of(PUBLIC_SCHEMA_CREATE);
 
     static final int QUERY_TIMEOUT_SECONDS = 10;
     static final int MAX_FINDINGS = 20, MAX_DETAIL = 200;
@@ -140,7 +150,8 @@ public final class DbAccountPrivileges {
         }
 
         Result result() {
-            boolean anyWrite = !findings.isEmpty();
+            boolean anyWrite = false;
+            for (Finding f : findings) if (!INFO_CODES.contains(f.code())) anyWrite = true;
             List<Finding> out = new ArrayList<>(findings);
             if (failed) out.add(new Finding(CHECK_FAILED, null));
             Boolean ro = anyWrite ? Boolean.FALSE : failed ? null : Boolean.TRUE;
@@ -197,9 +208,20 @@ public final class DbAccountPrivileges {
             + "AND n.nspname NOT IN ('pg_catalog', 'information_schema') AND n.nspname NOT LIKE 'pg\\_%' "
             + "AND (has_table_privilege(c.oid, 'INSERT') OR has_table_privilege(c.oid, 'UPDATE') "
             + "OR has_table_privilege(c.oid, 'DELETE') OR has_table_privilege(c.oid, 'TRUNCATE')) LIMIT 1";
-    static final String PG_SCHEMA_CREATE = "SELECT n.nspname FROM pg_namespace n WHERE n.nspname NOT IN "
-            + "('pg_catalog', 'information_schema') AND n.nspname NOT LIKE 'pg\\_%' "
-            + "AND has_schema_privilege(n.oid, 'CREATE') LIMIT 1";
+    /**
+     * CREATE yetkisi olan kullanıcı şemaları ve yetkinin KAYNAĞI (O-5): {@code direct} = hesap şemanın sahibi (ya da sahip
+     * rolün üyesi) veya CREATE hesaba / üyesi olduğu bir role verilmiş; {@code via_public} = PUBLIC'e verilmiş.
+     * {@code aclexplode(COALESCE(nspacl, acldefault('n', nspowner)))} şema ACL'sini satırlara açar (grantee 0 = PUBLIC).
+     */
+    static final String PG_SCHEMA_CREATE = "SELECT n.nspname, "
+            + "(pg_has_role(n.nspowner, 'USAGE') OR EXISTS (SELECT 1 FROM aclexplode(COALESCE(n.nspacl, "
+            + "acldefault('n', n.nspowner))) a WHERE a.privilege_type = 'CREATE' "
+            // CASE: PUBLIC (0) için pg_has_role hiç çağrılmaz (AND sırası SQL'de güvence değil; 0 rolü yok → hata)
+            + "AND CASE WHEN a.grantee = 0 THEN false ELSE pg_has_role(a.grantee, 'USAGE') END)) AS direct, "
+            + "EXISTS (SELECT 1 FROM aclexplode(COALESCE(n.nspacl, acldefault('n', n.nspowner))) a "
+            + "WHERE a.privilege_type = 'CREATE' AND a.grantee = 0) AS via_public "
+            + "FROM pg_namespace n WHERE n.nspname NOT IN ('pg_catalog', 'information_schema') "
+            + "AND n.nspname NOT LIKE 'pg\\_%' AND has_schema_privilege(n.oid, 'CREATE') ORDER BY n.nspname LIMIT 20";
     static final String PG_DB_CREATE = "SELECT has_database_privilege(current_database(), 'CREATE')";
 
     private static void postgres(Connection c, Acc a) {
@@ -211,7 +233,14 @@ public final class DbAccountPrivileges {
         });
         query(c, a, PG_WRITE_ALL, rs -> a.add(CAN_WRITE_TABLES, "pg_write_all_data"));
         query(c, a, PG_TABLE_WRITE, rs -> a.add(CAN_WRITE_TABLES, rs.getString(1)));
-        query(c, a, PG_SCHEMA_CREATE, rs -> a.add(CAN_CREATE, "schema " + rs.getString(1)));
+        query(c, a, PG_SCHEMA_CREATE, rs -> {
+            String schema = rs.getString(1);
+            boolean direct = rs.getBoolean(2);
+            boolean viaPublic = rs.getBoolean(3);
+            // Yalnız public şemasının PUBLIC kaynaklı CREATE'i bilgi; başka şemada (PUBLIC'e açılmış olsa da) gerçek yetki
+            if (!direct && viaPublic && "public".equals(schema)) a.add(PUBLIC_SCHEMA_CREATE, "schema public");
+            else a.add(CAN_CREATE, "schema " + schema);
+        });
         query(c, a, PG_DB_CREATE, rs -> { if (rs.getBoolean(1)) a.add(CAN_CREATE, "database"); });
     }
 

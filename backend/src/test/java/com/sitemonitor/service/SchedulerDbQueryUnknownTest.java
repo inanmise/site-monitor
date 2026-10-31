@@ -200,4 +200,21 @@ class SchedulerDbQueryUnknownTest {
         List<MonitoringOutageService.SweepItem> fail = items.getValue();
         assertThat(fail.get(0).up()).isFalse();
     }
+
+    @Test
+    @DisplayName("ikinci tur D-1: geçici sorgu hatasının teyidinde sorgu düzelip kural değerlendirilemezse eşik dolmadan DOWN DEĞİL")
+    void confirmationRespectsTheUnknownLimit() {
+        DbQueryMonitor m = monitor(0);
+        DbQueryCheckerService.Result failed = new DbQueryCheckerService.Result(DbQueryCheckerService.STATUS_FAIL, "NONE", 40,
+                null, false, List.of(), List.of(), List.of(), List.of(), false, List.of(), null, false, "bağlantı kurulamadı",
+                "DB_UNREACHABLE", SchedulerDbQuerySweepTest.iso(SchedulerDbQuerySweepTest.NOW), "abc", 3L, null);
+        when(checker.check(m, false)).thenReturn(failed);
+        MonitoringOutageService.SweepItem it = failItems().get(0);
+        assertThat(it.up()).isFalse();
+        assertThat(it.error()).startsWith("[DB_UNREACHABLE]");
+        // teyit: sorgu çalıştı ama kural değerlendirilemedi, sayaç 0 < 3 → iyileşme sayılır (DB_RULE_UNEVALUABLE açılmaz)
+        when(checker.recheck(any(), any())).thenReturn(unevaluable(DbQueryEvaluator.NOTE_COLUMN_MISSING));
+        assertThat(it.recheck().get()).containsEntry("status", "up");
+        verify(monitorRepo, never()).markDbQueryUnknown(anyLong());   // sorgu hatası sayacı değiştirmez
+    }
 }

@@ -419,6 +419,19 @@ public class DbQueryCheckerService {
         return t;
     }
 
+    /** Tazelik kuralında saat dilimsiz değerlerin yorum dilimi (r177 ikinci tur, O-1) — IANA adı; GLOBAL_ONLY. */
+    public static final String KEY_LOCAL_TIMEZONE = "site.monitor.dbquery.local-timezone";
+
+    /** Ayardaki yerel dilim; boş / geçersiz / okunamazsa {@link DbQueryEvaluator#DEFAULT_LOCAL_ZONE}. */
+    public java.time.ZoneId localZone() {
+        try {
+            String v = settings.getString(KEY_LOCAL_TIMEZONE, DbQueryEvaluator.DEFAULT_LOCAL_ZONE.getId());
+            return DbQueryRules.validTimezone(v) ? java.time.ZoneId.of(v.trim()) : DbQueryEvaluator.DEFAULT_LOCAL_ZONE;
+        } catch (RuntimeException e) {
+            return DbQueryEvaluator.DEFAULT_LOCAL_ZONE;
+        }
+    }
+
     /** Yazabilen hesap ayarı (bilinmeyen / boş = WARN). */
     public String writableMode() {
         String v = settings.getString(KEY_WRITABLE_MODE, WRITABLE_WARN);
@@ -617,7 +630,7 @@ public class DbQueryCheckerService {
                     hash, p.getId(), qr.serverVersion());
 
         DbQueryEvaluator.Baselines base = baselines(m, previousForMonitorId, run, anchor, rules, hash);
-        DbQueryEvaluator.Outcome outcome = DbQueryEvaluator.evaluate(rules, m.getRuleLogic(), qr, base, "tr");
+        DbQueryEvaluator.Outcome outcome = DbQueryEvaluator.evaluate(rules, m.getRuleLogic(), qr, base, "tr", localZone());
         boolean slow = m.getSlowQueryMs() != null && m.getSlowQueryMs() > 0 && qr.durationMs() >= m.getSlowQueryMs();
         // r177 (H-2): kanıt eksikliğiyle değerlendirilemeyen kural varsa ve karar ihlal değilse durum UNKNOWN — asla OK (yeşil)
         String status = DbQueryEvaluator.LEVEL_NONE.equals(outcome.level()) && !STATUS_BREACH.equals(outcome.status())

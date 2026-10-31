@@ -16,7 +16,15 @@ final class FakeJdbc {
 
     private FakeJdbc() {}
 
-    record Col(String name, int type, int precision) {}
+    /** @param typeName sürücünün tür adı; null = "T&lt;tür&gt;" */
+    record Col(String name, int type, int precision, String typeName) {
+        Col(String name, int type, int precision) {
+            this(name, type, precision, null);
+        }
+    }
+
+    /** Aynı hücrenin metni ({@code getString}) ve nesnesi ({@code getObject} / {@code getTimestamp}) ayrı (sürücü taklidi). */
+    record Dual(String text, Object object) {}
 
     /** @param readColumns değeri okunan kolon numaraları (1 tabanlı) */
     record Rs(ResultSet resultSet, Set<Integer> readColumns) {}
@@ -26,7 +34,8 @@ final class FakeJdbc {
                 new Class<?>[] {ResultSetMetaData.class}, (p, m, a) -> switch (m.getName()) {
                     case "getColumnCount" -> cols.size();
                     case "getColumnLabel", "getColumnName" -> cols.get((int) a[0] - 1).name();
-                    case "getColumnTypeName" -> "T" + cols.get((int) a[0] - 1).type();
+                    case "getColumnTypeName" -> cols.get((int) a[0] - 1).typeName() != null
+                            ? cols.get((int) a[0] - 1).typeName() : "T" + cols.get((int) a[0] - 1).type();
                     case "getColumnType" -> cols.get((int) a[0] - 1).type();
                     case "getPrecision" -> cols.get((int) a[0] - 1).precision();
                     default -> null;
@@ -49,6 +58,13 @@ final class FakeJdbc {
                         read.add(idx);
                         Object v = rows.get(cursor[0])[idx - 1];
                         wasNull[0] = v == null;
+                        if (v instanceof Dual d) {
+                            return switch (n) {
+                                case "getString" -> d.text();
+                                case "getTimestamp", "getObject" -> d.object();
+                                default -> d.text();
+                            };
+                        }
                         return switch (n) {
                             case "getString" -> v == null ? null : String.valueOf(v);
                             case "getLong" -> v == null ? 0L : ((Number) v).longValue();
