@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { CalendarClock, CalendarDays, CalendarOff, CalendarX2, CircleAlert, Clock, ExternalLink, Moon, Plus, RefreshCw, Repeat, Timer, Trash2, X } from 'lucide-react'
 import { api } from '../../api/client'
 import { useLanguage, useT } from '../../i18n/index.jsx'
@@ -21,7 +21,8 @@ import {
   formatDay, formatRun, intervalPresetsFor, intervalProblem, newWindow, previewBody, splitInterval, windowKind, windowProblems,
   windowSummary,
 } from './scheduleModel.js'
-import { formatHoliday, normalizeDays, todayIstanbul } from '../admin/holidayCalendarModel.js'
+import { formatHoliday, holidayCoverage, normalizeDays, todayIstanbul } from '../admin/holidayCalendarModel.js'
+import HolidayCoverageNotice from '../admin/HolidayCoverageNotice.jsx'
 
 /** Sunucu zamanlama hata kodları (`DbQuerySchedule.CODE_*`). */
 export const SCHEDULE_CODES = {
@@ -349,6 +350,7 @@ function WindowRow({ kind, index, w, disabled, serverErr, onChange, onRemove }) 
 function HolidayToggle({ checked, disabled, canEdit = false, lang, onChange }) {
   const t = useT()
   const id = useId()
+  const [coverage, reloadCoverage] = useHolidayCoverage(checked)
   return (
     <div data-slot="dbq-skip-holidays" className="flex flex-col gap-1.5 rounded-lg border p-3">
       <div className="flex min-h-9 items-center gap-2 pointer-coarse:min-h-10">
@@ -358,6 +360,9 @@ function HolidayToggle({ checked, disabled, canEdit = false, lang, onChange }) {
         </Label>
       </div>
       <p className="m-0 text-xs text-muted-foreground">{t(canEdit ? 'dbq.sched.skipHolidaysHint' : 'dbq.sched.skipHolidaysHintViewer')}</p>
+      {/* Takvim bitiyor / bitti (2.A): "tatillerde çalışma" açıkken tatilde sessizce çalışmaya başlamasın — uyarı (+ global
+          yöneticiye sabit tatilleri ekle). Kapsam okunamazsa / eski sunucuda hiçbir şey çizilmez. */}
+      {checked && <HolidayCoverageNotice coverage={coverage} canEdit={canEdit} onAdded={reloadCoverage} />}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <HolidayDaysPopover lang={lang} />
         {canEdit && (
@@ -370,6 +375,32 @@ function HolidayToggle({ checked, disabled, canEdit = false, lang, onChange }) {
       </div>
     </div>
   )
+}
+
+/**
+ * Tatil takviminin kapsamı (`holidayCoverage`) — yalnız `enabled` iken okunur (anahtar açılınca); sıra korumalı.
+ * Okunamazsa / alan yoksa `null` (uyarı çizilmez — istemci kapsam uydurmaz).
+ */
+function useHolidayCoverage(enabled) {
+  const [coverage, setCoverage] = useState(null)
+  const seq = useRef(0)
+  const reload = useCallback(async () => {
+    const n = ++seq.current
+    try {
+      const res = await api.admin.getHolidays()
+      if (n !== seq.current) return
+      setCoverage(res?.success && res.data ? holidayCoverage(res.data) : null)
+    } catch {
+      if (n === seq.current) setCoverage(null)
+    }
+  }, [])
+  useEffect(() => {
+    const box = seq   // temizlikte aynı sayaç (geç yanıt yazılmasın)
+    if (!enabled) { box.current++; setCoverage(null); return undefined }
+    reload()
+    return () => { box.current++ }
+  }, [enabled, reload])
+  return [coverage, reload]
 }
 
 /**

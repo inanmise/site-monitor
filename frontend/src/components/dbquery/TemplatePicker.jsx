@@ -4,6 +4,7 @@ import { api } from '../../api/client'
 import { useLanguage, useT } from '../../i18n/index.jsx'
 import { Button } from '@/components/shadcn/button'
 import { Card } from '@/components/shadcn/card'
+import { Badge } from '@/components/shadcn/badge'
 import { Skeleton } from '@/components/shadcn/skeleton'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/shadcn/collapsible'
 import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/shadcn/input-group'
@@ -14,6 +15,7 @@ import { useDialog } from '../ui/Dialog.jsx'
 import { DbTypeBadge } from './dbqueryParts.jsx'
 import { ruleSummary } from './ruleModel.js'
 import { foldSearchText } from '../../utils/monitorFilters.js'
+import { builtinTemplates } from './builtinTemplates.js'
 
 /** Takımın şablonlarını okur (sıra numaralı — geç yanıt düşer). */
 export function useTeamTemplates(teamId, enabled = true) {
@@ -80,17 +82,60 @@ export default function TemplatePicker({ teamId, dbType, onPick, disabled = fals
   )
 }
 
+/** Arama süzgeci (ad + açıklama + amaç; Türkçe katlama). */
+function matchTemplate(x, f) {
+  return !f || foldSearchText(`${x.name} ${x.description || ''} ${x.purpose || ''}`).includes(f)
+}
+
+/**
+ * Şablon kartı (seçici ve yönetici ortak): ad, tür / yerleşik rozeti, kural sayısı, açıklama, önizleme (aç / kapa) ve
+ * eylemler (`actions` — düğmeler). Yerleşik şablon `data-builtin`.
+ */
+export function TemplateCard({ tpl, dbType, open, onOpenChange, actions, slot = 'dbq-tpl-item', meta = null }) {
+  const t = useT()
+  return (
+    <Card data-slot={slot} data-id={tpl.id} data-builtin={tpl.builtin ? 'true' : undefined} className="gap-2 px-3 py-3 shadow-none">
+      <Collapsible open={open} onOpenChange={onOpenChange}>
+        <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-start">
+          <div className="flex min-w-0 flex-1 flex-col gap-1">
+            <span className="font-semibold [overflow-wrap:anywhere]">{tpl.name}</span>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {tpl.builtin && <Badge variant="secondary" data-slot="dbq-tpl-builtin" className="font-normal">{t('dbq.tpl.builtinBadge')}</Badge>}
+              <DbTypeBadge type={tpl.db_type} />
+              {!tpl.builtin && dbType && tpl.db_type && tpl.db_type !== dbType && (
+                <span className="text-xs text-amber-700 dark:text-amber-300">{t('dbq.tpl.otherType')}</span>
+              )}
+              <span className="text-xs text-muted-foreground">{t('dbq.tpl.ruleCount', (tpl.rules || []).length)}</span>
+              {meta}
+            </div>
+            {tpl.description && <span className="text-xs text-muted-foreground [overflow-wrap:anywhere]">{tpl.description}</span>}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <CollapsibleTrigger asChild>
+              <Button type="button" variant="ghost" size="sm" className="pointer-coarse:h-10" aria-label={t('dbq.tpl.previewOf', tpl.name)}>
+                <ChevronDown aria-hidden="true" className={cn('transition-transform motion-reduce:transition-none', open && 'rotate-180')} />
+                {t('dbq.tpl.preview')}
+              </Button>
+            </CollapsibleTrigger>
+            {actions}
+          </div>
+        </div>
+        <CollapsibleContent className="pt-2"><TemplatePreview tpl={tpl} /></CollapsibleContent>
+      </Collapsible>
+    </Card>
+  )
+}
+
 function PickerDialog({ teamId, dbType, onClose, onPick }) {
   const t = useT()
   const { showConfirm } = useDialog()
   const [load, reload] = useTeamTemplates(teamId)
   const [q, setQ] = useState('')
   const [openId, setOpenId] = useState(null)
-  const shown = useMemo(() => {
-    const f = foldSearchText(q.trim())
-    if (!f) return load.list
-    return load.list.filter((x) => foldSearchText(`${x.name} ${x.description || ''} ${x.purpose || ''}`).includes(f))
-  }, [load.list, q])
+  const f = foldSearchText(q.trim())
+  const shown = useMemo(() => load.list.filter((x) => matchTemplate(x, f)), [load.list, f])
+  // Yerleşik başlangıç şablonları (2.C) — istemcide sabit, bağlantının türünde SQL (bağlantı yoksa PostgreSQL sürümü)
+  const builtins = useMemo(() => builtinTemplates(t, dbType).filter((x) => matchTemplate(x, f)), [t, dbType, f])
 
   const pick = async (tpl) => {
     if (dbType && tpl.db_type && tpl.db_type !== dbType) {
@@ -108,58 +153,55 @@ function PickerDialog({ teamId, dbType, onClose, onPick }) {
     <ModalShell open onClose={onClose} size="lg" scrollBody icon={BookOpenCheck} title={t('dbq.tpl.pickTitle')}>
       <div data-slot="dbq-tpl-picker" className="flex min-w-0 flex-col gap-3">
         <p className="m-0 text-sm text-muted-foreground">{t('dbq.tpl.pickHint')}</p>
-        {load.state === 'ok' && load.list.length > 3 && (
-          <InputGroup className="h-9 max-w-sm">
-            <InputGroupInput type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('dbq.tpl.search')} aria-label={t('dbq.tpl.search')} />
-            <InputGroupAddon><Search aria-hidden="true" /></InputGroupAddon>
-          </InputGroup>
-        )}
-        {load.state === 'loading' && <div className="flex flex-col gap-2"><Skeleton className="h-16 w-full" /><Skeleton className="h-16 w-full" /></div>}
-        {load.state === 'error' && (
-          <StatusBlock tone="danger" icon={CircleAlert} title={t('dbq.tpl.loadFailedTitle')} description={load.message}
-            actions={<Button type="button" variant="outline" onClick={reload} className="pointer-coarse:h-10"><RefreshCw aria-hidden="true" />{t('dbq.tpl.retry')}</Button>} />
-        )}
-        {load.state === 'ok' && load.list.length === 0 && (
-          <StatusBlock tone="neutral" icon={FileCode2} title={t('dbq.tpl.emptyTitle')} description={t('dbq.tpl.emptyBody')} />
-        )}
-        {load.state === 'ok' && load.list.length > 0 && shown.length === 0 && (
-          <p className="m-0 text-sm text-muted-foreground">{t('dbq.tpl.noMatch')}</p>
-        )}
-        <ul className="m-0 flex list-none flex-col gap-2 p-0">
-          {shown.map((tpl) => (
-            <li key={tpl.id}>
-              <Card data-slot="dbq-tpl-item" data-id={tpl.id} className="gap-2 px-3 py-3 shadow-none">
-                <Collapsible open={openId === tpl.id} onOpenChange={(o) => setOpenId(o ? tpl.id : null)}>
-                  <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-start">
-                    <div className="flex min-w-0 flex-1 flex-col gap-1">
-                      <span className="font-semibold [overflow-wrap:anywhere]">{tpl.name}</span>
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <DbTypeBadge type={tpl.db_type} />
-                        {dbType && tpl.db_type && tpl.db_type !== dbType && (
-                          <span className="text-xs text-amber-700 dark:text-amber-300">{t('dbq.tpl.otherType')}</span>
-                        )}
-                        <span className="text-xs text-muted-foreground">{t('dbq.tpl.ruleCount', (tpl.rules || []).length)}</span>
-                      </div>
-                      {tpl.description && <span className="text-xs text-muted-foreground [overflow-wrap:anywhere]">{tpl.description}</span>}
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      <CollapsibleTrigger asChild>
-                        <Button type="button" variant="ghost" size="sm" className="pointer-coarse:h-10" aria-label={t('dbq.tpl.previewOf', tpl.name)}>
-                          <ChevronDown aria-hidden="true" className={cn('transition-transform motion-reduce:transition-none', openId === tpl.id && 'rotate-180')} />
-                          {t('dbq.tpl.preview')}
-                        </Button>
-                      </CollapsibleTrigger>
-                      <Button type="button" size="sm" onClick={() => pick(tpl)} className="pointer-coarse:h-10" aria-label={t('dbq.tpl.useOf', tpl.name)}>
-                        {t('dbq.tpl.use')}
-                      </Button>
-                    </div>
-                  </div>
-                  <CollapsibleContent className="pt-2"><TemplatePreview tpl={tpl} /></CollapsibleContent>
-                </Collapsible>
-              </Card>
-            </li>
-          ))}
-        </ul>
+        <InputGroup className="h-9 max-w-sm pointer-coarse:h-10">
+          <InputGroupInput type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('dbq.tpl.search')} aria-label={t('dbq.tpl.search')} />
+          <InputGroupAddon><Search aria-hidden="true" /></InputGroupAddon>
+        </InputGroup>
+
+        <section data-slot="dbq-tpl-group" data-group="team" aria-labelledby="dbq-tpl-team-h" className="flex min-w-0 flex-col gap-2">
+          <h4 id="dbq-tpl-team-h" className="m-0 text-xs font-bold tracking-wide text-muted-foreground uppercase">{t('dbq.tpl.groupTeam')}</h4>
+          {load.state === 'loading' && <div className="flex flex-col gap-2"><Skeleton className="h-16 w-full" /><Skeleton className="h-16 w-full" /></div>}
+          {load.state === 'error' && (
+            <StatusBlock tone="danger" icon={CircleAlert} title={t('dbq.tpl.loadFailedTitle')} description={load.message}
+              actions={<Button type="button" variant="outline" onClick={reload} className="pointer-coarse:h-10"><RefreshCw aria-hidden="true" />{t('dbq.tpl.retry')}</Button>} />
+          )}
+          {load.state === 'ok' && load.list.length === 0 && (
+            <StatusBlock tone="neutral" icon={FileCode2} title={t('dbq.tpl.emptyTitle')} description={t('dbq.tpl.emptyBodyBuiltin')} />
+          )}
+          {load.state === 'ok' && load.list.length > 0 && shown.length === 0 && (
+            <p className="m-0 text-sm text-muted-foreground">{t('dbq.tpl.noMatch')}</p>
+          )}
+          <ul className="m-0 flex list-none flex-col gap-2 p-0">
+            {shown.map((tpl) => (
+              <li key={tpl.id}>
+                <TemplateCard tpl={tpl} dbType={dbType} open={openId === tpl.id} onOpenChange={(o) => setOpenId(o ? tpl.id : null)}
+                  actions={(
+                    <Button type="button" size="sm" onClick={() => pick(tpl)} className="pointer-coarse:h-10" aria-label={t('dbq.tpl.useOf', tpl.name)}>
+                      {t('dbq.tpl.use')}
+                    </Button>
+                  )} />
+              </li>
+            ))}
+          </ul>
+        </section>
+
+        <section data-slot="dbq-tpl-group" data-group="builtin" aria-labelledby="dbq-tpl-builtin-h" className="flex min-w-0 flex-col gap-2">
+          <h4 id="dbq-tpl-builtin-h" className="m-0 text-xs font-bold tracking-wide text-muted-foreground uppercase">{t('dbq.tpl.groupBuiltin')}</h4>
+          <p className="m-0 text-xs text-muted-foreground">{t(dbType ? 'dbq.tpl.builtinHint' : 'dbq.tpl.builtinHintNoType')}</p>
+          {builtins.length === 0 && <p className="m-0 text-sm text-muted-foreground">{t('dbq.tpl.noMatch')}</p>}
+          <ul className="m-0 flex list-none flex-col gap-2 p-0">
+            {builtins.map((tpl) => (
+              <li key={tpl.id}>
+                <TemplateCard tpl={tpl} dbType={dbType} open={openId === tpl.id} onOpenChange={(o) => setOpenId(o ? tpl.id : null)}
+                  actions={(
+                    <Button type="button" size="sm" onClick={() => onPick(tpl)} className="pointer-coarse:h-10" aria-label={t('dbq.tpl.useOf', tpl.name)}>
+                      {t('dbq.tpl.use')}
+                    </Button>
+                  )} />
+              </li>
+            ))}
+          </ul>
+        </section>
       </div>
     </ModalShell>
   )

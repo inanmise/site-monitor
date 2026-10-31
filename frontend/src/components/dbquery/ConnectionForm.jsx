@@ -1,5 +1,5 @@
-import { useId } from 'react'
-import { KeyRound, ShieldAlert } from 'lucide-react'
+import { useId, useState } from 'react'
+import { ChevronDown, FileKey2, KeyRound, ShieldAlert } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import { Input } from '@/components/shadcn/input'
 import { Textarea } from '@/components/shadcn/textarea'
@@ -7,10 +7,15 @@ import { Label } from '@/components/shadcn/label'
 import { Switch } from '@/components/shadcn/switch'
 import { Checkbox } from '@/components/shadcn/checkbox'
 import { NativeSelect, NativeSelectOption } from '@/components/shadcn/native-select'
+import { Button } from '@/components/shadcn/button'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/shadcn/collapsible'
+import CopyButton from '../ui/CopyButton.jsx'
 import { cn } from '@/lib/utils'
 import Field from '../ui/Field.jsx'
 import SegmentedControl from '../ui/SegmentedControl.jsx'
-import { CONNECT_TIMEOUT, DB_TYPES, ORACLE_MODES, PG_SSL_MODES, changeDbType } from './connectionModel.js'
+import {
+  CONNECT_TIMEOUT, DB_TYPES, ORACLE_MODES, ORACLE_TCPS_PORT, PG_SSL_MODES, PG_WEAK_SSL, changeDbType, readOnlyAccountScript, setOracleTcps,
+} from './connectionModel.js'
 
 const CONTROL = 'h-9 w-full pointer-coarse:h-10'
 const FULL_SELECT = '[&>[data-slot=native-select-wrapper]]:w-full'
@@ -27,7 +32,7 @@ export default function ConnectionForm({ form, onChange, errors = {}, disabled =
   const t = useT()
   const set = (patch) => onChange({ ...form, ...patch })
   const type = form.db_type
-  const encId = useId(), trustId = useId(), clearId = useId()
+  const encId = useId(), trustId = useId(), clearId = useId(), tcpsId = useId()
 
   const field = (name, label, props = {}, extra = {}) => (
     <Field label={label} required={extra.required} name={name} error={errors[name]} hint={extra.hint} className={extra.className}>
@@ -77,6 +82,16 @@ export default function ConnectionForm({ form, onChange, errors = {}, disabled =
             options={ORACLE_MODES.map((m) => ({ value: m, label: t(`dbq.conn.oracleModeName.${m}`), disabled }))} />
         </div>
       )}
+      {type === 'ORACLE' && (
+        // Oracle TCPS (TLS, 2.B): açılınca port varsayılandaysa 2484; sunucu adı sertifikayla doğrulanır
+        <div data-slot="dbq-conn-tcps" className="mb-3.5 flex flex-col gap-1 rounded-md border p-3">
+          <div className="flex min-h-9 items-center gap-2 pointer-coarse:min-h-10">
+            <Switch id={tcpsId} checked={!!form.oracle_tcps} disabled={disabled} onCheckedChange={(b) => onChange(setOracleTcps(form, b === true))} />
+            <Label htmlFor={tcpsId} className="cursor-pointer self-stretch font-normal">{t('dbq.conn.tcps')}</Label>
+          </div>
+          <p className="m-0 text-xs text-muted-foreground">{t(form.oracle_tcps ? 'dbq.conn.tcpsOnHint' : 'dbq.conn.tcpsOffHint', ORACLE_TCPS_PORT)}</p>
+        </div>
+      )}
 
       <div className={GRID}>
         {field('database_name',
@@ -93,6 +108,16 @@ export default function ConnectionForm({ form, onChange, errors = {}, disabled =
           </Field>
         )}
       </div>
+
+      {type === 'POSTGRESQL' && PG_WEAK_SSL.includes(form.ssl_mode) && (
+        // `prefer` sunucu desteklemezse ŞİFRESİZ bağlantıya düşer; `disable` hiç şifrelemez (2.B) — kimlik bilgisi ve alarm
+        // satırları ağda açık akabilir. Yeni bağlantının varsayılanı `require`.
+        <p data-slot="dbq-conn-ssl-weak" data-mode={form.ssl_mode}
+          className="mb-3.5 mt-0 flex items-start gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/5 px-2.5 py-2 text-xs text-amber-800 dark:bg-amber-500/10 dark:text-amber-200">
+          <ShieldAlert aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
+          <span className="[overflow-wrap:anywhere]">{t(form.ssl_mode === 'disable' ? 'dbq.conn.sslWeak.disable' : 'dbq.conn.sslWeak.prefer')}</span>
+        </p>
+      )}
 
       {type === 'MSSQL' && (
         <div className="mb-3.5 flex flex-col gap-2 rounded-md border p-3">
@@ -136,6 +161,8 @@ export default function ConnectionForm({ form, onChange, errors = {}, disabled =
         </div>
       )}
 
+      <ReadOnlyAccountScript type={type} />
+
       {field('connect_timeout_ms', t('dbq.conn.timeout'), { inputMode: 'numeric', className: cn(CONTROL, 'tabular-nums sm:w-48') },
         { hint: t('dbq.conn.timeoutHint', CONNECT_TIMEOUT.min, CONNECT_TIMEOUT.max, CONNECT_TIMEOUT.def) })}
 
@@ -146,5 +173,38 @@ export default function ConnectionForm({ form, onChange, errors = {}, disabled =
         )}
       </Field>
     </div>
+  )
+}
+
+/**
+ * "Salt-okur hesap betiği" (2.B): DBA'ya verilecek, türe göre hazır örnek (statik metin — SiteMonitor çalıştırmaz, sunucuya
+ * gitmez). Kapalı başlar; kopyalanabilir; uzun satırlar KENDİ kabında yatay kayar (sayfa kaymaz).
+ */
+function ReadOnlyAccountScript({ type }) {
+  const t = useT()
+  const [open, setOpen] = useState(false)
+  const script = readOnlyAccountScript(type, t)
+  return (
+    <Collapsible open={open} onOpenChange={setOpen} data-slot="dbq-conn-dba" className="mb-3.5 rounded-md border">
+      <CollapsibleTrigger asChild>
+        <Button type="button" variant="ghost" aria-expanded={open}
+          className="h-auto w-full justify-start gap-2 rounded-none px-3 py-2.5 text-left font-semibold whitespace-normal hover:bg-muted/60 pointer-coarse:min-h-10">
+          <ChevronDown aria-hidden="true" className={cn('size-4 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none', open && 'rotate-180')} />
+          <FileKey2 aria-hidden="true" className="size-4 shrink-0" />
+          <span className="[overflow-wrap:anywhere]">{t('dbq.conn.dba.title')}</span>
+        </Button>
+      </CollapsibleTrigger>
+      <CollapsibleContent className="flex flex-col gap-2 px-3 pb-3">
+        <p className="m-0 text-xs text-muted-foreground">{t('dbq.conn.dba.hint')}</p>
+        <div className="flex min-w-0 items-start gap-2">
+          <pre data-slot="dbq-conn-dba-script" tabIndex={0} aria-label={t('dbq.conn.dba.title')}
+            className="m-0 min-w-0 flex-1 overflow-x-auto rounded-md border bg-muted/50 px-3 py-2 font-mono text-xs leading-5 whitespace-pre text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            {script}
+          </pre>
+          <CopyButton value={script} label={t('dbq.conn.dba.copy')} copiedLabel={t('dbq.conn.dba.copied')}
+            className="shrink-0 pointer-coarse:size-10" />
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
   )
 }

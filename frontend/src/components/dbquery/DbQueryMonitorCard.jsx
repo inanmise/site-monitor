@@ -1,4 +1,4 @@
-import { AlertTriangle, CalendarClock, DatabaseZap, Rows3, Timer, Unplug } from 'lucide-react'
+import { AlertTriangle, CalendarClock, CircleHelp, DatabaseZap, Rows3, Timer, Unplug } from 'lucide-react'
 import { formatDateSec } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { relativeTime } from '../admin/audit/auditFormat.js'
@@ -14,8 +14,9 @@ import {
   MonitorCardRich, MonitorCardPending, MonitorAlarmIcon, CARD_LAYER, CARD_COPY,
 } from '../monitoring/MonitorCard.jsx'
 import {
-  breachLevelKey, dbTypeLabel, durationText, istanbulTime, metricValueText, rowCountText, scheduleSummary, untilText,
+  breachLevelKey, dbTypeLabel, durationText, istanbulTime, metricValueText, rowCountText, scheduleSummary, unevaluatedRules, untilText,
 } from './dbqueryPageModel.js'
+import { resultNoteText } from './RuleResultsList.jsx'
 
 /**
  * Veritabanı Sorgu İzleme KARTI (11. tür, 2026-10-31) — paylaşılan MonitorCard ailesi üzerinde (shadcn, mobil duyarlı).
@@ -88,6 +89,7 @@ export default function DbQueryMonitorCard({
                   <span className="line-clamp-2 min-w-0 [overflow-wrap:anywhere]">{m.error}</span>
                 </p>
               )}
+              {m.status === 'UNKNOWN' && <UnevaluatedNote monitor={m} />}
               {!m.last_check && <MonitorCardPending slot="dbq-pending" />}
               <Metrics monitor={m} />
               <p data-slot="dbq-schedule" className="mb-2 flex min-w-0 items-start gap-1.5 text-xs text-muted-foreground">
@@ -109,6 +111,26 @@ export default function DbQueryMonitorCard({
         ) : ''}
       </MonitorCardFooter>
     </MonitorCard>
+  )
+}
+
+/**
+ * "Değerlendirilemedi" notu (2.A — UNKNOWN): kuralların en az biri ölçülemedi (kolon yok, sayı değil, taban yeniden
+ * kuruluyor …). NÖTR ton (asla yeşil "sağlıklı" değil, kırmızı arıza da değil); ilk notun metni + ardışık çalıştırma sayısı.
+ */
+function UnevaluatedNote({ monitor: m }) {
+  const t = useT()
+  const first = unevaluatedRules(m)[0]
+  const note = first ? resultNoteText(t, first.note) : null
+  const runs = Number(m.unknown_runs)
+  return (
+    <p data-slot="dbq-unevaluated" className="mb-2.5 flex min-w-0 items-start gap-1.5 text-xs leading-snug text-muted-foreground">
+      <CircleHelp aria-hidden="true" className="mt-px size-3.5 shrink-0" />
+      <span className="line-clamp-3 min-w-0 [overflow-wrap:anywhere]">
+        {t('dbq.card.unevaluated')}{note ? ` — ${note}` : ''}
+        {Number.isInteger(runs) && runs > 1 ? ` ${t('dbq.card.unknownRuns', runs)}` : ''}
+      </span>
+    </p>
   )
 }
 

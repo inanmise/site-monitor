@@ -52,9 +52,11 @@ import {
 } from './dbquery/buildingBlocks.jsx'
 import {
   DB_TYPES, DEFAULT_SCHEDULE, breachLevelKey, changedFieldGroups, checkStatusKey, checkStatusLabelKey, columnsFrom, dbTypeLabel,
-  dbqueryStatusKey, dbqueryStatusLabelKey, durationText, metricValueText, rateLimitText, retryAfterOf, rowCountText, scheduleFromRow,
-  serverFieldErrors, splitFieldErrors,
+  dbqueryStatusKey, dbqueryStatusLabelKey, durationText, metricValueText, planCheckAvailable, rateLimitText, retryAfterOf, rowCountText,
+  scheduleFromRow, sectionErrorCounts, serverFieldErrors, splitFieldErrors, warningsOf,
 } from './dbquery/dbqueryPageModel.js'
+import { WARNING_CODES, countTrapIndexes, defaultNewRule, primaryValueColumn, ruleFromColumn } from './dbquery/ruleSuggest.js'
+import { MAX_RULES } from './dbquery/ruleModel.js'
 import BulkActionBar from './ui/BulkActionBar.jsx'
 import NocNotifyField from './noc/forms/NocNotifyField.jsx'
 import { nocIdsFrom, nocGroupIdsBody } from './noc/forms/nocFormModel.js'
@@ -103,7 +105,8 @@ const emptyForm = {
   rules: [], ruleLogic: 'ANY', slowQueryMs: '',
   schedule: { ...DEFAULT_SCHEDULE },
   queryTimeoutSeconds: 30, maxRows: 1000,
-  mailIncludeRows: true, mailColumns: [], maskedColumns: [], mailSubjectTemplate: '',
+  // Yeni izlemede mailde YALNIZ seçilen kolonlar (2.B — varsayılan kişisel veri koruması); kayıtlı izleme alanıyla açılır
+  mailIncludeRows: true, mailColumnsMode: 'SELECTED', mailColumns: [], maskedColumns: [], mailSubjectTemplate: '',
   confirmAttempts: 1, confirmIntervalSeconds: 30, recoveryChecks: 1, recoveryIntervalSeconds: 60,
   active: true,
 }
@@ -124,6 +127,8 @@ function formFrom(m) {
     schedule: scheduleFromRow(m),
     queryTimeoutSeconds: m.query_timeout_seconds ?? 30, maxRows: m.max_rows ?? 1000,
     mailIncludeRows: m.mail_include_rows !== false,
+    // Alan yoksa (sürümden önceki kayıt / eski sunucu) bugünkü davranış: ilk N kolon
+    mailColumnsMode: m.mail_columns_mode === 'SELECTED' ? 'SELECTED' : 'FIRST_N',
     mailColumns: Array.isArray(m.mail_columns) ? m.mail_columns : [],
     maskedColumns: Array.isArray(m.masked_columns) ? m.masked_columns : [],
     mailSubjectTemplate: m.mail_subject_template || '',
@@ -163,6 +168,7 @@ function payloadFromForm(form) {
     query_timeout_seconds: numOrNull(form.queryTimeoutSeconds),
     max_rows: numOrNull(form.maxRows),
     mail_include_rows: !!form.mailIncludeRows,
+    mail_columns_mode: form.mailColumnsMode === 'SELECTED' ? 'SELECTED' : 'FIRST_N',
     mail_columns: form.mailColumns, masked_columns: form.maskedColumns,
     mail_subject_template: form.mailSubjectTemplate?.trim() || null,
   }
@@ -333,7 +339,8 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
   // Yeni izleme / kopya YALNIZ kendi takımlarına (K2): paylaşımla erişilen takımda bağlantı kullanılamaz, sunucu 403
   // DBQUERY_GRANT_TEAM verir. Varsayılan takım bir paylaşım takımıysa (yalnız paylaşımla yazılan tek takım) boş başlar.
   const ownDefaultTeam = defaultTeamId != null && !isGrantTeam(defaultTeamId, pickTeams) ? String(defaultTeamId) : ''
-  function openNew() {
+  /** Yeni izleme formu — `seed` (şablondan oluşturma, 2.C) sorgu / amaç / kurallar / takımı önceden doldurur. */
+  function openNew(seed = null) {
     openWith({
       ...emptyForm, teamId: isAdmin ? '' : ownDefaultTeam,
       schedule: { ...DEFAULT_SCHEDULE, interval_seconds: defaults?.interval_seconds ?? DEFAULT_SCHEDULE.interval_seconds },
@@ -343,7 +350,24 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
       confirmIntervalSeconds: defaults?.confirm_interval_seconds ?? emptyForm.confirmIntervalSeconds,
       recoveryChecks: defaults?.recovery_checks ?? emptyForm.recoveryChecks,
       recoveryIntervalSeconds: defaults?.recovery_interval_seconds ?? emptyForm.recoveryIntervalSeconds,
+      ...(seed || {}),
     }, 'new')
+  }
+  /**
+   * "Bu şablonla izleme oluştur" (2.C): şablon yöneticisi kapanır, yeni izleme formu şablonun sorgu / amaç / kurallarıyla
+   * açılır. Takım şablonunun takımı (yalnız kendi takımıysa — paylaşım takımında izleme oluşturulamaz, K2) seçili gelir;
+   * yerleşik şablon takım taşımaz. Bağlantı her zaman kullanıcıya bırakılır.
+   */
+  function openFromTemplate(tpl) {
+    if (!tpl) return
+    setTplOpen(false)
+    const tplTeam = tpl.team_id != null && !isGrantTeam(tpl.team_id, pickTeams)
+      && (isAdmin || pickTeams.some((tm) => String(tm.id) === String(tpl.team_id))) ? String(tpl.team_id) : null
+    openNew({
+      sqlText: tpl.sql_text || '', purpose: tpl.purpose || '',
+      rules: Array.isArray(tpl.rules) ? tpl.rules : [], ruleLogic: tpl.rule_logic === 'ALL' ? 'ALL' : 'ANY',
+      ...(tplTeam ? { teamId: tplTeam } : {}),
+    })
   }
   function openEdit(row) {
     // Güncel satır: detay kopyası bayat olabilir — form ondan kurulursa kayıt eski değerleri sessizce geri yazar.
@@ -435,6 +459,33 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
   const canRunQuery = form.profileId != null && !!form.sqlText.trim()
   const runHint = form.profileId == null ? t('dbq.form.runNeedsConnection') : !form.sqlText.trim() ? t('dbq.form.runNeedsSql') : null
 
+  // ── Akıllı kural kurulumu (2.C) — denemenin KOLON ADLARI / TÜRLERİ; satır verisi değil ──────────────────────────
+  const trapIndexes = useMemo(() => countTrapIndexes(form.rules, { warnings: testResult?.warnings, testResult, sqlText: form.sqlText }),
+    [form.rules, testResult, form.sqlText])
+  const trapColumn = useMemo(() => primaryValueColumn(columns), [columns])
+  const newRuleFactory = useCallback(() => defaultNewRule(testResult, columns), [testResult, columns])
+  /** Değerlendirme bölümüne kaydır (kural eklendi — kullanıcı nereye gittiğini görsün). */
+  const revealEvaluation = () => {
+    const el = typeof document !== 'undefined' ? document.querySelector('[data-dbq-section="evaluation"]') : null
+    try { el?.scrollIntoView?.({ block: 'start', behavior: 'smooth' }) } catch { /* jsdom */ }
+  }
+  /** Deneme panelindeki kolon menüsü: `rule:<TÜR>` → kural ekle; `mask` → mailde maskele. */
+  function onColumnAction(action, column) {
+    if (!column?.name) return
+    if (action === 'mask') {
+      setForm((f) => ({ ...f, maskedColumns: [...new Set([...(f.maskedColumns || []), column.name])] }))
+      fe.clear('masked_columns')
+      toast.success(t('dbq.form.maskAdded', column.name))
+      return
+    }
+    if (!String(action).startsWith('rule:')) return
+    const current = Array.isArray(form.rules) ? form.rules : []
+    if (current.length >= MAX_RULES) { toast.info(t('dbq.rule.maxReached', MAX_RULES)); return }
+    onRulesChange([...current, ruleFromColumn(column, String(action).slice(5))])
+    toast.success(t('dbq.form.ruleAdded', column.name))
+    revealEvaluation()
+  }
+
   /** Sunucu hatasını alanlara dağıtır; hiçbir alana düşmezse tost. */
   function applyServerErrors(res, fallbackKey) {
     const { fields, violations, plan } = serverFieldErrors(res)
@@ -523,6 +574,11 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
       const planWarn = res.plan_warning || res.data?.plan_warning
       toast.success(t('dbq.form.saved'))
       if (planWarn) toast.info(t('dbq.form.planWarnSaved', planWarn.message || ''))
+      // Kayıt uyarıları (engellemez — 2.B / 2.C): COUNT tuzağı, SELECT *, maskesiz hassas kolon
+      const warns = warningsOf(res)
+      if (warns.length) {
+        toast.info(t('dbq.form.savedWithWarnings', warns.map((w) => (WARNING_CODES.includes(w.code) ? t(`dbq.warn.${w.code}.title`) : (w.message || w.code))).join(' · ')))
+      }
       closeEditNow()
       if (shouldCheckAfterSave('dbquery', { isNew, before: isNew ? null : modal, after: res.data })) startCheckAfterSave(checkNow, res.data, { silent: true })
     } catch (e) {
@@ -693,6 +749,7 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
     : null
   const formTeamId = form.teamId === '' || form.teamId == null ? null : Number(form.teamId)
   const { rules: ruleErrors, schedule: scheduleErrors } = splitFieldErrors(fe.errors)
+  const sectionErrors = sectionErrorCounts(fe.errors)
   const limits = defaults
   const purposeLen = form.purpose.length
 
@@ -718,7 +775,7 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
           <span data-slot="dbq-grant-locked-banner">{t('dbq.form.grantLockedBody')}</span>
         </AlertBanner>
       )}
-      <FormSectionNav />
+      <FormSectionNav errorCounts={sectionErrors} />
 
       <FormGrid>
         <DbqSection id="basic" icon={Info} title={t('dbq.form.secBasic')}>
@@ -773,10 +830,13 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
           teamId={formTeamId} dbType={form.dbType || null}
           onPickTemplate={onPickTemplate} onSaveTemplate={() => setSaveTplOpen(true)}
           onTest={runTest} onPlanCheck={runPlanCheck} testing={testing} planChecking={planChecking}
-          testResult={testResult} planResult={planResult} canRun={canRunQuery} runHint={runHint} locked={grantLocked} />
+          testResult={testResult} planResult={planResult} canRun={canRunQuery} runHint={runHint} locked={grantLocked}
+          planAvailable={planCheckAvailable(limits, form.dbType || null)} onColumnAction={onColumnAction} />
 
         <EvaluationSection form={form} setForm={setForm} ruleErrors={ruleErrors} columns={columns}
-          slowError={fe.errors.slow_query_ms} onRulesChange={onRulesChange} clear={clear} locked={grantLocked} />
+          slowError={fe.errors.slow_query_ms} onRulesChange={onRulesChange} clear={clear} locked={grantLocked}
+          trapIndexes={trapIndexes} trapColumn={trapColumn} newRuleFactory={newRuleFactory}
+          backtestMonitorId={modal && modal !== 'new' ? modal.id : null} />
 
         <ScheduleSection value={form.schedule} onChange={onScheduleChange} fieldErrors={scheduleErrors}
           minIntervalSeconds={defaults?.min_interval_seconds} canEditHolidays={globalAdmin} />
@@ -795,7 +855,8 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
             <FormHint>{t('dbq.form.alertLevelHint')}</FormHint>
             <NocNotifyField disabled={routingLock} type="DBQUERY" checked={form.nocNotify} groupIds={form.nocGroupIds} canOpenSettings={globalAdmin}
               onChange={patch => setForm(f => ({ ...f, ...patch }))} />
-            <MailFields form={form} setForm={setForm} errors={fe.errors} columns={columns} clear={clear} limits={limits} locked={grantLocked} />
+            <MailFields form={form} setForm={setForm} errors={fe.errors} columns={columns} clear={clear} limits={limits} locked={grantLocked}
+              suggestedMasks={testResult?.suggested_masks} />
             {/* Teyit / kurtarma (standart; varsayılan 1 / 1 — iş alarmı gürültüsüz ama tek hatada da uyarır) */}
             <div className="min-w-0 rounded-lg border sm:col-span-2">
               <Button type="button" variant="ghost" aria-expanded={advOpen} onClick={() => setAdvOpen(v => !v)} data-slot="dbq-confirm-toggle"
@@ -852,7 +913,7 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
             <LibraryBig aria-hidden="true" className="size-4" />{t('dbq.page.templates')}
           </Button>
         </>}
-        canWrite={canWrite} onNew={openNew} newLabel={t('dbq.page.add')} />
+        canWrite={canWrite} onNew={() => openNew()} newLabel={t('dbq.page.add')} />
 
       <MonitorHowBox bullets={[t('dbq.page.how1'), t('dbq.page.how2'), t('dbq.page.how3'), t('dbq.page.how4'),
         t('dbq.page.how5'), t('dbq.page.how6')]} />
@@ -1016,7 +1077,7 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
       )}
       {tplOpen && (
         <TemplatesManager open={tplOpen} onOpenChange={setTplOpen} teamId={managerTeamId}
-          teams={managerTeams} canEdit={canWrite} />
+          teams={managerTeams} canEdit={canWrite} onCreateMonitor={canWrite ? openFromTemplate : null} />
       )}
 
       {checkRun.pickerOpen && (

@@ -1,9 +1,16 @@
-import { AlertTriangle, CheckCircle2, Clock, Columns3, EyeOff, Gauge, Info, ShieldAlert, XCircle } from 'lucide-react'
+import {
+  AlertTriangle, CheckCircle2, ChevronDown, CircleHelp, Clock, Columns3, EyeOff, Gauge, Info, ListPlus, ShieldAlert, XCircle,
+} from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import { Badge } from '@/components/shadcn/badge'
+import { Button } from '@/components/shadcn/button'
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
+} from '@/components/shadcn/dropdown-menu'
 import { cn } from '@/lib/utils'
 import { RuleResultsList } from './buildingBlocks.jsx'
+import { WARNING_CODES, columnKind, ruleOptionsFor } from './ruleSuggest.js'
 import {
   checkStatusLabelKey, durationText, failureKey, metricValueText, planTone, rowCountText,
 } from './dbqueryPageModel.js'
@@ -18,8 +25,14 @@ import {
  * <p>Props: `result` (testDbQuery `data`'sı ya da `{ error, code, retryAfter }`), `plan` ("Maliyeti denetle" sonucu,
  * isteğe bağlı). Test kancaları: kök `data-slot="dbq-test"` + `data-status` (OK|BREACH|FAIL|error|wait), kolonlar
  * `dbq-test-columns`, ihlaller `dbq-test-violations`, plan `dbq-test-plan` (+ `data-verdict`).
+ *
+ * <p>2026-10-31 (r177): kolon rozeti bir menüdür (`onColumnAction(action, column)` verilirse) — "Bu kolonun değerine
+ * kural ekle" / "Bu kolonda metin ara" / "Tazelik kuralı ekle" (`rule:<TÜR>`) ve "Mailde maskele" (`mask`); sunucunun
+ * önerdiği hassas kolonlar (`suggested_masks`) işaretlenir; sunucu uyarıları (`warnings`: COUNT tuzağı, `SELECT *`,
+ * maskesiz hassas kolon) bantta; UNKNOWN (kural değerlendirilemedi) nötr; maliyet denetimi kapalı (`OFF`) nötr
+ * "denetlenmedi".
  */
-export default function DbQueryTestPanel({ result, plan = null }) {
+export default function DbQueryTestPanel({ result, plan = null, onColumnAction = null, maskedColumns = [], actionsDisabled = false }) {
   const t = useT()
   if (!result && !plan) return null
   const failedCall = result && result.status == null && (result.error || result.code)
@@ -29,7 +42,12 @@ export default function DbQueryTestPanel({ result, plan = null }) {
     : result?.status === 'FAIL' ? 'danger'
     : result?.status === 'BREACH' ? 'warning'
     : result?.status === 'OK' ? (result.slow ? 'warning' : 'success') : 'info'
-  const Icon = waiting ? Clock : tone === 'success' ? CheckCircle2 : tone === 'danger' ? XCircle : tone === 'warning' ? AlertTriangle : Info
+  const unevaluated = !failedCall && result?.status === 'UNKNOWN'
+  const Icon = waiting ? Clock : unevaluated ? CircleHelp
+    : tone === 'success' ? CheckCircle2 : tone === 'danger' ? XCircle : tone === 'warning' ? AlertTriangle : Info
+  const warnings = Array.isArray(result?.warnings) ? result.warnings.filter((w) => w && typeof w.code === 'string') : []
+  const sensitive = new Set((Array.isArray(result?.suggested_masks) ? result.suggested_masks : []).map((c) => String(c).toLowerCase()))
+  const masked = new Set((Array.isArray(maskedColumns) ? maskedColumns : []).map((c) => String(c).toLowerCase()))
   const violations = Array.isArray(result?.guard?.violations) ? result.guard.violations : []
   const columns = Array.isArray(result?.columns) ? result.columns : []
   const effectivePlan = plan || result?.plan || null
@@ -54,6 +72,7 @@ export default function DbQueryTestPanel({ result, plan = null }) {
                 {result.slow && <span className="font-semibold">{t('dbq.test.slow')}</span>}
               </span>
               {result.row_count_capped && <span className="text-xs">{t('dbq.test.capped')}</span>}
+              {unevaluated && <span data-slot="dbq-test-unevaluated" className="text-xs">{t('dbq.test.unevaluatedHint')}</span>}
               {result.status === 'FAIL' && (
                 <span className="text-xs [overflow-wrap:anywhere]">
                   {failKey && <strong className="mr-1">{t(failKey)}.</strong>}
@@ -89,18 +108,34 @@ export default function DbQueryTestPanel({ result, plan = null }) {
         </div>
       )}
 
+      {warnings.length > 0 && (
+        <div data-slot="dbq-test-warnings" className="flex min-w-0 flex-col gap-1.5">
+          {warnings.map((w, i) => (
+            <AlertBanner key={`${w.code}-${i}`} tone="warning" className="mb-0"
+              title={WARNING_CODES.includes(w.code) ? t(`dbq.warn.${w.code}.title`) : t('dbq.warn.other.title')}>
+              <span data-slot="dbq-test-warning" data-code={w.code} className="flex flex-col gap-0.5 [overflow-wrap:anywhere]">
+                <span>{WARNING_CODES.includes(w.code) ? t(`dbq.warn.${w.code}.body`) : (w.message || t('dbq.warn.other.body'))}</span>
+                {Array.isArray(w.columns) && w.columns.length > 0 && (
+                  <span className="font-mono text-xs">{w.columns.join(', ')}</span>
+                )}
+              </span>
+            </AlertBanner>
+          ))}
+        </div>
+      )}
+
       {columns.length > 0 && (
         <div data-slot="dbq-test-columns" className="flex min-w-0 flex-col gap-1.5">
           <span className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
             <Columns3 aria-hidden="true" className="size-3.5" />{t('dbq.test.columns', columns.length)}
           </span>
+          {onColumnAction && !actionsDisabled && <span className="text-xs text-muted-foreground">{t('dbq.test.columnsHint')}</span>}
           <ul className="m-0 flex list-none flex-wrap gap-1.5 p-0">
             {columns.map((c, i) => (
               <li key={`${c.name}-${i}`}>
-                <Badge variant="outline" className="h-auto max-w-full gap-1 overflow-visible rounded-md px-2 py-0.5 text-[11px] whitespace-normal">
-                  <span className="font-mono font-semibold [overflow-wrap:anywhere]">{c.name}</span>
-                  {c.type && <span className="text-muted-foreground">{c.type}</span>}
-                </Badge>
+                <ColumnChip column={c} t={t} sensitive={sensitive.has(String(c.name).toLowerCase())}
+                  masked={masked.has(String(c.name).toLowerCase())}
+                  onAction={onColumnAction && !actionsDisabled ? (a) => onColumnAction(a, c) : null} />
               </li>
             ))}
           </ul>
@@ -123,11 +158,12 @@ export default function DbQueryTestPanel({ result, plan = null }) {
         </div>
       )}
       {effectivePlan && !effectivePlan.rateLimited && (
-        <div data-slot="dbq-test-plan" data-verdict={effectivePlan.supported === false ? 'UNSUPPORTED' : (effectivePlan.verdict || 'UNKNOWN')}>
+        <div data-slot="dbq-test-plan" data-verdict={effectivePlan.verdict === 'OFF' ? 'OFF'
+          : effectivePlan.supported === false ? 'UNSUPPORTED' : (effectivePlan.verdict || 'UNKNOWN')}>
           <AlertBanner tone={planTone(effectivePlan) === 'neutral' ? 'info' : planTone(effectivePlan)} icon={Gauge}
             title={t(planTitleKey(effectivePlan))}>
             <span className={cn('flex flex-col gap-0.5 [overflow-wrap:anywhere]')}>
-              {effectivePlan.supported !== false && (effectivePlan.cost != null || effectivePlan.rows != null) && (
+              {effectivePlan.supported !== false && effectivePlan.verdict !== 'OFF' && (effectivePlan.cost != null || effectivePlan.rows != null) && (
                 <span className="tabular-nums">
                   {t('dbq.test.planFigures', metricValueText(effectivePlan.cost), metricValueText(effectivePlan.rows))}
                 </span>
@@ -141,7 +177,63 @@ export default function DbQueryTestPanel({ result, plan = null }) {
   )
 }
 
+/** Kolon içeriği: ad + tür (+ hassas / maskeli işareti). */
+function ColumnLabel({ column: c, t, sensitive, masked }) {
+  return (
+    <>
+      <span className="font-mono font-semibold [overflow-wrap:anywhere]">{c.name}</span>
+      {c.type && <span className="text-muted-foreground">{c.type}</span>}
+      {sensitive && !masked && (
+        <span data-slot="dbq-col-sensitive" className="inline-flex items-center gap-0.5 text-amber-700 dark:text-amber-300">
+          <ShieldAlert aria-hidden="true" className="size-3" />{t('dbq.test.sensitive')}
+        </span>
+      )}
+      {masked && <span data-slot="dbq-col-masked" className="text-muted-foreground">{t('dbq.test.masked')}</span>}
+    </>
+  )
+}
+
+/**
+ * Kolon rozeti — eylem verilmişse menülü düğme (kural ekle / maskele; türe göre önerilen önce), yoksa düz rozet. SATIR
+ * VERİSİ YOK: yalnız ad ve tür.
+ */
+function ColumnChip({ column: c, t, sensitive, masked, onAction }) {
+  if (!onAction) {
+    return (
+      <Badge variant="outline" data-slot="dbq-col" className="h-auto max-w-full gap-1 overflow-visible rounded-md px-2 py-0.5 text-[11px] whitespace-normal">
+        <ColumnLabel column={c} t={t} sensitive={sensitive} masked={masked} />
+      </Badge>
+    )
+  }
+  const kinds = ruleOptionsFor(c)
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button type="button" variant="outline" size="sm" data-slot="dbq-col" data-kind={columnKind(c.type)}
+          aria-label={t('dbq.test.columnMenu', c.name)}
+          className="h-auto min-h-7 max-w-full gap-1 rounded-md px-2 py-0.5 text-[11px] font-normal whitespace-normal pointer-coarse:min-h-10">
+          <ColumnLabel column={c} t={t} sensitive={sensitive} masked={masked} />
+          <ChevronDown aria-hidden="true" className="size-3 opacity-70" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="z-(--z-menu) max-w-[min(20rem,90vw)]">
+        <DropdownMenuLabel className="font-mono text-xs [overflow-wrap:anywhere]">{c.name}</DropdownMenuLabel>
+        {kinds.map((k) => (
+          <DropdownMenuItem key={k} onSelect={() => onAction(`rule:${k}`)} className="pointer-coarse:min-h-10" data-action={`rule:${k}`}>
+            <ListPlus aria-hidden="true" />{t(`dbq.test.addRule.${k}`)}
+          </DropdownMenuItem>
+        ))}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onSelect={() => onAction('mask')} disabled={masked} className="pointer-coarse:min-h-10" data-action="mask">
+          <EyeOff aria-hidden="true" />{masked ? t('dbq.test.alreadyMasked') : t('dbq.test.maskColumn')}
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
 function planTitleKey(plan) {
+  if (plan.verdict === 'OFF') return 'dbq.test.planOff'
   if (plan.supported === false) return 'dbq.test.planUnsupported'
   if (plan.verdict === 'OK') return 'dbq.test.planOk'
   if (plan.verdict === 'WARN') return 'dbq.test.planWarn'
