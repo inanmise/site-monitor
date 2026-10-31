@@ -70,14 +70,23 @@ class ScriptedScheduleOverviewTest {
         return c;
     }
 
+    /** Her gün, şimdiden {@code fromMin} dk sonra açılıp {@code toMin} dk sonra kapanan izinli pencere (İstanbul, duvar
+     *  saatinden bağımsız sınama: dünkü pencere son kontrolden önce kapanmıştır). */
+    private static String windowFromNow(long fromMin, long toMin) {
+        DateTimeFormatter hm = DateTimeFormatter.ofPattern("HH:mm").withZone(java.time.ZoneId.of("Europe/Istanbul"));
+        Instant now = Instant.now();
+        return "[{\"days\":[],\"from\":\"" + hm.format(now.plus(fromMin, ChronoUnit.MINUTES)) + "\",\"to\":\""
+                + hm.format(now.plus(toMin, ChronoUnit.MINUTES)) + "\"}]";
+    }
+
     @Test
     @SuppressWarnings("unchecked")
     @DisplayName("pencere dışında bekleyen zamanlamalı izleme güncel; planlı koşumu kaçmış olan gecikmiş; düz aralık bugünkü kural")
     void scheduledScriptedStaleRule() {
-        ScriptedMonitor waiting = k6(1, "Mesai içi");               // son koşum 3 saat önce, sonraki pencere 2 saat sonra
-        waiting.setWindowsJson("[{\"days\":[1,2,3,4,5],\"from\":\"09:00\",\"to\":\"18:00\"}]");
+        ScriptedMonitor waiting = k6(1, "Mesai içi");               // son koşum 3 saat önce, sonraki pencere 1 saat sonra
+        waiting.setWindowsJson(windowFromNow(60, 180));
         waiting.setScheduleMode("INTERVAL");
-        waiting.setNextRunAt(inMinutes(120));
+        waiting.setNextRunAt(inMinutes(60));
         ScriptedMonitor overdue = k6(2, "Günlük cron");             // planlı koşum 20 dk önceydi, koşulmadı
         overdue.setScheduleMode("CRON"); overdue.setCronExpression("0 8 * * *"); overdue.setIntervalSeconds(86_400);
         overdue.setNextRunAt(ago(20));
@@ -94,6 +103,56 @@ class ScriptedScheduleOverviewTest {
         assertThat(row.apply("Mesai içi")).containsEntry("status", "up");
         assertThat(row.apply("Günlük cron")).containsEntry("status", "stale");
         assertThat(row.apply("Düz aralık")).containsEntry("status", "stale");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    @DisplayName("inceleme #3: plan her dönem ileri yazılsa da (geçici atlama) son kontrolden sonraki planlı koşum kaçtıysa gecikmiş")
+    void skippedRunsWithAdvancingPlanLookStale() {
+        ScriptedMonitor skipped = k6(4, "Hep atlanan cron");       // plan ileride ama son kontrol 30 saat önce
+        skipped.setScheduleMode("CRON"); skipped.setCronExpression("0 8 * * *"); skipped.setIntervalSeconds(86_400);
+        skipped.setNextRunAt(inMinutes(600));
+        ScriptedMonitor fresh = k6(5, "Yeni koşmuş cron");         // dün 08:00'den beri tetik yok sayılmaz: 2 dk önce koştu
+        fresh.setScheduleMode("CRON"); fresh.setCronExpression("0 8 * * *"); fresh.setIntervalSeconds(86_400);
+        fresh.setNextRunAt(inMinutes(600));
+        when(scriptedMonitorRepo.findAllByOrderByNameAsc()).thenReturn(List.of(skipped, fresh));
+        when(scriptedCheckRepo.findLatestPerMonitor()).thenReturn(List.of(pass(4, ago(60 * 30)), pass(5, ago(2))));
+        when(scriptedCheckRepo.weeklyStatsByMonitor(anyCollection(), anyString(), anyString())).thenReturn(List.of());
+
+        List<Map<String, Object>> rows = (List<Map<String, Object>>) svc.build(team -> true, false, 24).get("monitors");
+        java.util.function.Function<String, Map<String, Object>> row =
+                n -> rows.stream().filter(r -> n.equals(r.get("name"))).findFirst().orElseThrow();
+        assertThat(row.apply("Hep atlanan cron")).containsEntry("status", "stale");
+        assertThat(row.apply("Yeni koşmuş cron")).containsEntry("status", "up");
+    }
+
+    @Test
+    @DisplayName("inceleme #3: kaçırılan planlı koşum kuralı — sonraki planlı koşum + 600 sn; tatil planı öteler; okunamayan son kontrol = kural yok")
+    void missedPlannedRunRule() {
+        Instant now = Instant.now();
+        var plainEvery5 = new com.sitemonitor.service.dbquery.DbQuerySchedule.Spec("INTERVAL", 300, null, List.of(), List.of(),
+                false, List.of());
+        assertThat(MonitoringOverviewService.missedPlannedRun(plainEvery5, now.minus(14, ChronoUnit.MINUTES), now, java.util.Set.of()))
+                .as("son kontrol 14 dk önce: plan 9 dk önce, pay 10 dk").isFalse();
+        assertThat(MonitoringOverviewService.missedPlannedRun(plainEvery5, now.minus(16, ChronoUnit.MINUTES), now, java.util.Set.of()))
+                .as("son kontrol 16 dk önce: plan 11 dk önce + 10 dk pay geçti").isTrue();
+        assertThat(MonitoringOverviewService.missedPlannedRun(plainEvery5, null, now, java.util.Set.of())).isFalse();
+        assertThat(MonitoringOverviewService.missedPlannedRun(null, now.minus(1, ChronoUnit.DAYS), now, java.util.Set.of())).isFalse();
+
+        var cronHolidays = new com.sitemonitor.service.dbquery.DbQuerySchedule.Spec("CRON", 86_400, "0 8 * * *", List.of(), List.of(),
+                true, List.of());
+        Instant last = now.minus(30, ChronoUnit.HOURS);
+        assertThat(MonitoringOverviewService.missedPlannedRun(cronHolidays, last, now, java.util.Set.of())).isTrue();
+        java.time.LocalDate d0 = last.atZone(java.time.ZoneId.of("Europe/Istanbul")).toLocalDate().minusDays(1);
+        java.util.Set<java.time.LocalDate> holidays = new java.util.HashSet<>();
+        for (int i = 0; i < 5; i++) holidays.add(d0.plusDays(i));   // son kontrolden yarına dek tatil → tetik ileride
+        assertThat(MonitoringOverviewService.missedPlannedRun(cronHolidays, last, now, holidays)).isFalse();
+
+        ScriptedMonitor m = k6(9, "x");
+        m.setScheduleMode("CRON"); m.setCronExpression("0 8 * * *");
+        assertThat(MonitoringOverviewService.isScriptedStale(m, "bozuk-zaman", now, java.util.Set.of())).isFalse();
+        assertThat(MonitoringOverviewService.isScriptedStale(m, ISO.format(last), now, java.util.Set.of())).isTrue();
+        assertThat(MonitoringOverviewService.isScriptedStale(m, ISO.format(last) + "Z", now, java.util.Set.of())).isTrue();
     }
 
     @Test

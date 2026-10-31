@@ -2204,9 +2204,11 @@ public class ScriptedCheckerService {
                                           boolean viaProxy, String k6Version) {
         String status = (r != null && r.timedOut()) ? "TIMEOUT" : "ERROR";
         Integer exitCode = r != null ? r.exitCode() : -1;
-        String out = SecretMask.maskValues(maskedOutput, secretValues);
+        // Dış catch yolu da koşumda üretilen jetonları maskeler (k6r inceleme L2 — ana yol maskValues'tan SONRA maskTokens).
+        String out = SecretMask.maskTokens(SecretMask.maskValues(maskedOutput, secretValues));
+        String msg = SecretMask.maskTokens(message);
         return new ScriptedResult(status, false, durationMs, exitCode,
-                null, null, null, null, null, null, out, message, viaProxy, Phases.EMPTY, k6Version);
+                null, null, null, null, null, null, out, msg, viaProxy, Phases.EMPTY, k6Version);
     }
 
     /** Sonuç montajı — saf ve statik, böylece Spring'siz/k6'sız birim-test edilebilir. */

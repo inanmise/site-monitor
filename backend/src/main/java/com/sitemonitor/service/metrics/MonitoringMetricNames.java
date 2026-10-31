@@ -260,9 +260,11 @@ public final class MonitoringMetricNames {
         l.add(new Def(PUSH_ENABLED, Scope.CLUSTER, List.of(), "1 when personal push notifications are enabled"));
         // Sentetik izleme koşumları (k6r D3)
         l.add(new Def(SCRIPTED_RUNS, Scope.CLUSTER, List.of("status"),
-                "Scheduled synthetic (k6) runs in the last 24 hours by result (PASS, FAIL, ERROR, TIMEOUT, NO_CHECKS; zeros included)"));
+                "Scheduled synthetic (k6) runs in the last 24 hours by result (PASS, FAIL, ERROR, TIMEOUT, NO_CHECKS; zeros included; "
+                        + "manual runs and confirmation / recovery rechecks excluded)"));
         l.add(new Def(SCRIPTED_K6_VERSIONS, Scope.CLUSTER, List.of("version"),
-                "Scheduled synthetic (k6) runs in the last 24 hours by the k6 version that ran them (unknown = not recorded)"));
+                "Scheduled synthetic (k6) runs in the last 24 hours by the k6 version that ran them (unknown = not recorded; "
+                        + "manual runs and confirmation / recovery rechecks excluded)"));
         // Kendi sağlığı
         l.add(new Def(WATCHDOG_STATUS, Scope.CLUSTER, List.of(),
                 "Self-monitoring overall state: 0 up, 1 degraded, 2 down, 3 disabled, 4 never evaluated"));

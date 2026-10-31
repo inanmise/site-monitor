@@ -3,7 +3,9 @@ package com.sitemonitor.service;
 import com.sitemonitor.model.AlertEvent;
 import com.sitemonitor.model.ScriptedCheck;
 import com.sitemonitor.model.ScriptedMonitor;
+import com.sitemonitor.model.NetworkOutageEvent;
 import com.sitemonitor.repository.AlertEventRepository;
+import com.sitemonitor.repository.NetworkOutageEventRepository;
 import com.sitemonitor.repository.ScriptedCheckRepository;
 import com.sitemonitor.repository.ScriptedMonitorRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -18,6 +20,7 @@ import org.mockito.quality.Strictness;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -50,6 +53,7 @@ class ScriptedAnomalyGuardOpenOutageTest {
     @Mock UserPushService userPushService;
     @Mock AppSettingsService appSettings;
     @Mock AlertEventRepository alertRepo;
+    @Mock NetworkOutageEventRepository outageRepo;
 
     @InjectMocks ScriptedAnomalyGuard guard;
 
@@ -65,6 +69,9 @@ class ScriptedAnomalyGuardOpenOutageTest {
         monitor.setNotifyEmail(true);
         monitor.setTimeoutSeconds(60);
         guard.setAlertEventRepository(alertRepo);
+        guard.setNetworkOutageEventRepository(outageRepo);
+        when(monitorRepo.findById(7L)).thenAnswer(i -> Optional.of(monitor));   // güncel satır (k6r inceleme #4)
+        when(outageRepo.findFirstBySourceAndStatusOrderByIdDesc(anyString(), anyString())).thenReturn(Optional.empty());
 
         when(appSettings.getBoolean(eq("site.monitor.scripted.anomaly.enabled"), anyBoolean())).thenReturn(true);
         when(appSettings.getInt(eq("site.monitor.scripted.anomaly.timeout-streak"), anyInt())).thenReturn(5);
@@ -163,6 +170,85 @@ class ScriptedAnomalyGuardOpenOutageTest {
         when(checkRepo.findRecentScheduledByMonitorId(7L, 5)).thenReturn(checks("TIMEOUT", "TIMEOUT", "PASS", "TIMEOUT", "TIMEOUT"));
 
         assertThat(guard.evaluate(monitor, result("TIMEOUT", 1L))).isNull();
+        verifyNoInteractions(alertRepo);
+    }
+
+    @Test
+    @DisplayName("inceleme #1: teyit / kurtarma YENİDEN KONTROLÜNÜN zaman aşımı seriyi değerlendirmez (alarm açılmadan kapatmaz)")
+    void recheckTimeout_doesNotEvaluateStreak() {
+        when(alertRepo.findOpenAlerts(anyString(), anyString())).thenReturn(List.of());
+
+        assertThat(guard.evaluate(monitor, result("TIMEOUT", 1L), false, true)).isNull();
+
+        verify(checkRepo, never()).findRecentScheduledByMonitorId(anyLong(), anyInt());
+        verify(monitorRepo, never()).disableIfActive(anyLong(), anyString(), anyString());
+        verifyNoInteractions(emailService, userPushService, activityLog);
+    }
+
+    @Test
+    @DisplayName("inceleme #1: yeniden kontrolde de istek tavanı aşımı TEK koşumda kapatır (koşum yükü gerçek)")
+    void recheckRequestCapStillDisables() {
+        assertThat(guard.evaluate(monitor, result("PASS", 5000L), false, true)).contains("5000");
+        verify(monitorRepo).disableIfActive(anyLong(), anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("inceleme #1: açık alarm yok ama SCRIPTED_FAIL toplu kesinti bastırması sürüyor → kapatılmaz")
+    void ongoingSuppression_keepsMonitor() {
+        when(alertRepo.findOpenAlerts(anyString(), anyString())).thenReturn(List.of());
+        NetworkOutageEvent ev = new NetworkOutageEvent();
+        ev.setSource(EscalationService.TYPE_SCRIPTED_FAIL);
+        ev.setStatus("ONGOING");
+        when(outageRepo.findFirstBySourceAndStatusOrderByIdDesc(EscalationService.TYPE_SCRIPTED_FAIL, "ONGOING"))
+                .thenReturn(Optional.of(ev));
+
+        assertThat(guard.evaluate(monitor, result("TIMEOUT", 1L))).isNull();
+
+        verify(monitorRepo, never()).disableIfActive(anyLong(), anyString(), anyString());
+        verifyNoInteractions(emailService, userPushService, activityLog);
+    }
+
+    @Test
+    @DisplayName("inceleme #1: bastırma okunamadı → kapatılmaz (bilinmeyen = dokunma)")
+    void suppressionReadFailure_keepsMonitor() {
+        when(alertRepo.findOpenAlerts(anyString(), anyString())).thenReturn(List.of());
+        when(outageRepo.findFirstBySourceAndStatusOrderByIdDesc(anyString(), anyString()))
+                .thenThrow(new org.springframework.dao.QueryTimeoutException("x"));
+
+        assertThat(guard.evaluate(monitor, result("TIMEOUT", 1L))).isNull();
+        verify(monitorRepo, never()).disableIfActive(anyLong(), anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("inceleme #4: tarama sırasında ad değişti — açık alarm GÜNCEL adla aranır, izleme korunur")
+    void renamedDuringSweep_alarmLookedUpWithFreshName() {
+        ScriptedMonitor fresh = new ScriptedMonitor();
+        fresh.setId(7L);
+        fresh.setName("Ödeme akışı v2");
+        fresh.setTeamId(5L);
+        fresh.setActive(true);
+        when(monitorRepo.findById(7L)).thenReturn(Optional.of(fresh));
+        AlertEvent renamed = openFail(7L, 5L);
+        renamed.setDomain("Ödeme akışı v2");
+        when(alertRepo.findOpenAlerts("Ödeme akışı v2", EscalationService.TYPE_SCRIPTED_FAIL)).thenReturn(List.of(renamed));
+
+        assertThat(guard.evaluate(monitor, result("TIMEOUT", 1L))).isNull();   // tarama başındaki kopyanın adı eski
+
+        verify(alertRepo, never()).findOpenAlerts("Ödeme akışı", EscalationService.TYPE_SCRIPTED_FAIL);
+        verify(monitorRepo, never()).disableIfActive(anyLong(), anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("inceleme #4: güncel satır okunamadı ya da silinmiş → kapatılmaz")
+    void freshRowUnreadableOrGone_keepsMonitor() {
+        when(monitorRepo.findById(7L)).thenThrow(new org.springframework.dao.QueryTimeoutException("x"));
+        assertThat(guard.evaluate(monitor, result("TIMEOUT", 1L))).isNull();
+
+        org.mockito.Mockito.reset(monitorRepo);
+        when(monitorRepo.findById(7L)).thenReturn(Optional.empty());
+        assertThat(guard.evaluate(monitor, result("TIMEOUT", 1L))).isNull();
+
+        verify(monitorRepo, never()).disableIfActive(anyLong(), anyString(), anyString());
         verifyNoInteractions(alertRepo);
     }
 

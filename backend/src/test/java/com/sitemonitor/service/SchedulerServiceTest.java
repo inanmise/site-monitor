@@ -2428,8 +2428,11 @@ class SchedulerServiceTest {
         verify(scriptedCheckRepo, org.mockito.Mockito.times(2)).save(saved.capture());
         assertThat(saved.getAllValues().get(0).getManual()).isTrue();
         assertThat(saved.getAllValues().get(1).getManual()).isFalse();
-        verify(guard).evaluate(m, res, true);
-        verify(guard).evaluate(m, res, false);
+        // k6r inceleme #1: manual=false çağrısı teyit / kurtarma zincirinin yeniden kontrolü → recheck=true; elle koşum işaretlenmez
+        assertThat(saved.getAllValues().get(0).getRecheck()).isNull();
+        assertThat(saved.getAllValues().get(1).getRecheck()).isTrue();
+        verify(guard).evaluate(m, res, true, false);
+        verify(guard).evaluate(m, res, false, true);
     }
 
     @Test

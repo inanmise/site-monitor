@@ -3,6 +3,7 @@ package com.sitemonitor.service;
 import com.sitemonitor.model.AlertEvent;
 import com.sitemonitor.model.ScriptedMonitor;
 import com.sitemonitor.repository.AlertEventRepository;
+import com.sitemonitor.repository.NetworkOutageEventRepository;
 import com.sitemonitor.repository.ScriptedCheckRepository;
 import com.sitemonitor.repository.ScriptedMonitorRepository;
 import lombok.RequiredArgsConstructor;
@@ -41,6 +42,12 @@ import java.util.concurrent.ConcurrentHashMap;
  * aşımı serisi izlemeyi KAPATMAZ, alarma dokunmaz, bildirim göndermez (yalnız INFO, izleme başına saatte bir). Alarm
  * okunamazsa da kapatılmaz (bilinmeyen = dokunma). İstek tavanı aşımı tetikleyicisi değişmez.
  *
+ * <p><b>Teyit zinciri sürerken (k6r inceleme #1).</b> Alarm teyit zincirinin SONUNDA açılır; zincirin yeniden kontrolleri
+ * ({@code scripted_checks.recheck = true}) seriye SAYILMAZ ve bir yeniden kontrol sonucu seriyi değerlendirmez — yoksa
+ * {@code confirm-attempts} ≥ 4'te alarm açılmadan seri dolar, izleme kapanır ve alarm hiç açılmazdı. SCRIPTED_FAIL için süren
+ * bir toplu kesinti bastırması ({@code network_outage_events} ONGOING) varsa da dokunulmaz: bastırma sırasında alarm açılmaz
+ * ama kesinti gerçektir.
+ *
  * <p><b>Kapatma SEBEBİYLE birlikte yazılır.</b> {@code active=false} tek başına kullanıcının
  * kendi kapattığı izlemeden ayırt edilemezdi; {@code disabledReason} ekranda kalıcı uyarı olarak
  * durur ve kullanıcı izlemeyi yeniden açtığında temizlenir.
@@ -78,6 +85,14 @@ public class ScriptedAnomalyGuard {
         this.alertEventRepo = repo;
     }
 
+    /** SCRIPTED_FAIL için süren toplu kesinti bastırmasını okumak için (k6r inceleme #1). Yoksa bu denetim atlanır. */
+    private NetworkOutageEventRepository outageEventRepo;
+
+    @Autowired(required = false)
+    void setNetworkOutageEventRepository(NetworkOutageEventRepository repo) {
+        this.outageEventRepo = repo;
+    }
+
     /** "Açık kesinti var — kapatılmadı" satırının izleme başına en sık yazılma aralığı (ms). */
     static final long OPEN_OUTAGE_LOG_EVERY_MS = 3_600_000L;
     /** İzleme kimliği → son "kapatılmadı" günlük satırının anı. Sınırlı: tavanı aşınca temizlenir. */
@@ -112,13 +127,22 @@ public class ScriptedAnomalyGuard {
      *               Guard yalnız zamanlanmış koşumlarda çalışır ve seriyi yalnız zamanlanmış kayıtlardan sayar.
      */
     public String evaluate(ScriptedMonitor m, ScriptedCheckerService.ScriptedResult res, boolean manual) {
+        return evaluate(m, res, manual, false);
+    }
+
+    /**
+     * @param recheck teyit / kurtarma zincirinin YENİDEN KONTROLÜ mü (k6r inceleme #1): istek tavanı aşımı yine kapatır (koşum
+     *                yükü gerçek), zaman aşımı serisi DEĞERLENDİRİLMEZ — seri yalnız zamanlanmış koşumlardan ve yalnız
+     *                zamanlanmış bir koşumun ardından sayılır.
+     */
+    public String evaluate(ScriptedMonitor m, ScriptedCheckerService.ScriptedResult res, boolean manual, boolean recheck) {
         if (manual) return null;
         if (!enabled() || m == null || m.getId() == null || res == null) return null;
         // Zaten kapalıysa tekrar kapatma: aynı e-posta her manuel tetikte yeniden giderdi.
         if (Boolean.FALSE.equals(m.getActive())) return null;
         try {
             String reason = severeViolation(res);
-            if (reason == null) reason = timeoutStreak(m, res);
+            if (reason == null && !recheck) reason = timeoutStreak(m, res);
             if (reason == null) return null;
             return disable(m, reason) ? reason : null;
         } catch (Exception e) {
@@ -163,30 +187,49 @@ public class ScriptedAnomalyGuard {
     }
 
     /**
-     * Zaman aşımı serisi izlemeyi kapatmamalı mı (k6r B2): izlemenin AÇIK {@code SCRIPTED_FAIL} alarmı varsa (yalnız BU
+     * Zaman aşımı serisi izlemeyi kapatmamalı mı (k6r B2 + inceleme #1 / #4): izleme ÖNCE güncel satırından okunur (tarama
+     * sırasında ad / takım değişmişse alarm yeni adla aranır); izlemenin AÇIK {@code SCRIPTED_FAIL} alarmı varsa (yalnız BU
      * izlemenin olayı — ad yalnız takım içinde tekil, başka takımın aynı adlı senaryosunun alarmı sayılmaz:
-     * {@link EscalationService#closableBy}) ya da alarm okunamadıysa true. Okuyucu yoksa (elle kurulan testler) false = eski
-     * davranış.
+     * {@link EscalationService#closableBy}) ya da SCRIPTED_FAIL için süren bir toplu kesinti bastırması varsa ya da bunlardan
+     * biri okunamadıysa (satır silinmiş dahil) true. Alarm okuyucusu yoksa (elle kurulan testler) false = eski davranış.
      */
     private boolean outageAlarmKeepsMonitor(ScriptedMonitor m) {
         AlertEventRepository repo = alertEventRepo;
         if (repo == null) return false;
-        boolean open = false;
+        ScriptedMonitor cur;
         try {
-            Map<String, Object> owner = ownerCtx(m);
-            for (AlertEvent a : repo.findOpenAlerts(m.getName(), EscalationService.TYPE_SCRIPTED_FAIL)) {
-                if (a != null && EscalationService.closableBy(a, owner)) { open = true; break; }
-            }
+            cur = monitorRepo.findById(m.getId()).orElse(null);
         } catch (Exception e) {
             if (logDue(m.getId()))
-                log.warn("Anomali guard'ı: {} için açık kesinti alarmı okunamadı ({}) — zaman aşımı serisine rağmen izleme "
-                        + "KAPATILMADI (bilinmeyen durumda dokunulmaz)", m.getName(), e.getClass().getSimpleName());
+                log.warn("Anomali guard'ı: {} güncel satırı okunamadı ({}) — zaman aşımı serisine rağmen izleme KAPATILMADI "
+                        + "(bilinmeyen durumda dokunulmaz)", m.getName(), e.getClass().getSimpleName());
+            return true;
+        }
+        if (cur == null) return true;   // arada silindi: kapatılacak satır yok
+        String name = cur.getName() == null ? m.getName() : cur.getName();
+        boolean open = false;
+        boolean suppressed = false;
+        try {
+            Map<String, Object> owner = ownerCtx(cur);
+            for (AlertEvent a : repo.findOpenAlerts(name, EscalationService.TYPE_SCRIPTED_FAIL)) {
+                if (a != null && EscalationService.closableBy(a, owner)) { open = true; break; }
+            }
+            NetworkOutageEventRepository outages = outageEventRepo;
+            if (!open && outages != null)
+                suppressed = outages.findFirstBySourceAndStatusOrderByIdDesc(EscalationService.TYPE_SCRIPTED_FAIL, "ONGOING").isPresent();
+        } catch (Exception e) {
+            if (logDue(m.getId()))
+                log.warn("Anomali guard'ı: {} için açık kesinti alarmı / bastırma okunamadı ({}) — zaman aşımı serisine rağmen "
+                        + "izleme KAPATILMADI (bilinmeyen durumda dokunulmaz)", name, e.getClass().getSimpleName());
             return true;
         }
         if (open && logDue(m.getId()))
             log.info("Anomali guard'ı: {} son koşumlarının hepsi zaman aşımı, ama izlemenin AÇIK kesinti alarmı var — hedef "
-                    + "gerçekten yanıt vermiyor; izleme kapatılmadı, alarma dokunulmadı", m.getName());
-        return open;
+                    + "gerçekten yanıt vermiyor; izleme kapatılmadı, alarma dokunulmadı", name);
+        if (suppressed && logDue(m.getId()))
+            log.info("Anomali guard'ı: {} son koşumlarının hepsi zaman aşımı, ama sentetik izlemeler için toplu kesinti bastırması "
+                    + "sürüyor — izleme kapatılmadı", name);
+        return open || suppressed;
     }
 
     /** İzleme başına saatte bir günlük satırı (sınırlı harita). */

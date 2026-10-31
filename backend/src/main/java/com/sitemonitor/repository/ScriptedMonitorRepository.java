@@ -29,6 +29,21 @@ public interface ScriptedMonitorRepository extends JpaRepository<ScriptedMonitor
     @Query(value = "UPDATE scripted_monitors SET next_run_at = :next WHERE id = :id", nativeQuery = true)
     int updateNextRunAt(@Param("id") Long id, @Param("next") String next);
 
+    /**
+     * Planı İLK kez kuran çağıran (k6r inceleme #5): yalnız {@code next_run_at} hâlâ NULL ise yazar. Klasik gövde ile dağıtık
+     * gönderim aynı anda "first" görürse yalnız 1 satır alan küme vadesini sıfırlar ve koşar (0 = öteki kurdu).
+     */
+    @org.springframework.transaction.annotation.Transactional
+    @Modifying
+    @Query(value = "UPDATE scripted_monitors SET next_run_at = :next WHERE id = :id AND next_run_at IS NULL", nativeQuery = true)
+    int updateNextRunAtIfNull(@Param("id") Long id, @Param("next") String next);
+
+    /** Planı ÖNE ÇEKEN çağıran (k6r inceleme #5): yalnız okunan değer hâlâ yerindeyse yazar (0 = başka çağıran değiştirdi). */
+    @org.springframework.transaction.annotation.Transactional
+    @Modifying
+    @Query(value = "UPDATE scripted_monitors SET next_run_at = :next WHERE id = :id AND next_run_at = :prev", nativeQuery = true)
+    int updateNextRunAtIfEquals(@Param("id") Long id, @Param("prev") String prev, @Param("next") String next);
+
     /** Tatil takvimi değişince planı yeniden kurulacak aktif izlemeler: [id, zamanlama kipi] (k6r D2 — hafif okuma). */
     @Query("SELECT m.id, m.scheduleMode FROM ScriptedMonitor m WHERE m.active = true AND m.skipHolidays = true")
     List<Object[]> findHolidayScheduledRows();

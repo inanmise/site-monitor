@@ -43,9 +43,13 @@ public interface ScriptedCheckRepository extends JpaRepository<ScriptedCheck, Lo
     @Query("SELECT r FROM ScriptedCheck r WHERE r.monitorId = :id ORDER BY r.checkedAt DESC LIMIT :limit")
     List<ScriptedCheck> findRecentByMonitorId(@Param("id") Long id, @Param("limit") int limit);
 
-    /** Yalnız ZAMANLANMIŞ koşumlar (manual NULL/false), en yeni önce — anomali guard'ının zaman aşımı serisi (2026-09-29). */
+    /**
+     * Yalnız ZAMANLANMIŞ koşumlar (manual NULL/false), en yeni önce — anomali guard'ının zaman aşımı serisi (2026-09-29).
+     * Teyit / kurtarma zincirinin yeniden kontrolleri ({@code recheck = true}, 2026-10-31 k6r inceleme #1) de DIŞARIDA: alarm
+     * zincirin sonunda açılır; zincir adımları seriye girerse alarm açılmadan seri dolup izleme kapanırdı.
+     */
     @Query("SELECT r FROM ScriptedCheck r WHERE r.monitorId = :id AND (r.manual IS NULL OR r.manual = false) "
-            + "ORDER BY r.checkedAt DESC LIMIT :limit")
+            + "AND (r.recheck IS NULL OR r.recheck = false) ORDER BY r.checkedAt DESC LIMIT :limit")
     List<ScriptedCheck> findRecentScheduledByMonitorId(@Param("id") Long id, @Param("limit") int limit);
 
     @Query("SELECT r FROM ScriptedCheck r WHERE r.monitorId = :id AND r.checkedAt >= :since ORDER BY r.checkedAt DESC LIMIT :limit")
