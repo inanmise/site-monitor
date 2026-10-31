@@ -47,6 +47,7 @@ class MonitorNotesControllerTest {
     @MockitoBean com.sitemonitor.repository.DnsMonitorRepository dnsRepo;
     @MockitoBean com.sitemonitor.repository.DomainMonitorRepository domainRepo;
     @MockitoBean com.sitemonitor.repository.ScriptedMonitorRepository scriptedRepo;
+    @MockitoBean com.sitemonitor.repository.DbQueryMonitorRepository dbQueryRepo;
     @MockitoBean com.sitemonitor.repository.CertificateInventoryRepository inventoryRepo;
 
     // Web-context altyapısı (interceptor/filter) için gerekli mock'lar
@@ -398,6 +399,7 @@ class MonitorNotesControllerTest {
         com.sitemonitor.model.PingMonitor pi = new com.sitemonitor.model.PingMonitor(); pi.setTeamId(1L);
         com.sitemonitor.model.DomainMonitor d = new com.sitemonitor.model.DomainMonitor(); d.setTeamId(1L);
         com.sitemonitor.model.ScriptedMonitor s = new com.sitemonitor.model.ScriptedMonitor(); s.setTeamId(1L);
+        com.sitemonitor.model.DbQueryMonitor dq = new com.sitemonitor.model.DbQueryMonitor(); dq.setTeamId(1L);
         com.sitemonitor.model.DnsMonitor dn = new com.sitemonitor.model.DnsMonitor(); dn.setStandalone(true); dn.setTeamId(1L);
         com.sitemonitor.model.PortMonitor po = new com.sitemonitor.model.PortMonitor(); po.setStandalone(true); po.setTeamId(1L);
         when(httpRepo.findByUrl("t")).thenReturn(List.of(h));
@@ -407,6 +409,7 @@ class MonitorNotesControllerTest {
         when(pingRepo.findByHost("t")).thenReturn(List.of(pi));
         when(domainRepo.findByDomain("t")).thenReturn(List.of(d));
         when(scriptedRepo.findByName("t")).thenReturn(List.of(s));
+        when(dbQueryRepo.findByName("t")).thenReturn(List.of(dq));
         when(dnsRepo.findByDomain("t")).thenReturn(List.of(dn));
         when(portRepo.findByHostAndPortAndActiveTrue("t", 443)).thenReturn(List.of(po));
 
