@@ -597,6 +597,23 @@ describe('DbQueryMonitorPage — inceleme düzeltmeleri (2026-10-31)', () => {
   })
 })
 
+describe('DbQueryMonitorPage — kontrol geçmişi rozetleri', () => {
+  it('teyit / kurtarma satırı "Recheck", elle satır "Manual" rozeti taşır; zamanlanmış satır rozetsiz', async () => {
+    const base = { ok: true, status: 'OK', duration_ms: 12, row_count: 1, metric_value: 1, rule_results: [] }
+    api.monitoring.getCheckHistory.mockResolvedValue({ success: true, data: { items: [
+      { ...base, id: 3, checked_at: '2026-10-31T09:02:00', recheck: true },
+      { ...base, id: 2, checked_at: '2026-10-31T09:01:00', manual: true },
+      { ...base, id: 1, checked_at: '2026-10-31T09:00:00' },
+    ], counts: { total: 3, fail: 0 }, total: 3, page: 0, size: 50 } })
+    window.history.replaceState({}, '', '/?tab=dbquery&monitor=1&mtab=control')
+    render(<DbQueryMonitorPage {...props} />)
+    await waitFor(() => expect(document.querySelectorAll('[data-slot="dbq-hist-recheck"]')).toHaveLength(1))
+    expect(document.querySelector('[data-slot="dbq-hist-recheck"]').textContent).toBe('Recheck')
+    expect(document.querySelector('[data-slot="dbq-hist-recheck"]')).toHaveAttribute('title', expect.stringMatching(/baseline/))
+    expect(document.querySelectorAll('[data-slot="dbq-hist-manual"]')).toHaveLength(1)
+  })
+})
+
 describe('DbQueryMonitorPage — paylaşımla erişim (O5 / K2)', () => {
   const grantProps = { systemRole: 'USER', teamId: 5, teamName: 'SY-A', globalAdmin: false,
     myTeams: [{ id: 5, name: 'SY-A' }, { id: 8, name: 'Paylaşan Takım', grant: true }] }

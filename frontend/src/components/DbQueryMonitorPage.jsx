@@ -29,7 +29,7 @@ import MonitorPageHeader from './monitoring/MonitorPageHeader.jsx'
 import TagInput from './ui/TagInput.jsx'
 import {
   Trash2, DatabaseZap, LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, Inbox, Copy, Cable,
-  LibraryBig, ChevronDown, Hand, Info, BellRing,
+  LibraryBig, ChevronDown, Hand, Info, BellRing, Repeat,
 } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
 import CheckHistoryTab from './history/CheckHistoryTab.jsx'
@@ -1050,6 +1050,11 @@ function HistoryCells({ c, t, open, onToggle }) {
       {c.manual && (
         <Badge variant="outline" data-slot="dbq-hist-manual" className="gap-1 px-1.5 py-0 text-[10.5px]">
           <Hand aria-hidden="true" className="size-3" />{t('dbq.detail.manual')}
+        </Badge>
+      )}
+      {c.recheck && (
+        <Badge variant="outline" data-slot="dbq-hist-recheck" title={t('dbq.detail.recheckHint')} className="gap-1 px-1.5 py-0 text-[10.5px]">
+          <Repeat aria-hidden="true" className="size-3" />{t('dbq.detail.recheck')}
         </Badge>
       )}
     </span>

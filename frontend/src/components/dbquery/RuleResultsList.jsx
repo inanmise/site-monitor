@@ -40,7 +40,7 @@ export function ResultLevelBadge({ result, className = '' }) {
 const valueOrDash = (v) => (v == null || v === '' ? '—' : String(v))
 
 /** Sunucu not kodları (`DbQueryEvaluator.NOTE_*`) — `dbq.rr.note.<kod>` ile çevrilir. */
-export const RESULT_NOTE_CODES = ['column_missing', 'not_numeric', 'no_rows', 'first_run', 'prev_zero', 'partial', 'capped', 'query_failed']
+export const RESULT_NOTE_CODES = ['column_missing', 'not_numeric', 'no_rows', 'first_run', 'prev_zero', 'partial', 'capped', 'query_failed', 'null_value', 'prev_unreadable']
 
 /** Not → metin: bilinen kod çevrilir, bilinmeyen not (eski kayıt / serbest metin) olduğu gibi gösterilir. */
 export function resultNoteText(t, note) {
