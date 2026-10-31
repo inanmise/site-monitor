@@ -322,7 +322,7 @@ class ScriptedRepositoriesTest {
      * ({@code LIMIT :limit} — HQL 6); yeni koşum verisi kolonları kalıcı.
      */
     @Test
-    @DisplayName("stepSeriesRaw: elle koşum ve adımsız satır dışarıda, DESC, limit; koşum verisi kolonları yazılır / okunur")
+    @DisplayName("stepSeriesRaw: elle koşum, yeniden kontrol ve adımsız satır dışarıda, DESC, limit; koşum verisi kolonları yazılır / okunur")
     void stepSeriesRaw_scheduledOnlyDescLimited() {
         ScriptedCheck a = check(77L, true, 100, "2026-10-31T10:00:00");
         a.setStepsJson("[{\"name\":\"Giriş\",\"duration_ms\":36}]");
@@ -340,7 +340,11 @@ class ScriptedRepositoriesTest {
         ScriptedCheck noSteps = check(77L, true, 50, "2026-10-31T10:07:00");
         ScriptedCheck other = check(78L, true, 50, "2026-10-31T10:08:00");
         other.setStepsJson("[]");
-        checkRepo.saveAll(List.of(a, b, manual, noSteps, other));
+        // Teyit / kurtarma yeniden kontrolü (k6r son inceleme) trende girmez — kesinti sırasında 4× sayılırdı
+        ScriptedCheck recheck = check(77L, false, 70, "2026-10-31T10:09:00");
+        recheck.setRecheck(true);
+        recheck.setStepsJson("[{\"name\":\"Giriş\"}]");
+        checkRepo.saveAll(List.of(a, b, manual, noSteps, other, recheck));
 
         List<Object[]> rows = checkRepo.stepSeriesRaw(77L, "2026-10-31T00:00:00", "2026-10-31T23:59:59", 10);
         assertThat(rows).extracting(r -> r[0]).containsExactly("2026-10-31T10:05:00", "2026-10-31T10:00:00");
