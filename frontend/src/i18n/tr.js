@@ -23940,6 +23940,7 @@ export const TR = {
   "prs.cancel.notSentText": "İptal isteği gönderilemedi. Bağlantınızı denetleyip yeniden deneyin; analiz sürüyor olabilir.",
   "prs.cancel.unsupported": "Bu sunucu sürümü analiz iptalini desteklemiyor; analiz kendiliğinden bitecek.",
   "prs.cancel.notRunning": "Analiz zaten bitmiş; sonuç gösteriliyor.",
+  "prs.cancel.monitorGone": "İzleme bulunamadı ya da artık görme yetkiniz yok; analiz geçmişi yenilendi.",
   "prs.cancelled.title": "Analiz iptal edildi",
   "prs.cancelled.body": "Analiz bir kullanıcı isteğiyle durduruldu; sonuç kaydedilmedi. Yeniden analiz edebilirsiniz.",
   "prs.old.body": "{0} tarihli eski bir analiz gösteriliyor.",

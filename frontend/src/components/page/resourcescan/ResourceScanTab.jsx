@@ -361,10 +361,39 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
       }
       return
     }
-    // Eski sunucu (uç yok): 405 ya da kodsuz / genel 404 → düğme gizlenir; analiz yine sürer
-    if (res.status === 405 || (res.status === 404 && res.code !== 'RESOURCE_SCAN_NOT_FOUND')) {
+    // Eski sunucu (uç yok): 405 ya da kodsuz 404 → düğme gizlenir; analiz yine sürer
+    if (res.status === 405 || (res.status === 404 && !res.code)) {
       setCancelSupported(false)
       toast.info(t('prs.cancel.unsupported'))
+      return
+    }
+    // Kodlu genel 404 (NOT_FOUND) İKİ anlama gelir (D-2): izleme silinmiş / görme yetkisi kalkmış (yeni sunucu) ya da uç
+    // yok (eski sunucuda `/api/**` genel 404'ü de NOT_FOUND kodunu taşır). İzlemenin geçmişi yoklanır: okunuyorsa izleme
+    // yerinde, demek ki uç yok → eski sunucu, düğme gizlenir; geçmiş de 404 ise izleme gitmiş → düğme kalır, geçmiş yenilenir
+    if (res.status === 404 && res.code !== 'RESOURCE_SCAN_NOT_FOUND') {
+      let probe = null
+      setCancelling(true)
+      try {
+        probe = await api.monitoring.resourceScans(monitorId, 1)
+      } catch {
+        probe = null
+      } finally {
+        if (alive.current) setCancelling(false)
+      }
+      if (!alive.current) return
+      if (probe?.success) {
+        setCancelSupported(false)
+        toast.info(t('prs.cancel.unsupported'))
+        return
+      }
+      if (probe?.status === 404) {
+        toast.error(res.error || t('prs.cancel.monitorGone'), { details: res })
+        setPollNonce((n) => n + 1)
+        reload()
+      } else {
+        // yoklama da okunamadı (ağ / sunucu hatası): düğme kalır, kullanıcı yeniden deneyebilir
+        toast.error(res.error || t('prs.cancel.notSentText'), { details: res })
+      }
       return
     }
     if (res.code === 'RESOURCE_SCAN_NOT_RUNNING' || res.code === 'RESOURCE_SCAN_NOT_FOUND') {

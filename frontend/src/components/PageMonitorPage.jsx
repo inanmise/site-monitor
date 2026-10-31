@@ -204,6 +204,9 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
   const [detailTab, setDetailTab] = useState('issues')
   // Kaynak analizi sekmesinin bir kez açıldığı izleme (r177 H10) — o izlemede sekme gizlense de bağlı kalır
   const [resVisited, setResVisited] = useState(null)
+  // Bu sayfada izleme penceresi en az bir kez açıldı mı (r177 O-4): açılmadan önce (derin bağlantıda liste yüklenirken)
+  // kaynak analizi anahtarları (prs / prs_v / prs_b) adresten SİLİNMEZ — sekme açılınca onları okur
+  const [detailOpened, setDetailOpened] = useState(false)
   const deepLinkTab = useDeepLinkTab('issues')   // ?monitor=…&mtab=changes derin bağlantısı — ilk açılışta bir kez
   // Modaldan koşturulan kontrol Kontrol Geçmişi sekmesini de tazelesin. Sekmenin kendi 30 sn'lik
   // canlı yenilemesi yetmiyor: 1. sayfa dışındaysan ya da özel aralık seçtiysen KAPALI. Sinyal,
@@ -731,8 +734,10 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
     // Tanılama penceresinde gösterilen çalıştırma (2026-10-05) — bağlantı paylaşılınca KAYITLI sonuç açılır
     pidx: selected && pageDx?.monitorId === selected.id && canDiagnoseRow(selected) ? (pageDx.runId ?? null) : null,
     // Kaynak analizi (r177): seçili analiz / görünüm / ikinci analiz anahtarlarını sekme KENDİSİ yazar (görünürken);
-    // sekme görünmüyorsa (başka detay sekmesi ya da pencere kapalı) burada silinir — anahtarlar o zaman eşlemeye girer
-    ...(selected && detailTab === 'resources' ? {} : { prs: null, prs_v: null, prs_b: null }),
+    // pencere açıkken başka detay sekmesine geçilince ya da pencere KAPANINCA burada silinir. Pencere henüz hiç
+    // açılmadıysa (paylaşılan bağlantıda izleme listesi yükleniyor) dokunulmaz — yoksa 300 ms sonra silinir ve sekme
+    // açıldığında seçili analiz / karşılaştırma kaybolurdu (O-4)
+    ...((selected && detailTab === 'resources') || (!selected && !detailOpened) ? {} : { prs: null, prs_v: null, prs_b: null }),
     // range/hfrom/hto/hst artık CheckHistoryTab'ın kendi URL senkronunda
   })
 
@@ -741,6 +746,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
   useEffect(() => {
     if (selectedId != null && detailTab === 'resources') setResVisited((v) => (v === selectedId ? v : selectedId))
   }, [selectedId, detailTab])
+  useEffect(() => { if (selectedId != null) setDetailOpened(true) }, [selectedId])
 
   const statItems = [
     { key: 'total',    Icon: LayoutDashboard, label: t('page.dashTotal'),    value: counts.total,    cls: 'total'    },
