@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { ShieldCheck, ShieldAlert, ShieldQuestion, Table2, Info, AlertOctagon } from 'lucide-react'
+import { ShieldCheck, ShieldAlert, ShieldQuestion, Table2, Info, AlertOctagon, RotateCw } from 'lucide-react'
 import { api } from '../../api/client'
 import { useLanguage, useT } from '../../i18n/index.jsx'
 import { Textarea } from '@/components/shadcn/textarea'
@@ -11,7 +11,7 @@ import AlertBanner from '../ui/AlertBanner.jsx'
 import { FieldError } from '../ui/Field.jsx'
 import { Spinner } from '../ui/Progress.jsx'
 import {
-  MAX_SQL_CHARS, indent, isKnownGuardCode, lineCount, newlineWithIndent, offsetOf,
+  MAX_SQL_CHARS, indent, isGuardTimeout, isKnownGuardCode, lineCount, newlineWithIndent, offsetOf,
 } from './sqlEditorModel.js'
 
 /** Canlı denetim bekleme süresi (ms) — yazarken her tuşta istek gitmesin. */
@@ -44,14 +44,16 @@ function tOr(t, key, fallback) {
  *   • checking  — denetleniyor (nötr)
  *   • ok        — YALNIZ sunucu `ok: true` derse yeşil "güvenlik denetiminden geçti"
  *   • rejected  — ihlaller (satır:sütun; tıklayınca o satıra odak)
- *   • unknown   — ağ / sunucu hatası: "denetlenemedi" (nötr — asla "güvenli" değil)
+ *   • unknown   — ağ / sunucu hatası ya da sunucunun ayrıştırma zaman sınırı (`SQL_UNPARSABLE` + belirteç `TIMEOUT`,
+ *                 `isGuardTimeout`): "denetlenemedi" (nötr — asla "güvenli", asla "reddedildi" değil) + "Yeniden denetle"
  *   • idle      — devre dışı (salt okunur) görünüm: denetim yapılmaz, durum satırı çizilmez
  * Sunucunun kayıtta döndürdüğü ihlaller (`violations` prop, 400 DBQUERY_SQL_REJECTED) değer DEĞİŞENE dek önceliklidir.
  *
  * Klavye: Tab iki boşluk girintiler (çok satırlı seçimde her satırı), Shift+Tab azaltır, Enter bulunulan satırın
  * girintisini korur. Alandan Tab ile çıkmak için önce Esc (sonraki Tab odağı taşır) — ekranda yazılı.
  *
- * `onGuardChange(result)`: `{ status, ok (true | false | null), violations, tables, message }` — yalnız durum değişince.
+ * `onGuardChange(result)`: `{ status, ok (true | false | null), violations, tables, message, timeout }` — yalnız durum
+ * değişince; `timeout: true` = sunucu ayrıştırma süresi doldu (status 'unknown', ok null, violations boş).
  */
 export default function SqlEditor({ value, onChange, dbType, fieldError, violations, disabled = false, onGuardChange }) {
   const t = useT()
@@ -62,6 +64,7 @@ export default function SqlEditor({ value, onChange, dbType, fieldError, violati
   const pendingSel = useRef(null)
   const escTab = useRef(false)
   const seqRef = useRef(0)
+  const [recheck, setRecheck] = useState(0)
   const text = value ?? ''
   const [guard, setGuard] = useState({ status: disabled ? 'idle' : (text.trim() ? 'checking' : 'empty'), violations: [], tables: [], message: null })
 
@@ -96,8 +99,13 @@ export default function SqlEditor({ value, onChange, dbType, fieldError, violati
         const d = res?.success ? res.data : null
         if (d && typeof d === 'object') {
           const list = Array.isArray(d.violations) ? d.violations : []
-          const status = d.ok === true && list.length === 0 ? 'ok' : (d.ok === false || list.length > 0 ? 'rejected' : 'unknown')
-          next = { status, violations: list, tables: Array.isArray(d.tables) ? d.tables : [], message: null }
+          if (isGuardTimeout(list)) {
+            // Ayrıştırma zaman sınırı: sorgu kötü değil, şimdilik denetlenemedi — ileti sunucudan
+            next = { status: 'unknown', violations: [], tables: [], message: list[0].message || null, timeout: true }
+          } else {
+            const status = d.ok === true && list.length === 0 ? 'ok' : (d.ok === false || list.length > 0 ? 'rejected' : 'unknown')
+            next = { status, violations: list, tables: Array.isArray(d.tables) ? d.tables : [], message: null }
+          }
         } else {
           next = { status: 'unknown', violations: [], tables: [], message: res?.error || res?.message || null }
         }
@@ -108,10 +116,12 @@ export default function SqlEditor({ value, onChange, dbType, fieldError, violati
       setGuard(next)
     }, SQL_CHECK_DEBOUNCE_MS)
     return () => { clearTimeout(timer); ctrl.abort() }
-  }, [text, dbType, disabled])
+  }, [text, dbType, disabled, recheck])
 
   const shown = servedActive
-    ? { status: 'rejected', violations: served.list, tables: guard.tables, message: null }
+    ? (isGuardTimeout(served.list)
+        ? { status: 'unknown', violations: [], tables: [], message: served.list[0].message || null, timeout: true }
+        : { status: 'rejected', violations: served.list, tables: guard.tables, message: null })
     : guard
 
   // Üst bileşene durum değişimi (aynı durum tekrar bildirilmez — kayıt düğmesini gereksiz yere yeniden çizdirmez)
@@ -119,7 +129,7 @@ export default function SqlEditor({ value, onChange, dbType, fieldError, violati
   cbRef.current = onGuardChange
   const lastKey = useRef('')
   useEffect(() => {
-    const key = `${shown.status}|${(shown.violations || []).map((v) => `${v.code}:${v.line}:${v.column}`).join(',')}|${(shown.tables || []).join(',')}`
+    const key = `${shown.status}|${shown.timeout ? 'T' : ''}|${(shown.violations || []).map((v) => `${v.code}:${v.line}:${v.column}`).join(',')}|${(shown.tables || []).join(',')}`
     if (key === lastKey.current) return
     lastKey.current = key
     cbRef.current?.({
@@ -128,8 +138,9 @@ export default function SqlEditor({ value, onChange, dbType, fieldError, violati
       violations: shown.violations || [],
       tables: shown.tables || [],
       message: shown.message || null,
+      timeout: shown.timeout === true,
     })
-  }, [shown.status, shown.violations, shown.tables, shown.message])
+  }, [shown.status, shown.violations, shown.tables, shown.message, shown.timeout])
 
   // ── Düzenleme ───────────────────────────────────────────────────────────────────────────────────────────────────
   const lines = useMemo(() => lineCount(text), [text])
@@ -203,7 +214,7 @@ export default function SqlEditor({ value, onChange, dbType, fieldError, violati
 
       {/* Kural özeti — kullanıcı neyin kabul edildiğini yazmadan önce görsün */}
       <ul data-slot="dbq-sql-rules" aria-label={t('dbq.sql.rulesLabel')} className="m-0 flex list-none flex-wrap gap-1.5 p-0">
-        {['selectOnly', 'noDdl', 'noLock', 'limits'].map((k) => (
+        {['selectOnly', 'noDdl', 'noLock', 'builtinOnly', 'limits'].map((k) => (
           <li key={k}><Badge variant="outline" className="h-auto rounded-md font-normal whitespace-normal text-muted-foreground">{t(`dbq.sql.rule.${k}`)}</Badge></li>
         ))}
       </ul>
@@ -232,7 +243,8 @@ export default function SqlEditor({ value, onChange, dbType, fieldError, violati
 
       {over && <p className="text-xs font-semibold text-destructive">{t('dbq.sql.tooLong', fmt(MAX_SQL_CHARS))}</p>}
 
-      <GuardStatus id={statusId} guard={shown} t={t} onGo={goTo} />
+      <GuardStatus id={statusId} guard={shown} t={t} onGo={goTo}
+        onRecheck={servedActive || disabled ? null : () => setRecheck((n) => n + 1)} />
 
       {dbType === 'MSSQL' && (
         <AlertBanner tone="info" icon={Info} title={t('dbq.sql.nolockTitle')} className="mb-0">
@@ -250,7 +262,7 @@ export default function SqlEditor({ value, onChange, dbType, fieldError, violati
 }
 
 /** Denetim sonucu satırı + ihlal listesi + okunan tablolar. */
-function GuardStatus({ id, guard, t, onGo }) {
+function GuardStatus({ id, guard, t, onGo, onRecheck }) {
   const { status } = guard
   const list = guard.violations || []
   const tables = guard.tables || []
@@ -268,10 +280,23 @@ function GuardStatus({ id, guard, t, onGo }) {
         </p>
       )}
       {status === 'unknown' && (
-        <p data-slot="dbq-sql-unknown" className="m-0 inline-flex items-start gap-1.5 text-xs text-muted-foreground">
-          <ShieldQuestion aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
-          <span className="[overflow-wrap:anywhere]">{t('dbq.sql.unchecked')}{guard.message ? ` — ${guard.message}` : ''}</span>
-        </p>
+        <div data-slot="dbq-sql-unknown" data-timeout={guard.timeout ? 'true' : undefined}
+          className="flex min-w-0 flex-wrap items-start gap-x-3 gap-y-1.5">
+          <p className="m-0 inline-flex min-w-0 flex-1 basis-64 items-start gap-1.5 text-xs text-muted-foreground">
+            <ShieldQuestion aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
+            <span className="[overflow-wrap:anywhere]">
+              {guard.timeout
+                ? (guard.message || t('dbq.sql.timeout'))
+                : <>{t('dbq.sql.unchecked')}{guard.message ? ` — ${guard.message}` : ''}</>}
+            </span>
+          </p>
+          {onRecheck && (
+            <Button type="button" variant="outline" size="sm" onClick={onRecheck} data-slot="dbq-sql-recheck"
+              className="shrink-0 pointer-coarse:h-10">
+              <RotateCw aria-hidden="true" />{t('dbq.sql.recheck')}
+            </Button>
+          )}
+        </div>
       )}
       {status === 'rejected' && (
         <div data-slot="dbq-sql-violations" className="rounded-md border border-destructive/40 bg-destructive/5 p-2.5">

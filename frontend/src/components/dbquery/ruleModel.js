@@ -3,6 +3,10 @@
 // Arayüz metni burada ÜRETİLMEZ; insan dilindeki özet `ruleSummary(rule, t, lang)` sözlük kalıplarını doldurur.
 
 export const MAX_RULES = 10
+/** Sunucu sınırları (`DbQueryRules.MAX_LABEL / MAX_COLUMN / MAX_TEXT`): ad ve kolon kırpılmış, aranan metin olduğu gibi. */
+export const MAX_LABEL = 120
+export const MAX_COLUMN = 128
+export const MAX_TEXT = 500
 export const RULE_KINDS = ['ROW_COUNT', 'COLUMN_VALUE', 'TEXT_MATCH', 'CHANGE']
 export const RULE_LOGICS = ['ANY', 'ALL']
 export const AGGREGATES = ['FIRST', 'MAX', 'MIN', 'SUM', 'AVG', 'COUNT_NONNULL']
@@ -211,11 +215,18 @@ export function thresholdSet(rule, level) {
 export function validateRule(rule) {
   const out = {}
   if (!rule || !RULE_KINDS.includes(rule.kind)) { out.kind = 'kind'; return out }
-  if (needsColumn(rule) && isBlank(rule.column)) out.column = 'column'
+  if (typeof rule.label === 'string' && rule.label.trim().length > MAX_LABEL) out.label = 'label_long'
+  if (needsColumn(rule)) {
+    if (isBlank(rule.column)) out.column = 'column'
+    else if (String(rule.column).trim().length > MAX_COLUMN) out.column = 'column_long'
+  }
   const levels = isTextKind(rule.kind) ? [rule.critical != null ? 'critical' : 'warning'] : LEVELS
   for (const lvl of levels) {
     const v = rule[lvl]
-    if (isTextKind(rule.kind)) continue   // boş metin = eşik yok (aşağıda missing_text)
+    if (isTextKind(rule.kind)) {   // boş metin = eşik yok (aşağıda missing_text); sunucu metni kırpmadan sayar
+      if (typeof v === 'string' && v.length > MAX_TEXT) out[lvl] = 'text_long'
+      continue
+    }
     if (v == null) continue
     if (Array.isArray(v)) {
       const [lo, hi] = v
@@ -226,9 +237,8 @@ export function validateRule(rule) {
       else if (lo > hi) out[lvl] = 'range_order'
       continue
     }
+    // Negatif eşik sunucuda geçerli (değişimde artış / azalış işaretli karşılaştırılır) — burada HATA değil, ipucu
     if (!isBlank(v) && !isNum(v)) out[lvl] = 'number'
-    else if (rule.kind === 'CHANGE' && isNum(v) && v < 0) out[lvl] = 'negative'
-    else if (rule.kind === 'ROW_COUNT' && isNum(v) && v < 0) out[lvl] = 'negative'
   }
   if (!thresholdSet(rule, 'warning') && !thresholdSet(rule, 'critical')) out.threshold = isTextKind(rule.kind) ? 'missing_text' : 'missing_threshold'
   return out
@@ -250,7 +260,14 @@ export function validateRules(rules) {
 
 /** Sıkılık uyarısı (hata değil): kritik eşik uyarıdan GEVŞEKSE uyarı hiç tetiklenmez — kullanıcıya söylenir. */
 export function strictnessHint(rule) {
-  if (!rule || isTextKind(rule.kind) || isRangeOperator(rule.operator)) return null
+  if (!rule || isTextKind(rule.kind)) return null
+  // Anlamsız negatif eşik (satır sayısı hiç negatif olmaz; "her iki yönde" değişim mutlak değerle ölçülür)
+  const levelValues = LEVELS.flatMap((l) => (Array.isArray(rule[l]) ? rule[l] : [rule[l]])).filter(isNum)
+  if (levelValues.some((n) => n < 0)) {
+    if (rule.kind === 'ROW_COUNT') return 'negative_rows'
+    if (rule.kind === 'CHANGE' && (rule.change?.direction || 'ANY') === 'ANY') return 'negative_any'
+  }
+  if (isRangeOperator(rule.operator)) return null
   const w = rule.warning, c = rule.critical
   if (!isNum(w) || !isNum(c)) return null
   const op = rule.operator

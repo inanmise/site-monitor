@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { TR } from '../i18n/tr.js'
 import { EN } from '../i18n/en.js'
 import {
-  MAX_RULES, changeKind, changeOperator, formatInputNumber, formatNumber, moveRule, newRule, newRuleId, parseNumber,
+  MAX_COLUMN, MAX_LABEL, MAX_RULES, MAX_TEXT, changeKind, changeOperator, formatInputNumber, formatNumber, moveRule, newRule, newRuleId, parseNumber,
   ruleSummary, setTextLevel, strictnessHint, textLevel, trAblative, validateRule, validateRules, valueText,
 } from '../components/dbquery/ruleModel.js'
 
@@ -122,9 +122,45 @@ describe('doğrulama — sunucu alan adlarıyla', () => {
     expect(validateRule({ ...newRule('ROW_COUNT', 'x'), operator: 'BETWEEN', warning: [5, null] })).toMatchObject({ warning: 'range_both' })
     expect(validateRule({ ...newRule('ROW_COUNT', 'x'), operator: 'BETWEEN', warning: [9, 5] })).toMatchObject({ warning: 'range_order' })
     expect(validateRule({ ...newRule('COLUMN_VALUE', 'x'), warning: 1 })).toMatchObject({ column: 'column' })
-    expect(validateRule({ ...newRule('CHANGE', 'x'), warning: -5 })).toMatchObject({ warning: 'negative' })
+    // Negatif eşik sunucuda geçerli (DbQueryRules kabul eder) → hata DEĞİL; anlamsız olduğu yerde ipucu
+    expect(validateRule({ ...newRule('CHANGE', 'x'), warning: -5 })).toEqual({})
+    expect(validateRule({ ...newRule('ROW_COUNT', 'x'), warning: -1 })).toEqual({})
     expect(validateRule({ ...newRule('TEXT_MATCH', 'x'), column: 'A', warning: '' })).toEqual({ threshold: 'missing_text' })
     expect(validateRule({ ...changeOperator({ ...newRule('TEXT_MATCH', 'x'), column: 'A' }, 'EMPTY') })).toEqual({})
+  })
+
+  it('sunucu sınırları (DbQueryRules.MAX_LABEL / MAX_COLUMN / MAX_TEXT): ad ve kolon kırpılarak, metin olduğu gibi sayılır', () => {
+    expect([MAX_LABEL, MAX_COLUMN, MAX_TEXT]).toEqual([120, 128, 500])
+    const base = { ...newRule('ROW_COUNT', 'x'), warning: 1 }
+    expect(validateRule({ ...base, label: 'a'.repeat(120) })).toEqual({})
+    expect(validateRule({ ...base, label: ` ${'a'.repeat(120)} ` })).toEqual({})
+    expect(validateRule({ ...base, label: 'a'.repeat(121) })).toEqual({ label: 'label_long' })
+    const col = { ...newRule('COLUMN_VALUE', 'x'), warning: 1 }
+    expect(validateRule({ ...col, column: 'C'.repeat(128) })).toEqual({})
+    expect(validateRule({ ...col, column: 'C'.repeat(129) })).toEqual({ column: 'column_long' })
+    const txt = { ...newRule('TEXT_MATCH', 'x'), column: 'D' }
+    expect(validateRule({ ...txt, critical: 'h'.repeat(500) })).toEqual({})
+    expect(validateRule({ ...txt, critical: 'h'.repeat(501) })).toEqual({ critical: 'text_long' })
+    expect(validateRule({ ...txt, critical: ` ${'h'.repeat(500)}` })).toEqual({ critical: 'text_long' })
+  })
+
+  it('sunucuya giden eşik biçimi: EMPTY / NOT_EMPTY seçili seviyede "", diğer null (fromApi "" kabul eder, iki null reddeder)', () => {
+    const r = changeOperator({ ...newRule('TEXT_MATCH', 'x'), column: 'D' }, 'NOT_EMPTY')
+    expect(r).toMatchObject({ critical: '', warning: null })
+    expect(validateRule(r)).toEqual({})
+    // seviye seçilmiş ama metin yazılmamış (CONTAINS): "" gider → sunucu da reddeder; istemci önceden söyler
+    const lvl = setTextLevel({ ...newRule('TEXT_MATCH', 'x'), column: 'D' }, 'warning')
+    expect(lvl).toMatchObject({ warning: '', critical: null })
+    expect(validateRule(lvl)).toEqual({ threshold: 'missing_text' })
+  })
+
+  it('negatif eşik ipucu: satır sayısı ve "her iki yönde" değişim', () => {
+    expect(strictnessHint({ ...newRule('ROW_COUNT', 'x'), warning: -1 })).toBe('negative_rows')
+    expect(strictnessHint({ ...newRule('CHANGE', 'x'), critical: -5 })).toBe('negative_any')
+    const dec = { ...newRule('CHANGE', 'x'), change: { of: 'ROW_COUNT', mode: 'PERCENT', direction: 'INCREASE' }, operator: 'LT', critical: -20 }
+    expect(strictnessHint(dec)).toBeNull()
+    expect(strictnessHint({ ...newRule('COLUMN_VALUE', 'x'), column: 'T', warning: -3 })).toBeNull()
+    expect(strictnessHint({ ...newRule('ROW_COUNT', 'x'), operator: 'BETWEEN', warning: [-2, 5] })).toBe('negative_rows')
   })
 
   it('liste: rules[N].<alt> anahtarları; > 10 kural "rules"', () => {

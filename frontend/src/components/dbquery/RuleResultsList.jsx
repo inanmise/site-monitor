@@ -39,6 +39,17 @@ export function ResultLevelBadge({ result, className = '' }) {
 
 const valueOrDash = (v) => (v == null || v === '' ? '—' : String(v))
 
+/** Sunucu not kodları (`DbQueryEvaluator.NOTE_*`) — `dbq.rr.note.<kod>` ile çevrilir. */
+export const RESULT_NOTE_CODES = ['column_missing', 'not_numeric', 'no_rows', 'first_run', 'prev_zero', 'partial', 'capped', 'query_failed']
+
+/** Not → metin: bilinen kod çevrilir, bilinmeyen not (eski kayıt / serbest metin) olduğu gibi gösterilir. */
+export function resultNoteText(t, note) {
+  if (note == null) return null
+  const s = String(note).trim()
+  if (!s) return null
+  return RESULT_NOTE_CODES.includes(s) ? t(`dbq.rr.note.${s}`) : s
+}
+
 /**
  * Kural sonuçları (Veritabanı Sorgu İzleme, 2026-10-31) — kural · beklenen · gelen · seviye (+ not). SATIR VERİSİ YOK:
  * yalnız kuralın ölçtüğü değer ve sunucunun yazdığı beklenen metin. Geniş kapta tablo, dar kapta kart; `compact` kart
@@ -46,6 +57,7 @@ const valueOrDash = (v) => (v == null || v === '' ? '—' : String(v))
  */
 export default function RuleResultsList({ results, compact = false }) {
   const t = useT()
+  const noteOf = (r) => resultNoteText(t, r?.note)
   const [ref, width] = useElementWidth()
   const list = Array.isArray(results) ? results : []
   const name = (r, i) => (r?.label && String(r.label).trim())
@@ -62,6 +74,9 @@ export default function RuleResultsList({ results, compact = false }) {
           <li key={r?.id || i} data-slot="dbq-rr-item" data-state={resultState(r)} className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
             <span className="min-w-0 font-medium [overflow-wrap:anywhere]">{name(r, i)}</span>
             <span className="text-muted-foreground tabular-nums [overflow-wrap:anywhere]">{valueOrDash(r?.actual)}</span>
+            {resultState(r) === 'unevaluated' && noteOf(r) && (
+              <span data-slot="dbq-rr-note" data-note={r.note} className="text-muted-foreground [overflow-wrap:anywhere]">· {noteOf(r)}</span>
+            )}
             <ResultLevelBadge result={r} className="ml-auto text-[11px]" />
           </li>
         ))}
@@ -87,7 +102,7 @@ export default function RuleResultsList({ results, compact = false }) {
               <TableRow key={r?.id || i} data-slot="dbq-rr-item" data-state={resultState(r)}>
                 <TableCell className="align-top whitespace-normal">
                   <span className="font-medium [overflow-wrap:anywhere]">{name(r, i)}</span>
-                  {r?.note && <span className="mt-0.5 block text-xs text-muted-foreground [overflow-wrap:anywhere]">{r.note}</span>}
+                  {noteOf(r) && <span data-slot="dbq-rr-note" data-note={r.note} className="mt-0.5 block text-xs text-muted-foreground [overflow-wrap:anywhere]">{noteOf(r)}</span>}
                 </TableCell>
                 <TableCell className="align-top text-sm whitespace-normal [overflow-wrap:anywhere]">{valueOrDash(r?.expected)}</TableCell>
                 <TableCell className="align-top text-sm font-semibold whitespace-normal tabular-nums [overflow-wrap:anywhere]">{valueOrDash(r?.actual)}</TableCell>
@@ -110,7 +125,7 @@ export default function RuleResultsList({ results, compact = false }) {
                 <dt className="text-xs text-muted-foreground">{t('dbq.rr.col.actual')}</dt>
                 <dd className="m-0 font-semibold tabular-nums [overflow-wrap:anywhere]">{valueOrDash(r?.actual)}</dd>
               </dl>
-              {r?.note && <span className="text-xs text-muted-foreground [overflow-wrap:anywhere]">{r.note}</span>}
+              {noteOf(r) && <span data-slot="dbq-rr-note" data-note={r.note} className="text-xs text-muted-foreground [overflow-wrap:anywhere]">{noteOf(r)}</span>}
             </li>
           ))}
         </ul>

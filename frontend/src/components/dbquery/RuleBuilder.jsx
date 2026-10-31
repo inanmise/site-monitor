@@ -20,10 +20,39 @@ import {
 const FULL_SELECT = '[&>[data-slot=native-select-wrapper]]:w-full'
 const CONTROL = 'h-9 w-full pointer-coarse:h-10'
 
-/** Sunucu ya da istemci hata kodu → metin. Sunucu iletisi (düz metin) olduğu gibi. */
+/** Sunucu alan hatası değeri → metin: düz ileti olduğu gibi; `{ message, code }` biçiminde gelirse ileti. */
+export function serverText(v) {
+  if (v == null || v === '') return null
+  if (typeof v === 'string') return v
+  if (typeof v === 'object') return v.message || v.error || v.code || null
+  return String(v)
+}
+
+/** Sunucu ya da istemci hata kodu → metin. Sunucu iletisi ("Kural N+1 …", istek dilinde) önceliklidir. */
 function errorText(t, server, clientCode) {
-  if (server) return server
+  const sv = serverText(server)
+  if (sv) return sv
   return clientCode ? t(`dbq.rule.v.${clientCode}`) : null
+}
+
+/**
+ * Kartta bir alanın altında GÖSTERİLEN alt anahtarlar (`rules[N].<alt>`). Burada olmayan sunucu hataları (kuralın kendisi
+ * `rules[N]` — DBQUERY_RULE_INVALID, kimlik `rules[N].id` — DBQUERY_RULE_ID, şu an çizilmeyen bir alanın hatası) kartın
+ * başında listelenir: sunucunun söylediği hiçbir şey kaybolmaz.
+ */
+export function renderedRuleFields(rule) {
+  const out = new Set(['kind', 'label', 'operator'])
+  if (!rule || !RULE_KINDS.includes(rule.kind)) return out
+  if (needsColumn(rule)) out.add('column')
+  if (needsAggregate(rule)) out.add('aggregate')
+  if (rule.kind === 'CHANGE') out.add('change')
+  if (isTextKind(rule.kind)) {
+    out.add('scope')
+    if (!isNoValueOperator(rule.operator)) out.add(textLevel(rule))
+  } else {
+    out.add('warning'); out.add('critical')
+  }
+  return out
 }
 
 /**
@@ -69,7 +98,7 @@ export default function RuleBuilder({ rules, logic, onChange, onLogicChange, col
           options={RULE_LOGICS.map((v) => ({ value: v, label: t(`dbq.rule.logic.${v}`), disabled }))} />
       </div>
 
-      {errs.rules && <FieldError>{errs.rules}</FieldError>}
+      {serverText(errs.rules) && <FieldError>{serverText(errs.rules)}</FieldError>}
 
       {list.length === 0 && (
         <div data-slot="dbq-rule-empty" className="flex flex-col items-start gap-1 rounded-lg border border-dashed p-4">
@@ -112,6 +141,12 @@ function RuleCard({ rule, index, count, columns, disabled, errs, onChange, onRem
   const hint = strictnessHint(rule)
   const summary = ruleSummary(rule, t, lang)
   const missing = client.threshold || null
+  const shownFields = renderedRuleFields(rule)
+  const prefix = `rules[${index}]`
+  const orphanErrors = Object.entries(errs)
+    .filter(([k]) => k === prefix || (k.startsWith(`${prefix}.`) && !shownFields.has(k.slice(prefix.length + 1))))
+    .map(([k, v]) => [k, serverText(v)])
+    .filter(([, v]) => v)
 
   return (
     <Card data-slot="dbq-rule-card" data-kind={rule.kind} data-index={index}
@@ -127,6 +162,12 @@ function RuleCard({ rule, index, count, columns, disabled, errs, onChange, onRem
             aria-label={t('dbq.rule.delete', title)} className="size-9 text-destructive hover:text-destructive pointer-coarse:size-10"><Trash2 aria-hidden="true" /></Button>
         </div>
       </div>
+
+      {orphanErrors.length > 0 && (
+        <div data-slot="dbq-rule-server-errors" className="flex flex-col gap-1 border-b px-3 py-2 sm:px-4">
+          {orphanErrors.map(([k, v]) => <div key={k} data-field={k}><FieldError>{v}</FieldError></div>)}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 gap-x-4 gap-y-3 px-3 py-3 sm:grid-cols-2 sm:px-4">
         <Field label={t('dbq.rule.kind')} name={key('kind')} error={err('kind')} className={cn('mb-0', FULL_SELECT)}>
@@ -194,7 +235,7 @@ function RuleCard({ rule, index, count, columns, disabled, errs, onChange, onRem
               <ThresholdInput rule={rule} level="critical" index={index} disabled={disabled} err={err} onChange={onChange} lang={lang} />
             </div>
           )}
-        {missing && !errs[key('warning')] && !errs[key('critical')] && (
+        {missing && !serverText(errs[key('warning')]) && !serverText(errs[key('critical')]) && (
           <FieldHint tone="warn"><span data-slot="dbq-rule-missing">{t(`dbq.rule.v.${missing}`)}</span></FieldHint>
         )}
         {hint && <p data-slot="dbq-rule-strictness" className="mt-2 mb-0 inline-flex items-start gap-1.5 text-xs text-amber-700 dark:text-amber-300">

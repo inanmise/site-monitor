@@ -106,6 +106,26 @@ describe('RuleResultsList', () => {
     expect(resultState({ evaluated: false, level: 'CRITICAL' })).toBe('unevaluated')
   })
 
+  it('not kodu çevrilir (dbq.rr.note.<kod>); bilinmeyen not olduğu gibi', () => {
+    render(<RuleResultsList results={[
+      { id: 'a', label: 'Tutar', kind: 'COLUMN_VALUE', actual: '—', expected: '> 0', level: 'NONE', passed: true, evaluated: false, note: 'column_missing' },
+      { id: 'b', label: 'Değişim', kind: 'CHANGE', actual: '120', expected: 'değişim < %20', level: 'NONE', passed: true, evaluated: true, note: 'first_run' },
+      { id: 'c', label: 'Eski', kind: 'ROW_COUNT', actual: '3', expected: '> 5', level: 'NONE', passed: true, evaluated: true, note: 'Serbest açıklama' },
+    ]} />)
+    const notes = [...document.querySelectorAll('[data-slot="dbq-rr-note"]')].map((n) => n.textContent)
+    expect(notes).toEqual([
+      'Kolon sorgu sonucunda yok — kolon adını denetleyin.',
+      'İlk çalışma — karşılaştırılacak önceki değer yok.',
+      'Serbest açıklama',
+    ])
+    expect(document.body.textContent).not.toContain('dbq.rr.note.')
+  })
+
+  it('compact: değerlendirilemeyen kuralın notu da görünür', () => {
+    render(<RuleResultsList compact results={[{ id: 'a', label: 'Tutar', kind: 'COLUMN_VALUE', actual: null, expected: '> 0', level: 'NONE', passed: false, evaluated: false, note: 'no_rows' }]} />)
+    expect(document.querySelector('[data-slot="dbq-rr-note"]').textContent).toContain('Sorgu satır döndürmedi')
+  })
+
   it('compact: tek satırlık özet', () => {
     render(<RuleResultsList results={R.slice(0, 2)} compact />)
     expect(document.querySelector('[data-slot="dbq-rr"]').getAttribute('data-layout')).toBe('compact')

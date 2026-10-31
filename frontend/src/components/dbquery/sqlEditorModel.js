@@ -4,13 +4,25 @@
 export const MAX_SQL_CHARS = 10_000
 export const INDENT = '  '
 
-/** Bilinen ihlal kodları — sunucu `DbQuerySqlGuard` (+ `SQL_DBLINK`); bilinmeyen kod genel metne düşer. */
+/** Bilinen ihlal kodları — sunucu `DbQuerySqlGuard.CODES` ile aynı sıra; bilinmeyen kod genel metne düşer. */
 export const GUARD_CODES = [
   'SQL_EMPTY', 'SQL_TOO_LONG', 'SQL_CONTROL_CHAR', 'SQL_UNTERMINATED', 'SQL_MULTIPLE_STATEMENTS', 'SQL_NOT_SELECT',
   'SQL_FORBIDDEN_KEYWORD', 'SQL_LOCKING_CLAUSE', 'SQL_INTO', 'SQL_FORBIDDEN_FUNCTION', 'SQL_LOCK_HINT',
-  'SQL_MSSQL_NOLOCK_REQUIRED', 'SQL_UNPARSABLE', 'SQL_DBLINK',
+  'SQL_MSSQL_NOLOCK_REQUIRED', 'SQL_UNPARSABLE', 'SQL_REMOTE_OBJECT',
 ]
 export const isKnownGuardCode = (code) => GUARD_CODES.includes(code)
+
+/** Sunucu `DbQuerySqlGuard.TOKEN_TIMEOUT` — ayrıştırma zaman sınırı (sorgu reddedilmedi, şimdilik denetlenemedi). */
+export const GUARD_TIMEOUT_TOKEN = 'TIMEOUT'
+
+/**
+ * Sunucu `DbQuerySqlGuard.isTimeout` aynası: TEK ihlal, kod `SQL_UNPARSABLE`, belirteç `TIMEOUT` → "denetlenemedi"
+ * (nötr) — asla "reddedildi" (kırmızı) değil, asla "güvenli" (yeşil) değil.
+ */
+export function isGuardTimeout(violations) {
+  return Array.isArray(violations) && violations.length === 1
+    && violations[0]?.code === 'SQL_UNPARSABLE' && violations[0]?.token === GUARD_TIMEOUT_TOKEN
+}
 
 /** 1 tabanlı (satır, sütun) → metindeki konum; sınır dışı değerler kenara yapışır. */
 export function offsetOf(text, line, column) {

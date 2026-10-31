@@ -87,6 +87,51 @@ describe('RuleBuilder', () => {
     expect(within(cards()[0]).queryByText('Kolon sorguda yok: TUTAR')).toBeNull()
   })
 
+  it('sunucunun her kural kodu bir yerde görünür: alan altında ya da kart başında (rules[N], .id, çizilmeyen alan)', () => {
+    const text = { ...newRule('TEXT_MATCH', 'r-c'), column: 'DURUM', critical: null, warning: null }
+    const empty = { ...newRule('TEXT_MATCH', 'r-d'), column: 'DURUM', operator: 'EMPTY', critical: '' }
+    render(<Harness initial={[newRule('ROW_COUNT', 'r-a'), { ...newRule('ROW_COUNT', 'r b'), warning: 1 }, text, empty]}
+      fieldErrors={{
+        'rules[0]': 'Kural 1 okunamadı · Kural bir nesne olmalı · Kuralı silip yeniden ekleyin.',
+        'rules[1].id': 'Kural 2 kimliği geçersiz · Kuralı silip yeniden ekleyin.',
+        'rules[1].label': { code: 'DBQUERY_RULE_LABEL', message: 'Kural 2 adı çok uzun (en çok 120 karakter)' },
+        // metin kuralı: seviye kritikte ama sunucu "eşik gerekli"yi warning'e yazar
+        'rules[2].warning': 'Kural 3 için eşik gerekli · Bir eşik değeri girin.',
+        // değersiz işleçte eşik alanı çizilmez
+        'rules[3].critical': 'Kural 4 eşiği okunamadı',
+      }} />)
+    const [c0, c1, c2, c3] = cards()
+    expect(within(c0).getByText(/Kural 1 okunamadı/)).toBeInTheDocument()
+    expect(c0.querySelector('[data-slot="dbq-rule-server-errors"] [data-field="rules[0]"]')).not.toBeNull()
+    expect(within(c1).getByText(/Kural 2 kimliği geçersiz/)).toBeInTheDocument()
+    expect(c1.querySelector('[data-slot="dbq-rule-server-errors"] [data-field="rules[1].id"]')).not.toBeNull()
+    // { code, message } biçimi de alanın altında ileti olarak
+    expect(within(c1.querySelector('[data-field="rules[1].label"]')).getByText('Kural 2 adı çok uzun (en çok 120 karakter)')).toBeInTheDocument()
+    expect(c1.querySelector('[data-slot="dbq-rule-server-errors"] [data-field="rules[1].label"]')).toBeNull()
+    expect(within(c2).getByText(/Kural 3 için eşik gerekli/)).toBeInTheDocument()
+    expect(c2.querySelector('[data-slot="dbq-rule-missing"]')).toBeNull()
+    expect(within(c3).getByText('Kural 4 eşiği okunamadı')).toBeInTheDocument()
+    expect(c3.closest('[data-slot="dbq-rule-card"]').className).toMatch(/border-destructive/)
+  })
+
+  it('sunucu sınırları istemcide anında: ad > 120, kolon > 128, metin > 500', () => {
+    render(<Harness initial={[
+      { ...newRule('ROW_COUNT', 'r-a'), label: 'a'.repeat(121), warning: 1 },
+      { ...newRule('COLUMN_VALUE', 'r-b'), column: 'C'.repeat(129), warning: 1 },
+      { ...newRule('TEXT_MATCH', 'r-c'), column: 'D', critical: 'h'.repeat(501) },
+    ]} />)
+    const [c0, c1, c2] = cards()
+    expect(within(c0).getByText('Kural adı en çok 120 karakter olabilir — kısaltın.')).toBeInTheDocument()
+    expect(within(c1).getByText(/Kolon adı en çok 128 karakter/)).toBeInTheDocument()
+    expect(within(c2).getByText(/Aranan metin en çok 500 karakter/)).toBeInTheDocument()
+  })
+
+  it('negatif eşik hata değil, ipucu (satır sayısı)', () => {
+    render(<Harness initial={[{ ...newRule('ROW_COUNT', 'r-a'), warning: -1 }]} />)
+    expect(cards()[0].querySelector('[data-slot="dbq-rule-strictness"]').textContent).toContain('Satır sayısı hiç negatif olmaz')
+    expect(screen.queryByText('Negatif olamaz.')).toBeNull()
+  })
+
   it('sil onaylıdır; vazgeçilirse kural kalır', async () => {
     render(<Harness initial={[{ ...newRule('ROW_COUNT', 'r-a'), label: 'Bekleyen sipariş' }]} />)
     fireEvent.click(screen.getByRole('button', { name: 'Sil: Bekleyen sipariş' }))

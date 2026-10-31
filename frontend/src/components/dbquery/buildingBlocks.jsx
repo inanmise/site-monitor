@@ -10,7 +10,8 @@
 //                      onChange(patch), fieldErrors?, disabled? } — sonraki çalışmaları kendisi önizler (schedule-preview)
 // SqlEditor          { value, onChange(sql), dbType, fieldError?, violations?: [Violation], disabled?, onGuardChange?(result) }
 //                    — canlı güvenlik denetimi (sql-check, 400 ms), satır numarası, ihlal listesi; data-field="sql_text".
-//                    result = { status: 'empty'|'checking'|'ok'|'rejected'|'unknown', ok: true|false|null, violations, tables, message }
+//                    result = { status: 'idle'|'empty'|'checking'|'ok'|'rejected'|'unknown', ok: true|false|null, violations, tables,
+//                    message, timeout } — `timeout: true` = sunucu ayrıştırma süresi doldu (SQL_UNPARSABLE + TIMEOUT): 'unknown', ok null
 // ConnectionPicker   { teamId, value: profileId, onChange(profileId, profile), disabled?, error?, canManage?, teams? }
 //                    — takımın bağlantıları + "Bağlantıları yönet" (ConnectionsManager); data-field="profile_id"
 // ConnectionsManager { open, onOpenChange(open), teamId?, teams: [{id,name}], canEdit, onChanged?(profile?), initialView?: 'list'|'new' }

@@ -112,6 +112,49 @@ describe('SqlEditor — canlı güvenlik denetimi', () => {
     await waitFor(() => expect(guard().getAttribute('data-status')).toBe('ok'), { timeout: 2000 })
   })
 
+  it('ayrıştırma zaman sınırı (SQL_UNPARSABLE + TIMEOUT) → "denetlenemedi" (nötr, kırmızı değil) + sunucu iletisi; "Yeniden denetle" yeniden sorar', async () => {
+    const TIMEOUT_MSG = 'Sorgu şu an denetlenemedi (çözümleme süresi doldu) · Sunucu yoğun ya da sorgu çok karmaşık'
+    api.monitoring.dbQuerySqlCheck
+      .mockResolvedValueOnce({ success: true, data: { ok: false, tables: [], violations: [{ code: 'SQL_UNPARSABLE', token: 'TIMEOUT', message: TIMEOUT_MSG, line: null, column: null }] } })
+      .mockResolvedValueOnce({ success: true, data: { ok: true, violations: [], tables: ['t'] } })
+    const onGuard = vi.fn()
+    render(<Harness onGuard={onGuard} />)
+    fireEvent.change(ta(), { target: { value: 'SELECT 1' } })
+    await waitFor(() => expect(guard().getAttribute('data-status')).toBe('unknown'), { timeout: 2000 })
+    const box = document.querySelector('[data-slot="dbq-sql-unknown"]')
+    expect(box.getAttribute('data-timeout')).toBe('true')
+    expect(box.textContent).toContain(TIMEOUT_MSG)
+    expect(document.querySelector('[data-slot="dbq-sql-violations"]')).toBeNull()
+    expect(ta()).not.toHaveAttribute('aria-invalid')
+    expect(onGuard).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'unknown', ok: null, timeout: true, violations: [] }))
+    fireEvent.click(screen.getByRole('button', { name: 'Yeniden denetle' }))
+    await waitFor(() => expect(guard().getAttribute('data-status')).toBe('ok'), { timeout: 2000 })
+    expect(api.monitoring.dbQuerySqlCheck).toHaveBeenCalledTimes(2)
+    expect(onGuard).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'ok', ok: true, timeout: false }))
+  })
+
+  it('kayıtta dönen zaman aşımı da "denetlenemedi" çizilir (reddedildi değil)', () => {
+    const served = [{ code: 'SQL_UNPARSABLE', token: 'TIMEOUT', message: 'Çözümleme süresi doldu', line: null, column: null }]
+    render(<Harness initial="SELECT 1" violations={served} />)
+    expect(guard().getAttribute('data-status')).toBe('unknown')
+    expect(guard().textContent).toContain('Çözümleme süresi doldu')
+    expect(screen.queryByRole('button', { name: 'Yeniden denetle' })).toBeNull()
+  })
+
+  it('uzak nesne (SQL_REMOTE_OBJECT) kendi başlığıyla', async () => {
+    api.monitoring.dbQuerySqlCheck.mockResolvedValue({ success: true, data: { ok: false, tables: [], violations: [
+      { code: 'SQL_REMOTE_OBJECT', token: 'orders@prod_link', message: "'orders@prod_link' uzak nesne", line: 1, column: 15 },
+    ] } })
+    render(<Harness dbType="ORACLE" />)
+    fireEvent.change(ta(), { target: { value: 'SELECT * FROM orders@prod_link' } })
+    await waitFor(() => expect(guard().getAttribute('data-status')).toBe('rejected'), { timeout: 2000 })
+    const v = document.querySelector('[data-slot="dbq-sql-violation"]')
+    expect(v.getAttribute('data-code')).toBe('SQL_REMOTE_OBJECT')
+    expect(v.textContent).toContain('Uzak nesne (başka sunucu ya da bağlantı)')
+    expect(v.textContent).not.toContain('Sorgu kurala uymuyor')
+    expect(document.querySelector('[data-slot="dbq-sql-rules"]').textContent).toContain('Yalnız yerleşik fonksiyonlar')
+  })
+
   it('boş sorgu istek atmaz; devre dışıyken denetim yok', async () => {
     render(<Harness disabled initial="SELECT 1" />)
     await new Promise((r) => setTimeout(r, 500))

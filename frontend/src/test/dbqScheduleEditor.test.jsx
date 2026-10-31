@@ -41,16 +41,58 @@ describe('ScheduleEditor — önizleme', () => {
     expect(screen.getByText(/Saatler İstanbul saatidir/)).toBeInTheDocument()
   })
 
-  it('hiç çalışmaz → uyarı bandı; sunucu hataları alanın altında, çağıranın hatası önceliklidir', async () => {
+  it('sunucu hataları alanın altında (ileti sunucudan), çağıranın hatası önceliklidir', async () => {
     api.monitoring.dbQuerySchedulePreview.mockResolvedValue({ success: true, data: {
-      valid: false, never_runs: true, next: [], effective_interval_seconds: null,
-      errors: [{ field: 'windows', code: 'DBQUERY_SCHEDULE_NEVER_RUNS', message: 'Pencereler çakışıyor' }, { field: 'interval_seconds', code: 'X', message: 'sunucu iletisi' }],
+      valid: false, never_runs: false, next: [], effective_interval_seconds: null,
+      errors: [
+        { field: 'windows', code: 'DBQUERY_WINDOW_INVALID', message: 'Pencere 1 geçersiz · Pencereyi düzeltin.' },
+        { field: 'skip_dates', code: 'DBQUERY_SKIP_DATE_INVALID', message: "Ek tarih '2026-13-01' geçersiz" },
+        { field: 'interval_seconds', code: 'DBQUERY_INTERVAL_INVALID', message: 'sunucu iletisi' },
+      ],
     } })
     render(<Harness fieldErrors={{ interval_seconds: 'çağıranın iletisi' }} />)
-    await waitFor(() => expect(screen.getByText('Bu zamanlama hiç çalışmıyor')).toBeInTheDocument(), { timeout: 2000 })
-    expect(within(document.querySelector('[data-slot="dbq-windows"]')).getByText('Pencereler çakışıyor')).toBeInTheDocument()
+    await waitFor(() => expect(within(document.querySelector('[data-slot="dbq-windows"]')).getByText('Pencere 1 geçersiz · Pencereyi düzeltin.')).toBeInTheDocument(), { timeout: 2000 })
+    expect(screen.getByText("Ek tarih '2026-13-01' geçersiz")).toBeInTheDocument()
     expect(screen.getByText('çağıranın iletisi')).toBeInTheDocument()
     expect(screen.queryByText('sunucu iletisi')).toBeNull()
+  })
+
+  it('hiç çalışmaz (INTERVAL, alan schedule): sunucu iletisi bantta TEK kez', async () => {
+    const MSG = 'Bu zamanlamayla sorgu önümüzdeki 366 gün içinde hiç çalışmaz · Pencereleri gözden geçirin.'
+    api.monitoring.dbQuerySchedulePreview.mockResolvedValue({ success: true, data: {
+      valid: false, never_runs: true, next: [], effective_interval_seconds: null,
+      errors: [{ field: 'schedule', code: 'DBQUERY_SCHEDULE_NEVER_RUNS', message: MSG }],
+    } })
+    render(<Harness />)
+    await waitFor(() => expect(screen.getByText('Bu zamanlama hiç çalışmıyor')).toBeInTheDocument(), { timeout: 2000 })
+    expect(screen.getAllByText(MSG)).toHaveLength(1)
+    expect(preview().querySelector('[data-slot="dbq-schedule-never-runs"]').textContent).toBe(MSG)
+  })
+
+  it('hiç çalışmaz (CRON, alan cron_expression): cron alanının altında tekrarlanmaz; kayıt hatası aynı iletiyse de tek', async () => {
+    const MSG = 'Bu zamanlamayla sorgu hiç çalışmaz · Cron ifadesini gözden geçirin.'
+    api.monitoring.dbQuerySchedulePreview.mockResolvedValue({ success: true, data: {
+      valid: false, never_runs: true, next: [], effective_interval_seconds: null,
+      errors: [{ field: 'cron_expression', code: 'DBQUERY_SCHEDULE_NEVER_RUNS', message: MSG }],
+    } })
+    render(<Harness initial={{ ...BASE, schedule_mode: 'CRON', cron_expression: '0 3 31 2 *' }} fieldErrors={{ cron_expression: MSG }} />)
+    await waitFor(() => expect(screen.getByText('Bu zamanlama hiç çalışmıyor')).toBeInTheDocument(), { timeout: 2000 })
+    expect(screen.getAllByText(MSG)).toHaveLength(1)
+  })
+
+  it('cron çok sık / geçersiz: sunucu iletisi + koda göre kısa ipucu; kip geçersiz kip seçicinin altında', async () => {
+    api.monitoring.dbQuerySchedulePreview.mockResolvedValue({ success: true, data: {
+      valid: false, never_runs: false, next: [], effective_interval_seconds: null,
+      errors: [
+        { field: 'cron_expression', code: 'DBQUERY_CRON_TOO_FREQUENT', message: 'Cron ifadesi çok sık çalışıyor (iki çalışma arası 30 saniye; en az 60)' },
+        { field: 'schedule', code: 'DBQUERY_SCHEDULE_MODE_INVALID', message: 'Zamanlama kipi geçersiz' },
+      ],
+    } })
+    render(<Harness initial={{ ...BASE, schedule_mode: 'CRON', cron_expression: '*/30 * * * * *' }} />)
+    await waitFor(() => expect(screen.getByText(/Cron ifadesi çok sık çalışıyor/)).toBeInTheDocument(), { timeout: 2000 })
+    expect(document.querySelector('[data-slot="dbq-cron-code-hint"]').textContent).toContain('*/15')
+    expect(within(document.querySelector('[data-field="schedule_mode"]')).getByText('Zamanlama kipi geçersiz')).toBeInTheDocument()
+    expect(within(preview()).queryByText('Zamanlama kipi geçersiz')).toBeNull()
   })
 
   it('önizleme okunamazsa nötr "hesaplanamadı" (asla boş başarı değil)', async () => {

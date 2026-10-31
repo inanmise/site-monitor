@@ -19,6 +19,15 @@ import {
   formatRun, intervalProblem, newWindow, previewBody, splitInterval, windowKind, windowProblems, windowSummary,
 } from './scheduleModel.js'
 
+/** Sunucu zamanlama hata kodları (`DbQuerySchedule.CODE_*`). */
+export const SCHEDULE_CODES = {
+  INTERVAL: 'DBQUERY_INTERVAL_INVALID', CRON_INVALID: 'DBQUERY_CRON_INVALID', CRON_TOO_FREQUENT: 'DBQUERY_CRON_TOO_FREQUENT',
+  WINDOW: 'DBQUERY_WINDOW_INVALID', SKIP_DATE: 'DBQUERY_SKIP_DATE_INVALID', MODE: 'DBQUERY_SCHEDULE_MODE_INVALID',
+  NEVER_RUNS: 'DBQUERY_SCHEDULE_NEVER_RUNS',
+}
+/** Koda göre ek ipucu (ileti her zaman sunucudan; ipucu yalnız gerektiğinde). */
+const CODE_HINT = { DBQUERY_CRON_TOO_FREQUENT: 'dbq.sched.hint.tooFrequent', DBQUERY_CRON_INVALID: 'dbq.sched.hint.cronInvalid' }
+
 /** Önizleme isteği bekleme süresi (ms). */
 export const SCHEDULE_PREVIEW_DEBOUNCE_MS = 500
 const CONTROL = 'h-9 pointer-coarse:h-10'
@@ -31,6 +40,11 @@ const FULL_SELECT = '[&>[data-slot=native-select-wrapper]]:w-full'
  * "tatil takviminde çalışma", ek tarihler (≤ 100). Saat dilimi Europe/Istanbul. Canlı önizleme: değer değişince 500 ms
  * sonra `POST /dbquery/schedule-preview` → "Sonraki 10 çalışma" (İstanbul saati), etkin aralık, "hiç çalışmaz" uyarısı;
  * sunucu hataları alanın altında (çağıranın `fieldErrors`'ı önceliklidir). Geç yanıt sıra numarasıyla düşürülür.
+ *
+ * Sunucu iletisi (`errors[].message`, istek dilinde) HER ZAMAN gösterilir; kod (`DbQuerySchedule.CODE_*`) yalnız yeri ve
+ * gerekirse ek ipucunu seçer: `DBQUERY_SCHEDULE_MODE_INVALID` kip seçicinin altında; `DBQUERY_SCHEDULE_NEVER_RUNS`
+ * (CRON'da `cron_expression`, INTERVAL'de `schedule`) önizlemedeki "hiç çalışmaz" bandında TEK kez (alanın altında
+ * tekrarlanmaz); `DBQUERY_CRON_TOO_FREQUENT` / `DBQUERY_CRON_INVALID` cron alanının altında + kısa ipucu.
  * `onChange(patch)` yalnız değişen alanları taşır.
  */
 export default function ScheduleEditor({ value, onChange, fieldErrors, disabled = false }) {
@@ -39,7 +53,18 @@ export default function ScheduleEditor({ value, onChange, fieldErrors, disabled 
   const v = value || {}
   const mode = v.schedule_mode === 'CRON' ? 'CRON' : 'INTERVAL'
   const preview = useSchedulePreview(v)
-  const errs = { ...(preview.errors || {}), ...(fieldErrors || {}) }
+  const codes = preview.codes || {}
+  // Önizlemenin "hiç çalışmaz" ve "kip geçersiz" iletileri kendi yerlerinde çizilir — alan altında tekrarlanmaz
+  const own = {}
+  for (const [f, m] of Object.entries(preview.errors || {})) {
+    if (codes[f] === SCHEDULE_CODES.NEVER_RUNS || codes[f] === SCHEDULE_CODES.MODE) continue
+    own[f] = m
+  }
+  const errs = { ...own, ...(fieldErrors || {}) }
+  const modeError = errs.schedule_mode
+    || Object.entries(preview.errors || {}).find(([f]) => codes[f] === SCHEDULE_CODES.MODE)?.[1] || null
+  const neverRunsMessage = Object.entries(preview.errors || {}).find(([f]) => codes[f] === SCHEDULE_CODES.NEVER_RUNS)?.[1] || null
+  const cronHint = !fieldErrors?.cron_expression && CODE_HINT[codes.cron_expression] ? t(CODE_HINT[codes.cron_expression]) : null
   const set = (patch) => { if (!disabled) onChange?.(patch) }
 
   return (
@@ -52,12 +77,13 @@ export default function ScheduleEditor({ value, onChange, fieldErrors, disabled 
             { value: 'INTERVAL', label: t('dbq.sched.mode.INTERVAL'), icon: Repeat, disabled },
             { value: 'CRON', label: t('dbq.sched.mode.CRON'), icon: CalendarClock, disabled },
           ]} />
-        {errs.schedule_mode && <FieldError>{errs.schedule_mode}</FieldError>}
+        {modeError && <FieldError>{modeError}</FieldError>}
       </div>
 
       {mode === 'INTERVAL'
         ? <IntervalPicker seconds={v.interval_seconds} disabled={disabled} error={errs.interval_seconds} onChange={(s) => set({ interval_seconds: s })} />
-        : <CronInput expr={v.cron_expression ?? ''} disabled={disabled} error={errs.cron_expression} onChange={(c) => set({ cron_expression: c })} />}
+        : <CronInput expr={v.cron_expression ?? ''} disabled={disabled} codeHint={cronHint}
+          error={errs.cron_expression && errs.cron_expression !== neverRunsMessage ? errs.cron_expression : null} onChange={(c) => set({ cron_expression: c })} />}
 
       <WindowList kind="windows" list={v.windows} disabled={disabled} errs={errs} onChange={(w) => set({ windows: w })} />
       <WindowList kind="blackouts" list={v.blackouts} disabled={disabled} errs={errs} onChange={(w) => set({ blackouts: w })} />
@@ -65,7 +91,7 @@ export default function ScheduleEditor({ value, onChange, fieldErrors, disabled 
       <HolidayToggle checked={!!v.skip_holidays} disabled={disabled} onChange={(b) => set({ skip_holidays: b })} />
       <SkipDates dates={v.skip_dates} disabled={disabled} error={errs.skip_dates} lang={lang} onChange={(d) => set({ skip_dates: d })} />
 
-      <PreviewPanel preview={preview} error={errs.schedule} lang={lang} t={t} mode={mode} />
+      <PreviewPanel preview={preview} error={errs.schedule && errs.schedule !== neverRunsMessage ? errs.schedule : null} neverRunsMessage={neverRunsMessage} lang={lang} t={t} mode={mode} />
     </div>
   )
 }
@@ -75,15 +101,15 @@ function useSchedulePreview(v) {
   const body = previewBody(v)
   const key = JSON.stringify(body)
   const seq = useRef(0)
-  const [state, setState] = useState({ state: 'idle', reason: null, data: null, errors: null, message: null })
+  const [state, setState] = useState({ state: 'idle', reason: null, data: null, errors: null, codes: null, message: null })
   useEffect(() => {
     const n = ++seq.current
     if (body.schedule_mode === 'CRON' && !String(body.cron_expression || '').trim()) {
-      setState({ state: 'idle', reason: 'cronEmpty', data: null, errors: null, message: null })
+      setState({ state: 'idle', reason: 'cronEmpty', data: null, errors: null, codes: null, message: null })
       return undefined
     }
     if (body.schedule_mode === 'INTERVAL' && intervalProblem(body.interval_seconds)) {
-      setState({ state: 'idle', reason: 'interval', data: null, errors: null, message: null })
+      setState({ state: 'idle', reason: 'interval', data: null, errors: null, codes: null, message: null })
       return undefined
     }
     setState((s) => ({ ...s, state: 'loading' }))
@@ -95,18 +121,20 @@ function useSchedulePreview(v) {
         if (n !== seq.current || ctrl.signal.aborted) return
         if (res?.success && res.data && typeof res.data === 'object') {
           const errors = {}
+          const codes = {}
           for (const e of Array.isArray(res.data.errors) ? res.data.errors : []) {
-            if (e?.field && !errors[e.field]) errors[e.field] = e.message || e.code
+            if (e?.field && !errors[e.field]) { errors[e.field] = e.message || e.code; codes[e.field] = e.code || null }
           }
-          next = { state: 'ok', reason: null, data: res.data, errors, message: null }
+          next = { state: 'ok', reason: null, data: res.data, errors, codes, message: null }
         } else {
           const errors = {}
-          if (res?.field) errors[res.field] = res.error || res.message
-          next = { state: 'unknown', reason: null, data: null, errors, message: res?.error || res?.message || null }
+          const codes = {}
+          if (res?.field) { errors[res.field] = res.error || res.message; codes[res.field] = res.code || null }
+          next = { state: 'unknown', reason: null, data: null, errors, codes, message: res?.error || res?.message || null }
         }
       } catch (e) {
         if (n !== seq.current || ctrl.signal.aborted) return
-        next = { state: 'unknown', reason: null, data: null, errors: null, message: e?.message || null }
+        next = { state: 'unknown', reason: null, data: null, errors: null, codes: null, message: e?.message || null }
       }
       setState(next)
     }, SCHEDULE_PREVIEW_DEBOUNCE_MS)
@@ -185,7 +213,7 @@ function IntervalPicker({ seconds, disabled, error, onChange }) {
 }
 
 /** Cron alanı + hazır şablonlar + insan dilinde açıklama. */
-function CronInput({ expr, disabled, error, onChange }) {
+function CronInput({ expr, disabled, error, codeHint, onChange }) {
   const t = useT()
   const desc = useMemo(() => (expr.trim() ? describeCron(expr, t) : null), [expr, t])
   return (
@@ -197,6 +225,7 @@ function CronInput({ expr, disabled, error, onChange }) {
             className={cn(CONTROL, 'font-mono')} onChange={(e) => onChange(e.target.value)} />
         )}
       </Field>
+      {error && codeHint && <p data-slot="dbq-cron-code-hint" className="m-0 text-xs text-muted-foreground [overflow-wrap:anywhere]">{codeHint}</p>}
       {expr.trim() && (
         <p data-slot="dbq-cron-desc" data-explained={desc ? 'true' : 'false'}
           className={cn('m-0 rounded-md border px-3 py-2 text-sm [overflow-wrap:anywhere]', desc ? 'bg-muted/40' : 'text-muted-foreground')}>
@@ -370,7 +399,7 @@ function SkipDates({ dates, disabled, error, lang, onChange }) {
 }
 
 /** Sonraki 10 çalışma + etkin aralık + "hiç çalışmaz". */
-function PreviewPanel({ preview, error, lang, t, mode }) {
+function PreviewPanel({ preview, error, neverRunsMessage, lang, t, mode }) {
   const d = preview.data
   const runs = Array.isArray(d?.next) ? d.next : []
   return (
@@ -388,10 +417,12 @@ function PreviewPanel({ preview, error, lang, t, mode }) {
           {t('dbq.sched.previewUnavailable')}{preview.message ? ` — ${preview.message}` : ''}
         </p>
       )}
-      {preview.state === 'ok' && d?.never_runs && (
-        <AlertBanner tone="warning" title={t('dbq.sched.neverRunsTitle')} className="mb-0">{t('dbq.sched.neverRunsBody')}</AlertBanner>
+      {preview.state === 'ok' && (d?.never_runs || neverRunsMessage) && (
+        <AlertBanner tone="warning" title={t('dbq.sched.neverRunsTitle')} className="mb-0">
+          <span data-slot="dbq-schedule-never-runs" className="[overflow-wrap:anywhere]">{neverRunsMessage || t('dbq.sched.neverRunsBody')}</span>
+        </AlertBanner>
       )}
-      {preview.state === 'ok' && !d?.never_runs && d?.valid === false && runs.length === 0 && (
+      {preview.state === 'ok' && !d?.never_runs && !neverRunsMessage && d?.valid === false && runs.length === 0 && (
         <p className="m-0 text-xs text-muted-foreground">{t('dbq.sched.previewInvalid')}</p>
       )}
       {preview.state === 'ok' && runs.length > 0 && (
