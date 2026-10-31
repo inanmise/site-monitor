@@ -302,6 +302,7 @@ class SettingsScopedAdminGateTest {
                 // r177: değerlendirilemeyen çalıştırma alarmı ve yazabilen hesap kipi — kurum geneli güvenlik kararı
                 "site.monitor.dbquery.unknown-alert-runs",
                 "site.monitor.dbquery.writable-account-mode",
+                "site.monitor.dbquery.local-timezone",
                 // saklama anahtarları otomatik GLOBAL_ONLY (RetentionCatalog)
                 "site.monitor.metrics.dbquery.retention-days",
                 "site.monitor.dbquery.alert-rows.retention-days");

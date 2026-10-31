@@ -75,8 +75,12 @@ public class DbQueryRunner {
     static final long BINARY_COUNT_CAP = 16L << 20;
     static final int TEST_TIMEOUT_SECONDS = 10, SETUP_TIMEOUT_SECONDS = 10;
     static final int MAX_PLAN_CHARS = 4_000_000;
-    /** Sürücüye özgü saat dilimli tür kodları (r177): Oracle TIMESTAMP WITH TIME ZONE, MSSQL datetimeoffset — ISO biçime. */
-    static final int ORACLE_TIMESTAMPTZ = -101, MSSQL_DATETIMEOFFSET = -155;
+    /**
+     * Sürücüye özgü saat dilimli tür kodları (r177): Oracle TIMESTAMP WITH (LOCAL) TIME ZONE, MSSQL datetimeoffset. Hücre
+     * METNİ sürücünün metni olarak kalır (r177 öncesiyle aynı — metin kuralları / mail satırları değişmesin, ikinci tur
+     * D-6); tazelik kuralı için an ayrıca okunur ({@link QueryResult#instants}).
+     */
+    static final int ORACLE_TIMESTAMPTZ = -101, ORACLE_TIMESTAMPLTZ = -102, MSSQL_DATETIMEOFFSET = -155;
 
     /** Bağlanıcı tohumu — üretimde {@link DriverManager} sürücüsü, testlerde sahte. */
     @FunctionalInterface
@@ -158,15 +162,33 @@ public class DbQueryRunner {
      * @param failureReason    DB_UNREACHABLE | DB_DNS | DB_TIMEOUT | DB_AUTH | DB_SQL_ERROR | DB_DRIVER | DB_BLOCKED | null
      * @param error            maskeli kısa hata metni (≤ 500) ya da null
      */
+    /**
+     * @param instants saat dilimli zaman damgası kolonlarının ANLARI (kolon sırası → satır başına epoch ms, değer yoksa
+     *                 null; r177 ikinci tur O-1): PostgreSQL {@code timestamptz}, MSSQL {@code datetimeoffset}, Oracle
+     *                 {@code TIMESTAMP WITH (LOCAL) TIME ZONE}. Hücre metni bundan bağımsızdır. Diğer kolonlarda yok.
+     */
     public record QueryResult(boolean ok, long durationMs, int rowCount, boolean rowCountCapped, List<Column> columns,
                               List<List<Object>> rows, boolean valuesTruncated, String error, String failureReason,
-                              String serverVersion, DbClock dbClock, DbAccountPrivileges.Result privileges) {
+                              String serverVersion, DbClock dbClock, DbAccountPrivileges.Result privileges,
+                              java.util.Map<Integer, List<Long>> instants) {
+        public QueryResult {
+            instants = instants == null ? java.util.Map.of() : instants;
+        }
+
         /** Eski on alanlı biçim (veritabanı saati ve yetki denetimi yok). */
         public QueryResult(boolean ok, long durationMs, int rowCount, boolean rowCountCapped, List<Column> columns,
                            List<List<Object>> rows, boolean valuesTruncated, String error, String failureReason,
                            String serverVersion) {
             this(ok, durationMs, rowCount, rowCountCapped, columns, rows, valuesTruncated, error, failureReason,
-                    serverVersion, null, null);
+                    serverVersion, null, null, null);
+        }
+
+        /** r177 ilk tur biçimi (an kanalı yok). */
+        public QueryResult(boolean ok, long durationMs, int rowCount, boolean rowCountCapped, List<Column> columns,
+                           List<List<Object>> rows, boolean valuesTruncated, String error, String failureReason,
+                           String serverVersion, DbClock dbClock, DbAccountPrivileges.Result privileges) {
+            this(ok, durationMs, rowCount, rowCountCapped, columns, rows, valuesTruncated, error, failureReason,
+                    serverVersion, dbClock, privileges, null);
         }
     }
 
@@ -325,7 +347,7 @@ public class DbQueryRunner {
                     Read r = read(rs, limit, opts.discardColumns());
                     long ms = elapsedMs(t0);
                     return new QueryResult(true, ms, r.count, r.capped, List.copyOf(r.columns), r.rows, r.truncated,
-                            null, null, s.version, clock, privileges);
+                            null, null, s.version, clock, privileges, r.instants());
                 }
             }
         } catch (Throwable e) {
@@ -620,8 +642,42 @@ public class DbQueryRunner {
     private static final class Read {
         final List<Column> columns = new ArrayList<>();
         final List<List<Object>> rows = new ArrayList<>();
+        /** Saat dilimli kolonların anları (kolon sırası → satır başına epoch ms). */
+        final java.util.Map<Integer, List<Long>> instants = new java.util.LinkedHashMap<>();
         int count;
         boolean capped, truncated;
+
+        java.util.Map<Integer, List<Long>> instants() {
+            if (instants.isEmpty()) return java.util.Map.of();
+            java.util.Map<Integer, List<Long>> out = new java.util.LinkedHashMap<>();
+            for (java.util.Map.Entry<Integer, List<Long>> e : instants.entrySet())
+                out.put(e.getKey(), java.util.Collections.unmodifiableList(e.getValue()));
+            return java.util.Collections.unmodifiableMap(out);
+        }
+    }
+
+    /**
+     * Kolon saat dilimli bir zaman damgası mı: JDBC {@code TIMESTAMP_WITH_TIMEZONE}, MSSQL datetimeoffset, Oracle TIMESTAMP
+     * WITH (LOCAL) TIME ZONE ya da pgjdbc'nin {@code TIMESTAMP} diye bildirdiği {@code timestamptz}.
+     */
+    static boolean zonedTimestamp(int type, String typeName) {
+        if (type == Types.TIMESTAMP_WITH_TIMEZONE || type == MSSQL_DATETIMEOFFSET || type == ORACLE_TIMESTAMPTZ
+                || type == ORACLE_TIMESTAMPLTZ) return true;
+        return type == Types.TIMESTAMP && typeName != null && typeName.trim().equalsIgnoreCase("timestamptz");
+    }
+
+    /** Saat dilimli hücrenin ANI (epoch ms) — okunamazsa null (tazelik "zaman damgası değil" der). Asla fırlatmaz. */
+    static Long instantOf(ResultSet rs, int i, int type) {
+        try {
+            if (type == Types.TIMESTAMP || type == ORACLE_TIMESTAMPLTZ) {
+                java.sql.Timestamp t = rs.getTimestamp(i);
+                return t == null ? null : t.getTime();
+            }
+            OffsetDateTime o = rs.getObject(i, OffsetDateTime.class);
+            return o == null ? null : o.toInstant().toEpochMilli();
+        } catch (Throwable e) {
+            return null;
+        }
     }
 
     private static Read read(ResultSet rs, int limit, Set<String> discard) throws SQLException {
@@ -633,16 +689,20 @@ public class DbQueryRunner {
         int[] types = new int[cols];
         int[] precision = new int[cols];
         boolean[] skip = new boolean[cols];
+        boolean[] zoned = new boolean[cols];
         Set<String> drop = new HashSet<>();
         for (String d : discard) if (d != null) drop.add(d.trim().toLowerCase(Locale.ROOT));
         for (int i = 0; i < cols; i++) {
             String label = md.getColumnLabel(i + 1);
             if (label == null || label.isBlank()) label = md.getColumnName(i + 1);
             String name = label == null ? "" : label;
-            r.columns.add(new Column(name, md.getColumnTypeName(i + 1)));
+            String typeName = md.getColumnTypeName(i + 1);
+            r.columns.add(new Column(name, typeName));
             types[i] = md.getColumnType(i + 1);
+            zoned[i] = zonedTimestamp(types[i], typeName);
             try { precision[i] = md.getPrecision(i + 1); } catch (Throwable e) { precision[i] = 0; }
             skip[i] = drop.contains(name.toLowerCase(Locale.ROOT));
+            if (zoned[i] && !skip[i]) r.instants.put(i, new ArrayList<>());
         }
         long budget = MEMORY_BUDGET_CHARS;
         boolean exhausted = false;
@@ -660,6 +720,7 @@ public class DbQueryRunner {
                     continue;
                 }
                 Cell cell = readCell(rs, i + 1, types[i], precision[i]);
+                if (zoned[i]) r.instants.get(i).add(cell.value == null ? null : instantOf(rs, i + 1, types[i]));
                 if (cell.truncated) r.truncated = true;
                 budget -= cell.chars;
                 row.add(cell.value);
@@ -709,7 +770,7 @@ public class DbQueryRunner {
                 java.sql.Timestamp t = rs.getTimestamp(i);
                 return t == null ? Cell.NULL : new Cell(t.toLocalDateTime().toString(), 26, false);
             }
-            case Types.TIMESTAMP_WITH_TIMEZONE, Types.TIME_WITH_TIMEZONE, ORACLE_TIMESTAMPTZ, MSSQL_DATETIMEOFFSET -> {
+            case Types.TIMESTAMP_WITH_TIMEZONE, Types.TIME_WITH_TIMEZONE -> {
                 String s;
                 try {
                     OffsetDateTime o = rs.getObject(i, OffsetDateTime.class);

@@ -234,6 +234,7 @@ public final class AppSettingsCatalog {
         // r177: ardışık değerlendirilemeyen çalıştırma alarmı (0 = kapalı, 1–20) ve yazabilen / yönetici hesap kipi
         new Setting("site.monitor.dbquery.unknown-alert-runs",         "dbquery", Type.INT),
         new Setting("site.monitor.dbquery.writable-account-mode",      "dbquery", Type.ENUM, List.of("OFF", "WARN", "BLOCK")),
+        new Setting("site.monitor.dbquery.local-timezone",             "dbquery", Type.STRING),
         // Saklama (RetentionCatalog dbquery-checks / dbquery-alert-rows) — saklama anahtarı olarak kendiliğinden GLOBAL_ONLY.
         new Setting("site.monitor.metrics.dbquery.retention-days",     "dbquery", Type.INT),
         new Setting("site.monitor.dbquery.alert-rows.retention-days",  "dbquery", Type.INT),
@@ -857,7 +858,8 @@ public final class AppSettingsCatalog {
         // r177: değerlendirilemeyen çalıştırma alarmı (kapatmak izlemenin sessizce ölmesine izin verir) ve yazabilen hesap kipi
         // (BLOCK kapatılırsa yönetici hesapla sorgu çalışır) kurum geneli güvenlik kararı
         "site.monitor.dbquery.unknown-alert-runs",
-        "site.monitor.dbquery.writable-account-mode"
+        "site.monitor.dbquery.writable-account-mode",
+        "site.monitor.dbquery.local-timezone"
     ));
 
     /**

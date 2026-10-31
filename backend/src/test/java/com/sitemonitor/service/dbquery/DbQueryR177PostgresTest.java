@@ -56,9 +56,14 @@ class DbQueryR177PostgresTest {
         try (Connection c = direct(); Statement s = c.createStatement()) {
             dropAll(s);
             s.execute("CREATE SCHEMA dbq_r177");
-            s.execute("CREATE TABLE dbq_r177.olay (id int PRIMARY KEY, ts timestamptz NOT NULL, ts_yerel timestamp NOT NULL)");
-            s.execute("INSERT INTO dbq_r177.olay VALUES (1, now() - interval '10 minutes', localtimestamp - interval '10 minutes'), "
-                    + "(2, now() - interval '3 hours', localtimestamp - interval '3 hours')");
+            // ts_yerel: kurum uygulamasının İstanbul duvar saatiyle yazdığı dilimsiz değer (pod / oturum dilimi ne olursa olsun);
+            // ts_utc: UTC duvar saatiyle yazılmış dilimsiz değer (ikinci tur O-1)
+            s.execute("CREATE TABLE dbq_r177.olay (id int PRIMARY KEY, ts timestamptz NOT NULL, ts_yerel timestamp NOT NULL, "
+                    + "ts_utc timestamp NOT NULL)");
+            s.execute("INSERT INTO dbq_r177.olay VALUES (1, now() - interval '10 minutes', "
+                    + "(now() AT TIME ZONE 'Europe/Istanbul') - interval '10 minutes', (now() AT TIME ZONE 'UTC') - interval '10 minutes'), "
+                    + "(2, now() - interval '3 hours', (now() AT TIME ZONE 'Europe/Istanbul') - interval '3 hours', "
+                    + "(now() AT TIME ZONE 'UTC') - interval '3 hours')");
             // Kendi parolalarıyla: CI'daki PostgreSQL parola denetler (yerel küme trust kipindeydi)
             s.execute("CREATE ROLE " + RO + " LOGIN PASSWORD '" + ROLE_PASSWORD + "'");
             s.execute("CREATE ROLE " + RW + " LOGIN PASSWORD '" + ROLE_PASSWORD + "'");
@@ -106,7 +111,9 @@ class DbQueryR177PostgresTest {
         assertThat(t.ok()).isTrue();
         assertThat(t.privileges().checked()).isTrue();
         assertThat(t.privileges().readOnly()).isTrue();
-        assertThat(t.privileges().findings()).isEmpty();
+        // PG ≤ 14 (ya da taşınmış veritabanı) public şemasını PUBLIC'e açık bırakır — o yalnız bilgi bulgusudur
+        assertThat(t.privileges().findings()).extracting(DbAccountPrivileges.Finding::code)
+                .allMatch(DbAccountPrivileges.INFO_CODES::contains);
         // denetim istenmediyse yapılmaz
         assertThat(runner.test(spec(RO), false).privileges().checked()).isFalse();
     }
@@ -140,19 +147,76 @@ class DbQueryR177PostgresTest {
 
     @Test
     void databaseClockAndFreshnessAgeOnRealColumns() {
-        DbQueryRunner.QueryResult r = runner.run(spec(RO), "SELECT max(ts) AS ts, max(ts_yerel) AS ts_yerel FROM dbq_r177.olay",
-                10, 10, new DbQueryRunner.RunOptions(Set.of(), true, false));
+        DbQueryRunner.QueryResult r = runner.run(spec(RO), "SELECT max(ts) AS ts, max(ts_yerel) AS ts_yerel, max(ts_utc) AS ts_utc "
+                + "FROM dbq_r177.olay", 10, 10, new DbQueryRunner.RunOptions(Set.of(), true, false));
         assertThat(r.ok()).as(String.valueOf(r.error())).isTrue();
         assertThat(Duration.between(r.dbClock().now(), Instant.now()).abs().getSeconds()).isLessThan(30);
+        // timestamptz an kanalında; dilimsiz kolonlar değil
+        assertThat(r.instants()).containsOnlyKeys(0);
         List<DbQueryRules.Rule> rules = DbQueryRules.fromApi(List.of(
                 Map.of("id", "a", "kind", "FRESHNESS", "column", "ts", "operator", "GT", "warning", 3600),
-                Map.of("id", "b", "kind", "FRESHNESS", "column", "ts_yerel", "operator", "GT", "warning", 3600))).rules();
-        DbQueryEvaluator.Outcome o = DbQueryEvaluator.evaluate(rules, "ANY", r, DbQueryEvaluator.Baselines.NONE, "tr");
+                Map.of("id", "b", "kind", "FRESHNESS", "column", "ts_yerel", "operator", "GT", "warning", 3600),
+                Map.of("id", "c", "kind", "FRESHNESS", "column", "ts_utc", "operator", "GT", "warning", 3600,
+                        "timezone", "UTC"))).rules();
+        // ayar Europe/Istanbul (varsayılan): JVM / oturum dilimi (CI'da UTC) ne olursa olsun doğru yaş
+        DbQueryEvaluator.Outcome o = DbQueryEvaluator.evaluate(rules, "ANY", r, DbQueryEvaluator.Baselines.NONE, "tr",
+                java.time.ZoneId.of("Europe/Istanbul"));
         for (DbQueryEvaluator.RuleResult rr : o.results()) {
             assertThat(rr.evaluated()).as(rr.id() + " " + rr.note()).isTrue();
             assertThat(rr.measure()).as(rr.id()).isBetween(570.0, 660.0);   // ≈ 10 dk
         }
         assertThat(o.status()).isEqualTo("OK");
+        // İstanbul duvar saati UTC sayılırsa 3 sa ileride → future_timestamp (asla "taze")
+        DbQueryRules.Rule wrong = DbQueryRules.fromApi(List.of(Map.of("id", "w", "kind", "FRESHNESS", "column", "ts_yerel",
+                "operator", "GT", "warning", 3600, "timezone", "UTC"))).rules().get(0);
+        DbQueryEvaluator.RuleResult w = DbQueryEvaluator.evaluate(List.of(wrong), "ANY", r, DbQueryEvaluator.Baselines.NONE,
+                "tr").results().get(0);
+        assertThat(w.evaluated()).isFalse();
+        assertThat(w.note()).isEqualTo(DbQueryEvaluator.NOTE_FUTURE_TIMESTAMP);
+    }
+
+    /** public şemasında PUBLIC'in CREATE yetkisi var mı (PG ≤ 14 varsayılanı; PG 15+'ta kapalı). */
+    private static boolean publicCreateOpen(Statement s) throws Exception {
+        try (java.sql.ResultSet rs = s.executeQuery("SELECT EXISTS (SELECT 1 FROM pg_namespace n, aclexplode(COALESCE(n.nspacl, "
+                + "acldefault('n', n.nspowner))) a WHERE n.nspname = 'public' AND a.grantee = 0 AND a.privilege_type = 'CREATE')")) {
+            rs.next();
+            return rs.getBoolean(1);
+        }
+    }
+
+    @Test
+    void publicSchemaCreateFromPublicIsInformationButDirectGrantIsNot() throws Exception {
+        boolean wasOpen;
+        try (Connection c = direct(); Statement s = c.createStatement()) {
+            wasOpen = publicCreateOpen(s);
+            if (!wasOpen) s.execute("GRANT CREATE ON SCHEMA public TO PUBLIC");   // PG ≤ 14 durumunu kur
+        }
+        try {
+            DbAccountPrivileges.Result viaPublic = runner.test(spec(RO), true).privileges();
+            assertThat(viaPublic.readOnly()).isTrue();   // BLOCK'ta engellemez
+            assertThat(viaPublic.writable()).isFalse();
+            assertThat(viaPublic.findings()).extracting(DbAccountPrivileges.Finding::code)
+                    .containsExactly(DbAccountPrivileges.PUBLIC_SCHEMA_CREATE);
+            // hesaba doğrudan verilmiş CREATE gerçek yetki
+            try (Connection c = direct(); Statement s = c.createStatement()) {
+                s.execute("GRANT CREATE ON SCHEMA dbq_r177 TO " + RO);
+            }
+            DbAccountPrivileges.Result direct = runner.test(spec(RO), true).privileges();
+            assertThat(direct.readOnly()).isFalse();
+            assertThat(direct.findings()).extracting(DbAccountPrivileges.Finding::detail).contains("schema dbq_r177");
+            assertThat(direct.findings()).extracting(DbAccountPrivileges.Finding::code).contains(DbAccountPrivileges.CAN_CREATE);
+        } finally {
+            try (Connection c = direct(); Statement s = c.createStatement()) {
+                s.execute("REVOKE CREATE ON SCHEMA dbq_r177 FROM " + RO);
+                if (!wasOpen) s.execute("REVOKE CREATE ON SCHEMA public FROM PUBLIC");
+            }
+        }
+        // kapalı public (PG 15+ varsayılanı): bulgu yok
+        if (!wasOpen) {
+            DbAccountPrivileges.Result closed = runner.test(spec(RO), true).privileges();
+            assertThat(closed.readOnly()).isTrue();
+            assertThat(closed.findings()).isEmpty();
+        }
     }
 
     @Test

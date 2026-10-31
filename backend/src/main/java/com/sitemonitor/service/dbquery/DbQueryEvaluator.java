@@ -58,22 +58,34 @@ public final class DbQueryEvaluator {
             /** Tazelik kuralı: kolon değeri bir zaman damgası olarak okunamadı (r177). */
             NOTE_NOT_TIMESTAMP = "not_timestamp",
             /** Tazelik kuralı: veritabanı saati okunamadı — yaş hesaplanamaz (r177). */
-            NOTE_DB_CLOCK_UNAVAILABLE = "db_clock_unavailable";
+            NOTE_DB_CLOCK_UNAVAILABLE = "db_clock_unavailable",
+            /**
+             * Tazelik kuralı: değer veritabanı saatinden {@value #FUTURE_TOLERANCE_SECONDS} sn'den fazla ileride — büyük
+             * olasılıkla yanlış saat dilimi (r177 ikinci tur, O-1). Kanıt yok: asla "taze / geçti" sayılmaz.
+             */
+            NOTE_FUTURE_TIMESTAMP = "future_timestamp";
+
+    /** Tazelik: veritabanı saatinden bu kadar ileride olan değer saat farkı sayılır (yaş 0); daha ilerisi "gelecekte". */
+    public static final long FUTURE_TOLERANCE_SECONDS = 300;
+
+    /** Tazelik kuralında dilimsiz değerlerin varsayılan yorum dilimi (ayar okunamazsa). */
+    public static final java.time.ZoneId DEFAULT_LOCAL_ZONE = java.time.ZoneId.of("Europe/Istanbul");
 
     /**
      * Kanıt eksikliği notları (2026-10-31 inceleme D3): bu notla değerlendirilemeyen kural "geçti" sayılmaz — eşik kaleminin
-     * kararı bilinmiyor ({@code DbQueryAlarmText#thresholdVerdict}). Satır yok / değer boş bu kümede DEĞİL (değer yoksa
-     * ihlal de yoktur; aksi hâlde "takılı iş yok → satır yok" sorgusunun alarmı hiç kapanmazdı) — tazelik kuralı hariç
-     * ({@link #isInconclusive}).
+     * kararı bilinmiyor ({@code DbQueryAlarmText#thresholdVerdict}), kontrol satırı {@code UNKNOWN}. Satır yok / değer boş bu
+     * kümede DEĞİL (değer yoksa ihlal de yoktur; aksi hâlde "takılı iş yok → satır yok" sorgusunun alarmı hiç kapanmazdı) —
+     * tazelik kuralı hariç ({@link #isInconclusive}). "Taban kuruluyor" notları ({@link #WAITING_NOTES}) da bu kümede DEĞİL.
      */
     public static final java.util.Set<String> INCONCLUSIVE_NOTES =
-            java.util.Set.of(NOTE_COLUMN_MISSING, NOTE_NOT_NUMERIC, NOTE_FIRST_RUN, NOTE_PREVIOUS_UNREADABLE,
-                    NOTE_BASELINE_RESET, NOTE_NO_SEASONAL_BASELINE, NOTE_NOT_TIMESTAMP, NOTE_DB_CLOCK_UNAVAILABLE);
+            java.util.Set.of(NOTE_COLUMN_MISSING, NOTE_NOT_NUMERIC, NOTE_PREVIOUS_UNREADABLE, NOTE_NOT_TIMESTAMP,
+                    NOTE_DB_CLOCK_UNAVAILABLE, NOTE_FUTURE_TIMESTAMP);
 
     /**
-     * "Taban kuruluyor" notları (r177): kanıt eksikliğidir (kontrol satırı {@code UNKNOWN}) ama YAPILANDIRMA hatası değildir —
-     * kendiliğinden düzelir (bir sonraki / dünkü çalıştırma taban olur). Ardışık değerlendirilemeyen çalıştırma alarmını
-     * ({@code DB_RULE_UNEVALUABLE}) BESLEMEZ: yeni bir "geçen hafta aynı saat" kuralı bir hafta boyunca alarm üretmesin.
+     * "Taban kuruluyor" notları (r177 ikinci tur, O-6): ihlal DEĞİL ve kanıt eksikliği de DEĞİL — eşik kararında kural
+     * "geçti" sayılır (ANY'de başka ihlal yoksa karar OK, açık eşik alarmı kapanabilir), kontrol satırı UNKNOWN olmaz
+     * (not kural sonucunda görünür), ardışık değerlendirilemeyen çalıştırma alarmını beslemez. Aksi hâlde yeni bir "geçen
+     * hafta aynı saat" kuralı bir hafta boyunca açık eşik alarmının kapanmasını engellerdi.
      */
     public static final java.util.Set<String> WAITING_NOTES =
             java.util.Set.of(NOTE_FIRST_RUN, NOTE_BASELINE_RESET, NOTE_NO_SEASONAL_BASELINE);
@@ -180,9 +192,18 @@ public final class DbQueryEvaluator {
         return evaluate(rules, logic, result, new Baselines(previousMeasures == null ? Map.of() : previousMeasures, notes), lang);
     }
 
-    /** Kural başına taban ölçü + tabanın yokluğunun nedeni ({@link Baselines}) — r177. */
+    /** Kural başına taban ölçü + tabanın yokluğunun nedeni ({@link Baselines}) — r177; dilimsiz değerler {@link #DEFAULT_LOCAL_ZONE}. */
     public static Outcome evaluate(List<DbQueryRules.Rule> rules, String logic, DbQueryRunner.QueryResult result,
                                    Baselines baselines, String lang) {
+        return evaluate(rules, logic, result, baselines, lang, DEFAULT_LOCAL_ZONE);
+    }
+
+    /**
+     * @param localZone tazelik kuralında saat dilimi OLMAYAN değerlerin yorum dilimi (kuralın kendi {@code timezone}'u yoksa;
+     *                  ayar {@code site.monitor.dbquery.local-timezone}); null = {@link #DEFAULT_LOCAL_ZONE}
+     */
+    public static Outcome evaluate(List<DbQueryRules.Rule> rules, String logic, DbQueryRunner.QueryResult result,
+                                   Baselines baselines, String lang, java.time.ZoneId localZone) {
         boolean en = "en".equalsIgnoreCase(lang);
         List<DbQueryRules.Rule> rs = rules == null ? List.of() : rules;
         Baselines base = baselines == null ? Baselines.NONE : baselines;
@@ -196,7 +217,7 @@ public final class DbQueryEvaluator {
             }
             return new Outcome("OK", LEVEL_NONE, List.copyOf(out), null);
         }
-        Ctx ctx = new Ctx(result, en);
+        Ctx ctx = new Ctx(result, en, localZone == null ? DEFAULT_LOCAL_ZONE : localZone);
         List<RuleResult> out = new ArrayList<>();
         for (DbQueryRules.Rule r : rs) {
             if (r == null) continue;
@@ -245,7 +266,7 @@ public final class DbQueryEvaluator {
 
     // ── Kural başına ─────────────────────────────────────────────────────────
 
-    private record Ctx(DbQueryRunner.QueryResult result, boolean en) {}
+    private record Ctx(DbQueryRunner.QueryResult result, boolean en, java.time.ZoneId localZone) {}
 
     private static RuleResult evaluateRule(DbQueryRules.Rule r, Ctx ctx, Double previous, String missingNote) {
         boolean en = ctx.en();
@@ -274,7 +295,7 @@ public final class DbQueryEvaluator {
                 return change(r, qr, previous, missingNote, exp, en);
             }
             case DbQueryRules.KIND_FRESHNESS -> {
-                return freshness(r, qr, exp, en);
+                return freshness(r, qr, exp, en, ruleZone(r, ctx.localZone()));
             }
             default -> {
                 return notEvaluated(r, exp, NOTE_NOT_NUMERIC);
@@ -556,21 +577,38 @@ public final class DbQueryEvaluator {
     /** Zaman damgası metninin üst sınırı (daha uzunu tarih değildir — doğrusal, sınırlı ayrıştırma). */
     static final int MAX_TIMESTAMP_CHARS = 64;
 
+    /** Kuralın dilimi (geçerliyse), yoksa ayardaki yerel dilim. */
+    static java.time.ZoneId ruleZone(DbQueryRules.Rule r, java.time.ZoneId fallback) {
+        java.time.ZoneId base = fallback == null ? DEFAULT_LOCAL_ZONE : fallback;
+        if (r == null || r.timezone() == null) return base;
+        try {
+            return java.time.ZoneId.of(r.timezone());
+        } catch (RuntimeException e) {
+            return base;
+        }
+    }
+
     /**
      * Tazelik: kolondaki zaman damgalarının hesabı (MAX = en yeni, MIN = en eski, FIRST = ilk satır) veritabanı saatine göre
-     * YAŞA (saniye) çevrilir. Saat dilimli değerler mutlaktır; dilimsiz değerler ({@code timestamp} / {@code datetime2} /
-     * Oracle {@code DATE}) veritabanı saatinin diliminde yorumlanır ({@link DbQueryRunner.DbClock#offset}). Ölçüm = yaş;
-     * eşikler "yaş &gt; X" / "yaş ≥ X". Satır yok / değer boş → kanıt eksikliği ({@link #isInconclusive}); veritabanı saati
-     * okunamadı → {@link #NOTE_DB_CLOCK_UNAVAILABLE}; değer tarih değil → {@link #NOTE_NOT_TIMESTAMP}.
+     * YAŞA (saniye) çevrilir — yaş = veritabanının şu anki ANI − değer. Saat dilimli değerler (PostgreSQL {@code timestamptz},
+     * MSSQL {@code datetimeoffset}, Oracle {@code TIMESTAMP WITH TIME ZONE}) mutlaktır — çalıştırıcı anlarını ayrıca verir
+     * ({@link DbQueryRunner.QueryResult#instants}); dilimsiz değerler (PostgreSQL {@code timestamp}, MSSQL
+     * {@code datetime / datetime2}, Oracle {@code DATE / TIMESTAMP}) TÜM türlerde aynı kuralla {@code zone}'da (kuralın
+     * {@code timezone}'u, yoksa ayar) yorumlanır (r177 ikinci tur, O-1). Değer veritabanı saatinden
+     * {@value #FUTURE_TOLERANCE_SECONDS} sn'ye kadar ileride → yaş 0 (saat farkı); daha ilerisi →
+     * {@link #NOTE_FUTURE_TIMESTAMP} (değerlendirilemez — yanlış dilim; asla "geçti"). Satır yok / değer boş → kanıt eksikliği
+     * ({@link #isInconclusive}); veritabanı saati okunamadı → {@link #NOTE_DB_CLOCK_UNAVAILABLE}; değer tarih değil →
+     * {@link #NOTE_NOT_TIMESTAMP}.
      */
-    private static RuleResult freshness(DbQueryRules.Rule r, DbQueryRunner.QueryResult qr, String exp, boolean en) {
+    private static RuleResult freshness(DbQueryRules.Rule r, DbQueryRunner.QueryResult qr, String exp, boolean en,
+                                        java.time.ZoneId zone) {
         int idx = columnIndex(qr, r.column());
         if (idx < 0) return notEvaluated(r, exp, NOTE_COLUMN_MISSING);
         List<List<Object>> rows = qr.rows() == null ? List.of() : qr.rows();
         if (rows.isEmpty()) return notEvaluated(r, exp, NOTE_NO_ROWS);
         DbQueryRunner.DbClock clock = qr.dbClock();
         if (clock == null || clock.now() == null) return notEvaluated(r, exp, NOTE_DB_CLOCK_UNAVAILABLE);
-        java.time.ZoneOffset zone = clock.offset() == null ? java.time.ZoneOffset.UTC : clock.offset();
+        List<Long> absolute = qr.instants() == null ? null : qr.instants().get(idx);
         String agg = r.aggregate() == null ? "MAX" : r.aggregate();
         java.time.Instant picked = null;
         boolean anyValue = false;
@@ -580,19 +618,28 @@ public final class DbQueryEvaluator {
             Object cell = idx < row.size() ? row.get(idx) : null;
             if (cell == null) continue;
             anyValue = true;
-            java.time.Instant t = timestampOf(cell, zone);
+            java.time.Instant t;
+            if (absolute != null) {
+                Long ms = i < absolute.size() ? absolute.get(i) : null;
+                t = ms == null ? null : java.time.Instant.ofEpochMilli(ms);
+            } else {
+                t = timestampOf(cell, zone);
+            }
             if (t == null) return notEvaluated(r, exp, NOTE_NOT_TIMESTAMP);
             if (picked == null || ("MIN".equals(agg) ? t.isBefore(picked) : t.isAfter(picked))) picked = t;
         }
         if (!anyValue || picked == null) return notEvaluated(r, exp, NOTE_NULL_VALUE);
         double age = (clock.now().toEpochMilli() - picked.toEpochMilli()) / 1000.0;
-        age = round(age);
+        if (age < -FUTURE_TOLERANCE_SECONDS) {
+            String ahead = en ? "in the future (" + duration(-age, true) + " ahead of the database clock)"
+                    : "gelecekte (veritabanı saatinden " + duration(-age, false) + " ileride)";
+            return new RuleResult(r.id(), r.label(), r.kind(), ahead, exp, LEVEL_NONE, true, false, NOTE_FUTURE_TIMESTAMP,
+                    null, null);
+        }
+        age = round(Math.max(0, age));
         String level = numericLevel(r, age);
         String partial = qr.rowCountCapped() || qr.valuesTruncated() || rows.size() < qr.rowCount() ? NOTE_PARTIAL : null;
-        String actual = age < 0
-                ? (en ? "in the future (" + duration(-age, true) + " ahead of the database clock)"
-                      : "gelecekte (veritabanı saatinden " + duration(-age, false) + " ileride)")
-                : (en ? "age " + duration(age, true) : "yaş " + duration(age, false));
+        String actual = en ? "age " + duration(age, true) : "yaş " + duration(age, false);
         return new RuleResult(r.id(), r.label(), r.kind(), actual, exp, level, LEVEL_NONE.equals(level), true, partial,
                 age, age);
     }
@@ -603,11 +650,11 @@ public final class DbQueryEvaluator {
      * ({@code 2026-10-31 10:15:30.1234567 +03:00}). Sayı, mantıksal ve tanınmayan metin → null (tahmin YOK — örn. epoch).
      * Doğrusal: girdi ≤ {@value #MAX_TIMESTAMP_CHARS} karakter, düzenli ifade yok.
      */
-    static java.time.Instant timestampOf(Object cell, java.time.ZoneOffset zone) {
+    static java.time.Instant timestampOf(Object cell, java.time.ZoneId zone) {
         if (!(cell instanceof String raw)) return null;
         String s = raw.trim();
         if (s.length() < 10 || s.length() > MAX_TIMESTAMP_CHARS) return null;
-        java.time.ZoneOffset z = zone == null ? java.time.ZoneOffset.UTC : zone;
+        java.time.ZoneId z = zone == null ? DEFAULT_LOCAL_ZONE : zone;
         try {
             if (s.length() == 10) return java.time.LocalDate.parse(s).atStartOfDay(z).toInstant();
             StringBuilder b = new StringBuilder(s.length());
@@ -621,10 +668,12 @@ public final class DbQueryEvaluator {
             int sign = -1;
             for (int i = t.length() - 1; i > 10; i--) {
                 char c = t.charAt(i);
-                if (c == '+' || (c == '-' && i > 16)) { sign = i; break; }
+                // Tarih bölümünün tireleri 4 ve 7. konumda; 'T'den (10) sonraki her '-' dilim işaretidir — saniyesi sıfır
+                // değer "2026-10-31T10:15-05:00" yazılır (eksi 16. konumda, r177 ikinci tur D-5)
+                if (c == '+' || (c == '-' && i > 10)) { sign = i; break; }
                 if (c == 'Z' && i == t.length() - 1) { sign = i; break; }
             }
-            if (sign < 0) return java.time.LocalDateTime.parse(t).atOffset(z).toInstant();
+            if (sign < 0) return java.time.LocalDateTime.parse(t).atZone(z).toInstant();
             String local = t.substring(0, sign).trim();
             String off = t.substring(sign);
             java.time.ZoneOffset o;

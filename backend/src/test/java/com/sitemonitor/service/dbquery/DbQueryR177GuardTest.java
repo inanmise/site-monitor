@@ -58,6 +58,9 @@ class DbQueryR177GuardTest {
         assertThat(pg("SELECT max(tutar), min(tutar) FROM siparis").shape().singleRowAggregate()).isTrue();
         // GROUP BY satır başına sonuç verir — tuzak değil
         assertThat(pg("SELECT durum, COUNT(*) FROM siparis GROUP BY durum").shape().singleRowAggregate()).isFalse();
+        // HAVING'li toplama 0 ya da 1 satır döner — satır sayısı anlamlı (ikinci tur D-7)
+        assertThat(pg("SELECT COUNT(*) AS n FROM siparis WHERE durum = 'HATA' HAVING COUNT(*) > 5").shape()
+                .singleRowAggregate()).isFalse();
         DbQuerySqlGuard.Shape cols = pg("SELECT id, \"Musteri_No\", tutar AS t FROM siparis").shape();
         assertThat(cols.columns()).containsExactly("id", "Musteri_No", "t");
         assertThat(cols.singleRowAggregate()).isFalse();

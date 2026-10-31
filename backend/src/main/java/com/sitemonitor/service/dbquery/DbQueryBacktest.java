@@ -182,7 +182,10 @@ public final class DbQueryBacktest {
                 while (!win.isEmpty() && win.peekFirst()[0] < keep) win.removeFirst();
             }
         }
-        if (base == null || prev == null) return new Verdict(false, true, "NONE", true);
+        // Ölçü yok → kanıt eksikliği; ölçü var ama taban yok → "taban kuruluyor": ihlal değil, kanıt eksikliği de değil
+        // (canlı değerlendiriciyle aynı — r177 ikinci tur O-6)
+        if (base == null) return new Verdict(false, true, "NONE", true);
+        if (prev == null) return new Verdict(false, true, "NONE", false);
         DbQueryEvaluator.RuleResult rr = DbQueryEvaluator.changeAgainst(r, base, prev, null, "", false);
         return new Verdict(true, rr.passed(), rr.level(), false);
     }

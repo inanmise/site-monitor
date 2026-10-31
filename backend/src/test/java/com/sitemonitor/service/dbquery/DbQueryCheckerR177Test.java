@@ -131,7 +131,8 @@ class DbQueryCheckerR177Test {
         DbQueryCheckerService.Result r = runWith(m, rows(3_000));
         assertThat(r.ruleResults().get(0).note()).isEqualTo(DbQueryEvaluator.NOTE_BASELINE_RESET);
         assertThat(r.ruleResults().get(0).evaluated()).isFalse();
-        assertThat(r.status()).isEqualTo("UNKNOWN");   // taban kuruluyor — asla yeşil "OK" değil
+        // ikinci tur O-6: taban kuruluyor = ihlal değil, kanıt eksikliği de değil → satır OK, not kural sonucunda
+        assertThat(r.status()).isEqualTo("OK");
         assertThat(r.level()).isEqualTo("NONE");
     }
 
@@ -151,7 +152,7 @@ class DbQueryCheckerR177Test {
         DbQueryCheckerService.Result r = runWith(m, qr);
         assertThat(r.ruleResults().get(0).note()).isEqualTo(DbQueryEvaluator.NOTE_BASELINE_RESET);
         assertThat(r.ruleResults().get(0).measure()).isEqualTo(900.0);   // yeni taban bu çalıştırma
-        assertThat(r.status()).isEqualTo("UNKNOWN");
+        assertThat(r.status()).isEqualTo("OK");
     }
 
     @Test
@@ -197,11 +198,52 @@ class DbQueryCheckerR177Test {
         when(checks.findScheduledOkBetween(eq(11L), anyString(), anyString())).thenReturn(List.of());
         DbQueryCheckerService.Result r = runWith(monitor("SELECT a FROM t", rules), rows(30));
         assertThat(r.ruleResults().get(0).note()).isEqualTo(DbQueryEvaluator.NOTE_NO_SEASONAL_BASELINE);
-        assertThat(r.status()).isEqualTo("UNKNOWN");
-        // okuma hatası: prev_unreadable (kanıt eksikliği)
+        assertThat(r.status()).isEqualTo("OK");   // ikinci tur O-6: taban kuruluyor, kanıt eksikliği değil
+        // okuma hatası: prev_unreadable (kanıt eksikliği) → UNKNOWN
         when(checks.findScheduledOkBetween(eq(11L), anyString(), anyString())).thenThrow(new org.springframework.dao.QueryTimeoutException("x"));
-        assertThat(runWith(monitor("SELECT a FROM t", rules), rows(30)).ruleResults().get(0).note())
-                .isEqualTo(DbQueryEvaluator.NOTE_PREVIOUS_UNREADABLE);
+        DbQueryCheckerService.Result unreadable = runWith(monitor("SELECT a FROM t", rules), rows(30));
+        assertThat(unreadable.ruleResults().get(0).note()).isEqualTo(DbQueryEvaluator.NOTE_PREVIOUS_UNREADABLE);
+        assertThat(unreadable.status()).isEqualTo("UNKNOWN");
+    }
+
+    @Test
+    void newSeasonalRuleDoesNotKeepAnOpenThresholdAlarmOpen() {
+        // A kuralı (satır > 100) düzeldi; yeni eklenen B kuralı (geçen hafta aynı saat) henüz tabansız → karar OK:
+        // açık eşik alarmı kapanabilir (ikinci tur O-6 — önceden 7 gün UNKNOWN kalırdı)
+        String rules = "[{\"id\":\"a\",\"kind\":\"ROW_COUNT\",\"operator\":\"GT\",\"warning\":100},"
+                + "{\"id\":\"b\",\"kind\":\"CHANGE\",\"operator\":\"GT\",\"warning\":50,\"change\":{\"of\":\"ROW_COUNT\","
+                + "\"mode\":\"PERCENT\",\"direction\":\"ANY\",\"baseline\":\"same_time_last_week\"}}]";
+        when(checks.findScheduledOkBetween(eq(11L), anyString(), anyString())).thenReturn(List.of());
+        DbQueryCheckerService.Result r = runWith(monitor("SELECT a FROM t", rules), rows(30));
+        assertThat(r.status()).isEqualTo("OK");
+        assertThat(DbQueryAlarmText.thresholdVerdict(r.status(), DbQueryAlarmText.toApi(r.ruleResults()), "ANY"))
+                .isEqualTo(DbQueryAlarmText.VERDICT_OK);
+        // A hâlâ ihlaldeyse karar BREACH (taban bekleyen kural ihlali gizlemez)
+        DbQueryCheckerService.Result breach = runWith(monitor("SELECT a FROM t", rules), rows(300));
+        assertThat(breach.status()).isEqualTo("BREACH");
+    }
+
+    @Test
+    void freshnessUsesTheLocalTimezoneSetting() {
+        java.time.Instant now = java.time.Instant.now();
+        java.time.format.DateTimeFormatter local = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss");
+        String istanbulWallTime = local.format(now.minusSeconds(600).atZone(java.time.ZoneId.of("Europe/Istanbul")));
+        DbQueryRunner.QueryResult qr = new DbQueryRunner.QueryResult(true, 3, 1, false,
+                List.of(new DbQueryRunner.Column("son", "timestamp")), List.of(Arrays.asList((Object) istanbulWallTime)),
+                false, null, null, "PG", new DbQueryRunner.DbClock(now, java.time.ZoneOffset.UTC), null);
+        String rules = "[{\"id\":\"f\",\"kind\":\"FRESHNESS\",\"column\":\"son\",\"operator\":\"GT\",\"warning\":3600}]";
+        // varsayılan Europe/Istanbul (veritabanı saati UTC olsa da): yaş ≈ 10 dk
+        DbQueryCheckerService.Result r = runWith(monitor("SELECT son FROM t", rules), qr);
+        assertThat(r.ruleResults().get(0).measure()).isBetween(595.0, 605.0);
+        assertThat(svc.localZone().getId()).isEqualTo("Europe/Istanbul");
+        // ayar UTC: aynı duvar saati 3 sa ileride → future_timestamp, satır UNKNOWN
+        when(settings.getString(eq(DbQueryCheckerService.KEY_LOCAL_TIMEZONE), any())).thenReturn("UTC");
+        DbQueryCheckerService.Result utc = runWith(monitor("SELECT son FROM t", rules), qr);
+        assertThat(utc.ruleResults().get(0).note()).isEqualTo(DbQueryEvaluator.NOTE_FUTURE_TIMESTAMP);
+        assertThat(utc.status()).isEqualTo("UNKNOWN");
+        // geçersiz ayar → varsayılan
+        when(settings.getString(eq(DbQueryCheckerService.KEY_LOCAL_TIMEZONE), any())).thenReturn("Bozuk/Dilim");
+        assertThat(svc.localZone().getId()).isEqualTo("Europe/Istanbul");
     }
 
     // ── Tazelik, UNKNOWN ─────────────────────────────────────────────────────
