@@ -59,8 +59,9 @@ class DbQueryR177PostgresTest {
             s.execute("CREATE TABLE dbq_r177.olay (id int PRIMARY KEY, ts timestamptz NOT NULL, ts_yerel timestamp NOT NULL)");
             s.execute("INSERT INTO dbq_r177.olay VALUES (1, now() - interval '10 minutes', localtimestamp - interval '10 minutes'), "
                     + "(2, now() - interval '3 hours', localtimestamp - interval '3 hours')");
-            s.execute("CREATE ROLE " + RO + " LOGIN");
-            s.execute("CREATE ROLE " + RW + " LOGIN");
+            // Kendi parolalarıyla: CI'daki PostgreSQL parola denetler (yerel küme trust kipindeydi)
+            s.execute("CREATE ROLE " + RO + " LOGIN PASSWORD '" + ROLE_PASSWORD + "'");
+            s.execute("CREATE ROLE " + RW + " LOGIN PASSWORD '" + ROLE_PASSWORD + "'");
             for (String r : List.of(RO, RW)) {
                 s.execute("GRANT CONNECT ON DATABASE \"" + db + "\" TO " + r);
                 s.execute("GRANT USAGE ON SCHEMA dbq_r177 TO " + r);
@@ -90,8 +91,12 @@ class DbQueryR177PostgresTest {
         return DriverManager.getConnection(cfg.url(), cfg.user(), cfg.password());
     }
 
+    /** Test rollerinin parolası (yalnız bu geçici rollerde; yönetici hesabı kendi parolasıyla bağlanır). */
+    private static final String ROLE_PASSWORD = "dbq-r177-it";
+
     private static DbConnectionSpec spec(String user) {
-        return new DbConnectionSpec(DbType.POSTGRESQL, host, port, db, null, null, user, cfg.password(), "disable",
+        String password = RO.equals(user) || RW.equals(user) ? ROLE_PASSWORD : cfg.password();
+        return new DbConnectionSpec(DbType.POSTGRESQL, host, port, db, null, null, user, password, "disable",
                 false, false, 5_000);
     }
 

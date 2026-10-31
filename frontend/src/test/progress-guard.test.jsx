@@ -17,6 +17,10 @@ const UI_PROGRESS = path.join('components', 'ui', 'Progress.jsx')
 const EXEMPT = new Set([
   path.join('pages', 'Login.jsx'),            // .lp-spinner: login sayfası kendi CSS-only halkasını kullanır
   path.join('components', 'PageMonitorPage.jsx'), // .page-confirm-spin: onay akışında ikon dönüşü
+  // Kaynak analizi (2026-10-31): doluluk çubuğu DEĞİL, veri grafiği — tür dağılımının yığın çubuğu ve şelale bölütleri
+  // (her bölüt bir nesnenin payı / zaman aralığı; ProgressBar'ın tek değerli role="progressbar" anlamı yanlış olurdu)
+  path.join('components', 'page', 'resourcescan', 'ResourceScanDashboard.jsx'),
+  path.join('components', 'page', 'resourcescan', 'ResourceScanWaterfall.jsx'),
 ])
 
 function walk(dir, acc = []) {
