@@ -800,6 +800,7 @@ Her tür, hedeflerini ve sonuçlarını kendi tablolarında tutar ve kendi alarm
 | Sayfa bütünlüğü | `page_monitors` | `page_checks` + `page_resource_issues` | Sayfa alınamıyor (kritik), sayfa bütünlüğü (yüksek) |
 | Alan adı tescili | `domain_monitors` | `domain_checks` | Vade, bilinmiyor, durum kodu, kayıt değişikliği |
 | Senaryo (k6) | `scripted_monitors` | `scripted_checks` | Senaryo başarısız, yavaş koşum |
+| Veritabanı sorgusu | `dbquery_monitors` (+ `db_connection_profiles`) | `dbquery_checks` (+ `dbquery_alert_rows`) | Sorgu hatası, eşik (uyarı / kritik), yavaş sorgu |
 | Durum İzleme | `certificate_inventory` (ayrı hedef yok) | `uptime_checks` | Erişilebilirlik |
 
 Tür bazında alarm üretimini tamamen kapatmak isterseniz **Ayarlar → Genel** altındaki `monitoring` grubunda her tür için bir alarm anahtarı bulunur — monitörleri silmeden yalnız bildirimi susturur.
@@ -871,6 +872,24 @@ SSL sertifikanız kusursuz olabilir; ama alan adının tescili dolarsa domain el
 Detay penceresindeki Domain Kaydı sekmesi tescilin kimlik kartıdır: kayıt operatörü (registrar) ve IANA kimliği, önemli tarihler, ad sunucuları, çözümlenen A/AAAA IP'leri ve reverse-DNS adları, EPP durum kodları (açıklamalı) ve DNSSEC durumu. Vade sorgusu bir tanı aracıyla adım adım izlenebilir; kurumsal SSL-inspection proxy'si RDAP'ı bozarsa proxy CA zinciri yakalanıp güven deposuna eklenebilir (bkz. §14.26).
 
 Ne zaman kullanmalı? Kurumun sahip olduğu her üretim domaininde — istisnasız. Örneğin `sirketiniz.com` için varsayılan eşikleri korur, marka domainleriniz için hatırlatma listesine `90` gününü de eklersiniz; tescil yenileme bütçe onayı gerektiriyorsa 90 günlük öncü sinyal tam da bunun içindir.
+
+### 10.10 Veritabanı Sorgu İzleme
+
+Bazı sorunlar ağdan görünmez: bir iş kuyruğunda biriken kayıtlar, bir log tablosunda artan hata satırları, gece çalışması gereken bir aktarımın hiç başlamaması. **Veritabanı Sorgu İzleme** sekmesi kayıtlı bir veritabanı bağlantısında (PostgreSQL, Microsoft SQL Server ya da Oracle) sizin yazdığınız bir SELECT sorgusunu düzenli çalıştırır ve sonucu kurallarınıza göre değerlendirir. Kural ihlal edilirse **eşik alarmı** (uyarı ya da kritik), sorgu hiç çalıştırılamazsa (bağlantı, kimlik, sorgu hatası, zaman aşımı) **sorgu hatası alarmı**, sorgu belirlediğiniz süreyi aşarsa **yavaş sorgu alarmı** açılır. Diğer türlerdeki her şey burada da vardır: kartlar, şimdi kontrol et, kontrol geçmişi, grafik, alarm geçmişi, notlar, değişiklik geçmişi ve geri yükleme, toplu işlemler, bildirim grupları, 7/24, bakım pencereleri.
+
+**Bağlantılar.** Bağlantı bilgilerini her izlemede yeniden girmezsiniz: başlıktaki **Bağlantılar** penceresinde takımınız için bir kez kaydedersiniz (veritabanı türüne göre sunucu, port, veritabanı / servis adı ya da SID, örnek adı, kullanıcı adı, parola, şifreleme seçenekleri). Bağlantı takımınızın belgesidir: başka takımlar görmez, erişim paylaşımı da açmaz; izleme düzenleyebilen takım üyeleri yönetir. Parola şifreli saklanır ve hiçbir zaman geri gösterilmez; sunucu, port, veritabanı ya da kullanıcı değişirse güvenlik için yeniden istenir. Sağlık paneli son denemeyi, son kullanımı, son hatayı ve bağlantıyı kullanan izlemeleri gösterir. **Bağlantı için salt-okur, en az ayrıcalıklı bir veritabanı hesabı kullanın** (yalnız izlenecek tablolarda SELECT; çalıştırma, yazma, şema değiştirme yetkisi olmadan).
+
+**Sorgu ve güvenlik kuralları.** Yalnız okuyan tek bir SELECT (ya da WITH) kabul edilir; kayıtta, denemede ve her çalıştırmadan önce denetlenir. INSERT, UPDATE, DELETE, MERGE, şema değiştiren komutlar, yetki komutları, birden çok ifade, `SELECT … INTO`, `FOR UPDATE`, kilit ipuçları, uzak veritabanı bağlantıları, uyku / dosya okuma / komut çalıştırma fonksiyonları ve şema / paket nitelikli kullanıcı fonksiyonu çağrıları reddedilir. **Microsoft SQL Server'da her tablo `WITH (NOLOCK)` ile yazılmalıdır**; aksi halde sorgu kaydedilmez. Düzenleyici yazarken denetler ve neyin neden reddedildiğini satırıyla söyler. Sorgu salt-okur bir oturumda, zaman aşımı (5–60 sn) ve satır sınırıyla çalışır; süreyi aşan sorgu iptal edilir. Kayıtta isteğe bağlı maliyet ön kontrolü (PostgreSQL ve SQL Server planı) çok ağır sorguları uyarır ya da engeller.
+
+**Veriyi kimse göremez.** Bu izleme bir veri çekme aracı değildir: **Sorguyu dene** yalnız durumu, süreyi, satır sayısını, kolon adlarını ve kural sonuçlarını gösterir — satır verisini göstermez. Sonuç satırları yalnız alarm anında, alarm mailinde ve alarm ayrıntısında görünür (en çok 50 satır, 20 kolon); hassas kolonları maskeleyebilir (`••••`), maile hangi kolonların gireceğini seçebilirsiniz. Erişim paylaşımıyla alarmı okuyan kişi satırları görmez.
+
+**Esnek değerlendirme.** En çok 10 kural tanımlarsınız: satır sayısı, bir kolonun değeri (ilk / en büyük / en küçük / toplam / ortalama), metin eşleşmesi ve önceki çalıştırmaya göre değişim (yüzde ya da adet). Her kuralda iki seviye vardır: **uyarı** ve **kritik** eşik. Kurallardan herhangi biri ya da hepsi ihlal edildiğinde alarm açılabilir. Her kuralın altında ne denetlendiği düz cümleyle yazar ("Satır sayısı 10'dan büyükse UYARI, 100'den büyükse KRİTİK").
+
+**Esnek zamanlama.** Belirli aralıkla (her 1 dakika … her 7 gün) ya da **cron ifadesiyle** (ör. iş günleri 09:00'da, mesai saatlerinde her 15 dakikada) çalıştırırsınız; Türkiye saatine göredir. **İzinli pencereler** (yalnız bu gün ve saatlerde çalış), **yasak pencereler** (bu saatlerde çalışma — ör. gece bakım saati), **tatil takvimi** (Ayarlar → Platform → Tatil takvimi) ve ek tarihlerle sorgunun ne zaman çalışmayacağını belirlersiniz. Form sonraki 10 çalışmayı önceden gösterir.
+
+**Ayrıntılı alarm maili.** Mail; alarmın adını ve amacını ("bu alarm ne için"), bağlantıyı, sorgunun ne zaman çalıştığını ve ne kadar sürdüğünü, kaç satır döndüğünü, her kural için beklenen ve gelen değeri, çalışan sorguyu ve (açıksa) sonuç satırlarını tablo olarak içerir. Konu başlığını yer tutucularla kendiniz yazabilirsiniz (`{ad}`, `{amac}`, `{satir}`, `{deger}`, `{seviye}`, `{baglanti}`, `{zaman}`). Sık kullandığınız sorgu ve kuralları **Şablonlar** penceresinde takımınız için saklayıp yeni izlemeye "şablondan başla" ile aktarabilirsiniz.
+
+Ne zaman kullanmalı? Bir iş kuralının sonucunu sayıyla ölçebildiğinizde. Örneğin "son 15 dakikada `HATA` durumlu işlem sayısı 20'yi geçerse uyarı, 100'ü geçerse kritik" kuralı, mesai saatlerinde her 5 dakikada bir, tatillerde çalışmayacak şekilde kurulur; alarm maili ekibe hangi işlemlerin takıldığını tablo hâlinde götürür.
 
 ---
 
