@@ -243,6 +243,9 @@ export function DetailTabs({ value, onValueChange, tabs, counts, countsFor = nul
           hiçbir genişlikte kaydırma çubuğu çıkmaz. Dokunmatikte ≥ 40 px tetik yüksekliği (pointer-coarse). */}
       <TabsList variant="line" data-slot="detail-tabs-list"
         className={cn('h-auto w-full flex-wrap justify-start gap-x-1 gap-y-1 border-b pb-0',
+          // shadcn tabanının group-data h-9'u düz h-auto'dan özgül: aynı değişkenle ezilmezse sarılan satırlar
+          // listenin 36 px'lik kutusundan TAŞIP içeriğin üstüne biniyordu (telefonda 2–3 satır, 2026-10-31)
+          'group-data-[orientation=horizontal]/tabs:h-auto',
           'group-data-[orientation=horizontal]/tabs:pointer-coarse:min-h-12')}>
         {items.map(([k, label, opts]) => {
           const Icon = opts?.icon ?? TAB_ICONS[k]

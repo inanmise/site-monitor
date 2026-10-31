@@ -52,7 +52,13 @@ describe('manuel sertifika ayıklayıcısı — tembel parça kapısı', () => {
     const SETTINGS_EXPORT = 'components/admin/TechErrorReportSettings.jsx'
     // 2026-10-18 (C14): kanal görünümünün "Excel'e aktar" modülü (ChannelXlsxButton onu yalnız import() ile alır — lazyChunks kapısı)
     const CHANNEL_EXPORT = 'components/techerror/channelExport.js'
-    expect(writerUsers).toEqual(['components/cryptoinv/cryptoInventoryExport.js', 'components/sharedcert/sharedCertExport.js', SETTINGS_EXPORT, CHANNEL_EXPORT].sort())
+    // 2026-10-31: Sayfa Bütünlüğü kaynak analizi dışa aktarımı (Excel / PDF) — ResourceScanTab onu YALNIZ tıklamada import() ile alır
+    const RESOURCE_SCAN_EXPORT = 'components/page/resourcescan/resourceScanExport.js'
+    expect(writerUsers).toEqual(['components/cryptoinv/cryptoInventoryExport.js', 'components/sharedcert/sharedCertExport.js', SETTINGS_EXPORT, CHANNEL_EXPORT, RESOURCE_SCAN_EXPORT].sort())
+    expect(FILES.filter(({ src }) => staticImports(src).some((s) => /resourceScanExport(\.js)?$/.test(s))).map((x) => x.rel),
+      'kaynak analizi dışa aktarımı statik içe aktarılmaz').toEqual([])
+    expect(FILES.filter(({ src }) => /import\(\s*'\.\/resourceScanExport\.js'\s*\)/.test(src)).map((x) => x.rel))
+      .toEqual(['components/page/resourcescan/ResourceScanTab.jsx'])
     const settings = FILES.find((x) => x.rel === SETTINGS_EXPORT)
     expect(staticImports(settings.src).filter((s) => /(^|\/)xlsxWriter(\.js)?$/.test(s)), 'Ayarlar Excel yazıcısını statik içe aktarmaz').toEqual([])
     const staticExportUsers = FILES.filter(({ src }) => staticImports(src).some((s) => /(sharedCertExport|cryptoInventoryExport)(\.js)?$/.test(s))).map((x) => x.rel)

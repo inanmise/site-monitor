@@ -139,6 +139,55 @@ public class PageFetchCore {
     public record Resource(String url, String type, String sourcePage) {}
 
     /**
+     * Çekimin üst verisi (2026-10-31, Sayfa Bütünlüğü "Kaynak analizi") — SON yanıtın başlıkları, yönlendirme sonrası URL,
+     * yönlendirme sayısı ve (istenirse) gövdenin ilk baytları (görsel boyutu okumak için). Yalnız {@link #fetchWithMeta}
+     * doldurur; {@link #fetch} davranışı değişmedi.
+     *
+     * @param finalUrl        son isteğin URL'si (yönlendirme yoksa istenen URL); hiç yanıt gelmediyse null
+     * @param redirects       izlenen yönlendirme sayısı
+     * @param contentLength   {@code Content-Length} (telden gelen, sıkıştırılmış boyut); yoksa / bozuksa null
+     * @param head            gövdenin ilk baytları (telden, en çok istenen kadar); istenmediyse null
+     */
+    public record Meta(String finalUrl, int redirects, String contentType, String contentEncoding, Long contentLength,
+                       String cacheControl, String expires, String date, byte[] head) {
+        public static final Meta NONE = new Meta(null, 0, null, null, null, null, null, null, null);
+    }
+
+    /** {@link #fetchWithMeta} sonucu: çekimin kendisi + üst verisi. */
+    public record MetaFetch(Fetch fetch, Meta meta) {}
+
+    /** Üst veri toplayıcısı — yalnız {@link #fetchWithMeta} çağrısının kendi yığınında yaşar (paylaşılmaz). */
+    private static final class MetaSink {
+        final int headBytes;
+        String finalUrl;
+        int redirects;
+        java.net.http.HttpHeaders headers;
+        byte[] head;
+
+        MetaSink(int headBytes) { this.headBytes = Math.max(0, headBytes); }
+
+        Meta toMeta() {
+            if (headers == null) return new Meta(finalUrl, redirects, null, null, null, null, null, null, head);
+            Long len = null;
+            String cl = headers.firstValue("content-length").orElse(null);
+            if (cl != null) {
+                try { long v = Long.parseLong(cl.trim()); if (v >= 0) len = v; } catch (NumberFormatException ignore) { /* bozuk başlık */ }
+            }
+            return new Meta(finalUrl, redirects, clip(headers.firstValue("content-type").orElse(null)),
+                    clip(headers.firstValue("content-encoding").orElse(null)), len,
+                    clip(headers.firstValue("cache-control").orElse(null)), clip(headers.firstValue("expires").orElse(null)),
+                    clip(headers.firstValue("date").orElse(null)), head);
+        }
+
+        /** Başlık değerleri sınırlı tutulur (dev bir başlık belleği / DB'yi şişirmesin). */
+        private static String clip(String v) {
+            if (v == null) return null;
+            String t = v.trim();
+            return t.length() > 300 ? t.substring(0, 300) : t;
+        }
+    }
+
+    /**
      * Çekim seçenekleri.
      *
      * @param timeoutMs     istek başına zaman aşımı (alt sınır 1000 ms)
@@ -227,6 +276,21 @@ public class PageFetchCore {
      * Hiçbir zaman exception fırlatmaz — hata Fetch.error()/Fetch.blocked() olarak döner.
      */
     public Fetch fetch(String url, String method, FetchOptions opts) {
+        return fetch(url, method, opts, null);
+    }
+
+    /**
+     * {@link #fetch} + üst veri (2026-10-31, kaynak analizi): son yanıtın başlıkları, son URL, yönlendirme sayısı ve
+     * {@code headBytes > 0} ise gövdenin ilk baytları (yalnız SAYIM yolunda — {@code countBytes} ve {@code !wantBody}).
+     * Ağ davranışı, sınırlar ve SSRF kuralı {@link #fetch} ile birebir aynıdır. Hiçbir zaman fırlatmaz.
+     */
+    public MetaFetch fetchWithMeta(String url, String method, FetchOptions opts, int headBytes) {
+        MetaSink sink = new MetaSink(headBytes);
+        Fetch f = fetch(url, method, opts, sink);
+        return new MetaFetch(f, sink.toMeta());
+    }
+
+    private Fetch fetch(String url, String method, FetchOptions opts, MetaSink sink) {
         long start = System.currentTimeMillis();
         // Kendi SSRF/DNS kontrolumuzun suresi TTFB'ye YAZILMAZ: hedefin yavasligi degil bizim
         // guvenlik kapimizin maliyetidir. Olcum penceresinden dusulur (her hop icin toplanir).
@@ -292,8 +356,10 @@ public class PageFetchCore {
                     // Politika SafeRedirect'te tek kopya: aynı kural keyword/HTTP/HSTS için de geçerli.
                     String next = SafeRedirect.nextHop(current, loc);
                     if (next == null) {
+                        if (sink != null) { sink.finalUrl = current; sink.headers = resp.headers(); }
                         return new Fetch(sc, ttfb, System.currentTimeMillis() - start, 0L, null, null, false, false);
                     }
+                    if (sink != null) sink.redirects++;
                     current = next;
                     m = SafeRedirect.nextMethod(sc, m);   // 303 See Other → GET
                     continue;
@@ -302,6 +368,7 @@ public class PageFetchCore {
                 long count = 0L;
                 boolean truncated = false;
                 String encoding = resp.headers().firstValue("content-encoding").orElse(null);
+                if (sink != null) { sink.finalUrl = current; sink.headers = resp.headers(); }
                 try (InputStream is = com.sitemonitor.util.HttpBodies.withDeadline(resp.body(), bodyMs, "Sayfa")) {
                     if (opts.wantBody()) {
                         // SAYIM telden gelen (sıkıştırılmış) bayt üzerinden; GÖVDE ayrıştırmak için açılır.
@@ -319,9 +386,23 @@ public class PageFetchCore {
                             truncated = count >= MAX_COUNT_BYTES || d.timedOut();
                         }
                     } else if (opts.countBytes()) {
-                        Drained d = drain(is, MAX_COUNT_BYTES);
-                        count = d.bytes();
-                        truncated = count >= MAX_COUNT_BYTES || d.timedOut();
+                        boolean headTimedOut = false;
+                        if (sink != null && sink.headBytes > 0) {
+                            // Gövdenin ilk baytları (görsel boyutu) — sayımın PARÇASIDIR, ayrıca indirilmez.
+                            try {
+                                sink.head = is.readNBytes((int) Math.min(sink.headBytes, MAX_COUNT_BYTES));
+                            } catch (com.sitemonitor.util.HttpBodies.BodyDeadlineException te) {
+                                headTimedOut = true;
+                            }
+                            count = sink.head == null ? 0L : sink.head.length;
+                        }
+                        if (headTimedOut) {
+                            truncated = true;
+                        } else {
+                            Drained d = drain(is, MAX_COUNT_BYTES - count);
+                            count += d.bytes();
+                            truncated = count >= MAX_COUNT_BYTES || d.timedOut();
+                        }
                     } else {
                         // Yalnız ulaşılabilirlik: durum kodu başlıkta — gövdesini bitirmeyen kaynak HATA değil.
                         try { is.readNBytes(4096); }   // gövdeyi tüket (bağlantı iadesi)

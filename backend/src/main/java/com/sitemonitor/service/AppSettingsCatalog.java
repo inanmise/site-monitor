@@ -190,6 +190,13 @@ public final class AppSettingsCatalog {
         // Anahtar: PageFetchCore.MAX_RESOURCES_KEY; okuma PageFetchCore.maxResourcesPerCheck (sınırlı 100–10000).
         new Setting("site.monitor.page.max-resources",           "monitoring", Type.INT),
         new Setting("site.monitor.page.manual-cooldown-seconds", "monitoring", Type.INT),
+        // Sayfa Bütünlüğü "Kaynak analizi" (2026-10-31) — yalnız kullanıcı isteyince çalışan nesne taraması; tek taramanın
+        // süre / eşzamanlılık / nesne / bayt / istek-zaman-aşımı sınırları (PageResourceScanService.config, aralık dışı → varsayılan).
+        new Setting("site.monitor.page.resource-scan.max-seconds",        "monitoring", Type.INT),
+        new Setting("site.monitor.page.resource-scan.concurrency",        "monitoring", Type.INT),
+        new Setting("site.monitor.page.resource-scan.max-objects",        "monitoring", Type.INT),
+        new Setting("site.monitor.page.resource-scan.max-total-mb",       "monitoring", Type.INT),
+        new Setting("site.monitor.page.resource-scan.request-timeout-ms", "monitoring", Type.INT),
         new Setting("site.monitor.pagespeed.alert-enabled",           "monitoring", Type.BOOL),
         new Setting("site.monitor.pagespeed.resource-concurrency",    "monitoring", Type.INT),
         new Setting("site.monitor.pagespeed.user-agent",              "monitoring", Type.STRING),
@@ -206,6 +213,7 @@ public final class AppSettingsCatalog {
         // Sayfa-bütünlüğü check/issue serisi — gün-bazlı saklama (gece batch-purge).
         new Setting("site.monitor.metrics.page.retention-days",       "monitoring", Type.INT),
         new Setting("site.monitor.metrics.page-issues.retention-days","monitoring", Type.INT),
+        new Setting("site.monitor.page.resource-scan.retention-days",  "monitoring", Type.INT),
         // Senaryo İzleme (10. tür) — k6 alt süreç havuzu, timeout tavanları, çıktı/güvenlik + saklama.
         new Setting("site.monitor.scripted.enabled",                 "scripted", Type.BOOL),
         new Setting("site.monitor.scripted.alert-enabled",           "scripted", Type.BOOL),

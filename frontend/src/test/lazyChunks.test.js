@@ -124,6 +124,25 @@ describe('tembel parça kapısı — açılış paketi ve ekran ön-yükleme gra
     expect(hasDynamic(page, /metrics\/MetricsView\.jsx$/)).toBe(true)
   })
 
+  it('Sayfa bütünlüğü → Kaynak analizi (2026-10-31): sekme, grafik ve dışa aktarım (jsPDF / Excel) yalnız gerektiğinde yüklenir', () => {
+    const page = 'components/PageMonitorPage.jsx'
+    expect(hasStatic(page, /resourcescan\/ResourceScanTab(\.jsx)?$/)).toBe(false)
+    expect(hasDynamic(page, /resourcescan\/ResourceScanTab\.jsx$/)).toBe(true)
+    const staticUsers = FILES.filter(({ src }) => staticImports(src).some((s) => /resourcescan\/ResourceScanTab(\.jsx)?$/.test(s))).map((x) => x.rel)
+    expect(staticUsers).toEqual([])
+    // grafik (recharts) panoda tembel; dışa aktarım modülü sekmede tembel; jsPDF yalnız dışa aktarım modülünde ve import() ile
+    const dash = 'components/page/resourcescan/ResourceScanDashboard.jsx'
+    expect(hasStatic(dash, /ResourceScanTrend(\.jsx)?$/)).toBe(false)
+    expect(hasDynamic(dash, /\/ResourceScanTrend\.jsx$/)).toBe(true)
+    const tab = 'components/page/resourcescan/ResourceScanTab.jsx'
+    expect(hasStatic(tab, /resourceScanExport(\.js)?$|xlsxWriter|^jspdf/)).toBe(false)
+    expect(hasDynamic(tab, /\/resourceScanExport\.js$/)).toBe(true)
+    const exp = 'components/page/resourcescan/resourceScanExport.js'
+    expect(hasStatic(exp, /^jspdf/)).toBe(false)
+    expect(hasDynamic(exp, /^jspdf$/)).toBe(true)
+    expect(staticImports(read('components/page/resourcescan/resourceScanModel.js')).some((s) => /chart|recharts|jspdf|xlsx/.test(s))).toBe(false)
+  })
+
   it('Olaylar sayfasında sayfa düzeyinde saniyelik saat yok — süre kendi yaprağında (LiveDuration)', () => {
     const page = read('components/IncidentsPage.jsx')
     expect(page).not.toMatch(/setNowMs/)
