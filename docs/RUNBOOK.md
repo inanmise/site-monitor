@@ -408,14 +408,24 @@ Sorgu ≤ 10 000 karakter. Red iletisi nedeni ve düzeltmeyi söyler (`dbq.guard
 
 **Veri görünürlüğü.** Sorgunun sonuç satırları arayüzde hiçbir yerde gösterilmez ("Sorguyu dene" yalnız durum, süre, satır
 sayısı, kolon adları ve kural sonucu döndürür); yalnız alarm anındaki satırlar (≤ 50 × 20, hücre ≤ 200 karakter, maskeli
-kolonlar `••••`) alarm maili ve alarm ayrıntısında görünür, erişim paylaşımıyla okuyana gösterilmez. DB hata iletilerindeki
-veri değerleri (dönüşüm hatası vb.) temizlenir. **Kabul edilen kalıcı risk:** bir kural tek bir sayıyı (ölçülen değer,
-satır sayısı) ölçer ve grafikte gösterir — bu, eşik izlemenin doğasıdır; hassas tabloları izleme hesabından gizleyin.
+kolonlar `••••`) alarm maili ve alarm ayrıntısında görünür; ayrıntıdaki satırları yalnız izlemenin takımı (kendi kapsamı)
+ve global yönetici görür — 7/24 operatörü ve erişim paylaşımıyla okuyan yalnız satır sayısını görür. Satırlar gönderim
+anındaki GÜNCEL maske / "satırları maile ekle" ayarıyla yakalanır. DB hata iletilerindeki veri değerleri (dönüşüm hatası
+vb.) temizlenir. **Kabul edilen kalıcı risk:** her kural bir sayı ölçer (çalıştırma başına en çok 10 kural değeri; deneme
+yanıtında ve kontrol geçmişinde görünür) — bu, eşik izlemenin doğasıdır; hassas tabloları izleme hesabından gizleyin.
+"Sorguyu dene" ve "Maliyeti denetle" kullanıcı başına küme çapında saatte `test-per-hour` (60) denemeyle sınırlıdır
+(10 sn oturum beklemesine ek; sabit pencere — kayan bir saatte en kötü ≈ 2 kat).
 
 **Bağlantılar** takım belgesidir (Veritabanı Sorgu İzleme → Bağlantılar): yalnız sahip takım görür ve kullanır, erişim
-paylaşımı açmaz; izleme düzenleyebilen takım üyesi yönetir. Parola şifreli saklanır (`SITE_MONITOR_SECRET_KEY`, anahtar
-döndürme konumu `dbquery_connection_password`) ve asla geri gösterilmez; sunucu / port / veritabanı / kullanıcı değişince ya da
-güvenlik gevşetilince parola yeniden istenir. Ana makine SSRF kuralından geçer ve doğrulanan IP'ye bağlanılır. Kullanan izleme
+paylaşımı ve 7/24 açmaz (izleme listesinde 7/24 operatörü yalnız bağlantı adını ve türünü görür); izleme düzenleyebilen
+takım üyesi yönetir. **Erişim paylaşımı (EDIT / DELETE):** paylaşımla düzenleyen kişi bağlantıyı, sorguyu, kuralları,
+maskeleri, mail içeriğini, yavaş sorgu eşiğini, zaman aşımını ve satır tavanını değiştiremez; paylaşım takımında izleme
+açamaz / oraya kopyalayamaz; sorgu deneyemez, maliyet denetleyemez (403). EXECUTE ile "Şimdi kontrol et" kayıtlı sorguyu
+çalıştırır. **İzleme adı tüm takımlarda tekildir** (alarm adla eşlenir; PostgreSQL `ux_dbqm_name_lower`). Aynı adlı eski
+kayıtlar varsa açılışta uyarı yazılır ve dizin kurulmaz — biri yeniden adlandırılınca sonraki açılışta kurulur:
+`SELECT LOWER(name), COUNT(*) FROM dbquery_monitors GROUP BY 1 HAVING COUNT(*) > 1;` Parola şifreli saklanır (`SITE_MONITOR_SECRET_KEY`, anahtar
+döndürme konumu `dbquery_connection_password`) ve asla geri gösterilmez; sunucu / port / veritabanı / kullanıcı / takım değişince
+ya da güvenlik gevşetilince parola yeniden istenir. Ana makine SSRF kuralından geçer ve doğrulanan IP'ye bağlanılır. Kullanan izleme
 varken bağlantı silinemez (409). Sağlık paneli son denemeyi, son kullanımı, son hatayı ve kullanan izlemeleri gösterir.
 
 **Çıkış (egress).** İzlemenin çalıştığı pod (tarama lideri; her pod lider olabilir) izlenen veritabanının portuna erişebilmeli
@@ -426,8 +436,12 @@ varken bağlantı silinemez (409). Sağlık paneli son denemeyi, son kullanımı
 ardışık iki tetik ≥ `min-interval-seconds`); izinli pencereler, yasak pencereler, tatil takvimi (Ayarlar → Platform → Tatil
 takvimi, global yönetici; ilk açılışta 2026–2027 resmî tatilleri tohumlanır — dini bayram tarihlerini doğrulayın) ve ek
 tarihler. 15 dakikadan fazla geciken cron tetiği (lider yoktu, pod yeniden başladı) kaçırılmış sayılır, geç çalıştırılmaz.
+Aralık kipi ızgaradadır (gecikme birikmez, geç kalınca ileri atlanır). Zamanlama ya da tatil takvimi değişince plan hemen
+yeniden kurulur. Eşzamanlılık sınırı yüzünden atlanan çalışma yalnız izinli bir anda yeniden denenir; 10 dakikadan uzun
+süren atlama genel bakışta ve kartta "gecikmiş" görünür. Sorgular tarama liderinin kendi havuzunda (`dbquery-run-N`)
+koşar, öteki izleme türlerinin iş parçacıklarını meşgul etmez.
 
-**Ayarlar** (Ayarlar → Genel → Veritabanı Sorgu İzleme; çoğu GLOBAL_ONLY, canlı):
+**Ayarlar** (Ayarlar → Genel → Veritabanı Sorgu İzleme; hepsi GLOBAL_ONLY, canlı):
 
 | Anahtar (`site.monitor.dbquery.` öneki) | Varsayılan | Not |
 |---|---|---|
@@ -440,6 +454,7 @@ tarihler. 15 dakikadan fazla geciken cron tetiği (lider yoktu, pod yeniden baş
 | `plan-check-mode` | WARN | Kayıtta maliyet ön kontrolü (PG + MSSQL EXPLAIN): OFF / WARN / BLOCK |
 | `max-plan-cost` / `max-plan-rows` | 1 000 000 / 10 000 000 | BLOCK / WARN eşikleri |
 | `manual-cooldown-seconds` | 20 | "Şimdi kontrol et" beklemesi |
+| `test-per-hour` | 60 | Kullanıcı başına saatlik "Sorguyu dene" + "Maliyeti denetle" sınırı (küme çapında, 5–600) |
 
 Saklama: `site.monitor.metrics.dbquery.retention-days` (180), alarm satırları `site.monitor.dbquery.alert-rows.retention-days`
 (90; açık alarmın satırı silinmez). Yeniden uyarı: `site.monitor.realert.dbquery-minutes` (0 = genel aralık). Tarama tıkı
@@ -458,7 +473,9 @@ Saklama: `site.monitor.metrics.dbquery.retention-days` (180), alarm satırları 
 - Ağır sorgu uyarısı (plan maliyeti): `plan-check-mode=BLOCK` ile kaydı engelleyin; çalışmada zaman aşımı + satır sınırı +
   iptal bekçisi (zaman aşımı + 5 sn `cancel`, + 15 sn `abort`) sınırlar.
 - Denetim: `MONITOR_*` (kaynak `DBQUERY_MONITOR`), `DBQUERY_CONNECTION_CREATE|UPDATE|DELETE|TEST`,
-  `DBQUERY_TEMPLATE_CREATE|UPDATE|DELETE`, `HOLIDAY_CALENDAR_SAVE`. Sorgu metni ve parola denetime ve istek günlüğüne girmez.
+  `DBQUERY_TEMPLATE_CREATE|UPDATE|DELETE`, `HOLIDAY_CALENDAR_SAVE`. Parola hiçbir yere yazılmaz; istek günlüğü bu uçların
+gövdesini yazmaz. İzleme oluşturma / güncelleme / geri yükleme farkı ve değişiklik geçmişi sorgu metnini içerir (geri
+yükleme için gerekli; ilk 512 karakter); "Sorguyu dene" denetimi yalnız uzunluk ve özet (hash) taşır.
 
 ## Merkezi izleme alarm akışı
 
