@@ -146,7 +146,8 @@ function Metrics({ monitor: m }) {
     {
       key: 'next', label: t('dbq.card.nextRun'),
       value: m.active === false ? t('dbq.card.pausedShort') : (until || '—'),
-      sub: m.active === false ? null : nextAt,
+      // Alt satır İstanbul saati — öyle olduğu yazılır (tarayıcı saat dilimi farklı olabilir; DÜŞÜK 16)
+      sub: m.active === false || !nextAt ? null : t('dbq.card.istanbulAt', nextAt),
       Icon: CalendarClock,
     },
   ]
@@ -179,7 +180,7 @@ function CompactSummary({ monitor: m }) {
         <p data-slot="dbq-compact" className="mb-2 flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5 text-xs text-muted-foreground tabular-nums">
           <span><span className="font-semibold text-foreground">{metricValueText(m.metric_value)}</span> {t('dbq.card.valueShort')}</span>
           <span aria-hidden="true">·</span>
-          <span>{t('dbq.card.rowsShort', rowCountText(m.row_count, m.row_count_capped))}</span>
+          <span>{m.row_count === 1 && !m.row_count_capped ? t('dbq.card.rowsShort.one', '1') : t('dbq.card.rowsShort', rowCountText(m.row_count, m.row_count_capped))}</span>
           <span aria-hidden="true">·</span>
           <span className={cn(m.slow && 'font-semibold text-amber-700 dark:text-amber-400')}>{durationText(m.duration_ms, t)}</span>
         </p>

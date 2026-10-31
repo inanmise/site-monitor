@@ -52,7 +52,7 @@ import {
 } from './dbquery/buildingBlocks.jsx'
 import {
   DB_TYPES, DEFAULT_SCHEDULE, breachLevelKey, changedFieldGroups, checkStatusKey, checkStatusLabelKey, columnsFrom, dbTypeLabel,
-  dbqueryStatusKey, dbqueryStatusLabelKey, durationText, metricValueText, retryAfterOf, rowCountText, scheduleFromRow,
+  dbqueryStatusKey, dbqueryStatusLabelKey, durationText, metricValueText, rateLimitText, retryAfterOf, rowCountText, scheduleFromRow,
   serverFieldErrors, splitFieldErrors,
 } from './dbquery/dbqueryPageModel.js'
 import BulkActionBar from './ui/BulkActionBar.jsx'
@@ -63,7 +63,7 @@ import MonitorCardActions from './MonitorCardActions.jsx'
 import { useMonitorDeepLink } from '../hooks/useMonitorDeepLink.js'
 import { shouldCheckAfterSave, startCheckAfterSave } from '../utils/checkAfterSave.js'
 import ChangeNoteField from './history/ChangeNoteField.jsx'
-import { formTeamSelect, isRoutingLockedRow, routingLockOf, useMonitorTeamPick, withRoutingDefaults } from '../hooks/useMonitorTeamPick.js'
+import { formTeamSelect, isGrantTeam, isRoutingLockedRow, routingLockOf, useMonitorTeamPick, withRoutingDefaults } from '../hooks/useMonitorTeamPick.js'
 import { useMonitorResume } from '../hooks/useMonitorResume.js'
 import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
@@ -207,8 +207,10 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
   const [saving, setSaving] = useState(false)
   const { isRunning, track } = useRunningChecks()
   const [deleting, setDeleting] = useState(null)
-  // Deneme / maliyet sırası (form açılış / kapanışında artar → eski formun geç yanıtı yeni forma düşmez)
+  // Deneme ve maliyet AYRI sıralar (O3): biri ötekinin yanıtını geçersiz kılmaz; form açılış / kapanışı, takım ya da bağlantı
+  // değişimi ikisini birden arttırır → eski formun / eski bağlantının geç yanıtı yeni forma düşmez.
   const testSeq = useRef(0)
+  const planSeq = useRef(0)
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState(null)
   const [planChecking, setPlanChecking] = useState(false)
@@ -305,8 +307,8 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
   }
   useVisibleInterval(() => { if (selected) refreshModal() }, selected ? 30000 : 0, false)
 
-  /** Uçuşan deneme / maliyet isteğini geçersiz kılar (form açılışı / kapanışı). */
-  function cancelTest() { testSeq.current++; setTesting(false); setPlanChecking(false) }
+  /** Uçuşan deneme VE maliyet isteğini geçersiz kılar (form açılışı / kapanışı, takım / bağlantı değişimi). */
+  function cancelTest() { testSeq.current++; planSeq.current++; setTesting(false); setPlanChecking(false) }
   function resetFormSide() {
     cancelTest(); setTestResult(null); setPlanResult(null); setColumns([]); setSqlViolations(null)
     setSaveTplOpen(false); setAdvOpen(false)
@@ -316,7 +318,11 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
   const routingLock = routingLockOf(modal, form.teamId, pickTeams)
   useEffect(() => { if (modal === 'new' && routingLock) setForm(f => withRoutingDefaults(f)) }, [modal, routingLock])
   // Paylaşımla düzenlenen kayıtta BAĞLANTI da değişmez: bağlantılar takım belgesidir, paylaşımla görünmez (api §2).
+  // K2: aynı kilit sorgu, kurallar, kural birleşimi, maske / mail kolonları, satırları maile ekle, konu şablonu, yavaş
+  // sorgu eşiği, zaman aşımı ve en çok satırı da kapsar (satırın `routing_locked` / `shared_access` bayrağı — yeni bayrak
+  // yok); deneme / maliyet / şablon düğmeleri çizilmez (sunucu onları yalnız takımın kendi kapsamına açar).
   const connectionLocked = modal !== 'new' && !!modal && isRoutingLockedRow(modal)
+  const grantLocked = connectionLocked
 
   function openWith(nextForm, nextModal, dup = null) {
     resetFormSide()
@@ -324,9 +330,12 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
     setForm(nextForm); setModal(nextModal)
     initialBodyRef.current = JSON.stringify(payloadFromForm(nextForm))
   }
+  // Yeni izleme / kopya YALNIZ kendi takımlarına (K2): paylaşımla erişilen takımda bağlantı kullanılamaz, sunucu 403
+  // DBQUERY_GRANT_TEAM verir. Varsayılan takım bir paylaşım takımıysa (yalnız paylaşımla yazılan tek takım) boş başlar.
+  const ownDefaultTeam = defaultTeamId != null && !isGrantTeam(defaultTeamId, pickTeams) ? String(defaultTeamId) : ''
   function openNew() {
     openWith({
-      ...emptyForm, teamId: isAdmin ? '' : (defaultTeamId != null ? String(defaultTeamId) : ''),
+      ...emptyForm, teamId: isAdmin ? '' : ownDefaultTeam,
       schedule: { ...DEFAULT_SCHEDULE, interval_seconds: defaults?.interval_seconds ?? DEFAULT_SCHEDULE.interval_seconds },
       queryTimeoutSeconds: defaults?.query_timeout_seconds ?? emptyForm.queryTimeoutSeconds,
       maxRows: defaults?.max_rows ?? emptyForm.maxRows,
@@ -342,7 +351,11 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
     openWith(formFrom(m), m)
   }
   function openDuplicate(m) {
-    openWith({ ...formFrom(m), name: duplicateName(m.name) }, 'new', m)
+    const f = { ...formFrom(m), name: duplicateName(m.name) }
+    // Paylaşımla erişilen kaydın kopyası paylaşan takıma gidemez (K2): takım varsayılana, bağlantı boşa döner — bağlantı
+    // takımın belgesidir, kopya kendi takımının bağlantısını seçer.
+    const grantSource = isRoutingLockedRow(m) || isGrantTeam(f.teamId, pickTeams)
+    openWith(grantSource ? { ...f, teamId: isAdmin ? '' : ownDefaultTeam, profileId: null, dbType: '', groupName: '' } : f, 'new', m)
   }
   function closeEditNow() { cancelTest(); setModal(null); setDupSource(null); setChangeNote(''); setSaveTplOpen(false) }
   async function closeEdit() {
@@ -366,12 +379,13 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
   function onTeamChange(v) {
     // Bağlantılar takım belgesi: takım değişince seçili bağlantı ve onun deneme sonucu geçersiz.
     setForm(f => (String(f.teamId) === String(v) ? f : { ...f, teamId: v, profileId: null, dbType: '' }))
-    setTestResult(null); setPlanResult(null)
+    // Uçuşan deneme / maliyet eski takımın bağlantısında koşuyor — yanıtı yeni forma düşmesin (DÜŞÜK 2)
+    cancelTest(); setTestResult(null); setPlanResult(null)
     fe.clear('team_id'); fe.clear('profile_id')
   }
   function onConnectionChange(profileId, profile) {
     setForm(f => ({ ...f, profileId: profileId ?? null, dbType: profile?.db_type || (profileId == null ? '' : f.dbType) }))
-    setTestResult(null); setPlanResult(null)
+    cancelTest(); setTestResult(null); setPlanResult(null)
     fe.clear('profile_id')
   }
   function onSqlChange(sql) {
@@ -379,8 +393,18 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
     setSqlViolations(null); fe.clear('sql_text')
   }
   function onRulesChange(rules) {
+    // Yalnız DEĞİŞEN kuralın sunucu hatası silinir (DÜŞÜK 13): 2. kuralı düzelten kullanıcı 3. kuralın hatasını kaybetmez.
+    // Ekle / sil / taşı sırayı kaydırır — o zaman tüm kural hataları silinir (sunucunun `rules[N]` sırası artık geçersiz).
+    const prev = Array.isArray(form.rules) ? form.rules : []
+    const next = Array.isArray(rules) ? rules : []
+    const shifted = prev.length !== next.length || next.some((r, i) => r?.id !== prev[i]?.id)
+    const changed = new Set(next.map((r, i) => (JSON.stringify(r) !== JSON.stringify(prev[i]) ? i : -1)).filter((i) => i >= 0))
     setForm(f => ({ ...f, rules }))
-    clearKeys((k) => k === 'rules' || k.startsWith('rules['))
+    clearKeys((k) => {
+      if (k === 'rules') return true
+      const m = /^rules\[(\d+)\]/.exec(k)
+      return !!m && (shifted || changed.has(Number(m[1])))
+    })
   }
   function onScheduleChange(patch) {
     setForm(f => ({ ...f, schedule: { ...f.schedule, ...patch } }))
@@ -389,7 +413,10 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
 
   async function onPickTemplate(tpl) {
     if (!tpl) return
-    if (form.sqlText.trim() && form.sqlText !== tpl.sql_text) {
+    // Sorgu dolu ve farklıysa YA DA kurulmuş kurallar şablonunkilerle değişecekse onay (DÜŞÜK 14 — kurallar sessizce gitmesin)
+    const rulesReplaced = Array.isArray(tpl.rules) && Array.isArray(form.rules) && form.rules.length > 0
+      && JSON.stringify(form.rules) !== JSON.stringify(tpl.rules)
+    if ((form.sqlText.trim() && form.sqlText !== tpl.sql_text) || rulesReplaced) {
       const ok = await showConfirm({ title: t('dbq.form.tplApplyTitle'), message: t('dbq.form.tplApplyMsg', tpl.name || ''),
         confirmText: t('dbq.form.tplApply'), cancelText: t('dbq.form.keepEditing') })
       if (!ok) return
@@ -437,7 +464,10 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
           if (violations) setSqlViolations(violations)
           if (fields) fe.check(fields)
         }
-        setTestResult({ error: res?.error || t('dbq.test.failedGeneric'), code: res?.code || null, retryAfter: retryAfterOf(res) })
+        // Bekleme (429 RATE_LIMITED): sunucu iletisi olduğu gibi — ek "N sn sonra" cümlesi yok (K3, DÜŞÜK 5)
+        const limited = res?.code === 'RATE_LIMITED'
+        setTestResult({ error: limited ? rateLimitText(res, t, 'dbq.test.failedGeneric') : (res?.error || t('dbq.test.failedGeneric')),
+          code: res?.code || null, retryAfter: limited ? null : retryAfterOf(res) })
       }
     } catch (e) {
       if (my === testSeq.current) setTestResult({ error: e?.message || t('dbq.test.failedGeneric'), code: 'NETWORK_ERROR' })
@@ -448,17 +478,19 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
 
   async function runPlanCheck() {
     if (!canRunQuery) return
-    const my = testSeq.current
+    const my = ++planSeq.current
     setPlanChecking(true); setPlanResult(null)
     try {
       const res = await api.monitoring.dbQueryPlanCheck(form.profileId, form.sqlText)
-      if (my !== testSeq.current) return
-      setPlanResult(res?.success ? (res.data || { verdict: 'UNKNOWN' })
-        : { supported: true, verdict: 'UNKNOWN', message: res?.error || t('dbq.test.planFailed') })
+      if (my !== planSeq.current) return
+      if (res?.success) setPlanResult(res.data || { verdict: 'UNKNOWN' })
+      // Bekleme ayrı bilgi tonunda — "Maliyet okunamadı" DEĞİL (DÜŞÜK 6); metin sunucunun (K3)
+      else if (res?.code === 'RATE_LIMITED') setPlanResult({ rateLimited: true, message: rateLimitText(res, t, 'dbq.test.planFailed') })
+      else setPlanResult({ supported: true, verdict: 'UNKNOWN', message: res?.error || t('dbq.test.planFailed') })
     } catch (e) {
-      if (my === testSeq.current) setPlanResult({ supported: true, verdict: 'UNKNOWN', message: e?.message || t('dbq.test.planFailed') })
+      if (my === planSeq.current) setPlanResult({ supported: true, verdict: 'UNKNOWN', message: e?.message || t('dbq.test.planFailed') })
     } finally {
-      if (my === testSeq.current) setPlanChecking(false)
+      if (my === planSeq.current) setPlanChecking(false)
     }
   }
 
@@ -535,8 +567,10 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
         return { ok: true, data: res.data }
       }
       const wait = retryAfterOf(res)
+      // Sunucu iletisi zaten "N sn sonra yeniden deneyin" der — arkasına ikinci bekleme cümlesi eklenmez (DÜŞÜK 5)
       const msg = res?.code === 'DBQUERY_BUSY' ? t('dbq.page.busy')
-        : wait ? `${res?.error || t('dbq.page.checkFailed')} ${t('dbq.test.retryIn', wait)}` : (res?.error || t('dbq.page.checkFailed'))
+        : res?.error ? res.error
+        : wait ? `${t('dbq.page.checkFailed')} ${t('dbq.test.retryIn', wait)}` : t('dbq.page.checkFailed')
       if (!silent) toast.error(msg)
       return { ok: false, error: msg, data: res?.data ?? null }
     })
@@ -545,8 +579,13 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
   const { teamOptions, hasTeamOptions } = useTeamOptions(monitors)
   const teamSelectOptions = useMemo(() => [...(isAdmin ? [{ value: '', label: t('dbq.form.noTeam') }] : []),
     ...pickTeams.map(tm => ({ value: String(tm.id), label: tm.name }))], [isAdmin, pickTeams, t])
+  // Yalnız paylaşımla yazılan takımlar (`grant: true`) yeni izleme / kopya seçicisinde ve bağlantı / şablon yöneticisinde
+  // yer almaz (O5, K2): bağlantılar ve şablonlar takımın kendi belgesidir, paylaşımla açılmaz.
+  const grantTeamIds = useMemo(() => new Set(pickTeams.filter(tm => tm?.grant === true).map(tm => String(tm.id))), [pickTeams])
+  const newTeamOptions = useMemo(() => teamSelectOptions.filter(o => !grantTeamIds.has(String(o.value))), [teamSelectOptions, grantTeamIds])
   const teamNameById = useMemo(() => Object.fromEntries(teams.map(tm => [tm.id, tm.name])), [teams])
-  const managerTeams = useMemo(() => (isAdmin && teams.length ? teams : pickTeams).map(tm => ({ id: tm.id, name: tm.name })), [isAdmin, teams, pickTeams])
+  const managerTeams = useMemo(() => (isAdmin && teams.length ? teams : pickTeams)
+    .filter(tm => !grantTeamIds.has(String(tm.id))).map(tm => ({ id: tm.id, name: tm.name })), [isAdmin, teams, pickTeams, grantTeamIds])
   // Bağlantı / şablon yöneticisinin açılış takımı: takım süzgecindeki takım (ad → kimlik); yoksa kullanıcının varsayılan
   // takımı — o takımın listede izlemesi yoksa izlemesi olan İLK takım (yönetici kendi takımında izleme tutmuyorsa pencere
   // "kayıtlı bağlantı yok" diye açılmasın; takım seçici yine değiştirir).
@@ -640,9 +679,11 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
   function statusBadge(m) {
     return <MonitorStatusBadge status={dbqueryStatusKey(m)}>{t(dbqueryStatusLabelKey(m))}</MonitorStatusBadge>
   }
+  // Sabit takım alanı: yeni kayıtta yalnız paylaşımla yazılan varsayılan takım gösterilmez (oraya kayıt yapılamaz — K2)
+  const fixedTeamName = modal === 'new' && !ownDefaultTeam ? null : defaultTeamName
   const selectedTeamLabel = canPickTeam
     ? (pickTeams.find(tm => String(tm.id) === String(form.teamId))?.name || t('dbq.form.noTeam'))
-    : (defaultTeamName || t('dbq.form.noTeam'))
+    : (fixedTeamName || t('dbq.form.noTeam'))
   const activeMetric = METRICS.find(x => x.key === metric) ?? METRICS[0]
   // Ayrıntı başlığı: ad SARAR (adlar kesilmez — kalıcı kural); MonitorDetailModal'ın tek satır kırpması iç kapta kapatılır.
   const detailTitle = selected
@@ -670,6 +711,11 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
         ? <AlertBanner tone="info" icon={Copy}>{t('mon.duplicateHint')}</AlertBanner>
         : <AlertBanner tone="info" icon={DatabaseZap}>{t('dbq.form.typeInfo')}</AlertBanner>}
       {modal === 'new' && teamless && <FormNoTeamAlert />}
+      {grantLocked && (
+        <AlertBanner tone="info" icon={Info} title={t('dbq.form.grantLockedTitle')}>
+          <span data-slot="dbq-grant-locked-banner">{t('dbq.form.grantLockedBody')}</span>
+        </AlertBanner>
+      )}
       <FormSectionNav />
 
       <FormGrid>
@@ -683,8 +729,9 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
             </FormField>
             <FormField label={t('dbq.form.team')} required {...fe.fieldProps('team_id')}>
               {({ id }) => canPickTeam
-                ? <SearchableSelect id={id} value={form.teamId} onChange={onTeamChange} {...formTeamSelect(modal, teamSelectOptions, pickTeams)} searchThreshold={2} />
-                : <Input id={id} value={defaultTeamName || t('dbq.form.noTeam')} disabled />}
+                ? <SearchableSelect id={id} value={form.teamId} onChange={onTeamChange} searchThreshold={2}
+                    {...(modal === 'new' ? { options: newTeamOptions } : formTeamSelect(modal, teamSelectOptions, pickTeams))} />
+                : <Input id={id} value={fixedTeamName || t('dbq.form.noTeam')} disabled />}
             </FormField>
             <FormField full label={t('dbq.form.group')} required {...fe.fieldProps('group_name')}>
               {({ id }) => (
@@ -725,14 +772,15 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
           teamId={formTeamId} dbType={form.dbType || null}
           onPickTemplate={onPickTemplate} onSaveTemplate={() => setSaveTplOpen(true)}
           onTest={runTest} onPlanCheck={runPlanCheck} testing={testing} planChecking={planChecking}
-          testResult={testResult} planResult={planResult} canRun={canRunQuery} runHint={runHint} />
+          testResult={testResult} planResult={planResult} canRun={canRunQuery} runHint={runHint} locked={grantLocked} />
 
         <EvaluationSection form={form} setForm={setForm} ruleErrors={ruleErrors} columns={columns}
-          slowError={fe.errors.slow_query_ms} onRulesChange={onRulesChange} />
+          slowError={fe.errors.slow_query_ms} onRulesChange={onRulesChange} clear={clear} locked={grantLocked} />
 
-        <ScheduleSection value={form.schedule} onChange={onScheduleChange} fieldErrors={scheduleErrors} />
+        <ScheduleSection value={form.schedule} onChange={onScheduleChange} fieldErrors={scheduleErrors}
+          minIntervalSeconds={defaults?.min_interval_seconds} canEditHolidays={globalAdmin} />
 
-        <LimitsSection form={form} setForm={setForm} errors={fe.errors} limits={limits} />
+        <LimitsSection form={form} setForm={setForm} errors={fe.errors} limits={limits} clear={clear} locked={grantLocked} />
 
         <DbqSection id="alerting" icon={BellRing} title={t('dbq.form.secAlerting')} hint={t('dbq.form.secAlertingHint')}>
           <FormGrid>
@@ -746,7 +794,7 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
             <FormHint>{t('dbq.form.alertLevelHint')}</FormHint>
             <NocNotifyField disabled={routingLock} type="DBQUERY" checked={form.nocNotify} groupIds={form.nocGroupIds} canOpenSettings={globalAdmin}
               onChange={patch => setForm(f => ({ ...f, ...patch }))} />
-            <MailFields form={form} setForm={setForm} errors={fe.errors} columns={columns} clear={clear} />
+            <MailFields form={form} setForm={setForm} errors={fe.errors} columns={columns} clear={clear} limits={limits} locked={grantLocked} />
             {/* Teyit / kurtarma (standart; varsayılan 1 / 1 — iş alarmı gürültüsüz ama tek hatada da uyarır) */}
             <div className="min-w-0 rounded-lg border sm:col-span-2">
               <Button type="button" variant="ghost" aria-expanded={advOpen} onClick={() => setAdvOpen(v => !v)} data-slot="dbq-confirm-toggle"
@@ -842,7 +890,9 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
             {t('dbq.page.staleList')}
           </AlertBanner></div>
         )}
+        {/* Takım değişimi bağlantı seçimi gerektirir (izleme ve bağlantı aynı takımda olmalı) — toplu yapılamaz (O6) */}
         <BulkActionBar selected={bulkSel} items={pager.pageItems.filter(canManageRow)} teams={teams} canDelete={canDeleteRow} nocType="DBQUERY"
+          teamChange={false} teamChangeNote={t('dbq.page.bulkTeamNote')}
           api={{ update: api.monitoring.updateDbQueryMonitor, remove: api.monitoring.deleteDbQueryMonitor }}
           onClear={() => setBulkSel(new Set())} onPrune={setBulkSel} onDone={load}
           onToggleAll={() => setBulkSel((s) => { const vis = pager.pageItems.filter(canManageRow); const all = vis.every((m) => s.has(m.id)); return all ? new Set() : new Set(vis.map((m) => m.id)) })} />
@@ -913,6 +963,7 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
             <TabsContent value="control">
               <CheckHistoryTab kind="dbquery" monitorId={selected.id} listKey="dbquery-history" reloadSignal={histReload}
                 defaultPreset={7} gridClass="dbq-rt-grid" extraParams={problemOnly ? { only: 'problem' } : null}
+                filterMode={problemOnly ? 'none' : 'fail'}
                 renderAbove={() => (
                   <div data-slot="dbq-hist-problem" className="mb-2 flex min-w-0 items-center gap-2 pointer-coarse:min-h-10">
                     <Switch id="dbq-hist-problem" checked={problemOnly} onCheckedChange={(v) => setProblemOnly(v === true)} />

@@ -3,8 +3,7 @@ import { TR } from '../i18n/tr.js'
 import { EN } from '../i18n/en.js'
 import {
   addSkipDate, describeCron, durationText, formatDay, formatRun, intervalProblem, isYmd, parseCron, previewBody, splitInterval,
-  windowKind, windowProblems, windowSummary,
-} from '../components/dbquery/scheduleModel.js'
+  windowKind, windowProblems, windowSummary, intervalPresetsFor, effectiveMinInterval } from '../components/dbquery/scheduleModel.js'
 
 const mkT = (dict) => (key, ...args) => {
   let s = dict[key] ?? key
@@ -58,6 +57,17 @@ describe('aralık', () => {
     expect(intervalProblem(30)).toBe('interval_min')
     expect(intervalProblem(8 * 86400)).toBe('interval_max')
     expect(intervalProblem(300)).toBeNull()
+    // Ayarlı alt sınır (/monitoring/defaults min_interval_seconds — DÜŞÜK 9); bozuk sınır 60 sn
+    expect(intervalProblem(300, 600)).toBe('interval_min')
+    expect(intervalProblem(600, 600)).toBeNull()
+    expect(intervalProblem(30, 'bozuk')).toBe('interval_min')
+    expect(intervalProblem(60, null)).toBeNull()
+  })
+  it('hazır aralıklar alt sınıra uyar; kayıtlı (sınırın altındaki) değer listede kalır', () => {
+    expect(intervalPresetsFor(600, 1800)[0]).toBe(600)
+    expect(intervalPresetsFor(600, 300)).toContain(300)
+    expect(intervalPresetsFor(undefined, 300)[0]).toBe(60)
+    expect(effectiveMinInterval(90000)).toBe(60)
   })
   it('kısa süre metni', () => {
     expect(durationText(300, tTR)).toBe('5 dk')

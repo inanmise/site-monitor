@@ -47,6 +47,16 @@ describe('BulkActionBar', () => {
     expect(await screen.findByText(/2 (izleme atlandı|monitor\(s\) skipped)/)).toBeInTheDocument()
   })
 
+  it('teamChange=false (veritabanı sorgu izlemesi, O6): takım alanı YOK, yerinde bilgi satırı; varsayılan çubuk aynı', async () => {
+    const { rerender } = render(<BulkActionBar selected={new Set([1])} items={items} api={api} teams={[{ id: 7, name: 'Takım A' }]}
+      teamChange={false} teamChangeNote="Takım toplu değiştirilemez — bağlantı takıma bağlıdır." />)
+    expect(screen.queryByRole('combobox', { name: /^(Takım|Team)/ })).toBeNull()
+    expect(document.querySelector('[data-slot="bulk-team-note"]').textContent).toBe('Takım toplu değiştirilemez — bağlantı takıma bağlıdır.')
+    rerender(<BulkActionBar selected={new Set([1])} items={items} api={api} teams={[{ id: 7, name: 'Takım A' }]} />)
+    expect(screen.getByRole('combobox', { name: /^(Takım|Team)/ })).toBeInTheDocument()
+    expect(document.querySelector('[data-slot="bulk-team-note"]')).toBeNull()
+  })
+
   it('KALICI silme (2026-10-07): onay adları sayar + danger; başarılı silinenler ANINDA işaretlenir, başarısız olan işaretlenmez', async () => {
     __resetDeletedMarks()
     api.remove.mockImplementation(async (id) => (id === 2 ? { success: false } : { success: true, data: { permanent: true } }))

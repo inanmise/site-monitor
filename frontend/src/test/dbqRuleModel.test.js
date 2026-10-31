@@ -65,7 +65,8 @@ describe('insan dilinde özet', () => {
     const range = { ...newRule('COLUMN_VALUE', 'r1'), column: 'TUTAR', aggregate: 'SUM', operator: 'OUTSIDE', warning: [1000, 5000] }
     expect(ruleSummary(range, tTR, 'tr')).toBe('TUTAR kolonunun toplamı 1.000–5.000 aralığının dışındaysa UYARI.')
     const ch = { ...newRule('CHANGE', 'r2'), change: { of: 'ROW_COUNT', mode: 'PERCENT', direction: 'INCREASE' }, warning: 20, critical: 50 }
-    expect(ruleSummary(ch, tTR, 'tr')).toBe("Satır sayısındaki artış %20'den büyükse UYARI, %50'den büyükse KRİTİK. (önceki başarılı çalışmaya göre)")
+    expect(ruleSummary(ch, tTR, 'tr')).toBe("Satır sayısındaki artış %20'den büyükse UYARI, %50'den büyükse KRİTİK (önceki başarılı çalışmaya göre).")
+    expect(ruleSummary(ch, tEN, 'en')).toMatch(/ \(compared with the previous successful run\)\.$/)
     const txt = { ...newRule('TEXT_MATCH', 'r3'), column: 'DURUM', critical: 'HATA' }
     expect(ruleSummary(txt, tTR, 'tr')).toBe('Herhangi bir satırda DURUM değeri “HATA” içeriyorsa KRİTİK.')
     expect(ruleSummary(txt, tEN, 'en')).toBe('CRITICAL if any row’s DURUM contains “HATA”.')

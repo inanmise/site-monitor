@@ -17,7 +17,8 @@ const SECTION = 'mt-5 mb-2 text-xs font-bold tracking-wide text-muted-foreground
 /**
  * Alarm anındaki sorgu sonucu (Veritabanı Sorgu İzleme, 2026-10-31; kullanıcı kararı) — SATIR VERİSİNİN arayüzde
  * göründüğü TEK yer. `GET /monitoring/dbquery/alerts/{id}/rows`:
- *   • `hidden: true`  → alarmı paylaşımla (takım erişim izni) okuyan: satırlar gelmez, yalnız satır sayısı söylenir
+ *   • `hidden: true`  → izlemenin takımını kendi kapsamıyla görmeyen (paylaşımla okuyan, 7/24 operatörü — K4): satırlar
+ *                       gelmez, yalnız satır sayısı söylenir
  *   • `data: null`    → bu alarm için satır kaydı yok (alarm satırsız açılmış, saklama süresi geçmiş …)
  *   • veri            → yakalama zamanı, satır sayısı ("≥ N" sınırlı), gösterilen satır ("ilk 50"), maskeli kolon
  *                       rozetleri, yatay kaydırmalı tablo — hücre metni KIRPILMAZ, sarar
@@ -97,7 +98,9 @@ function RowsTable({ d, t, fmt }) {
   const masked = new Set((Array.isArray(d.masked) ? d.masked : []).map((c) => String(c).toLowerCase()))
   const isMasked = (c) => masked.has(String(c).toLowerCase())
   const total = Number(d.row_count)
-  const totalText = Number.isFinite(total) ? (d.row_count_capped ? t('dbq.rows.countCapped', fmt(total)) : t('dbq.rows.count', fmt(total))) : t('dbq.rows.countUnknown')
+  const totalText = Number.isFinite(total)
+    ? (d.row_count_capped ? t('dbq.rows.countCapped', fmt(total)) : (total === 1 ? t('dbq.rows.count.one', fmt(total)) : t('dbq.rows.count', fmt(total))))
+    : t('dbq.rows.countUnknown')
   const partial = d.truncated || (Number.isFinite(total) && rows.length < total)
 
   return (
@@ -111,8 +114,8 @@ function RowsTable({ d, t, fmt }) {
       {masked.size > 0 && (
         <div data-slot="dbq-alert-rows-masked" className="flex flex-wrap items-center gap-1.5">
           <span className="text-xs text-muted-foreground">{t('dbq.rows.maskedLabel')}</span>
-          {columns.filter(isMasked).map((c) => (
-            <Badge key={c} variant="outline" className="h-auto gap-1 rounded-md font-mono font-normal whitespace-normal [overflow-wrap:anywhere]">
+          {columns.filter(isMasked).map((c, i) => (
+            <Badge key={`${i}-${c}`} variant="outline" className="h-auto gap-1 rounded-md font-mono font-normal whitespace-normal [overflow-wrap:anywhere]">
               <Lock aria-hidden="true" />{c}
             </Badge>
           ))}
@@ -121,14 +124,16 @@ function RowsTable({ d, t, fmt }) {
       {rows.length === 0
         ? <p className="m-0 rounded-md border border-dashed px-3 py-2.5 text-sm text-muted-foreground">{t('dbq.rows.empty')}</p>
         : (
-          // Kaydırma shadcn Table'ın kendi kabında (table-container overflow-x-auto); dış kap yalnız çerçeve + bölge adı
-          <div data-slot="dbq-alert-rows-scroll" className="min-w-0 overflow-hidden rounded-md border" role="region" aria-label={t('dbq.rows.tableLabel')}>
+          // Kaydırıcı DIŞ kaptır (shadcn kabının kendi kaydırması kapatılır): bölge adı + tabIndex onda → klavyeyle de yatay
+          // kaydırılır (10b). Aynı adlı kolonlarda (SELECT a.id, b.id) anahtar SIRA ile — yinelenen anahtar yok (11).
+          <div data-slot="dbq-alert-rows-scroll" role="region" aria-label={t('dbq.rows.tableLabel')} tabIndex={0}
+            className="min-w-0 overflow-x-auto rounded-md border outline-none focus-visible:ring-2 focus-visible:ring-ring [&>[data-slot=table-container]]:overflow-visible">
             <Table data-slot="dbq-alert-rows-table" className="w-max min-w-full">
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-10 text-right text-muted-foreground">#</TableHead>
-                  {columns.map((c) => (
-                    <TableHead key={c} data-masked={isMasked(c) ? 'true' : undefined} className="align-bottom whitespace-normal">
+                  {columns.map((c, ci) => (
+                    <TableHead key={ci} data-masked={isMasked(c) ? 'true' : undefined} className="align-bottom whitespace-normal">
                       {/* Genişlik İÇ kutuda: tablo hücresinde max-width güvenilmez (tarayıcı yok sayar); iç kutunun katkısı sınırlanır */}
                       <span className="flex max-w-[28rem] min-w-[8rem] items-center gap-1 font-mono text-xs [overflow-wrap:anywhere]">
                         {isMasked(c) && <Lock aria-hidden="true" className="size-3 shrink-0 text-muted-foreground" />}{c}
@@ -145,7 +150,7 @@ function RowsTable({ d, t, fmt }) {
                     {columns.map((c, j) => {
                       const v = Array.isArray(r) ? r[j] : null
                       return (
-                        <TableCell key={c} className="align-top whitespace-normal">
+                        <TableCell key={j} className="align-top whitespace-normal">
                           <div data-slot="dbq-cell" className="max-w-[28rem] min-w-[8rem] font-mono text-xs whitespace-pre-wrap [overflow-wrap:anywhere]">
                             {v == null ? <span className="text-muted-foreground italic">NULL</span> : String(v)}
                           </div>

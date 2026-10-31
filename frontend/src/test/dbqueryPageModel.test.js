@@ -3,7 +3,7 @@ import {
   dbqueryStatusKey, dbqueryStatusLabelKey, breachLevelKey, dbTypeLabel, failureKey, FAILURE_CODES, rowCountText,
   metricValueText, intervalText, cronText, scheduleSummary, untilText, scheduleFromRow, DEFAULT_SCHEDULE,
   changedFieldGroups, listToCsv, csvToList, newRuleId, columnsFrom, orderFieldErrors, splitFieldErrors,
-  serverFieldErrors, retryAfterOf, planTone, SUBJECT_PLACEHOLDERS,
+  serverFieldErrors, retryAfterOf, planTone, SUBJECT_PLACEHOLDERS, rateLimitText, countText, istanbulTime,
 } from '../components/dbquery/dbqueryPageModel.js'
 import { EN } from '../i18n/en.js'
 import { TR } from '../i18n/tr.js'
@@ -80,13 +80,22 @@ describe('zamanlama özeti', () => {
   it('aralık en büyük kesin birimle', () => {
     expect(intervalText(300, t)).toBe('dbq.card.everyMin(5)')
     expect(intervalText(7200, t)).toBe('dbq.card.everyHour(2)')
-    expect(intervalText(86400, t)).toBe('dbq.card.everyDay(1)')
+    // Tek birim çoğul sayıyla yazılmaz: "Her 1 gün" değil "Her gün" (inceleme DÜŞÜK 17)
+    expect(intervalText(86400, t)).toBe('dbq.card.everyDayOne')
+    expect(intervalText(3600, t)).toBe('dbq.card.everyHourOne')
+    expect(intervalText(60, t)).toBe('dbq.card.everyMinOne')
+    expect(intervalText(2 * 86400, t)).toBe('dbq.card.everyDay(2)')
     expect(intervalText(90, t)).toBe('dbq.card.everySec(90)')
     expect(intervalText(0, t)).toBeNull()
   })
   it('sık cron kalıpları insan diline; tanınmayan null (uydurma açıklama yok)', () => {
     expect(cronText('*/15 * * * *', t)).toBe('dbq.card.everyMin(15)')
     expect(cronText('5 */2 * * *', t)).toBe('dbq.card.cronEveryHourAt(2|05)')
+    // Saatte bir: "1 saatte bir, :00 dakikasında" değil "Her saat başı" / "Her saat, :15 dakikasında"
+    expect(cronText('0 * * * *', t)).toBe('dbq.card.cronHourly')
+    expect(cronText('@hourly', t)).toBe('dbq.card.cronHourly')
+    expect(cronText('15 * * * *', t)).toBe('dbq.card.cronHourlyAt(15)')
+    expect(cronText('0 */1 * * *', t)).toBe('dbq.card.cronHourly')
     expect(cronText('30 9 * * *', t)).toBe('dbq.card.cronDaily(09:30)')
     expect(cronText('0 8 * * 1-5', t)).toBe('dbq.card.cronWeekdays(08:00)')
     expect(cronText('0 8 * * MON-FRI', t)).toBe('dbq.card.cronWeekdays(08:00)')
@@ -145,6 +154,11 @@ describe('düzenlemede yalnız değişen alanlar', () => {
   it('dizi içeriği değerle karşılaştırılır (yeni dizi nesnesi değişiklik değildir)', () => {
     expect(changedFieldGroups({ ...base, rules: [{ id: 'r1' }] }, base)).toEqual({})
   })
+  it('takım değişince grup adı da gider (sunucu grubu yeni takımda yalnız gövdede groupName varsa kaydeder — DÜŞÜK 4)', () => {
+    const b = { ...base, teamId: 5, groupName: 'Kurumsal' }
+    expect(changedFieldGroups({ ...b, teamId: 9 }, b)).toEqual({ teamId: 9, groupName: 'Kurumsal' })
+    expect(changedFieldGroups({ ...b, groupName: 'Yeni' }, b)).toEqual({ teamId: 5, groupName: 'Yeni' })
+  })
 })
 
 describe('listeler, kural kimliği, kolonlar', () => {
@@ -181,6 +195,11 @@ describe('sunucu doğrulama hataları → alanlar', () => {
     expect(serverFieldErrors({ success: false, code: 'DBQUERY_CRON_TOO_FREQUENT', error: 'Sık' }).fields).toEqual({ cron_expression: 'Sık' })
     expect(serverFieldErrors({ success: false, code: 'DBQUERY_CONNECTION_OTHER_TEAM', error: 'Başka takım' }).fields).toEqual({ profile_id: 'Başka takım' })
     expect(serverFieldErrors({ success: false, code: 'DUPLICATE_RECORD', error: 'Ad var' }).fields).toEqual({ name: 'Ad var' })
+    // K1: ad tüm takımlarda tekil — sunucu 409 + field name; K2: paylaşım takımında oluşturma reddi takım alanının altında
+    expect(serverFieldErrors({ success: false, code: 'DUPLICATE_RECORD', field: 'name', error: 'Bu ad başka bir izlemede' }).fields)
+      .toEqual({ name: 'Bu ad başka bir izlemede' })
+    expect(serverFieldErrors({ success: false, code: 'DBQUERY_GRANT_TEAM', error: 'Paylaşımla erişilen takımda oluşturulamaz' }).fields)
+      .toEqual({ team_id: 'Paylaşımla erişilen takımda oluşturulamaz' })
   })
   it('alana düşmeyen hata fields=null döner (çağıran bandı gösterir); başarı hiçbir şey döndürmez', () => {
     expect(serverFieldErrors({ success: false, code: 'INTERNAL', error: 'Sunucu hatası' }).fields).toBeNull()
@@ -201,6 +220,28 @@ describe('sunucu doğrulama hataları → alanlar', () => {
     expect(retryAfterOf({ retryAfter: '8' })).toBe(8)
     expect(retryAfterOf({ retry_after_seconds: 0 })).toBeNull()
     expect(retryAfterOf(null)).toBeNull()
+  })
+  it('bekleme metni (K3, DÜŞÜK 5): sunucu iletisi TEK başına; yoksa süreden; o da yoksa genel', () => {
+    const msg = 'Saatlik deneme sınırına ulaşıldı (60/saat) — 12 dk sonra yeniden deneyin.'
+    expect(rateLimitText({ success: false, code: 'RATE_LIMITED', error: msg, retry_after_seconds: 720 }, t, 'dbq.test.failedGeneric')).toBe(msg)
+    expect(rateLimitText({ success: false, code: 'RATE_LIMITED', retry_after_seconds: 7 }, t, 'dbq.test.failedGeneric')).toBe('dbq.test.retryIn(7)')
+    expect(rateLimitText({ success: false, code: 'RATE_LIMITED' }, t, 'dbq.test.failedGeneric')).toBe('dbq.test.failedGeneric')
+  })
+  it('sayılı metin: tam 1 → `.one` anahtarı (EN "1 monitor"); TR ve EN sözlüklerinde iki biçim de var', () => {
+    expect(countText(t, 'dbq.conn.usedCount', 1)).toBe('dbq.conn.usedCount.one(1)')
+    expect(countText(t, 'dbq.conn.usedCount', 3)).toBe('dbq.conn.usedCount(3)')
+    expect(countText(t, 'dbq.hol.total', 0)).toBe('dbq.hol.total(0)')
+    for (const k of ['dbq.conn.usedCount', 'dbq.hol.total', 'dbq.rows.count', 'dbq.card.rowsShort']) {
+      expect(TR[`${k}.one`]).toBeTruthy()
+      expect(EN[`${k}.one`]).toBeTruthy()
+    }
+    expect(EN['dbq.conn.usedCount.one']).toBe('{0} monitor')
+    expect(EN['dbq.hol.total.one']).toBe('{0} day')
+  })
+  it('İstanbul saati: saniyeli biçim (ayrıntıda son çalışma) — bozukta null', () => {
+    expect(istanbulTime('2026-10-31T10:05:07Z', { seconds: true })).toMatch(/13:05:07/)
+    expect(istanbulTime('2026-10-31T10:05:07Z')).not.toMatch(/:07$/)
+    expect(istanbulTime('bozuk', { seconds: true })).toBeNull()
   })
 })
 

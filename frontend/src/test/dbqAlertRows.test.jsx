@@ -48,12 +48,32 @@ describe('DbQueryAlertRows', () => {
     expect(cell.className).toMatch(/whitespace-pre-wrap/)
     expect(cell.className).not.toMatch(/\btruncate\b/)
     expect(sec.textContent).toContain('NULL')
+    // Kaydırıcı dış kap: bölge adı + klavye odağı (10b); shadcn kabının kendi kaydırması kapalı
+    const scroll = sec.querySelector('[data-slot="dbq-alert-rows-scroll"]')
+    expect(scroll).toHaveAttribute('role', 'region')
+    expect(scroll).toHaveAttribute('tabindex', '0')
+    expect(scroll.className).toMatch(/overflow-x-auto/)
+  })
+
+  it('aynı adlı kolonlar (SELECT a.id, b.id) yinelenen React anahtarı üretmez; hücreler doğru sırada (11)', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    api.monitoring.dbQueryAlertRows.mockResolvedValue({ success: true, data: {
+      captured_at: '2026-10-31T06:00:00', row_count: 1, row_count_capped: false, truncated: false, masked: [],
+      columns: ['id', 'id', 'ad'], rows: [['1', '2', 'Ali']],
+    } })
+    render(<DbQueryAlertRows alertId={33} alertType="DBQUERY_THRESHOLD" />)
+    await waitFor(() => expect(document.querySelectorAll('[data-slot="dbq-cell"]')).toHaveLength(3))
+    expect([...document.querySelectorAll('[data-slot="dbq-cell"]')].map((c) => c.textContent)).toEqual(['1', '2', 'Ali'])
+    expect(document.querySelector('[data-slot="dbq-alert-rows-count"]').textContent).toBe('1 satır döndü')
+    expect(err.mock.calls.some((c) => String(c[0]).includes('same key'))).toBe(false)
+    err.mockRestore()
   })
 
   it('paylaşımla okuyan: satırlar YOK, yalnız sayı', async () => {
     api.monitoring.dbQueryAlertRows.mockResolvedValue({ success: true, data: { hidden: true, row_count: 42 } })
     render(<DbQueryAlertRows alertId={7} alertType="DBQUERY_FAIL" />)
-    expect(await screen.findByText('Bu alarmı paylaşımla görüyorsunuz; sonuç satırları gösterilmez (42 satır).')).toBeInTheDocument()
+    // K4: 7/24 operatörü de `hidden` alır — metin "takım dışından (paylaşım ya da 7/24 ekibi)" der
+    expect(await screen.findByText('Satırları yalnız izlemenin kendi takımı görür; bu alarmı takım dışından (paylaşım ya da 7/24 ekibi olarak) görüyorsunuz — sonuç satırları gösterilmez (42 satır).')).toBeInTheDocument()
     expect(document.querySelector('[data-slot="dbq-alert-row"]')).toBeNull()
   })
 

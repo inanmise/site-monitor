@@ -317,10 +317,17 @@ export function ruleSummary(rule, t, lang = 'tr') {
     const phrase = t(`dbq.rule.op.${rule.operator || 'CONTAINS'}`, isBlank(v) ? '' : String(v))
     return t(lvl === 'warning' ? 'dbq.rule.sum.textWarn' : 'dbq.rule.sum.textCrit', subject, phrase)
   }
-  const suffix = rule.kind === 'CHANGE' ? ' ' + t('dbq.rule.sum.vsPrevious') : ''
-  if (hasW && hasC) return t('dbq.rule.sum.both', subject, numericPhrase(rule, rule.warning, t, lang), numericPhrase(rule, rule.critical, t, lang)) + suffix
-  if (hasW) return t('dbq.rule.sum.warnOnly', subject, numericPhrase(rule, rule.warning, t, lang)) + suffix
-  return t('dbq.rule.sum.critOnly', subject, numericPhrase(rule, rule.critical, t, lang)) + suffix
+  // Değişim kuralının eki cümlenin İÇİNE, son noktadan önce girer: "… KRİTİK (önceki …)." — "KRİTİK. (önceki …)" değil
+  const withSuffix = (text) => (rule.kind === 'CHANGE' ? beforeFinalStop(text, t('dbq.rule.sum.vsPrevious')) : text)
+  if (hasW && hasC) return withSuffix(t('dbq.rule.sum.both', subject, numericPhrase(rule, rule.warning, t, lang), numericPhrase(rule, rule.critical, t, lang)))
+  if (hasW) return withSuffix(t('dbq.rule.sum.warnOnly', subject, numericPhrase(rule, rule.warning, t, lang)))
+  return withSuffix(t('dbq.rule.sum.critOnly', subject, numericPhrase(rule, rule.critical, t, lang)))
+}
+
+/** Eki cümlenin son noktasından önce ekler ("A." + "(b)" → "A (b)."); nokta yoksa sona boşlukla. */
+function beforeFinalStop(text, suffix) {
+  const s = String(text ?? '')
+  return s.endsWith('.') ? `${s.slice(0, -1)} ${suffix}.` : `${s} ${suffix}`
 }
 
 /** Liste yer değiştirme (sınır dışında aynı dizi döner). */

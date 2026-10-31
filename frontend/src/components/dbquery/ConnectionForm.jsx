@@ -115,8 +115,11 @@ export default function ConnectionForm({ form, onChange, errors = {}, disabled =
 
       <div className={GRID}>
         {field('username', t('dbq.conn.username'), {}, { required: true })}
-        <Field label={t('dbq.conn.password')} required={!form.password_set || form.password_clear} name="password" error={errors.password}
-          hint={form.password_set && !form.password_clear ? t('dbq.conn.passwordStoredHint') : t('dbq.conn.passwordHint')}>
+        {/* Parola isteğe bağlı (O1): boş = parolasız bağlantı (yeni) / kayıtlı parola değişmez (düzenleme). Zorunlu yıldızı yok. */}
+        <Field label={t('dbq.conn.password')} name="password" error={errors.password}
+          hint={form.password_set
+            ? t(form.password_clear ? 'dbq.conn.passwordClearHint' : 'dbq.conn.passwordStoredHint')
+            : t('dbq.conn.passwordOptionalHint')}>
           {({ id, describedBy, invalid }) => (
             <Input id={id} type="password" aria-describedby={describedBy} aria-invalid={invalid} disabled={disabled || form.password_clear}
               className={CONTROL} autoComplete="new-password" data-1p-ignore data-lpignore="true"

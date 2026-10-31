@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
-import { CalendarClock, CalendarOff, CalendarX2, Clock, ExternalLink, Moon, Plus, Repeat, Timer, Trash2, X } from 'lucide-react'
+import { CalendarClock, CalendarDays, CalendarOff, CalendarX2, CircleAlert, Clock, ExternalLink, Moon, Plus, RefreshCw, Repeat, Timer, Trash2, X } from 'lucide-react'
 import { api } from '../../api/client'
 import { useLanguage, useT } from '../../i18n/index.jsx'
 import { Button } from '@/components/shadcn/button'
@@ -9,15 +9,19 @@ import { Switch } from '@/components/shadcn/switch'
 import { Badge } from '@/components/shadcn/badge'
 import { NativeSelect, NativeSelectOption } from '@/components/shadcn/native-select'
 import { ToggleGroup, ToggleGroupItem } from '@/components/shadcn/toggle-group'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/shadcn/popover'
+import { Skeleton } from '@/components/shadcn/skeleton'
 import { cn } from '@/lib/utils'
 import Field, { FieldError } from '../ui/Field.jsx'
 import SegmentedControl from '../ui/SegmentedControl.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import DateTimeField from '../ui/DateTimeField.jsx'
 import {
-  CRON_PRESETS, DAYS, INTERVAL_PRESETS, MAX_WINDOWS, UNIT_SECONDS, addSkipDate, describeCron, durationText, formatDay,
-  formatRun, intervalProblem, newWindow, previewBody, splitInterval, windowKind, windowProblems, windowSummary,
+  CRON_PRESETS, DAYS, INTERVAL_PRESETS, MAX_WINDOWS, UNIT_SECONDS, addSkipDate, describeCron, durationText, effectiveMinInterval,
+  formatDay, formatRun, intervalPresetsFor, intervalProblem, newWindow, previewBody, splitInterval, windowKind, windowProblems,
+  windowSummary,
 } from './scheduleModel.js'
+import { formatHoliday, normalizeDays, todayIstanbul } from '../admin/holidayCalendarModel.js'
 
 /** Sunucu zamanlama hata kodları (`DbQuerySchedule.CODE_*`). */
 export const SCHEDULE_CODES = {
@@ -46,13 +50,19 @@ const FULL_SELECT = '[&>[data-slot=native-select-wrapper]]:w-full'
  * (CRON'da `cron_expression`, INTERVAL'de `schedule`) önizlemedeki "hiç çalışmaz" bandında TEK kez (alanın altında
  * tekrarlanmaz); `DBQUERY_CRON_TOO_FREQUENT` / `DBQUERY_CRON_INVALID` cron alanının altında + kısa ipucu.
  * `onChange(patch)` yalnız değişen alanları taşır.
+ *
+ * Ek isteğe bağlı prop'lar (2026-10-31 inceleme turu; verilmezse eski davranış): `minIntervalSeconds` — sunucunun ayarlı
+ * alt sınırı (`/monitoring/defaults` `min_interval_seconds`): ipucu, hata metni ve hazır aralıklar ona uyar (DÜŞÜK 9);
+ * `canEditHolidays` — global yönetici: tatil takvimi ayar bağlantısı yalnız ona; diğerleri günleri pencere içinde salt
+ * okunur görür (O4).
  */
-export default function ScheduleEditor({ value, onChange, fieldErrors, disabled = false }) {
+export default function ScheduleEditor({ value, onChange, fieldErrors, disabled = false, minIntervalSeconds, canEditHolidays = false }) {
   const t = useT()
   const { lang } = useLanguage()
   const v = value || {}
   const mode = v.schedule_mode === 'CRON' ? 'CRON' : 'INTERVAL'
-  const preview = useSchedulePreview(v)
+  const minInterval = effectiveMinInterval(minIntervalSeconds)
+  const preview = useSchedulePreview(v, minInterval)
   const codes = preview.codes || {}
   // Önizlemenin "hiç çalışmaz" ve "kip geçersiz" iletileri kendi yerlerinde çizilir — alan altında tekrarlanmaz
   const own = {}
@@ -81,14 +91,15 @@ export default function ScheduleEditor({ value, onChange, fieldErrors, disabled 
       </div>
 
       {mode === 'INTERVAL'
-        ? <IntervalPicker seconds={v.interval_seconds} disabled={disabled} error={errs.interval_seconds} onChange={(s) => set({ interval_seconds: s })} />
+        ? <IntervalPicker seconds={v.interval_seconds} disabled={disabled} error={errs.interval_seconds} minSeconds={minInterval}
+            onChange={(s) => set({ interval_seconds: s })} />
         : <CronInput expr={v.cron_expression ?? ''} disabled={disabled} codeHint={cronHint}
           error={errs.cron_expression && errs.cron_expression !== neverRunsMessage ? errs.cron_expression : null} onChange={(c) => set({ cron_expression: c })} />}
 
       <WindowList kind="windows" list={v.windows} disabled={disabled} errs={errs} onChange={(w) => set({ windows: w })} />
       <WindowList kind="blackouts" list={v.blackouts} disabled={disabled} errs={errs} onChange={(w) => set({ blackouts: w })} />
 
-      <HolidayToggle checked={!!v.skip_holidays} disabled={disabled} onChange={(b) => set({ skip_holidays: b })} />
+      <HolidayToggle checked={!!v.skip_holidays} disabled={disabled} canEdit={canEditHolidays} lang={lang} onChange={(b) => set({ skip_holidays: b })} />
       <SkipDates dates={v.skip_dates} disabled={disabled} error={errs.skip_dates} lang={lang} onChange={(d) => set({ skip_dates: d })} />
 
       <PreviewPanel preview={preview} error={errs.schedule && errs.schedule !== neverRunsMessage ? errs.schedule : null} neverRunsMessage={neverRunsMessage} lang={lang} t={t} mode={mode} />
@@ -97,7 +108,7 @@ export default function ScheduleEditor({ value, onChange, fieldErrors, disabled 
 }
 
 /** Canlı önizleme durumu — idle | loading | ok | unknown. */
-function useSchedulePreview(v) {
+function useSchedulePreview(v, minInterval) {
   const body = previewBody(v)
   const key = JSON.stringify(body)
   const seq = useRef(0)
@@ -108,7 +119,7 @@ function useSchedulePreview(v) {
       setState({ state: 'idle', reason: 'cronEmpty', data: null, errors: null, codes: null, message: null })
       return undefined
     }
-    if (body.schedule_mode === 'INTERVAL' && intervalProblem(body.interval_seconds)) {
+    if (body.schedule_mode === 'INTERVAL' && intervalProblem(body.interval_seconds, minInterval)) {
       setState({ state: 'idle', reason: 'interval', data: null, errors: null, codes: null, message: null })
       return undefined
     }
@@ -141,19 +152,20 @@ function useSchedulePreview(v) {
     return () => { clearTimeout(timer); ctrl.abort() }
     // anahtar = gövdenin içeriği (nesne kimliği değil)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key])
+  }, [key, minInterval])
   return state
 }
 
 /** Aralık seçici — hazır değerler + "Özel" (sayı + birim). */
-function IntervalPicker({ seconds, disabled, error, onChange }) {
+function IntervalPicker({ seconds, disabled, error, minSeconds, onChange }) {
   const t = useT()
+  const presets = intervalPresetsFor(minSeconds, seconds)
   const preset = INTERVAL_PRESETS.includes(Number(seconds))
   const [custom, setCustom] = useState(!preset && seconds != null)
   const split = splitInterval(seconds)
   const [amount, setAmount] = useState(String(split.amount))
   const [unit, setUnit] = useState(split.unit)
-  const problem = intervalProblem(seconds)
+  const problem = intervalProblem(seconds, minSeconds)
   const amountId = useId()
 
   // Dışarıdan değişen değer (şablon / geri yükleme) özel kutuyu eşitler
@@ -186,7 +198,7 @@ function IntervalPicker({ seconds, disabled, error, onChange }) {
           setCustom(false)
           onChange(Number(val))
         }}>
-        {INTERVAL_PRESETS.map((s) => (
+        {presets.map((s) => (
           <ToggleGroupItem key={s} value={String(s)} className="h-9 px-3 pointer-coarse:h-10">{durationText(s, t)}</ToggleGroupItem>
         ))}
         <ToggleGroupItem value="custom" className="h-9 px-3 pointer-coarse:h-10">{t('dbq.sched.custom')}</ToggleGroupItem>
@@ -206,8 +218,8 @@ function IntervalPicker({ seconds, disabled, error, onChange }) {
           </div>
         </div>
       )}
-      <p className="m-0 text-xs text-muted-foreground">{t('dbq.sched.intervalHint')}</p>
-      {(error || problem) && <FieldError>{error || t(`dbq.sched.v.${problem}`)}</FieldError>}
+      <p className="m-0 text-xs text-muted-foreground">{t('dbq.sched.intervalHint', durationText(minSeconds, t))}</p>
+      {(error || problem) && <FieldError>{error || t(`dbq.sched.v.${problem}`, durationText(minSeconds, t))}</FieldError>}
     </div>
   )
 }
@@ -329,8 +341,12 @@ function WindowRow({ kind, index, w, disabled, serverErr, onChange, onRemove }) 
   )
 }
 
-/** "Tatil takviminde çalışma" — takvim yeni sekmede açılır (form kaybolmasın). */
-function HolidayToggle({ checked, disabled, onChange }) {
+/**
+ * "Tatil takviminde çalışma" (O4): hangi günlerin atlandığını HERKES pencerenin içinde salt okunur görür ("Tatil günlerini
+ * gör" — `GET /api/admin/holidays` herkese açık); Ayarlar sayfası yalnız global yöneticiye açık olduğundan takvimi
+ * düzenleme bağlantısı da yalnız ona çizilir (yeni sekmede — form kaybolmasın). Metin role göre değişir.
+ */
+function HolidayToggle({ checked, disabled, canEdit = false, lang, onChange }) {
   const t = useT()
   const id = useId()
   return (
@@ -341,15 +357,86 @@ function HolidayToggle({ checked, disabled, onChange }) {
           <CalendarOff aria-hidden="true" className="size-4" />{t('dbq.sched.skipHolidays')}
         </Label>
       </div>
-      <p className="m-0 text-xs text-muted-foreground">{t('dbq.sched.skipHolidaysHint')}</p>
-      <div>
-        <Button asChild variant="link" size="sm" className="h-auto px-0 pointer-coarse:min-h-10">
-          <a href="/?tab=settings&sec=holidays" target="_blank" rel="noopener noreferrer">
-            {t('dbq.sched.openHolidays')}<ExternalLink aria-hidden="true" />
-          </a>
-        </Button>
+      <p className="m-0 text-xs text-muted-foreground">{t(canEdit ? 'dbq.sched.skipHolidaysHint' : 'dbq.sched.skipHolidaysHintViewer')}</p>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <HolidayDaysPopover lang={lang} />
+        {canEdit && (
+          <Button asChild variant="link" size="sm" className="h-auto px-0 pointer-coarse:min-h-10">
+            <a href="/?tab=settings&sec=holidays" target="_blank" rel="noopener noreferrer" data-slot="dbq-holidays-settings-link">
+              {t('dbq.sched.openHolidays')}<ExternalLink aria-hidden="true" />
+            </a>
+          </Button>
+        )}
       </div>
     </div>
+  )
+}
+
+/**
+ * Tatil günleri — salt okunur liste (bugünden sonraki günler önce; geçmiş günler "geçmiş" ayrımıyla). Açılınca okunur;
+ * okunamazsa hata + tekrar dene (asla "tatil yok" denmez). Sıra korumalı: kapanıp açılınca eski yanıt yazılmaz.
+ */
+function HolidayDaysPopover({ lang }) {
+  const t = useT()
+  const [open, setOpen] = useState(false)
+  const [load, setLoad] = useState({ state: 'idle', days: [], message: null })
+  const seq = useRef(0)
+  const fetchDays = async () => {
+    const n = ++seq.current
+    setLoad({ state: 'loading', days: [], message: null })
+    try {
+      const res = await api.admin.getHolidays()
+      if (n !== seq.current) return
+      if (res?.success && res.data && Array.isArray(res.data.days)) setLoad({ state: 'ok', days: normalizeDays(res.data.days), message: null })
+      else setLoad({ state: 'error', days: [], message: res?.error || res?.message || null })
+    } catch (e) {
+      if (n === seq.current) setLoad({ state: 'error', days: [], message: e?.message || null })
+    }
+  }
+  const today = todayIstanbul()
+  const upcoming = load.days.filter((d) => d.day >= today)
+  const past = load.days.filter((d) => d.day < today)
+  return (
+    <Popover open={open} onOpenChange={(o) => { setOpen(o); if (o) fetchDays(); else seq.current++ }}>
+      <PopoverTrigger asChild>
+        <Button type="button" variant="link" size="sm" className="h-auto px-0 pointer-coarse:min-h-10" data-slot="dbq-holidays-view">
+          <CalendarDays aria-hidden="true" />{t('dbq.sched.viewHolidays')}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="z-(--z-menu) flex max-h-[min(24rem,var(--radix-popover-content-available-height))] w-80 max-w-[90vw] flex-col gap-2 overflow-hidden p-3"
+        data-slot="dbq-holidays-popover" data-load={load.state}>
+        <span className="text-sm font-semibold">{t('dbq.sched.holidaysTitle')}</span>
+        {load.state === 'loading' && <div className="flex flex-col gap-1.5" aria-busy="true"><Skeleton className="h-5 w-full" /><Skeleton className="h-5 w-full" /></div>}
+        {load.state === 'error' && (
+          <div data-slot="dbq-holidays-error" className="flex flex-col items-start gap-2 text-sm">
+            <span className="inline-flex items-start gap-1.5 text-destructive"><CircleAlert aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
+              <span className="[overflow-wrap:anywhere]">{t('dbq.sched.holidaysLoadFailed')}{load.message ? ` — ${load.message}` : ''}</span></span>
+            <Button type="button" variant="outline" size="sm" onClick={fetchDays} className="pointer-coarse:h-10"><RefreshCw aria-hidden="true" />{t('dbq.conn.retry')}</Button>
+          </div>
+        )}
+        {load.state === 'ok' && load.days.length === 0 && (
+          <p data-slot="dbq-holidays-empty" className="m-0 text-sm text-muted-foreground">{t('dbq.sched.holidaysEmpty')}</p>
+        )}
+        {load.state === 'ok' && load.days.length > 0 && (
+          // Uzun liste kendi kabında kayar; klavyeyle de kaydırılabilir (tabIndex + bölge adı)
+          <div role="region" aria-label={t('dbq.sched.holidaysTitle')} tabIndex={0}
+            className="-mx-1 min-h-0 overflow-y-auto rounded-sm px-1 outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            <ul data-slot="dbq-holidays-list" className="m-0 flex list-none flex-col gap-1 p-0">
+              {[...upcoming, ...past].map((d) => (
+                <li key={d.day} data-past={d.day < today ? 'true' : undefined}
+                  className={cn('flex min-w-0 flex-col rounded-md bg-muted/40 px-2 py-1 text-sm', d.day < today && 'text-muted-foreground')}>
+                  <span className="font-medium [overflow-wrap:anywhere]">{d.name || '—'}</span>
+                  <span className="text-xs text-muted-foreground tabular-nums">
+                    {formatHoliday(d.day, lang)}{d.day < today ? ` · ${t('dbq.sched.holidayPast')}` : ''}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        <span className="text-xs text-muted-foreground">{t('dbq.sched.tzNote')}</span>
+      </PopoverContent>
+    </Popover>
   )
 }
 

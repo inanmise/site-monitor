@@ -310,9 +310,10 @@ describe('DbQueryMonitorPage — form', () => {
     await fillValid()
     fireEvent.click(within(formDialog()).getByRole('button', { name: /^Try the query$/ }))
     const panel = await waitFor(() => { const el = document.querySelector('[data-slot="dbq-test"]'); expect(el).not.toBeNull(); return el })
-    expect(panel).toHaveAttribute('data-status', 'error')
+    // Bekleme hata değil (bilgi tonu); sunucu iletisi varsa yalnız o (ikinci bekleme cümlesi eklenmez — DÜŞÜK 5)
+    expect(panel).toHaveAttribute('data-status', 'wait')
     expect(panel.textContent).toContain('Çok sık denendi')
-    expect(panel.textContent).toMatch(/try again in 8 s/)
+    expect(panel.textContent).not.toMatch(/try again in 8 s/)
   })
 
   it('şablondan başla: dolu sorgu üzerine onay ister, onayla sorgu + kural + birleşim gelir; dolu amaç korunur', async () => {
@@ -379,6 +380,19 @@ describe('DbQueryMonitorPage — düzenleme', () => {
     expect(dlg.querySelector('[data-slot="dbq-connection-locked"]').textContent).toContain('Sipariş DB (PostgreSQL üretim)')
     expect(dlg.querySelector('[data-slot="t-conn-picker"]')).toBeNull()
   })
+
+  it('takım değişince grup adı da gönderilir (yeni takımın grup listesine kaydolsun — DÜŞÜK 4)', async () => {
+    api.admin.getTeams.mockResolvedValue({ success: true, data: [{ id: 5, name: 'SY-A' }, { id: 6, name: 'SY-B' }] })
+    api.monitoring.updateDbQueryMonitor.mockResolvedValue({ success: true, data: row({ team_id: 6 }) })
+    const dlg = await openEdit()
+    await act(async () => {})
+    fireEvent.mouseDown(within(fieldOf('team_id')).getByRole('combobox'))
+    fireEvent.mouseDown([...document.querySelectorAll('[role="option"]')].find((o) => o.textContent.includes('SY-B')))
+    fireEvent.click(within(dlg).getByRole('button', { name: 'pick-connection' }))
+    fireEvent.click(within(dlg).getByRole('button', { name: /^Save$/ }))
+    await waitFor(() => expect(api.monitoring.updateDbQueryMonitor).toHaveBeenCalledTimes(1))
+    expect(api.monitoring.updateDbQueryMonitor.mock.calls[0][1]).toMatchObject({ teamId: 6, groupName: 'Kurumsal' })
+  })
 })
 
 describe('DbQueryMonitorPage — ayrıntı', () => {
@@ -419,5 +433,212 @@ describe('DbQueryMonitorPage — ayrıntı', () => {
     expect(api.monitoring.getCheckHistory.mock.calls[0][0]).toBe('dbquery')
     fireEvent.click(await screen.findByRole('switch', { name: /Only problem checks/ }))
     await waitFor(() => expect(api.monitoring.getCheckHistory.mock.calls.some((c) => c[2]?.only === 'problem')).toBe(true))
+  })
+})
+
+describe('DbQueryMonitorPage — inceleme düzeltmeleri (2026-10-31)', () => {
+  async function openNewAs(over = {}) {
+    render(<DbQueryMonitorPage {...props} systemRole="USER" {...over} />)
+    await waitFor(() => expect(titles().length).toBeGreaterThan(0))
+    fireEvent.click(screen.getByRole('button', { name: /^New Monitor$/ }))
+    return formDialog()
+  }
+  async function fillValid() {
+    const dlg = formDialog()
+    fireEvent.change(within(dlg).getByLabelText(/^Name/), { target: { value: 'Yeni sorgu' } })
+    await fillGroupAndTags({ group: 'Kurumsal', tag: 'prod', root: dlg })
+    fireEvent.change(within(dlg).getByLabelText(/^What is this alert for\?/), { target: { value: 'Bekleyen sipariş sayısı' } })
+    fireEvent.click(within(dlg).getByRole('button', { name: 'pick-connection' }))
+    fireEvent.change(within(dlg).getByLabelText('sql'), { target: { value: 'SELECT count(*) FROM orders' } })
+  }
+
+  it('K1: 409 DUPLICATE_RECORD (ad tüm takımlarda tekil) → sunucu metni AD alanının altında, tost yok', async () => {
+    api.monitoring.createDbQueryMonitor.mockResolvedValue({ success: false, code: 'DUPLICATE_RECORD', field: 'name',
+      error: 'Bu ad başka bir veritabanı sorgu izlemesinde kullanılıyor — alarmlar adla eşlendiği için ad tüm takımlarda tekil olmalı.' })
+    await openNewAs()
+    await fillValid()
+    fireEvent.click(within(formDialog()).getByRole('button', { name: /^Save$/ }))
+    await waitFor(() => expect(fieldOf('name').textContent).toContain('ad tüm takımlarda tekil olmalı'))
+    expect(toastMock.error).not.toHaveBeenCalled()
+  })
+
+  it('K3 / DÜŞÜK 5: deneme bekleme (429) bilgi tonunda, YALNIZ sunucu metni (ikinci "… sonra" cümlesi yok)', async () => {
+    const msg = 'Saatlik deneme sınırına ulaşıldı (60/saat) — 12 dk sonra yeniden deneyin.'
+    api.monitoring.testDbQuery.mockResolvedValue({ success: false, code: 'RATE_LIMITED', error: msg, retry_after_seconds: 720 })
+    await openNewAs()
+    await fillValid()
+    fireEvent.click(within(formDialog()).getByRole('button', { name: /^Try the query$/ }))
+    const panel = await waitFor(() => { const el = document.querySelector('[data-slot="dbq-test"]'); expect(el).not.toBeNull(); return el })
+    expect(panel).toHaveAttribute('data-status', 'wait')
+    expect(panel.textContent).toContain('Please wait')
+    expect(panel.textContent).toContain(msg)
+    expect(panel.textContent).not.toMatch(/try again in 720 s/)
+  })
+
+  it('DÜŞÜK 6: maliyet denetimi bekleme (429) "Maliyet okunamadı" DEĞİL — bilgi tonu + sunucu metni', async () => {
+    api.monitoring.dbQueryPlanCheck.mockResolvedValue({ success: false, code: 'RATE_LIMITED', error: 'Çok sık deneme; 5 sn sonra yeniden deneyin.', retry_after_seconds: 5 })
+    await openNewAs()
+    await fillValid()
+    fireEvent.click(within(formDialog()).getByRole('button', { name: /^Check the cost$/ }))
+    const plan = await waitFor(() => { const el = document.querySelector('[data-slot="dbq-test-plan"]'); expect(el).not.toBeNull(); return el })
+    expect(plan).toHaveAttribute('data-verdict', 'WAIT')
+    expect(plan.textContent).toContain('Çok sık deneme; 5 sn sonra yeniden deneyin.')
+    expect(plan.textContent).not.toMatch(/could not be read/)
+  })
+
+  it('O3: maliyet sürerken deneme başlarsa maliyet sonucu YİNE gelir ve düğme kilitli kalmaz', async () => {
+    let resolvePlan
+    api.monitoring.dbQueryPlanCheck.mockImplementation(() => new Promise((r) => { resolvePlan = r }))
+    api.monitoring.testDbQuery.mockResolvedValue({ success: true, data: { status: 'OK', duration_ms: 10, row_count: 1, columns: [] } })
+    await openNewAs()
+    await fillValid()
+    fireEvent.click(within(formDialog()).getByRole('button', { name: /^Check the cost$/ }))
+    fireEvent.click(within(formDialog()).getByRole('button', { name: /^Try the query$/ }))
+    await waitFor(() => expect(document.querySelector('[data-slot="dbq-test"]')).toHaveAttribute('data-status', 'OK'))
+    await act(async () => { resolvePlan({ success: true, data: { supported: true, verdict: 'OK', cost: 12 } }) })
+    await waitFor(() => expect(document.querySelector('[data-slot="dbq-test-plan"]')).toHaveAttribute('data-verdict', 'OK'))
+    expect(within(formDialog()).getByRole('button', { name: /^Check the cost$/ })).not.toBeDisabled()
+  })
+
+  it('DÜŞÜK 2: uçuştaki deneme bağlantı değişince forma DÜŞMEZ (eski bağlantının kolonları öneri olmaz)', async () => {
+    let resolveTest
+    api.monitoring.testDbQuery.mockImplementation(() => new Promise((r) => { resolveTest = r }))
+    await openNewAs()
+    await fillValid()
+    fireEvent.click(within(formDialog()).getByRole('button', { name: /^Try the query$/ }))
+    await act(async () => { blocks.props.ConnectionPicker.onChange(4, { id: 4, name: 'Diğer DB', db_type: 'POSTGRESQL' }) })
+    await act(async () => { resolveTest({ success: true, data: { status: 'OK', columns: [{ name: 'eski_kolon', type: 'INT' }] } }) })
+    expect(document.querySelector('[data-slot="dbq-test"]')).toBeNull()
+    expect(document.querySelector('[data-slot="t-rule-columns"]').textContent).toBe('')
+  })
+
+  it('DÜŞÜK 13: yalnız DEĞİŞEN kuralın sunucu hatası silinir; sıra kayarsa hepsi', async () => {
+    api.monitoring.createDbQueryMonitor.mockResolvedValue({ success: false, code: 'VALIDATION_FAILED', error: 'Doğrulama',
+      fields: { 'rules[0].warning': 'Birinci kural', 'rules[1].critical': 'İkinci kural' } })
+    await openNewAs()
+    await fillValid()
+    const two = [{ id: 'a', kind: 'ROW_COUNT', warning: 1 }, { id: 'b', kind: 'ROW_COUNT', critical: 2 }]
+    await act(async () => { blocks.props.RuleBuilder.onChange(two) })
+    fireEvent.click(within(formDialog()).getByRole('button', { name: /^Save$/ }))
+    await waitFor(() => expect(document.querySelector('[data-err="rules[1].critical"]')).not.toBeNull())
+    await act(async () => { blocks.props.RuleBuilder.onChange([two[0], { ...two[1], critical: 5 }]) })
+    expect(document.querySelector('[data-err="rules[1].critical"]')).toBeNull()
+    expect(document.querySelector('[data-err="rules[0].warning"]').textContent).toBe('Birinci kural')
+    await act(async () => { blocks.props.RuleBuilder.onChange([{ ...two[1], critical: 5 }]) })
+    expect(document.querySelector('[data-err="rules[0].warning"]')).toBeNull()
+  })
+
+  it('DÜŞÜK 14: sorgu boşken kurulmuş kurallar şablonla değişecekse de onay sorulur', async () => {
+    await openNewAs()
+    await act(async () => { blocks.props.RuleBuilder.onChange([{ id: 'mine', kind: 'ROW_COUNT', warning: 3 }]) })
+    fireEvent.click(within(formDialog()).getByRole('button', { name: 'pick-template' }))
+    fireEvent.click(await screen.findByRole('button', { name: /^Keep editing$/ }))
+    expect(blocks.props.RuleBuilder.rules).toEqual([{ id: 'mine', kind: 'ROW_COUNT', warning: 3 }])
+  })
+
+  it('DÜŞÜK 9: mail ipuçları ayarlı sınırlardan; zamanlamaya alt sınır + tatil yetkisi geçer; mail kolon kutuları etiketli (10a)', async () => {
+    api.monitoring.monitorDefaults.mockResolvedValue({ success: true, data: { dbquery: { max_timeout_seconds: 60, max_rows_cap: 5000,
+      mail_max_rows: 30, mail_max_columns: 12, min_interval_seconds: 300 } } })
+    await openNewAs({ globalAdmin: false })
+    await waitFor(() => expect(fieldOf('mail_columns').textContent).toContain('12'))
+    expect(formDialog().textContent).toMatch(/Up to 30 rows/)
+    expect(blocks.props.ScheduleEditor.minIntervalSeconds).toBe(300)
+    expect(blocks.props.ScheduleEditor.canEditHolidays).toBe(false)
+    expect(within(formDialog()).getByLabelText('Email columns')).toBeInTheDocument()
+    expect(within(formDialog()).getByLabelText('Masked columns')).toBeInTheDocument()
+  })
+
+  it('DÜŞÜK 5: "Şimdi kontrol et" bekleme — sunucu iletisi TEK başına (arkasına "… sonra" eklenmez)', async () => {
+    api.monitoring.triggerDbQueryCheck.mockResolvedValue({ success: false, code: 'RATE_LIMITED', error: 'Çok sık kontrol; 7 sn sonra yeniden deneyin.', retry_after_seconds: 7 })
+    render(<DbQueryMonitorPage {...props} />)
+    fireEvent.click(await screen.findByRole('button', { name: /^Sipariş kuyruğu — check now$/i }))
+    await waitFor(() => expect(toastMock.error).toHaveBeenCalledWith('Çok sık kontrol; 7 sn sonra yeniden deneyin.'))
+  })
+
+  it('O6: toplu işlem çubuğunda takım değiştir YOK — yerinde bilgi satırı (bağlantı seçimi gerekir)', async () => {
+    render(<DbQueryMonitorPage {...props} />)
+    await waitFor(() => expect(titles()).toHaveLength(1))
+    fireEvent.click(screen.getByRole('checkbox', { name: /Sipariş kuyruğu/ }))
+    const bar = await waitFor(() => { const b = document.querySelector('[data-slot="bulk-action-bar"]'); expect(b).not.toBeNull(); return b })
+    expect(within(bar).queryByRole('combobox', { name: 'Team' })).toBeNull()
+    expect(bar.querySelector('[data-slot="bulk-team-note"]').textContent).toMatch(/changed in bulk/i)
+  })
+
+  it('DÜŞÜK 1: "yalnız sorunlu" açıkken yerleşik "Hatalı" süzgeci çizilmez (sunucu onu yok sayar)', async () => {
+    window.history.replaceState({}, '', '/?tab=dbquery&monitor=1&mtab=control')
+    render(<DbQueryMonitorPage {...props} />)
+    await waitFor(() => expect(document.querySelector('[data-slot="hist-tiles"]')).not.toBeNull())
+    expect(document.querySelector('[data-slot="hist-tiles"]')).toHaveAttribute('role', 'group')
+    fireEvent.click(await screen.findByRole('switch', { name: /Only problem checks/ }))
+    await waitFor(() => expect(document.querySelector('[data-slot="hist-tiles"]')).not.toHaveAttribute('role', 'group'))
+    const last = api.monitoring.getCheckHistory.mock.calls.at(-1)[2]
+    expect(last).toMatchObject({ only: 'problem', page: 0 })
+  })
+})
+
+describe('DbQueryMonitorPage — paylaşımla erişim (O5 / K2)', () => {
+  const grantProps = { systemRole: 'USER', teamId: 5, teamName: 'SY-A', globalAdmin: false,
+    myTeams: [{ id: 5, name: 'SY-A' }, { id: 8, name: 'Paylaşan Takım', grant: true }] }
+
+  it('düzenleme: bağlantı, sorgu, kurallar, mail içeriği ve sınırlar kilitli + not; deneme / maliyet / şablon düğmeleri yok', async () => {
+    api.monitoring.getDbQueryMonitors.mockResolvedValue({ success: true, data: [row({ team_id: 8, team_name: 'Paylaşan Takım', routing_locked: true, shared_access: true })] })
+    render(<DbQueryMonitorPage {...grantProps} />)
+    fireEvent.click(await screen.findByRole('button', { name: /^Sipariş kuyruğu — edit$/i }))
+    const dlg = formDialog()
+    expect(dlg.querySelector('[data-slot="dbq-grant-locked-banner"]')).not.toBeNull()
+    expect(dlg.querySelector('[data-slot="dbq-connection-locked"]')).not.toBeNull()
+    expect(blocks.props.SqlEditor.disabled).toBe(true)
+    expect(blocks.props.RuleBuilder.disabled).toBe(true)
+    expect(within(dlg).queryByRole('button', { name: /^Try the query$/ })).toBeNull()
+    expect(within(dlg).queryByRole('button', { name: /^Check the cost$/ })).toBeNull()
+    expect(within(dlg).queryByRole('button', { name: 'pick-template' })).toBeNull()
+    expect(dlg.querySelector('[data-slot="dbq-save-template"]')).toBeNull()
+    expect(fieldOf('slow_query_ms').querySelector('input')).toBeDisabled()
+    expect(fieldOf('query_timeout_seconds').querySelector('input')).toBeDisabled()
+    expect(fieldOf('max_rows').querySelector('input')).toBeDisabled()
+    expect(fieldOf('mail_subject_template').querySelector('input')).toBeDisabled()
+    expect(dlg.querySelectorAll('[data-slot="dbq-grant-locked"]').length).toBeGreaterThanOrEqual(4)
+    // Ad / amaç / zamanlama açık
+    expect(within(dlg).getByLabelText(/^Name/)).not.toBeDisabled()
+    expect(blocks.props.ScheduleEditor.disabled).toBeFalsy()
+  })
+
+  it('yeni izleme: paylaşım takımı seçenekte YOK; bağlantı / şablon yöneticisinde de yok', async () => {
+    render(<DbQueryMonitorPage {...grantProps} />)
+    await waitFor(() => expect(titles()).toHaveLength(1))
+    fireEvent.click(screen.getByRole('button', { name: /^Connections$/ }))
+    await waitFor(() => expect(blocks.props.ConnectionsManager?.open).toBe(true))
+    expect(blocks.props.ConnectionsManager.teams).toEqual([{ id: 5, name: 'SY-A' }])
+    fireEvent.click(screen.getByRole('button', { name: /^New Monitor$/ }))
+    const teamField = fieldOf('team_id')
+    fireEvent.mouseDown(within(teamField).getByRole('combobox'))
+    const opts = [...document.querySelectorAll('[role="option"]')].map((o) => o.textContent)
+    expect(opts.some((o) => o.includes('SY-A'))).toBe(true)
+    expect(opts.some((o) => o.includes('Paylaşan Takım'))).toBe(false)
+  })
+
+  it('paylaşımlı kaydın kopyası paylaşan takıma GİTMEZ: takım kendi varsayılanına, bağlantı boşa döner', async () => {
+    api.monitoring.getDbQueryMonitors.mockResolvedValue({ success: true, data: [row({ team_id: 8, team_name: 'Paylaşan Takım', routing_locked: true, shared_access: true })] })
+    render(<DbQueryMonitorPage {...grantProps} />)
+    fireEvent.click(await screen.findByRole('button', { name: /^Sipariş kuyruğu — duplicate$/i }))
+    await waitFor(() => expect(blocks.props.ConnectionPicker).toBeTruthy())
+    expect(blocks.props.ConnectionPicker.teamId).toBe(5)
+    expect(blocks.props.ConnectionPicker.value).toBeNull()
+  })
+
+  it('sunucu 403 DBQUERY_GRANT_TEAM → metin TAKIM alanının altında', async () => {
+    api.monitoring.createDbQueryMonitor.mockResolvedValue({ success: false, code: 'DBQUERY_GRANT_TEAM',
+      error: 'Paylaşımla erişilen takımda veritabanı sorgu izlemesi oluşturulamaz — bağlantılar takımın kendi belgesidir.' })
+    render(<DbQueryMonitorPage {...props} systemRole="USER" />)
+    await waitFor(() => expect(titles()).toHaveLength(1))
+    fireEvent.click(screen.getByRole('button', { name: /^New Monitor$/ }))
+    const dlg = formDialog()
+    fireEvent.change(within(dlg).getByLabelText(/^Name/), { target: { value: 'Yeni sorgu' } })
+    await fillGroupAndTags({ group: 'Kurumsal', tag: 'prod', root: dlg })
+    fireEvent.change(within(dlg).getByLabelText(/^What is this alert for\?/), { target: { value: 'Bekleyen sipariş sayısı' } })
+    fireEvent.click(within(dlg).getByRole('button', { name: 'pick-connection' }))
+    fireEvent.change(within(dlg).getByLabelText('sql'), { target: { value: 'SELECT 1' } })
+    fireEvent.click(within(dlg).getByRole('button', { name: /^Save$/ }))
+    await waitFor(() => expect(fieldOf('team_id').textContent).toContain('bağlantılar takımın kendi belgesidir'))
   })
 })

@@ -76,6 +76,14 @@ export function failureKey(code) {
 
 const isNum = (v) => typeof v === 'number' && Number.isFinite(v)
 
+/**
+ * Sayılı metin — tam 1 ise `<anahtar>.one` (EN "1 monitor", "1 day"; DÜŞÜK 17), aksi hâlde `<anahtar>`. `display`
+ * gösterilecek biçimlenmiş sayı (verilmezse sayının kendisi). İki dilde de `.one` anahtarı bulunur.
+ */
+export function countText(t, key, n, display = n) {
+  return Number(n) === 1 ? t(`${key}.one`, display) : t(key, display)
+}
+
 /** Dönen satır sayısı: sınırlıysa "≥ N" (sunucu `max_rows + 1` ile keser); bilinmiyorsa "—". */
 export function rowCountText(count, capped) {
   if (!isNum(count)) return '—'
@@ -101,6 +109,10 @@ export function durationText(ms, t) {
 /** Saniye → "5 dk" / "2 sa" / "1 gün" (tam bölünmeyen değerde en küçük kesin birim). */
 export function intervalText(sec, t) {
   if (!isNum(sec) || sec <= 0) return null
+  // Tek birim çoğul sayıyla yazılmaz: "Her 1 gün" değil "Her gün" (DÜŞÜK 17)
+  if (sec === 86400) return t('dbq.card.everyDayOne')
+  if (sec === 3600) return t('dbq.card.everyHourOne')
+  if (sec === 60) return t('dbq.card.everyMinOne')
   if (sec % 86400 === 0) return t('dbq.card.everyDay', sec / 86400)
   if (sec % 3600 === 0) return t('dbq.card.everyHour', sec / 3600)
   if (sec % 60 === 0) return t('dbq.card.everyMin', sec / 60)
@@ -141,6 +153,8 @@ export function cronText(expr, t) {
   if (dom === '*' && dow === '*' && (h === '*' || h.startsWith('*/'))) {
     const n = h === '*' ? '1' : h.slice(2)
     if (!isInt(n, 1, 23)) return null
+    // Saatte bir: "1 saatte bir, :00 dakikasında" değil "Her saat başı" / "Her saat, :15 dakikasında" (DÜŞÜK 17)
+    if (Number(n) === 1) return Number(mi) === 0 ? t('dbq.card.cronHourly') : t('dbq.card.cronHourlyAt', pad2(mi))
     return t('dbq.card.cronEveryHourAt', Number(n), pad2(mi))
   }
   if (!isInt(h, 0, 23)) return null
@@ -185,13 +199,17 @@ export function untilText(iso, t, now = Date.now()) {
   return t('dbq.card.inDay', Math.floor(hr / 24))
 }
 
-/** UTC ISO → İstanbul saatiyle "31.10.2026 14:05" (ürünün saat dilimi; tarayıcının değil). Bozuk → null. */
-export function istanbulTime(iso) {
+/**
+ * UTC ISO → İstanbul saatiyle "31.10.2026 14:05" (ürünün saat dilimi; tarayıcının değil). Bozuk → null. `seconds`:
+ * saniye de yazılır (ayrıntıdaki "Son çalışma" — aynı listedeki "Sonraki çalışma" ile aynı saat diliminde, DÜŞÜK 16).
+ */
+export function istanbulTime(iso, { seconds = false } = {}) {
   const at = zonedMs(iso)
   if (!Number.isFinite(at)) return null
   try {
     return new Date(at).toLocaleString(dateLocale(), {
       timeZone: 'Europe/Istanbul', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+      ...(seconds ? { second: '2-digit' } : {}),
     })
   } catch {
     return null
@@ -227,6 +245,8 @@ export function scheduleFromRow(m) {
  * denetimi, 7/24 anahtarı + grupları — nocMonitorForms kapısı ikisini birlikte bekler).
  */
 export const FIELD_GROUPS = Object.freeze([
+  // Takım değişince grup adı da gider: sunucu grubu yeni takımda yalnız gövdede `groupName` varsa kaydeder (DÜŞÜK 4)
+  ['teamId', 'groupName'],
   ['nocNotify', 'nocGroupIds'],
   ['notifyEmail', 'notifyWebhook', 'alertLevel', 'notificationGroupId'],
   ['profile_id', 'sql_text'],
@@ -319,6 +339,8 @@ export function splitFieldErrors(errors) {
 const CODE_FIELD = {
   DBQUERY_SQL_REJECTED: 'sql_text', DBQUERY_PLAN_TOO_COSTLY: 'sql_text', DBQUERY_CRON_TOO_FREQUENT: 'cron_expression',
   DBQUERY_SCHEDULE_NEVER_RUNS: 'schedule', DBQUERY_CONNECTION_OTHER_TEAM: 'profile_id', DUPLICATE_RECORD: 'name',
+  // Paylaşımla erişilen takımda oluşturma / kopyalama reddi (K2) — takım alanının altında
+  DBQUERY_GRANT_TEAM: 'team_id',
 }
 export function serverFieldErrors(res) {
   if (!res || res.success !== false) return { fields: null, violations: null, plan: null }
@@ -332,6 +354,19 @@ export function serverFieldErrors(res) {
   const plan = res.plan && typeof res.plan === 'object' ? res.plan : null
   const cleaned = Object.fromEntries(Object.entries(fields).filter(([, v]) => !!v))
   return { fields: Object.keys(cleaned).length ? orderFieldErrors(cleaned) : null, violations, plan }
+}
+
+/**
+ * Bekleme yanıtının (429) gösterilecek metni (K3, DÜŞÜK 5): sunucu iletisi varsa YALNIZ o — sunucu zaten "N sn / M dk
+ * sonra yeniden deneyin" der, arkasına ikinci bir "… sonra yeniden deneyebilirsiniz" eklenmez. İleti yoksa (eski sunucu)
+ * bekleme süresinden kurulur; süre de yoksa genel metin.
+ */
+export function rateLimitText(res, t, fallbackKey) {
+  const msg = typeof res?.error === 'string' && res.error.trim() ? res.error.trim()
+    : (typeof res?.message === 'string' && res.message.trim() ? res.message.trim() : null)
+  if (msg) return msg
+  const wait = retryAfterOf(res)
+  return wait ? t('dbq.test.retryIn', wait) : t(fallbackKey)
 }
 
 /** Bekleme yanıtı (429) → saniye; yoksa null. */

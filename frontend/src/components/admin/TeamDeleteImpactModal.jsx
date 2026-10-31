@@ -14,12 +14,15 @@ import { Label } from '@/components/shadcn/label'
 // ug_domains: UG olarak bağlı kayıtlar (2026-09-28). te_channels / te_templates / maintenance_windows (20.165.1, ADMIN-1):
 // takımın BELGELERİ — kanal raporları, şablon kütüphanesi, süren / yaklaşan bakım pencereleri silmeyi ENGELLER, "Taşı" taşır
 // (eskiden etki listesinde yoktu; silinen takımın kanal raporları saklama temizliğinde kalıcı siliniyordu). Eski sunucu
-// göndermezse bölüm çizilmez (bugünkü davranış).
-const SECTIONS = ['domains', 'ug_domains', 'monitors', 'users', 'contacts', 'groups', 'te_channels', 'te_templates', 'maintenance_windows']
+// göndermezse bölüm çizilmez (bugünkü davranış). dbq_connections / dbq_templates (2026-10-31, O2): veritabanı sorgu
+// izlemesinin kayıtlı bağlantıları ve sorgu şablonları da takım belgesidir — silmeyi engeller, "Taşı" izlemelerle taşır.
+const SECTIONS = ['domains', 'ug_domains', 'monitors', 'users', 'contacts', 'groups', 'te_channels', 'te_templates', 'maintenance_windows',
+  'dbq_connections', 'dbq_templates']
 
 /** Taşıma özeti (2026-10-22, FE-8): sunucunun saydığı HER taşınan şey, sıfırlar yazılmaz — yalnız kanalı / şablonu / bakım
  *  penceresi olan takımda "0 domain, 0 izleme, 0 kullanıcı" yanlış izlenimi kalkar. Bilinmeyen anahtar yok sayılır. */
-const MOVED_KEYS = ['domains', 'ug_domains', 'monitors', 'users', 'contacts', 'groups', 'te_channels', 'te_templates', 'maintenance_windows', 'open_alerts']
+const MOVED_KEYS = ['domains', 'ug_domains', 'monitors', 'users', 'contacts', 'groups', 'te_channels', 'te_templates', 'maintenance_windows',
+  'dbq_connections', 'dbq_templates', 'open_alerts']
 export function movedSummary(data, t) {
   const m = data || {}
   const parts = MOVED_KEYS.filter((k) => Number(m[k]) > 0).map((k) => t(`team.mv.${k}`, Number(m[k])))

@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle2, Columns3, EyeOff, Gauge, Info, ShieldAlert, XCircle } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Clock, Columns3, EyeOff, Gauge, Info, ShieldAlert, XCircle } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import { Badge } from '@/components/shadcn/badge'
@@ -16,28 +16,30 @@ import {
  * kullanıcıya da söyler (`dbq-test-norows`) — "veri çekme aracı değil" ilkesinin görünür hâli.
  *
  * <p>Props: `result` (testDbQuery `data`'sı ya da `{ error, code, retryAfter }`), `plan` ("Maliyeti denetle" sonucu,
- * isteğe bağlı). Test kancaları: kök `data-slot="dbq-test"` + `data-status` (OK|BREACH|FAIL|error), kolonlar
+ * isteğe bağlı). Test kancaları: kök `data-slot="dbq-test"` + `data-status` (OK|BREACH|FAIL|error|wait), kolonlar
  * `dbq-test-columns`, ihlaller `dbq-test-violations`, plan `dbq-test-plan` (+ `data-verdict`).
  */
 export default function DbQueryTestPanel({ result, plan = null }) {
   const t = useT()
   if (!result && !plan) return null
   const failedCall = result && result.status == null && (result.error || result.code)
-  const tone = failedCall ? 'danger'
+  // Bekleme (429 RATE_LIMITED — 10 sn oturum beklemesi ya da saatlik deneme sınırı, K3): hata değil, bilgi tonu
+  const waiting = failedCall && result.code === 'RATE_LIMITED'
+  const tone = waiting ? 'info' : failedCall ? 'danger'
     : result?.status === 'FAIL' ? 'danger'
     : result?.status === 'BREACH' ? 'warning'
     : result?.status === 'OK' ? (result.slow ? 'warning' : 'success') : 'info'
-  const Icon = tone === 'success' ? CheckCircle2 : tone === 'danger' ? XCircle : tone === 'warning' ? AlertTriangle : Info
+  const Icon = waiting ? Clock : tone === 'success' ? CheckCircle2 : tone === 'danger' ? XCircle : tone === 'warning' ? AlertTriangle : Info
   const violations = Array.isArray(result?.guard?.violations) ? result.guard.violations : []
   const columns = Array.isArray(result?.columns) ? result.columns : []
   const effectivePlan = plan || result?.plan || null
   const failKey = failureKey(result?.failure_reason)
   return (
-    <section data-slot="dbq-test" data-status={failedCall ? 'error' : (result?.status || 'none')} aria-live="polite"
+    <section data-slot="dbq-test" data-status={waiting ? 'wait' : failedCall ? 'error' : (result?.status || 'none')} aria-live="polite"
       className="mt-3 flex min-w-0 flex-col gap-2.5 rounded-lg border bg-muted/30 px-3.5 py-3">
       {result && (
         <AlertBanner tone={tone} icon={Icon}
-          title={failedCall ? t('dbq.test.callFailed') : t(checkStatusLabelKey(result))}>
+          title={waiting ? t('dbq.test.waitTitle') : failedCall ? t('dbq.test.callFailed') : t(checkStatusLabelKey(result))}>
           {failedCall ? (
             <span className="[overflow-wrap:anywhere]">
               {result.error}
@@ -112,7 +114,15 @@ export default function DbQueryTestPanel({ result, plan = null }) {
         </div>
       )}
 
-      {effectivePlan && (
+      {effectivePlan?.rateLimited && (
+        // Maliyet denetimi bekleme (429): "Maliyet okunamadı" DEĞİL — bilgi tonu, sunucunun metni (DÜŞÜK 6, K3)
+        <div data-slot="dbq-test-plan" data-verdict="WAIT">
+          <AlertBanner tone="info" icon={Clock} title={t('dbq.test.planWaitTitle')}>
+            <span className="[overflow-wrap:anywhere]">{effectivePlan.message}</span>
+          </AlertBanner>
+        </div>
+      )}
+      {effectivePlan && !effectivePlan.rateLimited && (
         <div data-slot="dbq-test-plan" data-verdict={effectivePlan.supported === false ? 'UNSUPPORTED' : (effectivePlan.verdict || 'UNKNOWN')}>
           <AlertBanner tone={planTone(effectivePlan) === 'neutral' ? 'info' : planTone(effectivePlan)} icon={Gauge}
             title={t(planTitleKey(effectivePlan))}>

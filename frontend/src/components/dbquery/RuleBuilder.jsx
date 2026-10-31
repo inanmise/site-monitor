@@ -258,7 +258,8 @@ function ColumnInput({ id, describedBy, invalid, disabled, columns, value, onCha
     if (value && !opts.some((o) => o.value === value)) opts.unshift({ value, label: value })
     return (
       <SearchableSelect id={id} value={value} onChange={(v) => onChange(String(v ?? ''))} options={opts} creatable wrapLabels
-        disabled={disabled} placeholder={t('dbq.rule.columnPick')} ariaLabel={t('dbq.rule.column')} />
+        disabled={disabled} placeholder={t('dbq.rule.columnPick')} ariaLabel={t('dbq.rule.column')}
+        ariaDescribedBy={describedBy} ariaInvalid={invalid} />
     )
   }
   return (

@@ -50,8 +50,11 @@ export function useCheckHistory({ kind, id, listKey, presets = [1, 7, 15, 30], d
   const fixedFrom = fixed?.from ? toUtcIso(fixed.from) : null
   const fixedTo = fixed?.to ? toUtcIso(fixed.to) : null
   // Aralık/filtre değişiminde sayfa 1 — id değişimi de (başka monitör açıldı). Boyut değişimini kanca kendisi sıfırlar.
+  // Tür-özel ek sorgu (ör. dbquery "yalnız sorunlu" — only=problem) da süzgeçtir: değişince sayfa 1 (3. sayfada açılan
+  // anahtar sorunlu listenin 3. sayfasını istemesin). Sabit ek sorgu (uptime-http `{port}`) değişmez → davranış aynı.
+  const extraKey = extraParams ? JSON.stringify(extraParams) : null
   const sp = useServerPagination({ listKey, preset: 'modal', apiBase: 0,
-    resetDeps: [kind, id, preset, customFrom ? customFrom.getTime() : null, customTo ? customTo.getTime() : null, status, fixedFrom, fixedTo] })
+    resetDeps: [kind, id, preset, customFrom ? customFrom.getTime() : null, customTo ? customTo.getTime() : null, status, fixedFrom, fixedTo, extraKey] })
   const { apiPage, pageSize, setTotal } = sp
   const page = sp.page
 

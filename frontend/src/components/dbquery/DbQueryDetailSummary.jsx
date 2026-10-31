@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { AlertTriangle, CalendarClock, DatabaseZap, FileCode2, ListChecks, Target, Unplug } from 'lucide-react'
-import { api, formatDateSec } from '../../api/client'
+import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import { Badge } from '@/components/shadcn/badge'
@@ -12,7 +12,9 @@ const SECTION = 'flex min-w-0 flex-col gap-1.5 rounded-lg border bg-muted/20 px-
 const HEAD = 'flex items-center gap-1.5 text-[11px] font-bold tracking-[.05em] text-muted-foreground uppercase'
 
 /** Bağlantı sağlık durumu → ton. Bilinmeyen / okunamayan asla yeşil değil. */
-const HEALTH_VARIANT = { ok: 'secondary', failing: 'destructive', untested: 'outline', unused: 'outline' }
+const HEALTH_VARIANT = { ok: 'secondary', failing: 'destructive', untested: 'outline', unused: 'outline', unknown: 'outline' }
+/** Sağlık zamanı — İstanbul saatiyle (ayrıntıdaki tüm saatler aynı dilimde; DÜŞÜK 16). */
+const at = (iso) => istanbulTime(iso, { seconds: true }) || '—'
 
 /**
  * Ayrıntı penceresinin "Özet" sekmesi (2026-10-31) — amaç, bağlantı + sağlık özeti, sorgu (satır numaralı okunur kod
@@ -75,8 +77,10 @@ export default function DbQueryDetailSummary({ monitor: m }) {
 
       <section data-slot="dbq-detail-sql" className={SECTION}>
         <h3 className={HEAD}><FileCode2 aria-hidden="true" className="size-3.5" />{t('dbq.detail.query')}</h3>
-        {/* Okunur kod bloğu (salt okunur): satır numarası + tam metin, YATAY kaydırmalı kap — metin kesilmez. */}
-        <div className="max-h-80 overflow-auto rounded-md border bg-background">
+        {/* Okunur kod bloğu (salt okunur): satır numarası + tam metin, YATAY kaydırmalı kap — metin kesilmez. Kap klavyeyle de
+            kaydırılır (bölge adı + tabIndex; 10b). */}
+        <div data-slot="dbq-detail-sql-scroll" role="region" aria-label={t('dbq.detail.query')} tabIndex={0}
+          className="max-h-80 overflow-auto rounded-md border bg-background outline-none focus-visible:ring-2 focus-visible:ring-ring">
           <ol aria-label={t('dbq.detail.query')} className="m-0 list-none p-0 py-1.5 font-mono text-xs leading-5">
             {lines.map((line, i) => (
               <li key={i} data-slot="dbq-sql-line" className="flex min-w-0">
@@ -110,7 +114,7 @@ export default function DbQueryDetailSummary({ monitor: m }) {
           <dt className="text-muted-foreground">{t('dbq.detail.scheduleLabel')}</dt>
           <dd className="m-0 [overflow-wrap:anywhere]">{scheduleSummary(m, t)}</dd>
           <dt className="text-muted-foreground">{t('dbq.detail.lastRun')}</dt>
-          <dd className="m-0 tabular-nums">{m.last_check ? formatDateSec(m.last_check) : t('dbq.detail.never')}</dd>
+          <dd className="m-0 tabular-nums">{m.last_check ? at(m.last_check) : t('dbq.detail.never')}</dd>
           <dt className="text-muted-foreground">{t('dbq.detail.nextRun')}</dt>
           <dd className="m-0 tabular-nums">
             {m.active === false ? t('dbq.card.pausedShort')
@@ -118,6 +122,8 @@ export default function DbQueryDetailSummary({ monitor: m }) {
               : '—'}
           </dd>
         </dl>
+        {/* Son ve sonraki çalışma AYNI saat diliminde (tarayıcısı UTC olan VDI kullanıcısı 3 saat fark görmesin) */}
+        <span data-slot="dbq-detail-tz" className="text-xs text-muted-foreground">{t('dbq.sched.tzNote')}</span>
       </section>
     </div>
   )
@@ -137,19 +143,20 @@ function HealthLine({ health }) {
     )
   }
   const h = health.data || {}
-  const state = ['ok', 'failing', 'untested', 'unused'].includes(h.state) ? h.state : 'untested'
+  // Tanınmayan / eksik durum "bilinmiyor" — "Denenmedi" yanlış bilgi olurdu (DÜŞÜK 12); asla yeşil değil
+  const state = ['ok', 'failing', 'untested', 'unused'].includes(h.state) ? h.state : 'unknown'
   return (
     <span data-slot="dbq-health" data-state={state} className="flex min-w-0 flex-col gap-0.5 text-xs">
       <span className="flex flex-wrap items-center gap-1.5">
         <Badge variant={HEALTH_VARIANT[state]} className={cn('px-1.5 py-0 text-[10.5px] font-semibold', state === 'ok' && 'bg-success/15 text-success dark:bg-success/20')}>
           {t(`dbq.detail.health_${state}`)}
         </Badge>
-        {h.last_ok_at && <span className="text-muted-foreground">{t('dbq.detail.lastOk', formatDateSec(h.last_ok_at))}</span>}
+        {h.last_ok_at && <span className="text-muted-foreground">{t('dbq.detail.lastOk', at(h.last_ok_at))}</span>}
         {h.server_version && <span className="text-muted-foreground [overflow-wrap:anywhere]">{h.server_version}</span>}
       </span>
       {h.last_error && (
         <span className="text-destructive [overflow-wrap:anywhere]">
-          {t('dbq.detail.lastProblemAt', h.last_error_at ? formatDateSec(h.last_error_at) : '—')} {h.last_error}
+          {t('dbq.detail.lastProblemAt', h.last_error_at ? at(h.last_error_at) : '—')} {h.last_error}
         </span>
       )}
     </span>

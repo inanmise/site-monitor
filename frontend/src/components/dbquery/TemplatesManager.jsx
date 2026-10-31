@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowLeft, ChevronDown, CircleAlert, FileCode2, Library, Pencil, RefreshCw, Trash2 } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
@@ -31,6 +31,10 @@ import { validateRules } from './ruleModel.js'
  * Şablonları yönet (Veritabanı Sorgu İzleme, 2026-10-31) — takımın şablon kütüphanesi: liste, önizleme (sorgu kod bloğu +
  * kural özeti), düzenle (ad, açıklama, DB türü, amaç, sorgu — canlı güvenlik denetimiyle — ve kurallar), sil (onaylı).
  * Takımlar arası görünürlük yok (sunucu süzer). `canEdit` false (ya da şablonun `can_edit` false) → salt okunur.
+ *
+ * Düzenleme görünümünde (Y1) Escape ve örtü pencereyi KAPATMAZ — sorgu düzenleyicisi "alandan çıkmak için önce Esc, sonra
+ * Tab" der; Esc tüm pencereyi kapatıp düzenlemeyi kaybettiriyordu. Kaydedilmemiş değişiklikle kapat (X) / "Listeye dön" /
+ * "Vazgeç" onay ister.
  */
 export default function TemplatesManager({ open, onOpenChange, teamId, teams = [], canEdit = false }) {
   const t = useT()
@@ -41,6 +45,26 @@ export default function TemplatesManager({ open, onOpenChange, teamId, teams = [
   const [editing, setEditing] = useState(null)
   const [openId, setOpenId] = useState(null)
   const [load, reload] = useTeamTemplates(team, !!open)
+  const dirtyRef = useRef(false)   // düzenleme görünümünün kaydedilmemiş değişikliği (EditView bildirir)
+
+  /** Kaydedilmemiş değişiklik varsa onay — "Değişiklikleri at" true döner. */
+  const confirmDiscard = useCallback(async () => {
+    if (!dirtyRef.current) return true
+    return showConfirm({
+      title: t('dbq.form.discardTitle'), message: t('dbq.tpl.discardMsg'),
+      confirmText: t('dbq.form.discard'), cancelText: t('dbq.form.keepEditing'), variant: 'danger',
+    })
+  }, [showConfirm, t])
+  const close = async () => {
+    if (editing && !(await confirmDiscard())) return
+    dirtyRef.current = false
+    onOpenChange?.(false)
+  }
+  const backToList = async () => {
+    if (!(await confirmDiscard())) return
+    dirtyRef.current = false
+    setEditing(null)
+  }
 
   useEffect(() => {
     if (!open) return
@@ -62,12 +86,12 @@ export default function TemplatesManager({ open, onOpenChange, teamId, teams = [
   }
 
   return (
-    <ModalShell open={!!open} onClose={() => onOpenChange?.(false)} size="xl" scrollBody icon={Library} title={t('dbq.tpl.managerTitle')}
-      dismissOnBackdrop={!editing}>
+    <ModalShell open={!!open} onClose={close} size="xl" scrollBody icon={Library} title={t('dbq.tpl.managerTitle')}
+      dismissOnBackdrop={!editing} dismissOnEscape={!editing}>
       <div data-slot="dbq-tpl-manager" data-view={editing ? 'edit' : 'list'} className="flex min-w-0 flex-col gap-3">
         {editing ? (
-          <EditView key={editing.id} tpl={editing} onCancel={() => setEditing(null)}
-            onSaved={() => { setEditing(null); reload() }} />
+          <EditView key={editing.id} tpl={editing} onCancel={backToList} dirtyRef={dirtyRef}
+            onSaved={() => { dirtyRef.current = false; setEditing(null); reload() }} />
         ) : (
           <>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
@@ -132,14 +156,19 @@ export default function TemplatesManager({ open, onOpenChange, teamId, teams = [
   )
 }
 
-function EditView({ tpl, onCancel, onSaved }) {
+function EditView({ tpl, onCancel, onSaved, dirtyRef }) {
   const t = useT()
   const toast = useToast()
-  const [f, setF] = useState({
+  const [initial] = useState(() => ({
     name: tpl.name || '', description: tpl.description || '', db_type: DB_TYPES.includes(tpl.db_type) ? tpl.db_type : 'POSTGRESQL',
     purpose: tpl.purpose || '', sql_text: tpl.sql_text || '', rules: Array.isArray(tpl.rules) ? tpl.rules : [],
     rule_logic: tpl.rule_logic === 'ALL' ? 'ALL' : 'ANY',
-  })
+  }))
+  const [f, setF] = useState(initial)
+  const dirty = JSON.stringify(f) !== JSON.stringify(initial)
+  useEffect(() => {
+    if (dirtyRef) dirtyRef.current = dirty
+  }, [dirty, dirtyRef])
   const [errors, setErrors] = useState({})
   const [violations, setViolations] = useState(null)
   const [banner, setBanner] = useState(null)

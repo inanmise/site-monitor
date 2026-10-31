@@ -98,8 +98,40 @@ export function payloadFromForm(form, { withId = false } = {}) {
 }
 
 /**
+ * Bağlantının HEDEFİNİ (ve güvenlik ayarını) belirleyen alanlar — sunucunun `targetChanges` listesiyle aynı küme. Düzenlemede
+ * biri değişince hepsi birlikte gönderilir (sunucu birleşik kaydı bütün olarak doğrular; tür değişimi türe ait alanları
+ * temizler) ve kayıtlı parola yeni hedefe gitmez kuralı (`password`) sunucuda tetiklenir.
+ */
+export const TARGET_KEYS = Object.freeze(['db_type', 'host', 'port', 'database_name', 'oracle_mode', 'mssql_instance', 'username',
+  'ssl_mode', 'mssql_encrypt', 'mssql_trust_server_certificate'])
+
+/**
+ * Düzenleme gövdesi (DÜŞÜK 7, "yalnız değişen alanlar"): yüklenen hâlden DEĞİŞEN alanlar; hedef alanlarından biri
+ * değiştiyse türün TÜM hedef alanları; parola yalnız yazıldıysa, `password_clear` yalnız işaretliyse. Aynı bağlantıyı açık
+ * tutan iki kişiden ikincisinin kaydı, birincinin değiştirdiği başka alanları sessizce eski değere döndürmez. Değişiklik yoksa
+ * `{}` (çağıran istek atmaz).
+ */
+export function changedConnectionPayload(form, baseline) {
+  const next = payloadFromForm(form)
+  const base = payloadFromForm(baseline || {})
+  const same = (k) => JSON.stringify(next[k]) === JSON.stringify(base[k])
+  const out = {}
+  for (const k of Object.keys(next)) {
+    if (k === 'password' || k === 'password_clear') continue
+    if (!same(k)) out[k] = next[k]
+  }
+  if (TARGET_KEYS.some((k) => k in out || (k in base && !(k in next)))) {
+    for (const k of TARGET_KEYS) if (k in next) out[k] = next[k]
+  }
+  if (next.password) out.password = next.password
+  if (next.password_clear) out.password_clear = true
+  return out
+}
+
+/**
  * İstemci doğrulaması → `{ alan: kod }` (`dbq.conn.v.<kod>`). Sunucu asıl doğrulayıcıdır (SSRF, ad tekilliği…).
- * Yeni bağlantıda parola zorunlu; düzenlemede kayıtlı parola varsa boş = değişmez.
+ * Parola ZORUNLU DEĞİL (O1): sunucu parolasız bağlantıyı destekler — yeni bağlantıda boş = parolasız, düzenlemede boş =
+ * kayıtlı parola değişmez, "Kayıtlı parolayı kaldır" = parolasız. Hedef değişince yeni parolayı sunucu ister (alan hatası).
  */
 export function validateConnection(form) {
   const out = {}
@@ -117,8 +149,6 @@ export function validateConnection(form) {
     out.mssql_instance = 'instance_invalid'
   }
   if (!String(form.username || '').trim()) out.username = 'username_required'
-  const hasStored = form.password_set && !form.password_clear
-  if (!form.password && !hasStored) out.password = 'password_required'
   const ct = intOrNull(form.connect_timeout_ms)
   if (ct == null) out.connect_timeout_ms = 'timeout_required'
   else if (!Number.isInteger(ct) || ct < CONNECT_TIMEOUT.min || ct > CONNECT_TIMEOUT.max) out.connect_timeout_ms = 'timeout_range'

@@ -1,5 +1,5 @@
 import { useEffect, useId, useState } from 'react'
-import { Pause, Play, Users, FolderInput, Trash2, X, CheckSquare, Square, Headset, BellRing, BellOff } from 'lucide-react'
+import { Pause, Play, Users, FolderInput, Trash2, X, CheckSquare, Square, Headset, BellRing, BellOff, Info } from 'lucide-react'
 import { api as client } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from './Toast.jsx'
@@ -32,8 +32,13 @@ import { isRoutingLockedRow } from '../../hooks/useMonitorTeamPick.js'
  * Sayaç ve eylemler GÖRÜNÜR seçili satırlardır (2026-10-22, UIM-21): seçim sayfa / süzgeç değişince başka sayfada
  * kalabiliyordu — çubuk "5 seçili" derken Sil yalnız görünen 2'yi siliyordu. `onPrune(set)` verilirse görünmeyen
  * kimlikler seçimden atılır; verilmese de sayaç yalnız görünen seçili satırları sayar.
+ *
+ * `teamChange` (2026-10-31, isteğe bağlı, varsayılan true): false → takım değiştir alanı çizilmez; `teamChangeNote` verilirse
+ * yerinde kısa bir bilgi satırı (ör. veritabanı sorgu izlemesi: takım değişimi bağlantı seçimi gerektirir — formdan yapılır,
+ * toplu istek her satırda reddedilirdi). Verilmezse çubuk bugünküyle birebir aynı.
  */
-export default function BulkActionBar({ selected, items, onClear, onDone, api, teams = [], canDelete = () => false, onToggleAll, nocType, onPrune }) {
+export default function BulkActionBar({ selected, items, onClear, onDone, api, teams = [], canDelete = () => false, onToggleAll, nocType, onPrune,
+  teamChange = true, teamChangeNote = null }) {
   const t = useT()
   const toast = useToast()
   const { showConfirm } = useDialog()
@@ -146,7 +151,13 @@ export default function BulkActionBar({ selected, items, onClear, onDone, api, t
             </ButtonGroup>
           </span>
         )}
-        {teams.length > 0 && (
+        {!teamChange && teamChangeNote && (
+          <span className={fieldCls} data-slot="bulk-team-note">
+            <Info size={13} aria-hidden="true" className="shrink-0" />
+            <span className="max-w-[22rem] text-xs [overflow-wrap:anywhere]">{teamChangeNote}</span>
+          </span>
+        )}
+        {teamChange && teams.length > 0 && (
           <span className={fieldCls}>
             <Users size={13} aria-hidden="true" />
             <span className="min-w-[140px]">

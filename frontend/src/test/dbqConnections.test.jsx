@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor, fireEvent, within } from './test-utils.jsx'
+import { render, screen, waitFor, fireEvent, within, act } from './test-utils.jsx'
 import { pressMenuTrigger } from './helpers/dropdownMenu.js'
 import { LANG_STORAGE_KEY } from '../i18n/dateLocale.js'
 
@@ -81,6 +81,35 @@ describe('ConnectionPicker', () => {
     await waitFor(() => expect(document.querySelector('[data-slot="dbq-conn-missing"]')).not.toBeNull())
   })
 
+  it('hata metni seçiciye aria-describedby ile bağlı (10c)', async () => {
+    render(<ConnectionPicker teamId={3} value={null} onChange={() => {}} error="Bir bağlantı seçin." />)
+    const trigger = await screen.findByRole('combobox', { name: 'Veritabanı bağlantısı' })
+    const id = trigger.getAttribute('aria-describedby')
+    expect(id).toBeTruthy()
+    expect(document.getElementById(id).textContent).toBe('Bir bağlantı seçin.')
+    expect(trigger).toHaveAttribute('aria-invalid', 'true')
+  })
+
+  it('seçiciden açılan yönetici yalnız formun takımını gösterir; başka takıma kaydedilen bağlantı seçilmez (DÜŞÜK 3)', async () => {
+    api.monitoring.createDbConnection.mockResolvedValue({ success: true, data: { ...PG, id: 99, team_id: 4, name: 'Başka takım' } })
+    const onChange = vi.fn()
+    render(<ConnectionPicker teamId={3} value={null} onChange={onChange} canManage teams={[{ id: 3, name: 'Takım A' }, { id: 4, name: 'Takım B' }]} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Yeni bağlantı' }))
+    const form = await waitFor(() => { const f = document.querySelector('[data-slot="dbq-conn-form"]'); if (!f) throw new Error('yok'); return f })
+    // Takım seçici yok: yeni bağlantı formun takımına (3) kaydedilir
+    expect(within(form).queryByLabelText(/^Takım/)).toBeNull()
+    fireEvent.change(within(form).getByLabelText(/^Bağlantı adı/), { target: { value: 'Rapor' } })
+    fireEvent.change(within(form).getByLabelText(/^Sunucu/), { target: { value: 'db1' } })
+    fireEvent.change(within(form).getByLabelText(/^Veritabanı$|^Veritabanı \*/), { target: { value: 'db1' } })
+    fireEvent.change(within(form).getByLabelText(/^Kullanıcı adı/), { target: { value: 'u' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Kaydet' }))
+    await waitFor(() => expect(api.monitoring.createDbConnection).toHaveBeenCalled())
+    expect(api.monitoring.createDbConnection.mock.calls[0][0]).toMatchObject({ team_id: 3 })
+    // Sunucu (beklenmedik biçimde) başka takımın profilini döndürse bile form onu seçmez
+    await act(async () => {})
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
   it('seçim onChange(id, profil) çağırır', async () => {
     const onChange = vi.fn()
     render(<ConnectionPicker teamId={3} value={null} onChange={onChange} />)
@@ -134,9 +163,73 @@ describe('ConnectionsManager', () => {
     await waitFor(() => expect(api.monitoring.updateDbConnection).toHaveBeenCalled())
     const [id, body] = api.monitoring.updateDbConnection.mock.calls[0]
     expect(id).toBe(7)
-    expect(body).toMatchObject({ name: 'Yeni ad', db_type: 'POSTGRESQL', ssl_mode: 'require', port: 5432 })
-    expect(body).not.toHaveProperty('password')
-    expect(body).not.toHaveProperty('mssql_instance')
+    // Yalnız değişen alan gider (DÜŞÜK 7): aynı bağlantıyı açık tutan başkasının kaydı geri yazılmaz; parola gitmez
+    expect(body).toEqual({ name: 'Yeni ad' })
+  })
+
+  it('düzenleme: hedef alanı değişince türün TÜM hedef alanları birlikte; yazılan parola gider; değişiklik yoksa istek yok', async () => {
+    api.monitoring.updateDbConnection.mockResolvedValue({ success: true, data: PG })
+    open()
+    const row = await waitFor(() => { const r = document.querySelector('[data-slot="dbq-conn-row"][data-id="7"]'); if (!r) throw new Error('yok'); return r })
+    pressMenuTrigger(within(row).getByRole('button', { name: /İşlemler/ }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Düzenle' }))
+    // Değişiklik yok → istek yok, ayrıntıya dönülür
+    fireEvent.click(screen.getByRole('button', { name: 'Kaydet' }))
+    await waitFor(() => expect(document.querySelector('[data-slot="dbq-conn-detail"]')).not.toBeNull())
+    expect(api.monitoring.updateDbConnection).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Düzenle' }))
+    const form = document.querySelector('[data-slot="dbq-conn-form"]')
+    fireEvent.change(within(form).getByLabelText(/^Sunucu/), { target: { value: 'pg-yeni-01.example.com.tr' } })
+    fireEvent.change(within(form).getByLabelText(/^Parola/), { target: { value: 'yeni-gizli' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Kaydet' }))
+    await waitFor(() => expect(api.monitoring.updateDbConnection).toHaveBeenCalled())
+    const body = api.monitoring.updateDbConnection.mock.calls[0][1]
+    expect(body).toEqual({ db_type: 'POSTGRESQL', host: 'pg-yeni-01.example.com.tr', port: 5432, database_name: 'muhasebe',
+      username: 'sm_reader', ssl_mode: 'require', password: 'yeni-gizli' })
+  })
+
+  it('"Kayıtlı parolayı kaldır" kaydedilebilir (O1): parola zorunlu değil, yıldız yok, gövde password_clear', async () => {
+    api.monitoring.updateDbConnection.mockResolvedValue({ success: true, data: { ...PG, password_set: false } })
+    open()
+    const row = await waitFor(() => { const r = document.querySelector('[data-slot="dbq-conn-row"][data-id="7"]'); if (!r) throw new Error('yok'); return r })
+    pressMenuTrigger(within(row).getByRole('button', { name: /İşlemler/ }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Düzenle' }))
+    const form = document.querySelector('[data-slot="dbq-conn-form"]')
+    fireEvent.click(within(form).getByRole('checkbox', { name: /Kayıtlı parolayı kaldır/ }))
+    expect(form.querySelector('[data-field="password"] [data-slot="field-required"]')).toBeNull()
+    expect(form.querySelector('[data-field="password"]').textContent).toMatch(/parolasız kurulur/)
+    fireEvent.click(screen.getByRole('button', { name: 'Kaydet' }))
+    await waitFor(() => expect(api.monitoring.updateDbConnection).toHaveBeenCalled())
+    expect(api.monitoring.updateDbConnection.mock.calls[0][1]).toEqual({ password_clear: true })
+    expect(within(form).queryByText('Parolayı yazın.')).toBeNull()
+  })
+
+  it('form görünümü (Y1): Escape pencereyi KAPATMAZ; kirli taslakla kapat ve "Geri" onay ister', async () => {
+    const onOpenChange = vi.fn()
+    open({ onOpenChange })
+    fireEvent.click(await screen.findByRole('button', { name: 'Yeni bağlantı' }))
+    const form = document.querySelector('[data-slot="dbq-conn-form"]')
+    fireEvent.change(within(form).getByLabelText(/^Bağlantı adı/), { target: { value: 'Yarım bağlantı' } })
+    fireEvent.keyDown(within(form).getByLabelText(/^Bağlantı adı/), { key: 'Escape', code: 'Escape' })
+    expect(onOpenChange).not.toHaveBeenCalled()
+    expect(document.querySelector('[data-slot="dbq-conn-form"]')).not.toBeNull()
+    // Kapat (X) → onay → "Düzenlemeye devam et" formu bırakır
+    fireEvent.click(screen.getByRole('button', { name: /^(Kapat|Close)$/ }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Düzenlemeye devam et' }))
+    expect(onOpenChange).not.toHaveBeenCalled()
+    expect(within(document.querySelector('[data-slot="dbq-conn-form"]')).getByLabelText(/^Bağlantı adı/)).toHaveValue('Yarım bağlantı')
+    // "Geri" → onay → "Değişiklikleri at" listeye döner
+    fireEvent.click(screen.getByRole('button', { name: 'Geri' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Değişiklikleri at' }))
+    await waitFor(() => expect(document.querySelector('[data-slot="dbq-conn-manager"]').getAttribute('data-view')).toBe('list'))
+  })
+
+  it('temiz formdan çıkmak onay istemez', async () => {
+    open()
+    fireEvent.click(await screen.findByRole('button', { name: 'Yeni bağlantı' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Geri' }))
+    await waitFor(() => expect(document.querySelector('[data-slot="dbq-conn-manager"]').getAttribute('data-view')).toBe('list'))
+    expect(screen.queryByRole('button', { name: 'Değişiklikleri at' })).toBeNull()
   })
 
   it('yeni bağlantı: istemci hataları alanın altında; tür değişimi varsayılan portu değiştirir; SQL Server alanları', async () => {
@@ -146,7 +239,10 @@ describe('ConnectionsManager', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Kaydet' }))
     expect(within(form).getByText('Bağlantı adını yazın.')).toBeInTheDocument()
     expect(within(form).getByText('Sunucu adını ya da IP adresini yazın.')).toBeInTheDocument()
-    expect(within(form).getByText('Parolayı yazın.')).toBeInTheDocument()
+    // Parola isteğe bağlı (O1): boş = parolasız bağlantı — hata yok, zorunlu yıldızı yok
+    expect(within(form).queryByText('Parolayı yazın.')).toBeNull()
+    expect(form.querySelector('[data-field="password"] [data-slot="field-required"]')).toBeNull()
+    expect(form.querySelector('[data-field="password"]').textContent).toMatch(/parolasız bağlanılır/)
     expect(api.monitoring.createDbConnection).not.toHaveBeenCalled()
     const ss = within(form).getByRole('button', { name: 'SQL Server' })
     fireEvent.mouseDown(ss); fireEvent.click(ss)
