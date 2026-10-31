@@ -206,6 +206,14 @@ describe('koşum sonucu yardımcıları', () => {
 
 })
 
+describe('stopPoint — kırpılmış doğrulama listesi', () => {
+  it('sunucunun adsız truncated öğesi son adım sayılmaz', () => {
+    const checks_json = JSON.stringify([{ name: 'Giriş › durum 200', passed: true }, { truncated: true, omitted: 40 }])
+    expect(stopPoint({ status: 'ERROR', checks_json })).toEqual({ after: 'Giriş › durum 200', at: null })
+    expect(stopPoint({ status: 'TIMEOUT', checks_json: JSON.stringify([{ truncated: true, omitted: 3 }]) })).toBeNull()
+  })
+})
+
 describe('zamanlama alanları', () => {
   it('eski sunucu satırı (alan yok) → varsayılan INTERVAL; dolu satır aynen', () => {
     expect(scheduleFromScriptedRow({ interval_seconds: 300 })).toEqual(DEFAULT_SCRIPTED_SCHEDULE)

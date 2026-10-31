@@ -318,6 +318,8 @@ export function stopPoint(result) {
     const raw = result.checks_json ?? result.checksJson
     checks = raw ? JSON.parse(raw) : []
   } catch { checks = [] }
+  // Sunucu 64 K tavanında listeye adsız `{truncated:true, omitted:N}` öğesi ekler — doğrulama değil, atlanır.
+  if (Array.isArray(checks)) checks = checks.filter((c) => c && typeof c === 'object' && c.name != null)
   if (!Array.isArray(checks) || checks.length === 0) return null
   const idx = checks.findIndex((c) => c && c.passed === false)
   if (idx < 0) return { after: str(checks[checks.length - 1]?.name), at: null }

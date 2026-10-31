@@ -1,6 +1,7 @@
 package com.sitemonitor.service;
 
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -65,6 +66,8 @@ public class ScriptedProcessHardening {
     private final AtomicReference<Outcome> outcome = new AtomicReference<>(Outcome.NOT_ATTEMPTED);
     private volatile boolean oomAdjustWarned = false;
 
+    /** Spring kurucusu — iki kurucu olduğu için açıkça işaretli (işaretsiz hâlde bağlam açılmıyordu). */
+    @Autowired
     public ScriptedProcessHardening(@Value("${site.monitor.scripted.process-hardening:true}") boolean enabled) {
         this(enabled, System.getProperty("os.name", ""), null);
     }
