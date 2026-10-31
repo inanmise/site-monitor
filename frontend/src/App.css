@@ -2846,9 +2846,6 @@ body:has(.app-main .sticky.bottom-0) .app-body { padding-bottom: 12px; }
    Renkler color-mix ile token'lardan türetilir; sabit hex koyu temada okunmaz hale gelir. */
 .sc-ver-vs { font-size: .78em; color: var(--text-muted); margin-left: 8px; }
 .sc-diff-summary { font-size: .8em; color: var(--text-muted); margin: 8px 0 4px; }
-.sc-diff-env { font-size: .8em; color: var(--text-light); margin: 4px 0 8px;
-  padding: 6px 9px; border-left: 3px solid var(--warning, #d97706); border-radius: 4px;
-  background: color-mix(in srgb, var(--warning, #d97706) 8%, transparent); }
 .sc-diff { font-family: Consolas, monospace; font-size: 12px; line-height: 1.55;
   border: 1px solid var(--border); border-radius: 6px; overflow: auto; max-height: 420px; }
 .sc-diff-row { display: grid; grid-template-columns: 38px 38px 16px 1fr; gap: 6px;

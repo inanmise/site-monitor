@@ -21,13 +21,13 @@ export default function ScriptedTemplateInfo({ tpl, lang, t }) {
     <div className="sc-tpl-info">
       <p className="sc-tpl-info-hdr">
         {/* Kapsam rozeti (shadcn Badge): takım ya da genel. */}
-        <Badge variant="outline" data-slot="template-scope" className="font-semibold">
+        <Badge variant="outline" data-slot="template-scope" className="h-auto max-w-full overflow-visible rounded-md text-left font-semibold whitespace-normal [overflow-wrap:anywhere]">
           {tpl.scope === 'team' ? (tpl.team_name || t('scripted.tplScopeTeam')) : t('scripted.tplScopeGeneral')}
         </Badge>
         {tpl.current_version && <VersionChip className="ml-2">v{tpl.current_version}</VersionChip>}
         {/* Köken rozeti: genele açılmış şablonun nereden geldiği (K5) — güven sinyali. */}
         {tpl.source_team_name && !tpl.builtin &&
-          <Badge variant="ghost" data-slot="template-origin" className="ml-2 px-0 text-[11px] font-semibold text-muted-foreground">
+          <Badge variant="ghost" data-slot="template-origin" className="ml-2 h-auto max-w-full overflow-visible rounded-md px-0 text-left text-[11px] font-semibold whitespace-normal text-muted-foreground [overflow-wrap:anywhere]">
             {t('scripted.tplFromTeam', tpl.source_team_name)}
           </Badge>}
       </p>

@@ -231,7 +231,7 @@ export default function ScriptedTemplateEditor({
             <Collapsible open={showEn} onOpenChange={setShowEn}
               className="flex min-w-0 flex-col gap-3 rounded-lg border bg-muted/30 px-3.5 py-3 sm:col-span-2">
               <CollapsibleTrigger asChild>
-                <Button type="button" variant="secondary" size="sm" className="self-start">
+                <Button type="button" variant="secondary" size="sm" className="self-start pointer-coarse:h-10">
                   {readOnly && en
                     ? (showEn ? t('tpl.trHide') : t('tpl.trShow'))
                     : (showEn ? t('tpl.enHide') : t('tpl.enShow'))}
@@ -286,7 +286,7 @@ export default function ScriptedTemplateEditor({
                   ))}
                 </div>}
               {!readOnly &&
-                <Button type="button" variant="secondary" size="sm" className="self-start" onClick={addEnvRow}>
+                <Button type="button" variant="secondary" size="sm" className="self-start pointer-coarse:h-10" onClick={addEnvRow}>
                   <Plus size={13} aria-hidden="true" /> {t('tpl.envAdd')}
                 </Button>}
               <FieldDescription className="text-xs">{t('tpl.envHint')}</FieldDescription>
@@ -314,16 +314,19 @@ export default function ScriptedTemplateEditor({
 /**
  * Tek env TANIM satırı: ad + açıklama + "gizli" kutusu + sil. DEĞER alanı bilinçli olarak YOK.
  * shadcn Input / Checkbox + Label / ikon Button (ipucu Tooltip).
+ *
+ * <p>Mobil-önce (E3, 2026-10-31): telefonda satır SARAR — ad tam genişlikte, açıklama alt satırda, gizli kutusu + sil
+ * en altta (310 px'te ad kutusu ~70 px'e eziliyordu); `sm` ve üstünde tek satır. Dokunmatikte hedefler 40 px.
  */
 function EnvRow({ t, row, readOnly, onPatch, onDelete }) {
   const secretId = useId()
   return (
-    <div data-slot="env-row" className="flex items-center gap-2">
-      <Input className="min-w-0 flex-1" placeholder={t('tpl.envName')} aria-label={t('tpl.envName')} value={row.name}
+    <div data-slot="env-row" className="flex flex-wrap items-center gap-2 border-b pb-2 last:border-b-0 last:pb-0 sm:flex-nowrap sm:border-b-0 sm:pb-0">
+      <Input className="min-w-0 basis-full sm:flex-1 sm:basis-0" placeholder={t('tpl.envName')} aria-label={t('tpl.envName')} value={row.name}
         disabled={readOnly} onChange={ev => onPatch({ name: ev.target.value })} />
-      <Input className="min-w-0 flex-[2]" placeholder={t('tpl.envDesc')} aria-label={t('tpl.envDesc')} value={row.desc || ''}
+      <Input className="min-w-0 basis-full sm:flex-[2] sm:basis-0" placeholder={t('tpl.envDesc')} aria-label={t('tpl.envDesc')} value={row.desc || ''}
         disabled={readOnly} onChange={ev => onPatch({ desc: ev.target.value })} />
-      <div className="flex shrink-0 items-center gap-1.5">
+      <div className="flex shrink-0 items-center gap-1.5 pointer-coarse:min-h-10">
         <Checkbox id={secretId} checked={!!row.secret} disabled={readOnly}
           onCheckedChange={v => onPatch({ secret: v === true })} />
         <Label htmlFor={secretId} className="text-xs font-semibold whitespace-nowrap text-muted-foreground">{t('tpl.envSecret')}</Label>
@@ -331,7 +334,7 @@ function EnvRow({ t, row, readOnly, onPatch, onDelete }) {
       {!readOnly &&
         <SimpleTooltip content={t('tpl.delete')}>
           <Button type="button" variant="outline" size="icon-sm"
-            className="shrink-0 hover:border-destructive hover:bg-destructive/10 hover:text-destructive"
+            className="ml-auto shrink-0 hover:border-destructive hover:bg-destructive/10 hover:text-destructive pointer-coarse:size-10 sm:ml-0"
             aria-label={t('a11y.rowAction', row.name || t('tpl.envName'), t('tpl.delete'))}
             onClick={onDelete}><Trash2 size={15} aria-hidden="true" /></Button>
         </SimpleTooltip>}

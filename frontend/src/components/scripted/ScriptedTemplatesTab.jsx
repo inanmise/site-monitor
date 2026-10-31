@@ -4,6 +4,7 @@ import { api, formatDateSec } from '../../api/client'
 import { useScriptedTemplates } from '../../hooks/useScriptedTemplates.js'
 import { CATEGORY_ORDER } from '../../utils/templateCategories.js'
 import { pickLang } from '../../utils/scriptSourceOptions.js'
+import { matchesSearchText } from '../../utils/monitorFilters.js'
 import { useToast } from '../ui/Toast.jsx'
 import { useDialog } from '../ui/Dialog.jsx'
 import SegmentedControl from '../ui/SegmentedControl.jsx'
@@ -52,23 +53,23 @@ export default function ScriptedTemplatesTab({ t, lang, teams = [], teamName, on
   const listScope = scope === 'trash' ? 'trash' : undefined
   const { templates, meta, loading, error, reload } = useScriptedTemplates(listScope)
 
+  // Etiketler Türkçe harf sırasıyla (D5, 2026-10-31: `.sort()` kod noktası sırasıydı — "ödeme" "zaman"dan sonra geliyordu)
   const tagOptions = useMemo(() => {
     const all = new Set()
     templates.forEach(x => (x.tags || []).forEach(g => all.add(g)))
     return [{ value: 'all', label: t('tpl.tagAll') },
-            ...[...all].sort().map(g => ({ value: g, label: g }))]
+            ...[...all].sort((a, b) => a.localeCompare(b, 'tr', { sensitivity: 'base', numeric: true })).map(g => ({ value: g, label: g }))]
   }, [templates, t])
 
+  // Arama Türkçe katlamalı (D5): "GÜVENLİK" ve "guvenlik" de "Güvenlik başlıkları denetimi"ni bulur — izleme
+  // sayfalarının ortak kuralı (`matchesSearchText`; İ/I/ı/i ve ş/ç/ğ/ö/ü katlanır).
   const shown = useMemo(() => {
-    const q = search.trim().toLowerCase()
     return templates.filter(x => {
       if (scope === 'general' && !(x.scope === 'general' && !x.builtin)) return false
       if (scope === 'builtin' && !x.builtin) return false
       if (scope === 'team' && x.scope !== 'team') return false
       if (tag !== 'all' && !(x.tags || []).includes(tag)) return false
-      if (!q) return true
-      const hay = [x.name, x.name_en, x.description, x.description_en, x.team_name, ...(x.tags || [])]
-      return hay.some(v => (v || '').toLowerCase().includes(q))
+      return matchesSearchText(search, [x.name, x.name_en, x.description, x.description_en, x.team_name, x.source_team_name, ...(x.tags || [])])
     })
   }, [templates, scope, tag, search])
 
@@ -257,10 +258,13 @@ export default function ScriptedTemplatesTab({ t, lang, teams = [], teamName, on
           t={t} k6Version={meta.k6_version} template={editing}
           meta={meta} teams={teams} teamName={teamName}
           onClose={() => setEditing(null)}
-          onSaved={(_saved, opts) => {
+          onSaved={(saved, opts) => {
             toast.success(t('tpl.saved'))
             reload()
-            if (!opts?.keepOpen) setEditing(null)
+            // Uyarıyla kaydedilip AÇIK kalan editör artık KAYITLI şablonu düzenler (O1, 2026-10-31): `editing` yeni kayıt
+            // ({}) olarak kalırsa ikinci "Kaydet" İKİNCİ bir şablon oluşturuyordu. İzleme formundaki setModal(res.data) deseni.
+            if (opts?.keepOpen) { if (saved?.id != null) setEditing(prev => ({ ...(prev || {}), ...saved })) }
+            else setEditing(null)
           }} />
       )}
 
@@ -343,16 +347,25 @@ function TemplateCard({ t, lang, row, onView, onEdit, onVersions, onDuplicate, o
 
         {(row.tags || []).length > 0 &&
           <div className="my-1 flex flex-wrap gap-1.5">
-            {row.tags.map(g => <Badge key={g} variant="outline" className="font-semibold">{g}</Badge>)}
+            {row.tags.map(g => <Badge key={g} variant="outline" className={cn('font-semibold', WRAP_BADGE)}>{g}</Badge>)}
           </div>}
 
         {(row.env || []).length > 0 &&
-          <p><span className="font-semibold text-foreground">{t('scripted.templateEnvNeeded')}</span>{' '}
+          <p className="[overflow-wrap:anywhere]"><span className="font-semibold text-foreground">{t('scripted.templateEnvNeeded')}</span>{' '}
             {row.env.map(e => e.name).join(', ')}</p>}
       </CardContent>
 
-      <CardFooter className="mt-auto justify-between gap-2 px-0 text-xs text-muted-foreground">
-        <span>{t('tpl.updatedBy', row.updated_by_name || row.updated_by || '—')}</span>
+      {/* Kartın ANA eylemi görünür (2026-10-31): eskiden yalnız ≡ menüsündeydi ("Bu şablonla monitör oluştur") — aynı işleyici. */}
+      {onUse && !deleted && (
+        <Button type="button" size="sm" variant="secondary" data-slot="template-use" onClick={onUse}
+          aria-label={t('a11y.rowAction', name, t('tpl.useCta'))}
+          className="mt-1 self-start pointer-coarse:h-10">
+          <FlaskConical aria-hidden="true" />{t('tpl.useCta')}
+        </Button>
+      )}
+
+      <CardFooter className="mt-auto flex-wrap justify-between gap-x-2 gap-y-0.5 px-0 text-xs text-muted-foreground">
+        <span className="min-w-0 [overflow-wrap:anywhere]">{t('tpl.updatedBy', row.updated_by_name || row.updated_by || '—')}</span>
         <span>{formatDateSec(row.updated_at)}</span>
       </CardFooter>
     </Card>
@@ -392,6 +405,12 @@ function DemoteModal({ t, row, teams, onClose, onConfirm }) {
   )
 }
 
+/**
+ * Sarılan rozet (O8, 2026-10-31): takım / köken adı uzun AD adları taşır — tek satır (nowrap + overflow-hidden) rozet
+ * telefonda adı kesiyor, 1280'de kartın DIŞINA ~180 px taşıyordu. Köşeli, taşmasız, sarar.
+ */
+export const WRAP_BADGE = 'h-auto max-w-full overflow-visible rounded-md text-left whitespace-normal [overflow-wrap:anywhere]'
+
 // Kapsam rozeti tonları (eski .sc-tpl-badge--*): yerleşik nötr, genel marka, takım yeşil, silinmiş kırmızı.
 const SCOPE_TONE = {
   builtin: 'bg-muted text-muted-foreground',
@@ -407,9 +426,9 @@ function ScopeBadge({ t, row }) {
       <Badge variant="secondary" data-scope="general" className={SCOPE_TONE.general}>{t('tpl.badgeGeneral')}</Badge>
       {/* Köken rozeti: genele açılmış şablonun nereden geldiği (K5) — güven sinyali. */}
       {row.source_team_name && (
-        <Badge variant="ghost" className="px-0 text-[11px] font-semibold text-muted-foreground">{t('scripted.tplFromTeam', row.source_team_name)}</Badge>
+        <Badge variant="ghost" data-slot="template-origin" className={cn('px-0 text-[11px] font-semibold text-muted-foreground', WRAP_BADGE)}>{t('scripted.tplFromTeam', row.source_team_name)}</Badge>
       )}
     </>)
   }
-  return <Badge variant="secondary" data-scope="team" className={SCOPE_TONE.team}>{row.team_name || t('tpl.badgeTeam')}</Badge>
+  return <Badge variant="secondary" data-scope="team" className={cn(SCOPE_TONE.team, WRAP_BADGE)}>{row.team_name || t('tpl.badgeTeam')}</Badge>
 }

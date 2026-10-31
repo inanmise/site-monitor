@@ -7,7 +7,7 @@ import { Button } from '@/components/shadcn/button'
 
 /**
  * Durum yoğunluk şeridi — seçili aralığın kovaları (dakika/saat/gün) tek satır hücre dizisi.
- * Hücre rengi hata oranına göre success→danger arasında (color-mix, token'lı — hex yok);
+ * Hücre rengi: hatasızsa soluk yeşil, hatalıysa oranla koyulaşan kırmızı (color-mix, token'lı — hex yok; {@link cellBackground});
  * tıklanınca o kovanın alt-aralığına iner (onZoom). Hatalı bölgeyi scroll'suz bulmanın yolu.
  * Grafik kütüphanesi yok; hücreler shadcn Button (renk satır içi — hata oranından hesaplanır),
  * ipucu shadcn Tooltip. Boş kovalar (hiç kontrol yok) backend'den gelmez, atlanır.
@@ -34,6 +34,18 @@ export function bucketBounds(key) {
 }
 
 const utcMs = (iso) => Date.parse(`${iso}Z`)
+
+/**
+ * Hücre rengi. Hatasız kova: soluk yeşil. Hatalı kova: hata oranıyla koyulaşan KIRMIZI ton (en az %35 kırmızı) —
+ * saydam zemin üstüne karışır. 2026-10-31 (O7, dokuz türün ortak şeridi): eskiden kırmızı YEŞİLLE karıştırılıyordu;
+ * 4/12 hatalı kova rgb(91,119,61) koyu zeytin yeşili çıkıyor, sağlıklı hücrelerden "daha koyu yeşil" gibi okunuyordu
+ * (renk körü için daha da kötü). Renk tek başına anlam taşımaz: hücrenin adı ve dokunmatik listesi hata sayısını söyler.
+ */
+export function cellBackground(fail, pct) {
+  if (!(Number(fail) > 0)) return 'color-mix(in srgb, var(--success) 30%, transparent)'
+  const p = Math.min(100, Math.max(35, Number(pct) || 0))
+  return `color-mix(in srgb, var(--danger) ${p}%, transparent)`
+}
 
 /**
  * Hatalı dilim koşuları (dokunmatik liste): ZAMANDA bitişik hatalı kovalar tek koşu. Arada kontrol olmayan bir kova
@@ -114,9 +126,7 @@ export default function DensityStrip({ buckets, onZoom, zoomed = false, onReset 
             const fail = Number(b.fail) || 0
             const ratio = total > 0 ? fail / total : 0
             const pct = Math.round(ratio * 100)
-            const bg = fail === 0
-              ? 'color-mix(in srgb, var(--success) 30%, transparent)'
-              : `color-mix(in srgb, var(--danger) ${Math.max(35, pct)}%, var(--success))`
+            const bg = cellBackground(fail, pct)
             const bounds = bucketBounds(String(b.key))
             const label = `${formatDateSec(bounds[0])} — ${total} / ${fail} ${t('hist.stripFail')}`
             return (

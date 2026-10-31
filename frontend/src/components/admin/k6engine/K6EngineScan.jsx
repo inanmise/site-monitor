@@ -10,9 +10,10 @@ import { ProgressBar, Spinner } from '../../ui/Progress.jsx'
 import MonitorStatsBar from '../../MonitorStatsBar.jsx'
 import ToneBadge from '../ToneBadge.jsx'
 import { SettingsSaveBar } from '../SettingsControls.jsx'
+import SearchableSelect from '../../ui/SearchableSelect.jsx'
 import { useElementWidth } from '../../../hooks/useElementWidth.js'
 import {
-  ALL, DIFFS, DIFF_TILE, DIFF_TONE, RESULTS_TABLE_MIN_PX, SCAN_STATE_TONE, STATUS_TONE, diffCounts, durationParts, filterResults,
+  ALL, DIFFS, DIFF_TONE, RESULTS_TABLE_MIN_PX, diffTileTone, SCAN_STATE_TONE, STATUS_TONE, diffCounts, durationParts, filterResults,
   filtersActive, fmtUtc, isOpenScan, normalizeIds, pickableMonitors, resultClasses, resultTeams, scanProgress, sortResults,
 } from './k6EngineModel.js'
 import { CHIP, SectionCard, TOUCH } from './K6EngineParts.jsx'
@@ -247,17 +248,17 @@ export function ResultsCard({
             {scans.error ? String(scans.error) : t('k6e.res.scansUnreadableBody')}
           </AlertBanner>
         )}
-        <div className="flex min-w-0 flex-col gap-1.5 sm:max-w-xl">
+        {/* Tarama seçici SARAR (E10, 2026-10-31): yerel <select> kapalıyken seçili metni telefonda kırpıyordu — uzun seçenek
+            ("#12 · tarih · durum · aday sürüm · kapsam") SearchableSelect `wrapLabels` ile tam okunur. */}
+        <div className="flex min-w-0 flex-col gap-1.5 sm:max-w-xl" data-slot="k6e-scan-pick">
           <Label htmlFor="k6e-scan-pick" className="text-xs font-medium text-muted-foreground">{t('k6e.res.pick')}</Label>
-          <NativeSelect id="k6e-scan-pick" value={selectedId == null ? '' : String(selectedId)} onChange={(e) => onSelect(Number(e.target.value))}
-            className="h-10 w-full" data-slot="k6e-scan-pick">
-            {list.map((s) => (
-              <NativeSelectOption key={s.id} value={String(s.id)}>
-                {t('k6e.res.pickOption', s.id, fmtUtc(s.started_at, lang), t(`k6e.scanState.${s.state}`), s.candidate_version || '—',
-                  t(`k6e.scope.${s.scope === 'SELECTED' ? 'SELECTED' : 'ALL'}`))}
-              </NativeSelectOption>
-            ))}
-          </NativeSelect>
+          <SearchableSelect id="k6e-scan-pick" wrapLabels searchThreshold={8}
+            value={selectedId == null ? '' : String(selectedId)} onChange={(v) => onSelect(Number(v))}
+            options={list.map((s) => ({
+              value: String(s.id),
+              label: t('k6e.res.pickOption', s.id, fmtUtc(s.started_at, lang), t(`k6e.scanState.${s.state}`), s.candidate_version || '—',
+                t(`k6e.scope.${s.scope === 'SELECTED' ? 'SELECTED' : 'ALL'}`)),
+            }))} />
         </div>
         <DetailBody t={t} lang={lang} detail={detail} scan={scan} onRetry={onRetryDetail} counts={counts} diff={diff} setDiff={setDiff}
           rows={rows} visible={visible} q={q} setQ={setQ} team={team} setTeam={setTeam} cls={cls} setCls={setCls} teams={teams}
@@ -300,7 +301,8 @@ function DetailBody({
   const open = isOpenScan(scan)
   const p = scanProgress(scan)
   const tiles = DIFFS.map((d) => ({
-    key: d, Icon: DIFF_ICON[d], label: t(`k6e.diff.${d}`), value: counts[d], cls: DIFF_TILE[d], hint: t(`k6e.diffHint.${d}`),
+    // Sıfır değerli kutucuk NÖTR (E10, 2026-10-31): "0 Dalgalı" amber boyanınca bir sorun varmış gibi okunuyordu
+    key: d, Icon: DIFF_ICON[d], label: t(`k6e.diff.${d}`), value: counts[d], cls: diffTileTone(d, counts[d]), hint: t(`k6e.diffHint.${d}`),
   }))
   return (
     <div className="flex min-w-0 flex-col gap-4" data-slot="k6e-detail" data-scan={scan.id} data-state={scan.state}>

@@ -9,10 +9,15 @@
  * `script_version` (güncel) / `run_script_version` (son koşumun sürümü), `slow_response_enabled` + `slow_threshold_ms`,
  * `timeout_seconds`.
  *
- * <p>Listede OLMAYANLAR (kart uydurmaz): p95 (`http_req_p95_ms` veritabanında var, liste yanıtına konmuyor),
- * iterasyon süresi, eşik (threshold) ADLARI (yalnız çıkış kodu 99 "eşik aşıldı" bilgisi var), sürümün değişme zamanı.
+ * <p>2026-10-31 (k6r): son koşumun p95'i `last_http_req_p95_ms` (yoksa kart göstermez) ve zamanlama alanları
+ * (`schedule_mode`, `cron_expression`, `windows`, `blackouts`, `skip_holidays`, `skip_dates`, `next_run_at`).
+ *
+ * <p>Listede OLMAYANLAR (kart uydurmaz): iterasyon süresi, eşik (threshold) ADLARI (yalnız çıkış kodu 99 "eşik aşıldı" bilgisi var), sürümün değişme zamanı.
  * k6 her zaman `--vus 1 --iterations 1` koşar — VU/iterasyon sabit olduğu için kartta gösterilmez.
  */
+
+import { cronText } from '../dbquery/dbqueryPageModel.js'
+import { intervalText } from '../ping/pingCardModel.js'
 
 const num = (v) => {
   if (v === null || v === undefined || v === '') return null
@@ -164,4 +169,37 @@ export function versionDrift(m) {
   const cur = m?.script_version
   const ran = m?.run_script_version
   return cur && ran && String(cur) !== String(ran) ? String(ran) : null
+}
+
+const nonEmpty = (v) => Array.isArray(v) && v.length > 0
+
+/**
+ * Zamanlamalı mı (2026-10-31, k6r D2): CRON kipi ya da izinli pencere / yasak pencere / tatil / atlanan gün süzgeci.
+ * Alanlar yoksa (eski sunucu) false — kart bugünkü "her N dk" çipini gösterir.
+ */
+export function isScheduled(m) {
+  if (!m) return false
+  return m.schedule_mode === 'CRON' || nonEmpty(m.windows) || nonEmpty(m.blackouts) || m.skip_holidays === true
+    || nonEmpty(m.skip_dates)
+}
+
+/**
+ * Kartın sıklık çipi metni. Aralık kipinde süzgeç yoksa bugünkü "her N dk" (ping kartıyla aynı metin). CRON kipinde
+ * sık kalıplar insan diliyle (dbquery kartıyla AYNI çevirici — sunucu iki türde aynı `DbQuerySchedule`'ı kullanır),
+ * tanınmayan ifade olduğu gibi ("cron: …"); süzgeçler kısa ek olarak. Hiçbiri yoksa null (çip çizilmez).
+ */
+export function scheduleText(m, t) {
+  if (!m) return null
+  const cron = m.schedule_mode === 'CRON'
+  const raw = typeof m.cron_expression === 'string' ? m.cron_expression.trim() : ''
+  const base = cron
+    ? (cronText(raw, t) || (raw ? t('dbq.card.cronRaw', raw) : null))
+    : intervalText(m.interval_seconds, t)
+  const extras = []
+  if (nonEmpty(m.windows)) extras.push(t('dbq.card.schedWindows'))
+  if (nonEmpty(m.blackouts)) extras.push(t('dbq.card.schedBlackouts'))
+  if (m.skip_holidays === true) extras.push(t('dbq.card.schedHolidays'))
+  if (nonEmpty(m.skip_dates)) extras.push(t('scripted.card.schedSkipDates'))
+  if (!base && !extras.length) return null
+  return [base, ...extras].filter(Boolean).join(' · ')
 }
