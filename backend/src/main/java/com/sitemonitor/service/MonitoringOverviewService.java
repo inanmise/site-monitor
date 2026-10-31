@@ -441,8 +441,9 @@ public class MonitoringOverviewService {
             else if (!isActive) status = "paused";
             else if (c == null) status = "unknown";
             else if (!open.isEmpty() || Boolean.FALSE.equals(ok)) status = "down";
-            else if (m instanceof com.sitemonitor.model.DbQueryMonitor dq
-                    ? isDbQueryStale(dq, nowI) : isStale(checkedAt, spec.interval().apply(m), nowI)) status = "stale";
+            else if (m instanceof com.sitemonitor.model.DbQueryMonitor dq ? isDbQueryStale(dq, nowI)
+                    : m instanceof com.sitemonitor.model.ScriptedMonitor sm && ScriptedSchedule.hasPlan(sm) ? isScriptedStale(sm, nowI)
+                    : isStale(checkedAt, spec.interval().apply(m), nowI)) status = "stale";
             // Veritabanı sorgusu (r177, H-2): sorgu çalıştı ama kural değerlendirilemedi — yeşil SAYILMAZ (nötr "değerlendirilemedi")
             else if (c instanceof com.sitemonitor.model.DbQueryCheck dc && dbQueryUnevaluable(dc)) status = "unknown";
             else status = "up";
@@ -543,6 +544,16 @@ public class MonitoringOverviewService {
     public static boolean isDbQueryStale(com.sitemonitor.model.DbQueryMonitor m, Instant now) {
         if (m == null) return false;
         return isDbQueryStale(m.getNextRunAt(), now) || skippedTooLong(m.getSkippedSince(), now);
+    }
+
+    /**
+     * Zamanlamalı (pencere / yasak / tatil / cron) sentetik izleme "gecikmiş" mi (k6r D2, 2026-10-31) — veritabanı sorgu
+     * izlemesinin planlı çalışma kuralı ({@link #isDbQueryStale(String, Instant)}): pencere dışında beklemek gecikme DEĞİL,
+     * planlı koşum ({@code next_run_at}) + pay geçtiyse gecikmiş. Düz aralıktaki izleme bu kurala girmez (çağıran
+     * {@code ScriptedSchedule.hasPlan} ile ayırır; bugünkü aralık kuralı).
+     */
+    public static boolean isScriptedStale(com.sitemonitor.model.ScriptedMonitor m, Instant now) {
+        return m != null && isDbQueryStale(m.getNextRunAt(), now);
     }
 
     static boolean skippedTooLong(String skippedSince, Instant now) {

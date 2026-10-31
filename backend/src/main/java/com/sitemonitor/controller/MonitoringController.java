@@ -747,6 +747,12 @@ public class MonitoringController {
             k6.setDisabledReason(null);
             k6.setDisabledAt(null);
         }
+        // k6r D2: zamanlama alanlarından biri geri döndüyse tanım bugünkü kurallarla doğrulanır (geçersizse 400, geri yükleme
+        // yapılmaz) ve etkin aralık yeniden hesaplanır; plan kayıttan sonra sıfırlanır
+        boolean k6ScheduleChanged = k6 != null && applied.stream().anyMatch(com.sitemonitor.service.ScriptedSchedule.PROPS::contains);
+        boolean k6PlannedBefore = k6 != null && com.sitemonitor.service.ScriptedSchedule.hasPlan(before.get("scheduleMode"),
+                before.get("windowsJson"), before.get("blackoutJson"), before.get("skipHolidays"), before.get("skipDatesJson"));
+        if (k6ScheduleChanged) restoreScriptedSchedule(k6);
 
         // Veritabanı sorgu izlemesi (2026-10-31): geri yükleme güncellemeyle AYNI kuralları uygular — ad tekil (alarm
         // anahtarı, tüm takımlarda), bağlantı aynı takımın, sorgu bugünkü güvenlik kurallarından geçmeli (kurallar sıkılaşmış olabilir), zamanlama
@@ -777,6 +783,8 @@ public class MonitoringController {
                     dbqOldName != null ? dbqOldName : dbq.getName(), DBQUERY_ALERT_TYPES, owner);
             if (dbqOldName != null && !dbqOldName.equals(dbq.getName())) rekeyDbQueryAlarms(dbq, dbqOldName);
         } else if (k6 != null) {
+            if (k6ScheduleChanged && k6.getId() != null
+                    && (k6PlannedBefore || com.sitemonitor.service.ScriptedSchedule.hasPlan(k6))) scriptedReplan(k6.getId());   // k6r D2
             Map<String, Object> owner = ownerCtx(k6.getId(), k6.getTeamId(), null);
             Set<String> k6Types = Set.of(EscalationService.TYPE_SCRIPTED_FAIL, EscalationService.TYPE_SCRIPTED_SLOW);
             if (k6OldName != null && !k6OldName.equals(k6.getName())) {
@@ -7038,6 +7046,8 @@ public class MonitoringController {
         // Env adı/boyutu (2026-10-08): ayrılmış ad (K6_*, GO*, *PROXY*, SSL_*, PATH …), geçersiz biçim, > 50 değişken
         // ya da > 8192 karakterlik değer → 400 VALIDATION_FAILED (fields.env). Hiçbir yan etkiden ÖNCE.
         com.sitemonitor.service.ScriptedEnvPolicy.validateForSave(body.get("env"), Map.of());
+        // k6r D2: zamanlama penceresi / cron — gövdede varsa doğrulanır (hiçbir yan etkiden ÖNCE); yoksa bugünkü yol
+        com.sitemonitor.service.dbquery.DbQuerySchedule.Spec k6Sched = scriptedScheduleOrThrow(body, null);
         String now = ISO.format(Instant.now());
         com.sitemonitor.model.ScriptedMonitor m = new com.sitemonitor.model.ScriptedMonitor();
         m.setName(name);
@@ -7053,6 +7063,7 @@ public class MonitoringController {
         if (body.get("recoveryChecks") != null)          m.setRecoveryChecks(clampRecovery(((Number) body.get("recoveryChecks")).intValue()));
         if (body.get("recoveryIntervalSeconds") != null) m.setRecoveryIntervalSeconds(clampInterval(((Number) body.get("recoveryIntervalSeconds")).intValue()));
         applyScriptedFields(m, body, null);
+        if (k6Sched != null) com.sitemonitor.service.ScriptedSchedule.apply(k6Sched, m, Instant.now(), scriptedHolidays());   // k6r D2
         m.setCreatedAt(now);
         m.setUpdatedAt(now);
         monitorHistory.stampCreated(m, session);
@@ -7099,6 +7110,9 @@ public class MonitoringController {
             // adlar biçim kurallarından muaf (eski kayıt düzenlenebilir kalır); koşumu etkileyen ayrılmış adlar her zaman 400.
             if (body.containsKey("env"))
                 com.sitemonitor.service.ScriptedEnvPolicy.validateForSave(body.get("env"), storedEnvValues(m.getEnvJson()));
+            // k6r D2: zamanlama (gövdede varsa) — doğrulama yan etkilerden ÖNCE; önceki tanım plan sıfırlama kararı için saklanır
+            com.sitemonitor.service.dbquery.DbQuerySchedule.Spec k6Sched = scriptedScheduleOrThrow(body, m);
+            com.sitemonitor.model.ScriptedMonitor schedBefore = scheduleCopy(m);
             String oldName = m.getName();
             // Ad takım içinde TEKİLDİR (create ile aynı kural): alarm anahtarı monitör adı olduğu için aynı takımda iki
             // aynı adlı izleme alarmlarını paylaşırdı. Yalnız ad ya da takım DEĞİŞİYORSA denetlenir — eski mükerrer kayıtların
@@ -7150,9 +7164,11 @@ public class MonitoringController {
             String oldScript = m.getScript();
             String oldEnv = m.getEnvJson();
             applyScriptedFields(m, body, m.getEnvJson());
+            if (k6Sched != null) com.sitemonitor.service.ScriptedSchedule.apply(k6Sched, m, Instant.now(), scriptedHolidays());   // k6r D2
             m.setUpdatedAt(ISO.format(Instant.now()));
             monitorHistory.stampUpdated(m, session);
             com.sitemonitor.model.ScriptedMonitor saved = scriptedMonitorRepo.save(m);
+            scriptedReplanIfChanged(schedBefore, saved);   // k6r D2: zamanlama değiştiyse plan sıfırlanır
             // Sürüm YALNIZ içerik (script/env) değişince yazılır: aralık/timeout gibi ayar
             // düzenlemeleri sürüm geçmişini gereksiz satırlarla şişirmemeli.
             if (contentChanged(oldScript, oldEnv, saved)) {
@@ -7668,7 +7684,100 @@ public class MonitoringController {
     private static final String[] SCRIPTED_FIELDS = {
             "name", "description", "script", "timeoutSeconds", "intervalSeconds",
             "confirmAttempts", "recoveryChecks", "active", "groupName", "notifyEmail", "notifyWebhook",
-            "slowResponseEnabled", "slowThresholdMs", "nocNotify", "nocGroupIds" };
+            "slowResponseEnabled", "slowThresholdMs", "nocNotify", "nocGroupIds",
+            // k6r D2 (2026-10-31): zamanlama penceresi / cron — değişiklik geçmişi farkı + geri yükleme (dbquery ile aynı adlar)
+            "scheduleMode", "cronExpression", "windowsJson", "blackoutJson", "skipHolidays", "skipDatesJson" };
+
+    // ── k6r D2: sentetik izleme zamanlaması (hesap DbQuerySchedule'ün, sentetiğe özgü yalnız metin / kolon yazımı) ──────────
+
+    /**
+     * Gövdedeki zamanlamanın tanımı — gövdede zamanlama anahtarı yoksa {@code null} (bugünkü yol: kolonlara dokunulmaz).
+     * Plan gerektiren tanım geçersizse 400 (alan hataları zamanlama düzenleyicisinin adlarıyla, kod dbquery'ninkiyle aynı;
+     * birden çok alan birlikte). Düz aralık bugünkü gibi denetlenmez.
+     */
+    private com.sitemonitor.service.dbquery.DbQuerySchedule.Spec scriptedScheduleOrThrow(Map<String, Object> body,
+                                                                                          com.sitemonitor.model.ScriptedMonitor current) {
+        // Zamanlamalı izlemede aralığın tek başına değişmesi de zamanlama değişikliğidir (denetlenir, CRON'da etkin aralık korunur)
+        boolean intervalOfPlanned = current != null && body != null && body.get("intervalSeconds") != null
+                && com.sitemonitor.service.ScriptedSchedule.hasPlan(current);
+        if (!com.sitemonitor.service.ScriptedSchedule.present(body) && !intervalOfPlanned) return null;
+        com.sitemonitor.service.dbquery.DbQuerySchedule.Spec spec = com.sitemonitor.service.ScriptedSchedule.fromBody(body, current);
+        throwScriptedScheduleErrors(com.sitemonitor.service.ScriptedSchedule.validate(spec, Instant.now(), scriptedHolidays()));
+        return spec;
+    }
+
+    private static void throwScriptedScheduleErrors(List<com.sitemonitor.service.ScriptedSchedule.FieldError> problems) {
+        if (problems == null || problems.isEmpty()) return;
+        Map<String, String> fields = new LinkedHashMap<>();
+        String code = null;
+        for (com.sitemonitor.service.ScriptedSchedule.FieldError fe : problems) {
+            fields.putIfAbsent(fe.field() == null ? "schedule" : fe.field(), fe.message());
+            if (code == null && com.sitemonitor.service.ScriptedSchedule.CODED.contains(fe.code())) code = fe.code();
+        }
+        String message = fields.values().iterator().next();
+        throw new DbQueryApiException(400, code == null ? "VALIDATION_FAILED" : code, message, fields, null);
+    }
+
+    /** Geri yüklenen zamanlamanın doğrulaması + kolon / etkin aralık yazımı (kayıttan ÖNCE); geçersizse 400. */
+    private void restoreScriptedSchedule(com.sitemonitor.model.ScriptedMonitor m) {
+        com.sitemonitor.service.dbquery.DbQuerySchedule.Spec spec = com.sitemonitor.service.ScriptedSchedule.specOf(m);
+        throwScriptedScheduleErrors(com.sitemonitor.service.ScriptedSchedule.validate(spec, Instant.now(), scriptedHolidays()));
+        com.sitemonitor.service.ScriptedSchedule.apply(spec, m, Instant.now(), scriptedHolidays());
+    }
+
+    /** Zamanlama alanlarının kopyası (plan sıfırlama kararı için). */
+    private static com.sitemonitor.model.ScriptedMonitor scheduleCopy(com.sitemonitor.model.ScriptedMonitor m) {
+        com.sitemonitor.model.ScriptedMonitor c = new com.sitemonitor.model.ScriptedMonitor();
+        c.setScheduleMode(m.getScheduleMode());
+        c.setIntervalSeconds(m.getIntervalSeconds());
+        c.setCronExpression(m.getCronExpression());
+        c.setWindowsJson(m.getWindowsJson());
+        c.setBlackoutJson(m.getBlackoutJson());
+        c.setSkipHolidays(m.getSkipHolidays());
+        c.setSkipDatesJson(m.getSkipDatesJson());
+        return c;
+    }
+
+    /**
+     * Zamanlama değiştiyse ve izleme önce YA DA sonra zamanlamalıysa plan sıfırlanır ({@code next_run_at} + {@code scripted:<id>}
+     * küme vadesi). Düz aralıkta yalnız aralık değişmesi bugünkü gibi (vade kısaltılan aralığı kendisi yakalar).
+     */
+    private void scriptedReplanIfChanged(com.sitemonitor.model.ScriptedMonitor before, com.sitemonitor.model.ScriptedMonitor after) {
+        if (before == null || after == null || after.getId() == null) return;
+        if (com.sitemonitor.service.ScriptedSchedule.sameSchedule(before, after)) return;
+        if (!com.sitemonitor.service.ScriptedSchedule.hasPlan(before) && !com.sitemonitor.service.ScriptedSchedule.hasPlan(after)) return;
+        scriptedReplan(after.getId());
+    }
+
+    private void scriptedReplan(long monitorId) {
+        try {
+            if (schedulerService != null) schedulerService.scriptedScheduleChanged(monitorId);
+        } catch (RuntimeException e) {
+            log.warn("Sentetik izleme #{}: zamanlama değişikliği plana işlenemedi — bir sonraki vade hesabında yenilenir: {}",
+                    monitorId, e.getClass().getSimpleName());
+        }
+    }
+
+    /** Tatil takvimi (60 sn özet); servis yoksa boş — "tatil yok" sayılır. */
+    private java.util.Set<java.time.LocalDate> scriptedHolidays() {
+        try {
+            return holidayCalendar == null ? java.util.Set.of() : holidayCalendar.days();
+        } catch (RuntimeException e) {
+            return java.util.Set.of();
+        }
+    }
+
+    /**
+     * Zamanlama önizlemesi (k6r D2): sonraki 10 koşum (UTC ISO) + etkin aralık — dbquery önizlemesiyle AYNI gövde / yanıt; en kısa
+     * aralık 60 sn. Hesap saf (veritabanına gitmez; tatil takvimi 60 sn önbellekten).
+     */
+    @PostMapping("/scripted/schedule-preview")
+    public ResponseEntity<Map<String, Object>> scriptedSchedulePreview(@RequestBody(required = false) Map<String, Object> body,
+                                                                       HttpSession session) {
+        permissionService.require(session, "monitoring.read", "view");
+        return ok(com.sitemonitor.service.ScriptedSchedule.preview(body, Instant.now(), scriptedHolidays()));
+    }
+    // ── /k6r D2 ──────────────────────────────────────────────────────────────────────────────────────────────────
 
     /** Script gövde desen taraması → BLOCK politikasında hit varsa hata mesajı, aksi halde null (WARN sadece bilgi). */
     private String scanScriptOrError(Object script) {
@@ -7998,6 +8107,9 @@ public class MonitoringController {
         item.put("confirm_interval_seconds", m.getConfirmIntervalSeconds());
         item.put("recovery_checks", m.getRecoveryChecks());
         item.put("recovery_interval_seconds", m.getRecoveryIntervalSeconds());
+        // k6r D2: zamanlama penceresi / cron (dbquery ile aynı adlar) + plan ve etkin aralık
+        for (Map.Entry<String, Object> e : com.sitemonitor.service.ScriptedSchedule.api(m).entrySet())
+            if (!"interval_seconds".equals(e.getKey())) item.put(e.getKey(), e.getValue());
         item.put("tags", m.getTags());
         item.put("alert_level",     com.sitemonitor.model.MonitorAlertPrefs.effectiveLevel(m.getAlertLevel()));
         item.put("notify_email", m.getNotifyEmail());

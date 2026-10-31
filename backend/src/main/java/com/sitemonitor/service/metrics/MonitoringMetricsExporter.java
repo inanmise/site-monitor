@@ -132,6 +132,12 @@ public class MonitoringMetricsExporter {
     static final String SQL_PUSH_STUCK = "SELECT COUNT(*) FROM user_push_deliveries WHERE status = 'PENDING' "
             + "AND created_at < ? AND (next_attempt_at IS NULL OR next_attempt_at < ?)";
     static final String SQL_LOCKS = "SELECT name, locked_until FROM scheduler_lock";
+    /**
+     * Son 24 sa ZAMANLANMIŞ sentetik koşumlar (k6r D3; elle "Şimdi kontrol et" / test sayılmaz — {@code manual}), sonuç ×
+     * k6 sürümü — iki aile tek sorgudan ({@code idx_sc_checked_at}).
+     */
+    static final String SQL_SCRIPTED_RUNS = "SELECT status, k6_version, COUNT(*) FROM scripted_checks "
+            + "WHERE checked_at >= ? AND (manual IS NULL OR manual = FALSE) GROUP BY status, k6_version";
     /** Kurum geneli aileleri başka pod yayıyor sayılması için gözlemin en çok yaşı: {@code refresh-seconds} × bu çarpan. */
     static final double ORG_OBSERVATION_FRESH_FACTOR = 2.5;
     /**
@@ -702,6 +708,11 @@ public class MonitoringMetricsExporter {
             return l;
         });
         if (notif != null) MonitoringMetricsModel.notifications(f, notif);
+
+        // Sentetik izleme koşumları (son 24 sa, sonuç × k6 sürümü — k6r D3)
+        List<Object[]> scripted = read(sources, "scripted_runs", () -> jdbc == null ? null
+                : jdbc.query(SQL_SCRIPTED_RUNS, (rs, i) -> new Object[]{rs.getString(1), rs.getString(2), rs.getLong(3)}, since24h));
+        if (scripted != null) MonitoringMetricsModel.scriptedRuns(f, scripted);
 
         // Kişisel push
         mergeInto(f, read(sources, "push", () -> {

@@ -13,9 +13,25 @@ public interface ScriptedMonitorRepository extends JpaRepository<ScriptedMonitor
     List<ScriptedMonitor> findByActiveTrue();
 
     /** Çok pod Sürüm 3-3 (paket B): dağıtık kontrol gönderiminin HAFİF okuması — aktif izlemelerin [id, aralık (sn)] (betik /
-     *  başlık / gizli sütunları okunmaz). Yalnız ana anahtar açıkken, tarama liderinin gönderim tıkında çağrılır. */
-    @Query("SELECT m.id, m.intervalSeconds FROM ScriptedMonitor m WHERE m.active = true")
+     *  başlık / gizli sütunları okunmaz). Yalnız ana anahtar açıkken, tarama liderinin gönderim tıkında çağrılır.
+     *  2026-10-31 (k6r D2): + zamanlama kolonları [2 kip, 3 cron, 4 pencereler, 5 yasak pencereler, 6 tatil atla, 7 ek tarihler,
+     *  8 sonraki plan] — zamanlamalı izleme gönderimde de plana uyar (ilk iki kolonun sırası değişmez). */
+    @Query("SELECT m.id, m.intervalSeconds, m.scheduleMode, m.cronExpression, m.windowsJson, m.blackoutJson, "
+         + "m.skipHolidays, m.skipDatesJson, m.nextRunAt FROM ScriptedMonitor m WHERE m.active = true")
     List<Object[]> findCheckDispatchRows();
+
+    /**
+     * Zamanlayıcının planı (k6r D2): bir sonraki planlı koşum ({@code next_run_at}) — hedefli, varlık kaydı ezmez
+     * ({@code updatable = false}). {@code null} = plan sıfırlandı (sonraki tıkta yeni tanımdan kurulur).
+     */
+    @org.springframework.transaction.annotation.Transactional
+    @Modifying
+    @Query(value = "UPDATE scripted_monitors SET next_run_at = :next WHERE id = :id", nativeQuery = true)
+    int updateNextRunAt(@Param("id") Long id, @Param("next") String next);
+
+    /** Tatil takvimi değişince planı yeniden kurulacak aktif izlemeler: [id, zamanlama kipi] (k6r D2 — hafif okuma). */
+    @Query("SELECT m.id, m.scheduleMode FROM ScriptedMonitor m WHERE m.active = true AND m.skipHolidays = true")
+    List<Object[]> findHolidayScheduledRows();
     long countByActiveTrue();
     /** Takım kapsamlı fırtına eşiği paydası (StormService, 2026-09-29) — yalnız o takımın aktif kayıtları. */
     long countByTeamIdAndActiveTrue(Long teamId);

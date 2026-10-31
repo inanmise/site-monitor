@@ -1,10 +1,13 @@
 package com.sitemonitor.service;
 
+import com.sitemonitor.model.AlertEvent;
 import com.sitemonitor.model.ScriptedMonitor;
+import com.sitemonitor.repository.AlertEventRepository;
 import com.sitemonitor.repository.ScriptedCheckRepository;
 import com.sitemonitor.repository.ScriptedMonitorRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
@@ -12,6 +15,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Sentetik izleme ANOMALİ guard'ı (L3) — koşum sonrası, kaydedilmiş sonuç üzerinden.
@@ -30,6 +34,12 @@ import java.util.Set;
  *   <li><b>Ardışık zaman aşımı → EŞİKTE.</b> Geçici ağ dalgalanması bir-iki koşumu vurur;
  *       kalıcı sorun hepsini. Eşik ayarlanabilir (varsayılan 5).</li>
  * </ul>
+ *
+ * <p><b>Gerçek kesintiye dokunulmaz (k6r B2, 2026-10-31).</b> Hedef uzun süre asılı kalıyorsa (yavaş / cevapsız uç) her koşum
+ * da zaman aşımına düşer; guard bunu "bitmeyen betik" sanıp izlemeyi kapatır, açık kesinti alarmını kapatır ve nöbetçiye
+ * "DÜZELDİ" push'u atardı — kesinti sürerken izleme körleşirdi. İzlemenin AÇIK bir {@code SCRIPTED_FAIL} alarmı varsa zaman
+ * aşımı serisi izlemeyi KAPATMAZ, alarma dokunmaz, bildirim göndermez (yalnız INFO, izleme başına saatte bir). Alarm
+ * okunamazsa da kapatılmaz (bilinmeyen = dokunma). İstek tavanı aşımı tetikleyicisi değişmez.
  *
  * <p><b>Kapatma SEBEBİYLE birlikte yazılır.</b> {@code active=false} tek başına kullanıcının
  * kendi kapattığı izlemeden ayırt edilemezdi; {@code disabledReason} ekranda kalıcı uyarı olarak
@@ -59,6 +69,20 @@ public class ScriptedAnomalyGuard {
     private final EmailNotificationService emailService;
     private final UserPushService userPushService;
     private final AppSettingsService appSettings;
+
+    /** Açık {@code SCRIPTED_FAIL} alarmını okumak için (k6r B2). Yoksa (elle kurulan testler) eski davranış: seri kapatır. */
+    private AlertEventRepository alertEventRepo;
+
+    @Autowired(required = false)
+    void setAlertEventRepository(AlertEventRepository repo) {
+        this.alertEventRepo = repo;
+    }
+
+    /** "Açık kesinti var — kapatılmadı" satırının izleme başına en sık yazılma aralığı (ms). */
+    static final long OPEN_OUTAGE_LOG_EVERY_MS = 3_600_000L;
+    /** İzleme kimliği → son "kapatılmadı" günlük satırının anı. Sınırlı: tavanı aşınca temizlenir. */
+    private final ConcurrentHashMap<Long, Long> openOutageLoggedAt = new ConcurrentHashMap<>();
+    private static final int OPEN_OUTAGE_LOG_MAX_KEYS = 10_000;
 
     /** Kaç ardışık zaman aşımından sonra izleme kapatılır. ≤0 ⇒ bu tetik kapalı. */
     int timeoutStreakLimit() {
@@ -128,12 +152,52 @@ public class ScriptedAnomalyGuard {
         for (var c : recent) {
             if (!"TIMEOUT".equals(c.getStatus())) return null;
         }
+        // k6r B2: hedef gerçekten asılıysa açık kesinti alarmı onu anlatıyor — izleme körleştirilmez, alarm kapatılmaz.
+        if (outageAlarmKeepsMonitor(m)) return null;
         return String.format(
                 "Anomali durumu tespit edildi: son %d koşumun %d'i de süre aşımıyla bitti — senaryo "
                 + "verilen bütçede tamamlanmıyor ve her turda bir k6 süreci %d saniye boyunca kaynak "
                 + "tutuyor. İzleme otomatik olarak devre dışı bırakıldı. Script'i hızlandırıp ya da "
                 + "süreç bütçesini gözden geçirip izlemeyi yeniden açabilirsiniz.",
                 limit, limit, m.getTimeoutSeconds() == null ? 0 : m.getTimeoutSeconds());
+    }
+
+    /**
+     * Zaman aşımı serisi izlemeyi kapatmamalı mı (k6r B2): izlemenin AÇIK {@code SCRIPTED_FAIL} alarmı varsa (yalnız BU
+     * izlemenin olayı — ad yalnız takım içinde tekil, başka takımın aynı adlı senaryosunun alarmı sayılmaz:
+     * {@link EscalationService#closableBy}) ya da alarm okunamadıysa true. Okuyucu yoksa (elle kurulan testler) false = eski
+     * davranış.
+     */
+    private boolean outageAlarmKeepsMonitor(ScriptedMonitor m) {
+        AlertEventRepository repo = alertEventRepo;
+        if (repo == null) return false;
+        boolean open = false;
+        try {
+            Map<String, Object> owner = ownerCtx(m);
+            for (AlertEvent a : repo.findOpenAlerts(m.getName(), EscalationService.TYPE_SCRIPTED_FAIL)) {
+                if (a != null && EscalationService.closableBy(a, owner)) { open = true; break; }
+            }
+        } catch (Exception e) {
+            if (logDue(m.getId()))
+                log.warn("Anomali guard'ı: {} için açık kesinti alarmı okunamadı ({}) — zaman aşımı serisine rağmen izleme "
+                        + "KAPATILMADI (bilinmeyen durumda dokunulmaz)", m.getName(), e.getClass().getSimpleName());
+            return true;
+        }
+        if (open && logDue(m.getId()))
+            log.info("Anomali guard'ı: {} son koşumlarının hepsi zaman aşımı, ama izlemenin AÇIK kesinti alarmı var — hedef "
+                    + "gerçekten yanıt vermiyor; izleme kapatılmadı, alarma dokunulmadı", m.getName());
+        return open;
+    }
+
+    /** İzleme başına saatte bir günlük satırı (sınırlı harita). */
+    private boolean logDue(Long monitorId) {
+        if (monitorId == null) return true;
+        long now = System.currentTimeMillis();
+        if (openOutageLoggedAt.size() > OPEN_OUTAGE_LOG_MAX_KEYS) openOutageLoggedAt.clear();
+        Long last = openOutageLoggedAt.get(monitorId);
+        if (last != null && now - last < OPEN_OUTAGE_LOG_EVERY_MS) return false;
+        openOutageLoggedAt.put(monitorId, now);
+        return true;
     }
 
     /**

@@ -8937,11 +8937,20 @@ public class SchedulerService {
         if (classicHeldForDrain(com.sitemonitor.service.checks.CheckJobTypes.SCRIPTED)) return;   // R3-3 FX (DH-M1 c): devir birikimi önce, dönem harcanmaz
         List<com.sitemonitor.model.ScriptedMonitor> monitors = scriptedMonitorRepo.findByActiveTrue();
         if (orphanCleanupDue("scripted")) cleanupOrphanScriptedAlerts();   // R3-3 B: ayrıştırıldı
+        pruneRetainedScripted(monitors);   // k6r B3: duraklatılan izlemenin geri verilen dönemi düşer (harita boşsa tek okuma)
         if (monitors.isEmpty()) return;
         // k6 süreçleri checker'ın SINIRLI havuzunda koşar; submit() ayrı executor'a atar → scheduler bloklanmaz.
         List<Map.Entry<com.sitemonitor.model.ScriptedMonitor, java.util.concurrent.Future<ScriptedCheckerService.ScriptedResult>>> started = new ArrayList<>();
+        Set<java.time.LocalDate> holidays = null;   // k6r D2: yalnız zamanlamalı izleme varken okunur (bugünkü yolda hiç)
         for (com.sitemonitor.model.ScriptedMonitor m : monitors) {
-            if (!classicCheckDue("scripted", m.getId(), m.getIntervalSeconds())) continue;   // R3-3 FX: + bekletilen dönem / klasik damga
+            boolean due;
+            if (ScriptedSchedule.hasPlan(m)) {   // k6r D2: pencere / yasak / tatil / cron → plan (dbquery kuralı)
+                if (holidays == null) holidays = dbQueryHolidays();
+                due = scriptedPlanDue(m.getId(), ScriptedSchedule.specOf(m), m.getNextRunAt(), holidays, true);
+            } else {
+                due = classicCheckDue("scripted", m.getId(), m.getIntervalSeconds());   // R3-3 FX: + bekletilen dönem / klasik damga
+            }
+            if (!due) continue;
             started.add(Map.entry(m, scriptedCheckerService.submit(m)));
         }
         int checked = 0, skipped = 0;
@@ -8959,7 +8968,7 @@ public class SchedulerService {
                 // Altyapı atlaması hedefin arızası DEĞİL: ne kayıt yazılır (uptime kirlenmesin)
                 // ne alarm zincirine girer. Aksi halde pool-size darlığı 100 monitörlük filoda
                 // toplu YANLIŞ alarm üretiyordu.
-                if (ScriptedCheckerService.isSkipped(res)) { skipped++; continue; }
+                if (ScriptedCheckerService.isSkipped(res)) { skipped++; retainScriptedPeriod(m); continue; }   // k6r B3
                 Map<String, Object> r = persistScripted(m, res, false);
                 addScriptedSweepItems(m, r, sweep, slowSweep);
                 checked++;
@@ -8967,6 +8976,7 @@ public class SchedulerService {
                 // Future'ı BIRAKMA: iptal edilmezse k6 süreci ve permit'i tutmaya devam eder.
                 entry.getValue().cancel(true);
                 skipped++;
+                retainScriptedPeriod(m);   // k6r B3: kayıt yazılmadı → dönem geri verilir
                 log.warn("Senaryo sonucu {} sn içinde gelmedi, koşum iptal edildi: {} — bu tur kontrol yazılmadı",
                         ScriptedCheckerService.maxWaitSeconds() + 15, m.getName());
             } catch (Exception e) {
@@ -8975,7 +8985,8 @@ public class SchedulerService {
         }
         if (skipped > 0)
             log.warn("Senaryo sweep: {} kontrol YÜRÜTÜLEMEDİ (k6 havuzu dolu / k6 yok). Kapasite ≈ "
-                    + "pool-size × aralık ÷ koşum süresi; scripted.k6.skipped sayacına bakın.", skipped);
+                    + "pool-size × aralık ÷ koşum süresi; scripted.k6.skipped sayacına bakın. Dönemleri geri verildi — "
+                    + "sonraki tıkta yeniden denenecek.", skipped);
         feedScriptedSweep(sweep, slowSweep);   // R3-3 B: ayrıştırıldı (dağıtık değerlendiriciyle ortak)
         log.debug("Scripted checks complete: {} monitors", checked);
     }
@@ -9009,6 +9020,179 @@ public class SchedulerService {
         if (orphanCleanupDue("scripted")) cleanupOrphanScriptedAlerts();
     }
     // ── /R3-3 B scripted ─────────────────────────────────────────────────────────────────────────────────────────────
+
+    // ── k6r B3 + D2 (2026-10-31): atlanan dönem + zamanlama penceresi / cron ───────────────────────────────────────────
+
+    /**
+     * Klasik kipte YÜRÜTÜLEMEYEN koşum (havuz dolu / k6 yok → SKIPPED, ya da sonuç bekleme süresinde gelmedi) dönemini GERİ
+     * VERİR (k6r B3): vade ({@code checkDue}) bu tıkta harcanmıştı, kayıt yazılmadı — izleme bir sonraki aralığa dek denenmezdi
+     * (havuz darlığında aralığın katları kadar seyrek, sessizce). Dağıtık kipin bekletme haritası ({@link #retainDue}) kullanılır:
+     * bir sonraki tıkta {@code classicCheckDue} / {@link #scriptedPlanDue} dönemi BİR KEZ yeniden sunar; yine atlanırsa yine
+     * geri verilir (dönem başına sınır yok, tık başına bir deneme). Bekletme {@code CHECK_RETAIN_MAX_MS}'te düşer, liderlik
+     * değişince silinir.
+     */
+    private void retainScriptedPeriod(com.sitemonitor.model.ScriptedMonitor m) {
+        if (m == null || m.getId() == null) return;
+        try {
+            retainDue(com.sitemonitor.service.checks.CheckJobTypes.SCRIPTED, List.of(m.getId()));
+        } catch (RuntimeException e) {
+            log.debug("Senaryo dönemi geri verilemedi ({}): {}", m.getName(), e.toString());
+        }
+    }
+
+    /** Aktif olmayan (duraklatılan / silinen) izlemenin geri verilen dönemi düşer — devamda zamanlamaya bakmadan koşmasın. */
+    private void pruneRetainedScripted(List<com.sitemonitor.model.ScriptedMonitor> active) {
+        if (retainedDue.isEmpty()) return;
+        java.util.concurrent.ConcurrentHashMap<Long, Long> kept = retainedDue.get(com.sitemonitor.service.checks.CheckJobTypes.SCRIPTED);
+        if (kept == null || kept.isEmpty()) return;
+        Set<Long> ids = new java.util.HashSet<>();
+        for (com.sitemonitor.model.ScriptedMonitor m : active) if (m.getId() != null) ids.add(m.getId());
+        kept.keySet().retainAll(ids);
+        if (kept.isEmpty()) retainedDue.remove(com.sitemonitor.service.checks.CheckJobTypes.SCRIPTED, kept);
+    }
+
+    /**
+     * Zamanlamalı (pencere / yasak pencere / tatil / ek tarih / cron) senaryonun bu tıktaki vadesi (k6r D2) — veritabanı sorgu
+     * izlemesinin kuralı ({@link #dbQueryPlan}, saf) ve küme anahtarı {@code scripted:<id>} (klasik vadeyle AYNI anahtar: kip
+     * değişince ikinci bir anahtar doğmaz). Hem klasik gövde hem dağıtık gönderim bunu çağırır.
+     *
+     * <ul>
+     *   <li>Geri verilen dönem (atlanan koşum / gönderilemeyen iş) şimdi İZİNLİYSE yeniden sunulur; izin dışıysa düşer
+     *       (pencere dışında, tatilde koşulmaz) ve olağan plan karar verir.</li>
+     *   <li>Plan ilk kez kuruldu ya da öne çekildi → küme anahtarı sıfırlanır (eski aralık vadesi yeni planın ilk tetiğini
+     *       yutmasın); plan değiştiyse {@code next_run_at} hedefli UPDATE ile yazılır.</li>
+     *   <li>Çalıştırma kararı kümede tek pod'da: anahtarın sonraki vadesi kendi planımızın sonraki anıdır.</li>
+     * </ul>
+     *
+     * @param classic klasik gövde mi (dağıtık sonuç boşaltıcısına "klasik kontrol başladı" damgası — {@code classicCheckDue} gibi)
+     */
+    boolean scriptedPlanDue(Long id, com.sitemonitor.service.dbquery.DbQuerySchedule.Spec spec, String storedNext,
+                            Set<java.time.LocalDate> holidays, boolean classic) {
+        if (id == null) return false;
+        String type = com.sitemonitor.service.checks.CheckJobTypes.SCRIPTED;
+        Instant now = Instant.ofEpochMilli(scheduleClock.getAsLong());
+        if (!retainedDue.isEmpty() && consumeRetainedDue(type, id)) {
+            if (safeAllowed(dbQueryScheduling, spec, now, holidays)) {
+                if (classic) noteScriptedClassicCheck(id);
+                return true;
+            }
+        }
+        Instant cronFloor = parseUtc(storedNext) == null && spec != null
+                && com.sitemonitor.service.dbquery.DbQuerySchedule.MODE_CRON.equalsIgnoreCase(spec.mode())
+                ? scriptedCronFirstFloor(id, now) : null;
+        DbQueryDuePlan plan = dbQueryPlan(dbQueryScheduling, spec, storedNext, now, holidays, cronFloor);
+        if (plan.write() && ("first".equals(plan.reason()) || "replanned".equals(plan.reason()))) resetScriptedClusterKey(id);
+        if (plan.run()) {
+            long nowMs = now.toEpochMilli();
+            long nextMs = plan.next() != null ? plan.next().toEpochMilli() : nowMs + DBQUERY_NEVER_MS;
+            long nominal = Math.max(60_000L, nextMs - nowMs);
+            if (!clusterDue(type + ":" + id, nominal, (prev, ms) -> nextMs)) return false;
+        }
+        if (plan.write()) writeScriptedNextRun(id, storedNext, plan.next());
+        if (plan.run() && classic) noteScriptedClassicCheck(id);
+        return plan.run();
+    }
+
+    /** {@code classicCheckDue} ile aynı damga: devirden önce alınmış dağıtık sonuç bu klasik kontrolün gerisinde kalırsa düşer. */
+    private void noteScriptedClassicCheck(Long id) {
+        com.sitemonitor.service.checks.CheckResultDrainer d = checkResultDrainer;
+        if (d != null) d.noteClassicCheck(com.sitemonitor.service.checks.CheckJobTypes.SCRIPTED, id);
+    }
+
+    /**
+     * CRON planı sıfırlanınca geri bakış tabanı ({@link #dbQueryCronFirstFloor} ile aynı kural): şimdi − 2 tık, ama son
+     * ZAMANLANMIŞ koşumun satırından önce değil. Son satır okunamazsa geri bakış YOK (çift koşum riskine girilmez).
+     */
+    private Instant scriptedCronFirstFloor(Long id, Instant now) {
+        long tick = Math.max(1_000L, classicSweepTickMs(com.sitemonitor.service.checks.CheckJobTypes.SCRIPTED));
+        Instant floor = now.minusMillis(2 * tick);
+        if (scriptedCheckRepo == null) return floor;
+        try {
+            List<com.sitemonitor.model.ScriptedCheck> last = scriptedCheckRepo.findRecentScheduledByMonitorId(id, 1);
+            Instant at = last == null || last.isEmpty() ? null : parseUtc(last.get(0).getCheckedAt());
+            return at != null && at.isAfter(floor) ? at : floor;
+        } catch (Exception e) {
+            log.debug("Senaryonun son koşumu okunamadı (#{}): {}", id, e.toString());
+            return null;
+        }
+    }
+
+    private void writeScriptedNextRun(Long id, String storedNext, Instant next) {
+        String iso = next == null ? null : ISO.format(next);
+        if (java.util.Objects.equals(iso, storedNext)) return;
+        try {
+            scriptedMonitorRepo.updateNextRunAt(id, iso);
+        } catch (Exception e) {
+            log.warn("Senaryonun sonraki koşumu yazılamadı (#{}): {}", id, e.getClass().getSimpleName());
+        }
+    }
+
+    /** Küme vadesi anahtarını unutur ({@code scripted:<id>}; bu pod'un önbelleği + satır); hata yutulur. */
+    private void resetScriptedClusterKey(Long monitorId) {
+        if (monitorId == null) return;
+        String key = com.sitemonitor.service.checks.CheckJobTypes.SCRIPTED + ":" + monitorId;
+        lastMonitorCheckAt.remove(key);
+        if (clusterSchedule == null) return;
+        try {
+            clusterSchedule.forget(key);
+        } catch (Exception e) {
+            log.warn("Senaryonun küme vadesi sıfırlanamadı (#{}): {}", monitorId, e.getClass().getSimpleName());
+        }
+    }
+
+    /**
+     * Senaryonun zamanlaması değişti (güncelleme / geri yükleme — controller, YALNIZ önce ya da sonra zamanlamalı ise çağırır;
+     * k6r D2): plan silinir ({@code next_run_at = NULL}), küme vadesi ve geri verilen dönem sıfırlanır → sonraki tıkta plan
+     * YENİ tanımdan kurulur (aralık kipinde şimdi izinliyse hemen, CRON'da sonraki tetik). Fırlatmaz.
+     */
+    public void scriptedScheduleChanged(long monitorId) {
+        java.util.concurrent.ConcurrentHashMap<Long, Long> kept = retainedDue.get(com.sitemonitor.service.checks.CheckJobTypes.SCRIPTED);
+        if (kept != null) kept.remove(monitorId);
+        if (scriptedMonitorRepo != null) {
+            try {
+                scriptedMonitorRepo.updateNextRunAt(monitorId, null);
+            } catch (Exception e) {
+                log.warn("Senaryonun planı sıfırlanamadı (#{}): {}", monitorId, e.getClass().getSimpleName());
+            }
+        }
+        resetScriptedClusterKey(monitorId);
+    }
+
+    /**
+     * Tatil takvimi değişti (k6r D2 — {@link #dbQueryCalendarChanged} ile aynı kural, tatil denetleyicisi çağırır): tatile
+     * bakan aktif senaryolarda CRON planı silinir (sonraki tıkta yeni takvimle sonraki tetik planlanır, çalıştırmadan), küme
+     * vadesi sıfırlanır; aralık kipinde plan silinmez (öne çekilme "replanned" yolunda, eklenen tatil vade anında "izin
+     * dışı"). Fırlatmaz.
+     */
+    public void scriptedCalendarChanged() {
+        if (scriptedMonitorRepo == null) return;
+        List<Object[]> rows;
+        try {
+            rows = scriptedMonitorRepo.findHolidayScheduledRows();
+        } catch (Exception e) {
+            log.warn("Tatil değişimi: senaryo izlemeleri okunamadı — planlar sonraki tıkta kendiliğinden düzelir: {}",
+                    e.getClass().getSimpleName());
+            return;
+        }
+        int replanned = 0;
+        for (Object[] r : rows == null ? List.<Object[]>of() : rows) {
+            Long id = rowLong(r, 0);
+            if (id == null) continue;
+            Object mode = r.length > 1 ? r[1] : null;
+            if (mode != null && com.sitemonitor.service.dbquery.DbQuerySchedule.MODE_CRON.equalsIgnoreCase(String.valueOf(mode).trim())) {
+                try {
+                    scriptedMonitorRepo.updateNextRunAt(id, null);
+                } catch (Exception e) {
+                    log.warn("Tatil değişimi: senaryonun planı sıfırlanamadı (#{}): {}", id, e.getClass().getSimpleName());
+                    continue;
+                }
+            }
+            resetScriptedClusterKey(id);
+            replanned++;
+        }
+        if (replanned > 0) log.info("Tatil takvimi değişti: {} senaryo izlemesinin planı yeniden kurulacak", replanned);
+    }
+    // ── /k6r B3 + D2 ─────────────────────────────────────────────────────────────────────────────────────────────────
 
     /** Bir senaryo kontrol sonucundan SweepItem üretir: SCRIPTED_FAIL (up=PASS) ve opsiyonel SCRIPTED_SLOW. */
     private void addScriptedSweepItems(com.sitemonitor.model.ScriptedMonitor m, Map<String, Object> r,
@@ -11117,7 +11301,9 @@ public class SchedulerService {
     /**
      * Gönderilemeyen dönemler (DA-M1): {@code checkDue} vadeyi ilerletti ama {@code dispatch} düştü → kimlik (tür → izleme →
      * bekletme anı) burada kalır; sonraki gönderim (ya da tür klasiğe döndüyse klasik gövde, {@link #classicCheckDue}) dönemi
-     * yeniden sunar — dönem kaybolmaz ({@code ON CONFLICT DO NOTHING} tekrar sunmayı güvenli kılar). Anahtar kapalıyken boş.
+     * yeniden sunar — dönem kaybolmaz ({@code ON CONFLICT DO NOTHING} tekrar sunmayı güvenli kılar). Anahtar kapalıyken boş —
+     * TEK istisna (k6r B3, 2026-10-31): klasik senaryo gövdesi yürütülemeyen (SKIPPED / sonuç gelmedi) koşumun dönemini de buraya
+     * koyar ({@code retainScriptedPeriod}); bir sonraki tık yeniden sunar.
      */
     private final java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.ConcurrentHashMap<Long, Long>> retainedDue =
             new java.util.concurrent.ConcurrentHashMap<>();
@@ -11516,6 +11702,21 @@ public class SchedulerService {
                 for (Object[] row : pageSpeedMonitorRepo.findCheckDispatchRows()) {
                     Long id = rowLong(row, 0);
                     if (id != null) addIfDue(type, id, dispatchIntervalSeconds(type, pageSpeedDueInterval(rowInt(row, 1))), ids);
+                }
+            }
+            case com.sitemonitor.service.checks.CheckJobTypes.SCRIPTED -> {
+                // k6r D2: zamanlamalı senaryo gönderimde de plana uyar (klasik gövdeyle aynı karar); düz aralık bugünkü yol
+                Set<java.time.LocalDate> holidays = null;
+                for (Object[] row : scriptedMonitorRepo.findCheckDispatchRows()) {
+                    Long id = rowLong(row, 0);
+                    if (id == null) continue;
+                    if (ScriptedSchedule.rowHasPlan(row)) {
+                        if (holidays == null) holidays = dbQueryHolidays();
+                        if (scriptedPlanDue(id, ScriptedSchedule.specOfRow(row), ScriptedSchedule.rowNextRunAt(row), holidays, false))
+                            ids.add(id);
+                    } else {
+                        addIfDue(type, id, dispatchIntervalSeconds(type, rowInt(row, 1)), ids);
+                    }
                 }
             }
             default -> {
