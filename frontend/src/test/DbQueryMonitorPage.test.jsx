@@ -200,6 +200,15 @@ describe('DbQueryMonitorPage — liste', () => {
     fireEvent.click(screen.getByRole('button', { name: /^Templates$/ }))
     await waitFor(() => expect(blocks.props.TemplatesManager?.open).toBe(true))
   })
+
+  it('yöneticinin kendi takımında izleme yoksa bağlantı yöneticisi izlemesi olan takımla açılır (canlı denemede bulundu)', async () => {
+    api.admin.getTeams.mockResolvedValue({ success: true, data: [{ id: 9, name: 'General' }, { id: 5, name: 'SY-A' }] })
+    render(<DbQueryMonitorPage {...props} teamId={9} teamName="General" myTeams={[{ id: 9, name: 'General' }]} />)
+    await waitFor(() => expect(titles().length).toBeGreaterThan(0))
+    fireEvent.click(await screen.findByRole('button', { name: /^Connections$/ }))
+    await waitFor(() => expect(blocks.props.ConnectionsManager?.open).toBe(true))
+    expect(blocks.props.ConnectionsManager.teamId).toBe(5)
+  })
 })
 
 describe('DbQueryMonitorPage — form', () => {

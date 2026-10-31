@@ -547,11 +547,16 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
     ...pickTeams.map(tm => ({ value: String(tm.id), label: tm.name }))], [isAdmin, pickTeams, t])
   const teamNameById = useMemo(() => Object.fromEntries(teams.map(tm => [tm.id, tm.name])), [teams])
   const managerTeams = useMemo(() => (isAdmin && teams.length ? teams : pickTeams).map(tm => ({ id: tm.id, name: tm.name })), [isAdmin, teams, pickTeams])
-  // Bağlantı / şablon yöneticisinin açılış takımı: takım süzgecindeki takım (ad → kimlik), yoksa kullanıcının varsayılan takımı.
+  // Bağlantı / şablon yöneticisinin açılış takımı: takım süzgecindeki takım (ad → kimlik); yoksa kullanıcının varsayılan
+  // takımı — o takımın listede izlemesi yoksa izlemesi olan İLK takım (yönetici kendi takımında izleme tutmuyorsa pencere
+  // "kayıtlı bağlantı yok" diye açılmasın; takım seçici yine değiştirir).
   const managerTeamId = useMemo(() => {
     const hit = teamFilter !== 'all' && teamFilter !== '__none__' ? managerTeams.find(tm => tm.name === teamFilter) : null
-    return hit ? hit.id : (defaultTeamId ?? null)
-  }, [teamFilter, managerTeams, defaultTeamId])
+    if (hit) return hit.id
+    const owning = managerTeams.filter(tm => monitors.some(m => m.team_id === tm.id))
+    if (defaultTeamId != null && (owning.length === 0 || owning.some(tm => tm.id === defaultTeamId))) return defaultTeamId
+    return owning.length ? owning[0].id : (defaultTeamId ?? null)
+  }, [teamFilter, managerTeams, defaultTeamId, monitors])
   const groupNames = useMemo(
     () => [...new Set(monitors.map(m => m.group_name).filter(Boolean))].sort((a, b) => a.localeCompare(b)), [monitors])
   const hasGroupOptions = groupNames.length > 0

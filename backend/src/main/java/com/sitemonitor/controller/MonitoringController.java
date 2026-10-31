@@ -5555,21 +5555,20 @@ public class MonitoringController {
         DbQueryMonitor mon = dbqRepo().findById(id).orElse(null);
         if (mon == null) return notFound(com.sitemonitor.util.Msg.t("Veritabanı sorgu izlemesi bulunamadı.", "Database query monitor not found."));
         DbQueryCheckRepository checks = dbqCheckRepo();
-        // "Sorunlu" süzgeci (status=fail ya da only=problem) = ihlal YA DA hata (status <> 'OK'); only=fail = yalnız hata (ok=false).
-        boolean onlyFail = "fail".equalsIgnoreCase(only);
-        String effStatus = onlyFail || "problem".equalsIgnoreCase(only) ? "fail" : status;
+        // Ortak geçmiş kutucukları ("Hatalı" + erişilebilirlik) ve status=fail süzgeci = YALNIZ çalıştırılamayan sorgu (ok=false):
+        // kural ihlali bir kesinti değildir (kart SLA'sı, sparkline ve günlük özetle aynı ölçü). Sayfanın kendi "yalnız sorunlu"
+        // anahtarı (only=problem) listeyi ihlal YA DA hata (status <> 'OK') satırlarına süzer; sayaçlar değişmez.
+        boolean onlyProblem = "problem".equalsIgnoreCase(only);
+        String effStatus = onlyProblem || "fail".equalsIgnoreCase(only) ? "fail" : status;
         var src = new CheckHistoryService.Source<Map<String, Object>>() {
             public org.springframework.data.domain.Page<Map<String, Object>> page(String f, String t, boolean fail, org.springframework.data.domain.Pageable p) {
                 var rows = !fail ? checks.findByMonitorIdAndCheckedAtBetween(id, f, t, p)
-                        : onlyFail ? checks.findByMonitorIdAndOkFalseAndCheckedAtBetween(id, f, t, p)
-                        : checks.findByMonitorIdAndStatusNotAndCheckedAtBetween(id, DbQueryCheck.STATUS_OK, f, t, p);
+                        : onlyProblem ? checks.findByMonitorIdAndStatusNotAndCheckedAtBetween(id, DbQueryCheck.STATUS_OK, f, t, p)
+                        : checks.findByMonitorIdAndOkFalseAndCheckedAtBetween(id, f, t, p);
                 return rows.map(MonitoringController::dbqCheckRow);
             }
             public long total(String f, String t) { return checks.countByMonitorIdAndCheckedAtBetween(id, f, t); }
-            public long fail(String f, String t) {
-                return onlyFail ? checks.countByMonitorIdAndOkFalseAndCheckedAtBetween(id, f, t)
-                        : checks.countByMonitorIdAndStatusNotAndCheckedAtBetween(id, DbQueryCheck.STATUS_OK, f, t);
-            }
+            public long fail(String f, String t) { return checks.countByMonitorIdAndOkFalseAndCheckedAtBetween(id, f, t); }
             public Long errors(String f, String t) { return checks.countByMonitorIdAndOkFalseAndCheckedAtBetween(id, f, t); }
             public List<Object[]> histogram(String f, String t, int len) { return checks.historyHistogram(id, f, t, len); }
             public List<Object[]> bounds() { return checks.historyBounds(id); }

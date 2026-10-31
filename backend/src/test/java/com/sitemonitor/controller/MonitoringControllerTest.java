@@ -7076,7 +7076,7 @@ class MonitoringControllerTest {
     }
 
     @Test
-    @DisplayName("DBQUERY geçmiş: only=problem → status <> 'OK' (ihlal + hata); başka takımın izlemesinin geçmişi 403")
+    @DisplayName("DBQUERY geçmiş: only=problem → status <> 'OK' (ihlal + hata); Hatalı sayacı / status=fail = yalnız ok=false; başka takımın izlemesinin geçmişi 403")
     void dbquery_history_problemFilterAndScope() throws Exception {
         var mon = dbqMonitor(51L, 1L, 5L);
         when(dbQueryMonitorRepo.findById(51L)).thenReturn(Optional.of(mon));
@@ -7089,6 +7089,15 @@ class MonitoringControllerTest {
                 .andExpect(status().isOk());
         verify(dbQueryCheckRepo).findByMonitorIdAndStatusNotAndCheckedAtBetween(eq(51L), eq("OK"), anyString(), anyString(), any());
         verify(dbQueryCheckRepo, never()).findByMonitorIdAndCheckedAtBetween(eq(51L), anyString(), anyString(), any());
+        // Ortak "Hatalı" sayacı + erişilebilirlik = YALNIZ çalıştırılamayan sorgu (ok=false); ihlal kesinti sayılmaz
+        verify(dbQueryCheckRepo, org.mockito.Mockito.atLeastOnce()).countByMonitorIdAndOkFalseAndCheckedAtBetween(eq(51L), anyString(), anyString());
+        verify(dbQueryCheckRepo, never()).countByMonitorIdAndStatusNotAndCheckedAtBetween(eq(51L), anyString(), anyString(), anyString());
+        // Ortak süzgeç (status=fail) = yalnız hata satırları
+        when(dbQueryCheckRepo.findByMonitorIdAndOkFalseAndCheckedAtBetween(eq(51L), anyString(), anyString(), any()))
+                .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of()));
+        mvc.perform(get("/api/monitoring/dbquery/51/history").param("status", "fail").session(session("ADMIN")))
+                .andExpect(status().isOk());
+        verify(dbQueryCheckRepo).findByMonitorIdAndOkFalseAndCheckedAtBetween(eq(51L), anyString(), anyString(), any());
 
         mvc.perform(get("/api/monitoring/dbquery/51/history").session(dbqUser(9L)))
                 .andExpect(status().isForbidden());
