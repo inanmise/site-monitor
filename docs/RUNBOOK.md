@@ -353,6 +353,37 @@ Kontrol: kurum ağından `curl -s -o /dev/null -w "%{http_code}\n" https://<host
 Prometheus"). Yine de `/metrics*` yollarını kenarda engelleyin: belirteçli uç kaba kuvvete karşı hız sınırlıdır ama kurum
 ağına açık olması gerekmez; Prometheus pod IP'sinden küme içinden kazımaya devam eder.
 
+## Sayfa kaynak analizi
+
+Sayfa Bütünlüğü izlemesinin detayındaki **Kaynak analizi** sekmesi yalnız kullanıcı isteyince çalışır: izlemenin sayfası
+sunucudan indirilir, sayfanın yüklediği nesneler (stil, betik, görsel, yazı tipi, medya, iframe, stilin `url()` ile
+çağırdıkları), bağlantılı belgeler ve diğer bağlantılar tek tek GET ile indirilip boyutu ve süresi ölçülür; not, tahmini
+yükleme süresi ve öneriler hesaplanır. İzlemeye dokunmaz (kontrol kaydı, alarm, bildirim yok). JavaScript çalıştırılmaz —
+betiğin sonradan yüklediği nesneler görünmez; yükleme süresi bir tahmindir (6 paralel bağlantı varsayımı).
+
+Sınırlar (Ayarlar → Genel → İzleme; canlı, aralık dışı değer varsayılana döner):
+
+| Anahtar | Varsayılan | Aralık |
+|---|---|---|
+| `site.monitor.page.resource-scan.max-seconds` | 300 | 60–900 |
+| `site.monitor.page.resource-scan.concurrency` | 6 | 1–16 |
+| `site.monitor.page.resource-scan.max-objects` | 1500 | 100–5000 |
+| `site.monitor.page.resource-scan.max-total-mb` | 200 | 10–1000 |
+| `site.monitor.page.resource-scan.request-timeout-ms` | 15000 | 2000–60000 |
+| `site.monitor.page.resource-scan.retention-days` | 365 | ≥ 30 |
+
+Pod başına aynı anda en çok 2 tarama (fazlası 429 `RESOURCE_SCAN_BUSY`), kişi başına dakikada 3 başlatma (429
+`RATE_LIMITED`), izleme başına tek çalışan tarama (409 `RESOURCE_SCAN_RUNNING` — arayüz çalışanı izler). Nesne listesi izleme
+başına son 20 çalıştırmada tutulur; özetler (not, süre, boyut — tarih grafiği) 1 yıl.
+
+**Sorun giderme.**
+- *Tarama "yarıda kaldı" (INTERRUPTED):* çalıştıran pod kapandı ya da 45 sn kalp atışı yazamadı. Yeniden çalıştırın.
+- *Çok nesneli sayfada "ölçüm sınırlı" notu:* süre / nesne / toplam indirme tavanından biri doldu; sayılar alt sınırdır.
+  Gerekirse ilgili ayarı yükseltin (tek pod'da bant genişliği ve CPU'yu düşünün).
+- *Nesneler "kırık" görünüyor ama tarayıcıda açılıyor:* ölçüm pod'dan yapılır (izlemenin vekil kararıyla). Pod'un çıkışını
+  kontrol edin (`scripts/multipod-egress-check.sh`); iç ağ / döngü adresleri güvenlik kuralına takılır (`BLOCKED`).
+- Denetim: her başlatma `PAGE_RESOURCE_SCAN_RUN` (İzleme kategorisi) olarak yazılır.
+
 ## Merkezi izleme alarm akışı
 
 Kurum içi izleme ekibi alarmları tek merkezde toplar; SiteMonitor'den **her dakika** `GET /api/public/alarm-feed` ile çeker

@@ -2326,6 +2326,11 @@ export const api = {
     },
     pageDiagnoseHistory: (id) => request(`/monitoring/page/${id}/diagnose/history`, { withStatus: true }),
     pageDiagnoseRun: (id, runId) => request(`/monitoring/page/${id}/diagnose/history/${encodeURIComponent(runId)}`, { withStatus: true }),
+    // Sayfa Bütünlüğü → "Kaynak analizi" (2026-10-31): kullanıcı isteyince başlar, sunucuda arka planda koşar. withStatus:
+    // 409 RESOURCE_SCAN_RUNNING (gövdede süren koşu — izlenir), 429 RATE_LIMITED / RESOURCE_SCAN_BUSY, 403 / 404 ayırt edilsin.
+    startResourceScan: (id) => request(`/monitoring/page/${id}/resource-scans`, { method: 'POST', withStatus: true }),
+    resourceScans: (id, limit = 200) => request(`/monitoring/page/${id}/resource-scans?limit=${encodeURIComponent(limit)}`, { withStatus: true }),
+    resourceScan: (id, scanId) => request(`/monitoring/page/${id}/resource-scans/${encodeURIComponent(scanId)}`, { withStatus: true }),
 
     // Sayfa Hızı (Page Speed)
     getPageSpeedMonitors:   () => request('/monitoring/pagespeed'),

@@ -75,6 +75,8 @@ const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
 // Uçtan uca tanılama (2026-10-05) — tembel: giriş paketi büyümez
 const PageDiagnoseDialog = lazy(() => import('./page/diagnose/PageDiagnoseDialog.jsx'))
+// Kaynak analizi sekmesi (2026-10-31) — tembel: grafik / pano / liste yalnız sekme açılınca iner
+const ResourceScanTab = lazy(() => import('./page/resourcescan/ResourceScanTab.jsx'))
 
 const INTERVALS = [
   { value: 60,    labelKey: 'page.iv1m'  },
@@ -1040,7 +1042,10 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
           ))}
           <DetailTabs value={detailTab} onValueChange={setDetailTab}
             countsFor={{ kind: 'page', monitorId: selected.id, notesType: 'PAGE', notesTarget: selected.url, openAlerts: selected.active_alarm ? 1 : 0 }}
-            tabs={[['issues', t('page.tabIssues')], ['chart', t('page.tabChart')], ['control', t('hist.tab')],
+            tabs={[['issues', t('page.tabIssues')],
+              // Kaynak analizi (2026-10-31): yalnız kullanıcı isteyince koşan nesne / boyut / süre taraması
+              ['resources', t('prs.tab')],
+              ['chart', t('page.tabChart')], ['control', t('hist.tab')],
               ['alerts', t('page.tabAlerts')], ['notes', t('page.tabNotes')],
               // Yapılandırma geçmişi — kontrol geçmişiyle KARIŞTIRILMAMALI:
               // orası "hedef ayakta mıydı", burası "ayarları kim değiştirdi".
@@ -1140,6 +1145,13 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
                   })}
                 </div>
               )}
+            </TabsContent>
+
+            <TabsContent value="resources">
+              {/* Kaynak analizi — izleme başına anahtarlı (başka izlemeye geçince durum ve izleme sorgusu sıfırlanır) */}
+              <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>
+                <ResourceScanTab key={selected.id} monitor={selected} />
+              </Suspense>
             </TabsContent>
 
             <TabsContent value="chart">

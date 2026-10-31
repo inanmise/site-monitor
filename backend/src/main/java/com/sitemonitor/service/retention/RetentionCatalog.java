@@ -202,6 +202,11 @@ public final class RetentionCatalog {
                 "Sayfa kaynak sorunları — kontrol başına 0..N satır. Ana kayıttan ÖNCE silinir (çocuk-ebeveyn sırası)."),
         age("page-checks", "page_checks", "checked_at", "site.monitor.metrics.page.retention-days",
                 180, 1, true, DataClass.OPERATIONAL, "Sayfa bütünlüğü kontrol serisi."),
+        age("page-resource-scans", "page_resource_scans", "started_at", "site.monitor.page.resource-scan.retention-days",
+                365, 30, false, DataClass.OPERATIONAL,
+                "Sayfa Bütünlüğü \"Kaynak analizi\" çalıştırmaları (2026-10-31, yalnız kullanıcı isteyince): özet + analiz 1 yıl "
+                + "(yükleme süresi grafiği ve geçmiş), nesne listesi izleme başına son 20 çalıştırmada (servis kendisi bırakır). "
+                + "Sayfanın nesne adreslerini ve çalıştıranın görünen adını içerir."),
         age("series-scripted", "scripted_checks", "checked_at", "site.monitor.metrics.scripted.retention-days",
                 180, 1, true, DataClass.OPERATIONAL,
                 "Senaryo (k6) kontrol serisi — çıktı kuyruğu ve kontrol JSON'u içerir."),
@@ -304,6 +309,10 @@ public final class RetentionCatalog {
                 "site.monitor.incident.draft-image-retention-days", 7, 1, false,
                 "incident_id IS NULL AND {t}", Mode.AGE, false, DataClass.CONTENT,
                 "Kaydedilmeyen taslak yüklemeleri: incident_id kalıcı olarak NULL kalır, hiçbir olaya bağlanmaz."),
+        orphan("page-resource-scans-orphan", "page_resource_scans",
+                "monitor_id NOT IN (SELECT id FROM page_monitors)", DataClass.OPERATIONAL,
+                "İzlemesi silinmiş kaynak analizleri (2026-10-31). İzleme silinirken servis siler; silme başarısız olursa "
+                + "öksüz kalan satır burada temizlenir."),
         orphan("incident-postmortems-orphan", "incident_postmortems",
                 "incident_id NOT IN (SELECT id FROM incident_records)", DataClass.CONTENT,
                 "Olayı silinmiş postmortem raporları (2026-10-11). Olay silme temizliği başarısız olursa öksüz kalan satır burada silinir."),

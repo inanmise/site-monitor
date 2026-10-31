@@ -595,6 +595,15 @@ public class PageCheckerService {
         return false;
     }
 
+    /**
+     * İzlemenin hariç-tutma desenlerinin URL yüklemi (2026-10-31, kaynak analizi): sweep ile AYNI derleme (glob / literal,
+     * ReDoS sınırları). Boş desen → null (hiçbir şey hariç tutulmaz).
+     */
+    public java.util.function.Predicate<String> excludePredicate(String raw) {
+        Excludes ex = compileExcludes(raw);
+        return ex == Excludes.EMPTY ? null : ex::matches;
+    }
+
     /** İzlemenin gönderdiği User-Agent — uçtan uca tanılamanın ham ölçümü AYNISINI gönderir (2026-10-05). */
     public String effectiveUserAgent() {
         return userAgent();

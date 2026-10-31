@@ -238,6 +238,7 @@ public final class AuditEventCatalog {
             "NOTIFICATION_GROUP_REASSIGN",
             "NOTIFICATION_GROUP_UPDATE",
             "PAGE_DIAGNOSTICS_RUN",       // Sayfa Bütünlüğü izlemesinde uçtan uca tanılama çalıştırıldı (2026-10-05)
+            "PAGE_RESOURCE_SCAN_RUN",     // Sayfa Bütünlüğü izlemesinde kaynak analizi başlatıldı (2026-10-31)
             "PAGESPEED_DIAGNOSTICS_RUN",  // Sayfa Hızı izlemesinde uçtan uca tanılama çalıştırıldı (2026-10-05)
             "PERMISSION_RESET",
             "PERMISSION_UPDATE",
@@ -452,6 +453,8 @@ public final class AuditEventCatalog {
         if (t.startsWith("PING_DIAGNOSTICS") || t.startsWith("PORT_DIAGNOSTICS") || t.startsWith("DNS_DIAGNOSTICS")) return MONITOR;
         // Sayfa Bütünlüğü / Sayfa Hızı uçtan uca tanılaması (2026-10-05) — aynı kural
         if (t.startsWith("PAGE_DIAGNOSTICS") || t.startsWith("PAGESPEED_DIAGNOSTICS")) return MONITOR;
+        // Sayfa Bütünlüğü kaynak analizi (2026-10-31) — izleme üzerinde kullanıcının istediği ölçüm, aynı kova
+        if (t.startsWith("PAGE_RESOURCE_SCAN")) return MONITOR;
         if (t.startsWith("MONITOR_") || t.startsWith("THRESHOLD_")
                 || t.startsWith("SCRIPTED_DRAFT")) return MONITOR;
         if (t.startsWith("CERT_") || t.startsWith("DOMAIN_") || t.startsWith("DIAGNOSTICS_")) return CERTIFICATE;

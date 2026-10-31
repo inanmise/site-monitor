@@ -288,6 +288,9 @@ public class MonitoringController {
     /** Sayfa-bütünlüğü (9. tür) — @RequiredArgsConstructor'ı büyütmemek için alan enjeksiyonu (schedulerService deseni). */
     @org.springframework.beans.factory.annotation.Autowired
     private com.sitemonitor.repository.PageMonitorRepository pageMonitorRepo;
+    /** Sayfa Bütünlüğü kaynak analizi (2026-10-31) — izleme silinince taramaları da silinir; dilim testlerinde yok. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.page.scan.PageResourceScanService pageResourceScans;
     @org.springframework.beans.factory.annotation.Autowired
     private com.sitemonitor.repository.PageCheckRepository pageCheckRepo;
     @org.springframework.beans.factory.annotation.Autowired
@@ -4308,6 +4311,7 @@ public class MonitoringController {
                     Set.of(EscalationService.TYPE_PAGE_DOWN, EscalationService.TYPE_PAGE_INTEGRITY),
                     "Sistem (izleme silindi)", ownerCtx(m.getId(), m.getTeamId(), null));   // D-b1
             pageMonitorRepo.delete(m);
+            if (pageResourceScans != null) pageResourceScans.deleteForMonitor(m.getId());   // nesne adresleri + kişi adı
             activityLog.recordLifecycle(ActivityLogService.PAGE, m.getId(), m.getName(),
                     m.getUrl(), m.getTeamId(), "DELETED", actor(session));
             auditService.recordAction("MONITOR_DELETE", session, "PAGE_MONITOR", String.valueOf(m.getId()), m.getName(), null);
