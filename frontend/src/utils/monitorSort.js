@@ -30,7 +30,7 @@ export const STATUS_TIER = {
   scripted: (m) => (m.status === 'FAIL' || m.status === 'ERROR' || m.status === 'TIMEOUT' ? TIER_DOWN
     : m.status === 'NO_CHECKS' ? TIER_WARN : TIER_REST),
   // Veritabanı sorgusu (api §1 "Kart durumu" = dbquery/dbqueryPageModel.dbqueryStatusKey): FAIL ve KRİTİK eşik → kırmızı;
-  // UYARI eşiği ve yavaş sorgu → sarı.
+  // UYARI eşiği ve yavaş sorgu → sarı. UNKNOWN (kural değerlendirilemedi, 2.A) kartta NÖTR rozet → sorunlu katmanı değil.
   dbquery: (m) => (m.status === 'FAIL' || (m.status === 'BREACH' && m.breach_level === 'CRITICAL') ? TIER_DOWN
     : m.status === 'BREACH' || (m.status === 'OK' && m.slow) ? TIER_WARN : TIER_REST),
 }

@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
-import { AlertTriangle, CalendarClock, DatabaseZap, FileCode2, ListChecks, Target, Unplug } from 'lucide-react'
+import { AlertTriangle, CalendarClock, CircleHelp, DatabaseZap, FileCode2, ListChecks, Target, Unplug } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import { Badge } from '@/components/shadcn/badge'
 import { cn } from '@/lib/utils'
 import { RuleResultsList } from './buildingBlocks.jsx'
-import { dbTypeLabel, failureKey, istanbulTime, scheduleSummary, untilText } from './dbqueryPageModel.js'
+import { dbTypeLabel, failureKey, istanbulTime, scheduleSummary, unevaluatedRules, untilText } from './dbqueryPageModel.js'
+import { resultNoteText } from './RuleResultsList.jsx'
 
 const SECTION = 'flex min-w-0 flex-col gap-1.5 rounded-lg border bg-muted/20 px-3.5 py-3'
 const HEAD = 'flex items-center gap-1.5 text-[11px] font-bold tracking-[.05em] text-muted-foreground uppercase'
@@ -43,6 +44,26 @@ export default function DbQueryDetailSummary({ monitor: m }) {
             <span className="flex flex-col gap-1 [overflow-wrap:anywhere]">
               {m.error && <span>{m.error}</span>}
               {failKey && <span className="text-xs">{t(`${failKey}.fix`)}</span>}
+            </span>
+          </AlertBanner>
+        </div>
+      )}
+
+      {m.status === 'UNKNOWN' && (
+        // Değerlendirilemedi (2.A): NÖTR bant — ne "sağlıklı" ne arıza; notlar kural sonuçlarında, ne yapılacağı burada
+        <div data-slot="dbq-detail-unevaluated">
+          <AlertBanner tone="info" icon={CircleHelp} title={t('dbq.detail.unevaluatedTitle')}>
+            <span className="flex flex-col gap-1 [overflow-wrap:anywhere]">
+              <span>{t('dbq.detail.unevaluatedBody')}</span>
+              {unevaluatedRules(m).map((r) => (
+                <span key={r.id || r.label} className="text-xs">
+                  <strong>{r.label || (r.kind ? t(`dbq.rule.kindName.${r.kind}`) : t('dbq.detail.rule'))}</strong>
+                  {r.note ? ` — ${resultNoteText(t, r.note)}` : ''}
+                </span>
+              ))}
+              {Number.isInteger(Number(m.unknown_runs)) && Number(m.unknown_runs) > 0 && (
+                <span data-slot="dbq-detail-unknown-runs" className="text-xs">{t('dbq.detail.unknownRuns', Number(m.unknown_runs))}</span>
+              )}
             </span>
           </AlertBanner>
         </div>

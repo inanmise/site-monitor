@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { ShieldCheck, ShieldAlert, ShieldQuestion, Table2, Info, AlertOctagon, RotateCw } from 'lucide-react'
+import { ShieldCheck, ShieldAlert, ShieldQuestion, Table2, Info, AlertOctagon, RotateCw, WrapText } from 'lucide-react'
 import { api } from '../../api/client'
 import { useLanguage, useT } from '../../i18n/index.jsx'
 import { Textarea } from '@/components/shadcn/textarea'
@@ -65,6 +65,9 @@ export default function SqlEditor({ value, onChange, dbType, fieldError, violati
   const escTab = useRef(false)
   const seqRef = useRef(0)
   const [recheck, setRecheck] = useState(0)
+  // Satır kaydırma (2.C): telefonda varsayılan AÇIK — uzun satır yatayda sona kaymış görünmesin; açıkken satır cetveli
+  // gizlenir (kaydırılan satır numarası yanıltırdı), ihlaller "satır N" olarak listelenmeye devam eder
+  const [wrap, setWrap] = useState(() => { try { return typeof window !== 'undefined' && window.innerWidth < 768 } catch { return false } })
   const text = value ?? ''
   const [guard, setGuard] = useState({ status: disabled ? 'idle' : (text.trim() ? 'checking' : 'empty'), violations: [], tables: [], message: null })
 
@@ -188,6 +191,7 @@ export default function SqlEditor({ value, onChange, dbType, fieldError, violati
     const pos = offsetOf(text, v.line || 1, v.column || 1)
     ta.focus()
     ta.setSelectionRange(pos, pos)
+    if (wrap) return   // kaydırılan satırlarda satır yüksekliğiyle konum hesaplanamaz — tarayıcı imleci görünür kılar
     const lh = parseFloat(getComputedStyle(ta).lineHeight) || 20
     ta.scrollTop = Math.max(0, ((Number(v.line) || 1) - 1) * lh - ta.clientHeight / 3)
     syncScroll()
@@ -206,9 +210,15 @@ export default function SqlEditor({ value, onChange, dbType, fieldError, violati
         <Label htmlFor={id} className="gap-1 font-semibold">
           {t('dbq.sql.label')} <span data-slot="field-required" className="text-destructive">*</span>
         </Label>
-        <span id={counterId} data-slot="dbq-sql-count" data-over={over ? 'true' : undefined}
-          className={cn('text-xs tabular-nums', over ? 'font-semibold text-destructive' : 'text-muted-foreground')}>
-          {t('dbq.sql.count', fmt(text.length), fmt(MAX_SQL_CHARS))}
+        <span className="flex flex-wrap items-center gap-2">
+          <Button type="button" variant="ghost" size="sm" aria-pressed={wrap} data-slot="dbq-sql-wrap" onClick={() => setWrap((w) => !w)}
+            className={cn('h-7 gap-1 px-2 text-xs pointer-coarse:h-10', wrap && 'bg-muted text-foreground')}>
+            <WrapText aria-hidden="true" className="size-3.5" />{t('dbq.sql.wrap')}
+          </Button>
+          <span id={counterId} data-slot="dbq-sql-count" data-over={over ? 'true' : undefined}
+            className={cn('text-xs tabular-nums', over ? 'font-semibold text-destructive' : 'text-muted-foreground')}>
+            {t('dbq.sql.count', fmt(text.length), fmt(MAX_SQL_CHARS))}
+          </span>
         </span>
       </div>
 
@@ -221,23 +231,27 @@ export default function SqlEditor({ value, onChange, dbType, fieldError, violati
 
       <div className={cn('flex min-w-0 overflow-hidden rounded-md border bg-background shadow-xs',
         (fieldError || over || shown.status === 'rejected') && 'border-destructive', disabled && 'opacity-80')}>
-        {/* Satır cetveli — metin kaydıkça aynı miktar kayar; ekran okuyucuya okunmaz */}
-        <div ref={gutterRef} aria-hidden="true" data-slot="dbq-sql-gutter"
-          className={cn(MONO, 'max-h-[60vh] shrink-0 overflow-hidden border-r bg-muted/50 py-2 text-right text-muted-foreground select-none')}>
-          {Array.from({ length: lines }, (_, i) => (
-            <div key={i} data-line={i + 1} data-bad={badLines.has(i + 1) ? 'true' : undefined}
-              className={cn('px-2 tabular-nums', badLines.has(i + 1) && 'bg-destructive/10 font-bold text-destructive')}>
-              {i + 1}
-            </div>
-          ))}
-        </div>
-        <Textarea ref={taRef} id={id} value={text} disabled={disabled} wrap="off" spellCheck={false} autoCapitalize="off"
+        {/* Satır cetveli — metin kaydıkça aynı miktar kayar; ekran okuyucuya okunmaz. Satır kaydırma açıkken çizilmez. */}
+        {!wrap && (
+          <div ref={gutterRef} aria-hidden="true" data-slot="dbq-sql-gutter"
+            className={cn(MONO, 'max-h-[60vh] shrink-0 overflow-hidden border-r bg-muted/50 py-2 text-right text-muted-foreground select-none')}>
+            {Array.from({ length: lines }, (_, i) => (
+              <div key={i} data-line={i + 1} data-bad={badLines.has(i + 1) ? 'true' : undefined}
+                className={cn('px-2 tabular-nums', badLines.has(i + 1) && 'bg-destructive/10 font-bold text-destructive')}>
+                {i + 1}
+              </div>
+            ))}
+          </div>
+        )}
+        <Textarea ref={taRef} id={id} value={text} disabled={disabled} wrap={wrap ? 'soft' : 'off'} data-wrap={wrap ? 'true' : undefined}
+          spellCheck={false} autoCapitalize="off"
           autoComplete="off" autoCorrect="off" data-gramm="false"
           placeholder={t('dbq.sql.placeholder')}
           aria-invalid={fieldError || over || shown.status === 'rejected' ? true : undefined}
           aria-describedby={[counterId, hintId, statusId, errId].filter(Boolean).join(' ')}
           onChange={(e) => onChange?.(e.target.value)} onKeyDown={onKeyDown} onScroll={syncScroll}
-          className={cn(MONO, 'field-sizing-fixed h-64 max-h-[60vh] min-h-40 resize-y overflow-auto rounded-none border-0 py-2 whitespace-pre shadow-none focus-visible:ring-0')} />
+          className={cn(MONO, 'field-sizing-fixed h-64 max-h-[60vh] min-h-40 resize-y overflow-auto rounded-none border-0 py-2 shadow-none focus-visible:ring-0',
+            wrap ? 'whitespace-pre-wrap [overflow-wrap:anywhere]' : 'whitespace-pre')} />
       </div>
       <p id={hintId} className="text-xs text-muted-foreground">{t('dbq.sql.keyboardHint')}</p>
 

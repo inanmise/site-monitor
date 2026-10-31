@@ -7,7 +7,7 @@ export const MAX_RULES = 10
 export const MAX_LABEL = 120
 export const MAX_COLUMN = 128
 export const MAX_TEXT = 500
-export const RULE_KINDS = ['ROW_COUNT', 'COLUMN_VALUE', 'TEXT_MATCH', 'CHANGE']
+export const RULE_KINDS = ['ROW_COUNT', 'COLUMN_VALUE', 'TEXT_MATCH', 'CHANGE', 'FRESHNESS']
 export const RULE_LOGICS = ['ANY', 'ALL']
 export const AGGREGATES = ['FIRST', 'MAX', 'MIN', 'SUM', 'AVG', 'COUNT_NONNULL']
 export const NUMERIC_OPERATORS = ['GT', 'GTE', 'LT', 'LTE', 'EQ', 'NEQ', 'BETWEEN', 'OUTSIDE']
@@ -17,6 +17,18 @@ export const CHANGE_OF = ['ROW_COUNT', 'COLUMN']
 export const CHANGE_MODES = ['PERCENT', 'ABSOLUTE']
 export const CHANGE_DIRECTIONS = ['INCREASE', 'DECREASE', 'ANY']
 export const LEVELS = ['warning', 'critical']
+/**
+ * Tazelik kuralı (FRESHNESS, 2026-10-31 — 2.D): kolon = zaman damgası; ölçüm = veritabanı saatine göre YAŞ (saniye),
+ * eşik "yaş > X" / "yaş ≥ X". Toplama: en yeni (MAX, varsayılan) / en eski (MIN) / ilk satır (FIRST).
+ */
+export const FRESHNESS_AGGREGATES = ['MAX', 'MIN', 'FIRST']
+export const FRESHNESS_OPERATORS = ['GT', 'GTE']
+/** Değişim kuralının tabanı (`change.baseline`; yoksa `previous` — önceki zamanlanmış başarılı çalışma). */
+export const CHANGE_BASELINES = ['previous', 'same_time_yesterday', 'same_time_last_week']
+/** Yaş birimleri — kural saniye taşır; kutu seçilen birimle gösterir (`dbq.rule.unit.<key>`). */
+export const AGE_UNITS = Object.freeze([
+  { key: 'sec', seconds: 1 }, { key: 'min', seconds: 60 }, { key: 'hour', seconds: 3600 }, { key: 'day', seconds: 86400 },
+])
 
 const RANGE = new Set(['BETWEEN', 'OUTSIDE'])
 const NO_VALUE = new Set(['EMPTY', 'NOT_EMPTY'])
@@ -24,18 +36,21 @@ const NO_VALUE = new Set(['EMPTY', 'NOT_EMPTY'])
 export const isRangeOperator = (op) => RANGE.has(op)
 export const isNoValueOperator = (op) => NO_VALUE.has(op)
 export const isTextKind = (kind) => kind === 'TEXT_MATCH'
+export const isFreshnessKind = (kind) => kind === 'FRESHNESS'
 /** Kolon gerektiren kural mı (COLUMN_VALUE, TEXT_MATCH, kolonun değişimi). */
 export function needsColumn(rule) {
   if (!rule) return false
-  if (rule.kind === 'COLUMN_VALUE' || rule.kind === 'TEXT_MATCH') return true
+  if (rule.kind === 'COLUMN_VALUE' || rule.kind === 'TEXT_MATCH' || rule.kind === 'FRESHNESS') return true
   return rule.kind === 'CHANGE' && rule.change?.of === 'COLUMN'
 }
 /** Toplama (FIRST/MAX/…) gerektiren kural mı. */
 export function needsAggregate(rule) {
   if (!rule) return false
-  return rule.kind === 'COLUMN_VALUE' || (rule.kind === 'CHANGE' && rule.change?.of === 'COLUMN')
+  return rule.kind === 'COLUMN_VALUE' || rule.kind === 'FRESHNESS' || (rule.kind === 'CHANGE' && rule.change?.of === 'COLUMN')
 }
-export const operatorsFor = (kind) => (isTextKind(kind) ? TEXT_OPERATORS : NUMERIC_OPERATORS)
+export const operatorsFor = (kind) => (isTextKind(kind) ? TEXT_OPERATORS : isFreshnessKind(kind) ? FRESHNESS_OPERATORS : NUMERIC_OPERATORS)
+/** Türün toplama seçenekleri (tazelikte yalnız en yeni / en eski / ilk satır). */
+export const aggregatesFor = (kind) => (isFreshnessKind(kind) ? FRESHNESS_AGGREGATES : AGGREGATES)
 
 /** Kural kimliği `r-<zaman><rastgele>` (sözleşme) — iki hızlı ekleme aynı kimliği almaz. */
 export function newRuleId(now = Date.now(), rand = Math.random) {
@@ -49,6 +64,7 @@ export function newRule(kind = 'ROW_COUNT', id = newRuleId()) {
   if (kind === 'COLUMN_VALUE') return { ...base, aggregate: 'FIRST' }
   if (kind === 'TEXT_MATCH') return { ...base, operator: 'CONTAINS', scope: 'ANY_ROW' }
   if (kind === 'CHANGE') return { ...base, change: { of: 'ROW_COUNT', mode: 'PERCENT', direction: 'ANY' } }
+  if (kind === 'FRESHNESS') return { ...base, aggregate: 'MAX' }
   return base
 }
 
@@ -59,7 +75,8 @@ export function newRule(kind = 'ROW_COUNT', id = newRuleId()) {
 export function changeKind(rule, kind) {
   if (!rule || rule.kind === kind) return rule
   const fresh = newRule(kind, rule.id)
-  const keepNumbers = !isTextKind(kind) && !isTextKind(rule.kind)
+  // Tazelik eşiği SANİYE (yaş) — satır sayısı / kolon değeri eşiği ile aynı birim değil: geçişte düşer
+  const keepNumbers = !isTextKind(kind) && !isTextKind(rule.kind) && !isFreshnessKind(kind) && !isFreshnessKind(rule.kind)
   const out = { ...fresh, label: rule.label ?? '' }
   if (keepNumbers) {
     out.operator = NUMERIC_OPERATORS.includes(rule.operator) ? rule.operator : fresh.operator
@@ -67,7 +84,7 @@ export function changeKind(rule, kind) {
     out.critical = rule.critical ?? null
   }
   if (needsColumn(out) && rule.column) out.column = rule.column
-  if (needsAggregate(out) && rule.aggregate) out.aggregate = rule.aggregate
+  if (needsAggregate(out) && rule.aggregate && aggregatesFor(kind).includes(rule.aggregate)) out.aggregate = rule.aggregate
   return out
 }
 
@@ -267,6 +284,8 @@ export function strictnessHint(rule) {
     if (rule.kind === 'ROW_COUNT') return 'negative_rows'
     if (rule.kind === 'CHANGE' && (rule.change?.direction || 'ANY') === 'ANY') return 'negative_any'
   }
+  // Tazelikte yaş hiç negatif olmaz — negatif eşik "her zaman eski" demektir
+  if (isFreshnessKind(rule.kind) && levelValues.some((n) => n < 0)) return 'negative_age'
   if (isRangeOperator(rule.operator)) return null
   const w = rule.warning, c = rule.critical
   if (!isNum(w) || !isNum(c)) return null
@@ -284,6 +303,7 @@ function subjectOf(rule, t) {
   if (rule.kind === 'ROW_COUNT') return t('dbq.rule.sum.subj.rowCount')
   if (rule.kind === 'COLUMN_VALUE') return t(`dbq.rule.sum.subj.agg.${rule.aggregate || 'FIRST'}`, col)
   if (rule.kind === 'TEXT_MATCH') return t(`dbq.rule.sum.subj.text.${rule.scope || 'ANY_ROW'}`, col)
+  if (rule.kind === 'FRESHNESS') return t(`dbq.rule.sum.subj.fresh.${FRESHNESS_AGGREGATES.includes(rule.aggregate) ? rule.aggregate : 'MAX'}`, col)
   const dir = rule.change?.direction || 'ANY'
   return rule.change?.of === 'COLUMN'
     ? t(`dbq.rule.sum.subj.change.col.${dir}`, col)
@@ -293,6 +313,11 @@ function subjectOf(rule, t) {
 function numericPhrase(rule, value, t, lang) {
   const percent = rule.kind === 'CHANGE' && rule.change?.mode === 'PERCENT'
   const op = rule.operator || 'GT'
+  if (rule.kind === 'FRESHNESS') {
+    // "15 dakikadan eskiyse" / "en az 1 saat eskiyse" — süre kuralın saniyesinden en büyük tam birimle yazılır
+    const fop = op === 'GTE' ? 'GTE' : 'GT'
+    return t(`dbq.rule.op.fresh.${fop}`, ageText(value, t, lang, { ablative: fop === 'GT' }))
+  }
   if (isRangeOperator(op)) {
     const [lo, hi] = Array.isArray(value) ? value : [value, null]
     return t(`dbq.rule.op.${op}`, valueText(lo, lang, { percent }), valueText(hi, lang, { percent }))
@@ -318,10 +343,64 @@ export function ruleSummary(rule, t, lang = 'tr') {
     return t(lvl === 'warning' ? 'dbq.rule.sum.textWarn' : 'dbq.rule.sum.textCrit', subject, phrase)
   }
   // Değişim kuralının eki cümlenin İÇİNE, son noktadan önce girer: "… KRİTİK (önceki …)." — "KRİTİK. (önceki …)" değil
-  const withSuffix = (text) => (rule.kind === 'CHANGE' ? beforeFinalStop(text, t('dbq.rule.sum.vsPrevious')) : text)
+  const withSuffix = (text) => (rule.kind === 'CHANGE' ? beforeFinalStop(text, t(baselineSuffixKey(rule))) : text)
   if (hasW && hasC) return withSuffix(t('dbq.rule.sum.both', subject, numericPhrase(rule, rule.warning, t, lang), numericPhrase(rule, rule.critical, t, lang)))
   if (hasW) return withSuffix(t('dbq.rule.sum.warnOnly', subject, numericPhrase(rule, rule.warning, t, lang)))
   return withSuffix(t('dbq.rule.sum.critOnly', subject, numericPhrase(rule, rule.critical, t, lang)))
+}
+
+/** Değişim kuralının tabanı (bilinmeyen / yok → önceki çalışma). */
+export function changeBaseline(rule) {
+  const b = rule?.change?.baseline
+  return CHANGE_BASELINES.includes(b) ? b : 'previous'
+}
+
+/** Değişim özetinin eki — tabana göre ("önceki başarılı çalışmaya göre" / "dün aynı saate göre" / …). */
+export function baselineSuffixKey(rule) {
+  const b = changeBaseline(rule)
+  if (b === 'same_time_yesterday') return 'dbq.rule.sum.vsYesterday'
+  if (b === 'same_time_last_week') return 'dbq.rule.sum.vsLastWeek'
+  return 'dbq.rule.sum.vsPrevious'
+}
+
+/**
+ * Saniye → en büyük TAM birim: 900 → { unit: 'min', value: 15 }, 3600 → { unit: 'hour', value: 1 }, 90 → sn. Sayı değilse
+ * null. Kutu ve özet aynı kuralı kullanır.
+ */
+export function ageParts(seconds) {
+  if (typeof seconds !== 'number' || !Number.isFinite(seconds)) return null
+  const abs = Math.abs(seconds)
+  for (let i = AGE_UNITS.length - 1; i > 0; i--) {
+    const u = AGE_UNITS[i]
+    if (abs >= u.seconds && abs % u.seconds === 0) return { unit: u.key, value: seconds / u.seconds }
+  }
+  return { unit: 'sec', value: seconds }
+}
+
+/** Süre metni ("15 dakika" / TR çıkma ekiyle "15 dakikadan"); sayı değilse olduğu gibi. */
+export function ageText(seconds, t, lang = 'tr', { ablative = false } = {}) {
+  const p = ageParts(seconds)
+  if (!p) return seconds == null ? '' : String(seconds)
+  // Tam 1 → tekil anahtar (EN "1 hour", "15 minutes"; TR aynı)
+  return t(`dbq.rule.age.${p.unit}${ablative ? '.abl' : ''}${Math.abs(p.value) === 1 ? '.one' : ''}`, formatNumber(p.value, lang))
+}
+
+/**
+ * Kutunun başlangıç birimi — tanımlı eşiklerin HEPSİNİ tam bölen en büyük birim (900 + 3600 → dk); eşik yoksa dk.
+ */
+export function ageUnitFor(rule) {
+  const vals = LEVELS.map((l) => rule?.[l]).filter(isNum)
+  if (!vals.length) return 'min'
+  for (let i = AGE_UNITS.length - 1; i > 0; i--) {
+    const u = AGE_UNITS[i]
+    if (vals.every((v) => v % u.seconds === 0 && Math.abs(v) >= u.seconds)) return u.key
+  }
+  return 'sec'
+}
+
+/** Birim anahtarı → saniye çarpanı (bilinmeyen → 1). */
+export function unitSeconds(key) {
+  return AGE_UNITS.find((u) => u.key === key)?.seconds ?? 1
 }
 
 /** Eki cümlenin son noktasından önce ekler ("A." + "(b)" → "A (b)."); nokta yoksa sona boşlukla. */
