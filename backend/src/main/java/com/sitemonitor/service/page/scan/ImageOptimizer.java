@@ -41,11 +41,44 @@ public final class ImageOptimizer {
     private ImageOptimizer() {}
 
     /**
-     * @param data      görselin (açılmış) gövdesi
-     * @param maxPixels kabul edilen en çok piksel (genişlik × yükseklik) — çözmeden ÖNCE başlıktan denetlenir
+     * Başlıktan çalışma belleği tahmini (bayt) — bellek izni bununla alınır (inceleme O-2): çözülmüş görüntü (piksel ×
+     * {@link ImageDimensions.Header#bytesPerPixel()}: 16 bit kanal 2 bayt, paletli 1) + JPEG yazıcısına çevirme kopyası
+     * (8 bit RGB / gri JPEG ve 8 bit RGB / gri PNG doğrudan yazılır → 0; 16 bit gri → 1 B/piksel; paletli, alfalı ve 16 bit
+     * renkli → 4 B/piksel — saydamlık çözmeden bilinmediği için kötü durum) + gövdenin kendisi.
      */
-    public static Outcome optimize(byte[] data, long maxPixels) {
-        if (data == null || data.length == 0) return null;
+    public static long workingBytes(ImageDimensions.Header h, long bodyBytes) {
+        long px = (long) h.width() * h.height();
+        long decode = px * h.bytesPerPixel();
+        long convert;
+        boolean eightBit = h.bitDepth() <= 8;
+        if (!h.palette() && eightBit && (h.channels() == 1 || h.channels() == 3)) convert = 0;
+        else if (!h.palette() && h.channels() == 1) convert = px;   // 16 bit gri → 8 bit gri kopya
+        else convert = px * 4L;
+        return decode + convert + Math.max(0, bodyBytes);
+    }
+
+    /**
+     * Eski imza (testler): piksel tavanı + bütçe = 40 MP'nin kötü durumu. Üretim yolu
+     * {@link #optimize(byte[], int, int, long)} kullanır.
+     */
+    static Outcome optimize(byte[] data, long maxPixels) {
+        ImageDimensions.Header h = ImageDimensions.header(data);
+        if (h == null || (long) h.width() * h.height() > maxPixels) return null;
+        return optimize(data, h.width(), h.height(), workingBytes(h, data.length));
+    }
+
+    /**
+     * Yeniden kodlar — çözmeden ÖNCE okuyucunun bildirdiği boyut beklenenle (başlığa göre izin alınan) aynı olmalı ve
+     * okuyucunun ham türünden hesaplanan çalışma belleği {@code maxBytes}'ı aşmamalı; aksi halde {@code null} (bellek
+     * yetmezliği yakalanmaz, öncesinde reddedilir).
+     *
+     * @param data     görselin (açılmış) gövdesi
+     * @param width    beklenen genişlik (bellek izninin hesaplandığı başlık)
+     * @param height   beklenen yükseklik
+     * @param maxBytes çözme + çevirme + gövde için alınan izin (bayt)
+     */
+    public static Outcome optimize(byte[] data, int width, int height, long maxBytes) {
+        if (data == null || data.length == 0 || width <= 0 || height <= 0) return null;
         try (ImageInputStream iis = new MemoryCacheImageInputStream(new ByteArrayInputStream(data))) {
             Iterator<ImageReader> readers = ImageIO.getImageReaders(iis);
             if (!readers.hasNext()) return null;
@@ -58,7 +91,8 @@ public final class ImageOptimizer {
                 if (!png && !jpeg) return null;
                 int w = reader.getWidth(0);
                 int h = reader.getHeight(0);
-                if (w <= 0 || h <= 0 || (long) w * h > maxPixels) return null;
+                if (w != width || h != height) return null;
+                if (readerWorkingBytes(reader, w, h, data.length) > maxBytes) return null;
                 BufferedImage img = reader.read(0);
                 if (img == null) return null;
                 if (png && transparent(img)) return new Outcome(encode(img, "png"), "png");
@@ -69,6 +103,30 @@ public final class ImageOptimizer {
         } catch (Exception e) {
             return null;   // çözülemedi → ölçülemedi (tahmin kullanılır). Bellek, çağıranın bellek izniyle sınırlıdır.
         }
+    }
+
+    /**
+     * Okuyucunun {@code read(0)}'da üreteceği türden (ilk hedef türü — {@code ImageReader.getDestination} kuralı; çözmeden)
+     * çalışma belleği: piksel × ceil(piksel bit / 8) + çevirme kopyası + gövde. Tür bildirilmiyorsa bilinmiyor →
+     * {@link Long#MAX_VALUE} (ölçülmez).
+     */
+    static long readerWorkingBytes(ImageReader reader, int w, int h, long bodyBytes) throws java.io.IOException {
+        Iterator<javax.imageio.ImageTypeSpecifier> types = reader.getImageTypes(0);
+        javax.imageio.ImageTypeSpecifier raw = types != null && types.hasNext() ? types.next() : null;
+        if (raw == null) return Long.MAX_VALUE;
+        long px = (long) w * h;
+        int bits = raw.getColorModel().getPixelSize();
+        long decode = px * Math.max(1, (bits + 7) / 8);
+        int type = raw.getBufferedImageType();
+        long convert;
+        if (type == BufferedImage.TYPE_3BYTE_BGR || type == BufferedImage.TYPE_INT_RGB || type == BufferedImage.TYPE_BYTE_GRAY) {
+            convert = 0;
+        } else if (raw.getColorModel().getColorSpace().getType() == ColorSpace.TYPE_GRAY && !raw.getColorModel().hasAlpha()) {
+            convert = px;
+        } else {
+            convert = px * 4L;
+        }
+        return decode + convert + Math.max(0, bodyBytes);
     }
 
     /** Gerçekten saydam piksel var mı — alfa kanalı satır satır taranır (doğrusal, piksel sayısıyla sınırlı). */

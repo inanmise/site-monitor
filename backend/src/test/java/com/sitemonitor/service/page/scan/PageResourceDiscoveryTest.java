@@ -350,4 +350,15 @@ class PageResourceDiscoveryTest {
                     () -> PageResourceDiscovery.cssRefs(evil, "https://x.com/"));
         }
     }
+
+    @Test
+    @DisplayName("@font-face taraması blok sınırıyla sınırlı (inceleme O-3): src'siz çok sayıda blok kilitlemez, sondaki blok yine bulunur")
+    void manyFontFaceBlocksBounded() {
+        String evil = "@font-face{a:b}".repeat(130_000) + "@font-face{src:url(/f/last.woff2) format('woff2')}";
+        List<PageResourceDiscovery.Candidate> refs = assertTimeoutPreemptively(java.time.Duration.ofSeconds(3),
+                () -> PageResourceDiscovery.cssRefs(evil, "https://x.com/css/s.css"));
+        assertThat(refs).extracting(PageResourceDiscovery.Candidate::url).containsExactly("https://x.com/f/last.woff2");
+        String noBraces = "@font-face{a:b src}".repeat(130_000);
+        assertTimeoutPreemptively(java.time.Duration.ofSeconds(3), () -> PageResourceDiscovery.cssRefs(noBraces, "https://x.com/"));
+    }
 }

@@ -385,8 +385,10 @@ public final class PageResourceDiscovery {
         int decl = -1;
         int p = from;
         while (p < to) {
-            int k = low.indexOf("src", p);
-            if (k < 0 || k >= to) break;
+            // Arama BLOK SINIRIYLA sınırlı (inceleme O-3): sınırsız aramada src'siz her blok metnin geri kalanını tarardı
+            // ("@font-face{a:b}" × 130 000 → karesel). Java 21 sınırlı indexOf.
+            int k = low.indexOf("src", p, to);
+            if (k < 0) break;
             char before = k == 0 ? '{' : s.charAt(k - 1);
             int colon = skipWs(s, k + 3);
             if ((before == '{' || before == ';' || Character.isWhitespace(before)) && colon < to && s.charAt(colon) == ':') {

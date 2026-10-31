@@ -121,7 +121,10 @@ public class PageResourceScanService {
     static final long OPT_PHASE_MS = 60_000L;
     /** Pod genelinde aynı anda yeniden kodlanan görsel. */
     static final int OPT_CONCURRENT = 2;
-    /** Pod genelinde görsel çözme bellek bütçesi (MB; piksel başına tahminle izin alınır, büyük görsel tek başına çalışır). */
+    /**
+     * Pod genelinde görsel çözme bellek bütçesi (MB). İzin İKİNCİ indirmenin başlığından hesaplanan çalışma belleğiyle alınır
+     * ({@link #measurePlan}); bütçeyi aşan görsel ölçülmez, büyük görsel tek başına çalışır.
+     */
     static final int OPT_MEMORY_MB = 200;
 
     public static final String KEY_MAX_SECONDS = "site.monitor.page.resource-scan.max-seconds";
@@ -1268,35 +1271,69 @@ public class PageResourceScanService {
         return e.equals("jpg") || e.equals("jpeg") || e.equals("png");
     }
 
-    /** Çözme belleği tahmini (MB): JPEG 3 B/piksel, PNG 4 + olası dönüştürme 3 B/piksel, + gövde. */
-    static int memoryNeedMb(ScanItem i) {
-        boolean png = "image/png".equals(i.contentType) || "png".equals(PageResourceDiscovery.ext(i.url));
-        long px = (long) i.width * i.height;
-        long need = px * (png ? 7 : 3) + i.bytes;
-        return (int) Math.max(1, (need + PageResourceAnalyzer.MB - 1) / PageResourceAnalyzer.MB);
+    /** İkinci indirmenin ölçülebilirliği: ölçülür (bellek izni MB ve başlık) ya da neden. */
+    record MeasurePlan(int memoryMb, ImageDimensions.Header header, String skipReason) {
+        static MeasurePlan skip(String reason) {
+            return new MeasurePlan(0, null, reason);
+        }
+
+        boolean measurable() {
+            return skipReason == null;
+        }
+    }
+
+    /**
+     * Bellek izni İKİNCİ indirmenin GERÇEK başlığından (inceleme O-2): ilk ölçümle aynı biçim, aynı piksel boyutu ve aynı tel
+     * baytı değilse ölçülmez (görsel değişmiş ya da istek başına farklı içerik — izin eski boyuta göre olurdu); başlıktan
+     * hesaplanan çalışma belleği ({@link ImageOptimizer#workingBytes} — 16 bit kanal, palet, gri, JPEG bileşen sayısı) pod
+     * bütçesini ({@value #OPT_MEMORY_MB} MB) ya da piksel tavanını aşarsa ölçülmez. Her durumda eski tahmin kalır.
+     */
+    static MeasurePlan measurePlan(ScanItem first, byte[] body, long wireBytes) {
+        if (body == null || body.length == 0) return MeasurePlan.skip("empty");
+        if (wireBytes != first.bytes) return MeasurePlan.skip("bytes_changed");
+        ImageDimensions.Header h = ImageDimensions.header(body);
+        if (h == null) return MeasurePlan.skip("unsupported");
+        boolean firstPng = "image/png".equals(first.contentType)
+                || (first.contentType == null && "png".equals(PageResourceDiscovery.ext(first.url)));
+        if (!h.format().equals(firstPng ? "png" : "jpeg")) return MeasurePlan.skip("format_changed");
+        if (first.width == null || first.height == null || h.width() != first.width || h.height() != first.height) {
+            return MeasurePlan.skip("size_changed");
+        }
+        if ((long) h.width() * h.height() > OPT_MAX_PIXELS) return MeasurePlan.skip("too_many_pixels");
+        long need = ImageOptimizer.workingBytes(h, body.length);
+        long mb = (need + PageResourceAnalyzer.MB - 1) / PageResourceAnalyzer.MB;
+        if (mb > OPT_MEMORY_MB) return MeasurePlan.skip("over_budget");
+        return new MeasurePlan((int) Math.max(1, mb), h, null);
     }
 
     private Long optimizeOne(Run run, ScanItem it, long phaseEnd) throws InterruptedException {
-        int need = memoryNeedMb(it);
-        if (need > OPT_MEMORY_MB) return null;   // bellek bütçesine sığmaz → tahmin kalır
         long wait = Math.max(1, Math.min(10_000L, phaseEnd - clock.getAsLong()));
+        // Yuva önce: gövde (≤ 10 MB) yuva başına tek — pod'da en çok {OPT_CONCURRENT} gövde bellekte
         if (!imageSlots.tryAcquire(wait, TimeUnit.MILLISECONDS)) return null;
         try {
-            if (!imageMemory.tryAcquire(need, wait, TimeUnit.MILLISECONDS)) return null;
+            boolean viaProxy = "proxy".equals(it.via);
+            PageFetchCore.FetchOptions o = new PageFetchCore.FetchOptions(run.c.requestTimeoutMs(), run.ua, null, true, true,
+                    viaProxy);
+            PageFetchCore.MetaFetch mf = core.fetchWithMeta(it.url, "GET", o, 0, run.imageTuning);
+            PageFetchCore.Fetch f = mf.fetch();
+            run.spent.addAndGet(Math.max(0, f.bytes()));
+            if (Thread.currentThread().isInterrupted() || run.halted()) return null;
+            if (f.status() < 200 || f.status() >= 300 || f.body() == null || f.truncated()) return null;
+            MeasurePlan plan = measurePlan(it, f.body(), f.bytes());
+            if (!plan.measurable()) {
+                log.debug("Kaynak analizi görsel kazancı ölçülmedi ({}): {}", plan.skipReason(), PageFetchCore.sanitize(it.url));
+                return null;
+            }
+            long wait2 = Math.max(1, Math.min(10_000L, phaseEnd - clock.getAsLong()));
+            if (!imageMemory.tryAcquire(plan.memoryMb(), wait2, TimeUnit.MILLISECONDS)) return null;
             try {
-                boolean viaProxy = "proxy".equals(it.via);
-                PageFetchCore.FetchOptions o = new PageFetchCore.FetchOptions(run.c.requestTimeoutMs(), run.ua, null, true, true,
-                        viaProxy);
-                PageFetchCore.MetaFetch mf = core.fetchWithMeta(it.url, "GET", o, 0, run.imageTuning);
-                PageFetchCore.Fetch f = mf.fetch();
-                run.spent.addAndGet(Math.max(0, f.bytes()));
-                if (Thread.currentThread().isInterrupted() || run.halted()) return null;
-                if (f.status() < 200 || f.status() >= 300 || f.body() == null || f.truncated()) return null;
-                ImageOptimizer.Outcome out = ImageOptimizer.optimize(f.body(), OPT_MAX_PIXELS);
+                // İzin başlığa göre alındı; çözücü de çözmeden önce aynı boyutu ve izni aşmayan ham türü doğrular
+                ImageOptimizer.Outcome out = ImageOptimizer.optimize(f.body(), plan.header().width(), plan.header().height(),
+                        (long) plan.memoryMb() * PageResourceAnalyzer.MB);
                 if (out == null) return null;
                 return Math.min(it.bytes, out.bytes());
             } finally {
-                imageMemory.release(need);
+                imageMemory.release(plan.memoryMb());
             }
         } finally {
             imageSlots.release();
