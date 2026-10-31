@@ -76,7 +76,10 @@ class DbQueryApiRepositoriesTest {
         assertThat(monitors.existsDuplicateName("Bekleyen Siparisler", a.getId())).isFalse();
         assertThat(monitors.existsDuplicateName("Yeni ad", null)).isFalse();
         assertThat(monitors.findByProfileId(p.getId())).extracting(DbQueryMonitor::getName).containsExactly("Bekleyen Siparisler");
-        assertThat(monitors.findAllByOrderByNameAsc()).hasSize(2);
+        // Paylaşılan H2'de başka sınıfların satırı kalmış olabilir — yalnız bu testin iki izlemesi, ad sırasıyla
+        assertThat(monitors.findAllByOrderByNameAsc()).extracting(DbQueryMonitor::getName)
+                .filteredOn(n -> n.equals("Bekleyen Siparisler") || n.equals("Başka izleme"))
+                .containsExactly("Başka izleme", "Bekleyen Siparisler");
     }
 
     @Test

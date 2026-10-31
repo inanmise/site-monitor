@@ -3,6 +3,7 @@ package com.sitemonitor.repository;
 import com.sitemonitor.model.DbQueryCheck;
 import com.sitemonitor.model.DbQueryMonitor;
 import jakarta.persistence.EntityManager;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -29,6 +30,16 @@ class DbQueryRunRepositoriesTest {
     @Autowired DbQueryMonitorRepository monitors;
     @Autowired DbQueryCheckRepository checks;
     @Autowired EntityManager em;
+
+    /**
+     * İşlemsiz (NOT_SUPPORTED) yazımlar geri alınmaz: aynı Spring bağlamını paylaşan öteki {@code @DataJpaTest} sınıfları
+     * (ör. DbQueryApiRepositoriesTest) bu kayıtları görmesin diye her test kendi satırlarını siler.
+     */
+    @AfterEach
+    void cleanUp() {
+        checks.deleteAll();
+        monitors.deleteAll();
+    }
 
     private DbQueryMonitor mon(String name) {
         DbQueryMonitor m = new DbQueryMonitor();
