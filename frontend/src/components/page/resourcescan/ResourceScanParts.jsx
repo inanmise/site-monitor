@@ -1,4 +1,4 @@
-import { ArrowDownRight, ArrowUpRight, Code2, File, FileCode2, FileText, Film, Frame, Image, Link2, Palette, Type, Minus, Star } from 'lucide-react'
+import { ArrowDownRight, ArrowUpRight, Code2, ExternalLink, File, FileCode2, FileText, Film, Frame, Image, Link2, Palette, Type, Minus, Star } from 'lucide-react'
 import ToneBadge from '../../admin/ToneBadge.jsx'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/shadcn/card'
 import { cn } from '@/lib/utils'
@@ -34,14 +34,16 @@ export const TONE_TEXT = {
 export const TONE_BAR = { success: 'ok', warning: 'warn', danger: 'crit' }
 
 /** Bölüm kartı: başlık (ikon + metin + açıklama) ve sağda eylemler; gövde çocuklar. */
-export function Section({ slot, icon: Icon, title, description, actions, className, contentClassName, children, ...rest }) {
+export function Section({ slot, icon: Icon, title, description, actions, className, contentClassName, children, titleFocusable = false, ...rest }) {
   return (
     <Card data-slot={slot} className={cn('min-w-0 gap-3 py-4 shadow-xs', className)} {...rest}>
       {(title || actions) && (
         <CardHeader className="flex flex-col gap-2 px-4 sm:flex-row sm:items-start sm:justify-between">
           <div className="flex min-w-0 flex-col gap-1">
             {title && (
-              <CardTitle className="flex min-w-0 items-center gap-2 text-sm leading-snug font-semibold">
+              // Bölüm geçişinde odak başlığa taşınır (r177 H1) — `tabIndex=-1`: Tab sırasına girmez, yalnız programla odaklanır
+              <CardTitle data-focus-target={titleFocusable ? slot : undefined} tabIndex={titleFocusable ? -1 : undefined}
+                className="flex min-w-0 items-center gap-2 text-sm leading-snug font-semibold focus-visible:rounded-sm focus-visible:outline-2 focus-visible:outline-ring">
                 {Icon && <Icon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />}
                 <span className={WRAP}>{title}</span>
               </CardTitle>
@@ -77,4 +79,28 @@ export function DeltaChip({ d, text, srText, sameText }) {
 export function signed(diff, fmtAbs) {
   if (diff === 0) return fmtAbs(0)
   return `${diff < 0 ? '−' : '+'}${fmtAbs(Math.abs(diff))}`
+}
+
+/**
+ * Güvenli bağlantı: yalnız http(s) adresi tıklanır (javascript: / data: şeması bağlanmaz), yeni sekmede, URL sarar.
+ * `label` verilirse görünen metin odur (adres yine `aria-label`'da).
+ */
+export function UrlText({ url, t, className, label }) {
+  const safe = typeof url === 'string' && /^https?:\/\//i.test(url)
+  if (!safe) return <span className={cn(WRAP, className)}>{label ?? (url || '—')}</span>
+  return (
+    <a href={url} target="_blank" rel="noopener noreferrer" data-slot="prs-obj-url"
+      aria-label={t('prs.obj.openUrl', url)}
+      className={cn('text-foreground underline-offset-2 hover:underline focus-visible:rounded-sm focus-visible:outline-2 focus-visible:outline-ring', WRAP, className)}>
+      {label ?? url}
+      <ExternalLink aria-hidden="true" className="ml-1 inline size-3 align-[-1px] text-muted-foreground" />
+    </a>
+  )
+}
+
+/** Küçük rozet (nesne bayrağı / bulgu) — sarar, kırpılmaz. */
+export function SmallBadge({ tone = 'muted', children, className, ...rest }) {
+  return (
+    <ToneBadge tone={tone} className={cn(CHIP, 'px-1.5 py-0 text-[11px] font-medium', className)} {...rest}>{children}</ToneBadge>
+  )
 }

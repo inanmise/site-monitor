@@ -177,14 +177,16 @@ describe('ResourceScanTab — pano', () => {
     expect(slots('prs-obj').every((r) => r.getAttribute('data-category') === 'IMAGE')).toBe(true)
   })
 
-  it('"Nesneleri göster" önerinin nesnelerine süzer; süzgeç kaldırılabilir', async () => {
+  it('"Nesneleri göster" önerinin BULGUSUYLA tam listeye süzer (r177); süzgeç kaldırılabilir', async () => {
     await mountDone()
     const rec = slots('prs-rec').find((r) => r.getAttribute('data-code') === 'UNCOMPRESSED_TEXT')
     fireEvent.click(within(rec).getByRole('button', { name: /nesneleri göster/i }))
-    await waitFor(() => expect(slot('prs-urls-filter')).not.toBeNull())
+    await waitFor(() => expect(slot('prs-rec-filter')).not.toBeNull())
+    expect(slot('prs-rec-filter').textContent).toMatch(/Öneri: 1 metin dosyası sıkıştırılmadan gönderiliyor/)
     expect(slots('prs-obj')).toHaveLength(1)
     expect(slot('prs-obj').textContent).toMatch(/app\.bundle\.js/)
-    fireEvent.click(within(slot('prs-urls-filter')).getByRole('button'))
+    expect(slot('prs-finding-chips').querySelector('[data-finding="UNCOMPRESSED_TEXT"]').getAttribute('data-state')).toBe('on')
+    fireEvent.click(within(slot('prs-rec-filter')).getByRole('button'))
     await waitFor(() => expect(slot('prs-count').textContent).toMatch(/40 \/ 40/))
   })
 })
@@ -196,15 +198,15 @@ describe('ResourceScanTab — nesneler', () => {
     await waitFor(() => expect(slot('prs-objects')).not.toBeNull())
   }
 
-  it('varsayılan büyükten küçüğe, sayfalama (25), tablo görünümü, tam URL', async () => {
+  it('varsayılan SAYFA YÜKÜ kapsamı (r177), büyükten küçüğe, sayfalama (25), tablo görünümü, tam URL', async () => {
     await openObjects()
     expect(slot('prs-objects-list').getAttribute('data-layout')).toBe('table')
     const rows = slots('prs-obj')
     expect(rows).toHaveLength(25)
-    expect(rows[0].getAttribute('data-category')).toBe('DOCUMENT')
-    expect(rows[1].getAttribute('data-category')).toBe('IMAGE')
-    expect(rows[1].textContent).toContain('ana-sayfa-banner-yuksek-cozunurluk-varyant-1.webp')
-    expect(slot('prs-count').textContent).toMatch(/40 \/ 40/)
+    expect(rows[0].getAttribute('data-category')).toBe('IMAGE')
+    expect(rows[0].textContent).toContain('ana-sayfa-banner-yuksek-cozunurluk-varyant-1.webp')
+    expect(slot('prs-count').textContent).toMatch(/38 \/ 40/)
+    expect(slots('prs-obj').some((r) => r.getAttribute('data-category') === 'DOCUMENT')).toBe(false)
     const link = slot('prs-obj-url', rows[0])
     expect(link.getAttribute('target')).toBe('_blank')
     expect(link.getAttribute('rel')).toBe('noopener noreferrer')
@@ -217,6 +219,8 @@ describe('ResourceScanTab — nesneler', () => {
     fireEvent.change(slot('prs-search'), { target: { value: '' } })
 
     fireEvent.click(slot('prs-bucket-chips').querySelector('[data-bucket="xl"]'))
+    await waitFor(() => expect(slots('prs-obj')).toHaveLength(1))   // sayfa yükü: yalnız büyük görsel (5 MB belge kapsam dışı)
+    fireEvent.click(screen.getByRole('button', { name: 'Tümü (2)' }))   // kapsam sayaçları öteki süzgeçleri (≥ 1 MB) uygular
     await waitFor(() => expect(slots('prs-obj')).toHaveLength(2))
     fireEvent.click(slot('prs-bucket-chips').querySelector('[data-bucket="xl"]'))
 
@@ -225,11 +229,11 @@ describe('ResourceScanTab — nesneler', () => {
     expect(slots('prs-obj').map((r) => r.getAttribute('data-category')).sort()).toEqual(['IMAGE', 'LINK'])
     fireEvent.click(screen.getByRole('button', { name: /^Tümü$/ , pressed: false }))
 
-    fireEvent.click(screen.getByRole('button', { name: 'Belgeler' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Belgeler (1)' }))
     await waitFor(() => expect(slots('prs-obj')).toHaveLength(1))
     expect(screen.getByRole('button', { name: /Süzgeçleri temizle \(1\)/ })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /Süzgeçleri temizle/ }))
-    await waitFor(() => expect(slot('prs-count').textContent).toMatch(/40 \/ 40/))
+    await waitFor(() => expect(slot('prs-count').textContent).toMatch(/38 \/ 40/))
 
     fireEvent.change(slot('prs-sort'), { target: { value: 'size_asc' } })
     await waitFor(() => expect(slots('prs-obj')[0].getAttribute('data-category')).toBe('IMAGE'))

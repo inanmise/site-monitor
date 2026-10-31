@@ -112,14 +112,40 @@ export const SIZE_BUCKETS = [
 ]
 export const BUCKET_KEYS = SIZE_BUCKETS.map((b) => b.key)
 
-export const SCOPES = ['all', 'page', 'documents', 'links']
-export const STATUS_FILTERS = ['all', 'failed']
-export const SORTS = ['size_desc', 'size_asc', 'time_desc', 'time_asc', 'type', 'url']
+export const SCOPES = ['page', 'all', 'documents', 'links']
+/** `failed` = kırık (sunucu `verdict=broken`); `unverified` = doğrulanamadı / engellendi (kırık SAYILMAZ, 2026-10-31 r177). */
+export const STATUS_FILTERS = ['all', 'failed', 'unverified']
+export const SORTS = ['size_desc', 'size_asc', 'time_desc', 'time_asc', 'start_asc', 'type', 'url']
 /**
- * `urls`: bir önerinin "Nesneleri göster" eylemi — yalnız önerinin sunucunun saydığı nesneleri (`item_urls`, en çok 10).
- * Boş = süzgeç yok.
+ * Varsayılan kapsam SAYFA YÜKÜ (r177 inceleme): bağlantılı belgeler / sayfalar listenin başını almasın — kapsam çipiyle
+ * görülür. `findings`: bulgu süzgeci (nesnenin `findings` kodlarından BİRİ seçiliyse geçer). `rec`: süzgeci kuran önerinin
+ * kodu (yalnız etiket — "Öneri: … nesneleri"). `urls`: kodu nesne bulgusu olmayan öneriler (SLOW_SERVER …) için sunucunun
+ * saydığı adresler (`item_urls`, en çok 10). Boş = süzgeç yok.
  */
-export const DEFAULT_FILTERS = Object.freeze({ q: '', types: [], buckets: [], scope: 'all', status: 'all', sort: 'size_desc', urls: [] })
+export const DEFAULT_FILTERS = Object.freeze({
+  q: '', types: [], buckets: [], findings: [], scope: 'page', status: 'all', sort: 'size_desc', urls: [], rec: null,
+})
+
+/**
+ * Bulgu kodları (nesne `findings` — sunucunun NESNEYE bağlı 13 öneri kodu), çip sırası: kırıklar önce. Sayfa düzeyi
+ * öneriler (OVERSIZED_PAGE, TOO_MANY_REQUESTS, SLOW_SERVER, THIRD_PARTY_HEAVY, ALL_GOOD) nesneye yazılmaz — sunucu
+ * `item_count`'larını null gönderir; onlar nesne listesine `item_urls` (en çok 10) ile bağlanır.
+ */
+export const FINDING_CODES = [
+  'BROKEN_RESOURCES', 'BROKEN_LINKS', 'LARGE_IMAGES', 'UNCOMPRESSED_TEXT', 'NO_CACHE', 'SLOW_OBJECTS', 'MODERN_IMAGE_FORMAT',
+  'OVERSIZED_IMAGE_DIMENSIONS', 'REDIRECTED_OBJECTS', 'LARGE_DOCUMENTS', 'HEAVY_JS', 'HEAVY_CSS', 'HEAVY_FONTS',
+]
+export const FINDING_SET = new Set(FINDING_CODES)
+/** Bulgu rozetinin tonu — kırık tehlike, düzeltilecek uyarı, katkı / bilgi nötr (bilinmeyen asla yeşil değil). */
+export const FINDING_TONE = {
+  BROKEN_RESOURCES: 'danger', BROKEN_LINKS: 'danger', LARGE_IMAGES: 'warning', UNCOMPRESSED_TEXT: 'warning', NO_CACHE: 'warning',
+  SLOW_OBJECTS: 'warning', MODERN_IMAGE_FORMAT: 'warning', OVERSIZED_IMAGE_DIMENSIONS: 'warning', REDIRECTED_OBJECTS: 'info',
+  LARGE_DOCUMENTS: 'info', HEAVY_JS: 'muted', HEAVY_CSS: 'muted', HEAVY_FONTS: 'muted',
+}
+
+/** Sunucu nesne kararı (`verdict`) — Sayfa Bütünlüğü izlemesinin kuralıyla aynı; yalnız `broken` kırık sayılır. */
+export const VERDICTS = ['ok', 'broken', 'unverified', 'blocked', 'skipped']
+const UNVERIFIED_VERDICTS = new Set(['unverified', 'blocked'])
 
 /** Ölçüm notları (sunucu `analysis.notes[]` — `{ code, params }`) ve i18n'e giden parametre sırası. */
 export const NOTE_ARGS = {
@@ -228,10 +254,124 @@ export function isPageLoad(item) {
   return !NOT_PAGE_LOAD.has(item?.category)
 }
 
-/** Başarısız nesne: aktarım hatası (status 0), HTTP ≥ 400 ya da sunucunun hata metni. */
-export function isFailed(item) {
+/**
+ * Nesnenin kararı: sunucunun `verdict`'i (bilinen değer) esastır; eski kayıtta (alan yok) aktarım hatası (status 0),
+ * HTTP ≥ 400 ya da hata metni → `broken`, aksi hâlde `ok`.
+ */
+export function verdictOf(item) {
+  if (typeof item?.verdict === 'string' && VERDICTS.includes(item.verdict)) return item.verdict
   const s = num(item?.status)
-  return s === 0 || (s !== null && s >= 400) || (typeof item?.error === 'string' && item.error.trim() !== '')
+  if (s === 0 || (s !== null && s >= 400) || (typeof item?.error === 'string' && item.error.trim() !== '')) return 'broken'
+  return 'ok'
+}
+
+/**
+ * Başarısız (KIRIK) nesne: karar `broken`. 401/403/429 / WAF engeli gibi "doğrulanamadı" ve güvenlik kuralının engellediği
+ * nesneler kırık SAYILMAZ (sunucu kararıyla; eski kayıtta eski kural).
+ */
+export function isFailed(item) {
+  return verdictOf(item) === 'broken'
+}
+
+/** Doğrulanamayan / engellenen nesne (kırık değil, ama açıldığı da bilinmiyor). */
+export const isUnverified = (item) => UNVERIFIED_VERDICTS.has(verdictOf(item))
+
+// Eski kayıtlar için istemci bulgu kuralı — sunucunun PageResourceAnalyzer kurallarının AYNISI (eşikler oradan; değişirse
+// burası da değişir). Yalnız `findings` alanı OLMAYAN (sürümden önce yazılmış) analizde kullanılır.
+const RULE = {
+  largeImage: 200 * KB, legacyMin: 50 * KB, oversizedWidth: 2000, textMin: KB, cacheOkS: 3600, slowMs: 1000, largeDoc: 5 * MB,
+}
+const CACHEABLE = new Set(['CSS', 'JS', 'IMAGE', 'FONT', 'MEDIA', 'FAVICON'])
+const LEGACY_EXT = /\.(jpe?g|png|gif|bmp)(?:$|[?#])/i
+
+/** Eski görsel biçimi (JPEG / PNG / GIF / BMP) — içerik türünden, yoksa uzantıdan (sunucu `legacyFormat`). */
+export function legacyImageFormat(item) {
+  const ct = String(item?.content_type || '').toLowerCase()
+  if (ct.startsWith('image/')) return /jpe?g|png|gif|bmp/.test(ct)
+  return LEGACY_EXT.test(String(item?.url || ''))
+}
+
+/** Sıkıştırılabilir metin (sunucu `compressibleText`): birinci taraf, 2xx/3xx, > 1 KB, HTML / CSS / JS / metin türü. */
+export function compressibleText(item) {
+  const s = num(item?.status)
+  if (item?.third_party === true || s === null || s < 200 || s >= 400 || !((num(item?.bytes) ?? 0) > RULE.textMin)) return false
+  if (TEXT_CATEGORIES.has(item?.category)) return true
+  const ct = String(item?.content_type || '').toLowerCase()
+  return ct.startsWith('text/') || /javascript|json|xml|svg/.test(ct)
+}
+
+/** Önbelleklenebilir durağan nesne (sunucu `cacheableStatic`): birinci taraf, 2xx, stil / betik / görsel / yazı tipi … */
+export function cacheableStatic(item) {
+  const s = num(item?.status)
+  return item?.third_party !== true && s !== null && s >= 200 && s < 300 && CACHEABLE.has(item?.category)
+}
+
+/** Eski kayıt için nesnenin bulguları (sunucu kuralıyla); `recCodes` = analizdeki öneri kodları (katkı bulguları için). */
+function fallbackFindings(it, recCodes) {
+  const out = new Set()
+  const page = isPageLoad(it)
+  const bytes = num(it?.bytes) ?? 0
+  const failed = isFailed(it)
+  const img = it?.category === 'IMAGE'
+  const ttl = num(it?.cache_ttl_s)
+  if (page && failed) out.add('BROKEN_RESOURCES')
+  if (!page && failed) out.add('BROKEN_LINKS')
+  if (page && img && bytes >= RULE.largeImage) out.add('LARGE_IMAGES')
+  if (page && img && legacyImageFormat(it) && bytes >= RULE.legacyMin && bytes < RULE.largeImage) out.add('MODERN_IMAGE_FORMAT')
+  if (page && img && (num(it?.width) ?? 0) > RULE.oversizedWidth) out.add('OVERSIZED_IMAGE_DIMENSIONS')
+  if (page && it?.compressed === false && compressibleText(it)) out.add('UNCOMPRESSED_TEXT')
+  if (page && cacheableStatic(it) && (ttl === null || ttl < RULE.cacheOkS)) out.add('NO_CACHE')
+  if (page && (num(it?.duration_ms) ?? 0) > RULE.slowMs) out.add('SLOW_OBJECTS')
+  if (page && (num(it?.redirects) ?? 0) > 0) out.add('REDIRECTED_OBJECTS')
+  if (it?.category === 'DOCUMENT' && bytes >= RULE.largeDoc) out.add('LARGE_DOCUMENTS')
+  if (page && recCodes.has('HEAVY_JS') && it?.category === 'JS') out.add('HEAVY_JS')
+  if (page && recCodes.has('HEAVY_CSS') && it?.category === 'CSS') out.add('HEAVY_CSS')
+  if (page && recCodes.has('HEAVY_FONTS') && it?.category === 'FONT') out.add('HEAVY_FONTS')
+  return FINDING_CODES.filter((c) => out.has(c))
+}
+
+/** Sunucu nesneye `findings` yazdı mı (sürümden sonraki analiz). */
+export const hasServerFindings = (item) => Array.isArray(item?.findings)
+
+/**
+ * Nesnelere bulgu ekler: sunucunun `findings`'i (bilinen kodlar, sabit sırada) esastır; alan YOKSA (eski analiz) istemci
+ * aynı kuralla hesaplar. Dönen nesnelerde `findings` hep dizidir, `findings_source` = `server` | `client`.
+ */
+export function withFindings(items, recommendations) {
+  const recCodes = new Set((Array.isArray(recommendations) ? recommendations : []).map((r) => r?.code).filter(Boolean))
+  return (Array.isArray(items) ? items : []).map((it) => {
+    if (hasServerFindings(it)) {
+      const set = new Set(it.findings)
+      return { ...it, findings: FINDING_CODES.filter((c) => set.has(c)), findings_source: 'server' }
+    }
+    return { ...it, findings: fallbackFindings(it, recCodes), findings_source: 'client' }
+  })
+}
+
+/** Bir öneriyle eşleşen nesne sayısı: sunucunun `item_count`'u; yoksa nesnelerdeki bulgu; o da yoksa adres sayısı. */
+export function recItemCount(rec, items) {
+  const n = num(rec?.item_count)
+  if (n !== null) return n
+  if (FINDING_SET.has(rec?.code) && Array.isArray(items)) return items.filter((it) => (it.findings || []).includes(rec.code)).length
+  return recItemUrls(rec).length
+}
+
+/** Öneri nesne listesine BULGU süzgeciyle mi (tam liste) yoksa adres listesiyle mi (en çok 10) bağlanır. */
+export const recFiltersByFinding = (rec) => FINDING_SET.has(rec?.code)
+
+/**
+ * Nesnenin bayt sayısı: sunucu boyutu bilemediyse (`size_source=unknown` — HEAD yanıtında Content-Length yok, bytes 0)
+ * null — "0 B" değil, "bilinmiyor".
+ */
+export function itemBytes(item) {
+  if (item?.size_source === 'unknown') return null
+  return num(item?.bytes)
+}
+
+/** Nesnenin insan okunur boyutu (bilinmeyen boyut → "Bilinmiyor"). */
+export function itemSizeText(item, t, locale) {
+  if (item?.size_source === 'unknown') return t('prs.obj.sizeUnknown')
+  return formatSize(item?.bytes, { truncated: item?.truncated === true, locale })
 }
 
 /** Boyut kovası anahtarı (xl … xs); bilinmeyen boyut null. */
@@ -248,13 +388,20 @@ function matchesScope(item, scope) {
   return true
 }
 
+function matchesStatus(item, status) {
+  if (status === 'failed') return isFailed(item)
+  if (status === 'unverified') return isUnverified(item)
+  return true
+}
+
 /** Süzgeçlerin hepsi (verilen boyut `skip` hariç) — sayaçlar için o boyut dışlanır. */
 function passes(item, f, skip) {
-  if (skip !== 'q' && !matchesSearchText(f.q, [item?.url, item?.content_type, item?.error])) return false
+  if (skip !== 'q' && !matchesSearchText(f.q, [item?.url, item?.content_type, item?.error, item?.host])) return false
   if (skip !== 'types' && f.types?.length && !f.types.includes(item?.category)) return false
-  if (skip !== 'buckets' && f.buckets?.length && !f.buckets.includes(sizeBucket(item?.bytes))) return false
+  if (skip !== 'buckets' && f.buckets?.length && !f.buckets.includes(sizeBucket(itemBytes(item)))) return false
+  if (skip !== 'findings' && f.findings?.length && !(item?.findings || []).some((c) => f.findings.includes(c))) return false
   if (skip !== 'scope' && !matchesScope(item, f.scope)) return false
-  if (skip !== 'status' && f.status === 'failed' && !isFailed(item)) return false
+  if (skip !== 'status' && !matchesStatus(item, f.status)) return false
   if (skip !== 'urls' && f.urls?.length && !f.urls.includes(item?.url)) return false
   return true
 }
@@ -274,18 +421,39 @@ export function countsBy(items, filters, dim) {
   const out = {}
   for (const it of Array.isArray(items) ? items : []) {
     if (!passes(it, f, dim)) continue
-    const k = dim === 'types' ? it?.category : sizeBucket(it?.bytes)
+    if (dim === 'findings') {
+      for (const c of it?.findings || []) out[c] = (out[c] || 0) + 1
+      continue
+    }
+    if (dim === 'scope') {
+      for (const s of SCOPES) if (matchesScope(it, s)) out[s] = (out[s] || 0) + 1
+      continue
+    }
+    if (dim === 'status') {
+      for (const s of STATUS_FILTERS) if (matchesStatus(it, s)) out[s] = (out[s] || 0) + 1
+      continue
+    }
+    const k = dim === 'types' ? it?.category : sizeBucket(itemBytes(it))
     if (k == null) continue
     out[k] = (out[k] || 0) + 1
   }
   return out
 }
 
-/** Etkin süzgeç sayısı (sıralama sayılmaz). */
+/** Etkin süzgeç sayısı (sıralama ve varsayılan kapsam sayılmaz). */
 export function activeFilterCount(filters) {
   const f = { ...DEFAULT_FILTERS, ...(filters || {}) }
-  return (f.q.trim() ? 1 : 0) + (f.types.length ? 1 : 0) + (f.buckets.length ? 1 : 0)
-    + (f.scope !== 'all' ? 1 : 0) + (f.status !== 'all' ? 1 : 0) + (f.urls?.length ? 1 : 0)
+  return (f.q.trim() ? 1 : 0) + (f.types.length ? 1 : 0) + (f.buckets.length ? 1 : 0) + (f.findings?.length ? 1 : 0)
+    + (f.scope !== DEFAULT_FILTERS.scope ? 1 : 0) + (f.status !== 'all' ? 1 : 0) + (f.urls?.length ? 1 : 0)
+}
+
+/**
+ * Seçili analiz değişince taşınmaması gereken süzgeçler (r177 H5): bir önerinin adres / bulgu süzgeci o analize aittir.
+ * Tür / boyut / kapsam / durum / arama / sıralama kalır.
+ */
+export function filtersForNewScan(filters) {
+  const f = { ...DEFAULT_FILTERS, ...(filters || {}) }
+  return f.urls.length || f.rec || f.findings.length ? { ...f, urls: [], rec: null, findings: [] } : filters
 }
 
 /** Kararlı sıralama; boş değerler HER İKİ yönde de sonda. Eşitlikte büyük boyut, sonra URL. */
@@ -298,13 +466,15 @@ export function sortItems(items, sort = 'size_desc', locale) {
     if (b === null) return -1
     return dir * (a - b)
   }
-  const byBytesDesc = (a, b) => nullsLast(num(a.it.bytes), num(b.it.bytes), -1)
+  const byBytesDesc = (a, b) => nullsLast(itemBytes(a.it), itemBytes(b.it), -1)
   const tie = (a, b) => byBytesDesc(a, b) || collator.compare(String(a.it.url ?? ''), String(b.it.url ?? '')) || a.i - b.i
   const cmp = {
     size_desc: (a, b) => byBytesDesc(a, b) || tie(a, b),
-    size_asc: (a, b) => nullsLast(num(a.it.bytes), num(b.it.bytes), 1) || tie(a, b),
+    size_asc: (a, b) => nullsLast(itemBytes(a.it), itemBytes(b.it), 1) || tie(a, b),
     time_desc: (a, b) => nullsLast(num(a.it.duration_ms), num(b.it.duration_ms), -1) || tie(a, b),
     time_asc: (a, b) => nullsLast(num(a.it.duration_ms), num(b.it.duration_ms), 1) || tie(a, b),
+    start_asc: (a, b) => nullsLast(num(a.it.start_ms), num(b.it.start_ms), 1)
+      || nullsLast(num(a.it.duration_ms), num(b.it.duration_ms), -1) || tie(a, b),
     type: (a, b) => {
       const ia = CATEGORIES.indexOf(a.it.category)
       const ib = CATEGORIES.indexOf(b.it.category)
@@ -334,6 +504,71 @@ export function waterfallBar(item, total) {
   const left = Math.max(0, Math.min(100, (s / total) * 100))
   const width = Math.max(0.6, Math.min(100 - left, (d / total) * 100))
   return { left, width }
+}
+
+/** Şelale görünümünün sıraları: başlangıca göre (varsayılan), süreye göre (en uzun önce) ya da bitişe göre. */
+export const WATERFALL_SORTS = ['start', 'duration', 'end']
+
+/**
+ * Şelale satırları: YALNIZ yükleme tahminine giren nesneler (başlangıç + süre bilinen). Geç yüklenen görseller, belgeler
+ * ve bağlantılar dışarıda kalır (`excluded` sayısı). Eşitlikte keşif sırası korunur.
+ */
+export function waterfallRows(items, sort = 'start') {
+  const list = (Array.isArray(items) ? items : []).map((it, i) => ({ it, i }))
+  const rows = list.filter(({ it }) => num(it?.start_ms) !== null && num(it?.duration_ms) !== null)
+  const s = (x) => num(x.it.start_ms)
+  const d = (x) => num(x.it.duration_ms)
+  const cmp = {
+    start: (a, b) => s(a) - s(b) || d(b) - d(a) || a.i - b.i,
+    duration: (a, b) => d(b) - d(a) || s(a) - s(b) || a.i - b.i,
+    end: (a, b) => (s(a) + d(a)) - (s(b) + d(b)) || a.i - b.i,
+  }[WATERFALL_SORTS.includes(sort) ? sort : 'start']
+  return { rows: rows.sort(cmp).map((x) => x.it), excluded: list.length - rows.length }
+}
+
+/** Ekseni "güzel" adımlarla böler: en çok `maxTicks` aralık; tavan adımın katı. ms adımları. */
+const MS_STEPS = [50, 100, 200, 250, 500, 1000, 2000, 2500, 5000, 10_000, 15_000, 20_000, 30_000, 60_000, 120_000, 300_000]
+export function niceMsTicks(maxMs, maxTicks = 5) {
+  const m = Math.max(1, num(maxMs) ?? 0)
+  const n = Math.max(1, Math.floor(maxTicks))
+  const step = MS_STEPS.find((st) => Math.ceil(m / st) <= n) ?? Math.ceil(m / n / 60_000) * 60_000
+  const top = Math.max(step, Math.ceil(m / step) * step)
+  const ticks = []
+  for (let v = 0; v <= top + 1e-9 && ticks.length <= n + 1; v += step) ticks.push(v)
+  return { step, top, ticks }
+}
+
+/** Bayt ekseni (1024 tabanlı): KB ya da MB'de yuvarlak adımlar ("0,5 MB / 1 MB / 1,5 MB" yerine "1 MB / 2 MB"). */
+const BYTE_STEPS = [
+  10 * KB, 25 * KB, 50 * KB, 100 * KB, 250 * KB, 500 * KB,
+  MB, 2 * MB, 5 * MB, 10 * MB, 20 * MB, 50 * MB, 100 * MB, 250 * MB, 500 * MB,
+]
+export function niceByteTicks(maxBytes, maxTicks = 3) {
+  const m = Math.max(1, num(maxBytes) ?? 0)
+  const n = Math.max(1, Math.floor(maxTicks))
+  const step = BYTE_STEPS.find((st) => Math.ceil(m / st) <= n) ?? Math.ceil(m / n / (500 * MB)) * 500 * MB
+  const top = Math.max(step, Math.ceil(m / step) * step)
+  const ticks = []
+  for (let v = 0; v <= top + 1e-9 && ticks.length <= n + 1; v += step) ticks.push(v)
+  return { step, top, ticks }
+}
+
+/** Not ekseni: her zaman 0–100, 25'er. */
+export const GRADE_TICKS = [0, 25, 50, 75, 100]
+
+/**
+ * Şelale çubuğunun parçaları (yüzde): bekleme (TTFB — ilk bayta kadar) ve indirme. TTFB bilinmiyorsa tek parça.
+ * `max` = eksenin tavanı.
+ */
+export function waterfallSegments(item, max) {
+  const s = num(item?.start_ms)
+  const d = num(item?.duration_ms)
+  if (s === null || d === null || !(max > 0)) return null
+  const left = Math.max(0, Math.min(100, (s / max) * 100))
+  const total = Math.max(0.6, Math.min(100 - left, (d / max) * 100))
+  const tt = num(item?.ttfb_ms)
+  const wait = tt !== null && d > 0 ? Math.min(total, total * Math.min(1, Math.max(0, tt) / d)) : 0
+  return { left, wait, download: Math.max(0, total - wait), total }
 }
 
 // ── Puan / ton / fark ───────────────────────────────────────────────────────
@@ -451,6 +686,32 @@ export function elapsedMs(scan, now = Date.now()) {
   return Math.max(0, e - s)
 }
 
+/**
+ * Süren koşunun GÖRÜLDÜĞÜ andaki geçen süresi (ms, r177 H13): sunucunun yanıt damgası (`timestamp`) varsa sunucu
+ * saatiyle (başlangıç da sunucu damgası — tarayıcı saati kaymış olsa da doğru), yoksa tarayıcı saatiyle; eksiye düşmez.
+ * Ekranda bu taban + o andan beri geçen MONOTON süre gösterilir.
+ */
+export function elapsedAtSighting(scan, serverTimestamp, browserNow = Date.now()) {
+  const s = toMs(scan?.started_at)
+  if (s === null) return null
+  const srv = toMs(serverTimestamp)
+  return Math.max(0, (srv ?? browserNow) - s)
+}
+
+/** Analiz kullanıcı tarafından iptal edildi mi (sunucu `cancelled` ya da hata kodu `CANCELLED`). */
+export const isCancelled = (scan) => scan?.cancelled === true || scan?.error_code === 'CANCELLED'
+
+/**
+ * İlerleme GERİ GİTMEZ (r177 H16): CSS'ten yeni nesne bulundukça toplam büyür ve yüzde düşebilirdi; ekranda görülen
+ * en yüksek değer korunur. `pct` null (belirsiz) → önceki değer.
+ */
+export function monotonicPct(prevMax, pct) {
+  const p = num(pct)
+  const m = num(prevMax)
+  if (p === null) return m
+  return m === null ? p : Math.max(m, p)
+}
+
 /** İlerleme yüzdesi; toplam bilinmiyorsa (0) null = belirsiz. */
 export function progressPct(scan) {
   const done = num(scan?.progress?.done)
@@ -521,20 +782,27 @@ export function trendDomain(points) {
 
 /**
  * Kategori kırılımı: önce sayfa yükü (bayta göre büyükten küçüğe), sonra sayfa boyutuna sayılmayanlar (belge / bağlantı).
- * `share` yalnız sayfa yükü kategorilerinde (sayfa boyutunun yüzdesi); `bar` en büyük kategoriye göre görsel ölçek.
+ * `share` yalnız sayfa yükü kategorilerinde (sayfa boyutunun yüzdesi). `bar` (r177 H3): sayfa yükü kategorisinde PAYIN
+ * kendisi (çubuk yanındaki yüzdeyle aynı ölçek); sayılmayanlarda kendi aralarındaki en büyüğe göre (ayrı ölçek) — bir
+ * 5 MB PDF sayfa yükü çubuklarını küçültmez.
  */
 export function categoryRows(categories, pageBytes) {
   const list = (Array.isArray(categories) ? categories : []).filter((c) => c && c.category)
-  const max = Math.max(0, ...list.map((c) => num(c.bytes) ?? 0))
+  const maxOther = Math.max(0, ...list.filter((c) => NOT_PAGE_LOAD.has(c.category)).map((c) => num(c.bytes) ?? 0))
+  const maxPage = Math.max(0, ...list.filter((c) => !NOT_PAGE_LOAD.has(c.category)).map((c) => num(c.bytes) ?? 0))
   const total = num(pageBytes)
   const rows = list.map((c) => {
     const bytes = num(c.bytes)
     const pageLoad = !NOT_PAGE_LOAD.has(c.category)
+    const share = pageLoad && total !== null && total > 0 && bytes !== null ? (bytes / total) * 100 : null
+    let bar = 0
+    if (bytes !== null) {
+      if (pageLoad) bar = share !== null ? Math.min(100, share) : (maxPage > 0 ? (bytes / maxPage) * 100 : 0)
+      else bar = maxOther > 0 ? (bytes / maxOther) * 100 : 0
+    }
     return {
       category: c.category, known: CATEGORIES.includes(c.category), count: num(c.count) ?? 0, bytes, durationMs: num(c.duration_ms),
-      pageLoad,
-      share: pageLoad && total !== null && total > 0 && bytes !== null ? (bytes / total) * 100 : null,
-      bar: max > 0 && bytes !== null ? (bytes / max) * 100 : 0,
+      pageLoad, share, bar,
     }
   })
   const order = (r) => (CATEGORIES.indexOf(r.category) < 0 ? 99 : CATEGORIES.indexOf(r.category))
@@ -553,10 +821,72 @@ export function weightPct(weight) {
 export function scoreRows(scores) {
   const list = (Array.isArray(scores) ? scores : []).filter((s) => s && s.key)
   const order = (k) => (SCORE_KEYS.indexOf(k) < 0 ? 99 : SCORE_KEYS.indexOf(k))
-  return [...list].sort((a, b) => order(a.key) - order(b.key)).map((s) => ({
-    key: s.key, known: SCORE_KEYS.includes(s.key), score: num(s.score), weight: weightPct(s.weight),
-    value: s.value, unit: s.unit, tone: scoreTone(s.score),
-  }))
+  return [...list].sort((a, b) => order(a.key) - order(b.key)).map((s) => {
+    const row = {
+      key: s.key, known: SCORE_KEYS.includes(s.key), score: num(s.score), weight: weightPct(s.weight),
+      value: s.value, unit: s.unit, tone: scoreTone(s.score), fullAt: num(s.full_at), zeroAt: num(s.zero_at),
+    }
+    row.lost = lostPoints({ ...row, lost: s.lost })
+    return row
+  })
+}
+
+/**
+ * Bileşenin nottan götürdüğü puan: sunucunun `lost` değeri (ağırlık × (100 − puan) / 100); eski kayıtta aynı formülle
+ * istemcide (1 ondalık). Puan ya da ağırlık bilinmiyorsa null.
+ */
+export function lostPoints(row) {
+  const l = num(row?.lost)
+  if (l !== null) return Math.max(0, l)
+  const s = num(row?.score)
+  const w = num(row?.weight)
+  if (s === null || w === null) return null
+  return Math.max(0, Math.round((w * (100 - s)) / 10) / 10)
+}
+
+/** "Notu en çok düşüren" bileşenler: kayıp > 0, büyükten küçüğe, en çok `n`. */
+export function topLosses(scores, n = 3) {
+  return scoreRows(scores).filter((r) => r.lost !== null && r.lost > 0)
+    .sort((a, b) => b.lost - a.lost || SCORE_KEYS.indexOf(a.key) - SCORE_KEYS.indexOf(b.key)).slice(0, n)
+}
+
+/** Puan bileşeni → onu iyileştiren öneri kodları (öncelik sırasıyla). */
+export const SCORE_RECS = {
+  load_time: ['SLOW_OBJECTS', 'OVERSIZED_PAGE', 'LARGE_IMAGES', 'HEAVY_JS'],
+  page_weight: ['OVERSIZED_PAGE', 'LARGE_IMAGES', 'HEAVY_JS', 'HEAVY_CSS', 'HEAVY_FONTS', 'THIRD_PARTY_HEAVY'],
+  images: ['LARGE_IMAGES', 'MODERN_IMAGE_FORMAT', 'OVERSIZED_IMAGE_DIMENSIONS'],
+  requests: ['TOO_MANY_REQUESTS'],
+  server_response: ['SLOW_SERVER'],
+  compression: ['UNCOMPRESSED_TEXT'],
+  caching: ['NO_CACHE'],
+  errors: ['BROKEN_RESOURCES'],
+}
+
+/** Bileşenin analizdeki ilgili önerisi (yoksa null). */
+export function relatedRec(key, recs) {
+  const codes = SCORE_RECS[key] || []
+  const list = Array.isArray(recs) ? recs : []
+  for (const c of codes) {
+    const r = list.find((x) => x?.code === c)
+    if (r) return r
+  }
+  return null
+}
+
+/** Bileşen hedefinin bir sınırını biriminde biçimler. */
+function formatBound(v, unit, locale) {
+  return formatScoreValue({ value: v, unit }, locale)
+}
+
+/**
+ * Bileşenin hedefleri (sunucu `full_at` / `zero_at`, `unit` biriminde): tam puan ve sıfır puan eşiği; yön eşiklerden
+ * (tam < sıfır → düşük daha iyi). Alanlar yoksa (eski analiz) null — hedef UYDURULMAZ.
+ */
+export function scoreTarget(row, locale) {
+  const full = num(row?.fullAt ?? row?.full_at)
+  const zero = num(row?.zeroAt ?? row?.zero_at)
+  if (full === null || zero === null || full === zero) return null
+  return { full: formatBound(full, row.unit, locale), zero: formatBound(zero, row.unit, locale), lowerIsBetter: full < zero }
 }
 
 /** Bileşenin ölçülen değeri birimine göre ("1,2 MB", "820 ms", "%45", "54"); bilinmeyen birim → yalın sayı. */
@@ -659,6 +989,211 @@ export function estImageMs(bytes, images) {
   return Math.round((b * tm) / tb)
 }
 
+/** Görselin ölçülmüş optimize boyutu (sunucu `optimized_bytes`, yalnız ölçülen görsellerde) ve kazanç yüzdesi. */
+export function optimizedImage(item) {
+  const b = num(item?.bytes)
+  const o = num(item?.optimized_bytes)
+  if (b === null || o === null || b <= 0 || o < 0) return null
+  // Yeniden sıkıştırma küçültmediyse (= ya da büyük) görsel "zaten iyi sıkıştırılmış"
+  return { bytes: b, optimized: o, savedPct: o >= b ? 0 : ((b - o) / b) * 100, alreadyGood: o >= b }
+}
+
+/** Ölçülmüş görsel kazancının metni: "1,6 MB → 400 KB (−%75)" ya da "zaten iyi sıkıştırılmış". */
+export function optimizedText(item, t, locale) {
+  const opt = optimizedImage(item)
+  if (!opt) return ''
+  if (opt.alreadyGood) return t('prs.img.alreadyGood')
+  return t('prs.img.optimizedTo', formatSize(opt.bytes, { locale }), formatSize(opt.optimized, { locale }), formatPct(opt.savedPct, locale, 0))
+}
+
+/** Ana belgenin TTFB'si (sunucu r177 `ttfb_ms` = YALNIZ son adımın ilk baytı; eski kayıtta `html_ttfb_ms`). */
+export const scanTtfb = (scan) => num(scan?.ttfb_ms) ?? num(scan?.html_ttfb_ms)
+
+// ── Üçüncü taraflar ──────────────────────────────────────────────────────────
+
+/** Üçüncü taraf satırı için kategori listesini bilinen sıraya dizer (bilinmeyen sonda). */
+function orderCategories(list) {
+  const set = new Set((Array.isArray(list) ? list : []).filter((c) => typeof c === 'string' && c))
+  return [...CATEGORIES.filter((c) => set.has(c)), ...[...set].filter((c) => !CATEGORIES.includes(c))]
+}
+
+/**
+ * Üçüncü taraf sunucular: analizin `third_parties` listesi (sunucu, en çok 20, bayta göre); eski analizde nesnelerden
+ * (yalnız sayfa yükü, `third_party=true`) aynı şekilde hesaplanır. Hiçbiri yoksa null (bölüm çizilmez).
+ * `source` = server | client.
+ */
+export function thirdPartyRows(analysis, items) {
+  if (Array.isArray(analysis?.third_parties)) {
+    return {
+      source: 'server',
+      rows: analysis.third_parties.filter((r) => r && r.host).map((r) => ({
+        host: String(r.host), count: num(r.count) ?? 0, bytes: num(r.bytes) ?? 0, failed: num(r.failed) ?? 0,
+        categories: orderCategories(r.categories),
+      })),
+    }
+  }
+  if (!Array.isArray(items)) return null
+  const by = new Map()
+  for (const it of items) {
+    if (it?.third_party !== true || !isPageLoad(it)) continue
+    const host = (it.host || hostOf(it.url) || '').toLowerCase()
+    if (!host) continue
+    const r = by.get(host) || { host, count: 0, bytes: 0, failed: 0, categories: [] }
+    r.count += 1
+    r.bytes += num(it.bytes) ?? 0
+    if (verdictOf(it) !== 'ok' && verdictOf(it) !== 'skipped') r.failed += 1
+    if (it.category && !r.categories.includes(it.category)) r.categories.push(it.category)
+    by.set(host, r)
+  }
+  if (!by.size) return { source: 'client', rows: [] }
+  const rows = [...by.values()].map((r) => ({ ...r, categories: orderCategories(r.categories) }))
+    .sort((a, b) => b.bytes - a.bytes || a.host.localeCompare(b.host)).slice(0, 20)
+  return { source: 'client', rows }
+}
+
+// ── Seçim, eski analiz, karşılaştırma ───────────────────────────────────────
+
+/** En yeni tamamlanmış analizin kimliği (yoksa null). */
+export function latestDoneId(items) {
+  return (Array.isArray(items) ? items : []).find((s) => s?.status === 'DONE')?.id ?? null
+}
+
+/** Karşılaştırmada seçilebilen analizler: yalnız tamamlanmış olanlar (yeniden eskiye). */
+export const comparableScans = (items) => (Array.isArray(items) ? items : []).filter((s) => s?.status === 'DONE')
+
+/** Analizin not algoritması sürümü (`algorithm_version`; alan yok = 1 — sürümden önceki kayıt). */
+export function algorithmVersion(scan, analysis) {
+  return num(analysis?.algorithm_version) ?? num(scan?.algorithm_version) ?? 1
+}
+
+/** Karşılaştırmanın KPI'ları (anahtar, alan, iyi yön) — ekran ve testler aynı listeyi kullanır. */
+export const COMPARE_KPIS = [
+  ['grade', 'grade', false], ['load', 'load_ms', true], ['ttfb', 'ttfb', true], ['size', 'page_bytes', true],
+  ['requests', 'request_count', true], ['images', 'image_bytes', true], ['broken', 'failed_count', true],
+]
+/** "Büyüyen nesne" eşiği: en az %10 VE en az 10 KB büyüme (ölçüm gürültüsü sayılmaz). */
+export const GROWN_MIN_PCT = 10
+export const GROWN_MIN_BYTES = 10 * KB
+/** Karşılaştırma listelerinde gösterilen en fazla nesne (fazlası "+N daha"). */
+export const COMPARE_LIST_MAX = 20
+
+/**
+ * İki tamamlanmış analizi karşılaştırır (İSTEMCİDE — sunucu ucu yok). `a`, `b` = `{ scan, analysis, items }`; sonuç
+ * ESKİ → YENİ yönündedir (başlangıç zamanına göre; eşitse kimliğe göre). Nesne listeleri yalnız İKİSİNDE de nesne
+ * ayrıntısı varsa (son 20 analiz) — yoksa `objects: null` (yalnız özet karşılaştırılır).
+ */
+export function compareScans(a, b) {
+  if (!a?.scan || !b?.scan) return null
+  const ta = toMs(a.scan.started_at) ?? 0
+  const tb = toMs(b.scan.started_at) ?? 0
+  const [older, newer] = ta < tb || (ta === tb && Number(a.scan.id) < Number(b.scan.id)) ? [a, b] : [b, a]
+  const algoOld = algorithmVersion(older.scan, older.analysis)
+  const algoNew = algorithmVersion(newer.scan, newer.analysis)
+  const val = (scan, field) => (field === 'ttfb' ? scanTtfb(scan) : num(scan[field]))
+  const kpis = COMPARE_KPIS.map(([key, field, lowerIsBetter]) => ({
+    key, field, old: val(older.scan, field), now: val(newer.scan, field),
+    d: delta(val(newer.scan, field), val(older.scan, field), { lowerIsBetter }),
+  }))
+  // Kategori farkı: iki taraftaki her tür (bilinen sıra)
+  const catOf = (an) => new Map((Array.isArray(an?.categories) ? an.categories : []).filter((c) => c?.category)
+    .map((c) => [c.category, { bytes: num(c.bytes) ?? 0, count: num(c.count) ?? 0 }]))
+  const co = catOf(older.analysis)
+  const cn = catOf(newer.analysis)
+  const cats = [...new Set([...co.keys(), ...cn.keys()])]
+    .sort((x, y) => (CATEGORIES.indexOf(x) < 0 ? 99 : CATEGORIES.indexOf(x)) - (CATEGORIES.indexOf(y) < 0 ? 99 : CATEGORIES.indexOf(y)))
+    .map((c) => {
+      const o = co.get(c) || { bytes: 0, count: 0 }
+      const n = cn.get(c) || { bytes: 0, count: 0 }
+      return { category: c, oldBytes: o.bytes, newBytes: n.bytes, oldCount: o.count, newCount: n.count, diff: n.bytes - o.bytes }
+    })
+  // Öneriler: yeni çıkan / çözülen (ALL_GOOD sayılmaz)
+  const codes = (an) => new Set((Array.isArray(an?.recommendations) ? an.recommendations : []).map((r) => r?.code)
+    .filter((c) => c && c !== 'ALL_GOOD'))
+  const ro = codes(older.analysis)
+  const rn = codes(newer.analysis)
+  const recNew = (Array.isArray(newer.analysis?.recommendations) ? newer.analysis.recommendations : []).filter((r) => r?.code && r.code !== 'ALL_GOOD' && !ro.has(r.code))
+  const recResolved = (Array.isArray(older.analysis?.recommendations) ? older.analysis.recommendations : []).filter((r) => r?.code && r.code !== 'ALL_GOOD' && !rn.has(r.code))
+  let objects = null
+  if (Array.isArray(older.items) && Array.isArray(newer.items)) {
+    const map = (list) => {
+      const m = new Map()
+      for (const it of list) if (it?.url && !m.has(it.url)) m.set(it.url, it)
+      return m
+    }
+    const mo = map(older.items)
+    const mn = map(newer.items)
+    const added = [...mn.values()].filter((it) => !mo.has(it.url)).sort((x, y) => (num(y.bytes) ?? -1) - (num(x.bytes) ?? -1))
+    const removed = [...mo.values()].filter((it) => !mn.has(it.url)).sort((x, y) => (num(y.bytes) ?? -1) - (num(x.bytes) ?? -1))
+    const grown = []
+    for (const [url, it] of mn) {
+      const prev = mo.get(url)
+      const nb = num(it.bytes)
+      const ob = num(prev?.bytes)
+      if (!prev || nb === null || ob === null) continue
+      const diff = nb - ob
+      if (diff >= GROWN_MIN_BYTES && (ob === 0 || (diff / ob) * 100 >= GROWN_MIN_PCT)) grown.push({ ...it, old_bytes: ob, diff })
+    }
+    grown.sort((x, y) => y.diff - x.diff)
+    objects = { added, removed, grown }
+  }
+  return { older, newer, algoMismatch: algoOld !== algoNew, algoOld, algoNew, kpis, categories: cats, recNew, recResolved, objects }
+}
+
+// ── URL durumu (paylaşılabilir bağlantı) ────────────────────────────────────
+
+/** Görünümler: pano, nesne listesi, şelale, geçmiş, karşılaştırma (URL `prs_v`; pano varsayılan — yazılmaz). */
+export const VIEWS = ['dash', 'objects', 'waterfall', 'history', 'compare']
+export const URL_SCAN = 'prs'
+export const URL_VIEW = 'prs_v'
+export const URL_OTHER = 'prs_b'
+
+/** Görünüm → üst bölüm (Pano / Nesneler / Geçmiş) ve alt kip. */
+export function sectionOfView(view) {
+  if (view === 'objects' || view === 'waterfall') return 'objects'
+  if (view === 'history' || view === 'compare') return 'history'
+  return 'overview'
+}
+export function viewOf(section, objectsMode, historyMode) {
+  if (section === 'objects') return objectsMode === 'waterfall' ? 'waterfall' : 'objects'
+  if (section === 'history') return historyMode === 'compare' ? 'compare' : 'history'
+  return 'dash'
+}
+
+const posInt = (v) => {
+  const n = Number(v)
+  return Number.isInteger(n) && n > 0 ? n : null
+}
+
+/** Adres çubuğundaki durum: `{ scanId, view, otherId }` (geçersiz değer null / `dash`). */
+export function parseUrlState(search) {
+  let p
+  try { p = new URLSearchParams(search || '') } catch { p = new URLSearchParams() }
+  const view = p.get(URL_VIEW)
+  return { scanId: posInt(p.get(URL_SCAN)), view: VIEWS.includes(view) ? view : 'dash', otherId: posInt(p.get(URL_OTHER)) }
+}
+
+/** URL'e yazılacak değerler (varsayılan görünüm ve karşılaştırma dışı ikinci analiz yazılmaz → null). */
+export function urlStateValues({ scanId, view, otherId }) {
+  return {
+    [URL_SCAN]: scanId ?? null,
+    [URL_VIEW]: view && view !== 'dash' && VIEWS.includes(view) ? view : null,
+    [URL_OTHER]: view === 'compare' && otherId != null ? otherId : null,
+  }
+}
+
+/**
+ * Paylaşılabilir mutlak bağlantı: izleme sayfası, detay penceresi bu izlemede, "Kaynak analizi" sekmesi, seçili analiz
+ * ve görünüm. (Adres çubuğuna güvenmez — debounce'lu yazım henüz düşmemiş olabilir.)
+ */
+export function resourceScanLink({ origin, monitorId, scanId, view, otherId }) {
+  const p = new URLSearchParams()
+  p.set('tab', 'page')
+  if (monitorId != null) p.set('monitor', String(monitorId))
+  p.set('mtab', 'resources')
+  for (const [k, v] of Object.entries(urlStateValues({ scanId, view, otherId }))) if (v != null) p.set(k, String(v))
+  return `${origin || ''}/?${p.toString()}`
+}
+
 // ── Dışa aktarım ─────────────────────────────────────────────────────────────
 
 /** Dosya adı parçası: Türkçe harfler sadeleşir, harf / rakam dışı "-", en çok 60 karakter. */
@@ -691,12 +1226,27 @@ const yesNo = (v, t) => (v === true ? t('prs.export.yes') : v === false ? t('prs
 /** Kategori etiketi (bilinmeyen kategori "Diğer"). */
 export const categoryLabel = (c, t) => t(`prs.cat.${CATEGORIES.includes(c) ? c : 'OTHER'}`)
 
-/** Durum metni: 0 → "bağlantı hatası", diğerleri HTTP kodu. */
+/**
+ * Durum metni (r177 H6): 0 → "Yanıt yok" (bağlantı kurulamadı DA olabilir, yanıt gecikti DE — nedeni sorun satırı
+ * söyler; eskiden "Bağlantı kurulamadı" + "Yanıt zaman aşımı" aynı satırda çelişiyordu), diğerleri HTTP kodu.
+ */
 export function statusText(item, t) {
+  // İndirilmeyen nesne (preload=none medya): sunucu bilerek istemedi — "yanıt yok" değil
+  if (verdictOf(item) === 'skipped') return t('prs.verdict.obj.skipped')
   const s = num(item?.status)
   if (s === null) return '—'
-  return s === 0 ? t('prs.obj.transport') : String(s)
+  return s === 0 ? t('prs.obj.noResponse') : String(s)
 }
+
+/** Kararın kısa metni (ok → boş: durum kodu yeterli). */
+export function verdictText(item, t) {
+  const v = verdictOf(item)
+  // ok → durum kodu yeter; skipped → durum metni zaten "İndirilmedi"
+  return v === 'ok' || v === 'skipped' ? '' : t(`prs.verdict.obj.${v}`)
+}
+
+/** Kararın tonu: kırık tehlike; doğrulanamadı / engellendi / indirilmedi NÖTR (amber değil — kırık değiller). */
+export const verdictTone = (item) => (verdictOf(item) === 'broken' ? 'danger' : 'muted')
 
 /** Önbellek metni (dışa aktarım ve kart). */
 export function cacheText(item, t, locale) {
@@ -704,6 +1254,18 @@ export function cacheText(item, t, locale) {
   if (st === 'none') return t('prs.obj.cacheNone')
   if (st === 'nostore') return t('prs.obj.cacheNoStore')
   return t('prs.obj.cacheTtl', formatTtl(item.cache_ttl_s, locale))
+}
+
+/** Bulgunun kısa adı (rozet / süzgeç / dışa aktarım). */
+export const findingLabel = (code, t) => t(FINDING_SET.has(code) ? `prs.finding.${code}` : 'prs.finding.other')
+
+/** Nesnenin bulunduğu yer: `page` → sayfanın HTML'i; adres → o CSS; alan yoksa CSS bayrağından (adres bilinmez). */
+export function foundInText(item, t) {
+  const f = item?.found_in
+  if (f === 'page') return t('prs.od.foundPage')
+  if (typeof f === 'string' && f.trim()) return t('prs.od.foundCss', f)
+  if (item?.from_css === true) return t('prs.od.foundCssUnknown')
+  return item?.found_in === undefined ? '' : t('prs.od.foundPage')
 }
 
 /** Nesneler sayfası: başlık + satırlar (sayılar SAYI hücresi — Excel'de sıralanabilir / toplanabilir). */
@@ -714,19 +1276,48 @@ export function objectSheetRows(items, t, locale) {
     t('prs.export.col.duration'), t('prs.export.col.start'), t('prs.export.col.pageLoad'), t('prs.export.col.thirdParty'),
     t('prs.export.col.compressed'), t('prs.export.col.cache'), t('prs.export.col.width'), t('prs.export.col.height'),
     t('prs.export.col.redirects'), t('prs.export.col.fromCss'), t('prs.export.col.lazy'), t('prs.export.col.truncated'),
-    t('prs.export.col.problem'),
+    t('prs.export.col.problem'), t('prs.export.col.verdict'), t('prs.export.col.findings'), t('prs.export.col.host'),
+    t('prs.export.col.via'), t('prs.export.col.foundIn'), t('prs.export.col.finalUrl'), t('prs.export.col.encoding'),
+    t('prs.export.col.cacheControl'), t('prs.export.col.optimized'),
   ]
   const rows = (Array.isArray(items) ? items : []).map((it) => {
-    const bucket = sizeBucket(it.bytes)
+    const bucket = sizeBucket(itemBytes(it))
+    const h = it.headers && typeof it.headers === 'object' ? it.headers : {}
     return [
       it.url ?? '', categoryLabel(it.category, t), it.content_type ?? '', statusText(it, t),
-      num(it.bytes), formatSize(it.bytes, { truncated: it.truncated === true, locale }), bucket ? t(`prs.bucket.${bucket}`) : '',
+      itemBytes(it), itemSizeText(it, t, locale), bucket ? t(`prs.bucket.${bucket}`) : '',
       num(it.ttfb_ms), num(it.duration_ms), num(it.start_ms), yesNo(isPageLoad(it), t), yesNo(it.third_party, t),
       yesNo(it.compressed, t), cacheText(it, t, locale), num(it.width), num(it.height), num(it.redirects),
       yesNo(it.from_css, t), yesNo(it.lazy, t), yesNo(it.truncated, t), problemText(it.error, t),
+      verdictText(it, t), (Array.isArray(it.findings) ? it.findings : []).map((c) => findingLabel(c, t)).join(', '),
+      it.host || hostOf(it.url) || '', it.via === 'proxy' ? t('prs.via.proxy') : it.via === 'direct' ? t('prs.via.direct') : '',
+      foundInText(it, t), it.final_url || '', h.content_encoding || '', h.cache_control || '', num(it.optimized_bytes),
     ]
   })
   return [head, ...rows]
+}
+
+/** Türler sayfası: tür, sayfa yüküne sayılır mı, nesne sayısı, bayt, sayfa payı. */
+export function categorySheetRows(categories, pageBytes, t, locale) {
+  return [
+    [t('prs.export.col.category'), t('prs.export.col.pageLoad'), t('prs.export.col.count'), t('prs.export.col.bytes'),
+      t('prs.export.col.size'), t('prs.export.col.share')],
+    ...categoryRows(categories, pageBytes).map((r) => [
+      categoryLabel(r.category, t), yesNo(r.pageLoad, t), r.count, r.bytes, formatSize(r.bytes, { locale }),
+      r.share != null ? formatPct(r.share, locale) : '',
+    ]),
+  ]
+}
+
+/** Üçüncü taraflar sayfası. */
+export function thirdPartySheetRows(tp, t, locale) {
+  return [
+    [t('prs.export.col.host'), t('prs.export.col.count'), t('prs.export.col.bytes'), t('prs.export.col.size'),
+      t('prs.export.col.brokenCount'), t('prs.export.col.categories')],
+    ...(tp?.rows || []).map((r) => [
+      r.host, r.count, r.bytes, formatSize(r.bytes, { locale }), r.failed, r.categories.map((c) => categoryLabel(c, t)).join(', '),
+    ]),
+  ]
 }
 
 /** Özet sayfası: [alan, değer] satırları. */
@@ -744,7 +1335,9 @@ export function summarySheetRows(monitor, scan, analysis, t, locale, fmtDate = (
     [t('prs.grade'), num(s.grade) !== null
       ? `${num(s.grade)} / 100${letter ? ` (${letter})` : ''}${isCapped(s) ? ` · ${t('prs.grade.partial')}` : ''}` : ''],
     [t('prs.kpi.load'), formatMs(s.load_ms, locale)],
-    [t('prs.kpi.ttfb'), formatMs(s.html_ttfb_ms, locale)],
+    [t('prs.kpi.ttfb'), formatMs(scanTtfb(s), locale)],
+    [t('prs.export.redirects'), num(s.redirect_count) !== null
+      ? t('prs.export.redirectsValue', formatNumber(s.redirect_count, locale), formatMs(s.redirect_ms ?? 0, locale)) : ''],
     [t('prs.kpi.htmlTime'), formatMs(s.html_ms, locale)],
     [t('prs.kpi.size'), formatSize(s.page_bytes, { locale })],
     [t('prs.export.pageBytes'), num(s.page_bytes)],
@@ -754,25 +1347,35 @@ export function summarySheetRows(monitor, scan, analysis, t, locale, fmtDate = (
     [t('prs.kpi.links'), `${formatNumber(s.link_count, locale)} · ${formatSize(s.link_bytes, { locale })}`],
     [t('prs.kpi.broken'), num(s.failed_count)],
     [t('prs.export.capped'), s.capped === true ? t('prs.export.yes') : t('prs.export.no')],
+    [t('prs.export.algorithm'), String(algorithmVersion(s, analysis))],
     [t('prs.export.estimateNote'), plural(t, 'prs.method.estimate', analysis?.timing?.parallel ?? 6, analysis?.timing?.parallel ?? 6)],
+    [t('prs.export.methodNote'), t('prs.method.notLighthouse')],
   ]
+}
+
+/** Bileşen hedefinin metni ("Tam puan ≤ 1 sn · 0 puan ≥ 12 sn"; hedef yoksa boş). */
+export function scoreTargetText(row, t, locale) {
+  const tg = scoreTarget(row, locale)
+  if (!tg) return ''
+  return t(tg.lowerIsBetter ? 'prs.score.targetLow' : 'prs.score.targetHigh', tg.full, tg.zero)
 }
 
 /** Puan bileşenleri sayfası. */
 export function scoreSheetRows(scores, t, locale) {
   return [
-    [t('prs.export.col.component'), t('prs.export.col.score'), t('prs.export.col.weight'), t('prs.export.col.measured')],
+    [t('prs.export.col.component'), t('prs.export.col.score'), t('prs.export.col.weight'), t('prs.export.col.measured'),
+      t('prs.export.col.lost'), t('prs.export.col.target')],
     ...scoreRows(scores).map((r) => [
-      t(scoreLabelKey(r.key)), r.score, r.weight, formatScoreValue(r, locale),
+      t(scoreLabelKey(r.key)), r.score, r.weight, formatScoreValue(r, locale), r.lost, scoreTargetText(r, t, locale),
     ]),
   ]
 }
 
 /** Öneriler sayfası (metinler i18n'den, parametreler biçimlenmiş). */
-export function recommendationSheetRows(recs, t, locale) {
+export function recommendationSheetRows(recs, t, locale, items = null) {
   return [
     [t('prs.export.col.severity'), t('prs.export.col.recommendation'), t('prs.export.col.detail'), t('prs.export.col.saving'),
-      t('prs.export.col.objects')],
+      t('prs.export.col.objects'), t('prs.export.col.count')],
     ...sortRecommendations(recs).map((r) => {
       const args = recommendationArgs(r, locale, 'title')
       const bodyArgs = recommendationArgs(r, locale, 'body')
@@ -786,6 +1389,7 @@ export function recommendationSheetRows(recs, t, locale) {
           .filter(Boolean).join(' — '),
         sv ? [sv.bytes, sv.ms].filter(Boolean).join(' · ') : '',
         urls.join('\n'),
+        r.code === 'ALL_GOOD' ? null : recItemCount(r, items),
       ]
     }),
   ]
@@ -797,13 +1401,15 @@ export function imageSheetRows(images, pageBytes, t, locale) {
   const pb = num(pageBytes)
   return [
     [t('prs.export.col.url'), t('prs.export.col.bytes'), t('prs.export.col.size'), t('prs.export.col.dimensions'),
-      t('prs.export.col.est4g'), t('prs.export.col.share')],
+      t('prs.export.col.est4g'), t('prs.export.col.share'), t('prs.export.col.optimized')],
     ...top.map((it) => {
       const est = estImageMs(it.bytes, images)
       const b = num(it.bytes)
+      const opt = optimizedImage(it)
       return [
         it.url ?? '', b, formatSize(b, { truncated: it.truncated === true, locale }), dimensionsText(it),
         est !== null ? formatMs(est, locale) : '', pb && b !== null ? formatPct((b / pb) * 100, locale) : '',
+        opt ? formatSize(opt.optimized, { locale }) : '',
       ]
     }),
   ]
