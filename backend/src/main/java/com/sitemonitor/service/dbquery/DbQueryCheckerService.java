@@ -59,7 +59,9 @@ public class DbQueryCheckerService {
 
     public static final String DB_GUARD_REJECTED = "DB_GUARD_REJECTED", DB_PROFILE_MISSING = "DB_PROFILE_MISSING",
             DB_PROFILE_OTHER_TEAM = "DB_PROFILE_OTHER_TEAM", DB_SECRET_UNREADABLE = "DB_SECRET_UNREADABLE",
-            DB_BUSY = "DB_BUSY";
+            DB_BUSY = "DB_BUSY",
+            /** SKIPPED kodu: SiteMonitor'ün kendi tarafında beklenmeyen hata (izlenen veritabanının suçu değil — alarm yok). */
+            DB_INTERNAL = "DB_INTERNAL";
 
     public static final String KEY_MAX_CONCURRENCY = "site.monitor.dbquery.max-concurrency",
             KEY_PER_CONNECTION = "site.monitor.dbquery.per-connection-concurrency",
@@ -91,7 +93,7 @@ public class DbQueryCheckerService {
      * @param rowsTruncated  mailRows satır / kolon sınırında kesildi
      * @param failureReason  FAIL kodu (DB_UNREACHABLE, DB_DNS, DB_TIMEOUT, DB_AUTH, DB_SQL_ERROR, DB_DRIVER, DB_BLOCKED,
      *                       DB_GUARD_REJECTED, DB_PROFILE_MISSING, DB_PROFILE_OTHER_TEAM, DB_SECRET_UNREADABLE) ya da
-     *                       SKIPPED kodu (DB_BUSY)
+     *                       SKIPPED kodu (DB_BUSY — izin dolu ya da denetim süre sınırında; DB_INTERNAL — iç hata)
      * @param error          maskeli hata metni (≤ 500)
      * @param checkedAt      UTC ISO (yyyy-MM-dd'T'HH:mm:ss)
      */
@@ -136,12 +138,14 @@ public class DbQueryCheckerService {
         try {
             return execute(m, m == null ? null : m.getId(), true, manual ? interactiveWaitMs : scheduledWaitMs, true);
         } catch (RuntimeException e) {
+            // İç hata (ör. SiteMonitor'ün kendi veritabanı) izlenen veritabanının kesintisi DEĞİLDİR → ATLA, alarm açma
             log.warn("Veritabanı sorgu izlemesi çalıştırılamadı (#{}): {}", m == null ? null : m.getId(),
                     e.getClass().getSimpleName());
-            return fail(m, DbQueryErrors.DB_DRIVER, Msg.t("Sorgu çalıştırılamadı (iç hata) · Beklenmeyen bir hata oluştu · "
-                    + "Bir sonraki çalıştırmayı bekleyin; sürerse yöneticinize bildirin.", "The query could not run (internal "
-                    + "error) · An unexpected error occurred · Wait for the next run; if it persists, tell your administrator."),
-                    null, null);
+            return skipped(m, null, DB_INTERNAL, Msg.t("Sorgu bu turda çalıştırılamadı (iç hata) · SiteMonitor tarafında "
+                    + "beklenmeyen bir hata oluştu; izlenen veritabanı sorumlu değil · Bir sonraki çalıştırmayı bekleyin; "
+                    + "sürerse yöneticinize bildirin.", "The query could not run this round (internal error) · An unexpected "
+                    + "error occurred on the SiteMonitor side; the monitored database is not to blame · Wait for the next "
+                    + "run; if it persists, tell your administrator."));
         }
     }
 
@@ -155,9 +159,9 @@ public class DbQueryCheckerService {
             return execute(draft, previousForMonitorId, false, interactiveWaitMs, false);
         } catch (RuntimeException e) {
             log.warn("Veritabanı sorgusu denenemedi: {}", e.getClass().getSimpleName());
-            return fail(draft, DbQueryErrors.DB_DRIVER, Msg.t("Sorgu denenemedi (iç hata) · Beklenmeyen bir hata oluştu · "
+            return skipped(draft, null, DB_INTERNAL, Msg.t("Sorgu denenemedi (iç hata) · Beklenmeyen bir hata oluştu · "
                     + "Biraz sonra yeniden deneyin.", "The query could not be tried (internal error) · An unexpected error "
-                    + "occurred · Try again shortly."), null, null);
+                    + "occurred · Try again shortly."));
         }
     }
 
@@ -292,7 +296,7 @@ public class DbQueryCheckerService {
         if (type == null) return fail(m, DbQueryErrors.DB_DRIVER, msgUnknownType(), p.getId(), null);
 
         DbQuerySqlGuard.Result guard = DbQuerySqlGuard.check(m.getSqlText(), type);
-        if (DbQuerySqlGuard.isTimeout(guard)) return skipped(m, p.getId(), msgBusy());
+        if (DbQuerySqlGuard.isTimeout(guard)) return skipped(m, p.getId(), DB_BUSY, msgBusy());
         if (!guard.ok()) {
             List<String> msgs = new ArrayList<>();
             for (DbQuerySqlGuard.Violation v : guard.violations()) {
@@ -318,7 +322,7 @@ public class DbQueryCheckerService {
         for (DbQueryRules.Rule r : rules) if (r.column() != null) discard.remove(r.column().trim().toLowerCase(Locale.ROOT));
 
         Lease lease = acquire(p.getId(), waitMs);
-        if (lease == null) return skipped(m, p.getId(), msgBusy());
+        if (lease == null) return skipped(m, p.getId(), DB_BUSY, msgBusy());
         DbQueryRunner.QueryResult qr;
         try {
             qr = runner.run(spec, m.getSqlText(), timeout, maxRows, discard);
@@ -511,9 +515,9 @@ public class DbQueryCheckerService {
                 m == null ? null : sqlHash(m.getSqlText()), profileId, version);
     }
 
-    private Result skipped(DbQueryMonitor m, Long profileId, String error) {
+    private Result skipped(DbQueryMonitor m, Long profileId, String code, String error) {
         return new Result(STATUS_SKIPPED, DbQueryEvaluator.LEVEL_NONE, 0, null, false, List.of(), List.of(), List.of(),
-                List.of(), false, List.of(), null, false, error, DB_BUSY, nowIso(),
+                List.of(), false, List.of(), null, false, error, code, nowIso(),
                 m == null ? null : sqlHash(m.getSqlText()), profileId, null);
     }
 

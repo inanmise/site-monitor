@@ -265,6 +265,15 @@ class DbQueryCheckerServiceTest {
     }
 
     @Test
+    void internalErrorIsSkippedNotAnAlarm() {
+        when(profiles.findById(7L)).thenThrow(new org.springframework.dao.DataAccessResourceFailureException("db down"));
+        DbQueryCheckerService.Result r = svc.check(monitor("SELECT 1", null), false);
+        assertThat(r.status()).isEqualTo("SKIPPED");
+        assertThat(r.failureReason()).isEqualTo("DB_INTERNAL");
+        verifyNoInteractions(runner);
+    }
+
+    @Test
     void networkClassCodes() {
         assertThat(DbQueryCheckerService.isNetworkClass("DB_UNREACHABLE")).isTrue();
         assertThat(DbQueryCheckerService.isNetworkClass("DB_DNS")).isTrue();
