@@ -343,6 +343,8 @@ public class MonitoringController {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private DbQueryAlertRowsRepository dbQueryAlertRowsRepo;
     @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.dbquery.DbQueryAlertRowsService dbQueryAlertRowsService;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
     private DbConnectionProfileRepository dbConnectionRepo;
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private DbQueryCheckerService dbQueryChecker;
@@ -5300,6 +5302,7 @@ public class MonitoringController {
         Boolean wasActive = m.getActive();
         String oldSql = m.getSqlText();
         Long oldProfile = m.getProfileId();
+        List<Object> oldSchedule = dbqScheduleColumns(m);
         String intendedName = body.get("name") != null ? body.get("name").toString().trim() : oldName;
         if (intendedName == null || intendedName.isBlank()) throw DbQueryApiException.field(null, "name", com.sitemonitor.util.Msg.t(
                 "İzlemeye bir ad verin — alarm ve mail bu adla anılır.", "Give the monitor a name — alarms and mails use this name."));
@@ -5318,6 +5321,8 @@ public class MonitoringController {
         throwDbqErrors(errs, violations, sched.code());
         DbQueryCheckerService.PlanVerdict plan = queryChanged ? dbqPlanOnSave(profile, m.getSqlText()) : null;
         if (sched.spec() != null) DbQuerySchedule.apply(sched.spec(), m, Instant.now(), dbqHolidays());
+        // Zamanlama değişti: eski plan (next_run_at) geçersiz — zamanlayıcı yeni tanımdan baştan planlar ("first").
+        if (!oldSchedule.equals(dbqScheduleColumns(m))) m.setNextRunAt(null);
         m.setSqlHash(dbqSqlHash(m.getSqlText()));
         if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, m.getTeamId(), body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
         m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
@@ -5342,6 +5347,12 @@ public class MonitoringController {
         return ok(out);
     }
 
+    /** Zamanlama kolonları (değişti mi karşılaştırması — next_run_at sıfırlanır). */
+    private static List<Object> dbqScheduleColumns(DbQueryMonitor m) {
+        return java.util.Arrays.asList(m.getScheduleMode(), m.getIntervalSeconds(), m.getCronExpression(), m.getWindowsJson(),
+                m.getBlackoutJson(), m.getSkipHolidays(), m.getSkipDatesJson());
+    }
+
     /** Kalıcı silme: kontroller + alarm anı satırları + izleme TEK işlemde; açık alarmlar sessizce kapanır (yalnız bu izlemenin). */
     @org.springframework.transaction.annotation.Transactional
     @DeleteMapping("/dbquery/{id}")
@@ -5355,6 +5366,7 @@ public class MonitoringController {
         escalationService.resolveOpenAlertsSilently(m.getName(), DBQUERY_ALERT_TYPES, "Sistem (izleme silindi)",
                 ownerCtx(m.getId(), m.getTeamId(), null));
         if (dbQueryAlertRowsRepo != null) dbQueryAlertRowsRepo.deleteByMonitorId(m.getId());
+        if (dbQueryAlertRowsService != null) dbQueryAlertRowsService.forget(m.getId());   // lider belleğindeki son satırlar
         dbqCheckRepo().deleteByMonitorId(m.getId());
         repo.delete(m);
         activityLog.recordLifecycle(ACT_DBQUERY, m.getId(), m.getName(), m.getName(), m.getTeamId(), "DELETED", actor(session));

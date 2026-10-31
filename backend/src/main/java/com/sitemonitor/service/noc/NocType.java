@@ -37,8 +37,8 @@ public enum NocType {
             "PORT_MONITOR", "monitoring.crud", "Port"),
     DOMAIN("domain_monitors", "domain", ActivityLogService.DOMAIN, MonitorHistoryService.DOMAIN,
             "DOMAIN_MONITOR", "monitoring.crud", "Alan Adı"),
-    // Veritabanı sorgu izlemesi (11. tür, 2026-10-31). Değişiklik geçmişi türü kalıcı "dbquery" (MonitorHistoryService.DBQUERY).
-    DBQUERY("dbquery_monitors", "dbquery", ActivityLogService.DBQUERY, "dbquery",
+    // Veritabanı sorgu izlemesi (11. tür, 2026-10-31).
+    DBQUERY("dbquery_monitors", "dbquery", ActivityLogService.DBQUERY, MonitorHistoryService.DBQUERY,
             "DBQUERY_MONITOR", "monitoring.crud", "Veritabanı Sorgusu");
 
     public final String table;

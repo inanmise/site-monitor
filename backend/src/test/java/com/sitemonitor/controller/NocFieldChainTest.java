@@ -148,7 +148,7 @@ class NocFieldChainTest {
                 com.sitemonitor.service.noc.NocType.KEYWORD, "updateKeyword", com.sitemonitor.service.noc.NocType.PAGE, "updatePage",
                 com.sitemonitor.service.noc.NocType.PAGESPEED, "updatePageSpeed", com.sitemonitor.service.noc.NocType.SCRIPTED, "updateScripted",
                 com.sitemonitor.service.noc.NocType.DOMAIN, "updateDomain", com.sitemonitor.service.noc.NocType.PORT, "updatePort",
-                com.sitemonitor.service.noc.NocType.DNS, "updateDns");
+                com.sitemonitor.service.noc.NocType.DNS, "updateDns", com.sitemonitor.service.noc.NocType.DBQUERY, "updateDbQuery");
         List<String> wrong = new ArrayList<>();
         for (var e : endpoint.entrySet()) {
             String body = endpointBody(mc, e.getValue());

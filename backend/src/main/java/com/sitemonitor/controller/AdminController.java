@@ -3439,7 +3439,9 @@ public class AdminController {
                         "monitors", moved.get("monitors"), "users", moved.get("users"), "contacts", moved.get("contacts"), "groups", moved.get("groups"),
                         // Takım belgeleri (2026-10-22, ADMIN-1): kanal teknik hata raporları, şablon kütüphanesi, bakım pencereleri
                         "te_channels", moved.get("te_channels"), "te_reports", moved.get("te_reports"),
-                        "te_templates", moved.get("te_templates"), "maintenance_windows", moved.get("maintenance_windows")));
+                        "te_templates", moved.get("te_templates"), "maintenance_windows", moved.get("maintenance_windows"),
+                        // Veritabanı sorgu izlemesi bağlantıları ve sorgu şablonları (2026-10-31) — takım belgeleri
+                        "dbq_connections", moved.get("dbq_connections"), "dbq_templates", moved.get("dbq_templates")));
         return ok(Map.of("data", moved));
     }
 
@@ -3515,10 +3517,11 @@ public class AdminController {
         Map<String, Object> impact = teamAdminService.impact(id);
         if (impact != null && !impact.isEmpty() && !Boolean.TRUE.equals(impact.get("empty"))) {
             throw new IllegalStateException(com.sitemonitor.util.Msg.t(
-                    "Bu takıma bağlı alan adı, izleme, kişi, bildirim grubu, teknik hata raporu kanalı / şablonu ya da süren"
-                            + " bakım penceresi var — önce başka bir takıma taşıyın.",
+                    "Bu takıma bağlı alan adı, izleme, kişi, bildirim grubu, teknik hata raporu kanalı / şablonu, veritabanı"
+                            + " bağlantısı / sorgu şablonu ya da süren bakım penceresi var — önce başka bir takıma taşıyın.",
                     "This team still has domains, monitors, people, notification groups, technical error report channels /"
-                            + " templates or live maintenance windows — move them to another team first."));
+                            + " templates, database connections / query templates or live maintenance windows — move them to"
+                            + " another team first."));
         }
         userService.deleteTeam(id);
         if (onCallService != null) onCallService.deleteForTeam(id);
