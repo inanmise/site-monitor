@@ -201,6 +201,7 @@ const SPECIAL = {
   // Sayfa Bütünlüğü / Sayfa Hızı uçtan uca tanılama (2026-10-05)
   PAGE_DIAGNOSTICS_RUN: 'audit.ev.PAGE_DIAGNOSTICS_RUN',
   PAGE_RESOURCE_SCAN_RUN: 'audit.ev.PAGE_RESOURCE_SCAN_RUN',
+  PAGE_RESOURCE_SCAN_CANCEL: 'audit.ev.PAGE_RESOURCE_SCAN_CANCEL',
   PAGESPEED_DIAGNOSTICS_RUN: 'audit.ev.PAGESPEED_DIAGNOSTICS_RUN',
   // Sistem Bakım Modu (2026-10-02): planla / hemen bakıma al / düzenle / başladı / uzat / hemen bitir / bitti / iptal /
   // duyuru e-postası + bakım başlayınca kesilen oturum — kural adı/eylem eşlemesine uymaz

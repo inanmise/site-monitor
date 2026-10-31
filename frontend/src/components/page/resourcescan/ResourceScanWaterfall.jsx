@@ -4,7 +4,7 @@ import { useT, useDateLocale } from '../../../i18n/index.jsx'
 import SegmentedControl from '../../ui/SegmentedControl.jsx'
 import StatusBlock from '../../ui/StatusBlock.jsx'
 import {
-  WATERFALL_SORTS, categoryLabel, formatMs, formatNumber, formatSize, niceMsTicks, plural, verdictOf, waterfallRows,
+  WATERFALL_SORTS, categoryLabel, formatMs, formatNumber, itemSizeText, niceMsTicks, plural, verdictOf, waterfallRows,
   waterfallSegments, waterfallTotal,
 } from './resourceScanModel.js'
 import { CATEGORY_ICON, TOUCH, WRAP } from './ResourceScanParts.jsx'
@@ -108,7 +108,7 @@ function WaterfallRow({ item, max, loadPct, t, locale, onOpen }) {
       </div>
       <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-1">
         <span data-slot="prs-wf-tip" className={cn('text-[11px] text-muted-foreground tabular-nums', WRAP)}>
-          {tip} · {formatSize(item.bytes, { truncated: item.truncated === true, locale })}
+          {tip} · {itemSizeText(item, t, locale)}
         </span>
         {onOpen && (
           <Button type="button" variant="ghost" size="sm" data-slot="prs-obj-open" onClick={() => onOpen(item)}

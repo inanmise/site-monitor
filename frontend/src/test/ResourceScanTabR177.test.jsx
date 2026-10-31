@@ -103,6 +103,13 @@ describe('pano — notun nedeni, hedefler, sıra', () => {
     expect(tile.textContent).toMatch(/Ölçülen kazanç/)
     expect(slot('prs-img-optimized').textContent).toMatch(/1,6 MB → 400 KB/)
     expect(slots('prs-kpi').find((k) => k.getAttribute('data-key') === 'load').textContent).toMatch(/2 yönlendirme \(480 ms\)/)
+    // yeniden sıkıştırma küçültmediyse (optimized_bytes = orijinal) "zaten iyi sıkıştırılmış" — kazanç gibi gösterilmez
+    const good = slots('prs-img-optimized').find((x) => x.getAttribute('data-already-good') === 'true')
+    expect(good.textContent).toBe('Zaten iyi sıkıştırılmış')
+    // ölçülen + tahmini kazanç ayrımı
+    expect(tile.textContent).toMatch(/2 görsel ölçüldü/)
+    // TTFB: sunucunun `ttfb_ms` alanı (son adım) `html_ttfb_ms`'ten önce gelir
+    expect(slots('prs-kpi').find((k) => k.getAttribute('data-key') === 'load').textContent).toMatch(/300 ms/)
   })
 
   it('sınırlı ölçümde hüküm "Kısmi ölçüm" (asla "Mükemmel")', async () => {
@@ -133,6 +140,45 @@ describe('nesneler — bulgular, karar, ayrıntı, şelale', () => {
     const row = slot('prs-obj')
     expect([...row.querySelectorAll('[data-finding]')].map((f) => f.getAttribute('data-finding')))
       .toEqual(['UNCOMPRESSED_TEXT', 'NO_CACHE', 'REDIRECTED_OBJECTS', 'HEAVY_JS'])
+  })
+
+  it('sayfa düzeyi öneri (item_count null): adres sayısını yazar, o adreslere süzer', async () => {
+    await mountDone()
+    const rec = slots('prs-rec').find((r) => r.getAttribute('data-code') === 'THIRD_PARTY_HEAVY')
+    expect(slot('prs-rec-show', rec).getAttribute('data-count')).toBe('1')
+    fireEvent.click(slot('prs-rec-show', rec))
+    await waitFor(() => expect(slot('prs-objects')).not.toBeNull())
+    expect(slot('prs-rec-filter')).not.toBeNull()
+    expect(slots('prs-obj')).toHaveLength(1)
+    expect(slot('prs-obj').getAttribute('data-category')).toBe('IMAGE')
+    // nesneye "üçüncü taraf ağır" bulgusu yazılmaz (sunucu: yalnız 13 nesne kodu)
+    expect(slot('prs-obj').querySelector('[data-finding="THIRD_PARTY_HEAVY"]')).toBeNull()
+  })
+
+  it('indirilmeyen medya "İndirilmedi" (kırık değil); boyutu bilinmeyen bağlantı "Bilinmiyor" (0 B değil)', async () => {
+    const d = scanDetailV2(12)
+    d.items.push(
+      { ...d.items[8], url: 'https://www.example.com/video/tanitim-filmi.mp4', category: 'MEDIA', status: 0, bytes: 0, verdict: 'skipped',
+        page_load: false, lazy: true, start_ms: null, optimized_bytes: null, width: null, height: null, headers: null },
+      { ...d.items[7], url: 'https://www.example.com/hakkimizda', status: 200, bytes: 0, size_source: 'unknown', verdict: 'ok', error: null,
+        duration_ms: 90, ttfb_ms: 80 },
+    )
+    api.monitoring.resourceScan.mockImplementation((_id, scanId) => Promise.resolve(scanId === 12 ? ok(d) : v2Detail(scanId)))
+    await mountDone()
+    openTab(/Nesneler/)
+    await waitFor(() => expect(slot('prs-objects')).not.toBeNull())
+    fireEvent.click(screen.getByRole('button', { name: /^Tümü \(\d+\)$/ }))
+    fireEvent.change(slot('prs-search'), { target: { value: 'tanitim-filmi' } })
+    await waitFor(() => expect(slots('prs-obj')).toHaveLength(1))
+    const st = slot('prs-obj-status')
+    expect(st.textContent).toBe('İndirilmedi')
+    expect(st.getAttribute('data-failed')).toBe('false')
+    expect(slot('prs-obj-verdict')).toBeNull()
+    fireEvent.change(slot('prs-search'), { target: { value: 'hakkimizda' } })
+    await waitFor(() => expect(slot('prs-obj')?.textContent).toMatch(/hakkimizda/))
+    expect(slot('prs-obj').textContent).toMatch(/Bilinmiyor/)
+    expect(slot('prs-obj').textContent).not.toMatch(/0 B/)
+    expect(slot('prs-obj').getAttribute('data-bucket')).toBeNull()
   })
 
   it('doğrulanamayan nesne nötr ve kırık sayılmaz; "Doğrulanamayanlar" süzgeci çıkar', async () => {
@@ -326,6 +372,28 @@ describe('iptal, bitiş bildirimi, ilerleme', () => {
     await waitFor(() => expect(slot('prs-cancel').textContent).toMatch(/İptal ediliyor/))
     expect(slot('prs-cancel').disabled).toBe(true)
     expect(slot('prs-cancel-pending')).not.toBeNull()
+  })
+
+  it('iptal 200 + bitmiş özet (INTERRUPTED / CANCELLED): "iptal edildi" tostu; bakılan analiz değişmez', async () => {
+    runningSetup({ cancel: ok(scanSummary(40, { status: 'INTERRUPTED', error_code: 'CANCELLED', cancelled: true, grade: null,
+      grade_letter: null, finished_at: '2026-10-31T09:00:50', error: 'İptal edildi' })) })
+    await mountDone()
+    const before = slot('prs-hero').textContent
+    fireEvent.click(slot('prs-cancel'))
+    fireEvent.click(await screen.findByRole('button', { name: 'İptal et' }))
+    expect(await screen.findByText('Analiz iptal edildi; sonuç kaydedilmedi.')).toBeInTheDocument()
+    await waitFor(() => expect(slot('prs-running')).toBeNull())
+    expect(slot('prs-interrupted')).toBeNull()             // seçim iptal edilen koşuya atlamaz
+    expect(slot('prs-hero').textContent).toBe(before)
+  })
+
+  it('409 NOT_RUNNING (gövdede bitmiş özet): koşu kartı kalkar, yeniden sorgu beklenmez', async () => {
+    runningSetup({ cancel: { success: false, status: 409, code: 'RESOURCE_SCAN_NOT_RUNNING', error: 'Analiz artık sürmüyor',
+      data: scanSummary(40, { finished_at: '2026-10-31T09:00:50' }) } })
+    await mountDone()
+    fireEvent.click(slot('prs-cancel'))
+    fireEvent.click(await screen.findByRole('button', { name: 'İptal et' }))
+    await waitFor(() => expect(slot('prs-running')).toBeNull())
   })
 
   it('eski sunucu (404 NOT_FOUND / 405): iptal düğmesi gizlenir, analiz izlenmeye devam eder', async () => {

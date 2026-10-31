@@ -12,7 +12,7 @@ import { LoadingBlock } from '../../ui/Progress.jsx'
 import {
   BUCKET_KEYS, CATEGORIES, DEFAULT_FILTERS, FINDING_CODES, FINDING_TONE, OBJECTS_TABLE_MIN_PX, SCOPES, SORTS, STATUS_FILTERS,
   activeFilterCount, cacheState, cacheText, categoryLabel, countsBy, dimensionsText, filterItems, findingLabel, formatBytesExact,
-  formatMs, formatNumber, formatSize, isPageLoad, plural, problemText, recTextKey, recommendationArgs, sizeBucket, sortItems,
+  formatMs, formatNumber, isPageLoad, itemBytes, itemSizeText, plural, problemText, recTextKey, recommendationArgs, sizeBucket, sortItems,
   statusText, verdictOf, verdictText, verdictTone, waterfallBar, waterfallTotal,
 } from './resourceScanModel.js'
 import { CATEGORY_ICON, CHIP, Section, SmallBadge, TOUCH, UrlText, WRAP } from './ResourceScanParts.jsx'
@@ -321,11 +321,11 @@ function StatusCell({ item, t }) {
   )
 }
 
-function SizeText({ item, locale }) {
+function SizeText({ item, t, locale }) {
   return (
     <span className="flex flex-col items-end gap-0.5 tabular-nums">
-      <span className="font-semibold text-foreground">{formatSize(item.bytes, { truncated: item.truncated === true, locale })}</span>
-      <span className="text-[11px] text-muted-foreground">{formatBytesExact(item.bytes, locale)}</span>
+      <span className="font-semibold text-foreground">{itemSizeText(item, t, locale)}</span>
+      {itemBytes(item) != null && <span className="text-[11px] text-muted-foreground">{formatBytesExact(item.bytes, locale)}</span>}
     </span>
   )
 }
@@ -355,7 +355,7 @@ function ObjectRow({ item, total, t, locale, onOpen }) {
   const dim = dimensionsText(item)
   const broken = verdictOf(item) === 'broken'
   return (
-    <TableRow data-slot="prs-obj" data-category={item.category} data-bucket={sizeBucket(item.bytes) || undefined}>
+    <TableRow data-slot="prs-obj" data-category={item.category} data-bucket={sizeBucket(itemBytes(item)) || undefined}>
       <TableCell className="align-top whitespace-normal">
         <div className="flex min-w-0 flex-col gap-1">
           <UrlText url={item.url} t={t} className="text-xs" />
@@ -368,7 +368,7 @@ function ObjectRow({ item, total, t, locale, onOpen }) {
         </div>
       </TableCell>
       <TableCell className="align-top text-xs whitespace-normal"><TypeText item={item} t={t} /></TableCell>
-      <TableCell className="align-top text-right text-xs"><SizeText item={item} locale={locale} /></TableCell>
+      <TableCell className="align-top text-right text-xs"><SizeText item={item} t={t} locale={locale} /></TableCell>
       <TableCell className="align-top text-right text-xs tabular-nums">
         <span className="block font-semibold">{formatMs(item.duration_ms, locale)}</span>
         {item.ttfb_ms != null && <span className="block text-[11px] text-muted-foreground">{t('prs.obj.ttfb', formatMs(item.ttfb_ms, locale))}</span>}
@@ -395,7 +395,7 @@ function ObjectCard({ item, t, locale, onOpen }) {
   const dim = dimensionsText(item)
   const broken = verdictOf(item) === 'broken'
   return (
-    <li data-slot="prs-obj" data-category={item.category} data-bucket={sizeBucket(item.bytes) || undefined}
+    <li data-slot="prs-obj" data-category={item.category} data-bucket={sizeBucket(itemBytes(item)) || undefined}
       className="flex min-w-0 flex-col gap-2 rounded-lg border bg-card px-3 py-2.5">
       <UrlText url={item.url} t={t} className="text-sm" />
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
@@ -406,8 +406,8 @@ function ObjectCard({ item, t, locale, onOpen }) {
       <div className="grid grid-cols-2 gap-2 text-xs">
         <div className="flex flex-col gap-0.5">
           <span className="text-[11px] font-semibold tracking-[.04em] text-muted-foreground uppercase max-sm:text-xs">{t('prs.col.size')}</span>
-          <span className="font-semibold tabular-nums">{formatSize(item.bytes, { truncated: item.truncated === true, locale })}</span>
-          <span className="text-[11px] text-muted-foreground tabular-nums">{formatBytesExact(item.bytes, locale)}</span>
+          <span className="font-semibold tabular-nums">{itemSizeText(item, t, locale)}</span>
+          {itemBytes(item) != null && <span className="text-[11px] text-muted-foreground tabular-nums">{formatBytesExact(item.bytes, locale)}</span>}
         </div>
         <div className="flex flex-col gap-0.5">
           <span className="text-[11px] font-semibold tracking-[.04em] text-muted-foreground uppercase max-sm:text-xs">{t('prs.col.time')}</span>

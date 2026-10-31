@@ -126,17 +126,21 @@ export const DEFAULT_FILTERS = Object.freeze({
   q: '', types: [], buckets: [], findings: [], scope: 'page', status: 'all', sort: 'size_desc', urls: [], rec: null,
 })
 
-/** Bulgu kodları (nesne `findings` — sunucunun öneri kodlarının nesneye uyan alt kümesi), çip sırası: kırıklar önce. */
+/**
+ * Bulgu kodları (nesne `findings` — sunucunun NESNEYE bağlı 13 öneri kodu), çip sırası: kırıklar önce. Sayfa düzeyi
+ * öneriler (OVERSIZED_PAGE, TOO_MANY_REQUESTS, SLOW_SERVER, THIRD_PARTY_HEAVY, ALL_GOOD) nesneye yazılmaz — sunucu
+ * `item_count`'larını null gönderir; onlar nesne listesine `item_urls` (en çok 10) ile bağlanır.
+ */
 export const FINDING_CODES = [
   'BROKEN_RESOURCES', 'BROKEN_LINKS', 'LARGE_IMAGES', 'UNCOMPRESSED_TEXT', 'NO_CACHE', 'SLOW_OBJECTS', 'MODERN_IMAGE_FORMAT',
-  'OVERSIZED_IMAGE_DIMENSIONS', 'REDIRECTED_OBJECTS', 'LARGE_DOCUMENTS', 'HEAVY_JS', 'HEAVY_CSS', 'HEAVY_FONTS', 'THIRD_PARTY_HEAVY',
+  'OVERSIZED_IMAGE_DIMENSIONS', 'REDIRECTED_OBJECTS', 'LARGE_DOCUMENTS', 'HEAVY_JS', 'HEAVY_CSS', 'HEAVY_FONTS',
 ]
 export const FINDING_SET = new Set(FINDING_CODES)
 /** Bulgu rozetinin tonu — kırık tehlike, düzeltilecek uyarı, katkı / bilgi nötr (bilinmeyen asla yeşil değil). */
 export const FINDING_TONE = {
   BROKEN_RESOURCES: 'danger', BROKEN_LINKS: 'danger', LARGE_IMAGES: 'warning', UNCOMPRESSED_TEXT: 'warning', NO_CACHE: 'warning',
   SLOW_OBJECTS: 'warning', MODERN_IMAGE_FORMAT: 'warning', OVERSIZED_IMAGE_DIMENSIONS: 'warning', REDIRECTED_OBJECTS: 'info',
-  LARGE_DOCUMENTS: 'info', HEAVY_JS: 'muted', HEAVY_CSS: 'muted', HEAVY_FONTS: 'muted', THIRD_PARTY_HEAVY: 'muted',
+  LARGE_DOCUMENTS: 'info', HEAVY_JS: 'muted', HEAVY_CSS: 'muted', HEAVY_FONTS: 'muted',
 }
 
 /** Sunucu nesne kararı (`verdict`) — Sayfa Bütünlüğü izlemesinin kuralıyla aynı; yalnız `broken` kırık sayılır. */
@@ -323,7 +327,6 @@ function fallbackFindings(it, recCodes) {
   if (page && recCodes.has('HEAVY_JS') && it?.category === 'JS') out.add('HEAVY_JS')
   if (page && recCodes.has('HEAVY_CSS') && it?.category === 'CSS') out.add('HEAVY_CSS')
   if (page && recCodes.has('HEAVY_FONTS') && it?.category === 'FONT') out.add('HEAVY_FONTS')
-  if (page && recCodes.has('THIRD_PARTY_HEAVY') && it?.third_party === true) out.add('THIRD_PARTY_HEAVY')
   return FINDING_CODES.filter((c) => out.has(c))
 }
 
@@ -356,6 +359,21 @@ export function recItemCount(rec, items) {
 /** Öneri nesne listesine BULGU süzgeciyle mi (tam liste) yoksa adres listesiyle mi (en çok 10) bağlanır. */
 export const recFiltersByFinding = (rec) => FINDING_SET.has(rec?.code)
 
+/**
+ * Nesnenin bayt sayısı: sunucu boyutu bilemediyse (`size_source=unknown` — HEAD yanıtında Content-Length yok, bytes 0)
+ * null — "0 B" değil, "bilinmiyor".
+ */
+export function itemBytes(item) {
+  if (item?.size_source === 'unknown') return null
+  return num(item?.bytes)
+}
+
+/** Nesnenin insan okunur boyutu (bilinmeyen boyut → "Bilinmiyor"). */
+export function itemSizeText(item, t, locale) {
+  if (item?.size_source === 'unknown') return t('prs.obj.sizeUnknown')
+  return formatSize(item?.bytes, { truncated: item?.truncated === true, locale })
+}
+
 /** Boyut kovası anahtarı (xl … xs); bilinmeyen boyut null. */
 export function sizeBucket(bytes) {
   const n = num(bytes)
@@ -380,7 +398,7 @@ function matchesStatus(item, status) {
 function passes(item, f, skip) {
   if (skip !== 'q' && !matchesSearchText(f.q, [item?.url, item?.content_type, item?.error, item?.host])) return false
   if (skip !== 'types' && f.types?.length && !f.types.includes(item?.category)) return false
-  if (skip !== 'buckets' && f.buckets?.length && !f.buckets.includes(sizeBucket(item?.bytes))) return false
+  if (skip !== 'buckets' && f.buckets?.length && !f.buckets.includes(sizeBucket(itemBytes(item)))) return false
   if (skip !== 'findings' && f.findings?.length && !(item?.findings || []).some((c) => f.findings.includes(c))) return false
   if (skip !== 'scope' && !matchesScope(item, f.scope)) return false
   if (skip !== 'status' && !matchesStatus(item, f.status)) return false
@@ -415,7 +433,7 @@ export function countsBy(items, filters, dim) {
       for (const s of STATUS_FILTERS) if (matchesStatus(it, s)) out[s] = (out[s] || 0) + 1
       continue
     }
-    const k = dim === 'types' ? it?.category : sizeBucket(it?.bytes)
+    const k = dim === 'types' ? it?.category : sizeBucket(itemBytes(it))
     if (k == null) continue
     out[k] = (out[k] || 0) + 1
   }
@@ -448,11 +466,11 @@ export function sortItems(items, sort = 'size_desc', locale) {
     if (b === null) return -1
     return dir * (a - b)
   }
-  const byBytesDesc = (a, b) => nullsLast(num(a.it.bytes), num(b.it.bytes), -1)
+  const byBytesDesc = (a, b) => nullsLast(itemBytes(a.it), itemBytes(b.it), -1)
   const tie = (a, b) => byBytesDesc(a, b) || collator.compare(String(a.it.url ?? ''), String(b.it.url ?? '')) || a.i - b.i
   const cmp = {
     size_desc: (a, b) => byBytesDesc(a, b) || tie(a, b),
-    size_asc: (a, b) => nullsLast(num(a.it.bytes), num(b.it.bytes), 1) || tie(a, b),
+    size_asc: (a, b) => nullsLast(itemBytes(a.it), itemBytes(b.it), 1) || tie(a, b),
     time_desc: (a, b) => nullsLast(num(a.it.duration_ms), num(b.it.duration_ms), -1) || tie(a, b),
     time_asc: (a, b) => nullsLast(num(a.it.duration_ms), num(b.it.duration_ms), 1) || tie(a, b),
     start_asc: (a, b) => nullsLast(num(a.it.start_ms), num(b.it.start_ms), 1)
@@ -976,8 +994,20 @@ export function optimizedImage(item) {
   const b = num(item?.bytes)
   const o = num(item?.optimized_bytes)
   if (b === null || o === null || b <= 0 || o < 0) return null
-  return { bytes: b, optimized: o, savedPct: o >= b ? 0 : ((b - o) / b) * 100 }
+  // Yeniden sıkıştırma küçültmediyse (= ya da büyük) görsel "zaten iyi sıkıştırılmış"
+  return { bytes: b, optimized: o, savedPct: o >= b ? 0 : ((b - o) / b) * 100, alreadyGood: o >= b }
 }
+
+/** Ölçülmüş görsel kazancının metni: "1,6 MB → 400 KB (−%75)" ya da "zaten iyi sıkıştırılmış". */
+export function optimizedText(item, t, locale) {
+  const opt = optimizedImage(item)
+  if (!opt) return ''
+  if (opt.alreadyGood) return t('prs.img.alreadyGood')
+  return t('prs.img.optimizedTo', formatSize(opt.bytes, { locale }), formatSize(opt.optimized, { locale }), formatPct(opt.savedPct, locale, 0))
+}
+
+/** Ana belgenin TTFB'si (sunucu r177 `ttfb_ms` = YALNIZ son adımın ilk baytı; eski kayıtta `html_ttfb_ms`). */
+export const scanTtfb = (scan) => num(scan?.ttfb_ms) ?? num(scan?.html_ttfb_ms)
 
 // ── Üçüncü taraflar ──────────────────────────────────────────────────────────
 
@@ -1011,7 +1041,7 @@ export function thirdPartyRows(analysis, items) {
     const r = by.get(host) || { host, count: 0, bytes: 0, failed: 0, categories: [] }
     r.count += 1
     r.bytes += num(it.bytes) ?? 0
-    if (isFailed(it)) r.failed += 1
+    if (verdictOf(it) !== 'ok' && verdictOf(it) !== 'skipped') r.failed += 1
     if (it.category && !r.categories.includes(it.category)) r.categories.push(it.category)
     by.set(host, r)
   }
@@ -1038,7 +1068,7 @@ export function algorithmVersion(scan, analysis) {
 
 /** Karşılaştırmanın KPI'ları (anahtar, alan, iyi yön) — ekran ve testler aynı listeyi kullanır. */
 export const COMPARE_KPIS = [
-  ['grade', 'grade', false], ['load', 'load_ms', true], ['ttfb', 'html_ttfb_ms', true], ['size', 'page_bytes', true],
+  ['grade', 'grade', false], ['load', 'load_ms', true], ['ttfb', 'ttfb', true], ['size', 'page_bytes', true],
   ['requests', 'request_count', true], ['images', 'image_bytes', true], ['broken', 'failed_count', true],
 ]
 /** "Büyüyen nesne" eşiği: en az %10 VE en az 10 KB büyüme (ölçüm gürültüsü sayılmaz). */
@@ -1059,9 +1089,10 @@ export function compareScans(a, b) {
   const [older, newer] = ta < tb || (ta === tb && Number(a.scan.id) < Number(b.scan.id)) ? [a, b] : [b, a]
   const algoOld = algorithmVersion(older.scan, older.analysis)
   const algoNew = algorithmVersion(newer.scan, newer.analysis)
+  const val = (scan, field) => (field === 'ttfb' ? scanTtfb(scan) : num(scan[field]))
   const kpis = COMPARE_KPIS.map(([key, field, lowerIsBetter]) => ({
-    key, field, old: num(older.scan[field]), now: num(newer.scan[field]),
-    d: delta(newer.scan[field], older.scan[field], { lowerIsBetter }),
+    key, field, old: val(older.scan, field), now: val(newer.scan, field),
+    d: delta(val(newer.scan, field), val(older.scan, field), { lowerIsBetter }),
   }))
   // Kategori farkı: iki taraftaki her tür (bilinen sıra)
   const catOf = (an) => new Map((Array.isArray(an?.categories) ? an.categories : []).filter((c) => c?.category)
@@ -1200,6 +1231,8 @@ export const categoryLabel = (c, t) => t(`prs.cat.${CATEGORIES.includes(c) ? c :
  * söyler; eskiden "Bağlantı kurulamadı" + "Yanıt zaman aşımı" aynı satırda çelişiyordu), diğerleri HTTP kodu.
  */
 export function statusText(item, t) {
+  // İndirilmeyen nesne (preload=none medya): sunucu bilerek istemedi — "yanıt yok" değil
+  if (verdictOf(item) === 'skipped') return t('prs.verdict.obj.skipped')
   const s = num(item?.status)
   if (s === null) return '—'
   return s === 0 ? t('prs.obj.noResponse') : String(s)
@@ -1208,7 +1241,8 @@ export function statusText(item, t) {
 /** Kararın kısa metni (ok → boş: durum kodu yeterli). */
 export function verdictText(item, t) {
   const v = verdictOf(item)
-  return v === 'ok' ? '' : t(`prs.verdict.obj.${v}`)
+  // ok → durum kodu yeter; skipped → durum metni zaten "İndirilmedi"
+  return v === 'ok' || v === 'skipped' ? '' : t(`prs.verdict.obj.${v}`)
 }
 
 /** Kararın tonu: kırık tehlike; doğrulanamadı / engellendi / indirilmedi NÖTR (amber değil — kırık değiller). */
@@ -1247,11 +1281,11 @@ export function objectSheetRows(items, t, locale) {
     t('prs.export.col.cacheControl'), t('prs.export.col.optimized'),
   ]
   const rows = (Array.isArray(items) ? items : []).map((it) => {
-    const bucket = sizeBucket(it.bytes)
+    const bucket = sizeBucket(itemBytes(it))
     const h = it.headers && typeof it.headers === 'object' ? it.headers : {}
     return [
       it.url ?? '', categoryLabel(it.category, t), it.content_type ?? '', statusText(it, t),
-      num(it.bytes), formatSize(it.bytes, { truncated: it.truncated === true, locale }), bucket ? t(`prs.bucket.${bucket}`) : '',
+      itemBytes(it), itemSizeText(it, t, locale), bucket ? t(`prs.bucket.${bucket}`) : '',
       num(it.ttfb_ms), num(it.duration_ms), num(it.start_ms), yesNo(isPageLoad(it), t), yesNo(it.third_party, t),
       yesNo(it.compressed, t), cacheText(it, t, locale), num(it.width), num(it.height), num(it.redirects),
       yesNo(it.from_css, t), yesNo(it.lazy, t), yesNo(it.truncated, t), problemText(it.error, t),
@@ -1301,7 +1335,7 @@ export function summarySheetRows(monitor, scan, analysis, t, locale, fmtDate = (
     [t('prs.grade'), num(s.grade) !== null
       ? `${num(s.grade)} / 100${letter ? ` (${letter})` : ''}${isCapped(s) ? ` · ${t('prs.grade.partial')}` : ''}` : ''],
     [t('prs.kpi.load'), formatMs(s.load_ms, locale)],
-    [t('prs.kpi.ttfb'), formatMs(s.html_ttfb_ms, locale)],
+    [t('prs.kpi.ttfb'), formatMs(scanTtfb(s), locale)],
     [t('prs.export.redirects'), num(s.redirect_count) !== null
       ? t('prs.export.redirectsValue', formatNumber(s.redirect_count, locale), formatMs(s.redirect_ms ?? 0, locale)) : ''],
     [t('prs.kpi.htmlTime'), formatMs(s.html_ms, locale)],

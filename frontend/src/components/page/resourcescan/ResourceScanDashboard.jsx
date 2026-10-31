@@ -9,7 +9,8 @@ import { LoadingBlock, ProgressBar } from '../../ui/Progress.jsx'
 import {
   SEVERITIES, SEVERITY_TONE, algorithmVersion, categoryLabel, categoryRows, delta, deltasComparable, dimensionsText, estImageMs,
   formatBytesExact, formatMs, formatNumber, formatPct, formatScoreValue, formatSize, gradeLetter, isCapped, noteRows, optimizedImage,
-  plural, recFiltersByFinding, recHostList, recItemCount, recItemUrls, recSaving, recTextKey, recommendationArgs, relatedRec, scanTone,
+  optimizedText, plural, recFiltersByFinding, recHostList, recItemCount, recItemUrls, recSaving, recTextKey, recommendationArgs, relatedRec,
+  scanTone, scanTtfb,
   scoreLabelKey, scoreRows, scoreTargetText, sortRecommendations, thirdPartyRows, topLosses, TOP_IMAGES_MAX,
 } from './resourceScanModel.js'
 import { CATEGORY_ICON, CHIP, DeltaChip, Section, signed, TONE_BAR, TONE_STROKE, TONE_TEXT, TOUCH, UrlText, WRAP } from './ResourceScanParts.jsx'
@@ -128,8 +129,8 @@ function GradeHero({ scan, analysis, prev, t, locale, onGoRec }) {
   const recs = analysis?.recommendations
   const redirects = Number(s.redirect_count) > 0
   const ttfbSub = redirects
-    ? t('prs.kpi.ttfbRedirSub', fmtMs(s.html_ttfb_ms), plural(t, 'prs.kpi.redirPart', s.redirect_count, fmtNum(s.redirect_count), fmtMs(s.redirect_ms ?? 0)))
-    : t('prs.kpi.ttfbSub', fmtMs(s.html_ttfb_ms))
+    ? t('prs.kpi.ttfbRedirSub', fmtMs(scanTtfb(s)), plural(t, 'prs.kpi.redirPart', s.redirect_count, fmtNum(s.redirect_count), fmtMs(s.redirect_ms ?? 0)))
+    : t('prs.kpi.ttfbSub', fmtMs(scanTtfb(s)))
   return (
     <Section slot="prs-hero" contentClassName="gap-4" titleFocusable>
       <div className="flex min-w-0 flex-row items-center gap-3 sm:gap-4">
@@ -191,11 +192,12 @@ function Losses({ losses, recs, t, locale, onGoRec }) {
     return <p data-slot="prs-losses-none" className="m-0 text-sm text-muted-foreground">{t('prs.loss.none')}</p>
   }
   return (
-    <div data-slot="prs-losses" className="flex min-w-0 flex-col gap-1.5">
+    // Kap sorgusu (@container): sütun sayısı PENCERENİN değil kartın genişliğinden — 768 px tablette dar pencerede taşmasın
+    <div data-slot="prs-losses" className="@container flex min-w-0 flex-col gap-1.5">
       <span className="flex items-center gap-1.5 text-xs font-semibold tracking-[.04em] text-muted-foreground uppercase">
         <TrendingDown aria-hidden="true" className="size-3.5" />{t('prs.loss.title')}
       </span>
-      <ol className="m-0 grid min-w-0 list-none grid-cols-1 gap-1.5 p-0 md:grid-cols-3">
+      <ol className="m-0 grid min-w-0 list-none grid-cols-1 gap-1.5 p-0 @2xl:grid-cols-3">
         {losses.map((r) => {
           const rec = relatedRec(r.key, recs)
           const target = scoreTargetText(r, t, locale)
@@ -210,7 +212,7 @@ function Losses({ losses, recs, t, locale, onGoRec }) {
               </span>
               {rec && onGoRec && (
                 <Button type="button" variant="ghost" size="sm" data-slot="prs-loss-rec" onClick={() => onGoRec(rec.code)}
-                  className={cn('h-7 w-fit px-1.5 text-xs', TOUCH)}>
+                  className={cn('h-auto min-h-7 w-fit max-w-full justify-start px-1.5 py-1 text-left text-xs whitespace-normal', TOUCH)}>
                   <Lightbulb aria-hidden="true" />{t('prs.loss.goRec')}
                 </Button>
               )}
@@ -426,7 +428,11 @@ function ImageImpact({ analysis, scan, t, locale }) {
     { k: 'large', label: t('prs.img.large'), value: formatNumber(img.large_count, locale), sub: formatSize(img.large_bytes, { locale }) },
     { k: 'est', label: t('prs.img.est'), value: formatMs(img.est_ms_4g, locale), sub: t('prs.img.est3g', formatMs(img.est_ms_3g, locale)) },
     { k: 'saving', label: t(measured ? 'prs.img.savingMeasured' : 'prs.img.savingEstimated'), value: formatSize(img.saving_bytes, { locale }),
-      sub: img.saving_ms_4g != null ? t('prs.img.savingMs', formatMs(img.saving_ms_4g, locale)) : null },
+      sub: [img.saving_ms_4g != null ? t('prs.img.savingMs', formatMs(img.saving_ms_4g, locale)) : null,
+        measured && img.measured_count != null
+          ? plural(t, 'prs.img.savingSplit', img.measured_count, formatNumber(img.measured_count, locale),
+            formatSize(img.saving_bytes_measured ?? 0, { locale }), formatSize(img.saving_bytes_estimated ?? 0, { locale }))
+          : null].filter(Boolean).join(' · ') || null },
   ]
   return (
     <Section slot="prs-images" icon={ImageIcon} title={t('prs.img.title')} description={t(measured ? 'prs.img.descMeasured' : 'prs.img.desc')}>
@@ -478,8 +484,9 @@ function ImageImpact({ analysis, scan, t, locale }) {
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pl-7 text-xs text-muted-foreground tabular-nums">
                     <span className="font-semibold text-foreground">{formatSize(it.bytes, { truncated: it.truncated === true, locale })}</span>
                     {opt && (
-                      <span data-slot="prs-img-optimized" className="font-semibold text-success">
-                        {t('prs.img.optimizedTo', formatSize(opt.bytes, { locale }), formatSize(opt.optimized, { locale }), formatPct(opt.savedPct, locale, 0))}
+                      <span data-slot="prs-img-optimized" data-already-good={opt.alreadyGood ? 'true' : undefined}
+                        className={cn('font-semibold', opt.alreadyGood ? 'text-muted-foreground' : 'text-success')}>
+                        {optimizedText(it, t, locale)}
                       </span>
                     )}
                     <span>{dim ? t('prs.img.dims', dim) : t('prs.img.dimsUnknown')}</span>

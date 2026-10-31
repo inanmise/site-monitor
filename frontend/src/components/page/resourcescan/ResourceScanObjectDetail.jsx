@@ -3,8 +3,8 @@ import { useT, useDateLocale } from '../../../i18n/index.jsx'
 import ModalShell from '../../ui/ModalShell.jsx'
 import ToneBadge from '../../admin/ToneBadge.jsx'
 import {
-  FINDING_TONE, categoryLabel, dimensionsText, findingLabel, formatBytesExact, formatMs, formatNumber, formatSize, foundInText,
-  isPageLoad, optimizedImage, formatPct, problemText, statusText, verdictOf, verdictText, verdictTone, cacheText,
+  FINDING_TONE, categoryLabel, dimensionsText, findingLabel, formatBytesExact, formatMs, formatNumber, foundInText,
+  isPageLoad, itemBytes, itemSizeText, optimizedImage, optimizedText, problemText, statusText, verdictOf, verdictText, verdictTone, cacheText,
 } from './resourceScanModel.js'
 import { CHIP, SmallBadge, TOUCH, UrlText, WRAP } from './ResourceScanParts.jsx'
 import { Button } from '@/components/shadcn/button'
@@ -72,13 +72,12 @@ export default function ResourceScanObjectDetail({ item, onClose, onGoRec, recom
         </Group>
 
         <Group title={t('prs.od.measure')}>
-          <Row label={t('prs.col.size')} value={`${formatSize(item.bytes, { truncated: item.truncated === true, locale })} · ${formatBytesExact(item.bytes, locale)}`} />
+          <Row label={t('prs.col.size')} value={itemBytes(item) == null ? itemSizeText(item, t, locale)
+            : `${itemSizeText(item, t, locale)} · ${formatBytesExact(item.bytes, locale)}`} />
           <Row label={t('prs.od.sizeSource')}
-            value={item.size_source === 'header' ? t('prs.od.sizeHeader') : item.size_source === 'body' ? t('prs.od.sizeBody') : null} empty={nr} />
-          {opt && (
-            <Row label={t('prs.od.optimized')} slot="prs-od-optimized"
-              value={t('prs.img.optimizedTo', formatSize(opt.bytes, { locale }), formatSize(opt.optimized, { locale }), formatPct(opt.savedPct, locale, 0))} />
-          )}
+            value={item.size_source === 'header' ? t('prs.od.sizeHeader') : item.size_source === 'body' ? t('prs.od.sizeBody')
+              : item.size_source === 'unknown' ? t('prs.od.sizeUnknownSource') : null} empty={nr} />
+          {opt && <Row label={t('prs.od.optimized')} slot="prs-od-optimized" value={optimizedText(item, t, locale)} />}
           {dim && <Row label={t('prs.export.col.dimensions')} value={t('prs.img.dims', dim)} />}
           <Row label={t('prs.od.ttfb')} value={item.ttfb_ms != null ? formatMs(item.ttfb_ms, locale) : null} empty="—" />
           <Row label={t('prs.od.duration')} value={formatMs(item.duration_ms, locale)} />

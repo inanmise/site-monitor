@@ -5,7 +5,7 @@ import {
   DEFAULT_FILTERS, FINDING_CODES, GRADE_TICKS, KB, MB, URL_OTHER, URL_SCAN, URL_VIEW, VIEWS, algorithmVersion, categoryRows,
   categorySheetRows, compareScans, comparableScans, countsBy, elapsedAtSighting, filterItems, filtersForNewScan, findingLabel,
   foundInText, isCancelled, isFailed, isUnverified, latestDoneId, lostPoints, monotonicPct, niceByteTicks, niceMsTicks, objectSheetRows,
-  optimizedImage, parseUrlState, recFiltersByFinding, recItemCount, resourceScanLink, scoreRows, scoreSheetRows, scoreTarget,
+  itemBytes, itemSizeText, optimizedImage, optimizedText, parseUrlState, recFiltersByFinding, scanTtfb, sortItems, recItemCount, resourceScanLink, scoreRows, scoreSheetRows, scoreTarget,
   scoreTargetText, sectionOfView, statusText, summarySheetRows, thirdPartyRows, topLosses, urlStateValues, verdictOf, verdictText,
   verdictTone, viewOf, waterfallRows, waterfallSegments, withFindings,
 } from '../components/page/resourcescan/resourceScanModel.js'
@@ -76,7 +76,10 @@ describe('bulgular — eski kayıtta sunucu kuralıyla (r177 H2)', () => {
     expect(f(rows, 'cdn.js')).toEqual([])
     rows = withFindings(items, [{ code: 'HEAVY_JS' }, { code: 'THIRD_PARTY_HEAVY' }])
     expect(f(rows, 'r.js')).toContain('HEAVY_JS')
-    expect(f(rows, 'cdn.js')).toEqual(['HEAVY_JS', 'THIRD_PARTY_HEAVY'])
+    // THIRD_PARTY_HEAVY sayfa düzeyi öneri — nesneye bulgu olarak YAZILMAZ (sunucu: 13 nesne kodu)
+    expect(f(rows, 'cdn.js')).toEqual(['HEAVY_JS'])
+    expect(FINDING_CODES).toHaveLength(13)
+    expect(FINDING_CODES).not.toContain('THIRD_PARTY_HEAVY')
   })
 
   it('sunucunun `findings`i esastır (bilinmeyen kod atılır, sabit sıra); istemci hesaplamaz', () => {
@@ -100,6 +103,9 @@ describe('bulgular — eski kayıtta sunucu kuralıyla (r177 H2)', () => {
     expect(recFiltersByFinding({ code: 'NO_CACHE' })).toBe(true)
     expect(recFiltersByFinding({ code: 'SLOW_SERVER' })).toBe(false)
     expect(recFiltersByFinding({ code: 'OVERSIZED_PAGE' })).toBe(false)
+    // sayfa düzeyi: item_count null → adres sayısı (`item_urls`)
+    expect(recFiltersByFinding({ code: 'THIRD_PARTY_HEAVY' })).toBe(false)
+    expect(recItemCount({ code: 'THIRD_PARTY_HEAVY', item_count: null, item_urls: ['a', 'b'] }, items)).toBe(2)
   })
 })
 
@@ -114,7 +120,26 @@ describe('karar (verdict) ve durum metni', () => {
     expect(verdictOf({ status: 200, error: 'x' })).toBe('broken')
     expect(verdictOf({ status: 200, verdict: 'yeni' })).toBe('ok')
     expect(verdictText({ verdict: 'ok' }, t)).toBe('')
-    expect(verdictText({ verdict: 'skipped' }, t)).toBe('prs.verdict.obj.skipped')
+    expect(verdictText({ verdict: 'skipped' }, t)).toBe('')   // durum metni zaten "İndirilmedi" der
+  })
+  it('indirilmeyen nesne (skipped) "İndirilmedi" — "yanıt yok" değil, kırık değil', () => {
+    const it0 = { status: 0, verdict: 'skipped', page_load: false }
+    expect(statusText(it0, tr)).toBe('İndirilmedi')
+    expect(verdictText(it0, tr)).toBe('')
+    expect(isFailed(it0)).toBe(false)
+    expect(isUnverified(it0)).toBe(false)
+  })
+  it('bilinmeyen boyut (size_source=unknown): "Bilinmiyor", 0 B değil; sıralamada ve kovada boş', () => {
+    const unk = { url: 'u', bytes: 0, size_source: 'unknown' }
+    expect(itemBytes(unk)).toBeNull()
+    expect(itemSizeText(unk, tr, TRL)).toBe('Bilinmiyor')
+    expect(itemSizeText({ bytes: 2048 }, tr, TRL)).toBe('2 KB')
+    expect(sortItems([unk, { url: 'k', bytes: 10 }], 'size_desc').map((i) => i.url)).toEqual(['k', 'u'])
+    expect(sortItems([unk, { url: 'k', bytes: 10 }], 'size_asc').map((i) => i.url)).toEqual(['k', 'u'])
+    expect(filterItems([unk], { ...DEFAULT_FILTERS, scope: 'all', buckets: ['xs'] })).toHaveLength(0)
+    const row = objectSheetRows([unk], tr, TRL)[1]
+    expect(row).toContain('Bilinmiyor')
+    expect(row).not.toContain(0)
   })
   it('durum 0 → "Yanıt yok" (r177 H6 — nedeni sorun satırı söyler)', () => {
     expect(statusText({ status: 0, error: 'READ_TIMEOUT' }, tr)).toBe('Yanıt yok')
@@ -292,9 +317,14 @@ describe('üçüncü taraflar, görsel kazancı, dışa aktarım', () => {
     expect(thirdPartyRows({}, []).rows).toEqual([])
   })
   it('ölçülmüş optimize boyut ve kazanç yüzdesi', () => {
-    expect(optimizedImage({ bytes: 1000, optimized_bytes: 250 })).toEqual({ bytes: 1000, optimized: 250, savedPct: 75 })
+    expect(optimizedImage({ bytes: 1000, optimized_bytes: 250 })).toEqual({ bytes: 1000, optimized: 250, savedPct: 75, alreadyGood: false })
     expect(optimizedImage({ bytes: 1000 })).toBeNull()
     expect(optimizedImage({ bytes: 1000, optimized_bytes: 1200 }).savedPct).toBe(0)
+    expect(optimizedImage({ bytes: 1000, optimized_bytes: 1000 }).alreadyGood).toBe(true)
+    expect(optimizedText({ bytes: 1000, optimized_bytes: 1000 }, tr, TRL)).toBe('Zaten iyi sıkıştırılmış')
+    expect(optimizedText({ bytes: 4 * MB, optimized_bytes: MB }, tr, TRL)).toMatch(/^4 MB → 1 MB/)
+    expect(scanTtfb({ ttfb_ms: 150, html_ttfb_ms: 700 })).toBe(150)
+    expect(scanTtfb({ html_ttfb_ms: 700 })).toBe(700)
   })
   it('nesne sayfasına bulgu / karar / yol / bulunduğu yer / son adres / başlık sütunları; eski kayıtta boş', () => {
     const rows = objectSheetRows(withFindings(scanItemsV2(), []), tr, TRL)

@@ -209,16 +209,22 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [monitorId])
 
-  /** Bitmiş koşuyu göster (izleme ya da iptal yanıtı): seçilir, geçmiş tazelenir, bildirim. */
+  /**
+   * Bitmiş koşuyu göster (izleme ya da iptal yanıtı): seçilir, geçmiş tazelenir, bildirim. İPTAL edilen koşu, kullanıcı
+   * başka (tamamlanmış) bir analize bakıyorsa seçimi DEĞİŞTİRMEZ — iptal edenin elindeki sonuç ekrandan gitmesin.
+   */
   const applyFinished = useCallback((scan, data) => {
     setRunning(null)
     setCancelRequested(null)
     setHist((h) => (h.data ? { ...h, data: { ...h.data, running: null, items: h.data.items.map((s) => (s.id === scan.id ? scan : s)) } } : h))
-    detailSeq.current += 1
     if (data?.scan) cacheRef.current.set(scan.id, data)
-    changeSelection(scan.id)
-    setDetail({ state: 'ok', id: scan.id, data: data?.scan ? data : { scan, analysis: null, items: null, items_kept: false }, error: null })
-    setSection('overview')
+    const keep = isCancelled(scan) && selectedRef.current != null && selectedRef.current !== scan.id
+    if (!keep) {
+      detailSeq.current += 1
+      changeSelection(scan.id)
+      setDetail({ state: 'ok', id: scan.id, data: data?.scan ? data : { scan, analysis: null, items: null, items_kept: false }, error: null })
+      setSection('overview')
+    }
     const wasHere = startedHere(monitorId, scan.id)
     forgetStarted(monitorId, scan.id)
     if (!isCancelled(scan) && (wasHere || activeRef.current || scan.status === 'DONE')) notifyDone(scan, { visible: activeRef.current })
@@ -341,12 +347,18 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
       if (alive.current) setCancelling(false)
     }
     if (!alive.current || !res) return
+    // Sunucu (r177): 200 + özet (çoğunlukla INTERRUPTED / CANCELLED); çok pod'da koşan pod kalp atışında durur → RUNNING
+    const summary = (d) => d?.scan ?? (d?.id != null ? d : null)
     if (res.success) {
       forgetStarted(monitorId, r.id)
-      setCancelRequested(r.id)
-      toast.info(t('prs.cancel.requested'))
-      const scan = res.data?.scan ?? (res.data?.id != null ? res.data : null)
-      if (scan && !isRunning(scan)) applyFinished(scan, res.data?.scan ? res.data : null)
+      const scan = summary(res.data)
+      if (scan && !isRunning(scan)) {
+        toast.info(t('prs.cancel.done'))
+        applyFinished(scan, res.data?.scan ? res.data : null)
+      } else {
+        setCancelRequested(r.id)
+        toast.info(t('prs.cancel.requested'))
+      }
       return
     }
     // Eski sunucu (uç yok): 405 ya da kodsuz / genel 404 → düğme gizlenir; analiz yine sürer
@@ -357,8 +369,10 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
     }
     if (res.code === 'RESOURCE_SCAN_NOT_RUNNING' || res.code === 'RESOURCE_SCAN_NOT_FOUND') {
       toast.info(t('prs.cancel.notRunning'))
-      setPollNonce((n) => n + 1)
-      reload()
+      // 409: gövdede güncel özet — bitmişse doğrudan gösterilir; 404: koşu yok → geçmiş tazelenir
+      const scan = summary(res.data)
+      if (scan && !isRunning(scan)) applyFinished(scan, null)
+      else { setPollNonce((n) => n + 1); reload() }
       return
     }
     toast.error(res.error || t('prs.cancel.notSentText'), { details: res })

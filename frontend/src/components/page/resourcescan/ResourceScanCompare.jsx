@@ -8,7 +8,7 @@ import { LoadingBlock } from '../../ui/Progress.jsx'
 import ToneBadge from '../../admin/ToneBadge.jsx'
 import {
   COMPARE_LIST_MAX, SEVERITIES, SEVERITY_TONE, categoryLabel, compareScans, comparableScans, deltasComparable, formatMs, formatNumber,
-  formatPct, formatSize, gradeLetter, plural, recTextKey, recommendationArgs,
+  formatPct, formatSize, gradeLetter, itemSizeText, plural, recTextKey, recommendationArgs,
 } from './resourceScanModel.js'
 import { CHIP, DeltaChip, Section, signed, TOUCH, UrlText, WRAP } from './ResourceScanParts.jsx'
 import { Button } from '@/components/shadcn/button'
@@ -215,7 +215,7 @@ function ObjList({ slot, title, list, t, locale, grown = false }) {
                 {categoryLabel(it.category, t)} · {grown
                   ? t('prs.cmp.grownBy', formatSize(it.old_bytes, { locale }), formatSize(it.bytes, { locale }),
                     it.old_bytes > 0 ? formatPct((it.diff / it.old_bytes) * 100, locale, 0) : '—')
-                  : formatSize(it.bytes, { truncated: it.truncated === true, locale })}
+                  : itemSizeText(it, t, locale)}
               </span>
             </li>
           ))}
