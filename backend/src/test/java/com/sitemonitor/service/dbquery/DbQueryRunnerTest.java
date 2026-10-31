@@ -253,6 +253,52 @@ class DbQueryRunnerTest {
         verify(conn).close();
     }
 
+    /**
+     * D5 (2026-10-31): PostgreSQL {@code cancel()} yeni bağlantı açar ve kara delik ağda saniyelerce bloklar — iptal tek iş
+     * parçacıklı bekçide koşsaydı öteki oturumların iptali onun arkasında beklerdi. Bekçi iptali sanal iş parçacığına verir.
+     */
+    @Test
+    void blockingCancelDoesNotDelayOtherSessions() throws Exception {
+        CountDownLatch aCancelEntered = new CountDownLatch(1), releaseA = new CountDownLatch(1);
+        Connection connA = mock(Connection.class);
+        Statement setupA = mock(Statement.class), queryA = mock(Statement.class);
+        when(connA.createStatement()).thenReturn(setupA);
+        when(connA.createStatement(ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY)).thenReturn(queryA);
+        DatabaseMetaData mdA = mock(DatabaseMetaData.class);
+        when(mdA.getDatabaseProductName()).thenReturn("PostgreSQL");
+        when(mdA.getDatabaseProductVersion()).thenReturn("16.4");
+        when(connA.getMetaData()).thenReturn(mdA);
+        org.mockito.Mockito.doAnswer(inv -> { aCancelEntered.countDown(); releaseA.await(20, TimeUnit.SECONDS); return null; })
+                .when(queryA).cancel();
+        when(queryA.executeQuery(anyString())).thenAnswer(inv -> {
+            releaseA.await(20, TimeUnit.SECONDS);
+            throw new SQLException("canceling statement due to user request", "57014");
+        });
+        DbQueryRunner runnerA = new DbQueryRunner(ssrf, (u, pr) -> connA);
+        runnerA.setWatchdogGraceForTests(100, 30_000);
+        Thread a = new Thread(() -> runnerA.run(spec(DbType.POSTGRESQL, "app"), "SELECT pg_sleep(100)", 1, 5));
+        a.start();
+        try {
+            assertThat(aCancelEntered.await(5, TimeUnit.SECONDS)).as("A'nın iptali başladı ve asılı").isTrue();
+
+            runner.setWatchdogGraceForTests(100, 5_000);
+            CountDownLatch bCancelled = new CountDownLatch(1);
+            org.mockito.Mockito.doAnswer(inv -> { bCancelled.countDown(); return null; }).when(query).cancel();
+            when(query.executeQuery(anyString())).thenAnswer(inv -> {
+                if (!bCancelled.await(5, TimeUnit.SECONDS)) throw new AssertionError("B'nin iptali A'nın arkasında kaldı");
+                throw new SQLException("canceling statement due to user request", "57014");
+            });
+            long t0 = System.nanoTime();
+            DbQueryRunner.QueryResult b = runner.run(spec(DbType.POSTGRESQL, "app"), "SELECT pg_sleep(100)", 1, 5);
+            long ms = (System.nanoTime() - t0) / 1_000_000;
+            assertThat(b.failureReason()).isEqualTo("DB_TIMEOUT");
+            assertThat(ms).isLessThan(4_000);
+        } finally {
+            releaseA.countDown();
+            a.join(10_000);
+        }
+    }
+
     @Test
     void connectionTestAndPlans() throws Exception {
         when(setup.executeQuery("SELECT 1")).thenReturn(FakeJdbc.resultSet(List.of(new FakeJdbc.Col("a", Types.INTEGER, 1)),

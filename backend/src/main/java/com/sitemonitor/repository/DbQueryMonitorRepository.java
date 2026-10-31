@@ -49,9 +49,27 @@ public interface DbQueryMonitorRepository extends JpaRepository<DbQueryMonitor, 
     /** Bildirim grubu kullanım sorgusu (silme / taşıma ekranı) — tarama yolunda değil. */
     List<DbQueryMonitor> findByNotificationGroupId(Long notificationGroupId);
 
-    /** Zamanlayıcının bir sonraki planlı çalışmayı yazması — hedefli (varlık kaydı eş zamanlı düzenlemeyi ezmesin). */
+    /**
+     * Zamanlayıcının bir sonraki planlı çalışmayı yazması — hedefli (varlık kaydı eş zamanlı düzenlemeyi ezmesin). Kolon
+     * varlıkta {@code updatable = false} — yerel SQL (2026-10-31 inceleme D4 / K6; {@code AlertEventRepository} emsali).
+     */
     @Transactional
     @Modifying
-    @Query("UPDATE DbQueryMonitor m SET m.nextRunAt = :next WHERE m.id = :id")
+    @Query(value = "UPDATE dbquery_monitors SET next_run_at = :next WHERE id = :id", nativeQuery = true)
     int updateNextRunAt(@Param("id") Long id, @Param("next") String next);
+
+    // ── Zamanlayıcı (run ajanı, 2026-10-31 inceleme O5): ardışık atlama — hedefli, varlık kaydı ezmez ──────────────────
+
+    /** Bir çalıştırma ATLANDI (izin yok / iç hata): sayaç + 1, ilk atlanma zamanı (yoksa) {@code now}. */
+    @Transactional
+    @Modifying
+    @Query(value = "UPDATE dbquery_monitors SET skipped_runs = COALESCE(skipped_runs, 0) + 1, "
+         + "skipped_since = COALESCE(skipped_since, :now) WHERE id = :id", nativeQuery = true)
+    int markDbQuerySkipped(@Param("id") Long id, @Param("now") String now);
+
+    /** Bir çalıştırma gerçekleşti: ardışık atlama sıfırlanır. */
+    @Transactional
+    @Modifying
+    @Query(value = "UPDATE dbquery_monitors SET skipped_runs = 0, skipped_since = NULL WHERE id = :id", nativeQuery = true)
+    int clearDbQuerySkipped(@Param("id") Long id);
 }

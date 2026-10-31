@@ -92,6 +92,14 @@ class SchedulerDbQuerySweepTest {
             saved.add(x);
             return x;
         });
+        // Zamanlanmış tarama izni bekletmeden ayırır ve motorun havuzunda koşar (inceleme O1): sahte motorda ayırma her zaman
+        // başarılı, çalıştırma eşzamanlı — sonuç testin check(m, false) taslağından.
+        lenient().when(checker.tryReserve(any())).thenReturn(() -> { });
+        lenient().when(checker.runReserved(any(), any(), any())).thenAnswer(inv -> {
+            DbQueryMonitor mm = inv.getArgument(0);
+            java.util.function.Function<DbQueryCheckerService.Result, Object> then = inv.getArgument(2);
+            return java.util.concurrent.CompletableFuture.completedFuture(then.apply(checker.check(mm, false)));
+        });
         ReflectionTestUtils.setField(scheduler, "dbQueryCheckerService", checker);
         ReflectionTestUtils.setField(scheduler, "dbQueryMonitorRepo", monitorRepo);
         ReflectionTestUtils.setField(scheduler, "dbQueryCheckRepo", checkRepo);

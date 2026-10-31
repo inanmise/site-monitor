@@ -26,7 +26,10 @@ import java.util.Map;
  *       Okunur metne hücre değeri ASLA yazılmaz (yalnız sayı) — arayüz sorgu verisini göstermez.</li>
  *   <li>Değişim kuralı önceki ölçüye göredir; önceki yoksa değerlendirilmez ("ilk çalıştırma"); yüzde kipinde önceki 0 ise
  *       adet farkı gibi davranır.</li>
- *   <li>Değerlendirilemeyen kural (kolon yok, sayı değil, satır yok …) ihlal SAYILMAZ.</li>
+ *   <li>Değerlendirilemeyen kural (kolon yok, sayı değil, satır yok …) ihlal SAYILMAZ. Kanıt EKSİKLİĞİ notlu olanı
+ *       ({@link #INCONCLUSIVE_NOTES}: kolon yok, sayı değil, ilk çalıştırma, önceki çalıştırma okunamadı) "geçti" de
+ *       sayılmaz — eşik alarmının kararı "bilinmiyor" olur (açılmaz, açık alarm kanıtsız kapanmaz; 2026-10-31 inceleme D3).
+ *       Satır yok / değer boş (NULL) ise ihlal edecek değer yoktur — geçti sayılır.</li>
  *   <li>ANY: en az bir ihlal → BREACH, seviye = en yükseği; ALL: değerlendirilen TÜM kurallar ihlalde (hepsi
  *       değerlendirilmiş olmalı) → BREACH, seviye = en düşüğü.</li>
  * </ul>
@@ -40,7 +43,19 @@ public final class DbQueryEvaluator {
     /** Not kodları (ön yüz {@code dbq.rr.note.<kod>} ile çevirir). */
     public static final String NOTE_COLUMN_MISSING = "column_missing", NOTE_NOT_NUMERIC = "not_numeric",
             NOTE_NO_ROWS = "no_rows", NOTE_FIRST_RUN = "first_run", NOTE_PREV_ZERO = "prev_zero",
-            NOTE_PARTIAL = "partial", NOTE_CAPPED = "capped", NOTE_QUERY_FAILED = "query_failed";
+            NOTE_PARTIAL = "partial", NOTE_CAPPED = "capped", NOTE_QUERY_FAILED = "query_failed",
+            /** Değer boş (NULL — ör. boş kümede MAX) — ihlal edecek değer yok (2026-10-31). */
+            NOTE_NULL_VALUE = "null_value",
+            /** Değişim kuralının önceki çalıştırması okunamadı (veritabanı hatası) — ilk çalıştırma DEĞİL (2026-10-31). */
+            NOTE_PREVIOUS_UNREADABLE = "prev_unreadable";
+
+    /**
+     * Kanıt eksikliği notları (2026-10-31 inceleme D3): bu notla değerlendirilemeyen kural "geçti" sayılmaz — eşik kaleminin
+     * kararı bilinmiyor ({@code DbQueryAlarmText#thresholdVerdict}). Satır yok / değer boş bu kümede DEĞİL (değer yoksa
+     * ihlal de yoktur; aksi hâlde "takılı iş yok → satır yok" sorgusunun alarmı hiç kapanmazdı).
+     */
+    public static final java.util.Set<String> INCONCLUSIVE_NOTES =
+            java.util.Set.of(NOTE_COLUMN_MISSING, NOTE_NOT_NUMERIC, NOTE_FIRST_RUN, NOTE_PREVIOUS_UNREADABLE);
 
     private static final ObjectMapper JSON = new ObjectMapper();
 
@@ -72,6 +87,15 @@ public final class DbQueryEvaluator {
      */
     public static Outcome evaluate(List<DbQueryRules.Rule> rules, String logic, DbQueryRunner.QueryResult result,
                                    Map<String, Double> previousMeasures, String lang) {
+        return evaluate(rules, logic, result, previousMeasures, lang, false);
+    }
+
+    /**
+     * @param previousUnreadable önceki çalıştırma OKUNAMADI (veritabanı hatası) — değişim kuralı "ilk çalıştırma" değil
+     *                           {@link #NOTE_PREVIOUS_UNREADABLE} notuyla değerlendirilemez (kanıt eksikliği, D3)
+     */
+    public static Outcome evaluate(List<DbQueryRules.Rule> rules, String logic, DbQueryRunner.QueryResult result,
+                                   Map<String, Double> previousMeasures, String lang, boolean previousUnreadable) {
         boolean en = "en".equalsIgnoreCase(lang);
         List<DbQueryRules.Rule> rs = rules == null ? List.of() : rules;
         Map<String, Double> prev = previousMeasures == null ? Map.of() : previousMeasures;
@@ -85,7 +109,7 @@ public final class DbQueryEvaluator {
             }
             return new Outcome("OK", LEVEL_NONE, List.copyOf(out), null);
         }
-        Ctx ctx = new Ctx(result, en);
+        Ctx ctx = new Ctx(result, en, previousUnreadable);
         List<RuleResult> out = new ArrayList<>();
         for (DbQueryRules.Rule r : rs) {
             if (r == null) continue;
@@ -134,7 +158,7 @@ public final class DbQueryEvaluator {
 
     // ── Kural başına ─────────────────────────────────────────────────────────
 
-    private record Ctx(DbQueryRunner.QueryResult result, boolean en) {}
+    private record Ctx(DbQueryRunner.QueryResult result, boolean en, boolean previousUnreadable) {}
 
     private static RuleResult evaluateRule(DbQueryRules.Rule r, Ctx ctx, Double previous) {
         boolean en = ctx.en();
@@ -160,7 +184,7 @@ public final class DbQueryEvaluator {
                 return textMatch(r, qr, exp, en);
             }
             case DbQueryRules.KIND_CHANGE -> {
-                return change(r, qr, previous, exp, en);
+                return change(r, qr, previous, ctx.previousUnreadable(), exp, en);
             }
             default -> {
                 return notEvaluated(r, exp, NOTE_NOT_NUMERIC);
@@ -224,7 +248,9 @@ public final class DbQueryEvaluator {
         if ("FIRST".equals(agg)) {
             if (rows.isEmpty()) return new Agg(null, NOTE_NO_ROWS);
             List<Object> first = rows.get(0);
-            Double d = idx < first.size() ? numeric(first.get(idx)) : null;
+            Object cell = idx < first.size() ? first.get(idx) : null;
+            if (cell == null) return new Agg(null, NOTE_NULL_VALUE);   // boş kümede MAX(...) = NULL — ihlal edecek değer yok
+            Double d = numeric(cell);
             return d == null ? new Agg(null, NOTE_NOT_NUMERIC) : new Agg(d, null);
         }
         double sum = 0, min = Double.POSITIVE_INFINITY, max = Double.NEGATIVE_INFINITY;
@@ -241,7 +267,8 @@ public final class DbQueryEvaluator {
         }
         if (count == 0) {
             if ("SUM".equals(agg) && nonNumeric == 0) return new Agg(0.0, rows.isEmpty() ? NOTE_NO_ROWS : partial);
-            return new Agg(null, nonNumeric > 0 ? NOTE_NOT_NUMERIC : NOTE_NO_ROWS);
+            if (nonNumeric > 0) return new Agg(null, NOTE_NOT_NUMERIC);
+            return new Agg(null, rows.isEmpty() ? NOTE_NO_ROWS : NOTE_NULL_VALUE);   // satır var ama hepsi NULL
         }
         double v = switch (agg) {
             case "MAX" -> max;
@@ -382,8 +409,8 @@ public final class DbQueryEvaluator {
 
     // ── Değişim ──────────────────────────────────────────────────────────────
 
-    private static RuleResult change(DbQueryRules.Rule r, DbQueryRunner.QueryResult qr, Double previous, String exp,
-                                     boolean en) {
+    private static RuleResult change(DbQueryRules.Rule r, DbQueryRunner.QueryResult qr, Double previous,
+                                     boolean previousUnreadable, String exp, boolean en) {
         DbQueryRules.Change ch = r.change() == null ? new DbQueryRules.Change("ROW_COUNT", "PERCENT", "ANY") : r.change();
         Double base;
         String baseNote = null;
@@ -398,7 +425,7 @@ public final class DbQueryEvaluator {
         }
         if (previous == null || !Double.isFinite(previous)) {
             return new RuleResult(r.id(), r.label(), r.kind(), fmt(base, en), exp, LEVEL_NONE, true, false,
-                    NOTE_FIRST_RUN, base, null);
+                    previousUnreadable ? NOTE_PREVIOUS_UNREADABLE : NOTE_FIRST_RUN, base, null);
         }
         double diff = base - previous;
         double signed = switch (ch.direction()) {

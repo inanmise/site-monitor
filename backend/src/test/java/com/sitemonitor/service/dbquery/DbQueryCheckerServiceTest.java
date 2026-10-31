@@ -173,7 +173,7 @@ class DbQueryCheckerServiceTest {
                 + "\"change\":{\"of\":\"ROW_COUNT\",\"mode\":\"PERCENT\",\"direction\":\"INCREASE\"}}]");
         DbQueryCheck prev = new DbQueryCheck();
         prev.setRuleResultsJson("[{\"id\":\"c\",\"measure\":2}]");
-        when(checks.findPreviousScheduledOk(11L)).thenReturn(Optional.of(prev));
+        when(checks.findRecentScheduledOk(11L)).thenReturn(List.of(prev));
         when(runner.run(any(), anyString(), anyInt(), anyInt(), any())).thenReturn(ok(List.of("a"),
                 new Object[] {1}, new Object[] {2}, new Object[] {3}));
         DbQueryCheckerService.Result r = svc.check(m, false);

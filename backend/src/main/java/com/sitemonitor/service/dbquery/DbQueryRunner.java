@@ -302,11 +302,18 @@ public class DbQueryRunner {
 
         void arm(int timeoutSeconds, long cancelGraceMs, long abortGraceMs) {
             long base = timeoutSeconds * 1_000L;
+            // İptal tek iş parçacıklı bekçide KOŞMAZ (2026-10-31 inceleme D5): PostgreSQL'de cancel() yeni bir bağlantı açar
+            // (cancelSignalTimeout ~10 sn); kara delik ağda bekçiyi bloklar, öteki oturumların iptal / abort'u gecikirdi.
+            // Bekçi yalnız işaretler ve iptali sanal iş parçacığına verir; abort zamanı bundan bağımsız gelir.
             cancelTask = WATCHDOG.schedule(() -> {
                 fired = true;
                 Statement st = stmt;
                 if (st != null) {
-                    try { st.cancel(); } catch (Throwable ignored) { /* bekçi asla fırlatmaz */ }
+                    try {
+                        ABORTER.execute(() -> {
+                            try { st.cancel(); } catch (Throwable ignored) { /* bekçi asla fırlatmaz */ }
+                        });
+                    } catch (Throwable ignored) { /* reddedildi — abort yine gelir */ }
                 }
             }, base + cancelGraceMs, TimeUnit.MILLISECONDS);
             abortTask = WATCHDOG.schedule(() -> {

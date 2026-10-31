@@ -290,6 +290,8 @@ public class MonitoringOverviewService {
         catch (Exception e) { log.debug("takım adları okunamadı: {}", e.toString()); }
 
         // Açık alarmlar — hedef anahtarına göre (izlemeye bağlanır; kapsam izlemeden miras). Tür süzgeci katalogdan.
+        // Anahtar takımsızdır: veritabanı sorgu izlemesinde hedef = izleme ADI ve ad TÜM takımlarda tekildir (2026-10-31
+        // karar K1) — iki takımın aynı adlı izlemesi aynı açık alarmı paylaşamaz (inceleme D6; kod değişikliği gerekmez).
         Map<String, List<AlertEvent>> openByKey = new HashMap<>();
         boolean alertsUnavailable = false;
         try {
@@ -440,7 +442,7 @@ public class MonitoringOverviewService {
             else if (c == null) status = "unknown";
             else if (!open.isEmpty() || Boolean.FALSE.equals(ok)) status = "down";
             else if (m instanceof com.sitemonitor.model.DbQueryMonitor dq
-                    ? isDbQueryStale(dq.getNextRunAt(), nowI) : isStale(checkedAt, spec.interval().apply(m), nowI)) status = "stale";
+                    ? isDbQueryStale(dq, nowI) : isStale(checkedAt, spec.interval().apply(m), nowI)) status = "stale";
             else status = "up";
 
             total++;
@@ -486,6 +488,14 @@ public class MonitoringOverviewService {
             row.put("avg_response_ms_window", rowAvg);
             // İzleme grubu (2026-10-01, Durum Sayfası): hizmet = takım + grup adı. Yüklenmiş entity'den — ek sorgu YOK.
             row.put("group_name", groupNameOf(m));
+            // Veritabanı sorgusu (2026-10-31 inceleme O4 / O5): açık alarmlardan biri SORGU HATASI mı (durum sayfası yalnız
+            // bunu kesinti sayar; kural ihlali / yavaşlık en fazla "degraded") ve art arda atlanan çalıştırma.
+            if (m instanceof com.sitemonitor.model.DbQueryMonitor dq) {
+                row.put("open_query_failure", open.stream().anyMatch(e ->
+                        com.sitemonitor.service.EscalationService.TYPE_DBQUERY_FAIL.equals(e.getAlertType())));
+                row.put("skipped_runs", dq.getSkippedRuns() == null ? 0 : dq.getSkippedRuns());
+                row.put("skipped_since", dq.getSkippedSince());
+            }
             rows.add(row);
         }
 
@@ -507,6 +517,33 @@ public class MonitoringOverviewService {
 
     /** Veritabanı sorgusunun planlı çalışmasından sonra "gecikmiş" sayılmadan önce tanınan pay: max(2 × tarama tıkı, 5 dk). */
     static final long DBQUERY_STALE_GRACE_SECONDS = 300;
+    /**
+     * Art arda atlanan (eşzamanlılık izni yok / iç hata) çalıştırma bu kadar süredir sürüyorsa izleme "gecikmiş" (2026-10-31
+     * inceleme O5): zamanlayıcı yeniden denemeyi ~10 dk sürdürür (20 × 30 sn tık), sonra bir sonraki planlı çalışmayı bekler.
+     */
+    static final long DBQUERY_SKIP_STALE_SECONDS = 600;
+
+    /**
+     * Veritabanı sorgu izlemesi "gecikmiş" mi — planlı çalışma kuralı ({@link #isDbQueryStale(String, Instant)}) YA DA
+     * çalıştırmalar {@link #DBQUERY_SKIP_STALE_SECONDS}'tan uzun süredir art arda ATLANIYOR (2026-10-31 inceleme O5: plan
+     * her dönem ileri yazıldığı için sürekli atlanan izleme son eski sonuçla sessizce "güncel" görünüyordu). Genel bakış ve
+     * "bugün" paneli bu kuralı kullanır.
+     */
+    public static boolean isDbQueryStale(com.sitemonitor.model.DbQueryMonitor m, Instant now) {
+        if (m == null) return false;
+        return isDbQueryStale(m.getNextRunAt(), now) || skippedTooLong(m.getSkippedSince(), now);
+    }
+
+    static boolean skippedTooLong(String skippedSince, Instant now) {
+        if (skippedSince == null || skippedSince.isBlank() || now == null) return false;
+        try {
+            Instant since = java.time.LocalDateTime.parse(skippedSince.trim().replace(' ', 'T').replace("Z", ""),
+                    DateTimeFormatter.ISO_LOCAL_DATE_TIME).toInstant(ZoneOffset.UTC);
+            return since.plusSeconds(DBQUERY_SKIP_STALE_SECONDS).isBefore(now);
+        } catch (Exception e) {
+            return false;
+        }
+    }
 
     /**
      * Veritabanı sorgu izlemesi "gecikmiş" mi (2026-10-31): vade izlemenin KENDİ zamanlamasından gelir (cron, izinli / yasak

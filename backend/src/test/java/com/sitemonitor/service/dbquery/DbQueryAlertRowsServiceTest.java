@@ -150,4 +150,108 @@ class DbQueryAlertRowsServiceTest {
         assertThat(svc.capture(300L, 5L)).isPresent();
         verify(repo, never()).save(any());
     }
+
+    // ── 2026-10-31 inceleme D1 (bellek) / D2 (güncel ayar) ────────────────────────────────────────────────────────────
+
+    static DbQueryCheckerService.Result withStatus(String status, boolean slow, String checkedAt) {
+        return new DbQueryCheckerService.Result(status, "NONE", 10, 1, false, List.of(), List.of("id", "deger"),
+                List.of(List.of("1", "v")), List.of(), false, List.of(), null, slow, null, null, checkedAt, "h", 1L, null);
+    }
+
+    @Test
+    @DisplayName("D1: yalnız ihlal / yavaş çalıştırmanın satırları tutulur; sağlıklı çalıştırma girişi siler")
+    void onlyBreachOrSlowIsRemembered() {
+        svc.remember(5L, withStatus("OK", false, "2026-10-31T09:00:00"));
+        assertThat(svc.latest(5L)).isEmpty();
+        svc.remember(5L, withStatus("OK", true, "2026-10-31T09:01:00"));
+        assertThat(svc.latest(5L)).as("yavaş sorgu satırları").isPresent();
+        svc.remember(5L, withStatus("BREACH", false, "2026-10-31T09:02:00"));
+        assertThat(svc.latest(5L)).isPresent();
+        svc.remember(5L, withStatus("OK", false, "2026-10-31T09:03:00"));
+        assertThat(svc.latest(5L)).as("ihlal bitti — eski satırlar yeni alarma taşınmaz").isEmpty();
+        assertThat(svc.rememberedChars()).isZero();
+    }
+
+    @Test
+    @DisplayName("D1: toplam karakter bütçesi aşılınca EN ESKİ girişler düşer; giriş süresi dolunca kullanılmaz")
+    void byteBudgetAndAge() {
+        java.util.concurrent.atomic.AtomicLong now = new java.util.concurrent.atomic.AtomicLong(1_000_000L);
+        svc.setClockForTests(now::get);
+        List<String> cols = new ArrayList<>();
+        for (int c = 0; c < 20; c++) cols.add("c" + c);
+        List<List<String>> rows = new ArrayList<>();
+        for (int r = 0; r < 50; r++) rows.add(new ArrayList<>(Collections.nCopies(20, "x".repeat(199))));
+        long per = DbQueryAlertRowsService.weight(DbQueryAlertRowsService.of(result("t", cols, rows, List.of(), 50, false, false)));
+        int fits = (int) (DbQueryAlertRowsService.MAX_REMEMBERED_CHARS / per);
+        for (long id = 1; id <= fits + 5; id++) svc.remember(id, result("2026-10-31T09:00:00", cols, rows, List.of(), 50, false, false));
+        assertThat(svc.rememberedChars()).isLessThanOrEqualTo(DbQueryAlertRowsService.MAX_REMEMBERED_CHARS);
+        assertThat(svc.latest(1L)).as("en eski düştü").isEmpty();
+        assertThat(svc.latest((long) fits + 5)).isPresent();
+
+        now.addAndGet(DbQueryAlertRowsService.MAX_AGE_MS + 1);
+        assertThat(svc.latest((long) fits + 5)).as("süresi doldu (silinen izlemenin girişi takipçide de kalmaz)").isEmpty();
+        svc.remember(999L, simple("2026-10-31T10:00:00", "yeni"));
+        assertThat(svc.rememberedCount()).as("eski girişler budandı").isEqualTo(1);
+    }
+
+    private com.sitemonitor.repository.DbQueryMonitorRepository monitors(com.sitemonitor.model.DbQueryMonitor m) {
+        com.sitemonitor.repository.DbQueryMonitorRepository r = mock(com.sitemonitor.repository.DbQueryMonitorRepository.class);
+        when(r.findById(5L)).thenReturn(Optional.ofNullable(m));
+        svc.setMonitorRepository(r);
+        return r;
+    }
+
+    @Test
+    @DisplayName("D2: 'satırları maile ekle' sonradan kapatıldıysa gönderimde satır YOK, hiçbir şey yazılmaz; ayrıntı da göstermez")
+    void rowsTurnedOffAtSendTime() {
+        svc.remember(5L, simple("2026-10-31T09:00:00", "gizli"));
+        svc.capture(100L, 5L);   // ayar yok (izleme deposu bağlı değil) — açılışta yazıldı
+        com.sitemonitor.model.DbQueryMonitor m = new com.sitemonitor.model.DbQueryMonitor();
+        m.setId(5L);
+        m.setMailIncludeRows(false);
+        monitors(m);
+        svc.remember(5L, simple("2026-10-31T10:00:00", "daha-yeni"));
+        assertThat(svc.capture(100L, 5L)).isEmpty();
+        assertThat(table.get(100L).getRowsJson()).as("daha yeni satırlar yazılmadı").doesNotContain("daha-yeni");
+        assertThat(svc.stored(100L)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("D2: sonradan maskelenen kolon gönderimde '••••' — bellekteki ve saklı kopya maskesiz gitmez")
+    void newMaskAppliedAtSendTime() {
+        svc.remember(5L, simple("2026-10-31T09:00:00", "4111-1111"));
+        com.sitemonitor.model.DbQueryMonitor m = new com.sitemonitor.model.DbQueryMonitor();
+        m.setId(5L);
+        m.setMaskedColumnsJson("[\"DEGER\"]");
+        monitors(m);
+        DbQueryAlertRowsService.Rows out = svc.capture(100L, 5L).orElseThrow();
+        assertThat(out.rows().get(0)).containsExactly("1", DbQueryAlertRowsService.MASK);
+        assertThat(out.masked()).contains("deger");
+        assertThat(table.get(100L).getRowsJson()).doesNotContain("4111");
+
+        // Saklı satır maskesiz kalmışsa (maske açılıştan SONRA eklendi) gönderimde maskelenir ve kopya güncellenir.
+        svc.setMonitorRepository(null);
+        svc.remember(5L, simple("2026-10-31T09:30:00", "5555-2222"));
+        svc.capture(200L, 5L);
+        assertThat(table.get(200L).getRowsJson()).contains("5555");
+        svc.forget(5L);
+        monitors(m);
+        assertThat(svc.capture(200L, 5L).orElseThrow().rows().get(0)).containsExactly("1", DbQueryAlertRowsService.MASK);
+        assertThat(table.get(200L).getRowsJson()).doesNotContain("5555");
+        assertThat(svc.stored(200L).orElseThrow().rows().get(0).get(1)).isEqualTo(DbQueryAlertRowsService.MASK);
+    }
+
+    @Test
+    @DisplayName("D2: izlemenin ayarı okunamazsa satır gönderilmez (doğrulanamayan veri gitmez); izleme silinmişse saklı satır kalır")
+    void unreadableSettingsSendNothing() {
+        svc.remember(5L, simple("2026-10-31T09:00:00", "v"));
+        com.sitemonitor.repository.DbQueryMonitorRepository r = mock(com.sitemonitor.repository.DbQueryMonitorRepository.class);
+        when(r.findById(5L)).thenThrow(new IllegalStateException("db"));
+        svc.setMonitorRepository(r);
+        assertThat(svc.capture(100L, 5L)).isEmpty();
+        verify(repo, never()).save(any());
+
+        monitors(null);   // silinmiş izleme: ayar yok → saklanan maske geçerli
+        assertThat(svc.capture(100L, 5L)).isPresent();
+    }
 }

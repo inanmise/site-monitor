@@ -16,10 +16,16 @@ public interface DbQueryCheckRepository extends JpaRepository<DbQueryCheck, Long
 
     Optional<DbQueryCheck> findTopByMonitorIdOrderByCheckedAtDesc(Long monitorId);
 
-    /** Değişim kuralının "önceki çalıştırması": son ZAMANLANMIŞ ve sorgusu çalışmış (ok) satır. */
+    /**
+     * Değişim kuralının tabanları (2026-10-31 inceleme Y1): son İKİ zamanlanmış ve sorgusu çalışmış satır, yeniden yeniye.
+     * [0] = zamanlanmış çalıştırmanın tabanı; [1] = son zamanlanmış çalıştırmanın KULLANDIĞI taban — teyit / kurtarma
+     * yeniden kontrolü ve elle "Şimdi kontrol et" onu okur (aksi hâlde ihlal eden satırın kendisiyle kıyaslanıp "değişim
+     * yok" görünürdü). Elle ve yeniden kontrol satırları bant dışıdır.
+     */
     @Query("SELECT c FROM DbQueryCheck c WHERE c.monitorId = :id AND c.ok = true "
-         + "AND (c.manual IS NULL OR c.manual = false) ORDER BY c.checkedAt DESC, c.id DESC LIMIT 1")
-    Optional<DbQueryCheck> findPreviousScheduledOk(@Param("id") Long monitorId);
+         + "AND (c.manual IS NULL OR c.manual = false) AND (c.recheck IS NULL OR c.recheck = false) "
+         + "ORDER BY c.checkedAt DESC, c.id DESC LIMIT 2")
+    List<DbQueryCheck> findRecentScheduledOk(@Param("id") Long monitorId);
 
     // Kontrol geçmişi: sunucu tarafı sayfalı aralık + "sorunlu" süzgeci (status <> 'OK' = ihlal ya da hata)
     Page<DbQueryCheck> findByMonitorIdAndCheckedAtBetween(Long monitorId, String from, String to, Pageable p);

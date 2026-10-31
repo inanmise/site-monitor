@@ -7970,8 +7970,12 @@ public class SchedulerService {
     // Vade izlemenin KENDİ zamanlamasından (aralık ya da cron + izinli / yasak pencereler + tatil + ek tarihler,
     // Europe/Istanbul) gelir: plan dbquery_monitors.next_run_at'te tutulur (her vadede hedefli UPDATE), küme genelinde tek
     // çalıştırmayı monitor_check_schedule anahtarı "dbquery:<id>" (clusterDue CAS) sağlar. Pencere dışında / uygun an yokken
-    // sorgu ÇALIŞMAZ, alarm durumu değişmez. Motor (DbQueryCheckerService) eşzamanlılık iznini alamazsa sonuç SKIPPED'dır:
-    // ne kontrol satırı ne alarm; izleme sonraki tıklarda (≤ DBQUERY_RETRY_MAX kez) yeniden denenir — dönem kaybolmaz.
+    // sorgu ÇALIŞMAZ, alarm durumu değişmez. Tarama izinleri BEKLEMEDEN ayırır (önce bağlantı, sonra pod —
+    // DbQueryCheckerService.tryReserve) ve ayrılan çalıştırmalar motorun kendi sınırlı havuzunda ("dbquery-run-N") koşar;
+    // paylaşılan certCheckExecutor'a iş gitmez (2026-10-31 inceleme O1). İzin {@link #DBQUERY_ADMISSION_WAIT_MS} içinde
+    // ayrılamayan çalıştırma ATLANIR (SKIPPED): ne kontrol satırı ne alarm; izleme sonraki tıklarda (≤ DBQUERY_RETRY_MAX
+    // kez, yalnız izinli anda — O2) yeniden denenir, ardışık atlamalar izleme satırına sayılır (O5 — genel bakış
+    // "gecikmiş" gösterir).
 
     /** Zamanlama hesabının dikişi — üretimde motorun saf {@link com.sitemonitor.service.dbquery.DbQuerySchedule}'ı; testte sahte. */
     interface DbQueryScheduling {
@@ -8003,6 +8007,13 @@ public class SchedulerService {
     static final int DBQUERY_RETRY_MAX = 20;
     /** "Hiç çalışmaz" planı: küme anahtarının uzak vadesi (ufuk ~366 gün). */
     static final long DBQUERY_NEVER_MS = 366L * 24 * 3600 * 1000;
+    /** Bir taramada izin ayırma için en çok beklenen süre — dolunca ayrılamayanlar ATLANIR (sonraki tık yeniden dener). */
+    static final long DBQUERY_ADMISSION_WAIT_MS = 30_000;
+    /** İzin ayırma döngüsünün tek bekleme dilimi (bir izin bırakılınca daha erken uyanır). */
+    static final long DBQUERY_ADMISSION_POLL_MS = 200;
+
+    /** Test dikişi: izin ayırma için en çok beklenen süre. */
+    long dbQueryAdmissionWaitMs = DBQUERY_ADMISSION_WAIT_MS;
 
     /** Meşgul sonuçla dönemi harcanmış izlemeler → kaç kez yeniden denendi (lider belleği, liderlik değişince silinir). */
     private final java.util.concurrent.ConcurrentHashMap<Long, Integer> dbQueryRetry = new java.util.concurrent.ConcurrentHashMap<>();
@@ -8026,6 +8037,9 @@ public class SchedulerService {
      *   <li>Plan ileride: beklenir — ama zamanlama kısaltıldıysa (şimdiki tanımın sonraki anı plandan önce) yeniden planlanır.</li>
      *   <li>Plan geldi: şimdi izin dışındaysa (pencere / yasak / tatil sonradan değişti) çalışmaz, sonraki uygun ana kayar;
      *       CRON tetiği {@link #DBQUERY_CRON_CATCHUP_MS}'ten fazla geciktiyse kaçırılmış sayılır (geç çalıştırılmaz).</li>
+     *   <li>ARALIK kipinde sonraki plan IZGARADAN gelir (2026-10-31 inceleme O6): önceki plan + k × aralık, şimdiyi geçen ilk
+     *       nokta (o an izinli değilse ondan sonraki ilk izinli an) — tarama gecikmesi bir sonraki vadeye taşınmaz, birden çok
+     *       aralık geç kalınca kaçırılanlar telafi edilmez, ileri atlanır.</li>
      * </ul>
      */
     static DbQueryDuePlan dbQueryPlan(DbQueryScheduling sch, com.sitemonitor.service.dbquery.DbQuerySchedule.Spec spec,
@@ -8046,8 +8060,25 @@ public class SchedulerService {
         if (cron && now.toEpochMilli() - planned.toEpochMilli() > DBQUERY_CRON_CATCHUP_MS) {
             return new DbQueryDuePlan(false, upcoming, true, "missed");
         }
-        if (!safeAllowed(sch, spec, now, holidays)) return new DbQueryDuePlan(false, upcoming, true, "outside_window");
-        return new DbQueryDuePlan(true, upcoming, true, "due");
+        Instant next = cron ? upcoming : gridNext(sch, spec, planned, now, holidays);
+        if (!safeAllowed(sch, spec, now, holidays)) return new DbQueryDuePlan(false, next, true, "outside_window");
+        return new DbQueryDuePlan(true, next, true, "due");
+    }
+
+    /**
+     * ARALIK kipinin ızgara vadesi (O6): {@code planned + k × aralık} (k ≥ 1, şimdiyi geçen ilk nokta); o an izinli değilse
+     * ondan sonraki ilk izinli an. Aralık okunamazsa şimdiden sonraki ilk an (eski davranış).
+     */
+    static Instant gridNext(DbQueryScheduling sch, com.sitemonitor.service.dbquery.DbQuerySchedule.Spec spec, Instant planned,
+                            Instant now, Set<java.time.LocalDate> holidays) {
+        Integer iv = spec == null ? null : spec.intervalSeconds();
+        if (iv == null || iv <= 0 || planned == null || planned.isAfter(now)) return safeNext(sch, spec, now, holidays);
+        long ivMs = iv * 1000L;
+        long behind = now.toEpochMilli() - planned.toEpochMilli();
+        long k = behind / ivMs + 1;
+        Instant candidate = planned.plusMillis(k * ivMs);
+        // nextAfter(after) = ilk izinli an ≥ after + aralık — "after" = aday − aralık → ilk izinli an ≥ aday
+        return safeNext(sch, spec, candidate.minusMillis(ivMs), holidays);
     }
 
     private static Instant safeNext(DbQueryScheduling sch, com.sitemonitor.service.dbquery.DbQuerySchedule.Spec spec,
@@ -8095,18 +8126,22 @@ public class SchedulerService {
     private void runDbQueryChecksLocked() {
         List<com.sitemonitor.model.DbQueryMonitor> monitors = dbQueryMonitorRepo.findByActiveTrue();
         if (orphanCleanupDue("dbquery")) cleanupOrphanDbQueryAlerts();
+        // O2: duraklatılan / silinen izlemenin "yeniden dene" girişi düşer — yeniden açıldığında zamanlamaya bakmadan koşmasın.
+        Set<Long> activeIds = new java.util.HashSet<>();
+        for (com.sitemonitor.model.DbQueryMonitor m : monitors) if (m.getId() != null) activeIds.add(m.getId());
+        dbQueryRetry.keySet().retainAll(activeIds);
         if (monitors.isEmpty()) return;
         Set<java.time.LocalDate> holidays = dbQueryHolidays();
-        List<Map.Entry<com.sitemonitor.model.DbQueryMonitor, java.util.function.Supplier<Map<String, Object>>>> started = new ArrayList<>();
+        List<com.sitemonitor.model.DbQueryMonitor> due = new ArrayList<>();
         for (com.sitemonitor.model.DbQueryMonitor m : monitors) {
             try {
-                if (!dbQueryDue(m, holidays)) continue;
+                if (dbQueryDue(m, holidays)) due.add(m);
             } catch (Exception e) {
                 log.warn("Veritabanı sorgu izlemesi vadesi hesaplanamadı ({}): {}", m.getName(), e.getClass().getSimpleName());
-                continue;
             }
-            started.add(Map.entry(m, startNetworkCheck(() -> recheckDbQuery(m, false))));
         }
+        List<Map.Entry<com.sitemonitor.model.DbQueryMonitor, java.util.function.Supplier<Map<String, Object>>>> started =
+                admitDbQueryRuns(due);
         int checked = 0, skipped = 0;
         List<MonitoringOutageService.SweepItem> fail = new ArrayList<>();
         List<MonitoringOutageService.SweepItem> threshold = new ArrayList<>();
@@ -8116,13 +8151,12 @@ public class SchedulerService {
             try {
                 Map<String, Object> r = entry.getValue().get();
                 if (Boolean.TRUE.equals(r.get("skipped"))) {
-                    // Altyapı atlaması (eşzamanlılık izni yok) hedefin arızası DEĞİL: satır / alarm yok, dönem korunur.
-                    dbQueryRetry.merge(m.getId(), 1, Integer::sum);
-                    if (dbQueryRetry.getOrDefault(m.getId(), 0) > DBQUERY_RETRY_MAX) dbQueryRetry.remove(m.getId());
+                    // Altyapı atlaması (izin yok / iç hata) hedefin arızası DEĞİL: satır / alarm yok, dönem korunur.
+                    noteDbQuerySkipped(m);
                     skipped++;
                     continue;
                 }
-                dbQueryRetry.remove(m.getId());
+                noteDbQueryRan(m);
                 addDbQuerySweepItems(m, r, fail, threshold, slow);
                 checked++;
             } catch (Exception e) {
@@ -8137,17 +8171,124 @@ public class SchedulerService {
     }
 
     /**
-     * İzlemenin bu tıkta çalışıp çalışmayacağı: meşgul sonuçla bekletilen dönem → evet (bir kez); değilse plan kararı
-     * ({@link #dbQueryPlan}) + küme genelinde tek sahiplenme. Plan değiştiyse {@code next_run_at} hedefli UPDATE ile yazılır.
+     * İzin ayırma (O1): vadesi gelen her izleme için izni BEKLEMEDEN ayırmayı dener (önce bağlantı, sonra pod); ayrılan
+     * çalıştırma motorun sınırlı havuzunda başlar. Ayrılamayanlar bir izin bırakılana dek (dilim
+     * {@link #DBQUERY_ADMISSION_POLL_MS}) yalnız BU tarama iş parçacığında bekler — başka hiçbir iş parçacığı izin
+     * beklemez; {@link #dbQueryAdmissionWaitMs} dolunca ya da kapanış başlayınca kalanlar ATLANIR. Sonuçlar vade sırasıyla.
+     */
+    private List<Map.Entry<com.sitemonitor.model.DbQueryMonitor, java.util.function.Supplier<Map<String, Object>>>> admitDbQueryRuns(
+            List<com.sitemonitor.model.DbQueryMonitor> due) {
+        Map<com.sitemonitor.model.DbQueryMonitor, java.util.function.Supplier<Map<String, Object>>> admitted =
+                new java.util.IdentityHashMap<>();
+        List<com.sitemonitor.model.DbQueryMonitor> waiting = new ArrayList<>(due);
+        long deadline = System.nanoTime() + Math.max(0L, dbQueryAdmissionWaitMs) * 1_000_000L;
+        while (!waiting.isEmpty()) {
+            for (java.util.Iterator<com.sitemonitor.model.DbQueryMonitor> it = waiting.iterator(); it.hasNext(); ) {
+                com.sitemonitor.model.DbQueryMonitor m = it.next();
+                com.sitemonitor.service.dbquery.DbQueryCheckerService.Reservation r = dbQueryCheckerService.tryReserve(m);
+                if (r == null) continue;
+                it.remove();
+                admitted.put(m, startDbQueryRun(m, r));
+            }
+            if (waiting.isEmpty() || stopping() || System.nanoTime() >= deadline) break;
+            long leftMs = (deadline - System.nanoTime()) / 1_000_000L;
+            dbQueryCheckerService.awaitRelease(Math.max(1L, Math.min(DBQUERY_ADMISSION_POLL_MS, leftMs)));
+            if (Thread.currentThread().isInterrupted()) break;
+        }
+        List<Map.Entry<com.sitemonitor.model.DbQueryMonitor, java.util.function.Supplier<Map<String, Object>>>> out = new ArrayList<>();
+        for (com.sitemonitor.model.DbQueryMonitor m : due) {
+            java.util.function.Supplier<Map<String, Object>> s = admitted.get(m);
+            if (s == null) s = () -> dbQuerySkippedResult(null, null);   // izin ayrılamadı → ATLANDI
+            out.add(Map.entry(m, s));
+        }
+        return out;
+    }
+
+    /** Ayrılmış izinle çalıştırmayı başlatır; havuz kabul etmezse (kapanış / kuyruk dolu) ATLANDI. Bekleme süre tavanlı. */
+    private java.util.function.Supplier<Map<String, Object>> startDbQueryRun(com.sitemonitor.model.DbQueryMonitor m,
+            com.sitemonitor.service.dbquery.DbQueryCheckerService.Reservation reservation) {
+        java.util.concurrent.CompletableFuture<Map<String, Object>> f;
+        try {
+            f = dbQueryCheckerService.runReserved(m, reservation, res -> recordDbQueryRun(m, res,
+                    com.sitemonitor.service.dbquery.DbQueryCheckerService.Run.SCHEDULED));
+        } catch (RuntimeException e) {
+            reservation.release();
+            f = null;
+        }
+        if (f == null) return () -> dbQuerySkippedResult(null, null);
+        java.util.concurrent.CompletableFuture<Map<String, Object>> capped =
+                f.orTimeout(NETWORK_CHECK_MAX_WAIT_MS, java.util.concurrent.TimeUnit.MILLISECONDS);
+        return () -> {
+            try {
+                return capped.join();
+            } catch (java.util.concurrent.CompletionException | java.util.concurrent.CancellationException ce) {
+                Throwable c = ce.getCause() != null ? ce.getCause() : ce;
+                if (c instanceof RuntimeException re) throw re;
+                if (c instanceof Error err) throw err;
+                throw new RuntimeException(c);
+            }
+        };
+    }
+
+    /** Atlanan çalıştırma (O2 / O5): yeniden dene sayacı (≤ {@link #DBQUERY_RETRY_MAX}, sonra WARN) + izleme satırında ardışık atlama. */
+    private void noteDbQuerySkipped(com.sitemonitor.model.DbQueryMonitor m) {
+        Long id = m.getId();
+        if (id == null) return;
+        int n = dbQueryRetry.merge(id, 1, Integer::sum);
+        if (n > DBQUERY_RETRY_MAX) {
+            dbQueryRetry.remove(id);
+            log.warn("Veritabanı sorgu izlemesi '{}' {} kez art arda ATLANDI (eşzamanlılık sınırı / iç hata) — bu dönem "
+                    + "çalıştırılamadı, bir sonraki planlı çalışma beklenecek (site.monitor.dbquery.max-concurrency / "
+                    + "per-connection-concurrency)", m.getName(), DBQUERY_RETRY_MAX);
+        }
+        try {
+            String now = ISO.format(Instant.ofEpochMilli(scheduleClock.getAsLong()));
+            dbQueryMonitorRepo.markDbQuerySkipped(id, now);
+            m.setSkippedRuns((m.getSkippedRuns() == null ? 0 : m.getSkippedRuns()) + 1);
+            if (m.getSkippedSince() == null) m.setSkippedSince(now);
+        } catch (Exception e) {
+            log.debug("Sorgu izlemesinin atlanma sayacı yazılamadı ({}): {}", m.getName(), e.toString());
+        }
+    }
+
+    /** Çalıştırma gerçekleşti (OK / ihlal / hata): yeniden dene girişi ve ardışık atlama düşer. */
+    private void noteDbQueryRan(com.sitemonitor.model.DbQueryMonitor m) {
+        Long id = m.getId();
+        if (id == null) return;
+        dbQueryRetry.remove(id);
+        boolean had = (m.getSkippedRuns() != null && m.getSkippedRuns() > 0) || m.getSkippedSince() != null;
+        if (!had) return;   // tıkta yazma yok — yalnız bir atlamadan sonra
+        try {
+            dbQueryMonitorRepo.clearDbQuerySkipped(id);
+            m.setSkippedRuns(0);
+            m.setSkippedSince(null);
+        } catch (Exception e) {
+            log.debug("Sorgu izlemesinin atlanma sayacı temizlenemedi ({}): {}", m.getName(), e.toString());
+        }
+    }
+
+    /**
+     * İzlemenin bu tıkta çalışıp çalışmayacağı: meşgul sonuçla bekletilen dönem → evet, ama YALNIZ şimdi izinliyse
+     * (pencere / yasak pencere / tatil — O2; değilse giriş düşer, olağan plan karar verir); değilse plan kararı
+     * ({@link #dbQueryPlan}) + küme genelinde tek sahiplenme. Plan değiştiyse {@code next_run_at} hedefli UPDATE ile yazılır;
+     * plan sıfırdan kurulduysa ya da öne çekildiyse (zamanlama / tatil değişti) küme anahtarı da sıfırlanır (O3).
      */
     boolean dbQueryDue(com.sitemonitor.model.DbQueryMonitor m, Set<java.time.LocalDate> holidays) {
         if (m.getId() == null) return false;
-        if (dbQueryRetry.containsKey(m.getId())) return true;   // meşgul sonuçla harcanan dönem — yeniden dene
         Instant now = Instant.ofEpochMilli(scheduleClock.getAsLong());
         com.sitemonitor.service.dbquery.DbQuerySchedule.Spec spec;
         try { spec = dbQueryScheduling.specOf(m); }
         catch (RuntimeException e) { spec = null; }
+        if (dbQueryRetry.containsKey(m.getId())) {
+            if (safeAllowed(dbQueryScheduling, spec, now, holidays)) return true;   // harcanan dönem — izinli anda yeniden dene
+            dbQueryRetry.remove(m.getId());   // artık izin dışı: yasak pencerede / tatilde sorgu çalışmaz
+        }
         DbQueryDuePlan plan = dbQueryPlan(dbQueryScheduling, spec, m.getNextRunAt(), now, holidays);
+        // O3: plan sıfırdan kuruldu (zamanlama değişti) ya da öne çekildi (tatil silindi, aralık kısaldı) — küme anahtarı ESKİ
+        // vadede kalırsa yeni planın ilk tetiği "henüz değil" görünür ve kaybolurdu (ör. günlük 18:00 → 09:00).
+        if (plan.write() && ("first".equals(plan.reason()) || "replanned".equals(plan.reason()))) {
+            resetDbQueryClusterKey(m.getId());
+        }
         if (plan.run()) {
             long nowMs = now.toEpochMilli();
             long nextMs = plan.next() != null ? plan.next().toEpochMilli() : nowMs + DBQUERY_NEVER_MS;
@@ -8158,6 +8299,72 @@ public class SchedulerService {
         }
         if (plan.write()) writeDbQueryNextRun(m, plan.next());
         return plan.run();
+    }
+
+    /** Küme vadesi anahtarını unutur (bu pod'un önbelleği + {@code monitor_check_schedule} satırı); hata yutulur. */
+    private void resetDbQueryClusterKey(Long monitorId) {
+        if (monitorId == null) return;
+        String key = "dbquery:" + monitorId;
+        lastMonitorCheckAt.remove(key);
+        if (clusterSchedule == null) return;
+        try {
+            clusterSchedule.forget(key);
+        } catch (Exception e) {
+            log.warn("Veritabanı sorgu izlemesinin küme vadesi sıfırlanamadı (#{}): {}", monitorId, e.getClass().getSimpleName());
+        }
+    }
+
+    /**
+     * İzlemenin zamanlaması değişti (güncelleme / geri yükleme — controller çağırır; K6): bir sonraki plan hedefli UPDATE ile
+     * silinir ({@code next_run_at = NULL}), küme vadesi ve "yeniden dene" girişi sıfırlanır → sonraki tıkta plan YENİ
+     * tanımdan kurulur (ARALIK kipinde şimdi izinliyse hemen çalışır, CRON'da sonraki tetik planlanır). Hiçbir pod'da
+     * fırlatmaz. {@code DbQueryMonitor.nextRunAt} varlık kaydıyla yazılmaz (updatable = false) — sıfırlama YALNIZ bununla.
+     */
+    public void dbQueryScheduleChanged(long monitorId) {
+        dbQueryRetry.remove(monitorId);
+        if (dbQueryMonitorRepo != null) {
+            try {
+                dbQueryMonitorRepo.updateNextRunAt(monitorId, null);
+            } catch (Exception e) {
+                log.warn("Veritabanı sorgu izlemesinin planı sıfırlanamadı (#{}): {}", monitorId, e.getClass().getSimpleName());
+            }
+        }
+        resetDbQueryClusterKey(monitorId);
+    }
+
+    /**
+     * Tatil takvimi değişti (tatil kaydı sonrası — controller çağırır; K6): tatile bakan etkin izlemelerin planı yeniden
+     * kurulur. CRON kipinde plan silinir ({@code next_run_at = NULL} → sonraki tıkta yeni takvimle sonraki tetik planlanır,
+     * çalıştırmadan), küme vadesi sıfırlanır. ARALIK kipinde plan SİLİNMEZ (silmek izlemeyi o an bir kez fazladan
+     * çalıştırır ve ızgarayı bozardı): tatilden çıkarılan gün plandan önceyse tarama "replanned" yolunda öne çeker (küme
+     * vadesiyle birlikte), eklenen tatil vade anında "izin dışı" sayılır. Takvim önbelleği tatil servisi tarafından
+     * tazelenir. Hata fırlatmaz.
+     */
+    public void dbQueryCalendarChanged() {
+        if (dbQueryMonitorRepo == null) return;
+        List<com.sitemonitor.model.DbQueryMonitor> active;
+        try {
+            active = dbQueryMonitorRepo.findByActiveTrue();
+        } catch (Exception e) {
+            log.warn("Tatil değişimi: veritabanı sorgu izlemeleri okunamadı — planlar sonraki tıkta kendiliğinden düzelir: {}",
+                    e.getClass().getSimpleName());
+            return;
+        }
+        int replanned = 0;
+        for (com.sitemonitor.model.DbQueryMonitor m : active) {
+            if (m.getId() == null || !Boolean.TRUE.equals(m.getSkipHolidays())) continue;
+            if (com.sitemonitor.model.DbQueryMonitor.MODE_CRON.equalsIgnoreCase(m.getScheduleMode())) {
+                try {
+                    dbQueryMonitorRepo.updateNextRunAt(m.getId(), null);
+                } catch (Exception e) {
+                    log.warn("Tatil değişimi: izlemenin planı sıfırlanamadı (#{}): {}", m.getId(), e.getClass().getSimpleName());
+                    continue;
+                }
+            }
+            resetDbQueryClusterKey(m.getId());
+            replanned++;
+        }
+        if (replanned > 0) log.info("Tatil takvimi değişti: {} veritabanı sorgu izlemesinin planı yeniden kurulacak", replanned);
     }
 
     private void writeDbQueryNextRun(com.sitemonitor.model.DbQueryMonitor m, Instant next) {
@@ -8199,12 +8406,20 @@ public class SchedulerService {
      * Bir sorgu sonucundan alarm kalemleri — zamanlanmış tarama ve elle değerlendirme ORTAK kurucusu (ctx kopyalanmaz).
      *
      * <ul>
-     *   <li>DBQUERY_FAIL: up = sorgu çalıştı (OK ya da ihlal). Seviye izlemenin alarm seviyesi.</li>
-     *   <li>DBQUERY_THRESHOLD: yalnız sorgu ÇALIŞTIYSA (hata "kural sağlandı" demek değildir — kalem üretilmez). Seviye
-     *       KURALIN seviyesi (WARNING / CRITICAL); detay kural özeti (ölçülen değeri taşır → teyit anahtarına girmez).</li>
-     *   <li>DBQUERY_SLOW: eşik tanımlıysa ve sorgu çalıştıysa; eşik kapalıysa sentetik "up" (asılı alarm kapanır).</li>
+     *   <li>DBQUERY_FAIL: up = sorgu çalıştı (OK ya da ihlal). Seviye izlemenin alarm seviyesi. Hata metni
+     *       {@code [KOD] …} (kesinti sınıfı koddan).</li>
+     *   <li>DBQUERY_THRESHOLD: yalnız sorgu ÇALIŞTIYSA ve karar KESİNSE (hata ya da değerlendirilemeyen kural "kural sağlandı"
+     *       demek değildir — {@link com.sitemonitor.service.dbquery.DbQueryAlarmText#thresholdVerdict}, inceleme D3: kalem
+     *       üretilmez, alarm ne açılır ne kanıtsız kapanır). Seviye KURALIN seviyesi (WARNING / CRITICAL); detay kural özeti
+     *       (ölçülen değeri taşır → teyit anahtarına girmez). Hata metni {@code [DB_THRESHOLD] özet} — ihlal bir kesinti
+     *       değildir, toplu ağ kesintisi bastırmasına girmez (inceleme Y2: kodsuz özet "timeout" sözcüğüyle ağ hatası
+     *       sanılıyordu).</li>
+     *   <li>DBQUERY_SLOW: eşik tanımlıysa ve sorgu çalıştıysa; eşik kapalıysa sentetik "up" (asılı alarm kapanır). Hata
+     *       metni yok (kesinti sınıfı değil).</li>
      * </ul>
-     * SKIPPED sonuç hiçbir kalem üretmez. SATIR VERİSİ bağlama KONMAZ (bkz. {@code DbQueryAlertRowsService}).
+     * SKIPPED sonuç hiçbir kalem üretmez. SATIR VERİSİ bağlama KONMAZ (bkz. {@code DbQueryAlertRowsService}). Teyit /
+     * kurtarma yeniden kontrolleri {@link com.sitemonitor.service.dbquery.DbQueryCheckerService.Run#RECHECK} ile koşar
+     * (bant dışı satır, onaylanan çalıştırmanın değişim tabanı — inceleme Y1).
      */
     private void addDbQuerySweepItems(com.sitemonitor.model.DbQueryMonitor m, Map<String, Object> r,
                                       List<MonitoringOutageService.SweepItem> fail,
@@ -8238,7 +8453,7 @@ public class SchedulerService {
                 str(r.get("failure_reason")), str(r.get("error")));
         fail.add(new MonitoringOutageService.SweepItem(
                 EscalationService.TYPE_DBQUERY_FAIL, m.getName(), fdetail, ran, ferr, chanCtx(new LinkedHashMap<>(ctx), m),
-                () -> { Map<String, Object> p = recheckDbQuery(m, false);
+                () -> { Map<String, Object> p = recheckDbQuery(m, com.sitemonitor.service.dbquery.DbQueryCheckerService.Run.RECHECK);
                         if (Boolean.TRUE.equals(p.get("skipped")))
                             return Map.of("status", "skipped", "error", String.valueOf(p.get("error")));
                         boolean ok = !com.sitemonitor.service.dbquery.DbQueryCheckerService.STATUS_FAIL.equals(p.get("status"));
@@ -8248,26 +8463,24 @@ public class SchedulerService {
 
         if (!ran) return;   // sorgu çalışmadı: eşik / süre hakkında KANIT yok — kalem üretilmez (açık alarm kanıtsız kapanmaz)
 
-        boolean breach = com.sitemonitor.service.dbquery.DbQueryCheckerService.STATUS_BREACH.equals(status);
-        String summary = str(r.get("rule_summary"));
-        String tdetail = summary != null ? summary : (breach ? "kural ihlali" : "kurallar sağlandı");
-        Map<String, Object> tctx = new LinkedHashMap<>(ctx);
-        tctx.put("detail", tdetail);
-        String lvl = str(r.get("level"));
-        if (breach && (com.sitemonitor.service.dbquery.DbQueryEvaluator.LEVEL_CRITICAL.equals(lvl)
-                || com.sitemonitor.service.dbquery.DbQueryEvaluator.LEVEL_WARNING.equals(lvl))) {
-            tctx.put("alert_level", lvl);   // eşik alarmının seviyesi KURALDAN (chanCtx izlemenin seviyesini EZMEZ — putIfAbsent)
+        String verdict = dbQueryThresholdVerdict(m, r);
+        if (!com.sitemonitor.service.dbquery.DbQueryAlarmText.VERDICT_UNKNOWN.equals(verdict)) {
+            boolean breach = com.sitemonitor.service.dbquery.DbQueryAlarmText.VERDICT_BREACH.equals(verdict);
+            String summary = str(r.get("rule_summary"));
+            String tdetail = summary != null ? summary : (breach ? "kural ihlali" : "kurallar sağlandı");
+            Map<String, Object> tctx = new LinkedHashMap<>(ctx);
+            tctx.put("detail", tdetail);
+            String lvl = str(r.get("level"));
+            if (breach && (com.sitemonitor.service.dbquery.DbQueryEvaluator.LEVEL_CRITICAL.equals(lvl)
+                    || com.sitemonitor.service.dbquery.DbQueryEvaluator.LEVEL_WARNING.equals(lvl))) {
+                tctx.put("alert_level", lvl);   // eşik alarmının seviyesi KURALDAN (chanCtx izlemenin seviyesini EZMEZ — putIfAbsent)
+            }
+            threshold.add(new MonitoringOutageService.SweepItem(
+                    EscalationService.TYPE_DBQUERY_THRESHOLD, m.getName(), tdetail, !breach,
+                    breach ? com.sitemonitor.service.dbquery.DbQueryAlarmText.thresholdError(tdetail) : null,
+                    chanCtx(tctx, m),
+                    () -> evalDbQueryThreshold(m)));
         }
-        threshold.add(new MonitoringOutageService.SweepItem(
-                EscalationService.TYPE_DBQUERY_THRESHOLD, m.getName(), tdetail, !breach, breach ? tdetail : null,
-                chanCtx(tctx, m),
-                () -> { Map<String, Object> p = recheckDbQuery(m, false);
-                        if (Boolean.TRUE.equals(p.get("skipped")))
-                            return Map.of("status", "skipped", "error", String.valueOf(p.get("error")));
-                        if (com.sitemonitor.service.dbquery.DbQueryCheckerService.STATUS_FAIL.equals(p.get("status")))
-                            return Map.of("status", "skipped", "error", "sorgu çalıştırılamadı — kural ölçülemedi");
-                        return Map.of("status", com.sitemonitor.service.dbquery.DbQueryCheckerService.STATUS_BREACH
-                                .equals(p.get("status")) ? "down" : "up"); }));
 
         Integer slowTh = m.getSlowQueryMs() != null && m.getSlowQueryMs() > 0 ? m.getSlowQueryMs() : null;
         Long durMs = r.get("duration_ms") instanceof Number dn ? dn.longValue() : null;
@@ -8281,11 +8494,37 @@ public class SchedulerService {
                 () -> evalDbQuerySlow(m)));
     }
 
+    /** Ham sonucun eşik kararı (D3): BREACH | OK | UNKNOWN — kural sonuçları ve izlemenin birleşimi (ANY / ALL). */
+    @SuppressWarnings("unchecked")
+    private static String dbQueryThresholdVerdict(com.sitemonitor.model.DbQueryMonitor m, Map<String, Object> r) {
+        List<Map<String, Object>> rules = new ArrayList<>();
+        if (r.get("rule_results") instanceof List<?> l) {
+            for (Object o : l) if (o instanceof Map<?, ?> mm) rules.add((Map<String, Object>) mm);
+        }
+        return com.sitemonitor.service.dbquery.DbQueryAlarmText.thresholdVerdict(str(r.get("status")), rules, m.getRuleLogic());
+    }
+
+    /** Eşik yeniden ölçümü (teyit / kurtarma): çalışmadı / meşgul / karar kesin değil → skipped (kanıt yok). */
+    private Map<String, Object> evalDbQueryThreshold(com.sitemonitor.model.DbQueryMonitor m) {
+        Map<String, Object> p = recheckDbQuery(m, com.sitemonitor.service.dbquery.DbQueryCheckerService.Run.RECHECK);
+        if (Boolean.TRUE.equals(p.get("skipped")))
+            return Map.of("status", "skipped", "error", String.valueOf(p.get("error")));
+        if (com.sitemonitor.service.dbquery.DbQueryCheckerService.STATUS_FAIL.equals(p.get("status")))
+            return Map.of("status", "skipped", "error", "sorgu çalıştırılamadı — kural ölçülemedi");
+        String verdict = dbQueryThresholdVerdict(m, p);
+        if (com.sitemonitor.service.dbquery.DbQueryAlarmText.VERDICT_UNKNOWN.equals(verdict))
+            return Map.of("status", "skipped", "error", "kural değerlendirilemedi — karar verilemedi");
+        if (com.sitemonitor.service.dbquery.DbQueryAlarmText.VERDICT_BREACH.equals(verdict))
+            return Map.of("status", "down", "error", com.sitemonitor.service.dbquery.DbQueryAlarmText.thresholdError(
+                    str(p.get("rule_summary"))));
+        return Map.of("status", "up");
+    }
+
     /** Yavaş sorgu yeniden ölçümü (teyit / kurtarma): eşik kapalı → up; çalışmadı / meşgul → skipped (kanıt yok). */
     private Map<String, Object> evalDbQuerySlow(com.sitemonitor.model.DbQueryMonitor m) {
         Integer th = m.getSlowQueryMs() != null && m.getSlowQueryMs() > 0 ? m.getSlowQueryMs() : null;
         if (th == null) return Map.of("status", "up");
-        Map<String, Object> p = recheckDbQuery(m, false);
+        Map<String, Object> p = recheckDbQuery(m, com.sitemonitor.service.dbquery.DbQueryCheckerService.Run.RECHECK);
         if (Boolean.TRUE.equals(p.get("skipped")) || com.sitemonitor.service.dbquery.DbQueryCheckerService.STATUS_FAIL.equals(p.get("status")))
             return Map.of("status", "skipped", "error", "sorgu çalıştırılamadı — süre ölçülemedi");
         Long ms = p.get("duration_ms") instanceof Number n ? n.longValue() : null;
@@ -8303,9 +8542,50 @@ public class SchedulerService {
         return s.isEmpty() || "null".equals(s) ? null : s;
     }
 
+    /** Elle ({@code true} → {@link com.sitemonitor.service.dbquery.DbQueryCheckerService.Run#MANUAL}) ya da zamanlanmış çalıştırma. */
+    Map<String, Object> recheckDbQuery(com.sitemonitor.model.DbQueryMonitor m, boolean manual) {
+        return recheckDbQuery(m, manual ? com.sitemonitor.service.dbquery.DbQueryCheckerService.Run.MANUAL
+                : com.sitemonitor.service.dbquery.DbQueryCheckerService.Run.SCHEDULED);
+    }
+
     /**
-     * Bir sorgu çalıştırması: motoru koşturur, {@code dbquery_checks} + aktivite yazar, mail satırlarını bu pod'un belleğine
-     * alır (alarm bildiriminde alarmla saklanır). SKIPPED (eşzamanlılık izni yok) → hiçbir şey yazılmaz.
+     * Bir sorgu çalıştırması (izin türe göre beklenerek — elle 10 sn, teyit / kurtarma 2 sn): motoru koşturur, sonucu
+     * {@link #recordDbQueryRun} ile kaydeder. Zamanlanmış tarama bunu DEĞİL ayrılmış izinli yolu kullanır
+     * ({@link #admitDbQueryRuns}).
+     */
+    Map<String, Object> recheckDbQuery(com.sitemonitor.model.DbQueryMonitor m,
+                                       com.sitemonitor.service.dbquery.DbQueryCheckerService.Run run) {
+        com.sitemonitor.service.dbquery.DbQueryCheckerService.Result res;
+        try {
+            res = switch (run) {
+                case MANUAL -> dbQueryCheckerService.check(m, true);
+                case RECHECK -> dbQueryCheckerService.recheck(m);
+                case SCHEDULED -> dbQueryCheckerService.check(m, false);
+            };
+        } catch (Exception e) {
+            // Motor fırlatmaz sözleşmesi — yine de bozulursa hedefin arızası sayılmaz (satır / alarm yok).
+            log.warn("Veritabanı sorgu motoru beklenmedik hata verdi ({}): {}", m.getName(), e.getClass().getSimpleName());
+            res = null;
+        }
+        return recordDbQueryRun(m, res, run);
+    }
+
+    /** Atlanan çalıştırmanın ham sonucu — hiçbir şey yazılmaz. */
+    private static Map<String, Object> dbQuerySkippedResult(String error, String reason) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("status", com.sitemonitor.service.dbquery.DbQueryCheckerService.STATUS_SKIPPED);
+        out.put("skipped", true);
+        out.put("ok", null);   // BİLİNMİYOR — ne çalıştı ne düştü
+        out.put("error", error != null ? error : "kontrol yürütülemedi");
+        out.put("failure_reason", reason != null ? reason : "DB_BUSY");
+        return out;
+    }
+
+    /**
+     * Bir sorgu çalıştırmasının kaydı: {@code dbquery_checks} + aktivite yazar, mail satırlarını bu pod'un belleğine alır
+     * (alarm bildiriminde alarmla saklanır). SKIPPED (izin yok) → hiçbir şey yazılmaz. Satır türü: zamanlanmış, elle
+     * ({@code manual = true}) ya da teyit / kurtarma ({@code recheck = true}) — son ikisi bant dışıdır (değişim kuralının
+     * tabanı olmaz, inceleme Y1).
      *
      * <p>Döner (ham sonuç — elle "Şimdi kontrol et" ucu ve takipçiden lidere iletilen değerlendirme de bunu kullanır;
      * SATIR VERİSİ İÇERMEZ): {@code status} (OK | BREACH | FAIL | SKIPPED), {@code skipped}, {@code ok} (sorgu çalıştı;
@@ -8314,23 +8594,13 @@ public class SchedulerService {
      * (API biçimi), {@code rule_summary}, {@code error} (maskeli), {@code failure_reason}, {@code checked_at} (UTC ISO),
      * {@code sql_hash}, {@code profile_id}, {@code profile_name}, {@code db_type}, {@code check_id}.
      */
-    Map<String, Object> recheckDbQuery(com.sitemonitor.model.DbQueryMonitor m, boolean manual) {
-        com.sitemonitor.service.dbquery.DbQueryCheckerService.Result res;
-        try {
-            res = dbQueryCheckerService.check(m, manual);
-        } catch (Exception e) {
-            // Motor fırlatmaz sözleşmesi — yine de bozulursa hedefin arızası sayılmaz (satır / alarm yok).
-            log.warn("Veritabanı sorgu motoru beklenmedik hata verdi ({}): {}", m.getName(), e.getClass().getSimpleName());
-            res = null;
-        }
+    Map<String, Object> recordDbQueryRun(com.sitemonitor.model.DbQueryMonitor m,
+                                         com.sitemonitor.service.dbquery.DbQueryCheckerService.Result res,
+                                         com.sitemonitor.service.dbquery.DbQueryCheckerService.Run run) {
+        boolean manual = run == com.sitemonitor.service.dbquery.DbQueryCheckerService.Run.MANUAL;
+        boolean recheck = run == com.sitemonitor.service.dbquery.DbQueryCheckerService.Run.RECHECK;
         if (res == null || com.sitemonitor.service.dbquery.DbQueryCheckerService.STATUS_SKIPPED.equals(res.status())) {
-            Map<String, Object> out = new LinkedHashMap<>();
-            out.put("status", com.sitemonitor.service.dbquery.DbQueryCheckerService.STATUS_SKIPPED);
-            out.put("skipped", true);
-            out.put("ok", null);   // BİLİNMİYOR — ne çalıştı ne düştü
-            out.put("error", res != null && res.error() != null ? res.error() : "kontrol yürütülemedi");
-            out.put("failure_reason", res != null && res.failureReason() != null ? res.failureReason() : "DB_BUSY");
-            return out;
+            return dbQuerySkippedResult(res != null ? res.error() : null, res != null ? res.failureReason() : null);
         }
         boolean failed = com.sitemonitor.service.dbquery.DbQueryCheckerService.STATUS_FAIL.equals(res.status());
         String ts = res.checkedAt() != null && !res.checkedAt().isBlank() ? res.checkedAt() : ISO.format(Instant.now());
@@ -8352,6 +8622,7 @@ public class SchedulerService {
             c.setRuleResultsJson(com.sitemonitor.service.dbquery.DbQueryAlarmText.toJson(res.ruleResults()));
             c.setSlow(res.slow());
             c.setManual(manual);
+            c.setRecheck(recheck);
             c.setSqlHash(res.sqlHash() != null ? res.sqlHash() : m.getSqlHash());
             c.setErrorMessage(res.error());
             c.setFailureReason(res.failureReason());
