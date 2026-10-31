@@ -28,7 +28,7 @@ class AlertKeyOwnershipServiceTest {
         DriverManagerDataSource ds = new DriverManagerDataSource("jdbc:h2:mem:ownershiptest;DB_CLOSE_DELAY=-1;MODE=PostgreSQL", "sa", "");
         jdbc = new JdbcTemplate(ds);
         for (String t : List.of("certificate_inventory", "http_monitors", "ping_monitors", "port_monitors", "dns_monitors",
-                "keyword_monitors", "page_monitors", "pagespeed_monitors", "scripted_monitors", "domain_monitors"))
+                "keyword_monitors", "page_monitors", "pagespeed_monitors", "scripted_monitors", "domain_monitors", "dbquery_monitors"))
             jdbc.update("DROP TABLE IF EXISTS " + t);
         jdbc.update("CREATE TABLE certificate_inventory(domain VARCHAR(253), team_id BIGINT, ug_team_id BIGINT, deleted_at VARCHAR(30))");
         jdbc.update("CREATE TABLE http_monitors(id BIGINT, name VARCHAR(100), url VARCHAR(300), team_id BIGINT)");
@@ -40,6 +40,7 @@ class AlertKeyOwnershipServiceTest {
         jdbc.update("CREATE TABLE pagespeed_monitors(id BIGINT, name VARCHAR(100), url VARCHAR(300), team_id BIGINT)");
         jdbc.update("CREATE TABLE scripted_monitors(id BIGINT, name VARCHAR(100), team_id BIGINT)");
         jdbc.update("CREATE TABLE domain_monitors(id BIGINT, name VARCHAR(100), domain VARCHAR(300), team_id BIGINT)");
+        jdbc.update("CREATE TABLE dbquery_monitors(id BIGINT, name VARCHAR(255), team_id BIGINT)");
 
         // Envanter: d.example.com SY=3 UG=4; ug-only.example.com SY yok UG=4; silinmiş kayıt sayılmaz
         jdbc.update("INSERT INTO certificate_inventory VALUES ('d.example.com', 3, 4, NULL), ('ug-only.example.com', NULL, 4, NULL),"

@@ -46,7 +46,7 @@ final class DbQueryErrors {
         String bestCode = DB_DRIVER;
         boolean sawSql = false;
         Throwable t = e;
-        for (int depth = 0; t != null && depth < CauseChain.MAX_DEPTH; depth++, t = t.getCause()) {
+        for (int causeDepth = 0; t != null && causeDepth < CauseChain.MAX_DEPTH; causeDepth++, t = t.getCause()) {
             String code = null;
             int rank = 0;
             if (t instanceof SsrfGuard.UnresolvableHostException || t instanceof UnknownHostException) { code = DB_DNS; rank = 5; }
@@ -99,7 +99,7 @@ final class DbQueryErrors {
         if (e == null) return null;
         Throwable t = e;
         String msg = null;
-        for (int depth = 0; t != null && depth < CauseChain.MAX_DEPTH; depth++, t = t.getCause()) {
+        for (int causeDepth = 0; t != null && causeDepth < CauseChain.MAX_DEPTH; causeDepth++, t = t.getCause()) {
             String m = t.getMessage();
             if (m != null && !m.isBlank()) { msg = m; break; }
             if (t.getCause() == t) break;
@@ -213,7 +213,7 @@ final class DbQueryErrors {
      */
     static boolean valueBearing(Throwable e, DbType type) {
         Throwable t = e;
-        for (int depth = 0; t != null && depth < CauseChain.MAX_DEPTH; depth++, t = t.getCause()) {
+        for (int causeDepth = 0; t != null && causeDepth < CauseChain.MAX_DEPTH; causeDepth++, t = t.getCause()) {
             if (t instanceof SQLException se) {
                 String st = se.getSQLState();
                 if (st != null && st.trim().startsWith("22")) return true;
@@ -374,7 +374,7 @@ final class DbQueryErrors {
     /** Zincirdeki ilk SQLSTATE (ve MSSQL hata numarası) — {@code " (SQLSTATE 22P02)"} ya da boş. */
     static String sqlStateSuffix(Throwable e, DbType type) {
         Throwable t = e;
-        for (int depth = 0; t != null && depth < CauseChain.MAX_DEPTH; depth++, t = t.getCause()) {
+        for (int causeDepth = 0; t != null && causeDepth < CauseChain.MAX_DEPTH; causeDepth++, t = t.getCause()) {
             if (t instanceof SQLException se && se.getSQLState() != null && !se.getSQLState().isBlank()) {
                 String st = se.getSQLState().trim();
                 if (st.length() > 10 || !st.chars().allMatch(Character::isLetterOrDigit)) return "";

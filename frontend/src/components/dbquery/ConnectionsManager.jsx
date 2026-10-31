@@ -270,8 +270,7 @@ function DetailView({ t, p, editable, inUse, inUseMessage, onBack, onEdit, onDel
   const runTest = async () => {
     setTesting(true)
     let res
-    try { res = await api.monitoring.testDbConnection(p.id) } catch (e) { res = { success: false, error: e?.message } }
-    setTesting(false)
+    try { res = await api.monitoring.testDbConnection(p.id) } catch (e) { res = { success: false, error: e?.message } } finally { setTesting(false) }
     setTest(res)
     if (res?.success) onTested?.()
     else if (res?.code === 'RATE_LIMITED') toast.info(res.error || t('dbq.conn.testWait', res.retry_after_seconds ?? 5))
@@ -443,8 +442,7 @@ function FormView({ t, team, teams, profile, creating, onCancel, onSaved }) {
     let res
     try {
       res = creating ? await api.monitoring.createDbConnection(body) : await api.monitoring.updateDbConnection(form.id, body)
-    } catch (e) { res = { success: false, error: e?.message } }
-    setSaving(false)
+    } catch (e) { res = { success: false, error: e?.message } } finally { setSaving(false) }
     if (res?.success) {
       toast.success(creating ? t('dbq.conn.created', body.name) : t('dbq.conn.updated', body.name))
       onSaved(res.data || null)
@@ -460,8 +458,7 @@ function FormView({ t, team, teams, profile, creating, onCancel, onSaved }) {
     if (!check()) return
     setTesting(true)
     let res
-    try { res = await api.monitoring.testDbConnectionDraft(payloadFromForm(form, { withId: true })) } catch (e) { res = { success: false, error: e?.message } }
-    setTesting(false)
+    try { res = await api.monitoring.testDbConnectionDraft(payloadFromForm(form, { withId: true })) } catch (e) { res = { success: false, error: e?.message } } finally { setTesting(false) }
     setTest(res)
     const fe = serverFieldErrors(res)
     if (Object.keys(fe).length) setServer(fe)

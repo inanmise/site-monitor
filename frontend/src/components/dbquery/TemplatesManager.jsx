@@ -158,8 +158,7 @@ function EditView({ tpl, onCancel, onSaved }) {
     if (Object.keys(fe).length) { setErrors(fe); return }
     setSaving(true)
     let res
-    try { res = await api.monitoring.updateDbQueryTemplate(tpl.id, { ...f, name: f.name.trim(), team_id: tpl.team_id }) } catch (e) { res = { success: false, error: e?.message } }
-    setSaving(false)
+    try { res = await api.monitoring.updateDbQueryTemplate(tpl.id, { ...f, name: f.name.trim(), team_id: tpl.team_id }) } catch (e) { res = { success: false, error: e?.message } } finally { setSaving(false) }
     if (res?.success) { toast.success(t('dbq.tpl.updated', f.name.trim())); onSaved(res.data || null); return }
     const sfe = serverFieldErrors(res)
     if (res?.code === 'DUPLICATE_RECORD' && !sfe.name) sfe.name = res.error || t('dbq.tpl.v.nameTaken')

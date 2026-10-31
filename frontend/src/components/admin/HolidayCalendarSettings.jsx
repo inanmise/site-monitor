@@ -72,8 +72,7 @@ export default function HolidayCalendarSettings({ readOnly: readOnlyProp = false
     setSaving(true)
     const body = toPayload(draft)
     let res
-    try { res = await api.admin.saveHolidays(body) } catch (e) { res = { success: false, error: e?.message } }
-    setSaving(false)
+    try { res = await api.admin.saveHolidays(body) } catch (e) { res = { success: false, error: e?.message } } finally { setSaving(false) }
     if (res?.success) {
       const list = normalizeDays(res.data?.days ?? body)
       setSaved(list); setDraft(list); setRowErrors({})

@@ -48,8 +48,7 @@ export default function SaveTemplateDialog({ open, onOpenChange, teamId, draft, 
       sql_text: draft?.sql_text ?? '', purpose: draft?.purpose ?? '', rules, rule_logic: draft?.rule_logic === 'ALL' ? 'ALL' : 'ANY',
     }
     let res
-    try { res = await api.monitoring.createDbQueryTemplate(body) } catch (e) { res = { success: false, error: e?.message } }
-    setSaving(false)
+    try { res = await api.monitoring.createDbQueryTemplate(body) } catch (e) { res = { success: false, error: e?.message } } finally { setSaving(false) }
     if (res?.success) {
       toast.success(t('dbq.tpl.saved', body.name))
       onSaved?.(res.data || null)
