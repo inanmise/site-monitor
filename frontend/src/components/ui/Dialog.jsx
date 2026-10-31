@@ -213,9 +213,10 @@ function DialogModal({ dialog, onConfirm, onCancel }) {
           </div>
         )}
 
+        {/* Dokunmatikte ≥ 40 px (mweb kuralı; dbquery e2e 2026-10-31'de 36 px ölçtü) — fare görünümü aynı */}
         <AlertDialogFooter>
           {dialog.type !== 'alert' && (
-            <Button type="button" variant="outline" onClick={onCancel}>
+            <Button type="button" variant="outline" onClick={onCancel} className="pointer-coarse:h-10">
               {dialog.cancelText ?? t('dlg.cancel')}
             </Button>
           )}
@@ -225,6 +226,7 @@ function DialogModal({ dialog, onConfirm, onCancel }) {
             variant={v.tone === 'destructive' ? 'destructive' : 'default'}
             disabled={!noteOk}
             onClick={confirm}
+            className="pointer-coarse:h-10"
           >
             {dialog.confirmText ?? t(DEFAULT_CONFIRM_KEY[dialog.type] ?? 'dlg.ok')}
           </Button>
