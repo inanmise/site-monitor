@@ -14378,6 +14378,7 @@ export const EN = {
   'scripted.card.checksRanHalted': 'checks ran · the scenario stopped part-way',
   'scripted.card.checksHaltedSr': '{0} checks ran, then the scenario stopped part-way',
   'scripted.card.p95': 'p95 {0}',
+  'scripted.card.schedSkipDates': 'skipped on set dates',
   'scripted.card.reasonTimeout':      'Timed out after {0}',
   'scripted.card.reasonTimeoutNoLimit': 'Timed out — the run was stopped',
   'scripted.card.reasonThreshold':    'A threshold in the script’s options was crossed',

@@ -14405,6 +14405,7 @@ export const TR = {
   'scripted.card.checksRanHalted': 'doğrulama koşabildi · senaryo yarıda kaldı',
   'scripted.card.checksHaltedSr': '{0} doğrulama koşabildi, ardından senaryo yarıda kaldı',
   'scripted.card.p95': 'p95 {0}',
+  'scripted.card.schedSkipDates': 'belirli günlerde atlanır',
   'scripted.card.reasonTimeout':      '{0} sonunda zaman aşımına uğradı',
   'scripted.card.reasonTimeoutNoLimit': 'Zaman aşımı — koşu durduruldu',
   'scripted.card.reasonThreshold':    'Script seçeneklerindeki bir eşik (threshold) aşıldı',

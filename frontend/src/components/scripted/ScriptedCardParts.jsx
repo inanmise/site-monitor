@@ -1,4 +1,4 @@
-import { CircleAlert, CircleX, Gauge, Globe, TimerOff, Timer } from 'lucide-react'
+import { CalendarClock, CircleAlert, CircleX, Gauge, Globe, TimerOff, Timer } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import { formatDateSec } from '../../api/client'
 import { relativeTime } from '../admin/audit/auditFormat.js'
@@ -12,9 +12,8 @@ import { ProgressBar } from '../ui/Progress.jsx'
 import { MonitorCardMetrics, MonitorPendingText, CARD_LAYER, CARD_COPY } from '../monitoring/MonitorCard.jsx'
 import { cn } from '@/lib/utils'
 import { exitLabel, stuckLabel } from '../scriptedExitCodes.js'
-import { intervalText } from '../ping/pingCardModel.js'
 import { VersionChip } from './VersionTimeline.jsx'
-import { checkCounts, durationAssessment, humanizeMs, runFailure, versionDrift } from './scriptedCardModel.js'
+import { checkCounts, durationAssessment, humanizeMs, isScheduled, runFailure, scheduleText, versionDrift } from './scriptedCardModel.js'
 import { failureHeadText } from './runDetailModel.js'
 
 /** Kart durum sözlüğü (MonitorCard: up|down|warn|unknown) → sonuç panelinin tonu. */
@@ -70,7 +69,9 @@ export function ScenarioTarget({ target, rowLabel }) {
 export function ScenarioChips({ monitor: m, className, warningsOnly = false }) {
   const t = useT()
   const drift = warningsOnly ? null : versionDrift(m)
-  const every = warningsOnly ? null : intervalText(m.interval_seconds, t)
+  // Sıklık: aralık kipinde bugünkü "her N dk"; zamanlamalı izlemede (CRON / pencere / tatil, k6r D2) kısa zamanlama özeti
+  const every = warningsOnly ? null : scheduleText(m, t)
+  const scheduled = isScheduled(m)
   const version = warningsOnly ? null : m.script_version
   if (!m.disabled_reason && !m.never_succeeded && !version && !every) return null
   return (
@@ -107,8 +108,11 @@ export function ScenarioChips({ monitor: m, className, warningsOnly = false }) {
         </HintPopover>
       )}
       {every && (
-        <Badge variant="outline" data-chip="interval" className={cn(CHIP, 'font-medium text-muted-foreground')}>
-          <Timer aria-hidden="true" />{every}
+        <Badge variant="outline" data-chip="interval" data-schedule={scheduled ? (m.schedule_mode === 'CRON' ? 'cron' : 'filtered') : undefined}
+          className={cn(CHIP, 'font-medium text-muted-foreground',
+            // Zamanlama özeti uzun olabilir ("Hafta içi 09:00 · izinli pencerelerde · tatillerde atlanır") — sarar, kesilmez
+            scheduled && 'h-auto min-h-5 overflow-visible whitespace-normal [overflow-wrap:anywhere]')}>
+          {scheduled ? <CalendarClock aria-hidden="true" /> : <Timer aria-hidden="true" />}{every}
         </Badge>
       )}
     </div>
