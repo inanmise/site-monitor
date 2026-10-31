@@ -130,6 +130,12 @@ ARG K6_VERSION
 RUN /usr/bin/k6 version | grep -q "v${K6_VERSION} " \
     && /opt/k6-next/k6 version | grep -q "v${K6_VERSION} " \
     || { echo "k6 sürümü tutmuyor: $(/usr/bin/k6 version) / $(/opt/k6-next/k6 version)" >&2; exit 1; }
+# İşlem sertleştirmesi (2026-10-31, k6 inceleme A2): k6 ikilisi root sahipli ve YALNIZ ÇALIŞTIRILIR (0111 — okunamaz).
+# Linux okunamayan bir ikiliyi execve eden süreci dump-edilemez yapar: her k6 sürecinin /proc/<pid>/environ dosyası root
+# sahipli olur ve AYNI kullanıcıdaki kardeş k6 süreçleri (başka takımların çözülmüş gizli değerleri) birbirini okuyamaz.
+# JVM'in kendisi açılışta prctl(PR_SET_DUMPABLE, 0) ile aynı korumayı alır (ScriptedProcessHardening). Sembolik bağ
+# (/opt/k6-next/k6) izinleri hedeften alır. scripts/image-boot-check.sh adım 9 doğrular.
+RUN chown root:root /usr/bin/k6 && chmod 0111 /usr/bin/k6
 
 LABEL org.opencontainers.image.title="Site Monitor" \
       org.opencontainers.image.description="SSL/TLS Certificate Monitoring System" \
@@ -179,4 +185,6 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
 # JAVA_OPTS is injected at runtime (ConfigMap / env var).
 # -XX:+UseContainerSupport is always on so the JVM reads cgroup limits.
 # Shell-form ENTRYPOINT is required to expand $JAVA_OPTS.
-ENTRYPOINT ["sh", "-c", "exec java -XX:+UseContainerSupport -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8 -Dfile.encoding=UTF-8 $JAVA_OPTS -Djava.security.egd=file:/dev/./urandom -jar app.jar"]
+# --enable-native-access=ALL-UNNAMED (2026-10-31): işlem sertleştirmesi prctl'i Java FFM ile çağırır (kısıtlı yöntem);
+# bayraksız JVM açılış günlüğüne "WARNING: A restricted method …" basar (image-boot-check.sh adım 9 bunu arar).
+ENTRYPOINT ["sh", "-c", "exec java -XX:+UseContainerSupport --enable-native-access=ALL-UNNAMED -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8 -Dfile.encoding=UTF-8 $JAVA_OPTS -Djava.security.egd=file:/dev/./urandom -jar app.jar"]

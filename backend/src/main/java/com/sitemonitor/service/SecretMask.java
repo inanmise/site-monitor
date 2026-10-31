@@ -103,6 +103,178 @@ public final class SecretMask {
         return out;
     }
 
+    // ── Çalışma anında üretilen jetonlar (2026-10-31, k6 inceleme A7) ───────────────────────────────────────
+    //
+    // maskValues yalnız KAYITLI gizli env değerlerini bilir. Bir betiğin koşum SIRASINDA aldığı / ürettiği jeton (OIDC
+    // access_token, Set-Cookie, Bearer başlığı, JWT) console.log ya da k6 hata satırıyla output_tail'e, oradan
+    // scripted_checks.error'a ve alarm e-postasına gidiyordu. maskTokens bu biçimleri DEĞER bilinmeden maskeler.
+    // DOĞRUSAL tarama (düzenli ifade grup döngüsü yok): her konumda sabit sayıda (anahtar listesi × en uzun anahtar)
+    // karşılaştırma; JWT denemesi başarısız olursa parça sonuna atlanır (aynı karakter iki kez taranmaz).
+
+    /** Değeri satır sonuna kadar maskelenen başlık adları (değer boşluk içerir: "Bearer abc"). */
+    private static final String[] TOKEN_HEADER_KEYS = {
+            "proxy-authorization", "authorization", "set-cookie", "cookie"};
+    /** Değeri tek "kelime" olan anahtarlar (JSON / sorgu dizesi / logfmt); uzun ad önce (id_token ⊃ token). */
+    private static final String[] TOKEN_VALUE_KEYS = {
+            "client_secret", "refresh_token", "access_token", "id_token", "password", "api_key", "apikey",
+            "passwd", "secret", "token"};
+    /** JWT parçası en az bu kadar karakter (her üç parça). */
+    private static final int JWT_MIN_PART = 10;
+
+    /**
+     * Metinde çalışma anında üretilmiş kimlik bilgilerini maskeler: {@code Authorization:} / {@code Proxy-Authorization:}
+     * ve {@code Cookie:} / {@code Set-Cookie:} değerleri (satır sonuna ya da kapanan tırnağa kadar), JWT
+     * ({@code eyJ…} + üç nokta-ayrık base64url parça, her biri ≥ 10) ve
+     * {@code access_token|id_token|refresh_token|token|password|passwd|secret|api_key|apikey|client_secret} anahtarlarının
+     * {@code =} / {@code :} ile verilen değerleri (JSON, sorgu dizesi, logfmt; kaçışlı tırnak {@code \"} dahil).
+     * Anahtar sözcük sınırında başlamalı ({@code mytoken=} maskelenmez, {@code tokens=5} de). Boş değer maskelenmez.
+     * Hiçbir koşulda istisna fırlatmaz; {@code null}/boş metin olduğu gibi döner.
+     */
+    public static String maskTokens(String text) {
+        if (text == null || text.isEmpty()) return text;
+        int n = text.length();
+        char[] low = new char[n];
+        for (int i = 0; i < n; i++) low[i] = Character.toLowerCase(text.charAt(i));
+        StringBuilder out = null;
+        int copied = 0;
+        int i = 0;
+        while (i < n) {
+            char c = low[i];
+            // ── JWT ──
+            if (i + 3 <= n && text.charAt(i) == 'e' && text.charAt(i + 1) == 'y' && text.charAt(i + 2) == 'J'
+                    && (i == 0 || !isB64Url(text.charAt(i - 1)))) {
+                int end = jwtEnd(text, i);
+                if (end > i) {
+                    if (out == null) out = new StringBuilder(n);
+                    out.append(text, copied, i).append(MASK);
+                    copied = end;
+                    i = end;
+                    continue;
+                }
+                // başarısız deneme: ilk base64url koşusunun sonuna atla (koşu içinde sınır olamaz)
+                int j = i;
+                while (j < n && isB64Url(text.charAt(j))) j++;
+                i = Math.max(j, i + 1);
+                continue;
+            }
+            if (isKeyStart(c) && (i == 0 || !isWordChar(text.charAt(i - 1)))) {
+                int[] span = tokenValueSpan(text, low, i);
+                if (span != null) {
+                    if (out == null) out = new StringBuilder(n);
+                    out.append(text, copied, span[0]).append(MASK);
+                    copied = span[1];
+                    i = span[1];
+                    continue;
+                }
+            }
+            i++;
+        }
+        if (out == null) return text;
+        return out.append(text, copied, n).toString();
+    }
+
+    private static boolean isKeyStart(char c) {
+        return c == 'a' || c == 'c' || c == 'i' || c == 'p' || c == 'r' || c == 's' || c == 't';
+    }
+
+    private static boolean isWordChar(char c) {
+        return Character.isLetterOrDigit(c) || c == '_';
+    }
+
+    private static boolean isB64Url(char c) {
+        return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '_';
+    }
+
+    /** {@code eyJ}'den başlayan geçerli JWT'nin bitişi; değilse -1. */
+    private static int jwtEnd(String s, int start) {
+        int n = s.length();
+        int pos = start;
+        for (int part = 0; part < 3; part++) {
+            int from = pos;
+            while (pos < n && isB64Url(s.charAt(pos))) pos++;
+            if (pos - from < JWT_MIN_PART) return -1;
+            if (part < 2) {
+                if (pos >= n || s.charAt(pos) != '.') return -1;
+                pos++;
+            }
+        }
+        return pos;
+    }
+
+    /** {@code low[i..]} bir anahtarla başlıyorsa anahtarın SONU, değilse -1 (anahtar sonrası kelime karakteri gelmemeli). */
+    private static int matchKey(char[] low, int i, String key) {
+        int n = low.length;
+        if (i + key.length() > n) return -1;
+        for (int k = 0; k < key.length(); k++) if (low[i + k] != key.charAt(k)) return -1;
+        int end = i + key.length();
+        if (end < n && (Character.isLetterOrDigit(low[end]) || low[end] == '_')) return -1;
+        return end;
+    }
+
+    /**
+     * Konumdaki anahtar + ayırıcı + değer: maskelenecek DEĞERİN [başlangıç, bitiş) aralığı; desen yoksa null.
+     * Biçim: {@code anahtar} [kapanan tırnak: {@code "} {@code '} {@code \"}] boşluk {@code :} ya da {@code =} boşluk
+     * [açılan tırnak] değer.
+     */
+    private static int[] tokenValueSpan(String s, char[] low, int i) {
+        boolean header = false;
+        int keyEnd = -1;
+        for (String k : TOKEN_HEADER_KEYS) {
+            keyEnd = matchKey(low, i, k);
+            if (keyEnd > 0) { header = true; break; }
+        }
+        if (keyEnd < 0) {
+            for (String k : TOKEN_VALUE_KEYS) {
+                keyEnd = matchKey(low, i, k);
+                if (keyEnd > 0) break;
+            }
+        }
+        if (keyEnd < 0) return null;
+        int n = s.length();
+        int p = keyEnd;
+        // JSON anahtarının kapanan tırnağı (kaçışlı olabilir: logfmt içindeki JSON)
+        if (p < n && s.charAt(p) == '\\' && p + 1 < n && s.charAt(p + 1) == '"') p += 2;
+        else if (p < n && (s.charAt(p) == '"' || s.charAt(p) == '\'')) p++;
+        while (p < n && (s.charAt(p) == ' ' || s.charAt(p) == '\t')) p++;
+        if (p >= n || (s.charAt(p) != ':' && s.charAt(p) != '=')) return null;
+        p++;
+        while (p < n && (s.charAt(p) == ' ' || s.charAt(p) == '\t')) p++;
+        if (p >= n) return null;
+        // açılan tırnak
+        String quote = null;
+        if (s.charAt(p) == '\\' && p + 1 < n && s.charAt(p + 1) == '"') { quote = "\\\""; p += 2; }
+        else if (s.charAt(p) == '"' || s.charAt(p) == '\'') { quote = String.valueOf(s.charAt(p)); p++; }
+        int start = p;
+        int end = p;
+        if (quote != null) {
+            while (end < n) {
+                char c = s.charAt(end);
+                if (c == '\n' || c == '\r') break;
+                if (quote.length() == 2) {                     // \"…\" — kapanış \" (önündeki \\ çift kaçış değilse)
+                    if (c == '\\' && end + 1 < n && s.charAt(end + 1) == '"') break;
+                    if (c == '\\' && end + 1 < n && s.charAt(end + 1) == '\\') { end += 2; continue; }
+                } else {
+                    if (c == '\\' && end + 1 < n) { end += 2; continue; }
+                    if (c == quote.charAt(0)) break;
+                }
+                end++;
+            }
+            end = Math.min(end, n);
+        } else if (header) {
+            while (end < n && s.charAt(end) != '\n' && s.charAt(end) != '\r') end++;
+        } else {
+            while (end < n && !isTokenStop(s.charAt(end))) end++;
+        }
+        if (end <= start) return null;
+        return new int[]{start, end};
+    }
+
+    /** Tırnaksız tek "kelime" değerin bittiği karakter. */
+    private static boolean isTokenStop(char c) {
+        return c == '&' || c == ',' || c == ';' || c == '"' || c == '\'' || c == '}' || c == ')' || c == ']' || c == '<'
+                || c == '\\' || Character.isWhitespace(c);
+    }
+
     /** URL query-string'i ve serbest metin içindeki hassas parametre DEĞERLERİNİ maskeler —
      *  sorun-bildirimi otomatik bağlamı (URL, hata metni/stack) için. Parametre ADI hassas
      *  kalıba uyarsa (EN+TR: password/parola/sifre/token/secret/otp/pin/key...) değeri {@link #MASK} olur;

@@ -92,4 +92,15 @@ public interface ScriptedCheckRepository extends JpaRepository<ScriptedCheck, Lo
          + "FROM ScriptedCheck c WHERE c.monitorId = :id AND c.scriptVersion IS NOT NULL "
          + "GROUP BY c.scriptVersion")
     List<Object[]> runStatsByScriptVersion(@Param("id") Long id);
+
+    /**
+     * Adım trendi (2026-10-31, k6 inceleme D1): [checked_at, steps_json] — yalnız ZAMANLANMIŞ koşumlar (elle koşum
+     * trendi bozmasın), adım verisi olanlar, yeniden eskiye, tavanlı (çağıran tavan + 1 ister → "kırpıldı" bilgisi).
+     */
+    @Query("SELECT r.checkedAt, r.stepsJson FROM ScriptedCheck r "
+         + "WHERE r.monitorId = :id AND r.checkedAt >= :from AND r.checkedAt <= :to "
+         + "AND (r.manual IS NULL OR r.manual = false) AND r.stepsJson IS NOT NULL "
+         + "ORDER BY r.checkedAt DESC LIMIT :limit")
+    List<Object[]> stepSeriesRaw(@Param("id") Long id, @Param("from") String from,
+                                 @Param("to") String to, @Param("limit") int limit);
 }

@@ -9156,6 +9156,17 @@ public class SchedulerService {
             c.setViaProxy(res.viaProxy());
             c.setScriptVersion(m.getScriptVersion());
             c.setK6Version(fitK6Version(res.k6Version()));
+            // Koşum verisi (2026-10-31, k6 inceleme D1): adımlar, eşikler, TLS, neden kodu, bağlam — MASKELİ üretildi.
+            var d = res.details();
+            if (d != null) {
+                c.setStepsJson(d.stepsJson());
+                c.setStepsTruncated(d.stepsTruncated() ? Boolean.TRUE : null);
+                c.setThresholdsJson(d.thresholdsJson());
+                c.setTlsJson(d.tlsJson());
+                c.setFailureReason(fitFailureReason(d.failureReason()));
+                c.setFailureDetail(d.failureDetail());
+                c.setContextJson(d.contextJson());
+            }
             var ph = res.phases();
             if (ph != null) {
                 c.setReqBlockedMs(ph.blockedMs());
@@ -9211,6 +9222,12 @@ public class SchedulerService {
             log.warn("Anomali guard'ı çalıştırılamadı ({}): {}", m.getName(), e.toString());
         }
         return out;
+    }
+
+    /** Neden kodu yalnız katalogdaysa ve kolona (VARCHAR(40)) sığıyorsa yazılır. */
+    static String fitFailureReason(String code) {
+        if (code == null || code.isBlank() || code.length() > 40) return null;
+        return com.sitemonitor.service.failure.CheckFailureReason.CODES.contains(code) ? code : null;
     }
 
     /** k6 sürüm metni kolona (VARCHAR(20)) sığsın — bilinmeyen biçimde uzun bir çıktı kaydı düşürmesin. */

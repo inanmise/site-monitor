@@ -164,16 +164,29 @@ class ScriptedProxyTest {
     }
 
     @Test
-    @DisplayName("blacklistFor: vekili KAPSAYAN aralık düşer, hedef korumaları KALIR")
-    void blacklistDropsOnlyProxyRange() {
+    @DisplayName("blacklistFor: yalnız VEKİL ADRESİ açılır; aralığın geri kalanı ve hedef korumaları KALIR (A6)")
+    void blacklistOpensOnlyProxyAddress() throws Exception {
         // "Vekili açtım ama yine çalışmıyor" durumunun kaynağı: --blacklist-ip k6'nın dialer'ında
-        // uygulanır ve vekil kullanılırken k6 HEDEFE değil VEKİLE bağlanır.
-        var svc = serviceWithGuard(settings("localhost", 8080, "", "", ""));
+        // uygulanır ve vekil kullanılırken k6 HEDEFE değil VEKİLE bağlanır. 2026-10-31'e dek vekili
+        // KAPSAYAN aralığın tamamı düşüyordu (vekil 10.1.2.3 ⇒ bütün 10.0.0.0/8 açık); artık yalnız
+        // vekilin kendi adresi açılır (CidrBlocks).
+        var svc = serviceWithGuard(settings("127.0.0.1", 8080, "", "", ""));
 
         List<String> out = svc.blacklistFor(true);
 
-        assertThat(out).doesNotContain("127.0.0.0/8");             // vekili kapsayan aralık düştü
+        assertThat(out).doesNotContain("127.0.0.0/8");
         assertThat(out).contains("169.254.169.254/32", "10.0.0.0/8");  // hedef koruması sürüyor
+        java.util.function.Predicate<String> covered = ip -> out.stream().anyMatch(c -> {
+            try {
+                return com.sitemonitor.service.scripted.CidrBlocks.contains(
+                        com.sitemonitor.service.scripted.CidrBlocks.parse(c), java.net.InetAddress.getByName(ip).getAddress());
+            } catch (Exception e) {
+                return false;
+            }
+        });
+        assertThat(covered.test("127.0.0.1")).isFalse();          // vekil açık
+        assertThat(covered.test("127.0.0.2")).isTrue();           // aralığın geri kalanı kapalı
+        assertThat(covered.test("127.255.0.1")).isTrue();
     }
 
     // ── buildProcessEnv: 288-koşumluk saha vakasının GEÇTİĞİ yol ─────────────────────────────

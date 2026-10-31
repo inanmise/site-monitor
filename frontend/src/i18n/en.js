@@ -16720,7 +16720,7 @@ export const EN = {
   'help.set.site.monitor.scripted.hardcoded-secret-policy':
     'What it does: Decides what happens when a hard-coded secret — a password or token — is detected in a script.\nBenefit: Secrets stop being embedded in script text and environment variables get used instead.\nRecommended: WARN (the default) warns but still saves; move to BLOCK to refuse the save once the habit is established.',
   'help.set.site.monitor.scripted.file-read-policy':
-    'What it does: What happens when a synthetic script reads files (open(), the k6/fs module, local file imports, system file paths).\nBenefit: k6 runs as the same user as the application, so a script that reads files can reach secrets on the server; this gate closes that path.\nRecommended: REPORT (default) only warns and writes a report at start-up; nothing else changes. When no existing script reads files (report: /api/admin/scripted/file-read-report), switch to BLOCK: such scripts are neither saved nor run.',
+    'What it does: What happens when a synthetic script reads files (open(), the k6/fs module, local file imports, system file paths).\nBenefit: k6 runs as the same user as the application, so a script that reads files can reach secrets on the server; this gate closes that path.\nRecommended: BLOCK (the default): a script that reads or writes files (open(), indirect open, k6/fs, local imports, handleSummary, gRPC proto files) is not saved, tested or run. REPORT only warns and writes a report at start-up; choose it only for a deliberate transition period. Affected scripts: /api/admin/scripted/file-read-report.',
   // TLS grade drop notification (2026-10-11)
   'help.set.site.monitor.tls-grade.drop-notify': 'What it does: When the daily TLS scan lowers a certificate\'s configuration grade, sends one summary email to the responsible (SY) and UG teams and a push to their members.\nBenefit: A grade drop no longer stays inside the app; the team learns the same day about a degradation such as TLS 1.0 being enabled, a weak cipher or a lost HSTS header.\nRecommended: On (the default). Each drop is notified once; rises and information changes from incomplete scans aren\'t notified. When switched off, pending drops are marked "notification off" and aren\'t sent later.',
   'help.set.site.monitor.tls-grade.drop-notify-min-grade': 'What it does: Decides which drops are notified: if the new grade is HIGHER than this one, no notification is sent.\nBenefit: Cuts the noise from small drops (A+ → A) without missing serious degradations.\nRecommended: A (the default) — every drop except to A+. Pick B or C to be told only about serious degradations.',
@@ -16762,13 +16762,13 @@ export const EN = {
   'help.set.site.monitor.scripted.max-timeout-seconds':
     'What it does: The longest run a scripted monitor may ask for — a hard upper bound.\nBenefit: One script cannot hold a pool slot for minutes and keep the others waiting.\nRecommended: 180 seconds (the default). Above 300, queueing becomes noticeable with a small pool.',
   'help.set.site.monitor.scripted.mem-limit':
-    'What it does: Sets the memory target for the k6 subprocess (the Go runtime\'s GOMEMLIMIT).\nBenefit: A script leaking memory cannot take the whole application down with an out-of-memory kill.\nRecommended: 256MiB (the default), or 512MiB for data-heavy scenarios; zero or empty removes the limit.',
+    'What it does: Sets the memory target for the k6 subprocess (the Go runtime\'s GOMEMLIMIT).\nBenefit: A script leaking memory cannot take the whole application down with an out-of-memory kill.\nRecommended: 256MiB (the default), or 512MiB for data-heavy scenarios; zero, off or empty removes the limit. The format is Go\'s: a number plus a unit (B, KiB, MiB, GiB, TiB) — a value such as "512MB" is not saved. Only a global administrator can change it.',
   'help.set.site.monitor.scripted.no-checks-policy':
     'What it does: Decides how a scenario that runs but never calls check() is judged.\nBenefit: A script that verifies nothing cannot quietly look successful.\nRecommended: WARN (the default) records it as faulty without alerting. Use FAIL to enforce discipline; PASS exists only as an emergency return to the old behaviour.',
   'help.set.site.monitor.scripted.output-tail-bytes':
     'What it does: How many bytes from the end of the k6 output are stored with each run.\nBenefit: You keep enough trace to debug with, without filling the run table with huge logs.\nRecommended: 8192 bytes (the default), or 16384 for chatty scripts; above 65536 storage costs climb fast.',
   'help.set.site.monitor.scripted.pool-size':
-    'What it does: How many k6 subprocesses may run at the same time.\nBenefit: The CPU and memory ceiling of a single pod is protected, so scripted monitoring does not starve the other checks.\nRecommended: 2 (the default). Each process eats its own CPU; above 4 is risky on a single pod.',
+    'What it does: How many k6 subprocesses may run at the same time.\nBenefit: The CPU and memory ceiling of a single pod is protected, so scripted monitoring does not starve the other checks.\nRecommended: 2 (the default). Each process eats its own CPU; above 4 is risky on a single pod. Applied without a restart: when lowered, running checks finish and no new one is allowed in. Only a global administrator can change it.',
   'help.set.site.monitor.scripted.slow-threshold-ms':
     'What it does: A k6 run slower than this counts as slow and can raise a slowness alert.\nBenefit: A scenario that still passes but is steadily getting slower becomes visible.\nRecommended: 15000 ms (the default). Keep it below the run timeout; use 30000 for long multi-step scenarios.',
   'help.set.site.monitor.scripted.syntax-check-policy':
@@ -18871,6 +18871,43 @@ export const EN = {
   'chkfail.REGISTRY_NO_EXPIRY.why': 'The registry answered but did not report an expiry date for {target}.',
   'chkfail.REGISTRY_NO_EXPIRY.effect': 'Days left could not be worked out; expiry warnings will not work.',
   'chkfail.REGISTRY_NO_EXPIRY.fix': 'Look at the registry answer on the Registration tab and confirm the expiry date with the registrar.',
+  // Scripted (k6) run reasons (2026-10-31) — network failures use the network codes above.
+  'chkfail.SCRIPT_CHECK_FAILED.short': 'Scenario check failed',
+  'chkfail.SCRIPT_CHECK_FAILED.why': 'The requests got responses, but at least one check() in the script failed (the expected content, status or value did not come back).',
+  'chkfail.SCRIPT_CHECK_FAILED.effect': 'A business step of the scenario did not work as expected; users may hit the same problem in this flow.',
+  'chkfail.SCRIPT_CHECK_FAILED.fix': 'Find the failed check and its step in the steps list and check the target application\'s response at that step. If the application changed on purpose, update the expectation in the script.',
+  'chkfail.SCRIPT_THRESHOLD_FAILED.short': 'Threshold crossed',
+  'chkfail.SCRIPT_THRESHOLD_FAILED.why': 'A threshold in the script\'s options.thresholds (for example response time p95) was crossed; k6 counted the run as failed.',
+  'chkfail.SCRIPT_THRESHOLD_FAILED.effect': 'The service answers, but outside the defined performance or success limit.',
+  'chkfail.SCRIPT_THRESHOLD_FAILED.fix': 'Find the failed threshold in the thresholds list and look for the cause of the slowness in the target system. If the threshold is unrealistic, review the value in the script.',
+  'chkfail.SCRIPT_EXCEPTION.short': 'Script stopped with an error',
+  'chkfail.SCRIPT_EXCEPTION.why': 'A JavaScript error (for example an undefined variable or an unexpected response shape) or a k6 configuration error happened while the script ran; the remaining steps did not run.',
+  'chkfail.SCRIPT_EXCEPTION.effect': 'The scenario did not run to the end; the target could not be verified in this run.',
+  'chkfail.SCRIPT_EXCEPTION.fix': 'Read the error line and line number in the technical detail, fix the script and try it with Test in the form.',
+  'chkfail.SCRIPT_ABORTED.short': 'Script stopped the test',
+  'chkfail.SCRIPT_ABORTED.why': 'The script marked the test as failed or stopped it on its own decision (exec.test.fail() or test.abort()).',
+  'chkfail.SCRIPT_ABORTED.effect': 'The script\'s own condition was not met; the scenario counted as failed.',
+  'chkfail.SCRIPT_ABORTED.fix': 'Look at the condition and message that stop the test in the script, and check the state of the target that triggers it.',
+  'chkfail.SCRIPT_NO_CHECKS.short': 'Nothing was verified',
+  'chkfail.SCRIPT_NO_CHECKS.why': 'The script ran but called no check() and defines no threshold; the run verified nothing.',
+  'chkfail.SCRIPT_NO_CHECKS.effect': 'This monitor can look "passed" even when the target is broken; the result can\'t be trusted.',
+  'chkfail.SCRIPT_NO_CHECKS.fix': 'Verify the status and content with check() after every important request; see the examples in the template library.',
+  'chkfail.SCRIPT_PROCESS_TIMEOUT.short': 'Process budget ran out',
+  'chkfail.SCRIPT_PROCESS_TIMEOUT.why': 'The run did not finish within the monitor\'s process budget and was stopped (a slow or unresponsive request, a long wait).',
+  'chkfail.SCRIPT_PROCESS_TIMEOUT.effect': 'The scenario did not run to the end; the steps list shows where it got stuck.',
+  'chkfail.SCRIPT_PROCESS_TIMEOUT.fix': 'Give the requests an explicit timeout shorter than the process budget (for example { timeout: \'20s\' }) and check the target of the step that got stuck; raise the monitor\'s timeout if needed.',
+  'chkfail.SCRIPT_INTERRUPTED.short': 'Run was interrupted',
+  'chkfail.SCRIPT_INTERRUPTED.why': 'The run was cut before it finished (the application is restarting or the job was cancelled); the target has nothing to do with it.',
+  'chkfail.SCRIPT_INTERRUPTED.effect': 'Nothing was measured in this run; the next run goes ahead normally.',
+  'chkfail.SCRIPT_INTERRUPTED.fix': 'No action is needed if it happened once. If it happens often, pass the reason for the restarts on to the system administrator.',
+  'chkfail.SCRIPT_FILE_READ_BLOCKED.short': 'File access blocked',
+  'chkfail.SCRIPT_FILE_READ_BLOCKED.why': 'The script accesses files on the server (open(), k6/fs, a local import, handleSummary or a gRPC proto); by security policy it was not run.',
+  'chkfail.SCRIPT_FILE_READ_BLOCKED.effect': 'The monitor does not run; the target is not measured.',
+  'chkfail.SCRIPT_FILE_READ_BLOCKED.fix': 'Pass the data as an environment variable (__ENV) or inside the script and remove the file access.',
+  'chkfail.K6_UNAVAILABLE.short': 'k6 is unavailable',
+  'chkfail.K6_UNAVAILABLE.why': 'The k6 binary is missing in this environment, could not be started, or its version is not supported; the run could not happen.',
+  'chkfail.K6_UNAVAILABLE.effect': 'Synthetic monitors do not run in this environment.',
+  'chkfail.K6_UNAVAILABLE.fix': 'Pass it on to the system administrator: check the active binary on Settings → Platform → k6 engine.',
   'chkfail.UNKNOWN.short': 'Check did not complete',
   'chkfail.UNKNOWN.why': 'The check ended with an unexpected error (technical detail below).',
   'chkfail.UNKNOWN.effect': 'The state of the target could not be measured by this check.',
@@ -18884,6 +18921,7 @@ export const EN = {
   'chkfail.phase.ICMP': 'Ping (ICMP)',
   'chkfail.phase.CONTENT': 'Page content',
   'chkfail.phase.REGISTRY': 'Domain registration (RDAP / WHOIS)',
+  'chkfail.phase.SCRIPT': 'Scenario (k6 script)',
   'chkhist.showDetails': 'Show details',
   'chkhist.hideDetails': 'Hide details',
   'chkhist.toggleAria': '{0} · {1} — {2}',

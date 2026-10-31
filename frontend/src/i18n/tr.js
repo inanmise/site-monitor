@@ -16748,7 +16748,7 @@ export const TR = {
   'help.set.site.monitor.scripted.hardcoded-secret-policy':
     'Ne işe yarar: Script içinde sabit-kodlu bir gizli değer (parola, token) saptandığında ne yapılacağı.\nFaydası: Sırlar script metnine gömülmez; ortam değişkeni kullanımı teşvik edilir.\nÖnerilen değer: WARN (varsayılan) uyarır ama kaydeder; disiplin oturduğunda BLOCK yapıp kaydı tamamen reddedin.',
   'help.set.site.monitor.scripted.file-read-policy':
-    'Ne işe yarar: Sentetik betikte dosya okuma (open(), k6/fs modülü, yerel dosya importu, sistem dosya yolu) saptandığında ne yapılacağı.\nFaydası: k6 uygulamayla aynı kullanıcıyla çalıştığı için dosya okuyan bir betik sunucudaki gizli değerlere erişebilir; bu kapı o yolu kapatır.\nÖnerilen değer: REPORT (varsayılan) yalnız uyarır ve açılışta rapor yazar, davranış değişmez. Mevcut betiklerin hiçbiri dosya okumuyorsa (rapor: /api/admin/scripted/file-read-report) BLOCK yapın; dosya okuyan betik kaydedilmez ve çalıştırılmaz.',
+    'Ne işe yarar: Sentetik betikte dosya okuma (open(), k6/fs modülü, yerel dosya importu, sistem dosya yolu) saptandığında ne yapılacağı.\nFaydası: k6 uygulamayla aynı kullanıcıyla çalıştığı için dosya okuyan bir betik sunucudaki gizli değerlere erişebilir; bu kapı o yolu kapatır.\nÖnerilen değer: BLOCK (varsayılan): dosya okuyan ya da yazan betik (open(), dolaylı open, k6/fs, yerel import, handleSummary, gRPC proto dosyası) kaydedilmez, denenmez ve çalıştırılmaz. REPORT yalnız uyarır ve açılışta rapor yazar; yalnız bilinçli bir geçiş dönemi için seçin. Etkilenen betikler: /api/admin/scripted/file-read-report.',
   // TLS notu düşüş bildirimi (2026-10-11)
   'help.set.site.monitor.tls-grade.drop-notify': 'Ne işe yarar: Günlük TLS taramasında bir sertifikanın yapılandırma notu düşünce sorumlu (SY) ve UG takımlarına tek bir özet e-posta ve üyelere push gönderir.\nFaydası: Not düşüşü yalnız uygulama içinde kalmaz; takım TLS 1.0 açılması, zayıf şifre ya da HSTS kaybı gibi bozulmayı aynı gün öğrenir.\nÖnerilen değer: Açık (varsayılan). Her düşüş bir kez bildirilir; not yükselmesi ve eksik taramadan doğan bilgi değişimi bildirilmez. Kapatılınca bekleyen düşüşler "bildirim kapalı" olarak işaretlenir, sonradan açılınca geriye dönük gönderilmez.',
   'help.set.site.monitor.tls-grade.drop-notify-min-grade': 'Ne işe yarar: Hangi düşüşlerin bildirileceğini belirler: yeni not bu nottan YÜKSEKSE bildirim gitmez.\nFaydası: Küçük düşüşlerle (A+ → A) gelen gürültü kesilir, ciddi bozulmalar kaçmaz.\nÖnerilen değer: A (varsayılan) — A+ dışındaki her düşüş. Yalnız ciddi bozulmalar için B ya da C seçin.',
@@ -16790,13 +16790,13 @@ export const TR = {
   'help.set.site.monitor.scripted.max-timeout-seconds':
     'Ne işe yarar: Bir senaryo monitörünün isteyebileceği en uzun koşum süresi — sert üst sınır.\nFaydası: Tek bir script havuz yuvasını dakikalarca tutup diğer senaryoları bekletemez.\nÖnerilen değer: 180 saniye (varsayılan). 300\'ün üstü, havuz küçükken sıra beklemeyi görünür biçimde uzatır.',
   'help.set.site.monitor.scripted.mem-limit':
-    'Ne işe yarar: k6 alt sürecinin bellek hedefi (Go çalışma zamanının GOMEMLIMIT değeri).\nFaydası: Kaçak bellek tüketen bir script uygulamayı OOM ile düşürmez.\nÖnerilen değer: 256MiB (varsayılan). Büyük veri işleyen senaryolarda 512MiB; 0 ya da boş sınırı kaldırır.',
+    'Ne işe yarar: k6 alt sürecinin bellek hedefi (Go çalışma zamanının GOMEMLIMIT değeri).\nFaydası: Kaçak bellek tüketen bir script uygulamayı OOM ile düşürmez.\nÖnerilen değer: 256MiB (varsayılan). Büyük veri işleyen senaryolarda 512MiB; 0, off ya da boş sınırı kaldırır. Biçim Go\'nunkidir: sayı + birim (B, KiB, MiB, GiB, TiB) — "512MB" gibi bir değer kaydedilmez. Yalnız global yönetici değiştirir.',
   'help.set.site.monitor.scripted.no-checks-policy':
     'Ne işe yarar: Koşan ama hiç check() çalıştırmayan bir senaryonun nasıl değerlendirileceği.\nFaydası: Hiçbir şeyi doğrulamayan bir script sessizce "başarılı" görünmez.\nÖnerilen değer: WARN (varsayılan): kayıt hatalı sayılır, alarm üretilmez. Disiplin isteniyorsa FAIL; PASS yalnız eski davranışa acil dönüş içindir.',
   'help.set.site.monitor.scripted.output-tail-bytes':
     'Ne işe yarar: Her koşumda saklanan k6 çıktısının son kaç baytının kaydedileceği.\nFaydası: Hata ayıklamak için yeterli iz kalır, koşum tablosu ise devasa loglarla şişmez.\nÖnerilen değer: 8192 bayt (varsayılan). Çıktısı bol scriptlerde 16384; 65536\'nın üstü saklama maliyetini hızla artırır.',
   'help.set.site.monitor.scripted.pool-size':
-    'Ne işe yarar: Aynı anda çalışabilecek k6 alt süreci sayısı.\nFaydası: Tek pod\'da CPU ve bellek tavanı korunur; senaryo izleme diğer kontrolleri aç bırakmaz.\nÖnerilen değer: 2 (varsayılan). Her süreç kendi CPU\'sunu yer; 4\'ün üstü tek pod kurulumda risklidir.',
+    'Ne işe yarar: Aynı anda çalışabilecek k6 alt süreci sayısı.\nFaydası: Tek pod\'da CPU ve bellek tavanı korunur; senaryo izleme diğer kontrolleri aç bırakmaz.\nÖnerilen değer: 2 (varsayılan). Her süreç kendi CPU\'sunu yer; 4\'ün üstü tek pod kurulumda risklidir. Yeniden başlatmadan uygulanır: azaltınca çalışan koşumlar biter, yenisine izin verilmez. Yalnız global yönetici değiştirir.',
   'help.set.site.monitor.scripted.slow-threshold-ms':
     'Ne işe yarar: Bir k6 koşumu bu süreyi aşarsa yavaş sayılır ve yavaşlık alarmı üretilebilir.\nFaydası: Senaryo hâlâ geçiyor ama giderek yavaşlıyorsa bu görünür olur.\nÖnerilen değer: 15000 ms (varsayılan). Koşum zaman aşımından küçük olmalı; çok adımlı senaryolarda 30000.',
   'help.set.site.monitor.scripted.syntax-check-policy':
@@ -18902,6 +18902,43 @@ export const TR = {
   'chkfail.REGISTRY_NO_EXPIRY.why': 'Kayıt sunucusu yanıt verdi ama {target} için bitiş tarihi bildirmedi.',
   'chkfail.REGISTRY_NO_EXPIRY.effect': 'Kalan gün hesaplanamadı; süre uyarıları çalışmaz.',
   'chkfail.REGISTRY_NO_EXPIRY.fix': 'Kayıt sunucusunun yanıtını Domain Kaydı sekmesinden inceleyin; bitiş tarihini kayıt firmasından teyit edin.',
+  // Senaryo (k6) koşum nedenleri (2026-10-31, k6 inceleme D1) — ağ kökenli başarısızlıkta yukarıdaki ağ kodları kullanılır.
+  'chkfail.SCRIPT_CHECK_FAILED.short': 'Senaryo doğrulaması düştü',
+  'chkfail.SCRIPT_CHECK_FAILED.why': 'İstekler yanıt aldı ama betikteki check() doğrulamalarından en az biri başarısız oldu (beklenen içerik, durum ya da değer gelmedi).',
+  'chkfail.SCRIPT_CHECK_FAILED.effect': 'Senaryonun iş adımı beklendiği gibi çalışmadı; kullanıcılar da aynı akışta sorun yaşıyor olabilir.',
+  'chkfail.SCRIPT_CHECK_FAILED.fix': 'Adımlar listesinde düşen check\'i ve adımını bulun; hedef uygulamanın o adımdaki yanıtını kontrol edin. Uygulama bilinçli olarak değiştiyse betikteki beklentiyi güncelleyin.',
+  'chkfail.SCRIPT_THRESHOLD_FAILED.short': 'Eşik aşıldı',
+  'chkfail.SCRIPT_THRESHOLD_FAILED.why': 'Betiğin options.thresholds bölümündeki bir eşik (ör. yanıt süresi p95) aşıldı; k6 koşumu başarısız saydı.',
+  'chkfail.SCRIPT_THRESHOLD_FAILED.effect': 'Hizmet yanıt veriyor ama tanımlı performans ya da başarı sınırının dışında.',
+  'chkfail.SCRIPT_THRESHOLD_FAILED.fix': 'Eşikler listesinde düşen eşiği bulun; yavaşlığın kaynağını hedef sistemde araştırın. Eşik gerçekçi değilse betikteki değeri gözden geçirin.',
+  'chkfail.SCRIPT_EXCEPTION.short': 'Betik hatayla durdu',
+  'chkfail.SCRIPT_EXCEPTION.why': 'Betik çalışırken bir JavaScript hatası (ör. tanımsız değişken, beklenmeyen yanıt biçimi) ya da k6 yapılandırma hatası oluştu; kalan adımlar çalışmadı.',
+  'chkfail.SCRIPT_EXCEPTION.effect': 'Senaryo sonuna kadar koşmadı; hedefin durumu bu koşumda doğrulanamadı.',
+  'chkfail.SCRIPT_EXCEPTION.fix': 'Teknik ayrıntıdaki hata satırını ve satır numarasını inceleyin; betiği düzeltip formdaki Test ile deneyin.',
+  'chkfail.SCRIPT_ABORTED.short': 'Betik testi durdurdu',
+  'chkfail.SCRIPT_ABORTED.why': 'Betik kendi kararıyla testi başarısız işaretledi ya da durdurdu (exec.test.fail() ya da test.abort()).',
+  'chkfail.SCRIPT_ABORTED.effect': 'Betiğin kendi koşulu sağlanmadı; senaryo başarısız sayıldı.',
+  'chkfail.SCRIPT_ABORTED.fix': 'Betikte testi durduran koşulu ve iletisini inceleyin; hedefte o koşula yol açan durumu kontrol edin.',
+  'chkfail.SCRIPT_NO_CHECKS.short': 'Hiçbir şey doğrulanmadı',
+  'chkfail.SCRIPT_NO_CHECKS.why': 'Betik çalıştı ama hiç check() çalıştırmadı ve eşik de tanımlı değil; koşum hiçbir şeyi doğrulamadı.',
+  'chkfail.SCRIPT_NO_CHECKS.effect': 'Bu izleme hedef bozulsa da "başarılı" görünebilir; sonuç güvenilir değil.',
+  'chkfail.SCRIPT_NO_CHECKS.fix': 'Her önemli isteğin ardından check() ile durum ve içeriği doğrulayın; şablon kütüphanesindeki örneklere bakın.',
+  'chkfail.SCRIPT_PROCESS_TIMEOUT.short': 'Süreç bütçesi doldu',
+  'chkfail.SCRIPT_PROCESS_TIMEOUT.why': 'Koşum izlemenin süreç bütçesi içinde bitmedi ve sonlandırıldı (yavaş ya da yanıt vermeyen bir istek, uzun bekleme).',
+  'chkfail.SCRIPT_PROCESS_TIMEOUT.effect': 'Senaryo sonuna kadar koşmadı; hangi adımda takıldığı adım listesinden görülebilir.',
+  'chkfail.SCRIPT_PROCESS_TIMEOUT.fix': 'İsteklere süreç bütçesinden kısa açık bir zaman aşımı verin (ör. { timeout: \'20s\' }) ve takılan adımın hedefini kontrol edin; gerekiyorsa izlemenin zaman aşımını artırın.',
+  'chkfail.SCRIPT_INTERRUPTED.short': 'Koşum kesildi',
+  'chkfail.SCRIPT_INTERRUPTED.why': 'Koşum tamamlanmadan kesildi (uygulama yeniden başlıyor ya da iş iptal edildi); hedefin bununla ilgisi yok.',
+  'chkfail.SCRIPT_INTERRUPTED.effect': 'Bu koşumda ölçüm yapılamadı; bir sonraki koşum normal sürer.',
+  'chkfail.SCRIPT_INTERRUPTED.fix': 'Tek seferlikse işlem gerekmez. Sık görülüyorsa uygulamanın yeniden başlama sebebini sistem yöneticisine iletin.',
+  'chkfail.SCRIPT_FILE_READ_BLOCKED.short': 'Dosya erişimi engellendi',
+  'chkfail.SCRIPT_FILE_READ_BLOCKED.why': 'Betik sunucudaki dosyalara erişiyor (open(), k6/fs, yerel import, handleSummary ya da gRPC proto); güvenlik ayarı gereği çalıştırılmadı.',
+  'chkfail.SCRIPT_FILE_READ_BLOCKED.effect': 'İzleme koşmuyor; hedefin durumu ölçülmüyor.',
+  'chkfail.SCRIPT_FILE_READ_BLOCKED.fix': 'Veriyi ortam değişkeniyle (__ENV) ya da betiğin içinde verin ve dosya erişimini kaldırın.',
+  'chkfail.K6_UNAVAILABLE.short': 'k6 kullanılamıyor',
+  'chkfail.K6_UNAVAILABLE.why': 'Bu ortamda k6 ikilisi bulunamadı, başlatılamadı ya da sürümü desteklenmiyor; koşum yapılamadı.',
+  'chkfail.K6_UNAVAILABLE.effect': 'Sentetik izlemeler bu ortamda koşmuyor.',
+  'chkfail.K6_UNAVAILABLE.fix': 'Sistem yöneticisine iletin: Ayarlar → Platform → k6 motoru sayfasından etkin ikiliyi denetleyin.',
   'chkfail.UNKNOWN.short': 'Kontrol tamamlanamadı',
   'chkfail.UNKNOWN.why': 'Kontrol beklenmeyen bir hatayla sonlandı (teknik ayrıntı aşağıda).',
   'chkfail.UNKNOWN.effect': 'Hedefin durumu bu kontrolde ölçülemedi.',
@@ -18915,6 +18952,7 @@ export const TR = {
   'chkfail.phase.ICMP': 'Ping (ICMP)',
   'chkfail.phase.CONTENT': 'Sayfa içeriği',
   'chkfail.phase.REGISTRY': 'Alan adı kaydı (RDAP / WHOIS)',
+  'chkfail.phase.SCRIPT': 'Senaryo (k6 betiği)',
   'chkhist.showDetails': 'Ayrıntıyı göster',
   'chkhist.hideDetails': 'Ayrıntıyı gizle',
   'chkhist.toggleAria': '{0} · {1} — {2}',

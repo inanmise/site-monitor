@@ -6997,6 +6997,8 @@ public class MonitoringController {
                     item.put("never_succeeded", latest.get(m.getId()) != null && !everPassed.contains(m.getId()));
                     return item;
                 }).toList();
+        // Son koşumun TLS hostlarına sertifika durumu — sayfa başına TEK toplu okuma (2026-10-31, k6 inceleme D1).
+        decorateScriptedTls(result, session);
         Map<String, Object> out = new LinkedHashMap<>();
         // Satır bayrakları öteki sekiz türle AYNI (2026-10-16, kullanıcı kararı: paylaşımda k6 da tam düzenlenir —
         // "yetki verdiği kişi aynı o ekipteki gibi"; 2026-10-12'deki "k6 paylaşımla düzenlenmez" istisnası kaldırıldı)
@@ -7413,7 +7415,7 @@ public class MonitoringController {
             public List<Object[]> histogram(String f, String t, int len) { return scriptedCheckRepo.historyHistogram(id, f, t, len); }
             public List<Object[]> bounds() { return scriptedCheckRepo.historyBounds(id); }
         };
-        return runHistory(session, mon.getTeamId(), src, "scripted",
+        ResponseEntity<?> resp = runHistory(session, mon.getTeamId(), src, "scripted",
                 mon.getName(), Set.of(EscalationService.TYPE_SCRIPTED_FAIL, EscalationService.TYPE_SCRIPTED_SLOW),
                 from, to, days, status, page, size, format, "scripted-history-" + id, List.of(
                 new CsvColumn<>("checked_at", com.sitemonitor.model.ScriptedCheck::getCheckedAt),
@@ -7435,7 +7437,93 @@ public class MonitoringController {
                 new CsvColumn<>("req_waiting_ms", com.sitemonitor.model.ScriptedCheck::getReqWaitingMs),
                 new CsvColumn<>("data_sent", com.sitemonitor.model.ScriptedCheck::getDataSent),
                 new CsvColumn<>("data_received", com.sitemonitor.model.ScriptedCheck::getDataReceived),
+                new CsvColumn<>("failure_reason", com.sitemonitor.model.ScriptedCheck::getFailureReason),
                 new CsvColumn<>("error", com.sitemonitor.model.ScriptedCheck::getError)), response);
+        return withScriptedRunFields(resp, session);
+    }
+
+    /** Satırı tel biçimine çeviren eşleyici (snake_case — Spring'in JSON adlandırmasıyla aynı). */
+    private static final com.fasterxml.jackson.databind.ObjectMapper SCRIPTED_ROW_MAPPER =
+            new com.fasterxml.jackson.databind.ObjectMapper()
+                    .setPropertyNamingStrategy(com.fasterxml.jackson.databind.PropertyNamingStrategies.SNAKE_CASE);
+
+    /** Ham JSON kolonları — satırda yerine ayrıştırılmış alanlar yazılır. */
+    private static final List<String> SCRIPTED_RAW_RUN_COLUMNS =
+            List.of("steps_json", "steps_truncated", "thresholds_json", "tls_json", "failure_reason", "failure_detail",
+                    "context_json");
+
+    /**
+     * Kontrol geçmişi satırlarına koşum verisi alanları (2026-10-31, k6 inceleme D1): {@code steps}, {@code thresholds},
+     * {@code tls} (sertifika durumu sayfa başına tek okumayla), {@code failure_reason}, {@code failure_detail},
+     * {@code run_context}. Eski satır alanları taşımaz. CSV yanıtı (gövde null) ve hata yanıtları dokunulmadan döner.
+     */
+    @SuppressWarnings("unchecked")
+    private ResponseEntity<?> withScriptedRunFields(ResponseEntity<?> resp, HttpSession session) {
+        if (resp == null || !(resp.getBody() instanceof Map<?, ?> body) || !(body.get("data") instanceof Map<?, ?> data)
+                || !(data.get("items") instanceof List<?> items)) return resp;
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (Object o : items) {
+            if (!(o instanceof com.sitemonitor.model.ScriptedCheck c)) continue;
+            Map<String, Object> row = SCRIPTED_ROW_MAPPER.convertValue(c, LinkedHashMap.class);
+            SCRIPTED_RAW_RUN_COLUMNS.forEach(row::remove);
+            row.putAll(com.sitemonitor.service.scripted.ScriptedRunView.fields(c));
+            rows.add(row);
+        }
+        decorateScriptedTls(rows, session);
+        ((Map<String, Object>) data).put("items", rows);
+        return resp;
+    }
+
+    /**
+     * {@code tls} girdilerine {@code cert_state} / {@code cert} — envanter + son sertifika kontrolü TEK toplu okumayla;
+     * {@code cert} yalnız izleyen o envanter satırının SY ya da UG takımını izleme kapsamında okuyabiliyorsa.
+     */
+    private void decorateScriptedTls(List<Map<String, Object>> rows, HttpSession session) {
+        try {
+            com.sitemonitor.service.scripted.ScriptedRunView.decorateTls(rows,
+                    new com.sitemonitor.service.scripted.ScriptedRunView.CertLookup() {
+                        public List<com.sitemonitor.model.CertificateInventory> inventory(java.util.Collection<String> hosts) {
+                            return inventoryRepo.findByDomainIn(hosts);
+                        }
+                        public List<com.sitemonitor.model.LatestCheck> latest(java.util.Collection<String> domains) {
+                            return latestCheckRepo.findByDomainIn(domains);
+                        }
+                    },
+                    inv -> SessionScope.canViewMonitoring(session, inv.getTeamId())
+                            || (inv.getUgTeamId() != null && SessionScope.canViewMonitoring(session, inv.getUgTeamId())));
+        } catch (Exception e) {
+            log.debug("Senaryo TLS sertifika durumu eklenemedi: {}", e.toString());
+        }
+    }
+
+    /** Adım trendinde en çok bu kadar koşum (yeniden eskiye). */
+    private static final int STEP_SERIES_MAX_ROWS = 2000;
+
+    /**
+     * Adım trendi (2026-10-31, k6 inceleme D1) — yalnız ZAMANLANMIŞ koşumlar, en çok {@value #STEP_SERIES_MAX_ROWS} satır,
+     * en sık ≤ 15 adım: {@code {steps: [{name, points: [{ts, duration_ms, failed}]}], truncated, from, to, days}}.
+     * Okuma kapısı {@code response-series} ile aynı.
+     */
+    @GetMapping("/scripted/{id}/step-series")
+    public ResponseEntity<Map<String, Object>> scriptedStepSeries(@PathVariable Long id,
+            @RequestParam(defaultValue = "7") int days, HttpSession session) {
+        permissionService.require(session, "monitoring.read", "view");
+        com.sitemonitor.model.ScriptedMonitor mon = scriptedMonitorRepo.findById(id).orElse(null);
+        if (mon == null) return notFound("Sentetik izleme bulunamadı");
+        var deny = denyIfNotViewable(session, mon.getTeamId());
+        if (deny != null) return deny;
+        int d = Math.max(1, Math.min(30, days));
+        String[] range = resolveRange(null, null, d);
+        List<Object[]> rows = scriptedCheckRepo.stepSeriesRaw(id, range[0], range[1], STEP_SERIES_MAX_ROWS + 1);
+        boolean truncated = rows.size() > STEP_SERIES_MAX_ROWS;
+        if (truncated) rows = rows.subList(0, STEP_SERIES_MAX_ROWS);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("steps", com.sitemonitor.service.scripted.ScriptedRunView.stepSeries(rows, null));
+        out.put("truncated", truncated);
+        out.put("from", range[0]);
+        out.put("to", range[1]);
+        out.put("days", d);
+        return ok(out);
     }
 
     @PostMapping("/scripted/{id}/check")
@@ -7484,6 +7572,7 @@ public class MonitoringController {
             Map<String, Object> out = new LinkedHashMap<>(enrichScripted(m,
                     scriptedCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null), teamNameMap(),
                     alertEventRepo.findOpenAlert(m.getName(), EscalationService.TYPE_SCRIPTED_FAIL).orElse(null)));
+            decorateScriptedTls(List.of(out), session);
             if (queued) out.put("queued", true);
             if (skippedReason != null) {
                 out.put("skipped", true);
@@ -7496,7 +7585,24 @@ public class MonitoringController {
         }).orElse(notFound("Sentetik izleme bulunamadı"));
     }
 
-    /** Ad-hoc test — kaydetmeden, formdaki script + env ile tek çalıştırma; sonucu + (maskeli) çıktıyı döndürür. */
+    /** "Test Çalıştır" kullanıcı başına sınırı (2026-10-31, k6 inceleme A4) — pod belleği, yük sınırı. */
+    private final com.sitemonitor.service.scripted.ScriptedTestLimiter scriptedTestLimiter =
+            new com.sitemonitor.service.scripted.ScriptedTestLimiter();
+
+    /**
+     * Ad-hoc test — kaydetmeden, formdaki script + env ile tek çalıştırma; sonucu + (maskeli) çıktıyı döndürür.
+     *
+     * <p>Sıra (2026-10-31, k6 inceleme A4 / A1 / A6 / B1): izin → boyut tavanı → env biçimi → dosya okuma (BLOCK → 400
+     * {@code file_reads}) → uzak import SSRF → kayıtlı gizli değerler ({@code keep}) → {@code validateScript} (kayıtla AYNI
+     * kurallar; engelleyici bulgu 400, uyarılar yanıtta {@code warnings}) → kullanıcı başına eşzamanlı 1 + dakikada
+     * {@value com.sitemonitor.service.scripted.ScriptedTestLimiter#PER_MINUTE} (429 {@code RATE_LIMITED} +
+     * {@code Retry-After}) → koşum ELLE KOTADAN (izleme havuzunun son izni zamanlanmış koşumlara kalır).
+     *
+     * <p>Gövde (camelCase): {@code script}, {@code timeoutSeconds}, {@code useProxy}, {@code env} [{name, value, secret,
+     * keep?}], {@code monitorId?}. {@code keep: true} + boş değer + {@code secret: true} satırı, {@code monitorId}'nin GÜNCEL
+     * env'indeki aynı adlı kayıtlı gizli değerle koşar — çağıran o izlemeyi DÜZENLEYEBİLMELİ (PUT ile aynı kapı). Yanıt
+     * {@code kept_secrets} [adlar] taşır (eski pod taşımaz; arayüz bunu "kayıtlı değerler gönderilemedi" diye söyler).
+     */
     @PostMapping("/scripted/test")
     public ResponseEntity<Map<String, Object>> testScripted(@RequestBody Map<String, Object> body, HttpSession session) {
         permissionService.require(session, "monitoring.scripted", "execute");
@@ -7504,24 +7610,160 @@ public class MonitoringController {
             return badRequest(k6UnavailableMessage());
         String script = body.get("script") != null ? body.get("script").toString() : "";
         if (script.isBlank()) return badRequest("script zorunlu");
+        // Boyut tavanı HER metin taramasından önce (kayıtla aynı tavan ve ileti).
+        if (script.length() > com.sitemonitor.service.ScriptedSafetyRules.MAX_SCRIPT_CHARS) {
+            throw DbQueryApiException.field(null, "script",
+                    com.sitemonitor.service.ScriptedSafetyRules.tooLargeMessage(script.length()));
+        }
         Integer timeout = body.get("timeoutSeconds") instanceof Number tn ? tn.intValue() : null;
         // Ayrılmış env adı (2026-10-08): koşum onu yok sayacağı için test de reddeder — test sonucu kaydedilmiş monitörün
-        // koşumuyla aynı kalsın (biçim/sayı kuralları kayıtta; test hiçbir şey yazmaz).
+        // koşumuyla aynı kalsın (biçim/sayı kuralları kayıtta; test hiçbir şey yazmaz). NUL içeren değer de 400 (A7).
         com.sitemonitor.service.ScriptedEnvPolicy.validateForTest(body.get("env"));
-        // Test env: frontend ham gönderir (secret değerler düz; henüz şifreli değil) → checker.test decrypt=false ile alır.
-        String envJson = testEnvJson(body.get("env"));
+        // Dosya okuma (A1): BLOCK'ta 400 + bulgular — "yürütülmedi" (SKIPPED) değil, kullanıcı formda düzeltsin.
+        List<String> fileReads = com.sitemonitor.service.ScriptedCheckerService.scanFileReads(script);
+        if (!fileReads.isEmpty() && scriptedChecker.fileReadBlocking()) {
+            String msg = com.sitemonitor.util.Msg.t(
+                    "Betik dosya okuyor ya da yazıyor (" + String.join(", ", fileReads) + "). Güvenlik ayarı gereği böyle bir "
+                            + "betik çalıştırılmaz; veriyi ortam değişkeniyle (__ENV) ya da betiğin içinde verin.",
+                    "The script reads or writes files (" + String.join(", ", fileReads) + "). By security policy such a "
+                            + "script is not run; pass the data as an environment variable (__ENV) or inside the script.");
+            Map<String, String> f = new LinkedHashMap<>();
+            f.put("script", msg);
+            Map<String, Object> extra = new LinkedHashMap<>();
+            extra.put("file_reads", fileReads);
+            throw new DbQueryApiException(400, "VALIDATION_FAILED", msg, f, extra);
+        }
+        // Uzak import SSRF (A6): kayıtla aynı kural.
+        String importBlock = scriptedChecker.blockedRemoteImport(script);
+        if (importBlock != null) throw DbQueryApiException.field(null, "script", remoteImportMessage(importBlock));
+        // Kayıtlı gizli değerler (B1).
+        ScriptedTestEnv testEnv = resolveTestEnv(body, session);
+        // Kayıt doğrulamasının AYNISI (A4): güvenlik kuralları + __ENV denetimi + k6 archive sözdizimi.
+        var diag = scriptedChecker.validateScript(script, testEnv.names(), timeout);
+        if (diag.blocked()) throw DbQueryApiException.field(null, "script", diag.blocking());
+        // Kullanıcı başına sınır (A4) — doğrulamadan SONRA: düzeltilecek bir hata kotayı yemesin.
+        var decision = scriptedTestLimiter.tryAcquire(testUserKey(session));
+        if (!decision.allowed()) {
+            throw DbQueryApiException.tooMany("RATE_LIMITED", decision.concurrent()
+                    ? com.sitemonitor.util.Msg.t("Önceki testiniz hâlâ sürüyor — bitmesini bekleyin.",
+                            "Your previous test is still running — wait for it to finish.")
+                    : com.sitemonitor.util.Msg.t("Çok sık test: dakikada en çok "
+                                    + com.sitemonitor.service.scripted.ScriptedTestLimiter.PER_MINUTE + " test. "
+                                    + decision.retryAfterSeconds() + " sn sonra yeniden deneyin.",
+                            "Too many tests: at most " + com.sitemonitor.service.scripted.ScriptedTestLimiter.PER_MINUTE
+                                    + " tests per minute. Try again in " + decision.retryAfterSeconds() + " s."),
+                    decision.retryAfterSeconds());
+        }
         // MONITOR_TRIGGER değil MONITOR_TEST: tetikleme KAYITLI bir monitörü zorla koşturur (kontrol
         // satırı yazar, alarm açabilir); ad-hoc test hiçbir şey yazmaz ama sunucudan dışarı bağlantı
         // açar. İkisini tek türde tutup yalnız resource_id="test" ile ayırmak, hiçbir filtrenin
-        // göstermediği bir konvansiyona bel bağlamaktı. Script GÖVDESİ yazılmaz, ölçüsü yazılır.
+        // göstermediği bir konvansiyona bel bağlamaktı. Script GÖVDESİ yazılmaz, ölçüsü + özeti yazılır (A4: adli iz —
+        // kim hangi betiği denedi, SHA-256 ile eşleştirilebilir) ve dosya okuma bulguları.
         auditService.recordAction("MONITOR_TEST", session, "SCRIPTED_MONITOR", "test",
-                AuditDetail.of("kind", "ad-hoc", "script_len", script == null ? 0 : script.length(),
+                AuditDetail.of("kind", "ad-hoc", "script_len", script.length(),
+                        "script_sha256", sha256Hex(script),
+                        "file_reads", fileReads.isEmpty() ? null : String.join(", ", fileReads),
+                        "monitor_id", testEnv.monitorId(),
+                        "kept_secrets", testEnv.kept().isEmpty() ? null : testEnv.kept().size(),
                         "use_proxy", normalizeUseProxy(body.get("useProxy"))), null);
-        // Test koşumu da monitörün vekil tercihini kullanır: aksi halde "Test Çalıştır" yeşil,
-        // kaydedilmiş koşum kırmızı olur ve fark teşhis edilemez.
-        com.sitemonitor.service.ScriptedCheckerService.ScriptedResult r =
-                scriptedChecker.test(script, envJson, timeout, normalizeUseProxy(body.get("useProxy")));
-        return ok(scriptedResultMap(r));
+        try (var ticket = decision.ticket()) {
+            // Test koşumu da monitörün vekil tercihini kullanır: aksi halde "Test Çalıştır" yeşil,
+            // kaydedilmiş koşum kırmızı olur ve fark teşhis edilemez.
+            com.sitemonitor.service.ScriptedCheckerService.ScriptedResult r =
+                    scriptedChecker.testRun(script, testEnv.env(), timeout, normalizeUseProxy(body.get("useProxy")));
+            Map<String, Object> out = scriptedResultMap(r, session);
+            List<String> warnings = new ArrayList<>(diag.warnings());
+            if (!fileReads.isEmpty()) warnings = withFileReadWarning(script, warnings);
+            out.put("warnings", warnings);
+            out.put("kept_secrets", testEnv.kept());
+            return ok(out);
+        }
+    }
+
+    /** Test env'i: koşacak değişkenler, ad listesi (doğrulama için), kayıtlı değerle doldurulanlar ve izleme kimliği. */
+    private record ScriptedTestEnv(List<com.sitemonitor.service.ScriptedCheckerService.EnvVar> env, List<String> names,
+                                   List<String> kept, Long monitorId) {}
+
+    /**
+     * Test gövdesindeki env satırları (B1). Değerler düz metindir (henüz şifrelenmedi); {@code secret} işaretliler çıktıda
+     * maskelenir. {@code keep: true} + boş değer + gizli satır: {@code monitorId}'nin GÜNCEL env'indeki kayıtlı değer —
+     * kapı PUT {@code /scripted/{id}} ile aynı (yoksa 403), izleme yok / görünmüyor 404, ad bulunamadı 400 alan {@code env},
+     * çözülemedi 409 {@code SECRET_UNREADABLE}. Kayıtlı değer hiçbir yere yazılmaz.
+     */
+    private ScriptedTestEnv resolveTestEnv(Map<String, Object> body, HttpSession session) {
+        List<com.sitemonitor.service.ScriptedCheckerService.EnvVar> env = new ArrayList<>();
+        List<String> names = new ArrayList<>();
+        List<String> keepNames = new ArrayList<>();
+        if (body.get("env") instanceof List<?> list) {
+            for (Object o : list) {
+                if (!(o instanceof Map<?, ?> e)) continue;
+                Object nm = e.get("name");
+                if (nm == null || nm.toString().isBlank()) continue;
+                String name = nm.toString().trim();
+                String value = e.get("value") == null ? "" : e.get("value").toString();
+                boolean secret = Boolean.TRUE.equals(e.get("secret")) || "true".equals(String.valueOf(e.get("secret")));
+                boolean keep = Boolean.TRUE.equals(e.get("keep")) || "true".equals(String.valueOf(e.get("keep")));
+                names.add(name);
+                if (keep && secret && value.isEmpty()) { keepNames.add(name); continue; }
+                env.add(new com.sitemonitor.service.ScriptedCheckerService.EnvVar(name, value, secret));
+            }
+        }
+        Long monitorId = body.get("monitorId") instanceof Number n ? n.longValue() : null;
+        if (monitorId == null && body.get("monitorId") instanceof String ms && !ms.isBlank()) {
+            try { monitorId = Long.parseLong(ms.trim()); } catch (NumberFormatException ignored) { /* aşağıda 400 */ }
+        }
+        List<String> kept = new ArrayList<>();
+        if (!keepNames.isEmpty()) {
+            permissionService.require(session, "monitoring.scripted", "edit");
+            if (monitorId == null) {
+                throw DbQueryApiException.field(null, "env", com.sitemonitor.util.Msg.t(
+                        keepNames.get(0) + " için kayıtlı değer yok (izleme belirtilmedi) — değeri yazın.",
+                        "No saved value for " + keepNames.get(0) + " (no monitor given) — enter the value."));
+            }
+            com.sitemonitor.model.ScriptedMonitor m = scriptedMonitorRepo.findById(monitorId).orElse(null);
+            if (m == null || !SessionScope.canViewMonitoring(session, m.getTeamId())) {
+                throw new DbQueryApiException(404, "NOT_FOUND", com.sitemonitor.util.Msg.t(
+                        "Sentetik izleme bulunamadı", "Synthetic monitor not found"));
+            }
+            if (!canOperateTeam(session, m.getTeamId())) {
+                throw new SecurityException(com.sitemonitor.util.Msg.t(
+                        "Bu izlemenin kayıtlı gizli değerleriyle test edemezsiniz (düzenleme yetkiniz yok)",
+                        "You can't test with this monitor's saved secret values (no edit permission)"));
+            }
+            for (String name : keepNames) {
+                var lookup = scriptedChecker.revealSecret(m, name);
+                switch (lookup.status()) {
+                    case OK -> {
+                        env.add(new com.sitemonitor.service.ScriptedCheckerService.EnvVar(name, lookup.value(), true));
+                        kept.add(name);
+                    }
+                    case NOT_FOUND -> throw DbQueryApiException.field(null, "env", com.sitemonitor.util.Msg.t(
+                            name + " için kayıtlı değer yok — değeri yazın.",
+                            "No saved value for " + name + " — enter the value."));
+                    case UNREADABLE -> throw DbQueryApiException.conflict("SECRET_UNREADABLE", "env",
+                            com.sitemonitor.util.Msg.t(
+                                    name + " kayıtlı değeri çözülemedi (anahtar değişmiş olabilir) — değeri yeniden girin.",
+                                    "The saved value of " + name + " can't be decrypted (the key may have changed) — "
+                                            + "enter the value again."), null);
+                }
+            }
+        }
+        return new ScriptedTestEnv(env, names, kept, monitorId);
+    }
+
+    private static String testUserKey(HttpSession session) {
+        Object u = session == null ? null : session.getAttribute("username");
+        return u == null ? "?" : u.toString();
+    }
+
+    private static String sha256Hex(String s) {
+        try {
+            byte[] h = java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(s.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            return java.util.HexFormat.of().formatHex(h);
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     @GetMapping("/scripted/{id}/response-series")
@@ -7673,6 +7915,10 @@ public class MonitoringController {
     /** Script gövde desen taraması → BLOCK politikasında hit varsa hata mesajı, aksi halde null (WARN sadece bilgi). */
     private String scanScriptOrError(Object script) {
         if (script == null) return null;
+        // Uzak import SSRF (2026-10-31, k6 inceleme A6): k6 modül indirmesi --blacklist-ip'e tabi değil — engelli bir hosta
+        // giden import kaydedilmez (koşumda da ERROR + SSRF_BLOCKED).
+        String importBlock = scriptedChecker == null ? null : scriptedChecker.blockedRemoteImport(script.toString());
+        if (importBlock != null) throw DbQueryApiException.field(null, "script", remoteImportMessage(importBlock));
         // Dosya okuma (2026-10-01, onaylı öneri 1): yalnız ayar BLOCK iken kayıt reddedilir; REPORT'ta (varsayılan)
         // kayıt sürer ve yanıta uyarı eklenir (withFileReadWarning).
         if (scriptedChecker != null && scriptedChecker.fileReadBlocking()) {
@@ -7692,8 +7938,17 @@ public class MonitoringController {
         return null;   // WARN: kaydı engelleme (frontend uyarısı gösterir)
     }
 
+    /** Uzak import engeli iletisi (kayıt + test aynı metin). */
+    private static String remoteImportMessage(String block) {
+        return com.sitemonitor.util.Msg.t(
+                "Betik engelli bir adresten modül içe aktarıyor: " + block + ". Uzak modüller yalnız herkese açık adreslerden "
+                        + "(ör. jslib.k6.io) alınabilir; iç ağ, döngü ve bulut meta veri adresleri güvenlik gereği kapalıdır.",
+                "The script imports a module from a blocked address: " + block + ". Remote modules may only come from public "
+                        + "addresses (e.g. jslib.k6.io); internal, loopback and cloud metadata addresses are closed for security.");
+    }
+
     /**
-     * REPORT modunda (varsayılan) dosya okuma uyarısı — kayıt engellenmez, yanıttaki {@code warnings}'e eklenir
+     * REPORT modunda dosya okuma uyarısı — kayıt engellenmez, yanıttaki {@code warnings}'e eklenir
      * (2026-10-01, onaylı öneri 1). BLOCK modunda bu noktaya gelinmez: {@link #scanScriptOrError} kaydı reddeder.
      */
     private List<String> withFileReadWarning(Object script, List<String> warnings) {
@@ -7916,6 +8171,25 @@ public class MonitoringController {
     }
 
     private Map<String, Object> scriptedResultMap(com.sitemonitor.service.ScriptedCheckerService.ScriptedResult r) {
+        return scriptedResultMap(r, null);
+    }
+
+    /**
+     * Koşum sonucu → tel biçimi. 2026-10-31 (k6 inceleme D1): koşum verisi alanları ({@code steps}, {@code thresholds},
+     * {@code tls}, {@code failure_reason}, {@code failure_detail}, {@code run_context}) ve elle kota doluysa
+     * {@code skipped_code}. Oturum verilirse TLS hostlarına sertifika durumu eklenir.
+     */
+    private Map<String, Object> scriptedResultMap(com.sitemonitor.service.ScriptedCheckerService.ScriptedResult r,
+                                                  HttpSession session) {
+        Map<String, Object> out = scriptedResultCore(r);
+        out.putAll(com.sitemonitor.service.scripted.ScriptedRunView.fields(r.details()));
+        if (com.sitemonitor.service.ScriptedCheckerService.MANUAL_POOL_BUSY.equals(r.error()))
+            out.put("skipped_code", "MANUAL_POOL_BUSY");
+        if (session != null) decorateScriptedTls(List.of(out), session);
+        return out;
+    }
+
+    private Map<String, Object> scriptedResultCore(com.sitemonitor.service.ScriptedCheckerService.ScriptedResult r) {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("status", r.status());
         out.put("ok", r.ok());
@@ -8034,6 +8308,10 @@ public class MonitoringController {
             // Koşumu yapan k6 sürümü (2026-10-29, k6 0.49 -> 2.3 geçişi) — geçiş öncesi / sonrası ayırt edilsin.
             item.put("run_k6_version", latest.getK6Version());
             item.put("checked_at", latest.getCheckedAt());
+            // Son koşumun verisi (2026-10-31, k6 inceleme D1): p95 (kart), adımlar, eşikler, TLS, neden, bağlam — eski
+            // satırda alanlar YOK (uydurulmaz). TLS sertifika durumu çağıran tarafından toplu eklenir.
+            item.put("last_http_req_p95_ms", latest.getHttpReqP95Ms());
+            item.putAll(com.sitemonitor.service.scripted.ScriptedRunView.fields(latest));
         } else {
             // "Hiç koşmadı" dalı — anahtarlar EKSİK değil NULL olmalı (keyword enrich deseni):
             // eksik anahtar frontend'te `?? 0` ile "0✓/0✗" gibi yanıltıcı değerlere düşüyordu.

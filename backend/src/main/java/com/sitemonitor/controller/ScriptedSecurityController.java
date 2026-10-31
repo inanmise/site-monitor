@@ -19,8 +19,9 @@ import java.util.Map;
 /**
  * Sentetik betik güvenliği — dosya okuma raporu (2026-10-01, onaylı öneri 1).
  *
- * <p>{@code GET /api/admin/scripted/file-read-report}: dosya okuyan mevcut betikler ve geçerli politika. Global yönetici
- * (kapsamlı müdür değil) + {@code system_health.read}. Salt okunur.
+ * <p>{@code GET /api/admin/scripted/file-read-report}: dosya okuyan mevcut betikler ({@code data}), şablonlar
+ * ({@code templates}, 2026-10-31) ve geçerli politika. Global yönetici (kapsamlı müdür değil) + {@code system_health.read}.
+ * Salt okunur.
  */
 @RestController
 @RequestMapping("/api/admin/scripted")
@@ -39,20 +40,26 @@ public class ScriptedSecurityController {
         SessionScope.requireNotScopedAdmin(session, PERMISSION);
         permissionService.require(session, PERMISSION, "view");
         List<ScriptedFileReadAudit.Finding> findings = audit.scan();
+        List<ScriptedFileReadAudit.Finding> templates = audit.scanTemplates();
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("success", true);
         body.put("policy", audit.policy());
         body.put("count", findings.size());
-        body.put("data", findings.stream().map(f -> {
-            Map<String, Object> m = new LinkedHashMap<>();
-            m.put("id", f.id());
-            m.put("name", f.name());
-            m.put("team_id", f.teamId());
-            m.put("active", f.active());
-            m.put("hits", f.hits());
-            return m;
-        }).toList());
+        body.put("data", findings.stream().map(ScriptedSecurityController::row).toList());
+        // 2026-10-31 (k6 inceleme A1): şablonlar da taranır — aynı kurallar, ayrı dizi (eski istemci yok sayar).
+        body.put("template_count", templates.size());
+        body.put("templates", templates.stream().map(ScriptedSecurityController::row).toList());
         body.put("timestamp", ISO.format(Instant.now()));
         return ResponseEntity.ok(body);
+    }
+
+    private static Map<String, Object> row(ScriptedFileReadAudit.Finding f) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", f.id());
+        m.put("name", f.name());
+        m.put("team_id", f.teamId());
+        m.put("active", f.active());
+        m.put("hits", f.hits());
+        return m;
     }
 }

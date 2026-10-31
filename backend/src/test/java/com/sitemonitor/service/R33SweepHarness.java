@@ -887,7 +887,16 @@ final class R33SweepHarness {
         Function<ScriptedMonitor, ScriptedCheckerService.ScriptedResult> result = m -> switch (m.getId().intValue()) {
             case 1 -> k6("PASS", true, 500L, 3, 0, "[]", null, null);
             case 2 -> k6("PASS", true, 3000L, 3, 0, "[]", null, null);
-            case 3 -> k6("FAIL", false, 800L, 1, 1, failedJson, "level=error msg=\"request timeout\"", "request timeout");
+            // Koşum verisi (2026-10-31, k6 inceleme D1): adımlar / eşik / TLS / neden kodu / bağlam kayda AYNEN geçer
+            case 3 -> k6("FAIL", false, 800L, 1, 1, failedJson, "level=error msg=\"request timeout\"", "request timeout")
+                    .withDetails(new ScriptedCheckerService.RunDetails(
+                            "[{\"name\":\"Ödeme\",\"duration_ms\":790,\"requests\":2,\"failed_requests\":1,\"p95_ms\":760,"
+                                    + "\"checks_passed\":1,\"checks_failed\":1,\"error_code\":1050}]", true,
+                            "[{\"metric\":\"http_req_duration\",\"expr\":\"p(95)<500\",\"ok\":false}]",
+                            "[{\"host\":\"odeme.example.com\",\"tls_version\":\"tls1.3\",\"requests\":2}]",
+                            "READ_TIMEOUT", "{\"phase\":\"RESPONSE\",\"error_code\":1050,\"step\":\"Ödeme\"}",
+                            "{\"process_budget_s\":130,\"request_timeout_s\":null,\"egress\":\"direct\","
+                                    + "\"corporate_ca\":true,\"inverted_budget\":false}"));
             case 4 -> k6(ScriptedCheckerService.STATUS_SKIPPED, false, null, null, null, null, null,
                     "k6 havuzu dolu — kontrol atlandı (sıra beklemesi aşıldı)");
             case 5 -> k6("NO_CHECKS", false, 300L, 0, 0, "[]", null, null);

@@ -123,6 +123,37 @@ public class ScriptedCheck {
     @Column(name = "manual")
     private Boolean manual;
 
+    // ── Koşum verisi (2026-10-31, k6 inceleme D1) — hepsi null olabilir: bu sürümden önceki satırlar ve k6'nın hiç
+    // koşamadığı koşumlar taşımaz (okuyan taraf uydurmaz). Kaynak: k6 --out json + --summary-export; MASKELİ yazılır.
+
+    /** Adımlar (k6 group): {@code [{name, duration_ms, requests, failed_requests, p95_ms, checks_passed, checks_failed, error_code}]}. */
+    @Column(name = "steps_json", columnDefinition = "TEXT")
+    private String stepsJson;
+
+    /** {@code --out json} okuma tavanına takıldı — adım listesi eksik olabilir. */
+    @Column(name = "steps_truncated")
+    private Boolean stepsTruncated;
+
+    /** Eşikler: {@code [{metric, expr, ok}]}. */
+    @Column(name = "thresholds_json", columnDefinition = "TEXT")
+    private String thresholdsJson;
+
+    /** Host başına TLS sürümü: {@code [{host, tls_version, requests}]} (sertifika durumu OKUMA anında eklenir). */
+    @Column(name = "tls_json", columnDefinition = "TEXT")
+    private String tlsJson;
+
+    /** Başarısızlık nedeni kodu ({@code CheckFailureReason}); PASS'te null. */
+    @Column(name = "failure_reason", length = 40)
+    private String failureReason;
+
+    /** Neden ayrıntısı — küçük JSON nesnesi (adım, k6 hata kodu, eşik, check …). */
+    @Column(name = "failure_detail", columnDefinition = "TEXT")
+    private String failureDetail;
+
+    /** Koşum bağlamı: {@code {process_budget_s, request_timeout_s, egress, corporate_ca, inverted_budget}}. */
+    @Column(name = "context_json", columnDefinition = "TEXT")
+    private String contextJson;
+
     @Column(name = "checked_at")
     private String checkedAt;
 }

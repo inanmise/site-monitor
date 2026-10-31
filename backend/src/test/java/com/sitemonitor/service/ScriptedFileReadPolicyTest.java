@@ -23,7 +23,8 @@ import static org.mockito.Mockito.when;
  *   <li>Tarayıcı {@code open()} (doğrudan ve köşeli parantezle), {@code k6/fs}, yerel dosya importu ve sistem dosya
  *       yolunu bulur; yorumdaki ve metin içindeki benzer sözcüklere takılmaz; {@code 'https://…'} sonrasına aynı
  *       satırda yazılmış {@code open()} gizlenemez.</li>
- *   <li>Varsayılan REPORT: koşum DEĞİŞMEZ. BLOCK: dosya okuyan betik yürütülmez ("yürütülmedi" — kayıt/alarm yok).</li>
+ *   <li>REPORT: koşum DEĞİŞMEZ. BLOCK (2026-10-31'den beri VARSAYILAN, k6 inceleme A1): dosya okuyan betik yürütülmez
+ *       ("yürütülmedi" — kayıt/alarm yok).</li>
  *   <li>Rapor servisi yalnız dosya okuyan betikleri listeler.</li>
  * </ul>
  */
@@ -35,7 +36,8 @@ class ScriptedFileReadPolicyTest {
         assertThat(ScriptedCheckerService.scanFileReads("const e = open('/proc/1/environ');"))
                 .contains("open()", "sistem dosya yolu");
         assertThat(ScriptedCheckerService.scanFileReads("const d = open(\"./data.json\");")).containsExactly("open()");
-        assertThat(ScriptedCheckerService.scanFileReads("globalThis['open']('x')")).containsExactly("open()");
+        // Köşeli parantezle erişim (2026-10-31, A1): artık ayrı bulgu adıyla — "open-indirect"
+        assertThat(ScriptedCheckerService.scanFileReads("globalThis['open']('x')")).containsExactly("open-indirect");
         // İsteğe bağlı çağrı (inceleme 2026-10-30, L4): open?.(…) da dosya okumadır; başka nesnenin metodu değildir.
         assertThat(ScriptedCheckerService.scanFileReads("const e = open?.('/proc/1/environ');"))
                 .contains("open()", "sistem dosya yolu");
@@ -111,7 +113,7 @@ class ScriptedFileReadPolicyTest {
     }
 
     @Test
-    @DisplayName("REPORT (varsayılan): dosya okuyan betik de eskisi gibi koşum yoluna girer — davranış değişmez")
+    @DisplayName("REPORT (açıkça seçilirse): dosya okuyan betik de eskisi gibi koşum yoluna girer")
     void report_doesNotChangeExecution() {
         var svc = service("REPORT");
         assertThat(svc.fileReadBlocking()).isFalse();

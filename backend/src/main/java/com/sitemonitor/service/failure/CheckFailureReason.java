@@ -68,11 +68,24 @@ public enum CheckFailureReason {
     NO_PUBLIC_REGISTRY(Phase.REGISTRY),
     REGISTRY_NO_EXPIRY(Phase.REGISTRY),
 
+    // ── Senaryo (k6 betiği, 2026-10-31 — Sentetik İzleme inceleme D1) ──
+    // Ağ kökenli başarısızlıkta yukarıdaki ağ kodları kullanılır (k6 error_code eşlemesi, ScriptedRunData); bunlar
+    // betiğin KENDİ kararları ve koşumun süreç düzeyindeki sonuçlarıdır.
+    SCRIPT_CHECK_FAILED(Phase.SCRIPT),
+    SCRIPT_THRESHOLD_FAILED(Phase.SCRIPT),
+    SCRIPT_EXCEPTION(Phase.SCRIPT),
+    SCRIPT_ABORTED(Phase.SCRIPT),
+    SCRIPT_NO_CHECKS(Phase.SCRIPT),
+    SCRIPT_PROCESS_TIMEOUT(Phase.SCRIPT),
+    SCRIPT_INTERRUPTED(Phase.SCRIPT),
+    SCRIPT_FILE_READ_BLOCKED(Phase.POLICY),
+    K6_UNAVAILABLE(Phase.POLICY),
+
     // ── Sınıflanamayan ──
     UNKNOWN(Phase.REQUEST);
 
     /** Kontrolün düştüğü evre — arayüzde "Evre" satırı ({@code chkfail.phase.<EVRE>}). */
-    public enum Phase { POLICY, DNS, CONNECT, TLS, REQUEST, RESPONSE, ICMP, CONTENT, REGISTRY }
+    public enum Phase { POLICY, DNS, CONNECT, TLS, REQUEST, RESPONSE, ICMP, CONTENT, REGISTRY, SCRIPT }
 
     public final Phase phase;
 

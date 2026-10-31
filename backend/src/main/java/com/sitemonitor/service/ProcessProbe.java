@@ -34,7 +34,26 @@ public final class ProcessProbe {
         return t;
     });
 
-    public record Result(String output, int exitCode, boolean timedOut) {}
+    /**
+     * @param interrupted çağıran iş parçacığı beklerken KESİLDİ (pod kapanışı / iş iptali; 2026-10-31) — süreç
+     *                    öldürüldü, {@code timedOut} da true'dur (eski okuyucular için); "süre aşımı" ile karıştırılmasın
+     *                    diye ayrı bayrak.
+     */
+    public record Result(String output, int exitCode, boolean timedOut, boolean interrupted) {
+        /** Kesintisiz sonuç (eski çağıranlar ve testler). */
+        public Result(String output, int exitCode, boolean timedOut) {
+            this(output, exitCode, timedOut, false);
+        }
+    }
+
+    /**
+     * Süreç başlatıldıktan HEMEN sonra çağrılır (2026-10-31, k6 inceleme A2 — örn. {@code oom_score_adj}). En iyi çaba:
+     * kancanın istisnası yutulur, koşumu asla bozmaz.
+     */
+    @FunctionalInterface
+    public interface StartHook {
+        void started(Process process);
+    }
 
     /**
      * Akışı EOF'a kadar tüketir ve yalnız son {@code cap} byte'ı döndürür (halka tampon).
@@ -113,21 +132,24 @@ public final class ProcessProbe {
     public static Result run(List<String> args, java.util.Map<String, String> env, java.io.File cwd,
                              int timeoutSeconds, boolean gracefulTerm, int maxOutputBytes,
                              boolean isolatedEnv) {
+        return run(args, env, cwd, timeoutSeconds, gracefulTerm, maxOutputBytes, isolatedEnv, null);
+    }
+
+    /** @param onStart süreç başladıktan hemen sonra çağrılan kanca (null = yok). */
+    public static Result run(List<String> args, java.util.Map<String, String> env, java.io.File cwd,
+                             int timeoutSeconds, boolean gracefulTerm, int maxOutputBytes,
+                             boolean isolatedEnv, StartHook onStart) {
         Process proc = null;
         try {
             ProcessBuilder pb = new ProcessBuilder(args);
             pb.redirectErrorStream(true);
             if (cwd != null) pb.directory(cwd);
-            if (isolatedEnv) {
-                java.util.Map<String, String> inherited = new java.util.LinkedHashMap<>(pb.environment());
-                pb.environment().clear();
-                inherited.forEach((k, v) -> {
-                    if (k != null && ENV_ALLOWLIST.contains(k.toUpperCase(java.util.Locale.ROOT)))
-                        pb.environment().put(k, v);
-                });
-            }
+            if (isolatedEnv) isolate(pb);
             if (env != null && !env.isEmpty()) pb.environment().putAll(env);
             proc = pb.start();
+            if (onStart != null) {
+                try { onStart.started(proc); } catch (Throwable ignore) { /* en iyi çaba — koşumu bozmaz */ }
+            }
             final Process p = proc;
             // Çıktı SONUNA KADAR tüketilir; bellekte yalnız SON HARD_READ_CAP byte tutulur.
             //
@@ -178,15 +200,32 @@ public final class ProcessProbe {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             if (proc != null) proc.destroyForcibly();
-            return new Result("kesintiye uğradı", -1, true);
+            return new Result("kesintiye uğradı", -1, true, true);
         }
     }
 
+    /** JVM ortamını temizler, yalnız {@link #ENV_ALLOWLIST} adlarını (büyük/küçük harf duyarsız) bırakır. */
+    static void isolate(ProcessBuilder pb) {
+        java.util.Map<String, String> inherited = new java.util.LinkedHashMap<>(pb.environment());
+        pb.environment().clear();
+        inherited.forEach((k, v) -> {
+            if (k != null && ENV_ALLOWLIST.contains(k.toUpperCase(java.util.Locale.ROOT)))
+                pb.environment().put(k, v);
+        });
+    }
+
+    /**
+     * Tanılama araçları (openssl, ping, dig, traceroute, ip …) için çalıştırıcı. Ortam İZOLEDİR (2026-10-31, k6
+     * inceleme A2): eskiden JVM'in tüm ortamını (şifreleme anahtarı, DB parolası, SMTP kimliği) miras alıyordu; bu araçlar
+     * kısa ömürlü de olsa ortamları {@code /proc/<pid>/environ} üzerinden aynı kullanıcının süreçlerince okunabilirdi.
+     * Araçların ihtiyacı {@link #ENV_ALLOWLIST} ile sınırlıdır (PATH, yerel ayar, Windows sistem değişkenleri).
+     */
     public static Result run(List<String> args, String stdin, int timeoutSeconds) {
         Process proc = null;
         try {
             ProcessBuilder pb = new ProcessBuilder(args);
             pb.redirectErrorStream(true); // stdout+stderr birlikte (araçlar stderr'e bilgi basar)
+            isolate(pb);
             proc = pb.start();
             final Process p = proc;
             CompletableFuture<byte[]> reader = CompletableFuture.supplyAsync(() -> {
@@ -224,7 +263,7 @@ public final class ProcessProbe {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             if (proc != null) proc.destroyForcibly();
-            return new Result("kesintiye uğradı", -1, true);
+            return new Result("kesintiye uğradı", -1, true, true);
         }
     }
 }
