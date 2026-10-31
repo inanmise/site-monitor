@@ -61,6 +61,8 @@ public class ManualEvalInbox {
     public static final String TYPE_KEYWORD = "keyword";
     public static final String TYPE_PAGE = "page";
     public static final String TYPE_PAGESPEED = "pagespeed";
+    /** Veritabanı sorgu izlemesi (11. tür, 2026-10-31) — = checkDue öneki, kalıcı. */
+    public static final String TYPE_DBQUERY = "dbquery";
     public static final String TYPE_SCRIPTED = "scripted";
     public static final String TYPE_PORT = "port";
     public static final String TYPE_PING = "ping";

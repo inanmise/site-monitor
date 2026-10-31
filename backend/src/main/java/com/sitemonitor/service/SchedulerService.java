@@ -7932,6 +7932,19 @@ public class SchedulerService {
         return recheckPageSpeed(m, true);
     }
 
+    // ── Veritabanı sorgu izlemesi (11. tür, 2026-10-31) — İSKELET: gövdeler tarama paketinde yazılır ──
+
+    /** Elle "Şimdi kontrol et": tek çalıştırma + kontrol satırı; dönen ham sonuç {@link #evaluateDbQueryNow}'a verilir. */
+    public Map<String, Object> triggerDbQueryCheck(com.sitemonitor.model.DbQueryMonitor m) {
+        throw new UnsupportedOperationException("triggerDbQueryCheck — tarama paketinde yazılacak");
+    }
+
+    /** Elle değerlendirme (manual=true: alarm AÇMAZ, yalnız kapanış uzlaştırması) — aynı sonuçla, ikinci çalıştırma yok. */
+    @Async("certCheckExecutor")
+    public void evaluateDbQueryNow(com.sitemonitor.model.DbQueryMonitor m, Map<String, Object> checkResult) {
+        throw new UnsupportedOperationException("evaluateDbQueryNow — tarama paketinde yazılacak");
+    }
+
     // ── Senaryo İzleme (10. tür) — k6 alt süreç sweep'i (bounded executor, scheduler'ı bloklamaz) ──────
     @Scheduled(fixedDelayString = SCRIPTED_SWEEP_TICK, initialDelayString = "95000")
     public void runScriptedChecks() {

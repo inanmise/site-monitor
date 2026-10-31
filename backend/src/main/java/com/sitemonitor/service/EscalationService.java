@@ -380,6 +380,14 @@ public class EscalationService {
     public static boolean isPageSpeed(String t) {
         return TYPE_PAGESPEED_DOWN.equals(t) || TYPE_PAGESPEED_SLOW.equals(t);
     }
+    /** Veritabanı sorgu izlemesi (11. tür, 2026-10-31): FAIL = sorgu çalıştırılamadı (kesinti), THRESHOLD = kural ihlali
+     *  (iş alarmı, kesinti değil), SLOW = sorgu süresi eşiği. Adlar kalıcıdır. */
+    public static final String TYPE_DBQUERY_FAIL = "DBQUERY_FAIL";
+    public static final String TYPE_DBQUERY_THRESHOLD = "DBQUERY_THRESHOLD";
+    public static final String TYPE_DBQUERY_SLOW = "DBQUERY_SLOW";
+    public static boolean isDbQuery(String t) {
+        return TYPE_DBQUERY_FAIL.equals(t) || TYPE_DBQUERY_THRESHOLD.equals(t) || TYPE_DBQUERY_SLOW.equals(t);
+    }
 
     /** İzleme kaynaklı alarm tipleri — kadanslarının sahibi ilgili sweep'lerdir;
      *  cert sweep'inin auto-resolve'u ve startup catch-up bunlara dokunmaz. */
