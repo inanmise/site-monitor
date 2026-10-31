@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Gauge, Lock, ExternalLink, PackagePlus, TriangleAlert, History } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
@@ -166,14 +166,19 @@ export function VersionRegressionBand({ monitor, canEdit = false, onLoad }) {
   const [error, setError] = useState(null)
   const id = monitor?.id
   const version = monitor?.script_version
+  // Geç yanıt koruması (inceleme 6, 2026-10-31): her yükleme bir sıra numarası alır; izleme / sürüm değişince ya da bant
+  // ayrılınca numara ilerler → eski yanıt onLoad ÇAĞIRMAZ (başka izlemenin editörü açılmaz, açık form ezilmez).
+  const loadSeq = useRef(0)
+  const currentId = useRef(id)
+  currentId.current = id
   useEffect(() => {
-    setRows(null); setError(null)
-    if (id == null || !version) return undefined
+    setRows(null); setError(null); setBusy(false)
+    if (id == null || !version) return () => { loadSeq.current++ }
     let alive = true
     Promise.resolve(api.monitoring.getScriptedVersions?.(id)).then((r) => {
       if (alive && r?.success) setRows(r.data?.versions || [])
     }).catch(() => { /* bant isteğe bağlı bir ipucu — okuma hatasında sessiz */ })
-    return () => { alive = false }
+    return () => { alive = false; loadSeq.current++ }
   }, [id, version])
 
   const reg = versionRegression(rows)
@@ -181,15 +186,20 @@ export function VersionRegressionBand({ monitor, canEdit = false, onLoad }) {
   const pct = (r) => Math.round(r * 100)
 
   async function load() {
+    const my = ++loadSeq.current
+    const forId = id
+    const prev = reg.prev
+    const stale = () => my !== loadSeq.current || currentId.current !== forId
     setBusy(true); setError(null)
     try {
-      const r = await api.monitoring.getScriptedVersion(id, reg.prev.id)
+      const r = await api.monitoring.getScriptedVersion(forId, prev.id)
+      if (stale()) return
       if (!r?.success) { setError(r?.error || t('scripted.versionBodyLoadFailed')); return }
-      onLoad?.(reg.prev, r.data)
+      onLoad?.(prev, r.data)
     } catch (e) {
-      setError(e?.message || t('scripted.versionBodyLoadFailed'))
+      if (!stale()) setError(e?.message || t('scripted.versionBodyLoadFailed'))
     } finally {
-      setBusy(false)
+      if (!stale()) setBusy(false)
     }
   }
 

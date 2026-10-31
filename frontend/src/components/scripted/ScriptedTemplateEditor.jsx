@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { Plus, Trash2, FileCode2, ChevronDown } from 'lucide-react'
 import { api } from '../../api/client'
 import ModalShell from '../ui/ModalShell.jsx'
@@ -51,10 +51,14 @@ export default function ScriptedTemplateEditor({
   const [error, setError] = useState(null)
   const [warnings, setWarnings] = useState([])
   const [showEn, setShowEn] = useState(false)
+  // Uyarıyla kaydedilip AÇIK kalan şablon (inceleme 9, 2026-10-31): yeni kayıt id alınca `isNew` düşer ve aşağıdaki okuma
+  // yeniden koşardı → yanıt formu (kayıttan sonra yazılanlar dahil) ezerdi. Kaydın yanıtı forma konur, okuma atlanır.
+  const savedHere = useRef(null)
 
   // Düzenlemede gövdeyi tekil uçtan çek; kopyalama akışında gövde zaten elde (`template.script`).
   useEffect(() => {
     if (isNew) return
+    if (savedHere.current != null && String(savedHere.current) === String(template.id)) { setLoading(false); return }
     let alive = true
     api.monitoring.getScriptedTemplate(template.id).then(r => {
       if (!alive) return
@@ -127,7 +131,12 @@ export default function ScriptedTemplateEditor({
       if (!res?.success) { setError(res?.error || t('tpl.saveError')); return }
       // Uyarılar KAYDETMEYİ engellemez ama modal kapanmadan gösterilir: kullanıcı isterse düzeltir.
       const warn = res.data?.warnings || []
-      if (warn.length > 0) { setWarnings(warn); onSaved?.(res.data, { keepOpen: true }); return }
+      if (warn.length > 0) {
+        savedHere.current = res.data?.id ?? template?.id ?? null
+        const patch = savedPatch(res.data)
+        setForm(f => ({ ...f, ...patch, restoredFrom: null }))
+        setWarnings(warn); onSaved?.(res.data, { keepOpen: true }); return
+      }
       onSaved?.(res.data)
     } finally {
       setSaving(false)
@@ -364,6 +373,18 @@ function formFrom(row, meta, teams) {
     bumpType: 'patch',
     restoredFrom: r._restoredFrom || null,
   }
+}
+
+/** Kayıt yanıtındaki alanlar → form yaması (yalnız yanıtta OLAN alanlar; olmayan alan formda kalır). */
+const SAVED_TEXT = [['name', 'name'], ['name_en', 'nameEn'], ['description', 'description'], ['description_en', 'descriptionEn'],
+  ['when_to_use', 'whenToUse'], ['when_to_use_en', 'whenToUseEn'], ['script', 'script'], ['category', 'category']]
+function savedPatch(d) {
+  if (!d || typeof d !== 'object') return {}
+  const out = {}
+  for (const [k, f] of SAVED_TEXT) if (typeof d[k] === 'string') out[f] = d[k]
+  if (Array.isArray(d.tags)) out.tags = d.tags.join(', ')
+  if (Array.isArray(d.env)) out.env = d.env.map(e => ({ name: e?.name || '', secret: !!e?.secret, desc: e?.desc || '' }))
+  return out
 }
 
 function nullIfBlank(s) {

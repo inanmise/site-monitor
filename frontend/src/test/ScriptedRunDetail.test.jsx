@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor, within } from './test-utils.jsx'
+import { render, screen, fireEvent, waitFor, within, act } from './test-utils.jsx'
 
 const { nav, perms } = vi.hoisted(() => ({ nav: vi.fn(), perms: { canEditInventory: false } }))
 vi.mock('../utils/navigate.js', () => ({ navigateTo: (...a) => nav(...a) }))
@@ -207,6 +207,32 @@ describe('VersionRegressionBand — "bu sürüm bozdu"', () => {
     expect(onLoad).not.toHaveBeenCalled()
   })
 
+  it('geç yanıt (inceleme 6): yükleme sürerken izleme değişirse ya da bant ayrılırsa onLoad ÇAĞRILMAZ; düğme kilitli kalmaz', async () => {
+    api.monitoring.getScriptedVersions.mockResolvedValue({ success: true, data: { versions: VERSIONS } })
+    const pending = []
+    api.monitoring.getScriptedVersion.mockImplementation(() => new Promise((r) => { pending.push(r) }))
+    const onLoad = vi.fn()
+    const loadBtn = (c) => c.querySelector('[data-slot="version-regression-load"]')
+    const { container, rerender, unmount } = render(<VersionRegressionBand monitor={{ id: 9, script_version: '2.0.1' }} canEdit onLoad={onLoad} />)
+    await waitFor(() => expect(loadBtn(container)).not.toBeNull())
+    fireEvent.click(loadBtn(container))
+    expect(loadBtn(container).disabled).toBe(true)
+    // başka izlemeye geçildi — eski izlemenin gövdesi sonra gelir
+    rerender(<VersionRegressionBand monitor={{ id: 10, script_version: '2.0.1' }} canEdit onLoad={onLoad} />)
+    await act(async () => { pending[0]({ success: true, data: { script: 'eski izleme' } }) })
+    expect(onLoad).not.toHaveBeenCalled()
+    await waitFor(() => expect(loadBtn(container)).not.toBeNull())
+    expect(loadBtn(container).disabled).toBe(false)
+    expect(container.querySelector('[data-slot="version-regression-error"]')).toBeNull()
+
+    // aynı izlemede iki hızlı tıklama yok (düğme kilitli); bant ayrılırsa geç gövde de onLoad çağırmaz
+    fireEvent.click(loadBtn(container))
+    unmount()
+    await act(async () => { pending[1]({ success: true, data: { script: 'ayrıldıktan sonra' } }) })
+    expect(onLoad).not.toHaveBeenCalled()
+    expect(api.monitoring.getScriptedVersion).toHaveBeenLastCalledWith(10, 32)
+  })
+
   it('karar yoksa, liste okunamazsa ya da sürüm yoksa bant çizilmez (iddia yok)', async () => {
     api.monitoring.getScriptedVersions.mockResolvedValue({ success: true, data: { versions: [
       { id: 2, version: '1.0.1', sequence_no: 1, run_count: 10, fail_count: 0, current: true }, { id: 1, version: '1.0.0', sequence_no: 0, run_count: 10, fail_count: 0 }] } })
@@ -264,6 +290,23 @@ describe('StepTrend — adım trendi', () => {
     const { container: c3 } = render(<StepTrend monitorId={4} />)
     await waitFor(() => expect(c3.querySelector('[data-slot="step-trend-empty"]')).not.toBeNull())
     expect(c3.querySelector('[data-slot="step-trend-error"]')).toBeNull()
+  })
+
+  it('aralık değişince seri seçimi varsayılana döner (inceleme 7 — s0, s1 … anahtarları yeni veride başka adımlardır)', async () => {
+    api.monitoring.scriptedStepSeries.mockResolvedValue({ success: true, data: DATA })
+    const { container } = render(<StepTrend monitorId={4} />)
+    await waitFor(() => expect(container.querySelectorAll('[data-slot="step-trend-series"] [data-series]')).toHaveLength(2))
+    const s0 = () => container.querySelector('[data-series="s0"]')
+    expect(s0().getAttribute('data-state')).toBe('on')
+    fireEvent.click(s0())
+    expect(s0().getAttribute('data-state')).toBe('off')
+    fireEvent.mouseDown(screen.getByRole('radio', { name: /30/ }), { button: 0 })
+    fireEvent.click(screen.getByRole('radio', { name: /30/ }))
+    await waitFor(() => expect(api.monitoring.scriptedStepSeries).toHaveBeenLastCalledWith(4, 30))
+    await waitFor(() => expect(s0().getAttribute('data-state')).toBe('on'))
+    // aynı aralıkta yapılan seçim korunur
+    fireEvent.click(s0())
+    expect(s0().getAttribute('data-state')).toBe('off')
   })
 
   it('ağ hatası (throw) da okunamadı durumudur', async () => {

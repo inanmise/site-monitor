@@ -56,6 +56,19 @@ function hostOf(raw) {
  * @returns {{url: string, host: string, hosts: number} | null}
  */
 export function scenarioTarget(m) {
+  if (!m || typeof m !== 'object') return computeScenarioTarget(m)
+  // İzleme başına önbellek (inceleme 11, 2026-10-31): liste araması her tuşta HER izlemenin betiğini taramasın. Satır nesnesi
+  // anahtar; betik / env başvurusu değişmişse (yerinde güncelleme) yeniden hesaplanır.
+  const hit = TARGET_CACHE.get(m)
+  if (hit && hit.script === m.script && hit.env === m.env) return hit.value
+  const value = computeScenarioTarget(m)
+  TARGET_CACHE.set(m, { script: m.script, env: m.env, value })
+  return value
+}
+
+const TARGET_CACHE = new WeakMap()
+
+function computeScenarioTarget(m) {
   const found = []
   for (const e of Array.isArray(m?.env) ? m.env : []) {
     const v = typeof e?.value === 'string' ? e.value.trim() : ''

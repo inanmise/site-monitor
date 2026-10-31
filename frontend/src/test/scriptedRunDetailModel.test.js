@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import {
+import { isLonePoint,
   ROOT_STEP, STEP_SERIES_COLORS, VERSION_REGRESSION, certDaysTone, failureHeadText, historyDetailText, normalizeSteps, parseChecks,
   runContextChips, runContextOf, stepSeriesData, stepState, stepsOf, stepsTruncated, stoppedAfter, thresholdsOf, tlsOf, tlsVersionLabel,
   versionRegression,
@@ -8,6 +8,7 @@ import { checksSummary, isHalted, stripRunContext } from '../components/scripted
 import { failureOf, scriptedLegacyCode, detailRows } from '../components/checks/checkFailureModel.js'
 import { isCodeFrame } from '../components/ScriptedMonitorPage.jsx'
 import { cellBackground } from '../components/history/DensityStrip.jsx'
+import { scenarioTarget } from '../components/scripted/scriptedCardModel.js'
 import { diffTileTone } from '../components/admin/k6engine/k6EngineModel.js'
 
 /** Anahtarı ve argümanları döndüren t — testler ANLAMA bakar. */
@@ -253,5 +254,47 @@ describe('checkFailureModel — sentetik (k6) hata sınıfı', () => {
     expect(rows.map((r) => [r.key, r.value])).toEqual(expect.arrayContaining([
       ['target', 'ibank.example.com'], ['step', 'Giriş › OTP'], ['k6Code', '1210'], ['threshold', 'http_req_duration p(95)<500'],
     ]))
+  })
+  it('ayrıntı satırları (inceleme 10): düşen doğrulamanın adı `failure_detail.check` → "check" satırı, kötü tonda; yoksa satır yok', () => {
+    const row = { status: 'FAIL', failure_reason: 'SCRIPT_CHECK_FAILED',
+      failure_detail: '{"step":"Giriş","check":"durum 200 — gövde \\"ok\\" içeriyor"}' }
+    const rows = detailRows('scripted', row, {}, t, failureOf('scripted', row, {}))
+    const check = rows.find((r) => r.key === 'check')
+    expect(check).toMatchObject({ value: 'durum 200 — gövde "ok" içeriyor', tone: 'bad' })
+    expect(rows.findIndex((r) => r.key === 'check')).toBe(rows.findIndex((r) => r.key === 'step') + 1)
+    const plain = { status: 'FAIL', failure_reason: 'SCRIPT_CHECK_FAILED', failure_detail: '{"step":"Giriş"}' }
+    expect(detailRows('scripted', plain, {}, t, failureOf('scripted', plain, {})).some((r) => r.key === 'check')).toBe(false)
+  })
+})
+
+describe('scenarioTarget önbelleği (inceleme 11 — arama her tuşta betik taramasın)', () => {
+  it('aynı satır nesnesinde ikinci çağrı aynı sonucu (aynı nesneyi) döner; betik değişince yeniden hesaplanır', () => {
+    const m = { script: "http.get('https://a.example.com/x')", env: [] }
+    const first = scenarioTarget(m)
+    expect(first.host).toBe('a.example.com')
+    expect(scenarioTarget(m)).toBe(first)
+    m.script = "http.get('https://b.example.com/')"
+    expect(scenarioTarget(m).host).toBe('b.example.com')
+    const env = [{ name: 'BASE_URL', value: 'https://c.example.com', secret: false }]
+    m.env = env
+    expect(scenarioTarget(m).host).toBe('c.example.com')
+    expect(scenarioTarget(null)).toBeNull()
+    expect(scenarioTarget({ script: '' })).toBeNull()
+  })
+})
+
+describe('isLonePoint — komşusuz tek değer nokta olarak çizilir (inceleme 7)', () => {
+  const rows = [{ t: 1, s0: 10 }, { t: 2, s1: 5 }, { t: 3, s0: 12, s1: 6 }, { t: 4, s0: 13 }, { t: 5, s1: 7 }]
+  it('değer var ve iki komşu boş → true; komşusu olan / değersiz / sınır dışı → false', () => {
+    expect(isLonePoint(rows, 's0', 0)).toBe(true)    // yalnız sonraki satır boş, öncesi yok
+    expect(isLonePoint(rows, 's0', 2)).toBe(false)   // sonraki satırda değer var
+    expect(isLonePoint(rows, 's1', 1)).toBe(false)   // sonraki satırda (t: 3) değer var
+    expect(isLonePoint(rows, 's1', 4)).toBe(true)
+    expect(isLonePoint(rows, 's1', 2)).toBe(false)   // önceki satırda (t: 2) değer var
+    expect(isLonePoint(rows, 's0', 1)).toBe(false)   // bu satırda değer yok
+    expect(isLonePoint(rows, 's0', 9)).toBe(false)
+    expect(isLonePoint(null, 's0', 0)).toBe(false)
+    expect(isLonePoint([{ t: 1, s0: 0 }], 's0', 0)).toBe(true)   // 0 ms da değerdir
+    expect(isLonePoint([{ t: 1, s0: null }, { t: 2, s0: 4 }], 's0', 1)).toBe(true)
   })
 })

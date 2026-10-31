@@ -450,6 +450,7 @@ export function detailRows(type, row, monitor, t, f) {
   if (type === 'scripted') {
     // Sunucunun k6 ayrıntısı: takılan adım, k6 hata kodu, düşen eşik (2026-10-31, k6r D1)
     push('step', d.step)
+    push('check', d.check, { tone: 'bad' })
     if (num(d.error_code) != null) push('k6Code', num(d.error_code), { mono: true, tone: 'bad' })
     push('threshold', d.threshold, { mono: true, tone: 'bad' })
   }
