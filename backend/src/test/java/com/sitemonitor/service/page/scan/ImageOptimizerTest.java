@@ -86,4 +86,44 @@ class ImageOptimizerTest {
         assertThat(ImageOptimizer.optimize(gif.toByteArray(), 40_000_000L)).isNull();
         assertThat(ImageOptimizer.optimize(png(noise(100, 100, BufferedImage.TYPE_INT_RGB, null)), 9_999L)).isNull();
     }
+
+    /** Gerçek 16 bit RGBA PNG (yarı saydam) — ImageIO 16 bit kanalları yazar. */
+    static byte[] png16Rgba(int w, int h) throws IOException {
+        java.awt.color.ColorSpace cs = java.awt.color.ColorSpace.getInstance(java.awt.color.ColorSpace.CS_sRGB);
+        java.awt.image.ComponentColorModel cm = new java.awt.image.ComponentColorModel(cs, new int[]{16, 16, 16, 16}, true,
+                false, java.awt.Transparency.TRANSLUCENT, java.awt.image.DataBuffer.TYPE_USHORT);
+        java.awt.image.WritableRaster r = cm.createCompatibleWritableRaster(w, h);
+        Random rnd = new Random(3);
+        int[] px = new int[4];
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                px[0] = rnd.nextInt(65536); px[1] = rnd.nextInt(65536); px[2] = rnd.nextInt(65536); px[3] = 30000;
+                r.setPixel(x, y, px);
+            }
+        }
+        return png(new BufferedImage(cm, r, false, null));
+    }
+
+    @Test
+    @DisplayName("16 bit RGBA PNG: başlık hesabı 12 B/piksel; çözmeden ÖNCE izin denetlenir — yetmezse null, yeterse ölçülür")
+    void sixteenBitBudget() throws IOException {
+        byte[] data = png16Rgba(120, 80);
+        ImageDimensions.Header h = ImageDimensions.header(data);
+        assertThat(h).isEqualTo(new ImageDimensions.Header(120, 80, "png", 4, 16, false));
+        long need = ImageOptimizer.workingBytes(h, data.length);
+        assertThat(need).isEqualTo(120L * 80 * 12 + data.length);
+        assertThat(ImageOptimizer.optimize(data, 120, 80, need / 2)).as("izin yetmez → çözülmez").isNull();
+        ImageOptimizer.Outcome ok = ImageOptimizer.optimize(data, 120, 80, need);
+        assertThat(ok).isNotNull();
+        assertThat(ok.format()).as("yarı saydam").isEqualTo("png");
+    }
+
+    @Test
+    @DisplayName("okuyucunun bildirdiği boyut izin alınan başlıktan farklı → çözülmez")
+    void readerSizeMustMatchPermit() throws IOException {
+        byte[] data = png(noise(64, 48, BufferedImage.TYPE_INT_RGB, null));
+        assertThat(ImageOptimizer.optimize(data, 64, 48, 10_000_000L)).isNotNull();
+        assertThat(ImageOptimizer.optimize(data, 32, 48, 10_000_000L)).isNull();
+        assertThat(ImageOptimizer.optimize(data, 64, 47, 10_000_000L)).isNull();
+    }
 }

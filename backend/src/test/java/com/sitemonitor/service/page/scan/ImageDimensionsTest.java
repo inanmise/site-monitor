@@ -90,4 +90,59 @@ class ImageDimensionsTest {
         for (int i = 0; i < 4; i++) b[12 + i] = (byte) chunk.charAt(i);
         return b;
     }
+
+    // ── Çözme bilgisi (2026-11, inceleme O-2: bellek izni gerçek başlıktan) ───────────────────────
+
+    /** Elle PNG başlığı: imza + IHDR (genişlik, yükseklik, bit derinliği, renk türü) — çözülmez, yalnız başlık okunur. */
+    static byte[] pngHeader(int w, int h, int depth, int colorType) {
+        java.nio.ByteBuffer b = java.nio.ByteBuffer.allocate(64);
+        b.put(new byte[]{(byte) 0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A});
+        b.putInt(13).put(new byte[]{'I', 'H', 'D', 'R'}).putInt(w).putInt(h);
+        b.put((byte) depth).put((byte) colorType).put((byte) 0).put((byte) 0).put((byte) 0).putInt(0);
+        return b.array();
+    }
+
+    /** Elle JPEG başlığı: SOI + SOF0 (kesinlik, yükseklik, genişlik, bileşen sayısı). */
+    static byte[] jpegHeader(int w, int h, int comps) {
+        java.nio.ByteBuffer b = java.nio.ByteBuffer.allocate(64);
+        b.put(new byte[]{(byte) 0xFF, (byte) 0xD8, (byte) 0xFF, (byte) 0xC0, 0x00, 0x11, 0x08});
+        b.putShort((short) h).putShort((short) w).put((byte) comps);
+        return b.array();
+    }
+
+    @Test
+    @DisplayName("çözme bilgisi: PNG renk türü + bit derinliği (16 bit RGBA = 8 B/piksel, paletli 1, gri 1 / 16 bit gri 2), JPEG bileşen")
+    void decodeHeader() {
+        ImageDimensions.Header rgba16 = ImageDimensions.header(pngHeader(1000, 500, 16, 6));
+        assertThat(rgba16).isEqualTo(new ImageDimensions.Header(1000, 500, "png", 4, 16, false));
+        assertThat(rgba16.bytesPerPixel()).isEqualTo(8);
+        assertThat(ImageDimensions.header(pngHeader(10, 10, 8, 2)).bytesPerPixel()).isEqualTo(3);
+        assertThat(ImageDimensions.header(pngHeader(10, 10, 16, 2)).bytesPerPixel()).isEqualTo(6);
+        assertThat(ImageDimensions.header(pngHeader(10, 10, 4, 3)).bytesPerPixel()).as("paletli").isEqualTo(1);
+        assertThat(ImageDimensions.header(pngHeader(10, 10, 8, 0)).bytesPerPixel()).isEqualTo(1);
+        assertThat(ImageDimensions.header(pngHeader(10, 10, 16, 0)).bytesPerPixel()).isEqualTo(2);
+        assertThat(ImageDimensions.header(pngHeader(10, 10, 8, 4)).bytesPerPixel()).as("gri + alfa").isEqualTo(2);
+        assertThat(ImageDimensions.header(pngHeader(10, 10, 8, 5))).as("geçersiz renk türü").isNull();
+        assertThat(ImageDimensions.header(pngHeader(10, 10, 7, 2))).as("geçersiz bit derinliği").isNull();
+        assertThat(ImageDimensions.header(jpegHeader(640, 480, 3)))
+                .isEqualTo(new ImageDimensions.Header(640, 480, "jpeg", 3, 8, false));
+        assertThat(ImageDimensions.header(jpegHeader(640, 480, 1)).bytesPerPixel()).isEqualTo(1);
+        assertThat(ImageDimensions.header(jpegHeader(640, 480, 4))).as("CMYK çözülmez").isNull();
+        assertThat(ImageDimensions.header(new byte[]{1, 2, 3})).isNull();
+        assertThat(ImageDimensions.header(null)).isNull();
+    }
+
+    @Test
+    @DisplayName("çalışma belleği: çözülmüş görüntü + JPEG'e çevirme kopyası (8 bit RGB / gri 0, 16 bit gri 1, alfalı / paletli / 16 bit renkli 4 B/piksel) + gövde")
+    void workingBytesTable() {
+        long px = 1000L * 500;
+        assertThat(ImageOptimizer.workingBytes(ImageDimensions.header(pngHeader(1000, 500, 16, 6)), 7))
+                .as("16 bit RGBA: 8 + 4 B/piksel").isEqualTo(px * 12 + 7);
+        assertThat(ImageOptimizer.workingBytes(ImageDimensions.header(pngHeader(1000, 500, 8, 2)), 0)).isEqualTo(px * 3);
+        assertThat(ImageOptimizer.workingBytes(ImageDimensions.header(pngHeader(1000, 500, 8, 6)), 0)).isEqualTo(px * 8);
+        assertThat(ImageOptimizer.workingBytes(ImageDimensions.header(pngHeader(1000, 500, 8, 3)), 0)).isEqualTo(px * 5);
+        assertThat(ImageOptimizer.workingBytes(ImageDimensions.header(pngHeader(1000, 500, 16, 0)), 0)).isEqualTo(px * 3);
+        assertThat(ImageOptimizer.workingBytes(ImageDimensions.header(jpegHeader(1000, 500, 3)), 0)).isEqualTo(px * 3);
+        assertThat(ImageOptimizer.workingBytes(ImageDimensions.header(jpegHeader(1000, 500, 1)), 0)).isEqualTo(px);
+    }
 }

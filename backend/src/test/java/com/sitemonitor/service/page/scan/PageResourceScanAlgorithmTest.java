@@ -471,4 +471,74 @@ class PageResourceScanAlgorithmTest {
         Map<String, Object> img = get(get(one, "analysis"), "images");
         assertThat(img).containsEntry("saving_measured", true).containsEntry("measured_count", 2);
     }
+
+    // ── İnceleme O-2: bellek izni İKİNCİ indirmenin gerçek başlığından ───────────────────────────────
+
+    static byte[] pngHdr(int w, int h, int depth, int colorType, int size) {
+        java.nio.ByteBuffer b = java.nio.ByteBuffer.allocate(Math.max(64, size));
+        b.put(new byte[]{(byte) 0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A});
+        b.putInt(13).put(new byte[]{'I', 'H', 'D', 'R'}).putInt(w).putInt(h);
+        b.put((byte) depth).put((byte) colorType).put((byte) 0).put((byte) 0).put((byte) 0).putInt(0);
+        return b.array();
+    }
+
+    static ScanItem firstMeasure(int w, int h, long bytes, String ct) {
+        ScanItem it = new ScanItem();
+        it.url = "https://a.com/x.png";
+        it.category = "IMAGE";
+        it.contentType = ct;
+        it.width = w;
+        it.height = h;
+        it.bytes = bytes;
+        return it;
+    }
+
+    @Test
+    @DisplayName("ölçüm planı: aynı biçim / boyut / bayt → başlıktan izin (16 bit RGBA 12 B/piksel); farklı boyut / bayt / biçim ya da bütçe aşımı → ölçülmez")
+    void measurePlanRules() {
+        byte[] small = pngHdr(1000, 1000, 16, 6, 200_000);
+        PageResourceScanService.MeasurePlan ok = PageResourceScanService.measurePlan(
+                firstMeasure(1000, 1000, small.length, "image/png"), small, small.length);
+        assertThat(ok.measurable()).isTrue();
+        assertThat(ok.memoryMb()).as("1 MP × 12 B + gövde").isEqualTo((int) ((12_000_000L + small.length + PageResourceAnalyzer.MB - 1)
+                / PageResourceAnalyzer.MB));
+        // ikinci indirme farklı piksel boyutunda (aynı bayt) → ölçülmez
+        byte[] bigger = pngHdr(6300, 6300, 16, 6, 200_000);
+        assertThat(PageResourceScanService.measurePlan(firstMeasure(1000, 1000, bigger.length, "image/png"), bigger, bigger.length)
+                .skipReason()).isEqualTo("size_changed");
+        // tel baytı farklı → ölçülmez
+        assertThat(PageResourceScanService.measurePlan(firstMeasure(1000, 1000, small.length + 1, "image/png"), small, small.length)
+                .skipReason()).isEqualTo("bytes_changed");
+        // biçim farklı (ilk ölçüm JPEG) → ölçülmez
+        assertThat(PageResourceScanService.measurePlan(firstMeasure(1000, 1000, small.length, "image/jpeg"), small, small.length)
+                .skipReason()).isEqualTo("format_changed");
+        // aynı görsel ama başlıktan hesaplanan bellek bütçeyi aşar (36 MP × 12 B ≈ 432 MB > 200 MB) → ölçülmez
+        byte[] huge = pngHdr(6000, 6000, 16, 6, 300_000);
+        assertThat(PageResourceScanService.measurePlan(firstMeasure(6000, 6000, huge.length, "image/png"), huge, huge.length)
+                .skipReason()).isEqualTo("over_budget");
+        // 8 bit RGB aynı boyutta bütçeye sığar (36 MP × 3 B ≈ 108 MB)
+        byte[] rgb = pngHdr(6000, 6000, 8, 2, 300_000);
+        assertThat(PageResourceScanService.measurePlan(firstMeasure(6000, 6000, rgb.length, "image/png"), rgb, rgb.length)
+                .measurable()).isTrue();
+        assertThat(PageResourceScanService.measurePlan(firstMeasure(1000, 1000, 10, "image/png"), new byte[0], 0)
+                .measurable()).isFalse();
+    }
+
+    @Test
+    @DisplayName("uçtan uca: görsel ikinci indirmede değişirse (farklı boyut) yeniden kodlanmaz — tahmin kalır")
+    void secondDownloadChanged_notMeasured() throws Exception {
+        AtomicInteger swaps = new AtomicInteger();
+        byte[] other = noisePng(300, 300, false);
+        server.createContext("/swap.png", ex -> respond(ex, 200, "image/png", swaps.incrementAndGet() == 1 ? photo : other));
+        server.createContext("/swappage", ex -> respond(ex, 200, "text/html",
+                "<html><body><img src=\"/swap.png\"></body></html>".getBytes(StandardCharsets.UTF_8)));
+        PageResourceScanService.Start st = svc.start(monitor(10, "/swappage"), "u:10", "H");
+        Map<String, Object> one = awaitEnd(svc, 10, id(st));
+        Map<String, Object> sw = byUrlEnd(get(one, "items"), "/swap.png");
+        assertThat(((Number) sw.get("width")).intValue()).isEqualTo(420);
+        assertThat(sw).doesNotContainKey("optimized_bytes");
+        assertThat(swaps.get()).as("ikinci indirme yapıldı").isEqualTo(2);
+        Map<String, Object> img = get(get(one, "analysis"), "images");
+        assertThat(img).containsEntry("saving_measured", false).containsEntry("measured_count", 0);
+    }
 }
