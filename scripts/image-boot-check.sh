@@ -34,7 +34,7 @@ err() { echo "::error::$*"; fail=1; }
 # ── 1-3: HTTP ──────────────────────────────────────────────────────────────────────────────
 health="$(curl -s --max-time 10 "$BASE/health" || true)"
 echo "/health → $health"
-printf '%s' "$health" | grep -q '"status":"UP"' || err "/health UP değil: ${health:-<yanıt yok>}"
+grep -q '"status":"UP"' <<<"$health" || err "/health UP değil: ${health:-<yanıt yok>}"
 
 code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$BASE/api/branding" || true)"
 echo "/api/branding → HTTP $code"
@@ -142,29 +142,32 @@ if [ -s "$LOG" ]; then
   k6log="$(sed -E 's/\x1B\[[0-9;]*[A-Za-z]//g' "$LOG" | grep -a '\[K6\]' || true)"
   if [ -n "$k6_main" ]; then
     re_main="$(printf '%s' "$k6_main" | sed 's/\./\\./g')"
-    if printf '%s\n' "$k6log" | grep -aEq "\[K6\] .*v${re_main} \("; then
+    if grep -aEq "\[K6\] .*v${re_main} \(" <<<"$k6log"; then
       echo "k6: v${k6_main} bulundu"
     else
       err "günlükte k6 v${k6_main} yoklaması yok (beklenen: '[K6] ✅ k6 bulundu — sürüm v${k6_main}')"
       printf '%s\n' "$k6log" | head -5
     fi
   fi
-  if printf '%s\n' "$k6log" | grep -aEq "desteklenmiyor|k6 bulunamadı"; then
+  if grep -aEq "desteklenmiyor|k6 bulunamadı" <<<"$k6log"; then
     err "günlükte k6 'desteklenmiyor' / 'bulunamadı' diyor — senaryo izleme devre dışı kalır"
     printf '%s\n' "$k6log" | head -5
   fi
 fi
 
 # ── 9: işlem sertleştirmesi (2026-10-31, k6 inceleme A2) ──────────────────────────────────
+# DİKKAT: `set -o pipefail` altında `printf … | grep -q` büyük girdide ilk eşleşmede çıkar, printf SIGPIPE alır ve boru
+# hattı BAŞARISIZ sayılır (20.178.0 imaj testi: satır vardı, denetim "yok" dedi; ters yönde 'restricted method'
+# uyarısını gizlerdi). Bu yüzden bu betikte `grep -q` girdisini here-string (`<<<`) ile alır.
 if [ -s "$LOG" ]; then
   clean="$(sed -E 's/\x1B\[[0-9;]*[A-Za-z]//g' "$LOG")"
-  if printf '%s\n' "$clean" | grep -aq "İşlem sertleştirmesi uygulandı"; then
+  if grep -aq "İşlem sertleştirmesi uygulandı" <<<"$clean"; then
     echo "sertleştirme: JVM dump-edilemez (günlük)"
   else
     err "günlükte 'İşlem sertleştirmesi uygulandı' satırı yok (prctl uygulanamadı ya da kapalı)"
     printf '%s\n' "$clean" | grep -a "İşlem sertleştirmesi" | head -3
   fi
-  if printf '%s\n' "$clean" | grep -aqi "restricted method"; then
+  if grep -aqi "restricted method" <<<"$clean"; then
     err "günlükte 'restricted method' uyarısı var — ENTRYPOINT'te --enable-native-access=ALL-UNNAMED eksik"
     printf '%s\n' "$clean" | grep -ai "restricted method" | head -3
   fi
