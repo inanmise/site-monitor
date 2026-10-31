@@ -32,7 +32,6 @@ import {
   LibraryBig, ChevronDown, Hand, Info, BellRing,
 } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
-import { changedFields } from '../utils/changedFields.js'
 import CheckHistoryTab from './history/CheckHistoryTab.jsx'
 import AlertHistory from './admin/AlertHistory.jsx'
 import { alertTypesFor } from '../utils/monitorAlertTypes.js'
@@ -52,7 +51,7 @@ import {
   ConnectionPicker, ConnectionsManager, RuleResultsList, SaveTemplateDialog, TemplatesManager,
 } from './dbquery/buildingBlocks.jsx'
 import {
-  DB_TYPES, DEFAULT_SCHEDULE, breachLevelKey, checkStatusKey, checkStatusLabelKey, columnsFrom, dbTypeLabel,
+  DB_TYPES, DEFAULT_SCHEDULE, breachLevelKey, changedFieldGroups, checkStatusKey, checkStatusLabelKey, columnsFrom, dbTypeLabel,
   dbqueryStatusKey, dbqueryStatusLabelKey, durationText, metricValueText, retryAfterOf, rowCountText, scheduleFromRow,
   serverFieldErrors, splitFieldErrors,
 } from './dbquery/dbqueryPageModel.js'
@@ -112,25 +111,6 @@ const emptyForm = {
 /** Boş metin → null, sayı → sayı (sunucu boşu "yok" sayar: yavaş sorgu eşiği kapalı, …). */
 const numOrNull = (v) => (v === '' || v == null ? null : Number(v))
 
-/**
- * Standart alanların (dokuz türün paylaşılan yardımcıları — resolveWriteTeam, requireGroupAndTags, applyNotificationGroup,
- * NocMonitorService.applyFromBody, guardSharedNotificationFields — ve BulkActionBar) camelCase adları ↔ api §1'in
- * snake_case adları. Sözleşme gövdeyi snake_case yazar; paylaşılan arka uç yardımcıları camelCase okur. Arka uç bu türde
- * hangisini okursa okusun aynı değer gitsin diye standart alanlar İKİ adla da gönderilir (değerler tek kaynaktan).
- */
-const STANDARD_SNAKE = {
-  name: 'name', active: 'active', teamId: 'team_id', groupName: 'group_name', tags: 'tags',
-  notificationGroupId: 'notification_group_id', nocNotify: 'noc_notify', nocGroupIds: 'noc_group_ids',
-  alertLevel: 'alert_level', notifyEmail: 'notify_email', notifyWebhook: 'notify_webhook',
-  confirmAttempts: 'confirm_attempts', confirmIntervalSeconds: 'confirm_interval_seconds',
-  recoveryChecks: 'recovery_checks', recoveryIntervalSeconds: 'recovery_interval_seconds',
-}
-function withSnakeAliases(std) {
-  const out = { ...std }
-  for (const [camel, snake] of Object.entries(STANDARD_SNAKE)) if (camel in std) out[snake] = std[camel]
-  return out
-}
-
 /** Satır (snake_case) → form. Düzenle ve Kopyala AYNI eşlemeyi kullanır → alan kaçmaz. Parola / satır verisi yok. */
 function formFrom(m) {
   return {
@@ -153,7 +133,12 @@ function formFrom(m) {
   }
 }
 
-/** Form → istek gövdesi (standart alanlar iki adla; türe özgü alanlar api §1 adlarıyla). */
+/**
+ * Form → istek gövdesi. Standart alanlar (ad, takım, grup, etiket, bildirim, 7/24, teyit / kurtarma) dokuz türün ortak
+ * sözleşmesiyle camelCase (paylaşılan arka uç yardımcıları — resolveWriteTeam, requireGroupAndTags, applyNotificationGroup,
+ * NocMonitorService.applyFromBody, guardSharedNotificationFields — ve BulkActionBar bu adları okur; kapı nocMonitorForms);
+ * türe özgü alanlar api §1 adlarıyla (snake_case).
+ */
 function payloadFromForm(form) {
   const std = {
     name: form.name.trim(), active: form.active,
@@ -167,7 +152,7 @@ function payloadFromForm(form) {
     recoveryChecks: Number(form.recoveryChecks), recoveryIntervalSeconds: Number(form.recoveryIntervalSeconds),
   }
   return {
-    ...withSnakeAliases(std),
+    ...std,
     profile_id: form.profileId ?? null,
     purpose: form.purpose.trim(),
     sql_text: form.sqlText,
@@ -492,8 +477,8 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
     const isNew = modal === 'new'
     const full = payloadFromForm(form)
     // Düzenlemede YALNIZ değişen alanlar (aynı izlemeyi açık tutan başkasının kaydı sessizce geri dönmesin).
-    const body = isNew ? full : changedFields(full, payloadFromForm(formFrom(modal)))
-    if (changeNote.trim()) { body.changeNote = changeNote.trim(); body.change_note = changeNote.trim() }
+    const body = isNew ? full : changedFieldGroups(full, payloadFromForm(formFrom(modal)))
+    if (changeNote.trim()) body.changeNote = changeNote.trim()
     if (!isNew && Object.keys(body).length === 0) { toast.info(t('dbq.form.noChanges')); closeEditNow(); return }
     setSaving(true)
     try {
@@ -654,6 +639,10 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
     ? (pickTeams.find(tm => String(tm.id) === String(form.teamId))?.name || t('dbq.form.noTeam'))
     : (defaultTeamName || t('dbq.form.noTeam'))
   const activeMetric = METRICS.find(x => x.key === metric) ?? METRICS[0]
+  // Ayrıntı başlığı: ad SARAR (adlar kesilmez — kalıcı kural); MonitorDetailModal'ın tek satır kırpması iç kapta kapatılır.
+  const detailTitle = selected
+    ? <span data-slot="dbq-detail-title" className="block whitespace-normal [overflow-wrap:anywhere]">{selected.name}</span>
+    : null
   const formTeamId = form.teamId === '' || form.teamId == null ? null : Number(form.teamId)
   const { rules: ruleErrors, schedule: scheduleErrors } = splitFieldErrors(fe.errors)
   const limits = defaults
@@ -755,7 +744,7 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
             <MailFields form={form} setForm={setForm} errors={fe.errors} columns={columns} clear={clear} />
             {/* Teyit / kurtarma (standart; varsayılan 1 / 1 — iş alarmı gürültüsüz ama tek hatada da uyarır) */}
             <div className="min-w-0 rounded-lg border sm:col-span-2">
-              <Button type="button" variant="ghost" aria-expanded={advOpen} onClick={() => setAdvOpen(v => !v)}
+              <Button type="button" variant="ghost" aria-expanded={advOpen} onClick={() => setAdvOpen(v => !v)} data-slot="dbq-confirm-toggle"
                 className="h-auto w-full justify-start gap-2 rounded-none px-3.5 py-3 font-semibold hover:bg-muted/60 pointer-coarse:min-h-10">
                 <ChevronDown size={16} aria-hidden="true" className={cn('text-muted-foreground transition-transform motion-reduce:transition-none', advOpen && 'rotate-180')} />
                 {t('dbq.form.confirmTitle')}
@@ -802,10 +791,10 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
         refreshEvery={REFRESH_INTERVAL} refreshResetKey={loadNonce} onRefresh={load} refreshing={loading}
         check={{ count: checkable.length, running: checkRun.running, done: checkRun.run?.rows.length ?? 0, total: checkRun.run?.total ?? 0, onOpen: checkRun.openPicker }}
         extraActions={<>
-          <Button type="button" variant="outline" size="sm" className="pointer-coarse:h-10" data-slot="dbq-open-connections" onClick={() => setConnOpen(true)}>
+          <Button type="button" variant="outline" className="h-10 sm:h-9 pointer-coarse:h-10" data-slot="dbq-open-connections" onClick={() => setConnOpen(true)}>
             <Cable aria-hidden="true" className="size-4" />{t('dbq.page.connections')}
           </Button>
-          <Button type="button" variant="outline" size="sm" className="pointer-coarse:h-10" data-slot="dbq-open-templates" onClick={() => setTplOpen(true)}>
+          <Button type="button" variant="outline" className="h-10 sm:h-9 pointer-coarse:h-10" data-slot="dbq-open-templates" onClick={() => setTplOpen(true)}>
             <LibraryBig aria-hidden="true" className="size-4" />{t('dbq.page.templates')}
           </Button>
         </>}
@@ -878,7 +867,9 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
 
       {/* ── Detay penceresi ── */}
       {selected && (
-        <MonitorDetailModal onClose={closeDetail} status={dbqueryStatusKey(selected)} badge={statusBadge(selected)} title={selected.name} noc={{ type: 'DBQUERY', monitor: selected, canEdit: canManageRow(selected) }}
+        <MonitorDetailModal onClose={closeDetail} status={dbqueryStatusKey(selected)} badge={statusBadge(selected)}
+          title={detailTitle}
+          noc={{ type: 'DBQUERY', monitor: selected, canEdit: canManageRow(selected) }}
           actions={
             <MonitorModalActions
               onResume={canManageRow(selected) && !selected.active ? () => resume(selected) : undefined}
@@ -893,7 +884,7 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
               deleting={deleting === selected.id}
               deleteTitle={t('dbq.page.delete')}
               onClose={closeDetail}>
-              <CopyLinkButton iconOnly variant="outline" />
+              <CopyLinkButton iconOnly variant="outline" className="pointer-coarse:size-10" />
             </MonitorModalActions>
           }>
           <DetailDivider className="mt-0" />
@@ -918,7 +909,7 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
               <CheckHistoryTab kind="dbquery" monitorId={selected.id} listKey="dbquery-history" reloadSignal={histReload}
                 defaultPreset={7} gridClass="dbq-rt-grid" extraParams={problemOnly ? { only: 'problem' } : null}
                 renderAbove={() => (
-                  <div data-slot="dbq-hist-problem" className="mb-2 flex min-w-0 items-center gap-2">
+                  <div data-slot="dbq-hist-problem" className="mb-2 flex min-w-0 items-center gap-2 pointer-coarse:min-h-10">
                     <Switch id="dbq-hist-problem" checked={problemOnly} onCheckedChange={(v) => setProblemOnly(v === true)} />
                     <Label htmlFor="dbq-hist-problem" className="text-sm font-normal">{t('dbq.detail.problemOnly')}</Label>
                   </div>

@@ -91,7 +91,7 @@ describe('userPrefsModel — favoriler', () => {
     expect(r).toMatchObject({ on: false, list: [] })
     expect(normalizeFavorites([{ type: 'ssl', id: 1 }, { type: 'ping', id: 0 }, { type: 'ping', id: 2 }, { type: 'ping', id: '2' }]))
       .toEqual([{ type: 'ping', id: 2 }])
-    expect(MONITOR_TYPES).toHaveLength(9)
+    expect(MONITOR_TYPES).toHaveLength(10)   // + dbquery (2026-10-31; UserPreferencesService.FAVORITE_TYPES ile aynı)
   })
 
   it(`en çok ${MAX_FAVORITES} favori: tavan doluyken ekleme yapılmaz (full)`, () => {

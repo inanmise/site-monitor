@@ -8,6 +8,7 @@ import DomainMonitorPage from '../components/DomainMonitorPage.jsx'
 import PingMonitorPage from '../components/PingMonitorPage.jsx'
 import PortMonitorPage from '../components/PortMonitorPage.jsx'
 import DnsMonitorPage from '../components/DnsMonitorPage.jsx'
+import DbQueryMonitorPage from '../components/DbQueryMonitorPage.jsx'
 import CheckTeamPicker from '../components/check/CheckTeamPicker.jsx'
 import { WhyOpenChips } from '../components/admin/alerts/AlertBadges.jsx'
 import StormSettings from '../components/admin/StormSettings.jsx'
@@ -40,6 +41,7 @@ const PAGES = [
   ['Ping', PingMonitorPage, 'getPingMonitors', { host: 'a.example.com', status: 'up', ip_version: 'V4', packet_count: 4 }],
   ['Port', PortMonitorPage, 'getPortMonitors', { host: 'a.example.com', port: 443, protocol: 'TCP', status: 'open' }],
   ['Dns', DnsMonitorPage, 'getDnsMonitors', { domain: 'a.example.com', record_type: 'A', value: '203.0.113.10', standalone: true }],
+  ['DbQuery', DbQueryMonitorPage, 'getDbQueryMonitors', { purpose: 'Bekleyen sipariş sayısını izler', profile_id: 3, profile: { id: 3, name: 'Sipariş DB', db_type: 'POSTGRESQL', host: 'db.example.com', port: 5432, database_name: 'orders' }, sql_text: 'SELECT count(*) FROM orders', rules: [], status: 'OK', breach_level: 'NONE', last_check: '2026-09-26T09:00:00' }],
 ]
 
 const row = (fields, id, teamId, extra = {}) => ({

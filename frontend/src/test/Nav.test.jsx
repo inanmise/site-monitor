@@ -202,7 +202,7 @@ describe('Nav — nav-main yapısı ve ikonlar (2026-09-26)', () => {
   const SECTIONS = ['certificates', 'monitoring', 'alerts', 'reports', 'logs', 'management']
   /** App.jsx VALID_TABS'ın kenar çubuğunda duranları ('settings' kullanıcı menüsünde). */
   const TABS = ['dashboard', 'all', 'domains', 'manualcerts', 'uptime', 'forecast', 'renewal', 'renewal-guide',
-    'status', 'http', 'ping', 'port', 'dns', 'domain', 'keyword', 'page', 'pagespeed', 'scripted',
+    'status', 'http', 'ping', 'port', 'dns', 'domain', 'keyword', 'page', 'pagespeed', 'scripted', 'dbquery',
     'warnings', 'incidents', 'maintenance', 'alerthistory', 'storms', 'noc', 'stats', 'weakalgo', 'dataquality', 'weeklyreports', 'incident-history', 'executive', 'channelreports',
     'activity', 'myactivity', 'system', 'monitorchanges', 'admin', 'health', 'permissions', 'sqlplayground', 'login-issues', 'help']
 
@@ -331,13 +331,14 @@ describe('Nav — çok takımlı kullanıcı', () => {
 })
 
 describe('Nav — İzleme ara başlıkları (2026-09-23)', () => {
-  it('üç ara başlık sırayla çizilir; her biri kendi ilk sekmesinin HEMEN önünde durur', () => {
+  it('dört ara başlık sırayla çizilir; her biri kendi ilk sekmesinin HEMEN önünde durur', () => {
     const { container } = render(withSidebar(<Nav {...DEFAULT_PROPS} />))
     const heads = [...container.querySelectorAll('[data-nav-section]')]
     expect(heads.map((h) => h.textContent)).toEqual(
-      [expect.stringMatching(/Erişilebilirlik|Availability/), expect.stringMatching(/Alan Adı ve DNS|Domains and DNS/), expect.stringMatching(/İçerik ve Deneyim|Content and experience/)])
+      [expect.stringMatching(/Erişilebilirlik|Availability/), expect.stringMatching(/Alan Adı ve DNS|Domains and DNS/), expect.stringMatching(/İçerik ve Deneyim|Content and experience/),
+        expect.stringMatching(/Veri ve iş kuralları|Data and business rules/)])
     expect(heads.map((h) => h.nextElementSibling.querySelector('[data-tour]').getAttribute('data-tour')))
-      .toEqual(['nav-tab-http', 'nav-tab-dns', 'nav-tab-keyword'])
+      .toEqual(['nav-tab-http', 'nav-tab-dns', 'nav-tab-keyword', 'nav-tab-dbquery'])
     // Başlık tıklanabilir bir kontrol DEĞİL — klavye odağına girmez; alt menünün (SidebarMenuSub) içinde durur
     heads.forEach((h) => {
       expect(h.tagName).not.toBe('BUTTON'); expect(h.getAttribute('role')).toBe('presentation')
@@ -347,7 +348,7 @@ describe('Nav — İzleme ara başlıkları (2026-09-23)', () => {
 
   it('İzleme grubunun dokuz sekmesinin hiçbiri kaybolmaz', () => {
     const { container } = render(withSidebar(<Nav {...DEFAULT_PROPS} />))
-    for (const id of ['http', 'ping', 'port', 'dns', 'domain', 'keyword', 'page', 'pagespeed', 'scripted']) {
+    for (const id of ['http', 'ping', 'port', 'dns', 'domain', 'keyword', 'page', 'pagespeed', 'scripted', 'dbquery']) {
       expect(tabButton(container, id)).toBeTruthy()
     }
   })
@@ -517,7 +518,7 @@ describe('Nav — ikon kipi: ipuçları ve yana açılan bölüm menüsü', () =
     pressMenuTrigger(mon)
     const menu = screen.getByRole('menu')
     expect(within(menu).getByText(/^(Availability|Erişilebilirlik)$/)).toBeInTheDocument()
-    expect(within(menu).getAllByRole('menuitem')).toHaveLength(11)   // 9 tür + İzleme Panosu (2026-09-30) + Durum Sayfası (2026-10-01)
+    expect(within(menu).getAllByRole('menuitem')).toHaveLength(12)   // 10 tür (Veritabanı sorgusu 2026-10-31) + İzleme Panosu (2026-09-30) + Durum Sayfası (2026-10-01)
     fireEvent.click(within(menu).getByRole('menuitem', { name: /^Ping$/ }))
     expect(onTabChange).toHaveBeenCalledWith('ping')
   })

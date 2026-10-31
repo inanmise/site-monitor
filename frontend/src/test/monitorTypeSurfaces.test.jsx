@@ -226,6 +226,7 @@ describe('İzleme türü yüzeyleri — yeni tür eklenince hepsi güncellenmeli
       port: 'components/PortMonitorPage.jsx',
       domain: 'components/DomainMonitorPage.jsx',
       scripted: 'components/ScriptedMonitorPage.jsx',
+      dbquery: 'components/DbQueryMonitorPage.jsx',
       dns: 'components/DnsDetailModal.jsx',
     }
     for (const [type, file] of Object.entries(PAGES)) {

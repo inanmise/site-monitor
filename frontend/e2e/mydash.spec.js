@@ -11,7 +11,7 @@ const LONG_SERVICE = 'Kurumsal İnternet Bankacılığı Ödeme ve Fatura Tahsil
 
 // Takım × tür matrisi için izleme satırları: uzun AD takım adları, her türden, sorunlu / gecikmiş / sağlıklı karışık
 const MATRIX_TEAMS = [[5, LONG_TEAM], [6, 'Ödeme Sistemleri ve Kart Operasyonları (Bireysel / Kurumsal Kanallar)'], [7, 'Altyapı'], [8, 'Çağrı Merkezi']]
-const MATRIX_MONITORS = MATRIX_TEAMS.flatMap(([id, name], i) => ['http', 'ping', 'dns', 'pagespeed', 'scripted']
+const MATRIX_MONITORS = MATRIX_TEAMS.flatMap(([id, name], i) => ['http', 'ping', 'dns', 'pagespeed', 'scripted', 'dbquery']
   .filter((_, j) => (i + j) % 4 !== 3)
   .map((type, j) => ({ id: id * 100 + j, team_id: id, team_name: name, type, active: true, status: (i + j) % 5 === 0 ? 'down' : (i + j) % 7 === 0 ? 'stale' : 'up' })))
   .concat([{ id: 999, team_id: null, team_name: null, type: 'http', active: true, status: 'up' }])
@@ -45,7 +45,8 @@ async function mock(page, { dashboard = null, noc = false } = {}) {
     } else if (p === '/api/monitoring/overview') {
       body = { success: true, data: { totals: { active: 120, down: 3, stale: 2, unknown: 1, success_rate_window: 98.4 },
         types: [{ type: 'http', total: 60, active: 60, down: 2, stale: 0 }, { type: 'ping', total: 40, active: 40, down: 1, stale: 2 },
-          { type: 'dns', total: 20, active: 20, down: 0, stale: 0 }, { type: 'pagespeed', total: 4, active: 4 }, { type: 'scripted', total: 3, active: 3, unknown: 1 }],
+          { type: 'dns', total: 20, active: 20, down: 0, stale: 0 }, { type: 'pagespeed', total: 4, active: 4 }, { type: 'scripted', total: 3, active: 3, unknown: 1 },
+          { type: 'dbquery', total: 5, active: 5, down: 1 }],
         monitors: MATRIX_MONITORS } }
     } else if (p === '/api/stats') {
       body = { success: true, data: { total_certificates: 240, valid_count: 220, expired: 1, expiring_in_7_days: 2, expiring_in_30_days: 6, error_count: 1,
@@ -227,7 +228,7 @@ for (const vp of VIEWPORTS) {
       }
       await expect(matrix).toContainText(LONG_TEAM)
       await expect(root.locator('[data-slot="mydash-widget"][data-type="service_grid"] [data-slot="mydash-grid-service"]').first()).toBeVisible()
-      await expect(root.locator('[data-slot="mydash-widget"][data-type="type_heatmap"] [data-slot="mydash-heat-cell"]')).toHaveCount(5)
+      await expect(root.locator('[data-slot="mydash-widget"][data-type="type_heatmap"] [data-slot="mydash-heat-cell"]')).toHaveCount(6)   // 6 tür (veritabanı sorgusu dahil; izlemesi olmayan tür gizli)
       await page.waitForTimeout(300)
       expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), 'yatay taşma').toBeLessThanOrEqual(1)
       expect(await page.evaluate(clipped, '[data-slot="mydash-page"]'), 'kırpılan metin').toEqual([])

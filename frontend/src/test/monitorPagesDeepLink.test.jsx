@@ -9,6 +9,7 @@ import PingMonitorPage from '../components/PingMonitorPage.jsx'
 import PortMonitorPage from '../components/PortMonitorPage.jsx'
 import DnsMonitorPage from '../components/DnsMonitorPage.jsx'
 import ScriptedMonitorPage from '../components/ScriptedMonitorPage.jsx'
+import DbQueryMonitorPage from '../components/DbQueryMonitorPage.jsx'
 
 const toastMock = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), info: vi.fn(), dismiss: vi.fn() }))
 vi.mock('../components/ui/Toast.jsx', () => ({ useToast: () => toastMock, ToastProvider: ({ children }) => children }))
@@ -44,6 +45,7 @@ const PAGES = [
   ['Port', 'port', 'PORT', PortMonitorPage, 'getPortMonitors', (i) => ({ host: host(i), port: 443, protocol: 'TCP', status: 'open' })],
   ['Dns', 'dns', 'DNS', DnsMonitorPage, 'getDnsMonitors', (i) => ({ domain: host(i), record_type: 'A', value: '203.0.113.10', standalone: true })],
   ['Scripted', 'scripted', 'SCRIPTED', ScriptedMonitorPage, 'getScriptedMonitors', () => ({ status: 'up', script: 'export default function () {}', env: [] })],
+  ['DbQuery', 'dbquery', 'DBQUERY', DbQueryMonitorPage, 'getDbQueryMonitors', () => ({ purpose: 'Bekleyen sipariş sayısını izler', profile_id: 3, profile: { id: 3, name: 'Sipariş DB', db_type: 'POSTGRESQL', host: 'db.example.com', port: 5432, database_name: 'orders' }, sql_text: 'SELECT count(*) FROM orders', rules: [], status: 'OK', breach_level: 'NONE', last_check: '2026-09-26T09:00:00' })],
 ]
 const N = 60   // sayfa boyu 50 → son kayıtlar 2. sayfada
 const row = (fields, i) => ({

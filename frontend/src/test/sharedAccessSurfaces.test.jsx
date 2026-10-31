@@ -102,7 +102,7 @@ describe('paylaşımla görülen satırların yüzeyleri', () => {
 
   it('sözleşme: dokuz izleme formu paylaşımlı kayıtta (ve paylaşan takıma yeni kayıtta) bildirim bloğunu, 7/24 alanını ve takım seçicisini kilitler; k6 da paylaşımla yazılabilen takımları alır (2026-10-16)', () => {
     const dir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'components')
-    for (const page of ['Dns', 'Domain', 'Http', 'Keyword', 'Page', 'PageSpeed', 'Ping', 'Port']) {
+    for (const page of ['Dns', 'Domain', 'Http', 'Keyword', 'Page', 'PageSpeed', 'Ping', 'Port', 'DbQuery']) {
       const src = fs.readFileSync(path.join(dir, `${page}MonitorPage.jsx`), 'utf8')
       // inceleme 5: kilit tek ölçütten (routingLockOf: satır routing_locked / shared_access, yeni kayıtta paylaşım takımı)
       expect(src, page).toContain('const routingLock = routingLockOf(modal, form.teamId, pickTeams)')

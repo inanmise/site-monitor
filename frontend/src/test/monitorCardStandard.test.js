@@ -18,7 +18,7 @@ const COMPONENTS = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '.
 const MONITOR_PAGES = [
   'PingMonitorPage', 'DnsMonitorPage', 'DomainMonitorPage', 'HttpMonitorPage',
   'KeywordMonitorPage', 'PageMonitorPage', 'PageSpeedMonitorPage', 'PortMonitorPage',
-  'ScriptedMonitorPage',
+  'ScriptedMonitorPage', 'DbQueryMonitorPage',
 ]
 
 const read = (p) => fs.readFileSync(path.join(COMPONENTS, `${p}.jsx`), 'utf8')
@@ -38,6 +38,7 @@ const CARD_MODULES = {
   HttpMonitorPage: ['http/HttpMonitorCard'],
   PortMonitorPage: ['port/PortMonitorCard'],
   DomainMonitorPage: ['domain/DomainMonitorCard'],
+  DbQueryMonitorPage: ['dbquery/DbQueryMonitorCard'],
 }
 const readCard = (p) => [read(p), ...(CARD_MODULES[p] || []).map(read)].join('\n')
 
@@ -103,7 +104,7 @@ describe('izleme listesi kart standardı', () => {
       scanned.push(p)
       for (const [label, rx] of REQUIRED) if (!rx.test(src)) missing.push(`${p} → ${label}`)
     }
-    expect(scanned, 'tarama vakum değil: dokuz izleme sayfasının hepsi okundu').toHaveLength(9)
+    expect(scanned, 'tarama vakum değil: on izleme sayfasının hepsi okundu').toHaveLength(10)
     expect(missing).toEqual([])
   })
 
@@ -150,7 +151,7 @@ describe('izleme listesi kart standardı', () => {
       if (!/<MonitorPageHeader\b[^>]*\btype="[a-z]+"/.test(src)) missing.push(`${p} → <MonitorPageHeader type="…">`)
       if (/className="(upt-header|upt-header-right|upt-title|upt-subtitle|upt-last-check|dns-header|dns-title)"/.test(src)) missing.push(`${p} → el yapımı başlık sınıfı`)
     }
-    expect(PAGES, 'tarama vakum değil: on sayfa okundu').toHaveLength(10)
+    expect(PAGES, 'tarama vakum değil: on bir sayfa okundu').toHaveLength(11)
     expect(missing).toEqual([])
   })
 
@@ -164,7 +165,7 @@ describe('izleme listesi kart standardı', () => {
   it('dokuz sayfa kayıttan sonra ilk / taze kontrolü paylaşılan karardan başlatır ve kart `running` alır', () => {
     const KIND = {
       PingMonitorPage: 'ping', DnsMonitorPage: 'dns', DomainMonitorPage: 'domain', HttpMonitorPage: 'http', KeywordMonitorPage: 'keyword',
-      PageMonitorPage: 'page', PageSpeedMonitorPage: 'pagespeed', PortMonitorPage: 'port', ScriptedMonitorPage: 'scripted',
+      PageMonitorPage: 'page', PageSpeedMonitorPage: 'pagespeed', PortMonitorPage: 'port', ScriptedMonitorPage: 'scripted', DbQueryMonitorPage: 'dbquery',
     }
     const missing = []
     for (const p of MONITOR_PAGES) {
@@ -196,7 +197,7 @@ describe('izleme listesi kart standardı', () => {
   it('dokuz kart + sertifika kartı 7/24 göstergesini paylaşılan yerden çizer; sayfa canEdit, detay penceresi noc verir', () => {
     const TYPE = {
       PingMonitorPage: 'PING', DnsMonitorPage: 'DNS', DomainMonitorPage: 'DOMAIN', HttpMonitorPage: 'HTTP', KeywordMonitorPage: 'KEYWORD',
-      PageMonitorPage: 'PAGE', PageSpeedMonitorPage: 'PAGESPEED', PortMonitorPage: 'PORT', ScriptedMonitorPage: 'SCRIPTED',
+      PageMonitorPage: 'PAGE', PageSpeedMonitorPage: 'PAGESPEED', PortMonitorPage: 'PORT', ScriptedMonitorPage: 'SCRIPTED', DbQueryMonitorPage: 'DBQUERY',
     }
     const missing = []
     const shared = read('monitoring/MonitorCard')

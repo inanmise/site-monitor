@@ -24,6 +24,7 @@ vi.mock('../api/client', () => ({
       getDnsMonitors: vi.fn(), createDnsMonitor: vi.fn(), updateDnsMonitor: vi.fn(),
       getPortMonitors: vi.fn(), createPortMonitor: vi.fn(), updatePortMonitor: vi.fn(),
       getDomainMonitors: vi.fn(), createDomainMonitor: vi.fn(), updateDomainMonitor: vi.fn(),
+      getDbQueryMonitors: vi.fn(), createDbQueryMonitor: vi.fn(), updateDbQueryMonitor: vi.fn(),
     },
   }),
 }))
@@ -54,6 +55,7 @@ import ScriptedMonitorPage from '../components/ScriptedMonitorPage.jsx'
 import DnsMonitorPage from '../components/DnsMonitorPage.jsx'
 import PortMonitorPage from '../components/PortMonitorPage.jsx'
 import DomainMonitorPage from '../components/DomainMonitorPage.jsx'
+import DbQueryMonitorPage from '../components/DbQueryMonitorPage.jsx'
 import InventoryFormModal from '../components/inventory/InventoryFormModal.jsx'
 
 /**
@@ -83,6 +85,7 @@ const PAGES = [
   { type: 'DNS', Page: DnsMonitorPage, key: 'Dns', row: { id: 1, name: 'example', domain: 'www.example.com', record_type: 'A', standalone: true, value: '1.2.3.4', ttl: 300 } },
   { type: 'PORT', Page: PortMonitorPage, key: 'Port', row: { id: 1, name: 'mail', host: '10.0.0.1', port: 8443, protocol: 'TCP', status: 'open' } },
   { type: 'DOMAIN', Page: DomainMonitorPage, key: 'Domain', row: { id: 1, name: 'example', domain: 'example.com.tr', status: 'OK', source: 'RDAP', days_remaining: 120 } },
+  { type: 'DBQUERY', Page: DbQueryMonitorPage, key: 'DbQuery', row: { id: 1, name: 'Sipariş kuyruğu', purpose: 'Bekleyen sipariş sayısını izler', profile_id: 3, profile: { id: 3, name: 'Sipariş DB', db_type: 'POSTGRESQL' }, sql_text: 'SELECT count(*) FROM orders', rules: [], status: 'OK', last_check: AT } },
 ]
 
 const SWITCH = /7\/24 izleme ekibine bildir|Notify the 24\/7 monitoring team/

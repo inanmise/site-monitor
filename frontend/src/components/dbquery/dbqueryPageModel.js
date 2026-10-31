@@ -221,6 +221,35 @@ export function scheduleFromRow(m) {
   }
 }
 
+/**
+ * Birlikte anlam taşıyan alan kümeleri — biri değişince HEPSİ gönderilir (düzenlemede yalnız değişen alanlar kuralının
+ * istisnası): sunucu bir kümeyi bütün olarak doğrular (zamanlama önizlemesi, sorgunun bağlantının veritabanı türüne göre
+ * denetimi, 7/24 anahtarı + grupları — nocMonitorForms kapısı ikisini birlikte bekler).
+ */
+export const FIELD_GROUPS = Object.freeze([
+  ['nocNotify', 'nocGroupIds'],
+  ['notifyEmail', 'notifyWebhook', 'alertLevel', 'notificationGroupId'],
+  ['profile_id', 'sql_text'],
+  ['rules', 'rule_logic'],
+  [...SCHEDULE_KEYS],
+  ['mail_include_rows', 'mail_columns', 'masked_columns'],
+  ['confirmAttempts', 'confirmIntervalSeconds', 'recoveryChecks', 'recoveryIntervalSeconds'],
+])
+
+/**
+ * Düzenleme gövdesi: yüklenen hâlden DEĞİŞEN alanlar + değişen alanın kümesindeki diğerleri (FIELD_GROUPS). Aynı izlemeyi
+ * açık tutan başka bir yöneticinin o arada kaydettiği alanlar sessizce eski değere dönmez. Hiçbir şey değişmediyse `{}`.
+ */
+export function changedFieldGroups(next, base, groups = FIELD_GROUPS) {
+  const same = (k) => JSON.stringify(next?.[k]) === JSON.stringify(base?.[k])
+  const out = {}
+  for (const k of Object.keys(next || {})) if (base == null || !same(k)) out[k] = next[k]
+  for (const g of groups) {
+    if (g.some((k) => k in out)) for (const k of g) if (k in (next || {})) out[k] = next[k]
+  }
+  return out
+}
+
 /** Liste (dizi) ↔ TagInput CSV metni. Boş öğeler atılır, sıra korunur, tekrar edenler bir kez. */
 export function listToCsv(list) {
   return Array.isArray(list) ? [...new Set(list.map((s) => String(s).trim()).filter(Boolean))].join(', ') : ''

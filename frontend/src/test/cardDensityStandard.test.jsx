@@ -29,6 +29,7 @@ const PAGES = {
   PageSpeedMonitorPage: 'pagespeed/PageSpeedMonitorCard.jsx',
   PortMonitorPage: 'port/PortMonitorCard.jsx',
   ScriptedMonitorPage: 'scripted/ScriptedMonitorCard.jsx',
+  DbQueryMonitorPage: 'dbquery/DbQueryMonitorCard.jsx',
 }
 
 /**

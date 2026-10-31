@@ -5,7 +5,7 @@
 import { test, expect } from '@playwright/test'
 import { mockApi } from './support/monitorMocks.js'
 
-const TYPES = ['http', 'ping', 'port', 'dns', 'domain', 'keyword', 'page', 'pagespeed', 'scripted']
+const TYPES = ['http', 'ping', 'port', 'dns', 'domain', 'keyword', 'page', 'pagespeed', 'scripted', 'dbquery']
 
 for (const vp of [{ width: 360, height: 780 }, { width: 390, height: 844 }]) {
   for (const type of TYPES) {
