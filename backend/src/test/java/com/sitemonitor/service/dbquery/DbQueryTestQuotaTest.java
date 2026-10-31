@@ -65,7 +65,8 @@ class DbQueryTestQuotaTest {
                     .isInstanceOfSatisfying(DbQueryApiException.class, e -> {
                         assertThat(e.status()).isEqualTo(429);
                         assertThat(e.code()).isEqualTo("RATE_LIMITED");
-                        assertThat(e.getMessage()).contains("Saatlik deneme sınırına ulaşıldı (5/saat)").contains("dk sonra");
+                        assertThat(e.getMessage()).contains("Saatlik deneme sınırına ulaşıldı (5/saat;")
+                                .contains("elle kontrol birlikte sayılır").contains("dk sonra");
                         long wait = ((Number) e.extra().get("retry_after_seconds")).longValue();
                         assertThat(wait).isBetween(3_500L, 3_600L);
                     });
@@ -78,6 +79,31 @@ class DbQueryTestQuotaTest {
         // Başka kullanıcı etkilenmez
         podA.consume(user("mehmet"));
         podB.consume(user("mehmet"));
+    }
+
+    @Test
+    @DisplayName("İkinci tur O-3 + D-5: deneme / maliyet / elle kontrol TEK sayaç (iki pod); yürütülmeyen (meşgul) deneme geri "
+            + "verilir — bloğu yazan deneme geri verilince blok kalkar; bilet en çok bir kez geri verilir")
+    void refundGivesBackOneAttemptAcrossPods() {
+        MockHttpSession ayse = user("ayse");
+        podA.consume(ayse);                                       // "Sorguyu dene" (pod A)
+        podB.consume(ayse);                                       // "Maliyeti denetle" (pod B)
+        podA.consume(ayse);                                       // "Şimdi kontrol et" (pod A)
+        podB.consume(ayse);                                       // 4.
+        DbQueryTestQuota.Ticket fifth = podA.consume(ayse);       // 5. — blok yazıldı
+        assertThatThrownBy(() -> podB.consume(ayse)).isInstanceOf(DbQueryApiException.class);
+
+        podA.refund(fifth);                                       // 5. çalışmadı (motor meşgul) → hak geri
+        podA.refund(fifth);                                       // ikinci geri verme yok sayılır
+        podA.refund(null);
+        DbQueryTestQuota.Ticket again = podB.consume(ayse);       // geri verilen hak kullanılır (pod B)
+        assertThat(again).isNotNull();
+        assertThatThrownBy(() -> podA.consume(ayse))
+                .isInstanceOfSatisfying(DbQueryApiException.class, e -> assertThat(e.status()).isEqualTo(429));
+        Integer attempts = mp.jdbc().queryForObject("SELECT attempts FROM rate_limit_counters WHERE limit_key = ?",
+                Integer.class, RateLimitCounterService.key(DbQueryTestQuota.SCOPE, "ayse"));
+        assertThat(attempts).as("çift geri verme sayımı eksiltmedi").isEqualTo(5);
+        assertThat(again.toString()).doesNotContain("ayse");
     }
 
     @Test

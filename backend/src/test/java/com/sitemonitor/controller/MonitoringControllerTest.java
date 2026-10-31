@@ -7531,4 +7531,69 @@ class MonitoringControllerTest {
         }
         assertThat(stamps).doesNotContainKey(63L);
     }
+
+    // ── İnceleme ikinci tur (O-3, D-5) ───────────────────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("İkinci tur O-3: 'Şimdi kontrol et' saatlik küme sayacından düşer (EXECUTE paylaşımıyla tetikleyen de); sınır doluysa "
+            + "429 RATE_LIMITED, kontrol ÇALIŞMAZ, izleme beklemesi başlamaz")
+    void dbquery_trigger_countsHourlyQuota() throws Exception {
+        when(dbQueryMonitorRepo.findById(48L)).thenReturn(Optional.of(dbqMonitor(48L, 1L, 5L)));
+        when(dbQueryMonitorRepo.findById(49L)).thenReturn(Optional.of(dbqMonitor(49L, 1L, 5L)));
+        when(dbConnectionRepo.findById(5L)).thenReturn(Optional.of(dbqConn(5L, 1L)));
+        when(appSettings.getInt(eq("site.monitor.dbquery.manual-cooldown-seconds"), anyInt())).thenReturn(20);
+        when(schedulerService.triggerDbQueryCheck(any())).thenReturn(java.util.Map.of("status", "OK"));
+        var ticket = org.mockito.Mockito.mock(com.sitemonitor.service.dbquery.DbQueryTestQuota.Ticket.class);
+        MockHttpSession grantExec = dbqGrantee(3L, 1L, true, false, false);
+        when(dbQueryTestQuota.consume(grantExec)).thenReturn(ticket);
+        try (DbqEngine engine = DbqEngine.ok()) {
+            mvc.perform(post("/api/monitoring/dbquery/48/check").session(grantExec)).andExpect(status().isOk());
+            verify(dbQueryTestQuota).consume(grantExec);
+
+            org.mockito.Mockito.doThrow(DbQueryApiException.tooMany("RATE_LIMITED",
+                            "Saatlik deneme sınırına ulaşıldı (60/saat; sorgu denemesi, maliyet denetimi ve elle kontrol birlikte sayılır) — 7 dk sonra yeniden deneyin.", 400))
+                    .when(dbQueryTestQuota).consume(any());
+            mvc.perform(post("/api/monitoring/dbquery/49/check").session(grantExec))
+                    .andExpect(status().is(429))
+                    .andExpect(jsonPath("$.code").value("RATE_LIMITED"))
+                    .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("elle kontrol")))
+                    .andExpect(header().string("Retry-After", "400"));
+        }
+        verify(schedulerService, org.mockito.Mockito.times(1)).triggerDbQueryCheck(any());
+        verify(dbQueryTestQuota, never()).refund(any());
+        MonitoringController controller = org.springframework.test.util.AopTestUtils.getTargetObject(
+                applicationContext.getBean(MonitoringController.class));
+        @SuppressWarnings("unchecked")
+        java.util.Map<Long, Long> stamps = (java.util.Map<Long, Long>)
+                org.springframework.test.util.ReflectionTestUtils.getField(controller, "dbQueryManualTriggerAt");
+        assertThat(stamps).as("sınır doluyken izleme beklemesi başlamaz").doesNotContainKey(49L);
+    }
+
+    @Test
+    @DisplayName("İkinci tur D-5: motor meşgul (SKIPPED) → 'Sorguyu dene' ve 'Şimdi kontrol et' saatlik hakkı GERİ VERİR (429 DBQUERY_BUSY)")
+    void dbquery_busy_refundsHourlyQuota() throws Exception {
+        when(dbConnectionRepo.findById(5L)).thenReturn(Optional.of(dbqConn(5L, 1L)));
+        when(dbQueryMonitorRepo.findById(50L)).thenReturn(Optional.of(dbqMonitor(50L, 1L, 5L)));
+        when(appSettings.getInt(eq("site.monitor.dbquery.manual-cooldown-seconds"), anyInt())).thenReturn(20);
+        var ticket = org.mockito.Mockito.mock(com.sitemonitor.service.dbquery.DbQueryTestQuota.Ticket.class);
+        when(dbQueryTestQuota.consume(any())).thenReturn(ticket);
+        var busy = org.mockito.Mockito.mock(com.sitemonitor.service.dbquery.DbQueryCheckerService.Result.class);
+        when(busy.status()).thenReturn("SKIPPED");
+        when(dbQueryChecker.test(any(), any())).thenReturn(busy);
+        when(schedulerService.triggerDbQueryCheck(any()))
+                .thenReturn(java.util.Map.of("status", "SKIPPED", "failure_reason", "DB_BUSY"));
+        var json = org.springframework.http.MediaType.APPLICATION_JSON;
+        try (DbqEngine engine = DbqEngine.ok()) {
+            mvc.perform(post("/api/monitoring/dbquery/test").session(session("ADMIN")).contentType(json)
+                            .content("{\"profile_id\":5,\"sql_text\":\"SELECT COUNT(*) FROM orders\",\"rules\":[]}"))
+                    .andExpect(status().is(429))
+                    .andExpect(jsonPath("$.code").value("DBQUERY_BUSY"));
+            verify(dbQueryTestQuota, org.mockito.Mockito.times(1)).refund(ticket);
+            mvc.perform(post("/api/monitoring/dbquery/50/check").session(session("ADMIN")))
+                    .andExpect(status().is(429))
+                    .andExpect(jsonPath("$.code").value("DBQUERY_BUSY"));
+        }
+        verify(dbQueryTestQuota, org.mockito.Mockito.times(2)).refund(ticket);
+        verify(schedulerService, never()).evaluateDbQueryNow(any(), any());
+    }
 }

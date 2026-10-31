@@ -5460,11 +5460,16 @@ public class MonitoringController {
                     "Bu izleme için çok sık elle kontrol; " + wait + " sn sonra yeniden deneyin.",
                     "Too many manual checks for this monitor; try again in " + wait + " s."), wait);
         }
+        // Kullanıcı başına KÜME çapında saatlik sınır (inceleme ikinci tur, O-3): elle kontrolün yanıtı da kural değerlerini
+        // (rule_results) taşır — "Sorguyu dene" ve "Maliyeti denetle" ile AYNI sayaç; EXECUTE paylaşımıyla tetikleyen de sayılır.
+        // İzleme damgası sayaçtan SONRA yazılır: sınır doluysa izleme beklemesi hiç başlamaz.
+        var quotaTicket = dbqHourlyQuota(session, null);
         dbQueryManualTriggerAt.put(id, nowMs);
         Map<String, Object> result = schedulerService.triggerDbQueryCheck(m);   // tek çalıştırma + kontrol satırı
-        // Pod / bağlantı izni alınamadı (eşzamanlılık dolu) — kontrol YÜRÜTÜLMEDİ, satır yazılmadı: bekleme geri verilir.
+        // Pod / bağlantı izni alınamadı (eşzamanlılık dolu) — kontrol YÜRÜTÜLMEDİ, satır yazılmadı: bekleme ve saatlik hak geri verilir.
         if (result != null && DbQueryCheckerService.STATUS_SKIPPED.equals(String.valueOf(result.get("status")))) {
             dbQueryManualTriggerAt.remove(id, nowMs);
+            dbqHourlyRefund(quotaTicket);
             throw DbQueryApiException.tooMany("DBQUERY_BUSY", com.sitemonitor.util.Msg.t(
                     "Veritabanı şu an başka sorguları çalıştırıyor (eşzamanlılık sınırı dolu); kontrol yapılmadı. Birkaç saniye sonra yeniden deneyin.",
                     "The database is busy with other queries (concurrency limit reached); the check didn't run. Try again in a few seconds."), 10);
@@ -5484,8 +5489,9 @@ public class MonitoringController {
      * Kaydetmeden deneme ("Sorguyu dene") — taslağın bağlantısı + sorgusu + kurallarıyla tek çalıştırma; hiçbir şey yazmaz.
      * Yanıtta SATIR VERİSİ YOK (ilke: izleme bir veri çekme aracı değildir): yalnız durum, süre, satır sayısı, kolon ADLARI,
      * kural sonuçları ve güvenlik denetimi. Oturum başına {@value #DBQUERY_TEST_COOLDOWN_SECONDS} sn bekleme (dakikada ≤ 6) +
-     * kullanıcı başına KÜME çapında saatlik sınır ({@code site.monitor.dbquery.test-per-hour}, "Maliyeti denetle" ile ortak
-     * sayaç — inceleme 2026-10-31, K3): deneme başına ≤ {@value DbQueryRules#MAX_RULES} kural değeri, saatte N deneme.
+     * kullanıcı başına KÜME çapında saatlik sınır ({@code site.monitor.dbquery.test-per-hour}, "Maliyeti denetle" ve "Şimdi
+     * kontrol et" ile ortak sayaç — inceleme 2026-10-31, K3 / O-3): deneme başına ≤ {@value DbQueryRules#MAX_RULES} kural
+     * değeri, saatte N deneme. Yürütülmeyen (meşgul) deneme sayılmaz (D-5).
      */
     @PostMapping("/dbquery/test")
     public ResponseEntity<Map<String, Object>> testDbQuery(@RequestBody Map<String, Object> raw, HttpSession session) {
@@ -5508,14 +5514,16 @@ public class MonitoringController {
         List<Map<String, Object>> violations = dbqGuard(draft, profile, true, errs);
         throwDbqErrors(errs, violations, null);
         dbqCooldown(session, DBQUERY_TEST_AT, DBQUERY_TEST_COOLDOWN_SECONDS);
-        dbqHourlyQuota(session, DBQUERY_TEST_AT);
+        var quotaTicket = dbqHourlyQuota(session, DBQUERY_TEST_AT);
         auditService.recordAction("MONITOR_TEST", session, "DBQUERY_MONITOR", "test",
                 AuditDetail.of("kind", "query", "profile_id", profile.getId(), "db_type", profile.getDbType(),
                         "sql_len", draft.getSqlText() == null ? 0 : draft.getSqlText().length(),
                         "sql_hash", dbqSqlHash(draft.getSqlText())), null);
         DbQueryCheckerService.Result r = dbqChecker().test(draft, monitorId);
         if (r != null && DbQueryCheckerService.STATUS_SKIPPED.equals(r.status())) {
+            // Deneme YÜRÜTÜLMEDİ (izin alınamadı): oturum beklemesi ve saatlik hak geri verilir (D-5)
             session.removeAttribute(DBQUERY_TEST_AT);
+            dbqHourlyRefund(quotaTicket);
             throw DbQueryApiException.tooMany("DBQUERY_BUSY", com.sitemonitor.util.Msg.t(
                     "Veritabanı şu an başka sorguları çalıştırıyor (eşzamanlılık sınırı dolu); deneme yapılmadı. Birkaç saniye sonra yeniden deneyin.",
                     "The database is busy with other queries (concurrency limit reached); the test didn't run. Try again in a few seconds."), 10);
@@ -6285,17 +6293,29 @@ public class MonitoringController {
     }
 
     /**
-     * Saatlik KÜME sayacı (K3): oturum beklemesinden SONRA sorulur — sınır aşımında 429 {@code RATE_LIMITED}; o zaman oturum
-     * damgası geri alınır (bir sonraki tıklama saatlik iletiyi görsün, 10 sn'lik "çok sık" iletisini değil). Sayaç bean'i
-     * yokken (dilimli testler) sınır yok.
+     * Saatlik KÜME sayacı (K3; "Şimdi kontrol et" de — O-3): oturum / izleme beklemesinden SONRA sorulur — sınır aşımında 429
+     * {@code RATE_LIMITED}; o zaman oturum damgası geri alınır (bir sonraki tıklama saatlik iletiyi görsün, 10 sn'lik "çok sık"
+     * iletisini değil; {@code cooldownKey} null = oturum damgası yok). Sayaç bean'i yokken (dilimli testler) sınır yok.
+     *
+     * @return sayılan deneme — yürütülmezse (motor meşgul) {@link #dbqHourlyRefund} ile geri verilir (D-5); bean yoksa null
      */
-    private void dbqHourlyQuota(HttpSession session, String cooldownKey) {
-        if (dbQueryTestQuota == null) return;
+    private com.sitemonitor.service.dbquery.DbQueryTestQuota.Ticket dbqHourlyQuota(HttpSession session, String cooldownKey) {
+        if (dbQueryTestQuota == null) return null;
         try {
-            dbQueryTestQuota.consume(session);
+            return dbQueryTestQuota.consume(session);
         } catch (DbQueryApiException e) {
-            session.removeAttribute(cooldownKey);
+            if (cooldownKey != null) session.removeAttribute(cooldownKey);
             throw e;
+        }
+    }
+
+    /** Yürütülmeyen denemenin saatlik hakkını geri verir (inceleme D-5; "deneme yapılmadı" denirken hak düşmesin). */
+    private void dbqHourlyRefund(com.sitemonitor.service.dbquery.DbQueryTestQuota.Ticket ticket) {
+        if (dbQueryTestQuota == null || ticket == null) return;
+        try {
+            dbQueryTestQuota.refund(ticket);
+        } catch (RuntimeException e) {
+            log.warn("Saatlik deneme hakkı geri verilemedi: {}", e.getClass().getSimpleName());
         }
     }
 

@@ -94,6 +94,13 @@ public class RateLimitCounterService {
     static final String SQL_READ_STATE = "SELECT attempts, blocked_until FROM " + TABLE + " WHERE limit_key = ?";
     static final String SQL_DELETE = "DELETE FROM " + TABLE + " WHERE limit_key = ?";
     static final String SQL_PURGE = "DELETE FROM " + TABLE + " WHERE expires_at < ?";
+    /**
+     * Bir denemeyi geri verir (2026-10-31, dbquery D-5): sayım bir azalır; sayım eşiğin altına inerse blok kalkar (geri verilen
+     * deneme bloğu yazan denemeydiyse). SET ifadeleri ESKİ satırla değerlendirilir; sayım 0'ın altına inmez.
+     */
+    static final String SQL_RELEASE = "UPDATE " + TABLE + " SET attempts = attempts - 1, "
+            + "blocked_until = CASE WHEN attempts - 1 < ? THEN 0 ELSE blocked_until END, updated_at = ? "
+            + "WHERE limit_key = ? AND attempts > 0";
 
     /** {@code null} = yalnız bellek. */
     private final JdbcTemplate jdbc;
@@ -177,6 +184,32 @@ public class RateLimitCounterService {
             }
         }
         return hitMemory(key, limit, now);
+    }
+
+    /**
+     * {@link #hit} ile sayılmış BİR denemeyi geri verir (2026-10-31, dbquery D-5: deneme hiç yürütülmedi — motor meşguldü).
+     * Deneme nereye sayıldıysa ({@code taken.memory()}: bellek yedeği, değilse veritabanı) yalnız orada düşülür; sayım eşiğin
+     * altına inerse blok kalkar. {@code taken == null} ya da anahtar / sınır yoksa hiçbir şey yapılmaz. Hata yutulur (geri
+     * verilemeyen deneme yalnız fazladan sayılmış olur — sınır asla gevşemez).
+     */
+    public void release(String key, Limit limit, State taken) {
+        if (key == null || limit == null || taken == null) return;
+        if (taken.memory()) {
+            memory.computeIfPresent(key, (k, x) -> {
+                if (x.attempts > 0) {
+                    x.attempts--;
+                    if (x.attempts < limit.max()) x.blockedUntil = 0L;
+                }
+                return x;
+            });
+            return;
+        }
+        if (jdbc == null) return;
+        try {
+            jdbc.update(SQL_RELEASE, limit.max(), clock.getAsLong(), key);
+        } catch (Exception e) {
+            log.warn("Oran sınırı denemesi geri verilemedi: {}", e.getMessage());
+        }
     }
 
     /** Sayımı ve bloğu siler (ör. gerçek oturum kuruldu). Hata yutulur. */

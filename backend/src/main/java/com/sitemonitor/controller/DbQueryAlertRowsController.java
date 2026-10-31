@@ -1,13 +1,19 @@
 package com.sitemonitor.controller;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitemonitor.model.AlertEvent;
+import com.sitemonitor.model.DbQueryMonitor;
 import com.sitemonitor.repository.AlertEventRepository;
+import com.sitemonitor.repository.DbQueryMonitorRepository;
 import com.sitemonitor.service.AlertOwnership;
 import com.sitemonitor.service.EscalationService;
 import com.sitemonitor.service.PermissionService;
 import com.sitemonitor.service.dbquery.DbQueryAlertRowsService;
 import com.sitemonitor.util.Msg;
 import jakarta.servlet.http.HttpSession;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.CacheControl;
 import org.springframework.http.ResponseEntity;
@@ -35,7 +41,11 @@ import java.util.Set;
  * alarm anı satırlarını tam görüyordu). Kural alarm maili dışındaki her görünümde aynıdır.
  *
  * <p>Yanıt {@code no-store}; satırlar asla günlüğe / denetime yazılmaz. Kayıt yoksa (sorgu hatası alarmı, satırlar maile
- * eklenmiyor, eski alarm) {@code data: null}.
+ * eklenmiyor, eski alarm) {@code data: null} + NEDEN ({@code reason}, ek alan — inceleme ikinci tur D-4: "okunamadı" ile
+ * "satır yok" aynı görünüyordu): {@value #REASON_NONE} = saklı satır yok (alarm satırsız açılmış ya da saklama süresi dolmuş),
+ * {@value #REASON_ROWS_DISABLED} = izlemenin "satırları maile ekle" ayarı kapalı, {@value #REASON_UNAVAILABLE} = izleme ayarı
+ * okunamadı, izleme silinmiş ya da satır kaydı okunamadı (bilinmiyor — "yok" DEĞİL). Neden, servisin boş dönüşünden sonra
+ * izleme kaydından çıkarılır (izleme kimliği alarm bağlamındaki {@code monitor_id}, yoksa alarm anahtarı = izleme adı).
  */
 @RestController
 @RequestMapping("/api/monitoring/dbquery/alerts")
@@ -48,6 +58,20 @@ public class DbQueryAlertRowsController {
     /** 7/24 operatörü kurum geneli okur — isteğe bağlı (dilimli bağlamda yoksa yalnız global görüntüleyici). */
     @Autowired(required = false)
     private com.sitemonitor.service.noc.NocCallLogService nocCallLog;
+
+    /** Boş yanıtın nedeni için izleme kaydı (D-4) — isteğe bağlı; yokken neden {@value #REASON_UNAVAILABLE} (bilinmiyor). */
+    @Autowired(required = false)
+    private DbQueryMonitorRepository monitorRepo;
+
+    /** Satır yokken nedenler — tel değerleri KALICI (ön yüz bunlara göre yazar). */
+    public static final String REASON_NONE = "none", REASON_ROWS_DISABLED = "rows_disabled", REASON_UNAVAILABLE = "unavailable";
+
+    private static final Logger log = LoggerFactory.getLogger(DbQueryAlertRowsController.class);
+    private static final ObjectMapper CTX_JSON = new ObjectMapper();
+    /** Bağlam JSON'u sınırı (ayrıştırma bütçesi). */
+    static final int MAX_CTX_CHARS = 64 * 1024;
+
+    void setMonitorRepo(DbQueryMonitorRepository repo) { this.monitorRepo = repo; }
 
     public DbQueryAlertRowsController(PermissionService permissionService, AlertEventRepository alertEventRepo,
                                       DbQueryAlertRowsService alertRows) {
@@ -69,10 +93,54 @@ public class DbQueryAlertRowsController {
         }
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("success", true);
-        Optional<DbQueryAlertRowsService.Rows> rows = EscalationService.isDbQuery(ev.getAlertType())
-                ? alertRows.stored(alertId) : Optional.empty();
+        boolean dbq = EscalationService.isDbQuery(ev.getAlertType());
+        Optional<DbQueryAlertRowsService.Rows> rows = Optional.empty();
+        boolean readFailed = false;
+        if (dbq) {
+            try {
+                rows = alertRows.stored(alertId);
+            } catch (RuntimeException e) {
+                // Satır kaydı okunamadı: "satır yok" DEĞİL — neden bilinmiyor (D-4)
+                log.warn("Sorgu alarmı satırları okunamadı (olay {}): {}", alertId, e.getClass().getSimpleName());
+                readFailed = true;
+            }
+        }
         body.put("data", rows.map(r -> view(r, !fullRows(session, owners))).orElse(null));
+        if (rows.isEmpty()) body.put("reason", !dbq ? REASON_NONE : readFailed ? REASON_UNAVAILABLE : emptyReason(ev));
         return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(body);
+    }
+
+    /**
+     * Servis satır döndürmediğinde nedeni izleme kaydından çıkarır (D-4): izleme okunamadı / silinmiş / kimliği çözülemedi →
+     * {@value #REASON_UNAVAILABLE}; "satırları maile ekle" kapalı → {@value #REASON_ROWS_DISABLED}; aksi → {@value #REASON_NONE}.
+     */
+    String emptyReason(AlertEvent ev) {
+        DbQueryMonitorRepository repo = monitorRepo;
+        if (repo == null) return REASON_UNAVAILABLE;
+        try {
+            Long id = monitorIdOf(ev.getContextJson());
+            Optional<DbQueryMonitor> m = id != null ? repo.findById(id)
+                    : ev.getDomain() == null ? Optional.empty() : repo.findFirstByNameOrderByIdAsc(ev.getDomain());
+            if (m.isEmpty()) return REASON_UNAVAILABLE;
+            return Boolean.FALSE.equals(m.get().getMailIncludeRows()) ? REASON_ROWS_DISABLED : REASON_NONE;
+        } catch (RuntimeException e) {
+            log.warn("Sorgu alarmının izleme ayarı okunamadı (olay {}): {}", ev.getId(), e.getClass().getSimpleName());
+            return REASON_UNAVAILABLE;
+        }
+    }
+
+    /** Alarm bağlamındaki {@code monitor_id} (sayı ya da sayısal metin); yok / bozuk / aşırı uzun → null. */
+    static Long monitorIdOf(String contextJson) {
+        if (contextJson == null || contextJson.isBlank() || contextJson.length() > MAX_CTX_CHARS) return null;
+        try {
+            JsonNode n = CTX_JSON.readTree(contextJson).get("monitor_id");
+            if (n == null || n.isNull()) return null;
+            if (n.isNumber()) return n.longValue();
+            String t = n.asText().trim();
+            return t.isEmpty() ? null : Long.valueOf(t);
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     /**
