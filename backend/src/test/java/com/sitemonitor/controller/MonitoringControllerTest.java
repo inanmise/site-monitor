@@ -7290,6 +7290,13 @@ class MonitoringControllerTest {
                             .content("{\"interval_seconds\":900}"))
                     .andExpect(status().isOk());
             verify(schedulerService, org.mockito.Mockito.times(1)).dbQueryScheduleChanged(47L);
+            verify(schedulerService, never()).dbQueryActiveChanged(anyLong());
+
+            // Duraklatma: atlama sayacı / bekleyen yeniden deneme zamanlayıcıda sıfırlanır
+            mvc.perform(put("/api/monitoring/dbquery/47").session(dbqUser(1L)).contentType(json)
+                            .content("{\"active\":false}"))
+                    .andExpect(status().isOk());
+            verify(schedulerService, org.mockito.Mockito.times(1)).dbQueryActiveChanged(47L);
         }
     }
 

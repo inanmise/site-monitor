@@ -769,6 +769,8 @@ public class MonitoringController {
             saveRestored(resolved, entity);
         }
         if (dbqScheduleChanged) dbqRestoredScheduleChanged(dbq);
+        if (dbq != null && dbq.getId() != null && before.get("active") instanceof Boolean wasOn
+                && !wasOn.equals(Boolean.TRUE.equals(dbq.getActive()))) dbqActiveChanged(dbq.getId());
         if (dbq != null) {
             Map<String, Object> owner = ownerCtx(dbq.getId(), dbq.getTeamId(), null);
             closeAlertsOnPause(before.get("active") instanceof Boolean b ? b : null, dbq.getActive(),
@@ -940,6 +942,15 @@ public class MonitoringController {
      * Zamanlaması değişen izlemenin planını sıfırlar ({@code next_run_at} + {@code dbquery:<id>} küme vadesi). Hata kaydı
      * bozmaz: plan en geç bir sonraki vade hesabında yenilenir (öne çekilen plan "replanned" yoluyla da düzelir).
      */
+    /** Duraklatma / devam ettirme sonrası zamanlayıcı durumu ({@code SchedulerService.dbQueryActiveChanged} — fırlatmaz). */
+    private void dbqActiveChanged(long monitorId) {
+        try {
+            if (schedulerService != null) schedulerService.dbQueryActiveChanged(monitorId);
+        } catch (RuntimeException e) {
+            log.warn("Veritabanı sorgu izlemesi #{}: duraklatma / devam zamanlayıcıya işlenemedi: {}", monitorId, e.getClass().getSimpleName());
+        }
+    }
+
     private void dbqReplan(long monitorId) {
         try {
             if (schedulerService != null) schedulerService.dbQueryScheduleChanged(monitorId);
@@ -5400,6 +5411,8 @@ public class MonitoringController {
         monitorHistory.stampUpdated(m, session);
         DbQueryMonitor saved = dbqUniqueSave(m.getName(), id, nameChanged, () -> repo.save(m));
         if (scheduleChanged) dbqReplan(saved.getId());
+        // Duraklat / devam: atlama sayacı ve bekleyen "yeniden dene" girişi sıfırlanır (eski dönem devamda koşmasın)
+        if (!Objects.equals(Boolean.TRUE.equals(wasActive), Boolean.TRUE.equals(saved.getActive()))) dbqActiveChanged(saved.getId());
         // Ad değişti: açık alarm(lar) yeni ada taşınır — YALNIZ bu izlemenin olayı (EscalationService.closableBy)
         if (oldName != null && !oldName.equals(saved.getName())) rekeyDbQueryAlarms(saved, oldName);
         auditService.recordAction("MONITOR_UPDATE", session, "DBQUERY_MONITOR", String.valueOf(saved.getId()), saved.getName(),

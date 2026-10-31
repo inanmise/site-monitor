@@ -413,8 +413,10 @@ ve global yönetici görür — 7/24 operatörü ve erişim paylaşımıyla okuy
 anındaki GÜNCEL maske / "satırları maile ekle" ayarıyla yakalanır. DB hata iletilerindeki veri değerleri (dönüşüm hatası
 vb.) temizlenir. **Kabul edilen kalıcı risk:** her kural bir sayı ölçer (çalıştırma başına en çok 10 kural değeri; deneme
 yanıtında ve kontrol geçmişinde görünür) — bu, eşik izlemenin doğasıdır; hassas tabloları izleme hesabından gizleyin.
-"Sorguyu dene" ve "Maliyeti denetle" kullanıcı başına küme çapında saatte `test-per-hour` (60) denemeyle sınırlıdır
-(10 sn oturum beklemesine ek; sabit pencere — kayan bir saatte en kötü ≈ 2 kat).
+"Sorguyu dene", "Maliyeti denetle" ve "Şimdi kontrol et" kullanıcı başına küme çapında saatte `test-per-hour` (60)
+çalışmayla sınırlıdır (tek sayaç; 10 sn oturum ve 20 sn izleme beklemesine ek; sabit pencere — kayan bir saatte en kötü ≈ 2
+kat; veritabanı meşgul olduğu için çalışmayan deneme ya da elle kontrol sayılmaz). Satır yoksa alarm ayrıntısı nedenini
+söyler (satırlar maile eklenmiyor / izleme okunamadı).
 
 **Bağlantılar** takım belgesidir (Veritabanı Sorgu İzleme → Bağlantılar): yalnız sahip takım görür ve kullanır, erişim
 paylaşımı ve 7/24 açmaz (izleme listesinde 7/24 operatörü yalnız bağlantı adını ve türünü görür); izleme düzenleyebilen
@@ -436,7 +438,9 @@ varken bağlantı silinemez (409). Sağlık paneli son denemeyi, son kullanımı
 ardışık iki tetik ≥ `min-interval-seconds`); izinli pencereler, yasak pencereler, tatil takvimi (Ayarlar → Platform → Tatil
 takvimi, global yönetici; ilk açılışta 2026–2027 resmî tatilleri tohumlanır — dini bayram tarihlerini doğrulayın) ve ek
 tarihler. 15 dakikadan fazla geciken cron tetiği (lider yoktu, pod yeniden başladı) kaçırılmış sayılır, geç çalıştırılmaz.
-Aralık kipi ızgaradadır (gecikme birikmez, geç kalınca ileri atlanır). Zamanlama ya da tatil takvimi değişince plan hemen
+Aralık kipi ızgaradadır (gecikme birikmez, geç kalınca ileri atlanır). Teyit veritabanı izni alamazsa (10 sn) ilk zamanlanmış
+ölçüm kanıt sayılır ve alarm yine açılır; kurtarma (kapanış) ise ölçüm ister. Değişim kuralı teyit boyunca zinciri başlatan
+çalıştırmanın tabanına göre ölçülür. Zamanlama ya da tatil takvimi değişince plan hemen
 yeniden kurulur. Eşzamanlılık sınırı yüzünden atlanan çalışma yalnız izinli bir anda yeniden denenir; 10 dakikadan uzun
 süren atlama genel bakışta ve kartta "gecikmiş" görünür. Sorgular tarama liderinin kendi havuzunda (`dbquery-run-N`)
 koşar, öteki izleme türlerinin iş parçacıklarını meşgul etmez.
@@ -454,7 +458,7 @@ koşar, öteki izleme türlerinin iş parçacıklarını meşgul etmez.
 | `plan-check-mode` | WARN | Kayıtta maliyet ön kontrolü (PG + MSSQL EXPLAIN): OFF / WARN / BLOCK |
 | `max-plan-cost` / `max-plan-rows` | 1 000 000 / 10 000 000 | BLOCK / WARN eşikleri |
 | `manual-cooldown-seconds` | 20 | "Şimdi kontrol et" beklemesi |
-| `test-per-hour` | 60 | Kullanıcı başına saatlik "Sorguyu dene" + "Maliyeti denetle" sınırı (küme çapında, 5–600) |
+| `test-per-hour` | 60 | Kullanıcı başına saatlik "Sorguyu dene" + "Maliyeti denetle" + "Şimdi kontrol et" sınırı (küme çapında, 5–600) |
 
 Saklama: `site.monitor.metrics.dbquery.retention-days` (180), alarm satırları `site.monitor.dbquery.alert-rows.retention-days`
 (90; açık alarmın satırı silinmez). Yeniden uyarı: `site.monitor.realert.dbquery-minutes` (0 = genel aralık). Tarama tıkı
