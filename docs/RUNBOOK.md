@@ -984,6 +984,9 @@ okuyamaz. Açılış günlüğünde "[K6] İşlem sertleştirmesi uygulandı" sa
   günlüğüne düşer). Bellek dökümü yalnız `HeapDumpOnOutOfMemoryError` ile.
 - Çekirdek dökümü üretilmez.
 - Kapatmak (yalnız teşhis için, geçici): env `SCRIPTED_PROCESS_HARDENING=false` + yeniden başlatma.
+- k6 süreçleri de dump-edilemez olduğu için `/proc/<k6>/oom_score_adj` yazılamaz: bellek dolunca çekirdeğin JVM yerine k6'yı
+  seçmesi sağlanamaz (ayrıcalıklı yardımcı ya da ayrı bellek cgroup'u gerekir). Bellek sınırı (`mem-limit`) ve istek tavanları
+  bu yüzden önemlidir.
 - openssl / ping / dig / traceroute gibi tanı araçları artık en küçük ortamla çalışır (PATH, HOME, LANG, TZ); bu araçlar
   için `OPENSSL_CONF` / `SSL_CERT_FILE` gibi değişkenlere dayanıyorsanız etkilenir.
 
@@ -1012,7 +1015,9 @@ izlemesiyle aynı kurallar); hiçbir zamanlama ayarı yoksa izleme eskisi gibi h
 cron + tatil atlayan izlemelerin planı yenilenir.
 
 **Sürüm geçişi.** Eski pod varsayılan olarak REPORT çalışır (dosya okuyan betikler orada koşmaya devam eder), `keep`'i
-bilmez, zamanlamalı izlemeyi düz aralıkla koşar. Hepsi yeni sürüme geçince fark kapanır.
+bilmez, zamanlamalı izlemeyi düz aralıkla koşar; liderlik eski ve yeni pod arasında el değiştirirse zamanlamalı bir izleme aynı
+aralıkta iki kez koşabilir (eski podun vade anahtarı ile yeni podun planı ayrı hesaplanır). Hepsi yeni sürüme geçince fark
+kapanır — zamanlama penceresi / cron'u geçiş bitince tanımlayın.
 
 ## Çok pod
 

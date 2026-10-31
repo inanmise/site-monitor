@@ -462,8 +462,11 @@ kontrol edilir; yeniden 3-4'e geçilip anahtar açıkken ilk sertifika turu onu 
 ### Sentetik izleme (k6) sertleştirmesi — bir kerelik
 - [ ] **Dosya okuyan betikler:** genel yönetici oturumuyla `GET /api/admin/scripted/file-read-report` → `monitors` ve
       `templates` listesi boş mu? Bu sürümle varsayılan BLOCK: listedeki izlemeler (dosya okuma, `handleSummary`, yerel
-      import, sistem yolu) KOŞMAZ. Liste boş değilse sahip takımlarla konuşun ya da bilinçli karar olarak env
-      `SCRIPTED_FILE_READ_POLICY=REPORT` verin (Helm `config.extraEnv`).
+      import, sistem yolu) KOŞMAZ — yalnız `console` için `handleSummary` kullanan ya da bir değişkenine `open` adını
+      veren betik de listede çıkar (sezgisel tarama). Liste boş değilse: betikleri sahip takımlarla düzeltin (dosya okumak
+      yerine değer ortam değişkeniyle gelsin; `handleSummary` kaldırılsın) YA DA bilinçli karar olarak env
+      `SCRIPTED_FILE_READ_POLICY=REPORT` verin (Helm `config.extraEnv`) — bu durumda betiklerin pod dosyalarını okuma riski
+      sürer (işlem sertleştirmesi sırları yine korur).
 - [ ] **Kayıtlı bellek sınırı:** `SELECT setting_value FROM app_settings WHERE setting_key = 'site.monitor.scripted.mem-limit';`
       — Go biçiminde değilse (`512MB` gibi) yeni sürüm onu k6'ya VERMEZ (WARN) ve kayıt ekranı düzeltmeyi ister.
 - [ ] **Sonrası:** tüm pod'ların günlüğünde "[K6] İşlem sertleştirmesi uygulandı" satırı ve "restricted method" uyarısının
