@@ -42,13 +42,59 @@ public class DbQueryMonitorSchemaPatch {
         this.jdbc = jdbc;
     }
 
+    /**
+     * r177 kolonları (tablolar bu sürümden önce prod'da VAR): ddl-auto boş kolonları zaten ekler; bu liste eksikse (ddl-auto
+     * kapalı / yarım kalmış açılış) idempotent ekler. Hepsi boş olabilir (null = eski davranış: {@code mail_columns_mode}
+     * null = FIRST_N, {@code unknown_runs} null = 0, {@code oracle_tcps} null = kapalı, {@code last_privileges_json} null =
+     * denetlenmedi) — varsayılan / NOT NULL yaması gerekmez. Sıra: [tablo, kolon, tür].
+     */
+    static final List<String[]> COLUMNS = List.of(
+            new String[]{"dbquery_monitors", "mail_columns_mode", "VARCHAR(10)"},
+            new String[]{"dbquery_monitors", "unknown_runs", "INTEGER"},
+            new String[]{"db_connection_profiles", "oracle_tcps", "BOOLEAN"},
+            new String[]{"db_connection_profiles", "last_privileges_json", "TEXT"});
+
     @EventListener(ApplicationReadyEvent.class)
     public void onReady() {
+        try {
+            ensureColumns();
+        } catch (Exception e) {
+            log.warn("Veritabanı sorgu izlemesi kolon yaması uygulanamadı (sonraki açılışta yeniden denenecek): {}",
+                    e.getClass().getSimpleName());
+        }
         try {
             apply();
         } catch (Exception e) {
             log.warn("Veritabanı sorgu izlemesi ad indeksi yaması uygulanamadı (sonraki açılışta yeniden denenecek): {}",
                     e.getClass().getSimpleName());
+        }
+    }
+
+    /** @return eklenen kolon sayısı (var olan kolon sorgu denemesiyle anlaşılır — ifade hiç çalışmaz). */
+    public int ensureColumns() {
+        int added = 0;
+        SchemaDdlGuard guard = new SchemaDdlGuard(jdbc);
+        for (String[] c : COLUMNS) {
+            if (columnExists(c[0], c[1])) continue;
+            try {
+                guard.executeBounded("ALTER TABLE " + c[0] + " ADD COLUMN IF NOT EXISTS " + c[1] + " " + c[2], false);
+                added++;
+            } catch (Exception e) {
+                if (columnExists(c[0], c[1])) continue;   // başka pod aynı anda ekledi
+                log.warn("Veritabanı sorgu izlemesi kolonu eklenemedi ({}.{}) — sonraki açılışta yeniden denenecek: {}",
+                        c[0], c[1], e.getClass().getSimpleName());
+            }
+        }
+        if (added > 0) log.info("Veritabanı sorgu izlemesi: {} kolon eklendi (r177)", added);
+        return added;
+    }
+
+    private boolean columnExists(String table, String column) {
+        try {
+            jdbc.queryForList("SELECT " + column + " FROM " + table + " WHERE 1 = 0");
+            return true;
+        } catch (Exception e) {
+            return false;
         }
     }
 

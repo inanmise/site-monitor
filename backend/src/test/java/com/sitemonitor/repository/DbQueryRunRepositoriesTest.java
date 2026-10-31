@@ -142,4 +142,56 @@ class DbQueryRunRepositoriesTest {
         monitors.updateNextRunAt(id, null);
         assertThat(monitors.findById(id).orElseThrow().getNextRunAt()).isNull();
     }
+
+    @Test
+    @DisplayName("r177: mevsimsel taban penceresi — yalnız zamanlanmış ok satırları, aralık içi, eskiden yeniye")
+    void scheduledOkBetween() {
+        long id = mon("Mevsimsel").getId();
+        check(id, "2026-11-01T09:54:00", true, false, false, "[dışında]");
+        check(id, "2026-11-01T09:56:00", true, false, false, "[a]");
+        check(id, "2026-11-01T09:58:00", true, true, false, "[elle]");
+        check(id, "2026-11-01T09:59:00", false, false, false, "[hata]");
+        check(id, "2026-11-01T10:01:00", true, null, null, "[b]");
+        check(id, "2026-11-01T10:06:00", true, false, false, "[dışında2]");
+        assertThat(checks.findScheduledOkBetween(id, "2026-11-01T09:55:00", "2026-11-01T10:05:00"))
+                .extracting(DbQueryCheck::getRuleResultsJson).containsExactly("[a]", "[b]");
+    }
+
+    @Test
+    @DisplayName("r177: geriye dönük deneme sayfası — zamanlanmış satırlar (hatalı dahil), id sırası, anahtar sayfalama, yalnız ölçü kolonları")
+    void backtestPageKeyset() {
+        long id = mon("Deneme").getId();
+        DbQueryCheck a = check(id, "2026-11-01T10:00:00", true, false, false, "[1]");
+        check(id, "2026-11-01T10:05:00", true, true, false, "[elle]");
+        DbQueryCheck b = check(id, "2026-11-01T10:10:00", false, false, false, null);
+        DbQueryCheck c = check(id, "2026-11-01T10:15:00", true, null, null, "[3]");
+        check(id, "2026-10-01T10:00:00", true, false, false, "[eski]");
+        List<Object[]> p1 = checks.backtestPage(id, "2026-10-31T00:00:00", 0L, 2);
+        assertThat(p1).hasSize(2);
+        assertThat(((Number) p1.get(0)[0]).longValue()).isEqualTo(a.getId());
+        assertThat(p1.get(0)[1]).isEqualTo("2026-11-01T10:00:00");
+        assertThat(p1.get(0)[5]).isEqualTo("[1]");
+        assertThat(((Number) p1.get(1)[0]).longValue()).isEqualTo(b.getId());
+        assertThat(p1.get(1)[2]).isEqualTo(Boolean.FALSE);
+        List<Object[]> p2 = checks.backtestPage(id, "2026-10-31T00:00:00", b.getId(), 2);
+        assertThat(p2).hasSize(1);
+        assertThat(((Number) p2.get(0)[0]).longValue()).isEqualTo(c.getId());
+    }
+
+    @Test
+    @DisplayName("r177: değerlendirilemeyen çalıştırma sayacı — eski satır (NULL) artar; sıfırlama yalnız sıfır değilken yazar; varlık kaydı ezmez")
+    void unknownRunsCounter() {
+        DbQueryMonitor m = mon("Sayaç");
+        long id = m.getId();
+        assertThat(monitors.markDbQueryUnknown(id)).isEqualTo(1);
+        assertThat(monitors.markDbQueryUnknown(id)).isEqualTo(1);
+        assertThat(monitors.findById(id).orElseThrow().getUnknownRuns()).isEqualTo(2);
+        // bayat varlık kaydı sayacı geri almaz (updatable = false)
+        m.setName("Sayaç yeni ad");
+        monitors.save(m);
+        assertThat(monitors.findById(id).orElseThrow().getUnknownRuns()).isEqualTo(2);
+        assertThat(monitors.clearDbQueryUnknown(id)).isEqualTo(1);
+        assertThat(monitors.clearDbQueryUnknown(id)).isZero();
+        assertThat(monitors.findById(id).orElseThrow().getUnknownRuns()).isZero();
+    }
 }

@@ -53,13 +53,18 @@ public class DbQueryCheckerService {
 
     private static final Logger log = LoggerFactory.getLogger(DbQueryCheckerService.class);
 
-    public static final String STATUS_OK = "OK", STATUS_BREACH = "BREACH", STATUS_FAIL = "FAIL", STATUS_SKIPPED = "SKIPPED";
+    public static final String STATUS_OK = "OK", STATUS_BREACH = "BREACH", STATUS_FAIL = "FAIL", STATUS_SKIPPED = "SKIPPED",
+            /**
+             * r177 (H-2): sorgu çalıştı ama en az bir kural KANIT EKSİKLİĞİYLE değerlendirilemedi ve karar ihlal değil — ne
+             * sağlıklı ne kesinti ("değerlendirilemedi", nötr). Kontrol satırının {@code status}'u; {@code ok} = true.
+             */
+            STATUS_UNKNOWN = "UNKNOWN";
 
     /** Çalıştırıcı hata kodları (kalıcı) — {@code failure_reason}. */
     public static final String DB_UNREACHABLE = DbQueryErrors.DB_UNREACHABLE, DB_DNS = DbQueryErrors.DB_DNS,
             DB_TIMEOUT = DbQueryErrors.DB_TIMEOUT, DB_AUTH = DbQueryErrors.DB_AUTH,
             DB_SQL_ERROR = DbQueryErrors.DB_SQL_ERROR, DB_DRIVER = DbQueryErrors.DB_DRIVER,
-            DB_BLOCKED = DbQueryErrors.DB_BLOCKED;
+            DB_BLOCKED = DbQueryErrors.DB_BLOCKED, DB_ACCOUNT_WRITABLE = DbQueryErrors.DB_ACCOUNT_WRITABLE;
 
     public static final String DB_GUARD_REJECTED = "DB_GUARD_REJECTED", DB_PROFILE_MISSING = "DB_PROFILE_MISSING",
             DB_PROFILE_OTHER_TEAM = "DB_PROFILE_OTHER_TEAM", DB_SECRET_UNREADABLE = "DB_SECRET_UNREADABLE",
@@ -75,7 +80,20 @@ public class DbQueryCheckerService {
             KEY_MAIL_MAX_COLUMNS = "site.monitor.dbquery.mail-max-columns",
             KEY_PLAN_MODE = "site.monitor.dbquery.plan-check-mode",
             KEY_MAX_PLAN_COST = "site.monitor.dbquery.max-plan-cost",
-            KEY_MAX_PLAN_ROWS = "site.monitor.dbquery.max-plan-rows";
+            KEY_MAX_PLAN_ROWS = "site.monitor.dbquery.max-plan-rows",
+            /** r177: yazabilen / yönetici hesap — OFF (denetleme) | WARN (denetle, uyar; varsayılan) | BLOCK (reddet). */
+            KEY_WRITABLE_MODE = "site.monitor.dbquery.writable-account-mode";
+
+    /** Yazabilen hesap ayarının değerleri. */
+    public static final String WRITABLE_OFF = "OFF", WRITABLE_WARN = "WARN", WRITABLE_BLOCK = "BLOCK";
+
+    /** Oturum uygulama adı / sorgu başı yorumu (r177, DBA izlenebilirliği): {@code SiteMonitor dbq#<id>}, deneme. */
+    public static final String APP_NAME_PREFIX = "SiteMonitor dbq#", APP_NAME_TEST = "SiteMonitor dbq-test";
+    /** BLOCK kipinde "salt-okur" kararının bellekte geçerlilik süresi (her çalıştırmada katalog sorgusu olmasın). */
+    static final long READ_ONLY_CACHE_MS = 10L * 60 * 1000;
+    static final int READ_ONLY_CACHE_MAX = 1_000;
+    /** Mevsimsel taban: hedef ana en çok ± bu kadar (ve aralığın yarısı) uzaklıktaki zamanlanmış çalıştırma. */
+    static final long SEASONAL_TOLERANCE_MAX_MS = 30L * 60 * 1000;
 
     static final long SCHEDULED_WAIT_MS = 30_000, INTERACTIVE_WAIT_MS = 10_000;
     /**
@@ -146,7 +164,10 @@ public class DbQueryCheckerService {
                          Double metricValue, boolean slow, String error, String failureReason, String checkedAt,
                          String sqlHash, Long profileId, String serverVersion) {}
 
-    /** @param verdict OK | WARN | BLOCK | UNKNOWN (ayar {@code site.monitor.dbquery.plan-check-mode} + eşikler). */
+    /**
+     * @param verdict OK | WARN | BLOCK | UNKNOWN | OFF (ayar {@code site.monitor.dbquery.plan-check-mode} + eşikler; OFF = r177
+     *                "denetlenmedi" — ayar kapalı, maliyet hiç ölçülmedi; asla "uygun" değil)
+     */
     public record PlanVerdict(boolean supported, String verdict, Double cost, Double rows, String message) {}
 
     /** Kayıtlı parola çözülemedi (anahtar değişti / bozuk değer). */
@@ -165,6 +186,8 @@ public class DbQueryCheckerService {
     private volatile long scheduledWaitMs = SCHEDULED_WAIT_MS, interactiveWaitMs = INTERACTIVE_WAIT_MS,
             recheckWaitMs = RECHECK_WAIT_MS;
     private final Map<Long, Permits> connectionPermits = new ConcurrentHashMap<>();
+    /** BLOCK kipi: bağlantı (kimlik + düzenleme anı + kullanıcı) → "salt-okur doğrulandı" anı (ms). Yalnız OLUMLU sonuç. */
+    private final Map<String, Long> readOnlyConfirmed = new ConcurrentHashMap<>();
     /** Bir izin bırakıldı — {@link #awaitRelease} bekleyen taramayı uyandırır. */
     private final Object releaseSignal = new Object();
     /** Zamanlanmış çalıştırma havuzu (ilk kullanımda kurulur; kapanışta {@link #shutdown}). */
@@ -367,27 +390,75 @@ public class DbQueryCheckerService {
         }
         Lease lease = acquire(profile.getId(), interactiveWaitMs);
         if (lease == null) return new DbQueryRunner.ConnectionTest(false, 0, null, msgBusy(), DB_BUSY);
+        boolean checkPrivileges = !WRITABLE_OFF.equals(writableMode());
         DbQueryRunner.ConnectionTest t;
         try {
-            t = runner.test(spec);
+            t = runner.test(spec.withAppName(APP_NAME_TEST), checkPrivileges);
         } finally {
             lease.release();
         }
+        if (t == null) t = new DbQueryRunner.ConnectionTest(false, 0, null, null, DbQueryErrors.DB_DRIVER);
+        if (t.privileges() != null && t.privileges().checked()) notePrivileges(profile, t.privileges());
         if (profile.getId() != null && passwordOverride == null) {
+            String at = nowIso();
             try {
-                profiles.recordTest(profile.getId(), nowIso(), t.ok(), (int) Math.min(Integer.MAX_VALUE, t.durationMs()),
+                profiles.recordTest(profile.getId(), at, t.ok(), (int) Math.min(Integer.MAX_VALUE, t.durationMs()),
                         t.error(), t.serverVersion());
             } catch (RuntimeException e) {
                 log.warn("Bağlantı denemesi sonucu yazılamadı (#{}): {}", profile.getId(), e.getClass().getSimpleName());
             }
+            // Yetki özeti yalnız denetim GERÇEKTEN yapıldıysa yazılır (başarısız bağlantı eski özeti silmesin)
+            if (t.ok() && t.privileges() != null && t.privileges().checked()) {
+                try {
+                    profiles.recordPrivileges(profile.getId(), DbAccountPrivileges.toJson(t.privileges(), at));
+                } catch (RuntimeException e) {
+                    log.warn("Bağlantı yetki özeti yazılamadı (#{}): {}", profile.getId(), e.getClass().getSimpleName());
+                }
+            }
         }
         return t;
+    }
+
+    /** Yazabilen hesap ayarı (bilinmeyen / boş = WARN). */
+    public String writableMode() {
+        String v = settings.getString(KEY_WRITABLE_MODE, WRITABLE_WARN);
+        String u = v == null ? WRITABLE_WARN : v.trim().toUpperCase(Locale.ROOT);
+        return WRITABLE_OFF.equals(u) || WRITABLE_BLOCK.equals(u) ? u : WRITABLE_WARN;
+    }
+
+    /** Bağlantının bellek anahtarı (düzenleme / kullanıcı değişince eski "salt-okur" kararı geçmez). */
+    private static String readOnlyKey(DbConnectionProfile p) {
+        return p.getId() + "|" + p.getUpdatedAt() + "|" + p.getUsername() + "|" + p.getHost() + "|" + p.getDatabaseName();
+    }
+
+    /** Denetim sonucu belleğe: salt-okur doğrulandıysa anı yazılır, yazabilen / bilinmiyorsa silinir. */
+    private void notePrivileges(DbConnectionProfile p, DbAccountPrivileges.Result r) {
+        if (p == null || p.getId() == null || r == null) return;
+        String key = readOnlyKey(p);
+        if (Boolean.TRUE.equals(r.readOnly())) {
+            if (readOnlyConfirmed.size() >= READ_ONLY_CACHE_MAX) readOnlyConfirmed.clear();
+            readOnlyConfirmed.put(key, System.currentTimeMillis());
+        } else {
+            readOnlyConfirmed.remove(key);
+        }
+    }
+
+    /** BLOCK kipinde bu çalıştırma yetkiyi oturumda denetlemeli mi (yakın zamanda salt-okur doğrulanmadıysa). */
+    private boolean mustCheckWritable(DbConnectionProfile p) {
+        if (!WRITABLE_BLOCK.equals(writableMode())) return false;
+        Long at = p.getId() == null ? null : readOnlyConfirmed.get(readOnlyKey(p));
+        return at == null || System.currentTimeMillis() - at > READ_ONLY_CACHE_MS;
     }
 
     public PlanVerdict planCheck(DbConnectionProfile profile, String sql) {
         if (profile == null) return new PlanVerdict(false, "UNKNOWN", null, null, msgProfileMissing());
         DbType type = DbType.parse(profile.getDbType());
         if (type == null) return new PlanVerdict(false, "UNKNOWN", null, null, msgUnknownType());
+        // r177 (H-6): denetim kapalıyken karar "OFF" (denetlenmedi, nötr) — asla "OK" (uygun) değil
+        if ("OFF".equals(planMode()))
+            return new PlanVerdict(type != DbType.ORACLE, "OFF", null, null, Msg.t(
+                    "Maliyet ön kontrolü yönetici ayarıyla kapalı — sorgunun maliyeti denetlenmedi.",
+                    "The cost check is turned off by an administrator setting — the query's cost was not checked."));
         if (type == DbType.ORACLE)
             return new PlanVerdict(false, "UNKNOWN", null, null, Msg.t(
                     "Oracle'da maliyet ön kontrolü yapılamıyor · Plan okumak için veritabanına plan tablosu yazmak gerekir · "
@@ -395,8 +466,6 @@ public class DbQueryCheckerService {
                     "The cost check is not available for Oracle · Reading a plan requires writing to a plan table · "
                             + "Try the query with \"Try query\" and look at its duration."));
         String mode = planMode();
-        if ("OFF".equals(mode))
-            return new PlanVerdict(true, "OK", null, null, Msg.t("Maliyet ön kontrolü kapalı.", "The cost check is turned off."));
         DbQuerySqlGuard.Result guard = DbQuerySqlGuard.check(sql, type);
         if (!guard.ok())
             return new PlanVerdict(true, "UNKNOWN", null, null, Msg.t(
@@ -412,7 +481,7 @@ public class DbQueryCheckerService {
         if (lease == null) return new PlanVerdict(true, "UNKNOWN", null, null, msgBusy());
         DbQueryRunner.PlanResult p;
         try {
-            p = runner.plan(spec, sql, Math.min(maxTimeout(), DEFAULT_TIMEOUT));
+            p = runner.plan(spec.withAppName(APP_NAME_TEST), sql, Math.min(maxTimeout(), DEFAULT_TIMEOUT));
         } finally {
             lease.release();
         }
@@ -462,7 +531,8 @@ public class DbQueryCheckerService {
         return new DbConnectionSpec(type, profile.getHost(), port, profile.getDatabaseName(), profile.getOracleMode(),
                 profile.getMssqlInstance(), profile.getUsername(), password, profile.getSslMode(),
                 Boolean.TRUE.equals(profile.getMssqlEncrypt()), Boolean.TRUE.equals(profile.getMssqlTrustServerCertificate()),
-                Math.max(1_000, Math.min(30_000, connectMs)));
+                Math.max(1_000, Math.min(30_000, connectMs)), DbConnectionSpec.DEFAULT_APP_NAME,
+                type == DbType.ORACLE && Boolean.TRUE.equals(profile.getOracleTcps()));
     }
 
     // ── Akış ─────────────────────────────────────────────────────────────────
@@ -508,7 +578,7 @@ public class DbQueryCheckerService {
         }
         DbConnectionSpec spec;
         try {
-            spec = specOf(p, null);
+            spec = specOf(p, null).withAppName(m.getId() == null ? APP_NAME_TEST : APP_NAME_PREFIX + m.getId());
         } catch (SecretUnreadableException e) {
             return fail(m, DB_SECRET_UNREADABLE, msgSecretUnreadable(), p.getId(), null);
         }
@@ -522,31 +592,42 @@ public class DbQueryCheckerService {
         Set<String> discard = new LinkedHashSet<>(masked);
         for (DbQueryRules.Rule r : rules) if (r.column() != null) discard.remove(r.column().trim().toLowerCase(Locale.ROOT));
 
+        boolean wantClock = false;
+        for (DbQueryRules.Rule r : rules) if (DbQueryRules.KIND_FRESHNESS.equals(r.kind())) wantClock = true;
+        boolean refuseWritable = mustCheckWritable(p);
+        DbQueryRunner.RunOptions opts = new DbQueryRunner.RunOptions(discard, wantClock, refuseWritable);
+
         Lease lease = reserved != null ? reserved : acquire(p.getId(), waitMs);
         if (lease == null) return skipped(m, p.getId(), DB_BUSY, msgBusy());
         DbQueryRunner.QueryResult qr;
         try {
-            qr = runner.run(spec, m.getSqlText(), timeout, maxRows, discard);
+            qr = runner.run(spec, m.getSqlText(), timeout, maxRows, opts);
         } finally {
             lease.release();
         }
+        if (qr == null) qr = new DbQueryRunner.QueryResult(false, 0, 0, false, List.of(), List.of(), false, null,
+                DbQueryErrors.DB_DRIVER, null);
+        if (refuseWritable && qr.privileges() != null) notePrivileges(p, qr.privileges());
         String at = nowIso();
+        String hash = sqlHash(m.getSqlText());
         if (recordHealth) recordUse(p.getId(), at, qr);
         if (!qr.ok())
             return new Result(STATUS_FAIL, DbQueryEvaluator.LEVEL_NONE, qr.durationMs(), null, false, List.of(), List.of(),
                     List.of(), List.of(), false, List.of(), null, false, qr.error(), qr.failureReason(), at,
-                    sqlHash(m.getSqlText()), p.getId(), qr.serverVersion());
+                    hash, p.getId(), qr.serverVersion());
 
-        Baseline base = previousMeasures(previousForMonitorId, run, anchor);
-        DbQueryEvaluator.Outcome outcome = DbQueryEvaluator.evaluate(rules, m.getRuleLogic(), qr, base.measures(), "tr",
-                base.unreadable());
+        DbQueryEvaluator.Baselines base = baselines(m, previousForMonitorId, run, anchor, rules, hash);
+        DbQueryEvaluator.Outcome outcome = DbQueryEvaluator.evaluate(rules, m.getRuleLogic(), qr, base, "tr");
         boolean slow = m.getSlowQueryMs() != null && m.getSlowQueryMs() > 0 && qr.durationMs() >= m.getSlowQueryMs();
+        // r177 (H-2): kanıt eksikliğiyle değerlendirilemeyen kural varsa ve karar ihlal değilse durum UNKNOWN — asla OK (yeşil)
+        String status = DbQueryEvaluator.LEVEL_NONE.equals(outcome.level()) && !STATUS_BREACH.equals(outcome.status())
+                && outcome.inconclusive() ? STATUS_UNKNOWN : outcome.status();
 
         MailRows mail = selectMailRows && !Boolean.FALSE.equals(m.getMailIncludeRows())
                 ? mailRows(m, qr, masked) : mailColumnsOnly(m, qr, masked);
-        return new Result(outcome.status(), outcome.level(), qr.durationMs(), qr.rowCount(), qr.rowCountCapped(),
+        return new Result(status, outcome.level(), qr.durationMs(), qr.rowCount(), qr.rowCountCapped(),
                 qr.columns(), mail.columns, mail.rows, mail.masked, mail.truncated, outcome.results(),
-                outcome.metricValue(), slow, null, null, at, sqlHash(m.getSqlText()), p.getId(), qr.serverVersion());
+                outcome.metricValue(), slow, null, null, at, hash, p.getId(), qr.serverVersion());
     }
 
     private void recordUse(Long profileId, String at, DbQueryRunner.QueryResult qr) {
@@ -560,40 +641,150 @@ public class DbQueryCheckerService {
         }
     }
 
-    /** Değişim kuralının tabanı: kural kimliği → önceki ölçü; {@code unreadable} = okuma HATA verdi (ilk çalıştırma değil). */
-    record Baseline(Map<String, Double> measures, boolean unreadable) {}
 
     /**
-     * Değişim kuralının tabanı ({@link Run}): zamanlanmış çalıştırmada son zamanlanmış ok satırı; teyit / kurtarmada
-     * çapadan (zinciri başlatan satır) önceki en yeni zamanlanmış ok satırı; elle kontrolde son zamanlanmış satırdan önceki
-     * zamanlanmış ok satırı, o yoksa son zamanlanmış satırın kendisi (D-7). Satır yoksa boş (ilk çalıştırma); okunamazsa
-     * boş + {@code unreadable} (kural "değerlendirilemedi", D3 — "geçti" sayılmaz).
+     * Değişim kurallarının tabanları (r177): kural başına {@code previous} ya da mevsimsel taban. Bir taban YALNIZ aynı sorgu
+     * özeti ({@code sql_hash}) ve aynı kural parmak izi ({@link DbQueryEvaluator#sameMeasureDefinition}) taşıyorsa kullanılır;
+     * değilse {@link DbQueryEvaluator#NOTE_BASELINE_RESET} (H-1: sorgu / kolon değişince eski ölçüyle kıyaslanıp sahte
+     * değişim alarmı açılmasın). Okuma hatası → {@link DbQueryEvaluator#NOTE_PREVIOUS_UNREADABLE}.
      */
-    private Baseline previousMeasures(Long monitorId, Run run, Anchor anchor) {
-        if (monitorId == null) return new Baseline(Map.of(), false);
-        try {
-            DbQueryCheck base;
-            if (run == Run.SCHEDULED) {
-                List<DbQueryCheck> recent = checks.findRecentScheduledOk(monitorId);
-                base = recent == null || recent.isEmpty() ? null : recent.get(0);
-            } else if (run == Run.RECHECK && anchor != null && anchor.checkedAt() != null) {
-                base = checks.findScheduledOkBefore(monitorId, anchor.checkedAt(),
-                        anchor.checkId() == null ? -1L : anchor.checkId()).orElse(null);
-            } else {
-                DbQueryCheck trigger = checks.findLatestScheduled(monitorId).orElse(null);
-                if (trigger == null) {
-                    base = null;
-                } else {
-                    base = checks.findScheduledOkBefore(monitorId, trigger.getCheckedAt(),
-                            trigger.getId() == null ? -1L : trigger.getId()).orElse(null);
-                    if (base == null && run == Run.MANUAL && Boolean.TRUE.equals(trigger.getOk())) base = trigger;
+    private DbQueryEvaluator.Baselines baselines(DbQueryMonitor m, Long monitorId, Run run, Anchor anchor,
+                                                 List<DbQueryRules.Rule> rules, String sqlHash) {
+        List<DbQueryRules.Rule> change = new ArrayList<>();
+        for (DbQueryRules.Rule r : rules) if (DbQueryRules.KIND_CHANGE.equals(r.kind())) change.add(r);
+        if (monitorId == null || change.isEmpty()) return DbQueryEvaluator.Baselines.NONE;
+        Map<String, Double> measures = new java.util.HashMap<>();
+        Map<String, String> notes = new java.util.HashMap<>();
+        boolean needPrevious = false, needSeasonal = false;
+        for (DbQueryRules.Rule r : change) {
+            if (DbQueryRules.BASELINE_PREVIOUS.equals(r.change() == null ? null : r.change().baselineOrPrevious())) needPrevious = true;
+            else needSeasonal = true;
+        }
+        if (needPrevious) {
+            try {
+                DbQueryCheck base = previousRow(monitorId, run, anchor);
+                if (base != null) {
+                    Map<String, DbQueryEvaluator.RuleResult> stored = byId(base.getRuleResultsJson());
+                    boolean sameQuery = base.getSqlHash() == null || Objects.equals(base.getSqlHash(), sqlHash);
+                    for (DbQueryRules.Rule r : change) {
+                        if (!DbQueryRules.BASELINE_PREVIOUS.equals(r.change() == null ? null : r.change().baselineOrPrevious())) continue;
+                        DbQueryEvaluator.RuleResult sr = stored.get(r.id());
+                        if (sr == null) continue;   // yeni kural → ilk çalıştırma
+                        if (!sameQuery || !DbQueryEvaluator.sameMeasureDefinition(sr, r)) {
+                            notes.put(r.id(), DbQueryEvaluator.NOTE_BASELINE_RESET);
+                        } else if (sr.measure() != null) {
+                            measures.put(r.id(), sr.measure());
+                        }
+                    }
                 }
+            } catch (RuntimeException e) {
+                log.warn("Önceki çalıştırma okunamadı (#{}): {}", monitorId, e.getClass().getSimpleName());
+                for (DbQueryRules.Rule r : change) notes.putIfAbsent(r.id(), DbQueryEvaluator.NOTE_PREVIOUS_UNREADABLE);
             }
-            if (base == null) return new Baseline(Map.of(), false);
-            return new Baseline(DbQueryEvaluator.measuresFromJson(base.getRuleResultsJson()), false);
+        }
+        if (needSeasonal) seasonal(m, monitorId, run, anchor, change, sqlHash, measures, notes);
+        return new DbQueryEvaluator.Baselines(measures, notes);
+    }
+
+    /**
+     * Önceki çalıştırma tabanının satırı ({@link Run}): zamanlanmış çalıştırmada son zamanlanmış ok satırı; teyit / kurtarmada
+     * çapadan (zinciri başlatan satır) önceki en yeni zamanlanmış ok satırı; elle kontrolde son zamanlanmış satırdan önceki
+     * zamanlanmış ok satırı, o yoksa son zamanlanmış satırın kendisi (D-7). Satır yoksa null (ilk çalıştırma). Okuma hatası
+     * fırlatır (çağıran "okunamadı" der — D3).
+     */
+    private DbQueryCheck previousRow(Long monitorId, Run run, Anchor anchor) {
+        if (run == Run.SCHEDULED) {
+            List<DbQueryCheck> recent = checks.findRecentScheduledOk(monitorId);
+            return recent == null || recent.isEmpty() ? null : recent.get(0);
+        }
+        if (run == Run.RECHECK && anchor != null && anchor.checkedAt() != null) {
+            return checks.findScheduledOkBefore(monitorId, anchor.checkedAt(),
+                    anchor.checkId() == null ? -1L : anchor.checkId()).orElse(null);
+        }
+        DbQueryCheck trigger = checks.findLatestScheduled(monitorId).orElse(null);
+        if (trigger == null) return null;
+        DbQueryCheck base = checks.findScheduledOkBefore(monitorId, trigger.getCheckedAt(),
+                trigger.getId() == null ? -1L : trigger.getId()).orElse(null);
+        if (base == null && run == Run.MANUAL && Boolean.TRUE.equals(trigger.getOk())) base = trigger;
+        return base;
+    }
+
+    /**
+     * Mevsimsel taban (r177, Ö-10): hedef an = başvuru anı − 1 gün / − 7 gün; başvuru anı zamanlanmış çalıştırmada şimdi,
+     * teyit / kurtarmada zinciri başlatan satır, elle kontrolde son zamanlanmış satır. Hedefin ± min(aralığın yarısı,
+     * {@value #SEASONAL_TOLERANCE_MAX_MS} ms) içindeki EN YAKIN zamanlanmış ok satırı (aynı sorgu özeti + parmak izi, ölçüsü
+     * dolu); yoksa {@link DbQueryEvaluator#NOTE_NO_SEASONAL_BASELINE}.
+     */
+    private void seasonal(DbQueryMonitor m, Long monitorId, Run run, Anchor anchor, List<DbQueryRules.Rule> change,
+                          String sqlHash, Map<String, Double> measures, Map<String, String> notes) {
+        Instant ref;
+        try {
+            ref = seasonalReference(monitorId, run, anchor);
         } catch (RuntimeException e) {
-            log.warn("Önceki çalıştırma okunamadı (#{}): {}", monitorId, e.getClass().getSimpleName());
-            return new Baseline(Map.of(), true);
+            for (DbQueryRules.Rule r : change) if (!isPrevious(r)) notes.putIfAbsent(r.id(), DbQueryEvaluator.NOTE_PREVIOUS_UNREADABLE);
+            return;
+        }
+        long intervalMs = Math.max(60_000L, (m == null || m.getIntervalSeconds() == null ? 300L : m.getIntervalSeconds()) * 1000L);
+        long tol = Math.min(SEASONAL_TOLERANCE_MAX_MS, intervalMs / 2);
+        Map<String, List<DbQueryCheck>> cache = new java.util.HashMap<>();
+        for (DbQueryRules.Rule r : change) {
+            if (isPrevious(r)) continue;
+            String mode = r.change().baselineOrPrevious();
+            long back = DbQueryRules.BASELINE_LAST_WEEK.equals(mode) ? 7L * 86_400_000L : 86_400_000L;
+            Instant target = ref.minusMillis(back);
+            List<DbQueryCheck> rows;
+            try {
+                rows = cache.computeIfAbsent(mode, k -> checks.findScheduledOkBetween(monitorId,
+                        ISO.format(target.minusMillis(tol)), ISO.format(target.plusMillis(tol))));
+            } catch (RuntimeException e) {
+                log.warn("Mevsimsel taban okunamadı (#{}): {}", monitorId, e.getClass().getSimpleName());
+                notes.put(r.id(), DbQueryEvaluator.NOTE_PREVIOUS_UNREADABLE);
+                continue;
+            }
+            Double best = null;
+            long bestGap = Long.MAX_VALUE;
+            for (DbQueryCheck c : rows == null ? List.<DbQueryCheck>of() : rows) {
+                if (c.getSqlHash() != null && !Objects.equals(c.getSqlHash(), sqlHash)) continue;
+                DbQueryEvaluator.RuleResult sr = byId(c.getRuleResultsJson()).get(r.id());
+                if (sr == null || sr.measure() == null || !DbQueryEvaluator.sameMeasureDefinition(sr, r)) continue;
+                Instant at = parseIso(c.getCheckedAt());
+                if (at == null) continue;
+                long gap = Math.abs(at.toEpochMilli() - target.toEpochMilli());
+                if (gap <= tol && gap < bestGap) { bestGap = gap; best = sr.measure(); }
+            }
+            if (best != null) measures.put(r.id(), best);
+            else notes.put(r.id(), DbQueryEvaluator.NOTE_NO_SEASONAL_BASELINE);
+        }
+    }
+
+    private Instant seasonalReference(Long monitorId, Run run, Anchor anchor) {
+        if (run == Run.SCHEDULED) return Instant.now();
+        if (run == Run.RECHECK && anchor != null && anchor.checkedAt() != null) {
+            Instant a = parseIso(anchor.checkedAt());
+            if (a != null) return a;
+        }
+        DbQueryCheck trigger = checks.findLatestScheduled(monitorId).orElse(null);
+        Instant t = trigger == null ? null : parseIso(trigger.getCheckedAt());
+        return t != null ? t : Instant.now();
+    }
+
+    private static boolean isPrevious(DbQueryRules.Rule r) {
+        return r.change() == null || DbQueryRules.BASELINE_PREVIOUS.equals(r.change().baselineOrPrevious());
+    }
+
+    private static Map<String, DbQueryEvaluator.RuleResult> byId(String json) {
+        Map<String, DbQueryEvaluator.RuleResult> out = new java.util.HashMap<>();
+        for (DbQueryEvaluator.RuleResult r : DbQueryEvaluator.fromJson(json)) if (r.id() != null) out.putIfAbsent(r.id(), r);
+        return out;
+    }
+
+    public static Instant parseIso(String s) {
+        if (s == null || s.isBlank()) return null;
+        try {
+            return java.time.LocalDateTime.parse(s.trim().length() > 19 ? s.trim().substring(0, 19) : s.trim())
+                    .toInstant(ZoneOffset.UTC);
+        } catch (RuntimeException e) {
+            return null;
         }
     }
 
@@ -614,6 +805,7 @@ public class DbQueryCheckerService {
 
     private MailRows mailRows(DbQueryMonitor m, DbQueryRunner.QueryResult qr, Set<String> masked) {
         int[] idx = selectColumns(m, qr);
+        if (idx.length == 0) return new MailRows(List.of(), List.of(), List.of(), qr.rowCount() > 0);
         int maxRows = Math.max(0, settings.getInt(KEY_MAIL_MAX_ROWS, 50));
         List<String> names = new ArrayList<>(), maskedOut = new ArrayList<>();
         boolean[] mask = new boolean[idx.length];
@@ -657,7 +849,10 @@ public class DbQueryCheckerService {
                 if (cols.get(i).name().equalsIgnoreCase(want.trim()) && !picked.contains(i)) { picked.add(i); break; }
             }
         }
-        if (picked.isEmpty()) for (int i = 0; i < cols.size() && picked.size() < max; i++) picked.add(i);
+        // r177 (Ö-6): "yalnız seçtiğim kolonlar" kipinde seçilen kolon yoksa mail satır tablosu YOK (yalnız sayı) — ilk N'e
+        // düşülmez; bugünkü kayıtlar (FIRST_N / null) eski davranışta kalır
+        boolean selectedOnly = DbQueryMonitor.MAIL_COLUMNS_SELECTED.equals(m.getMailColumnsMode());
+        if (picked.isEmpty() && !selectedOnly) for (int i = 0; i < cols.size() && picked.size() < max; i++) picked.add(i);
         int[] out = new int[picked.size()];
         for (int i = 0; i < out.length; i++) out[i] = picked.get(i);
         return out;

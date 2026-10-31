@@ -99,7 +99,7 @@ class DbQueryRunnerTest {
         verify(query).setQueryTimeout(30);
         verify(query).setMaxRows(101);
         verify(query).setFetchSize(101);
-        verify(query).executeQuery("SELECT 7 AS n");          // sondaki ';' silinir
+        verify(query).executeQuery("/* SiteMonitor */ SELECT 7 AS n");   // sondaki ';' silinir; DBA izi öne eklenir (r177)
         verify(conn).rollback();
         verify(conn).close();
         assertThat(r.rows().get(0).get(0)).isEqualTo(BigDecimal.valueOf(7));
@@ -133,7 +133,7 @@ class DbQueryRunnerTest {
                 + "(HOST=10.0.0.5)(PORT=1521))(CONNECT_DATA=(SERVICE_NAME=ORCLPDB1)))");
         verify(oc, never()).setReadOnly(true);                   // Oracle'da yalnız açık ifade (ORA-01453)
         verify(os).execute("SET TRANSACTION READ ONLY");
-        verify(oq).executeQuery("SELECT 1 FROM dual");
+        verify(oq).executeQuery("/* SiteMonitor */ SELECT 1 FROM dual");
     }
 
     @Test
@@ -301,7 +301,7 @@ class DbQueryRunnerTest {
 
     @Test
     void connectionTestAndPlans() throws Exception {
-        when(setup.executeQuery("SELECT 1")).thenReturn(FakeJdbc.resultSet(List.of(new FakeJdbc.Col("a", Types.INTEGER, 1)),
+        when(setup.executeQuery("/* SiteMonitor */ SELECT 1")).thenReturn(FakeJdbc.resultSet(List.of(new FakeJdbc.Col("a", Types.INTEGER, 1)),
                 List.<Object[]>of(new Object[] {1})).resultSet());
         DbQueryRunner.ConnectionTest t = runner.test(spec(DbType.POSTGRESQL, "app"));
         assertThat(t.ok()).isTrue();
@@ -319,7 +319,7 @@ class DbQueryRunnerTest {
         assertThat(DbQueryRunner.parsePgPlan("bozuk").ok()).isFalse();
         assertThat(runner.plan(spec(DbType.ORACLE, "X"), "SELECT 1 FROM dual", 10).supported()).isFalse();
 
-        when(setup.executeQuery("EXPLAIN (FORMAT JSON) SELECT 1"))
+        when(setup.executeQuery("EXPLAIN (FORMAT JSON) /* SiteMonitor */ SELECT 1"))
                 .thenReturn(FakeJdbc.resultSet(List.of(new FakeJdbc.Col("QUERY PLAN", Types.VARCHAR, 100)),
                         List.<Object[]>of(new Object[] {"[{\"Plan\":{\"Total Cost\":3.5,\"Plan Rows\":1}}]"})).resultSet());
         DbQueryRunner.PlanResult live = runner.plan(spec(DbType.POSTGRESQL, "app"), "SELECT 1;", 10);
@@ -350,7 +350,7 @@ class DbQueryRunnerTest {
         assertThat(p.ok()).isFalse();
         assertThat(p.error()).doesNotContain("TOPSECRET").doesNotContain("Position").contains("22P02");
         // bağlantı denemesi (kullanıcı SQL'i yok — yalnız bağlantı tanımının adları izinli)
-        when(setup.executeQuery("SELECT 1")).thenThrow(new SQLException(
+        when(setup.executeQuery("/* SiteMonitor */ SELECT 1")).thenThrow(new SQLException(
                 "ERROR: permission denied for schema \"GIZLI_SEMA\"", "42501"));
         DbQueryRunner.ConnectionTest t = runner.test(spec(DbType.POSTGRESQL, "app"));
         assertThat(t.ok()).isFalse();

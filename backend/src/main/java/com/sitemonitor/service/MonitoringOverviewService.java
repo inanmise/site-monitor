@@ -443,6 +443,8 @@ public class MonitoringOverviewService {
             else if (!open.isEmpty() || Boolean.FALSE.equals(ok)) status = "down";
             else if (m instanceof com.sitemonitor.model.DbQueryMonitor dq
                     ? isDbQueryStale(dq, nowI) : isStale(checkedAt, spec.interval().apply(m), nowI)) status = "stale";
+            // Veritabanı sorgusu (r177, H-2): sorgu çalıştı ama kural değerlendirilemedi — yeşil SAYILMAZ (nötr "değerlendirilemedi")
+            else if (c instanceof com.sitemonitor.model.DbQueryCheck dc && dbQueryUnevaluable(dc)) status = "unknown";
             else status = "up";
 
             total++;
@@ -495,6 +497,9 @@ public class MonitoringOverviewService {
                         com.sitemonitor.service.EscalationService.TYPE_DBQUERY_FAIL.equals(e.getAlertType())));
                 row.put("skipped_runs", dq.getSkippedRuns() == null ? 0 : dq.getSkippedRuns());
                 row.put("skipped_since", dq.getSkippedSince());
+                // r177: son çalıştırma "değerlendirilemedi" (status unknown'ın nedeni — "henüz çalışmadı"dan ayrılsın)
+                row.put("rule_unevaluable", c instanceof com.sitemonitor.model.DbQueryCheck dc && dbQueryUnevaluable(dc));
+                row.put("unknown_runs", dq.getUnknownRuns() == null ? 0 : dq.getUnknownRuns());
             }
             rows.add(row);
         }
@@ -513,6 +518,12 @@ public class MonitoringOverviewService {
         if (checksUnavailable) t.put("checks_unavailable", true);
         if (statsUnavailable) t.put("stats_unavailable", true);
         return t;
+    }
+
+    /** Sorgu çalıştı, kural değerlendirilemedi (r177 {@code status = UNKNOWN}) — sağlıklı sayılmaz. */
+    static boolean dbQueryUnevaluable(com.sitemonitor.model.DbQueryCheck c) {
+        return c != null && Boolean.TRUE.equals(c.getOk())
+                && com.sitemonitor.model.DbQueryCheck.STATUS_UNKNOWN.equals(c.getStatus());
     }
 
     /** Veritabanı sorgusunun planlı çalışmasından sonra "gecikmiş" sayılmadan önce tanınan pay: max(2 × tarama tıkı, 5 dk). */

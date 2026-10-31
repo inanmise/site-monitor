@@ -208,4 +208,85 @@ class DbConnectionProfileServiceTest {
         assertThat(row(withPw.getId()).get("PASSWORD_ENC")).isNull();
         assertThat(((Number) row(withPw.getId()).get("TEAM_ID")).longValue()).isEqualTo(6L);
     }
+
+    // ── r177 ────────────────────────────────────────────────────────────────
+
+    private Map<String, Object> createBody(String type, String name) {
+        Map<String, Object> b = new LinkedHashMap<>();
+        b.put("team_id", 1);
+        b.put("name", name);
+        b.put("db_type", type);
+        b.put("host", "db1.sirket.local");
+        b.put("database_name", "ORCL".equals(name) ? "ORCLPDB1" : "app");
+        b.put("username", "ro");
+        b.put("password", "pw");
+        return b;
+    }
+
+    @Test
+    @DisplayName("r177: yeni PostgreSQL bağlantısı 'require' (şifresiz düşmez); Oracle TCPS portu 2484; TCPS yalnız Oracle'da; güvenlik uyarıları")
+    void r177_createDefaultsAndSecurityWarnings() {
+        DbConnectionProfile pg = service.create(createBody("POSTGRESQL", "PG yeni"), admin(), "admin", "Yönetici");
+        assertThat(pg.getSslMode()).isEqualTo("require");
+        assertThat(pg.getOracleTcps()).isNull();
+        assertThat(DbConnectionProfileService.securityWarnings(pg)).containsExactly(DbConnectionProfileService.SEC_SSL_NOT_VERIFIED);
+
+        Map<String, Object> ob = createBody("ORACLE", "ORCL");
+        ob.put("oracle_tcps", true);
+        DbConnectionProfile ora = service.create(ob, admin(), "admin", "Yönetici");
+        assertThat(ora.getOracleTcps()).isTrue();
+        assertThat(ora.getPort()).isEqualTo(2484);
+        assertThat(DbConnectionProfileService.toApi(ora, "T", true, List.of(), List.of()).get("oracle_tcps")).isEqualTo(true);
+
+        Map<String, Object> mb = createBody("MSSQL", "MS yeni");
+        mb.put("oracle_tcps", true);   // MSSQL'de anlamsız — saklanmaz
+        DbConnectionProfile ms = service.create(mb, admin(), "admin", "Yönetici");
+        assertThat(ms.getOracleTcps()).isNull();
+        assertThat(DbConnectionProfileService.toApi(ms, "T", true, List.of(), List.of()).get("oracle_tcps")).isNull();
+
+        // var olan "prefer" kaydı korunur ama uyarılır; eski boş değer = prefer
+        DbConnectionProfile old = saved(1L, "enc:v1:x");
+        assertThat(old.getSslMode()).isEqualTo("prefer");
+        assertThat(DbConnectionProfileService.securityWarnings(old)).containsExactly(DbConnectionProfileService.SEC_SSL_PREFER);
+        old.setSslMode(null);
+        assertThat(DbConnectionProfileService.securityWarnings(old)).containsExactly(DbConnectionProfileService.SEC_SSL_PREFER);
+        old.setSslMode("disable");
+        assertThat(DbConnectionProfileService.securityWarnings(old)).containsExactly(DbConnectionProfileService.SEC_SSL_DISABLED);
+        old.setSslMode("verify-full");
+        assertThat(DbConnectionProfileService.securityWarnings(old)).isEmpty();
+        ms.setMssqlEncrypt(false);
+        assertThat(DbConnectionProfileService.securityWarnings(ms)).containsExactly(DbConnectionProfileService.SEC_MSSQL_UNENCRYPTED);
+        ms.setMssqlEncrypt(true);
+        ms.setMssqlTrustServerCertificate(true);
+        assertThat(DbConnectionProfileService.securityWarnings(ms)).containsExactly(DbConnectionProfileService.SEC_MSSQL_TRUST_SERVER_CERT);
+        assertThat(DbConnectionProfileService.SECURITY_WARNING_CODES).hasSize(5);
+    }
+
+    @Test
+    @DisplayName("r177: hesap yetki özeti sağlıkta; hesap / sunucu / parola değişince eski özet silinir, ad değişince kalır")
+    void r177_privilegesSummaryFollowsTheAccount() {
+        DbConnectionProfile p = saved(1L, "enc:v1:x");
+        long id = p.getId();
+        String json = DbAccountPrivileges.toJson(new DbAccountPrivileges.Result(true, false,
+                List.of(new DbAccountPrivileges.Finding(DbAccountPrivileges.CAN_WRITE_TABLES, "orders"))), "2026-10-31T09:00:00");
+        repo.recordPrivileges(id, json);
+        DbConnectionProfile fresh = repo.findById(id).orElseThrow();
+        @SuppressWarnings("unchecked")
+        Map<String, Object> priv = (Map<String, Object>) DbConnectionProfileService.health(fresh, false).get("privileges");
+        assertThat(priv).containsEntry("checked", true).containsEntry("read_only", false).containsEntry("checked_at", "2026-10-31T09:00:00");
+        assertThat(String.valueOf(priv.get("findings"))).contains("CAN_WRITE_TABLES");
+
+        Map<String, Object> rename = new LinkedHashMap<>();
+        rename.put("name", "Yeni ad");
+        service.update(id, rename, admin(), "admin", "Yönetici");
+        assertThat(jdbc.queryForObject("SELECT last_privileges_json FROM db_connection_profiles WHERE id = ?", String.class, id))
+                .isEqualTo(json);
+        Map<String, Object> user = new LinkedHashMap<>();
+        user.put("username", "baska_hesap");
+        user.put("password", "yeni");
+        service.update(id, user, admin(), "admin", "Yönetici");
+        assertThat(jdbc.queryForObject("SELECT last_privileges_json FROM db_connection_profiles WHERE id = ?", String.class, id))
+                .isNull();
+        assertThat(DbConnectionProfileService.health(repo.findById(id).orElseThrow(), false).get("privileges")).isNull();
+    }
 }

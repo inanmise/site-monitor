@@ -29,6 +29,12 @@ public interface DbConnectionProfileRepository extends JpaRepository<DbConnectio
     int recordTest(@Param("id") Long id, @Param("at") String at, @Param("ok") Boolean ok, @Param("ms") Integer ms,
                    @Param("error") String error, @Param("version") String version);
 
+    /** Son bağlantı denemesinin hesap yetkisi özeti (r177) — yalnız bu kolon. */
+    @Transactional
+    @Modifying
+    @Query("UPDATE DbConnectionProfile p SET p.lastPrivilegesJson = :json WHERE p.id = :id")
+    int recordPrivileges(@Param("id") Long id, @Param("json") String json);
+
     /** İzleme çalıştırması bağlantıyı kullandı (başarılı). */
     @Transactional
     @Modifying

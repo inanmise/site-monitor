@@ -854,6 +854,14 @@ public class EmailTemplateBuilder {
             };
         }
         if (isDbQuery(m.alertType())) {
+            // r177 (H-2): sorgu çalışıyor ama kural değerlendirilemiyor — bağlantı / ağ değil, kural / kolon sorunu
+            if ("DBQUERY_FAIL".equals(m.alertType()) && com.sitemonitor.service.dbquery.DbQueryAlarmText.RULE_UNEVALUABLE_CODE
+                    .equals(strCtx(m.ctx(), "failure_reason"))) {
+                return List.of(
+                        "Sorgu çalışıyor ama kuralların okuduğu kolon sonuçta yok ya da değeri uygun değil (sayı / zaman damgası) — kolon adı ya da sorgu değişmiş olabilir",
+                        "Site Monitor'de izlemeyi açıp \"Sorguyu dene\" ile dönen kolonları ve kural sonucunu görün; kuralı ya da sorguyu düzeltin",
+                        "Kurallar yeniden değerlendirilebilince alarm kendiliğinden kapanır");
+            }
             return switch (m.alertType()) {
                 case "DBQUERY_FAIL" -> List.of(
                         "Yukarıdaki hata türüne bakın: bağlantı / ağ, kimlik bilgisi, sorgu hatası ya da zaman aşımı",

@@ -20,15 +20,29 @@ final class DbJdbcUrls {
 
     /** URL'e girer: yalnız güvenli karakterler (sözleşme deseni {@code [A-Za-z0-9_.$#-]{1,128}}). */
     static final int MAX_NAME = 128, MAX_INSTANCE = 64;
-    static final String APP_NAME = "SiteMonitor";
+    static final String APP_NAME = DbConnectionSpec.DEFAULT_APP_NAME;
 
-    /** Kurulmuş bağlantı: URL + özellikler (parola içerir — günlüğe YAZILMAZ). */
-    record Target(String url, Properties props) {
+    /** Oracle TCPS varsayılan portu (r177). */
+    static final int ORACLE_TCPS_PORT = 2484;
+
+    /**
+     * Kurulmuş bağlantı: URL + özellikler (parola içerir — günlüğe YAZILMAZ). {@code tcps} yalnız Oracle TCPS'te dolu: URL'de
+     * sunucu ADI kalır (sertifika adı), çözüm doğrulanmış IP'ye kilitlenir ve TLS bağlamı kurum CA paketiyle kurulur —
+     * bağlantı {@code DriverManager} yerine sürücünün bağlantı kurucusuyla açılır ({@link DbQueryRunner}).
+     */
+    record Target(String url, Properties props, OracleTcps tcps) {
+        Target(String url, Properties props) {
+            this(url, props, null);
+        }
+
         @Override
         public String toString() {
             return "Target[" + url + "]";
         }
     }
+
+    /** @param host sertifikada beklenen ad (URL'deki HOST); @param pinned yalnız buna çözülür (SSRF denetiminden geçmiş IP). */
+    record OracleTcps(String host, InetAddress pinned) {}
 
     private DbJdbcUrls() {}
 
@@ -60,6 +74,7 @@ final class DbJdbcUrls {
                 && !ssl.equals("verify-ca") && !ssl.equals("allow"))
             throw new IllegalArgumentException("geçersiz ssl kipi");
         boolean verifyFull = ssl.equals("verify-full");
+        boolean verifyChain = verifyFull || ssl.equals("verify-ca");
         String host = verifyFull ? requireHostName(spec.host()) : hostLiteral(ip);
         String url = "jdbc:postgresql://" + host + ":" + spec.port() + "/"
                 + URLEncoder.encode(db, StandardCharsets.UTF_8);
@@ -72,8 +87,11 @@ final class DbJdbcUrls {
         p.setProperty("connectTimeout", String.valueOf(connectSec));
         p.setProperty("socketTimeout", String.valueOf(readSec));
         p.setProperty("readOnly", "true");
-        p.setProperty("ApplicationName", APP_NAME);
+        p.setProperty("ApplicationName", spec.safeAppName());
         p.setProperty("sslmode", ssl);
+        // Doğrulamalı kiplerde zincir kurum CA paketi + JVM cacerts ile doğrulanır (r177, H-3): sürücünün varsayılanı
+        // ~/.postgresql/root.crt okur — konteynerde yok, verify-full hiç çalışamıyordu. Ad denetimini sürücü ayrıca yapar.
+        if (verifyChain) p.setProperty("sslfactory", DbTrustSslSocketFactory.class.getName());
         // Sunucu tarafı hazır ifade önbelleği yok (her çalıştırma taze bağlantı); genişletilmiş protokol kalır — satır
         // sınırı ve parça parça okuma (fetchSize) yalnız onunla çalışır
         p.setProperty("prepareThreshold", "0");
@@ -92,11 +110,17 @@ final class DbJdbcUrls {
         p.setProperty("socketTimeout", String.valueOf(readSec * 1_000));
         p.setProperty("lockTimeout", "2000");
         p.setProperty("applicationIntent", "ReadOnly");
-        p.setProperty("applicationName", APP_NAME);
+        p.setProperty("applicationName", spec.safeAppName());
         p.setProperty("encrypt", String.valueOf(spec.mssqlEncrypt()));
         p.setProperty("trustServerCertificate", String.valueOf(spec.mssqlTrustServerCertificate()));
-        if (spec.mssqlEncrypt() && !spec.mssqlTrustServerCertificate())
-            p.setProperty("hostNameInCertificate", requireHostName(spec.host()));
+        if (spec.mssqlEncrypt() && !spec.mssqlTrustServerCertificate()) {
+            String name = requireHostName(spec.host());
+            p.setProperty("hostNameInCertificate", name);
+            // Zincir kurum CA paketi + JVM cacerts, AD da bizim güven yöneticimizde denetlenir (r177, H-3): iç CA'lı sunucu
+            // için "sertifikaya güven" açmak zorunda kalınmasın. Argüman = beklenen ad (IPv6 köşeli parantezsiz).
+            p.setProperty("trustManagerClass", DbTrustManager.class.getName());
+            p.setProperty("trustManagerConstructorArg", bareHost(name));
+        }
         // Adres URL'de değil özellikte: IPv6 ve örnek adı (ad\örnek) kaçış derdi olmadan geçer
         return new Target("jdbc:sqlserver://", p);
     }
@@ -105,13 +129,27 @@ final class DbJdbcUrls {
         String name = requireName(spec.database(), false);
         boolean sid = "SID".equalsIgnoreCase(spec.oracleMode() == null ? "" : spec.oracleMode().trim());
         String data = sid ? "(SID=" + name + ")" : "(SERVICE_NAME=" + name + ")";
+        boolean tcps = spec.oracleTcps();
+        // TCPS (r177): HOST = sunucu ADI (sertifika DN / SAN eşleşmesi) — çözüm kurucuda doğrulanmış IP'ye kilitlenir
+        String host = tcps ? bareHost(requireHostName(spec.host())) : ip.getHostAddress();
         String url = "jdbc:oracle:thin:@(DESCRIPTION=(CONNECT_TIMEOUT=" + Math.max(1, connectMs / 1_000)
-                + ")(ADDRESS=(PROTOCOL=TCP)(HOST=" + ip.getHostAddress() + ")(PORT=" + spec.port() + "))(CONNECT_DATA="
-                + data + "))";
+                + ")(ADDRESS=(PROTOCOL=" + (tcps ? "TCPS" : "TCP") + ")(HOST=" + host + ")(PORT=" + spec.port()
+                + "))(CONNECT_DATA=" + data + ")"
+                + (tcps ? "(SECURITY=(SSL_SERVER_DN_MATCH=TRUE))" : "") + ")";
         p.setProperty("oracle.net.CONNECT_TIMEOUT", String.valueOf(connectMs));
         p.setProperty("oracle.jdbc.ReadTimeout", String.valueOf(readSec * 1_000));
-        p.setProperty("v$session.program", APP_NAME);
+        p.setProperty("v$session.program", spec.safeAppName());
+        if (tcps) {
+            p.setProperty("oracle.net.ssl_server_dn_match", "true");
+            return new Target(url, p, new OracleTcps(host, ip));
+        }
         return new Target(url, p);
+    }
+
+    /** Ad doğrulamasının köşeli parantezsiz biçimi (IPv6 sertifika eşleşmesi düz yazımla yapılır). */
+    static String bareHost(String name) {
+        if (name == null) return null;
+        return name.startsWith("[") && name.endsWith("]") ? name.substring(1, name.length() - 1) : name;
     }
 
     /** IPv6 köşeli parantezle; bölge kimliği atılır. */

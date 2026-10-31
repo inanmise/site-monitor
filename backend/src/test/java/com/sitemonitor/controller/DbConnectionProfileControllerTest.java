@@ -115,7 +115,7 @@ class DbConnectionProfileControllerTest {
                 .andExpect(jsonPath("$.data.id").value(50))
                 .andExpect(jsonPath("$.data.password_set").value(true))
                 .andExpect(jsonPath("$.data.port").value(5432))
-                .andExpect(jsonPath("$.data.ssl_mode").value("prefer"))
+                .andExpect(jsonPath("$.data.ssl_mode").value("require"))   // r177: yeni bağlantının varsayılanı
                 .andExpect(jsonPath("$.data.health.state").value("untested"))
                 .andExpect(jsonPath("$.data.created_by_name").value("Ayşe Yılmaz (Sipariş / Uzman)"))
                 .andReturn().getResponse().getContentAsString();

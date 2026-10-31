@@ -49,6 +49,26 @@ public interface DbQueryCheckRepository extends JpaRepository<DbQueryCheck, Long
     Optional<DbQueryCheck> findScheduledOkBefore(@Param("id") Long monitorId, @Param("at") String at,
                                                  @Param("beforeId") Long beforeId);
 
+    /**
+     * Mevsimsel değişim tabanı adayları (r177): {@code [from, to]} aralığındaki zamanlanmış ve sorgusu çalışmış satırlar (en çok
+     * 50, zamana göre) — elle ve yeniden kontrol satırları bant dışıdır.
+     */
+    @Query("SELECT c FROM DbQueryCheck c WHERE c.monitorId = :id AND c.ok = true "
+         + "AND (c.manual IS NULL OR c.manual = false) AND (c.recheck IS NULL OR c.recheck = false) "
+         + "AND c.checkedAt >= :from AND c.checkedAt <= :to ORDER BY c.checkedAt ASC, c.id ASC LIMIT 50")
+    List<DbQueryCheck> findScheduledOkBetween(@Param("id") Long monitorId, @Param("from") String from, @Param("to") String to);
+
+    /**
+     * Geriye dönük eşik denemesi (r177): zamanlanmış satırların hafif izdüşümü — {@code [id, checkedAt, ok, status, sqlHash,
+     * ruleResultsJson]}, anahtar küme sayfalı ({@code id > :afterId}, kimlik sırası). Satır verisi yok (kontrol satırında hiç yok).
+     */
+    @Query("SELECT c.id, c.checkedAt, c.ok, c.status, c.sqlHash, c.ruleResultsJson FROM DbQueryCheck c "
+         + "WHERE c.monitorId = :id AND c.checkedAt >= :from AND c.id > :afterId "
+         + "AND (c.manual IS NULL OR c.manual = false) AND (c.recheck IS NULL OR c.recheck = false) "
+         + "ORDER BY c.id ASC LIMIT :limit")
+    List<Object[]> backtestPage(@Param("id") Long monitorId, @Param("from") String from, @Param("afterId") Long afterId,
+                                @Param("limit") int limit);
+
     // Kontrol geçmişi: sunucu tarafı sayfalı aralık + "sorunlu" süzgeci (status <> 'OK' = ihlal ya da hata)
     Page<DbQueryCheck> findByMonitorIdAndCheckedAtBetween(Long monitorId, String from, String to, Pageable p);
     Page<DbQueryCheck> findByMonitorIdAndStatusNotAndCheckedAtBetween(Long monitorId, String status, String from, String to, Pageable p);
