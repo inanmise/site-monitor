@@ -25,6 +25,7 @@ export const MONITOR_ALERT_TYPES = {
   page:      ['PAGE_DOWN', 'PAGE_INTEGRITY'],
   pagespeed: ['PAGESPEED_DOWN', 'PAGESPEED_SLOW'],
   scripted:  ['SCRIPTED_FAIL', 'SCRIPTED_SLOW'],
+  dbquery:   ['DBQUERY_FAIL', 'DBQUERY_THRESHOLD', 'DBQUERY_SLOW'],
 }
 
 /** Bilinmeyen tür → boş dizi; AlertHistory bunu "süzme yok" sayar (mevcut davranış korunur). */

@@ -18,7 +18,7 @@ import PushPreferencesCard from '../components/myactivity/PushPreferencesCard.js
  * gelsin", en düşük seviye, izleme türleri (en az biri — alanın altında hata), push dili, kendine test (gönderildi /
  * ayarlanmamış / HTTP / 10 dk sınırı), opt-out notu, yükleme hatası.
  */
-const FAMILIES = ['cert', 'domain', 'http', 'ping', 'port', 'dns', 'keyword', 'page', 'pagespeed', 'scripted']
+const FAMILIES = ['cert', 'domain', 'http', 'ping', 'port', 'dns', 'keyword', 'page', 'pagespeed', 'scripted', 'dbquery']
 const DEFAULTS = {
   success: true, min_level: null, families: null, lang: 'tr', snooze_until: null, snooze_active: false,
   snooze_critical: true, opt_out: false, available_families: FAMILIES, server_now: '2026-10-04T11:00:00',
@@ -85,7 +85,7 @@ describe('PushPreferencesCard', () => {
     render(<PushPreferencesCard />)
     const save = await loaded()
     fireEvent.click(card().getByRole('button', { name: 'High and above' }))
-    for (const f of ['Domain', 'Ping', 'Port', 'DNS', 'Keyword', 'Page', 'Page Speed', 'Synthetic']) {
+    for (const f of ['Domain', 'Ping', 'Port', 'DNS', 'Keyword', 'Page', 'Page Speed', 'Synthetic', 'Database query']) {
       fireEvent.click(card().getByRole('button', { name: f }))
     }
     fireEvent.click(card().getByRole('button', { name: 'English' }))

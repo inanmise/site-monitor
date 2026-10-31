@@ -389,7 +389,9 @@ class MonitoringOutageStuckAlarmRegressionTest {
                 EscalationService.TYPE_SCRIPTED_FAIL, EscalationService.TYPE_SCRIPTED_SLOW,
                 EscalationService.TYPE_DOMAINMON_EXPIRY, EscalationService.TYPE_DOMAINMON_UNKNOWN,
                 EscalationService.TYPE_DOMAINMON_STATUS, EscalationService.TYPE_DOMAINMON_TRANSFER_LOCK,
-                EscalationService.TYPE_DOMAINMON_BLACKLIST);
+                EscalationService.TYPE_DOMAINMON_BLACKLIST,
+                EscalationService.TYPE_DBQUERY_FAIL, EscalationService.TYPE_DBQUERY_THRESHOLD,
+                EscalationService.TYPE_DBQUERY_SLOW);
         List<String> notClosed = new ArrayList<>();
         for (String t : types) {
             MonitoringOutageService s = newService();

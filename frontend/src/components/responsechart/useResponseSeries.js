@@ -8,6 +8,7 @@ const FETCHERS = {
   ping: 'getPingResponseSeries', keyword: 'getKeywordResponseSeries', port: 'getPortResponseSeries',
   dns: 'getDnsResponseSeries', http: 'getHttpResponseSeries', page: 'getPageResponseSeries',
   scripted: 'getScriptedResponseSeries', pagespeed: 'getPageSpeedSeries', ssl: 'getSslResponseSeries',
+  dbquery: 'getDbQuerySeries',
 }
 
 /**

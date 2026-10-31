@@ -156,7 +156,7 @@ describe('İzleme Panosu', () => {
     expect(successPct({ success_rate_window: 101 })).toBe(100)
     expect(successPct({ success_rate_window: null })).toBeNull()
     // Yeniden dışa aktarılan tanımlar (diğer dosyalar/testler sayfadan içe aktarıyor)
-    expect(TYPE_ORDER).toHaveLength(9)
+    expect(TYPE_ORDER).toHaveLength(10)   // + Veritabanı sorgusu (2026-10-31)
     expect(TYPE_META.http.tab).toBe('http')
     expect(STATUS_META.down.rank).toBe(0)
   })

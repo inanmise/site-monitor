@@ -1748,6 +1748,9 @@ export const api = {
       method: 'POST', body: JSON.stringify({ email }),
     }),
     getCertInvReportHistory: (limit = 24) => request(`/admin/system/cert-inventory-report/history?limit=${limit}`),
+    // Tatil / özel gün takvimi (veritabanı sorgu izlemesi "tatillerde çalışma"; global admin yazar)
+    getHolidays:  () => request('/admin/holidays', { withStatus: true }),
+    saveHolidays: (days) => request('/admin/holidays', { method: 'PUT', body: JSON.stringify({ days }), withStatus: true }),
     saveCertInvReportSettings: (values) => request('/admin/system/cert-inventory-report/settings', {
       method: 'PUT', body: JSON.stringify(values),
     }),
@@ -2364,6 +2367,44 @@ export const api = {
     },
     pageSpeedDiagnoseHistory: (id) => request(`/monitoring/pagespeed/${id}/diagnose/history`, { withStatus: true }),
     pageSpeedDiagnoseRun: (id, runId) => request(`/monitoring/pagespeed/${id}/diagnose/history/${encodeURIComponent(runId)}`, { withStatus: true }),
+
+    // Veritabanı Sorgu İzleme (11. tür, 2026-10-31). withStatus: alan hataları (400 VALIDATION_FAILED / DBQUERY_SQL_REJECTED …),
+    // 409 / 429 ve sunucu iletisi çağırana gövdeyle döner — form hatayı alanın altına yazar.
+    getDbQueryMonitors:   () => request('/monitoring/dbquery'),
+    createDbQueryMonitor: (data) => request('/monitoring/dbquery', { method: 'POST', body: JSON.stringify(data), withStatus: true }),
+    updateDbQueryMonitor: (id, data) => request(`/monitoring/dbquery/${id}`, { method: 'PUT', body: JSON.stringify(data), withStatus: true }),
+    deleteDbQueryMonitor: (id) => request(`/monitoring/dbquery/${id}`, { method: 'DELETE' }),
+    triggerDbQueryCheck:  (id) => request(`/monitoring/dbquery/${id}/check`, { method: 'POST', withStatus: true }),
+    testDbQuery:          (data) => request('/monitoring/dbquery/test', { method: 'POST', body: JSON.stringify(data), withStatus: true, timeoutMs: 0 }),
+    dbQuerySqlCheck:      (sql, dbType, { signal } = {}) => request('/monitoring/dbquery/sql-check', {
+      method: 'POST', body: JSON.stringify({ sql, db_type: dbType }), withStatus: true, ...(signal ? { signal } : {}),
+    }),
+    dbQueryPlanCheck:     (profileId, sql) => request('/monitoring/dbquery/plan-check', {
+      method: 'POST', body: JSON.stringify({ profile_id: profileId, sql }), withStatus: true, timeoutMs: 0,
+    }),
+    dbQuerySchedulePreview: (schedule, { signal } = {}) => request('/monitoring/dbquery/schedule-preview', {
+      method: 'POST', body: JSON.stringify(schedule), withStatus: true, ...(signal ? { signal } : {}),
+    }),
+    getDbQuerySeries: (id, { from, to, days, metric } = {}) => {
+      const q = new URLSearchParams(
+        Object.fromEntries(Object.entries({ from, to, days, metric }).filter(([, v]) => v != null && v !== '')),
+      ).toString()
+      return request(`/monitoring/dbquery/${id}/response-series${q ? `?${q}` : ''}`)
+    },
+    // Kayıtlı bağlantılar (takım belgesi; paylaşımla açılmaz) — parola asla dönmez (password_set).
+    dbConnections:        (teamId) => request(`/monitoring/dbquery/connections${teamId != null ? `?team_id=${encodeURIComponent(teamId)}` : ''}`, { withStatus: true }),
+    createDbConnection:   (data) => request('/monitoring/dbquery/connections', { method: 'POST', body: JSON.stringify(data), withStatus: true }),
+    updateDbConnection:   (id, data) => request(`/monitoring/dbquery/connections/${id}`, { method: 'PUT', body: JSON.stringify(data), withStatus: true }),
+    deleteDbConnection:   (id) => request(`/monitoring/dbquery/connections/${id}`, { method: 'DELETE', withStatus: true }),
+    testDbConnection:     (id) => request(`/monitoring/dbquery/connections/${id}/test`, { method: 'POST', withStatus: true, timeoutMs: 0 }),
+    testDbConnectionDraft: (data) => request('/monitoring/dbquery/connections/test', { method: 'POST', body: JSON.stringify(data), withStatus: true, timeoutMs: 0 }),
+    // Takım sorgu şablonları
+    dbQueryTemplates:      (teamId) => request(`/monitoring/dbquery/templates${teamId != null ? `?team_id=${encodeURIComponent(teamId)}` : ''}`, { withStatus: true }),
+    createDbQueryTemplate: (data) => request('/monitoring/dbquery/templates', { method: 'POST', body: JSON.stringify(data), withStatus: true }),
+    updateDbQueryTemplate: (id, data) => request(`/monitoring/dbquery/templates/${id}`, { method: 'PUT', body: JSON.stringify(data), withStatus: true }),
+    deleteDbQueryTemplate: (id) => request(`/monitoring/dbquery/templates/${id}`, { method: 'DELETE', withStatus: true }),
+    // Alarm anındaki sorgu sonucu (paylaşımla okuyana satır yok: hidden)
+    dbQueryAlertRows:      (alertId) => request(`/monitoring/dbquery/alerts/${encodeURIComponent(alertId)}/rows`, { withStatus: true }),
 
     // Senaryo İzleme (Scripted Check / k6) — 10. tür
     getScriptedMonitors:   () => request('/monitoring/scripted'),

@@ -62,7 +62,8 @@ import java.util.function.Predicate;
  *   <li>kontrolü gecikmiş (panonun "stale" kuralı) → {@code degraded};</li>
  *   <li>panoda "down": son kontrol başarısız YA DA açık alarm HIGH/CRITICAL → {@code down}; yalnız UYARI seviyeli açık alarm
  *       (yavaşlık, yaklaşan bitiş) ve son kontrol başarılı → {@code degraded}. Alan adı kaydı izlemesi bir erişim kesintisi
- *       değildir: sorunu en fazla {@code degraded};</li>
+ *       değildir: sorunu en fazla {@code degraded}. Veritabanı sorgu izlemesinde yalnız sorgunun çalıştırılamaması (son
+ *       kontrol başarısız ya da açık sorgu hatası alarmı) {@code down}; kural ihlali / yavaş sorgu en fazla {@code degraded};</li>
  *   <li>aksi → {@code up}.</li>
  * </ol>
  *
@@ -146,10 +147,12 @@ public class StatusPageService {
     /** Rollup tablosundaki tür adı → pano tür anahtarı (DNS ve alan adı rollup'ta yok → kullanılabilirlik hesaplanmaz). */
     static final Map<String, String> ROLLUP_TYPES = Map.of(
             "HTTP", "http", "PING", "ping", "PORT", "port", "KEYWORD", "keyword",
-            "PAGE", "page", "PAGESPEED", "pagespeed", "SCRIPTED", "scripted");
+            "PAGE", "page", "PAGESPEED", "pagespeed", "SCRIPTED", "scripted",
+            // Veritabanı sorgusu (2026-10-31): kullanılabilirlik = sorgu ÇALIŞTI (kural ihlali kesinti değil).
+            "DBQUERY", "dbquery");
     static final String UPTIME_SQL =
             "SELECT monitor_type, monitor_key, SUM(total_checks) AS total, SUM(up_checks) AS up FROM monitor_check_daily "
-          + "WHERE day >= ? AND day < ? AND monitor_type IN ('HTTP','PING','PORT','KEYWORD','PAGE','PAGESPEED','SCRIPTED') "
+          + "WHERE day >= ? AND day < ? AND monitor_type IN ('HTTP','PING','PORT','KEYWORD','PAGE','PAGESPEED','SCRIPTED','DBQUERY') "
           + "GROUP BY monitor_type, monitor_key";
 
     private static final DateTimeFormatter ISO =
@@ -479,7 +482,12 @@ public class StatusPageService {
                 Object lvl = row.get("open_alert_level");
                 boolean severe = lvl != null && SEVERE_LEVELS.contains(String.valueOf(lvl).toUpperCase(Locale.ROOT));
                 if (!failed && !severe) yield M_DEGRADED;            // yalnız uyarı seviyeli açık alarm
-                yield "domain".equals(row.get("type")) ? M_DEGRADED : M_DOWN;   // kayıt sorunu erişim kesintisi değildir
+                if ("domain".equals(row.get("type"))) yield M_DEGRADED;   // kayıt sorunu erişim kesintisi değildir
+                // Veritabanı sorgusu (2026-10-31 inceleme O4): yalnız sorgunun ÇALIŞTIRILAMAMASI kesintidir (son kontrol
+                // başarısız ya da açık sorgu hatası alarmı); kural ihlali / yavaş sorgu iş göstergesidir — en fazla degraded.
+                if ("dbquery".equals(row.get("type")))
+                    yield failed || Boolean.TRUE.equals(row.get("open_query_failure")) ? M_DOWN : M_DEGRADED;
+                yield M_DOWN;
             }
             case "paused" -> M_PAUSED;
             case "deleted" -> null;

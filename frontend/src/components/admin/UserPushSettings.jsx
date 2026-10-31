@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState, useRef, useId } from 'react'
 import {
   Save, Send, BellRing, Plus, Trash2, Copy, RefreshCw, Search as SearchIcon,
   Crown, UserCog, Briefcase, Globe, Network, Target, Radio, CalendarDays,
-  ScanSearch, FlaskConical, Gauge, ShieldCheck, WifiOff, Timer, CalendarClock,
+  ScanSearch, FlaskConical, Gauge, ShieldCheck, WifiOff, Timer, CalendarClock, DatabaseSearch,
   ArrowLeftRight, CheckCircle2, OctagonPause, Check, Landmark, Building2, ChevronDown, TriangleAlert,
 } from 'lucide-react'
 import { api } from '../../api/client'
@@ -88,7 +88,7 @@ const TYPES = [
   { key: 'cert', Icon: ShieldCheck }, { key: 'http', Icon: Globe }, { key: 'port', Icon: Network },
   { key: 'dns', Icon: SearchIcon }, { key: 'keyword', Icon: Target }, { key: 'ping', Icon: Radio },
   { key: 'domain', Icon: CalendarDays }, { key: 'page', Icon: ScanSearch },
-  { key: 'scripted', Icon: FlaskConical }, { key: 'pagespeed', Icon: Gauge },
+  { key: 'scripted', Icon: FlaskConical }, { key: 'pagespeed', Icon: Gauge }, { key: 'dbquery', Icon: DatabaseSearch },
 ]
 
 /** KPI pencereleri (2026-09-12): anahtar = backend STAT_WINDOWS ile aynı; ms + etiket anahtarı. */

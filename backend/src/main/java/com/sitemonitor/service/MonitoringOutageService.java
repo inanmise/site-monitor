@@ -1233,6 +1233,12 @@ public class MonitoringOutageService implements EvalStateSource {
      */
     static String classifyError(String error, String domain) {
         if (error == null || error.isBlank()) return null;
+        // Veritabanı sorgu izlemesi (2026-10-31): öğe hatası "[DB_KOD] metin" — sınıf sürücü metninden değil KODDAN gelir
+        // ve hiçbir kod ağ / DNS sınıfı değildir: izlemeler birkaç veritabanında kümelenir, toplu kesinti bastırması tek bir
+        // veritabanının çöküşünü (tam yakalanması gereken olayı) gizlerdi (DbQueryAlarmText.outageClassOf).
+        String dbClass = com.sitemonitor.service.dbquery.DbQueryAlarmText.outageClassOf(
+                com.sitemonitor.service.dbquery.DbQueryAlarmText.codeOf(error));
+        if (dbClass != null) return dbClass;
         String e = error.toLowerCase(Locale.ROOT);
         for (String m : CONFIG_ERROR_MARKS) if (e.contains(m)) return ERROR_CONFIG;   // yapılandırma EZER
         if (domain != null && !domain.isBlank() && e.trim().equals(domain.trim().toLowerCase(Locale.ROOT))) {
@@ -2380,8 +2386,11 @@ public class MonitoringOutageService implements EvalStateSource {
         // hic tutmuyordu: ihlal suren bir izleme icin her sweep 3 denemelik YENI bir zincir aciyordu,
         // her denemesi tam bir sayfa indirmesi (yuzlerce istek, on MB'lar). Sentetikte cozulen kusurun
         // ayni si; burada maliyeti daha agir cunku re-check tum alt kaynaklari yeniden cekiyor.
+        // DBQUERY_* (2026-10-31) da aynı sınıfta: eşik öğesinin detayı kural özeti (ÖLÇÜLEN değeri taşır — "gelen 1.250"),
+        // yavaş sorgunun detayı süre. Ad takımda tekildir; detail anahtara girmez, gösterimde korunur.
         if (EscalationService.isScripted(item.alertType())
-                || EscalationService.TYPE_PAGESPEED_SLOW.equals(item.alertType()))
+                || EscalationService.TYPE_PAGESPEED_SLOW.equals(item.alertType())
+                || EscalationService.isDbQuery(item.alertType()))
             return item.alertType() + ":" + item.domain();
         // O-A3-4 (2026-09-29): DNS_CHANGED anahtarına İZLEME KİMLİĞİ girer — çift kaynaklı alan adında (envanter türevi +
         // bağımsız, ya da iki takımın izlemesi) aynı tur içinde görülen aynı değişiklik iki AYRI teyit zinciri açar; eskiden
@@ -2981,6 +2990,11 @@ public class MonitoringOutageService implements EvalStateSource {
                  EscalationService.TYPE_SCRIPTED_SLOW ->
                     appSettings.getBoolean("site.monitor.scripted.alert-enabled", true)
                     && appSettings.getBoolean("site.monitor.scripted.enabled", true);
+            // Veritabanı sorgu izlemesi (2026-10-31): kendi anahtarı (diğer türlerle parite).
+            case EscalationService.TYPE_DBQUERY_FAIL,
+                 EscalationService.TYPE_DBQUERY_THRESHOLD,
+                 EscalationService.TYPE_DBQUERY_SLOW ->
+                    appSettings.getBoolean("site.monitor.dbquery.alert-enabled", true);
             default                                 ->
                     appSettings.getBoolean("site.monitor.uptime.alert-enabled", uptimeAlertEnabled);
         };

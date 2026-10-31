@@ -34,8 +34,10 @@ public final class CacheBusNames {
     public static final String SYSTEM_MAINTENANCE = "system-maintenance";
     /** Pasif / silinmiş hesap kapısı + tek-oturum (süpersede) önbelleği — {@code UserService}. */
     public static final String USER_GATE = "user-gate";
+    /** Tatil / özel gün takvimi (veritabanı sorgu izlemesi "tatillerde çalışma", 2026-10-31) — {@code HolidayCalendarService}. */
+    public static final String HOLIDAYS = "holidays";
 
     /** Hepsi (kapı testi: biçim + tekillik). */
     public static final List<String> ALL = List.of(WEAK_ALGO, TECH_ERROR_ANALYTICS, ONCALL, QUIET_HOURS, INACTIVE_RECIPIENTS,
-            NOC_OPERATORS, TEAM_GRANTS, MAINTENANCE_WINDOWS, SYSTEM_MAINTENANCE, USER_GATE);
+            NOC_OPERATORS, TEAM_GRANTS, MAINTENANCE_WINDOWS, SYSTEM_MAINTENANCE, USER_GATE, HOLIDAYS);
 }

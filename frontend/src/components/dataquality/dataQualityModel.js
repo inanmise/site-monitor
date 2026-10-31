@@ -152,7 +152,7 @@ export function healthPercent(rule) {
 /** İzleme türü → kenar çubuğu etiket anahtarı (kalem satırındaki tür rozeti). */
 export const TYPE_LABEL_KEY = {
   SSL: 'dq.type.SSL', HTTP: 'nav.http', PING: 'nav.ping', PORT: 'nav.port', DNS: 'nav.dns', DOMAIN: 'nav.domainmon',
-  KEYWORD: 'nav.keyword', PAGE: 'nav.page', PAGESPEED: 'nav.pagespeed', SCRIPTED: 'nav.scripted', TEAM: 'dq.type.TEAM',
+  KEYWORD: 'nav.keyword', PAGE: 'nav.page', PAGESPEED: 'nav.pagespeed', SCRIPTED: 'nav.scripted', DBQUERY: 'nav.dbquery', TEAM: 'dq.type.TEAM',
 }
 
 /** Kalemin envanter kaydı için derin bağlantısı: Envanter çekmecesi (başkasının kaydında "tüm takımlar" kapsamı). */

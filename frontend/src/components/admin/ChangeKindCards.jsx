@@ -1,4 +1,4 @@
-import { Globe, CalendarDays, Network, Search, Target, Radio, ScanSearch, FlaskConical,
+import { Globe, CalendarDays, Network, Search, Target, Radio, ScanSearch, FlaskConical, DatabaseSearch,
   Gauge, ShieldCheck, Folder, Wrench, Layers, FilePlus2, Pencil, Trash2 } from 'lucide-react'
 import SimpleTooltip from '../ui/SimpleTooltip.jsx'
 import { TONE_CLASS } from './ToneBadge.jsx'
@@ -24,7 +24,7 @@ import { cn } from '@/lib/utils'
 // Dışa açık: İzleme Değişiklikleri listesi satırdaki tür ikonunu da buradan alır (tek ikon sözlüğü).
 export const ICONS = {
   http: Globe, domain: CalendarDays, port: Network, dns: Search, keyword: Target,
-  ping: Radio, page: ScanSearch, pagespeed: Gauge, scripted: FlaskConical,
+  ping: Radio, page: ScanSearch, pagespeed: Gauge, scripted: FlaskConical, dbquery: DatabaseSearch,
   inventory: ShieldCheck, group: Folder, maintenance: Wrench,
 }
 

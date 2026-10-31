@@ -115,6 +115,7 @@ const DomainMonitorPage = lazy(() => import('./components/DomainMonitorPage'))
 const PingMonitorPage = lazy(() => import('./components/PingMonitorPage'))
 const PageMonitorPage = lazy(() => import('./components/PageMonitorPage'))
 const PageSpeedMonitorPage = lazy(() => import('./components/PageSpeedMonitorPage'))
+const DbQueryMonitorPage = lazy(() => import('./components/DbQueryMonitorPage'))   // Veritabanı Sorgu İzleme (11. tür, 2026-10-31)
 const MonitoringOverviewPage = lazy(() => import('./components/MonitoringOverviewPage'))   // İzleme Panosu (2026-09-30)
 const StatusPage = lazy(() => import('./components/StatusPage'))   // Kurum içi Durum Sayfası (2026-10-01) — oturum açmış herkes
 const StormStatusPage = lazy(() => import('./components/StormStatusPage'))   // Alarm Fırtınası (2026-09-30)
@@ -2514,6 +2515,7 @@ export default function App() {
             {tab === 'pagespeed' && <PageSpeedMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={writeTeams} globalAdmin={globalAdmin} />}
             {/* k6 da öteki türler gibi paylaşımla yazılabilen takımları alır (2026-10-16, kullanıcı kararı: tam düzenleme) */}
             {tab === 'scripted' && <ScriptedMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={writeTeams} globalAdmin={globalAdmin} />}
+            {tab === 'dbquery'  && <DbQueryMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={writeTeams} globalAdmin={globalAdmin} />}
             {tab === 'forecast' && <ExpiryForecastPage onSelectDomain={(d) => setModalCert(certs.find(c => c.domain === d) ?? { domain: d })} />}
             {/* Markalı 404 (2026-10-08): tanınmayan ?tab= → "Sayfa bulunamadı"; rolüne kapalı sekme → "Erişim yok" (eskiden boş) */}
             {tab === NOT_FOUND_TAB && (

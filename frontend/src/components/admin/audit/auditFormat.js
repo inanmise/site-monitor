@@ -86,6 +86,10 @@ const VERB_SUFFIXES = [
 /** Olay türünün başındaki NESNE → i18n anahtarı (en uzun önek önce eşleşir). */
 const NOUN_PREFIXES = [
   ['CERT_INVENTORY_REPORT', 'audit.noun.certInventoryReport'],
+  // Veritabanı Sorgu İzleme (2026-10-31): bağlantı + şablon + tatil takvimi olayları nesne + eylem kuralıyla etiketlenir
+  ['DBQUERY_CONNECTION', 'audit.noun.dbqueryConnection'],
+  ['DBQUERY_TEMPLATE', 'audit.noun.dbqueryTemplate'],
+  ['HOLIDAY_CALENDAR', 'audit.noun.holidayCalendar'],
   ['NOTIFICATION_GROUP', 'audit.noun.notificationGroup'],
   ['WEEKLY_AVAILABILITY', 'audit.noun.weeklyAvailability'],
   ['REMEMBER_TOKEN', 'audit.noun.rememberToken'],

@@ -177,4 +177,41 @@ class RateLimitCounterServiceTest {
         assertThat(RateLimitCounterService.remainingSeconds(30_100L, 100L)).isEqualTo(30L);
         assertThat(RateLimitCounterService.remainingSeconds(50L, 100L)).isZero();
     }
+
+    @Test
+    @DisplayName("release (2026-10-31, dbquery D-5): bloğu yazan deneme pod B'de geri verilince sayım 9'a iner, blok kalkar — iki pod'da")
+    void release_undoesOneAttemptAndLiftsBlock() {
+        for (int i = 0; i < 9; i++) podA.hit(KEY, LOGIN);
+        State tenth = podB.hit(KEY, LOGIN);
+        assertThat(podA.blockedSeconds(KEY)).isEqualTo(30L);
+        podB.release(KEY, LOGIN, tenth);
+        assertThat(podA.blockedSeconds(KEY)).as("geri verilen deneme bloğu yazmıştı → blok kalkar").isZero();
+        assertThat(mp.jdbc().queryForObject("SELECT attempts FROM rate_limit_counters WHERE limit_key = ?", Integer.class, KEY))
+                .isEqualTo(9);
+        // Eşik altında geri verme: yalnız sayım düşer
+        State s = podA.hit(KEY, LOGIN);
+        assertThat(s.attempts()).isEqualTo(10);
+        podA.release(KEY, LOGIN, podA.hit(KEY, LOGIN));   // 11. → geri → 10, blok sürer (10 ≥ eşik)
+        assertThat(podB.blockedSeconds(KEY)).isEqualTo(30L);
+        // null / sayım 0 → hiçbir şey (sayım eksiye inmez)
+        podA.release(KEY, LOGIN, null);
+        String other = RateLimitCounterService.key("login-ip", "10.7.7.7");
+        podA.release(other, LOGIN, new State(1, 0L, false));
+        assertThat(mp.jdbc().queryForObject("SELECT count(*) FROM rate_limit_counters WHERE limit_key = ?", Integer.class, other))
+                .isZero();
+    }
+
+    @Test
+    @DisplayName("release: bellek yedeğine sayılan deneme bellekten geri verilir (veritabanına dokunulmaz)")
+    void release_memoryFallback() {
+        DriverManagerDataSource broken = new DriverManagerDataSource("jdbc:h2:mem:yok-rel-" + System.nanoTime() + ";MODE=PostgreSQL", "sa", "");
+        RateLimitCounterService pod = new RateLimitCounterService(new JdbcTemplate(broken), mp.clockSupplier());   // tablo YOK
+        State last = null;
+        for (int i = 0; i < 10; i++) last = pod.hit(KEY, LOGIN);
+        assertThat(last.memory()).isTrue();
+        assertThat(pod.blockedSeconds(KEY)).isEqualTo(30L);
+        pod.release(KEY, LOGIN, last);
+        assertThat(pod.blockedSeconds(KEY)).isZero();
+        assertThat(pod.hit(KEY, LOGIN).attempts()).isEqualTo(10);
+    }
 }

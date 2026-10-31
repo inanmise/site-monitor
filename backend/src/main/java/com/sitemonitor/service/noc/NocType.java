@@ -8,7 +8,7 @@ import java.util.Locale;
 import java.util.Set;
 
 /**
- * 7/24 bildirimi taşıyan on izleme türü — sözleşmedeki tür anahtarları ({@code SSL}, {@code PING}, …).
+ * 7/24 bildirimi taşıyan on bir izleme türü — sözleşmedeki tür anahtarları ({@code SSL}, {@code PING}, …).
  *
  * <p>Her tür, NOC akışının ihtiyaç duyduğu bütün eşlemeleri TEK yerde taşır: tablo, arayüz sekmesi (derin
  * bağlantı), etkinlik günlüğü türü, değişiklik geçmişi türü, denetim kaynağı ve yazma izni. Bir eşlemenin
@@ -36,7 +36,10 @@ public enum NocType {
     PORT("port_monitors", "port", ActivityLogService.PORT, MonitorHistoryService.PORT,
             "PORT_MONITOR", "monitoring.crud", "Port"),
     DOMAIN("domain_monitors", "domain", ActivityLogService.DOMAIN, MonitorHistoryService.DOMAIN,
-            "DOMAIN_MONITOR", "monitoring.crud", "Alan Adı");
+            "DOMAIN_MONITOR", "monitoring.crud", "Alan Adı"),
+    // Veritabanı sorgu izlemesi (11. tür, 2026-10-31).
+    DBQUERY("dbquery_monitors", "dbquery", ActivityLogService.DBQUERY, MonitorHistoryService.DBQUERY,
+            "DBQUERY_MONITOR", "monitoring.crud", "Veritabanı Sorgusu");
 
     public final String table;
     /** Arayüz sekmesi — {@code ?tab=<sekme>&monitor=<id>} (SSL: {@code &domain=}). */
@@ -82,6 +85,7 @@ public enum NocType {
         if (t.startsWith("PAGESPEED_")) return PAGESPEED;
         if (t.startsWith("PAGE_")) return PAGE;
         if (t.startsWith("SCRIPTED_")) return SCRIPTED;
+        if (t.startsWith("DBQUERY_")) return DBQUERY;
         if (t.startsWith("PORT_")) return PORT;
         if (t.startsWith("DNS_")) return DNS;
         if (t.equals(EscalationService.TYPE_KEYWORD) || t.startsWith("KEYWORD_")) return KEYWORD;

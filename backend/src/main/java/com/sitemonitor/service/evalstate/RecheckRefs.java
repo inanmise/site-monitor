@@ -14,7 +14,7 @@ import java.util.List;
  * <p>Kural, {@code SchedulerService.isStillMonitored}'ın önek dağıtımının AYNASIDIR (değişirse ikisi birlikte):
  * {@code ACCESSIBILITY → uptime} (envanter kaynaklı erişilebilirlik), {@code PORT_* → port}, {@code DNS_* → dns},
  * {@code KEYWORD* → keyword}, {@code PING_* → ping}, {@code HTTP_* | DOMAIN_EXPIRY → http},
- * {@code PAGESPEED_* → pagespeed} ({@code PAGE_}'den ÖNCE), {@code PAGE_* → page}, {@code SCRIPTED_* → scripted},
+ * {@code PAGESPEED_* → pagespeed} ({@code PAGE_}'den ÖNCE), {@code PAGE_* → page}, {@code SCRIPTED_* → scripted}, {@code DBQUERY_* → dbquery},
  * {@code DOMAINMON_* → domain}. Adlar {@code ManualEvalInbox.TYPE_*} ile aynı (+ {@link #UPTIME}) — KALICI (satırlarda
  * saklanır). Bilinmeyen tür → {@code null} (zincir 3-2'de sürdürülemez, doğrulama {@code descriptor} olarak sayar).
  *
@@ -31,7 +31,8 @@ public final class RecheckRefs {
     /** Bilinen tüm izleme türleri (eşlemenin değer kümesi). */
     public static final List<String> MONITOR_TYPES = List.of(UPTIME, ManualEvalInbox.TYPE_PORT, ManualEvalInbox.TYPE_DNS,
             ManualEvalInbox.TYPE_KEYWORD, ManualEvalInbox.TYPE_PING, ManualEvalInbox.TYPE_HTTP, ManualEvalInbox.TYPE_PAGE,
-            ManualEvalInbox.TYPE_PAGESPEED, ManualEvalInbox.TYPE_SCRIPTED, ManualEvalInbox.TYPE_DOMAIN);
+            ManualEvalInbox.TYPE_PAGESPEED, ManualEvalInbox.TYPE_SCRIPTED, ManualEvalInbox.TYPE_DOMAIN,
+            ManualEvalInbox.TYPE_DBQUERY);
 
     /**
      * Alarm türünün izleme türü ({@link #MONITOR_TYPES}'tan biri) ya da tanınmıyorsa {@code null}.
@@ -51,6 +52,7 @@ public final class RecheckRefs {
         if (t.startsWith("PAGE_")) return ManualEvalInbox.TYPE_PAGE;
         if (t.startsWith("SCRIPTED_")) return ManualEvalInbox.TYPE_SCRIPTED;
         if (t.startsWith("DOMAINMON_")) return ManualEvalInbox.TYPE_DOMAIN;
+        if (t.startsWith("DBQUERY_")) return ManualEvalInbox.TYPE_DBQUERY;
         return null;
     }
 }

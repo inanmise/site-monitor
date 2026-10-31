@@ -160,6 +160,20 @@ public class ClusterScheduleService {
         return new Claim(false, null);   // yarışı başka pod kazandı — değeri bir sonraki turda okunur
     }
 
+    /**
+     * Bir İZLEME anahtarının satırını siler (2026-10-31, veritabanı sorgu izlemesi O3): izlemenin zamanlaması değişince
+     * eski vade satırda kalırsa yeni planın ilk tetiği "henüz değil" görünür; silinen anahtarın bir sonraki
+     * {@link #claim}'i ilk görüştür (hemen sahiplenilir). Tur ({@value #ROUND_PREFIX}) ve kira ({@value #LEASE_PREFIX})
+     * anahtarları silinmez.
+     *
+     * @return satır silindi mi
+     * @throws org.springframework.dao.DataAccessException veritabanı hatasında
+     */
+    public boolean forget(String key) {
+        if (key == null || key.startsWith(ROUND_PREFIX) || key.startsWith(LEASE_PREFIX)) return false;
+        return jdbc.update(SQL_DELETE, key) > 0;
+    }
+
     // ── İki aşamalı tur (2026-10-21, çok pod R1-A, MP-15) ────────────────────────────────────────────────────────────
 
     /** Koşu tamamlandı: satır hâlâ bu koşunun bıraktığı değerdeyse (ve bu sahipteyse) sıradaki ızgara vadesine ilerler. */

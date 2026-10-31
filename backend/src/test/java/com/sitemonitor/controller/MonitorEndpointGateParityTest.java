@@ -36,7 +36,8 @@ class MonitorEndpointGateParityTest {
             Path.of("src/main/java/com/sitemonitor/controller/MonitoringController.java");
 
     private static final List<String> TYPES = List.of(
-            "Port", "Dns", "Keyword", "Http", "Ping", "Page", "PageSpeed", "Domain", "Scripted");
+            "Port", "Dns", "Keyword", "Http", "Ping", "Page", "PageSpeed", "Domain", "Scripted",
+            "DbQuery");   // veritabanı sorgu izlemesi (11. tür, 2026-10-31)
 
     /**
      * Fiil → BEKLENEN yetki kuralı.

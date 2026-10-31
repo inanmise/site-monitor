@@ -1,9 +1,303 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-31T01:47:54Z",
+  "generatedAt": "2026-10-31T07:08:32Z",
   "repo": "inanmise/site-monitor",
-  "count": 796,
+  "count": 797,
   "releases": [
+    {
+      "version": "20.176.0",
+      "tag": "v20.176.0",
+      "releasedAt": "2026-10-31T07:08:26Z",
+      "commit": "dfca747c09dd610a372318d90e608e1c2ab61cff",
+      "prevVersion": "20.175.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 7,
+        "fix": 20,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 5,
+        "other": 7
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "dfca747c",
+          "subject": "dbquery ikinci tur bağlandı — duraklat / devam zamanlayıcıyı sıfırlar; belge ve kılavuz ikinci turla eşitlendi"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "fba4dc6f",
+          "subject": "dbquery ikinci tur — teyit izin bekleyişi ve kanıtı, sabit değişim tabanı, CRON geri bakışı, mail kolon daraltması"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "c37b4ef0",
+          "subject": "deneme sınırı açıklaması elle kontrolü ve meşgul denemeyi anlatır"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "143464ed",
+          "subject": "dbquery ikinci tur — elle kontrol de saatlik sayaçta, meşgul deneme hakkı geri verilir, satır ucu boş yanıt nedeni"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "ea2bf44a",
+          "subject": "alarm satırları — satır yokken neden gösterilir (satırları maile ekle kapalı / izleme okunamadı), bilinmeyen \"satır yok\" sayılmaz"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "5636bb25",
+          "subject": "dbquery depo testleri birbirinden yalıtıldı — işlemsiz yazan test kendi satırlarını siler"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "f6f9ed3b",
+          "subject": "dbquery ön yüz bağlantıları — deneme sınırı ayarı etiketi, yeni kural notları, geçmişte teyit rozeti; kılavuz ve belge güncel"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "64a25e59",
+          "subject": "dbquery inceleme turu — CLAUDE.md ve RUNBOOK güncel davranışla eşitlendi"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "4d2813b0",
+          "subject": "dbquery inceleme düzeltmeleri bağlandı — zamanlama / tatil değişiminde plan sıfırlanır, teyit satırı ve atlanan çalışma alanları"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "1a04fbeb",
+          "subject": "ortak onay penceresinin düğmeleri dokunmatikte 40 px (dbquery e2e ölçümü)"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "c4bd0827",
+          "subject": "dbquery e2e genişletmesi (tatil penceresi, paylaşım kilidi, toplu not, klavyeyle kaydırma) + ayrıntı / kart testleri"
+        },
+        {
+          "type": "chore",
+          "scope": null,
+          "breaking": false,
+          "sha": "62120deb",
+          "subject": "dbquery deneme sınırı ayar satırı (application.properties)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "2de6af68",
+          "subject": "dbquery API / yetki / veri inceleme düzeltmeleri — paylaşım kilidi, küme çapında ad tekilliği ve deneme sınırı"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "6ed19ecb",
+          "subject": "dbquery çalışma zamanı inceleme düzeltmeleri — değişim tabanı, kodlu eşik hatası, ayrı havuz, zamanlama vadesi, bellek sınırı"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "ffa97d11",
+          "subject": "dbquery ön yüz inceleme düzeltmeleri — Esc / kirli taslak onayı, parolasız bağlantı, takım etki listesi, paylaşım kilidi, ayrı maliyet sırası, tatil günleri"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "7dde9266",
+          "subject": "dbquery CI düzeltmeleri — satır sonları LF, neden zinciri adı, şema yaması sayısı, test bağlam önbelleği 8, işlem bayrakları finally"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "6faa8d98",
+          "subject": "kullanıcı kılavuzu PDF'leri ve kök kopyaları yeniden üretildi (veritabanı sorgu izleme)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "5fd2b7f9",
+          "subject": "dbquery canlı deneme bulguları — geçmişte Hatalı / erişilebilirlik yalnız çalıştırılamayan sorgu, bağlantı yöneticisi izlemesi olan takımla açılır"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "984cc21e",
+          "subject": "CLAUDE.md — veritabanı sorgu izlemesi bölümü, tarama / değerlendirme sayıları; kılavuz menü cümlesi"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "98847322",
+          "subject": "veritabanı sorgu izleme güvenlik incelemesi düzeltmeleri — hata iletisinde değer, verify-full IP kilidi, XML yöntemi niteleyicisi"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "8540a2ed",
+          "subject": "notlar hedef sahibi kapısı veritabanı sorgu izlemesini de kapsar"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "96f24f8d",
+          "subject": "dbquery yapı taşları sunucu kodlarıyla eşitlendi — uzak nesne, ayrıştırma zaman aşımı, not kodları, zamanlama ve kural hataları"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "ac81f13d",
+          "subject": "veritabanı sorgu izlemesi sayfası — sayfa ve model testleri, uçtan uca tarama, çapraz kapılar; değişen alan kümeleri"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "7e5a855f",
+          "subject": "veritabanı sorgu izlemesi sayfası — kart, bölümlü form, ayrıntı ve çapraz ön yüz dokunma noktaları"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "51fc4f64",
+          "subject": "veritabanı bağlantısı — kayıtlı parola değişen hedefe gönderilmez"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "6c396116",
+          "subject": "kullanıcı kılavuzu — Veritabanı Sorgu İzleme bölümü (TR + EN) ve izleme türleri tablosu"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "7f2a6bf6",
+          "subject": "RUNBOOK — veritabanı sorgu izleme bölümü, anahtar döndürme konumu, OTel JDBC notu"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "d8ec8e20",
+          "subject": "dbquery birleştirme — 7/24 değişiklik geçmişi türü, zamanlama değişince yeniden planlama, silmede alarm satırı belleği, takım belgeleri metni"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "1153d512",
+          "subject": "veritabanı sorgu izlemesi tarama, alarm satırı ve posta testleri — DB hataları toplu kesinti sayılmaz"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "eca536bb",
+          "subject": "veritabanı sorgu izlemesi taraması, alarm ve bildirim katmanı — lider-yalnız tarama, alarm satırları, ayrıntılı posta, katalog ve pano"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "a09ab6ea",
+          "subject": "tatil takvimi kolonu holiday_date — day H2'de ayrılmış sözcük; depo testi geri eklendi"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "6f1ae6d0",
+          "subject": "veritabanı sorgu izlemesi API katmanı — izleme uçları, kayıtlı bağlantılar, sorgu şablonları, tatil takvimi"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "6251d3f6",
+          "subject": "dbquery yapı taşları — menü simgeleri, hücre genişliği iç kutuda, yükleniyor göstergesi, lint uyarıları"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "3b726a35",
+          "subject": "veritabanı sorgu izlemesi yapı taşları — SQL düzenleyici, kural oluşturucu, zamanlama, bağlantılar, şablonlar, alarm satırları, tatil takvimi"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "078adcf2",
+          "subject": "veritabanı sorgu denetleyicisi — iç hata alarm açmaz (SKIPPED / DB_INTERNAL), ağ sınıfı yardımcısı ve hata kodu sabitleri"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "671cdd21",
+          "subject": "veritabanı sorgu güvenlik denetimi — atlatma denemeleri, gerçekçi sorgular, süre kapısı; Oracle parantezsiz paket çağrısı ve eski biçim ipucu konumu"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "4ec06c5c",
+          "subject": "veritabanı sorgu izlemesi motoru — sorgu güvenlik denetimi, kurallar, değerlendirici, zamanlama, JDBC çalıştırıcı"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "8451b2e9",
+          "subject": "veritabanı sorgu izlemesi iskeleti — ön yüz API ailesi ve yapı taşı sözleşmesi"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "bf19abe0",
+          "subject": "veritabanı sorgu izlemesi iskeleti — veri modeli, depolar, motor imzaları, sürücüler"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.175.0",
       "tag": "v20.175.0",

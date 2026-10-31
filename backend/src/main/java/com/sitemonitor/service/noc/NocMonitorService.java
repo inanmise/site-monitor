@@ -52,9 +52,17 @@ public class NocMonitorService {
         this.directory = directory;
     }
 
+    /** Veritabanı sorgu izlemesi (11. tür, 2026-10-31) — alan enjeksiyonu (yapıcıyı büyütüp elle kurulan testleri bozmasın). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setDbQueryRepo(com.sitemonitor.repository.DbQueryMonitorRepository dbQuery) {
+        if (dbQuery != null) repos.put(NocType.DBQUERY, dbQuery);
+    }
+
     /** Canlı izleme varlığı ya da null (yok / silinmiş — silinmiş DNS/Port ve çöp kutusundaki envanter dâhil). */
     public NocTarget load(NocType type, long id) {
-        Object e = repos.get(type).findById(id).orElse(null);
+        JpaRepository<?, Long> repo = repos.get(type);
+        if (repo == null) return null;   // türün deposu bu bağlamda yok (elle kurulan test)
+        Object e = repo.findById(id).orElse(null);
         if (!(e instanceof NocTarget t)) return null;
         if (deletedAt(e) != null) return null;
         return t;

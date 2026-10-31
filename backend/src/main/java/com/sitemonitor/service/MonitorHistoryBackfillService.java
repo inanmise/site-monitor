@@ -50,7 +50,8 @@ public class MonitorHistoryBackfillService {
      * <p>Sürüm ARTTIRMA kuralı: {@link #KIND_BY_RESOURCE} ya da {@link #EVENT_BY_ACTION}
      * genişlediğinde artır. Yalnız kod düzeltmesi yapıldıysa artırma — gereksiz tam tarama olur.
      *
-     * <p>v1: ilk sürüm (8 tür) · v2: PAGESPEED eklendi.
+     * <p>v1: ilk sürüm (8 tür) · v2: PAGESPEED eklendi. DBQUERY (2026-10-31) kapsama girdi ama sürüm ARTIRILMADI: tür
+     * yeni — özellik ÖNCESİ denetim satırı yok, ikinci bir tam tarama boşa olurdu.
      */
     private static final int BACKFILL_VERSION = 2;
 
@@ -64,7 +65,8 @@ public class MonitorHistoryBackfillService {
             "SCRIPTED_MONITOR", MonitorHistoryService.SCRIPTED,
             "DOMAIN_MONITOR", MonitorHistoryService.DOMAIN,
             "PING_MONITOR", MonitorHistoryService.PING,
-            "PAGESPEED_MONITOR", MonitorHistoryService.PAGESPEED);
+            "PAGESPEED_MONITOR", MonitorHistoryService.PAGESPEED,
+            "DBQUERY_MONITOR", MonitorHistoryService.DBQUERY);
 
     /** Denetim olayı → geçmiş olayı. */
     private static final Map<String, String> EVENT_BY_ACTION = Map.of(
@@ -82,7 +84,8 @@ public class MonitorHistoryBackfillService {
             MonitorHistoryService.SCRIPTED, "scripted_monitors",
             MonitorHistoryService.DOMAIN, "domain_monitors",
             MonitorHistoryService.PING, "ping_monitors",
-            MonitorHistoryService.PAGESPEED, "pagespeed_monitors");
+            MonitorHistoryService.PAGESPEED, "pagespeed_monitors",
+            MonitorHistoryService.DBQUERY, "dbquery_monitors");
 
     private final AuditLogRepository auditRepo;
     private final MonitorChangeLogRepository changeRepo;

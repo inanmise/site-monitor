@@ -514,6 +514,7 @@ class SchedulerClusterScheduleTest {
         s.runCriticalDomainChecks();
         s.runPingChecks();
         s.runDnsChecks();
+        s.runDbQueryChecks();   // 11. tür (2026-10-31) — 15. tarama girişi
     }
 
     @Test

@@ -113,6 +113,41 @@ class MonitoringOverviewServiceTest {
 
     @Test
     @SuppressWarnings("unchecked")
+    @DisplayName("Veritabanı sorgusu (O4 / O5): uzun süredir atlanan izleme 'gecikmiş'; açık sorgu HATASI alarmı satırda işaretli")
+    void dbQuerySkippedIsStaleAndQueryFailureFlag() {
+        com.sitemonitor.repository.DbQueryMonitorRepository dqm = mock(com.sitemonitor.repository.DbQueryMonitorRepository.class);
+        com.sitemonitor.repository.DbQueryCheckRepository dqc = mock(com.sitemonitor.repository.DbQueryCheckRepository.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(svc, "dbQueryMonitorRepo", dqm);
+        org.springframework.test.util.ReflectionTestUtils.setField(svc, "dbQueryCheckRepo", dqc);
+        com.sitemonitor.model.DbQueryMonitor skippedM = new com.sitemonitor.model.DbQueryMonitor();
+        skippedM.setId(1L); skippedM.setName("Atlanan"); skippedM.setTeamId(14L); skippedM.setActive(true);
+        skippedM.setNextRunAt(ISO.format(Instant.now().plus(1, ChronoUnit.HOURS)));   // plan ileride — eski kural "güncel" derdi
+        skippedM.setSkippedRuns(25); skippedM.setSkippedSince(ago(30));
+        com.sitemonitor.model.DbQueryMonitor failing = new com.sitemonitor.model.DbQueryMonitor();
+        failing.setId(2L); failing.setName("Hatalı"); failing.setTeamId(14L); failing.setActive(true);
+        failing.setNextRunAt(ISO.format(Instant.now().plus(1, ChronoUnit.HOURS)));
+        when(dqm.findAllByOrderByNameAsc()).thenReturn(List.of(skippedM, failing));
+        com.sitemonitor.model.DbQueryCheck c1 = new com.sitemonitor.model.DbQueryCheck();
+        c1.setMonitorId(1L); c1.setOk(true); c1.setCheckedAt(ago(60)); c1.setStatus("OK");
+        com.sitemonitor.model.DbQueryCheck c2 = new com.sitemonitor.model.DbQueryCheck();
+        c2.setMonitorId(2L); c2.setOk(true); c2.setCheckedAt(ago(1)); c2.setStatus("OK");
+        when(dqc.findLatestPerMonitor()).thenReturn(List.of(c1, c2));
+        when(dqc.weeklyStatsByMonitor(anyCollection(), anyString(), anyString())).thenReturn(List.of());
+        AlertEvent fail = new AlertEvent(); fail.setDomain("Hatalı"); fail.setAlertType("DBQUERY_FAIL"); fail.setAlertLevel("HIGH"); fail.setResolved(false);
+        when(alertEventRepo.findAllOpenOrderBySeverity()).thenReturn(List.of(fail));
+
+        Map<String, Object> out = svc.build(team -> true, false, 24);
+        List<Map<String, Object>> rows = (List<Map<String, Object>>) out.get("monitors");
+        Map<String, Object> skipped = rows.stream().filter(r -> "Atlanan".equals(r.get("target"))).findFirst().orElseThrow();
+        assertThat(skipped).containsEntry("status", "stale").containsEntry("skipped_runs", 25)
+                .containsEntry("open_query_failure", false);
+        assertThat(skipped.get("skipped_since")).isNotNull();
+        Map<String, Object> failRow = rows.stream().filter(r -> "Hatalı".equals(r.get("target"))).findFirst().orElseThrow();
+        assertThat(failRow).containsEntry("status", "down").containsEntry("open_query_failure", true).containsEntry("skipped_runs", 0);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
     @DisplayName("Envanteri PASİF host'un envanter türevi Port/DNS izlemesi 'duraklatılmış' + inventory_inactive (tarama atlar); standalone ve aktif envanterli satır gecikmiş kalır")
     void inventoryInactivePortIsPausedNotStale() {
         com.sitemonitor.repository.CertificateInventoryRepository inventoryRepo =

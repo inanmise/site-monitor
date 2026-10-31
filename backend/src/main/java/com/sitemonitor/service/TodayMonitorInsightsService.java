@@ -89,7 +89,8 @@ public class TodayMonitorInsightsService {
     static final Set<String> HEALTH_CRITICAL_KEYS = Set.of("revocation", "trust", "sanMatch", "chain");
     private static final ZoneId IST = ZoneId.of("Europe/Istanbul");
     /** Yavaşlama için whois gecikmesi anlamsız → DOMAIN dışarıda. */
-    private static final Set<String> SLOW_TYPES = Set.of("HTTP", "PORT", "PING", "DNS", "KEYWORD", "PAGE", "PAGESPEED", "SCRIPTED");
+    private static final Set<String> SLOW_TYPES = Set.of("HTTP", "PORT", "PING", "DNS", "KEYWORD", "PAGE", "PAGESPEED", "SCRIPTED",
+            "DBQUERY");
 
     private static final DateTimeFormatter ISO = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
 
@@ -109,6 +110,9 @@ public class TodayMonitorInsightsService {
     private final KeywordMonitorRepository keywordRepo;
     private final PageMonitorRepository pageRepo;
     private final PageSpeedMonitorRepository pageSpeedRepo;
+    /** Veritabanı sorgu izlemesi (11. tür, 2026-10-31) — alan enjeksiyonu, isteğe bağlı (yapıcıyla kurulan testler bozulmasın). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.repository.DbQueryMonitorRepository dbQueryRepo;
     private final ScriptedMonitorRepository scriptedRepo;
     private final DomainMonitorRepository domainRepo;
     private final MaintenanceWindowRepository maintenanceRepo;
@@ -172,6 +176,11 @@ public class TodayMonitorInsightsService {
         List<Supplier<List<? extends MonitorSchedule>>> sources = List.of(
                 httpRepo::findAll, portRepo::findAll, pingRepo::findAll, dnsRepo::findAll, keywordRepo::findAll,
                 pageRepo::findAll, pageSpeedRepo::findAll, scriptedRepo::findAll, domainRepo::findAll);
+        if (dbQueryRepo != null) {
+            List<Supplier<List<? extends MonitorSchedule>>> all = new ArrayList<>(sources);
+            all.add(dbQueryRepo::findAll);
+            sources = all;
+        }
         for (Supplier<List<? extends MonitorSchedule>> src : sources) {
             // SİLİNMİŞ DNS/Port standalone satır (deleted_at, 2026-09-27) hiçbir kartta yoktur — eskiden silme =
             // duraklatma olduğu için silinen izlemeler "Duraklatılmış" kartında görünüyordu.
@@ -295,6 +304,19 @@ public class TodayMonitorInsightsService {
             int interval = m.getIntervalSeconds() != null && m.getIntervalSeconds() > 0 ? m.getIntervalSeconds() : STALE_FLOOR_SEC;
             long thresholdSec = Math.max((long) interval * STALE_FACTOR, STALE_FLOOR_SEC);
             String lastAt = last.get(key(m.scheduleType(), m.getId()));
+            // Veritabanı sorgusu (2026-10-31): vade kendi zamanlamasından (cron / pencere / tatil) — aralığın katı kuralı
+            // gece / hafta sonu bekleyen izlemeyi "bayat" sayardı. Planlı çalışma (next_run_at) + pay geçmediyse bayat değil.
+            if (m instanceof com.sitemonitor.model.DbQueryMonitor dq) {
+                if (!MonitoringOverviewService.isDbQueryStale(dq, now)) continue;
+                Instant ref = lastAt != null ? parse(lastAt) : parse(dq.getNextRunAt());
+                if (ref == null) continue;
+                Map<String, Object> row = row(m);
+                row.put("last_check", lastAt); row.put("age_min", Duration.between(ref, now).getSeconds() / 60);
+                row.put("never", lastAt == null); row.put("interval_sec", interval);
+                row.put("expected_min", MonitoringOverviewService.DBQUERY_STALE_GRACE_SECONDS / 60);
+                items.add(row);
+                continue;
+            }
             Instant created = parse(m.getCreatedAt());
             // Pencerede kontrol yok: pencereden ÖNCE yaratılmışsa "7+ gündür kontrol yok" (yaş pencereyle sınırlı —
             // tam tarih için tüm tabloyu taramayız); pencerede yaratılmışsa yaratılış anından ölç ("hiç kontrol edilmedi").

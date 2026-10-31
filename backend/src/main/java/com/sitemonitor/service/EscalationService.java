@@ -104,6 +104,20 @@ public class EscalationService {
     private RunbookNoteService runbookNotes;
 
     /**
+     * Veritabanı sorgu izlemesi (11. tür, 2026-10-31): alarm anındaki sonuç satırları ({@code dbquery_alert_rows}) ve
+     * alarm / çözüm e-postasının canlı zenginleştirmesi (amaç, bağlantı, sorgu, kural sonuçları). Alan enjeksiyonu +
+     * isteğe bağlı: elle kurulan testlerde yoksa sorgu alarmı e-postası bağlamdaki bilgilerle (satırsız) gider.
+     */
+    @Autowired(required = false)
+    private com.sitemonitor.service.dbquery.DbQueryAlertRowsService dbQueryAlertRows;
+    @Autowired(required = false)
+    private com.sitemonitor.repository.DbQueryMonitorRepository dbQueryMonitorRepo;
+    @Autowired(required = false)
+    private com.sitemonitor.repository.DbConnectionProfileRepository dbConnectionProfileRepo;
+    @Autowired(required = false)
+    private com.sitemonitor.repository.DbQueryCheckRepository dbQueryCheckRepo;
+
+    /**
      * Takım sessiz saatleri (2026-10-01, onaylı öneri 15) — opt-in erteleme kararı. Alan enjeksiyonu + isteğe bağlı (NOC
      * deseni): testler servisi elle kuruyor; yokken (null) ya da hiçbir takımda pencere tanımlı değilken gönderim yolu
      * bugünküyle bayt bayt aynıdır (karar bellek-içi önbellekten — gönderim başına sorgu yok).
@@ -380,6 +394,14 @@ public class EscalationService {
     public static boolean isPageSpeed(String t) {
         return TYPE_PAGESPEED_DOWN.equals(t) || TYPE_PAGESPEED_SLOW.equals(t);
     }
+    /** Veritabanı sorgu izlemesi (11. tür, 2026-10-31): FAIL = sorgu çalıştırılamadı (kesinti), THRESHOLD = kural ihlali
+     *  (iş alarmı, kesinti değil), SLOW = sorgu süresi eşiği. Adlar kalıcıdır. */
+    public static final String TYPE_DBQUERY_FAIL = "DBQUERY_FAIL";
+    public static final String TYPE_DBQUERY_THRESHOLD = "DBQUERY_THRESHOLD";
+    public static final String TYPE_DBQUERY_SLOW = "DBQUERY_SLOW";
+    public static boolean isDbQuery(String t) {
+        return TYPE_DBQUERY_FAIL.equals(t) || TYPE_DBQUERY_THRESHOLD.equals(t) || TYPE_DBQUERY_SLOW.equals(t);
+    }
 
     /** İzleme kaynaklı alarm tipleri — kadanslarının sahibi ilgili sweep'lerdir;
      *  cert sweep'inin auto-resolve'u ve startup catch-up bunlara dokunmaz. */
@@ -391,7 +413,8 @@ public class EscalationService {
                    TYPE_DOMAINMON_TRANSFER_LOCK, TYPE_DOMAINMON_BLACKLIST,
                    TYPE_KEYWORD_SLOW, TYPE_KEYWORD_SSL, TYPE_KEYWORD_DOMAIN_EXPIRY, TYPE_PORT_SLOW, TYPE_PING_SLOW,
                    TYPE_PAGE_DOWN, TYPE_PAGE_INTEGRITY, TYPE_SCRIPTED_FAIL, TYPE_SCRIPTED_SLOW,
-                   TYPE_PAGESPEED_DOWN, TYPE_PAGESPEED_SLOW);
+                   TYPE_PAGESPEED_DOWN, TYPE_PAGESPEED_SLOW,
+                   TYPE_DBQUERY_FAIL, TYPE_DBQUERY_THRESHOLD, TYPE_DBQUERY_SLOW);
 
     /** İzleme türlerinden süre-bitişi ailesi ("N gün kaldı" anlamlı) — {@link #isDurationAlert}. */
     public static final Set<String> EXPIRY_MONITORING_TYPES =
@@ -414,7 +437,10 @@ public class EscalationService {
     public static final Set<String> DOWN_ALERT_TYPES =
             Set.of(TYPE_ACCESSIBILITY, TYPE_HTTP_DOWN, TYPE_PORT_DOWN, TYPE_PING_DOWN, TYPE_DNS_FAILURE, TYPE_KEYWORD,
                    // PAGESPEED_SLOW bilinçli DIŞARIDA: yavaşlık kesinti değildir, storm sayımına girmemeli.
-                   TYPE_PAGE_DOWN, TYPE_SCRIPTED_FAIL, TYPE_PAGESPEED_DOWN);
+                   TYPE_PAGE_DOWN, TYPE_SCRIPTED_FAIL, TYPE_PAGESPEED_DOWN,
+                   // DBQUERY_FAIL (sorgu çalıştırılamadı) kesintidir; DBQUERY_THRESHOLD (iş kuralı ihlali) ve DBQUERY_SLOW
+                   // bilinçli DIŞARIDA — fırtına üyesi olmazlar.
+                   TYPE_DBQUERY_FAIL);
 
     /**
      * Sertifika sweep'inin YALNIZ KAPANIŞ yolu (prod 2026-09-29, K1'in sertifika eşleniği).
@@ -1778,6 +1804,24 @@ public class EscalationService {
         return orphans.size();
     }
 
+    /** Öksüz veritabanı sorgu alarmı temizliği (2026-10-31) — hiçbir sorgu izlemesine karşılık gelmeyen açık DBQUERY_*
+     *  alarmlarını sessizce kapatır (ad değişimi / silme sonrası). Kimlik = izleme adı (k6 emsali). */
+    public int resolveOrphanedDbQueryAlerts(Set<String> existingNames) {
+        if (existingNames == null) return 0;
+        Set<String> orphans = new HashSet<>();
+        for (AlertEvent e : alertEventRepo.findAllOpenOrderBySeverity()) {
+            if (!isDbQuery(e.getAlertType())) continue;
+            if (e.getDomain() == null || existingNames.contains(e.getDomain())) continue;
+            orphans.add(e.getDomain());
+        }
+        for (String d : orphans) {
+            resolveOpenAlertsSilently(d, Set.of(TYPE_DBQUERY_FAIL, TYPE_DBQUERY_THRESHOLD, TYPE_DBQUERY_SLOW),
+                    "Sistem (öksüz alarm — eşleşen veritabanı sorgu izlemesi yok)");
+        }
+        if (!orphans.isEmpty()) log.info("🧹 Öksüz veritabanı sorgu alarmı temizlendi: {} izleme {}", orphans.size(), orphans);
+        return orphans.size();
+    }
+
     /** Öksüz Domain-izleme alarmı temizliği — hiçbir domain monitörüne karşılık gelmeyen açık
      *  DOMAINMON_* alarmlarını sessizce kapatır (domain rename/silme sonrası). Kimlik = kayıtlı domain. */
     public int resolveOrphanedDomainMonAlerts(Set<String> existingDomains) {
@@ -2445,6 +2489,31 @@ public class EscalationService {
                         (detail != null ? " — " + detail : "") + ". " +
                         "Ardışık doğrulama denemeleri başarısız oldu. Test yeniden geçtiğinde alarm otomatik kapanır.";
             }
+            case TYPE_DBQUERY_FAIL -> {
+                Object reason = com.sitemonitor.service.dbquery.DbQueryAlarmText.failureLabel(
+                        ctx.get("failure_reason") == null ? null : String.valueOf(ctx.get("failure_reason")));
+                Object err = ctx.get("error");
+                Object conn = ctx.get("profile_name");
+                return "KRİTİK: " + domain + " veritabanı sorgusu çalıştırılamadı" +
+                        (conn != null ? " (bağlantı " + conn + ")" : "") +
+                        (reason != null ? " — " + reason : "") + (err != null ? ": " + err : "") + ". " +
+                        "Ardışık doğrulama denemeleri başarısız oldu. Sorgu yeniden çalıştığında alarm otomatik kapanacaktır.";
+            }
+            case TYPE_DBQUERY_THRESHOLD -> {
+                Object summary = ctx.get("rule_summary");
+                Object purpose = ctx.get("purpose");
+                return "YÜKSEK: " + domain + " veritabanı sorgusunun sonucu tanımlı kuralı ihlal etti" +
+                        (summary != null ? " — " + summary : "") + ". " +
+                        (purpose != null ? "Alarmın amacı: " + purpose + ". " : "") +
+                        "Bu bir kesinti değildir; kural yeniden sağlandığında alarm otomatik kapanır.";
+            }
+            case TYPE_DBQUERY_SLOW -> {
+                Object ms = ctx.get("duration_ms");
+                Object th = ctx.get("threshold_ms");
+                return "YÜKSEK: " + domain + " veritabanı sorgusu çalışıyor ANCAK YAVAŞ" +
+                        (ms != null ? " — " + ms + " ms" : "") + (th != null ? " (eşik " + th + " ms)" : "") + ". " +
+                        "Sorgu süresi eşiğin altına indiğinde alarm otomatik kapanır.";
+            }
             case TYPE_DOMAIN_EXPIRY -> {
                 Object dom = ctx.getOrDefault("domain", domain);
                 Object days = ctx.get("domain_days_remaining");
@@ -2786,6 +2855,8 @@ public class EscalationService {
                         }
                     } catch (Exception ignore) { /* zenginleştirilemezse mail yine sade hâliyle gönderilir */ }
                 }
+                // Veritabanı sorgu çözümünde CANLI güncel değerler (2026-10-31): son çalıştırmanın kural sonuçları.
+                if (isDbQuery(event.getAlertType())) certContext = withDbQueryResolvedValues(certContext);
             } else if (MONITORING_ALERT_TYPES.contains(event.getAlertType())) {
                 certContext = null;
             } else {
@@ -3159,6 +3230,9 @@ public class EscalationService {
         Integer days = freshDays != null ? freshDays : event.getDaysRemaining();
 
         String subject = escalationStepSubject(delayMinutes, level, type, mailCtx, domain);
+        DbQueryMailParts dbqStep = isDbQuery(type) ? dbQueryMailParts(event.getId(), type, level, mailCtx) : null;
+        if (dbqStep != null && dbqStep.subject() != null)
+            subject = "[ESKALASYON · " + delayMinutes + " dk onaysız] " + dbqStep.subject();
         String body = event.getMessage() != null && !event.getMessage().isBlank()
                 ? event.getMessage() : buildMessage(domain, type, level, days);
         String message = escalationStepNote(delayMinutes) + "\n\n" + body;
@@ -3176,11 +3250,13 @@ public class EscalationService {
         } else if (email.isEmpty()) {
             emailStatus = "SKIPPED: alıcı yok";
         } else {
+            Map<String, Object> stepSendCtx = dbqStep != null ? dbqStep.apply(mailCtx, true) : mailCtx;
+            Map<String, Object> stepLogCtx = dbqStep != null ? dbqStep.apply(mailCtx, false) : mailCtx;
             try {
-                htmlBody = emailService.buildAlertEmailHtml(subject, message, domain, level, type, days, mailCtx);
+                htmlBody = emailService.buildAlertEmailHtml(subject, message, domain, level, type, days, stepLogCtx);
             } catch (Exception ignore) { /* günlük gövdesi düz metin kalır */ }
             try {
-                emailStatus = emailService.sendAlert(new String[]{email}, subject, message, domain, level, type, days, mailCtx);
+                emailStatus = emailService.sendAlert(new String[]{email}, subject, message, domain, level, type, days, stepSendCtx);
             } catch (Exception e) {
                 emailStatus = "FAILED: " + e.getMessage();
             }
@@ -3281,6 +3357,177 @@ public class EscalationService {
         return sb.append(" — yenilemek için yeni sürümü yükleyin").toString();
     }
 
+    // ── Veritabanı sorgu izlemesi (11. tür, 2026-10-31) — alarm postası parçaları ─────────────────────────────────────
+
+    /** Bağlamda bu anahtar varsa bağlam TAZE tarama bağlamıdır (alarm anlık görüntüsü değil — whitelist'te yok). */
+    static final String CTX_DBQUERY_FRESH = "dbquery_checked_at";
+    /** Postadaki sorgu metninin üst sınırı. */
+    static final int DBQUERY_MAIL_SQL_MAX = 4000;
+
+    /**
+     * Sorgu alarmı postasının parçaları: {@code extra} her iki kopyaya (gönderim + günlük) girer — canlı izleme / bağlantı
+     * bilgisi ve (bağlam anlık görüntüyse) son çalıştırmanın değerleri; {@code rows} YALNIZ gönderilen postaya girer;
+     * {@code subject} izlemenin özel konusu (null = standart konu).
+     */
+    record DbQueryMailParts(Map<String, Object> extra,
+                            com.sitemonitor.service.dbquery.DbQueryAlertRowsService.Rows rows, String subject) {
+        /** {@code withRows=false}: günlük / önizleme kopyası — satırlar yerine yalnız satır sayısı. */
+        Map<String, Object> apply(Map<String, Object> base, boolean withRows) {
+            Map<String, Object> out = new LinkedHashMap<>();
+            if (base != null) out.putAll(base);
+            out.putAll(extra);
+            if (rows != null && !rows.isEmpty()) {
+                if (withRows) out.put(com.sitemonitor.service.dbquery.DbQueryAlertRowsService.CTX_ROWS, rows);
+                else out.put(com.sitemonitor.service.dbquery.DbQueryAlertRowsService.CTX_ROWS_WITHHELD,
+                        rows.rows() == null ? 0 : rows.rows().size());
+            }
+            return out;
+        }
+    }
+
+    /**
+     * Sorgu alarmı postasının parçalarını kurar: izleme + bağlantı (canlı), bağlam anlık görüntüyse son çalıştırma, alarm
+     * anındaki satırlar (açılış / yeniden bildirim anında {@code dbquery_alert_rows}'a yazılır — eşik ve yavaşlık
+     * alarmında; sorgu hatasında satır yoktur) ve özel konu. Okumalar indeksli tekil (alarm postası düşük hacimli); her
+     * hata yutulur — posta eksik bilgiyle yine gider.
+     */
+    DbQueryMailParts dbQueryMailParts(Long alertEventId, String alertType, String level, Map<String, Object> ctx) {
+        Map<String, Object> extra = new LinkedHashMap<>();
+        Long monitorId = ctx != null && ctx.get("monitor_id") instanceof Number n ? n.longValue() : null;
+        com.sitemonitor.model.DbQueryMonitor m = null;
+        com.sitemonitor.model.DbConnectionProfile p = null;
+        try {
+            if (monitorId != null && dbQueryMonitorRepo != null) m = dbQueryMonitorRepo.findById(monitorId).orElse(null);
+            if (m != null && m.getProfileId() != null && dbConnectionProfileRepo != null)
+                p = dbConnectionProfileRepo.findById(m.getProfileId()).orElse(null);
+        } catch (Exception e) {
+            log.debug("Sorgu alarmı postası izleme/bağlantı okunamadı ({}): {}", monitorId, e.toString());
+        }
+        if (m != null) {
+            if (m.getName() != null) extra.put("monitor_name", m.getName());
+            if (m.getPurpose() != null && !m.getPurpose().isBlank()) extra.put("purpose", m.getPurpose().trim());
+            if (m.getSqlText() != null && !m.getSqlText().isBlank()) {
+                String sql = m.getSqlText().strip();
+                extra.put("dbquery_sql", sql.length() > DBQUERY_MAIL_SQL_MAX ? sql.substring(0, DBQUERY_MAIL_SQL_MAX) + "…" : sql);
+            }
+            if (m.getSlowQueryMs() != null && ctx != null && ctx.get("threshold_ms") == null) extra.put("threshold_ms", m.getSlowQueryMs());
+            if (Boolean.FALSE.equals(m.getMailIncludeRows())) extra.put("dbquery_rows_off", true);
+        }
+        if (p != null) {
+            if (p.getName() != null) extra.put("profile_name", p.getName());
+            if (p.getDbType() != null) extra.put("db_type", p.getDbType());
+            String target = (p.getHost() != null ? p.getHost() : "") + (p.getPort() != null ? ":" + p.getPort() : "")
+                    + (p.getDatabaseName() != null && !p.getDatabaseName().isBlank() ? "/" + p.getDatabaseName() : "");
+            if (!target.isBlank()) extra.put("dbquery_target", target);
+        }
+        boolean fresh = ctx != null && ctx.get(CTX_DBQUERY_FRESH) != null;
+        if (!fresh && monitorId != null && dbQueryCheckRepo != null) {
+            // Anlık görüntü (yeniden uyarı / elle gönderim / eskalasyon adımı): değerler SON çalıştırmadan — satırlarla tutarlı.
+            try {
+                dbQueryCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(monitorId).ifPresent(c -> putDbQueryCheck(extra, c, ""));
+            } catch (Exception e) {
+                log.debug("Sorgu alarmı postası son çalıştırma okunamadı ({}): {}", monitorId, e.toString());
+            }
+        }
+        com.sitemonitor.service.dbquery.DbQueryAlertRowsService.Rows rows = null;
+        boolean rowsWanted = m == null || !Boolean.FALSE.equals(m.getMailIncludeRows());
+        if (dbQueryAlertRows != null && rowsWanted && !TYPE_DBQUERY_FAIL.equals(alertType)) {
+            rows = (alertEventId != null ? dbQueryAlertRows.capture(alertEventId, monitorId)
+                    : dbQueryAlertRows.latest(monitorId)).orElse(null);
+        }
+        String subject = null;
+        if (m != null && com.sitemonitor.service.dbquery.DbQueryMailSubject.hasTemplate(m.getMailSubjectTemplate())) {
+            Map<String, Object> view = new LinkedHashMap<>();
+            if (ctx != null) view.putAll(ctx);
+            view.putAll(extra);
+            subject = com.sitemonitor.service.dbquery.DbQueryMailSubject.render(m.getMailSubjectTemplate(),
+                    dbQuerySubjectValues(view, level));
+        }
+        return new DbQueryMailParts(extra, rows, subject);
+    }
+
+    /** Konu yer tutucu değerleri ({@link com.sitemonitor.service.dbquery.DbQueryMailSubject}). */
+    static Map<String, String> dbQuerySubjectValues(Map<String, Object> c, String level) {
+        Map<String, String> v = new LinkedHashMap<>();
+        v.put("name", str(c.get("monitor_name")));
+        String purpose = str(c.get("purpose"));
+        v.put("purpose", purpose != null && purpose.length() > 120 ? purpose.substring(0, 119) + "…" : purpose);
+        String rows = str(c.get("row_count"));
+        if (rows != null && Boolean.TRUE.equals(c.get("row_count_capped"))) rows = "≥ " + rows;
+        v.put("rows", rows);
+        v.put("value", numberText(c.get("metric_value")));
+        v.put("level", levelWordTr(level));
+        v.put("connection", str(c.get("profile_name")));
+        v.put("time", formatIstanbulLong(str(c.get("checked_at"))));
+        return v;
+    }
+
+    /** Bir kontrol satırının değerlerini bağlama koyar ({@code prefix} çözüm anında "resolved_"). */
+    private static void putDbQueryCheck(Map<String, Object> out, com.sitemonitor.model.DbQueryCheck c, String prefix) {
+        if (c.getStatus() != null) out.put(prefix + "dbquery_status", c.getStatus());
+        if (c.getBreachLevel() != null) out.put(prefix + "breach_level", c.getBreachLevel());
+        if (c.getDurationMs() != null) out.put(prefix + "duration_ms", c.getDurationMs());
+        if (c.getRowCount() != null) out.put(prefix + "row_count", c.getRowCount());
+        if (c.getRowCountCapped() != null) out.put(prefix + "row_count_capped", c.getRowCountCapped());
+        if (c.getMetricValue() != null) out.put(prefix + "metric_value", c.getMetricValue());
+        if (c.getCheckedAt() != null) out.put(prefix + "checked_at", c.getCheckedAt());
+        List<Map<String, Object>> rr = com.sitemonitor.service.dbquery.DbQueryAlarmText.parse(c.getRuleResultsJson());
+        if (!rr.isEmpty()) {
+            if (prefix.isEmpty()) out.put("rule_results", rr);
+            out.put(prefix + "rule_summary", com.sitemonitor.service.dbquery.DbQueryAlarmText.breachSummary(rr));
+        }
+        if (prefix.isEmpty()) {
+            if (c.getErrorMessage() != null) out.put("error", c.getErrorMessage());
+            if (c.getFailureReason() != null) out.put("failure_reason", c.getFailureReason());
+        }
+    }
+
+    /** Çözüm postasının "güncel değerler" bloğu — son çalıştırma, {@code resolved_*} anahtarlarıyla (alarm anı değil). */
+    private Map<String, Object> withDbQueryResolvedValues(Map<String, Object> ctx) {
+        if (ctx == null || dbQueryCheckRepo == null) return ctx;
+        Long monitorId = ctx.get("monitor_id") instanceof Number n ? n.longValue() : null;
+        if (monitorId == null) return ctx;
+        try {
+            var latest = dbQueryCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(monitorId).orElse(null);
+            if (latest == null) return ctx;
+            Map<String, Object> out = new LinkedHashMap<>(ctx);
+            putDbQueryCheck(out, latest, "resolved_");
+            return out;
+        } catch (Exception e) {
+            return ctx;   // zenginleştirilemezse posta sade hâliyle gider
+        }
+    }
+
+    private static String str(Object o) {
+        if (o == null) return null;
+        String s = String.valueOf(o).trim();
+        return s.isEmpty() || "null".equals(s) ? null : s;
+    }
+
+    /** Sayı → okunur metin (tam sayıda ".0" yok); sayı değilse metin olduğu gibi. */
+    static String numberText(Object o) {
+        if (o == null) return null;
+        if (o instanceof Number n) {
+            double d = n.doubleValue();
+            if (Double.isNaN(d) || Double.isInfinite(d)) return null;
+            if (d == Math.rint(d) && Math.abs(d) < 1e15) return String.valueOf((long) d);
+            return java.math.BigDecimal.valueOf(d).stripTrailingZeros().toPlainString();
+        }
+        return str(o);
+    }
+
+    /** UTC ISO → "gg.aa.yyyy SS:dd" (Europe/Istanbul); bozuksa olduğu gibi. */
+    private static String formatIstanbulLong(String iso) {
+        if (iso == null) return null;
+        try {
+            return LocalDateTime.parse(iso, LDT).atOffset(java.time.ZoneOffset.UTC)
+                    .atZoneSameInstant(java.time.ZoneId.of("Europe/Istanbul"))
+                    .format(java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
+        } catch (Exception e) {
+            return iso;
+        }
+    }
+
     /** Subject'te görünen hedef adı: monitör adı > şema-soyulmuş adres. Çıplak http(s):// subject'e girmez. */
     static String subjectDisplayName(Map<String, Object> ctx, String domain) {
         if (ctx != null) {
@@ -3304,6 +3551,14 @@ public class EscalationService {
                                                           Map<String, Object> certContext,
                                                           Set<String> excludeEmails,
                                                           Set<String> excludeUsernames) {
+        // Veritabanı sorgu alarmı (2026-10-31): alarm anındaki satırlar bildirim kanalı kararlarından ÖNCE alarmla saklanır —
+        // sessiz saat / sistem bakımı postayı ertelese de alarm ayrıntısı o anki sonucu gösterir. Motor satırları yalnız
+        // "satırları maile ekle" açıkken üretir; sorgu hatasında satır yoktur.
+        if (dbQueryAlertRows != null && alertEventId != null && isDbQuery(alertType)
+                && !TYPE_DBQUERY_FAIL.equals(alertType)) {
+            Long monId = certContext != null && certContext.get("monitor_id") instanceof Number n ? n.longValue() : null;
+            dbQueryAlertRows.capture(alertEventId, monId);
+        }
         // 0. SAHİPSİZ KAYIT KAPISI (ürün kararı 2026-09-28): tüm sahiplik çözümlemesinden SONRA (çağıran: envanter SY/UG,
         // izleme damgası, envanter türevli Port/DNS için alan adı → envanter) hiçbir takım yoksa alarm HİÇBİR kanaldan
         // bildirim üretmez — e-posta, kontak webhook'u, kişi push'u ve 7/24 (NOC) dahil. Takım zorunlu olduğundan bu bir
@@ -3502,6 +3757,9 @@ public class EscalationService {
             case TYPE_SCRIPTED_SLOW -> "Sentetik Yavaş Koşum";
             case TYPE_PAGESPEED_DOWN -> "Sayfa Hızı Ölçülemiyor";
             case TYPE_PAGESPEED_SLOW -> "Sayfa Hızı Eşiği Aşıldı";
+            case TYPE_DBQUERY_FAIL  -> "Veritabanı Sorgu Hatası";
+            case TYPE_DBQUERY_THRESHOLD -> "Veritabanı Sorgu Eşiği";
+            case TYPE_DBQUERY_SLOW  -> "Veritabanı Yavaş Sorgu";
             case TYPE_DOMAIN_EXPIRY -> "Domain Süre Bitişi";
             case TYPE_DOMAINMON_EXPIRY  -> "Alan Adı Süre Bitişi";
             case TYPE_DOMAINMON_UNKNOWN -> "Alan Adı Veri Yok";
@@ -3525,6 +3783,9 @@ public class EscalationService {
             case TYPE_SCRIPTED_SLOW -> "Sentetik test (k6) yavaş";
             case TYPE_PAGESPEED_DOWN -> "Sayfa hızı ölçülemiyor";
             case TYPE_PAGESPEED_SLOW -> "Sayfa performans eşiğini aştı";
+            case TYPE_DBQUERY_FAIL  -> "Veritabanı sorgusu çalıştırılamadı";
+            case TYPE_DBQUERY_THRESHOLD -> "Veritabanı sorgu kuralı ihlal edildi";
+            case TYPE_DBQUERY_SLOW  -> "Veritabanı sorgusu yavaş";
             case TYPE_DOMAINMON_UNKNOWN -> "Alan adı kayıt verisi alınamadı";
             case TYPE_DOMAINMON_STATUS  -> "Alan adı durum kodu uyarısı";
             case TYPE_DOMAINMON_CHANGED -> "Alan adı kaydı değişti";
@@ -3542,8 +3803,12 @@ public class EscalationService {
         // Subject standardı: [Site Monitor] SEVERITY · monitör ADI · kısa sorun — çıplak URL subject'e
         // girmez (ctx.monitor_name; yoksa domain'in şema-soyulmuş hali). AlertEvent.domain (yönlendirme/
         // dedupe anahtarı) DEĞİŞMEZ; bu yalnız görünen metin.
-        String subject = subjectPrefix + "[Site Monitor] " + daysSeg + " · "
-                + subjectDisplayName(certContext, domain) + " · " + summaryTr;
+        // Veritabanı sorgu izlemesi (2026-10-31): canlı izleme / bağlantı bilgisi, alarm anındaki satırlar ve isteğe bağlı
+        // ÖZEL konu şablonu. Satırlar YALNIZ gönderilen postaya girer (aşağıda sendCtx); günlüğe yazılan gövde satırsızdır.
+        DbQueryMailParts dbqMail = isDbQuery(alertType) ? dbQueryMailParts(alertEventId, alertType, level, certContext) : null;
+        String subject = dbqMail != null && dbqMail.subject() != null ? subjectPrefix + dbqMail.subject()
+                : subjectPrefix + "[Site Monitor] " + daysSeg + " · "
+                  + subjectDisplayName(certContext, domain) + " · " + summaryTr;
 
         // 2.5. Runbook notu (2026-10-01): hedefin "Rehber & Notlar" rehberi varsa e-postanın ve Teams/Slack mesajının
         // SONUNA "Ne yapılmalı" eklenir. Gönderim başına TEK sorgu — sonuç aşağıdaki tüm e-posta/webhook alıcılarında
@@ -3551,6 +3816,11 @@ public class EscalationService {
         // bayt bayt bugünküyle aynı. Kişi push'u ve 7/24 (NOC) bu notu ALMAZ (kendi uzunluk sözleşmeleri var).
         String runbook = runbookNotes != null ? runbookNotes.plainGuide(alertType, domain, certContext) : null;
         Map<String, Object> mailCtx = withRunbook(certContext, runbook);
+        Map<String, Object> sendCtx = mailCtx;
+        if (dbqMail != null) {
+            sendCtx = dbqMail.apply(mailCtx, true);
+            mailCtx = dbqMail.apply(mailCtx, false);   // günlük + önizleme gövdesi: satırsız
+        }
         String webhookMessage = com.sitemonitor.service.mail.RunbookNote.webhookMessage(message, runbook);
 
         // 3. Tek email — tüm alıcılara. skipMail ise gövde YİNE kurulur: webhook satırlarının
@@ -3575,7 +3845,7 @@ public class EscalationService {
             saveLog(alertEventId, skipName, String.join(", ", allEmails), subject, htmlBody, emailStatus, "SKIPPED", trigger);
         } else {
             emailStatus = emailService.sendAlert(
-                    toArr, subject, message, domain, level, alertType, daysRemaining, mailCtx);
+                    toArr, subject, message, domain, level, alertType, daysRemaining, sendCtx);
             // 4. Email log — tek kayıt (teamNames yukarıda ctx zenginleştirmesinde hesaplandı)
             saveLog(alertEventId, teamNames, String.join(", ", allEmails), subject, htmlBody, emailStatus, "SKIPPED", trigger);
             // L-E5 (2026-10-22): nöbetçi adresi yalnız posta GERÇEKTEN gittiyse (SENT / 421 kuyruğu) damgalanır — başarısız ya da
@@ -4290,6 +4560,15 @@ public class EscalationService {
             case TYPE_PAGESPEED_SLOW -> "YÜKSEK: " + domain +
                     " sayfası performans eşiğini aştı — bu bir kesinti değildir, sayfa çalışıyor ancak ağır/yavaş. " +
                     "Ölçüm eşiğin altına indiğinde alarm otomatik kapanacaktır.";
+            case TYPE_DBQUERY_FAIL -> "KRİTİK: " + domain +
+                    " veritabanı sorgu izlemesi çalıştırılamadı (bağlantı / kimlik / sorgu hatası ya da zaman aşımı). " +
+                    "Ardışık doğrulama denemeleri başarısız oldu. Sorgu yeniden çalıştığında alarm otomatik kapanacaktır.";
+            case TYPE_DBQUERY_THRESHOLD -> "YÜKSEK: " + domain +
+                    " veritabanı sorgusunun sonucu tanımlı kuralı ihlal etti — bu bir kesinti değildir. " +
+                    "Kural yeniden sağlandığında alarm otomatik kapanacaktır.";
+            case TYPE_DBQUERY_SLOW -> "YÜKSEK: " + domain +
+                    " veritabanı sorgusu çalışıyor ancak süresi yavaş sorgu eşiğini aştı. " +
+                    "Süre eşiğin altına indiğinde alarm otomatik kapanacaktır.";
             case TYPE_HTTP_SSL -> "YÜKSEK: " + domain +
                     " için TLS sertifikası hata veriyor ya da süresi dolmak üzere. " +
                     "Sertifika düzeldiğinde alarm otomatik kapanır.";
@@ -4399,6 +4678,9 @@ public class EscalationService {
                 case TYPE_SCRIPTED_SLOW -> "Sentetik Yavaş Koşum";
                 case TYPE_PAGESPEED_DOWN -> "Sayfa Hızı Ölçülemiyor";
                 case TYPE_PAGESPEED_SLOW -> "Sayfa Hızı Eşiği Aşıldı";
+                case TYPE_DBQUERY_FAIL  -> "Veritabanı Sorgu Hatası";
+                case TYPE_DBQUERY_THRESHOLD -> "Veritabanı Sorgu Eşiği";
+                case TYPE_DBQUERY_SLOW  -> "Veritabanı Yavaş Sorgu";
                 case TYPE_DOMAIN_EXPIRY -> "Domain Süre Bitişi";
                 case TYPE_DOMAINMON_EXPIRY  -> "Alan Adı Süre Bitişi";
                 case TYPE_DOMAINMON_UNKNOWN -> "Alan Adı Veri Yok";
@@ -4465,7 +4747,11 @@ public class EscalationService {
                                  // dönüyor, e-postanın ESKİ / YENİ kutuları boş gidiyordu.
                                  "record_type", "old_values", "new_values", "change_detail", CTX_DETECTED_IN_MAINTENANCE,
                                  // ALERTS-1: elle yeniden gönderim / eskalasyon adımı konusunda izlemenin ADI (çıplak URL değil).
-                                 "monitor_name");
+                                 "monitor_name",
+                                 // Veritabanı sorgu izlemesi (2026-10-31): çözüm postası "ne için / nerede / ne ihlal edildi"
+                                 // satırları. SATIR VERİSİ ve sorgu metni BURADA YOK — alarm olayına yazılmaz.
+                                 "purpose", "profile_name", "db_type", "rule_summary", "dbquery_status", "breach_level",
+                                 "failure_reason");
 
     private String snapshotContext(Map<String, Object> ctx) {
         if (ctx == null) return null;
@@ -4524,7 +4810,7 @@ public class EscalationService {
                 || TYPE_HTTP_DOWN.equals(alertType) || TYPE_HTTP_SSL.equals(alertType) || TYPE_HTTP_SLOW.equals(alertType)
                 || TYPE_DOMAIN_EXPIRY.equals(alertType)
                 || isDomainMon(alertType) || isKeywordAux(alertType) || isPage(alertType) || isScripted(alertType)
-                || isPageSpeed(alertType);
+                || isPageSpeed(alertType) || isDbQuery(alertType);
     }
 
     /**

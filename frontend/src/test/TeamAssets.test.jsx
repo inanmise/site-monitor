@@ -134,6 +134,18 @@ describe('TeamDeleteImpactModal — takım belgeleri (ADMIN-1)', () => {
     expect(screen.getByRole('button', { name: /Taşı ve sil|Move and delete/ })).toBeDisabled()
   })
 
+  it('veritabanı bağlantıları ve sorgu şablonları da engel olarak listelenir (O2) — kullanıcı neyin engellediğini görür', async () => {
+    api.admin.teamImpact.mockResolvedValue({ success: true, data: { ...base,
+      dbq_connections: { count: 2, items: ['Muhasebe Ana Veritabanı', 'SQL Rapor'] },
+      dbq_templates: { count: 1, items: ['Bekleyen sipariş sayısı'] } } })
+    render(<TeamDeleteImpactModal team={TEAM} teams={TEAMS} onClose={() => {}} onDeleted={() => {}} />)
+    expect(await screen.findByText('Muhasebe Ana Veritabanı')).toBeInTheDocument()
+    expect(screen.getByText(/2 veritabanı bağlantısı|2 database connections/)).toBeInTheDocument()
+    expect(screen.getByText(/1 sorgu şablonu|1 query templates/)).toBeInTheDocument()
+    expect(screen.getByText('Bekleyen sipariş sayısı')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Taşı ve sil|Move and delete/ })).toBeDisabled()
+  })
+
   it('eski sunucu (alanlar yok): bugünkü görünüm, yönetici özeti satırı yok', async () => {
     api.admin.teamImpact.mockResolvedValue({ success: true, data: { ...base, empty: true } })
     render(<TeamDeleteImpactModal team={TEAM} teams={TEAMS} onClose={() => {}} onDeleted={() => {}} />)

@@ -47,6 +47,8 @@ public class MonitorHistoryService {
     public static final String HTTP = "HTTP";
     public static final String PAGE = "PAGE";
     public static final String PAGESPEED = "PAGESPEED";
+    /** Veritabanı sorgu izlemesi (11. tür, 2026-10-31) — yol "dbquery". */
+    public static final String DBQUERY = "DBQUERY";
     public static final String SCRIPTED = "SCRIPTED";
     public static final String DOMAIN = "DOMAIN";
     public static final String PING = "PING";
@@ -58,6 +60,7 @@ public class MonitorHistoryService {
     public static final Map<String, String> KIND_BY_PATH = Map.ofEntries(
             Map.entry("port", PORT), Map.entry("dns", DNS), Map.entry("keyword", KEYWORD),
             Map.entry("http", HTTP), Map.entry("page", PAGE), Map.entry("pagespeed", PAGESPEED),
+            Map.entry("dbquery", DBQUERY),
             Map.entry("scripted", SCRIPTED),
             Map.entry("domain", DOMAIN), Map.entry("ping", PING),
             Map.entry("inventory", INVENTORY), Map.entry("group", GROUP),

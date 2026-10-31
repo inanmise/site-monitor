@@ -177,7 +177,7 @@ class NocPersistenceTest {
         assertThat(s).containsEntry("total", 4).containsEntry("covered", 2).containsEntry("paused", 1)
                 .containsEntry("not_covered", 1).containsEntry("active_groups", 1);
         @SuppressWarnings("unchecked") Map<String, Map<String, Integer>> byType = (Map<String, Map<String, Integer>>) s.get("by_type");
-        assertThat(byType).hasSize(10);
+        assertThat(byType).hasSize(11);   // 2026-10-31: + DBQUERY
         assertThat(byType.get("PING")).containsEntry("total", 3).containsEntry("covered", 1);
 
         config.save(Map.of("enabledTypes", Map.of("PING", false)), "admin", "Yönetici");

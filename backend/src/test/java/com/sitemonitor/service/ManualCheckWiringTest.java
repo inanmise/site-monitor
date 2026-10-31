@@ -89,6 +89,9 @@ class ManualCheckWiringTest {
         e.put("scripted", s -> s.evaluateScriptedNow(sc, raw("up", false, "detail", "FAIL — 0/2")));
         DomainMonitor dm = new DomainMonitor(); dm.setId(9L); dm.setName("Alan A"); dm.setDomain("example.com"); dm.setTeamId(7L);
         e.put("domain", s -> s.evaluateDomainAlarmsNow(dm, raw("status", "UNKNOWN", "error", "RDAP timeout")));
+        com.sitemonitor.model.DbQueryMonitor dq = new com.sitemonitor.model.DbQueryMonitor(); dq.setId(10L); dq.setName("Sorgu A"); dq.setTeamId(7L);
+        e.put("dbquery", s -> s.evaluateDbQueryNow(dq, raw("status", "FAIL", "ok", false, "error", "connection refused",
+                "failure_reason", "DB_UNREACHABLE")));
         return e;
     }
 

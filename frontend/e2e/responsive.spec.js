@@ -18,7 +18,7 @@ import { failedChecks, kwPathDiffers } from '../src/test/helpers/keywordDiagnose
 const TABS = [
   'dashboard', 'mydash', 'all', 'domains', 'manualcerts', 'forecast', 'renewal', 'renewal-guide',
   'warnings', 'incidents', 'maintenance', 'alerthistory', 'noc', 'stats', 'weakalgo', 'dataquality', 'weeklyreports', 'incident-history', 'executive', 'channelreports',
-  'health', 'uptime', 'monitoring', 'status', 'storms', 'http', 'domain', 'port', 'dns', 'keyword', 'ping', 'page', 'pagespeed', 'scripted',
+  'health', 'uptime', 'monitoring', 'status', 'storms', 'http', 'domain', 'port', 'dns', 'keyword', 'ping', 'page', 'pagespeed', 'scripted', 'dbquery',
   'activity', 'myactivity', 'system', 'monitorchanges',
   'admin', 'permissions', 'sqlplayground', 'login-issues', 'help', 'settings',
 ]
@@ -36,7 +36,7 @@ const KNOWN_OVERFLOW = new Map([
 ])
 
 /** İzleme sekmeleri — ilk kartın DETAY penceresi de telefonda ölçülür (sekme listesi, başlık eylemleri, geçmiş ızgarası). */
-const DETAIL_TABS = ['http', 'keyword', 'page', 'pagespeed', 'domain', 'ping', 'port', 'dns', 'scripted', 'uptime']
+const DETAIL_TABS = ['http', 'keyword', 'page', 'pagespeed', 'domain', 'ping', 'port', 'dns', 'scripted', 'dbquery', 'uptime']
 
 /** Tarayıcıda: sayfa taşması + görünüm alanı dışına taşan en dıştaki görünür öğeler. `sel`: ölçülecek kök (varsayılan sayfa). */
 function measure(sel) {

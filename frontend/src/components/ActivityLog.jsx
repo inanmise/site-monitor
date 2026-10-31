@@ -9,7 +9,7 @@ import { useServerPagination } from '../hooks/useServerPagination.js'
 import {
   Shield, Activity, Globe, Server, Radio, Share2, Search, CalendarClock, ScanSearch, FlaskConical, Gauge,
   CheckCircle, AlertTriangle, XCircle, HelpCircle, ChevronDown, ChevronRight,
-  Download, X, RefreshCw, Clock, User, Inbox, ExternalLink, Filter, Layers } from 'lucide-react'
+  Download, X, RefreshCw, Clock, User, Inbox, ExternalLink, Filter, Layers, DatabaseSearch } from 'lucide-react'
 import { csvCell } from '../utils/csv.js'
 import { downloadCsv } from '../utils/csvExport.js'
 import { relTimeOrRaw } from '../utils/relativeTime.js'
@@ -50,6 +50,7 @@ const TYPES = [
   // Backend SCRIPTED kaydi yaziyor (ActivityLogService.SCRIPTED) ama burada karsiligi yoktu:
   // satirlar gri "?" rozetiyle cikiyor ve tur filtresi cipi hic uretilmiyordu.
   { key: 'SCRIPTED',Icon: FlaskConical,  color: '#7e22ce' },
+  { key: 'DBQUERY', Icon: DatabaseSearch, color: '#0369a1' },
 ]
 const TYPE_MAP = Object.fromEntries(TYPES.map((t) => [t.key, t]))
 

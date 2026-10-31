@@ -1,7 +1,7 @@
 import {
   Globe, ShieldAlert, Network, Plug, Server, Clock, Shuffle, AlertCircle,
   Target, Radio, ScanSearch, FlaskConical, CalendarDays, Link2, Ban, Zap, Gauge, Bell,
-  ListX,
+  ListX, DatabaseZap,
 } from 'lucide-react'
 
 /**
@@ -80,6 +80,12 @@ export const ALERT_TYPE_META = {
   // ── Sentetik izleme ───────────────────────────────────────────────────────
   SCRIPTED_FAIL:     { icon: FlaskConical, color: '#be123c' },
   SCRIPTED_SLOW:     { icon: FlaskConical, color: '#0f766e' },
+
+  // ── Veritabanı sorgusu (11. tür) ────────────────────────────────────────────
+  // FAIL kırmızı (bağlantı / sorgu hatası = kesinti); eşik aşımı İŞ alarmı (kesinti DEĞİL) amber; yavaş sorgu teal.
+  DBQUERY_FAIL:      { icon: DatabaseZap,  color: '#dc2626' },
+  DBQUERY_THRESHOLD: { icon: DatabaseZap,  color: '#b45309' },
+  DBQUERY_SLOW:      { icon: DatabaseZap,  color: '#0f766e' },
 }
 
 /** Sözlükte olmayan (yeni eklenmiş) bir tip için nötr görsel kimlik — asla boş dönmez. */

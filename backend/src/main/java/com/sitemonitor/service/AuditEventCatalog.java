@@ -109,6 +109,13 @@ public final class AuditEventCatalog {
             "CONTACT_UPDATE",
             "CONTACT_WEBHOOK_TEST",
             "CRYPTO_INVENTORY_EXPORT",    // kripto envanteri / PQC hazırlık raporu XLSX/PDF/CSV dışa aktarıldı (2026-10-10)
+            "DBQUERY_CONNECTION_CREATE",  // veritabanı sorgu izlemesi: takım bağlantısı eklendi (2026-10-31) — parola YOK
+            "DBQUERY_CONNECTION_DELETE",  // takım bağlantısı silindi
+            "DBQUERY_CONNECTION_TEST",    // bağlantı denendi (kayıtlı ya da kaydetmeden) — sonuç ve hata kodu
+            "DBQUERY_CONNECTION_UPDATE",  // takım bağlantısı düzenlendi (fark; parola yalnız "değişti" bilgisi)
+            "DBQUERY_TEMPLATE_CREATE",    // takım sorgu şablonu eklendi
+            "DBQUERY_TEMPLATE_DELETE",    // takım sorgu şablonu silindi
+            "DBQUERY_TEMPLATE_UPDATE",    // takım sorgu şablonu düzenlendi
             "DIAGNOSTICS_DOMAIN_EXPIRY",
             "DIAGNOSTICS_HSTS",
             "DIAGNOSTICS_NETWORK",
@@ -145,6 +152,7 @@ public final class AuditEventCatalog {
             "GUIDE_LINK_CREATE",
             "GUIDE_LINK_DELETE",
             "GUIDE_LINK_UPDATE",
+            "HOLIDAY_CALENDAR_SAVE",      // kurum tatil / özel gün takvimi kaydedildi (veritabanı sorgu izlemesi, 2026-10-31)
             "HTTP_DIAGNOSTICS_RUN",       // HTTP izlemesinde uçtan uca tanılama çalıştırıldı (2026-10-02)
             "INCIDENT_ACTION_ADD",        // postmortem aksiyonu eklendi (2026-10-11)
             "INCIDENT_ACTION_DELETE",     // postmortem aksiyonu silindi (2026-10-11)
@@ -453,6 +461,8 @@ public final class AuditEventCatalog {
         if (t.startsWith("PING_DIAGNOSTICS") || t.startsWith("PORT_DIAGNOSTICS") || t.startsWith("DNS_DIAGNOSTICS")) return MONITOR;
         // Sayfa Bütünlüğü / Sayfa Hızı uçtan uca tanılaması (2026-10-05) — aynı kural
         if (t.startsWith("PAGE_DIAGNOSTICS") || t.startsWith("PAGESPEED_DIAGNOSTICS")) return MONITOR;
+        // Veritabanı sorgu izlemesi (2026-10-31): takım bağlantıları ve sorgu şablonları izleme yapılandırmasıdır — aynı kova
+        if (t.startsWith("DBQUERY_")) return MONITOR;
         // Sayfa Bütünlüğü kaynak analizi (2026-10-31) — izleme üzerinde kullanıcının istediği ölçüm, aynı kova
         if (t.startsWith("PAGE_RESOURCE_SCAN")) return MONITOR;
         if (t.startsWith("MONITOR_") || t.startsWith("THRESHOLD_")
@@ -475,6 +485,8 @@ public final class AuditEventCatalog {
         if (t.startsWith("SYSTEM_") || t.startsWith("SCHEDULER_") || t.startsWith("WATCHDOG_") || t.equals("SCHEMA_PATCH")
                 || t.equals("CLIENT_ERROR_REPORT") || t.startsWith("ISSUE_REPORT")) return SYSTEM;
 
+        // Kurum tatil takvimi (2026-10-31) — platform ayarı (izlemelerin "tatillerde çalışma" seçeneği okur)
+        if (t.startsWith("HOLIDAY_")) return SETTINGS;
         // Kalan her şey bir AYAR yüzeyidir (settings/branding/storm/guide-link/template…).
         if (t.startsWith("GENERAL_") || t.startsWith("BRANDING_") || t.startsWith("STORM_")
                 || t.startsWith("GUIDE_LINK_") || t.startsWith("TEMPLATE_") || t.startsWith("PLATFORM_")

@@ -11,7 +11,7 @@
 export const VALID_TABS = new Set([
   'dashboard', 'mydash', 'all', 'domains', 'manualcerts', 'forecast', 'renewal', 'renewal-guide',
   'warnings', 'incidents', 'maintenance', 'alerthistory', 'noc', 'stats', 'weakalgo', 'dataquality', 'weeklyreports', 'incident-history', 'executive', 'channelreports',
-  'health', 'uptime', 'monitoring', 'status', 'storms', 'http', 'domain', 'port', 'dns', 'keyword', 'ping', 'page', 'pagespeed', 'scripted', 'activity', 'myactivity', 'system', 'monitorchanges',
+  'health', 'uptime', 'monitoring', 'status', 'storms', 'http', 'domain', 'port', 'dns', 'keyword', 'ping', 'page', 'pagespeed', 'scripted', 'dbquery', 'activity', 'myactivity', 'system', 'monitorchanges',
   'admin', 'permissions', 'sqlplayground', 'login-issues', 'help', 'settings',
 ])
 

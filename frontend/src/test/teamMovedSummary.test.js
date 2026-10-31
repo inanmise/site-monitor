@@ -21,13 +21,20 @@ describe('movedSummary', () => {
       .toBe('Taşındı: 3 sertifika, 2 izleme, 1 kullanıcı, 4 eskalasyon kişisi, 5 açık alarm')
   })
 
+  it('yalnız veritabanı bağlantısı / sorgu şablonu taşıyan takım "taşınacak kayıt yoktu" DEMEZ (O2)', () => {
+    expect(movedSummary({ domains: 0, monitors: 0, dbq_connections: 2, dbq_templates: 1 }, tOf(TR)))
+      .toBe('Taşındı: 2 veritabanı bağlantısı, 1 sorgu şablonu')
+    expect(movedSummary({ dbq_connections: 1 }, tOf(EN))).not.toBe(EN['team.movedNothing'])
+  })
+
   it('hiçbir şey taşınmadıysa / yanıt boşsa "taşınacak kayıt yoktu"', () => {
     expect(movedSummary({ domains: 0 }, tOf(EN))).toBe(EN['team.movedNothing'])
     expect(movedSummary(null, tOf(TR))).toBe(TR['team.movedNothing'])
   })
 
   it('her anahtarın TR ve EN metni var', () => {
-    for (const k of ['domains', 'ug_domains', 'monitors', 'users', 'contacts', 'groups', 'te_channels', 'te_templates', 'maintenance_windows', 'open_alerts']) {
+    for (const k of ['domains', 'ug_domains', 'monitors', 'users', 'contacts', 'groups', 'te_channels', 'te_templates', 'maintenance_windows',
+      'dbq_connections', 'dbq_templates', 'open_alerts']) {
       expect(TR[`team.mv.${k}`]).toBeTruthy()
       expect(EN[`team.mv.${k}`]).toBeTruthy()
     }

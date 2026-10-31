@@ -29,6 +29,10 @@ export const STATUS_TIER = {
   pagespeed: (m) => (m.status === 'DOWN' ? TIER_DOWN : m.status === 'SLOW' ? TIER_WARN : TIER_REST),
   scripted: (m) => (m.status === 'FAIL' || m.status === 'ERROR' || m.status === 'TIMEOUT' ? TIER_DOWN
     : m.status === 'NO_CHECKS' ? TIER_WARN : TIER_REST),
+  // Veritabanı sorgusu (api §1 "Kart durumu" = dbquery/dbqueryPageModel.dbqueryStatusKey): FAIL ve KRİTİK eşik → kırmızı;
+  // UYARI eşiği ve yavaş sorgu → sarı.
+  dbquery: (m) => (m.status === 'FAIL' || (m.status === 'BREACH' && m.breach_level === 'CRITICAL') ? TIER_DOWN
+    : m.status === 'BREACH' || (m.status === 'OK' && m.slow) ? TIER_WARN : TIER_REST),
 }
 
 /** Sıralama katmanı — duraklatılmış izleme (active === false) her türde sorunlu sayılmaz. */

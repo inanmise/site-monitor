@@ -36,7 +36,8 @@ class MonitorResponseFieldsTest {
     /** Yanıtı elle kuran dokuz izleme kurucusu. Yeni bir tür eklenirse buraya da eklenir. */
     private static final List<String> BUILDERS = List.of(
             "enrichDomain", "enrichHttp", "enrichKeyword", "enrichPing", "enrichPort",
-            "enrichDns", "enrichPage", "enrichPageSpeed", "enrichScripted");
+            "enrichDns", "enrichPage", "enrichPageSpeed", "enrichScripted",
+            "enrichDbQuery");   // veritabanı sorgu izlemesi (2026-10-31)
 
     /**
      * Yanıtta bulunması ZORUNLU alanlar.

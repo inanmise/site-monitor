@@ -125,6 +125,15 @@ class MonitoringControllerTest {
     @MockitoBean com.sitemonitor.service.SecretCipher secretCipher;
     /** Bildirim gruplari: dilim baglami icin gerekli; stub YOK -> "hic grup yok" (birinci yasa). */
     @MockitoBean com.sitemonitor.repository.NotificationGroupRepository notificationGroupRepo;
+    // Veritabanı sorgu izlemesi (11. tür, 2026-10-31): controller alanları required=false; dilimde sahte verilir
+    @MockitoBean com.sitemonitor.repository.DbQueryMonitorRepository dbQueryMonitorRepo;
+    @MockitoBean com.sitemonitor.repository.DbQueryCheckRepository dbQueryCheckRepo;
+    @MockitoBean com.sitemonitor.repository.DbQueryAlertRowsRepository dbQueryAlertRowsRepo;
+    @MockitoBean com.sitemonitor.repository.DbConnectionProfileRepository dbConnectionRepo;
+    @MockitoBean com.sitemonitor.service.dbquery.DbQueryCheckerService dbQueryChecker;
+    @MockitoBean com.sitemonitor.service.dbquery.HolidayCalendarService holidayCalendar;
+    /** "Sorguyu dene" / "Maliyeti denetle" saatlik küme sayacı (inceleme 2026-10-31, K3) — sahte: varsayılan "sınır yok". */
+    @MockitoBean com.sitemonitor.service.dbquery.DbQueryTestQuota dbQueryTestQuota;
 
     @BeforeEach
     void stubTeamMap() {
@@ -1584,6 +1593,15 @@ class MonitoringControllerTest {
         specs.put("pagespeed", new Spec(() -> { when(pageSpeedMonitorRepo.findById(1L)).thenReturn(Optional.of(psm));
             when(pageSpeedCheckRepo.seriesRaw(eq(1L), anyString(), anyString(), anyInt())).thenReturn(rawPageSpeed); },
             "/api/monitoring/pagespeed/1/response-series", 100));
+        // Veritabanı sorgu izlemesi (2026-10-31): seri [ts, durationMs, rowCount, metricValue, ok, status]; HATA (FAIL)
+        // çalıştırmasının değeri seriye GİRMEZ (Sayfa Hızı gibi) → ortalama 100, kesinti sayacı yine 1.
+        var dqm = new com.sitemonitor.model.DbQueryMonitor(); dqm.setId(1L); dqm.setTeamId(1L);
+        List<Object[]> rawDbQuery = List.of(
+                new Object[]{ "2026-08-06T10:05:00", 100, 3, 1.5, true,  "OK"   },
+                new Object[]{ "2026-08-06T10:25:00", 0,   0, null, false, "FAIL" });
+        specs.put("dbquery", new Spec(() -> { when(dbQueryMonitorRepo.findById(1L)).thenReturn(Optional.of(dqm));
+            when(dbQueryCheckRepo.seriesRaw(eq(1L), anyString(), anyString(), anyInt())).thenReturn(rawDbQuery); },
+            "/api/monitoring/dbquery/1/response-series", 100));
         specs.put("ssl",      new Spec(() -> { when(inventoryRepo.findByDomain("a.com")).thenReturn(Optional.of(inv("a.com")));
             when(certCheckRepo.responseSeriesRaw(eq("a.com"), anyString(), anyString(), anyInt())).thenReturn(raw); },
             "/api/monitoring/uptime/a.com/ssl/response-series"));
@@ -6795,5 +6813,794 @@ class MonitoringControllerTest {
                     .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
                     .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("java.lang"))));
         }
+    }
+
+    // ═══ Veritabanı sorgu izlemesi (11. tür, 2026-10-31) ═════════════════════════════════════════════════════
+    // Motor sınıfları (DbQuerySqlGuard, DbQueryRules, DbQuerySchedule) bu dalda iskelettir → statik sahte. Denetlenen: kapsam
+    // (başka takımın bağlantısı görünmez / kullanılamaz, paylaşım okuyucusu bağlantı ayrıntısını görmez), parola ve satır verisi
+    // ASLA yanıtta yok, güvenlik reddi alan hatası, beklemeler, silmenin geçmişi temizlemesi.
+
+    private static com.sitemonitor.model.DbConnectionProfile dbqConn(long id, long team) {
+        var p = new com.sitemonitor.model.DbConnectionProfile();
+        p.setId(id); p.setTeamId(team); p.setName("Sipariş veritabanı (salt okunur)"); p.setDbType("POSTGRESQL");
+        p.setHost("db-orders.internal"); p.setPort(5432); p.setDatabaseName("orders");
+        p.setUsername("ro_monitor"); p.setPasswordEnc("enc:v1:GIZLI-PAROLA-SIFRELI");
+        return p;
+    }
+
+    private static com.sitemonitor.model.DbQueryMonitor dbqMonitor(long id, long team, long profile) {
+        var m = new com.sitemonitor.model.DbQueryMonitor();
+        m.setId(id); m.setTeamId(team); m.setProfileId(profile); m.setActive(true);
+        m.setName("Bekleyen siparişler " + id); m.setPurpose("Bekleyen sipariş birikmesini yakalar");
+        m.setSqlText("SELECT COUNT(*) FROM orders WHERE state = 'PENDING'");
+        m.setScheduleMode("INTERVAL"); m.setIntervalSeconds(300);
+        return m;
+    }
+
+    /** Motor statiklerinin "her şey geçerli" sahtesi (yalnız sorgu denetimi parametreyle). */
+    private static final class DbqEngine implements AutoCloseable {
+        final org.mockito.MockedStatic<com.sitemonitor.service.dbquery.DbQuerySqlGuard> guard =
+                org.mockito.Mockito.mockStatic(com.sitemonitor.service.dbquery.DbQuerySqlGuard.class);
+        final org.mockito.MockedStatic<com.sitemonitor.service.dbquery.DbQueryRules> rules =
+                org.mockito.Mockito.mockStatic(com.sitemonitor.service.dbquery.DbQueryRules.class);
+        final org.mockito.MockedStatic<com.sitemonitor.service.dbquery.DbQuerySchedule> schedule =
+                org.mockito.Mockito.mockStatic(com.sitemonitor.service.dbquery.DbQuerySchedule.class);
+
+        DbqEngine(com.sitemonitor.service.dbquery.DbQuerySqlGuard.Result guardResult) {
+            guard.when(() -> com.sitemonitor.service.dbquery.DbQuerySqlGuard.check(any(), any())).thenReturn(guardResult);
+            rules.when(() -> com.sitemonitor.service.dbquery.DbQueryRules.fromApi(any()))
+                    .thenReturn(new com.sitemonitor.service.dbquery.DbQueryRules.Parsed(List.of(), List.of()));
+            rules.when(() -> com.sitemonitor.service.dbquery.DbQueryRules.toJson(any())).thenReturn("[]");
+            rules.when(() -> com.sitemonitor.service.dbquery.DbQueryRules.fromJson(any())).thenReturn(List.of());
+            rules.when(() -> com.sitemonitor.service.dbquery.DbQueryRules.toApi(any())).thenReturn(List.of());
+            schedule.when(() -> com.sitemonitor.service.dbquery.DbQuerySchedule.fromApi(any())).thenReturn(
+                    new com.sitemonitor.service.dbquery.DbQuerySchedule.Spec("INTERVAL", 300, null, List.of(), List.of(), false, List.of()));
+            schedule.when(() -> com.sitemonitor.service.dbquery.DbQuerySchedule.validate(any(), anyInt(), any(), any())).thenReturn(List.of());
+        }
+
+        static DbqEngine ok() {
+            return new DbqEngine(new com.sitemonitor.service.dbquery.DbQuerySqlGuard.Result(true, List.of(), List.of("orders")));
+        }
+
+        @Override public void close() { guard.close(); rules.close(); schedule.close(); }
+    }
+
+    private static String dbqCreateBody(long team, long profile, String name) {
+        return "{\"name\":\"" + name + "\",\"team_id\":" + team + ",\"profile_id\":" + profile
+                + ",\"group_name\":\"Sipariş\",\"tags\":\"veritabanı\",\"purpose\":\"Bekleyen sipariş birikmesini yakalar\""
+                + ",\"sql_text\":\"SELECT COUNT(*) FROM orders\",\"rules\":[]}";
+    }
+
+    private MockHttpSession dbqUser(long primaryTeam) {
+        MockHttpSession s = session("USER");
+        s.setAttribute("teamId", primaryTeam);
+        s.setAttribute("viewTeamIds", List.of(primaryTeam));
+        return s;
+    }
+
+    @Test
+    @DisplayName("DBQUERY liste: paylaşım okuyucusu bağlantının adını görür, sunucu / veritabanı ayrıntısını GÖRMEZ; parola hiçbir yanıtta yok")
+    void dbquery_list_grantReaderSeesProfileSummaryOnly() throws Exception {
+        var mon = dbqMonitor(31L, 1L, 5L);
+        when(dbQueryMonitorRepo.findAllByOrderByNameAsc()).thenReturn(List.of(mon));
+        when(dbQueryCheckRepo.findLatestPerMonitor()).thenReturn(List.of());
+        when(dbConnectionRepo.findAllById(any())).thenReturn(List.of(dbqConn(5L, 1L)));
+
+        MockHttpSession grant = dbqUser(3L);
+        grant.setAttribute(SessionScope.ATTR_GRANT_VIEW, List.of(1L));
+        String body = mvc.perform(get("/api/monitoring/dbquery").session(grant))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].profile.name").value("Sipariş veritabanı (salt okunur)"))
+                .andExpect(jsonPath("$.data[0].profile.db_type").value("POSTGRESQL"))
+                .andExpect(jsonPath("$.data[0].profile.host").doesNotExist())
+                .andExpect(jsonPath("$.data[0].profile.database_name").doesNotExist())
+                .andReturn().getResponse().getContentAsString();
+        assertThat(body).doesNotContain("GIZLI-PAROLA").doesNotContain("password").doesNotContain("ro_monitor");
+
+        // Takımın kendi kişisi (ya da global admin) ayrıntıyı görür
+        mvc.perform(get("/api/monitoring/dbquery").session(dbqUser(1L)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].profile.host").value("db-orders.internal"));
+
+        // Başka takım: izleme hiç listelenmez (IDOR)
+        mvc.perform(get("/api/monitoring/dbquery").session(dbqUser(9L)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(0));
+    }
+
+    @Test
+    @DisplayName("DBQUERY oluşturma: başka takımın bağlantısı — global admin 400 DBQUERY_CONNECTION_OTHER_TEAM, takım kullanıcısı 'bulunamadı'")
+    void dbquery_create_otherTeamConnectionRefused() throws Exception {
+        when(dbConnectionRepo.findById(9L)).thenReturn(Optional.of(dbqConn(9L, 2L)));
+        try (DbqEngine engine = DbqEngine.ok()) {
+            mvc.perform(post("/api/monitoring/dbquery").session(session("ADMIN"))
+                            .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                            .content(dbqCreateBody(1L, 9L, "Sipariş birikmesi")))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.code").value("DBQUERY_CONNECTION_OTHER_TEAM"))
+                    .andExpect(jsonPath("$.field").value("profile_id"));
+
+            // Takım 1 kullanıcısı takım 2'nin bağlantısını GÖREMEZ → var olduğu da söylenmez (yalnız "bulunamadı")
+            String body = mvc.perform(post("/api/monitoring/dbquery").session(dbqUser(1L))
+                            .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                            .content(dbqCreateBody(1L, 9L, "Sipariş birikmesi")))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                    .andExpect(jsonPath("$.fields.profile_id").exists())
+                    .andReturn().getResponse().getContentAsString();
+            assertThat(body).doesNotContain("OTHER_TEAM").doesNotContain("db-orders");
+        }
+        verify(dbQueryMonitorRepo, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("DBQUERY oluşturma: güvenlik denetimi reddi → 400 DBQUERY_SQL_REJECTED, alan sql_text + ihlal listesi; kaydedilmez")
+    void dbquery_create_guardRejectionIsFieldError() throws Exception {
+        when(dbConnectionRepo.findById(5L)).thenReturn(Optional.of(dbqConn(5L, 1L)));
+        var rejected = new com.sitemonitor.service.dbquery.DbQuerySqlGuard.Result(false, List.of(
+                new com.sitemonitor.service.dbquery.DbQuerySqlGuard.Violation("WRITE_STATEMENT", "DELETE",
+                        "Yalnız okuma sorgusu (SELECT) çalıştırılabilir.", 1, 1)), List.of());
+        try (DbqEngine engine = new DbqEngine(rejected)) {
+            mvc.perform(post("/api/monitoring/dbquery").session(session("ADMIN"))
+                            .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                            .content(dbqCreateBody(1L, 5L, "Sipariş birikmesi")))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.code").value("DBQUERY_SQL_REJECTED"))
+                    .andExpect(jsonPath("$.field").value("sql_text"))
+                    .andExpect(jsonPath("$.violations[0].code").value("WRITE_STATEMENT"))
+                    .andExpect(jsonPath("$.violations[0].line").value(1));
+        }
+        verify(dbQueryMonitorRepo, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("DBQUERY oluşturma: geçerli kayıt kaydedilir, yanıtta parola / kullanıcı adı yok; aynı ad 409 DUPLICATE_RECORD")
+    void dbquery_create_savesAndDuplicateNameRefused() throws Exception {
+        when(dbConnectionRepo.findById(5L)).thenReturn(Optional.of(dbqConn(5L, 1L)));
+        when(dbQueryMonitorRepo.save(any())).thenAnswer(i -> {
+            com.sitemonitor.model.DbQueryMonitor m = i.getArgument(0);
+            m.setId(77L);
+            return m;
+        });
+        try (DbqEngine engine = DbqEngine.ok()) {
+            String body = mvc.perform(post("/api/monitoring/dbquery").session(session("ADMIN"))
+                            .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                            .content(dbqCreateBody(1L, 5L, "Sipariş birikmesi")))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.id").value(77))
+                    .andExpect(jsonPath("$.data.profile_id").value(5))
+                    .andExpect(jsonPath("$.data.purpose").value("Bekleyen sipariş birikmesini yakalar"))
+                    .andExpect(jsonPath("$.data.status").doesNotExist())   // henüz çalışmadı: durum YOK (bilinmiyor ≠ sağlıklı)
+                    .andReturn().getResponse().getContentAsString();
+            assertThat(body).doesNotContain("GIZLI-PAROLA").doesNotContain("password");
+            org.mockito.ArgumentCaptor<com.sitemonitor.model.DbQueryMonitor> cap =
+                    org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.DbQueryMonitor.class);
+            verify(dbQueryMonitorRepo).save(cap.capture());
+            assertThat(cap.getValue().getSqlHash()).hasSize(16);
+            assertThat(cap.getValue().getTeamId()).isEqualTo(1L);
+
+            when(dbQueryMonitorRepo.existsDuplicateName(eq("Sipariş birikmesi"), any())).thenReturn(true);
+            mvc.perform(post("/api/monitoring/dbquery").session(session("ADMIN"))
+                            .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                            .content(dbqCreateBody(1L, 5L, "Sipariş birikmesi")))
+                    .andExpect(status().isConflict())
+                    .andExpect(jsonPath("$.code").value("DUPLICATE_RECORD"))
+                    .andExpect(jsonPath("$.field").value("name"))
+                    .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("tüm takımlarda tekil")));
+        }
+    }
+
+    @Test
+    @DisplayName("DBQUERY dene: yanıtta SATIR VERİSİ yok (yalnız kolon adları / sayılar); oturum başına bekleme → ikinci istek 429")
+    void dbquery_test_returnsNoRowDataAndHasCooldown() throws Exception {
+        when(dbConnectionRepo.findById(5L)).thenReturn(Optional.of(dbqConn(5L, 1L)));
+        when(dbQueryChecker.test(any(), any())).thenReturn(new com.sitemonitor.service.dbquery.DbQueryCheckerService.Result(
+                "OK", "NONE", 42L, 1, false,
+                List.of(new com.sitemonitor.service.dbquery.DbQueryRunner.Column("musteri_tckn", "VARCHAR")),
+                List.of("musteri_tckn"), List.of(List.of("12345678901-GIZLI-SATIR")), List.of(), false,
+                List.of(), 1.0, false, null, null, "2026-10-31T10:00:00", "abcd", 5L, "PostgreSQL 16"));
+        MockHttpSession s = session("ADMIN");
+        String req = "{\"profile_id\":5,\"sql_text\":\"SELECT musteri_tckn FROM musteri\",\"rules\":[]}";
+        try (DbqEngine engine = DbqEngine.ok()) {
+            String body = mvc.perform(post("/api/monitoring/dbquery/test").session(s)
+                            .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content(req))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.status").value("OK"))
+                    .andExpect(jsonPath("$.data.row_count").value(1))
+                    .andExpect(jsonPath("$.data.columns[0].name").value("musteri_tckn"))
+                    .andExpect(jsonPath("$.data.guard.ok").value(true))
+                    .andReturn().getResponse().getContentAsString();
+            assertThat(body).doesNotContain("12345678901").doesNotContain("mail_rows").doesNotContain("GIZLI-PAROLA");
+
+            mvc.perform(post("/api/monitoring/dbquery/test").session(s)
+                            .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content(req))
+                    .andExpect(status().is(429))
+                    .andExpect(jsonPath("$.code").value("RATE_LIMITED"))
+                    .andExpect(header().exists("Retry-After"));
+        }
+        verify(dbQueryChecker, org.mockito.Mockito.times(1)).test(any(), any());
+    }
+
+    @Test
+    @DisplayName("DBQUERY dene: başka takımın bağlantısıyla deneme yapılamaz (bağlantı 'bulunamadı'); motor hiç çağrılmaz")
+    void dbquery_test_otherTeamConnectionUnusable() throws Exception {
+        when(dbConnectionRepo.findById(9L)).thenReturn(Optional.of(dbqConn(9L, 2L)));
+        try (DbqEngine engine = DbqEngine.ok()) {
+            mvc.perform(post("/api/monitoring/dbquery/test").session(dbqUser(1L))
+                            .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                            .content("{\"profile_id\":9,\"sql_text\":\"SELECT 1\"}"))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.field").value("profile_id"));
+        }
+        verify(dbQueryChecker, never()).test(any(), any());
+    }
+
+    @Test
+    @DisplayName("DBQUERY elle kontrol: eşzamanlılık dolu (SKIPPED) → 429 DBQUERY_BUSY ve bekleme geri verilir; sonra 200, ardından 429 RATE_LIMITED")
+    void dbquery_trigger_busyRefundsCooldown() throws Exception {
+        var mon = dbqMonitor(701L, 1L, 5L);
+        when(dbQueryMonitorRepo.findById(701L)).thenReturn(Optional.of(mon));
+        when(dbConnectionRepo.findById(5L)).thenReturn(Optional.of(dbqConn(5L, 1L)));
+        when(appSettings.getInt(eq("site.monitor.dbquery.manual-cooldown-seconds"), anyInt())).thenReturn(20);
+        when(schedulerService.triggerDbQueryCheck(any()))
+                .thenReturn(java.util.Map.of("status", "SKIPPED", "failure_reason", "DB_BUSY"))
+                .thenReturn(java.util.Map.of("status", "OK"));
+        try (DbqEngine engine = DbqEngine.ok()) {
+            mvc.perform(post("/api/monitoring/dbquery/701/check").session(session("ADMIN")))
+                    .andExpect(status().is(429))
+                    .andExpect(jsonPath("$.code").value("DBQUERY_BUSY"));
+            mvc.perform(post("/api/monitoring/dbquery/701/check").session(session("ADMIN")))
+                    .andExpect(status().isOk());
+            mvc.perform(post("/api/monitoring/dbquery/701/check").session(session("ADMIN")))
+                    .andExpect(status().is(429))
+                    .andExpect(jsonPath("$.code").value("RATE_LIMITED"));
+        }
+        verify(schedulerService, org.mockito.Mockito.times(2)).triggerDbQueryCheck(any());
+        // Elle değerlendirme yalnız GERÇEKTEN çalışan kontrolde (aynı sonuçla, ikinci sorgu yok)
+        verify(schedulerService, org.mockito.Mockito.times(1)).evaluateDbQueryNow(any(), any());
+    }
+
+    @Test
+    @DisplayName("DBQUERY güncelleme: paylaşımla düzenleyen kişi izlemenin BAĞLANTISINI değiştiremez (403)")
+    void dbquery_update_grantEditorCannotChangeConnection() throws Exception {
+        var mon = dbqMonitor(41L, 1L, 5L);
+        when(dbQueryMonitorRepo.findById(41L)).thenReturn(Optional.of(mon));
+        MockHttpSession grant = dbqUser(3L);
+        grant.setAttribute(SessionScope.ATTR_GRANT_VIEW, List.of(1L));
+        grant.setAttribute(SessionScope.ATTR_GRANT_EXECUTE, List.of(1L));
+        grant.setAttribute(SessionScope.ATTR_GRANT_EDIT, List.of(1L));
+        try (DbqEngine engine = DbqEngine.ok()) {
+            mvc.perform(put("/api/monitoring/dbquery/41").session(grant)
+                            .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                            .content("{\"profile_id\":6}"))
+                    .andExpect(status().isForbidden());
+        }
+        verify(dbQueryMonitorRepo, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("DBQUERY geçmiş: only=problem → status <> 'OK' (ihlal + hata); Hatalı sayacı / status=fail = yalnız ok=false; başka takımın izlemesinin geçmişi 403")
+    void dbquery_history_problemFilterAndScope() throws Exception {
+        var mon = dbqMonitor(51L, 1L, 5L);
+        when(dbQueryMonitorRepo.findById(51L)).thenReturn(Optional.of(mon));
+        var c = new com.sitemonitor.model.DbQueryCheck();
+        c.setId(1L); c.setMonitorId(51L); c.setCheckedAt("2026-10-30T10:00:00"); c.setOk(true);
+        c.setStatus("BREACH"); c.setRowCount(12); c.setDurationMs(40);
+        when(dbQueryCheckRepo.findByMonitorIdAndStatusNotAndCheckedAtBetween(eq(51L), eq("OK"), anyString(), anyString(), any()))
+                .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(c)));
+        mvc.perform(get("/api/monitoring/dbquery/51/history").param("only", "problem").session(session("ADMIN")))
+                .andExpect(status().isOk());
+        verify(dbQueryCheckRepo).findByMonitorIdAndStatusNotAndCheckedAtBetween(eq(51L), eq("OK"), anyString(), anyString(), any());
+        verify(dbQueryCheckRepo, never()).findByMonitorIdAndCheckedAtBetween(eq(51L), anyString(), anyString(), any());
+        // Ortak "Hatalı" sayacı + erişilebilirlik = YALNIZ çalıştırılamayan sorgu (ok=false); ihlal kesinti sayılmaz
+        verify(dbQueryCheckRepo, org.mockito.Mockito.atLeastOnce()).countByMonitorIdAndOkFalseAndCheckedAtBetween(eq(51L), anyString(), anyString());
+        verify(dbQueryCheckRepo, never()).countByMonitorIdAndStatusNotAndCheckedAtBetween(eq(51L), anyString(), anyString(), anyString());
+        // Ortak süzgeç (status=fail) = yalnız hata satırları
+        when(dbQueryCheckRepo.findByMonitorIdAndOkFalseAndCheckedAtBetween(eq(51L), anyString(), anyString(), any()))
+                .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of()));
+        mvc.perform(get("/api/monitoring/dbquery/51/history").param("status", "fail").session(session("ADMIN")))
+                .andExpect(status().isOk());
+        verify(dbQueryCheckRepo).findByMonitorIdAndOkFalseAndCheckedAtBetween(eq(51L), anyString(), anyString(), any());
+
+        mvc.perform(get("/api/monitoring/dbquery/51/history").session(dbqUser(9L)))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("DBQUERY silme: kontroller + alarm anı satırları silinir, açık alarm sessizce kapanır; yetkisiz USER 403")
+    void dbquery_delete_cleansHistory() throws Exception {
+        var mon = dbqMonitor(61L, 1L, 5L);
+        when(dbQueryMonitorRepo.findById(61L)).thenReturn(Optional.of(mon));
+        mvc.perform(delete("/api/monitoring/dbquery/61").session(dbqUser(9L)))
+                .andExpect(status().isForbidden());
+        verify(dbQueryMonitorRepo, never()).delete(any());
+
+        mvc.perform(delete("/api/monitoring/dbquery/61").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.deleted").value(true));
+        verify(dbQueryAlertRowsRepo).deleteByMonitorId(61L);
+        verify(dbQueryCheckRepo).deleteByMonitorId(61L);
+        verify(dbQueryMonitorRepo).delete(mon);
+        verify(escalationService).resolveOpenAlertsSilently(eq(mon.getName()), any(), anyString(), any());
+    }
+
+    @Test
+    @DisplayName("DBQUERY varsayılanlar: /defaults dbquery bloğunu taşır (aralık 300 sn)")
+    void dbquery_defaults() throws Exception {
+        // Sahte ayar servisi varsayılanı DÖNDÜRMEZ (null / 0) — uç Map.of kurduğu için gerçek davranışı (varsayılanı) kur.
+        when(appSettings.getString(anyString(), anyString())).thenAnswer(i -> i.getArgument(1));
+        when(appSettings.getInt(anyString(), anyInt())).thenAnswer(i -> i.getArgument(1));
+        mvc.perform(get("/api/monitoring/defaults").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.dbquery.interval_seconds").value(300))
+                .andExpect(jsonPath("$.data.dbquery.max_timeout_seconds").value(60))
+                .andExpect(jsonPath("$.data.dbquery.plan_check_mode").value("WARN"));
+    }
+
+    // ── İnceleme 2026-10-31 düzeltmeleri (API / yetki / veri) ────────────────────────────────────────────────────
+
+    /** Kendi takımı {@code ownTeam}; {@code shared} takımında paylaşım (VIEW her zaman, düzeyler birikimli). */
+    private MockHttpSession dbqGrantee(long ownTeam, long shared, boolean execute, boolean edit, boolean delete) {
+        MockHttpSession s = dbqUser(ownTeam);
+        s.setAttribute(SessionScope.ATTR_GRANT_VIEW, List.of(shared));
+        if (execute || edit || delete) s.setAttribute(SessionScope.ATTR_GRANT_EXECUTE, List.of(shared));
+        if (edit || delete) s.setAttribute(SessionScope.ATTR_GRANT_EDIT, List.of(shared));
+        if (delete) s.setAttribute(SessionScope.ATTR_GRANT_DELETE, List.of(shared));
+        return s;
+    }
+
+    /** 7/24 izleme ekibi operatörü (rol USER; kendi takımı {@code ownTeam}). */
+    private MockHttpSession dbqNocOperator(long ownTeam) {
+        MockHttpSession s = dbqUser(ownTeam);
+        s.setAttribute(SessionScope.ATTR_NOC_OPERATOR, Boolean.TRUE);
+        s.setAttribute(SessionScope.ATTR_NOC_TEAM_IDS, List.of(ownTeam));
+        return s;
+    }
+
+    private static com.sitemonitor.model.MonitorChangeLog dbqSnap(long monitorId, int seq, long team, String json) {
+        com.sitemonitor.model.MonitorChangeLog row = new com.sitemonitor.model.MonitorChangeLog();
+        row.setId(1000L + seq); row.setResourceKind("DBQUERY"); row.setResourceId(monitorId); row.setSeq(seq); row.setTeamId(team);
+        row.setResourceName("Bekleyen siparişler " + monitorId);
+        row.setSnapshot(json);
+        return row;
+    }
+
+    @Test
+    @DisplayName("İnceleme Y1 / K5: 7/24 operatörü her takımın izlemesini listeler ama bağlantının YALNIZ adını ve türünü görür (sunucu / port / veritabanı yok)")
+    void dbquery_list_nocOperatorSeesProfileSummaryOnly() throws Exception {
+        var mon = dbqMonitor(32L, 1L, 5L);
+        when(dbQueryMonitorRepo.findAllByOrderByNameAsc()).thenReturn(List.of(mon));
+        when(dbQueryCheckRepo.findLatestPerMonitor()).thenReturn(List.of());
+        when(dbConnectionRepo.findAllById(any())).thenReturn(List.of(dbqConn(5L, 1L)));
+        String body = mvc.perform(get("/api/monitoring/dbquery").session(dbqNocOperator(7L)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].profile.name").value("Sipariş veritabanı (salt okunur)"))
+                .andExpect(jsonPath("$.data[0].profile.db_type").value("POSTGRESQL"))
+                .andExpect(jsonPath("$.data[0].profile.host").doesNotExist())
+                .andExpect(jsonPath("$.data[0].profile.port").doesNotExist())
+                .andExpect(jsonPath("$.data[0].profile.database_name").doesNotExist())
+                .andReturn().getResponse().getContentAsString();
+        assertThat(body).doesNotContain("db-orders.internal").doesNotContain("GIZLI-PAROLA").doesNotContain("ro_monitor");
+
+        // Global görüntüleyici (AUDIT) bağlantıyı görebilir → ayrıntı da görünür (bağlantı ucuyla tek kural)
+        MockHttpSession audit = session("AUDIT");
+        mvc.perform(get("/api/monitoring/dbquery").session(audit))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].profile.host").value("db-orders.internal"));
+    }
+
+    @Test
+    @DisplayName("İnceleme Y2 + O1 / K2: EDIT paylaşımlı kişi SQL / kural / maske / mail / sınır alanlarını değiştiremez (403, kayıt yok); aynı değerler "
+            + "gövdeden düşer, ad / grup / zamanlama değişir")
+    void dbquery_update_grantEditorLockedFields() throws Exception {
+        var mon = dbqMonitor(42L, 1L, 5L);
+        mon.setMaskedColumnsJson("[\"tckn\"]");
+        mon.setMailSubjectTemplate("Sipariş birikmesi");
+        when(dbQueryMonitorRepo.findById(42L)).thenReturn(Optional.of(mon));
+        when(dbConnectionRepo.findById(5L)).thenReturn(Optional.of(dbqConn(5L, 1L)));
+        when(dbQueryMonitorRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+        MockHttpSession grant = dbqGrantee(3L, 1L, true, true, false);
+        var json = org.springframework.http.MediaType.APPLICATION_JSON;
+        try (DbqEngine engine = DbqEngine.ok()) {
+            for (String change : List.of(
+                    "{\"sql_text\":\"SELECT tckn FROM musteri WHERE id = 42\"}",
+                    "{\"sqlText\":\"SELECT tckn FROM musteri WHERE id = 42\"}",
+                    "{\"masked_columns\":[]}",
+                    "{\"mail_include_rows\":false}",
+                    "{\"mail_columns\":[\"tckn\"]}",
+                    "{\"mail_subject_template\":\"Başka konu\"}",
+                    "{\"rule_logic\":\"ALL\"}",
+                    "{\"slow_query_ms\":5000}",
+                    "{\"query_timeout_seconds\":45}",
+                    "{\"max_rows\":10}",
+                    "{\"profile_id\":6}")) {
+                mvc.perform(put("/api/monitoring/dbquery/42").session(grant).contentType(json).content(change))
+                        .andExpect(status().isForbidden());
+            }
+            // Kurallar (alarm SEVİYESİ kuraldan gelir): farklı kural → 403
+            var rule = new com.sitemonitor.service.dbquery.DbQueryRules.Rule("r1", "Bekleyen", "ROW_COUNT", null, null, "GT", null,
+                    null, new com.sitemonitor.service.dbquery.DbQueryRules.Threshold(1.0, null, null, null), null);
+            engine.rules.when(() -> com.sitemonitor.service.dbquery.DbQueryRules.fromApi(any()))
+                    .thenReturn(new com.sitemonitor.service.dbquery.DbQueryRules.Parsed(List.of(rule), List.of()));
+            mvc.perform(put("/api/monitoring/dbquery/42").session(grant).contentType(json)
+                            .content("{\"rules\":[{\"kind\":\"ROW_COUNT\",\"operator\":\"GT\",\"critical\":1}]}"))
+                    .andExpect(status().isForbidden());
+            verify(dbQueryMonitorRepo, never()).save(any());
+
+            // Tam form: kilitli alanlar KAYITLI değerle aynı (düşer) + ad / grup / zamanlama değişimi → kaydedilir
+            engine.rules.when(() -> com.sitemonitor.service.dbquery.DbQueryRules.fromApi(any()))
+                    .thenReturn(new com.sitemonitor.service.dbquery.DbQueryRules.Parsed(List.of(), List.of()));
+            String full = "{\"name\":\"Yeni ad\",\"group_name\":\"Sipariş\",\"tags\":\"veritabanı\",\"interval_seconds\":600,"
+                    + "\"profile_id\":5,\"sql_text\":\"SELECT COUNT(*) FROM orders WHERE state = 'PENDING'\",\"rules\":[],"
+                    + "\"rule_logic\":\"ANY\",\"masked_columns\":[\"tckn\"],\"mail_include_rows\":true,\"mail_columns\":[],"
+                    + "\"mail_subject_template\":\"Sipariş birikmesi\",\"slow_query_ms\":null,\"query_timeout_seconds\":30,\"max_rows\":1000}";
+            mvc.perform(put("/api/monitoring/dbquery/42").session(grant).contentType(json).content(full))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.routing_locked").value(true));
+            engine.schedule.verify(() -> com.sitemonitor.service.dbquery.DbQuerySchedule.apply(any(), any(), any(), any()));
+        }
+        org.mockito.ArgumentCaptor<com.sitemonitor.model.DbQueryMonitor> cap =
+                org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.DbQueryMonitor.class);
+        verify(dbQueryMonitorRepo).save(cap.capture());
+        assertThat(cap.getValue().getName()).isEqualTo("Yeni ad");
+        assertThat(cap.getValue().getSqlText()).isEqualTo("SELECT COUNT(*) FROM orders WHERE state = 'PENDING'");
+        assertThat(cap.getValue().getMaskedColumnsJson()).isEqualTo("[\"tckn\"]");
+        assertThat(cap.getValue().getMailIncludeRows()).isTrue();
+        assertThat(cap.getValue().getProfileId()).isEqualTo(5L);
+    }
+
+    @Test
+    @DisplayName("İnceleme K2: kendi kapsamıyla düzenleyen kişi aynı alanları serbestçe değiştirir (kilit yalnız paylaşımda)")
+    void dbquery_update_ownerChangesLockedFieldsFreely() throws Exception {
+        var mon = dbqMonitor(46L, 1L, 5L);
+        when(dbQueryMonitorRepo.findById(46L)).thenReturn(Optional.of(mon));
+        when(dbConnectionRepo.findById(5L)).thenReturn(Optional.of(dbqConn(5L, 1L)));
+        when(dbQueryMonitorRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+        try (DbqEngine engine = DbqEngine.ok()) {
+            mvc.perform(put("/api/monitoring/dbquery/46").session(dbqUser(1L))
+                            .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                            .content("{\"sql_text\":\"SELECT COUNT(*) FROM orders\",\"masked_columns\":[\"tckn\"],\"mail_include_rows\":false}"))
+                    .andExpect(status().isOk());
+        }
+        org.mockito.ArgumentCaptor<com.sitemonitor.model.DbQueryMonitor> cap =
+                org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.DbQueryMonitor.class);
+        verify(dbQueryMonitorRepo).save(cap.capture());
+        assertThat(cap.getValue().getSqlText()).isEqualTo("SELECT COUNT(*) FROM orders");
+        assertThat(cap.getValue().getMailIncludeRows()).isFalse();
+    }
+
+    @Test
+    @DisplayName("İnceleme K6: zamanlama değişince plan zamanlayıcıyla sıfırlanır (dbQueryScheduleChanged); yalnız sorgu değişince sıfırlanmaz")
+    void dbquery_update_scheduleChangeReplans() throws Exception {
+        var mon = dbqMonitor(47L, 1L, 5L);
+        when(dbQueryMonitorRepo.findById(47L)).thenReturn(Optional.of(mon));
+        when(dbConnectionRepo.findById(5L)).thenReturn(Optional.of(dbqConn(5L, 1L)));
+        when(dbQueryMonitorRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+        var json = org.springframework.http.MediaType.APPLICATION_JSON;
+        try (DbqEngine engine = DbqEngine.ok()) {
+            mvc.perform(put("/api/monitoring/dbquery/47").session(dbqUser(1L)).contentType(json)
+                            .content("{\"sql_text\":\"SELECT COUNT(*) FROM orders\"}"))
+                    .andExpect(status().isOk());
+            verify(schedulerService, never()).dbQueryScheduleChanged(anyLong());
+
+            engine.schedule.when(() -> com.sitemonitor.service.dbquery.DbQuerySchedule.apply(any(), any(), any(), any()))
+                    .thenAnswer(i -> { ((com.sitemonitor.model.DbQueryMonitor) i.getArgument(1)).setIntervalSeconds(900); return null; });
+            mvc.perform(put("/api/monitoring/dbquery/47").session(dbqUser(1L)).contentType(json)
+                            .content("{\"interval_seconds\":900}"))
+                    .andExpect(status().isOk());
+            verify(schedulerService, org.mockito.Mockito.times(1)).dbQueryScheduleChanged(47L);
+            verify(schedulerService, never()).dbQueryActiveChanged(anyLong());
+
+            // Duraklatma: atlama sayacı / bekleyen yeniden deneme zamanlayıcıda sıfırlanır
+            mvc.perform(put("/api/monitoring/dbquery/47").session(dbqUser(1L)).contentType(json)
+                            .content("{\"active\":false}"))
+                    .andExpect(status().isOk());
+            verify(schedulerService, org.mockito.Mockito.times(1)).dbQueryActiveChanged(47L);
+        }
+    }
+
+    @Test
+    @DisplayName("İnceleme K2: paylaşımla erişilen takımda izleme oluşturulamaz / oraya kopyalanamaz → 403 DBQUERY_GRANT_TEAM; kendi takımına serbest")
+    void dbquery_create_inGrantTeamRefused() throws Exception {
+        when(dbConnectionRepo.findById(5L)).thenReturn(Optional.of(dbqConn(5L, 1L)));
+        when(dbConnectionRepo.findById(8L)).thenReturn(Optional.of(dbqConn(8L, 3L)));
+        when(dbQueryMonitorRepo.save(any())).thenAnswer(i -> {
+            com.sitemonitor.model.DbQueryMonitor m = i.getArgument(0);
+            m.setId(78L);
+            return m;
+        });
+        MockHttpSession grant = dbqGrantee(3L, 1L, true, true, true);
+        var json = org.springframework.http.MediaType.APPLICATION_JSON;
+        try (DbqEngine engine = DbqEngine.ok()) {
+            mvc.perform(post("/api/monitoring/dbquery").session(grant).contentType(json)
+                            .content(dbqCreateBody(1L, 5L, "Sipariş birikmesi (kopya)")))
+                    .andExpect(status().isForbidden())
+                    .andExpect(jsonPath("$.code").value("DBQUERY_GRANT_TEAM"))
+                    .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("Paylaşımla erişilen takımda")));
+            verify(dbQueryMonitorRepo, never()).save(any());
+
+            mvc.perform(post("/api/monitoring/dbquery").session(grant).contentType(json)
+                            .content(dbqCreateBody(3L, 8L, "Kendi takımımın izlemesi")))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.id").value(78));
+        }
+    }
+
+    @Test
+    @DisplayName("İnceleme Y2 / K2: viaMonitor yok — paylaşımlı kişi monitor_id ile /dbquery/test ve /plan-check'te 403 DBQUERY_GRANT_TEAM; "
+            + "görülemeyen izleme 404; motor hiç çağrılmaz")
+    void dbquery_testAndPlan_viaGrantedMonitorRefused() throws Exception {
+        var mon = dbqMonitor(43L, 1L, 5L);
+        when(dbQueryMonitorRepo.findById(43L)).thenReturn(Optional.of(mon));
+        when(dbConnectionRepo.findById(5L)).thenReturn(Optional.of(dbqConn(5L, 1L)));
+        MockHttpSession grant = dbqGrantee(3L, 1L, true, true, true);
+        var json = org.springframework.http.MediaType.APPLICATION_JSON;
+        try (DbqEngine engine = DbqEngine.ok()) {
+            mvc.perform(post("/api/monitoring/dbquery/test").session(grant).contentType(json)
+                            .content("{\"monitor_id\":43,\"profile_id\":5,\"sql_text\":\"SELECT COUNT(*) FROM orders\"}"))
+                    .andExpect(status().isForbidden())
+                    .andExpect(jsonPath("$.code").value("DBQUERY_GRANT_TEAM"));
+            mvc.perform(post("/api/monitoring/dbquery/plan-check").session(grant).contentType(json)
+                            .content("{\"monitor_id\":43,\"profile_id\":5,\"sql\":\"SELECT COUNT(*) FROM orders\"}"))
+                    .andExpect(status().isForbidden())
+                    .andExpect(jsonPath("$.code").value("DBQUERY_GRANT_TEAM"));
+            // İzleme olmadan da: paylaşım bağlantıyı açmaz → bağlantı "bulunamadı"
+            mvc.perform(post("/api/monitoring/dbquery/test").session(grant).contentType(json)
+                            .content("{\"profile_id\":5,\"sql_text\":\"SELECT COUNT(*) FROM orders\"}"))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.field").value("profile_id"));
+            // Görülemeyen izleme (başka takım, paylaşım yok) → 404 (varlık sızmaz)
+            mvc.perform(post("/api/monitoring/dbquery/test").session(dbqUser(9L)).contentType(json)
+                            .content("{\"monitor_id\":43,\"profile_id\":5,\"sql_text\":\"SELECT 1\"}"))
+                    .andExpect(status().isNotFound());
+        }
+        verify(dbQueryChecker, never()).test(any(), any());
+        verify(dbQueryChecker, never()).planCheck(any(), any());
+    }
+
+    @Test
+    @DisplayName("İnceleme K2: EXECUTE paylaşımıyla 'Şimdi kontrol et' (kayıtlı sorgu) aynen çalışır")
+    void dbquery_trigger_viaExecuteGrantRuns() throws Exception {
+        var mon = dbqMonitor(44L, 1L, 5L);
+        when(dbQueryMonitorRepo.findById(44L)).thenReturn(Optional.of(mon));
+        when(dbConnectionRepo.findById(5L)).thenReturn(Optional.of(dbqConn(5L, 1L)));
+        when(appSettings.getInt(eq("site.monitor.dbquery.manual-cooldown-seconds"), anyInt())).thenReturn(20);
+        when(schedulerService.triggerDbQueryCheck(any())).thenReturn(java.util.Map.of("status", "OK"));
+        try (DbqEngine engine = DbqEngine.ok()) {
+            mvc.perform(post("/api/monitoring/dbquery/44/check").session(dbqGrantee(3L, 1L, true, false, false)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.profile.host").doesNotExist());   // paylaşım bağlantı ayrıntısını açmaz
+        }
+        verify(schedulerService).triggerDbQueryCheck(mon);
+        verify(schedulerService).evaluateDbQueryNow(eq(mon), any());
+    }
+
+    @Test
+    @DisplayName("İnceleme O3 / K3: saatlik küme sınırı dolu → /test ve /plan-check 429 RATE_LIMITED + Retry-After; motor çağrılmaz, oturum beklemesi geri verilir")
+    void dbquery_testAndPlan_hourlyQuota() throws Exception {
+        when(dbConnectionRepo.findById(5L)).thenReturn(Optional.of(dbqConn(5L, 1L)));
+        org.mockito.Mockito.doThrow(DbQueryApiException.tooMany("RATE_LIMITED",
+                        "Saatlik deneme sınırına ulaşıldı (60/saat) — 12 dk sonra yeniden deneyin.", 700))
+                .when(dbQueryTestQuota).consume(any());
+        MockHttpSession s = session("ADMIN");
+        var json = org.springframework.http.MediaType.APPLICATION_JSON;
+        try (DbqEngine engine = DbqEngine.ok()) {
+            mvc.perform(post("/api/monitoring/dbquery/test").session(s).contentType(json)
+                            .content("{\"profile_id\":5,\"sql_text\":\"SELECT COUNT(*) FROM orders\",\"rules\":[]}"))
+                    .andExpect(status().is(429))
+                    .andExpect(jsonPath("$.code").value("RATE_LIMITED"))
+                    .andExpect(jsonPath("$.retry_after_seconds").value(700))
+                    .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("Saatlik deneme sınırına")))
+                    .andExpect(header().string("Retry-After", "700"));
+            assertThat(s.getAttribute(MonitoringController.DBQUERY_TEST_AT)).as("oturum beklemesi geri verilir").isNull();
+            mvc.perform(post("/api/monitoring/dbquery/plan-check").session(s).contentType(json)
+                            .content("{\"profile_id\":5,\"sql\":\"SELECT COUNT(*) FROM orders\"}"))
+                    .andExpect(status().is(429))
+                    .andExpect(jsonPath("$.code").value("RATE_LIMITED"));
+        }
+        verify(dbQueryTestQuota, org.mockito.Mockito.times(2)).consume(any());
+        verify(dbQueryChecker, never()).test(any(), any());
+        verify(dbQueryChecker, never()).planCheck(any(), any());
+    }
+
+    @Test
+    @DisplayName("İnceleme O2 / K1: ad TÜM takımlarda tekil — aynı pod'da eşzamanlı iki kayıt (iki takım, ad yalnız büyük-küçük harfle farklı) → biri 200, biri 409")
+    void dbquery_create_concurrentSameName_oneConflict() throws Exception {
+        when(dbConnectionRepo.findById(5L)).thenReturn(Optional.of(dbqConn(5L, 1L)));
+        when(dbConnectionRepo.findById(6L)).thenReturn(Optional.of(dbqConn(6L, 2L)));
+        java.util.Set<String> saved = java.util.concurrent.ConcurrentHashMap.newKeySet();
+        when(dbQueryMonitorRepo.existsDuplicateName(anyString(), any()))
+                .thenAnswer(i -> saved.contains(i.<String>getArgument(0).toLowerCase(java.util.Locale.ROOT)));
+        when(dbQueryMonitorRepo.save(any())).thenAnswer(i -> {
+            com.sitemonitor.model.DbQueryMonitor m = i.getArgument(0);
+            Thread.sleep(300);   // yarış penceresi: denetim ile kayıt arası
+            saved.add(m.getName().toLowerCase(java.util.Locale.ROOT));
+            m.setId(900L + saved.size());
+            return m;
+        });
+        // Not: motor sahteleri (mockStatic) iş parçacığına özeldir — istekler gerçek motorla koşar (sorgu basit SELECT)
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            java.util.concurrent.CyclicBarrier start = new java.util.concurrent.CyclicBarrier(2);
+            java.util.List<java.util.concurrent.Callable<Integer>> calls = List.of(
+                    () -> { start.await(5, java.util.concurrent.TimeUnit.SECONDS);
+                            return mvc.perform(post("/api/monitoring/dbquery").session(session("ADMIN"))
+                                    .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                                    .content(dbqCreateBody(1L, 5L, "Ortak ad"))).andReturn().getResponse().getStatus(); },
+                    () -> { start.await(5, java.util.concurrent.TimeUnit.SECONDS);
+                            return mvc.perform(post("/api/monitoring/dbquery").session(session("ADMIN"))
+                                    .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                                    .content(dbqCreateBody(2L, 6L, "ORTAK AD"))).andReturn().getResponse().getStatus(); });
+            List<Integer> statuses = new java.util.ArrayList<>();
+            for (var f : pool.invokeAll(calls, 30, java.util.concurrent.TimeUnit.SECONDS)) statuses.add(f.get(1, java.util.concurrent.TimeUnit.SECONDS));
+            assertThat(statuses).containsExactlyInAnyOrder(200, 409);
+        } finally {
+            pool.shutdownNow();
+        }
+        verify(dbQueryMonitorRepo, org.mockito.Mockito.times(1)).save(any());
+    }
+
+    @Test
+    @DisplayName("İnceleme K1: veritabanı tekil indeks ihlali (başka pod, ux_dbqm_name_lower) aynı 409 DUPLICATE_RECORD + alan name'e çevrilir")
+    void dbquery_create_uniqueIndexViolationIs409() throws Exception {
+        when(dbConnectionRepo.findById(5L)).thenReturn(Optional.of(dbqConn(5L, 1L)));
+        when(dbQueryMonitorRepo.save(any())).thenThrow(new org.springframework.dao.DataIntegrityViolationException("could not execute statement",
+                new org.hibernate.exception.ConstraintViolationException(
+                        "duplicate key value violates unique constraint \"ux_dbqm_name_lower\"",
+                        new java.sql.SQLException("duplicate key", "23505"), "ux_dbqm_name_lower")));
+        try (DbqEngine engine = DbqEngine.ok()) {
+            mvc.perform(post("/api/monitoring/dbquery").session(session("ADMIN"))
+                            .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                            .content(dbqCreateBody(1L, 5L, "Sipariş birikmesi")))
+                    .andExpect(status().isConflict())
+                    .andExpect(jsonPath("$.code").value("DUPLICATE_RECORD"))
+                    .andExpect(jsonPath("$.field").value("name"));
+        }
+        // Tanıma kuralı: başka bir bütünlük hatası (ör. NOT NULL) ad çakışması SAYILMAZ
+        assertThat(MonitoringController.dbqNameViolation(new org.springframework.dao.DataIntegrityViolationException("x",
+                new java.sql.SQLException("null value in column", "23502")))).isFalse();
+    }
+
+    @Test
+    @DisplayName("İnceleme O1 / D5: paylaşımla geri yüklemede sorgu / bağlantı / mail alanları atlanır (skipped_routing); yalnız onlar farklıysa 403 ve doğru ileti")
+    void dbquery_restore_byGranteeSkipsLockedFields() throws Exception {
+        var mon = dbqMonitor(45L, 1L, 5L);
+        mon.setName("Canlı ad");
+        when(dbQueryMonitorRepo.findById(45L)).thenReturn(Optional.of(mon));
+        when(dbConnectionRepo.findById(5L)).thenReturn(Optional.of(dbqConn(5L, 1L)));
+        when(dbQueryMonitorRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+        when(changeLogRepo.findByResourceKindAndResourceIdAndSeq("DBQUERY", 45L, 1)).thenReturn(Optional.of(
+                dbqSnap(45L, 1, 1L, "{\"sqlText\":\"SELECT tckn FROM musteri\",\"profileId\":6,\"mailIncludeRows\":false}")));
+        when(changeLogRepo.findByResourceKindAndResourceIdAndSeq("DBQUERY", 45L, 2)).thenReturn(Optional.of(
+                dbqSnap(45L, 2, 1L, "{\"name\":\"Eski ad\",\"sqlText\":\"SELECT tckn FROM musteri\"}")));
+        MockHttpSession grant = dbqGrantee(3L, 1L, true, true, true);
+        try (DbqEngine engine = DbqEngine.ok()) {
+            mvc.perform(post("/api/monitoring/changes/dbquery/45/1/restore").session(grant))
+                    .andExpect(status().isForbidden())
+                    .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("sorgu, bağlantı")));
+            verify(dbQueryMonitorRepo, never()).save(any());
+
+            mvc.perform(post("/api/monitoring/changes/dbquery/45/2/restore").session(grant))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.skipped_routing").value(org.hamcrest.Matchers.hasItem("sqlText")));
+        }
+        assertThat(mon.getName()).isEqualTo("Eski ad");
+        assertThat(mon.getSqlText()).as("sorgu paylaşımla geri yüklenmez").isEqualTo("SELECT COUNT(*) FROM orders WHERE state = 'PENDING'");
+        assertThat(mon.getProfileId()).isEqualTo(5L);
+    }
+
+    @Test
+    @DisplayName("İnceleme D5: geri yükleme maliyet ön kontrolünü uygular — BLOCK → 400 DBQUERY_PLAN_TOO_COSTLY (kayıt yok); WARN → kayıt + plan_warning")
+    void dbquery_restore_appliesPlanCheck() throws Exception {
+        // Her okuma TAZE kayıt (üretimde findById ayrık bir kopya döner; ilk denemenin yerinde değişikliği ikinciye taşınmasın)
+        when(dbQueryMonitorRepo.findById(47L)).thenAnswer(i -> Optional.of(dbqMonitor(47L, 1L, 5L)));
+        when(dbConnectionRepo.findById(5L)).thenReturn(Optional.of(dbqConn(5L, 1L)));
+        when(dbQueryMonitorRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+        when(appSettings.getString(eq("site.monitor.dbquery.plan-check-mode"), anyString())).thenReturn("BLOCK");
+        when(changeLogRepo.findByResourceKindAndResourceIdAndSeq("DBQUERY", 47L, 1)).thenReturn(Optional.of(
+                dbqSnap(47L, 1, 1L, "{\"sqlText\":\"SELECT * FROM orders\"}")));
+        when(dbQueryChecker.planCheck(any(), any()))
+                .thenReturn(new com.sitemonitor.service.dbquery.DbQueryCheckerService.PlanVerdict(true, "BLOCK", 9.0e9, 1.0e9, "pahalı"))
+                .thenReturn(new com.sitemonitor.service.dbquery.DbQueryCheckerService.PlanVerdict(true, "WARN", 2.0e6, 1.0e5, "dikkat"));
+        try (DbqEngine engine = DbqEngine.ok()) {
+            mvc.perform(post("/api/monitoring/changes/dbquery/47/1/restore").session(session("ADMIN")))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.code").value("DBQUERY_PLAN_TOO_COSTLY"));
+            verify(dbQueryMonitorRepo, never()).save(any());
+            mvc.perform(post("/api/monitoring/changes/dbquery/47/1/restore").session(session("ADMIN")))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.plan_warning.verdict").value("WARN"));
+        }
+        org.mockito.ArgumentCaptor<com.sitemonitor.model.DbQueryMonitor> cap =
+                org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.DbQueryMonitor.class);
+        verify(dbQueryMonitorRepo).save(cap.capture());
+        assertThat(cap.getValue().getSqlText()).isEqualTo("SELECT * FROM orders");
+    }
+
+    @Test
+    @DisplayName("İnceleme D8: silinen izlemenin elle kontrol bekleme damgası haritada kalmaz")
+    void dbquery_delete_forgetsManualCooldown() throws Exception {
+        var mon = dbqMonitor(63L, 1L, 5L);
+        when(dbQueryMonitorRepo.findById(63L)).thenReturn(Optional.of(mon));
+        when(dbConnectionRepo.findById(5L)).thenReturn(Optional.of(dbqConn(5L, 1L)));
+        when(appSettings.getInt(eq("site.monitor.dbquery.manual-cooldown-seconds"), anyInt())).thenReturn(20);
+        when(schedulerService.triggerDbQueryCheck(any())).thenReturn(java.util.Map.of("status", "OK"));
+        MonitoringController controller = org.springframework.test.util.AopTestUtils.getTargetObject(
+                applicationContext.getBean(MonitoringController.class));
+        @SuppressWarnings("unchecked")
+        java.util.Map<Long, Long> stamps = (java.util.Map<Long, Long>)
+                org.springframework.test.util.ReflectionTestUtils.getField(controller, "dbQueryManualTriggerAt");
+        try (DbqEngine engine = DbqEngine.ok()) {
+            mvc.perform(post("/api/monitoring/dbquery/63/check").session(session("ADMIN"))).andExpect(status().isOk());
+            assertThat(stamps).containsKey(63L);
+            mvc.perform(delete("/api/monitoring/dbquery/63").session(session("ADMIN"))).andExpect(status().isOk());
+        }
+        assertThat(stamps).doesNotContainKey(63L);
+    }
+
+    // ── İnceleme ikinci tur (O-3, D-5) ───────────────────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("İkinci tur O-3: 'Şimdi kontrol et' saatlik küme sayacından düşer (EXECUTE paylaşımıyla tetikleyen de); sınır doluysa "
+            + "429 RATE_LIMITED, kontrol ÇALIŞMAZ, izleme beklemesi başlamaz")
+    void dbquery_trigger_countsHourlyQuota() throws Exception {
+        when(dbQueryMonitorRepo.findById(48L)).thenReturn(Optional.of(dbqMonitor(48L, 1L, 5L)));
+        when(dbQueryMonitorRepo.findById(49L)).thenReturn(Optional.of(dbqMonitor(49L, 1L, 5L)));
+        when(dbConnectionRepo.findById(5L)).thenReturn(Optional.of(dbqConn(5L, 1L)));
+        when(appSettings.getInt(eq("site.monitor.dbquery.manual-cooldown-seconds"), anyInt())).thenReturn(20);
+        when(schedulerService.triggerDbQueryCheck(any())).thenReturn(java.util.Map.of("status", "OK"));
+        var ticket = org.mockito.Mockito.mock(com.sitemonitor.service.dbquery.DbQueryTestQuota.Ticket.class);
+        MockHttpSession grantExec = dbqGrantee(3L, 1L, true, false, false);
+        when(dbQueryTestQuota.consume(grantExec)).thenReturn(ticket);
+        try (DbqEngine engine = DbqEngine.ok()) {
+            mvc.perform(post("/api/monitoring/dbquery/48/check").session(grantExec)).andExpect(status().isOk());
+            verify(dbQueryTestQuota).consume(grantExec);
+
+            org.mockito.Mockito.doThrow(DbQueryApiException.tooMany("RATE_LIMITED",
+                            "Saatlik deneme sınırına ulaşıldı (60/saat; sorgu denemesi, maliyet denetimi ve elle kontrol birlikte sayılır) — 7 dk sonra yeniden deneyin.", 400))
+                    .when(dbQueryTestQuota).consume(any());
+            mvc.perform(post("/api/monitoring/dbquery/49/check").session(grantExec))
+                    .andExpect(status().is(429))
+                    .andExpect(jsonPath("$.code").value("RATE_LIMITED"))
+                    .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("elle kontrol")))
+                    .andExpect(header().string("Retry-After", "400"));
+        }
+        verify(schedulerService, org.mockito.Mockito.times(1)).triggerDbQueryCheck(any());
+        verify(dbQueryTestQuota, never()).refund(any());
+        MonitoringController controller = org.springframework.test.util.AopTestUtils.getTargetObject(
+                applicationContext.getBean(MonitoringController.class));
+        @SuppressWarnings("unchecked")
+        java.util.Map<Long, Long> stamps = (java.util.Map<Long, Long>)
+                org.springframework.test.util.ReflectionTestUtils.getField(controller, "dbQueryManualTriggerAt");
+        assertThat(stamps).as("sınır doluyken izleme beklemesi başlamaz").doesNotContainKey(49L);
+    }
+
+    @Test
+    @DisplayName("İkinci tur D-5: motor meşgul (SKIPPED) → 'Sorguyu dene' ve 'Şimdi kontrol et' saatlik hakkı GERİ VERİR (429 DBQUERY_BUSY)")
+    void dbquery_busy_refundsHourlyQuota() throws Exception {
+        when(dbConnectionRepo.findById(5L)).thenReturn(Optional.of(dbqConn(5L, 1L)));
+        when(dbQueryMonitorRepo.findById(50L)).thenReturn(Optional.of(dbqMonitor(50L, 1L, 5L)));
+        when(appSettings.getInt(eq("site.monitor.dbquery.manual-cooldown-seconds"), anyInt())).thenReturn(20);
+        var ticket = org.mockito.Mockito.mock(com.sitemonitor.service.dbquery.DbQueryTestQuota.Ticket.class);
+        when(dbQueryTestQuota.consume(any())).thenReturn(ticket);
+        var busy = org.mockito.Mockito.mock(com.sitemonitor.service.dbquery.DbQueryCheckerService.Result.class);
+        when(busy.status()).thenReturn("SKIPPED");
+        when(dbQueryChecker.test(any(), any())).thenReturn(busy);
+        when(schedulerService.triggerDbQueryCheck(any()))
+                .thenReturn(java.util.Map.of("status", "SKIPPED", "failure_reason", "DB_BUSY"));
+        var json = org.springframework.http.MediaType.APPLICATION_JSON;
+        try (DbqEngine engine = DbqEngine.ok()) {
+            mvc.perform(post("/api/monitoring/dbquery/test").session(session("ADMIN")).contentType(json)
+                            .content("{\"profile_id\":5,\"sql_text\":\"SELECT COUNT(*) FROM orders\",\"rules\":[]}"))
+                    .andExpect(status().is(429))
+                    .andExpect(jsonPath("$.code").value("DBQUERY_BUSY"));
+            verify(dbQueryTestQuota, org.mockito.Mockito.times(1)).refund(ticket);
+            mvc.perform(post("/api/monitoring/dbquery/50/check").session(session("ADMIN")))
+                    .andExpect(status().is(429))
+                    .andExpect(jsonPath("$.code").value("DBQUERY_BUSY"));
+        }
+        verify(dbQueryTestQuota, org.mockito.Mockito.times(2)).refund(ticket);
+        verify(schedulerService, never()).evaluateDbQueryNow(any(), any());
     }
 }

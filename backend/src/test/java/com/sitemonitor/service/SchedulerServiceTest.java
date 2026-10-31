@@ -202,13 +202,13 @@ class SchedulerServiceTest {
     }
 
     @Test
-    @DisplayName("rollupDailyStats: 8 tip (port/ping/keyword/http/page/scripted/pagespeed/uptime) için upsert çalıştırır")
+    @DisplayName("rollupDailyStats: 9 tip (port/ping/keyword/http/page/scripted/pagespeed/dbquery/uptime) için upsert çalıştırır")
     void rollupDailyStats_runsAllTypes() {
         when(jdbcTemplate.update(anyString(), anyString(), anyString())).thenReturn(3);
         scheduler.rollupDailyStats();
         // Yeni bir izleme türü eklenip rollup satırı unutulursa bu sayı tutmaz: o türün uptime'ı
         // günlük özete hiç girmez ve haftalık raporlarda sessizce yok sayılırdı.
-        verify(jdbcTemplate, times(8)).update(anyString(), anyString(), anyString());   // 8 tip (sql, from, to)
+        verify(jdbcTemplate, times(9)).update(anyString(), anyString(), anyString());   // 9 tip (sql, from, to)
     }
 
     @Test

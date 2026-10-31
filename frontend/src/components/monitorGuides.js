@@ -654,6 +654,106 @@ const NOC_EN = `
 - Monitors with it switched on show a **24/7** badge on their card (Rich view) and in the detail window. To change several monitors at once, use **Notify 24/7 team: On / Off** in the bulk action bar.
 `
 
+const DBQUERY_TR = `
+## Veritabanı sorgu izlemesi nasıl eklenir?
+
+Bir veritabanında **yalnız okuma yapan bir SELECT sorgusunu** düzenli aralıkla (ya da cron ile) çalıştırır; dönen sayıyı / satır sayısını / metni **sizin kurallarınızla** değerlendirir ve kural ihlal edilince alarm açar. Örnek: "son 15 dakikada başarısız ödeme sayısı 20'yi geçerse", "dünkü mutabakat dosyası işlenmemişse".
+
+**+ Yeni İzleme** ile formu açın. Form bölümlere ayrılmıştır; üstteki düğmelerle bölümler arasında atlayabilirsiniz.
+
+### Temel
+- **Ad** — Takım içinde tekildir; alarmın anahtarıdır. Adı değiştirirseniz açık alarmlar yeni ada taşınır.
+- **Takım**, **Grup**, **Etiketler** — standart (grup ve en az bir etiket zorunlu).
+- **Bu alarm ne için?** — Alarmı alan kişinin ilk okuyacağı açıklama (5–2000 karakter). Alarm mailinde ve ayrıntı penceresinde görünür.
+
+### Bağlantı
+- Takımınızın **kayıtlı bağlantılarından** birini seçin (PostgreSQL, SQL Server, Oracle). Bağlantıları sayfa başlığındaki **Bağlantılar** düğmesinden ya da seçicinin yanındaki **Bağlantıları yönet** ile ekleyip deneyebilirsiniz.
+- Bağlantılar takımın belgesidir: başka takım göremez; parola şifreli saklanır ve ekrana **asla** geri dönmez. İzlemeyi düzenleyebilen takım üyesi bağlantıyı da yönetir.
+- Takımı değiştirirseniz seçili bağlantı sıfırlanır.
+
+### Sorgu — güvenlik kuralları (kesin)
+- **Yalnız SELECT** (ya da \`WITH … SELECT\`). INSERT / UPDATE / DELETE / MERGE, tablo ya da yetki değiştiren her komut, işlem komutları (COMMIT, ROLLBACK …), \`SELECT … INTO\`, \`FOR UPDATE\` gibi kilit alan ifadeler ve tehlikeli fonksiyonlar (ör. \`pg_sleep\`, \`xp_*\`, \`DBMS_*\`) reddedilir.
+- **Tek ifade**: yalnız sonda tek bir \`;\` olabilir.
+- **SQL Server'da her tablo** \`WITH (NOLOCK)\` taşımalıdır; kilit ipuçları (UPDLOCK, TABLOCK, HOLDLOCK …) yasaktır.
+- En çok 10.000 karakter; ayrıştırılamayan sorgu kaydedilmez. Düzenleyici yazarken denetler ve sorunu satır:sütun ile gösterir.
+- Sorgu salt-okunur bir oturumda, zaman aşımı ve satır tavanıyla çalışır; bekçi süre dolunca sorguyu iptal eder.
+- **Şablondan başla** takımınızın kayıtlı sorgu şablonlarını getirir; **Şablon olarak kaydet** bu sorguyu, amacını ve kurallarını takımla paylaşır.
+
+### Sorguyu dene — sonuç satırları GÖSTERİLMEZ
+**Sorguyu dene** sorguyu kaydetmeden çalıştırır ve yalnız **durum, süre, satır sayısı, kolon adları ve türleri ve kural sonuçlarını** gösterir. Sorgunun döndürdüğü **satırlar hiçbir ekranda gösterilmez** — bu araç veri çekmek için değildir. Alarm anındaki satırlar yalnız alarm mailinde ve alarm ayrıntısında görünür (maskeleyeceğiniz kolonlar \`••••\` olur). **Maliyeti denetle** sorguyu çalıştırmadan planını okur (PostgreSQL / SQL Server); çok pahalı sorgular yönetici ayarına göre uyarı alır ya da kaydedilmez.
+
+### Değerlendirme
+- **Kurallar** (en çok 10): satır sayısı, bir kolonun değeri (ilk / en büyük / en küçük / toplam / ortalama), metin eşleşmesi ya da önceki çalıştırmaya göre değişim. Her kuralda **Uyarı** ve **Kritik** eşiği ayrı verilebilir.
+- **Herhangi biri / Hepsi** — kurallardan biri mi yoksa hepsi mi ihlal edilince alarm açılsın.
+- **Yavaş sorgu eşiği (ms)** — Boş = kapalı. Süre bu değeri aşınca ayrı bir "yavaş sorgu" uyarısı açılır.
+- Eşik aşımı bir **iş alarmıdır**, kesinti değildir: kullanılabilirlik yüzdenizi düşürmez. Bağlantı ya da sorgu hatası ise kesinti alarmıdır.
+
+### Zamanlama
+- **Aralık** (en az 1 dk) ya da **cron** (İstanbul saati; iki çalışma arası en az 1 dk).
+- **İzinli pencereler** / **yasak pencereler** (gün + saat aralığı), **resmî tatillerde çalışma**, **ek tarihler**. Pencere dışında beklemek gecikme sayılmaz.
+- Düzenleyici sonraki 10 çalışmayı gösterir; hiç çalışmayacak bir zamanlama kaydedilmez.
+
+### Sınırlar
+- **Zaman aşımı** (5–60 sn) ve **en çok satır** — tavanları yönetici belirler. Satır tavanı aşılırsa sayı "≥ N" diye gösterilir.
+
+### Alarm ve bildirim
+- **Alarm seviyesi** bağlantı / sorgu hatası alarmının seviyesidir; eşik alarmlarının seviyesi kurallardan (Uyarı / Kritik) gelir.
+- **Teyit** ve **kurtarma** — varsayılan 1 / 1.
+- **Mail konusu şablonu** — Boşsa standart konu. Yer tutucular: \`{ad}\` \`{amac}\` \`{satir}\` \`{deger}\` \`{seviye}\` \`{baglanti}\` \`{zaman}\`.
+- **Satırları maile ekle**, **mail kolonları** (boş = ilk 20 kolon) ve **maskelenecek kolonlar** (ör. TCKN, kart numarası).
+- "Şimdi kontrol et" sonucu kaydeder ama **alarm açmaz** (standart kural); açık bir alarmı sağlıklı sonuçla kapatabilir.
+`
+
+const DBQUERY_EN = `
+## How do I add a database query monitor?
+
+Runs a **read-only SELECT query** against a database at a regular interval (or on a cron schedule), evaluates the returned number / row count / text against **your rules** and opens an alert when a rule is breached. Examples: "more than 20 failed payments in the last 15 minutes", "yesterday's reconciliation file has not been processed".
+
+Open the form with **+ New Monitor**. The form is split into sections; the buttons at the top jump between them.
+
+### Basics
+- **Name** — Unique within the team; it is the alert key. If you rename the monitor, open alerts move to the new name.
+- **Team**, **Group**, **Tags** — standard (a group and at least one tag are required).
+- **What is this alert for?** — The first thing the person who receives the alert reads (5–2000 characters). Shown in the alert email and in the detail window.
+
+### Connection
+- Pick one of your team's **saved connections** (PostgreSQL, SQL Server, Oracle). Add and test connections with **Connections** in the page header or **Manage connections** next to the picker.
+- Connections belong to the team: other teams can't see them; the password is stored encrypted and is **never** shown again. Anyone who can edit the monitor can manage the connection.
+- Changing the team clears the selected connection.
+
+### Query — safety rules (strict)
+- **SELECT only** (or \`WITH … SELECT\`). INSERT / UPDATE / DELETE / MERGE, anything that changes tables or permissions, transaction commands (COMMIT, ROLLBACK …), \`SELECT … INTO\`, locking clauses such as \`FOR UPDATE\` and dangerous functions (e.g. \`pg_sleep\`, \`xp_*\`, \`DBMS_*\`) are rejected.
+- **One statement**: only a single trailing \`;\` is allowed.
+- **On SQL Server every table** must carry \`WITH (NOLOCK)\`; locking hints (UPDLOCK, TABLOCK, HOLDLOCK …) are not allowed.
+- At most 10,000 characters; a query that can't be parsed is not saved. The editor checks as you type and points at the problem with line:column.
+- The query runs in a read-only session with a timeout and a row cap; a watchdog cancels it when time runs out.
+- **Start from a template** loads your team's saved query templates; **Save as template** shares this query, its purpose and its rules with the team.
+
+### Try the query — result rows are NOT shown
+**Try the query** runs the query without saving and shows only the **status, duration, row count, column names and types and the rule results**. The rows the query returns are **never shown on any screen** — this is not a data extraction tool. The rows at the moment of an alert appear only in the alert email and the alert details (columns you mask show as \`••••\`). **Check the cost** reads the query plan without running it (PostgreSQL / SQL Server); very expensive queries get a warning or are refused, depending on an administrator setting.
+
+### Evaluation
+- **Rules** (up to 10): row count, a column value (first / max / min / sum / average), a text match or a change compared with the previous run. Each rule can have separate **Warning** and **Critical** thresholds.
+- **Any / All** — open the alert when any rule is breached or only when all of them are.
+- **Slow query threshold (ms)** — Empty = off. A separate "slow query" warning opens when the duration exceeds it.
+- A threshold breach is a **business alert**, not an outage: it doesn't lower your availability. A connection or query error is an outage alert.
+
+### Schedule
+- **Interval** (at least 1 min) or **cron** (Istanbul time; at least 1 min between runs).
+- **Allowed windows** / **blackout windows** (days + time range), **skip public holidays**, **extra dates**. Waiting outside a window doesn't count as late.
+- The editor shows the next 10 runs; a schedule that would never run is not saved.
+
+### Limits
+- **Timeout** (5–60 s) and **maximum rows** — an administrator sets the caps. When the row cap is hit the count shows as "≥ N".
+
+### Alerting
+- The **alert level** is the level of the connection / query error alert; threshold alerts take their level from the rules (Warning / Critical).
+- **Confirmation** and **recovery** — 1 / 1 by default.
+- **Email subject template** — Empty means the standard subject. Placeholders: \`{ad}\` (name) \`{amac}\` (purpose) \`{satir}\` (rows) \`{deger}\` (value) \`{seviye}\` (level) \`{baglanti}\` (connection) \`{zaman}\` (time).
+- **Include rows in the email**, **email columns** (empty = the first 20 columns) and **masked columns** (e.g. national ID, card number).
+- "Check now" records the result but **never opens an alert** (standard rule); a healthy result can close an open alert.
+`
+
 export const MONITOR_GUIDES = {
   http:     { tr: HTTP_TR + NOC_TR,     en: HTTP_EN + NOC_EN },
   port:     { tr: PORT_TR + NOC_TR,     en: PORT_EN + NOC_EN },
@@ -664,4 +764,5 @@ export const MONITOR_GUIDES = {
   domain:   { tr: DOMAIN_TR + NOC_TR,   en: DOMAIN_EN + NOC_EN },
   pagespeed: { tr: PAGESPEED_TR + NOC_TR, en: PAGESPEED_EN + NOC_EN },
   scripted: { tr: SCRIPTED_TR + NOC_TR, en: SCRIPTED_EN + NOC_EN },
+  dbquery:  { tr: DBQUERY_TR + NOC_TR,  en: DBQUERY_EN + NOC_EN },
 }

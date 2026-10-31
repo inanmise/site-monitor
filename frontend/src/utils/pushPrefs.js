@@ -3,7 +3,7 @@
 import { toUtc, localDayKey } from './localDay.js'
 
 /** İzleme aileleri — backend MonitorTypeCatalog.ORDER ile aynı sıra (sunucu `available_families` verirse o kazanır). */
-export const PUSH_FAMILIES = ['cert', 'domain', 'http', 'ping', 'port', 'dns', 'keyword', 'page', 'pagespeed', 'scripted']
+export const PUSH_FAMILIES = ['cert', 'domain', 'http', 'ping', 'port', 'dns', 'keyword', 'page', 'pagespeed', 'scripted', 'dbquery']
 /** En düşük seviye seçenekleri — 'ALL' = tercih yok (sunucuda null). */
 export const PUSH_LEVELS = ['ALL', 'HIGH', 'CRITICAL']
 export const PUSH_LANGS = ['tr', 'en']

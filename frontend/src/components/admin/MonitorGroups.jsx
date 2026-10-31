@@ -17,7 +17,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 export const TYPE_LABEL = {
   cert: 'wr.monTypeCert', http: 'wr.monTypeHttp', ping: 'wr.monTypePing',
   port: 'wr.monTypePort', dns: 'wr.monTypeDns', keyword: 'wr.monTypeKeyword', domain: 'wr.monTypeDomain',
-  page: 'wr.monTypePage', scripted: 'wr.monTypeScripted', pagespeed: 'wr.monTypePageSpeed',
+  page: 'wr.monTypePage', scripted: 'wr.monTypeScripted', pagespeed: 'wr.monTypePageSpeed', dbquery: 'wr.monTypeDbQuery',
 }
 
 /**

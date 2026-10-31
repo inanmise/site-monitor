@@ -32,7 +32,8 @@ class NocFieldChainTest {
     private static final Path AC = Path.of("src", "main", "java", "com", "sitemonitor", "controller", "AdminController.java");
 
     /** Dokuz izleme türü (envanter AdminController'da). */
-    private static final List<String> TYPES = List.of("Ping", "Http", "Keyword", "Page", "PageSpeed", "Scripted", "Domain", "Port", "Dns");
+    private static final List<String> TYPES = List.of("Ping", "Http", "Keyword", "Page", "PageSpeed", "Scripted", "Domain", "Port", "Dns",
+            "DbQuery");   // veritabanı sorgu izlemesi (2026-10-31)
 
     private static String read(Path p) throws Exception {
         return Files.readString(p, StandardCharsets.UTF_8);
@@ -51,7 +52,7 @@ class NocFieldChainTest {
     @DisplayName("on varlık da NocTarget (noc_notify + noc_group_ids kolonları)")
     void entitiesImplementNocTarget() throws Exception {
         for (String cls : List.of("PingMonitor", "HttpMonitor", "KeywordMonitor", "PageMonitor", "PageSpeedMonitor",
-                "ScriptedMonitor", "DomainMonitor", "PortMonitor", "DnsMonitor", "CertificateInventory")) {
+                "ScriptedMonitor", "DomainMonitor", "PortMonitor", "DnsMonitor", "DbQueryMonitor", "CertificateInventory")) {
             Class<?> c = Class.forName("com.sitemonitor.model." + cls);
             assertThat(NocTarget.class.isAssignableFrom(c)).as(cls).isTrue();
             String src = read(Path.of("src", "main", "java", "com", "sitemonitor", "model", cls + ".java"));
@@ -78,7 +79,7 @@ class NocFieldChainTest {
     @DisplayName("geçmiş/denetim alan listeleri 7/24 alanlarını taşır (yalnız 7/24 değişen düzenleme de iz bırakır)")
     void historyFieldLists() throws Exception {
         String mc = read(MC), ac = read(AC);
-        for (String arr : List.of("MON_FIELDS", "SCRIPTED_FIELDS", "PAGESPEED_FIELDS")) {
+        for (String arr : List.of("MON_FIELDS", "SCRIPTED_FIELDS", "PAGESPEED_FIELDS", "DBQUERY_FIELDS")) {
             String body = arrayBody(mc, arr);
             assertThat(body).as(arr).contains("\"nocNotify\"").contains("\"nocGroupIds\"");
         }
@@ -147,7 +148,7 @@ class NocFieldChainTest {
                 com.sitemonitor.service.noc.NocType.KEYWORD, "updateKeyword", com.sitemonitor.service.noc.NocType.PAGE, "updatePage",
                 com.sitemonitor.service.noc.NocType.PAGESPEED, "updatePageSpeed", com.sitemonitor.service.noc.NocType.SCRIPTED, "updateScripted",
                 com.sitemonitor.service.noc.NocType.DOMAIN, "updateDomain", com.sitemonitor.service.noc.NocType.PORT, "updatePort",
-                com.sitemonitor.service.noc.NocType.DNS, "updateDns");
+                com.sitemonitor.service.noc.NocType.DNS, "updateDns", com.sitemonitor.service.noc.NocType.DBQUERY, "updateDbQuery");
         List<String> wrong = new ArrayList<>();
         for (var e : endpoint.entrySet()) {
             String body = endpointBody(mc, e.getValue());

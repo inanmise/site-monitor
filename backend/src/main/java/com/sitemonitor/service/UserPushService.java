@@ -2631,6 +2631,10 @@ public class UserPushService {
         String t = alertType == null ? "" : alertType;
         if (t.contains("EXPIRY")) return "expiry";
         if (t.contains("CHANGED") || t.contains("TRANSFER_LOCK") || t.contains("BLACKLIST")) return "changed";
+        // Veritabanı sorgu eşiği (2026-10-31) BİLİNÇLİ ayrı dal: ihlal bir yavaşlık DEĞİL ("eşik" sözcüğü aşağıdaki "slow"
+        // dalına düşürürdü — telefona sorgu SÜRESİ yazılırdı) ve "yanıt vermiyor" da değil (sorgu çalıştı) → "degraded"
+        // ("sorun var (erişim değil)" + neden = kural özeti). DBQUERY_FAIL → "down", DBQUERY_SLOW → "slow".
+        if ("DBQUERY_THRESHOLD".equals(t)) return "degraded";
         if (t.contains("SLOW") || t.contains("THRESHOLD")) return "slow";
         // Sertifika kusurları: "yanıt vermiyor" metni yanlış teşhise yönlendiriyordu.
         if ("REVOKED".equals(t) || "MISMATCH".equals(t) || t.contains("CHAIN")

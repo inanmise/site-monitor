@@ -53,6 +53,9 @@ public class MonitoringGroupBackfill {
     private final ScriptedMonitorRepository scriptedRepo;
     private final PageSpeedMonitorRepository pageSpeedRepo;
     private final MonitoringGroupService groupService;
+    /** Veritabanı sorgu izlemesi (11. tür, 2026-10-31) — alan enjeksiyonu: elle kurulan testler değişmesin; yokken tür atlanır. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.repository.DbQueryMonitorRepository dbQueryRepo;
 
     /** Kilit ve nişan adları — KALICI (değişirse tek seferlik doldurma yeniden koşar). */
     static final String LOCK_NAME = "monitoring-group-team-backfill";
@@ -96,6 +99,7 @@ public class MonitoringGroupBackfill {
             seeded += seed("page",     pageRepo.groupCountsByTeam());
             seeded += seed("scripted", scriptedRepo.groupCountsByTeam());
             seeded += seed("pagespeed", pageSpeedRepo.groupCountsByTeam());
+            if (dbQueryRepo != null) seeded += seed("dbquery", dbQueryRepo.groupCountsByTeam());
             if (seeded > 0) log.info("Monitoring group registry seed: {} (team,type,name) grubu tarandı", seeded);
         } catch (Exception e) {
             log.warn("Monitoring group backfill failed: {}", e.getMessage());
@@ -210,6 +214,7 @@ public class MonitoringGroupBackfill {
             case "page"    -> pageRepo.renameGroupForTeam(teamId, oldName, newName);
             case "scripted"-> scriptedRepo.renameGroupForTeam(teamId, oldName, newName);
             case "pagespeed"-> pageSpeedRepo.renameGroupForTeam(teamId, oldName, newName);
+            case "dbquery"  -> dbQueryRepo == null ? 0 : dbQueryRepo.renameGroupForTeam(teamId, oldName, newName);
             default        -> 0;
         };
     }

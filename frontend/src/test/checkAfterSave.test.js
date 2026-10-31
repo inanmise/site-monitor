@@ -5,7 +5,7 @@ import { CHECK_FIELDS, shouldCheckAfterSave, startCheckAfterSave } from '../util
  * Kayıt sonrası kontrol KARARI (utils/checkAfterSave) — dokuz tür, tek kural (2026-09-28).
  * Sayfa kablolaması monitorCheckAfterSave.test.jsx / ScriptedMonitorPage.firstCheck.test.jsx'te; burada karar tablosu.
  */
-const KINDS = ['http', 'ping', 'keyword', 'port', 'dns', 'page', 'pagespeed', 'scripted', 'domain']
+const KINDS = ['http', 'ping', 'keyword', 'port', 'dns', 'page', 'pagespeed', 'scripted', 'domain', 'dbquery']
 
 /** Alanı "farklı" yapan değer — tipine göre (metin / sayı / mantıksal). */
 const bump = (v) => (typeof v === 'boolean' ? !v : typeof v === 'number' ? v + 1 : `${v ?? ''}x`)

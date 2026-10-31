@@ -31,6 +31,8 @@ import {
 import { alertExpiryIso, alertLink, buildAlertTimeline, groupPushRows, parseContacts, statusLabel } from './alertHistoryModel.js'
 import { StormPushSection, StormPushTimelineEntry } from './AlertStormPush.jsx'
 import { normalizeStormPush, showStormPushSection } from './stormPushModel.js'
+// Veritabanı sorgu alarmı (2026-10-31): alarm anındaki sorgu sonucu — satır verisinin göründüğü TEK yer; diğer türlerde boş
+import DbQueryAlertRows from '../../dbquery/DbQueryAlertRows.jsx'
 
 /** Tier rozeti tonları (sertifika kademesi). */
 const TIER_BG = { 1: 'bg-indigo-600', 2: 'bg-sky-600', 3: 'bg-cyan-600', 4: 'bg-zinc-500' }
@@ -259,6 +261,9 @@ export function AlertDetailBody({
           <AlertSignatureStrip alert={a} teamName={teamName} onShowHistory={onShowHistory} />
         </div>
       </Card>
+
+      {/* Veritabanı sorgu alarmı (2026-10-31): alarm anındaki satırlar (paylaşımla okuyana yalnız sayı); DBQUERY dışı türde hiçbir şey */}
+      <DbQueryAlertRows alertId={a.id} alertType={a.alert_type} />
 
       {/* 7/24 arama kayıtları (2026-09-27): izni olana hızlı giriş formu + herkese zaman çizelgesi / boş durum */}
       <NocCallSection alert={a} canWrite={nocCanWrite} focusKey={nocFocusKey + localNocFocus} onChanged={onNocChanged} />

@@ -156,6 +156,9 @@ public class EmailTemplateBuilder {
     private static boolean isPageSpeed(String t) {
         return "PAGESPEED_DOWN".equals(t) || "PAGESPEED_SLOW".equals(t);
     }
+    /** Veritabanı sorgu izlemesi ailesi (11. tür, 2026-10-31) — {@link #tabFor} dalı ŞART: yoksa {@link #isCert} true olur
+     *  ve posta "Sertifika İzleme" başlığı / sertifika adımlarıyla giderdi. */
+    static boolean isDbQuery(String t) { return t != null && t.startsWith("DBQUERY_"); }
     /**
      * AİLE tanımları — tek tip yerine tür ailesi.
      *
@@ -194,6 +197,7 @@ public class EmailTemplateBuilder {
         if (isPageSpeed(t)) return "pagespeed";
         if (isScripted(t)) return "scripted";
         if (isHttp(t)) return "http";
+        if (isDbQuery(t)) return "dbquery";
         return "dashboard";   // sertifika
     }
 
@@ -215,6 +219,9 @@ public class EmailTemplateBuilder {
             case "HTTP_DOWN" -> "HTTP/Website Erişilemez";
             case "HTTP_SLOW" -> "HTTP Yavaş Yanıt";
             case "HTTP_SSL" -> "HTTP İzlemesi — TLS Sertifika Sorunu";
+            case "DBQUERY_FAIL" -> "Veritabanı Sorgusu Çalıştırılamadı";
+            case "DBQUERY_THRESHOLD" -> "Veritabanı Sorgu Kuralı İhlali";
+            case "DBQUERY_SLOW" -> "Veritabanı Yavaş Sorgu";
             default -> "İzleme Uyarısı";
         };
     }
@@ -231,6 +238,8 @@ public class EmailTemplateBuilder {
         MailDoc d = MailDoc.create("[Site Monitor] " + severityLabel(m.level()) + " · " + nz(m.domain()))
                 .preheader(summary)
                 .kicker(subsystemLabel(m.alertType()));
+        // Sorgu sonucu satır tablosu veri-yoğundur → 640 px kart (telefonda yine tek sütun).
+        if (isDbQuery(m.alertType()) && dbQueryRows(m.ctx()) != null) d.wide();
         d.badges(severityBadge(m.level()), days != null && days <= 3 ? Badge.solid("ACİL", Tone.DESTRUCTIVE) : null);
         // Süre-DIŞI sertifika kusurlarında gün sayacı yanıltıcıdır (1775 gün geçerli ama kabul
         // edilemez sertifika) → metrik yerine tip etiketli uyarı gösterilir.
@@ -249,6 +258,7 @@ public class EmailTemplateBuilder {
             d.timeline(points, tone.strong);
         }
         d.keyValue("Ayrıntılar", detailRows(m));
+        if (isDbQuery(m.alertType())) dbQuerySections(d, m.ctx());
         // Envanter bağlamı — "Önerilen Aksiyon"dan ÖNCE: okuyucu önce sertifikanın nerede durduğunu
         // (operasyonel bayraklar) ve takımın kendi yenileme sürecini görür, sonra genel adımları.
         manualSourceSection(d, m);   // yalnız elle yüklenen sertifikada (ctx anahtarı yoksa hiçbir şey eklenmez)
@@ -312,6 +322,7 @@ public class EmailTemplateBuilder {
         if (tl != null) sb.append(tl).append('\n');
         sb.append('\n');
         for (Row r : detailRows(m)) sb.append(r.label()).append(": ").append(r.text()).append('\n');
+        if (isDbQuery(m.alertType())) sb.append(dbQueryText(m.ctx()));
         // HTML paritesi: envanter bölümleri metin sürümde de aynı sırayla yer alır.
         String manualSrc = m.ctx() == null ? null : strCtx(m.ctx(), EscalationService.CTX_MANUAL_SOURCE);
         if (manualSrc != null) sb.append('\n').append(manualSrc).append('\n');
@@ -379,7 +390,7 @@ public class EmailTemplateBuilder {
                 : firstNonNull(strCtx(ctx, "days_remaining"), strCtx(ctx, "days"));
 
         List<Row> rows = new ArrayList<>();
-        rows.add(new Row("Alan Adı", "<strong>" + d + "</strong>", nz(domain)));
+        rows.add(new Row(isDbQuery(alertType) ? "İzleme" : "Alan Adı", "<strong>" + d + "</strong>", nz(domain)));
         // "Yeni" yalnız süre bitişi alarmının OTOMATİK kapanışında doğrudur (ALERTS-15): kara liste / kilit / durum çözümü ya da
         // elle kapanış alan adının yenilendiğini söylemez.
         boolean renewed = isExpiryType(alertType) && verifiedRecovery(resolvedBy);
@@ -444,6 +455,7 @@ public class EmailTemplateBuilder {
                 rows.add(new Row("Güncel Durum", curHtml, curText));
             }
         }
+        if (ctx != null && isDbQuery(alertType)) rows.addAll(dbQueryResolvedRows(alertType, ctx));
         String durHuman = durationHuman(createdAt, resolvedAt);
         // Sentetik cozumu: alarm e-postasinda dolu bir dal vardi ama COZUM e-postasinda YOKTU.
         // Nobetci "ne duzeldi" bilgisini alamiyor, jenerik "alarm kapandi" cumlesiyle kaliyordu.
@@ -519,6 +531,9 @@ public class EmailTemplateBuilder {
                         : pageStatusTr(cur));
             }
         }
+        if (ctx != null && isDbQuery(alertType)) {   // HTML ile aynı bilgi (veritabanı sorgusu)
+            for (Row r : dbQueryResolvedRows(alertType, ctx)) sb.append("\n").append(r.label()).append(": ").append(r.text());
+        }
         String durHuman = durationHuman(createdAt, resolvedAt);
         if (ctx != null && "SCRIPTED_SLOW".equals(alertType)) {   // HTML ile ayni bilgi
             sb.append("\nÇözülen Alarm: Sentetik Yavaş Koşum");
@@ -544,6 +559,55 @@ public class EmailTemplateBuilder {
         // HTML/metin paritesi: olay aksiyon linkleri (kimlik yoksa "").
         sb.append(MailCta.incidentActionText(liveBaseUrl(), ctx == null ? null : ctx.get("alert_event_id")));
         return sb.toString();
+    }
+
+    /**
+     * Veritabanı sorgu alarmı çözüm satırları (HTML + düz metin ortak): ne için, nerede, alarm anında ne vardı ve ŞU AN ne
+     * var. Alarm anı anahtarları olayın anlık görüntüsünden ({@link EscalationService#RESOLVED_CONTEXT_KEYS}), {@code
+     * resolved_*} anahtarları çözüm anındaki SON çalıştırmadan gelir (EscalationService.withDbQueryResolvedValues).
+     */
+    static List<Row> dbQueryResolvedRows(String alertType, Map<String, Object> ctx) {
+        List<Row> rows = new ArrayList<>();
+        rows.add(Row.of("Çözülen Alarm", switch (alertType == null ? "" : alertType) {
+            case "DBQUERY_FAIL" -> "Veritabanı Sorgu Hatası";
+            case "DBQUERY_SLOW" -> "Veritabanı Yavaş Sorgu";
+            default -> "Veritabanı Sorgu Eşiği";
+        }));
+        String purpose = strCtx(ctx, "purpose");
+        if (purpose != null) rows.add(Row.of("Alarm Amacı", purpose));
+        List<String> conn = new ArrayList<>();
+        String profile = strCtx(ctx, "profile_name");
+        if (profile != null) conn.add(profile);
+        String type = com.sitemonitor.service.dbquery.DbQueryAlarmText.dbTypeLabel(strCtx(ctx, "db_type"));
+        if (type != null) conn.add(type);
+        if (!conn.isEmpty()) rows.add(Row.of("Bağlantı", String.join(" · ", conn)));
+        if ("DBQUERY_FAIL".equals(alertType)) {
+            String reason = com.sitemonitor.service.dbquery.DbQueryAlarmText.failureLabel(strCtx(ctx, "failure_reason"));
+            if (reason != null) rows.add(Row.of("Sorun (alarm anı)", reason));
+            String err = firstNonNull(strCtx(ctx, "error"), strCtx(ctx, "last_error"));
+            if (err != null) rows.add(Row.of("Hata (alarm anı)", err.length() > 200 ? err.substring(0, 200) + "…" : err));
+        } else {
+            String was = firstNonNull(strCtx(ctx, "rule_summary"), strCtx(ctx, "detail"));
+            if (was != null) rows.add(Row.of("Sorun (alarm anı)", was));
+        }
+        String cur = strCtx(ctx, "resolved_dbquery_status");
+        if (cur != null) {
+            String curText = switch (cur) {
+                case "OK" -> "Sorgu çalışıyor, kurallar sağlanıyor";
+                case "BREACH" -> "Sorgu çalışıyor — kural ihlali sürüyor: " + nz(strCtx(ctx, "resolved_rule_summary"));
+                case "FAIL" -> "Son çalıştırma başarısız";
+                default -> cur;
+            };
+            String when = strCtx(ctx, "resolved_checked_at");
+            rows.add(Row.of("Güncel Durum", curText + (when != null ? " (" + formatHuman(when) + ")" : "")));
+            String n = strCtx(ctx, "resolved_row_count");
+            if (n != null) rows.add(Row.of("Dönen Satır (güncel)", ("true".equalsIgnoreCase(strCtx(ctx, "resolved_row_count_capped")) ? "≥ " : "") + n));
+            String val = com.sitemonitor.service.EscalationService.numberText(ctx.get("resolved_metric_value"));
+            if (val != null) rows.add(Row.of("Ölçülen Değer (güncel)", val));
+            String dur = strCtx(ctx, "resolved_duration_ms");
+            if (dur != null) rows.add(Row.of("Süre (güncel)", dur + " ms"));
+        }
+        return rows;
     }
 
     /**
@@ -582,6 +646,12 @@ public class EmailTemplateBuilder {
             return "Senaryo koşum süresi eşiğin altına indi — alarm otomatik olarak kapandı.";
         if (EscalationService.isScripted(alertType))
             return "Senaryo yeniden başarılı — alarm otomatik olarak kapandı.";
+        if ("DBQUERY_FAIL".equals(alertType))
+            return "Veritabanı sorgusu yeniden çalışıyor — alarm otomatik olarak kapandı.";
+        if ("DBQUERY_THRESHOLD".equals(alertType))
+            return "Sorgu sonucu kuralları yeniden sağlıyor — alarm otomatik olarak kapandı.";
+        if ("DBQUERY_SLOW".equals(alertType))
+            return "Sorgu süresi eşiğin altına indi — alarm otomatik olarak kapandı.";
         return "Alarm otomatik olarak kapandı.";
     }
 
@@ -635,8 +705,25 @@ public class EmailTemplateBuilder {
     private List<Row> detailRows(AlertMail m) {
         List<Row> out = new ArrayList<>();
         Map<String, Object> c = m.ctx();
-        out.add(new Row(isHttp(m.alertType()) ? "Adres" : "Alan Adı", "<strong>" + esc(m.domain()) + "</strong>", nz(m.domain())));
-        if (isHttp(m.alertType())) {   // HTTP izleme — sertifika satırları değil, isteğin sonucu (ALERTS-13)
+        out.add(new Row(isHttp(m.alertType()) ? "Adres" : isDbQuery(m.alertType()) ? "İzleme" : "Alan Adı",
+                "<strong>" + esc(m.domain()) + "</strong>", nz(m.domain())));
+        if (isDbQuery(m.alertType())) {   // veritabanı sorgusu — ne için, nerede, ne zaman, ne döndü (2026-10-31)
+            addIf(out, "Alarm Amacı", strCtx(c, "purpose"));
+            addIf(out, "Bağlantı", dbQueryConnectionText(c));
+            addIf(out, "Çalışma Zamanı", strCtx(c, "checked_at") != null ? formatHuman(strCtx(c, "checked_at")) : null);
+            String dur = strCtx(c, "duration_ms");
+            String th = strCtx(c, "threshold_ms");
+            addIf(out, "Süre", dur != null ? dur + " ms" + (th != null ? " (yavaş sorgu eşiği " + th + " ms)" : "") : null);
+            addIf(out, "Dönen Satır", dbQueryRowCountText(c));
+            addIf(out, "Ölçülen Değer", com.sitemonitor.service.EscalationService.numberText(c == null ? null : c.get("metric_value")));
+            if ("DBQUERY_FAIL".equals(m.alertType())) {
+                addIf(out, "Hata Türü", com.sitemonitor.service.dbquery.DbQueryAlarmText.failureLabel(strCtx(c, "failure_reason")));
+                addIf(out, "Hata", firstNonNull(strCtx(c, "error"), strCtx(c, "last_error")));
+            } else {
+                addIf(out, "İhlal", "DBQUERY_THRESHOLD".equals(m.alertType()) ? strCtx(c, "rule_summary") : null);
+            }
+            addIf(out, "Doğrulama", confirmationText(c));
+        } else if (isHttp(m.alertType())) {   // HTTP izleme — sertifika satırları değil, isteğin sonucu (ALERTS-13)
             String url = strCtx(c, "url");
             if (url != null && !url.equals(m.domain())) addIf(out, "URL", url);
             addIf(out, "HTTP Durumu", strCtx(c, "http_status"));
@@ -766,6 +853,22 @@ public class EmailTemplateBuilder {
                         "Erişim geri gelince alarm kendiliğinden kapanır");
             };
         }
+        if (isDbQuery(m.alertType())) {
+            return switch (m.alertType()) {
+                case "DBQUERY_FAIL" -> List.of(
+                        "Yukarıdaki hata türüne bakın: bağlantı / ağ, kimlik bilgisi, sorgu hatası ya da zaman aşımı",
+                        "Veritabanı sunucusunun erişilebilirliğini ve bağlantı tanımını (sunucu, port, veritabanı, kullanıcı) Site Monitor'de \"Bağlantılar\" penceresinden deneyin",
+                        "Sorgu yeniden çalışınca alarm kendiliğinden kapanır");
+                case "DBQUERY_SLOW" -> List.of(
+                        "Sorgunun neden yavaşladığını inceleyin (veri hacmi, eksik indeks, kilit beklemesi, sunucu yükü)",
+                        "Yukarıdaki süreyi yavaş sorgu eşiğiyle karşılaştırın; eşik gerçekçi değilse izleme ayarını gözden geçirin",
+                        "Sorgu süresi eşiğin altına inince alarm kendiliğinden kapanır");
+                default -> List.of(
+                        "Yukarıdaki kurallar tablosunda hangi kuralın, hangi değerle ihlal edildiğine bakın",
+                        "Alarm amacında tanımlanan iş sürecini (ör. bekleyen kayıtlar, hatalı işlemler) ilgili ekiple kontrol edin",
+                        "Kurallar yeniden sağlanınca alarm kendiliğinden kapanır — sonraki çalıştırma zamanlamaya göre yapılır");
+            };
+        }
         if (isPage(m.alertType())) {
             if ("PAGE_DOWN".equals(m.alertType()))
                 return List.of("Sayfanın erişilebilirliğini kontrol edin (sunucu/uygulama/ağ). Sayfa yeniden yüklenince alarm otomatik kapanır.");
@@ -806,6 +909,7 @@ public class EmailTemplateBuilder {
         if (isPageSpeed(t)) return "Sayfa Hızı İzleme";
         if (isScripted(t)) return "Sentetik İzleme";
         if (isHttp(t)) return "HTTP/Website İzleme";
+        if (isDbQuery(t)) return "Veritabanı Sorgu İzleme";
         return "Sertifika İzleme";
     }
 
@@ -977,6 +1081,195 @@ public class EmailTemplateBuilder {
         String url = appSettings.getString("site.monitor.app.base-url", appBaseUrl);
         return (url == null || url.isBlank()) ? "" : url.replaceAll("/+$", "");
     }
+
+    // ── Veritabanı sorgu izlemesi (11. tür, 2026-10-31) — alarm postası bölümleri ─────────────────────────────────────
+    //
+    // Kullanıcı isteği: "ne bekleniyordu, ne geldi, ne çalıştı, sorgu ne zaman çalıştı, kaç satır döndü, satırlar kolon
+    // bazlı tablo". Satırlar YALNIZ gönderilen postanın geçici bağlamında gelir (DbQueryAlertRowsService.CTX_ROWS);
+    // bildirim günlüğüne yazılan kopyada yerine yalnız satır sayısı vardır (CTX_ROWS_WITHHELD).
+
+    /**
+     * Postadaki satır tablosunun BAYT bütçesi (yaklaşık) — Gmail 102 KB üstünü kırpar; aşan satırlar "+N satır daha" olur.
+     * Hücre metni + hücre başına HTML yükü ({@link #DBQUERY_CELL_OVERHEAD}) sayılır; telefon kart kopyası yalnız küçük
+     * tablolarda üretilir (kopya içeriği ikiye katlar).
+     */
+    static final int DBQUERY_ROWS_CHAR_BUDGET = 40_000;
+    /** MailKit veri tablosunda bir hücrenin satır içi stil / etiket yükü (ölçülmüş, yuvarlanmış). */
+    static final int DBQUERY_CELL_OVERHEAD = 260;
+    /** Telefon kart kopyası üretilen en büyük tablo: kolon ve satır sayısı. */
+    static final int DBQUERY_STACK_MAX_COLS = 6, DBQUERY_STACK_MAX_ROWS = 10;
+    /** Sorgu kod bloğu tavanı. */
+    static final int DBQUERY_SQL_MAX = 4000;
+
+    /** Bağlamdaki alarm anı satırları (yoksa null). */
+    static com.sitemonitor.service.dbquery.DbQueryAlertRowsService.Rows dbQueryRows(Map<String, Object> c) {
+        Object v = c == null ? null : c.get(com.sitemonitor.service.dbquery.DbQueryAlertRowsService.CTX_ROWS);
+        return v instanceof com.sitemonitor.service.dbquery.DbQueryAlertRowsService.Rows r && !r.isEmpty() ? r : null;
+    }
+
+    /** "Ad · tür · sunucu:port/veritabanı" — kullanıcı adı / parola ASLA yazılmaz (bağlamda da yoktur). */
+    static String dbQueryConnectionText(Map<String, Object> c) {
+        List<String> parts = new ArrayList<>();
+        String name = strCtx(c, "profile_name");
+        if (name != null) parts.add(name);
+        String type = com.sitemonitor.service.dbquery.DbQueryAlarmText.dbTypeLabel(strCtx(c, "db_type"));
+        if (type != null) parts.add(type);
+        String target = strCtx(c, "dbquery_target");
+        if (target != null) parts.add(target);
+        return parts.isEmpty() ? null : String.join(" · ", parts);
+    }
+
+    /** "1.250" ya da sınırlıysa "≥ 1000"; yoksa null. */
+    static String dbQueryRowCountText(Map<String, Object> c) {
+        String n = strCtx(c, "row_count");
+        if (n == null) return null;
+        return (boolCtx(c, "row_count_capped") ? "≥ " : "") + n;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<Map<String, Object>> dbQueryRuleResults(Map<String, Object> c) {
+        Object v = c == null ? null : c.get("rule_results");
+        if (!(v instanceof List<?> l)) return List.of();
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Object o : l) if (o instanceof Map<?, ?> m) out.add((Map<String, Object>) m);
+        return out;
+    }
+
+    /** Kurallar tablosu (Kural · Beklenen · Gelen · Durum) + sorgu kod bloğu + sonuç satırları. */
+    private static void dbQuerySections(MailDoc d, Map<String, Object> c) {
+        List<Map<String, Object>> rules = dbQueryRuleResults(c);
+        if (!rules.isEmpty()) {
+            List<MailKit.Col> cols = List.of(MailKit.Col.of("Kural"), MailKit.Col.of("Beklenen"),
+                    MailKit.Col.of("Gelen"), MailKit.Col.nw("Durum"));
+            List<List<MailKit.Cell>> rows = new ArrayList<>();
+            for (Map<String, Object> r : rules) {
+                boolean violated = Boolean.FALSE.equals(r.get("passed")) && !Boolean.FALSE.equals(r.get("evaluated"));
+                String state = com.sitemonitor.service.dbquery.DbQueryAlarmText.ruleStateText(r);
+                String color = violated ? ("CRITICAL".equals(String.valueOf(r.get("level"))) ? Tone.DESTRUCTIVE.text : Tone.WARNING.text)
+                        : Boolean.FALSE.equals(r.get("evaluated")) ? MailTokens.MUTED : MailTokens.SUCCESS;
+                String label = r.get("label") != null && !String.valueOf(r.get("label")).isBlank() ? String.valueOf(r.get("label"))
+                        : com.sitemonitor.service.dbquery.DbQueryAlarmText.kindLabel(r.get("kind") == null ? null : String.valueOf(r.get("kind")));
+                rows.add(List.of(MailKit.Cell.of(label), MailKit.Cell.of(nzv(r.get("expected"))),
+                        MailKit.Cell.of(nzv(r.get("actual")), violated ? color : null, violated),
+                        MailKit.Cell.of(state, color, violated)));
+            }
+            d.heading("Kurallar");
+            d.table(cols, rows);
+        }
+        String sql = strCtx(c, "dbquery_sql");
+        if (sql != null) d.pre("Çalıştırılan Sorgu", sql.length() > DBQUERY_SQL_MAX ? sql.substring(0, DBQUERY_SQL_MAX) + "…" : sql);
+        dbQueryRowsSection(d, c);
+    }
+
+    private static String nzv(Object o) {
+        if (o == null) return "—";
+        String s = String.valueOf(o);
+        return s.isBlank() || "null".equals(s) ? "—" : s;
+    }
+
+    /** Sonuç satırları tablosu — gönderimde satırlar, günlük kopyasında yalnız sayı; kapalıysa / yoksa açıklama. */
+    private static void dbQueryRowsSection(MailDoc d, Map<String, Object> c) {
+        com.sitemonitor.service.dbquery.DbQueryAlertRowsService.Rows rows = dbQueryRows(c);
+        if (rows != null) {
+            RowsView v = rowsView(rows);
+            d.heading("Sorgu Sonucu (alarm anı)", v.caption());
+            d.table(v.cols(), v.cells(), v.stack());
+            if (v.more() != null) d.note(v.more());
+            return;
+        }
+        Object withheld = c == null ? null : c.get(com.sitemonitor.service.dbquery.DbQueryAlertRowsService.CTX_ROWS_WITHHELD);
+        if (withheld != null) {
+            d.note("Sorgu sonucu satırları (" + withheld + " satır) alıcılara gönderilen postadadır; bildirim günlüğündeki bu "
+                    + "kopyada saklanmaz. Alarm ayrıntısında \"Alarm anındaki sorgu sonucu\" bölümünden görülebilir.");
+        } else if (boolCtx(c, "dbquery_rows_off")) {
+            d.note("Bu izlemede sorgu sonucu satırları maile eklenmiyor (izleme ayarı).");
+        }
+    }
+
+    /** Tablo görünümü: kolonlar, hücreler (bütçe içinde), başlık açıklaması ve "+N satır / +M kolon daha" notu. */
+    private record RowsView(List<MailKit.Col> cols, List<List<MailKit.Cell>> cells, String caption, String more, boolean stack) {}
+
+    private static RowsView rowsView(com.sitemonitor.service.dbquery.DbQueryAlertRowsService.Rows rows) {
+        java.util.Set<String> masked = new java.util.HashSet<>();
+        if (rows.masked() != null) for (String m : rows.masked()) if (m != null) masked.add(m.toLowerCase(Locale.ROOT));
+        List<MailKit.Col> cols = new ArrayList<>();
+        for (String name : rows.columns()) {
+            String label = name == null || name.isBlank() ? "—" : name;
+            cols.add(masked.contains(label.toLowerCase(Locale.ROOT)) ? MailKit.Col.of(label + " (maskeli)") : MailKit.Col.of(label));
+        }
+        List<List<MailKit.Cell>> cells = new ArrayList<>();
+        int budget = DBQUERY_ROWS_CHAR_BUDGET, shown = 0, used = 0;
+        for (List<String> r : rows.rows()) {
+            int cost = cols.size() * DBQUERY_CELL_OVERHEAD;
+            List<MailKit.Cell> line = new ArrayList<>(cols.size());
+            for (int i = 0; i < cols.size(); i++) {
+                String v = r != null && i < r.size() ? r.get(i) : null;
+                cost += v == null ? 4 : v.length() + 1;
+                line.add(v == null ? MailKit.Cell.of("NULL", MailTokens.MUTED, false) : MailKit.Cell.of(v));
+            }
+            if (shown > 0 && cost > budget) break;
+            budget -= cost;
+            used += cost;
+            cells.add(line);
+            shown++;
+        }
+        // Telefon kart kopyası içeriği ikiye katlar → yalnız küçük tabloda ve kopya bütçeye sığıyorsa.
+        boolean stack = cols.size() <= DBQUERY_STACK_MAX_COLS && shown <= DBQUERY_STACK_MAX_ROWS
+                && used * 2L <= DBQUERY_ROWS_CHAR_BUDGET;
+        int total = rows.rowCount() != null ? rows.rowCount() : rows.rows().size();
+        int moreRows = Math.max(0, total - shown);
+        String caption = (rows.rowCountCapped() ? "En az " : "") + total + " satır döndü"
+                + (shown < total ? " — ilk " + shown + " satır gösteriliyor" : "")
+                + (masked.isEmpty() ? "" : ". Maskelenen kolonların değeri " + com.sitemonitor.service.dbquery.DbQueryAlertRowsService.MASK
+                    + " olarak yazılır");
+        String more = null;
+        if (moreRows > 0 || rows.truncated()) {
+            List<String> parts = new ArrayList<>();
+            if (moreRows > 0) parts.add("+" + (rows.rowCountCapped() ? "en az " : "") + moreRows + " satır daha");
+            if (rows.truncated()) parts.add("bazı kolonlar / uzun hücreler kısaltıldı");
+            more = String.join(" · ", parts) + " — tamamı veritabanında; Site Monitor sonuç verisini saklamaz.";
+        }
+        return new RowsView(cols, cells, caption, more, stack);
+    }
+
+    /** Düz metin paritesi: kurallar, sorgu, sonuç satırları (HTML ile aynı bilgi). */
+    static String dbQueryText(Map<String, Object> c) {
+        StringBuilder sb = new StringBuilder();
+        List<Map<String, Object>> rules = dbQueryRuleResults(c);
+        if (!rules.isEmpty()) {
+            sb.append("\nKurallar:\n");
+            for (Map<String, Object> r : rules) {
+                String label = r.get("label") != null && !String.valueOf(r.get("label")).isBlank() ? String.valueOf(r.get("label"))
+                        : com.sitemonitor.service.dbquery.DbQueryAlarmText.kindLabel(r.get("kind") == null ? null : String.valueOf(r.get("kind")));
+                sb.append("- ").append(label).append(" · Beklenen: ").append(nzv(r.get("expected")))
+                  .append(" · Gelen: ").append(nzv(r.get("actual")))
+                  .append(" · Durum: ").append(com.sitemonitor.service.dbquery.DbQueryAlarmText.ruleStateText(r)).append('\n');
+            }
+        }
+        String sql = strCtx(c, "dbquery_sql");
+        if (sql != null) sb.append("\nÇalıştırılan Sorgu:\n").append(sql.length() > DBQUERY_SQL_MAX ? sql.substring(0, DBQUERY_SQL_MAX) + "…" : sql).append('\n');
+        com.sitemonitor.service.dbquery.DbQueryAlertRowsService.Rows rows = dbQueryRows(c);
+        if (rows != null) {
+            RowsView v = rowsView(rows);
+            sb.append("\nSorgu Sonucu (alarm anı) — ").append(v.caption()).append(":\n");
+            List<String> header = new ArrayList<>();
+            for (MailKit.Col col : v.cols()) header.add(col.label());
+            sb.append(String.join(" | ", header)).append('\n');
+            for (List<MailKit.Cell> line : v.cells()) {
+                List<String> vals = new ArrayList<>();
+                for (MailKit.Cell cell : line) vals.add(cell.text());
+                sb.append(String.join(" | ", vals)).append('\n');
+            }
+            if (v.more() != null) sb.append(v.more()).append('\n');
+        } else {
+            Object withheld = c == null ? null : c.get(com.sitemonitor.service.dbquery.DbQueryAlertRowsService.CTX_ROWS_WITHHELD);
+            if (withheld != null) sb.append("\nSorgu sonucu satırları (").append(withheld)
+                    .append(" satır) gönderilen postadadır; bu kopyada saklanmaz.\n");
+            else if (boolCtx(c, "dbquery_rows_off")) sb.append("\nBu izlemede sorgu sonucu satırları maile eklenmiyor.\n");
+        }
+        return sb.toString();
+    }
+
 
     // ── Değer/format yardımcıları ────────────────────────────────────────────
     private static void addIf(List<Row> out, String label, String value) {
@@ -1157,6 +1450,10 @@ public class EmailTemplateBuilder {
         if (alertType != null && alertType.startsWith("HTTP_")) {
             Long id = monitorIdOf(ctx);
             return "/?tab=http" + (id != null ? "&monitor=" + id : "");
+        }
+        if (isDbQuery(alertType)) {   // veritabanı sorgusu: izlemenin kendisi (alan adı yok — anahtar izleme adıdır)
+            Long id = monitorIdOf(ctx);
+            return "/?tab=dbquery" + (id != null ? "&monitor=" + id : "");
         }
         String tab = tabFor(alertType);
         if (domain == null) return "/?tab=" + tab;

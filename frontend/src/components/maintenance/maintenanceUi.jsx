@@ -1,5 +1,5 @@
 import { useCallback } from 'react'
-import { Globe, Plug, TextSearch, Radio, FileSearch, Gauge, Network, AtSign, ShieldCheck, FlaskConical, Repeat } from 'lucide-react'
+import { Globe, Plug, TextSearch, Radio, FileSearch, Gauge, Network, AtSign, ShieldCheck, FlaskConical, Repeat, DatabaseSearch } from 'lucide-react'
 import { useT, useDateLocale } from '../../i18n/index.jsx'
 import ToneBadge from '../admin/ToneBadge.jsx'
 import { Badge } from '@/components/shadcn/badge'
@@ -12,7 +12,7 @@ export const STATUS_TONE = { active: 'success', upcoming: 'info', scheduled: 'in
 /** İzleme türü → ikon (hedef özetinde tür simgeleri; sayı metin olarak da yazılır — ikon ek bilgi). */
 export const TYPE_ICON = {
   http: Globe, port: Plug, keyword: TextSearch, ping: Radio, page: FileSearch, pagespeed: Gauge,
-  dns: Network, domain: AtSign, cert: ShieldCheck, scripted: FlaskConical,
+  dns: Network, domain: AtSign, cert: ShieldCheck, scripted: FlaskConical, dbquery: DatabaseSearch,
 }
 
 /** Sayılı metin: 1 için tekil anahtar, diğerleri çoğul ("1 monitor" / "3 monitors"). */

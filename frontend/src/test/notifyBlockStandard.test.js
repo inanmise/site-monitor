@@ -24,7 +24,7 @@ const COMPONENTS = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '.
 const MONITOR_FORMS = [
   'PingMonitorPage', 'DnsMonitorPage', 'DomainMonitorPage', 'HttpMonitorPage',
   'KeywordMonitorPage', 'PageMonitorPage', 'PageSpeedMonitorPage', 'PortMonitorPage',
-  'ScriptedMonitorPage',
+  'ScriptedMonitorPage', 'DbQueryMonitorPage',
 ]
 
 const read = (form) => fs.readFileSync(path.join(COMPONENTS, `${form}.jsx`), 'utf8')
@@ -36,8 +36,12 @@ describe('bildirim bloğu standardı', () => {
   })
 
   it('dokuz form da ORTAK aralık çubuğunu kullanır', () => {
-    const missing = MONITOR_FORMS.filter(f => !/<IntervalSlider/.test(read(f)))
+    // Veritabanı sorgusu (11. tür) aralık çubuğu değil zamanlama düzenleyicisi taşır: aralık + cron + izinli / yasak pencere +
+    // tatil — tek bir aralık seçimi o kipi ifade edemez. Kural "kendi çubuğunu yazma" olarak kalır (aşağıdaki kapı).
+    const missing = MONITOR_FORMS.filter(f => f !== 'DbQueryMonitorPage' && !/<IntervalSlider/.test(read(f)))
     expect(missing).toEqual([])
+    expect(read('DbQueryMonitorPage') + fs.readFileSync(path.join(COMPONENTS, 'dbquery', 'DbQueryMonitorForm.jsx'), 'utf8'),
+      'veritabanı sorgusu: ortak zamanlama düzenleyicisi (ScheduleEditor) yok').toMatch(/<ScheduleEditor\b|<ScheduleSection\b/)
   })
 
   it('hiçbir form KENDİ kanal ızgarasını yeniden yazmaz (kopya blok = kayan standart)', () => {

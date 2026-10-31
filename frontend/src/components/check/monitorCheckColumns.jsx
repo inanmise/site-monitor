@@ -1,6 +1,7 @@
 import { fmtDay, daysClass, httpClass, CELL } from './CheckRunShell.jsx'
 import { formatPercent } from '../../i18n/dateLocale.js'
 import { formatBytes } from '../../utils/formatBytes.js'
+import { checkStatusLabelKey, rowCountText } from '../dbquery/dbqueryPageModel.js'
 
 /**
  * Toplu koşumda tür başına eşzamanlılık tavanı.
@@ -15,13 +16,16 @@ import { formatBytes } from '../../utils/formatBytes.js'
  *       D-10: son izin zamanlanmış kontrollere kalır). Fazlası kotayı bekler; sıra beklemesi ucun
  *       beklemesinden kısa tutulduğu için yetişemeyen "havuz dolu → atlandı" döner (O-b3). Tavan elle
  *       kotayı AŞMAMALI — aşarsa uzun senaryolarda kontrollerin bir kısmı boşuna atlanır.</li>
+ *   <li>{@code dbquery: 2} — sunucu bağlantı başına en çok 2 eşzamanlı sorgu çalıştırır
+ *       ({@code site.monitor.dbquery.per-connection-concurrency}); fazlası 429 DBQUERY_BUSY döner, izlenen
+ *       veritabanına da yük bindirmemek gerekir.</li>
  *   <li>{@code page/pagespeed: 3} — tek kontrol ana sayfayı ve onlarca alt kaynağı çekiyor;
  *       altı paralel koşum tek pod'un giden bağlantılarını doldurur.</li>
  * </ul>
  */
 export const CHECK_CONCURRENCY_BY_TYPE = {
   http: 6, domain: 6, port: 6, dns: 6, keyword: 6, ping: 6,
-  page: 3, pagespeed: 3, scripted: 1,
+  page: 3, pagespeed: 3, scripted: 1, dbquery: 2,
 }
 
 const num = (v) => (v == null ? '—' : v)
@@ -166,6 +170,23 @@ export function monitorCheckColumns(type, t) {
             return `${d.checks_passed ?? 0}✓ / ${d.checks_failed ?? 0}✕`
           } },
           { key: 'duration', label: t('mon.checkColDuration'), render: r => ms((r.data || {}).duration_ms) },
+        ],
+      }
+
+    case 'dbquery':
+      return {
+        // Hedef = bağlantının adı (veritabanı sunucusu); izleme adı tablonun ilk sütununda zaten var.
+        targetOf: m => m?.profile?.name || '',
+        columns: [
+          { key: 'state', label: t('mon.checkColState'), render: r => {
+            const d = r.data || {}
+            return d.status ? t(checkStatusLabelKey(d)) : '—'
+          } },
+          { key: 'rows', label: t('mon.checkColRows'), render: r => {
+            const d = r.data || {}
+            return rowCountText(d.row_count, d.row_count_capped)
+          } },
+          { key: 'duration', label: t('mon.checkColMs'), render: r => ms((r.data || {}).duration_ms) },
         ],
       }
 

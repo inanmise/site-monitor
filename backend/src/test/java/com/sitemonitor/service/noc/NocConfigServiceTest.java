@@ -29,7 +29,7 @@ class NocConfigServiceTest {
         assertThat(c.minLevel()).isEqualTo("CRITICAL");
         assertThat(c.sendResolve()).isTrue();
         Map<String, Object> dto = NocConfigService.toDto(c);
-        assertThat(((Map<?, ?>) dto.get("enabled_types"))).hasSize(10);
+        assertThat(((Map<?, ?>) dto.get("enabled_types"))).hasSize(11);   // 2026-10-31: + DBQUERY
         assertThat(dto).containsEntry("min_level", "CRITICAL").containsEntry("send_resolve", true)
                 .containsEntry("call_instructions", "");
     }

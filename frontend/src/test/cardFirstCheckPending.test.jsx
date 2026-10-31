@@ -26,6 +26,7 @@ import PageMonitorCard from '../components/page/PageMonitorCard.jsx'
 import PageSpeedMonitorCard from '../components/pagespeed/PageSpeedMonitorCard.jsx'
 import ScriptedMonitorCard from '../components/scripted/ScriptedMonitorCard.jsx'
 import HttpMonitorCard from '../components/http/HttpMonitorCard.jsx'
+import DbQueryMonitorCard from '../components/dbquery/DbQueryMonitorCard.jsx'
 
 const NEVER = { id: 5, name: 'Yeni izleme', active: true, team_id: 1, team_name: 'Takım A', group_name: 'Kurumsal Web', tags: 'prod', status: 'unknown', checked_at: null }
 
@@ -40,6 +41,7 @@ const CARDS = [
   ['dns', DnsMonitorCard, { domain: 'www.example.com', record_type: 'A', standalone: true, value: null }, 'Awaiting the first check', ['dns-values-empty', 'dns-compact-empty']],
   ['port', PortMonitorCard, { host: 'db.example.com', port: 5432, protocol: 'TCP', standalone: true, response_ms: null }, 'Awaiting first check', ['port-result-title', 'port-compact']],
   ['domain', DomainMonitorCard, { domain: 'example.com', status: 'UNKNOWN', days_remaining: null, expiry_date: null, source: null }, 'Expiry date unknown', 'domain-unknown'],
+  ['dbquery', DbQueryMonitorCard, { purpose: 'Bekleyen sipariş sayısı', profile: { id: 3, name: 'Sipariş DB', db_type: 'POSTGRESQL' }, status: null, last_check: null }, 'Waiting for the first check', 'dbq-pending'],
 ]
 
 const slotOf = (slot, density) => (Array.isArray(slot) ? slot[density === 'rich' ? 0 : 1] : slot)
@@ -76,7 +78,7 @@ describe.each(CARDS)('hiç kontrol edilmemiş kart — %s', (kind, Card, row, id
       value: '192.0.2.1', response_ms: 20, http_status: 200, ok: true, found: true, occurrences: 1, rtt_ms: 10, packet_loss: 0,
       total_resources: 10, broken_resources: 0, timeout_count: 0, mixed_content_count: 0, days_remaining: 100, expiry_date: '2027-01-06' }
     if (kind === 'port') checked.status = 'open'
-    if (kind === 'page' || kind === 'domain' || kind === 'pagespeed') checked.status = 'OK'
+    if (kind === 'page' || kind === 'domain' || kind === 'pagespeed' || kind === 'dbquery') checked.status = 'OK'
     if (kind === 'scripted') { checked.status = 'PASS'; checked.duration_ms = 800; checked.checks_passed = 1; checked.checks_failed = 0 }
     const { container } = render(<Card monitor={checked} density="rich" running onOpen={() => {}} />)
     expect(container.querySelector('[data-slot="monitor-first-check"]')).toBeNull()

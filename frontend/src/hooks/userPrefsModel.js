@@ -81,7 +81,7 @@ export const MAX_VIEWS_PER_LIST = 50
 export const MAX_VIEW_NAME = 60
 
 /** Favori olabilen izleme türleri — sekme kimlikleriyle aynı. */
-export const MONITOR_TYPES = Object.freeze(['http', 'ping', 'port', 'dns', 'domain', 'keyword', 'page', 'pagespeed', 'scripted'])
+export const MONITOR_TYPES = Object.freeze(['http', 'ping', 'port', 'dns', 'domain', 'keyword', 'page', 'pagespeed', 'scripted', 'dbquery'])
 
 const SUFFIX_RE = /^[A-Za-z0-9._:-]{1,80}$/
 const LANDING_RE = /^[a-z][a-z0-9-]{0,39}$/

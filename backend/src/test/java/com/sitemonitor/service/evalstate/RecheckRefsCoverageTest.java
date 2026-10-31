@@ -54,7 +54,9 @@ class RecheckRefsCoverageTest {
                 Map.entry("DOMAINMON_TRANSFER_LOCK", "domain"), Map.entry("DOMAINMON_BLACKLIST", "domain"),
                 Map.entry("PAGE_DOWN", "page"), Map.entry("PAGE_INTEGRITY", "page"),
                 Map.entry("SCRIPTED_FAIL", "scripted"), Map.entry("SCRIPTED_SLOW", "scripted"),
-                Map.entry("PAGESPEED_DOWN", "pagespeed"), Map.entry("PAGESPEED_SLOW", "pagespeed")));
+                Map.entry("PAGESPEED_DOWN", "pagespeed"), Map.entry("PAGESPEED_SLOW", "pagespeed"),
+                Map.entry("DBQUERY_FAIL", "dbquery"), Map.entry("DBQUERY_THRESHOLD", "dbquery"),
+                Map.entry("DBQUERY_SLOW", "dbquery")));
         assertThat(expected.keySet()).containsExactlyInAnyOrderElementsOf(EscalationService.MONITORING_ALERT_TYPES);
         Map<String, String> actual = new TreeMap<>();
         for (String t : expected.keySet()) actual.put(t, RecheckRefs.monitorType(t));

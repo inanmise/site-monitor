@@ -1,6 +1,6 @@
 import {
   LayoutDashboard, FileBadge, Boxes, FileKey2, MonitorCheck, CalendarRange, RefreshCw, BookOpenText,
-  Globe, Radio, EthernetPort, Waypoints, CalendarClock, TextSearch, FileCheck, Gauge, Workflow,
+  Globe, Radio, EthernetPort, Waypoints, CalendarClock, TextSearch, FileCheck, Gauge, Workflow, DatabaseSearch,
   TriangleAlert, Siren, Wrench, History, Headset,
   ChartPie, ShieldAlert, FileChartColumn, FileClock,
   Logs, UserCheck, Fingerprint, FilePenLine,
@@ -37,6 +37,7 @@ export const TAB_META = {
   page:               { Icon: FileCheck,     section: 'nav.groupMonitoring' },
   pagespeed:          { Icon: Gauge,         section: 'nav.groupMonitoring' },
   scripted:           { Icon: Workflow,      section: 'nav.groupMonitoring' },
+  dbquery:            { Icon: DatabaseSearch, section: 'nav.groupMonitoring' },
   warnings:           { Icon: TriangleAlert, section: 'nav.groupAlerts' },
   incidents:          { Icon: Siren,         section: 'nav.groupAlerts' },
   maintenance:        { Icon: Wrench,        section: 'nav.groupAlerts' },
@@ -64,12 +65,12 @@ export const TAB_META = {
 }
 
 /** Sunucu araması (`/api/search`) izleme tür kimlikleri — GlobalSearchService.MONITOR_KINDS ile aynı. */
-export const MONITOR_KINDS = ['http', 'ping', 'port', 'dns', 'keyword', 'page', 'pagespeed', 'scripted', 'domain']
+export const MONITOR_KINDS = ['http', 'ping', 'port', 'dns', 'keyword', 'page', 'pagespeed', 'scripted', 'domain', 'dbquery']
 
 /** İzleme türü → kenar çubuğundaki sekme etiketi (sonuç satırının sağındaki tür adı). */
 export const MONITOR_LABEL_KEY = {
   http: 'nav.http', ping: 'nav.ping', port: 'nav.port', dns: 'nav.dns', domain: 'nav.domainmon',
-  keyword: 'nav.keyword', page: 'nav.page', pagespeed: 'nav.pagespeed', scripted: 'nav.scripted',
+  keyword: 'nav.keyword', page: 'nav.page', pagespeed: 'nav.pagespeed', scripted: 'nav.scripted', dbquery: 'nav.dbquery',
 }
 
 /** Sonuç türü → ikon (izleme türleri TAB_META'dan). */

@@ -86,6 +86,12 @@ class AuditCoverageTest {
                 "k6 ikililerini YENİDEN YOKLAR (2026-10-29): yalnız bu pod'un bellekteki sürüm bilgisini tazeler, hiçbir "
               + "ayar / kayıt değiştirmez. Değişiklik yapan uçlar (K6_ENGINE_SETTINGS_SAVE / SWITCH / ROLLBACK, "
               + "K6_COMPAT_SCAN_START / CANCEL) denetlenir.");
+        EXEMPT.put("MonitoringController#dbQuerySqlCheck",
+                "Veritabanı sorgu izlemesi CANLI YAZIM DENETİMİ (2026-10-31): sorguyu yalnız bellekte ayrıştırır, veritabanına "
+              + "gitmez, hiçbir kayıt değiştirmez. POST yalnız sorgu metni gövdesi taşıdığı için (URL'de SQL olmasın).");
+        EXEMPT.put("MonitoringController#dbQuerySchedulePreview",
+                "Veritabanı sorgu izlemesi ZAMANLAMA ÖNİZLEMESİ (2026-10-31): sonraki çalışmaları saf hesapla bulur, hiçbir "
+              + "kayıt değiştirmez. Kayıt (MONITOR_CREATE / MONITOR_UPDATE) denetlenir.");
         EXEMPT.put("UserBulkDeactivationController#preview",
                 "Toplu pasife alma ÖNİZLEMESİ (2026-10-02): yalnız hedef listesini hesaplar, hiçbir kaydı değiştirmez. "
               + "POST yalnız ölçüt gövdesi taşıdığı için; uygulama (USER_BULK_DEACTIVATE) ve geri alma denetlenir.");

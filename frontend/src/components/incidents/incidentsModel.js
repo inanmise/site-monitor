@@ -1,5 +1,5 @@
 import {
-  Globe, Radio, EthernetPort, Waypoints, CalendarClock, TextSearch, FileCheck, Gauge, Workflow, ShieldCheck,
+  Globe, Radio, EthernetPort, Waypoints, CalendarClock, TextSearch, FileCheck, Gauge, Workflow, ShieldCheck, DatabaseSearch,
 } from 'lucide-react'
 import { parseUtc, formatIncidentTime } from '../../utils/incidentMeta.js'
 
@@ -16,11 +16,11 @@ import { parseUtc, formatIncidentTime } from '../../utils/incidentMeta.js'
 /** İzleme türü → kenar çubuğuyla AYNI ikon (Nav.jsx) — kullanıcı türü iki yerde de aynı simgeden tanır. */
 export const MONITOR_TYPE_ICON = {
   http: Globe, ping: Radio, port: EthernetPort, dns: Waypoints, domain: CalendarClock,
-  keyword: TextSearch, page: FileCheck, pagespeed: Gauge, scripted: Workflow, cert: ShieldCheck,
+  keyword: TextSearch, page: FileCheck, pagespeed: Gauge, scripted: Workflow, dbquery: DatabaseSearch, cert: ShieldCheck,
 }
 export const MONITOR_TYPE_LABEL_KEY = {
   http: 'nav.http', ping: 'nav.ping', port: 'nav.port', dns: 'nav.dns', domain: 'nav.domainmon',
-  keyword: 'nav.keyword', page: 'nav.page', pagespeed: 'nav.pagespeed', scripted: 'nav.scripted', cert: 'incov.typeCert',
+  keyword: 'nav.keyword', page: 'nav.page', pagespeed: 'nav.pagespeed', scripted: 'nav.scripted', dbquery: 'nav.dbquery', cert: 'incov.typeCert',
 }
 
 /** Önem seviyesi (AlertEvent.alertLevel) → sıra + i18n + ton (MonitorStatsBar / rozet renkleri). */

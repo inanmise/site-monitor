@@ -47,6 +47,8 @@ export default function SearchableSelect({
   // Ad yolları (role="combobox" içerikten ad almaz — PickerTrigger): ariaLabel, görünür etiketin
   // id'si ya da `id` + `<label htmlFor>` / Field render-prop'u.
   ariaLabelledBy, id,
+  // İsteğe bağlı (2026-10-31): ipucu / hata metni bağı ve geçersizlik — PickerTrigger'a aynen iletilir; verilmezse çıktı aynı.
+  ariaDescribedBy, ariaInvalid,
   // true: seçenek ve seçili ad kırpılmaz, sarar (uzun AD görünen adları / takım adları — 2026-10-12). Varsayılan eski görünüm.
   wrapLabels = false,
 }) {
@@ -248,6 +250,8 @@ export default function SearchableSelect({
           placeholderShown={isEmpty}
           ariaLabel={ariaLabel}
           ariaLabelledBy={ariaLabelledBy}
+          ariaDescribedBy={ariaDescribedBy}
+          ariaInvalid={ariaInvalid}
           id={id}
           wrap={wrapLabels}
         >

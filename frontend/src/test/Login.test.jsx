@@ -184,12 +184,12 @@ describe('Login', () => {
     expect(screen.getByText('Monitor')).toBeDefined()
     expect(screen.getByText('Alert')).toBeDefined()
     expect(screen.getByText('Report')).toBeDefined()
-    // İzle sütunu: 11 çip (10 izleme türü + Uptime; flagship Sertifika canlı nabız noktalı),
-    // Uyar: 3, Raporla: 3 → toplam 17. Sayfa Bütünlüğü, Sentetik (k6) ve Sayfa Hızı sonradan
+    // İzle sütunu: 12 çip (11 izleme türü + Uptime; flagship Sertifika canlı nabız noktalı),
+    // Uyar: 3, Raporla: 3 → toplam 18. Sayfa Bütünlüğü, Sentetik (k6), Sayfa Hızı ve Veritabanı sorgusu sonradan
     // eklendi; her seferinde vitrin ile "N izleme türü" metni ayrışmıştı.
     // İzle sütununun türlerle TAM örtüşmesi ayrıca monitorTypeSurfaces.test.jsx'te kilitli;
     // buradaki toplam diğer iki sütunun da sabit kalmasını sağlar.
-    expect(container.querySelectorAll('.lp-chip')).toHaveLength(17)
+    expect(container.querySelectorAll('.lp-chip')).toHaveLength(18)
     expect(container.querySelector('.lp-chip--flag')).not.toBeNull()
     expect(container.querySelector('.lp-chip--flag .lp-chip-live')).not.toBeNull()
     expect(screen.getByText('DNS')).toBeDefined()

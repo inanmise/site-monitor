@@ -243,6 +243,7 @@ class PushMessageContractTest {
                 Map.entry("KEYWORD", "down"),
                 Map.entry("SCRIPTED_FAIL", "down"),
                 Map.entry("DNS_FAILURE", "down"),
+                Map.entry("DBQUERY_FAIL", "down"),   // 2026-10-31: sorgu çalıştırılamadı (kesinti)
                 // Yavaşlık ailesi
                 Map.entry("PING_SLOW", "slow"),
                 Map.entry("PORT_SLOW", "slow"),
@@ -251,6 +252,7 @@ class PushMessageContractTest {
                 Map.entry("DNS_SLOW", "slow"),
                 Map.entry("PAGESPEED_SLOW", "slow"),
                 Map.entry("SCRIPTED_SLOW", "slow"),
+                Map.entry("DBQUERY_SLOW", "slow"),
                 // Süre bitişi
                 Map.entry("EXPIRY", "expiry"),
                 Map.entry("DOMAIN_EXPIRY", "expiry"),
@@ -274,7 +276,9 @@ class PushMessageContractTest {
                 Map.entry("UNTRUSTED_CA", "cert"),
                 // Hedef ayakta ama bozuk / bilinmiyor
                 Map.entry("PAGE_INTEGRITY", "degraded"),
-                Map.entry("DOMAINMON_UNKNOWN", "degraded"));
+                Map.entry("DOMAINMON_UNKNOWN", "degraded"),
+                // Veritabanı sorgu kuralı ihlali: sorgu çalıştı (yanıt var), yavaşlık değil — iş kuralı sorunu
+                Map.entry("DBQUERY_THRESHOLD", "degraded"));
 
         List<String> wrong = new java.util.ArrayList<>();
         List<String> unmapped = new java.util.ArrayList<>();

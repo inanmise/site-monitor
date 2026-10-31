@@ -225,7 +225,11 @@ public final class DeferredIndexBuilder {
             // KULLANILMAZ: dağıtım günü bilinmiyor, eski pod'lar o güne dek çatallı satır yazabilir). İhlal ekleme yolunda bir
             // kez yeniden okunup denenir (AuditService.appendLocked). PostgreSQL'e özgü (H2'de JVM kilidi + COMMIT sonrası yazım).
             Spec.postgresOnly("CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS ux_audit_seq ON audit_log(seq)"
-                    + " WHERE seq_locked IS NOT NULL"));
+                    + " WHERE seq_locked IS NOT NULL"),
+            // dbquery_checks (11. tür, 2026-10-31): saatlik / günlük rollup (WHERE checked_at >= ? AND < ?), filo sparkline'ı
+            // ve saklama budaması — entity indeksi (monitor_id, checked_at) zaman aralığına tek başına hizmet etmez.
+            // SONA eklendi: katalog sırası testlerde konumla okunur.
+            Spec.portable("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_dbqc_checked_at ON dbquery_checks(checked_at)"));
 
     /** Bir koşunun özeti. {@code locked=false} → kilit alınamadı, hiçbir şey denenmedi. */
     public record Result(int built, int rebuilt, int valid, int skipped, int failed, boolean locked, long millis) {}

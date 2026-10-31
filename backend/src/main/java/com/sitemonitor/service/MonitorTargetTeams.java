@@ -37,7 +37,7 @@ import java.util.stream.Stream;
  * ({@link SessionScope#canOperateTeam}, izleme güncelleme kapısıyla aynı), okuma = birini GÖREBİLMEK.
  *
  * <p>Hedef anahtarı ekranın gönderdiğiyle birebir: HTTP/KEYWORD/PAGE/PAGESPEED = url, PING = host, PORT = host:port,
- * DNS/DOMAIN = alan adı, SCRIPTED = izleme adı.
+ * DNS/DOMAIN = alan adı, SCRIPTED / DBQUERY = izleme adı.
  *
  * <p><b>DNS/Port ÇİFT KAYNAKLI:</b> envanter-türevi satırın ({@code standalone != true}) takımı ENVANTERİN takımıdır —
  * satırdaki {@code team_id} null ya da bayat olabilir ({@code MonitoringController.effectiveTeam} ile aynı kural);
@@ -61,6 +61,9 @@ public class MonitorTargetTeams {
     private final DomainMonitorRepository domainRepo;
     private final ScriptedMonitorRepository scriptedRepo;
     private final CertificateInventoryRepository inventoryRepo;
+    /** Veritabanı sorgu izlemesi (11. tür, 2026-10-31) — alan enjeksiyonu: elle kurulan testler değişmesin. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.repository.DbQueryMonitorRepository dbQueryRepo;
 
     /** Hedefi izleyen izlemelerin sahipleri; eşleşme yoksa (ya da bilinmeyen tip) boş liste. */
     public List<Owner> owners(String type, String target) {
@@ -73,6 +76,8 @@ public class MonitorTargetTeams {
             case "PING"      -> plain(pingRepo.findByHost(target), PingMonitor::getTeamId);
             case "DOMAIN"    -> plain(domainRepo.findByDomain(target), DomainMonitor::getTeamId);
             case "SCRIPTED"  -> plain(scriptedRepo.findByName(target), ScriptedMonitor::getTeamId);
+            case "DBQUERY"   -> dbQueryRepo == null ? List.of()
+                    : plain(dbQueryRepo.findByName(target), com.sitemonitor.model.DbQueryMonitor::getTeamId);
             case "DNS"       -> dnsOwners(target);
             case "PORT"      -> portOwners(target);
             default          -> List.of();

@@ -51,9 +51,13 @@ describe('İzleme türü sayfaları — varsayılan kart sırası (2026-10-01)',
       ['page', { status: 'DOWN' }, TIER_DOWN], ['page', { status: 'DEGRADED' }, TIER_WARN], ['page', { status: 'OK' }, TIER_REST],
       ['pagespeed', { status: 'DOWN' }, TIER_DOWN], ['pagespeed', { status: 'SLOW' }, TIER_WARN], ['pagespeed', { status: 'OK' }, TIER_REST],
       ['scripted', { status: 'FAIL' }, TIER_DOWN], ['scripted', { status: 'TIMEOUT' }, TIER_DOWN], ['scripted', { status: 'NO_CHECKS' }, TIER_WARN], ['scripted', { status: 'PASS' }, TIER_REST],
+      // Veritabanı sorgusu = dbqueryPageModel.dbqueryStatusKey (FAIL / kritik eşik kırmızı; uyarı eşiği / yavaş sarı)
+      ['dbquery', { status: 'FAIL' }, TIER_DOWN], ['dbquery', { status: 'BREACH', breach_level: 'CRITICAL' }, TIER_DOWN],
+      ['dbquery', { status: 'BREACH', breach_level: 'WARNING' }, TIER_WARN], ['dbquery', { status: 'OK', slow: true }, TIER_WARN],
+      ['dbquery', { status: 'OK' }, TIER_REST], ['dbquery', {}, TIER_REST],
     ]
     for (const [type, m, tier] of cases) expect(tierOf(m, type), `${type} ${JSON.stringify(m)}`).toBe(tier)
-    expect(Object.keys(STATUS_TIER).sort()).toEqual(['dns', 'domain', 'http', 'keyword', 'page', 'pagespeed', 'ping', 'port', 'scripted'])
+    expect(Object.keys(STATUS_TIER).sort()).toEqual(['dbquery', 'dns', 'domain', 'http', 'keyword', 'page', 'pagespeed', 'ping', 'port', 'scripted'])
   })
 
   it('sarı (warn) kartlar kırmızılardan sonra, sağlıklılardan önce', () => {

@@ -427,7 +427,7 @@ export const closesAutomatically = (type) => !!type && !MANUAL_CLOSE_TYPES.has(S
 // eskiden kural yoktu → "Sertifikaları aç" + olay kategorisi CERTIFICATE.
 const TYPE_TAB = [
   [/^HTTP_/, 'http'], [/^DOMAIN_EXPIRY$/, 'http'], [/^DNS_/, 'dns'], [/^PORT_/, 'port'], [/^PING_/, 'ping'], [/^KEYWORD/, 'keyword'],
-  [/^PAGESPEED_/, 'pagespeed'], [/^PAGE_/, 'page'], [/^SCRIPTED_/, 'scripted'], [/^DOMAINMON_/, 'domain'],
+  [/^PAGESPEED_/, 'pagespeed'], [/^PAGE_/, 'page'], [/^SCRIPTED_/, 'scripted'], [/^DOMAINMON_/, 'domain'], [/^DBQUERY_/, 'dbquery'],
 ]
 export function alertSourceTab(type) {
   const s = String(type || '')

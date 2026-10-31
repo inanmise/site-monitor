@@ -80,7 +80,7 @@ public class MonitoringOverviewService {
     /** Taze istek ({@code fresh=true}) belleği ancak kayıt bu yaştan eskiyse atlar (ms) — Yenile düğmesi sel koruması. */
     static final long FRESH_MIN_MS = 5_000;
     /** Pencere sorgusunun 4. sütunu ORTALAMA yanıt/süre olan türler (DNS'te aynı sütun değişim sayısıdır — okunmaz). */
-    static final Set<String> AVG_RESPONSE_TYPES = Set.of("http", "ping", "page", "pagespeed", "scripted");
+    static final Set<String> AVG_RESPONSE_TYPES = Set.of("http", "ping", "page", "pagespeed", "scripted", "dbquery");
 
     private final HttpMonitorRepository httpMonitorRepo;
     private final PingMonitorRepository pingMonitorRepo;
@@ -113,6 +113,13 @@ public class MonitoringOverviewService {
      */
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.sitemonitor.repository.CertificateInventoryRepository inventoryRepo;
+
+    /** Veritabanı sorgu izlemesi (11. tür, 2026-10-31) — alan enjeksiyonu, isteğe bağlı (yapıcıyla kurulan testler bozulmasın;
+     *  yoksa tür panoda görünmez). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.repository.DbQueryMonitorRepository dbQueryMonitorRepo;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.repository.DbQueryCheckRepository dbQueryCheckRepo;
 
     /** Bellekli girişin hesaplamayı PROXY üzerinden çağırması için (salt-okunur işlem korunur) — CertificateService deseni.
      *  Birim testinde null → doğrudan {@code this}. */
@@ -283,6 +290,8 @@ public class MonitoringOverviewService {
         catch (Exception e) { log.debug("takım adları okunamadı: {}", e.toString()); }
 
         // Açık alarmlar — hedef anahtarına göre (izlemeye bağlanır; kapsam izlemeden miras). Tür süzgeci katalogdan.
+        // Anahtar takımsızdır: veritabanı sorgu izlemesinde hedef = izleme ADI ve ad TÜM takımlarda tekildir (2026-10-31
+        // karar K1) — iki takımın aynı adlı izlemesi aynı açık alarmı paylaşamaz (inceleme D6; kod değişikliği gerekmez).
         Map<String, List<AlertEvent>> openByKey = new HashMap<>();
         boolean alertsUnavailable = false;
         try {
@@ -306,6 +315,8 @@ public class MonitoringOverviewService {
         types.add(summarize(pageSpec(), canViewTeam, teamNames, openByKey, from, now, nowI, rows));
         types.add(summarize(pageSpeedSpec(), canViewTeam, teamNames, openByKey, from, now, nowI, rows));
         types.add(summarize(scriptedSpec(), canViewTeam, teamNames, openByKey, from, now, nowI, rows));
+        if (dbQueryMonitorRepo != null && dbQueryCheckRepo != null)
+            types.add(summarize(dbQuerySpec(), canViewTeam, teamNames, openByKey, from, now, nowI, rows));
 
         // Pencerede çözülen alarmlar (tür başına) — kapsam: alarm satırının takımı görüş kapsamında (global → hepsi).
         // Gruplu sayım (tip, damgalı takım): sessiz kapanış sorguda elenir, kapsam takım sütunu üzerinden burada.
@@ -430,7 +441,8 @@ public class MonitoringOverviewService {
             else if (!isActive) status = "paused";
             else if (c == null) status = "unknown";
             else if (!open.isEmpty() || Boolean.FALSE.equals(ok)) status = "down";
-            else if (isStale(checkedAt, spec.interval().apply(m), nowI)) status = "stale";
+            else if (m instanceof com.sitemonitor.model.DbQueryMonitor dq
+                    ? isDbQueryStale(dq, nowI) : isStale(checkedAt, spec.interval().apply(m), nowI)) status = "stale";
             else status = "up";
 
             total++;
@@ -476,6 +488,14 @@ public class MonitoringOverviewService {
             row.put("avg_response_ms_window", rowAvg);
             // İzleme grubu (2026-10-01, Durum Sayfası): hizmet = takım + grup adı. Yüklenmiş entity'den — ek sorgu YOK.
             row.put("group_name", groupNameOf(m));
+            // Veritabanı sorgusu (2026-10-31 inceleme O4 / O5): açık alarmlardan biri SORGU HATASI mı (durum sayfası yalnız
+            // bunu kesinti sayar; kural ihlali / yavaşlık en fazla "degraded") ve art arda atlanan çalıştırma.
+            if (m instanceof com.sitemonitor.model.DbQueryMonitor dq) {
+                row.put("open_query_failure", open.stream().anyMatch(e ->
+                        com.sitemonitor.service.EscalationService.TYPE_DBQUERY_FAIL.equals(e.getAlertType())));
+                row.put("skipped_runs", dq.getSkippedRuns() == null ? 0 : dq.getSkippedRuns());
+                row.put("skipped_since", dq.getSkippedSince());
+            }
             rows.add(row);
         }
 
@@ -493,6 +513,55 @@ public class MonitoringOverviewService {
         if (checksUnavailable) t.put("checks_unavailable", true);
         if (statsUnavailable) t.put("stats_unavailable", true);
         return t;
+    }
+
+    /** Veritabanı sorgusunun planlı çalışmasından sonra "gecikmiş" sayılmadan önce tanınan pay: max(2 × tarama tıkı, 5 dk). */
+    static final long DBQUERY_STALE_GRACE_SECONDS = 300;
+    /**
+     * Art arda atlanan (eşzamanlılık izni yok / iç hata) çalıştırma bu kadar süredir sürüyorsa izleme "gecikmiş" (2026-10-31
+     * inceleme O5): zamanlayıcı yeniden denemeyi ~10 dk sürdürür (20 × 30 sn tık), sonra bir sonraki planlı çalışmayı bekler.
+     */
+    static final long DBQUERY_SKIP_STALE_SECONDS = 600;
+
+    /**
+     * Veritabanı sorgu izlemesi "gecikmiş" mi — planlı çalışma kuralı ({@link #isDbQueryStale(String, Instant)}) YA DA
+     * çalıştırmalar {@link #DBQUERY_SKIP_STALE_SECONDS}'tan uzun süredir art arda ATLANIYOR (2026-10-31 inceleme O5: plan
+     * her dönem ileri yazıldığı için sürekli atlanan izleme son eski sonuçla sessizce "güncel" görünüyordu). Genel bakış ve
+     * "bugün" paneli bu kuralı kullanır.
+     */
+    public static boolean isDbQueryStale(com.sitemonitor.model.DbQueryMonitor m, Instant now) {
+        if (m == null) return false;
+        return isDbQueryStale(m.getNextRunAt(), now) || skippedTooLong(m.getSkippedSince(), now);
+    }
+
+    static boolean skippedTooLong(String skippedSince, Instant now) {
+        if (skippedSince == null || skippedSince.isBlank() || now == null) return false;
+        try {
+            Instant since = java.time.LocalDateTime.parse(skippedSince.trim().replace(' ', 'T').replace("Z", ""),
+                    DateTimeFormatter.ISO_LOCAL_DATE_TIME).toInstant(ZoneOffset.UTC);
+            return since.plusSeconds(DBQUERY_SKIP_STALE_SECONDS).isBefore(now);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /**
+     * Veritabanı sorgu izlemesi "gecikmiş" mi (2026-10-31): vade izlemenin KENDİ zamanlamasından gelir (cron, izinli / yasak
+     * pencereler, tatil) — aralığın katı kuralı burada YANLIŞ olurdu (günlük cron'u ya da mesai dışı penceresi olan izleme
+     * her gece "gecikmiş" görünürdü). Kural: planlı çalışma ({@code next_run_at}) + {@link #DBQUERY_STALE_GRACE_SECONDS}
+     * geçtiyse gecikmiş; pencere dışında beklemek gecikme DEĞİL (plan bir sonraki uygun ana yazılır). Plan yoksa (henüz
+     * hesaplanmadı / uygun an yok) gecikme yok.
+     */
+    static boolean isDbQueryStale(String nextRunAt, Instant now) {
+        if (nextRunAt == null || nextRunAt.isBlank()) return false;
+        try {
+            // "yyyy-MM-ddTHH:mm:ss" (UTC) yazılır; "Z" son eki ya da kesirli saniye de okunur (yazan katmandan bağımsız).
+            Instant next = java.time.LocalDateTime.parse(nextRunAt.trim().replace(' ', 'T').replace("Z", ""),
+                    DateTimeFormatter.ISO_LOCAL_DATE_TIME).toInstant(ZoneOffset.UTC);
+            return next.plusSeconds(DBQUERY_STALE_GRACE_SECONDS).isBefore(now);
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     static boolean isStale(String checkedAt, Integer intervalSeconds, Instant now) {
@@ -630,6 +699,18 @@ public class MonitoringOverviewService {
                 scriptedCheckRepo::weeklyStatsByMonitor);
     }
 
+    /** Veritabanı sorgusu: hedef = ad (alarm anahtarı); süre = sorgu süresi; ok = sorgu çalıştı (eşik ihlali kesinti değil). */
+    private TypeSpec<com.sitemonitor.model.DbQueryMonitor, com.sitemonitor.model.DbQueryCheck> dbQuerySpec() {
+        return new TypeSpec<>("dbquery", dbQueryMonitorRepo::findAllByOrderByNameAsc,
+                com.sitemonitor.model.DbQueryMonitor::getId, com.sitemonitor.model.DbQueryMonitor::getName,
+                com.sitemonitor.model.DbQueryMonitor::getName, com.sitemonitor.model.DbQueryMonitor::getTeamId,
+                com.sitemonitor.model.DbQueryMonitor::getActive, m -> false, com.sitemonitor.model.DbQueryMonitor::getIntervalSeconds,
+                dbQueryCheckRepo::findLatestPerMonitor, com.sitemonitor.model.DbQueryCheck::getMonitorId,
+                c -> Boolean.TRUE.equals(c.getOk()), com.sitemonitor.model.DbQueryCheck::getCheckedAt,
+                com.sitemonitor.model.DbQueryCheck::getDurationMs, com.sitemonitor.model.DbQueryCheck::getErrorMessage,
+                dbQueryCheckRepo::weeklyStatsByMonitor);
+    }
+
     private static String nz(String a, String b) { return a != null && !a.isBlank() ? a : b; }
 
     /**
@@ -647,6 +728,7 @@ public class MonitoringOverviewService {
             case PageMonitor x -> x.getGroupName();
             case PageSpeedMonitor x -> x.getGroupName();
             case ScriptedMonitor x -> x.getGroupName();
+            case com.sitemonitor.model.DbQueryMonitor x -> x.getGroupName();
             case null, default -> null;
         };
         return g == null || g.isBlank() ? null : g.trim();

@@ -5,7 +5,7 @@ import { mockApi } from './support/monitorMocks.js'
 // izlemede"): kutu yüksekliği sekme içeriğine göre değişip dikey ortalı pencere yeniden konumlanıyordu (HTTP: yükseklik
 // 499–868, üst kenar 16–200 px). MonitorDetailModal artık sabit yükseklik + yalnız gövde kayar. Her türün ANA sekme
 // şeridi gezilir, kutu boyutu/konumu örneklenir; oynama ≤ 2 px. jsdom yerleşim hesaplamaz → gerçek tarayıcı.
-const TYPES = ['http', 'keyword', 'page', 'pagespeed', 'domain', 'ping', 'port', 'dns', 'scripted']
+const TYPES = ['http', 'keyword', 'page', 'pagespeed', 'domain', 'ping', 'port', 'dns', 'scripted', 'dbquery']
 for (const type of TYPES) {
   test(`${type}: detay penceresi sekme geçişinde boyut/konum sabit`, async ({ page }) => {
     test.setTimeout(180_000)

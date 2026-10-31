@@ -68,17 +68,18 @@ public class AvailabilitySection implements ExecutiveSummarySection {
     static final String TITLE = "Erişilebilirlik hedefi uyumu";
 
     /** Rollup tür adları (monitor_check_hourly.monitor_type). */
-    static final List<String> ROLLUP_TYPES = List.of("HTTP", "PING", "PORT", "KEYWORD", "PAGE", "PAGESPEED", "SCRIPTED", "UPTIME");
+    static final List<String> ROLLUP_TYPES = List.of("HTTP", "PING", "PORT", "KEYWORD", "PAGE", "PAGESPEED", "SCRIPTED", "DBQUERY",
+            "UPTIME");
     /** Pano tür anahtarı → rollup tür adı. */
     static final Map<String, String> OVERVIEW_TO_ROLLUP = Map.of(
             "http", "HTTP", "ping", "PING", "port", "PORT", "keyword", "KEYWORD",
-            "page", "PAGE", "pagespeed", "PAGESPEED", "scripted", "SCRIPTED");
+            "page", "PAGE", "pagespeed", "PAGESPEED", "scripted", "SCRIPTED", "dbquery", "DBQUERY");
     /** "En kötü hizmetler" listesine girmek için gereken en az kontrol (gürültülü küçük örnekler sıralamayı ele geçirmesin). */
     static final int MIN_SERVICE_CHECKS = 30;
     static final int WORST_LIMIT = 10;
     static final int TEAM_LIMIT = 50;
 
-    private static final String IN_TYPES = "('HTTP','PING','PORT','KEYWORD','PAGE','PAGESPEED','SCRIPTED','UPTIME')";
+    private static final String IN_TYPES = "('HTTP','PING','PORT','KEYWORD','PAGE','PAGESPEED','SCRIPTED','DBQUERY','UPTIME')";
 
     /** İzleme başına cari + önceki ay toplamları — params: cur, cur, cur, cur, prevFrom, curTo. */
     static String perMonitorSql(String table, String col) {

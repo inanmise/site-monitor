@@ -137,6 +137,24 @@
             <artifactId>postgresql</artifactId>
             <scope>runtime</scope>
         </dependency>
+        <!-- Veritabanı sorgu izlemesi (11. tür, 2026-10-31): izlenen Oracle / MSSQL veritabanlarına bağlanan sürücüler.
+             Sürümler Spring Boot BOM'undan; yalnız DriverManager + JDBC URL ile kullanılır (derleme bağımlılığı yok). -->
+        <dependency>
+            <groupId>com.oracle.database.jdbc</groupId>
+            <artifactId>ojdbc11</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.microsoft.sqlserver</groupId>
+            <artifactId>mssql-jdbc</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+        <!-- SQL ayrıştırıcı — izleme sorgusunun yalnız SELECT olduğunu AST düzeyinde doğrular (DbQuerySqlGuard). -->
+        <dependency>
+            <groupId>com.github.jsqlparser</groupId>
+            <artifactId>jsqlparser</artifactId>
+            <version>5.4</version>
+        </dependency>
         <!-- Spring Session JDBC — shared sessions across nodes (HA) -->
         <dependency>
             <groupId>org.springframework.session</groupId>

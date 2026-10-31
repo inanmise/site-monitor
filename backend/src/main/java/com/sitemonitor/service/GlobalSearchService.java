@@ -52,6 +52,7 @@ public class GlobalSearchService {
         MONITOR_KINDS.put("page",      new Kind("page_monitors",      "url",    "page"));
         MONITOR_KINDS.put("pagespeed", new Kind("pagespeed_monitors", "url",    "pagespeed"));
         MONITOR_KINDS.put("scripted",  new Kind("scripted_monitors",  "name",   "scripted"));
+        MONITOR_KINDS.put("dbquery",   new Kind("dbquery_monitors",   "name",   "dbquery"));   // veritabanı sorgu izlemesi (2026-10-31)
         MONITOR_KINDS.put("domain",    new Kind("domain_monitors",    "domain", "domain"));
     }
     static final int MAX_CERTS = 20, MAX_PER_MONITOR = 6, MAX_TEAMS = 5, MIN_QUERY = 2;

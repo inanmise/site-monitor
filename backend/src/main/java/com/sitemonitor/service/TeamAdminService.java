@@ -95,6 +95,27 @@ public class TeamAdminService {
 
     void setAlertFieldWriter(com.sitemonitor.service.AlertEventFieldWriter w) { this.alertFieldWriter = w; }
 
+    /**
+     * Veritabanı sorgu izlemesi (11. tür, 2026-10-31): izlemeler, takımın kayıtlı bağlantıları ve sorgu şablonları. Bağlantı ve
+     * şablon TAKIM BELGESİDİR — etki önizlemesi onları sayar (silmeyi engeller, "önce taşı"), {@link #moveAll} izlemelerle
+     * BİRLİKTE taşır (izleme ve bağlantısı aynı takımda kalmalı). Alan enjeksiyonu: kurucu ve elle kurulan testler değişmesin;
+     * yokken bölüm atlanır.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.repository.DbQueryMonitorRepository dbQueryRepo;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.repository.DbConnectionProfileRepository dbConnectionRepo;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.repository.DbQueryTemplateRepository dbQueryTemplateRepo;
+
+    void setDbQueryRepos(com.sitemonitor.repository.DbQueryMonitorRepository monitors,
+                         com.sitemonitor.repository.DbConnectionProfileRepository connections,
+                         com.sitemonitor.repository.DbQueryTemplateRepository templates) {
+        this.dbQueryRepo = monitors;
+        this.dbConnectionRepo = connections;
+        this.dbQueryTemplateRepo = templates;
+    }
+
     /** Taşıma çakışması: hedef takımda aynı adlı kanal / şablon ya da hedefin sınırı dolu → 409, HİÇBİR şey taşınmaz. */
     public static class MoveConflictException extends com.sitemonitor.config.GlobalExceptionHandler.CodedConflictException {
         public MoveConflictException(String code, String message) { super(code, message, null); }
@@ -106,6 +127,7 @@ public class TeamAdminService {
         m.put("HTTP", httpRepo); m.put("PORT", portRepo); m.put("PING", pingRepo); m.put("DNS", dnsRepo);
         m.put("KEYWORD", keywordRepo); m.put("PAGE", pageRepo); m.put("PAGESPEED", pageSpeedRepo);
         m.put("SCRIPTED", scriptedRepo); m.put("DOMAIN", domainRepo);
+        if (dbQueryRepo != null) m.put("DBQUERY", dbQueryRepo);
         return m;
     }
 
@@ -187,6 +209,13 @@ public class TeamAdminService {
         out.put("te_templates", sample(templates));
         List<String> windows = liveWindowNames(teamId, java.time.Instant.now());
         out.put("maintenance_windows", sample(windows));
+        // Veritabanı sorgu izlemesi (2026-10-31): kayıtlı bağlantılar ve sorgu şablonları da takım belgesidir — silmeyi engeller.
+        List<String> dbConnections = dbConnectionRepo == null ? List.of()
+                : dbConnectionRepo.findByTeamIdOrderByNameAsc(teamId).stream().map(com.sitemonitor.model.DbConnectionProfile::getName).toList();
+        out.put("dbq_connections", sample(dbConnections));
+        List<String> dbTemplates = dbQueryTemplateRepo == null ? List.of()
+                : dbQueryTemplateRepo.findByTeamIdOrderByNameAsc(teamId).stream().map(com.sitemonitor.model.DbQueryTemplate::getName).toList();
+        out.put("dbq_templates", sample(dbTemplates));
         // Yönetici özeti takım ayarı / geçmişi: BİLGİ (engel değil) — takımla birlikte silinir (yetim kuralı), taşınmaz.
         Map<String, Object> exec = new LinkedHashMap<>();
         exec.put("settings", count("SELECT COUNT(*) FROM executive_summary_team_settings WHERE team_id = ?", teamId) > 0);
@@ -197,7 +226,8 @@ public class TeamAdminService {
         // taşır; taşımadan silme 409 alır.
         boolean empty = inv.isEmpty() && ugInv.isEmpty() && monitorNames.isEmpty() && users.isEmpty() && open == 0
                 && contactRepo.findByTeamIdOrderByRoleAsc(teamId).isEmpty() && groupRepo.findByTeamIdOrderByNameAsc(teamId).isEmpty()
-                && channels.isEmpty() && templates.isEmpty() && windows.isEmpty();
+                && channels.isEmpty() && templates.isEmpty() && windows.isEmpty()
+                && dbConnections.isEmpty() && dbTemplates.isEmpty();
         out.put("empty", empty);
         return out;
     }
@@ -277,6 +307,7 @@ public class TeamAdminService {
         // Takım belgeleri ÖNCE denetlenir (2026-10-22, ADMIN-1): hedefte aynı adlı kanal / şablon ya da dolu sınır → 409,
         // hiçbir şey taşınmaz (işlem geri alınır). Kanal adı takım içinde tekildir (uk_tech_error_channel_team_name).
         DocumentMove docs = planDocumentMove(from, to);
+        planDbQueryMove(from, to);   // veritabanı sorgu izlemesi: ad çakışması / şablon sınırı → 409, hiçbir şey taşınmaz
         Map<String, Integer> moved = new LinkedHashMap<>();
         int n = 0;
         for (CertificateInventory i : inventoryRepo.findByTeamIdOrderByDomainAsc(from)) {
@@ -305,7 +336,11 @@ public class TeamAdminService {
         n += moveMonitors(pageSpeedRepo, from, to, (m, t) -> m.setTeamId(t));
         n += moveMonitors(scriptedRepo, from, to, (m, t) -> m.setTeamId(t));
         n += moveMonitors(domainRepo, from, to, (m, t) -> m.setTeamId(t));
+        if (dbQueryRepo != null) n += moveMonitors(dbQueryRepo, from, to, (m, t) -> m.setTeamId(t));
         moved.put("monitors", n);
+        // Bağlantılar ve şablonlar izlemelerle AYNI işlemde taşınır (izleme başka takımın bağlantısına bağlı kalmasın).
+        moved.put("dbq_connections", dbConnectionRepo == null ? 0 : dbConnectionRepo.moveTeam(from, to));
+        moved.put("dbq_templates", dbQueryTemplateRepo == null ? 0 : dbQueryTemplateRepo.moveTeam(from, to));
         n = 0;
         for (AppUser u : userRepo.findAll()) {
             boolean primary = Objects.equals(u.getTeamId(), from);
@@ -486,6 +521,61 @@ public class TeamAdminService {
         }
         jdbc.update("UPDATE tech_error_team_templates SET team_id = ?, version = version + 1 WHERE team_id = ?", to, from);
         moved.put("te_templates", docs.templates());
+    }
+
+    /**
+     * Veritabanı sorgu izlemesi taşımasının ön denetimi (2026-10-31): hedef takımda aynı adlı izleme (ad alarm anahtarıdır),
+     * bağlantı ya da şablon varsa, ya da şablon kitaplığı sınırı aşılırsa 409 — hiçbir şey taşınmaz (işlem geri alınır).
+     * İzleme adı inceleme 2026-10-31'den (K1) beri TÜM takımlarda tekil: taşıma adı değiştirmediği için yeni çift üretemez; bu
+     * denetim yalnız kural öncesinden kalan çift adlarda (PostgreSQL'de {@code ux_dbqm_name_lower} kurulamamışken) taşımayı keser.
+     */
+    private void planDbQueryMove(Long from, Long to) {
+        if (dbQueryRepo != null) {
+            java.util.Set<String> target = new java.util.HashSet<>();
+            for (var m : dbQueryRepo.findByTeamId(to)) if (m.getName() != null) target.add(m.getName().toLowerCase(java.util.Locale.ROOT));
+            List<String> clash = new ArrayList<>();
+            for (var m : dbQueryRepo.findByTeamId(from))
+                if (m.getName() != null && target.contains(m.getName().toLowerCase(java.util.Locale.ROOT))) clash.add(m.getName());
+            if (!clash.isEmpty()) {
+                String head = head(clash);
+                throw new MoveConflictException("TEAM_MOVE_DBQUERY_NAME_CLASH", com.sitemonitor.util.Msg.t(
+                        "Hedef takımda aynı adlı veritabanı sorgu izlemesi var (ad alarm anahtarıdır): " + head + ". Hiçbir şey taşınmadı; izlemelerden birini yeniden adlandırıp tekrar deneyin.",
+                        "The target team already has a database query monitor with the same name (the name is the alarm key): " + head + ". Nothing was moved; rename one of the monitors and try again."));
+            }
+        }
+        if (dbConnectionRepo != null) {
+            java.util.Set<String> target = new java.util.HashSet<>();
+            for (var p : dbConnectionRepo.findByTeamIdOrderByNameAsc(to)) target.add(p.getName().toLowerCase(java.util.Locale.ROOT));
+            List<String> clash = new ArrayList<>();
+            for (var p : dbConnectionRepo.findByTeamIdOrderByNameAsc(from))
+                if (target.contains(p.getName().toLowerCase(java.util.Locale.ROOT))) clash.add(p.getName());
+            if (!clash.isEmpty()) {
+                String head = head(clash);
+                throw new MoveConflictException("TEAM_MOVE_DBQ_CONNECTION_CLASH", com.sitemonitor.util.Msg.t(
+                        "Hedef takımda aynı adlı veritabanı bağlantısı var: " + head + ". Hiçbir şey taşınmadı; bağlantılardan birini yeniden adlandırıp tekrar deneyin.",
+                        "The target team already has a database connection with the same name: " + head + ". Nothing was moved; rename one of the connections and try again."));
+            }
+        }
+        if (dbQueryTemplateRepo != null) {
+            List<com.sitemonitor.model.DbQueryTemplate> src = dbQueryTemplateRepo.findByTeamIdOrderByNameAsc(from);
+            List<com.sitemonitor.model.DbQueryTemplate> dst = dbQueryTemplateRepo.findByTeamIdOrderByNameAsc(to);
+            java.util.Set<String> target = new java.util.HashSet<>();
+            for (var t : dst) target.add(t.getName().toLowerCase(java.util.Locale.ROOT));
+            List<String> clash = new ArrayList<>();
+            for (var t : src) if (target.contains(t.getName().toLowerCase(java.util.Locale.ROOT))) clash.add(t.getName());
+            if (!clash.isEmpty()) {
+                String head = head(clash);
+                throw new MoveConflictException("TEAM_MOVE_DBQ_TEMPLATE_CLASH", com.sitemonitor.util.Msg.t(
+                        "Hedef takımda aynı adlı sorgu şablonu var: " + head + ". Hiçbir şey taşınmadı; şablonlardan birini yeniden adlandırıp tekrar deneyin.",
+                        "The target team already has a query template with the same name: " + head + ". Nothing was moved; rename one of the templates and try again."));
+            }
+            int max = com.sitemonitor.service.dbquery.DbQueryTemplateService.MAX_PER_TEAM;
+            if (!src.isEmpty() && dst.size() + src.size() > max) {
+                throw new MoveConflictException("TEAM_MOVE_DBQ_TEMPLATE_LIMIT", com.sitemonitor.util.Msg.t(
+                        "Taşıma hedef takımın sorgu şablonu sınırını (" + max + ") aşar; hiçbir şey taşınmadı. Kullanılmayan şablonları silip tekrar deneyin.",
+                        "Moving would put the target team over its query template limit (" + max + "); nothing was moved. Delete unused templates and try again."));
+            }
+        }
     }
 
     private static String head(List<String> names) {

@@ -59,7 +59,7 @@ public class NocMonitorDirectory {
             case SSL, DNS, DOMAIN -> "domain";
             case PING, PORT -> "host";
             case HTTP, KEYWORD, PAGE, PAGESPEED -> "url";
-            case SCRIPTED -> "name";
+            case SCRIPTED, DBQUERY -> "name";   // ad = alarm anahtarı (takımda tekil)
         };
     }
 
@@ -176,7 +176,7 @@ public class NocMonitorDirectory {
         String k = switch (r.type()) {
             case PORT -> r.target() == null ? null : r.target().substring(0, Math.max(0, r.target().lastIndexOf(':')));
             case DNS -> r.target() == null ? null : r.target().replaceFirst(" [(][^)]*[)]$", "");
-            case SCRIPTED, SSL -> r.name();
+            case SCRIPTED, DBQUERY, SSL -> r.name();
             default -> r.target();
         };
         return k == null ? null : k.toLowerCase(Locale.ROOT);
@@ -237,6 +237,7 @@ public class NocMonitorDirectory {
             case PAGE -> simple(t, "SELECT id, name, url, team_id, active, noc_notify, noc_group_ids FROM page_monitors WHERE 1=1" + where, args, out);
             case PAGESPEED -> simple(t, "SELECT id, name, url, team_id, active, noc_notify, noc_group_ids FROM pagespeed_monitors WHERE 1=1" + where, args, out);
             case SCRIPTED -> simple(t, "SELECT id, name, name, team_id, active, noc_notify, noc_group_ids FROM scripted_monitors WHERE 1=1" + where, args, out);
+            case DBQUERY -> simple(t, "SELECT id, name, name, team_id, active, noc_notify, noc_group_ids FROM dbquery_monitors WHERE 1=1" + where, args, out);
             case DOMAIN -> simple(t, "SELECT id, name, domain, team_id, active, noc_notify, noc_group_ids FROM domain_monitors WHERE 1=1" + where, args, out);
             case DNS -> jdbc.query("SELECT id, name, domain, record_type, team_id, active, standalone, noc_notify, noc_group_ids "
                     + "FROM dns_monitors WHERE deleted_at IS NULL" + where, rs -> {

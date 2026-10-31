@@ -25,7 +25,7 @@ function backendTypes() {
   const src = fs.readFileSync(SERVICE, 'utf8')
   return [...new Set([...src.matchAll(/"([a-z]+)"/g)].map(m => m[1]))]
     .filter(t => ['cert', 'http', 'ping', 'port', 'dns', 'keyword', 'domain',
-      'page', 'scripted', 'pagespeed'].includes(t))
+      'page', 'scripted', 'pagespeed', 'dbquery'].includes(t))
 }
 
 describe('İzleme Grupları tür etiketleri ↔ backend', () => {

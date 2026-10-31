@@ -38,7 +38,7 @@ function RowLink({ title, onClick, children }) {
  */
 export const MONITOR_TAB = {
   HTTP: 'http', PORT: 'port', PING: 'ping', DNS: 'dns', KEYWORD: 'keyword',
-  PAGE: 'page', PAGESPEED: 'pagespeed', SCRIPTED: 'scripted', DOMAIN: 'domain',
+  PAGE: 'page', PAGESPEED: 'pagespeed', SCRIPTED: 'scripted', DOMAIN: 'domain', DBQUERY: 'dbquery',
 }
 
 export function openMonitor(item) {

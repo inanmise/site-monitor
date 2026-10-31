@@ -45,7 +45,7 @@ function formFile(form) {
 const MONITOR_FORMS = [
   'PingMonitorPage', 'DnsMonitorPage', 'DomainMonitorPage', 'HttpMonitorPage',
   'KeywordMonitorPage', 'PageMonitorPage', 'PageSpeedMonitorPage', 'PortMonitorPage',
-  'ScriptedMonitorPage',
+  'ScriptedMonitorPage', 'DbQueryMonitorPage',
 ]
 
 /**
@@ -111,7 +111,7 @@ const NOC_MONITOR_LINKS = [
 const NOC_TYPE_OF = {
   PingMonitorPage: 'PING', DnsMonitorPage: 'DNS', DomainMonitorPage: 'DOMAIN', HttpMonitorPage: 'HTTP',
   KeywordMonitorPage: 'KEYWORD', PageMonitorPage: 'PAGE', PageSpeedMonitorPage: 'PAGESPEED', PortMonitorPage: 'PORT',
-  ScriptedMonitorPage: 'SCRIPTED',
+  ScriptedMonitorPage: 'SCRIPTED', DbQueryMonitorPage: 'DBQUERY',
 }
 
 describe('İzleme formu bağlantı kapısı (7/24 izleme ekibi)', () => {

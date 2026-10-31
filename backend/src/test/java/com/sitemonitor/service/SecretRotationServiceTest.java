@@ -47,6 +47,8 @@ class SecretRotationServiceTest {
         jdbc.execute("CREATE TABLE scripted_monitors (id BIGINT PRIMARY KEY, name VARCHAR(200), env_json TEXT)");
         jdbc.execute("CREATE TABLE scripted_script_versions (id BIGINT PRIMARY KEY, version VARCHAR(40), env_json TEXT)");
         jdbc.execute("CREATE TABLE app_settings (id BIGINT PRIMARY KEY, setting_key VARCHAR(150), setting_value TEXT, updated_at VARCHAR(30))");
+        // Veritabanı sorgu izlemesi bağlantı parolası (2026-10-31)
+        jdbc.execute("CREATE TABLE db_connection_profiles (id BIGINT PRIMARY KEY, name VARCHAR(120), password_enc TEXT)");
         oldCipher = SecretCipherRotationTest.cipher(OLD, null);
         rotating = SecretCipherRotationTest.cipher(NEW, OLD);
         svc = new SecretRotationService(jdbc, rotating);
@@ -288,5 +290,17 @@ class SecretRotationServiceTest {
         SecretRotationService.LocationResult rest = svc.reencrypt(httpLoc, Long.MAX_VALUE);
         assertThat(rest.partial()).isFalse();
         assertThat(rest.rowsRewritten()).isEqualTo(103);                   // 501..603 — baştan DEĞİL
+    }
+
+    @Test
+    @DisplayName("veritabanı bağlantısı parolası (2026-10-31): önceki anahtardaki değer yeni anahtarla yeniden yazılır, adıyla sayılır")
+    void dbQueryConnectionPasswordIsRotated() {
+        jdbc.update("INSERT INTO db_connection_profiles VALUES (3, 'Sipariş veritabanı', ?)", oldCipher.encrypt("db-pw"));
+        assertThat(loc(svc.status(), "dbquery_connection_password")).containsEntry("previous", 1).containsEntry("rows", 1);
+        svc.reencrypt("admin");
+        SecretCipher newOnly = SecretCipherRotationTest.cipher(NEW, null);
+        assertThat(newOnly.decrypt(jdbc.queryForObject("SELECT password_enc FROM db_connection_profiles WHERE id = 3", String.class)))
+                .isEqualTo("db-pw");
+        assertThat(loc(svc.status(), "dbquery_connection_password")).containsEntry("previous", 0).containsEntry("current", 1);
     }
 }

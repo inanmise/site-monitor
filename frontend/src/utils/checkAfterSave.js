@@ -42,6 +42,8 @@ export const CHECK_FIELDS = Object.freeze({
   scripted: ['script_version', 'timeout_seconds', 'use_proxy'],
   // Durum (OK/WARNING/CRITICAL) kontrol ANINDA uyarı/kritik günlerinden hesaplanır → onlar da sonucu etkiler.
   domain: ['domain', 'check_timeout_ms', 'blacklist_enabled', 'warning_days', 'critical_days'],
+  // Bağlantı, sorgu, sınırlar ve kurallar sonucu değiştirir (zamanlama / mail ayarı DEĞİL — kontrolü etkilemez).
+  dbquery: ['profile_id', 'sql_text', 'query_timeout_seconds', 'max_rows', 'rules', 'rule_logic', 'slow_query_ms'],
 })
 
 /** Karşılaştırma için tek biçim: boş = null, metin kırpılır, dizi/nesne JSON. */

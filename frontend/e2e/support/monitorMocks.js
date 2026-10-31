@@ -96,6 +96,42 @@ export const MONITORS = {
     value: i === 4 ? 'v=spf1 include:_spf.example.com include:mail.example.net ~all' : '203.0.113.' + (10 + i),
     ttl: 300, response_ms: [11, 24, 9, null, 17, null][i], changed: i === 1, rotated: i === 5, standalone: i % 2 === 0,
   })),
+  // Veritabanı sorgusu (11. tür): OK · kritik eşik + alarm · duraklatılmış · hiç çalışmamış · uyarı eşiği · bağlantı hatası.
+  // Uzun gerçekçi adlar (AD tarzı bağlantı adları, iş birimi adları) — ad ve amaç kesilmez.
+  dbquery: HOSTS.map((h, i) => base(i, {
+    name: [
+      'Sipariş kuyruğu bekleyenleri',
+      'Başarısız ödeme işlemleri — son 15 dakika (Kurumsal ve Bireysel Bankacılık Ödeme Altyapısı)',
+      'Gece mutabakat dosyası',
+      'Yeni eklenen müşteri kontrolü',
+      'Kart başvuru onay süresi',
+      'Raporlama veri ambarı yükleme gecikmesi',
+    ][i],
+    purpose: i === 1
+      ? 'Son 15 dakikada başarısız ödeme sayısı 20 adedi geçerse ödeme ekibini uyarır; 50 adedi geçerse kritik alarm açılır ve 7/24 ekibi arar.'
+      : 'Bekleyen kayıt sayısını izler; eşik aşılırsa ilgili ekip uyarılır.',
+    status: ['OK', 'BREACH', 'OK', null, 'BREACH', 'FAIL'][i],
+    breach_level: ['NONE', 'CRITICAL', 'NONE', null, 'WARNING', 'NONE'][i],
+    slow: i === 4,
+    metric_value: [12, 87, 0, null, 34.5, null][i],
+    row_count: [1, 1000, 1, null, 1, null][i], row_count_capped: i === 1,
+    duration_ms: [240, 1820, 95, null, 6400, null][i],
+    error: i === 5 ? 'ORA-12541: TNS:no listener (sunucu adı ya da port erişilemiyor — bağlantı ayarlarını ve ağ erişimini denetleyin)' : null,
+    failure_reason: i === 5 ? 'DB_UNREACHABLE' : null,
+    last_check: i === 3 ? null : iso((i + 1) * 60_000),
+    next_run_at: iso(-(i + 2) * 60_000),
+    profile_id: 40 + (i % 3),
+    profile: { id: 40 + (i % 3), name: ['Sipariş DB (PostgreSQL üretim)', 'ODEME_RAPORLAMA_SALT_OKUNUR — Kurumsal Ödeme Sistemleri Raporlama Kümesi', 'MUTABAKAT-MSSQL-01'][i % 3],
+      db_type: ['POSTGRESQL', 'ORACLE', 'MSSQL'][i % 3], host: ['db.example.com', 'odeme-rapor-scan.example.com', 'mssql01.example.com'][i % 3],
+      port: [5432, 1521, 1433][i % 3], database_name: ['orders', 'ODEMERPT', 'Mutabakat'][i % 3] },
+    sql_text: i % 3 === 2 ? 'SELECT COUNT(*) AS bekleyen FROM dbo.Mutabakat WITH (NOLOCK) WHERE durum = 0' : 'SELECT count(*) AS bekleyen\nFROM orders\nWHERE status = 0',
+    rules: [{ id: 'r1', label: 'Bekleyen sayısı', kind: 'COLUMN_VALUE', column: 'bekleyen', aggregate: 'FIRST', operator: 'GT', warning: 20, critical: 50 }],
+    rule_logic: 'ANY', slow_query_ms: 5000, query_timeout_seconds: 30, max_rows: 1000,
+    rule_results: [{ id: 'r1', label: 'Bekleyen sayısı', kind: 'COLUMN_VALUE', actual: [12, 87, 0, null, 34.5, null][i], expected: '> 20 uyarı · > 50 kritik', level: ['NONE', 'CRITICAL', 'NONE', 'NONE', 'WARNING', 'NONE'][i], passed: i !== 1 && i !== 4, evaluated: true }],
+    schedule_mode: i === 2 ? 'CRON' : 'INTERVAL', cron_expression: i === 2 ? '30 6 * * 1-5' : '', interval_seconds: i === 2 ? 86400 : 300,
+    windows: i === 4 ? [{ days: [1, 2, 3, 4, 5], from: '08:00', to: '20:00' }] : [], blackouts: [], skip_holidays: i === 2, skip_dates: [],
+    mail_include_rows: true, mail_columns: [], masked_columns: i === 1 ? ['kart_no'] : [], mail_subject_template: null,
+  })),
   scripted: HOSTS.map((h, i) => base(i, {
     name: i === 2 ? 'Ödeme akışı — sepete ekle, adres, kart doğrulama ve onay adımları' : `Giriş akışı ${h}`,
     duration_ms: [2400, 18_000, 3100, null, 900, null][i],
@@ -985,4 +1021,4 @@ export async function mockApi(page, opts = {}) {
 }
 
 /** Kart ızgarası olan sekmeler (Uptime dâhil) — kart tasarım taraması bunları gezer. */
-export const CARD_TABS = ['http', 'keyword', 'page', 'pagespeed', 'domain', 'ping', 'port', 'dns', 'scripted', 'uptime']
+export const CARD_TABS = ['http', 'keyword', 'page', 'pagespeed', 'domain', 'ping', 'port', 'dns', 'scripted', 'dbquery', 'uptime']

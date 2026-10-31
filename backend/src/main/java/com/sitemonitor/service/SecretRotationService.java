@@ -88,6 +88,8 @@ public class SecretRotationService {
                     "Sayfa hızı — Basic auth parolası", "PageSpeed — basic auth password"),
             new Location("pagespeed_headers", "pagespeed_monitors", "custom_headers_enc", Kind.VALUE, "name", null, false,
                     "Sayfa hızı — özel başlıklar", "PageSpeed — custom headers"),
+            new Location("dbquery_connection_password", "db_connection_profiles", "password_enc", Kind.VALUE, "name", null, false,
+                    "Veritabanı bağlantısı — parola", "Database connection — password"),
             new Location("scripted_env", "scripted_monitors", "env_json", Kind.JSON_SECRETS, "name", null, false,
                     "Senaryolu izleme — gizli ortam değişkenleri", "Scripted monitor — secret environment variables"),
             new Location("scripted_versions", "scripted_script_versions", "env_json", Kind.JSON_SECRETS, "version", null, false,

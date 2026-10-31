@@ -50,7 +50,7 @@ public final class GrafanaDashboardGenerator {
      * Pano içerik revizyonu — içerik (panel, sorgu, değişken) değişen HER sürümde artır ve
      * {@code src/test/resources/grafana/dashboard-content.sha256} dosyasını güncelle (kapı mesajı yeni satırı yazar).
      */
-    public static final int DASHBOARD_REVISION = 9;
+    public static final int DASHBOARD_REVISION = 10;
     /** "Kritik / yüksek alarm açıldı" anotasyonunun penceresi (sn) — açılış zamanı bu kadar yeni olan alarmlar. */
     static final int ALERT_OPENED_WINDOW_S = 900;
     /** Aktarıcı tazelik eşiği (sn) — sunucunun {@code max(180, 3 × refresh-seconds)} kuralının varsayılan değeri. */
@@ -87,6 +87,7 @@ public final class GrafanaDashboardGenerator {
         TYPE_LABELS.put("page", new String[]{"Sayfa bütünlüğü", "Page integrity"});
         TYPE_LABELS.put("pagespeed", new String[]{"Sayfa hızı", "Page speed"});
         TYPE_LABELS.put("scripted", new String[]{"Sentetik (k6)", "Synthetic (k6)"});
+        TYPE_LABELS.put("dbquery", new String[]{"Veritabanı sorgusu", "Database query"});
     }
 
     /**

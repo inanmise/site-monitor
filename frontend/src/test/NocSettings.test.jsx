@@ -17,7 +17,7 @@ vi.mock('../api/client', () => ({
 import { api } from '../api/client'
 import NocSettings from '../components/admin/NocSettings.jsx'
 
-const ALL_ON = { SSL: true, PING: true, HTTP: true, KEYWORD: true, PAGE: true, PAGESPEED: true, SCRIPTED: true, DNS: true, PORT: true, DOMAIN: true }
+const ALL_ON = { SSL: true, PING: true, HTTP: true, KEYWORD: true, PAGE: true, PAGESPEED: true, SCRIPTED: true, DNS: true, PORT: true, DOMAIN: true, DBQUERY: true }
 const CONFIG = { enabled_types: ALL_ON, min_level: 'CRITICAL', send_resolve: true, call_instructions: '' }
 const GROUPS = [
   { id: 2, name: 'Hafta sonu', description: '', emails: ['haftasonu@example.com'], active: true, is_default: false, monitor_count: 0,
@@ -205,9 +205,9 @@ describe('NocSettings — tür anahtarları ve kurallar', () => {
     } }))
   })
 
-  it('10 tür, tür ikonlu anahtar; kapatınca uyarı + kaydet ONAY ister; saveConfig camelCase gövde', async () => {
+  it('11 tür, tür ikonlu anahtar; kapatınca uyarı + kaydet ONAY ister; saveConfig camelCase gövde', async () => {
     await renderReady()
-    expect(document.querySelectorAll('[data-slot="noc-type-row"]')).toHaveLength(10)
+    expect(document.querySelectorAll('[data-slot="noc-type-row"]')).toHaveLength(11)
     expect(typeRow('PING').querySelector('svg')).not.toBeNull()
     const bar = () => document.querySelector('[data-slot="settings-save-bar"]')
     expect(bar()).not.toHaveAttribute('data-dirty')
@@ -252,7 +252,7 @@ describe('NocSettings — tür anahtarları ve kurallar', () => {
     await waitFor(() => expect(api.admin.noc.saveConfig).toHaveBeenCalledWith(expect.objectContaining({ enabledTypes: ALL_ON })))
     expect(confirmMock).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: /Switch all off|Tümünü kapat/ }))
-    expect(document.querySelectorAll('[data-slot="noc-type-row"][data-on="false"]')).toHaveLength(10)
+    expect(document.querySelectorAll('[data-slot="noc-type-row"][data-on="false"]')).toHaveLength(11)
   })
 
   it('her ayarın yardım balonu var (HelpTip) — gruplar, türler, seviye, çözüldü e-postası, arama talimatı', async () => {
