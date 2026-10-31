@@ -15,6 +15,15 @@ const VIEWPORTS = [
   { name: 'laptop', width: 1280, height: 800, touch: false },
 ]
 const LONG = MONITORS.dbquery[1]
+const LONG_HOLIDAY = 'Ramazan Bayramı Arifesi ve Bayramın Birinci Günü (arife yarım günü tam gün sayılır — kurum içi ek tatil)'
+const NEXT_Y = new Date().getFullYear() + 1
+const HOLIDAYS = [
+  { day: `${NEXT_Y}-01-01`, name: 'Yılbaşı' },
+  { day: `${NEXT_Y}-04-23`, name: 'Ulusal Egemenlik ve Çocuk Bayramı' },
+  { day: `${NEXT_Y}-12-31`, name: LONG_HOLIDAY },
+  { day: '2001-10-29', name: 'Cumhuriyet Bayramı' },
+]
+const json = (body) => (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
 
 /** Görünüm alanının dışına taşan (kendi kaydırma kabında olmayan) öğeler + sayfa düzeyi yatay taşma. */
 function measure(sel) {
@@ -126,6 +135,14 @@ for (const vp of VIEWPORTS) {
       await expect(page.locator('[data-slot="dbq-open-connections"]')).toBeVisible()
       await expect(page.locator('[data-slot="dbq-open-templates"]')).toBeVisible()
       await check(page, 'liste', '.upt-page', '.upt-grid')
+      // Toplu işlem: takım değiştir yerine bilgi satırı (O6 — bağlantı seçimi gerekir); çubuk sığar, not kırpılmaz
+      await card(LONG.name).getByRole('checkbox').first().click()
+      const bulk = page.locator('[data-slot="bulk-action-bar"]')
+      await expect(bulk).toBeVisible()
+      await expect(bulk.locator('[data-slot="bulk-team-note"]')).toContainText(/Takım toplu değiştirilemez|can.t be changed in bulk/)
+      await expect(bulk.getByRole('combobox', { name: /^(Takım|Team)$/ })).toHaveCount(0)
+      await check(page, 'liste (toplu çubuk)', '.upt-page', '[data-slot="bulk-action-bar"]')
+      await bulk.getByRole('button', { name: /Seçimi temizle|Clear selection/ }).click()
       if (vp.touch) {
         expect(await page.evaluate(smallTargets, { sel: '.upt-page', only: ['[data-slot="dbq-open-connections"]', '[data-slot="dbq-open-templates"]'] }),
           `başlık @${vp.name}: küçük dokunma hedefi`).toEqual([])
@@ -143,6 +160,7 @@ for (const vp of VIEWPORTS) {
       test.setTimeout(120_000)
       // Takım üyesi: takım alanı sabit, Kaydet etkin (yönetici için takım seçilene dek kapalı)
       await mockApi(page, { role: 'USER', globalAdmin: false })
+      await page.route((u) => new URL(u).pathname === '/api/admin/holidays', json({ success: true, data: { days: HOLIDAYS, can_edit: false } }))
       await page.goto('/?tab=dbquery')
       await expect(page.locator('.upt-grid > [data-slot="card"]')).toHaveCount(6, { timeout: 20_000 })
       await page.getByRole('button', { name: /^(New Monitor|Yeni İzleme)$/ }).first().click()
@@ -167,6 +185,27 @@ for (const vp of VIEWPORTS) {
       await expect(dlg.locator('[data-field="name"] input')).toBeFocused()
       expect(posted).toBe(0)
       await check(page, 'form (hatalar)', dsel, dsel, FORM_OWN)
+      // Tatil günleri (O4): yönetici olmayana ayar bağlantısı YOK ("Erişim yok" açardı); günler form içinde salt okunur
+      const hol = dlg.locator('[data-slot="dbq-skip-holidays"]')
+      await hol.scrollIntoViewIfNeeded()
+      await expect(hol.locator('[data-slot="dbq-holidays-settings-link"]')).toHaveCount(0)
+      await hol.locator('[data-slot="dbq-holidays-view"]').click()
+      const pop = page.locator('[data-slot="dbq-holidays-popover"][data-load="ok"]')
+      await expect(pop).toBeVisible()
+      await expect(pop.locator('[data-slot="dbq-holidays-list"] li')).toHaveCount(4)
+      await expect(pop.locator('[data-slot="dbq-holidays-list"] li').first()).toContainText('Yılbaşı')
+      await expect(pop).toContainText(LONG_HOLIDAY)
+      const pb = await pop.boundingBox()
+      expect(pb.x, `tatil penceresi @${vp.name}: soldan taşıyor`).toBeGreaterThanOrEqual(0)
+      expect(pb.x + pb.width, `tatil penceresi @${vp.name}: sağdan taşıyor`).toBeLessThanOrEqual(vp.width + 1)
+      expect(await page.evaluate(clipped, '[data-slot="dbq-holidays-popover"]'), `tatil penceresi @${vp.name}: kırpılan metin`).toEqual([])
+      if (vp.touch) {
+        expect(await page.evaluate(smallTargets, { sel: dsel, only: ['[data-slot="dbq-holidays-view"]'] }), `tatil @${vp.name}: küçük dokunma hedefi`).toEqual([])
+      }
+      await page.keyboard.press('Escape')
+      await expect(pop).toHaveCount(0)
+      // Escape yalnız pencereyi kapattı; form AÇIK (izleme formu Escape ile kapanmaz)
+      await expect(dlg).toBeVisible()
       if (vp.name === 'phone') {
         const box = await dlg.boundingBox()
         // Ortak izleme formu telefonda kenarlarda küçük boşlukla ekranı kaplar — ekran dışına taşmaz, dar kalmaz
@@ -174,6 +213,31 @@ for (const vp of VIEWPORTS) {
         expect(box.x + box.width, 'telefonda form sağ kenardan taşıyor').toBeLessThanOrEqual(vp.width + 1)
         expect(Math.round(box.width), 'telefonda form dar').toBeGreaterThanOrEqual(vp.width - 24)
       }
+    })
+
+    test('paylaşımla düzenleme (K2): kilit notları sığar; deneme / maliyet / şablon düğmeleri yok', async ({ page }) => {
+      test.setTimeout(120_000)
+      await mockApi(page, { role: 'USER', globalAdmin: false })
+      const shared = MONITORS.dbquery.map((m, i) => (i === 1 ? { ...m, routing_locked: true, shared_access: true, can_edit: true, can_delete: false } : m))
+      await page.route((u) => new URL(u).pathname === '/api/monitoring/dbquery', (route) => (route.request().method() === 'GET'
+        ? json({ success: true, data: shared })(route) : route.fallback()))
+      await page.goto('/?tab=dbquery')
+      await expect(page.locator('.upt-grid > [data-slot="card"]')).toHaveCount(6, { timeout: 20_000 })
+      const sharedCard = page.locator('.upt-grid > [data-slot="card"]').filter({ has: page.locator('[data-monitor-open]', { hasText: LONG.name }) })
+      await sharedCard.getByRole('button', { name: /— (edit|düzenle)$/i }).first().click()
+      const dsel = '[role="dialog"]:has([data-slot="dbq-form-nav"])'
+      const dlg = page.locator(dsel)
+      await expect(dlg).toBeVisible()
+      await expect(dlg.locator('[data-slot="dbq-grant-locked-banner"]')).toBeVisible()
+      await expect(dlg.locator('[data-slot="dbq-grant-locked"]')).toHaveCount(4)
+      await expect(dlg.locator('[data-slot="dbq-connection-locked"]')).toBeVisible()
+      await expect(dlg.locator('[data-slot="dbq-test-run"]')).toHaveCount(0)
+      await expect(dlg.locator('[data-slot="dbq-plan-run"]')).toHaveCount(0)
+      await expect(dlg.locator('[data-slot="dbq-save-template"]')).toHaveCount(0)
+      await expect(dlg.locator('[data-slot="dbq-sql-editor"] textarea')).toBeDisabled()
+      await expect(dlg.locator('[data-field="query_timeout_seconds"] input')).toBeDisabled()
+      await check(page, 'form (paylaşım)', dsel, dsel, ['[data-slot="dbq-form-nav"]', '[data-slot="dbq-subject-placeholders"]'])
+      await page.screenshot({ path: test.info().outputPath(`dbquery-grant-form-${vp.name}.png`), fullPage: false })
     })
 
     test('ayrıntı: derin bağlantı → Özet (amaç, satır numaralı sorgu) → Kontrol geçmişi; sığar, kırpılmaz', async ({ page }) => {

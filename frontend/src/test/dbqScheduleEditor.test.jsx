@@ -7,7 +7,7 @@ import { LANG_STORAGE_KEY } from '../i18n/dateLocale.js'
 // (gece yarısını aşan özet), tatil anahtarı, ek tarih, canlı önizleme (debounce, sıra numarası, hata → nötr, "hiç
 // çalışmaz", sunucu hataları alanın altında; çağıranın fieldErrors'ı önceliklidir).
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
-vi.mock('../api/client', () => ({ api: withApiFallback({ monitoring: { dbQuerySchedulePreview: vi.fn() } }) }))
+vi.mock('../api/client', () => ({ api: withApiFallback({ monitoring: { dbQuerySchedulePreview: vi.fn() }, admin: { getHolidays: vi.fn() } }) }))
 vi.mock('../components/ui/DateTimeField.jsx', () => ({
   default: ({ value, onChange, placeholder, disabled }) => <input aria-label={placeholder || 'date'} value={value || ''} disabled={disabled} onChange={(e) => onChange(e.target.value)} />,
 }))
@@ -15,9 +15,9 @@ import { api } from '../api/client'
 import ScheduleEditor from '../components/dbquery/ScheduleEditor.jsx'
 
 const BASE = { schedule_mode: 'INTERVAL', interval_seconds: 300, cron_expression: null, windows: [], blackouts: [], skip_holidays: false, skip_dates: [] }
-function Harness({ initial = BASE, spy, fieldErrors, disabled }) {
+function Harness({ initial = BASE, spy, fieldErrors, disabled, ...rest }) {
   const [v, setV] = useState(initial)
-  return <ScheduleEditor value={v} fieldErrors={fieldErrors} disabled={disabled} onChange={(p) => { setV((s) => ({ ...s, ...p })); spy?.(p) }} />
+  return <ScheduleEditor value={v} fieldErrors={fieldErrors} disabled={disabled} {...rest} onChange={(p) => { setV((s) => ({ ...s, ...p })); spy?.(p) }} />
 }
 const preview = () => document.querySelector('[data-slot="dbq-schedule-preview"]')
 const NEXT = ['2026-11-02T06:00:00', '2026-11-02T06:05:00', '2026-11-02T06:10:00']
@@ -185,9 +185,9 @@ describe('ScheduleEditor — alanlar', () => {
     expect(spy).toHaveBeenLastCalledWith({ blackouts: [{ days: [1, 2, 3, 4, 5], from: '09:00', to: '18:00' }] })
   })
 
-  it('tatil anahtarı + takvim yeni sekmede; ek tarih ekle / yinelenen reddi / kaldır', () => {
+  it('tatil anahtarı + takvim yeni sekmede (global yönetici); ek tarih ekle / yinelenen reddi / kaldır', () => {
     const spy = vi.fn()
-    render(<Harness spy={spy} />)
+    render(<Harness spy={spy} canEditHolidays />)
     fireEvent.click(screen.getByRole('switch', { name: /Tatil takvimindeki günlerde çalışma/ }))
     expect(spy).toHaveBeenLastCalledWith({ skip_holidays: true })
     const link = screen.getByRole('link', { name: /Tatil takvimini yeni sekmede aç/ })
@@ -199,6 +199,45 @@ describe('ScheduleEditor — alanlar', () => {
     expect(screen.getByText('Bu tarih zaten listede.')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /^Kaldır: 31 Aralık 2026/ }))
     expect(spy).toHaveBeenLastCalledWith({ skip_dates: [] })
+  })
+
+  it('yönetici olmayan (O4): ayar bağlantısı YOK ("Erişim yok" açardı); günler pencerede salt okunur, metin role göre', async () => {
+    api.admin.getHolidays.mockResolvedValue({ success: true, data: { days: [
+      { day: '2099-01-01', name: 'Yılbaşı' }, { day: '2000-05-19', name: 'Gençlik ve Spor Bayramı' },
+    ], can_edit: false } })
+    render(<Harness />)
+    expect(screen.queryByRole('link', { name: /Tatil takvimini yeni sekmede aç/ })).toBeNull()
+    expect(document.querySelector('[data-slot="dbq-skip-holidays"]').textContent).toMatch(/global yöneticiler düzenler/)
+    expect(document.querySelector('[data-slot="dbq-skip-holidays"]').textContent).not.toMatch(/Ayarlar → Platform/)
+    fireEvent.click(screen.getByRole('button', { name: 'Tatil günlerini gör' }))
+    const pop = await waitFor(() => { const p = document.querySelector('[data-slot="dbq-holidays-popover"]'); if (!p || p.getAttribute('data-load') !== 'ok') throw new Error('yok'); return p })
+    const items = pop.querySelectorAll('[data-slot="dbq-holidays-list"] li')
+    // Gelecek günler önce, geçmiş günler "geçmiş" işaretiyle sonra
+    expect(items[0].textContent).toContain('Yılbaşı')
+    expect(items[1].textContent).toContain('Gençlik ve Spor Bayramı')
+    expect(items[1]).toHaveAttribute('data-past', 'true')
+    expect(api.admin.getHolidays).toHaveBeenCalledTimes(1)
+  })
+
+  it('tatil günleri okunamazsa hata + tekrar dene (asla "gün yok" değil)', async () => {
+    api.admin.getHolidays.mockResolvedValueOnce({ success: false, error: 'Sunucu yanıt vermedi (503)' })
+      .mockResolvedValueOnce({ success: true, data: { days: [], can_edit: false } })
+    render(<Harness />)
+    fireEvent.click(screen.getByRole('button', { name: 'Tatil günlerini gör' }))
+    const err = await waitFor(() => { const e = document.querySelector('[data-slot="dbq-holidays-error"]'); if (!e) throw new Error('yok'); return e })
+    expect(err.textContent).toContain('Sunucu yanıt vermedi (503)')
+    expect(document.querySelector('[data-slot="dbq-holidays-empty"]')).toBeNull()
+    fireEvent.click(within(err).getByRole('button', { name: 'Tekrar dene' }))
+    await waitFor(() => expect(document.querySelector('[data-slot="dbq-holidays-empty"]')).not.toBeNull())
+  })
+
+  it('ayarlı alt sınır (DÜŞÜK 9): altındaki hazır aralıklar gizli, ipucu ve hata sınırı söyler', () => {
+    render(<Harness minIntervalSeconds={600} initial={{ ...BASE, interval_seconds: 1800 }} />)
+    expect(screen.queryByRole('radio', { name: '1 dk' })).toBeNull()
+    expect(screen.queryByRole('radio', { name: '5 dk' })).toBeNull()
+    expect(screen.getByRole('radio', { name: '10 dk' })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: '30 dk' })).toHaveAttribute('aria-checked', 'true')
+    expect(document.querySelector('[data-field="interval_seconds"]').textContent).toContain('En kısa aralık 10 dk')
   })
 
   it('salt okunur: değişiklik yollanmaz', () => {

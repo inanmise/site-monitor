@@ -45,13 +45,29 @@ export function durationText(sec, t) {
   return t('dbq.sched.dur.seconds', s)
 }
 
-/** Aralık hatası kodu (`dbq.sched.v.<kod>`) ya da null. */
-export function intervalProblem(sec) {
+/**
+ * Aralık hatası kodu (`dbq.sched.v.<kod>`) ya da null. `min`: sunucunun ayarlı alt sınırı (`/monitoring/defaults`
+ * `min_interval_seconds`, DÜŞÜK 9); verilmezse ya da geçersizse 60 sn.
+ */
+export function intervalProblem(sec, min = MIN_INTERVAL_SECONDS) {
   const s = Number(sec)
+  const floor = effectiveMinInterval(min)
   if (!Number.isFinite(s) || s <= 0) return 'interval_required'
-  if (s < MIN_INTERVAL_SECONDS) return 'interval_min'
+  if (s < floor) return 'interval_min'
   if (s > MAX_INTERVAL_SECONDS) return 'interval_max'
   return null
+}
+
+/** Ayarlı alt sınır → geçerli tamsayı saniye (60 … 1 gün); bozuk değer 60. */
+export function effectiveMinInterval(min) {
+  const n = Number(min)
+  return Number.isFinite(n) && n >= MIN_INTERVAL_SECONDS && n <= 86400 ? Math.round(n) : MIN_INTERVAL_SECONDS
+}
+
+/** Alt sınırın altındaki hazır aralıklar gösterilmez; seçili değer (kayıtlı izleme) sınırın altındaysa da listede kalır. */
+export function intervalPresetsFor(min, current) {
+  const floor = effectiveMinInterval(min)
+  return INTERVAL_PRESETS.filter((s) => s >= floor || s === Number(current))
 }
 
 // ── Cron çözümleyici (açıklama için) ───────────────────────────────────────────────────────────────────────────────────

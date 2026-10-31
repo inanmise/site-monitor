@@ -15,6 +15,8 @@ import SegmentedControl from '../ui/SegmentedControl.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import { useDialog } from '../ui/Dialog.jsx'
 import { SETTINGS_STACK, SettingsHeader, SettingsSaveBar, SettingsSection } from './SettingsControls.jsx'
+import { useUnsavedWork } from '../../utils/unsavedWork.js'
+import { countText } from '../dbquery/dbqueryPageModel.js'
 import {
   MAX_DAYS, entryProblems, formatHoliday, normalizeDays, sameDays, toPayload, todayIstanbul, yearsOf,
 } from './holidayCalendarModel.js'
@@ -25,6 +27,10 @@ import {
  * (sunucu `can_edit` + kabuğun `readOnly`'si birlikte); diğer yöneticiler salt okunur görür. Yıl süzgeci, gün ekle (tarih +
  * ad), satır içi düzenle / sil, kaydet çubuğu (yalnız değişince; tam liste `PUT`). Okunamazsa hata + tekrar dene — asla
  * "tatil yok" denmez. Tohumlanan resmî tatillerde dini bayramların doğrulanması gerektiği not edilir.
+ *
+ * Kaydedilmemiş değişiklik korunur (DÜŞÜK 8): "Yenile" kirli taslağı onaysız ezmez; sekmeyi kapatma / yenileme tarayıcı
+ * uyarısı verir ve başka pencereden gelen "raporu aç" isteği taslağı sessizce bırakmaz (`useUnsavedWork` — diğer ayar
+ * sayfalarının deseni). Sürüm denetimi yok: PUT tam listeyi değiştirir (iki global yönetici aynı anda → son yazan kazanır).
  */
 export default function HolidayCalendarSettings({ readOnly: readOnlyProp = false }) {
   const t = useT()
@@ -63,6 +69,26 @@ export default function HolidayCalendarSettings({ readOnly: readOnlyProp = false
 
   const editable = canEdit && !readOnlyProp
   const dirty = load.state === 'ok' && !sameDays(saved, draft)
+
+  useUnsavedWork(dirty)   // başka pencereden gelen "raporu aç" isteği değişikliği sessizce bırakmasın
+  useEffect(() => {
+    if (!dirty) return undefined
+    const warn = (e) => { e.preventDefault(); e.returnValue = '' }
+    window.addEventListener('beforeunload', warn)
+    return () => window.removeEventListener('beforeunload', warn)
+  }, [dirty])
+
+  /** "Yenile": kaydedilmemiş taslak varsa önce onay — kabul edilmezse hiçbir şey olmaz. */
+  const refresh = async () => {
+    if (dirty) {
+      const ok = await showConfirm({
+        title: t('dbq.hol.refreshDirtyTitle'), message: t('dbq.hol.refreshDirtyBody'),
+        confirmText: t('dbq.hol.refreshDirtyConfirm'), cancelText: t('dbq.form.keepEditing'), variant: 'danger',
+      })
+      if (!ok) return
+    }
+    reload()
+  }
   const years = useMemo(() => yearsOf(draft), [draft])
   const today = todayIstanbul()
   const shown = useMemo(() => (year === 'all' ? draft : draft.filter((d) => d.day.startsWith(`${year}-`))), [draft, year])
@@ -101,9 +127,9 @@ export default function HolidayCalendarSettings({ readOnly: readOnlyProp = false
   return (
     <div data-slot="holiday-settings" className={SETTINGS_STACK}>
       <SettingsHeader icon={CalendarOff} title={t('dbq.hol.title')} description={t('dbq.hol.desc')}
-        meta={load.state === 'ok' ? <Badge variant="outline" className="font-normal">{t('dbq.hol.total', draft.length)}</Badge> : null}
+        meta={load.state === 'ok' ? <Badge variant="outline" className="font-normal">{countText(t, 'dbq.hol.total', draft.length)}</Badge> : null}
         actions={(
-          <Button type="button" variant="outline" onClick={reload} disabled={load.state === 'loading' || saving} className="pointer-coarse:h-10">
+          <Button type="button" variant="outline" onClick={refresh} disabled={load.state === 'loading' || saving} className="pointer-coarse:h-10">
             <RefreshCw aria-hidden="true" />{t('dbq.hol.refresh')}
           </Button>
         )} />

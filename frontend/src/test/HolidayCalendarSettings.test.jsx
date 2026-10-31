@@ -112,6 +112,35 @@ describe('HolidayCalendarSettings', () => {
     await waitFor(() => expect(document.querySelector('[data-slot="holiday-readonly"]')).not.toBeNull())
   })
 
+  it('kirli taslakta "Yenile" onay ister (DÜŞÜK 8): vazgeçilirse taslak kalır, onaylanırsa yeniden okunur; kayıtlı iş kaydı', async () => {
+    const { hasUnsavedWork, resetUnsavedWorkForTests } = await import('../utils/unsavedWork.js')
+    resetUnsavedWorkForTests()
+    render(<HolidayCalendarSettings />)
+    await waitFor(() => expect(rows()).toHaveLength(2))
+    expect(hasUnsavedWork()).toBe(false)
+    fireEvent.click(screen.getByRole('button', { name: /^Sil: Atatürk/ }))
+    fireEvent.click(within(await screen.findByRole('dialog', { name: /Gün silinsin mi/ })).getByRole('button', { name: 'Günü kaldır' }))
+    await waitFor(() => expect(rows()).toHaveLength(1))
+    expect(hasUnsavedWork()).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: 'Yenile' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Düzenlemeye devam et' }))
+    expect(rows()).toHaveLength(1)
+    expect(api.admin.getHolidays).toHaveBeenCalledTimes(1)
+    fireEvent.click(screen.getByRole('button', { name: 'Yenile' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Değişiklikleri at ve yenile' }))
+    await waitFor(() => expect(rows()).toHaveLength(2))
+    expect(api.admin.getHolidays).toHaveBeenCalledTimes(2)
+    expect(hasUnsavedWork()).toBe(false)
+  })
+
+  it('temiz taslakta "Yenile" onaysız okur', async () => {
+    render(<HolidayCalendarSettings />)
+    await waitFor(() => expect(rows()).toHaveLength(2))
+    fireEvent.click(screen.getByRole('button', { name: 'Yenile' }))
+    await waitFor(() => expect(api.admin.getHolidays).toHaveBeenCalledTimes(2))
+    expect(screen.queryByRole('button', { name: 'Değişiklikleri at ve yenile' })).toBeNull()
+  })
+
   it('okunamazsa hata + tekrar dene; liste boş denmez', async () => {
     api.admin.getHolidays.mockResolvedValueOnce({ success: false, error: 'Sunucuya ulaşılamadı' })
     render(<HolidayCalendarSettings />)

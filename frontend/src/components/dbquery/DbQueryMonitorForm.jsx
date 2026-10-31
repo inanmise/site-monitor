@@ -1,4 +1,4 @@
-import { BellRing, CalendarClock, DatabaseZap, FileCode2, FlaskConical, Gauge, Info, ListChecks, Mail, Save, ShieldCheck, SlidersHorizontal } from 'lucide-react'
+import { BellRing, CalendarClock, DatabaseZap, FileCode2, FlaskConical, Gauge, Info, ListChecks, Lock, Mail, Save, ShieldCheck, SlidersHorizontal } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import TagInput from '../ui/TagInput.jsx'
 import { Button } from '@/components/shadcn/button'
@@ -64,31 +64,44 @@ export function FormSectionNav() {
   )
 }
 
+/** Paylaşımla düzenlenen kayıtta kilitli alanların açıklaması (K2) — bölümün başında, neden değiştirilemediğini söyler. */
+export function GrantLockNote({ children }) {
+  return (
+    <p data-slot="dbq-grant-locked" className="m-0 flex min-w-0 items-start gap-1.5 rounded-md border border-dashed bg-muted/40 px-2.5 py-2 text-xs text-muted-foreground">
+      <Lock aria-hidden="true" className="mt-px size-3.5 shrink-0" />
+      <span className="[overflow-wrap:anywhere]">{children}</span>
+    </p>
+  )
+}
+
 /**
  * Sorgu bölümü: şablondan başla, sorgu düzenleyicisi (canlı güvenlik denetimi — yapı taşı), "Sorguyu dene" / "Maliyeti
- * denetle" / "Şablon olarak kaydet" ve deneme sonucu (satır verisi YOK).
+ * denetle" / "Şablon olarak kaydet" ve deneme sonucu (satır verisi YOK). `locked` (K2 — paylaşımla düzenlenen kayıt):
+ * sorgu salt okunur, deneme / maliyet / şablon düğmeleri çizilmez (sunucu bunları yalnız takımın kendi kapsamına açar).
  */
 export function QuerySection({
   form, onSqlChange, sqlError, violations, onGuardChange, teamId, dbType,
   onPickTemplate, onSaveTemplate, onTest, onPlanCheck, testing, planChecking, testResult, planResult,
-  canRun, runHint, disabled = false,
+  canRun, runHint, disabled = false, locked = false,
 }) {
   const t = useT()
   return (
     <DbqSection id="query" icon={FileCode2} title={t('dbq.form.secQuery')} hint={t('dbq.form.secQueryHint')}>
-      <div className="flex min-w-0 flex-wrap items-center gap-2">
-        <TemplatePicker teamId={teamId} dbType={dbType} onPick={onPickTemplate} disabled={disabled || !teamId} />
-        <Button type="button" variant="outline" size="sm" className="pointer-coarse:h-10" onClick={onSaveTemplate}
-          disabled={disabled || !teamId || !form.sqlText.trim()} data-slot="dbq-save-template">
-          <Save aria-hidden="true" className="size-3.5" />{t('dbq.form.saveTemplate')}
-        </Button>
-      </div>
+      {locked ? <GrantLockNote>{t('dbq.form.grantLockedQuery')}</GrantLockNote> : (
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <TemplatePicker teamId={teamId} dbType={dbType} onPick={onPickTemplate} disabled={disabled || !teamId} />
+          <Button type="button" variant="outline" size="sm" className="pointer-coarse:h-10" onClick={onSaveTemplate}
+            disabled={disabled || !teamId || !form.sqlText.trim()} data-slot="dbq-save-template">
+            <Save aria-hidden="true" className="size-3.5" />{t('dbq.form.saveTemplate')}
+          </Button>
+        </div>
+      )}
       <SqlEditor value={form.sqlText} onChange={onSqlChange} dbType={dbType} fieldError={sqlError}
-        violations={violations} disabled={disabled} onGuardChange={onGuardChange} />
+        violations={violations} disabled={disabled || locked} onGuardChange={onGuardChange} />
       <FormHint full={false}>
         <ShieldCheck aria-hidden="true" className="mr-1 inline size-3.5 align-[-2px]" />{t('dbq.form.sqlRules')}
       </FormHint>
-      <div className="flex min-w-0 flex-wrap items-center gap-2">
+      {!locked && <div className="flex min-w-0 flex-wrap items-center gap-2">
         <Button type="button" variant="secondary" className="pointer-coarse:h-10" onClick={onTest} data-slot="dbq-test-run"
           aria-busy={testing || undefined} disabled={!canRun || testing} title={!canRun ? runHint : undefined}>
           <FlaskConical aria-hidden="true" className="size-4" />{testing ? t('dbq.form.testing') : t('dbq.form.test')}
@@ -98,17 +111,19 @@ export function QuerySection({
           <Gauge aria-hidden="true" className="size-4" />{planChecking ? t('dbq.form.planChecking') : t('dbq.form.planCheck')}
         </Button>
         {!canRun && runHint && <span className="text-xs text-muted-foreground">{runHint}</span>}
-      </div>
-      <DbQueryTestPanel result={testResult} plan={planResult} />
+      </div>}
+      {!locked && <DbQueryTestPanel result={testResult} plan={planResult} />}
     </DbqSection>
   )
 }
 
-/** Değerlendirme: kural oluşturucu (yapı taşı) + yavaş sorgu eşiği. */
-export function EvaluationSection({ form, setForm, ruleErrors, columns, slowError, onRulesChange, disabled = false }) {
+/** Değerlendirme: kural oluşturucu (yapı taşı) + yavaş sorgu eşiği. `locked` (K2): kurallar, birleşim ve eşik salt okunur. */
+export function EvaluationSection({ form, setForm, ruleErrors, columns, slowError, onRulesChange, clear, disabled: off = false, locked = false }) {
   const t = useT()
+  const disabled = off || locked
   return (
     <DbqSection id="evaluation" icon={ListChecks} title={t('dbq.form.secEvaluation')} hint={t('dbq.form.secEvaluationHint')}>
+      {locked && <GrantLockNote>{t('dbq.form.grantLockedRules')}</GrantLockNote>}
       <RuleBuilder rules={form.rules} logic={form.ruleLogic} columns={columns} fieldErrors={ruleErrors} disabled={disabled}
         onChange={onRulesChange} onLogicChange={(logic) => setForm((f) => ({ ...f, ruleLogic: logic }))} />
       <FormGrid>
@@ -117,7 +132,7 @@ export function EvaluationSection({ form, setForm, ruleErrors, columns, slowErro
             <InputGroup>
               <InputGroupInput id={id} aria-describedby={describedBy} type="number" min="100" max="600000" step="100"
                 value={form.slowQueryMs} placeholder={t('dbq.form.slowQueryOff')} disabled={disabled}
-                onChange={(e) => setForm((f) => ({ ...f, slowQueryMs: e.target.value }))} />
+                onChange={(e) => { setForm((f) => ({ ...f, slowQueryMs: e.target.value })); clear?.('slow_query_ms') }} />
               <InputGroupAddon align="inline-end"><InputGroupText>ms</InputGroupText></InputGroupAddon>
             </InputGroup>
           )}
@@ -128,31 +143,34 @@ export function EvaluationSection({ form, setForm, ruleErrors, columns, slowErro
 }
 
 /** Zamanlama: aralık / cron + pencereler + tatil (yapı taşı; sonraki çalışmaları kendisi önizler). */
-export function ScheduleSection({ value, onChange, fieldErrors, disabled = false }) {
+export function ScheduleSection({ value, onChange, fieldErrors, disabled = false, minIntervalSeconds, canEditHolidays = false }) {
   const t = useT()
   return (
     <DbqSection id="schedule" icon={CalendarClock} title={t('dbq.form.secSchedule')} hint={t('dbq.form.secScheduleHint')}>
       <div data-field="schedule" className="min-w-0">
-        <ScheduleEditor value={value} onChange={onChange} fieldErrors={fieldErrors} disabled={disabled} />
+        <ScheduleEditor value={value} onChange={onChange} fieldErrors={fieldErrors} disabled={disabled}
+          minIntervalSeconds={minIntervalSeconds} canEditHolidays={canEditHolidays} />
       </div>
     </DbqSection>
   )
 }
 
-/** Sınırlar: zaman aşımı + en çok satır (tavanlar /defaults'tan; sunucu da aynısını uygular). */
-export function LimitsSection({ form, setForm, errors, limits, disabled = false }) {
+/** Sınırlar: zaman aşımı + en çok satır (tavanlar /defaults'tan; sunucu da aynısını uygular). `locked` (K2): salt okunur. */
+export function LimitsSection({ form, setForm, errors, limits, clear, disabled: off = false, locked = false }) {
   const t = useT()
   const maxTimeout = limits?.max_timeout_seconds ?? 60
   const maxRows = limits?.max_rows_cap ?? 5000
+  const disabled = off || locked
   return (
     <DbqSection id="limits" icon={SlidersHorizontal} title={t('dbq.form.secLimits')} hint={t('dbq.form.secLimitsHint')}>
+      {locked && <GrantLockNote>{t('dbq.form.grantLockedLimits')}</GrantLockNote>}
       <FormGrid>
         <FormField label={t('dbq.form.timeout')} name="query_timeout_seconds" error={errors.query_timeout_seconds}
           hint={t('dbq.form.timeoutHint', maxTimeout)}>
           {({ id, describedBy }) => (
             <InputGroup>
               <InputGroupInput id={id} aria-describedby={describedBy} type="number" min="5" max={maxTimeout} value={form.queryTimeoutSeconds}
-                disabled={disabled} onChange={(e) => setForm((f) => ({ ...f, queryTimeoutSeconds: e.target.value }))} />
+                disabled={disabled} onChange={(e) => { setForm((f) => ({ ...f, queryTimeoutSeconds: e.target.value })); clear?.('query_timeout_seconds') }} />
               <InputGroupAddon align="inline-end"><InputGroupText>{t('dbq.form.unitSec')}</InputGroupText></InputGroupAddon>
             </InputGroup>
           )}
@@ -160,7 +178,7 @@ export function LimitsSection({ form, setForm, errors, limits, disabled = false 
         <FormField label={t('dbq.form.maxRows')} name="max_rows" error={errors.max_rows} hint={t('dbq.form.maxRowsHint', maxRows)}>
           {({ id, describedBy }) => (
             <Input id={id} aria-describedby={describedBy} type="number" min="1" max={maxRows} value={form.maxRows}
-              disabled={disabled} onChange={(e) => setForm((f) => ({ ...f, maxRows: e.target.value }))} />
+              disabled={disabled} onChange={(e) => { setForm((f) => ({ ...f, maxRows: e.target.value })); clear?.('max_rows') }} />
           )}
         </FormField>
       </FormGrid>
@@ -170,15 +188,20 @@ export function LimitsSection({ form, setForm, errors, limits, disabled = false 
 
 /**
  * Alarm mailinin içeriği: konu şablonu (yer tutucu ipucu — tıklayınca eklenir), satırları maile ekle, mail kolonları,
- * maskelenecek kolonlar. Kolon önerileri son denemenin kolon ADLARINDAN (satır verisi değil).
+ * maskelenecek kolonlar. Kolon önerileri son denemenin kolon ADLARINDAN (satır verisi değil). Sınır ipuçları ayarlı
+ * değerlerden (`limits.mail_max_rows` / `mail_max_columns`, `/monitoring/defaults`; DÜŞÜK 9). `locked` (K2): salt okunur.
  */
-export function MailFields({ form, setForm, errors, columns = [], clear, disabled = false }) {
+export function MailFields({ form, setForm, errors, columns = [], clear, limits, disabled: off = false, locked = false }) {
   const t = useT()
   const names = columns.map((c) => c.name)
+  const mailMaxRows = positiveInt(limits?.mail_max_rows, 50)
+  const mailMaxColumns = positiveInt(limits?.mail_max_columns, 20)
+  const disabled = off || locked
   const insert = (ph) => { setForm((f) => ({ ...f, mailSubjectTemplate: `${f.mailSubjectTemplate || ''}${f.mailSubjectTemplate && !/\s$/.test(f.mailSubjectTemplate) ? ' ' : ''}${ph}` })); clear?.('mail_subject_template') }
   return (
     <div data-slot="dbq-mail" className="flex min-w-0 flex-col gap-3 sm:col-span-2">
       <FormSection title={t('dbq.form.mailTitle')} icon={Mail} hint={t('dbq.form.mailHint')} boxed={false}>
+        {locked && <GrantLockNote>{t('dbq.form.grantLockedMail')}</GrantLockNote>}
         <FormGrid>
           <FormField full label={t('dbq.form.subject')} name="mail_subject_template" error={errors.mail_subject_template}
             hint={t('dbq.form.subjectHint')}>
@@ -199,18 +222,17 @@ export function MailFields({ form, setForm, errors, columns = [], clear, disable
           </div>
           <CheckField full checked={form.mailIncludeRows} disabled={disabled}
             onCheckedChange={(v) => setForm((f) => ({ ...f, mailIncludeRows: v }))}
-            label={t('dbq.form.includeRows')} hint={t('dbq.form.includeRowsHint')} />
+            label={t('dbq.form.includeRows')} hint={t('dbq.form.includeRowsHint', mailMaxRows)} />
+          {/* Başlık TagInput'un kendi <label>'ı — giriş kutusunun erişilebilir adı (iki kutu aynı yer tutucuyu taşır; 10a) */}
           <div className={cn('flex min-w-0 flex-col gap-1.5 sm:col-span-2', !form.mailIncludeRows && 'opacity-80')} data-field="mail_columns">
-            <span className="text-sm font-medium">{t('dbq.form.mailColumns')}</span>
-            <TagInput value={listToCsv(form.mailColumns)} disabled={disabled || !form.mailIncludeRows} suggestions={names}
+            <TagInput label={t('dbq.form.mailColumns')} value={listToCsv(form.mailColumns)} disabled={disabled || !form.mailIncludeRows} suggestions={names}
               placeholder={t('dbq.form.mailColumnsPh')}
               onChange={(v) => { setForm((f) => ({ ...f, mailColumns: csvToList(v) })); clear?.('mail_columns') }} />
-            <FormHint full={false}>{t('dbq.form.mailColumnsHint')}</FormHint>
+            <FormHint full={false}>{t('dbq.form.mailColumnsHint', mailMaxColumns)}</FormHint>
             {errors.mail_columns && <p role="alert" className="text-xs text-destructive">{errors.mail_columns}</p>}
           </div>
           <div className="flex min-w-0 flex-col gap-1.5 sm:col-span-2" data-field="masked_columns">
-            <span className="text-sm font-medium">{t('dbq.form.maskedColumns')}</span>
-            <TagInput value={listToCsv(form.maskedColumns)} disabled={disabled} suggestions={names}
+            <TagInput label={t('dbq.form.maskedColumns')} value={listToCsv(form.maskedColumns)} disabled={disabled} suggestions={names}
               placeholder={t('dbq.form.maskedColumnsPh')}
               onChange={(v) => { setForm((f) => ({ ...f, maskedColumns: csvToList(v) })); clear?.('masked_columns') }} />
             <FormHint full={false}>{t('dbq.form.maskedColumnsHint')}</FormHint>
@@ -220,4 +242,10 @@ export function MailFields({ form, setForm, errors, columns = [], clear, disable
       </FormSection>
     </div>
   )
+}
+
+/** Ayarlı sınır → pozitif tamsayı; yoksa / bozuksa varsayılan. */
+function positiveInt(v, def) {
+  const n = Number(v)
+  return Number.isInteger(n) && n > 0 ? n : def
 }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { DatabaseZap, Plus, RefreshCw, TriangleAlert, CircleAlert } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
@@ -17,9 +17,14 @@ import { DB_TYPES, healthState, serverLabel } from './connectionModel.js'
  * sağlık rozeti — bilinmeyen asla yeşil değil). Takım yoksa devre dışı + ipucu; liste boşsa "bu takımda kayıtlı bağlantı
  * yok — ekle"; okunamazsa hata + tekrar dene. "Bağlantıları yönet" ve "Yeni bağlantı" ConnectionsManager'ı açar; yeni
  * bağlantı kaydedilince seçilir. `data-field="profile_id"` (sunucu alan hatası kancası).
+ *
+ * Seçiciden açılan yönetici YALNIZ formun takımını gösterir (DÜŞÜK 3): yeni bağlantı başka takıma kaydedilip "bu takımda
+ * bulunamadı" uyarısıyla seçilmesin; dönen profil yine de yalnız formun takımındaysa seçilir. Hata metni seçiciye
+ * `aria-describedby` ile bağlıdır (10c).
  */
 export default function ConnectionPicker({ teamId, value, onChange, disabled = false, error, canManage = false, teams }) {
   const t = useT()
+  const errorId = useId()
   const [load, setLoad] = useState({ state: teamId == null ? 'noTeam' : 'loading', list: [], message: null })
   const [manager, setManager] = useState(null)   // null | 'list' | 'new'
   const seq = useRef(0)
@@ -48,12 +53,14 @@ export default function ConnectionPicker({ teamId, value, onChange, disabled = f
     value: p.id, label: p.name,
     hint: `${DB_TYPES.includes(p.db_type) ? t(`dbq.conn.type.${p.db_type}`) : t('dbq.conn.type.unknown')} · ${serverLabel(p)} · ${t(`dbq.conn.health.${healthState(p)}`)}`,
   }))
-  const teamList = Array.isArray(teams) && teams.length ? teams : (teamId != null ? [{ id: teamId, name: '' }] : [])
+  const formTeam = Array.isArray(teams) ? teams.find((tm) => String(tm.id) === String(teamId)) : null
+  const teamList = teamId != null ? [formTeam ? { id: formTeam.id, name: formTeam.name } : { id: teamId, name: '' }] : []
   const noTeam = teamId == null
 
   const onManagerChanged = (profile) => {
     reload()
-    if (manager === 'new' && profile?.id != null) onChange?.(profile.id, profile)
+    const sameTeam = profile?.team_id == null || String(profile.team_id) === String(teamId)
+    if (manager === 'new' && profile?.id != null && sameTeam) onChange?.(profile.id, profile)
   }
 
   return (
@@ -85,6 +92,7 @@ export default function ConnectionPicker({ teamId, value, onChange, disabled = f
 
       {!noTeam && load.state === 'ok' && list.length > 0 && (
         <SearchableSelect value={value ?? ''} options={opts} wrapLabels disabled={disabled} ariaLabel={t('dbq.conn.pickLabel')}
+          ariaDescribedBy={error ? errorId : undefined} ariaInvalid={!!error}
           placeholder={t('dbq.conn.pickPlaceholder')}
           onChange={(v) => {
             const p = list.find((x) => String(x.id) === String(v)) || null
@@ -121,7 +129,7 @@ export default function ConnectionPicker({ teamId, value, onChange, disabled = f
         </div>
       )}
 
-      {error && <FieldError>{error}</FieldError>}
+      {error && <FieldError id={errorId}>{error}</FieldError>}
 
       {manager && (
         <ConnectionsManager open onOpenChange={(o) => { if (!o) setManager(null) }} teamId={teamId} teams={teamList}

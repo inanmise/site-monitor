@@ -23,8 +23,9 @@ import { useElementWidth } from '../../hooks/useElementWidth.js'
 import ConnectionForm from './ConnectionForm.jsx'
 import { DbTypeBadge, HealthBadge } from './dbqueryParts.jsx'
 import {
-  emptyForm, formFromProfile, healthState, payloadFromForm, serverFieldErrors, serverLabel, validateConnection,
+  changedConnectionPayload, emptyForm, formFromProfile, healthState, payloadFromForm, serverFieldErrors, serverLabel, validateConnection,
 } from './connectionModel.js'
+import { countText } from './dbqueryPageModel.js'
 
 /** Tablo ↔ kart eşiği — KAP genişliği (pencere içinde, kenar çubuğuyla daralmış sayfada farklı). */
 export const CONNECTIONS_TABLE_MIN_PX = 760
@@ -39,6 +40,10 @@ export const CONNECTIONS_TABLE_MIN_PX = 760
  *
  * Ek isteğe bağlı prop'lar (sözleşmeye EKLENDİ, mevcutlar aynı): `initialView` ('list' | 'new') — seçicinin "Yeni
  * bağlantı" kısayolu; `onChanged(profile?)` oluşturulan / güncellenen profili de taşır.
+ *
+ * Form görünümünde (Y1) Escape ve örtü pencereyi KAPATMAZ; kaydedilmemiş değişiklikle kapat (X) / "Geri" / "Vazgeç" onay
+ * ister (izleme formunun "kaydedilmemiş değişiklikler" deseni) — yazılan sunucu / kullanıcı / parola sessizce gitmez.
+ * Düzenleme yalnız değişen alanları gönderir (hedef alanları + parola kuralı birlikte; DÜŞÜK 7).
  */
 export default function ConnectionsManager({ open, onOpenChange, teamId, teams = [], canEdit = false, onChanged, initialView = 'list' }) {
   const t = useT()
@@ -49,6 +54,7 @@ export default function ConnectionsManager({ open, onOpenChange, teamId, teams =
   const [load, setLoad] = useState({ state: 'loading', list: [], message: null })
   const [view, setView] = useState({ name: 'list' })
   const seq = useRef(0)
+  const dirtyRef = useRef(false)   // form görünümünün kaydedilmemiş değişikliği (FormView bildirir)
 
   useEffect(() => {
     if (!open) return
@@ -75,12 +81,30 @@ export default function ConnectionsManager({ open, onOpenChange, teamId, teams =
 
   useEffect(() => { if (open) reload() }, [open, reload])
 
-  const close = () => onOpenChange?.(false)
+  /** Kaydedilmemiş değişiklik varsa onay — "Değişiklikleri at" true döner. */
+  const confirmDiscard = useCallback(async () => {
+    if (!dirtyRef.current) return true
+    return showConfirm({
+      title: t('dbq.form.discardTitle'), message: t('dbq.conn.discardMsg'),
+      confirmText: t('dbq.form.discard'), cancelText: t('dbq.form.keepEditing'), variant: 'danger',
+    })
+  }, [showConfirm, t])
+  const close = async () => {
+    if (view.name === 'form' && !(await confirmDiscard())) return
+    dirtyRef.current = false
+    onOpenChange?.(false)
+  }
+  const leaveForm = async (next) => {
+    if (!(await confirmDiscard())) return
+    dirtyRef.current = false
+    setView(next)
+  }
   const byId = (id) => load.list.find((p) => p.id === id) || null
   const editable = (p) => canEdit && p?.can_edit !== false
   const teamName = teamList.find((tm) => tm.id === team)?.name || null
 
   const afterSave = (profile) => {
+    dirtyRef.current = false
     onChanged?.(profile)
     reload()
     setView(profile?.id != null ? { name: 'detail', id: profile.id, fresh: profile } : { name: 'list' })
@@ -112,7 +136,7 @@ export default function ConnectionsManager({ open, onOpenChange, teamId, teams =
   const editing = view.name === 'form' && view.id != null ? byId(view.id) : null
 
   return (
-    <ModalShell open={!!open} onClose={close} size="xl" scrollBody dismissOnBackdrop={view.name !== 'form'}
+    <ModalShell open={!!open} onClose={close} size="xl" scrollBody dismissOnBackdrop={view.name !== 'form'} dismissOnEscape={view.name !== 'form'}
       icon={DatabaseZap} title={t('dbq.conn.managerTitle')}>
       <div data-slot="dbq-conn-manager" data-view={view.name} className="flex min-w-0 flex-col gap-3">
         {view.name === 'list' && (
@@ -135,7 +159,10 @@ export default function ConnectionsManager({ open, onOpenChange, teamId, teams =
         )}
         {view.name === 'form' && (view.id == null || editing) && (
           <FormView key={view.id ?? 'new'} t={t} team={team} teams={teamList} profile={editing} creating={view.id == null}
-            onCancel={() => setView(view.id != null ? { name: 'detail', id: view.id } : { name: 'list' })} onSaved={afterSave} />
+            dirtyRef={dirtyRef}
+            onCancel={() => leaveForm(view.id != null ? { name: 'detail', id: view.id } : { name: 'list' })}
+            onNoChanges={() => { dirtyRef.current = false; setView({ name: 'detail', id: view.id }) }}
+            onSaved={afterSave} />
         )}
       </div>
     </ModalShell>
@@ -209,7 +236,7 @@ function ListView({ t, load, teams, team, setTeam, canEdit, teamName, onReload, 
                   </TableCell>
                   <TableCell className="align-top font-mono text-xs whitespace-normal [overflow-wrap:anywhere]">{serverLabel(p)}</TableCell>
                   <TableCell className="align-top whitespace-normal"><HealthBadge profile={p} /></TableCell>
-                  <TableCell className="align-top text-sm whitespace-normal tabular-nums">{t('dbq.conn.usedCount', (p.used_by || []).length)}</TableCell>
+                  <TableCell className="align-top text-sm whitespace-normal tabular-nums">{countText(t, 'dbq.conn.usedCount', (p.used_by || []).length)}</TableCell>
                   <TableCell className="text-right align-top">
                     <RowActions t={t} p={p} editable={editable(p)} onOpen={onOpen} onEdit={onEdit} onDelete={onDelete} />
                   </TableCell>
@@ -233,7 +260,7 @@ function ListView({ t, load, teams, team, setTeam, canEdit, teamName, onReload, 
                   <div className="flex flex-wrap items-center gap-1.5">
                     <DbTypeBadge type={p.db_type} />
                     <HealthBadge profile={p} />
-                    <span className="text-xs text-muted-foreground">{t('dbq.conn.usedCount', (p.used_by || []).length)}</span>
+                    <span className="text-xs text-muted-foreground">{countText(t, 'dbq.conn.usedCount', (p.used_by || []).length)}</span>
                   </div>
                   <Button type="button" variant="outline" onClick={() => onOpen(p)} className="w-full pointer-coarse:h-10">
                     <Eye aria-hidden="true" />{t('dbq.conn.details')}
@@ -399,9 +426,10 @@ function TestOutcome({ t, res }) {
 }
 
 /** Ekle / düzenle formu + kaydetmeden deneme. */
-function FormView({ t, team, teams, profile, creating, onCancel, onSaved }) {
+function FormView({ t, team, teams, profile, creating, onCancel, onSaved, onNoChanges, dirtyRef }) {
   const toast = useToast()
-  const [form, setForm] = useState(() => (profile ? formFromProfile(profile) : emptyForm(team)))
+  const [baseline] = useState(() => (profile ? formFromProfile(profile) : emptyForm(team)))
+  const [form, setForm] = useState(baseline)
   const [server, setServer] = useState({})
   const [client, setClient] = useState({})
   const [banner, setBanner] = useState(null)
@@ -409,6 +437,13 @@ function FormView({ t, team, teams, profile, creating, onCancel, onSaved }) {
   const [testing, setTesting] = useState(false)
   const [test, setTest] = useState(null)
   const errors = { ...client, ...server }
+  // Kaydedilmemiş değişiklik = gövde (parola dahil) açılıştakinden farklı — yöneticinin kapat / geri onayı bunu okur
+  const dirty = JSON.stringify(payloadFromForm(form)) !== JSON.stringify(payloadFromForm(baseline))
+  useEffect(() => {
+    if (dirtyRef) dirtyRef.current = dirty
+  }, [dirty, dirtyRef])
+  // Görünüm kapanınca (kayıt, geri, silinmiş kayıt) bayrak iner — yöneticinin sonraki kapatması boşuna onay sormasın
+  useEffect(() => () => { if (dirtyRef) dirtyRef.current = false }, [dirtyRef])
   const shownErrors = Object.fromEntries(Object.entries(errors).map(([k, v]) => [k, client[k] && !server[k] ? t(`dbq.conn.v.${v}`) : v]))
 
   const onChange = (next) => {
@@ -437,14 +472,17 @@ function FormView({ t, team, teams, profile, creating, onCancel, onSaved }) {
   const save = async () => {
     setBanner(null)
     if (!check()) return
+    // Düzenleme yalnız değişen alanları gönderir; hiçbir şey değişmediyse istek yok
+    const body = creating ? payloadFromForm(form) : changedConnectionPayload(form, baseline)
+    if (!creating && Object.keys(body).length === 0) { toast.info(t('dbq.conn.noChanges')); onNoChanges?.(); return }
     setSaving(true)
-    const body = payloadFromForm(form)
     let res
     try {
       res = creating ? await api.monitoring.createDbConnection(body) : await api.monitoring.updateDbConnection(form.id, body)
     } catch (e) { res = { success: false, error: e?.message } } finally { setSaving(false) }
     if (res?.success) {
-      toast.success(creating ? t('dbq.conn.created', body.name) : t('dbq.conn.updated', body.name))
+      const name = String(form.name || '').trim()
+      toast.success(creating ? t('dbq.conn.created', name) : t('dbq.conn.updated', name))
       onSaved(res.data || null)
       return
     }

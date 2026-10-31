@@ -140,6 +140,42 @@ describe('TemplatesManager', () => {
     expect(api.monitoring.updateDbQueryTemplate.mock.calls[0][1]).toMatchObject({ name: 'Kuyruk (yeni)', team_id: 3, db_type: 'MSSQL', rules: T1.rules })
   })
 
+  it('düzenleme görünümü (Y1): Esc (sorgu düzenleyicisinin "Esc sonra Tab" ipucu) pencereyi KAPATMAZ; kirli taslak onay ister', async () => {
+    const onOpenChange = vi.fn()
+    render(<TemplatesManager open onOpenChange={onOpenChange} teamId={3} teams={[{ id: 3, name: 'A' }]} canEdit />)
+    const row = await waitFor(() => { const r = document.querySelector('[data-slot="dbq-tpl-row"][data-id="1"]'); if (!r) throw new Error('yok'); return r })
+    pressMenuTrigger(within(row).getByRole('button', { name: /İşlemler/ }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Düzenle' }))
+    const edit = document.querySelector('[data-slot="dbq-tpl-edit"]')
+    const ta = edit.querySelector('[data-slot="dbq-sql-editor"] textarea')
+    fireEvent.change(ta, { target: { value: 'SELECT 1 AS uzun_degisiklik' } })
+    fireEvent.keyDown(ta, { key: 'Escape', code: 'Escape' })
+    expect(onOpenChange).not.toHaveBeenCalled()
+    expect(document.querySelector('[data-slot="dbq-tpl-edit"]')).not.toBeNull()
+    // Kapat (X) → onay → "Düzenlemeye devam et": taslak yerinde
+    fireEvent.click(screen.getByRole('button', { name: 'Kapat' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Düzenlemeye devam et' }))
+    expect(onOpenChange).not.toHaveBeenCalled()
+    expect(document.querySelector('[data-slot="dbq-tpl-edit"] [data-slot="dbq-sql-editor"] textarea')).toHaveValue('SELECT 1 AS uzun_degisiklik')
+    // "Listeye dön" → onay → "Değişiklikleri at" listeye döner
+    fireEvent.click(screen.getByRole('button', { name: /Listeye dön|Şablonlara dön/ }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Değişiklikleri at' }))
+    await waitFor(() => expect(document.querySelector('[data-slot="dbq-tpl-manager"]').getAttribute('data-view')).toBe('list'))
+  })
+
+  it('liste görünümünde Esc pencereyi kapatır; temiz düzenlemeden çıkmak onay istemez', async () => {
+    const onOpenChange = vi.fn()
+    render(<TemplatesManager open onOpenChange={onOpenChange} teamId={3} teams={[{ id: 3, name: 'A' }]} canEdit />)
+    const row = await waitFor(() => { const r = document.querySelector('[data-slot="dbq-tpl-row"][data-id="1"]'); if (!r) throw new Error('yok'); return r })
+    pressMenuTrigger(within(row).getByRole('button', { name: /İşlemler/ }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Düzenle' }))
+    fireEvent.click(within(document.querySelector('[data-slot="dbq-tpl-edit"]')).getByRole('button', { name: 'Vazgeç' }))
+    await waitFor(() => expect(document.querySelector('[data-slot="dbq-tpl-manager"]').getAttribute('data-view')).toBe('list'))
+    expect(screen.queryByRole('button', { name: 'Değişiklikleri at' })).toBeNull()
+    fireEvent.keyDown(document.querySelector('[data-slot="dbq-tpl-manager"]'), { key: 'Escape', code: 'Escape' })
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false))
+  })
+
   it('salt okunur: menüde düzenle / sil yok (menü hiç çizilmez)', async () => {
     render(<TemplatesManager open onOpenChange={() => {}} teamId={3} teams={[{ id: 3, name: 'A' }]} canEdit={false} />)
     const row = await waitFor(() => { const r = document.querySelector('[data-slot="dbq-tpl-row"][data-id="1"]'); if (!r) throw new Error('yok'); return r })
