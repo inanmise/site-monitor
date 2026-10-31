@@ -859,7 +859,26 @@ public final class AppSettingsCatalog {
         // (BLOCK kapatılırsa yönetici hesapla sorgu çalışır) kurum geneli güvenlik kararı
         "site.monitor.dbquery.unknown-alert-runs",
         "site.monitor.dbquery.writable-account-mode",
-        "site.monitor.dbquery.local-timezone"
+        "site.monitor.dbquery.local-timezone",
+        // Senaryo (k6) kurum geneli tavanları (2026-10-31, k6 inceleme A5 / G4): bu tavanların tek amacı "bir izleme öbür
+        // kontrolleri aç bırakmasın / üretim sistemine yük bindirmesin" — kapsamlı müdür gevşetemez. Bozuk mem-limit tüm k6
+        // koşumlarını düşürüp kurum geneli sahte alarm üretirdi; anomali koruması ve sözdizimi / check'siz koşum politikaları
+        // bütün takımların izlemelerini etkiler.
+        "site.monitor.scripted.max-rps",
+        "site.monitor.scripted.max-procs",
+        "site.monitor.scripted.mem-limit",
+        "site.monitor.scripted.max-requests-per-run",
+        "site.monitor.scripted.anomaly.enabled",
+        "site.monitor.scripted.anomaly.timeout-streak",
+        "site.monitor.scripted.pool-size",
+        "site.monitor.scripted.max-timeout-seconds",
+        "site.monitor.scripted.default-timeout-seconds",
+        "site.monitor.scripted.output-tail-bytes",
+        "site.monitor.scripted.syntax-check-policy",
+        "site.monitor.scripted.validate-timeout-seconds",
+        "site.monitor.scripted.no-checks-policy",
+        "site.monitor.scripted.manual-cooldown-seconds",
+        "site.monitor.scripted.manual-wait-seconds"
     ));
 
     /**

@@ -18,6 +18,11 @@
 #      200 + no-store (sürüm bağımsız açılış koruması hiç önbelleğe alınmaz).
 #   8. (2026-10-29, k6 sürüm geçişi; 2026-10-30'dan beri tek ikili) günlük: k6 (/usr/bin/k6) yoklaması Dockerfile'daki
 #      K6_VERSION sürümünü söylüyor, "desteklenmiyor" ya da "bulunamadı" demiyor — yanlış ikili ya da eksik katman görünsün.
+#      Bu adım aynı zamanda okunamaz (0111) k6 ikilisinin ÇALIŞTIRILABİLDİĞİNİN kanıtıdır.
+#   9. (2026-10-31, k6 inceleme A2 — işlem sertleştirmesi) günlük: "İşlem sertleştirmesi uygulandı" satırı VAR, "restricted
+#      method" uyarısı YOK; konteyner içinde (SM_CONTAINER, varsayılan "sm"; docker yoksa ya da konteyner bulunamazsa bu
+#      kısım uyarıyla atlanır) uygulama kullanıcısıyla `cat /proc/1/environ` (JVM dump-edilemez) ve `cat /usr/bin/k6`
+#      (ikili 0111) BAŞARISIZ olmalı, `/usr/bin/k6 version` çalışmalı.
 set -uo pipefail
 
 BASE="${1:?kullanım: image-boot-check.sh <base-url> <log-dosyası> [varlık-listeleri-dizini]}"
@@ -148,6 +153,39 @@ if [ -s "$LOG" ]; then
     err "günlükte k6 'desteklenmiyor' / 'bulunamadı' diyor — senaryo izleme devre dışı kalır"
     printf '%s\n' "$k6log" | head -5
   fi
+fi
+
+# ── 9: işlem sertleştirmesi (2026-10-31, k6 inceleme A2) ──────────────────────────────────
+if [ -s "$LOG" ]; then
+  clean="$(sed -E 's/\x1B\[[0-9;]*[A-Za-z]//g' "$LOG")"
+  if printf '%s\n' "$clean" | grep -aq "İşlem sertleştirmesi uygulandı"; then
+    echo "sertleştirme: JVM dump-edilemez (günlük)"
+  else
+    err "günlükte 'İşlem sertleştirmesi uygulandı' satırı yok (prctl uygulanamadı ya da kapalı)"
+    printf '%s\n' "$clean" | grep -a "İşlem sertleştirmesi" | head -3
+  fi
+  if printf '%s\n' "$clean" | grep -aqi "restricted method"; then
+    err "günlükte 'restricted method' uyarısı var — ENTRYPOINT'te --enable-native-access=ALL-UNNAMED eksik"
+    printf '%s\n' "$clean" | grep -ai "restricted method" | head -3
+  fi
+fi
+CTR="${SM_CONTAINER:-sm}"
+if command -v docker >/dev/null 2>&1 && docker inspect "$CTR" >/dev/null 2>&1; then
+  if docker exec "$CTR" cat /proc/1/environ >/dev/null 2>&1; then
+    err "konteynerde uygulama kullanıcısı /proc/1/environ'u OKUYABİLİYOR — JVM dump-edilebilir (sertleştirme etkisiz)"
+  else
+    echo "sertleştirme: /proc/1/environ okunamıyor"
+  fi
+  if docker exec "$CTR" cat /usr/bin/k6 >/dev/null 2>&1; then
+    err "konteynerde /usr/bin/k6 OKUNABİLİYOR — 0111 izni yok (kardeş k6 süreçlerinin ortamı birbirine açık)"
+  else
+    echo "sertleştirme: /usr/bin/k6 okunamıyor (yalnız çalıştırılır)"
+  fi
+  if ! docker exec "$CTR" /usr/bin/k6 version >/dev/null 2>&1; then
+    err "konteynerde /usr/bin/k6 version çalışmıyor (0111 ikili çalıştırılamadı)"
+  fi
+else
+  echo "::warning::konteyner '$CTR' bulunamadı ya da docker yok — /proc ve ikili izin denetimleri atlandı"
 fi
 
 if [ "$fail" -ne 0 ]; then

@@ -1,0 +1,156 @@
+{
+    "metrics": {
+        "data_sent": {
+            "count": 152,
+            "rate": 4135.5255246267825
+        },
+        "data_received": {
+            "count": 1690,
+            "rate": 45980.51405670567
+        },
+        "http_reqs": {
+            "count": 2,
+            "rate": 54.41480953456293
+        },
+        "http_req_waiting": {
+            "min": 4.9713,
+            "med": 6.9853000000000005,
+            "max": 8.9993,
+            "p(90)": 8.596499999999999,
+            "p(95)": 8.7979,
+            "avg": 6.9853000000000005
+        },
+        "http_req_duration{expected_response:true}": {
+            "p(90)": 13.623429999999999,
+            "p(95)": 14.064664999999998,
+            "avg": 10.09355,
+            "min": 5.6812,
+            "med": 10.09355,
+            "max": 14.5059
+        },
+        "http_req_failed": {
+            "fails": 2,
+            "passes": 0,
+            "value": 0
+        },
+        "checks": {
+            "passes": 2,
+            "fails": 0,
+            "thresholds": {
+                "rate>0.5": false
+            },
+            "value": 1
+        },
+        "http_req_connecting": {
+            "med": 0.50005,
+            "max": 1.0001,
+            "p(90)": 0.9000900000000001,
+            "p(95)": 0.9500949999999999,
+            "avg": 0.50005,
+            "min": 0
+        },
+        "http_req_tls_handshaking": {
+            "p(90)": 0,
+            "p(95)": 0,
+            "avg": 0,
+            "min": 0,
+            "med": 0,
+            "max": 0
+        },
+        "http_req_blocked": {
+            "med": 1.49985,
+            "max": 2.9997,
+            "p(90)": 2.6997299999999997,
+            "p(95)": 2.8497149999999998,
+            "avg": 1.49985,
+            "min": 0
+        },
+        "iteration_duration": {
+            "med": 36.7547,
+            "max": 36.7547,
+            "p(90)": 36.7547,
+            "p(95)": 36.7547,
+            "avg": 36.7547,
+            "min": 36.7547
+        },
+        "http_req_sending": {
+            "avg": 0,
+            "min": 0,
+            "med": 0,
+            "max": 0,
+            "p(90)": 0,
+            "p(95)": 0
+        },
+        "iterations": {
+            "count": 1,
+            "rate": 27.207404767281464
+        },
+        "http_req_duration": {
+            "avg": 10.09355,
+            "min": 5.6812,
+            "med": 10.09355,
+            "max": 14.5059,
+            "p(90)": 13.623429999999999,
+            "p(95)": 14.064664999999998,
+            "thresholds": {
+                "p(95)<5000": false,
+                "avg<1": true
+            }
+        },
+        "group_duration": {
+            "avg": 22.0849,
+            "min": 8.3746,
+            "med": 22.084899999999998,
+            "max": 35.7952,
+            "p(90)": 33.05314,
+            "p(95)": 34.42417
+        },
+        "http_req_receiving": {
+            "max": 5.5066,
+            "p(90)": 5.02693,
+            "p(95)": 5.2667649999999995,
+            "avg": 3.10825,
+            "min": 0.7099,
+            "med": 3.10825
+        }
+    },
+    "root_group": {
+        "name": "",
+        "path": "",
+        "id": "d41d8cd98f00b204e9800998ecf8427e",
+        "groups": {
+            "Giriş": {
+                "checks": {
+                    "durum 200": {
+                        "id": "edc96dd9fb4ab0001b282ce0cf658cb6",
+                        "passes": 1,
+                        "fails": 0,
+                        "name": "durum 200",
+                        "path": "::Giriş::durum 200"
+                    }
+                },
+                "name": "Giriş",
+                "path": "::Giriş",
+                "id": "625cc8fe91b383f7aeefee10b6fa5caa",
+                "groups": {
+                    "Alt adım": {
+                        "groups": {},
+                        "checks": {
+                                "gövde UP": {
+                                    "id": "c716e37e7178848bdcba572784923056",
+                                    "passes": 1,
+                                    "fails": 0,
+                                    "name": "gövde UP",
+                                    "path": "::Giriş::Alt adım::gövde UP"
+                                }
+                            },
+                        "name": "Alt adım",
+                        "path": "::Giriş::Alt adım",
+                        "id": "b62daae3b603ab30d26608c2c8c8663a"
+                    }
+                }
+            }
+        },
+        "checks": {}
+    }
+}

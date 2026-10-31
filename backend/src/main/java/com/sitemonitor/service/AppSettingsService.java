@@ -376,6 +376,9 @@ public class AppSettingsService {
         }
         // k6 motoru (2026-10-29): GODEBUG izin listesi, User-Agent, ikili yolları, tarama dışı izleme kimlikleri.
         if (K6EngineSettings.isKey(s.key())) K6EngineSettings.validate(s.key(), val);
+        // k6 Go tavanları (2026-10-31, k6 inceleme A5): GOMEMLIMIT biçimi / GOMAXPROCS tam sayı — bozuk değer k6'yı
+        // açılışta düşürürdü (her koşum ERROR → kurum geneli sahte alarm).
+        if (ScriptedResourceLimits.isKey(s.key())) ScriptedResourceLimits.validate(s.key(), val);
         // Dağıtık kontrol türleri (2026-10-29, çok pod Sürüm 3-3): yalnız bilinen sekiz ad — alan hatası distributed_types.
         if (com.sitemonitor.service.checks.DistributedChecks.KEY_TYPES.equals(s.key())) {
             com.sitemonitor.service.checks.CheckJobTypes.validateSetting(val);

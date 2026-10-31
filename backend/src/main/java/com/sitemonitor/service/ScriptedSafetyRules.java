@@ -183,8 +183,25 @@ public final class ScriptedSafetyRules {
             warnings.add(requests + " istek çağrısı var. Tavan " + MAX_STATIC_REQUESTS
                     + "; senaryo büyümeye devam ederse kayıt engellenecek.");
         }
+        // HTTP dışı trafik (2026-10-31, k6 inceleme A7 / G8): istek/sn tavanı, koşum başına istek tavanı ve anomali koruması
+        // yalnız HTTP isteklerini sayar — WebSocket / gRPC akışı bu tavanların DIŞINDA kalır. Engellemez, söyler.
+        String nonHttp = nonHttpModule(src);
+        if (nonHttp != null) {
+            warnings.add("Betik `" + nonHttp + "` modülünü kullanıyor: istek tavanı ve anomali koruması bu trafiği SAYMAZ "
+                    + "(yalnız HTTP isteklerini sayar). Bağlantıyı kısa tutun ve açık bir zaman aşımı verin.");
+        }
 
         return new SafetyDiagnostics(null, warnings);
+    }
+
+    /** {@code k6/experimental/websockets}, {@code k6/websockets}, {@code k6/ws}, {@code k6/net/grpc} — ilk görülen modül adı. */
+    private static final Pattern NON_HTTP_MODULE = Pattern.compile(
+            "['\"`](k6/(?:experimental/websockets|websockets|ws|net/grpc))['\"`]");
+
+    static String nonHttpModule(String code) {
+        if (code == null) return null;
+        Matcher m = NON_HTTP_MODULE.matcher(code);
+        return m.find() ? m.group(1) : null;
     }
 
     /** {@code from 'k6/x/…'}, {@code import 'k6/x/…'}, {@code import('k6/x/…')}, {@code require('k6/x/…')}. */

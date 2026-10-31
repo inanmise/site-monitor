@@ -121,6 +121,11 @@ public class SsrfGuard {
         if (!allowLoopback) {
             c.add("127.0.0.0/8");
             c.add("::1/128");
+            // "Her yer" adresleri (2026-10-31, k6 inceleme A6): Linux'ta 0.0.0.0 / :: hedefine bağlanmak yerel makineye
+            // düşer — 127.0.0.0/8 kapalıyken http://0.0.0.0:port/ yerel sunucuya ulaşıyordu (k6 v2.3.0 ile ölçüldü).
+            // blockReason bunları isAnyLocalAddress ile zaten reddediyordu; k6'ya giden liste eksikti.
+            c.add("0.0.0.0/32");
+            c.add("::/128");
         }
         if (!allowInternal) {
             c.add("10.0.0.0/8");

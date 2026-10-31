@@ -93,6 +93,12 @@ class K6RealContractTest {
     private final Map<String, String> settingsOverrides = new ConcurrentHashMap<>();
 
     private ScriptedCheckerService service(Engine e) {
+        SsrfGuard guard = mock(SsrfGuard.class);
+        when(guard.blacklistCidrs()).thenReturn(List.of());   // yerel test sunucusu (127.0.0.1) engellenmesin
+        return service(e, guard);
+    }
+
+    private ScriptedCheckerService service(Engine e, SsrfGuard guard) {
         AppSettingsService s = mock(AppSettingsService.class);
         when(s.getString(anyString(), anyString())).thenAnswer(i -> {
             String key = i.getArgument(0);
@@ -103,8 +109,6 @@ class K6RealContractTest {
         });
         when(s.getInt(anyString(), anyInt())).thenAnswer(i -> i.getArgument(1));
         when(s.getBoolean(anyString(), anyBoolean())).thenAnswer(i -> i.getArgument(1));
-        SsrfGuard guard = mock(SsrfGuard.class);
-        when(guard.blacklistCidrs()).thenReturn(List.of());   // yerel test sunucusu (127.0.0.1) engellenmesin
         ScriptedCheckerService svc = new ScriptedCheckerService(guard, null, s, new SimpleMeterRegistry(), new ProxySettings());
         svc.init();
         assertThat(svc.isAvailable()).as("k6 çalıştırılamadı: " + e.bin()).isTrue();
@@ -310,6 +314,113 @@ class K6RealContractTest {
         long after;
         try (var s = Files.list(tmp)) { after = s.filter(p -> p.getFileName().toString().startsWith("k6-")).count(); }
         assertThat(after).isLessThanOrEqualTo(before);
+    }
+
+    // ── Koşum verisi + güvenlik (2026-10-31, k6 inceleme D1 / A1 / A6) ────────────────────────────────────────
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("engines")
+    @DisplayName("--out json: adımlar (iç içe group), check sayıları, eşikler (düşen önce) ve neden kodu; koşum bağlamı")
+    void runDataStepsThresholds(Engine e) {
+        ScriptedCheckerService svc = service(e);
+        var r = run(svc, """
+                import http from 'k6/http';
+                import { check, group } from 'k6';
+                export const options = { thresholds: { http_req_duration: ['p(95)<60000', 'avg<0'] } };
+                export default function () {
+                  group('Giriş', function () {
+                    check(http.get(__ENV.U + '/ok', { timeout: '10s' }), { 'durum 200': (x) => x.status === 200 });
+                    group('Alt adım', function () {
+                      check(http.get(__ENV.U + '/ok', { timeout: '10s' }), { 'gövde': (x) => x.body === 'merhaba' });
+                    });
+                  });
+                }
+                """);
+        assertThat(r.status()).isEqualTo("FAIL");
+        assertThat(r.exitCode()).isEqualTo(99);
+        var d = r.details();
+        assertThat(d).isNotNull();
+        assertThat(d.failureReason()).isEqualTo("SCRIPT_THRESHOLD_FAILED");
+        assertThat(d.failureDetail()).contains("http_req_duration avg<0");
+        assertThat(d.stepsJson()).contains("\"name\":\"Giriş\"").contains("\"name\":\"Giriş › Alt adım\"")
+                .contains("\"checks_passed\":1");
+        assertThat(d.thresholdsJson()).startsWith("[{\"metric\":\"http_req_duration\",\"expr\":\"avg<0\",\"ok\":false}");
+        assertThat(d.contextJson()).contains("\"egress\":\"direct\"").contains("\"request_timeout_s\":10");
+        assertThat(d.stepsTruncated()).isFalse();
+        assertThat(d.tlsJson()).isNull();                      // http — TLS yok
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("engines")
+    @DisplayName("Ağ hatası sınıflandırılır: bağlantı reddi → CONNECT_REFUSED + k6 hata kodu 1212")
+    void networkErrorClassified(Engine e) throws Exception {
+        ScriptedCheckerService svc = service(e);
+        int closed;
+        try (ServerSocket ss = new ServerSocket(0, 1, InetAddress.getLoopbackAddress())) { closed = ss.getLocalPort(); }
+        var r = svc.test("""
+                import http from 'k6/http';
+                import { check, group } from 'k6';
+                export default function () {
+                  group('Ödeme', () => { check(http.get('http://127.0.0.1:%d/x', { timeout: '5s' }), { ok: (x) => x.status === 200 }); });
+                }
+                """.formatted(closed), "[]", 60, "OFF");
+        assertThat(r.status()).isEqualTo("FAIL");
+        assertThat(r.details().failureReason()).isEqualTo("CONNECT_REFUSED");
+        assertThat(r.details().failureDetail()).contains("\"error_code\":1212").contains("\"step\":\"Ödeme\"")
+                .contains("\"target\":\"127.0.0.1\"");
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("engines")
+    @DisplayName("ÖLÇÜM: handleSummary varken --summary-export da YAZILIR — REPORT politikasında sonuç okunur; BLOCK'ta koşmaz")
+    void handleSummaryStillWritesSummaryExport(Engine e) {
+        settingsOverrides.put(ScriptedCheckerService.FILE_READ_POLICY_KEY, "REPORT");
+        ScriptedCheckerService svc = service(e);
+        var r = run(svc, """
+                import { check } from 'k6';
+                export default function () { check(1, { ok: () => true }); }
+                export function handleSummary(data) { return { stdout: 'HS-STDOUT' }; }
+                """);
+        assertThat(r.status()).as(r.error()).isEqualTo("PASS");
+        assertThat(r.checksPassed()).isEqualTo(1);                 // özet dosyası okundu
+        settingsOverrides.remove(ScriptedCheckerService.FILE_READ_POLICY_KEY);
+        var blocked = run(service(e), "export function handleSummary(d) { return {}; }\nexport default function () {}\n");
+        assertThat(blocked.status()).isEqualTo(ScriptedCheckerService.STATUS_SKIPPED);
+        assertThat(blocked.failureReason()).isEqualTo("SCRIPT_FILE_READ_BLOCKED");
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("engines")
+    @DisplayName("Uzak import engelli hosta: k6 BAŞLATILMAZ, ERROR + SSRF_BLOCKED (k6'nın --blacklist-ip'i modül indirmesini "
+            + "kapsamıyor — ölçüldü)")
+    void remoteImportBlockedBeforeK6(Engine e) {
+        AppSettingsService gs = mock(AppSettingsService.class);
+        when(gs.getBoolean(anyString(), anyBoolean())).thenAnswer(i -> i.getArgument(1));   // loopback kapalı
+        ScriptedCheckerService svc = service(e, new SsrfGuard(gs));
+        long t0 = System.currentTimeMillis();
+        var r = svc.test("import { x } from 'https://127.0.0.1:9/mod.js';\nexport default function () {}\n", "[]", 60, "OFF");
+        assertThat(r.status()).isEqualTo("ERROR");
+        assertThat(r.failureReason()).isEqualTo("SSRF_BLOCKED");
+        assertThat(r.error()).contains("127.0.0.1");
+        assertThat(System.currentTimeMillis() - t0).isLessThan(10_000);
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("engines")
+    @DisplayName("ÖLÇÜM: 0.0.0.0 kara listedeyken istek k6 hata kodu 1110 ile reddedilir (127.0.0.0/8 tek başına yetmiyordu)")
+    void anyAddressBlacklisted(Engine e) {
+        SsrfGuard guard = mock(SsrfGuard.class);
+        when(guard.blacklistCidrs()).thenReturn(List.of("127.0.0.0/8", "0.0.0.0/32", "::/128"));
+        ScriptedCheckerService svc = service(e, guard);
+        int port = server.getAddress().getPort();
+        var r = svc.test("""
+                import http from 'k6/http';
+                import { check } from 'k6';
+                export default function () { check(http.get('http://0.0.0.0:%d/ok', { timeout: '5s' }), { ok: (x) => x.status === 200 }); }
+                """.formatted(port), "[]", 60, "OFF");
+        assertThat(r.status()).isEqualTo("FAIL");
+        assertThat(r.details().failureReason()).isEqualTo("SSRF_BLOCKED");
+        assertThat(r.details().failureDetail()).contains("\"error_code\":1110");
     }
 
     @org.junit.jupiter.api.Test
