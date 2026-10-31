@@ -121,6 +121,11 @@ public class MonitoringOverviewService {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.sitemonitor.repository.DbQueryCheckRepository dbQueryCheckRepo;
 
+    /** Tatil takvimi — zamanlamalı sentetik izlemenin "kaçırılan planlı koşum" kuralı için (k6r inceleme #3). İsteğe bağlı:
+     *  yoksa (yapıcıyla kurulan testler) tatil yok sayılır. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.dbquery.HolidayCalendarService holidayCalendar;
+
     /** Bellekli girişin hesaplamayı PROXY üzerinden çağırması için (salt-okunur işlem korunur) — CertificateService deseni.
      *  Birim testinde null → doğrudan {@code this}. */
     @org.springframework.beans.factory.annotation.Autowired
@@ -442,7 +447,8 @@ public class MonitoringOverviewService {
             else if (c == null) status = "unknown";
             else if (!open.isEmpty() || Boolean.FALSE.equals(ok)) status = "down";
             else if (m instanceof com.sitemonitor.model.DbQueryMonitor dq ? isDbQueryStale(dq, nowI)
-                    : m instanceof com.sitemonitor.model.ScriptedMonitor sm && ScriptedSchedule.hasPlan(sm) ? isScriptedStale(sm, nowI)
+                    : m instanceof com.sitemonitor.model.ScriptedMonitor sm && ScriptedSchedule.hasPlan(sm)
+                            ? isScriptedStale(sm, checkedAt, nowI, holidays())
                     : isStale(checkedAt, spec.interval().apply(m), nowI)) status = "stale";
             // Veritabanı sorgusu (r177, H-2): sorgu çalıştı ama kural değerlendirilemedi — yeşil SAYILMAZ (nötr "değerlendirilemedi")
             else if (c instanceof com.sitemonitor.model.DbQueryCheck dc && dbQueryUnevaluable(dc)) status = "unknown";
@@ -554,6 +560,66 @@ public class MonitoringOverviewService {
      */
     public static boolean isScriptedStale(com.sitemonitor.model.ScriptedMonitor m, Instant now) {
         return m != null && isDbQueryStale(m.getNextRunAt(), now);
+    }
+
+    /**
+     * Zamanlamalı sentetik izlemenin planlı koşumu yapılmadan geçti mi (k6r inceleme #3): son kontrolden SONRAKİ ilk planlı
+     * koşum + bu pay geçtiyse ve daha yeni kontrol yoksa gecikmiş. Pay, tarama tıkı (60 sn) + k6 izni beklemesi + süreç tavanı
+     * (180 sn) sığsın diye {@value} sn — uzun süren normal bir koşum gecikmiş görünmesin.
+     */
+    static final long SCRIPTED_MISSED_RUN_GRACE_SECONDS = 600;
+
+    /**
+     * Zamanlamalı sentetik izleme gecikmiş mi (k6r inceleme #3, 2026-10-31): planlı çalışma kuralı
+     * ({@link #isScriptedStale(com.sitemonitor.model.ScriptedMonitor, Instant)}) YA DA son kontrolden sonraki ilk planlı koşum
+     * + {@link #SCRIPTED_MISSED_RUN_GRACE_SECONDS} geçti ve yeni kontrol yok. İkinci kural şarttır: geçici atlamada (havuz dolu,
+     * k6 yok, dosya okuma engeli) plan ({@code next_run_at}) her dönem ileri yazıldığından birinci kural tek başına koşmayan
+     * izlemeyi son eski sonuçla "güncel" (yeşil) gösterirdi. Son kontrol okunamazsa / yoksa yalnız birinci kural (çağıran
+     * kontrolü hiç olmayan izlemeyi zaten "bilinmiyor" gösterir).
+     *
+     * @param lastCheckedAt son kontrol anı (UTC, "yyyy-MM-ddTHH:mm:ss"; "Z" / kesir / boşluk da okunur)
+     */
+    public static boolean isScriptedStale(com.sitemonitor.model.ScriptedMonitor m, String lastCheckedAt, Instant now,
+                                          Set<java.time.LocalDate> holidays) {
+        if (m == null || now == null) return false;
+        if (isDbQueryStale(m.getNextRunAt(), now)) return true;
+        return missedPlannedRun(ScriptedSchedule.specOf(m), parseUtc(lastCheckedAt), now, holidays);
+    }
+
+    /** Son kontrolden sonraki ilk planlı koşum + {@link #SCRIPTED_MISSED_RUN_GRACE_SECONDS} şimdiden önce mi (saf). */
+    static boolean missedPlannedRun(com.sitemonitor.service.dbquery.DbQuerySchedule.Spec spec, Instant lastCheck, Instant now,
+                                    Set<java.time.LocalDate> holidays) {
+        if (spec == null || lastCheck == null || now == null) return false;
+        try {
+            Instant next = com.sitemonitor.service.dbquery.DbQuerySchedule.nextAfter(spec, lastCheck,
+                    holidays == null ? Set.of() : holidays);
+            return next != null && next.plusSeconds(SCRIPTED_MISSED_RUN_GRACE_SECONDS).isBefore(now);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** UTC zaman metni → an ("yyyy-MM-ddTHH:mm:ss"; "Z" / boşluk / kesir de okunur); okunamazsa null. */
+    static Instant parseUtc(String at) {
+        if (at == null || at.isBlank()) return null;
+        try {
+            return java.time.LocalDateTime.parse(at.trim().replace(' ', 'T').replace("Z", ""),
+                    DateTimeFormatter.ISO_LOCAL_DATE_TIME).toInstant(ZoneOffset.UTC);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** Tatil günleri (60 sn bellekli servis); okunamaz / servis yok → boş küme (tatil yok sayılır — en kötü gecikmiş görünür). */
+    private Set<java.time.LocalDate> holidays() {
+        com.sitemonitor.service.dbquery.HolidayCalendarService h = holidayCalendar;
+        if (h == null) return Set.of();
+        try {
+            Set<java.time.LocalDate> d = h.days();
+            return d == null ? Set.of() : d;
+        } catch (Exception e) {
+            return Set.of();
+        }
     }
 
     static boolean skippedTooLong(String skippedSince, Instant now) {

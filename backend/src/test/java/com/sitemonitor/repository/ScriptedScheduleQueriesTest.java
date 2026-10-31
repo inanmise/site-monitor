@@ -64,6 +64,20 @@ class ScriptedScheduleQueriesTest {
     }
 
     @Test
+    @DisplayName("inceleme #5: koşullu plan yazımı — NULL'dan yalnız bir kez kurulur; öne çekme yalnız okunan değer hâlâ saklıysa yazar")
+    void casNextRunAt() {
+        ScriptedMonitor m = save("cas", true, "CRON", null);
+        assertThat(repo.updateNextRunAtIfNull(m.getId(), "2026-11-10T05:00:00")).isEqualTo(1);
+        assertThat(repo.updateNextRunAtIfNull(m.getId(), "2026-11-10T06:00:00")).as("ikinci 'first' kaybeder").isZero();
+        assertThat(repo.findById(m.getId()).orElseThrow().getNextRunAt()).isEqualTo("2026-11-10T05:00:00");
+
+        assertThat(repo.updateNextRunAtIfEquals(m.getId(), "2000-01-01T00:00:00", "2026-11-09T05:00:00"))
+                .as("bayat okuma kaybeder").isZero();
+        assertThat(repo.updateNextRunAtIfEquals(m.getId(), "2026-11-10T05:00:00", "2026-11-09T05:00:00")).isEqualTo(1);
+        assertThat(repo.findById(m.getId()).orElseThrow().getNextRunAt()).isEqualTo("2026-11-09T05:00:00");
+    }
+
+    @Test
     @DisplayName("gönderim izdüşümü: [id, aralık, kip, cron, pencereler, yasaklar, tatil, ek tarihler, plan] — yalnız aktif")
     void dispatchRowsCarryScheduleColumns() {
         ScriptedMonitor cron = save("cron", true, "CRON", true);

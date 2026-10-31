@@ -50,7 +50,7 @@ public final class GrafanaDashboardGenerator {
      * Pano içerik revizyonu — içerik (panel, sorgu, değişken) değişen HER sürümde artır ve
      * {@code src/test/resources/grafana/dashboard-content.sha256} dosyasını güncelle (kapı mesajı yeni satırı yazar).
      */
-    public static final int DASHBOARD_REVISION = 11;
+    public static final int DASHBOARD_REVISION = 12;
     /** "Kritik / yüksek alarm açıldı" anotasyonunun penceresi (sn) — açılış zamanı bu kadar yeni olan alarmlar. */
     static final int ALERT_OPENED_WINDOW_S = 900;
     /** Aktarıcı tazelik eşiği (sn) — sunucunun {@code max(180, 3 × refresh-seconds)} kuralının varsayılan değeri. */
@@ -1411,21 +1411,22 @@ public final class GrafanaDashboardGenerator {
         }
 
         /**
-         * Sentetik (k6) koşumları (revizyon 11, 2026-10-31 — k6r D3): son 24 saatte ZAMANLANMIŞ koşumların sonuca göre dağılımı ve
-         * k6 sürüm dağılımı (KÜME aileleri; pod'lar arası {@code max}). Takım / tür süzgecinden bağımsızdır (kurum geneli sayım).
+         * Sentetik (k6) koşumları (revizyon 11, 2026-10-31 — k6r D3; 12: teyit / kurtarma yeniden kontrolleri sayılmaz): son 24
+         * saatte ZAMANLANMIŞ koşumların sonuca göre dağılımı ve k6 sürüm dağılımı (KÜME aileleri; pod'lar arası {@code max}).
+         * Takım / tür süzgecinden bağımsızdır (kurum geneli sayım).
          */
         void scriptedRuns() {
             String runs = MonitoringMetricNames.SCRIPTED_RUNS;
             String vers = MonitoringMetricNames.SCRIPTED_K6_VERSIONS;
             Panel result = new Panel("piechart", t("Sentetik koşum sonuçları (24 sa)", "Synthetic run results (24 h)"),
                     t("Son 24 saatte ZAMANLANMIŞ sentetik (k6) koşumlarının sonuca göre dağılımı — kurum geneli, takım süzgecinden "
-                            + "bağımsız; elle \"Şimdi kontrol et\" ve form testi sayılmaz, teyit / kurtarma yeniden kontrolleri sayılır. "
+                            + "bağımsız; elle \"Şimdi kontrol et\", form testi ve teyit / kurtarma zincirinin yeniden kontrolleri sayılmaz. "
                             + "PASS: geçti · FAIL: doğrulama ya da eşik düştü · ERROR: betik / altyapı hatası (sözdizimi, k6 başlatılamadı) · "
                             + "TIMEOUT: süreç bütçesi aşıldı · NO_CHECKS: koştu ama hiçbir şey doğrulamadı. Havuz dolduğu için yürütülemeyen "
                             + "koşum kaydedilmez, burada görünmez. Veri yoksa kaynak okunamadı (0 sayılmaz).",
                             "Distribution of SCHEDULED synthetic (k6) runs in the last 24 hours by result — organisation-wide, independent of "
-                                    + "the team filter; manual \"Check now\" runs and form tests are not counted, confirmation / recovery "
-                                    + "rechecks are. PASS: passed · FAIL: a check or threshold failed · ERROR: script / infrastructure error "
+                                    + "the team filter; manual \"Check now\" runs, form tests and confirmation / recovery rechecks are not "
+                                    + "counted. PASS: passed · FAIL: a check or threshold failed · ERROR: script / infrastructure error "
                                     + "(syntax, k6 could not start) · TIMEOUT: the process budget ran out · NO_CHECKS: ran but verified nothing. "
                                     + "A run that could not start because the pool was full is not recorded and does not show here. "
                                     + "No data means the source could not be read (not 0)."));

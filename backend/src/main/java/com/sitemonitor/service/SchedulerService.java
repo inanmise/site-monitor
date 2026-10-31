@@ -8953,7 +8953,7 @@ public class SchedulerService {
             if (!due) continue;
             started.add(Map.entry(m, scriptedCheckerService.submit(m)));
         }
-        int checked = 0, skipped = 0;
+        int checked = 0, skipped = 0, retained = 0;
         List<MonitoringOutageService.SweepItem> sweep = new ArrayList<>();
         List<MonitoringOutageService.SweepItem> slowSweep = new ArrayList<>();
         for (var entry : started) {
@@ -8968,7 +8968,11 @@ public class SchedulerService {
                 // Altyapı atlaması hedefin arızası DEĞİL: ne kayıt yazılır (uptime kirlenmesin)
                 // ne alarm zincirine girer. Aksi halde pool-size darlığı 100 monitörlük filoda
                 // toplu YANLIŞ alarm üretiyordu.
-                if (ScriptedCheckerService.isSkipped(res)) { skipped++; retainScriptedPeriod(m); continue; }   // k6r B3
+                if (ScriptedCheckerService.isSkipped(res)) {
+                    skipped++;
+                    if (transientScriptedSkip(res)) { retainScriptedPeriod(m); retained++; }   // k6r B3 (+ #2: yalnız GEÇİCİ atlama)
+                    continue;
+                }
                 Map<String, Object> r = persistScripted(m, res, false);
                 addScriptedSweepItems(m, r, sweep, slowSweep);
                 checked++;
@@ -8977,6 +8981,7 @@ public class SchedulerService {
                 entry.getValue().cancel(true);
                 skipped++;
                 retainScriptedPeriod(m);   // k6r B3: kayıt yazılmadı → dönem geri verilir
+                retained++;
                 log.warn("Senaryo sonucu {} sn içinde gelmedi, koşum iptal edildi: {} — bu tur kontrol yazılmadı",
                         ScriptedCheckerService.maxWaitSeconds() + 15, m.getName());
             } catch (Exception e) {
@@ -8985,8 +8990,8 @@ public class SchedulerService {
         }
         if (skipped > 0)
             log.warn("Senaryo sweep: {} kontrol YÜRÜTÜLEMEDİ (k6 havuzu dolu / k6 yok). Kapasite ≈ "
-                    + "pool-size × aralık ÷ koşum süresi; scripted.k6.skipped sayacına bakın. Dönemleri geri verildi — "
-                    + "sonraki tıkta yeniden denenecek.", skipped);
+                    + "pool-size × aralık ÷ koşum süresi; scripted.k6.skipped sayacına bakın. {} dönem geri verildi — "
+                    + "sonraki tıkta yeniden denenecek.", skipped, retained);
         feedScriptedSweep(sweep, slowSweep);   // R3-3 B: ayrıştırıldı (dağıtık değerlendiriciyle ortak)
         log.debug("Scripted checks complete: {} monitors", checked);
     }
@@ -9040,6 +9045,19 @@ public class SchedulerService {
         }
     }
 
+    /**
+     * Atlama GEÇİCİ mi (k6r inceleme #2): havuz dolu / sıra beklemesi / kesinti → evet (bir sonraki tık yeniden dener). Dosya
+     * okuma engeli ({@code SCRIPT_FILE_READ_BLOCKED}) ve k6 yok / desteklenmiyor ({@code K6_UNAVAILABLE}) KALICIDIR: geri
+     * verilseydi her tık bir izin beklemesi, bir atlama sayacı ve yanıltıcı bir "yeniden denenecek" satırı üretirdi —
+     * izleme olağan aralığında yeniden denenir.
+     */
+    static boolean transientScriptedSkip(ScriptedCheckerService.ScriptedResult res) {
+        String reason = res == null || res.details() == null ? null : res.details().failureReason();
+        if (reason == null) return true;
+        return !com.sitemonitor.service.failure.CheckFailureReason.SCRIPT_FILE_READ_BLOCKED.name().equals(reason)
+                && !com.sitemonitor.service.failure.CheckFailureReason.K6_UNAVAILABLE.name().equals(reason);
+    }
+
     /** Aktif olmayan (duraklatılan / silinen) izlemenin geri verilen dönemi düşer — devamda zamanlamaya bakmadan koşmasın. */
     private void pruneRetainedScripted(List<com.sitemonitor.model.ScriptedMonitor> active) {
         if (retainedDue.isEmpty()) return;
@@ -9081,16 +9099,36 @@ public class SchedulerService {
                 && com.sitemonitor.service.dbquery.DbQuerySchedule.MODE_CRON.equalsIgnoreCase(spec.mode())
                 ? scriptedCronFirstFloor(id, now) : null;
         DbQueryDuePlan plan = dbQueryPlan(dbQueryScheduling, spec, storedNext, now, holidays, cronFloor);
-        if (plan.write() && ("first".equals(plan.reason()) || "replanned".equals(plan.reason()))) resetScriptedClusterKey(id);
+        boolean reset = plan.write() && ("first".equals(plan.reason()) || "replanned".equals(plan.reason()));
+        if (reset) {
+            // k6r inceleme #5: planı kuran / öne çeken yalnız KOŞULLU yazımı kazanan çağırandır (okunan değer → yeni plan).
+            // Klasik gövde ile gönderim aynı anda "first" görürse ikisi de anahtarı sıfırlayıp koşardı (iki koşum); kaybeden
+            // ne anahtara dokunur ne koşar — sonraki tık güncel planı okur.
+            if (!casScriptedNextRun(id, storedNext, plan.next())) return false;
+            resetScriptedClusterKey(id);
+        }
         if (plan.run()) {
             long nowMs = now.toEpochMilli();
             long nextMs = plan.next() != null ? plan.next().toEpochMilli() : nowMs + DBQUERY_NEVER_MS;
             long nominal = Math.max(60_000L, nextMs - nowMs);
             if (!clusterDue(type + ":" + id, nominal, (prev, ms) -> nextMs)) return false;
         }
-        if (plan.write()) writeScriptedNextRun(id, storedNext, plan.next());
+        if (plan.write() && !reset) writeScriptedNextRun(id, storedNext, plan.next());
         if (plan.run() && classic) noteScriptedClassicCheck(id);
         return plan.run();
+    }
+
+    /** Koşullu plan yazımı (#5): saklı değer hâlâ okunan değerse yazar; kazanıldıysa true. Hata = kaybedildi (koşulmaz). */
+    private boolean casScriptedNextRun(Long id, String storedNext, Instant next) {
+        String iso = next == null ? null : ISO.format(next);
+        try {
+            int n = storedNext == null ? scriptedMonitorRepo.updateNextRunAtIfNull(id, iso)
+                    : scriptedMonitorRepo.updateNextRunAtIfEquals(id, storedNext, iso);
+            return n > 0;
+        } catch (Exception e) {
+            log.warn("Senaryonun planı kurulamadı (#{}): {} — sonraki tıkta yeniden denenecek", id, e.getClass().getSimpleName());
+            return false;
+        }
     }
 
     /** {@code classicCheckDue} ile aynı damga: devirden önce alınmış dağıtık sonuç bu klasik kontrolün gerisinde kalırsa düşer. */
@@ -9294,11 +9332,20 @@ public class SchedulerService {
         // D-10 (2026-09-29): elle koşum ve elle kontrolün başlattığı kurtarma zinciri ELLE k6 kotasından koşar
         // (havuzun son izni zamanlanmış koşumlara kalır); zincirin satırları da elle kökenli işaretlenir.
         boolean manualOrigin = manual || ScriptedCheckerService.manualQuotaActive();
-        return persistScripted(m, manual ? scriptedCheckerService.runManual(m) : scriptedCheckerService.run(m), manualOrigin);
+        // k6r inceleme #1 (2026-10-31): manual=false çağrısı TEYİT / KURTARMA zincirinin yeniden kontrolüdür (sweep kalemi
+        // lambdası, yavaşlık teyidi) — satır recheck=true yazılır; anomali serisi ve "zamanlanmış koşum" metrikleri saymaz.
+        return persistScripted(m, manual ? scriptedCheckerService.runManual(m) : scriptedCheckerService.run(m), manualOrigin,
+                !manual);
     }
 
     private Map<String, Object> persistScripted(com.sitemonitor.model.ScriptedMonitor m,
                                                 ScriptedCheckerService.ScriptedResult res, boolean manual) {
+        return persistScripted(m, res, manual, false);
+    }
+
+    /** @param recheck teyit / kurtarma zinciri yeniden kontrolü (satır {@code recheck=true}; anomali serisi saymaz). */
+    private Map<String, Object> persistScripted(com.sitemonitor.model.ScriptedMonitor m,
+                                                ScriptedCheckerService.ScriptedResult res, boolean manual, boolean recheck) {
         // Kontrol YÜRÜTÜLEMEDİYSE (k6 yok / havuz dolu) hiçbir şey kaydedilmez: uptime serisine
         // sahte bir başarısızlık, alarm zincirine sahte bir kanıt girmesin. Çağıran "skipped"
         // görür; manuel tetikte kullanıcıya sebep, teyit zincirinde ise zinciri iptal ettirir.
@@ -9337,6 +9384,7 @@ public class SchedulerService {
             c.setOutputTail(res.outputTail());
             c.setError(res.error());
             c.setManual(manual);   // 2026-09-29: anomali serisi yalnız zamanlanmış koşumları sayar
+            if (recheck) c.setRecheck(Boolean.TRUE);   // k6r inceleme #1: zincir adımı (zamanlanmış koşum NULL kalır)
             c.setViaProxy(res.viaProxy());
             c.setScriptVersion(m.getScriptVersion());
             c.setK6Version(fitK6Version(res.k6Version()));
@@ -9397,7 +9445,7 @@ public class SchedulerService {
         // (Guard'ın kendi içi de sessiz; bu ikinci kemer enjeksiyonun hiç yapılmadığı yolları
         // da kapsıyor — aksi halde tek bir null bütün senaryo sweep'ini sessizce düşürürdü.)
         try {
-            String disabled = scriptedAnomalyGuard == null ? null : scriptedAnomalyGuard.evaluate(m, res, manual);
+            String disabled = scriptedAnomalyGuard == null ? null : scriptedAnomalyGuard.evaluate(m, res, manual, recheck);
             if (disabled != null) {
                 out.put("disabled", true);
                 out.put("disabled_reason", disabled);

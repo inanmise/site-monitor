@@ -324,6 +324,47 @@ class MonitoringControllerScriptedScheduleTest {
     }
 
     @Test
+    @DisplayName("inceleme #1: geçmiş satırı recheck alanını YALNIZ teyit / kurtarma yeniden kontrolünde taşır")
+    void history_recheckFieldOnlyWhenTrue() throws Exception {
+        var m = live(49L);
+        when(scriptedMonitorRepo.findById(49L)).thenReturn(Optional.of(m));
+        com.sitemonitor.model.ScriptedCheck re = new com.sitemonitor.model.ScriptedCheck();
+        re.setId(1L); re.setMonitorId(49L); re.setOk(false); re.setStatus("TIMEOUT"); re.setRecheck(Boolean.TRUE);
+        re.setCheckedAt("2030-01-02T05:01:00");
+        com.sitemonitor.model.ScriptedCheck sched = new com.sitemonitor.model.ScriptedCheck();
+        sched.setId(2L); sched.setMonitorId(49L); sched.setOk(false); sched.setStatus("TIMEOUT");
+        sched.setCheckedAt("2030-01-02T05:00:00");
+        when(scriptedCheckRepo.findByMonitorIdAndCheckedAtBetween(anyLong(), anyString(), anyString(), any()))
+                .thenReturn(new org.springframework.data.domain.PageImpl<>(java.util.List.of(re, sched),
+                        org.springframework.data.domain.PageRequest.of(0, 50), 2));
+
+        mvc.perform(get("/api/monitoring/scripted/49/history").param("days", "7").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items[0].recheck").value(true))
+                .andExpect(jsonPath("$.data.items[1].recheck").doesNotExist());
+    }
+
+    @Test
+    @DisplayName("inceleme #6: plan sıfırlandıysa yanıt next_run_at = null döner (eski plan gösterilmez); değişmediyse saklı plan")
+    void update_replanned_responseHasNoStalePlan() throws Exception {
+        var m = live(48L);
+        m.setScheduleMode("CRON");
+        m.setCronExpression("0 8 * * *");
+        m.setIntervalSeconds(86_400);
+        m.setNextRunAt("2030-01-02T05:00:00");
+        when(scriptedMonitorRepo.findById(48L)).thenReturn(Optional.of(m));
+        when(scriptedMonitorRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+        when(scriptedCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(48L)).thenReturn(Optional.empty());
+
+        String unchanged = update(48L, "{\"name\":\"yeni ad 48\"}");
+        assertThat(unchanged).contains("\"next_run_at\":\"2030-01-02T05:00:00\"");
+
+        String replanned = update(48L, "{\"schedule_mode\":\"CRON\",\"cron_expression\":\"0 9 * * *\"}");
+        verify(schedulerService).scriptedScheduleChanged(48L);
+        assertThat(replanned).contains("\"next_run_at\":null").doesNotContain("2030-01-02T05:00:00");
+    }
+
+    @Test
     @DisplayName("düz aralıkta yalnız aralık değişirse plan SIFIRLANMAZ (bugünkü davranış — vade kısaltmayı kendisi yakalar)")
     void update_plainIntervalChange_noReplan() throws Exception {
         var m = live(42L);

@@ -157,4 +157,18 @@ class ScriptedEngineSecurityTest {
         assertThat(detail).contains("script: Line 4:1").doesNotContain("k6-run-").doesNotContain("Users");
         assertThat(ScriptedCheckerService.K6_LINE_COL.matcher(detail).find()).isTrue();
     }
+
+    @Test
+    @DisplayName("inceleme L2: dış catch yolunun sonucu (errWithContext) koşumda üretilen jetonları da maskeler — mesaj + çıktı")
+    void errWithContextMasksRuntimeTokens() {
+        ScriptedCheckerService svc = serviceWithGuard(mock(SsrfGuard.class));
+        ProcessProbe.Result r = new ProcessProbe.Result("out", 1, false, false);
+        ScriptedCheckerService.ScriptedResult res = org.springframework.test.util.ReflectionTestUtils.invokeMethod(svc,
+                "errWithContext", "k6 çıktısı okunamadı: access_token=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTYifQ.c2lnbmF0dXJlMTIzNA",
+                r, "GET /x\nAuthorization: Bearer gizli-oturum-jetonu\nkayitli=S3CR3T", 1200L, List.of("S3CR3T"), false, "v2.3.0");
+        assertThat(res).isNotNull();
+        assertThat(res.error()).doesNotContain("eyJhbGci").doesNotContain("c2lnbmF0dXJl");
+        assertThat(res.outputTail()).doesNotContain("gizli-oturum-jetonu").doesNotContain("S3CR3T");
+        assertThat(res.status()).isEqualTo("ERROR");
+    }
 }

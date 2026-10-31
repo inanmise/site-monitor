@@ -61,7 +61,7 @@ class ScriptedScheduleSweepTest {
             submitted.add(m.getId());
             List<String> q = scripted.get(m.getId());
             String status = q == null || q.isEmpty() ? "PASS" : q.remove(0);
-            return CompletableFuture.completedFuture(result(status));
+            return CompletableFuture.completedFuture(resultOf(status));
         });
         // Planın hedefli yazımı: bellekteki varlığa da yansısın (bir sonraki tık saklı planı okusun)
         lenient().doAnswer(i -> {
@@ -69,6 +69,31 @@ class ScriptedScheduleSweepTest {
             for (ScriptedMonitor m : active) if (id.equals(m.getId())) m.setNextRunAt(i.getArgument(1));
             return 1;
         }).when(h.scriptedRepo).updateNextRunAt(anyLong(), any());
+        // Koşullu plan yazımı (k6r inceleme #5): yalnız saklı değer okunan değerse yazar
+        lenient().doAnswer(i -> {
+            Long id = i.getArgument(0);
+            for (ScriptedMonitor m : active)
+                if (id.equals(m.getId()) && m.getNextRunAt() == null) { m.setNextRunAt(i.getArgument(1)); return 1; }
+            return 0;
+        }).when(h.scriptedRepo).updateNextRunAtIfNull(anyLong(), any());
+        lenient().doAnswer(i -> {
+            Long id = i.getArgument(0);
+            for (ScriptedMonitor m : active)
+                if (id.equals(m.getId()) && java.util.Objects.equals(m.getNextRunAt(), i.getArgument(1))) {
+                    m.setNextRunAt(i.getArgument(2));
+                    return 1;
+                }
+            return 0;
+        }).when(h.scriptedRepo).updateNextRunAtIfEquals(anyLong(), any(), any());
+    }
+
+    /** "SKIPPED:&lt;neden&gt;" = sınıflandırılmış atlama (k6 yok / dosya okuma engeli); düz durum = {@link #result}. */
+    private static ScriptedCheckerService.ScriptedResult resultOf(String status) {
+        if (status.startsWith("SKIPPED:")) {
+            var reason = com.sitemonitor.service.failure.CheckFailureReason.valueOf(status.substring("SKIPPED:".length()));
+            return result(ScriptedCheckerService.STATUS_SKIPPED).withDetails(ScriptedCheckerService.RunDetails.reasonOnly(reason));
+        }
+        return result(status);
     }
 
     private static ScriptedCheckerService.ScriptedResult result(String status) {
@@ -190,6 +215,40 @@ class ScriptedScheduleSweepTest {
     }
 
     @Test
+    @DisplayName("inceleme #2: dosya okuma engeli (SCRIPT_FILE_READ_BLOCKED) kalıcıdır — dönem GERİ VERİLMEZ, her tıkta denenmez")
+    void blockedSkipIsNotRetried() {
+        at("2026-11-02T10:00:00");
+        plain(6);
+        scripted.put(6L, new ArrayList<>(List.of("SKIPPED:SCRIPT_FILE_READ_BLOCKED", "SKIPPED:SCRIPT_FILE_READ_BLOCKED")));
+        tick();
+        assertThat(submits(6)).isEqualTo(1);
+        advanceSeconds(60);
+        tick();   // geri verilen dönem yok, aralık (300 sn) dolmadı → koşmaz
+        advanceSeconds(60);
+        tick();
+        assertThat(submits(6)).isEqualTo(1);
+        advanceSeconds(200);
+        tick();   // olağan aralıkta yine denenir
+        assertThat(submits(6)).isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("inceleme #2: k6 yok (K6_UNAVAILABLE) de geri verilmez; nedensiz / havuz dolu atlama verilir")
+    void transientSkipRule() {
+        assertThat(SchedulerService.transientScriptedSkip(resultOf("SKIPPED:K6_UNAVAILABLE"))).isFalse();
+        assertThat(SchedulerService.transientScriptedSkip(resultOf("SKIPPED:SCRIPT_FILE_READ_BLOCKED"))).isFalse();
+        assertThat(SchedulerService.transientScriptedSkip(resultOf("SKIPPED"))).isTrue();
+        assertThat(SchedulerService.transientScriptedSkip(null)).isTrue();
+        at("2026-11-02T10:00:00");
+        plain(7);
+        scripted.put(7L, new ArrayList<>(List.of("SKIPPED:K6_UNAVAILABLE")));
+        tick();
+        advanceSeconds(60);
+        tick();
+        assertThat(submits(7)).isEqualTo(1);
+    }
+
+    @Test
     @DisplayName("B3: SKIPPED satır / alarm üretmez (bugünkü gibi) — yalnız dönem geri verilir")
     void skippedWritesNoRow() {
         at("2026-11-02T10:00:00");
@@ -209,6 +268,8 @@ class ScriptedScheduleSweepTest {
         tick();
         assertThat(submits(10)).isEqualTo(1);
         verify(h.scriptedRepo, never()).updateNextRunAt(anyLong(), any());
+        verify(h.scriptedRepo, never()).updateNextRunAtIfNull(anyLong(), any());
+        verify(h.scriptedRepo, never()).updateNextRunAtIfEquals(anyLong(), any(), any());
     }
 
     @Test
@@ -301,8 +362,10 @@ class ScriptedScheduleSweepTest {
         List<Long> due = h.scheduler.dueCheckJobIds(CheckJobTypes.SCRIPTED);
         assertThat(due).containsExactly(21L);
         assertThat(windowed.getNextRunAt()).isEqualTo(ISO.format(ist("2026-11-09T09:00:00")));
-        verify(h.scriptedRepo, times(1)).updateNextRunAt(eq(20L), any());
+        // ilk plan koşullu yazımla kurulur (#5); düz aralıklı izleme plan yazmaz
+        verify(h.scriptedRepo, times(1)).updateNextRunAtIfNull(eq(20L), any());
         verify(h.scriptedRepo, never()).updateNextRunAt(eq(21L), any());
+        verify(h.scriptedRepo, never()).updateNextRunAtIfNull(eq(21L), any());
 
         at("2026-11-09T09:00:10");
         assertThat(h.scheduler.dueCheckJobIds(CheckJobTypes.SCRIPTED)).contains(20L);
@@ -315,6 +378,36 @@ class ScriptedScheduleSweepTest {
         when(h.scriptedRepo.findCheckDispatchRows()).thenReturn(List.<Object[]>of(new Object[]{30L, 300}));
         assertThat(h.scheduler.dueCheckJobIds(CheckJobTypes.SCRIPTED)).containsExactly(30L);
         verify(h.scriptedRepo, never()).updateNextRunAt(anyLong(), any());
+    }
+
+    @Test
+    @DisplayName("inceleme #5: plan yokken iki çağıran aynı anda 'first' görür — yalnız koşullu yazımı kazanan koşar")
+    void firstPlanRace_onlyCasWinnerRuns() {
+        at("2026-11-09T10:00:00");   // pazartesi, pencerede
+        ScriptedMonitor m = weekdayWindow(60);
+        var spec = ScriptedSchedule.specOf(m);
+        // ikisi de saklı planı NULL okudu (klasik gövde ∥ gönderim)
+        boolean a = h.scheduler.scriptedPlanDue(60L, spec, null, java.util.Set.of(), true);
+        boolean b = h.scheduler.scriptedPlanDue(60L, spec, null, java.util.Set.of(), false);
+        assertThat(a).isTrue();
+        assertThat(b).isFalse();
+        assertThat(m.getNextRunAt()).isEqualTo(ISO.format(ist("2026-11-09T10:05:00")));
+        verify(h.scriptedRepo, times(2)).updateNextRunAtIfNull(eq(60L), any());
+    }
+
+    @Test
+    @DisplayName("inceleme #5: plan yazımı DB hatası verirse koşulmaz (kaybedilmiş sayılır), sonraki tık yeniden dener")
+    void firstPlanWriteFailure_doesNotRun() {
+        at("2026-11-09T10:00:00");
+        ScriptedMonitor m = weekdayWindow(61);
+        when(h.scriptedRepo.updateNextRunAtIfNull(eq(61L), any()))
+                .thenThrow(new org.springframework.dao.QueryTimeoutException("x"))
+                .thenAnswer(i -> { m.setNextRunAt(i.getArgument(1)); return 1; });
+        tick();
+        assertThat(submits(61)).isZero();
+        advanceSeconds(60);
+        tick();
+        assertThat(submits(61)).isEqualTo(1);
     }
 
     // ── Plan sıfırlama kancaları ────────────────────────────────────────────────────────────────────────────────────

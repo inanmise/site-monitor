@@ -133,11 +133,13 @@ public class MonitoringMetricsExporter {
             + "AND created_at < ? AND (next_attempt_at IS NULL OR next_attempt_at < ?)";
     static final String SQL_LOCKS = "SELECT name, locked_until FROM scheduler_lock";
     /**
-     * Son 24 sa ZAMANLANMIŞ sentetik koşumlar (k6r D3; elle "Şimdi kontrol et" / test sayılmaz — {@code manual}), sonuç ×
-     * k6 sürümü — iki aile tek sorgudan ({@code idx_sc_checked_at}).
+     * Son 24 sa ZAMANLANMIŞ sentetik koşumlar (k6r D3; elle "Şimdi kontrol et" / test sayılmaz — {@code manual}; teyit /
+     * kurtarma zincirinin yeniden kontrolleri de sayılmaz — {@code recheck}, inceleme #1), sonuç × k6 sürümü — iki aile tek
+     * sorgudan ({@code idx_sc_checked_at}).
      */
     static final String SQL_SCRIPTED_RUNS = "SELECT status, k6_version, COUNT(*) FROM scripted_checks "
-            + "WHERE checked_at >= ? AND (manual IS NULL OR manual = FALSE) GROUP BY status, k6_version";
+            + "WHERE checked_at >= ? AND (manual IS NULL OR manual = FALSE) AND (recheck IS NULL OR recheck = FALSE) "
+            + "GROUP BY status, k6_version";
     /** Kurum geneli aileleri başka pod yayıyor sayılması için gözlemin en çok yaşı: {@code refresh-seconds} × bu çarpan. */
     static final double ORG_OBSERVATION_FRESH_FACTOR = 2.5;
     /**

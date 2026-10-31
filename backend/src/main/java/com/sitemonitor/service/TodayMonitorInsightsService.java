@@ -114,6 +114,9 @@ public class TodayMonitorInsightsService {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.sitemonitor.repository.DbQueryMonitorRepository dbQueryRepo;
     private final ScriptedMonitorRepository scriptedRepo;
+    /** Tatil takvimi — zamanlamalı sentetik izlemenin "kaçırılan planlı koşum" kuralı için (k6r inceleme #3); isteğe bağlı. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.dbquery.HolidayCalendarService holidayCalendar;
     private final DomainMonitorRepository domainRepo;
     private final MaintenanceWindowRepository maintenanceRepo;
     private final MaintenanceService maintenanceService;
@@ -308,8 +311,15 @@ public class TodayMonitorInsightsService {
             // gece / hafta sonu bekleyen izlemeyi "bayat" sayardı. Planlı çalışma (next_run_at) + pay geçmediyse bayat değil.
             // Zamanlamalı sentetik izleme (k6r D2, 2026-10-31): aynı planlı koşum kuralı — pencere dışında beklemek bayatlık değil
             if (m instanceof com.sitemonitor.model.ScriptedMonitor sm && ScriptedSchedule.hasPlan(sm)) {
-                if (!MonitoringOverviewService.isScriptedStale(sm, now)) continue;
-                Instant ref = lastAt != null ? parse(lastAt) : parse(sm.getNextRunAt());
+                // Pencerede kontrol yoksa: izleme pencere İÇİNDE yaratıldıysa yaratılış anından ölçülür (koşmayan yeni izleme de
+                // planlı koşumu kaçırınca gecikmiş görünür — k6r inceleme #3, bilinmeyen yeşil olmasın); pencereden ÖNCE
+                // yaratıldıysa son kontrol bilinmez (aylık cron 7 günlük pencerede kontrol göstermeyebilir) → yalnız plan kuralı.
+                Instant createdAt = parse(sm.getCreatedAt());
+                String lastOrCreated = lastAt != null ? lastAt
+                        : createdAt != null && createdAt.isAfter(sinceAt) ? sm.getCreatedAt() : null;
+                if (!MonitoringOverviewService.isScriptedStale(sm, lastOrCreated, now, holidays())) continue;
+                Instant ref = lastAt != null ? parse(lastAt)
+                        : sm.getCreatedAt() != null ? parse(sm.getCreatedAt()) : parse(sm.getNextRunAt());
                 if (ref == null) continue;
                 Map<String, Object> row = row(m);
                 row.put("last_check", lastAt); row.put("age_min", Duration.between(ref, now).getSeconds() / 60);
@@ -344,6 +354,18 @@ public class TodayMonitorInsightsService {
         }
         items.sort(Comparator.comparingLong((Map<String, Object> m) -> -(Long) m.get("age_min")));
         return items;
+    }
+
+    /** Tatil günleri (servis 60 sn bellekli); okunamaz / servis yok → boş küme. */
+    private Set<LocalDate> holidays() {
+        com.sitemonitor.service.dbquery.HolidayCalendarService h = holidayCalendar;
+        if (h == null) return Set.of();
+        try {
+            Set<LocalDate> d = h.days();
+            return d == null ? Set.of() : d;
+        } catch (Exception e) {
+            return Set.of();
+        }
     }
 
     static Instant parse(String iso) {

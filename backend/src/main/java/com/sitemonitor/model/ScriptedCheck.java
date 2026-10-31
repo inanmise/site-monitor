@@ -123,6 +123,16 @@ public class ScriptedCheck {
     @Column(name = "manual")
     private Boolean manual;
 
+    /**
+     * Teyit / kurtarma zincirinin YENİDEN KONTROLÜ mü (2026-10-31, k6r inceleme #1 — {@code dbquery_checks.recheck} emsali)
+     * — true = zincir adımı; NULL / false = zamanlanmış koşum (dağıtık işçi işi dahil) ya da elle koşum. Kontrol geçmişi
+     * ve uptime serisi bunları da sayar; anomali guard'ının zaman aşımı serisi ve Grafana'nın "zamanlanmış koşum"
+     * ailesi SAYMAZ: alarm teyit zincirinin sonunda açılır, zincir adımları seriye girerse alarm açılmadan seri dolar ve
+     * izleme kapanırdı. Bu sürümden önceki satırlar NULL taşır.
+     */
+    @Column(name = "recheck")
+    private Boolean recheck;
+
     // ── Koşum verisi (2026-10-31, k6 inceleme D1) — hepsi null olabilir: bu sürümden önceki satırlar ve k6'nın hiç
     // koşamadığı koşumlar taşımaz (okuyan taraf uydurmaz). Kaynak: k6 --out json + --summary-export; MASKELİ yazılır.
 

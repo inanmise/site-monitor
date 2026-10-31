@@ -111,4 +111,42 @@ class ScriptedScheduleTodayTest {
         assertThat(cron).containsEntry("expected_min", MonitoringOverviewService.DBQUERY_STALE_GRACE_SECONDS / 60)
                 .containsEntry("interval_sec", 86_400).containsEntry("never", false);
     }
+
+    @Test
+    @DisplayName("inceleme #3: plan ileri yazılsa da koşmayan zamanlamalı izleme bayat — son kontrol ya da (hiç yoksa) yaratılış anından")
+    void skippedOrNeverRunScheduledScriptedIsStale() {
+        ScriptedMonitor skipped = k6(4, "atlanan");
+        skipped.setScheduleMode("CRON"); skipped.setCronExpression("0 8 * * *"); skipped.setIntervalSeconds(86_400);
+        skipped.setNextRunAt(ISO.format(NOW.plus(Duration.ofHours(10))));      // her dönem ileri yazıldı
+        ScriptedMonitor never = k6(5, "hic");
+        never.setScheduleMode("CRON"); never.setCronExpression("0 8 * * *"); never.setIntervalSeconds(86_400);
+        never.setNextRunAt(ISO.format(NOW.plus(Duration.ofHours(10))));
+        ScriptedMonitor ok = k6(6, "bugun-kostu");                              // bugünkü 08:00 tetiği koştu
+        ok.setScheduleMode("CRON"); ok.setCronExpression("0 8 * * *"); ok.setIntervalSeconds(86_400);
+        ok.setNextRunAt(ISO.format(NOW.plus(Duration.ofHours(10))));
+        when(scriptedRepo.findAll()).thenReturn(List.of(skipped, never, ok));
+        when(activityRepo.lastCheckByMonitor(anyString())).thenReturn(List.<Object[]>of(
+                new Object[]{"SCRIPTED", 4L, at(60 * 30)}, new Object[]{"SCRIPTED", 6L, at(60 * 10)}));
+
+        TodayMonitorInsightsService.Snapshot snap = svc.snapshot(NOW);
+
+        assertThat(snap.stale()).extracting(m -> m.get("monitor_id")).containsExactlyInAnyOrder(4L, 5L);
+        var hic = snap.stale().stream().filter(m -> m.get("monitor_id").equals(5L)).findFirst().orElseThrow();
+        assertThat(hic).containsEntry("never", true);
+    }
+
+    @Test
+    @DisplayName("inceleme #3: pencereden önce yaratılmış ve pencerede kontrolü görünmeyen aylık cron — son kontrol bilinmez, plan ileride → bayat DEĞİL")
+    void monthlyCronOutsideActivityWindowIsNotGuessedStale() {
+        ScriptedMonitor monthly = k6(7, "aylik");
+        monthly.setCreatedAt(at(60L * 24 * 60));                            // 60 gün önce
+        monthly.setScheduleMode("CRON"); monthly.setCronExpression("@monthly"); monthly.setIntervalSeconds(30 * 86_400);
+        monthly.setNextRunAt(ISO.format(NOW.plus(Duration.ofDays(10))));
+        when(scriptedRepo.findAll()).thenReturn(List.of(monthly));
+        when(activityRepo.lastCheckByMonitor(anyString())).thenReturn(List.of());
+
+        assertThat(ScriptedSchedule.hasPlan(monthly)).isTrue();
+        assertThat(MonitoringOverviewService.isScriptedStale(monthly, null, NOW, java.util.Set.of())).as("doğrudan").isFalse();
+        assertThat(svc.snapshot(NOW).stale()).isEmpty();
+    }
 }

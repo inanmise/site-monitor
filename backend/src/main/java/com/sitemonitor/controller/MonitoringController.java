@@ -7170,7 +7170,8 @@ public class MonitoringController {
             m.setUpdatedAt(ISO.format(Instant.now()));
             monitorHistory.stampUpdated(m, session);
             com.sitemonitor.model.ScriptedMonitor saved = scriptedMonitorRepo.save(m);
-            scriptedReplanIfChanged(schedBefore, saved);   // k6r D2: zamanlama değiştiyse plan sıfırlanır
+            // k6r D2: zamanlama değiştiyse plan sıfırlanır — yanıt da sıfırlanmış planı söyler (inceleme #6; eski plan değil)
+            boolean k6Replanned = scriptedReplanIfChanged(schedBefore, saved);
             // Sürüm YALNIZ içerik (script/env) değişince yazılır: aralık/timeout gibi ayar
             // düzenlemeleri sürüm geçmişini gereksiz satırlarla şişirmemeli.
             if (contentChanged(oldScript, oldEnv, saved)) {
@@ -7189,6 +7190,7 @@ public class MonitoringController {
             var changeRow = monitorHistory.record(MonitorHistoryService.SCRIPTED, saved.getId(), saved.getName(), saved.getTeamId(),
                     MonitorHistoryService.UPDATE, _before, AuditDiff.snapshot(saved, SCRIPTED_FIELDS), changeNote(body), session);
             noteConfigChanged(changeRow, ActivityLogService.SCRIPTED, saved.getName(), session);
+            if (k6Replanned) saved.setNextRunAt(null);   // inceleme #6: yanıt sıfırlanmış planı söyler, eskisini değil
             Map<String, Object> out = new LinkedHashMap<>(enrichScripted(saved,
                     scriptedCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null), teamNameMap(),
                     alertEventRepo.findOpenAlert(saved.getName(), EscalationService.TYPE_SCRIPTED_FAIL).orElse(null)));
@@ -7482,6 +7484,8 @@ public class MonitoringController {
             if (!(o instanceof com.sitemonitor.model.ScriptedCheck c)) continue;
             Map<String, Object> row = SCRIPTED_ROW_MAPPER.convertValue(c, LinkedHashMap.class);
             SCRIPTED_RAW_RUN_COLUMNS.forEach(row::remove);
+            // Teyit / kurtarma yeniden kontrolü (k6r inceleme #1) — alan YALNIZ true iken taşınır (eski / zamanlanmış satır yok)
+            if (!Boolean.TRUE.equals(c.getRecheck())) row.remove("recheck");
             row.putAll(com.sitemonitor.service.scripted.ScriptedRunView.fields(c));
             rows.add(row);
         }
@@ -7984,11 +7988,13 @@ public class MonitoringController {
      * Zamanlama değiştiyse ve izleme önce YA DA sonra zamanlamalıysa plan sıfırlanır ({@code next_run_at} + {@code scripted:<id>}
      * küme vadesi). Düz aralıkta yalnız aralık değişmesi bugünkü gibi (vade kısaltılan aralığı kendisi yakalar).
      */
-    private void scriptedReplanIfChanged(com.sitemonitor.model.ScriptedMonitor before, com.sitemonitor.model.ScriptedMonitor after) {
-        if (before == null || after == null || after.getId() == null) return;
-        if (com.sitemonitor.service.ScriptedSchedule.sameSchedule(before, after)) return;
-        if (!com.sitemonitor.service.ScriptedSchedule.hasPlan(before) && !com.sitemonitor.service.ScriptedSchedule.hasPlan(after)) return;
+    /** @return plan sıfırlandı mı (yanıttaki {@code next_run_at} o zaman null olmalı). */
+    private boolean scriptedReplanIfChanged(com.sitemonitor.model.ScriptedMonitor before, com.sitemonitor.model.ScriptedMonitor after) {
+        if (before == null || after == null || after.getId() == null) return false;
+        if (com.sitemonitor.service.ScriptedSchedule.sameSchedule(before, after)) return false;
+        if (!com.sitemonitor.service.ScriptedSchedule.hasPlan(before) && !com.sitemonitor.service.ScriptedSchedule.hasPlan(after)) return false;
         scriptedReplan(after.getId());
+        return true;
     }
 
     private void scriptedReplan(long monitorId) {

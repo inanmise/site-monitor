@@ -111,7 +111,7 @@
       }
     } ]
   },
-  "description" : "SiteMonitor izleme durumu, alarmlar, sertifikalar ve sistemin kendi sağlığı — takım ve tür süzgeçli. Pano revizyonu 11 · SiteMonitor 0.0.0-gate.",
+  "description" : "SiteMonitor izleme durumu, alarmlar, sertifikalar ve sistemin kendi sağlığı — takım ve tür süzgeçli. Pano revizyonu 12 · SiteMonitor 0.0.0-gate.",
   "editable" : true,
   "fiscalYearStartMonth" : 0,
   "graphTooltip" : 1,
@@ -5369,7 +5369,7 @@
   }, {
     "type" : "piechart",
     "title" : "Sentetik koşum sonuçları (24 sa)",
-    "description" : "Son 24 saatte ZAMANLANMIŞ sentetik (k6) koşumlarının sonuca göre dağılımı — kurum geneli, takım süzgecinden bağımsız; elle \"Şimdi kontrol et\" ve form testi sayılmaz, teyit / kurtarma yeniden kontrolleri sayılır. PASS: geçti · FAIL: doğrulama ya da eşik düştü · ERROR: betik / altyapı hatası (sözdizimi, k6 başlatılamadı) · TIMEOUT: süreç bütçesi aşıldı · NO_CHECKS: koştu ama hiçbir şey doğrulamadı. Havuz dolduğu için yürütülemeyen koşum kaydedilmez, burada görünmez. Veri yoksa kaynak okunamadı (0 sayılmaz).",
+    "description" : "Son 24 saatte ZAMANLANMIŞ sentetik (k6) koşumlarının sonuca göre dağılımı — kurum geneli, takım süzgecinden bağımsız; elle \"Şimdi kontrol et\", form testi ve teyit / kurtarma zincirinin yeniden kontrolleri sayılmaz. PASS: geçti · FAIL: doğrulama ya da eşik düştü · ERROR: betik / altyapı hatası (sözdizimi, k6 başlatılamadı) · TIMEOUT: süreç bütçesi aşıldı · NO_CHECKS: koştu ama hiçbir şey doğrulamadı. Havuz dolduğu için yürütülemeyen koşum kaydedilmez, burada görünmez. Veri yoksa kaynak okunamadı (0 sayılmaz).",
     "datasource" : {
       "type" : "prometheus",
       "uid" : "${datasource}"
@@ -13536,6 +13536,6 @@
   "timezone" : "browser",
   "title" : "SiteMonitor — Uçtan uca izleme",
   "uid" : "sitemonitor-overview",
-  "version" : 11,
+  "version" : 12,
   "weekStart" : "monday"
 }
