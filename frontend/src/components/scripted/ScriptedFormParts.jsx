@@ -9,7 +9,7 @@ import AlertBanner from '../ui/AlertBanner.jsx'
 import HintPopover from '../ui/HintPopover.jsx'
 import { MonitorGuideDialog } from '../ui/MonitorGuideButton.jsx'
 import { parseK6Markers } from '../../utils/k6Errors.js'
-import { envLint, runContextChips } from './scriptedFormModel.js'
+import { envLint } from './scriptedFormModel.js'
 
 /**
  * Sentetik İzleme formunun sunum parçaları (2026-10-31, k6r fe1). Form ve test paneli ScriptedMonitorPage.jsx'te
@@ -169,24 +169,6 @@ export function EmptyEnvWarning({ t, names }) {
     <AlertBanner tone="warning" className="mb-0" title={t('scripted.f.envEmptyTitle')}>
       <span data-slot="env-empty-warning" className="[overflow-wrap:anywhere]">{t('scripted.f.envEmptyBody', names.join(', '))}</span>
     </AlertBanner>
-  )
-}
-
-/** Koşum bağlamı çipleri (`run_context`) — dile göre; alan yoksa hiçbir şey çizilmez. */
-export function RunContextChips({ t, ctx }) {
-  const chips = useMemo(() => runContextChips(ctx), [ctx])
-  if (!chips.length) return null
-  return (
-    <div data-slot="run-context" className="flex min-w-0 flex-wrap items-center gap-1.5">
-      <span className="text-xs text-muted-foreground">{t('scripted.f.ctx.title')}</span>
-      {chips.map((c) => (
-        <Badge key={c.key} variant="outline" data-ctx={c.key}
-          className={cn('h-auto rounded-md overflow-visible font-normal whitespace-normal [overflow-wrap:anywhere]',
-            c.tone === 'warning' ? 'border-amber-500/50 text-amber-800 dark:text-amber-300' : 'text-muted-foreground')}>
-          {t(`scripted.f.ctx.${c.key}`, ...c.args)}
-        </Badge>
-      ))}
-    </div>
   )
 }
 

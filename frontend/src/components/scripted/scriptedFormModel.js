@@ -335,25 +335,6 @@ export function stripContextLine(error, runContext) {
   return kept.join('\n').trimEnd()
 }
 
-/** `run_context` → çip tanımları ({ key, tone, args }); alan yoksa boş dizi. */
-export function runContextChips(ctx) {
-  if (!ctx || typeof ctx !== 'object') return []
-  const out = []
-  const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null)
-  if (num(ctx.process_budget_s) != null) out.push({ key: 'budget', tone: 'muted', args: [ctx.process_budget_s] })
-  if ('request_timeout_s' in ctx) {
-    out.push(num(ctx.request_timeout_s) != null
-      ? { key: 'reqTimeout', tone: 'muted', args: [ctx.request_timeout_s] }
-      : { key: 'reqTimeoutDefault', tone: 'muted', args: [] })
-  }
-  if (ctx.egress === 'proxy') out.push({ key: 'egressProxy', tone: 'muted', args: [] })
-  else if (ctx.egress === 'direct') out.push({ key: 'egressDirect', tone: 'muted', args: [] })
-  if (ctx.corporate_ca === true) out.push({ key: 'caYes', tone: 'muted', args: [] })
-  else if (ctx.corporate_ca === false) out.push({ key: 'caNo', tone: 'muted', args: [] })
-  if (ctx.inverted_budget === true) out.push({ key: 'inverted', tone: 'warning', args: [] })
-  return out
-}
-
 // ── Zamanlama ───────────────────────────────────────────────────────────────────────────────────────────────
 
 /** Formun zamanlama alt nesnesi (dbquery ScheduleEditor değer adlarıyla; aralık formun `intervalSeconds`'ında). */

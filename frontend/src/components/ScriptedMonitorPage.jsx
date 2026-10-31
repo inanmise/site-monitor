@@ -22,14 +22,13 @@ import { FlaskConical, Play, Plus, Trash2, Eye, EyeOff, AlertTriangle, LayoutDas
 import ScheduleEditor from './dbquery/ScheduleEditor.jsx'
 import { durationText as schedDurationText, intervalProblem, windowProblems } from './dbquery/scheduleModel.js'
 import { scheduleSummary, serverFieldErrors } from './dbquery/dbqueryPageModel.js'
-import StepList from './scripted/StepList.jsx'
 import {
   DEFAULT_SCRIPTED_SCHEDULE, emptyEnvNames, hasTimingError, keptSecretsIgnored, looksSecretName, mergeEnv,
   scheduleEditorValue, scheduleErrorsOf, scheduleFromScriptedRow, schedulePayload, scheduleProblems, SCHEDULE_ERROR_KEYS,
   stopPoint, stripContextLine, targetHostOf, templateEnvDescs, testEnvPayload, TIMING_SECTION_KEYS, usesSavedSecret,
 } from './scripted/scriptedFormModel.js'
 import {
-  EmptyEnvWarning, EnvLintChips, EnvRowNotes, FormBlock, GotoLineButton, InlineCodeText, RunContextChips,
+  EmptyEnvWarning, EnvLintChips, EnvRowNotes, FormBlock, GotoLineButton, InlineCodeText,
   ScriptedEmptyState, TimingBlock, useEnvLint,
 } from './scripted/ScriptedFormParts.jsx'
 import { duplicateName } from '../utils/duplicateName.js'
@@ -2477,7 +2476,7 @@ function TestRunPanel({ t, result, onGoto }) {
         </p>
       )}
 
-      <RunContextChips t={t} ctx={result.run_context} />
+      <RunContextChips context={result.run_context} />
 
       {/* Adım listesi — paylaşılan bileşen (CheckDetail ile aynı): `steps` yoksa `checks_json` listesi */}
       {hasSteps && (

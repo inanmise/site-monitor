@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   scanEnvUsage, looksSecretName, envLint, mergeEnv, testEnvPayload, usesSavedSecret, keptSecretsIgnored,
-  templateEnvDescs, emptyEnvNames, targetHostOf, stopPoint, stripContextLine, runContextChips,
+  templateEnvDescs, emptyEnvNames, targetHostOf, stopPoint, stripContextLine,
   DEFAULT_SCRIPTED_SCHEDULE, scheduleFromScriptedRow, scheduleEditorValue, schedulePayload, scheduleErrorsOf,
   hasTimingError, scheduleProblems, MAX_ENV_SCAN_CHARS,
 } from '../components/scripted/scriptedFormModel.js'
@@ -204,19 +204,6 @@ describe('koşum sonucu yardımcıları', () => {
     expect(stripContextLine(null, {})).toBeNull()
   })
 
-  it('runContextChips', () => {
-    expect(runContextChips({ process_budget_s: 60, request_timeout_s: null, egress: 'proxy', corporate_ca: false, inverted_budget: true }))
-      .toEqual([
-        { key: 'budget', tone: 'muted', args: [60] },
-        { key: 'reqTimeoutDefault', tone: 'muted', args: [] },
-        { key: 'egressProxy', tone: 'muted', args: [] },
-        { key: 'caNo', tone: 'muted', args: [] },
-        { key: 'inverted', tone: 'warning', args: [] },
-      ])
-    expect(runContextChips({ request_timeout_s: 20, egress: 'direct', corporate_ca: true })).toEqual([
-      { key: 'reqTimeout', tone: 'muted', args: [20] }, { key: 'egressDirect', tone: 'muted', args: [] }, { key: 'caYes', tone: 'muted', args: [] }])
-    expect(runContextChips(undefined)).toEqual([])
-  })
 })
 
 describe('zamanlama alanları', () => {
