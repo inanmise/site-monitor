@@ -1,4 +1,4 @@
-import { CheckCircle2, CircleHelp, Siren, TriangleAlert, CircleSlash } from 'lucide-react'
+import { CheckCircle2, CircleHelp, Siren, TriangleAlert, CircleSlash, Hourglass } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
 import { cn } from '@/lib/utils'
@@ -13,17 +13,20 @@ export const RESULTS_TABLE_MIN_PX = 560
  * Sonucun görünür durumu: `unevaluated` (kolon yok / sayı değil — not ile) · `critical` · `warning` · `passed` ·
  * `unknown` (alanlar eksik — asla "geçti" sayılmaz, asla yeşil değil).
  */
+/** Taban kuran notlar (sunucu: ihlal değil, kanıt eksikliği de değil — r177 2. tur) → nötr "taban kuruluyor". */
+export const BASELINE_NOTES = ['first_run', 'baseline_reset', 'no_seasonal_baseline']
+
 export function resultState(r) {
   if (!r) return 'unknown'
-  if (r.evaluated === false) return 'unevaluated'
+  if (r.evaluated === false) return BASELINE_NOTES.includes(r.note) ? 'building' : 'unevaluated'
   if (r.level === 'CRITICAL') return 'critical'
   if (r.level === 'WARNING') return 'warning'
   if (r.passed === true) return 'passed'
   return 'unknown'
 }
 
-const TONE = { passed: 'success', warning: 'warning', critical: 'danger', unevaluated: 'muted', unknown: 'muted' }
-const ICON = { passed: CheckCircle2, warning: TriangleAlert, critical: Siren, unevaluated: CircleSlash, unknown: CircleHelp }
+const TONE = { passed: 'success', warning: 'warning', critical: 'danger', unevaluated: 'muted', building: 'muted', unknown: 'muted' }
+const ICON = { passed: CheckCircle2, warning: TriangleAlert, critical: Siren, unevaluated: CircleSlash, building: Hourglass, unknown: CircleHelp }
 
 /** Sonuç rozeti (geçti / UYARI / KRİTİK / değerlendirilemedi / bilinmiyor). `data-slot="dbq-rr-level"` + `data-state`. */
 export function ResultLevelBadge({ result, className = '' }) {
@@ -42,7 +45,7 @@ const valueOrDash = (v) => (v == null || v === '' ? '—' : String(v))
 /** Sunucu not kodları (`DbQueryEvaluator.NOTE_*`) — `dbq.rr.note.<kod>` ile çevrilir. */
 export const RESULT_NOTE_CODES = ['column_missing', 'not_numeric', 'no_rows', 'first_run', 'prev_zero', 'partial', 'capped', 'query_failed', 'null_value', 'prev_unreadable',
   // 2026-10-31 (r177): sorgu / kural değişti → taban yeniden kuruluyor; mevsimsel taban yok; tazelik kolonu zaman damgası değil
-  'baseline_reset', 'no_seasonal_baseline', 'not_timestamp', 'db_clock_unavailable']
+  'baseline_reset', 'no_seasonal_baseline', 'not_timestamp', 'db_clock_unavailable', 'future_timestamp']
 
 /** Not → metin: bilinen kod çevrilir, bilinmeyen not (eski kayıt / serbest metin) olduğu gibi gösterilir. */
 export function resultNoteText(t, note) {
@@ -76,7 +79,7 @@ export default function RuleResultsList({ results, compact = false }) {
           <li key={r?.id || i} data-slot="dbq-rr-item" data-state={resultState(r)} className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
             <span className="min-w-0 font-medium [overflow-wrap:anywhere]">{name(r, i)}</span>
             <span className="text-muted-foreground tabular-nums [overflow-wrap:anywhere]">{valueOrDash(r?.actual)}</span>
-            {resultState(r) === 'unevaluated' && noteOf(r) && (
+            {['unevaluated', 'building'].includes(resultState(r)) && noteOf(r) && (
               <span data-slot="dbq-rr-note" data-note={r.note} className="text-muted-foreground [overflow-wrap:anywhere]">· {noteOf(r)}</span>
             )}
             <ResultLevelBadge result={r} className="ml-auto text-[11px]" />

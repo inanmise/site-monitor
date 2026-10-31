@@ -339,3 +339,23 @@ describe('r177 entegrasyon — sunucu biçimleri', () => {
     }
   })
 })
+
+describe('r177 2. tur — taban kuruluyor, bilgi yetkisi', () => {
+  it('taban kuran notlar "building" (nötr), gerçek kanıt eksikliği "unevaluated"', async () => {
+    const { resultState, BASELINE_NOTES, RESULT_NOTE_CODES } = await import('../components/dbquery/RuleResultsList.jsx')
+    for (const note of BASELINE_NOTES) expect(resultState({ evaluated: false, note })).toBe('building')
+    expect(resultState({ evaluated: false, note: 'column_missing' })).toBe('unevaluated')
+    expect(resultState({ evaluated: false, note: 'future_timestamp' })).toBe('unevaluated')
+    expect(RESULT_NOTE_CODES).toContain('future_timestamp')
+    expect(TR['dbq.rr.state.building']).toBeTruthy()
+    expect(EN['dbq.rr.state.building']).toBeTruthy()
+  })
+
+  it('PUBLIC_SCHEMA_CREATE bilgi kodudur — çevirisi var, uyarı sayılmaz', async () => {
+    const { isInfoPrivilege, privilegeKey } = await import('../components/dbquery/connectionModel.js')
+    expect(isInfoPrivilege('PUBLIC_SCHEMA_CREATE')).toBe(true)
+    expect(isInfoPrivilege('CAN_CREATE')).toBe(false)
+    expect(TR[privilegeKey('PUBLIC_SCHEMA_CREATE')]).toMatch(/public/)
+    expect(EN[privilegeKey('PUBLIC_SCHEMA_CREATE')]).toMatch(/public/)
+  })
+})

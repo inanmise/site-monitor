@@ -94,7 +94,10 @@ export function setOracleTcps(form, on) {
 
 /** Sunucunun kalıcı bulgu kodları (`dbq.conn.priv.<KOD>`). */
 export const PRIVILEGE_CODES = Object.freeze(['SUPERUSER', 'CAN_WRITE_TABLES', 'CAN_CREATE', 'DB_OWNER', 'DATA_WRITER', 'DDL_ADMIN',
-  'CAN_EXECUTE', 'DBA_ROLE', 'ANY_PRIVILEGE', 'CHECK_FAILED'])
+  'CAN_EXECUTE', 'DBA_ROLE', 'ANY_PRIVILEGE', 'CHECK_FAILED', 'PUBLIC_SCHEMA_CREATE'])
+/** Yalnız BİLGİ olan yetki kodları (sunucu `INFO_CODES`): hesabı "yazabilen" yapmaz, BLOCK'ta engellemez. */
+export const INFO_PRIVILEGE_CODES = Object.freeze(['PUBLIC_SCHEMA_CREATE'])
+export const isInfoPrivilege = (code) => INFO_PRIVILEGE_CODES.includes(code)
 
 /**
  * Yetki özeti → durum: `read_only` (denetlendi, yazma / yönetici yetkisi yok — yalnız o yeşil), `writable` (bulgu var),

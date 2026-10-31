@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeft, DatabaseZap, Pencil, Plug, PlugZap, Plus, RefreshCw, Trash2, Eye, Table2, ListTree, Server, CircleAlert, CircleHelp,
-  ShieldAlert, ShieldCheck,
+  ShieldAlert, ShieldCheck, Info,
 } from 'lucide-react'
 import { api, formatDate } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
@@ -24,7 +24,7 @@ import { useElementWidth } from '../../hooks/useElementWidth.js'
 import ConnectionForm from './ConnectionForm.jsx'
 import { DbTypeBadge, HealthBadge } from './dbqueryParts.jsx'
 import {
-  PG_WEAK_SSL, changedConnectionPayload, emptyForm, formFromProfile, healthState, payloadFromForm, privilegeFindings, privilegeKey,
+  PG_WEAK_SSL, changedConnectionPayload, emptyForm, formFromProfile, healthState, payloadFromForm, privilegeFindings, privilegeKey, isInfoPrivilege,
   privilegeState, serverFieldErrors, serverLabel, validateConnection,
 } from './connectionModel.js'
 import { countText } from './dbqueryPageModel.js'
@@ -449,10 +449,21 @@ export function PrivilegesSummary({ t, priv, compact = false }) {
   if (state === 'absent') return null
   const findings = privilegeFindings(priv)
   if (state === 'read_only') {
+    const info = findings.filter((f) => isInfoPrivilege(f.code))
     return (
-      <p data-slot="dbq-conn-priv" data-state={state} className="m-0 inline-flex items-start gap-1.5 text-xs text-success">
-        <ShieldCheck aria-hidden="true" className="mt-px size-3.5 shrink-0" />{t('dbq.conn.privReadOnly')}
-      </p>
+      <div data-slot="dbq-conn-priv" data-state={state} className="flex min-w-0 flex-col gap-1 text-xs">
+        <p className="m-0 inline-flex items-start gap-1.5 text-success">
+          <ShieldCheck aria-hidden="true" className="mt-px size-3.5 shrink-0" />{t('dbq.conn.privReadOnly')}
+        </p>
+        {info.map((f, i) => (
+          // Bilgi kodu (ör. PG ≤ 14 public şeması CREATE — herkese açık varsayılan): uyarı değil, DBA'ya not
+          <p key={`${f.code}-${i}`} data-slot="dbq-conn-priv-info" data-code={f.code}
+            className="m-0 inline-flex items-start gap-1.5 text-muted-foreground">
+            <Info aria-hidden="true" className="mt-px size-3.5 shrink-0" />
+            <span className="[overflow-wrap:anywhere]">{t(privilegeKey(f.code))}</span>
+          </p>
+        ))}
+      </div>
     )
   }
   if (state === 'unknown') {

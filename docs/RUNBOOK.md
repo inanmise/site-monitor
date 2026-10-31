@@ -485,7 +485,13 @@ alarmı açar (`DB_RULE_UNEVALUABLE`). Sorgu ya da kural değişince değişim k
 görünürlük (kullanıcı kararı):** 7/24 operatörü ve paylaşımla okuyan, başka takımın ölçülen değerlerini (liste, geçmiş, CSV)
 görür; satırlar, bağlantı adresi ve sorgu denemesi onlara kapalıdır.
 
-**Ayarlar (ek):** `unknown-alert-runs` (3, 0 = kapalı, ≤ 20), `writable-account-mode` (WARN). Tatil takvimi bitmek üzereyse
+**Ayarlar (ek):** `unknown-alert-runs` (3, 0 = kapalı, ≤ 20), `writable-account-mode` (WARN), `local-timezone`
+(`Europe/Istanbul` — tazelik kuralında saat dilimi OLMAYAN zaman damgaları bu dilimle okunur; kural kendi dilimini
+verebilir; 5 dakikadan fazla ilerideki değer "değerlendirilemedi" olur). PostgreSQL ≤ 14'te `public` şemasındaki herkese
+açık CREATE yalnız bilgi olarak gösterilir, hesabı "yazabilir" yapmaz.
+
+**Sürüm geçişi uyarısı:** tüm pod'lar bu sürüme geçene dek tazelik / mevsimsel kural ve "yalnız seçili kolonlar" kipli izleme
+oluşturmayın — eski pod bu ayarları bilmez (alarm mailine ilk N kolon gider; maskeler yine uygulanır). Tatil takvimi bitmek üzereyse
 (60 gün) uyarı çıkar; global yönetici gelecek yılın sabit tarihli resmî tatillerini tek tıkla ekler, dini bayramlar elle girilir.
 
 **Sorun giderme (kontrol geçmişindeki neden kodu).**

@@ -360,6 +360,19 @@ function FreshnessThresholds({ rule, index, disabled, err, onChange, lang }) {
           </NativeSelect>
         )}
       </Field>
+      <Field label={t('dbq.rule.timezone')} name={`rules[${index}].timezone`} error={err('timezone')} hint={t('dbq.rule.timezoneHint')}
+        className="mb-0 sm:max-w-xs">
+        {({ id, describedBy }) => (
+          <Input id={id} aria-describedby={describedBy} disabled={disabled} className={CONTROL} data-slot="dbq-rule-timezone"
+            value={rule.timezone ?? ''} placeholder="Europe/Istanbul" autoComplete="off" spellCheck={false}
+            onChange={(e) => {
+              const v = e.target.value
+              const next = { ...rule }
+              if (v.trim()) next.timezone = v.trim(); else delete next.timezone
+              onChange(next)
+            }} />
+        )}
+      </Field>
       <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
         {['warning', 'critical'].map((level) => (
           <Field key={level} name={`rules[${index}].${level}`} error={err(level)} hint={t('dbq.rule.numberHint')} className="mb-0"
