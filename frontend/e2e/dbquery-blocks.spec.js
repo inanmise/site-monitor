@@ -158,6 +158,39 @@ for (const vp of VIEWPORTS) {
       await page.screenshot({ path: `test-results/dbquery-holidays-${vp.name}-full.png`, fullPage: true })
     })
 
+    test('Ayarlar → Tatil takvimi (r177): takvim bitiyor uyarısı sığar; "sabit tatilleri ekle" POST eder, uyarı kapanır', async ({ page }) => {
+      test.setTimeout(120_000)
+      await routes(page)
+      const posts = []
+      let days = DAYS.slice()
+      let until = `${Y}-12-31`
+      // Kapsama alanları (2.A): takvim bu yıl bitiyor → "yakında biter" uyarısı + gelecek yılın sabit tatillerini ekle
+      await page.route((u) => new URL(u).pathname === '/api/admin/holidays', (route) => json({ success: true,
+        data: { days, can_edit: true, coverage_until: until, ends_soon: until === `${Y}-12-31` } })(route))
+      await page.route((u) => new URL(u).pathname === '/api/admin/holidays/add-fixed', (route) => {
+        posts.push(new URL(route.request().url()).searchParams.get('year'))
+        days = [...DAYS, { day: `${Y + 1}-01-01`, name: 'Yılbaşı' }, { day: `${Y + 1}-04-23`, name: 'Ulusal Egemenlik ve Çocuk Bayramı' }]
+        until = `${Y + 1}-12-31`
+        return json({ success: true, data: { days, can_edit: true, coverage_until: until, ends_soon: false, added: 2 } })(route)
+      })
+      await page.goto('/?tab=settings&sec=holidays')
+      const root = page.locator('[data-slot="holiday-settings"]')
+      const cov = root.locator('[data-slot="holiday-coverage"]')
+      await expect(cov).toHaveAttribute('data-state', 'soon', { timeout: 20_000 })
+      await page.waitForTimeout(300)
+      expect(await page.evaluate(overflowX), `@${vp.name}: yatay taşma`).toBeLessThanOrEqual(1)
+      expect(await page.evaluate(offenders, '[data-slot="holiday-settings"]'), `@${vp.name}: ekran dışına taşan öğe`).toEqual([])
+      expect(await page.evaluate(clipped, '[data-slot="holiday-coverage"]'), `@${vp.name}: kırpılan metin`).toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="holiday-coverage"]'), `@${vp.name}: küçük dokunma hedefi`).toEqual([])
+      await cov.locator('[data-slot="holiday-add-fixed"]').click()
+      await expect.poll(() => posts).toEqual([String(Y + 1)])
+      await expect(cov).toHaveAttribute('data-state', 'ok')
+      // Süzgeç eklenen yıla geçer: yeni günler görünür
+      await expect(root.locator('[data-slot="holiday-row"]')).toHaveCount(2)
+      await expect(root.locator(`[data-slot="holiday-row"][data-day="${Y + 1}-01-01"]`)).toBeVisible()
+      await page.screenshot({ path: `test-results/dbquery-holiday-coverage-${vp.name}.png`, fullPage: false })
+    })
+
     test('alarm ayrıntısı: alarm anındaki satırlar — geniş tablo kendi kabında kayar, uzun hücre sarar, maskeli kolon rozeti', async ({ page }) => {
       test.setTimeout(120_000)
       await routes(page)

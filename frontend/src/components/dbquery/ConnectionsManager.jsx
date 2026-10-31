@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  ArrowLeft, DatabaseZap, Pencil, Plug, PlugZap, Plus, RefreshCw, Trash2, Eye, Table2, ListTree, Server, CircleAlert,
+  ArrowLeft, DatabaseZap, Pencil, Plug, PlugZap, Plus, RefreshCw, Trash2, Eye, Table2, ListTree, Server, CircleAlert, CircleHelp,
+  ShieldAlert, ShieldCheck, Info,
 } from 'lucide-react'
 import { api, formatDate } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
@@ -23,7 +24,8 @@ import { useElementWidth } from '../../hooks/useElementWidth.js'
 import ConnectionForm from './ConnectionForm.jsx'
 import { DbTypeBadge, HealthBadge } from './dbqueryParts.jsx'
 import {
-  changedConnectionPayload, emptyForm, formFromProfile, healthState, payloadFromForm, serverFieldErrors, serverLabel, validateConnection,
+  PG_WEAK_SSL, changedConnectionPayload, emptyForm, formFromProfile, healthState, payloadFromForm, privilegeFindings, privilegeKey, isInfoPrivilege,
+  privilegeState, serverFieldErrors, serverLabel, validateConnection,
 } from './connectionModel.js'
 import { countText } from './dbqueryPageModel.js'
 
@@ -45,6 +47,13 @@ export const CONNECTIONS_TABLE_MIN_PX = 760
  * ister (izleme formunun "kaydedilmemiş değişiklikler" deseni) — yazılan sunucu / kullanıcı / parola sessizce gitmez.
  * Düzenleme yalnız değişen alanları gönderir (hedef alanları + parola kuralı birlikte; DÜŞÜK 7).
  */
+/** Sunucunun `security_warnings` kodlarından ekranda AYRICA gösterilecekler (bilinmeyen kod çizilmez). */
+export const SERVER_SECURITY_WARNINGS = ['SSL_NOT_VERIFIED', 'MSSQL_UNENCRYPTED', 'MSSQL_TRUST_SERVER_CERT']
+export function serverSecurityWarnings(p) {
+  const list = Array.isArray(p?.security_warnings) ? p.security_warnings : []
+  return SERVER_SECURITY_WARNINGS.filter((c) => list.includes(c))
+}
+
 export default function ConnectionsManager({ open, onOpenChange, teamId, teams = [], canEdit = false, onChanged, initialView = 'list' }) {
   const t = useT()
   const toast = useToast()
@@ -353,6 +362,33 @@ function DetailView({ t, p, editable, inUse, inUseMessage, onBack, onEdit, onDel
           <Fact label={t('dbq.conn.h.lastOk')}>{when(h.last_ok_at)}</Fact>
           <Fact label={t('dbq.conn.h.avgDuration')}>{h.last_duration_ms != null ? t('dbq.conn.ms', h.last_duration_ms) : t('dbq.conn.h.unknownValue')}</Fact>
           <Fact label={t('dbq.conn.h.lastProblemAt')}>{h.last_error_at ? when(h.last_error_at) : t('dbq.conn.h.noProblem')}</Fact>
+          {privilegeState(h.privileges) !== 'absent' && (
+            // Son testin hesap yetkisi özeti (2.B — sunucu hedefli UPDATE ile yazar; alan yoksa satır yok)
+            <Fact label={t('dbq.conn.h.privileges')} className="sm:col-span-2">
+              <PrivilegesSummary t={t} priv={h.privileges} compact />
+            </Fact>
+          )}
+          {p.db_type === 'POSTGRESQL' && PG_WEAK_SSL.includes(p.ssl_mode) && (
+            <Fact label={t('dbq.conn.h.encryption')} className="sm:col-span-2">
+              <span data-slot="dbq-conn-ssl-weak" data-mode={p.ssl_mode} className="inline-flex items-start gap-1.5 text-xs text-amber-800 dark:text-amber-200">
+                <ShieldAlert aria-hidden="true" className="mt-px size-3.5 shrink-0" />
+                <span className="[overflow-wrap:anywhere]">{t(p.ssl_mode === 'disable' ? 'dbq.conn.sslWeak.disable' : 'dbq.conn.sslWeak.prefer')}</span>
+              </span>
+            </Fact>
+          )}
+          {serverSecurityWarnings(p).length > 0 && (
+            // Sunucunun bağlantı güvenlik uyarıları (r177 2.B; PG prefer / disable yukarıda istemci kuralıyla)
+            <Fact label={t('dbq.conn.h.security')} className="sm:col-span-2">
+              <ul data-slot="dbq-conn-security-warnings" className="m-0 flex list-none flex-col gap-1 p-0">
+                {serverSecurityWarnings(p).map((code) => (
+                  <li key={code} data-code={code} className="inline-flex items-start gap-1.5 text-xs text-amber-800 dark:text-amber-200">
+                    <ShieldAlert aria-hidden="true" className="mt-px size-3.5 shrink-0" />
+                    <span className="[overflow-wrap:anywhere]">{t(`dbq.conn.secw.${code}`)}</span>
+                  </li>
+                ))}
+              </ul>
+            </Fact>
+          )}
           {(h.last_error || h.last_test_error) && (
             <Fact label={t('dbq.conn.h.lastProblem')} className="sm:col-span-2">
               <code data-slot="dbq-conn-last-error" className="block rounded-md bg-muted/60 px-2 py-1.5 font-mono text-xs whitespace-pre-wrap [overflow-wrap:anywhere]">
@@ -403,24 +439,88 @@ function Fact({ label, children, className }) {
   )
 }
 
-/** Deneme sonucu — başarı (süre + sunucu sürümü), başarısız (maskeli hata), bekleme. */
+/**
+ * Hesap yetkisi özeti (2.B — bağlantı testinin `privileges`'ı): salt okunur → yeşil tek satır; yazabilen / yönetici →
+ * uyarı + bulgular (kod metinleri) + DBA betiği yönlendirmesi; denetlenemedi → nötr (asla yeşil değil); alan yok (eski
+ * sunucu) → hiçbir şey. `compact`: sağlık panelinin satırı.
+ */
+export function PrivilegesSummary({ t, priv, compact = false }) {
+  const state = privilegeState(priv)
+  if (state === 'absent') return null
+  const findings = privilegeFindings(priv)
+  if (state === 'read_only') {
+    const info = findings.filter((f) => isInfoPrivilege(f.code))
+    return (
+      <div data-slot="dbq-conn-priv" data-state={state} className="flex min-w-0 flex-col gap-1 text-xs">
+        <p className="m-0 inline-flex items-start gap-1.5 text-success">
+          <ShieldCheck aria-hidden="true" className="mt-px size-3.5 shrink-0" />{t('dbq.conn.privReadOnly')}
+        </p>
+        {info.map((f, i) => (
+          // Bilgi kodu (ör. PG ≤ 14 public şeması CREATE — herkese açık varsayılan): uyarı değil, DBA'ya not
+          <p key={`${f.code}-${i}`} data-slot="dbq-conn-priv-info" data-code={f.code}
+            className="m-0 inline-flex items-start gap-1.5 text-muted-foreground">
+            <Info aria-hidden="true" className="mt-px size-3.5 shrink-0" />
+            <span className="[overflow-wrap:anywhere]">{t(privilegeKey(f.code))}</span>
+          </p>
+        ))}
+      </div>
+    )
+  }
+  if (state === 'unknown') {
+    return (
+      <p data-slot="dbq-conn-priv" data-state={state} className="m-0 inline-flex items-start gap-1.5 text-xs text-muted-foreground">
+        <CircleHelp aria-hidden="true" className="mt-px size-3.5 shrink-0" />
+        <span className="[overflow-wrap:anywhere]">{t('dbq.conn.privUnknown')}</span>
+      </p>
+    )
+  }
+  return (
+    <div data-slot="dbq-conn-priv" data-state={state}
+      className={cn('flex min-w-0 flex-col gap-1 rounded-md border border-amber-500/40 bg-amber-500/5 px-2.5 py-2 text-xs dark:bg-amber-500/10',
+        compact && 'py-1.5')}>
+      <span className="inline-flex items-start gap-1.5 font-semibold text-amber-800 dark:text-amber-200">
+        <ShieldAlert aria-hidden="true" className="mt-px size-3.5 shrink-0" />{t('dbq.conn.privWritable')}
+      </span>
+      {findings.length > 0 && (
+        <ul data-slot="dbq-conn-priv-findings" className="m-0 flex list-disc flex-col gap-0.5 pl-5">
+          {findings.map((f, i) => (
+            <li key={`${f.code}-${i}`} data-code={f.code} className="[overflow-wrap:anywhere]">
+              {t(privilegeKey(f.code))}{f.detail ? <span className="text-muted-foreground"> — {f.detail}</span> : null}
+            </li>
+          ))}
+        </ul>
+      )}
+      {!compact && <span className="text-muted-foreground">{t('dbq.conn.privAdvice')}</span>}
+    </div>
+  )
+}
+
+/** Deneme sonucu — başarı (süre + sunucu sürümü + yetki özeti), başarısız (maskeli hata), bekleme. */
 function TestOutcome({ t, res }) {
   if (res?.success && res.data?.ok === true) {
     const d = res.data
     return (
       <AlertBanner tone="success" title={t('dbq.conn.testOkTitle')} className="mb-0">
-        <span data-slot="dbq-conn-test" data-ok="true">
-          {t('dbq.conn.testOkBody', d.duration_ms ?? '—')}{d.server_version ? ` · ${d.server_version}` : ''}
+        <span className="flex min-w-0 flex-col gap-1.5">
+          <span data-slot="dbq-conn-test" data-ok="true">
+            {t('dbq.conn.testOkBody', d.duration_ms ?? '—')}{d.server_version ? ` · ${d.server_version}` : ''}
+          </span>
+          <PrivilegesSummary t={t} priv={d.privileges} />
         </span>
       </AlertBanner>
     )
   }
   const d = res?.success ? res.data : null
+  const blocked = d?.failure_reason === 'DB_ACCOUNT_WRITABLE' || res?.code === 'DB_ACCOUNT_WRITABLE'
   const msg = d?.error || res?.error || res?.message || t('dbq.conn.testFailedBody')
   return (
-    <AlertBanner tone={res?.code === 'RATE_LIMITED' ? 'info' : 'danger'} title={res?.code === 'RATE_LIMITED' ? t('dbq.conn.testWaitTitle') : t('dbq.conn.testFailTitle')} className="mb-0">
-      <code data-slot="dbq-conn-test" data-ok="false" className="block font-mono text-xs whitespace-pre-wrap [overflow-wrap:anywhere]">{msg}</code>
-      {d?.duration_ms != null && <span className="text-xs">{t('dbq.conn.ms', d.duration_ms)}</span>}
+    <AlertBanner tone={res?.code === 'RATE_LIMITED' ? 'info' : 'danger'}
+      title={res?.code === 'RATE_LIMITED' ? t('dbq.conn.testWaitTitle') : blocked ? t('dbq.conn.testBlockedTitle') : t('dbq.conn.testFailTitle')} className="mb-0">
+      <span className="flex min-w-0 flex-col gap-1.5">
+        <code data-slot="dbq-conn-test" data-ok="false" className="block font-mono text-xs whitespace-pre-wrap [overflow-wrap:anywhere]">{msg}</code>
+        {d?.duration_ms != null && <span className="text-xs">{t('dbq.conn.ms', d.duration_ms)}</span>}
+        <PrivilegesSummary t={t} priv={d?.privileges} />
+      </span>
     </AlertBanner>
   )
 }

@@ -21,7 +21,9 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 public class DbQueryCheck {
 
-    public static final String STATUS_OK = "OK", STATUS_BREACH = "BREACH", STATUS_FAIL = "FAIL";
+    public static final String STATUS_OK = "OK", STATUS_BREACH = "BREACH", STATUS_FAIL = "FAIL",
+            /** r177: sorgu çalıştı, en az bir kural kanıt eksikliğiyle değerlendirilemedi, ihlal yok — "değerlendirilemedi". */
+            STATUS_UNKNOWN = "UNKNOWN";
     public static final String LEVEL_NONE = "NONE", LEVEL_WARNING = "WARNING", LEVEL_CRITICAL = "CRITICAL";
 
     @Id
@@ -37,7 +39,7 @@ public class DbQueryCheck {
     @Column(nullable = false)
     private Boolean ok = true;
 
-    /** {@link #STATUS_OK} | {@link #STATUS_BREACH} | {@link #STATUS_FAIL}. */
+    /** {@link #STATUS_OK} | {@link #STATUS_BREACH} | {@link #STATUS_FAIL} | {@link #STATUS_UNKNOWN}. */
     @Column(length = 10)
     private String status;
 

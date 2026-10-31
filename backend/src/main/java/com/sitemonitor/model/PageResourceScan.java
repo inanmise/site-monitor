@@ -131,4 +131,22 @@ public class PageResourceScan {
 
     @Column(name = "items_kept")
     private Boolean itemsKept;
+
+    // ── Algoritma 2 (2026-11): NULL = eski satır (algoritma 1) ──
+
+    /** Ana sayfanın izlediği yönlendirme sayısı. */
+    @Column(name = "redirect_count")
+    private Integer redirectCount;
+
+    /** Yönlendirme adımlarının toplam süresi (ms); {@code html_ttfb_ms} artık yalnız son adımın ilk baytı. */
+    @Column(name = "redirect_ms")
+    private Long redirectMs;
+
+    /** Analiz algoritmasının sürümü ({@code PageResourceAnalyzer.ALGORITHM_VERSION}); NULL = 1. */
+    @Column(name = "algorithm_version")
+    private Integer algorithmVersion;
+
+    /** İptal istendi (iptal ucu yazar; koşan pod kalp atışında satırın artık RUNNING olmadığını görüp durur). */
+    @Column(name = "cancel_requested")
+    private Boolean cancelRequested;
 }

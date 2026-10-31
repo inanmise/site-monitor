@@ -113,6 +113,36 @@ export function validThreshold(v) {
   return v != null && v !== '' && Number.isFinite(n) && n > 0 ? n : null
 }
 
+/** Seviye çizgisi tavanı — grafik okunur kalsın (iki seviye × alt / üst uç × birkaç kural). */
+export const MAX_LEVEL_LINES = 6
+
+/**
+ * Seri yanıtının eşik listesi (Veritabanı Sorgu İzleme, 2026-10-31 — 2.D; `response-series?metric=value` →
+ * `thresholds` [{rule_id, label, level, value, low, high}]) → çizilecek yatay çizgiler `[{key, level, value, label, edge}]`.
+ * Tek değer `value`; aralık (BETWEEN / OUTSIDE) iki uç (`low`, `high` — `edge`). Sayı olmayan uç atlanır; seviye
+ * WARNING / CRITICAL dışında atlanır; ≤ 6 çizgi; alan yoksa boş dizi (bugünkü grafik).
+ */
+export function levelLines(thresholds) {
+  const list = Array.isArray(thresholds) ? thresholds : []
+  const out = []
+  const numOf = (v) => (v == null || v === '' || !Number.isFinite(Number(v)) ? null : Number(v))
+  for (const th of list) {
+    if (!th || typeof th !== 'object') continue
+    const level = String(th.level || '').toUpperCase()
+    if (level !== 'WARNING' && level !== 'CRITICAL') continue
+    const label = typeof th.label === 'string' ? th.label.trim() : ''
+    const base = `${th.rule_id ?? 'r'}-${level}`
+    const v = numOf(th.value)
+    if (v != null) out.push({ key: `${base}-v`, level, value: v, label, edge: null })
+    for (const edge of ['low', 'high']) {
+      const e = numOf(th[edge])
+      if (e != null) out.push({ key: `${base}-${edge}`, level, value: e, label, edge })
+    }
+    if (out.length >= MAX_LEVEL_LINES) break
+  }
+  return out.slice(0, MAX_LEVEL_LINES)
+}
+
 // ── Seri biçimlendirme ───────────────────────────────────────────────────────────────────────
 
 const num = (v) => (v == null || v === '' || !Number.isFinite(Number(v)) ? null : Number(v))

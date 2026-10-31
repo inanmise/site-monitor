@@ -18,8 +18,9 @@ import { SETTINGS_STACK, SettingsHeader, SettingsSaveBar, SettingsSection } from
 import { useUnsavedWork } from '../../utils/unsavedWork.js'
 import { countText } from '../dbquery/dbqueryPageModel.js'
 import {
-  MAX_DAYS, entryProblems, formatHoliday, normalizeDays, sameDays, toPayload, todayIstanbul, yearsOf,
+  MAX_DAYS, entryProblems, formatHoliday, holidayCoverage, normalizeDays, sameDays, toPayload, todayIstanbul, yearsOf,
 } from './holidayCalendarModel.js'
+import HolidayCoverageNotice from './HolidayCoverageNotice.jsx'
 
 /**
  * Ayarlar → Platform → Tatil takvimi (2026-10-31, Veritabanı Sorgu İzleme). Kurum geneli tatil / özel gün listesi —
@@ -45,6 +46,8 @@ export default function HolidayCalendarSettings({ readOnly: readOnlyProp = false
   const [saving, setSaving] = useState(false)
   const [banner, setBanner] = useState(null)
   const [rowErrors, setRowErrors] = useState({})
+  // Kapsam (2.A — coverage_until / ends_soon): sunucunun SON yanıtından; alan yoksa null (uyarı yok)
+  const [coverage, setCoverage] = useState(null)
   const seq = useRef(0)
 
   const reload = useCallback(async () => {
@@ -56,6 +59,7 @@ export default function HolidayCalendarSettings({ readOnly: readOnlyProp = false
       if (res?.success && res.data && Array.isArray(res.data.days)) {
         const list = normalizeDays(res.data.days)
         setSaved(list); setDraft(list); setCanEdit(res.data.can_edit === true); setRowErrors({}); setBanner(null)
+        setCoverage(holidayCoverage(res.data))
         setLoad({ state: 'ok', message: null })
       } else {
         setLoad({ state: 'error', message: res?.error || res?.message || t('dbq.hol.loadFailedBody') })
@@ -103,6 +107,7 @@ export default function HolidayCalendarSettings({ readOnly: readOnlyProp = false
       const list = normalizeDays(res.data?.days ?? body)
       setSaved(list); setDraft(list); setRowErrors({})
       if (res.data && typeof res.data.can_edit === 'boolean') setCanEdit(res.data.can_edit)
+      if (res.data) setCoverage(holidayCoverage(res.data))
       toast.success(t('dbq.hol.saved'))
       return
     }
@@ -138,6 +143,19 @@ export default function HolidayCalendarSettings({ readOnly: readOnlyProp = false
         <AlertBanner tone="info" title={t('dbq.hol.readOnlyTitle')} className="mb-0"><span data-slot="holiday-readonly">{t('dbq.hol.readOnlyBody')}</span></AlertBanner>
       )}
       <AlertBanner tone="warning" icon={Info} title={t('dbq.hol.verifyTitle')} className="mb-0">{t('dbq.hol.verifyBody')}</AlertBanner>
+      {load.state === 'ok' && (
+        <HolidayCoverageNotice coverage={coverage} canEdit={editable} showOk
+          blockedReason={dirty ? t('dbq.hol.cov.saveFirst') : null}
+          onAdded={(data) => {
+            // Eklenen yılın günleri görünsün (süzgeç bu yılda kalırsa "hiçbir şey olmadı" sanılır)
+            if (coverage?.nextYear) setYear(coverage.nextYear)
+            // Sunucu yeni tam listeyi döndürürse doğrudan; dönmezse yeniden oku (taslak kirli değil — düğme kapalıydı)
+            if (data && Array.isArray(data.days)) {
+              const list = normalizeDays(data.days)
+              setSaved(list); setDraft(list); setCoverage(holidayCoverage(data))
+            } else reload()
+          }} />
+      )}
 
       {load.state === 'loading' && (
         <div className="flex flex-col gap-2" aria-busy="true"><Skeleton className="h-10 w-full" /><Skeleton className="h-10 w-full" /><Skeleton className="h-10 w-full" /></div>

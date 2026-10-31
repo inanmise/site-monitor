@@ -4,7 +4,11 @@
 
 export const DB_TYPES = ['POSTGRESQL', 'MSSQL', 'ORACLE']
 export const DEFAULT_PORT = { POSTGRESQL: 5432, MSSQL: 1433, ORACLE: 1521 }
+/** Oracle TCPS (TLS) varsayılan portu (2.B). */
+export const ORACLE_TCPS_PORT = 2484
 export const PG_SSL_MODES = ['disable', 'prefer', 'require', 'verify-full']
+/** Şifresiz bağlantıya düşebilen / şifresiz kipler (2.B uyarısı). YENİ bağlantının varsayılanı `require`. */
+export const PG_WEAK_SSL = Object.freeze(['disable', 'prefer'])
 export const ORACLE_MODES = ['SERVICE', 'SID']
 export const HEALTH_STATES = ['ok', 'failing', 'untested', 'unused']
 export const CONNECT_TIMEOUT = { min: 1000, max: 30000, def: 10000 }
@@ -35,7 +39,7 @@ export function emptyForm(teamId = null, dbType = 'POSTGRESQL') {
   return {
     id: null, team_id: teamId, name: '', db_type: dbType, host: '', port: String(DEFAULT_PORT[dbType]), database_name: '',
     oracle_mode: 'SERVICE', mssql_instance: '', username: '', password: '', password_set: false, password_clear: false,
-    ssl_mode: 'prefer', mssql_encrypt: true, mssql_trust_server_certificate: false,
+    ssl_mode: 'require', mssql_encrypt: true, mssql_trust_server_certificate: false, oracle_tcps: false,
     connect_timeout_ms: String(CONNECT_TIMEOUT.def), description: '',
   }
 }
@@ -59,16 +63,106 @@ export function formFromProfile(p) {
     ssl_mode: PG_SSL_MODES.includes(p?.ssl_mode) ? p.ssl_mode : f.ssl_mode,
     mssql_encrypt: p?.mssql_encrypt !== false,
     mssql_trust_server_certificate: p?.mssql_trust_server_certificate === true,
+    oracle_tcps: p?.oracle_tcps === true,
     connect_timeout_ms: p?.connect_timeout_ms != null ? String(p.connect_timeout_ms) : f.connect_timeout_ms,
     description: p?.description ?? '',
   }
 }
 
+/** Formun şu anki varsayılan portu (Oracle TCPS açıksa 2484). */
+function defaultPortOf(form) {
+  return form.db_type === 'ORACLE' && form.oracle_tcps ? ORACLE_TCPS_PORT : DEFAULT_PORT[form.db_type]
+}
+
 /** DB türü değişimi: port, türün varsayılanıysa yeni türün varsayılanına geçer (elle yazılan port korunur). */
 export function changeDbType(form, dbType) {
   if (form.db_type === dbType) return form
-  const wasDefault = !form.port || form.port === String(DEFAULT_PORT[form.db_type])
-  return { ...form, db_type: dbType, port: wasDefault ? String(DEFAULT_PORT[dbType]) : form.port }
+  const wasDefault = !form.port || form.port === String(defaultPortOf(form))
+  const next = { ...form, db_type: dbType }
+  return { ...next, port: wasDefault ? String(defaultPortOf(next)) : form.port }
+}
+
+/** Oracle TCPS aç / kapat: port varsayılandaysa 1521 ↔ 2484 (elle yazılan port korunur). */
+export function setOracleTcps(form, on) {
+  if (!!form.oracle_tcps === !!on) return form
+  const wasDefault = !form.port || form.port === String(defaultPortOf(form))
+  const next = { ...form, oracle_tcps: !!on }
+  return { ...next, port: wasDefault ? String(defaultPortOf(next)) : form.port }
+}
+
+// ── Hesap yetkisi denetimi (2.B — bağlantı testi yanıtı `privileges`) ──────────────────────────────────────────────
+
+/** Sunucunun kalıcı bulgu kodları (`dbq.conn.priv.<KOD>`). */
+export const PRIVILEGE_CODES = Object.freeze(['SUPERUSER', 'CAN_WRITE_TABLES', 'CAN_CREATE', 'DB_OWNER', 'DATA_WRITER', 'DDL_ADMIN',
+  'CAN_EXECUTE', 'DBA_ROLE', 'ANY_PRIVILEGE', 'CHECK_FAILED', 'PUBLIC_SCHEMA_CREATE'])
+/** Yalnız BİLGİ olan yetki kodları (sunucu `INFO_CODES`): hesabı "yazabilen" yapmaz, BLOCK'ta engellemez. */
+export const INFO_PRIVILEGE_CODES = Object.freeze(['PUBLIC_SCHEMA_CREATE'])
+export const isInfoPrivilege = (code) => INFO_PRIVILEGE_CODES.includes(code)
+
+/**
+ * Yetki özeti → durum: `read_only` (denetlendi, yazma / yönetici yetkisi yok — yalnız o yeşil), `writable` (bulgu var),
+ * `unknown` (denetlenemedi — okunamadı ya da `read_only: null`; asla yeşil değil), `absent` (alan yok — eski sunucu / test
+ * edilmedi: hiçbir şey gösterilmez).
+ */
+export function privilegeState(priv) {
+  if (!priv || typeof priv !== 'object') return 'absent'
+  if (priv.checked !== true) return 'unknown'
+  if (priv.read_only === true) return 'read_only'
+  if (priv.read_only === false) return 'writable'
+  return 'unknown'
+}
+
+/** Yetki bulguları — `[{code, detail}]`; bilinmeyen kod genel metne düşer (ham kod yalnız ayrıntı satırında). */
+export function privilegeFindings(priv) {
+  return (Array.isArray(priv?.findings) ? priv.findings : []).filter((f) => f && typeof f.code === 'string')
+}
+
+/** Bulgu kodu → sözlük anahtarı (tanınmayan → `OTHER`). */
+export function privilegeKey(code) {
+  return PRIVILEGE_CODES.includes(code) ? `dbq.conn.priv.${code}` : 'dbq.conn.priv.OTHER'
+}
+
+// ── DBA'ya verilecek salt-okur hesap betiği (2.B — statik metin; sunucuya gitmez) ─────────────────────────────────────
+
+/**
+ * Türe göre "salt-okur hesap oluşturma" betiği. Yer tutucular dilde (`<parola>` / `<password>`); yorum satırları
+ * çevrilir. Betik ÖRNEKTİR — DBA kurum politikasına göre uyarlar; SiteMonitor çalıştırmaz.
+ */
+export function readOnlyAccountScript(dbType, t) {
+  const pw = t('dbq.conn.dba.ph.password'), db = t('dbq.conn.dba.ph.database'), obj = t('dbq.conn.dba.ph.object')
+  const only = t('dbq.conn.dba.onlyTables')
+  if (dbType === 'MSSQL') {
+    return [
+      `-- ${t('dbq.conn.dba.head', 'SQL Server')}`,
+      `CREATE LOGIN sitemonitor_ro WITH PASSWORD = '${pw}', CHECK_POLICY = ON;`,
+      `USE ${db};`,
+      'CREATE USER sitemonitor_ro FOR LOGIN sitemonitor_ro;',
+      `GRANT SELECT ON OBJECT::${obj} TO sitemonitor_ro;   -- ${only}`,
+      'DENY INSERT, UPDATE, DELETE, ALTER, EXECUTE TO sitemonitor_ro;',
+      `-- ${t('dbq.conn.dba.mssqlNote')}`,
+    ].join('\n')
+  }
+  if (dbType === 'ORACLE') {
+    return [
+      `-- ${t('dbq.conn.dba.head', 'Oracle')}`,
+      'CREATE PROFILE sitemonitor_prof LIMIT SESSIONS_PER_USER 2 CPU_PER_CALL 6000 LOGICAL_READS_PER_CALL 1000000;',
+      `CREATE USER sitemonitor_ro IDENTIFIED BY "${pw}" PROFILE sitemonitor_prof;`,
+      'GRANT CREATE SESSION TO sitemonitor_ro;',
+      `GRANT SELECT ON ${obj} TO sitemonitor_ro;   -- ${only}`,
+      `-- ${t('dbq.conn.dba.oracleNote')}`,
+    ].join('\n')
+  }
+  return [
+    `-- ${t('dbq.conn.dba.head', 'PostgreSQL')}`,
+    `CREATE ROLE sitemonitor_ro LOGIN PASSWORD '${pw}' CONNECTION LIMIT 4;`,
+    'ALTER ROLE sitemonitor_ro SET default_transaction_read_only = on;',
+    "ALTER ROLE sitemonitor_ro SET statement_timeout = '60s';",
+    `GRANT CONNECT ON DATABASE ${db} TO sitemonitor_ro;`,
+    `GRANT USAGE ON SCHEMA ${t('dbq.conn.dba.ph.schema')} TO sitemonitor_ro;`,
+    `GRANT SELECT ON ${obj} TO sitemonitor_ro;   -- ${only}`,
+    `-- ${t('dbq.conn.dba.pgPublicNote')}`,
+    '-- REVOKE CREATE ON SCHEMA public FROM PUBLIC;',
+  ].join('\n')
 }
 
 const intOrNull = (v) => (v === '' || v == null ? null : (/^\d+$/.test(String(v).trim()) ? Number(String(v).trim()) : NaN))
@@ -84,7 +178,7 @@ export function payloadFromForm(form, { withId = false } = {}) {
     port: intOrNull(form.port), database_name: String(form.database_name || '').trim(), username: String(form.username || '').trim(),
     connect_timeout_ms: intOrNull(form.connect_timeout_ms), description: String(form.description || '').trim(),
   }
-  if (t === 'ORACLE') body.oracle_mode = form.oracle_mode
+  if (t === 'ORACLE') { body.oracle_mode = form.oracle_mode; body.oracle_tcps = !!form.oracle_tcps }
   if (t === 'MSSQL') {
     body.mssql_instance = String(form.mssql_instance || '').trim()
     body.mssql_encrypt = !!form.mssql_encrypt
@@ -103,7 +197,7 @@ export function payloadFromForm(form, { withId = false } = {}) {
  * temizler) ve kayıtlı parola yeni hedefe gitmez kuralı (`password`) sunucuda tetiklenir.
  */
 export const TARGET_KEYS = Object.freeze(['db_type', 'host', 'port', 'database_name', 'oracle_mode', 'mssql_instance', 'username',
-  'ssl_mode', 'mssql_encrypt', 'mssql_trust_server_certificate'])
+  'ssl_mode', 'mssql_encrypt', 'mssql_trust_server_certificate', 'oracle_tcps'])
 
 /**
  * Düzenleme gövdesi (DÜŞÜK 7, "yalnız değişen alanlar"): yüklenen hâlden DEĞİŞEN alanlar; hedef alanlarından biri

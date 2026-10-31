@@ -380,6 +380,13 @@ public class AppSettingsService {
         if (com.sitemonitor.service.checks.DistributedChecks.KEY_TYPES.equals(s.key())) {
             com.sitemonitor.service.checks.CheckJobTypes.validateSetting(val);
         }
+        // Veritabanı sorgu izlemesi yerel dilimi (r177 ikinci tur, O-1): IANA dilim adı — alan hatası dbquery_local_timezone.
+        if (com.sitemonitor.service.dbquery.DbQueryCheckerService.KEY_LOCAL_TIMEZONE.equals(s.key())
+                && !com.sitemonitor.service.dbquery.DbQueryRules.validTimezone(val)) {
+            throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException("dbquery_local_timezone", Msg.t(
+                    "Saat dilimi tanınmadı — Europe/Istanbul ya da UTC gibi bir IANA dilim adı yazın.",
+                    "Unknown time zone — enter an IANA zone name such as Europe/Istanbul or UTC."));
+        }
         // Kendi kendini izleme (2026-10-11): aralıklar ve alıcı biçimleri — hangi uçtan yazılırsa yazılsın aynı kural.
         if (com.sitemonitor.service.watchdog.WatchdogSettings.isKey(s.key())) {
             com.sitemonitor.service.watchdog.WatchdogSettings.validate(s.key(), val);

@@ -107,8 +107,26 @@ public final class DbQuerySqlGuard {
      */
     public record Violation(String code, String token, String message, Integer line, Integer column) {}
 
-    /** @param tables sorgunun okuduğu tablolar (şema dahil, küçük harf; ayrıştırılamazsa boş). */
-    public record Result(boolean ok, List<Violation> violations, List<String> tables) {}
+    /**
+     * @param tables sorgunun okuduğu tablolar (şema dahil, küçük harf; ayrıştırılamazsa boş).
+     * @param shape  sorgunun DIŞ SELECT biçimi (r177 uyarıları); ayrıştırılamadıysa {@link Shape#UNKNOWN}
+     */
+    public record Result(boolean ok, List<Violation> violations, List<String> tables, Shape shape) {
+        /** Eski üç alanlı biçim (biçim bilinmiyor). */
+        public Result(boolean ok, List<Violation> violations, List<String> tables) {
+            this(ok, violations, tables, Shape.UNKNOWN);
+        }
+    }
+
+    /**
+     * Dış SELECT'in biçimi (r177 — engellemez, uyarı): {@code selectStar} = {@code *} / {@code t.*} var (kolonlar değişince
+     * kurallar bozulur, yeni kolonlar maile girer); {@code singleRowAggregate} = GROUP BY'sız toplama ({@code COUNT(*)},
+     * {@code SUM(…)} …) — sorgu HER ZAMAN tek satır döndürür, "satır sayısı" kuralı hiç tetiklenmez; {@code columns} = DIŞ
+     * SELECT'in görünür kolon adları (takma ad ya da kolon adı; ifadelerde takma ad yoksa atlanır; {@code *} çözülemez).
+     */
+    public record Shape(boolean known, boolean selectStar, boolean singleRowAggregate, List<String> columns) {
+        public static final Shape UNKNOWN = new Shape(false, false, false, List.of());
+    }
 
     private DbQuerySqlGuard() {}
 
@@ -169,6 +187,9 @@ public final class DbQuerySqlGuard {
             "PG_LOG_BACKEND_MEMORY_CONTEXTS", "PG_CURRENT_XACT_ID", "PG_EXPORT_SNAPSHOT", "LO_", "DBLINK",
             "SET_CONFIG", "NEXTVAL", "SETVAL", "TXID_", "QUERY_TO_XML", "DATABASE_TO_XML", "SCHEMA_TO_XML",
             "CURSOR_TO_XML",
+            // r177 (H-4): table_to_xml / table_to_xmlschema / table_to_xml_and_xmlschema koca tabloyu sunucuda TEK değere
+            // çevirir (satır sınırı yalnız istemcide keser); pg_stat_statements_reset istatistikleri siler
+            "TABLE_TO_XML", "PG_STAT_STATEMENTS_RESET",
             // MSSQL
             "XP_", "SP_", "FN_DBLOG", "FN_DUMP_DBLOG", "FN_TRACE_GETTABLE", "FN_XE_FILE_TARGET_READ_FILE",
             "FN_GET_AUDIT_FILE",
@@ -272,6 +293,8 @@ public final class DbQuerySqlGuard {
         record PendingXml(String qualifier, String shown, int start) {}
         final List<PendingXml> pendingXml = new ArrayList<>();
         boolean pendingResolved;
+        /** Dış SELECT biçimi (AST çözülürse). */
+        Shape shape = Shape.UNKNOWN;
 
         Run(String sql, DbType type) {
             this.sql = sql;
@@ -298,7 +321,7 @@ public final class DbQuerySqlGuard {
             }
             if (!pendingResolved && violations.isEmpty()) rejectPendingXml(null);
             List<Violation> out = List.copyOf(violations);
-            return new Result(out.isEmpty(), out, out.isEmpty() || !tables.isEmpty() ? List.copyOf(tables) : List.of());
+            return new Result(out.isEmpty(), out, out.isEmpty() || !tables.isEmpty() ? List.copyOf(tables) : List.of(), shape);
         }
 
         // ── sözcük kuralları ─────────────────────────────────────
@@ -628,6 +651,11 @@ public final class DbQuerySqlGuard {
                 add(SQL_NOT_SELECT, st.getClass().getSimpleName(), msgNotSelect(firstWord(), ""), null);
                 return;
             }
+            try {
+                shape = shapeOf(sel);
+            } catch (RuntimeException | StackOverflowError e) {
+                shape = Shape.UNKNOWN;
+            }
             Walker w = new Walker();
             try {
                 w.getTables((Statement) sel);
@@ -929,6 +957,48 @@ public final class DbQuerySqlGuard {
             for (int i = 0; i < items.size(); i++) if (items.get(i) == w) return i;
             return -1;
         }
+    }
+
+    // ── Dış SELECT biçimi (r177) ─────────────────────────────────────────────
+
+    /** GROUP BY'sız kullanıldığında TEK satır üreten toplama fonksiyonları (büyük harf). */
+    static final Set<String> AGGREGATE_FUNCTIONS = Set.of("COUNT", "COUNT_BIG", "SUM", "AVG", "MIN", "MAX", "STDDEV",
+            "STDDEV_POP", "STDDEV_SAMP", "STDEV", "STDEVP", "VARIANCE", "VAR", "VARP", "VAR_POP", "VAR_SAMP", "STRING_AGG",
+            "LISTAGG", "ARRAY_AGG", "BOOL_AND", "BOOL_OR", "EVERY", "MEDIAN", "GROUP_CONCAT", "CHECKSUM_AGG", "JSON_AGG",
+            "JSONB_AGG", "XMLAGG", "PERCENTILE_CONT", "PERCENTILE_DISC");
+
+    /** Dış SELECT (WITH ve parantez açılmış) — birleşim (UNION …) bilinmeyen biçim sayılır. */
+    static Shape shapeOf(Select sel) {
+        Select body = sel;
+        for (int i = 0; i < MAX_DEPTH && body instanceof ParenthesedSelect ps && ps.getSelect() != null; i++) body = ps.getSelect();
+        if (!(body instanceof PlainSelect ps)) return new Shape(true, false, false, List.of());
+        boolean star = false;
+        boolean anyAggregate = false;
+        List<String> cols = new ArrayList<>();
+        if (ps.getSelectItems() != null) {
+            for (net.sf.jsqlparser.statement.select.SelectItem<?> item : ps.getSelectItems()) {
+                if (item == null) continue;
+                Object e = item.getExpression();
+                if (e instanceof net.sf.jsqlparser.statement.select.AllColumns
+                        || e instanceof net.sf.jsqlparser.statement.select.AllTableColumns) {
+                    star = true;
+                    continue;
+                }
+                if (e instanceof net.sf.jsqlparser.expression.Function f && f.getName() != null) {
+                    List<String> parts = splitName(f.getName());
+                    String last = parts.isEmpty() ? f.getName() : parts.get(parts.size() - 1);
+                    if (AGGREGATE_FUNCTIONS.contains(unquote(last).toUpperCase(Locale.ROOT))) anyAggregate = true;
+                }
+                String name = null;
+                if (item.getAlias() != null && item.getAlias().getName() != null) name = unquote(item.getAlias().getName());
+                else if (e instanceof net.sf.jsqlparser.schema.Column c && c.getColumnName() != null) name = unquote(c.getColumnName());
+                if (name != null && !name.isBlank() && cols.size() < MAX_TABLES) cols.add(name);
+            }
+        }
+        // GROUP BY satır başına sonuç verir; HAVING'li toplama 0 ya da 1 satır döner — iki durumda da satır sayısı anlamlı
+        // (r177 ikinci tur D-7)
+        boolean grouped = ps.getGroupBy() != null || ps.getHaving() != null;
+        return new Shape(true, star, anyAggregate && !grouped && !star, List.copyOf(cols));
     }
 
     // ── Ayrıştırma (zaman kutusu) ────────────────────────────────────────────

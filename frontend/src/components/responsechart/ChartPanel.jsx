@@ -33,7 +33,7 @@ const SPARSE_POINTS = 60
  * tabanda). Kontrol yapılmayan dilimde çizgi KOPAR (model boşluk noktası ekler).
  */
 export default function ChartPanel({
-  t, title, shape, stats, fmt, aux, auxLabel, threshold, thresholdLabel, hidden, onHiddenChange, summary, busy,
+  t, title, shape, stats, fmt, aux, auxLabel, threshold, thresholdLabel, hidden, onHiddenChange, summary, busy, levels = [],
 }) {
   const uid = useId().replace(/:/g, '')
   const titleId = `rtc-title-${uid}`
@@ -59,7 +59,11 @@ export default function ChartPanel({
 
   const dataMax = stats.max ?? 0
   const thrInView = threshold != null && (dataMax <= 0 || threshold <= dataMax * THRESHOLD_VIEW_FACTOR)
-  const yTop = Math.max(dataMax, thrInView ? threshold : 0) * 1.1
+  // Kural seviye çizgileri (uyarı / kritik eşik — 2.D): verinin 3 katından uzaktakiler eksende değil, rozette "üstünde"
+  const levelList = Array.isArray(levels) ? levels : []
+  const levelInView = (v) => v >= 0 && (dataMax <= 0 || v <= dataMax * THRESHOLD_VIEW_FACTOR)
+  const levelTop = levelList.reduce((m, l) => (levelInView(l.value) ? Math.max(m, l.value) : m), 0)
+  const yTop = Math.max(dataMax, thrInView ? threshold : 0, levelTop) * 1.1
   const auxLabels = aux === 'loss' ? [formatLoss(100)] : aux === 'days' ? [`${Math.max(0, ...shape.real.map((p) => p.days ?? 0))} ${t('chart.unitDays')}`] : []
   const yWidth = axisWidth([fmt.axis(yTop), fmt.axis(yTop / 2), ...(on('aux') ? auxLabels : [])])
   const plotWidth = Math.max(0, (width || 640) - yWidth - 20)
@@ -124,6 +128,16 @@ export default function ChartPanel({
               ))}
             </ToggleGroup>
           )}
+          {levelList.map((l) => (
+            <Badge key={l.key} variant="outline" data-slot="chart-level" data-level={l.level} data-in-view={levelInView(l.value) ? 'true' : 'false'}
+              className="h-auto min-h-8 max-w-full gap-1.5 rounded-md px-2 py-1 font-medium whitespace-normal text-muted-foreground pointer-coarse:min-h-10">
+              <SeriesKey shape="dashed" color={l.level === 'CRITICAL' ? 'var(--destructive)' : 'var(--warning)'} />
+              <span className="[overflow-wrap:anywhere]">
+                {t(levelInView(l.value) ? 'rtc.level' : 'rtc.levelAbove', t(l.level === 'CRITICAL' ? 'rtc.levelCritical' : 'rtc.levelWarning'),
+                  fmt.value(l.value))}{l.label ? ` · ${l.label}` : ''}
+              </span>
+            </Badge>
+          ))}
           {threshold != null && (
             <Badge variant="outline" data-slot="chart-threshold" data-in-view={thrInView ? 'true' : 'false'}
               className="h-8 gap-1.5 rounded-md px-2 font-medium text-muted-foreground pointer-coarse:h-10">
@@ -171,6 +185,10 @@ export default function ChartPanel({
                   ifOverflow="extendDomain"
                   label={{ value: fmt.value(threshold), position: 'insideTopRight', fill: 'var(--muted-foreground)', fontSize: 11 }} />
               )}
+              {levelList.filter((l) => levelInView(l.value)).map((l) => (
+                <ReferenceLine key={l.key} yAxisId="v" y={l.value} ifOverflow="extendDomain" strokeDasharray="5 4" strokeWidth={1.25}
+                  stroke={l.level === 'CRITICAL' ? 'var(--destructive)' : 'var(--warning)'} />
+              ))}
               {failures && (
                 <Line yAxisId="v" dataKey="downY" hide={hidden.has('down')} stroke="none" dot={downDot} activeDot={false}
                   legendType="none" isAnimationActive={false} connectNulls={false} />

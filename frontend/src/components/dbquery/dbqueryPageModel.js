@@ -24,6 +24,7 @@ export function dbqueryStatusKey(m) {
   if (s === 'FAIL') return 'down'
   if (s === 'BREACH') return m.breach_level === 'CRITICAL' ? 'down' : 'warn'
   if (s === 'OK') return m.slow ? 'warn' : 'up'
+  // UNKNOWN (2.A): en az bir kural değerlendirilemedi, karar ihlal değil — nötr; asla 'up' değil
   return 'unknown'
 }
 
@@ -33,6 +34,7 @@ export function dbqueryStatusLabelKey(m) {
   if (s === 'FAIL') return 'dbq.status.fail'
   if (s === 'BREACH') return m.breach_level === 'CRITICAL' ? 'dbq.status.breachCritical' : 'dbq.status.breachWarning'
   if (s === 'OK') return m.slow ? 'dbq.status.slow' : 'dbq.status.ok'
+  if (s === 'UNKNOWN') return 'dbq.status.unevaluated'
   return 'dbq.status.unknown'
 }
 
@@ -62,6 +64,8 @@ export function dbTypeLabel(type) {
 export const FAILURE_CODES = Object.freeze([
   'DB_UNREACHABLE', 'DB_DNS', 'DB_TIMEOUT', 'DB_AUTH', 'DB_SQL_ERROR', 'DB_DRIVER', 'DB_BLOCKED',
   'DB_GUARD_REJECTED', 'DB_PROFILE_MISSING', 'DB_PROFILE_OTHER_TEAM', 'DB_SECRET_UNREADABLE', 'DB_BUSY',
+  // 2.B: yazma / yönetici yetkili hesap (ayar BLOCK) — kayıt ve çalıştırma reddedilir
+  'DB_ACCOUNT_WRITABLE',
 ])
 /**
  * Neden kodu → `dbq.fail.<KOD>` (başlık) ve `dbq.fail.<KOD>.fix` (ne yapılmalı). Bilinmeyen kod `OTHER`'a düşer —
@@ -252,7 +256,7 @@ export const FIELD_GROUPS = Object.freeze([
   ['profile_id', 'sql_text'],
   ['rules', 'rule_logic'],
   [...SCHEDULE_KEYS],
-  ['mail_include_rows', 'mail_columns', 'masked_columns'],
+  ['mail_include_rows', 'mail_columns_mode', 'mail_columns', 'masked_columns'],
   ['confirmAttempts', 'confirmIntervalSeconds', 'recoveryChecks', 'recoveryIntervalSeconds'],
 ])
 
@@ -297,7 +301,7 @@ export const FIELD_ORDER = Object.freeze([
   'rules', 'slow_query_ms',
   'schedule', 'schedule_mode', 'interval_seconds', 'cron_expression', 'windows', 'blackouts', 'skip_dates',
   'query_timeout_seconds', 'max_rows',
-  'mail_subject_template', 'mail_columns', 'masked_columns',
+  'mail_subject_template', 'mail_columns_mode', 'mail_columns', 'masked_columns',
 ])
 
 const rank = (k) => {
@@ -310,6 +314,52 @@ const rank = (k) => {
 export function orderFieldErrors(map) {
   return Object.fromEntries(Object.entries(map || {}).filter(([, v]) => !!v)
     .sort(([a], [b]) => rank(a) - rank(b) || (a < b ? -1 : a > b ? 1 : 0)))
+}
+
+/**
+ * Alan anahtarı → form bölümü (`FORM_SECTIONS` kimlikleri; bölüm atlama çubuğunun hata sayısı). Tanınmayan anahtar
+ * `null` (hiçbir bölüme sayılmaz — ileti yine alanında / bantta).
+ */
+const FIELD_SECTION = {
+  name: 'basic', team_id: 'basic', group_name: 'basic', tags: 'basic', purpose: 'basic',
+  profile_id: 'connection',
+  sql_text: 'query',
+  rules: 'evaluation', slow_query_ms: 'evaluation',
+  schedule: 'schedule', schedule_mode: 'schedule', interval_seconds: 'schedule', cron_expression: 'schedule', windows: 'schedule',
+  blackouts: 'schedule', skip_dates: 'schedule',
+  query_timeout_seconds: 'limits', max_rows: 'limits',
+  mail_subject_template: 'alerting', mail_columns_mode: 'alerting', mail_columns: 'alerting', masked_columns: 'alerting',
+  confirm_attempts: 'alerting', confirm_interval_seconds: 'alerting', recovery_checks: 'alerting', recovery_interval_seconds: 'alerting',
+}
+export function sectionOfField(key) {
+  if (typeof key !== 'string') return null
+  if (key === 'rules' || key.startsWith('rules[')) return 'evaluation'
+  return FIELD_SECTION[key] || null
+}
+
+/** Hata haritası → `{ bölüm: sayı }` (yalnız ileti taşıyan alanlar). */
+export function sectionErrorCounts(errors) {
+  const out = {}
+  for (const [k, v] of Object.entries(errors || {})) {
+    if (!v) continue
+    const sec = sectionOfField(k)
+    if (sec) out[sec] = (out[sec] || 0) + 1
+  }
+  return out
+}
+
+/** Sunucu yanıtının uyarı listesi (2.B / 2.C — `warnings` zarfta ya da `data` içinde; engellemez). */
+export function warningsOf(res) {
+  const list = Array.isArray(res?.warnings) ? res.warnings : (Array.isArray(res?.data?.warnings) ? res.data.warnings : [])
+  return list.filter((w) => w && typeof w === 'object' && typeof w.code === 'string' && w.code)
+}
+
+/**
+ * Değerlendirilemeyen kuralların notları (UNKNOWN durumu, 2.A) — `[{ label, note }]`, en çok 3; satır verisi değil.
+ */
+export function unevaluatedRules(m) {
+  const list = Array.isArray(m?.rule_results) ? m.rule_results : []
+  return list.filter((r) => r && r.evaluated === false).slice(0, 3).map((r) => ({ id: r.id, label: r.label || null, note: r.note || null, kind: r.kind || null }))
 }
 
 /** Zamanlama düzenleyicisine giden alanlar. */
@@ -341,6 +391,8 @@ const CODE_FIELD = {
   DBQUERY_SCHEDULE_NEVER_RUNS: 'schedule', DBQUERY_CONNECTION_OTHER_TEAM: 'profile_id', DUPLICATE_RECORD: 'name',
   // Paylaşımla erişilen takımda oluşturma / kopyalama reddi (K2) — takım alanının altında
   DBQUERY_GRANT_TEAM: 'team_id',
+  // Yazabilen hesap (ayar BLOCK, 2.B) — bağlantı seçiminin altında
+  DB_ACCOUNT_WRITABLE: 'profile_id',
 }
 export function serverFieldErrors(res) {
   if (!res || res.success !== false) return { fields: null, violations: null, plan: null }
@@ -382,11 +434,23 @@ export const SUBJECT_PLACEHOLDERS = Object.freeze(['{ad}', '{amac}', '{satir}', 
 
 // ── Plan (maliyet) kararı ─────────────────────────────────────────────────────────────────────────────────
 
-/** PlanVerdict → ton: OK success · WARN warning · BLOCK danger · UNKNOWN / desteklenmiyor muted (asla yeşil değil). */
+/**
+ * PlanVerdict → ton: OK success · WARN warning · BLOCK danger · UNKNOWN / OFF (denetim kapalı, 2.A) / desteklenmiyor
+ * muted (asla yeşil değil).
+ */
 export function planTone(plan) {
-  if (!plan || plan.supported === false) return 'neutral'
+  if (!plan || plan.supported === false || plan.verdict === 'OFF') return 'neutral'
   if (plan.verdict === 'OK') return 'success'
   if (plan.verdict === 'WARN') return 'warning'
   if (plan.verdict === 'BLOCK') return 'danger'
   return 'neutral'
+}
+
+/**
+ * "Maliyeti denetle" düğmesi çizilsin mi: denetim kapalı (`plan_check_mode` OFF) ya da Oracle (desteklenmiyor) değilse.
+ * Ayar bilinmiyorsa (eski sunucu, varsayılanlar okunamadı) düğme kalır — sunucu kararı söyler.
+ */
+export function planCheckAvailable(limits, dbType) {
+  if (dbType === 'ORACLE') return false
+  return String(limits?.plan_check_mode || '').toUpperCase() !== 'OFF'
 }

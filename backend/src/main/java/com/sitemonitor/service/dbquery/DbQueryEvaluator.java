@@ -47,15 +47,63 @@ public final class DbQueryEvaluator {
             /** Değer boş (NULL — ör. boş kümede MAX) — ihlal edecek değer yok (2026-10-31). */
             NOTE_NULL_VALUE = "null_value",
             /** Değişim kuralının önceki çalıştırması okunamadı (veritabanı hatası) — ilk çalıştırma DEĞİL (2026-10-31). */
-            NOTE_PREVIOUS_UNREADABLE = "prev_unreadable";
+            NOTE_PREVIOUS_UNREADABLE = "prev_unreadable",
+            /**
+             * Değişim kuralının tabanı başka bir sorguyla ya da başka bir kural tanımıyla ölçülmüş (sorgu / kolon / hesap /
+             * değişimin konusu değişti — r177, H-1): eski ölçüyle kıyaslanmaz, taban bu çalıştırmayla yeniden kurulur.
+             */
+            NOTE_BASELINE_RESET = "baseline_reset",
+            /** Mevsimsel taban (dün / geçen hafta aynı saat) için uygun zamanlanmış çalıştırma yok (r177). */
+            NOTE_NO_SEASONAL_BASELINE = "no_seasonal_baseline",
+            /** Tazelik kuralı: kolon değeri bir zaman damgası olarak okunamadı (r177). */
+            NOTE_NOT_TIMESTAMP = "not_timestamp",
+            /** Tazelik kuralı: veritabanı saati okunamadı — yaş hesaplanamaz (r177). */
+            NOTE_DB_CLOCK_UNAVAILABLE = "db_clock_unavailable",
+            /**
+             * Tazelik kuralı: değer veritabanı saatinden {@value #FUTURE_TOLERANCE_SECONDS} sn'den fazla ileride — büyük
+             * olasılıkla yanlış saat dilimi (r177 ikinci tur, O-1). Kanıt yok: asla "taze / geçti" sayılmaz.
+             */
+            NOTE_FUTURE_TIMESTAMP = "future_timestamp";
+
+    /** Tazelik: veritabanı saatinden bu kadar ileride olan değer saat farkı sayılır (yaş 0); daha ilerisi "gelecekte". */
+    public static final long FUTURE_TOLERANCE_SECONDS = 300;
+
+    /** Tazelik kuralında dilimsiz değerlerin varsayılan yorum dilimi (ayar okunamazsa). */
+    public static final java.time.ZoneId DEFAULT_LOCAL_ZONE = java.time.ZoneId.of("Europe/Istanbul");
 
     /**
      * Kanıt eksikliği notları (2026-10-31 inceleme D3): bu notla değerlendirilemeyen kural "geçti" sayılmaz — eşik kaleminin
-     * kararı bilinmiyor ({@code DbQueryAlarmText#thresholdVerdict}). Satır yok / değer boş bu kümede DEĞİL (değer yoksa
-     * ihlal de yoktur; aksi hâlde "takılı iş yok → satır yok" sorgusunun alarmı hiç kapanmazdı).
+     * kararı bilinmiyor ({@code DbQueryAlarmText#thresholdVerdict}), kontrol satırı {@code UNKNOWN}. Satır yok / değer boş bu
+     * kümede DEĞİL (değer yoksa ihlal de yoktur; aksi hâlde "takılı iş yok → satır yok" sorgusunun alarmı hiç kapanmazdı) —
+     * tazelik kuralı hariç ({@link #isInconclusive}). "Taban kuruluyor" notları ({@link #WAITING_NOTES}) da bu kümede DEĞİL.
      */
     public static final java.util.Set<String> INCONCLUSIVE_NOTES =
-            java.util.Set.of(NOTE_COLUMN_MISSING, NOTE_NOT_NUMERIC, NOTE_FIRST_RUN, NOTE_PREVIOUS_UNREADABLE);
+            java.util.Set.of(NOTE_COLUMN_MISSING, NOTE_NOT_NUMERIC, NOTE_PREVIOUS_UNREADABLE, NOTE_NOT_TIMESTAMP,
+                    NOTE_DB_CLOCK_UNAVAILABLE, NOTE_FUTURE_TIMESTAMP);
+
+    /**
+     * "Taban kuruluyor" notları (r177 ikinci tur, O-6): ihlal DEĞİL ve kanıt eksikliği de DEĞİL — eşik kararında kural
+     * "geçti" sayılır (ANY'de başka ihlal yoksa karar OK, açık eşik alarmı kapanabilir), kontrol satırı UNKNOWN olmaz
+     * (not kural sonucunda görünür), ardışık değerlendirilemeyen çalıştırma alarmını beslemez. Aksi hâlde yeni bir "geçen
+     * hafta aynı saat" kuralı bir hafta boyunca açık eşik alarmının kapanmasını engellerdi.
+     */
+    public static final java.util.Set<String> WAITING_NOTES =
+            java.util.Set.of(NOTE_FIRST_RUN, NOTE_BASELINE_RESET, NOTE_NO_SEASONAL_BASELINE);
+
+    /**
+     * Değerlendirilemeyen bir kural sonucu KANIT EKSİKLİĞİ mi (geçti sayılmaz): {@link #INCONCLUSIVE_NOTES}; tazelik kuralında
+     * ayrıca satır yok / değer boş (zaman damgası yoksa tazelik bilinemez — boş tablo "taze" değildir).
+     */
+    public static boolean isInconclusive(String kind, String note) {
+        if (note == null) return false;
+        if (INCONCLUSIVE_NOTES.contains(note)) return true;
+        return DbQueryRules.KIND_FRESHNESS.equals(kind) && (NOTE_NO_ROWS.equals(note) || NOTE_NULL_VALUE.equals(note));
+    }
+
+    /** Kanıt eksikliği ve "taban kuruluyor" değil — yapılandırma / veri sorunu (ardışık değerlendirilemeyen alarmı besler). */
+    public static boolean isConfigUnevaluable(String kind, String note) {
+        return isInconclusive(kind, note) && !WAITING_NOTES.contains(note);
+    }
 
     private static final ObjectMapper JSON = new ObjectMapper();
 
@@ -68,16 +116,57 @@ public final class DbQueryEvaluator {
      * @param note      kısa açıklama kodu ya da metni (null olabilir)
      * @param measure   TABAN ölçü (satır sayısı / kolon toplamı …) — bir sonraki çalıştırmanın değişim kuralı bunu okur
      * @param compared  eşikle karşılaştırılan sayı (değişim kuralında değişim miktarı; diğerlerinde = measure)
+     * @param fingerprint kuralın ölçüm tanımının özeti ({@link DbQueryRules#fingerprint}, r177) — bir sonraki çalıştırmanın
+     *                    değişim tabanı ve geriye dönük deneme bununla eşler; bu sürümden önceki satırlarda yok (null)
      */
     public record RuleResult(String id, String label, String kind, String actual, String expected, String level,
-                             boolean passed, boolean evaluated, String note, Double measure, Double compared) {}
+                             boolean passed, boolean evaluated, String note, Double measure, Double compared,
+                             String fingerprint) {
+        /** Eski on bir alanlı biçim (parmak izi yok). */
+        public RuleResult(String id, String label, String kind, String actual, String expected, String level,
+                          boolean passed, boolean evaluated, String note, Double measure, Double compared) {
+            this(id, label, kind, actual, expected, level, passed, evaluated, note, measure, compared, null);
+        }
+
+        /** Parmak izi eklenmiş kopya. */
+        RuleResult withFingerprint(String fp) {
+            return new RuleResult(id, label, kind, actual, expected, level, passed, evaluated, note, measure, compared, fp);
+        }
+    }
 
     /**
      * @param status      OK | BREACH
      * @param level       NONE | WARNING | CRITICAL
      * @param metricValue grafik değeri: ilk değerlendirilen sayısal kuralın compared değeri; yoksa satır sayısı
      */
-    public record Outcome(String status, String level, List<RuleResult> results, Double metricValue) {}
+    public record Outcome(String status, String level, List<RuleResult> results, Double metricValue) {
+        /** En az bir kural kanıt eksikliğiyle değerlendirilemedi ({@link #isInconclusive}) — r177 kontrol durumu UNKNOWN. */
+        public boolean inconclusive() {
+            if (results == null) return false;
+            for (RuleResult r : results) if (r != null && !r.evaluated() && isInconclusive(r.kind(), r.note())) return true;
+            return false;
+        }
+
+        /** En az bir kural YAPILANDIRMA sorunuyla değerlendirilemedi ({@link #isConfigUnevaluable}). */
+        public boolean configUnevaluable() {
+            if (results == null) return false;
+            for (RuleResult r : results) if (r != null && !r.evaluated() && isConfigUnevaluable(r.kind(), r.note())) return true;
+            return false;
+        }
+    }
+
+    /**
+     * Değişim kuralının tabanları (r177): kural kimliği → taban ölçü; ölçü yoksa {@code notes}'taki not (tabanın neden olmadığı:
+     * {@link #NOTE_BASELINE_RESET}, {@link #NOTE_NO_SEASONAL_BASELINE}, {@link #NOTE_PREVIOUS_UNREADABLE}); not da yoksa
+     * {@link #NOTE_FIRST_RUN}.
+     */
+    public record Baselines(Map<String, Double> measures, Map<String, String> notes) {
+        public static final Baselines NONE = new Baselines(Map.of(), Map.of());
+
+        Double measure(String id) { return measures == null || id == null ? null : measures.get(id); }
+
+        String note(String id) { return notes == null || id == null ? null : notes.get(id); }
+    }
 
     private DbQueryEvaluator() {}
 
@@ -96,31 +185,50 @@ public final class DbQueryEvaluator {
      */
     public static Outcome evaluate(List<DbQueryRules.Rule> rules, String logic, DbQueryRunner.QueryResult result,
                                    Map<String, Double> previousMeasures, String lang, boolean previousUnreadable) {
+        Map<String, String> notes = new HashMap<>();
+        if (previousUnreadable && rules != null) {
+            for (DbQueryRules.Rule r : rules) if (r != null && r.id() != null) notes.put(r.id(), NOTE_PREVIOUS_UNREADABLE);
+        }
+        return evaluate(rules, logic, result, new Baselines(previousMeasures == null ? Map.of() : previousMeasures, notes), lang);
+    }
+
+    /** Kural başına taban ölçü + tabanın yokluğunun nedeni ({@link Baselines}) — r177; dilimsiz değerler {@link #DEFAULT_LOCAL_ZONE}. */
+    public static Outcome evaluate(List<DbQueryRules.Rule> rules, String logic, DbQueryRunner.QueryResult result,
+                                   Baselines baselines, String lang) {
+        return evaluate(rules, logic, result, baselines, lang, DEFAULT_LOCAL_ZONE);
+    }
+
+    /**
+     * @param localZone tazelik kuralında saat dilimi OLMAYAN değerlerin yorum dilimi (kuralın kendi {@code timezone}'u yoksa;
+     *                  ayar {@code site.monitor.dbquery.local-timezone}); null = {@link #DEFAULT_LOCAL_ZONE}
+     */
+    public static Outcome evaluate(List<DbQueryRules.Rule> rules, String logic, DbQueryRunner.QueryResult result,
+                                   Baselines baselines, String lang, java.time.ZoneId localZone) {
         boolean en = "en".equalsIgnoreCase(lang);
         List<DbQueryRules.Rule> rs = rules == null ? List.of() : rules;
-        Map<String, Double> prev = previousMeasures == null ? Map.of() : previousMeasures;
+        Baselines base = baselines == null ? Baselines.NONE : baselines;
         Double rowMetric = result == null ? null : (double) result.rowCount();
         if (result == null || !result.ok()) {
             List<RuleResult> out = new ArrayList<>();
             for (DbQueryRules.Rule r : rs) {
                 if (r == null) continue;
                 out.add(new RuleResult(r.id(), r.label(), r.kind(), "—", expected(r, en), LEVEL_NONE, true, false,
-                        NOTE_QUERY_FAILED, null, null));
+                        NOTE_QUERY_FAILED, null, null, DbQueryRules.fingerprint(r)));
             }
             return new Outcome("OK", LEVEL_NONE, List.copyOf(out), null);
         }
-        Ctx ctx = new Ctx(result, en, previousUnreadable);
+        Ctx ctx = new Ctx(result, en, localZone == null ? DEFAULT_LOCAL_ZONE : localZone);
         List<RuleResult> out = new ArrayList<>();
         for (DbQueryRules.Rule r : rs) {
             if (r == null) continue;
             RuleResult rr;
             try {
-                rr = evaluateRule(r, ctx, prev.get(r.id()));
+                rr = evaluateRule(r, ctx, base.measure(r.id()), base.note(r.id()));
             } catch (RuntimeException e) {
                 rr = new RuleResult(r.id(), r.label(), r.kind(), "—", expected(r, en), LEVEL_NONE, true, false,
                         NOTE_NOT_NUMERIC, null, null);
             }
-            out.add(rr);
+            out.add(rr.withFingerprint(DbQueryRules.fingerprint(r)));
         }
         boolean all = "ALL".equalsIgnoreCase(logic == null ? "" : logic.trim());
         String status = "OK", level = LEVEL_NONE;
@@ -158,9 +266,9 @@ public final class DbQueryEvaluator {
 
     // ── Kural başına ─────────────────────────────────────────────────────────
 
-    private record Ctx(DbQueryRunner.QueryResult result, boolean en, boolean previousUnreadable) {}
+    private record Ctx(DbQueryRunner.QueryResult result, boolean en, java.time.ZoneId localZone) {}
 
-    private static RuleResult evaluateRule(DbQueryRules.Rule r, Ctx ctx, Double previous) {
+    private static RuleResult evaluateRule(DbQueryRules.Rule r, Ctx ctx, Double previous, String missingNote) {
         boolean en = ctx.en();
         String exp = expected(r, en);
         DbQueryRunner.QueryResult qr = ctx.result();
@@ -184,7 +292,10 @@ public final class DbQueryEvaluator {
                 return textMatch(r, qr, exp, en);
             }
             case DbQueryRules.KIND_CHANGE -> {
-                return change(r, qr, previous, ctx.previousUnreadable(), exp, en);
+                return change(r, qr, previous, missingNote, exp, en);
+            }
+            case DbQueryRules.KIND_FRESHNESS -> {
+                return freshness(r, qr, exp, en, ruleZone(r, ctx.localZone()));
             }
             default -> {
                 return notEvaluated(r, exp, NOTE_NOT_NUMERIC);
@@ -410,7 +521,7 @@ public final class DbQueryEvaluator {
     // ── Değişim ──────────────────────────────────────────────────────────────
 
     private static RuleResult change(DbQueryRules.Rule r, DbQueryRunner.QueryResult qr, Double previous,
-                                     boolean previousUnreadable, String exp, boolean en) {
+                                     String missingNote, String exp, boolean en) {
         DbQueryRules.Change ch = r.change() == null ? new DbQueryRules.Change("ROW_COUNT", "PERCENT", "ANY") : r.change();
         Double base;
         String baseNote = null;
@@ -425,8 +536,18 @@ public final class DbQueryEvaluator {
         }
         if (previous == null || !Double.isFinite(previous)) {
             return new RuleResult(r.id(), r.label(), r.kind(), fmt(base, en), exp, LEVEL_NONE, true, false,
-                    previousUnreadable ? NOTE_PREVIOUS_UNREADABLE : NOTE_FIRST_RUN, base, null);
+                    missingNote != null ? missingNote : NOTE_FIRST_RUN, base, null);
         }
+        return changeAgainst(r, base, previous, baseNote, exp, en);
+    }
+
+    /**
+     * Değişim kuralının eşik kararı — ölçü ({@code base}) ve taban ({@code previous}) bilindiğinde. Geriye dönük deneme saklı
+     * ölçülerle de bunu kullanır (aynı hesap, aynı metin).
+     */
+    static RuleResult changeAgainst(DbQueryRules.Rule r, double base, double previous, String baseNote, String exp,
+                                    boolean en) {
+        DbQueryRules.Change ch = r.change() == null ? new DbQueryRules.Change("ROW_COUNT", "PERCENT", "ANY") : r.change();
         double diff = base - previous;
         double signed = switch (ch.direction()) {
             case "INCREASE" -> diff;
@@ -449,6 +570,136 @@ public final class DbQueryEvaluator {
         String actual = (diff == 0 ? dirWord : amount + " " + dirWord) + span;
         return new RuleResult(r.id(), r.label(), r.kind(), actual, exp, level, LEVEL_NONE.equals(level), true, note,
                 base, round(compared));
+    }
+
+    // ── Tazelik (r177) ───────────────────────────────────────────────────────
+
+    /** Zaman damgası metninin üst sınırı (daha uzunu tarih değildir — doğrusal, sınırlı ayrıştırma). */
+    static final int MAX_TIMESTAMP_CHARS = 64;
+
+    /** Kuralın dilimi (geçerliyse), yoksa ayardaki yerel dilim. */
+    static java.time.ZoneId ruleZone(DbQueryRules.Rule r, java.time.ZoneId fallback) {
+        java.time.ZoneId base = fallback == null ? DEFAULT_LOCAL_ZONE : fallback;
+        if (r == null || r.timezone() == null) return base;
+        try {
+            return java.time.ZoneId.of(r.timezone());
+        } catch (RuntimeException e) {
+            return base;
+        }
+    }
+
+    /**
+     * Tazelik: kolondaki zaman damgalarının hesabı (MAX = en yeni, MIN = en eski, FIRST = ilk satır) veritabanı saatine göre
+     * YAŞA (saniye) çevrilir — yaş = veritabanının şu anki ANI − değer. Saat dilimli değerler (PostgreSQL {@code timestamptz},
+     * MSSQL {@code datetimeoffset}, Oracle {@code TIMESTAMP WITH TIME ZONE}) mutlaktır — çalıştırıcı anlarını ayrıca verir
+     * ({@link DbQueryRunner.QueryResult#instants}); dilimsiz değerler (PostgreSQL {@code timestamp}, MSSQL
+     * {@code datetime / datetime2}, Oracle {@code DATE / TIMESTAMP}) TÜM türlerde aynı kuralla {@code zone}'da (kuralın
+     * {@code timezone}'u, yoksa ayar) yorumlanır (r177 ikinci tur, O-1). Değer veritabanı saatinden
+     * {@value #FUTURE_TOLERANCE_SECONDS} sn'ye kadar ileride → yaş 0 (saat farkı); daha ilerisi →
+     * {@link #NOTE_FUTURE_TIMESTAMP} (değerlendirilemez — yanlış dilim; asla "geçti"). Satır yok / değer boş → kanıt eksikliği
+     * ({@link #isInconclusive}); veritabanı saati okunamadı → {@link #NOTE_DB_CLOCK_UNAVAILABLE}; değer tarih değil →
+     * {@link #NOTE_NOT_TIMESTAMP}.
+     */
+    private static RuleResult freshness(DbQueryRules.Rule r, DbQueryRunner.QueryResult qr, String exp, boolean en,
+                                        java.time.ZoneId zone) {
+        int idx = columnIndex(qr, r.column());
+        if (idx < 0) return notEvaluated(r, exp, NOTE_COLUMN_MISSING);
+        List<List<Object>> rows = qr.rows() == null ? List.of() : qr.rows();
+        if (rows.isEmpty()) return notEvaluated(r, exp, NOTE_NO_ROWS);
+        DbQueryRunner.DbClock clock = qr.dbClock();
+        if (clock == null || clock.now() == null) return notEvaluated(r, exp, NOTE_DB_CLOCK_UNAVAILABLE);
+        List<Long> absolute = qr.instants() == null ? null : qr.instants().get(idx);
+        String agg = r.aggregate() == null ? "MAX" : r.aggregate();
+        java.time.Instant picked = null;
+        boolean anyValue = false;
+        int limit = "FIRST".equals(agg) ? Math.min(1, rows.size()) : rows.size();
+        for (int i = 0; i < limit; i++) {
+            List<Object> row = rows.get(i);
+            Object cell = idx < row.size() ? row.get(idx) : null;
+            if (cell == null) continue;
+            anyValue = true;
+            java.time.Instant t;
+            if (absolute != null) {
+                Long ms = i < absolute.size() ? absolute.get(i) : null;
+                t = ms == null ? null : java.time.Instant.ofEpochMilli(ms);
+            } else {
+                t = timestampOf(cell, zone);
+            }
+            if (t == null) return notEvaluated(r, exp, NOTE_NOT_TIMESTAMP);
+            if (picked == null || ("MIN".equals(agg) ? t.isBefore(picked) : t.isAfter(picked))) picked = t;
+        }
+        if (!anyValue || picked == null) return notEvaluated(r, exp, NOTE_NULL_VALUE);
+        double age = (clock.now().toEpochMilli() - picked.toEpochMilli()) / 1000.0;
+        if (age < -FUTURE_TOLERANCE_SECONDS) {
+            String ahead = en ? "in the future (" + duration(-age, true) + " ahead of the database clock)"
+                    : "gelecekte (veritabanı saatinden " + duration(-age, false) + " ileride)";
+            return new RuleResult(r.id(), r.label(), r.kind(), ahead, exp, LEVEL_NONE, true, false, NOTE_FUTURE_TIMESTAMP,
+                    null, null);
+        }
+        age = round(Math.max(0, age));
+        String level = numericLevel(r, age);
+        String partial = qr.rowCountCapped() || qr.valuesTruncated() || rows.size() < qr.rowCount() ? NOTE_PARTIAL : null;
+        String actual = en ? "age " + duration(age, true) : "yaş " + duration(age, false);
+        return new RuleResult(r.id(), r.label(), r.kind(), actual, exp, level, LEVEL_NONE.equals(level), true, partial,
+                age, age);
+    }
+
+    /**
+     * Hücre → an. Çalıştırıcının okuduğu biçimler: ISO yerel tarih-saat ({@code 2026-10-31T10:15:30.123}), saat dilimli ISO
+     * ({@code …+03:00} / {@code …Z}), yalnız tarih ({@code 2026-10-31} — günün başı); sürücülerin metin biçimleri
+     * ({@code 2026-10-31 10:15:30.1234567 +03:00}). Sayı, mantıksal ve tanınmayan metin → null (tahmin YOK — örn. epoch).
+     * Doğrusal: girdi ≤ {@value #MAX_TIMESTAMP_CHARS} karakter, düzenli ifade yok.
+     */
+    static java.time.Instant timestampOf(Object cell, java.time.ZoneId zone) {
+        if (!(cell instanceof String raw)) return null;
+        String s = raw.trim();
+        if (s.length() < 10 || s.length() > MAX_TIMESTAMP_CHARS) return null;
+        java.time.ZoneId z = zone == null ? DEFAULT_LOCAL_ZONE : zone;
+        try {
+            if (s.length() == 10) return java.time.LocalDate.parse(s).atStartOfDay(z).toInstant();
+            StringBuilder b = new StringBuilder(s.length());
+            for (int i = 0; i < s.length(); i++) {
+                char c = s.charAt(i);
+                if (i == 10 && c == ' ') { b.append('T'); continue; }
+                b.append(c);
+            }
+            String t = b.toString();
+            // Dilim eki: "Z", "+03:00", "+0300", "+03", ve önündeki tek boşluk (" +03:00")
+            int sign = -1;
+            for (int i = t.length() - 1; i > 10; i--) {
+                char c = t.charAt(i);
+                // Tarih bölümünün tireleri 4 ve 7. konumda; 'T'den (10) sonraki her '-' dilim işaretidir — saniyesi sıfır
+                // değer "2026-10-31T10:15-05:00" yazılır (eksi 16. konumda, r177 ikinci tur D-5)
+                if (c == '+' || (c == '-' && i > 10)) { sign = i; break; }
+                if (c == 'Z' && i == t.length() - 1) { sign = i; break; }
+            }
+            if (sign < 0) return java.time.LocalDateTime.parse(t).atZone(z).toInstant();
+            String local = t.substring(0, sign).trim();
+            String off = t.substring(sign);
+            java.time.ZoneOffset o;
+            if ("Z".equals(off)) o = java.time.ZoneOffset.UTC;
+            else {
+                String d = off.substring(1);
+                if (d.length() == 4 && d.indexOf(':') < 0) d = d.substring(0, 2) + ":" + d.substring(2);
+                if (d.length() == 2) d = d + ":00";
+                o = java.time.ZoneOffset.of(off.charAt(0) + d);
+            }
+            return java.time.LocalDateTime.parse(local).atOffset(o).toInstant();
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    /** Süre metni: "45 sn", "12 dk 3 sn", "3 sa 5 dk", "2 g 4 sa" (EN "45 s", "12 min 3 s", "3 h 5 min", "2 d 4 h"). */
+    static String duration(double seconds, boolean en) {
+        if (!Double.isFinite(seconds)) return "—";
+        long s = Math.round(Math.abs(seconds));
+        long d = s / 86_400, h = (s % 86_400) / 3_600, m = (s % 3_600) / 60, sec = s % 60;
+        String ds = en ? " d" : " g", hs = en ? " h" : " sa", ms = en ? " min" : " dk", ss = en ? " s" : " sn";
+        if (d > 0) return d + ds + (h > 0 ? " " + h + hs : "");
+        if (h > 0) return h + hs + (m > 0 ? " " + m + ms : "");
+        if (m > 0) return m + ms + (sec > 0 ? " " + sec + ss : "");
+        return sec + ss;
     }
 
     private static String changeWord(double diff, String direction, boolean en) {
@@ -477,6 +728,13 @@ public final class DbQueryEvaluator {
         }
         String prefix = "";
         boolean percent = false;
+        if (DbQueryRules.KIND_FRESHNESS.equals(r.kind())) {
+            List<String> parts = new ArrayList<>();
+            String ageWord = en ? "age " : "yaş ";
+            if (r.warning() != null) parts.add(ageWord + healthyAge(r.operator(), r.warning(), en) + " (" + levelWord(LEVEL_WARNING, en) + ")");
+            if (r.critical() != null) parts.add(ageWord + healthyAge(r.operator(), r.critical(), en) + " (" + levelWord(LEVEL_CRITICAL, en) + ")");
+            return String.join(" · ", parts);
+        }
         if (DbQueryRules.KIND_CHANGE.equals(r.kind()) && r.change() != null) {
             percent = "PERCENT".equals(r.change().mode());
             prefix = switch (r.change().direction()) {
@@ -507,6 +765,12 @@ public final class DbQueryEvaluator {
             case "NEQ" -> "= " + v;
             default -> v;
         };
+    }
+
+    /** Tazelik eşiğinin sağlıklı metni: GT 600 → "≤ 10 dk", GTE 600 → "< 10 dk". */
+    private static String healthyAge(String op, DbQueryRules.Threshold t, boolean en) {
+        String v = t.value() == null ? "—" : duration(t.value(), en);
+        return ("GTE".equals(op) ? "< " : "≤ ") + v;
     }
 
     private static String num(double v, boolean percent, boolean en) {
@@ -572,6 +836,7 @@ public final class DbQueryEvaluator {
                 m.put("note", r.note());
                 m.put("measure", r.measure());
                 m.put("compared", r.compared());
+                if (r.fingerprint() != null) m.put("fingerprint", r.fingerprint());
                 out.add(m);
             }
         }
@@ -594,7 +859,8 @@ public final class DbQueryEvaluator {
                 out.add(new RuleResult(id, str(m.get("label")), str(m.get("kind")), str(m.get("actual")),
                         str(m.get("expected")), str(m.get("level")), Boolean.TRUE.equals(m.get("passed")),
                         Boolean.TRUE.equals(m.get("evaluated")), str(m.get("note")),
-                        DbQueryRules.toDouble(m.get("measure")), DbQueryRules.toDouble(m.get("compared"))));
+                        DbQueryRules.toDouble(m.get("measure")), DbQueryRules.toDouble(m.get("compared")),
+                        str(m.get("fingerprint"))));
             }
             return List.copyOf(out);
         } catch (Exception e) {
@@ -607,6 +873,18 @@ public final class DbQueryEvaluator {
         Map<String, Double> out = new HashMap<>();
         for (RuleResult r : fromJson(json)) if (r.measure() != null) out.put(r.id(), r.measure());
         return out;
+    }
+
+    /**
+     * Saklı bir kural ölçüsü bugünkü kuralın TABANI olabilir mi (r177, H-1): aynı kimlik zaten eşleşmiş; parmak izi varsa
+     * eşit olmalı ({@link DbQueryRules#fingerprint}); bu sürümden ÖNCEKİ satırda (parmak izi yok) yalnız tür denetlenir —
+     * eski satırı reddetmek her değişim kuralını yayından sonra bir çalıştırma "değerlendirilemedi" bırakırdı (günlük cron'da
+     * bir gün); sorgu özeti ayrıca çağıranda karşılaştırılır.
+     */
+    public static boolean sameMeasureDefinition(RuleResult stored, DbQueryRules.Rule current) {
+        if (stored == null || current == null) return false;
+        if (stored.fingerprint() != null) return stored.fingerprint().equals(DbQueryRules.fingerprint(current));
+        return stored.kind() == null || stored.kind().equals(current.kind());
     }
 
     private static String str(Object o) { return o == null ? null : String.valueOf(o); }

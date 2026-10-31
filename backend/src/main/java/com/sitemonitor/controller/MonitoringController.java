@@ -5249,7 +5249,7 @@ public class MonitoringController {
             "name", "active", "teamId", "groupName", "tags", "profileId", "purpose", "sqlText",
             "scheduleMode", "intervalSeconds", "cronExpression", "windowsJson", "blackoutJson", "skipHolidays", "skipDatesJson",
             "queryTimeoutSeconds", "maxRows", "rulesJson", "ruleLogic", "slowQueryMs",
-            "mailIncludeRows", "mailColumnsJson", "maskedColumnsJson", "mailSubjectTemplate",
+            "mailIncludeRows", "mailColumnsJson", "maskedColumnsJson", "mailSubjectTemplate", "mailColumnsMode",
             "confirmAttempts", "confirmIntervalSeconds", "recoveryChecks", "recoveryIntervalSeconds",
             "alertLevel", "notifyEmail", "notifyWebhook", "notificationGroupId", "nocNotify", "nocGroupIds" };
 
@@ -5348,6 +5348,7 @@ public class MonitoringController {
         m.setUpdatedAt(now);
         monitorHistory.stampCreated(m, session);
         monitorHistory.stampUpdated(m, session);
+        dbqRequireAccountAllowed(profile);
         DbQueryMonitor saved = dbqUniqueSave(m.getName(), null, true, () -> repo.save(m));
         activityLog.recordLifecycle(ACT_DBQUERY, saved.getId(), saved.getName(), saved.getName(), saved.getTeamId(), "CREATED", actor(session));
         auditService.recordAction("MONITOR_CREATE", session, "DBQUERY_MONITOR", String.valueOf(saved.getId()), saved.getName(),
@@ -5357,6 +5358,7 @@ public class MonitoringController {
         Map<String, Object> out = enrichDbQuery(saved, null, teamNameMap(), null, profile, dbqProfileDetail(session, saved.getTeamId()));
         withCheckFlag(session, List.of(out));
         if (plan != null) out.put("plan_warning", dbqPlanApi(plan));
+        out.put("warnings", dbqWarnings(saved, profile, null));
         return ok(out);
     }
 
@@ -5378,6 +5380,7 @@ public class MonitoringController {
         Boolean wasActive = m.getActive();
         String oldSql = m.getSqlText();
         Long oldProfile = m.getProfileId();
+        String oldRules = m.getRulesJson();
         List<Object> oldSchedule = dbqScheduleColumns(m);
         String intendedName = body.get("name") != null ? body.get("name").toString().trim() : oldName;
         if (intendedName == null || intendedName.isBlank()) throw DbQueryApiException.field(null, "name", com.sitemonitor.util.Msg.t(
@@ -5396,6 +5399,7 @@ public class MonitoringController {
         List<Map<String, Object>> violations = dbqGuard(m, profile, queryChanged, errs);
         throwDbqErrors(errs, violations, sched.code());
         DbQueryCheckerService.PlanVerdict plan = queryChanged ? dbqPlanOnSave(profile, m.getSqlText()) : null;
+        if (queryChanged) dbqRequireAccountAllowed(profile);
         if (sched.spec() != null) DbQuerySchedule.apply(sched.spec(), m, Instant.now(), dbqHolidays());
         // Zamanlama değişti: eski plan (next_run_at + küme vadesi) geçersiz — zamanlayıcı yeni tanımdan baştan planlar
         // ("first"). next_run_at updatable=false: sıfırlama kayıttan SONRA zamanlayıcının hedefli yazımıyla (dbQueryScheduleChanged).
@@ -5411,6 +5415,8 @@ public class MonitoringController {
         monitorHistory.stampUpdated(m, session);
         DbQueryMonitor saved = dbqUniqueSave(m.getName(), id, nameChanged, () -> repo.save(m));
         if (scheduleChanged) dbqReplan(saved.getId());
+        // r177: sorgu / bağlantı / kurallar değişti — eski tanımın "değerlendirilemedi" dizisi yeni tanıma taşınmaz
+        if (queryChanged || !Objects.equals(oldRules, saved.getRulesJson())) dbqClearUnknown(saved);
         // Duraklat / devam: atlama sayacı ve bekleyen "yeniden dene" girişi sıfırlanır (eski dönem devamda koşmasın)
         if (!Objects.equals(Boolean.TRUE.equals(wasActive), Boolean.TRUE.equals(saved.getActive()))) dbqActiveChanged(saved.getId());
         // Ad değişti: açık alarm(lar) yeni ada taşınır — YALNIZ bu izlemenin olayı (EscalationService.closableBy)
@@ -5424,6 +5430,7 @@ public class MonitoringController {
                 teamNameMap(), openDbQueryAlarms(List.of(saved)).get(saved.getId()), profile, dbqProfileDetail(session, saved.getTeamId()));
         withCheckFlag(session, List.of(out));
         if (plan != null) out.put("plan_warning", dbqPlanApi(plan));
+        out.put("warnings", dbqWarnings(saved, profile, null));
         return ok(out);
     }
 
@@ -5542,6 +5549,17 @@ public class MonitoringController {
                     "The database is busy with other queries (concurrency limit reached); the test didn't run. Try again in a few seconds."), 10);
         }
         Map<String, Object> out = dbqTestResult(r);
+        // r177 (Ö-6): sonuç kolonlarından hassas olabilenler (maskeli olmayan) — maske ÖNERİSİ; satır verisi yok
+        List<String> resultCols = new ArrayList<>();
+        if (r != null && r.columnInfo() != null) for (DbQueryRunner.Column c : r.columnInfo()) resultCols.add(c.name());
+        out.put("suggested_masks", dbqSuggestedMasks(resultCols, draft));
+        // Uyarılar izlemenin KAYDEDİLECEK ayarıyla (deneme kendisi satır seçmez): "satırları maile ekle" gövdedeki değer
+        // (yoksa açık); mail kolonu kipi gönderilmediyse yeni izlemede SELECTED, var olan izlemede bugünkü davranış (FIRST_N)
+        Object rowsRaw = dbqVal(body, "mail_include_rows");
+        draft.setMailIncludeRows(!(Boolean.FALSE.equals(rowsRaw) || "false".equalsIgnoreCase(String.valueOf(rowsRaw))));
+        if (!dbqHas(body, "mail_columns_mode") && monitorId == null) draft.setMailColumnsMode(DbQueryMonitor.MAIL_COLUMNS_SELECTED);
+        out.put("warnings", dbqWarnings(draft, profile, r == null || r.columnInfo() == null || r.columnInfo().isEmpty() ? null : resultCols));
+        draft.setMailIncludeRows(false);
         DbQuerySqlGuard.Result g = dbqGuardResult(draft.getSqlText(), profile);
         Map<String, Object> guard = new LinkedHashMap<>();
         guard.put("ok", g != null && g.ok());
@@ -5568,6 +5586,13 @@ public class MonitoringController {
         out.put("violations", com.sitemonitor.service.dbquery.DbQueryTemplateService.violations(g));
         out.put("tables", g == null || g.tables() == null ? List.of() : g.tables());
         out.put("db_type", (type == null ? DbType.POSTGRESQL : type).name());
+        // r177: biçim uyarıları (engellemez) — SELECT *; gövdede kurallar varsa COUNT tuzağı
+        List<DbQueryRules.Rule> rules = List.of();
+        if (body != null && body.get("rules") instanceof List<?> rl && rl.size() <= DbQueryRules.MAX_RULES) {
+            DbQueryRules.Parsed parsed = DbQueryRules.fromApi(rl);
+            if (parsed.rules() != null) rules = parsed.rules();
+        }
+        out.put("warnings", dbqShapeWarnings(g == null ? null : g.shape(), rules));
         return ok(out);
     }
 
@@ -5708,9 +5733,283 @@ public class MonitoringController {
         Map<String, Object> out = new LinkedHashMap<>(buildResponseSeries(projected, range[0], range[1], false));
         dbqDecorateSeries(out, raw, range[0], range[1]);
         out.put("metric", "value".equals(m) || "rows".equals(m) ? m : "duration");
+        // r177 (Ö-8): ölçülen değer grafiğinde eşik çizgileri — değeri belirleyen (ilk sayısal) kuralın uyarı / kritik eşikleri
+        if ("value".equals(m)) out.put("thresholds", dbqSeriesThresholds(mon));
         if ("rows".equals(m)) out.put("unit", "rows");
         else if ("value".equals(m)) out.put("unit", "value");
         return ok(out);
+    }
+
+    /** Eşik denemesi: kullanıcı başına (bu pod) son 1 dk'daki başlangıçlar — yük sınırı (veritabanına gitmez). */
+    private final java.util.concurrent.ConcurrentHashMap<String, java.util.ArrayDeque<Long>> dbqBacktestStarts =
+            new java.util.concurrent.ConcurrentHashMap<>();
+    static final int DBQUERY_BACKTEST_PER_MINUTE = 6;
+    /** Eşik denemesinin okuduğu en çok satır (90 gün × dakikalık izleme sığar) ve süre bütçesi. */
+    static final int DBQUERY_BACKTEST_MAX_ROWS = 150_000, DBQUERY_BACKTEST_PAGE = 2_000;
+    static final long DBQUERY_BACKTEST_BUDGET_MS = 15_000;
+    static final Set<Integer> DBQUERY_BACKTEST_DAYS = Set.of(7, 30, 90);
+
+    /**
+     * Geriye dönük eşik denemesi (r177, Ö-8): SAKLI zamanlanmış çalıştırmaların kural ölçümleri YENİ kurallarla yeniden
+     * değerlendirilir ({@link com.sitemonitor.service.dbquery.DbQueryBacktest}) — veritabanına sorgu YOK, satır verisi YOK.
+     * İzin = izlemeyi düzenleme ({@code monitoring.crud/edit} + takımı işletebilme; paylaşımla EDIT de); görülemeyen izleme
+     * 404. Saatlik deneme hakkından DÜŞMEZ; pod başına kullanıcı başına {@value #DBQUERY_BACKTEST_PER_MINUTE}/dk yük sınırı.
+     * Gövde {@code {rules, rule_logic, days}} (kurallar / birleşim yoksa izlemenin kayıtlıları; gün 7 | 30 | 90).
+     */
+    @PostMapping("/dbquery/{id}/backtest")
+    public ResponseEntity<Map<String, Object>> dbQueryBacktest(@PathVariable Long id, @RequestBody(required = false) Map<String, Object> raw,
+                                                               HttpSession session) {
+        permissionService.require(session, "monitoring.crud", "edit");
+        DbQueryMonitor mon = dbqRepo().findById(id).orElse(null);
+        if (mon == null || !SessionScope.canViewMonitoring(session, mon.getTeamId())) {
+            return notFound(com.sitemonitor.util.Msg.t("Veritabanı sorgu izlemesi bulunamadı.", "Database query monitor not found."));
+        }
+        if (!canOperateTeam(session, mon.getTeamId())) throw new SecurityException(com.sitemonitor.util.Msg.t(
+                "Bu izlemenin eşiklerini deneme yetkiniz yok — izlemeyi düzenleyebilen kişi deneyebilir.",
+                "You can't try thresholds on this monitor — whoever can edit the monitor can."));
+        Map<String, Object> body = raw == null ? new LinkedHashMap<>() : dbqBody(raw);
+        Map<String, String> errs = new LinkedHashMap<>();
+        int days = 30;
+        Object dv = dbqVal(body, "days");
+        if (dv != null) {
+            Integer d = dbqInt(dv);
+            if (d == null || !DBQUERY_BACKTEST_DAYS.contains(d)) {
+                errs.put("days", com.sitemonitor.util.Msg.t("Deneme süresi 7, 30 ya da 90 gün olmalı.", "The period must be 7, 30 or 90 days."));
+            } else {
+                days = d;
+            }
+        }
+        List<DbQueryRules.Rule> rules;
+        if (dbqHas(body, "rules")) {
+            Object rr = dbqVal(body, "rules");
+            if (rr instanceof List<?> l && l.size() > DbQueryRules.MAX_RULES) {
+                errs.put("rules", com.sitemonitor.util.Msg.t("En çok " + DbQueryRules.MAX_RULES + " kural eklenebilir.",
+                        "At most " + DbQueryRules.MAX_RULES + " rules can be added."));
+                rules = List.of();
+            } else {
+                DbQueryRules.Parsed parsed = DbQueryRules.fromApi(rr == null ? List.of() : rr);
+                if (parsed.errors() != null) for (DbQueryRules.FieldError fe : parsed.errors()) errs.putIfAbsent(fe.field(), fe.message());
+                rules = parsed.rules() == null ? List.of() : parsed.rules();
+            }
+        } else {
+            rules = DbQueryRules.fromJson(mon.getRulesJson());
+        }
+        String logic = mon.getRuleLogic() == null ? DbQueryMonitor.LOGIC_ANY : mon.getRuleLogic();
+        if (dbqHas(body, "rule_logic")) {
+            Object v = dbqVal(body, "rule_logic");
+            String sl = v == null ? DbQueryMonitor.LOGIC_ANY : v.toString().trim().toUpperCase(java.util.Locale.ROOT);
+            if (!DbQueryMonitor.LOGIC_ANY.equals(sl) && !DbQueryMonitor.LOGIC_ALL.equals(sl)) {
+                errs.put("rule_logic", com.sitemonitor.util.Msg.t("Kural birleşimi ANY (herhangi biri) ya da ALL (hepsi) olmalı.",
+                        "The rule logic must be ANY (any rule) or ALL (all rules)."));
+            } else {
+                logic = sl;
+            }
+        }
+        if (rules.isEmpty() && !errs.containsKey("rules") && errs.keySet().stream().noneMatch(k -> k.startsWith("rules")))
+            errs.put("rules", com.sitemonitor.util.Msg.t("Denenecek en az bir kural gerekli.", "At least one rule is needed to try."));
+        throwDbqErrors(errs, null, null);
+        dbqBacktestRate(session);
+
+        Instant now = Instant.now();
+        Instant from = now.minus(java.time.Duration.ofDays(days));
+        long lookback = com.sitemonitor.service.dbquery.DbQueryBacktest.lookbackMs(rules);
+        String readFrom = ISO.format(from.minusMillis(lookback));
+        com.sitemonitor.service.dbquery.DbQueryBacktest bt = new com.sitemonitor.service.dbquery.DbQueryBacktest(
+                rules, logic, dbqSqlHash(mon.getSqlText()), from, mon.getIntervalSeconds());
+        long deadline = System.currentTimeMillis() + DBQUERY_BACKTEST_BUDGET_MS;
+        long after = 0;
+        int read = 0;
+        boolean truncated = false;
+        DbQueryCheckRepository checks = dbqCheckRepo();
+        while (true) {
+            List<Object[]> page = checks.backtestPage(id, readFrom, after, DBQUERY_BACKTEST_PAGE);
+            if (page == null || page.isEmpty()) break;
+            for (Object[] r : page) {
+                long rid = r[0] instanceof Number n ? n.longValue() : 0L;
+                after = Math.max(after, rid);
+                Instant at = com.sitemonitor.service.dbquery.DbQueryCheckerService.parseIso(r[1] == null ? null : r[1].toString());
+                bt.accept(new com.sitemonitor.service.dbquery.DbQueryBacktest.Row(rid, at, !Boolean.FALSE.equals(r[2]),
+                        r[4] == null ? null : r[4].toString(), DbQueryEvaluator.fromJson(r[5] == null ? null : r[5].toString())));
+                read++;
+            }
+            if (page.size() < DBQUERY_BACKTEST_PAGE) break;
+            if (read >= DBQUERY_BACKTEST_MAX_ROWS || System.currentTimeMillis() > deadline) { truncated = true; break; }
+        }
+        Map<String, Object> out = bt.report(truncated);
+        out.put("days", days);
+        return ok(out);
+    }
+
+    /** Eşik denemesi yük sınırı (kullanıcı başına, bu pod, kayan 1 dk) — 429 RATE_LIMITED + Retry-After. */
+    private void dbqBacktestRate(HttpSession session) {
+        Object u = session == null ? null : session.getAttribute("username");
+        String key = u == null ? "?" : u.toString();
+        long now = System.currentTimeMillis();
+        java.util.ArrayDeque<Long> q = dbqBacktestStarts.computeIfAbsent(key, k -> new java.util.ArrayDeque<>());
+        synchronized (q) {
+            while (!q.isEmpty() && now - q.peekFirst() >= 60_000L) q.pollFirst();
+            if (q.size() >= DBQUERY_BACKTEST_PER_MINUTE) {
+                long wait = Math.max(1, (60_000L - (now - q.peekFirst()) + 999) / 1000);
+                throw DbQueryApiException.tooMany("RATE_LIMITED", com.sitemonitor.util.Msg.t(
+                        "Çok sık eşik denemesi; " + wait + " sn sonra yeniden deneyin.",
+                        "Too many threshold tries; try again in " + wait + " s."), wait);
+            }
+            q.addLast(now);
+        }
+        if (dbqBacktestStarts.size() > 10_000) dbqBacktestStarts.clear();
+    }
+
+    /**
+     * Seri yanıtı eşik çizgileri (r177): değeri belirleyen kural = ilk sayısal kural (metin eşleşmesi değil). Her seviye bir
+     * satır {@code {rule_id, label, level, value, low, high}} (tek değer ya da aralık). Kural yoksa boş liste.
+     */
+    static List<Map<String, Object>> dbqSeriesThresholds(DbQueryMonitor mon) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (DbQueryRules.Rule r : DbQueryRules.fromJson(mon == null ? null : mon.getRulesJson())) {
+            if (DbQueryRules.KIND_TEXT_MATCH.equals(r.kind())) continue;
+            for (String level : List.of("WARNING", "CRITICAL")) {
+                DbQueryRules.Threshold t = "WARNING".equals(level) ? r.warning() : r.critical();
+                if (t == null || (t.value() == null && !t.isRange())) continue;
+                Map<String, Object> e = new LinkedHashMap<>();
+                e.put("rule_id", r.id());
+                e.put("label", r.label() != null ? r.label() : com.sitemonitor.service.dbquery.DbQueryAlarmText.kindLabel(r.kind()));
+                e.put("level", level);
+                e.put("value", t.value());
+                e.put("low", t.isRange() ? t.low() : null);
+                e.put("high", t.isRange() ? t.high() : null);
+                out.add(e);
+            }
+            break;   // yalnız değeri belirleyen kural
+        }
+        return out;
+    }
+
+    /** Uyarı kodları (r177, kalıcı — ön yüz {@code dbq.warn.<KOD>}). */
+    static final String DBQ_WARN_ROW_COUNT_ON_AGGREGATE = "ROW_COUNT_ON_AGGREGATE", DBQ_WARN_SELECT_STAR = "SELECT_STAR",
+            DBQ_WARN_SENSITIVE_UNMASKED = "SENSITIVE_UNMASKED";
+
+    /** Sorgu biçimi uyarıları: {@code SELECT *}; tek satırlık toplama + satır sayısı kuralı (COUNT tuzağı, H-5). */
+    static List<Map<String, Object>> dbqShapeWarnings(DbQuerySqlGuard.Shape shape, List<DbQueryRules.Rule> rules) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        if (shape == null || !shape.known()) return out;
+        if (shape.singleRowAggregate()) {
+            List<String> ids = new ArrayList<>();
+            for (DbQueryRules.Rule r : rules == null ? List.<DbQueryRules.Rule>of() : rules) {
+                boolean rowCount = DbQueryRules.KIND_ROW_COUNT.equals(r.kind())
+                        || (DbQueryRules.KIND_CHANGE.equals(r.kind()) && r.change() != null && "ROW_COUNT".equals(r.change().of()));
+                if (rowCount) ids.add(r.id());
+            }
+            if (!ids.isEmpty()) {
+                Map<String, Object> w = new LinkedHashMap<>();
+                w.put("code", DBQ_WARN_ROW_COUNT_ON_AGGREGATE);
+                w.put("rule_ids", ids);
+                w.put("columns", shape.columns());
+                w.put("message", com.sitemonitor.util.Msg.t(
+                        "Sorgu GROUP BY'sız bir toplama (COUNT, SUM …) — her zaman TEK satır döndürür; \"satır sayısı\" kuralı hiç "
+                                + "tetiklenmez · Kuralı \"kolon değeri\" türüne çevirin (sonuç kolonunun değeri).",
+                        "The query is an aggregate without GROUP BY (COUNT, SUM …) — it always returns ONE row, so a \"row count\" "
+                                + "rule never fires · Change the rule to a \"column value\" rule (the value of the result column)."));
+                out.add(w);
+            }
+        }
+        if (shape.selectStar()) {
+            Map<String, Object> w = new LinkedHashMap<>();
+            w.put("code", DBQ_WARN_SELECT_STAR);
+            w.put("message", com.sitemonitor.util.Msg.t(
+                    "Sorgu SELECT * kullanıyor — tablo kolonları değişince kurallar bozulabilir ve yeni kolonlar alarm mailine girer "
+                            + "· Gereken kolonları adlarıyla yazın.",
+                    "The query uses SELECT * — when the table's columns change, rules may break and new columns enter the alarm "
+                            + "mail · List the columns you need by name."));
+            out.add(w);
+        }
+        return out;
+    }
+
+    /**
+     * Kayıt / deneme uyarıları (engellemez): biçim uyarıları + hassas kolon maskesiz mailde (Ö-6). Mail kolonları: deneme
+     * sonucundaki gerçek kolonlar ({@code resultColumns}) ya da sorgu metninin dış SELECT kolonları; SELECTED kipinde yalnız
+     * seçilenler, FIRST_N'de seçilenler ya da (seçim yoksa) ilk N. Hassas + maskesiz kolon varsa {@code SENSITIVE_UNMASKED}.
+     */
+    private List<Map<String, Object>> dbqWarnings(DbQueryMonitor m, DbConnectionProfile profile, List<String> resultColumns) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        if (m == null) return out;
+        DbQuerySqlGuard.Result g = m.getSqlText() == null || m.getSqlText().isBlank() || profile == null ? null
+                : dbqGuardResult(m.getSqlText(), profile);
+        DbQuerySqlGuard.Shape shape = g == null ? null : g.shape();
+        out.addAll(dbqShapeWarnings(shape, DbQueryRules.fromJson(m.getRulesJson())));
+        if (Boolean.FALSE.equals(m.getMailIncludeRows())) return out;
+        List<String> known = resultColumns != null ? resultColumns : shape == null || !shape.known() ? List.of() : shape.columns();
+        List<String> mailCols = dbqEffectiveMailColumns(m, known);
+        java.util.Set<String> masked = new java.util.HashSet<>();
+        for (Object o : dbqJsonList(m.getMaskedColumnsJson())) if (o != null) masked.add(o.toString().trim().toLowerCase(java.util.Locale.ROOT));
+        List<String> exposed = new ArrayList<>();
+        for (String c : com.sitemonitor.service.dbquery.DbQuerySensitiveColumns.filter(mailCols)) {
+            if (!masked.contains(c.trim().toLowerCase(java.util.Locale.ROOT))) exposed.add(c);
+        }
+        if (!exposed.isEmpty()) {
+            Map<String, Object> w = new LinkedHashMap<>();
+            w.put("code", DBQ_WARN_SENSITIVE_UNMASKED);
+            w.put("columns", exposed);
+            w.put("message", com.sitemonitor.util.Msg.t(
+                    "Alarm mailine maskesiz gidebilecek kişisel / gizli veri kolonları var (" + String.join(", ", exposed) + ") · "
+                            + "Bu kolonları maskeleyin ya da mail kolonlarından çıkarın.",
+                    "Personal / secret data columns may go to the alarm mail unmasked (" + String.join(", ", exposed) + ") · "
+                            + "Mask these columns or remove them from the mail columns."));
+            out.add(w);
+        }
+        return out;
+    }
+
+    /** Maile girecek kolonlar (kipe göre) — bilinen kolon adları üstünden. */
+    private List<String> dbqEffectiveMailColumns(DbQueryMonitor m, List<String> known) {
+        List<String> chosen = new ArrayList<>();
+        for (Object o : dbqJsonList(m.getMailColumnsJson())) if (o != null && !o.toString().isBlank()) chosen.add(o.toString().trim());
+        boolean selectedOnly = DbQueryMonitor.MAIL_COLUMNS_SELECTED.equals(m.getMailColumnsMode());
+        if (selectedOnly) return chosen;
+        List<String> picked = new ArrayList<>();
+        for (String c : chosen) for (String k : known) if (k.equalsIgnoreCase(c) && !picked.contains(k)) picked.add(k);
+        if (!picked.isEmpty() || (!chosen.isEmpty() && known.isEmpty())) return picked.isEmpty() ? chosen : picked;
+        int max = Math.max(1, Math.min(20, appSettings.getInt("site.monitor.dbquery.mail-max-columns", 20)));
+        return known.size() <= max ? known : known.subList(0, max);
+    }
+
+    /** Deneme sonucunun kolonlarından maskelenmesi önerilenler (hassas ad + henüz maskeli değil). */
+    private static List<String> dbqSuggestedMasks(List<String> resultColumns, DbQueryMonitor draft) {
+        java.util.Set<String> masked = new java.util.HashSet<>();
+        for (Object o : dbqJsonList(draft == null ? null : draft.getMaskedColumnsJson()))
+            if (o != null) masked.add(o.toString().trim().toLowerCase(java.util.Locale.ROOT));
+        List<String> out = new ArrayList<>();
+        for (String c : com.sitemonitor.service.dbquery.DbQuerySensitiveColumns.filter(resultColumns)) {
+            if (!masked.contains(c.trim().toLowerCase(java.util.Locale.ROOT))) out.add(c);
+        }
+        return out;
+    }
+
+    /**
+     * Yazabilen hesap kipi BLOCK (r177, Ö-1): bağlantının SON denemesi hesabın yazabildiğini gösterdiyse kayıt 400
+     * {@code DB_ACCOUNT_WRITABLE} (alan {@code profile_id}). Hiç denenmemiş / okunamamış bağlantı burada engellenmez —
+     * çalıştırma anında oturumda denetlenir.
+     */
+    private void dbqRequireAccountAllowed(DbConnectionProfile profile) {
+        if (profile == null || dbQueryChecker == null) return;
+        if (!DbQueryCheckerService.WRITABLE_BLOCK.equals(dbQueryChecker.writableMode())) return;
+        if (!com.sitemonitor.service.dbquery.DbAccountPrivileges.storedWritable(profile.getLastPrivilegesJson())) return;
+        throw DbQueryApiException.field(DbQueryCheckerService.DB_ACCOUNT_WRITABLE, "profile_id", com.sitemonitor.util.Msg.t(
+                "Bu bağlantının hesabı yazma / yönetici yetkisine sahip; yönetici ayarı bu tür hesaplarla izlemeyi engelliyor · "
+                        + "DBA'dan yalnız okuma yetkili bir hesap isteyin, bağlantıya girip \"Bağlantıyı dene\" ile doğrulayın.",
+                "This connection's account has write / administrator rights; an administrator setting blocks monitors with such "
+                        + "accounts · Ask your DBA for a read-only account, enter it in the connection and verify it with \"Test connection\"."));
+    }
+
+    /** Değerlendirilemeyen çalıştırma sayacı sıfırlanır (tanım değişti) — hata kaydı bozmaz. */
+    private void dbqClearUnknown(DbQueryMonitor m) {
+        if (m == null || m.getId() == null || m.getUnknownRuns() == null || m.getUnknownRuns() == 0) return;
+        try {
+            dbqRepo().clearDbQueryUnknown(m.getId());
+        } catch (RuntimeException e) {
+            log.warn("Veritabanı sorgu izlemesi #{}: değerlendirilemeyen çalıştırma sayacı sıfırlanamadı: {}", m.getId(),
+                    e.getClass().getSimpleName());
+        }
     }
 
     // ── Veritabanı sorgu izlemesi — yardımcılar ──────────────────────────────
@@ -5821,6 +6120,7 @@ public class MonitoringController {
         m.put("mail_include_rows", "mailIncludeRows");
         m.put("mail_columns", "mailColumnsJson");
         m.put("mail_subject_template", "mailSubjectTemplate");
+        m.put("mail_columns_mode", "mailColumnsMode");
         m.put("slow_query_ms", "slowQueryMs");
         m.put("query_timeout_seconds", "queryTimeoutSeconds");
         m.put("max_rows", "maxRows");
@@ -5884,6 +6184,8 @@ public class MonitoringController {
                 if (s != null && s.isEmpty()) s = null;
                 return Objects.equals(s, m.getMailSubjectTemplate());
             }
+            case "mail_columns_mode":
+                return Objects.equals(dbqMailMode(sent, m.getMailColumnsMode()), dbqMailMode(m.getMailColumnsMode(), null));
             case "slow_query_ms":
                 return Objects.equals(dbqInt(sent), m.getSlowQueryMs());
             case "query_timeout_seconds": {
@@ -6118,6 +6420,23 @@ public class MonitoringController {
             String json = dbqColumnList(dbqVal(body, "masked_columns"), DBQUERY_MASKED_COLUMNS_MAX, "masked_columns", errs);
             if (!errs.containsKey("masked_columns")) m.setMaskedColumnsJson(json);
         }
+        // r177 (Ö-6): mail kolonları kipi — YENİ izlemede varsayılan SELECTED (yalnız seçilen kolonlar); var olan kayıtlar
+        // null = FIRST_N (bugünkü davranış). Geçersiz değer alan hatası.
+        if (dbqHas(body, "mail_columns_mode")) {
+            Object v = dbqVal(body, "mail_columns_mode");
+            String mode = v == null ? null : v.toString().trim().toUpperCase(java.util.Locale.ROOT);
+            if (mode == null || mode.isEmpty()) {
+                m.setMailColumnsMode(create ? DbQueryMonitor.MAIL_COLUMNS_SELECTED : m.getMailColumnsMode());
+            } else if (!DbQueryMonitor.MAIL_COLUMNS_FIRST_N.equals(mode) && !DbQueryMonitor.MAIL_COLUMNS_SELECTED.equals(mode)) {
+                errs.put("mail_columns_mode", com.sitemonitor.util.Msg.t(
+                        "Mail kolonları kipi FIRST_N (seçilenler, yoksa ilk kolonlar) ya da SELECTED (yalnız seçilenler) olmalı.",
+                        "The mail columns mode must be FIRST_N (chosen ones, otherwise the first columns) or SELECTED (only the chosen ones)."));
+            } else {
+                m.setMailColumnsMode(mode);
+            }
+        } else if (create && m.getMailColumnsMode() == null) {
+            m.setMailColumnsMode(DbQueryMonitor.MAIL_COLUMNS_SELECTED);
+        }
         if (dbqHas(body, "mail_subject_template")) {
             Object v = dbqVal(body, "mail_subject_template");
             String s = v == null ? null : v.toString().trim();
@@ -6173,6 +6492,13 @@ public class MonitoringController {
             errs.put(field, com.sitemonitor.util.Msg.t("Kolon listesi okunamadı.", "The column list couldn't be read."));
             return null;
         }
+    }
+
+    /** Kip değeri (gönderilen ya da kayıtlı) → etkin kip; boş / bilinmeyen = {@code fallback} ya da FIRST_N. */
+    private static String dbqMailMode(Object v, String fallback) {
+        String s = v == null ? null : v.toString().trim().toUpperCase(java.util.Locale.ROOT);
+        if (DbQueryMonitor.MAIL_COLUMNS_SELECTED.equals(s) || DbQueryMonitor.MAIL_COLUMNS_FIRST_N.equals(s)) return s;
+        return fallback != null ? dbqMailMode(fallback, null) : DbQueryMonitor.MAIL_COLUMNS_FIRST_N;
     }
 
     private static boolean dbqHasControl(String s) {
@@ -6532,15 +6858,15 @@ public class MonitoringController {
         int keyLen = bucketKeyLen(from, to);
         Map<String, double[]> rows = new HashMap<>();     // [toplam, adet]
         Map<String, double[]> values = new HashMap<>();
-        Map<String, Integer> worst = new HashMap<>();      // 0 OK, 1 BREACH, 2 FAIL
+        Map<String, Integer> worst = new HashMap<>();      // 0 OK, 1 UNKNOWN, 2 BREACH, 3 FAIL
         for (Object[] r : raw) {
             String ts = (String) r[0];
             if (ts == null || ts.length() < keyLen) continue;
             String key = ts.substring(0, keyLen);
             if (r[2] instanceof Number n) { double[] a = rows.computeIfAbsent(key, k -> new double[2]); a[0] += n.doubleValue(); a[1]++; }
             if (r[3] instanceof Number n) { double[] a = values.computeIfAbsent(key, k -> new double[2]); a[0] += n.doubleValue(); a[1]++; }
-            int rank = Boolean.FALSE.equals(r[4]) || DbQueryCheck.STATUS_FAIL.equals(r[5]) ? 2
-                    : DbQueryCheck.STATUS_BREACH.equals(r[5]) ? 1 : 0;
+            int rank = Boolean.FALSE.equals(r[4]) || DbQueryCheck.STATUS_FAIL.equals(r[5]) ? 3
+                    : DbQueryCheck.STATUS_BREACH.equals(r[5]) ? 2 : DbQueryCheck.STATUS_UNKNOWN.equals(r[5]) ? 1 : 0;
             worst.merge(key, rank, Math::max);
         }
         for (Object o : list) {
@@ -6554,7 +6880,8 @@ public class MonitoringController {
             p.put("row_count", rc == null || rc[1] == 0 ? null : Math.round(rc[0] / rc[1]));
             p.put("metric_value", mv == null || mv[1] == 0 ? null : mv[0] / mv[1]);
             Integer w = worst.get(key);
-            p.put("status", w == null ? null : w == 2 ? DbQueryCheck.STATUS_FAIL : w == 1 ? DbQueryCheck.STATUS_BREACH : DbQueryCheck.STATUS_OK);
+            p.put("status", w == null ? null : w == 3 ? DbQueryCheck.STATUS_FAIL : w == 2 ? DbQueryCheck.STATUS_BREACH
+                    : w == 1 ? DbQueryCheck.STATUS_UNKNOWN : DbQueryCheck.STATUS_OK);
         }
     }
 
@@ -6621,6 +6948,9 @@ public class MonitoringController {
         item.put("mail_columns",          dbqJsonList(m.getMailColumnsJson()));
         item.put("masked_columns",        dbqJsonList(m.getMaskedColumnsJson()));
         item.put("mail_subject_template", m.getMailSubjectTemplate());
+        item.put("mail_columns_mode",     dbqMailMode(m.getMailColumnsMode(), null));
+        // r177: ardışık yapılandırma sorunuyla değerlendirilemeyen zamanlanmış çalıştırma (eşiğe ulaşınca DB_RULE_UNEVALUABLE)
+        item.put("unknown_runs",          m.getUnknownRuns() == null ? 0 : m.getUnknownRuns());
         if (latest != null) {
             item.put("status",            latest.getStatus());
             item.put("breach_level",      latest.getBreachLevel());

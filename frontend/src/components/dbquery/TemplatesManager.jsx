@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeft, ChevronDown, CircleAlert, FileCode2, Library, Pencil, RefreshCw, Trash2 } from 'lucide-react'
+import { ArrowLeft, ChevronDown, CircleAlert, Copy, FileCode2, FilePlus2, Library, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { Button } from '@/components/shadcn/button'
@@ -23,7 +23,8 @@ import { Spinner } from '../ui/Progress.jsx'
 import SqlEditor from './SqlEditor.jsx'
 import RuleBuilder from './RuleBuilder.jsx'
 import { DbTypeBadge } from './dbqueryParts.jsx'
-import { TemplatePreview, useTeamTemplates } from './TemplatePicker.jsx'
+import { TemplateCard, TemplatePreview, useTeamTemplates } from './TemplatePicker.jsx'
+import { builtinTemplates } from './builtinTemplates.js'
 import { DB_TYPES, serverFieldErrors } from './connectionModel.js'
 import { validateRules } from './ruleModel.js'
 
@@ -36,7 +37,7 @@ import { validateRules } from './ruleModel.js'
  * Tab" der; Esc tüm pencereyi kapatıp düzenlemeyi kaybettiriyordu. Kaydedilmemiş değişiklikle kapat (X) / "Listeye dön" /
  * "Vazgeç" onay ister.
  */
-export default function TemplatesManager({ open, onOpenChange, teamId, teams = [], canEdit = false }) {
+export default function TemplatesManager({ open, onOpenChange, teamId, teams = [], canEdit = false, onCreateMonitor = null }) {
   const t = useT()
   const toast = useToast()
   const { showConfirm } = useDialog()
@@ -44,8 +45,17 @@ export default function TemplatesManager({ open, onOpenChange, teamId, teams = [
   const [team, setTeam] = useState(teamId ?? teamList[0]?.id ?? null)
   const [editing, setEditing] = useState(null)
   const [openId, setOpenId] = useState(null)
+  const [builtinType, setBuiltinType] = useState('POSTGRESQL')
   const [load, reload] = useTeamTemplates(team, !!open)
   const dirtyRef = useRef(false)   // düzenleme görünümünün kaydedilmemiş değişikliği (EditView bildirir)
+  const builtins = useMemo(() => builtinTemplates(t, builtinType), [t, builtinType])
+  /** Yeni şablon taslağı (boş ya da yerleşik şablonun kopyası) — kayıt takımın kütüphanesine (`POST`). */
+  const startNew = (from = null) => setEditing({
+    id: null, team_id: team, name: from?.name || '', description: from?.description || '', db_type: from?.db_type || 'POSTGRESQL',
+    purpose: from?.purpose || '', sql_text: from?.sql_text || '', rules: Array.isArray(from?.rules) ? from.rules : [],
+    rule_logic: from?.rule_logic === 'ALL' ? 'ALL' : 'ANY',
+  })
+  const createMonitor = (tpl) => { dirtyRef.current = false; onCreateMonitor?.(tpl) }
 
   /** Kaydedilmemiş değişiklik varsa onay — "Değişiklikleri at" true döner. */
   const confirmDiscard = useCallback(async () => {
@@ -90,7 +100,7 @@ export default function TemplatesManager({ open, onOpenChange, teamId, teams = [
       dismissOnBackdrop={!editing} dismissOnEscape={!editing}>
       <div data-slot="dbq-tpl-manager" data-view={editing ? 'edit' : 'list'} className="flex min-w-0 flex-col gap-3">
         {editing ? (
-          <EditView key={editing.id} tpl={editing} onCancel={backToList} dirtyRef={dirtyRef}
+          <EditView key={editing.id ?? 'new'} tpl={editing} onCancel={backToList} dirtyRef={dirtyRef}
             onSaved={() => { dirtyRef.current = false; setEditing(null); reload() }} />
         ) : (
           <>
@@ -103,10 +113,18 @@ export default function TemplatesManager({ open, onOpenChange, teamId, teams = [
                   </NativeSelect>
                 </div>
               ) : <p className="m-0 text-sm text-muted-foreground">{t('dbq.tpl.managerHint')}</p>}
-              <Button type="button" variant="outline" onClick={reload} disabled={load.state === 'loading'} className="pointer-coarse:h-10">
-                <RefreshCw aria-hidden="true" />{t('dbq.conn.refresh')}
-              </Button>
+              <div className="flex flex-wrap gap-2">
+                <Button type="button" variant="outline" onClick={reload} disabled={load.state === 'loading'} className="pointer-coarse:h-10">
+                  <RefreshCw aria-hidden="true" />{t('dbq.conn.refresh')}
+                </Button>
+                {canEdit && team != null && (
+                  <Button type="button" onClick={() => startNew()} className="pointer-coarse:h-10" data-slot="dbq-tpl-new">
+                    <Plus aria-hidden="true" />{t('dbq.tpl.new')}
+                  </Button>
+                )}
+              </div>
             </div>
+            <h4 className="m-0 text-xs font-bold tracking-wide text-muted-foreground uppercase">{t('dbq.tpl.groupTeam')}</h4>
             {load.state === 'noTeam' && <StatusBlock tone="neutral" title={t('dbq.conn.noTeamTitle')} description={t('dbq.conn.noTeamBody')} />}
             {load.state === 'loading' && <div className="flex flex-col gap-2"><Skeleton className="h-16 w-full" /><Skeleton className="h-16 w-full" /></div>}
             {load.state === 'error' && (
@@ -133,6 +151,7 @@ export default function TemplatesManager({ open, onOpenChange, teamId, teams = [
                         </div>
                         <KebabMenu variant="labeled" label={t('dbq.conn.col.actions')} rowLabel={tpl.name}
                           items={[
+                            { label: t('dbq.tpl.createMonitor'), icon: <FilePlus2 aria-hidden="true" />, onClick: () => createMonitor(tpl), hidden: !onCreateMonitor },
                             { label: t('dbq.tpl.edit'), icon: <Pencil aria-hidden="true" />, onClick: () => setEditing(tpl), hidden: !editable(tpl) },
                             { label: t('dbq.tpl.delete'), icon: <Trash2 aria-hidden="true" />, onClick: () => remove(tpl), danger: true, hidden: !editable(tpl) },
                           ]} />
@@ -149,6 +168,42 @@ export default function TemplatesManager({ open, onOpenChange, teamId, teams = [
                 </li>
               ))}
             </ul>
+
+            {/* Yerleşik başlangıç şablonları (2.C) — salt okunur; izleme oluştur ya da takım kütüphanesine kopyala */}
+            <section data-slot="dbq-tpl-builtins" aria-labelledby="dbq-tpl-mgr-builtin-h" className="flex min-w-0 flex-col gap-2 border-t pt-3">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex min-w-0 flex-col gap-0.5">
+                  <h4 id="dbq-tpl-mgr-builtin-h" className="m-0 text-xs font-bold tracking-wide text-muted-foreground uppercase">{t('dbq.tpl.groupBuiltin')}</h4>
+                  <p className="m-0 text-xs text-muted-foreground">{t('dbq.tpl.builtinManagerHint')}</p>
+                </div>
+                <SegmentedControl value={builtinType} onChange={setBuiltinType} ariaLabel={t('dbq.conn.dbType')}
+                  className="w-full sm:w-auto" itemClassName="flex-1 sm:flex-none"
+                  options={DB_TYPES.map((d) => ({ value: d, label: t(`dbq.conn.type.${d}`) }))} />
+              </div>
+              <ul className="m-0 flex list-none flex-col gap-2 p-0">
+                {builtins.map((tpl) => (
+                  <li key={tpl.id}>
+                    <TemplateCard tpl={tpl} slot="dbq-tpl-builtin-row" open={openId === tpl.id} onOpenChange={(o) => setOpenId(o ? tpl.id : null)}
+                      actions={(
+                        <>
+                          {onCreateMonitor && (
+                            <Button type="button" size="sm" onClick={() => createMonitor(tpl)} className="pointer-coarse:h-10"
+                              data-slot="dbq-tpl-create-monitor" aria-label={t('dbq.tpl.createMonitorOf', tpl.name)}>
+                              <FilePlus2 aria-hidden="true" />{t('dbq.tpl.createMonitor')}
+                            </Button>
+                          )}
+                          {canEdit && team != null && (
+                            <Button type="button" variant="outline" size="sm" onClick={() => startNew(tpl)} className="pointer-coarse:h-10"
+                              data-slot="dbq-tpl-copy" aria-label={t('dbq.tpl.copyToTeamOf', tpl.name)}>
+                              <Copy aria-hidden="true" />{t('dbq.tpl.copyToTeam')}
+                            </Button>
+                          )}
+                        </>
+                      )} />
+                  </li>
+                ))}
+              </ul>
+            </section>
           </>
         )}
       </div>
@@ -189,22 +244,27 @@ function EditView({ tpl, onCancel, onSaved, dirtyRef }) {
     if (Object.keys(fe).length) { setErrors(fe); return }
     setSaving(true)
     let res
-    try { res = await api.monitoring.updateDbQueryTemplate(tpl.id, { ...f, name: f.name.trim(), team_id: tpl.team_id }) } catch (e) { res = { success: false, error: e?.message } } finally { setSaving(false) }
-    if (res?.success) { toast.success(t('dbq.tpl.updated', f.name.trim())); onSaved(res.data || null); return }
+    const creating = tpl.id == null
+    const body = { ...f, name: f.name.trim(), team_id: tpl.team_id }
+    try {
+      res = creating ? await api.monitoring.createDbQueryTemplate(body) : await api.monitoring.updateDbQueryTemplate(tpl.id, body)
+    } catch (e) { res = { success: false, error: e?.message } } finally { setSaving(false) }
+    if (res?.success) { toast.success(t(creating ? 'dbq.tpl.saved' : 'dbq.tpl.updated', f.name.trim())); onSaved(res.data || null); return }
     const sfe = serverFieldErrors(res)
     if (res?.code === 'DUPLICATE_RECORD' && !sfe.name) sfe.name = res.error || t('dbq.tpl.v.nameTaken')
     setErrors(sfe)
     if (Array.isArray(res?.violations)) setViolations(res.violations)
-    if (!Object.keys(sfe).length) setBanner(res?.error || res?.message || t('dbq.tpl.saveFailedBody'))
+    if (!Object.keys(sfe).length) setBanner({ title: res?.code === 'TEMPLATE_LIBRARY_LIMIT' ? t('dbq.tpl.limitTitle') : t('dbq.tpl.saveFailedTitle'),
+      body: res?.error || res?.message || t('dbq.tpl.saveFailedBody') })
   }
 
   return (
     <div data-slot="dbq-tpl-edit" className="flex min-w-0 flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2">
         <Button type="button" variant="ghost" onClick={onCancel} disabled={saving} className="pointer-coarse:h-10"><ArrowLeft aria-hidden="true" />{t('dbq.tpl.backToList')}</Button>
-        <h3 className="m-0 text-base font-semibold [overflow-wrap:anywhere]">{t('dbq.tpl.editTitle', tpl.name)}</h3>
+        <h3 className="m-0 text-base font-semibold [overflow-wrap:anywhere]">{tpl.id == null ? t('dbq.tpl.newTitle') : t('dbq.tpl.editTitle', tpl.name)}</h3>
       </div>
-      {banner && <AlertBanner tone="danger" title={t('dbq.tpl.saveFailedTitle')} className="mb-0">{banner}</AlertBanner>}
+      {banner && <AlertBanner tone="danger" title={banner.title} className="mb-0">{banner.body}</AlertBanner>}
       <div className="grid grid-cols-1 gap-x-4 sm:grid-cols-2">
         <Field label={t('dbq.tpl.name')} required name="name" error={errors.name}>
           {({ id, describedBy, invalid }) => (

@@ -16,13 +16,17 @@ import java.util.Set;
 /**
  * Değerlendirme kuralları modeli (sözleşme §3). JSON biçimi ({@code dbquery_monitors.rules_json}, API {@code rules}):
  * <pre>
- * { "id": "r1", "label": "…", "kind": "ROW_COUNT|COLUMN_VALUE|TEXT_MATCH|CHANGE",
+ * { "id": "r1", "label": "…", "kind": "ROW_COUNT|COLUMN_VALUE|TEXT_MATCH|CHANGE|FRESHNESS",
  *   "column": "…", "aggregate": "FIRST|MAX|MIN|SUM|AVG|COUNT_NONNULL",
  *   "operator": "GT|GTE|LT|LTE|EQ|NEQ|BETWEEN|OUTSIDE|CONTAINS|NOT_CONTAINS|EQUALS|NOT_EQUALS|EMPTY|NOT_EMPTY",
  *   "scope": "ANY_ROW|ALL_ROWS|FIRST_ROW",
  *   "warning": 10 | [1, 5] | "text", "critical": 100 | [0, 2] | "text",
- *   "change": { "of": "ROW_COUNT|COLUMN", "mode": "PERCENT|ABSOLUTE", "direction": "INCREASE|DECREASE|ANY" } }
+ *   "change": { "of": "ROW_COUNT|COLUMN", "mode": "PERCENT|ABSOLUTE", "direction": "INCREASE|DECREASE|ANY",
+ *               "baseline": "previous|same_time_yesterday|same_time_last_week" } }
  * </pre>
+ * Tazelik ({@code FRESHNESS}, r177): kolon bir zaman damgasıdır; hesap {@code MAX} (varsayılan; FIRST / MIN de olur), ölçüm =
+ * veritabanı saatine göre YAŞ (saniye), operatör yalnız {@code GT} / {@code GTE} ("yaş ≥ X"). Değişim tabanı ({@code baseline},
+ * varsayılan {@code previous}) mevsimsel olabilir: dünün / geçen haftanın aynı saatindeki zamanlanmış çalıştırma.
  * Operatör İHLAL koşuludur: {@code GT 10} → değer 10'dan büyükse ihlal; {@code BETWEEN [1, 5]} → aralığın İÇİNDEyse,
  * {@code OUTSIDE [1, 5]} → DIŞINDAysa ihlal. İki seviye (uyarı / kritik) sayısal kurallarda bağımsız eşiklerdir (kritik önce);
  * metin kuralı tek seviyelidir (kritik alanı doluysa kritik, değilse uyarı).
@@ -36,9 +40,12 @@ public final class DbQueryRules {
     public static final int MAX_LABEL = 120, MAX_COLUMN = 128, MAX_TEXT = 500;
 
     public static final String KIND_ROW_COUNT = "ROW_COUNT", KIND_COLUMN_VALUE = "COLUMN_VALUE",
-            KIND_TEXT_MATCH = "TEXT_MATCH", KIND_CHANGE = "CHANGE";
+            KIND_TEXT_MATCH = "TEXT_MATCH", KIND_CHANGE = "CHANGE",
+            /** Tazelik: zaman damgası kolonunun veritabanı saatine göre yaşı (saniye) — r177. */
+            KIND_FRESHNESS = "FRESHNESS";
 
-    public static final List<String> KINDS = List.of(KIND_ROW_COUNT, KIND_COLUMN_VALUE, KIND_TEXT_MATCH, KIND_CHANGE);
+    public static final List<String> KINDS =
+            List.of(KIND_ROW_COUNT, KIND_COLUMN_VALUE, KIND_TEXT_MATCH, KIND_CHANGE, KIND_FRESHNESS);
     public static final List<String> AGGREGATES = List.of("FIRST", "MAX", "MIN", "SUM", "AVG", "COUNT_NONNULL");
     public static final List<String> NUMERIC_OPERATORS = List.of("GT", "GTE", "LT", "LTE", "EQ", "NEQ", "BETWEEN", "OUTSIDE");
     public static final List<String> TEXT_OPERATORS =
@@ -47,6 +54,14 @@ public final class DbQueryRules {
     public static final List<String> CHANGE_OF = List.of("ROW_COUNT", "COLUMN");
     public static final List<String> CHANGE_MODES = List.of("PERCENT", "ABSOLUTE");
     public static final List<String> CHANGE_DIRECTIONS = List.of("INCREASE", "DECREASE", "ANY");
+    /** Değişim tabanı (API değeri küçük harf, kalıcı): önceki çalıştırma / dünün aynı saati / geçen haftanın aynı saati. */
+    public static final String BASELINE_PREVIOUS = "previous", BASELINE_YESTERDAY = "same_time_yesterday",
+            BASELINE_LAST_WEEK = "same_time_last_week";
+    public static final List<String> CHANGE_BASELINES = List.of(BASELINE_PREVIOUS, BASELINE_YESTERDAY, BASELINE_LAST_WEEK);
+    /** Tazelik kuralında anlamlı hesaplar (toplam / ortalama zaman damgasında anlamsız). */
+    public static final List<String> FRESHNESS_AGGREGATES = List.of("MAX", "MIN", "FIRST");
+    /** Tazelik kuralının operatörleri: "yaş &gt; X" / "yaş ≥ X". */
+    public static final List<String> FRESHNESS_OPERATORS = List.of("GT", "GTE");
 
     private static final ObjectMapper JSON = new ObjectMapper();
 
@@ -55,10 +70,45 @@ public final class DbQueryRules {
         public boolean isRange() { return low != null && high != null; }
     }
 
-    public record Change(String of, String mode, String direction) {}
+    /**
+     * @param baseline {@link #CHANGE_BASELINES} — {@code previous} (varsayılan, bugüne dek tek davranış) ya da mevsimsel taban
+     */
+    public record Change(String of, String mode, String direction, String baseline) {
+        /** Eski üç alanlı biçim (taban = önceki çalıştırma). */
+        public Change(String of, String mode, String direction) {
+            this(of, mode, direction, BASELINE_PREVIOUS);
+        }
 
+        /** Taban null ise önceki çalıştırma. */
+        public String baselineOrPrevious() {
+            return baseline == null ? BASELINE_PREVIOUS : baseline;
+        }
+    }
+
+    /**
+     * @param timezone yalnız tazelik kuralında: saat dilimi OLMAYAN zaman damgalarının yorumlandığı IANA dilimi (ör.
+     *                 {@code Europe/Istanbul}); null = ayar {@code site.monitor.dbquery.local-timezone} (r177 ikinci tur, O-1)
+     */
     public record Rule(String id, String label, String kind, String column, String aggregate, String operator,
-                       String scope, Threshold warning, Threshold critical, Change change) {}
+                       String scope, Threshold warning, Threshold critical, Change change, String timezone) {
+        /** Eski on alanlı biçim (dilim yok). */
+        public Rule(String id, String label, String kind, String column, String aggregate, String operator,
+                    String scope, Threshold warning, Threshold critical, Change change) {
+            this(id, label, kind, column, aggregate, operator, scope, warning, critical, change, null);
+        }
+    }
+
+    /** Dilim adının üst sınırı (IANA adları ≤ 32). */
+    static final int MAX_TIMEZONE = 64;
+
+    /**
+     * Geçerli IANA dilim adı mı (ör. {@code Europe/Istanbul}, {@code UTC}); sabit fark ({@code +03:00}) ve tanınmayan ad
+     * kabul edilmez. Doğrusal, düzenli ifade yok.
+     */
+    public static boolean validTimezone(String s) {
+        if (s == null || s.isBlank() || s.length() > MAX_TIMEZONE) return false;
+        return java.time.ZoneId.getAvailableZoneIds().contains(s.trim());
+    }
 
     /** Alan hatası: {@code field} = "rules[2].warning" gibi; {@code message} istek dilinde. */
     public record FieldError(String field, String code, String message) {}
@@ -152,11 +202,14 @@ public final class DbQueryRules {
             put(m, "scope", r.scope());
             put(m, "warning", thresholdToApi(r.warning()));
             put(m, "critical", thresholdToApi(r.critical()));
+            put(m, "timezone", r.timezone());
             if (r.change() != null) {
                 Map<String, Object> c = new LinkedHashMap<>();
                 put(c, "of", r.change().of());
                 put(c, "mode", r.change().mode());
                 put(c, "direction", r.change().direction());
+                // Önceki çalıştırma tabanı yazılmaz (saklı JSON ve eski istemciler bugünkü gibi kalsın)
+                if (!BASELINE_PREVIOUS.equals(r.change().baselineOrPrevious())) put(c, "baseline", r.change().baseline());
                 m.put("change", c);
             }
             out.add(m);
@@ -223,9 +276,9 @@ public final class DbQueryRules {
         String kind = upper(m.get("kind"));
         if (kind == null || !KINDS.contains(kind)) {
             errors.add(err(base + ".kind", "DBQUERY_RULE_KIND", Msg.t(
-                    "Kural " + (i + 1) + " türü seçilmedi · Tür: satır sayısı, kolon değeri, metin eşleşmesi ya da değişim · "
-                            + "Bir tür seçin.",
-                    "Rule " + (i + 1) + " has no type · Type: row count, column value, text match or change · "
+                    "Kural " + (i + 1) + " türü seçilmedi · Tür: satır sayısı, kolon değeri, metin eşleşmesi, değişim ya da "
+                            + "tazelik · Bir tür seçin.",
+                    "Rule " + (i + 1) + " has no type · Type: row count, column value, text match, change or freshness · "
                             + "Choose a type.")));
             return null;
         }
@@ -235,7 +288,8 @@ public final class DbQueryRules {
         String scope = upper(m.get("scope"));
         Change change = null;
 
-        boolean needsColumn = kind.equals(KIND_COLUMN_VALUE) || kind.equals(KIND_TEXT_MATCH);
+        boolean freshness = kind.equals(KIND_FRESHNESS);
+        boolean needsColumn = kind.equals(KIND_COLUMN_VALUE) || kind.equals(KIND_TEXT_MATCH) || freshness;
         if (kind.equals(KIND_CHANGE)) {
             change = parseChange(m.get("change"), base, i, errors);
             needsColumn = change != null && "COLUMN".equals(change.of());
@@ -258,7 +312,17 @@ public final class DbQueryRules {
             column = null;
         }
         boolean usesAggregate = kind.equals(KIND_COLUMN_VALUE) || (change != null && "COLUMN".equals(change.of()));
-        if (usesAggregate) {
+        if (freshness) {
+            // Tazelik: en yeni kayıt (MAX, varsayılan), en eski (MIN — ör. en eski bekleyen kaydın yaşı) ya da ilk satır
+            if (aggregate == null) aggregate = "MAX";
+            else if (!FRESHNESS_AGGREGATES.contains(aggregate)) {
+                errors.add(err(base + ".aggregate", "DBQUERY_RULE_AGGREGATE", Msg.t(
+                        "Kural " + (i + 1) + " için geçersiz hesap · Tazelik kuralında seçenekler: en yeni (en büyük), en eski "
+                                + "(en küçük) ya da ilk satır · Bir seçenek seçin.",
+                        "Rule " + (i + 1) + " has an invalid calculation · A freshness rule can use the newest (max), the "
+                                + "oldest (min) or the first row · Choose one.")));
+            }
+        } else if (usesAggregate) {
             if (aggregate == null) aggregate = "FIRST";
             else if (!AGGREGATES.contains(aggregate)) {
                 errors.add(err(base + ".aggregate", "DBQUERY_RULE_AGGREGATE", Msg.t(
@@ -271,7 +335,15 @@ public final class DbQueryRules {
             aggregate = null;
         }
         boolean text = kind.equals(KIND_TEXT_MATCH);
-        List<String> ops = text ? TEXT_OPERATORS : NUMERIC_OPERATORS;
+        List<String> ops = text ? TEXT_OPERATORS : freshness ? FRESHNESS_OPERATORS : NUMERIC_OPERATORS;
+        if (freshness && operator != null && NUMERIC_OPERATORS.contains(operator) && !ops.contains(operator)) {
+            errors.add(err(base + ".operator", "DBQUERY_RULE_OPERATOR", Msg.t(
+                    "Kural " + (i + 1) + " için karşılaştırma geçersiz · Tazelik kuralı yalnız yaş büyükse (> ya da ≥) "
+                            + "alarm verir · Büyüktür ya da büyük-eşittir seçin.",
+                    "Rule " + (i + 1) + " has an invalid comparison · A freshness rule only alarms when the age is greater "
+                            + "(> or ≥) · Choose greater than or greater than or equal.")));
+            return null;
+        }
         if (operator == null || !ops.contains(operator)) {
             errors.add(err(base + ".operator", "DBQUERY_RULE_OPERATOR", Msg.t(
                     "Kural " + (i + 1) + " için karşılaştırma seçilmedi · Kural hangi durumda alarm vereceğini bilmeli · "
@@ -302,8 +374,26 @@ public final class DbQueryRules {
                     "Rule " + (i + 1) + " needs a threshold · At least one of the warning or critical thresholds is "
                             + "required · Enter a threshold value.")));
         }
+        // Tazelik kuralının saat dilimi (r177 ikinci tur, O-1): yalnız tazelikte; boş = ayardaki yerel dilim
+        String timezone = null;
+        if (freshness) {
+            String tz = str(m.get("timezone"));
+            if (tz != null) {
+                if (!validTimezone(tz)) {
+                    errors.add(err(base + ".timezone", "DBQUERY_RULE_TIMEZONE", Msg.t(
+                            "Kural " + (i + 1) + " için saat dilimi tanınmadı · Saat dilimi olmayan zaman damgaları bu "
+                                    + "dilimde yorumlanır · Europe/Istanbul ya da UTC gibi bir IANA dilim adı yazın; boş "
+                                    + "bırakırsanız sistem ayarı kullanılır.",
+                            "Rule " + (i + 1) + " has an unknown time zone · Timestamps without a time zone are read in "
+                                    + "this zone · Enter an IANA zone name such as Europe/Istanbul or UTC, or leave it "
+                                    + "empty to use the system setting.")));
+                } else {
+                    timezone = tz.trim();
+                }
+            }
+        }
         if (errors.size() > before) return null;
-        return new Rule(id, label, kind, column, aggregate, operator, scope, warning, critical, change);
+        return new Rule(id, label, kind, column, aggregate, operator, scope, warning, critical, change, timezone);
     }
 
     private static Change parseChange(Object raw, String base, int i, List<FieldError> errors) {
@@ -318,9 +408,19 @@ public final class DbQueryRules {
         String of = upper(c.get("of"));
         String mode = upper(c.get("mode"));
         String dir = upper(c.get("direction"));
+        String baseline = str(c.get("baseline"));
         if (of == null) of = "ROW_COUNT";
         if (mode == null) mode = "PERCENT";
         if (dir == null) dir = "ANY";
+        baseline = baseline == null ? BASELINE_PREVIOUS : baseline.toLowerCase(Locale.ROOT);
+        if (!CHANGE_BASELINES.contains(baseline)) {
+            errors.add(err(base + ".change.baseline", "DBQUERY_RULE_CHANGE", Msg.t(
+                    "Kural " + (i + 1) + " değişim tabanı geçersiz · Taban önceki çalıştırma, dünün aynı saati ya da geçen "
+                            + "haftanın aynı saati olabilir · Bir taban seçin.",
+                    "Rule " + (i + 1) + " change baseline is invalid · The baseline can be the previous run, the same time "
+                            + "yesterday or the same time last week · Choose a baseline.")));
+            return null;
+        }
         if (!CHANGE_OF.contains(of) || !CHANGE_MODES.contains(mode) || !CHANGE_DIRECTIONS.contains(dir)) {
             errors.add(err(base + ".change", "DBQUERY_RULE_CHANGE", Msg.t(
                     "Kural " + (i + 1) + " değişim ayarı geçersiz · Değişim satır sayısında ya da bir kolonda; yüzde ya da "
@@ -329,7 +429,7 @@ public final class DbQueryRules {
                             + "as percent or absolute; as increase, decrease or either · Choose the options again.")));
             return null;
         }
-        return new Change(of, mode, dir);
+        return new Change(of, mode, dir, baseline);
     }
 
     private static Threshold parseThreshold(Object raw, boolean text, boolean range, boolean noText, String field, int i,
@@ -384,6 +484,45 @@ public final class DbQueryRules {
                         + "Eşiği sayı olarak girin (ondalık ayırıcı nokta).",
                 "Rule " + (i + 1) + " threshold must be a number · The comparison uses a numeric value · "
                         + "Enter the threshold as a number."));
+    }
+
+    // ── Kural parmak izi (r177) ─────────────────────────────────────────────
+
+    /**
+     * Kuralın ÖLÇÜMÜNÜ belirleyen tanımın kısa özeti (16 hex): değişim kuralının tabanı ve geriye dönük deneme yalnız aynı
+     * kimlik + aynı parmak izi taşıyan saklı ölçümü kullanır (H-1: kolon / hesap / değişimin konusu değişince eski ölçü
+     * başka bir şeyi ölçmüş olur). Eşik, seviye, ad ve değişimin kipi / yönü / tabanı ölçümü değiştirmez — parmak izine
+     * GİRMEZ (eşik değiştirmek tabanı sıfırlamaz). Metin eşleşmesinde ölçü (eşleşen satır sayısı) aranan metne, operatöre ve
+     * kapsama bağlıdır, onlar girer. Biçim kalıcıdır (saklı satırlar onunla eşlenir).
+     */
+    public static String fingerprint(Rule r) {
+        if (r == null || r.kind() == null) return null;
+        String col = r.column() == null ? "" : r.column().trim().toLowerCase(Locale.ROOT);
+        String agg = r.aggregate() == null ? "" : r.aggregate();
+        String basis = switch (r.kind()) {
+            case KIND_ROW_COUNT -> KIND_ROW_COUNT;
+            case KIND_COLUMN_VALUE -> r.kind() + "|" + col + "|" + agg;
+            // Tazelikte dilim ölçümü (yaşı) değiştirir; dilimsiz kural bugünkü özetini korur
+            case KIND_FRESHNESS -> r.kind() + "|" + col + "|" + agg + (r.timezone() == null ? "" : "|" + r.timezone());
+            case KIND_TEXT_MATCH -> {
+                Threshold t = r.critical() != null ? r.critical() : r.warning();
+                String needle = t == null || t.text() == null ? "" : DbQueryEvaluator.TextMatcher.fold(t.text());
+                yield KIND_TEXT_MATCH + "|" + col + "|" + r.operator() + "|" + (r.scope() == null ? "ANY_ROW" : r.scope())
+                        + "|" + needle;
+            }
+            case KIND_CHANGE -> {
+                String of = r.change() == null ? "ROW_COUNT" : r.change().of();
+                yield KIND_CHANGE + "|" + of + ("COLUMN".equals(of) ? "|" + col + "|" + agg : "");
+            }
+            default -> r.kind();
+        };
+        try {
+            byte[] d = java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(basis.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            return java.util.HexFormat.of().formatHex(d, 0, 8);
+        } catch (java.security.NoSuchAlgorithmException e) {
+            return null;
+        }
     }
 
     static Double toDouble(Object o) {

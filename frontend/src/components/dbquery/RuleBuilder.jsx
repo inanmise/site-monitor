@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react'
-import { ArrowDown, ArrowUp, ListChecks, Plus, Trash2, TriangleAlert, Siren, Lightbulb } from 'lucide-react'
+import { ArrowDown, ArrowUp, ListChecks, Plus, Trash2, TriangleAlert, Siren, Lightbulb, Wand2 } from 'lucide-react'
 import { useLanguage, useT } from '../../i18n/index.jsx'
 import { Button } from '@/components/shadcn/button'
 import { Input } from '@/components/shadcn/input'
@@ -11,10 +11,12 @@ import SegmentedControl from '../ui/SegmentedControl.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
 import { useDialog } from '../ui/Dialog.jsx'
 import {
-  AGGREGATES, CHANGE_DIRECTIONS, CHANGE_MODES, CHANGE_OF, MAX_RULES, RULE_KINDS, RULE_LOGICS, SCOPES,
-  changeKind, changeOperator, formatInputNumber, isNoValueOperator, isRangeOperator, isTextKind, moveRule, needsAggregate,
-  needsColumn, newRule, operatorsFor, parseNumber, ruleSummary, setTextLevel, strictnessHint, textLevel, validateRule,
+  AGE_UNITS, CHANGE_BASELINES, CHANGE_DIRECTIONS, CHANGE_MODES, CHANGE_OF, MAX_RULES, RULE_KINDS, RULE_LOGICS, SCOPES,
+  ageUnitFor, aggregatesFor, changeBaseline, changeKind, changeOperator, formatInputNumber, isFreshnessKind, isNoValueOperator,
+  isRangeOperator, isTextKind, moveRule, needsAggregate, needsColumn, newRule, operatorsFor, parseNumber, ruleSummary, setTextLevel,
+  strictnessHint, textLevel, unitSeconds, validateRule,
 } from './ruleModel.js'
+import { toColumnValueRule } from './ruleSuggest.js'
 
 /** NativeSelect tam genişlik (kendi sarmalayıcısı `w-fit`). */
 const FULL_SELECT = '[&>[data-slot=native-select-wrapper]]:w-full'
@@ -63,19 +65,29 @@ export function renderedRuleFields(rule) {
  * (`rules`, `rules[N].<alt>`) ilgili alanın altında; istemci doğrulaması (sayı biçimi TR "1.250,5" / EN "1,250.5", aralık,
  * en az bir eşik) anında. Yazılan sayı yazılırken yeniden biçimlenmez (taslak metin), geçersiz metin sessizce yutulmaz:
  * kurala METİN olarak geçer → sunucu da alan hatası döner.
+ *
+ * <p>2026-10-31 (r177): Tazelik (FRESHNESS — zaman damgası kolonunun yaşı, eşik süre birimiyle), değişimde taban seçimi
+ * (önceki çalışma / dün aynı saat / geçen hafta aynı saat) ve COUNT(*) tuzağı: `trapIndexes` (sayfanın hesapladığı —
+ * sunucu uyarısı `ROW_COUNT_ON_AGGREGATE` ya da deneme kanıtı) içindeki "satır sayısı" kuralının kartında uyarı + "Kolon
+ * değeri kuralına çevir" (`trapColumn` — denemedeki sayısal kolon; yoksa kolonu kullanıcı seçer). `newRuleFactory`:
+ * "Kural ekle"nin varsayılanı (verilmezse satır sayısı).
  */
-export default function RuleBuilder({ rules, logic, onChange, onLogicChange, columns, fieldErrors, disabled = false }) {
+export default function RuleBuilder({
+  rules, logic, onChange, onLogicChange, columns, fieldErrors, disabled = false,
+  trapIndexes = null, trapColumn = null, newRuleFactory = null,
+}) {
   const t = useT()
   const { showConfirm } = useDialog()
   const list = useMemo(() => (Array.isArray(rules) ? rules : []), [rules])
   const errs = fieldErrors || {}
   const atMax = list.length >= MAX_RULES
+  const traps = useMemo(() => new Set(trapIndexes ? [...trapIndexes] : []), [trapIndexes])
 
   const update = useCallback((i, next) => {
     onChange?.(list.map((r, j) => (j === i ? next : r)))
   }, [list, onChange])
 
-  const add = () => { if (!atMax) onChange?.([...list, newRule('ROW_COUNT')]) }
+  const add = () => { if (!atMax) onChange?.([...list, (newRuleFactory && newRuleFactory()) || newRule('ROW_COUNT')]) }
   const remove = async (i) => {
     const r = list[i]
     const name = r?.label?.trim() || t('dbq.rule.cardTitle', i + 1)
@@ -111,6 +123,7 @@ export default function RuleBuilder({ rules, logic, onChange, onLogicChange, col
         {list.map((r, i) => (
           <li key={r.id || `idx-${i}`}>
             <RuleCard rule={r} index={i} count={list.length} columns={columns} disabled={disabled} errs={errs}
+              trap={traps.has(i) && r?.kind === 'ROW_COUNT'} trapColumn={trapColumn}
               onChange={(next) => update(i, next)} onRemove={() => remove(i)}
               onMove={(d) => onChange?.(moveRule(list, i, d))} />
           </li>
@@ -130,7 +143,7 @@ export default function RuleBuilder({ rules, logic, onChange, onLogicChange, col
 }
 
 /** Tek kural kartı. */
-function RuleCard({ rule, index, count, columns, disabled, errs, onChange, onRemove, onMove }) {
+function RuleCard({ rule, index, count, columns, disabled, errs, onChange, onRemove, onMove, trap = false, trapColumn = null }) {
   const t = useT()
   const { lang } = useLanguage()
   const client = useMemo(() => validateRule(rule), [rule])
@@ -163,6 +176,22 @@ function RuleCard({ rule, index, count, columns, disabled, errs, onChange, onRem
         </div>
       </div>
 
+      {trap && (
+        // COUNT(*) tuzağı (2.A / 2.C): tek satır dönen özet sorguda "satır sayısı" hep 1 — kural hiç tetiklenmez
+        <div data-slot="dbq-rule-count-trap" role="note"
+          className="flex min-w-0 flex-col gap-2 border-b border-amber-500/40 bg-amber-500/5 px-3 py-2.5 text-sm sm:flex-row sm:items-start sm:px-4 dark:bg-amber-500/10">
+          <p className="m-0 flex min-w-0 flex-1 items-start gap-1.5 text-amber-800 dark:text-amber-200">
+            <TriangleAlert aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
+            <span className="[overflow-wrap:anywhere]">{t(trapColumn ? 'dbq.rule.trap.bodyColumn' : 'dbq.rule.trap.body', trapColumn || '')}</span>
+          </p>
+          <Button type="button" variant="outline" size="sm" disabled={disabled} data-slot="dbq-rule-convert"
+            className="shrink-0 self-start pointer-coarse:h-10"
+            onClick={() => onChange(toColumnValueRule(rule, trapColumn))}>
+            <Wand2 aria-hidden="true" />{t('dbq.rule.trap.convert')}
+          </Button>
+        </div>
+      )}
+
       {orphanErrors.length > 0 && (
         <div data-slot="dbq-rule-server-errors" className="flex flex-col gap-1 border-b px-3 py-2 sm:px-4">
           {orphanErrors.map(([k, v]) => <div key={k} data-field={k}><FieldError>{v}</FieldError></div>)}
@@ -189,7 +218,8 @@ function RuleCard({ rule, index, count, columns, disabled, errs, onChange, onRem
 
         {needsColumn(rule) && (
           <Field label={t('dbq.rule.column')} required name={key('column')} error={err('column')}
-            hint={columns?.length ? t('dbq.rule.columnHintKnown') : t('dbq.rule.columnHintUnknown')} className="mb-0">
+            hint={isFreshnessKind(rule.kind) ? t('dbq.rule.columnHintTime')
+              : columns?.length ? t('dbq.rule.columnHintKnown') : t('dbq.rule.columnHintUnknown')} className="mb-0">
             {({ id, describedBy, invalid }) => (
               <ColumnInput id={id} describedBy={describedBy} invalid={invalid} disabled={disabled} columns={columns}
                 value={rule.column ?? ''} onChange={(v) => onChange({ ...rule, column: v || null })} />
@@ -200,8 +230,10 @@ function RuleCard({ rule, index, count, columns, disabled, errs, onChange, onRem
           <Field label={t('dbq.rule.aggregate')} name={key('aggregate')} error={err('aggregate')} className={cn('mb-0', FULL_SELECT)}>
             {({ id, describedBy, invalid }) => (
               <NativeSelect id={id} aria-describedby={describedBy} aria-invalid={invalid} disabled={disabled} className={CONTROL}
-                value={rule.aggregate || 'FIRST'} onChange={(e) => onChange({ ...rule, aggregate: e.target.value })}>
-                {AGGREGATES.map((a) => <NativeSelectOption key={a} value={a}>{t(`dbq.rule.agg.${a}`)}</NativeSelectOption>)}
+                value={rule.aggregate || aggregatesFor(rule.kind)[0]} onChange={(e) => onChange({ ...rule, aggregate: e.target.value })}>
+                {aggregatesFor(rule.kind).map((a) => (
+                  <NativeSelectOption key={a} value={a}>{t(isFreshnessKind(rule.kind) ? `dbq.rule.aggFresh.${a}` : `dbq.rule.agg.${a}`)}</NativeSelectOption>
+                ))}
               </NativeSelect>
             )}
           </Field>
@@ -229,7 +261,9 @@ function RuleCard({ rule, index, count, columns, disabled, errs, onChange, onRem
       <div className="border-t px-3 py-3 sm:px-4">
         {text
           ? <TextThreshold rule={rule} index={index} disabled={disabled} err={err} onChange={onChange} />
-          : (
+          : isFreshnessKind(rule.kind)
+            ? <FreshnessThresholds rule={rule} index={index} disabled={disabled} err={err} onChange={onChange} lang={lang} />
+            : (
             <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
               <ThresholdInput rule={rule} level="warning" index={index} disabled={disabled} err={err} onChange={onChange} lang={lang} />
               <ThresholdInput rule={rule} level="critical" index={index} disabled={disabled} err={err} onChange={onChange} lang={lang} />
@@ -279,23 +313,86 @@ function ChangeFields({ rule, index, disabled, err, onChange }) {
     if (patch.of === 'ROW_COUNT') { next.column = null; next.aggregate = null }
     onChange(next)
   }
-  const sel = (label, field, values, keyPrefix) => (
-    <Field label={label} name={`rules[${index}].change`} error={field === 'of' ? err('change') : undefined} className={cn('mb-0', FULL_SELECT)}>
+  const sel = (label, field, values, keyPrefix, { value = ch[field], hint } = {}) => (
+    <Field label={label} name={`rules[${index}].change`} error={field === 'of' ? err('change') : undefined} hint={hint}
+      className={cn('mb-0', FULL_SELECT)}>
       {({ id, describedBy, invalid }) => (
         <NativeSelect id={id} aria-describedby={describedBy} aria-invalid={invalid} disabled={disabled} className={CONTROL}
-          value={ch[field]} onChange={(e) => set({ [field]: e.target.value })}>
+          value={value} onChange={(e) => set({ [field]: e.target.value })} data-change-field={field}>
           {values.map((v) => <NativeSelectOption key={v} value={v}>{t(`${keyPrefix}.${v}`)}</NativeSelectOption>)}
         </NativeSelect>
       )}
     </Field>
   )
+  const baseline = changeBaseline(rule)
   return (
     <>
       {sel(t('dbq.rule.changeOf'), 'of', CHANGE_OF, 'dbq.rule.changeOfName')}
       {sel(t('dbq.rule.changeMode'), 'mode', CHANGE_MODES, 'dbq.rule.changeModeName')}
       {sel(t('dbq.rule.changeDirection'), 'direction', CHANGE_DIRECTIONS, 'dbq.rule.changeDirName')}
-      <p className="m-0 self-end text-xs text-muted-foreground sm:pb-2">{t('dbq.rule.changeHint')}</p>
+      {/* Mevsimsel karşılaştırma (2.D): taban = hedef zamana en yakın zamanlanmış başarılı çalışma (±yarım aralık, ≤ 30 dk) */}
+      {sel(t('dbq.rule.baseline'), 'baseline', CHANGE_BASELINES, 'dbq.rule.baselineName', {
+        value: baseline, hint: t(`dbq.rule.baselineHint.${baseline}`),
+      })}
+      <p className="m-0 self-end text-xs text-muted-foreground sm:col-span-2 sm:pb-2">{t('dbq.rule.changeHint')}</p>
     </>
+  )
+}
+
+/**
+ * Tazelik eşikleri (2.D): kural SANİYE taşır; kutular seçilen birimle (sn / dk / sa / gün) gösterir. Başlangıç birimi
+ * eşiklerin hepsini tam bölen en büyük birim (900 + 3600 → dk); yazılan değer birimle çarpılıp tam saniyeye yuvarlanır.
+ * Yaş = veritabanı saatine göre (kolonun saat dilimi yoksa veritabanının saat dilimiyle yorumlanır).
+ */
+function FreshnessThresholds({ rule, index, disabled, err, onChange, lang }) {
+  const t = useT()
+  const [unit, setUnit] = useState(() => ageUnitFor(rule))
+  const factor = unitSeconds(unit)
+  const toDisplay = (v) => (typeof v === 'number' && Number.isFinite(v) ? v / factor : v)
+  const commit = (level) => (x) => onChange({ ...rule, [level]: typeof x === 'number' ? Math.round(x * factor) : x })
+  return (
+    <div data-slot="dbq-rule-freshness" className="flex min-w-0 flex-col gap-3">
+      <Field label={t('dbq.rule.ageUnit')} name={`rules[${index}].unit`} hint={t('dbq.rule.ageHint')} className={cn('mb-0 sm:max-w-xs', FULL_SELECT)}>
+        {({ id, describedBy }) => (
+          <NativeSelect id={id} aria-describedby={describedBy} disabled={disabled} className={CONTROL} value={unit}
+            onChange={(e) => setUnit(e.target.value)} data-slot="dbq-rule-age-unit">
+            {AGE_UNITS.map((u) => <NativeSelectOption key={u.key} value={u.key}>{t(`dbq.rule.unit.${u.key}`)}</NativeSelectOption>)}
+          </NativeSelect>
+        )}
+      </Field>
+      <Field label={t('dbq.rule.timezone')} name={`rules[${index}].timezone`} error={err('timezone')} hint={t('dbq.rule.timezoneHint')}
+        className="mb-0 sm:max-w-xs">
+        {({ id, describedBy }) => (
+          <Input id={id} aria-describedby={describedBy} disabled={disabled} className={CONTROL} data-slot="dbq-rule-timezone"
+            value={rule.timezone ?? ''} placeholder="Europe/Istanbul" autoComplete="off" spellCheck={false}
+            onChange={(e) => {
+              const v = e.target.value
+              const next = { ...rule }
+              if (v.trim()) next.timezone = v.trim(); else delete next.timezone
+              onChange(next)
+            }} />
+        )}
+      </Field>
+      <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
+        {['warning', 'critical'].map((level) => (
+          <Field key={level} name={`rules[${index}].${level}`} error={err(level)} hint={t('dbq.rule.numberHint')} className="mb-0"
+            label={(
+              <span className="inline-flex items-center gap-1.5">
+                {level === 'critical'
+                  ? <Siren aria-hidden="true" className="size-3.5 text-destructive" />
+                  : <TriangleAlert aria-hidden="true" className="size-3.5 text-amber-600 dark:text-amber-400" />}
+                {t(level === 'critical' ? 'dbq.rule.critical' : 'dbq.rule.warning')}
+                <span className="font-normal text-muted-foreground">({t(`dbq.rule.unit.${unit}`)})</span>
+              </span>
+            )}>
+            {({ id, describedBy, invalid }) => (
+              <NumberInput id={id} describedBy={describedBy} invalid={invalid} disabled={disabled} lang={lang}
+                placeholder={t('dbq.rule.thresholdPlaceholder')} value={toDisplay(rule[level])} onCommit={commit(level)} />
+            )}
+          </Field>
+        ))}
+      </div>
+    </div>
   )
 }
 

@@ -67,4 +67,22 @@ class DbQueryMonitorSchemaPatchTest {
                 .startsWith("CREATE UNIQUE INDEX IF NOT EXISTS ux_dbqm_name_lower ON dbquery_monitors")
                 .contains("LOWER(name)");
     }
+
+    @Test
+    @DisplayName("r177: eski tablolara yeni kolonlar eklenir (idempotent); eski satırlar NULL okunur, kırılmaz")
+    void r177ColumnsAddedIdempotently() {
+        JdbcTemplate jdbc = mp.jdbc();
+        jdbc.execute("CREATE TABLE IF NOT EXISTS db_connection_profiles (id BIGINT PRIMARY KEY, name VARCHAR(255))");
+        jdbc.update("INSERT INTO dbquery_monitors (id, name) VALUES (7, 'Eski izleme')");
+        jdbc.update("INSERT INTO db_connection_profiles (id, name) VALUES (3, 'Eski bağlantı')");
+        DbQueryMonitorSchemaPatch patch = new DbQueryMonitorSchemaPatch(jdbc);
+        assertThat(patch.ensureColumns()).isEqualTo(DbQueryMonitorSchemaPatch.COLUMNS.size());
+        assertThat(patch.ensureColumns()).isZero();
+        assertThat(jdbc.queryForMap("SELECT mail_columns_mode, unknown_runs FROM dbquery_monitors WHERE id = 7"))
+                .containsEntry("MAIL_COLUMNS_MODE", null).containsEntry("UNKNOWN_RUNS", null);
+        assertThat(jdbc.queryForMap("SELECT oracle_tcps, last_privileges_json FROM db_connection_profiles WHERE id = 3"))
+                .containsEntry("ORACLE_TCPS", null).containsEntry("LAST_PRIVILEGES_JSON", null);
+        jdbc.update("UPDATE dbquery_monitors SET unknown_runs = COALESCE(unknown_runs, 0) + 1 WHERE id = 7");
+        assertThat(jdbc.queryForObject("SELECT unknown_runs FROM dbquery_monitors WHERE id = 7", Integer.class)).isEqualTo(1);
+    }
 }

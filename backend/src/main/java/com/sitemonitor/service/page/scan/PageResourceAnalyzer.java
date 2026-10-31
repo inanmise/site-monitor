@@ -31,8 +31,16 @@ import static com.sitemonitor.service.page.scan.PageResourceDiscovery.MEDIA;
  *
  * <p>Not (ağırlıklar toplamı 100): yükleme süresi 25, sayfa boyutu 20, görseller 15, istek sayısı 10, sunucu yanıtı (TTFB)
  * 10, hatalar 8, sıkıştırma 7, önbellek 5. Harf: A ≥ 90, B ≥ 80, C ≥ 70, D ≥ 60, E ≥ 50, F altı.
+ *
+ * <p><b>Algoritma sürümü {@value #ALGORITHM_VERSION}</b> (2026-11, analiz kökünde {@code algorithm_version}; eski kayıtta yok =
+ * 1): TTFB yalnız son adımın ilk baytı (yönlendirmeler ayrı), kırık kararı Sayfa Bütünlüğü izlemesiyle aynı (yalnız
+ * {@code broken} hata puanına ve BROKEN_* önerilerine girer; doğrulanamayan / engellenen girmez), indirilmeyen medya
+ * hiçbir toplama girmez, görsel kazancı ölçülen görsellerde ölçülmüş. Not formülü ya da girdisi değişirse sürüm ARTAR.
  */
 public final class PageResourceAnalyzer {
+
+    /** Analiz algoritmasının sürümü — farklı sürümlü iki analiz karşılaştırılırken arayüz uyarır. */
+    public static final int ALGORITHM_VERSION = 2;
 
     public static final int PARALLEL = 6;
 
@@ -58,6 +66,17 @@ public final class PageResourceAnalyzer {
      *  sıkıştırılmamış metin ≈ %70. */
     static final double SAVE_LARGE_IMAGE = 0.60, SAVE_MODERN_FORMAT = 0.30, SAVE_TEXT = 0.70;
     static final int MAX_ITEM_URLS = 10;
+    /** {@code third_parties} tablosunun en çok satırı (bayta göre). */
+    static final int MAX_THIRD_PARTIES = 20;
+
+    /**
+     * Nesneye bulgu olarak yazılan öneri kodları ({@code findings}) — öneriyi üreten kuralın nesne listesinin AYNISI.
+     * Sayfa düzeyindeki kodlar (OVERSIZED_PAGE, TOO_MANY_REQUESTS, SLOW_SERVER, THIRD_PARTY_HEAVY, ALL_GOOD) nesneye
+     * yazılmaz; onların öneri satırında {@code item_count} null'dır.
+     */
+    public static final Set<String> FINDING_CODES = Set.of("UNCOMPRESSED_TEXT", "NO_CACHE", "LARGE_IMAGES",
+            "MODERN_IMAGE_FORMAT", "OVERSIZED_IMAGE_DIMENSIONS", "SLOW_OBJECTS", "REDIRECTED_OBJECTS", "BROKEN_RESOURCES",
+            "BROKEN_LINKS", "LARGE_DOCUMENTS", "HEAVY_JS", "HEAVY_CSS", "HEAVY_FONTS");
 
     /** Ağırlıklar (sıra = arayüzdeki sıra). */
     public static final Map<String, Integer> WEIGHTS;
@@ -80,6 +99,21 @@ public final class PageResourceAnalyzer {
     static final double[][] TTFB_CURVE = {{200, 100}, {500, 85}, {800, 70}, {1500, 40}, {3000, 0}};
     static final double[][] IMAGE_CURVE_MB = {{0.5, 100}, {1, 85}, {2, 65}, {4, 35}, {8, 0}};
     static final double[][] ERROR_CURVE = {{0, 100}, {1, 80}, {2, 65}, {5, 30}, {10, 0}};
+
+    /**
+     * Bileşen hedefleri {tam puan eşiği, sıfır puan eşiği} — {@code unit} ile aynı birimde; eğrilerden türetilir (tek kaynak).
+     * Görsellerde ayrıca her büyük görsel (≥ {@value #LARGE_IMAGE_LIMIT_KB} KB) 8 puan düşürür.
+     */
+    static final Map<String, Object[]> TARGETS = Map.of(
+            "load_time", new Object[]{(long) LOAD_CURVE[0][0], (long) LOAD_CURVE[LOAD_CURVE.length - 1][0]},
+            "page_weight", new Object[]{Math.round(WEIGHT_CURVE_MB[0][0] * MB),
+                    Math.round(WEIGHT_CURVE_MB[WEIGHT_CURVE_MB.length - 1][0] * MB)},
+            "images", new Object[]{Math.round(IMAGE_CURVE_MB[0][0] * MB), Math.round(IMAGE_CURVE_MB[IMAGE_CURVE_MB.length - 1][0] * MB)},
+            "requests", new Object[]{(int) REQUEST_CURVE[0][0], (int) REQUEST_CURVE[REQUEST_CURVE.length - 1][0]},
+            "server_response", new Object[]{(long) TTFB_CURVE[0][0], (long) TTFB_CURVE[TTFB_CURVE.length - 1][0]},
+            "errors", new Object[]{(int) ERROR_CURVE[0][0], (int) ERROR_CURVE[ERROR_CURVE.length - 1][0]},
+            "compression", new Object[]{100, 0},
+            "caching", new Object[]{100, 0});
 
     /** Taramanın sınırları — ölçüm notları için. */
     public record Limits(boolean objectsCapped, int maxObjects, boolean timeCapped, int maxSeconds,
@@ -112,7 +146,10 @@ public final class PageResourceAnalyzer {
         List<ScanItem> page = new ArrayList<>();
         List<ScanItem> docs = new ArrayList<>();
         List<ScanItem> links = new ArrayList<>();
+        int notLoaded = 0;
         for (ScanItem it : items) {
+            it.findings.clear();
+            if (it != html && it.skipped()) { notLoaded++; continue; }   // indirilmedi: hiçbir toplama girmez
             if (it.pageLoad) page.add(it);
             else if (DOCUMENT.equals(it.category)) docs.add(it);
             else links.add(it);
@@ -165,6 +202,11 @@ public final class PageResourceAnalyzer {
             row.put("weight", w.getValue());
             row.put("value", values.get(w.getKey())[0]);
             row.put("unit", values.get(w.getKey())[1]);
+            // Hedefler (unit ile aynı birim): tam puan ve sıfır puan eşiği + ağırlıklı kayıp puan (1 ondalık)
+            Object[] target = TARGETS.get(w.getKey());
+            row.put("full_at", target[0]);
+            row.put("zero_at", target[1]);
+            row.put("lost", Math.round(w.getValue() * (100 - sc) / 10.0) / 10.0);
             scores.add(row);
         }
         int grade = (int) Math.round(weighted / 100.0);
@@ -174,6 +216,7 @@ public final class PageResourceAnalyzer {
         Map<String, long[]> cat = new LinkedHashMap<>();
         for (String c : PageResourceDiscovery.CATEGORIES) cat.put(c, new long[3]);
         for (ScanItem it : items) {
+            if (it != html && it.skipped()) continue;
             long[] a = cat.computeIfAbsent(it.category == null ? PageResourceDiscovery.OTHER : it.category, k -> new long[3]);
             a[0]++;
             a[1] += it.bytes;
@@ -190,12 +233,24 @@ public final class PageResourceAnalyzer {
             categories.add(row);
         }
 
+        // Öneriler nesnelere bulgu ({@code findings}) yazar — görsel listesi (toMap) bundan SONRA kurulur
+        List<Map<String, Object>> recs = recommendations(html, page, images, docs, links, pageBytes, loadMs, lim.capped());
+
         // ── Görsel etkisi ───────────────────────────────────────────────────────────────
-        long imageSaving = 0;
+        // Kazanç: sunucuda ölçülen görselde ölçülmüş (yeniden kodlanmış boyut farkı), diğerlerinde eski tahmin
+        long measuredSaving = 0, estimatedSaving = 0;
+        int measuredCount = 0;
         for (ScanItem i : images) {
-            if (i.bytes >= LARGE_IMAGE_BYTES) imageSaving += Math.round(i.bytes * SAVE_LARGE_IMAGE);
-            else if (legacyFormat(i) && i.bytes >= LEGACY_FORMAT_MIN_BYTES) imageSaving += Math.round(i.bytes * SAVE_MODERN_FORMAT);
+            if (i.optimizedBytes != null) {
+                measuredCount++;
+                measuredSaving += measuredSaving(i);
+            } else if (i.bytes >= LARGE_IMAGE_BYTES) {
+                estimatedSaving += Math.round(i.bytes * SAVE_LARGE_IMAGE);
+            } else if (legacyFormat(i) && i.bytes >= LEGACY_FORMAT_MIN_BYTES) {
+                estimatedSaving += Math.round(i.bytes * SAVE_MODERN_FORMAT);
+            }
         }
+        long imageSaving = measuredSaving + estimatedSaving;
         Map<String, Object> img = new LinkedHashMap<>();
         img.put("count", images.size());
         img.put("bytes", imageBytes);
@@ -207,6 +262,10 @@ public final class PageResourceAnalyzer {
         img.put("saving_bytes", imageSaving);
         img.put("saving_ms_4g", transferMs(imageSaving, BPS_4G));
         img.put("saving_ms_3g", transferMs(imageSaving, BPS_3G));
+        img.put("saving_measured", measuredCount > 0);
+        img.put("measured_count", measuredCount);
+        img.put("saving_bytes_measured", measuredSaving);
+        img.put("saving_bytes_estimated", estimatedSaving);
         img.put("top", images.stream().sorted(Comparator.comparingLong((ScanItem i) -> i.bytes).reversed())
                 .limit(10).map(ScanItem::toMap).toList());
 
@@ -216,13 +275,19 @@ public final class PageResourceAnalyzer {
         timing.put("sum_ms", items.stream().filter(i -> i.startMs != null).mapToLong(i -> i.durationMs).sum());
         timing.put("slowest_ms", page.stream().mapToLong(i -> i.durationMs).max().orElse(0));
         timing.put("parallel", PARALLEL);
+        timing.put("ttfb_ms", html.ttfbMs);
+        timing.put("redirect_count", html.redirects);
+        timing.put("redirect_ms", html.redirectMs);
 
         Map<String, Object> analysis = new LinkedHashMap<>();
+        analysis.put("algorithm_version", ALGORITHM_VERSION);
         analysis.put("scores", scores);
         analysis.put("categories", categories);
-        analysis.put("recommendations", recommendations(html, page, images, docs, links, pageBytes, loadMs, lim.capped()));
+        analysis.put("recommendations", recs);
         analysis.put("images", img);
+        analysis.put("third_parties", thirdParties(page));
         analysis.put("timing", timing);
+        analysis.put("not_loaded_count", notLoaded);
         analysis.put("notes", notes(lim));
 
         return new Result(grade, letter, loadMs, html.ttfbMs, html.durationMs, pageBytes, page.size(), imageBytes,
@@ -274,7 +339,8 @@ public final class PageResourceAnalyzer {
         List<ScanItem> large = images.stream().filter(i -> i.bytes >= LARGE_IMAGE_BYTES).toList();
         if (!large.isEmpty()) {
             long bytes = sum(large);
-            long save = Math.round(bytes * SAVE_LARGE_IMAGE);
+            long save = 0;
+            for (ScanItem i : large) save += i.optimizedBytes != null ? measuredSaving(i) : Math.round(i.bytes * SAVE_LARGE_IMAGE);
             boolean high = large.stream().anyMatch(i -> i.bytes >= MB) || bytes >= 2 * MB;
             out.add(rec("LARGE_IMAGES", high ? "high" : "medium",
                     params("count", large.size(), "bytes", bytes, "limit_kb", LARGE_IMAGE_LIMIT_KB), save,
@@ -301,7 +367,8 @@ public final class PageResourceAnalyzer {
                 .filter(i -> legacyFormat(i) && i.bytes >= LEGACY_FORMAT_MIN_BYTES && i.bytes < LARGE_IMAGE_BYTES).toList();
         if (!legacy.isEmpty()) {
             long bytes = sum(legacy);
-            long save = Math.round(bytes * SAVE_MODERN_FORMAT);
+            long save = 0;
+            for (ScanItem i : legacy) save += i.optimizedBytes != null ? measuredSaving(i) : Math.round(i.bytes * SAVE_MODERN_FORMAT);
             out.add(rec("MODERN_IMAGE_FORMAT", bytes >= MB ? "medium" : "low",
                     params("count", legacy.size(), "bytes", bytes), save, transferMs(save, BPS_4G), legacy));
         }
@@ -403,6 +470,11 @@ public final class PageResourceAnalyzer {
         return m;
     }
 
+    /**
+     * Öneri satırı. Nesne listesi ({@code about}) öneriyi üreten kuralın listesidir: {@link #FINDING_CODES}'taki kodlar o
+     * nesnelere bulgu olarak yazılır ve {@code item_count} TÜM sayıdır ({@code item_urls} en çok {@value #MAX_ITEM_URLS}
+     * kalır); sayfa düzeyindeki kodlarda {@code item_count} null.
+     */
     private static Map<String, Object> rec(String code, String severity, Map<String, Object> params, Long savingBytes,
                                            Long savingMs, List<ScanItem> about) {
         Map<String, Object> m = new LinkedHashMap<>();
@@ -413,7 +485,50 @@ public final class PageResourceAnalyzer {
         m.put("saving_ms", savingMs);
         m.put("item_urls", about.stream().sorted(Comparator.comparingLong((ScanItem i) -> i.bytes).reversed())
                 .limit(MAX_ITEM_URLS).map(i -> i.url).toList());
+        boolean attach = FINDING_CODES.contains(code);
+        if (attach) for (ScanItem i : about) i.findings.add(code);
+        m.put("item_count", attach ? about.size() : null);
         return m;
+    }
+
+    /** Ölçülmüş görsel kazancı (bayt): telden gelen boyut − yeniden kodlanmış boyut, 0 altına inmez. */
+    static long measuredSaving(ScanItem i) {
+        return i.optimizedBytes == null ? 0L : Math.max(0L, i.bytes - i.optimizedBytes);
+    }
+
+    /**
+     * Üçüncü taraf sunucular (sayfa yükü, en çok {@value #MAX_THIRD_PARTIES}, bayta göre): istek, bayt, yüklenemeyen
+     * (karar {@code ok} değil — kırık + doğrulanamayan + engellenen) ve görülen kategoriler (sabit kategori sırasıyla).
+     */
+    static List<Map<String, Object>> thirdParties(List<ScanItem> page) {
+        Map<String, long[]> agg = new LinkedHashMap<>();
+        Map<String, Set<String>> cats = new HashMap<>();
+        for (ScanItem i : page) {
+            if (!i.thirdParty) continue;
+            String h = i.host != null ? i.host : host(i.url);
+            long[] a = agg.computeIfAbsent(h, k -> new long[3]);
+            a[0]++;
+            a[1] += i.bytes;
+            boolean notOk = i.verdict != null ? !ScanItem.OK.equals(i.verdict) : i.failed();
+            if (notOk) a[2]++;
+            cats.computeIfAbsent(h, k -> new HashSet<>()).add(i.category == null ? PageResourceDiscovery.OTHER : i.category);
+        }
+        List<Map<String, Object>> out = new ArrayList<>();
+        agg.entrySet().stream()
+                .sorted(Comparator.comparingLong((Map.Entry<String, long[]> e) -> e.getValue()[1]).reversed()
+                        .thenComparing(Map.Entry::getKey))
+                .limit(MAX_THIRD_PARTIES)
+                .forEach(e -> {
+                    Map<String, Object> row = new LinkedHashMap<>();
+                    row.put("host", e.getKey());
+                    row.put("count", e.getValue()[0]);
+                    row.put("bytes", e.getValue()[1]);
+                    row.put("failed", e.getValue()[2]);
+                    Set<String> seen = cats.getOrDefault(e.getKey(), Set.of());
+                    row.put("categories", PageResourceDiscovery.CATEGORIES.stream().filter(seen::contains).toList());
+                    out.add(row);
+                });
+        return out;
     }
 
     private static Map<String, Object> params(Object... kv) {

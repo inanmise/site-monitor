@@ -292,4 +292,21 @@ class DbQueryAlertRowsServiceTest {
         monitors(null);   // silinmiş izleme: ayar yok → saklanan maske geçerli
         assertThat(svc.capture(100L, 5L)).isPresent();
     }
+
+    @Test
+    @DisplayName("r177 (Ö-6): 'yalnız seçilen kolonlar' kipinde seçim boşsa gönderimde satır YOK (ilk kolonlara düşülmez); FIRST_N eski davranış")
+    void selectedModeWithoutColumnsSendsNoRows() {
+        svc.remember(5L, simple("2026-10-31T09:00:00", "gizli"));
+        com.sitemonitor.model.DbQueryMonitor m = new com.sitemonitor.model.DbQueryMonitor();
+        m.setId(5L);
+        m.setMailColumnsMode(com.sitemonitor.model.DbQueryMonitor.MAIL_COLUMNS_SELECTED);
+        monitors(m);
+        assertThat(svc.capture(100L, 5L)).isEmpty();
+        assertThat(table).doesNotContainKey(100L);
+        m.setMailColumnsJson("[\"id\"]");
+        assertThat(svc.capture(101L, 5L).orElseThrow().columns()).containsExactly("id");
+        m.setMailColumnsJson(null);
+        m.setMailColumnsMode(null);
+        assertThat(svc.capture(102L, 5L).orElseThrow().columns()).containsExactly("id", "deger");
+    }
 }

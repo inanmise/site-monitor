@@ -294,6 +294,8 @@ public class DbQueryAlertRowsService {
             Set<String> columns = new LinkedHashSet<>();
             for (String c : readList(m.get().getMailColumnsJson())) if (c != null && !c.isBlank())
                 columns.add(c.trim().toLowerCase(Locale.ROOT));
+            // r177 (Ö-6): "yalnız seçilen kolonlar" kipinde seçim yoksa hiçbir kolon maile girmez (ilk N kolona düşülmez)
+            if (columns.isEmpty() && DbQueryMonitor.MAIL_COLUMNS_SELECTED.equals(m.get().getMailColumnsMode())) return Policy.BLOCKED;
             return new Policy(true, Set.copyOf(masked), Set.copyOf(columns));
         } catch (Exception e) {
             log.warn("Sorgu izlemesinin satır ayarı okunamadı (#{}) — satırlar gönderilmiyor: {}", monitorId,

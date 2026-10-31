@@ -113,6 +113,70 @@ public class HolidayCalendarService {
         return out;
     }
 
+    /** Takvimin "yakında bitiyor" eşiği (r177, H-7): son tatil günü bugünden en çok bu kadar gün sonraysa uyarılır. */
+    public static final int ENDS_SOON_DAYS = 60;
+
+    /**
+     * Sabit tarihli resmî tatiller (r177): ay-gün + ad. Dini bayramlar (Ramazan / Kurban) her yıl kaydığı için BURADA YOK —
+     * elle girilir (ekran ve yanıt bunu söyler).
+     */
+    public static final List<String[]> FIXED_PUBLIC_HOLIDAYS = List.of(
+            new String[]{"01-01", "Yılbaşı"},
+            new String[]{"04-23", "Ulusal Egemenlik ve Çocuk Bayramı"},
+            new String[]{"05-01", "Emek ve Dayanışma Günü"},
+            new String[]{"05-19", "Atatürk'ü Anma, Gençlik ve Spor Bayramı"},
+            new String[]{"07-15", "Demokrasi ve Milli Birlik Günü"},
+            new String[]{"08-30", "Zafer Bayramı"},
+            new String[]{"10-29", "Cumhuriyet Bayramı"});
+
+    /**
+     * Takvimin kapsadığı son gün (r177): en geç tatil günü ya da takvim boşsa null. {@code ends_soon} = son gün bugünden
+     * ({@code today}, Europe/Istanbul) {@value #ENDS_SOON_DAYS} günden az sonra ya da takvim boş — "tatillerde çalışma"
+     * açık izlemeler o tarihten sonra tatillerde de çalışır.
+     */
+    public static Map<String, Object> coverage(List<Map<String, Object>> days, LocalDate today) {
+        LocalDate last = null;
+        if (days != null) {
+            for (Map<String, Object> d : days) {
+                LocalDate v = d == null ? null : parseDay(d.get("day") == null ? null : String.valueOf(d.get("day")));
+                if (v != null && (last == null || v.isAfter(last))) last = v;
+            }
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("coverage_until", last == null ? null : last.toString());
+        out.put("ends_soon", last == null || !last.isAfter(today.plusDays(ENDS_SOON_DAYS)));
+        out.put("ends_soon_days", ENDS_SOON_DAYS);
+        return out;
+    }
+
+    /**
+     * Bir yılın sabit tarihli resmî tatillerini ekler (r177, H-7): VAR OLAN güne (aynı tarih — adı farklı olsa da) dokunmaz.
+     * @return eklenen gün sayısı
+     */
+    @Transactional
+    public int addFixed(int year, String actorName) {
+        if (year < MIN_YEAR || year > MAX_YEAR) throw new IllegalArgumentException("yıl aralık dışı");
+        Set<String> existing = new HashSet<>();
+        for (HolidayDay d : repo.findAll()) existing.add(d.getDay());
+        String now = ISO.format(Instant.now());
+        List<HolidayDay> write = new ArrayList<>();
+        for (String[] f : FIXED_PUBLIC_HOLIDAYS) {
+            String day = year + "-" + f[0];
+            if (existing.contains(day) || existing.size() + write.size() >= MAX_DAYS) continue;
+            HolidayDay e = new HolidayDay();
+            e.setDay(day);
+            e.setName(f[1]);
+            e.setCreatedAt(now);
+            e.setCreatedByName(actorName);
+            write.add(e);
+        }
+        if (!write.isEmpty()) {
+            repo.saveAll(write);
+            invalidateAfterCommit();
+        }
+        return write.size();
+    }
+
     /** Gönderilen tek gün (doğrulanmış). */
     public record Day(String day, String name) {}
 

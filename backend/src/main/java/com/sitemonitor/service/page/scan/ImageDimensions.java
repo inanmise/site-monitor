@@ -38,6 +38,77 @@ public final class ImageDimensions {
         return s != null && s.width() > 0 && s.height() > 0 && s.width() <= MAX_SIDE && s.height() <= MAX_SIDE;
     }
 
+    /**
+     * Çözme bilgisi (2026-11, ölçülmüş görsel kazancının bellek izni — inceleme O-2): yalnız PNG ve JPEG.
+     *
+     * @param format   {@code png} | {@code jpeg}
+     * @param channels kanal sayısı (PNG renk türünden: gri 1, RGB 3, paletli 1, gri+alfa 2, RGBA 4; JPEG bileşen sayısı)
+     * @param bitDepth örnek başına bit (PNG IHDR bit derinliği; JPEG kesinliği)
+     * @param palette  paletli PNG (piksel = dizin)
+     */
+    public record Header(int width, int height, String format, int channels, int bitDepth, boolean palette) {
+        /** Çözülmüş görüntünün piksel başına baytı (alt bayt derinlikleri 1 bayta yuvarlanır — güvenli taraf). */
+        public int bytesPerPixel() {
+            if (palette) return 1;
+            return channels * (bitDepth > 8 ? 2 : 1);
+        }
+    }
+
+    /** PNG / JPEG başlığından çözme bilgisi; tanınmayan / bozuk / desteklenmeyen (ör. JPEG'de 1 ve 3 dışı bileşen) → null. */
+    public static Header header(byte[] b) {
+        if (b == null || b.length < 26) return null;
+        try {
+            Header h = null;
+            if (isPng(b)) h = pngHeader(b);
+            else if ((b[0] & 0xFF) == 0xFF && (b[1] & 0xFF) == 0xD8) h = jpegHeader(b);
+            return h != null && valid(new Size(h.width(), h.height())) ? h : null;
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    private static Header pngHeader(byte[] b) {
+        int depth = b[24] & 0xFF;
+        int colorType = b[25] & 0xFF;
+        if (depth != 1 && depth != 2 && depth != 4 && depth != 8 && depth != 16) return null;
+        int channels;
+        boolean palette = false;
+        switch (colorType) {
+            case 0 -> channels = 1;
+            case 2 -> channels = 3;
+            case 3 -> { channels = 1; palette = true; }
+            case 4 -> channels = 2;
+            case 6 -> channels = 4;
+            default -> { return null; }
+        }
+        return new Header(be32(b, 16), be32(b, 20), "png", channels, depth, palette);
+    }
+
+    /** JPEG: {@link #jpeg} ile aynı işaretçi yürüyüşü; SOF'tan kesinlik ve bileşen sayısı (yalnız 1 = gri, 3 = renkli). */
+    private static Header jpegHeader(byte[] b) {
+        int i = 2;
+        while (i + 9 < b.length) {
+            if ((b[i] & 0xFF) != 0xFF) return null;
+            int marker = b[i + 1] & 0xFF;
+            if (marker == 0xFF) { i++; continue; }
+            if (marker == 0xD8 || marker == 0x01 || (marker >= 0xD0 && marker <= 0xD7)) { i += 2; continue; }
+            if (marker == 0xD9 || marker == 0xDA) return null;
+            int len = ((b[i + 2] & 0xFF) << 8) | (b[i + 3] & 0xFF);
+            if (len < 2) return null;
+            boolean sof = marker >= 0xC0 && marker <= 0xCF && marker != 0xC4 && marker != 0xC8 && marker != 0xCC;
+            if (sof) {
+                int precision = b[i + 4] & 0xFF;
+                int h = ((b[i + 5] & 0xFF) << 8) | (b[i + 6] & 0xFF);
+                int w = ((b[i + 7] & 0xFF) << 8) | (b[i + 8] & 0xFF);
+                int comps = b[i + 9] & 0xFF;
+                if (comps != 1 && comps != 3) return null;   // CMYK / YCCK: çözücü desteklemez
+                return new Header(w, h, "jpeg", comps, precision, false);
+            }
+            i += 2 + len;
+        }
+        return null;
+    }
+
     private static boolean isPng(byte[] b) {
         return b.length >= 24 && (b[0] & 0xFF) == 0x89 && b[1] == 'P' && b[2] == 'N' && b[3] == 'G'
                 && b[12] == 'I' && b[13] == 'H' && b[14] == 'D' && b[15] == 'R';

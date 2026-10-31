@@ -1,9 +1,128 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-31T07:08:32Z",
+  "generatedAt": "2026-10-31T13:03:33Z",
   "repo": "inanmise/site-monitor",
-  "count": 797,
+  "count": 798,
   "releases": [
+    {
+      "version": "20.177.0",
+      "tag": "v20.177.0",
+      "releasedAt": "2026-10-31T13:03:28Z",
+      "commit": "86bbb536e2819112837f8d940d326b8ea904833d",
+      "prevVersion": "20.176.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 4,
+        "fix": 8,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 2
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "86bbb536",
+          "subject": "r177 son inceleme düzeltmeleri bağlandı — tazelik saat dilimi alanı, taban kuruluyor durumu, public şeması bilgi kodu; belgeler"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "d7cace52",
+          "subject": "dbquery r177 ikinci tur — tazelik saat dilimi, taban kuran notlar kanıt eksikliği değil, public şema CREATE bilgisi"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "339f9a3a",
+          "subject": "kaynak analizi — görsel kazancı belleği ikinci indirmenin başlığından, @font-face taraması blok sınırlı"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "ff40efd4",
+          "subject": "kaynak analizi bağlantısı geç gelen izleme listesinde kaybolmuyor; iptalin 404'ü eski sunucuyla karışmıyor"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "de6d00da",
+          "subject": "salt-okur hesap betiği PostgreSQL public şeması notunu taşır"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "02be585a",
+          "subject": "r177 CI — test rolleri kendi parolasıyla, kılavuzda birleşik marka yazımı yok, grafik çubukları ilerleme bekçisinden muaf"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "dc796621",
+          "subject": "r177 entegrasyonu — uyarı rule_ids eşlemesi, db saati not kodu, bağlantı güvenlik uyarıları, yeni ayar etiketleri; belgeler ve kılavuz"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "4b25e356",
+          "subject": "dbquery r177 arka uç — değerlendirilemeyen durum, hesap yetki denetimi, TLS, tazelik kuralı, mevsimsel taban, geriye dönük deneme"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "474138ce",
+          "subject": "kaynak analizi ön yüzü sunucu ikinci turuyla eşitlendi — 13 nesne bulgusu, indirilmeyen / boyutu bilinmeyen nesne, zaten iyi görsel, iptal yanıtı"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "b70307fd",
+          "subject": "dbquery r177 arayüzü — değerlendirilemedi, salt-okur hesap, kurulum kolaylığı, tazelik / geriye dönük deneme"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "7343ec68",
+          "subject": "kaynak analizi postgres-it — yeni DONE / END parametreleri, iptal ve algoritma sürümü gerçek tiplerle"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "1864018c",
+          "subject": "kaynak analizi algoritma 2 — karar, HEAD-önce, vekil, iptal, süre dolumu, görsel kazancı, çekirdek ayarları"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "5fe3ef08",
+          "subject": "kaynak analizi ön yüzü — bulgular, not nedenleri, şelale, karşılaştırma, iptal ve bitiş bildirimi"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "cc46308c",
+          "subject": "kaynak analizi algoritma 2 — nesne başına vekil, tarayıcı gibi keşif, izlemeyle aynı kırık kararı"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.176.0",
       "tag": "v20.176.0",

@@ -7,6 +7,7 @@ import com.sitemonitor.service.AuditDetail;
 import com.sitemonitor.service.AuditService;
 import com.sitemonitor.service.CertificateService;
 import com.sitemonitor.service.PermissionService;
+import com.sitemonitor.service.dbquery.DbAccountPrivileges;
 import com.sitemonitor.service.dbquery.DbConnectionProfileService;
 import com.sitemonitor.service.dbquery.DbQueryCheckerService;
 import com.sitemonitor.service.dbquery.DbQueryRunner;
@@ -162,13 +163,20 @@ public class DbConnectionProfileController {
         return out;
     }
 
-    private static Map<String, Object> testResult(DbQueryRunner.ConnectionTest t) {
+    private Map<String, Object> testResult(DbQueryRunner.ConnectionTest t) {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("ok", t != null && t.ok());
         out.put("duration_ms", t == null ? null : t.durationMs());
         out.put("server_version", t == null ? null : t.serverVersion());
         out.put("error", t == null ? Msg.t("Deneme sonucu alınamadı.", "No test result was returned.") : t.error());
         out.put("failure_reason", t == null ? "DB_DRIVER" : t.failureReason());
+        // r177 (Ö-1): hesabın yazma / yönetici yetkileri — {checked, read_only, findings: [{code, detail}]}; ayar kipi
+        // (OFF | WARN | BLOCK) ön yüzün uyarı / ret dilini seçmesi için
+        DbAccountPrivileges.Result priv = t == null || t.privileges() == null ? DbAccountPrivileges.Result.NOT_CHECKED : t.privileges();
+        out.put("privileges", priv.toApi());
+        String mode = checker == null ? DbQueryCheckerService.WRITABLE_WARN : checker.writableMode();
+        out.put("writable_account_mode", mode);
+        out.put("account_blocked", DbQueryCheckerService.WRITABLE_BLOCK.equals(mode) && priv.writable());
         return out;
     }
 

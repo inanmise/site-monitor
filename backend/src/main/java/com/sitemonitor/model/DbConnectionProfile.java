@@ -82,6 +82,13 @@ public class DbConnectionProfile {
     @Column(name = "mssql_trust_server_certificate")
     private Boolean mssqlTrustServerCertificate;
 
+    /**
+     * Yalnız Oracle: TLS (TCPS) ile bağlan (r177) — varsayılan port 2484, sunucu sertifikası kurum CA paketi + JVM cacerts ile
+     * ve sunucu ADIYLA doğrulanır. null = kapalı (eski kayıt).
+     */
+    @Column(name = "oracle_tcps")
+    private Boolean oracleTcps;
+
     /** Bağlanma zaman aşımı (ms, 1000–30000; varsayılan 10000). */
     @Column(name = "connect_timeout_ms")
     private Integer connectTimeoutMs = 10000;
@@ -124,6 +131,13 @@ public class DbConnectionProfile {
 
     @Column(name = "last_duration_ms", updatable = false)
     private Integer lastDurationMs;
+
+    /**
+     * Son başarılı bağlantı denemesinin hesap yetkisi özeti (r177): {@code {checked, read_only, findings, checked_at}} — katalog
+     * bilgisi, veri / parola yok. Yalnız hedefli UPDATE ({@code recordPrivileges}) yazar.
+     */
+    @Column(name = "last_privileges_json", columnDefinition = "TEXT", updatable = false)
+    private String lastPrivilegesJson;
 
     @Column(name = "created_at", length = 30)
     private String createdAt;

@@ -29,7 +29,9 @@ import java.util.Set;
 final class DbQueryErrors {
 
     static final String DB_UNREACHABLE = "DB_UNREACHABLE", DB_DNS = "DB_DNS", DB_TIMEOUT = "DB_TIMEOUT",
-            DB_AUTH = "DB_AUTH", DB_SQL_ERROR = "DB_SQL_ERROR", DB_DRIVER = "DB_DRIVER", DB_BLOCKED = "DB_BLOCKED";
+            DB_AUTH = "DB_AUTH", DB_SQL_ERROR = "DB_SQL_ERROR", DB_DRIVER = "DB_DRIVER", DB_BLOCKED = "DB_BLOCKED",
+            /** r177: yönetici ayarı (writable-account-mode BLOCK) yazabilen hesabı reddetti — sorgu çalışmadı (CONFIG). */
+            DB_ACCOUNT_WRITABLE = "DB_ACCOUNT_WRITABLE";
 
     /** Ağ sınıfı kodlar (toplu kesinti / bastırma kuralı için). */
     static final Set<String> NETWORK_CLASS = Set.of(DB_UNREACHABLE, DB_DNS, DB_TIMEOUT);

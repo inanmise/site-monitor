@@ -99,7 +99,7 @@ class DbQueryRunnerTest {
         verify(query).setQueryTimeout(30);
         verify(query).setMaxRows(101);
         verify(query).setFetchSize(101);
-        verify(query).executeQuery("SELECT 7 AS n");          // sondaki ';' silinir
+        verify(query).executeQuery("/* SiteMonitor */ SELECT 7 AS n");   // sondaki ';' silinir; DBA izi öne eklenir (r177)
         verify(conn).rollback();
         verify(conn).close();
         assertThat(r.rows().get(0).get(0)).isEqualTo(BigDecimal.valueOf(7));
@@ -133,7 +133,7 @@ class DbQueryRunnerTest {
                 + "(HOST=10.0.0.5)(PORT=1521))(CONNECT_DATA=(SERVICE_NAME=ORCLPDB1)))");
         verify(oc, never()).setReadOnly(true);                   // Oracle'da yalnız açık ifade (ORA-01453)
         verify(os).execute("SET TRANSACTION READ ONLY");
-        verify(oq).executeQuery("SELECT 1 FROM dual");
+        verify(oq).executeQuery("/* SiteMonitor */ SELECT 1 FROM dual");
     }
 
     @Test
@@ -301,7 +301,7 @@ class DbQueryRunnerTest {
 
     @Test
     void connectionTestAndPlans() throws Exception {
-        when(setup.executeQuery("SELECT 1")).thenReturn(FakeJdbc.resultSet(List.of(new FakeJdbc.Col("a", Types.INTEGER, 1)),
+        when(setup.executeQuery("/* SiteMonitor */ SELECT 1")).thenReturn(FakeJdbc.resultSet(List.of(new FakeJdbc.Col("a", Types.INTEGER, 1)),
                 List.<Object[]>of(new Object[] {1})).resultSet());
         DbQueryRunner.ConnectionTest t = runner.test(spec(DbType.POSTGRESQL, "app"));
         assertThat(t.ok()).isTrue();
@@ -319,7 +319,7 @@ class DbQueryRunnerTest {
         assertThat(DbQueryRunner.parsePgPlan("bozuk").ok()).isFalse();
         assertThat(runner.plan(spec(DbType.ORACLE, "X"), "SELECT 1 FROM dual", 10).supported()).isFalse();
 
-        when(setup.executeQuery("EXPLAIN (FORMAT JSON) SELECT 1"))
+        when(setup.executeQuery("EXPLAIN (FORMAT JSON) /* SiteMonitor */ SELECT 1"))
                 .thenReturn(FakeJdbc.resultSet(List.of(new FakeJdbc.Col("QUERY PLAN", Types.VARCHAR, 100)),
                         List.<Object[]>of(new Object[] {"[{\"Plan\":{\"Total Cost\":3.5,\"Plan Rows\":1}}]"})).resultSet());
         DbQueryRunner.PlanResult live = runner.plan(spec(DbType.POSTGRESQL, "app"), "SELECT 1;", 10);
@@ -350,7 +350,7 @@ class DbQueryRunnerTest {
         assertThat(p.ok()).isFalse();
         assertThat(p.error()).doesNotContain("TOPSECRET").doesNotContain("Position").contains("22P02");
         // bağlantı denemesi (kullanıcı SQL'i yok — yalnız bağlantı tanımının adları izinli)
-        when(setup.executeQuery("SELECT 1")).thenThrow(new SQLException(
+        when(setup.executeQuery("/* SiteMonitor */ SELECT 1")).thenThrow(new SQLException(
                 "ERROR: permission denied for schema \"GIZLI_SEMA\"", "42501"));
         DbQueryRunner.ConnectionTest t = runner.test(spec(DbType.POSTGRESQL, "app"));
         assertThat(t.ok()).isFalse();
@@ -382,5 +382,39 @@ class DbQueryRunnerTest {
             assertThat(t.ok()).isFalse();
             assertThat(t.failureReason()).as(type.name() + ": " + t.error()).isEqualTo("DB_UNREACHABLE");
         }
+    }
+
+    // ── r177 ikinci tur (D-6 / O-1): saat dilimli hücrenin METNİ sürücünün metni, ANI ayrı kanalda ─────────────────
+
+    @Test
+    void zonedTimestampTextUnchangedAndInstantSeparate() throws Exception {
+        java.time.OffsetDateTime ms = java.time.OffsetDateTime.parse("2026-10-31T10:15:30.1234567+03:00");
+        java.time.OffsetDateTime ora = java.time.OffsetDateTime.parse("2026-10-31T08:00:00-05:00");
+        java.time.Instant pg = java.time.Instant.parse("2026-10-31T07:00:00Z");
+        returns(FakeJdbc.resultSet(List.of(
+                        new FakeJdbc.Col("dto", DbQueryRunner.MSSQL_DATETIMEOFFSET, 34),
+                        new FakeJdbc.Col("tstz", DbQueryRunner.ORACLE_TIMESTAMPTZ, 35),
+                        new FakeJdbc.Col("pgtz", Types.TIMESTAMP, 35, "timestamptz"),
+                        new FakeJdbc.Col("yerel", Types.TIMESTAMP, 29, "timestamp")),
+                List.<Object[]>of(
+                        new Object[] {new FakeJdbc.Dual("2026-10-31 10:15:30.1234567 +03:00", ms),
+                                new FakeJdbc.Dual("2026-10-31 08:00:00.000000 -05:00", ora),
+                                Timestamp.from(pg), Timestamp.valueOf("2026-10-31 10:00:00")},
+                        new Object[] {null, null, null, null})));
+        DbQueryRunner.QueryResult r = runner.run(spec(DbType.MSSQL, "app"), "SELECT dto, tstz, pgtz, yerel FROM t", 10, 5);
+        assertThat(r.ok()).isTrue();
+        // metin r177 öncesiyle aynı (sürücü metni) — metin kuralları / mail satırları değişmez
+        assertThat(r.rows().get(0).get(0)).isEqualTo("2026-10-31 10:15:30.1234567 +03:00");
+        assertThat(r.rows().get(0).get(1)).isEqualTo("2026-10-31 08:00:00.000000 -05:00");
+        assertThat(r.rows().get(0).get(3)).isEqualTo("2026-10-31T10:00");
+        // an kanalı yalnız saat dilimli kolonlarda
+        assertThat(r.instants()).containsOnlyKeys(0, 1, 2);
+        assertThat(r.instants().get(0)).containsExactly(ms.toInstant().toEpochMilli(), null);
+        assertThat(r.instants().get(1)).containsExactly(ora.toInstant().toEpochMilli(), null);
+        assertThat(r.instants().get(2)).containsExactly(pg.toEpochMilli(), null);
+        assertThat(DbQueryRunner.zonedTimestamp(Types.TIMESTAMP_WITH_TIMEZONE, "x")).isTrue();
+        assertThat(DbQueryRunner.zonedTimestamp(Types.TIMESTAMP, "TIMESTAMPTZ")).isTrue();
+        assertThat(DbQueryRunner.zonedTimestamp(Types.TIMESTAMP, "datetime2")).isFalse();
+        assertThat(DbQueryRunner.zonedTimestamp(Types.DATE, null)).isFalse();
     }
 }

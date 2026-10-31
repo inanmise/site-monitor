@@ -1965,6 +1965,12 @@ public class SchedulerService {
         // Sayfa kaynak analizi (2026-10-31): izleme başına TEK çalışan tarama — iki pod aynı anda başlatırsa ikinci INSERT düşer
         // (PostgreSQL kısmi benzersiz indeks; H2'de kısmi indeks yok, servis INSERT sonrası en küçük kimlik kuralıyla eler).
         patch("CREATE UNIQUE INDEX IF NOT EXISTS ux_prs_one_running ON page_resource_scans(monitor_id) WHERE status = 'RUNNING'");
+        // Kaynak analizi algoritma 2 (2026-11): yönlendirme sayısı / süresi, algoritma sürümü, iptal bayrağı — PageResourceScan
+        // (NULL = eski satır). Varsayılansız nullable kolon: PostgreSQL'de anlık.
+        patch("ALTER TABLE page_resource_scans ADD COLUMN redirect_count INTEGER");
+        patch("ALTER TABLE page_resource_scans ADD COLUMN redirect_ms BIGINT");
+        patch("ALTER TABLE page_resource_scans ADD COLUMN algorithm_version INTEGER");
+        patch("ALTER TABLE page_resource_scans ADD COLUMN cancel_requested BOOLEAN");
         // Anomali konusu görselleri (2026-10-18): yuva kimliği iss:<bölüm>:<konu>:<n> 40 karakteri aşabilir (bölüm + konu
         // kimliği 40'ar) — TechErrorReportImage.slotId 120. PostgreSQL'de VARCHAR büyütmek tabloyu yeniden yazmaz.
         patch("ALTER TABLE tech_error_report_images ALTER COLUMN slot_id TYPE VARCHAR(120)");
@@ -8528,18 +8534,40 @@ public class SchedulerService {
         String fdetail = "sorgu";
         String ferr = ran ? null : com.sitemonitor.service.dbquery.DbQueryAlarmText.itemError(
                 str(r.get("failure_reason")), str(r.get("error")));
+        // r177 (H-2): sorgu çalıştı ama kurallar ardışık N zamanlanmış çalıştırmada YAPILANDIRMA sorunuyla değerlendirilemedi
+        // (kolon yok / sayı değil / zaman damgası değil …) — izleme sessizce ölmesin: FAIL kalemi düşer, kodu
+        // DB_RULE_UNEVALUABLE (CONFIG sınıfı — toplu kesinti bastırmasına girmez). Elle değerlendirmede sayaç yok: sonuç
+        // değerlendirilemiyorsa kalem düşer (elle kontrol alarm AÇMAZ, ama açık alarmı kanıtsız da kapatmaz).
+        int unknownLimit = dbQueryUnknownAlertRuns();
+        List<String> unevaluable = ran && unknownLimit > 0 ? dbQueryUnevaluableNotes(r) : List.of();
+        int unknownRuns = r.get("unknown_runs") instanceof Number un ? un.intValue() : 0;
+        boolean unevaluableDown = !unevaluable.isEmpty() && (!scheduled || unknownRuns >= unknownLimit);
+        Map<String, Object> fctx = new LinkedHashMap<>(ctx);
+        if (unevaluableDown) {
+            ferr = com.sitemonitor.service.dbquery.DbQueryAlarmText.unevaluableError(unevaluable, scheduled ? unknownRuns : 1);
+            fctx.put("failure_reason", com.sitemonitor.service.dbquery.DbQueryAlarmText.RULE_UNEVALUABLE_CODE);
+            fctx.put("error", ferr.substring(ferr.indexOf(']') + 1).trim());
+            fctx.put("unevaluable_notes", unevaluable);
+        }
+        boolean fup = ran && !unevaluableDown;
         // İkinci tur O-1: zamanlanmış sorgu hatasının TEYİDİ ölçülemezse (izin yok / iç hata) zincir iptal edilmez — ilk
         // ölçüm (bu kalemin kendisi) kanıt sayılır; kurtarmada (up kalem) ölçülemeyen kontrol "atlandı" kalır.
-        Map<String, Object> failEvidence = scheduled && !ran ? dbQueryDownEvidence(ferr, null, null) : null;
+        Map<String, Object> failEvidence = scheduled && !fup ? dbQueryDownEvidence(ferr, null, null) : null;
         fail.add(new MonitoringOutageService.SweepItem(
-                EscalationService.TYPE_DBQUERY_FAIL, m.getName(), fdetail, ran, ferr, chanCtx(new LinkedHashMap<>(ctx), m),
+                EscalationService.TYPE_DBQUERY_FAIL, m.getName(), fdetail, fup, ferr, chanCtx(fctx, m),
                 () -> { Map<String, Object> p = recheckDbQuery(m, com.sitemonitor.service.dbquery.DbQueryCheckerService.Run.RECHECK, anchor);
                         if (Boolean.TRUE.equals(p.get("skipped")))
                             return dbQueryUnmeasured(m, EscalationService.TYPE_DBQUERY_FAIL, p, failEvidence);
                         boolean ok = !com.sitemonitor.service.dbquery.DbQueryCheckerService.STATUS_FAIL.equals(p.get("status"));
-                        return ok ? Map.of("status", "up")
-                                : Map.of("status", "down", "error", com.sitemonitor.service.dbquery.DbQueryAlarmText.itemError(
-                                        str(p.get("failure_reason")), str(p.get("error")))); }));
+                        if (!ok) return Map.of("status", "down", "error", com.sitemonitor.service.dbquery.DbQueryAlarmText.itemError(
+                                str(p.get("failure_reason")), str(p.get("error"))));
+                        // Yeniden ölçüm de değerlendirilemiyorsa iyileşme KANITI değildir — ama yalnız ardışık değerlendirilemeyen
+                        // çalıştırma eşiği DOLMUŞSA düşük kalır (r177 ikinci tur D-1): eşik dolmadan teyit DB_RULE_UNEVALUABLE
+                        // alarmı açmasın (geçici sorgu hatasının teyidi, sorgu düzelip kural değerlendirilemezse)
+                        List<String> again = unknownLimit > 0 && unknownRuns >= unknownLimit ? dbQueryUnevaluableNotes(p) : List.of();
+                        return again.isEmpty() ? Map.of("status", "up")
+                                : Map.of("status", "down", "error",
+                                        com.sitemonitor.service.dbquery.DbQueryAlarmText.unevaluableError(again, 1)); }));
 
         if (!ran) return;   // sorgu çalışmadı: eşik / süre hakkında KANIT yok — kalem üretilmez (açık alarm kanıtsız kapanmaz)
 
@@ -8574,6 +8602,23 @@ public class SchedulerService {
                 EscalationService.TYPE_DBQUERY_SLOW, m.getName(), durMs != null ? durMs + " ms" : "süre",
                 !slowDown, null, chanCtx(sctx, m),
                 () -> evalDbQuerySlow(m, anchor, slowEvidence)));
+    }
+
+    /** Ardışık değerlendirilemeyen çalıştırma alarmının eşiği (r177) — 0 = kapalı, en çok 20. */
+    int dbQueryUnknownAlertRuns() {
+        int v = appSettings.getInt("site.monitor.dbquery.unknown-alert-runs", 3);
+        return Math.max(0, Math.min(20, v));
+    }
+
+    /** Ham sonucun yapılandırma sorunuyla değerlendirilemeyen kural notları (r177). */
+    @SuppressWarnings("unchecked")
+    private static List<String> dbQueryUnevaluableNotes(Map<String, Object> r) {
+        if (r == null || r.get("rule_results") == null) return List.of();
+        List<Map<String, Object>> rules = new ArrayList<>();
+        if (r.get("rule_results") instanceof List<?> l) {
+            for (Object o : l) if (o instanceof Map<?, ?> mm) rules.add((Map<String, Object>) mm);
+        }
+        return com.sitemonitor.service.dbquery.DbQueryAlarmText.unevaluableNotes(rules);
     }
 
     /** Ham sonucun eşik kararı (D3): BREACH | OK | UNKNOWN — kural sonuçları ve izlemenin birleşimi (ANY / ALL). */
@@ -8758,6 +8803,31 @@ public class SchedulerService {
             try { dbQueryAlertRows.remember(m.getId(), res); }
             catch (Exception e) { log.debug("Sorgu satırları belleğe alınamadı ({}): {}", m.getName(), e.toString()); }
         }
+        // r177 (H-2): ardışık YAPILANDIRMA sorunuyla değerlendirilemeyen ZAMANLANMIŞ çalıştırma sayacı (hedefli UPDATE; elle /
+        // teyit satırları sayacı değiştirmez). Sorgu hatası (FAIL) sayacı değiştirmez — o ayrı bir alarm.
+        int unknownRuns = m.getUnknownRuns() == null ? 0 : m.getUnknownRuns();
+        if (run == com.sitemonitor.service.dbquery.DbQueryCheckerService.Run.SCHEDULED && !failed) {
+            boolean config = false;
+            for (com.sitemonitor.service.dbquery.DbQueryEvaluator.RuleResult rr : res.ruleResults() == null
+                    ? List.<com.sitemonitor.service.dbquery.DbQueryEvaluator.RuleResult>of() : res.ruleResults()) {
+                if (rr != null && !rr.evaluated()
+                        && com.sitemonitor.service.dbquery.DbQueryEvaluator.isConfigUnevaluable(rr.kind(), rr.note())) config = true;
+            }
+            if (config) {
+                unknownRuns++;
+                if (dbQueryMonitorRepo != null && m.getId() != null) {
+                    try { dbQueryMonitorRepo.markDbQueryUnknown(m.getId()); }
+                    catch (Exception e) { log.debug("Değerlendirilemeyen çalıştırma sayacı yazılamadı ({}): {}", m.getName(), e.toString()); }
+                }
+            } else if (unknownRuns > 0) {
+                unknownRuns = 0;
+                if (dbQueryMonitorRepo != null && m.getId() != null) {
+                    try { dbQueryMonitorRepo.clearDbQueryUnknown(m.getId()); }
+                    catch (Exception e) { log.debug("Değerlendirilemeyen çalıştırma sayacı sıfırlanamadı ({}): {}", m.getName(), e.toString()); }
+                }
+            }
+            m.setUnknownRuns(unknownRuns);
+        }
         // D-6: elle kontrol çalıştı → izleme çalışabiliyor; eski "atlandı" dizisi "gecikmiş" göstermesin. Atlanan zamanlanmış
         // dönemin "yeniden dene" girişi KALIR (elle kontrol alarm açmaz — o dönemin değerlendirmesi zamanlanmış çalıştırmada).
         if (manual) clearDbQuerySkipState(m, false);
@@ -8802,6 +8872,7 @@ public class SchedulerService {
         out.put("failure_reason", res.failureReason());
         out.put("checked_at", ts);
         out.put("sql_hash", res.sqlHash() != null ? res.sqlHash() : m.getSqlHash());
+        out.put("unknown_runs", unknownRuns);
         out.put("profile_id", profileId);
         if (profileName != null) out.put("profile_name", profileName);
         if (dbType != null) out.put("db_type", dbType);

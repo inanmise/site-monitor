@@ -531,4 +531,39 @@ class MonitoringOverviewServiceTest {
         assertThat(types.stream().filter(x -> "http".equals(x.get("type"))).findFirst().orElseThrow()).containsEntry("checks_unavailable", true)
                 .containsEntry("stats_unavailable", true);
     }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    @DisplayName("r177 (H-2): sorgu çalıştı ama kural değerlendirilemedi → 'unknown' (yeşil değil) + rule_unevaluable; henüz çalışmamış izlemeden ayrılır")
+    void dbQueryUnevaluableIsNeverHealthy() {
+        com.sitemonitor.repository.DbQueryMonitorRepository dqm = mock(com.sitemonitor.repository.DbQueryMonitorRepository.class);
+        com.sitemonitor.repository.DbQueryCheckRepository dqc = mock(com.sitemonitor.repository.DbQueryCheckRepository.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(svc, "dbQueryMonitorRepo", dqm);
+        org.springframework.test.util.ReflectionTestUtils.setField(svc, "dbQueryCheckRepo", dqc);
+        com.sitemonitor.model.DbQueryMonitor un = new com.sitemonitor.model.DbQueryMonitor();
+        un.setId(1L); un.setName("Değerlendirilemeyen"); un.setTeamId(14L); un.setActive(true); un.setUnknownRuns(2);
+        un.setNextRunAt(ISO.format(Instant.now().plus(1, ChronoUnit.HOURS)));
+        com.sitemonitor.model.DbQueryMonitor fresh = new com.sitemonitor.model.DbQueryMonitor();
+        fresh.setId(2L); fresh.setName("Yeni"); fresh.setTeamId(14L); fresh.setActive(true);
+        fresh.setNextRunAt(ISO.format(Instant.now().plus(1, ChronoUnit.HOURS)));
+        com.sitemonitor.model.DbQueryMonitor good = new com.sitemonitor.model.DbQueryMonitor();
+        good.setId(3L); good.setName("Sağlıklı"); good.setTeamId(14L); good.setActive(true);
+        good.setNextRunAt(ISO.format(Instant.now().plus(1, ChronoUnit.HOURS)));
+        when(dqm.findAllByOrderByNameAsc()).thenReturn(List.of(un, fresh, good));
+        com.sitemonitor.model.DbQueryCheck c1 = new com.sitemonitor.model.DbQueryCheck();
+        c1.setMonitorId(1L); c1.setOk(true); c1.setCheckedAt(ago(1)); c1.setStatus("UNKNOWN");
+        com.sitemonitor.model.DbQueryCheck c3 = new com.sitemonitor.model.DbQueryCheck();
+        c3.setMonitorId(3L); c3.setOk(true); c3.setCheckedAt(ago(1)); c3.setStatus("OK");
+        when(dqc.findLatestPerMonitor()).thenReturn(List.of(c1, c3));
+        when(dqc.weeklyStatsByMonitor(anyCollection(), anyString(), anyString())).thenReturn(List.of());
+
+        Map<String, Object> out = svc.build(team -> true, false, 24);
+        List<Map<String, Object>> rows = (List<Map<String, Object>>) out.get("monitors");
+        java.util.function.Function<String, Map<String, Object>> row = n -> rows.stream().filter(r -> n.equals(r.get("target"))).findFirst().orElseThrow();
+        assertThat(row.apply("Değerlendirilemeyen")).containsEntry("status", "unknown").containsEntry("rule_unevaluable", true)
+                .containsEntry("unknown_runs", 2);
+        assertThat(row.apply("Yeni")).containsEntry("status", "unknown").containsEntry("rule_unevaluable", false);
+        assertThat(row.apply("Sağlıklı")).containsEntry("status", "up").containsEntry("rule_unevaluable", false);
+        assertThat(MonitoringOverviewService.dbQueryUnevaluable(null)).isFalse();
+    }
 }

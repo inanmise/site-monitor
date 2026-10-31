@@ -71,6 +71,21 @@ export function formatHoliday(ymd, lang = 'tr') {
     .format(new Date(Date.UTC(y, m - 1, d, 12)))
 }
 
+/**
+ * Takvimin kapsadığı son gün (2.A — `GET /api/admin/holidays` `coverage_until` + `ends_soon` (≤ 60 gün)). Sunucu alanları
+ * YOKSA (eski sunucu) `null` — uyarı gösterilmez (bugünkü davranış; istemci kapsam uydurmaz).
+ *  → `{ until: 'yyyy-MM-dd' | null, endsSoon: bool, ended: bool, nextYear: number }`. `nextYear` = sabit tatillerin
+ *  ekleneceği yıl: son tatil gününün yılı + 1 (takvim boşsa bu yıl).
+ */
+export function holidayCoverage(data, today = todayIstanbul()) {
+  if (!data || typeof data !== 'object' || !('coverage_until' in data || 'ends_soon' in data)) return null
+  const until = isYmd(data.coverage_until) ? data.coverage_until : null
+  const ended = until != null && until < today
+  const endsSoon = data.ends_soon === true || ended || until == null
+  const nextYear = until ? Number(until.slice(0, 4)) + 1 : Number(today.slice(0, 4))
+  return { until, endsSoon, ended, nextYear }
+}
+
 /** PUT gövdesi — sıralı, adlar kırpılmış. */
 export function toPayload(list) {
   return normalizeDays(list).map((d) => ({ day: d.day, name: d.name.trim() }))

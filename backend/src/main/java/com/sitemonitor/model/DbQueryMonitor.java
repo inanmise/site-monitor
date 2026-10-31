@@ -28,6 +28,12 @@ public class DbQueryMonitor implements MonitorAlertPrefs, MonitorSchedule, NocTa
 
     public static final String MODE_INTERVAL = "INTERVAL", MODE_CRON = "CRON";
     public static final String LOGIC_ANY = "ANY", LOGIC_ALL = "ALL";
+    /**
+     * Mail kolonları kipi (r177, Ö-6): {@code FIRST_N} = seçilen kolonlar, seçim yoksa ilk N kolon (bu sürümden önceki her
+     * kayıt — null da bu); {@code SELECTED} = YALNIZ seçilen kolonlar, seçim boşsa satır tablosu yok (yalnız sayı) — yeni
+     * izlemenin varsayılanı.
+     */
+    public static final String MAIL_COLUMNS_FIRST_N = "FIRST_N", MAIL_COLUMNS_SELECTED = "SELECTED";
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -118,6 +124,14 @@ public class DbQueryMonitor implements MonitorAlertPrefs, MonitorSchedule, NocTa
     @Column(name = "skipped_since", length = 30, insertable = false, updatable = false)
     private String skippedSince;
 
+    /**
+     * Ardışık YAPILANDIRMA sorunuyla değerlendirilemeyen zamanlanmış çalıştırma sayısı (r177, H-2) — kolon yok / sayı değil /
+     * zaman damgası değil … {@code site.monitor.dbquery.unknown-alert-runs}'a ulaşınca {@code DBQUERY_FAIL}
+     * ({@code DB_RULE_UNEVALUABLE}) alarmı. Yalnız zamanlayıcının hedefli UPDATE'leri yazar (varlık kaydı ezmez); null = 0.
+     */
+    @Column(name = "unknown_runs", insertable = false, updatable = false)
+    private Integer unknownRuns;
+
     // ── Çalıştırma sınırları ─────────────────────────────────────────────────
 
     /** Sorgu zaman aşımı (sn, 5–60; üst sınır ayardan). */
@@ -151,6 +165,10 @@ public class DbQueryMonitor implements MonitorAlertPrefs, MonitorSchedule, NocTa
     /** Mailde gösterilecek kolonlar JSON {@code ["col", …]}; boş = ilk 20 kolon. */
     @Column(name = "mail_columns_json", columnDefinition = "TEXT")
     private String mailColumnsJson;
+
+    /** {@link #MAIL_COLUMNS_FIRST_N} | {@link #MAIL_COLUMNS_SELECTED}; null = FIRST_N (eski kayıt). */
+    @Column(name = "mail_columns_mode", length = 10)
+    private String mailColumnsMode;
 
     /** Maskelenecek kolonlar JSON (büyük-küçük harf duyarsız) — değer "••••" yazılır, saklanmaz. */
     @Column(name = "masked_columns_json", columnDefinition = "TEXT")

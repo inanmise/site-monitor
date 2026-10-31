@@ -1751,6 +1751,8 @@ export const api = {
     // Tatil / özel gün takvimi (veritabanı sorgu izlemesi "tatillerde çalışma"; global admin yazar)
     getHolidays:  () => request('/admin/holidays', { withStatus: true }),
     saveHolidays: (days) => request('/admin/holidays', { method: 'PUT', body: JSON.stringify({ days }), withStatus: true }),
+    // Sabit tarihli resmî tatilleri ekle (1 Ocak … 29 Ekim; dini bayramlar elle) — global admin; var olan güne dokunmaz
+    addFixedHolidays: (year) => request('/admin/holidays/add-fixed?year=' + encodeURIComponent(year), { method: 'POST', withStatus: true }),
     saveCertInvReportSettings: (values) => request('/admin/system/cert-inventory-report/settings', {
       method: 'PUT', body: JSON.stringify(values),
     }),
@@ -2334,6 +2336,9 @@ export const api = {
     startResourceScan: (id) => request(`/monitoring/page/${id}/resource-scans`, { method: 'POST', withStatus: true }),
     resourceScans: (id, limit = 200) => request(`/monitoring/page/${id}/resource-scans?limit=${encodeURIComponent(limit)}`, { withStatus: true }),
     resourceScan: (id, scanId) => request(`/monitoring/page/${id}/resource-scans/${encodeURIComponent(scanId)}`, { withStatus: true }),
+    // İptal (r177): yalnız RUNNING (409 RESOURCE_SCAN_NOT_RUNNING); 404 / 405 kodsuz = eski sunucu → ekran düğmeyi gizler.
+    cancelResourceScan: (id, scanId) => request(`/monitoring/page/${id}/resource-scans/${encodeURIComponent(scanId)}/cancel`,
+      { method: 'POST', withStatus: true }),
 
     // Sayfa Hızı (Page Speed)
     getPageSpeedMonitors:   () => request('/monitoring/pagespeed'),
@@ -2391,6 +2396,8 @@ export const api = {
       ).toString()
       return request(`/monitoring/dbquery/${id}/response-series${q ? `?${q}` : ''}`)
     },
+    // Geriye dönük eşik denemesi: saklı zamanlanmış ölçümler yeni eşiklerle (DB'ye sorgu GİTMEZ; satır verisi yok)
+    dbQueryBacktest: (id, body) => request('/monitoring/dbquery/' + id + '/backtest', { method: 'POST', body: JSON.stringify(body), withStatus: true }),
     // Kayıtlı bağlantılar (takım belgesi; paylaşımla açılmaz) — parola asla dönmez (password_set).
     dbConnections:        (teamId) => request(`/monitoring/dbquery/connections${teamId != null ? `?team_id=${encodeURIComponent(teamId)}` : ''}`, { withStatus: true }),
     createDbConnection:   (data) => request('/monitoring/dbquery/connections', { method: 'POST', body: JSON.stringify(data), withStatus: true }),

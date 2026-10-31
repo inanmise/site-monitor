@@ -7,6 +7,8 @@ import org.jsoup.nodes.Element;
 
 import java.net.URI;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -24,8 +26,20 @@ import java.util.function.Predicate;
  * sayısına ve nota KATILMAZ ({@code pageLoad=false}). JavaScript'in sonradan eklediği nesneler görünmez — ölçüm sunucudan
  * yapılır, betik çalıştırılmaz.
  *
- * <p>Tarayıcı gibi: görsel başına TEK aday ({@code src}, yoksa {@code srcset}'in ilki), {@code loading="lazy"} ve
- * otomatik oynatılmayan medya "geç yüklenir" olarak işaretlenir (sayfa boyutuna girer, yükleme süresi tahminine girmez).
+ * <p><b>Tarayıcı gibi (algoritma 2, 2026-11 — inceleme H2/H3/H4/H5/H6/H8/H12):</b>
+ * <ul>
+ *   <li>{@code <noscript>} ve {@code <template>} içi YOK (JS açık tarayıcı onları istemez; izleme pikselleri tetiklenmez).</li>
+ *   <li>görsel başına TEK aday ({@code src}, yoksa {@code srcset}'in ilki); {@code <picture>}'da ilk desteklenen türdeki
+ *       {@code <source srcset>} ({@code max-width} medya sorgulu olanlar masaüstü bakışında sona kalır), yoksa {@code img}.</li>
+ *   <li>{@code <video>/<audio>} yalnız {@code autoplay} ya da {@code preload="auto"} ise indirilir, yalnız İLK uygun
+ *       kaynak; diğerleri "indirilmedi" ({@link Candidate#notLoaded()}) olarak listelenir — boyut / istek / nota girmez.</li>
+ *   <li>{@code <script nomodule>} sayılmaz (modern tarayıcı modül sürümünü alır, {@code nomodule}'ü hiç istemez);
+ *       {@code apple-touch-icon} / {@code mask-icon} masaüstü tarayıcıda indirilmez.</li>
+ *   <li>CSS yorumları atlanır; {@code @font-face}'te yalnız SON {@code src} bildiriminin İLK desteklenen biçimi
+ *       (woff2 / woff / ttf / otf; eot / svg yalnız başka yoksa) — kategori {@code FONT}.</li>
+ *   <li>satır içi stiller belgenin {@code <base href>}'iyle çözülür ({@link Found#baseUrl()}).</li>
+ * </ul>
+ * {@code loading="lazy"} görsel / iframe "geç yüklenir" olarak işaretlenir (sayfa boyutuna girer, yükleme tahminine girmez).
  * Döngüler girdiyle sınırlıdır (CSS taraması doğrusal, düzenli ifade yok).
  */
 public final class PageResourceDiscovery {
@@ -39,8 +53,11 @@ public final class PageResourceDiscovery {
 
     /** Bir CSS dosyasından alınacak azami başvuru (dev bir CSS envanteri şişirmesin). */
     static final int MAX_CSS_REFS = 500;
-    /** Taranacak azami CSS metni (karakter) — gövde zaten {@link PageFetchCore#MAX_BODY_BYTES} ile sınırlı. */
-    static final int MAX_CSS_CHARS = 2_000_000;
+    /**
+     * Taranacak azami CSS metni (karakter) — tarama stil gövdesini de bu kadar AÇAR (bellek tepesi, inceleme H15); gövde
+     * zaten {@link PageFetchCore#MAX_BODY_BYTES} ile sınırlı.
+     */
+    public static final int MAX_CSS_CHARS = 2_000_000;
     /** Daha uzun adresler atlanır (gerçek nesne adresi değil; bellek ve satır boyutu korunur). */
     static final int MAX_URL_CHARS = 4096;
 
@@ -54,6 +71,14 @@ public final class PageResourceDiscovery {
             "pdf", "doc", "docx", "xls", "xlsx", "xlsm", "ppt", "pptx", "pps", "ppsx", "odt", "ods", "odp", "rtf", "csv",
             "txt", "zip", "rar", "7z", "gz", "tgz", "tar", "bz2", "xz", "exe", "msi", "dmg", "apk", "iso", "epub", "xml",
             "json");
+    /** Tarayıcının çalıştırdığı betik türleri (boş = klasik); {@code text/template} gibi türler indirilmez. */
+    private static final Set<String> SCRIPT_TYPES = Set.of("", "text/javascript", "application/javascript",
+            "application/ecmascript", "text/ecmascript", "application/x-javascript", "text/jscript", "module");
+    /** {@code <picture><source type>} için desteklenen görsel türleri (boş = tür verilmemiş → desteklenir). */
+    private static final Set<String> PICTURE_TYPES = Set.of("", "image/avif", "image/webp", "image/jpeg", "image/jpg",
+            "image/png", "image/apng", "image/gif", "image/svg+xml", "image/bmp", "image/x-icon", "image/vnd.microsoft.icon");
+    /** Masaüstü tarayıcının indirmediği simge türleri. */
+    private static final Set<String> MOBILE_ICON_RELS = Set.of("apple-touch-icon", "apple-touch-icon-precomposed", "mask-icon");
 
     /**
      * Keşfedilen aday nesne.
@@ -62,12 +87,28 @@ public final class PageResourceDiscovery {
      * @param pageLoad  sayfa boyutuna / nota katılır mı (belge ve bağlantı için false)
      * @param lazy      geç yüklenir (loading=lazy, otomatik oynatılmayan medya) — yükleme süresi tahminine girmez
      * @param fromCss   bir stil metninden ({@code url()}, {@code @import}) bulundu
+     * @param notLoaded tarayıcı İNDİRMEZ (ör. {@code preload="none"} medya) — listelenir, ölçülmez
      */
-    public record Candidate(String url, String category, boolean pageLoad, boolean lazy, boolean fromCss) {}
+    public record Candidate(String url, String category, boolean pageLoad, boolean lazy, boolean fromCss, boolean notLoaded) {
+        /** Geriye uyum: indirilen aday. */
+        public Candidate(String url, String category, boolean pageLoad, boolean lazy, boolean fromCss) {
+            this(url, category, pageLoad, lazy, fromCss, false);
+        }
+    }
 
-    /** Bir HTML gövdesinin keşif sonucu. */
+    /**
+     * Bir HTML gövdesinin keşif sonucu.
+     *
+     * @param baseUrl belgenin taban adresi ({@code <base href>} varsa o) — satır içi stilleri bununla çözün
+     */
     public record Found(List<Candidate> pageLoad, List<Candidate> documents, List<Candidate> links,
-                        List<String> inlineCss, int excluded) {}
+                        List<String> inlineCss, int excluded, String baseUrl) {
+        /** Geriye uyum: taban adres yok (çağıran sayfanın adresini kullanır). */
+        public Found(List<Candidate> pageLoad, List<Candidate> documents, List<Candidate> links,
+                     List<String> inlineCss, int excluded) {
+            this(pageLoad, documents, links, inlineCss, excluded, null);
+        }
+    }
 
     private PageResourceDiscovery() {}
 
@@ -79,8 +120,10 @@ public final class PageResourceDiscovery {
         Document doc;
         try {
             doc = Jsoup.parse(new java.io.ByteArrayInputStream(html == null ? new byte[0] : html), null, pageUrl);
+            // JS açık tarayıcı bunları hiç istemez (GTM / piksel noscript'leri, şablon içerikleri)
+            doc.select("noscript, template").remove();
         } catch (Exception e) {
-            return new Found(List.of(), List.of(), List.of(), List.of(), 0);
+            return new Found(List.of(), List.of(), List.of(), List.of(), 0, pageUrl);
         }
         String self = key(pageUrl);
         Map<String, Candidate> page = new LinkedHashMap<>();
@@ -104,32 +147,82 @@ public final class PageResourceDiscovery {
                 case "video", "audio", "track" -> MEDIA;
                 default -> OTHER;
             };
+            else if (rel.stream().anyMatch(MOBILE_ICON_RELS::contains)) cat = null;   // masaüstünde indirilmez
             else if (rel.stream().anyMatch(r -> r.contains("icon"))) cat = FAVICON;
             else if (rel.contains("manifest")) cat = OTHER;
             if (cat == null) continue;   // prefetch / preconnect / dns-prefetch / canonical / alternate: indirme değil
-            add(page, abs(el, "href"), cat, true, false, false, self, exclude, excluded);
+            add(page, abs(el, "href"), cat, true, false, false, false, self, exclude, excluded);
         }
-        for (Element el : doc.select("script[src]")) add(page, abs(el, "src"), JS, true, false, false, self, exclude, excluded);
+        for (Element el : doc.select("script[src]")) {
+            if (el.hasAttr("nomodule")) continue;   // modern tarayıcı indirmez (modül sürümü yüklenir)
+            String type = el.attr("type").trim().toLowerCase(Locale.ROOT);
+            int semi = type.indexOf(';');
+            if (semi >= 0) type = type.substring(0, semi).trim();
+            if (!SCRIPT_TYPES.contains(type)) continue;   // text/template vb. çalıştırılmaz, indirilmez
+            add(page, abs(el, "src"), JS, true, false, false, false, self, exclude, excluded);
+        }
+        // <picture>: ilk desteklenen kaynak; img yedeği yalnız uygun kaynak yoksa
+        Set<Element> pictureImgs = Collections.newSetFromMap(new IdentityHashMap<>());
+        for (Element pic : doc.select("picture")) {
+            Element img = null;
+            List<Element> sources = new ArrayList<>();
+            for (Element ch : pic.children()) {
+                if ("source".equals(ch.normalName()) && !ch.attr("srcset").isBlank()) sources.add(ch);
+                else if (img == null && "img".equals(ch.normalName())) img = ch;
+            }
+            if (img != null) pictureImgs.add(img);
+            boolean lazy = img != null && "lazy".equalsIgnoreCase(img.attr("loading").trim());
+            Element chosen = pickPictureSource(sources);
+            String u = chosen != null ? firstSrcset(chosen) : "";
+            if (u.isBlank() && img != null) {
+                u = abs(img, "src");
+                if (u.isBlank()) u = firstSrcset(img);
+            }
+            add(page, u, IMAGE, true, lazy, false, false, self, exclude, excluded);
+        }
         for (Element el : doc.select("img")) {
+            if (pictureImgs.contains(el)) continue;
             String u = abs(el, "src");
             if (u.isBlank()) u = firstSrcset(el);
             boolean lazy = "lazy".equalsIgnoreCase(el.attr("loading").trim());
-            add(page, u, IMAGE, true, lazy, false, self, exclude, excluded);
+            add(page, u, IMAGE, true, lazy, false, false, self, exclude, excluded);
         }
-        for (Element el : doc.select("input[type=image][src]")) add(page, abs(el, "src"), IMAGE, true, false, false, self, exclude, excluded);
-        for (Element el : doc.select("video[poster]")) add(page, abs(el, "poster"), IMAGE, true, false, false, self, exclude, excluded);
+        for (Element el : doc.select("input[type=image][src]")) {
+            add(page, abs(el, "src"), IMAGE, true, false, false, false, self, exclude, excluded);
+        }
+        // Afiş görseli preload'tan bağımsız istenir
+        for (Element el : doc.select("video[poster]")) add(page, abs(el, "poster"), IMAGE, true, false, false, false, self, exclude, excluded);
         for (Element el : doc.select("video, audio")) {
-            boolean lazy = !el.hasAttr("autoplay");
-            add(page, abs(el, "src"), MEDIA, true, lazy, false, self, exclude, excluded);
-            for (Element s : el.select("source[src]")) add(page, abs(s, "src"), MEDIA, true, lazy, false, self, exclude, excluded);
-            for (Element t : el.select("track[src]")) add(page, abs(t, "src"), OTHER, true, lazy, false, self, exclude, excluded);
+            boolean autoplay = el.hasAttr("autoplay");
+            String preload = el.hasAttr("preload") ? el.attr("preload").trim().toLowerCase(Locale.ROOT) : null;
+            // HTML: boş değerli preload = "auto"; değer yoksa / none / metadata → gövde indirilmez
+            boolean download = autoplay || (preload != null && (preload.isEmpty() || "auto".equals(preload)));
+            String src = abs(el, "src");
+            if (src.isBlank()) {
+                for (Element s : el.select("source[src]")) {
+                    String type = s.attr("type").trim().toLowerCase(Locale.ROOT);
+                    if (!type.isEmpty() && !type.startsWith("video/") && !type.startsWith("audio/")) continue;
+                    src = abs(s, "src");
+                    if (!src.isBlank()) break;
+                }
+            }
+            if (src.isBlank()) continue;
+            if (download) {
+                // otomatik oynatılan medya yükleme tahmine girer; preload=auto olan oynatılmayan medya geç yüklenir
+                add(page, src, MEDIA, true, !autoplay, false, false, self, exclude, excluded);
+                for (Element t : el.select("track[src][default]")) {
+                    add(page, abs(t, "src"), OTHER, true, true, false, false, self, exclude, excluded);
+                }
+            } else {
+                add(page, src, MEDIA, false, true, false, true, self, exclude, excluded);
+            }
         }
         for (Element el : doc.select("iframe[src], frame[src]")) {
             boolean lazy = "lazy".equalsIgnoreCase(el.attr("loading").trim());
-            add(page, abs(el, "src"), IFRAME, true, lazy, false, self, exclude, excluded);
+            add(page, abs(el, "src"), IFRAME, true, lazy, false, false, self, exclude, excluded);
         }
-        for (Element el : doc.select("embed[src]")) add(page, abs(el, "src"), OTHER, true, false, false, self, exclude, excluded);
-        for (Element el : doc.select("object[data]")) add(page, abs(el, "data"), OTHER, true, false, false, self, exclude, excluded);
+        for (Element el : doc.select("embed[src]")) add(page, abs(el, "src"), OTHER, true, false, false, false, self, exclude, excluded);
+        for (Element el : doc.select("object[data]")) add(page, abs(el, "data"), OTHER, true, false, false, false, self, exclude, excluded);
 
         // Satır içi stiller (<style> blokları ve style="…" öznitelikleri) — url() başvuruları ayrıca çağırana döner
         List<String> inline = new ArrayList<>();
@@ -150,39 +243,71 @@ public final class PageResourceDiscovery {
             if (page.containsKey(k)) continue;   // sayfanın zaten yüklediği bir nesne — sayfa nesnesi olarak kalır
             boolean isDoc = DOCUMENT_EXT.contains(ext(u)) || IMAGE_EXT.contains(ext(u)) || MEDIA_EXT.contains(ext(u))
                     || FONT_EXT.contains(ext(u));
-            add(isDoc ? docs : links, u, isDoc ? DOCUMENT : LINK, false, false, false, self, exclude, excluded);
+            add(isDoc ? docs : links, u, isDoc ? DOCUMENT : LINK, false, false, false, false, self, exclude, excluded);
         }
+        String base = doc.baseUri();
         // Bir URL hem belge hem bağlantı listesinde olamaz (anahtar aynı) — yukarıdaki ayrım uzantıya göre tekildir.
         return new Found(List.copyOf(page.values()), List.copyOf(docs.values()), List.copyOf(links.values()),
-                inline, excluded[0]);
+                inline, excluded[0], base == null || base.isBlank() ? pageUrl : base);
+    }
+
+    /** {@code <picture>}'ın kaynakları içinde ilk desteklenen tür; {@code max-width} medyalı olanlar (mobil) sona kalır. */
+    private static Element pickPictureSource(List<Element> sources) {
+        Element fallback = null;
+        for (Element s : sources) {
+            String type = s.attr("type").trim().toLowerCase(Locale.ROOT);
+            int semi = type.indexOf(';');
+            if (semi >= 0) type = type.substring(0, semi).trim();
+            if (!PICTURE_TYPES.contains(type)) continue;
+            if (s.attr("media").toLowerCase(Locale.ROOT).contains("max-width")) {
+                if (fallback == null) fallback = s;
+                continue;
+            }
+            return s;
+        }
+        return fallback;
     }
 
     /**
      * CSS metnindeki {@code url(...)} ve {@code @import} başvuruları — DOĞRUSAL tarama (düzenli ifade yok), en çok
-     * {@value #MAX_CSS_REFS}. {@code data:} / {@code #} başvuruları atlanır; göreli adresler {@code baseUrl}'e göre çözülür.
-     * Kategori uzantıdan: yazı tipi → FONT, görsel → IMAGE, {@code @import} ya da .css → CSS, diğerleri OTHER.
+     * {@value #MAX_CSS_REFS}. Yorumlar ({@code /* … *\/}) atlanır; {@code @font-face} bloğunda yalnız tarayıcının
+     * indireceği TEK yazı tipi ({@link #chooseFont}); {@code data:} / {@code #} başvuruları atlanır; göreli adresler
+     * {@code baseUrl}'e göre çözülür. Kategori uzantıdan: yazı tipi → FONT, görsel → IMAGE, {@code @import} ya da .css
+     * → CSS, diğerleri OTHER.
      */
     public static List<Candidate> cssRefs(String css, String baseUrl) {
         List<Candidate> out = new ArrayList<>();
         if (css == null || css.isEmpty()) return out;
-        String s = css.length() > MAX_CSS_CHARS ? css.substring(0, MAX_CSS_CHARS) : css;
+        String s = stripComments(css.length() > MAX_CSS_CHARS ? css.substring(0, MAX_CSS_CHARS) : css);
         String low = s.toLowerCase(Locale.ROOT);
         Map<String, Candidate> seen = new LinkedHashMap<>();
         int i = 0;
         int n = s.length();
-        // Sonraki "url(" / "@import" konumları önbellekte: her turda baştan aramak kötü girdide karesel olurdu
-        // ("@import@import…" ya da "url(url(…"). Bir konum yalnız tüketildiğinde (i onu geçince) yeniden aranır.
+        // Sonraki "url(" / "@import" / "@font-face" konumları önbellekte: her turda baştan aramak kötü girdide karesel
+        // olurdu ("@import@import…" ya da "url(url(…"). Bir konum yalnız tüketildiğinde (i onu geçince) yeniden aranır.
         int u = low.indexOf("url(");
         int imp = low.indexOf("@import");
+        int ff = low.indexOf("@font-face");
         while (i < n && seen.size() < MAX_CSS_REFS) {
             if (u >= 0 && u < i) u = low.indexOf("url(", i);
             if (imp >= 0 && imp < i) imp = low.indexOf("@import", i);
-            if (u < 0 && imp < 0) break;
-            boolean isImport = imp >= 0 && (u < 0 || imp < u);
-            int at = isImport ? imp : u;
-            if (isImport) {
+            if (ff >= 0 && ff < i) ff = low.indexOf("@font-face", i);
+            if (u < 0 && imp < 0 && ff < 0) break;
+            int at = min3(u, imp, ff);
+            if (at == ff) {
+                // @font-face { … } — blok iç içe parantez almaz: ilk '}' sonu
+                int open = s.indexOf('{', ff + 10);
+                if (open < 0) break;
+                int close = s.indexOf('}', open + 1);
+                int end = close < 0 ? n : close;
+                String chosen = chooseFont(s, low, open + 1, end);
+                if (chosen != null) put(seen, chosen, baseUrl, FONT);
+                i = close < 0 ? n : close + 1;
+                continue;
+            }
+            if (at == imp) {
                 // @import "x.css"; | @import url(x.css); | @import 'x.css' screen;
-                int j = skipWs(s, at + 7);
+                int j = skipWs(s, imp + 7);
                 if (j < n && low.startsWith("url(", j)) {
                     Ref r = readUrlFn(s, j + 4);
                     put(seen, r.value(), baseUrl, CSS);
@@ -192,7 +317,7 @@ public final class PageResourceDiscovery {
                     put(seen, r.value(), baseUrl, CSS);
                     i = Math.max(r.end(), j + 1);
                 } else {
-                    i = at + 7;
+                    i = imp + 7;
                 }
                 continue;
             }
@@ -207,6 +332,126 @@ public final class PageResourceDiscovery {
         }
         out.addAll(seen.values());
         return out;
+    }
+
+    private static int min3(int a, int b, int c) {
+        int m = Integer.MAX_VALUE;
+        if (a >= 0) m = Math.min(m, a);
+        if (b >= 0) m = Math.min(m, b);
+        if (c >= 0) m = Math.min(m, c);
+        return m;
+    }
+
+    /**
+     * CSS yorumlarını atar — DOĞRUSAL: tırnaklı dizgi içindeki {@code /*} yorum değildir (dizgi satır sonunda biter, kaçışlı
+     * karakter atlanır); kapanmayan yorum metnin sonuna kadar sürer (tarayıcı gibi).
+     */
+    static String stripComments(String s) {
+        if (s.indexOf("/*") < 0) return s;
+        StringBuilder out = new StringBuilder(s.length());
+        int n = s.length();
+        char q = 0;
+        int i = 0;
+        while (i < n) {
+            char c = s.charAt(i);
+            if (q != 0) {
+                out.append(c);
+                if (c == '\\' && i + 1 < n) { out.append(s.charAt(i + 1)); i += 2; continue; }
+                if (c == q || c == '\n') q = 0;
+                i++;
+                continue;
+            }
+            if (c == '"' || c == '\'') { q = c; out.append(c); i++; continue; }
+            if (c == '/' && i + 1 < n && s.charAt(i + 1) == '*') {
+                int end = s.indexOf("*/", i + 2);
+                if (end < 0) break;
+                out.append(' ');
+                i = end + 2;
+                continue;
+            }
+            out.append(c);
+            i++;
+        }
+        return out.toString();
+    }
+
+    /**
+     * {@code @font-face} bloğunun [from, to) aralığından tarayıcının indireceği yazı tipi: SON {@code src} bildirimi geçerlidir
+     * (CSS'te sonraki bildirim öncekini ezer); listede sırayla ilk DESTEKLENEN biçim (woff2 / woff / ttf / otf, ipucu
+     * yoksa uzantı; bilinmeyen {@code format()} atlanır), yoksa ilk eot / svg. {@code local()} atlanır (makinede olup
+     * olmadığı bilinmez). Doğrusal; bulunamazsa null.
+     */
+    static String chooseFont(String s, String low, int from, int to) {
+        int decl = -1;
+        int p = from;
+        while (p < to) {
+            // Arama BLOK SINIRIYLA sınırlı (inceleme O-3): sınırsız aramada src'siz her blok metnin geri kalanını tarardı
+            // ("@font-face{a:b}" × 130 000 → karesel). Java 21 sınırlı indexOf.
+            int k = low.indexOf("src", p, to);
+            if (k < 0) break;
+            char before = k == 0 ? '{' : s.charAt(k - 1);
+            int colon = skipWs(s, k + 3);
+            if ((before == '{' || before == ';' || Character.isWhitespace(before)) && colon < to && s.charAt(colon) == ':') {
+                decl = colon + 1;
+            }
+            p = k + 3;
+        }
+        if (decl < 0) return null;
+        // Değer: üst düzey ';' ya da blok sonuna kadar; girdiler üst düzey virgülle ayrılır (parantez / tırnak içi hariç)
+        List<String> entries = new ArrayList<>();
+        int depth = 0;
+        char q = 0;
+        int start = decl;
+        int i = decl;
+        for (; i < to; i++) {
+            char c = s.charAt(i);
+            if (q != 0) {
+                if (c == '\\') { i++; continue; }
+                if (c == q) q = 0;
+                continue;
+            }
+            if (c == '"' || c == '\'') q = c;
+            else if (c == '(') depth++;
+            else if (c == ')') depth = Math.max(0, depth - 1);
+            else if (depth == 0 && (c == ',' || c == ';')) {
+                entries.add(s.substring(start, i));
+                start = i + 1;
+                if (c == ';') break;
+            }
+        }
+        if (i >= to && start < to) entries.add(s.substring(start, to));
+        String legacy = null;
+        for (String raw : entries) {
+            String e = raw.trim();
+            String el = e.toLowerCase(Locale.ROOT);
+            int up = el.indexOf("url(");
+            if (up < 0) continue;   // local(…) ya da bozuk
+            Ref r = readUrlFn(e, up + 4);
+            if (r.value() == null) continue;
+            String fmt = null;
+            int fp = el.indexOf("format(", r.end() > up ? Math.min(r.end(), el.length()) : up);
+            if (fp >= 0) {
+                int fc = el.indexOf(')', fp + 7);
+                fmt = el.substring(fp + 7, fc < 0 ? el.length() : fc).replace("\"", "").replace("'", "").trim();
+            }
+            int support = fontSupport(fmt, ext(r.value()));
+            if (support == 2) return r.value();
+            if (support == 1 && legacy == null) legacy = r.value();
+        }
+        return legacy;
+    }
+
+    /** 2 = modern tarayıcı destekler, 1 = eski biçim (eot / svg), 0 = desteklenmez (bilinmeyen format ipucu). */
+    private static int fontSupport(String fmt, String ext) {
+        if (fmt != null && !fmt.isEmpty()) {
+            // embedded-opentype (eot) "opentype" içerir — önce eski biçimler
+            if (fmt.contains("embedded-opentype") || fmt.equals("eot") || fmt.contains("svg")) return 1;
+            if (fmt.contains("woff") || fmt.contains("truetype") || fmt.contains("opentype") || fmt.contains("collection")
+                    || fmt.equals("ttf") || fmt.equals("otf")) return 2;
+            return 0;
+        }
+        if ("eot".equals(ext) || "svg".equals(ext)) return 1;
+        return 2;   // ipucu yok: tarayıcı indirip dener
     }
 
     /** {@code url(} sonrasından değeri okur: tırnaklı ya da çıplak, kapanış parantezine kadar. */
@@ -249,11 +494,12 @@ public final class PageResourceDiscovery {
         if (raw.length() > MAX_URL_CHARS) return;
         String u = PageFetchCore.normalizeUrl(PageFetchCore.resolve(base, PageFetchCore.normalizeUrl(raw)));
         if (!PageFetchCore.isHttp(u) || u.length() > MAX_URL_CHARS) return;
-        seen.putIfAbsent(key(u), new Candidate(u, cat, true, false, true));
+        String k = key(u);   // istenen adres parçasız (tarayıcı #… göndermez; font.eot?#iefix = font.eot)
+        seen.putIfAbsent(k, new Candidate(k, cat, true, false, true));
     }
 
     private static void add(Map<String, Candidate> out, String url, String cat, boolean pageLoad, boolean lazy,
-                            boolean fromCss, String self, Predicate<String> exclude, int[] excluded) {
+                            boolean fromCss, boolean notLoaded, String self, Predicate<String> exclude, int[] excluded) {
         if (url == null || url.isBlank() || url.length() > MAX_URL_CHARS) return;
         String u = PageFetchCore.normalizeUrl(url);
         if (!PageFetchCore.isHttp(u) || u.length() > MAX_URL_CHARS) return;
@@ -261,7 +507,7 @@ public final class PageResourceDiscovery {
         if (k.equalsIgnoreCase(self)) return;   // sayfanın kendisi (HTML satırı ayrıca eklenir)
         if (out.containsKey(k)) return;
         if (exclude != null && safeTest(exclude, u)) { excluded[0]++; return; }
-        out.put(k, new Candidate(u, cat, pageLoad, lazy, fromCss));
+        out.put(k, new Candidate(k, cat, pageLoad, lazy, fromCss, notLoaded));   // istenen adres parçasız
     }
 
     private static boolean safeTest(Predicate<String> p, String u) {
@@ -289,9 +535,11 @@ public final class PageResourceDiscovery {
         return out;
     }
 
-    /** Tekilleştirme anahtarı: parçasız URL. */
+    /** Tekilleştirme anahtarı: parçasız URL; sonda kalan boş {@code ?} atılır ({@code font.eot?#iefix} = {@code font.eot}). */
     public static String key(String url) {
-        return url == null ? "" : PageFetchCore.stripFragment(url);
+        if (url == null) return "";
+        String k = PageFetchCore.stripFragment(url);
+        return k.endsWith("?") ? k.substring(0, k.length() - 1) : k;
     }
 
     /** URL yolunun uzantısı (küçük harf, yoksa boş). */

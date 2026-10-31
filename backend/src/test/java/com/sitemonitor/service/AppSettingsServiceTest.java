@@ -74,6 +74,20 @@ class AppSettingsServiceTest {
     }
 
     @Test
+    @DisplayName("r177 ikinci tur O-1: sorgu izlemesinin yerel saat dilimi yalnız IANA adı; geçersiz → alan hatası dbquery_local_timezone")
+    void dbqueryLocalTimezoneValidated() {
+        String key = com.sitemonitor.service.dbquery.DbQueryCheckerService.KEY_LOCAL_TIMEZONE;
+        service.save(values(key, "UTC"), "admin");
+        assertThat(service.getString(key, null)).isEqualTo("UTC");
+        for (String bad : new String[]{"Mars/Olympus", "+03:00", "europe/istanbul "}) {
+            assertThatThrownBy(() -> service.save(values(key, bad), "admin")).as(bad)
+                    .isInstanceOfSatisfying(com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException.class,
+                            e -> assertThat(e.getMessage()).isNotBlank());
+        }
+        assertThat(service.getString(key, null)).as("reddedilen değer yazılmadı").isEqualTo("UTC");
+    }
+
+    @Test
     @DisplayName("Tür bazlı yeniden uyarı (2026-10-01): 0 ya da 15–10080 dk kaydedilir, aralık dışı 400; varsayılan 0")
     void realertMinutes_rangeValidated() {
         String key = "site.monitor.realert.http-minutes";

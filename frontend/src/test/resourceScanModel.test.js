@@ -2,7 +2,8 @@ import { describe, it, expect } from 'vitest'
 import { TR } from '../i18n/tr.js'
 import { EN } from '../i18n/en.js'
 import {
-  BUCKET_KEYS, CATEGORIES, DEFAULT_FILTERS, KB, MB, NOTE_ARGS, NOTE_PLURAL, REC_CODES, REC_PLURAL, SCORE_KEYS, SORTS, activeFilterCount, cacheState,
+  BUCKET_KEYS, CATEGORIES, DEFAULT_FILTERS, FINDING_CODES, KB, MB, NOTE_ARGS, NOTE_PLURAL, REC_CODES, REC_PLURAL, SCOPES, SCORE_KEYS, SORTS,
+  STATUS_FILTERS, VERDICTS, WATERFALL_SORTS, activeFilterCount, cacheState,
   categoryRows, countsBy, delta, deltasComparable, elapsedMs, estImageMs, exportFileName, filterItems, formatBytesExact, formatMs, formatPct, formatSize,
   formatTtl, gradeLetter, gradeTone, imageSheetRows, isCapped, isFailed, isPageLoad, noteRows, objectSheetRows, pickDefaultScan, plural, pluralKey,
   pollCapMs, pollCapReached, previousDone, problemText, progressPct, scanTone, recHostList, recItemUrls, recSaving, recTextKey, recommendationArgs, recommendationSheetRows, scoreLabelKey, scoreRows, scoreTone,
@@ -55,20 +56,22 @@ describe('boyut kovaları ve nesne kuralları', () => {
 })
 
 describe('süzgeç / sayaç / sıralama', () => {
-  it('varsayılan süzgeç her şeyi geçirir; sıra büyükten küçüğe', () => {
-    const out = sortItems(filterItems(ITEMS, DEFAULT_FILTERS), 'size_desc', TRL)
+  it('varsayılan kapsam SAYFA YÜKÜ (r177); "Tümü" kapsamı her şeyi geçirir; sıra büyükten küçüğe', () => {
+    expect(DEFAULT_FILTERS.scope).toBe('page')
+    expect(sortItems(filterItems(ITEMS, DEFAULT_FILTERS), 'size_desc', TRL).map((x) => x.category)).toEqual(['IMAGE', 'JS', 'CSS', 'HTML', 'IMAGE'])
+    const out = sortItems(filterItems(ITEMS, { scope: 'all' }), 'size_desc', TRL)
     expect(out.map((x) => x.category)).toEqual(['DOCUMENT', 'IMAGE', 'JS', 'CSS', 'HTML', 'IMAGE', 'LINK'])
   })
   it('tür (çoklu), kova, kapsam, durum, arama (Türkçe katlama), öneri adresleri', () => {
     expect(filterItems(ITEMS, { types: ['IMAGE', 'CSS'] })).toHaveLength(3)
-    expect(filterItems(ITEMS, { buckets: ['xl'] }).map((x) => x.category)).toEqual(['IMAGE', 'DOCUMENT'])
+    expect(filterItems(ITEMS, { scope: 'all', buckets: ['xl'] }).map((x) => x.category)).toEqual(['IMAGE', 'DOCUMENT'])
     expect(filterItems(ITEMS, { scope: 'page' })).toHaveLength(5)
     expect(filterItems(ITEMS, { scope: 'documents' }).map((x) => x.category)).toEqual(['DOCUMENT'])
     expect(filterItems(ITEMS, { scope: 'links' }).map((x) => x.category)).toEqual(['LINK'])
-    expect(filterItems(ITEMS, { status: 'failed' }).map((x) => x.category)).toEqual(['CSS', 'LINK'])
+    expect(filterItems(ITEMS, { scope: 'all', status: 'failed' }).map((x) => x.category)).toEqual(['CSS', 'LINK'])
     expect(filterItems(ITEMS, { q: 'CDN.EX' })).toHaveLength(1)
     expect(filterItems([{ url: 'https://ex.com/İletişim' }], { q: 'iletisim' })).toHaveLength(1)
-    expect(filterItems(ITEMS, { urls: ['https://ex.com/a.js', 'https://ex.com/doc.pdf'] })).toHaveLength(2)
+    expect(filterItems(ITEMS, { scope: 'all', urls: ['https://ex.com/a.js', 'https://ex.com/doc.pdf'] })).toHaveLength(2)
   })
   it('sayaçlar kendi boyutunu dışlar, ötekileri uygular', () => {
     const f = { ...DEFAULT_FILTERS, types: ['IMAGE'], scope: 'page' }
@@ -78,7 +81,9 @@ describe('süzgeç / sayaç / sıralama', () => {
   it('etkin süzgeç sayısı (sıralama sayılmaz)', () => {
     expect(activeFilterCount(DEFAULT_FILTERS)).toBe(0)
     expect(activeFilterCount({ ...DEFAULT_FILTERS, sort: 'url' })).toBe(0)
-    expect(activeFilterCount({ q: ' x ', types: ['JS'], buckets: ['xs'], scope: 'page', status: 'failed', urls: ['u'] })).toBe(6)
+    // varsayılan kapsam (sayfa yükü) sayılmaz; "Tümü" bir süzgeç değişikliğidir
+    expect(activeFilterCount({ ...DEFAULT_FILTERS, scope: 'page' })).toBe(0)
+    expect(activeFilterCount({ q: ' x ', types: ['JS'], buckets: ['xs'], findings: ['NO_CACHE'], scope: 'all', status: 'failed', urls: ['u'] })).toBe(7)
   })
   it('her sıralama boş değeri SONA koyar; eşitlikte kararlı', () => {
     const rows = [{ url: 'b', bytes: null, duration_ms: 5 }, { url: 'a', bytes: 10, duration_ms: null }, { url: 'c', bytes: 30, duration_ms: 1 }]
@@ -208,8 +213,12 @@ describe('analiz blokları', () => {
     expect(rows.map((r) => r.category)).toEqual(['IMAGE', 'JS', 'DOCUMENT', 'LINK'])
     expect(rows[0].share).toBe(75)
     expect(rows[2].share).toBeNull()
+    // r177 H3: sayfa yükü çubuğu PAYIN kendisi (yandaki yüzdeyle aynı ölçek) — 6 MB'lık belge onu küçültmez
+    expect(rows[0].bar).toBe(75)
+    expect(rows[1].bar).toBe(25)
+    // sayılmayanlar kendi aralarındaki en büyüğe göre
     expect(rows[2].bar).toBe(100)
-    expect(rows[0].bar).toBe(50)
+    expect(rows[3].bar).toBeCloseTo((900 * KB) / (6 * MB) * 100, 5)
   })
   it('puan bileşenleri sırası, ağırlık (kesir ya da yüzde), bilinmeyen anahtar sonda', () => {
     const rows = scoreRows([{ key: 'errors', score: 100, weight: 0.1 }, { key: 'yeni', score: 50, weight: 5 }, { key: 'load_time', score: 40, weight: 30 }])
@@ -277,14 +286,14 @@ describe('dışa aktarım', () => {
   })
   it('nesne satırları: başlık + sayılar sayı hücresi, lazy / kırpma / sorun sütunları', () => {
     const rows = objectSheetRows(ITEMS, t, TRL)
-    expect(rows[0]).toHaveLength(21)
+    expect(rows[0]).toHaveLength(30)
     expect(rows).toHaveLength(ITEMS.length + 1)
     const hero = rows.find((r) => r[0] === 'https://ex.com/hero.jpg')
     expect(hero[4]).toBe(2 * MB)
     expect(hero[5]).toBe('2 MB')
     expect(hero[6]).toBe('prs.bucket.xl')
     const link = rows.find((r) => r[0] === 'https://ex.com/about')
-    expect(link[3]).toBe('prs.obj.transport')
+    expect(link[3]).toBe('prs.obj.noResponse')   // r177 H6: "bağlantı kurulamadı" değil (neden sorun sütununda)
     expect(link[10]).toBe('prs.export.no')
     expect(link[20]).toBe('prs.objProblem.connection')   // ham kod / metin asla sütuna yazılmaz
     const lazy = rows.find((r) => r[0] === 'https://ex.com/lazy.png')
@@ -306,7 +315,7 @@ describe('dışa aktarım', () => {
     expect(recs[2][2]).toContain('a.com, b.com')
     expect(recs[2][4]).toBe('u1\nu2')
     const imgs = imageSheetRows({ bytes: 2 * MB, est_ms_4g: 2000, top: [{ url: 'i.jpg', bytes: MB, width: 1920, height: 1080 }] }, 4 * MB, t, ENL)
-    expect(imgs[1]).toEqual(['i.jpg', MB, '1 MB', '1920×1080', '1 s', '25%'])
+    expect(imgs[1]).toEqual(['i.jpg', MB, '1 MB', '1920×1080', '1 s', '25%', ''])
   })
 })
 
@@ -315,8 +324,12 @@ describe('sözlük kapısı — dinamik anahtarlar iki dilde de var', () => {
     ...CATEGORIES.map((c) => `prs.cat.${c}`), ...BUCKET_KEYS.map((b) => `prs.bucket.${b}`), ...SCORE_KEYS.map(scoreLabelKey),
     ...REC_CODES.flatMap((c) => [`prs.rec.${c}.title`, `prs.rec.${c}.body`]), ...Object.keys(NOTE_ARGS).map((c) => `prs.note.${c}`),
     ...SORTS.map((s) => `prs.sort.${s}`), ...['A', 'B', 'C', 'D', 'E', 'F'].map((l) => `prs.verdict.${l}`),
-    ...['DONE', 'RUNNING', 'FAILED', 'INTERRUPTED', 'UNKNOWN'].map((s) => `prs.status.run.${s}`),
+    ...['DONE', 'RUNNING', 'FAILED', 'INTERRUPTED', 'UNKNOWN', 'CANCELLED'].map((s) => `prs.status.run.${s}`),
     'prs.rec.other.title', 'prs.rec.other.body', 'prs.note.other', 'prs.score.other',
+    ...FINDING_CODES.map((c) => `prs.finding.${c}`), 'prs.finding.other', ...VERDICTS.filter((v) => v !== 'ok').map((v) => `prs.verdict.obj.${v}`),
+    ...SCORE_KEYS.map((k) => `prs.score.measured.${k}`), 'prs.score.measured.other', ...WATERFALL_SORTS.map((s) => `prs.wf.sort.${s}`),
+    ...STATUS_FILTERS.map((s) => `prs.statusFilter.${s === 'failed' ? 'broken' : s}`), ...SCOPES.map((s) => `prs.scope.${s}`),
+    ...['content_type', 'content_encoding', 'cache_control', 'expires', 'content_length', 'server', 'x_cache'].map((h) => `prs.od.h.${h}`),
   ]
   it.each(keys)('%s', (k) => {
     expect(TR[k], `TR ${k}`).toBeTruthy()
@@ -375,7 +388,8 @@ describe('İngilizce tekil biçim (sayı tam 1 → `.one`)', () => {
     expect(plural(tEn, 'prs.kpi.imagesCount', 1, '1')).toBe('1 image')
     const docs = tEn('prs.kpi.docsSub', plural(tEn, 'prs.kpi.docsPart', 1, '1', '2 MB'), plural(tEn, 'prs.kpi.linksPart', 7, '7'))
     expect(docs).toBe('1 document (2 MB) · 7 links · not counted in page size')
-    expect(plural(tEn, 'prs.hero.lead', 1, '1 s', '20 KB', '1')).toBe('Estimated load 1 s · page size 20 KB · 1 request')
+    expect(plural(tEn, 'prs.kpi.redirPart', 1, '1', '480 ms')).toBe('1 redirect (480 ms)')
+    expect(plural(tEn, 'prs.kpi.redirPart', 2, '2', '480 ms')).toBe('2 redirects (480 ms)')
   })
 
   it('dışa aktarım aynı seçimi kullanır (öneri sayfası, tahmin notu)', () => {
