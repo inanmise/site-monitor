@@ -265,6 +265,16 @@ class DbQueryCheckerServiceTest {
     }
 
     @Test
+    void networkClassCodes() {
+        assertThat(DbQueryCheckerService.isNetworkClass("DB_UNREACHABLE")).isTrue();
+        assertThat(DbQueryCheckerService.isNetworkClass("DB_DNS")).isTrue();
+        assertThat(DbQueryCheckerService.isNetworkClass("DB_TIMEOUT")).isTrue();
+        for (String c : List.of("DB_AUTH", "DB_SQL_ERROR", "DB_DRIVER", "DB_BLOCKED", "DB_GUARD_REJECTED", "DB_BUSY"))
+            assertThat(DbQueryCheckerService.isNetworkClass(c)).as(c).isFalse();
+        assertThat(DbQueryCheckerService.isNetworkClass(null)).isFalse();
+    }
+
+    @Test
     void parseTimeoutIsSkippedNotFailed() {
         DbQuerySqlGuard.Result timeout = new DbQuerySqlGuard.Result(false, List.of(new DbQuerySqlGuard.Violation(
                 DbQuerySqlGuard.SQL_UNPARSABLE, DbQuerySqlGuard.TOKEN_TIMEOUT, "x", null, null)), List.of());

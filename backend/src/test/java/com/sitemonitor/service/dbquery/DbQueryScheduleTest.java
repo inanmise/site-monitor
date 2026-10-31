@@ -207,7 +207,7 @@ class DbQueryScheduleTest {
 
     @Test
     void searchesAreBounded() {
-        // Yılda tek bir dakika izinli (29 Şubat yok → 2027'de hiç) + her dakika cron: sonuç null, ama hızla
+        // İzinli pencere tüm günü kapatan yasak pencereyle örtülü + her dakika cron: hiç uygun an yok → null, ama hızla
         Spec rare = new Spec("CRON", null, "0 * * * * *", List.of(new Window(List.of(7), "03:00", "03:01")),
                 List.of(new Window(List.of(), "00:00", "24:00")), false, List.of());
         assertTimeoutPreemptively(java.time.Duration.ofSeconds(5), () -> {

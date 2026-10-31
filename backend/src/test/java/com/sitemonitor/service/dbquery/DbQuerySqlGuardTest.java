@@ -210,6 +210,88 @@ class DbQuerySqlGuardTest {
     }
 
     @Test
+    void oracleParameterlessPackageCallsWithoutParentheses() {
+        // Oracle parametresiz fonksiyonu parantezsiz çağırır: belirteç düzeyinde alias.kolon'dan ayırt edilemez → AST ile
+        assertRejected(ora("SELECT my_pkg.do_harm FROM dual"), DbQuerySqlGuard.SQL_FORBIDDEN_FUNCTION);
+        assertRejected(ora("SELECT DBMS_RANDOM.VALUE FROM dual"), DbQuerySqlGuard.SQL_FORBIDDEN_FUNCTION);
+        assertRejected(ora("SELECT o.id FROM orders o WHERE o.total > other_schema.pkg.limit_value"),
+                DbQuerySqlGuard.SQL_FORBIDDEN_FUNCTION);
+        assertOk(ora("SELECT e.id, d.name, hr.employees.salary FROM hr.employees e JOIN hr.departments d ON d.id = e.dept_id"));
+        assertOk(ora("SELECT e.id, d.name FROM hr.employees e, hr.departments d WHERE e.dept_id = d.id(+)"));
+        assertOk(ora("WITH c AS (SELECT id FROM t) SELECT c.id FROM c"));
+        assertOk(ora("SELECT x.n FROM (SELECT COUNT(*) n FROM t) x"));
+        Result seq = ora("SELECT my_seq.NEXTVAL FROM dual");
+        assertThat(codes(seq)).containsExactly(DbQuerySqlGuard.SQL_FORBIDDEN_FUNCTION);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "SELECT 1 FROM t WHERE 1 = 1; COMMIT",
+            "SELECT (SELECT 1 FROM t FOR UPDATE) AS x",
+            "SELECT * FROM t WHERE a IN (SELECT b FROM u FOR SHARE)",
+            "SELECT pg_catalog.set_config('statement_timeout', '0', false)",
+            "SELECT * FROM t WHERE x = (SELECT setval('s', 1))",
+            "select 1 /* yorum */ ; /* yorum */ delete from t",
+            "SELECT 1\nUNION ALL\nSELECT pg_sleep(1)",
+            "SELECT 1 FROM t WHERE a = 1 AND LOCK = 1",
+            "SELECT * FROM t; -- yalnız yorum değil\nTRUNCATE t",
+            "SELECT lo_unlink(1)",
+            "SELECT dblink_exec('x', 'drop table t')",
+            "SELECT * FROM t WHERE id = 1 FOR KEY SHARE",
+            "SELECT pg_notify('c', 'x')",
+            "SELECT pg_try_advisory_lock(1)",
+    })
+    void moreBypassAttemptsPostgres(String sql) {
+        assertThat(pg(sql).ok()).as(sql).isFalse();
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "SELECT * FROM t WITH (NOLOCK) EXEC sp_who",
+            "SELECT * FROM t WITH (NOLOCK) EXECUTE('DROP TABLE t')",
+            "SELECT * FROM t WITH (NOLOCK) DECLARE @x int",
+            "SELECT * FROM t WITH (NOLOCK) INSERT INTO u SELECT 1",
+            "SELECT * FROM t WITH (NOLOCK) TRUNCATE TABLE u",
+            "SELECT * FROM t WITH (NOLOCK) ; SELECT 1",
+            "SELECT * FROM t WITH (NOLOCK) WHERE a = (SELECT b FROM u WITH (UPDLOCK))",
+            "SELECT * FROM t WITH (ROWLOCK, NOLOCK)",
+            "SELECT * FROM t WITH (NOLOCK) JOIN u WITH (TABLOCK) ON 1 = 1",
+            "SELECT * FROM sys.fn_dblog(NULL, NULL)",
+            "SELECT dbo.f() FROM t WITH (NOLOCK)",
+            "SELECT * FROM t WITH (NOLOCK) WHERE x = {fn user()}",
+            "SELECT * FROM t WITH (NOLOCK) SHUTDOWN WITH NOWAIT",
+            "SELECT * FROM t WITH (NOLOCK) KILL 55",
+            "SELECT * FROM t WITH (NOLOCK) DBCC CHECKDB",
+            "SELECT * INTO dbo.copy FROM t WITH (NOLOCK)",
+            "SELECT * FROM OPENDATASOURCE('SQLNCLI', 'x').db.dbo.t",
+            "SELECT * FROM t WITH (NOLOCK) UNION SELECT * FROM u",
+            // eski biçim ipucu kılığında kullanıcı fonksiyonu
+            "SELECT dbo.f(NOLOCK) FROM t WITH (NOLOCK)",
+            "SELECT a FROM t WITH (NOLOCK) WHERE dbo.f(nolock) = 1",
+            "SELECT a FROM t WITH (NOLOCK) ORDER BY dbo.f(NOLOCK)",
+            "SELECT a, dbo.f (NOLOCK) AS x FROM t WITH (NOLOCK)",
+    })
+    void moreBypassAttemptsMssql(String sql) {
+        assertThat(ms(sql).ok()).as(sql).isFalse();
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "BEGIN DELETE FROM t; END;",
+            "SELECT 1 FROM dual; DELETE FROM t",
+            "SELECT * FROM t FOR UPDATE SKIP LOCKED",
+            "SELECT DBMS_XMLGEN.GETXML('select * from t') FROM dual",
+            "SELECT UTL_INADDR.GET_HOST_ADDRESS('x') FROM dual",
+            "SELECT * FROM t@other",
+            "SELECT * FROM t AS OF TIMESTAMP SYSDATE - 1 FOR UPDATE",
+            "SELECT q'[x]' FROM dual; DROP TABLE t",
+            "SELECT 1 FROM dual /* a /* b */ DELETE FROM t",
+    })
+    void moreBypassAttemptsOracle(String sql) {
+        assertThat(ora(sql).ok()).as(sql).isFalse();
+    }
+
+    @Test
     void jdbcEscapeSyntaxRejected() {
         assertRejected(pg("SELECT {fn now()}"), DbQuerySqlGuard.SQL_FORBIDDEN_KEYWORD);
         assertRejected(ms("SELECT 1 FROM t WITH (NOLOCK) WHERE a = {call x}"), DbQuerySqlGuard.SQL_FORBIDDEN_KEYWORD);
@@ -248,6 +330,10 @@ class DbQuerySqlGuardTest {
         assertOk(ms("SELECT * FROM dbo.t AS a WITH (READUNCOMMITTED)"));
         assertOk(ms("SELECT * FROM dbo.t a WITH (NOLOCK, READUNCOMMITTED)"));
         assertOk(ms("SELECT * FROM dbo.t with ( nolock )"));
+        assertOk(ms("SELECT * FROM dbo.t1 a (NOLOCK), dbo.t2 AS b (NOLOCK) WHERE a.id = b.id"));
+        assertOk(ms("SELECT * FROM t1 (NOLOCK) JOIN t2 (NOLOCK) ON t1.a = t2.a"));
+        // seçim listesindeki f(nolock) ipucu değil, nolock adlı kolonu alan yerleşik fonksiyondur
+        assertOk(ms("SELECT ABS(nolock) FROM t WITH (NOLOCK)"));
         assertRejected(ms("SELECT * FROM dbo.t WITH (NOLOCK, UPDLOCK)"), DbQuerySqlGuard.SQL_LOCK_HINT);
         assertRejected(ms("SELECT * FROM dbo.t WITH (UPDLOCK)"), DbQuerySqlGuard.SQL_LOCK_HINT);
         assertRejected(ms("SELECT * FROM dbo.t (TABLOCKX)"), DbQuerySqlGuard.SQL_LOCK_HINT);
@@ -362,6 +448,39 @@ class DbQuerySqlGuardTest {
         long t0 = System.nanoTime();
         for (int i = 0; i < 10; i++) SqlLexer.lex(w, POSTGRESQL);
         assertThat((System.nanoTime() - t0) / 1_000_000 / 10).isLessThan(200);
+    }
+
+    @Test
+    void fullCheckUnder200msOnAdversarialInput() {
+        // Sözleşme: 10 000 karakterlik kötü niyetli girdi < 200 ms (tam denetim: sözcük + AST). Isınmadan sonra 3 ölçümün en
+        // iyisi alınır (çöp toplayıcı gürültüsü). Yerelde en kötüsü ≈ 50 ms.
+        String[] inputs = {
+                "SELECT " + "'a'||".repeat(1_990) + "'a'",
+                "SELECT " + "a,".repeat(4_990) + "a",
+                "SELECT 1 FROM t WHERE " + "x = 1 OR ".repeat(1_100) + "1 = 1",
+                "SELECT " + "(".repeat(40) + "1" + ")".repeat(40) + " FROM t WHERE " + "a + ".repeat(2_000) + "1",
+                "SELECT * FROM t WHERE a IN (" + "1,".repeat(4_900) + "1)",
+                "SELECT " + "f(".repeat(39) + "1" + ")".repeat(39) + " FROM t WHERE " + "x OR ".repeat(1_500) + "y",
+                "SELECT 1 DELETE " + "DROP ".repeat(1_990),
+        };
+        for (int warm = 0; warm < 2; warm++)
+            for (String s : inputs) for (DbType t : DbType.values()) { DbQuerySqlGuard.clearCache(); DbQuerySqlGuard.check(cut(s), t); }
+        for (String s : inputs) {
+            for (DbType t : DbType.values()) {
+                long best = Long.MAX_VALUE;
+                for (int i = 0; i < 3; i++) {
+                    DbQuerySqlGuard.clearCache();
+                    long t0 = System.nanoTime();
+                    DbQuerySqlGuard.check(cut(s), t);
+                    best = Math.min(best, (System.nanoTime() - t0) / 1_000_000);
+                }
+                assertThat(best).as(t + " " + s.substring(0, 40)).isLessThan(200);
+            }
+        }
+    }
+
+    private static String cut(String s) {
+        return s.length() > DbQuerySqlGuard.MAX_SQL_CHARS ? s.substring(0, DbQuerySqlGuard.MAX_SQL_CHARS) : s;
     }
 
     @Test

@@ -51,6 +51,12 @@ public class DbQueryCheckerService {
 
     public static final String STATUS_OK = "OK", STATUS_BREACH = "BREACH", STATUS_FAIL = "FAIL", STATUS_SKIPPED = "SKIPPED";
 
+    /** Çalıştırıcı hata kodları (kalıcı) — {@code failure_reason}. */
+    public static final String DB_UNREACHABLE = DbQueryErrors.DB_UNREACHABLE, DB_DNS = DbQueryErrors.DB_DNS,
+            DB_TIMEOUT = DbQueryErrors.DB_TIMEOUT, DB_AUTH = DbQueryErrors.DB_AUTH,
+            DB_SQL_ERROR = DbQueryErrors.DB_SQL_ERROR, DB_DRIVER = DbQueryErrors.DB_DRIVER,
+            DB_BLOCKED = DbQueryErrors.DB_BLOCKED;
+
     public static final String DB_GUARD_REJECTED = "DB_GUARD_REJECTED", DB_PROFILE_MISSING = "DB_PROFILE_MISSING",
             DB_PROFILE_OTHER_TEAM = "DB_PROFILE_OTHER_TEAM", DB_SECRET_UNREADABLE = "DB_SECRET_UNREADABLE",
             DB_BUSY = "DB_BUSY";
@@ -519,6 +525,14 @@ public class DbQueryCheckerService {
         String v = settings.getString(KEY_PLAN_MODE, "WARN");
         String u = v == null ? "WARN" : v.trim().toUpperCase(Locale.ROOT);
         return u.equals("OFF") || u.equals("BLOCK") ? u : "WARN";
+    }
+
+    /**
+     * AĞ sınıfı hata mı (DB_UNREACHABLE, DB_DNS, DB_TIMEOUT) — toplu kesinti / bastırma kuralı için (MonitoringOutageService
+     * {@code isOutageClass} karşılığı). Kimlik, SQL, sürücü, engel ve denetim hataları ağ sınıfı DEĞİLDİR.
+     */
+    public static boolean isNetworkClass(String failureReason) {
+        return failureReason != null && DbQueryErrors.NETWORK_CLASS.contains(failureReason);
     }
 
     /** Sorgunun SHA-256 öneki (16 hex) — değişiklik izi. */

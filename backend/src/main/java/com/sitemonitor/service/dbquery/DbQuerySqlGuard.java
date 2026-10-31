@@ -323,12 +323,16 @@ public final class DbQuerySqlGuard {
                     }
                     continue;
                 }
-                if (t.isName() && i + 1 < n && tk.get(i + 1).isSymbol('(') && !consumed[i + 1]) checkFunction(i);
+                boolean oracleOuterJoin = type == DbType.ORACLE && i + 3 < n && tk.get(i + 2).isSymbol('+')
+                        && tk.get(i + 3).isSymbol(')');   // d.id(+) — eski Oracle dış birleşim işareti, çağrı değil
+                if (t.isName() && i + 1 < n && tk.get(i + 1).isSymbol('(') && !consumed[i + 1] && !oracleOuterJoin)
+                    checkFunction(i);
                 if (t.kind() != SqlLexer.Kind.WORD) continue;
                 String u = t.upper();
                 boolean dotBefore = i > 0 && tk.get(i - 1).isSymbol('.');
                 boolean dotAfter = i + 1 < n && tk.get(i + 1).isSymbol('.');
                 if (dotBefore && "NEXTVAL".equals(u)) {
+                    consumed[i] = true;
                     add(SQL_FORBIDDEN_FUNCTION, t.text(), msgSequence(t.text(), pos(t.start())), t.start());
                     continue;
                 }
@@ -435,7 +439,7 @@ public final class DbQuerySqlGuard {
                 if (consumed[i]) continue;
                 boolean modern = tk.get(i).isWord("WITH") && i > 0 && i + 1 < n && tk.get(i + 1).isSymbol('(');
                 boolean legacy = !modern && tk.get(i).isSymbol('(') && i > 0
-                        && (tk.get(i - 1).isName() && !tk.get(i - 1).isWord("WITH"));
+                        && (tk.get(i - 1).isName() && !tk.get(i - 1).isWord("WITH")) && tableReferenceBefore(i);
                 if (!modern && !legacy) continue;
                 int open = modern ? i + 1 : i;
                 int close = -1, depth = 0;
@@ -477,6 +481,57 @@ public final class DbQuerySqlGuard {
                     add(SQL_LOCK_HINT, "WITH", msgOtherHint("WITH ( … )", pos(first.start())), first.start());
                 }
             }
+        }
+
+        /**
+         * Eski biçim {@code ( NOLOCK )} yalnız bir TABLO BAŞVURUSUNDAN sonra ipucudur: önündeki ad zinciri (isteğe bağlı takma
+         * adla — {@code t x}, {@code t AS x}) FROM / JOIN / APPLY ya da virgülden sonra gelir. Seçim listesinde, WHERE'de
+         * {@code dbo.f(NOLOCK)} bir fonksiyon çağrısıdır — ipucu sanılıp kullanıcı fonksiyonu denetimini atlatamaz.
+         */
+        boolean tableReferenceBefore(int openParen) {
+            int b = chainStart(openParen - 1) - 1;
+            if (b >= 0 && isTableIntro(b)) return true;
+            if (b >= 0 && tk.get(b).isWord("AS")) {
+                b--;
+                if (b < 0 || !tk.get(b).isName()) return false;
+                b = chainStart(b) - 1;
+            } else if (b >= 0 && tk.get(b).isName()) {
+                b = chainStart(b) - 1;              // takma ad AS'siz: önceki zincir tablo adıdır
+            } else {
+                return false;
+            }
+            return b >= 0 && isTableIntro(b);
+        }
+
+        private boolean isTableIntro(int idx) {
+            SqlLexer.Token t = tk.get(idx);
+            if (t.isWord("FROM") || t.isWord("JOIN") || t.isWord("APPLY")) return true;
+            return t.isSymbol(',') && commaInFromList(idx);
+        }
+
+        /** Virgül bir FROM listesinde mi (aynı parantez düzeyinde geriye doğru ilk yan tümce sözcüğü FROM). */
+        private boolean commaInFromList(int comma) {
+            int depth = 0;
+            for (int j = comma - 1; j >= 0; j--) {
+                SqlLexer.Token x = tk.get(j);
+                if (x.isSymbol(')')) { depth++; continue; }
+                if (x.isSymbol('(')) { if (depth == 0) return false; depth--; continue; }
+                if (depth > 0 || x.kind() != SqlLexer.Kind.WORD) continue;
+                switch (x.upper()) {
+                    case "FROM": return true;
+                    case "SELECT", "WHERE", "GROUP", "ORDER", "HAVING", "ON", "BY", "SET", "VALUES", "WITH", "OPTION":
+                        return false;
+                    default: break;
+                }
+            }
+            return false;
+        }
+
+        /** {@code end} dizininde biten {@code ad.ad.ad} zincirinin ilk belirteci. */
+        int chainStart(int end) {
+            int s = end;
+            while (s - 2 >= 0 && tk.get(s - 1).isSymbol('.') && tk.get(s - 2).isName()) s -= 2;
+            return s;
         }
 
         // ── AST kuralları ────────────────────────────────────────
@@ -533,8 +588,31 @@ public final class DbQuerySqlGuard {
                 }
             }
             for (String alias : w.modifyingCte) add(SQL_NOT_SELECT, alias, msgModifyingCte(alias), null);
+            if (type == DbType.ORACLE) oracleQualifiedNames(w.qualifiers);
             if (w.into && lexicalViolations == 0) add(SQL_INTO, "INTO", msgInto(""), null);
             if (w.forUpdate && lexicalViolations == 0) add(SQL_LOCKING_CLAUSE, "FOR UPDATE", msgLocking("FOR UPDATE", ""), null);
+        }
+
+        /**
+         * Oracle parametresiz paket fonksiyonunu PARANTEZSİZ çağırmaya izin verir ({@code SELECT pkg.zarar FROM dual}) —
+         * belirteç düzeyinde {@code takma_ad.kolon}'dan ayırt edilemez. Niteleyicisi sorgunun bir tablosu / takma adı / CTE'si
+         * OLMAYAN nitelikli ad reddedilir (paket ya da başka şemanın nesnesi olabilir).
+         */
+        void oracleQualifiedNames(Set<String> known) {
+            int n = tk.size();
+            for (int i = 0; i + 2 < n; i++) {
+                if (!tk.get(i).isName() || !tk.get(i + 1).isSymbol('.') || !tk.get(i + 2).isName()) continue;
+                if (i > 0 && tk.get(i - 1).isSymbol('.')) continue;
+                int j = i;
+                while (j + 2 < n && tk.get(j + 1).isSymbol('.') && tk.get(j + 2).isName()) j += 2;
+                boolean call = j + 1 < n && tk.get(j + 1).isSymbol('(');
+                String first = lower(tk.get(i).kind() == SqlLexer.Kind.QUOTED ? unquote(tk.get(i).text()) : tk.get(i).text());
+                if (!call && !known.contains(first) && !consumed[j]) {
+                    String shown = sql.substring(tk.get(i).start(), tk.get(j).end());
+                    add(SQL_FORBIDDEN_FUNCTION, shown, msgOracleQualified(shown, pos(tk.get(i).start())), tk.get(i).start());
+                }
+                i = j;
+            }
         }
 
         String firstWord() {
@@ -633,6 +711,8 @@ public final class DbQuerySqlGuard {
         final List<Ref> refs = new ArrayList<>();
         final List<TableFunction> functions = new ArrayList<>();
         final List<String> modifyingCte = new ArrayList<>();
+        /** Sorgudaki tablo adı parçaları, takma adlar ve CTE adları (küçük harf) — Oracle nitelikli ad denetimi için. */
+        final Set<String> qualifiers = new java.util.HashSet<>();
         boolean into, forUpdate;
         private final Deque<Frame> frames = new ArrayDeque<>();
 
@@ -678,8 +758,13 @@ public final class DbQuerySqlGuard {
             try { return super.visit(s, ctx); } finally { pop(f); }
         }
 
+        private void alias(net.sf.jsqlparser.expression.Alias a) {
+            if (a != null && a.getName() != null) qualifiers.add(lower(unquote(a.getName())));
+        }
+
         @Override
         public <S> Void visit(ParenthesedSelect s, S ctx) {
+            alias(s.getAlias());
             inspect(s);
             Frame f = push(s);
             try { return super.visit(s, ctx); } finally { pop(f); }
@@ -687,6 +772,7 @@ public final class DbQuerySqlGuard {
 
         @Override
         public <S> Void visit(LateralSubSelect s, S ctx) {
+            alias(s.getAlias());
             inspect(s);
             Frame f = push(s);
             try { return super.visit(s, ctx); } finally { pop(f); }
@@ -695,6 +781,7 @@ public final class DbQuerySqlGuard {
         @Override
         public <S> Void visit(WithItem<?> w, S ctx) {
             if (!(w.getParenthesedStatement() instanceof ParenthesedSelect)) modifyingCte.add(w.getAliasName());
+            if (w.getAliasName() != null) qualifiers.add(lower(unquote(w.getAliasName())));
             for (Frame f : frames) {
                 int idx = indexOfIdentity(f.items, w);
                 if (idx >= 0) {
@@ -717,12 +804,15 @@ public final class DbQuerySqlGuard {
                 }
             }
             refs.add(new Ref(t, cte));
+            for (String part : splitName(t.getFullyQualifiedName())) qualifiers.add(lower(unquote(part)));
+            alias(t.getAlias());
             return super.visit(t, ctx);
         }
 
         @Override
         public <S> Void visit(TableFunction tf, S ctx) {
             functions.add(tf);
+            alias(tf.getAlias());
             return super.visit(tf, ctx);
         }
 
@@ -991,6 +1081,15 @@ public final class DbQuerySqlGuard {
                         + "doğrudan yazın.",
                 "'" + clip(fn, 80) + "' is a package or object function" + at + " · Package functions can change data in "
                         + "their own (autonomous) transaction and cannot be checked · Remove it or write its query directly.");
+    }
+
+    private static String msgOracleQualified(String name, String at) {
+        return Msg.t("'" + clip(name, 80) + "' sorgudaki bir tabloya ya da takma ada bağlı değil" + at + " · Oracle'da bu "
+                        + "biçim bir paket fonksiyonunu parantezsiz çağırabilir; paket fonksiyonları denetlenemez · Kolonu "
+                        + "tablonun takma adıyla yazın (ör. FROM siparis s … s.kolon) ya da fonksiyonu kaldırın.",
+                "'" + clip(name, 80) + "' is not tied to a table or alias of the query" + at + " · In Oracle this form can "
+                        + "call a package function without parentheses, and package functions cannot be checked · Write the "
+                        + "column with the table's alias (e.g. FROM orders o … o.col) or remove the function.");
     }
 
     private static String msgTableFunction(String fn) {
