@@ -95,9 +95,28 @@ public class DbQueryMonitor implements MonitorAlertPrefs, MonitorSchedule, NocTa
     @Column(name = "skip_dates_json", columnDefinition = "TEXT")
     private String skipDatesJson;
 
-    /** Bir sonraki planlı çalışma (UTC ISO) — zamanlayıcı her vadede hedefli UPDATE ile yazar; null = henüz hesaplanmadı. */
-    @Column(name = "next_run_at", length = 30)
+    /**
+     * Bir sonraki planlı çalışma (UTC ISO) — YALNIZ zamanlayıcının hedefli UPDATE'leri yazar ({@code updatable = false},
+     * 2026-10-31 inceleme D4 / K6: varlık kaydı bayat okumayla planı geri yazmasın); null = henüz hesaplanmadı. Zamanlama
+     * değişince sıfırlama {@code SchedulerService.dbQueryScheduleChanged}.
+     */
+    @Column(name = "next_run_at", length = 30, updatable = false)
     private String nextRunAt;
+
+    /**
+     * Art arda ATLANAN (eşzamanlılık izni yok / iç hata) çalıştırma sayısı — bir çalıştırma gerçekleşince 0 (2026-10-31
+     * inceleme O5). Yalnız zamanlayıcının hedefli UPDATE'leri yazar; null = hiç atlanmadı (bu kolondan önceki satır).
+     */
+    @Column(name = "skipped_runs", insertable = false, updatable = false)
+    private Integer skippedRuns;
+
+    /**
+     * İlk atlanan çalıştırmanın zamanı (UTC ISO) — bir çalıştırma gerçekleşince null. Genel bakış bundan
+     * {@code MonitoringOverviewService.DBQUERY_SKIP_STALE_SECONDS} sonra izlemeyi "gecikmiş" gösterir: plan ileri yazıldığı
+     * hâlde sorgu çalışamıyorsa izleme sessizce "güncel" görünmesin.
+     */
+    @Column(name = "skipped_since", length = 30, insertable = false, updatable = false)
+    private String skippedSince;
 
     // ── Çalıştırma sınırları ─────────────────────────────────────────────────
 

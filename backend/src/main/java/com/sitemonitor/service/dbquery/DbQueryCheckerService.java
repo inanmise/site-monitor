@@ -34,15 +34,19 @@ import java.util.function.IntSupplier;
 /**
  * Bir izlemenin tek çalıştırmasını uçtan uca yürütür (sözleşme §2–§3): bağlantıyı bulur ve parolayı çözer, sorguyu YENİDEN
  * denetler ({@link DbQuerySqlGuard}), eşzamanlılık izinlerini alır (pod / bağlantı), çalıştırır ({@link DbQueryRunner}),
- * kuralları değerlendirir ({@link DbQueryEvaluator}; önceki zamanlanmış çalıştırma {@code DbQueryCheckRepository
- * .findPreviousScheduledOk}), yavaş sorguyu işaretler, mail / alarm satırlarını seçer + maskeler, bağlantı sağlığını yazar.
- * Kontrol satırını YAZMAZ ve alarm DEĞERLENDİRMEZ (zamanlayıcının işi). Asla fırlatmaz.
+ * kuralları değerlendirir ({@link DbQueryEvaluator}; değişim kuralının tabanı {@code DbQueryCheckRepository
+ * .findRecentScheduledOk} — {@link Run}), yavaş sorguyu işaretler, mail / alarm satırlarını seçer + maskeler, bağlantı
+ * sağlığını yazar. Kontrol satırını YAZMAZ ve alarm DEĞERLENDİRMEZ (zamanlayıcının işi). Asla fırlatmaz.
  *
- * <p>İzinler canlı ayardan okunur ({@code site.monitor.dbquery.max-concurrency}, {@code …per-connection-concurrency}):
- * izin {@value #SCHEDULED_WAIT_MS} ms (elle / deneme {@value #INTERACTIVE_WAIT_MS} ms) içinde alınamazsa çalıştırma
- * ATLANIR ({@code SKIPPED} / {@code DB_BUSY} — satır yazılmaz, alarm yok). Ayrıştırma zaman / izin sınırına takılan güvenlik
- * denetimi de ATLAMA sayılır (yük altında sahte FAIL alarmı açılmasın); gerçek red ise FAIL {@code DB_GUARD_REJECTED}'dir ve
- * sorgu ÇALIŞMAZ.
+ * <p><b>İzinler</b> canlı ayardan okunur ({@code site.monitor.dbquery.max-concurrency}, {@code …per-connection-concurrency})
+ * ve HER ZAMAN önce bağlantı, sonra pod izni alınır (2026-10-31 inceleme O1): pod iznini tutarken bağlantı izni BEKLENMEZ —
+ * yavaş bir veritabanının izlemeleri pod izinlerini kapıp öteki bağlantıların izlemelerini durduramaz. Zamanlanmış
+ * çalıştırmalar paylaşılan havuzlarda izin BEKLEMEZ: tarama {@link #tryReserve} ile izni bekletmeden ayırır, ayrılan
+ * çalıştırma bu sınıfın kendi sınırlı havuzunda koşar ({@link #runReserved}; iş parçacıkları {@value #RUN_THREAD_PREFIX}N,
+ * en çok {@value #RUN_THREADS}). Teyit / kurtarma yeniden kontrolü (MOS havuzu) izni en çok {@value #RECHECK_WAIT_MS} ms,
+ * elle / deneme {@value #INTERACTIVE_WAIT_MS} ms bekler; alınamazsa çalıştırma ATLANIR ({@code SKIPPED} / {@code DB_BUSY} —
+ * satır yazılmaz, alarm yok). Ayrıştırma zaman / izin sınırına takılan güvenlik denetimi de ATLAMA sayılır (yük altında
+ * sahte FAIL alarmı açılmasın); gerçek red ise FAIL {@code DB_GUARD_REJECTED}'dir ve sorgu ÇALIŞMAZ.
  */
 @Service
 public class DbQueryCheckerService {
@@ -74,6 +78,31 @@ public class DbQueryCheckerService {
             KEY_MAX_PLAN_ROWS = "site.monitor.dbquery.max-plan-rows";
 
     static final long SCHEDULED_WAIT_MS = 30_000, INTERACTIVE_WAIT_MS = 10_000;
+    /** Teyit / kurtarma yeniden kontrolünün izin beklemesi (MOS'un paylaşılan teyit / kurtarma havuzunda koşar). */
+    static final long RECHECK_WAIT_MS = 2_000;
+    /** Zamanlanmış çalıştırma havuzu: iş parçacığı adı öneki (kalıcı — günlük / iş parçacığı dökümü) ve üst sınır. */
+    public static final String RUN_THREAD_PREFIX = "dbquery-run-";
+    static final int RUN_THREADS = 32, RUN_QUEUE = 256;
+    /** Kapanışta koşan sorguların bitmesi için en çok beklenen süre (ortak yok etme bütçesinden). */
+    static final long SHUTDOWN_WAIT_MS = 1_000;
+
+    /**
+     * Çalıştırmanın türü — değişim kuralının TABANINI belirler (2026-10-31 inceleme Y1).
+     * <ul>
+     *   <li>{@link #SCHEDULED}: önceki zamanlanmış çalıştırma (son zamanlanmış ok satırı).</li>
+     *   <li>{@link #RECHECK} (teyit / kurtarma) ve {@link #MANUAL} ("Şimdi kontrol et"): onaylanan son zamanlanmış
+     *       çalıştırmanın KULLANDIĞI taban (son zamanlanmış satırdan önceki zamanlanmış ok satırı) — ihlal eden satırın
+     *       kendisiyle kıyaslanıp "değişim yok" görünmesin. Bu satırlar bant dışıdır (zamanlayıcı {@code manual} /
+     *       {@code recheck} işaretiyle yazar).</li>
+     * </ul>
+     */
+    public enum Run { SCHEDULED, RECHECK, MANUAL }
+
+    /** Bekletmeden ayrılmış izin ({@link #tryReserve}); {@link #runReserved} bırakır, gönderilemezse çağıran bırakır. */
+    public interface Reservation {
+        /** İzni bırakır (birden çok çağrı güvenli). */
+        void release();
+    }
     static final int MAIL_CELL_CHARS = 200;
     public static final String MASK = "••••";
     static final int DEFAULT_TIMEOUT = 30, DEFAULT_MAX_ROWS = 1_000, MIN_TIMEOUT = 5;
@@ -119,8 +148,14 @@ public class DbQueryCheckerService {
 
     private final Permits podPermits = new Permits();
     /** İzin bekleme süreleri (ms) — testler kısaltır. */
-    private volatile long scheduledWaitMs = SCHEDULED_WAIT_MS, interactiveWaitMs = INTERACTIVE_WAIT_MS;
+    private volatile long scheduledWaitMs = SCHEDULED_WAIT_MS, interactiveWaitMs = INTERACTIVE_WAIT_MS,
+            recheckWaitMs = RECHECK_WAIT_MS;
     private final Map<Long, Permits> connectionPermits = new ConcurrentHashMap<>();
+    /** Bir izin bırakıldı — {@link #awaitRelease} bekleyen taramayı uyandırır. */
+    private final Object releaseSignal = new Object();
+    /** Zamanlanmış çalıştırma havuzu (ilk kullanımda kurulur; kapanışta {@link #shutdown}). */
+    private volatile java.util.concurrent.ThreadPoolExecutor runPool;
+    private volatile boolean closing;
 
     public DbQueryCheckerService(DbConnectionProfileRepository profiles, DbQueryCheckRepository checks,
                                  SecretCipher cipher, DbQueryRunner runner, AppSettingsService settings) {
@@ -133,20 +168,145 @@ public class DbQueryCheckerService {
 
     // ── Giriş noktaları ──────────────────────────────────────────────────────
 
-    /** Kayıtlı izlemenin çalıştırması; bağlantı sağlığını yazar. */
+    /** Kayıtlı izlemenin çalıştırması ({@code manual} → {@link Run#MANUAL}, değilse {@link Run#SCHEDULED}). */
     public Result check(DbQueryMonitor m, boolean manual) {
+        return check(m, manual ? Run.MANUAL : Run.SCHEDULED);
+    }
+
+    /** Teyit / kurtarma yeniden kontrolü ({@link Run#RECHECK}): kısa izin beklemesi, onaylanan çalıştırmanın tabanı. */
+    public Result recheck(DbQueryMonitor m) {
+        return check(m, Run.RECHECK);
+    }
+
+    /** Kayıtlı izlemenin çalıştırması; bağlantı sağlığını yazar. İzin türüne göre beklenir (sınıf belgesi). */
+    public Result check(DbQueryMonitor m, Run run) {
+        Run kind = run == null ? Run.SCHEDULED : run;
+        long wait = switch (kind) {
+            case MANUAL -> interactiveWaitMs;
+            case RECHECK -> recheckWaitMs;
+            case SCHEDULED -> scheduledWaitMs;
+        };
         try {
-            return execute(m, m == null ? null : m.getId(), true, manual ? interactiveWaitMs : scheduledWaitMs, true);
+            return execute(m, m == null ? null : m.getId(), kind, true, wait, true, null);
         } catch (RuntimeException e) {
-            // İç hata (ör. SiteMonitor'ün kendi veritabanı) izlenen veritabanının kesintisi DEĞİLDİR → ATLA, alarm açma
-            log.warn("Veritabanı sorgu izlemesi çalıştırılamadı (#{}): {}", m == null ? null : m.getId(),
-                    e.getClass().getSimpleName());
-            return skipped(m, null, DB_INTERNAL, Msg.t("Sorgu bu turda çalıştırılamadı (iç hata) · SiteMonitor tarafında "
-                    + "beklenmeyen bir hata oluştu; izlenen veritabanı sorumlu değil · Bir sonraki çalıştırmayı bekleyin; "
-                    + "sürerse yöneticinize bildirin.", "The query could not run this round (internal error) · An unexpected "
-                    + "error occurred on the SiteMonitor side; the monitored database is not to blame · Wait for the next "
-                    + "run; if it persists, tell your administrator."));
+            return internalError(m, e);
         }
+    }
+
+    /**
+     * Zamanlanmış çalıştırmanın izinlerini BEKLEMEDEN ayırır — önce bağlantı, sonra pod (sınıf belgesi). İzin yoksa ya da
+     * kapanış başladıysa null: tarama bu izlemeyi bir sonraki izin bırakılışında yeniden dener ({@link #awaitRelease}).
+     */
+    public Reservation tryReserve(DbQueryMonitor m) {
+        if (closing || m == null) return null;
+        return acquire(m.getProfileId(), 0);
+    }
+
+    /** Bir izin bırakılana ya da {@code ms} dolana dek bekler (tarama iş parçacığı; kesilirse bayrağı geri koyar). */
+    public void awaitRelease(long ms) {
+        if (ms <= 0) return;
+        synchronized (releaseSignal) {
+            try {
+                releaseSignal.wait(ms);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+    }
+
+    /**
+     * Ayrılmış izinle zamanlanmış çalıştırmayı bu sınıfın sınırlı havuzunda koşar; sonuç gelince {@code then} (zamanlayıcının
+     * kayıt adımı) aynı havuz iş parçacığında çalışır. İzin sorgu biter bitmez bırakılır. Havuz işi kabul etmezse (kapanış,
+     * kuyruk dolu) izin bırakılır ve null döner — çağıran çalıştırmayı ATLANDI sayar.
+     */
+    public <T> java.util.concurrent.CompletableFuture<T> runReserved(DbQueryMonitor m, Reservation reservation,
+                                                                     java.util.function.Function<Result, T> then) {
+        if (reservation == null) return null;
+        if (closing || then == null || !(reservation instanceof Lease lease)) {
+            reservation.release();
+            return null;
+        }
+        java.util.concurrent.CompletableFuture<T> f = new java.util.concurrent.CompletableFuture<>();
+        try {
+            runPool().execute(() -> {
+                if (closing) {   // kuyrukta beklerken kapanış başladı — sorgu hiç çalıştırılmaz
+                    lease.release();
+                    f.cancel(false);
+                    return;
+                }
+                Result res;
+                try {
+                    res = execute(m, m == null ? null : m.getId(), Run.SCHEDULED, true, 0, true, lease);
+                } catch (RuntimeException e) {
+                    res = internalError(m, e);
+                } finally {
+                    lease.release();
+                }
+                if (closing) {   // kapanış: kayıt adımı (veritabanı yazımı) koşmaz — tarama sonucu zaten düşer
+                    f.cancel(false);
+                    return;
+                }
+                try {
+                    f.complete(then.apply(res));
+                } catch (Throwable t) {
+                    f.completeExceptionally(t);
+                }
+            });
+        } catch (java.util.concurrent.RejectedExecutionException e) {
+            lease.release();
+            return null;
+        }
+        return f;
+    }
+
+    private java.util.concurrent.ThreadPoolExecutor runPool() {
+        java.util.concurrent.ThreadPoolExecutor p = runPool;
+        if (p != null) return p;
+        synchronized (this) {
+            if (runPool == null) {
+                java.util.concurrent.atomic.AtomicInteger n = new java.util.concurrent.atomic.AtomicInteger();
+                java.util.concurrent.ThreadPoolExecutor ex = new java.util.concurrent.ThreadPoolExecutor(RUN_THREADS,
+                        RUN_THREADS, 60, java.util.concurrent.TimeUnit.SECONDS,
+                        new java.util.concurrent.LinkedBlockingQueue<>(RUN_QUEUE), r -> {
+                            Thread t = new Thread(r, RUN_THREAD_PREFIX + n.incrementAndGet());
+                            t.setDaemon(true);
+                            return t;
+                        });
+                ex.allowCoreThreadTimeOut(true);
+                runPool = ex;
+            }
+            return runPool;
+        }
+    }
+
+    /**
+     * Kapanış: yeni çalıştırma / ayırma kabul edilmez, koşan sorgular ortak yok etme bütçesinden en çok
+     * {@value #SHUTDOWN_WAIT_MS} ms beklenir, sonra kesilir. Havuz hiç kurulmadıysa ortak bütçeye dokunulmaz.
+     */
+    @jakarta.annotation.PreDestroy
+    public void shutdown() {
+        closing = true;
+        java.util.concurrent.ThreadPoolExecutor p = runPool;
+        if (p == null) return;
+        p.shutdown();
+        try {
+            if (!p.awaitTermination(com.sitemonitor.config.ShutdownDeadline.waitMs(SHUTDOWN_WAIT_MS),
+                    java.util.concurrent.TimeUnit.MILLISECONDS)) p.shutdownNow();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            p.shutdownNow();
+        }
+    }
+
+    /** İç hata (ör. SiteMonitor'ün kendi veritabanı) izlenen veritabanının kesintisi DEĞİLDİR → ATLA, alarm açma. */
+    private Result internalError(DbQueryMonitor m, RuntimeException e) {
+        log.warn("Veritabanı sorgu izlemesi çalıştırılamadı (#{}): {}", m == null ? null : m.getId(),
+                e.getClass().getSimpleName());
+        return skipped(m, null, DB_INTERNAL, Msg.t("Sorgu bu turda çalıştırılamadı (iç hata) · SiteMonitor tarafında "
+                + "beklenmeyen bir hata oluştu; izlenen veritabanı sorumlu değil · Bir sonraki çalıştırmayı bekleyin; "
+                + "sürerse yöneticinize bildirin.", "The query could not run this round (internal error) · An unexpected "
+                + "error occurred on the SiteMonitor side; the monitored database is not to blame · Wait for the next "
+                + "run; if it persists, tell your administrator."));
     }
 
     /**
@@ -156,7 +316,7 @@ public class DbQueryCheckerService {
      */
     public Result test(DbQueryMonitor draft, Long previousForMonitorId) {
         try {
-            return execute(draft, previousForMonitorId, false, interactiveWaitMs, false);
+            return execute(draft, previousForMonitorId, Run.SCHEDULED, false, interactiveWaitMs, false, null);
         } catch (RuntimeException e) {
             log.warn("Veritabanı sorgusu denenemedi: {}", e.getClass().getSimpleName());
             return skipped(draft, null, DB_INTERNAL, Msg.t("Sorgu denenemedi (iç hata) · Beklenmeyen bir hata oluştu · "
@@ -281,8 +441,23 @@ public class DbQueryCheckerService {
 
     // ── Akış ─────────────────────────────────────────────────────────────────
 
-    private Result execute(DbQueryMonitor m, Long previousForMonitorId, boolean recordHealth, long waitMs,
-                           boolean selectMailRows) {
+    /**
+     * @param run      değişim kuralının tabanı ({@link Run}); deneme ucu {@link Run#SCHEDULED} (taslak "sıradaki çalıştırma"
+     *                 gibi değerlendirilir)
+     * @param reserved önceden ayrılmış izin ({@link #tryReserve}) ya da null (izin {@code waitMs} beklenerek alınır); her
+     *                 yolda bırakılır
+     */
+    private Result execute(DbQueryMonitor m, Long previousForMonitorId, Run run, boolean recordHealth, long waitMs,
+                           boolean selectMailRows, Lease reserved) {
+        try {
+            return executeBody(m, previousForMonitorId, run, recordHealth, waitMs, selectMailRows, reserved);
+        } finally {
+            if (reserved != null) reserved.release();
+        }
+    }
+
+    private Result executeBody(DbQueryMonitor m, Long previousForMonitorId, Run run, boolean recordHealth, long waitMs,
+                               boolean selectMailRows, Lease reserved) {
         if (m == null) return fail(null, DB_PROFILE_MISSING, msgProfileMissing(), null, null);
         DbConnectionProfile p = m.getProfileId() == null ? null : profiles.findById(m.getProfileId()).orElse(null);
         if (p == null) return fail(m, DB_PROFILE_MISSING, msgProfileMissing(), null, null);
@@ -321,7 +496,7 @@ public class DbQueryCheckerService {
         Set<String> discard = new LinkedHashSet<>(masked);
         for (DbQueryRules.Rule r : rules) if (r.column() != null) discard.remove(r.column().trim().toLowerCase(Locale.ROOT));
 
-        Lease lease = acquire(p.getId(), waitMs);
+        Lease lease = reserved != null ? reserved : acquire(p.getId(), waitMs);
         if (lease == null) return skipped(m, p.getId(), DB_BUSY, msgBusy());
         DbQueryRunner.QueryResult qr;
         try {
@@ -336,8 +511,9 @@ public class DbQueryCheckerService {
                     List.of(), List.of(), false, List.of(), null, false, qr.error(), qr.failureReason(), at,
                     sqlHash(m.getSqlText()), p.getId(), qr.serverVersion());
 
-        Map<String, Double> previous = previousMeasures(previousForMonitorId);
-        DbQueryEvaluator.Outcome outcome = DbQueryEvaluator.evaluate(rules, m.getRuleLogic(), qr, previous, "tr");
+        Baseline base = previousMeasures(previousForMonitorId, run);
+        DbQueryEvaluator.Outcome outcome = DbQueryEvaluator.evaluate(rules, m.getRuleLogic(), qr, base.measures(), "tr",
+                base.unreadable());
         boolean slow = m.getSlowQueryMs() != null && m.getSlowQueryMs() > 0 && qr.durationMs() >= m.getSlowQueryMs();
 
         MailRows mail = selectMailRows && !Boolean.FALSE.equals(m.getMailIncludeRows())
@@ -358,17 +534,24 @@ public class DbQueryCheckerService {
         }
     }
 
-    /** Önceki ZAMANLANMIŞ ve sorgusu çalışmış satırın kural ölçüleri (değişim kuralı); okunamazsa boş (ilk çalıştırma). */
-    private Map<String, Double> previousMeasures(Long monitorId) {
-        if (monitorId == null) return Map.of();
+    /** Değişim kuralının tabanı: kural kimliği → önceki ölçü; {@code unreadable} = okuma HATA verdi (ilk çalıştırma değil). */
+    record Baseline(Map<String, Double> measures, boolean unreadable) {}
+
+    /**
+     * Değişim kuralının tabanı ({@link Run}): zamanlanmış çalıştırmada son zamanlanmış ok satırı; yeniden kontrol / elle
+     * kontrolde ondan ÖNCEKİ zamanlanmış ok satırı (onaylanan çalıştırmanın kendi tabanı). Satır yoksa boş (ilk
+     * çalıştırma); okunamazsa boş + {@code unreadable} (kural "değerlendirilemedi", D3 — "geçti" sayılmaz).
+     */
+    private Baseline previousMeasures(Long monitorId, Run run) {
+        if (monitorId == null) return new Baseline(Map.of(), false);
         try {
-            return checks.findPreviousScheduledOk(monitorId)
-                    .map(DbQueryCheck::getRuleResultsJson)
-                    .map(DbQueryEvaluator::measuresFromJson)
-                    .orElse(Map.of());
+            List<DbQueryCheck> recent = checks.findRecentScheduledOk(monitorId);
+            int idx = run == Run.SCHEDULED ? 0 : 1;
+            if (recent == null || recent.size() <= idx || recent.get(idx) == null) return new Baseline(Map.of(), false);
+            return new Baseline(DbQueryEvaluator.measuresFromJson(recent.get(idx).getRuleResultsJson()), false);
         } catch (RuntimeException e) {
             log.warn("Önceki çalıştırma okunamadı (#{}): {}", monitorId, e.getClass().getSimpleName());
-            return Map.of();
+            return new Baseline(Map.of(), true);
         }
     }
 
@@ -468,32 +651,40 @@ public class DbQueryCheckerService {
         synchronized int inUse() { return inUse; }
     }
 
-    /** Pod + bağlantı izni; ikisi de alınamazsa hiçbiri tutulmaz. */
-    private final class Lease {
+    /** Bağlantı + pod izni; ikisi de alınamazsa hiçbiri tutulmaz. Bırakılış bekleyen taramayı uyandırır. */
+    private final class Lease implements Reservation {
         private final Permits connection;
-        private boolean released;
+        private final java.util.concurrent.atomic.AtomicBoolean released = new java.util.concurrent.atomic.AtomicBoolean();
 
         Lease(Permits connection) { this.connection = connection; }
 
-        void release() {
-            if (released) return;
-            released = true;
-            if (connection != null) connection.release();
+        @Override
+        public void release() {
+            if (!released.compareAndSet(false, true)) return;
             podPermits.release();
+            if (connection != null) connection.release();
+            synchronized (releaseSignal) { releaseSignal.notifyAll(); }
         }
     }
 
+    /**
+     * Önce bağlantı izni (bekleyerek), sonra pod izni (kalan süreyle) — pod izni tutulurken bağlantı izni BEKLENMEZ (O1):
+     * yavaş bir bağlantının izlemeleri pod izinlerini kapıp öteki bağlantıların izlemelerini durduramaz.
+     */
     private Lease acquire(Long profileId, long waitMs) {
         long start = System.currentTimeMillis();
-        if (!podPermits.acquire(() -> settings.getInt(KEY_MAX_CONCURRENCY, 4), waitMs)) return null;
         Permits conn = null;
         if (profileId != null) {
             conn = connectionPermits.computeIfAbsent(profileId, k -> new Permits());
-            long left = waitMs - (System.currentTimeMillis() - start);
-            if (!conn.acquire(() -> settings.getInt(KEY_PER_CONNECTION, 2), Math.max(0, left))) {
-                podPermits.release();
-                return null;
+            if (!conn.acquire(() -> settings.getInt(KEY_PER_CONNECTION, 2), waitMs)) return null;
+        }
+        long left = waitMs - (System.currentTimeMillis() - start);
+        if (!podPermits.acquire(() -> settings.getInt(KEY_MAX_CONCURRENCY, 4), Math.max(0, left))) {
+            if (conn != null) {
+                conn.release();
+                synchronized (releaseSignal) { releaseSignal.notifyAll(); }
             }
+            return null;
         }
         return new Lease(conn);
     }
@@ -502,6 +693,17 @@ public class DbQueryCheckerService {
     void setWaitsForTests(long scheduledMs, long interactiveMs) {
         this.scheduledWaitMs = scheduledMs;
         this.interactiveWaitMs = interactiveMs;
+    }
+
+    /** Testler: yeniden kontrolün izin beklemesini kısaltır. */
+    void setRecheckWaitForTests(long ms) {
+        this.recheckWaitMs = ms;
+    }
+
+    /** Testler / gözlem: bağlantının şu an tutulan izni. */
+    int connectionInUse(Long profileId) {
+        Permits p = profileId == null ? null : connectionPermits.get(profileId);
+        return p == null ? 0 : p.inUse();
     }
 
     /** Testler / gözlem: şu an tutulan pod izni. */

@@ -3,8 +3,11 @@ package com.sitemonitor.service.dbquery;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitemonitor.model.DbQueryAlertRows;
+import com.sitemonitor.model.DbQueryMonitor;
 import com.sitemonitor.repository.DbQueryAlertRowsRepository;
+import com.sitemonitor.repository.DbQueryMonitorRepository;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 
@@ -12,15 +15,22 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.Set;
+import java.util.function.LongSupplier;
 
 /**
  * Veritabanı sorgu alarmının ALARM ANINDAKİ sonuç satırları (2026-10-31, kullanıcı kararı: "mailde + alarm ayrıntısında").
  *
  * <p><b>Akış.</b> Zamanlayıcı her çalıştırmadan sonra o çalıştırmanın (motorun zaten maskelediği, sınırladığı) mail
- * satırlarını {@link #remember} ile BU POD'UN belleğine koyar — izleme başına tek, en güncel kayıt. Alarm bildirimi
+ * satırlarını {@link #remember} ile BU POD'UN belleğine koyar — izleme başına tek, en güncel kayıt; YALNIZ satırları bir
+ * alarmda kullanılabilecek çalıştırmalar (kural ihlali ya da yavaş sorgu) tutulur, diğer çalıştırma girişi siler. Alarm bildirimi
  * gönderilirken (açılış, eskalasyon, günlük yeniden uyarı, elle yeniden gönderim) {@code EscalationService} alarm olayının
  * kimliğiyle {@link #capture} çağırır: bellekteki satırlar {@code dbquery_alert_rows}'a yazılır (alarm başına TEK satır, son
  * yazılan kalır) ve maile aynı satırlar konur. Bellekte yoksa (başka pod, yeniden başlatma) saklanmış son satırlar kullanılır.
@@ -30,8 +40,15 @@ import java.util.concurrent.ConcurrentHashMap;
  * giden ham sonuca KONMAZ, kontrol satırına, bildirim günlüğüne ({@code notification_logs} gövdesi satırsız kopyadır),
  * denetime ve uygulama günlüğüne yazılmaz.
  *
+ * <p><b>Güncel ayar gönderim anında (2026-10-31 inceleme D2).</b> Satırlar çalıştırma anının maskesiyle tutulur; alarm
+ * postası / ayrıntısı İZLEMENİN O ANKİ ayarını uygular: "satırları maile ekle" kapatılmışsa satır dönmez (yazılmaz), sonradan
+ * maskelenen kolonun hücreleri "••••" olur (saklı kopya da maskelenerek güncellenir). İzleme okunamazsa satır DÖNMEZ (ayar
+ * doğrulanamadan veri gönderilmez); izleme silinmişse saklı satırlar alındıkları maskeyle kalır.
+ *
  * <p>Sınırlar (sözleşme §1): ≤ {@link #MAX_ROWS} satır × {@link #MAX_COLUMNS} kolon, hücre ≤ {@link #MAX_CELL} karakter.
- * Bellek sınırlıdır: izleme başına bir giriş, en çok {@link #MAX_REMEMBERED} giriş.
+ * Bellek sınırlıdır (2026-10-31 inceleme D1): izleme başına bir giriş, en çok {@link #MAX_REMEMBERED} giriş ve toplam
+ * {@link #MAX_REMEMBERED_CHARS} karakter (aşılınca en eski girişler düşer); giriş {@link #MAX_AGE_MS} ms sonra düşer — silinen
+ * izlemenin girişini {@link #forget} çağrılmayan pod'lar da tutmaz.
  */
 @Slf4j
 @Service
@@ -43,6 +60,10 @@ public class DbQueryAlertRowsService {
     public static final String CTX_ROWS_WITHHELD = "dbquery_rows_withheld";
 
     public static final int MAX_ROWS = 50, MAX_COLUMNS = 20, MAX_CELL = 200, MAX_REMEMBERED = 10_000;
+    /** Bellekteki tüm girişlerin toplam karakter bütçesi (≈ 8–16 MB) — aşılınca en eski girişler düşer. */
+    public static final long MAX_REMEMBERED_CHARS = 8_000_000L;
+    /** Bellek girişinin ömrü: bu süreden eski giriş kullanılmaz ve silinir (saklı satırlar alarmla zaten durur). */
+    public static final long MAX_AGE_MS = 6L * 3600 * 1000;
     /** Maskelenen kolonun yazılan değeri. */
     public static final String MASK = "••••";
 
@@ -67,62 +88,210 @@ public class DbQueryAlertRowsService {
     private static final ObjectMapper JSON = new ObjectMapper();
 
     private final DbQueryAlertRowsRepository repo;
-    private final ConcurrentHashMap<Long, Rows> latest = new ConcurrentHashMap<>();
+    /** İzlemenin güncel ayarı (D2); yoksa (el yapımı nesne / test) ayar uygulanmaz — çalıştırma anının maskesi geçerli. */
+    private DbQueryMonitorRepository monitors;
+
+    /** Bellek girişi: satırlar, karakter ağırlığı, belleğe alınma anı. Erişim {@code this} kilidiyle. */
+    private record Entry(Rows rows, long chars, long atMs) {}
+
+    /** Ekleme sırası korunur (yeniden ekleme sona taşır) — bütçe aşımında en eski girişler düşer. */
+    private final LinkedHashMap<Long, Entry> latest = new LinkedHashMap<>();
+    private long totalChars;
+    private volatile LongSupplier clock = System::currentTimeMillis;
 
     public DbQueryAlertRowsService(DbQueryAlertRowsRepository repo) {
         this.repo = repo;
     }
 
+    @Autowired(required = false)
+    public void setMonitorRepository(DbQueryMonitorRepository monitors) {
+        this.monitors = monitors;
+    }
+
+    /** Testler: saat. */
+    void setClockForTests(LongSupplier clock) {
+        this.clock = clock;
+    }
+
     /**
-     * Bir çalıştırmanın mail satırlarını belleğe alır (izleme başına en güncel). Satır yoksa (hata, mail_include_rows
-     * kapalı, sonuç boş) izlemenin girişi SİLİNİR — eski çalıştırmanın satırları yeni bir alarma taşınmasın.
+     * Bir çalıştırmanın mail satırlarını belleğe alır (izleme başına en güncel). YALNIZ kural ihlali ya da yavaş sorgu
+     * çalıştırmasının satırları tutulur (eşik / yavaşlık alarmı satır taşır; sorgu hatası satırsızdır). Başka sonuç ya da
+     * satır yoksa (hata, mail_include_rows kapalı, sonuç boş) izlemenin girişi SİLİNİR — eski çalıştırmanın satırları yeni
+     * bir alarma taşınmasın.
      */
     public void remember(Long monitorId, DbQueryCheckerService.Result r) {
         if (monitorId == null) return;
-        Rows rows = r == null ? null : of(r);
-        if (rows == null || rows.isEmpty()) {
-            latest.remove(monitorId);
-            return;
+        boolean wanted = r != null && (DbQueryCheckerService.STATUS_BREACH.equals(r.status()) || r.slow());
+        Rows rows = wanted ? of(r) : null;
+        synchronized (this) {
+            removeEntry(monitorId);
+            if (rows == null || rows.isEmpty()) return;
+            long chars = weight(rows);
+            if (chars > MAX_REMEMBERED_CHARS) return;   // tek giriş bütçeyi aşamaz (sınırlarla zaten ≤ ~210 bin)
+            long now = clock.getAsLong();
+            dropExpired(now);
+            while (!latest.isEmpty() && (latest.size() >= MAX_REMEMBERED || totalChars + chars > MAX_REMEMBERED_CHARS)) {
+                Iterator<Map.Entry<Long, Entry>> it = latest.entrySet().iterator();
+                Entry oldest = it.next().getValue();
+                it.remove();
+                totalChars -= oldest.chars();
+            }
+            latest.put(monitorId, new Entry(rows, chars, now));
+            totalChars += chars;
         }
-        if (latest.size() >= MAX_REMEMBERED && !latest.containsKey(monitorId)) latest.clear();   // savunma: sınırsız büyümesin
-        latest.put(monitorId, rows);
     }
 
     /** İzleme silindi / satırları geçersiz — bellekteki giriş düşer. */
     public void forget(Long monitorId) {
-        if (monitorId != null) latest.remove(monitorId);
+        if (monitorId == null) return;
+        synchronized (this) { removeEntry(monitorId); }
     }
 
-    /** Bu pod'un bellekteki son satırları (yoksa boş). */
+    /** Bu pod'un bellekteki son satırları (yoksa ya da süresi dolduysa boş). Ayar uygulanmaz — ham bellek görüntüsü. */
     public Optional<Rows> latest(Long monitorId) {
-        return monitorId == null ? Optional.empty() : Optional.ofNullable(latest.get(monitorId));
+        return monitorId == null ? Optional.empty() : Optional.ofNullable(memory(monitorId));
     }
+
+    /** Testler / gözlem: bellekteki giriş sayısı ve toplam karakter ağırlığı. */
+    synchronized int rememberedCount() { return latest.size(); }
+
+    synchronized long rememberedChars() { return totalChars; }
 
     /**
      * Alarm bildirimi anında satırları alarmla saklar ve döndürür. Bellekteki satırlar saklanmış olandan YENİYSE yazılır;
-     * değilse (ya da bellekte yoksa) saklanmış satırlar döner. İkisi de yoksa boş. Hata fırlatmaz — bildirim satırsız gider.
+     * değilse (ya da bellekte yoksa) saklanmış satırlar döner. İkisi de yoksa boş. İzlemenin GÜNCEL ayarı uygulanır (sınıf
+     * belgesi, D2): satırlar kapatılmışsa boş döner ve hiçbir şey yazılmaz; yeni maskeler hem dönen hem saklanan kopyaya
+     * işlenir. Hata fırlatmaz — bildirim satırsız gider.
      */
     public Optional<Rows> capture(Long alertEventId, Long monitorId) {
         if (alertEventId == null) return Optional.empty();
+        Policy policy = policyOf(monitorId);
+        if (!policy.include()) return Optional.empty();
+        Rows mem = monitorId == null ? null : memory(monitorId);
         try {
-            Rows mem = monitorId == null ? null : latest.get(monitorId);
             Optional<DbQueryAlertRows> stored = repo.findByAlertEventId(alertEventId);
-            if (mem == null) return stored.map(DbQueryAlertRowsService::toRows);
-            if (stored.isPresent() && !newer(mem.capturedAt(), stored.get().getCapturedAt())) {
-                return stored.map(DbQueryAlertRowsService::toRows);
+            if (mem == null || (stored.isPresent() && !newer(mem.capturedAt(), stored.get().getCapturedAt()))) {
+                if (stored.isEmpty()) return Optional.empty();
+                Rows was = toRows(stored.get());
+                Rows now = policy.apply(was);
+                if (now != was) write(stored.get(), alertEventId, stored.get().getMonitorId(), now);   // yeni maske saklı kopyaya
+                return Optional.of(now);
             }
-            write(stored.orElse(null), alertEventId, monitorId, mem);
-            return Optional.of(mem);
+            Rows out = policy.apply(mem);
+            write(stored.orElse(null), alertEventId, monitorId, out);
+            return Optional.of(out);
         } catch (Exception e) {
             log.warn("Sorgu alarmı satırları saklanamadı (olay {}): {}", alertEventId, e.getClass().getSimpleName());
-            return monitorId == null ? Optional.empty() : Optional.ofNullable(latest.get(monitorId));
+            return mem == null ? Optional.empty() : Optional.of(policy.apply(mem));
         }
     }
 
-    /** Alarmla saklanmış son satırlar (alarm ayrıntısı ucu). */
+    /** Alarmla saklanmış son satırlar (alarm ayrıntısı ucu) — izlemenin GÜNCEL ayarıyla (D2). */
     public Optional<Rows> stored(Long alertEventId) {
         if (alertEventId == null) return Optional.empty();
-        return repo.findByAlertEventId(alertEventId).map(DbQueryAlertRowsService::toRows);
+        Optional<DbQueryAlertRows> row = repo.findByAlertEventId(alertEventId);
+        if (row.isEmpty()) return Optional.empty();
+        Policy policy = policyOf(row.get().getMonitorId());
+        if (!policy.include()) return Optional.empty();
+        return Optional.of(policy.apply(toRows(row.get())));
+    }
+
+    // ── Güncel ayar (D2) ─────────────────────────────────────────────────────
+
+    /**
+     * Gönderim anının ayarı: {@code include} = "satırları maile ekle" açık; {@code masked} = maskelenecek kolonlar (küçük
+     * harf). Uygulanmadığında (izleme deposu yok / izleme silinmiş) {@link #NONE}.
+     */
+    record Policy(boolean include, Set<String> masked) {
+        static final Policy NONE = new Policy(true, Set.of());
+        static final Policy BLOCKED = new Policy(false, Set.of());
+
+        /** Yeni maskeleri işler; değişiklik yoksa AYNI nesne döner. */
+        Rows apply(Rows r) {
+            if (r == null || masked.isEmpty() || r.columns() == null) return r;
+            Set<String> already = new LinkedHashSet<>();
+            if (r.masked() != null) for (String m : r.masked()) if (m != null) already.add(m.toLowerCase(Locale.ROOT));
+            boolean[] mask = new boolean[r.columns().size()];
+            boolean any = false;
+            List<String> maskedOut = new ArrayList<>(r.masked() == null ? List.of() : r.masked());
+            for (int i = 0; i < mask.length; i++) {
+                String c = r.columns().get(i);
+                String lc = c == null ? "" : c.toLowerCase(Locale.ROOT);
+                if (masked.contains(lc) && !already.contains(lc)) {
+                    mask[i] = true;
+                    any = true;
+                    maskedOut.add(c);
+                }
+            }
+            if (!any) return r;
+            List<List<String>> rows = new ArrayList<>();
+            for (List<String> row : r.rows() == null ? List.<List<String>>of() : r.rows()) {
+                List<String> o = new ArrayList<>(row == null ? List.of() : row);
+                for (int i = 0; i < mask.length && i < o.size(); i++) if (mask[i]) o.set(i, MASK);
+                rows.add(java.util.Collections.unmodifiableList(o));
+            }
+            return new Rows(r.capturedAt(), r.columns(), List.copyOf(rows), List.copyOf(maskedOut), r.rowCount(),
+                    r.rowCountCapped(), r.truncated());
+        }
+    }
+
+    /** İzlemenin güncel ayarı; izleme deposu yoksa / izleme silinmişse {@link Policy#NONE}, okunamazsa satır YOK. */
+    Policy policyOf(Long monitorId) {
+        DbQueryMonitorRepository repoM = monitors;
+        if (repoM == null || monitorId == null) return Policy.NONE;
+        try {
+            Optional<DbQueryMonitor> m = repoM.findById(monitorId);
+            if (m.isEmpty()) return Policy.NONE;
+            if (Boolean.FALSE.equals(m.get().getMailIncludeRows())) return Policy.BLOCKED;
+            Set<String> masked = new LinkedHashSet<>();
+            for (String c : readList(m.get().getMaskedColumnsJson())) if (c != null && !c.isBlank())
+                masked.add(c.trim().toLowerCase(Locale.ROOT));
+            return new Policy(true, Set.copyOf(masked));
+        } catch (Exception e) {
+            log.warn("Sorgu izlemesinin satır ayarı okunamadı (#{}) — satırlar gönderilmiyor: {}", monitorId,
+                    e.getClass().getSimpleName());
+            return Policy.BLOCKED;   // ayar doğrulanamadı: maskelenmesi gereken veri gitmesin
+        }
+    }
+
+    // ── Bellek (D1) ──────────────────────────────────────────────────────────
+
+    private synchronized Rows memory(Long monitorId) {
+        Entry e = latest.get(monitorId);
+        if (e == null) return null;
+        if (clock.getAsLong() - e.atMs() > MAX_AGE_MS) {
+            removeEntry(monitorId);
+            return null;
+        }
+        return e.rows();
+    }
+
+    /** Kilit altında: girişi siler, bütçeyi düşer. */
+    private void removeEntry(Long monitorId) {
+        Entry e = latest.remove(monitorId);
+        if (e != null) totalChars -= e.chars();
+    }
+
+    /** Kilit altında: süresi dolmuş girişler (ekleme sırası = yaş sırası, baştan). */
+    private void dropExpired(long now) {
+        Iterator<Map.Entry<Long, Entry>> it = latest.entrySet().iterator();
+        while (it.hasNext()) {
+            Entry e = it.next().getValue();
+            if (now - e.atMs() <= MAX_AGE_MS) break;
+            it.remove();
+            totalChars -= e.chars();
+        }
+    }
+
+    /** Girişin karakter ağırlığı: kolon adları + hücreler (+ satır başına sabit pay). */
+    static long weight(Rows r) {
+        long n = 0;
+        if (r.columns() != null) for (String c : r.columns()) n += c == null ? 1 : c.length() + 1;
+        if (r.rows() != null) for (List<String> row : r.rows()) {
+            n += 8;
+            if (row != null) for (String v : row) n += v == null ? 1 : v.length() + 1;
+        }
+        return n;
     }
 
     private void write(DbQueryAlertRows existing, Long alertEventId, Long monitorId, Rows rows) {

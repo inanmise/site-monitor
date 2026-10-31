@@ -156,6 +156,26 @@ class StatusPageServiceTest {
     }
 
     @Test
+    @DisplayName("Veritabanı sorgusu (O4): kritik kural ihlali / yavaşlık kesinti DEĞİL (degraded); sorgu hatası kesinti")
+    void monitorHealth_dbqueryOnlyFailureIsOutage() {
+        // Kritik eşik alarmı açık, sorgu çalışıyor → en fazla bozulmuş
+        Map<String, Object> breach = withAlert(row("dbquery", 20, "Bekleyen sipariş", "Bekleyen sipariş", 14L, "SY", null, "up"),
+                "CRITICAL", ago(5), true);
+        breach.put("open_query_failure", false);
+        assertThat(monitorHealth(breach, false)).isEqualTo(M_DEGRADED);
+        // Açık SORGU HATASI alarmı (son kontrol kurtarma sırasında başarılı) → kesinti
+        Map<String, Object> failOpen = withAlert(row("dbquery", 21, "Rapor", "Rapor", 14L, "SY", null, "up"), "HIGH", ago(5), true);
+        failOpen.put("open_query_failure", true);
+        assertThat(monitorHealth(failOpen, false)).isEqualTo(M_DOWN);
+        // Son kontrol başarısız (sorgu çalıştırılamadı) → kesinti
+        assertThat(monitorHealth(row("dbquery", 22, "Bağlantısız", "Bağlantısız", 14L, "SY", null, "down"), false))
+                .isEqualTo(M_DOWN);
+        // Eski satır (alan yok) + yalnız kritik eşik → bozulmuş (kesinti sayılmaz)
+        Map<String, Object> legacy = withAlert(row("dbquery", 23, "Eski", "Eski", 14L, "SY", null, "up"), "CRITICAL", ago(5), true);
+        assertThat(monitorHealth(legacy, false)).isEqualTo(M_DEGRADED);
+    }
+
+    @Test
     @DisplayName("Hizmet durumu: bakım / veri yok / yarıdan fazlası düşük → büyük kesinti, aksi kısmi / bozulmuş / çalışıyor")
     void serviceState_rules() {
         // (aktif, bakım, veri yok, düşük, bozulmuş)

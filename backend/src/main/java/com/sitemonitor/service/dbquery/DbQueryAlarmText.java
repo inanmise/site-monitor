@@ -186,6 +186,48 @@ public final class DbQueryAlarmText {
         return "[" + code + "] " + e;
     }
 
+    /**
+     * Eşik (kural ihlali) kaleminin hata kodu (2026-10-31 inceleme Y2): ihlal bir KESİNTİ değildir, toplu ağ kesintisi
+     * bastırmasına girmemeli. Kodsuz hata metni kural özetidir ("Ödeme timeout sayısı: gelen 12 …"), {@code classifyError}
+     * içindeki "timeout" / "connection refused" işaretleri onu AĞ hatası sanıyor, aynı upstream sorununda üç ihlal eşik
+     * alarmlarını sessizce bastırıyordu. Kod → {@link #outageClassOf} CONFIG.
+     */
+    public static final String THRESHOLD_CODE = "DB_THRESHOLD";
+
+    /** Eşik kaleminin hata metni: {@code [DB_THRESHOLD] özet} (asla kodsuz). */
+    public static String thresholdError(String summary) {
+        return itemError(THRESHOLD_CODE, summary == null || summary.isBlank() ? "kural ihlali" : summary);
+    }
+
+    /** Eşik kaleminin kararı: ihlal → {@link #VERDICT_BREACH}, kurallar sağlandı → {@link #VERDICT_OK}, kanıt yok → UNKNOWN. */
+    public static final String VERDICT_BREACH = "BREACH", VERDICT_OK = "OK", VERDICT_UNKNOWN = "UNKNOWN";
+
+    /**
+     * Eşik kaleminin kararı (2026-10-31 inceleme D3). {@code status} motorun (BREACH = değerlendirilen kurallar ihlal
+     * koşulunu sağladı); BREACH değilse "geçti" ancak KANIT varsa: değerlendirilemeyen kural kanıt eksikliği notu taşıyorsa
+     * ({@link DbQueryEvaluator#INCONCLUSIVE_NOTES} — kolon yok, sayı değil, ilk çalıştırma, önceki çalıştırma okunamadı)
+     * <ul>
+     *   <li>ANY: o kural ihlal ediyor olabilir → UNKNOWN;</li>
+     *   <li>ALL: ihlal için TÜM kurallar ihlalde olmalı — en az bir kural sağlandıysa (değerlendirilip geçti ya da değer
+     *       yok) karar kesin OK; aksi hâlde UNKNOWN.</li>
+     * </ul>
+     * UNKNOWN eşik kalemi üretilmez: alarm açılmaz, açık alarm kanıtsız ("ÇÖZÜLDÜ" postasıyla) kapanmaz.
+     */
+    public static String thresholdVerdict(String status, List<Map<String, Object>> results, String logic) {
+        if (VERDICT_BREACH.equals(status)) return VERDICT_BREACH;
+        List<Map<String, Object>> rs = results == null ? List.of() : results;
+        boolean inconclusive = false, somePassed = false;
+        for (Map<String, Object> r : rs) {
+            if (r == null) continue;
+            boolean evaluated = !Boolean.FALSE.equals(r.get("evaluated"));
+            if (!evaluated && DbQueryEvaluator.INCONCLUSIVE_NOTES.contains(text(r.get("note")))) inconclusive = true;
+            else if (!Boolean.FALSE.equals(r.get("passed"))) somePassed = true;
+        }
+        if (!inconclusive) return VERDICT_OK;
+        boolean all = "ALL".equalsIgnoreCase(logic == null ? "" : logic.trim());
+        return all && somePassed ? VERDICT_OK : VERDICT_UNKNOWN;
+    }
+
     /** {@link #itemError} önekindeki kod (büyük harf) ya da null. */
     public static String codeOf(String itemError) {
         if (itemError == null || itemError.length() < 5 || itemError.charAt(0) != '[') return null;

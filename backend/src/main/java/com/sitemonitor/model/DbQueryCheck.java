@@ -71,6 +71,14 @@ public class DbQueryCheck {
     @Column
     private Boolean manual;
 
+    /**
+     * Teyit / kurtarma yeniden kontrolü (true, 2026-10-31 inceleme Y1) — BANT DIŞI satır: değişim kuralının tabanı olmaz
+     * (bir sonraki zamanlanmış çalıştırma onu değil, önceki ZAMANLANMIŞ satırı okur). {@code manual} ile birlikte "zamanlanmış"
+     * = ikisi de false / null. Geçmişte "Teyit / kurtarma" diye etiketlenir. null = bu kolondan önceki satır (zamanlanmış).
+     */
+    @Column
+    private Boolean recheck;
+
     /** Koşan sorgunun özeti ({@link DbQueryMonitor#getSqlHash()} o anki değeri). */
     @Column(name = "sql_hash", length = 16)
     private String sqlHash;
