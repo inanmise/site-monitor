@@ -7271,6 +7271,29 @@ class MonitoringControllerTest {
     }
 
     @Test
+    @DisplayName("İnceleme K6: zamanlama değişince plan zamanlayıcıyla sıfırlanır (dbQueryScheduleChanged); yalnız sorgu değişince sıfırlanmaz")
+    void dbquery_update_scheduleChangeReplans() throws Exception {
+        var mon = dbqMonitor(47L, 1L, 5L);
+        when(dbQueryMonitorRepo.findById(47L)).thenReturn(Optional.of(mon));
+        when(dbConnectionRepo.findById(5L)).thenReturn(Optional.of(dbqConn(5L, 1L)));
+        when(dbQueryMonitorRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+        var json = org.springframework.http.MediaType.APPLICATION_JSON;
+        try (DbqEngine engine = DbqEngine.ok()) {
+            mvc.perform(put("/api/monitoring/dbquery/47").session(dbqUser(1L)).contentType(json)
+                            .content("{\"sql_text\":\"SELECT COUNT(*) FROM orders\"}"))
+                    .andExpect(status().isOk());
+            verify(schedulerService, never()).dbQueryScheduleChanged(anyLong());
+
+            engine.schedule.when(() -> com.sitemonitor.service.dbquery.DbQuerySchedule.apply(any(), any(), any(), any()))
+                    .thenAnswer(i -> { ((com.sitemonitor.model.DbQueryMonitor) i.getArgument(1)).setIntervalSeconds(900); return null; });
+            mvc.perform(put("/api/monitoring/dbquery/47").session(dbqUser(1L)).contentType(json)
+                            .content("{\"interval_seconds\":900}"))
+                    .andExpect(status().isOk());
+            verify(schedulerService, org.mockito.Mockito.times(1)).dbQueryScheduleChanged(47L);
+        }
+    }
+
+    @Test
     @DisplayName("İnceleme K2: paylaşımla erişilen takımda izleme oluşturulamaz / oraya kopyalanamaz → 403 DBQUERY_GRANT_TEAM; kendi takımına serbest")
     void dbquery_create_inGrantTeamRefused() throws Exception {
         when(dbConnectionRepo.findById(5L)).thenReturn(Optional.of(dbqConn(5L, 1L)));

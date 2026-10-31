@@ -933,7 +933,20 @@ public class MonitoringController {
      * sonraki planlamada uygulanır).
      */
     private void dbqRestoredScheduleChanged(DbQueryMonitor m) {
-        log.debug("Veritabanı sorgu izlemesi #{}: geri yükleme zamanlamayı değiştirdi — plan yeniden kurulmalı", m.getId());
+        if (m != null && m.getId() != null) dbqReplan(m.getId());
+    }
+
+    /**
+     * Zamanlaması değişen izlemenin planını sıfırlar ({@code next_run_at} + {@code dbquery:<id>} küme vadesi). Hata kaydı
+     * bozmaz: plan en geç bir sonraki vade hesabında yenilenir (öne çekilen plan "replanned" yoluyla da düzelir).
+     */
+    private void dbqReplan(long monitorId) {
+        try {
+            if (schedulerService != null) schedulerService.dbQueryScheduleChanged(monitorId);
+        } catch (RuntimeException e) {
+            log.warn("Veritabanı sorgu izlemesi #{}: zamanlama değişikliği plana işlenemedi — bir sonraki vade hesabında yenilenir: {}",
+                    monitorId, e.getClass().getSimpleName());
+        }
     }
 
     /** Geri almada kimlik + zaman künyesi. {@code setUpdatedAt} olmayan türde sessizce geçer. */
@@ -5373,8 +5386,9 @@ public class MonitoringController {
         throwDbqErrors(errs, violations, sched.code());
         DbQueryCheckerService.PlanVerdict plan = queryChanged ? dbqPlanOnSave(profile, m.getSqlText()) : null;
         if (sched.spec() != null) DbQuerySchedule.apply(sched.spec(), m, Instant.now(), dbqHolidays());
-        // Zamanlama değişti: eski plan (next_run_at) geçersiz — zamanlayıcı yeni tanımdan baştan planlar ("first").
-        if (!oldSchedule.equals(dbqScheduleColumns(m))) m.setNextRunAt(null);
+        // Zamanlama değişti: eski plan (next_run_at + küme vadesi) geçersiz — zamanlayıcı yeni tanımdan baştan planlar
+        // ("first"). next_run_at updatable=false: sıfırlama kayıttan SONRA zamanlayıcının hedefli yazımıyla (dbQueryScheduleChanged).
+        boolean scheduleChanged = !oldSchedule.equals(dbqScheduleColumns(m));
         m.setSqlHash(dbqSqlHash(m.getSqlText()));
         if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, m.getTeamId(), body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
         m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
@@ -5385,6 +5399,7 @@ public class MonitoringController {
         m.setUpdatedAt(ISO.format(Instant.now()));
         monitorHistory.stampUpdated(m, session);
         DbQueryMonitor saved = dbqUniqueSave(m.getName(), id, nameChanged, () -> repo.save(m));
+        if (scheduleChanged) dbqReplan(saved.getId());
         // Ad değişti: açık alarm(lar) yeni ada taşınır — YALNIZ bu izlemenin olayı (EscalationService.closableBy)
         if (oldName != null && !oldName.equals(saved.getName())) rekeyDbQueryAlarms(saved, oldName);
         auditService.recordAction("MONITOR_UPDATE", session, "DBQUERY_MONITOR", String.valueOf(saved.getId()), saved.getName(),
@@ -6418,6 +6433,8 @@ public class MonitoringController {
         r.put("metric_value", c.getMetricValue());
         r.put("slow", Boolean.TRUE.equals(c.getSlow()));
         r.put("manual", Boolean.TRUE.equals(c.getManual()));
+        // Teyit / kurtarma yeniden kontrolü (bant dışı — değişim kuralının tabanına girmez)
+        r.put("recheck", Boolean.TRUE.equals(c.getRecheck()));
         r.put("error", c.getErrorMessage());
         r.put("failure_reason", c.getFailureReason());
         r.put("rule_results", dbqRuleResults(c.getRuleResultsJson()));
@@ -6564,6 +6581,9 @@ public class MonitoringController {
         item.put("rules",                 com.sitemonitor.service.dbquery.DbQueryTemplateService.rulesApi(m.getRulesJson()));
         item.putAll(dbqScheduleApi(m));
         item.put("next_run_at",           m.getNextRunAt());
+        // Ardışık atlanan çalışma (izin / meşguliyet) — 600 sn'yi aşan atlama genel bakışta "gecikmiş" sayılır
+        item.put("skipped_runs",          m.getSkippedRuns() == null ? 0 : m.getSkippedRuns());
+        item.put("skipped_since",         m.getSkippedSince());
         item.put("mail_include_rows",     !Boolean.FALSE.equals(m.getMailIncludeRows()));
         item.put("mail_columns",          dbqJsonList(m.getMailColumnsJson()));
         item.put("masked_columns",        dbqJsonList(m.getMaskedColumnsJson()));

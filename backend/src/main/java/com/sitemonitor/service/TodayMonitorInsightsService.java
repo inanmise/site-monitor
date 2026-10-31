@@ -307,7 +307,7 @@ public class TodayMonitorInsightsService {
             // Veritabanı sorgusu (2026-10-31): vade kendi zamanlamasından (cron / pencere / tatil) — aralığın katı kuralı
             // gece / hafta sonu bekleyen izlemeyi "bayat" sayardı. Planlı çalışma (next_run_at) + pay geçmediyse bayat değil.
             if (m instanceof com.sitemonitor.model.DbQueryMonitor dq) {
-                if (!MonitoringOverviewService.isDbQueryStale(dq.getNextRunAt(), now)) continue;
+                if (!MonitoringOverviewService.isDbQueryStale(dq, now)) continue;
                 Instant ref = lastAt != null ? parse(lastAt) : parse(dq.getNextRunAt());
                 if (ref == null) continue;
                 Map<String, Object> row = row(m);

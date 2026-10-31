@@ -33,7 +33,7 @@ public class DbQueryMonitor implements MonitorAlertPrefs, MonitorSchedule, NocTa
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    /** Alarm adı (takım içinde tekil, büyük-küçük harf duyarsız) — alarm anahtarı da budur. */
+    /** Alarm adı (TÜM takımlarda tekil, büyük-küçük harf duyarsız; PostgreSQL ux_dbqm_name_lower) — alarm anahtarı da budur. */
     @Column(nullable = false)
     private String name;
 

@@ -39,6 +39,7 @@ class HolidayCalendarControllerTest {
     @MockitoBean UserService userService;
     @MockitoBean HttpMetricsService httpMetricsService;
     @MockitoBean AuthController authController;
+    @MockitoBean com.sitemonitor.service.SchedulerService scheduler;
 
     @BeforeEach
     void setUp() {
@@ -86,6 +87,8 @@ class HolidayCalendarControllerTest {
                 .andExpect(jsonPath("$.data.days.length()").value(1));
         verify(auditService, times(1)).recordAction(eq("HOLIDAY_CALENDAR_SAVE"), any(jakarta.servlet.http.HttpSession.class),
                 eq("HOLIDAY_CALENDAR"), eq("holidays"), anyString(), isNull());
+        // Takvim değişti: tatile bakan sorgu izlemelerinin planı yeniden kurulur
+        verify(scheduler, times(1)).dbQueryCalendarChanged();
 
         when(holidays.replaceAll(any(), any())).thenReturn(new HolidayCalendarService.Change(0, 0, 0, 1));
         mvc.perform(put("/api/admin/holidays").session(session("ADMIN", null))
@@ -93,6 +96,7 @@ class HolidayCalendarControllerTest {
                 .andExpect(status().isOk());
         verify(auditService, times(1)).recordAction(eq("HOLIDAY_CALENDAR_SAVE"), any(jakarta.servlet.http.HttpSession.class),
                 anyString(), anyString(), anyString(), any());
+        verify(scheduler, times(1)).dbQueryCalendarChanged();   // değişiklik yoksa plan da yeniden kurulmaz
     }
 
     @Test

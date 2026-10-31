@@ -25,12 +25,18 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/admin/holidays")
 @RequiredArgsConstructor
+@lombok.extern.slf4j.Slf4j
 public class HolidayCalendarController {
 
     private static final DateTimeFormatter ISO = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
 
     private final HolidayCalendarService holidays;
     private final AuditService auditService;
+
+    /** Tatil kaydından sonra sorgu izlemelerinin planı (@Lazy: SchedulerService ağır bean; dilim testlerinde yok). */
+    @org.springframework.context.annotation.Lazy
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.SchedulerService scheduler;
 
     @ExceptionHandler(DbQueryApiException.class)
     public ResponseEntity<Map<String, Object>> onApiError(DbQueryApiException e) {
@@ -60,6 +66,13 @@ public class HolidayCalendarController {
         if (c.changed()) {
             auditService.recordAction("HOLIDAY_CALENDAR_SAVE", session, "HOLIDAY_CALENDAR", "holidays",
                     AuditDetail.of("added", c.added(), "removed", c.removed(), "renamed", c.renamed(), "total", c.total()), null);
+            // Tatile bakan CRON izlemelerinin planı yeni takvimle yeniden kurulur (silinen gün yeniden planlanır).
+            try {
+                if (scheduler != null) scheduler.dbQueryCalendarChanged();
+            } catch (RuntimeException e) {
+                log.warn("Tatil takvimi değişikliği sorgu izlemelerinin planına işlenemedi — bir sonraki vade hesabında yenilenir: {}",
+                        e.getClass().getSimpleName());
+            }
         }
         return ok(view(session));
     }
