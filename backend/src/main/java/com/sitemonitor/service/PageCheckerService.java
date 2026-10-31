@@ -357,7 +357,7 @@ public class PageCheckerService {
     /** >=400 durum kodu sınıflandırması (F2): kesin-yok/sunucu-hatası mı yoksa belirsiz/erişim/geçici mi.
      *  404/410 → BROKEN (kesin yok); 5xx (503 HARİÇ) → BROKEN (sunucu hatası); 401/403/429/451/503 + diğer tüm
      *  4xx (400/405/406…) → BLOCKED (WAF bot-blok / rate-limit / geçici — tarayıcıda/oturumda yüklenebilir). */
-    static String classifyStatus(int status) {
+    public static String classifyStatus(int status) {
         if (status == 404 || status == 410) return "BROKEN";
         if (status >= 500 && status != 503) return "BROKEN";
         return "BLOCKED";
@@ -438,7 +438,7 @@ public class PageCheckerService {
     }
 
     /** Transport zaman aşımı mı (HttpTimeoutException "request timed out")? Bağlantı reddi/NXDOMAIN DEĞİL. */
-    static boolean isTimedOut(PageFetchCore.Fetch f) {
+    public static boolean isTimedOut(PageFetchCore.Fetch f) {
         return f != null && f.status() == 0 && !f.blocked() && f.error() != null
                 && f.error().toLowerCase(Locale.ROOT).contains("timed out");
     }

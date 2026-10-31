@@ -246,6 +246,7 @@ public final class AuditEventCatalog {
             "NOTIFICATION_GROUP_REASSIGN",
             "NOTIFICATION_GROUP_UPDATE",
             "PAGE_DIAGNOSTICS_RUN",       // Sayfa Bütünlüğü izlemesinde uçtan uca tanılama çalıştırıldı (2026-10-05)
+            "PAGE_RESOURCE_SCAN_CANCEL",  // Sayfa Bütünlüğü izlemesinde çalışan kaynak analizi iptal edildi (2026-11)
             "PAGE_RESOURCE_SCAN_RUN",     // Sayfa Bütünlüğü izlemesinde kaynak analizi başlatıldı (2026-10-31)
             "PAGESPEED_DIAGNOSTICS_RUN",  // Sayfa Hızı izlemesinde uçtan uca tanılama çalıştırıldı (2026-10-05)
             "PERMISSION_RESET",

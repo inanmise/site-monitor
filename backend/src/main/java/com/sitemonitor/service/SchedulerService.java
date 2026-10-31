@@ -1965,6 +1965,12 @@ public class SchedulerService {
         // Sayfa kaynak analizi (2026-10-31): izleme başına TEK çalışan tarama — iki pod aynı anda başlatırsa ikinci INSERT düşer
         // (PostgreSQL kısmi benzersiz indeks; H2'de kısmi indeks yok, servis INSERT sonrası en küçük kimlik kuralıyla eler).
         patch("CREATE UNIQUE INDEX IF NOT EXISTS ux_prs_one_running ON page_resource_scans(monitor_id) WHERE status = 'RUNNING'");
+        // Kaynak analizi algoritma 2 (2026-11): yönlendirme sayısı / süresi, algoritma sürümü, iptal bayrağı — PageResourceScan
+        // (NULL = eski satır). Varsayılansız nullable kolon: PostgreSQL'de anlık.
+        patch("ALTER TABLE page_resource_scans ADD COLUMN redirect_count INTEGER");
+        patch("ALTER TABLE page_resource_scans ADD COLUMN redirect_ms BIGINT");
+        patch("ALTER TABLE page_resource_scans ADD COLUMN algorithm_version INTEGER");
+        patch("ALTER TABLE page_resource_scans ADD COLUMN cancel_requested BOOLEAN");
         // Anomali konusu görselleri (2026-10-18): yuva kimliği iss:<bölüm>:<konu>:<n> 40 karakteri aşabilir (bölüm + konu
         // kimliği 40'ar) — TechErrorReportImage.slotId 120. PostgreSQL'de VARCHAR büyütmek tabloyu yeniden yazmaz.
         patch("ALTER TABLE tech_error_report_images ALTER COLUMN slot_id TYPE VARCHAR(120)");

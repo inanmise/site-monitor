@@ -231,4 +231,200 @@ class PageResourceAnalyzerTest {
         ScanItem byExt = item("https://a.com/x.JPG", "IMAGE", 70 * KB, 10);
         assertThat(PageResourceAnalyzer.legacyFormat(byExt)).isTrue();
     }
+
+    // ── Algoritma 2 ───────────────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("algoritma 2: kökte algorithm_version, zamanlamada son adım TTFB + yönlendirme; SLOW_SERVER yalnız son adıma bakar")
+    void algorithmVersionAndRedirectSplit() {
+        List<ScanItem> items = new ArrayList<>();
+        ScanItem h = html(300, 2600, 30 * KB);   // son adımın ilk baytı 300 ms; zincirin tamamı uzun
+        h.redirects = 2;
+        h.redirectMs = 2000;
+        items.add(h);
+        PageResourceAnalyzer.Result r = PageResourceAnalyzer.analyze(items, PageResourceAnalyzer.Limits.NONE);
+        assertThat(r.analysis().get("algorithm_version")).isEqualTo(2);
+        assertThat(r.analysis().keySet().iterator().next()).isEqualTo("algorithm_version");
+        Map<String, Object> timing = get(r.analysis(), "timing");
+        assertThat(timing).containsEntry("ttfb_ms", 300L).containsEntry("redirect_count", 2).containsEntry("redirect_ms", 2000L);
+        List<Map<String, Object>> recs = get(r.analysis(), "recommendations");
+        assertThat(recs).extracting(m -> m.get("code")).doesNotContain("SLOW_SERVER");
+        assertThat(r.htmlTtfbMs()).isEqualTo(300);
+    }
+
+    @Test
+    @DisplayName("not bileşenleri: full_at / zero_at (unit ile aynı birim, eğrilerden) ve lost = ağırlık × (100 − puan) / 100, 1 ondalık")
+    void scoreTargetsAndLost() {
+        List<ScanItem> items = new ArrayList<>();
+        items.add(html(120, 2500, 30 * KB));   // yükleme 2500 ms → 83 puan
+        PageResourceAnalyzer.Result r = PageResourceAnalyzer.analyze(items, PageResourceAnalyzer.Limits.NONE);
+        List<Map<String, Object>> scores = get(r.analysis(), "scores");
+        Map<String, Map<String, Object>> by = new java.util.LinkedHashMap<>();
+        for (Map<String, Object> s : scores) by.put((String) s.get("key"), s);
+        assertThat(by.get("load_time")).containsEntry("full_at", 1000L).containsEntry("zero_at", 12_000L)
+                .containsEntry("score", 83).containsEntry("lost", 4.3);   // 25 × 17 / 100 = 4,25 → 4,3
+        assertThat(by.get("page_weight")).containsEntry("full_at", 512 * KB).containsEntry("zero_at", 15 * MB);
+        assertThat(by.get("images")).containsEntry("full_at", 512 * KB).containsEntry("zero_at", 8 * MB);
+        assertThat(by.get("requests")).containsEntry("full_at", 25).containsEntry("zero_at", 300);
+        assertThat(by.get("server_response")).containsEntry("full_at", 200L).containsEntry("zero_at", 3000L);
+        assertThat(by.get("errors")).containsEntry("full_at", 0).containsEntry("zero_at", 10);
+        assertThat(by.get("compression")).containsEntry("full_at", 100).containsEntry("zero_at", 0).containsEntry("lost", 0.0);
+        assertThat(by.get("caching")).containsEntry("full_at", 100).containsEntry("zero_at", 0);
+        double lost = scores.stream().mapToDouble(s -> ((Number) s.get("lost")).doubleValue()).sum();
+        assertThat(Math.round(100 - lost)).as("kayıpların toplamı notu açıklar").isEqualTo(r.grade());
+    }
+
+    @Test
+    @DisplayName("bulgular: öneriyi üreten kuralın nesnelerine yazılır; item_count TÜM sayı (item_urls ≤ 10); sayfa düzeyi kodlarda null")
+    void findingsAndItemCount() {
+        List<ScanItem> items = new ArrayList<>();
+        items.add(html(2000, 2500, 120 * KB));
+        items.get(0).compressed = false;
+        for (int k = 0; k < 12; k++) {
+            ScanItem js = item("https://a.com/n" + k + ".js", "JS", 60 * KB, 200);
+            js.cacheTtlS = null;
+            items.add(js);
+        }
+        ScanItem big = item("https://a.com/hero.jpg", "IMAGE", 2 * MB, 3000);
+        big.contentType = "image/jpeg";
+        big.width = 4000;
+        big.height = 3000;
+        items.add(big);
+        PageResourceAnalyzer.Result r = PageResourceAnalyzer.analyze(items, PageResourceAnalyzer.Limits.NONE);
+        List<Map<String, Object>> recs = get(r.analysis(), "recommendations");
+        Map<String, Map<String, Object>> by = new java.util.LinkedHashMap<>();
+        for (Map<String, Object> m : recs) by.put((String) m.get("code"), m);
+        assertThat(by.get("NO_CACHE").get("item_count")).isEqualTo(12);
+        assertThat((List<?>) by.get("NO_CACHE").get("item_urls")).hasSize(10);
+        assertThat(by.get("SLOW_SERVER").get("item_count")).as("sayfa düzeyi").isNull();
+        assertThat(big.findings).contains("LARGE_IMAGES", "OVERSIZED_IMAGE_DIMENSIONS", "SLOW_OBJECTS");
+        assertThat(items.get(0).findings).as("HTML: sıkıştırılmamış metin; SLOW_SERVER nesneye yazılmaz")
+                .contains("UNCOMPRESSED_TEXT").doesNotContain("SLOW_SERVER");
+        // her bulgu kodunun öneri satırındaki item_count = o kodu taşıyan nesne sayısı (tek kaynak)
+        for (Map<String, Object> m : recs) {
+            String code = (String) m.get("code");
+            if (!PageResourceAnalyzer.FINDING_CODES.contains(code)) continue;
+            long carrying = items.stream().filter(i -> i.findings.contains(code)).count();
+            assertThat(((Number) m.get("item_count")).longValue()).as(code).isEqualTo(carrying);
+        }
+        assertThat(items).allMatch(i -> PageResourceAnalyzer.FINDING_CODES.containsAll(i.findings));
+        assertThat(big.toMap().get("findings")).isEqualTo(new ArrayList<>(big.findings));
+    }
+
+    @Test
+    @DisplayName("karar: yalnız 'broken' hata puanına ve BROKEN_* önerilerine girer; doğrulanamayan / engellenen girmez")
+    void verdictDrivesBroken() {
+        List<ScanItem> items = new ArrayList<>();
+        items.add(html(120, 300, 30 * KB));
+        ScanItem waf = item("https://cdn.x.net/w.js", "JS", 0, 40);
+        waf.status = 403;
+        waf.verdict = ScanItem.UNVERIFIED;
+        waf.thirdParty = true;
+        items.add(waf);
+        ScanItem ssrf = item("https://social.x/w.js", "JS", 0, 5);
+        ssrf.status = 0;
+        ssrf.verdict = ScanItem.BLOCKED;
+        items.add(ssrf);
+        ScanItem gone = item("https://a.com/gone.css", "CSS", 0, 30);
+        gone.status = 404;
+        gone.verdict = ScanItem.BROKEN;
+        items.add(gone);
+        ScanItem linkedin = item("https://www.linkedin.com/company/x", "LINK", 0, 30);
+        linkedin.status = 999;
+        linkedin.verdict = ScanItem.UNVERIFIED;
+        items.add(linkedin);
+        PageResourceAnalyzer.Result r = PageResourceAnalyzer.analyze(items, PageResourceAnalyzer.Limits.NONE);
+        assertThat(r.failedCount()).isEqualTo(1);
+        List<Map<String, Object>> recs = get(r.analysis(), "recommendations");
+        Map<String, Object> broken = recs.stream().filter(m -> "BROKEN_RESOURCES".equals(m.get("code"))).findFirst().orElseThrow();
+        assertThat(broken.get("item_urls")).isEqualTo(List.of("https://a.com/gone.css"));
+        assertThat(recs).extracting(m -> m.get("code")).doesNotContain("BROKEN_LINKS");
+        List<Map<String, Object>> tp = get(r.analysis(), "third_parties");
+        assertThat(tp).hasSize(1);
+        assertThat(tp.get(0)).containsEntry("host", "cdn.x.net").containsEntry("count", 1L).containsEntry("failed", 1L);
+    }
+
+    @Test
+    @DisplayName("indirilmeyen medya (skipped) hiçbir toplama girmez: boyut, istek, kategori, öneri; not_loaded_count sayar")
+    void skippedNotCounted() {
+        List<ScanItem> items = new ArrayList<>();
+        items.add(html(120, 300, 30 * KB));
+        ScanItem video = item("https://a.com/promo.mp4", "MEDIA", 0, 0);
+        video.pageLoad = false;
+        video.lazy = true;
+        video.status = 0;
+        video.verdict = ScanItem.SKIPPED;
+        items.add(video);
+        PageResourceAnalyzer.Result r = PageResourceAnalyzer.analyze(items, PageResourceAnalyzer.Limits.NONE);
+        assertThat(r.requestCount()).isEqualTo(1);
+        assertThat(r.linkCount()).isZero();
+        assertThat(r.failedCount()).isZero();
+        assertThat(r.analysis().get("not_loaded_count")).isEqualTo(1);
+        List<Map<String, Object>> cats = get(r.analysis(), "categories");
+        assertThat(cats).extracting(m -> m.get("category")).containsExactly("HTML");
+        List<Map<String, Object>> recs = get(r.analysis(), "recommendations");
+        assertThat(recs).extracting(m -> m.get("code")).containsExactly("ALL_GOOD");
+        assertThat(video.startMs).isNull();
+    }
+
+    @Test
+    @DisplayName("ölçülmüş görsel kazancı: ölçülen görselde gerçek fark, ölçülemeyende eski tahmin; LARGE_IMAGES kazancı ölçümü kullanır")
+    void measuredImageSaving() {
+        List<ScanItem> items = new ArrayList<>();
+        items.add(html(120, 300, 30 * KB));
+        ScanItem measured = item("https://a.com/m.jpg", "IMAGE", 1200 * KB, 400);
+        measured.contentType = "image/jpeg";
+        measured.optimizedBytes = 180 * KB;
+        items.add(measured);
+        ScanItem estimated = item("https://a.com/e.png", "IMAGE", 400 * KB, 300);
+        estimated.contentType = "image/png";
+        items.add(estimated);
+        ScanItem already = item("https://a.com/ok.jpg", "IMAGE", 150 * KB, 100);
+        already.contentType = "image/jpeg";
+        already.optimizedBytes = 150 * KB;   // yeniden kodlama küçültmedi
+        items.add(already);
+        PageResourceAnalyzer.Result r = PageResourceAnalyzer.analyze(items, PageResourceAnalyzer.Limits.NONE);
+        Map<String, Object> img = get(r.analysis(), "images");
+        long measuredSave = 1200 * KB - 180 * KB;
+        long estimatedSave = Math.round(400 * KB * 0.6);
+        assertThat(img).containsEntry("saving_measured", true).containsEntry("measured_count", 2)
+                .containsEntry("saving_bytes_measured", measuredSave).containsEntry("saving_bytes_estimated", estimatedSave)
+                .containsEntry("saving_bytes", measuredSave + estimatedSave);
+        List<Map<String, Object>> recs = get(r.analysis(), "recommendations");
+        Map<String, Object> large = recs.stream().filter(m -> "LARGE_IMAGES".equals(m.get("code"))).findFirst().orElseThrow();
+        assertThat(large.get("saving_bytes")).isEqualTo(measuredSave + estimatedSave);
+        List<Map<String, Object>> top = get(img, "top");
+        assertThat(top.get(0)).containsEntry("optimized_bytes", 180 * KB);
+        assertThat(top.get(1)).doesNotContainKey("optimized_bytes");
+
+        // hiçbiri ölçülmediyse saving_measured = false
+        List<ScanItem> none = new ArrayList<>();
+        none.add(html(120, 300, 30 * KB));
+        ScanItem e2 = item("https://a.com/e2.png", "IMAGE", 400 * KB, 300);
+        e2.contentType = "image/png";
+        none.add(e2);
+        Map<String, Object> img2 = get(PageResourceAnalyzer.analyze(none, PageResourceAnalyzer.Limits.NONE).analysis(), "images");
+        assertThat(img2).containsEntry("saving_measured", false).containsEntry("measured_count", 0);
+    }
+
+    @Test
+    @DisplayName("üçüncü taraf tablosu: host başına istek / bayt / yüklenemeyen / kategoriler, bayta göre en çok 20")
+    void thirdPartyTable() {
+        List<ScanItem> items = new ArrayList<>();
+        items.add(html(120, 300, 30 * KB));
+        for (int k = 0; k < 25; k++) {
+            ScanItem t = item("https://cdn" + k + ".net/a.js", "JS", (k + 1) * KB, 50);
+            t.thirdParty = true;
+            items.add(t);
+        }
+        ScanItem font = item("https://cdn24.net/f.woff2", "FONT", 10 * KB, 50);
+        font.thirdParty = true;
+        items.add(font);
+        List<Map<String, Object>> tp = get(PageResourceAnalyzer.analyze(items, PageResourceAnalyzer.Limits.NONE).analysis(),
+                "third_parties");
+        assertThat(tp).hasSize(20);
+        assertThat(tp.get(0)).containsEntry("host", "cdn24.net").containsEntry("count", 2L).containsEntry("bytes", 35 * KB)
+                .containsEntry("failed", 0L).containsEntry("categories", List.of("JS", "FONT"));
+        assertThat(tp.get(19).get("host")).isEqualTo("cdn5.net");
+    }
 }

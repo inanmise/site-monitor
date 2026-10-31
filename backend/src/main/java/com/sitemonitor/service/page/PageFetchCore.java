@@ -79,6 +79,53 @@ public class PageFetchCore {
     public static final String ACCEPT = "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8";
     public static final String ACCEPT_LANGUAGE = "tr,en;q=0.9";
     public static final String ACCEPT_ENCODING = "gzip, deflate";
+    /**
+     * Gövdesi AYRIŞTIRILMAYAN (yalnız sayılan) çekimlerin başlığı — kaynak analizi (2026-11): tarayıcı {@code br} ister ve
+     * Brotli veren CDN'lerde tel baytı gzip'ten küçüktür. Java'da Brotli çözücü yok; bu yüzden YALNIZ sayım yolunda istenir
+     * (HTML ve CSS ayrıştırılacağı için {@link #ACCEPT_ENCODING} ile istenir). İzleme çekimleri bu başlığı göndermez.
+     */
+    public static final String ACCEPT_ENCODING_COUNT = "gzip, deflate, br";
+    /** Önbellek isabet başlığı adayları (sırayla ilk dolu olan). */
+    private static final List<String> X_CACHE_HEADERS = List.of("x-cache", "cf-cache-status", "x-cache-status", "x-proxy-cache");
+
+    /**
+     * Kaynak analizinin TARAMA BAŞINA ayrı istemcileri (2026-11, inceleme H10/H11): izleme kontrollerinin bağlantı havuzunu
+     * paylaşmaz (sıcak / soğuk havuz ölçümü oynatmasın, tarama aynı host'a giden izlemeyi yavaşlatmasın) ve
+     * {@link #shutdownNow()} uçuştaki TÜM istekleri keser (iptal / süre dolumu / kapanış). Güvenlik kuralı aynıdır: aynı
+     * trust-all bağlamı, MANUEL yönlendirme (her adım SSRF'den geçer), vekil seçicisi ve kimliği.
+     */
+    public static final class ScanClients implements AutoCloseable {
+        private final HttpClient direct;
+        private final HttpClient proxied;
+
+        ScanClients(HttpClient direct, HttpClient proxied) {
+            this.direct = direct;
+            this.proxied = proxied;
+        }
+
+        HttpClient pick(boolean viaProxy) {
+            return viaProxy && proxied != null ? proxied : direct;
+        }
+
+        /** Uçuştaki istekleri keser; tekrar çağrılabilir, asla fırlatmaz. */
+        public void shutdownNow() {
+            try { direct.shutdownNow(); } catch (RuntimeException ignore) { /* kapatma hatası önemsiz */ }
+            if (proxied != null) {
+                try { proxied.shutdownNow(); } catch (RuntimeException ignore) { /* kapatma hatası önemsiz */ }
+            }
+        }
+
+        @Override
+        public void close() {
+            shutdownNow();
+        }
+    }
+
+    /**
+     * Kaynak analizi çekim ayarı: hangi istemciler, hangi {@code Accept-Encoding}, saklanan gövde ve açılmış gövde tavanı
+     * (bellek tepesi: stil gövdesi taramanın karakter sınırına göre açılır — inceleme H15). {@code null} = izleme davranışı.
+     */
+    public record ScanTuning(ScanClients clients, String acceptEncoding, int maxBodyBytes, int maxDecodedBytes) {}
     /** Bayt SAYARKEN tek kaynaktan okunacak tavan: dev bir dosya (video/ISO) ölçümü kilitlemesin.
      *  Tavana ulaşılırsa sayım burada durur — "en az bu kadar" demektir, truncated bayrağı işaretler. */
     // 1024 tabanlı: arayüz boyutları KB/MB olarak 1024 tabanıyla gösteriyor; ondalık 10.000.000
@@ -147,10 +194,25 @@ public class PageFetchCore {
      * @param redirects       izlenen yönlendirme sayısı
      * @param contentLength   {@code Content-Length} (telden gelen, sıkıştırılmış boyut); yoksa / bozuksa null
      * @param head            gövdenin ilk baytları (telden, en çok istenen kadar); istenmediyse null
+     * @param server          {@code Server} başlığı (yalnız gösterim; sınırlı)
+     * @param xCache          önbellek isabet başlığı ({@code X-Cache}, yoksa {@code CF-Cache-Status} / {@code X-Cache-Status}
+     *                        / {@code X-Proxy-Cache}); yoksa null
+     * @param redirectMs      yönlendirme ADIMLARININ toplam süresi (2026-11, kaynak analizi algoritma 2 — her adımın isteği +
+     *                        başlığı + atılan gövdesi; SSRF denetimi düşülür); yönlendirme yoksa 0
+     * @param finalTtfbMs     YALNIZ son adımın ilk baytı (son isteğin başından başlıklarına; yönlendirmeler hariç); son
+     *                        adıma hiç yanıt gelmediyse null. {@link Fetch#ttfbMs()} zincirin tamamını ölçmeye devam eder.
      */
     public record Meta(String finalUrl, int redirects, String contentType, String contentEncoding, Long contentLength,
-                       String cacheControl, String expires, String date, byte[] head) {
+                       String cacheControl, String expires, String date, byte[] head, String server, String xCache,
+                       long redirectMs, Long finalTtfbMs) {
         public static final Meta NONE = new Meta(null, 0, null, null, null, null, null, null, null);
+
+        /** Geriye uyum (algoritma 1 alanları): sunucu / önbellek başlığı ve adım süreleri yok. */
+        public Meta(String finalUrl, int redirects, String contentType, String contentEncoding, Long contentLength,
+                    String cacheControl, String expires, String date, byte[] head) {
+            this(finalUrl, redirects, contentType, contentEncoding, contentLength, cacheControl, expires, date, head,
+                    null, null, 0L, null);
+        }
     }
 
     /** {@link #fetchWithMeta} sonucu: çekimin kendisi + üst verisi. */
@@ -163,20 +225,31 @@ public class PageFetchCore {
         int redirects;
         java.net.http.HttpHeaders headers;
         byte[] head;
+        long redirectMs;
+        Long finalTtfbMs;
 
         MetaSink(int headBytes) { this.headBytes = Math.max(0, headBytes); }
 
         Meta toMeta() {
-            if (headers == null) return new Meta(finalUrl, redirects, null, null, null, null, null, null, head);
+            if (headers == null) {
+                return new Meta(finalUrl, redirects, null, null, null, null, null, null, head, null, null, redirectMs, finalTtfbMs);
+            }
             Long len = null;
             String cl = headers.firstValue("content-length").orElse(null);
             if (cl != null) {
                 try { long v = Long.parseLong(cl.trim()); if (v >= 0) len = v; } catch (NumberFormatException ignore) { /* bozuk başlık */ }
             }
+            String xCache = null;
+            for (String h : X_CACHE_HEADERS) {
+                xCache = clip(headers.firstValue(h).orElse(null));
+                if (xCache != null && !xCache.isEmpty()) break;
+                xCache = null;
+            }
             return new Meta(finalUrl, redirects, clip(headers.firstValue("content-type").orElse(null)),
                     clip(headers.firstValue("content-encoding").orElse(null)), len,
                     clip(headers.firstValue("cache-control").orElse(null)), clip(headers.firstValue("expires").orElse(null)),
-                    clip(headers.firstValue("date").orElse(null)), head);
+                    clip(headers.firstValue("date").orElse(null)), head, clip(headers.firstValue("server").orElse(null)),
+                    xCache, redirectMs, finalTtfbMs);
         }
 
         /** Başlık değerleri sınırlı tutulur (dev bir başlık belleği / DB'yi şişirmesin). */
@@ -261,6 +334,27 @@ public class PageFetchCore {
         resourceExecutor = Executors.newVirtualThreadPerTaskExecutor();
     }
 
+    /**
+     * Kaynak analizi için YENİ istemci çifti (tarama başına; çağıran kapatır). Ortak istemciyle aynı güven bağlamı ve vekil
+     * seçicisi; bağlantı havuzu ayrıdır.
+     */
+    public ScanClients newScanClients() {
+        HttpClient.Builder b = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10))
+                .followRedirects(HttpClient.Redirect.NEVER);
+        try { if (httpClient != null) b.sslContext(httpClient.sslContext()); } catch (Exception ignore) { /* varsayılan güven */ }
+        HttpClient direct = b.build();
+        HttpClient proxied = null;
+        if (proxySettings != null && proxySettings.enabled()) {
+            java.net.Authenticator auth = proxySettings.authenticator(log, "Page resource scan");
+            HttpClient.Builder pb = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10))
+                    .followRedirects(HttpClient.Redirect.NEVER).proxy(proxySettings.proxySelector());
+            try { if (httpClient != null) pb.sslContext(httpClient.sslContext()); } catch (Exception ignore) { /* varsayılan güven */ }
+            if (auth != null) pb.authenticator(auth);
+            proxied = pb.build();
+        }
+        return new ScanClients(direct, proxied);
+    }
+
     @PreDestroy
     public void shutdown() {
         if (resourceExecutor != null) resourceExecutor.shutdownNow();
@@ -276,7 +370,7 @@ public class PageFetchCore {
      * Hiçbir zaman exception fırlatmaz — hata Fetch.error()/Fetch.blocked() olarak döner.
      */
     public Fetch fetch(String url, String method, FetchOptions opts) {
-        return fetch(url, method, opts, null);
+        return fetch(url, method, opts, null, null);
     }
 
     /**
@@ -285,16 +379,28 @@ public class PageFetchCore {
      * Ağ davranışı, sınırlar ve SSRF kuralı {@link #fetch} ile birebir aynıdır. Hiçbir zaman fırlatmaz.
      */
     public MetaFetch fetchWithMeta(String url, String method, FetchOptions opts, int headBytes) {
+        return fetchWithMeta(url, method, opts, headBytes, null);
+    }
+
+    /**
+     * {@link #fetchWithMeta(String, String, FetchOptions, int)} + kaynak analizi ayarı ({@link ScanTuning}): tarama başına
+     * istemci, {@code Accept-Encoding}, saklanan / açılmış gövde tavanı. {@code tuning == null} → izleme davranışı birebir.
+     * Ayarlı çağrıda kesilen iş parçacığının kesme bayrağı geri konur (çağıran sonucu atabilsin).
+     */
+    public MetaFetch fetchWithMeta(String url, String method, FetchOptions opts, int headBytes, ScanTuning tuning) {
         MetaSink sink = new MetaSink(headBytes);
-        Fetch f = fetch(url, method, opts, sink);
+        Fetch f = fetch(url, method, opts, sink, tuning);
         return new MetaFetch(f, sink.toMeta());
     }
 
-    private Fetch fetch(String url, String method, FetchOptions opts, MetaSink sink) {
+    private Fetch fetch(String url, String method, FetchOptions opts, MetaSink sink, ScanTuning tuning) {
         long start = System.currentTimeMillis();
         // Kendi SSRF/DNS kontrolumuzun suresi TTFB'ye YAZILMAZ: hedefin yavasligi degil bizim
         // guvenlik kapimizin maliyetidir. Olcum penceresinden dusulur (her hop icin toplanir).
         long guardMs = 0L;
+        final int maxBody = tuning == null ? MAX_BODY_BYTES : Math.max(1, tuning.maxBodyBytes());
+        final int maxDecoded = tuning == null ? MAX_DECODED_BYTES : Math.max(1, tuning.maxDecodedBytes());
+        final String acceptEncoding = tuning == null || tuning.acceptEncoding() == null ? ACCEPT_ENCODING : tuning.acceptEncoding();
         String current = url;
         String m = method;
         // Ek başlıklar YALNIZ ilk host'a gider. extraHeaders pratikte sır taşıyor — Sayfa Hızı
@@ -308,6 +414,9 @@ public class PageFetchCore {
         try {
             for (int hop = 0; hop <= MAX_REDIRECTS; hop++) {
                 String host = hostOf(current);
+                // Adım süresi (kaynak analizi, algoritma 2): yönlendirme adımları ve son adımın ilk baytı AYRI ölçülür.
+                long hopStart = System.currentTimeMillis();
+                long hopGuard = 0L;
                 try {
                     if (host == null) throw new SsrfGuard.BlockedException("geçersiz URL: " + current);
                     // SSRF (her hop). NOT (M4 residual): validate() çözülen IP'leri döndürür ama HttpClient host'u
@@ -316,7 +425,8 @@ public class PageFetchCore {
                     // (HTTPS SNI karmaşası + kaynak-başı maliyet). Ops: networkaddress.cache.ttl'i 0'a çekmeyin.
                     long g0 = System.currentTimeMillis();
                     ssrfGuard.validate(host);
-                    guardMs += System.currentTimeMillis() - g0;
+                    hopGuard = System.currentTimeMillis() - g0;
+                    guardMs += hopGuard;
                 } catch (SsrfGuard.BlockedException be) {
                     return new Fetch(0, 0L, System.currentTimeMillis() - start, 0L, null, be.getMessage(), true, false,
                             classified(be, opts, current));
@@ -332,15 +442,19 @@ public class PageFetchCore {
                         // Gondermeyince sunucu sikistirmasiz yaniyor: arayuz "transfer boyutu"
                         // diyordu ama olculen sey acilmis boyuttu (44.6 MB ↔ tarayicida 6.1 MB).
                         // Artik telde ne gidiyorsa o sayiliyor; govde YALNIZ ayristirmak icin aciliyor.
-                        .header("Accept-Encoding", ACCEPT_ENCODING);
+                        .header("Accept-Encoding", acceptEncoding);
                 if (originHost.equalsIgnoreCase(host)) applyExtraHeaders(rb, opts.extraHeaders());
                 HttpRequest req = "HEAD".equals(m)
                         ? rb.method("HEAD", HttpRequest.BodyPublishers.noBody()).build()
                         : rb.GET().build();
-                HttpClient c = opts.viaProxy() && proxiedClient != null ? proxiedClient : httpClient;
+                HttpClient c = tuning != null && tuning.clients() != null
+                        ? tuning.clients().pick(opts.viaProxy())
+                        : (opts.viaProxy() && proxiedClient != null ? proxiedClient : httpClient);
                 HttpResponse<InputStream> resp = c.send(req, HttpResponse.BodyHandlers.ofInputStream());
                 // send() başlıklar geldiğinde döner → ilk-bayt anı burasıdır (gövde henüz okunmadı).
-                long ttfb = Math.max(0L, System.currentTimeMillis() - start - guardMs);
+                long headersAt = System.currentTimeMillis();
+                long ttfb = Math.max(0L, headersAt - start - guardMs);
+                long hopTtfb = Math.max(0L, headersAt - hopStart - hopGuard);
                 int sc = resp.statusCode();
                 // Gövde SÜRE bütçesi (prod kapısı 2026-09-25, N1): istek zaman aşımı yalnız başlıklara kadar
                 // işliyor; gövdeyi bitirmeyen bir kaynak (MJPEG <img>, SSE) okuyan iş parçacığını ve soketi
@@ -356,10 +470,13 @@ public class PageFetchCore {
                     // Politika SafeRedirect'te tek kopya: aynı kural keyword/HTTP/HSTS için de geçerli.
                     String next = SafeRedirect.nextHop(current, loc);
                     if (next == null) {
-                        if (sink != null) { sink.finalUrl = current; sink.headers = resp.headers(); }
+                        if (sink != null) { sink.finalUrl = current; sink.headers = resp.headers(); sink.finalTtfbMs = hopTtfb; }
                         return new Fetch(sc, ttfb, System.currentTimeMillis() - start, 0L, null, null, false, false);
                     }
-                    if (sink != null) sink.redirects++;
+                    if (sink != null) {
+                        sink.redirects++;
+                        sink.redirectMs += Math.max(0L, System.currentTimeMillis() - hopStart - hopGuard);
+                    }
                     current = next;
                     m = SafeRedirect.nextMethod(sc, m);   // 303 See Other → GET
                     continue;
@@ -368,7 +485,7 @@ public class PageFetchCore {
                 long count = 0L;
                 boolean truncated = false;
                 String encoding = resp.headers().firstValue("content-encoding").orElse(null);
-                if (sink != null) { sink.finalUrl = current; sink.headers = resp.headers(); }
+                if (sink != null) { sink.finalUrl = current; sink.headers = resp.headers(); sink.finalTtfbMs = hopTtfb; }
                 try (InputStream is = com.sitemonitor.util.HttpBodies.withDeadline(resp.body(), bodyMs, "Sayfa")) {
                     if (opts.wantBody()) {
                         // SAYIM telden gelen (sıkıştırılmış) bayt üzerinden; GÖVDE ayrıştırmak için açılır.
@@ -377,9 +494,9 @@ public class PageFetchCore {
                         // boyutu" etiketini yine yalancı yapardı.
                         // Süre dolarsa BodyDeadlineException → aşağıdaki catch: kesik gövdeyi ayrıştırmak
                         // sahte "sayfa değişti"/eksik envanter üretirdi, hata olarak raporlanır.
-                        byte[] raw = is.readNBytes(MAX_BODY_BYTES);
+                        byte[] raw = is.readNBytes(maxBody);
                         count = raw.length;
-                        body = decode(raw, encoding);
+                        body = decode(raw, encoding, maxDecoded);
                         if (opts.countBytes()) {                   // tavanın ötesini SAY (sakla değil)
                             Drained d = drain(is, MAX_COUNT_BYTES - count);
                             count += d.bytes();
@@ -414,6 +531,9 @@ public class PageFetchCore {
             return new Fetch(0, 0L, System.currentTimeMillis() - start, 0L, null, "çok fazla yönlendirme", false, false,
                     redirectLimit(opts, current));
         } catch (Exception e) {
+            // Kaynak analizi: kesilen (iptal / süre dolumu) iş parçacığının bayrağı geri konur — çağıran sonucu "kırık"
+            // saymadan atabilsin. İzleme çağrıları (tuning yok) bugünkü gibi.
+            if (tuning != null && e instanceof InterruptedException) Thread.currentThread().interrupt();
             String msg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
             return new Fetch(0, 0L, System.currentTimeMillis() - start, 0L, null, msg, false, false,
                     classified(e, opts, current));
@@ -456,19 +576,19 @@ public class PageFetchCore {
      * akış yüzünden sayfanın tamamen ölçülemez hale gelmesindense, ayrıştırıcının elinden
      * geleni yapması yeğdir (jsoup bozuk girdide boş envanter döner, istisna sızmaz).
      */
-    private static byte[] decode(byte[] raw, String encoding) {
+    private static byte[] decode(byte[] raw, String encoding, int cap) {
         if (raw == null || raw.length == 0 || encoding == null) return raw;
         String enc = encoding.trim().toLowerCase(java.util.Locale.ROOT);
         try (java.io.ByteArrayInputStream in = new java.io.ByteArrayInputStream(raw)) {
             if (enc.contains("gzip")) {
                 try (java.util.zip.GZIPInputStream g = new java.util.zip.GZIPInputStream(in)) {
-                    return readCapped(g, raw.length, enc);
+                    return readCapped(g, raw.length, enc, cap);
                 }
             }
             if (enc.contains("deflate")) {
                 try (java.util.zip.InflaterInputStream d =
                              new java.util.zip.InflaterInputStream(in, new java.util.zip.Inflater(true))) {
-                    return readCapped(d, raw.length, enc);
+                    return readCapped(d, raw.length, enc, cap);
                 }
             }
         } catch (Exception e) {
@@ -489,10 +609,11 @@ public class PageFetchCore {
      */
     public static final int MAX_DECODED_BYTES = 10 * MAX_BODY_BYTES;
 
-    private static byte[] readCapped(InputStream in, int rawLen, String enc) throws java.io.IOException {
-        byte[] out = in.readNBytes(MAX_DECODED_BYTES);
-        if (out.length >= MAX_DECODED_BYTES) {
-            // Sessizce kırpmak "sayfa değişti" sanrısı üretir — kırpma GÖRÜNÜR olmalı.
+    private static byte[] readCapped(InputStream in, int rawLen, String enc, int cap) throws java.io.IOException {
+        byte[] out = in.readNBytes(cap);
+        if (out.length >= cap && cap == MAX_DECODED_BYTES) {
+            // Sessizce kırpmak "sayfa değişti" sanrısı üretir — kırpma GÖRÜNÜR olmalı. (Kaynak analizinin daha küçük
+            // tavanı bilinçlidir: stilin yalnız taranan kısmı açılır — uyarı gürültü olurdu.)
             log.warn("Açılmış gövde {} bayt tavanına dayandı ({}, telde {} bayt) — kaynak envanteri EKSİK olabilir; "
                     + "sıkıştırma bombası olabilir", MAX_DECODED_BYTES, enc, rawLen);
         }

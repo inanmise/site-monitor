@@ -71,7 +71,7 @@ class PageResourceDiscoveryTest {
         assertThat(p.get("https://ornek.com.tr/sayfa/hero.webp").category()).isEqualTo("IMAGE");
         assertThat(p.get("https://ornek.com.tr/js/mod.js").category()).isEqualTo("JS");
         assertThat(p.get("https://ornek.com.tr/favicon.ico").category()).isEqualTo("FAVICON");
-        assertThat(p.get("https://ornek.com.tr/apple.png").category()).isEqualTo("FAVICON");
+        assertThat(p).as("apple-touch-icon masaüstünde indirilmez").doesNotContainKey("https://ornek.com.tr/apple.png");
         assertThat(p.get("https://ornek.com.tr/site.webmanifest").category()).isEqualTo("OTHER");
         assertThat(p.keySet()).noneMatch(u -> u.contains("cdn.example.net") && !u.endsWith("lib.js"));   // dns-prefetch yok
         assertThat(p.get("https://cdn.example.net/lib.js").category()).isEqualTo("JS");
@@ -80,13 +80,16 @@ class PageResourceDiscoveryTest {
         assertThat(p.get("https://ornek.com.tr/sayfa/below.jpg").lazy()).isTrue();
         assertThat(p.get("https://ornek.com.tr/v/poster.jpg").category()).isEqualTo("IMAGE");
         assertThat(p.get("https://ornek.com.tr/v/clip.mp4").lazy()).as("otomatik oynatılmayan medya geç yüklenir").isTrue();
+        assertThat(p.get("https://ornek.com.tr/v/clip.mp4").notLoaded()).as("preload yok: tarayıcı gövdeyi indirmez").isTrue();
+        assertThat(p.get("https://ornek.com.tr/v/clip.mp4").pageLoad()).isFalse();
         assertThat(p.get("https://ornek.com.tr/v/auto.webm").lazy()).isFalse();
         assertThat(p.get("https://www.youtube.com/embed/x").category()).isEqualTo("IFRAME");
         assertThat(p.get("https://www.youtube.com/embed/x").lazy()).isTrue();
         assertThat(p.keySet()).noneMatch(u -> u.endsWith("/sayfa/"));   // canonical ve sayfanın kendisi yok
         // satır içi stiller ayrıca döner
         assertThat(f.inlineCss()).hasSize(2);
-        assertThat(f.pageLoad()).allMatch(PageResourceDiscovery.Candidate::pageLoad);
+        assertThat(f.pageLoad()).allMatch(c -> c.pageLoad() || c.notLoaded());
+        assertThat(f.baseUrl()).isEqualTo(BASE);
     }
 
     @Test
@@ -123,7 +126,7 @@ class PageResourceDiscoveryTest {
         assertThat(m.keySet()).containsExactly(
                 "https://ornek.com.tr/css/base.css", "https://ornek.com.tr/css/print.css",
                 "https://ornek.com.tr/css/img/a.png", "https://ornek.com.tr/img/b.svg",
-                "https://ornek.com.tr/f/x.woff2", "https://ornek.com.tr/f/x.ttf", "https://ornek.com.tr/v/clip");
+                "https://ornek.com.tr/f/x.woff2", "https://ornek.com.tr/v/clip");
         assertThat(m.get("https://ornek.com.tr/css/base.css").category()).isEqualTo("CSS");
         assertThat(m.get("https://ornek.com.tr/css/img/a.png").category()).isEqualTo("IMAGE");
         assertThat(m.get("https://ornek.com.tr/f/x.woff2").category()).isEqualTo("FONT");
@@ -169,5 +172,182 @@ class PageResourceDiscoveryTest {
         assertThat(PageResourceDiscovery.ext("https://a.com/x/rapor.PDF?x=1")).isEqualTo("pdf");
         assertThat(PageResourceDiscovery.ext("https://a.com/x/")).isEmpty();
         assertThat(PageResourceDiscovery.ext("https://a.com/x.y/z")).isEmpty();
+    }
+
+    // ── Algoritma 2: tarayıcı gibi keşif (inceleme H2/H4/H5/H6/H8/H12) ─────────────────────────────
+
+    private static Map<String, PageResourceDiscovery.Candidate> pageOf(String html) {
+        return byUrl(PageResourceDiscovery.discover(html.getBytes(StandardCharsets.UTF_8), BASE, null).pageLoad());
+    }
+
+    @Test
+    @DisplayName("<noscript> ve <template> içi istenmez (GTM / piksel noscript'leri tetiklenmez)")
+    void noscriptAndTemplateIgnored() {
+        Map<String, PageResourceDiscovery.Candidate> p = pageOf("""
+                <html><head><noscript><link rel="stylesheet" href="/ns.css"></noscript></head><body>
+                  <noscript><img src="https://px.ads.linkedin.com/collect/?pid=1&fmt=gif"></noscript>
+                  <noscript><iframe src="https://www.googletagmanager.com/ns.html?id=GTM-X"></iframe></noscript>
+                  <template><img src="/tpl.png"><script src="/tpl.js"></script></template>
+                  <img src="/real.png">
+                </body></html>
+                """);
+        assertThat(p.keySet()).containsExactly("https://ornek.com.tr/real.png");
+    }
+
+    @Test
+    @DisplayName("medya: yalnız autoplay / preload=auto indirilir, yalnız İLK uygun kaynak; diğerleri tek 'indirilmedi' adayı")
+    void mediaRules() {
+        Map<String, PageResourceDiscovery.Candidate> p = pageOf("""
+                <html><body>
+                  <video autoplay><source src="/a.m3u8" type="application/x-mpegURL"><source src="/a.mp4" type="video/mp4">
+                    <source src="/a.webm" type="video/webm"><track src="/a.vtt" default><track src="/b.vtt"></video>
+                  <video preload="auto"><source src="/b.mp4"><source src="/b.webm"></video>
+                  <video preload><source src="/c.mp4"></video>
+                  <video controls preload="none"><source src="/d.mp4"><source src="/d.webm"></video>
+                  <video preload="metadata" src="/e.mp4"></video>
+                  <audio><source src="/f.mp3"><source src="/f.ogg"></audio>
+                </body></html>
+                """);
+        assertThat(p.get("https://ornek.com.tr/a.mp4").notLoaded()).isFalse();
+        assertThat(p.get("https://ornek.com.tr/a.mp4").lazy()).as("autoplay tahmine girer").isFalse();
+        assertThat(p).doesNotContainKeys("https://ornek.com.tr/a.m3u8", "https://ornek.com.tr/a.webm",
+                "https://ornek.com.tr/b.webm", "https://ornek.com.tr/d.webm", "https://ornek.com.tr/f.ogg",
+                "https://ornek.com.tr/b.vtt");
+        assertThat(p.get("https://ornek.com.tr/a.vtt").category()).as("varsayılan altyazı indirilen medyayla").isEqualTo("OTHER");
+        assertThat(p.get("https://ornek.com.tr/b.mp4").notLoaded()).isFalse();
+        assertThat(p.get("https://ornek.com.tr/b.mp4").lazy()).as("preload=auto geç yüklenir").isTrue();
+        assertThat(p.get("https://ornek.com.tr/c.mp4").notLoaded()).as("boş preload = auto").isFalse();
+        for (String u : List.of("https://ornek.com.tr/d.mp4", "https://ornek.com.tr/e.mp4", "https://ornek.com.tr/f.mp3")) {
+            PageResourceDiscovery.Candidate c = p.get(u);
+            assertThat(c.notLoaded()).as(u).isTrue();
+            assertThat(c.pageLoad()).as(u).isFalse();
+            assertThat(c.category()).isEqualTo("MEDIA");
+        }
+    }
+
+    @Test
+    @DisplayName("<picture>: ilk desteklenen türdeki source (srcset'in ilki); img yedeği yalnız uygun source yoksa; max-width medyalı sona")
+    void pictureSources() {
+        Map<String, PageResourceDiscovery.Candidate> p = pageOf("""
+                <html><body>
+                  <picture><source type="image/avif" srcset="h.avif 1x, h2.avif 2x"><source type="image/webp" srcset="h.webp">
+                    <img src="h.jpg" loading="lazy"></picture>
+                  <picture><source type="image/jxl" srcset="j.jxl"><img src="j.jpg"></picture>
+                  <picture><source media="(max-width: 600px)" srcset="m-small.webp"><source srcset="m-big.webp">
+                    <img src="m.jpg"></picture>
+                  <picture><img srcset="only.png 1x, only2.png 2x"></picture>
+                </body></html>
+                """);
+        assertThat(p).containsKey("https://ornek.com.tr/sayfa/h.avif")
+                .doesNotContainKeys("https://ornek.com.tr/sayfa/h2.avif", "https://ornek.com.tr/sayfa/h.webp",
+                        "https://ornek.com.tr/sayfa/h.jpg", "https://ornek.com.tr/sayfa/j.jxl", "https://ornek.com.tr/sayfa/m.jpg",
+                        "https://ornek.com.tr/sayfa/m-small.webp");
+        assertThat(p.get("https://ornek.com.tr/sayfa/h.avif").lazy()).as("img'in loading'i").isTrue();
+        assertThat(p).containsKeys("https://ornek.com.tr/sayfa/j.jpg", "https://ornek.com.tr/sayfa/m-big.webp",
+                "https://ornek.com.tr/sayfa/only.png");
+    }
+
+    @Test
+    @DisplayName("betik: nomodule ve çalıştırılmayan türler (text/template) sayılmaz; type=module sayılır; mobil simgeler yok")
+    void scriptsAndIcons() {
+        Map<String, PageResourceDiscovery.Candidate> p = pageOf("""
+                <html><head>
+                  <link rel="icon" href="/fav.png"><link rel="apple-touch-icon" href="/apple.png">
+                  <link rel="apple-touch-icon-precomposed" href="/apple2.png"><link rel="mask-icon" href="/mask.svg">
+                  <script type="module" src="/main-es2015.js"></script>
+                  <script nomodule src="/main-es5.js"></script>
+                  <script type="text/template" src="/tpl.html"></script>
+                  <script type="text/javascript; charset=utf-8" src="/classic.js"></script>
+                </head></html>
+                """);
+        assertThat(p.keySet()).containsExactlyInAnyOrder("https://ornek.com.tr/fav.png", "https://ornek.com.tr/main-es2015.js",
+                "https://ornek.com.tr/classic.js");
+    }
+
+    @Test
+    @DisplayName("@font-face (Font Awesome 4.7): yalnız SON src'nin ilk desteklenen biçimi (woff2); #iefix kopyası ve svg yok")
+    void fontAwesomeOneFont() {
+        String css = "@font-face{font-family:'FontAwesome';src:url('../fonts/fontawesome-webfont.eot?v=4.7.0');"
+                + "src:url('../fonts/fontawesome-webfont.eot?#iefix&v=4.7.0') format('embedded-opentype'),"
+                + "url('../fonts/fontawesome-webfont.woff2?v=4.7.0') format('woff2'),"
+                + "url('../fonts/fontawesome-webfont.woff?v=4.7.0') format('woff'),"
+                + "url('../fonts/fontawesome-webfont.ttf?v=4.7.0') format('truetype'),"
+                + "url('../fonts/fontawesome-webfont.svg?v=4.7.0#fontawesomeregular') format('svg');"
+                + "font-weight:normal;font-style:normal}"
+                + ".fa{display:inline-block;background:url(../img/sprite.png)}";
+        List<PageResourceDiscovery.Candidate> refs = PageResourceDiscovery.cssRefs(css, "https://ornek.com.tr/css/fa.css");
+        assertThat(refs).extracting(PageResourceDiscovery.Candidate::url).containsExactly(
+                "https://ornek.com.tr/fonts/fontawesome-webfont.woff2?v=4.7.0", "https://ornek.com.tr/img/sprite.png");
+        assertThat(refs.get(0).category()).isEqualTo("FONT");
+    }
+
+    @Test
+    @DisplayName("@font-face sıra ve yedek kuralları: listede ilk desteklenen; yalnız eot / svg varsa ilki (FONT); local() ve data: indirme değil")
+    void fontFaceTable() {
+        String base = "https://ornek.com.tr/css/x.css";
+        // satır: CSS → beklenen tek URL (null = hiç başvuru yok)
+        String[][] table = {
+                {"@font-face{src:url(a.ttf) format('truetype'), url(a.woff2) format('woff2')}", "https://ornek.com.tr/css/a.ttf"},
+                {"@font-face{src:local('Inter'), url(b.woff) format(\"woff\")}", "https://ornek.com.tr/css/b.woff"},
+                {"@font-face{src:url(c.eot?#iefix) format('embedded-opentype'), url(c.svg#c) format('svg')}", "https://ornek.com.tr/css/c.eot"},
+                {"@font-face{src:url(d.svg#d) format('svg')}", "https://ornek.com.tr/css/d.svg"},
+                {"@font-face{src:url(data:font/woff2;base64,AAAA) format('woff2'), url(e.woff) format('woff')}", null},
+                {"@font-face{src:url(f.weird) format('x-unknown'), url(f.otf)}", "https://ornek.com.tr/css/f.otf"},
+                {"@font-face{src:url(g.woff2) format('woff2') tech(variations)}", "https://ornek.com.tr/css/g.woff2"},
+                {"@font-face{font-family:x}", null},
+        };
+        for (String[] row : table) {
+            List<PageResourceDiscovery.Candidate> refs = PageResourceDiscovery.cssRefs(row[0], base);
+            if (row[1] == null) {
+                assertThat(refs).as(row[0]).isEmpty();
+            } else {
+                assertThat(refs).as(row[0]).extracting(PageResourceDiscovery.Candidate::url).containsExactly(row[1]);
+                assertThat(refs.get(0).category()).as(row[0]).isEqualTo("FONT");
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("CSS yorumundaki url() istenmez; dizgi içindeki '/*' yorum değildir; kapanmayan yorum sonuna kadar")
+    void cssComments() {
+        String css = "/* eski: .hero{background:url(../img/old-banner.jpg)} */ .a{background:url(new.png)}\n"
+                + ".b:after{content:\"/*\"} .c{background:url(c.png)}\n"
+                + "/* kapanmıyor .d{background:url(d.png)}";
+        assertThat(PageResourceDiscovery.cssRefs(css, "https://ornek.com.tr/css/s.css"))
+                .extracting(PageResourceDiscovery.Candidate::url)
+                .containsExactly("https://ornek.com.tr/css/new.png", "https://ornek.com.tr/css/c.png");
+    }
+
+    @Test
+    @DisplayName("anahtar: parça ve sonda kalan boş '?' atılır (font.eot?#iefix = font.eot)")
+    void keyDropsEmptyQuery() {
+        assertThat(PageResourceDiscovery.key("https://a.com/f.eot?#iefix")).isEqualTo("https://a.com/f.eot");
+        assertThat(PageResourceDiscovery.key("https://a.com/f.eot?")).isEqualTo("https://a.com/f.eot");
+        assertThat(PageResourceDiscovery.key("https://a.com/f.eot?v=1#x")).isEqualTo("https://a.com/f.eot?v=1");
+    }
+
+    @Test
+    @DisplayName("<base href> belgenin taban adresidir: satır içi stiller onunla çözülür")
+    void baseHrefForInlineStyles() {
+        String html = "<html><head><base href=\"https://cdn.ornek.net/assets/\"><style>.a{background:url(i.png)}</style>"
+                + "</head><body><img src=\"logo.png\"></body></html>";
+        PageResourceDiscovery.Found f = PageResourceDiscovery.discover(html.getBytes(StandardCharsets.UTF_8), BASE, null);
+        assertThat(f.baseUrl()).isEqualTo("https://cdn.ornek.net/assets/");
+        assertThat(byUrl(f.pageLoad())).containsKey("https://cdn.ornek.net/assets/logo.png");
+        assertThat(PageResourceDiscovery.cssRefs(f.inlineCss().get(0), f.baseUrl()))
+                .extracting(PageResourceDiscovery.Candidate::url).containsExactly("https://cdn.ornek.net/assets/i.png");
+    }
+
+    @Test
+    @DisplayName("yorum ayıklama ve @font-face seçimi doğrusal: kötü girdi kilitlemez")
+    void commentAndFontFaceBounded() {
+        String comments = "/*".repeat(300_000);
+        String quotes = "\"'".repeat(300_000) + "/*x*/";
+        String faces = "@font-face{src:".repeat(100_000);
+        String srcs = "@font-face{" + "src src: src;".repeat(100_000) + "}";
+        for (String evil : List.of(comments, quotes, faces, srcs)) {
+            assertTimeoutPreemptively(java.time.Duration.ofSeconds(3),
+                    () -> PageResourceDiscovery.cssRefs(evil, "https://x.com/"));
+        }
     }
 }

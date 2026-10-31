@@ -30,12 +30,13 @@ import java.util.Map;
  *   <li>{@code POST /api/monitoring/page/{id}/resource-scans} — başlat (arka planda; 202 + tarama özeti)</li>
  *   <li>{@code GET  /api/monitoring/page/{id}/resource-scans?limit=} — geçmiş (özetler, 1 yıl) + çalışan tarama + {@code can_run}</li>
  *   <li>{@code GET  /api/monitoring/page/{id}/resource-scans/{scanId}} — tek tarama: özet + analiz + nesneler</li>
+ *   <li>{@code POST /api/monitoring/page/{id}/resource-scans/{scanId}/cancel} — çalışan taramayı iptal (2026-11)</li>
  * </ul>
  *
  * <p><b>Yetki</b> (kullanıcı kararı): çalıştırmak "Şimdi kontrol et" kuralıdır — {@code monitoring.trigger/execute} + izlemenin
  * takımında ÇALIŞTIRMA kapsamı ({@link SessionScope#canExecuteTeam}, EXECUTE+ paylaşım dahil); okumak izlemeyi görebilen
  * herkes ({@code monitoring.read/view} + {@link SessionScope#canViewMonitoring}). Göremediği izleme 404 (varlığı sızmaz).
- * Denetim: {@code PAGE_RESOURCE_SCAN_RUN} (yalnız başlatma; URL sorgusuz).
+ * Denetim: {@code PAGE_RESOURCE_SCAN_RUN} (başlatma) ve {@code PAGE_RESOURCE_SCAN_CANCEL} (iptal); URL sorgusuz.
  */
 @RestController
 @RequestMapping("/api/monitoring/page")
@@ -92,6 +93,42 @@ public class PageResourceScanController {
                             + " kaynak analizi birlikte çalışabiliyor ve şu an dolu. Birkaç saniye sonra yeniden deneyin.",
                     "At most " + PageResourceScanService.MAX_PER_POD
                             + " resource analyses can run together on the server and it is busy right now. Try again in a few seconds."));
+        };
+    }
+
+    /**
+     * Çalışan taramayı iptal eder (2026-11). İzin = çalıştırma izni ("Şimdi kontrol et" kuralı). Yalnız RUNNING tarama: satır
+     * INTERRUPTED / CANCELLED olur; koşan pod (hangisi olursa olsun) kalp atışında görüp durur. Bitmiş tarama → 409
+     * {@code RESOURCE_SCAN_NOT_RUNNING} (güncel özetle); bilinmeyen tarama → 404. Denetim {@code PAGE_RESOURCE_SCAN_CANCEL}.
+     */
+    @PostMapping("/{id}/resource-scans/{scanId}/cancel")
+    public ResponseEntity<Map<String, Object>> cancel(@PathVariable Long id, @PathVariable Long scanId, HttpSession session) {
+        permissionService.require(session, "monitoring.trigger", "execute");
+        PageMonitor m = pageMonitorRepo.findById(id).orElse(null);
+        if (m == null || !SessionScope.canViewMonitoring(session, m.getTeamId())) return notFound();
+        if (!SessionScope.canExecuteTeam(session, m.getTeamId())) {
+            throw new SecurityException(Msg.t("Bu takımın izlemesinde kaynak analizini iptal edemezsiniz.",
+                    "You cannot cancel a resource analysis on this team's monitor."));
+        }
+        PageResourceScanService.Cancel r = scans.cancel(scanId, m.getId());
+        return switch (r.outcome()) {
+            case CANCELLED -> {
+                auditService.recordAction("PAGE_RESOURCE_SCAN_CANCEL", session, "PAGE_MONITOR", String.valueOf(m.getId()),
+                        AuditDetail.of("name", m.getName(), "url", AuditDetail.safeTarget(m.getUrl()), "scan_id", scanId), null);
+                yield ResponseEntity.ok(ok(r.scan()));
+            }
+            case NOT_RUNNING -> {
+                Map<String, Object> body = new LinkedHashMap<>();
+                body.put("success", false);
+                body.put("code", "RESOURCE_SCAN_NOT_RUNNING");
+                body.put("error", Msg.t("Bu kaynak analizi artık çalışmıyor (bitti ya da yarıda kaldı); iptal edilecek bir şey yok.",
+                        "This resource analysis is no longer running (it finished or was cut short); there is nothing to cancel."));
+                body.put("data", r.scan());
+                yield ResponseEntity.status(409).body(body);
+            }
+            case NOT_FOUND -> error(404, "RESOURCE_SCAN_NOT_FOUND", Msg.t(
+                    "Kaynak analizi kaydı bulunamadı; silinmiş ya da saklama süresi dolmuş olabilir. Geçmişi yenileyin.",
+                    "Resource analysis run not found; it may have been deleted or aged out. Refresh the history."));
         };
     }
 
