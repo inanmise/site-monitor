@@ -357,7 +357,8 @@ ağına açık olması gerekmez; Prometheus pod IP'sinden küme içinden kazıma
 
 Sayfa Bütünlüğü izlemesinin detayındaki **Kaynak analizi** sekmesi yalnız kullanıcı isteyince çalışır: izlemenin sayfası
 sunucudan indirilir, sayfanın yüklediği nesneler (stil, betik, görsel, yazı tipi, medya, iframe, stilin `url()` ile
-çağırdıkları), bağlantılı belgeler ve diğer bağlantılar tek tek GET ile indirilip boyutu ve süresi ölçülür; not, tahmini
+çağırdıkları) indirilip boyutu ve süresi ölçülür, bağlantılı belgeler ve diğer bağlantılar önce HEAD ile (boyut
+`Content-Length`'ten) denetlenir; not, tahmini
 yükleme süresi ve öneriler hesaplanır. İzlemeye dokunmaz (kontrol kaydı, alarm, bildirim yok). JavaScript çalıştırılmaz —
 betiğin sonradan yüklediği nesneler görünmez; yükleme süresi bir tahmindir (6 paralel bağlantı varsayımı).
 
@@ -378,6 +379,13 @@ başına son 20 çalıştırmada tutulur; özetler (not, süre, boyut — tarih 
 
 **Sorun giderme.**
 - *Tarama "yarıda kaldı" (INTERRUPTED):* çalıştıran pod kapandı ya da 45 sn kalp atışı yazamadı. Yeniden çalıştırın.
+  "İptal edildi" ise bir kullanıcı iptal etti (`PAGE_RESOURCE_SCAN_CANCEL` denetim kaydı).
+- *Algoritma 2 (2026-10-31):* vekil kararı her nesnenin kendi adresiyle (NO_PROXY dahil) verilir; kırık kararı Sayfa
+  Bütünlüğü izlemesiyle aynıdır (401 / 403 / 429 / 503 ve WAF engelleri "doğrulanamadı", kırık değil); `<noscript>` içi,
+  oynatılmayan videolar ve kullanılmayan font biçimleri sayılmaz. Bu yüzden eski analizlerle not karşılaştırılmaz
+  (arayüz uyarır).
+- *Ölçülmüş görsel kazancı:* en büyük 20 JPEG / PNG ikinci kez indirilip sunucuda yeniden sıkıştırılır (boyut
+  küçültülmez) — hedefe o kadar ek trafik gider; pod başına 2 eşzamanlı, 200 MB çözme bütçesi.
 - *Çok nesneli sayfada "ölçüm sınırlı" notu:* süre / nesne / toplam indirme tavanından biri doldu; sayılar alt sınırdır.
   Gerekirse ilgili ayarı yükseltin (tek pod'da bant genişliği ve CPU'yu düşünün).
 - *Nesneler "kırık" görünüyor ama tarayıcıda açılıyor:* ölçüm pod'dan yapılır (izlemenin vekil kararıyla). Pod'un çıkışını
@@ -464,10 +472,28 @@ Saklama: `site.monitor.metrics.dbquery.retention-days` (180), alarm satırları 
 (90; açık alarmın satırı silinmez). Yeniden uyarı: `site.monitor.realert.dbquery-minutes` (0 = genel aralık). Tarama tıkı
 `site.monitor.dbquery.interval-ms` (30000, açılışta).
 
+**Hesap yetkisi ve TLS (2026-10-31).** "Bağlantıyı dene" hesabın yazma / yönetici yetkilerini okur ve sağlık paneline
+yazar. `writable-account-mode` (OFF / WARN / BLOCK, varsayılan WARN): BLOCK'ta yazabilen hesapla izleme kaydedilmez ve
+çalışmaz (`DB_ACCOUNT_WRITABLE`); yetki okunamazsa engellemez. MSSQL'de yalnız veritabanı düzeyi yetkiler okunur — tek tabloya
+verilmiş GRANT görülmez. Bağlantı formundaki salt-okur hesap betiğini DBA'ya verin. Kurum CA demeti PostgreSQL ve MSSQL
+sürücülerine bağlıdır; Oracle'da TCPS (port 2484) seçilebilir. Yeni PostgreSQL bağlantısı varsayılan `require`. DBA tarafında
+oturum `SiteMonitor dbq#<id>` adıyla görünür, sorgunun başında aynı adla bir yorum vardır.
+
+**Değerlendirilemeyen sonuç.** Sorgu çalışıp kural ölçülemezse (kolon yok, sayı değil, zaman damgası değil) çalıştırma
+"değerlendirilemedi" kaydedilir (kesinti değil); `unknown-alert-runs` (3) ardışık böyle çalıştırma "Hatalı sorgu"
+alarmı açar (`DB_RULE_UNEVALUABLE`). Sorgu ya da kural değişince değişim kuralının tabanı yeniden kurulur. **Kabul edilen
+görünürlük (kullanıcı kararı):** 7/24 operatörü ve paylaşımla okuyan, başka takımın ölçülen değerlerini (liste, geçmiş, CSV)
+görür; satırlar, bağlantı adresi ve sorgu denemesi onlara kapalıdır.
+
+**Ayarlar (ek):** `unknown-alert-runs` (3, 0 = kapalı, ≤ 20), `writable-account-mode` (WARN). Tatil takvimi bitmek üzereyse
+(60 gün) uyarı çıkar; global yönetici gelecek yılın sabit tarihli resmî tatillerini tek tıkla ekler, dini bayramlar elle girilir.
+
 **Sorun giderme (kontrol geçmişindeki neden kodu).**
 - `DB_UNREACHABLE` / `DB_DNS` / `DB_TIMEOUT`: pod'dan veritabanına ulaşılamıyor ya da sorgu zaman aşımına uğradı — çıkış
   kuralı, port, ad çözümleme; zaman aşımı sürüyorsa sorguyu daraltın (indeks, WHERE, TOP / FETCH FIRST) ya da zaman aşımını artırın.
 - `DB_AUTH`: kullanıcı / parola reddedildi — bağlantıyı düzenleyip parolayı yeniden girin.
+- `DB_ACCOUNT_WRITABLE`: bağlantı hesabı yazabiliyor ve `writable-account-mode=BLOCK` — salt-okur hesap kullanın.
+- `DB_RULE_UNEVALUABLE`: kurallar art arda değerlendirilemedi — kolon adlarını / kural türünü düzeltin.
 - `DB_SQL_ERROR`: sorgu veritabanında hata verdi (kolon / tablo yok, yetki yok, tür dönüşümü).
 - `DB_GUARD_REJECTED`: kayıtlı sorgu güncel güvenlik kurallarına takıldı (sürüm sonrası daha katı kural) — sorguyu düzeltin.
 - `DB_BLOCKED`: ana makine iç ağ / meta veri kuralına takıldı (`site.monitor.ssrf.*`).

@@ -47,6 +47,13 @@ export const CONNECTIONS_TABLE_MIN_PX = 760
  * ister (izleme formunun "kaydedilmemiş değişiklikler" deseni) — yazılan sunucu / kullanıcı / parola sessizce gitmez.
  * Düzenleme yalnız değişen alanları gönderir (hedef alanları + parola kuralı birlikte; DÜŞÜK 7).
  */
+/** Sunucunun `security_warnings` kodlarından ekranda AYRICA gösterilecekler (bilinmeyen kod çizilmez). */
+export const SERVER_SECURITY_WARNINGS = ['SSL_NOT_VERIFIED', 'MSSQL_UNENCRYPTED', 'MSSQL_TRUST_SERVER_CERT']
+export function serverSecurityWarnings(p) {
+  const list = Array.isArray(p?.security_warnings) ? p.security_warnings : []
+  return SERVER_SECURITY_WARNINGS.filter((c) => list.includes(c))
+}
+
 export default function ConnectionsManager({ open, onOpenChange, teamId, teams = [], canEdit = false, onChanged, initialView = 'list' }) {
   const t = useT()
   const toast = useToast()
@@ -367,6 +374,19 @@ function DetailView({ t, p, editable, inUse, inUseMessage, onBack, onEdit, onDel
                 <ShieldAlert aria-hidden="true" className="mt-px size-3.5 shrink-0" />
                 <span className="[overflow-wrap:anywhere]">{t(p.ssl_mode === 'disable' ? 'dbq.conn.sslWeak.disable' : 'dbq.conn.sslWeak.prefer')}</span>
               </span>
+            </Fact>
+          )}
+          {serverSecurityWarnings(p).length > 0 && (
+            // Sunucunun bağlantı güvenlik uyarıları (r177 2.B; PG prefer / disable yukarıda istemci kuralıyla)
+            <Fact label={t('dbq.conn.h.security')} className="sm:col-span-2">
+              <ul data-slot="dbq-conn-security-warnings" className="m-0 flex list-none flex-col gap-1 p-0">
+                {serverSecurityWarnings(p).map((code) => (
+                  <li key={code} data-code={code} className="inline-flex items-start gap-1.5 text-xs text-amber-800 dark:text-amber-200">
+                    <ShieldAlert aria-hidden="true" className="mt-px size-3.5 shrink-0" />
+                    <span className="[overflow-wrap:anywhere]">{t(`dbq.conn.secw.${code}`)}</span>
+                  </li>
+                ))}
+              </ul>
             </Fact>
           )}
           {(h.last_error || h.last_test_error) && (

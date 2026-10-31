@@ -321,3 +321,21 @@ describe('yerleşik başlangıç şablonları (2.C)', () => {
     expect(builtinSql('recent_problems', 'MSSQL')).toContain('GETDATE()')
   })
 })
+
+describe('r177 entegrasyon — sunucu biçimleri', () => {
+  it('ROW_COUNT_ON_AGGREGATE: sunucunun rule_ids dizisi yalnız o satır sayısı kurallarını işaretler', () => {
+    const rules = [{ id: 'a', kind: 'ROW_COUNT' }, { id: 'b', kind: 'COLUMN_VALUE' }, { id: 'c', kind: 'ROW_COUNT' }]
+    const set = countTrapIndexes(rules, { warnings: [{ code: 'ROW_COUNT_ON_AGGREGATE', rule_ids: ['c', 'b'] }] })
+    expect([...set]).toEqual([2])
+  })
+
+  it('bağlantı güvenlik uyarıları: yalnız tanınan sunucu kodları, istemcinin zaten gösterdiği PG prefer / disable hariç', async () => {
+    const { serverSecurityWarnings, SERVER_SECURITY_WARNINGS } = await import('../components/dbquery/ConnectionsManager.jsx')
+    expect(serverSecurityWarnings({ security_warnings: ['SSL_PREFER_DOWNGRADE', 'MSSQL_UNENCRYPTED', 'BILINMEYEN'] })).toEqual(['MSSQL_UNENCRYPTED'])
+    expect(serverSecurityWarnings({})).toEqual([])
+    for (const code of SERVER_SECURITY_WARNINGS) {
+      expect(TR[`dbq.conn.secw.${code}`]).toBeTruthy()
+      expect(EN[`dbq.conn.secw.${code}`]).toBeTruthy()
+    }
+  })
+})

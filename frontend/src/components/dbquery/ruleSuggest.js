@@ -38,7 +38,7 @@ export function isAggregateOnlySql(sql) {
   return !/\bgroup\s+by\b/i.test(s)
 }
 
-/** Uyarı listesi (sunucu biçimi) → yalnız tanınan kodlu öğeler; `{code, rule_id?, rule_index?, columns?, message?}`. */
+/** Uyarı listesi (sunucu biçimi) → yalnız tanınan kodlu öğeler; `{code, rule_ids?, rule_id?, rule_index?, columns?, message?}`. */
 export function knownWarnings(list) {
   return (Array.isArray(list) ? list : []).filter((w) => w && typeof w === 'object' && typeof w.code === 'string')
 }
@@ -56,6 +56,14 @@ export function countTrapIndexes(rules, { warnings, testResult, sqlText } = {}) 
   if (trap.length) {
     const out = new Set()
     for (const w of trap) {
+      // Sunucu (r177) kuralları `rule_ids` dizisiyle bildirir; tekil `rule_id` / `rule_index` de kabul
+      if (Array.isArray(w.rule_ids) && w.rule_ids.length) {
+        for (const id of w.rule_ids) {
+          const i = list.findIndex((r) => r?.id === id)
+          if (i >= 0 && list[i]?.kind === 'ROW_COUNT') out.add(i)
+        }
+        continue
+      }
       const byId = w.rule_id != null ? list.findIndex((r) => r?.id === w.rule_id) : -1
       const byIdx = Number.isInteger(w.rule_index) ? w.rule_index : -1
       const hit = byId >= 0 ? byId : byIdx
