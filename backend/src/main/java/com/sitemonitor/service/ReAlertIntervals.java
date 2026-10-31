@@ -7,7 +7,7 @@ import java.util.Map;
 
 /**
  * Tür bazlı yeniden uyarı sıklığı (2026-10-01, opt-in). Her izleme ailesi ({@link MonitorTypeCatalog#ORDER}: cert,
- * domain, http, ping, port, dns, keyword, page, pagespeed, scripted) için DAKİKA cinsinden isteğe bağlı geçersiz kılma:
+ * domain, http, ping, port, dns, keyword, page, pagespeed, scripted, dbquery) için DAKİKA cinsinden isteğe bağlı geçersiz kılma:
  * {@code site.monitor.realert.<aile>-minutes}.
  *
  * <p><b>Ürün güvencesi.</b> "Yeniden uyarının varsayılanı bugünkü 24 saat kalır." Değer 0 (varsayılan) = ailenin geçersiz

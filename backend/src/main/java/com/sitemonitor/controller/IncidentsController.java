@@ -61,6 +61,9 @@ public class IncidentsController {
     private final PageMonitorRepository pageMonitorRepo;
     private final ScriptedMonitorRepository scriptedMonitorRepo;
     private final PageSpeedMonitorRepository pageSpeedMonitorRepo;
+    /** Veritabanı sorgu izlemesi (11. tür, 2026-10-31) — alan enjeksiyonu, isteğe bağlı (WebMvc dilimi / elle kurulan test). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.repository.DbQueryMonitorRepository dbQueryMonitorRepo;
     private final CertificateInventoryRepository inventoryRepo;
     private final com.sitemonitor.repository.TeamRepository teamRepo;   // takım sütunu (2026-09-18)
     private final PermissionService permissionService;
@@ -519,6 +522,10 @@ public class IncidentsController {
         // PAGESPEED_SLOW yukaridaki `_SLOW` kuralina takilir; DOWN'un burada acikca yeri olmali,
         // yoksa Sayfa Hizi KESINTILERI olay ekraninda "bilinmeyen" kok neden olarak gorunur.
         else if ("PAGESPEED_DOWN".equals(type))   { code = "DOWN";      cat = "down"; }
+        // Veritabanı sorgusu (2026-10-31): sorgu çalıştırılamadı = kesinti; kural ihlali = içerik / koşul sorunu (iş
+        // alarmı). DBQUERY_SLOW yukarıdaki `_SLOW` kuralına takılır.
+        else if ("DBQUERY_FAIL".equals(type))     { code = "QUERY";     cat = "down"; }
+        else if ("DBQUERY_THRESHOLD".equals(type)) { code = "THRESHOLD"; cat = "content"; }
         else { code = type; cat = "unknown"; }
         return Map.of("code", code, "category", cat);
     }
@@ -541,6 +548,9 @@ public class IncidentsController {
         // PAGESPEED alarmlari AlertEvent.domain'e m.getUrl() yaziyor (SchedulerService.addPageSpeedSweepItems)
         // — page/http ile ayni anahtarlama.
         if (fams.contains("pagespeed")) idx.put("pagespeed", index(pageSpeedMonitorRepo.findAll(), m -> m.getUrl(), m -> m.getName(), m -> m.getId()));
+        // Veritabanı sorgusu: alarm anahtarı izleme ADI (k6 emsali).
+        if (fams.contains("dbquery") && dbQueryMonitorRepo != null)
+            idx.put("dbquery", index(dbQueryMonitorRepo.findAll(), m -> m.getName(), m -> m.getName(), m -> m.getId()));
         for (AlertEvent e : events) {
             String fam = family(e.getAlertType());
             Object[] ref = idx.containsKey(fam) ? idx.get(fam).get(e.getDomain()) : null;
@@ -579,6 +589,7 @@ public class IncidentsController {
         if (type.startsWith("PAGESPEED_")) return "pagespeed";
         if (type.startsWith("PAGE_"))     return "page";
         if (type.startsWith("SCRIPTED_")) return "scripted";
+        if (type.startsWith("DBQUERY_"))  return "dbquery";
         if ("HTTP_DOWN".equals(type) || "HTTP_SSL".equals(type) || "HTTP_SLOW".equals(type) || "DOMAIN_EXPIRY".equals(type)) return "http";
         return "cert";   // EXPIRY / CHAIN_BROKEN / REVOKED / MISMATCH / ACCESSIBILITY
     }
@@ -590,6 +601,7 @@ public class IncidentsController {
             case "ping" -> "ping"; case "dns" -> "dns";  case "domain" -> "domain";
             case "page" -> "page"; case "scripted" -> "scripted";
             case "pagespeed" -> "pagespeed";
+            case "dbquery" -> "dbquery";
             default -> "dashboard";
         };
     }

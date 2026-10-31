@@ -282,6 +282,23 @@ public class SchedulerService {
     @Autowired
     private ScriptedAnomalyGuard scriptedAnomalyGuard;
 
+    /**
+     * Veritabanı Sorgu İzleme (11. tür, 2026-10-31) — alan enjeksiyonu, İSTEĞE BAĞLI: elle kurulan testlerde ve dilimli
+     * bağlamlarda bean yokken tarama sessizce hiçbir şey yapmaz (diğer on tür bugünküyle aynı).
+     */
+    @Autowired(required = false)
+    private com.sitemonitor.service.dbquery.DbQueryCheckerService dbQueryCheckerService;
+    @Autowired(required = false)
+    private com.sitemonitor.repository.DbQueryMonitorRepository dbQueryMonitorRepo;
+    @Autowired(required = false)
+    private com.sitemonitor.repository.DbQueryCheckRepository dbQueryCheckRepo;
+    @Autowired(required = false)
+    private com.sitemonitor.repository.DbConnectionProfileRepository dbConnectionProfileRepo;
+    @Autowired(required = false)
+    private com.sitemonitor.service.dbquery.HolidayCalendarService holidayCalendarService;
+    @Autowired(required = false)
+    private com.sitemonitor.service.dbquery.DbQueryAlertRowsService dbQueryAlertRows;
+
     @Value("${site.monitor.username:user}")
     private String adminUsername;
 
@@ -738,6 +755,8 @@ public class SchedulerService {
             return pageMonitorRepo == null || pageMonitorRepo.findById(id).map(m -> Boolean.TRUE.equals(m.getActive())).orElse(false);
         if (t.startsWith("SCRIPTED_"))
             return scriptedMonitorRepo == null || scriptedMonitorRepo.findById(id).map(m -> Boolean.TRUE.equals(m.getActive())).orElse(false);
+        if (t.startsWith("DBQUERY_"))
+            return dbQueryMonitorRepo == null || dbQueryMonitorRepo.findById(id).map(m -> Boolean.TRUE.equals(m.getActive())).orElse(false);
         if (t.startsWith("DOMAINMON_"))
             return domainMonitorRepo.findById(id).map(m -> Boolean.TRUE.equals(m.getActive())).orElse(false);
         return true;
@@ -1570,7 +1589,9 @@ public class SchedulerService {
                 "page_checks", "page_resource_issues", "scripted_checks",
                 // Sayfa Hızı: kırılım tablosu her kontrolde LATEST satırlarını silip yeniden yazar →
                 // ölü-tuple üretimi yüksek, agresif autovacuum şart (yoksa tablo şişer).
-                "pagespeed_checks", "pagespeed_resources"}) {
+                "pagespeed_checks", "pagespeed_resources",
+                // Veritabanı sorgu izlemesi (2026-10-31): ekle-yalnız seri, saklama budaması siler.
+                "dbquery_checks"}) {
             patch("ALTER TABLE " + t + " SET (autovacuum_vacuum_scale_factor = 0.02, autovacuum_vacuum_threshold = 5000, "
                 + "autovacuum_analyze_scale_factor = 0.02, autovacuum_analyze_threshold = 5000)");
         }
@@ -2671,9 +2692,11 @@ public class SchedulerService {
             int pi = rollupUpsert("PAGE",    "page_checks",     "ok",   "response_ms", from, to);
             int sc = rollupUpsert("SCRIPTED", "scripted_checks", "ok",  "duration_ms", from, to);
             int ps = rollupUpsert("PAGESPEED", "pagespeed_checks", "ok", "response_ms", from, to);
+            // Veritabanı sorgusu: ok = sorgu ÇALIŞTI (eşik ihlali kesinti değildir, SLA'yı düşürmez); süre = sorgu süresi.
+            int dq = rollupUpsert("DBQUERY", "dbquery_checks", "ok", "duration_ms", from, to);
             int u  = rollupUptime(from, to);
-            log.info("Daily rollup: port={}, ping={}, keyword={}, http={}, page={}, scripted={}, pagespeed={}, uptime={} ({} → {})",
-                    p, pg, k, h, pi, sc, ps, u, from, to);
+            log.info("Daily rollup: port={}, ping={}, keyword={}, http={}, page={}, scripted={}, pagespeed={}, dbquery={}, uptime={} ({} → {})",
+                    p, pg, k, h, pi, sc, ps, dq, u, from, to);
         } catch (Exception e) {
             log.warn("Daily rollup failed: {}", e.getMessage());
         }
@@ -2731,6 +2754,7 @@ public class SchedulerService {
         total += Math.max(0, rollupInto(target, bucketCol, len, "PAGE",     "page_checks",     "ok",   "response_ms", from, to));
         total += Math.max(0, rollupInto(target, bucketCol, len, "SCRIPTED", "scripted_checks", "ok",   "duration_ms", from, to));
         total += Math.max(0, rollupInto(target, bucketCol, len, "PAGESPEED", "pagespeed_checks", "ok", "response_ms", from, to));
+        total += Math.max(0, rollupInto(target, bucketCol, len, "DBQUERY", "dbquery_checks", "ok", "duration_ms", from, to));
         total += Math.max(0, rollupUptimeInto(target, bucketCol, len, from, to));
         return total;
     }
@@ -4304,6 +4328,7 @@ public class SchedulerService {
         pageMonitorRepo.findAll().forEach(m -> live.add("page:" + m.getId()));
         pageSpeedMonitorRepo.findAll().forEach(m -> live.add("pagespeed:" + m.getId()));
         scriptedMonitorRepo.findAll().forEach(m -> live.add("scripted:" + m.getId()));
+        if (dbQueryMonitorRepo != null) dbQueryMonitorRepo.findAll().forEach(m -> live.add("dbquery:" + m.getId()));
         return live;
     }
 
@@ -5289,6 +5314,7 @@ public class SchedulerService {
     private void publishSweepLeadership(boolean leader, long atMs, String reason) {
         // R3-3 son inceleme F1: bekletilen dönemler bu liderliğe aittir — ara liderin işlediği izlemeler yeniden sunulmasın
         retainedDue.clear();
+        dbQueryRetry.clear();   // sorgu izlemesi: "meşguldü, yeniden dene" belleği de bu liderliğe aittir
         if (eventPublisher == null || clusterSchedule == null) return;
         // Liderlik bitti (2026-10-23, çok pod R2b, MP-37d): izleme vade önbelleği yalnız lider dolduruyor; takipçide işe
         // yaramaz ve gece budaması yalnız 'nightly-cleanup'ı kazanan pod'da koştuğu için silinmiş izlemelerin anahtarları
@@ -7034,6 +7060,12 @@ public class SchedulerService {
                 if (m == null) return false;
                 evaluateScriptedNow(m, raw);
             }
+            case com.sitemonitor.service.monitoring.ManualEvalInbox.TYPE_DBQUERY -> {
+                com.sitemonitor.model.DbQueryMonitor m = dbQueryMonitorRepo == null ? null
+                        : dbQueryMonitorRepo.findById(id).filter(x -> Boolean.TRUE.equals(x.getActive())).orElse(null);
+                if (m == null) return false;
+                evaluateDbQueryNow(m, raw);
+            }
             case com.sitemonitor.service.monitoring.ManualEvalInbox.TYPE_PORT -> {
                 PortMonitor m = portMonitorRepo.findById(id).filter(x -> Boolean.TRUE.equals(x.getActive())).orElse(null);
                 if (m == null) return false;
@@ -7932,17 +7964,474 @@ public class SchedulerService {
         return recheckPageSpeed(m, true);
     }
 
-    // ── Veritabanı sorgu izlemesi (11. tür, 2026-10-31) — İSKELET: gövdeler tarama paketinde yazılır ──
+    // ── Veritabanı Sorgu İzleme (11. tür, 2026-10-31) — lider-yalnız tarama ────────────────────────────────────────────
+    //
+    // Dağıtık kontrollerin (çok pod Sürüm 3-3) DIŞINDA: tarama, teyit / kurtarma ve değerlendirme yalnız tarama liderinde.
+    // Vade izlemenin KENDİ zamanlamasından (aralık ya da cron + izinli / yasak pencereler + tatil + ek tarihler,
+    // Europe/Istanbul) gelir: plan dbquery_monitors.next_run_at'te tutulur (her vadede hedefli UPDATE), küme genelinde tek
+    // çalıştırmayı monitor_check_schedule anahtarı "dbquery:<id>" (clusterDue CAS) sağlar. Pencere dışında / uygun an yokken
+    // sorgu ÇALIŞMAZ, alarm durumu değişmez. Motor (DbQueryCheckerService) eşzamanlılık iznini alamazsa sonuç SKIPPED'dır:
+    // ne kontrol satırı ne alarm; izleme sonraki tıklarda (≤ DBQUERY_RETRY_MAX kez) yeniden denenir — dönem kaybolmaz.
+
+    /** Zamanlama hesabının dikişi — üretimde motorun saf {@link com.sitemonitor.service.dbquery.DbQuerySchedule}'ı; testte sahte. */
+    interface DbQueryScheduling {
+        com.sitemonitor.service.dbquery.DbQuerySchedule.Spec specOf(com.sitemonitor.model.DbQueryMonitor m);
+        Instant nextAfter(com.sitemonitor.service.dbquery.DbQuerySchedule.Spec spec, Instant after, Set<java.time.LocalDate> holidays);
+        boolean allowedAt(com.sitemonitor.service.dbquery.DbQuerySchedule.Spec spec, Instant t, Set<java.time.LocalDate> holidays);
+    }
+
+    static final DbQueryScheduling DBQUERY_SCHEDULE = new DbQueryScheduling() {
+        @Override public com.sitemonitor.service.dbquery.DbQuerySchedule.Spec specOf(com.sitemonitor.model.DbQueryMonitor m) {
+            return com.sitemonitor.service.dbquery.DbQuerySchedule.of(m);
+        }
+        @Override public Instant nextAfter(com.sitemonitor.service.dbquery.DbQuerySchedule.Spec spec, Instant after,
+                                           Set<java.time.LocalDate> holidays) {
+            return com.sitemonitor.service.dbquery.DbQuerySchedule.nextAfter(spec, after, holidays);
+        }
+        @Override public boolean allowedAt(com.sitemonitor.service.dbquery.DbQuerySchedule.Spec spec, Instant t,
+                                           Set<java.time.LocalDate> holidays) {
+            return com.sitemonitor.service.dbquery.DbQuerySchedule.allowedAt(spec, t, holidays);
+        }
+    };
+
+    /** Test dikişi: zamanlama hesabı. */
+    DbQueryScheduling dbQueryScheduling = DBQUERY_SCHEDULE;
+
+    /** CRON tetiği bu kadar gecikmişse (lider yoktu, pod yeniden başladı) KAÇIRILMIŞ sayılır — geç çalıştırılmaz. */
+    static final long DBQUERY_CRON_CATCHUP_MS = 15L * 60 * 1000;
+    /** Meşgul (SKIPPED) sonuçtan sonra sonraki tıklarda en çok kaç kez yeniden denenir — sonra sonraki dönem beklenir. */
+    static final int DBQUERY_RETRY_MAX = 20;
+    /** "Hiç çalışmaz" planı: küme anahtarının uzak vadesi (ufuk ~366 gün). */
+    static final long DBQUERY_NEVER_MS = 366L * 24 * 3600 * 1000;
+
+    /** Meşgul sonuçla dönemi harcanmış izlemeler → kaç kez yeniden denendi (lider belleği, liderlik değişince silinir). */
+    private final java.util.concurrent.ConcurrentHashMap<Long, Integer> dbQueryRetry = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * Saf vade kararı.
+     *
+     * @param run     şimdi çalıştır
+     * @param next    yazılacak bir sonraki plan (null = uygun an yok / hiç çalışmaz)
+     * @param write   {@code next_run_at} değişti — hedefli UPDATE yazılmalı
+     * @param reason  karar gerekçesi (günlük / test): due, not_yet, outside_window, missed, first, never, replanned
+     */
+    record DbQueryDuePlan(boolean run, Instant next, boolean write, String reason) {}
+
+    /**
+     * Bir izlemenin bu tıktaki vade kararı (saf — zamanlama dikişi ve saat dışarıdan).
+     *
+     * <ul>
+     *   <li>Plan yok (ilk görüş / zamanlama değişti): ARALIK kipinde şimdi izinliyse hemen çalışır; değilse (ve CRON'da her
+     *       zaman) sonraki uygun an planlanır.</li>
+     *   <li>Plan ileride: beklenir — ama zamanlama kısaltıldıysa (şimdiki tanımın sonraki anı plandan önce) yeniden planlanır.</li>
+     *   <li>Plan geldi: şimdi izin dışındaysa (pencere / yasak / tatil sonradan değişti) çalışmaz, sonraki uygun ana kayar;
+     *       CRON tetiği {@link #DBQUERY_CRON_CATCHUP_MS}'ten fazla geciktiyse kaçırılmış sayılır (geç çalıştırılmaz).</li>
+     * </ul>
+     */
+    static DbQueryDuePlan dbQueryPlan(DbQueryScheduling sch, com.sitemonitor.service.dbquery.DbQuerySchedule.Spec spec,
+                                      String storedNext, Instant now, Set<java.time.LocalDate> holidays) {
+        Instant planned = parseUtc(storedNext);
+        boolean cron = com.sitemonitor.model.DbQueryMonitor.MODE_CRON.equalsIgnoreCase(spec == null ? null : spec.mode());
+        Instant upcoming = safeNext(sch, spec, now, holidays);
+        if (planned == null) {
+            if (!cron && safeAllowed(sch, spec, now, holidays)) return new DbQueryDuePlan(true, upcoming, true, "first");
+            return new DbQueryDuePlan(false, upcoming, upcoming != null || storedNext != null, upcoming == null ? "never" : "first");
+        }
+        if (planned.isAfter(now)) {
+            if (upcoming == null) return new DbQueryDuePlan(false, null, true, "never");
+            // Zamanlama kısaltıldı: şimdiki tanımın sonraki anı plandan belirgin biçimde önce → yeniden planla.
+            if (upcoming.isBefore(planned.minusSeconds(60))) return new DbQueryDuePlan(false, upcoming, true, "replanned");
+            return new DbQueryDuePlan(false, planned, false, "not_yet");
+        }
+        if (cron && now.toEpochMilli() - planned.toEpochMilli() > DBQUERY_CRON_CATCHUP_MS) {
+            return new DbQueryDuePlan(false, upcoming, true, "missed");
+        }
+        if (!safeAllowed(sch, spec, now, holidays)) return new DbQueryDuePlan(false, upcoming, true, "outside_window");
+        return new DbQueryDuePlan(true, upcoming, true, "due");
+    }
+
+    private static Instant safeNext(DbQueryScheduling sch, com.sitemonitor.service.dbquery.DbQuerySchedule.Spec spec,
+                                    Instant after, Set<java.time.LocalDate> holidays) {
+        try { return spec == null ? null : sch.nextAfter(spec, after, holidays); }
+        catch (RuntimeException e) { return null; }   // bozuk tanım = uygun an yok (fırlatmaz sözleşmesine ek savunma)
+    }
+
+    private static boolean safeAllowed(DbQueryScheduling sch, com.sitemonitor.service.dbquery.DbQuerySchedule.Spec spec,
+                                       Instant t, Set<java.time.LocalDate> holidays) {
+        try { return spec != null && sch.allowedAt(spec, t, holidays); }
+        catch (RuntimeException e) { return false; }
+    }
+
+    private static Instant parseUtc(String iso) {
+        if (iso == null || iso.isBlank()) return null;
+        try {
+            return java.time.LocalDateTime.parse(iso.trim().replace(' ', 'T').replace("Z", ""),
+                    java.time.format.DateTimeFormatter.ISO_LOCAL_DATE_TIME).toInstant(ZoneOffset.UTC);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** Tatil takvimi (60 sn özet); servis yoksa / okunamazsa boş — "tatil yok" sayılır, izleme çalışır. */
+    private Set<java.time.LocalDate> dbQueryHolidays() {
+        try { return holidayCalendarService == null ? Set.of() : holidayCalendarService.days(); }
+        catch (Exception e) { return Set.of(); }
+    }
+
+    @Scheduled(fixedDelayString = DBQUERY_SWEEP_TICK, initialDelayString = "100000")
+    public void runDbQueryChecks() {
+        noteSweepTick();   // tıkanma ölçüsü (MP-24): liderlik / duraklatma kapısından ÖNCE
+        if (!appSettings.getBoolean("site.monitor.dbquery.alert-enabled", true)) return;
+        if (!isSweepLeader()) return;   // tarama liderliği: alarm hattını besleyen taramalar küme genelinde TEK pod'da
+        if (dbQueryMonitorRepo == null || dbQueryCheckerService == null) return;
+        if (!tryAcquireSchedulerLock("dbquery-sweep", sweepLockTtlMinutes)) {
+            logSkip("Veritabanı sorgu sweep — lock başka instance'da, atlanıyor");
+            return;
+        }
+        try { runDbQueryChecksLocked(); }
+        finally { releaseSchedulerLock("dbquery-sweep"); }
+    }
+
+    private void runDbQueryChecksLocked() {
+        List<com.sitemonitor.model.DbQueryMonitor> monitors = dbQueryMonitorRepo.findByActiveTrue();
+        if (orphanCleanupDue("dbquery")) cleanupOrphanDbQueryAlerts();
+        if (monitors.isEmpty()) return;
+        Set<java.time.LocalDate> holidays = dbQueryHolidays();
+        List<Map.Entry<com.sitemonitor.model.DbQueryMonitor, java.util.function.Supplier<Map<String, Object>>>> started = new ArrayList<>();
+        for (com.sitemonitor.model.DbQueryMonitor m : monitors) {
+            try {
+                if (!dbQueryDue(m, holidays)) continue;
+            } catch (Exception e) {
+                log.warn("Veritabanı sorgu izlemesi vadesi hesaplanamadı ({}): {}", m.getName(), e.getClass().getSimpleName());
+                continue;
+            }
+            started.add(Map.entry(m, startNetworkCheck(() -> recheckDbQuery(m, false))));
+        }
+        int checked = 0, skipped = 0;
+        List<MonitoringOutageService.SweepItem> fail = new ArrayList<>();
+        List<MonitoringOutageService.SweepItem> threshold = new ArrayList<>();
+        List<MonitoringOutageService.SweepItem> slow = new ArrayList<>();
+        for (var entry : started) {
+            com.sitemonitor.model.DbQueryMonitor m = entry.getKey();
+            try {
+                Map<String, Object> r = entry.getValue().get();
+                if (Boolean.TRUE.equals(r.get("skipped"))) {
+                    // Altyapı atlaması (eşzamanlılık izni yok) hedefin arızası DEĞİL: satır / alarm yok, dönem korunur.
+                    dbQueryRetry.merge(m.getId(), 1, Integer::sum);
+                    if (dbQueryRetry.getOrDefault(m.getId(), 0) > DBQUERY_RETRY_MAX) dbQueryRetry.remove(m.getId());
+                    skipped++;
+                    continue;
+                }
+                dbQueryRetry.remove(m.getId());
+                addDbQuerySweepItems(m, r, fail, threshold, slow);
+                checked++;
+            } catch (Exception e) {
+                log.warn("Veritabanı sorgu kontrolü başarısız {}: {}", m.getName(), e.getClass().getSimpleName());
+            }
+        }
+        if (skipped > 0)
+            log.info("Veritabanı sorgu sweep: {} kontrol eşzamanlılık sınırı nedeniyle bu tur ATLANDI — sonraki tıkta yeniden "
+                    + "denenecek (site.monitor.dbquery.max-concurrency / per-connection-concurrency)", skipped);
+        feedDbQuerySweep(fail, threshold, slow);
+        log.debug("Veritabanı sorgu kontrolleri tamam: {} izleme", checked);
+    }
+
+    /**
+     * İzlemenin bu tıkta çalışıp çalışmayacağı: meşgul sonuçla bekletilen dönem → evet (bir kez); değilse plan kararı
+     * ({@link #dbQueryPlan}) + küme genelinde tek sahiplenme. Plan değiştiyse {@code next_run_at} hedefli UPDATE ile yazılır.
+     */
+    boolean dbQueryDue(com.sitemonitor.model.DbQueryMonitor m, Set<java.time.LocalDate> holidays) {
+        if (m.getId() == null) return false;
+        if (dbQueryRetry.containsKey(m.getId())) return true;   // meşgul sonuçla harcanan dönem — yeniden dene
+        Instant now = Instant.ofEpochMilli(scheduleClock.getAsLong());
+        com.sitemonitor.service.dbquery.DbQuerySchedule.Spec spec;
+        try { spec = dbQueryScheduling.specOf(m); }
+        catch (RuntimeException e) { spec = null; }
+        DbQueryDuePlan plan = dbQueryPlan(dbQueryScheduling, spec, m.getNextRunAt(), now, holidays);
+        if (plan.run()) {
+            long nowMs = now.toEpochMilli();
+            long nextMs = plan.next() != null ? plan.next().toEpochMilli() : nowMs + DBQUERY_NEVER_MS;
+            // Nominal = kendi sonraki planımıza uzaklık: başka pod'un aynı plana yazdığı vade "kısaltılmış aralık" sayılmaz
+            // (çift çalıştırma yok); daha UZAK bir eski vade (zamanlama kısaltıldı) ise kısaltma sayılır ve sahiplenilir.
+            long nominal = Math.max(60_000L, nextMs - nowMs);
+            if (!clusterDue("dbquery:" + m.getId(), nominal, (prev, ms) -> nextMs)) return false;
+        }
+        if (plan.write()) writeDbQueryNextRun(m, plan.next());
+        return plan.run();
+    }
+
+    private void writeDbQueryNextRun(com.sitemonitor.model.DbQueryMonitor m, Instant next) {
+        String iso = next == null ? null : ISO.format(next);
+        if (java.util.Objects.equals(iso, m.getNextRunAt())) return;
+        try {
+            dbQueryMonitorRepo.updateNextRunAt(m.getId(), iso);
+            m.setNextRunAt(iso);
+        } catch (Exception e) {
+            log.warn("Veritabanı sorgu izlemesinin sonraki çalışması yazılamadı ({}): {}", m.getName(), e.getClass().getSimpleName());
+        }
+    }
+
+    /** Öksüz sorgu alarmı temizliği (ad değişimi / silme sonrası; kimlik = izleme adı). */
+    private void cleanupOrphanDbQueryAlerts() {
+        try {
+            java.util.Set<String> names = dbQueryMonitorRepo.findAll().stream()
+                    .map(com.sitemonitor.model.DbQueryMonitor::getName).filter(java.util.Objects::nonNull)
+                    .collect(java.util.stream.Collectors.toSet());
+            escalationService.resolveOrphanedDbQueryAlerts(names);
+        } catch (Exception e) {
+            log.warn("Öksüz veritabanı sorgu alarmı temizliği başarısız: {}", e.getMessage());
+        }
+    }
+
+    /** Sorgu alarm hattı — sıra: FAIL (kesinti) → THRESHOLD (iş kuralı) → SLOW; her biri kendi teyit / kurtarma yaşam döngüsü. */
+    private void feedDbQuerySweep(List<MonitoringOutageService.SweepItem> fail,
+                                  List<MonitoringOutageService.SweepItem> threshold,
+                                  List<MonitoringOutageService.SweepItem> slow) {
+        try { monitoringOutageService.handleSweepResults(EscalationService.TYPE_DBQUERY_FAIL, fail); }
+        catch (Exception e) { log.warn("Veritabanı sorgu FAIL işlenemedi: {}", e.getMessage(), e); }
+        try { monitoringOutageService.handleSweepResults(EscalationService.TYPE_DBQUERY_THRESHOLD, threshold); }
+        catch (Exception e) { log.warn("Veritabanı sorgu THRESHOLD işlenemedi: {}", e.getMessage(), e); }
+        try { monitoringOutageService.handleSweepResults(EscalationService.TYPE_DBQUERY_SLOW, slow); }
+        catch (Exception e) { log.warn("Veritabanı sorgu SLOW işlenemedi: {}", e.getMessage(), e); }
+    }
+
+    /**
+     * Bir sorgu sonucundan alarm kalemleri — zamanlanmış tarama ve elle değerlendirme ORTAK kurucusu (ctx kopyalanmaz).
+     *
+     * <ul>
+     *   <li>DBQUERY_FAIL: up = sorgu çalıştı (OK ya da ihlal). Seviye izlemenin alarm seviyesi.</li>
+     *   <li>DBQUERY_THRESHOLD: yalnız sorgu ÇALIŞTIYSA (hata "kural sağlandı" demek değildir — kalem üretilmez). Seviye
+     *       KURALIN seviyesi (WARNING / CRITICAL); detay kural özeti (ölçülen değeri taşır → teyit anahtarına girmez).</li>
+     *   <li>DBQUERY_SLOW: eşik tanımlıysa ve sorgu çalıştıysa; eşik kapalıysa sentetik "up" (asılı alarm kapanır).</li>
+     * </ul>
+     * SKIPPED sonuç hiçbir kalem üretmez. SATIR VERİSİ bağlama KONMAZ (bkz. {@code DbQueryAlertRowsService}).
+     */
+    private void addDbQuerySweepItems(com.sitemonitor.model.DbQueryMonitor m, Map<String, Object> r,
+                                      List<MonitoringOutageService.SweepItem> fail,
+                                      List<MonitoringOutageService.SweepItem> threshold,
+                                      List<MonitoringOutageService.SweepItem> slow) {
+        if (r == null || Boolean.TRUE.equals(r.get("skipped"))) return;
+        String status = r.get("status") == null ? null : String.valueOf(r.get("status"));
+        boolean ran = !com.sitemonitor.service.dbquery.DbQueryCheckerService.STATUS_FAIL.equals(status) && status != null;
+        Map<String, Object> ctx = new LinkedHashMap<>();
+        ctx.put("monitor_name", m.getName());
+        ctx.put("monitor_id", m.getId());
+        ctx.put("monitor_confirm_attempts", m.getConfirmAttempts());
+        ctx.put("monitor_confirm_interval_ms", m.getConfirmIntervalSeconds() != null ? m.getConfirmIntervalSeconds() * 1000L : null);
+        ctx.put("monitor_recovery_checks", m.getRecoveryChecks());
+        ctx.put("monitor_recovery_interval_ms", m.getRecoveryIntervalSeconds() != null ? m.getRecoveryIntervalSeconds() * 1000L : null);
+        if (m.getTeamId() != null) ctx.put("team_id", m.getTeamId());
+        if (m.getNotificationGroupId() != null) ctx.put("notification_group_id", m.getNotificationGroupId());
+        if (m.getPurpose() != null && !m.getPurpose().isBlank()) ctx.put("purpose", m.getPurpose().trim());
+        ctx.put("dbquery_status", status);
+        for (String k : new String[]{"profile_name", "db_type", "duration_ms", "row_count", "row_count_capped",
+                "metric_value", "checked_at", "rule_results", "rule_summary", "error", "failure_reason"}) {
+            if (r.get(k) != null) ctx.put(k, r.get(k));
+        }
+        if (r.get("level") != null) ctx.put("breach_level", r.get("level"));
+        // Taze tarama bağlamı işareti (whitelist'te YOK → alarm anlık görüntüsüne girmez): e-posta yeniden uyarıda son
+        // çalıştırmayı okur, açılışta bu bağlamı.
+        if (r.get("checked_at") != null) ctx.put(EscalationService.CTX_DBQUERY_FRESH, r.get("checked_at"));
+
+        String fdetail = "sorgu";
+        String ferr = ran ? null : com.sitemonitor.service.dbquery.DbQueryAlarmText.itemError(
+                str(r.get("failure_reason")), str(r.get("error")));
+        fail.add(new MonitoringOutageService.SweepItem(
+                EscalationService.TYPE_DBQUERY_FAIL, m.getName(), fdetail, ran, ferr, chanCtx(new LinkedHashMap<>(ctx), m),
+                () -> { Map<String, Object> p = recheckDbQuery(m, false);
+                        if (Boolean.TRUE.equals(p.get("skipped")))
+                            return Map.of("status", "skipped", "error", String.valueOf(p.get("error")));
+                        boolean ok = !com.sitemonitor.service.dbquery.DbQueryCheckerService.STATUS_FAIL.equals(p.get("status"));
+                        return ok ? Map.of("status", "up")
+                                : Map.of("status", "down", "error", com.sitemonitor.service.dbquery.DbQueryAlarmText.itemError(
+                                        str(p.get("failure_reason")), str(p.get("error")))); }));
+
+        if (!ran) return;   // sorgu çalışmadı: eşik / süre hakkında KANIT yok — kalem üretilmez (açık alarm kanıtsız kapanmaz)
+
+        boolean breach = com.sitemonitor.service.dbquery.DbQueryCheckerService.STATUS_BREACH.equals(status);
+        String summary = str(r.get("rule_summary"));
+        String tdetail = summary != null ? summary : (breach ? "kural ihlali" : "kurallar sağlandı");
+        Map<String, Object> tctx = new LinkedHashMap<>(ctx);
+        tctx.put("detail", tdetail);
+        String lvl = str(r.get("level"));
+        if (breach && (com.sitemonitor.service.dbquery.DbQueryEvaluator.LEVEL_CRITICAL.equals(lvl)
+                || com.sitemonitor.service.dbquery.DbQueryEvaluator.LEVEL_WARNING.equals(lvl))) {
+            tctx.put("alert_level", lvl);   // eşik alarmının seviyesi KURALDAN (chanCtx izlemenin seviyesini EZMEZ — putIfAbsent)
+        }
+        threshold.add(new MonitoringOutageService.SweepItem(
+                EscalationService.TYPE_DBQUERY_THRESHOLD, m.getName(), tdetail, !breach, breach ? tdetail : null,
+                chanCtx(tctx, m),
+                () -> { Map<String, Object> p = recheckDbQuery(m, false);
+                        if (Boolean.TRUE.equals(p.get("skipped")))
+                            return Map.of("status", "skipped", "error", String.valueOf(p.get("error")));
+                        if (com.sitemonitor.service.dbquery.DbQueryCheckerService.STATUS_FAIL.equals(p.get("status")))
+                            return Map.of("status", "skipped", "error", "sorgu çalıştırılamadı — kural ölçülemedi");
+                        return Map.of("status", com.sitemonitor.service.dbquery.DbQueryCheckerService.STATUS_BREACH
+                                .equals(p.get("status")) ? "down" : "up"); }));
+
+        Integer slowTh = m.getSlowQueryMs() != null && m.getSlowQueryMs() > 0 ? m.getSlowQueryMs() : null;
+        Long durMs = r.get("duration_ms") instanceof Number dn ? dn.longValue() : null;
+        if (slowTh != null && durMs == null) return;   // eşik açık ama süre ölçülmedi — kanıt yok, kalem yok
+        boolean slowDown = slowTh != null && durMs >= slowTh;
+        Map<String, Object> sctx = new LinkedHashMap<>(ctx);
+        if (slowTh != null) sctx.put("threshold_ms", slowTh);
+        slow.add(new MonitoringOutageService.SweepItem(
+                EscalationService.TYPE_DBQUERY_SLOW, m.getName(), durMs != null ? durMs + " ms" : "süre",
+                !slowDown, null, chanCtx(sctx, m),
+                () -> evalDbQuerySlow(m)));
+    }
+
+    /** Yavaş sorgu yeniden ölçümü (teyit / kurtarma): eşik kapalı → up; çalışmadı / meşgul → skipped (kanıt yok). */
+    private Map<String, Object> evalDbQuerySlow(com.sitemonitor.model.DbQueryMonitor m) {
+        Integer th = m.getSlowQueryMs() != null && m.getSlowQueryMs() > 0 ? m.getSlowQueryMs() : null;
+        if (th == null) return Map.of("status", "up");
+        Map<String, Object> p = recheckDbQuery(m, false);
+        if (Boolean.TRUE.equals(p.get("skipped")) || com.sitemonitor.service.dbquery.DbQueryCheckerService.STATUS_FAIL.equals(p.get("status")))
+            return Map.of("status", "skipped", "error", "sorgu çalıştırılamadı — süre ölçülemedi");
+        Long ms = p.get("duration_ms") instanceof Number n ? n.longValue() : null;
+        if (ms == null) return Map.of("status", "skipped", "error", "süre ölçülemedi");
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("status", ms >= th ? "down" : "up");
+        out.put("duration_ms", ms);
+        out.put("threshold_ms", th);
+        return out;
+    }
+
+    private static String str(Object o) {
+        if (o == null) return null;
+        String s = String.valueOf(o).trim();
+        return s.isEmpty() || "null".equals(s) ? null : s;
+    }
+
+    /**
+     * Bir sorgu çalıştırması: motoru koşturur, {@code dbquery_checks} + aktivite yazar, mail satırlarını bu pod'un belleğine
+     * alır (alarm bildiriminde alarmla saklanır). SKIPPED (eşzamanlılık izni yok) → hiçbir şey yazılmaz.
+     *
+     * <p>Döner (ham sonuç — elle "Şimdi kontrol et" ucu ve takipçiden lidere iletilen değerlendirme de bunu kullanır;
+     * SATIR VERİSİ İÇERMEZ): {@code status} (OK | BREACH | FAIL | SKIPPED), {@code skipped}, {@code ok} (sorgu çalıştı;
+     * SKIPPED'da null), {@code level} (NONE | WARNING | CRITICAL), {@code duration_ms}, {@code row_count},
+     * {@code row_count_capped}, {@code metric_value}, {@code slow}, {@code slow_query_ms}, {@code rule_results}
+     * (API biçimi), {@code rule_summary}, {@code error} (maskeli), {@code failure_reason}, {@code checked_at} (UTC ISO),
+     * {@code sql_hash}, {@code profile_id}, {@code profile_name}, {@code db_type}, {@code check_id}.
+     */
+    Map<String, Object> recheckDbQuery(com.sitemonitor.model.DbQueryMonitor m, boolean manual) {
+        com.sitemonitor.service.dbquery.DbQueryCheckerService.Result res;
+        try {
+            res = dbQueryCheckerService.check(m, manual);
+        } catch (Exception e) {
+            // Motor fırlatmaz sözleşmesi — yine de bozulursa hedefin arızası sayılmaz (satır / alarm yok).
+            log.warn("Veritabanı sorgu motoru beklenmedik hata verdi ({}): {}", m.getName(), e.getClass().getSimpleName());
+            res = null;
+        }
+        if (res == null || com.sitemonitor.service.dbquery.DbQueryCheckerService.STATUS_SKIPPED.equals(res.status())) {
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("status", com.sitemonitor.service.dbquery.DbQueryCheckerService.STATUS_SKIPPED);
+            out.put("skipped", true);
+            out.put("ok", null);   // BİLİNMİYOR — ne çalıştı ne düştü
+            out.put("error", res != null && res.error() != null ? res.error() : "kontrol yürütülemedi");
+            out.put("failure_reason", res != null && res.failureReason() != null ? res.failureReason() : "DB_BUSY");
+            return out;
+        }
+        boolean failed = com.sitemonitor.service.dbquery.DbQueryCheckerService.STATUS_FAIL.equals(res.status());
+        String ts = res.checkedAt() != null && !res.checkedAt().isBlank() ? res.checkedAt() : ISO.format(Instant.now());
+        List<Map<String, Object>> rules = com.sitemonitor.service.dbquery.DbQueryAlarmText.toApi(res.ruleResults());
+        String level = failed ? com.sitemonitor.service.dbquery.DbQueryEvaluator.LEVEL_NONE
+                : (res.level() != null ? res.level() : com.sitemonitor.service.dbquery.DbQueryEvaluator.LEVEL_NONE);
+        Long checkId = null;
+        try {
+            com.sitemonitor.model.DbQueryCheck c = new com.sitemonitor.model.DbQueryCheck();
+            c.setMonitorId(m.getId());
+            c.setCheckedAt(ts);
+            c.setOk(!failed);   // ok = sorgu ÇALIŞTI — eşik ihlali kesinti değildir (SLA / sparkline düşmez)
+            c.setStatus(res.status());
+            c.setBreachLevel(level);
+            c.setDurationMs((int) Math.min(Integer.MAX_VALUE, Math.max(0L, res.durationMs())));
+            c.setRowCount(res.rowCount());
+            c.setRowCountCapped(res.rowCountCapped());
+            c.setMetricValue(res.metricValue());
+            c.setRuleResultsJson(com.sitemonitor.service.dbquery.DbQueryAlarmText.toJson(res.ruleResults()));
+            c.setSlow(res.slow());
+            c.setManual(manual);
+            c.setSqlHash(res.sqlHash() != null ? res.sqlHash() : m.getSqlHash());
+            c.setErrorMessage(res.error());
+            c.setFailureReason(res.failureReason());
+            checkId = dbQueryCheckRepo == null ? null : dbQueryCheckRepo.save(c).getId();
+        } catch (Exception e) {
+            log.warn("Veritabanı sorgu kontrol kaydı yazılamadı: {} — {}", m.getName(), e.getClass().getSimpleName());
+        }
+        // Alarm anındaki satırlar: bu pod'un belleğinde (izleme başına en güncel) — alarm bildiriminde alarmla saklanır.
+        if (dbQueryAlertRows != null) {
+            try { dbQueryAlertRows.remember(m.getId(), res); }
+            catch (Exception e) { log.debug("Sorgu satırları belleğe alınamadı ({}): {}", m.getName(), e.toString()); }
+        }
+        String profileName = null, dbType = null;
+        Long profileId = res.profileId() != null ? res.profileId() : m.getProfileId();
+        if (profileId != null && dbConnectionProfileRepo != null) {
+            try {
+                var p = dbConnectionProfileRepo.findById(profileId).orElse(null);
+                if (p != null) { profileName = p.getName(); dbType = p.getDbType(); }
+            } catch (Exception e) {
+                log.debug("Sorgu bağlantısı okunamadı ({}): {}", profileId, e.toString());
+            }
+        }
+
+        Map<String, Object> activity = new LinkedHashMap<>();
+        activity.put("status", res.status());
+        activity.put("ok", !failed);
+        activity.put("level", level);
+        activity.put("response_ms", res.durationMs());
+        if (res.rowCount() != null) activity.put("row_count", res.rowCount());
+        if (res.rowCountCapped()) activity.put("row_count_capped", true);
+        if (res.metricValue() != null) activity.put("metric_value", res.metricValue());
+        if (res.error() != null) activity.put("error", res.error());
+        if (res.failureReason() != null) activity.put("failure_reason", res.failureReason());
+        activityLog.recordCheck(ActivityLogService.DBQUERY, m.getId(), m.getName(),
+                profileName != null ? profileName : m.getName(), m.getTeamId(), manual, manual ? "manual" : "scheduler", activity);
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("status", res.status());
+        out.put("skipped", false);
+        out.put("ok", !failed);
+        out.put("level", level);
+        out.put("duration_ms", res.durationMs());
+        out.put("row_count", res.rowCount());
+        out.put("row_count_capped", res.rowCountCapped());
+        out.put("metric_value", res.metricValue());
+        out.put("slow", res.slow());
+        out.put("slow_query_ms", m.getSlowQueryMs());
+        out.put("rule_results", rules);
+        out.put("rule_summary", failed ? null : com.sitemonitor.service.dbquery.DbQueryAlarmText.breachSummary(rules));
+        out.put("error", res.error());
+        out.put("failure_reason", res.failureReason());
+        out.put("checked_at", ts);
+        out.put("sql_hash", res.sqlHash() != null ? res.sqlHash() : m.getSqlHash());
+        out.put("profile_id", profileId);
+        if (profileName != null) out.put("profile_name", profileName);
+        if (dbType != null) out.put("db_type", dbType);
+        if (checkId != null) out.put("check_id", checkId);
+        return out;
+    }
 
     /** Elle "Şimdi kontrol et": tek çalıştırma + kontrol satırı; dönen ham sonuç {@link #evaluateDbQueryNow}'a verilir. */
     public Map<String, Object> triggerDbQueryCheck(com.sitemonitor.model.DbQueryMonitor m) {
-        throw new UnsupportedOperationException("triggerDbQueryCheck — tarama paketinde yazılacak");
+        return recheckDbQuery(m, true);
     }
 
     /** Elle değerlendirme (manual=true: alarm AÇMAZ, yalnız kapanış uzlaştırması) — aynı sonuçla, ikinci çalıştırma yok. */
     @Async("certCheckExecutor")
     public void evaluateDbQueryNow(com.sitemonitor.model.DbQueryMonitor m, Map<String, Object> checkResult) {
-        throw new UnsupportedOperationException("evaluateDbQueryNow — tarama paketinde yazılacak");
+        if (forwardManualToLeader(com.sitemonitor.service.monitoring.ManualEvalInbox.TYPE_DBQUERY,
+                m == null ? null : m.getId(), checkResult)) return;   // çok pod R1-B: takipçi → lider
+        try {
+            List<MonitoringOutageService.SweepItem> fail = new ArrayList<>(), threshold = new ArrayList<>(), slow = new ArrayList<>();
+            addDbQuerySweepItems(m, checkResult, fail, threshold, slow);
+            monitoringOutageService.handleSweepResults(EscalationService.TYPE_DBQUERY_FAIL, fail, true);
+            monitoringOutageService.handleSweepResults(EscalationService.TYPE_DBQUERY_THRESHOLD, threshold, true);
+            monitoringOutageService.handleSweepResults(EscalationService.TYPE_DBQUERY_SLOW, slow, true);
+        } catch (Exception e) {
+            log.warn("Manuel veritabanı sorgu değerlendirmesi başarısız {}: {}", m == null ? null : m.getName(),
+                    e.getClass().getSimpleName());
+        }
     }
 
     // ── Senaryo İzleme (10. tür) — k6 alt süreç sweep'i (bounded executor, scheduler'ı bloklamaz) ──────
@@ -10006,6 +10495,8 @@ public class SchedulerService {
     static final String PAGE_SWEEP_TICK = "${site.monitor.page.interval-ms:60000}";
     static final String PAGESPEED_SWEEP_TICK = "${site.monitor.pagespeed.interval-ms:60000}";
     static final String SCRIPTED_SWEEP_TICK = "${site.monitor.scripted.interval-ms:60000}";
+    /** Veritabanı sorgu izlemesi tarama tıkı (sözleşme §4) — izleme vadesi kendi zamanlamasından gelir (aralık / cron). */
+    static final String DBQUERY_SWEEP_TICK = "${site.monitor.dbquery.interval-ms:30000}";
     static final String PING_SWEEP_TICK = "${site.monitor.ping.interval-ms:30000}";
     static final String DNS_SWEEP_TICK = "${site.monitor.dns.interval-ms:300000}";
 

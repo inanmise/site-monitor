@@ -399,8 +399,9 @@ class DataQualityQueriesTest {
         long[] large = measure(stats);
         assertThat(large[0]).as("JdbcTemplate sorgu sayısı").isEqualTo(small[0]);
         assertThat(large[1]).as("JPA hazırlanan cümle sayısı").isEqualTo(small[1]);
-        // takımlar + üyeler + hata sayısı + 9 izleme türü (JDBC) · envanter + kişiler + gruplar + duraklatma geçmişi (JPA)
-        assertThat(large[0]).as("JdbcTemplate sorguları").isEqualTo(12);
+        // takımlar + üyeler + hata sayısı + 10 izleme türü (JDBC; 2026-10-31 veritabanı sorgusu) · envanter + kişiler +
+        // gruplar + duraklatma geçmişi (JPA)
+        assertThat(large[0]).as("JdbcTemplate sorguları").isEqualTo(13);
         assertThat(large[1]).as("JPA cümleleri").isEqualTo(4);
     }
 

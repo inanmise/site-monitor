@@ -146,10 +146,12 @@ public class StatusPageService {
     /** Rollup tablosundaki tür adı → pano tür anahtarı (DNS ve alan adı rollup'ta yok → kullanılabilirlik hesaplanmaz). */
     static final Map<String, String> ROLLUP_TYPES = Map.of(
             "HTTP", "http", "PING", "ping", "PORT", "port", "KEYWORD", "keyword",
-            "PAGE", "page", "PAGESPEED", "pagespeed", "SCRIPTED", "scripted");
+            "PAGE", "page", "PAGESPEED", "pagespeed", "SCRIPTED", "scripted",
+            // Veritabanı sorgusu (2026-10-31): kullanılabilirlik = sorgu ÇALIŞTI (kural ihlali kesinti değil).
+            "DBQUERY", "dbquery");
     static final String UPTIME_SQL =
             "SELECT monitor_type, monitor_key, SUM(total_checks) AS total, SUM(up_checks) AS up FROM monitor_check_daily "
-          + "WHERE day >= ? AND day < ? AND monitor_type IN ('HTTP','PING','PORT','KEYWORD','PAGE','PAGESPEED','SCRIPTED') "
+          + "WHERE day >= ? AND day < ? AND monitor_type IN ('HTTP','PING','PORT','KEYWORD','PAGE','PAGESPEED','SCRIPTED','DBQUERY') "
           + "GROUP BY monitor_type, monitor_key";
 
     private static final DateTimeFormatter ISO =

@@ -344,7 +344,8 @@ class StormServiceTest {
             EscalationService.TYPE_KEYWORD, "keywordRepo",
             EscalationService.TYPE_PAGE_DOWN, "pageRepo",
             EscalationService.TYPE_SCRIPTED_FAIL, "scriptedRepo",
-            EscalationService.TYPE_PAGESPEED_DOWN, "pageSpeedRepo");
+            EscalationService.TYPE_PAGESPEED_DOWN, "pageSpeedRepo",
+            EscalationService.TYPE_DBQUERY_FAIL, "dbQueryRepo");
 
     private void injectFieldRepos() {
         org.springframework.test.util.ReflectionTestUtils.setField(storm, "pageRepo", pageRepo);

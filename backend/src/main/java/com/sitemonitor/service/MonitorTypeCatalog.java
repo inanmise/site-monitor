@@ -34,7 +34,7 @@ public final class MonitorTypeCatalog {
 
     /** Ekranda/PDF'te tür sırası — frontend WeeklyMonitoringStrip.ORDER ile AYNI. */
     public static final List<String> ORDER =
-            List.of("cert", "domain", "http", "ping", "port", "dns", "keyword", "page", "pagespeed", "scripted");
+            List.of("cert", "domain", "http", "ping", "port", "dns", "keyword", "page", "pagespeed", "scripted", "dbquery");
 
     /**
      * Tür → o türe ait {@code AlertEvent.alertType} kümesi.
@@ -45,25 +45,29 @@ public final class MonitorTypeCatalog {
      * görünmez ve aynı alarm arayuzde sekmesiz kalırdı. Büyüyen listeler {@code TYPE_*}
      * sabitlerinden gelir ve kapı onları dener.
      */
-    public static final Map<String, Set<String>> ALERT_TYPES = Map.of(
-            "cert",     Set.of("EXPIRY", "CHAIN_BROKEN", "REVOKED", "MISMATCH",
-                                   "HOSTNAME_MISMATCH", "UNTRUSTED_CA"),
-            "http",     Set.of("ACCESSIBILITY", "HTTP_DOWN", "HTTP_SSL", "HTTP_SLOW", "DOMAIN_EXPIRY"),
-            "port",     Set.of("PORT_DOWN", "PORT_SLOW"),
-            "dns",      Set.of("DNS_FAILURE", "DNS_CHANGED", "DNS_SLOW", "DNS_UNEXPECTED", "DNS_INCONSISTENT"),
-            "keyword",  Set.of("KEYWORD", "KEYWORD_SLOW", "KEYWORD_SSL", "KEYWORD_DOMAIN_EXPIRY"),
-            "ping",     Set.of("PING_DOWN", "PING_SLOW"),
-            "domain",   Set.of("DOMAINMON_EXPIRY", "DOMAINMON_UNKNOWN", "DOMAINMON_STATUS", "DOMAINMON_CHANGED",
-                               "DOMAINMON_TRANSFER_LOCK", "DOMAINMON_BLACKLIST"),
-            "page",     Set.of("PAGE_DOWN", "PAGE_INTEGRITY"),
-            "scripted", Set.of("SCRIPTED_FAIL", "SCRIPTED_SLOW"),
-            "pagespeed", Set.of("PAGESPEED_DOWN", "PAGESPEED_SLOW"));
+    public static final Map<String, Set<String>> ALERT_TYPES = Map.ofEntries(
+            // Map.of en çok 10 çift alır — 11. tür (dbquery, 2026-10-31) ile Map.ofEntries. Kapı regex'i
+            // (monitorTypeSurfaces.test.jsx) her girişi `"tür", Set.of(` biçiminde okur; biçim korunur.
+            Map.entry("cert",     Set.of("EXPIRY", "CHAIN_BROKEN", "REVOKED", "MISMATCH",
+                                   "HOSTNAME_MISMATCH", "UNTRUSTED_CA")),
+            Map.entry("http",     Set.of("ACCESSIBILITY", "HTTP_DOWN", "HTTP_SSL", "HTTP_SLOW", "DOMAIN_EXPIRY")),
+            Map.entry("port",     Set.of("PORT_DOWN", "PORT_SLOW")),
+            Map.entry("dns",      Set.of("DNS_FAILURE", "DNS_CHANGED", "DNS_SLOW", "DNS_UNEXPECTED", "DNS_INCONSISTENT")),
+            Map.entry("keyword",  Set.of("KEYWORD", "KEYWORD_SLOW", "KEYWORD_SSL", "KEYWORD_DOMAIN_EXPIRY")),
+            Map.entry("ping",     Set.of("PING_DOWN", "PING_SLOW")),
+            Map.entry("domain",   Set.of("DOMAINMON_EXPIRY", "DOMAINMON_UNKNOWN", "DOMAINMON_STATUS", "DOMAINMON_CHANGED",
+                               "DOMAINMON_TRANSFER_LOCK", "DOMAINMON_BLACKLIST")),
+            Map.entry("page",     Set.of("PAGE_DOWN", "PAGE_INTEGRITY")),
+            Map.entry("scripted", Set.of("SCRIPTED_FAIL", "SCRIPTED_SLOW")),
+            Map.entry("pagespeed", Set.of("PAGESPEED_DOWN", "PAGESPEED_SLOW")),
+            Map.entry("dbquery",  Set.of("DBQUERY_FAIL", "DBQUERY_THRESHOLD", "DBQUERY_SLOW")));
 
     /** Tür → Türkçe etiket (e-posta + PDF ortak). */
-    public static final Map<String, String> LABELS_TR = Map.of(
-            "cert", "Sertifika", "domain", "Alan Adı", "http", "HTTP/Website", "ping", "Ping",
-            "port", "Port", "dns", "DNS", "keyword", "Keyword", "page", "Sayfa Bütünlüğü",
-            "pagespeed", "Sayfa Hızı", "scripted", "Sentetik (k6)");
+    public static final Map<String, String> LABELS_TR = Map.ofEntries(
+            Map.entry("cert", "Sertifika"), Map.entry("domain", "Alan Adı"), Map.entry("http", "HTTP/Website"),
+            Map.entry("ping", "Ping"), Map.entry("port", "Port"), Map.entry("dns", "DNS"), Map.entry("keyword", "Keyword"),
+            Map.entry("page", "Sayfa Bütünlüğü"), Map.entry("pagespeed", "Sayfa Hızı"), Map.entry("scripted", "Sentetik (k6)"),
+            Map.entry("dbquery", "Veritabanı Sorgusu"));
 
     /** alertType → tür (ters eşleme, tek sefer kurulur). */
     private static final Map<String, String> TYPE_OF_ALERT = buildReverse();

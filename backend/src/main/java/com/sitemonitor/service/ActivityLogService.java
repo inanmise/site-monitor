@@ -26,7 +26,7 @@ public class ActivityLogService {
 
     public static final String CERT = "CERT", UPTIME = "UPTIME", HTTP = "HTTP", PORT = "PORT",
             PING = "PING", DNS = "DNS", KEYWORD = "KEYWORD", DOMAIN = "DOMAIN", PAGE = "PAGE", SCRIPTED = "SCRIPTED",
-            PAGESPEED = "PAGESPEED";
+            PAGESPEED = "PAGESPEED", DBQUERY = "DBQUERY";
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -185,8 +185,33 @@ public class ActivityLogService {
                 String detail = safe(status) + (cp != null || cf != null ? " · " + (cp != null ? cp : 0) + "✓/" + (cf != null ? cf : 0) + "✗" : "");
                 a.setResultSummary(detail + (ms != null ? " · " + ms + "ms" : ""));
             }
+            case DBQUERY -> {
+                String status = str(r.get("status"));   // OK | BREACH | FAIL
+                // Kural ihlali bir KESİNTİ DEĞİL (iş alarmı) → WARNING; sorgu çalışmadıysa ERROR / TIMEOUT.
+                String reason = str(r.get("failure_reason"));
+                a.setResultStatus(switch (status == null ? "" : status.toUpperCase()) {
+                    case "OK" -> "SUCCESS";
+                    case "BREACH" -> "WARNING";
+                    case "FAIL" -> "DB_TIMEOUT".equals(reason) ? "TIMEOUT" : "ERROR";
+                    default -> error != null ? "ERROR" : "UNKNOWN";
+                });
+                Integer rows = asInt(r.get("row_count"));
+                Object metric = r.get("metric_value");
+                String detail = "FAIL".equalsIgnoreCase(status) ? "çalıştırılamadı"
+                        : (rows != null ? (truthy(r.get("row_count_capped")) ? "≥ " : "") + rows + " satır" : "-")
+                          + (metric instanceof Number n && n.doubleValue() != (rows == null ? Double.NaN : rows.doubleValue())
+                             ? " · değer " + metricText(n) : "");
+                a.setResultSummary(detail + (ms != null ? " · " + ms + "ms" : ""));
+            }
             default -> a.setResultStatus(error != null ? "ERROR" : "SUCCESS");
         }
+    }
+
+    /** Ölçülen değer: tam sayıda ".0" yazılmaz. */
+    private static String metricText(Number n) {
+        double d = n.doubleValue();
+        if (d == Math.rint(d) && Math.abs(d) < 1e15) return String.valueOf((long) d);
+        return java.math.BigDecimal.valueOf(d).stripTrailingZeros().toPlainString();
     }
 
     private static String mapCertDomainStatus(String type, String status, String error) {

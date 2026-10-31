@@ -68,6 +68,13 @@ public class MonitoringWeeklyStatsService {
     private final PageCheckRepository pageCheckRepo;
     private final PageSpeedCheckRepository pageSpeedCheckRepo;
 
+    /** Veritabanı sorgu izlemesi (11. tür, 2026-10-31) — alan enjeksiyonu, isteğe bağlı (yapıcıyla kurulan testler bozulmasın;
+     *  yoksa tür boş istatistikle raporlanır). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.repository.DbQueryMonitorRepository dbQueryMonitorRepo;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.repository.DbQueryCheckRepository dbQueryCheckRepo;
+
     private final AlertEventRepository alertEventRepo;
     private final CertificateService certificateService;
     private final WeeklyAvailabilityReportService availabilityService;
@@ -122,6 +129,7 @@ public class MonitoringWeeklyStatsService {
         types.add(pageType(c));
         types.add(pageSpeedType(c));
         types.add(scriptedType(c));
+        types.add(dbQueryType(c));
         return new MonitoringStats(types);
     }
 
@@ -265,6 +273,16 @@ public class MonitoringWeeklyStatsService {
                 .map(m -> new MonRef(m.getId(), m.getName(), m.getCreatedAt())).toList();
         return monitorIdType("scripted", mons, c,
                 (idl, from, to) -> scriptedCheckRepo.weeklyStatsByMonitor(idl, from, to), ExtraMode.NONE, null);
+    }
+
+    /** Veritabanı sorgusu: başarı = sorgu ÇALIŞTI (kural ihlali kesinti değildir); ek değer = ortalama sorgu süresi. */
+    private TypeStats dbQueryType(Ctx c) {
+        List<MonRef> mons = dbQueryMonitorRepo == null ? List.of() : dbQueryMonitorRepo.findByActiveTrue().stream()
+                .filter(m -> c.teamId().equals(m.getTeamId()))
+                .map(m -> new MonRef(m.getId(), m.getName(), m.getCreatedAt())).toList();
+        return monitorIdType("dbquery", mons, c,
+                (idl, from, to) -> dbQueryCheckRepo == null ? List.<Object[]>of() : dbQueryCheckRepo.weeklyStatsByMonitor(idl, from, to),
+                ExtraMode.AVG_MS, null);
     }
 
     /** monitorId-anahtarlı türler için ortak: aktif-sayı + id→ad + haftalık grup sorgusu (cur/prev). */

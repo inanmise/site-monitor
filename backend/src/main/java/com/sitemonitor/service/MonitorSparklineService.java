@@ -56,6 +56,9 @@ public class MonitorSparklineService {
                 "CASE WHEN ok = FALSE OR error_message IS NOT NULL OR (breached_metrics IS NOT NULL AND breached_metrics <> '') THEN 1 ELSE 0 END"));
         KINDS.put("scripted",  new Kind("scripted_checks",  "scripted_monitors",  "duration_ms",
                 verdict("ok", "error IS NOT NULL OR exit_code <> 0 OR checks_failed > 0")));
+        // Veritabanı sorgusu (2026-10-31): kesinti YALNIZ sorgunun çalıştırılamaması (ok = FALSE). Kural ihlali (status
+        // BREACH, ok = TRUE) iş alarmıdır — SLA'yı düşürmez (kart ihlali kendi rozetiyle gösterir).
+        KINDS.put("dbquery",   new Kind("dbquery_checks",   "dbquery_monitors",   "duration_ms", verdict("ok", "error_message IS NOT NULL")));
     }
 
     /** {@code col = FALSE} → hata; hüküm sütunu boş (eski satır) ise {@code legacyFail} kuralı. */

@@ -106,6 +106,10 @@ public class StormService {
     @org.springframework.beans.factory.annotation.Autowired
     private com.sitemonitor.repository.PageSpeedMonitorRepository pageSpeedRepo;
 
+    /** Veritabanı sorgu türü (11. tür, 2026-10-31) — alan enjeksiyonu, isteğe bağlı (elle kurulan testte null → 0). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.repository.DbQueryMonitorRepository dbQueryRepo;
+
     /** Kişi-push kanalı — alan enjeksiyonu (constructor/test büyütmemek için, pageRepo deseni).
      *  Fırtına yolunda push HİÇ YOKTU: ürünün en ciddi olayında (12 monitör birden düştü) yalnız
      *  kişi-push'u kullanan nöbetçi hiçbir bildirim almıyordu. null-güvenli çağrılır. */
@@ -1098,7 +1102,9 @@ public class StormService {
                     // Sayfa hızı: PAGESPEED_DOWN storm ÜYESİ (DOWN_ALERT_TYPES içinde) → paydada da olmalı.
                     // Payda eksik kalırsa yüzde olduğundan büyük çıkar, fırtına erken ilan edilir ve
                     // bireysel alarmlar gereksiz yere bastırılır.
-                    + (pageSpeedRepo != null ? pageSpeedRepo.countByActiveTrue() : 0);
+                    + (pageSpeedRepo != null ? pageSpeedRepo.countByActiveTrue() : 0)
+                    // Veritabanı sorgusu: DBQUERY_FAIL storm ÜYESİ (DOWN_ALERT_TYPES içinde) → paydada da olmalı.
+                    + (dbQueryRepo != null ? dbQueryRepo.countByActiveTrue() : 0);
         } catch (Exception e) {
             return cachedTotal > 0 ? cachedTotal : 0;
         }
@@ -1129,7 +1135,8 @@ public class StormService {
                     + dnsRepo.countByStandaloneTrueAndActiveTrueAndTeamId(teamId)
                     + (pageRepo != null ? pageRepo.countByTeamIdAndActiveTrue(teamId) : 0)
                     + (scriptedRepo != null ? scriptedRepo.countByTeamIdAndActiveTrue(teamId) : 0)
-                    + (pageSpeedRepo != null ? pageSpeedRepo.countByTeamIdAndActiveTrue(teamId) : 0);
+                    + (pageSpeedRepo != null ? pageSpeedRepo.countByTeamIdAndActiveTrue(teamId) : 0)
+                    + (dbQueryRepo != null ? dbQueryRepo.countByTeamIdAndActiveTrue(teamId) : 0);
         } catch (Exception e) {
             return c != null ? c[0] : 0;
         }
@@ -1198,6 +1205,7 @@ public class StormService {
             + " UNION ALL SELECT team_id, COUNT(*) FROM page_monitors WHERE active = true AND team_id IS NOT NULL GROUP BY team_id"
             + " UNION ALL SELECT team_id, COUNT(*) FROM scripted_monitors WHERE active = true AND team_id IS NOT NULL GROUP BY team_id"
             + " UNION ALL SELECT team_id, COUNT(*) FROM pagespeed_monitors WHERE active = true AND team_id IS NOT NULL GROUP BY team_id"
+            + " UNION ALL SELECT team_id, COUNT(*) FROM dbquery_monitors WHERE active = true AND team_id IS NOT NULL GROUP BY team_id"
             + ") x GROUP BY team_id";
     private volatile Map<Long, Long> activeByTeam;
     private volatile long activeByTeamAtMs;
@@ -1735,6 +1743,8 @@ public class StormService {
                         scriptedRepo != null ? scriptedRepo.findFirstByNameOrderByIdAsc(d).map(m -> m.getGroupName()).orElse(null) : null;
                 case EscalationService.TYPE_PAGESPEED_DOWN, EscalationService.TYPE_PAGESPEED_SLOW ->
                         pageSpeedRepo != null ? pageSpeedRepo.findFirstByUrlOrderByIdAsc(d).map(m -> m.getGroupName()).orElse(null) : null;
+                case EscalationService.TYPE_DBQUERY_FAIL, EscalationService.TYPE_DBQUERY_THRESHOLD, EscalationService.TYPE_DBQUERY_SLOW ->
+                        dbQueryRepo != null ? dbQueryRepo.findFirstByNameOrderByIdAsc(d).map(m -> m.getGroupName()).orElse(null) : null;
                 // Yavaşlık da AYNI monitörden gelir: türü ayrı tutup grubu çözmemek alarmı
                 // "Grupsuz" fırtına kovasına düşürürdü (Sayfa/Sentetik aileleri gibi çiftli).
                 case EscalationService.TYPE_PING_DOWN, EscalationService.TYPE_PING_SLOW ->
@@ -1775,6 +1785,9 @@ public class StormService {
                     : scriptedRepo.findById(id).map(m -> Optional.ofNullable(m.getGroupName())).orElse(null);
             case EscalationService.TYPE_PAGESPEED_DOWN, EscalationService.TYPE_PAGESPEED_SLOW -> pageSpeedRepo == null ? null
                     : pageSpeedRepo.findById(id).map(m -> Optional.ofNullable(m.getGroupName())).orElse(null);
+            case EscalationService.TYPE_DBQUERY_FAIL, EscalationService.TYPE_DBQUERY_THRESHOLD, EscalationService.TYPE_DBQUERY_SLOW ->
+                    dbQueryRepo == null ? null
+                    : dbQueryRepo.findById(id).map(m -> Optional.ofNullable(m.getGroupName())).orElse(null);
             case EscalationService.TYPE_PING_DOWN, EscalationService.TYPE_PING_SLOW ->
                     pingRepo.findById(id).map(m -> Optional.ofNullable(m.getGroupName())).orElse(null);
             case EscalationService.TYPE_DNS_FAILURE ->
@@ -2450,6 +2463,7 @@ public class StormService {
             case EscalationService.TYPE_PAGE_DOWN     -> "Sayfa Erişilemez";
             case EscalationService.TYPE_SCRIPTED_FAIL -> "Sentetik Senaryo Başarısız";
             case EscalationService.TYPE_PAGESPEED_DOWN-> "Sayfa Hızı Erişilemez";
+            case EscalationService.TYPE_DBQUERY_FAIL  -> "Veritabanı Sorgusu Çalıştırılamıyor";
             case "MIXED"                              -> "Karışık (çok tipli)";
             default                                   -> "Kesinti";
         };

@@ -111,7 +111,7 @@
       }
     } ]
   },
-  "description" : "SiteMonitor izleme durumu, alarmlar, sertifikalar ve sistemin kendi sağlığı — takım ve tür süzgeçli. Pano revizyonu 9 · SiteMonitor 0.0.0-gate.",
+  "description" : "SiteMonitor izleme durumu, alarmlar, sertifikalar ve sistemin kendi sağlığı — takım ve tür süzgeçli. Pano revizyonu 10 · SiteMonitor 0.0.0-gate.",
   "editable" : true,
   "fiscalYearStartMonth" : 0,
   "graphTooltip" : 1,
@@ -1750,6 +1750,11 @@
                 "color" : "text",
                 "index" : 9,
                 "text" : "Sentetik (k6)"
+              },
+              "dbquery" : {
+                "color" : "text",
+                "index" : 10,
+                "text" : "Veritabanı sorgusu"
               }
             },
             "type" : "value"
@@ -2652,6 +2657,15 @@
           "id" : "displayName",
           "value" : "Sentetik (k6)"
         } ]
+      }, {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "dbquery"
+        },
+        "properties" : [ {
+          "id" : "displayName",
+          "value" : "Veritabanı sorgusu"
+        } ]
       } ]
     },
     "targets" : [ {
@@ -3208,6 +3222,11 @@
                 "color" : "text",
                 "index" : 9,
                 "text" : "Sentetik (k6)"
+              },
+              "dbquery" : {
+                "color" : "text",
+                "index" : 10,
+                "text" : "Veritabanı sorgusu"
               }
             },
             "type" : "value"
@@ -3862,6 +3881,11 @@
                 "color" : "text",
                 "index" : 9,
                 "text" : "Sentetik (k6)"
+              },
+              "dbquery" : {
+                "color" : "text",
+                "index" : 10,
+                "text" : "Veritabanı sorgusu"
               }
             },
             "type" : "value"
@@ -4808,6 +4832,15 @@
           "id" : "displayName",
           "value" : "Sentetik (k6)"
         } ]
+      }, {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "dbquery"
+        },
+        "properties" : [ {
+          "id" : "displayName",
+          "value" : "Veritabanı sorgusu"
+        } ]
       } ]
     },
     "targets" : [ {
@@ -5136,6 +5169,15 @@
         "properties" : [ {
           "id" : "displayName",
           "value" : "Sentetik (k6)"
+        } ]
+      }, {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "dbquery"
+        },
+        "properties" : [ {
+          "id" : "displayName",
+          "value" : "Veritabanı sorgusu"
         } ]
       } ]
     },
@@ -13119,8 +13161,12 @@
         "selected" : false,
         "text" : "Sentetik (k6)",
         "value" : "scripted"
+      }, {
+        "selected" : false,
+        "text" : "Veritabanı sorgusu",
+        "value" : "dbquery"
       } ],
-      "query" : "Sertifika : cert, Alan adı kaydı : domain, HTTP / Web sitesi : http, Ping : ping, Port : port, DNS : dns, İçerik (keyword) : keyword, Sayfa bütünlüğü : page, Sayfa hızı : pagespeed, Sentetik (k6) : scripted",
+      "query" : "Sertifika : cert, Alan adı kaydı : domain, HTTP / Web sitesi : http, Ping : ping, Port : port, DNS : dns, İçerik (keyword) : keyword, Sayfa bütünlüğü : page, Sayfa hızı : pagespeed, Sentetik (k6) : scripted, Veritabanı sorgusu : dbquery",
       "skipUrlSync" : false,
       "type" : "custom",
       "description" : "İzleme türü (sertifika alarmları için Sertifika)."
@@ -13280,6 +13326,6 @@
   "timezone" : "browser",
   "title" : "SiteMonitor — Uçtan uca izleme",
   "uid" : "sitemonitor-overview",
-  "version" : 9,
+  "version" : 10,
   "weekStart" : "monday"
 }

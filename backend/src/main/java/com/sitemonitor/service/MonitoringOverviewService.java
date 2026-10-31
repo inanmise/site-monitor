@@ -80,7 +80,7 @@ public class MonitoringOverviewService {
     /** Taze istek ({@code fresh=true}) belleği ancak kayıt bu yaştan eskiyse atlar (ms) — Yenile düğmesi sel koruması. */
     static final long FRESH_MIN_MS = 5_000;
     /** Pencere sorgusunun 4. sütunu ORTALAMA yanıt/süre olan türler (DNS'te aynı sütun değişim sayısıdır — okunmaz). */
-    static final Set<String> AVG_RESPONSE_TYPES = Set.of("http", "ping", "page", "pagespeed", "scripted");
+    static final Set<String> AVG_RESPONSE_TYPES = Set.of("http", "ping", "page", "pagespeed", "scripted", "dbquery");
 
     private final HttpMonitorRepository httpMonitorRepo;
     private final PingMonitorRepository pingMonitorRepo;
@@ -113,6 +113,13 @@ public class MonitoringOverviewService {
      */
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.sitemonitor.repository.CertificateInventoryRepository inventoryRepo;
+
+    /** Veritabanı sorgu izlemesi (11. tür, 2026-10-31) — alan enjeksiyonu, isteğe bağlı (yapıcıyla kurulan testler bozulmasın;
+     *  yoksa tür panoda görünmez). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.repository.DbQueryMonitorRepository dbQueryMonitorRepo;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.repository.DbQueryCheckRepository dbQueryCheckRepo;
 
     /** Bellekli girişin hesaplamayı PROXY üzerinden çağırması için (salt-okunur işlem korunur) — CertificateService deseni.
      *  Birim testinde null → doğrudan {@code this}. */
@@ -306,6 +313,8 @@ public class MonitoringOverviewService {
         types.add(summarize(pageSpec(), canViewTeam, teamNames, openByKey, from, now, nowI, rows));
         types.add(summarize(pageSpeedSpec(), canViewTeam, teamNames, openByKey, from, now, nowI, rows));
         types.add(summarize(scriptedSpec(), canViewTeam, teamNames, openByKey, from, now, nowI, rows));
+        if (dbQueryMonitorRepo != null && dbQueryCheckRepo != null)
+            types.add(summarize(dbQuerySpec(), canViewTeam, teamNames, openByKey, from, now, nowI, rows));
 
         // Pencerede çözülen alarmlar (tür başına) — kapsam: alarm satırının takımı görüş kapsamında (global → hepsi).
         // Gruplu sayım (tip, damgalı takım): sessiz kapanış sorguda elenir, kapsam takım sütunu üzerinden burada.
@@ -430,7 +439,8 @@ public class MonitoringOverviewService {
             else if (!isActive) status = "paused";
             else if (c == null) status = "unknown";
             else if (!open.isEmpty() || Boolean.FALSE.equals(ok)) status = "down";
-            else if (isStale(checkedAt, spec.interval().apply(m), nowI)) status = "stale";
+            else if (m instanceof com.sitemonitor.model.DbQueryMonitor dq
+                    ? isDbQueryStale(dq.getNextRunAt(), nowI) : isStale(checkedAt, spec.interval().apply(m), nowI)) status = "stale";
             else status = "up";
 
             total++;
@@ -493,6 +503,27 @@ public class MonitoringOverviewService {
         if (checksUnavailable) t.put("checks_unavailable", true);
         if (statsUnavailable) t.put("stats_unavailable", true);
         return t;
+    }
+
+    /** Veritabanı sorgusunun planlı çalışmasından sonra "gecikmiş" sayılmadan önce tanınan pay: max(2 × tarama tıkı, 5 dk). */
+    static final long DBQUERY_STALE_GRACE_SECONDS = 300;
+
+    /**
+     * Veritabanı sorgu izlemesi "gecikmiş" mi (2026-10-31): vade izlemenin KENDİ zamanlamasından gelir (cron, izinli / yasak
+     * pencereler, tatil) — aralığın katı kuralı burada YANLIŞ olurdu (günlük cron'u ya da mesai dışı penceresi olan izleme
+     * her gece "gecikmiş" görünürdü). Kural: planlı çalışma ({@code next_run_at}) + {@link #DBQUERY_STALE_GRACE_SECONDS}
+     * geçtiyse gecikmiş; pencere dışında beklemek gecikme DEĞİL (plan bir sonraki uygun ana yazılır). Plan yoksa (henüz
+     * hesaplanmadı / uygun an yok) gecikme yok.
+     */
+    static boolean isDbQueryStale(String nextRunAt, Instant now) {
+        if (nextRunAt == null || nextRunAt.isBlank()) return false;
+        try {
+            Instant next = java.time.LocalDateTime.parse(nextRunAt.trim(), DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss"))
+                    .toInstant(ZoneOffset.UTC);
+            return next.plusSeconds(DBQUERY_STALE_GRACE_SECONDS).isBefore(now);
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     static boolean isStale(String checkedAt, Integer intervalSeconds, Instant now) {
@@ -630,6 +661,18 @@ public class MonitoringOverviewService {
                 scriptedCheckRepo::weeklyStatsByMonitor);
     }
 
+    /** Veritabanı sorgusu: hedef = ad (alarm anahtarı); süre = sorgu süresi; ok = sorgu çalıştı (eşik ihlali kesinti değil). */
+    private TypeSpec<com.sitemonitor.model.DbQueryMonitor, com.sitemonitor.model.DbQueryCheck> dbQuerySpec() {
+        return new TypeSpec<>("dbquery", dbQueryMonitorRepo::findAllByOrderByNameAsc,
+                com.sitemonitor.model.DbQueryMonitor::getId, com.sitemonitor.model.DbQueryMonitor::getName,
+                com.sitemonitor.model.DbQueryMonitor::getName, com.sitemonitor.model.DbQueryMonitor::getTeamId,
+                com.sitemonitor.model.DbQueryMonitor::getActive, m -> false, com.sitemonitor.model.DbQueryMonitor::getIntervalSeconds,
+                dbQueryCheckRepo::findLatestPerMonitor, com.sitemonitor.model.DbQueryCheck::getMonitorId,
+                c -> Boolean.TRUE.equals(c.getOk()), com.sitemonitor.model.DbQueryCheck::getCheckedAt,
+                com.sitemonitor.model.DbQueryCheck::getDurationMs, com.sitemonitor.model.DbQueryCheck::getErrorMessage,
+                dbQueryCheckRepo::weeklyStatsByMonitor);
+    }
+
     private static String nz(String a, String b) { return a != null && !a.isBlank() ? a : b; }
 
     /**
@@ -647,6 +690,7 @@ public class MonitoringOverviewService {
             case PageMonitor x -> x.getGroupName();
             case PageSpeedMonitor x -> x.getGroupName();
             case ScriptedMonitor x -> x.getGroupName();
+            case com.sitemonitor.model.DbQueryMonitor x -> x.getGroupName();
             case null, default -> null;
         };
         return g == null || g.isBlank() ? null : g.trim();

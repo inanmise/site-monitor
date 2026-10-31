@@ -274,6 +274,9 @@ public class DataQualitySource {
                     rs -> { out.add(simple(t, rs, rs.getString(3), null)); });
             case SCRIPTED -> jdbc.query("SELECT id, name, name, team_id, active, group_name, updated_at FROM scripted_monitors",
                     rs -> { out.add(simple(t, rs, null, null)); });
+            // Veritabanı sorgusu (2026-10-31): aynı bağlantıda farklı sorgular meşrudur → yinelenen sayılmaz (dupKey null).
+            case DBQUERY -> jdbc.query("SELECT id, name, name, team_id, active, group_name, updated_at FROM dbquery_monitors",
+                    rs -> { out.add(simple(t, rs, null, null)); });
             case PING -> jdbc.query("SELECT id, name, host, team_id, active, group_name, updated_at FROM ping_monitors", rs -> {
                 String host = rs.getString(3);
                 out.add(simple(t, rs, host, lower(host)));

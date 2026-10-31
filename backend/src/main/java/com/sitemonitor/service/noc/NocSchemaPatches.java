@@ -25,10 +25,11 @@ import java.util.List;
 @RequiredArgsConstructor
 public class NocSchemaPatches {
 
-    /** 7/24 alanlarını taşıyan on tablo (on izleme türü). */
+    /** 7/24 alanlarını taşıyan on bir tablo (on bir izleme türü; 2026-10-31 veritabanı sorgusu). */
     static final List<String> MONITOR_TABLES = List.of(
             "certificate_inventory", "ping_monitors", "http_monitors", "keyword_monitors", "page_monitors",
-            "pagespeed_monitors", "scripted_monitors", "dns_monitors", "port_monitors", "domain_monitors");
+            "pagespeed_monitors", "scripted_monitors", "dns_monitors", "port_monitors", "domain_monitors",
+            "dbquery_monitors");
 
     static final List<String> INDEXES = List.of(
             "CREATE UNIQUE INDEX IF NOT EXISTS ux_noc_delivery_key ON noc_deliveries(dedupe_key)",

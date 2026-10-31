@@ -67,7 +67,7 @@ public class AlertNoiseService {
     static final String PATTERN_NORMAL = "NORMAL";
     /** "Düşük" sınıfı alarm tipleri — aynı host'u birden çok türün izlediğini bunlarla anlarız. */
     private static final Set<String> DOWN_CLASS = Set.of("ACCESSIBILITY", "HTTP_DOWN", "PORT_DOWN", "PING_DOWN",
-            "DNS_FAILURE", "KEYWORD", "PAGE_DOWN", "PAGESPEED_DOWN", "SCRIPTED_FAIL");
+            "DNS_FAILURE", "KEYWORD", "PAGE_DOWN", "PAGESPEED_DOWN", "SCRIPTED_FAIL", "DBQUERY_FAIL");
 
     private final AlertEventRepository alertEventRepo;
     private final CertificateInventoryRepository inventoryRepo;

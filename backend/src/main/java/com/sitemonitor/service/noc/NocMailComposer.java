@@ -80,6 +80,9 @@ public final class NocMailComposer {
             case "PAGESPEED_DOWN" -> "Sayfa hızı ölçülemiyor";
             case "PORT_SLOW", "PING_SLOW", "DNS_SLOW", "KEYWORD_SLOW", "HTTP_SLOW", "SCRIPTED_SLOW" -> "Yavaş yanıt";
             case "PAGESPEED_SLOW" -> "Sayfa hızı eşiği aşıldı";
+            case "DBQUERY_FAIL" -> "Veritabanı sorgusu çalıştırılamıyor";
+            case "DBQUERY_THRESHOLD" -> "Veritabanı sorgu kuralı ihlal edildi";
+            case "DBQUERY_SLOW" -> "Veritabanı sorgusu yavaş";
             case "DNS_CHANGED" -> "DNS kaydı değişti";
             case "DNS_UNEXPECTED" -> "DNS beklenmeyen değer döndürüyor";
             case "DNS_INCONSISTENT" -> "DNS çözümleyicileri tutarsız";
