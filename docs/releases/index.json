@@ -1,9 +1,51 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-30T23:35:22Z",
+  "generatedAt": "2026-10-31T01:47:54Z",
   "repo": "inanmise/site-monitor",
-  "count": 795,
+  "count": 796,
   "releases": [
+    {
+      "version": "20.175.0",
+      "tag": "v20.175.0",
+      "releasedAt": "2026-10-31T01:47:48Z",
+      "commit": "1e8043cc4d572e9dd8d884936a35456eaf8e1d0b",
+      "prevVersion": "20.174.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 1
+      },
+      "changes": [
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "1e8043cc",
+          "subject": "tembel Excel yazıcısı kapısına kaynak analizi dışa aktarımı eklendi"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "03ec8a8c",
+          "subject": "kaynak analizi son inceleme düzeltmeleri — bellek sınırı, kısmi ölçüm başarı sayılmaz, kalp atışı, iki pod"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "5ddd4904",
+          "subject": "sayfa bütünlüğü kaynak analizi — istenince sayfanın tüm nesnelerini ölçen sekme, not, öneriler, Excel / PDF"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.174.0",
       "tag": "v20.174.0",
