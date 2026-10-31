@@ -122,10 +122,10 @@ class HolidayCalendarServiceTest {
 
         private JdbcTemplate jdbc(String name) {
             JdbcTemplate j = new JdbcTemplate(new DriverManagerDataSource(
-                    "jdbc:h2:mem:" + name + ";DB_CLOSE_DELAY=-1;MODE=PostgreSQL;NON_KEYWORDS=DAY", "sa", ""));   // "day" H2'de anahtar sözcük (PostgreSQL'de değil)
+                    "jdbc:h2:mem:" + name + ";DB_CLOSE_DELAY=-1;MODE=PostgreSQL", "sa", ""));
             j.execute("DROP TABLE IF EXISTS holiday_days");
             j.execute("DROP TABLE IF EXISTS schema_patch_markers");
-            j.execute("CREATE TABLE holiday_days (day VARCHAR(10) PRIMARY KEY, name VARCHAR(120) NOT NULL, "
+            j.execute("CREATE TABLE holiday_days (holiday_date VARCHAR(10) PRIMARY KEY, name VARCHAR(120) NOT NULL, "
                     + "created_at VARCHAR(30), created_by_name VARCHAR(200))");
             return j;
         }
@@ -148,22 +148,22 @@ class HolidayCalendarServiceTest {
             HolidayCalendarSeed seed = seed(j, cal);
             seed.run();
             assertThat(j.queryForObject("SELECT COUNT(*) FROM holiday_days", Integer.class)).isEqualTo(HolidayCalendarSeed.DAYS.size());
-            assertThat(j.queryForObject("SELECT name FROM holiday_days WHERE day = '2026-10-28'", String.class)).contains("arife");
+            assertThat(j.queryForObject("SELECT name FROM holiday_days WHERE holiday_date = '2026-10-28'", String.class)).contains("arife");
             assertThat(j.queryForObject("SELECT COUNT(*) FROM schema_patch_markers WHERE patch_key = ?", Integer.class,
                     HolidayCalendarSeed.KEY)).isEqualTo(1);
             verify(cal).invalidate();
 
             // Yönetici bir günü sildi — yeni pod / ikinci tur tohumu YENİDEN yazmaz (nişan)
-            j.update("DELETE FROM holiday_days WHERE day = '2026-01-01'");
+            j.update("DELETE FROM holiday_days WHERE holiday_date = '2026-01-01'");
             seed(j, cal).run();
-            assertThat(j.queryForObject("SELECT COUNT(*) FROM holiday_days WHERE day = '2026-01-01'", Integer.class)).isZero();
+            assertThat(j.queryForObject("SELECT COUNT(*) FROM holiday_days WHERE holiday_date = '2026-01-01'", Integer.class)).isZero();
         }
 
         @Test
         @DisplayName("dolu tablo: yöneticinin takvimine dokunulmaz, yalnız nişan yazılır")
         void filledTableIsUntouched() {
             JdbcTemplate j = jdbc("holidayseed2");
-            j.update("INSERT INTO holiday_days (day, name) VALUES ('2026-12-31', 'Şirket günü')");
+            j.update("INSERT INTO holiday_days (holiday_date, name) VALUES ('2026-12-31', 'Şirket günü')");
             HolidayCalendarService cal = mock(HolidayCalendarService.class);
             seed(j, cal).run();
             assertThat(j.queryForObject("SELECT COUNT(*) FROM holiday_days", Integer.class)).isEqualTo(1);

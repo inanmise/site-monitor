@@ -127,8 +127,8 @@ public class HolidayCalendarSeed {
             String now = ISO.format(Instant.now());
             for (String[] d : DAYS) {
                 // Koşullu ekleme: yarışta (elle kayıt) aynı gün çift satır üretmez — gün birincil anahtardır.
-                written += jdbc.update("INSERT INTO holiday_days (day, name, created_at, created_by_name) "
-                        + "SELECT ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM holiday_days WHERE day = ?)",
+                written += jdbc.update("INSERT INTO holiday_days (holiday_date, name, created_at, created_by_name) "
+                        + "SELECT ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM holiday_days WHERE holiday_date = ?)",
                         d[0], d[1], now, ACTOR, d[0]);
             }
         }

@@ -125,8 +125,19 @@ class DbQueryApiRepositoriesTest {
         assertThat(checks.historyBounds(id).get(0)).containsExactly("2026-10-30T10:00:00", "2026-10-30T12:00:00");
     }
 
-    // Tatil takvimi deposu burada YOK: "day" kolonu H2'de anahtar sözcük (PostgreSQL'de değil) → ddl create-drop tabloyu kuramaz.
-    // Gerçek SQL HolidayCalendarServiceTest.Seed'de (H2, NON_KEYWORDS=DAY) koşar.
+    @Autowired HolidayDayRepository holidays;
+
+    @Test
+    @DisplayName("tatil takvimi deposu: kolon holiday_date (\"day\" H2'de ayrılmış sözcük) — kayıt + gün sırasıyla okuma")
+    void holidayRepository() {
+        for (String[] d : new String[][] {{"2026-10-29", "Cumhuriyet Bayramı"}, {"2026-01-01", "Yılbaşı"}}) {
+            com.sitemonitor.model.HolidayDay h = new com.sitemonitor.model.HolidayDay();
+            h.setDay(d[0]); h.setName(d[1]);
+            holidays.save(h);
+        }
+        assertThat(holidays.findAllByOrderByDayAsc()).extracting(com.sitemonitor.model.HolidayDay::getDay)
+                .containsExactly("2026-01-01", "2026-10-29");
+    }
 
     @Test
     @Transactional(propagation = Propagation.NOT_SUPPORTED)

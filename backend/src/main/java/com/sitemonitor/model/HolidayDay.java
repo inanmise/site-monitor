@@ -14,9 +14,9 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 public class HolidayDay {
 
-    /** {@code yyyy-MM-dd}. */
+    /** {@code yyyy-MM-dd}. Kolon adı {@code holiday_date}: {@code day} H2'de ayrılmış sözcük (PostgreSQL'de değil). */
     @Id
-    @Column(length = 10)
+    @Column(name = "holiday_date", length = 10)
     private String day;
 
     @Column(nullable = false, length = 120)
