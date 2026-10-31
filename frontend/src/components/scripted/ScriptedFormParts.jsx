@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import { AlertTriangle, BookOpen, ChevronDown, CircleHelp, FileCode2, FlaskConical, Globe, Info, KeyRound, LockKeyhole, Plus } from 'lucide-react'
 import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'

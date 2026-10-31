@@ -217,9 +217,36 @@ export function mergeEnv(current, incoming, { withValues = false, keepSecret = (
 
 // ── Test gövdesi (B1) ───────────────────────────────────────────────────────────────────────────────────────
 
-/** Düzenleme formunda "kayıtlı değerle" koşacak satır mı? (gizli, değeri boş, sunucuda değeri kayıtlı) */
-export function usesSavedSecret(row, editMode) {
-  return !!editMode && !!row?.secret && !!row?.value_set && !(row?.value || '')
+/**
+ * İzlemenin GÜNCEL (sunucudaki) env'inde değeri kayıtlı gizli değişkenlerin adları. Sunucu `keep` satırını ve
+ * kayıtta değersiz gizli satırı ADA göre çözer; formdaki satırın `value_set` bayrağı ad değişince yalan olur
+ * (inceleme 2026-10-31: adı değiştirilen satır "kayıtlı değerle" sayılıyor, test 400 alıyor, kayıtta değersiz
+ * kalıyordu). Yeni izlemede / kopyada boş küme.
+ * @returns {Set<string>}
+ */
+export function savedSecretNames(env) {
+  const out = new Set()
+  for (const e of Array.isArray(env) ? env : []) {
+    const name = (e?.name || '').trim()
+    if (name && e.secret && e.value_set) out.add(name)
+  }
+  return out
+}
+
+/**
+ * Satırın sunucuda kayıtlı gizli değeri var mı? `savedNames` (Set) verilirse karar ADA göre verilir; verilmezse
+ * (eski çağıran) satırın `value_set` bayrağı.
+ */
+export function hasSavedSecret(row, savedNames) {
+  if (!row?.secret) return false
+  const name = (row.name || '').trim()
+  if (!name) return false
+  return savedNames instanceof Set ? savedNames.has(name) : !!row.value_set
+}
+
+/** Düzenleme formunda "kayıtlı değerle" koşacak satır mı? (gizli, değeri boş, sunucuda bu ADLA değer kayıtlı) */
+export function usesSavedSecret(row, editMode, savedNames) {
+  return !!editMode && hasSavedSecret(row, savedNames) && !(row?.value || '')
 }
 
 /**
@@ -227,13 +254,13 @@ export function usesSavedSecret(row, editMode) {
  * (sunucu izlemenin GÜNCEL env'indeki şifreli değeri kullanır); yeni izlemede / kopyada `keep` hiç gönderilmez.
  * @returns {{ env: object[], kept: string[] }}
  */
-export function testEnvPayload(env, { editMode = false } = {}) {
+export function testEnvPayload(env, { editMode = false, savedNames } = {}) {
   const out = []
   const kept = []
   for (const e of Array.isArray(env) ? env : []) {
     const name = (e?.name || '').trim()
     if (!name) continue
-    if (usesSavedSecret(e, editMode)) {
+    if (usesSavedSecret(e, editMode, savedNames)) {
       out.push({ name, value: '', secret: true, keep: true })
       kept.push(name)
     } else {
@@ -267,14 +294,14 @@ export function templateEnvDescs(tpl, lang = 'tr') {
   return out
 }
 
-/** Değeri boş satırların adları (gizli + `value_set` dolu sayılır — kayıtlı değer var). */
-export function emptyEnvNames(env) {
+/** Değeri boş satırların adları (bu adla kayıtlı gizli değeri olan satır dolu sayılır). */
+export function emptyEnvNames(env, savedNames) {
   const out = []
   for (const e of Array.isArray(env) ? env : []) {
     const name = (e?.name || '').trim()
     if (!name) continue
     if ((e.value || '').trim()) continue
-    if (e.secret && e.value_set) continue
+    if (hasSavedSecret(e, savedNames)) continue
     out.push(name)
   }
   return uniq(out)
@@ -327,16 +354,6 @@ export function stopPoint(result) {
 }
 const str = (v) => (v == null ? '' : String(v))
 
-/**
- * Yapılandırılmış `run_context` varsa hata metnindeki Türkçe bağlam satırı ("süreç bütçesi=… · çıkış=…") düşer —
- * arayüz aynı bilgiyi dil doğru çiplerle gösterir. Alan yoksa (eski sunucu / eski satır) metin AYNEN kalır.
- */
-export function stripContextLine(error, runContext) {
-  if (typeof error !== 'string' || !error || !runContext || typeof runContext !== 'object') return error
-  const kept = error.split('\n').filter((l) => !l.trimStart().startsWith('süreç bütçesi='))
-  return kept.join('\n').trimEnd()
-}
-
 // ── Zamanlama ───────────────────────────────────────────────────────────────────────────────────────────────
 
 /** Formun zamanlama alt nesnesi (dbquery ScheduleEditor değer adlarıyla; aralık formun `intervalSeconds`'ında). */
@@ -372,6 +389,48 @@ export function schedulePayload(schedule) {
     skip_holidays: !!s.skip_holidays,
     skip_dates: Array.isArray(s.skip_dates) ? s.skip_dates : [],
   }
+}
+
+/**
+ * Kayıt gövdesine zamanlama anahtarları girsin mi (inceleme 2026-10-31)? Yalnız (a) yeni kayıtta / kopyada, (b) satır
+ * zamanlama alanlarını TAŞIYORSA (yeni sunucu — düz aralıkta alanlar null gelir ama anahtar vardır), (c) kullanıcı
+ * zamanlamayı değiştirdiyse. Eski sürüm podun döndürdüğü satırda alan yoktur → form varsayılanı (her aralıkta) görür;
+ * dokunulmadan kaydedilirse anahtar gönderilmez ve yeni sürüm pod kayıtlı CRON / pencereleri SİLMEZ.
+ * @returns {object} `schedulePayload` ya da boş nesne
+ */
+export function scheduleBodyKeys({ row, schedule }) {
+  const isNew = !row || row.id == null
+  const carries = !!row && typeof row === 'object' && Object.prototype.hasOwnProperty.call(row, 'schedule_mode')
+  const body = schedulePayload(schedule)
+  if (isNew || carries) return body
+  const changed = JSON.stringify(body) !== JSON.stringify(schedulePayload(scheduleFromScriptedRow(row)))
+  return changed ? body : {}
+}
+
+// ── Test sonucu odağı ───────────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Test sonucu paneli odağı alabilir mi? Yalnız odak "Test Çalıştır" çubuğunda, önceki sonuç panelinde ya da hiçbir
+ * yerde (body) iken — kullanıcı sonuç beklerken başka bir alana yazıyorsa odak çalınmaz, sonuç canlı bölgeden duyurulur
+ * (inceleme 2026-10-31).
+ */
+export function testResultMayTakeFocus(doc = typeof document !== 'undefined' ? document : null) {
+  const ae = doc?.activeElement
+  if (!ae || ae === doc.body || ae === doc.documentElement) return true
+  return typeof ae.closest === 'function' && !!ae.closest('[data-slot="sc-test-bar"], [data-slot="test-run"]')
+}
+
+// ── Taslak ──────────────────────────────────────────────────────────────────────────────────────────────────
+
+/** Taslağa YAZILMAYAN form alanları: betiğin ikinci kopyası (`scriptBase`) ve ad önerisi işareti (`nameAuto`). */
+export const DRAFT_EXCLUDED_KEYS = Object.freeze(['scriptBase', 'nameAuto'])
+
+/** Formun taslak kopyası: gizli env değerleri boş, yardımcı alanlar düşük (inceleme 2026-10-31: yük ~2 katına çıkmıştı). */
+export function draftForm(form) {
+  const f = { ...(form || {}) }
+  for (const k of DRAFT_EXCLUDED_KEYS) delete f[k]
+  f.env = (Array.isArray(form?.env) ? form.env : []).map((e) => (e?.secret ? { ...e, value: '' } : e))
+  return f
 }
 
 /** Zamanlama düzenleyicisinin alan anahtarları (sunucu `field` değerleri — dbquery kodlarıyla aynı). */

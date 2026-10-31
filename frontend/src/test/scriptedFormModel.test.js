@@ -1,9 +1,10 @@
 import { describe, it, expect } from 'vitest'
 import {
   scanEnvUsage, looksSecretName, envLint, mergeEnv, testEnvPayload, usesSavedSecret, keptSecretsIgnored,
-  templateEnvDescs, emptyEnvNames, targetHostOf, stopPoint, stripContextLine,
+  templateEnvDescs, emptyEnvNames, targetHostOf, stopPoint,
   DEFAULT_SCRIPTED_SCHEDULE, scheduleFromScriptedRow, scheduleEditorValue, schedulePayload, scheduleErrorsOf,
   hasTimingError, scheduleProblems, MAX_ENV_SCAN_CHARS,
+  savedSecretNames, hasSavedSecret, scheduleBodyKeys, testResultMayTakeFocus, draftForm, DRAFT_EXCLUDED_KEYS,
 } from '../components/scripted/scriptedFormModel.js'
 import { intervalProblem, windowProblems } from '../components/dbquery/scheduleModel.js'
 import { optionHint, buildScriptSourceOptions } from '../utils/scriptSourceOptions.js'
@@ -197,12 +198,6 @@ describe('koşum sonucu yardımcıları', () => {
     expect(stopPoint({ status: 'ERROR' })).toBeNull()
   })
 
-  it('stripContextLine yalnız run_context varken Türkçe bağlam satırını düşürür', () => {
-    const err = 'k6 hatası\nsüreç bütçesi=60s · çıkış=vekil'
-    expect(stripContextLine(err, { process_budget_s: 60 })).toBe('k6 hatası')
-    expect(stripContextLine(err, null)).toBe(err)
-    expect(stripContextLine(null, {})).toBeNull()
-  })
 
 })
 
@@ -243,5 +238,74 @@ describe('zamanlama alanları', () => {
       .toEqual({ cron_expression: 'cron_required' })
     expect(scheduleProblems({ intervalSeconds: 300, schedule: { ...DEFAULT_SCRIPTED_SCHEDULE, blackouts: [{ days: [], from: '01:00', to: '02:00' }] } }, deps))
       .toEqual({ blackouts: 'days_required' })
+  })
+})
+
+describe('inceleme düzeltmeleri (2026-10-31) — saf kurallar', () => {
+  const saved = savedSecretNames([
+    { name: 'PASSWORD', secret: true, value_set: true },
+    { name: 'TOKEN', secret: true, value_set: false },
+    { name: 'BASE_URL', secret: false, value: 'x', value_set: true },
+    { name: ' SPACED ', secret: true, value_set: true },
+  ])
+
+  it('savedSecretNames: yalnız gizli + değeri kayıtlı adlar (kırpılmış); boş girdi = boş küme', () => {
+    expect([...saved].sort()).toEqual(['PASSWORD', 'SPACED'])
+    expect(savedSecretNames(null).size).toBe(0)
+  })
+
+  it('3: karar ADA göre — adı değişen satırın value_set bayrağı yok sayılır, eski ada dönünce geçerli', () => {
+    const renamed = { name: 'PASSWORD_NEW', secret: true, value_set: true, value: '' }
+    expect(hasSavedSecret(renamed, saved)).toBe(false)
+    expect(usesSavedSecret(renamed, true, saved)).toBe(false)
+    expect(usesSavedSecret({ ...renamed, name: 'PASSWORD' }, true, saved)).toBe(true)
+    // Gizli değil / değer yazılmış → kayıtlı değer kullanılmaz
+    expect(usesSavedSecret({ name: 'PASSWORD', secret: false, value: '' }, true, saved)).toBe(false)
+    expect(usesSavedSecret({ name: 'PASSWORD', secret: true, value: 'yeni' }, true, saved)).toBe(false)
+    // Küme verilmezse (eski çağıran) satır bayrağı
+    expect(hasSavedSecret(renamed)).toBe(true)
+  })
+
+  it('3: test gövdesi ve boş değer uyarısı aynı kurala uyar', () => {
+    const env = [{ name: 'PASSWORD_NEW', secret: true, value_set: true, value: '' }, { name: 'PASSWORD', secret: true, value: '' }]
+    const { env: body, kept } = testEnvPayload(env, { editMode: true, savedNames: saved })
+    expect(body).toEqual([{ name: 'PASSWORD_NEW', value: '', secret: true }, { name: 'PASSWORD', value: '', secret: true, keep: true }])
+    expect(kept).toEqual(['PASSWORD'])
+    expect(emptyEnvNames(env, saved)).toEqual(['PASSWORD_NEW'])
+  })
+
+  it('1: zamanlama anahtarları — yeni kayıt / alan taşıyan satır / değişiklik varsa; eski pod satırı dokunulmadıysa boş', () => {
+    const plain = { ...DEFAULT_SCRIPTED_SCHEDULE }
+    const cron = { ...DEFAULT_SCRIPTED_SCHEDULE, schedule_mode: 'CRON', cron_expression: '0 9 * * 1-5' }
+    expect(scheduleBodyKeys({ row: null, schedule: plain })).toEqual(schedulePayload(plain))
+    expect(scheduleBodyKeys({ row: {}, schedule: plain })).toEqual(schedulePayload(plain))       // kopya / yeni
+    const oldPodRow = { id: 7, interval_seconds: 300 }
+    expect(scheduleBodyKeys({ row: oldPodRow, schedule: scheduleFromScriptedRow(oldPodRow) })).toEqual({})
+    expect(scheduleBodyKeys({ row: oldPodRow, schedule: cron })).toEqual(schedulePayload(cron))
+    const newPodRow = { id: 7, schedule_mode: null, cron_expression: null, windows: null }
+    expect(scheduleBodyKeys({ row: newPodRow, schedule: scheduleFromScriptedRow(newPodRow) })).toEqual(schedulePayload(plain))
+  })
+
+  it('2: odak yalnız test çubuğunda / önceki sonuç panelinde / body iken alınabilir', () => {
+    document.body.innerHTML = '<div data-slot="sc-test-bar"><button id="b">Test</button></div><div data-slot="test-run" tabindex="-1" id="p"></div><input id="i">'
+    document.activeElement?.blur?.()
+    expect(testResultMayTakeFocus(document)).toBe(true)
+    document.getElementById('b').focus()
+    expect(testResultMayTakeFocus(document)).toBe(true)
+    document.getElementById('p').focus()
+    expect(testResultMayTakeFocus(document)).toBe(true)
+    document.getElementById('i').focus()
+    expect(testResultMayTakeFocus(document)).toBe(false)
+    expect(testResultMayTakeFocus(null)).toBe(true)
+    document.body.innerHTML = ''
+  })
+
+  it('8: taslak betiğin ikinci kopyasını ve ad önerisi işaretini yazmaz; gizli değerler boş', () => {
+    const f = { name: 'A', script: 'x'.repeat(10), scriptBase: 'x'.repeat(10), nameAuto: 'A', env: [{ name: 'P', secret: true, value: 'gizli' }, { name: 'U', value: 'u' }] }
+    const d = draftForm(f)
+    for (const k of DRAFT_EXCLUDED_KEYS) expect(d).not.toHaveProperty(k)
+    expect(d.env).toEqual([{ name: 'P', secret: true, value: '' }, { name: 'U', value: 'u' }])
+    expect(d.script).toBe(f.script)
+    expect(f.scriptBase).toBe('x'.repeat(10))   // girdi değişmez
   })
 })

@@ -12,7 +12,9 @@ const LONG_VAR = 'ODEME_SERVISI_ISTEMCI_GIZLI_ANAHTARI_URETIM_ORTAMI_BOLGE_2_PAS
 const MON = {
   ...MONITORS.scripted[0],
   id: 100, name: 'Ödeme akışı — sepete ekle, adres doğrulama ve 3D Secure ile kart onayı (üretim)', active: true, status: 'FAIL',
-  team_id: 1, team_name: 'Takım A', group_name: 'Ödeme', tags: 'prod',
+  team_id: 1, team_name: 'Takım A', group_name: 'Ödeme',
+  // Uzun etiket + birkaç kısa etiket: sarılan satırlarda dokunmatik kaldır düğmeleri üst üste binmemeli (inceleme 2026-10-31)
+  tags: 'prod,odeme-servisi-uretim-ortami-bolge-2-cok-uzun-etiket-adi-kesilmemeli-ve-tasmamali,kart,3ds,odeme',
   script: "import http from 'k6/http';\nimport { check } from 'k6';\nexport default function () {\n  const r = http.get(__ENV.BASE_URL)\n  check(r, { ok: (x) => x.status === 200 })\n}\n",
   can_check: true, can_edit: true, can_delete: true,
   env: [
@@ -125,12 +127,38 @@ function clippedTexts() {
   return out
 }
 
+/**
+ * Etiket rozetleri: kaldır düğmeleri birbirinin üstüne binmez (dokunuş komşu etikete gitmez), rozet etiket kutusunun
+ * dışına taşmaz, uzun etiket kırpılmaz.
+ */
+function tagReport() {
+  const out = []
+  const dlg = [...document.querySelectorAll('[role="dialog"]')].at(-1)
+  const chips = [...(dlg?.querySelectorAll('[data-tag-chip]') || [])]
+  if (chips.length === 0) return ['NO_TAGS']
+  const box = chips[0].parentElement.getBoundingClientRect()
+  const btns = chips.map((c) => c.querySelector('button')).filter(Boolean).map((b) => b.getBoundingClientRect())
+  for (let i = 0; i < btns.length; i++) {
+    for (let j = i + 1; j < btns.length; j++) {
+      const a = btns[i], b = btns[j]
+      if (a.left < b.right - 0.5 && b.left < a.right - 0.5 && a.top < b.bottom - 0.5 && b.top < a.bottom - 0.5) out.push(`kaldır ${i}–${j} üst üste`)
+    }
+  }
+  for (const c of chips) {
+    const r = c.getBoundingClientRect()
+    if (r.left < box.left - 1 || r.right > box.right + 1) out.push(`rozet taşıyor ${Math.round(r.left)}–${Math.round(r.right)} / ${Math.round(box.left)}–${Math.round(box.right)}`)
+    const text = c.querySelector('span')
+    if (text && text.scrollWidth > text.clientWidth + 1) out.push(`etiket kırpılmış ${text.textContent.slice(0, 20)}`)
+  }
+  return out
+}
+
 /** 40 px'ten küçük görünür denetimler (bu özelliğin denetimleri). */
 function smallTargets() {
   const out = []
   const dlg = [...document.querySelectorAll('[role="dialog"]')].at(-1)
   const sel = '[data-slot="sc-timing"] h3 button, [data-slot="env-lint"] button, [data-slot="goto-line"], [data-slot="sc-test-bar"] button, '
-    + '[data-slot="env-row-notes"] [data-slot="hint-trigger"]'
+    + '[data-slot="env-row-notes"] [data-slot="hint-trigger"], [data-tag-chip] button'
   for (const b of dlg?.querySelectorAll(sel) || []) {
     const r = b.getBoundingClientRect()
     if (r.width === 0 || r.height === 0) continue
@@ -208,6 +236,7 @@ for (const vp of VIEWPORTS) {
       const dlg = await openEdit(page)
 
       await expect(dlg.locator('[data-slot="env-saved-value"]')).toBeVisible()
+      expect(await page.evaluate(tagReport)).toEqual([])
       // Uzun gizli değişken adı tam görünür (kutuda) — satır pencereye sığar
       await expect(dlg.getByRole('textbox', { name: /^(NAME|AD)$/ }).nth(1)).toHaveValue(LONG_VAR)
 
