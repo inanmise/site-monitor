@@ -251,9 +251,9 @@ function RowActions({ t, p, editable, onOpen, onEdit, onDelete }) {
   return (
     <KebabMenu variant="labeled" label={t('dbq.conn.col.actions')} rowLabel={p.name}
       items={[
-        { label: t('dbq.conn.details'), icon: Eye, onClick: () => onOpen(p) },
-        { label: t('dbq.conn.edit'), icon: Pencil, onClick: () => onEdit(p), hidden: !editable },
-        { label: t('dbq.conn.delete'), icon: Trash2, onClick: () => onDelete(p), danger: true, hidden: !editable },
+        { label: t('dbq.conn.details'), icon: <Eye aria-hidden="true" />, onClick: () => onOpen(p) },
+        { label: t('dbq.conn.edit'), icon: <Pencil aria-hidden="true" />, onClick: () => onEdit(p), hidden: !editable },
+        { label: t('dbq.conn.delete'), icon: <Trash2 aria-hidden="true" />, onClick: () => onDelete(p), danger: true, hidden: !editable },
       ]} />
   )
 }

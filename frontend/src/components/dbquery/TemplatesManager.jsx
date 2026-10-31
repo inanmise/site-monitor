@@ -109,8 +109,8 @@ export default function TemplatesManager({ open, onOpenChange, teamId, teams = [
                         </div>
                         <KebabMenu variant="labeled" label={t('dbq.conn.col.actions')} rowLabel={tpl.name}
                           items={[
-                            { label: t('dbq.tpl.edit'), icon: Pencil, onClick: () => setEditing(tpl), hidden: !editable(tpl) },
-                            { label: t('dbq.tpl.delete'), icon: Trash2, onClick: () => remove(tpl), danger: true, hidden: !editable(tpl) },
+                            { label: t('dbq.tpl.edit'), icon: <Pencil aria-hidden="true" />, onClick: () => setEditing(tpl), hidden: !editable(tpl) },
+                            { label: t('dbq.tpl.delete'), icon: <Trash2 aria-hidden="true" />, onClick: () => remove(tpl), danger: true, hidden: !editable(tpl) },
                           ]} />
                       </div>
                       <CollapsibleTrigger asChild>

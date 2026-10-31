@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { ShieldCheck, ShieldAlert, ShieldQuestion, Table2, Info, AlertOctagon, LoaderCircle } from 'lucide-react'
+import { ShieldCheck, ShieldAlert, ShieldQuestion, Table2, Info, AlertOctagon } from 'lucide-react'
 import { api } from '../../api/client'
 import { useLanguage, useT } from '../../i18n/index.jsx'
 import { Textarea } from '@/components/shadcn/textarea'
@@ -9,6 +9,7 @@ import { Badge } from '@/components/shadcn/badge'
 import { cn } from '@/lib/utils'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import { FieldError } from '../ui/Field.jsx'
+import { Spinner } from '../ui/Progress.jsx'
 import {
   MAX_SQL_CHARS, indent, isKnownGuardCode, lineCount, newlineWithIndent, offsetOf,
 } from './sqlEditorModel.js'
@@ -257,7 +258,7 @@ function GuardStatus({ id, guard, t, onGo }) {
     <div id={id} data-slot="dbq-sql-guard" data-status={status} className="flex min-w-0 flex-col gap-2" aria-live="polite">
       {status === 'checking' && (
         <p className="m-0 inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-          <LoaderCircle aria-hidden="true" className="size-3.5 animate-spin motion-reduce:animate-none" />{t('dbq.sql.checking')}
+          <Spinner size={14} inline decorative />{t('dbq.sql.checking')}
         </p>
       )}
       {status === 'empty' && <p className="m-0 text-xs text-muted-foreground">{t('dbq.sql.emptyHint')}</p>}

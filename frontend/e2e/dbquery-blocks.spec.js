@@ -166,7 +166,7 @@ for (const vp of VIEWPORTS) {
       expect(scroller.ox, `@${vp.name}: tablo kabı kaydırılabilir`).toBe('auto')
       expect(scroller.sw, `@${vp.name}: geniş tablo kapta kayar`).toBeGreaterThan(scroller.cw)
       // Uzun hücre sarar — kırpılmaz, tek satıra zorlanmaz
-      const cell = sec.locator('td', { hasText: 'referans 9f2c1e7a' })
+      const cell = sec.locator('[data-slot="dbq-cell"]', { hasText: 'referans 9f2c1e7a' })
       const c = await cell.evaluate((el) => ({ sw: el.scrollWidth, cw: el.clientWidth, h: el.getBoundingClientRect().height, ws: getComputedStyle(el).whiteSpace }))
       expect(c.ws).toBe('pre-wrap')
       expect(c.sw, `@${vp.name}: uzun hücre kırpıldı`).toBeLessThanOrEqual(c.cw + 1)

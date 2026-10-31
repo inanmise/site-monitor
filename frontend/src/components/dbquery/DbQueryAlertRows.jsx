@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { DatabaseZap, EyeOff, Lock, RefreshCw, CircleAlert, Clock } from 'lucide-react'
+import { DatabaseZap, EyeOff, Lock, RefreshCw, Clock } from 'lucide-react'
 import { api, formatDateSec } from '../../api/client'
 import { useLanguage, useT } from '../../i18n/index.jsx'
 import { Button } from '@/components/shadcn/button'
@@ -48,6 +48,8 @@ export default function DbQueryAlertRows({ alertId, alertType }) {
   useEffect(() => {
     if (!applies) return undefined
     load()
+    // sıra numarası bir ARTTIRILIR: uçuştaki yanıt (önceki alarmın) bayat sayılsın — DOM ref değil, uyarı yersiz
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     return () => { seq.current++ }
   }, [applies, load])
 
@@ -126,8 +128,9 @@ function RowsTable({ d, t, fmt }) {
                 <TableRow>
                   <TableHead className="w-10 text-right text-muted-foreground">#</TableHead>
                   {columns.map((c) => (
-                    <TableHead key={c} data-masked={isMasked(c) ? 'true' : undefined} className="max-w-[28rem] min-w-[8rem] align-bottom whitespace-normal">
-                      <span className="inline-flex items-center gap-1 font-mono text-xs [overflow-wrap:anywhere]">
+                    <TableHead key={c} data-masked={isMasked(c) ? 'true' : undefined} className="align-bottom whitespace-normal">
+                      {/* Genişlik İÇ kutuda: tablo hücresinde max-width güvenilmez (tarayıcı yok sayar); iç kutunun katkısı sınırlanır */}
+                      <span className="flex max-w-[28rem] min-w-[8rem] items-center gap-1 font-mono text-xs [overflow-wrap:anywhere]">
                         {isMasked(c) && <Lock aria-hidden="true" className="size-3 shrink-0 text-muted-foreground" />}{c}
                         {isMasked(c) && <span className="sr-only"> ({t('dbq.rows.maskedSr')})</span>}
                       </span>
@@ -142,8 +145,10 @@ function RowsTable({ d, t, fmt }) {
                     {columns.map((c, j) => {
                       const v = Array.isArray(r) ? r[j] : null
                       return (
-                        <TableCell key={c} className="max-w-[28rem] min-w-[8rem] align-top font-mono text-xs whitespace-pre-wrap [overflow-wrap:anywhere]">
-                          {v == null ? <span className="text-muted-foreground italic">NULL</span> : String(v)}
+                        <TableCell key={c} className="align-top whitespace-normal">
+                          <div data-slot="dbq-cell" className="max-w-[28rem] min-w-[8rem] font-mono text-xs whitespace-pre-wrap [overflow-wrap:anywhere]">
+                            {v == null ? <span className="text-muted-foreground italic">NULL</span> : String(v)}
+                          </div>
                         </TableCell>
                       )
                     })}

@@ -44,7 +44,7 @@ describe('DbQueryAlertRows', () => {
     expect(sec.querySelector('[data-slot="dbq-alert-rows-masked"]').textContent).toContain('MUSTERI_TCKN')
     expect(sec.querySelectorAll('[data-slot="dbq-alert-row"]')).toHaveLength(2)
     expect(sec.querySelector('th[data-masked="true"]').textContent).toContain('MUSTERI_TCKN')
-    const cell = [...sec.querySelectorAll('td')].find((td) => td.textContent === LONG_CELL)
+    const cell = [...sec.querySelectorAll('[data-slot="dbq-cell"]')].find((d) => d.textContent === LONG_CELL)
     expect(cell.className).toMatch(/whitespace-pre-wrap/)
     expect(cell.className).not.toMatch(/\btruncate\b/)
     expect(sec.textContent).toContain('NULL')

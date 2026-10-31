@@ -199,13 +199,13 @@ describe('AdminSettings — sekme semantiği, klavye ve derin bağlantı', () =>
 describe('AdminSettings — tam sayfa kabuk: başlık, gruplu gezinti, arama, durum noktaları', () => {
   beforeEach(() => { setUrl(''); vi.clearAllMocks() })
 
-  it('PageHeader: h2 başlık + açıklama + "24 bölüm" çipi; içerik paneli tam genişlik (w-full, tavan yok)', () => {
+  it('PageHeader: h2 başlık + açıklama + "25 bölüm" çipi; içerik paneli tam genişlik (w-full, tavan yok)', () => {
     render(<AdminSettings />)
     const header = document.querySelector('[data-slot="page-header"]')
     expect(header).not.toBeNull()
     expect(within(header).getByRole('heading', { level: 2, name: /^(Settings|Ayarlar)$/ })).toBeInTheDocument()
     expect(header.querySelector('[data-slot="page-description"]')).not.toBeNull()
-    expect(within(header).getByText(/24 (sections|bölüm)/)).toBeInTheDocument()
+    expect(within(header).getByText(/25 (sections|bölüm)/)).toBeInTheDocument()
     const panel = screen.getByRole('tabpanel')
     expect(panel.className).toMatch(/\bw-full\b/)
     expect(panel.className).not.toMatch(/max-w-\[/)

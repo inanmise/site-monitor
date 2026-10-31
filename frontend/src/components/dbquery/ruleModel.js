@@ -119,7 +119,7 @@ const GROUP_COMMA = /^\d{1,3}(,\d{3})+$/
 export function parseNumber(text, lang = 'tr') {
   if (text == null) return null
   if (typeof text === 'number') return Number.isFinite(text) ? text : NaN
-  let s = String(text).replace(/[\s  ]/g, '')
+  let s = String(text).replace(/[\s\u00A0\u202F]/g, '')
   if (s === '') return null
   if (s.length > 40) return NaN
   let sign = ''
