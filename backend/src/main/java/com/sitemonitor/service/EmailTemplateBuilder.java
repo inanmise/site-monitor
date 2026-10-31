@@ -1088,8 +1088,16 @@ public class EmailTemplateBuilder {
     // bazlı tablo". Satırlar YALNIZ gönderilen postanın geçici bağlamında gelir (DbQueryAlertRowsService.CTX_ROWS);
     // bildirim günlüğüne yazılan kopyada yerine yalnız satır sayısı vardır (CTX_ROWS_WITHHELD).
 
-    /** Postadaki satır tablosunun karakter bütçesi — Gmail 102 KB üstünü kırpar; aşan satırlar "+N satır daha" olur. */
-    static final int DBQUERY_ROWS_CHAR_BUDGET = 30_000;
+    /**
+     * Postadaki satır tablosunun BAYT bütçesi (yaklaşık) — Gmail 102 KB üstünü kırpar; aşan satırlar "+N satır daha" olur.
+     * Hücre metni + hücre başına HTML yükü ({@link #DBQUERY_CELL_OVERHEAD}) sayılır; telefon kart kopyası yalnız küçük
+     * tablolarda üretilir (kopya içeriği ikiye katlar).
+     */
+    static final int DBQUERY_ROWS_CHAR_BUDGET = 40_000;
+    /** MailKit veri tablosunda bir hücrenin satır içi stil / etiket yükü (ölçülmüş, yuvarlanmış). */
+    static final int DBQUERY_CELL_OVERHEAD = 260;
+    /** Telefon kart kopyası üretilen en büyük tablo: kolon ve satır sayısı. */
+    static final int DBQUERY_STACK_MAX_COLS = 6, DBQUERY_STACK_MAX_ROWS = 10;
     /** Sorgu kod bloğu tavanı. */
     static final int DBQUERY_SQL_MAX = 4000;
 
@@ -1165,7 +1173,7 @@ public class EmailTemplateBuilder {
         if (rows != null) {
             RowsView v = rowsView(rows);
             d.heading("Sorgu Sonucu (alarm anı)", v.caption());
-            d.table(v.cols(), v.cells(), v.cols().size() <= 6);
+            d.table(v.cols(), v.cells(), v.stack());
             if (v.more() != null) d.note(v.more());
             return;
         }
@@ -1179,7 +1187,7 @@ public class EmailTemplateBuilder {
     }
 
     /** Tablo görünümü: kolonlar, hücreler (bütçe içinde), başlık açıklaması ve "+N satır / +M kolon daha" notu. */
-    private record RowsView(List<MailKit.Col> cols, List<List<MailKit.Cell>> cells, String caption, String more) {}
+    private record RowsView(List<MailKit.Col> cols, List<List<MailKit.Cell>> cells, String caption, String more, boolean stack) {}
 
     private static RowsView rowsView(com.sitemonitor.service.dbquery.DbQueryAlertRowsService.Rows rows) {
         java.util.Set<String> masked = new java.util.HashSet<>();
@@ -1190,20 +1198,24 @@ public class EmailTemplateBuilder {
             cols.add(masked.contains(label.toLowerCase(Locale.ROOT)) ? MailKit.Col.of(label + " (maskeli)") : MailKit.Col.of(label));
         }
         List<List<MailKit.Cell>> cells = new ArrayList<>();
-        int budget = DBQUERY_ROWS_CHAR_BUDGET, shown = 0;
+        int budget = DBQUERY_ROWS_CHAR_BUDGET, shown = 0, used = 0;
         for (List<String> r : rows.rows()) {
-            int cost = 0;
+            int cost = cols.size() * DBQUERY_CELL_OVERHEAD;
             List<MailKit.Cell> line = new ArrayList<>(cols.size());
             for (int i = 0; i < cols.size(); i++) {
                 String v = r != null && i < r.size() ? r.get(i) : null;
-                cost += v == null ? 1 : v.length() + 1;
+                cost += v == null ? 4 : v.length() + 1;
                 line.add(v == null ? MailKit.Cell.of("NULL", MailTokens.MUTED, false) : MailKit.Cell.of(v));
             }
             if (shown > 0 && cost > budget) break;
             budget -= cost;
+            used += cost;
             cells.add(line);
             shown++;
         }
+        // Telefon kart kopyası içeriği ikiye katlar → yalnız küçük tabloda ve kopya bütçeye sığıyorsa.
+        boolean stack = cols.size() <= DBQUERY_STACK_MAX_COLS && shown <= DBQUERY_STACK_MAX_ROWS
+                && used * 2L <= DBQUERY_ROWS_CHAR_BUDGET;
         int total = rows.rowCount() != null ? rows.rowCount() : rows.rows().size();
         int moreRows = Math.max(0, total - shown);
         String caption = (rows.rowCountCapped() ? "En az " : "") + total + " satır döndü"
@@ -1217,7 +1229,7 @@ public class EmailTemplateBuilder {
             if (rows.truncated()) parts.add("bazı kolonlar / uzun hücreler kısaltıldı");
             more = String.join(" · ", parts) + " — tamamı veritabanında; Site Monitor sonuç verisini saklamaz.";
         }
-        return new RowsView(cols, cells, caption, more);
+        return new RowsView(cols, cells, caption, more, stack);
     }
 
     /** Düz metin paritesi: kurallar, sorgu, sonuç satırları (HTML ile aynı bilgi). */

@@ -74,6 +74,8 @@ class DeferredIndexBuilderTest {
         EXPECTED.put("ux_der_mon_exp_thr", "domain_expiry_reminders(monitor_id, expiry_date, threshold_days) WHERE claim_token IS NOT NULL");
         // Denetim zinciri seq tekilliği (2026-10-22, çok pod R2a-D1 — MP-38): kısmi, TEKİL; yalnız yeni kodun kilitli satırları
         EXPECTED.put("ux_audit_seq", "audit_log(seq) WHERE seq_locked IS NOT NULL");
+        // Veritabanı sorgu izlemesi kontrol serisi (2026-10-31, 11. tür): taşınabilir, katalogun sonunda
+        EXPECTED.put("idx_dbqc_checked_at", "dbquery_checks(checked_at)");
     }
     /** TEKİL indeksler — {@code CREATE UNIQUE INDEX …}, {@code ux_} öneki. */
     private static final Set<String> UNIQUE = Set.of("ux_push_eventless_key_user", "ux_der_mon_exp_thr", "ux_audit_seq");

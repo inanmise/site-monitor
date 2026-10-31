@@ -518,8 +518,9 @@ public class MonitoringOverviewService {
     static boolean isDbQueryStale(String nextRunAt, Instant now) {
         if (nextRunAt == null || nextRunAt.isBlank()) return false;
         try {
-            Instant next = java.time.LocalDateTime.parse(nextRunAt.trim(), DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss"))
-                    .toInstant(ZoneOffset.UTC);
+            // "yyyy-MM-ddTHH:mm:ss" (UTC) yazılır; "Z" son eki ya da kesirli saniye de okunur (yazan katmandan bağımsız).
+            Instant next = java.time.LocalDateTime.parse(nextRunAt.trim().replace(' ', 'T').replace("Z", ""),
+                    DateTimeFormatter.ISO_LOCAL_DATE_TIME).toInstant(ZoneOffset.UTC);
             return next.plusSeconds(DBQUERY_STALE_GRACE_SECONDS).isBefore(now);
         } catch (Exception e) {
             return false;

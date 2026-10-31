@@ -42,7 +42,8 @@ class ManualEvaluationWiringTest {
     private static final List<String> ENTRIES = List.of(
             "evaluateHttpNow", "evaluatePortNow", "evaluatePingNow", "evaluateKeywordNow",
             "evaluateDnsNow", "evaluatePageNow", "evaluatePageSpeedNow", "evaluateScriptedNow",
-            "evaluateDomainAlarmsNow");   // Domain'in girişi daha önceden vardı
+            "evaluateDomainAlarmsNow",   // Domain'in girişi daha önceden vardı
+            "evaluateDbQueryNow");       // 11. tür (2026-10-31)   // Domain'in girişi daha önceden vardı
 
     private static String read(Path p) throws Exception {
         return Files.readString(p);

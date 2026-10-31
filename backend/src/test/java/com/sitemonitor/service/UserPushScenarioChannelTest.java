@@ -114,11 +114,11 @@ class UserPushScenarioChannelTest {
 
     @SuppressWarnings("unchecked")
     @Test
-    @DisplayName("İzleme senaryosu dokuz türü sorar: bir tür kapalı → kısmi (engel yok), hepsi kapalı → SKIPPED_TYPE_OFF")
+    @DisplayName("İzleme senaryosu on türü sorar: bir tür kapalı → kısmi (engel yok), hepsi kapalı → SKIPPED_TYPE_OFF")
     void monitorKind_partialAndFullTypeOff() {
         scopeOff("TYPE", "ping");
         Map<String, Object> partial = service.scenarioChannel(5L, "HIGH", true);
-        assertThat((List<String>) partial.get("types")).hasSize(9).doesNotContain("cert");
+        assertThat((List<String>) partial.get("types")).hasSize(10).doesNotContain("cert");
         assertThat(partial).containsEntry("disabled_types", List.of("ping")).containsEntry("block_reason", null);
 
         for (String f : MonitorTypeCatalog.ORDER) scopeOff("TYPE", f);

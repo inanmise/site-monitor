@@ -120,6 +120,16 @@ class ManualEvalRoundTripTest {
                 "detail", "FAIL — 0✓/2✗ · request timeout", "checks_failed", 2,
                 "failed_checks", List.of(row("name", "giriş", "fails", 1), row("name", "sepet", "fails", 3)),
                 "output_tail", "ERRO[0001] request timeout", "response_ms", 15_000L, "error", "request timeout")));
+        com.sitemonitor.model.DbQueryMonitor dq = new com.sitemonitor.model.DbQueryMonitor(); dq.setId(10L); dq.setName("Sorgu A");
+        dq.setTeamId(7L); dq.setPurpose("Bekleyen siparişler birikmesin"); dq.setSlowQueryMs(2000);
+        c.add(new Case("dbquery", (s, r) -> s.evaluateDbQueryNow(dq, r), raw("status", "BREACH", "skipped", false, "ok", true,
+                "level", "CRITICAL", "duration_ms", 2500L, "row_count", 1250, "row_count_capped", false, "metric_value", 1250.0,
+                "slow", true, "slow_query_ms", 2000, "rule_summary", "Bekleyen: gelen 1.250 · beklenen ≤ 100 (kritik eşik)",
+                "rule_results", List.of(row("id", "r1", "label", "Bekleyen", "kind", "ROW_COUNT", "actual", "1.250",
+                        "expected", "≤ 100", "level", "CRITICAL", "passed", false, "evaluated", true, "measure", 1250.0,
+                        "compared", 1250.0)),
+                "checked_at", "2026-10-31T06:00:00", "profile_name", "Sipariş DB", "db_type", "POSTGRESQL",
+                "profile_id", 3L, "check_id", 77L)));
         DomainMonitor dm = new DomainMonitor(); dm.setId(9L); dm.setName("Alan A"); dm.setDomain("example.com");
         dm.setTeamId(7L);
         c.add(new Case("domain", (s, r) -> s.evaluateDomainAlarmsNow(dm, r), raw("domain", "example.com", "source", "RDAP",
@@ -174,7 +184,8 @@ class ManualEvalRoundTripTest {
         }
         assertThat(types).containsExactlyInAnyOrder(ManualEvalInbox.TYPE_HTTP, ManualEvalInbox.TYPE_PORT,
                 ManualEvalInbox.TYPE_PING, ManualEvalInbox.TYPE_KEYWORD, ManualEvalInbox.TYPE_DNS, ManualEvalInbox.TYPE_PAGE,
-                ManualEvalInbox.TYPE_PAGESPEED, ManualEvalInbox.TYPE_SCRIPTED, ManualEvalInbox.TYPE_DOMAIN);
+                ManualEvalInbox.TYPE_PAGESPEED, ManualEvalInbox.TYPE_SCRIPTED, ManualEvalInbox.TYPE_DOMAIN,
+                ManualEvalInbox.TYPE_DBQUERY);
     }
 
     @Test

@@ -303,6 +303,46 @@ final class EmailSamples {
                 LONG_URL, "HIGH", "HTTP_SLOW", null,
                 map("url", LONG_URL, "http_status", 200, "response_ms", 4200, "threshold_ms", 2000, "monitor_id", 44,
                         "checked_at", "2026-09-26T07:00:00", "team_name", "Takım A", "alert_event_id", 94L));
+        // 2026-10-31: veritabanı sorgu izlemesi — kurallar tablosu, çalıştırılan sorgu ve alarm anındaki satırlar (maskeli kolon)
+        alert("alert-dbquery-threshold", "[Site Monitor] KRİTİK · Bekleyen Siparişler · Veritabanı Sorgu Eşiği",
+                "KRİTİK: Bekleyen Siparişler sorgusunda kural ihlali — Bekleyen sipariş: gelen 25 · beklenen ≤ 10 (kritik eşik).",
+                "Bekleyen Siparişler", "CRITICAL", "DBQUERY_THRESHOLD", null, dbQueryCtx());
+        Map<String, Object> dbFail = map("monitor_id", 51L, "monitor_name", "Bekleyen Siparişler",
+                "purpose", "Ödeme bekleyen siparişler on adedi geçmesin", "profile_name", "ERP Üretim", "db_type", "ORACLE",
+                "dbquery_target", "erpdb.corp.local:1521/ERP", "checked_at", "2026-09-26T07:00:00", "duration_ms", 30012L,
+                "dbquery_status", "FAIL", "failure_reason", "DB_TIMEOUT",
+                "error", "Sorgu 30 sn içinde tamamlanmadı (ORA-01013: user requested cancel of current operation)",
+                "dbquery_sql", "SELECT COUNT(*) FROM siparis WHERE durum = 'BEKLIYOR'",
+                "team_name", "Takım A", "alert_event_id", 96L);
+        alert("alert-dbquery-fail", "[Site Monitor] YÜKSEK · Bekleyen Siparişler · Veritabanı Sorgu Hatası",
+                "YÜKSEK: Bekleyen Siparişler sorgusu çalıştırılamadı — Zaman aşımı.", "Bekleyen Siparişler", "HIGH",
+                "DBQUERY_FAIL", null, dbFail);
+    }
+
+    private static Map<String, Object> dbQueryCtx() {
+        var rules = com.sitemonitor.service.dbquery.DbQueryAlarmText.toApi(List.of(
+                new com.sitemonitor.service.dbquery.DbQueryEvaluator.RuleResult("r1", "Bekleyen sipariş", "ROW_COUNT", "25",
+                        "≤ 10", "CRITICAL", false, true, null, 25.0, 25.0),
+                new com.sitemonitor.service.dbquery.DbQueryEvaluator.RuleResult("r2", "En eski sipariş (dk)", "COLUMN_VALUE",
+                        "42", "≤ 60", "WARNING", true, true, null, 42.0, 42.0)));
+        List<List<String>> rows = new ArrayList<>();
+        String[] names = {"Ayşe Yılmaz (Kurumsal Müşteriler / Ankara Bölge)", "Mehmet Demir", "Zeynep Kaya", "Ali Çelik", "Elif Şahin"};
+        for (int i = 0; i < names.length; i++) {
+            rows.add(java.util.Arrays.asList(String.valueOf(10_400 + i), names[i], (1250 + i * 75) + ",00",
+                    com.sitemonitor.service.dbquery.DbQueryAlertRowsService.MASK, i == 2 ? null : "2026-09-26 06:" + (10 + i * 7)));
+        }
+        var captured = new com.sitemonitor.service.dbquery.DbQueryAlertRowsService.Rows("2026-09-26T07:00:00",
+                List.of("siparis_no", "musteri", "tutar", "kart_no", "olusturma"), rows, List.of("kart_no"), 25, false, false);
+        return map("monitor_id", 51L, "monitor_name", "Bekleyen Siparişler",
+                "purpose", "Ödeme bekleyen siparişler on adedi geçmesin — biriken siparişler müşteri şikâyetine dönüşür",
+                "profile_name", "ERP Üretim", "db_type", "ORACLE", "dbquery_target", "erpdb.corp.local:1521/ERP",
+                "checked_at", "2026-09-26T07:00:00", "duration_ms", 840L, "row_count", 25, "metric_value", 25.0,
+                "dbquery_status", "BREACH", "rule_results", rules,
+                "rule_summary", com.sitemonitor.service.dbquery.DbQueryAlarmText.breachSummary(rules),
+                "dbquery_sql", "SELECT s.siparis_no, m.ad AS musteri, s.tutar, s.kart_no, s.olusturma\n"
+                        + "  FROM siparis s JOIN musteri m ON m.id = s.musteri_id\n WHERE s.durum = 'BEKLIYOR'\n ORDER BY s.olusturma",
+                com.sitemonitor.service.dbquery.DbQueryAlertRowsService.CTX_ROWS, captured,
+                "team_name", "Takım A", "alert_event_id", 95L);
     }
 
     // ── #7–10 Çözüm ailesi ───────────────────────────────────────────────────
@@ -330,6 +370,16 @@ final class EmailSamples {
                 "Takım A", null);
         resolved("resolved-scripted-slow", "[Site Monitor ✅ ÇÖZÜLDÜ] Ödeme akışı", TR, "SCRIPTED_SLOW", "HIGH", "Sistem (otomatik)",
                 "2026-09-26T06:42:00", "2026-09-26T05:00:00", map("duration_ms", 8120, "threshold_ms", 5000), "Takım A", null);
+        // 2026-10-31: veritabanı sorgu izlemesi çözümü — alarm anındaki ihlal + çözüm anındaki son çalıştırma
+        Map<String, Object> dbRes = dbQueryCtx();
+        dbRes.remove(com.sitemonitor.service.dbquery.DbQueryAlertRowsService.CTX_ROWS);
+        dbRes.put("resolved_dbquery_status", "OK");
+        dbRes.put("resolved_row_count", 4);
+        dbRes.put("resolved_metric_value", 4.0);
+        dbRes.put("resolved_duration_ms", 610);
+        dbRes.put("resolved_checked_at", "2026-09-26T08:30:00");
+        resolved("resolved-dbquery", "[Site Monitor ✅ ÇÖZÜLDÜ] Bekleyen Siparişler", "Bekleyen Siparişler", "DBQUERY_THRESHOLD",
+                "CRITICAL", "Sistem (otomatik)", "2026-09-26T08:30:00", "2026-09-26T07:00:00", dbRes, "Takım A", null);
         resolved("resolved-accessibility", "[Site Monitor ✅ ÇÖZÜLDÜ] " + LONG_HOST, LONG_HOST, "ACCESSIBILITY", "CRITICAL",
                 "Sistem (otomatik)", "2026-09-26T09:14:25", "2026-09-26T07:00:00", map("alert_event_id", 4242L), "Takım A",
                 new EmailNotificationService.UptimeSummary(99.95, 1, 99.80, 3));

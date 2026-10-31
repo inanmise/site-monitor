@@ -59,7 +59,13 @@ class ResolvedMailContextKeysTest {
             Map.entry("registrar",                "reconstructDomainContext — DomainCheck.registrar"),
             Map.entry("source",                   "reconstructDomainContext — DomainCheck.source"),
             Map.entry("status_codes",             "reconstructDomainContext — DomainCheck.statusCodes (EPP)"),
-            Map.entry("nameservers",              "reconstructDomainContext — DomainCheck.nameservers"));
+            Map.entry("nameservers",              "reconstructDomainContext — DomainCheck.nameservers"),
+            // Veritabanı sorgusu (2026-10-31): EscalationService.withDbQueryResolvedValues — çözüm anındaki SON çalıştırma.
+            Map.entry("resolved_dbquery_status",   "withDbQueryResolvedValues — DbQueryCheck.status (çözüm anı)"),
+            Map.entry("resolved_rule_summary",     "withDbQueryResolvedValues — kural özeti (çözüm anı)"),
+            Map.entry("resolved_row_count",        "withDbQueryResolvedValues — DbQueryCheck.rowCount (çözüm anı)"),
+            Map.entry("resolved_row_count_capped", "withDbQueryResolvedValues — DbQueryCheck.rowCountCapped (çözüm anı)"),
+            Map.entry("resolved_duration_ms",      "withDbQueryResolvedValues — DbQueryCheck.durationMs (çözüm anı)"));
 
     /** {@code strCtx(ctx, "anahtar")} — şablonun bağlam okuma yüzeyi. */
     private static final Pattern CTX_READ = Pattern.compile("strCtx\\(\\s*ctx\\s*,\\s*\"([a-z0-9_]+)\"");

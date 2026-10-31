@@ -170,18 +170,20 @@ public final class DbQueryAlarmText {
             case "DB_PROFILE_OTHER_TEAM" -> "Bağlantı başka bir takıma ait";
             case "DB_SECRET_UNREADABLE" -> "Bağlantı parolası çözülemedi";
             case "DB_BUSY" -> "Eşzamanlı çalıştırma sınırı dolu";
+            case "DB_UNKNOWN" -> "Bilinmeyen hata";
             default -> code;
         };
     }
 
     /**
-     * Tarama öğesinin hata metni: {@code [KOD] maskeli hata}. Kod yoksa yalnız hata, hata da yoksa "sorgu çalıştırılamadı".
+     * Tarama öğesinin hata metni: {@code [KOD] maskeli hata}. Kod yoksa DB_UNKNOWN, hata yoksa "sorgu çalıştırılamadı".
      * {@link #codeOf} ile kod yeniden okunur.
      */
     public static String itemError(String failureReason, String error) {
         String e = error == null || error.isBlank() ? "sorgu çalıştırılamadı" : error.trim();
-        if (failureReason == null || failureReason.isBlank()) return e;
-        return "[" + failureReason.trim() + "] " + e;
+        // Kod HER ZAMAN yazılır (yoksa DB_UNKNOWN): sınıf sürücü metninden tahmin edilmesin ({@link #outageClassOf}).
+        String code = failureReason == null || failureReason.isBlank() ? "DB_UNKNOWN" : failureReason.trim();
+        return "[" + code + "] " + e;
     }
 
     /** {@link #itemError} önekindeki kod (büyük harf) ya da null. */
@@ -194,14 +196,17 @@ public final class DbQueryAlarmText {
     }
 
     /**
-     * Hata kodunun kesinti sınıfı ({@code MonitoringOutageService} sabitleriyle aynı adlar): bağlantı / zaman aşımı →
-     * NETWORK, DNS → DNS, diğer her kod (kimlik, SQL, sürücü, güvenlik reddi, bağlantı tanımı) → CONFIG. Kod değilse null.
+     * Hata kodunun kesinti sınıfı ({@code MonitoringOutageService} sabitleriyle aynı adlar). Bilinçli olarak HİÇBİR kod
+     * NETWORK / DNS değildir: toplu kesinti bastırması ("izlemelerin yarısı ağ hatasıyla düştüyse bu bizim ağımızdır, tek tek
+     * alarm açma") sorgu izlemesinde YANLIŞ sonuç verir — izlemeler birkaç veritabanı sunucusunda kümelenir, tek bir
+     * veritabanının çökmesi izlemelerin çoğunu aynı anda düşürür ve tam yakalanması gereken kesinti bastırılırdı. Bağlantı /
+     * zaman aşımı / ad çözümleme → OTHER (hedef tarafı), diğer her kod (kimlik, SQL, sürücü, güvenlik reddi, bağlantı tanımı)
+     * → CONFIG. Kod değilse null.
      */
     public static String outageClassOf(String code) {
         if (code == null) return null;
         return switch (code) {
-            case "DB_UNREACHABLE", "DB_TIMEOUT" -> "NETWORK";
-            case "DB_DNS" -> "DNS";
+            case "DB_UNREACHABLE", "DB_TIMEOUT", "DB_DNS", "DB_UNKNOWN" -> "OTHER";
             default -> code.startsWith("DB_") ? "CONFIG" : null;
         };
     }

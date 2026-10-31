@@ -1234,7 +1234,8 @@ public class MonitoringOutageService implements EvalStateSource {
     static String classifyError(String error, String domain) {
         if (error == null || error.isBlank()) return null;
         // Veritabanı sorgu izlemesi (2026-10-31): öğe hatası "[DB_KOD] metin" — sınıf sürücü metninden değil KODDAN gelir
-        // (bağlantı / zaman aşımı → ağ, DNS → DNS; kimlik / SQL / güvenlik reddi → yapılandırma, toplu kesinti sayılmaz).
+        // ve hiçbir kod ağ / DNS sınıfı değildir: izlemeler birkaç veritabanında kümelenir, toplu kesinti bastırması tek bir
+        // veritabanının çöküşünü (tam yakalanması gereken olayı) gizlerdi (DbQueryAlarmText.outageClassOf).
         String dbClass = com.sitemonitor.service.dbquery.DbQueryAlarmText.outageClassOf(
                 com.sitemonitor.service.dbquery.DbQueryAlarmText.codeOf(error));
         if (dbClass != null) return dbClass;
