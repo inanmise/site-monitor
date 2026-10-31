@@ -7603,4 +7603,225 @@ class MonitoringControllerTest {
         verify(dbQueryTestQuota, org.mockito.Mockito.times(2)).refund(ticket);
         verify(schedulerService, never()).evaluateDbQueryNow(any(), any());
     }
+
+    // ── r177: uyarılar, mail kolonu kipi, yazabilen hesap, sayaç, eşik çizgileri, geriye dönük deneme ─────────────────
+
+    private static com.sitemonitor.service.dbquery.DbQueryRules.Rule dbqRowCountRule() {
+        return new com.sitemonitor.service.dbquery.DbQueryRules.Rule("r1", null, "ROW_COUNT", null, null, "GT", null,
+                new com.sitemonitor.service.dbquery.DbQueryRules.Threshold(10.0, null, null, null), null, null);
+    }
+
+    @Test
+    @DisplayName("r177: kayıt uyarıları (engellemez) — GROUP BY'sız toplama + satır sayısı kuralı, SELECT *; yeni izlemede mail kipi SELECTED")
+    void dbquery_r177_saveWarningsAndMailMode() throws Exception {
+        when(dbConnectionRepo.findById(5L)).thenReturn(Optional.of(dbqConn(5L, 1L)));
+        when(dbQueryMonitorRepo.save(any())).thenAnswer(i -> {
+            com.sitemonitor.model.DbQueryMonitor m = i.getArgument(0);
+            m.setId(90L);
+            return m;
+        });
+        var shape = new com.sitemonitor.service.dbquery.DbQuerySqlGuard.Shape(true, false, true, List.of("adet"));
+        try (DbqEngine engine = new DbqEngine(new com.sitemonitor.service.dbquery.DbQuerySqlGuard.Result(true, List.of(),
+                List.of("orders"), shape))) {
+            engine.rules.when(() -> com.sitemonitor.service.dbquery.DbQueryRules.fromJson(any())).thenReturn(List.of(dbqRowCountRule()));
+            mvc.perform(post("/api/monitoring/dbquery").session(session("ADMIN"))
+                            .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                            .content(dbqCreateBody(1L, 5L, "Toplam izleme")))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.mail_columns_mode").value("SELECTED"))
+                    .andExpect(jsonPath("$.data.unknown_runs").value(0))
+                    .andExpect(jsonPath("$.data.warnings[0].code").value("ROW_COUNT_ON_AGGREGATE"))
+                    .andExpect(jsonPath("$.data.warnings[0].rule_ids[0]").value("r1"))
+                    .andExpect(jsonPath("$.data.warnings[0].message").exists());
+            org.mockito.ArgumentCaptor<com.sitemonitor.model.DbQueryMonitor> cap =
+                    org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.DbQueryMonitor.class);
+            verify(dbQueryMonitorRepo).save(cap.capture());
+            assertThat(cap.getValue().getMailColumnsMode()).isEqualTo("SELECTED");
+
+            // geçersiz kip → alan hatası, kaydedilmez
+            org.mockito.Mockito.clearInvocations(dbQueryMonitorRepo);
+            mvc.perform(post("/api/monitoring/dbquery").session(session("ADMIN"))
+                            .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                            .content(dbqCreateBody(1L, 5L, "Toplam izleme 2").replace("\"rules\":[]", "\"rules\":[],\"mail_columns_mode\":\"ALL\"")))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.fields.mail_columns_mode").exists());
+            verify(dbQueryMonitorRepo, never()).save(any());
+        }
+        // sql-check: SELECT * uyarısı
+        var star = new com.sitemonitor.service.dbquery.DbQuerySqlGuard.Shape(true, true, false, List.of());
+        try (DbqEngine engine = new DbqEngine(new com.sitemonitor.service.dbquery.DbQuerySqlGuard.Result(true, List.of(),
+                List.of("orders"), star))) {
+            mvc.perform(post("/api/monitoring/dbquery/sql-check").session(session("ADMIN"))
+                            .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                            .content("{\"sql\":\"SELECT * FROM orders\",\"db_type\":\"POSTGRESQL\"}"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.warnings.length()").value(1))
+                    .andExpect(jsonPath("$.data.warnings[0].code").value("SELECT_STAR"));
+        }
+    }
+
+    @Test
+    @DisplayName("r177: var olan izleme (kip yok) FIRST_N okunur; yanıtta unknown_runs; SQL değişince değerlendirilemeyen sayacı sıfırlanır")
+    void dbquery_r177_existingRowsAndUnknownReset() throws Exception {
+        var mon = dbqMonitor(91L, 1L, 5L);
+        mon.setUnknownRuns(2);
+        when(dbQueryMonitorRepo.findById(91L)).thenReturn(Optional.of(mon));
+        when(dbConnectionRepo.findById(5L)).thenReturn(Optional.of(dbqConn(5L, 1L)));
+        when(dbQueryMonitorRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+        var json = org.springframework.http.MediaType.APPLICATION_JSON;
+        try (DbqEngine engine = DbqEngine.ok()) {
+            mvc.perform(put("/api/monitoring/dbquery/91").session(dbqUser(1L)).contentType(json)
+                            .content("{\"purpose\":\"Yeni amaç metni\"}"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.mail_columns_mode").value("FIRST_N"))
+                    .andExpect(jsonPath("$.data.unknown_runs").value(2));
+            verify(dbQueryMonitorRepo, never()).clearDbQueryUnknown(anyLong());
+            mvc.perform(put("/api/monitoring/dbquery/91").session(dbqUser(1L)).contentType(json)
+                            .content("{\"sql_text\":\"SELECT COUNT(*) FROM orders WHERE state = 'X'\"}"))
+                    .andExpect(status().isOk());
+            verify(dbQueryMonitorRepo).clearDbQueryUnknown(91L);
+        }
+    }
+
+    @Test
+    @DisplayName("r177: yazabilen hesap kipi BLOCK — son denemesi yazabilen hesap gösteren bağlantıyla kayıt 400 DB_ACCOUNT_WRITABLE; WARN kaydeder")
+    void dbquery_r177_writableAccountBlockOnSave() throws Exception {
+        var conn = dbqConn(5L, 1L);
+        conn.setLastPrivilegesJson(com.sitemonitor.service.dbquery.DbAccountPrivileges.toJson(
+                new com.sitemonitor.service.dbquery.DbAccountPrivileges.Result(true, false, List.of(
+                        new com.sitemonitor.service.dbquery.DbAccountPrivileges.Finding("SUPERUSER", "rolsuper"))),
+                "2026-10-31T09:00:00"));
+        when(dbConnectionRepo.findById(5L)).thenReturn(Optional.of(conn));
+        when(dbQueryMonitorRepo.save(any())).thenAnswer(i -> {
+            com.sitemonitor.model.DbQueryMonitor m = i.getArgument(0);
+            m.setId(92L);
+            return m;
+        });
+        when(dbQueryChecker.writableMode()).thenReturn("BLOCK");
+        try (DbqEngine engine = DbqEngine.ok()) {
+            mvc.perform(post("/api/monitoring/dbquery").session(session("ADMIN"))
+                            .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                            .content(dbqCreateBody(1L, 5L, "Yazabilen hesap")))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.code").value("DB_ACCOUNT_WRITABLE"))
+                    .andExpect(jsonPath("$.field").value("profile_id"));
+            verify(dbQueryMonitorRepo, never()).save(any());
+            when(dbQueryChecker.writableMode()).thenReturn("WARN");
+            mvc.perform(post("/api/monitoring/dbquery").session(session("ADMIN"))
+                            .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                            .content(dbqCreateBody(1L, 5L, "Yazabilen hesap")))
+                    .andExpect(status().isOk());
+        }
+    }
+
+    @Test
+    @DisplayName("r177: deneme yanıtı hassas kolonlar için maske ÖNERİR (satır verisi yok); mail kolonundaki maskesiz hassas kolon uyarılır")
+    void dbquery_r177_testSuggestsMasks() throws Exception {
+        when(dbConnectionRepo.findById(5L)).thenReturn(Optional.of(dbqConn(5L, 1L)));
+        when(dbQueryChecker.test(any(), any())).thenReturn(new com.sitemonitor.service.dbquery.DbQueryCheckerService.Result(
+                "OK", "NONE", 42L, 1, false,
+                List.of(new com.sitemonitor.service.dbquery.DbQueryRunner.Column("musteri_tckn", "VARCHAR"),
+                        new com.sitemonitor.service.dbquery.DbQueryRunner.Column("adet", "INT")),
+                List.of("musteri_tckn"), List.of(List.of("12345678901")), List.of(), false,
+                List.of(), 1.0, false, null, null, "2026-10-31T10:00:00", "abcd", 5L, "PostgreSQL 16"));
+        MockHttpSession s = session("ADMIN");
+        s.setAttribute("username", "r177-mask");
+        try (DbqEngine engine = DbqEngine.ok()) {
+            String body = mvc.perform(post("/api/monitoring/dbquery/test").session(s)
+                            .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                            .content("{\"profile_id\":5,\"sql_text\":\"SELECT musteri_tckn, adet FROM musteri\",\"rules\":[],"
+                                    + "\"mail_columns\":[\"musteri_tckn\",\"adet\"]}"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.suggested_masks.length()").value(1))
+                    .andExpect(jsonPath("$.data.suggested_masks[0]").value("musteri_tckn"))
+                    .andExpect(jsonPath("$.data.warnings[0].code").value("SENSITIVE_UNMASKED"))
+                    .andExpect(jsonPath("$.data.warnings[0].columns[0]").value("musteri_tckn"))
+                    .andReturn().getResponse().getContentAsString();
+            assertThat(body).doesNotContain("12345678901");
+        }
+    }
+
+    @Test
+    @DisplayName("r177: değer grafiği eşik çizgileri — değeri belirleyen ilk sayısal kuralın uyarı / kritik eşiği; diğer metrikte yok")
+    void dbquery_r177_seriesThresholds() throws Exception {
+        var mon = dbqMonitor(93L, 1L, 5L);
+        mon.setRulesJson("[{\"id\":\"t\",\"kind\":\"TEXT_MATCH\",\"column\":\"d\",\"operator\":\"CONTAINS\",\"warning\":\"HATA\"},"
+                + "{\"id\":\"v\",\"label\":\"Bekleyen tutar\",\"kind\":\"COLUMN_VALUE\",\"column\":\"tutar\",\"aggregate\":\"SUM\","
+                + "\"operator\":\"GT\",\"warning\":10,\"critical\":50},"
+                + "{\"id\":\"r\",\"kind\":\"ROW_COUNT\",\"operator\":\"GT\",\"warning\":1}]");
+        when(dbQueryMonitorRepo.findById(93L)).thenReturn(Optional.of(mon));
+        when(dbQueryCheckRepo.seriesRaw(eq(93L), anyString(), anyString(), anyInt())).thenReturn(List.of());
+        mvc.perform(get("/api/monitoring/dbquery/93/response-series").param("metric", "value").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.thresholds.length()").value(2))
+                .andExpect(jsonPath("$.data.thresholds[0].rule_id").value("v"))
+                .andExpect(jsonPath("$.data.thresholds[0].label").value("Bekleyen tutar"))
+                .andExpect(jsonPath("$.data.thresholds[0].level").value("WARNING"))
+                .andExpect(jsonPath("$.data.thresholds[0].value").value(10.0))
+                .andExpect(jsonPath("$.data.thresholds[1].level").value("CRITICAL"))
+                .andExpect(jsonPath("$.data.thresholds[1].value").value(50.0));
+        mvc.perform(get("/api/monitoring/dbquery/93/response-series").param("metric", "duration").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.thresholds").doesNotExist());
+    }
+
+    @Test
+    @DisplayName("r177: geriye dönük deneme — saklı ölçülerle yeni eşik; veritabanına gitmez; görülemeyen 404, paylaşımla salt okur 403, gün 7/30/90, dakikada 6")
+    void dbquery_r177_backtest() throws Exception {
+        var mon = dbqMonitor(94L, 1L, 5L);
+        mon.setRulesJson("[{\"id\":\"r1\",\"kind\":\"ROW_COUNT\",\"operator\":\"GT\",\"warning\":1000}]");
+        when(dbQueryMonitorRepo.findById(94L)).thenReturn(Optional.of(mon));
+        String hash = MonitoringController.dbqSqlHash(mon.getSqlText());
+        String fp = com.sitemonitor.service.dbquery.DbQueryRules.fingerprint(
+                com.sitemonitor.service.dbquery.DbQueryRules.fromJson(mon.getRulesJson()).get(0));
+        java.time.Instant now = java.time.Instant.now();
+        java.time.format.DateTimeFormatter iso = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss")
+                .withZone(java.time.ZoneOffset.UTC);
+        List<Object[]> page = new java.util.ArrayList<>();
+        int[] measures = {5, 50, 60, 2, 80};
+        for (int i = 0; i < measures.length; i++) {
+            page.add(new Object[]{(long) (i + 1), iso.format(now.minusSeconds(3600L * (5 - i))), Boolean.TRUE, "OK", hash,
+                    "[{\"id\":\"r1\",\"kind\":\"ROW_COUNT\",\"evaluated\":true,\"passed\":true,\"measure\":" + measures[i]
+                            + ",\"fingerprint\":\"" + fp + "\"}]"});
+        }
+        when(dbQueryCheckRepo.backtestPage(eq(94L), anyString(), eq(0L), anyInt())).thenReturn(page);
+        var json = org.springframework.http.MediaType.APPLICATION_JSON;
+        MockHttpSession owner = dbqUser(1L);
+        owner.setAttribute("username", "r177-backtest");
+        String req = "{\"days\":7,\"rules\":[{\"id\":\"r1\",\"kind\":\"ROW_COUNT\",\"operator\":\"GT\",\"warning\":40}]}";
+        mvc.perform(post("/api/monitoring/dbquery/94/backtest").session(owner).contentType(json).content(req))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.runs").value(5))
+                .andExpect(jsonPath("$.data.evaluated").value(5))
+                .andExpect(jsonPath("$.data.would_breach.warning").value(3))
+                .andExpect(jsonPath("$.data.would_breach.critical").value(0))
+                .andExpect(jsonPath("$.data.would_open_alarms").value(2))
+                .andExpect(jsonPath("$.data.per_rule[0].id").value("r1"))
+                .andExpect(jsonPath("$.data.days").value(7))
+                .andExpect(jsonPath("$.data.truncated").value(false));
+        verify(schedulerService, never()).triggerDbQueryCheck(any());
+        verify(dbQueryChecker, never()).test(any(), any());
+
+        // doğrulama: gün, kural
+        mvc.perform(post("/api/monitoring/dbquery/94/backtest").session(owner).contentType(json).content("{\"days\":14}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.fields.days").exists());
+        mvc.perform(post("/api/monitoring/dbquery/94/backtest").session(owner).contentType(json)
+                        .content("{\"rules\":[{\"kind\":\"ROW_COUNT\"}]}"))
+                .andExpect(status().isBadRequest());
+        // kapsam: başka takım 404, paylaşımla salt okur 403
+        mvc.perform(post("/api/monitoring/dbquery/94/backtest").session(dbqUser(9L)).contentType(json).content(req))
+                .andExpect(status().isNotFound());
+        mvc.perform(post("/api/monitoring/dbquery/94/backtest").session(dbqGrantee(3L, 1L, false, false, false))
+                        .contentType(json).content(req))
+                .andExpect(status().isForbidden());
+        // yük sınırı: dakikada 6 başlangıç (ilk başarılı çağrı sayıldı)
+        for (int i = 0; i < 5; i++)
+            mvc.perform(post("/api/monitoring/dbquery/94/backtest").session(owner).contentType(json).content(req))
+                    .andExpect(status().isOk());
+        mvc.perform(post("/api/monitoring/dbquery/94/backtest").session(owner).contentType(json).content(req))
+                .andExpect(status().is(429))
+                .andExpect(jsonPath("$.code").value("RATE_LIMITED"))
+                .andExpect(header().exists("Retry-After"));
+    }
 }

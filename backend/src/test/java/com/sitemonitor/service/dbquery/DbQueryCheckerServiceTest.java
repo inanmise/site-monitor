@@ -128,7 +128,7 @@ class DbQueryCheckerServiceTest {
         DbQueryMonitor m = monitor("SELECT * FROM orders", "[{\"id\":\"r1\",\"kind\":\"ROW_COUNT\",\"operator\":\"GT\","
                 + "\"warning\":1,\"critical\":5}]");
         m.setSlowQueryMs(40);
-        when(runner.run(any(), anyString(), anyInt(), anyInt(), any())).thenReturn(ok(List.of("id"),
+        when(runner.run(any(), anyString(), anyInt(), anyInt(), any(DbQueryRunner.RunOptions.class))).thenReturn(ok(List.of("id"),
                 new Object[] {1}, new Object[] {2}, new Object[] {3}));
         DbQueryCheckerService.Result r = svc.check(m, false);
         assertThat(r.status()).isEqualTo("BREACH");
@@ -141,7 +141,7 @@ class DbQueryCheckerServiceTest {
         assertThat(r.profileId()).isEqualTo(7L);
         verify(profiles).recordUseOk(eq(7L), anyString(), eq(42));
         // zaman aşımı / satır sınırı varsayılan ve tavanla
-        verify(runner).run(any(), eq("SELECT * FROM orders"), eq(30), eq(1000), any());
+        verify(runner).run(any(), eq("SELECT * FROM orders"), eq(30), eq(1000), any(DbQueryRunner.RunOptions.class));
     }
 
     @Test
@@ -151,14 +151,14 @@ class DbQueryCheckerServiceTest {
         DbQueryMonitor m = monitor("SELECT 1", null);
         m.setQueryTimeoutSeconds(60);
         m.setMaxRows(5000);
-        when(runner.run(any(), anyString(), anyInt(), anyInt(), any())).thenReturn(ok(List.of("a")));
+        when(runner.run(any(), anyString(), anyInt(), anyInt(), any(DbQueryRunner.RunOptions.class))).thenReturn(ok(List.of("a")));
         svc.check(m, false);
-        verify(runner).run(any(), anyString(), eq(20), eq(50), any());
+        verify(runner).run(any(), anyString(), eq(20), eq(50), any(DbQueryRunner.RunOptions.class));
     }
 
     @Test
     void failedRunRecordsHealthError() {
-        when(runner.run(any(), anyString(), anyInt(), anyInt(), any())).thenReturn(new DbQueryRunner.QueryResult(false, 5, 0,
+        when(runner.run(any(), anyString(), anyInt(), anyInt(), any(DbQueryRunner.RunOptions.class))).thenReturn(new DbQueryRunner.QueryResult(false, 5, 0,
                 false, List.of(), List.of(), false, "connection refused", "DB_UNREACHABLE", null));
         DbQueryCheckerService.Result r = svc.check(monitor("SELECT 1", null), false);
         assertThat(r.status()).isEqualTo("FAIL");
@@ -174,7 +174,7 @@ class DbQueryCheckerServiceTest {
         DbQueryCheck prev = new DbQueryCheck();
         prev.setRuleResultsJson("[{\"id\":\"c\",\"measure\":2}]");
         when(checks.findRecentScheduledOk(11L)).thenReturn(List.of(prev));
-        when(runner.run(any(), anyString(), anyInt(), anyInt(), any())).thenReturn(ok(List.of("a"),
+        when(runner.run(any(), anyString(), anyInt(), anyInt(), any(DbQueryRunner.RunOptions.class))).thenReturn(ok(List.of("a"),
                 new Object[] {1}, new Object[] {2}, new Object[] {3}));
         DbQueryCheckerService.Result r = svc.check(m, false);
         assertThat(r.status()).isEqualTo("BREACH");
@@ -187,13 +187,12 @@ class DbQueryCheckerServiceTest {
                 + "\"column\":\"KART\",\"operator\":\"CONTAINS\",\"warning\":\"4111\"}]");
         m.setMaskedColumnsJson("[\"Kart\", \"tutar\"]");
         m.setMailColumnsJson("[\"tutar\", \"ad\", \"kart\", \"yok\"]");
-        @SuppressWarnings({"unchecked", "rawtypes"})
-        ArgumentCaptor<Set<String>> discard = ArgumentCaptor.forClass((Class) Set.class);
+        ArgumentCaptor<DbQueryRunner.RunOptions> discard = ArgumentCaptor.forClass(DbQueryRunner.RunOptions.class);
         when(runner.run(any(), anyString(), anyInt(), anyInt(), discard.capture())).thenReturn(ok(List.of("ad", "kart", "tutar"),
                 new Object[] {"Ayşe", "4111-1", new BigDecimal("10.50")}, new Object[] {"x".repeat(300), "5", null}));
         DbQueryCheckerService.Result r = svc.check(m, false);
         // kural kullanan maskeli kolon okunur; kullanılmayan maskeli kolon hiç okunmaz
-        assertThat(discard.getValue()).containsExactly("tutar");
+        assertThat(discard.getValue().discardColumns()).containsExactly("tutar");
         assertThat(r.mailColumns()).containsExactly("tutar", "ad", "kart");
         assertThat(r.maskedColumns()).containsExactly("tutar", "kart");
         assertThat(r.mailRows().get(0)).containsExactly("••••", "Ayşe", "••••");
@@ -212,7 +211,7 @@ class DbQueryCheckerServiceTest {
     void mailIncludeRowsOffAndDefaultColumns() {
         DbQueryMonitor m = monitor("SELECT 1", null);
         m.setMailIncludeRows(false);
-        when(runner.run(any(), anyString(), anyInt(), anyInt(), any())).thenReturn(ok(List.of("a", "b"), new Object[] {1, 2}));
+        when(runner.run(any(), anyString(), anyInt(), anyInt(), any(DbQueryRunner.RunOptions.class))).thenReturn(ok(List.of("a", "b"), new Object[] {1, 2}));
         DbQueryCheckerService.Result r = svc.check(m, false);
         assertThat(r.mailRows()).isEmpty();
         assertThat(r.mailColumns()).containsExactly("a", "b");
@@ -229,7 +228,7 @@ class DbQueryCheckerServiceTest {
         when(settings.getInt(eq(DbQueryCheckerService.KEY_MAX_CONCURRENCY), anyInt())).thenReturn(1);
         svc.setWaitsForTests(200, 200);
         CountDownLatch inside = new CountDownLatch(1), release = new CountDownLatch(1);
-        when(runner.run(any(), anyString(), anyInt(), anyInt(), any())).thenAnswer(inv -> {
+        when(runner.run(any(), anyString(), anyInt(), anyInt(), any(DbQueryRunner.RunOptions.class))).thenAnswer(inv -> {
             inside.countDown();
             release.await(5, TimeUnit.SECONDS);
             return ok(List.of("a"));
@@ -293,13 +292,13 @@ class DbQueryCheckerServiceTest {
 
     @Test
     void connectionTestHealthOnlyWithoutOverride() {
-        when(runner.test(any())).thenReturn(new DbQueryRunner.ConnectionTest(true, 12, "PostgreSQL 16", null, null));
+        when(runner.test(any(), anyBoolean())).thenReturn(new DbQueryRunner.ConnectionTest(true, 12, "PostgreSQL 16", null, null));
         assertThat(svc.testConnection(profile, null).ok()).isTrue();
         verify(profiles).recordTest(eq(7L), anyString(), eq(true), eq(12), isNull(), eq("PostgreSQL 16"));
         svc.testConnection(profile, "yeni-parola");
         verify(profiles, org.mockito.Mockito.times(1)).recordTest(anyLong(), anyString(), anyBoolean(), anyInt(), any(), any());
         ArgumentCaptor<DbConnectionSpec> spec = ArgumentCaptor.forClass(DbConnectionSpec.class);
-        verify(runner, org.mockito.Mockito.times(2)).test(spec.capture());
+        verify(runner, org.mockito.Mockito.times(2)).test(spec.capture(), anyBoolean());
         assertThat(spec.getAllValues().get(0).password()).isEqualTo("secret");
         assertThat(spec.getAllValues().get(1).password()).isEqualTo("yeni-parola");
         assertThat(spec.getAllValues().get(1).toString()).doesNotContain("yeni-parola");
@@ -318,7 +317,8 @@ class DbQueryCheckerServiceTest {
         // reddedilen sorgunun planı okunmaz
         assertThat(svc.planCheck(profile, "DELETE FROM t").verdict()).isEqualTo("UNKNOWN");
         when(settings.getString(eq(DbQueryCheckerService.KEY_PLAN_MODE), any())).thenReturn("OFF");
-        assertThat(svc.planCheck(profile, "SELECT * FROM t").verdict()).isEqualTo("OK");
+        // r177 (Ö-3): kapalı ön kontrol "uygun" DEĞİL — ayrı hüküm OFF, plan okunmaz
+        assertThat(svc.planCheck(profile, "SELECT * FROM t").verdict()).isEqualTo("OFF");
         profile.setDbType("ORACLE");
         assertThat(svc.planCheck(profile, "SELECT 1 FROM dual").supported()).isFalse();
         verify(runner, org.mockito.Mockito.times(4)).plan(any(), anyString(), anyInt());

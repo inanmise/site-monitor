@@ -67,6 +67,21 @@ public interface DbQueryMonitorRepository extends JpaRepository<DbQueryMonitor, 
          + "skipped_since = COALESCE(skipped_since, :now) WHERE id = :id", nativeQuery = true)
     int markDbQuerySkipped(@Param("id") Long id, @Param("now") String now);
 
+    // ── Ardışık değerlendirilemeyen çalıştırma (r177, H-2) — hedefli, varlık kaydı ezmez ────────────────────────────
+
+    /** Zamanlanmış çalıştırma yapılandırma sorunuyla değerlendirilemedi: sayaç + 1. */
+    @Transactional
+    @Modifying
+    @Query(value = "UPDATE dbquery_monitors SET unknown_runs = COALESCE(unknown_runs, 0) + 1 WHERE id = :id", nativeQuery = true)
+    int markDbQueryUnknown(@Param("id") Long id);
+
+    /** Değerlendirilebilen çalıştırma (ya da tanım değişti): sayaç sıfırlanır. */
+    @Transactional
+    @Modifying
+    @Query(value = "UPDATE dbquery_monitors SET unknown_runs = 0 WHERE id = :id AND unknown_runs IS NOT NULL AND unknown_runs <> 0",
+           nativeQuery = true)
+    int clearDbQueryUnknown(@Param("id") Long id);
+
     /** Bir çalıştırma gerçekleşti: ardışık atlama sıfırlanır. */
     @Transactional
     @Modifying

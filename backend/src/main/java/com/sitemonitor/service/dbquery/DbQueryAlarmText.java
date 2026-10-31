@@ -47,6 +47,7 @@ public final class DbQueryAlarmText {
             m.put("note", r.note());
             m.put("measure", r.measure());
             m.put("compared", r.compared());
+            if (r.fingerprint() != null) m.put("fingerprint", r.fingerprint());
             out.add(m);
         }
         return out;
@@ -116,8 +117,53 @@ public final class DbQueryAlarmText {
             case "COLUMN_VALUE" -> "Kolon değeri";
             case "TEXT_MATCH" -> "Metin eşleşmesi";
             case "CHANGE" -> "Değişim";
+            case "FRESHNESS" -> "Tazelik";
             default -> "Kural";
         };
+    }
+
+    /**
+     * Ardışık değerlendirilemeyen çalıştırma alarmının hata kodu (r177, H-2): kural(lar) sorgu sonucundan değerlendirilemiyor
+     * (kolon yok / sayı değil / zaman damgası değil …) — izleme sessizce ölmesin. CONFIG sınıfı ({@link #outageClassOf}).
+     */
+    public static final String RULE_UNEVALUABLE_CODE = "DB_RULE_UNEVALUABLE";
+
+    /** Yapılandırma sorunuyla değerlendirilemeyen kuralların not kodları (tekil, sıralı); yoksa boş. */
+    public static List<String> unevaluableNotes(List<Map<String, Object>> results) {
+        java.util.TreeSet<String> out = new java.util.TreeSet<>();
+        if (results == null) return List.of();
+        for (Map<String, Object> r : results) {
+            if (r == null || !Boolean.FALSE.equals(r.get("evaluated"))) continue;
+            String note = text(r.get("note"));
+            if (DbQueryEvaluator.isConfigUnevaluable(text(r.get("kind")), note)) out.add(note);
+        }
+        return List.copyOf(out);
+    }
+
+    /** Not kodunun Türkçe etiketi (alarm hata metni ve mail). */
+    public static String noteLabel(String note) {
+        if (note == null) return "değerlendirilemedi";
+        return switch (note) {
+            case DbQueryEvaluator.NOTE_COLUMN_MISSING -> "kolon sonuçta yok";
+            case DbQueryEvaluator.NOTE_NOT_NUMERIC -> "değer sayı değil";
+            case DbQueryEvaluator.NOTE_NOT_TIMESTAMP -> "değer zaman damgası değil";
+            case DbQueryEvaluator.NOTE_DB_CLOCK_UNAVAILABLE -> "veritabanı saati okunamadı";
+            case DbQueryEvaluator.NOTE_PREVIOUS_UNREADABLE -> "önceki çalıştırma okunamadı";
+            case DbQueryEvaluator.NOTE_NO_ROWS -> "sorgu satır döndürmedi";
+            case DbQueryEvaluator.NOTE_NULL_VALUE -> "değer boş";
+            default -> note;
+        };
+    }
+
+    /**
+     * Değerlendirilemeyen çalıştırma kaleminin hata metni: {@code [DB_RULE_UNEVALUABLE] kural(lar) değerlendirilemedi (…)} —
+     * not kodları metinde (alarm ayrıntısı); asla hücre değeri yok.
+     */
+    public static String unevaluableError(List<String> notes, int runs) {
+        List<String> labels = new ArrayList<>();
+        if (notes != null) for (String n : notes) labels.add(noteLabel(n));
+        String head = runs > 1 ? runs + " ardışık çalıştırmada kural değerlendirilemedi" : "kural değerlendirilemedi";
+        return itemError(RULE_UNEVALUABLE_CODE, labels.isEmpty() ? head : head + " (" + String.join(", ", labels) + ")");
     }
 
     /**
@@ -170,6 +216,8 @@ public final class DbQueryAlarmText {
             case "DB_PROFILE_OTHER_TEAM" -> "Bağlantı başka bir takıma ait";
             case "DB_SECRET_UNREADABLE" -> "Bağlantı parolası çözülemedi";
             case "DB_BUSY" -> "Eşzamanlı çalıştırma sınırı dolu";
+            case "DB_RULE_UNEVALUABLE" -> "Kural sorgu sonucundan değerlendirilemedi";
+            case "DB_ACCOUNT_WRITABLE" -> "Bağlantı hesabı yazma / yönetici yetkisine sahip";
             case "DB_UNKNOWN" -> "Bilinmeyen hata";
             default -> code;
         };
@@ -220,7 +268,7 @@ public final class DbQueryAlarmText {
         for (Map<String, Object> r : rs) {
             if (r == null) continue;
             boolean evaluated = !Boolean.FALSE.equals(r.get("evaluated"));
-            if (!evaluated && DbQueryEvaluator.INCONCLUSIVE_NOTES.contains(text(r.get("note")))) inconclusive = true;
+            if (!evaluated && DbQueryEvaluator.isInconclusive(text(r.get("kind")), text(r.get("note")))) inconclusive = true;
             else if (!Boolean.FALSE.equals(r.get("passed"))) somePassed = true;
         }
         if (!inconclusive) return VERDICT_OK;

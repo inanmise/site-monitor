@@ -187,6 +187,12 @@ public class DbConnectionProfileService {
         // Parola varlık kaydıyla YAZILMAZ (updatable = false, inceleme 2026-10-31 D4) — yalnız gerçekten değiştiyse (yeni değer ya
         // da temizleme) hedefli UPDATE; değişmediyse araya giren yeniden şifreleme (anahtar döndürme) korunur.
         if (!Objects.equals(before.getPasswordEnc(), next.getPasswordEnc())) repo.updatePasswordEnc(id, next.getPasswordEnc());
+        // r177 (Ö-1): hesap / hedef değişti — eski hesabın yetki özeti bu bağlantıyı TANIMLAMAZ (yazabilen hesap kipi onu okur);
+        // bir sonraki "Bağlantıyı dene" yeniden yazar
+        if (accountChanged(before, next) && before.getLastPrivilegesJson() != null) {
+            repo.recordPrivileges(id, null);
+            saved.setLastPrivilegesJson(null);
+        }
         return new Updated(before, saved);
     }
 
@@ -287,8 +293,11 @@ public class DbConnectionProfileService {
         m.put("ssl_mode", p.getSslMode());
         m.put("mssql_encrypt", p.getMssqlEncrypt());
         m.put("mssql_trust_server_certificate", p.getMssqlTrustServerCertificate());
+        m.put("oracle_tcps", DbType.ORACLE.name().equals(p.getDbType()) ? Boolean.TRUE.equals(p.getOracleTcps()) : null);
         m.put("connect_timeout_ms", p.getConnectTimeoutMs());
         m.put("description", p.getDescription());
+        // r177: bağlantı güvenliği uyarıları (kod listesi kalıcı — ön yüz dbq.conn.sec.<KOD>)
+        m.put("security_warnings", securityWarnings(p));
         m.put("created_at", p.getCreatedAt());
         m.put("created_by_name", p.getCreatedByName());
         m.put("updated_at", p.getUpdatedAt());
@@ -326,7 +335,40 @@ public class DbConnectionProfileService {
         h.put("last_error", p.getLastError());
         h.put("last_duration_ms", p.getLastDurationMs());
         h.put("state", healthState(p, used));
+        // r177 (Ö-1): son bağlantı denemesinin hesap yetkisi özeti — {checked, read_only, findings, checked_at}; yoksa null
+        h.put("privileges", DbAccountPrivileges.fromJson(p.getLastPrivilegesJson()));
         return h;
+    }
+
+    /** Bağlantı güvenliği uyarı kodları (r177, H-3) — kalıcı. */
+    public static final String SEC_SSL_PREFER = "SSL_PREFER_DOWNGRADE", SEC_SSL_DISABLED = "SSL_DISABLED",
+            SEC_SSL_NOT_VERIFIED = "SSL_NOT_VERIFIED", SEC_MSSQL_UNENCRYPTED = "MSSQL_UNENCRYPTED",
+            SEC_MSSQL_TRUST_SERVER_CERT = "MSSQL_TRUST_SERVER_CERT";
+    public static final List<String> SECURITY_WARNING_CODES = List.of(SEC_SSL_PREFER, SEC_SSL_DISABLED, SEC_SSL_NOT_VERIFIED,
+            SEC_MSSQL_UNENCRYPTED, SEC_MSSQL_TRUST_SERVER_CERT);
+
+    /**
+     * Bağlantının TLS zayıflıkları (r177): PostgreSQL {@code prefer} / {@code allow} (ya da boş — eski kayıtların varsayılanı)
+     * şifresiz bağlantıya DÜŞEBİLİR; {@code disable} hiç şifrelemez; {@code require} şifreler ama sunucuyu doğrulamaz.
+     * MSSQL şifreleme kapalı / sunucu sertifikasına körü körüne güven. Oracle yerel ağ şifrelemesi sunucuda ayarlanır —
+     * uyarı üretilmez.
+     */
+    public static List<String> securityWarnings(DbConnectionProfile p) {
+        List<String> out = new ArrayList<>();
+        DbType t = DbType.parse(p.getDbType());
+        if (t == DbType.POSTGRESQL) {
+            String ssl = p.getSslMode() == null ? "prefer" : p.getSslMode().toLowerCase(Locale.ROOT);
+            switch (ssl) {
+                case "prefer", "allow" -> out.add(SEC_SSL_PREFER);
+                case "disable" -> out.add(SEC_SSL_DISABLED);
+                case "require" -> out.add(SEC_SSL_NOT_VERIFIED);
+                default -> { }
+            }
+        } else if (t == DbType.MSSQL) {
+            if (Boolean.FALSE.equals(p.getMssqlEncrypt())) out.add(SEC_MSSQL_UNENCRYPTED);
+            else if (Boolean.TRUE.equals(p.getMssqlTrustServerCertificate())) out.add(SEC_MSSQL_TRUST_SERVER_CERT);
+        }
+        return out;
     }
 
     static String healthState(DbConnectionProfile p, boolean used) {
@@ -394,6 +436,8 @@ public class DbConnectionProfileService {
         }
         if (body.get("mssql_encrypt") instanceof Boolean b) p.setMssqlEncrypt(b);
         if (body.get("mssql_trust_server_certificate") instanceof Boolean b) p.setMssqlTrustServerCertificate(b);
+        boolean tcpsSent = body.get("oracle_tcps") instanceof Boolean;
+        if (body.get("oracle_tcps") instanceof Boolean b) p.setOracleTcps(b);
         if (body.containsKey("connect_timeout_ms")) {
             Object v = body.get("connect_timeout_ms");
             p.setConnectTimeoutMs(v == null || v.toString().isBlank() ? null : intOf(v));
@@ -402,7 +446,12 @@ public class DbConnectionProfileService {
 
         DbType type = DbType.parse(p.getDbType());
         if (type != null) {
-            if (p.getPort() == null && (create || body.containsKey("port"))) p.setPort(type.defaultPort());
+            // Oracle TCPS (r177): varsayılan port 2484 — port gönderilmediyse / boşsa ve TCPS açıldıysa
+            boolean tcps = type == DbType.ORACLE && Boolean.TRUE.equals(p.getOracleTcps());
+            if (p.getPort() == null && (create || body.containsKey("port")))
+                p.setPort(tcps ? DbJdbcUrls.ORACLE_TCPS_PORT : type.defaultPort());
+            else if (tcps && tcpsSent && !body.containsKey("port") && Integer.valueOf(type.defaultPort()).equals(p.getPort()))
+                p.setPort(DbJdbcUrls.ORACLE_TCPS_PORT);
             if (p.getConnectTimeoutMs() == null) p.setConnectTimeoutMs(DEFAULT_CONNECT_MS);
             // Türe ait olmayan alanlar temizlenir: başka türün ayarı bağlantıya sızmasın (ör. Oracle kipi PG kaydında).
             if (type != DbType.ORACLE) p.setOracleMode(null);
@@ -415,8 +464,12 @@ public class DbConnectionProfileService {
                 if (p.getMssqlEncrypt() == null) p.setMssqlEncrypt(true);
                 if (p.getMssqlTrustServerCertificate() == null) p.setMssqlTrustServerCertificate(false);
             }
+            if (type != DbType.ORACLE) p.setOracleTcps(null);
+            else if (p.getOracleTcps() == null) p.setOracleTcps(false);
             if (type != DbType.POSTGRESQL) p.setSslMode(null);
-            else if (p.getSslMode() == null) p.setSslMode("prefer");
+            // r177 (H-3): YENİ bağlantının varsayılanı "require" (şifresiz olmaz); var olan "prefer" kayıtları korunur
+            // (sağlık panelinde "şifresiz bağlantıya düşebilir" uyarısı — securityWarnings)
+            else if (p.getSslMode() == null) p.setSslMode(create ? "require" : "prefer");
         }
         // Parola — yalnız değişince (boş / gelmeyen = korunur); temizleme açıkça istenir.
         Object pw = body.get("password");
@@ -534,6 +587,19 @@ public class DbConnectionProfileService {
     }
 
     /**
+     * Hesabın / hedefin kimliği değişti mi (r177): tür, sunucu (büyük-küçük harf duyarsız), port, veritabanı, kullanıcı adı ya
+     * da parola. Saklı yetki özeti yalnız aynı hesap için geçerlidir.
+     */
+    static boolean accountChanged(DbConnectionProfile before, DbConnectionProfile next) {
+        return !Objects.equals(before.getDbType(), next.getDbType())
+                || !String.valueOf(before.getHost()).equalsIgnoreCase(String.valueOf(next.getHost()))
+                || !Objects.equals(before.getPort(), next.getPort())
+                || !Objects.equals(before.getDatabaseName(), next.getDatabaseName())
+                || !Objects.equals(before.getUsername(), next.getUsername())
+                || !Objects.equals(before.getPasswordEnc(), next.getPasswordEnc());
+    }
+
+    /**
      * Hedefi belirleyen ya da güvenliği gevşeten alanlardan kayıtlı değerden farklı olanlar (adları; boş = değişiklik yok).
      * Hedef: tür, sunucu (büyük-küçük harf duyarsız), port, veritabanı, Oracle kipi, MSSQL örneği, kullanıcı adı. Gevşetme:
      * PostgreSQL SSL kipinin daha zayıfa inmesi, MSSQL şifrelemenin kapanması, sunucu sertifikasına güvenin açılması.
@@ -552,6 +618,8 @@ public class DbConnectionProfileService {
         if (!Boolean.TRUE.equals(before.getMssqlTrustServerCertificate()) && Boolean.TRUE.equals(next.getMssqlTrustServerCertificate())) {
             out.add("mssql_trust_server_certificate");
         }
+        // Oracle TCPS kapatıldı (r177): şifreli bağlantı düz TCP'ye iniyor — kayıtlı parola düz metin hatta gönderilmez
+        if (Boolean.TRUE.equals(before.getOracleTcps()) && !Boolean.TRUE.equals(next.getOracleTcps())) out.add("oracle_tcps");
         return out;
     }
 
@@ -660,6 +728,7 @@ public class DbConnectionProfileService {
         to.setSslMode(from.getSslMode());
         to.setMssqlEncrypt(from.getMssqlEncrypt());
         to.setMssqlTrustServerCertificate(from.getMssqlTrustServerCertificate());
+        to.setOracleTcps(from.getOracleTcps());
         to.setConnectTimeoutMs(from.getConnectTimeoutMs());
         to.setDescription(from.getDescription());
     }
@@ -680,6 +749,7 @@ public class DbConnectionProfileService {
         m.put("ssl_mode", p.getSslMode());
         m.put("mssql_encrypt", p.getMssqlEncrypt());
         m.put("mssql_trust_server_certificate", p.getMssqlTrustServerCertificate());
+        m.put("oracle_tcps", p.getOracleTcps());
         m.put("connect_timeout_ms", p.getConnectTimeoutMs());
         m.put("description", p.getDescription());
         return m;

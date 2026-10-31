@@ -114,7 +114,7 @@ class DbQueryCheckerReviewFixTest {
         when(checks.findRecentScheduledOk(11L)).thenReturn(List.of(s3, s2));
         when(checks.findLatestScheduled(11L)).thenReturn(Optional.of(s3));
         when(checks.findScheduledOkBefore(11L, s3.getCheckedAt(), 3L)).thenReturn(Optional.of(s2));
-        when(runner.run(any(), anyString(), anyInt(), anyInt(), any())).thenReturn(rows(500));
+        when(runner.run(any(), anyString(), anyInt(), anyInt(), any(DbQueryRunner.RunOptions.class))).thenReturn(rows(500));
 
         DbQueryCheckerService.Result scheduled = svc.check(m, DbQueryCheckerService.Run.SCHEDULED);
         assertThat(scheduled.status()).as("sonraki zamanlanmış: 500 → 500 değişim yok").isEqualTo("OK");
@@ -138,7 +138,7 @@ class DbQueryCheckerReviewFixTest {
         when(checks.findRecentScheduledOk(14L)).thenReturn(List.of(s4, s3));
         when(checks.findLatestScheduled(14L)).thenReturn(Optional.of(s4));
         when(checks.findScheduledOkBefore(14L, s3.getCheckedAt(), 3L)).thenReturn(Optional.of(s2));
-        when(runner.run(any(), anyString(), anyInt(), anyInt(), any())).thenReturn(rows(540));
+        when(runner.run(any(), anyString(), anyInt(), anyInt(), any(DbQueryRunner.RunOptions.class))).thenReturn(rows(540));
         DbQueryCheckerService.Result r = svc.recheck(m, new DbQueryCheckerService.Anchor(s3.getCheckedAt(), 3L));
         assertThat(r.status()).isEqualTo("BREACH");
         assertThat(r.ruleResults().get(0).compared()).as("540 − 300 (S2), 540 − 520 değil").isEqualTo(240.0);
@@ -152,7 +152,7 @@ class DbQueryCheckerReviewFixTest {
         DbQueryCheck s1 = row(1L, "2026-11-02T06:00:00", 500);
         when(checks.findLatestScheduled(12L)).thenReturn(Optional.of(s1));
         when(checks.findScheduledOkBefore(12L, s1.getCheckedAt(), 1L)).thenReturn(Optional.empty());
-        when(runner.run(any(), anyString(), anyInt(), anyInt(), any())).thenReturn(rows(500));
+        when(runner.run(any(), anyString(), anyInt(), anyInt(), any(DbQueryRunner.RunOptions.class))).thenReturn(rows(500));
         for (DbQueryCheckerService.Result r : List.of(svc.recheck(m, new DbQueryCheckerService.Anchor(s1.getCheckedAt(), 1L)),
                 svc.recheck(m))) {
             assertThat(r.ruleResults().get(0).evaluated()).isFalse();
@@ -167,7 +167,7 @@ class DbQueryCheckerReviewFixTest {
         DbQueryCheck s1 = row(1L, "2026-11-02T06:00:00", 300);
         when(checks.findLatestScheduled(15L)).thenReturn(Optional.of(s1));
         when(checks.findScheduledOkBefore(15L, s1.getCheckedAt(), 1L)).thenReturn(Optional.empty());
-        when(runner.run(any(), anyString(), anyInt(), anyInt(), any())).thenReturn(rows(340));
+        when(runner.run(any(), anyString(), anyInt(), anyInt(), any(DbQueryRunner.RunOptions.class))).thenReturn(rows(340));
         DbQueryCheckerService.Result r = svc.check(m, true);
         assertThat(r.ruleResults().get(0).evaluated()).isTrue();
         assertThat(r.ruleResults().get(0).note()).isNotEqualTo(DbQueryEvaluator.NOTE_FIRST_RUN);
@@ -193,7 +193,7 @@ class DbQueryCheckerReviewFixTest {
     void manualUnreadableTrigger() {
         DbQueryMonitor m = monitor(16L, 7L, CHANGE);
         when(checks.findLatestScheduled(16L)).thenThrow(new org.springframework.dao.QueryTimeoutException("x"));
-        when(runner.run(any(), anyString(), anyInt(), anyInt(), any())).thenReturn(rows(5));
+        when(runner.run(any(), anyString(), anyInt(), anyInt(), any(DbQueryRunner.RunOptions.class))).thenReturn(rows(5));
         assertThat(svc.check(m, true).ruleResults().get(0).note()).isEqualTo(DbQueryEvaluator.NOTE_PREVIOUS_UNREADABLE);
     }
 
@@ -202,9 +202,11 @@ class DbQueryCheckerReviewFixTest {
     void unreadablePreviousIsNotFirstRun() {
         DbQueryMonitor m = monitor(13L, 7L, CHANGE);
         when(checks.findRecentScheduledOk(13L)).thenThrow(new org.springframework.dao.QueryTimeoutException("x"));
-        when(runner.run(any(), anyString(), anyInt(), anyInt(), any())).thenReturn(rows(9_999));
+        when(runner.run(any(), anyString(), anyInt(), anyInt(), any(DbQueryRunner.RunOptions.class))).thenReturn(rows(9_999));
         DbQueryCheckerService.Result r = svc.check(m, false);
-        assertThat(r.status()).isEqualTo("OK");
+        // r177: kanıt eksikliği olan çalıştırma UNKNOWN (eski "OK" yanıltıcıydı); alarm kararı OK ile aynı (ihlal yok)
+        assertThat(r.status()).isEqualTo("UNKNOWN");
+        assertThat(r.level()).isEqualTo("NONE");
         assertThat(r.ruleResults().get(0).note()).isEqualTo(DbQueryEvaluator.NOTE_PREVIOUS_UNREADABLE);
         String verdict = DbQueryAlarmText.thresholdVerdict(r.status(), DbQueryAlarmText.toApi(r.ruleResults()), "ANY");
         assertThat(verdict).isEqualTo(DbQueryAlarmText.VERDICT_UNKNOWN);
@@ -248,7 +250,7 @@ class DbQueryCheckerReviewFixTest {
     @DisplayName("O1: ayrılmış çalıştırma motorun KENDİ havuzunda (dbquery-run-N) koşar; izin sorgudan sonra bırakılır")
     void reservedRunOnOwnPool() throws Exception {
         AtomicReference<String> thread = new AtomicReference<>();
-        when(runner.run(any(), anyString(), anyInt(), anyInt(), any())).thenAnswer(i -> {
+        when(runner.run(any(), anyString(), anyInt(), anyInt(), any(DbQueryRunner.RunOptions.class))).thenAnswer(i -> {
             thread.set(Thread.currentThread().getName());
             return rows(1);
         });

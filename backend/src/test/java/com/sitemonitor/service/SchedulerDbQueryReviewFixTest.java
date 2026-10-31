@@ -250,7 +250,7 @@ class SchedulerDbQueryReviewFixTest {
             p.setUsername("u");
             when(profiles.findById(3L)).thenReturn(Optional.of(p));
             DbQueryRunner runner = mock(DbQueryRunner.class);
-            when(runner.run(any(), anyString(), anyInt(), anyInt(), any())).thenAnswer(i -> {
+            when(runner.run(any(), anyString(), anyInt(), anyInt(), any(DbQueryRunner.RunOptions.class))).thenAnswer(i -> {
                 int v = values.get(Math.min(next.getAndIncrement(), values.size() - 1));
                 return new DbQueryRunner.QueryResult(true, 5, v, false, List.of(new DbQueryRunner.Column("id", "INT")),
                         List.of(), false, null, null, "PostgreSQL 16");
@@ -355,7 +355,7 @@ class SchedulerDbQueryReviewFixTest {
             p.setUsername("u");
             when(profiles.findById(3L)).thenReturn(Optional.of(p));
             DbQueryRunner runner = mock(DbQueryRunner.class);
-            when(runner.run(any(), anyString(), anyInt(), anyInt(), any())).thenAnswer(i -> {
+            when(runner.run(any(), anyString(), anyInt(), anyInt(), any(DbQueryRunner.RunOptions.class))).thenAnswer(i -> {
                 int v = values.get(Math.min(next.getAndIncrement(), values.size() - 1));
                 return new DbQueryRunner.QueryResult(true, 5, v, false, List.of(new DbQueryRunner.Column("id", "INT")),
                         List.of(), false, null, null, "PostgreSQL 16");
